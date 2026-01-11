@@ -40,6 +40,26 @@ function serializeError(err: unknown): DiskWorkerError {
   return { message: String(err) };
 }
 
+function isPowerOfTwo(n: number): boolean {
+  if (!Number.isSafeInteger(n) || n <= 0) return false;
+  // Use bigint to avoid 32-bit truncation.
+  const b = BigInt(n);
+  return (b & (b - 1n)) === 0n;
+}
+
+function assertValidDiskBackend(backend: unknown): asserts backend is DiskBackend {
+  if (backend !== "opfs" && backend !== "idb") {
+    throw new Error("cacheBackend must be 'opfs' or 'idb'");
+  }
+}
+
+function assertValidOpfsFileName(name: string, field: string): void {
+  // OPFS file names are path components; reject separators to avoid confusion about directories.
+  if (name.includes("/") || name.includes("\\") || name.includes("\0")) {
+    throw new Error(`${field} must be a simple file name (no path separators)`);
+  }
+}
+
 /**
  * @param {number} requestId
  * @param {any} payload
@@ -81,6 +101,10 @@ function assertNonSecretUrl(url: string | undefined): void {
       throw new Error("Refusing to persist what looks like a signed URL; store a stable URL or a leaseEndpoint instead.");
     }
     return;
+  }
+
+  if (parsed.username || parsed.password) {
+    throw new Error("Refusing to persist a URL with embedded credentials; store a stable URL or a leaseEndpoint instead.");
   }
 
   const banned = new Set([
@@ -369,18 +393,24 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
       }
 
       const id = newDiskId();
-      const cacheBackend = (payload.cacheBackend || backend) as DiskBackend;
+      const cacheBackendRaw = payload.cacheBackend ?? backend;
+      assertValidDiskBackend(cacheBackendRaw);
+      const cacheBackend = cacheBackendRaw;
       const chunkSizeBytes =
         typeof payload.chunkSizeBytes === "number" && Number.isFinite(payload.chunkSizeBytes) && payload.chunkSizeBytes > 0
           ? payload.chunkSizeBytes
           : 1024 * 1024;
-      if (chunkSizeBytes % 512 !== 0) throw new Error("chunkSizeBytes must be a multiple of 512");
+      if (chunkSizeBytes % 512 !== 0 || !isPowerOfTwo(chunkSizeBytes)) {
+        throw new Error("chunkSizeBytes must be a power of two and a multiple of 512");
+      }
 
       const overlayBlockSizeBytes =
         typeof payload.overlayBlockSizeBytes === "number" && Number.isFinite(payload.overlayBlockSizeBytes) && payload.overlayBlockSizeBytes > 0
           ? payload.overlayBlockSizeBytes
           : 1024 * 1024;
-      if (overlayBlockSizeBytes % 512 !== 0) throw new Error("overlayBlockSizeBytes must be a multiple of 512");
+      if (overlayBlockSizeBytes % 512 !== 0 || !isPowerOfTwo(overlayBlockSizeBytes)) {
+        throw new Error("overlayBlockSizeBytes must be a power of two and a multiple of 512");
+      }
 
       const urls: RemoteDiskUrls = {
         ...((payload.urls || {}) as RemoteDiskUrls),
@@ -392,6 +422,10 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
 
       const cacheFileName = typeof payload.cacheFileName === "string" && payload.cacheFileName ? payload.cacheFileName : `${id}.cache.aerospar`;
       const overlayFileName = typeof payload.overlayFileName === "string" && payload.overlayFileName ? payload.overlayFileName : `${id}.overlay.aerospar`;
+      if (cacheBackend === "opfs") {
+        assertValidOpfsFileName(cacheFileName, "cacheFileName");
+        assertValidOpfsFileName(overlayFileName, "overlayFileName");
+      }
 
       const meta: DiskImageMetadata = {
         source: "remote",
@@ -453,11 +487,30 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
       }
       if (payload.validator !== undefined) meta.remote.validator = payload.validator as RemoteDiskValidator;
 
-      if (payload.cacheBackend !== undefined) meta.cache.backend = payload.cacheBackend as DiskBackend;
-      if (payload.chunkSizeBytes !== undefined) meta.cache.chunkSizeBytes = Number(payload.chunkSizeBytes);
+      if (payload.cacheBackend !== undefined) {
+        assertValidDiskBackend(payload.cacheBackend);
+        meta.cache.backend = payload.cacheBackend;
+      }
+      if (payload.chunkSizeBytes !== undefined) {
+        const next = Number(payload.chunkSizeBytes);
+        if (next % 512 !== 0 || !isPowerOfTwo(next)) {
+          throw new Error("chunkSizeBytes must be a power of two and a multiple of 512");
+        }
+        meta.cache.chunkSizeBytes = next;
+      }
       if (payload.cacheFileName !== undefined) meta.cache.fileName = String(payload.cacheFileName);
       if (payload.overlayFileName !== undefined) meta.cache.overlayFileName = String(payload.overlayFileName);
-      if (payload.overlayBlockSizeBytes !== undefined) meta.cache.overlayBlockSizeBytes = Number(payload.overlayBlockSizeBytes);
+      if (payload.overlayBlockSizeBytes !== undefined) {
+        const next = Number(payload.overlayBlockSizeBytes);
+        if (next % 512 !== 0 || !isPowerOfTwo(next)) {
+          throw new Error("overlayBlockSizeBytes must be a power of two and a multiple of 512");
+        }
+        meta.cache.overlayBlockSizeBytes = next;
+      }
+      if (meta.cache.backend === "opfs") {
+        assertValidOpfsFileName(meta.cache.fileName, "cacheFileName");
+        assertValidOpfsFileName(meta.cache.overlayFileName, "overlayFileName");
+      }
 
       await store.putDisk(meta);
       postOk(requestId, meta);
