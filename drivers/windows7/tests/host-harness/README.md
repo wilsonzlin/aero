@@ -296,7 +296,7 @@ For safety and determinism, the provisioning script installs **only an allowlist
 
 Note: the harness uses **modern-only** virtio device IDs for virtio-net/virtio-blk/virtio-input/virtio-snd
 (`DEV_1041`/`DEV_1042`/`DEV_1052`/`DEV_1059`) and sets `x-pci-revision=0x01` so strict contract-v1 INFs can bind.
-For virtio-snd, the canonical INF (`aero-virtio-snd.inf`) matches only `PCI\\VEN_1AF4&DEV_1059&REV_01`, so your QEMU
+For virtio-snd, the canonical INF (`aero-virtio-snd.inf`) matches only `PCI\VEN_1AF4&DEV_1059&REV_01`, so your QEMU
 build must support `disable-legacy=on` and `x-pci-revision=0x01` for virtio-snd testing.
 The repo also contains an optional legacy filename alias INF (`virtio-snd.inf.disabled`; rename to `virtio-snd.inf` to
 enable) for compatibility with older workflows/tools. It installs the same driver/service and matches the same

@@ -32,7 +32,7 @@ drivers/windows7/tests/
 - Runs a virtio-input HID sanity test (detect virtio-input HID devices + validate separate keyboard-only + mouse-only HID devices).
 - Optionally runs a virtio-snd test (PCI detection + endpoint enumeration + short playback) when enabled with `--test-snd`
   (or `--require-snd`).
-  - Detects the virtio-snd PCI function by hardware ID (`PCI\\VEN_1AF4&DEV_1059`).
+  - Detects the virtio-snd PCI function by hardware ID (`PCI\VEN_1AF4&DEV_1059`).
     - Aero contract v1 requires `REV_01` and a modern-only virtio-snd PCI function. If the device does not report `REV_01` (or does not expose the modern virtio-snd PCI ID), the Aero INF will not bind and the test will treat the device as missing.
 - Also emits a `virtio-snd-capture` marker (capture endpoint detection + optional WASAPI capture smoke test).
 - Logs to:
@@ -59,7 +59,7 @@ The host harness waits for the final `AERO_VIRTIO_SELFTEST|RESULT|...` line and 
 (virtio-blk + virtio-input + virtio-snd + virtio-net) were emitted so older selftest binaries can’t accidentally pass.
 
 Note:
-- The virtio-snd test reports `SKIP` when `PCI\\VEN_1AF4&DEV_1059` is missing by default; use `--require-snd` to make
+- The virtio-snd test reports `SKIP` when `PCI\VEN_1AF4&DEV_1059` is missing by default; use `--require-snd` to make
   missing virtio-snd fail the overall selftest. Use `--disable-snd` to force `SKIP`.
 - Capture is reported separately via the `virtio-snd-capture` marker. Missing capture is `SKIP` by default unless
   `--require-snd-capture` is set. Use `--test-snd-capture` to run the capture smoke test (otherwise only endpoint
