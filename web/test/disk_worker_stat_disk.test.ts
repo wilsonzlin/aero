@@ -159,6 +159,32 @@ test("disk_worker stat_disk", async (t) => {
     assert.equal(stat.actualSizeBytes, 100 + (30 + 40 + 50 + 20 + 10));
   });
 
+  await t.test("local IDB: reports allocated chunk bytes (sparse disk)", async () => {
+    installOpfsMock();
+    await clearIdb();
+
+    const meta = await requestDiskWorker<any>("idb", "create_blank", {
+      name: "blank",
+      sizeBytes: 1024 * 1024,
+      kind: "hdd",
+      format: "raw",
+    });
+
+    const db = await openDiskManagerDb();
+    try {
+      const tx = db.transaction(["chunks"], "readwrite");
+      const store = tx.objectStore("chunks");
+      store.put({ id: meta.id, index: 0, data: new Uint8Array(10).buffer });
+      store.put({ id: meta.id, index: 1, data: new Uint8Array(5).buffer });
+      await idbTxDone(tx);
+    } finally {
+      db.close();
+    }
+
+    const stat = await requestDiskWorker<any>("idb", "stat_disk", { id: meta.id });
+    assert.equal(stat.actualSizeBytes, 10 + 5);
+  });
+
   await t.test("remote IDB chunked: includes overlay + remote_chunk_meta bytesUsed", async () => {
     installOpfsMock();
     await clearIdb();
@@ -220,4 +246,3 @@ test("disk_worker stat_disk", async (t) => {
     assert.equal(stat.actualSizeBytes, (10 + 5) + 7 + (40 + 10 + 3));
   });
 });
-

@@ -751,6 +751,13 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
       if (meta.source === "local") {
         if (meta.backend === "opfs" && !meta.remote) {
           actualSizeBytes = await opfsGetDiskSizeBytes(meta.fileName, meta.opfsDirectory);
+        } else if (meta.backend === "idb") {
+          const db = await openDiskManagerDb();
+          try {
+            actualSizeBytes = await idbSumDiskChunkBytes(db, meta.id);
+          } finally {
+            db.close();
+          }
         }
         postOk(requestId, { meta, actualSizeBytes });
         return;
