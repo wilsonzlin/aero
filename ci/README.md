@@ -28,6 +28,23 @@ pwsh -File ci/package-drivers.ps1 -MakeFatImage
 pwsh -File ci/package-guest-tools.ps1
 ```
 
+## `ci/build-drivers.ps1`
+
+Builds driver projects under `drivers/` for the requested platforms/configuration using `msbuild.exe`.
+
+### Legacy WDK BUILD / NMake wrapper projects
+
+Some legacy driver projects are Visual Studio "Makefile" projects (`<Keyword>MakeFileProj</Keyword>` /
+`<ConfigurationType>Makefile</ConfigurationType>`) that invoke classic WDK 7.1 `build.exe`.
+The modern toolchain installed by `ci/install-wdk.ps1` does not provide `build.exe`, so CI **skips**
+these projects by default.
+
+To opt in locally (when you have `build.exe` available in your environment):
+
+```powershell
+pwsh -File ci/build-drivers.ps1 -ToolchainJson out/toolchain.json -IncludeMakefileProjects
+```
+
 ## `ci/stamp-infs.ps1`
 
 Stamps `DriverVer` in staged `.inf` files (in-place) using WDK `stampinf.exe`.

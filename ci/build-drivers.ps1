@@ -44,6 +44,9 @@ param(
   [string]$ToolchainJson,
 
   [Parameter()]
+  [switch]$IncludeMakefileProjects,
+
+  [Parameter()]
   [switch]$RequireDrivers
 )
 
@@ -631,6 +634,100 @@ function Invoke-MSBuild {
   return $exitCode
 }
 
+function Get-VcxprojMakefileMarkers {
+  param([Parameter(Mandatory = $true)][string]$VcxprojPath)
+
+  if (-not (Test-Path -LiteralPath $VcxprojPath -PathType Leaf)) {
+    throw "Vcxproj not found: $VcxprojPath"
+  }
+
+  $content = Get-Content -LiteralPath $VcxprojPath -Raw
+  if ([string]::IsNullOrWhiteSpace($content)) { return $null }
+
+  $markers = New-Object System.Collections.Generic.List[string]
+  if ($content -match '<Keyword>\s*MakeFileProj\s*</Keyword>') {
+    [void]$markers.Add('Keyword=MakeFileProj')
+  }
+  if ($content -match '<ConfigurationType>\s*Makefile\s*</ConfigurationType>') {
+    [void]$markers.Add('ConfigurationType=Makefile')
+  }
+
+  if ($markers.Count -eq 0) { return $null }
+  return ($markers -join ', ')
+}
+
+function Get-SlnReferencedVcxprojPaths {
+  param([Parameter(Mandatory = $true)][string]$SolutionPath)
+
+  if (-not (Test-Path -LiteralPath $SolutionPath -PathType Leaf)) {
+    throw "Solution not found: $SolutionPath"
+  }
+
+  $solutionDir = Split-Path -LiteralPath $SolutionPath -Parent
+  $lines = Get-Content -LiteralPath $SolutionPath
+  $paths = New-Object System.Collections.Generic.List[string]
+
+  foreach ($line in $lines) {
+    if ($line -match '^\s*Project\(".*?"\)\s*=\s*".*?",\s*"(.*?\.vcxproj)"\s*,') {
+      $rel = [string]$Matches[1]
+      if ([string]::IsNullOrWhiteSpace($rel)) { continue }
+      $rel = $rel.Trim().Trim('"').Replace('/', '\')
+      $candidate = Join-Path $solutionDir $rel
+      if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+        [void]$paths.Add((Resolve-Path -LiteralPath $candidate).Path)
+      } else {
+        Write-Host ("Warning: solution references missing project: {0} (from {1})" -f $rel, $SolutionPath)
+      }
+    }
+  }
+
+  return (Get-UniqueStringsInOrder -Values $paths.ToArray())
+}
+
+function Get-MakefileSkipInfoForDriverTarget {
+  param(
+    [Parameter(Mandatory = $true)]$Target,
+    [Parameter(Mandatory = $true)][switch]$IncludeMakefileProjects
+  )
+
+  if ($IncludeMakefileProjects) { return $null }
+
+  if ($Target.Kind -eq 'vcxproj') {
+    $markers = Get-VcxprojMakefileMarkers -VcxprojPath $Target.BuildPath
+    if (-not $markers) { return $null }
+    return [pscustomobject]@{
+      Reason = "Makefile-based project detected ($markers)"
+      MakefileProjects = @([pscustomobject]@{
+        Path = $Target.BuildPath
+        Markers = $markers
+      })
+    }
+  }
+
+  if ($Target.Kind -eq 'sln') {
+    $vcxprojs = Get-SlnReferencedVcxprojPaths -SolutionPath $Target.BuildPath
+    $makefileProjects = New-Object System.Collections.Generic.List[object]
+
+    foreach ($vcxproj in $vcxprojs) {
+      $markers = Get-VcxprojMakefileMarkers -VcxprojPath $vcxproj
+      if (-not $markers) { continue }
+      [void]$makefileProjects.Add([pscustomobject]@{
+        Path = $vcxproj
+        Markers = $markers
+      })
+    }
+
+    if ($makefileProjects.Count -eq 0) { return $null }
+
+    return [pscustomobject]@{
+      Reason = "Solution references Makefile-based project(s)"
+      MakefileProjects = $makefileProjects.ToArray()
+    }
+  }
+
+  return $null
+}
+
 $repoRoot = Get-RepoRoot
 $driversRoot = Join-Path $repoRoot 'drivers'
 $outRoot = Join-Path $repoRoot 'out'
@@ -645,6 +742,11 @@ $normalizedPlatforms = Get-UniqueStringsInOrder -Values $normalizedPlatforms
 Write-Host "Configuration: $Configuration"
 Write-Host ("Platforms: {0}" -f ($normalizedPlatforms -join ', '))
 if ($Drivers) { Write-Host ("Drivers allowlist: {0}" -f ($Drivers -join ', ')) }
+if ($IncludeMakefileProjects) {
+  Write-Host "Include MakefileProj/Makefile driver projects: yes"
+} else {
+  Write-Host "Include MakefileProj/Makefile driver projects: no (skipping by default)"
+}
 
 $toolchain = Read-ToolchainJson -ToolchainJsonPath $ToolchainJson
 if ($null -ne $toolchain) {
@@ -673,9 +775,32 @@ Ensure-Directory -Path $logRoot
 Ensure-Directory -Path $objRoot
 
 $results = New-Object System.Collections.Generic.List[object]
+$skippedTargets = New-Object System.Collections.Generic.List[object]
 $failed = $false
 
 foreach ($target in $targets) {
+  $skipInfo = Get-MakefileSkipInfoForDriverTarget -Target $target -IncludeMakefileProjects:$IncludeMakefileProjects
+  if ($null -ne $skipInfo) {
+    Write-Host ""
+    Write-Host ("==> Skipping driver '{0}' ({1})" -f $target.Name, $target.Kind)
+    Write-Host ("    Project: {0}" -f $target.BuildPath)
+    Write-Host ("    Reason:  {0}" -f $skipInfo.Reason)
+    Write-Host "    Makefile projects:"
+    foreach ($p in $skipInfo.MakefileProjects) {
+      Write-Host ("      - {0} ({1})" -f $p.Path, $p.Markers)
+    }
+    Write-Host "    Hint: pass -IncludeMakefileProjects to opt in (requires WDK BUILD/build.exe in PATH)."
+
+    [void]$skippedTargets.Add([pscustomobject]@{
+      Driver = $target.Name
+      Kind = $target.Kind
+      Project = $target.BuildPath
+      Reason = $skipInfo.Reason
+      MakefileProjects = $skipInfo.MakefileProjects
+    })
+    continue
+  }
+
   foreach ($platform in $normalizedPlatforms) {
     if ($null -ne $toolchain) {
       Initialize-ToolchainEnvironment -Toolchain $toolchain -Platform $platform
@@ -732,14 +857,42 @@ foreach ($target in $targets) {
 Write-Host ""
 Write-Host "Driver build summary:"
 
-foreach ($driverName in ($results | Select-Object -ExpandProperty Driver | Sort-Object -Unique)) {
-  Write-Host ("- {0}" -f $driverName)
-  foreach ($r in ($results | Where-Object { $_.Driver -eq $driverName } | Sort-Object -Property Arch)) {
-    $status = if ($r.Succeeded) { 'OK' } else { 'FAIL' }
-    Write-Host ("    {0}: {1}" -f $r.Arch, $r.OutputPath)
-    Write-Host ("      status: {0}" -f $status)
-    Write-Host ("      log:    {0}" -f $r.Log)
+if (-not $results -or $results.Count -eq 0) {
+  Write-Host "- (no drivers were built)"
+} else {
+  foreach ($driverName in ($results | Select-Object -ExpandProperty Driver | Sort-Object -Unique)) {
+    Write-Host ("- {0}" -f $driverName)
+    foreach ($r in ($results | Where-Object { $_.Driver -eq $driverName } | Sort-Object -Property Arch)) {
+      $status = if ($r.Succeeded) { 'OK' } else { 'FAIL' }
+      Write-Host ("    {0}: {1}" -f $r.Arch, $r.OutputPath)
+      Write-Host ("      status: {0}" -f $status)
+      Write-Host ("      log:    {0}" -f $r.Log)
+    }
   }
+}
+
+if ($skippedTargets.Count -gt 0) {
+  Write-Host ""
+  Write-Host "Skipped driver targets:"
+  foreach ($s in ($skippedTargets | Sort-Object -Property Driver)) {
+    Write-Host ("- {0} ({1})" -f $s.Driver, $s.Kind)
+    Write-Host ("    project: {0}" -f $s.Project)
+    Write-Host ("    reason:  {0}" -f $s.Reason)
+    if ($s.MakefileProjects -and $s.MakefileProjects.Count -gt 0) {
+      Write-Host "    makefile projects:"
+      foreach ($p in $s.MakefileProjects) {
+        Write-Host ("      - {0} ({1})" -f $p.Path, $p.Markers)
+      }
+    }
+  }
+}
+
+if ((-not $results -or $results.Count -eq 0) -and $skippedTargets.Count -eq $targets.Count) {
+  if ($RequireDrivers) {
+    throw "All discovered driver targets were skipped because they are Makefile-based (Keyword=MakeFileProj/ConfigurationType=Makefile). Pass -IncludeMakefileProjects if you have WDK BUILD/build.exe available."
+  }
+  Write-Host ""
+  Write-Host "All discovered driver targets were skipped."
 }
 
 if ($failed) {
