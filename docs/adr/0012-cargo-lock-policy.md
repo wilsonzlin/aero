@@ -1,4 +1,4 @@
-# ADR 0005: Commit `Cargo.lock` for reproducible Rust builds
+# ADR 0012: Commit `Cargo.lock` for reproducible Rust builds
 
 ## Context
 

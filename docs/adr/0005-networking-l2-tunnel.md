@@ -1,4 +1,4 @@
-# ADR 0011: Networking via L2 tunnel (Option C) to an unprivileged proxy
+# ADR 0005: Networking via L2 tunnel (Option C) to an unprivileged proxy
 
 ## Context
 
@@ -42,10 +42,10 @@ Outbound connectivity is performed via normal host sockets (connect/sendto) with
 
 The L2 proxy is a distinct *data-plane* service, separate from the HTTP/control-plane gateway:
 
-- **In-repo target location:** `backend/aero-net-proxy/` (Rust service).
+- **In-repo target location:** `proxy/aero-l2-proxy/` (Rust service).
   - It will reuse the existing Rust packet/stack crates (e.g. `crates/aero-net-stack`, `crates/nt-packetlib`) rather than re-implementing packet parsing/state machines in Node.
-- **Deployment topology:** deploy `aero-net-proxy` alongside `backend/aero-gateway` and route both behind the same edge proxy/Ingress.
-  - The edge proxy provides TLS/WSS termination, COOP/COEP headers, and path-based routing (e.g. `/tcp`, `/dns-query` → `aero-gateway`; `/l2` → `aero-net-proxy`).
+- **Deployment topology:** deploy `aero-l2-proxy` alongside `backend/aero-gateway` and route both behind the same edge proxy/Ingress.
+  - The edge proxy provides TLS/WSS termination, COOP/COEP headers, and path-based routing (e.g. `/tcp`, `/dns-query` → `aero-gateway`; `/l2` → `aero-l2-proxy`).
 
 ### Relationship to `backend/aero-gateway` (Node vs Rust)
 
@@ -57,7 +57,7 @@ Responsibilities are split as:
   - session bootstrap / auth primitives
   - origin allowlist + global request rate limiting
   - other HTTP APIs (e.g. DoH) as needed
-- `aero-net-proxy` (data plane):
+- `aero-l2-proxy` (data plane):
   - per-VM L2 tunnel termination
   - DHCP/DNS/NAT in the proxy-side user-space stack
   - egress policy enforcement at the point where real sockets are opened
@@ -119,7 +119,7 @@ Minimum requirements for production deployments:
 
 - **Higher bandwidth overhead:** L2 tunneling carries Ethernet/IP/TCP “chatter” (ACKs, retransmits, ARP/DHCP/broadcast) over the WAN. Expect higher baseline bandwidth than socket-level relaying.
 - **WebRTC must be reliable for L2:** if WebRTC is introduced, it cannot use lossy/partially reliable settings; unordered delivery is acceptable but frame loss is not.
-- **Operational complexity:** running a dedicated `aero-net-proxy` adds:
+- **Operational complexity:** running a dedicated `aero-l2-proxy` adds:
   - another service to deploy/monitor/scale
   - stateful per-VM session management (timeouts, cleanup, quotas)
   - additional security review surface (egress policy, abuse prevention)
