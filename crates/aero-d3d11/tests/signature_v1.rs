@@ -1,5 +1,6 @@
 use aero_d3d11::{
     parse_signature_chunk, parse_signatures, DxbcFile, DxbcSignatureParameter, FourCC,
+    SignatureError,
 };
 
 const FOURCC_ISGN: FourCC = FourCC(*b"ISGN");
@@ -126,12 +127,34 @@ fn build_signature_chunk_v1(params: &[DxbcSignatureParameter]) -> Vec<u8> {
     bytes
 }
 
+fn build_signature_chunk_v1_one_entry(stream: u32) -> Vec<u8> {
+    // Signature chunk header: param_count + param_offset.
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(&1u32.to_le_bytes()); // param_count
+    bytes.extend_from_slice(&8u32.to_le_bytes()); // param_offset
+
+    let string_table_offset = 8u32 + 32u32;
+    bytes.extend_from_slice(&string_table_offset.to_le_bytes()); // semantic_name_offset
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // semantic_index
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // system_value_type
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // component_type
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // register
+    bytes.extend_from_slice(&u32::from_le_bytes([0xF, 0x3, 0, 0]).to_le_bytes()); // mask/rw/pad
+    bytes.extend_from_slice(&stream.to_le_bytes()); // stream
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // min_precision
+    bytes.extend_from_slice(b"POSITION\0");
+    bytes
+}
+
 #[test]
 fn parses_v1_signature_chunk_entries() {
     let mut params = vec![
         sig_param("POSITION", 0, 0, 0b0011, 0),
         sig_param("COLOR", 0, 1, 0b1111, 2),
     ];
+    params[0].system_value_type = 7;
+    params[0].component_type = 3;
+    params[0].read_write_mask = 0b0001;
     // v1 layout stores min-precision as a full DWORD (ignored by aero-dxbc).
     params[0].min_precision = 7;
 
@@ -142,7 +165,10 @@ fn parses_v1_signature_chunk_entries() {
     assert_eq!(sig.parameters[0].semantic_name, "POSITION");
     assert_eq!(sig.parameters[0].semantic_index, 0);
     assert_eq!(sig.parameters[0].register, 0);
+    assert_eq!(sig.parameters[0].system_value_type, 7);
+    assert_eq!(sig.parameters[0].component_type, 3);
     assert_eq!(sig.parameters[0].mask, 0b0011);
+    assert_eq!(sig.parameters[0].read_write_mask, 0b0001);
     assert_eq!(sig.parameters[0].stream, 0);
     assert_eq!(sig.parameters[0].min_precision, 0);
 
@@ -150,6 +176,20 @@ fn parses_v1_signature_chunk_entries() {
     assert_eq!(sig.parameters[1].register, 1);
     assert_eq!(sig.parameters[1].mask, 0b1111);
     assert_eq!(sig.parameters[1].stream, 2);
+}
+
+#[test]
+fn rejects_v1_stream_out_of_range() {
+    let chunk_bytes = build_signature_chunk_v1_one_entry(256);
+    let err = parse_signature_chunk(FOURCC_ISG1, &chunk_bytes).unwrap_err();
+
+    assert!(matches!(
+        err,
+        SignatureError::MalformedChunk {
+            fourcc: FOURCC_ISG1,
+            reason: "stream index out of range"
+        }
+    ));
 }
 
 #[test]

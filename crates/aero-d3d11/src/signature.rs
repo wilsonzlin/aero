@@ -7,7 +7,7 @@
 
 use core::fmt;
 
-use aero_dxbc::parse_signature_chunk_with_fourcc as parse_dxbc_signature_chunk;
+use aero_dxbc::signature::parse_signature_chunk_for_fourcc as parse_dxbc_signature_chunk;
 
 use crate::{DxbcFile, FourCC};
 

@@ -68,7 +68,12 @@ pub fn parse_signature_chunk_with_fourcc(
     parse_signature_chunk_impl(Some(fourcc), bytes)
 }
 
-pub(crate) fn parse_signature_chunk_for_fourcc(
+/// Parses a DXBC signature chunk payload, using the chunk `fourcc` as a hint.
+///
+/// This is the same as [`parse_signature_chunk_with_fourcc`], but kept as a
+/// separate entry-point because some callers want an explicit “for FourCC”
+/// API when working with multiple chunk variants (`ISGN`/`ISG1`, etc).
+pub fn parse_signature_chunk_for_fourcc(
     fourcc: FourCC,
     bytes: &[u8],
 ) -> Result<SignatureChunk, DxbcError> {
