@@ -3493,7 +3493,16 @@ void APIENTRY GsSetSamplers(D3D10DDI_HDEVICE, UINT, UINT, const D3D10DDI_HSAMPLE
 }
 
 void APIENTRY SetViewports(D3D10DDI_HDEVICE hDevice, UINT numViewports, const D3D10_DDI_VIEWPORT* pViewports) {
-  if (!hDevice.pDrvPrivate || !numViewports || !pViewports) {
+  if (!hDevice.pDrvPrivate) {
+    SetError(hDevice, E_INVALIDARG);
+    return;
+  }
+  if (numViewports == 0) {
+    // Some runtimes clear state by calling SetViewports(0, nullptr). Treat this
+    // as a no-op for bring-up rather than returning E_INVALIDARG.
+    return;
+  }
+  if (!pViewports) {
     SetError(hDevice, E_INVALIDARG);
     return;
   }
@@ -3520,7 +3529,16 @@ void APIENTRY SetViewports(D3D10DDI_HDEVICE hDevice, UINT numViewports, const D3
 }
 
 void APIENTRY SetScissorRects(D3D10DDI_HDEVICE hDevice, UINT numRects, const D3D10_DDI_RECT* pRects) {
-  if (!hDevice.pDrvPrivate || !numRects || !pRects) {
+  if (!hDevice.pDrvPrivate) {
+    SetError(hDevice, E_INVALIDARG);
+    return;
+  }
+  if (numRects == 0) {
+    // Some runtimes clear state by calling SetScissorRects(0, nullptr). Treat
+    // this as a no-op for bring-up rather than returning E_INVALIDARG.
+    return;
+  }
+  if (!pRects) {
     SetError(hDevice, E_INVALIDARG);
     return;
   }
