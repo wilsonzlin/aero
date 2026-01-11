@@ -80,7 +80,7 @@ VirtIoSndBackendVirtio_SetParams(_In_ PVOID Context, _In_ ULONG BufferBytes, _In
             txBuffers = 1;
         }
 
-        status = VirtIoSndInitTxEngine(dx, PeriodBytes, txBuffers, FALSE);
+        status = VirtIoSndInitTxEngine(dx, PeriodBytes, txBuffers, TRUE);
         if (!NT_SUCCESS(status)) {
             VIRTIOSND_TRACE_ERROR("backend(virtio): Tx engine init failed: 0x%08X\n", (UINT)status);
             return status;
@@ -184,7 +184,7 @@ VirtIoSndBackendVirtio_Release(_In_ PVOID Context)
          * Device is already stopped/removed (STOP_DEVICE / REMOVE_DEVICE path).
          * Tear down the local tx engine best-effort so buffers are not leaked.
          */
-        InterlockedExchange(&ctx->Dx->TxEngineInitialized, 0);
+        VirtIoSndUninitTxEngine(ctx->Dx);
         VirtioSndTxUninit(&ctx->Dx->Tx);
 
         ctx->BufferBytes = 0;
