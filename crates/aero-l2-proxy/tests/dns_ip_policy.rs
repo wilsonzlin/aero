@@ -301,7 +301,11 @@ async fn run_dns_case(allow_private_ips: bool, expect_addr: Option<[u8; 4]>) {
     proxy.shutdown().await;
 }
 
-async fn run_localhost_case(allow_private_ips: bool, expect_addr: Option<[u8; 4]>, expect_denied: u64) {
+async fn run_localhost_case(
+    allow_private_ips: bool,
+    expect_addr: Option<[u8; 4]>,
+    expect_denied: u64,
+) {
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
     let _open = EnvVarGuard::set("AERO_L2_OPEN", "1");
     let _insecure_allow_no_auth = EnvVarGuard::set("AERO_L2_INSECURE_ALLOW_NO_AUTH", "1");
@@ -321,8 +325,7 @@ async fn run_localhost_case(allow_private_ips: bool, expect_addr: Option<[u8; 4]
     let _legacy_token = EnvVarGuard::unset("AERO_L2_TOKEN");
     let _ping_interval = EnvVarGuard::set("AERO_L2_PING_INTERVAL_MS", "0");
     let _max_connections = EnvVarGuard::set("AERO_L2_MAX_CONNECTIONS", "0");
-    let _max_connections_per_session =
-        EnvVarGuard::set("AERO_L2_MAX_CONNECTIONS_PER_SESSION", "0");
+    let _max_connections_per_session = EnvVarGuard::set("AERO_L2_MAX_CONNECTIONS_PER_SESSION", "0");
     let _max_bytes = EnvVarGuard::set("AERO_L2_MAX_BYTES_PER_CONNECTION", "0");
     let _max_fps = EnvVarGuard::set("AERO_L2_MAX_FRAMES_PER_SECOND", "0");
 
