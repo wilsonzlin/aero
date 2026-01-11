@@ -791,8 +791,8 @@ HRESULT AeroGpuWaitForFence(AeroGpuDevice* dev, uint64_t fence, uint32_t timeout
   }
 
   if (dev->kmt_fence_syncobj) {
-    const D3DKMT_HANDLE handles[1] = {dev->kmt_fence_syncobj};
-    const UINT64 fence_values[1] = {fence};
+    D3DKMT_HANDLE handles[1] = {dev->kmt_fence_syncobj};
+    UINT64 fence_values[1] = {fence};
 
     // Prefer the runtime's wait callback when available; it matches the Win7 DDI
     // contract and avoids direct-thunk WOW64 quirks.
@@ -946,7 +946,7 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
   }
 
   uint64_t last_fence = 0;
-  std::uintptr_t wddm_context = 0;
+  std::uintptr_t wddm_context = static_cast<std::uintptr_t>(dev->kmt_context);
   auto log_missing_context_once = [&] {
     static std::atomic<bool> logged = false;
     bool expected = false;
