@@ -12,7 +12,7 @@
 #include <stdint.h>
 
 /* Use the Aero Windows 7 virtio common SG entry shape (virtio_sg_entry_t). */
-#include "virtqueue_split_legacy.h"
+#include "virtio_sg.h"
 
 /*
  * Windows 7 (x86/x64) uses 4KiB pages. The virtio-snd DMA paths only need to

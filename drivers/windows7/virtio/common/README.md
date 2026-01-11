@@ -200,6 +200,9 @@ must link **exactly one** of them.
   - Legacy portable split ring (`vring`) implementation (descriptor table + avail ring + used ring).
   - Aero contract v1 drivers should use `drivers/windows/virtio/common/virtqueue_split.{c,h}` instead.
 
+- `include/virtio_sg.h`
+  - Shared scatter/gather entry type (`virtio_sg_entry_t`) used by legacy virtqueues and driver helpers.
+
 - `include/virtio_queue.h` + `src/virtio_queue.c`
   - Windows kernel convenience wrapper around **legacy/transitional** split rings:
     - allocates descriptor/avail/used in a single physically-contiguous block and maintains a descriptor free list

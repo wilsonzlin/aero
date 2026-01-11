@@ -5,9 +5,9 @@
 #include <ntddk.h>
 
 /*
- * Use the legacy Aero Windows 7 virtio common SG entry shape (virtio_sg_entry_t).
+ * Use the Aero Windows 7 virtio common SG entry shape (virtio_sg_entry_t).
  */
-#include "virtqueue_split_legacy.h"
+#include "virtio_sg.h"
 
 /*
  * DISPATCH_LEVEL-safe helpers for converting an MDL-backed circular PCM buffer

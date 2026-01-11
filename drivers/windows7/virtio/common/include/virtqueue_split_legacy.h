@@ -14,6 +14,7 @@
 #define AERO_VIRTQUEUE_SPLIT_LEGACY_H_
 
 #include "virtio_os.h"
+#include "virtio_sg.h"
 
 /* virtio ring feature bits (in the device/driver feature bitmap). */
 #ifndef VIRTIO_RING_F_INDIRECT_DESC
@@ -69,12 +70,6 @@ typedef struct vring_used {
 /* Compile-time layout checks (avoid accidental padding differences). */
 typedef char _virtio_static_assert_desc_size[(sizeof(vring_desc_t) == 16u) ? 1 : -1];
 typedef char _virtio_static_assert_used_elem_size[(sizeof(vring_used_elem_t) == 8u) ? 1 : -1];
-
-typedef struct virtio_sg_entry {
-    uint64_t addr;
-    uint32_t len;
-    virtio_bool_t device_writes; /* set VRING_DESC_F_WRITE */
-} virtio_sg_entry_t;
 
 typedef struct virtqueue_split_indirect {
     virtio_dma_buffer_t table;

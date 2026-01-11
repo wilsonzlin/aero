@@ -102,7 +102,7 @@ Contract v1 (virtio-pci modern) references:
 - Spec constants/layouts (headers):
   - `drivers/win7/virtio/virtio-core/include/virtio_spec.h`
 - Shared SG entry definition used by `virtiosnd_sg_*` helpers:
-  - `drivers/windows7/virtio/common/include/virtqueue_split_legacy.h` (`virtio_sg_entry_t`)
+  - `drivers/windows7/virtio/common/include/virtio_sg.h` (`virtio_sg_entry_t`)
 
 Legacy virtio-pci I/O-port support (out of contract; retained for compatibility experiments):
 
