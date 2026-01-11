@@ -34,7 +34,8 @@ function Assert-SafeOutRoot {
   }
 
   $repoOut = [System.IO.Path]::GetFullPath((Join-Path $repoFull "out"))
-  if ($outFull.StartsWith($repoOut, [System.StringComparison]::OrdinalIgnoreCase)) {
+  $repoOutPrefix = $repoOut.TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
+  if ($outFull.Equals($repoOut, [System.StringComparison]::OrdinalIgnoreCase) -or $outFull.StartsWith($repoOutPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
     return
   }
 
