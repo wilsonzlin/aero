@@ -56,21 +56,23 @@ class CreateResourceDesc:
 
 
 def _parse_int(line: str, key: str) -> Optional[int]:
-    m = re.search(rf"{re.escape(key)}=(\d+)", line)
+    # Use a word-boundary match so short keys like `h=` do not accidentally
+    # match substrings inside longer keys like `byteWidth=`.
+    m = re.search(rf"\b{re.escape(key)}=(\d+)", line)
     if not m:
         return None
     return int(m.group(1), 10)
 
 
 def _parse_hex(line: str, key: str) -> Optional[int]:
-    m = re.search(rf"{re.escape(key)}=0x([0-9a-fA-F]+)", line)
+    m = re.search(rf"\b{re.escape(key)}=0x([0-9a-fA-F]+)", line)
     if not m:
         return None
     return int(m.group(1), 16)
 
 
 def _parse_token(line: str, key: str) -> Optional[str]:
-    m = re.search(rf"{re.escape(key)}=([^\s]+)", line)
+    m = re.search(rf"\b{re.escape(key)}=([^\s]+)", line)
     if not m:
         return None
     return m.group(1)
