@@ -131,6 +131,32 @@ fn build_signature_chunk_v1_one_entry(stream: u32) -> Vec<u8> {
     bytes
 }
 
+fn build_signature_chunk_v0_one_entry(stream: u8) -> Vec<u8> {
+    let mut bytes = Vec::new();
+
+    let param_count = 1u32;
+    let param_offset = 8u32;
+
+    bytes.extend_from_slice(&param_count.to_le_bytes());
+    bytes.extend_from_slice(&param_offset.to_le_bytes());
+
+    let table_start = bytes.len();
+    assert_eq!(table_start, 8);
+
+    let entry_size = 24usize;
+    let string_table_offset = (table_start + entry_size) as u32;
+
+    bytes.extend_from_slice(&string_table_offset.to_le_bytes()); // semantic_name_offset
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // semantic_index
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // system_value_type
+    bytes.extend_from_slice(&3u32.to_le_bytes()); // component_type
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // register
+    bytes.extend_from_slice(&u32::from_le_bytes([0xF, 0xF, stream, 0]).to_le_bytes()); // mask/rw/stream/min_prec
+
+    bytes.extend_from_slice(b"POSITION\0");
+    bytes
+}
+
 fn build_dxbc(chunks: &[(FourCC, &[u8])]) -> Vec<u8> {
     let chunk_count = u32::try_from(chunks.len()).expect("too many chunks for test");
     let header_len = 4 + 16 + 4 + 4 + 4 + (chunks.len() * 4);
@@ -201,6 +227,15 @@ fn parse_signature_chunk_two_entries_v1_layout() {
 #[test]
 fn parse_signature_chunk_v1_layout_single_entry_stream_is_preserved() {
     let bytes = build_signature_chunk_v1_one_entry(2);
+    let sig = parse_signature_chunk(&bytes).expect("signature parse should succeed");
+    assert_eq!(sig.entries.len(), 1);
+    assert_eq!(sig.entries[0].semantic_name, "POSITION");
+    assert_eq!(sig.entries[0].stream, Some(2));
+}
+
+#[test]
+fn parse_signature_chunk_v0_layout_single_entry_stream_is_preserved() {
+    let bytes = build_signature_chunk_v0_one_entry(2);
     let sig = parse_signature_chunk(&bytes).expect("signature parse should succeed");
     assert_eq!(sig.entries.len(), 1);
     assert_eq!(sig.entries[0].semantic_name, "POSITION");
