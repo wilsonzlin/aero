@@ -1110,7 +1110,7 @@ fn copyfiles_section_names_with_dots_are_treated_as_sections() -> anyhow::Result
         version: "0.0.0".to_string(),
         build_id: "test".to_string(),
         volume_id: "AERO_GUEST_TOOLS".to_string(),
-        signing_policy: aero_packager::SigningPolicy::TestSigning,
+        signing_policy: aero_packager::SigningPolicy::Test,
         source_date_epoch: 0,
     };
 
