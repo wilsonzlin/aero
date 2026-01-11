@@ -69,7 +69,10 @@ errors.push(
 // canonical production entry point is `deploy/docker-compose.yml`.
 const tracked = gitTrackedFiles();
 const composeManifests = [
-  ...tracked.filter((path) => path.endsWith('docker-compose.yml')),
+  ...tracked.filter((path) => {
+    const base = path.split('/').at(-1) ?? path;
+    return (base.startsWith('docker-compose') && (base.endsWith('.yml') || base.endsWith('.yaml'))) || false;
+  }),
   ...tracked.filter((path) => path.endsWith('compose.yaml') || path.endsWith('compose.yml')),
 ];
 
