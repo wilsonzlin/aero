@@ -1834,6 +1834,140 @@ bool TestAllocationListSplitResetsOnEmptySubmit() {
   return true;
 }
 
+bool TestOpenResourceCapturesWddmAllocationForTracking() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3D9DDI_HADAPTER hAdapter{};
+    D3D9DDI_HDEVICE hDevice{};
+    AEROGPU_D3D9DDI_HRESOURCE hResource{};
+    bool has_adapter = false;
+    bool has_device = false;
+    bool has_resource = false;
+
+    ~Cleanup() {
+      if (has_resource && device_funcs.pfnDestroyResource) {
+        device_funcs.pfnDestroyResource(hDevice, hResource);
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Enable allocation-list tracking in a portable build.
+  dev->wddm_context.hContext = 1;
+  D3DDDI_ALLOCATIONLIST alloc_list[4] = {};
+  dev->alloc_list_tracker.rebind(alloc_list, 4, 0xFFFFu);
+  dev->alloc_list_tracker.reset();
+
+  aerogpu_wddm_alloc_priv priv{};
+  priv.magic = AEROGPU_WDDM_ALLOC_PRIV_MAGIC;
+  priv.version = AEROGPU_WDDM_ALLOC_PRIV_VERSION;
+  priv.alloc_id = 1;
+  priv.flags = AEROGPU_WDDM_ALLOC_PRIV_FLAG_IS_SHARED;
+  priv.share_token = 0x1122334455667788ull;
+  priv.size_bytes = 16ull * 16ull * 4ull;
+  priv.reserved0 = 0;
+
+  AEROGPU_D3D9DDIARG_OPENRESOURCE open_res{};
+  open_res.pPrivateDriverData = &priv;
+  open_res.private_driver_data_size = sizeof(priv);
+  open_res.type = 0;
+  open_res.format = 22u; // D3DFMT_X8R8G8B8
+  open_res.width = 16;
+  open_res.height = 16;
+  open_res.depth = 1;
+  open_res.mip_levels = 1;
+  open_res.usage = 0;
+  open_res.size = 0;
+  open_res.hResource.pDrvPrivate = nullptr;
+  open_res.wddm_hAllocation = 0x1234u;
+
+  if (!Check(cleanup.device_funcs.pfnOpenResource != nullptr, "OpenResource entrypoint")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnOpenResource(create_dev.hDevice, &open_res);
+  if (!Check(hr == S_OK, "OpenResource")) {
+    return false;
+  }
+  if (!Check(open_res.hResource.pDrvPrivate != nullptr, "OpenResource returned resource")) {
+    return false;
+  }
+  cleanup.hResource = open_res.hResource;
+  cleanup.has_resource = true;
+
+  auto* res = reinterpret_cast<Resource*>(open_res.hResource.pDrvPrivate);
+  if (!Check(res->backing_alloc_id == priv.alloc_id, "OpenResource captures alloc_id")) {
+    return false;
+  }
+  if (!Check(res->wddm_hAllocation == open_res.wddm_hAllocation, "OpenResource captures wddm_hAllocation")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnSetRenderTarget(create_dev.hDevice, 0, open_res.hResource);
+  if (!Check(hr == S_OK, "SetRenderTarget")) {
+    return false;
+  }
+
+  // Clear forces render-target allocation tracking; this should succeed when
+  // OpenResource supplies wddm_hAllocation.
+  hr = cleanup.device_funcs.pfnClear(create_dev.hDevice,
+                                     /*flags=*/0x1u,
+                                     /*color_rgba8=*/0xFFFFFFFFu,
+                                     /*depth=*/1.0f,
+                                     /*stencil=*/0);
+  if (!Check(hr == S_OK, "Clear")) {
+    return false;
+  }
+
+  if (!Check(dev->alloc_list_tracker.list_len() == 1, "allocation list includes imported RT")) {
+    return false;
+  }
+  if (!Check(alloc_list[0].hAllocation == open_res.wddm_hAllocation, "tracked allocation handle matches")) {
+    return false;
+  }
+  if (!Check(alloc_list[0].WriteOperation == 1, "tracked allocation is marked WriteOperation")) {
+    return false;
+  }
+  return true;
+}
+
 bool TestInvalidPayloadArgs() {
   uint8_t buf[256] = {};
 
@@ -4168,6 +4302,7 @@ int main() {
   failures += !aerogpu::TestGetDisplayModeExReturnsPrimaryMode();
   failures += !aerogpu::TestDeviceMiscExApisSucceed();
   failures += !aerogpu::TestAllocationListSplitResetsOnEmptySubmit();
+  failures += !aerogpu::TestOpenResourceCapturesWddmAllocationForTracking();
   failures += !aerogpu::TestInvalidPayloadArgs();
   failures += !aerogpu::TestDestroyBoundShaderUnbinds();
   failures += !aerogpu::TestDestroyBoundVertexDeclUnbinds();
