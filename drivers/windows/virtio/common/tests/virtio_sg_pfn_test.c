@@ -144,7 +144,8 @@ static void TestBufferTooSmall(void)
 static void TestLenClampedToU32(void)
 {
 #if SIZE_MAX > 0xFFFFFFFFu
-	const size_t len = ((size_t)0xFFFFFFFFu) + 1u; /* 4GiB + 1 */
+	/* One byte beyond the 32-bit virtio descriptor length limit. */
+	const size_t len = ((size_t)0xFFFFFFFFu) + 1u;
 	const UINT32 pfn_count = (UINT32)((len + (PAGE_SIZE - 1)) / PAGE_SIZE);
 	UINT64 *pfns;
 	VIRTQ_SG sg[3];
