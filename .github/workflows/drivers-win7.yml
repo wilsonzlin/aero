@@ -62,6 +62,9 @@ jobs:
       - name: Check Windows 7 virtio contract consistency (docs + INFs)
         run: python3 scripts/ci/check-windows7-virtio-contract-consistency.py
 
+      - name: Unit tests (Win7 host harness wav verification)
+        run: python3 -m unittest discover -s drivers/windows7/tests/host-harness/tests -p 'test_*.py'
+
       - name: Check virtio-snd.vcxproj sources (modern vs legacy)
         shell: bash
         run: |
