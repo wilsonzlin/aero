@@ -2860,14 +2860,15 @@ function renderWebUsbPassthroughDemoWorkerPanel(): HTMLElement {
   const runConfigFullButton = el("button", {
     text: "Run GET_DESCRIPTOR(Configuration full)",
     onclick: () => {
-      if (configTotalLenHint === null) return;
+      const len = configTotalLenHint;
+      if (len === null) return;
       lastRequest = "configDescriptor";
       lastResult = null;
       refreshUi();
       attachedIoWorker?.postMessage({
         type: "usb.demo.run",
         request: "configDescriptor",
-        length: configTotalLenHint,
+        length: len,
       } satisfies UsbPassthroughDemoRunMessage);
     },
   }) as HTMLButtonElement;
