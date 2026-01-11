@@ -294,7 +294,7 @@ jobs:
         run: bash scripts/validate-acpi.sh
 
   win7-virtio-portable-tests:
-    name: Win7 virtio (portable tests)
+    name: Win7 virtio (portable + virtio-snd host tests)
     needs: policy
     if: needs.policy.result == 'success' && needs.policy.outputs.code_changed == 'true'
     runs-on: ubuntu-latest
@@ -307,6 +307,17 @@ jobs:
           ./drivers/win7/virtio/tests/build_and_run.sh
           if command -v clang >/dev/null 2>&1; then
             CC=clang ./drivers/win7/virtio/tests/build_and_run.sh
+          fi
+      - name: Build + run virtio-snd host tests
+        run: |
+          set -euo pipefail
+          cmake -S drivers/windows7/virtio-snd/tests -B out/virtiosnd-host-tests
+          cmake --build out/virtiosnd-host-tests
+          ctest --test-dir out/virtiosnd-host-tests --output-on-failure
+          if command -v clang >/dev/null 2>&1; then
+            CC=clang cmake -S drivers/windows7/virtio-snd/tests -B out/virtiosnd-host-tests-clang
+            cmake --build out/virtiosnd-host-tests-clang
+            ctest --test-dir out/virtiosnd-host-tests-clang --output-on-failure
           fi
   qemu-boot:
     name: QEMU boot tests (boot sector + FreeDOS)
