@@ -17,8 +17,8 @@ The intended developer workflow is:
 | --- | --- |
 | `SOURCES.md` | Clean-room/source tracking record (see `drivers/windows7/LEGAL.md` §2.6). |
 | `src/`, `include/` | Driver sources (shared by both build systems). |
-| `virtio-snd.vcxproj` | WDK 10 MSBuild project (used by CI; builds `virtiosnd.sys`). |
-| `makefile` | WDK 7.1 `build.exe` wrapper (legacy/manual builds). |
+| `virtio-snd.vcxproj` | **CI-supported** MSBuild project (WDK10; builds `virtiosnd.sys`). |
+| `makefile`, `src/sources` | Legacy WDK 7.1 `build.exe` files (deprecated). |
 | `inf/` | Driver package staging directory (INF/CAT/SYS live together for “Have Disk…” installs). |
 | `scripts/` | Utilities for generating a test cert, generating the catalog, signing, and optional release packaging. |
 | `cert/` | **Local-only** output directory for `.cer/.pfx` (ignored by git). |
@@ -37,7 +37,36 @@ You need the following tools in `PATH` (typically by opening a WDK Developer Com
 
 ## Build
 
-CI builds this driver via **MSBuild + WDK 10** using `virtio-snd.vcxproj` (see `docs/README.md`). The build must produce:
+### Supported: WDK10 / MSBuild (CI path)
+
+This driver is built in CI via the MSBuild project:
+
+- `drivers/windows7/virtio-snd/virtio-snd.vcxproj`
+
+From a Windows host with the WDK installed:
+
+```powershell
+# From the repo root:
+.\ci\install-wdk.ps1
+.\ci\build-drivers.ps1 -ToolchainJson .\out\toolchain.json -Drivers windows7/virtio-snd
+```
+
+Build outputs are staged under:
+
+- `out/drivers/windows7/virtio-snd/x86/virtiosnd.sys`
+- `out/drivers/windows7/virtio-snd/x64/virtiosnd.sys`
+
+To stage an installable/signable package, copy the appropriate `virtiosnd.sys` into:
+
+```text
+drivers/windows7/virtio-snd/inf/virtiosnd.sys
+```
+
+### Legacy/deprecated: WDK 7.1 `build.exe`
+
+The original WDK 7.1 `build.exe` files are kept for reference. See `docs/README.md` for legacy build environment notes.
+
+The build must produce:
 
 - `virtiosnd.sys`
 

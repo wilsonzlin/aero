@@ -14,12 +14,19 @@ This directory contains implementations and helpers for both. For the
 miniport-oriented contract-v1 transport used by the in-tree NDIS/StorPort drivers,
 see `drivers/windows7/virtio-modern/common/` (`aero_virtio_pci_modern.*`).
 
+`virtio_pci_modern_wdm.*` covers capability parsing + BAR mapping + `common_cfg`/notify/ISR/device-config helpers
+for Aero contract v1 virtio-pci modern devices. Drivers still own device-specific protocol/state machines and
+virtqueue sizing/allocation policy.
+
 And additional shared helpers:
 
 - **INTx helper:** `virtio_pci_intx_wdm.*` (ISR read-to-ack + DPC dispatch)
 - **Contract identity validation:** `virtio_pci_contract.*` (AERO-W7-VIRTIO v1 PCI identity)
 - **Split virtqueues:** `virtqueue_split.*` (portable split ring implementation)
 - **Windows queue helper (legacy):** `virtio_queue.*` (alloc + PFN programming + notify)
+
+For a WDM-focused modern transport bring-up guide (caps + BAR mapping + queues + INTx), see:
+[`docs/windows/virtio-pci-modern-wdm.md`](../../../../docs/windows/virtio-pci-modern-wdm.md).
 
 ## Aero contract v1 (AERO-W7-VIRTIO)
 
@@ -66,6 +73,12 @@ There are two modern transport helpers in-tree:
     (i.e., **no legacy PFN programming**).
   - Feature negotiation is 64-bit and `VirtioPciNegotiateFeatures()` always
     requires `VIRTIO_F_VERSION_1`.
+  - IRQL:
+    - init/map/unmap/uninit/negotiation helpers are **PASSIVE_LEVEL**
+    - queue/config/notify helpers are **<= DISPATCH_LEVEL** (DPC-safe)
+  - Not implemented (out of scope):
+    - MSI/MSI-X interrupt setup (contract v1 requires INTx)
+    - packed virtqueues
 
 - `include/virtio_pci_intx_wdm.h` + `src/virtio_pci_intx_wdm.c`
   - Reusable INTx ISR + DPC pair for virtio-pci modern devices.

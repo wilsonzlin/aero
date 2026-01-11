@@ -1,468 +1,259 @@
-# Virtio PCI modern transport bring-up on Windows 7 (WDM + INTx)
+# Virtio PCI modern transport bring-up (Windows 7, WDM + INTx)
 
-This document is a practical bring-up guide for a **WDM (non-KMDF)** PnP function driver that speaks the **virtio-pci modern** (Virtio 1.0+) transport on Windows 7.
+This page describes the **WDM** (non-KMDF) bring-up flow for Aero **virtio-pci modern** devices (Virtio 1.0+, PCI vendor capabilities + MMIO).
 
-It is intentionally written around the **WDM** lifecycle (`IRP_MJ_PNP` + `IRP_MN_START_DEVICE`) and the Aero contract v1 assumptions:
+It is written around the WDM-only helpers under `drivers/windows7/virtio/common/`:
 
-- **BAR0 MMIO only** (no legacy I/O port transport).
-- Virtio vendor capabilities provide **COMMON/NOTIFY/ISR/DEVICE** regions.
-- **INTx is required**; **MSI-X is optional**. (`docs/windows7-virtio-driver-contract.md`)
+- `include/virtio_pci_modern_wdm.h` + `src/virtio_pci_modern_wdm.c`
+- `include/virtio_pci_intx_wdm.h` + `src/virtio_pci_intx_wdm.c`
 
-Related docs / code:
+For the binding transport contract, see: [`docs/windows7-virtio-driver-contract.md`](../windows7-virtio-driver-contract.md).
 
-- [`../windows7-virtio-driver-contract.md`](../windows7-virtio-driver-contract.md) (Aero contract v1: fixed BAR0 + fixed cap layout, INTx required)
-- [`../virtio/virtqueue-split-ring-win7.md`](../virtio/virtqueue-split-ring-win7.md) (split virtqueue implementation notes)
-- Portable virtio capability parser:
-  - `drivers/win7/virtio/virtio-core/portable/virtio_pci_cap_parser.{h,c}`
-- Reference implementations in this repo (WDM-only):
-  - `drivers/windows7/virtio-snd/include/pci_interface.h` (`VirtIoSndAcquirePciBusInterface`)
-  - `drivers/windows7/virtio-snd/include/virtio_pci_modern_wdm.h` (`VIRTIOSND_TRANSPORT`, `VirtIoSndTransport*`)
-  - `drivers/windows7/virtio-snd/include/virtiosnd_intx.h` (`VirtIoSndIntx*`)
+## Aero contract v1 transport expectations (device-model side)
 
----
+Contract v1 (`AERO-W7-VIRTIO`, PCI Revision ID `0x01`) locks down the modern transport to keep Windows 7 bring-up deterministic.
+The transport-relevant requirements are:
 
-## 0) IRQL / execution model (why the sequence matters)
+### BAR0 MMIO
 
-- `IRP_MN_START_DEVICE` runs at **PASSIVE_LEVEL**. Do all slow work here:
-  - query interfaces, read PCI config space, parse caps, map BARs (`MmMapIoSpace`), negotiate features, allocate queue memory, connect interrupts.
-- INTx ISR runs at the device’s **DIRQL**. Do the absolute minimum:
-  - **read the virtio ISR status byte** (read-to-clear) and queue a DPC.
-- DPC runs at **DISPATCH_LEVEL**. Drain queues and do any MMIO sequences that need spin locks.
+- **BAR0** is a **memory BAR** (MMIO), little-endian, size **>= 0x4000**.
+- All required virtio configuration windows are in **BAR0** (contract v1 fixed layout).
 
-Keep all MMIO pointers in **nonpaged** storage and treat them as `volatile`.
+### Required virtio vendor capabilities (PCI cap ID `0x09`)
 
----
+PCI config space must contain a valid capability list with these virtio vendor-specific capabilities:
 
-## 1) Query `PCI_BUS_INTERFACE_STANDARD` (WDM: `IRP_MN_QUERY_INTERFACE`)
+- `VIRTIO_PCI_CAP_COMMON_CFG` (`cfg_type = 1`) → `common_cfg`
+- `VIRTIO_PCI_CAP_NOTIFY_CFG` (`cfg_type = 2`) → notify doorbell region + `notify_off_multiplier`
+- `VIRTIO_PCI_CAP_ISR_CFG` (`cfg_type = 3`) → ISR status register (read-to-ack)
+- `VIRTIO_PCI_CAP_DEVICE_CFG` (`cfg_type = 4`) → device-specific config window
 
-Virtio PCI bring-up needs PCI config space reads to:
+### INTx + ISR read-to-ack semantics
 
-- find BAR base addresses programmed by the bus,
-- walk the PCI capability list and find virtio vendor-specific capabilities.
+Contract v1 requires **INTx**. The key behavior is:
 
-In WDM, you typically query `GUID_PCI_BUS_INTERFACE_STANDARD` from the lower (PCI) driver.
+- The device asserts INTx when it sets any ISR cause bit.
+- The driver **must read** the ISR status byte to **acknowledge** the interrupt and deassert the line.
+- The ISR byte is **read-to-ack**; reading returns the pending cause bits and clears them.
+- If the ISR byte reads as `0`, the interrupt is **not** for this device (important for shared vectors).
 
-Minimal pattern (pseudo-code):
+The helper `virtio_pci_intx_wdm` implements the canonical Windows 7 INTx pattern: read ISR in the ISR (ack) and dispatch to driver callbacks at DPC level.
+
+### Required feature bits
+
+All Aero devices require:
+
+- `VIRTIO_F_VERSION_1` (bit 32) — always enforced by `VirtioPciNegotiateFeatures`.
+- `VIRTIO_F_RING_INDIRECT_DESC` (bit 28) — drivers should include this in their **Required** feature mask (contract v1 requires it for all devices).
+
+## IRQL + locking rules (from SAL annotations)
+
+### PASSIVE_LEVEL only (PnP/start/stop paths)
+
+These helpers must be called at `PASSIVE_LEVEL`:
+
+- `VirtioPciModernWdmInit`, `VirtioPciModernWdmMapBars`, `VirtioPciModernWdmUnmapBars`, `VirtioPciModernWdmUninit`
+- `VirtioPciResetDevice`
+- `VirtioPciNegotiateFeatures`
+- `VirtioIntxConnect`, `VirtioIntxDisconnect`
+
+In practice, they belong in `IRP_MN_START_DEVICE` / stop/remove handling, **not** in your ISR/DPC.
+
+### <= DISPATCH_LEVEL (DPC-safe helpers)
+
+These helpers are `<= DISPATCH_LEVEL` and are safe to call from a DPC:
+
+- queue configuration/notification: `VirtioPciGetQueueSize`, `VirtioPciSetupQueue`, `VirtioPciDisableQueue`, `VirtioPciNotifyQueue`
+- config window access: `VirtioPciReadDeviceConfig`, `VirtioPciWriteDeviceConfig`
+- status bits: `VirtioPciAddStatus`, `VirtioPciGetStatus`, `VirtioPciFailDevice`
+
+### CommonCfg selector serialization (required)
+
+`common_cfg` contains device-global selector registers (`device_feature_select`, `driver_feature_select`, `queue_select`).
+Any multi-step sequence that uses selectors must be serialized.
+
+`virtio_pci_modern_wdm` provides a per-device spinlock and exposes it via:
+
+- `VirtioPciCommonCfgAcquire` / `VirtioPciCommonCfgRelease`
+
+Most helper APIs take this lock internally. You only need to call `VirtioPciCommonCfgAcquire/Release` if you:
+
+- access `Dev->CommonCfg` fields directly, or
+- need to batch multiple `common_cfg` operations into one atomic sequence.
+
+## Canonical WDM PnP flow (modern transport + INTx)
+
+### `IRP_MN_START_DEVICE`
+
+High-level sequencing (omitting the IRP forwarding boilerplate):
+
+1. **Query PCI interface + parse virtio caps**
+   - `VirtioPciModernWdmInit(LowerDeviceObject, &ctx->Vdev)`
+2. **Map BARs**
+   - `VirtioPciModernWdmMapBars(&ctx->Vdev, rawList, translatedList)`
+3. **Negotiate features**
+   - `VirtioPciNegotiateFeatures(&ctx->Vdev, Required, Wanted, &Negotiated)`
+4. **Allocate and program virtqueues**
+   - allocate split-ring memory (DMA) for each queue
+   - `VirtioPciSetupQueue(&ctx->Vdev, q, descPa, availPa, usedPa)`
+5. **Connect INTx**
+   - locate `CmResourceTypeInterrupt` in the translated resource list
+   - `VirtioIntxConnect(DeviceObject, InterruptDescTranslated, ctx->Vdev.IsrStatus, ...)`
+6. **Set `DRIVER_OK`**
+   - `VirtioPciAddStatus(&ctx->Vdev, VIRTIO_STATUS_DRIVER_OK)`
+
+### `IRP_MN_STOP_DEVICE` / `IRP_MN_REMOVE_DEVICE`
+
+Typical safe teardown order:
+
+1. `VirtioIntxDisconnect(&ctx->Intx)` (waits for in-flight DPC completion)
+2. `VirtioPciResetDevice(&ctx->Vdev)`
+3. Free queue/ring memory (driver-owned; out of scope for transport helpers)
+4. `VirtioPciModernWdmUnmapBars(&ctx->Vdev)`
+5. On final remove: `VirtioPciModernWdmUninit(&ctx->Vdev)`
+
+## Minimal pseudo-code (WDM START/STOP with the helpers)
+
+This snippet is intentionally simplified and omits DMA allocation details, queue draining, and IRP forwarding.
 
 ```c
-static NTSTATUS QueryIfcCompletion(_In_ PDEVICE_OBJECT DeviceObject, _In_ PIRP Irp, _In_ PVOID Context)
+#include "virtio_pci_modern_wdm.h"
+#include "virtio_pci_intx_wdm.h"
+
+/* Virtio ring feature bits are not currently centralized in a single header. */
+#ifndef VIRTIO_F_RING_INDIRECT_DESC
+#define VIRTIO_F_RING_INDIRECT_DESC (1ull << 28)
+#endif
+
+typedef struct _DEVICE_CONTEXT {
+    PDEVICE_OBJECT Self;
+    PDEVICE_OBJECT Lower; // attached device object
+
+    VIRTIO_PCI_MODERN_WDM_DEVICE Vdev;
+    VIRTIO_INTX_WDM Intx;
+
+    // Driver-owned queue state + ring allocations live here.
+} DEVICE_CONTEXT;
+
+static VOID
+EvtVirtioQueueDpc(_In_opt_ PVOID Context)
 {
-    UNREFERENCED_PARAMETER(DeviceObject);
-    UNREFERENCED_PARAMETER(Irp);
-    KeSetEvent((PKEVENT)Context, IO_NO_INCREMENT, FALSE);
-    return STATUS_MORE_PROCESSING_REQUIRED; // caller frees the IRP
+    DEVICE_CONTEXT *ctx = (DEVICE_CONTEXT *)Context;
+    // DISPATCH_LEVEL: drain used rings, complete requests, etc.
 }
 
-static NTSTATUS QueryPciBusInterface(
-    _In_ PDEVICE_OBJECT Lower,
-    _Out_ PCI_BUS_INTERFACE_STANDARD* PciIfcOut
-    )
+static VOID
+EvtVirtioConfigDpc(_In_opt_ PVOID Context)
 {
-    KEVENT event;
-    PIRP irp;
+    DEVICE_CONTEXT *ctx = (DEVICE_CONTEXT *)Context;
+    // DISPATCH_LEVEL: re-read device config if your device supports changes.
+}
+
+static const CM_PARTIAL_RESOURCE_DESCRIPTOR *
+FindTranslatedInterruptDesc(_In_ PCM_RESOURCE_LIST ResourcesTranslated)
+{
+    // Walk ResourcesTranslated to find the CmResourceTypeInterrupt descriptor.
+    // (Implementation omitted.)
+    return InterruptDescTranslated;
+}
+
+NTSTATUS
+StartDevice(_Inout_ DEVICE_CONTEXT *ctx, _In_ PIRP Irp)
+{
     NTSTATUS status;
+    UINT64 negotiated = 0;
 
-    KeInitializeEvent(&event, NotificationEvent, FALSE);
-    RtlZeroMemory(PciIfcOut, sizeof(*PciIfcOut));
+    PCM_RESOURCE_LIST raw = IoGetCurrentIrpStackLocation(Irp)->Parameters.StartDevice.AllocatedResources;
+    PCM_RESOURCE_LIST translated =
+        IoGetCurrentIrpStackLocation(Irp)->Parameters.StartDevice.AllocatedResourcesTranslated;
 
-    irp = IoAllocateIrp((CCHAR)Lower->StackSize, FALSE);
-    if (!irp) return STATUS_INSUFFICIENT_RESOURCES;
-
-    irp->IoStatus.Status = STATUS_NOT_SUPPORTED;
-    irp->IoStatus.Information = 0;
-
-    IoSetCompletionRoutine(irp, QueryIfcCompletion, &event, TRUE, TRUE, TRUE);
-
-    {
-        PIO_STACK_LOCATION s = IoGetNextIrpStackLocation(irp);
-        s->MajorFunction = IRP_MJ_PNP;
-        s->MinorFunction = IRP_MN_QUERY_INTERFACE;
-        s->Parameters.QueryInterface.InterfaceType = (LPGUID)&GUID_PCI_BUS_INTERFACE_STANDARD;
-        s->Parameters.QueryInterface.Size = sizeof(*PciIfcOut);
-        s->Parameters.QueryInterface.Version = PCI_BUS_INTERFACE_STANDARD_VERSION;
-        s->Parameters.QueryInterface.Interface = (PINTERFACE)PciIfcOut;
-        s->Parameters.QueryInterface.InterfaceSpecificData = NULL;
-    }
-
-    status = IoCallDriver(Lower, irp);
-    if (status == STATUS_PENDING) {
-        KeWaitForSingleObject(&event, Executive, KernelMode, FALSE, NULL);
-        status = irp->IoStatus.Status;
-    }
-
-    IoFreeIrp(irp);
-
+    status = VirtioPciModernWdmInit(ctx->Lower, &ctx->Vdev);
     if (!NT_SUCCESS(status)) return status;
 
-    // Hold a reference for as long as you use the function pointers.
-    if (PciIfcOut->InterfaceReference) {
-        PciIfcOut->InterfaceReference(PciIfcOut->Context);
-    }
+    status = VirtioPciModernWdmMapBars(&ctx->Vdev, raw, translated);
+    if (!NT_SUCCESS(status)) goto fail_uninit;
+
+    // Contract v1 baseline:
+    const UINT64 required = VIRTIO_F_RING_INDIRECT_DESC;
+    const UINT64 wanted = 0;
+
+    status = VirtioPciNegotiateFeatures(&ctx->Vdev, required, wanted, &negotiated);
+    if (!NT_SUCCESS(status)) goto fail_unmap;
+
+    // Allocate + program queues (queue memory allocation omitted).
+    // status = VirtioPciSetupQueue(&ctx->Vdev, 0, descPa, availPa, usedPa);
+
+    const CM_PARTIAL_RESOURCE_DESCRIPTOR *intDesc = FindTranslatedInterruptDesc(translated);
+    status = VirtioIntxConnect(ctx->Self,
+                               intDesc,
+                               ctx->Vdev.IsrStatus,
+                               EvtVirtioQueueDpc,
+                               ctx,
+                               EvtVirtioConfigDpc,
+                               ctx,
+                               &ctx->Intx);
+    if (!NT_SUCCESS(status)) goto fail_reset;
+
+    VirtioPciAddStatus(&ctx->Vdev, VIRTIO_STATUS_DRIVER_OK);
     return STATUS_SUCCESS;
+
+fail_reset:
+    VirtioPciResetDevice(&ctx->Vdev);
+fail_unmap:
+    VirtioPciModernWdmUnmapBars(&ctx->Vdev);
+fail_uninit:
+    VirtioPciModernWdmUninit(&ctx->Vdev);
+    return status;
 }
-```
 
-In this repo’s WDM virtio-snd driver, this step is wrapped by:
-
-- `VirtIoSndAcquirePciBusInterface` / `VirtIoSndReleasePciBusInterface` (`drivers/windows7/virtio-snd/include/pci_interface.h`)
-
-Release the interface on STOP/REMOVE:
-
-```c
-if (dx->PciIfc.InterfaceDereference) {
-    dx->PciIfc.InterfaceDereference(dx->PciIfc.Context);
-}
-RtlZeroMemory(&dx->PciIfc, sizeof(dx->PciIfc));
-```
-
----
-
-## 2) Read BAR base addresses from config space (handle 64-bit BARs)
-
-The virtio vendor capability parser needs the *actual* BAR base addresses (bus addresses) so it can compute `addr = bar_base + offset`.
-
-Read the Type 0 header BAR registers at config offsets `0x10..0x24` (`6 * u32`). Then decode each BAR:
-
-- If bit 0 is set, it’s an **I/O BAR** (should not be used for virtio modern in Aero).
-- If memory BAR:
-  - bits 2:1 = `0b10` means **64-bit BAR** and consumes two BAR slots (`BARn` + `BARn+1`).
-  - mask low bits (`& ~0xFu`) to get the aligned base.
-
-Pseudo-code:
-
-```c
-static NTSTATUS ReadBarBases(
-    _In_ PCI_BUS_INTERFACE_STANDARD* Pci,
-    _Out_writes_(6) ULONGLONG BarBase
-    )
+VOID
+StopDevice(_Inout_ DEVICE_CONTEXT *ctx)
 {
-    ULONG barReg[6];
-    ULONG n;
-
-    RtlZeroMemory(BarBase, sizeof(ULONGLONG) * 6);
-
-    n = Pci->ReadConfig(Pci->Context, 0 /*PCI_WHICHSPACE_CONFIG*/, barReg, 0x10, sizeof(barReg));
-    if (n != sizeof(barReg)) return STATUS_DEVICE_DATA_ERROR;
-
-    for (ULONG i = 0; i < 6; i++) {
-        ULONG v = barReg[i];
-        if (v == 0) continue;
-
-        if (v & 0x1) {
-            // IO BAR - ignore for virtio modern.
-            continue;
-        }
-
-        ULONG memType = (v >> 1) & 0x3;
-        if (memType == 0x2) { // 64-bit
-            if (i == 5) return STATUS_DEVICE_CONFIGURATION_ERROR;
-            BarBase[i] = ((ULONGLONG)barReg[i + 1] << 32) | (ULONGLONG)(v & ~0xFu);
-            i++; // consume upper half slot
-        } else {
-            BarBase[i] = (ULONGLONG)(v & ~0xFu);
-        }
-    }
-
-    return STATUS_SUCCESS;
+    VirtioIntxDisconnect(&ctx->Intx);
+    VirtioPciResetDevice(&ctx->Vdev);
+    VirtioPciModernWdmUnmapBars(&ctx->Vdev);
+    // Keep ctx->Vdev initialized across STOP/START; call Uninit only on REMOVE.
 }
 ```
 
----
+## Debugging notes: what the helpers do internally
 
-## 3) Parse virtio vendor capabilities (COMMON/NOTIFY/ISR/DEVICE)
+The helpers are thin wrappers over the standard WDM patterns, which is useful to know when debugging bring-up:
 
-Read the first 256 bytes of PCI config space (enough for the standard cap list) and feed it into the portable parser:
+- `VirtioPciModernWdmInit`:
+  - sends `IRP_MN_QUERY_INTERFACE` for `GUID_PCI_BUS_INTERFACE_STANDARD` to the lower stack
+  - reads PCI Revision ID and enforces contract v1 (`0x01`)
+  - reads PCI BAR programming and parses the virtio vendor capability list using
+    `drivers/win7/virtio/virtio-core/portable/virtio_pci_cap_parser.c`
+  - enforces contract v1 placement (all required virtio caps in BAR0)
 
-```c
-#include "virtio_pci_cap_parser.h"
+- `VirtioPciModernWdmMapBars`:
+  - matches BAR memory resources from `IRP_MN_START_DEVICE`’s `CM_RESOURCE_LIST`
+  - maps MMIO with `MmMapIoSpace(MmNonCached)`
+  - populates `Dev->CommonCfg`, `Dev->NotifyBase`, `Dev->IsrStatus`, `Dev->DeviceCfg`,
+    plus `Dev->NotifyOffMultiplier`
 
-uint8_t cfg[256];
-uint64_t bar_addrs[VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT];
-virtio_pci_parsed_caps_t caps;
+- `VirtioIntxConnect`:
+  - connects an INTx ISR via `IoConnectInterrupt` using the *translated* interrupt resource
+  - the ISR performs the required virtio read-to-ack by reading `Dev->IsrStatus`
+  - work is dispatched to optional per-device callbacks from a DPC; disconnect waits for in-flight DPC completion
 
-Pci->ReadConfig(Pci->Context, 0, cfg, 0, sizeof(cfg));
+## How this relates to other virtio code in this repo
 
-for (i = 0; i < VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT; i++) {
-    bar_addrs[i] = (uint64_t)BarBase[i];
-}
+### `drivers/windows7/virtio-modern/common/` (fixed-layout helpers)
 
-virtio_pci_cap_parse_result_t r = virtio_pci_cap_parse(cfg, sizeof(cfg), bar_addrs, &caps);
-if (r != VIRTIO_PCI_CAP_PARSE_OK) {
-    // unsupported / malformed device
-}
-```
+`drivers/windows7/virtio-modern/common/` provides contract v1 helpers that assume:
 
-The parser guarantees the required modern virtio regions exist and returns:
+- BAR0 is **already mapped** by the caller, and
+- the fixed Aero MMIO layout is in use.
 
-- `caps.common_cfg` (cfg_type 1)
-- `caps.notify_cfg` (cfg_type 2) + `caps.notify_off_multiplier`
-- `caps.isr_cfg` (cfg_type 3)
-- `caps.device_cfg` (cfg_type 4)
+This is useful in environments that don’t have WDM PnP start IRPs/resources (e.g. StorPort/NDIS).
 
-> Aero contract v1 fixes these to BAR0 with offsets `{0x0000,0x1000,0x2000,0x3000}` respectively, but drivers should still parse/validate the capability list so bugs are caught early.
+### `drivers/win7/virtio/virtio-core/` (KMDF-centric modern transport)
 
-In this repo, virtio-snd stores the parsed results in `VIRTIOSND_TRANSPORT.Caps` and exposes the resolved MMIO pointers
-(`CommonCfg`, `NotifyBase`, `IsrStatus`, `DeviceCfg`) after `VirtIoSndTransportInit()`.
+`virtio-core` provides a more general virtio-pci modern discovery/mapping layer, primarily targeted at **KMDF** drivers.
 
----
+It can be built without WDF (`VIRTIO_CORE_USE_WDF=0`), but it exports several transport helper symbols
+(`VirtioPciResetDevice`, `VirtioPciNegotiateFeatures`, etc.) that overlap with `virtio_pci_modern_wdm`.
+Don’t link both into the same driver without resolving the symbol/name conflicts.
 
-## 4) Map BAR0 from translated CM resources and compute cap VAs
-
-In `IRP_MN_START_DEVICE`, Windows provides:
-
-- `AllocatedResources` (raw bus addresses)
-- `AllocatedResourcesTranslated` (system physical addresses you can map)
-
-You typically:
-
-1. Find the `CmResourceTypeMemory` descriptor that corresponds to BAR0.
-   - Aero contract v1 uses **exactly one MMIO BAR** so this is usually “the only memory resource”.
-   - More defensively: match the raw resource `Start` against the BAR base you read from config space.
-2. Map the **translated** address with `MmMapIoSpace`.
-3. Compute each capability VA as `bar0_va + cap.offset`.
-
-Pseudo-code:
-
-```c
-// PASSIVE_LEVEL only.
-dx->Bar0Length = memDesc->u.Memory.Length;
-dx->Bar0Va = MmMapIoSpace(memDescTranslated->u.Memory.Start, dx->Bar0Length, MmNonCached);
-if (!dx->Bar0Va) return STATUS_INSUFFICIENT_RESOURCES;
-
-dx->CommonCfg = (volatile uint8_t*)dx->Bar0Va + caps.common_cfg.offset;
-dx->NotifyBase = (volatile uint8_t*)dx->Bar0Va + caps.notify_cfg.offset;
-dx->IsrStatus = (volatile uint8_t*)dx->Bar0Va + caps.isr_cfg.offset;   // 1 byte, read-to-clear
-dx->DeviceCfg = (volatile uint8_t*)dx->Bar0Va + caps.device_cfg.offset;
-dx->NotifyOffMultiplier = caps.notify_off_multiplier;
-```
-
-The `VIRTIOSND_TRANSPORT` helper (`virtio_pci_modern_wdm.h`) implements this mapping logic for BAR0 and computes all of the
-capability VAs for you.
-
-Use `READ_REGISTER_*` / `WRITE_REGISTER_*` for MMIO accesses, plus explicit barriers (`KeMemoryBarrier`) around multi-step sequences.
-
----
-
-## 5) Serialize CommonCfg selector registers with a spin lock
-
-`virtio_pci_common_cfg` contains *global selector registers*:
-
-- `device_feature_select` / `device_feature`
-- `driver_feature_select` / `driver_feature`
-- `queue_select` + all `queue_*` fields
-
-These selectors affect subsequent reads/writes, so any multi-step access must be serialized across threads (e.g. DPC draining RX and a power callback querying config).
-
-WDM-style device extension fields:
-
-```c
-KSPIN_LOCK CommonCfgLock;
-```
-
-Rule of thumb: **every** sequence that writes a selector and then touches dependent fields must hold the lock. This lock must be usable at **DISPATCH_LEVEL** (DPC safe).
-
-In this repo, `VIRTIOSND_TRANSPORT.CommonCfgLock` is initialized by `VirtIoSndTransportInit()`, and the exported
-`VirtIoSndTransport*` helpers serialize selector-based `common_cfg` access internally.
-
----
-
-## 6) Negotiate features (RESET → ACK → DRIVER → FEATURES_OK), require `VIRTIO_F_VERSION_1`
-
-Modern virtio feature negotiation is 64-bit using the `*_feature_select` selector pattern.
-
-Required status sequence:
-
-1. `device_status = 0` (reset)
-2. set `ACKNOWLEDGE`, then `DRIVER`
-3. read device features (low 32, high 32)
-4. compute negotiated features:
-   - `negotiated = (device & wanted) | required`
-   - **always** include `VIRTIO_F_VERSION_1` (bit 32) per Aero contract v1
-5. write driver features (low 32, high 32)
-6. set `FEATURES_OK`
-7. read back `device_status` and ensure `FEATURES_OK` stuck; otherwise the device rejected features → set `FAILED`.
-
-Minimal pseudo-code:
-
-```c
-// PASSIVE_LEVEL recommended (can sleep/stall, does multiple MMIO ops).
-WriteU8(&cc->device_status, 0);
-WriteU8(&cc->device_status, VIRTIO_STATUS_ACKNOWLEDGE);
-WriteU8(&cc->device_status, VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER);
-
-UINT64 device = ReadDeviceFeatures64(cc, &dx->CommonCfgLock);
-
-UINT64 required = (1ull << 32); // VIRTIO_F_VERSION_1
-UINT64 wanted = required;
-UINT64 negotiated = (device & wanted) | required;
-
-WriteDriverFeatures64(cc, negotiated, &dx->CommonCfgLock);
-
-WriteU8(&cc->device_status, ReadU8(&cc->device_status) | VIRTIO_STATUS_FEATURES_OK);
-if ((ReadU8(&cc->device_status) & VIRTIO_STATUS_FEATURES_OK) == 0) {
-    WriteU8(&cc->device_status, ReadU8(&cc->device_status) | VIRTIO_STATUS_FAILED);
-    return STATUS_NOT_SUPPORTED;
-}
-```
-
-In this repo, virtio-snd centralizes this flow in:
-
-- `VirtIoSndTransportNegotiateFeatures()` (`virtio_pci_modern_wdm.h`)
-  - Always requires `VIRTIO_F_VERSION_1` (bit 32).
-  - Also requires any device/contract-specific bits (for virtio-snd contract v1: `VIRTIO_F_RING_INDIRECT_DESC`).
-
-Only after queues + interrupts are configured should you set `DRIVER_OK`.
-
----
-
-## 7) Program queues and notify via the notify region
-
-For each virtqueue you use:
-
-1. Select the queue with `queue_select = q`.
-2. Read `queue_size` (max supported). Choose a size <= that.
-3. Allocate DMA-visible queue memory (descriptor table + avail + used).
-4. Program `queue_desc`, `queue_avail`, `queue_used` (64-bit physical addresses).
-5. Set `queue_enable = 1`.
-
-Pseudo-code (register-level):
-
-```c
-// DISPATCH_LEVEL safe if all memory is already allocated.
-KeAcquireSpinLock(&dx->CommonCfgLock, &oldIrql);
-WriteU16(&cc->queue_select, q);
-
-USHORT max = ReadU16(&cc->queue_size);
-if (max == 0) { /* queue not implemented */ }
-
-WriteU64(&cc->queue_desc,  desc_pa);
-WriteU64(&cc->queue_avail, avail_pa);
-WriteU64(&cc->queue_used,  used_pa);
-
-WriteU16(&cc->queue_enable, 1);
-KeReleaseSpinLock(&dx->CommonCfgLock, oldIrql);
-```
-
-In this repo, this register sequence is implemented by:
-
-- `VirtIoSndTransportSetupQueue()` (`virtio_pci_modern_wdm.h`)
-
-### Notify (“kick”)
-
-Modern virtio notifications use:
-
-- per-queue `queue_notify_off` (from common cfg)
-- global `notify_off_multiplier` (from notify cap)
-
-Compute:
-
-```text
-notify_addr = notify_base + queue_notify_off * notify_off_multiplier
-```
-
-Then write the queue index (u16) to `notify_addr`.
-
-```c
-USHORT off;
-KeAcquireSpinLock(&dx->CommonCfgLock, &oldIrql);
-WriteU16(&cc->queue_select, q);
-off = ReadU16(&cc->queue_notify_off);
-KeReleaseSpinLock(&dx->CommonCfgLock, oldIrql);
-
-volatile UINT16* notify = (volatile UINT16*)(dx->NotifyBase + (off * dx->NotifyOffMultiplier));
-WRITE_REGISTER_USHORT((volatile USHORT*)notify, q);
-```
-
-In this repo, virtio-snd exposes the notify helpers as:
-
-- `VirtIoSndTransportComputeNotifyAddr()`
-- `VirtIoSndTransportNotifyQueue()`
-
-Ordering rule: after you publish new descriptors + avail entries, issue a memory barrier (`KeMemoryBarrier`) before the notify write so the device never sees partially initialized ring contents.
-
----
-
-## 8) INTx interrupts: ISR read-to-ack + DPC dispatch
-
-For Aero contract v1, drivers must work with **INTx** (line-based, level-triggered, commonly shared).
-
-### 8.1 The virtio ISR status register is read-to-clear
-
-The ISR status capability (`cfg_type = 3`) is a single byte:
-
-- bit 0 (`0x01`): queue interrupt
-- bit 1 (`0x02`): config change
-
-**Reading the byte acknowledges the interrupt** in the device. For INTx this is required to deassert the line; if you skip it you will usually get an **interrupt storm**.
-
-### 8.2 Reference implementation (Task 424): Aero WDM INTx helper (virtio-snd)
-
-In this repo, the WDM virtio-snd driver provides a small INTx helper that demonstrates the correct **read-to-ack + DPC**
-pattern and handles teardown races:
-
-- Header: `drivers/windows7/virtio-snd/include/virtiosnd_intx.h`
-- Impl: `drivers/windows7/virtio-snd/src/virtiosnd_intx.c`
-
-Entry points:
-
-- `VirtIoSndIntxCaptureResources(Dx, ResourcesTranslated)` (finds a line interrupt resource; ignores message-signaled)
-- `VirtIoSndIntxInitialize(Dx)` / `VirtIoSndIntxConnect(Dx)` / `VirtIoSndIntxDisconnect(Dx)`
-- ISR: `VirtIoSndIntxIsr`
-- DPC: `VirtIoSndIntxDpc`
-
-Cause bits (from `virtiosnd_intx.h`):
-
-- `VIRTIOSND_ISR_QUEUE` (`0x01`)
-- `VIRTIOSND_ISR_CONFIG` (`0x02`)
-
-Minimalized pseudocode (logic is the important part):
-
-```c
-BOOLEAN VirtIoSndIntxIsr(_In_ PKINTERRUPT Interrupt, _In_ PVOID ServiceContext)
-{
-    UNREFERENCED_PARAMETER(Interrupt);
-    PVIRTIOSND_DEVICE_EXTENSION dx = (PVIRTIOSND_DEVICE_EXTENSION)ServiceContext;
-
-    const UCHAR isr = READ_REGISTER_UCHAR(dx->Transport.IsrStatus); // ACK (read-to-clear)
-    if (isr == 0) {
-        return FALSE; // shared INTx: not for us
-    }
-
-    InterlockedOr(&dx->PendingIsrStatus, isr);
-    KeInsertQueueDpc(&dx->InterruptDpc, NULL, NULL);
-    return TRUE;
-}
-
-VOID VirtIoSndIntxDpc(_In_ PKDPC Dpc, _In_opt_ PVOID DeferredContext, _In_opt_ PVOID Arg1, _In_opt_ PVOID Arg2)
-{
-    UNREFERENCED_PARAMETER(Dpc);
-    UNREFERENCED_PARAMETER(Arg1);
-    UNREFERENCED_PARAMETER(Arg2);
-
-    PVIRTIOSND_DEVICE_EXTENSION dx = (PVIRTIOSND_DEVICE_EXTENSION)DeferredContext;
-    const LONG isr = InterlockedExchange(&dx->PendingIsrStatus, 0);
-
-    if (isr & VIRTIOSND_ISR_QUEUE) {
-        // Drain used rings, complete requests, etc.
-    }
-    if (isr & VIRTIOSND_ISR_CONFIG) {
-        // Handle device config change.
-    }
-}
-```
-
-IRQL constraints:
-
-- ISR: must not block; must touch only nonpaged memory; should not perform any selector-based `common_cfg` sequences.
-- DPC: may acquire spin locks and drain queues; must still avoid blocking operations.
-
-### 8.3 Connecting INTx
-
-Windows 7 reports INTx as a `CmResourceTypeInterrupt` descriptor (with `CM_RESOURCE_INTERRUPT_MESSAGE` **not** set).
-
-Requirements for a safe connect:
-
-- `IsrStatus` MMIO must already be mapped (otherwise you cannot ACK/deassert the line interrupt).
-- Connect using `IoConnectInterrupt` (or `IoConnectInterruptEx` if you have a unified INTx/MSI path).
-
-In this repo, `VirtIoSndIntxCaptureResources` + `VirtIoSndIntxConnect` implement these checks and perform the connect.
