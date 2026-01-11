@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import { startDiskImageServer, type DiskImageServer } from "../fixtures/servers";
@@ -8,6 +8,11 @@ const BOOT_IMAGE_BYTES = readFileSync(
   fileURLToPath(new URL("../fixtures/boot/boot_vga_serial_8s.img", import.meta.url)),
 );
 
+const THREADED_WASM_BINARY = fileURLToPath(
+  new URL("../../web/src/wasm/pkg-threaded/aero_wasm_bg.wasm", import.meta.url),
+);
+const HAS_THREADED_WASM_BINARY = existsSync(THREADED_WASM_BINARY);
+
 let server!: DiskImageServer;
 
 async function waitForReady(page: Page) {
@@ -15,6 +20,11 @@ async function waitForReady(page: Page) {
 }
 
 test.describe("vm boot (VGA + serial)", () => {
+  test.skip(
+    !HAS_THREADED_WASM_BINARY,
+    "Threaded WASM package missing (required for shared-memory worker runtime). Build it with `npm -w web run wasm:build:threaded`.",
+  );
+
   test.beforeAll(async () => {
     server = await startDiskImageServer({ data: BOOT_IMAGE_BYTES, enableCors: true });
   });
