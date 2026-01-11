@@ -4447,20 +4447,93 @@ HRESULT AEROGPU_D3D9_CALL OpenAdapter(
     return E_INVALIDARG;
   }
 
-  const LUID luid = aerogpu::default_luid();
+  LUID luid = aerogpu::default_luid();
+#if defined(_WIN32)
+  // Some runtimes may call OpenAdapter/OpenAdapter2 without providing an HDC or
+  // explicit LUID. Resolve a stable LUID from the primary display so the adapter
+  // cache and KMD query helpers can be shared with OpenAdapterFromHdc/Luid.
+  HDC hdc = GetDC(nullptr);
+  if (hdc) {
+    if (!aerogpu::get_luid_from_hdc(hdc, &luid)) {
+      aerogpu::logf("aerogpu-d3d9: OpenAdapter failed to resolve adapter LUID from primary HDC\n");
+    }
+  }
+#endif
   auto* adapter_funcs = reinterpret_cast<D3D9DDI_ADAPTERFUNCS*>(pOpenAdapter->pAdapterFuncs);
   if (!adapter_funcs) {
+#if defined(_WIN32)
+    if (hdc) {
+      ReleaseDC(nullptr, hdc);
+    }
+#endif
     return E_INVALIDARG;
   }
 
-  return aerogpu::OpenAdapterCommon("OpenAdapter",
-                                    get_interface_version(pOpenAdapter),
-                                    pOpenAdapter->Version,
-                                    pOpenAdapter->pAdapterCallbacks,
-                                    get_adapter_callbacks2(pOpenAdapter),
-                                    luid,
-                                    &pOpenAdapter->hAdapter,
-                                    adapter_funcs);
+  const HRESULT hr = aerogpu::OpenAdapterCommon("OpenAdapter",
+                                     get_interface_version(pOpenAdapter),
+                                     pOpenAdapter->Version,
+                                     pOpenAdapter->pAdapterCallbacks,
+                                     get_adapter_callbacks2(pOpenAdapter),
+                                     luid,
+                                     &pOpenAdapter->hAdapter,
+                                     adapter_funcs);
+#if defined(_WIN32)
+  if (SUCCEEDED(hr) && hdc) {
+    auto* adapter = aerogpu::as_adapter(pOpenAdapter->hAdapter);
+    if (adapter) {
+      const int w = GetDeviceCaps(hdc, HORZRES);
+      const int h = GetDeviceCaps(hdc, VERTRES);
+      const int refresh = GetDeviceCaps(hdc, VREFRESH);
+      if (w > 0) {
+        adapter->primary_width = static_cast<uint32_t>(w);
+      }
+      if (h > 0) {
+        adapter->primary_height = static_cast<uint32_t>(h);
+      }
+      if (refresh > 0) {
+        adapter->primary_refresh_hz = static_cast<uint32_t>(refresh);
+      }
+    }
+
+    const bool kmd_ok = adapter && adapter->kmd_query.InitFromHdc(hdc);
+    if (adapter) {
+      adapter->kmd_query_available.store(kmd_ok, std::memory_order_release);
+    }
+    if (kmd_ok) {
+      uint64_t submitted = 0;
+      uint64_t completed = 0;
+      if (adapter->kmd_query.QueryFence(&submitted, &completed)) {
+        aerogpu::logf("aerogpu-d3d9: KMD fence submitted=%llu completed=%llu\n",
+                      static_cast<unsigned long long>(submitted),
+                      static_cast<unsigned long long>(completed));
+      }
+
+      aerogpu_umd_private_v1 priv;
+      std::memset(&priv, 0, sizeof(priv));
+      if (adapter->kmd_query.QueryUmdPrivate(&priv)) {
+        adapter->umd_private = priv;
+        adapter->umd_private_valid = true;
+
+        char magicStr[5] = {0, 0, 0, 0, 0};
+        magicStr[0] = (char)((priv.device_mmio_magic >> 0) & 0xFF);
+        magicStr[1] = (char)((priv.device_mmio_magic >> 8) & 0xFF);
+        magicStr[2] = (char)((priv.device_mmio_magic >> 16) & 0xFF);
+        magicStr[3] = (char)((priv.device_mmio_magic >> 24) & 0xFF);
+
+        aerogpu::logf("aerogpu-d3d9: UMDRIVERPRIVATE magic=0x%08x (%s) abi=0x%08x features=0x%llx flags=0x%08x\n",
+                      priv.device_mmio_magic,
+                      magicStr,
+                      priv.device_abi_version_u32,
+                      static_cast<unsigned long long>(priv.device_features),
+                      priv.flags);
+      }
+    }
+  }
+  if (hdc) {
+    ReleaseDC(nullptr, hdc);
+  }
+#endif
+  return hr;
 }
 
 HRESULT AEROGPU_D3D9_CALL OpenAdapter2(
@@ -4469,20 +4542,90 @@ HRESULT AEROGPU_D3D9_CALL OpenAdapter2(
     return E_INVALIDARG;
   }
 
-  const LUID luid = aerogpu::default_luid();
+  LUID luid = aerogpu::default_luid();
+#if defined(_WIN32)
+  HDC hdc = GetDC(nullptr);
+  if (hdc) {
+    if (!aerogpu::get_luid_from_hdc(hdc, &luid)) {
+      aerogpu::logf("aerogpu-d3d9: OpenAdapter2 failed to resolve adapter LUID from primary HDC\n");
+    }
+  }
+#endif
   auto* adapter_funcs = reinterpret_cast<D3D9DDI_ADAPTERFUNCS*>(pOpenAdapter->pAdapterFuncs);
   if (!adapter_funcs) {
+#if defined(_WIN32)
+    if (hdc) {
+      ReleaseDC(nullptr, hdc);
+    }
+#endif
     return E_INVALIDARG;
   }
 
-  return aerogpu::OpenAdapterCommon("OpenAdapter2",
-                                    get_interface_version(pOpenAdapter),
-                                    pOpenAdapter->Version,
-                                    pOpenAdapter->pAdapterCallbacks,
-                                    get_adapter_callbacks2(pOpenAdapter),
-                                    luid,
-                                    &pOpenAdapter->hAdapter,
-                                    adapter_funcs);
+  const HRESULT hr = aerogpu::OpenAdapterCommon("OpenAdapter2",
+                                     get_interface_version(pOpenAdapter),
+                                     pOpenAdapter->Version,
+                                     pOpenAdapter->pAdapterCallbacks,
+                                     get_adapter_callbacks2(pOpenAdapter),
+                                     luid,
+                                     &pOpenAdapter->hAdapter,
+                                     adapter_funcs);
+#if defined(_WIN32)
+  if (SUCCEEDED(hr) && hdc) {
+    auto* adapter = aerogpu::as_adapter(pOpenAdapter->hAdapter);
+    if (adapter) {
+      const int w = GetDeviceCaps(hdc, HORZRES);
+      const int h = GetDeviceCaps(hdc, VERTRES);
+      const int refresh = GetDeviceCaps(hdc, VREFRESH);
+      if (w > 0) {
+        adapter->primary_width = static_cast<uint32_t>(w);
+      }
+      if (h > 0) {
+        adapter->primary_height = static_cast<uint32_t>(h);
+      }
+      if (refresh > 0) {
+        adapter->primary_refresh_hz = static_cast<uint32_t>(refresh);
+      }
+    }
+
+    const bool kmd_ok = adapter && adapter->kmd_query.InitFromHdc(hdc);
+    if (adapter) {
+      adapter->kmd_query_available.store(kmd_ok, std::memory_order_release);
+    }
+    if (kmd_ok) {
+      uint64_t submitted = 0;
+      uint64_t completed = 0;
+      if (adapter->kmd_query.QueryFence(&submitted, &completed)) {
+        aerogpu::logf("aerogpu-d3d9: KMD fence submitted=%llu completed=%llu\n",
+                      static_cast<unsigned long long>(submitted),
+                      static_cast<unsigned long long>(completed));
+      }
+
+      aerogpu_umd_private_v1 priv;
+      std::memset(&priv, 0, sizeof(priv));
+      if (adapter->kmd_query.QueryUmdPrivate(&priv)) {
+        adapter->umd_private = priv;
+        adapter->umd_private_valid = true;
+
+        char magicStr[5] = {0, 0, 0, 0, 0};
+        magicStr[0] = (char)((priv.device_mmio_magic >> 0) & 0xFF);
+        magicStr[1] = (char)((priv.device_mmio_magic >> 8) & 0xFF);
+        magicStr[2] = (char)((priv.device_mmio_magic >> 16) & 0xFF);
+        magicStr[3] = (char)((priv.device_mmio_magic >> 24) & 0xFF);
+
+        aerogpu::logf("aerogpu-d3d9: UMDRIVERPRIVATE magic=0x%08x (%s) abi=0x%08x features=0x%llx flags=0x%08x\n",
+                      priv.device_mmio_magic,
+                      magicStr,
+                      priv.device_abi_version_u32,
+                      static_cast<unsigned long long>(priv.device_features),
+                      priv.flags);
+      }
+    }
+  }
+  if (hdc) {
+    ReleaseDC(nullptr, hdc);
+  }
+#endif
+  return hr;
 }
 
 HRESULT AEROGPU_D3D9_CALL OpenAdapterFromHdc(
@@ -4493,7 +4636,7 @@ HRESULT AEROGPU_D3D9_CALL OpenAdapterFromHdc(
 
   LUID luid = aerogpu::default_luid();
 #if defined(_WIN32)
-  if (pOpenAdapter->hDc && !get_luid_from_hdc(pOpenAdapter->hDc, &luid)) {
+  if (pOpenAdapter->hDc && !aerogpu::get_luid_from_hdc(pOpenAdapter->hDc, &luid)) {
     aerogpu::logf("aerogpu-d3d9: OpenAdapterFromHdc failed to resolve adapter LUID from HDC\n");
   }
 #endif
