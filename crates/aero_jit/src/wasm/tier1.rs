@@ -1,20 +1,38 @@
 use aero_cpu::CpuState as Tier1CpuState;
 use aero_types::{Cond, Flag, FlagSet, Gpr, Width};
 use wasm_encoder::{
-    CodeSection, EntityType, ExportKind, ExportSection, Function, FunctionSection, ImportSection,
-    Instruction, MemArg, MemoryType, Module, TypeSection, ValType,
+    BlockType, CodeSection, EntityType, ExportKind, ExportSection, Function, FunctionSection,
+    ImportSection, Instruction, MemArg, MemoryType, Module, TypeSection, ValType,
 };
 
+use crate::abi::{
+    JIT_CTX_RAM_BASE_OFFSET, JIT_CTX_TLB_OFFSET, JIT_CTX_TLB_SALT_OFFSET, MMU_ACCESS_READ,
+    MMU_ACCESS_WRITE,
+};
 use crate::tier1_ir::{BinOp, GuestReg, IrBlock, IrInst, IrTerminator, ValueId};
 
 use super::{
     IMPORT_JIT_EXIT, IMPORT_MEMORY, IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U32, IMPORT_MEM_READ_U64,
     IMPORT_MEM_READ_U8, IMPORT_MEM_WRITE_U16, IMPORT_MEM_WRITE_U32, IMPORT_MEM_WRITE_U64,
-    IMPORT_MEM_WRITE_U8, IMPORT_MODULE, IMPORT_PAGE_FAULT, JIT_EXIT_SENTINEL_I64,
+    IMPORT_MEM_WRITE_U8, IMPORT_MODULE, IMPORT_MMU_TRANSLATE, IMPORT_PAGE_FAULT,
+    IMPORT_JIT_EXIT_MMIO, JIT_EXIT_SENTINEL_I64,
 };
 
 /// WASM export name for Tier-1 blocks.
 pub const EXPORT_TIER1_BLOCK_FN: &str = "block";
+
+#[derive(Debug, Clone, Copy)]
+pub struct Tier1WasmOptions {
+    /// Enable the inline direct-mapped JIT TLB + direct guest RAM fast-path for same-page loads
+    /// and stores.
+    pub inline_tlb: bool,
+}
+
+impl Default for Tier1WasmOptions {
+    fn default() -> Self {
+        Self { inline_tlb: false }
+    }
+}
 
 #[derive(Clone, Copy)]
 struct ImportedFuncs {
@@ -26,7 +44,9 @@ struct ImportedFuncs {
     mem_write_u16: u32,
     mem_write_u32: u32,
     mem_write_u64: u32,
+    mmu_translate: Option<u32>,
     _page_fault: u32,
+    jit_exit_mmio: Option<u32>,
     _jit_exit: u32,
     count: u32,
 }
@@ -41,6 +61,11 @@ impl Tier1WasmCodegen {
 
     #[must_use]
     pub fn compile_block(&self, block: &IrBlock) -> Vec<u8> {
+        self.compile_block_with_options(block, Tier1WasmOptions::default())
+    }
+
+    #[must_use]
+    pub fn compile_block_with_options(&self, block: &IrBlock, options: Tier1WasmOptions) -> Vec<u8> {
         let mut module = Module::new();
 
         let mut types = TypeSection::new();
@@ -76,10 +101,36 @@ impl Tier1WasmCodegen {
         types
             .ty()
             .function([ValType::I32, ValType::I64, ValType::I64], []);
+        let ty_mmu_translate = if options.inline_tlb {
+            let ty = types.len();
+            types
+                .ty()
+                .function([ValType::I32, ValType::I64, ValType::I32], [ValType::I64]);
+            Some(ty)
+        } else {
+            None
+        };
         let ty_page_fault = types.len();
         types
             .ty()
             .function([ValType::I32, ValType::I64], [ValType::I64]);
+        let ty_jit_exit_mmio = if options.inline_tlb {
+            let ty = types.len();
+            types.ty().function(
+                [
+                    ValType::I32,
+                    ValType::I64,
+                    ValType::I32,
+                    ValType::I32,
+                    ValType::I64,
+                    ValType::I64,
+                ],
+                [ValType::I64],
+            );
+            Some(ty)
+        } else {
+            None
+        };
         let ty_jit_exit = types.len();
         types
             .ty()
@@ -112,7 +163,9 @@ impl Tier1WasmCodegen {
             mem_write_u16: next(&mut next_func),
             mem_write_u32: next(&mut next_func),
             mem_write_u64: next(&mut next_func),
+            mmu_translate: options.inline_tlb.then(|| next(&mut next_func)),
             _page_fault: next(&mut next_func),
+            jit_exit_mmio: options.inline_tlb.then(|| next(&mut next_func)),
             _jit_exit: next(&mut next_func),
             count: next_func - func_base,
         };
@@ -157,11 +210,25 @@ impl Tier1WasmCodegen {
             IMPORT_MEM_WRITE_U64,
             EntityType::Function(ty_mem_write_u64),
         );
+        if options.inline_tlb {
+            imports.import(
+                IMPORT_MODULE,
+                IMPORT_MMU_TRANSLATE,
+                EntityType::Function(ty_mmu_translate.expect("type for mmu_translate")),
+            );
+        }
         imports.import(
             IMPORT_MODULE,
             IMPORT_PAGE_FAULT,
             EntityType::Function(ty_page_fault),
         );
+        if options.inline_tlb {
+            imports.import(
+                IMPORT_MODULE,
+                IMPORT_JIT_EXIT_MMIO,
+                EntityType::Function(ty_jit_exit_mmio.expect("type for jit_exit_mmio")),
+            );
+        }
         imports.import(
             IMPORT_MODULE,
             IMPORT_JIT_EXIT,
@@ -205,16 +272,34 @@ impl Tier1WasmCodegen {
         func.instruction(&Instruction::LocalGet(layout.rip_local()));
         func.instruction(&Instruction::LocalSet(layout.next_rip_local()));
 
+        if options.inline_tlb {
+            // Load JIT metadata (guest RAM base and TLB salt).
+            func.instruction(&Instruction::LocalGet(layout.cpu_ptr_local()));
+            func.instruction(&Instruction::I64Load(memarg(JIT_CTX_RAM_BASE_OFFSET, 3)));
+            func.instruction(&Instruction::LocalSet(layout.ram_base_local()));
+
+            func.instruction(&Instruction::LocalGet(layout.cpu_ptr_local()));
+            func.instruction(&Instruction::I64Load(memarg(JIT_CTX_TLB_SALT_OFFSET, 3)));
+            func.instruction(&Instruction::LocalSet(layout.tlb_salt_local()));
+        }
+
+        // Structured single-exit block so we can `br` out of the block on MMIO exits.
+        func.instruction(&Instruction::Block(BlockType::Empty));
+
         let mut emitter = Emitter {
             func: &mut func,
             imported,
             layout,
+            options,
+            depth: 0,
         };
 
         for inst in &block.insts {
             emitter.emit_inst(inst);
         }
         emitter.emit_terminator(&block.terminator);
+
+        emitter.func.instruction(&Instruction::End); // end exit block
 
         // Spill guest state back to linear memory.
         for gpr in all_gprs() {
@@ -301,8 +386,28 @@ impl LocalsLayout {
         self.rflags_local() + 1
     }
 
-    fn scratch_local(self) -> u32 {
+    fn ram_base_local(self) -> u32 {
         self.next_rip_local() + 1
+    }
+
+    fn tlb_salt_local(self) -> u32 {
+        self.ram_base_local() + 1
+    }
+
+    fn scratch_vaddr_local(self) -> u32 {
+        self.tlb_salt_local() + 1
+    }
+
+    fn scratch_vpn_local(self) -> u32 {
+        self.scratch_vaddr_local() + 1
+    }
+
+    fn scratch_tlb_data_local(self) -> u32 {
+        self.scratch_vpn_local() + 1
+    }
+
+    fn scratch_local(self) -> u32 {
+        self.scratch_tlb_data_local() + 1
     }
 
     fn value_base(self) -> u32 {
@@ -314,8 +419,9 @@ impl LocalsLayout {
     }
 
     fn total_i64_locals(self) -> u32 {
-        // gpr[16] + rip + rflags + next_rip + scratch + values
-        16 + 1 + 1 + 1 + 1 + self.values
+        // gpr[16] + rip + rflags + next_rip + ram_base + tlb_salt +
+        // scratch locals (vaddr, vpn, tlb_data, scratch) + values
+        16 + 1 + 1 + 1 + 1 + 1 + 4 + self.values
     }
 }
 
@@ -323,6 +429,9 @@ struct Emitter<'a> {
     func: &'a mut Function,
     imported: ImportedFuncs,
     layout: LocalsLayout,
+    options: Tier1WasmOptions,
+    /// Current nesting depth *inside* the single-exit `block`.
+    depth: u32,
 }
 
 impl Emitter<'_> {
@@ -373,66 +482,201 @@ impl Emitter<'_> {
                     .instruction(&Instruction::LocalSet(self.layout.value_local(*dst)));
             }
             IrInst::Load { dst, addr, width } => {
-                self.func
-                    .instruction(&Instruction::LocalGet(self.layout.cpu_ptr_local()));
+                if !self.options.inline_tlb {
+                    // Baseline mode: always go through the imported slow helpers.
+                    self.func
+                        .instruction(&Instruction::LocalGet(self.layout.cpu_ptr_local()));
+                    self.func
+                        .instruction(&Instruction::LocalGet(self.layout.value_local(*addr)));
+                    match *width {
+                        Width::W8 => {
+                            self.func
+                                .instruction(&Instruction::Call(self.imported.mem_read_u8));
+                            self.func.instruction(&Instruction::I64ExtendI32U);
+                        }
+                        Width::W16 => {
+                            self.func
+                                .instruction(&Instruction::Call(self.imported.mem_read_u16));
+                            self.func.instruction(&Instruction::I64ExtendI32U);
+                        }
+                        Width::W32 => {
+                            self.func
+                                .instruction(&Instruction::Call(self.imported.mem_read_u32));
+                            self.func.instruction(&Instruction::I64ExtendI32U);
+                        }
+                        Width::W64 => {
+                            self.func
+                                .instruction(&Instruction::Call(self.imported.mem_read_u64));
+                        }
+                    }
+                    self.emit_trunc(*width);
+                    self.func
+                        .instruction(&Instruction::LocalSet(self.layout.value_local(*dst)));
+                    return;
+                }
+
+                // Save vaddr into a scratch local (used by both slow/fast paths).
                 self.func
                     .instruction(&Instruction::LocalGet(self.layout.value_local(*addr)));
-                match *width {
-                    Width::W8 => {
-                        self.func
-                            .instruction(&Instruction::Call(self.imported.mem_read_u8));
-                        self.func.instruction(&Instruction::I64ExtendI32U);
-                    }
-                    Width::W16 => {
-                        self.func
-                            .instruction(&Instruction::Call(self.imported.mem_read_u16));
-                        self.func.instruction(&Instruction::I64ExtendI32U);
-                    }
-                    Width::W32 => {
-                        self.func
-                            .instruction(&Instruction::Call(self.imported.mem_read_u32));
-                        self.func.instruction(&Instruction::I64ExtendI32U);
-                    }
-                    Width::W64 => {
-                        self.func
-                            .instruction(&Instruction::Call(self.imported.mem_read_u64));
-                    }
-                }
-                self.emit_trunc(*width);
                 self.func
-                    .instruction(&Instruction::LocalSet(self.layout.value_local(*dst)));
+                    .instruction(&Instruction::LocalSet(self.layout.scratch_vaddr_local()));
+
+                let (size_bytes, slow_read) = match *width {
+                    Width::W8 => (1u32, self.imported.mem_read_u8),
+                    Width::W16 => (2u32, self.imported.mem_read_u16),
+                    Width::W32 => (4u32, self.imported.mem_read_u32),
+                    Width::W64 => (8u32, self.imported.mem_read_u64),
+                };
+
+                // Cross-page accesses use the slow helper for correctness.
+                let cross_limit = (crate::PAGE_OFFSET_MASK as u64)
+                    .saturating_sub(size_bytes.saturating_sub(1) as u64);
+                self.func
+                    .instruction(&Instruction::LocalGet(self.layout.scratch_vaddr_local()));
+                self.func
+                    .instruction(&Instruction::I64Const(crate::PAGE_OFFSET_MASK as i64));
+                self.func.instruction(&Instruction::I64And);
+                self.func.instruction(&Instruction::I64Const(cross_limit as i64));
+                self.func.instruction(&Instruction::I64GtU);
+
+                self.func.instruction(&Instruction::If(BlockType::Empty));
+                self.depth += 1;
+                {
+                    // Slow path.
+                    self.func
+                        .instruction(&Instruction::LocalGet(self.layout.cpu_ptr_local()));
+                    self.func
+                        .instruction(&Instruction::LocalGet(self.layout.scratch_vaddr_local()));
+                    self.func.instruction(&Instruction::Call(slow_read));
+                    if !matches!(*width, Width::W64) {
+                        self.func.instruction(&Instruction::I64ExtendI32U);
+                    }
+                    self.emit_trunc(*width);
+                    self.func
+                        .instruction(&Instruction::LocalSet(self.layout.value_local(*dst)));
+                }
+                self.func.instruction(&Instruction::Else);
+                {
+                    // Fast path: inline TLB probe + direct RAM load.
+                    self.emit_translate_and_cache(MMU_ACCESS_READ, crate::TLB_FLAG_READ);
+
+                    self.emit_mmio_exit(size_bytes, 0, None);
+
+                    self.emit_compute_ram_addr();
+                    match *width {
+                        Width::W8 => self.func.instruction(&Instruction::I64Load8U(memarg(0, 0))),
+                        Width::W16 => {
+                            self.func.instruction(&Instruction::I64Load16U(memarg(0, 1)))
+                        }
+                        Width::W32 => {
+                            self.func.instruction(&Instruction::I64Load32U(memarg(0, 2)))
+                        }
+                        Width::W64 => self.func.instruction(&Instruction::I64Load(memarg(0, 3))),
+                    };
+                    self.emit_trunc(*width);
+                    self.func
+                        .instruction(&Instruction::LocalSet(self.layout.value_local(*dst)));
+                }
+                self.func.instruction(&Instruction::End);
+                self.depth -= 1;
             }
             IrInst::Store { addr, src, width } => {
-                self.func
-                    .instruction(&Instruction::LocalGet(self.layout.cpu_ptr_local()));
+                if !self.options.inline_tlb {
+                    // Baseline mode: always go through the imported slow helpers.
+                    self.func
+                        .instruction(&Instruction::LocalGet(self.layout.cpu_ptr_local()));
+                    self.func
+                        .instruction(&Instruction::LocalGet(self.layout.value_local(*addr)));
+                    self.func
+                        .instruction(&Instruction::LocalGet(self.layout.value_local(*src)));
+                    match *width {
+                        Width::W8 => {
+                            self.emit_trunc(Width::W8);
+                            self.func.instruction(&Instruction::I32WrapI64);
+                            self.func
+                                .instruction(&Instruction::Call(self.imported.mem_write_u8));
+                        }
+                        Width::W16 => {
+                            self.emit_trunc(Width::W16);
+                            self.func.instruction(&Instruction::I32WrapI64);
+                            self.func
+                                .instruction(&Instruction::Call(self.imported.mem_write_u16));
+                        }
+                        Width::W32 => {
+                            self.emit_trunc(Width::W32);
+                            self.func.instruction(&Instruction::I32WrapI64);
+                            self.func
+                                .instruction(&Instruction::Call(self.imported.mem_write_u32));
+                        }
+                        Width::W64 => {
+                            self.func
+                                .instruction(&Instruction::Call(self.imported.mem_write_u64));
+                        }
+                    }
+                    return;
+                }
+
                 self.func
                     .instruction(&Instruction::LocalGet(self.layout.value_local(*addr)));
                 self.func
-                    .instruction(&Instruction::LocalGet(self.layout.value_local(*src)));
-                match *width {
-                    Width::W8 => {
-                        self.emit_trunc(Width::W8);
+                    .instruction(&Instruction::LocalSet(self.layout.scratch_vaddr_local()));
+
+                let (size_bytes, slow_write) = match *width {
+                    Width::W8 => (1u32, self.imported.mem_write_u8),
+                    Width::W16 => (2u32, self.imported.mem_write_u16),
+                    Width::W32 => (4u32, self.imported.mem_write_u32),
+                    Width::W64 => (8u32, self.imported.mem_write_u64),
+                };
+
+                let cross_limit = (crate::PAGE_OFFSET_MASK as u64)
+                    .saturating_sub(size_bytes.saturating_sub(1) as u64);
+                self.func
+                    .instruction(&Instruction::LocalGet(self.layout.scratch_vaddr_local()));
+                self.func
+                    .instruction(&Instruction::I64Const(crate::PAGE_OFFSET_MASK as i64));
+                self.func.instruction(&Instruction::I64And);
+                self.func.instruction(&Instruction::I64Const(cross_limit as i64));
+                self.func.instruction(&Instruction::I64GtU);
+
+                self.func.instruction(&Instruction::If(BlockType::Empty));
+                self.depth += 1;
+                {
+                    // Slow path.
+                    self.func
+                        .instruction(&Instruction::LocalGet(self.layout.cpu_ptr_local()));
+                    self.func
+                        .instruction(&Instruction::LocalGet(self.layout.scratch_vaddr_local()));
+                    self.func
+                        .instruction(&Instruction::LocalGet(self.layout.value_local(*src)));
+                    if !matches!(*width, Width::W64) {
+                        self.emit_trunc(*width);
                         self.func.instruction(&Instruction::I32WrapI64);
-                        self.func
-                            .instruction(&Instruction::Call(self.imported.mem_write_u8));
                     }
-                    Width::W16 => {
-                        self.emit_trunc(Width::W16);
-                        self.func.instruction(&Instruction::I32WrapI64);
-                        self.func
-                            .instruction(&Instruction::Call(self.imported.mem_write_u16));
-                    }
-                    Width::W32 => {
-                        self.emit_trunc(Width::W32);
-                        self.func.instruction(&Instruction::I32WrapI64);
-                        self.func
-                            .instruction(&Instruction::Call(self.imported.mem_write_u32));
-                    }
-                    Width::W64 => {
-                        self.func
-                            .instruction(&Instruction::Call(self.imported.mem_write_u64));
-                    }
+                    self.func.instruction(&Instruction::Call(slow_write));
                 }
+                self.func.instruction(&Instruction::Else);
+                {
+                    // Fast path: inline TLB probe + direct RAM store.
+                    self.emit_translate_and_cache(MMU_ACCESS_WRITE, crate::TLB_FLAG_WRITE);
+
+                    self.emit_mmio_exit(size_bytes, 1, Some(*src));
+
+                    self.emit_compute_ram_addr();
+                    self.func
+                        .instruction(&Instruction::LocalGet(self.layout.value_local(*src)));
+                    match *width {
+                        Width::W8 => self.func.instruction(&Instruction::I64Store8(memarg(0, 0))),
+                        Width::W16 => {
+                            self.func.instruction(&Instruction::I64Store16(memarg(0, 1)))
+                        }
+                        Width::W32 => {
+                            self.func.instruction(&Instruction::I64Store32(memarg(0, 2)))
+                        }
+                        Width::W64 => self.func.instruction(&Instruction::I64Store(memarg(0, 3))),
+                    };
+                }
+                self.func.instruction(&Instruction::End);
+                self.depth -= 1;
             }
             IrInst::BinOp {
                 dst,
@@ -613,6 +857,170 @@ impl Emitter<'_> {
         }
         self.func
             .instruction(&Instruction::LocalSet(self.layout.scratch_local()));
+    }
+
+    fn emit_translate_and_cache(&mut self, access_code: i32, required_flag: u64) {
+        debug_assert!(self.options.inline_tlb);
+
+        // vpn = vaddr >> 12
+        self.func
+            .instruction(&Instruction::LocalGet(self.layout.scratch_vaddr_local()));
+        self.func
+            .instruction(&Instruction::I64Const(crate::PAGE_SHIFT as i64));
+        self.func.instruction(&Instruction::I64ShrU);
+        self.func
+            .instruction(&Instruction::LocalSet(self.layout.scratch_vpn_local()));
+
+        // Check TLB tag match.
+        self.emit_tlb_entry_addr();
+        self.func.instruction(&Instruction::I64Load(memarg(0, 3))); // tag
+        self.func
+            .instruction(&Instruction::LocalGet(self.layout.scratch_vpn_local()));
+        self.func
+            .instruction(&Instruction::LocalGet(self.layout.tlb_salt_local()));
+        self.func.instruction(&Instruction::I64Xor);
+        // expect_tag = (vpn ^ salt) | 1; keep 0 reserved for invalidation.
+        self.func.instruction(&Instruction::I64Const(1));
+        self.func.instruction(&Instruction::I64Or);
+        self.func.instruction(&Instruction::I64Eq);
+
+        self.func.instruction(&Instruction::If(BlockType::Empty));
+        self.depth += 1;
+        {
+            // Hit: load `data` from the entry.
+            self.emit_tlb_entry_addr();
+            self.func.instruction(&Instruction::I64Load(memarg(8, 3))); // data
+            self.func
+                .instruction(&Instruction::LocalSet(self.layout.scratch_tlb_data_local()));
+        }
+        self.func.instruction(&Instruction::Else);
+        {
+            // Miss: call the translation helper (expected to fill the entry).
+            self.emit_mmu_translate(access_code);
+        }
+        self.func.instruction(&Instruction::End);
+        self.depth -= 1;
+
+        // Permission check: if the cached entry doesn't permit this access, go slow-path.
+        self.func
+            .instruction(&Instruction::LocalGet(self.layout.scratch_tlb_data_local()));
+        self.func
+            .instruction(&Instruction::I64Const(required_flag as i64));
+        self.func.instruction(&Instruction::I64And);
+        self.func.instruction(&Instruction::I64Eqz);
+
+        self.func.instruction(&Instruction::If(BlockType::Empty));
+        self.depth += 1;
+        {
+            self.emit_mmu_translate(access_code);
+        }
+        self.func.instruction(&Instruction::End);
+        self.depth -= 1;
+    }
+
+    fn emit_mmu_translate(&mut self, access_code: i32) {
+        self.func
+            .instruction(&Instruction::LocalGet(self.layout.cpu_ptr_local()));
+        self.func
+            .instruction(&Instruction::LocalGet(self.layout.scratch_vaddr_local()));
+        self.func.instruction(&Instruction::I32Const(access_code));
+        self.func.instruction(&Instruction::Call(
+            self.imported
+                .mmu_translate
+                .expect("mmu_translate import missing"),
+        ));
+        self.func
+            .instruction(&Instruction::LocalSet(self.layout.scratch_tlb_data_local()));
+    }
+
+    fn emit_mmio_exit(&mut self, size_bytes: u32, is_write: i32, value: Option<ValueId>) {
+        self.func
+            .instruction(&Instruction::LocalGet(self.layout.scratch_tlb_data_local()));
+        self.func
+            .instruction(&Instruction::I64Const(crate::TLB_FLAG_IS_RAM as i64));
+        self.func.instruction(&Instruction::I64And);
+        self.func.instruction(&Instruction::I64Eqz);
+
+        self.func.instruction(&Instruction::If(BlockType::Empty));
+        self.depth += 1;
+        {
+            self.func
+                .instruction(&Instruction::LocalGet(self.layout.cpu_ptr_local()));
+            self.func
+                .instruction(&Instruction::LocalGet(self.layout.scratch_vaddr_local()));
+            self.func
+                .instruction(&Instruction::I32Const(size_bytes as i32));
+            self.func.instruction(&Instruction::I32Const(is_write));
+            if let Some(value) = value {
+                self.func
+                    .instruction(&Instruction::LocalGet(self.layout.value_local(value)));
+            } else {
+                self.func.instruction(&Instruction::I64Const(0));
+            }
+            self.func
+                .instruction(&Instruction::LocalGet(self.layout.rip_local()));
+            self.func.instruction(&Instruction::Call(
+                self.imported
+                    .jit_exit_mmio
+                    .expect("jit_exit_mmio import missing"),
+            ));
+            self.func
+                .instruction(&Instruction::LocalSet(self.layout.next_rip_local()));
+            // MMIO exits are runtime exits; return the sentinel and let the runtime read the
+            // concrete `next_rip` from `CpuState.rip`.
+            self.func
+                .instruction(&Instruction::I64Const(JIT_EXIT_SENTINEL_I64));
+            self.func
+                .instruction(&Instruction::LocalSet(self.layout.scratch_local()));
+            self.func.instruction(&Instruction::Br(self.depth));
+        }
+        self.func.instruction(&Instruction::End);
+        self.depth -= 1;
+    }
+
+    /// Computes the linear-memory address for the current `{vaddr, tlb_data}` pair and leaves it
+    /// on the stack as an `i32` suitable for a WASM `load/store`.
+    fn emit_compute_ram_addr(&mut self) {
+        // paddr = (phys_base & !0xFFF) | (vaddr & 0xFFF)
+        self.func
+            .instruction(&Instruction::LocalGet(self.layout.scratch_tlb_data_local()));
+        self.func
+            .instruction(&Instruction::I64Const(crate::PAGE_BASE_MASK as i64));
+        self.func.instruction(&Instruction::I64And);
+
+        self.func
+            .instruction(&Instruction::LocalGet(self.layout.scratch_vaddr_local()));
+        self.func
+            .instruction(&Instruction::I64Const(crate::PAGE_OFFSET_MASK as i64));
+        self.func.instruction(&Instruction::I64And);
+        self.func.instruction(&Instruction::I64Or);
+
+        // wasm_addr = ram_base + paddr
+        self.func
+            .instruction(&Instruction::LocalGet(self.layout.ram_base_local()));
+        self.func.instruction(&Instruction::I64Add);
+        self.func.instruction(&Instruction::I32WrapI64);
+    }
+
+    fn emit_tlb_entry_addr(&mut self) {
+        // base = cpu_ptr + JIT_CTX_TLB_OFFSET + ((vpn & mask) * ENTRY_SIZE)
+        self.func
+            .instruction(&Instruction::LocalGet(self.layout.cpu_ptr_local()));
+        self.func.instruction(&Instruction::I64ExtendI32U);
+        self.func
+            .instruction(&Instruction::I64Const(JIT_CTX_TLB_OFFSET as i64));
+        self.func.instruction(&Instruction::I64Add);
+
+        self.func
+            .instruction(&Instruction::LocalGet(self.layout.scratch_vpn_local()));
+        self.func
+            .instruction(&Instruction::I64Const(crate::JIT_TLB_INDEX_MASK as i64));
+        self.func.instruction(&Instruction::I64And);
+        self.func
+            .instruction(&Instruction::I64Const(crate::JIT_TLB_ENTRY_SIZE as i64));
+        self.func.instruction(&Instruction::I64Mul);
+        self.func.instruction(&Instruction::I64Add);
+        self.func.instruction(&Instruction::I32WrapI64);
     }
 
     fn emit_trunc(&mut self, width: Width) {
@@ -1080,7 +1488,9 @@ impl Default for ImportedFuncs {
             mem_write_u16: 0,
             mem_write_u32: 0,
             mem_write_u64: 0,
+            mmu_translate: None,
             _page_fault: 0,
+            jit_exit_mmio: None,
             _jit_exit: 0,
             count: 0,
         }
