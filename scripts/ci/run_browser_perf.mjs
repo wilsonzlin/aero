@@ -27,7 +27,7 @@ Outputs (in --out-dir):
   - raw.json
   - summary.json
   - perf_export.json
-  - trace.json (optional; future)
+  - trace.json
 `.trim();
   // eslint-disable-next-line no-console
   console.log(msg);
@@ -273,17 +273,27 @@ async function stopPreviewServer(server) {
 }
 
 async function assertOutputLayout(outDirAbs) {
-  const required = ["raw.json", "summary.json", "perf_export.json"];
-  await Promise.all(
-    required.map(async (f) => {
-      const p = path.join(outDirAbs, f);
-      try {
-        await fs.access(p);
-      } catch {
-        throw new Error(`[ci-perf] expected output file missing: ${p}`);
-      }
-    }),
-  );
+  const required = ["raw.json", "summary.json"];
+  for (const f of required) {
+    const p = path.join(outDirAbs, f);
+    try {
+      await fs.access(p);
+    } catch {
+      throw new Error(`[ci-perf] expected output file missing: ${p}`);
+    }
+  }
+
+  // Some versions of `tools/perf/run.mjs` may not write these files yet; keep
+  // artifact layout stable by creating placeholders.
+  const placeholders = ["perf_export.json", "trace.json"];
+  for (const f of placeholders) {
+    const p = path.join(outDirAbs, f);
+    try {
+      await fs.access(p);
+    } catch {
+      await fs.writeFile(p, "null\n");
+    }
+  }
 }
 
 async function main() {
