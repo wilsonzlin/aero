@@ -82,6 +82,30 @@ function el<K extends keyof HTMLElementTagNameMap>(
   return node;
 }
 
+function renderBuildInfoPanel(): HTMLElement {
+  const versionLink = el("a", {
+    href: "/aero.version.json",
+    target: "_blank",
+    rel: "noreferrer",
+    text: "aero.version.json",
+  });
+
+  return el(
+    "div",
+    { class: "panel" },
+    el("h2", { text: "Build info" }),
+    el("div", { class: "row" }, el("strong", { text: "Version:" }), el("span", { class: "mono", text: __AERO_BUILD_INFO__.version })),
+    el("div", { class: "row" }, el("strong", { text: "Commit:" }), el("span", { class: "mono", text: __AERO_BUILD_INFO__.gitSha })),
+    el(
+      "div",
+      { class: "row" },
+      el("strong", { text: "Built:" }),
+      el("span", { class: "mono", text: __AERO_BUILD_INFO__.builtAt }),
+    ),
+    el("div", { class: "hint muted" }, "Also available at ", versionLink, "."),
+  );
+}
+
 function createExpectedTestPattern(width: number, height: number): Uint8Array {
   const halfW = Math.floor(width / 2);
   const halfH = Math.floor(height / 2);
@@ -166,6 +190,7 @@ function render(): void {
 
   app.replaceChildren(
     el("h1", { text: "Aero Platform Capabilities" }),
+    renderBuildInfoPanel(),
     settingsHost,
     statusHost,
     el(

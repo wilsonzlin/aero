@@ -1,0 +1,140 @@
+name: Release - web
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref to build (branch, tag, or SHA). Leave blank to use the workflow ref.
+        required: false
+        default: ""
+      tag:
+        description: Optional release tag to upload assets to (e.g. v0.1.0). Leave blank to skip publishing a GitHub Release.
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  build-web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref != '' && inputs.ref || github.ref }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install Rust toolchain (stable)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install Rust toolchain (nightly + rust-src)
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install nightly --profile minimal --component rust-src --target wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack
+
+      - name: Install wasm-opt (Binaryen)
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y binaryen
+
+      - name: Compute build metadata
+        shell: bash
+        env:
+          TAG_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || '' }}
+        run: |
+          set -euo pipefail
+
+          echo "BUILD_TIMESTAMP=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_ENV"
+          echo "GIT_SHA=${GITHUB_SHA}" >> "$GITHUB_ENV"
+
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            version="${GITHUB_REF_NAME}"
+            release_tag="${GITHUB_REF_NAME}"
+          elif [[ -n "${TAG_INPUT}" ]]; then
+            version="${TAG_INPUT}"
+            release_tag="${TAG_INPUT}"
+          else
+            version="${GITHUB_REF_NAME}"
+            release_tag=""
+          fi
+
+          echo "AERO_VERSION=${version}" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=${release_tag}" >> "$GITHUB_ENV"
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: web
+
+      - name: Build (WASM + web)
+        run: npm run build
+        working-directory: web
+
+      - name: Validate build output
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test -f web/dist/_headers
+          test -f web/dist/aero.version.json
+
+          wasm_count="$(find web/dist -name '*.wasm' | wc -l | tr -d '[:space:]')"
+          if [[ "${wasm_count}" -lt 2 ]]; then
+            echo "Expected at least 2 .wasm files in web/dist (single + threaded), found: ${wasm_count}" >&2
+            find web/dist -name '*.wasm' -print >&2 || true
+            exit 1
+          fi
+
+      - name: Package dist
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          artifact="aero-web-${AERO_VERSION}.zip"
+          (cd web/dist && zip -r "../../${artifact}" .)
+          sha256sum "${artifact}" > "${artifact}.sha256"
+
+          echo "artifact=${artifact}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload build artifact (workflow)
+        uses: actions/upload-artifact@v4
+        with:
+          name: aero-web-dist-${{ env.AERO_VERSION }}
+          path: |
+            ${{ steps.package.outputs.artifact }}
+            ${{ steps.package.outputs.artifact }}.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Publish GitHub Release asset
+        if: env.RELEASE_TAG != ''
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          files: |
+            ${{ steps.package.outputs.artifact }}
+            ${{ steps.package.outputs.artifact }}.sha256
+          generate_release_notes: true
+

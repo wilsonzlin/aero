@@ -8,6 +8,12 @@ import type { PerfApi } from './perf/types';
 export {};
 
 declare global {
+  const __AERO_BUILD_INFO__: Readonly<{
+    version: string;
+    gitSha: string;
+    builtAt: string;
+  }>;
+
   interface Window {
     aero?: AeroGlobalApi & {
       bench?: {

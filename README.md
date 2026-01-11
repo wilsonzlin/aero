@@ -43,6 +43,7 @@ The `justfile` is intentionally configurable so it can survive repo refactors:
 
 - Architecture & subsystem docs: [`AGENTS.md`](./AGENTS.md)
 - Deployment/hosting (COOP/COEP, SharedArrayBuffer/WASM threads): [`docs/deployment.md`](./docs/deployment.md)
+- Releases (web artifacts + gateway images): [`docs/release.md`](./docs/release.md)
 - Windows 7 end-user setup:
   - Install Guest Tools + switch to virtio/Aero GPU: [`docs/windows7-guest-tools.md`](./docs/windows7-guest-tools.md)
   - Driver/signature/boot troubleshooting: [`docs/windows7-driver-troubleshooting.md`](./docs/windows7-driver-troubleshooting.md)
