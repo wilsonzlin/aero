@@ -25,7 +25,7 @@ virtio driver health via **COM1 serial** (host-captured), stdout, and a log file
     - at least one **keyboard-only** HID device exists
     - at least one **mouse-only** HID device exists
     - no matched HID device advertises both keyboard and mouse application collections (contract v1 expects two separate PCI functions).
-- **virtio-snd** (optional; enable with `--test-snd` / `--require-snd`)
+- **virtio-snd**
   - Detect the virtio-snd PCI function via SetupAPI hardware IDs:
     - `PCI\VEN_1AF4&DEV_1059` (modern; Aero contract v1 expects `REV_01`)
     - If QEMU is not launched with `disable-legacy=on`, virtio-snd may enumerate as the transitional ID
@@ -34,7 +34,7 @@ virtio driver health via **COM1 serial** (host-captured), stdout, and a log file
   - Enumerate audio render endpoints via MMDevice API and start a shared-mode WASAPI render stream.
   - Render a short deterministic tone (440Hz) at 48kHz/16-bit/stereo.
   - If WASAPI fails, a WinMM `waveOut` fallback is attempted.
-  - By default the test is reported as **SKIP**; when enabled, missing device or playback failure is **FAIL**.
+  - If the device is missing, the test is reported as **SKIP** by default; use `--require-snd` to make it **FAIL**.
 
 Note: For deterministic DNS testing under QEMU slirp, the default `--dns-host` is `host.lan`
 (with fallbacks like `gateway.lan` / `dns.lan`).
@@ -47,16 +47,17 @@ The host harness parses these markers from COM1 serial:
 AERO_VIRTIO_SELFTEST|START|...
 AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS|...
 AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS|...
-# (either, depending on flags/device):
-AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|...
+AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP
 # or:
-AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS|...
+AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS
+# or:
+AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL
 AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS|...
 AERO_VIRTIO_SELFTEST|RESULT|PASS
 ```
 
 Notes:
-- If virtio-snd is not enabled via `--test-snd` / `--require-snd`, the tool emits `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP`.
+- If virtio-snd is missing, the tool emits `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP` (unless `--require-snd` is set).
 - If the virtio-snd test is disabled via `--disable-snd`, the tool also emits `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP`.
 
 ## Building
@@ -109,14 +110,12 @@ schtasks /Create /F /TN "AeroVirtioSelftest" /SC ONSTART /RU SYSTEM ^
   /TR "\"C:\AeroTests\aero-virtio-selftest.exe\" --http-url http://10.0.2.2:18080/aero-virtio-selftest --dns-host host.lan"
 ```
 
-To enable the optional virtio-snd test (recommended when a virtio-snd device is attached and the driver is installed):
+To require virtio-snd (fail the overall run if `PCI\VEN_1AF4&DEV_1059` is missing):
 
 ```bat
 schtasks /Create /F /TN "AeroVirtioSelftest" /SC ONSTART /RU SYSTEM ^
-  /TR "\"C:\AeroTests\aero-virtio-selftest.exe\" --test-snd --http-url http://10.0.2.2:18080/aero-virtio-selftest --dns-host host.lan"
+  /TR "\"C:\AeroTests\aero-virtio-selftest.exe\" --require-snd --http-url http://10.0.2.2:18080/aero-virtio-selftest --dns-host host.lan"
 ```
-
-(Alias: `--require-snd`.)
 
 To explicitly skip virtio-snd:
 
