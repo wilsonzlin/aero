@@ -65,17 +65,19 @@ Typical lines look like:
 ```text
 [AeroGPU:D3D10 t=123456 tid=1337 #0] OpenAdapter10
 [AeroGPU:D3D10 t=123456 tid=1337 #1] OpenAdapterCommon iface=... ver=...
-[AeroGPU:D3D10 t=123457 tid=1337 #2] GetCaps hAdapter=0x... Type=12 DataSize=64 pData=0x...
-[AeroGPU:D3D10 t=123457 tid=1337 #3] GetCaps -> hr=0x00000000
+[AeroGPU:D3D10 t=123457 tid=1337 #2] GetCaps10 Type=12 DataSize=64 pData=0x...
+[AeroGPU:D3D10 t=123457 tid=1337 #3] GetCaps10 -> hr=0x00000000
 [AeroGPU:D3D10 t=123458 tid=1337 #4] CreateDevice hAdapter=0x... hDevice=0x...
 [AeroGPU:D3D10 t=123458 tid=1337 #5] CreateDevice -> hr=0x00000000
 [AeroGPU:D3D10 t=123500 tid=1337 #6] CreateRTV hDevice=0x... hResource=0x...
 [AeroGPU:D3D10 t=123500 tid=1337 #7] Present hDevice=0x... syncInterval=1 backbuffer=0x...
+[AeroGPU:D3D10 t=123501 tid=1337 #8] SetErrorCb hr=0x80004001
 ```
 
 ### 3.1 `GetCaps` sequencing
 
 * The `Type=<n>` field is the raw `D3D10DDIARG_GETCAPS::Type` value requested by the runtime.
+  * Depending on which runtime path is active you may see `GetCaps10` (D3D10.0) and/or `GetCaps` (D3D10.1).
 * Cross-reference `<n>` against the Win7-era WDK header (`d3d10umddi.h`) to find the corresponding `D3D10DDI_GETCAPS_TYPE` / `D3D10DDICAPS_TYPE_*` enum entry.
 
 Bring-up workflow:

@@ -671,6 +671,11 @@ void flush_locked(AeroGpuDevice* dev) {
 }
 
 void set_error(AeroGpuDevice* dev, HRESULT hr) {
+  // Many D3D10/DDI entrypoints are `void` and must signal failures via the
+  // runtime callback instead of returning HRESULT. Log these so bring-up can
+  // quickly correlate failures to the last DDI call.
+  AEROGPU_D3D10_11_LOG("SetErrorCb hr=0x%08X", static_cast<unsigned>(hr));
+  AEROGPU_D3D10_TRACEF("SetErrorCb hr=0x%08X", static_cast<unsigned>(hr));
   if (!dev || !dev->pfn_set_error || !dev->hrt_device.pDrvPrivate) {
     return;
   }
@@ -770,6 +775,9 @@ enum class DdiTraceStubId : size_t {
   UpdateSubresourceUP,
   CopyResource,
   CopySubresourceRegion,
+  DrawInstanced,
+  DrawIndexedInstanced,
+  DrawAuto,
   Count,
 };
 
@@ -793,6 +801,9 @@ static constexpr const char* kDdiTraceStubNames[static_cast<size_t>(DdiTraceStub
     "UpdateSubresourceUP",
     "CopyResource",
     "CopySubresourceRegion",
+    "DrawInstanced",
+    "DrawIndexedInstanced",
+    "DrawAuto",
 };
 
 template <typename FnPtr, DdiTraceStubId Id>
@@ -1597,6 +1608,12 @@ HRESULT AEROGPU_APIENTRY Map(D3D10DDI_HDEVICE hDevice,
                        static_cast<unsigned>(subresource),
                        static_cast<unsigned>(map_type),
                        static_cast<unsigned>(map_flags));
+  AEROGPU_D3D10_TRACEF_VERBOSE("Map hDevice=%p hResource=%p sub=%u type=%u flags=0x%X",
+                               hDevice.pDrvPrivate,
+                               hResource.pDrvPrivate,
+                               static_cast<unsigned>(subresource),
+                               static_cast<unsigned>(map_type),
+                               static_cast<unsigned>(map_flags));
 
   if (!pMapped || !hDevice.pDrvPrivate || !hResource.pDrvPrivate) {
     return E_INVALIDARG;
@@ -2573,6 +2590,12 @@ void AEROGPU_APIENTRY Map(D3D10DDI_HDEVICE hDevice,
                           D3D10DDI_MAPPED_SUBRESOURCE* pOut) {
   AEROGPU_D3D10_11_LOG("pfnMap(D3D10DDIARG_MAP) subresource=%u",
                        static_cast<unsigned>(pMap ? pMap->Subresource : 0));
+  AEROGPU_D3D10_TRACEF_VERBOSE("Map2 hDevice=%p hResource=%p sub=%u type=%u flags=0x%X",
+                               hDevice.pDrvPrivate,
+                               (pMap && pMap->hResource.pDrvPrivate) ? pMap->hResource.pDrvPrivate : nullptr,
+                               pMap ? static_cast<unsigned>(pMap->Subresource) : 0u,
+                               pMap ? static_cast<unsigned>(pMap->MapType) : 0u,
+                               pMap ? static_cast<unsigned>(pMap->Flags) : 0u);
   if (!hDevice.pDrvPrivate || !pMap || !pOut) {
     return;
   }
@@ -2625,6 +2648,10 @@ void AEROGPU_APIENTRY Map(D3D10DDI_HDEVICE hDevice,
 
 void AEROGPU_APIENTRY Unmap(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hResource, UINT subresource) {
   AEROGPU_D3D10_11_LOG("pfnUnmap subresource=%u", static_cast<unsigned>(subresource));
+  AEROGPU_D3D10_TRACEF_VERBOSE("Unmap hDevice=%p hResource=%p sub=%u",
+                               hDevice.pDrvPrivate,
+                               hResource.pDrvPrivate,
+                               static_cast<unsigned>(subresource));
   if (!hDevice.pDrvPrivate || !hResource.pDrvPrivate) {
     return;
   }
@@ -2662,6 +2689,12 @@ void AEROGPU_APIENTRY Unmap(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hResour
 void AEROGPU_APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice,
                                          const D3D10DDIARG_UPDATESUBRESOURCEUP* pArgs,
                                          const void* pSysMem) {
+  AEROGPU_D3D10_TRACEF_VERBOSE("UpdateSubresourceUP hDevice=%p hDstResource=%p sub=%u rowPitch=%u src=%p",
+                               hDevice.pDrvPrivate,
+                               (pArgs && pArgs->hDstResource.pDrvPrivate) ? pArgs->hDstResource.pDrvPrivate : nullptr,
+                               pArgs ? static_cast<unsigned>(pArgs->DstSubresource) : 0u,
+                               pArgs ? static_cast<unsigned>(pArgs->RowPitch) : 0u,
+                               pSysMem);
   if (!hDevice.pDrvPrivate || !pArgs || !pSysMem) {
     return;
   }
@@ -2863,10 +2896,9 @@ HRESULT AEROGPU_APIENTRY CreateDevice(D3D10DDI_HADAPTER hAdapter, D3D10_1DDIARG_
 
   pCreateDevice->pDeviceFuncs->pfnDraw = &Draw;
   pCreateDevice->pDeviceFuncs->pfnDrawIndexed = &DrawIndexed;
-  pCreateDevice->pDeviceFuncs->pfnDrawInstanced = &DdiStub<decltype(pCreateDevice->pDeviceFuncs->pfnDrawInstanced)>::Call;
-  pCreateDevice->pDeviceFuncs->pfnDrawIndexedInstanced =
-      &DdiStub<decltype(pCreateDevice->pDeviceFuncs->pfnDrawIndexedInstanced)>::Call;
-  pCreateDevice->pDeviceFuncs->pfnDrawAuto = &DdiStub<decltype(pCreateDevice->pDeviceFuncs->pfnDrawAuto)>::Call;
+  AEROGPU_D3D10_ASSIGN_STUB(pfnDrawInstanced, DrawInstanced);
+  AEROGPU_D3D10_ASSIGN_STUB(pfnDrawIndexedInstanced, DrawIndexedInstanced);
+  AEROGPU_D3D10_ASSIGN_STUB(pfnDrawAuto, DrawAuto);
   pCreateDevice->pDeviceFuncs->pfnPresent = &Present;
   pCreateDevice->pDeviceFuncs->pfnFlush = &Flush;
   pCreateDevice->pDeviceFuncs->pfnRotateResourceIdentities = &RotateResourceIdentities;
@@ -2910,17 +2942,21 @@ void AEROGPU_APIENTRY CloseAdapter(D3D10DDI_HADAPTER hAdapter) {
 // -------------------------------------------------------------------------------------------------
 
 SIZE_T AEROGPU_APIENTRY CalcPrivateDeviceSize10(D3D10DDI_HADAPTER, const D3D10DDIARG_CREATEDEVICE*) {
+  AEROGPU_D3D10_TRACEF("CalcPrivateDeviceSize10");
   return sizeof(AeroGpuDevice);
 }
 
 HRESULT AEROGPU_APIENTRY CreateDevice10(D3D10DDI_HADAPTER hAdapter, D3D10DDIARG_CREATEDEVICE* pCreateDevice) {
+  AEROGPU_D3D10_TRACEF("CreateDevice10 hAdapter=%p hDevice=%p",
+                       hAdapter.pDrvPrivate,
+                       pCreateDevice ? pCreateDevice->hDrvDevice.pDrvPrivate : nullptr);
   if (!pCreateDevice || !pCreateDevice->hDrvDevice.pDrvPrivate || !pCreateDevice->pDeviceFuncs) {
-    return E_INVALIDARG;
+    AEROGPU_D3D10_RET_HR(E_INVALIDARG);
   }
 
   auto* adapter = FromHandle<D3D10DDI_HADAPTER, AeroGpuAdapter>(hAdapter);
   if (!adapter) {
-    return E_FAIL;
+    AEROGPU_D3D10_RET_HR(E_FAIL);
   }
 
   auto* device = new (pCreateDevice->hDrvDevice.pDrvPrivate) AeroGpuDevice();
@@ -3027,12 +3063,16 @@ HRESULT AEROGPU_APIENTRY CreateDevice10(D3D10DDI_HADAPTER hAdapter, D3D10DDIARG_
   pCreateDevice->pDeviceFuncs->pfnCopySubresourceRegion =
       &DdiErrorStub<decltype(pCreateDevice->pDeviceFuncs->pfnCopySubresourceRegion)>::Call;
 
-  return S_OK;
+  AEROGPU_D3D10_RET_HR(S_OK);
 }
 
 HRESULT AEROGPU_APIENTRY GetCaps10(D3D10DDI_HADAPTER, const D3D10DDIARG_GETCAPS* pCaps) {
+  AEROGPU_D3D10_TRACEF("GetCaps10 Type=%u DataSize=%u pData=%p",
+                       pCaps ? static_cast<unsigned>(pCaps->Type) : 0u,
+                       pCaps ? static_cast<unsigned>(pCaps->DataSize) : 0u,
+                       pCaps ? pCaps->pData : nullptr);
   if (!pCaps || !pCaps->pData) {
-    return E_INVALIDARG;
+    AEROGPU_D3D10_RET_HR(E_INVALIDARG);
   }
 
   std::memset(pCaps->pData, 0, pCaps->DataSize);
@@ -3073,6 +3113,7 @@ HRESULT AEROGPU_APIENTRY GetCaps10(D3D10DDI_HADAPTER, const D3D10DDIARG_GETCAPS*
         __if_exists(D3D10DDIARG_FORMAT_SUPPORT::FormatSupport2) {
           fmt->FormatSupport2 = 0;
         }
+        AEROGPU_D3D10_TRACEF("GetCaps10 FORMAT_SUPPORT fmt=%u support=0x%x", format, support);
       }
       break;
 
@@ -3080,7 +3121,7 @@ HRESULT AEROGPU_APIENTRY GetCaps10(D3D10DDI_HADAPTER, const D3D10DDIARG_GETCAPS*
       break;
   }
 
-  return S_OK;
+  AEROGPU_D3D10_RET_HR(S_OK);
 }
 
 HRESULT AEROGPU_APIENTRY GetCaps(D3D10DDI_HADAPTER, const D3D10_1DDIARG_GETCAPS* pCaps) {
