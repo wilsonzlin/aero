@@ -9,6 +9,14 @@ export type UsbRingAttachMessage = {
   actionRing: SharedArrayBuffer;
   completionRing: SharedArrayBuffer;
 };
+/**
+ * Request the SharedArrayBuffer USB proxy rings from the broker.
+ *
+ * This is useful when a worker-side runtime starts after the broker already posted
+ * `usb.ringAttach` (e.g. WASM initialized late). Older brokers may ignore this
+ * message; the runtime should fall back to `postMessage`-based proxying.
+ */
+export type UsbRingAttachRequestMessage = { type: "usb.ringAttachRequest" };
 export type UsbSelectDeviceMessage = { type: "usb.selectDevice"; filters?: USBDeviceFilter[] };
 /**
  * Request the current `usb.selected` state from the broker.
@@ -44,6 +52,7 @@ export type UsbProxyMessage =
   | UsbActionMessage
   | UsbCompletionMessage
   | UsbRingAttachMessage
+  | UsbRingAttachRequestMessage
   | UsbSelectDeviceMessage
   | UsbQuerySelectedMessage
   | UsbSelectedMessage
@@ -197,6 +206,10 @@ export function isUsbRingAttachMessage(value: unknown): value is UsbRingAttachMe
   return true;
 }
 
+export function isUsbRingAttachRequestMessage(value: unknown): value is UsbRingAttachRequestMessage {
+  return isRecord(value) && value.type === "usb.ringAttachRequest";
+}
+
 export function isUsbSelectDeviceMessage(value: unknown): value is UsbSelectDeviceMessage {
   if (!isRecord(value) || value.type !== "usb.selectDevice") return false;
   if (value.filters === undefined) return true;
@@ -236,6 +249,7 @@ export function isUsbProxyMessage(value: unknown): value is UsbProxyMessage {
     isUsbActionMessage(value) ||
     isUsbCompletionMessage(value) ||
     isUsbRingAttachMessage(value) ||
+    isUsbRingAttachRequestMessage(value) ||
     isUsbSelectDeviceMessage(value) ||
     isUsbQuerySelectedMessage(value) ||
     isUsbSelectedMessage(value) ||

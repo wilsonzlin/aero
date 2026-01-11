@@ -1,6 +1,7 @@
 import {
   isUsbCompletionMessage,
   isUsbRingAttachMessage,
+  type UsbRingAttachRequestMessage,
   isUsbSelectedMessage,
   isUsbSetupPacket,
   getTransferablesForUsbActionMessage,
@@ -286,6 +287,16 @@ export class WebUsbPassthroughRuntime {
     this.#port.addEventListener("message", this.#onMessage);
     // When using addEventListener() MessagePorts need start() to begin dispatch.
     (this.#port as unknown as { start?: () => void }).start?.();
+
+    // Request SAB rings from the broker. This is important when the runtime is
+    // instantiated after the broker already sent `usb.ringAttach` (e.g. WASM
+    // finished loading late). Older brokers may ignore it; we fall back to
+    // `postMessage` proxying when rings are unavailable.
+    try {
+      this.#port.postMessage({ type: "usb.ringAttachRequest" } satisfies UsbRingAttachRequestMessage);
+    } catch {
+      // Best-effort; ignore if the broker isn't attached yet.
+    }
 
     // If we start blocked (common in worker runtimes), proactively query the broker
     // for the current selection state so we don't wedge if we missed an earlier

@@ -64,12 +64,13 @@ describe("usb/WebUsbPassthroughRuntime", () => {
     const p = runtime.pollOnce();
 
     expect(port.posted).toEqual([
+      { type: "usb.ringAttachRequest" },
       { type: "usb.action", action: actions[0] },
       { type: "usb.action", action: actions[1] },
     ]);
     const bulkOut = actions[1];
     if (!bulkOut || bulkOut.kind !== "bulkOut") throw new Error("unreachable");
-    expect(port.transfers).toEqual([undefined, [bulkOut.data.buffer]]);
+    expect(port.transfers).toEqual([undefined, undefined, [bulkOut.data.buffer]]);
 
     port.emit({
       type: "usb.completion",
@@ -102,12 +103,16 @@ describe("usb/WebUsbPassthroughRuntime", () => {
     });
 
     await runtime.pollOnce();
-    expect(port.posted).toEqual([{ type: "usb.querySelected" }]);
+    expect(port.posted).toEqual([{ type: "usb.ringAttachRequest" }, { type: "usb.querySelected" }]);
 
     port.emit({ type: "usb.selected", ok: true, info: { vendorId: 1, productId: 2 } });
 
     const p = runtime.pollOnce();
-    expect(port.posted).toEqual([{ type: "usb.querySelected" }, { type: "usb.action", action }]);
+    expect(port.posted).toEqual([
+      { type: "usb.ringAttachRequest" },
+      { type: "usb.querySelected" },
+      { type: "usb.action", action },
+    ]);
     port.emit({ type: "usb.completion", completion: { kind: "bulkIn", id: 1, status: "stall" } satisfies UsbHostCompletion });
     await p;
   });
@@ -136,9 +141,9 @@ describe("usb/WebUsbPassthroughRuntime", () => {
 
     const p = runtime.pollOnce();
 
-    expect(port.posted).toEqual([{ type: "usb.action", action: actions[0] }]);
+    expect(port.posted).toEqual([{ type: "usb.ringAttachRequest" }, { type: "usb.action", action: actions[0] }]);
     // Transfer list was rejected, so the runtime should retry without transferables.
-    expect(port.transfers).toEqual([undefined]);
+    expect(port.transfers).toEqual([undefined, undefined]);
 
     port.emit({
       type: "usb.completion",
@@ -167,7 +172,10 @@ describe("usb/WebUsbPassthroughRuntime", () => {
 
     const p = runtime.pollOnce();
 
-    expect(port.posted).toEqual([{ type: "usb.action", action: { kind: "bulkIn", id: 1, endpoint: 0x81, length: 8 } }]);
+    expect(port.posted).toEqual([
+      { type: "usb.ringAttachRequest" },
+      { type: "usb.action", action: { kind: "bulkIn", id: 1, endpoint: 0x81, length: 8 } },
+    ]);
 
     const completion: UsbHostCompletion = { kind: "bulkIn", id: 1, status: "success", data: Uint8Array.of(1) };
     port.emit({ type: "usb.completion", completion });
@@ -232,7 +240,7 @@ describe("usb/WebUsbPassthroughRuntime", () => {
     port.emit({ type: "usb.selected", ok: true, info: { vendorId: 1, productId: 2 } });
 
     const p = runtime.pollOnce();
-    expect(port.posted).toEqual([{ type: "usb.action", action }]);
+    expect(port.posted).toEqual([{ type: "usb.ringAttachRequest" }, { type: "usb.action", action }]);
 
     // No completion is delivered; selecting ok:false should cancel the in-flight action and reset the bridge.
     port.emit({ type: "usb.selected", ok: false, error: "device revoked" });
@@ -255,7 +263,7 @@ describe("usb/WebUsbPassthroughRuntime", () => {
 
     const runtime = new WebUsbPassthroughRuntime({ bridge, port: port as unknown as MessagePort, pollIntervalMs: 0 });
     await runtime.pollOnce();
-    expect(port.posted).toEqual([]);
+    expect(port.posted).toEqual([{ type: "usb.ringAttachRequest" }]);
   });
 
   it("limits forwarded actions per pollOnce when maxActionsPerPoll is set", async () => {
@@ -285,6 +293,7 @@ describe("usb/WebUsbPassthroughRuntime", () => {
 
     const p1 = runtime.pollOnce();
     expect(port.posted).toEqual([
+      { type: "usb.ringAttachRequest" },
       { type: "usb.action", action: actions[0] },
       { type: "usb.action", action: actions[1] },
     ]);
@@ -296,7 +305,7 @@ describe("usb/WebUsbPassthroughRuntime", () => {
 
     const p2 = runtime.pollOnce();
     expect(drain_actions).toHaveBeenCalledTimes(1);
-    expect(port.posted.slice(2)).toEqual([{ type: "usb.action", action: actions[2] }]);
+    expect(port.posted.slice(3)).toEqual([{ type: "usb.action", action: actions[2] }]);
     port.emit({ type: "usb.completion", completion: { kind: "bulkIn", id: 3, status: "stall" } satisfies UsbHostCompletion });
     await p2;
   });
@@ -318,8 +327,8 @@ describe("usb/WebUsbPassthroughRuntime", () => {
 
     const p = runtime.pollOnce();
 
-    expect(port.posted).toHaveLength(1);
-    const msg = port.posted[0] as { type: string; action: { id: unknown } };
+    expect(port.posted).toHaveLength(2);
+    const msg = port.posted[1] as { type: string; action: { id: unknown } };
     expect(msg.type).toBe("usb.action");
     expect(msg.action.id).toBe(1);
     expect(typeof msg.action.id).toBe("number");
@@ -372,7 +381,7 @@ describe("usb/WebUsbPassthroughRuntime", () => {
     const runtime = new WebUsbPassthroughRuntime({ bridge, port: port as unknown as MessagePort, pollIntervalMs: 0 });
     await runtime.pollOnce();
 
-    expect(port.posted).toEqual([]);
+    expect(port.posted).toEqual([{ type: "usb.ringAttachRequest" }]);
     expect(reset).not.toHaveBeenCalled();
 
     expect(push_completion).toHaveBeenCalledTimes(1);
@@ -398,7 +407,7 @@ describe("usb/WebUsbPassthroughRuntime", () => {
     const runtime = new WebUsbPassthroughRuntime({ bridge, port: port as unknown as MessagePort, pollIntervalMs: 0 });
     await runtime.pollOnce();
 
-    expect(port.posted).toEqual([]);
+    expect(port.posted).toEqual([{ type: "usb.ringAttachRequest" }]);
     expect(push_completion).not.toHaveBeenCalled();
     expect(reset).toHaveBeenCalledTimes(1);
     expect(runtime.getMetrics().lastError).toMatch(/missing id/);
@@ -420,7 +429,7 @@ describe("usb/WebUsbPassthroughRuntime", () => {
     const runtime = new WebUsbPassthroughRuntime({ bridge, port: port as unknown as MessagePort, pollIntervalMs: 0 });
 
     const p = runtime.pollOnce();
-    expect(port.posted).toEqual([{ type: "usb.action", action }]);
+    expect(port.posted).toEqual([{ type: "usb.ringAttachRequest" }, { type: "usb.action", action }]);
 
     // `data` is an array instead of a Uint8Array, so it fails validation.
     port.emit({
@@ -454,7 +463,7 @@ describe("usb/WebUsbPassthroughRuntime", () => {
     const runtime = new WebUsbPassthroughRuntime({ bridge, port: port as unknown as MessagePort, pollIntervalMs: 0 });
     await runtime.pollOnce();
 
-    expect(port.posted).toEqual([]);
+    expect(port.posted).toEqual([{ type: "usb.ringAttachRequest" }]);
     expect(push_completion).not.toHaveBeenCalled();
     expect(reset).toHaveBeenCalledTimes(1);
     expect(runtime.getMetrics().lastError).toMatch(/invalid id/);

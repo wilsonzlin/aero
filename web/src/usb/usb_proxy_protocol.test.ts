@@ -9,6 +9,7 @@ import {
   isUsbHostCompletion,
   isUsbProxyMessage,
   isUsbRingAttachMessage,
+  isUsbRingAttachRequestMessage,
   usbErrorCompletion,
   type UsbActionMessage,
   type UsbCompletionMessage,
@@ -112,6 +113,10 @@ describe("usb/usb_proxy_protocol", () => {
     const ringAttach = { type: "usb.ringAttach", actionRing: new SharedArrayBuffer(16), completionRing: new SharedArrayBuffer(16) };
     expect(isUsbRingAttachMessage(ringAttach)).toBe(true);
     expect(isUsbProxyMessage(ringAttach)).toBe(true);
+
+    const ringAttachReq = { type: "usb.ringAttachRequest" };
+    expect(isUsbRingAttachRequestMessage(ringAttachReq)).toBe(true);
+    expect(isUsbProxyMessage(ringAttachReq)).toBe(true);
     expect(
       isUsbProxyMessage({
         type: "usb.guest.status",

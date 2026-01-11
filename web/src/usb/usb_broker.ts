@@ -3,6 +3,7 @@ import {
   isUsbActionMessage,
   isUsbGuestWebUsbStatusMessage,
   isUsbQuerySelectedMessage,
+  isUsbRingAttachRequestMessage,
   isUsbSelectDeviceMessage,
   usbErrorCompletion,
   type UsbActionMessage,
@@ -326,6 +327,13 @@ export class UsbBroker {
           return;
         }
 
+        if (isUsbRingAttachRequestMessage(data)) {
+          // Best-effort: late-starting runtimes may have missed the initial `usb.ringAttach`
+          // message. Resend the ring handles so they can switch to the shared-memory fast path.
+          this.attachRings(port);
+          return;
+        }
+
         if (isUsbGuestWebUsbStatusMessage(data)) {
           this.guestStatus = data.snapshot;
           this.broadcastGuestStatus({ type: "usb.guest.status", snapshot: data.snapshot });
@@ -400,21 +408,30 @@ export class UsbBroker {
   }
 
   private attachRings(port: MessagePort | Worker): void {
-    if (this.actionRings.has(port) || this.completionRings.has(port)) return;
     if (!this.canUseSharedMemory()) return;
 
-    const actionSab = createUsbProxyRingBuffer(this.ringActionCapacityBytes);
-    const completionSab = createUsbProxyRingBuffer(this.ringCompletionCapacityBytes);
-    const actionRing = new UsbProxyRing(actionSab);
-    const completionRing = new UsbProxyRing(completionSab);
-    this.actionRings.set(port, actionRing);
-    this.completionRings.set(port, completionRing);
+    let actionRing = this.actionRings.get(port) ?? null;
+    let completionRing = this.completionRings.get(port) ?? null;
 
-    const timer = setInterval(() => this.drainActionRing(port), this.ringDrainIntervalMs);
-    (timer as unknown as { unref?: () => void }).unref?.();
-    this.ringDrainTimers.set(port, timer);
+    if (!actionRing || !completionRing) {
+      const actionSab = createUsbProxyRingBuffer(this.ringActionCapacityBytes);
+      const completionSab = createUsbProxyRingBuffer(this.ringCompletionCapacityBytes);
+      actionRing = new UsbProxyRing(actionSab);
+      completionRing = new UsbProxyRing(completionSab);
+      this.actionRings.set(port, actionRing);
+      this.completionRings.set(port, completionRing);
 
-    const msg: UsbRingAttachMessage = { type: "usb.ringAttach", actionRing: actionSab, completionRing: completionSab };
+      const timer = setInterval(() => this.drainActionRing(port), this.ringDrainIntervalMs);
+      (timer as unknown as { unref?: () => void }).unref?.();
+      this.ringDrainTimers.set(port, timer);
+    }
+
+    // Always send the ring handles so late-starting runtimes can attach.
+    const msg: UsbRingAttachMessage = {
+      type: "usb.ringAttach",
+      actionRing: actionRing.buffer(),
+      completionRing: completionRing.buffer(),
+    };
     this.postToPort(port, msg);
   }
 

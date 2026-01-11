@@ -126,6 +126,45 @@ describe("usb/WebUSB proxy SAB ring integration", () => {
     broker.detachWorkerPort(brokerPort as unknown as MessagePort);
   });
 
+  it("allows late-starting runtimes to request usb.ringAttach (so they can still use rings)", async () => {
+    Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
+
+    const broker = new UsbBroker({ ringDrainIntervalMs: 1 });
+    const { brokerPort, workerPort } = createChannel();
+
+    // Attach the worker port first: `usb.ringAttach` is emitted immediately, but there is no runtime
+    // listener yet so it is effectively missed.
+    broker.attachWorkerPort(brokerPort as unknown as MessagePort);
+    brokerPort.sent.length = 0;
+
+    const actions: UsbHostAction[] = [{ kind: "bulkIn", id: 1, endpoint: 0x81, length: 8 }];
+    const push_completion = vi.fn();
+    const bridge: UsbPassthroughBridgeLike = {
+      drain_actions: vi.fn(() => actions),
+      push_completion,
+      reset: vi.fn(),
+      free: vi.fn(),
+    };
+
+    const runtime = new WebUsbPassthroughRuntime({ bridge, port: workerPort as unknown as MessagePort, pollIntervalMs: 0 });
+
+    // Runtime constructor should have requested rings, triggering a re-send of usb.ringAttach.
+    expect(brokerPort.sent.some((p) => (p.msg as { type?: unknown }).type === "usb.ringAttach")).toBe(true);
+
+    // Drop worker -> broker postMessage deliveries to ensure the ring path is used.
+    workerPort.deliverToPeer = false;
+
+    await withTimeout(runtime.pollOnce(), 250);
+
+    const postedActions = workerPort.sent.filter((p) => (p.msg as { type?: unknown }).type === "usb.action");
+    expect(postedActions).toHaveLength(0);
+
+    expect(push_completion).toHaveBeenCalledTimes(1);
+
+    runtime.destroy();
+    broker.detachWorkerPort(brokerPort as unknown as MessagePort);
+  });
+
   it("falls back to usb.action postMessage when the action ring is full", async () => {
     Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
 
