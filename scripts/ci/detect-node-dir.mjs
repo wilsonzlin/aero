@@ -189,10 +189,26 @@ let lockfile = "";
 if (existsSync(lockfileAbs)) {
     lockfile = toOutputRelativePath(outputRoot, lockfileAbs);
 } else if (requireLockfile) {
-    die(
-        `package-lock.json not found at '${toOutputRelativePath(outputRoot, lockfileAbs)}'. ` +
-            "This workflow expects npm; ensure a lockfile exists.",
-    );
+    const relToRoot = path.relative(searchRoot, workspaceAbs);
+    const insideSearchRoot = relToRoot === "" || (!relToRoot.startsWith("..") && !path.isAbsolute(relToRoot));
+    const rootLockfileAbs = path.join(searchRoot, "package-lock.json");
+    if (insideSearchRoot && existsSync(rootLockfileAbs)) {
+        lockfile = toOutputRelativePath(outputRoot, rootLockfileAbs);
+    } else {
+        die(
+            `package-lock.json not found at '${toOutputRelativePath(outputRoot, lockfileAbs)}'. ` +
+                "This workflow expects npm; ensure a lockfile exists.",
+        );
+    }
+} else {
+    // Workspaces: the lockfile may live at the checkout root even when the selected
+    // Node directory is a workspace subdirectory (e.g. AERO_NODE_DIR=web).
+    const relToRoot = path.relative(searchRoot, workspaceAbs);
+    const insideSearchRoot = relToRoot === "" || (!relToRoot.startsWith("..") && !path.isAbsolute(relToRoot));
+    const rootLockfileAbs = path.join(searchRoot, "package-lock.json");
+    if (insideSearchRoot && existsSync(rootLockfileAbs)) {
+        lockfile = toOutputRelativePath(outputRoot, rootLockfileAbs);
+    }
 }
 
 const out = {

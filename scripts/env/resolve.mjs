@@ -384,7 +384,9 @@ if (args.requireWasmCrateDir && !wasmCrateDir.abs) {
   die("unable to locate a wasm crate (Cargo.toml); set AERO_WASM_CRATE_DIR or pass --wasm-crate-dir <path>");
 }
 
-const nodeLockfileAbs = detectNodeLockfile(nodeDir.abs);
+// In an npm-workspaces monorepo, `package-lock.json` lives at the repo root even
+// when callers point `AERO_NODE_DIR` at a workspace subdirectory (e.g. `web/`).
+const nodeLockfileAbs = detectNodeLockfile(nodeDir.abs) ?? detectNodeLockfile(repoRoot);
 
 const resolved = {
   // Useful for consumers that need to resolve relative paths.
