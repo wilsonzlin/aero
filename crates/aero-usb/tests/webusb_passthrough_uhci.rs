@@ -1,6 +1,6 @@
 use aero_usb::passthrough::{
     SetupPacket as HostSetupPacket, UsbHostAction, UsbHostCompletion, UsbHostCompletionIn,
-    UsbWebUsbPassthroughDevice,
+    UsbHostCompletionOut, UsbWebUsbPassthroughDevice,
 };
 use aero_usb::uhci::UhciController;
 use aero_usb::usb::SetupPacket;
@@ -200,6 +200,115 @@ fn control_in_pending_produces_td_nak_until_completion() {
         passthrough_device_mut(&mut ctrl).drain_actions().is_empty(),
         "expected no new host actions after completion"
     );
+}
+
+#[test]
+fn control_out_pending_acks_data_then_naks_status_until_completion() {
+    let io_base = 0x5250;
+    let (mut ctrl, mut mem, mut irq, mut alloc, fl_base) = setup_controller(io_base);
+
+    let setup = SetupPacket {
+        request_type: 0x40, // Vendor, host-to-device.
+        request: 0x01,
+        value: 0x1234,
+        index: 0,
+        length: 3,
+    };
+    let payload = [0xAAu8, 0xBB, 0xCC];
+
+    let qh_addr = alloc.alloc(0x20, 0x10);
+    let setup_buf = alloc.alloc(8, 0x10);
+    let setup_td = alloc.alloc(0x20, 0x10);
+    let data_buf = alloc.alloc(payload.len() as u32, 0x10);
+    let data_td = alloc.alloc(0x20, 0x10);
+    let status_td = alloc.alloc(0x20, 0x10);
+
+    mem.write(setup_buf, &setup_packet_bytes(setup));
+    mem.write(data_buf, &payload);
+
+    write_td(
+        &mut mem,
+        setup_td,
+        data_td,
+        td_ctrl(true, false),
+        td_token(0x2D, 0, 0, false, 8),
+        setup_buf,
+    );
+    write_td(
+        &mut mem,
+        data_td,
+        status_td,
+        td_ctrl(true, false),
+        td_token(0xE1, 0, 0, true, payload.len()),
+        data_buf,
+    );
+    // Status stage: IN zero-length, DATA1.
+    write_td(
+        &mut mem,
+        status_td,
+        LINK_PTR_T,
+        td_ctrl(true, true),
+        td_token(0x69, 0, 0, true, 0),
+        0,
+    );
+
+    write_qh(&mut mem, qh_addr, LINK_PTR_T, setup_td);
+    install_frame_list(&mut mem, fl_base, qh_addr);
+
+    // Frame #1: SETUP and OUT DATA TDs complete, STATUS stage NAKs (pending).
+    ctrl.step_frame(&mut mem, &mut irq);
+
+    assert_eq!(mem.read_u32(setup_td + 4) & TD_CTRL_ACTIVE, 0);
+    assert_eq!(mem.read_u32(data_td + 4) & TD_CTRL_ACTIVE, 0);
+
+    let status_ctrl = mem.read_u32(status_td + 4);
+    assert_ne!(status_ctrl & TD_CTRL_ACTIVE, 0);
+    assert_ne!(status_ctrl & TD_CTRL_NAK, 0);
+
+    let mut actions = passthrough_device_mut(&mut ctrl).drain_actions();
+    assert_eq!(actions.len(), 1, "expected exactly one queued host action");
+    let action = actions.pop().unwrap();
+    let (id, got_setup, got_data) = match action {
+        UsbHostAction::ControlOut { id, setup, data } => (id, setup, data),
+        other => panic!("unexpected action: {other:?}"),
+    };
+    assert_eq!(
+        got_setup,
+        HostSetupPacket {
+            bm_request_type: setup.request_type,
+            b_request: setup.request,
+            w_value: setup.value,
+            w_index: setup.index,
+            w_length: setup.length,
+        }
+    );
+    assert_eq!(got_data, payload);
+
+    // Frame #2: still pending, should NAK again without emitting a duplicate action.
+    ctrl.step_frame(&mut mem, &mut irq);
+    let status_ctrl = mem.read_u32(status_td + 4);
+    assert_ne!(status_ctrl & TD_CTRL_ACTIVE, 0);
+    assert_ne!(status_ctrl & TD_CTRL_NAK, 0);
+    assert!(
+        passthrough_device_mut(&mut ctrl).drain_actions().is_empty(),
+        "expected no duplicate host actions while pending"
+    );
+
+    // Provide completion and ensure the next frame completes the STATUS stage.
+    passthrough_device_mut(&mut ctrl).push_completion(UsbHostCompletion::ControlOut {
+        id,
+        result: UsbHostCompletionOut::Success {
+            bytes_written: payload.len() as u32,
+        },
+    });
+
+    ctrl.step_frame(&mut mem, &mut irq);
+    let status_ctrl = mem.read_u32(status_td + 4);
+    assert_eq!(status_ctrl & TD_CTRL_ACTIVE, 0);
+    assert_eq!(actlen(status_ctrl), 0);
+
+    assert_eq!(mem.read_u32(qh_addr + 4), LINK_PTR_T);
+    assert!(passthrough_device_mut(&mut ctrl).drain_actions().is_empty());
 }
 
 #[test]
