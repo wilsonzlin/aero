@@ -136,6 +136,16 @@ def main() -> int:
             "contract-v1: additionally forces x-pci-revision=0x01."
         ),
     )
+    parser.add_argument(
+        "--dump-query-pci",
+        action="store_true",
+        help="Print the raw QMP query-pci JSON (useful if your QEMU version has a different schema).",
+    )
+    parser.add_argument(
+        "--dump-info-pci",
+        action="store_true",
+        help="Print the HMP 'info pci' output via QMP (useful for manual inspection).",
+    )
     args = parser.parse_args()
 
     rev_arg = ""
@@ -177,7 +187,7 @@ def main() -> int:
             qemu_args,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
             text=True,
         )
         try:
@@ -188,6 +198,14 @@ def main() -> int:
             _qmp_exec(proc, "qmp_capabilities", None, 1)
             res = _qmp_exec(proc, "query-pci", None, 2)
             query = res.get("return")
+            if args.dump_query_pci:
+                print(json.dumps(query, indent=2, sort_keys=True))
+                print("")
+            if args.dump_info_pci:
+                info = _qmp_exec(proc, "human-monitor-command", {"command-line": "info pci"}, 3).get("return", "")
+                print("--- HMP: info pci ---")
+                print(info.rstrip())
+                print("")
             devices = _iter_pci_devices(query)
 
             want = {(0x1AF4, 0x1041), (0x1AF4, 0x1042), (0x1AF4, 0x1052)}
@@ -205,6 +223,11 @@ def main() -> int:
                 )
             if not filtered:
                 print("  (no matching devices found in query-pci output)")
+                err = (proc.stderr.read() or "").strip()
+                if err:
+                    print("")
+                    print("--- QEMU stderr ---")
+                    print(err)
 
             return 0
         finally:
@@ -223,4 +246,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
