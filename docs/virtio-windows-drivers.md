@@ -105,7 +105,7 @@ Notes:
   - Aero’s in-tree Win7 virtio driver packages are revision-gated (`&REV_01`), and some drivers also validate the revision at runtime.
   - For QEMU-based testing with strict contract-v1 drivers, pass `x-pci-revision=0x01` on each `-device virtio-*-pci,...` arg (the Win7 host harness under `drivers/windows7/tests/host-harness/` does this automatically).
 
-### Contract ↔ in-tree drivers ↔ Guest Tools config (net/blk)
+### Contract ↔ in-tree drivers ↔ Guest Tools config (virtio)
 
 For Aero’s in-tree drivers and Guest Tools installer logic, the identifiers below must match **exactly**:
 
@@ -113,6 +113,8 @@ For Aero’s in-tree drivers and Guest Tools installer logic, the identifiers be
 |---|---|---|---|---|
 | virtio-net | `1AF4:1041` (REV `0x01`) | `drivers/windows7/virtio/net/aerovnet.inf` | `aerovnet` | `guest-tools/config/devices.cmd`: `AERO_VIRTIO_NET_SERVICE`, `AERO_VIRTIO_NET_HWIDS` |
 | virtio-blk | `1AF4:1042` (REV `0x01`) | `drivers/windows7/virtio/blk/aerovblk.inf` | `aerovblk` | `guest-tools/config/devices.cmd`: `AERO_VIRTIO_BLK_SERVICE`, `AERO_VIRTIO_BLK_HWIDS` |
+| virtio-input | `1AF4:1052` (REV `0x01`) | `drivers/windows/virtio-input/virtio-input.inf` | `virtioinput` | `guest-tools/config/devices.cmd`: `AERO_VIRTIO_INPUT_SERVICE`, `AERO_VIRTIO_INPUT_HWIDS` |
+| virtio-snd | `1AF4:1059` (REV `0x01`) | `drivers/windows7/virtio-snd/inf/aero-virtio-snd.inf` | `aeroviosnd` | `guest-tools/config/devices.cmd`: `AERO_VIRTIO_SND_SERVICE`, `AERO_VIRTIO_SND_HWIDS` |
 
 Guest Tools uses:
 
