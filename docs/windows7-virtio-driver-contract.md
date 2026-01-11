@@ -869,6 +869,7 @@ Playback data path (`txq`):
 - After start, the driver submits PCM buffers on `txq`.
 - The device MUST play buffers in order and complete each buffer with OK status when consumed.
 - On underrun, the device MUST output silence and continue.
+- The device MAY reject playback buffers with payloads larger than **4 MiB** with `BAD_MSG` (implementation safety limit).
 
 Capture data path (`rxq`):
 
