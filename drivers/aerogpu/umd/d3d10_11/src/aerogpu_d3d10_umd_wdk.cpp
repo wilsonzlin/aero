@@ -1940,31 +1940,8 @@ HRESULT APIENTRY Map(D3D10DDI_HDEVICE hDevice, D3D10DDIARG_MAP* pMap) {
   return S_OK;
 }
 
-void APIENTRY Unmap(D3D10DDI_HDEVICE hDevice, const D3D10DDIARG_UNMAP* pUnmap) {
-  if (!hDevice.pDrvPrivate || !pUnmap || !pUnmap->hResource.pDrvPrivate) {
-    SetError(hDevice, E_INVALIDARG);
-    return;
-  }
-
-  auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
-  auto* res = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(pUnmap->hResource);
+void unmap_resource_locked(D3D10DDI_HDEVICE hDevice, AeroGpuDevice* dev, AeroGpuResource* res, uint32_t subresource) {
   if (!dev || !res) {
-    SetError(hDevice, E_INVALIDARG);
-    return;
-  }
-
-  std::lock_guard<std::mutex> lock(dev->mutex);
-
-  uint32_t subresource = 0;
-  __if_exists(D3D10DDIARG_UNMAP::Subresource) {
-    subresource = static_cast<uint32_t>(pUnmap->Subresource);
-  }
-
-  if (!res->mapped) {
-    SetError(hDevice, E_FAIL);
-    return;
-  }
-  if (subresource != res->mapped_subresource) {
     SetError(hDevice, E_INVALIDARG);
     return;
   }
@@ -2066,6 +2043,203 @@ void APIENTRY Unmap(D3D10DDI_HDEVICE hDevice, const D3D10DDIARG_UNMAP* pUnmap) {
   res->mapped_wddm_allocation = 0;
   res->mapped_wddm_pitch = 0;
   res->mapped_wddm_slice_pitch = 0;
+}
+
+void APIENTRY Unmap(D3D10DDI_HDEVICE hDevice, const D3D10DDIARG_UNMAP* pUnmap) {
+  if (!hDevice.pDrvPrivate || !pUnmap || !pUnmap->hResource.pDrvPrivate) {
+    SetError(hDevice, E_INVALIDARG);
+    return;
+  }
+
+  auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+  auto* res = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(pUnmap->hResource);
+  if (!dev || !res) {
+    SetError(hDevice, E_INVALIDARG);
+    return;
+  }
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+
+  uint32_t subresource = 0;
+  __if_exists(D3D10DDIARG_UNMAP::Subresource) {
+    subresource = static_cast<uint32_t>(pUnmap->Subresource);
+  }
+
+  if (!res->mapped) {
+    SetError(hDevice, E_FAIL);
+    return;
+  }
+  if (subresource != res->mapped_subresource) {
+    SetError(hDevice, E_INVALIDARG);
+    return;
+  }
+  unmap_resource_locked(hDevice, dev, res, subresource);
+}
+
+// -------------------------------------------------------------------------------------------------
+// Optional Win7 D3D10 entrypoints for staging and dynamic maps.
+//
+// Some WDK/runtime combinations route certain Map/Unmap calls through these
+// specialized hooks rather than `pfnMap`. Implement them as thin wrappers so the
+// D3D10 runtime never observes E_NOTIMPL for common map patterns.
+// -------------------------------------------------------------------------------------------------
+
+HRESULT APIENTRY StagingResourceMap(D3D10DDI_HDEVICE hDevice,
+                                    D3D10DDI_HRESOURCE hResource,
+                                    UINT subresource,
+                                    D3D10_DDI_MAP map_type,
+                                    UINT map_flags,
+                                    D3D10DDI_MAPPED_SUBRESOURCE* pMapped) {
+  if (!pMapped) {
+    return E_INVALIDARG;
+  }
+  pMapped->pData = nullptr;
+  pMapped->RowPitch = 0;
+  pMapped->DepthPitch = 0;
+  if (!hDevice.pDrvPrivate || !hResource.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+
+  D3D10DDIARG_MAP map{};
+  map.hResource = hResource;
+  __if_exists(D3D10DDIARG_MAP::Subresource) {
+    map.Subresource = subresource;
+  }
+  __if_exists(D3D10DDIARG_MAP::MapType) {
+    map.MapType = map_type;
+  }
+  __if_exists(D3D10DDIARG_MAP::MapFlags) {
+    map.MapFlags = map_flags;
+  }
+  __if_not_exists(D3D10DDIARG_MAP::MapFlags) {
+    __if_exists(D3D10DDIARG_MAP::Flags) {
+      map.Flags = map_flags;
+    }
+  }
+
+  const HRESULT hr = Map(hDevice, &map);
+  if (FAILED(hr)) {
+    return hr;
+  }
+
+  pMapped->pData = map.pData;
+  pMapped->RowPitch = map.RowPitch;
+  pMapped->DepthPitch = map.DepthPitch;
+  return S_OK;
+}
+
+void APIENTRY StagingResourceUnmap(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hResource, UINT subresource) {
+  if (!hDevice.pDrvPrivate || !hResource.pDrvPrivate) {
+    return;
+  }
+  auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+  auto* res = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(hResource);
+  if (!dev || !res) {
+    return;
+  }
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  if (!res->mapped || static_cast<uint32_t>(subresource) != res->mapped_subresource) {
+    return;
+  }
+  unmap_resource_locked(hDevice, dev, res, static_cast<uint32_t>(subresource));
+}
+
+HRESULT APIENTRY DynamicIABufferMapDiscard(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hResource, void** ppData) {
+  if (!ppData) {
+    return E_INVALIDARG;
+  }
+  *ppData = nullptr;
+  if (!hDevice.pDrvPrivate || !hResource.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+
+  D3D10DDIARG_MAP map{};
+  map.hResource = hResource;
+  __if_exists(D3D10DDIARG_MAP::MapType) {
+    map.MapType = static_cast<D3D10_DDI_MAP>(kD3DMapWriteDiscard);
+  }
+  const HRESULT hr = Map(hDevice, &map);
+  if (FAILED(hr)) {
+    return hr;
+  }
+  *ppData = map.pData;
+  return S_OK;
+}
+
+HRESULT APIENTRY DynamicIABufferMapNoOverwrite(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hResource, void** ppData) {
+  if (!ppData) {
+    return E_INVALIDARG;
+  }
+  *ppData = nullptr;
+  if (!hDevice.pDrvPrivate || !hResource.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+
+  D3D10DDIARG_MAP map{};
+  map.hResource = hResource;
+  __if_exists(D3D10DDIARG_MAP::MapType) {
+    map.MapType = static_cast<D3D10_DDI_MAP>(kD3DMapWriteNoOverwrite);
+  }
+  const HRESULT hr = Map(hDevice, &map);
+  if (FAILED(hr)) {
+    return hr;
+  }
+  *ppData = map.pData;
+  return S_OK;
+}
+
+void APIENTRY DynamicIABufferUnmap(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hResource) {
+  if (!hDevice.pDrvPrivate || !hResource.pDrvPrivate) {
+    return;
+  }
+  auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+  auto* res = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(hResource);
+  if (!dev || !res) {
+    return;
+  }
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  if (!res->mapped || res->mapped_subresource != 0) {
+    return;
+  }
+  unmap_resource_locked(hDevice, dev, res, /*subresource=*/0);
+}
+
+HRESULT APIENTRY DynamicConstantBufferMapDiscard(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hResource, void** ppData) {
+  if (!ppData) {
+    return E_INVALIDARG;
+  }
+  *ppData = nullptr;
+  if (!hDevice.pDrvPrivate || !hResource.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+
+  D3D10DDIARG_MAP map{};
+  map.hResource = hResource;
+  __if_exists(D3D10DDIARG_MAP::MapType) {
+    map.MapType = static_cast<D3D10_DDI_MAP>(kD3DMapWriteDiscard);
+  }
+  const HRESULT hr = Map(hDevice, &map);
+  if (FAILED(hr)) {
+    return hr;
+  }
+  *ppData = map.pData;
+  return S_OK;
+}
+
+void APIENTRY DynamicConstantBufferUnmap(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hResource) {
+  if (!hDevice.pDrvPrivate || !hResource.pDrvPrivate) {
+    return;
+  }
+  auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+  auto* res = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(hResource);
+  if (!dev || !res) {
+    return;
+  }
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  if (!res->mapped || res->mapped_subresource != 0) {
+    return;
+  }
+  unmap_resource_locked(hDevice, dev, res, /*subresource=*/0);
 }
 
 void APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice, const D3D10DDIARG_UPDATESUBRESOURCEUP* pUpdate) {
@@ -4270,25 +4444,25 @@ HRESULT APIENTRY CreateDevice(D3D10DDI_HADAPTER hAdapter, const D3D10DDIARG_CREA
     funcs.pfnWriteToSubresource = &NotImpl<decltype(funcs.pfnWriteToSubresource)>::Fn;
   }
   if constexpr (has_pfnStagingResourceMap<D3D10DDI_DEVICEFUNCS>::value) {
-    funcs.pfnStagingResourceMap = &NotImpl<decltype(funcs.pfnStagingResourceMap)>::Fn;
+    funcs.pfnStagingResourceMap = &StagingResourceMap;
   }
   if constexpr (has_pfnStagingResourceUnmap<D3D10DDI_DEVICEFUNCS>::value) {
-    funcs.pfnStagingResourceUnmap = &Noop<decltype(funcs.pfnStagingResourceUnmap)>::Fn;
+    funcs.pfnStagingResourceUnmap = &StagingResourceUnmap;
   }
   if constexpr (has_pfnDynamicIABufferMapDiscard<D3D10DDI_DEVICEFUNCS>::value) {
-    funcs.pfnDynamicIABufferMapDiscard = &NotImpl<decltype(funcs.pfnDynamicIABufferMapDiscard)>::Fn;
+    funcs.pfnDynamicIABufferMapDiscard = &DynamicIABufferMapDiscard;
   }
   if constexpr (has_pfnDynamicIABufferMapNoOverwrite<D3D10DDI_DEVICEFUNCS>::value) {
-    funcs.pfnDynamicIABufferMapNoOverwrite = &NotImpl<decltype(funcs.pfnDynamicIABufferMapNoOverwrite)>::Fn;
+    funcs.pfnDynamicIABufferMapNoOverwrite = &DynamicIABufferMapNoOverwrite;
   }
   if constexpr (has_pfnDynamicIABufferUnmap<D3D10DDI_DEVICEFUNCS>::value) {
-    funcs.pfnDynamicIABufferUnmap = &Noop<decltype(funcs.pfnDynamicIABufferUnmap)>::Fn;
+    funcs.pfnDynamicIABufferUnmap = &DynamicIABufferUnmap;
   }
   if constexpr (has_pfnDynamicConstantBufferMapDiscard<D3D10DDI_DEVICEFUNCS>::value) {
-    funcs.pfnDynamicConstantBufferMapDiscard = &NotImpl<decltype(funcs.pfnDynamicConstantBufferMapDiscard)>::Fn;
+    funcs.pfnDynamicConstantBufferMapDiscard = &DynamicConstantBufferMapDiscard;
   }
   if constexpr (has_pfnDynamicConstantBufferUnmap<D3D10DDI_DEVICEFUNCS>::value) {
-    funcs.pfnDynamicConstantBufferUnmap = &Noop<decltype(funcs.pfnDynamicConstantBufferUnmap)>::Fn;
+    funcs.pfnDynamicConstantBufferUnmap = &DynamicConstantBufferUnmap;
   }
   if constexpr (has_pfnCalcPrivateQuerySize<D3D10DDI_DEVICEFUNCS>::value) {
     funcs.pfnCalcPrivateQuerySize = &NotImpl<decltype(funcs.pfnCalcPrivateQuerySize)>::Fn;
