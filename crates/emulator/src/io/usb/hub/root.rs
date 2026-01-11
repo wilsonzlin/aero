@@ -202,8 +202,16 @@ impl RootHub {
                 });
             }
             p.device = Some(AttachedUsbDevice::new(model));
-            p.connected = true;
+            if !p.connected {
+                p.connected = true;
+            }
             p.connect_change = true;
+            // Connecting a new device effectively disables the port until the host performs
+            // the reset/enable sequence.
+            if p.enabled {
+                p.enabled = false;
+                p.enable_change = true;
+            }
             return Ok(());
         }
 

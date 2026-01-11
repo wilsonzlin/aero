@@ -250,3 +250,33 @@ fn disabled_downstream_port_is_not_routable() {
     hub_ctl.set_port_enabled(0, false);
     assert!(root.device_mut_for_address(5).is_none());
 }
+
+#[test]
+fn attach_at_path_to_root_port_disables_previously_enabled_port() {
+    let mut root = RootHub::new();
+
+    // Force-enable the root port first; this simulates a host that previously enabled the port
+    // (or test harnesses that bypass the reset/enable dance).
+    root.force_enable_for_tests(0);
+
+    // Clear the port-enable-change latch while keeping the port enabled.
+    const PED: u16 = 1 << 2;
+    const PEDC: u16 = 1 << 3;
+    root.write_portsc(0, PED | PEDC);
+    let before = root.read_portsc(0);
+    assert_ne!(before & PED, 0);
+    assert_eq!(before & PEDC, 0);
+
+    // Attaching a new device should disable the port until the host performs a reset/enable
+    // sequence again.
+    root.attach_at_path(&[0], Box::new(TestLeaf))
+        .expect("attach leaf at root port");
+    let after = root.read_portsc(0);
+    assert_eq!(after & PED, 0);
+    assert_ne!(after & PEDC, 0);
+
+    assert!(
+        root.device_mut_for_address(0).is_none(),
+        "device should not be routable until the port is re-enabled"
+    );
+}
