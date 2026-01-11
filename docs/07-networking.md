@@ -570,6 +570,11 @@ Health check:
 curl http://127.0.0.1:8081/healthz
 ```
 
+UDP relay modes:
+
+- `WS /udp` (no `host`/`port`/`target` query params): multiplexed UDP relay framing (v1/v2 datagrams) per [`proxy/webrtc-udp-relay/PROTOCOL.md`](../proxy/webrtc-udp-relay/PROTOCOL.md).
+- `WS /udp?v=1&host=<host>&port=<port>` (or `target=<host>:<port>`): legacy per-target UDP relay (raw UDP payload bytes).
+
 The simplest approach is one WebSocket per TCP connection (`/tcp`). For high
 connection counts (thousands of concurrent guest sockets), the gateway should
 support multiplexing many TCP streams over a single WebSocket connection
