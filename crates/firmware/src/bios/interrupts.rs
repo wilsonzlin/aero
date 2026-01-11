@@ -756,7 +756,7 @@ fn build_e820_map(
 
 #[cfg(test)]
 mod tests {
-    use super::super::BiosConfig;
+    use super::super::{BiosConfig, PCIE_ECAM_BASE, PCIE_ECAM_SIZE};
     use super::*;
     use machine::{CpuState, InMemoryDisk, MemoryAccess, PhysicalMemory, FLAG_CF};
 
@@ -941,18 +941,21 @@ mod tests {
 
     #[test]
     fn e820_reserves_pcie_ecam_window() {
-        let map = build_e820_map(4 * 1024 * 1024 * 1024, None, None);
+        const FOUR_GIB: u64 = 4 * 1024 * 1024 * 1024;
+        let map = build_e820_map(FOUR_GIB, None, None);
 
         assert!(
             map.iter().any(|e| {
-                e.base == 0xB000_0000 && e.length == 0x1000_0000 && e.region_type == E820_RESERVED
+                e.base == PCIE_ECAM_BASE && e.length == PCIE_ECAM_SIZE && e.region_type == E820_RESERVED
             }),
-            "E820 should reserve the PCIe ECAM window at 0xB000_0000..0xC000_0000"
+            "E820 should reserve the PCIe ECAM window at 0x{PCIE_ECAM_BASE:x}..0x{:x}",
+            PCIE_ECAM_BASE + PCIE_ECAM_SIZE
         );
 
+        let expected_high_len = FOUR_GIB - PCIE_ECAM_BASE;
         assert!(
             map.iter().any(|e| {
-                e.base == 0x1_0000_0000 && e.length == 0x5000_0000 && e.region_type == E820_RAM
+                e.base == 0x1_0000_0000 && e.length == expected_high_len && e.region_type == E820_RAM
             }),
             "E820 should remap RAM above 4GiB to preserve the configured memory size"
         );
@@ -962,8 +965,8 @@ mod tests {
                 continue;
             }
             let entry_end = entry.base.saturating_add(entry.length);
-            let overlap_start = entry.base.max(0xB000_0000);
-            let overlap_end = entry_end.min(0xC000_0000);
+            let overlap_start = entry.base.max(PCIE_ECAM_BASE);
+            let overlap_end = entry_end.min(PCIE_ECAM_BASE.saturating_add(PCIE_ECAM_SIZE));
             assert!(
                 overlap_end <= overlap_start,
                 "RAM entry overlaps ECAM window: {entry:?}"
