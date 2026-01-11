@@ -45,6 +45,7 @@ members = [
     "crates/aero-d3d9-shader",
     "crates/aero-d3d9",
     "crates/aero-debug",
+    "crates/aero-interrupts",
     "crates/aero-d3d11",
     "crates/aero-tier0",
     "crates/devices",

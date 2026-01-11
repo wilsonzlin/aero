@@ -1,8 +1,7 @@
 use aero_devices::clock::ManualClock;
 use aero_devices::hpet::Hpet;
 use aero_platform::interrupts::{
-    InterruptController, IoApicRedirectionEntry, PlatformInterruptMode, PlatformInterrupts,
-    TriggerMode,
+    InterruptController, PlatformInterruptMode, PlatformInterrupts,
 };
 
 const REG_GENERAL_CONFIG: u64 = 0x010;
@@ -20,6 +19,15 @@ const TIMER_CFG_PERIODIC: u64 = 1 << 3;
 const TIMER_CFG_INT_ROUTE_SHIFT: u64 = 9;
 const TIMER_CFG_INT_ROUTE_MASK: u64 = 0x1F << TIMER_CFG_INT_ROUTE_SHIFT;
 
+fn program_ioapic_entry(ints: &mut PlatformInterrupts, gsi: u32, low: u32, high: u32) {
+    let redtbl_low = 0x10u32 + gsi * 2;
+    let redtbl_high = redtbl_low + 1;
+    ints.ioapic_mmio_write(0x00, redtbl_low);
+    ints.ioapic_mmio_write(0x10, low);
+    ints.ioapic_mmio_write(0x00, redtbl_high);
+    ints.ioapic_mmio_write(0x10, high);
+}
+
 #[test]
 fn synthetic_guest_programs_hpet_and_receives_periodic_interrupts() {
     let clock = ManualClock::new();
@@ -27,10 +35,7 @@ fn synthetic_guest_programs_hpet_and_receives_periodic_interrupts() {
     interrupts.set_mode(PlatformInterruptMode::Apic);
 
     // Route GSI5 to vector 0x40.
-    let mut entry = IoApicRedirectionEntry::fixed(0x40, 0);
-    entry.masked = false;
-    entry.trigger = TriggerMode::Edge;
-    interrupts.ioapic_mut().set_entry(5, entry);
+    program_ioapic_entry(&mut interrupts, 5, 0x40, 0);
 
     let mut hpet = Hpet::new_default(clock.clone());
 
@@ -68,4 +73,3 @@ fn synthetic_guest_programs_hpet_and_receives_periodic_interrupts() {
         interrupts.eoi(0x40);
     }
 }
-

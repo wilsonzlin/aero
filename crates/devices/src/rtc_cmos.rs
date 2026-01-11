@@ -650,12 +650,19 @@ mod tests {
     use super::*;
     use crate::clock::ManualClock;
     use crate::irq::PlatformIrqLine;
-    use aero_platform::interrupts::{
-        InterruptController, IoApicRedirectionEntry, PlatformInterruptMode, PlatformInterrupts,
-    };
+    use aero_platform::interrupts::{InterruptController, PlatformInterruptMode, PlatformInterrupts};
     use std::cell::Cell;
     use std::cell::RefCell;
     use std::rc::Rc;
+
+    fn program_ioapic_entry(ints: &mut PlatformInterrupts, gsi: u32, low: u32, high: u32) {
+        let redtbl_low = 0x10u32 + gsi * 2;
+        let redtbl_high = redtbl_low + 1;
+        ints.ioapic_mmio_write(0x00, redtbl_low);
+        ints.ioapic_mmio_write(0x10, low);
+        ints.ioapic_mmio_write(0x00, redtbl_high);
+        ints.ioapic_mmio_write(0x10, high);
+    }
 
     #[derive(Clone)]
     struct TestIrq(Rc<Cell<bool>>);
@@ -873,9 +880,7 @@ mod tests {
             .set_mode(PlatformInterruptMode::Apic);
 
         let vector = 0x48u8;
-        let mut entry = IoApicRedirectionEntry::fixed(vector, 0);
-        entry.masked = false;
-        interrupts.borrow_mut().ioapic_mut().set_entry(8, entry);
+        program_ioapic_entry(&mut interrupts.borrow_mut(), 8, u32::from(vector), 0);
 
         let irq_line = PlatformIrqLine::isa(interrupts.clone(), 8);
         let rtc = Rc::new(RefCell::new(RtcCmos::new(clock.clone(), irq_line)));

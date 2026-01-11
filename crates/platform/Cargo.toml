@@ -5,6 +5,7 @@ edition = "2021"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
+aero-interrupts = { path = "../aero-interrupts" }
 memory = { path = "../memory" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

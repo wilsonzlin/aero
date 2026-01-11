@@ -3,8 +3,17 @@ use std::rc::Rc;
 
 use aero_devices::i8042::I8042Ports;
 use aero_platform::interrupts::{
-    InterruptController, IoApicRedirectionEntry, PlatformInterruptMode, PlatformInterrupts, TriggerMode,
+    InterruptController, PlatformInterruptMode, PlatformInterrupts,
 };
+
+fn program_ioapic_entry(ints: &mut PlatformInterrupts, gsi: u32, low: u32, high: u32) {
+    let redtbl_low = 0x10u32 + gsi * 2;
+    let redtbl_high = redtbl_low + 1;
+    ints.ioapic_mmio_write(0x00, redtbl_low);
+    ints.ioapic_mmio_write(0x10, low);
+    ints.ioapic_mmio_write(0x00, redtbl_high);
+    ints.ioapic_mmio_write(0x10, high);
+}
 
 #[test]
 fn i8042_keyboard_irq1_delivers_pic_vector() {
@@ -76,11 +85,7 @@ fn i8042_keyboard_irq1_delivers_ioapic_vector() {
     {
         let mut ints = interrupts.borrow_mut();
         ints.set_mode(PlatformInterruptMode::Apic);
-
-        let mut entry = IoApicRedirectionEntry::fixed(0x31, 0);
-        entry.masked = false;
-        entry.trigger = TriggerMode::Edge;
-        ints.ioapic_mut().set_entry(1, entry);
+        program_ioapic_entry(&mut ints, 1, 0x31, 0);
     }
 
     let i8042 = I8042Ports::new();
@@ -96,11 +101,7 @@ fn i8042_mouse_irq12_delivers_ioapic_vector() {
     {
         let mut ints = interrupts.borrow_mut();
         ints.set_mode(PlatformInterruptMode::Apic);
-
-        let mut entry = IoApicRedirectionEntry::fixed(0x3C, 0);
-        entry.masked = false;
-        entry.trigger = TriggerMode::Edge;
-        ints.ioapic_mut().set_entry(12, entry);
+        program_ioapic_entry(&mut ints, 12, 0x3C, 0);
     }
 
     let i8042 = I8042Ports::new();
@@ -117,4 +118,3 @@ fn i8042_mouse_irq12_delivers_ioapic_vector() {
 
     assert_eq!(interrupts.borrow().get_pending(), Some(0x3C));
 }
-

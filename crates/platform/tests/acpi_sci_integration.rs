@@ -113,9 +113,10 @@ fn program_level_ioapic_redirection(ints: &mut PlatformInterrupts, gsi: u32, vec
 
     // Low dword:
     // - vector in bits 0..7
+    // - bit13 = 1 => active-low (matches our MADT ISO for SCI)
     // - bit15 = 1 => level-triggered
     // - bit16 = 0 => unmasked
-    let low = (vector as u32) | (1 << 15);
+    let low = (vector as u32) | (1 << 13) | (1 << 15);
 
     ioapic_write_reg(ints, redir_low_index, low);
     ioapic_write_reg(ints, redir_high_index, 0); // destination APIC ID 0

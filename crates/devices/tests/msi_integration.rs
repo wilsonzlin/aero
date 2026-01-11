@@ -2,9 +2,17 @@ use aero_devices::pci::{
     MsiCapability, PciBdf, PciConfigSpace, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig,
 };
 use aero_platform::interrupts::{
-    InterruptController, IoApicRedirectionEntry, PlatformInterruptMode, PlatformInterrupts,
-    TriggerMode,
+    InterruptController, PlatformInterruptMode, PlatformInterrupts,
 };
+
+fn program_ioapic_entry(ints: &mut PlatformInterrupts, gsi: u32, low: u32, high: u32) {
+    let redtbl_low = 0x10u32 + gsi * 2;
+    let redtbl_high = redtbl_low + 1;
+    ints.ioapic_mmio_write(0x00, redtbl_low);
+    ints.ioapic_mmio_write(0x10, low);
+    ints.ioapic_mmio_write(0x00, redtbl_high);
+    ints.ioapic_mmio_write(0x10, high);
+}
 
 struct TestPciDevice {
     bdf: PciBdf,
@@ -115,10 +123,9 @@ fn intx_fallback_routes_through_pci_intx_router() {
     let gsi = intx_router.gsi_for_intx(device.bdf, device.intx_pin);
 
     let vector = 0x45u8;
-    let mut entry = IoApicRedirectionEntry::fixed(vector, 0);
-    entry.masked = false;
-    entry.trigger = TriggerMode::Level;
-    interrupts.ioapic_mut().set_entry(gsi, entry);
+    // PCI INTx is active-low + level-triggered.
+    let low = u32::from(vector) | (1 << 13) | (1 << 15);
+    program_ioapic_entry(&mut interrupts, gsi, low, 0);
 
     assert!(!device.raise_interrupt(&mut interrupts, &mut intx_router));
     assert_eq!(interrupts.get_pending(), Some(vector));

@@ -632,3 +632,4 @@ mod tests {
         assert_eq!(apic.get_pending_vector(), None);
     }
 }
+

@@ -1,7 +1,5 @@
 use aero_devices::pit8254::{Pit8254, PIT_CH0, PIT_CMD};
-use aero_platform::interrupts::{
-    InterruptController, IoApicRedirectionEntry, PlatformInterruptMode, PlatformInterrupts,
-};
+use aero_platform::interrupts::{InterruptController, PlatformInterruptMode, PlatformInterrupts};
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -11,6 +9,15 @@ fn program_mode2(pit: &mut Pit8254, divisor: u16) {
     pit.port_write(PIT_CMD, 1, 0x34);
     pit.port_write(PIT_CH0, 1, u32::from(divisor & 0x00FF));
     pit.port_write(PIT_CH0, 1, u32::from(divisor >> 8));
+}
+
+fn program_ioapic_entry(ints: &mut PlatformInterrupts, gsi: u32, low: u32, high: u32) {
+    let redtbl_low = 0x10u32 + gsi * 2;
+    let redtbl_high = redtbl_low + 1;
+    ints.ioapic_mmio_write(0x00, redtbl_low);
+    ints.ioapic_mmio_write(0x10, low);
+    ints.ioapic_mmio_write(0x00, redtbl_high);
+    ints.ioapic_mmio_write(0x10, high);
 }
 
 #[test]
@@ -60,10 +67,7 @@ fn pit_irq0_respects_isa_irq_override_in_apic_mode() {
         ints.set_mode(PlatformInterruptMode::Apic);
         // Simulate an MADT ISO remapping IRQ0 -> GSI2.
         ints.set_isa_irq_override(0, 2);
-
-        let mut entry = IoApicRedirectionEntry::fixed(0x31, 0);
-        entry.masked = false;
-        ints.ioapic_mut().set_entry(2, entry);
+        program_ioapic_entry(&mut ints, 2, 0x31, 0);
     }
 
     let mut pit = Pit8254::new();

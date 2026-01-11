@@ -1,5 +1,5 @@
-use super::local_apic::LocalApic;
 use super::router::PlatformInterrupts;
+use aero_interrupts::apic::LocalApic;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MsiMessage {
@@ -21,9 +21,16 @@ pub trait MsiTrigger {
     fn trigger_msi(&mut self, message: MsiMessage);
 }
 
-#[derive(Debug, Clone)]
 pub struct ApicSystem {
     lapics: Vec<LocalApic>,
+}
+
+impl std::fmt::Debug for ApicSystem {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ApicSystem")
+            .field("lapics", &self.lapics.len())
+            .finish_non_exhaustive()
+    }
 }
 
 impl ApicSystem {
@@ -45,13 +52,20 @@ impl ApicSystem {
 impl MsiTrigger for ApicSystem {
     fn trigger_msi(&mut self, message: MsiMessage) {
         let vector = message.vector();
-        self.lapic0_mut().inject_vector(vector);
+        self.lapic0_mut().inject_fixed_interrupt(vector);
     }
 }
 
 impl MsiTrigger for PlatformInterrupts {
     fn trigger_msi(&mut self, message: MsiMessage) {
         let vector = message.vector();
-        self.lapic_mut().inject_vector(vector);
+        let dest = message.destination_id();
+
+        // xAPIC "physical destination" decoding (single-CPU for now).
+        // If the destination matches the bootstrap processor's APIC ID, inject.
+        // Multi-CPU destination decoding can be layered on later.
+        if dest == self.lapic_apic_id() {
+            self.lapic_inject_fixed(vector);
+        }
     }
 }

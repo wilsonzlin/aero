@@ -144,6 +144,7 @@ version = "0.1.0"
 dependencies = [
  "aero-acpi",
  "aero-devices-input",
+ "aero-interrupts",
  "aero-platform",
  "aero_cpu_core",
  "memory",
@@ -259,6 +260,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "aero-interrupts"
+version = "0.1.0"
+
+[[package]]
 name = "aero-io-snapshot"
 version = "0.1.0"
 dependencies = [
@@ -371,6 +376,7 @@ version = "0.1.0"
 dependencies = [
  "aero-acpi",
  "aero-devices",
+ "aero-interrupts",
  "js-sys",
  "memory",
  "wasm-bindgen",

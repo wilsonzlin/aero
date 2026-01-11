@@ -1,9 +1,10 @@
-use super::ioapic::{IoApic, IoApicDelivery};
-use super::local_apic::LocalApic;
 use super::pic::Pic8259;
 use crate::io::{IoPortBus, PortIoDevice};
+use aero_interrupts::apic::{IoApic, IoApicId, LapicInterruptSink, LocalApic};
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlatformInterruptMode {
@@ -27,15 +28,49 @@ pub trait InterruptController {
     fn eoi(&mut self, vector: u8);
 }
 
-#[derive(Debug, Clone)]
+struct RoutedLapicSink {
+    lapic: Arc<LocalApic>,
+    apic_enabled: Arc<AtomicBool>,
+}
+
+impl LapicInterruptSink for RoutedLapicSink {
+    fn apic_id(&self) -> u8 {
+        self.lapic.apic_id()
+    }
+
+    fn inject_external_interrupt(&self, vector: u8) {
+        if self.apic_enabled.load(Ordering::SeqCst) {
+            self.lapic.inject_fixed_interrupt(vector);
+        }
+    }
+}
+
+#[derive(Clone)]
 pub struct PlatformInterrupts {
     mode: PlatformInterruptMode,
     isa_irq_to_gsi: [u32; 16],
+    gsi_level: Vec<bool>,
+
     pic: Pic8259,
-    ioapic: IoApic,
-    lapic: LocalApic,
+    ioapic: Arc<Mutex<IoApic>>,
+    lapic: Arc<LocalApic>,
+    apic_enabled: Arc<AtomicBool>,
+
     imcr_select: u8,
     imcr: u8,
+}
+
+impl std::fmt::Debug for PlatformInterrupts {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PlatformInterrupts")
+            .field("mode", &self.mode)
+            .field("isa_irq_to_gsi", &self.isa_irq_to_gsi)
+            .field("gsi_level", &self.gsi_level)
+            .field("pic", &self.pic)
+            .field("imcr_select", &self.imcr_select)
+            .field("imcr", &self.imcr)
+            .finish_non_exhaustive()
+    }
 }
 
 pub type SharedPlatformInterrupts = Rc<RefCell<PlatformInterrupts>>;
@@ -91,12 +126,36 @@ impl PlatformInterrupts {
         // Windows and other ACPI/APIC OSes will program the IOAPIC expecting that mapping.
         isa_irq_to_gsi[0] = 2;
 
+        let lapic = Arc::new(LocalApic::new(0));
+        // Keep the LAPIC enabled for platform-level interrupt injection (tests and early bring-up).
+        lapic.mmio_write(0xF0, &(0x1FFu32).to_le_bytes());
+
+        let apic_enabled = Arc::new(AtomicBool::new(false));
+        let sink: Arc<dyn LapicInterruptSink> = Arc::new(RoutedLapicSink {
+            lapic: lapic.clone(),
+            apic_enabled: apic_enabled.clone(),
+        });
+
+        let ioapic = Arc::new(Mutex::new(IoApic::new(IoApicId(0), sink)));
+
+        // Wire LAPIC EOI -> IOAPIC Remote-IRR handling.
+        let ioapic_for_eoi = ioapic.clone();
+        lapic.register_eoi_notifier(Arc::new(move |vector| {
+            ioapic_for_eoi.lock().unwrap().notify_eoi(vector);
+        }));
+
+        let num_gsis = ioapic.lock().unwrap().num_redirection_entries();
+
         Self {
             mode: PlatformInterruptMode::LegacyPic,
             isa_irq_to_gsi,
+            gsi_level: vec![false; num_gsis],
+
             pic: Pic8259::new(0x08, 0x70),
-            ioapic: IoApic::new(24),
-            lapic: LocalApic::new(0),
+            ioapic,
+            lapic,
+            apic_enabled,
+
             imcr_select: 0,
             imcr: 0,
         }
@@ -115,13 +174,19 @@ impl PlatformInterrupts {
         let prev = self.mode;
         self.mode = mode;
 
+        self.apic_enabled
+            .store(mode == PlatformInterruptMode::Apic, Ordering::SeqCst);
+
         if prev != PlatformInterruptMode::Apic && mode == PlatformInterruptMode::Apic {
             // If the IOAPIC has been programmed while still routing through the legacy
             // PIC (or has seen input levels change without delivery), Remote-IRR may not
             // represent a real in-service interrupt. Reset it before syncing asserted
             // level-triggered lines into the LAPIC.
-            self.ioapic.clear_remote_irr();
-            self.sync_ioapic();
+            let mut ioapic = self.ioapic.lock().unwrap();
+            ioapic.clear_remote_irr();
+            for (gsi, level) in self.gsi_level.iter().enumerate() {
+                ioapic.set_irq_level(gsi as u32, *level);
+            }
         }
     }
 
@@ -131,22 +196,6 @@ impl PlatformInterrupts {
 
     pub fn pic_mut(&mut self) -> &mut Pic8259 {
         &mut self.pic
-    }
-
-    pub fn ioapic(&self) -> &IoApic {
-        &self.ioapic
-    }
-
-    pub fn ioapic_mut(&mut self) -> &mut IoApic {
-        &mut self.ioapic
-    }
-
-    pub fn lapic(&self) -> &LocalApic {
-        &self.lapic
-    }
-
-    pub fn lapic_mut(&mut self) -> &mut LocalApic {
-        &mut self.lapic
     }
 
     pub fn set_isa_irq_override(&mut self, isa_irq: u8, gsi: u32) {
@@ -164,15 +213,23 @@ impl PlatformInterrupts {
                     .copied()
                     .unwrap_or(irq as u32);
 
+                self.set_gsi_level(gsi, true);
+
                 match self.mode {
                     PlatformInterruptMode::LegacyPic => {
                         self.pic.raise_irq(irq);
-                        self.ioapic.set_line_level(gsi, true);
                     }
-                    PlatformInterruptMode::Apic => self.raise_gsi(gsi),
+                    PlatformInterruptMode::Apic => {
+                        self.ioapic.lock().unwrap().set_irq_level(gsi, true);
+                    }
                 }
             }
-            InterruptInput::Gsi(gsi) => self.raise_gsi(gsi),
+            InterruptInput::Gsi(gsi) => {
+                self.set_gsi_level(gsi, true);
+                if self.mode == PlatformInterruptMode::Apic {
+                    self.ioapic.lock().unwrap().set_irq_level(gsi, true);
+                }
+            }
         }
     }
 
@@ -185,30 +242,35 @@ impl PlatformInterrupts {
                     .copied()
                     .unwrap_or(irq as u32);
 
+                self.set_gsi_level(gsi, false);
+
                 match self.mode {
                     PlatformInterruptMode::LegacyPic => {
                         self.pic.lower_irq(irq);
-                        self.ioapic.set_line_level(gsi, false);
                     }
-                    PlatformInterruptMode::Apic => self.lower_gsi(gsi),
+                    PlatformInterruptMode::Apic => {
+                        self.ioapic.lock().unwrap().set_irq_level(gsi, false);
+                    }
                 }
             }
-            InterruptInput::Gsi(gsi) => self.lower_gsi(gsi),
+            InterruptInput::Gsi(gsi) => {
+                self.set_gsi_level(gsi, false);
+                if self.mode == PlatformInterruptMode::Apic {
+                    self.ioapic.lock().unwrap().set_irq_level(gsi, false);
+                }
+            }
         }
     }
 
     pub fn ioapic_mmio_read(&self, offset: u64) -> u32 {
-        self.ioapic.mmio_read(offset)
+        self.ioapic.lock().unwrap().mmio_read(offset, 4) as u32
     }
 
     pub fn ioapic_mmio_write(&mut self, offset: u64, value: u32) {
-        let deliveries = self.ioapic.mmio_write(offset, value);
-        if self.mode == PlatformInterruptMode::Apic {
-            self.deliver_ioapic_deliveries(deliveries);
-        } else {
-            // While in legacy PIC mode, IOAPIC programming should not result in a
-            // delivered interrupt or a latched Remote-IRR bit.
-            self.ioapic.clear_remote_irr();
+        let mut ioapic = self.ioapic.lock().unwrap();
+        ioapic.mmio_write(offset, 4, u64::from(value));
+        if self.mode != PlatformInterruptMode::Apic {
+            ioapic.clear_remote_irr();
         }
     }
 
@@ -262,51 +324,18 @@ impl PlatformInterrupts {
         );
     }
 
-    fn raise_gsi(&mut self, gsi: u32) {
-        if self.mode == PlatformInterruptMode::Apic {
-            let deliveries = self.ioapic.set_line(gsi, true);
-            self.deliver_ioapic_deliveries(deliveries);
-        } else {
-            self.ioapic.set_line_level(gsi, true);
-        }
+    pub(crate) fn lapic_apic_id(&self) -> u8 {
+        self.lapic.apic_id()
     }
 
-    fn lower_gsi(&mut self, gsi: u32) {
-        if self.mode == PlatformInterruptMode::Apic {
-            let deliveries = self.ioapic.set_line(gsi, false);
-            self.deliver_ioapic_deliveries(deliveries);
-        } else {
-            self.ioapic.set_line_level(gsi, false);
-        }
+    pub(crate) fn lapic_inject_fixed(&self, vector: u8) {
+        self.lapic.inject_fixed_interrupt(vector);
     }
 
-    fn deliver_ioapic_deliveries(&mut self, deliveries: Vec<IoApicDelivery>) {
-        if self.mode != PlatformInterruptMode::Apic {
-            return;
+    fn set_gsi_level(&mut self, gsi: u32, level: bool) {
+        if let Some(slot) = self.gsi_level.get_mut(gsi as usize) {
+            *slot = level;
         }
-
-        for delivery in deliveries {
-            if delivery.dest as u32 != self.lapic.apic_id() {
-                continue;
-            }
-
-            self.lapic.inject_vector(delivery.vector);
-        }
-    }
-
-    fn sync_ioapic(&mut self) {
-        let deliveries = self.ioapic.sync();
-        self.deliver_ioapic_deliveries(deliveries);
-    }
-
-    fn lapic_pending_vector(&self) -> Option<u8> {
-        for vector in (0u16..=255).rev() {
-            let vector = vector as u8;
-            if self.lapic.is_pending(vector) {
-                return Some(vector);
-            }
-        }
-        None
     }
 }
 
@@ -314,7 +343,7 @@ impl InterruptController for PlatformInterrupts {
     fn get_pending(&self) -> Option<u8> {
         match self.mode {
             PlatformInterruptMode::LegacyPic => self.pic.get_pending_vector(),
-            PlatformInterruptMode::Apic => self.lapic_pending_vector(),
+            PlatformInterruptMode::Apic => self.lapic.get_pending_vector(),
         }
     }
 
@@ -322,7 +351,7 @@ impl InterruptController for PlatformInterrupts {
         match self.mode {
             PlatformInterruptMode::LegacyPic => self.pic.acknowledge(vector),
             PlatformInterruptMode::Apic => {
-                self.lapic.acknowledge_vector(vector);
+                let _ = self.lapic.ack(vector);
             }
         }
     }
@@ -331,8 +360,8 @@ impl InterruptController for PlatformInterrupts {
         match self.mode {
             PlatformInterruptMode::LegacyPic => self.pic.eoi(vector),
             PlatformInterruptMode::Apic => {
-                let deliveries = self.ioapic.notify_eoi(vector);
-                self.deliver_ioapic_deliveries(deliveries);
+                let _ = vector;
+                self.lapic.eoi();
             }
         }
     }
@@ -341,7 +370,15 @@ impl InterruptController for PlatformInterrupts {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::interrupts::{IoApicRedirectionEntry, TriggerMode};
+
+    fn program_ioapic_entry(ints: &mut PlatformInterrupts, gsi: u32, low: u32, high: u32) {
+        let redtbl_low = 0x10u32 + gsi * 2;
+        let redtbl_high = redtbl_low + 1;
+        ints.ioapic_mmio_write(0x00, redtbl_low);
+        ints.ioapic_mmio_write(0x10, low);
+        ints.ioapic_mmio_write(0x00, redtbl_high);
+        ints.ioapic_mmio_write(0x10, high);
+    }
 
     #[test]
     fn imcr_ports_switch_mode_via_io_bus() {
@@ -381,9 +418,8 @@ mod tests {
         let mut ints = PlatformInterrupts::new();
         ints.set_mode(PlatformInterruptMode::Apic);
 
-        let mut entry = IoApicRedirectionEntry::fixed(0x31, 0);
-        entry.masked = false;
-        ints.ioapic_mut().set_entry(1, entry);
+        // GSI1 -> vector 0x31, edge-triggered, unmasked.
+        program_ioapic_entry(&mut ints, 1, 0x31, 0);
 
         ints.raise_irq(InterruptInput::IsaIrq(1));
         assert_eq!(ints.get_pending(), Some(0x31));
@@ -402,9 +438,7 @@ mod tests {
         ints.set_mode(PlatformInterruptMode::Apic);
 
         // Firmware publishes ISA IRQ0 -> GSI2.
-        let mut entry = IoApicRedirectionEntry::fixed(0x60, 0);
-        entry.masked = false;
-        ints.ioapic_mut().set_entry(2, entry);
+        program_ioapic_entry(&mut ints, 2, 0x60, 0);
 
         ints.raise_irq(InterruptInput::IsaIrq(0));
         assert_eq!(ints.get_pending(), Some(0x60));
@@ -414,10 +448,8 @@ mod tests {
     fn switching_to_apic_delivers_asserted_level_lines() {
         let mut ints = PlatformInterrupts::new();
 
-        let mut entry = IoApicRedirectionEntry::fixed(0x60, 0);
-        entry.masked = false;
-        entry.trigger = TriggerMode::Level;
-        ints.ioapic_mut().set_entry(1, entry);
+        // GSI1 -> vector 0x60, level-triggered, unmasked.
+        program_ioapic_entry(&mut ints, 1, 0x60 | (1 << 15), 0);
 
         ints.raise_irq(InterruptInput::Gsi(1));
         assert_eq!(ints.get_pending(), None);
@@ -431,10 +463,8 @@ mod tests {
         let mut ints = PlatformInterrupts::new();
         ints.set_mode(PlatformInterruptMode::Apic);
 
-        let mut entry = IoApicRedirectionEntry::fixed(0x40, 0);
-        entry.masked = false;
-        entry.trigger = TriggerMode::Level;
-        ints.ioapic_mut().set_entry(1, entry);
+        // GSI1 -> vector 0x40, level-triggered, unmasked.
+        program_ioapic_entry(&mut ints, 1, 0x40 | (1 << 15), 0);
 
         ints.raise_irq(InterruptInput::Gsi(1));
         assert_eq!(ints.get_pending(), Some(0x40));
@@ -446,32 +476,33 @@ mod tests {
     }
 
     #[test]
-    fn apic_eoi_clears_remote_irr_for_shared_vectors() {
+    fn level_triggered_active_low_redelivers_after_eoi_when_line_stays_asserted() {
         let mut ints = PlatformInterrupts::new();
         ints.set_mode(PlatformInterruptMode::Apic);
 
-        let vector = 0x50;
+        // Use GSI9 (SCI) which is active-low wired by default in our board model.
+        // Program polarity_low=1 + trigger_mode=level, unmasked, vector 0x55.
+        let vector = 0x55u32;
+        let low = vector | (1 << 13) | (1 << 15); // polarity_low + level-triggered
+        program_ioapic_entry(&mut ints, 9, low, 0);
 
-        let mut entry1 = IoApicRedirectionEntry::fixed(vector, 0);
-        entry1.masked = false;
-        entry1.trigger = TriggerMode::Level;
-        ints.ioapic_mut().set_entry(1, entry1);
+        // Assert the line and ensure it delivers once.
+        ints.raise_irq(InterruptInput::Gsi(9));
+        assert_eq!(ints.get_pending(), Some(vector as u8));
+        ints.acknowledge(vector as u8);
 
-        let mut entry2 = IoApicRedirectionEntry::fixed(vector, 0);
-        entry2.masked = false;
-        entry2.trigger = TriggerMode::Level;
-        ints.ioapic_mut().set_entry(2, entry2);
-
-        ints.raise_irq(InterruptInput::Gsi(1));
-        ints.raise_irq(InterruptInput::Gsi(2));
-        assert_eq!(ints.get_pending(), Some(vector));
-
-        ints.acknowledge(vector);
-        ints.lower_irq(InterruptInput::Gsi(1));
+        // With the line still asserted, Remote-IRR should suppress re-delivery until EOI.
         assert_eq!(ints.get_pending(), None);
 
-        ints.eoi(vector);
-        assert_eq!(ints.get_pending(), Some(vector));
+        // EOI while still asserted should clear Remote-IRR and cause re-delivery.
+        ints.eoi(vector as u8);
+        assert_eq!(ints.get_pending(), Some(vector as u8));
+
+        // Deassert, then EOI: should stop.
+        ints.acknowledge(vector as u8);
+        ints.lower_irq(InterruptInput::Gsi(9));
+        ints.eoi(vector as u8);
+        assert_eq!(ints.get_pending(), None);
     }
 
     #[test]
@@ -488,3 +519,4 @@ mod tests {
         assert_eq!(ints.mode(), PlatformInterruptMode::LegacyPic);
     }
 }
+

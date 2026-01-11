@@ -151,6 +151,10 @@ impl IoApic {
         }
     }
 
+    pub fn num_redirection_entries(&self) -> usize {
+        self.redirection.len()
+    }
+
     pub fn set_pin_active_low(&mut self, gsi: u32, active_low: bool) {
         if let Some(slot) = self.pin_active_low.get_mut(gsi as usize) {
             *slot = active_low;
@@ -158,6 +162,19 @@ impl IoApic {
         if let Some(level) = self.pin_level.get_mut(gsi as usize) {
             // Keep the pin deasserted when adjusting wiring assumptions.
             *level = active_low;
+        }
+    }
+
+    /// Clears Remote-IRR for all redirection entries.
+    ///
+    /// Remote-IRR is only meaningful once the IOAPIC has delivered a level-triggered interrupt
+    /// to a LAPIC. If the guest programs the IOAPIC while the platform is still routing
+    /// interrupts through the legacy PIC (or delivery is otherwise suppressed), Remote-IRR may
+    /// not reflect a real in-service interrupt; callers can clear it when switching to APIC
+    /// delivery.
+    pub fn clear_remote_irr(&mut self) {
+        for entry in &mut self.redirection {
+            entry.remote_irr = false;
         }
     }
 
@@ -263,13 +280,6 @@ impl IoApic {
         let asserted = entry.interpret_level(new_raw);
 
         if entry.mask {
-            if entry.trigger_mode == TriggerMode::Level && !asserted {
-                // See the comment below: in the absence of a full LAPIC EOI feedback path,
-                // clearing Remote-IRR on deassert is used as a pragmatic approximation.
-                if let Some(entry) = self.redirection.get_mut(gsi as usize) {
-                    entry.remote_irr = false;
-                }
-            }
             return;
         }
 
@@ -282,13 +292,6 @@ impl IoApic {
             TriggerMode::Level => {
                 if asserted {
                     self.maybe_deliver_level(gsi);
-                } else if let Some(entry) = self.redirection.get_mut(gsi as usize) {
-                    // Real hardware clears Remote-IRR on EOI from the LAPIC, but in early
-                    // versions of the emulator we may not have a full EOI feedback path.
-                    // Clearing on deassert is a pragmatic approximation that:
-                    // - prevents storms while the line is held asserted
-                    // - allows re-delivery after a deassert/reassert cycle even without EOI
-                    entry.remote_irr = false;
                 }
             }
         }
@@ -394,7 +397,7 @@ mod tests {
 
         // Program redirection entry 0 (reg 0x10 low, 0x11 high).
         ioapic.mmio_write(0x00, 4, 0x10);
-        ioapic.mmio_write(0x10, 4, 0x20); // vector 0x20, unmasked edge by default? mask bit is 0 here.
+        ioapic.mmio_write(0x10, 4, 0x20); // vector 0x20, mask bit is 0 here.
         ioapic.mmio_write(0x00, 4, 0x10);
         assert_eq!(ioapic.mmio_read(0x10, 4) as u32 & 0xff, 0x20);
 
@@ -448,39 +451,5 @@ mod tests {
         // Now emulate EOI while still asserted; should re-deliver (remote IRR cleared).
         ioapic.notify_eoi(0x21);
         assert_eq!(service_next(&lapic), Some(0x21));
-    }
-
-    #[test]
-    fn level_triggered_deassert_while_masked_clears_remote_irr() {
-        let (mut ioapic, lapic) = mk_ioapic();
-
-        let gsi = 2u32;
-        let vector = 0x22u32;
-        let redtbl = 0x10u32 + gsi * 2;
-
-        // Configure entry as level-triggered and unmasked.
-        ioapic.mmio_write(0x00, 4, u64::from(redtbl));
-        ioapic.mmio_write(0x10, 4, u64::from(vector | (1 << 15)));
-
-        // Assert the line: should deliver once and set Remote-IRR.
-        ioapic.set_irq_level(gsi, true);
-        assert_eq!(service_next(&lapic), Some(vector as u8));
-
-        ioapic.mmio_write(0x00, 4, u64::from(redtbl));
-        let low = ioapic.mmio_read(0x10, 4) as u32;
-        assert_ne!(low & (1 << 14), 0);
-
-        // Mask, deassert while masked, then unmask. Without clearing Remote-IRR on deassert
-        // the next assertion would be suppressed forever (no EOI feedback path in this test).
-        ioapic.mmio_write(0x00, 4, u64::from(redtbl));
-        ioapic.mmio_write(0x10, 4, u64::from(low | (1 << 16)));
-
-        ioapic.set_irq_level(gsi, false);
-
-        ioapic.mmio_write(0x00, 4, u64::from(redtbl));
-        ioapic.mmio_write(0x10, 4, u64::from(vector | (1 << 15)));
-
-        ioapic.set_irq_level(gsi, true);
-        assert_eq!(service_next(&lapic), Some(vector as u8));
     }
 }
