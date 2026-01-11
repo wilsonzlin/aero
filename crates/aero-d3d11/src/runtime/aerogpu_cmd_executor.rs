@@ -32,6 +32,7 @@ use crate::{
 };
 
 const DEFAULT_MAX_VERTEX_SLOTS: usize = MAX_INPUT_SLOTS as usize;
+const DEFAULT_MAX_TEXTURE_SLOTS: usize = 16;
 
 // Opcode constants from `aerogpu_cmd.h` (via the canonical `aero-protocol` enum).
 const OPCODE_NOP: u32 = AerogpuCmdOpcode::Nop as u32;
@@ -326,9 +327,9 @@ impl Default for AerogpuD3d11State {
             ps: None,
             cs: None,
             input_layout: None,
-            textures_vs: Vec::new(),
-            textures_ps: Vec::new(),
-            textures_cs: Vec::new(),
+            textures_vs: vec![None; DEFAULT_MAX_TEXTURE_SLOTS],
+            textures_ps: vec![None; DEFAULT_MAX_TEXTURE_SLOTS],
+            textures_cs: vec![None; DEFAULT_MAX_TEXTURE_SLOTS],
             samplers_vs: Vec::new(),
             samplers_ps: Vec::new(),
             samplers_cs: Vec::new(),
@@ -2266,6 +2267,9 @@ impl AerogpuD3d11Executor {
         let slot: usize = slot_u32
             .try_into()
             .map_err(|_| anyhow!("SET_TEXTURE: slot out of range"))?;
+        if slot >= DEFAULT_MAX_TEXTURE_SLOTS {
+            bail!("SET_TEXTURE: slot out of supported range: {slot}");
+        }
         let texture = if texture == 0 { None } else { Some(texture) };
 
         let slots = match stage_u32 {
@@ -2274,10 +2278,6 @@ impl AerogpuD3d11Executor {
             2 => &mut self.state.textures_cs,
             _ => bail!("SET_TEXTURE: unknown shader stage {stage_u32}"),
         };
-
-        if slots.len() <= slot {
-            slots.resize(slot + 1, None);
-        }
         slots[slot] = texture;
         Ok(())
     }
