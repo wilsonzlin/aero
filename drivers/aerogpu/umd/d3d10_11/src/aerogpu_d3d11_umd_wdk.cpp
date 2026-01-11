@@ -1270,32 +1270,49 @@ static Device* DeviceFromHandle(T) {
   return nullptr;
 }
 
-static void AssertNoNullDdiTable(const char* name, const void* table, size_t bytes) {
-#if !defined(NDEBUG)
-  if (!table) {
-    assert(false && "DDI table pointer must be non-null");
-    return;
+// Validates that the runtime will never see a NULL DDI function pointer.
+//
+// This is intentionally enabled in release builds. If our `__if_exists` field
+// lists ever fall out of sync with the WDK's `d3d11umddi.h` layout, this check
+// should fail fast (OpenAdapter/CreateDevice return `E_NOINTERFACE`) instead of
+// allowing a later NULL-call crash inside the D3D11 runtime.
+static bool ValidateNoNullDdiTable(const char* name, const void* table, size_t bytes) {
+  if (!table || bytes == 0) {
+    return false;
   }
 
-  // These tables are expected to contain only function pointers.
-  assert((bytes % sizeof(void*)) == 0);
-  const auto* ptrs = reinterpret_cast<const void* const*>(table);
+  // These tables are expected to contain only function pointers, densely packed.
+  if ((bytes % sizeof(void*)) != 0) {
+    return false;
+  }
+
+  const auto* raw = reinterpret_cast<const unsigned char*>(table);
   const size_t count = bytes / sizeof(void*);
   for (size_t i = 0; i < count; ++i) {
-    if (!ptrs[i]) {
-#if defined(_WIN32)
-      char buf[256] = {};
-      snprintf(buf, sizeof(buf), "aerogpu-d3d11: NULL DDI entry in %s at index=%zu\n", name ? name : "?", i);
-      OutputDebugStringA(buf);
-#endif
-      assert(ptrs[i] && "NULL DDI function pointer");
+    const size_t offset = i * sizeof(void*);
+    bool all_zero = true;
+    for (size_t j = 0; j < sizeof(void*); ++j) {
+      if (raw[offset + j] != 0) {
+        all_zero = false;
+        break;
+      }
     }
-  }
-#else
-  (void)name;
-  (void)table;
-  (void)bytes;
+    if (!all_zero) {
+      continue;
+    }
+
+#if defined(_WIN32)
+    char buf[256] = {};
+    snprintf(buf, sizeof(buf), "aerogpu-d3d11: NULL DDI entry in %s at index=%zu\n", name ? name : "?", i);
+    OutputDebugStringA(buf);
 #endif
+
+#if !defined(NDEBUG)
+    assert(false && "NULL DDI function pointer");
+#endif
+    return false;
+  }
+  return true;
 }
 
 #define AEROGPU_D3D11_DEVICEFUNCS_FIELDS(X)                                                                     \
@@ -1550,7 +1567,7 @@ static D3D11DDI_ADAPTERFUNCS MakeStubAdapterFuncs11() {
   STUB_FIELD(pfnCreateDevice);
   STUB_FIELD(pfnCloseAdapter);
 #undef STUB_FIELD
-  AssertNoNullDdiTable("D3D11DDI_ADAPTERFUNCS (stub)", &funcs, sizeof(funcs));
+  assert(ValidateNoNullDdiTable("D3D11DDI_ADAPTERFUNCS (stub)", &funcs, sizeof(funcs)));
   return funcs;
 }
 
@@ -4431,7 +4448,6 @@ HRESULT AEROGPU_APIENTRY CreateDevice11(D3D10DDI_HADAPTER hAdapter, D3D11DDIARG_
   }
 
   BindPresentAndRotate(pCreateDevice->pDeviceFuncs);
-  AssertNoNullDdiTable("D3D11DDI_DEVICEFUNCS", pCreateDevice->pDeviceFuncs, sizeof(*pCreateDevice->pDeviceFuncs));
 
   // Immediate context funcs.
   ctx_funcs->pfnIaSetInputLayout = &IaSetInputLayout11;
@@ -4531,10 +4547,16 @@ HRESULT AEROGPU_APIENTRY CreateDevice11(D3D10DDI_HADAPTER hAdapter, D3D11DDIARG_
 
   ctx_funcs->pfnFlush = &Flush11;
   BindPresentAndRotate(ctx_funcs);
-  AssertNoNullDdiTable("D3D11DDI_DEVICECONTEXTFUNCS", ctx_funcs, sizeof(*ctx_funcs));
-
-  AssertNoNullDdiTable("D3D11DDI_DEVICEFUNCS", pCreateDevice->pDeviceFuncs, sizeof(*pCreateDevice->pDeviceFuncs));
-  AssertNoNullDdiTable("D3D11DDI_DEVICECONTEXTFUNCS", ctx_funcs, sizeof(*ctx_funcs));
+  if (!ValidateNoNullDdiTable("D3D11DDI_DEVICEFUNCS", pCreateDevice->pDeviceFuncs, sizeof(*pCreateDevice->pDeviceFuncs)) ||
+      !ValidateNoNullDdiTable("D3D11DDI_DEVICECONTEXTFUNCS", ctx_funcs, sizeof(*ctx_funcs))) {
+    SetImmediateContextHandle(pCreateDevice, nullptr);
+    DestroyWddmContext(dev);
+    ctx->~AeroGpuDeviceContext();
+    delete callbacks_copy;
+    dev->runtime_callbacks = nullptr;
+    dev->~Device();
+    return E_NOINTERFACE;
+  }
 
   return S_OK;
 }
@@ -4601,7 +4623,11 @@ HRESULT OpenAdapter11Impl(D3D10DDIARG_OPENADAPTER* pOpenData) {
   }
   funcs->pfnCreateDevice = &CreateDevice11;
   funcs->pfnCloseAdapter = &CloseAdapter11;
-  AssertNoNullDdiTable("D3D11DDI_ADAPTERFUNCS", funcs, sizeof(*funcs));
+  if (!ValidateNoNullDdiTable("D3D11DDI_ADAPTERFUNCS", funcs, sizeof(*funcs))) {
+    pOpenData->hAdapter.pDrvPrivate = nullptr;
+    delete adapter;
+    return E_NOINTERFACE;
+  }
   return S_OK;
 }
 
