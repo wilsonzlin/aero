@@ -467,7 +467,7 @@ For non-browser clients or internal bridges, use token-based auth (`AERO_L2_AUTH
 and provide the credential via:
 
 - `?token=<value>` query param, or
-- `Sec-WebSocket-Protocol: aero-l2-token.<value>` (in addition to `aero-l2-tunnel-v1`)
+- an additional `Sec-WebSocket-Protocol` entry `aero-l2-token.<value>` (offered alongside `aero-l2-tunnel-v1`)
 
 For mixed deployments (browser cookies + internal JWTs), use `AERO_L2_AUTH_MODE=cookie_or_jwt`.
 
