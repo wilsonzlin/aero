@@ -54,15 +54,19 @@ test("node l2 proxy exposes /metrics and counts rx frames", async () => {
     const ws = new WebSocket(`ws://127.0.0.1:${port}/l2`, ["aero-l2-tunnel-v1"]);
     await waitForOpen(ws);
     ws.send(Buffer.alloc(60));
-    await new Promise((resolve) => setTimeout(resolve, 20));
     ws.close(1000, "done");
     await waitForClose(ws);
 
-    const res = await fetch(`http://127.0.0.1:${port}/metrics`);
-    assert.equal(res.status, 200);
-    const body = await res.text();
-
-    const rx = parseMetric(body, "l2_frames_rx_total");
+    const deadline = Date.now() + 2_000;
+    let rx = null;
+    while (Date.now() < deadline) {
+      const res = await fetch(`http://127.0.0.1:${port}/metrics`);
+      assert.equal(res.status, 200);
+      const body = await res.text();
+      rx = parseMetric(body, "l2_frames_rx_total");
+      if (rx !== null && rx >= 1) break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
     assert.ok(rx !== null && rx >= 1, `expected rx >= 1, got ${rx}`);
   } finally {
     await proxy.close();
