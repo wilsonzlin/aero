@@ -74,13 +74,13 @@ These documents must reflect the canonical AeroGPU PCI identity and the canonica
 - **Docs, INFs, and device models must stay in sync.** Any change to AeroGPU’s PCI identity or ABI must update all consumers (protocol headers, emulator/device model, INFs, and `docs/windows-device-contract.{md,json}`) in the same change set.
 
 - **Legacy IDs/ABIs are deprecated and must be explicitly labeled + gated.**
-  - **1AE0** (older guest stack / placeholder IDs): supported only for historical bring-up; must not be the default anywhere.
+  - **1AE0** (older guest stack / placeholder IDs): archived under `prototype/legacy-win7-aerogpu-1ae0/`; not supported by the current emulator/device models.
   - **1AED** (legacy MMIO ABI): supported only behind an explicit “legacy ABI” compatibility mode; no new features added.
   - **A0E0** (`aero-gpu-device` cmd/completion-ring ABI, formerly `crates/aero-gpu-device`): treated as an internal/experimental ABI; must not be presented as the AeroGPU WDDM device.
 
 - **Migration / removal timeline (project policy):**
   1. Immediately: new development targets **A3A0 + versioned protocol headers** only. Legacy IDs/ABIs must not be used by default.
-  2. After **one release cycle** with A3A0 as default: remove the A0E0 `aero-gpu-device` cmd/completion-ring ABI (formerly `crates/aero-gpu-device`) and 1AE0 from any default configs and docs; keep only if explicitly enabled for development/testing.
+  2. After **one release cycle** with A3A0 as default: remove the A0E0 `aero-gpu-device` cmd/completion-ring ABI (formerly `crates/aero-gpu-device`) and 1AE0 from any default configs and docs; keep only in clearly archived prototype locations.
   3. After **two release cycles** with A3A0 as default: drop 1AED compatibility unless there is a documented, actively-used downstream dependency that requires it.
 
 - **CI drift checks are required.** CI must detect mismatches between:
