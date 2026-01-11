@@ -118,7 +118,9 @@ At a high level, drivers using Aero contract v1 devices should:
    - **Generic transport:** `VirtioPciModernTransportInit(...)` (**STRICT** by default; some drivers optionally retry with **COMPAT** for bring-up).
 3. Negotiate features (64-bit; always requires `VIRTIO_F_VERSION_1`).
 4. Allocate and program split virtqueues:
-   - build a ring layout (for example `virtqueue_split_alloc_ring` + `virtqueue_split_init`)
+   - build a ring layout using a split-ring engine:
+     - Miniports in this repo use `virtqueue_split_legacy.*` (for example `virtqueue_split_alloc_ring` + `virtqueue_split_init`).
+     - WDM drivers like `virtio-snd` use the canonical `drivers/windows/virtio/common/virtqueue_split.{c,h}` engine (`VIRTQ_SPLIT` / `VirtqSplit*` API).
    - activate it via `VirtioPciSetupQueue(...)` (miniport) or `VirtioPciModernTransportSetupQueue(...)` (generic)
    - optionally pre-cache notify doorbell addresses so `VirtioPciNotifyQueue(...)` stays lock-free on hot paths.
 5. Handle INTx:
@@ -127,8 +129,10 @@ At a high level, drivers using Aero contract v1 devices should:
 
 Note: `virtio_queue.*` is built on the legacy/transitional virtio-pci PFN queue
 programming model and is not compatible with the modern transport. Modern drivers
-typically pair the transport with `virtqueue_split_legacy.*` (or a driver-specific
-split ring implementation).
+pair the transport with a split-ring implementation:
+
+- Miniports (`virtio-blk` / `virtio-net`) use `virtqueue_split_legacy.*`.
+- WDM drivers like `virtio-snd` use the canonical `drivers/windows/virtio/common/virtqueue_split.{c,h}` engine.
 
 ## virtio-pci legacy register offsets
 
