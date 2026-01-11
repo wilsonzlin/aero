@@ -252,8 +252,10 @@ fn parse_signature_chunk_two_entries_v1_layout() {
     assert_eq!(sig.entries.len(), 2);
     assert_eq!(sig.entries[0].semantic_name, "POSITION");
     assert_eq!(sig.entries[0].mask, 0xF);
+    assert_eq!(sig.entries[0].read_write_mask, 0xF);
     assert_eq!(sig.entries[1].semantic_name, "TEXCOORD");
     assert_eq!(sig.entries[1].mask, 0x3);
+    assert_eq!(sig.entries[1].read_write_mask, 0x3);
 }
 
 #[test]
@@ -436,7 +438,9 @@ fn dxbc_get_signature_parses_v1_entry_layout() {
 
     assert_eq!(sig.entries.len(), 2);
     assert_eq!(sig.entries[0].semantic_name, "POSITION");
+    assert_eq!(sig.entries[0].read_write_mask, 0xF);
     assert_eq!(sig.entries[1].semantic_name, "TEXCOORD");
+    assert_eq!(sig.entries[1].read_write_mask, 0x3);
 }
 
 #[test]
