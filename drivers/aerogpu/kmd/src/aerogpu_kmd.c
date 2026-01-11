@@ -134,6 +134,40 @@ static VOID AeroGpuMetaHandleFreeAll(_Inout_ AEROGPU_ADAPTER* Adapter)
     }
 }
 
+typedef struct _AEROGPU_SHARED_HANDLE_TOKEN_ENTRY {
+    LIST_ENTRY ListEntry;
+    PVOID Object;
+    ULONG Token;
+} AEROGPU_SHARED_HANDLE_TOKEN_ENTRY;
+
+static VOID AeroGpuFreeSharedHandleTokens(_Inout_ AEROGPU_ADAPTER* Adapter)
+{
+    if (!Adapter) {
+        return;
+    }
+
+    for (;;) {
+        AEROGPU_SHARED_HANDLE_TOKEN_ENTRY* node = NULL;
+
+        KIRQL oldIrql;
+        KeAcquireSpinLock(&Adapter->SharedHandleTokenLock, &oldIrql);
+        if (!IsListEmpty(&Adapter->SharedHandleTokens)) {
+            PLIST_ENTRY entry = RemoveHeadList(&Adapter->SharedHandleTokens);
+            node = CONTAINING_RECORD(entry, AEROGPU_SHARED_HANDLE_TOKEN_ENTRY, ListEntry);
+        }
+        KeReleaseSpinLock(&Adapter->SharedHandleTokenLock, oldIrql);
+
+        if (!node) {
+            break;
+        }
+
+        if (node->Object) {
+            ObDereferenceObject(node->Object);
+        }
+        ExFreePoolWithTag(node, AEROGPU_POOL_TAG);
+    }
+}
+
 /* ---- Helpers ------------------------------------------------------------ */
 
 /*
@@ -806,6 +840,10 @@ static NTSTATUS APIENTRY AeroGpuDdiAddDevice(_In_ PDEVICE_OBJECT PhysicalDeviceO
     KeInitializeSpinLock(&adapter->AllocationsLock);
     InitializeListHead(&adapter->Allocations);
 
+    KeInitializeSpinLock(&adapter->SharedHandleTokenLock);
+    InitializeListHead(&adapter->SharedHandleTokens);
+    adapter->NextSharedHandleToken = 0;
+
     adapter->CurrentWidth = 1024;
     adapter->CurrentHeight = 768;
     adapter->CurrentPitch = 1024 * 4;
@@ -1038,6 +1076,7 @@ static NTSTATUS APIENTRY AeroGpuDdiRemoveDevice(_In_ const PVOID MiniportDeviceC
     AEROGPU_LOG0("RemoveDevice");
     AeroGpuMetaHandleFreeAll(adapter);
     AeroGpuFreeAllAllocations(adapter);
+    AeroGpuFreeSharedHandleTokens(adapter);
     ExFreePoolWithTag(adapter, AEROGPU_POOL_TAG);
     return STATUS_SUCCESS;
 }
@@ -3179,6 +3218,85 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
             out->vblank_period_ns = 0;
         }
         out->reserved0 = 0;
+        return STATUS_SUCCESS;
+    }
+
+    if (hdr->op == AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE) {
+        if (pEscape->PrivateDriverDataSize < sizeof(aerogpu_escape_map_shared_handle_inout)) {
+            return STATUS_BUFFER_TOO_SMALL;
+        }
+
+        aerogpu_escape_map_shared_handle_inout* io =
+            (aerogpu_escape_map_shared_handle_inout*)pEscape->pPrivateDriverData;
+
+        io->hdr.version = AEROGPU_ESCAPE_VERSION;
+        io->hdr.op = AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE;
+        io->hdr.size = sizeof(*io);
+        io->hdr.reserved0 = 0;
+
+        io->share_token = 0;
+        io->reserved0 = 0;
+
+        HANDLE sharedHandle = (HANDLE)(ULONG_PTR)io->shared_handle;
+        if (!sharedHandle) {
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        PVOID object = NULL;
+        NTSTATUS st = ObReferenceObjectByHandle(sharedHandle, 0, NULL, UserMode, &object, NULL);
+        if (!NT_SUCCESS(st)) {
+            return st;
+        }
+
+        ULONG token = 0;
+        BOOLEAN keepObjectRef = FALSE;
+        {
+            KIRQL oldIrql;
+            KeAcquireSpinLock(&adapter->SharedHandleTokenLock, &oldIrql);
+
+            for (PLIST_ENTRY entry = adapter->SharedHandleTokens.Flink;
+                 entry != &adapter->SharedHandleTokens;
+                 entry = entry->Flink) {
+                AEROGPU_SHARED_HANDLE_TOKEN_ENTRY* node =
+                    CONTAINING_RECORD(entry, AEROGPU_SHARED_HANDLE_TOKEN_ENTRY, ListEntry);
+                if (node->Object == object) {
+                    token = node->Token;
+                    break;
+                }
+            }
+
+            if (token == 0) {
+                token = ++adapter->NextSharedHandleToken;
+                if (token == 0) {
+                    token = ++adapter->NextSharedHandleToken;
+                }
+
+                AEROGPU_SHARED_HANDLE_TOKEN_ENTRY* node =
+                    (AEROGPU_SHARED_HANDLE_TOKEN_ENTRY*)ExAllocatePoolWithTag(
+                        NonPagedPool, sizeof(*node), AEROGPU_POOL_TAG);
+                if (node) {
+                    RtlZeroMemory(node, sizeof(*node));
+                    node->Object = object;
+                    node->Token = token;
+                    InsertTailList(&adapter->SharedHandleTokens, &node->ListEntry);
+                    keepObjectRef = TRUE;
+                } else {
+                    token = 0;
+                }
+            }
+
+            KeReleaseSpinLock(&adapter->SharedHandleTokenLock, oldIrql);
+        }
+
+        if (!keepObjectRef) {
+            ObDereferenceObject(object);
+        }
+
+        if (token == 0) {
+            return STATUS_INSUFFICIENT_RESOURCES;
+        }
+
+        io->share_token = (uint32_t)token;
         return STATUS_SUCCESS;
     }
 

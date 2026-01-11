@@ -163,6 +163,10 @@ typedef struct _AEROGPU_ADAPTER {
 
     AEROGPU_ABI_KIND AbiKind;
 
+    LIST_ENTRY SharedHandleTokens;
+    KSPIN_LOCK SharedHandleTokenLock;
+    ULONG NextSharedHandleToken;
+
     /* Current mode (programmed via CommitVidPn / SetVidPnSourceAddress). */
     ULONG CurrentWidth;
     ULONG CurrentHeight;

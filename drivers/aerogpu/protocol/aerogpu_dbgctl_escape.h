@@ -30,6 +30,7 @@ extern "C" {
 
 /* Extended base Escape ops used by bring-up tooling. */
 #define AEROGPU_ESCAPE_OP_QUERY_DEVICE_V2 7u
+#define AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE 8u
 
 #define AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS 32u
 
@@ -209,6 +210,14 @@ AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_vblank_out, vblank_pe
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_vblank_out, reserved0) == 52);
 
 typedef aerogpu_escape_query_vblank_out aerogpu_escape_dump_vblank_inout;
+typedef struct aerogpu_escape_map_shared_handle_inout {
+  aerogpu_escape_header hdr;
+  uint64_t shared_handle;
+  uint32_t share_token;
+  uint32_t reserved0;
+} aerogpu_escape_map_shared_handle_inout;
+
+AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_map_shared_handle_inout) == 32);
 
 #pragma pack(pop)
 
