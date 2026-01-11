@@ -20,6 +20,7 @@ jobs:
     timeout-minutes: 30
     env:
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+      STORAGE_PERF_REGRESSION_THRESHOLD_PCT: "15"
     steps:
       - name: Checkout (candidate)
         uses: actions/checkout@v4
@@ -60,6 +61,8 @@ jobs:
 
       - name: Install Chromium (Playwright, baseline)
         working-directory: base
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "0"
         run: npx playwright install chromium
 
       - name: Run storage perf (baseline)
@@ -74,15 +77,17 @@ jobs:
           node --experimental-strip-types bench/runner.ts storage_io \
             --out-dir storage-perf-results/head
 
+          cp storage-perf-results/base/storage_bench.json storage-perf-results/base.json
+          cp storage-perf-results/head/storage_bench.json storage-perf-results/head.json
+
       - name: Compare (fail on regression)
         working-directory: head
         run: |
-          node --experimental-strip-types bench/compare.ts \
+          node --experimental-strip-types scripts/compare_storage_benchmarks.ts \
             --baseline storage-perf-results/base/storage_bench.json \
-            --candidate storage-perf-results/head/storage_bench.json \
-            --out-dir storage-perf-results \
-            --thresholds-file bench/perf_thresholds.json \
-            --profile pr-smoke
+            --current storage-perf-results/head/storage_bench.json \
+            --thresholdPct ${{ env.STORAGE_PERF_REGRESSION_THRESHOLD_PCT }} \
+            --json
 
       - name: Job summary
         if: always()
