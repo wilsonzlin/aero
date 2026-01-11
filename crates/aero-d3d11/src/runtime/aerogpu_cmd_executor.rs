@@ -144,6 +144,15 @@ struct ResourceBacking {
     offset_bytes: u64,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct TextureWritebackPlan {
+    base_gpa: u64,
+    row_pitch: u64,
+    padded_bytes_per_row: u32,
+    unpadded_bytes_per_row: u32,
+    height: u32,
+}
+
 #[derive(Debug)]
 enum PendingWriteback {
     Buffer {
@@ -153,11 +162,7 @@ enum PendingWriteback {
     },
     Texture2d {
         staging: wgpu::Buffer,
-        base_gpa: u64,
-        row_pitch: u64,
-        padded_bytes_per_row: u32,
-        unpadded_bytes_per_row: u32,
-        height: u32,
+        plan: TextureWritebackPlan,
     },
 }
 
@@ -597,7 +602,15 @@ impl AerogpuD3d11Executor {
     }
 
     pub fn poll_wait(&self) {
+        self.poll();
+    }
+
+    fn poll(&self) {
+        #[cfg(not(target_arch = "wasm32"))]
         self.device.poll(wgpu::Maintain::Wait);
+
+        #[cfg(target_arch = "wasm32")]
+        self.device.poll(wgpu::Maintain::Poll);
     }
 
     pub fn cache_stats(&self) -> AerogpuCmdCacheStats {
@@ -691,7 +704,7 @@ impl AerogpuD3d11Executor {
         slice.map_async(wgpu::MapMode::Read, move |v| {
             sender.send(v).ok();
         });
-        self.device.poll(wgpu::Maintain::Wait);
+        self.poll();
         receiver
             .receive()
             .await
@@ -738,66 +751,59 @@ impl AerogpuD3d11Executor {
         Ok(out)
     }
 
-    async fn apply_writeback(
-        &self,
-        writeback: PendingWriteback,
-        guest_mem: &dyn GuestMemory,
-    ) -> Result<()> {
-        match writeback {
-            PendingWriteback::Buffer {
-                staging,
-                dst_gpa,
-                size_bytes,
-            } => {
-                let size_aligned = align_copy_buffer_size(size_bytes)?;
-                let bytes =
-                    aero_gpu::readback_buffer(&self.device, &staging, 0..size_aligned).await;
-                let len: usize = size_bytes
-                    .try_into()
-                    .map_err(|_| anyhow!("COPY_BUFFER: size_bytes out of range"))?;
-                guest_mem
-                    .write(dst_gpa, &bytes[..len])
-                    .map_err(anyhow_guest_mem)?;
-            }
-            PendingWriteback::Texture2d {
-                staging,
-                base_gpa,
-                row_pitch,
-                padded_bytes_per_row,
-                unpadded_bytes_per_row,
-                height,
-            } => {
-                let staging_size = (padded_bytes_per_row as u64)
-                    .checked_mul(height as u64)
-                    .ok_or_else(|| anyhow!("COPY_TEXTURE2D: staging buffer size overflow"))?;
-                let bytes =
-                    aero_gpu::readback_buffer(&self.device, &staging, 0..staging_size).await;
-
-                for row in 0..height as u64 {
-                    let src_start = row as usize * padded_bytes_per_row as usize;
-                    let src_end = src_start + unpadded_bytes_per_row as usize;
-                    let dst_gpa = base_gpa
-                        .checked_add(row.checked_mul(row_pitch).ok_or_else(|| {
-                            anyhow!("COPY_TEXTURE2D: dst GPA overflow (row pitch mul)")
-                        })?)
-                        .ok_or_else(|| {
-                            anyhow!("COPY_TEXTURE2D: dst GPA overflow (row pitch add)")
-                        })?;
-                    guest_mem
-                        .write(dst_gpa, &bytes[src_start..src_end])
-                        .map_err(anyhow_guest_mem)?;
-                }
-            }
-        }
-
-        Ok(())
-    }
-
     pub fn execute_cmd_stream(
         &mut self,
         stream_bytes: &[u8],
         allocs: Option<&[AerogpuAllocEntry]>,
         guest_mem: &dyn GuestMemory,
+    ) -> Result<ExecuteReport> {
+        let mut pending_writebacks = Vec::new();
+        let report =
+            self.execute_cmd_stream_inner(stream_bytes, allocs, guest_mem, &mut pending_writebacks)?;
+
+        if pending_writebacks.is_empty() {
+            return Ok(report);
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            bail!("WRITEBACK_DST requires async execution on wasm (call execute_cmd_stream_async)");
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.flush_pending_writebacks_blocking(pending_writebacks, guest_mem)?;
+            Ok(report)
+        }
+    }
+
+    /// WASM-friendly async variant of `execute_cmd_stream`.
+    ///
+    /// On WASM targets, `wgpu::Buffer::map_async` completion is delivered via the JS event loop,
+    /// so synchronous waiting would deadlock. This method awaits writeback staging buffer maps
+    /// when `AEROGPU_COPY_FLAG_WRITEBACK_DST` is used.
+    pub async fn execute_cmd_stream_async(
+        &mut self,
+        stream_bytes: &[u8],
+        allocs: Option<&[AerogpuAllocEntry]>,
+        guest_mem: &dyn GuestMemory,
+    ) -> Result<ExecuteReport> {
+        let mut pending_writebacks = Vec::new();
+        let report =
+            self.execute_cmd_stream_inner(stream_bytes, allocs, guest_mem, &mut pending_writebacks)?;
+        if !pending_writebacks.is_empty() {
+            self.flush_pending_writebacks_async(pending_writebacks, guest_mem)
+                .await?;
+        }
+        Ok(report)
+    }
+
+    fn execute_cmd_stream_inner(
+        &mut self,
+        stream_bytes: &[u8],
+        allocs: Option<&[AerogpuAllocEntry]>,
+        guest_mem: &dyn GuestMemory,
+        pending_writebacks: &mut Vec<PendingWriteback>,
     ) -> Result<ExecuteReport> {
         self.encoder_has_commands = false;
         let iter = AerogpuCmdStreamIter::new(stream_bytes)
@@ -859,26 +865,15 @@ impl AerogpuD3d11Executor {
             iter.next()
                 .expect("peeked Some")
                 .map_err(|err| anyhow!("aerogpu_cmd: invalid cmd header @0x{cursor:x}: {err:?}"))?;
-            let writeback = self.exec_non_draw_command(
+            self.exec_non_draw_command(
                 &mut encoder,
                 opcode,
                 cmd_bytes,
                 &alloc_map,
                 guest_mem,
+                pending_writebacks,
                 &mut report,
             )?;
-            if let Some(writeback) = writeback {
-                #[cfg(target_arch = "wasm32")]
-                {
-                    drop(writeback);
-                    bail!("aerogpu_cmd: WRITEBACK_DST requires execute_cmd_stream_async on wasm");
-                }
-
-                #[cfg(not(target_arch = "wasm32"))]
-                {
-                    pollster::block_on(self.apply_writeback(writeback, guest_mem))?;
-                }
-            }
 
             report.commands = report.commands.saturating_add(1);
             cursor = cmd_end;
@@ -889,87 +884,197 @@ impl AerogpuD3d11Executor {
         Ok(report)
     }
 
-    pub async fn execute_cmd_stream_async(
-        &mut self,
-        stream_bytes: &[u8],
-        allocs: Option<&[AerogpuAllocEntry]>,
+    #[cfg(not(target_arch = "wasm32"))]
+    fn flush_pending_writebacks_blocking(
+        &self,
+        pending: Vec<PendingWriteback>,
         guest_mem: &dyn GuestMemory,
-    ) -> Result<ExecuteReport> {
-        self.encoder_has_commands = false;
-        let iter = AerogpuCmdStreamIter::new(stream_bytes)
-            .map_err(|e| anyhow!("aerogpu_cmd: invalid cmd stream: {e:?}"))?;
-        let stream_size = iter.header().size_bytes as usize;
-        let mut iter = iter.peekable();
-
-        let alloc_map = AllocTable::new(allocs.unwrap_or(&[]))?;
-
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("aerogpu_cmd encoder"),
-            });
-
-        let mut report = ExecuteReport::default();
-
-        let mut cursor = AerogpuCmdStreamHeader::SIZE_BYTES;
-        while let Some(next) = iter.peek() {
-            let (cmd_size, opcode) = match next {
-                Ok(packet) => (packet.hdr.size_bytes as usize, packet.hdr.opcode),
-                Err(err) => {
-                    return Err(anyhow!(
-                        "aerogpu_cmd: invalid cmd header @0x{cursor:x}: {err:?}"
+    ) -> Result<()> {
+        for writeback in pending {
+            match writeback {
+                PendingWriteback::Buffer {
+                    staging,
+                    dst_gpa,
+                    size_bytes,
+                } => {
+                    let slice = staging.slice(..);
+                    let state = std::sync::Arc::new((
+                        std::sync::Mutex::new(None::<Result<(), wgpu::BufferAsyncError>>),
+                        std::sync::Condvar::new(),
                     ));
-                }
-            };
-            let cmd_end = cursor
-                .checked_add(cmd_size)
-                .ok_or_else(|| anyhow!("aerogpu_cmd: cmd size overflow"))?;
-            let cmd_bytes = stream_bytes
-                .get(cursor..cmd_end)
-                .ok_or_else(|| {
-                    anyhow!(
-                        "aerogpu_cmd: cmd overruns stream: cursor=0x{cursor:x} cmd_size=0x{cmd_size:x} stream_size=0x{stream_size:x}"
-                    )
-                })?;
+                    let state_clone = state.clone();
+                    slice.map_async(wgpu::MapMode::Read, move |res| {
+                        let (lock, cv) = &*state_clone;
+                        *lock.lock().unwrap() = Some(res);
+                        cv.notify_one();
+                    });
+                    self.poll();
 
-            match opcode {
-                OPCODE_DRAW | OPCODE_DRAW_INDEXED => {
-                    self.exec_render_pass_load(
-                        &mut encoder,
-                        &mut iter,
-                        &mut cursor,
-                        stream_bytes,
-                        stream_size,
-                        &alloc_map,
-                        guest_mem,
-                        &mut report,
+                    let (lock, cv) = &*state;
+                    let mut guard = lock.lock().unwrap();
+                    while guard.is_none() {
+                        guard = cv.wait(guard).unwrap();
+                    }
+                    guard
+                        .take()
+                        .unwrap()
+                        .map_err(|e| anyhow!("COPY_BUFFER: writeback map_async failed: {e:?}"))?;
+
+                    let mapped = slice.get_mapped_range();
+                    let len: usize = size_bytes
+                        .try_into()
+                        .map_err(|_| anyhow!("COPY_BUFFER: size_bytes out of range"))?;
+                    guest_mem
+                        .write(dst_gpa, mapped.get(..len).ok_or_else(|| {
+                            anyhow!("COPY_BUFFER: writeback staging buffer too small")
+                        })?)
+                        .map_err(anyhow_guest_mem)?;
+                    drop(mapped);
+                    staging.unmap();
+                }
+                PendingWriteback::Texture2d { staging, plan } => {
+                    let slice = staging.slice(..);
+                    let state = std::sync::Arc::new((
+                        std::sync::Mutex::new(None::<Result<(), wgpu::BufferAsyncError>>),
+                        std::sync::Condvar::new(),
+                    ));
+                    let state_clone = state.clone();
+                    slice.map_async(wgpu::MapMode::Read, move |res| {
+                        let (lock, cv) = &*state_clone;
+                        *lock.lock().unwrap() = Some(res);
+                        cv.notify_one();
+                    });
+                    self.poll();
+
+                    let (lock, cv) = &*state;
+                    let mut guard = lock.lock().unwrap();
+                    while guard.is_none() {
+                        guard = cv.wait(guard).unwrap();
+                    }
+                    guard
+                        .take()
+                        .unwrap()
+                        .map_err(|e| anyhow!("COPY_TEXTURE2D: writeback map_async failed: {e:?}"))?;
+
+                    let mapped = slice.get_mapped_range();
+                    let padded_bpr_usize: usize = plan
+                        .padded_bytes_per_row
+                        .try_into()
+                        .map_err(|_| anyhow!("COPY_TEXTURE2D: padded bytes_per_row out of range"))?;
+                    let unpadded_bpr_usize: usize = plan.unpadded_bytes_per_row.try_into().map_err(
+                        |_| anyhow!("COPY_TEXTURE2D: bytes_per_row out of range"),
                     )?;
-                    continue;
+                    for row in 0..plan.height as u64 {
+                        let src_start = row as usize * padded_bpr_usize;
+                        let src_end = src_start
+                            .checked_add(unpadded_bpr_usize)
+                            .ok_or_else(|| anyhow!("COPY_TEXTURE2D: src row end overflows usize"))?;
+                        let row_bytes = mapped.get(src_start..src_end).ok_or_else(|| {
+                            anyhow!("COPY_TEXTURE2D: writeback staging buffer too small")
+                        })?;
+                        let dst_gpa = plan
+                            .base_gpa
+                            .checked_add(
+                                row.checked_mul(plan.row_pitch).ok_or_else(|| {
+                                    anyhow!("COPY_TEXTURE2D: dst GPA overflow (row pitch mul)")
+                                })?,
+                            )
+                            .ok_or_else(|| {
+                                anyhow!("COPY_TEXTURE2D: dst GPA overflow (row pitch add)")
+                            })?;
+                        guest_mem.write(dst_gpa, row_bytes).map_err(anyhow_guest_mem)?;
+                    }
+                    drop(mapped);
+                    staging.unmap();
                 }
-                _ => {}
             }
-
-            iter.next()
-                .expect("peeked Some")
-                .map_err(|err| anyhow!("aerogpu_cmd: invalid cmd header @0x{cursor:x}: {err:?}"))?;
-            if let Some(writeback) = self.exec_non_draw_command(
-                &mut encoder,
-                opcode,
-                cmd_bytes,
-                &alloc_map,
-                guest_mem,
-                &mut report,
-            )? {
-                self.apply_writeback(writeback, guest_mem).await?;
-            }
-
-            report.commands = report.commands.saturating_add(1);
-            cursor = cmd_end;
         }
+        Ok(())
+    }
 
-        self.queue.submit([encoder.finish()]);
-        self.encoder_has_commands = false;
-        Ok(report)
+    async fn flush_pending_writebacks_async(
+        &self,
+        pending: Vec<PendingWriteback>,
+        guest_mem: &dyn GuestMemory,
+    ) -> Result<()> {
+        for writeback in pending {
+            match writeback {
+                PendingWriteback::Buffer {
+                    staging,
+                    dst_gpa,
+                    size_bytes,
+                } => {
+                    let slice = staging.slice(..);
+                    let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
+                    slice.map_async(wgpu::MapMode::Read, move |res| {
+                        sender.send(res).ok();
+                    });
+                    self.poll();
+                    receiver
+                        .receive()
+                        .await
+                        .ok_or_else(|| anyhow!("wgpu: map_async dropped"))?
+                        .context("wgpu: map_async failed")?;
+
+                    let mapped = slice.get_mapped_range();
+                    let len: usize = size_bytes
+                        .try_into()
+                        .map_err(|_| anyhow!("COPY_BUFFER: size_bytes out of range"))?;
+                    guest_mem
+                        .write(dst_gpa, mapped.get(..len).ok_or_else(|| {
+                            anyhow!("COPY_BUFFER: writeback staging buffer too small")
+                        })?)
+                        .map_err(anyhow_guest_mem)?;
+                    drop(mapped);
+                    staging.unmap();
+                }
+                PendingWriteback::Texture2d { staging, plan } => {
+                    let slice = staging.slice(..);
+                    let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
+                    slice.map_async(wgpu::MapMode::Read, move |res| {
+                        sender.send(res).ok();
+                    });
+                    self.poll();
+                    receiver
+                        .receive()
+                        .await
+                        .ok_or_else(|| anyhow!("wgpu: map_async dropped"))?
+                        .context("wgpu: map_async failed")?;
+
+                    let mapped = slice.get_mapped_range();
+                    let padded_bpr_usize: usize = plan
+                        .padded_bytes_per_row
+                        .try_into()
+                        .map_err(|_| anyhow!("COPY_TEXTURE2D: padded bytes_per_row out of range"))?;
+                    let unpadded_bpr_usize: usize = plan.unpadded_bytes_per_row.try_into().map_err(
+                        |_| anyhow!("COPY_TEXTURE2D: bytes_per_row out of range"),
+                    )?;
+                    for row in 0..plan.height as u64 {
+                        let src_start = row as usize * padded_bpr_usize;
+                        let src_end = src_start
+                            .checked_add(unpadded_bpr_usize)
+                            .ok_or_else(|| anyhow!("COPY_TEXTURE2D: src row end overflows usize"))?;
+                        let row_bytes = mapped.get(src_start..src_end).ok_or_else(|| {
+                            anyhow!("COPY_TEXTURE2D: writeback staging buffer too small")
+                        })?;
+                        let dst_gpa = plan
+                            .base_gpa
+                            .checked_add(
+                                row.checked_mul(plan.row_pitch).ok_or_else(|| {
+                                    anyhow!("COPY_TEXTURE2D: dst GPA overflow (row pitch mul)")
+                                })?,
+                            )
+                            .ok_or_else(|| {
+                                anyhow!("COPY_TEXTURE2D: dst GPA overflow (row pitch add)")
+                            })?;
+                        guest_mem.write(dst_gpa, row_bytes).map_err(anyhow_guest_mem)?;
+                    }
+                    drop(mapped);
+                    staging.unmap();
+                }
+            }
+        }
+        Ok(())
     }
 
     fn submit_encoder(&mut self, encoder: &mut wgpu::CommandEncoder, label: &'static str) {
@@ -999,143 +1104,53 @@ impl AerogpuD3d11Executor {
         cmd_bytes: &[u8],
         allocs: &AllocTable,
         guest_mem: &dyn GuestMemory,
+        pending_writebacks: &mut Vec<PendingWriteback>,
         report: &mut ExecuteReport,
-    ) -> Result<Option<PendingWriteback>> {
+    ) -> Result<()> {
         match opcode {
-            OPCODE_NOP => Ok(None),
-            OPCODE_DEBUG_MARKER => Ok(None),
-            OPCODE_CREATE_BUFFER => {
-                self.exec_create_buffer(cmd_bytes, allocs)?;
-                Ok(None)
+            OPCODE_NOP => Ok(()),
+            OPCODE_DEBUG_MARKER => Ok(()),
+            OPCODE_CREATE_BUFFER => self.exec_create_buffer(cmd_bytes, allocs),
+            OPCODE_CREATE_TEXTURE2D => self.exec_create_texture2d(cmd_bytes, allocs),
+            OPCODE_DESTROY_RESOURCE => self.exec_destroy_resource(cmd_bytes),
+            OPCODE_RESOURCE_DIRTY_RANGE => self.exec_resource_dirty_range(cmd_bytes),
+            OPCODE_UPLOAD_RESOURCE => self.exec_upload_resource(encoder, cmd_bytes),
+            OPCODE_COPY_BUFFER => {
+                self.exec_copy_buffer(encoder, cmd_bytes, allocs, guest_mem, pending_writebacks)
             }
-            OPCODE_CREATE_TEXTURE2D => {
-                self.exec_create_texture2d(cmd_bytes, allocs)?;
-                Ok(None)
-            }
-            OPCODE_DESTROY_RESOURCE => {
-                self.exec_destroy_resource(cmd_bytes)?;
-                Ok(None)
-            }
-            OPCODE_RESOURCE_DIRTY_RANGE => {
-                self.exec_resource_dirty_range(cmd_bytes)?;
-                Ok(None)
-            }
-            OPCODE_UPLOAD_RESOURCE => {
-                self.exec_upload_resource(encoder, cmd_bytes)?;
-                Ok(None)
-            }
-            OPCODE_COPY_BUFFER => self.exec_copy_buffer(encoder, cmd_bytes, allocs, guest_mem),
             OPCODE_COPY_TEXTURE2D => {
-                self.exec_copy_texture2d(encoder, cmd_bytes, allocs, guest_mem)
+                self.exec_copy_texture2d(encoder, cmd_bytes, allocs, guest_mem, pending_writebacks)
             }
-            OPCODE_CREATE_SHADER_DXBC => {
-                self.exec_create_shader_dxbc(cmd_bytes)?;
-                Ok(None)
-            }
-            OPCODE_DESTROY_SHADER => {
-                self.exec_destroy_shader(cmd_bytes)?;
-                Ok(None)
-            }
-            OPCODE_BIND_SHADERS => {
-                self.exec_bind_shaders(cmd_bytes)?;
-                Ok(None)
-            }
-            OPCODE_SET_SHADER_CONSTANTS_F => {
-                self.exec_set_shader_constants_f(encoder, cmd_bytes)?;
-                Ok(None)
-            }
-            OPCODE_CREATE_INPUT_LAYOUT => {
-                self.exec_create_input_layout(cmd_bytes)?;
-                Ok(None)
-            }
-            OPCODE_DESTROY_INPUT_LAYOUT => {
-                self.exec_destroy_input_layout(cmd_bytes)?;
-                Ok(None)
-            }
-            OPCODE_SET_INPUT_LAYOUT => {
-                self.exec_set_input_layout(cmd_bytes)?;
-                Ok(None)
-            }
-            OPCODE_SET_RENDER_TARGETS => {
-                self.exec_set_render_targets(cmd_bytes)?;
-                Ok(None)
-            }
-            OPCODE_SET_VIEWPORT => {
-                self.exec_set_viewport(cmd_bytes)?;
-                Ok(None)
-            }
-            OPCODE_SET_SCISSOR => {
-                self.exec_set_scissor(cmd_bytes)?;
-                Ok(None)
-            }
-            OPCODE_SET_VERTEX_BUFFERS => {
-                self.exec_set_vertex_buffers(cmd_bytes)?;
-                Ok(None)
-            }
-            OPCODE_SET_INDEX_BUFFER => {
-                self.exec_set_index_buffer(cmd_bytes)?;
-                Ok(None)
-            }
-            OPCODE_SET_PRIMITIVE_TOPOLOGY => {
-                self.exec_set_primitive_topology(cmd_bytes)?;
-                Ok(None)
-            }
-            OPCODE_SET_TEXTURE => {
-                self.exec_set_texture(cmd_bytes)?;
-                Ok(None)
-            }
-            OPCODE_SET_SAMPLER_STATE => {
-                self.exec_set_sampler_state(cmd_bytes)?;
-                Ok(None)
-            }
-            OPCODE_CREATE_SAMPLER => {
-                self.exec_create_sampler(cmd_bytes)?;
-                Ok(None)
-            }
-            OPCODE_DESTROY_SAMPLER => {
-                self.exec_destroy_sampler(cmd_bytes)?;
-                Ok(None)
-            }
-            OPCODE_SET_SAMPLERS => {
-                self.exec_set_samplers(cmd_bytes)?;
-                Ok(None)
-            }
-            OPCODE_SET_CONSTANT_BUFFERS => {
-                self.exec_set_constant_buffers(cmd_bytes)?;
-                Ok(None)
-            }
-            OPCODE_CLEAR => {
-                self.exec_clear(encoder, cmd_bytes, allocs, guest_mem)?;
-                Ok(None)
-            }
-            OPCODE_PRESENT => {
-                self.exec_present(encoder, cmd_bytes, report)?;
-                Ok(None)
-            }
-            OPCODE_PRESENT_EX => {
-                self.exec_present_ex(encoder, cmd_bytes, report)?;
-                Ok(None)
-            }
-            OPCODE_FLUSH => {
-                self.exec_flush(encoder)?;
-                Ok(None)
-            }
+            OPCODE_CREATE_SHADER_DXBC => self.exec_create_shader_dxbc(cmd_bytes),
+            OPCODE_DESTROY_SHADER => self.exec_destroy_shader(cmd_bytes),
+            OPCODE_BIND_SHADERS => self.exec_bind_shaders(cmd_bytes),
+            OPCODE_SET_SHADER_CONSTANTS_F => self.exec_set_shader_constants_f(encoder, cmd_bytes),
+            OPCODE_CREATE_INPUT_LAYOUT => self.exec_create_input_layout(cmd_bytes),
+            OPCODE_DESTROY_INPUT_LAYOUT => self.exec_destroy_input_layout(cmd_bytes),
+            OPCODE_SET_INPUT_LAYOUT => self.exec_set_input_layout(cmd_bytes),
+            OPCODE_SET_RENDER_TARGETS => self.exec_set_render_targets(cmd_bytes),
+            OPCODE_SET_VIEWPORT => self.exec_set_viewport(cmd_bytes),
+            OPCODE_SET_SCISSOR => self.exec_set_scissor(cmd_bytes),
+            OPCODE_SET_VERTEX_BUFFERS => self.exec_set_vertex_buffers(cmd_bytes),
+            OPCODE_SET_INDEX_BUFFER => self.exec_set_index_buffer(cmd_bytes),
+            OPCODE_SET_PRIMITIVE_TOPOLOGY => self.exec_set_primitive_topology(cmd_bytes),
+            OPCODE_SET_TEXTURE => self.exec_set_texture(cmd_bytes),
+            OPCODE_SET_SAMPLER_STATE => self.exec_set_sampler_state(cmd_bytes),
+            OPCODE_CREATE_SAMPLER => self.exec_create_sampler(cmd_bytes),
+            OPCODE_DESTROY_SAMPLER => self.exec_destroy_sampler(cmd_bytes),
+            OPCODE_SET_SAMPLERS => self.exec_set_samplers(cmd_bytes),
+            OPCODE_SET_CONSTANT_BUFFERS => self.exec_set_constant_buffers(cmd_bytes),
+            OPCODE_CLEAR => self.exec_clear(encoder, cmd_bytes, allocs, guest_mem),
+            OPCODE_PRESENT => self.exec_present(encoder, cmd_bytes, report),
+            OPCODE_PRESENT_EX => self.exec_present_ex(encoder, cmd_bytes, report),
+            OPCODE_FLUSH => self.exec_flush(encoder),
             // Known-but-ignored state that should not crash bring-up.
-            OPCODE_SET_BLEND_STATE => {
-                self.exec_set_blend_state(cmd_bytes)?;
-                Ok(None)
-            }
-            OPCODE_SET_DEPTH_STENCIL_STATE => {
-                self.exec_set_depth_stencil_state(cmd_bytes)?;
-                Ok(None)
-            }
-            OPCODE_SET_RASTERIZER_STATE => {
-                self.exec_set_rasterizer_state(cmd_bytes)?;
-                Ok(None)
-            }
+            OPCODE_SET_BLEND_STATE => self.exec_set_blend_state(cmd_bytes),
+            OPCODE_SET_DEPTH_STENCIL_STATE => self.exec_set_depth_stencil_state(cmd_bytes),
+            OPCODE_SET_RASTERIZER_STATE => self.exec_set_rasterizer_state(cmd_bytes),
             _ => {
                 report.unknown_opcodes = report.unknown_opcodes.saturating_add(1);
-                Ok(None)
+                Ok(())
             }
         }
     }
@@ -2100,7 +2115,8 @@ impl AerogpuD3d11Executor {
         cmd_bytes: &[u8],
         allocs: &AllocTable,
         guest_mem: &dyn GuestMemory,
-    ) -> Result<Option<PendingWriteback>> {
+        pending_writebacks: &mut Vec<PendingWriteback>,
+    ) -> Result<()> {
         let cmd = decode_cmd_copy_buffer_le(cmd_bytes)
             .map_err(|e| anyhow!("COPY_BUFFER: invalid payload: {e:?}"))?;
         // `AerogpuCmdCopyBuffer` is `repr(C, packed)` (ABI mirror); copy out fields before use to
@@ -2117,7 +2133,7 @@ impl AerogpuD3d11Executor {
             bail!("COPY_BUFFER: unknown flags {flags:#x}");
         }
         if size_bytes == 0 {
-            return Ok(None);
+            return Ok(());
         }
         if dst_buffer == 0 || src_buffer == 0 {
             bail!("COPY_BUFFER: resource handles must be non-zero");
@@ -2140,6 +2156,24 @@ impl AerogpuD3d11Executor {
         // Ensure the source buffer reflects any CPU writes from guest memory before copying.
         self.ensure_buffer_uploaded(encoder, src_buffer, allocs, guest_mem)?;
 
+        let dst_backing = if writeback {
+            let dst = self
+                .resources
+                .buffers
+                .get(&dst_buffer)
+                .ok_or_else(|| anyhow!("COPY_BUFFER: unknown dst buffer {dst_buffer}"))?;
+            dst.backing.ok_or_else(|| {
+                anyhow!(
+                    "COPY_BUFFER: WRITEBACK_DST requires dst buffer to be guest-backed (handle={dst_buffer})"
+                )
+            })?
+        } else {
+            ResourceBacking {
+                alloc_id: 0,
+                offset_bytes: 0,
+            }
+        };
+
         // If the destination is guest-backed and has pending uploads outside the copied region,
         // upload them now so untouched bytes remain correct.
         let needs_dst_upload = {
@@ -2161,7 +2195,6 @@ impl AerogpuD3d11Executor {
 
         let mut staging: Option<wgpu::Buffer> = None;
         let mut copy_size_aligned = size_bytes;
-        let mut writeback_req: Option<PendingWriteback> = None;
 
         // Encode the copy.
         {
@@ -2248,29 +2281,16 @@ impl AerogpuD3d11Executor {
             let Some(staging) = staging else {
                 bail!("COPY_BUFFER: internal error: missing staging buffer for writeback");
             };
-            let dst_backing = {
-                let dst = self
-                    .resources
-                    .buffers
-                    .get(&dst_buffer)
-                    .ok_or_else(|| anyhow!("COPY_BUFFER: unknown dst buffer {dst_buffer}"))?;
-                dst.backing.ok_or_else(|| {
-                    anyhow!(
-                        "COPY_BUFFER: WRITEBACK_DST requires dst buffer to be guest-backed (handle={dst_buffer})"
-                    )
-                })?
-            };
 
-            let dst_offset = dst_backing
-                .offset_bytes
-                .checked_add(dst_offset_bytes)
-                .ok_or_else(|| anyhow!("COPY_BUFFER: dst backing offset overflow"))?;
-            let dst_gpa =
-                allocs.validate_write_range(dst_backing.alloc_id, dst_offset, size_bytes)?;
-
-            self.submit_encoder(encoder, "aerogpu_cmd encoder after COPY_BUFFER writeback");
-
-            writeback_req = Some(PendingWriteback::Buffer {
+            let dst_gpa = allocs.validate_write_range(
+                dst_backing.alloc_id,
+                dst_backing
+                    .offset_bytes
+                    .checked_add(dst_offset_bytes)
+                    .ok_or_else(|| anyhow!("COPY_BUFFER: dst backing offset overflow"))?,
+                size_bytes,
+            )?;
+            pending_writebacks.push(PendingWriteback::Buffer {
                 staging,
                 dst_gpa,
                 size_bytes,
@@ -2283,7 +2303,7 @@ impl AerogpuD3d11Executor {
             dst.dirty = None;
         }
 
-        Ok(writeback_req)
+        Ok(())
     }
 
     fn exec_copy_texture2d(
@@ -2292,7 +2312,8 @@ impl AerogpuD3d11Executor {
         cmd_bytes: &[u8],
         allocs: &AllocTable,
         guest_mem: &dyn GuestMemory,
-    ) -> Result<Option<PendingWriteback>> {
+        pending_writebacks: &mut Vec<PendingWriteback>,
+    ) -> Result<()> {
         let cmd = decode_cmd_copy_texture2d_le(cmd_bytes)
             .map_err(|e| anyhow!("COPY_TEXTURE2D: invalid payload: {e:?}"))?;
         // `AerogpuCmdCopyTexture2d` is `repr(C, packed)` (ABI mirror); copy out fields before use
@@ -2316,7 +2337,7 @@ impl AerogpuD3d11Executor {
             bail!("COPY_TEXTURE2D: unknown flags {flags:#x}");
         }
         if width == 0 || height == 0 {
-            return Ok(None);
+            return Ok(());
         }
         if dst_texture == 0 || src_texture == 0 {
             bail!("COPY_TEXTURE2D: resource handles must be non-zero");
@@ -2383,7 +2404,6 @@ impl AerogpuD3d11Executor {
         };
 
         let mut staging: Option<(wgpu::Buffer, u32, u32, u32)> = None;
-        let mut writeback_req: Option<PendingWriteback> = None;
 
         {
             let src = self
@@ -2588,18 +2608,15 @@ impl AerogpuD3d11Executor {
 
             let base_gpa =
                 allocs.validate_write_range(dst_backing.alloc_id, start_offset, validate_size)?;
-
-            self.submit_encoder(
-                encoder,
-                "aerogpu_cmd encoder after COPY_TEXTURE2D writeback",
-            );
-            writeback_req = Some(PendingWriteback::Texture2d {
+            pending_writebacks.push(PendingWriteback::Texture2d {
                 staging,
-                base_gpa,
-                row_pitch,
-                padded_bytes_per_row: padded_bpr,
-                unpadded_bytes_per_row: unpadded_bpr,
-                height: copy_h,
+                plan: TextureWritebackPlan {
+                    base_gpa,
+                    row_pitch,
+                    padded_bytes_per_row: padded_bpr,
+                    unpadded_bytes_per_row: unpadded_bpr,
+                    height: copy_h,
+                },
             });
         }
 
@@ -2610,7 +2627,7 @@ impl AerogpuD3d11Executor {
             dst.host_shadow = None;
         }
 
-        Ok(writeback_req)
+        Ok(())
     }
 
     fn exec_create_shader_dxbc(&mut self, cmd_bytes: &[u8]) -> Result<()> {
