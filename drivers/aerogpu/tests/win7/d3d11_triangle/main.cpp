@@ -481,6 +481,7 @@ static int RunD3D11Triangle(int argc, char** argv) {
       }
       const uint32_t expected_corner = 0xFFFF0000u;  // red in BGRA memory order
       if ((args.pixel & 0x00FFFFFFu) != (expected_corner & 0x00FFFFFFu)) {
+        PrintDeviceRemovedReasonIfAny(kTestName, device.get());
         return reporter.Fail("Map(staging, DO_NOT_WAIT) pixel mismatch at (5,5): got 0x%08lX expected ~0x%08lX",
                              (unsigned long)args.pixel,
                              (unsigned long)expected_corner);
