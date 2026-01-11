@@ -152,6 +152,35 @@ describe("net/connectL2Tunnel", () => {
     }
   });
 
+  it("ws mode supports token auth via Sec-WebSocket-Protocol (tokenTransport=subprotocol)", async () => {
+    const originalFetch = globalThis.fetch;
+    const originalWs = (globalThis as unknown as Record<string, unknown>).WebSocket;
+
+    globalThis.fetch = vi.fn(async () => {
+      return new Response("{}", { status: 201, headers: { "Content-Type": "application/json" } });
+    }) as unknown as typeof fetch;
+
+    resetFakeWebSocket();
+    (globalThis as unknown as Record<string, unknown>).WebSocket = FakeWebSocket as unknown as WebSocketConstructor;
+
+    const events: L2TunnelEvent[] = [];
+    const tunnel = await connectL2Tunnel("https://gateway.example.com/base", {
+      mode: "ws",
+      sink: (ev) => events.push(ev),
+      tunnelOptions: { token: "sekrit", tokenTransport: "subprotocol" },
+    });
+
+    try {
+      expect(FakeWebSocket.last?.url).toBe("wss://gateway.example.com/base/l2");
+      expect(FakeWebSocket.last?.protocols).toEqual([L2_TUNNEL_SUBPROTOCOL, "aero-l2-token.sekrit"]);
+    } finally {
+      tunnel.close();
+      globalThis.fetch = originalFetch;
+      if (originalWs === undefined) delete (globalThis as { WebSocket?: unknown }).WebSocket;
+      else (globalThis as unknown as Record<string, unknown>).WebSocket = originalWs;
+    }
+  });
+
   it("honors endpoints.l2 from the gateway session response", async () => {
     const originalFetch = globalThis.fetch;
     const originalWs = (globalThis as unknown as Record<string, unknown>).WebSocket;
