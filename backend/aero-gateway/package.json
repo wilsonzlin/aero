@@ -15,6 +15,7 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "bench": "npm run build && node bench/run.mjs --mode local --json bench/results.json",
+    "bench:nightly": "npm run build && node bench/run.mjs --mode nightly --json bench/results.json",
     "bench:smoke": "npm run build && node bench/run.mjs --mode smoke --json bench/results.json --assert"
   },
   "dependencies": {

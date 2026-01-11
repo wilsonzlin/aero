@@ -78,7 +78,7 @@ jobs:
           mkdir -p perf-results/gateway
           npm -w backend/aero-gateway run build
           node backend/aero-gateway/bench/run.mjs \
-            --mode smoke \
+            --mode nightly \
             --json "$GITHUB_WORKSPACE/perf-results/gateway/raw.json" \
             --assert
 

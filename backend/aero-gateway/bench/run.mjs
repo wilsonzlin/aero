@@ -629,7 +629,7 @@ function assertThresholds(results) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  const mode = args.mode === 'smoke' ? 'smoke' : 'local';
+  const mode = args.mode === 'smoke' ? 'smoke' : args.mode === 'nightly' ? 'nightly' : 'local';
   const outputJson = args.json ? path.resolve(process.cwd(), args.json) : path.resolve('bench', 'results.json');
   const shouldAssert = Boolean(args.assert);
 
@@ -640,7 +640,13 @@ async function main() {
            tcpThroughput: { totalBytes: 5 * 1024 * 1024, chunkBytes: 64 * 1024, warmupRuns: 1, runs: 3 },
            doh: { durationSeconds: 3, connections: 25 },
          }
-      : {
+      : mode === 'nightly'
+        ? {
+            tcpRtt: { payloadBytes: 32, warmup: 20, iterations: 200 },
+            tcpThroughput: { totalBytes: 10 * 1024 * 1024, chunkBytes: 64 * 1024, warmupRuns: 1, runs: 5 },
+            doh: { durationSeconds: 10, connections: 50 },
+          }
+        : {
            tcpRtt: { payloadBytes: 32, warmup: 20, iterations: 200 },
            tcpThroughput: { totalBytes: 10 * 1024 * 1024, chunkBytes: 64 * 1024, warmupRuns: 1, runs: 5 },
            doh: { durationSeconds: 10, connections: 50 },

@@ -34,6 +34,15 @@ npm -w backend/aero-gateway run bench
 
 This writes a JSON report to `backend/aero-gateway/bench/results.json` and prints a human-readable summary to stdout.
 
+### Nightly (CI trending)
+
+Runs a configuration intended for nightly perf history dashboards (more stable than the smoke mode, but still designed to finish quickly on CI runners):
+
+```bash
+npm -w backend/aero-gateway run build
+node backend/aero-gateway/bench/run.mjs --mode nightly --json backend/aero-gateway/bench/results.json
+```
+
 ### CI smoke
 
 Runs a short, conservative benchmark and **asserts minimum thresholds**:
