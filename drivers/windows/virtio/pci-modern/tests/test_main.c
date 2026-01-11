@@ -754,6 +754,41 @@ static void TestQueueSetupAndNotify(void)
 	VirtioPciModernTransportUninit(&t);
 }
 
+static void TestQueueSetupRejectUnalignedOrInvalidQueue(void)
+{
+	FAKE_DEV dev;
+	VIRTIO_PCI_MODERN_OS_INTERFACE os;
+	VIRTIO_PCI_MODERN_TRANSPORT t;
+	NTSTATUS st;
+	const UINT64 desc_pa = 0x1122334455667700ull;
+	const UINT64 avail_pa = 0x1122334455668800ull;
+	const UINT64 used_pa = 0x1122334455669900ull;
+
+	FakeDevInitValid(&dev);
+	os = GetOs(&dev);
+
+	st = VirtioPciModernTransportInit(&t, &os, VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT, 0x10000000u, sizeof(dev.Bar0));
+	assert(st == STATUS_SUCCESS);
+
+	/* Unaligned desc (must be 16-byte aligned). */
+	st = VirtioPciModernTransportSetupQueue(&t, 0, desc_pa + 1, avail_pa, used_pa);
+	assert(st == STATUS_INVALID_PARAMETER);
+
+	/* Unaligned avail (must be 2-byte aligned). */
+	st = VirtioPciModernTransportSetupQueue(&t, 0, desc_pa, avail_pa + 1, used_pa);
+	assert(st == STATUS_INVALID_PARAMETER);
+
+	/* Unaligned used (must be 4-byte aligned). */
+	st = VirtioPciModernTransportSetupQueue(&t, 0, desc_pa, avail_pa, used_pa + 2);
+	assert(st == STATUS_INVALID_PARAMETER);
+
+	/* Invalid queue index -> queue_size==0 -> NOT_FOUND. */
+	st = VirtioPciModernTransportSetupQueue(&t, 1, desc_pa, avail_pa, used_pa);
+	assert(st == STATUS_NOT_FOUND);
+
+	VirtioPciModernTransportUninit(&t);
+}
+
 static void TestNotifyRejectInvalidQueue(void)
 {
 	FAKE_DEV dev;
@@ -1005,6 +1040,7 @@ int main(void)
 	TestNegotiateFeaturesStrictRejectPackedRingOffered();
 	TestNegotiateFeaturesCompatDoesNotNegotiatePackedRing();
 	TestQueueSetupAndNotify();
+	TestQueueSetupRejectUnalignedOrInvalidQueue();
 	TestNotifyRejectInvalidQueue();
 	TestNotifyRejectInvalidQueueCompat();
 	TestDeviceConfigReadStable();

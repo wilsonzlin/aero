@@ -800,6 +800,7 @@ NTSTATUS VirtioPciModernTransportSetupQueue(VIRTIO_PCI_MODERN_TRANSPORT *t, UINT
 VOID VirtioPciModernTransportDisableQueue(VIRTIO_PCI_MODERN_TRANSPORT *t, UINT16 q)
 {
 	VIRTIO_PCI_MODERN_SPINLOCK_STATE state;
+	UINT16 qsz;
 
 	if (t == NULL || t->CommonCfg == NULL) {
 		return;
@@ -808,8 +809,11 @@ VOID VirtioPciModernTransportDisableQueue(VIRTIO_PCI_MODERN_TRANSPORT *t, UINT16
 	VirtioPciModernLock(t, &state);
 	t->CommonCfg->queue_select = q;
 	VirtioPciModernMb(t);
-	t->CommonCfg->queue_enable = 0;
-	VirtioPciModernMb(t);
+	qsz = t->CommonCfg->queue_size;
+	if (qsz != 0) {
+		t->CommonCfg->queue_enable = 0;
+		VirtioPciModernMb(t);
+	}
 	VirtioPciModernUnlock(t, state);
 }
 
@@ -868,12 +872,16 @@ NTSTATUS VirtioPciModernTransportNotifyQueue(VIRTIO_PCI_MODERN_TRANSPORT *t, UIN
 
 UINT8 VirtioPciModernTransportReadIsrStatus(VIRTIO_PCI_MODERN_TRANSPORT *t)
 {
+	UINT8 v;
+
 	if (t == NULL || t->IsrStatus == NULL) {
 		return 0;
 	}
 
 	/* Read-to-ack. */
-	return t->IsrStatus[0];
+	v = t->IsrStatus[0];
+	VirtioPciModernMb(t);
+	return v;
 }
 
 NTSTATUS VirtioPciModernTransportReadDeviceConfig(VIRTIO_PCI_MODERN_TRANSPORT *t, UINT32 offset, VOID *buffer,
