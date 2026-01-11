@@ -108,6 +108,11 @@ aerogpu_add_win7_test(d3d9ex_triangle
 )
 target_link_libraries(d3d9ex_triangle PRIVATE user32 gdi32 d3d9)
 
+aerogpu_add_win7_test(d3d9ex_vb_dirty_range
+  d3d9ex_vb_dirty_range/main.cpp
+)
+target_link_libraries(d3d9ex_vb_dirty_range PRIVATE user32 gdi32 d3d9)
+
 aerogpu_add_win7_test(d3d9ex_multiframe_triangle
   d3d9ex_multiframe_triangle/main.cpp
 )

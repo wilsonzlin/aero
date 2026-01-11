@@ -339,8 +339,13 @@ impl UhciRuntime {
             .connect_device(port, Box::new(RcWebHidDevice(dev.clone())));
 
         self.webhid_ports[port] = Some(device_id);
-        self.webhid_devices
-            .insert(device_id, WebHidDeviceState { location: WebHidDeviceLocation::RootPort(port), dev });
+        self.webhid_devices.insert(
+            device_id,
+            WebHidDeviceState {
+                location: WebHidDeviceLocation::RootPort(port),
+                dev,
+            },
+        );
 
         Ok(port as u32)
     }
@@ -377,11 +382,12 @@ impl UhciRuntime {
             serde_wasm_bindgen::from_value(collections_json)
                 .map_err(|err| js_error(&format!("Invalid WebHID collection schema: {err}")))?;
 
-        let report_descriptor = webhid::synthesize_report_descriptor(&collections).map_err(|err| {
-            js_error(&format!(
-                "Failed to synthesize HID report descriptor: {err}"
-            ))
-        })?;
+        let report_descriptor =
+            webhid::synthesize_report_descriptor(&collections).map_err(|err| {
+                js_error(&format!(
+                    "Failed to synthesize HID report descriptor: {err}"
+                ))
+            })?;
 
         let has_interrupt_out = collections_have_output_reports(&collections);
 
@@ -620,7 +626,9 @@ impl UhciRuntime {
         let hub = UsbHubDevice::new_with_ports(desired as usize);
         self.ctrl
             .connect_device(EXTERNAL_HUB_ROOT_PORT, Box::new(hub));
-        self.external_hub = Some(ExternalHubState { port_count: desired });
+        self.external_hub = Some(ExternalHubState {
+            port_count: desired,
+        });
         Ok(())
     }
 
@@ -700,8 +708,8 @@ fn clamp_hub_port_count(value: u32) -> u8 {
 }
 
 fn parse_root_port_guest_path(path: JsValue) -> Result<usize, JsValue> {
-    let path: Vec<u32> =
-        serde_wasm_bindgen::from_value(path).map_err(|err| js_error(&format!("Invalid guestPath: {err}")))?;
+    let path: Vec<u32> = serde_wasm_bindgen::from_value(path)
+        .map_err(|err| js_error(&format!("Invalid guestPath: {err}")))?;
     let Some(&root_port) = path.first() else {
         return Err(js_error("guestPath must not be empty"));
     };
@@ -714,8 +722,8 @@ fn parse_root_port_guest_path(path: JsValue) -> Result<usize, JsValue> {
 }
 
 fn parse_external_hub_guest_path(path: JsValue) -> Result<(usize, u8), JsValue> {
-    let path: Vec<u32> =
-        serde_wasm_bindgen::from_value(path).map_err(|err| js_error(&format!("Invalid guestPath: {err}")))?;
+    let path: Vec<u32> = serde_wasm_bindgen::from_value(path)
+        .map_err(|err| js_error(&format!("Invalid guestPath: {err}")))?;
     if path.len() < 2 {
         return Err(js_error(
             "guestPath must include a downstream hub port (expected [rootPort, hubPort])",

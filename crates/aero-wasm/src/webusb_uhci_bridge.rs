@@ -358,7 +358,10 @@ impl WebUsbUhciBridge {
         const TAG_CONTROLLER: u16 = 1;
         const TAG_IRQ_ASSERTED: u16 = 2;
 
-        let mut w = SnapshotWriter::new(WEBUSB_UHCI_BRIDGE_DEVICE_ID, WEBUSB_UHCI_BRIDGE_DEVICE_VERSION);
+        let mut w = SnapshotWriter::new(
+            WEBUSB_UHCI_BRIDGE_DEVICE_ID,
+            WEBUSB_UHCI_BRIDGE_DEVICE_VERSION,
+        );
         w.field_bytes(TAG_CONTROLLER, self.controller.save_state());
         w.field_bool(TAG_IRQ_ASSERTED, self.irq.asserted);
         w.finish()

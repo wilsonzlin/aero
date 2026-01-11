@@ -55,4 +55,3 @@ fn uhci_runtime_supports_external_hub_paths_and_webusb_on_root_port_1() {
     let webusb_port = rt.webusb_attach(Some(1)).expect("attach WebUSB");
     assert_eq!(webusb_port, 1);
 }
-

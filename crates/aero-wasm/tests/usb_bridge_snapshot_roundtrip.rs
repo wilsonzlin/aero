@@ -1,6 +1,8 @@
 #![cfg(target_arch = "wasm32")]
 
-use aero_usb::passthrough::{PendingSummary, UsbHostAction, UsbHostCompletion, UsbHostCompletionIn};
+use aero_usb::passthrough::{
+    PendingSummary, UsbHostAction, UsbHostCompletion, UsbHostCompletionIn,
+};
 use aero_usb::usb::{SetupPacket, UsbDevice, UsbHandshake};
 use aero_wasm::{UhciControllerBridge, WebUsbUhciBridge};
 use wasm_bindgen_test::wasm_bindgen_test;
@@ -272,9 +274,7 @@ fn webusb_uhci_bridge_snapshot_roundtrip_preserves_irq_and_registers() {
 
     let completion = UsbHostCompletion::ControlIn {
         id,
-        result: UsbHostCompletionIn::Success {
-            data: vec![0u8; 8],
-        },
+        result: UsbHostCompletionIn::Success { data: vec![0u8; 8] },
     };
     bridge
         .push_completion(serde_wasm_bindgen::to_value(&completion).unwrap())
