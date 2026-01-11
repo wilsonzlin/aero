@@ -1,59 +1,61 @@
-export enum InputEventType {
+export const InputEventType = {
   /**
-   * A PS/2 set-2 scancode sequence.
-   *
-   * Payload:
-   *   a = packed bytes (little-endian, b0 in bits 0..7)
-   *   b = byte length (1..4)
-   */
-  KeyScancode = 1,
+    * A PS/2 set-2 scancode sequence.
+    *
+    * Payload:
+    *   a = packed bytes (little-endian, b0 in bits 0..7)
+    *   b = byte length (1..4)
+    */
+  KeyScancode: 1,
   /**
-   * A USB HID keyboard usage event (Usage Page 0x07).
-   *
-   * This is emitted in addition to `KeyScancode` so the runtime can drive both
-   * legacy PS/2 (i8042) and USB HID (UHCI) paths from the same captured input.
-   *
-   * Payload:
-   *   a = (usage & 0xFF) | ((pressed ? 1 : 0) << 8)
-   *   b = unused
-   */
-  KeyHidUsage = 6,
+    * A USB HID keyboard usage event (Usage Page 0x07).
+    *
+    * This is emitted in addition to `KeyScancode` so the runtime can drive both
+    * legacy PS/2 (i8042) and USB HID (UHCI) paths from the same captured input.
+    *
+    * Payload:
+    *   a = (usage & 0xFF) | ((pressed ? 1 : 0) << 8)
+    *   b = unused
+    */
+  KeyHidUsage: 6,
   /**
-   * Relative mouse movement in PS/2 coordinate space (dx right, dy up).
-   *
-   * Payload:
-   *   a = dx (signed 32-bit)
-   *   b = dy (signed 32-bit)
-   */
-  MouseMove = 2,
+    * Relative mouse movement in PS/2 coordinate space (dx right, dy up).
+    *
+    * Payload:
+    *   a = dx (signed 32-bit)
+    *   b = dy (signed 32-bit)
+    */
+  MouseMove: 2,
   /**
-   * Mouse button state bitmask.
-   *
-   * Payload:
-   *   a = buttons (bit0=left, bit1=right, bit2=middle)
-   *   b = unused
-   */
-  MouseButtons = 3,
+    * Mouse button state bitmask.
+    *
+    * Payload:
+    *   a = buttons (bit0=left, bit1=right, bit2=middle)
+    *   b = unused
+    */
+  MouseButtons: 3,
   /**
-   * Mouse wheel movement.
-   *
-   * Payload:
-   *   a = dz (signed 32-bit, positive = wheel up)
-   *   b = unused
-   */
-  MouseWheel = 4,
+    * Mouse wheel movement.
+    *
+    * Payload:
+    *   a = dz (signed 32-bit, positive = wheel up)
+    *   b = unused
+    */
+  MouseWheel: 4,
   /**
-   * USB HID gamepad input report (8 bytes).
-   *
-   * Payload:
-   *   a = packed bytes 0..3 of an 8-byte gamepad report (little-endian)
-   *   b = packed bytes 4..7 of the report (little-endian)
-   *
-   * The canonical report layout is defined by `crates/aero-usb/src/hid.rs::GamepadReport`
-   * (and mirrored by the native emulator stack under `crates/emulator`).
-   */
-  GamepadReport = 5,
-}
+    * USB HID gamepad input report (8 bytes).
+    *
+    * Payload:
+    *   a = packed bytes 0..3 of an 8-byte gamepad report (little-endian)
+    *   b = packed bytes 4..7 of the report (little-endian)
+    *
+    * The canonical report layout is defined by `crates/aero-usb/src/hid.rs::GamepadReport`
+    * (and mirrored by the native emulator stack under `crates/emulator`).
+    */
+  GamepadReport: 5,
+} as const;
+
+export type InputEventType = (typeof InputEventType)[keyof typeof InputEventType];
 
 export interface InputBatchMessage {
   type: 'in:input-batch';
