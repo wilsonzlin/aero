@@ -164,6 +164,12 @@ typedef struct _WORK_QUEUE_ITEM {
     PVOID Parameter;
 } WORK_QUEUE_ITEM, *PWORK_QUEUE_ITEM;
 
+/*
+ * Forward declaration so ExQueueWorkItem can temporarily adjust the simulated
+ * IRQL before the KIRQL typedef is introduced later in this header.
+ */
+extern volatile unsigned char g_virtiosnd_test_current_irql;
+
 static __forceinline void ExInitializeWorkItem(_Out_ PWORK_QUEUE_ITEM Item, _In_ PWORKER_THREAD_ROUTINE Routine, _In_opt_ PVOID Parameter)
 {
     Item->WorkerRoutine = Routine;
@@ -174,12 +180,22 @@ static __forceinline void ExQueueWorkItem(_Inout_ PWORK_QUEUE_ITEM Item, _In_ WO
 {
     PWORKER_THREAD_ROUTINE routine;
     PVOID parameter;
+    unsigned char old_irql;
 
     UNREFERENCED_PARAMETER(QueueType);
 
     routine = Item->WorkerRoutine;
     parameter = Item->Parameter;
+
+    /*
+     * Work items run at PASSIVE_LEVEL on a system worker thread. Unit tests are
+     * single-threaded, so temporarily drop the simulated IRQL while running the
+     * callback.
+     */
+    old_irql = g_virtiosnd_test_current_irql;
+    g_virtiosnd_test_current_irql = 0u; /* PASSIVE_LEVEL */
     routine(parameter);
+    g_virtiosnd_test_current_irql = old_irql;
 }
 
 /* ---- Interlocked operations (single-process host tests) ---- */
@@ -200,7 +216,28 @@ typedef ULONG KSPIN_LOCK;
 #define PASSIVE_LEVEL ((KIRQL)0u)
 #define DISPATCH_LEVEL ((KIRQL)2u)
 
-static __forceinline KIRQL KeGetCurrentIrql(void) { return PASSIVE_LEVEL; }
+/*
+ * Host-test IRQL model:
+ *
+ * The kernel has the concept of a "current IRQL", which changes as code enters
+ * interrupt/DPC context or acquires spinlocks. For host (user-mode) unit tests we
+ * model this with a mutable global so tests can intentionally exercise
+ * DISPATCH_LEVEL code paths.
+ *
+ * Default is PASSIVE_LEVEL (defined in test_proto.c).
+ */
+extern volatile KIRQL g_virtiosnd_test_current_irql;
+
+static __forceinline KIRQL KeGetCurrentIrql(void) { return g_virtiosnd_test_current_irql; }
+
+static __forceinline KIRQL KeRaiseIrqlToDpcLevel(void)
+{
+    KIRQL old = KeGetCurrentIrql();
+    g_virtiosnd_test_current_irql = DISPATCH_LEVEL;
+    return old;
+}
+
+static __forceinline void KeLowerIrql(KIRQL NewIrql) { g_virtiosnd_test_current_irql = NewIrql; }
 
 static __forceinline void KeInitializeSpinLock(KSPIN_LOCK *lock) { UNREFERENCED_PARAMETER(lock); }
 
@@ -208,14 +245,15 @@ static __forceinline void KeAcquireSpinLock(KSPIN_LOCK *lock, KIRQL *old_irql)
 {
     UNREFERENCED_PARAMETER(lock);
     if (old_irql != NULL) {
-        *old_irql = PASSIVE_LEVEL;
+        *old_irql = KeGetCurrentIrql();
     }
+    g_virtiosnd_test_current_irql = DISPATCH_LEVEL;
 }
 
 static __forceinline void KeReleaseSpinLock(KSPIN_LOCK *lock, KIRQL old_irql)
 {
     UNREFERENCED_PARAMETER(lock);
-    UNREFERENCED_PARAMETER(old_irql);
+    g_virtiosnd_test_current_irql = old_irql;
 }
 
 static __forceinline void KeMemoryBarrier(void) { __sync_synchronize(); }

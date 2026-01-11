@@ -12,6 +12,9 @@
 #include "virtiosnd_rx.h"
 #include "virtiosnd_tx.h"
 
+/* Shared by the ntddk.h shim so tests can simulate DISPATCH_LEVEL code paths. */
+volatile KIRQL g_virtiosnd_test_current_irql = PASSIVE_LEVEL;
+
 /*
  * Keep assertions active in all build configurations.
  *
@@ -287,6 +290,65 @@ static void test_control_set_params_formats_channels(void)
     virtio_test_queue_destroy(&q);
 }
 
+static void test_control_timeout_then_late_completion_runs_at_dpc_level(void)
+{
+    VIRTIO_TEST_QUEUE q;
+    VIRTIOSND_DMA_CONTEXT dma;
+    VIRTIOSND_CONTROL ctrl;
+    NTSTATUS status;
+    VIRTIO_SND_PCM_SIMPLE_REQ req;
+    ULONG respStatus;
+    ULONG virtioStatus;
+    ULONG respLen;
+    const VIRTIOSND_SG* sg;
+    UINT32 usedLen;
+    KIRQL oldIrql;
+
+    virtio_test_queue_init(&q, FALSE /* auto_complete */);
+    RtlZeroMemory(&dma, sizeof(dma));
+    VirtioSndCtrlInit(&ctrl, &dma, &q.queue);
+
+    RtlZeroMemory(&req, sizeof(req));
+    req.code = VIRTIO_SND_R_PCM_RELEASE;
+    req.stream_id = VIRTIO_SND_PLAYBACK_STREAM_ID;
+
+    respStatus = 0xFFFFFFFFu;
+    virtioStatus = 0;
+    respLen = 0;
+
+    status = VirtioSndCtrlSendSync(&ctrl, &req, sizeof(req), &respStatus, sizeof(respStatus), 1u, &virtioStatus, &respLen);
+    assert(status == STATUS_IO_TIMEOUT);
+
+    /* A timed out request should still be tracked as active until completion/cancel. */
+    assert(KeReadStateEvent(&ctrl.ReqIdleEvent) == 0);
+    assert(q.pending_count == 1);
+    assert(q.pending[0].sg_count == 2);
+
+    sg = q.pending[0].sg;
+    assert(sg[1].write == TRUE);
+    assert(sg[1].addr != 0);
+
+    /* Simulate device writing a successful response and placing the chain on the used ring. */
+    *(uint32_t*)(uintptr_t)sg[1].addr = VIRTIO_SND_S_OK;
+    usedLen = sg[1].len;
+
+    q.used[q.used_tail].cookie = q.pending[0].cookie;
+    q.used[q.used_tail].used_len = usedLen;
+    q.used_tail = (q.used_tail + 1u) % VIRTIO_TEST_QUEUE_MAX_PENDING;
+    q.used_count++;
+
+    /* Process the used entry at DISPATCH_LEVEL to exercise the DPC completion path. */
+    oldIrql = KeRaiseIrqlToDpcLevel();
+    VirtioSndCtrlProcessUsed(&ctrl);
+    KeLowerIrql(oldIrql);
+
+    /* The request should be freed and removed from the active list (idle signaled). */
+    assert(KeReadStateEvent(&ctrl.ReqIdleEvent) != 0);
+
+    VirtioSndCtrlUninit(&ctrl);
+    virtio_test_queue_destroy(&q);
+}
+
 int main(void)
 {
     test_tx_rejects_misaligned_pcm_bytes();
@@ -295,7 +357,7 @@ int main(void)
     test_rx_rejects_misaligned_payload_bytes();
     test_rx_builds_hdr_payload_status_chain();
     test_control_set_params_formats_channels();
+    test_control_timeout_then_late_completion_runs_at_dpc_level();
     printf("virtiosnd_proto_tests: PASS\n");
     return 0;
 }
-
