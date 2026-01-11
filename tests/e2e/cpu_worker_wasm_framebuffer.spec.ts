@@ -1,10 +1,21 @@
 import { expect, test, type Page } from "@playwright/test";
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
+const THREADED_WASM_BINARY = fileURLToPath(
+  new URL("../../web/src/wasm/pkg-threaded/aero_wasm_bg.wasm", import.meta.url),
+);
+const HAS_THREADED_WASM_BINARY = existsSync(THREADED_WASM_BINARY);
 
 async function waitForReady(page: Page) {
   await page.waitForFunction(() => (window as any).__aeroTest?.ready === true);
 }
 
 test("cpu worker wasm demo: publishes shared framebuffer frames from WASM", async ({ page }) => {
+  test.skip(
+    !HAS_THREADED_WASM_BINARY,
+    "Threaded WASM package missing (required for shared-memory worker runtime). Build it with `npm -w web run wasm:build:threaded`.",
+  );
   await page.goto("http://127.0.0.1:5173/web/cpu-worker-wasm-framebuffer-smoke.html", { waitUntil: "load" });
 
   const support = await page.evaluate(() => {
