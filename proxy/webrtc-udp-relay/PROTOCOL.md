@@ -349,10 +349,11 @@ Error `code` values are currently best-effort and intended for debugging:
 #### WebSocket flow
 
 1. Client connects to `/webrtc/signal`
-2. Client sends `offer`
-3. Server responds immediately with `answer` (does **not** wait for ICE gathering)
-4. Both sides exchange `candidate` messages until connected
-5. Client opens a DataChannel labeled `udp`
+2. (If `AUTH_MODE != none`) client sends `auth`
+3. Client sends `offer`
+4. Server responds immediately with `answer` (does **not** wait for ICE gathering)
+5. Both sides exchange `candidate` messages until connected
+6. Client opens a DataChannel labeled `udp`
 
 ### HTTP offer → answer (non-trickle ICE fallback)
 

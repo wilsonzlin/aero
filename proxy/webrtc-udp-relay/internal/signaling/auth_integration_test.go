@@ -317,3 +317,134 @@ func TestWebSocketAuthTimeout(t *testing.T) {
 		t.Fatalf("expected auth_failure metric increment")
 	}
 }
+
+func TestWebSocketOversizedMessageRejected(t *testing.T) {
+	cfg := config.Config{
+		AuthMode:                      config.AuthModeAPIKey,
+		APIKey:                        "secret",
+		SignalingAuthTimeout:          2 * time.Second,
+		MaxSignalingMessageBytes:      32,
+		MaxSignalingMessagesPerSecond: 50,
+	}
+	ts, _ := startSignalingServer(t, cfg)
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/webrtc/signal"
+	c, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+
+	oversized := `{"type":"auth","apiKey":"` + strings.Repeat("a", 128) + `"}`
+	if err := c.WriteMessage(websocket.TextMessage, []byte(oversized)); err != nil {
+		// The server may close fast enough that the write fails, which is fine.
+		return
+	}
+
+	_ = c.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, _, err = c.ReadMessage()
+	if err == nil {
+		t.Fatalf("expected close error")
+	}
+	if !websocket.IsCloseError(err, websocket.CloseMessageTooBig) {
+		t.Fatalf("expected message too big close; got %v", err)
+	}
+}
+
+func TestWebSocketRejectsBinaryBeforeAuth(t *testing.T) {
+	cfg := config.Config{
+		AuthMode:                      config.AuthModeAPIKey,
+		APIKey:                        "secret",
+		SignalingAuthTimeout:          2 * time.Second,
+		MaxSignalingMessageBytes:      64 * 1024,
+		MaxSignalingMessagesPerSecond: 50,
+	}
+	ts, _ := startSignalingServer(t, cfg)
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/webrtc/signal"
+	c, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+
+	if err := c.WriteMessage(websocket.BinaryMessage, []byte{0x01, 0x02}); err != nil {
+		t.Fatalf("write binary: %v", err)
+	}
+
+	_ = c.SetReadDeadline(time.Now().Add(2 * time.Second))
+	msgType, msg, err := c.ReadMessage()
+	if err != nil {
+		if websocket.IsCloseError(err, websocket.CloseUnsupportedData) {
+			return
+		}
+		t.Fatalf("read: %v", err)
+	}
+	if msgType != websocket.TextMessage {
+		t.Fatalf("unexpected message type %d", msgType)
+	}
+	parsed, err := signaling.ParseSignalMessage(msg)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if parsed.Type != signaling.MessageTypeError || parsed.Code != "bad_message" {
+		t.Fatalf("unexpected server message: %#v", parsed)
+	}
+
+	_, _, err = c.ReadMessage()
+	if err == nil {
+		t.Fatalf("expected close error")
+	}
+	if !websocket.IsCloseError(err, websocket.CloseUnsupportedData) {
+		t.Fatalf("expected unsupported data close; got %v", err)
+	}
+}
+
+func TestWebSocketRateLimitExceeded(t *testing.T) {
+	cfg := config.Config{
+		AuthMode:                      config.AuthModeNone,
+		SignalingAuthTimeout:          2 * time.Second,
+		MaxSignalingMessageBytes:      64 * 1024,
+		MaxSignalingMessagesPerSecond: 1,
+	}
+	ts, m := startSignalingServer(t, cfg)
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/webrtc/signal"
+	c, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+
+	// The server tolerates auth messages even when AUTH_MODE=none.
+	if err := c.WriteJSON(signaling.SignalMessage{Type: signaling.MessageTypeAuth, APIKey: "ignored"}); err != nil {
+		t.Fatalf("write auth1: %v", err)
+	}
+	if err := c.WriteJSON(signaling.SignalMessage{Type: signaling.MessageTypeAuth, APIKey: "ignored"}); err != nil {
+		t.Fatalf("write auth2: %v", err)
+	}
+
+	_ = c.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, raw, err := c.ReadMessage()
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	parsed, err := signaling.ParseSignalMessage(raw)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if parsed.Type != signaling.MessageTypeError || parsed.Code != "rate_limited" {
+		t.Fatalf("unexpected server message: %#v", parsed)
+	}
+	if m.Get(metrics.DropReasonRateLimited) == 0 {
+		t.Fatalf("expected rate_limited metric increment")
+	}
+
+	_, _, err = c.ReadMessage()
+	if err == nil {
+		t.Fatalf("expected close error")
+	}
+	if !websocket.IsCloseError(err, websocket.ClosePolicyViolation) {
+		t.Fatalf("expected policy violation close; got %v", err)
+	}
+}
