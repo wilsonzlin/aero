@@ -102,3 +102,45 @@ func TestServer_EnforcesMaxSessions(t *testing.T) {
 		t.Fatalf("expected too_many_sessions metric increment")
 	}
 }
+
+func TestServer_RejectsCrossOriginHTTPRequests(t *testing.T) {
+	srv := NewServer(Config{
+		RelayConfig: relay.DefaultConfig(),
+		Policy:      policy.NewDevDestinationPolicy(),
+		Authorizer:  AllowAllAuthorizer{},
+	})
+
+	mux := http.NewServeMux()
+	srv.RegisterRoutes(mux)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	cases := []struct {
+		method string
+		path   string
+	}{
+		{method: http.MethodPost, path: "/offer"},
+		{method: http.MethodPost, path: "/session"},
+		{method: http.MethodPost, path: "/webrtc/offer"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			req, err := http.NewRequest(tc.method, ts.URL+tc.path, nil)
+			if err != nil {
+				t.Fatalf("NewRequest: %v", err)
+			}
+			req.Header.Set("Origin", "https://evil.example.com")
+
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("Do: %v", err)
+			}
+			resp.Body.Close()
+
+			if resp.StatusCode != http.StatusForbidden {
+				t.Fatalf("status=%d, want %d", resp.StatusCode, http.StatusForbidden)
+			}
+		})
+	}
+}

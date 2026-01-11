@@ -242,6 +242,11 @@ func (s *Server) incMetric(name string) {
 }
 
 func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
+	if !s.checkOrigin(r) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+
 	if s.Sessions == nil {
 		writeJSONError(w, http.StatusInternalServerError, "internal_error", "session manager not configured")
 		return
@@ -275,6 +280,11 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleOffer(w http.ResponseWriter, r *http.Request) {
+	if !s.checkOrigin(r) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+
 	var req OfferRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 2<<20)).Decode(&req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "bad_message", "invalid offer")
@@ -388,6 +398,11 @@ func (s *Server) handleOffer(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleWebRTCOffer(w http.ResponseWriter, r *http.Request) {
+	if !s.checkOrigin(r) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+
 	if s.WebRTC == nil {
 		writeJSONError(w, http.StatusInternalServerError, "internal_error", "webrtc api not configured")
 		return
