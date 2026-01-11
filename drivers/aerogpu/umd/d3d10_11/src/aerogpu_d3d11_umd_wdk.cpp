@@ -2831,6 +2831,9 @@ void AEROGPU_APIENTRY IaSetIndexBuffer11(D3D11DDI_HDEVICECONTEXT hCtx, D3D11DDI_
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
+  dev->current_ib = hBuffer.pDrvPrivate ? FromHandle<D3D11DDI_HRESOURCE, Resource>(hBuffer) : nullptr;
+  dev->current_ib_format = static_cast<uint32_t>(format);
+  dev->current_ib_offset_bytes = offset;
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_index_buffer>(AEROGPU_CMD_SET_INDEX_BUFFER);
   cmd->buffer = hBuffer.pDrvPrivate ? FromHandle<D3D11DDI_HRESOURCE, Resource>(hBuffer)->handle : 0;
   cmd->format = dxgi_index_format_to_aerogpu(static_cast<uint32_t>(format));
@@ -2897,8 +2900,42 @@ void AEROGPU_APIENTRY GsSetShader11(D3D11DDI_HDEVICECONTEXT hCtx,
   // Geometry stage not yet translated into the command stream.
 }
 
-void AEROGPU_APIENTRY VsSetConstantBuffers11(D3D11DDI_HDEVICECONTEXT, UINT, UINT, const D3D11DDI_HRESOURCE*, const UINT*, const UINT*) {}
-void AEROGPU_APIENTRY PsSetConstantBuffers11(D3D11DDI_HDEVICECONTEXT, UINT, UINT, const D3D11DDI_HRESOURCE*, const UINT*, const UINT*) {}
+void AEROGPU_APIENTRY VsSetConstantBuffers11(D3D11DDI_HDEVICECONTEXT hCtx,
+                                             UINT StartSlot,
+                                             UINT NumBuffers,
+                                             const D3D11DDI_HRESOURCE* phBuffers,
+                                             const UINT*,
+                                             const UINT*) {
+  auto* dev = DeviceFromContext(hCtx);
+  if (!dev) {
+    return;
+  }
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  if (StartSlot == 0 && NumBuffers >= 1) {
+    dev->current_vs_cb0 = (phBuffers && phBuffers[0].pDrvPrivate) ? FromHandle<D3D11DDI_HRESOURCE, Resource>(phBuffers[0])
+                                                                  : nullptr;
+  }
+}
+
+void AEROGPU_APIENTRY PsSetConstantBuffers11(D3D11DDI_HDEVICECONTEXT hCtx,
+                                             UINT StartSlot,
+                                             UINT NumBuffers,
+                                             const D3D11DDI_HRESOURCE* phBuffers,
+                                             const UINT*,
+                                             const UINT*) {
+  auto* dev = DeviceFromContext(hCtx);
+  if (!dev) {
+    return;
+  }
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  if (StartSlot == 0 && NumBuffers >= 1) {
+    dev->current_ps_cb0 = (phBuffers && phBuffers[0].pDrvPrivate) ? FromHandle<D3D11DDI_HRESOURCE, Resource>(phBuffers[0])
+                                                                  : nullptr;
+  }
+}
+
 void AEROGPU_APIENTRY GsSetConstantBuffers11(D3D11DDI_HDEVICECONTEXT, UINT, UINT, const D3D11DDI_HRESOURCE*, const UINT*, const UINT*) {}
 
 template <typename THandle>
@@ -3065,6 +3102,14 @@ void AEROGPU_APIENTRY VsSetShaderResources11(D3D11DDI_HDEVICECONTEXT hCtx,
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
+  if (StartSlot == 0 && NumViews >= 1) {
+    Resource* bound = nullptr;
+    if (phViews[0].pDrvPrivate) {
+      auto* view = FromHandle<D3D11DDI_HSHADERRESOURCEVIEW, ShaderResourceView>(phViews[0]);
+      bound = view ? view->resource : nullptr;
+    }
+    dev->current_vs_srv0 = bound;
+  }
   for (UINT i = 0; i < NumViews; i++) {
     const uint32_t slot = static_cast<uint32_t>(StartSlot + i);
     aerogpu_handle_t tex = 0;
@@ -3097,6 +3142,14 @@ void AEROGPU_APIENTRY PsSetShaderResources11(D3D11DDI_HDEVICECONTEXT hCtx,
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
+  if (StartSlot == 0 && NumViews >= 1) {
+    Resource* bound = nullptr;
+    if (phViews[0].pDrvPrivate) {
+      auto* view = FromHandle<D3D11DDI_HSHADERRESOURCEVIEW, ShaderResourceView>(phViews[0]);
+      bound = view ? view->resource : nullptr;
+    }
+    dev->current_ps_srv0 = bound;
+  }
   for (UINT i = 0; i < NumViews; i++) {
     const uint32_t slot = static_cast<uint32_t>(StartSlot + i);
     aerogpu_handle_t tex = 0;
@@ -3187,6 +3240,13 @@ void AEROGPU_APIENTRY ClearState11(D3D11DDI_HDEVICECONTEXT hCtx) {
   dev->current_vb = nullptr;
   dev->current_vb_stride_bytes = 0;
   dev->current_vb_offset_bytes = 0;
+  dev->current_ib = nullptr;
+  dev->current_ib_format = kDxgiFormatUnknown;
+  dev->current_ib_offset_bytes = 0;
+  dev->current_vs_cb0 = nullptr;
+  dev->current_ps_cb0 = nullptr;
+  dev->current_vs_srv0 = nullptr;
+  dev->current_ps_srv0 = nullptr;
   dev->viewport_x = 0.0f;
   dev->viewport_y = 0.0f;
   dev->viewport_width = 0.0f;
@@ -3345,38 +3405,100 @@ static float EdgeFn(float ax, float ay, float bx, float by, float px, float py) 
   return (px - ax) * (by - ay) - (py - ay) * (bx - ax);
 }
 
-static void SoftwareDrawTriangleList(Device* dev, UINT vertex_count, UINT first_vertex) {
-  if (!dev) {
+struct SoftwareVtx {
+  float x = 0.0f;
+  float y = 0.0f;
+  float a[4] = {};
+};
+
+static bool ReadConstantColor(Device* dev, float out_rgba[4]) {
+  if (!dev || !out_rgba) {
+    return false;
+  }
+
+  Resource* cb = dev->current_ps_cb0 ? dev->current_ps_cb0 : dev->current_vs_cb0;
+  if (!cb || cb->kind != ResourceKind::Buffer || cb->storage.size() < sizeof(float) * 4) {
+    return false;
+  }
+
+  std::memcpy(out_rgba, cb->storage.data(), sizeof(float) * 4);
+  return true;
+}
+
+static bool SampleTexturePointClamp(Resource* tex, float u, float v, float out_rgba[4]) {
+  if (!tex || !out_rgba || tex->kind != ResourceKind::Texture2D || tex->width == 0 || tex->height == 0 ||
+      tex->row_pitch_bytes == 0) {
+    return false;
+  }
+  if (tex->storage.size() < static_cast<size_t>(tex->row_pitch_bytes) * static_cast<size_t>(tex->height)) {
+    return false;
+  }
+  if (!(tex->dxgi_format == kDxgiFormatB8G8R8A8Unorm || tex->dxgi_format == kDxgiFormatB8G8R8X8Unorm ||
+        tex->dxgi_format == kDxgiFormatR8G8B8A8Unorm)) {
+    return false;
+  }
+
+  u = std::clamp(u, 0.0f, 1.0f);
+  v = std::clamp(v, 0.0f, 1.0f);
+
+  int x = static_cast<int>(u * static_cast<float>(tex->width));
+  int y = static_cast<int>(v * static_cast<float>(tex->height));
+  x = std::clamp(x, 0, static_cast<int>(tex->width) - 1);
+  y = std::clamp(y, 0, static_cast<int>(tex->height) - 1);
+
+  const size_t off = static_cast<size_t>(y) * tex->row_pitch_bytes + static_cast<size_t>(x) * 4;
+  if (off + 4 > tex->storage.size()) {
+    return false;
+  }
+
+  uint8_t r = 0, g = 0, b = 0, a = 255;
+  switch (tex->dxgi_format) {
+    case kDxgiFormatB8G8R8A8Unorm:
+      b = tex->storage[off + 0];
+      g = tex->storage[off + 1];
+      r = tex->storage[off + 2];
+      a = tex->storage[off + 3];
+      break;
+    case kDxgiFormatB8G8R8X8Unorm:
+      b = tex->storage[off + 0];
+      g = tex->storage[off + 1];
+      r = tex->storage[off + 2];
+      a = 255;
+      break;
+    case kDxgiFormatR8G8B8A8Unorm:
+      r = tex->storage[off + 0];
+      g = tex->storage[off + 1];
+      b = tex->storage[off + 2];
+      a = tex->storage[off + 3];
+      break;
+    default:
+      return false;
+  }
+
+  constexpr float inv255 = 1.0f / 255.0f;
+  out_rgba[0] = static_cast<float>(r) * inv255;
+  out_rgba[1] = static_cast<float>(g) * inv255;
+  out_rgba[2] = static_cast<float>(b) * inv255;
+  out_rgba[3] = static_cast<float>(a) * inv255;
+  return true;
+}
+
+static void SoftwareRasterTriangle(Device* dev,
+                                   Resource* rt,
+                                   const SoftwareVtx& v0,
+                                   const SoftwareVtx& v1,
+                                   const SoftwareVtx& v2,
+                                   bool has_color,
+                                   bool has_uv,
+                                   const float constant_rgba[4],
+                                   Resource* tex) {
+  if (!dev || !rt) {
     return;
   }
-  Resource* rt = dev->current_rtv_resource;
-  Resource* vb = dev->current_vb;
-  if (!rt || !vb || rt->kind != ResourceKind::Texture2D || vb->kind != ResourceKind::Buffer) {
-    return;
-  }
-  if (rt->width == 0 || rt->height == 0 || rt->row_pitch_bytes == 0) {
+  if (rt->kind != ResourceKind::Texture2D || rt->width == 0 || rt->height == 0 || rt->row_pitch_bytes == 0) {
     return;
   }
   if (rt->storage.size() < static_cast<size_t>(rt->row_pitch_bytes) * static_cast<size_t>(rt->height)) {
-    return;
-  }
-  if (!(rt->dxgi_format == kDxgiFormatB8G8R8A8Unorm || rt->dxgi_format == kDxgiFormatB8G8R8X8Unorm ||
-        rt->dxgi_format == kDxgiFormatR8G8B8A8Unorm)) {
-    return;
-  }
-  if (dev->current_topology != AEROGPU_TOPOLOGY_TRIANGLELIST) {
-    return;
-  }
-  if (vertex_count < 3) {
-    return;
-  }
-
-  // Expect the Win7 test vertex format:
-  //   float2 POSITION @ byte 0
-  //   float4 COLOR    @ byte 8
-  const uint32_t stride = dev->current_vb_stride_bytes;
-  const uint32_t base_off = dev->current_vb_offset_bytes;
-  if (stride < 24) {
     return;
   }
 
@@ -3388,32 +3510,7 @@ static void SoftwareDrawTriangleList(Device* dev, UINT vertex_count, UINT first_
     return;
   }
 
-  struct Vtx {
-    float x;
-    float y;
-    float c[4];
-  };
-
-  auto read_vtx = [&](uint32_t idx) -> Vtx {
-    Vtx out{};
-    const uint64_t byte_off = static_cast<uint64_t>(base_off) + static_cast<uint64_t>(idx) * stride;
-    if (byte_off + 24 > vb->storage.size()) {
-      return out;
-    }
-    const uint8_t* p = vb->storage.data() + static_cast<size_t>(byte_off);
-    std::memcpy(&out.x, p + 0, sizeof(float));
-    std::memcpy(&out.y, p + 4, sizeof(float));
-    std::memcpy(&out.c[0], p + 8, sizeof(float) * 4);
-    return out;
-  };
-
-  // We only need enough for the tests; handle the first triangle.
-  const Vtx v0 = read_vtx(first_vertex + 0);
-  const Vtx v1 = read_vtx(first_vertex + 1);
-  const Vtx v2 = read_vtx(first_vertex + 2);
-
-  const auto to_screen = [&](const Vtx& v, float* out_x, float* out_y) {
-    // Input positions are already in NDC (via a pass-through VS in the tests).
+  const auto to_screen = [&](const SoftwareVtx& v, float* out_x, float* out_y) {
     const float ndc_x = v.x;
     const float ndc_y = v.y;
     *out_x = vp_x + (ndc_x + 1.0f) * 0.5f * vp_w;
@@ -3472,8 +3569,18 @@ static void SoftwareDrawTriangleList(Device* dev, UINT vertex_count, UINT first_
       const float b2 = w2 * inv_area;
 
       float out_rgba[4] = {};
-      for (int i = 0; i < 4; i++) {
-        out_rgba[i] = b0 * v0.c[i] + b1 * v1.c[i] + b2 * v2.c[i];
+      if (has_color) {
+        for (int i = 0; i < 4; i++) {
+          out_rgba[i] = b0 * v0.a[i] + b1 * v1.a[i] + b2 * v2.a[i];
+        }
+      } else if (has_uv) {
+        const float u = b0 * v0.a[0] + b1 * v1.a[0] + b2 * v2.a[0];
+        const float v = b0 * v0.a[1] + b1 * v1.a[1] + b2 * v2.a[1];
+        if (!SampleTexturePointClamp(tex, u, v, out_rgba)) {
+          continue;
+        }
+      } else if (constant_rgba) {
+        std::memcpy(out_rgba, constant_rgba, sizeof(out_rgba));
       }
 
       uint8_t r = U8FromFloat01(out_rgba[0]);
@@ -3500,6 +3607,221 @@ static void SoftwareDrawTriangleList(Device* dev, UINT vertex_count, UINT first_
           break;
       }
     }
+  }
+}
+
+static void SoftwareDrawTriangleList(Device* dev, UINT vertex_count, UINT first_vertex) {
+  if (!dev) {
+    return;
+  }
+  Resource* rt = dev->current_rtv_resource;
+  Resource* vb = dev->current_vb;
+  if (!rt || !vb || rt->kind != ResourceKind::Texture2D || vb->kind != ResourceKind::Buffer) {
+    return;
+  }
+  if (rt->width == 0 || rt->height == 0 || rt->row_pitch_bytes == 0) {
+    return;
+  }
+  if (rt->storage.size() < static_cast<size_t>(rt->row_pitch_bytes) * static_cast<size_t>(rt->height)) {
+    return;
+  }
+  if (!(rt->dxgi_format == kDxgiFormatB8G8R8A8Unorm || rt->dxgi_format == kDxgiFormatB8G8R8X8Unorm ||
+        rt->dxgi_format == kDxgiFormatR8G8B8A8Unorm)) {
+    return;
+  }
+  if (dev->current_topology != AEROGPU_TOPOLOGY_TRIANGLELIST) {
+    return;
+  }
+  if (vertex_count < 3) {
+    return;
+  }
+
+  const uint32_t stride = dev->current_vb_stride_bytes;
+  const uint32_t base_off = dev->current_vb_offset_bytes;
+  if (stride < 8) {
+    return;
+  }
+
+  const bool has_color = (stride >= 24);
+  const bool has_uv = (!has_color && stride >= 16);
+  float constant_rgba[4] = {};
+  Resource* tex = nullptr;
+  if (!has_color && !has_uv) {
+    if (!ReadConstantColor(dev, constant_rgba)) {
+      return;
+    }
+  } else if (has_uv) {
+    tex = dev->current_ps_srv0 ? dev->current_ps_srv0 : dev->current_vs_srv0;
+    if (!tex) {
+      return;
+    }
+  }
+
+  auto read_vtx = [&](uint32_t idx, SoftwareVtx* out) -> bool {
+    if (!out) {
+      return false;
+    }
+    const uint64_t byte_off = static_cast<uint64_t>(base_off) + static_cast<uint64_t>(idx) * stride;
+    const size_t needed = has_color ? 24 : (has_uv ? 16 : 8);
+    if (byte_off + needed > vb->storage.size()) {
+      return false;
+    }
+    const uint8_t* p = vb->storage.data() + static_cast<size_t>(byte_off);
+    std::memcpy(&out->x, p + 0, sizeof(float));
+    std::memcpy(&out->y, p + 4, sizeof(float));
+    if (has_color) {
+      std::memcpy(&out->a[0], p + 8, sizeof(float) * 4);
+    } else if (has_uv) {
+      std::memcpy(&out->a[0], p + 8, sizeof(float) * 2);
+      out->a[2] = 0.0f;
+      out->a[3] = 0.0f;
+    }
+    return true;
+  };
+
+  SoftwareVtx v0{};
+  SoftwareVtx v1{};
+  SoftwareVtx v2{};
+  if (!read_vtx(first_vertex + 0, &v0) || !read_vtx(first_vertex + 1, &v1) || !read_vtx(first_vertex + 2, &v2)) {
+    return;
+  }
+
+  SoftwareRasterTriangle(dev, rt, v0, v1, v2, has_color, has_uv, has_color || has_uv ? nullptr : constant_rgba, tex);
+}
+
+static void SoftwareDrawIndexedTriangleList(Device* dev, UINT index_count, UINT first_index, INT base_vertex) {
+  if (!dev) {
+    return;
+  }
+  Resource* rt = dev->current_rtv_resource;
+  Resource* vb = dev->current_vb;
+  Resource* ib = dev->current_ib;
+  if (!rt || !vb || !ib || rt->kind != ResourceKind::Texture2D || vb->kind != ResourceKind::Buffer ||
+      ib->kind != ResourceKind::Buffer) {
+    return;
+  }
+  if (rt->width == 0 || rt->height == 0 || rt->row_pitch_bytes == 0) {
+    return;
+  }
+  if (rt->storage.size() < static_cast<size_t>(rt->row_pitch_bytes) * static_cast<size_t>(rt->height)) {
+    return;
+  }
+  if (!(rt->dxgi_format == kDxgiFormatB8G8R8A8Unorm || rt->dxgi_format == kDxgiFormatB8G8R8X8Unorm ||
+        rt->dxgi_format == kDxgiFormatR8G8B8A8Unorm)) {
+    return;
+  }
+  if (dev->current_topology != AEROGPU_TOPOLOGY_TRIANGLELIST) {
+    return;
+  }
+  if (index_count < 3) {
+    return;
+  }
+
+  const uint32_t stride = dev->current_vb_stride_bytes;
+  const uint32_t base_off = dev->current_vb_offset_bytes;
+  if (stride < 8) {
+    return;
+  }
+
+  const bool has_color = (stride >= 24);
+  const bool has_uv = (!has_color && stride >= 16);
+  float constant_rgba[4] = {};
+  Resource* tex = nullptr;
+  if (!has_color && !has_uv) {
+    if (!ReadConstantColor(dev, constant_rgba)) {
+      return;
+    }
+  } else if (has_uv) {
+    tex = dev->current_ps_srv0 ? dev->current_ps_srv0 : dev->current_vs_srv0;
+    if (!tex) {
+      return;
+    }
+  }
+
+  size_t index_size = 0;
+  if (dev->current_ib_format == kDxgiFormatR16Uint) {
+    index_size = 2;
+  } else if (dev->current_ib_format == kDxgiFormatR32Uint) {
+    index_size = 4;
+  } else {
+    return;
+  }
+
+  const uint64_t indices_off = static_cast<uint64_t>(dev->current_ib_offset_bytes) +
+                               static_cast<uint64_t>(first_index) * static_cast<uint64_t>(index_size);
+  if (indices_off >= ib->storage.size()) {
+    return;
+  }
+
+  auto read_index = [&](uint32_t idx, uint32_t* out) -> bool {
+    if (!out) {
+      return false;
+    }
+    const uint64_t byte_off = indices_off + static_cast<uint64_t>(idx) * static_cast<uint64_t>(index_size);
+    if (byte_off + index_size > ib->storage.size()) {
+      return false;
+    }
+    const uint8_t* p = ib->storage.data() + static_cast<size_t>(byte_off);
+    if (index_size == 2) {
+      uint16_t v = 0;
+      std::memcpy(&v, p, sizeof(v));
+      *out = v;
+      return true;
+    }
+    if (index_size == 4) {
+      uint32_t v = 0;
+      std::memcpy(&v, p, sizeof(v));
+      *out = v;
+      return true;
+    }
+    return false;
+  };
+
+  auto read_vtx = [&](uint32_t idx, SoftwareVtx* out) -> bool {
+    if (!out) {
+      return false;
+    }
+    const uint64_t byte_off = static_cast<uint64_t>(base_off) + static_cast<uint64_t>(idx) * stride;
+    const size_t needed = has_color ? 24 : (has_uv ? 16 : 8);
+    if (byte_off + needed > vb->storage.size()) {
+      return false;
+    }
+    const uint8_t* p = vb->storage.data() + static_cast<size_t>(byte_off);
+    std::memcpy(&out->x, p + 0, sizeof(float));
+    std::memcpy(&out->y, p + 4, sizeof(float));
+    if (has_color) {
+      std::memcpy(&out->a[0], p + 8, sizeof(float) * 4);
+    } else if (has_uv) {
+      std::memcpy(&out->a[0], p + 8, sizeof(float) * 2);
+      out->a[2] = 0.0f;
+      out->a[3] = 0.0f;
+    }
+    return true;
+  };
+
+  const uint32_t tri_count = index_count / 3;
+  for (uint32_t tri = 0; tri < tri_count; tri++) {
+    uint32_t i0 = 0, i1 = 0, i2 = 0;
+    if (!read_index(tri * 3 + 0, &i0) || !read_index(tri * 3 + 1, &i1) || !read_index(tri * 3 + 2, &i2)) {
+      return;
+    }
+
+    const int v0_idx = static_cast<int>(i0) + base_vertex;
+    const int v1_idx = static_cast<int>(i1) + base_vertex;
+    const int v2_idx = static_cast<int>(i2) + base_vertex;
+    if (v0_idx < 0 || v1_idx < 0 || v2_idx < 0) {
+      continue;
+    }
+
+    SoftwareVtx v0{};
+    SoftwareVtx v1{};
+    SoftwareVtx v2{};
+    if (!read_vtx(static_cast<uint32_t>(v0_idx), &v0) || !read_vtx(static_cast<uint32_t>(v1_idx), &v1) ||
+        !read_vtx(static_cast<uint32_t>(v2_idx), &v2)) {
+      continue;
+    }
+
+    SoftwareRasterTriangle(dev, rt, v0, v1, v2, has_color, has_uv, has_color || has_uv ? nullptr : constant_rgba, tex);
   }
 }
 
@@ -3602,6 +3924,7 @@ void AEROGPU_APIENTRY DrawIndexed11(D3D11DDI_HDEVICECONTEXT hCtx, UINT IndexCoun
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
+  SoftwareDrawIndexedTriangleList(dev, IndexCount, StartIndexLocation, BaseVertexLocation);
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_draw_indexed>(AEROGPU_CMD_DRAW_INDEXED);
   cmd->index_count = IndexCount;
   cmd->instance_count = 1;

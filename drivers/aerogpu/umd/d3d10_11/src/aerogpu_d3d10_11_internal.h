@@ -351,6 +351,13 @@ struct Device {
   Resource* current_vb = nullptr;
   uint32_t current_vb_stride_bytes = 0;
   uint32_t current_vb_offset_bytes = 0;
+  Resource* current_ib = nullptr;
+  uint32_t current_ib_format = kDxgiFormatUnknown;
+  uint32_t current_ib_offset_bytes = 0;
+  Resource* current_vs_cb0 = nullptr;
+  Resource* current_ps_cb0 = nullptr;
+  Resource* current_vs_srv0 = nullptr;
+  Resource* current_ps_srv0 = nullptr;
 
   float viewport_x = 0.0f;
   float viewport_y = 0.0f;
