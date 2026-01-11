@@ -125,6 +125,9 @@ constexpr uint32_t kD3D11MapWriteNoOverwrite = 5;
 constexpr uint32_t kD3D11MapFlagDoNotWait = 0x100000;
 
 // DXGI_FORMAT subset (numeric values from dxgiformat.h).
+constexpr uint32_t kDxgiFormatR32G32B32A32Float = 2;
+constexpr uint32_t kDxgiFormatR32G32B32Float = 6;
+constexpr uint32_t kDxgiFormatR32G32Float = 16;
 constexpr uint32_t kDxgiFormatR8G8B8A8Unorm = 28;
 constexpr uint32_t kDxgiFormatD32Float = 40;
 constexpr uint32_t kDxgiFormatD24UnormS8Uint = 45;
@@ -132,8 +135,6 @@ constexpr uint32_t kDxgiFormatR16Uint = 57;
 constexpr uint32_t kDxgiFormatR32Uint = 42;
 constexpr uint32_t kDxgiFormatB8G8R8A8Unorm = 87;
 constexpr uint32_t kDxgiFormatB8G8R8X8Unorm = 88;
-constexpr uint32_t kDxgiFormatR32G32Float = 16;
-constexpr uint32_t kDxgiFormatR32G32B32A32Float = 2;
 
 // D3D_FEATURE_LEVEL subset (numeric values from d3dcommon.h).
 constexpr uint32_t kD3DFeatureLevel10_0 = 0xA000;
@@ -5475,6 +5476,7 @@ struct AEROGPU_D3D11_FEATURE_DATA_MULTISAMPLE_QUALITY_LEVELS {
 uint32_t d3d11_format_support_flags(uint32_t dxgi_format) {
   switch (dxgi_format) {
     case kDxgiFormatB8G8R8A8Unorm:
+    case kDxgiFormatB8G8R8X8Unorm:
     case kDxgiFormatR8G8B8A8Unorm:
       return kD3D11FormatSupportTexture2D | kD3D11FormatSupportRenderTarget | kD3D11FormatSupportShaderSample |
              kD3D11FormatSupportBlendable | kD3D11FormatSupportCpuLockable | kD3D11FormatSupportDisplay;
