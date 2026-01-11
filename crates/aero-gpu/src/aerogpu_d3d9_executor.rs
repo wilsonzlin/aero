@@ -1276,9 +1276,9 @@ impl AerogpuD3d9Executor {
                         }
                     };
 
-                    let encoder = encoder_opt
-                        .as_mut()
-                        .ok_or_else(|| AerogpuD3d9Error::Validation("COPY_BUFFER: missing encoder".into()))?;
+                    let encoder = encoder_opt.as_mut().ok_or_else(|| {
+                        AerogpuD3d9Error::Validation("COPY_BUFFER: missing encoder".into())
+                    })?;
 
                     encoder.copy_buffer_to_buffer(
                         src_buf,
@@ -1306,7 +1306,13 @@ impl AerogpuD3d9Executor {
                                 usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
                                 mapped_at_creation: false,
                             });
-                            encoder.copy_buffer_to_buffer(dst_buf, dst_offset_bytes, &staging, 0, size_bytes);
+                            encoder.copy_buffer_to_buffer(
+                                dst_buf,
+                                dst_offset_bytes,
+                                &staging,
+                                0,
+                                size_bytes,
+                            );
                             let encoder = encoder_opt.take().ok_or_else(|| {
                                 AerogpuD3d9Error::Validation("COPY_BUFFER: missing encoder".into())
                             })?;
@@ -1607,13 +1613,11 @@ impl AerogpuD3d9Executor {
 
                         #[cfg(not(target_arch = "wasm32"))]
                         {
-                            let unpadded_bpr = dst_w
-                                .checked_mul(bpp)
-                                .ok_or_else(|| {
-                                    AerogpuD3d9Error::Validation(
-                                        "COPY_TEXTURE2D: row pitch overflow".into(),
-                                    )
-                                })?;
+                            let unpadded_bpr = dst_w.checked_mul(bpp).ok_or_else(|| {
+                                AerogpuD3d9Error::Validation(
+                                    "COPY_TEXTURE2D: row pitch overflow".into(),
+                                )
+                            })?;
                             let padded_bpr =
                                 align_to(unpadded_bpr, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
                             let buffer_size = padded_bpr as u64 * dst_h as u64;
@@ -1645,7 +1649,9 @@ impl AerogpuD3d9Executor {
                                 },
                             );
                             let encoder = encoder_opt.take().ok_or_else(|| {
-                                AerogpuD3d9Error::Validation("COPY_TEXTURE2D: missing encoder".into())
+                                AerogpuD3d9Error::Validation(
+                                    "COPY_TEXTURE2D: missing encoder".into(),
+                                )
                             })?;
                             self.queue.submit([encoder.finish()]);
 
