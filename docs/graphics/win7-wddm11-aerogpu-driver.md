@@ -439,11 +439,11 @@ For each entrypoint:
     (`drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`). dxgkrnl returns the same
     bytes on `OpenResource` in another process, so both processes observe an
     identical `alloc_id`.
-  - For D3D9Ex shared surfaces, the KMD generates/stores a per-allocation
-    `ShareToken` and returns it to the UMD via allocation private driver data
-    (`drivers/aerogpu/protocol/aerogpu_alloc_privdata.h`). The UMD uses this
-    token as the protocol `share_token` for `EXPORT_SHARED_SURFACE` /
-    `IMPORT_SHARED_SURFACE`.
+  - For D3D9Ex shared surfaces, the UMD also generates a stable, collision-resistant
+    `share_token` (u64) and persists it in the same preserved WDDM allocation private
+    data blob (`aerogpu_wddm_alloc_priv.share_token` in
+    `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`). The UMD then uses this token
+    as the protocol `share_token` for `EXPORT_SHARED_SURFACE` / `IMPORT_SHARED_SURFACE`.
   - The KMD validates `magic/version/alloc_id` and stores the IDs/tokens in its
     `AEROGPU_ALLOCATION` bookkeeping.
 - **Can be deferred:** General cross-process resource sharing.
