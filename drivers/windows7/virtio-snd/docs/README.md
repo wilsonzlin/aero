@@ -265,6 +265,11 @@ CI builds the driver using:
 
 * `drivers/windows7/virtio-snd/virtio-snd.vcxproj`
 
+Configuration notes:
+
+- `Release` builds define `DBG=0` (free build; debug logging compiled out).
+- `Debug` builds define `DBG=1` (enables `VIRTIOSND_TRACE*` `DbgPrintEx` logging).
+
 Build outputs are staged under:
 
 - `out/drivers/windows7/virtio-snd/x86/virtiosnd.sys`
