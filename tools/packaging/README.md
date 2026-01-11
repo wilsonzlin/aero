@@ -88,7 +88,7 @@ powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-guest-tools-from
   -BuildId local
 ```
 
-By default this wrapper uses `-Profile full` (includes optional audio/input drivers when present).
+By default this wrapper uses `-Profile full` (includes optional Win7 audio/input drivers when present; best-effort).
 To build storage+network-only Guest Tools media, use `-Profile minimal`.
 
 This wrapper uses `docs/windows-device-contract-virtio-win.json` by default so the packaged

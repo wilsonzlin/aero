@@ -53,11 +53,11 @@ Aero can build Guest Tools media (`aero-guest-tools.iso` / `.zip`) from a few di
      - `aero-guest-tools.manifest.json` (alias used by CI/release asset publishing)
 
 2) **Upstream virtio-win** (`viostor`, `netkvm`, etc.) *(optional / compatibility)*
-     - Script: `drivers/scripts/make-guest-tools-from-virtio-win.ps1`
-     - Spec (via `-Profile`):
-       - Default (`-Profile full`): `tools/packaging/specs/win7-virtio-full.json` (expects modern IDs for core devices; `AERO-W7-VIRTIO` v1 is modern-only; includes best-effort `vioinput`/`viosnd` when present)
-       - Optional (`-Profile minimal`): `tools/packaging/specs/win7-virtio-win.json` (storage+network only)
-     - Device contract (for generated `config/devices.cmd`): `docs/windows-device-contract-virtio-win.json`
+   - Script: `drivers/scripts/make-guest-tools-from-virtio-win.ps1`
+   - Spec (via `-Profile`):
+     - Default (`-Profile full`): `tools/packaging/specs/win7-virtio-full.json` (expects modern IDs for core devices; `AERO-W7-VIRTIO` v1 is modern-only; includes best-effort `vioinput`/`viosnd` when present)
+     - Optional (`-Profile minimal`): `tools/packaging/specs/win7-virtio-win.json` (storage+network only)
+   - Device contract (for generated `config/devices.cmd`): `docs/windows-device-contract-virtio-win.json`
 
 3) **In-tree Aero virtio** (`aerovblk`, `aerovnet`) *(local/dev)*
    - Script: `drivers/scripts/make-guest-tools-from-aero-virtio.ps1`
@@ -409,14 +409,14 @@ powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-guest-tools-from
   -BuildId local
 ```
 
-By default, the wrapper uses `-Profile full` (includes optional audio/input drivers when present).
+By default, the wrapper uses `-Profile full` (includes optional Win7 audio/input drivers when present; best-effort).
 
-To include best-effort Win7 audio/input drivers when present in your virtio-win version, use:
+To build storage+network-only Guest Tools media, use:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-guest-tools-from-virtio-win.ps1 `
   -VirtioWinIso C:\path\to\virtio-win.iso `
-  -Profile full `
+  -Profile minimal `
   -OutDir .\dist\guest-tools `
   -Version 0.0.0 `
   -BuildId local

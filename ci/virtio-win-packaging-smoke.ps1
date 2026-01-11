@@ -827,14 +827,14 @@ if (-not $SkipGuestToolsDefaultsCheck) {
   }
 
   $defaultsLogText = Get-Content -LiteralPath $guestToolsDefaultsLog -Raw
-  if ($defaultsLogText -notmatch '(?m)^\s*profile\s*:\s*minimal\s*$') {
-    throw "Expected defaults run to use -Profile minimal. See $guestToolsDefaultsLog"
+  if ($defaultsLogText -notmatch '(?m)^\s*profile\s*:\s*full\s*$') {
+    throw "Expected defaults run to use -Profile full. See $guestToolsDefaultsLog"
   }
-  if ($defaultsLogText -notmatch 'win7-virtio-win\.json') {
-    throw "Expected defaults run to select win7-virtio-win.json. See $guestToolsDefaultsLog"
+  if ($defaultsLogText -notmatch 'win7-virtio-full\.json') {
+    throw "Expected defaults run to select win7-virtio-full.json. See $guestToolsDefaultsLog"
   }
-  if ($defaultsLogText -notmatch '(?m)^\s*drivers\s*:\s*viostor,\s*netkvm\s*$') {
-    throw "Expected defaults run to extract only viostor,netkvm. See $guestToolsDefaultsLog"
+  if ($defaultsLogText -notmatch '(?m)^\s*drivers\s*:\s*viostor,\s*netkvm,\s*viosnd,\s*vioinput\s*$') {
+    throw "Expected defaults run to extract viostor,netkvm,viosnd,vioinput. See $guestToolsDefaultsLog"
   }
 
   $defaultsManifestObj = Get-Content -LiteralPath $defaultsManifest -Raw | ConvertFrom-Json
@@ -855,7 +855,7 @@ if (-not $SkipGuestToolsDefaultsCheck) {
     }
   }
 
-  $defaultsSpecPath = Join-Path $repoRoot "tools/packaging/specs/win7-virtio-win.json"
+  $defaultsSpecPath = Join-Path $repoRoot "tools/packaging/specs/win7-virtio-full.json"
   Assert-GuestToolsDevicesCmdServices -ZipPath $defaultsZip -SpecPath $defaultsSpecPath
 
   $optionalDriverPaths = @(
@@ -865,10 +865,18 @@ if (-not $SkipGuestToolsDefaultsCheck) {
     "drivers/amd64/vioinput/vioinput.inf"
   )
 
-  # Default profile is 'minimal', so optional drivers SHOULD NOT be packaged by default.
+  # Default profile is 'full'. When optional drivers exist in the virtio-win root, they SHOULD be
+  # packaged. If this run omits optional drivers, the wrapper should continue best-effort and
+  # the packaged output should not contain those files.
   foreach ($p in $optionalDriverPaths) {
-    if ($defaultsPaths -contains $p) {
-      throw "Did not expect optional driver file path to be packaged by default (-Profile minimal): $p"
+    if ($OmitOptionalDrivers) {
+      if ($defaultsPaths -contains $p) {
+        throw "Did not expect optional driver file path to be packaged when optional drivers are omitted: $p"
+      }
+    } else {
+      if ($defaultsPaths -notcontains $p) {
+        throw "Expected optional driver file path to be packaged by default (-Profile full): $p"
+      }
     }
   }
 
