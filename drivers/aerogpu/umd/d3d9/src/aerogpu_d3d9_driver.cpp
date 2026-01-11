@@ -451,33 +451,6 @@ enum class FenceWaitResult {
   Failed,
 };
 
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
-template <typename Fn>
-struct fn_first_param;
-
-template <typename Ret, typename Arg0, typename... Rest>
-struct fn_first_param<Ret(__stdcall*)(Arg0, Rest...)> {
-  using type = Arg0;
-};
-
-template <typename Ret, typename Arg0, typename... Rest>
-struct fn_first_param<Ret(*)(Arg0, Rest...)> {
-  using type = Arg0;
-};
-
-template <typename T, typename = void>
-struct has_render_output_buffers : std::false_type {};
-
-template <typename T>
-struct has_render_output_buffers<T,
-                                 std::void_t<decltype(std::declval<T&>().pNewCommandBuffer),
-                                             decltype(std::declval<T&>().NewCommandBufferSize),
-                                             decltype(std::declval<T&>().pNewAllocationList),
-                                             decltype(std::declval<T&>().NewAllocationListSize),
-                                             decltype(std::declval<T&>().pNewPatchLocationList),
-                                             decltype(std::declval<T&>().NewPatchLocationListSize)>> : std::true_type {};
-#endif
-
 #if defined(_WIN32)
 using AerogpuNtStatus = LONG;
 
@@ -1776,9 +1749,19 @@ template <typename T>
 struct has_member_hContext<T, std::void_t<decltype(std::declval<T>().hContext)>> : std::true_type {};
 
 template <typename T, typename = void>
+struct has_member_hDevice : std::false_type {};
+template <typename T>
+struct has_member_hDevice<T, std::void_t<decltype(std::declval<T>().hDevice)>> : std::true_type {};
+
+template <typename T, typename = void>
 struct has_member_pCommandBuffer : std::false_type {};
 template <typename T>
 struct has_member_pCommandBuffer<T, std::void_t<decltype(std::declval<T>().pCommandBuffer)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_pDmaBuffer : std::false_type {};
+template <typename T>
+struct has_member_pDmaBuffer<T, std::void_t<decltype(std::declval<T>().pDmaBuffer)>> : std::true_type {};
 
 template <typename T, typename = void>
 struct has_member_CommandLength : std::false_type {};
@@ -1789,6 +1772,11 @@ template <typename T, typename = void>
 struct has_member_CommandBufferSize : std::false_type {};
 template <typename T>
 struct has_member_CommandBufferSize<T, std::void_t<decltype(std::declval<T>().CommandBufferSize)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_DmaBufferSize : std::false_type {};
+template <typename T>
+struct has_member_DmaBufferSize<T, std::void_t<decltype(std::declval<T>().DmaBufferSize)>> : std::true_type {};
 
 template <typename T, typename = void>
 struct has_member_pAllocationList : std::false_type {};
@@ -1819,6 +1807,16 @@ template <typename T, typename = void>
 struct has_member_NumPatchLocations : std::false_type {};
 template <typename T>
 struct has_member_NumPatchLocations<T, std::void_t<decltype(std::declval<T>().NumPatchLocations)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_Flags : std::false_type {};
+template <typename T>
+struct has_member_Flags<T, std::void_t<decltype(std::declval<T>().Flags)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_Present : std::false_type {};
+template <typename T>
+struct has_member_Present<T, std::void_t<decltype(std::declval<T>().Present)>> : std::true_type {};
 
 template <typename T, typename = void>
 struct has_member_pNewCommandBuffer : std::false_type {};
@@ -1861,6 +1859,21 @@ template <typename T>
 struct has_member_NewFenceValue<T, std::void_t<decltype(std::declval<T>().NewFenceValue)>> : std::true_type {};
 
 template <typename T, typename = void>
+struct has_member_pSubmissionFenceId : std::false_type {};
+template <typename T>
+struct has_member_pSubmissionFenceId<T, std::void_t<decltype(std::declval<T>().pSubmissionFenceId)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_FenceValue : std::false_type {};
+template <typename T>
+struct has_member_FenceValue<T, std::void_t<decltype(std::declval<T>().FenceValue)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_pFenceValue : std::false_type {};
+template <typename T>
+struct has_member_pFenceValue<T, std::void_t<decltype(std::declval<T>().pFenceValue)>> : std::true_type {};
+
+template <typename T, typename = void>
 struct has_member_pDmaBufferPrivateData : std::false_type {};
 template <typename T>
 struct has_member_pDmaBufferPrivateData<T, std::void_t<decltype(std::declval<T>().pDmaBufferPrivateData)>> : std::true_type {};
@@ -1872,19 +1885,28 @@ struct has_member_DmaBufferPrivateDataSize<T, std::void_t<decltype(std::declval<
     : std::true_type {};
 
 template <typename ArgsT>
-void fill_submit_args(ArgsT& args, Device* dev, uint32_t command_length_bytes) {
+void fill_submit_args(ArgsT& args, Device* dev, uint32_t command_length_bytes, bool is_present) {
   const bool patch_list_available = (dev->wddm_context.pPatchLocationList != nullptr);
+  if constexpr (has_member_hDevice<ArgsT>::value) {
+    args.hDevice = dev->wddm_device;
+  }
   if constexpr (has_member_hContext<ArgsT>::value) {
     args.hContext = dev->wddm_context.hContext;
   }
   if constexpr (has_member_pCommandBuffer<ArgsT>::value) {
     args.pCommandBuffer = dev->wddm_context.pCommandBuffer;
   }
+  if constexpr (has_member_pDmaBuffer<ArgsT>::value) {
+    args.pDmaBuffer = dev->wddm_context.pCommandBuffer;
+  }
   if constexpr (has_member_CommandLength<ArgsT>::value) {
     args.CommandLength = command_length_bytes;
   }
   if constexpr (has_member_CommandBufferSize<ArgsT>::value) {
     args.CommandBufferSize = dev->wddm_context.CommandBufferSize;
+  }
+  if constexpr (has_member_DmaBufferSize<ArgsT>::value) {
+    args.DmaBufferSize = dev->wddm_context.CommandBufferSize;
   }
   if constexpr (has_member_pAllocationList<ArgsT>::value) {
     args.pAllocationList = dev->wddm_context.pAllocationList;
@@ -1925,6 +1947,16 @@ void fill_submit_args(ArgsT& args, Device* dev, uint32_t command_length_bytes) {
   }
   if constexpr (has_member_DmaBufferPrivateDataSize<ArgsT>::value) {
     args.DmaBufferPrivateDataSize = dev->wddm_context.DmaBufferPrivateDataSize;
+  }
+
+  // Some WDDM callback arg structs include flags distinguishing render vs present.
+  // If such flags are present, populate them so present submissions prefer the
+  // DxgkDdiPresent path when routed via RenderCb fallback.
+  if constexpr (has_member_Flags<ArgsT>::value) {
+    using FlagsT = std::remove_reference_t<decltype(args.Flags)>;
+    if constexpr (has_member_Present<FlagsT>::value) {
+      args.Flags.Present = is_present ? 1 : 0;
+    }
   }
 }
 
@@ -2012,7 +2044,11 @@ void update_context_from_submit_args(Device* dev, const ArgsT& args) {
 }
 
 template <typename CallbackFn>
-HRESULT invoke_submit_callback(Device* dev, CallbackFn cb, uint32_t command_length_bytes, uint64_t* out_submission_fence) {
+HRESULT invoke_submit_callback(Device* dev,
+                               CallbackFn cb,
+                               uint32_t command_length_bytes,
+                               bool is_present,
+                               uint64_t* out_submission_fence) {
   if (out_submission_fence) {
     *out_submission_fence = 0;
   }
@@ -2021,30 +2057,116 @@ HRESULT invoke_submit_callback(Device* dev, CallbackFn cb, uint32_t command_leng
   using Arg = std::remove_const_t<std::remove_pointer_t<ArgPtr>>;
 
   Arg args{};
-  fill_submit_args(args, dev, command_length_bytes);
+  fill_submit_args(args, dev, command_length_bytes, is_present);
   if constexpr (has_member_NewFenceValue<Arg>::value) {
     args.NewFenceValue = 0;
   }
+  uint64_t submission_fence = 0;
+
+  HRESULT hr = E_FAIL;
   if constexpr (has_member_SubmissionFenceId<Arg>::value) {
-    args.SubmissionFenceId = 0;
+    using FenceMemberT = std::remove_reference_t<decltype(args.SubmissionFenceId)>;
+    using FenceStorageT = std::remove_pointer_t<FenceMemberT>;
+    FenceStorageT fence_storage{};
+
+    if constexpr (std::is_pointer<FenceMemberT>::value) {
+      // Some header/interface versions expose SubmissionFenceId as an output
+      // pointer rather than an in-struct value. Provide a valid storage location
+      // so the runtime can write back the exact per-submission fence ID.
+      args.SubmissionFenceId = &fence_storage;
+    } else {
+      args.SubmissionFenceId = 0;
+    }
+
+    hr = cb(static_cast<ArgPtr>(&args));
+    if (SUCCEEDED(hr)) {
+      if constexpr (has_member_NewFenceValue<Arg>::value) {
+        if (args.NewFenceValue) {
+          submission_fence = static_cast<uint64_t>(args.NewFenceValue);
+        } else if constexpr (std::is_pointer<FenceMemberT>::value) {
+          submission_fence = static_cast<uint64_t>(fence_storage);
+        } else {
+          submission_fence = static_cast<uint64_t>(args.SubmissionFenceId);
+        }
+      } else {
+        if constexpr (std::is_pointer<FenceMemberT>::value) {
+          submission_fence = static_cast<uint64_t>(fence_storage);
+        } else {
+          submission_fence = static_cast<uint64_t>(args.SubmissionFenceId);
+        }
+      }
+    }
+  } else if constexpr (has_member_pSubmissionFenceId<Arg>::value) {
+    using FenceMemberT = std::remove_reference_t<decltype(args.pSubmissionFenceId)>;
+    using FenceStorageT = std::remove_pointer_t<FenceMemberT>;
+    FenceStorageT fence_storage{};
+
+    if constexpr (std::is_pointer<FenceMemberT>::value) {
+      args.pSubmissionFenceId = &fence_storage;
+    }
+
+    hr = cb(static_cast<ArgPtr>(&args));
+    if (SUCCEEDED(hr)) {
+      if constexpr (has_member_NewFenceValue<Arg>::value) {
+        if (args.NewFenceValue) {
+          submission_fence = static_cast<uint64_t>(args.NewFenceValue);
+        } else if constexpr (std::is_pointer<FenceMemberT>::value) {
+          submission_fence = static_cast<uint64_t>(fence_storage);
+        }
+      } else if constexpr (std::is_pointer<FenceMemberT>::value) {
+        submission_fence = static_cast<uint64_t>(fence_storage);
+      }
+    }
+  } else if constexpr (has_member_pFenceValue<Arg>::value) {
+    using FenceMemberT = std::remove_reference_t<decltype(args.pFenceValue)>;
+    using FenceStorageT = std::remove_pointer_t<FenceMemberT>;
+    FenceStorageT fence_storage{};
+
+    if constexpr (std::is_pointer<FenceMemberT>::value) {
+      args.pFenceValue = &fence_storage;
+    }
+
+    hr = cb(static_cast<ArgPtr>(&args));
+    if (SUCCEEDED(hr)) {
+      if constexpr (has_member_NewFenceValue<Arg>::value) {
+        if (args.NewFenceValue) {
+          submission_fence = static_cast<uint64_t>(args.NewFenceValue);
+        } else if constexpr (std::is_pointer<FenceMemberT>::value) {
+          submission_fence = static_cast<uint64_t>(fence_storage);
+        }
+      } else if constexpr (std::is_pointer<FenceMemberT>::value) {
+        submission_fence = static_cast<uint64_t>(fence_storage);
+      }
+    }
+  } else if constexpr (has_member_FenceValue<Arg>::value) {
+    args.FenceValue = 0;
+    hr = cb(static_cast<ArgPtr>(&args));
+    if (SUCCEEDED(hr)) {
+      if constexpr (has_member_NewFenceValue<Arg>::value) {
+        if (args.NewFenceValue) {
+          submission_fence = static_cast<uint64_t>(args.NewFenceValue);
+        } else {
+          submission_fence = static_cast<uint64_t>(args.FenceValue);
+        }
+      } else {
+        submission_fence = static_cast<uint64_t>(args.FenceValue);
+      }
+    }
+  } else {
+    hr = cb(static_cast<ArgPtr>(&args));
+    if (SUCCEEDED(hr)) {
+      if constexpr (has_member_NewFenceValue<Arg>::value) {
+        submission_fence = static_cast<uint64_t>(args.NewFenceValue);
+      }
+    }
   }
 
-  const HRESULT hr = cb(static_cast<ArgPtr>(&args));
   if (FAILED(hr)) {
     return hr;
   }
 
   if (out_submission_fence) {
-    uint64_t fence = 0;
-    if constexpr (has_member_NewFenceValue<Arg>::value) {
-      fence = static_cast<uint64_t>(args.NewFenceValue);
-    }
-    if (fence == 0) {
-      if constexpr (has_member_SubmissionFenceId<Arg>::value) {
-        fence = static_cast<uint64_t>(args.SubmissionFenceId);
-      }
-    }
-    *out_submission_fence = fence;
+    *out_submission_fence = submission_fence;
   }
 
   // The runtime may rotate command buffers/lists after a submission. Preserve the
@@ -2111,22 +2233,26 @@ uint64_t submit(Device* dev, bool is_present) {
       dev->wddm_context.patch_location_entries_used = 0;
 
       HRESULT submit_hr = E_NOTIMPL;
-      if constexpr (has_pfnPresentCb<WddmDeviceCallbacks>::value) {
-        if (is_present && dev->wddm_callbacks.pfnPresentCb) {
-          submission_fence = 0;
-          submit_hr = invoke_submit_callback(dev,
-                                             dev->wddm_callbacks.pfnPresentCb,
-                                             static_cast<uint32_t>(cmd_bytes),
-                                             &submission_fence);
+      const uint32_t cmd_len = static_cast<uint32_t>(cmd_bytes);
+      bool tried_present_cb = false;
+      if (is_present) {
+        if constexpr (has_pfnPresentCb<WddmDeviceCallbacks>::value) {
+          if (dev->wddm_callbacks.pfnPresentCb) {
+            tried_present_cb = true;
+            submission_fence = 0;
+            submit_hr = invoke_submit_callback(dev, dev->wddm_callbacks.pfnPresentCb, cmd_len, /*is_present=*/true,
+                                               &submission_fence);
+          }
         }
       }
-      if (!SUCCEEDED(submit_hr)) {
+
+      // If no PresentCb is available, route present-like submissions through
+      // RenderCb as a fallback.
+      if (!is_present || !tried_present_cb) {
         if constexpr (has_pfnRenderCb<WddmDeviceCallbacks>::value) {
           if (dev->wddm_callbacks.pfnRenderCb) {
             submission_fence = 0;
-            submit_hr = invoke_submit_callback(dev,
-                                               dev->wddm_callbacks.pfnRenderCb,
-                                               static_cast<uint32_t>(cmd_bytes),
+            submit_hr = invoke_submit_callback(dev, dev->wddm_callbacks.pfnRenderCb, cmd_len, /*is_present=*/is_present,
                                                &submission_fence);
           }
         }
