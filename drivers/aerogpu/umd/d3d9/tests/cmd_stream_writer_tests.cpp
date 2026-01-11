@@ -2416,6 +2416,198 @@ bool TestFvfXyzrhwDiffuseDrawPrimitiveEmulationConvertsVertices() {
   return Check(c0 == kGreen, "DrawPrimitive: diffuse color preserved");
 }
 
+bool TestDrawIndexedPrimitiveUpEmitsIndexBufferCommands() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3D9DDI_HADAPTER hAdapter{};
+    D3D9DDI_HDEVICE hDevice{};
+    bool has_adapter = false;
+    bool has_device = false;
+
+    ~Cleanup() {
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnSetFVF != nullptr, "SetFVF must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetViewport != nullptr, "SetViewport must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDrawIndexedPrimitive2 != nullptr, "DrawIndexedPrimitive2 must be available")) {
+    return false;
+  }
+
+  AEROGPU_D3D9DDI_VIEWPORT vp{};
+  vp.x = 0.0f;
+  vp.y = 0.0f;
+  vp.w = 256.0f;
+  vp.h = 256.0f;
+  vp.min_z = 0.0f;
+  vp.max_z = 1.0f;
+  hr = cleanup.device_funcs.pfnSetViewport(create_dev.hDevice, &vp);
+  if (!Check(hr == S_OK, "SetViewport")) {
+    return false;
+  }
+
+  // D3DFVF_XYZRHW (0x4) | D3DFVF_DIFFUSE (0x40).
+  hr = cleanup.device_funcs.pfnSetFVF(create_dev.hDevice, 0x44u);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE)")) {
+    return false;
+  }
+
+  struct Vertex {
+    float x;
+    float y;
+    float z;
+    float rhw;
+    uint32_t color;
+  };
+
+  constexpr uint32_t kRed = 0xFFFF0000u;
+  Vertex verts[3]{};
+  verts[0] = {256.0f * 0.25f, 256.0f * 0.25f, 0.5f, 1.0f, kRed};
+  verts[1] = {256.0f * 0.75f, 256.0f * 0.25f, 0.5f, 1.0f, kRed};
+  verts[2] = {256.0f * 0.50f, 256.0f * 0.75f, 0.5f, 1.0f, kRed};
+
+  const uint16_t indices[3] = {0, 1, 2};
+
+  AEROGPU_D3D9DDIARG_DRAWINDEXEDPRIMITIVE2 draw{};
+  draw.type = AEROGPU_D3D9DDI_PRIM_TRIANGLELIST;
+  draw.primitive_count = 1;
+  draw.min_index = 0;
+  draw.num_vertices = 3;
+  draw.pIndexData = indices;
+  draw.index_format = AEROGPU_D3D9DDI_INDEX_FORMAT_U16;
+  draw.pVertexStreamZeroData = verts;
+  draw.vertex_stream_zero_stride = sizeof(Vertex);
+
+  hr = cleanup.device_funcs.pfnDrawIndexedPrimitive2(create_dev.hDevice, &draw);
+  if (!Check(hr == S_OK, "DrawIndexedPrimitive2")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+  if (!Check(dev->up_vertex_buffer != nullptr, "up_vertex_buffer allocated")) {
+    return false;
+  }
+  if (!Check(dev->up_index_buffer != nullptr, "up_index_buffer allocated")) {
+    return false;
+  }
+  const aerogpu_handle_t vb_handle = dev->up_vertex_buffer->handle;
+  const aerogpu_handle_t ib_handle = dev->up_index_buffer->handle;
+  if (!Check(vb_handle != 0, "up_vertex_buffer handle non-zero")) {
+    return false;
+  }
+  if (!Check(ib_handle != 0, "up_index_buffer handle non-zero")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+
+  bool saw_vb_upload = false;
+  bool saw_ib_upload = false;
+  bool saw_set_ib = false;
+
+  size_t offset = sizeof(aerogpu_cmd_stream_header);
+  while (offset + sizeof(aerogpu_cmd_hdr) <= len) {
+    const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + offset);
+    if (hdr->opcode == AEROGPU_CMD_UPLOAD_RESOURCE) {
+      const auto* upload = reinterpret_cast<const aerogpu_cmd_upload_resource*>(hdr);
+      if (upload->resource_handle == vb_handle) {
+        saw_vb_upload = true;
+        if (!Check(upload->size_bytes == sizeof(verts), "upload_resource(VB) size")) {
+          return false;
+        }
+      }
+      if (upload->resource_handle == ib_handle) {
+        saw_ib_upload = true;
+        if (!Check(upload->size_bytes == sizeof(indices), "upload_resource(IB) size")) {
+          return false;
+        }
+      }
+    } else if (hdr->opcode == AEROGPU_CMD_SET_INDEX_BUFFER) {
+      const auto* set_ib = reinterpret_cast<const aerogpu_cmd_set_index_buffer*>(hdr);
+      if (set_ib->buffer == ib_handle) {
+        saw_set_ib = true;
+        if (!Check(set_ib->format == AEROGPU_INDEX_FORMAT_UINT16, "set_index_buffer format")) {
+          return false;
+        }
+        if (!Check(set_ib->offset_bytes == 0, "set_index_buffer offset")) {
+          return false;
+        }
+      }
+    }
+
+    if (hdr->size_bytes == 0 || hdr->size_bytes > len - offset) {
+      break;
+    }
+    offset += hdr->size_bytes;
+  }
+
+  if (!Check(saw_vb_upload, "VB upload emitted")) {
+    return false;
+  }
+  if (!Check(saw_ib_upload, "IB upload emitted")) {
+    return false;
+  }
+  if (!Check(saw_set_ib, "SET_INDEX_BUFFER emitted for UP IB")) {
+    return false;
+  }
+
+  const CmdLoc draw_loc = FindLastOpcode(buf, len, AEROGPU_CMD_DRAW_INDEXED);
+  if (!Check(draw_loc.hdr != nullptr, "DRAW_INDEXED emitted")) {
+    return false;
+  }
+  const auto* draw_cmd = reinterpret_cast<const aerogpu_cmd_draw_indexed*>(draw_loc.hdr);
+  if (!Check(draw_cmd->index_count == 3, "DRAW_INDEXED index_count")) {
+    return false;
+  }
+  if (!Check(draw_cmd->first_index == 0, "DRAW_INDEXED first_index")) {
+    return false;
+  }
+  return Check(draw_cmd->base_vertex == 0, "DRAW_INDEXED base_vertex");
+}
+
 bool TestResetShrinkUnbindsBackbuffer() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
@@ -3537,6 +3729,7 @@ int main() {
   failures += !aerogpu::TestDestroyBoundVertexDeclUnbinds();
   failures += !aerogpu::TestFvfXyzrhwDiffuseDrawPrimitiveUpEmitsFixedfuncCommands();
   failures += !aerogpu::TestFvfXyzrhwDiffuseDrawPrimitiveEmulationConvertsVertices();
+  failures += !aerogpu::TestDrawIndexedPrimitiveUpEmitsIndexBufferCommands();
   failures += !aerogpu::TestResetShrinkUnbindsBackbuffer();
   failures += !aerogpu::TestRotateResourceIdentitiesRebindsChangedHandles();
   failures += !aerogpu::TestPresentBackbufferRotationUndoOnSmallCmdBuffer();
