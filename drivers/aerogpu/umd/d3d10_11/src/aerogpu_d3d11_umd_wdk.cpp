@@ -1548,6 +1548,7 @@ static bool ValidateNoNullDdiTable(const char* name, const void* table, size_t b
   X(pfnMap)                                                                                                         \
   X(pfnUnmap)                                                                                                       \
   X(pfnUpdateSubresourceUP)                                                                                         \
+  X(pfnUpdateSubresource)                                                                                           \
   X(pfnCopySubresourceRegion)                                                                                       \
   X(pfnCopyResource)                                                                                                \
   X(pfnCopyStructureCount)                                                                                           \
@@ -5635,6 +5636,14 @@ HRESULT AEROGPU_APIENTRY CreateDevice11(D3D10DDI_HADAPTER hAdapter, D3D11DDIARG_
       ctx_funcs->pfnUpdateSubresourceUP = &UpdateSubresourceUP11ArgsAndSysMem;
     } else {
       ctx_funcs->pfnUpdateSubresourceUP = &DdiStub<Fn>::Call;
+    }
+  }
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnUpdateSubresource) {
+    using Fn = decltype(ctx_funcs->pfnUpdateSubresource);
+    if constexpr (std::is_convertible_v<decltype(&UpdateSubresourceUP11), Fn>) {
+      ctx_funcs->pfnUpdateSubresource = &UpdateSubresourceUP11;
+    } else {
+      ctx_funcs->pfnUpdateSubresource = &DdiStub<Fn>::Call;
     }
   }
 
