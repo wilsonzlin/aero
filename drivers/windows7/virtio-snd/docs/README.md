@@ -25,6 +25,11 @@ Virtio backend (legacy virtio-pci I/O-port):
 * `src/aeroviosnd_hw.c` — **legacy virtio-pci I/O-port** bring-up + controlq/txq protocol
 * `drivers/windows7/virtio/common` — reusable legacy virtio-pci + split virtqueue implementation
 
+Scatter/gather helpers (WaveRT cyclic buffer → virtio descriptors):
+
+* `include/virtiosnd_sg.h` / `src/virtiosnd_sg.c` — DISPATCH_LEVEL-safe helper that maps an MDL-backed circular PCM buffer region into a compact `(phys,len)` list (page-split + physical coalescing + wrap support).
+* `include/virtiosnd_sg_tx.h` / `src/virtiosnd_sg_tx.c` — convenience wrapper that emits `VIRTIOSND_SG` entries (the SG type used by the `virtiosnd_queue.h` abstraction).
+
 Notes:
 
 * **Queues:** controlq (0) + txq (2) are used for basic playback.

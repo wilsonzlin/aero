@@ -157,6 +157,16 @@ The virtio-snd submission is built from the concatenation of those regions (for
 example into a temporary contiguous buffer, or as two SG segments if the
 transport layer supports it).
 
+In Aero, WaveRT buffers are represented as an MDL whose pages may be physically
+non-contiguous. To submit the cyclic buffer to the virtio-snd TX queue without
+copying, use the scatter/gather helper in this driver:
+
+- `VirtIoSndTxSgBuildFromMdlRegion()` (`include/virtiosnd_sg_tx.h`)
+
+It converts the logical circular region into a compact SG list by splitting on
+page boundaries and coalescing physically contiguous PFNs, and it handles wrap
+around the end of the ring.
+
 ## KS/WaveRT state machine ↔ virtio-snd PCM control mapping
 
 Windows pins use the KS state machine:
