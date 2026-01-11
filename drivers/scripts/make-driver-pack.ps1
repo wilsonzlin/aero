@@ -239,12 +239,18 @@ foreach ($d in $Drivers) {
   if ($null -eq $d) {
     continue
   }
-  $id = $d.Trim().ToLowerInvariant()
-  if ($id.Length -eq 0) {
-    continue
-  }
-  if ($seenDrivers.Add($id)) {
-    $requestedDrivers.Add($id) | Out-Null
+  # Accept both:
+  # - PowerShell-native arrays: -Drivers viostor,netkvm
+  # - External shell args (e.g. bash) where commas may be part of the same token:
+  #   -Drivers "viostor,netkvm"
+  foreach ($part in ($d -split ",")) {
+    $id = $part.Trim().ToLowerInvariant()
+    if ($id.Length -eq 0) {
+      continue
+    }
+    if ($seenDrivers.Add($id)) {
+      $requestedDrivers.Add($id) | Out-Null
+    }
   }
 }
 
