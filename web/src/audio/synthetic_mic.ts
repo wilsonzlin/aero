@@ -1,4 +1,10 @@
-import { createMicRingBuffer } from "./mic_capture";
+import {
+  createMicRingBuffer,
+  DROPPED_SAMPLES_INDEX,
+  micRingBufferWrite,
+  READ_POS_INDEX,
+  WRITE_POS_INDEX,
+} from "./mic_ring.js";
 
 export type SyntheticMicSource = {
   ringBuffer: SharedArrayBuffer;
@@ -20,45 +26,6 @@ export type SyntheticMicOptions = {
   tickMs?: number;
 };
 
-const MIC_WRITE_POS = 0;
-const MIC_READ_POS = 1;
-const MIC_DROPPED = 2;
-
-function writeToMicRingBuffer(header: Uint32Array, data: Float32Array, capacity: number, samples: Float32Array): void {
-  let writePos = Atomics.load(header, MIC_WRITE_POS) >>> 0;
-  const readPos = Atomics.load(header, MIC_READ_POS) >>> 0;
-
-  const used = (writePos - readPos) >>> 0;
-  if (used > capacity) {
-    // Consumer fell too far behind (or indices got corrupted). Match the
-    // MicCapture writer behavior and drop the whole block.
-    Atomics.add(header, MIC_DROPPED, samples.length);
-    return;
-  }
-
-  const free = capacity - used;
-  if (free === 0) {
-    Atomics.add(header, MIC_DROPPED, samples.length);
-    return;
-  }
-
-  const toWrite = Math.min(samples.length, free);
-  const dropped = samples.length - toWrite;
-  if (dropped) Atomics.add(header, MIC_DROPPED, dropped);
-
-  // Keep the most recent portion when under pressure.
-  const slice = dropped ? samples.subarray(dropped) : samples;
-
-  const start = writePos % capacity;
-  const firstPart = Math.min(toWrite, capacity - start);
-  data.set(slice.subarray(0, firstPart), start);
-  const remaining = toWrite - firstPart;
-  if (remaining) data.set(slice.subarray(firstPart), 0);
-
-  writePos = (writePos + toWrite) >>> 0;
-  Atomics.store(header, MIC_WRITE_POS, writePos);
-}
-
 export function startSyntheticMic(options: SyntheticMicOptions = {}): SyntheticMicSource {
   if (typeof SharedArrayBuffer === "undefined") {
     throw new Error("SharedArrayBuffer is required for synthetic mic (crossOriginIsolated).");
@@ -77,13 +44,9 @@ export function startSyntheticMic(options: SyntheticMicOptions = {}): SyntheticM
   const rb = createMicRingBuffer(capacitySamples);
 
   // Reset indices/counters in case the buffer is reused.
-  Atomics.store(rb.header, MIC_WRITE_POS, 0);
-  Atomics.store(rb.header, MIC_READ_POS, 0);
-  Atomics.store(rb.header, MIC_DROPPED, 0);
-
-  const header = rb.header;
-  const data = rb.data;
-  const capacity = rb.capacity;
+  Atomics.store(rb.header, WRITE_POS_INDEX, 0);
+  Atomics.store(rb.header, READ_POS_INDEX, 0);
+  Atomics.store(rb.header, DROPPED_SAMPLES_INDEX, 0);
 
   let phase = 0;
   const phaseStep = freqHz / sampleRate;
@@ -107,7 +70,7 @@ export function startSyntheticMic(options: SyntheticMicOptions = {}): SyntheticM
         phase += phaseStep;
         if (phase >= 1) phase -= 1;
       }
-      writeToMicRingBuffer(header, data, capacity, scratch.subarray(0, n));
+      micRingBufferWrite(rb, scratch.subarray(0, n));
       producedSamples += n;
       remaining -= n;
     }

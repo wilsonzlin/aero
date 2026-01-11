@@ -35,6 +35,7 @@ import {
   type ConfigUpdateMessage,
   MessageType,
   type ProtocolMessage,
+  type SetMicrophoneRingBufferMessage,
   type SetAudioRingBufferMessage,
   type WorkerInitMessage,
   decodeProtocolMessage,
@@ -63,12 +64,6 @@ let perfInstructions = 0n;
 
 let currentConfig: AeroConfig | null = null;
 let currentConfigVersion = 0;
-
-type SetMicrophoneRingBufferMessage = {
-  type: "setMicrophoneRingBuffer";
-  ringBuffer: SharedArrayBuffer | null;
-  sampleRate?: number;
-};
 
 type MicRingBufferView = {
   sab: SharedArrayBuffer;
