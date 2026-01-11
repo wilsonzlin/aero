@@ -5,7 +5,7 @@ mod zip_util;
 
 use anyhow::{bail, Context, Result};
 use sha2::{Digest as _, Sha256};
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -210,13 +210,6 @@ fn collect_files(config: &PackageConfig, driver_plan: &DriverPlan) -> Result<Vec
                 continue;
             }
 
-            // Skip hidden files such as `.DS_Store` (and placeholder `.keep`) to keep outputs
-            // stable across hosts.
-            let file_name = entry.file_name().to_string_lossy();
-            if file_name.starts_with('.') {
-                continue;
-            }
-
             let ext = entry
                 .path()
                 .extension()
@@ -228,6 +221,13 @@ fn collect_files(config: &PackageConfig, driver_plan: &DriverPlan) -> Result<Vec
                     "refusing to package private key material in licenses directory: {}",
                     entry.path().display()
                 );
+            }
+
+            // Skip hidden files such as `.DS_Store` (and placeholder `.keep`) to keep outputs
+            // stable across hosts.
+            let file_name = entry.file_name().to_string_lossy();
+            if file_name.starts_with('.') {
+                continue;
             }
 
             let rel = entry
@@ -435,7 +435,7 @@ fn validate_driver_dir(driver: &DriverSpec, arch: &str, driver_dir: &Path) -> Re
     let mut found_inf = false;
     let mut found_sys = false;
     let mut found_cat = false;
-    let mut inf_texts = Vec::new();
+    let mut infs = Vec::<(String, String)>::new();
 
     // Collect a view of the files that would be packaged for this driver, so we can
     // validate that any INF-referenced payloads are actually present.
@@ -463,20 +463,19 @@ fn validate_driver_dir(driver: &DriverSpec, arch: &str, driver_dir: &Path) -> Re
             if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
                 packaged_base_names.insert(name.to_ascii_lowercase());
             }
-        }
 
-        let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
-        let lower = name.to_ascii_lowercase();
-        if lower.ends_with(".inf") {
-            found_inf = true;
-            inf_texts.push(
-                read_inf_text(path)
-                    .with_context(|| format!("read INF for {} ({})", driver.name, arch))?,
-            );
-        } else if lower.ends_with(".sys") {
-            found_sys = true;
-        } else if lower.ends_with(".cat") {
-            found_cat = true;
+            let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+            let lower = name.to_ascii_lowercase();
+            if lower.ends_with(".inf") {
+                found_inf = true;
+                let text = read_inf_text(path)
+                    .with_context(|| format!("read INF for {} ({})", driver.name, arch))?;
+                infs.push((rel_str, text));
+            } else if lower.ends_with(".sys") {
+                found_sys = true;
+            } else if lower.ends_with(".cat") {
+                found_cat = true;
+            }
         }
     }
 
@@ -493,7 +492,7 @@ fn validate_driver_dir(driver: &DriverSpec, arch: &str, driver_dir: &Path) -> Re
             .case_insensitive(true)
             .build()
             .with_context(|| format!("compile regex for hardware ID: {hwid_re}"))?;
-        if !inf_texts.iter().any(|t| re.is_match(t)) {
+        if !infs.iter().any(|(_path, text)| re.is_match(text)) {
             bail!(
                 "driver {} ({}) INF files missing expected hardware ID pattern: {hwid_re}",
                 driver.name,
@@ -502,21 +501,82 @@ fn validate_driver_dir(driver: &DriverSpec, arch: &str, driver_dir: &Path) -> Re
         }
     }
 
-    for (inf_idx, inf_text) in inf_texts.iter().enumerate() {
-        validate_inf_references(
-            &driver.name,
+    // Best-effort: ensure all commonly referenced payload items are actually present in the
+    // packaged driver directory. This catches missing coinstallers and other auxiliary payloads
+    // that `pnputil -a <inf>` expects to find next to the INF.
+    let mut missing: BTreeMap<String, (String, BTreeSet<String>)> = BTreeMap::new();
+    let has_any_wdf_coinstaller = packaged_base_names
+        .iter()
+        .any(|n| n.starts_with("wdfcoinstaller") && n.ends_with(".dll"));
+
+    for (inf_rel_path, inf_text) in &infs {
+        let (referenced, needs_any_wdf) = collect_inf_references(inf_text);
+        for token in referenced {
+            let token = normalize_inf_path_token(&token);
+            if token.is_empty() || token.contains('%') {
+                continue;
+            }
+            let token_lower = token.to_ascii_lowercase().replace('\\', "/");
+            if token_lower.contains('/') && packaged_rel_paths.contains(&token_lower) {
+                continue;
+            }
+
+            // Prefer path matches when a path was provided, but fall back to basename (best-effort)
+            // to avoid false negatives when the INF uses slightly different relative paths.
+            let base = token_lower
+                .rsplit_once('/')
+                .map(|(_, b)| b)
+                .unwrap_or(token_lower.as_str());
+            if packaged_base_names.contains(base) {
+                continue;
+            }
+
+            missing
+                .entry(token_lower)
+                .and_modify(|(_display, infs)| {
+                    infs.insert(inf_rel_path.clone());
+                })
+                .or_insert_with(|| {
+                    let mut infs = BTreeSet::new();
+                    infs.insert(inf_rel_path.clone());
+                    (token, infs)
+                });
+        }
+
+        if needs_any_wdf && !has_any_wdf_coinstaller {
+            missing
+                .entry("wdfcoinstaller*.dll".to_string())
+                .and_modify(|(_display, infs)| {
+                    infs.insert(inf_rel_path.clone());
+                })
+                .or_insert_with(|| {
+                    let mut infs = BTreeSet::new();
+                    infs.insert(inf_rel_path.clone());
+                    ("WdfCoInstaller*.dll".to_string(), infs)
+                });
+        }
+    }
+
+    if !missing.is_empty() {
+        let mut msg = format!(
+            "driver {} ({}) INF referenced files are missing from the packaged driver directory ({}):",
+            driver.name,
             arch,
-            inf_idx,
-            inf_text,
-            &packaged_rel_paths,
-            &packaged_base_names,
-        )
-        .with_context(|| {
-            format!(
-                "validate INF referenced files for {} ({})",
-                driver.name, arch
-            )
-        })?;
+            driver_dir.display()
+        );
+        for (_key, (display, infs)) in &missing {
+            let inf_list = infs.iter().cloned().collect::<Vec<_>>().join(", ");
+            msg.push_str(&format!("\n- {display} (referenced by: {inf_list})"));
+        }
+        if missing.values().any(|(display, _)| {
+            display.to_ascii_lowercase().starts_with("wdfcoinstaller")
+                && display.to_ascii_lowercase().ends_with(".dll")
+        }) {
+            msg.push_str(
+                "\n\nKMDF drivers often require the KMDF coinstaller DLL (WdfCoInstaller*.dll) to be present alongside the INF.",
+            );
+        }
+        bail!("{msg}");
     }
 
     Ok(())
@@ -571,6 +631,28 @@ fn should_include_driver_file(
     rel_path: &str,
     allowlist: &DriverFileAllowlist,
 ) -> Result<bool> {
+    // Refuse to ship any file that looks like signing key material, even if it would otherwise
+    // be excluded (e.g. hidden files/dirs). Drivers are often distributed as directory trees and
+    // we want to fail fast if a key accidentally ends up in the payload.
+    let ext = path
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let ext_opt = if ext.is_empty() {
+        None
+    } else {
+        Some(ext.as_str())
+    };
+    if let Some(ext) = ext_opt {
+        if is_private_key_extension(ext) {
+            bail!(
+                "refusing to package private key material (.{ext}): {} (Guest Tools must not ship signing keys or other secret material)",
+                path.display(),
+            );
+        }
+    }
+
     // Skip hidden directories (e.g. `.vs/`) to keep outputs stable across hosts.
     // `walkdir` will still traverse them unless we filter at the file level.
     if rel_path
@@ -595,25 +677,7 @@ fn should_include_driver_file(
         return Ok(false);
     }
 
-    let ext = path
-        .extension()
-        .and_then(|s| s.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    let ext_opt = if ext.is_empty() {
-        None
-    } else {
-        Some(ext.as_str())
-    };
-
     if let Some(ext) = ext_opt {
-        if is_private_key_extension(ext) {
-            bail!(
-                "refusing to package private key material (.{ext}): {} (Guest Tools must not ship signing keys or other secret material)",
-                path.display(),
-            );
-        }
-
         if is_default_excluded_driver_extension(ext) && !allowlist.is_allowed(rel_path, Some(ext)) {
             return Ok(false);
         }
@@ -639,16 +703,12 @@ fn is_default_excluded_driver_extension(ext: &str) -> bool {
     )
 }
 
-fn validate_inf_references(
-    driver_name: &str,
-    arch: &str,
-    inf_index: usize,
-    inf_text: &str,
-    packaged_rel_paths: &HashSet<String>,
-    packaged_base_names: &HashSet<String>,
-) -> Result<()> {
+/// Returns a best-effort set of files referenced by common INF directives, plus a flag indicating
+/// that the INF references KMDF coinstallers but does not name a specific `WdfCoInstaller*.dll`.
+fn collect_inf_references(inf_text: &str) -> (BTreeSet<String>, bool) {
     let sections = parse_inf_sections(inf_text);
     let mut referenced = BTreeSet::<String>::new();
+    let mut needs_any_wdf = false;
 
     // Validate `SourceDisksFiles*` entries if present; these are intended to list every
     // payload file that ships in the driver package.
@@ -727,7 +787,7 @@ fn validate_inf_references(
     // DLL(s) actually exist in the packaged driver directory.
     let inf_lower = inf_text.to_ascii_lowercase();
     if inf_lower.contains("wdfcoinstaller") {
-        let re = regex::RegexBuilder::new(r"wdfcoinstaller[0-9a-z]*\.dll")
+        let re = regex::RegexBuilder::new(r"wdfcoinstaller[0-9a-z_]*\.dll")
             .case_insensitive(true)
             .build()
             .expect("valid regex");
@@ -738,50 +798,11 @@ fn validate_inf_references(
         }
 
         if !found {
-            // If we couldn't find a specific DLL name, still require that some WDF coinstaller
-            // DLL exists in the directory.
-            let any = packaged_base_names
-                .iter()
-                .any(|n| n.starts_with("wdfcoinstaller") && n.ends_with(".dll"));
-            if !any {
-                bail!(
-                    "driver {} ({}) INF #{} mentions WdfCoInstaller but no WdfCoInstaller*.dll was packaged",
-                    driver_name,
-                    arch,
-                    inf_index
-                );
-            }
+            needs_any_wdf = true;
         }
     }
 
-    for token in referenced {
-        let token = normalize_inf_path_token(&token);
-        if token.is_empty() {
-            continue;
-        }
-        let token_lower = token.to_ascii_lowercase().replace('\\', "/");
-        if token_lower.contains('/') && packaged_rel_paths.contains(&token_lower) {
-            continue;
-        }
-
-        // Prefer path matches when a path was provided, but fall back to basename (best-effort)
-        // to avoid false negatives when the INF uses slightly different relative paths.
-        let base = token_lower
-            .rsplit_once('/')
-            .map(|(_, b)| b)
-            .unwrap_or(token_lower.as_str());
-        if !packaged_base_names.contains(base) {
-            bail!(
-                "driver {} ({}) INF #{} references missing file: {}",
-                driver_name,
-                arch,
-                inf_index,
-                token
-            );
-        }
-    }
-
-    Ok(())
+    (referenced, needs_any_wdf)
 }
 
 fn parse_inf_sections(text: &str) -> HashMap<String, Vec<String>> {

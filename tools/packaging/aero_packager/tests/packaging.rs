@@ -485,11 +485,21 @@ fn package_rejects_private_key_materials() -> anyhow::Result<()> {
     let guest_tools_dir = testdata.join("guest-tools");
     let spec_path = testdata.join("spec.json");
 
-    for ext in ["pfx", "key", "pem"] {
+    for (rel_path, ext) in [
+        ("x86/testdrv/test.pfx", "pfx"),
+        // Hidden file should still be rejected (even though it would normally be excluded).
+        ("x86/testdrv/.hidden.key", "key"),
+        // Hidden directory should still be scanned for key material.
+        ("x86/testdrv/.secrets/secret.pem", "pem"),
+    ] {
         let drivers_tmp = tempfile::tempdir()?;
         copy_dir_all(&drivers_dir, drivers_tmp.path())?;
+        let dst = drivers_tmp.path().join(rel_path);
+        if let Some(parent) = dst.parent() {
+            fs::create_dir_all(parent)?;
+        }
         fs::write(
-            drivers_tmp.path().join(format!("x86/testdrv/test.{ext}")),
+            &dst,
             b"dummy secret",
         )?;
 
@@ -512,8 +522,12 @@ fn package_rejects_private_key_materials() -> anyhow::Result<()> {
             msg.contains("refusing to package private key material"),
             "unexpected error: {msg}"
         );
+        let file_name = std::path::Path::new(rel_path)
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or(rel_path);
         assert!(
-            msg.contains(&format!("test.{ext}")),
+            msg.contains(file_name),
             "expected offending path in error for .{ext}: {msg}"
         );
     }
@@ -711,7 +725,7 @@ fn copyinf_directives_are_validated() -> anyhow::Result<()> {
     let err = aero_packager::package_guest_tools(&config).unwrap_err();
     let msg = format!("{err:#}");
     assert!(
-        msg.contains("missing.inf") && msg.contains("references missing file"),
+        msg.contains("missing.inf") && msg.contains("INF referenced files are missing"),
         "unexpected error: {msg}"
     );
 
