@@ -79,6 +79,10 @@ pub enum AerogpuD3d9Error {
     UnknownResource(u32),
     #[error("resource handle {0} is already in use")]
     ResourceHandleInUse(u32),
+    #[error("shader handle {0} is already in use")]
+    ShaderHandleInUse(u32),
+    #[error("input layout handle {0} is already in use")]
+    InputLayoutHandleInUse(u32),
     #[error("unknown shader handle {0}")]
     UnknownShader(u32),
     #[error("unknown input layout handle {0}")]
@@ -652,6 +656,13 @@ impl AerogpuD3d9Executor {
             .ok_or(AerogpuD3d9Error::UnknownResource(handle))
     }
 
+    fn handle_in_use(&self, handle: u32) -> bool {
+        self.resource_handles.contains_key(&handle)
+            || self.resources.contains_key(&handle)
+            || self.shaders.contains_key(&handle)
+            || self.input_layouts.contains_key(&handle)
+    }
+
     fn register_resource_handle(&mut self, handle: u32) {
         if handle == 0 {
             return;
@@ -705,9 +716,7 @@ impl AerogpuD3d9Executor {
                         "CREATE_BUFFER: resource handle 0 is reserved".into(),
                     ));
                 }
-                if self.resource_handles.contains_key(&buffer_handle)
-                    || self.resources.contains_key(&buffer_handle)
-                {
+                if self.handle_in_use(buffer_handle) {
                     return Err(AerogpuD3d9Error::ResourceHandleInUse(buffer_handle));
                 }
 
@@ -782,9 +791,7 @@ impl AerogpuD3d9Executor {
                         "CREATE_TEXTURE2D: resource handle 0 is reserved".into(),
                     ));
                 }
-                if self.resource_handles.contains_key(&texture_handle)
-                    || self.resources.contains_key(&texture_handle)
-                {
+                if self.handle_in_use(texture_handle) {
                     return Err(AerogpuD3d9Error::ResourceHandleInUse(texture_handle));
                 }
                 if width == 0 || height == 0 {
@@ -1491,29 +1498,37 @@ impl AerogpuD3d9Executor {
                 dxbc_bytes,
                 ..
             } => {
+                if shader_handle == 0 {
+                    return Err(AerogpuD3d9Error::Validation(
+                        "CREATE_SHADER_DXBC: shader handle 0 is reserved".into(),
+                    ));
+                }
+                if self.handle_in_use(shader_handle) {
+                    return Err(AerogpuD3d9Error::ShaderHandleInUse(shader_handle));
+                }
+
+                let expected_stage = match stage {
+                    s if s == cmd::AerogpuShaderStage::Vertex as u32 => shader::ShaderStage::Vertex,
+                    s if s == cmd::AerogpuShaderStage::Pixel as u32 => shader::ShaderStage::Pixel,
+                    _ => {
+                        return Err(AerogpuD3d9Error::Validation(format!(
+                            "CREATE_SHADER_DXBC: unsupported stage {stage}"
+                        )));
+                    }
+                };
+
                 let key = xxhash_rust::xxh3::xxh3_64(dxbc_bytes);
                 let cached = self
                     .shader_cache
                     .get_or_translate(dxbc_bytes)
                     .map_err(|e| AerogpuD3d9Error::ShaderTranslation(e.to_string()))?;
                 let bytecode_stage = cached.ir.version.stage;
-                let expected_stage = match stage {
-                    s if s == cmd::AerogpuShaderStage::Vertex as u32 => {
-                        Some(shader::ShaderStage::Vertex)
-                    }
-                    s if s == cmd::AerogpuShaderStage::Pixel as u32 => {
-                        Some(shader::ShaderStage::Pixel)
-                    }
-                    _ => None,
-                };
-                if let Some(expected_stage) = expected_stage {
-                    if expected_stage != bytecode_stage {
-                        return Err(AerogpuD3d9Error::ShaderStageMismatch {
-                            shader_handle,
-                            expected: expected_stage,
-                            actual: bytecode_stage,
-                        });
-                    }
+                if expected_stage != bytecode_stage {
+                    return Err(AerogpuD3d9Error::ShaderStageMismatch {
+                        shader_handle,
+                        expected: expected_stage,
+                        actual: bytecode_stage,
+                    });
                 }
                 let module = self
                     .device
@@ -1620,6 +1635,14 @@ impl AerogpuD3d9Executor {
                 blob_bytes,
                 ..
             } => {
+                if input_layout_handle == 0 {
+                    return Err(AerogpuD3d9Error::Validation(
+                        "CREATE_INPUT_LAYOUT: input layout handle 0 is reserved".into(),
+                    ));
+                }
+                if self.handle_in_use(input_layout_handle) {
+                    return Err(AerogpuD3d9Error::InputLayoutHandleInUse(input_layout_handle));
+                }
                 let decl = VertexDeclaration::from_d3d_bytes(blob_bytes)
                     .map_err(|e| AerogpuD3d9Error::VertexDeclaration(e.to_string()))?;
                 self.input_layouts
@@ -1930,6 +1953,9 @@ impl AerogpuD3d9Executor {
                         });
                     }
                 } else {
+                    if self.handle_in_use(out_resource_handle) {
+                        return Err(AerogpuD3d9Error::ResourceHandleInUse(out_resource_handle));
+                    }
                     self.resource_handles
                         .insert(out_resource_handle, underlying);
                     *self.resource_refcounts.entry(underlying).or_insert(0) += 1;
