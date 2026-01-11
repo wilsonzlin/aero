@@ -190,6 +190,51 @@ jobs:
                 console.log(`| \`${name}\` | ${medianText} | ${fmtCv(cv)} | ${fmtN(n)} |`);
               }
           NODE
+              if [[ -f perf-results/gateway/raw.json ]]; then
+                node - <<'NODE'
+                const fs = require("node:fs");
+                const path = require("node:path");
+
+                const gatewayPath = path.join(process.env.GITHUB_WORKSPACE, "perf-results", "gateway", "raw.json");
+                const data = JSON.parse(fs.readFileSync(gatewayPath, "utf8"));
+
+                const rtt = data.tcpProxy?.rttMs ?? {};
+                const thr = data.tcpProxy?.throughput ?? {};
+                const thrStats = thr.stats ?? {};
+                const doh = data.doh ?? {};
+                const qpsStats = doh.qpsStats ?? {};
+                const latency = doh.latencyMs ?? {};
+
+                const fmt = (n, decimals = 2) => (typeof n === "number" && Number.isFinite(n) ? n.toFixed(decimals) : "n/a");
+                const fmtInt = (n) => (typeof n === "number" && Number.isFinite(n) ? Math.round(n).toString() : "n/a");
+                const fmtCv = (cv) =>
+                  typeof cv === "number" && Number.isFinite(cv) ? (cv === 0 ? "0" : `${(cv * 100).toFixed(2)}%`) : "n/a";
+
+                const rows = [];
+                const pushRow = (label, value, cv, n) => rows.push([label, value, fmtCv(cv), fmtInt(n)]);
+
+                pushRow("tcp_rtt_p50_ms", `${fmt(rtt.p50, 2)} ms`, rtt.cv, rtt.n);
+                pushRow("tcp_throughput_mib_s", `${fmt(thr.mibPerSecond, 1)} MiB/s`, thrStats.cv, thrStats.n);
+                pushRow("doh_qps", `${fmt(doh.qps, 0)} qps`, qpsStats.cv, qpsStats.n);
+                const hitRatio = doh.cache?.hitRatio;
+                pushRow(
+                  "doh_cache_hit_ratio_pct",
+                  hitRatio == null ? "n/a" : `${fmt(hitRatio * 100, 1)} %`,
+                  null,
+                  (doh.cache?.hits ?? 0) + (doh.cache?.misses ?? 0),
+                );
+                pushRow("doh_latency_p99_ms", `${fmt(latency.p99, 2)} ms`, latency.cv, latency.n);
+
+                console.log("");
+                console.log("Gateway:");
+                console.log("");
+                console.log("| Metric | Value | CV | n |");
+                console.log("| --- | ---: | ---: | ---: |");
+                for (const row of rows) {
+                  console.log(`| \`${row[0]}\` | ${row[1]} | ${row[2]} | ${row[3]} |`);
+                }
+              NODE
+              fi
             else
               echo "_No summary.json produced._"
             fi
