@@ -61,15 +61,34 @@ runs:
 
         # Aero pins stable via rust-toolchain.toml. When callers request "stable"
         # we resolve it to the pinned version to keep CI reproducible.
-        if [[ "$requested" == "stable" && -f rust-toolchain.toml ]]; then
+        if [[ "$requested" == "stable" ]]; then
+          if [[ ! -f rust-toolchain.toml ]]; then
+            echo "::error::setup-rust: rust-toolchain.toml not found (required to resolve pinned stable toolchain)."
+            exit 1
+          fi
+
           pinned=""
           toolchain_toml="$(< rust-toolchain.toml)"
           if [[ "$toolchain_toml" =~ (^|[[:space:]])channel[[:space:]]*=[[:space:]]*\"([^\"]+)\" ]]; then
             pinned="${BASH_REMATCH[2]}"
           fi
-          if [[ -n "$pinned" ]]; then
-            resolved="$pinned"
+
+          if [[ -z "$pinned" ]]; then
+            echo "::error::setup-rust: unable to resolve toolchain.channel from rust-toolchain.toml."
+            exit 1
           fi
+
+          if [[ "$pinned" == "stable" ]]; then
+            echo "::error::setup-rust: rust-toolchain.toml must pin stable to an explicit version (channel must not be 'stable')."
+            exit 1
+          fi
+
+          if ! [[ "$pinned" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+$ ]]; then
+            echo "::error::setup-rust: rust-toolchain.toml channel must look like a semver (e.g. 1.92.0); got '$pinned'."
+            exit 1
+          fi
+
+          resolved="$pinned"
         fi
 
         # Aero pins nightly Rust for threaded WASM builds in scripts/toolchains.json.
@@ -88,6 +107,11 @@ runs:
 
           if [[ -z "$pinned_nightly" ]]; then
             echo "::error::setup-rust: unable to resolve rust.nightlyWasm from scripts/toolchains.json."
+            exit 1
+          fi
+
+          if ! [[ "$pinned_nightly" =~ ^nightly-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]$ ]]; then
+            echo "::error::setup-rust: rust.nightlyWasm must be pinned to nightly-YYYY-MM-DD; got '$pinned_nightly'."
             exit 1
           fi
 
