@@ -178,8 +178,19 @@ For WebUSB passthrough specifically:
   queued/in-flight host I/O on restore. This prevents replaying side effects after restore; the guest
   will naturally retry transfers, emitting fresh `UsbHostAction`s.
 - `UsbWebUsbPassthroughDevice` snapshots guest-visible USB state (address + control pipe stage) so a
-  restore taken mid-control-transfer does not deadlock the guest. Any host-side work is still dropped
-  as above, so the restored control pipe will NAK and re-emit an action as needed.
+  restore taken mid-control-transfer does not deadlock the guest. Newer snapshots also include the
+  full internal `UsbPassthroughDevice` host-action state, so an in-flight transfer can resume
+  deterministically: the relevant TD will continue returning NAK until a completion with the same
+  action id is injected (and no duplicate `UsbHostAction`s are emitted).
+
+Browser integration note (important):
+
+- WebUSB host actions are backed by JS Promises that cannot be resumed after a VM snapshot restore.
+  The WASM `UhciControllerBridge.load_state()` therefore calls
+  `UsbWebUsbPassthroughDevice::reset_host_state_for_restore()` after restore.
+  - This clears queued/in-flight host actions/completions, preventing deadlock on a completion that
+    will never arrive.
+  - The monotonic `next_id` is preserved, so re-emitted actions still have deterministic ids.
 
 Idempotency / retry behavior (important):
 
