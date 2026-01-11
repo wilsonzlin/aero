@@ -12,6 +12,7 @@ We assume a single PCI bus (`bus 0`) with stable device numbers. Not all devices
 
 | BDF      | Device | Vendor:Device | Class (base/sub/progif) | INTx pin | Notes |
 |----------|--------|---------------|--------------------------|----------|-------|
+| 00:01.0  | ISA    | 8086:7000     | 06/01/00                 | -        | PIIX3-compatible ISA bridge (function 0 of a multi-function slot; `header_type=0x80` so guests discover 00:01.1/00:01.2) |
 | 00:01.1  | IDE    | 8086:7010     | 01/01/8A                 | INTA     | PIIX3-compatible PCI IDE (legacy compatibility mode, bus mastering DMA) |
 | 00:01.2  | USB1   | 8086:7020     | 0C/03/00                 | INTA     | UHCI (USB 1.1) |
 | 00:02.0  | SATA   | 8086:2922     | 01/06/01                 | INTA     | AHCI (SATA) |
@@ -93,7 +94,9 @@ For Windows 7 and Linux to bind drivers predictably:
    - HDA: `04/03/00`
    - UHCI: `0C/03/00`
 3. **Header type** must be `0x00` (type-0 endpoint), except when a device intentionally exposes
-   multiple functions on the same slot:
+    multiple functions on the same slot:
+   - PIIX3 (function 0 at `00:01.0`) must set `header_type = 0x80` so guests enumerate the IDE
+     and UHCI functions at `00:01.1` and `00:01.2`.
    - `virtio-input` keyboard (function 0) must set `header_type = 0x80` (multi-function bit) so
      guests enumerate the paired mouse function (function 1).
 4. **BAR types and sizes** must be correct:

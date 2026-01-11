@@ -201,6 +201,7 @@ pub const PCI_VENDOR_ID_VIRTIO: u16 = 0x1af4;
 
 pub const PCI_DEVICE_ID_INTEL_PIIX3_IDE: u16 = 0x7010;
 pub const PCI_DEVICE_ID_INTEL_PIIX3_UHCI: u16 = 0x7020;
+pub const PCI_DEVICE_ID_INTEL_PIIX3_ISA: u16 = 0x7000;
 pub const PCI_DEVICE_ID_INTEL_ICH9_AHCI: u16 = 0x2922;
 pub const PCI_DEVICE_ID_INTEL_ICH6_HDA: u16 = 0x2668;
 pub const PCI_DEVICE_ID_INTEL_E1000_82540EM: u16 = 0x100e;
@@ -290,6 +291,22 @@ pub const IDE_PIIX3: PciDeviceProfile = PciDeviceProfile {
     header_type: 0x00,
     interrupt_pin: Some(PciInterruptPin::IntA),
     bars: &IDE_BARS,
+    capabilities: &[],
+};
+
+pub const ISA_PIIX3: PciDeviceProfile = PciDeviceProfile {
+    name: "piix3-isa",
+    bdf: PciBdf::new(0, 1, 0),
+    vendor_id: PCI_VENDOR_ID_INTEL,
+    device_id: PCI_DEVICE_ID_INTEL_PIIX3_ISA,
+    subsystem_vendor_id: 0,
+    subsystem_id: 0,
+    revision_id: 0,
+    class: PciClassCode::new(0x06, 0x01, 0x00),
+    // Mark as multi-function so OS enumeration discovers the IDE/UHCI functions.
+    header_type: 0x80,
+    interrupt_pin: None,
+    bars: &[],
     capabilities: &[],
 };
 
@@ -476,6 +493,7 @@ pub const VIRTIO_SND: PciDeviceProfile = PciDeviceProfile {
 };
 
 pub const CANONICAL_IO_DEVICES: &[PciDeviceProfile] = &[
+    ISA_PIIX3,
     IDE_PIIX3,
     USB_UHCI_PIIX3,
     SATA_AHCI_ICH9,

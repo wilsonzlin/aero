@@ -5,6 +5,10 @@ use aero_devices::pci::profile::*;
 
 #[test]
 fn canonical_ids_and_class_codes() {
+    assert_eq!(ISA_PIIX3.vendor_id, 0x8086);
+    assert_eq!(ISA_PIIX3.device_id, 0x7000);
+    assert_eq!(ISA_PIIX3.class.as_u32(), 0x060100);
+
     assert_eq!(IDE_PIIX3.vendor_id, 0x8086);
     assert_eq!(IDE_PIIX3.device_id, 0x7010);
     assert_eq!(IDE_PIIX3.class.as_u32(), 0x01018a);
