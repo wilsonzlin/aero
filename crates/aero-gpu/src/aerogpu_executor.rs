@@ -1788,6 +1788,12 @@ fn fs_main() -> @location(0) vec4<f32> {
                 ));
             }
 
+            let base_gpa = table.resolve_gpa(
+                dst_backing.alloc_id,
+                dst_backing.alloc_offset_bytes,
+                dst_backing.size_bytes,
+            )?;
+
             for row in 0..height {
                 let src_off = row as usize * bytes_per_row_usize;
                 let src_end = src_off + row_bytes_usize;
@@ -1817,16 +1823,9 @@ fn fs_main() -> @location(0) vec4<f32> {
                         "COPY_TEXTURE2D: writeback out of bounds".into(),
                     ));
                 }
-                let alloc_offset = dst_backing
-                    .alloc_offset_bytes
-                    .checked_add(write_offset)
-                    .ok_or_else(|| {
-                        ExecutorError::Validation(
-                            "COPY_TEXTURE2D: dst alloc offset overflow".into(),
-                        )
-                    })?;
-                let dst_gpa =
-                    table.resolve_gpa(dst_backing.alloc_id, alloc_offset, u64::from(row_bytes))?;
+                let dst_gpa = base_gpa.checked_add(write_offset).ok_or_else(|| {
+                    ExecutorError::Validation("COPY_TEXTURE2D: dst GPA overflow".into())
+                })?;
 
                 guest_memory.write(dst_gpa, row_bytes_slice)?;
             }

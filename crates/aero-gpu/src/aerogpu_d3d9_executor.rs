@@ -1117,6 +1117,21 @@ impl AerogpuD3d9Executor {
         )
     }
 
+    pub async fn execute_cmd_stream_with_guest_memory_async(
+        &mut self,
+        bytes: &[u8],
+        guest_memory: &dyn GuestMemory,
+        alloc_table: Option<&AllocTable>,
+    ) -> Result<(), AerogpuD3d9Error> {
+        self.execute_cmd_stream_with_guest_memory_for_context_async(
+            0,
+            bytes,
+            guest_memory,
+            alloc_table,
+        )
+        .await
+    }
+
     /// WASM-friendly async variant of `execute_cmd_stream_with_guest_memory_for_context`.
     ///
     /// On WASM targets, `wgpu::Buffer::map_async` completion is delivered via the JS event loop,
@@ -2558,36 +2573,36 @@ impl AerogpuD3d9Executor {
                                     "COPY_TEXTURE2D: dst backing overflow".into(),
                                 )
                             })?;
-                        if backing_end > alloc.size_bytes {
-                            return Err(AerogpuD3d9Error::Validation(format!(
-                                "COPY_TEXTURE2D: dst backing out of bounds (alloc_id={} offset=0x{:x} size=0x{:x} alloc_size=0x{:x})",
-                                dst_backing.alloc_id,
-                                dst_backing.alloc_offset_bytes,
-                                dst_backing.size_bytes,
-                                alloc.size_bytes
-                            )));
-                        }
-                        let backing_gpa = alloc
-                            .gpa
-                            .checked_add(dst_backing.alloc_offset_bytes)
-                            .ok_or_else(|| {
-                                AerogpuD3d9Error::Validation(
+                            if backing_end > alloc.size_bytes {
+                                return Err(AerogpuD3d9Error::Validation(format!(
+                                    "COPY_TEXTURE2D: dst backing out of bounds (alloc_id={} offset=0x{:x} size=0x{:x} alloc_size=0x{:x})",
+                                    dst_backing.alloc_id,
+                                    dst_backing.alloc_offset_bytes,
+                                    dst_backing.size_bytes,
+                                    alloc.size_bytes
+                                )));
+                            }
+                            let backing_gpa = alloc
+                                .gpa
+                                .checked_add(dst_backing.alloc_offset_bytes)
+                                .ok_or_else(|| {
+                                    AerogpuD3d9Error::Validation(
+                                        "COPY_TEXTURE2D: dst backing overflow".into(),
+                                    )
+                                })?;
+                            if backing_gpa.checked_add(dst_backing.size_bytes).is_none() {
+                                return Err(AerogpuD3d9Error::Validation(
                                     "COPY_TEXTURE2D: dst backing overflow".into(),
-                                )
-                            })?;
-                        if backing_gpa.checked_add(dst_backing.size_bytes).is_none() {
-                            return Err(AerogpuD3d9Error::Validation(
-                                "COPY_TEXTURE2D: dst backing overflow".into(),
-                            ));
-                        }
+                                ));
+                            }
 
-                        // WRITEBACK_DST snapshots the copied texels into a staging buffer. The
-                        // staging buffer is mapped and committed into guest memory after a submit
-                        // boundary at the end of the command stream.
-                        let staging_size = (padded_bpr as u64)
-                            .checked_mul(height as u64)
-                            .ok_or_else(|| {
-                                AerogpuD3d9Error::Validation(
+                            // WRITEBACK_DST snapshots the copied texels into a staging buffer. The
+                            // staging buffer is mapped and committed into guest memory after a submit
+                            // boundary at the end of the command stream.
+                            let staging_size = (padded_bpr as u64)
+                                .checked_mul(height as u64)
+                                .ok_or_else(|| {
+                                    AerogpuD3d9Error::Validation(
                                     "COPY_TEXTURE2D: staging buffer size overflow".into(),
                                 )
                             })?;
@@ -2622,15 +2637,15 @@ impl AerogpuD3d9Executor {
                                 depth_or_array_layers: 1,
                             },
                         );
-                        writeback_entry = Some(PendingWriteback::Texture2d {
-                            staging,
-                            plan: TextureWritebackPlan {
-                                backing: dst_backing,
-                                backing_gpa,
-                                dst_x,
-                                dst_y,
-                                height,
-                                is_x8: is_x8_format(dst_format_raw),
+                            writeback_entry = Some(PendingWriteback::Texture2d {
+                                staging,
+                                plan: TextureWritebackPlan {
+                                    backing: dst_backing,
+                                    backing_gpa,
+                                    dst_x,
+                                    dst_y,
+                                    height,
+                                    is_x8: is_x8_format(dst_format_raw),
                                 bytes_per_pixel: bpp,
                                 unpadded_bytes_per_row: unpadded_bpr,
                                 padded_bytes_per_row: padded_bpr,

@@ -7,6 +7,47 @@ fn align_to(value: u32, alignment: u32) -> u32 {
     (value + alignment - 1) & !(alignment - 1)
 }
 
+/// Read back a byte range from a buffer.
+///
+/// This is intended for tests and debugging; it uses `map_async` and works on both native and
+/// WASM targets.
+///
+/// # Panics
+/// Panics if mapping fails. (This is test-facing API.)
+pub async fn readback_buffer(
+    device: &wgpu::Device,
+    buffer: &wgpu::Buffer,
+    range: std::ops::Range<u64>,
+) -> Vec<u8> {
+    if range.start == range.end {
+        return Vec::new();
+    }
+
+    let slice = buffer.slice(range);
+    let (sender, receiver) = oneshot_channel();
+    slice.map_async(wgpu::MapMode::Read, move |res| {
+        sender.send(res).ok();
+    });
+
+    #[cfg(not(target_arch = "wasm32"))]
+    device.poll(wgpu::Maintain::Wait);
+
+    #[cfg(target_arch = "wasm32")]
+    device.poll(wgpu::Maintain::Poll);
+
+    receiver
+        .receive()
+        .await
+        .expect("map_async sender dropped")
+        .expect("map_async failed");
+
+    let mapped = slice.get_mapped_range();
+    let out = mapped.to_vec();
+    drop(mapped);
+    buffer.unmap();
+    out
+}
+
 /// Read back an RGBA8 region from a texture.
 ///
 /// This is intended for tests and debugging; it uses a staging buffer and

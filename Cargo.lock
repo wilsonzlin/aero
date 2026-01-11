@@ -103,6 +103,8 @@ dependencies = [
  "futures-intrusive",
  "naga 24.0.0",
  "pollster",
+ "wasm-bindgen",
+ "wasm-bindgen-test",
  "wgpu",
 ]
 
@@ -221,6 +223,8 @@ dependencies = [
  "serde_json",
  "thiserror 1.0.69",
  "tracing",
+ "wasm-bindgen",
+ "wasm-bindgen-test",
  "wgpu",
  "xxhash-rust",
 ]
