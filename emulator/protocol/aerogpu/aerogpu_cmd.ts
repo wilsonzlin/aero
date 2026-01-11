@@ -417,6 +417,31 @@ function alignUp4U32(v: number): number {
   return alignUp(v, 4);
 }
 
+export interface AerogpuCmdDebugMarkerPayload {
+  markerBytes: Uint8Array;
+  marker: string;
+}
+
+export function decodeCmdDebugMarkerPayload(bytes: Uint8Array, packetOffset: number): AerogpuCmdDebugMarkerPayload {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const hdr = decodeCmdHdr(view, packetOffset);
+  if (hdr.opcode !== AerogpuCmdOpcode.DebugMarker) {
+    throw new Error(`Unexpected opcode: 0x${hdr.opcode.toString(16)} (expected DEBUG_MARKER)`);
+  }
+
+  const packetEnd = packetOffset + hdr.sizeBytes;
+  if (packetEnd > bytes.byteLength) {
+    throw new Error("Buffer too small for DEBUG_MARKER packet");
+  }
+
+  const payload = bytes.subarray(packetOffset + AEROGPU_CMD_HDR_SIZE, packetEnd);
+  let trimmedLen = payload.byteLength;
+  while (trimmedLen > 0 && payload[trimmedLen - 1] === 0) trimmedLen--;
+  const markerBytes = payload.subarray(0, trimmedLen);
+  const marker = new TextDecoder("utf-8", { fatal: true }).decode(markerBytes);
+  return { markerBytes, marker };
+}
+
 export interface AerogpuCmdCreateShaderDxbcPayload {
   shaderHandle: AerogpuHandle;
   stage: number;
@@ -717,6 +742,13 @@ export class AerogpuCmdWriter {
     this.view.setUint32(offset + AEROGPU_CMD_HDR_OFF_SIZE_BYTES, alignedSize, true);
     this.len += alignedSize;
     return offset;
+  }
+
+  debugMarker(marker: string | Uint8Array): void {
+    const markerBytes = typeof marker === "string" ? new TextEncoder().encode(marker) : marker;
+    const unpadded = AEROGPU_CMD_HDR_SIZE + markerBytes.byteLength;
+    const base = this.appendRaw(AerogpuCmdOpcode.DebugMarker, unpadded);
+    new Uint8Array(this.buf, base + AEROGPU_CMD_HDR_SIZE, markerBytes.byteLength).set(markerBytes);
   }
 
   createBuffer(

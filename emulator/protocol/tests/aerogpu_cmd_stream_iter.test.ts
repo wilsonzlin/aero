@@ -8,6 +8,7 @@ import {
   AerogpuCmdOpcode,
   AerogpuCmdWriter,
   AerogpuShaderStage,
+  decodeCmdDebugMarkerPayload,
   decodeCmdCreateInputLayoutBlob,
   decodeCmdCreateShaderDxbcPayload,
   decodeCmdSetShaderConstantsFPayload,
@@ -112,4 +113,18 @@ test("iterCmdStream rejects streams where a packet overruns cmd_stream.size_byte
   );
 
   assert.throws(() => Array.from(iterCmdStream(bad)), /overruns stream/);
+});
+
+test("decodeCmdDebugMarkerPayload trims padding and decodes UTF-8", () => {
+  const w = new AerogpuCmdWriter();
+  w.debugMarker("hello");
+  const stream = w.finish();
+
+  const packets = Array.from(iterCmdStream(stream));
+  assert.equal(packets.length, 1);
+  assert.equal(packets[0]!.opcode, AerogpuCmdOpcode.DebugMarker);
+
+  const decoded = decodeCmdDebugMarkerPayload(stream, AEROGPU_CMD_STREAM_HEADER_SIZE);
+  assert.equal(decoded.marker, "hello");
+  assert.deepEqual(decoded.markerBytes, new TextEncoder().encode("hello"));
 });
