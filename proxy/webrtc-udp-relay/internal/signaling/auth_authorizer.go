@@ -32,22 +32,22 @@ func NewAuthAuthorizer(cfg config.Config) (AuthAuthorizer, error) {
 	}, nil
 }
 
-func (a AuthAuthorizer) Authorize(r *http.Request, firstMsg *ClientHello) error {
+func (a AuthAuthorizer) Authorize(r *http.Request, firstMsg *ClientHello) (AuthResult, error) {
 	if a.mode == config.AuthModeNone {
-		return nil
+		return AuthResult{}, nil
 	}
 	if a.verifier == nil {
-		return errors.New("auth verifier not configured")
+		return AuthResult{}, errors.New("auth verifier not configured")
 	}
 
 	cred, err := credentialFromHelloAndRequest(a.mode, firstMsg, r)
 	if err != nil {
-		return err
+		return AuthResult{}, err
 	}
 	if err := a.verifier.Verify(cred); err != nil {
-		return err
+		return AuthResult{}, err
 	}
-	return nil
+	return AuthResult{Credential: cred}, nil
 }
 
 func credentialFromHelloAndRequest(mode config.AuthMode, hello *ClientHello, r *http.Request) (string, error) {

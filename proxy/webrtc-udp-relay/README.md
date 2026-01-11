@@ -275,6 +275,31 @@ The service supports configuration via environment variables and equivalent flag
 - `MAX_DATAGRAM_PAYLOAD_BYTES` / `--max-datagram-payload-bytes` (default `1200`) — max UDP payload bytes per relay frame (applies to WebRTC `udp` DataChannel and `/udp` WebSocket fallback)
 - `PREFER_V2` / `--prefer-v2` (default `false`) — prefer v2 framing for relay→client packets once the client demonstrates v2 support
 
+### L2 tunnel bridging (env + flags)
+
+When clients create a **reliable** WebRTC DataChannel labeled `l2`, the relay can bridge it to a
+backend WebSocket (typically `aero-l2-proxy`) that speaks subprotocol `aero-l2-tunnel-v1`.
+
+Env vars / flags:
+
+- `L2_BACKEND_WS_URL` / `--l2-backend-ws-url` (optional; when unset, `l2` DataChannels are rejected)
+  - Example: `ws://127.0.0.1:8090/l2`
+- `L2_MAX_MESSAGE_BYTES` / `--l2-max-message-bytes` (default `4096`)
+- `L2_BACKEND_FORWARD_ORIGIN` / `--l2-backend-forward-origin` (default: `true` when `L2_BACKEND_WS_URL` is set)
+  - When enabled, the relay forwards the normalized browser `Origin` (or a derived origin from request Host/scheme)
+    to the backend WebSocket dial.
+- `L2_BACKEND_ORIGIN_OVERRIDE` / `--l2-backend-origin-override` (optional)
+  - When set, this Origin value is used for all backend dials instead of forwarding the client origin.
+- `L2_BACKEND_AUTH_FORWARD_MODE` / `--l2-backend-auth-forward-mode` (default `query`)
+  - `none`: do not forward auth credentials
+  - `query`: append `token=<credential>` and `apiKey=<credential>` query parameters when dialing the backend
+  - `subprotocol`: offer `Sec-WebSocket-Protocol: aero-l2-tunnel-v1, aero-l2-token.<credential>`
+
+The relay requires that the backend negotiates `aero-l2-tunnel-v1` (strict).
+
+The forwarded `<credential>` is the same JWT/API key that authenticated the relay's signaling endpoints
+(`AUTH_MODE`). When `AUTH_MODE=none`, no credential is forwarded.
+
 ### Quota + rate limiting (env + flags)
 
 Per-session quotas and rate limits are enforced on the **data plane** (WebRTC DataChannel ↔ UDP):

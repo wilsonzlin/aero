@@ -62,6 +62,12 @@ func TestDefaultsDev(t *testing.T) {
 	if cfg.L2BackendWSToken != "" {
 		t.Fatalf("L2BackendWSToken=%q, want empty", cfg.L2BackendWSToken)
 	}
+	if cfg.L2BackendForwardOrigin {
+		t.Fatalf("L2BackendForwardOrigin=true, want false")
+	}
+	if cfg.L2BackendAuthForwardMode != L2BackendAuthForwardModeQuery {
+		t.Fatalf("L2BackendAuthForwardMode=%q, want %q", cfg.L2BackendAuthForwardMode, L2BackendAuthForwardModeQuery)
+	}
 	if cfg.L2MaxMessageBytes != DefaultL2MaxMessageBytes {
 		t.Fatalf("L2MaxMessageBytes=%d, want %d", cfg.L2MaxMessageBytes, DefaultL2MaxMessageBytes)
 	}
@@ -259,6 +265,12 @@ func TestL2BackendWSURL_AcceptsWebSocketURL(t *testing.T) {
 	if cfg.L2BackendWSToken != "test-token" {
 		t.Fatalf("L2BackendWSToken=%q", cfg.L2BackendWSToken)
 	}
+	if !cfg.L2BackendForwardOrigin {
+		t.Fatalf("expected L2BackendForwardOrigin default true when L2 is enabled")
+	}
+	if cfg.L2BackendAuthForwardMode != L2BackendAuthForwardModeQuery {
+		t.Fatalf("L2BackendAuthForwardMode=%q, want %q", cfg.L2BackendAuthForwardMode, L2BackendAuthForwardModeQuery)
+	}
 	if cfg.L2MaxMessageBytes != 2048 {
 		t.Fatalf("L2MaxMessageBytes=%d, want 2048", cfg.L2MaxMessageBytes)
 	}
@@ -287,6 +299,34 @@ func TestL2BackendWSToken_RejectsInvalidToken(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), EnvL2BackendWSToken) {
 		t.Fatalf("expected error mentioning %s (err=%v)", EnvL2BackendWSToken, err)
+	}
+}
+
+func TestL2BackendAuthForwardMode_Subprotocol(t *testing.T) {
+	cfg, err := load(lookupMap(map[string]string{
+		EnvAPIKey:                   "secret",
+		EnvL2BackendWSURL:           "ws://127.0.0.1:8090/l2",
+		EnvL2BackendAuthForwardMode: "subprotocol",
+	}), nil)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.L2BackendAuthForwardMode != L2BackendAuthForwardModeSubprotocol {
+		t.Fatalf("L2BackendAuthForwardMode=%q, want %q", cfg.L2BackendAuthForwardMode, L2BackendAuthForwardModeSubprotocol)
+	}
+}
+
+func TestL2BackendOriginOverride_NormalizesAndValidates(t *testing.T) {
+	cfg, err := load(lookupMap(map[string]string{
+		EnvAPIKey:                  "secret",
+		EnvL2BackendWSURL:          "ws://127.0.0.1:8090/l2",
+		EnvL2BackendOriginOverride: "HTTPS://Example.COM:443/",
+	}), nil)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.L2BackendWSOrigin != "https://example.com:443" {
+		t.Fatalf("L2BackendWSOrigin=%q, want %q", cfg.L2BackendWSOrigin, "https://example.com:443")
 	}
 }
 

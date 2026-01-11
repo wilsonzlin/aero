@@ -35,10 +35,13 @@ const (
 	EnvPreferV2                  = "PREFER_V2"
 
 	// L2 tunnel bridging (WebRTC DataChannel "l2" <-> backend WS).
-	EnvL2BackendWSURL    = "L2_BACKEND_WS_URL"
-	EnvL2BackendWSOrigin = "L2_BACKEND_WS_ORIGIN"
-	EnvL2BackendWSToken  = "L2_BACKEND_WS_TOKEN"
-	EnvL2MaxMessageBytes = "L2_MAX_MESSAGE_BYTES"
+	EnvL2BackendWSURL           = "L2_BACKEND_WS_URL"
+	EnvL2BackendWSOrigin        = "L2_BACKEND_WS_ORIGIN"
+	EnvL2BackendWSToken         = "L2_BACKEND_WS_TOKEN"
+	EnvL2BackendForwardOrigin   = "L2_BACKEND_FORWARD_ORIGIN"
+	EnvL2BackendAuthForwardMode = "L2_BACKEND_AUTH_FORWARD_MODE"
+	EnvL2BackendOriginOverride  = "L2_BACKEND_ORIGIN_OVERRIDE"
+	EnvL2MaxMessageBytes        = "L2_MAX_MESSAGE_BYTES"
 
 	// Quota/rate limiting knobs (required by the task).
 	EnvMaxSessions                     = "MAX_SESSIONS"
@@ -137,6 +140,14 @@ const (
 	AuthModeJWT    AuthMode = "jwt"
 )
 
+type L2BackendAuthForwardMode string
+
+const (
+	L2BackendAuthForwardModeNone        L2BackendAuthForwardMode = "none"
+	L2BackendAuthForwardModeQuery       L2BackendAuthForwardMode = "query"
+	L2BackendAuthForwardModeSubprotocol L2BackendAuthForwardMode = "subprotocol"
+)
+
 type NAT1To1IPCandidateType string
 
 const (
@@ -188,10 +199,12 @@ type Config struct {
 	PreferV2                  bool
 
 	// L2 tunnel bridging.
-	L2BackendWSURL    string
-	L2BackendWSOrigin string
-	L2BackendWSToken  string
-	L2MaxMessageBytes int
+	L2BackendWSURL           string
+	L2BackendWSOrigin        string
+	L2BackendWSToken         string
+	L2BackendForwardOrigin   bool
+	L2BackendAuthForwardMode L2BackendAuthForwardMode
+	L2MaxMessageBytes        int
 
 	// WebRTCUDPPortRange restricts the UDP ports used for ICE. When nil, pion uses
 	// its defaults (OS ephemeral port selection).
@@ -338,6 +351,25 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	l2BackendWSURL := envOrDefault(lookup, EnvL2BackendWSURL, "")
 	l2BackendWSOrigin := envOrDefault(lookup, EnvL2BackendWSOrigin, "")
 	l2BackendWSToken := envOrDefault(lookup, EnvL2BackendWSToken, "")
+	l2BackendOriginOverride := envOrDefault(lookup, EnvL2BackendOriginOverride, "")
+
+	l2BackendForwardOrigin := false
+	envForwardOrigin, envForwardOriginOK := lookup(EnvL2BackendForwardOrigin)
+	envForwardOriginSet := envForwardOriginOK && strings.TrimSpace(envForwardOrigin) != ""
+	if envForwardOriginSet {
+		v, err := strconv.ParseBool(strings.TrimSpace(envForwardOrigin))
+		if err != nil {
+			return Config{}, fmt.Errorf("invalid %s %q: %w", EnvL2BackendForwardOrigin, envForwardOrigin, err)
+		}
+		l2BackendForwardOrigin = v
+	}
+
+	l2BackendAuthForwardModeStr := string(L2BackendAuthForwardModeQuery)
+	envAuthForwardMode, envAuthForwardModeOK := lookup(EnvL2BackendAuthForwardMode)
+	envAuthForwardModeSet := envAuthForwardModeOK && strings.TrimSpace(envAuthForwardMode) != ""
+	if envAuthForwardModeSet {
+		l2BackendAuthForwardModeStr = strings.TrimSpace(envAuthForwardMode)
+	}
 	l2MaxMessageBytes, err := envIntOrDefault(lookup, EnvL2MaxMessageBytes, DefaultL2MaxMessageBytes)
 	if err != nil {
 		return Config{}, err
@@ -470,10 +502,11 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	fs.SetOutput(os.Stderr)
 
 	var (
-		modeStr      string
-		logFormatStr string
-		logLevelStr  string
-		authModeStr  string
+		modeStr                      string
+		logFormatStr                 string
+		logLevelStr                  string
+		authModeStr                  string
+		l2BackendAuthForwardModeFlag string
 	)
 
 	fs.StringVar(&listenAddr, "listen-addr", listenAddr, "HTTP listen address (host:port)")
@@ -523,6 +556,9 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		l2BackendWSToken,
 		"Optional token to present to the L2 backend via WebSocket subprotocol (sent as aero-l2-token.<token>; env "+EnvL2BackendWSToken+")",
 	)
+	fs.BoolVar(&l2BackendForwardOrigin, "l2-backend-forward-origin", l2BackendForwardOrigin, "Forward Origin header when dialing the L2 backend WebSocket (env "+EnvL2BackendForwardOrigin+")")
+	fs.StringVar(&l2BackendAuthForwardModeFlag, "l2-backend-auth-forward-mode", l2BackendAuthForwardModeStr, "L2 backend auth forwarding mode: none, query, subprotocol (env "+EnvL2BackendAuthForwardMode+")")
+	fs.StringVar(&l2BackendOriginOverride, "l2-backend-origin-override", l2BackendOriginOverride, "Override Origin header sent to the L2 backend WebSocket (env "+EnvL2BackendOriginOverride+")")
 	fs.IntVar(&l2MaxMessageBytes, "l2-max-message-bytes", l2MaxMessageBytes, "Max L2 tunnel message size in bytes (env "+EnvL2MaxMessageBytes+")")
 
 	fs.StringVar(&authModeStr, "auth-mode", authModeDefault, "Signaling auth mode: none, api_key, or jwt (env "+EnvAuthMode+")")
@@ -562,6 +598,11 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	}
 
 	authMode, err := parseAuthMode(authModeStr)
+	if err != nil {
+		return Config{}, err
+	}
+
+	l2BackendAuthForwardMode, err := parseL2BackendAuthForwardMode(l2BackendAuthForwardModeFlag)
 	if err != nil {
 		return Config{}, err
 	}
@@ -718,6 +759,21 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		}
 	}
 
+	if !envForwardOriginSet && !setFlags["l2-backend-forward-origin"] && strings.TrimSpace(l2BackendWSURL) != "" {
+		// Default to forwarding Origin when L2 is enabled.
+		l2BackendForwardOrigin = true
+	}
+
+	if strings.TrimSpace(l2BackendOriginOverride) != "" {
+		origin, err := normalizeOriginValue(l2BackendOriginOverride)
+		if err != nil {
+			return Config{}, fmt.Errorf("invalid %s/%s %q: %w", EnvL2BackendOriginOverride, "--l2-backend-origin-override", l2BackendOriginOverride, err)
+		}
+		// Treat L2_BACKEND_ORIGIN_OVERRIDE/--l2-backend-origin-override as an alias
+		// that overrides the backend Origin header configured via L2_BACKEND_WS_ORIGIN.
+		l2BackendWSOrigin = origin
+	}
+
 	cfg := Config{
 		ListenAddr:          listenAddr,
 		PublicBaseURL:       publicBaseURL,
@@ -741,10 +797,12 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		MaxDatagramPayloadBytes:   maxDatagramPayloadBytes,
 		PreferV2:                  preferV2,
 
-		L2BackendWSURL:    l2BackendWSURL,
-		L2BackendWSOrigin: l2BackendWSOrigin,
-		L2BackendWSToken:  l2BackendWSToken,
-		L2MaxMessageBytes: l2MaxMessageBytes,
+		L2BackendWSURL:           l2BackendWSURL,
+		L2BackendWSOrigin:        l2BackendWSOrigin,
+		L2BackendWSToken:         l2BackendWSToken,
+		L2BackendForwardOrigin:   l2BackendForwardOrigin,
+		L2BackendAuthForwardMode: l2BackendAuthForwardMode,
+		L2MaxMessageBytes:        l2MaxMessageBytes,
 
 		WebRTCUDPPortRange:           webrtcUDPPortRange,
 		WebRTCUDPListenIP:            webrtcUDPListenIP,
@@ -920,8 +978,52 @@ func parseAuthMode(raw string) (AuthMode, error) {
 	}
 }
 
+func parseL2BackendAuthForwardMode(raw string) (L2BackendAuthForwardMode, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case string(L2BackendAuthForwardModeNone):
+		return L2BackendAuthForwardModeNone, nil
+	case string(L2BackendAuthForwardModeQuery), "":
+		return L2BackendAuthForwardModeQuery, nil
+	case string(L2BackendAuthForwardModeSubprotocol):
+		return L2BackendAuthForwardModeSubprotocol, nil
+	default:
+		return "", fmt.Errorf("invalid %s %q (expected %s, %s, or %s)", EnvL2BackendAuthForwardMode, raw,
+			L2BackendAuthForwardModeNone,
+			L2BackendAuthForwardModeQuery,
+			L2BackendAuthForwardModeSubprotocol,
+		)
+	}
+}
+
 func IsUnspecifiedIP(ip net.IP) bool {
 	return ip == nil || ip.Equal(net.IPv4zero) || ip.Equal(net.IPv6zero)
+}
+
+func normalizeOriginValue(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", nil
+	}
+	if raw == "null" {
+		return "null", nil
+	}
+
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return "", fmt.Errorf("expected full origin like https://example.com")
+	}
+	if u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return "", fmt.Errorf("must not include credentials, query, or fragment")
+	}
+	if u.Path != "" && u.Path != "/" {
+		return "", fmt.Errorf("must not include a path")
+	}
+
+	scheme := strings.ToLower(u.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return "", fmt.Errorf("unsupported scheme %q", u.Scheme)
+	}
+	return scheme + "://" + strings.ToLower(u.Host), nil
 }
 
 func parseAllowedOrigins(raw string) ([]string, error) {

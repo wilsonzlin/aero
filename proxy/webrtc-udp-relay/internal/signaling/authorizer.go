@@ -11,12 +11,21 @@ type ClientHello struct {
 	Credential string `json:"-"`
 }
 
+// AuthResult carries metadata about an authorized signaling request/session.
+//
+// Today this is used to plumb the authenticated credential (JWT/API key) into
+// the WebRTC session so downstream components (e.g. the L2 backend bridge) can
+// reuse it when dialing other services.
+type AuthResult struct {
+	Credential string
+}
+
 type Authorizer interface {
-	Authorize(r *http.Request, firstMsg *ClientHello) error
+	Authorize(r *http.Request, firstMsg *ClientHello) (AuthResult, error)
 }
 
 type AllowAllAuthorizer struct{}
 
-func (AllowAllAuthorizer) Authorize(r *http.Request, firstMsg *ClientHello) error {
-	return nil
+func (AllowAllAuthorizer) Authorize(r *http.Request, firstMsg *ClientHello) (AuthResult, error) {
+	return AuthResult{}, nil
 }

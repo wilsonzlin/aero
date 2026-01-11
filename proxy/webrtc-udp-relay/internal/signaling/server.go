@@ -18,6 +18,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/pion/webrtc/v4"
 
+	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/httpserver"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/metrics"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/origin"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/policy"
@@ -246,7 +247,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.authorizer().Authorize(r, nil); err != nil {
+	if _, err := s.authorizer().Authorize(r, nil); err != nil {
 		s.incMetric(metrics.AuthFailure)
 		writeJSONError(w, http.StatusUnauthorized, "unauthorized", "unauthorized")
 		return
@@ -292,11 +293,15 @@ func (s *Server) handleOffer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.authorizer().Authorize(r, &ClientHello{Type: MessageTypeOffer}); err != nil {
+	authRes, err := s.authorizer().Authorize(r, &ClientHello{Type: MessageTypeOffer})
+	if err != nil {
 		s.incMetric(metrics.AuthFailure)
 		writeJSONError(w, http.StatusUnauthorized, "unauthorized", "unauthorized")
 		return
 	}
+
+	clientOrigin := httpserver.NormalizedOriginFromRequest(r)
+	clientCredential := authRes.Credential
 
 	var relaySession *relay.Session
 	if s.Sessions != nil {
@@ -319,7 +324,6 @@ func (s *Server) handleOffer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var sess *webrtcpeer.Session
-	var err error
 	cleanup := func() {
 		cleanupRelaySession()
 		if sess != nil {
@@ -327,7 +331,7 @@ func (s *Server) handleOffer(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	sess, err = webrtcpeer.NewSession(s.WebRTC, s.ICEServers, s.RelayConfig, s.Policy, relaySession, cleanup)
+	sess, err = webrtcpeer.NewSession(s.WebRTC, s.ICEServers, s.RelayConfig, s.Policy, relaySession, clientOrigin, clientCredential, cleanup)
 	if err != nil {
 		cleanupRelaySession()
 		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to create session")
@@ -410,11 +414,15 @@ func (s *Server) handleWebRTCOffer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.authorizer().Authorize(r, &ClientHello{Type: MessageTypeOffer}); err != nil {
+	authRes, err := s.authorizer().Authorize(r, &ClientHello{Type: MessageTypeOffer})
+	if err != nil {
 		s.incMetric(metrics.AuthFailure)
 		writeJSONError(w, http.StatusUnauthorized, "unauthorized", err.Error())
 		return
 	}
+
+	clientOrigin := httpserver.NormalizedOriginFromRequest(r)
+	clientCredential := authRes.Credential
 
 	sessionID, relaySession, err := s.allocateRelaySession()
 	if err != nil {
@@ -440,7 +448,7 @@ func (s *Server) handleWebRTCOffer(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	sess, err = webrtcpeer.NewSession(s.WebRTC, s.ICEServers, s.RelayConfig, s.Policy, relaySession, cleanup)
+	sess, err = webrtcpeer.NewSession(s.WebRTC, s.ICEServers, s.RelayConfig, s.Policy, relaySession, clientOrigin, clientCredential, cleanup)
 	if err != nil {
 		cleanupRelaySession()
 		writeJSONError(w, http.StatusInternalServerError, "internal_error", err.Error())
@@ -631,6 +639,8 @@ type wsSession struct {
 
 	session      *webrtcpeer.Session
 	relaySession *relay.Session
+	origin       string
+	credential   string
 
 	writeMu sync.Mutex
 
@@ -671,12 +681,14 @@ const wsWriteWait = 1 * time.Second
 func (wss *wsSession) run() {
 	defer wss.Close()
 
+	wss.origin = httpserver.NormalizedOriginFromRequest(wss.req)
+
 	wss.conn.SetReadLimit(wss.maxMessageBytes)
 
 	var haveOffer bool
 
 	authorized := false
-	if err := wss.authorizer.Authorize(wss.req, nil); err != nil {
+	if authRes, err := wss.authorizer.Authorize(wss.req, nil); err != nil {
 		if IsAuthMissing(err) {
 			_ = wss.conn.SetReadDeadline(time.Now().Add(wss.authTimeout))
 		} else {
@@ -686,6 +698,7 @@ func (wss *wsSession) run() {
 		}
 	} else {
 		authorized = true
+		wss.credential = authRes.Credential
 	}
 
 	for {
@@ -730,13 +743,15 @@ func (wss *wsSession) run() {
 			if cred == "" {
 				cred = msg.Token
 			}
-			if err := wss.authorizer.Authorize(wss.req, &ClientHello{Type: MessageTypeAuth, Credential: cred}); err != nil {
+			authRes, err := wss.authorizer.Authorize(wss.req, &ClientHello{Type: MessageTypeAuth, Credential: cred})
+			if err != nil {
 				wss.srv.incMetric(metrics.AuthFailure)
 				_ = wss.fail("unauthorized", unauthorizedMessage(err), websocket.ClosePolicyViolation, "unauthorized")
 				return
 			}
 
 			authorized = true
+			wss.credential = authRes.Credential
 			_ = wss.conn.SetReadDeadline(time.Time{})
 			continue
 		}
@@ -826,7 +841,7 @@ func (wss *wsSession) handleOffer(offerWire SDP) error {
 		}
 	}
 
-	sess, err = webrtcpeer.NewSession(wss.srv.WebRTC, wss.srv.ICEServers, wss.srv.RelayConfig, wss.srv.Policy, relaySession, cleanup)
+	sess, err = webrtcpeer.NewSession(wss.srv.WebRTC, wss.srv.ICEServers, wss.srv.RelayConfig, wss.srv.Policy, relaySession, wss.origin, wss.credential, cleanup)
 	if err != nil {
 		cleanupRelaySession()
 		return err

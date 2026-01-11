@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/config"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/udpproto"
 )
 
@@ -47,6 +48,14 @@ type Config struct {
 	// The negotiated subprotocol is still required to be `aero-l2-tunnel-v1`.
 	L2BackendWSToken string
 
+	// L2BackendForwardOrigin controls whether the relay forwards an Origin header
+	// from the client signaling request to the L2 backend WebSocket dial.
+	L2BackendForwardOrigin bool
+
+	// L2BackendAuthForwardMode controls how the relay forwards the client's auth
+	// credential when dialing the L2 backend WebSocket.
+	L2BackendAuthForwardMode config.L2BackendAuthForwardMode
+
 	// L2MaxMessageBytes bounds the size of individual L2 tunnel messages forwarded
 	// over the "l2" DataChannel and backend WebSocket.
 	L2MaxMessageBytes int
@@ -71,6 +80,7 @@ func DefaultConfig() Config {
 		UDPReadBufferBytes:        65535,
 		DataChannelSendQueueBytes: 1 << 20, // 1MiB
 		MaxDatagramPayloadBytes:   udpproto.DefaultMaxPayload,
+		L2BackendAuthForwardMode:  config.L2BackendAuthForwardModeQuery,
 		L2MaxMessageBytes:         4096,
 		InboundFilterMode:         InboundFilterAddressAndPort,
 	}
@@ -95,6 +105,9 @@ func (c Config) withDefaults() Config {
 	}
 	if c.L2MaxMessageBytes <= 0 {
 		c.L2MaxMessageBytes = d.L2MaxMessageBytes
+	}
+	if c.L2BackendAuthForwardMode == "" {
+		c.L2BackendAuthForwardMode = d.L2BackendAuthForwardMode
 	}
 	if c.RemoteAllowlistIdleTimeout <= 0 {
 		c.RemoteAllowlistIdleTimeout = c.UDPBindingIdleTimeout

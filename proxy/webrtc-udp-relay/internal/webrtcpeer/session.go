@@ -19,6 +19,8 @@ type Session struct {
 	relayCfg   relay.Config
 	destPolicy *policy.DestinationPolicy
 	quota      *relay.Session
+	origin     string
+	credential string
 	onClose    func()
 
 	mu    sync.Mutex
@@ -27,7 +29,7 @@ type Session struct {
 	close sync.Once
 }
 
-func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.Config, destPolicy *policy.DestinationPolicy, quota *relay.Session, onClose func()) (*Session, error) {
+func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.Config, destPolicy *policy.DestinationPolicy, quota *relay.Session, origin, credential string, onClose func()) (*Session, error) {
 	if api == nil {
 		api = webrtc.NewAPI()
 	}
@@ -41,6 +43,8 @@ func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.C
 		relayCfg:   relayCfg,
 		destPolicy: destPolicy,
 		quota:      quota,
+		origin:     origin,
+		credential: credential,
 		onClose:    onClose,
 	}
 
@@ -120,7 +124,17 @@ func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.C
 				return
 			}
 
-			b := newL2Bridge(dc, cfg.L2BackendWSURL, cfg.L2BackendWSOrigin, cfg.L2BackendWSToken, cfg.L2MaxMessageBytes, quota)
+			dialCfg := l2BackendDialConfig{
+				BackendWSURL:          cfg.L2BackendWSURL,
+				ClientOrigin:          s.origin,
+				Credential:            s.credential,
+				ForwardOrigin:         cfg.L2BackendForwardOrigin,
+				AuthForwardMode:       cfg.L2BackendAuthForwardMode,
+				BackendOriginOverride: cfg.L2BackendWSOrigin,
+				BackendToken:          cfg.L2BackendWSToken,
+				MaxMessageBytes:       cfg.L2MaxMessageBytes,
+			}
+			b := newL2Bridge(dc, dialCfg, quota)
 
 			s.mu.Lock()
 			if s.l2 != nil {
