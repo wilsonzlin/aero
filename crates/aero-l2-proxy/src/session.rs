@@ -168,6 +168,37 @@ async fn close_policy_violation(ws_out_tx: &mpsc::Sender<Message>, reason: &'sta
         .await;
 }
 
+async fn close_shutting_down(ws_out_tx: &mpsc::Sender<Message>) {
+    const CLOSE_CODE_GOING_AWAY: u16 = 1001;
+    const MAX_REASON_BYTES: usize = 123;
+    let reason = "shutting down";
+    let reason = if reason.len() <= MAX_REASON_BYTES {
+        Cow::Borrowed(reason)
+    } else {
+        Cow::Owned(truncate_utf8(reason, MAX_REASON_BYTES))
+    };
+
+    // Best-effort: if the sender/connection is already gone, ignore.
+    let _ = ws_out_tx
+        .try_send(Message::Close(Some(CloseFrame {
+            code: CLOSE_CODE_GOING_AWAY,
+            reason,
+        })));
+}
+
+fn truncate_utf8(input: &str, max_bytes: usize) -> String {
+    let mut out = String::new();
+    for ch in input.chars() {
+        let mut buf = [0u8; 4];
+        let encoded = ch.encode_utf8(&mut buf);
+        if out.len() + encoded.len() > max_bytes {
+            break;
+        }
+        out.push(ch);
+    }
+    out
+}
+
 async fn send_ws_message(
     ws_out_tx: &mpsc::Sender<Message>,
     msg: Message,
@@ -223,6 +254,8 @@ async fn run_session_inner(
         }
     });
 
+    let mut shutdown_rx = state.shutdown_rx.clone();
+
     let (event_tx, mut event_rx) = mpsc::channel::<SessionEvent>(128);
 
     let mut quotas = SessionQuotas::new(
@@ -265,7 +298,17 @@ async fn run_session_inner(
     let mut ping_outstanding: Option<(u64, tokio::time::Instant)> = None;
 
     loop {
+        if *shutdown_rx.borrow() {
+            close_shutting_down(&ws_out_tx).await;
+            break;
+        }
+
         tokio::select! {
+            biased;
+            _ = shutdown_rx.changed() => {
+                close_shutting_down(&ws_out_tx).await;
+                break;
+            }
             _ = ping_interval.tick(), if ping_enabled => {
                 if let Some((_, sent_at)) = ping_outstanding {
                     if sent_at.elapsed() > ping_resend_after {

@@ -19,8 +19,33 @@ async fn main() -> std::io::Result<()> {
     let handle = start_server(config).await?;
     tracing::info!("aero-l2-proxy listening on http://{}", handle.local_addr());
 
-    // Best-effort graceful shutdown on Ctrl+C.
-    let _ = tokio::signal::ctrl_c().await;
+    // Best-effort graceful shutdown on Ctrl+C / SIGTERM.
+    let ctrl_c = tokio::signal::ctrl_c();
+
+    #[cfg(unix)]
+    let sigterm = async {
+        use tokio::signal::unix::{signal, SignalKind};
+        match signal(SignalKind::terminate()) {
+            Ok(mut sigterm) => {
+                sigterm.recv().await;
+            }
+            Err(err) => {
+                tracing::warn!("failed to install SIGTERM handler: {err}");
+                std::future::pending::<()>().await;
+            }
+        }
+    };
+
+    #[cfg(not(unix))]
+    let sigterm = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = sigterm => {},
+    }
+
+    tracing::info!("shutdown signal received");
+    handle.mark_shutting_down();
     handle.shutdown().await;
     Ok(())
 }

@@ -1,7 +1,10 @@
 use std::{
     net::SocketAddr,
-    sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use axum::{
@@ -14,8 +17,10 @@ use axum::{
     routing::get,
     Router,
 };
-use tokio::sync::Semaphore;
-use tokio::{sync::oneshot, task::JoinHandle};
+use tokio::{
+    sync::{oneshot, watch, Semaphore},
+    task::JoinHandle,
+};
 
 use base64::Engine;
 use ring::hmac;
@@ -43,12 +48,17 @@ pub(crate) struct AppState {
     pub(crate) metrics: Metrics,
     pub(crate) capture: CaptureManager,
     pub(crate) connections: Option<Arc<Semaphore>>,
+    pub(crate) shutting_down: Arc<AtomicBool>,
+    pub(crate) shutdown_rx: watch::Receiver<bool>,
 }
 
 pub struct ServerHandle {
     addr: SocketAddr,
     shutdown_tx: Option<oneshot::Sender<()>>,
     task: Option<JoinHandle<()>>,
+    shutting_down: Arc<AtomicBool>,
+    shutdown_broadcast: watch::Sender<bool>,
+    shutdown_grace: Duration,
 }
 
 impl ServerHandle {
@@ -56,18 +66,31 @@ impl ServerHandle {
         self.addr
     }
 
+    pub fn mark_shutting_down(&self) {
+        self.shutting_down.store(true, Ordering::SeqCst);
+        let _ = self.shutdown_broadcast.send(true);
+    }
+
     pub async fn shutdown(mut self) {
+        self.mark_shutting_down();
         if let Some(tx) = self.shutdown_tx.take() {
             let _ = tx.send(());
         }
         if let Some(task) = self.task.take() {
-            let _ = task.await;
+            let mut task = task;
+            if tokio::time::timeout(self.shutdown_grace, &mut task)
+                .await
+                .is_err()
+            {
+                task.abort();
+            }
         }
     }
 }
 
 impl Drop for ServerHandle {
     fn drop(&mut self) {
+        self.mark_shutting_down();
         if let Some(tx) = self.shutdown_tx.take() {
             let _ = tx.send(());
         }
@@ -78,6 +101,7 @@ impl Drop for ServerHandle {
 }
 
 pub async fn start_server(cfg: ProxyConfig) -> std::io::Result<ServerHandle> {
+    let shutdown_grace = cfg.shutdown_grace;
     let listener = tokio::net::TcpListener::bind(cfg.bind_addr).await?;
     let addr = listener.local_addr()?;
 
@@ -99,6 +123,9 @@ pub async fn start_server(cfg: ProxyConfig) -> std::io::Result<ServerHandle> {
     let connections = (cfg.security.max_connections != 0)
         .then(|| Arc::new(Semaphore::new(cfg.security.max_connections)));
 
+    let shutting_down = Arc::new(AtomicBool::new(false));
+    let (shutdown_broadcast, sessions_shutdown_rx) = watch::channel(false);
+
     let state = AppState {
         cfg: Arc::new(cfg),
         dns: Arc::new(dns),
@@ -106,6 +133,8 @@ pub async fn start_server(cfg: ProxyConfig) -> std::io::Result<ServerHandle> {
         metrics,
         capture,
         connections,
+        shutting_down: shutting_down.clone(),
+        shutdown_rx: sessions_shutdown_rx,
     };
     let app = build_app(state);
 
@@ -125,6 +154,9 @@ pub async fn start_server(cfg: ProxyConfig) -> std::io::Result<ServerHandle> {
         addr,
         shutdown_tx: Some(shutdown_tx),
         task: Some(task),
+        shutting_down,
+        shutdown_broadcast,
+        shutdown_grace,
     })
 }
 
@@ -142,7 +174,10 @@ async fn healthz() -> impl IntoResponse {
     StatusCode::OK
 }
 
-async fn readyz() -> impl IntoResponse {
+async fn readyz(State(state): State<AppState>) -> impl IntoResponse {
+    if state.shutting_down.load(Ordering::SeqCst) {
+        return StatusCode::SERVICE_UNAVAILABLE;
+    }
     StatusCode::OK
 }
 
@@ -209,6 +244,9 @@ async fn l2_ws_handler(
 ) -> impl IntoResponse {
     let client_ip = client_addr.ip();
 
+    if state.shutting_down.load(Ordering::SeqCst) {
+        return (StatusCode::SERVICE_UNAVAILABLE, "shutting down").into_response();
+    }
     if !has_subprotocol(&headers, TUNNEL_SUBPROTOCOL) {
         return (
             StatusCode::BAD_REQUEST,
