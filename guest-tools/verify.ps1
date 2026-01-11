@@ -1135,6 +1135,43 @@ try {
             $cfgStatus = "WARN"
             $cfgDetails += "AERO_VIRTIO_BLK_HWIDS is not set."
         }
+        if (-not $cfgVirtioSndService) {
+            $cfgStatus = "WARN"
+            $cfgDetails += "AERO_VIRTIO_SND_SERVICE is not set (default for Aero in-tree drivers: aeroviosnd)."
+        }
+        if (-not $cfgVirtioSndHwids -or $cfgVirtioSndHwids.Count -eq 0) {
+            $cfgStatus = "WARN"
+            $cfgDetails += "AERO_VIRTIO_SND_HWIDS is not set."
+        } else {
+            $expected = "PCI\\VEN_1AF4&DEV_1059&REV_01"
+            $found = $false
+            foreach ($h in $cfgVirtioSndHwids) {
+                if (-not $h) { continue }
+                if (("" + $h).ToLower() -eq $expected.ToLower()) { $found = $true; break }
+            }
+            if (-not $found) {
+                $cfgStatus = "WARN"
+                $cfgDetails += ("AERO_VIRTIO_SND_HWIDS should include '" + $expected + "' (Aero Win7 virtio contract v1 expects REV_01).")
+            }
+        }
+        if ($cfgVirtioInputHwids -and $cfgVirtioInputHwids.Count -gt 0) {
+            $hasModern = $false
+            $hasTransitional = $false
+            foreach ($h in $cfgVirtioInputHwids) {
+                if (-not $h) { continue }
+                $u = ("" + $h).ToUpper()
+                if ($u.Contains("DEV_1052")) { $hasModern = $true }
+                if ($u.Contains("DEV_1011")) { $hasTransitional = $true }
+            }
+            if (-not $hasModern) {
+                $cfgStatus = "WARN"
+                $cfgDetails += "AERO_VIRTIO_INPUT_HWIDS does not include DEV_1052 (virtio-input modern ID)."
+            }
+            if ($hasTransitional) {
+                $cfgStatus = "WARN"
+                $cfgDetails += "AERO_VIRTIO_INPUT_HWIDS contains DEV_1011 (virtio-input transitional ID). Aero Win7 contract v1 is modern-only (DEV_1052)."
+            }
+        }
         if ($cfgVirtioBlkService) { $cfgDetails += "AERO_VIRTIO_BLK_SERVICE=" + $cfgVirtioBlkService }
         if ($cfgVirtioBlkSys) { $cfgDetails += "AERO_VIRTIO_BLK_SYS=" + $cfgVirtioBlkSys }
         if ($cfgVirtioSndService) { $cfgDetails += "AERO_VIRTIO_SND_SERVICE=" + $cfgVirtioSndService }
@@ -1989,7 +2026,7 @@ try {
         Add-Check "aerogpu_umd_files" "AeroGPU D3D9 UMD DLL placement" "WARN" ("Failed: " + $_.Exception.Message) $null @()
     }
 
-    $audioServiceCandidates = @("viosnd","aerosnd","virtiosnd","aeroviosnd")
+    $audioServiceCandidates = @("aeroviosnd","viosnd","aerosnd","virtiosnd")
     if ($cfgVirtioSndService) { $audioServiceCandidates = @($cfgVirtioSndService) + $audioServiceCandidates }
     $audioServiceCandidates = Dedup-CaseInsensitive $audioServiceCandidates
 

@@ -104,6 +104,9 @@ jobs:
       - name: Check repository policy
         run: scripts/ci/check-repo-policy.sh
 
+      - name: Check Guest Tools devices.cmd is generated
+        run: python3 scripts/generate-guest-tools-devices-cmd.py --check
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
