@@ -1,6 +1,8 @@
 const TCP_MUX_SUBPROTOCOL = "aero-tcp-mux-v1";
 const HEADER_BYTES = 9;
 
+import WebSocket from "ws";
+
 const MsgType = {
   OPEN: 1,
   DATA: 2,
@@ -27,6 +29,35 @@ function decodeErrorPayload(payload) {
 function decodeClosePayload(payload) {
   if (payload.length !== 1) return { flags: 0 };
   return { flags: payload.readUInt8(0) };
+}
+
+function replaceProtocol(input, map) {
+  const url = new URL(input);
+  if (map[url.protocol]) url.protocol = map[url.protocol];
+  return url;
+}
+
+async function bootstrapSessionCookie(gatewayBase) {
+  const httpUrl = replaceProtocol(gatewayBase, { "ws:": "http:", "wss:": "https:" });
+  httpUrl.pathname = `${httpUrl.pathname.replace(/\/$/, "")}/session`;
+
+  const res = await fetch(httpUrl, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: "{}",
+  });
+
+  if (!res.ok) {
+    throw new Error(`POST /session failed: HTTP ${res.status}`);
+  }
+
+  const setCookie = res.headers.get("set-cookie");
+  if (!setCookie) {
+    throw new Error("POST /session did not return a Set-Cookie header");
+  }
+
+  // Format: "aero_session=...; Path=/; HttpOnly; ..."
+  return setCookie.split(";")[0];
 }
 
 function encodeFrame(msgType, streamId, payload) {
@@ -58,14 +89,23 @@ function encodeOpenPayload({ host, port, metadata }) {
 }
 
 // Usage:
-//   node backend/aero-gateway/examples/tcp-mux-client.js ws://127.0.0.1:8080 127.0.0.1 1234
-const [, , gatewayUrl = "ws://127.0.0.1:8080", targetHost = "127.0.0.1", targetPortStr = "7"] = process.argv;
+//   node backend/aero-gateway/examples/tcp-mux-client.js http://127.0.0.1:8080 127.0.0.1 1234
+//
+// This script bootstraps an `aero_session` cookie via `POST /session`, then
+// opens a `/tcp-mux` WebSocket using the canonical `aero-tcp-mux-v1` framing.
+const [, , gatewayBase = "http://127.0.0.1:8080", targetHost = "127.0.0.1", targetPortStr = "7"] = process.argv;
 const targetPort = Number.parseInt(targetPortStr, 10);
 
-const ws = new WebSocket(`${gatewayUrl.replace(/^http/, "ws")}/tcp-mux`, TCP_MUX_SUBPROTOCOL);
+const cookie = await bootstrapSessionCookie(gatewayBase);
+const wsUrl = replaceProtocol(gatewayBase, { "http:": "ws:", "https:": "wss:" });
+wsUrl.pathname = `${wsUrl.pathname.replace(/\/$/, "")}/tcp-mux`;
+
+const ws = new WebSocket(wsUrl.toString(), TCP_MUX_SUBPROTOCOL, {
+  headers: { cookie },
+});
 ws.binaryType = "arraybuffer";
 
-ws.addEventListener("open", () => {
+ws.on("open", () => {
   const streamId = 1;
   ws.send(encodeFrame(MsgType.OPEN, streamId, encodeOpenPayload({ host: targetHost, port: targetPort })));
   ws.send(encodeFrame(MsgType.DATA, streamId, Buffer.from("hello from tcp-mux\n", "utf8")));
@@ -77,9 +117,9 @@ ws.addEventListener("open", () => {
 
 let pending = Buffer.alloc(0);
 
-ws.addEventListener("message", (event) => {
-  if (!(event.data instanceof ArrayBuffer)) return;
-  const chunk = Buffer.from(event.data);
+ws.on("message", (data) => {
+  const chunk =
+    data instanceof ArrayBuffer ? Buffer.from(data) : Array.isArray(data) ? Buffer.concat(data) : Buffer.from(data);
   pending = pending.length === 0 ? chunk : Buffer.concat([pending, chunk]);
 
   // Frames are carried in a byte stream: multiple frames may be concatenated in
@@ -116,10 +156,10 @@ ws.addEventListener("message", (event) => {
   }
 });
 
-ws.addEventListener("close", () => {
+ws.on("close", () => {
   console.log("ws closed");
 });
 
-ws.addEventListener("error", (err) => {
+ws.on("error", (err) => {
   console.error("ws error", err);
 });
