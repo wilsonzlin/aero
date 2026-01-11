@@ -753,7 +753,7 @@ impl DemoVm {
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
         self.inner
-            .restore_snapshot_from(&mut file)
+            .restore_snapshot_from_checked(&mut file)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
         file.close().map_err(|e| JsValue::from_str(&e.to_string()))?;

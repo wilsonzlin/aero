@@ -3,8 +3,8 @@ use std::io::{Cursor, Read, Seek, Write};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use aero_snapshot::{
-    CpuState, DeviceId, DeviceState, DiskOverlayRefs, MmuState, Result, SaveOptions, SnapshotMeta,
-    SnapshotSource, SnapshotTarget,
+    CpuState, DeviceId, DeviceState, DiskOverlayRefs, MmuState, RestoreOptions, Result, SaveOptions,
+    SnapshotMeta, SnapshotSource, SnapshotTarget,
 };
 
 const DEFAULT_PAGE_SIZE: u32 = 4096;
@@ -87,11 +87,22 @@ impl Vm {
     }
 
     pub fn restore_snapshot_bytes(&mut self, bytes: &[u8]) -> Result<()> {
-        self.restore_snapshot_from(&mut Cursor::new(bytes))
+        self.restore_snapshot_from_checked(&mut Cursor::new(bytes))
     }
 
     pub fn restore_snapshot_from<R: Read>(&mut self, r: &mut R) -> Result<()> {
         aero_snapshot::restore_snapshot(r, self)
+    }
+
+    pub fn restore_snapshot_from_checked<R: Read + Seek>(&mut self, r: &mut R) -> Result<()> {
+        let expected_parent_snapshot_id = self.last_snapshot_id;
+        aero_snapshot::restore_snapshot_with_options(
+            r,
+            self,
+            RestoreOptions {
+                expected_parent_snapshot_id,
+            },
+        )
     }
 }
 
