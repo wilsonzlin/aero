@@ -89,6 +89,17 @@ pub trait CpuBus {
     /// instructions (for example, `CMPXCHG`, `XADD`, and `XCHG` with a memory
     /// operand).
     ///
+    /// ### Write-intent semantics
+    ///
+    /// Callers use `atomic_rmw` for instructions that are architecturally
+    /// read-modify-write operations. Even when the update ends up being a no-op
+    /// (`new == old`), real CPUs treat these as *write-intent* memory accesses
+    /// (e.g. they require write permission and may set paging dirty bits).
+    ///
+    /// Translation-aware busses (paging, MMIO routers, etc) should model that
+    /// behavior by performing permission checks / side effects with write intent
+    /// even if they optimize away the final store.
+    ///
     /// Implementations may override this to provide true atomicity against
     /// concurrent devices/threads. The default implementation falls back to a
     /// plain scalar read + conditional write.
