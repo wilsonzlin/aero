@@ -43,7 +43,7 @@ claim to implement contract v1:
 For additional safety you can also match the subsystem-qualified form, but that is currently
 commented out in the INF:
 
-* `PCI\VEN_1AF4&DEV_1059&SUBSYS_00031AF4&REV_01`
+* `PCI\VEN_1AF4&DEV_1059&SUBSYS_00191AF4&REV_01`
 
 ## QEMU mapping
 

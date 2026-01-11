@@ -7,9 +7,9 @@ This is useful when you want a Win7 image that comes up with the virtio-snd PCI 
 The driver package you inject must ultimately be a normal driver folder containing at least:
 
 ```text
-virtio-snd.inf
+aero-virtio-snd.inf
 virtiosnd.sys
-virtio-snd.cat   (recommended; required for unattended Win7 x64)
+aero-virtio-snd.cat   (recommended; required for unattended Win7 x64)
 ```
 
 In this repo, the packaging/staging directory is:
@@ -45,11 +45,11 @@ You must inject a driver package that matches the target Windows 7 architecture:
 - Windows 7 **x86** → use an x86 build of `virtiosnd.sys`
 - Windows 7 **x64** → use an amd64/x64 build of `virtiosnd.sys`
 
-`virtio-snd.inf` has `NTx86` and `NTamd64` models, but the binary filename is the same (`virtiosnd.sys`) for both architectures. To avoid mixing them up, it’s easiest to keep separate per-arch folders (example only):
+`aero-virtio-snd.inf` has `NTx86` and `NTamd64` models, but the binary filename is the same (`virtiosnd.sys`) for both architectures. To avoid mixing them up, it’s easiest to keep separate per-arch folders (example only):
 
 ```text
-C:\drivers\virtio-snd\x86\   (virtio-snd.inf + virtiosnd.sys (x86) + virtio-snd.cat)
-C:\drivers\virtio-snd\amd64\ (virtio-snd.inf + virtiosnd.sys (x64) + virtio-snd.cat)
+C:\drivers\virtio-snd\x86\   (aero-virtio-snd.inf + virtiosnd.sys (x86) + aero-virtio-snd.cat)
+C:\drivers\virtio-snd\amd64\ (aero-virtio-snd.inf + virtiosnd.sys (x64) + aero-virtio-snd.cat)
 ```
 
 Point DISM at the folder (or the `.inf`) for the specific architecture you are servicing.
@@ -86,7 +86,7 @@ Assuming this repo is checked out at `C:\src\aero` and your driver package is pr
 ```bat
 set REPO=C:\src\aero
 
-REM Point this at a folder containing virtio-snd.inf + virtiosnd.sys for the
+REM Point this at a folder containing aero-virtio-snd.inf + virtiosnd.sys for the
 REM correct architecture.
 set VIRTIO_SND_INF_DIR=%REPO%\drivers\windows7\virtio-snd\inf
 
@@ -109,7 +109,7 @@ List staged 3rd-party drivers in the mounted image:
 dism /Image:%MOUNT% /Get-Drivers /Format:Table
 ```
 
-Locate the `oem#.inf` entry corresponding to `virtio-snd.inf`, then inspect it:
+Locate the `oem#.inf` entry corresponding to `aero-virtio-snd.inf`, then inspect it:
 
 ```bat
 dism /Image:%MOUNT% /Get-DriverInfo /Driver:oem#.inf
@@ -209,19 +209,19 @@ Once the system boots with virtio-snd hardware present:
   pnputil -e
   ```
 
-  Look for the entry whose “Original name” is `virtio-snd.inf` (the “Published name” will be `oem#.inf`).
+  Look for the entry whose “Original name” is `aero-virtio-snd.inf` (the “Published name” will be `oem#.inf`).
 
 - **SetupAPI log**
 
   Inspect `%WINDIR%\inf\setupapi.dev.log` and search for:
 
-  - `virtio-snd.inf`, or
+  - `aero-virtio-snd.inf`, or
   - the device hardware ID (for Aero virtio-snd: `PCI\VEN_1AF4&DEV_1059&REV_01`)
 
 If the driver package is staged but the device doesn’t bind:
 
 1. Confirm you injected the correct architecture (x86 vs x64).
-2. Confirm the device’s Hardware IDs match what `virtio-snd.inf` declares (Device Manager → Details → **Hardware Ids**).
+2. Confirm the device’s Hardware IDs match what `aero-virtio-snd.inf` declares (Device Manager → Details → **Hardware Ids**).
 3. Confirm signature policy didn’t block installation/loading (next section).
 
 ---

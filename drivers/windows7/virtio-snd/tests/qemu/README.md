@@ -24,7 +24,7 @@ References:
   - Known-good reference: QEMU **8.2.x**.
 - A Windows 7 SP1 VM disk image (x86 or x64).
 - The virtio-snd driver package for the target architecture:
-  - `drivers/windows7/virtio-snd/inf/virtio-snd.inf`
+  - `drivers/windows7/virtio-snd/inf/aero-virtio-snd.inf`
   - `virtiosnd.sys` built for x86 or x64 and placed next to the INF for installation
 - Test signing enabled in the guest (or a properly production-signed driver package).
 
@@ -150,14 +150,14 @@ Use either Device Manager or PnPUtil.
 2. Open **Device Manager**.
 3. Right click the virtio-snd device → **Update Driver Software...**
 4. **Browse my computer for driver software**
-5. Point it to the directory containing `virtio-snd.inf`:
-   - Repo layout: `drivers/windows7/virtio-snd/inf/`
-   - Bundle ZIP/ISO layout: `drivers\virtio-snd\x86\` or `drivers\virtio-snd\x64\`
+5. Point it to the directory containing `aero-virtio-snd.inf`:
+    - Repo layout: `drivers/windows7/virtio-snd/inf/`
+    - Bundle ZIP/ISO layout: `drivers\virtio-snd\x86\` or `drivers\virtio-snd\x64\`
 
 **PnPUtil (scriptable, elevated CMD):**
 
 ```bat
-pnputil -i -a X:\path\to\virtio-snd.inf
+pnputil -i -a X:\path\to\aero-virtio-snd.inf
 ```
 
 Reboot if prompted.
