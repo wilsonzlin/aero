@@ -112,6 +112,11 @@ exports the undecorated names expected by the runtimes:
 - `aerogpu_d3d10_x86.def`
 - `aerogpu_d3d10_x64.def`
 
+For cross-checking header drift and x86 stdcall export decoration against the
+real Win7-era WDK header set, see the tooling-only probe:
+
+- `tools/wdk_abi_probe/`
+
 #### Quick validation
 
 From a Visual Studio Developer Command Prompt, inspect the DLL exports:
