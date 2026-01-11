@@ -150,9 +150,8 @@ This enables compact command streams that use small IDs instead of repeating GPA
   `0x80000000..0xffffffff` for internal/standard allocations (see
   `aerogpu_wddm_alloc.h`).
 - For **shared allocations** (cross-process `OpenResource`), the UMD must embed
-  the chosen `alloc_id` + `share_token` into the preserved WDDM allocation
-  private data blob so it can be recovered in another process. See
-  `aerogpu_wddm_alloc.h`.
+  the chosen `alloc_id` into the preserved WDDM allocation private data blob so
+  it can be recovered in another process. See `aerogpu_wddm_alloc.h`.
 - `alloc_id` values for shared allocations should avoid collisions across guest
   processes: DWM may compose many redirected surfaces from different processes
   in a single submission, and the per-submit allocation table is keyed by
@@ -160,14 +159,16 @@ This enables compact command streams that use small IDs instead of repeating GPA
   (`alloc_id <= 0x7fffffff`). A simple implementation is to allocate it from a
   cross-process monotonic counter (e.g. named shared memory / file mapping +
   atomic increment) and clamp/mask it into range (skipping 0).
-- For D3D9Ex shared surfaces, `share_token` must be stable across guest processes,
-  collision-resistant, and must not be derived from process-local handle values.
-  Generating it via a crypto RNG (or equivalent) is acceptable. `share_token`
-  does not need to be derived from `alloc_id` (or vice versa).
+- For D3D9Ex shared surfaces, `share_token` (as used by
+  `EXPORT_SHARED_SURFACE`/`IMPORT_SHARED_SURFACE`) must be stable across guest
+  processes and must not be derived from process-local handle values.
+  Recommended source: the AeroGPU KMD allocation `ShareToken` returned to the
+  UMD via allocation private driver data (`aerogpu_alloc_privdata.h`).
 - The KMD treats `alloc_id` as an **input** (UMD→KMD), validates it, and forwards
   the corresponding GPA/size to the host in `aerogpu_alloc_entry`.
 
-See `aerogpu_wddm_alloc.h` for the exact private-data layout used to persist `alloc_id`/`share_token` across CreateAllocation/OpenAllocation.
+See `aerogpu_wddm_alloc.h` for the exact private-data layout used to persist
+`alloc_id` across CreateAllocation/OpenAllocation.
 
 #### Guest-memory access rules
 

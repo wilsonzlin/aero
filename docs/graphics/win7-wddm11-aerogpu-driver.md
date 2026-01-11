@@ -430,14 +430,21 @@ For each entrypoint:
 - **Purpose:** Share/open allocations across processes/devices.
 - **AeroGPU MVP behavior:**
   - Support the minimal cases required by D3D9Ex + DWM redirected surfaces.
-  - **Do not rely on KMD→UMD writeback** through WDDM private-data buffers. For
-    Win7 WDDM 1.1, treat allocation private driver data as **UMD→KMD input**.
-  - The UMD generates `alloc_id` (u32) and `share_token` (u64) at shared-resource
-    creation time and stores them in the preserved per-allocation private data
-    blob (`drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`). dxgkrnl returns the
-    same bytes on `OpenResource` in another process, so both processes observe
-    identical IDs.
-  - The KMD validates `magic/version/alloc_id` and stores the IDs in its
+  - **Do not rely on KMD→UMD writeback** through the *UMD-provided* WDDM
+    allocation private-data buffers: on Win7 WDDM 1.1, treat
+    `aerogpu_wddm_alloc.h` as **UMD→KMD input** (and preserved by dxgkrnl for
+    `OpenResource`).
+  - The UMD generates `alloc_id` (u32) at shared-resource creation time and
+    stores it in the preserved per-allocation private data blob
+    (`drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`). dxgkrnl returns the same
+    bytes on `OpenResource` in another process, so both processes observe an
+    identical `alloc_id`.
+  - For D3D9Ex shared surfaces, the KMD generates/stores a per-allocation
+    `ShareToken` and returns it to the UMD via allocation private driver data
+    (`drivers/aerogpu/protocol/aerogpu_alloc_privdata.h`). The UMD uses this
+    token as the protocol `share_token` for `EXPORT_SHARED_SURFACE` /
+    `IMPORT_SHARED_SURFACE`.
+  - The KMD validates `magic/version/alloc_id` and stores the IDs/tokens in its
     `AEROGPU_ALLOCATION` bookkeeping.
 - **Can be deferred:** General cross-process resource sharing.
 
