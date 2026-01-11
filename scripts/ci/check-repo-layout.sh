@@ -74,6 +74,10 @@ need_file "protocol-vectors/udp-relay.json"
 need_file "protocol-vectors/tcp-mux-v1.json"
 need_file "protocol-vectors/l2-tunnel-v1.json"
 
+# Unified, versioned conformance vectors (protocols + auth) consumed by multiple implementations.
+need_file "crates/conformance/test-vectors/README.md"
+need_file "crates/conformance/test-vectors/aero-vectors-v1.json"
+
 # Guardrail: avoid reintroducing a second, competing "canonical" vectors directory.
 if [[ -d "tests/protocol-vectors" ]]; then
   die "tests/protocol-vectors is deprecated; use protocol-vectors/ instead"
