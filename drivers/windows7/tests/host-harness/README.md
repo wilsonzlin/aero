@@ -221,6 +221,15 @@ the legacy I/O-port transport (transitional devices enumerate as `DEV_1000/DEV_1
 [`docs/windows7-virtio-driver-contract.md`](../../../../docs/windows7-virtio-driver-contract.md) (`AERO-W7-VIRTIO` v1),
 which is modern-only.
 
+#### Verifying what your QEMU build reports (no guest required)
+
+You can probe the PCI IDs (including Revision ID) that your local QEMU build advertises for the harness devices with:
+
+```bash
+python3 drivers/windows7/tests/host-harness/probe_qemu_virtio_pci_ids.py --qemu-system qemu-system-x86_64 --mode default
+python3 drivers/windows7/tests/host-harness/probe_qemu_virtio_pci_ids.py --qemu-system qemu-system-x86_64 --mode contract-v1
+```
+
 ## Provisioning an image (recommended approach)
 
 Windows images are **not** distributed in this repo.
