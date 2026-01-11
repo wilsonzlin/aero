@@ -7,6 +7,7 @@
 #define AERO_VIRTIO_PCI_CONTRACT_REVISION_ID 0x01u
 
 /* Aero contract v1 fixed BAR0 MMIO layout (docs/windows7-virtio-driver-contract.md). */
+#define AERO_VIRTIO_PCI_BAR0_LEN     0x4000u
 #define AERO_VIRTIO_PCI_COMMON_OFF  0x0000u
 #define AERO_VIRTIO_PCI_COMMON_LEN  0x0100u
 #define AERO_VIRTIO_PCI_NOTIFY_OFF  0x1000u
@@ -379,6 +380,7 @@ VirtIoSndTransportInit(_Out_ PVIRTIOSND_TRANSPORT Transport,
     BOOLEAN bar_is_memory[VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT];
     virtio_pci_cap_parse_result_t parseRes;
     virtio_pci_parsed_caps_t caps;
+    ULONG bar0Reg;
 
     if (Transport == NULL) {
         return STATUS_INVALID_PARAMETER;
@@ -407,6 +409,20 @@ VirtIoSndTransportInit(_Out_ PVIRTIOSND_TRANSPORT Transport,
 
     Transport->PciRevisionId = cfg[0x08u];
     if (Transport->PciRevisionId != AERO_VIRTIO_PCI_CONTRACT_REVISION_ID) {
+        status = STATUS_NOT_SUPPORTED;
+        goto Fail;
+    }
+
+    /*
+     * Aero contract v1 exposes BAR0 as a 64-bit MMIO BAR (PCI memory type 64-bit).
+     * Validate the BAR type before attempting to parse/match resources.
+     */
+    bar0Reg = VirtIoSndReadLe32FromCfg(cfg, 0x10u);
+    if (bar0Reg == 0 || (bar0Reg & 0x1u) != 0) {
+        status = STATUS_NOT_SUPPORTED;
+        goto Fail;
+    }
+    if (((bar0Reg >> 1) & 0x3u) != 0x2u) {
         status = STATUS_NOT_SUPPORTED;
         goto Fail;
     }
@@ -449,6 +465,11 @@ VirtIoSndTransportInit(_Out_ PVIRTIOSND_TRANSPORT Transport,
                                                &Transport->Bar0TranslatedStart,
                                                &Transport->Bar0Length);
     if (!NT_SUCCESS(status)) {
+        goto Fail;
+    }
+
+    if (Transport->Bar0Length != (SIZE_T)AERO_VIRTIO_PCI_BAR0_LEN) {
+        status = STATUS_DEVICE_CONFIGURATION_ERROR;
         goto Fail;
     }
 
