@@ -641,8 +641,13 @@ fn build_e820_map(
     // ACPI `MCFG` entry emitted by `bios::acpi`.
     const PCIE_ECAM_BASE: u64 = 0xB000_0000;
     const PCIE_ECAM_SIZE: u64 = 0x1000_0000; // 256MiB (buses 0..=255)
-                                             // Typical x86 systems reserve a PCI/MMIO window below 4GiB. This must be
-                                             // reported via E820 so OSes (notably Windows) do not treat device MMIO as RAM.
+    // The start of the "low memory" window available for RAM below 4GiB.
+    //
+    // The ECAM region lives immediately below the typical PCI BAR allocation window, so any RAM
+    // beyond this address must be remapped above 4GiB to keep the ECAM window reserved.
+    const LOW_RAM_END: u64 = PCIE_ECAM_BASE;
+    // Typical x86 systems reserve a PCI/MMIO window below 4GiB. This must be
+    // reported via E820 so OSes (notably Windows) do not treat device MMIO as RAM.
     const PCI_HOLE_START: u64 = 0xC000_0000;
     const PCI_HOLE_END: u64 = 0x1_0000_0000;
 
@@ -696,9 +701,6 @@ fn build_e820_map(
     if let Some((base, len)) = nvs_region {
         reserved.push((base, len, E820_NVS));
     }
-    // Always reserve the ECAM window. Even if ACPI is disabled, the platform MMIO mapping
-    // must not be reported as usable RAM.
-    reserved.push((PCIE_ECAM_BASE, PCIE_ECAM_SIZE, E820_RESERVED));
     reserved.sort_by_key(|(base, _, _)| *base);
 
     // Conventional memory (0 - EBDA).
@@ -724,15 +726,24 @@ fn build_e820_map(
         return map;
     }
 
-    // Low extended memory: [1MiB, PCI_HOLE_START) with reserved splits.
-    let low_ram_end = total_memory.min(PCI_HOLE_START);
+    // Low extended memory: [1MiB, LOW_RAM_END) with reserved splits.
+    let low_ram_end = total_memory.min(LOW_RAM_END);
     push_ram_split_by_reserved(&mut map, ONE_MIB, low_ram_end, &reserved);
 
-    // PCI/MMIO hole + high memory remap when total RAM exceeds 3GiB.
-    if total_memory > PCI_HOLE_START {
+    // PCI/MMIO hole + high memory remap when total RAM exceeds the low RAM window.
+    if total_memory > LOW_RAM_END {
+        // Reserve the PCIe ECAM window (MCFG / config space).
+        push_region(
+            &mut map,
+            PCIE_ECAM_BASE,
+            PCIE_ECAM_BASE.saturating_add(PCIE_ECAM_SIZE),
+            E820_RESERVED,
+        );
+
+        // Reserve the remaining PCI/MMIO window below 4GiB.
         push_region(&mut map, PCI_HOLE_START, PCI_HOLE_END, E820_RESERVED);
 
-        let high_ram_len = total_memory - PCI_HOLE_START;
+        let high_ram_len = total_memory - LOW_RAM_END;
         let high_ram_end = PCI_HOLE_END.saturating_add(high_ram_len);
         push_ram_split_by_reserved(&mut map, PCI_HOLE_END, high_ram_end, &reserved);
     }
@@ -934,6 +945,13 @@ mod tests {
                 e.base == 0xB000_0000 && e.length == 0x1000_0000 && e.region_type == E820_RESERVED
             }),
             "E820 should reserve the PCIe ECAM window at 0xB000_0000..0xC000_0000"
+        );
+
+        assert!(
+            map.iter().any(|e| {
+                e.base == 0x1_0000_0000 && e.length == 0x5000_0000 && e.region_type == E820_RAM
+            }),
+            "E820 should remap RAM above 4GiB to preserve the configured memory size"
         );
 
         for entry in &map {
