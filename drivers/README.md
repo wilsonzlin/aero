@@ -113,7 +113,7 @@ Notes:
 Output:
 
 - `drivers\out\aero-win7-driver-pack\` (staging dir)
-- `drivers\out\aero-win7-driver-pack.zip` (what the web UI/injector consumes)
+- `drivers\out\aero-win7-driver-pack.zip` (zip copy of the staging dir; convenient for copying into a VM or for downstream tooling)
 
 Both the staging directory and the zip include:
 
@@ -171,7 +171,11 @@ Signing policy:
 - Override with `-SigningPolicy test` for test-signed/custom-signed driver bundles.
   - Legacy alias accepted: `testsigning` (maps to `test`).
 
-This emits `aero-guest-tools.iso` and `aero-guest-tools.zip` under `dist/guest-tools/`.
+This emits the following under `dist/guest-tools/`:
+
+- `aero-guest-tools.iso`
+- `aero-guest-tools.zip`
+- `manifest.json`
 
 The Guest Tools ISO/zip root also includes `THIRD_PARTY_NOTICES.md` (sourced from
 `guest-tools/THIRD_PARTY_NOTICES.md` in this repo).
