@@ -580,3 +580,53 @@ test("tcp-mux returns PROTOCOL_ERROR for duplicate OPEN stream_id without breaki
     await echoServer.close();
   }
 });
+
+test("tcp-mux stream_id is unique for the lifetime of the websocket", async () => {
+  const echoServer = await startTcpEchoServer();
+  const proxy = await startProxyServer({ listenHost: "127.0.0.1", listenPort: 0, open: true });
+  const proxyAddr = proxy.server.address();
+  assert.ok(proxyAddr && typeof proxyAddr !== "string");
+
+  let ws: WebSocket | null = null;
+  try {
+    ws = await openWebSocket(`ws://127.0.0.1:${proxyAddr.port}/tcp-mux`, TCP_MUX_SUBPROTOCOL);
+    const waiter = createFrameWaiter(ws);
+
+    const open1 = encodeTcpMuxFrame(
+      TcpMuxMsgType.OPEN,
+      1,
+      encodeTcpMuxOpenPayload({ host: "127.0.0.1", port: echoServer.port })
+    );
+    const payload = Buffer.from("first-stream");
+    const data = encodeTcpMuxFrame(TcpMuxMsgType.DATA, 1, payload);
+    ws.send(Buffer.concat([open1, data]));
+
+    await waitForEcho(waiter, 1, payload);
+
+    ws.send(encodeTcpMuxFrame(TcpMuxMsgType.CLOSE, 1, encodeTcpMuxClosePayload(TcpMuxCloseFlags.FIN)));
+    await waiter.waitFor((f) => f.msgType === TcpMuxMsgType.CLOSE && f.streamId === 1);
+
+    // Attempt to reuse stream_id=1 after it has closed; this should still be rejected.
+    ws.send(open1);
+    const errFrame = await waiter.waitFor((f) => f.msgType === TcpMuxMsgType.ERROR && f.streamId === 1);
+    const err = decodeTcpMuxErrorPayload(errFrame.payload);
+    assert.equal(err.code, TcpMuxErrorCode.PROTOCOL_ERROR);
+
+    // Ensure mux WS still works after the rejected OPEN.
+    ws.send(encodeTcpMuxFrame(TcpMuxMsgType.PING, 0, Buffer.from([1])));
+    await waiter.waitFor((f) => f.msgType === TcpMuxMsgType.PONG && f.streamId === 0);
+
+    const closePromise = waitForClose(ws);
+    ws.close(1000, "done");
+    await closePromise;
+  } finally {
+    if (ws && ws.readyState !== ws.CLOSED) {
+      ws.terminate();
+      await waitForClose(ws).catch(() => {
+        // ignore
+      });
+    }
+    await proxy.close();
+    await echoServer.close();
+  }
+});
