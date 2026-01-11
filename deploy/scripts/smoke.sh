@@ -93,6 +93,8 @@ root_headers="$(fetch_headers https://localhost/)"
 health_headers="$(fetch_headers https://localhost/healthz)"
 wasm_headers="$(fetch_headers "https://localhost/assets/$SMOKE_WASM_NAME")"
 
+assert_header_exact "Cache-Control" "no-cache" "$root_headers"
+
 for headers in "$root_headers" "$health_headers" "$wasm_headers"; do
   assert_header_exact "Cross-Origin-Opener-Policy" "same-origin" "$headers"
   assert_header_exact "Cross-Origin-Embedder-Policy" "require-corp" "$headers"
