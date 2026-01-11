@@ -1441,6 +1441,21 @@ HRESULT AEROGPU_APIENTRY GetDeviceRemovedReason11(D3D11DDI_HDEVICE) {
   return S_OK;
 }
 
+static D3D11DDI_ADAPTERFUNCS MakeStubAdapterFuncs11() {
+  D3D11DDI_ADAPTERFUNCS funcs = {};
+#define STUB_FIELD(field) funcs.field = &DdiStub<decltype(funcs.field)>::Call
+  STUB_FIELD(pfnGetCaps);
+  STUB_FIELD(pfnCalcPrivateDeviceSize);
+  __if_exists(D3D11DDI_ADAPTERFUNCS::pfnCalcPrivateDeviceContextSize) {
+    STUB_FIELD(pfnCalcPrivateDeviceContextSize);
+  }
+  STUB_FIELD(pfnCreateDevice);
+  STUB_FIELD(pfnCloseAdapter);
+#undef STUB_FIELD
+  AssertNoNullDdiTable("D3D11DDI_ADAPTERFUNCS (stub)", &funcs, sizeof(funcs));
+  return funcs;
+}
+
 static void UnmapLocked(Device* dev, Resource* res) {
   if (!dev || !res || !res->mapped) {
     return;
@@ -4056,7 +4071,7 @@ HRESULT OpenAdapter11Impl(D3D10DDIARG_OPENADAPTER* pOpenData) {
   pOpenData->hAdapter.pDrvPrivate = adapter;
 
   auto* funcs = reinterpret_cast<D3D11DDI_ADAPTERFUNCS*>(pOpenData->pAdapterFuncs);
-  std::memset(funcs, 0, sizeof(*funcs));
+  *funcs = MakeStubAdapterFuncs11();
   funcs->pfnGetCaps = &GetCaps11;
   funcs->pfnCalcPrivateDeviceSize = &CalcPrivateDeviceSize11;
   if constexpr (has_member_pfnCalcPrivateDeviceContextSize<D3D11DDI_ADAPTERFUNCS>::value) {
@@ -4064,6 +4079,7 @@ HRESULT OpenAdapter11Impl(D3D10DDIARG_OPENADAPTER* pOpenData) {
   }
   funcs->pfnCreateDevice = &CreateDevice11;
   funcs->pfnCloseAdapter = &CloseAdapter11;
+  AssertNoNullDdiTable("D3D11DDI_ADAPTERFUNCS", funcs, sizeof(*funcs));
   return S_OK;
 }
 
