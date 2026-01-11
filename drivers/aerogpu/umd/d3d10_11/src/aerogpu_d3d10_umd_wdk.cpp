@@ -186,62 +186,6 @@ constexpr uint32_t AlignUpU32(uint32_t value, uint32_t alignment) {
   return static_cast<uint32_t>((value + alignment - 1) & ~(alignment - 1));
 }
 
-static uint64_t AllocateGlobalToken() {
-  static std::mutex g_mutex;
-  static HANDLE g_mapping = nullptr;
-  static void* g_view = nullptr;
-
-  std::lock_guard<std::mutex> lock(g_mutex);
-
-  if (!g_view) {
-    const wchar_t* name = L"Local\\AeroGPU.GlobalHandleCounter";
-
-    // Use a permissive DACL so other processes in the session can open and
-    // update the counter (e.g. DWM, sandboxed apps, different integrity levels).
-    HANDLE mapping =
-        aerogpu::win32::CreateFileMappingWBestEffortLowIntegrity(
-            INVALID_HANDLE_VALUE, PAGE_READWRITE, 0, sizeof(uint64_t), name);
-    if (mapping) {
-      void* view = MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(uint64_t));
-      if (view) {
-        g_mapping = mapping;
-        g_view = view;
-      } else {
-        CloseHandle(mapping);
-      }
-    }
-  }
-
-  if (g_view) {
-    auto* counter = reinterpret_cast<volatile LONG64*>(g_view);
-    LONG64 token = InterlockedIncrement64(counter);
-    if ((static_cast<uint64_t>(token) & 0x7FFFFFFFULL) == 0) {
-      token = InterlockedIncrement64(counter);
-    }
-    return static_cast<uint64_t>(token);
-  }
-
-  return 0;
-}
-
-static bool AllocateSharedAllocIds(uint32_t* out_alloc_id, uint64_t* out_share_token) {
-  if (!out_alloc_id || !out_share_token) {
-    return false;
-  }
-
-  const uint64_t token = AllocateGlobalToken();
-  if (!token) {
-    return false;
-  }
-  const uint32_t alloc_id = static_cast<uint32_t>(token & 0x7FFFFFFFULL);
-  if (!alloc_id) {
-    return false;
-  }
-  *out_alloc_id = alloc_id;
-  *out_share_token = token;
-  return true;
-}
-
 // DXGI_FORMAT subset (numeric values from dxgiformat.h).
 constexpr uint32_t kDxgiFormatR32G32B32A32Float = 2;
 constexpr uint32_t kDxgiFormatR32G32B32Float = 6;
