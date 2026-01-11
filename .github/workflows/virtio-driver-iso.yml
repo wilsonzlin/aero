@@ -31,6 +31,7 @@ jobs:
       - name: Verify ISO contents
         run: |
           python3 tools/driver-iso/verify_iso.py \
+            --require-arch both \
             --iso dist/aero-virtio-win7-drivers-sample.iso
 
       - name: Upload ISO artifact

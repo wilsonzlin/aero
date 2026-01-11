@@ -11,6 +11,9 @@ import tempfile
 from pathlib import Path
 
 
+REQUIRED_PACKAGE_IDS = ("virtio-blk", "virtio-net")
+
+
 def _load_manifest(path: Path) -> dict:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
@@ -58,24 +61,42 @@ def _find_iso_tool() -> tuple[str, list[str]]:
     )
 
 
-def _validate_required_packages(manifest: dict, drivers_root: Path) -> None:
+def _arches_for_require_arch(require_arch: str) -> tuple[str, ...]:
+    if require_arch == "both":
+        return ("x86", "amd64")
+    return (require_arch,)
+
+
+def _validate_required_packages(manifest: dict, drivers_root: Path, require_arch: str) -> None:
     missing: list[str] = []
-    for pkg in manifest.get("packages", []):
-        if not pkg.get("required"):
-            continue
-        inf_rel = pkg.get("inf")
-        if not inf_rel:
-            missing.append(f"{pkg.get('id')} ({pkg.get('arch')}): missing 'inf' in manifest")
-            continue
-        inf_path = drivers_root / inf_rel
-        if not inf_path.is_file():
-            missing.append(f"{pkg.get('id')} ({pkg.get('arch')}): {inf_rel} not found under {drivers_root}")
+
+    packages = manifest.get("packages", [])
+    for pkg_id in REQUIRED_PACKAGE_IDS:
+        for arch in _arches_for_require_arch(require_arch):
+            matches = [pkg for pkg in packages if pkg.get("id") == pkg_id and pkg.get("arch") == arch]
+            if not matches:
+                missing.append(f"{pkg_id} ({arch}): missing package entry in manifest")
+                continue
+            if len(matches) > 1:
+                missing.append(f"{pkg_id} ({arch}): multiple package entries in manifest")
+                continue
+
+            pkg = matches[0]
+            inf_rel = pkg.get("inf")
+            if not inf_rel:
+                missing.append(f"{pkg_id} ({arch}): missing 'inf' in manifest")
+                continue
+            inf_path = drivers_root / inf_rel
+            if not inf_path.is_file():
+                missing.append(f"{pkg_id} ({arch}): {inf_rel} not found under {drivers_root}")
 
     if missing:
         formatted = "\n".join(f"- {m}" for m in missing)
         raise SystemExit(
-            "required driver package files are missing:\n"
+            f"required driver package files are missing (required by --require-arch {require_arch}):\n"
             f"{formatted}\n\n"
+            "Hint: if you intentionally want a single-arch ISO, pass `--require-arch x86` or "
+            "`--require-arch amd64`.\n"
             "Hint: for a demo build, use `--drivers-root drivers/virtio/sample`.\n"
             "For a real build, populate `drivers/virtio/prebuilt/` with a Win7-capable virtio driver set."
         )
@@ -141,6 +162,12 @@ def main() -> int:
         help="Root directory containing win7/… driver files",
     )
     parser.add_argument(
+        "--require-arch",
+        choices=["x86", "amd64", "both"],
+        default="both",
+        help="Which architecture(s) must be present for required drivers (default: both).",
+    )
+    parser.add_argument(
         "--output",
         type=Path,
         required=True,
@@ -164,7 +191,7 @@ def main() -> int:
     readme_filename = manifest.get("iso", {}).get("readme_filename") or "README.txt"
 
     drivers_root = args.drivers_root.resolve()
-    _validate_required_packages(manifest, drivers_root)
+    _validate_required_packages(manifest, drivers_root, args.require_arch)
 
     out_path = args.output.resolve()
     out_path.parent.mkdir(parents=True, exist_ok=True)

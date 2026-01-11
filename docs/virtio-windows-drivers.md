@@ -104,7 +104,7 @@ drivers/virtio/
           netkvm.cat
         vioinput/            # best-effort
         viosnd/              # optional
-      amd64/                 # best-effort
+      amd64/                 # recommended (required for Win7 x64 Setup + x64 guests)
         viostor/
         netkvm/
         ...
@@ -158,12 +158,54 @@ This document covers both; see the sections below.
 
 The builder requires an ISO authoring tool (Linux: `xorriso` preferred; also supports `genisoimage`/`mkisofs`).
 
+### Multi-arch driver ISOs are recommended (x86 + amd64)
+
+Windows will only load kernel drivers that match the OS architecture:
+
+- **Windows 7 x64 Setup** (“Load Driver”) requires **amd64** drivers.
+- **Windows 7 x86 Setup** requires **x86** drivers.
+
+To prevent accidentally producing an ISO that can’t be used for Win7 x64 installs, `tools/driver-iso/build.py`
+and `tools/driver-iso/verify_iso.py` default to:
+
+```text
+--require-arch both
+```
+
+This requires the minimum driver set (at least `viostor` + `netkvm`) to be present for **both** architectures.
+
 Example (from repo root):
 
 ```bash
 python3 tools/driver-iso/build.py \
   --drivers-root drivers/virtio/prebuilt \
   --output dist/aero-virtio-win7-drivers.iso
+```
+
+### Building a single-arch ISO (x86-only or amd64-only)
+
+If you intentionally want a single-arch ISO, pass `--require-arch`:
+
+```bash
+# Win7 x86-only drivers ISO (will NOT work for Win7 x64 installs)
+python3 tools/driver-iso/build.py \
+  --require-arch x86 \
+  --drivers-root drivers/virtio/prebuilt \
+  --output dist/aero-virtio-win7-drivers-x86.iso
+
+# Win7 amd64-only drivers ISO
+python3 tools/driver-iso/build.py \
+  --require-arch amd64 \
+  --drivers-root drivers/virtio/prebuilt \
+  --output dist/aero-virtio-win7-drivers-amd64.iso
+```
+
+The verifier supports the same flag:
+
+```bash
+python3 tools/driver-iso/verify_iso.py \
+  --require-arch x86 \
+  --iso dist/aero-virtio-win7-drivers-x86.iso
 ```
 
 To build a demo ISO from placeholders:
