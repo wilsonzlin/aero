@@ -389,6 +389,13 @@ impl RootHub {
     pub fn tick_1ms(&mut self) {
         for p in &mut self.ports {
             p.tick_1ms();
+            if p.enabled && p.suspended && !p.resuming && !p.resume_detect {
+                if let Some(dev) = p.device.as_mut() {
+                    if dev.model_mut().poll_remote_wakeup() {
+                        p.resume_detect = true;
+                    }
+                }
+            }
             if !p.enabled || p.suspended || p.resuming {
                 continue;
             }

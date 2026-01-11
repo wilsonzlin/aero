@@ -375,6 +375,7 @@ pub struct UsbCompositeHidInput {
     address: u8,
     configuration: u8,
     remote_wakeup_enabled: bool,
+    remote_wakeup_pending: bool,
     keyboard: KeyboardInterface,
     mouse: MouseInterface,
     gamepad: GamepadInterface,
@@ -399,50 +400,84 @@ impl UsbCompositeHidInputHandle {
     }
 
     pub fn key_event(&self, usage: u8, pressed: bool) {
-        self.0.borrow_mut().keyboard.key_event(usage, pressed);
+        let mut dev = self.0.borrow_mut();
+        dev.keyboard.key_event(usage, pressed);
+        if dev.remote_wakeup_enabled && dev.configuration != 0 {
+            dev.remote_wakeup_pending = true;
+        }
     }
 
     pub fn mouse_button_event(&self, button_bit: u8, pressed: bool) {
-        self.0.borrow_mut().mouse.button_event(button_bit, pressed);
+        let mut dev = self.0.borrow_mut();
+        dev.mouse.button_event(button_bit, pressed);
+        if dev.remote_wakeup_enabled && dev.configuration != 0 {
+            dev.remote_wakeup_pending = true;
+        }
     }
 
     pub fn mouse_movement(&self, dx: i32, dy: i32) {
-        self.0.borrow_mut().mouse.movement(dx, dy);
+        let mut dev = self.0.borrow_mut();
+        dev.mouse.movement(dx, dy);
+        if dev.remote_wakeup_enabled && dev.configuration != 0 {
+            dev.remote_wakeup_pending = true;
+        }
     }
 
     pub fn mouse_wheel(&self, delta: i32) {
-        self.0.borrow_mut().mouse.wheel(delta);
+        let mut dev = self.0.borrow_mut();
+        dev.mouse.wheel(delta);
+        if dev.remote_wakeup_enabled && dev.configuration != 0 {
+            dev.remote_wakeup_pending = true;
+        }
     }
 
     pub fn gamepad_button_event(&self, button_idx: u8, pressed: bool) {
-        self.0
-            .borrow_mut()
-            .gamepad
-            .button_event(button_idx, pressed);
+        let mut dev = self.0.borrow_mut();
+        dev.gamepad.button_event(button_idx, pressed);
+        if dev.remote_wakeup_enabled && dev.configuration != 0 {
+            dev.remote_wakeup_pending = true;
+        }
     }
 
     pub fn gamepad_buttons_mask_event(&self, button_mask: u16, pressed: bool) {
-        self.0
-            .borrow_mut()
-            .gamepad
-            .buttons_mask_event(button_mask, pressed);
+        let mut dev = self.0.borrow_mut();
+        dev.gamepad.buttons_mask_event(button_mask, pressed);
+        if dev.remote_wakeup_enabled && dev.configuration != 0 {
+            dev.remote_wakeup_pending = true;
+        }
     }
 
     pub fn gamepad_set_buttons(&self, buttons: u16) {
-        self.0.borrow_mut().gamepad.set_buttons(buttons);
+        let mut dev = self.0.borrow_mut();
+        dev.gamepad.set_buttons(buttons);
+        if dev.remote_wakeup_enabled && dev.configuration != 0 {
+            dev.remote_wakeup_pending = true;
+        }
     }
 
     pub fn gamepad_set_hat(&self, hat: Option<u8>) {
-        self.0.borrow_mut().gamepad.set_hat(hat);
+        let mut dev = self.0.borrow_mut();
+        dev.gamepad.set_hat(hat);
+        if dev.remote_wakeup_enabled && dev.configuration != 0 {
+            dev.remote_wakeup_pending = true;
+        }
     }
 
     pub fn gamepad_set_axes(&self, x: i8, y: i8, rx: i8, ry: i8) {
-        self.0.borrow_mut().gamepad.set_axes(x, y, rx, ry);
+        let mut dev = self.0.borrow_mut();
+        dev.gamepad.set_axes(x, y, rx, ry);
+        if dev.remote_wakeup_enabled && dev.configuration != 0 {
+            dev.remote_wakeup_pending = true;
+        }
     }
 
     /// Updates the entire 8-byte gamepad report state in one call.
     pub fn gamepad_set_report(&self, report: GamepadReport) {
-        self.0.borrow_mut().gamepad.set_report(report);
+        let mut dev = self.0.borrow_mut();
+        dev.gamepad.set_report(report);
+        if dev.remote_wakeup_enabled && dev.configuration != 0 {
+            dev.remote_wakeup_pending = true;
+        }
     }
 }
 
@@ -470,6 +505,10 @@ impl UsbDeviceModel for UsbCompositeHidInputHandle {
     fn handle_interrupt_in(&mut self, ep_addr: u8) -> UsbInResult {
         self.0.borrow_mut().handle_interrupt_in(ep_addr)
     }
+
+    fn poll_remote_wakeup(&mut self) -> bool {
+        self.0.borrow_mut().poll_remote_wakeup()
+    }
 }
 
 impl Default for UsbCompositeHidInput {
@@ -484,6 +523,7 @@ impl UsbCompositeHidInput {
             address: 0,
             configuration: 0,
             remote_wakeup_enabled: false,
+            remote_wakeup_pending: false,
             keyboard: KeyboardInterface::new(),
             mouse: MouseInterface::new(),
             gamepad: GamepadInterface::new(),
@@ -601,6 +641,7 @@ impl UsbDeviceModel for UsbCompositeHidInput {
                             return ControlResponse::Stall;
                         }
                         self.remote_wakeup_enabled = false;
+                        self.remote_wakeup_pending = false;
                         ControlResponse::Ack
                     }
                     _ => ControlResponse::Stall,
@@ -657,6 +698,7 @@ impl UsbDeviceModel for UsbCompositeHidInput {
                     self.configuration = config;
                     if self.configuration == 0 {
                         self.clear_reports();
+                        self.remote_wakeup_pending = false;
                     }
                     ControlResponse::Ack
                 }
@@ -994,6 +1036,15 @@ impl UsbDeviceModel for UsbCompositeHidInput {
                 }
             }
             _ => UsbInResult::Stall,
+        }
+    }
+
+    fn poll_remote_wakeup(&mut self) -> bool {
+        if self.remote_wakeup_pending && self.remote_wakeup_enabled && self.configuration != 0 {
+            self.remote_wakeup_pending = false;
+            true
+        } else {
+            false
         }
     }
 }

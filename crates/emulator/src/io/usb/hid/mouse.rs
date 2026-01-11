@@ -43,6 +43,7 @@ pub struct UsbHidMouse {
     address: u8,
     configuration: u8,
     remote_wakeup_enabled: bool,
+    remote_wakeup_pending: bool,
     interrupt_in_halted: bool,
     idle_rate: u8,
     protocol: HidProtocol,
@@ -105,6 +106,10 @@ impl UsbDeviceModel for UsbHidMouseHandle {
     fn handle_interrupt_in(&mut self, ep_addr: u8) -> UsbInResult {
         self.0.borrow_mut().handle_interrupt_in(ep_addr)
     }
+
+    fn poll_remote_wakeup(&mut self) -> bool {
+        self.0.borrow_mut().poll_remote_wakeup()
+    }
 }
 
 impl Default for UsbHidMouse {
@@ -119,6 +124,7 @@ impl UsbHidMouse {
             address: 0,
             configuration: 0,
             remote_wakeup_enabled: false,
+            remote_wakeup_pending: false,
             interrupt_in_halted: false,
             idle_rate: 0,
             protocol: HidProtocol::Report,
@@ -135,6 +141,9 @@ impl UsbHidMouse {
             self.pending_reports.pop_front();
         }
         self.pending_reports.push_back(report);
+        if self.remote_wakeup_enabled && self.configuration != 0 {
+            self.remote_wakeup_pending = true;
+        }
     }
 
     /// Sets or clears a mouse button bit.
@@ -248,6 +257,7 @@ impl UsbDeviceModel for UsbHidMouse {
                             return ControlResponse::Stall;
                         }
                         self.remote_wakeup_enabled = false;
+                        self.remote_wakeup_pending = false;
                         ControlResponse::Ack
                     }
                     _ => ControlResponse::Stall,
@@ -304,6 +314,7 @@ impl UsbDeviceModel for UsbHidMouse {
                     self.configuration = config;
                     if self.configuration == 0 {
                         self.pending_reports.clear();
+                        self.remote_wakeup_pending = false;
                     }
                     ControlResponse::Ack
                 }
@@ -484,6 +495,15 @@ impl UsbDeviceModel for UsbHidMouse {
         match self.pending_reports.pop_front() {
             Some(r) => UsbInResult::Data(r.to_bytes(self.protocol)),
             None => UsbInResult::Nak,
+        }
+    }
+
+    fn poll_remote_wakeup(&mut self) -> bool {
+        if self.remote_wakeup_pending && self.remote_wakeup_enabled && self.configuration != 0 {
+            self.remote_wakeup_pending = false;
+            true
+        } else {
+            false
         }
     }
 }

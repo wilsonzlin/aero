@@ -328,6 +328,16 @@ pub trait UsbDeviceModel {
         }
     }
 
+    /// Poll for a remote wakeup event while the upstream port is suspended.
+    ///
+    /// Returning `true` indicates the device would signal a remote wakeup (resume) event.
+    /// Host-side hub/port models should treat this as a *level-to-edge* conversion: once a wake
+    /// has been observed, the device should return `false` until another host-visible wake event
+    /// occurs.
+    fn poll_remote_wakeup(&mut self) -> bool {
+        false
+    }
+
     /// If this device is a USB hub, route an address lookup to its downstream devices.
     ///
     /// The UHCI controller uses this for topology-aware device routing: it first matches the

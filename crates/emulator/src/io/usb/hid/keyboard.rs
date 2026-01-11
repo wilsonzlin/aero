@@ -48,6 +48,7 @@ pub struct UsbHidKeyboard {
     address: u8,
     configuration: u8,
     remote_wakeup_enabled: bool,
+    remote_wakeup_pending: bool,
     interrupt_in_halted: bool,
     idle_rate: u8,
     protocol: HidProtocol,
@@ -105,6 +106,10 @@ impl UsbDeviceModel for UsbHidKeyboardHandle {
     fn handle_interrupt_in(&mut self, ep_addr: u8) -> UsbInResult {
         self.0.borrow_mut().handle_interrupt_in(ep_addr)
     }
+
+    fn poll_remote_wakeup(&mut self) -> bool {
+        self.0.borrow_mut().poll_remote_wakeup()
+    }
 }
 
 impl Default for UsbHidKeyboard {
@@ -119,6 +124,7 @@ impl UsbHidKeyboard {
             address: 0,
             configuration: 0,
             remote_wakeup_enabled: false,
+            remote_wakeup_pending: false,
             interrupt_in_halted: false,
             idle_rate: 0,
             protocol: HidProtocol::Report,
@@ -157,6 +163,9 @@ impl UsbHidKeyboard {
 
         if changed {
             self.enqueue_current_report();
+            if self.remote_wakeup_enabled && self.configuration != 0 {
+                self.remote_wakeup_pending = true;
+            }
         }
     }
 
@@ -247,6 +256,7 @@ impl UsbDeviceModel for UsbHidKeyboard {
                             return ControlResponse::Stall;
                         }
                         self.remote_wakeup_enabled = false;
+                        self.remote_wakeup_pending = false;
                         ControlResponse::Ack
                     }
                     _ => ControlResponse::Stall,
@@ -500,6 +510,15 @@ impl UsbDeviceModel for UsbHidKeyboard {
         match self.pending_reports.pop_front() {
             Some(r) => UsbInResult::Data(r.to_vec()),
             None => UsbInResult::Nak,
+        }
+    }
+
+    fn poll_remote_wakeup(&mut self) -> bool {
+        if self.remote_wakeup_pending && self.remote_wakeup_enabled && self.configuration != 0 {
+            self.remote_wakeup_pending = false;
+            true
+        } else {
+            false
         }
     }
 }

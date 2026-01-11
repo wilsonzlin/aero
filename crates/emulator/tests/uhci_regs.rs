@@ -2,7 +2,7 @@ use emulator::io::pci::PciDevice;
 use emulator::io::usb::hid::keyboard::UsbHidKeyboardHandle;
 use emulator::io::usb::uhci::regs::*;
 use emulator::io::usb::uhci::{UhciController, UhciPciDevice};
-use emulator::io::usb::{ControlResponse, SetupPacket, UsbDeviceModel, UsbInResult};
+use emulator::io::usb::{ControlResponse, SetupPacket, UsbDeviceModel, UsbInResult, UsbOutResult};
 use emulator::io::PortIO;
 use memory::{Bus, MemoryBus};
 use std::cell::RefCell;
@@ -40,6 +40,11 @@ fn write_td(mem: &mut Bus, addr: u32, link: u32, status: u32, token: u32, buffer
 fn write_qh(mem: &mut Bus, addr: u32, elem: u32) {
     mem.write_u32(addr as u64, 1); // horizontal terminate
     mem.write_u32(addr.wrapping_add(4) as u64, elem);
+}
+
+fn control_no_data(dev: &mut emulator::io::usb::core::AttachedUsbDevice, setup: SetupPacket) {
+    assert_eq!(dev.handle_setup(setup), UsbOutResult::Ack);
+    assert!(matches!(dev.handle_in(0, 0), UsbInResult::Data(d) if d.is_empty()));
 }
 
 fn init_frame_list(mem: &mut Bus, qh_addr: u32) {
@@ -548,6 +553,63 @@ fn uhci_port_resume_detect_latches_resume_sts_and_can_irq() {
         0
     );
     assert!(!uhci.irq_level());
+}
+
+#[test]
+fn uhci_suspended_hid_device_can_remote_wake_and_trigger_resume_irq() {
+    const PORTSC_PED: u16 = 1 << 2;
+    const PORTSC_RD: u16 = 1 << 6;
+    const PORTSC_SUSP: u16 = 1 << 12;
+
+    let mut mem = Bus::new(0x1000);
+    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let keyboard = UsbHidKeyboardHandle::new();
+    uhci.controller.hub_mut().attach(0, Box::new(keyboard.clone()));
+    uhci.controller.hub_mut().force_enable_for_tests(0);
+
+    // Configure the device and enable remote wakeup.
+    {
+        let dev = uhci
+            .controller
+            .hub_mut()
+            .device_mut_for_address(0)
+            .expect("device should be reachable at address 0");
+        control_no_data(
+            dev,
+            SetupPacket {
+                bm_request_type: 0x00,
+                b_request: 0x09, // SET_CONFIGURATION
+                w_value: 1,
+                w_index: 0,
+                w_length: 0,
+            },
+        );
+        control_no_data(
+            dev,
+            SetupPacket {
+                bm_request_type: 0x00,
+                b_request: 0x03, // SET_FEATURE
+                w_value: 1,      // DEVICE_REMOTE_WAKEUP
+                w_index: 0,
+                w_length: 0,
+            },
+        );
+    }
+
+    // Enable resume IRQs and enter port suspend.
+    uhci.port_write(REG_USBINTR, 2, USBINTR_RESUME as u32);
+    uhci.port_write(REG_PORTSC1, 2, (PORTSC_PED | PORTSC_SUSP) as u32);
+
+    // User input should create a remote wakeup event while suspended.
+    keyboard.key_event(4, true); // HID usage 4 = 'a'
+    uhci.tick_1ms(&mut mem);
+
+    assert_ne!(uhci.port_read(REG_PORTSC1, 2) as u16 & PORTSC_RD, 0);
+    assert_ne!(
+        uhci.port_read(REG_USBSTS, 2) as u16 & USBSTS_RESUMEDETECT,
+        0
+    );
+    assert!(uhci.irq_level());
 }
 
 #[test]
