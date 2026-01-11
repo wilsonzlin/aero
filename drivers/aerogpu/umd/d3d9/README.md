@@ -55,8 +55,8 @@ Build files:
 
 - Visual Studio project: `aerogpu_d3d9_umd.vcxproj`
 - Exports:
-  - `aerogpu_d3d9_x86.def` (exports `OpenAdapter`, `OpenAdapter2` from stdcall-decorated x86 symbols)
-  - `aerogpu_d3d9_x64.def` (exports `OpenAdapter`, `OpenAdapter2`)
+  - `aerogpu_d3d9_x86.def` (exports `OpenAdapter*` entrypoints from stdcall-decorated x86 symbols)
+  - `aerogpu_d3d9_x64.def` (exports `OpenAdapter*` entrypoints)
 
 Recommended build entrypoint (MSBuild/WDK10):
 
@@ -101,7 +101,7 @@ Then ensure the DLLs are copied into the correct system directories during insta
 After installation, reboot (or restart the display driver) and confirm:
 
 1. DWM starts without falling back to Basic mode.
-2. Debug output shows `module_path=...`, `OpenAdapter2`, and subsequent command submissions.
+2. Debug output shows `module_path=...`, `OpenAdapterFromHdc`/`OpenAdapterFromLuid` (depending on caller), and subsequent command submissions.
 
 ## Supported feature subset (bring-up)
 

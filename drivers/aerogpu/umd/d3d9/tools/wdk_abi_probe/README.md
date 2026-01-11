@@ -44,14 +44,18 @@ If compilation fails because a type is missing, you are likely compiling against
 == Exported entrypoints (x86 stdcall decoration) ==
 PFND3DDDI_OPENADAPTER  => _OpenAdapter@N
 PFND3DDDI_OPENADAPTER2 => _OpenAdapter2@M
+PFND3DDDI_OPENADAPTERFROMHDC  => _OpenAdapterFromHdc@K
+PFND3DDDI_OPENADAPTERFROMLUID => _OpenAdapterFromLuid@L
 ```
 
 2. Confirm that `drivers/aerogpu/umd/d3d9/aerogpu_d3d9_x86.def` matches:
 
 - `OpenAdapter=_OpenAdapter@N`
 - `OpenAdapter2=_OpenAdapter2@M`
+- `OpenAdapterFromHdc=_OpenAdapterFromHdc@K`
+- `OpenAdapterFromLuid=_OpenAdapterFromLuid@L`
 
-If `N/M` differ, the UMD will load but the runtime will call the wrong symbol (or corrupt the stack).
+If any of `N/M/K/L` differ, the UMD will load but the runtime will call the wrong symbol (or corrupt the stack).
 
 ### 2) Struct/table layout sanity
 
