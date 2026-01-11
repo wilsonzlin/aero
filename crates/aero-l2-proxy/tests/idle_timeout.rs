@@ -1,12 +1,13 @@
-use std::{net::SocketAddr, sync::Mutex, time::Duration};
+use std::{net::SocketAddr, time::Duration};
 
 use aero_l2_proxy::{start_server, ProxyConfig, TUNNEL_SUBPROTOCOL};
 use futures_util::{SinkExt, StreamExt};
+use tokio::sync::Mutex;
 use tokio_tungstenite::tungstenite::{
     client::IntoClientRequest, http::HeaderValue, protocol::frame::coding::CloseCode, Message,
 };
 
-static ENV_LOCK: Mutex<()> = Mutex::new(());
+static ENV_LOCK: Mutex<()> = Mutex::const_new(());
 
 struct EnvVarGuard {
     key: &'static str,
@@ -66,7 +67,7 @@ fn ws_request(addr: SocketAddr) -> tokio_tungstenite::tungstenite::http::Request
 
 #[tokio::test]
 async fn idle_timeout_closes_tunnel_and_increments_metric() {
-    let _lock = ENV_LOCK.lock().unwrap();
+    let _lock = ENV_LOCK.lock().await;
 
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
     let _open = EnvVarGuard::set("AERO_L2_OPEN", "1");
@@ -125,7 +126,7 @@ async fn idle_timeout_closes_tunnel_and_increments_metric() {
 
 #[tokio::test]
 async fn idle_timeout_resets_on_inbound_keepalive() {
-    let _lock = ENV_LOCK.lock().unwrap();
+    let _lock = ENV_LOCK.lock().await;
 
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
     let _open = EnvVarGuard::set("AERO_L2_OPEN", "1");

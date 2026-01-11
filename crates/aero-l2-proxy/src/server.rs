@@ -1364,7 +1364,7 @@ fn parse_x_forwarded_for(value: &str) -> Option<IpAddr> {
     first.parse::<SocketAddr>().ok().map(|addr| addr.ip())
 }
 
-struct IpConnectionLimiter {
+pub(crate) struct IpConnectionLimiter {
     max: u32,
     counts: Mutex<HashMap<IpAddr, u32>>,
 }
