@@ -107,9 +107,18 @@ function validateComposeConfig(relPath) {
   args.push('config', '-q');
 
   const res = spawnSync('docker', args, { cwd: repoRoot, encoding: 'utf8' });
-  if (res.status === 0) return;
-
   const output = [res.stdout, res.stderr].filter(Boolean).join('\n').trim();
+  if (res.status === 0) {
+    // docker compose can exit 0 while still printing warnings about unset
+    // variables, deprecated fields, etc. Treat any output as a CI failure so
+    // "example" manifests remain copy/paste-safe and warning-free.
+    if (!output) return;
+    return {
+      relPath,
+      message: `docker compose config produced warnings for ${relPath}:\n${output}`,
+    };
+  }
+
   return {
     relPath,
     message: `docker compose config failed for ${relPath}${output ? `:\n${output}` : ''}`,
