@@ -1517,6 +1517,13 @@ try {
         $sigSummary = "bcdedit failed or produced no output (run as Administrator for full results)."
         $sigDetails += "Exit code: " + $bcd.exit_code
     } else {
+        $policy = $null
+        if ($report.media_integrity -and ($report.media_integrity -is [hashtable]) -and $report.media_integrity.signing_policy) {
+            $policy = "" + $report.media_integrity.signing_policy
+        }
+        $policyLower = ""
+        if ($policy) { $policyLower = $policy.ToLower() }
+
         if (-not $testsigning) { $testsigning = "Unknown/NotSet" }
         if (-not $nointegritychecks) { $nointegritychecks = "Unknown/NotSet" }
         $sigSummary = "testsigning=" + $testsigning + ", nointegritychecks=" + $nointegritychecks
@@ -1532,14 +1539,34 @@ try {
         }
 
         if ($nicOn) {
-            $sigStatus = "WARN"
-            $sigDetails += "nointegritychecks is enabled. This is not recommended; prefer testsigning or properly signed drivers."
-        }
-        if (-not $tsOn) {
-            if ($is64) {
+            if ($policyLower -eq "nointegritychecks") {
+                $sigDetails += "nointegritychecks is enabled (expected by signing_policy=nointegritychecks). Note: this is not recommended; prefer properly signed drivers when possible."
+            } else {
                 $sigStatus = Merge-Status $sigStatus "WARN"
+                $sigDetails += "nointegritychecks is enabled. This is not recommended; prefer testsigning or properly signed drivers."
             }
-            $sigDetails += "testsigning is not enabled. If Aero drivers are test-signed (common on Windows 7 x64), enable it: bcdedit /set testsigning on"
+        } else {
+            if ($is64 -and ($policyLower -eq "nointegritychecks")) {
+                $sigStatus = Merge-Status $sigStatus "WARN"
+                $sigDetails += "signing_policy=nointegritychecks but nointegritychecks is not enabled. Enable it: bcdedit /set nointegritychecks on"
+            }
+        }
+
+        if ($is64) {
+            if ($policyLower -eq "none") {
+                if ($tsOn) {
+                    $sigStatus = Merge-Status $sigStatus "WARN"
+                    $sigDetails += "testsigning is enabled, but signing_policy=none indicates production-signed drivers. Consider disabling it: bcdedit /set testsigning off"
+                }
+            } elseif ($policyLower -eq "nointegritychecks") {
+                # testsigning is not required when nointegritychecks is used.
+            } else {
+                # signing_policy=testsigning (or unknown / no manifest): testsigning is commonly required.
+                if (-not $tsOn) {
+                    $sigStatus = Merge-Status $sigStatus "WARN"
+                    $sigDetails += "testsigning is not enabled. If the Guest Tools media uses test-signed/custom-signed drivers (signing_policy=testsigning), enable it: bcdedit /set testsigning on"
+                }
+            }
         }
     }
 
