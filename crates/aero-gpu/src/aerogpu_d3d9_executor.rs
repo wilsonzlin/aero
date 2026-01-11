@@ -1158,21 +1158,24 @@ impl AerogpuD3d9Executor {
                 ..
             } => {
                 self.ensure_encoder();
-                let mut encoder = self.encoder.take().unwrap();
+                let mut encoder_opt = self.encoder.take();
                 let result = (|| -> Result<(), AerogpuD3d9Error> {
                     if size_bytes == 0 {
                         return Ok(());
                     }
-                    if (flags & AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0 {
-                        return Err(AerogpuD3d9Error::Validation(
-                            "COPY_BUFFER: AEROGPU_COPY_FLAG_WRITEBACK_DST is not supported yet"
-                                .into(),
-                        ));
-                    }
+                    let writeback = (flags & AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0;
                     if (flags & !AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0 {
                         return Err(AerogpuD3d9Error::Validation(format!(
                             "COPY_BUFFER: unknown flags 0x{flags:08X}"
                         )));
+                    }
+                    if writeback {
+                        #[cfg(target_arch = "wasm32")]
+                        {
+                            return Err(AerogpuD3d9Error::Validation(
+                                "COPY_BUFFER: AEROGPU_COPY_FLAG_WRITEBACK_DST is not supported on wasm yet".into(),
+                            ));
+                        }
                     }
 
                     if dst_offset_bytes % wgpu::COPY_BUFFER_ALIGNMENT != 0
@@ -1187,7 +1190,7 @@ impl AerogpuD3d9Executor {
 
                     let src_underlying = self.resolve_resource_handle(src_buffer)?;
                     let dst_underlying = self.resolve_resource_handle(dst_buffer)?;
-                    let (src_size, dst_size) = {
+                    let (src_size, dst_size, dst_backing) = {
                         let src = self
                             .resources
                             .get(&src_underlying)
@@ -1206,8 +1209,8 @@ impl AerogpuD3d9Executor {
                                 })
                             }
                         };
-                        let dst_size = match dst {
-                            Resource::Buffer { size, .. } => *size,
+                        let (dst_size, dst_backing) = match dst {
+                            Resource::Buffer { size, backing, .. } => (*size, *backing),
                             _ => {
                                 return Err(AerogpuD3d9Error::CopyNotSupported {
                                     src: src_buffer,
@@ -1215,8 +1218,13 @@ impl AerogpuD3d9Executor {
                                 })
                             }
                         };
-                        (src_size, dst_size)
+                        (src_size, dst_size, dst_backing)
                     };
+                    if writeback && dst_backing.is_none() {
+                        return Err(AerogpuD3d9Error::Validation(format!(
+                            "COPY_BUFFER: WRITEBACK_DST requires dst buffer to be guest-backed (handle={dst_buffer})"
+                        )));
+                    }
 
                     let src_end = src_offset_bytes.checked_add(size_bytes).ok_or(
                         AerogpuD3d9Error::CopyOutOfBounds {
@@ -1268,6 +1276,10 @@ impl AerogpuD3d9Executor {
                         }
                     };
 
+                    let encoder = encoder_opt
+                        .as_mut()
+                        .ok_or_else(|| AerogpuD3d9Error::Validation("COPY_BUFFER: missing encoder".into()))?;
+
                     encoder.copy_buffer_to_buffer(
                         src_buf,
                         src_offset_bytes,
@@ -1275,9 +1287,74 @@ impl AerogpuD3d9Executor {
                         dst_offset_bytes,
                         size_bytes,
                     );
+
+                    if writeback {
+                        let Some(dst_backing) = dst_backing else {
+                            return Err(AerogpuD3d9Error::Validation(
+                                "COPY_BUFFER: WRITEBACK_DST requires guest-backed dst".into(),
+                            ));
+                        };
+                        let Some(guest_memory) = ctx.guest_memory else {
+                            return Err(AerogpuD3d9Error::MissingGuestMemory(dst_buffer));
+                        };
+
+                        #[cfg(not(target_arch = "wasm32"))]
+                        {
+                            let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
+                                label: Some("aerogpu-d3d9.copy_buffer.writeback"),
+                                size: size_bytes,
+                                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                                mapped_at_creation: false,
+                            });
+                            encoder.copy_buffer_to_buffer(dst_buf, dst_offset_bytes, &staging, 0, size_bytes);
+                            let encoder = encoder_opt.take().ok_or_else(|| {
+                                AerogpuD3d9Error::Validation("COPY_BUFFER: missing encoder".into())
+                            })?;
+                            self.queue.submit([encoder.finish()]);
+
+                            let slice = staging.slice(..);
+                            let state = std::sync::Arc::new((
+                                std::sync::Mutex::new(None::<Result<(), wgpu::BufferAsyncError>>),
+                                std::sync::Condvar::new(),
+                            ));
+                            let state_clone = state.clone();
+                            slice.map_async(wgpu::MapMode::Read, move |res| {
+                                let (lock, cv) = &*state_clone;
+                                *lock.lock().unwrap() = Some(res);
+                                cv.notify_one();
+                            });
+                            self.poll();
+                            let (lock, cv) = &*state;
+                            let mut guard = lock.lock().unwrap();
+                            while guard.is_none() {
+                                guard = cv.wait(guard).unwrap();
+                            }
+                            let map_res = guard.take().unwrap();
+                            map_res.map_err(|err| {
+                                AerogpuD3d9Error::Validation(format!(
+                                    "COPY_BUFFER: writeback map_async failed: {err:?}"
+                                ))
+                            })?;
+
+                            let mapped = slice.get_mapped_range();
+                            let dst_gpa = dst_backing
+                                .base_gpa
+                                .checked_add(dst_offset_bytes)
+                                .ok_or_else(|| {
+                                    AerogpuD3d9Error::Validation(
+                                        "COPY_BUFFER: dst GPA overflow".into(),
+                                    )
+                                })?;
+                            guest_memory.write(dst_gpa, &mapped)?;
+                            drop(mapped);
+                            staging.unmap();
+                        }
+                    }
                     Ok(())
                 })();
-                self.encoder = Some(encoder);
+                // For writeback copies `encoder_opt` is consumed by `finish()`; for normal copies keep
+                // batching.
+                self.encoder = encoder_opt;
                 result
             }
             AeroGpuCmd::CopyTexture2d {
@@ -1297,21 +1374,24 @@ impl AerogpuD3d9Executor {
                 ..
             } => {
                 self.ensure_encoder();
-                let mut encoder = self.encoder.take().unwrap();
+                let mut encoder_opt = self.encoder.take();
                 let result = (|| -> Result<(), AerogpuD3d9Error> {
                     if width == 0 || height == 0 {
                         return Ok(());
                     }
-                    if (flags & AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0 {
-                        return Err(AerogpuD3d9Error::Validation(
-                            "COPY_TEXTURE2D: AEROGPU_COPY_FLAG_WRITEBACK_DST is not supported yet"
-                                .into(),
-                        ));
-                    }
+                    let writeback = (flags & AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0;
                     if (flags & !AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0 {
                         return Err(AerogpuD3d9Error::Validation(format!(
                             "COPY_TEXTURE2D: unknown flags 0x{flags:08X}"
                         )));
+                    }
+                    if writeback {
+                        #[cfg(target_arch = "wasm32")]
+                        {
+                            return Err(AerogpuD3d9Error::Validation(
+                                "COPY_TEXTURE2D: AEROGPU_COPY_FLAG_WRITEBACK_DST is not supported on wasm yet".into(),
+                            ));
+                        }
                     }
 
                     let src_underlying = self.resolve_resource_handle(src_texture)?;
@@ -1441,6 +1521,10 @@ impl AerogpuD3d9Executor {
                         ctx.guest_memory,
                     )?;
 
+                    let encoder = encoder_opt.as_mut().ok_or_else(|| {
+                        AerogpuD3d9Error::Validation("COPY_TEXTURE2D: missing encoder".into())
+                    })?;
+
                     let src_tex = match self
                         .resources
                         .get(&src_underlying)
@@ -1454,12 +1538,17 @@ impl AerogpuD3d9Executor {
                             })
                         }
                     };
-                    let dst_tex = match self
+                    let (dst_tex, dst_backing, dst_row_pitch) = match self
                         .resources
                         .get(&dst_underlying)
                         .ok_or(AerogpuD3d9Error::UnknownResource(dst_texture))?
                     {
-                        Resource::Texture2d { texture, .. } => texture,
+                        Resource::Texture2d {
+                            texture,
+                            backing,
+                            row_pitch_bytes,
+                            ..
+                        } => (texture, *backing, *row_pitch_bytes),
                         _ => {
                             return Err(AerogpuD3d9Error::CopyNotSupported {
                                 src: src_texture,
@@ -1467,6 +1556,11 @@ impl AerogpuD3d9Executor {
                             })
                         }
                     };
+                    if writeback && dst_backing.is_none() {
+                        return Err(AerogpuD3d9Error::Validation(format!(
+                            "COPY_TEXTURE2D: WRITEBACK_DST requires dst texture to be guest-backed (handle={dst_texture})"
+                        )));
+                    }
 
                     encoder.copy_texture_to_texture(
                         wgpu::ImageCopyTexture {
@@ -1495,9 +1589,118 @@ impl AerogpuD3d9Executor {
                             depth_or_array_layers: 1,
                         },
                     );
+
+                    if writeback {
+                        let Some(dst_backing) = dst_backing else {
+                            return Err(AerogpuD3d9Error::Validation(
+                                "COPY_TEXTURE2D: WRITEBACK_DST requires guest-backed dst".into(),
+                            ));
+                        };
+                        let Some(guest_memory) = ctx.guest_memory else {
+                            return Err(AerogpuD3d9Error::MissingGuestMemory(dst_texture));
+                        };
+
+                        let bpp = bytes_per_pixel(dst_format);
+                        if bpp != 4 {
+                            return Err(AerogpuD3d9Error::ReadbackUnsupported(dst_texture));
+                        }
+
+                        #[cfg(not(target_arch = "wasm32"))]
+                        {
+                            let unpadded_bpr = dst_w
+                                .checked_mul(bpp)
+                                .ok_or_else(|| {
+                                    AerogpuD3d9Error::Validation(
+                                        "COPY_TEXTURE2D: row pitch overflow".into(),
+                                    )
+                                })?;
+                            let padded_bpr =
+                                align_to(unpadded_bpr, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+                            let buffer_size = padded_bpr as u64 * dst_h as u64;
+                            let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
+                                label: Some("aerogpu-d3d9.copy_texture2d.writeback"),
+                                size: buffer_size,
+                                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                                mapped_at_creation: false,
+                            });
+                            encoder.copy_texture_to_buffer(
+                                wgpu::ImageCopyTexture {
+                                    texture: dst_tex,
+                                    mip_level: 0,
+                                    origin: wgpu::Origin3d::ZERO,
+                                    aspect: wgpu::TextureAspect::All,
+                                },
+                                wgpu::ImageCopyBuffer {
+                                    buffer: &staging,
+                                    layout: wgpu::ImageDataLayout {
+                                        offset: 0,
+                                        bytes_per_row: Some(padded_bpr),
+                                        rows_per_image: Some(dst_h),
+                                    },
+                                },
+                                wgpu::Extent3d {
+                                    width: dst_w,
+                                    height: dst_h,
+                                    depth_or_array_layers: 1,
+                                },
+                            );
+                            let encoder = encoder_opt.take().ok_or_else(|| {
+                                AerogpuD3d9Error::Validation("COPY_TEXTURE2D: missing encoder".into())
+                            })?;
+                            self.queue.submit([encoder.finish()]);
+
+                            let slice = staging.slice(..);
+                            let state = std::sync::Arc::new((
+                                std::sync::Mutex::new(None::<Result<(), wgpu::BufferAsyncError>>),
+                                std::sync::Condvar::new(),
+                            ));
+                            let state_clone = state.clone();
+                            slice.map_async(wgpu::MapMode::Read, move |res| {
+                                let (lock, cv) = &*state_clone;
+                                *lock.lock().unwrap() = Some(res);
+                                cv.notify_one();
+                            });
+                            self.poll();
+                            let (lock, cv) = &*state;
+                            let mut guard = lock.lock().unwrap();
+                            while guard.is_none() {
+                                guard = cv.wait(guard).unwrap();
+                            }
+                            let map_res = guard.take().unwrap();
+                            map_res.map_err(|err| {
+                                AerogpuD3d9Error::Validation(format!(
+                                    "COPY_TEXTURE2D: writeback map_async failed: {err:?}"
+                                ))
+                            })?;
+
+                            let mapped = slice.get_mapped_range();
+                            let row_pitch = if dst_row_pitch != 0 {
+                                dst_row_pitch.max(unpadded_bpr) as u64
+                            } else {
+                                dst_backing.row_pitch_bytes.max(unpadded_bpr) as u64
+                            };
+                            for row in 0..dst_h as u64 {
+                                let src_start = row as usize * padded_bpr as usize;
+                                let src_end = src_start + unpadded_bpr as usize;
+                                let dst_gpa = dst_backing
+                                    .base_gpa
+                                    .checked_add(row * row_pitch)
+                                    .ok_or_else(|| {
+                                        AerogpuD3d9Error::Validation(
+                                            "COPY_TEXTURE2D: dst GPA overflow".into(),
+                                        )
+                                    })?;
+                                guest_memory.write(dst_gpa, &mapped[src_start..src_end])?;
+                            }
+                            drop(mapped);
+                            staging.unmap();
+                        }
+                    }
                     Ok(())
                 })();
-                self.encoder = Some(encoder);
+                // For writeback copies `encoder_opt` is consumed by `finish()`; for normal copies keep
+                // batching.
+                self.encoder = encoder_opt;
                 result
             }
             AeroGpuCmd::CreateShaderDxbc {

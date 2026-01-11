@@ -234,6 +234,15 @@ impl aero_gpu::GuestMemory for MemoryBusGuestMemory<'_> {
         self.mem.borrow_mut().read_physical(gpa, dst);
         Ok(())
     }
+
+    fn write(&self, gpa: u64, src: &[u8]) -> Result<(), aero_gpu::GuestMemoryError> {
+        let len = src.len();
+        let _end = gpa
+            .checked_add(len as u64)
+            .ok_or(aero_gpu::GuestMemoryError { gpa, len })?;
+        self.mem.borrow_mut().write_physical(gpa, src);
+        Ok(())
+    }
 }
 
 #[cfg(feature = "aerogpu-native")]

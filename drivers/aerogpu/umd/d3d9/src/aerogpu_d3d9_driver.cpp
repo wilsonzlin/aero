@@ -3428,22 +3428,87 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
     }
   }
 
-  // System-memory pool resources are CPU-only: the host does not need a backing
-  // GPU object for readback destinations.
+  // System-memory pool resources (e.g. CreateOffscreenPlainSurface with
+  // D3DPOOL_SYSTEMMEM) are used by the D3D9 runtime for readback
+  // (GetRenderTargetData). In WDDM builds we back these with a guest allocation
+  // so the host can write pixels directly into guest memory
+  // (AEROGPU_COPY_FLAG_WRITEBACK_DST) and the CPU can lock the allocation to
+  // read them.
   if (res->pool == kD3DPOOL_SYSTEMMEM) {
     if (wants_shared) {
       return trace.ret(D3DERR_INVALIDCALL);
     }
-    try {
-      res->storage.resize(res->size_bytes);
-    } catch (...) {
-      return E_OUTOFMEMORY;
+    // In non-WDDM/portable builds there is no allocation-table plumbing, so keep
+    // systemmem resources CPU-only (no host object).
+    if (dev->wddm_context.hContext == 0) {
+      try {
+        res->storage.resize(res->size_bytes);
+      } catch (...) {
+        return trace.ret(E_OUTOFMEMORY);
+      }
+      res->handle = 0;
+      res->backing_alloc_id = 0;
+      res->backing_offset_bytes = 0;
+      res->share_token = 0;
+      res->wddm_hAllocation = 0;
+      pCreateResource->hResource.pDrvPrivate = res.release();
+      return trace.ret(S_OK);
     }
-    res->handle = 0;
-    res->backing_alloc_id = 0;
+
+    // WDDM path: back the systemmem surface with a guest allocation so the host
+    // can write pixels back into guest memory (WRITEBACK_DST) and the CPU can
+    // lock/map the allocation to read them.
+    if (!pCreateResource->pKmdAllocPrivateData ||
+        pCreateResource->KmdAllocPrivateDataSize < sizeof(aerogpu_wddm_alloc_priv)) {
+      logf("aerogpu-d3d9: Create systemmem resource missing private data buffer (have=%u need=%u)\n",
+           pCreateResource->KmdAllocPrivateDataSize,
+           static_cast<unsigned>(sizeof(aerogpu_wddm_alloc_priv)));
+      return trace.ret(D3DERR_INVALIDCALL);
+    }
+
+    // WRITEBACK_DST requires the destination to have a host resource.
+    if (d3d9_format_to_aerogpu(res->format) == AEROGPU_FORMAT_INVALID) {
+      return trace.ret(D3DERR_INVALIDCALL);
+    }
+
+    const uint32_t alloc_id = allocate_umd_alloc_id(dev->adapter);
+    if (!alloc_id) {
+      logf("aerogpu-d3d9: Failed to allocate systemmem alloc_id (handle=%u)\n",
+           static_cast<unsigned>(res->handle));
+      return trace.ret(E_FAIL);
+    }
+
+    aerogpu_wddm_alloc_priv priv{};
+    priv.magic = AEROGPU_WDDM_ALLOC_PRIV_MAGIC;
+    priv.version = AEROGPU_WDDM_ALLOC_PRIV_VERSION;
+    priv.alloc_id = alloc_id;
+    priv.flags = AEROGPU_WDDM_ALLOC_PRIV_FLAG_NONE;
+    priv.share_token = 0;
+    priv.size_bytes = static_cast<aerogpu_wddm_u64>(res->size_bytes);
+    priv.reserved0 = encode_wddm_alloc_priv_desc(res->format, res->width, res->height);
+    std::memcpy(pCreateResource->pKmdAllocPrivateData, &priv, sizeof(priv));
+
+    res->backing_alloc_id = alloc_id;
     res->backing_offset_bytes = 0;
     res->share_token = 0;
-    res->wddm_hAllocation = 0;
+    res->is_shared = false;
+    res->is_shared_alias = false;
+
+    if (res->wddm_hAllocation == 0) {
+      logf("aerogpu-d3d9: Create systemmem resource missing WDDM hAllocation (handle=%u alloc_id=%u)\n",
+           static_cast<unsigned>(res->handle),
+           static_cast<unsigned>(res->backing_alloc_id));
+      return trace.ret(E_FAIL);
+    }
+
+    // Ensure CPU copies/locks map the allocation rather than reading stale
+    // `storage` bytes.
+    res->storage.clear();
+
+    if (!emit_create_resource_locked(dev, res.get())) {
+      return trace.ret(E_OUTOFMEMORY);
+    }
+
     pCreateResource->hResource.pDrvPrivate = res.release();
     return trace.ret(S_OK);
   }
@@ -5028,10 +5093,10 @@ HRESULT AEROGPU_D3D9_CALL device_unlock(
   }
 
   res->locked = false;
+  res->locked_ptr = nullptr;
 
   const uint32_t locked_flags = res->locked_flags;
   res->locked_flags = 0;
-  res->locked_ptr = nullptr;
 
 #if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
   if (res->wddm_hAllocation != 0 && dev->wddm_device != 0) {
@@ -5041,7 +5106,7 @@ HRESULT AEROGPU_D3D9_CALL device_unlock(
            static_cast<unsigned long>(hr),
            static_cast<unsigned>(res->backing_alloc_id),
            static_cast<unsigned long long>(res->wddm_hAllocation));
-      return hr;
+      return trace.ret(hr);
     }
   }
 #endif
@@ -5051,17 +5116,17 @@ HRESULT AEROGPU_D3D9_CALL device_unlock(
   // can re-upload on demand.
   if (res->handle != 0 && res->backing_alloc_id != 0 && (locked_flags & kD3DLOCK_READONLY) == 0 && size) {
     if (!ensure_cmd_space(dev, align_up(sizeof(aerogpu_cmd_resource_dirty_range), 4))) {
-      return E_OUTOFMEMORY;
+      return trace.ret(E_OUTOFMEMORY);
     }
 
     const HRESULT hr = track_resource_allocation_locked(dev, res, /*write=*/false);
     if (FAILED(hr)) {
-      return hr;
+      return trace.ret(hr);
     }
 
     auto* cmd = append_fixed_locked<aerogpu_cmd_resource_dirty_range>(dev, AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
     if (!cmd) {
-      return E_OUTOFMEMORY;
+      return trace.ret(E_OUTOFMEMORY);
     }
     cmd->resource_handle = res->handle;
     cmd->reserved0 = 0;
@@ -5179,12 +5244,63 @@ HRESULT AEROGPU_D3D9_CALL device_get_render_target_data(
     return trace.ret(E_FAIL);
   }
 
-  // Flush prior GPU work and wait for completion so the CPU sees final pixels.
+  if (src->width != dst->width || src->height != dst->height || src->format != dst->format) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+  const uint32_t bpp = bytes_per_pixel(src->format);
+  if (bpp != 4) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+  if (!src->handle || !dst->handle) {
+    return trace.ret(kD3DErrInvalidCall);
+  }
+  if (dst->backing_alloc_id == 0) {
+    // Writeback requires a guest allocation backing the destination so the host
+    // can populate the systemmem surface bytes.
+    return trace.ret(kD3DErrInvalidCall);
+  }
+
   uint64_t fence = 0;
   {
     std::lock_guard<std::mutex> lock(dev->mutex);
+
+    // Ensure we can fit the copy packet before tracking allocations: allocation
+    // tracking can force a submission split, and we must not split after
+    // populating the allocation list for this command.
+    if (!ensure_cmd_space(dev, align_up(sizeof(aerogpu_cmd_copy_texture2d), 4))) {
+      return trace.ret(E_OUTOFMEMORY);
+    }
+
+    if (track_resource_allocation_locked(dev, dst, /*write=*/true) < 0) {
+      return trace.ret(E_FAIL);
+    }
+    if (track_resource_allocation_locked(dev, src, /*write=*/false) < 0) {
+      return trace.ret(E_FAIL);
+    }
+
+    auto* cmd = append_fixed_locked<aerogpu_cmd_copy_texture2d>(dev, AEROGPU_CMD_COPY_TEXTURE2D);
+    if (!cmd) {
+      return trace.ret(E_OUTOFMEMORY);
+    }
+    cmd->dst_texture = dst->handle;
+    cmd->src_texture = src->handle;
+    cmd->dst_mip_level = 0;
+    cmd->dst_array_layer = 0;
+    cmd->src_mip_level = 0;
+    cmd->src_array_layer = 0;
+    cmd->dst_x = 0;
+    cmd->dst_y = 0;
+    cmd->src_x = 0;
+    cmd->src_y = 0;
+    cmd->width = dst->width;
+    cmd->height = dst->height;
+    cmd->flags = AEROGPU_COPY_FLAG_WRITEBACK_DST;
+    cmd->reserved0 = 0;
+
     fence = submit(dev);
   }
+
+  // Wait for completion so the CPU sees final pixels.
   const FenceWaitResult wait_res = wait_for_fence(dev, fence, /*timeout_ms=*/2000);
   if (wait_res == FenceWaitResult::Failed) {
     return trace.ret(E_FAIL);
@@ -5192,8 +5308,7 @@ HRESULT AEROGPU_D3D9_CALL device_get_render_target_data(
   if (wait_res == FenceWaitResult::NotReady) {
     return trace.ret(kD3dErrWasStillDrawing);
   }
-
-  return trace.ret(copy_surface_bytes(dev, src, dst));
+  return trace.ret(S_OK);
 }
 
 HRESULT AEROGPU_D3D9_CALL device_copy_rects(
@@ -5212,6 +5327,68 @@ HRESULT AEROGPU_D3D9_CALL device_copy_rects(
   auto* dst = as_resource(pCopyRects->hDstResource);
   if (!dev || !src || !dst) {
     return trace.ret(E_INVALIDARG);
+  }
+
+  // Fast path: GPU -> systemmem copy (readback). If the destination is a
+  // systemmem surface backed by a guest allocation, emit a host copy with
+  // WRITEBACK_DST so the bytes land in guest memory for CPU LockRect.
+  if (dst->pool == kD3DPOOL_SYSTEMMEM &&
+      dst->backing_alloc_id != 0 &&
+      src->handle != 0 &&
+      dst->handle != 0 &&
+      src->format == dst->format &&
+      (!pCopyRects->pSrcRects || pCopyRects->rect_count == 0)) {
+    const uint32_t width = std::min<uint32_t>(src->width, dst->width);
+    const uint32_t height = std::min<uint32_t>(src->height, dst->height);
+    if (width == 0 || height == 0) {
+      return trace.ret(S_OK);
+    }
+
+    uint64_t fence = 0;
+    {
+      std::lock_guard<std::mutex> lock(dev->mutex);
+
+      if (!ensure_cmd_space(dev, align_up(sizeof(aerogpu_cmd_copy_texture2d), 4))) {
+        return trace.ret(E_OUTOFMEMORY);
+      }
+
+      if (track_resource_allocation_locked(dev, dst, /*write=*/true) < 0) {
+        return trace.ret(E_FAIL);
+      }
+      if (track_resource_allocation_locked(dev, src, /*write=*/false) < 0) {
+        return trace.ret(E_FAIL);
+      }
+
+      auto* cmd = append_fixed_locked<aerogpu_cmd_copy_texture2d>(dev, AEROGPU_CMD_COPY_TEXTURE2D);
+      if (!cmd) {
+        return trace.ret(E_OUTOFMEMORY);
+      }
+      cmd->dst_texture = dst->handle;
+      cmd->src_texture = src->handle;
+      cmd->dst_mip_level = 0;
+      cmd->dst_array_layer = 0;
+      cmd->src_mip_level = 0;
+      cmd->src_array_layer = 0;
+      cmd->dst_x = 0;
+      cmd->dst_y = 0;
+      cmd->src_x = 0;
+      cmd->src_y = 0;
+      cmd->width = width;
+      cmd->height = height;
+      cmd->flags = AEROGPU_COPY_FLAG_WRITEBACK_DST;
+      cmd->reserved0 = 0;
+
+      fence = submit(dev);
+    }
+
+    const FenceWaitResult wait_res = wait_for_fence(dev, fence, /*timeout_ms=*/2000);
+    if (wait_res == FenceWaitResult::Failed) {
+      return trace.ret(E_FAIL);
+    }
+    if (wait_res == FenceWaitResult::NotReady) {
+      return trace.ret(kD3dErrWasStillDrawing);
+    }
+    return trace.ret(S_OK);
   }
 
   uint64_t fence = 0;

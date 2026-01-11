@@ -1,7 +1,7 @@
 mod common;
 
 use aero_gpu::aerogpu_executor::{AllocEntry, AllocTable};
-use aero_gpu::{AerogpuD3d9Error, AerogpuD3d9Executor, VecGuestMemory};
+use aero_gpu::{AerogpuD3d9Error, AerogpuD3d9Executor, GuestMemory, VecGuestMemory};
 use aero_protocol::aerogpu::{
     aerogpu_cmd::{
         AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode,
@@ -199,7 +199,7 @@ fn d3d9_cmd_stream_flushes_guest_backed_resources_from_dirty_ranges() {
 
     let tex_data = [255u8, 0, 0, 255];
 
-    let mut guest_memory = VecGuestMemory::new(0x4000);
+    let guest_memory = VecGuestMemory::new(0x4000);
     guest_memory.write(VB_GPA, &vb_data).unwrap();
     guest_memory.write(TEX_GPA, &tex_data).unwrap();
 
@@ -482,7 +482,7 @@ fn d3d9_copy_texture2d_flushes_dst_dirty_ranges_before_sampling() {
     let src_tex_data = [255u8, 0, 0, 255];
     let dst_tex_data = [0u8, 255, 0, 255];
 
-    let mut guest_memory = VecGuestMemory::new(0x4000);
+    let guest_memory = VecGuestMemory::new(0x4000);
     guest_memory.write(DST_GPA, &dst_tex_data).unwrap();
 
     let alloc_table = AllocTable::new([(
@@ -719,7 +719,7 @@ fn d3d9_copy_texture2d_flushes_dst_dirty_ranges_before_sampling() {
 }
 
 #[test]
-fn d3d9_copy_buffer_writeback_flag_is_rejected() {
+fn d3d9_copy_buffer_writeback_writes_guest_memory() {
     let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
         Ok(exec) => exec,
         Err(AerogpuD3d9Error::AdapterNotFound) => {
@@ -731,10 +731,30 @@ fn d3d9_copy_buffer_writeback_flag_is_rejected() {
 
     // Protocol constants from `aero-protocol`.
     const OPC_CREATE_BUFFER: u32 = AerogpuCmdOpcode::CreateBuffer as u32;
+    const OPC_UPLOAD_RESOURCE: u32 = AerogpuCmdOpcode::UploadResource as u32;
     const OPC_COPY_BUFFER: u32 = AerogpuCmdOpcode::CopyBuffer as u32;
 
     const SRC_HANDLE: u32 = 1;
     const DST_HANDLE: u32 = 2;
+
+    const DST_ALLOC_ID: u32 = 1;
+    const DST_GPA: u64 = 0x1000;
+
+    let src_data: [u8; 16] = [
+        0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D,
+        0x1E, 0x1F,
+    ];
+
+    let guest_memory = VecGuestMemory::new(0x4000);
+    guest_memory.write(DST_GPA, &[0u8; 16]).unwrap();
+
+    let alloc_table = AllocTable::new([(
+        DST_ALLOC_ID,
+        AllocEntry {
+            gpa: DST_GPA,
+            size_bytes: 4096,
+        },
+    )]);
 
     let stream = build_stream(|out| {
         emit_packet(out, OPC_CREATE_BUFFER, |out| {
@@ -750,9 +770,17 @@ fn d3d9_copy_buffer_writeback_flag_is_rejected() {
             push_u32(out, DST_HANDLE);
             push_u32(out, 0); // usage_flags
             push_u64(out, 16); // size_bytes
-            push_u32(out, 0); // backing_alloc_id
+            push_u32(out, DST_ALLOC_ID);
             push_u32(out, 0); // backing_offset_bytes
             push_u64(out, 0); // reserved0
+        });
+
+        emit_packet(out, OPC_UPLOAD_RESOURCE, |out| {
+            push_u32(out, SRC_HANDLE);
+            push_u32(out, 0); // reserved0
+            push_u64(out, 0); // offset_bytes
+            push_u64(out, src_data.len() as u64); // size_bytes
+            out.extend_from_slice(&src_data);
         });
 
         emit_packet(out, OPC_COPY_BUFFER, |out| {
@@ -766,9 +794,107 @@ fn d3d9_copy_buffer_writeback_flag_is_rejected() {
         });
     });
 
-    match exec.execute_cmd_stream(&stream) {
-        Ok(_) => panic!("expected COPY_BUFFER writeback flag to be rejected"),
-        Err(AerogpuD3d9Error::Validation(msg)) => assert!(msg.contains("WRITEBACK_DST")),
-        Err(other) => panic!("unexpected error: {other:?}"),
-    }
+    exec.execute_cmd_stream_with_guest_memory(&stream, &guest_memory, Some(&alloc_table))
+        .expect("execute should succeed");
+
+    let mut out = [0u8; 16];
+    guest_memory.read(DST_GPA, &mut out).unwrap();
+    assert_eq!(out, src_data);
+}
+
+#[test]
+fn d3d9_copy_texture2d_writeback_writes_guest_memory() {
+    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
+        Ok(exec) => exec,
+        Err(AerogpuD3d9Error::AdapterNotFound) => {
+            eprintln!("skipping copy texture writeback test: wgpu adapter not found");
+            return;
+        }
+        Err(err) => panic!("failed to create executor: {err}"),
+    };
+
+    const OPC_CREATE_TEXTURE2D: u32 = AerogpuCmdOpcode::CreateTexture2d as u32;
+    const OPC_UPLOAD_RESOURCE: u32 = AerogpuCmdOpcode::UploadResource as u32;
+    const OPC_COPY_TEXTURE2D: u32 = AerogpuCmdOpcode::CopyTexture2d as u32;
+
+    const SRC_TEX_HANDLE: u32 = 1;
+    const DST_TEX_HANDLE: u32 = 2;
+
+    const DST_ALLOC_ID: u32 = 1;
+    const DST_GPA: u64 = 0x1000;
+
+    let pixel = [0xAAu8, 0xBB, 0xCC, 0xDD];
+
+    let guest_memory = VecGuestMemory::new(0x4000);
+    guest_memory.write(DST_GPA, &[0u8; 4]).unwrap();
+
+    let alloc_table = AllocTable::new([(
+        DST_ALLOC_ID,
+        AllocEntry {
+            gpa: DST_GPA,
+            size_bytes: 4096,
+        },
+    )]);
+
+    let stream = build_stream(|out| {
+        emit_packet(out, OPC_CREATE_TEXTURE2D, |out| {
+            push_u32(out, SRC_TEX_HANDLE);
+            push_u32(out, AEROGPU_RESOURCE_USAGE_TEXTURE);
+            push_u32(out, AerogpuFormat::R8G8B8A8Unorm as u32);
+            push_u32(out, 1); // width
+            push_u32(out, 1); // height
+            push_u32(out, 1); // mip_levels
+            push_u32(out, 1); // array_layers
+            push_u32(out, 4); // row_pitch_bytes
+            push_u32(out, 0); // backing_alloc_id
+            push_u32(out, 0); // backing_offset_bytes
+            push_u64(out, 0); // reserved0
+        });
+
+        emit_packet(out, OPC_CREATE_TEXTURE2D, |out| {
+            push_u32(out, DST_TEX_HANDLE);
+            push_u32(out, AEROGPU_RESOURCE_USAGE_TEXTURE);
+            push_u32(out, AerogpuFormat::R8G8B8A8Unorm as u32);
+            push_u32(out, 1); // width
+            push_u32(out, 1); // height
+            push_u32(out, 1); // mip_levels
+            push_u32(out, 1); // array_layers
+            push_u32(out, 4); // row_pitch_bytes
+            push_u32(out, DST_ALLOC_ID);
+            push_u32(out, 0); // backing_offset_bytes
+            push_u64(out, 0); // reserved0
+        });
+
+        emit_packet(out, OPC_UPLOAD_RESOURCE, |out| {
+            push_u32(out, SRC_TEX_HANDLE);
+            push_u32(out, 0); // reserved0
+            push_u64(out, 0); // offset_bytes
+            push_u64(out, pixel.len() as u64); // size_bytes
+            out.extend_from_slice(&pixel);
+        });
+
+        emit_packet(out, OPC_COPY_TEXTURE2D, |out| {
+            push_u32(out, DST_TEX_HANDLE);
+            push_u32(out, SRC_TEX_HANDLE);
+            push_u32(out, 0); // dst_mip_level
+            push_u32(out, 0); // dst_array_layer
+            push_u32(out, 0); // src_mip_level
+            push_u32(out, 0); // src_array_layer
+            push_u32(out, 0); // dst_x
+            push_u32(out, 0); // dst_y
+            push_u32(out, 0); // src_x
+            push_u32(out, 0); // src_y
+            push_u32(out, 1); // width
+            push_u32(out, 1); // height
+            push_u32(out, AEROGPU_COPY_FLAG_WRITEBACK_DST);
+            push_u32(out, 0); // reserved0
+        });
+    });
+
+    exec.execute_cmd_stream_with_guest_memory(&stream, &guest_memory, Some(&alloc_table))
+        .expect("execute should succeed");
+
+    let mut out = [0u8; 4];
+    guest_memory.read(DST_GPA, &mut out).unwrap();
+    assert_eq!(out, pixel);
 }
