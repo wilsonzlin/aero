@@ -18,7 +18,7 @@ Implementation references (current repo):
 - Rust wire contract + action/completion queue (`UsbPassthroughDevice`): `crates/aero-usb/src/passthrough.rs`
 - Rust guest-visible UHCI controller + TD handshake mapping: `crates/aero-usb/src/uhci.rs`
 - WASM export bridge (`UsbPassthroughBridge`): `crates/aero-wasm/src/lib.rs`
-- WASM guest-visible UHCI controller (`UhciControllerBridge`) + WebUSB passthrough device (root port 1): `crates/aero-wasm/src/uhci_controller_bridge.rs` (re-exported from `crates/aero-wasm/src/lib.rs`)
+- WASM guest-visible UHCI controller (`UhciControllerBridge`) + WebUSB passthrough device lifecycle (`set_connected`, `drain_actions`, `push_completion`, `reset` on root port 1): `crates/aero-wasm/src/uhci_controller_bridge.rs` (re-exported from `crates/aero-wasm/src/lib.rs`)
 - (Dev/harness) WASM standalone WebUSB UHCI bridge (`WebUsbUhciBridge`): `crates/aero-wasm/src/webusb_uhci_bridge.rs` (re-exported from `crates/aero-wasm/src/lib.rs`)
 - WASM demo driver (`UsbPassthroughDemo`; queues GET_DESCRIPTOR requests to validate the action↔completion contract end-to-end): `crates/aero-wasm/src/lib.rs`
 - WASM UHCI enumeration harness (dev smoke; `WebUsbUhciPassthroughHarness`): `crates/aero-wasm/src/webusb_uhci_passthrough_harness.rs`
@@ -26,6 +26,7 @@ Implementation references (current repo):
 - TS WebUSB backend/executor (`WebUsbBackend`): `web/src/usb/webusb_backend.ts` (+ `web/src/usb/webusb_executor.ts`)
 - TS main-thread broker for workers (optional): `web/src/usb/usb_broker.ts` (+ `web/src/usb/usb_proxy_protocol.ts`, `web/src/usb/usb_proxy_ring.ts`)
 - TS worker-side passthrough runtime (action/completion pump): `web/src/usb/webusb_passthrough_runtime.ts`
+- Guest-visible worker wiring (UHCI PCI device + WebUSB hotplug + passthrough runtime): `web/src/workers/io.worker.ts`
 - TS worker-side demo runtime (drains `UsbPassthroughDemo` actions, pushes completions, defines `usb.demo.run`, emits `usb.demoResult`): `web/src/usb/usb_passthrough_demo_runtime.ts`
 - TS worker-side UHCI harness runner (dev smoke): `web/src/usb/webusb_harness_runtime.ts`
 - TS guest-visible UHCI PCI device (I/O worker): `web/src/io/devices/uhci.ts`
