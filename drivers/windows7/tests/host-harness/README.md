@@ -274,8 +274,8 @@ Notes:
   - It *attempts* to attach virtio-input keyboard/mouse devices (`virtio-keyboard-pci` + `virtio-mouse-pci`) so the
     guest virtio-input selftest can run, but will warn and skip them if the QEMU binary does not advertise those
     devices.
-    - In transitional mode, virtio-input enumerates with the older transitional ID space (e.g. `DEV_1011`), so you need
-      a virtio-input driver package that binds the transitional IDs.
+    - In transitional mode, virtio-input **may** enumerate with the older transitional ID space (e.g. `DEV_1011`)
+      depending on QEMU, so you need a virtio-input driver package that binds the IDs your QEMU build exposes.
 
 Note: transitional mode is incompatible with virtio-snd testing (`-WithVirtioSnd` / `--with-virtio-snd`), since virtio-snd
 testing requires the contract-v1 overrides (`disable-legacy=on,x-pci-revision=0x01`).

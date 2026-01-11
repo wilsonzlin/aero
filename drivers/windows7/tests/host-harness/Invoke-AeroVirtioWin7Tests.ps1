@@ -33,8 +33,8 @@ param(
   # - It uses QEMU defaults for virtio-blk/net and relaxes per-test marker requirements.
   # - It attempts to attach virtio-input keyboard/mouse devices (virtio-keyboard-pci + virtio-mouse-pci) when
   #   the QEMU binary advertises them; otherwise it warns that the guest virtio-input selftest will likely FAIL.
-  #   In transitional mode virtio-input enumerates with the older transitional ID space (e.g. DEV_1011), so the
-  #   guest must have a driver package that binds the transitional IDs.
+  #   In transitional mode, virtio-input may enumerate with the older transitional ID space (e.g. DEV_1011)
+  #   depending on QEMU, so the guest must have a driver package that binds the IDs your QEMU build exposes.
   [Parameter(Mandatory = $false)]
   [switch]$VirtioTransitional,
 
