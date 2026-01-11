@@ -141,7 +141,10 @@ Expected output (once `virtiosnd.sys` exists in `inf/`):
 
 ```text
 inf\aero-virtio-snd.cat
+inf\virtio-snd.cat
 ```
+
+`virtio-snd.cat` is only generated if `inf\virtio-snd.inf` is present.
 
 ## Signing (SYS + CAT)
 
@@ -157,6 +160,7 @@ This signs:
 
 - `inf\virtiosnd.sys`
 - `inf\aero-virtio-snd.cat`
+- `inf\virtio-snd.cat` (if `inf\virtio-snd.inf` is present)
 
 ## Installation (Device Manager → “Have Disk…”)
 
@@ -164,7 +168,7 @@ This signs:
 2. **Browse my computer**
 3. **Let me pick** → **Have Disk…**
 4. Browse to `drivers/windows7/virtio-snd/inf/`
-5. Select `aero-virtio-snd.inf`
+5. Select `aero-virtio-snd.inf` (recommended for Aero contract v1)
 
 ## Offline / slipstream installation (optional)
 

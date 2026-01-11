@@ -349,7 +349,10 @@ Expected output:
 
 ```text
 inf\aero-virtio-snd.cat
+inf\virtio-snd.cat
 ```
+
+`virtio-snd.cat` is only generated if `inf\virtio-snd.inf` is present.
 
 ### 3) Sign the SYS + CAT
 
@@ -363,6 +366,7 @@ This signs:
 
 - `inf\virtiosnd.sys`
 - `inf\aero-virtio-snd.cat`
+- `inf\virtio-snd.cat` (if `inf\virtio-snd.inf` is present)
 
 ## Windows 7 guest setup
 
@@ -415,7 +419,8 @@ guest-tools\drivers\<arch>\virtio-snd\
    - `aero-virtio-snd.inf`
    - `virtiosnd.sys`
    - `aero-virtio-snd.cat` (signed)
-2. Use Device Manager → Update Driver → "Have Disk..." and point to `inf\` (or `release\<arch>\virtio-snd\` once packaged).
+   - (Optional) `virtio-snd.inf` + `virtio-snd.cat` (signed)
+2. Use Device Manager → Update Driver → "Have Disk..." and point to `inf\` (or `release\<arch>\virtio-snd\` once packaged). Pick the desired INF when prompted.
 
 For offline/slipstream installation into Windows 7 images (WIM or offline OS), see:
 
