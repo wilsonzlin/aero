@@ -84,3 +84,37 @@ test("agent-env: preserves non-sccache rustc wrappers", { skip: process.platform
     fs.rmSync(repoRoot, { recursive: true, force: true });
   }
 });
+
+test(
+  "agent-env: AERO_DISABLE_RUSTC_WRAPPER forces wrappers off (even non-sccache)",
+  { skip: process.platform === "win32" },
+  () => {
+    const repoRoot = setupTempRepo();
+    try {
+      const stdout = execFileSync(
+        "bash",
+        [
+          "-c",
+          'source scripts/agent-env.sh >/dev/null; printf "%s|%s|%s|%s" "$RUSTC_WRAPPER" "$RUSTC_WORKSPACE_WRAPPER" "$CARGO_BUILD_RUSTC_WRAPPER" "$CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER"',
+        ],
+        {
+          cwd: repoRoot,
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            AERO_DISABLE_RUSTC_WRAPPER: "1",
+            RUSTC_WRAPPER: "ccache",
+            RUSTC_WORKSPACE_WRAPPER: "/usr/bin/ccache",
+            CARGO_BUILD_RUSTC_WRAPPER: "ccache",
+            CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER: "ccache",
+          },
+          stdio: ["ignore", "pipe", "pipe"],
+        },
+      );
+
+      assert.equal(stdout, "|||");
+    } finally {
+      fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+  },
+);
