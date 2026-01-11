@@ -64,7 +64,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.tflint.d/plugins
-          key: ${{ runner.os }}-tflint-${{ hashFiles(format('{0}/.tflint.hcl', matrix.module)) }}
+          key: ${{ runner.os }}-tflint-${{ hashFiles('infra/**/.tflint.hcl') }}
           restore-keys: |
             ${{ runner.os }}-tflint-
 
