@@ -3,10 +3,12 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
+mod cmd_snapshot;
 mod cmd_test_all;
 mod cmd_wasm;
 mod cmd_web;
 mod error;
+
 // Fixture "sources" live under `tests/fixtures/` so they can be consumed by
 // system/integration tests and by this generator.
 //
@@ -34,6 +36,7 @@ fn try_main() -> Result<()> {
 
     match cmd.as_str() {
         "fixtures" => cmd_fixtures(args.collect()),
+        "snapshot" => cmd_snapshot::cmd(args.collect()),
         "test-all" => cmd_test_all::cmd(args.collect()),
         "wasm" => cmd_wasm::cmd(args.collect()),
         "web" => cmd_web::cmd(args.collect()),
@@ -50,12 +53,15 @@ fn help() -> Result<()> {
         "\
 Usage:
   cargo xtask fixtures [--check]
+  cargo xtask snapshot inspect <path>
+  cargo xtask snapshot validate [--deep] <path>
   cargo xtask test-all [options] [-- <extra playwright args>]
   cargo xtask wasm [single|threaded|both] [dev|release]
   cargo xtask web dev|build|preview
 
 Commands:
   fixtures   Generate tiny, deterministic test fixtures under `tests/fixtures/`.
+  snapshot   Inspect/validate an `aero-snapshot` file without loading multi-GB RAM payloads.
   test-all   Run the full test stack (Rust, WASM, TypeScript, Playwright).
   wasm       Build the Rust→WASM packages used by the web app.
   web        Run web (Node/Vite) tasks via npm.

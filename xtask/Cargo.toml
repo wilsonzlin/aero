@@ -6,3 +6,9 @@ publish = false
 license = "MIT OR Apache-2.0"
 
 [dependencies]
+aero-snapshot = { path = "../crates/aero-snapshot" }
+
+[dev-dependencies]
+assert_cmd = "2"
+predicates = "3"
+tempfile = "3"

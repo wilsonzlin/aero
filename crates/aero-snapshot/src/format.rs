@@ -14,6 +14,19 @@ impl SectionId {
     pub const RAM: SectionId = SectionId(6);
     /// Multi-vCPU CPU state. Newer snapshots may use this instead of `CPU`.
     pub const CPUS: SectionId = SectionId(7);
+
+    pub fn name(self) -> Option<&'static str> {
+        match self {
+            SectionId::META => Some("META"),
+            SectionId::CPU => Some("CPU"),
+            SectionId::MMU => Some("MMU"),
+            SectionId::DEVICES => Some("DEVICES"),
+            SectionId::DISKS => Some("DISKS"),
+            SectionId::RAM => Some("RAM"),
+            SectionId::CPUS => Some("CPUS"),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -34,4 +47,41 @@ impl DeviceId {
     pub const BIOS: DeviceId = DeviceId(10);
     /// Memory bus/host glue state (A20 gate, ROM ranges, etc.).
     pub const MEMORY: DeviceId = DeviceId(11);
+
+    pub fn name(self) -> Option<&'static str> {
+        match self {
+            DeviceId::PIC => Some("PIC"),
+            DeviceId::APIC => Some("APIC"),
+            DeviceId::PIT => Some("PIT"),
+            DeviceId::RTC => Some("RTC"),
+            DeviceId::PCI => Some("PCI"),
+            DeviceId::DISK_CONTROLLER => Some("DISK_CONTROLLER"),
+            DeviceId::VGA => Some("VGA"),
+            DeviceId::SERIAL => Some("SERIAL"),
+            DeviceId::CPU_INTERNAL => Some("CPU_INTERNAL"),
+            DeviceId::BIOS => Some("BIOS"),
+            DeviceId::MEMORY => Some("MEMORY"),
+            _ => None,
+        }
+    }
+}
+
+impl core::fmt::Display for SectionId {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        if let Some(name) = self.name() {
+            write!(f, "{name}({})", self.0)
+        } else {
+            write!(f, "SectionId({})", self.0)
+        }
+    }
+}
+
+impl core::fmt::Display for DeviceId {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        if let Some(name) = self.name() {
+            write!(f, "{name}({})", self.0)
+        } else {
+            write!(f, "DeviceId({})", self.0)
+        }
+    }
 }
