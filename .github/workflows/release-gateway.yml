@@ -45,7 +45,9 @@ jobs:
             # Prefer semver without the leading v inside the container (tags still include both forms).
             echo "AERO_GATEWAY_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
           else
-            echo "AERO_GATEWAY_VERSION=${GITHUB_REF_NAME}" >> "$GITHUB_ENV"
+            # For non-tag builds (main + workflow_dispatch), keep the image self-describing by
+            # using the same tag format we publish to GHCR (sha-<short>).
+            echo "AERO_GATEWAY_VERSION=sha-${GITHUB_SHA::12}" >> "$GITHUB_ENV"
           fi
 
       - name: Set up Docker Buildx
