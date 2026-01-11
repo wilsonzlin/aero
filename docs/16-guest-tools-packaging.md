@@ -115,3 +115,18 @@ Before producing any output, the packager verifies that:
 - each required driver's `.inf` files contain the expected hardware IDs (regex match).
 
 These checks are driven by a small JSON spec passed via `--spec`.
+
+## CI coverage (packager + config/spec drift)
+
+GitHub Actions runs a dedicated workflow (`guest-tools-packager`) on PRs that touch Guest Tools
+packaging inputs (`tools/packaging/**`, `guest-tools/**`, etc.). It covers:
+
+- `cargo test --manifest-path tools/packaging/aero_packager/Cargo.toml`
+- A lightweight consistency check that ensures `guest-tools/config/devices.cmd` HWIDs stay in sync
+  with `tools/packaging/specs/win7-virtio-win.json`.
+
+You can run the same check locally:
+
+```bash
+python tools/guest-tools/validate_config.py
+```

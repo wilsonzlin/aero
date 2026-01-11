@@ -1,0 +1,84 @@
+name: guest-tools-packager
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "tools/packaging/**"
+      - "tools/guest-tools/**"
+      - "guest-tools/**"
+      - "drivers/scripts/make-guest-tools-from-virtio-win.ps1"
+      - ".github/workflows/guest-tools-packager.yml"
+  pull_request:
+    paths:
+      - "tools/packaging/**"
+      - "tools/guest-tools/**"
+      - "guest-tools/**"
+      - "drivers/scripts/make-guest-tools-from-virtio-win.ps1"
+      - ".github/workflows/guest-tools-packager.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: guest-tools-packager-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+
+jobs:
+  test:
+    name: Packager + config validation (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+
+    env:
+      # `aero_packager` is a standalone workspace under tools/. Use a stable target
+      # directory so CI caching behaves consistently across OSes.
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: cargo test (tools/packaging/aero_packager)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out/guest-tools-packager
+          cargo test --manifest-path tools/packaging/aero_packager/Cargo.toml 2>&1 | tee out/guest-tools-packager/cargo-test.log
+
+      - name: Validate Guest Tools config vs packaging spec
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out/guest-tools-packager
+          python tools/guest-tools/validate_config.py 2>&1 | tee out/guest-tools-packager/validate-config.log
+
+      - name: Upload logs (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: guest-tools-packager-logs-${{ matrix.os }}
+          path: out/guest-tools-packager/*.log
+          if-no-files-found: ignore
+          retention-days: 7
