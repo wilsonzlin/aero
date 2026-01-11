@@ -1,35 +1,51 @@
 //! `aero_cpu_core::state::CpuState` WASM JIT ABI.
 //!
-//! This module is the **single source of truth** for the byte offsets that
-//! dynamically-generated WASM blocks use to read/write the canonical CPU state
-//! stored in linear memory.
-//!
-//! The canonical state layout is defined by [`aero_cpu_core::state::CpuState`]
-//! (and documented there as a stable ABI). The constants here intentionally use
-//! `u32` because WebAssembly memory offsets are encoded as 32-bit immediates.
-//!
-//! If the `aero_cpu_core` CPU state layout ever changes, the unit tests in
-//! `crates/aero_jit/tests/abi.rs` are expected to fail loudly so that JIT
-//! codegen can be updated in lockstep.
+//! Exposes byte offsets into the canonical CPU state struct stored in linear
+//! memory. Offsets are `u32` because WASM encodes memory immediates as 32-bit.
 
-/// Byte offsets of GPRs in [`aero_cpu_core::state::CpuState`], in architectural order.
-pub const CPU_GPR_OFF: [u32; 16] = [
-    0, 8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120,
-];
+use wasm_encoder::MemArg;
 
-/// Byte offset of `CpuState.rip`.
-pub const CPU_RIP_OFF: u32 = 128;
+const fn cast_usize_array_16(src: [usize; 16]) -> [u32; 16] {
+    let mut out = [0u32; 16];
+    let mut i = 0;
+    while i < 16 {
+        out[i] = src[i] as u32;
+        i += 1;
+    }
+    out
+}
 
-/// Byte offset of `CpuState.rflags`.
-pub const CPU_RFLAGS_OFF: u32 = 136;
+const _: () = {
+    let mut i = 0;
+    while i < 16 {
+        assert!(aero_cpu_core::state::CPU_GPR_OFF[i] <= u32::MAX as usize);
+        assert!(aero_cpu_core::state::CPU_XMM_OFF[i] <= u32::MAX as usize);
+        i += 1;
+    }
 
-/// Byte offsets of XMM registers in `CpuState.sse.xmm[i]`.
-pub const CPU_XMM_OFF: [u32; 16] = [
-    784, 800, 816, 832, 848, 864, 880, 896, 912, 928, 944, 960, 976, 992, 1008, 1024,
-];
+    assert!(aero_cpu_core::state::CPU_RIP_OFF <= u32::MAX as usize);
+    assert!(aero_cpu_core::state::CPU_RFLAGS_OFF <= u32::MAX as usize);
+    assert!(aero_cpu_core::state::CPU_STATE_SIZE <= u32::MAX as usize);
+    assert!(aero_cpu_core::state::CPU_STATE_ALIGN <= u32::MAX as usize);
+};
 
-/// Total size (in bytes) of [`aero_cpu_core::state::CpuState`].
-pub const CPU_STATE_SIZE: u32 = 1072;
+pub const CPU_GPR_OFF: [u32; 16] = cast_usize_array_16(aero_cpu_core::state::CPU_GPR_OFF);
+pub const CPU_RIP_OFF: u32 = aero_cpu_core::state::CPU_RIP_OFF as u32;
+pub const CPU_RFLAGS_OFF: u32 = aero_cpu_core::state::CPU_RFLAGS_OFF as u32;
+pub const CPU_XMM_OFF: [u32; 16] = cast_usize_array_16(aero_cpu_core::state::CPU_XMM_OFF);
+pub const CPU_STATE_SIZE: u32 = aero_cpu_core::state::CPU_STATE_SIZE as u32;
+pub const CPU_STATE_ALIGN: u32 = aero_cpu_core::state::CPU_STATE_ALIGN as u32;
 
-/// Alignment (in bytes) of [`aero_cpu_core::state::CpuState`].
-pub const CPU_STATE_ALIGN: u32 = 16;
+#[inline]
+pub fn gpr_offset(gpr_index: usize) -> u32 {
+    CPU_GPR_OFF[gpr_index]
+}
+
+#[inline]
+pub fn memarg(offset: u32, align: u32) -> MemArg {
+    MemArg {
+        offset: offset as u64,
+        align,
+        memory_index: 0,
+    }
+}

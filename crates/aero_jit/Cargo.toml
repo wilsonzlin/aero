@@ -17,6 +17,7 @@ aero_cpu_core = { path = "../aero_cpu_core" }
 wasmtime = "40.0.1"
 
 [dev-dependencies]
+memoffset = "0.9"
 rand = "0.8.5"
 rand_chacha = "0.3"
 wasmparser = "0.244.0"

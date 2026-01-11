@@ -564,6 +564,7 @@ dependencies = [
  "aero_cpu_core",
  "aero_types",
  "aero_x86",
+ "memoffset",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
  "thiserror 2.0.17",
