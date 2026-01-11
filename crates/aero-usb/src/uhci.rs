@@ -446,8 +446,28 @@ impl UhciController {
             }
 
             let td = UhciTd::read(mem, addr);
-            let _ = self.process_td(mem, addr, td);
-            link = td.link_ptr;
+            match self.process_td(mem, addr, td) {
+                TdAdvance::Continue(next) => {
+                    link = next;
+                }
+                TdAdvance::ContinueAndStop(mut next) => {
+                    // Short Packet Detect (SPD) stops further TD processing within this TD chain
+                    // for the current frame, but the controller still continues walking the
+                    // schedule at the next non-TD link (QH/terminate).
+                    while traversed < MAX_LINK_TRAVERSAL
+                        && next & LINK_PTR_T == 0
+                        && next & LINK_PTR_Q == 0
+                    {
+                        traversed += 1;
+                        let td = UhciTd::read(mem, next & 0xFFFF_FFF0);
+                        next = td.link_ptr;
+                    }
+                    link = next;
+                }
+                TdAdvance::Stop => {
+                    link = td.link_ptr;
+                }
+            }
         }
     }
 
@@ -1135,6 +1155,64 @@ mod tests {
         assert_eq!(ctrl.usbsts & USBSTS_USBINT, 0);
         assert_eq!(ctrl.usbint_causes, 0);
         assert!(!irq.raised);
+    }
+
+    #[test]
+    fn uhci_short_packet_detect_stops_processing_additional_tds_in_direct_chain() {
+        let io_base = 0x3150;
+        let mut ctrl = UhciController::new(io_base, 11);
+        ctrl.connect_device(0, Box::new(ShortPacketThenNakDevice::new()));
+
+        let mut mem = TestMemory::new(0x9000);
+        let mut irq = TestIrq::default();
+
+        ctrl.port_write(io_base + REG_PORTSC1, 2, PORTSC_PED as u32, &mut irq);
+        ctrl.port_write(
+            io_base + REG_USBINTR,
+            2,
+            USBINTR_SHORT_PACKET as u32,
+            &mut irq,
+        );
+        ctrl.port_write(io_base + REG_FRBASEADD, 4, 0x1000, &mut irq);
+        for i in 0..1024u32 {
+            // Frame list entry points directly to a TD (not a QH).
+            mem.write_u32(0x1000 + i * 4, 0x3000);
+        }
+
+        // TD #1: IN to addr0/ep0, maxlen 8, with SPD set.
+        let maxlen_field = (8u32 - 1) << TD_TOKEN_MAXLEN_SHIFT;
+        let token = 0x69u32 | maxlen_field;
+        mem.write_u32(0x3000, 0x3020);
+        mem.write_u32(0x3004, TD_CTRL_ACTIVE | TD_CTRL_SPD | 0x7FF);
+        mem.write_u32(0x3008, token);
+        mem.write_u32(0x300C, 0x4000);
+
+        // TD #2: would NAK if processed in the same frame.
+        mem.write_u32(0x3020, LINK_PTR_T);
+        mem.write_u32(0x3024, TD_CTRL_ACTIVE | 0x7FF);
+        mem.write_u32(0x3028, token);
+        mem.write_u32(0x302C, 0x4010);
+
+        ctrl.port_write(io_base + REG_USBCMD, 2, USBCMD_RUN as u32, &mut irq);
+
+        ctrl.step_frame(&mut mem, &mut irq);
+
+        // TD #1 should complete with a short packet (3 bytes).
+        let td1_ctrl = mem.read_u32(0x3004);
+        assert_eq!(td1_ctrl & TD_CTRL_ACTIVE, 0);
+        assert_eq!(td1_ctrl & TD_CTRL_ACTLEN_MASK, 2);
+        assert_eq!(&mem.data[0x4000..0x4003], [0x11, 0x22, 0x33]);
+
+        // SPD should stop further TD processing within this chain for the current frame, so TD #2
+        // remains active and should not be marked as NAKed yet.
+        let td2_ctrl = mem.read_u32(0x3024);
+        assert_ne!(td2_ctrl & TD_CTRL_ACTIVE, 0);
+        assert_eq!(td2_ctrl & TD_CTRL_NAK, 0);
+
+        assert_ne!(ctrl.usbsts & USBSTS_USBINT, 0);
+        assert_ne!(ctrl.usbint_causes & USBINT_CAUSE_SHORT_PACKET, 0);
+        assert!(irq.raised);
+        assert_eq!(irq.last_irq, Some(11));
     }
 
     struct StallDevice;
