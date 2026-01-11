@@ -90,7 +90,7 @@ impl ResolvedByteRange {
     pub fn len(&self) -> u64 {
         self.end
             .checked_sub(self.start)
-            .and_then(|delta| delta.checked_add(1))
+            .map(|delta| delta.saturating_add(1))
             .unwrap_or(0)
     }
 
