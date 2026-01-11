@@ -39,6 +39,7 @@ set "PKG_DIR=%AEROGPU_ROOT%\packaging\win7"
 set "KMD_SYS=%OUT_ROOT%\%ARCH%\%VARIANT%\kmd\aerogpu.sys"
 set "UMD_X86_DIR=%OUT_ROOT%\x86\%VARIANT%\umd"
 set "UMD_X64_DIR=%OUT_ROOT%\x64\%VARIANT%\umd"
+set "DBGCTL_EXE=%AEROGPU_ROOT%\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe"
 
 if not exist "%PKG_DIR%" (
   echo ERROR: Packaging directory not found: "%PKG_DIR%"
@@ -72,6 +73,7 @@ del /f /q "%PKG_DIR%\aerogpu.sys" >nul 2>nul
 del /f /q "%PKG_DIR%\aerogpu_d3d9.dll" "%PKG_DIR%\aerogpu_d3d9_x64.dll" >nul 2>nul
 del /f /q "%PKG_DIR%\aerogpu_d3d10.dll" "%PKG_DIR%\aerogpu_d3d10_x64.dll" >nul 2>nul
 del /f /q "%PKG_DIR%\aerogpu.cat" "%PKG_DIR%\aerogpu_dx11.cat" >nul 2>nul
+del /f /q "%PKG_DIR%\aerogpu_dbgctl.exe" >nul 2>nul
 
 copy /y "%KMD_SYS%" "%PKG_DIR%\" >nul
 
@@ -95,6 +97,14 @@ if /i "%ARCH%"=="x64" (
       copy /y "%UMD_X64_DIR%\aerogpu_d3d10_x64.dll" "%PKG_DIR%\" >nul
     )
   )
+)
+
+rem Optional: stage dbgctl bring-up tool (if already built).
+if exist "%DBGCTL_EXE%" (
+  copy /y "%DBGCTL_EXE%" "%PKG_DIR%\" >nul
+  echo NOTE: staged dbgctl tool: aerogpu_dbgctl.exe
+) else (
+  echo NOTE: dbgctl tool not staged (not built): "%DBGCTL_EXE%"
 )
 
 echo OK: staged binaries.

@@ -188,6 +188,10 @@ For bring-up and debugging, you can use the Escape-based dbgctl tool:
 - Tool: `drivers/aerogpu/tools/win7_dbgctl/`
 - Docs/build: `drivers/aerogpu/tools/win7_dbgctl/README.md`
 
+If `drivers\\aerogpu\\build\\stage_packaging_win7.cmd` finds an already-built dbgctl
+binary at `drivers\\aerogpu\\tools\\win7_dbgctl\\bin\\aerogpu_dbgctl.exe`, it will copy
+it into this packaging directory as `aerogpu_dbgctl.exe`.
+
 Examples:
 
 ```bat
@@ -198,7 +202,10 @@ build_vs2010.cmd
 :: Run it
 bin\aerogpu_dbgctl.exe --query-version
 bin\aerogpu_dbgctl.exe --query-fence
-bin\aerogpu_dbgctl.exe --dump-ring
+bin\aerogpu_dbgctl.exe --dump-ring --ring-id 0
+bin\aerogpu_dbgctl.exe --dump-vblank --vblank-samples 10 --vblank-interval-ms 200
+bin\aerogpu_dbgctl.exe --wait-vblank --vblank-samples 120 --timeout-ms 2000
+bin\aerogpu_dbgctl.exe --query-scanline --vblank-samples 50 --vblank-interval-ms 10
 bin\aerogpu_dbgctl.exe --selftest
 ```
 

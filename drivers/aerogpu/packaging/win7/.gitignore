@@ -7,3 +7,4 @@
 *.pfx
 *.pvk
 devcon.exe
+aerogpu_dbgctl.exe
