@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { WebSocket } from "../tools/minimal_ws.js";
-import { encodeL2Frame } from "../web/src/shared/l2TunnelProtocol.ts";
+import { encodeL2Frame, L2_TUNNEL_SUBPROTOCOL } from "../web/src/shared/l2TunnelProtocol.ts";
 
 import { startRustL2Proxy } from "../tools/rust_l2_proxy.js";
 
@@ -10,7 +10,7 @@ const L2_PROXY_TEST_TIMEOUT_MS = 900_000;
 
 async function connectOrReject(url, { protocols, ...opts } = {}) {
   return new Promise((resolve, reject) => {
-    const protos = protocols ?? ["aero-l2-tunnel-v1"];
+    const protos = protocols ?? [L2_TUNNEL_SUBPROTOCOL];
     const ws = new WebSocket(url, protos, opts);
 
     const timeout = setTimeout(() => reject(new Error("timeout waiting for websocket outcome")), 2_000);
@@ -143,7 +143,7 @@ test("l2 proxy enforces token auth when configured", { timeout: L2_PROXY_TEST_TI
     await waitForClose(ok.ws);
 
     const protoOk = await connectOrReject(`ws://127.0.0.1:${proxy.port}/l2`, {
-      protocols: ["aero-l2-tunnel-v1", "aero-l2-token.sekrit"],
+      protocols: [L2_TUNNEL_SUBPROTOCOL, "aero-l2-token.sekrit"],
       headers: { origin: "https://app.example.com" },
     });
     assert.equal(protoOk.ok, true);

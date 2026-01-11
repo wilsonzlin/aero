@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { WebSocket } from "../tools/minimal_ws.js";
-import { encodeL2Frame } from "../web/src/shared/l2TunnelProtocol.ts";
+import { encodeL2Frame, L2_TUNNEL_SUBPROTOCOL } from "../web/src/shared/l2TunnelProtocol.ts";
 
 import { startRustL2Proxy } from "../tools/rust_l2_proxy.js";
 
@@ -183,7 +183,7 @@ test("l2 proxy exposes /metrics and counts rx frames", { timeout: 900_000 }, asy
     assert.notEqual(sessionsTotal0, null, "missing l2_sessions_total");
     assert.notEqual(sessionsActive0, null, "missing l2_sessions_active");
 
-    const ws = new WebSocket(`ws://127.0.0.1:${port}/l2`, ["aero-l2-tunnel-v1"]);
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/l2`, [L2_TUNNEL_SUBPROTOCOL]);
     await waitForOpen(ws);
 
     const payload = Buffer.alloc(60);

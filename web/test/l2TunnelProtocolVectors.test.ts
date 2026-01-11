@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
+  L2_TUNNEL_SUBPROTOCOL,
   L2_TUNNEL_TYPE_ERROR,
   L2_TUNNEL_TYPE_FRAME,
   L2_TUNNEL_TYPE_PING,
@@ -36,6 +37,7 @@ type L2InvalidVector = {
 
 type VectorsFile = {
   version: number;
+  // Key matches `L2_TUNNEL_SUBPROTOCOL`.
   "aero-l2-tunnel-v1": {
     valid: L2ValidVector[];
     invalid: L2InvalidVector[];
@@ -63,7 +65,7 @@ const vectors = loadVectors();
 test("l2 tunnel matches canonical conformance vectors", () => {
   assert.equal(vectors.version, 1);
 
-  for (const v of vectors["aero-l2-tunnel-v1"].valid) {
+  for (const v of vectors[L2_TUNNEL_SUBPROTOCOL].valid) {
     const payload = hexToBytes(v.payloadHex);
     const wire = hexToBytes(v.wireHex);
 
@@ -106,7 +108,7 @@ test("l2 tunnel matches canonical conformance vectors", () => {
     }
   }
 
-  for (const v of vectors["aero-l2-tunnel-v1"].invalid) {
+  for (const v of vectors[L2_TUNNEL_SUBPROTOCOL].invalid) {
     const wire = hexToBytes(v.wireHex);
     try {
       decodeL2Message(wire);

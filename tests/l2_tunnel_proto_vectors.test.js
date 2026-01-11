@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { encodeL2Message } from "../prototype/nt-arch-rfc/l2_tunnel_proto.js";
+import { L2_TUNNEL_SUBPROTOCOL } from "../web/src/shared/l2TunnelProtocol.ts";
 
 function decodeHex(hex) {
   assert.equal(hex.length % 2, 0, `hex string length must be even, got ${hex.length}`);
@@ -17,10 +18,10 @@ function loadVectors() {
 
 const vectors = loadVectors();
 assert.equal(vectors.version, 1);
-assert.ok(vectors["aero-l2-tunnel-v1"], "missing aero-l2-tunnel-v1 vectors");
+assert.ok(vectors[L2_TUNNEL_SUBPROTOCOL], `missing ${L2_TUNNEL_SUBPROTOCOL} vectors`);
 
 describe("prototype/nt-arch-rfc L2 tunnel protocol vectors", () => {
-  for (const v of vectors["aero-l2-tunnel-v1"].valid) {
+  for (const v of vectors[L2_TUNNEL_SUBPROTOCOL].valid) {
     it(v.name, () => {
       const payload = decodeHex(v.payloadHex);
       const expectedFrame = decodeHex(v.wireHex);
