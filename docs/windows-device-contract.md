@@ -292,6 +292,7 @@ At minimum, each device entry contains:
 
 - `pci_vendor_id`
 - `pci_device_id`
+- `pci_device_id_transitional` (virtio devices only)
 - `hardware_id_patterns`
 - `driver_service_name`
 - `inf_name`
@@ -302,13 +303,16 @@ Consumers must not assume any particular device ordering and must tolerate new d
 ### Manifest field conventions (normative)
 
 - `pci_vendor_id` / `pci_device_id` are hex strings with `0x` prefix (e.g. `"0x1AF4"`).
-- `pci_device_id` is the **canonical** emulator-presented Device ID for the device entry. If a driver/tool also supports additional compatibility IDs (for example, virtio transitional IDs), those MUST be represented in `hardware_id_patterns`.
+- `pci_device_id` is the **canonical** emulator-presented Device ID for the device entry (for virtio devices, this is the modern ID space).
+- For virtio devices, `pci_device_id_transitional` records the corresponding virtio-pci transitional Device ID (for reference / compatibility).
 - `hardware_id_patterns` are Windows PnP PCI hardware ID strings using backslashes (e.g. `PCI\VEN_1AF4&DEV_1042&REV_01`).
   - In `windows-device-contract.json` these are stored as JSON strings, so backslashes are escaped (the literal form is
     `"PCI\\VEN_1AF4&DEV_1042&REV_01"`).
   - They are intended to be **directly usable** in INF matching and transformable into registry key names for `CriticalDeviceDatabase`.
   - Tools must treat them as case-insensitive.
   - Consumers MUST treat this list as an **unordered set** (do not assume ordering); tools like Guest Tools may sort/deduplicate patterns before use.
+  - For virtio devices, this list is **modern-only** under `AERO-W7-VIRTIO` v1 (it must not contain transitional `DEV_10xx` IDs).
+    Transitional IDs are tracked separately in `pci_device_id_transitional`.
 
 ### Hardware ID pattern policy (normative)
 
