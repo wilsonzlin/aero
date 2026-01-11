@@ -21,6 +21,11 @@ struct AdapterRequirements {
   uint32_t require_did;
 };
 
+enum SharedResourceKind {
+  kSharedTexture = 0,
+  kSharedRenderTarget = 1,
+};
+
 // Minimal NT structures needed to patch a suspended child process command line in-place.
 // This keeps the test single-binary while still passing the *child* handle value when we
 // DuplicateHandle into the child process (handle inheritance is avoided for the shared handle).
@@ -521,6 +526,20 @@ static int RunChild(int argc, char** argv, const AdapterRequirements& req, bool 
     return aerogpu_test::Fail(kTestName, "missing required --shared-handle in --child mode");
   }
 
+  SharedResourceKind kind = kSharedTexture;
+  std::string kind_str;
+  if (aerogpu_test::GetArgValue(argc, argv, "--resource", &kind_str)) {
+    if (aerogpu_test::StrIContainsA(kind_str.c_str(), "rendertarget") ||
+        aerogpu_test::StrIContainsA(kind_str.c_str(), "rt")) {
+      kind = kSharedRenderTarget;
+    } else if (aerogpu_test::StrIContainsA(kind_str.c_str(), "texture") ||
+               aerogpu_test::StrIContainsA(kind_str.c_str(), "tex")) {
+      kind = kSharedTexture;
+    } else {
+      return aerogpu_test::Fail(kTestName, "invalid --resource (expected texture|rendertarget)");
+    }
+  }
+
   uintptr_t handle_value = 0;
   std::string err;
   if (!ParseUintPtr(handle_str, &handle_value, &err) || handle_value == 0) {
@@ -551,23 +570,38 @@ static int RunChild(int argc, char** argv, const AdapterRequirements& req, bool 
   }
 
   HANDLE open_handle = shared_handle;
-  ComPtr<IDirect3DTexture9> tex;
-  HRESULT hr = dev->CreateTexture(kWidth,
-                                  kHeight,
-                                  1,
-                                  D3DUSAGE_RENDERTARGET,
-                                  kFormat,
-                                  D3DPOOL_DEFAULT,
-                                  tex.put(),
-                                  &open_handle);
-  if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CreateTexture(open shared)", hr);
-  }
-
   ComPtr<IDirect3DSurface9> surface;
-  hr = tex->GetSurfaceLevel(0, surface.put());
-  if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "IDirect3DTexture9::GetSurfaceLevel", hr);
+  HRESULT hr = S_OK;
+  if (kind == kSharedTexture) {
+    ComPtr<IDirect3DTexture9> tex;
+    hr = dev->CreateTexture(kWidth,
+                            kHeight,
+                            1,
+                            D3DUSAGE_RENDERTARGET,
+                            kFormat,
+                            D3DPOOL_DEFAULT,
+                            tex.put(),
+                            &open_handle);
+    if (FAILED(hr)) {
+      return aerogpu_test::FailHresult(kTestName, "CreateTexture(open shared)", hr);
+    }
+    hr = tex->GetSurfaceLevel(0, surface.put());
+    if (FAILED(hr)) {
+      return aerogpu_test::FailHresult(kTestName, "IDirect3DTexture9::GetSurfaceLevel", hr);
+    }
+  } else {
+    hr = dev->CreateRenderTargetEx(kWidth,
+                                   kHeight,
+                                   kFormat,
+                                   D3DMULTISAMPLE_NONE,
+                                   0,
+                                   FALSE,
+                                   surface.put(),
+                                   &open_handle,
+                                   0);
+    if (FAILED(hr)) {
+      return aerogpu_test::FailHresult(kTestName, "CreateRenderTargetEx(open shared)", hr);
+    }
   }
 
   rc = ValidateSurfacePixels(kTestName,
@@ -612,8 +646,13 @@ static int RunParent(int argc,
     return rc;
   }
 
+  SharedResourceKind kind = kSharedTexture;
   HANDLE shared_handle = NULL;
   ComPtr<IDirect3DTexture9> tex;
+  ComPtr<IDirect3DSurface9> surface;
+
+  // Prefer a shared render-target texture. If texture sharing is unavailable, fall back to a
+  // shareable render-target surface.
   HRESULT hr = dev->CreateTexture(kWidth,
                                   kHeight,
                                   1,
@@ -622,19 +661,33 @@ static int RunParent(int argc,
                                   D3DPOOL_DEFAULT,
                                   tex.put(),
                                   &shared_handle);
-  if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CreateTexture(shared)", hr);
-  }
-  if (!shared_handle) {
-    return aerogpu_test::Fail(kTestName,
-                              "CreateTexture(shared) succeeded but returned NULL shared handle");
-  }
-
-  ComPtr<IDirect3DSurface9> surface;
-  hr = tex->GetSurfaceLevel(0, surface.put());
-  if (FAILED(hr)) {
-    CloseHandle(shared_handle);
-    return aerogpu_test::FailHresult(kTestName, "IDirect3DTexture9::GetSurfaceLevel", hr);
+  if (SUCCEEDED(hr) && tex && shared_handle) {
+    kind = kSharedTexture;
+    hr = tex->GetSurfaceLevel(0, surface.put());
+    if (FAILED(hr)) {
+      CloseHandle(shared_handle);
+      return aerogpu_test::FailHresult(kTestName, "IDirect3DTexture9::GetSurfaceLevel", hr);
+    }
+  } else {
+    tex.reset();
+    shared_handle = NULL;
+    kind = kSharedRenderTarget;
+    hr = dev->CreateRenderTargetEx(kWidth,
+                                   kHeight,
+                                   kFormat,
+                                   D3DMULTISAMPLE_NONE,
+                                   0,
+                                   FALSE,
+                                   surface.put(),
+                                   &shared_handle,
+                                   0);
+    if (FAILED(hr)) {
+      return aerogpu_test::FailHresult(kTestName, "CreateRenderTargetEx(create shared)", hr);
+    }
+    if (!shared_handle) {
+      return aerogpu_test::Fail(kTestName,
+                                "CreateRenderTargetEx(create shared) succeeded but returned NULL shared handle");
+    }
   }
 
   rc = RenderTriangleToSurface(kTestName, dev.get(), surface.get(), kWidth, kHeight);
@@ -650,6 +703,11 @@ static int RunParent(int argc,
     return rc;
   }
 
+  aerogpu_test::PrintfStdout("INFO: %s: parent shared handle=%s (%s)",
+                             kTestName,
+                             FormatHandleHex(shared_handle).c_str(),
+                             (kind == kSharedTexture) ? "texture" : "rendertarget");
+
   // Ensure the shared handle is not inherited: the child should only observe it via DuplicateHandle
   // into the child process (which is closer to how DWM consumes app surfaces).
   SetHandleInformation(shared_handle, HANDLE_FLAG_INHERIT, 0);
@@ -663,7 +721,9 @@ static int RunParent(int argc,
   const std::string placeholder_hex = FormatHandleHex((HANDLE)0);
   std::wstring cmdline = L"\"";
   cmdline += exe_path;
-  cmdline += L"\" --child --shared-handle=";
+  cmdline += L"\" --child --resource=";
+  cmdline += (kind == kSharedTexture) ? L"texture" : L"rendertarget";
+  cmdline += L" --shared-handle=";
   cmdline += std::wstring(placeholder_hex.begin(), placeholder_hex.end());
   cmdline += L" --hidden";
   if (dump) {
@@ -700,7 +760,7 @@ static int RunParent(int argc,
                            &cmdline_buf[0],
                            NULL,
                            NULL,
-                           TRUE,
+                           FALSE,
                            CREATE_SUSPENDED,
                            NULL,
                            NULL,
@@ -734,7 +794,11 @@ static int RunParent(int argc,
   }
 
   std::string patch_err;
-  if (!PatchChildCommandLineSharedHandle(pi.hProcess, FormatHandleHex(child_handle_value), &patch_err)) {
+  const std::string child_handle_hex = FormatHandleHex(child_handle_value);
+  aerogpu_test::PrintfStdout("INFO: %s: duplicated handle into child as %s",
+                             kTestName,
+                             child_handle_hex.c_str());
+  if (!PatchChildCommandLineSharedHandle(pi.hProcess, child_handle_hex, &patch_err)) {
     TerminateProcess(pi.hProcess, 1);
     WaitForSingleObject(pi.hProcess, 5000);
     CloseHandle(pi.hThread);
