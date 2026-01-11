@@ -2289,8 +2289,13 @@ HRESULT APIENTRY Map(D3D10DDI_HDEVICE hDevice, D3D10DDIARG_MAP* pMap) {
     res->mapped_wddm_slice_pitch = 0;
 
     pMap->pData = res->storage.empty() ? nullptr : res->storage.data();
-    pMap->RowPitch = (res->kind == ResourceKind::Texture2D) ? res->row_pitch_bytes : 0;
-    pMap->DepthPitch = 0;
+    if (res->kind == ResourceKind::Texture2D) {
+      pMap->RowPitch = res->row_pitch_bytes;
+      pMap->DepthPitch = res->row_pitch_bytes * res->height;
+    } else {
+      pMap->RowPitch = 0;
+      pMap->DepthPitch = 0;
+    }
     return S_OK;
   };
 
@@ -2390,11 +2395,13 @@ HRESULT APIENTRY Map(D3D10DDI_HDEVICE hDevice, D3D10DDIARG_MAP* pMap) {
 
   pMap->pData = lock_cb.pData;
   if (res->kind == ResourceKind::Texture2D) {
-    pMap->RowPitch = res->mapped_wddm_pitch ? res->mapped_wddm_pitch : res->row_pitch_bytes;
+    const uint32_t pitch = res->mapped_wddm_pitch ? res->mapped_wddm_pitch : res->row_pitch_bytes;
+    pMap->RowPitch = pitch;
+    pMap->DepthPitch = res->mapped_wddm_slice_pitch ? res->mapped_wddm_slice_pitch : pitch * res->height;
   } else {
     pMap->RowPitch = 0;
+    pMap->DepthPitch = 0;
   }
-  pMap->DepthPitch = 0;
 
   res->mapped = true;
   res->mapped_write = want_write;
