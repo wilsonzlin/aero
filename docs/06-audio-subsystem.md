@@ -107,8 +107,10 @@ Audio snapshots must capture guest-visible progress (DMA positions, buffer state
     amp gain/mute, pin widget control, pin/AFG power state, etc.).
   - Stream DMA runtime progress needed to continue deterministically after restore (BDL index + byte offset and
     resampler fractional position; capture also restores the capture-frame accumulator used for rate conversion).
-  - Host output sample rate used by the controller (`output_rate_hz`). This is required to restore stream resampler
-    state deterministically (even though it isn't guest-visible directly).
+- Host sample rates used by the controller:
+  - output/time base (`output_rate_hz`)
+  - mic input (`capture_sample_rate_hz`)
+  These are required to restore stream resampler state deterministically (even though they aren't guest-visible directly).
 - **Host-side audio plumbing (recreated)**
   - AudioWorklet ring *indices* (`read_pos` / `write_pos` monotonic frame counters + capacity). The ring buffer
     contents are not serialized.

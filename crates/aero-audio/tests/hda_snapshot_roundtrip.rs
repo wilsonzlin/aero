@@ -455,3 +455,81 @@ fn hda_snapshot_restore_restores_output_rate_hz_for_resampler_determinism() {
     restored.process(&mut mem, frames_1);
     assert_eq!(restored.mmio_read(REG_SD0LPIB, 4), expected_lpib);
 }
+
+#[test]
+fn hda_snapshot_restore_restores_capture_sample_rate_hz_for_capture_resampler_determinism() {
+    let mut hda = HdaController::new();
+    // Simulate a microphone capture graph running at 44.1kHz while the output time base is 48kHz.
+    hda.set_capture_sample_rate_hz(44_100);
+    let mut mem = GuestMemory::new(0x40_000);
+
+    hda.mmio_write(REG_GCTL, 4, 0x1);
+
+    // Configure codec ADC (NID 4) to use stream 2, channel 0.
+    hda.codec_mut().execute_verb(4, verb_12(0x706, 0x20));
+
+    // Guest capture format: 48kHz, 16-bit, mono. This forces resampling 44.1k -> 48k.
+    let fmt_raw: u16 = (1 << 4) | 0x0;
+    hda.codec_mut().execute_verb(4, verb_4(0x2, fmt_raw));
+
+    let bdl_base = 0x1000u64;
+    let buf = 0x2000u64;
+    let buf_len = 4096u32;
+
+    mem.write_u64(bdl_base, buf);
+    mem.write_u32(bdl_base + 8, buf_len);
+    mem.write_u32(bdl_base + 12, 0);
+
+    {
+        let sd = hda.stream_mut(1);
+        sd.bdpl = bdl_base as u32;
+        sd.bdpu = 0;
+        sd.cbl = buf_len;
+        sd.lvi = 0;
+        sd.fmt = fmt_raw;
+        // SRST | RUN | stream number 2.
+        sd.ctl = (1 << 0) | (1 << 1) | (2 << 20);
+    }
+
+    let output_frames = 256usize;
+    let mut capture = VecDequeCaptureSource::new();
+    let samples: Vec<f32> = (0..5000)
+        .map(|i| (i as f32 / 5000.0) * 2.0 - 1.0)
+        .collect();
+    capture.push_samples(&samples);
+
+    // Advance capture so the resampler has non-trivial queued/pos state at snapshot time.
+    hda.process_with_capture(&mut mem, output_frames, &mut capture);
+
+    let snap = hda.snapshot_state(AudioWorkletRingState {
+        capacity_frames: 256,
+        write_pos: 0,
+        read_pos: 0,
+    });
+    assert_eq!(snap.capture_sample_rate_hz, 44_100);
+
+    // Clone guest memory + capture source at snapshot time so baseline and restored runs see
+    // identical host input and guest RAM.
+    let mut mem_expected = mem.clone();
+    let mut mem_restored = mem.clone();
+    let capture_expected = capture.clone();
+    let capture_restored = capture.clone();
+
+    let mut expected = hda.clone();
+    let mut expected_capture = capture_expected;
+    expected.process_with_capture(&mut mem_expected, output_frames, &mut expected_capture);
+
+    // Restore into a fresh controller. We intentionally do not call `set_capture_sample_rate_hz`;
+    // the snapshot must carry the capture rate so the capture resampler state restores deterministically.
+    let mut restored = HdaController::new();
+    restored.restore_state(&snap);
+    assert_eq!(restored.capture_sample_rate_hz(), 44_100);
+
+    let mut restored_capture = capture_restored;
+    restored.process_with_capture(&mut mem_restored, output_frames, &mut restored_capture);
+
+    // The snapshot does not preserve the resampler's queued microphone samples (host resource),
+    // but it should preserve how many *new* samples are consumed from the deterministic capture
+    // source after restore.
+    assert_eq!(restored_capture.len(), expected_capture.len());
+}

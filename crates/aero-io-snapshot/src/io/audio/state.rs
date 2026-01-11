@@ -72,6 +72,12 @@ pub struct HdaControllerState {
     /// Stored so restores can recreate deterministic stream resampler state without requiring the
     /// coordinator to set the rate before applying the snapshot.
     pub output_rate_hz: u32,
+    /// Host/input sample rate used when pulling microphone samples for the capture stream.
+    ///
+    /// Like [`Self::output_rate_hz`], this is not guest-visible directly, but it affects how many
+    /// host samples are consumed to synthesize guest capture frames (and therefore affects
+    /// deterministic capture output when the capture source is deterministic).
+    pub capture_sample_rate_hz: u32,
 
     pub dplbase: u32,
     pub dpubase: u32,
@@ -109,6 +115,7 @@ impl Default for HdaControllerState {
             intctl: 0,
             intsts: 0,
             output_rate_hz: 0,
+            capture_sample_rate_hz: 0,
             dplbase: 0,
             dpubase: 0,
             corblbase: 0,
@@ -160,7 +167,7 @@ impl Default for HdaControllerState {
 
 impl IoSnapshot for HdaControllerState {
     const DEVICE_ID: [u8; 4] = *b"HDA0";
-    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(2, 3);
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(2, 4);
 
     fn save_state(&self) -> Vec<u8> {
         const TAG_GCTL: u16 = 1;
@@ -171,6 +178,7 @@ impl IoSnapshot for HdaControllerState {
         const TAG_DPUBASE: u16 = 6;
         const TAG_WAKEEN: u16 = 7;
         const TAG_OUTPUT_RATE_HZ: u16 = 8;
+        const TAG_CAPTURE_SAMPLE_RATE_HZ: u16 = 9;
 
         const TAG_CORBLBASE: u16 = 10;
         const TAG_CORBUBASE: u16 = 11;
@@ -207,6 +215,7 @@ impl IoSnapshot for HdaControllerState {
         w.field_u32(TAG_DPUBASE, self.dpubase);
         w.field_u16(TAG_WAKEEN, self.wakeen);
         w.field_u32(TAG_OUTPUT_RATE_HZ, self.output_rate_hz);
+        w.field_u32(TAG_CAPTURE_SAMPLE_RATE_HZ, self.capture_sample_rate_hz);
 
         w.field_u32(TAG_CORBLBASE, self.corblbase);
         w.field_u32(TAG_CORBUBASE, self.corbubase);
@@ -309,6 +318,7 @@ impl IoSnapshot for HdaControllerState {
         const TAG_DPUBASE: u16 = 6;
         const TAG_WAKEEN: u16 = 7;
         const TAG_OUTPUT_RATE_HZ: u16 = 8;
+        const TAG_CAPTURE_SAMPLE_RATE_HZ: u16 = 9;
 
         const TAG_CORBLBASE: u16 = 10;
         const TAG_CORBUBASE: u16 = 11;
@@ -362,6 +372,9 @@ impl IoSnapshot for HdaControllerState {
         }
         if let Some(v) = r.u32(TAG_OUTPUT_RATE_HZ)? {
             self.output_rate_hz = v;
+        }
+        if let Some(v) = r.u32(TAG_CAPTURE_SAMPLE_RATE_HZ)? {
+            self.capture_sample_rate_hz = v;
         }
 
         if let Some(v) = r.u32(TAG_CORBLBASE)? {

@@ -210,6 +210,7 @@ fn hda_state_roundtrip() {
         intctl: 2,
         intsts: 3,
         output_rate_hz: 44_100,
+        capture_sample_rate_hz: 48_000,
         dplbase: 0x1000,
         dpubase: 0,
         corblbase: 0x2000,
