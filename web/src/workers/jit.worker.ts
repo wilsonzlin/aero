@@ -59,6 +59,7 @@ let jitEnabled = false;
 
 const JIT_CACHE_MAX_ENTRIES = 64;
 const moduleCache = new Map<string, WebAssembly.Module>();
+const inflightCompiles = new Map<string, Promise<WebAssembly.Module>>();
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -97,6 +98,8 @@ function cacheGet(key: string): WebAssembly.Module | undefined {
 }
 
 function cacheSet(key: string, module: WebAssembly.Module): void {
+  // Refresh insertion order for LRU even when the key already exists.
+  moduleCache.delete(key);
   moduleCache.set(key, module);
   if (moduleCache.size <= JIT_CACHE_MAX_ENTRIES) return;
   const oldest = moduleCache.keys().next().value as string | undefined;
@@ -229,13 +232,32 @@ async function handleCompile(req: JitCompileRequest): Promise<void> {
     return;
   }
 
+  const inflight = inflightCompiles.get(key);
+  if (inflight) {
+    const startMs = performance.now();
+    if (perf.traceEnabled) perf.instant("jit:inflight_hit", "t", { key });
+    try {
+      const module = await inflight;
+      const durationMs = performance.now() - startMs;
+      cacheSet(key, module);
+      postJitResponse({ type: "jit:compiled", id: req.id, module, durationMs, cached: true });
+    } catch (err) {
+      const durationMs = performance.now() - startMs;
+      const message = err instanceof Error ? err.message : String(err);
+      postJitResponse({ type: "jit:error", id: req.id, code: "compile_failed", message, durationMs });
+    }
+    return;
+  }
+
   const startMs = performance.now();
   perf.spanBegin("jit:compile");
   if (perf.traceEnabled) perf.instant("jit:compile:begin", "t", { key });
 
   let module: WebAssembly.Module;
   try {
-    module = await WebAssembly.compile(req.wasmBytes);
+    const promise = WebAssembly.compile(req.wasmBytes);
+    inflightCompiles.set(key, promise);
+    module = await promise;
   } catch (err) {
     const durationMs = performance.now() - startMs;
     perfJitMs += durationMs;
@@ -243,6 +265,7 @@ async function handleCompile(req: JitCompileRequest): Promise<void> {
     postJitResponse({ type: "jit:error", id: req.id, code: "compile_failed", message, durationMs });
     return;
   } finally {
+    inflightCompiles.delete(key);
     perf.spanEnd("jit:compile");
   }
 
