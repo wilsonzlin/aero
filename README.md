@@ -4,7 +4,11 @@ This repository contains Aero’s architecture/design documentation plus browser
 
 ## Developer workflow (canonical)
 
-Use [`just`](https://github.com/casey/just) from the repo root so contributors don’t need to remember multi-step Rust + WASM + web commands.
+Use `cargo xtask` from the repo root for a **cross-platform** (Windows-friendly)
+task runner that orchestrates Rust + WASM + web commands.
+
+If you have bash + [`just`](https://github.com/casey/just), the `justfile` still
+provides convenient aliases, but `cargo xtask` is the canonical implementation.
 
 For a reproducible “clone → build → test” environment (including Rust stable+nightly, Node, QEMU, etc.), see [`docs/dev-environment.md`](./docs/dev-environment.md).
 
@@ -12,14 +16,23 @@ For a reproducible “clone → build → test” environment (including Rust st
 
 - Rust (via `rustup`)
 - Node.js + npm
-- `just` (task runner)
-  - Install via `cargo install just` or your OS package manager.
 - `wasm-pack` (to build the Rust→WASM packages)
   - Install via `cargo install wasm-pack`
+- Optional: `just` (task runner; uses bash)
+  - Install via `cargo install just` or your OS package manager.
 - Optional: `watchexec` (for `just wasm-watch`)
   - Install via `cargo install watchexec-cli`
 
-### Common workflows
+### Common workflows (cross-platform)
+
+```bash
+cargo xtask wasm both release   # build wasm packages (single + threaded)
+cargo xtask web dev             # run the Vite dev server (prints the local URL)
+cargo xtask web build           # production web build
+cargo xtask test-all --skip-e2e # Rust + WASM + TS (skip Playwright)
+```
+
+### Common workflows (bash/just convenience)
 
 ```bash
 just setup   # install wasm target, install JS deps, sanity-check toolchain
@@ -163,7 +176,9 @@ rustup component add rust-src --toolchain nightly
 Recommended (repo root):
 
 ```bash
-just wasm                # builds both variants (single + threaded)
+cargo xtask wasm both release  # builds both variants (single + threaded)
+# Or (bash/just convenience):
+just wasm
 ```
 
 Manual equivalent (from `web/`):

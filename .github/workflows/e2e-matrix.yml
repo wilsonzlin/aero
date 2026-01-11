@@ -61,6 +61,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
       - name: Determine Node workspace directory
         id: node-dir
         run: |
@@ -112,7 +115,7 @@ jobs:
       - name: Run Playwright tests
         env:
           AERO_NODE_DIR: ${{ steps.node-dir.outputs.dir }}
-        run: ./scripts/test-all.sh --skip-rust --skip-wasm --skip-ts --pw-project ${{ matrix.project }} -- --reporter=dot,html --trace=retain-on-failure
+        run: cargo xtask test-all --skip-rust --skip-wasm --skip-ts --pw-project ${{ matrix.project }} -- --reporter=dot,html --trace=retain-on-failure
 
       - name: Upload Playwright artifacts
         if: always()

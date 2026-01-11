@@ -326,7 +326,7 @@ jobs:
         run: wasm-pack build --release --target web -- ${{ steps.cargo-locked.outputs.locked }}
 
       - name: wasm-pack test (node)
-        run: ./scripts/test-all.sh --skip-rust --skip-ts --skip-e2e --wasm-crate-dir "${{ steps.wasm-crate.outputs.dir }}"
+        run: cargo xtask test-all --skip-rust --skip-ts --skip-e2e --wasm-crate-dir "${{ steps.wasm-crate.outputs.dir }}"
 
       - name: Upload wasm-pack output (on failure)
         if: failure()
@@ -597,6 +597,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
       - name: Determine Node workspace directory
         id: node-dir
         run: |
@@ -665,7 +668,7 @@ jobs:
       - name: Playwright tests (non-WebGPU)
         env:
           AERO_NODE_DIR: ${{ steps.node-dir.outputs.dir }}
-        run: ./scripts/test-all.sh --skip-rust --skip-wasm --skip-ts --pw-project chromium
+        run: cargo xtask test-all --skip-rust --skip-wasm --skip-ts --pw-project chromium
 
       - name: Publish E2E test report
         if: always()

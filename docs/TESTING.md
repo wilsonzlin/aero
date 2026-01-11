@@ -25,8 +25,12 @@ CI reruns the same command and fails if it produces any diff (determinism check)
 From the repo root:
 
 ```bash
-./scripts/test-all.sh
+cargo xtask test-all
 ```
+
+`./scripts/test-all.sh` is kept as a thin wrapper around `cargo xtask test-all`
+for a transition period, but `cargo xtask` is the canonical implementation (and
+works on Windows without bash).
 
 The unified runner executes (in order):
 
@@ -43,16 +47,16 @@ Common options:
 
 ```bash
 # Skip the slowest step
-./scripts/test-all.sh --skip-e2e
+cargo xtask test-all --skip-e2e
 
 # Require WebGPU for tests that gate on it
-./scripts/test-all.sh --webgpu
+cargo xtask test-all --webgpu
 
 # Select Playwright projects (repeatable)
-./scripts/test-all.sh --pw-project chromium --pw-project firefox
+cargo xtask test-all --pw-project chromium --pw-project firefox
 
 # Forward additional Playwright CLI args (everything after --)
-./scripts/test-all.sh --pw-project chromium -- --grep smoke
+cargo xtask test-all --pw-project chromium -- --grep smoke
 ```
 
 If your repo layout differs from the defaults, override directories:
@@ -177,7 +181,7 @@ wasm-pack test --node
 
 Notes:
 
-- `scripts/test-all.sh` resolves the wasm-pack crate via `scripts/ci/detect-wasm-crate.*`.
+- `cargo xtask test-all` resolves the wasm-pack crate via `scripts/ci/detect-wasm-crate.*` (shared with CI tooling).
   - Override with `AERO_WASM_CRATE_DIR` / `--wasm-crate-dir` if needed.
   - Otherwise it prefers the canonical crate (`crates/aero-wasm`) when present.
   - If it must fall back to `cargo metadata`, it fails if multiple `cdylib` crates exist (set an override).
@@ -368,7 +372,7 @@ Expected behavior when `AERO_REQUIRE_WEBGPU=1` is set:
 
 CI should be reproducible locally with the same top-level commands:
 
-- Full stack (recommended): `./scripts/test-all.sh`
+- Full stack (recommended): `cargo xtask test-all` (or `./scripts/test-all.sh` wrapper)
 - Rust: `cargo test --workspace`
 - WASM (Node): `wasm-pack test --node`
 - TypeScript unit tests: `npm run test:unit` (often with coverage enabled)

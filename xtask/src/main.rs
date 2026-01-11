@@ -1,23 +1,31 @@
 use std::env;
 use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
+mod cmd_test_all;
+mod cmd_wasm;
+mod cmd_web;
+mod error;
 // Fixture "sources" live under `tests/fixtures/` so they can be consumed by
 // system/integration tests and by this generator.
 //
 // We compile them into the `xtask` binary via `#[path]` in the module definition
 // (see `xtask/src/fixture_sources/`) to avoid any external build tooling.
 mod fixture_sources;
+mod paths;
+mod runner;
+
+use crate::error::{Result, XtaskError};
 
 fn main() {
     if let Err(err) = try_main() {
         eprintln!("error: {err}");
-        std::process::exit(1);
+        std::process::exit(err.exit_code());
     }
 }
 
-fn try_main() -> Result<(), String> {
+fn try_main() -> Result<()> {
     let mut args = env::args().skip(1);
     let Some(cmd) = args.next() else {
         return help();
@@ -25,47 +33,55 @@ fn try_main() -> Result<(), String> {
 
     match cmd.as_str() {
         "fixtures" => cmd_fixtures(args.collect()),
+        "test-all" => cmd_test_all::cmd(args.collect()),
+        "wasm" => cmd_wasm::cmd(args.collect()),
+        "web" => cmd_web::cmd(args.collect()),
         "-h" | "--help" | "help" => help(),
         other => Err(format!(
             "unknown xtask subcommand `{other}` (run `cargo xtask help`)"
-        )),
+        )
+        .into()),
     }
 }
 
-fn help() -> Result<(), String> {
+fn help() -> Result<()> {
     println!(
         "\
 Usage:
   cargo xtask fixtures [--check]
+  cargo xtask test-all [options] [-- <extra playwright args>]
+  cargo xtask wasm [single|threaded|both] [dev|release]
+  cargo xtask web dev|build|preview
 
 Commands:
   fixtures   Generate tiny, deterministic test fixtures under `tests/fixtures/`.
+  test-all   Run the full test stack (Rust, WASM, TypeScript, Playwright).
+  wasm       Build the Rust→WASM packages used by the web app.
+  web        Run web (Node/Vite) tasks via npm.
+
+Run `cargo xtask <command> --help` for command-specific help.
 "
     );
     Ok(())
 }
 
-fn repo_root() -> Result<PathBuf, String> {
-    // `CARGO_MANIFEST_DIR` points at `<repo>/xtask`, so the parent is the repo root.
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    manifest_dir
-        .parent()
-        .map(Path::to_path_buf)
-        .ok_or_else(|| "failed to locate repo root".to_string())
-}
-
-fn cmd_fixtures(args: Vec<String>) -> Result<(), String> {
+fn cmd_fixtures(args: Vec<String>) -> Result<()> {
     let mut check = false;
     for arg in args {
         match arg.as_str() {
             "--check" => check = true,
-            other => return Err(format!("unknown flag for `fixtures`: `{other}`")),
+            other => {
+                return Err(XtaskError::Message(format!(
+                    "unknown flag for `fixtures`: `{other}`"
+                )))
+            }
         }
     }
 
-    let root = repo_root()?;
+    let root = paths::repo_root()?;
     let out_dir = root.join("tests/fixtures/boot");
-    fs::create_dir_all(&out_dir).map_err(|e| format!("create {out_dir:?}: {e}"))?;
+    fs::create_dir_all(&out_dir)
+        .map_err(|e| XtaskError::Message(format!("create {out_dir:?}: {e}")))?;
 
     let boot_sector = boot_sector_from_code(fixture_sources::boot_vga_serial::CODE)?;
 
@@ -83,12 +99,13 @@ fn cmd_fixtures(args: Vec<String>) -> Result<(), String> {
     Ok(())
 }
 
-fn boot_sector_from_code(code: &[u8]) -> Result<Vec<u8>, String> {
+fn boot_sector_from_code(code: &[u8]) -> Result<Vec<u8>> {
     if code.len() > 510 {
         return Err(format!(
             "boot sector code is too large: {} bytes (max 510)",
             code.len()
-        ));
+        )
+        .into());
     }
 
     let mut out = Vec::with_capacity(512);
@@ -101,15 +118,16 @@ fn boot_sector_from_code(code: &[u8]) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
-fn disk_image_with_fill(boot_sector: &[u8], sectors: usize) -> Result<Vec<u8>, String> {
+fn disk_image_with_fill(boot_sector: &[u8], sectors: usize) -> Result<Vec<u8>> {
     if boot_sector.len() != 512 {
         return Err(format!(
             "boot sector must be exactly 512 bytes, got {}",
             boot_sector.len()
-        ));
+        )
+        .into());
     }
     if sectors == 0 {
-        return Err("disk image must have at least 1 sector".to_string());
+        return Err("disk image must have at least 1 sector".into());
     }
 
     let mut img = Vec::with_capacity(sectors * 512);
@@ -122,29 +140,30 @@ fn disk_image_with_fill(boot_sector: &[u8], sectors: usize) -> Result<Vec<u8>, S
     Ok(img)
 }
 
-fn ensure_file(path: &Path, expected: &[u8], check: bool) -> Result<(), String> {
+fn ensure_file(path: &Path, expected: &[u8], check: bool) -> Result<()> {
     let existing = match fs::read(path) {
         Ok(bytes) => Some(bytes),
         Err(err) if err.kind() == io::ErrorKind::NotFound => None,
         Err(err) => {
-            return Err(format!("read {path:?}: {err}"));
+            return Err(format!("read {path:?}: {err}").into());
         }
     };
 
     if check {
         let Some(existing) = existing else {
-            return Err(format!("{path:?} is missing (run `cargo xtask fixtures`)"));
+            return Err(format!("{path:?} is missing (run `cargo xtask fixtures`)").into());
         };
         if existing != expected {
-            return Err(format!(
-                "{path:?} is out of date (run `cargo xtask fixtures`)"
-            ));
+            return Err(
+                format!("{path:?} is out of date (run `cargo xtask fixtures`)").into(),
+            );
         }
         return Ok(());
     }
 
     if existing.as_deref() != Some(expected) {
-        fs::write(path, expected).map_err(|e| format!("write {path:?}: {e}"))?;
+        fs::write(path, expected)
+            .map_err(|e| XtaskError::Message(format!("write {path:?}: {e}")))?;
     }
 
     Ok(())
