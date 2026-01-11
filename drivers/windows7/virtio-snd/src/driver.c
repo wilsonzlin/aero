@@ -27,139 +27,6 @@ VirtIoSndCompleteIrp(
     return Status;
 }
 
-static VOID
-VirtIoSndReleaseHardwareResources(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
-{
-    ULONG i;
-
-    /*
-     * Always tear down the virtio-pci modern transport first (it owns a BAR0
-     * MmMapIoSpace mapping and holds a referenced PCI bus interface).
-     */
-    VirtIoSndTransportUninit(&Dx->Transport);
-    Dx->NegotiatedFeatures = 0;
-
-    for (i = 0; i < Dx->MmioRangeCount; ++i) {
-        if (Dx->MmioRanges[i].BaseAddress != NULL && Dx->MmioRanges[i].Length != 0) {
-            MmUnmapIoSpace(Dx->MmioRanges[i].BaseAddress, Dx->MmioRanges[i].Length);
-        }
-
-        Dx->MmioRanges[i].BaseAddress = NULL;
-        Dx->MmioRanges[i].Length = 0;
-        Dx->MmioRanges[i].PhysicalAddress.QuadPart = 0;
-    }
-
-    Dx->MmioRangeCount = 0;
-
-    Dx->HasIoPort = FALSE;
-    Dx->IoPortBase = 0;
-    Dx->IoPortLength = 0;
-}
-
-static NTSTATUS
-VirtIoSndStartDevice(
-    _Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx,
-    _In_opt_ PCM_RESOURCE_LIST RawResources,
-    _In_opt_ PCM_RESOURCE_LIST TranslatedResources
-    )
-{
-    NTSTATUS status;
-    UINT64 negotiated;
-
-    VirtIoSndReleaseHardwareResources(Dx);
-
-    negotiated = 0;
-
-    if (RawResources == NULL || TranslatedResources == NULL) {
-        VIRTIOSND_TRACE_ERROR("StartDevice: missing CM resources\n");
-        return STATUS_DEVICE_CONFIGURATION_ERROR;
-    }
-    if (RawResources->Count < 1 || TranslatedResources->Count < 1) {
-        VIRTIOSND_TRACE_ERROR("StartDevice: empty CM resources list\n");
-        return STATUS_DEVICE_CONFIGURATION_ERROR;
-    }
-
-    status = VirtIoSndTransportInit(&Dx->Transport, Dx->LowerDeviceObject, RawResources, TranslatedResources);
-    if (!NT_SUCCESS(status)) {
-        VIRTIOSND_TRACE_ERROR("StartDevice: transport init failed: 0x%08X\n", status);
-        VirtIoSndReleaseHardwareResources(Dx);
-        return status;
-    }
-
-    status = VirtIoSndTransportNegotiateFeatures(&Dx->Transport, &negotiated);
-    if (!NT_SUCCESS(status)) {
-        VIRTIOSND_TRACE_ERROR("StartDevice: feature negotiation failed: 0x%08X\n", status);
-        VirtIoSndReleaseHardwareResources(Dx);
-        return status;
-    }
-
-    Dx->NegotiatedFeatures = negotiated;
-
-    {
-        PCM_PARTIAL_RESOURCE_DESCRIPTOR desc;
-        ULONG i;
-        ULONG count = TranslatedResources->List[0].PartialResourceList.Count;
-
-        desc = TranslatedResources->List[0].PartialResourceList.PartialDescriptors;
-        for (i = 0; i < count; ++i) {
-            switch (desc[i].Type) {
-            case CmResourceTypeMemory:
-                if (Dx->MmioRangeCount < VIRTIOSND_MAX_MMIO_RANGES) {
-                    PVIRTIOSND_MMIO_RANGE range = &Dx->MmioRanges[Dx->MmioRangeCount];
-
-                    range->PhysicalAddress = desc[i].u.Memory.Start;
-                    range->Length = desc[i].u.Memory.Length;
-                    range->BaseAddress = NULL;
-
-                    if (range->Length != 0) {
-                        range->BaseAddress = MmMapIoSpace(range->PhysicalAddress, range->Length, MmNonCached);
-                    }
-
-                    VIRTIOSND_TRACE(
-                        "StartDevice: MMIO[%lu] PA=%I64x len=%lu VA=%p\n",
-                        Dx->MmioRangeCount,
-                        range->PhysicalAddress.QuadPart,
-                        range->Length,
-                        range->BaseAddress);
-
-                    ++Dx->MmioRangeCount;
-                } else {
-                    VIRTIOSND_TRACE_ERROR("StartDevice: too many MMIO ranges; ignoring\n");
-                }
-                break;
-
-            case CmResourceTypePort:
-                if (!Dx->HasIoPort) {
-                    Dx->HasIoPort = TRUE;
-                    Dx->IoPortBase = (ULONG_PTR)desc[i].u.Port.Start.QuadPart;
-                    Dx->IoPortLength = desc[i].u.Port.Length;
-                }
-
-                VIRTIOSND_TRACE(
-                    "StartDevice: IO port start=%I64x len=%lu\n",
-                    desc[i].u.Port.Start.QuadPart,
-                    desc[i].u.Port.Length);
-                break;
-
-            case CmResourceTypeInterrupt:
-                VIRTIOSND_TRACE(
-                    "StartDevice: interrupt vector=%lu level=%lu affinity=%I64x\n",
-                    desc[i].u.Interrupt.Vector,
-                    desc[i].u.Interrupt.Level,
-                    (ULONGLONG)desc[i].u.Interrupt.Affinity);
-                break;
-
-            default:
-                VIRTIOSND_TRACE("StartDevice: resource type=%u\n", (UINT)desc[i].Type);
-                break;
-            }
-        }
-    }
-
-    Dx->Started = TRUE;
-    return STATUS_SUCCESS;
-}
-
 static NTSTATUS
 VirtIoSndSyncCompletionRoutine(
     _In_ PDEVICE_OBJECT DeviceObject,
@@ -312,6 +179,9 @@ VirtIoSndAddDevice(PDRIVER_OBJECT DriverObject, PDEVICE_OBJECT PhysicalDeviceObj
 
     IoInitializeRemoveLock(&dx->RemoveLock, VIRTIOSND_POOL_TAG, 0, 0);
 
+    KeInitializeEvent(&dx->DpcIdleEvent, NotificationEvent, TRUE);
+    dx->Stopping = 1;
+
     deviceObject->Flags |= dx->LowerDeviceObject->Flags & (DO_BUFFERED_IO | DO_DIRECT_IO | DO_POWER_PAGABLE);
     deviceObject->Flags &= ~DO_DEVICE_INITIALIZING;
 
@@ -406,25 +276,23 @@ VirtIoSndDispatchPnp(PDEVICE_OBJECT DeviceObject, PIRP Irp)
             return VirtIoSndCompleteIrp(Irp, status, 0);
         }
 
-        status = VirtIoSndStartDevice(dx, raw, translated);
+        status = VirtIoSndStartHardware(dx, raw, translated);
         IoReleaseRemoveLock(&dx->RemoveLock, Irp);
         return VirtIoSndCompleteIrp(Irp, status, 0);
     }
 
     case IRP_MN_STOP_DEVICE:
-        VirtIoSndReleaseHardwareResources(dx);
-        dx->Started = FALSE;
+        VirtIoSndStopHardware(dx);
         return VirtIoSndForwardIrpWithRemoveLock(dx, Irp);
 
     case IRP_MN_SURPRISE_REMOVAL:
         dx->Removed = TRUE;
-        VirtIoSndReleaseHardwareResources(dx);
-        dx->Started = FALSE;
+        VirtIoSndStopHardware(dx);
         return VirtIoSndForwardIrpWithRemoveLock(dx, Irp);
 
     case IRP_MN_REMOVE_DEVICE: {
         dx->Removed = TRUE;
-        VirtIoSndReleaseHardwareResources(dx);
+        VirtIoSndStopHardware(dx);
 
         IoSkipCurrentIrpStackLocation(Irp);
         status = IoCallDriver(dx->LowerDeviceObject, Irp);
