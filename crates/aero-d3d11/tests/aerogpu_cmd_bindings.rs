@@ -1893,7 +1893,7 @@ fn aerogpu_cmd_rebinds_vertex_buffer_between_draws_without_restarting_render_pas
         assert_eq!(stats.bind_group_layouts.entries, 2);
 
         let pixels = exec.read_texture_rgba8(RT).await.unwrap();
-        assert_eq!(pixels.len(), 2 * 1 * 4);
+        assert_eq!(pixels.len(), 2 * 4);
         assert_eq!(&pixels[0..4], &[255, 0, 0, 255]);
         assert_eq!(&pixels[4..8], &[0, 255, 0, 255]);
     });

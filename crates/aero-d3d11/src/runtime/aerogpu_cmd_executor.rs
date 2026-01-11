@@ -1494,7 +1494,7 @@ impl AerogpuD3d11Executor {
             vec![None; pipeline_bindings.group_layouts.len()];
 
         let mut d3d_slot_to_wgpu_slot: Vec<Option<u32>> = vec![None; DEFAULT_MAX_VERTEX_SLOTS];
-        let mut used_vertex_slots = vec![false; DEFAULT_MAX_VERTEX_SLOTS];
+        let mut used_vertex_slots = [false; DEFAULT_MAX_VERTEX_SLOTS];
         for (wgpu_slot, &d3d_slot) in wgpu_slot_to_d3d_slot.iter().enumerate() {
             let slot_usize: usize = d3d_slot
                 .try_into()
