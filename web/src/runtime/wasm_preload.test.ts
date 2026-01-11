@@ -60,6 +60,9 @@ describe("runtime/wasm_preload", () => {
         UsbPassthroughBridge: class {
           free(): void {}
         },
+        WebUsbUhciPassthroughHarness: class {
+          free(): void {}
+        },
       }),
     };
 
@@ -72,5 +75,6 @@ describe("runtime/wasm_preload", () => {
     expect(api.add(2, 3)).toBe(5);
     expect(initInput).toBe(compiled.module);
     expect(api.UsbPassthroughBridge).toBeDefined();
+    expect(api.WebUsbUhciPassthroughHarness).toBeDefined();
   });
 });

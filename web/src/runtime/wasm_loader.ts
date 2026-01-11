@@ -313,6 +313,7 @@ function toApi(mod: RawWasmModule): WasmApi {
         UsbHidBridge: mod.UsbHidBridge,
         WebHidPassthroughBridge: mod.WebHidPassthroughBridge,
         UsbPassthroughBridge: mod.UsbPassthroughBridge,
+        WebUsbUhciPassthroughHarness: mod.WebUsbUhciPassthroughHarness,
         CpuWorkerDemo: mod.CpuWorkerDemo,
         AeroApi: mod.AeroApi,
         DemoVm: mod.DemoVm,

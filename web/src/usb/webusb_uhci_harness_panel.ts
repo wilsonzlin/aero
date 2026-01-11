@@ -369,7 +369,7 @@ export function renderWebUsbUhciHarnessPanel(
 
   void wasmInitPromise
     .then((wasm) => {
-      hasHarnessExport = typeof (wasm.api as unknown as Record<string, unknown>).WebUsbUhciPassthroughHarness === "function";
+      hasHarnessExport = typeof wasm.api.WebUsbUhciPassthroughHarness === "function";
       wasmInitErr = null;
       refreshUi();
     })
@@ -510,7 +510,7 @@ export function renderWebUsbUhciHarnessPanel(
         return;
       }
 
-      const ctor = (wasm.api as unknown as Record<string, unknown>).WebUsbUhciPassthroughHarness;
+      const ctor = wasm.api.WebUsbUhciPassthroughHarness;
       if (typeof ctor !== "function") {
         showError(new Error("WASM export missing: WebUsbUhciPassthroughHarness"));
         return;
