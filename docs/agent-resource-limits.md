@@ -195,6 +195,9 @@ Mitigations:
   source ./scripts/agent-env.sh
   ```
 
+  Note: this intentionally overrides any existing `CARGO_HOME` so the isolation
+  actually takes effect.
+
 ### Build is very slow
 
 You might be over-constrained. Check if you're accidentally running with `-j1`:

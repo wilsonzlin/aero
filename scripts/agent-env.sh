@@ -13,9 +13,9 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 #   export AERO_ISOLATE_CARGO_HOME=1
 #   source scripts/agent-env.sh
 if [[ -n "${AERO_ISOLATE_CARGO_HOME:-}" ]]; then
-  if [[ -z "${CARGO_HOME:-}" ]]; then
-    export CARGO_HOME="$REPO_ROOT/.cargo-home"
-  fi
+  # Force a repo-local Cargo home so "package cache" locks don't serialize all
+  # concurrent agents on the same host.
+  export CARGO_HOME="$REPO_ROOT/.cargo-home"
   mkdir -p "$CARGO_HOME"
 fi
 
