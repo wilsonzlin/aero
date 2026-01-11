@@ -249,6 +249,18 @@ export function compareGpuBenchmarks({
       const baselineStats = bOk ? statsFromScenario(b, metricName) : null;
       const candidateStats = cOk ? statsFromScenario(c, metricName) : null;
 
+      // Some GPU metrics are only recorded by certain scenarios (or only when a
+      // scenario runs via a particular API backend). If a metric is missing in
+      // both baseline and candidate for an otherwise-successful scenario, treat
+      // it as "not applicable" and skip the comparison.
+      //
+      // We intentionally *do not* skip missing metrics when either scenario is
+      // non-`ok` (skipped/error), so scenario failures still surface as
+      // instability in CI.
+      if (bOk && cOk && !baselineStats && !candidateStats) {
+        continue;
+      }
+
       let effectiveThreshold: any = threshold;
       if (overrideMaxRegressionPct != null) {
         effectiveThreshold = { ...effectiveThreshold, maxRegressionPct: overrideMaxRegressionPct };

@@ -193,6 +193,67 @@ test("compare_gpu_benchmarks exits 2 when a required candidate metric is missing
   }
 });
 
+test("compare_gpu_benchmarks skips comparisons for metrics missing in both baseline and candidate", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "aero-gpu-compare-"));
+  try {
+    const baselinePath = path.join(dir, "baseline.json");
+    const candidatePath = path.join(dir, "candidate.json");
+    const thresholdsPath = path.join(dir, "thresholds.json");
+    const outDir = path.join(dir, "out");
+
+    await writeJson(thresholdsPath, {
+      schemaVersion: 1,
+      profiles: {
+        "pr-smoke": {
+          gpu: {
+            metrics: {
+              frameTimeMsP95: { better: "lower", maxRegressionPct: 0.15, extremeCvThreshold: 0.5 },
+              presentLatencyMsP95: { better: "lower", maxRegressionPct: 0.15, extremeCvThreshold: 0.5 },
+            },
+          },
+        },
+      },
+    });
+
+    // Both baseline + candidate intentionally omit presentLatencyMsP95 (e.g. a 2D scenario).
+    await writeJson(baselinePath, {
+      meta: { gitSha: "base", iterations: 3 },
+      summary: {
+        scenarios: {
+          vga_text_scroll: {
+            name: "VGA text scroll stress",
+            status: "ok",
+            metrics: { frameTimeMsP95: { median: 10, cv: 0.1, n: 3 } },
+          },
+        },
+      },
+    });
+
+    await writeJson(candidatePath, {
+      meta: { gitSha: "head", iterations: 3 },
+      summary: {
+        scenarios: {
+          vga_text_scroll: {
+            name: "VGA text scroll stress",
+            status: "ok",
+            metrics: { frameTimeMsP95: { median: 10, cv: 0.1, n: 3 } },
+          },
+        },
+      },
+    });
+
+    const result = runCompare({ baseline: baselinePath, candidate: candidatePath, outDir, thresholdsFile: thresholdsPath });
+    assert.equal(result.status, 0, `expected exit code 0, got ${result.status}\n${result.stderr}`);
+
+    const summary = JSON.parse(await readFile(path.join(outDir, "summary.json"), "utf8"));
+    assert.equal(summary.status, "pass");
+    assert.ok(Array.isArray(summary.comparisons));
+    assert.equal(summary.comparisons.some((c: any) => c.metric === "presentLatencyMsP95"), false);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("compare_gpu_benchmarks supports aero-gpu-bench schemaVersion=1 baseline", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "aero-gpu-compare-"));
   try {
