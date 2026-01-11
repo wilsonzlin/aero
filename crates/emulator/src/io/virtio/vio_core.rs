@@ -73,6 +73,12 @@ impl From<GuestMemoryError> for VirtQueueError {
     }
 }
 
+fn checked_offset(base: u64, offset: u64, len: usize, size: u64) -> Result<u64, VirtQueueError> {
+    base.checked_add(offset).ok_or_else(|| {
+        VirtQueueError::GuestMemory(GuestMemoryError::OutOfRange { paddr: base, len, size })
+    })
+}
+
 #[derive(Debug, Clone)]
 pub struct VirtQueue {
     pub size: u16,
@@ -100,13 +106,16 @@ impl VirtQueue {
         &mut self,
         mem: &impl GuestMemory,
     ) -> Result<Option<DescriptorChain>, VirtQueueError> {
-        let avail_idx = mem.read_u16_le(self.avail_ring + 2)?;
+        let avail_idx_addr = checked_offset(self.avail_ring, 2, 2, mem.size())?;
+        let avail_idx = mem.read_u16_le(avail_idx_addr)?;
         if avail_idx == self.last_avail_idx {
             return Ok(None);
         }
 
         let ring_index = (self.last_avail_idx % self.size) as u64;
-        let head_index = mem.read_u16_le(self.avail_ring + 4 + ring_index * 2)?;
+        let head_index_addr =
+            checked_offset(self.avail_ring, 4 + ring_index * 2, 2, mem.size())?;
+        let head_index = mem.read_u16_le(head_index_addr)?;
         self.last_avail_idx = self.last_avail_idx.wrapping_add(1);
 
         Ok(Some(self.read_chain(mem, head_index)?))
@@ -121,13 +130,16 @@ impl VirtQueue {
         &self,
         mem: &impl GuestMemory,
     ) -> Result<Option<DescriptorChain>, VirtQueueError> {
-        let avail_idx = mem.read_u16_le(self.avail_ring + 2)?;
+        let avail_idx_addr = checked_offset(self.avail_ring, 2, 2, mem.size())?;
+        let avail_idx = mem.read_u16_le(avail_idx_addr)?;
         if avail_idx == self.last_avail_idx {
             return Ok(None);
         }
 
         let ring_index = (self.last_avail_idx % self.size) as u64;
-        let head_index = mem.read_u16_le(self.avail_ring + 4 + ring_index * 2)?;
+        let head_index_addr =
+            checked_offset(self.avail_ring, 4 + ring_index * 2, 2, mem.size())?;
+        let head_index = mem.read_u16_le(head_index_addr)?;
         Ok(Some(self.read_chain(mem, head_index)?))
     }
 
@@ -136,7 +148,8 @@ impl VirtQueue {
     ///
     /// Returns `true` if an entry was consumed.
     pub fn consume_available(&mut self, mem: &impl GuestMemory) -> Result<bool, VirtQueueError> {
-        let avail_idx = mem.read_u16_le(self.avail_ring + 2)?;
+        let avail_idx_addr = checked_offset(self.avail_ring, 2, 2, mem.size())?;
+        let avail_idx = mem.read_u16_le(avail_idx_addr)?;
         if avail_idx == self.last_avail_idx {
             return Ok(false);
         }
@@ -151,14 +164,17 @@ impl VirtQueue {
         chain: &DescriptorChain,
         len: u32,
     ) -> Result<bool, VirtQueueError> {
+        let mem_size = mem.size();
         let used_ring_index = (self.next_used_idx % self.size) as u64;
-        let used_elem_addr = self.used_ring + 4 + used_ring_index * 8;
+        let used_elem_addr = checked_offset(self.used_ring, 4 + used_ring_index * 8, 8, mem_size)?;
 
         mem.write_u32_le(used_elem_addr, chain.head_index as u32)?;
-        mem.write_u32_le(used_elem_addr + 4, len)?;
+        let used_elem_len_addr = checked_offset(used_elem_addr, 4, 4, mem_size)?;
+        mem.write_u32_le(used_elem_len_addr, len)?;
 
         self.next_used_idx = self.next_used_idx.wrapping_add(1);
-        mem.write_u16_le(self.used_ring + 2, self.next_used_idx)?;
+        let used_idx_addr = checked_offset(self.used_ring, 2, 2, mem_size)?;
+        mem.write_u16_le(used_idx_addr, self.next_used_idx)?;
 
         self.device_should_interrupt(mem)
     }
@@ -216,12 +232,15 @@ impl VirtQueue {
         mem: &impl GuestMemory,
         index: u16,
     ) -> Result<Descriptor, VirtQueueError> {
-        let base = self.desc_table + (index as u64) * 16;
+        let base = checked_offset(self.desc_table, (index as u64) * 16, 16, mem.size())?;
+        let len_addr = checked_offset(base, 8, 4, mem.size())?;
+        let flags_addr = checked_offset(base, 12, 2, mem.size())?;
+        let next_addr = checked_offset(base, 14, 2, mem.size())?;
         Ok(Descriptor {
             addr: mem.read_u64_le(base)?,
-            len: mem.read_u32_le(base + 8)?,
-            flags: mem.read_u16_le(base + 12)?,
-            next: mem.read_u16_le(base + 14)?,
+            len: mem.read_u32_le(len_addr)?,
+            flags: mem.read_u16_le(flags_addr)?,
+            next: mem.read_u16_le(next_addr)?,
         })
     }
 }
@@ -302,5 +321,16 @@ mod tests {
         let popped = vq.pop_available(&mem).unwrap().unwrap();
         assert_eq!(peeked, popped);
         assert!(vq.peek_available(&mem).unwrap().is_none());
+    }
+
+    #[test]
+    fn virtqueue_addresses_do_not_panic_on_overflow() {
+        let mem = DenseMemory::new(0x100).unwrap();
+        let mut vq = VirtQueue::new(8, 0, u64::MAX - 1, 0);
+        let err = vq.pop_available(&mem).unwrap_err();
+        assert!(matches!(
+            err,
+            VirtQueueError::GuestMemory(GuestMemoryError::OutOfRange { .. })
+        ));
     }
 }

@@ -2,7 +2,7 @@ use crate::io::net::NetworkBackend;
 use crate::io::virtio::vio_core::{
     Descriptor, DescriptorChain, VirtQueue, VirtQueueError, VRING_DESC_F_WRITE,
 };
-use memory::GuestMemory;
+use memory::{GuestMemory, GuestMemoryError};
 use std::collections::VecDeque;
 
 const MIN_FRAME_LEN: usize = 14;
@@ -191,7 +191,7 @@ impl VirtioNetDevice {
                 None => break,
             };
 
-            if !rx_chain_can_fit_frame(&chain, frame.len()) {
+            if !rx_chain_can_fit_frame(mem, &chain, frame.len()) {
                 // Buffers are insufficient; drop without consuming the RX chain.
                 self.pending_rx.pop_front();
                 continue;
@@ -252,6 +252,7 @@ fn read_tx_frame(
     {
         return match err {
             VirtQueueError::DescriptorChainTooShort { .. } => Ok(None),
+            VirtQueueError::GuestMemory(_) => Ok(None),
             other => Err(other),
         };
     }
@@ -286,11 +287,13 @@ fn tx_total_len(descs: &[Descriptor]) -> Option<usize> {
     Some(total)
 }
 
-fn rx_chain_can_fit_frame(chain: &DescriptorChain, frame_len: usize) -> bool {
+fn rx_chain_can_fit_frame(mem: &impl GuestMemory, chain: &DescriptorChain, frame_len: usize) -> bool {
     let needed = VirtioNetHeader::SIZE + frame_len;
     if needed > MAX_TX_TOTAL_LEN {
         return false;
     }
+
+    let mem_size = mem.size();
 
     let Some(first) = chain.descriptors.first() else {
         return false;
@@ -300,18 +303,46 @@ fn rx_chain_can_fit_frame(chain: &DescriptorChain, frame_len: usize) -> bool {
         return false;
     }
 
-    let mut total_writable = 0usize;
+    let header_end = match first.addr.checked_add(VirtioNetHeader::SIZE as u64) {
+        Some(end) => end,
+        None => return false,
+    };
+    if header_end > mem_size {
+        return false;
+    }
+
+    let mut remaining_payload = frame_len;
+    let mut offset = VirtioNetHeader::SIZE;
     for desc in &chain.descriptors {
         if desc.flags & VRING_DESC_F_WRITE == 0 {
             break;
         }
 
-        total_writable = match total_writable.checked_add(desc.len as usize) {
-            Some(total) => total,
-            None => return true,
-        };
+        let desc_len = desc.len as usize;
+        if offset >= desc_len {
+            offset -= desc_len;
+            continue;
+        }
 
-        if total_writable >= needed {
+        let available = desc_len - offset;
+        let to_write = usize::min(available, remaining_payload);
+        if to_write > 0 {
+            let addr = match desc.addr.checked_add(offset as u64) {
+                Some(addr) => addr,
+                None => return false,
+            };
+            let end = match addr.checked_add(to_write as u64) {
+                Some(end) => end,
+                None => return false,
+            };
+            if end > mem_size {
+                return false;
+            }
+            remaining_payload -= to_write;
+        }
+
+        offset = 0;
+        if remaining_payload == 0 {
             return true;
         }
     }
@@ -337,10 +368,14 @@ fn read_chain_exact(
 
         let available = desc_len - offset;
         let to_read = usize::min(available, out.len() - written);
-        mem.read_into(
-            desc.addr + offset as u64,
-            &mut out[written..written + to_read],
-        )?;
+        let addr = desc.addr.checked_add(offset as u64).ok_or_else(|| {
+            VirtQueueError::GuestMemory(GuestMemoryError::OutOfRange {
+                paddr: desc.addr,
+                len: to_read,
+                size: mem.size(),
+            })
+        })?;
+        mem.read_into(addr, &mut out[written..written + to_read])?;
         written += to_read;
         offset = 0;
 
@@ -383,7 +418,14 @@ fn write_chain(
 
         let available = desc_len - offset;
         let to_write = usize::min(available, remaining.len());
-        mem.write_from(desc.addr + offset as u64, &remaining[..to_write])?;
+        let addr = desc.addr.checked_add(offset as u64).ok_or_else(|| {
+            VirtQueueError::GuestMemory(GuestMemoryError::OutOfRange {
+                paddr: desc.addr,
+                len: to_write,
+                size: mem.size(),
+            })
+        })?;
+        mem.write_from(addr, &remaining[..to_write])?;
         written += to_write;
         remaining = &remaining[to_write..];
         offset = 0;
@@ -999,5 +1041,96 @@ mod tests {
         mem.read_into(payload_addr, &mut payload).unwrap();
         assert_eq!(&payload[..frame.len()], frame);
         assert_eq!(&payload[frame.len()..], &[0u8; 20 - MIN_FRAME_LEN]);
+    }
+
+    #[test]
+    fn tx_drops_frames_on_guest_memory_errors_without_panicking() {
+        let mut mem = DenseMemory::new(0x4000).unwrap();
+
+        let desc_table = 0x1000;
+        let avail = 0x2000;
+        let used = 0x3000;
+
+        write_desc(
+            &mut mem,
+            desc_table,
+            0,
+            Descriptor {
+                addr: u64::MAX - 5,
+                len: (VirtioNetHeader::SIZE + MIN_FRAME_LEN) as u32,
+                flags: 0,
+                next: 0,
+            },
+        );
+
+        init_avail(&mut mem, avail, 0, 0);
+        mem.write_u16_le(used, 0).unwrap();
+        mem.write_u16_le(used + 2, 0).unwrap();
+
+        let rx_vq = VirtQueue::new(8, 0, 0, 0);
+        let tx_vq = VirtQueue::new(8, desc_table, avail, used);
+        let config = VirtioNetConfig {
+            mac: [0; 6],
+            status: 1,
+            max_queue_pairs: 1,
+        };
+        let mut dev = VirtioNetDevice::new(config, rx_vq, tx_vq);
+
+        let mut backend = TestBackend::default();
+        let irq = dev.process_tx(&mut mem, &mut backend).unwrap();
+        assert!(irq);
+        assert!(backend.frames.is_empty());
+        assert_eq!(mem.read_u16_le(used + 2).unwrap(), 1);
+    }
+
+    #[test]
+    fn rx_drops_frames_when_descriptor_addresses_invalid() {
+        let mut mem = DenseMemory::new(0x8000).unwrap();
+
+        let desc_table = 0x1000;
+        let avail = 0x2000;
+        let used = 0x3000;
+
+        write_desc(
+            &mut mem,
+            desc_table,
+            0,
+            Descriptor {
+                addr: u64::MAX - 5,
+                len: VirtioNetHeader::SIZE as u32,
+                flags: VRING_DESC_F_WRITE | VRING_DESC_F_NEXT,
+                next: 1,
+            },
+        );
+        write_desc(
+            &mut mem,
+            desc_table,
+            1,
+            Descriptor {
+                addr: 0x500,
+                len: 64,
+                flags: VRING_DESC_F_WRITE,
+                next: 0,
+            },
+        );
+
+        init_avail(&mut mem, avail, 0, 0);
+        mem.write_u16_le(used, 0).unwrap();
+        mem.write_u16_le(used + 2, 0).unwrap();
+
+        let rx_vq = VirtQueue::new(8, desc_table, avail, used);
+        let tx_vq = VirtQueue::new(8, 0, 0, 0);
+        let config = VirtioNetConfig {
+            mac: [0; 6],
+            status: 1,
+            max_queue_pairs: 1,
+        };
+        let mut dev = VirtioNetDevice::new(config, rx_vq, tx_vq);
+
+        let frame = [0x11u8; MIN_FRAME_LEN];
+        let irq = dev.inject_rx_frame(&mut mem, &frame).unwrap();
+        assert!(!irq);
+        assert_eq!(dev.take_isr(), 0x0);
+        assert_eq!(mem.read_u16_le(used + 2).unwrap(), 0);
     }
 }
