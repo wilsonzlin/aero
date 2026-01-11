@@ -1462,6 +1462,19 @@ void APIENTRY IaSetVertexBuffers(D3D10DDI_HDEVICE hDevice,
 
   std::lock_guard<std::mutex> lock(dev->mutex);
 
+  // Unbind path (e.g. IASetVertexBuffers(0,0,NULL,NULL,NULL)).
+  if (startSlot == 0 && numBuffers == 0) {
+    dev->current_vb_res = nullptr;
+    dev->current_vb_stride = 0;
+    dev->current_vb_offset = 0;
+
+    auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_vertex_buffers>(
+        AEROGPU_CMD_SET_VERTEX_BUFFERS, nullptr, 0);
+    cmd->start_slot = 0;
+    cmd->buffer_count = 0;
+    return;
+  }
+
   // Minimal bring-up: handle the common {start=0,count=1} case.
   if (startSlot != 0 || numBuffers != 1) {
     SetError(hDevice, E_NOTIMPL);

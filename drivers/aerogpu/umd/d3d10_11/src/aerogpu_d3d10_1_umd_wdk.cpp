@@ -2806,7 +2806,7 @@ void AEROGPU_APIENTRY IaSetVertexBuffers(D3D10DDI_HDEVICE hDevice,
                                          const D3D10DDI_HRESOURCE* pBuffers,
                                          const UINT* pStrides,
                                          const UINT* pOffsets) {
-  if (!hDevice.pDrvPrivate || !pBuffers || !pStrides || !pOffsets) {
+  if (!hDevice.pDrvPrivate) {
     return;
   }
 
@@ -2815,8 +2815,27 @@ void AEROGPU_APIENTRY IaSetVertexBuffers(D3D10DDI_HDEVICE hDevice,
     return;
   }
 
-  // Minimal: only slot 0 is wired up.
-  if (start_slot != 0 || buffer_count == 0) {
+  if (buffer_count == 0) {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    dev->current_vb_res = nullptr;
+    dev->current_vb_stride = 0;
+    dev->current_vb_offset = 0;
+
+    auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_vertex_buffers>(
+        AEROGPU_CMD_SET_VERTEX_BUFFERS, nullptr, 0);
+    cmd->start_slot = start_slot;
+    cmd->buffer_count = 0;
+    return;
+  }
+
+  if (!pBuffers || !pStrides || !pOffsets) {
+    set_error(dev, E_INVALIDARG);
+    return;
+  }
+
+  // Minimal: only slot 0 / count 1 is wired up.
+  if (start_slot != 0 || buffer_count != 1) {
+    set_error(dev, E_NOTIMPL);
     return;
   }
   AEROGPU_D3D10_TRACEF_VERBOSE("IaSetVertexBuffers hDevice=%p buf=%p stride=%u offset=%u",
