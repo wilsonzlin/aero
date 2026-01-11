@@ -8,7 +8,9 @@ use crate::devices::aerogpu_regs::{
     AEROGPU_PCI_SUBCLASS_VGA_COMPATIBLE, AEROGPU_PCI_SUBSYSTEM_ID, AEROGPU_PCI_SUBSYSTEM_VENDOR_ID,
     AEROGPU_PCI_VENDOR_ID, FEATURE_VBLANK,
 };
-use crate::devices::aerogpu_ring::{AeroGpuRingHeader, RING_TAIL_OFFSET};
+use crate::devices::aerogpu_ring::{
+    AeroGpuRingHeader, AEROGPU_FENCE_PAGE_MAGIC, AEROGPU_FENCE_PAGE_SIZE_BYTES, RING_TAIL_OFFSET,
+};
 use crate::devices::aerogpu_scanout::AeroGpuFormat;
 use crate::gpu_worker::aerogpu_executor::{AeroGpuExecutor, AeroGpuExecutorConfig};
 use crate::io::pci::{MmioDevice, PciConfigSpace, PciDevice};
@@ -153,6 +155,11 @@ impl AeroGpuPciDevice {
         self.regs.scanout0.read_rgba(mem)
     }
 
+    pub fn complete_fence(&mut self, mem: &mut dyn MemoryBus, fence: u64) {
+        self.executor.complete_fence(&mut self.regs, mem, fence);
+        self.update_irq_level();
+    }
+
     fn update_irq_level(&mut self) {
         self.irq_level = (self.regs.irq_status & self.regs.irq_enable) != 0;
     }
@@ -164,6 +171,12 @@ impl AeroGpuPciDevice {
         }
         self.executor.reset();
         self.regs.completed_fence = 0;
+        if self.regs.fence_gpa != 0 {
+            mem.write_u32(self.regs.fence_gpa + 0, AEROGPU_FENCE_PAGE_MAGIC);
+            mem.write_u32(self.regs.fence_gpa + 4, self.regs.abi_version);
+            mem.write_u64(self.regs.fence_gpa + 8, self.regs.completed_fence);
+            let _ = AEROGPU_FENCE_PAGE_SIZE_BYTES;
+        }
         self.regs.irq_status = 0;
         self.update_irq_level();
     }
