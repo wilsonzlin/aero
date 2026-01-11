@@ -8,10 +8,12 @@
     Without a per-project intermediate directory, projects can contend for shared intermediates
     like `vc143.pdb`, causing flaky parallel builds (fatal error C1041 / file-in-use).
 
-    `IntDir` may still be overridden by the command line (e.g. build scripts pass /p:IntDir=...).
+    Note: do NOT guard this with `Condition="'$(IntDir)' == ''"`: the VC toolset typically sets a
+    default `IntDir` early, but it is not project-unique. Command-line `/p:IntDir=...` still wins
+    (global properties cannot be overridden by project files), so existing local scripts remain
+    compatible.
   -->
   <PropertyGroup>
-    <IntDir Condition="'$(IntDir)' == ''">$(BaseIntermediateOutputPath)$(MSBuildProjectName)\$(Platform)\$(Configuration)\</IntDir>
+    <IntDir>$(BaseIntermediateOutputPath)$(MSBuildProjectName)\$(Platform)\$(Configuration)\</IntDir>
   </PropertyGroup>
 </Project>
-
