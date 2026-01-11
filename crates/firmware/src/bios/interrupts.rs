@@ -638,6 +638,12 @@ fn build_e820_map(
 ) -> Vec<E820Entry> {
     let mut map = Vec::new();
     const ONE_MIB: u64 = 0x0010_0000;
+    // PCIe ECAM / MMCONFIG window reserved for PCI configuration space accesses.
+    //
+    // This must match the platform mapping (see `aero-pc-platform`) and the
+    // ACPI `MCFG` entry emitted by `bios::acpi`.
+    const PCIE_ECAM_BASE: u64 = 0xB000_0000;
+    const PCIE_ECAM_SIZE: u64 = 0x1000_0000; // 256MiB (buses 0..=255)
     // Typical x86 systems reserve a PCI/MMIO window below 4GiB. This must be
     // reported via E820 so OSes (notably Windows) do not treat device MMIO as RAM.
     const PCI_HOLE_START: u64 = 0xC000_0000;
@@ -693,6 +699,9 @@ fn build_e820_map(
     if let Some((base, len)) = nvs_region {
         reserved.push((base, len, E820_NVS));
     }
+    // Always reserve the ECAM window. Even if ACPI is disabled, the platform MMIO mapping
+    // must not be reported as usable RAM.
+    reserved.push((PCIE_ECAM_BASE, PCIE_ECAM_SIZE, E820_RESERVED));
     reserved.sort_by_key(|(base, _, _)| *base);
 
     // Conventional memory (0 - EBDA).
@@ -861,10 +870,11 @@ mod tests {
             Case {
                 mem: 4 * 1024 * 1024 * 1024,
                 ax: 0x3C00,
-                // With a 3GiB PCI/MMIO hole (0xC0000000..4GiB), only 3GiB of RAM
-                // exists below 4GiB. The remainder is remapped above 4GiB and does
-                // not count toward INT 15h E801's BX value.
-                bx: 0xBF00,
+                // With a 256MiB PCIe ECAM window at 0xB0000000 and a 3GiB PCI/MMIO
+                // hole (0xC0000000..4GiB), only 0xB0000000 bytes of RAM exist below
+                // 4GiB. The remainder is remapped above 4GiB and does not count
+                // toward INT 15h E801's BX value.
+                bx: 0xAF00,
             },
         ];
 
@@ -916,5 +926,30 @@ mod tests {
         handle_int13(&mut bios, &mut cpu, &mut mem, &mut disk);
         assert_ne!(cpu.rflags & FLAG_CF, 0);
         assert_eq!((cpu.rax >> 8) & 0xFF, 0x04);
+    }
+
+    #[test]
+    fn e820_reserves_pcie_ecam_window() {
+        let map = build_e820_map(4 * 1024 * 1024 * 1024, None, None);
+
+        assert!(
+            map.iter().any(|e| {
+                e.base == 0xB000_0000 && e.length == 0x1000_0000 && e.region_type == E820_RESERVED
+            }),
+            "E820 should reserve the PCIe ECAM window at 0xB000_0000..0xC000_0000"
+        );
+
+        for entry in &map {
+            if entry.region_type != E820_RAM || entry.length == 0 {
+                continue;
+            }
+            let entry_end = entry.base.saturating_add(entry.length);
+            let overlap_start = entry.base.max(0xB000_0000);
+            let overlap_end = entry_end.min(0xC000_0000);
+            assert!(
+                overlap_end <= overlap_start,
+                "RAM entry overlaps ECAM window: {entry:?}"
+            );
+        }
     }
 }
