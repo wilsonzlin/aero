@@ -40,16 +40,38 @@ case "${AERO_ISOLATE_CARGO_HOME:-}" in
     ;;
 esac
 
-# Some environments export `RUSTC_WRAPPER=sccache` (or the `CARGO_BUILD_*` equivalents).
-# When sccache is missing or its server is unavailable, Cargo fails before compilation starts.
-# Clear sccache-based wrappers by default for agent sandboxes; developers can opt back in by
-# exporting the wrapper variables again after sourcing this file.
-for var in RUSTC_WRAPPER RUSTC_WORKSPACE_WRAPPER CARGO_BUILD_RUSTC_WRAPPER CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER; do
-  val="${!var:-}"
-  if [[ "$val" == "sccache" || "$val" == */sccache || "$val" == "sccache.exe" || "$val" == */sccache.exe ]]; then
-    export "${var}="
-  fi
-done
+# Some environments configure a rustc wrapper (commonly `sccache`) either via environment
+# variables (`RUSTC_WRAPPER=sccache`) or via global Cargo config (`~/.cargo/config.toml`).
+#
+# When the wrapper daemon is unhealthy, Cargo can fail with errors like:
+#
+#   sccache: error: failed to execute compile
+#
+# This script disables environment-based `sccache` wrappers by default for agent sandboxes;
+# developers can opt back in by exporting the wrapper variables again after sourcing this file.
+#
+# If you also need to override a Cargo config `build.rustc-wrapper`, set
+# `AERO_DISABLE_RUSTC_WRAPPER=1` before sourcing; this exports *empty* wrapper variables, which
+# override Cargo config and disable wrappers entirely.
+case "${AERO_DISABLE_RUSTC_WRAPPER:-}" in
+  "" | 0 | false | FALSE | no | NO | off | OFF)
+    for var in RUSTC_WRAPPER RUSTC_WORKSPACE_WRAPPER CARGO_BUILD_RUSTC_WRAPPER CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER; do
+      val="${!var:-}"
+      if [[ "$val" == "sccache" || "$val" == */sccache || "$val" == "sccache.exe" || "$val" == */sccache.exe ]]; then
+        export "${var}="
+      fi
+    done
+    ;;
+  1 | true | TRUE | yes | YES | on | ON)
+    export RUSTC_WRAPPER=
+    export RUSTC_WORKSPACE_WRAPPER=
+    export CARGO_BUILD_RUSTC_WRAPPER=
+    export CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER=
+    ;;
+  *)
+    echo "warning: unsupported AERO_DISABLE_RUSTC_WRAPPER value: ${AERO_DISABLE_RUSTC_WRAPPER}" >&2
+    ;;
+esac
 
 # Rust/Cargo - balance speed vs memory
 export CARGO_BUILD_JOBS=4
@@ -98,6 +120,13 @@ echo "  RUSTFLAGS=$RUSTFLAGS"
 echo "  CARGO_INCREMENTAL=$CARGO_INCREMENTAL"
 if [[ -n "${CARGO_HOME:-}" ]]; then
   echo "  CARGO_HOME=$CARGO_HOME"
+fi
+if [[ "${RUSTC_WRAPPER+x}" != "" ]]; then
+  if [[ -n "${RUSTC_WRAPPER}" ]]; then
+    echo "  RUSTC_WRAPPER=$RUSTC_WRAPPER"
+  else
+    echo "  RUSTC_WRAPPER=<disabled>"
+  fi
 fi
 echo "  NODE_OPTIONS=$NODE_OPTIONS"
 if [[ -n "${AERO_ALLOW_UNSUPPORTED_NODE:-}" ]]; then

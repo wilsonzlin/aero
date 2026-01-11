@@ -228,6 +228,33 @@ Mitigations:
 
   (This uses more disk space, but avoids the lock contention.)
 
+### sccache errors ("failed to execute compile")
+
+Some environments configure a global Cargo rustc wrapper (commonly `sccache`) via `~/.cargo/config.toml`:
+
+```toml
+[build]
+rustc-wrapper = "sccache"
+```
+
+If the `sccache` daemon/socket is unhealthy, Cargo can fail with errors like:
+
+```
+sccache: error: failed to execute compile
+```
+
+Mitigations:
+
+- **Disable wrappers for the command**:
+  ```bash
+  RUSTC_WRAPPER= cargo test --locked
+  ```
+- Or, when using the agent env helper:
+  ```bash
+  export AERO_DISABLE_RUSTC_WRAPPER=1
+  source ./scripts/agent-env.sh
+  ```
+
 ### Build is very slow
 
 You might be over-constrained. Check if you're accidentally running with `-j1`:
