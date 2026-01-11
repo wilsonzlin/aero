@@ -79,9 +79,16 @@ At minimum, install the certificate into:
 - `ROOT`
 - `TrustedPublisher`
 
-The repo’s WIM injector script supports this directly:
+Recommended (Windows host): `tools/windows/patch-win7-media.ps1` can inject the certificate into the
+offline stores for both `boot.wim` and `install.wim` inside an extracted ISO tree, and can optionally
+inject drivers from a directory containing `.inf` files (for example `out/packages/**` from CI builds):
 
 ```powershell
-.\drivers\scripts\inject-win7-wim.ps1 -WimFile D:\iso\sources\boot.wim -Index 2 -DriverPackRoot .\drivers\out\aero-win7-driver-pack -CertPath .\out\certs\aero-test.cer
-.\drivers\scripts\inject-win7-wim.ps1 -WimFile D:\iso\sources\install.wim -Index 1 -DriverPackRoot .\drivers\out\aero-win7-driver-pack -CertPath .\out\certs\aero-test.cer
+.\tools\windows\patch-win7-media.ps1 `
+  -MediaRoot C:\iso\win7sp1 `
+  -CertPath .\out\certs\aero-test.cer `
+  -DriversPath .\out\packages
 ```
+
+If you already have a `win7/<arch>/...` driver tree, `drivers/scripts/inject-win7-wim.ps1` can inject
+drivers into a single WIM index and inject the certificate into the offline stores.

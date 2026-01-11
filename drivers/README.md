@@ -237,24 +237,32 @@ If you want Windows Setup to see virtio storage/network during install, inject d
 There are two common cases:
 
 - **Test-signed Aero driver bundles** (CI/release, `signing_policy=test`): inject both drivers **and** the public signing certificate into the offline images.
-- **WHQL/production-signed drivers** (for example, unmodified virtio-win packages): you can inject drivers with DISM and skip certificate injection.
+- **WHQL/production-signed drivers** (for example, unmodified virtio-win packages): inject drivers with DISM and skip certificate injection.
 
-The helper script `drivers/scripts/inject-win7-wim.ps1` implements the **test-signed** case. It expects a `win7/<arch>/...` driver tree (like the staging output from `make-driver-pack.ps1`) and injects the certificate into the offline `ROOT` + `TrustedPublisher` stores.
+### Recommended (Windows host): patch extracted install media (`tools/windows/patch-win7-media.ps1`)
 
-1. Build the driver pack and extract it to a folder (or use the staging folder).
-2. Ensure you have the **Aero test signing certificate** (`.cer`) that was used to sign the driver catalogs.
-   - This repo’s signing pipeline outputs it as: `out/certs/aero-test.cer`
-3. Inject into `boot.wim` (setup environment) and `install.wim` (the OS image). The injector also installs the certificate into the offline stores (`ROOT` + `TrustedPublisher`) so both WinPE and the installed OS trust the drivers:
+The script `tools/windows/patch-win7-media.ps1` is the most complete end-to-end flow: it patches BCD
+`testsigning`, injects the signing certificate into offline stores, and can inject drivers from any
+directory containing `.inf` files (including `out/packages/**` from CI builds).
+
+Example (CI-built signed packages + cert → patched Win7 ISO tree):
 
 ```powershell
-# Storage/network available during Windows Setup:
-.\drivers\scripts\inject-win7-wim.ps1 -WimFile D:\iso\sources\boot.wim -Index 2 -DriverPackRoot .\drivers\out\aero-win7-driver-pack -CertPath .\out\certs\aero-test.cer
-
-# Inject into the installed OS image (repeat for each index/edition you care about):
-.\drivers\scripts\inject-win7-wim.ps1 -WimFile D:\iso\sources\install.wim -Index 1 -DriverPackRoot .\drivers\out\aero-win7-driver-pack -CertPath .\out\certs\aero-test.cer
+.\tools\windows\patch-win7-media.ps1 `
+  -MediaRoot C:\iso\win7sp1 `
+  -CertPath .\out\certs\aero-test.cer `
+  -DriversPath .\out\packages
 ```
 
-Rebuild the ISO after injection (outside the scope of this repo; use your preferred `oscdimg`/ISO tool).
+### Alternative (driver-pack layout): inject a single WIM (`drivers/scripts/inject-win7-wim.ps1`)
+
+If you already have a `win7/<arch>/...` driver tree (for example from `drivers/out/aero-win7-driver-pack/`
+produced by `make-driver-pack.ps1`), `drivers/scripts/inject-win7-wim.ps1` can inject drivers into a
+single WIM index and inject a certificate into the offline `ROOT` + `TrustedPublisher` stores.
+
+For WHQL/production-signed drivers, prefer DISM-only injection without adding a custom certificate.
+
+Rebuild the ISO after patching (outside the scope of this repo; use your preferred `oscdimg`/ISO tool).
 
 ## Driver signing / test mode
 
