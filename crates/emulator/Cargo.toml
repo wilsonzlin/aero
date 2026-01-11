@@ -5,6 +5,7 @@ edition = "2021"
 license = "MIT OR Apache-2.0"
 [features]
 default = []
+aerogpu-native = ["dep:aero-gpu", "dep:pollster"]
 net-trace = []
 # Enable verbose debug logging from the user-space network stack.
 net_log = []
@@ -21,12 +22,14 @@ aero-snapshot = { path = "../aero-snapshot" }
 aero-platform = { path = "../platform" }
 aero-gpu-trace = { path = "../aero-gpu-trace", optional = true }
 aero-protocol = { path = "../../emulator/protocol" }
+aero-gpu = { path = "../aero-gpu", optional = true }
 aero-storage = { path = "../aero-storage" }
 font8x8 = "0.3"
 memory = { path = "../memory" }
 aero-net-stack = { path = "../aero-net-stack" }
 aero-net-e1000 = { path = "../aero-net-e1000" }
 nt-packetlib = { path = "../nt-packetlib" }
+pollster = { version = "0.3", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "1"

@@ -1656,6 +1656,7 @@ name = "emulator"
 version = "0.1.0"
 dependencies = [
  "aero-devices",
+ "aero-gpu",
  "aero-gpu-trace",
  "aero-io-snapshot",
  "aero-net-e1000",
@@ -1673,6 +1674,7 @@ dependencies = [
  "machine",
  "memory",
  "nt-packetlib",
+ "pollster",
  "proptest",
  "serde",
  "serde_json",

@@ -34,6 +34,7 @@ mod time;
 mod upload;
 mod wgpu_integration;
 
+mod acmd_executor;
 mod bc_decompress;
 mod readback;
 mod texture_format;
@@ -42,18 +43,19 @@ mod texture_manager;
 pub mod backend;
 pub mod bindings;
 pub mod cmd;
+pub mod command_processor_d3d9;
 pub mod hal;
 pub mod pipeline_cache;
 pub mod pipeline_key;
 pub mod profiler;
 pub mod aerogpu_d3d9;
-pub mod command_processor_d3d9;
 pub mod aerogpu_executor;
 pub mod protocol_d3d11;
 pub mod protocol_d3d9;
 pub mod stats;
 
 pub use aerogpu_d3d9_executor::{AerogpuD3d9Error, AerogpuD3d9Executor};
+pub use acmd_executor::{AeroGpuAcmdExecutor, AeroGpuAcmdExecutorError};
 pub use bc_decompress::{
     decompress_bc1_rgba8, decompress_bc2_rgba8, decompress_bc3_rgba8, decompress_bc7_rgba8,
 };

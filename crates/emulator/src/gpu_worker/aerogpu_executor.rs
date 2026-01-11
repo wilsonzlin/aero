@@ -12,6 +12,10 @@ use crate::devices::aerogpu_ring::{
     AEROGPU_ALLOC_TABLE_MAGIC, AEROGPU_FENCE_PAGE_MAGIC, AEROGPU_FENCE_PAGE_SIZE_BYTES,
     AEROGPU_RING_HEADER_SIZE_BYTES,
 };
+use crate::gpu_worker::aerogpu_backend::{
+    AeroGpuBackendCompletion, AeroGpuBackendScanout, AeroGpuBackendSubmission,
+    AeroGpuCommandBackend, NullAeroGpuBackend,
+};
 
 #[cfg(feature = "aerogpu-trace")]
 use aero_gpu_trace::{AerogpuMemoryRangeCapture, TraceMeta, TraceWriteError, TraceWriter};
@@ -121,13 +125,13 @@ pub enum AeroGpuCmdStreamDecodeError {
     StreamSizeTooLarge,
 }
 
-#[derive(Debug)]
 pub struct AeroGpuExecutor {
     cfg: AeroGpuExecutorConfig,
     pub last_submissions: VecDeque<AeroGpuSubmissionRecord>,
     pending_fences: VecDeque<PendingFenceCompletion>,
     in_flight: BTreeMap<u64, InFlightSubmission>,
     completed_before_submit: HashSet<u64>,
+    backend: Box<dyn AeroGpuCommandBackend>,
     #[cfg(feature = "aerogpu-trace")]
     trace: Option<AerogpuSubmissionTrace>,
 }
@@ -140,6 +144,7 @@ impl Clone for AeroGpuExecutor {
             pending_fences: self.pending_fences.clone(),
             in_flight: self.in_flight.clone(),
             completed_before_submit: self.completed_before_submit.clone(),
+            backend: Box::new(NullAeroGpuBackend::new()),
             #[cfg(feature = "aerogpu-trace")]
             trace: None,
         }
@@ -154,20 +159,32 @@ impl AeroGpuExecutor {
             pending_fences: VecDeque::new(),
             in_flight: BTreeMap::new(),
             completed_before_submit: HashSet::new(),
+            backend: Box::new(NullAeroGpuBackend::new()),
             #[cfg(feature = "aerogpu-trace")]
             trace: None,
         }
+    }
+
+    pub fn set_backend(&mut self, backend: Box<dyn AeroGpuCommandBackend>) {
+        self.backend = backend;
     }
 
     pub fn reset(&mut self) {
         self.pending_fences.clear();
         self.in_flight.clear();
         self.completed_before_submit.clear();
+        self.backend.reset();
     }
 
     pub fn flush_pending_fences(&mut self, regs: &mut AeroGpuRegs, mem: &mut dyn MemoryBus) {
         if self.cfg.fence_completion != AeroGpuFenceCompletionMode::Immediate {
-            self.pending_fences.clear();
+            // If vblank pacing is disabled, don't allow vsync-gated fences to remain blocked.
+            for entry in self.in_flight.values_mut() {
+                if entry.kind == PendingFenceKind::Vblank {
+                    entry.vblank_ready = true;
+                }
+            }
+            self.advance_completed_fence(regs, mem);
             return;
         }
         if self.pending_fences.is_empty() {
@@ -192,6 +209,16 @@ impl AeroGpuExecutor {
 
     pub fn process_vblank_tick(&mut self, regs: &mut AeroGpuRegs, mem: &mut dyn MemoryBus) {
         if self.cfg.fence_completion != AeroGpuFenceCompletionMode::Immediate {
+            // Complete at most one vsync-delayed fence per vblank tick.
+            if let Some((_, entry)) = self.in_flight.iter_mut().next() {
+                if entry.kind == PendingFenceKind::Vblank
+                    && entry.completed_backend
+                    && !entry.vblank_ready
+                {
+                    entry.vblank_ready = true;
+                }
+            }
+            self.advance_completed_fence(regs, mem);
             return;
         }
         // Complete at most one vsync-delayed fence per vblank tick.
@@ -221,7 +248,7 @@ impl AeroGpuExecutor {
         }
 
         if let Some(entry) = self.in_flight.get_mut(&fence) {
-            entry.completed = true;
+            entry.completed_backend = true;
         } else {
             // Allow completions to arrive before `process_doorbell` consumes the corresponding
             // descriptor. We'll apply this completion when the submit arrives.
@@ -230,6 +257,29 @@ impl AeroGpuExecutor {
         }
 
         self.advance_completed_fence(regs, mem);
+    }
+
+    pub fn poll_backend_completions(&mut self, regs: &mut AeroGpuRegs, mem: &mut dyn MemoryBus) {
+        let completions = self.backend.poll_completions();
+        if completions.is_empty() {
+            return;
+        }
+
+        for AeroGpuBackendCompletion { fence, error } in completions {
+            if error.is_some() {
+                regs.stats.malformed_submissions =
+                    regs.stats.malformed_submissions.saturating_add(1);
+                regs.irq_status |= irq_bits::ERROR;
+            }
+            self.complete_fence(regs, mem, fence);
+        }
+    }
+
+    pub fn read_presented_scanout_rgba8(
+        &mut self,
+        scanout_id: u32,
+    ) -> Option<AeroGpuBackendScanout> {
+        self.backend.read_scanout_rgba8(scanout_id)
     }
 
     fn advance_completed_fence(&mut self, regs: &mut AeroGpuRegs, mem: &mut dyn MemoryBus) {
@@ -247,15 +297,15 @@ impl AeroGpuExecutor {
                 continue;
             }
 
-            let (completed, flags) = {
+            let (ready, flags) = {
                 let next = self
                     .in_flight
                     .get(&next_fence)
                     .expect("key came from in_flight");
-                (next.completed, next.desc.flags)
+                (next.is_ready(), next.desc.flags)
             };
 
-            if !completed {
+            if !ready {
                 break;
             }
 
@@ -343,7 +393,8 @@ impl AeroGpuExecutor {
             if desc.desc_size_bytes < AeroGpuSubmitDesc::SIZE_BYTES
                 || desc.desc_size_bytes > ring.entry_stride_bytes
             {
-                regs.stats.malformed_submissions = regs.stats.malformed_submissions.saturating_add(1);
+                regs.stats.malformed_submissions =
+                    regs.stats.malformed_submissions.saturating_add(1);
             }
 
             let mut decode_errors = Vec::new();
@@ -416,19 +467,85 @@ impl AeroGpuExecutor {
                     }
                 }
                 AeroGpuFenceCompletionMode::Deferred => {
+                    let mut vsync_present = false;
+                    let cmd_stream_ok = desc.cmd_gpa != 0
+                        && desc.cmd_size_bytes != 0
+                        && cmd_stream_header.is_some()
+                        && !decode_errors
+                            .iter()
+                            .any(|e| matches!(e, AeroGpuSubmissionDecodeError::CmdStream(_)));
+                    if cmd_stream_ok {
+                        vsync_present =
+                            cmd_stream_has_vsync_present_bytes(&cmd_stream).unwrap_or(false);
+                    }
+
+                    let alloc_table = if desc.alloc_table_gpa != 0
+                        && desc.alloc_table_size_bytes != 0
+                        && alloc_table_header.is_some()
+                        && !decode_errors
+                            .iter()
+                            .any(|e| matches!(e, AeroGpuSubmissionDecodeError::AllocTable(_)))
+                    {
+                        let size_bytes = alloc_table_header
+                            .as_ref()
+                            .map(|h| h.size_bytes)
+                            .unwrap_or(0);
+                        let size = size_bytes as usize;
+                        if size == 0 {
+                            None
+                        } else {
+                            let mut bytes = vec![0u8; size];
+                            mem.read_physical(desc.alloc_table_gpa, &mut bytes);
+                            Some(bytes)
+                        }
+                    } else {
+                        None
+                    };
+
+                    let can_pace_vsync = vsync_present
+                        && (regs.features & FEATURE_VBLANK) != 0
+                        && regs.scanout0.enable;
+                    let kind = if can_pace_vsync {
+                        PendingFenceKind::Vblank
+                    } else {
+                        PendingFenceKind::Immediate
+                    };
+
                     if desc.signal_fence > regs.completed_fence {
                         let already_completed = self.completed_before_submit.remove(&desc.signal_fence);
                         self.in_flight.insert(
                             desc.signal_fence,
                             InFlightSubmission {
                                 desc: desc.clone(),
-                                completed: already_completed,
+                                kind,
+                                completed_backend: already_completed,
+                                vblank_ready: kind == PendingFenceKind::Immediate,
                             },
                         );
 
-                        if already_completed {
+                        if already_completed && kind == PendingFenceKind::Immediate {
                             self.advance_completed_fence(regs, mem);
                         }
+                    }
+
+                    let submit = AeroGpuBackendSubmission {
+                        flags: desc.flags,
+                        context_id: desc.context_id,
+                        engine_id: desc.engine_id,
+                        signal_fence: desc.signal_fence,
+                        cmd_stream: cmd_stream.clone(),
+                        alloc_table,
+                    };
+
+                    if self.backend.submit(mem, submit).is_err() {
+                        regs.stats.malformed_submissions =
+                            regs.stats.malformed_submissions.saturating_add(1);
+                        regs.irq_status |= irq_bits::ERROR;
+                        // If the backend rejects the submission, still unblock the fence.
+                        if let Some(entry) = self.in_flight.get_mut(&desc.signal_fence) {
+                            entry.vblank_ready = true;
+                        }
+                        self.complete_fence(regs, mem, desc.signal_fence);
                     }
                 }
             }
@@ -475,6 +592,8 @@ impl AeroGpuExecutor {
         if self.cfg.fence_completion == AeroGpuFenceCompletionMode::Immediate {
             // Complete any immediate fences that are not blocked behind a vsync fence.
             self.complete_immediate_fences(regs, mem);
+        } else {
+            self.poll_backend_completions(regs, mem);
         }
     }
 
@@ -754,6 +873,55 @@ fn decode_cmd_stream(
     (Some(header), cmd_stream)
 }
 
+fn cmd_stream_has_vsync_present_bytes(bytes: &[u8]) -> Result<bool, ()> {
+    if bytes.len() < ProtocolCmdStreamHeader::SIZE_BYTES {
+        return Err(());
+    }
+
+    let stream_hdr =
+        decode_cmd_stream_header_le(&bytes[..ProtocolCmdStreamHeader::SIZE_BYTES]).map_err(|_| ())?;
+    let declared_size = stream_hdr.size_bytes as usize;
+    if declared_size > bytes.len() {
+        return Err(());
+    }
+
+    let mut offset = ProtocolCmdStreamHeader::SIZE_BYTES;
+    while offset < declared_size {
+        let rem = declared_size - offset;
+        if rem < AerogpuCmdHdr::SIZE_BYTES {
+            return Err(());
+        }
+
+        let cmd_hdr =
+            decode_cmd_hdr_le(&bytes[offset..offset + AerogpuCmdHdr::SIZE_BYTES]).map_err(|_| ())?;
+
+        let cmd_size = cmd_hdr.size_bytes as usize;
+        let end = offset.checked_add(cmd_size).ok_or(())?;
+        if end > declared_size {
+            return Err(());
+        }
+
+        if cmd_hdr.opcode == AerogpuCmdOpcode::Present as u32
+            || cmd_hdr.opcode == AerogpuCmdOpcode::PresentEx as u32
+        {
+            // flags is always at offset 12 (hdr + scanout_id).
+            if cmd_size < 16 {
+                return Err(());
+            }
+            let flags_offset = offset + 12;
+            let flags =
+                u32::from_le_bytes(bytes[flags_offset..flags_offset + 4].try_into().unwrap());
+            if (flags & AEROGPU_PRESENT_FLAG_VSYNC) != 0 {
+                return Ok(true);
+            }
+        }
+
+        offset = end;
+    }
+
+    Ok(false)
+}
+
 fn cmd_stream_has_vsync_present(
     mem: &mut dyn MemoryBus,
     cmd_gpa: u64,
@@ -814,7 +982,18 @@ fn cmd_stream_has_vsync_present(
 #[derive(Clone, Debug)]
 struct InFlightSubmission {
     desc: AeroGpuSubmitDesc,
-    completed: bool,
+    kind: PendingFenceKind,
+    completed_backend: bool,
+    vblank_ready: bool,
+}
+
+impl InFlightSubmission {
+    fn is_ready(&self) -> bool {
+        match self.kind {
+            PendingFenceKind::Immediate => self.completed_backend,
+            PendingFenceKind::Vblank => self.completed_backend && self.vblank_ready,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -824,11 +1003,18 @@ mod tests {
     use crate::devices::aerogpu_ring::AEROGPU_RING_MAGIC;
     use memory::Bus;
 
-    fn write_ring_header(mem: &mut dyn MemoryBus, gpa: u64, entry_count: u32, head: u32, tail: u32) {
+    fn write_ring_header(
+        mem: &mut dyn MemoryBus,
+        gpa: u64,
+        entry_count: u32,
+        head: u32,
+        tail: u32,
+    ) {
         let stride = AeroGpuSubmitDesc::SIZE_BYTES;
-        let size_bytes =
-            u32::try_from(AEROGPU_RING_HEADER_SIZE_BYTES + u64::from(entry_count) * u64::from(stride))
-                .unwrap();
+        let size_bytes = u32::try_from(
+            AEROGPU_RING_HEADER_SIZE_BYTES + u64::from(entry_count) * u64::from(stride),
+        )
+        .unwrap();
 
         mem.write_u32(gpa + 0, AEROGPU_RING_MAGIC);
         mem.write_u32(gpa + 4, AeroGpuRegs::default().abi_version);
@@ -868,7 +1054,8 @@ mod tests {
         }
 
         let ring_size_bytes =
-            u32::try_from(AEROGPU_RING_HEADER_SIZE_BYTES + u64::from(entry_count) * stride).unwrap();
+            u32::try_from(AEROGPU_RING_HEADER_SIZE_BYTES + u64::from(entry_count) * stride)
+                .unwrap();
 
         let mut regs = AeroGpuRegs::default();
         regs.ring_gpa = ring_gpa;

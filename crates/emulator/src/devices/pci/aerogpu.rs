@@ -12,6 +12,7 @@ use crate::devices::aerogpu_ring::{
     AeroGpuRingHeader, AEROGPU_FENCE_PAGE_MAGIC, AEROGPU_FENCE_PAGE_SIZE_BYTES, RING_TAIL_OFFSET,
 };
 use crate::devices::aerogpu_scanout::AeroGpuFormat;
+use crate::gpu_worker::aerogpu_backend::AeroGpuCommandBackend;
 use crate::gpu_worker::aerogpu_executor::{AeroGpuExecutor, AeroGpuExecutorConfig};
 use crate::io::pci::{MmioDevice, PciConfigSpace, PciDevice};
 
@@ -104,6 +105,10 @@ impl AeroGpuPciDevice {
     }
 
     pub fn tick(&mut self, mem: &mut dyn MemoryBus, now: Instant) {
+        self.executor.poll_backend_completions(&mut self.regs, mem);
+        // `tick` has early-return paths (no vblank yet); update IRQ after polling completions.
+        self.update_irq_level();
+
         // If vblank pacing is disabled (by config or by disabling the scanout), do not allow any
         // vsync-delayed fences to remain queued forever.
         if self.vblank_interval.is_none() || !self.regs.scanout0.enable {
@@ -158,6 +163,15 @@ impl AeroGpuPciDevice {
     pub fn complete_fence(&mut self, mem: &mut dyn MemoryBus, fence: u64) {
         self.executor.complete_fence(&mut self.regs, mem, fence);
         self.update_irq_level();
+    }
+
+    pub fn set_backend(&mut self, backend: Box<dyn AeroGpuCommandBackend>) {
+        self.executor.set_backend(backend);
+    }
+
+    pub fn read_presented_scanout_rgba8(&mut self, scanout_id: u32) -> Option<(u32, u32, Vec<u8>)> {
+        let scanout = self.executor.read_presented_scanout_rgba8(scanout_id)?;
+        Some((scanout.width, scanout.height, scanout.rgba8))
     }
 
     fn update_irq_level(&mut self) {
