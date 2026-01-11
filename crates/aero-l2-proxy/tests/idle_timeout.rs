@@ -115,7 +115,10 @@ async fn idle_timeout_closes_tunnel_and_increments_metric() {
     })
     .await
     .unwrap();
-    assert_eq!(metric_val, 1, "expected idle timeout metric to increment once");
+    assert_eq!(
+        metric_val, 1,
+        "expected idle timeout metric to increment once"
+    );
 
     proxy.shutdown().await;
 }

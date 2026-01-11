@@ -162,11 +162,10 @@ fn ws_message_len(msg: &Message) -> u64 {
 
 fn close_policy_violation(ws_out_tx: &mpsc::Sender<Message>, reason: &'static str) {
     const CLOSE_CODE_POLICY_VIOLATION: u16 = 1008;
-    let _ = ws_out_tx
-        .try_send(Message::Close(Some(CloseFrame {
-            code: CLOSE_CODE_POLICY_VIOLATION,
-            reason: Cow::Borrowed(reason),
-        })));
+    let _ = ws_out_tx.try_send(Message::Close(Some(CloseFrame {
+        code: CLOSE_CODE_POLICY_VIOLATION,
+        reason: Cow::Borrowed(reason),
+    })));
 }
 
 async fn close_shutting_down(ws_out_tx: &mpsc::Sender<Message>) {
