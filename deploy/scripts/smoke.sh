@@ -229,7 +229,7 @@ const crypto = require("node:crypto");
 const host = "localhost";
 const port = 443;
 
-function requestSessionCookie() {
+function requestSessionInfo() {
   return new Promise((resolve, reject) => {
     const body = Buffer.from("{}", "utf8");
     const req = https.request(
@@ -268,9 +268,25 @@ function requestSessionCookie() {
             reject(new Error("missing udpRelay in /session response (gateway should be configured for same-origin UDP relay)"));
             return;
           }
+          if (udpRelay.baseUrl !== `https://${host}`) {
+            reject(new Error(`unexpected udpRelay.baseUrl: ${udpRelay.baseUrl}`));
+            return;
+          }
+          if (udpRelay.authMode !== "api_key") {
+            reject(new Error(`unexpected udpRelay.authMode: ${udpRelay.authMode}`));
+            return;
+          }
           const endpoints = udpRelay.endpoints;
           if (!endpoints || typeof endpoints !== "object") {
             reject(new Error("missing udpRelay.endpoints in /session response"));
+            return;
+          }
+          if (endpoints.webrtcSignal !== "/webrtc/signal") {
+            reject(new Error(`unexpected udpRelay.endpoints.webrtcSignal: ${endpoints.webrtcSignal}`));
+            return;
+          }
+          if (endpoints.webrtcOffer !== "/webrtc/offer") {
+            reject(new Error(`unexpected udpRelay.endpoints.webrtcOffer: ${endpoints.webrtcOffer}`));
             return;
           }
           if (endpoints.webrtcIce !== "/webrtc/ice") {
@@ -279,6 +295,12 @@ function requestSessionCookie() {
           }
           if (endpoints.udp !== "/udp") {
             reject(new Error(`unexpected udpRelay.endpoints.udp: ${endpoints.udp}`));
+            return;
+          }
+
+          const token = udpRelay.token;
+          if (typeof token !== "string" || token.length === 0) {
+            reject(new Error(`missing udpRelay.token in /session response: ${JSON.stringify(udpRelay)}`));
             return;
           }
 
@@ -301,7 +323,7 @@ function requestSessionCookie() {
             reject(new Error(`unexpected /session status: ${status}`));
             return;
           }
-          resolve(cookiePair);
+          resolve({ cookiePair, udpRelayToken: token });
         });
       },
     );
@@ -426,7 +448,7 @@ function checkUdpRelayToken(cookiePair) {
             reject(new Error(`missing token from /udp-relay/token: ${JSON.stringify(parsed)}`));
             return;
           }
-          resolve();
+          resolve(parsed.token);
         });
       },
     );
@@ -435,10 +457,115 @@ function checkUdpRelayToken(cookiePair) {
   });
 }
 
+function checkRelayWebSocketUpgrade(path, label) {
+  return new Promise((resolve, reject) => {
+    const guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+    const key = crypto.randomBytes(16).toString("base64");
+    const expectedAccept = crypto.createHash("sha1").update(key + guid).digest("base64");
+
+    const req = [
+      `GET ${path} HTTP/1.1`,
+      `Host: ${host}`,
+      "Connection: Upgrade",
+      "Upgrade: websocket",
+      "Sec-WebSocket-Version: 13",
+      `Sec-WebSocket-Key: ${key}`,
+      `Origin: https://${host}`,
+      "",
+      "",
+    ].join("\r\n");
+
+    const socket = tls.connect({
+      host,
+      port,
+      servername: host,
+      rejectUnauthorized: false,
+    });
+
+    let done = false;
+    let handshakeTimer;
+    let holdTimer;
+
+    const fail = (err) => {
+      if (done) return;
+      done = true;
+      clearTimeout(handshakeTimer);
+      clearTimeout(holdTimer);
+      socket.destroy();
+      reject(err);
+    };
+
+    const succeed = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(handshakeTimer);
+      clearTimeout(holdTimer);
+      socket.end();
+      resolve();
+    };
+
+    handshakeTimer = setTimeout(() => {
+      fail(new Error(`timeout waiting for ${label} upgrade response`));
+    }, 5000);
+
+    socket.on("secureConnect", () => {
+      socket.write(req);
+    });
+
+    let buf = "";
+    socket.on("data", (chunk) => {
+      if (done) return;
+      buf += chunk.toString("utf8");
+      const idx = buf.indexOf("\r\n\r\n");
+      if (idx === -1) return;
+
+      const headerBlock = buf.slice(0, idx);
+      const lines = headerBlock.split("\r\n");
+      const statusLine = lines[0] ?? "";
+      if (!statusLine.includes(" 101 ")) {
+        fail(new Error(`unexpected status line from ${label}: ${statusLine}`));
+        return;
+      }
+
+      const acceptLine = lines.find((line) => /^sec-websocket-accept:/i.test(line));
+      if (!acceptLine) {
+        fail(new Error(`missing Sec-WebSocket-Accept in ${label} upgrade response`));
+        return;
+      }
+      const accept = acceptLine.split(":", 2)[1]?.trim() ?? "";
+      if (accept !== expectedAccept) {
+        fail(new Error(`unexpected Sec-WebSocket-Accept for ${label} (expected ${expectedAccept}, got ${accept})`));
+        return;
+      }
+
+      // Give the server a moment to reject invalid auth tokens (it will close the
+      // connection shortly after the handshake). Treat an early close as failure.
+      clearTimeout(handshakeTimer);
+      holdTimer = setTimeout(() => {
+        succeed();
+      }, 300);
+    });
+
+    socket.on("close", () => {
+      if (done) return;
+      fail(new Error(`${label} WebSocket closed immediately after handshake (auth/routing failure?)`));
+    });
+
+    socket.on("error", (err) => {
+      fail(err);
+    });
+  });
+}
+
 (async () => {
-  const cookie = await requestSessionCookie();
-  await checkTcpUpgrade(cookie);
-  await checkUdpRelayToken(cookie);
+  const session = await requestSessionInfo();
+  await checkTcpUpgrade(session.cookiePair);
+  const token = await checkUdpRelayToken(session.cookiePair);
+  if (token !== session.udpRelayToken) {
+    throw new Error(`mismatched udp relay token: /session=${session.udpRelayToken} /udp-relay/token=${token}`);
+  }
+  await checkRelayWebSocketUpgrade(`/webrtc/signal?token=${encodeURIComponent(token)}`, "/webrtc/signal");
+  await checkRelayWebSocketUpgrade(`/udp?token=${encodeURIComponent(token)}`, "/udp");
 })().catch((err) => {
   console.error("tcp upgrade check failed:", err);
   process.exit(1);
