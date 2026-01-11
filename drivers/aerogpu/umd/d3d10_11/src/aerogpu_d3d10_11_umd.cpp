@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "aerogpu_cmd_writer.h"
+#include "aerogpu_d3d10_11_log.h"
 
 namespace {
 
@@ -283,6 +284,7 @@ HRESULT flush_locked(AeroGpuDevice* dev) {
 // -------------------------------------------------------------------------------------------------
 
 void AEROGPU_APIENTRY DestroyDevice(D3D10DDI_HDEVICE hDevice) {
+  AEROGPU_D3D10_11_LOG_CALL();
   if (!hDevice.pDrvPrivate) {
     return;
   }
@@ -291,12 +293,14 @@ void AEROGPU_APIENTRY DestroyDevice(D3D10DDI_HDEVICE hDevice) {
 }
 
 SIZE_T AEROGPU_APIENTRY CalcPrivateResourceSize(D3D10DDI_HDEVICE, const AEROGPU_DDIARG_CREATERESOURCE*) {
+  AEROGPU_D3D10_11_LOG_CALL();
   return sizeof(AeroGpuResource);
 }
 
 HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
                                          const AEROGPU_DDIARG_CREATERESOURCE* pDesc,
                                          D3D10DDI_HRESOURCE hResource) {
+  AEROGPU_D3D10_11_LOG_CALL();
   if (!hDevice.pDrvPrivate || !pDesc || !hResource.pDrvPrivate) {
     return E_INVALIDARG;
   }
@@ -439,6 +443,7 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
 }
 
 void AEROGPU_APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hResource) {
+  AEROGPU_D3D10_11_LOG_CALL();
   if (!hDevice.pDrvPrivate || !hResource.pDrvPrivate) {
     return;
   }
@@ -464,6 +469,7 @@ void AEROGPU_APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOUR
 }
 
 SIZE_T AEROGPU_APIENTRY CalcPrivateShaderSize(D3D10DDI_HDEVICE, const AEROGPU_DDIARG_CREATESHADER*) {
+  AEROGPU_D3D10_11_LOG_CALL();
   return sizeof(AeroGpuShader);
 }
 
@@ -500,16 +506,19 @@ static HRESULT CreateShaderCommon(D3D10DDI_HDEVICE hDevice,
 HRESULT AEROGPU_APIENTRY CreateVertexShader(D3D10DDI_HDEVICE hDevice,
                                             const AEROGPU_DDIARG_CREATESHADER* pDesc,
                                             D3D10DDI_HSHADER hShader) {
+  AEROGPU_D3D10_11_LOG_CALL();
   return CreateShaderCommon(hDevice, pDesc, hShader, AEROGPU_SHADER_STAGE_VERTEX);
 }
 
 HRESULT AEROGPU_APIENTRY CreatePixelShader(D3D10DDI_HDEVICE hDevice,
                                            const AEROGPU_DDIARG_CREATESHADER* pDesc,
                                            D3D10DDI_HSHADER hShader) {
+  AEROGPU_D3D10_11_LOG_CALL();
   return CreateShaderCommon(hDevice, pDesc, hShader, AEROGPU_SHADER_STAGE_PIXEL);
 }
 
 void AEROGPU_APIENTRY DestroyShader(D3D10DDI_HDEVICE hDevice, D3D10DDI_HSHADER hShader) {
+  AEROGPU_D3D10_11_LOG_CALL();
   if (!hDevice.pDrvPrivate || !hShader.pDrvPrivate) {
     return;
   }
@@ -531,12 +540,14 @@ void AEROGPU_APIENTRY DestroyShader(D3D10DDI_HDEVICE hDevice, D3D10DDI_HSHADER h
 }
 
 SIZE_T AEROGPU_APIENTRY CalcPrivateInputLayoutSize(D3D10DDI_HDEVICE, const AEROGPU_DDIARG_CREATEINPUTLAYOUT*) {
+  AEROGPU_D3D10_11_LOG_CALL();
   return sizeof(AeroGpuInputLayout);
 }
 
 HRESULT AEROGPU_APIENTRY CreateInputLayout(D3D10DDI_HDEVICE hDevice,
                                            const AEROGPU_DDIARG_CREATEINPUTLAYOUT* pDesc,
                                            D3D10DDI_HELEMENTLAYOUT hLayout) {
+  AEROGPU_D3D10_11_LOG_CALL();
   if (!hDevice.pDrvPrivate || !pDesc || !hLayout.pDrvPrivate || (!pDesc->NumElements && pDesc->pElements)) {
     return E_INVALIDARG;
   }
@@ -582,6 +593,7 @@ HRESULT AEROGPU_APIENTRY CreateInputLayout(D3D10DDI_HDEVICE hDevice,
 }
 
 void AEROGPU_APIENTRY DestroyInputLayout(D3D10DDI_HDEVICE hDevice, D3D10DDI_HELEMENTLAYOUT hLayout) {
+  AEROGPU_D3D10_11_LOG_CALL();
   if (!hLayout.pDrvPrivate) {
     return;
   }
@@ -603,12 +615,14 @@ void AEROGPU_APIENTRY DestroyInputLayout(D3D10DDI_HDEVICE hDevice, D3D10DDI_HELE
 }
 
 SIZE_T AEROGPU_APIENTRY CalcPrivateRTVSize(D3D10DDI_HDEVICE, const AEROGPU_DDIARG_CREATERENDERTARGETVIEW*) {
+  AEROGPU_D3D10_11_LOG_CALL();
   return sizeof(AeroGpuRenderTargetView);
 }
 
 HRESULT AEROGPU_APIENTRY CreateRTV(D3D10DDI_HDEVICE hDevice,
                                    const AEROGPU_DDIARG_CREATERENDERTARGETVIEW* pDesc,
                                    D3D10DDI_HRENDERTARGETVIEW hRtv) {
+  AEROGPU_D3D10_11_LOG_CALL();
   if (!hDevice.pDrvPrivate || !pDesc || !hRtv.pDrvPrivate || !pDesc->hResource.pDrvPrivate) {
     return E_INVALIDARG;
   }
@@ -619,6 +633,7 @@ HRESULT AEROGPU_APIENTRY CreateRTV(D3D10DDI_HDEVICE hDevice,
 }
 
 void AEROGPU_APIENTRY DestroyRTV(D3D10DDI_HDEVICE, D3D10DDI_HRENDERTARGETVIEW hRtv) {
+  AEROGPU_D3D10_11_LOG_CALL();
   if (!hRtv.pDrvPrivate) {
     return;
   }
@@ -627,12 +642,14 @@ void AEROGPU_APIENTRY DestroyRTV(D3D10DDI_HDEVICE, D3D10DDI_HRENDERTARGETVIEW hR
 }
 
 SIZE_T AEROGPU_APIENTRY CalcPrivateDSVSize(D3D10DDI_HDEVICE, const AEROGPU_DDIARG_CREATEDEPTHSTENCILVIEW*) {
+  AEROGPU_D3D10_11_LOG_CALL();
   return sizeof(AeroGpuDepthStencilView);
 }
 
 HRESULT AEROGPU_APIENTRY CreateDSV(D3D10DDI_HDEVICE hDevice,
                                    const AEROGPU_DDIARG_CREATEDEPTHSTENCILVIEW* pDesc,
                                    D3D10DDI_HDEPTHSTENCILVIEW hDsv) {
+  AEROGPU_D3D10_11_LOG_CALL();
   if (!hDevice.pDrvPrivate || !pDesc || !hDsv.pDrvPrivate || !pDesc->hResource.pDrvPrivate) {
     return E_INVALIDARG;
   }
@@ -643,6 +660,7 @@ HRESULT AEROGPU_APIENTRY CreateDSV(D3D10DDI_HDEVICE hDevice,
 }
 
 void AEROGPU_APIENTRY DestroyDSV(D3D10DDI_HDEVICE, D3D10DDI_HDEPTHSTENCILVIEW hDsv) {
+  AEROGPU_D3D10_11_LOG_CALL();
   if (!hDsv.pDrvPrivate) {
     return;
   }
@@ -651,12 +669,14 @@ void AEROGPU_APIENTRY DestroyDSV(D3D10DDI_HDEVICE, D3D10DDI_HDEPTHSTENCILVIEW hD
 }
 
 SIZE_T AEROGPU_APIENTRY CalcPrivateBlendStateSize(D3D10DDI_HDEVICE, const AEROGPU_DDIARG_CREATEBLENDSTATE*) {
+  AEROGPU_D3D10_11_LOG_CALL();
   return sizeof(AeroGpuBlendState);
 }
 
 HRESULT AEROGPU_APIENTRY CreateBlendState(D3D10DDI_HDEVICE hDevice,
                                           const AEROGPU_DDIARG_CREATEBLENDSTATE*,
                                           D3D10DDI_HBLENDSTATE hState) {
+  AEROGPU_D3D10_11_LOG_CALL();
   if (!hDevice.pDrvPrivate || !hState.pDrvPrivate) {
     return E_INVALIDARG;
   }
@@ -665,6 +685,7 @@ HRESULT AEROGPU_APIENTRY CreateBlendState(D3D10DDI_HDEVICE hDevice,
 }
 
 void AEROGPU_APIENTRY DestroyBlendState(D3D10DDI_HDEVICE, D3D10DDI_HBLENDSTATE hState) {
+  AEROGPU_D3D10_11_LOG_CALL();
   if (!hState.pDrvPrivate) {
     return;
   }
@@ -673,12 +694,14 @@ void AEROGPU_APIENTRY DestroyBlendState(D3D10DDI_HDEVICE, D3D10DDI_HBLENDSTATE h
 }
 
 SIZE_T AEROGPU_APIENTRY CalcPrivateRasterizerStateSize(D3D10DDI_HDEVICE, const AEROGPU_DDIARG_CREATERASTERIZERSTATE*) {
+  AEROGPU_D3D10_11_LOG_CALL();
   return sizeof(AeroGpuRasterizerState);
 }
 
 HRESULT AEROGPU_APIENTRY CreateRasterizerState(D3D10DDI_HDEVICE hDevice,
                                                const AEROGPU_DDIARG_CREATERASTERIZERSTATE*,
                                                D3D10DDI_HRASTERIZERSTATE hState) {
+  AEROGPU_D3D10_11_LOG_CALL();
   if (!hDevice.pDrvPrivate || !hState.pDrvPrivate) {
     return E_INVALIDARG;
   }
@@ -687,6 +710,7 @@ HRESULT AEROGPU_APIENTRY CreateRasterizerState(D3D10DDI_HDEVICE hDevice,
 }
 
 void AEROGPU_APIENTRY DestroyRasterizerState(D3D10DDI_HDEVICE, D3D10DDI_HRASTERIZERSTATE hState) {
+  AEROGPU_D3D10_11_LOG_CALL();
   if (!hState.pDrvPrivate) {
     return;
   }
@@ -696,12 +720,14 @@ void AEROGPU_APIENTRY DestroyRasterizerState(D3D10DDI_HDEVICE, D3D10DDI_HRASTERI
 
 SIZE_T AEROGPU_APIENTRY CalcPrivateDepthStencilStateSize(D3D10DDI_HDEVICE,
                                                          const AEROGPU_DDIARG_CREATEDEPTHSTENCILSTATE*) {
+  AEROGPU_D3D10_11_LOG_CALL();
   return sizeof(AeroGpuDepthStencilState);
 }
 
 HRESULT AEROGPU_APIENTRY CreateDepthStencilState(D3D10DDI_HDEVICE hDevice,
                                                  const AEROGPU_DDIARG_CREATEDEPTHSTENCILSTATE*,
                                                  D3D10DDI_HDEPTHSTENCILSTATE hState) {
+  AEROGPU_D3D10_11_LOG_CALL();
   if (!hDevice.pDrvPrivate || !hState.pDrvPrivate) {
     return E_INVALIDARG;
   }
@@ -710,6 +736,7 @@ HRESULT AEROGPU_APIENTRY CreateDepthStencilState(D3D10DDI_HDEVICE hDevice,
 }
 
 void AEROGPU_APIENTRY DestroyDepthStencilState(D3D10DDI_HDEVICE, D3D10DDI_HDEPTHSTENCILSTATE hState) {
+  AEROGPU_D3D10_11_LOG_CALL();
   if (!hState.pDrvPrivate) {
     return;
   }
@@ -720,6 +747,7 @@ void AEROGPU_APIENTRY DestroyDepthStencilState(D3D10DDI_HDEVICE, D3D10DDI_HDEPTH
 void AEROGPU_APIENTRY SetRenderTargets(D3D10DDI_HDEVICE hDevice,
                                        D3D10DDI_HRENDERTARGETVIEW hRtv,
                                        D3D10DDI_HDEPTHSTENCILVIEW hDsv) {
+  AEROGPU_D3D10_11_LOG_CALL();
   if (!hDevice.pDrvPrivate) {
     return;
   }
@@ -752,6 +780,7 @@ void AEROGPU_APIENTRY SetRenderTargets(D3D10DDI_HDEVICE hDevice,
 }
 
 void AEROGPU_APIENTRY ClearRTV(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRENDERTARGETVIEW, const float rgba[4]) {
+  AEROGPU_D3D10_11_LOG_CALL();
   if (!hDevice.pDrvPrivate || !rgba) {
     return;
   }
@@ -777,6 +806,7 @@ void AEROGPU_APIENTRY ClearDSV(D3D10DDI_HDEVICE hDevice,
                                uint32_t clear_flags,
                                float depth,
                                uint8_t stencil) {
+  AEROGPU_D3D10_11_LOG_CALL();
   if (!hDevice.pDrvPrivate) {
     return;
   }
@@ -806,6 +836,7 @@ void AEROGPU_APIENTRY ClearDSV(D3D10DDI_HDEVICE hDevice,
 }
 
 void AEROGPU_APIENTRY SetInputLayout(D3D10DDI_HDEVICE hDevice, D3D10DDI_HELEMENTLAYOUT hLayout) {
+  AEROGPU_D3D10_11_LOG_CALL();
   if (!hDevice.pDrvPrivate) {
     return;
   }
@@ -831,6 +862,7 @@ void AEROGPU_APIENTRY SetVertexBuffer(D3D10DDI_HDEVICE hDevice,
                                       D3D10DDI_HRESOURCE hBuffer,
                                       uint32_t stride,
                                       uint32_t offset) {
+  AEROGPU_D3D10_11_LOG_CALL();
   if (!hDevice.pDrvPrivate) {
     return;
   }
@@ -855,6 +887,7 @@ void AEROGPU_APIENTRY SetVertexBuffer(D3D10DDI_HDEVICE hDevice,
 }
 
 void AEROGPU_APIENTRY SetIndexBuffer(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hBuffer, uint32_t format, uint32_t offset) {
+  AEROGPU_D3D10_11_LOG_CALL();
   if (!hDevice.pDrvPrivate) {
     return;
   }
@@ -873,6 +906,7 @@ void AEROGPU_APIENTRY SetIndexBuffer(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURC
 }
 
 void AEROGPU_APIENTRY SetViewport(D3D10DDI_HDEVICE hDevice, const AEROGPU_DDI_VIEWPORT* pVp) {
+  AEROGPU_D3D10_11_LOG_CALL();
   if (!hDevice.pDrvPrivate || !pVp) {
     return;
   }
@@ -893,6 +927,7 @@ void AEROGPU_APIENTRY SetViewport(D3D10DDI_HDEVICE hDevice, const AEROGPU_DDI_VI
 }
 
 void AEROGPU_APIENTRY SetDrawState(D3D10DDI_HDEVICE hDevice, D3D10DDI_HSHADER hVs, D3D10DDI_HSHADER hPs) {
+  AEROGPU_D3D10_11_LOG_CALL();
   if (!hDevice.pDrvPrivate) {
     return;
   }
@@ -916,18 +951,22 @@ void AEROGPU_APIENTRY SetDrawState(D3D10DDI_HDEVICE hDevice, D3D10DDI_HSHADER hV
 }
 
 void AEROGPU_APIENTRY SetBlendState(D3D10DDI_HDEVICE, D3D10DDI_HBLENDSTATE) {
+  AEROGPU_D3D10_11_LOG_CALL();
   // Stub (state objects are accepted but not yet encoded).
 }
 
 void AEROGPU_APIENTRY SetRasterizerState(D3D10DDI_HDEVICE, D3D10DDI_HRASTERIZERSTATE) {
+  AEROGPU_D3D10_11_LOG_CALL();
   // Stub (state objects are accepted but not yet encoded).
 }
 
 void AEROGPU_APIENTRY SetDepthStencilState(D3D10DDI_HDEVICE, D3D10DDI_HDEPTHSTENCILSTATE) {
+  AEROGPU_D3D10_11_LOG_CALL();
   // Stub (state objects are accepted but not yet encoded).
 }
 
 void AEROGPU_APIENTRY SetPrimitiveTopology(D3D10DDI_HDEVICE hDevice, uint32_t topology) {
+  AEROGPU_D3D10_11_LOG_CALL();
   if (!hDevice.pDrvPrivate) {
     return;
   }
@@ -949,6 +988,7 @@ void AEROGPU_APIENTRY SetPrimitiveTopology(D3D10DDI_HDEVICE hDevice, uint32_t to
 }
 
 void AEROGPU_APIENTRY Draw(D3D10DDI_HDEVICE hDevice, uint32_t vertex_count, uint32_t start_vertex) {
+  AEROGPU_D3D10_11_LOG_CALL();
   if (!hDevice.pDrvPrivate) {
     return;
   }
@@ -967,6 +1007,7 @@ void AEROGPU_APIENTRY Draw(D3D10DDI_HDEVICE hDevice, uint32_t vertex_count, uint
 }
 
 void AEROGPU_APIENTRY DrawIndexed(D3D10DDI_HDEVICE hDevice, uint32_t index_count, uint32_t start_index, int32_t base_vertex) {
+  AEROGPU_D3D10_11_LOG_CALL();
   if (!hDevice.pDrvPrivate) {
     return;
   }
@@ -986,6 +1027,7 @@ void AEROGPU_APIENTRY DrawIndexed(D3D10DDI_HDEVICE hDevice, uint32_t index_count
 }
 
 HRESULT AEROGPU_APIENTRY Present(D3D10DDI_HDEVICE hDevice, const AEROGPU_DDIARG_PRESENT* pPresent) {
+  AEROGPU_D3D10_11_LOG_CALL();
   if (!hDevice.pDrvPrivate || !pPresent) {
     return E_INVALIDARG;
   }
@@ -1005,6 +1047,7 @@ HRESULT AEROGPU_APIENTRY Present(D3D10DDI_HDEVICE hDevice, const AEROGPU_DDIARG_
 }
 
 HRESULT AEROGPU_APIENTRY Flush(D3D10DDI_HDEVICE hDevice) {
+  AEROGPU_D3D10_11_LOG_CALL();
   if (!hDevice.pDrvPrivate) {
     return E_INVALIDARG;
   }
@@ -1018,6 +1061,7 @@ HRESULT AEROGPU_APIENTRY Flush(D3D10DDI_HDEVICE hDevice) {
 }
 
 void AEROGPU_APIENTRY RotateResourceIdentities(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE* pResources, uint32_t numResources) {
+  AEROGPU_D3D10_11_LOG_CALL();
   if (!hDevice.pDrvPrivate || !pResources || numResources < 2) {
     return;
   }
@@ -1057,10 +1101,12 @@ void AEROGPU_APIENTRY RotateResourceIdentities(D3D10DDI_HDEVICE hDevice, D3D10DD
 // -------------------------------------------------------------------------------------------------
 
 SIZE_T AEROGPU_APIENTRY CalcPrivateDeviceSize(D3D10DDI_HADAPTER, const D3D10DDIARG_CREATEDEVICE*) {
+  AEROGPU_D3D10_11_LOG_CALL();
   return sizeof(AeroGpuDevice);
 }
 
 HRESULT AEROGPU_APIENTRY CreateDevice(D3D10DDI_HADAPTER hAdapter, const D3D10DDIARG_CREATEDEVICE* pCreateDevice) {
+  AEROGPU_D3D10_11_LOG_CALL();
   if (!pCreateDevice || !pCreateDevice->hDevice.pDrvPrivate || !pCreateDevice->pDeviceFuncs) {
     return E_INVALIDARG;
   }
@@ -1133,7 +1179,30 @@ HRESULT AEROGPU_APIENTRY CreateDevice(D3D10DDI_HADAPTER hAdapter, const D3D10DDI
   return S_OK;
 }
 
+HRESULT AEROGPU_APIENTRY GetCaps(D3D10DDI_HADAPTER, const D3D10DDIARG_GETCAPS* pGetCaps) {
+  if (!pGetCaps) {
+    AEROGPU_D3D10_11_LOG("GetCaps pGetCaps=null");
+    return E_INVALIDARG;
+  }
+
+  bool recognized = false;
+
+  // For early bring-up, the D3D10/11 caps surface is intentionally conservative.
+  // We currently don't expose detailed caps; we only zero the caller buffer so
+  // the runtime sees a consistent "unsupported" baseline.
+  if (pGetCaps->pData && pGetCaps->DataSize) {
+    std::memset(pGetCaps->pData, 0, pGetCaps->DataSize);
+  }
+
+  AEROGPU_D3D10_11_LOG("GetCaps Type=%u DataSize=%u recognized=%u",
+                       static_cast<unsigned>(pGetCaps->Type),
+                       static_cast<unsigned>(pGetCaps->DataSize),
+                       recognized ? 1u : 0u);
+  return S_OK;
+}
+
 void AEROGPU_APIENTRY CloseAdapter(D3D10DDI_HADAPTER hAdapter) {
+  AEROGPU_D3D10_11_LOG_CALL();
   auto* adapter = FromHandle<D3D10DDI_HADAPTER, AeroGpuAdapter>(hAdapter);
   delete adapter;
 }
@@ -1154,6 +1223,7 @@ HRESULT OpenAdapterCommon(D3D10DDIARG_OPENADAPTER* pOpenData) {
   funcs.pfnCalcPrivateDeviceSize = &CalcPrivateDeviceSize;
   funcs.pfnCreateDevice = &CreateDevice;
   funcs.pfnCloseAdapter = &CloseAdapter;
+  funcs.pfnGetCaps = &GetCaps;
 
   *pOpenData->pAdapterFuncs = funcs;
   return S_OK;
@@ -1164,14 +1234,17 @@ HRESULT OpenAdapterCommon(D3D10DDIARG_OPENADAPTER* pOpenData) {
 extern "C" {
 
 HRESULT AEROGPU_APIENTRY OpenAdapter10(D3D10DDIARG_OPENADAPTER* pOpenData) {
+  AEROGPU_D3D10_11_LOG_CALL();
   return OpenAdapterCommon(pOpenData);
 }
 
 HRESULT AEROGPU_APIENTRY OpenAdapter10_2(D3D10DDIARG_OPENADAPTER* pOpenData) {
+  AEROGPU_D3D10_11_LOG_CALL();
   return OpenAdapterCommon(pOpenData);
 }
 
 HRESULT AEROGPU_APIENTRY OpenAdapter11(D3D10DDIARG_OPENADAPTER* pOpenData) {
+  AEROGPU_D3D10_11_LOG_CALL();
   return OpenAdapterCommon(pOpenData);
 }
 

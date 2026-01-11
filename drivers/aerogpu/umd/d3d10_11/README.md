@@ -94,3 +94,23 @@ CI builds the same solution (and stages outputs under `out/drivers/aerogpu/`) vi
 If your checkout still contains `drivers\aerogpu\build\build_all.cmd`, treat it as a convenience wrapper around MSBuild/WDK10 that stages outputs under `drivers\aerogpu\build\out\win7\...`.
 
 The project expects the Windows SDK/WDK to provide D3D10/11 DDI headers (e.g. `d3d10umddi.h`, `d3d11umddi.h`) when building the real UMD.  
+
+## DDI call logging (Win7 bring-up)
+
+For early bring-up the UMD can emit a lightweight, grep-friendly trace of runtime → UMD calls.
+
+- Output format: **one line per call**, prefixed with `AEROGPU_D3D11DDI:`
+- Sink: `OutputDebugStringA` (and optionally an on-disk log file)
+
+Enable it by setting these environment variables **before launching the app**:
+
+```cmd
+set AEROGPU_D3D10_11_LOG=1
+rem Optional: also append to a file
+set AEROGPU_D3D10_11_LOG_FILE=C:\aerogpu_d3d10_11_umd.log
+```
+
+Collect the output using one of:
+
+- **DebugView** (Sysinternals): run DebugView and enable *Capture Win32*.
+- **WinDbg**: attach to the process and watch the debug output stream.
