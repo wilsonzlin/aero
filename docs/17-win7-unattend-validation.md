@@ -513,7 +513,7 @@ Typical fixes:
 
 ```bat
 certutil -addstore -f TrustedPublisher C:\Aero\certs\aero-test.cer
-certutil -addstore -f Root C:\Aero\certs\aero-root.cer
+certutil -addstore -f Root C:\Aero\certs\aero-test.cer
 ```
 
 Notes:
