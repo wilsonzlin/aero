@@ -230,11 +230,17 @@ For Windows 7–scale guests, snapshot files can be multiple gigabytes. Avoid bu
 - In Dedicated Workers, Chrome exposes OPFS `FileSystemSyncAccessHandle`, which supports positioned `read/write({ at })` operations.
 - `crates/aero-opfs` provides `aero_opfs::OpfsSyncFile`, a `std::io::{Read, Write, Seek}` wrapper over `FileSystemSyncAccessHandle` with a cursor and JS-safe offset validation.
 
-The WASM demo (`crates/aero-wasm::DemoVm`) exposes convenience helpers (wasm32-only):
+The browser/WASM bindings (`crates/aero-wasm`) expose convenience helpers (wasm32-only) for
+streaming snapshots directly to/from OPFS:
 
 - `snapshot_full_to_opfs(path: string) -> Promise<void>`
 - `snapshot_dirty_to_opfs(path: string) -> Promise<void>`
 - `restore_snapshot_from_opfs(path: string) -> Promise<void>`
+
+These helpers are implemented for:
+
+- `crates/aero-wasm::Machine` (preferred; canonical full-system VM)
+- `crates/aero-wasm::DemoVm` (legacy stub/demo VM used by snapshot panels)
 
 If sync access handles are unavailable (e.g. the code runs on the main thread instead of a DedicatedWorkerGlobalScope), these helpers return a clear error.
 
@@ -254,7 +260,12 @@ The JS host can store the snapshot in OPFS and/or trigger a download for export.
 
 ## Testing
 
-The reference VM (`crates/aero-vm/`) contains deterministic tests:
+The canonical machine (`crates/aero-machine/`) contains deterministic host-side integration tests
+that exercise snapshot round-trips end-to-end:
+
+- `crates/aero-machine/tests/bios_post_checkpoint.rs`
+
+The legacy stub VM (`crates/aero-vm/`) also contains deterministic tests (kept for the web demo):
 
 - Run a deterministic program, snapshot mid-execution, restore into a fresh VM, and verify identical output + memory.
 - Chain `full snapshot -> dirty diff snapshot` to validate incremental restore.
