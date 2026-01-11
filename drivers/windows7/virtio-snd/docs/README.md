@@ -304,6 +304,13 @@ drivers/windows7/virtio-snd/inf/virtiosnd.sys
 
 > `Inf2Cat` hashes every file referenced by the INF, so `virtiosnd.sys` must exist in `inf/` before generating the catalog.
 
+Instead of copying manually, you can use:
+
+```powershell
+# Stage the x86 or amd64 build output into inf\virtiosnd.sys
+powershell -ExecutionPolicy Bypass -File .\scripts\stage-built-sys.ps1 -Arch amd64
+```
+
 ## Prerequisites (host build/sign machine)
 
 Run the signing tooling from a WDK Developer Command Prompt (so the tools are in `PATH`):
