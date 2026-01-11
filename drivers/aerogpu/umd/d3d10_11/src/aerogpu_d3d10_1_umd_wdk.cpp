@@ -1479,10 +1479,56 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       pDesc ? static_cast<unsigned>(pDesc->ByteWidth) : 0u,
       (pDesc && pDesc->pMipInfoList) ? static_cast<unsigned>(pDesc->pMipInfoList[0].TexelWidth) : 0u,
       (pDesc && pDesc->pMipInfoList) ? static_cast<unsigned>(pDesc->pMipInfoList[0].TexelHeight) : 0u,
+       pDesc ? static_cast<unsigned>(pDesc->MipLevels) : 0u,
+       pDesc ? static_cast<unsigned>(pDesc->ArraySize) : 0u,
+       pDesc ? static_cast<unsigned>(pDesc->Format) : 0u,
+       pDesc ? pDesc->pInitialDataUP : nullptr);
+
+#if defined(AEROGPU_UMD_TRACE_RESOURCES)
+  uint32_t usage = 0;
+  __if_exists(D3D10DDIARG_CREATERESOURCE::Usage) {
+    usage = static_cast<uint32_t>(pDesc ? pDesc->Usage : 0);
+  }
+
+  uint32_t cpu_access = 0;
+  __if_exists(D3D10DDIARG_CREATERESOURCE::CPUAccessFlags) {
+    cpu_access = static_cast<uint32_t>(pDesc ? pDesc->CPUAccessFlags : 0);
+  }
+  __if_exists(D3D10DDIARG_CREATERESOURCE::CpuAccessFlags) {
+    cpu_access = static_cast<uint32_t>(pDesc ? pDesc->CpuAccessFlags : 0);
+  }
+
+  uint32_t sample_count = 0;
+  uint32_t sample_quality = 0;
+  __if_exists(D3D10DDIARG_CREATERESOURCE::SampleDesc) {
+    sample_count = static_cast<uint32_t>(pDesc ? pDesc->SampleDesc.Count : 0);
+    sample_quality = static_cast<uint32_t>(pDesc ? pDesc->SampleDesc.Quality : 0);
+  }
+
+  const uint32_t tex_w =
+      (pDesc && pDesc->pMipInfoList) ? static_cast<uint32_t>(pDesc->pMipInfoList[0].TexelWidth) : 0;
+  const uint32_t tex_h =
+      (pDesc && pDesc->pMipInfoList) ? static_cast<uint32_t>(pDesc->pMipInfoList[0].TexelHeight) : 0;
+
+  AEROGPU_D3D10_11_LOG(
+      "trace_resources: D3D10.1 CreateResource dim=%u bind=0x%08X usage=%u cpu=0x%08X misc=0x%08X fmt=%u "
+      "byteWidth=%u w=%u h=%u mips=%u array=%u sample=(%u,%u) mipInfoList=%p initUP=%p",
+      pDesc ? static_cast<unsigned>(pDesc->ResourceDimension) : 0u,
+      pDesc ? static_cast<unsigned>(pDesc->BindFlags) : 0u,
+      static_cast<unsigned>(usage),
+      static_cast<unsigned>(cpu_access),
+      pDesc ? static_cast<unsigned>(pDesc->MiscFlags) : 0u,
+      pDesc ? static_cast<unsigned>(pDesc->Format) : 0u,
+      pDesc ? static_cast<unsigned>(pDesc->ByteWidth) : 0u,
+      static_cast<unsigned>(tex_w),
+      static_cast<unsigned>(tex_h),
       pDesc ? static_cast<unsigned>(pDesc->MipLevels) : 0u,
       pDesc ? static_cast<unsigned>(pDesc->ArraySize) : 0u,
-      pDesc ? static_cast<unsigned>(pDesc->Format) : 0u,
+      static_cast<unsigned>(sample_count),
+      static_cast<unsigned>(sample_quality),
+      pDesc ? pDesc->pMipInfoList : nullptr,
       pDesc ? pDesc->pInitialDataUP : nullptr);
+#endif
   if (!hDevice.pDrvPrivate || !pDesc || !hResource.pDrvPrivate) {
     AEROGPU_D3D10_RET_HR(E_INVALIDARG);
   }
@@ -1503,6 +1549,12 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     res->bind_flags = pDesc->BindFlags;
     res->misc_flags = pDesc->MiscFlags;
     res->size_bytes = pDesc->ByteWidth;
+
+#if defined(AEROGPU_UMD_TRACE_RESOURCES)
+    AEROGPU_D3D10_11_LOG("trace_resources:  => created buffer handle=%u size=%llu",
+                         static_cast<unsigned>(res->handle),
+                         static_cast<unsigned long long>(res->size_bytes));
+#endif
 
     if (pDesc->pInitialDataUP) {
       const auto& init = pDesc->pInitialDataUP[0];
@@ -1558,6 +1610,14 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     res->array_size = pDesc->ArraySize;
     res->dxgi_format = static_cast<uint32_t>(pDesc->Format);
     res->row_pitch_bytes = res->width * bytes_per_pixel_aerogpu(aer_fmt);
+
+#if defined(AEROGPU_UMD_TRACE_RESOURCES)
+    AEROGPU_D3D10_11_LOG("trace_resources:  => created tex2d handle=%u size=%ux%u row_pitch=%u",
+                         static_cast<unsigned>(res->handle),
+                         static_cast<unsigned>(res->width),
+                         static_cast<unsigned>(res->height),
+                         static_cast<unsigned>(res->row_pitch_bytes));
+#endif
 
     if (pDesc->pInitialDataUP) {
       if (res->mip_levels != 1 || res->array_size != 1) {
@@ -2906,6 +2966,30 @@ HRESULT AEROGPU_APIENTRY Present(D3D10DDI_HDEVICE hDevice, const D3D10DDIARG_PRE
 
   std::lock_guard<std::mutex> lock(dev->mutex);
 
+#if defined(AEROGPU_UMD_TRACE_RESOURCES)
+  D3D10DDI_HRESOURCE hsrc = {};
+  __if_exists(D3D10DDIARG_PRESENT::hSrcResource) {
+    hsrc = pPresent->hSrcResource;
+  }
+  __if_exists(D3D10DDIARG_PRESENT::hRenderTarget) {
+    hsrc = pPresent->hRenderTarget;
+  }
+  __if_exists(D3D10DDIARG_PRESENT::hResource) {
+    hsrc = pPresent->hResource;
+  }
+  __if_exists(D3D10DDIARG_PRESENT::hSurface) {
+    hsrc = pPresent->hSurface;
+  }
+
+  aerogpu_handle_t src_handle = 0;
+  if (hsrc.pDrvPrivate) {
+    src_handle = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(hsrc)->handle;
+  }
+  AEROGPU_D3D10_11_LOG("trace_resources: D3D10.1 Present sync=%u src_handle=%u",
+                       static_cast<unsigned>(pPresent->SyncInterval),
+                       static_cast<unsigned>(src_handle));
+#endif
+
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_present>(AEROGPU_CMD_PRESENT);
   cmd->scanout_id = 0;
   bool vsync = (pPresent->SyncInterval != 0);
@@ -3081,6 +3165,20 @@ void AEROGPU_APIENTRY RotateResourceIdentities(D3D10DDI_HDEVICE hDevice,
 
   std::lock_guard<std::mutex> lock(dev->mutex);
 
+#if defined(AEROGPU_UMD_TRACE_RESOURCES)
+  AEROGPU_D3D10_11_LOG("trace_resources: D3D10.1 RotateResourceIdentities count=%u",
+                       static_cast<unsigned>(numResources));
+  for (UINT i = 0; i < numResources; ++i) {
+    aerogpu_handle_t handle = 0;
+    if (pResources[i].pDrvPrivate) {
+      handle = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(pResources[i])->handle;
+    }
+    AEROGPU_D3D10_11_LOG("trace_resources:  + slot[%u]=%u",
+                         static_cast<unsigned>(i),
+                         static_cast<unsigned>(handle));
+  }
+#endif
+
   auto* first = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(pResources[0]);
   if (!first) {
     return;
@@ -3100,6 +3198,18 @@ void AEROGPU_APIENTRY RotateResourceIdentities(D3D10DDI_HDEVICE hDevice,
   if (last) {
     last->handle = saved;
   }
+
+#if defined(AEROGPU_UMD_TRACE_RESOURCES)
+  for (UINT i = 0; i < numResources; ++i) {
+    aerogpu_handle_t handle = 0;
+    if (pResources[i].pDrvPrivate) {
+      handle = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(pResources[i])->handle;
+    }
+    AEROGPU_D3D10_11_LOG("trace_resources:  -> slot[%u]=%u",
+                         static_cast<unsigned>(i),
+                         static_cast<unsigned>(handle));
+  }
+#endif
 }
 
 // -------------------------------------------------------------------------------------------------

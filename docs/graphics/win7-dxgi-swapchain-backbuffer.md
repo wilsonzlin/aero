@@ -19,6 +19,10 @@ Lines are prefixed by the logging helper (currently `AEROGPU_D3D11DDI:`) and the
 
 * `trace_resources:`
 
+> Note: the trace hooks are compiled into both the repo “portable ABI subset” UMD path and the WDK-backed Win7 UMD DDIs
+> (`aerogpu_d3d10_umd_wdk.cpp`, `aerogpu_d3d10_1_umd_wdk.cpp`, `aerogpu_d3d11_umd_wdk.cpp`). This means the default
+> WDK build (`/p:AeroGpuUseWdkHeaders=1`) will still emit the `trace_resources:` lines.
+
 ### 2) Run the DXGI probe app on Win7
 
 The guest-side probe lives at:

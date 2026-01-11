@@ -102,6 +102,10 @@ When enabled, the UMD prints `CreateResource`, `RotateResourceIdentities`, and
 `Present` details via the standard UMD logging helper (`AEROGPU_D3D10_11_LOG`),
 tagged with `trace_resources:`.
 
+The trace hooks are implemented in both the WDK-backed Win7 DDIs and the
+repo-local ABI subset build so the same flag can be used regardless of header
+source (`/p:AeroGpuUseWdkHeaders=1` vs `0`).
+
 See `docs/graphics/win7-dxgi-swapchain-backbuffer.md` for the recommended probe
 app and log interpretation workflow.
 

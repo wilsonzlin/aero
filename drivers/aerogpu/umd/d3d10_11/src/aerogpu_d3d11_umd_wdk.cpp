@@ -1015,6 +1015,50 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
 
   std::lock_guard<std::mutex> lock(dev->mutex);
 
+#if defined(AEROGPU_UMD_TRACE_RESOURCES)
+  uint32_t sample_count = 0;
+  uint32_t sample_quality = 0;
+  __if_exists(D3D11DDIARG_CREATERESOURCE::SampleDesc) {
+    sample_count = static_cast<uint32_t>(pDesc->SampleDesc.Count);
+    sample_quality = static_cast<uint32_t>(pDesc->SampleDesc.Quality);
+  }
+
+  uint64_t resource_flags_bits = 0;
+  uint32_t resource_flags_size = 0;
+  __if_exists(D3D11DDIARG_CREATERESOURCE::ResourceFlags) {
+    resource_flags_size = static_cast<uint32_t>(sizeof(pDesc->ResourceFlags));
+    const size_t n = std::min(sizeof(resource_flags_bits), sizeof(pDesc->ResourceFlags));
+    std::memcpy(&resource_flags_bits, &pDesc->ResourceFlags, n);
+  }
+
+  const void* init_ptr = nullptr;
+  if constexpr (has_member_pInitialDataUP<D3D11DDIARG_CREATERESOURCE>::value) {
+    init_ptr = pDesc->pInitialDataUP;
+  } else if constexpr (has_member_pInitialData<D3D11DDIARG_CREATERESOURCE>::value) {
+    init_ptr = pDesc->pInitialData;
+  }
+
+  AEROGPU_D3D10_11_LOG(
+      "trace_resources: D3D11 CreateResource dim=%u bind=0x%08X usage=%u cpu=0x%08X misc=0x%08X fmt=%u "
+      "byteWidth=%u w=%u h=%u mips=%u array=%u sample=(%u,%u) rflags=0x%llX rflags_size=%u init=%p",
+      static_cast<unsigned>(static_cast<uint32_t>(pDesc->ResourceDimension)),
+      static_cast<unsigned>(static_cast<uint32_t>(pDesc->BindFlags)),
+      static_cast<unsigned>(static_cast<uint32_t>(pDesc->Usage)),
+      static_cast<unsigned>(static_cast<uint32_t>(pDesc->CPUAccessFlags)),
+      static_cast<unsigned>(static_cast<uint32_t>(pDesc->MiscFlags)),
+      static_cast<unsigned>(static_cast<uint32_t>(pDesc->Format)),
+      static_cast<unsigned>(static_cast<uint32_t>(pDesc->ByteWidth)),
+      static_cast<unsigned>(static_cast<uint32_t>(pDesc->Width)),
+      static_cast<unsigned>(static_cast<uint32_t>(pDesc->Height)),
+      static_cast<unsigned>(static_cast<uint32_t>(pDesc->MipLevels)),
+      static_cast<unsigned>(static_cast<uint32_t>(pDesc->ArraySize)),
+      static_cast<unsigned>(sample_count),
+      static_cast<unsigned>(sample_quality),
+      static_cast<unsigned long long>(resource_flags_bits),
+      static_cast<unsigned>(resource_flags_size),
+      init_ptr);
+#endif
+
   auto* res = new (hResource.pDrvPrivate) Resource();
   res->handle = AllocateGlobalHandle(dev->adapter);
   res->bind_flags = static_cast<uint32_t>(pDesc->BindFlags);
@@ -1084,6 +1128,12 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
       return E_OUTOFMEMORY;
     }
 
+#if defined(AEROGPU_UMD_TRACE_RESOURCES)
+    AEROGPU_D3D10_11_LOG("trace_resources:  => created buffer handle=%u size=%llu",
+                         static_cast<unsigned>(res->handle),
+                         static_cast<unsigned long long>(res->size_bytes));
+#endif
+
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_buffer>(AEROGPU_CMD_CREATE_BUFFER);
     cmd->buffer_handle = res->handle;
     cmd->usage_flags = bind_flags_to_usage_flags(res->bind_flags);
@@ -1128,6 +1178,14 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
       res->~Resource();
       return E_OUTOFMEMORY;
     }
+
+#if defined(AEROGPU_UMD_TRACE_RESOURCES)
+    AEROGPU_D3D10_11_LOG("trace_resources:  => created tex2d handle=%u size=%ux%u row_pitch=%u",
+                         static_cast<unsigned>(res->handle),
+                         static_cast<unsigned>(res->width),
+                         static_cast<unsigned>(res->height),
+                         static_cast<unsigned>(res->row_pitch_bytes));
+#endif
 
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_texture2d>(AEROGPU_CMD_CREATE_TEXTURE2D);
     cmd->texture_handle = res->handle;
@@ -2749,6 +2807,31 @@ HRESULT AEROGPU_APIENTRY Present11(D3D11DDI_HDEVICECONTEXT hCtx, const D3D10DDIA
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
+
+#if defined(AEROGPU_UMD_TRACE_RESOURCES)
+  D3D10DDI_HRESOURCE hsrc = {};
+  __if_exists(D3D10DDIARG_PRESENT::hSrcResource) {
+    hsrc = pPresent->hSrcResource;
+  }
+  __if_exists(D3D10DDIARG_PRESENT::hRenderTarget) {
+    hsrc = pPresent->hRenderTarget;
+  }
+  __if_exists(D3D10DDIARG_PRESENT::hResource) {
+    hsrc = pPresent->hResource;
+  }
+  __if_exists(D3D10DDIARG_PRESENT::hSurface) {
+    hsrc = pPresent->hSurface;
+  }
+
+  aerogpu_handle_t src_handle = 0;
+  if (hsrc.pDrvPrivate) {
+    src_handle = FromHandle<D3D10DDI_HRESOURCE, Resource>(hsrc)->handle;
+  }
+  AEROGPU_D3D10_11_LOG("trace_resources: D3D11 Present sync=%u src_handle=%u",
+                       static_cast<unsigned>(pPresent->SyncInterval),
+                       static_cast<unsigned>(src_handle));
+#endif
+
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_present>(AEROGPU_CMD_PRESENT);
   cmd->scanout_id = 0;
   bool vsync = (pPresent->SyncInterval != 0);
@@ -2767,6 +2850,21 @@ void AEROGPU_APIENTRY RotateResourceIdentities11(D3D11DDI_HDEVICECONTEXT hCtx, D
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
+
+#if defined(AEROGPU_UMD_TRACE_RESOURCES)
+  AEROGPU_D3D10_11_LOG("trace_resources: D3D11 RotateResourceIdentities count=%u",
+                       static_cast<unsigned>(numResources));
+  for (UINT i = 0; i < numResources; i++) {
+    aerogpu_handle_t handle = 0;
+    if (pResources[i].pDrvPrivate) {
+      handle = FromHandle<D3D11DDI_HRESOURCE, Resource>(pResources[i])->handle;
+    }
+    AEROGPU_D3D10_11_LOG("trace_resources:  + slot[%u]=%u",
+                         static_cast<unsigned>(i),
+                         static_cast<unsigned>(handle));
+  }
+#endif
+
   auto* first = pResources[0].pDrvPrivate ? FromHandle<D3D11DDI_HRESOURCE, Resource>(pResources[0]) : nullptr;
   if (!first) {
     return;
@@ -2784,6 +2882,18 @@ void AEROGPU_APIENTRY RotateResourceIdentities11(D3D11DDI_HDEVICECONTEXT hCtx, D
   if (last) {
     last->handle = saved;
   }
+
+#if defined(AEROGPU_UMD_TRACE_RESOURCES)
+  for (UINT i = 0; i < numResources; i++) {
+    aerogpu_handle_t handle = 0;
+    if (pResources[i].pDrvPrivate) {
+      handle = FromHandle<D3D11DDI_HRESOURCE, Resource>(pResources[i])->handle;
+    }
+    AEROGPU_D3D10_11_LOG("trace_resources:  -> slot[%u]=%u",
+                         static_cast<unsigned>(i),
+                         static_cast<unsigned>(handle));
+  }
+#endif
 }
 
 HRESULT AEROGPU_APIENTRY Present11Device(D3D11DDI_HDEVICE hDevice, const D3D10DDIARG_PRESENT* pPresent) {
