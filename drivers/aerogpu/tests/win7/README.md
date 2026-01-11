@@ -237,10 +237,13 @@ In a Win7 VM with AeroGPU installed and working correctly:
 * `d3d9ex_stretchrect` exercises compositor-critical D3D9Ex DDIs: `ColorFill`, `UpdateSurface`, `StretchRect`, and `UpdateTexture` (validated via readback)
 * `d3d9ex_query_latency` validates D3D9Ex `D3DQUERYTYPE_EVENT` polling + max frame latency APIs (prints query completion timing + configured latency)
 * `d3d9ex_shared_surface` creates a D3D9Ex shared render-target (prefers texture; falls back to shared surface), duplicates the shared handle into a child process, and validates cross-process pixel visibility via readback (pass `--no-validate-sharing` to skip readback validation)
-  * When debugging the KMD, this is also a good repro for validating stable `alloc_id` / `share_token` via allocation private driver data: the miniport should log the same IDs for `DxgkDdiCreateAllocation` (parent) and `DxgkDdiOpenAllocation` (child).
-  * If the shared handle is a real NT handle, the parent also (when supported) confirms `AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE` maps both process-local handles to the same stable token.
+  * When debugging the KMD, this is also a good repro for validating stable `alloc_id` / `share_token`:
+    * `alloc_id` is preserved cross-process via the WDDM allocation private-driver-data blob (`aerogpu_wddm_alloc_priv.alloc_id` in `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`).
+    * `share_token` is the protocol token used by `EXPORT_SHARED_SURFACE` / `IMPORT_SHARED_SURFACE` and should be stable across processes (canonical contract: KMD-generated `ShareToken`, returned to the UMD via `drivers/aerogpu/protocol/aerogpu_alloc_privdata.h`).
+    The miniport should log the same IDs for `DxgkDdiCreateAllocation` (parent) and `DxgkDdiOpenAllocation` (child).
+  * If the shared handle is a real NT handle, the parent also (when supported) confirms `AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE` maps both process-local handles to the same stable **debug token**.
 * `d3d9ex_shared_surface_ipc` creates a shared D3D9Ex render-target texture in one process, opens it in a second process, and validates the consumer can read back the producer’s clear color.
-  * If the shared handle is a real NT handle, the producer duplicates it into the consumer and (when supported) confirms `AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE` maps both process-local handles to the same stable token.
+  * If the shared handle is a real NT handle, the producer duplicates it into the consumer and (when supported) confirms `AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE` maps both process-local handles to the same stable **debug token**.
   * If the shared handle is not a real NT handle, it falls back to passing the raw handle value (token-style shared handles).
 * `d3d9ex_shared_surface_wow64` validates **cross-bitness** D3D9Ex shared-surface interop on Win7 x64: an **x86 (WOW64) producer** duplicates a shared render-target texture handle into an **x64 consumer** and the consumer validates pixel data via readback (skipped on 32-bit OS). This mirrors the Win7 desktop scenario where DWM is 64-bit but many apps are 32-bit.
 * `d3d9ex_shared_surface_many_producers` mimics the DWM “many producers → one compositor” workload:
