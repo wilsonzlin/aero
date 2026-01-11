@@ -290,8 +290,7 @@ async fn run_buffer_case(max_buffered_tcp_bytes: u32, expect_rst: bool) {
     let _legacy_token = EnvVarGuard::unset("AERO_L2_TOKEN");
     let _ping_interval = EnvVarGuard::set("AERO_L2_PING_INTERVAL_MS", "0");
     let _max_connections = EnvVarGuard::set("AERO_L2_MAX_CONNECTIONS", "0");
-    let _max_connections_per_session =
-        EnvVarGuard::set("AERO_L2_MAX_CONNECTIONS_PER_SESSION", "0");
+    let _max_connections_per_session = EnvVarGuard::set("AERO_L2_MAX_CONNECTIONS_PER_SESSION", "0");
     let _max_bytes = EnvVarGuard::set("AERO_L2_MAX_BYTES_PER_CONNECTION", "0");
     let _max_fps = EnvVarGuard::set("AERO_L2_MAX_FRAMES_PER_SECOND", "0");
     let _allow_private_ips = EnvVarGuard::unset("AERO_L2_ALLOW_PRIVATE_IPS");
@@ -304,8 +303,7 @@ async fn run_buffer_case(max_buffered_tcp_bytes: u32, expect_rst: bool) {
 
     // Ensure the proxy-side connection will not complete quickly (so the stack is forced to
     // buffer payload).
-    let _tcp_forward =
-        EnvVarGuard::set("AERO_L2_TCP_FORWARD", "203.0.113.10:80=10.255.255.1:80");
+    let _tcp_forward = EnvVarGuard::set("AERO_L2_TCP_FORWARD", "203.0.113.10:80=10.255.255.1:80");
 
     let cfg = ProxyConfig::from_env().unwrap();
     let proxy = start_server(cfg).await.unwrap();
@@ -335,8 +333,10 @@ async fn run_buffer_case(max_buffered_tcp_bytes: u32, expect_rst: bool) {
         .send(Message::Binary(encode_l2_frame(&dhcp_frame).into()))
         .await
         .unwrap();
-    let _ = wait_for_udp_datagram(&mut ws_rx, |udp| udp.src_port() == 67 && udp.dst_port() == 68)
-        .await;
+    let _ = wait_for_udp_datagram(&mut ws_rx, |udp| {
+        udp.src_port() == 67 && udp.dst_port() == 68
+    })
+    .await;
 
     let remote_ip = Ipv4Addr::new(203, 0, 113, 10);
     let remote_port = 80;
@@ -386,7 +386,8 @@ async fn run_buffer_case(max_buffered_tcp_bytes: u32, expect_rst: bool) {
         })
         .await;
         assert_eq!(
-            ack, isn + 1,
+            ack,
+            isn + 1,
             "expected buffered payload to be rejected (buffer limit={max_buffered_tcp_bytes})"
         );
     } else {
@@ -657,14 +658,12 @@ async fn tcp_connect_failures_increment_metric() {
     let _legacy_token = EnvVarGuard::unset("AERO_L2_TOKEN");
     let _ping_interval = EnvVarGuard::set("AERO_L2_PING_INTERVAL_MS", "0");
     let _max_connections = EnvVarGuard::set("AERO_L2_MAX_CONNECTIONS", "0");
-    let _max_connections_per_session =
-        EnvVarGuard::set("AERO_L2_MAX_CONNECTIONS_PER_SESSION", "0");
+    let _max_connections_per_session = EnvVarGuard::set("AERO_L2_MAX_CONNECTIONS_PER_SESSION", "0");
     let _max_bytes = EnvVarGuard::set("AERO_L2_MAX_BYTES_PER_CONNECTION", "0");
     let _max_fps = EnvVarGuard::set("AERO_L2_MAX_FRAMES_PER_SECOND", "0");
     let _allow_private_ips = EnvVarGuard::unset("AERO_L2_ALLOW_PRIVATE_IPS");
     let _allowed_tcp_ports = EnvVarGuard::set("AERO_L2_ALLOWED_TCP_PORTS", "80");
-    let _tcp_forward =
-        EnvVarGuard::set("AERO_L2_TCP_FORWARD", "203.0.113.10:80=127.0.0.1:0");
+    let _tcp_forward = EnvVarGuard::set("AERO_L2_TCP_FORWARD", "203.0.113.10:80=127.0.0.1:0");
     let _tcp_timeout = EnvVarGuard::set("AERO_L2_TCP_CONNECT_TIMEOUT_MS", "200");
     let _stack_max_tcp = EnvVarGuard::unset("AERO_L2_STACK_MAX_TCP_CONNECTIONS");
 
@@ -704,8 +703,10 @@ async fn tcp_connect_failures_increment_metric() {
         .send(Message::Binary(encode_l2_frame(&dhcp_frame).into()))
         .await
         .unwrap();
-    let _ = wait_for_udp_datagram(&mut ws_rx, |udp| udp.src_port() == 67 && udp.dst_port() == 68)
-        .await;
+    let _ = wait_for_udp_datagram(&mut ws_rx, |udp| {
+        udp.src_port() == 67 && udp.dst_port() == 68
+    })
+    .await;
 
     let remote_ip = Ipv4Addr::new(203, 0, 113, 10);
     let remote_port = 80;

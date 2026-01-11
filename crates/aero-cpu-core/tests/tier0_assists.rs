@@ -169,7 +169,9 @@ fn tier0_assists_execute_cpuid_msr_tsc_and_interrupt_flag_ops() {
             BatchExit::Exception(e) => {
                 panic!("unexpected exception after {executed_total} insts: {e:?}")
             }
-            BatchExit::CpuExit(e) => panic!("unexpected cpu exit after {executed_total} insts: {e:?}"),
+            BatchExit::CpuExit(e) => {
+                panic!("unexpected cpu exit after {executed_total} insts: {e:?}")
+            }
         }
     }
 

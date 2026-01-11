@@ -723,10 +723,12 @@ impl Machine {
                 BatchExit::CpuExit(exit) => {
                     self.flush_serial();
                     return match exit {
-                        aero_cpu_core::interrupts::CpuExit::TripleFault => RunExit::ResetRequested {
-                            kind: ResetKind::Cpu,
-                            executed,
-                        },
+                        aero_cpu_core::interrupts::CpuExit::TripleFault => {
+                            RunExit::ResetRequested {
+                                kind: ResetKind::Cpu,
+                                executed,
+                            }
+                        }
                         aero_cpu_core::interrupts::CpuExit::MemoryFault => RunExit::Exception {
                             exception: Exception::MemoryFault,
                             executed,

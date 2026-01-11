@@ -12,7 +12,8 @@ use emulator::devices::aerogpu_ring::{
     RING_HEAD_OFFSET, RING_TAIL_OFFSET,
 };
 use emulator::gpu_worker::aerogpu_backend::{
-    AeroGpuBackendCompletion, AeroGpuBackendScanout, AeroGpuBackendSubmission, AeroGpuCommandBackend,
+    AeroGpuBackendCompletion, AeroGpuBackendScanout, AeroGpuBackendSubmission,
+    AeroGpuCommandBackend,
 };
 use emulator::gpu_worker::aerogpu_executor::{
     AeroGpuExecutor, AeroGpuExecutorConfig, AeroGpuFenceCompletionMode,

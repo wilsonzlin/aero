@@ -1,10 +1,10 @@
 use aero_io_snapshot::io::state::{IoSnapshot, SnapshotError};
 use aero_usb::hid::passthrough::UsbHidPassthrough;
+use aero_usb::hub::UsbHubDevice;
 use aero_usb::passthrough::{
     SetupPacket as HostSetupPacket, UsbHostAction, UsbHostCompletion, UsbHostCompletionIn,
     UsbPassthroughDevice, UsbWebUsbPassthroughDevice,
 };
-use aero_usb::hub::UsbHubDevice;
 use aero_usb::uhci::UhciController;
 use aero_usb::usb::{SetupPacket, UsbDevice, UsbHandshake};
 
@@ -165,8 +165,8 @@ fn hid_passthrough_snapshot_roundtrip_preserves_state_and_input_queue() {
         &mut dev,
         SetupPacket {
             request_type: 0x21,
-            request: 0x09,                 // SET_REPORT
-            value: (2u16 << 8) | 2u16,     // Output report, ID 2
+            request: 0x09,             // SET_REPORT
+            value: (2u16 << 8) | 2u16, // Output report, ID 2
             index: 0,
             length: 3, // report ID + 2 bytes
         },
@@ -235,7 +235,10 @@ fn hid_passthrough_snapshot_roundtrip_preserves_state_and_input_queue() {
     assert_eq!(idle, [7]);
 
     // Interrupt OUT endpoint should remain halted.
-    assert!(matches!(restored.handle_out(1, &[0x99]), UsbHandshake::Stall));
+    assert!(matches!(
+        restored.handle_out(1, &[0x99]),
+        UsbHandshake::Stall
+    ));
 
     // Pending input reports should survive snapshot/restore and be served in order.
     let mut buf = [0u8; 8];
@@ -493,7 +496,11 @@ fn uhci_snapshot_roundtrip_preserves_regs_and_port_timer() {
 
     let expected_frnum = ctrl.port_read(io_base + REG_FRNUM, 2);
     let expected_portsc1 = ctrl.port_read(io_base + REG_PORTSC1, 2) as u16;
-    assert_ne!(expected_portsc1 & PORTSC_PR, 0, "reset should still be active");
+    assert_ne!(
+        expected_portsc1 & PORTSC_PR,
+        0,
+        "reset should still be active"
+    );
 
     let snapshot = ctrl.save_state();
 
@@ -507,23 +514,37 @@ fn uhci_snapshot_roundtrip_preserves_regs_and_port_timer() {
     assert_eq!(restored.port_read(io_base + REG_FRBASEADD, 4), fl_base);
     assert_eq!(restored.port_read(io_base + REG_FRNUM, 2), expected_frnum);
     assert_eq!(restored.port_read(io_base + REG_SOFMOD, 1), 0x55);
-    assert_eq!(restored.port_read(io_base + REG_PORTSC1, 2) as u16, expected_portsc1);
+    assert_eq!(
+        restored.port_read(io_base + REG_PORTSC1, 2) as u16,
+        expected_portsc1
+    );
 
     let root0 = restored.bus().port(0).unwrap();
     assert!(root0.connected, "root port connection must be preserved");
-    assert!(!root0.enabled, "root port should remain disabled during reset");
+    assert!(
+        !root0.enabled,
+        "root port should remain disabled during reset"
+    );
 
     // Continue the reset timer: 40ms remaining.
     for _ in 0..39 {
         restored.step_frame(&mut mem, &mut irq);
     }
     let portsc1 = restored.port_read(io_base + REG_PORTSC1, 2) as u16;
-    assert_ne!(portsc1 & PORTSC_PR, 0, "reset should still be active after 39ms");
+    assert_ne!(
+        portsc1 & PORTSC_PR,
+        0,
+        "reset should still be active after 39ms"
+    );
 
     restored.step_frame(&mut mem, &mut irq);
     let portsc1 = restored.port_read(io_base + REG_PORTSC1, 2) as u16;
     assert_eq!(portsc1 & PORTSC_PR, 0, "reset bit clears after 40ms");
-    assert_ne!(portsc1 & PORTSC_PED, 0, "port should be enabled after reset completes");
+    assert_ne!(
+        portsc1 & PORTSC_PED,
+        0,
+        "port should be enabled after reset completes"
+    );
     assert!(restored.bus().port(0).unwrap().enabled);
 }
 
@@ -565,7 +586,11 @@ fn usb_passthrough_device_snapshot_preserves_next_id_and_drops_pending_io() {
     dev.handle_in_transfer(0x81, 8);
     assert_eq!(dev.pending_summary().queued_actions, 1);
     let id1 = match dev.pop_action().expect("expected queued action") {
-        UsbHostAction::BulkIn { id, endpoint, length } => {
+        UsbHostAction::BulkIn {
+            id,
+            endpoint,
+            length,
+        } => {
             assert_eq!(endpoint, 0x81);
             assert_eq!(length, 8);
             id
@@ -590,7 +615,10 @@ fn usb_passthrough_device_snapshot_preserves_next_id_and_drops_pending_io() {
 
     // Next action should continue from next_id=2.
     restored.handle_in_transfer(0x81, 8);
-    let id2 = match restored.pop_action().expect("expected action after restore") {
+    let id2 = match restored
+        .pop_action()
+        .expect("expected action after restore")
+    {
         UsbHostAction::BulkIn { id, .. } => id,
         other => panic!("unexpected action: {other:?}"),
     };
@@ -621,7 +649,10 @@ fn webusb_passthrough_device_snapshot_preserves_pending_set_address() {
 
     // Status stage for SET_ADDRESS is an IN ZLP.
     let mut zlp: [u8; 0] = [];
-    assert_eq!(restored.handle_in(0, &mut zlp), UsbHandshake::Ack { bytes: 0 });
+    assert_eq!(
+        restored.handle_in(0, &mut zlp),
+        UsbHandshake::Ack { bytes: 0 }
+    );
     assert_eq!(restored.address(), 12);
 }
 
@@ -641,7 +672,10 @@ fn webusb_passthrough_device_snapshot_requeues_control_in_action() {
     let actions = dev.drain_actions();
     assert_eq!(actions.len(), 1);
     let id1 = match actions[0] {
-        UsbHostAction::ControlIn { id, setup: host_setup } => {
+        UsbHostAction::ControlIn {
+            id,
+            setup: host_setup,
+        } => {
             assert_eq!(
                 host_setup,
                 HostSetupPacket {
@@ -672,7 +706,10 @@ fn webusb_passthrough_device_snapshot_requeues_control_in_action() {
     let actions = restored.drain_actions();
     assert_eq!(actions.len(), 1);
     let id2 = match actions[0] {
-        UsbHostAction::ControlIn { id, setup: host_setup } => {
+        UsbHostAction::ControlIn {
+            id,
+            setup: host_setup,
+        } => {
             assert_eq!(
                 host_setup,
                 HostSetupPacket {
@@ -696,7 +733,10 @@ fn webusb_passthrough_device_snapshot_requeues_control_in_action() {
         },
     });
 
-    assert_eq!(restored.handle_in(0, &mut buf), UsbHandshake::Ack { bytes: 4 });
+    assert_eq!(
+        restored.handle_in(0, &mut buf),
+        UsbHandshake::Ack { bytes: 4 }
+    );
     assert_eq!(buf, [9, 8, 7, 6]);
 
     // Status stage for control-IN is an OUT ZLP.

@@ -365,7 +365,9 @@ impl WasmVm {
                 }
                 BatchExit::CpuExit(exit) => {
                     let kind = match exit {
-                        aero_cpu_core::interrupts::CpuExit::TripleFault => RunExitKind::ResetRequested,
+                        aero_cpu_core::interrupts::CpuExit::TripleFault => {
+                            RunExitKind::ResetRequested
+                        }
                         _ => RunExitKind::Exception,
                     };
                     return RunExit {

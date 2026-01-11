@@ -274,4 +274,3 @@ fn aerogpu_cmd_clear_depth_zero_rejects_far_fragments() {
         }
     });
 }
-

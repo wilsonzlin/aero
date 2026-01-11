@@ -209,8 +209,7 @@ async fn run_case(max_cache_entries: u32, expected_queries_total: u64) {
     let _legacy_token = EnvVarGuard::unset("AERO_L2_TOKEN");
     let _ping_interval = EnvVarGuard::set("AERO_L2_PING_INTERVAL_MS", "0");
     let _max_connections = EnvVarGuard::set("AERO_L2_MAX_CONNECTIONS", "0");
-    let _max_connections_per_session =
-        EnvVarGuard::set("AERO_L2_MAX_CONNECTIONS_PER_SESSION", "0");
+    let _max_connections_per_session = EnvVarGuard::set("AERO_L2_MAX_CONNECTIONS_PER_SESSION", "0");
     let _max_bytes = EnvVarGuard::set("AERO_L2_MAX_BYTES_PER_CONNECTION", "0");
     let _max_fps = EnvVarGuard::set("AERO_L2_MAX_FRAMES_PER_SECOND", "0");
 
@@ -324,4 +323,3 @@ async fn stack_dns_cache_entries_env_controls_eviction() {
     // With capacity=2, the first name should still be cached, so the third lookup should be a hit.
     run_case(2, 2).await;
 }
-

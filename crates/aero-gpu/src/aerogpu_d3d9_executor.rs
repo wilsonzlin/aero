@@ -2271,7 +2271,15 @@ impl AerogpuD3d9Executor {
                     let dst_underlying = self.resolve_resource_handle(dst_texture)?;
                     let (
                         (src_format_raw, _src_format, src_w, src_h, src_mips, src_layers),
-                        (dst_format_raw, dst_format, dst_w, dst_h, dst_mips, dst_layers, dst_backing),
+                        (
+                            dst_format_raw,
+                            dst_format,
+                            dst_w,
+                            dst_h,
+                            dst_mips,
+                            dst_layers,
+                            dst_backing,
+                        ),
                     ) = {
                         let src = self
                             .resources
@@ -4281,7 +4289,7 @@ impl AerogpuD3d9Executor {
                         compilation_options: wgpu::PipelineCompilationOptions::default(),
                         targets: &targets,
                     }),
-                     primitive: wgpu::PrimitiveState {
+                    primitive: wgpu::PrimitiveState {
                         topology: self.state.topology,
                         strip_index_format: None,
                         front_face: if self.state.rasterizer_state.front_ccw {

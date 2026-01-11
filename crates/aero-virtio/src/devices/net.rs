@@ -173,7 +173,10 @@ impl<B: NetBackend> VirtioNet<B> {
         let hdr_len = self.negotiated_hdr_len();
         let mut hdr_bytes = [0u8; VirtioNetHdr::LEN];
         let mut hdr_written = 0usize;
-        let offload_features = VIRTIO_NET_F_CSUM | VIRTIO_NET_F_HOST_TSO4 | VIRTIO_NET_F_HOST_TSO6 | VIRTIO_NET_F_HOST_ECN;
+        let offload_features = VIRTIO_NET_F_CSUM
+            | VIRTIO_NET_F_HOST_TSO4
+            | VIRTIO_NET_F_HOST_TSO6
+            | VIRTIO_NET_F_HOST_ECN;
         let max_packet_bytes = if (self.negotiated_features & offload_features) != 0 {
             1024 * 1024
         } else {

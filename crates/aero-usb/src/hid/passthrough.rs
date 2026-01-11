@@ -830,8 +830,14 @@ impl IoSnapshot for UsbHidPassthrough {
             Encoder::new().vec_bytes(&pending).finish(),
         );
 
-        w.field_bytes(TAG_LAST_INPUT_REPORTS, encode_report_map(&self.last_input_reports));
-        w.field_bytes(TAG_LAST_OUTPUT_REPORTS, encode_report_map(&self.last_output_reports));
+        w.field_bytes(
+            TAG_LAST_INPUT_REPORTS,
+            encode_report_map(&self.last_input_reports),
+        );
+        w.field_bytes(
+            TAG_LAST_OUTPUT_REPORTS,
+            encode_report_map(&self.last_output_reports),
+        );
         w.field_bytes(
             TAG_LAST_FEATURE_REPORTS,
             encode_report_map(&self.last_feature_reports),

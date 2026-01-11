@@ -1,7 +1,9 @@
 use crate::aerogpu_executor::{AllocTable, ExecutorError};
 use crate::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_pci::AEROGPU_ABI_VERSION_U32;
-use aero_protocol::aerogpu::aerogpu_ring::{AerogpuAllocEntry, AerogpuAllocTableHeader, AEROGPU_ALLOC_TABLE_MAGIC};
+use aero_protocol::aerogpu::aerogpu_ring::{
+    AerogpuAllocEntry, AerogpuAllocTableHeader, AEROGPU_ALLOC_TABLE_MAGIC,
+};
 
 fn build_alloc_table_bytes(
     size_bytes: u32,
@@ -27,8 +29,7 @@ fn build_alloc_table_bytes(
     write_u32(&mut buf, 20, 0);
 
     for (i, (alloc_id, gpa, size)) in entries.iter().copied().enumerate() {
-        let base =
-            AerogpuAllocTableHeader::SIZE_BYTES + i * (entry_stride_bytes as usize);
+        let base = AerogpuAllocTableHeader::SIZE_BYTES + i * (entry_stride_bytes as usize);
         write_u32(&mut buf, base + 0, alloc_id);
         write_u32(&mut buf, base + 4, 0); // flags
         write_u64(&mut buf, base + 8, gpa);
@@ -43,7 +44,8 @@ fn build_alloc_table_bytes(
 fn alloc_table_duplicate_alloc_id_is_rejected() {
     let gpa = 0x1000u64;
     let entry_stride = AerogpuAllocEntry::SIZE_BYTES as u32;
-    let size_bytes = (AerogpuAllocTableHeader::SIZE_BYTES + 2 * AerogpuAllocEntry::SIZE_BYTES) as u32;
+    let size_bytes =
+        (AerogpuAllocTableHeader::SIZE_BYTES + 2 * AerogpuAllocEntry::SIZE_BYTES) as u32;
 
     let bytes = build_alloc_table_bytes(
         size_bytes,
@@ -79,8 +81,7 @@ fn alloc_table_header_stride_too_small_is_rejected() {
     let mem = VecGuestMemory::new(0x2000);
     mem.write(gpa, &bytes).unwrap();
 
-    let err =
-        AllocTable::decode_from_guest_memory(&mem, gpa, size_bytes).expect_err("must fail");
+    let err = AllocTable::decode_from_guest_memory(&mem, gpa, size_bytes).expect_err("must fail");
     let ExecutorError::Validation(msg) = err else {
         panic!("expected validation error, got {err:?}");
     };
@@ -101,8 +102,7 @@ fn alloc_table_header_size_too_small_for_entry_count_is_rejected() {
     let mem = VecGuestMemory::new(0x2000);
     mem.write(gpa, &bytes).unwrap();
 
-    let err =
-        AllocTable::decode_from_guest_memory(&mem, gpa, size_bytes).expect_err("must fail");
+    let err = AllocTable::decode_from_guest_memory(&mem, gpa, size_bytes).expect_err("must fail");
     let ExecutorError::Validation(msg) = err else {
         panic!("expected validation error, got {err:?}");
     };

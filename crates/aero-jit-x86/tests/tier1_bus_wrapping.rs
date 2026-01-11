@@ -54,4 +54,3 @@ fn tier1_bus_write_wraps_u64_addresses() {
         vec![(u64::MAX - 1, 0x44), (u64::MAX, 0x33), (0, 0x22), (1, 0x11)]
     );
 }
-
