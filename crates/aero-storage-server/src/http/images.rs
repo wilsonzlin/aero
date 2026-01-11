@@ -149,9 +149,16 @@ async fn serve_image(
     let len = meta.size;
     let cache_control = data_cache_control_value(&state, &req_headers);
 
+    // Conditional requests (`If-None-Match` / `If-Modified-Since`) are evaluated against the
+    // ETag we would send on success. Some store implementations may not provide an ETag; in that
+    // case fall back to our deterministic weak ETag so `If-None-Match: *` and revalidation still
+    // work.
+    let fallback_etag = meta.etag.is_none().then(|| cache::etag_or_fallback(&meta));
+    let current_etag = meta.etag.as_deref().or(fallback_etag.as_deref());
+
     // Conditional requests: if the client has a matching validator, we can return `304` and
     // avoid streaming bytes (RFC 9110).
-    if cache::is_not_modified(&req_headers, meta.etag.as_deref(), meta.last_modified) {
+    if cache::is_not_modified(&req_headers, current_etag, meta.last_modified) {
         return not_modified_response(&state, &meta, cache_control);
     }
 

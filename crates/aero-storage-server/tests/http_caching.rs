@@ -1,4 +1,7 @@
-use aero_storage_server::{store::LocalFsImageStore, AppState};
+use aero_storage_server::{
+    store::{BoxedAsyncRead, ImageCatalogEntry, ImageMeta, ImageStore, LocalFsImageStore, StoreError},
+    AppState,
+};
 use axum::{
     body::Body,
     http::{header, Method, Request, StatusCode},
@@ -8,13 +11,52 @@ use std::sync::Arc;
 use tempfile::tempdir;
 use tower::ServiceExt;
 
+#[derive(Clone)]
+struct NoEtagStore {
+    inner: LocalFsImageStore,
+}
+
+#[async_trait::async_trait]
+impl ImageStore for NoEtagStore {
+    async fn list_images(&self) -> Result<Vec<ImageCatalogEntry>, StoreError> {
+        let mut images = self.inner.list_images().await?;
+        for image in &mut images {
+            image.meta.etag = None;
+        }
+        Ok(images)
+    }
+
+    async fn get_image(&self, image_id: &str) -> Result<ImageCatalogEntry, StoreError> {
+        let mut image = self.inner.get_image(image_id).await?;
+        image.meta.etag = None;
+        Ok(image)
+    }
+
+    async fn get_meta(&self, image_id: &str) -> Result<ImageMeta, StoreError> {
+        let mut meta = self.inner.get_meta(image_id).await?;
+        meta.etag = None;
+        Ok(meta)
+    }
+
+    async fn open_range(
+        &self,
+        image_id: &str,
+        start: u64,
+        len: u64,
+    ) -> Result<BoxedAsyncRead, StoreError> {
+        self.inner.open_range(image_id, start, len).await
+    }
+}
+
 async fn setup_app() -> (axum::Router, tempfile::TempDir) {
     let dir = tempdir().expect("tempdir");
     tokio::fs::write(dir.path().join("test.img"), b"Hello, world!")
         .await
         .expect("write test file");
 
-    let store = Arc::new(LocalFsImageStore::new(dir.path()));
+    let store = Arc::new(NoEtagStore {
+        inner: LocalFsImageStore::new(dir.path()),
+    });
     let state = AppState::new(store);
     (aero_storage_server::app(state), dir)
 }
