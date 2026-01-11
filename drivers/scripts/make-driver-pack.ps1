@@ -288,7 +288,7 @@ try {
 
   # Upstream virtio-win license/notice texts (best-effort). Stored under
   # licenses/virtio-win/ to avoid colliding with Aero's own README files.
-  Copy-VirtioWinNotices -VirtioRoot $VirtioWinRoot -DestDir (Join-Path $packRoot "licenses\\virtio-win")
+  Copy-VirtioWinNotices -VirtioRoot $VirtioWinRoot -DestDir (Join-Path (Join-Path $packRoot "licenses") "virtio-win")
 
   $driverResults = @()
   $includedDrivers = New-Object "System.Collections.Generic.HashSet[string]"
