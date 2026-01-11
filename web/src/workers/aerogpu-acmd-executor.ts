@@ -158,9 +158,6 @@ export const decodeAerogpuAllocTable = (buf: ArrayBuffer): AeroGpuAllocTable => 
     const gpaU64 = dv.getBigUint64(base + 8, true);
     const allocSizeBytesU64 = dv.getBigUint64(base + 16, true);
 
-    if (gpaU64 === 0n) {
-      throw new Error(`aerogpu: alloc table entry ${i} has gpa=0`);
-    }
     if (allocSizeBytesU64 === 0n) {
       throw new Error(`aerogpu: alloc table entry ${i} has size_bytes=0`);
     }
