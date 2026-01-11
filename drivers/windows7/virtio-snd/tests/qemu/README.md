@@ -227,6 +227,7 @@ The selftest logs to:
    ```
 3. Review `C:\aero-virtio-selftest.log` and locate the virtio-snd marker:
    - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS`
+   - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|...` (if the test was disabled via `--disable-snd`)
    - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|reason=<...>|hr=0x........`
 
 Common `reason=` values include:
@@ -263,7 +264,8 @@ Then review:
 - Confirm the device HWID Windows sees (Device Manager → Properties → Details → Hardware Ids).
 - Confirm QEMU is exposing virtio-snd as expected (and you used the correct QEMU device name).
 - Confirm the HWID includes `PCI\VEN_1AF4&DEV_1059&REV_01`. If it does not, the Aero INF will not match.
-- Prefer `disable-legacy=on` and `x-pci-revision=0x01` (or upgrade QEMU) so the device enumerates as modern + revision-gated (`DEV_1059&REV_01`).
+- Prefer `disable-legacy=on`. If your QEMU build supports overriding PCI identification fields, set the
+  Revision ID to `0x01` so Windows reports `...&REV_01` (consult `qemu-system-x86_64 -device virtio-sound-pci,help` for `x-pci-*` options).
 
 ### Driver binds, but no playback endpoint appears in Control Panel → Sound
 
