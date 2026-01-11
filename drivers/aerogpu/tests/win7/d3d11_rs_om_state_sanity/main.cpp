@@ -728,7 +728,6 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     }
     context->Unmap(staging.get(), 0);
 
-    const uint32_t expected_red = 0xFFFF0000u;
     if ((center_null & 0x00FFFFFFu) != (expected_red & 0x00FFFFFFu)) {
       return aerogpu_test::Fail(kTestName,
                                 "cull NULL state failed: center(%d,%d)=0x%08lX expected ~0x%08lX",
