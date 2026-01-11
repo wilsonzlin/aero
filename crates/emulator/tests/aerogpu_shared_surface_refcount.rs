@@ -86,7 +86,13 @@ fn build_stream(packets: impl FnOnce(&mut Vec<u8>), abi_version: u32) -> Vec<u8>
     out
 }
 
-fn write_alloc_table(mem: &mut VecMemory, gpa: u64, abi_version: u32, backing_gpa: u64, backing_size: u64) -> u32 {
+fn write_alloc_table(
+    mem: &mut VecMemory,
+    gpa: u64,
+    abi_version: u32,
+    backing_gpa: u64,
+    backing_size: u64,
+) -> u32 {
     let size_bytes = (ProtocolAllocTableHeader::SIZE_BYTES + ProtocolAllocEntry::SIZE_BYTES) as u32;
     let mut buf = Vec::with_capacity(size_bytes as usize);
 
@@ -116,7 +122,13 @@ fn shared_surface_alias_survives_destroy_of_original_handle() {
 
     let alloc_table_gpa = 0x1000u64;
     let backing_gpa = 0x8000u64;
-    let alloc_table_size_bytes = write_alloc_table(&mut mem, alloc_table_gpa, regs.abi_version, backing_gpa, 0x1000);
+    let alloc_table_size_bytes = write_alloc_table(
+        &mut mem,
+        alloc_table_gpa,
+        regs.abi_version,
+        backing_gpa,
+        0x1000,
+    );
 
     let cmd_gpa = 0x2000u64;
     let (width, height) = (2u32, 2u32);
@@ -221,4 +233,3 @@ fn shared_surface_alias_survives_destroy_of_original_handle() {
         assert_eq!(px, [0, 255, 0, 255]);
     }
 }
-

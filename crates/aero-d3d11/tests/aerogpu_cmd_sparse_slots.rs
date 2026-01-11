@@ -1,6 +1,8 @@
 use aero_d3d11::input_layout::fnv1a_32;
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
-use aero_gpu::{VecGuestMemory, AEROGPU_INPUT_LAYOUT_BLOB_MAGIC, AEROGPU_INPUT_LAYOUT_BLOB_VERSION};
+use aero_gpu::{
+    VecGuestMemory, AEROGPU_INPUT_LAYOUT_BLOB_MAGIC, AEROGPU_INPUT_LAYOUT_BLOB_VERSION,
+};
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode,
     AerogpuCmdStreamHeader as ProtocolCmdStreamHeader, AerogpuPrimitiveTopology,

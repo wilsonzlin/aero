@@ -6,8 +6,8 @@ use std::sync::Arc;
 use aero_gpu::bindings::layout_cache::{BindGroupLayoutCache, CachedBindGroupLayout};
 use aero_gpu::pipeline_cache::{PipelineCache, PipelineCacheConfig};
 use aero_gpu::pipeline_key::{ColorTargetKey, PipelineLayoutKey, RenderPipelineKey, ShaderHash};
-use aero_gpu::{GuestMemory, GuestMemoryError};
 use aero_gpu::GpuCapabilities;
+use aero_gpu::{GuestMemory, GuestMemoryError};
 use aero_protocol::aerogpu::aerogpu_cmd::{
     decode_cmd_copy_buffer_le, decode_cmd_copy_texture2d_le,
     decode_cmd_create_input_layout_blob_le, decode_cmd_create_shader_dxbc_payload_le,

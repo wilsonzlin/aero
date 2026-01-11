@@ -877,11 +877,7 @@ fn parse_inf_active_pci_hwids(inf_text: &str) -> BTreeSet<String> {
         if line.is_empty() {
             continue;
         }
-        let candidate = line
-            .split(',')
-            .map(|p| p.trim())
-            .last()
-            .unwrap_or_default();
+        let candidate = line.split(',').map(|p| p.trim()).last().unwrap_or_default();
         if candidate.to_ascii_uppercase().starts_with("PCI\\VEN_") {
             out.insert(candidate.to_string());
         }
