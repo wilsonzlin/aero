@@ -38,6 +38,7 @@ Notes:
   - `-Drivers viostor,netkvm`
 - To fail if optional drivers are requested but missing:
   - `-StrictOptional` (typically used together with `-Drivers viostor,netkvm,viosnd,vioinput`)
+
 ### Linux/macOS host (extract ISO, then use `-VirtioWinRoot`)
 
 `drivers/scripts/make-driver-pack.ps1` can run under PowerShell 7 (`pwsh`), but ISO mounting is Windows-only.
@@ -50,6 +51,14 @@ python3 tools/virtio-win/extract.py \
 
 pwsh drivers/scripts/make-driver-pack.ps1 -VirtioWinRoot /tmp/virtio-win-root
 ```
+
+Notes:
+
+- The extractor prefers `7z`/`7zz` (no root required). If you don’t have it, install:
+  - Ubuntu/Debian: `sudo apt-get install p7zip-full`
+  - macOS (Homebrew): `brew install p7zip`
+  - Or use the pure-Python backend: `python3 -m pip install pycdlib` and pass `--backend pycdlib`.
+- `make-driver-pack.ps1` requires PowerShell 7 (`pwsh`) on non-Windows hosts.
 
 Output:
 

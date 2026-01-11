@@ -252,6 +252,12 @@ python3 tools/virtio-win/extract.py \
 pwsh drivers/scripts/make-driver-pack.ps1 -VirtioWinRoot /tmp/virtio-win-root -NoZip
 ```
 
+Notes:
+
+- `tools/virtio-win/extract.py` prefers `7z` (install `p7zip-full` on Ubuntu/Debian or `p7zip` via Homebrew on macOS).
+  If you don’t have `7z`, install `pycdlib` (`python3 -m pip install pycdlib`) and pass `--backend pycdlib`.
+- `drivers/scripts/make-driver-pack.ps1` requires PowerShell 7 (`pwsh`) on non-Windows hosts.
+
 `tools/virtio-win/extract.py` also writes a machine-readable provenance file to:
 
 - `/tmp/virtio-win-root/virtio-win-provenance.json`
