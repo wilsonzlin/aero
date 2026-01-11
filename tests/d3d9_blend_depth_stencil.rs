@@ -251,6 +251,10 @@ fn assert_rgba_near(actual: [u8; 4], expected: [u8; 4], tolerance: u8) {
 
 #[test]
 fn render_blend_mode_correctness() {
+    if !common::skip_unless_webgpu("render_blend_mode_correctness") {
+        return;
+    }
+
     let Some((device, queue)) = create_device() else {
         common::skip_or_panic(
             "render_blend_mode_correctness",
@@ -423,6 +427,10 @@ fn render_blend_mode_correctness() {
 
 #[test]
 fn render_depth_test_correctness() {
+    if !common::skip_unless_webgpu("render_depth_test_correctness") {
+        return;
+    }
+
     let Some((device, queue)) = create_device() else {
         common::skip_or_panic(
             "render_depth_test_correctness",
@@ -580,6 +588,10 @@ fn render_depth_test_correctness() {
 
 #[test]
 fn render_stencil_correctness() {
+    if !common::skip_unless_webgpu("render_stencil_correctness") {
+        return;
+    }
+
     let Some((device, queue)) = create_device() else {
         common::skip_or_panic(
             "render_stencil_correctness",

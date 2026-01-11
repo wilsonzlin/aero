@@ -13,18 +13,26 @@ struct Vertex {
     uv: [f32; 2],
 }
 
+async fn new_runtime(test_name: &str) -> Option<D3D11Runtime> {
+    if !common::skip_unless_webgpu(test_name) {
+        return None;
+    }
+
+    match D3D11Runtime::new_for_tests().await {
+        Ok(rt) => Some(rt),
+        Err(e) => {
+            common::skip_or_panic(test_name, &format!("wgpu unavailable ({e:#})"));
+            None
+        }
+    }
+}
+
 #[test]
 fn d3d11_render_textured_quad() {
     pollster::block_on(async {
-        let mut rt = match D3D11Runtime::new_for_tests().await {
-            Ok(rt) => rt,
-            Err(e) => {
-                common::skip_or_panic(
-                    concat!(module_path!(), "::d3d11_render_textured_quad"),
-                    &format!("wgpu unavailable ({e:#})"),
-                );
-                return;
-            }
+        let test_name = concat!(module_path!(), "::d3d11_render_textured_quad");
+        let Some(mut rt) = new_runtime(test_name).await else {
+            return;
         };
 
         const VB: u32 = 1;
@@ -243,15 +251,9 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 #[test]
 fn d3d11_compute_writes_storage_buffer() {
     pollster::block_on(async {
-        let mut rt = match D3D11Runtime::new_for_tests().await {
-            Ok(rt) => rt,
-            Err(e) => {
-                common::skip_or_panic(
-                    concat!(module_path!(), "::d3d11_compute_writes_storage_buffer"),
-                    &format!("wgpu unavailable ({e:#})"),
-                );
-                return;
-            }
+        let test_name = concat!(module_path!(), "::d3d11_compute_writes_storage_buffer");
+        let Some(mut rt) = new_runtime(test_name).await else {
+            return;
         };
 
         const OUT: u32 = 101;
@@ -328,15 +330,9 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
 #[test]
 fn d3d11_compute_writes_storage_texture() {
     pollster::block_on(async {
-        let mut rt = match D3D11Runtime::new_for_tests().await {
-            Ok(rt) => rt,
-            Err(e) => {
-                common::skip_or_panic(
-                    concat!(module_path!(), "::d3d11_compute_writes_storage_texture"),
-                    &format!("wgpu unavailable ({e:#})"),
-                );
-                return;
-            }
+        let test_name = concat!(module_path!(), "::d3d11_compute_writes_storage_texture");
+        let Some(mut rt) = new_runtime(test_name).await else {
+            return;
         };
 
         const TEX: u32 = 201;
@@ -395,18 +391,12 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
 #[test]
 fn d3d11_update_texture2d_unaligned_bytes_per_row() {
     pollster::block_on(async {
-        let mut rt = match D3D11Runtime::new_for_tests().await {
-            Ok(rt) => rt,
-            Err(e) => {
-                common::skip_or_panic(
-                    concat!(
-                        module_path!(),
-                        "::d3d11_update_texture2d_unaligned_bytes_per_row"
-                    ),
-                    &format!("wgpu unavailable ({e:#})"),
-                );
-                return;
-            }
+        let test_name = concat!(
+            module_path!(),
+            "::d3d11_update_texture2d_unaligned_bytes_per_row"
+        );
+        let Some(mut rt) = new_runtime(test_name).await else {
+            return;
         };
 
         const TEX: u32 = 301;

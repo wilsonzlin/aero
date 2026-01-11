@@ -10,6 +10,17 @@ pub fn require_webgpu() -> bool {
         || v.eq_ignore_ascii_case("on")
 }
 
+pub fn skip_unless_webgpu(test_name: &str) -> bool {
+    if require_webgpu() {
+        return true;
+    }
+    skip_or_panic(
+        test_name,
+        "WebGPU tests disabled (set AERO_REQUIRE_WEBGPU=1 to enable)",
+    );
+    false
+}
+
 pub fn skip_or_panic(test_name: &str, reason: &str) {
     if require_webgpu() {
         panic!("AERO_REQUIRE_WEBGPU is enabled but {test_name} cannot run: {reason}");

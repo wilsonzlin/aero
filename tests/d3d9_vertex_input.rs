@@ -10,6 +10,10 @@ use wgpu::util::DeviceExt;
 mod common;
 
 fn create_device(test_name: &str) -> Option<(wgpu::Device, wgpu::Queue)> {
+    if !common::skip_unless_webgpu(test_name) {
+        return None;
+    }
+
     if std::env::var_os("XDG_RUNTIME_DIR").is_none() {
         // Some WGPU backends complain loudly if this isn't set, even when we never create a surface.
         std::env::set_var("XDG_RUNTIME_DIR", "/tmp");
