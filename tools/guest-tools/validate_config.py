@@ -5,8 +5,8 @@ Lightweight consistency checker for Guest Tools config vs packaging specs.
 Why this exists:
 - `guest-tools/config/devices.cmd` drives boot-critical driver installation (service
   names + HWIDs).
-- `devices.cmd` is generated from the canonical device contract
-  (`docs/windows-device-contract.json`) during Guest Tools packaging.
+- `devices.cmd` is generated from a Windows device contract JSON during Guest Tools
+  packaging.
 - `tools/packaging/specs/*.json` drives `aero_packager` validation when building Guest
   Tools media (ISO/zip) from driver packages (either upstream virtio-win or the
   in-repo Aero drivers produced by CI).
@@ -32,6 +32,7 @@ class ValidationError(RuntimeError):
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_WINDOWS_DEVICE_CONTRACT_PATH = REPO_ROOT / "docs/windows-device-contract.json"
 
 # Canonical Guest Tools / packager naming for the AeroGPU driver directory.
 # Keep this in sync with:
@@ -83,7 +84,7 @@ class ContractDevice:
 
 def load_windows_device_contract(path: Path) -> Mapping[str, ContractDevice]:
     """
-    Load the machine-readable Windows device contract (docs/windows-device-contract.json).
+    Load the machine-readable Windows device contract JSON.
 
     We use this as the source of truth for boot-critical service names like virtio-blk:
     packaging specs intentionally focus on driver folder names + HWID regexes and do not
@@ -591,7 +592,13 @@ def _validate_hwid_contract(
     return match
 
 
-def validate(devices: DevicesConfig, spec_path: Path, spec_expected: Mapping[str, SpecDriver]) -> None:
+def validate(
+    devices: DevicesConfig,
+    spec_path: Path,
+    spec_expected: Mapping[str, SpecDriver],
+    *,
+    windows_device_contract: Path = DEFAULT_WINDOWS_DEVICE_CONTRACT_PATH,
+) -> None:
     # Storage service name: `devices.cmd` must declare the storage driver's INF AddService
     # name so `guest-tools/setup.cmd` can preseed BOOT_START + CriticalDeviceDatabase keys.
     #
@@ -599,7 +606,7 @@ def validate(devices: DevicesConfig, spec_path: Path, spec_expected: Mapping[str
     # Aero device contract (`docs/windows-device-contract.json`). If the packaged storage
     # driver changes its INF AddService name, update the contract and regenerate Guest Tools
     # (do not hand-edit devices.cmd).
-    contract_path = REPO_ROOT / "docs/windows-device-contract.json"
+    contract_path = windows_device_contract
     contract = load_windows_device_contract(contract_path)
     virtio_blk_contract = contract.get("virtio-blk")
     if virtio_blk_contract is None:
@@ -613,7 +620,7 @@ def validate(devices: DevicesConfig, spec_path: Path, spec_expected: Mapping[str
             f"windows-device-contract.json virtio-blk.driver_service_name: {expected_blk_service!r}\n"
             "\n"
             "Remediation:\n"
-            "- Update docs/windows-device-contract.json (virtio-blk.driver_service_name) to match the virtio-blk INF AddService name.\n"
+            f"- Update {contract_path} (virtio-blk.driver_service_name) to match the virtio-blk INF AddService name.\n"
             "- Regenerate guest-tools/config/devices.cmd (it is derived from the contract).\n"
         )
 
@@ -870,15 +877,21 @@ def main(argv: Sequence[str]) -> int:
         default=str(REPO_ROOT / "tools/packaging/specs/win7-virtio-win.json"),
         help="Path to packaging spec JSON (default: in-repo win7-virtio-win.json).",
     )
+    parser.add_argument(
+        "--windows-device-contract",
+        default=str(DEFAULT_WINDOWS_DEVICE_CONTRACT_PATH),
+        help="Path to Windows device contract JSON used to validate service names/HWIDs (default: canonical Aero contract).",
+    )
     args = parser.parse_args(list(argv))
 
     devices_path = _resolve_path(args.devices_cmd)
     spec_path = _resolve_path(args.spec)
+    contract_path = _resolve_path(args.windows_device_contract)
 
     try:
         devices = load_devices_cmd(devices_path)
         spec_expected = load_packaging_spec(spec_path)
-        validate(devices, spec_path, spec_expected)
+        validate(devices, spec_path, spec_expected, windows_device_contract=contract_path)
     except ValidationError as e:
         print(f"ERROR: {e}", file=sys.stderr)
         return 1

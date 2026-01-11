@@ -1098,6 +1098,15 @@ if (-not (Test-Path -LiteralPath $specPathResolved -PathType Leaf)) {
   throw "SpecPath does not exist: '$specPathResolved'."
 }
 
+$windowsDeviceContractResolved = $null
+if ([string]::IsNullOrWhiteSpace($WindowsDeviceContractPath)) {
+  throw "-WindowsDeviceContractPath must not be empty."
+}
+$windowsDeviceContractResolved = Resolve-RepoPath -Path $WindowsDeviceContractPath
+if (-not (Test-Path -LiteralPath $windowsDeviceContractResolved -PathType Leaf)) {
+  throw "WindowsDeviceContractPath does not exist: '$windowsDeviceContractResolved'."
+}
+
 if (-not [string]::IsNullOrWhiteSpace($DriverNameMapJson)) {
   $script:DriverNameMap = Load-DriverNameMap -Path $DriverNameMapJson
   if ($script:DriverNameMap.Count -gt 0) {
@@ -1124,11 +1133,6 @@ Require-Command -Name "cargo" | Out-Null
 $packagerManifest = Resolve-RepoPath -Path "tools/packaging/aero_packager/Cargo.toml"
 if (-not (Test-Path -LiteralPath $packagerManifest -PathType Leaf)) {
   throw "Missing packager Cargo.toml: '$packagerManifest'."
-}
-
-$windowsDeviceContractResolved = Resolve-RepoPath -Path $WindowsDeviceContractPath
-if (-not (Test-Path -LiteralPath $windowsDeviceContractResolved -PathType Leaf)) {
-  throw "Missing Windows device contract JSON: '$windowsDeviceContractResolved'."
 }
 
 $stageRoot = Resolve-RepoPath -Path "out/_staging_guest_tools"

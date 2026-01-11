@@ -59,6 +59,20 @@ cargo run --release --locked -- \
 Use `--signing-policy production` (or `none`) to build Guest Tools media for
 WHQL/production-signed drivers without requiring any certificate files.
 
+## Windows device contract variants (`config/devices.cmd`)
+
+`aero_packager` generates `config/devices.cmd` from a machine-readable Windows device contract JSON
+(`--windows-device-contract`).
+
+This repo maintains two variants:
+
+- `docs/windows-device-contract.json` (canonical, in-tree Aero driver service names like `aerovblk` / `aerovnet`)
+- `docs/windows-device-contract-virtio-win.json` (upstream virtio-win service names like `viostor` / `netkvm`)
+
+Virtio-win Guest Tools builds **must** use the virtio-win contract so `guest-tools/setup.cmd` can
+validate the boot-critical storage INF (`AddService = viostor, ...`) and pre-seed registry state
+without requiring `/skipstorage`.
+
 ## Building Guest Tools from `virtio-win.iso` (Win7 virtio drivers)
 
 If you want Guest Tools to include the upstream virtio drivers (`viostor`, `netkvm`, etc.), use:
@@ -73,6 +87,10 @@ powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-guest-tools-from
 
 By default this wrapper uses `-Profile full` (includes best-effort Win7 audio/input drivers when present in your virtio-win version).
 To build storage+network-only Guest Tools media (no optional audio/input drivers), use `-Profile minimal`.
+
+This wrapper uses `docs/windows-device-contract-virtio-win.json` by default so the packaged
+`config/devices.cmd` matches the upstream virtio-win INF service names (required for storage
+pre-seeding).
 
 On Linux/macOS you can run the same wrapper under PowerShell 7 (`pwsh`). When `Mount-DiskImage`
 is unavailable (or fails to mount), it automatically falls back to the cross-platform extractor:
@@ -114,6 +132,7 @@ produce the Guest Tools ISO/zip from those artifacts using:
 - `ci/package-guest-tools.ps1`
   - Local default (when `-SpecPath` is omitted): `tools/packaging/specs/win7-aero-guest-tools.json` (stricter HWID validation)
   - CI/release workflows: `tools/packaging/specs/win7-signed.json` (HWID regex lists intentionally empty)
+  - Device contract (for generated `config/devices.cmd`): `-WindowsDeviceContractPath` (default: `docs/windows-device-contract.json`)
 
 To reproduce CI packaging locally (assuming you already have `out/packages/` + `out/certs/`):
 

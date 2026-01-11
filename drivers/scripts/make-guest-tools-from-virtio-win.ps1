@@ -87,6 +87,13 @@ param(
 
   [string]$SpecPath,
 
+  # Windows device contract used by the Guest Tools packager to generate `config/devices.cmd`.
+  #
+  # Virtio-win driver bundles must use the virtio-win contract so:
+  # - AERO_VIRTIO_*_SERVICE values match the upstream INF AddService names (viostor/netkvm/...)
+  # - guest-tools/setup.cmd can pre-seed boot-critical storage registry keys without /skipstorage.
+  [string]$WindowsDeviceContractPath = "docs/windows-device-contract-virtio-win.json",
+
   [switch]$CleanStage
 )
 
@@ -164,6 +171,14 @@ $resolvedSpecPath = if ($PSBoundParameters.ContainsKey("SpecPath")) {
 $resolvedSpecPath = [System.IO.Path]::GetFullPath($resolvedSpecPath)
 $SpecPath = $resolvedSpecPath
 
+if (-not $WindowsDeviceContractPath) {
+  throw "-WindowsDeviceContractPath must not be empty."
+}
+if (-not [System.IO.Path]::IsPathRooted($WindowsDeviceContractPath)) {
+  $WindowsDeviceContractPath = Join-Path $repoRoot $WindowsDeviceContractPath
+}
+$WindowsDeviceContractPath = [System.IO.Path]::GetFullPath($WindowsDeviceContractPath)
+
 $defaultDrivers = if ($Profile -eq "minimal") {
   @("viostor", "netkvm")
 } else {
@@ -182,6 +197,7 @@ Write-Host "Resolved Guest Tools packaging inputs:"
 Write-Host "  profile : $Profile"
 Write-Host "  signing : $SigningPolicy"
 Write-Host "  spec    : $resolvedSpecPath"
+Write-Host "  contract: $WindowsDeviceContractPath"
 Write-Host "  drivers : $($resolvedDrivers -join ', ')"
 
 $guestToolsDir = Join-Path $repoRoot "guest-tools"
@@ -221,16 +237,11 @@ if (-not (Test-Path -LiteralPath $guestToolsNotices -PathType Leaf)) {
 if (-not (Test-Path -LiteralPath $SpecPath -PathType Leaf)) {
   throw "Expected packaging spec not found: $SpecPath"
 }
+if (-not (Test-Path -LiteralPath $WindowsDeviceContractPath -PathType Leaf)) {
+  throw "Expected Windows device contract not found: $WindowsDeviceContractPath"
+}
 
 Ensure-Directory -Path $driversOutDir
-
-# The Guest Tools packager generates `config/devices.cmd` from a Windows device contract JSON.
-# Use the dedicated virtio-win contract so the generated service names match upstream virtio-win
-# AddService names (viostor/netkvm/vioinput/viosnd) while keeping Aero's PCI IDs/HWID patterns.
-$deviceContractPath = Join-Path (Join-Path $repoRoot "docs") "windows-device-contract-virtio-win.json"
-if (-not (Test-Path -LiteralPath $deviceContractPath -PathType Leaf)) {
-  throw "Expected Windows device contract not found: $deviceContractPath"
-}
 
 # 1) Build the standard Win7 driver pack staging directory (from virtio-win ISO/root).
 $packArgs = @(
@@ -350,7 +361,7 @@ Ensure-Directory -Path $OutDir
 Write-Host "Packaging Guest Tools via CI wrapper..."
 Write-Host "  spec : $SpecPath"
 Write-Host "  out  : $OutDir"
-Write-Host "  contract : $deviceContractPath"
+Write-Host "  contract : $WindowsDeviceContractPath"
 
 & $wrapperScript `
   -InputRoot $packagerDriversRoot `
@@ -358,7 +369,7 @@ Write-Host "  contract : $deviceContractPath"
   -SigningPolicy $SigningPolicy `
   -CertPath $CertPath `
   -SpecPath $SpecPath `
-  -WindowsDeviceContractPath $deviceContractPath `
+  -WindowsDeviceContractPath $WindowsDeviceContractPath `
   -OutDir $OutDir `
   -Version $Version `
   -BuildId $BuildId

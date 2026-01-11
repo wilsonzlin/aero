@@ -109,6 +109,22 @@ function Write-SyntheticInf {
     $lines.Add($HardwareId) | Out-Null
   }
 
+  # `guest-tools/setup.cmd` requires that config/devices.cmd service names match the INF AddService
+  # names for virtio-blk and other drivers. Include an explicit AddService directive so the smoke
+  # test can validate the packaged devices.cmd stays in sync.
+  $lines.Add("") | Out-Null
+  $lines.Add("[DefaultInstall.Services]") | Out-Null
+  $lines.Add("AddService = $BaseName, 0x00000002, ${BaseName}_Service_Inst") | Out-Null
+  $lines.Add("") | Out-Null
+  $lines.Add("[${BaseName}_Service_Inst]") | Out-Null
+  $lines.Add("ServiceType = 1") | Out-Null
+  $lines.Add("StartType = 3") | Out-Null
+  $lines.Add("ErrorControl = 1") | Out-Null
+  $lines.Add("ServiceBinary = %12%\\$BaseName.sys") | Out-Null
+  $lines.Add("") | Out-Null
+  $lines.Add("[Strings]") | Out-Null
+  $lines.Add('ProviderName="Aero Synthetic"') | Out-Null
+
   $lines | Out-File -FilePath $Path -Encoding ascii
 }
 
@@ -139,6 +155,182 @@ function New-SyntheticDriverFiles {
 
   Write-PlaceholderBinary -Path (Join-Path $dir $sysName)
   Write-PlaceholderBinary -Path (Join-Path $dir $catName)
+}
+
+function Get-SpecDriverNames {
+  param([Parameter(Mandatory = $true)][string]$SpecPath)
+
+  $specObj = Get-Content -LiteralPath $SpecPath -Raw | ConvertFrom-Json
+  $specDriverNames = @()
+  if ($null -ne $specObj.drivers) {
+    $specDriverNames += @($specObj.drivers | ForEach-Object { $_.name })
+  }
+  if ($null -ne $specObj.required_drivers) {
+    $specDriverNames += @($specObj.required_drivers | ForEach-Object { $_.name })
+  }
+  return @(
+    $specDriverNames |
+      Where-Object { $_ } |
+      ForEach-Object { $_.ToString().ToLowerInvariant() } |
+      Sort-Object -Unique
+  )
+}
+
+function Try-ReadZipEntryText {
+  param(
+    [Parameter(Mandatory = $true)][string]$ZipPath,
+    [Parameter(Mandatory = $true)][string]$EntryPath
+  )
+
+  Add-Type -AssemblyName System.IO.Compression
+  $fs = [System.IO.File]::OpenRead($ZipPath)
+  $zip = [System.IO.Compression.ZipArchive]::new($fs, [System.IO.Compression.ZipArchiveMode]::Read, $false)
+  try {
+    $entry = $zip.GetEntry($EntryPath)
+    if (-not $entry) {
+      return $null
+    }
+    $sr = New-Object System.IO.StreamReader($entry.Open())
+    try {
+      return $sr.ReadToEnd()
+    } finally {
+      $sr.Dispose()
+    }
+  } finally {
+    $zip.Dispose()
+    $fs.Dispose()
+  }
+}
+
+function ReadZipEntryText {
+  param(
+    [Parameter(Mandatory = $true)][string]$ZipPath,
+    [Parameter(Mandatory = $true)][string]$EntryPath
+  )
+
+  $text = Try-ReadZipEntryText -ZipPath $ZipPath -EntryPath $EntryPath
+  if ($null -eq $text) {
+    throw "Expected ZIP '$ZipPath' to contain entry '$EntryPath'."
+  }
+  return $text
+}
+
+function Get-DevicesCmdVarValue {
+  param(
+    [Parameter(Mandatory = $true)][string]$DevicesCmdText,
+    [Parameter(Mandatory = $true)][string]$VarName
+  )
+
+  $target = $VarName.ToUpperInvariant()
+  foreach ($rawLine in ($DevicesCmdText -split "`r?`n")) {
+    $line = $rawLine.Trim()
+    if (-not $line) { continue }
+
+    $lower = $line.ToLowerInvariant()
+    if ($lower.StartsWith("rem") -or $lower.StartsWith("::") -or $lower.StartsWith("@echo")) {
+      continue
+    }
+
+    if ($line -match '^(?i)\s*set\s+"([^=]+)=(.*)"\s*$') {
+      $key = $matches[1].Trim().ToUpperInvariant()
+      if ($key -eq $target) {
+        return $matches[2].Trim()
+      }
+      continue
+    }
+
+    if ($line -match '^(?i)\s*set\s+([^=]+)=(.*)$') {
+      $key = $matches[1].Trim().ToUpperInvariant()
+      if ($key -eq $target) {
+        return $matches[2].Trim()
+      }
+      continue
+    }
+  }
+
+  return $null
+}
+
+function Assert-DevicesCmdVarEquals {
+  param(
+    [Parameter(Mandatory = $true)][string]$DevicesCmdText,
+    [Parameter(Mandatory = $true)][string]$VarName,
+    [Parameter(Mandatory = $true)][string]$Expected
+  )
+
+  $actual = Get-DevicesCmdVarValue -DevicesCmdText $DevicesCmdText -VarName $VarName
+  if ($null -eq $actual) {
+    throw "Guest Tools devices.cmd missing expected variable: $VarName"
+  }
+  if ($actual.Trim().ToLowerInvariant() -ne $Expected.Trim().ToLowerInvariant()) {
+    throw "Guest Tools devices.cmd $VarName mismatch: expected '$Expected', got '$actual'"
+  }
+}
+
+function Get-InfAddServiceName {
+  param([Parameter(Mandatory = $true)][string]$InfText)
+  $m = [regex]::Match($InfText, '(?im)^\s*AddService\s*=\s*([^,\s]+)')
+  if ($m.Success) {
+    return $m.Groups[1].Value.Trim().Trim('"')
+  }
+  return $null
+}
+
+function Assert-DevicesCmdServiceMatchesInf {
+  param(
+    [Parameter(Mandatory = $true)][string]$ZipPath,
+    [Parameter(Mandatory = $true)][string]$DevicesCmdText,
+    [Parameter(Mandatory = $true)][string]$DevicesCmdServiceVar,
+    [Parameter(Mandatory = $true)][string]$InfEntryPath,
+    [switch]$Optional
+  )
+
+  $expectedService = Get-DevicesCmdVarValue -DevicesCmdText $DevicesCmdText -VarName $DevicesCmdServiceVar
+  if (-not $expectedService) {
+    throw "Guest Tools devices.cmd missing expected service variable: $DevicesCmdServiceVar"
+  }
+
+  $infText = Try-ReadZipEntryText -ZipPath $ZipPath -EntryPath $InfEntryPath
+  if (-not $infText) {
+    if ($Optional) {
+      return
+    }
+    throw "Expected Guest Tools ZIP to include INF entry: $InfEntryPath"
+  }
+  $infService = Get-InfAddServiceName -InfText $infText
+  if (-not $infService) {
+    throw "INF $InfEntryPath does not contain an AddService directive (synthetic INF regression)."
+  }
+  if ($infService.ToLowerInvariant() -ne $expectedService.ToLowerInvariant()) {
+    throw "Service mismatch: devices.cmd $DevicesCmdServiceVar='$expectedService' but $InfEntryPath AddService='$infService'"
+  }
+}
+
+function Assert-GuestToolsDevicesCmdServices {
+  param(
+    [Parameter(Mandatory = $true)][string]$ZipPath,
+    [Parameter(Mandatory = $true)][string]$SpecPath
+  )
+
+  $devicesCmdText = ReadZipEntryText -ZipPath $ZipPath -EntryPath "config/devices.cmd"
+
+  # Required for boot-critical storage pre-seeding and network validation.
+  Assert-DevicesCmdVarEquals -DevicesCmdText $devicesCmdText -VarName "AERO_VIRTIO_BLK_SERVICE" -Expected "viostor"
+  Assert-DevicesCmdVarEquals -DevicesCmdText $devicesCmdText -VarName "AERO_VIRTIO_NET_SERVICE" -Expected "netkvm"
+
+  $specDriverNames = Get-SpecDriverNames -SpecPath $SpecPath
+  if ($specDriverNames -contains "vioinput") {
+    Assert-DevicesCmdVarEquals -DevicesCmdText $devicesCmdText -VarName "AERO_VIRTIO_INPUT_SERVICE" -Expected "vioinput"
+  }
+  if ($specDriverNames -contains "viosnd") {
+    Assert-DevicesCmdVarEquals -DevicesCmdText $devicesCmdText -VarName "AERO_VIRTIO_SND_SERVICE" -Expected "viosnd"
+  }
+
+  # Ensure devices.cmd service names actually match the packaged INF AddService values.
+  Assert-DevicesCmdServiceMatchesInf -ZipPath $ZipPath -DevicesCmdText $devicesCmdText -DevicesCmdServiceVar "AERO_VIRTIO_BLK_SERVICE" -InfEntryPath "drivers/x86/viostor/viostor.inf"
+  Assert-DevicesCmdServiceMatchesInf -ZipPath $ZipPath -DevicesCmdText $devicesCmdText -DevicesCmdServiceVar "AERO_VIRTIO_NET_SERVICE" -InfEntryPath "drivers/x86/netkvm/netkvm.inf"
+  Assert-DevicesCmdServiceMatchesInf -ZipPath $ZipPath -DevicesCmdText $devicesCmdText -DevicesCmdServiceVar "AERO_VIRTIO_INPUT_SERVICE" -InfEntryPath "drivers/x86/vioinput/vioinput.inf" -Optional
+  Assert-DevicesCmdServiceMatchesInf -ZipPath $ZipPath -DevicesCmdText $devicesCmdText -DevicesCmdServiceVar "AERO_VIRTIO_SND_SERVICE" -InfEntryPath "drivers/x86/viosnd/viosnd.inf" -Optional
 }
 
 $repoRoot = Resolve-RepoRoot
@@ -519,25 +711,22 @@ foreach ($want in @(
   "licenses/virtio-win/driver-pack-manifest.json",
   "drivers/x86/viostor/viostor.inf",
   "drivers/x86/netkvm/netkvm.inf"
-)) {
+ )) {
   if (-not ($manifestPaths -contains $want)) {
     throw "Guest Tools manifest missing expected packaged file path: $want"
   }
 }
 
+# Validate that the packaged `config/devices.cmd` uses virtio-win-correct service names
+# (matching the packaged INF AddService directives), so `guest-tools/setup.cmd` can
+# perform boot-critical storage validation + pre-seeding without /skipstorage.
+Assert-GuestToolsDevicesCmdServices -ZipPath $guestZip -SpecPath $GuestToolsSpecPath
+
+$specDriverNames = Get-SpecDriverNames -SpecPath $GuestToolsSpecPath
+
 # When optional drivers are both present in the synthetic virtio-win tree and declared in the
 # Guest Tools packaging spec, they should be included in the packaged output.
 if (-not $OmitOptionalDrivers) {
-  $specObj = Get-Content -LiteralPath $GuestToolsSpecPath -Raw | ConvertFrom-Json
-  $specDriverNames = @()
-  if ($null -ne $specObj.drivers) {
-    $specDriverNames += @($specObj.drivers | ForEach-Object { $_.name })
-  }
-  if ($null -ne $specObj.required_drivers) {
-    $specDriverNames += @($specObj.required_drivers | ForEach-Object { $_.name })
-  }
-  $specDriverNames = @($specDriverNames | Where-Object { $_ } | ForEach-Object { $_.ToString().ToLowerInvariant() } | Sort-Object -Unique)
-
   $optionalChecks = @()
   if ($specDriverNames -contains "viosnd") { $optionalChecks += "drivers/x86/viosnd/viosnd.inf"; $optionalChecks += "drivers/amd64/viosnd/viosnd.inf" }
   if ($specDriverNames -contains "vioinput") { $optionalChecks += "drivers/x86/vioinput/vioinput.inf"; $optionalChecks += "drivers/amd64/vioinput/vioinput.inf" }
@@ -595,6 +784,12 @@ if ($TestSigningPolicies) {
   if ($testSigningCerts.Count -eq 0) {
     throw "Guest Tools test-signing output contained no certificate artifacts under certs/*.cer|*.crt|*.p7b"
   }
+
+  $testSigningZip = Join-Path $guestToolsTestSigningOutDir "aero-guest-tools.zip"
+  if (-not (Test-Path -LiteralPath $testSigningZip -PathType Leaf)) {
+    throw "Expected Guest Tools testsigning ZIP not found: $testSigningZip"
+  }
+  Assert-GuestToolsDevicesCmdServices -ZipPath $testSigningZip -SpecPath $GuestToolsSpecPath
 }
 
 if (-not $SkipGuestToolsDefaultsCheck) {
@@ -658,6 +853,9 @@ if (-not $SkipGuestToolsDefaultsCheck) {
       throw "Did not expect certificate files to be packaged for signing_policy=none (defaults run): $p"
     }
   }
+
+  $defaultsSpecPath = Join-Path $repoRoot "tools/packaging/specs/win7-virtio-full.json"
+  Assert-GuestToolsDevicesCmdServices -ZipPath $defaultsZip -SpecPath $defaultsSpecPath
 
   $optionalDriverPaths = @(
     "drivers/x86/viosnd/viosnd.inf",
@@ -737,6 +935,13 @@ if (-not $SkipGuestToolsDefaultsCheck) {
     }
   }
 
+  $profileFullZip = Join-Path $guestToolsProfileFullOutDir "aero-guest-tools.zip"
+  if (-not (Test-Path -LiteralPath $profileFullZip -PathType Leaf)) {
+    throw "Expected Guest Tools -Profile full ZIP not found: $profileFullZip"
+  }
+  $profileFullSpecPath = Join-Path $repoRoot "tools/packaging/specs/win7-virtio-full.json"
+  Assert-GuestToolsDevicesCmdServices -ZipPath $profileFullZip -SpecPath $profileFullSpecPath
+
   # Validate that a relative -SpecPath is resolved against the repo root (not the current working directory).
   $guestToolsRelativeSpecOutDir = Join-Path $OutRoot "guest-tools-relative-spec"
   Ensure-EmptyDirectory -Path $guestToolsRelativeSpecOutDir
@@ -765,19 +970,26 @@ if (-not $SkipGuestToolsDefaultsCheck) {
     throw "make-guest-tools-from-virtio-win.ps1 (relative -SpecPath) failed (exit $LASTEXITCODE). See $guestToolsRelativeSpecLog"
   }
 
-  $relativeSpecLogText = Get-Content -LiteralPath $guestToolsRelativeSpecLog -Raw
-  if ($relativeSpecLogText -notmatch '(?m)^\s*profile\s*:\s*full\s*$') {
-    throw "Expected relative -SpecPath run to use -Profile full. See $guestToolsRelativeSpecLog"
-  }
-  if ($relativeSpecLogText -notmatch 'win7-virtio-full\.json') {
-    throw "Expected relative -SpecPath run to select win7-virtio-full.json. See $guestToolsRelativeSpecLog"
-  }
-}
+   $relativeSpecLogText = Get-Content -LiteralPath $guestToolsRelativeSpecLog -Raw
+   if ($relativeSpecLogText -notmatch '(?m)^\s*profile\s*:\s*full\s*$') {
+     throw "Expected relative -SpecPath run to use -Profile full. See $guestToolsRelativeSpecLog"
+   }
+   if ($relativeSpecLogText -notmatch 'win7-virtio-full\.json') {
+     throw "Expected relative -SpecPath run to select win7-virtio-full.json. See $guestToolsRelativeSpecLog"
+   }
 
-$isoScript = Join-Path $repoRoot "drivers\scripts\make-virtio-driver-iso.ps1"
-if (-not (Test-Path -LiteralPath $isoScript -PathType Leaf)) {
-  throw "Expected script not found: $isoScript"
-}
+   $relativeSpecZip = Join-Path $guestToolsRelativeSpecOutDir "aero-guest-tools.zip"
+   if (-not (Test-Path -LiteralPath $relativeSpecZip -PathType Leaf)) {
+     throw "Expected Guest Tools relative -SpecPath ZIP not found: $relativeSpecZip"
+   }
+   $relativeSpecPath = Join-Path $repoRoot "tools/packaging/specs/win7-virtio-full.json"
+   Assert-GuestToolsDevicesCmdServices -ZipPath $relativeSpecZip -SpecPath $relativeSpecPath
+ }
+
+ $isoScript = Join-Path $repoRoot "drivers\scripts\make-virtio-driver-iso.ps1"
+ if (-not (Test-Path -LiteralPath $isoScript -PathType Leaf)) {
+   throw "Expected script not found: $isoScript"
+ }
 
 $python = Resolve-Python
 if (-not $python) {

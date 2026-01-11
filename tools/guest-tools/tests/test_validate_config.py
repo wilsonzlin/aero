@@ -257,6 +257,67 @@ class ValidateConfigTests(unittest.TestCase):
             with redirect_stdout(io.StringIO()):
                 validate_config.validate(devices, spec_path, expected)
 
+    def test_windows_device_contract_override_supports_virtio_win_services(self) -> None:
+        # The in-repo Guest Tools config uses Aero in-tree service names (aerovblk, etc), but
+        # virtio-win Guest Tools packaging needs to validate against upstream service names
+        # (viostor/netkvm). The validator should support selecting the contract variant.
+        virtio_contract_path = validate_config.REPO_ROOT / "docs/windows-device-contract-virtio-win.json"
+        virtio_contract = validate_config.load_windows_device_contract(virtio_contract_path)
+        virtio_blk = virtio_contract["virtio-blk"]
+        virtio_net = virtio_contract["virtio-net"]
+
+        with tempfile.TemporaryDirectory(prefix="aero-guest-tools-validate-config-") as tmp:
+            tmp_path = Path(tmp)
+            devices_cmd = tmp_path / "devices.cmd"
+            devices_cmd.write_text(
+                "\n".join(
+                    [
+                        f'set "AERO_VIRTIO_BLK_SERVICE={virtio_blk.driver_service_name}"',
+                        f"set AERO_VIRTIO_BLK_HWIDS={_quote_items(virtio_blk.hardware_id_patterns)}",
+                        f"set AERO_VIRTIO_NET_HWIDS={_quote_items(virtio_net.hardware_id_patterns)}",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            spec_path = tmp_path / "win7-virtio-win.json"
+            spec_path.write_text(
+                json.dumps(
+                    {
+                        "drivers": [
+                            {
+                                "name": "viostor",
+                                "required": True,
+                                "expected_hardware_ids": [_ven_dev_regex_from_hwid(virtio_blk.hardware_id_patterns[0])],
+                            },
+                            {
+                                "name": "netkvm",
+                                "required": True,
+                                "expected_hardware_ids": [_ven_dev_regex_from_hwid(virtio_net.hardware_id_patterns[0])],
+                            },
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            devices = validate_config.load_devices_cmd(devices_cmd)
+            expected = validate_config.load_packaging_spec(spec_path)
+
+            # Default contract is the canonical Aero one, which should reject viostor.
+            with self.assertRaises(validate_config.ValidationError):
+                with redirect_stdout(io.StringIO()):
+                    validate_config.validate(devices, spec_path, expected)
+
+            # But the virtio-win contract should accept it.
+            with redirect_stdout(io.StringIO()):
+                validate_config.validate(
+                    devices,
+                    spec_path,
+                    expected,
+                    windows_device_contract=virtio_contract_path,
+                )
+
     def test_aero_spec_rejects_transitional_virtio_ids(self) -> None:
         # Aero virtio contract v1 is modern-only, so we intentionally reject transitional
         # virtio-pci IDs in the Aero packaging spec.
@@ -493,7 +554,6 @@ class ValidateConfigTests(unittest.TestCase):
                     validate_config.validate(devices, spec_path, expected)
 
             self.assertIn("DEV_1018", str(ctx.exception))
-
 
 if __name__ == "__main__":
     unittest.main()

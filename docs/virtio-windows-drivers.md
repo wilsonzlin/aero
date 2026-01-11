@@ -39,13 +39,15 @@ Aero can ship Windows 7 virtio drivers inside `aero-guest-tools.iso` in two ways
 
 1) **Upstream virtio-win** (`viostor`, `netkvm`, etc.)
    - Script: `drivers/scripts/make-guest-tools-from-virtio-win.ps1`
-   - Spec:
+   - Spec (via `-Profile`):
        - Default (`-Profile full`): `tools/packaging/specs/win7-virtio-full.json` (expects modern IDs for core devices; `AERO-W7-VIRTIO` v1 is modern-only; includes best-effort `vioinput`/`viosnd` when present)
        - Optional (`-Profile minimal`): `tools/packaging/specs/win7-virtio-win.json` (storage+network only)
+   - Device contract (for generated `config/devices.cmd`): `docs/windows-device-contract-virtio-win.json`
 
 2) **In-tree Aero virtio** (`aerovblk`, `aerovnet`)
    - Script: `drivers/scripts/make-guest-tools-from-aero-virtio.ps1`
    - Spec: `tools/packaging/specs/win7-aero-virtio.json` (**modern-only** IDs; rejects virtio-pci transitional IDs at packaging time)
+   - Device contract (for generated `config/devices.cmd` when using the CI packaging wrapper): `docs/windows-device-contract.json`
 
 ## Chosen approach (short term): package upstream virtio-win drivers
 
@@ -93,14 +95,16 @@ Guest Tools uses:
 - `AERO_VIRTIO_BLK_SERVICE` to configure the storage service as `BOOT_START` and to pre-seed `CriticalDeviceDatabase`.
 - `AERO_VIRTIO_*_HWIDS` to enumerate the hardware IDs the installer should expect. For `AERO-W7-VIRTIO` v1, include `&REV_01` when your INFs are revision-gated (for example the in-tree `aero-virtio-snd.inf` matches `...&REV_01`).
 
-Note: `guest-tools/config/devices.cmd` is generated from `docs/windows-device-contract.json`
-(see `scripts/generate-guest-tools-devices-cmd.py`) and is regenerated during Guest Tools packaging from
-the device contract passed to the packager (`ci/package-guest-tools.ps1 -WindowsDeviceContractPath`).
+Note: `guest-tools/config/devices.cmd` is generated from a Windows device contract JSON
+(see `scripts/generate-guest-tools-devices-cmd.py`) and is regenerated during Guest Tools packaging
+from the contract passed to the packager (`ci/package-guest-tools.ps1 -WindowsDeviceContractPath`):
 
-When packaging Guest Tools from **virtio-win** drivers, use the dedicated contract override
-`docs/windows-device-contract-virtio-win.json` so the packaged `config/devices.cmd` uses virtio-win
-INF `AddService` names (e.g. `viostor`, `netkvm`) while keeping Aero’s modern-only PCI HWID patterns
-(`REV_01`) for boot-critical `CriticalDeviceDatabase` seeding.
+- `docs/windows-device-contract.json` (canonical; Aero in-tree driver service names like `aerovblk` / `aerovnet`)
+- `docs/windows-device-contract-virtio-win.json` (virtio-win; upstream service names like `viostor` / `netkvm`)
+
+Virtio-win Guest Tools builds must use the virtio-win contract so `guest-tools/setup.cmd` can
+validate the boot-critical storage INF `AddService` name and pre-seed `CriticalDeviceDatabase`
+without requiring `/skipstorage` while keeping Aero’s modern-only PCI HWID patterns (`REV_01`).
 
 ### Licensing policy (project requirement)
 
