@@ -353,6 +353,25 @@ Disk byte responses do not need to set COOP/COEP, but they must be **compatible*
 
 Attach a response headers policy to the `/users/*` and `/public/*` cache behaviors with:
 
+#### Byte-stability / anti-transform headers (required for `Range`)
+
+Because disk streaming uses byte offsets, intermediaries **must not** change the wire representation.
+Ensure the disk object responses include:
+
+```
+Cache-Control: no-transform
+Content-Encoding: identity
+Content-Type: application/octet-stream
+X-Content-Type-Options: nosniff
+```
+
+Notes:
+
+- `Cache-Control: no-transform` is defence-in-depth; it tells CDNs/proxies not to apply compression or other transforms.
+- Avoid any “automatic compression” features on these cache behaviors. For CloudFront, disable compression for disk behaviors (or ensure it is not applied to `application/octet-stream`).
+- `Content-Type` can be set on the S3 object metadata (recommended) or overridden at the edge.
+- `Content-Encoding` should be absent or `identity`. Do **not** serve disks as `gzip`/`br`.
+
 #### CORS (for cross-origin disk fetches)
 
 If using signed cookies across origins, you must allow credentials (and you must not use `*` for allow-origin):
