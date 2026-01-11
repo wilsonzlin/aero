@@ -501,3 +501,9 @@ object-store-verify *args:
   #!/usr/bin/env bash
   set -euo pipefail
   (cd infra/local-object-store && ./verify.sh {{args}})
+
+# Reproduce `.github/workflows/iac.yml` locally (Terraform/tflint + Helm/kubeconform + deploy hygiene).
+check-iac:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  ./scripts/ci/check-iac.sh
