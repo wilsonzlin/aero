@@ -38,9 +38,11 @@ param(
   [Parameter(Mandatory = $false)]
   [string]$HttpPath = "/aero-virtio-selftest",
 
-  # If set, attach a virtio-snd device (virtio-sound-pci).
+  # If set, attach a virtio-snd device (virtio-sound-pci / virtio-snd-pci).
+  # Default is off to avoid changing existing virtio-blk/virtio-net-only images.
   [Parameter(Mandatory = $false)]
-  [switch]$EnableVirtioSnd,
+  [Alias("EnableVirtioSnd")]
+  [switch]$WithVirtioSnd,
 
   # Audio backend for virtio-snd.
   # - none: no host audio (device exists)
@@ -143,6 +145,26 @@ function Read-NewText {
   }
 }
 
+function Resolve-AeroVirtioSndPciDeviceName {
+  param(
+    [Parameter(Mandatory = $true)] [string]$QemuSystem
+  )
+
+  # QEMU device naming has changed over time. Prefer the modern name but fall back
+  # if a distro build exposes a legacy alias.
+  $helpText = ""
+  try {
+    $helpText = (& $QemuSystem -device help 2>&1 | Out-String)
+  } catch {
+    throw "Failed to query QEMU device list ('$QemuSystem -device help'): $_"
+  }
+
+  if ($helpText -match "virtio-sound-pci") { return "virtio-sound-pci" }
+  if ($helpText -match "virtio-snd-pci") { return "virtio-snd-pci" }
+
+  throw "QEMU binary '$QemuSystem' does not advertise a virtio-snd PCI device. Upgrade QEMU or pass a custom device via -QemuExtraArgs."
+}
+
 function Wait-AeroSelftestResult {
   param(
     [Parameter(Mandatory = $true)] [string]$SerialLogPath,
@@ -198,17 +220,18 @@ function Get-AeroVirtioSoundDeviceArg {
     [Parameter(Mandatory = $true)] [string]$QemuSystem
   )
 
-  # Determine if QEMU supports the modern virtio `disable-legacy` property for virtio-sound-pci.
-  # If QEMU doesn't support virtio-sound-pci at all, fail early with a clear error.
-  $help = & $QemuSystem -device "virtio-sound-pci,help" 2>&1
+  # Determine if QEMU supports the modern virtio `disable-legacy` property for virtio-snd.
+  # If QEMU doesn't support virtio-snd at all, fail early with a clear error.
+  $deviceName = Resolve-AeroVirtioSndPciDeviceName -QemuSystem $QemuSystem
+  $help = & $QemuSystem -device "$deviceName,help" 2>&1
   $exitCode = $LASTEXITCODE
   if ($exitCode -ne 0) {
     $helpText = ($help | Out-String).Trim()
-    throw "virtio-sound-pci is not supported by this QEMU binary ($QemuSystem). Output:`n$helpText"
+    throw "virtio-snd device '$deviceName' is not supported by this QEMU binary ($QemuSystem). Output:`n$helpText"
   }
 
   $helpText = $help -join "`n"
-  $device = "virtio-sound-pci,audiodev=snd0"
+  $device = "$deviceName,audiodev=snd0"
   if ($helpText -match "disable-legacy") {
     $device += ",disable-legacy=on"
   }
@@ -241,7 +264,7 @@ try {
   }
 
   $virtioSndArgs = @()
-  if ($EnableVirtioSnd) {
+  if ($WithVirtioSnd) {
     $audiodev = ""
     switch ($VirtioSndAudioBackend) {
       "none" {
@@ -277,7 +300,7 @@ try {
       "-device", $virtioSndDevice
     )
   } elseif (-not [string]::IsNullOrEmpty($VirtioSndWavPath) -or $VirtioSndAudioBackend -ne "none") {
-    throw "-VirtioSndAudioBackend/-VirtioSndWavPath require -EnableVirtioSnd."
+    throw "-VirtioSndAudioBackend/-VirtioSndWavPath require -WithVirtioSnd."
   }
 
   $qemuArgs = @(

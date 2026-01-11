@@ -8,7 +8,7 @@ PowerShell is inconvenient (e.g. Linux CI).
 
 It:
 - starts a tiny HTTP server on 127.0.0.1:<port> (guest reaches it as 10.0.2.2:<port> via slirp)
-- launches QEMU with virtio-blk + virtio-net and COM1 redirected to a log file
+- launches QEMU with virtio-blk + virtio-net (and optionally virtio-snd) and COM1 redirected to a log file
 - tails the serial log until it sees AERO_VIRTIO_SELFTEST|RESULT|PASS/FAIL
 """
 
@@ -78,6 +78,33 @@ def _stop_process(proc: subprocess.Popen[bytes]) -> None:
             pass
 
 
+def _detect_virtio_snd_device(qemu_system: str) -> str:
+    # QEMU device naming has changed over time. Prefer the modern name but fall back
+    # if a distro build exposes a legacy alias.
+    try:
+        proc = subprocess.run(
+            [qemu_system, "-device", "help"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+    except FileNotFoundError as e:
+        raise RuntimeError(f"qemu-system binary not found: {qemu_system}") from e
+    except OSError as e:
+        raise RuntimeError(f"failed to run '{qemu_system} -device help': {e}") from e
+
+    help_text = proc.stdout.decode("utf-8", errors="replace")
+    if "virtio-sound-pci" in help_text:
+        return "virtio-sound-pci"
+    if "virtio-snd-pci" in help_text:
+        return "virtio-snd-pci"
+
+    raise RuntimeError(
+        "QEMU does not advertise a virtio-snd PCI device (expected 'virtio-sound-pci' or 'virtio-snd-pci'). "
+        "Upgrade QEMU or omit --with-virtio-snd/--enable-virtio-snd and pass custom QEMU args."
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--qemu-system", required=True, help="Path to qemu-system-* binary")
@@ -94,12 +121,9 @@ def main() -> int:
     parser.add_argument("--http-path", default="/aero-virtio-selftest")
     parser.add_argument("--snapshot", action="store_true", help="Discard disk writes (snapshot=on)")
     parser.add_argument(
-        "--follow-serial",
-        action="store_true",
-        help="Stream newly captured COM1 serial output to stdout while waiting",
-    )
-    parser.add_argument(
+        "--with-virtio-snd",
         "--enable-virtio-snd",
+        dest="enable_virtio_snd",
         action="store_true",
         help="Attach a virtio-snd device (virtio-sound-pci)",
     )
@@ -114,13 +138,18 @@ def main() -> int:
         default=None,
         help="Output wav path when --virtio-snd-audio-backend=wav",
     )
+    parser.add_argument(
+        "--follow-serial",
+        action="store_true",
+        help="Stream newly captured COM1 serial output to stdout while waiting",
+    )
 
     # Any remaining args are passed directly to QEMU.
     args, qemu_extra = parser.parse_known_args()
 
     if not args.enable_virtio_snd:
         if args.virtio_snd_audio_backend != "none" or args.virtio_snd_wav_path is not None:
-            parser.error("--virtio-snd-* options require --enable-virtio-snd")
+            parser.error("--virtio-snd-* options require --with-virtio-snd/--enable-virtio-snd")
     elif args.virtio_snd_audio_backend == "wav" and not args.virtio_snd_wav_path:
         parser.error("--virtio-snd-wav-path is required when --virtio-snd-audio-backend=wav")
 
@@ -143,7 +172,12 @@ def main() -> int:
 
         virtio_snd_args: list[str] = []
         if args.enable_virtio_snd:
-            device_arg = _get_qemu_virtio_sound_device_arg(args.qemu_system)
+            try:
+                device_arg = _get_qemu_virtio_sound_device_arg(args.qemu_system)
+            except RuntimeError as e:
+                print(f"ERROR: {e}", file=sys.stderr)
+                return 2
+
             backend = args.virtio_snd_audio_backend
             if backend == "none":
                 audiodev_arg = "none,id=snd0"
@@ -179,7 +213,8 @@ def main() -> int:
             "virtio-net-pci,netdev=net0",
             "-drive",
             drive,
-        ] + virtio_snd_args + qemu_extra
+        ]
+        qemu_args += virtio_snd_args + qemu_extra
 
         print("Launching QEMU:")
         print("  " + " ".join(shlex.quote(str(a)) for a in qemu_args))
@@ -254,10 +289,11 @@ def _print_tail(path: Path) -> None:
 
 def _get_qemu_virtio_sound_device_arg(qemu_system: str) -> str:
     """
-    Return the virtio-sound-pci device arg string, enabling modern virtio where supported.
+    Return the virtio-snd PCI device arg string, enabling modern virtio where supported.
     """
+    device_name = _detect_virtio_snd_device(qemu_system)
     proc = subprocess.run(
-        [qemu_system, "-device", "virtio-sound-pci,help"],
+        [qemu_system, "-device", f"{device_name},help"],
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
@@ -265,12 +301,12 @@ def _get_qemu_virtio_sound_device_arg(qemu_system: str) -> str:
     )
     if proc.returncode != 0:
         out = (proc.stdout or "").strip()
-        raise SystemExit(
-            f"virtio-sound-pci is not supported by this QEMU binary ({qemu_system}). Output:\n{out}"
+        raise RuntimeError(
+            f"virtio-snd device '{device_name}' is not supported by this QEMU binary ({qemu_system}). Output:\n{out}"
         )
 
     out = proc.stdout or ""
-    device = "virtio-sound-pci,audiodev=snd0"
+    device = f"{device_name},audiodev=snd0"
     if "disable-legacy" in out:
         device += ",disable-legacy=on"
     return device

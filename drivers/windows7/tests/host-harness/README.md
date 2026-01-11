@@ -35,6 +35,20 @@ pwsh ./drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1 `
   -TimeoutSeconds 600
 ```
 
+### Optional: attach virtio-snd (audio)
+
+If your test image includes the virtio-snd driver, you can ask the harness to attach a virtio-snd PCI device:
+
+```powershell
+pwsh ./drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1 `
+  -QemuSystem qemu-system-x86_64 `
+  -DiskImagePath ./win7-aero-tests.qcow2 `
+  -WithVirtioSnd `
+  -TimeoutSeconds 600
+```
+
+The harness uses QEMU’s `-audiodev none,...` backend so it remains headless/CI-friendly.
+
 On success, the script returns exit code `0` and prints:
 
 ```
@@ -62,6 +76,7 @@ python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
   --disk-image ./win7-aero-tests.qcow2 \
   --serial-log ./win7-serial.log \
   --timeout-seconds 600 \
+  --with-virtio-snd \
   --snapshot
 ```
 
@@ -69,7 +84,8 @@ Add `--follow-serial` to stream COM1 serial output while waiting.
 
 ### virtio-snd (audio) device
 
-To attach a virtio-snd device (virtio-sound-pci) during the run, enable it explicitly.
+To attach a virtio-snd device (virtio-sound-pci) during the run, enable it explicitly with `-WithVirtioSnd` / `--with-virtio-snd`.
+(Aliases `-EnableVirtioSnd` / `--enable-virtio-snd` are also accepted.)
 
 PowerShell:
 
@@ -77,7 +93,7 @@ PowerShell:
 pwsh ./drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1 `
   -QemuSystem qemu-system-x86_64 `
   -DiskImagePath ./win7-aero-tests.qcow2 `
-  -EnableVirtioSnd `
+  -WithVirtioSnd `
   -VirtioSndAudioBackend none
 ```
 
@@ -87,7 +103,7 @@ Python:
 python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
   --qemu-system qemu-system-x86_64 \
   --disk-image ./win7-aero-tests.qcow2 \
-  --enable-virtio-snd \
+  --with-virtio-snd \
   --virtio-snd-audio-backend none
 ```
 
@@ -101,7 +117,7 @@ PowerShell:
 pwsh ./drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1 `
   -QemuSystem qemu-system-x86_64 `
   -DiskImagePath ./win7-aero-tests.qcow2 `
-  -EnableVirtioSnd `
+  -WithVirtioSnd `
   -VirtioSndAudioBackend wav `
   -VirtioSndWavPath ./out/virtio-snd.wav
 ```
@@ -112,7 +128,7 @@ Python:
 python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
   --qemu-system qemu-system-x86_64 \
   --disk-image ./win7-aero-tests.qcow2 \
-  --enable-virtio-snd \
+  --with-virtio-snd \
   --virtio-snd-audio-backend wav \
   --virtio-snd-wav-path ./out/virtio-snd.wav
 ```
@@ -144,6 +160,7 @@ On completion, the workflow uploads the serial log and harness output as the `wi
   - `-chardev file,...` + `-serial chardev:...` (guest COM1 → host log)
   - `virtio-net-pci` with `-netdev user`
   - `-drive if=virtio` for virtio-blk testing
+  - (optional) `virtio-snd` PCI device when `-WithVirtioSnd` / `--with-virtio-snd` is set
 - Watches the serial log for:
   - `AERO_VIRTIO_SELFTEST|RESULT|PASS`
   - `AERO_VIRTIO_SELFTEST|RESULT|FAIL`
