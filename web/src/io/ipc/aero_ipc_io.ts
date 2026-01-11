@@ -12,7 +12,31 @@ export interface AeroIpcIoDispatchTarget {
   portWrite(port: number, size: number, value: number): void;
   mmioRead(addr: bigint, size: number): number;
   mmioWrite(addr: bigint, size: number, value: number): void;
+  /**
+   * Optional disk read handler.
+   *
+   * If implemented, the server will invoke this for `diskRead` commands and emit
+   * a corresponding `diskReadResp` event when the returned value (or promise)
+   * resolves.
+   *
+   * The implementation is responsible for copying bytes into the shared guest
+   * memory at `guestOffset`.
+   */
+  diskRead?(diskOffset: bigint, len: number, guestOffset: bigint): AeroIpcIoDiskResult | Promise<AeroIpcIoDiskResult>;
+  /**
+   * Optional disk write handler.
+   *
+   * The implementation is responsible for copying bytes out of the shared guest
+   * memory at `guestOffset`.
+   */
+  diskWrite?(diskOffset: bigint, len: number, guestOffset: bigint): AeroIpcIoDiskResult | Promise<AeroIpcIoDiskResult>;
   tick(nowMs: number): void;
+}
+
+export interface AeroIpcIoDiskResult {
+  ok: boolean;
+  bytes: number;
+  errorCode?: number;
 }
 
 export interface AeroIpcIoClientOptions {
@@ -239,6 +263,15 @@ export class AeroIpcIoClient {
 
 export interface AeroIpcIoServerOptions {
   tickIntervalMs?: number;
+  /**
+   * Optional event sink used for server-emitted AIPC events.
+   *
+   * When omitted, events are pushed using `evtQ.pushBlocking`, which can stall
+   * the worker if the ring is full. Browser workers that must remain responsive
+   * to `postMessage` handlers should provide a non-blocking sink (e.g. tryPush
+   * + in-memory queue flushed from a timer/tick).
+   */
+  emitEvent?: (bytes: Uint8Array) => void;
 }
 
 export interface AeroIpcIoServerRunAsyncOptions {
@@ -263,20 +296,22 @@ export class AeroIpcIoServer implements IrqSink {
   readonly #evtQ: RingBuffer;
   readonly #target: AeroIpcIoDispatchTarget;
   readonly #tickIntervalMs: number;
+  readonly #emitEvent: (bytes: Uint8Array) => void;
 
   constructor(cmdQ: RingBuffer, evtQ: RingBuffer, target: AeroIpcIoDispatchTarget, opts: AeroIpcIoServerOptions = {}) {
     this.#cmdQ = cmdQ;
     this.#evtQ = evtQ;
     this.#target = target;
     this.#tickIntervalMs = opts.tickIntervalMs ?? 5;
+    this.#emitEvent = opts.emitEvent ?? ((bytes) => this.#evtQ.pushBlocking(bytes));
   }
 
   raiseIrq(irq: number): void {
-    this.#evtQ.pushBlocking(encodeEvent({ kind: "irqRaise", irq: irq & 0xff }));
+    this.#emitEvent(encodeEvent({ kind: "irqRaise", irq: irq & 0xff }));
   }
 
   lowerIrq(irq: number): void {
-    this.#evtQ.pushBlocking(encodeEvent({ kind: "irqLower", irq: irq & 0xff }));
+    this.#emitEvent(encodeEvent({ kind: "irqLower", irq: irq & 0xff }));
   }
 
   run(): void {
@@ -364,28 +399,85 @@ export class AeroIpcIoServer implements IrqSink {
       case "nop":
         // NOP is often used for benchmarking / wakeups; reply so the sender can
         // measure latency.
-        this.#evtQ.pushBlocking(encodeEvent({ kind: "ack", seq: cmd.seq }));
+        this.#emitEvent(encodeEvent({ kind: "ack", seq: cmd.seq }));
         return;
       case "mmioRead": {
         const value = this.#target.mmioRead(cmd.addr, cmd.size);
         const data = valueToLeBytes(value, cmd.size);
-        this.#evtQ.pushBlocking(encodeEvent({ kind: "mmioReadResp", id: cmd.id, data }));
+        this.#emitEvent(encodeEvent({ kind: "mmioReadResp", id: cmd.id, data }));
         return;
       }
       case "mmioWrite": {
         const value = leBytesToU32(cmd.data);
         this.#target.mmioWrite(cmd.addr, cmd.data.byteLength, value);
-        this.#evtQ.pushBlocking(encodeEvent({ kind: "mmioWriteResp", id: cmd.id }));
+        this.#emitEvent(encodeEvent({ kind: "mmioWriteResp", id: cmd.id }));
         return;
       }
       case "portRead": {
         const value = this.#target.portRead(cmd.port, cmd.size);
-        this.#evtQ.pushBlocking(encodeEvent({ kind: "portReadResp", id: cmd.id, value }));
+        this.#emitEvent(encodeEvent({ kind: "portReadResp", id: cmd.id, value }));
         return;
       }
       case "portWrite": {
         this.#target.portWrite(cmd.port, cmd.size, cmd.value);
-        this.#evtQ.pushBlocking(encodeEvent({ kind: "portWriteResp", id: cmd.id }));
+        this.#emitEvent(encodeEvent({ kind: "portWriteResp", id: cmd.id }));
+        return;
+      }
+      case "diskRead": {
+        const handler = this.#target.diskRead;
+        if (typeof handler !== "function") {
+          // No disk backend; reply with a generic failure so the client does not deadlock.
+          this.#emitEvent(encodeEvent({ kind: "diskReadResp", id: cmd.id, ok: false, bytes: 0, errorCode: 0 }));
+          return;
+        }
+
+        const emit = (res: AeroIpcIoDiskResult | null | undefined): void => {
+          const ok = Boolean(res?.ok);
+          const bytes = typeof res?.bytes === "number" && Number.isFinite(res.bytes) ? res.bytes >>> 0 : 0;
+          const errorCode =
+            typeof res?.errorCode === "number" && Number.isFinite(res.errorCode) ? (res.errorCode >>> 0) : undefined;
+          this.#emitEvent(encodeEvent({ kind: "diskReadResp", id: cmd.id, ok, bytes, errorCode }));
+        };
+
+        try {
+          const result = handler.call(this.#target, cmd.diskOffset, cmd.len, cmd.guestOffset);
+          const maybeThenable = result as unknown as { then?: unknown };
+          if (maybeThenable && typeof maybeThenable.then === "function") {
+            void (result as Promise<AeroIpcIoDiskResult>).then(emit, () => emit({ ok: false, bytes: 0, errorCode: 0 }));
+          } else {
+            emit(result as AeroIpcIoDiskResult);
+          }
+        } catch {
+          emit({ ok: false, bytes: 0, errorCode: 0 });
+        }
+        return;
+      }
+      case "diskWrite": {
+        const handler = this.#target.diskWrite;
+        if (typeof handler !== "function") {
+          this.#emitEvent(encodeEvent({ kind: "diskWriteResp", id: cmd.id, ok: false, bytes: 0, errorCode: 0 }));
+          return;
+        }
+
+        const emit = (res: AeroIpcIoDiskResult | null | undefined): void => {
+          const ok = Boolean(res?.ok);
+          const bytes = typeof res?.bytes === "number" && Number.isFinite(res.bytes) ? res.bytes >>> 0 : 0;
+          const errorCode =
+            typeof res?.errorCode === "number" && Number.isFinite(res.errorCode) ? (res.errorCode >>> 0) : undefined;
+          this.#emitEvent(encodeEvent({ kind: "diskWriteResp", id: cmd.id, ok, bytes, errorCode }));
+        };
+
+        try {
+          const result = handler.call(this.#target, cmd.diskOffset, cmd.len, cmd.guestOffset);
+          const maybeThenable = result as unknown as { then?: unknown };
+          if (maybeThenable && typeof maybeThenable.then === "function") {
+            void (result as Promise<AeroIpcIoDiskResult>).then(emit, () => emit({ ok: false, bytes: 0, errorCode: 0 }));
+          } else {
+            emit(result as AeroIpcIoDiskResult);
+          }
+        } catch {
+          emit({ ok: false, bytes: 0, errorCode: 0 });
+        }
         return;
       }
       case "shutdown":

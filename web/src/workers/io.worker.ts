@@ -29,6 +29,7 @@ import { DeviceManager, type IrqSink } from "../io/device_manager";
 import { I8042Controller } from "../io/devices/i8042";
 import { PciTestDevice } from "../io/devices/pci_test_device";
 import { UART_COM1, Uart16550, type SerialOutputSink } from "../io/devices/uart16550";
+import { AeroIpcIoServer, type AeroIpcIoDiskResult, type AeroIpcIoDispatchTarget } from "../io/ipc/aero_ipc_io";
 import { openSyncAccessHandleInDedicatedWorker } from "../platform/opfs.ts";
 import { RemoteStreamingDisk, type RemoteDiskCacheStatus, type RemoteDiskTelemetrySnapshot } from "../platform/remote_disk";
 import { DEFAULT_OPFS_DISK_IMAGES_DIRECTORY } from "../storage/disk_image_store";
@@ -273,7 +274,9 @@ let currentConfig: AeroConfig | null = null;
 let currentConfigVersion = 0;
 
 let started = false;
-let pollTimer: number | undefined;
+let shuttingDown = false;
+let ioServerAbort: AbortController | null = null;
+let ioServerTask: Promise<void> | null = null;
 
 type OpenActiveDiskRequest = { id: number; type: "openActiveDisk"; token: WorkerOpenToken };
 type OpenRemoteDiskRequest = {
@@ -884,7 +887,7 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
         perf.spanEnd("worker:boot");
       }
 
-      startPolling();
+      startIoIpcServer();
       return;
     }
 
@@ -907,27 +910,106 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
   }
 };
 
-function startPolling(): void {
-  if (started) return;
-  started = true;
+function isPerfActive(): boolean {
+  const header = perfFrameHeader;
+  return !!perfWriter && !!header && Atomics.load(header, PERF_FRAME_HEADER_ENABLED_INDEX) !== 0;
+}
 
-  // This worker must remain responsive to `postMessage` input batches. Avoid blocking loops / Atomics.wait
-  // here; instead poll the command ring at a low rate.
-  pollTimer = setInterval(() => {
-    const header = perfFrameHeader;
-    const perfActive =
-      !!perfWriter && !!header && Atomics.load(header, PERF_FRAME_HEADER_ENABLED_INDEX) !== 0;
-    const t0 = perfActive ? performance.now() : 0;
-    drainRuntimeCommands();
-    drainIoIpcCommands();
-    deviceManager?.tick(performance.now());
-    hidGuest.poll?.();
-    if (perfActive) perfIoMs += performance.now() - t0;
-    maybeEmitPerfSample();
-    if (Atomics.load(status, StatusIndex.StopRequested) === 1) {
-      shutdown();
+function startIoIpcServer(): void {
+  if (started) return;
+  const cmdRing = ioCmdRing;
+  const evtRing = ioEvtRing;
+  const mgr = deviceManager;
+  if (!cmdRing || !evtRing || !mgr) {
+    throw new Error("I/O IPC rings are unavailable; worker was not initialized correctly.");
+  }
+
+  started = true;
+  ioServerAbort = new AbortController();
+
+  const dispatchTarget: AeroIpcIoDispatchTarget = {
+    portRead: (port, size) => {
+      let value = 0;
+      try {
+        value = mgr.portRead(port, size);
+      } catch {
+        value = 0;
+      }
+      portReadCount++;
+      if ((portReadCount & 0xff) === 0) perf.counter("io:portReads", portReadCount);
+      return value >>> 0;
+    },
+    portWrite: (port, size, value) => {
+      try {
+        mgr.portWrite(port, size, value);
+      } catch {
+        // Ignore device errors; still reply so the CPU side doesn't deadlock.
+      }
+      portWriteCount++;
+      if ((portWriteCount & 0xff) === 0) perf.counter("io:portWrites", portWriteCount);
+    },
+    mmioRead: (addr, size) => {
+      let value = 0;
+      try {
+        value = mgr.mmioRead(addr, size);
+      } catch {
+        value = 0;
+      }
+      mmioReadCount++;
+      if ((mmioReadCount & 0xff) === 0) perf.counter("io:mmioReads", mmioReadCount);
+      return value >>> 0;
+    },
+    mmioWrite: (addr, size, value) => {
+      try {
+        mgr.mmioWrite(addr, size, value);
+      } catch {
+        // Ignore device errors; still reply so the CPU side doesn't deadlock.
+      }
+      mmioWriteCount++;
+      if ((mmioWriteCount & 0xff) === 0) perf.counter("io:mmioWrites", mmioWriteCount);
+    },
+    diskRead,
+    diskWrite,
+    tick: (nowMs) => {
+      const perfActive = isPerfActive();
+      const t0 = perfActive ? performance.now() : 0;
+
+      flushPendingIoEvents();
+      drainRuntimeCommands();
+      mgr.tick(nowMs);
+      hidGuest.poll?.();
+
+      if (perfActive) perfIoMs += performance.now() - t0;
+      maybeEmitPerfSample();
+
+      if (Atomics.load(status, StatusIndex.StopRequested) === 1) {
+        ioServerAbort?.abort();
+      }
+    },
+  };
+
+  const server = new AeroIpcIoServer(cmdRing, evtRing, dispatchTarget, {
+    tickIntervalMs: 8,
+    emitEvent: (bytes) => enqueueIoEvent(bytes),
+  });
+
+  ioServerTask = (async () => {
+    try {
+      await server.runAsync({ signal: ioServerAbort!.signal, yieldEveryNCommands: 128 });
+    } catch (err) {
+      fatal(err);
+      return;
     }
-  }, 8) as unknown as number;
+
+    // A `shutdown` command on the ioIpc ring (or an abort) should tear down the
+    // whole worker.
+    try {
+      Atomics.store(status, StatusIndex.StopRequested, 1);
+    } catch {
+      // ignore if status isn't initialized yet.
+    }
+    shutdown();
+  })();
 }
 
 function drainRuntimeCommands(): void {
@@ -942,51 +1024,7 @@ function drainRuntimeCommands(): void {
     }
     if (cmd.kind === "shutdown") {
       Atomics.store(status, StatusIndex.StopRequested, 1);
-    }
-  }
-}
-
-function drainIoIpcCommands(): void {
-  const cmdRing = ioCmdRing;
-  if (!cmdRing) return;
-  flushPendingIoEvents();
-
-  while (true) {
-    const bytes = cmdRing.tryPop();
-    if (!bytes) break;
-
-    let cmd: Command;
-    try {
-      cmd = decodeCommand(bytes);
-    } catch {
-      continue;
-    }
-
-    switch (cmd.kind) {
-      case "diskRead":
-        handleDiskRead(cmd);
-        break;
-      case "diskWrite":
-        handleDiskWrite(cmd);
-        break;
-      case "portRead":
-        handlePortRead(cmd);
-        break;
-      case "portWrite":
-        handlePortWrite(cmd);
-        break;
-      case "mmioRead":
-        handleMmioRead(cmd);
-        break;
-      case "mmioWrite":
-        handleMmioWrite(cmd);
-        break;
-      case "nop":
-        enqueueIoEvent(encodeEvent({ kind: "ack", seq: cmd.seq }));
-        break;
-      case "shutdown":
-        Atomics.store(status, StatusIndex.StopRequested, 1);
-        break;
+      ioServerAbort?.abort();
     }
   }
 }
@@ -1004,94 +1042,16 @@ function flushPendingIoEvents(): void {
 function enqueueIoEvent(bytes: Uint8Array, opts?: { bestEffort?: boolean }): void {
   const evtRing = ioEvtRing;
   if (!evtRing) return;
+  flushPendingIoEvents();
+  if (pendingIoEvents.length > 0) {
+    // Preserve ordering: do not allow newer events to overtake buffered ones.
+    if (opts?.bestEffort) return;
+    pendingIoEvents.push(bytes);
+    return;
+  }
   if (evtRing.tryPush(bytes)) return;
   if (opts?.bestEffort) return;
   pendingIoEvents.push(bytes);
-}
-
-function valueToLeBytes(value: number, size: number): Uint8Array {
-  const out = new Uint8Array(size >>> 0);
-  const v = value >>> 0;
-  if (size >= 1) out[0] = v & 0xff;
-  if (size >= 2) out[1] = (v >>> 8) & 0xff;
-  if (size >= 3) out[2] = (v >>> 16) & 0xff;
-  if (size >= 4) out[3] = (v >>> 24) & 0xff;
-  return out;
-}
-
-function leBytesToU32(bytes: Uint8Array): number {
-  const b0 = bytes[0] ?? 0;
-  const b1 = bytes[1] ?? 0;
-  const b2 = bytes[2] ?? 0;
-  const b3 = bytes[3] ?? 0;
-  return (b0 | (b1 << 8) | (b2 << 16) | (b3 << 24)) >>> 0;
-}
-
-function handlePortRead(cmd: Extract<Command, { kind: "portRead" }>): void {
-  const id = cmd.id >>> 0;
-  let value = 0;
-  const mgr = deviceManager;
-  if (mgr) {
-    try {
-      value = mgr.portRead(cmd.port, cmd.size);
-    } catch {
-      value = 0;
-    }
-  }
-
-  portReadCount++;
-  if ((portReadCount & 0xff) === 0) perf.counter("io:portReads", portReadCount);
-  enqueueIoEvent(encodeEvent({ kind: "portReadResp", id, value: value >>> 0 }));
-}
-
-function handlePortWrite(cmd: Extract<Command, { kind: "portWrite" }>): void {
-  const id = cmd.id >>> 0;
-  const mgr = deviceManager;
-  if (mgr) {
-    try {
-      mgr.portWrite(cmd.port, cmd.size, cmd.value);
-    } catch {
-      // Ignore device errors; still reply so the CPU side doesn't deadlock.
-    }
-  }
-
-  portWriteCount++;
-  if ((portWriteCount & 0xff) === 0) perf.counter("io:portWrites", portWriteCount);
-  enqueueIoEvent(encodeEvent({ kind: "portWriteResp", id }));
-}
-
-function handleMmioRead(cmd: Extract<Command, { kind: "mmioRead" }>): void {
-  const id = cmd.id >>> 0;
-  let value = 0;
-  const mgr = deviceManager;
-  if (mgr) {
-    try {
-      value = mgr.mmioRead(cmd.addr, cmd.size);
-    } catch {
-      value = 0;
-    }
-  }
-
-  mmioReadCount++;
-  if ((mmioReadCount & 0xff) === 0) perf.counter("io:mmioReads", mmioReadCount);
-  enqueueIoEvent(encodeEvent({ kind: "mmioReadResp", id, data: valueToLeBytes(value, cmd.size) }));
-}
-
-function handleMmioWrite(cmd: Extract<Command, { kind: "mmioWrite" }>): void {
-  const id = cmd.id >>> 0;
-  const value = leBytesToU32(cmd.data);
-  const mgr = deviceManager;
-  if (mgr) {
-    try {
-      mgr.mmioWrite(cmd.addr, cmd.data.byteLength, value);
-    } catch {
-      // Ignore device errors; still reply so the CPU side doesn't deadlock.
-    }
-  }
-
-  mmioWriteCount++;
-  if ((mmioWriteCount & 0xff) === 0) perf.counter("io:mmioWrites", mmioWriteCount);
-  enqueueIoEvent(encodeEvent({ kind: "mmioWriteResp", id }));
 }
 
 function diskOffsetToJsNumber(diskOffset: bigint, len: number): number | null {
@@ -1110,112 +1070,100 @@ function guestRangeView(guestOffset: bigint, len: number): Uint8Array | null {
   return guestU8.subarray(start, start + (len >>> 0));
 }
 
-function handleDiskRead(cmd: Extract<Command, { kind: "diskRead" }>): void {
-  const id = cmd.id >>> 0;
-  const len = cmd.len >>> 0;
+function diskRead(diskOffset: bigint, len: number, guestOffset: bigint): AeroIpcIoDiskResult | Promise<AeroIpcIoDiskResult> {
+  const length = len >>> 0;
 
-  const view = guestRangeView(cmd.guestOffset, len);
+  const view = guestRangeView(guestOffset, length);
   if (!view) {
-    enqueueIoEvent(encodeEvent({ kind: "diskReadResp", id, ok: false, bytes: 0, errorCode: DISK_ERROR_GUEST_OOB }));
-    return;
+    return { ok: false, bytes: 0, errorCode: DISK_ERROR_GUEST_OOB };
   }
 
-  const at = diskOffsetToJsNumber(cmd.diskOffset, len);
+  const at = diskOffsetToJsNumber(diskOffset, length);
   if (at === null) {
-    enqueueIoEvent(
-      encodeEvent({ kind: "diskReadResp", id, ok: false, bytes: 0, errorCode: DISK_ERROR_DISK_OFFSET_TOO_LARGE }),
-    );
-    return;
+    return { ok: false, bytes: 0, errorCode: DISK_ERROR_DISK_OFFSET_TOO_LARGE };
   }
 
   const remote = activeRemoteDisk;
   if (remote) {
-    if (at + len > remote.capacityBytes) {
-      enqueueIoEvent(encodeEvent({ kind: "diskReadResp", id, ok: false, bytes: 0, errorCode: DISK_ERROR_DISK_OOB }));
-      return;
+    if (at + length > remote.capacityBytes) {
+      return { ok: false, bytes: 0, errorCode: DISK_ERROR_DISK_OOB };
     }
     // Preserve request ordering. Some callers treat disk I/O as synchronous and
     // assume responses arrive in the same order as commands.
-    remoteDiskReadChain = remoteDiskReadChain
+    const op = remoteDiskReadChain
       .catch(() => {
         // Keep queue alive after unexpected errors.
       })
       .then(async () => {
         try {
           await remote.readInto(at, view);
-          perfIoReadBytes += len >>> 0;
-          enqueueIoEvent(encodeEvent({ kind: "diskReadResp", id, ok: true, bytes: len >>> 0 }));
+          perfIoReadBytes += length;
+          return { ok: true, bytes: length };
         } catch {
-          enqueueIoEvent(
-            encodeEvent({ kind: "diskReadResp", id, ok: false, bytes: 0, errorCode: DISK_ERROR_IO_FAILURE }),
-          );
+          return { ok: false, bytes: 0, errorCode: DISK_ERROR_IO_FAILURE };
         }
       });
-    return;
+
+    remoteDiskReadChain = op.then(
+      () => undefined,
+      () => undefined,
+    );
+    return op;
   }
 
   const handle = activeAccessHandle;
   if (!handle) {
-    enqueueIoEvent(encodeEvent({ kind: "diskReadResp", id, ok: false, bytes: 0, errorCode: DISK_ERROR_NO_ACTIVE_DISK }));
-    return;
+    return { ok: false, bytes: 0, errorCode: DISK_ERROR_NO_ACTIVE_DISK };
   }
   const capacityBytes = activeDiskCapacityBytes;
-  if (capacityBytes !== null && at + len > capacityBytes) {
-    enqueueIoEvent(encodeEvent({ kind: "diskReadResp", id, ok: false, bytes: 0, errorCode: DISK_ERROR_DISK_OOB }));
-    return;
+  if (capacityBytes !== null && at + length > capacityBytes) {
+    return { ok: false, bytes: 0, errorCode: DISK_ERROR_DISK_OOB };
   }
 
   try {
     const bytes = handle.read(view, { at });
     perfIoReadBytes += bytes >>> 0;
-    enqueueIoEvent(encodeEvent({ kind: "diskReadResp", id, ok: true, bytes: bytes >>> 0 }));
+    return { ok: true, bytes: bytes >>> 0 };
   } catch {
-    enqueueIoEvent(encodeEvent({ kind: "diskReadResp", id, ok: false, bytes: 0, errorCode: DISK_ERROR_IO_FAILURE }));
+    return { ok: false, bytes: 0, errorCode: DISK_ERROR_IO_FAILURE };
   }
 }
 
-function handleDiskWrite(cmd: Extract<Command, { kind: "diskWrite" }>): void {
-  const id = cmd.id >>> 0;
-  const len = cmd.len >>> 0;
-
+function diskWrite(
+  diskOffset: bigint,
+  len: number,
+  guestOffset: bigint,
+): AeroIpcIoDiskResult | Promise<AeroIpcIoDiskResult> {
+  const length = len >>> 0;
   if (activeRemoteDisk) {
-    enqueueIoEvent(encodeEvent({ kind: "diskWriteResp", id, ok: false, bytes: 0, errorCode: DISK_ERROR_READ_ONLY }));
-    return;
+    return { ok: false, bytes: 0, errorCode: DISK_ERROR_READ_ONLY };
   }
 
   const handle = activeAccessHandle;
   if (!handle) {
-    enqueueIoEvent(
-      encodeEvent({ kind: "diskWriteResp", id, ok: false, bytes: 0, errorCode: DISK_ERROR_NO_ACTIVE_DISK }),
-    );
-    return;
+    return { ok: false, bytes: 0, errorCode: DISK_ERROR_NO_ACTIVE_DISK };
   }
 
-  const view = guestRangeView(cmd.guestOffset, len);
+  const view = guestRangeView(guestOffset, length);
   if (!view) {
-    enqueueIoEvent(encodeEvent({ kind: "diskWriteResp", id, ok: false, bytes: 0, errorCode: DISK_ERROR_GUEST_OOB }));
-    return;
+    return { ok: false, bytes: 0, errorCode: DISK_ERROR_GUEST_OOB };
   }
 
-  const at = diskOffsetToJsNumber(cmd.diskOffset, len);
+  const at = diskOffsetToJsNumber(diskOffset, length);
   if (at === null) {
-    enqueueIoEvent(
-      encodeEvent({ kind: "diskWriteResp", id, ok: false, bytes: 0, errorCode: DISK_ERROR_DISK_OFFSET_TOO_LARGE }),
-    );
-    return;
+    return { ok: false, bytes: 0, errorCode: DISK_ERROR_DISK_OFFSET_TOO_LARGE };
   }
   const capacityBytes = activeDiskCapacityBytes;
-  if (capacityBytes !== null && at + len > capacityBytes) {
-    enqueueIoEvent(encodeEvent({ kind: "diskWriteResp", id, ok: false, bytes: 0, errorCode: DISK_ERROR_DISK_OOB }));
-    return;
+  if (capacityBytes !== null && at + length > capacityBytes) {
+    return { ok: false, bytes: 0, errorCode: DISK_ERROR_DISK_OOB };
   }
 
   try {
     const bytes = handle.write(view, { at });
     perfIoWriteBytes += bytes >>> 0;
-    enqueueIoEvent(encodeEvent({ kind: "diskWriteResp", id, ok: true, bytes: bytes >>> 0 }));
+    return { ok: true, bytes: bytes >>> 0 };
   } catch {
-    enqueueIoEvent(encodeEvent({ kind: "diskWriteResp", id, ok: false, bytes: 0, errorCode: DISK_ERROR_IO_FAILURE }));
+    return { ok: false, bytes: 0, errorCode: DISK_ERROR_IO_FAILURE };
   }
 }
 
@@ -1286,10 +1234,9 @@ function handleInputBatch(buffer: ArrayBuffer): void {
 }
 
 function shutdown(): void {
-  if (pollTimer !== undefined) {
-    clearInterval(pollTimer);
-    pollTimer = undefined;
-  }
+  if (shuttingDown) return;
+  shuttingDown = true;
+  ioServerAbort?.abort();
   if (usbPassthroughDebugTimer !== undefined) {
     clearInterval(usbPassthroughDebugTimer);
     usbPassthroughDebugTimer = undefined;
@@ -1330,6 +1277,7 @@ function pushEventBlocking(evt: Event, timeoutMs = 1000): void {
 }
 
 function fatal(err: unknown): void {
+  ioServerAbort?.abort();
   const message = err instanceof Error ? err.message : String(err);
   pushEventBlocking({ kind: "panic", message });
   try {
