@@ -39,6 +39,10 @@ For the in-browser runtime, the canonical stack is:
   - WebUSB executor/broker (main thread): `web/src/usb/webusb_backend.ts`, `web/src/usb/usb_broker.ts`
   - Worker-side runtime pump: `web/src/usb/webusb_passthrough_runtime.ts`
 
+Note: the canonical browser host entrypoint is the repo-root Vite app, but it imports shared runtime
+modules from `web/src/*`. The `web/` directory’s own `web/index.html` entrypoint is legacy, but the
+USB host integration under `web/src/usb/*` is the maintained implementation.
+
 The browser runtime must **not** implement a parallel USB/UHCI stack in `crates/emulator` or in
 TypeScript.
 
