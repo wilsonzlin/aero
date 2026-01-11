@@ -854,6 +854,7 @@ struct AeroGpuDdiStub;
 template <typename R, typename... Args>
 struct AeroGpuDdiStub<R(AEROGPU_APIENTRY*)(Args...)> {
   static R AEROGPU_APIENTRY Func(Args... args) {
+    ((void)args, ...);
     if constexpr (std::is_same_v<R, void>) {
       ReportNotImpl(args...);
       return;
@@ -861,6 +862,25 @@ struct AeroGpuDdiStub<R(AEROGPU_APIENTRY*)(Args...)> {
       return E_NOTIMPL;
     } else if constexpr (std::is_same_v<R, SIZE_T>) {
       return kAeroGpuDdiStubPrivateSize;
+    } else {
+      return {};
+    }
+  }
+};
+
+template <typename FnPtr>
+struct AeroGpuDdiNoopStub;
+
+template <typename R, typename... Args>
+struct AeroGpuDdiNoopStub<R(AEROGPU_APIENTRY*)(Args...)> {
+  static R AEROGPU_APIENTRY Func(Args... args) {
+    ((void)args, ...);
+    if constexpr (std::is_same_v<R, HRESULT>) {
+      return E_NOTIMPL;
+    } else if constexpr (std::is_same_v<R, SIZE_T>) {
+      return kAeroGpuDdiStubPrivateSize;
+    } else if constexpr (std::is_same_v<R, void>) {
+      return;
     } else {
       return {};
     }
@@ -977,7 +997,13 @@ inline void AssertNoNullDdiTable(const char* name, const void* table, size_t byt
   X(pfnSetExceptionMode)                                                                                          \
   X(pfnPresent)                                                                                                    \
   X(pfnRotateResourceIdentities)                                                                                   \
-  X(pfnCheckDeferredContextHandleSizes)
+  X(pfnCheckDeferredContextHandleSizes)                                                                           \
+  X(pfnCalcPrivateDeviceContextSize)                                                                               \
+  X(pfnCreateDeviceContext)                                                                                        \
+  X(pfnDestroyDeviceContext)                                                                                       \
+  X(pfnCalcPrivateDeviceContextStateSize)                                                                          \
+  X(pfnCreateDeviceContextState)                                                                                   \
+  X(pfnDestroyDeviceContextState)
 
 #define AEROGPU_D3D11_DEVICECONTEXTFUNCS_FIELDS(X)                                                               \
   X(pfnVsSetShader)                                                                                               \
@@ -1036,12 +1062,14 @@ inline void AssertNoNullDdiTable(const char* name, const void* table, size_t byt
   X(pfnMap)                                                                                                        \
   X(pfnUnmap)                                                                                                      \
   X(pfnUpdateSubresourceUP)                                                                                        \
+  X(pfnUpdateSubresource)                                                                                           \
   X(pfnCopySubresourceRegion)                                                                                      \
   X(pfnCopyResource)                                                                                               \
   X(pfnCopyStructureCount)                                                                                          \
   X(pfnResolveSubresource)                                                                                          \
   X(pfnGenerateMips)                                                                                               \
   X(pfnSetResourceMinLOD)                                                                                           \
+  X(pfnGetResourceMinLOD)                                                                                           \
   X(pfnClearRenderTargetView)                                                                                      \
   X(pfnClearUnorderedAccessViewUint)                                                                               \
   X(pfnClearUnorderedAccessViewFloat)                                                                              \
@@ -1049,13 +1077,61 @@ inline void AssertNoNullDdiTable(const char* name, const void* table, size_t byt
   X(pfnBegin)                                                                                                      \
   X(pfnEnd)                                                                                                        \
   X(pfnQueryGetData)                                                                                               \
+  X(pfnGetData)                                                                                                    \
   X(pfnSetPredication)                                                                                              \
   X(pfnExecuteCommandList)                                                                                         \
   X(pfnFinishCommandList)                                                                                          \
   X(pfnClearState)                                                                                                 \
   X(pfnFlush)                                                                                                      \
   X(pfnPresent)                                                                                                    \
-  X(pfnRotateResourceIdentities)
+  X(pfnRotateResourceIdentities)                                                                                   \
+  X(pfnDiscardResource)                                                                                            \
+  X(pfnDiscardView)                                                                                                \
+  X(pfnSetMarker)                                                                                                  \
+  X(pfnBeginEvent)                                                                                                 \
+  X(pfnEndEvent)                                                                                                   \
+  X(pfnGetResourceMinLOD)
+
+#define AEROGPU_D3D11_DEVICECONTEXTFUNCS_NOOP_FIELDS(X)                                                           \
+  X(pfnClearState)                                                                                                 \
+  X(pfnSetPredication)                                                                                              \
+  X(pfnSoSetTargets)                                                                                               \
+  X(pfnVsSetShader)                                                                                                 \
+  X(pfnVsSetConstantBuffers)                                                                                      \
+  X(pfnVsSetShaderResources)                                                                                      \
+  X(pfnVsSetSamplers)                                                                                             \
+  X(pfnHsSetShader)                                                                                               \
+  X(pfnHsSetConstantBuffers)                                                                                      \
+  X(pfnHsSetShaderResources)                                                                                      \
+  X(pfnHsSetSamplers)                                                                                             \
+  X(pfnDsSetShader)                                                                                               \
+  X(pfnDsSetConstantBuffers)                                                                                      \
+  X(pfnDsSetShaderResources)                                                                                      \
+  X(pfnDsSetSamplers)                                                                                             \
+  X(pfnGsSetShader)                                                                                               \
+  X(pfnGsSetConstantBuffers)                                                                                      \
+  X(pfnGsSetShaderResources)                                                                                      \
+  X(pfnGsSetSamplers)                                                                                             \
+  X(pfnPsSetShader)                                                                                               \
+  X(pfnPsSetConstantBuffers)                                                                                      \
+  X(pfnPsSetShaderResources)                                                                                      \
+  X(pfnPsSetSamplers)                                                                                             \
+  X(pfnCsSetShader)                                                                                               \
+  X(pfnCsSetConstantBuffers)                                                                                      \
+  X(pfnCsSetShaderResources)                                                                                      \
+  X(pfnCsSetSamplers)                                                                                             \
+  X(pfnCsSetUnorderedAccessViews)                                                                                 \
+  X(pfnSetRenderTargetsAndUnorderedAccessViews)                                                                    \
+  X(pfnUnmap)                                                                                                      \
+  X(pfnStagingResourceUnmap)                                                                                      \
+  X(pfnDynamicIABufferUnmap)                                                                                      \
+  X(pfnDynamicConstantBufferUnmap)                                                                                \
+  X(pfnDiscardResource)                                                                                            \
+  X(pfnDiscardView)                                                                                                \
+  X(pfnSetMarker)                                                                                                  \
+  X(pfnBeginEvent)                                                                                                 \
+  X(pfnEndEvent)                                                                                                   \
+  X(pfnSetResourceMinLOD)
 
 inline void InitDeviceFuncsWithStubs(D3D11DDI_DEVICEFUNCS* out) {
   if (!out) {
@@ -1063,7 +1139,7 @@ inline void InitDeviceFuncsWithStubs(D3D11DDI_DEVICEFUNCS* out) {
   }
   std::memset(out, 0, sizeof(*out));
 #define AEROGPU_ASSIGN_DEVICE_STUB(field)                                                                          \
-  __if_exists(D3D11DDI_DEVICEFUNCS::field) { out->field = &AeroGpuDdiStub<decltype(out->field)>::Func; }
+  __if_exists(D3D11DDI_DEVICEFUNCS::field) { out->field = &AeroGpuDdiNoopStub<decltype(out->field)>::Func; }
   AEROGPU_D3D11_DEVICEFUNCS_FIELDS(AEROGPU_ASSIGN_DEVICE_STUB)
 #undef AEROGPU_ASSIGN_DEVICE_STUB
 }
@@ -1077,7 +1153,29 @@ inline void InitDeviceContextFuncsWithStubs(D3D11DDI_DEVICECONTEXTFUNCS* out) {
   __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::field) { out->field = &AeroGpuDdiStub<decltype(out->field)>::Func; }
   AEROGPU_D3D11_DEVICECONTEXTFUNCS_FIELDS(AEROGPU_ASSIGN_CONTEXT_STUB)
 #undef AEROGPU_ASSIGN_CONTEXT_STUB
+
+  // Avoid spamming SetErrorCb for benign ClearState/unbind sequences.
+#define AEROGPU_ASSIGN_CONTEXT_NOOP(field)                                                                         \
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::field) { out->field = &AeroGpuDdiNoopStub<decltype(out->field)>::Func; }
+  AEROGPU_D3D11_DEVICECONTEXTFUNCS_NOOP_FIELDS(AEROGPU_ASSIGN_CONTEXT_NOOP)
+#undef AEROGPU_ASSIGN_CONTEXT_NOOP
 }
+
+static const D3D11DDI_DEVICEFUNCS kStubDeviceFuncs = [] {
+  D3D11DDI_DEVICEFUNCS f{};
+  InitDeviceFuncsWithStubs(&f);
+  return f;
+}();
+
+static const D3D11DDI_DEVICECONTEXTFUNCS kStubCtxFuncs = [] {
+  D3D11DDI_DEVICECONTEXTFUNCS f{};
+  InitDeviceContextFuncsWithStubs(&f);
+  return f;
+}();
+
+#undef AEROGPU_D3D11_DEVICEFUNCS_FIELDS
+#undef AEROGPU_D3D11_DEVICECONTEXTFUNCS_FIELDS
+#undef AEROGPU_D3D11_DEVICECONTEXTFUNCS_NOOP_FIELDS
 
 template <typename Fn, typename HandleA, typename HandleB, typename... Args>
 decltype(auto) CallCbMaybeHandle(Fn fn, HandleA handle_a, HandleB handle_b, Args&&... args) {
@@ -3449,6 +3547,298 @@ SIZE_T AEROGPU_APIENTRY CalcPrivateDeviceSize11(D3D10DDI_HADAPTER, const D3D11DD
   return sizeof(AeroGpuDevice) + sizeof(AeroGpuImmediateContext);
 }
 
+static const D3D11DDI_DEVICEFUNCS kStubDeviceFuncs = [] {
+  D3D11DDI_DEVICEFUNCS f = {};
+
+#define AEROGPU_STUB_DEV_FIELD(member)                                                                \
+  __if_exists(D3D11DDI_DEVICEFUNCS::member) {                                                         \
+    f.member = &DdiNoopStub<decltype(f.member)>::Call;                                                 \
+  }
+
+  AEROGPU_STUB_DEV_FIELD(pfnDestroyDevice);
+
+  AEROGPU_STUB_DEV_FIELD(pfnCalcPrivateResourceSize);
+  AEROGPU_STUB_DEV_FIELD(pfnCreateResource);
+  AEROGPU_STUB_DEV_FIELD(pfnOpenResource);
+  AEROGPU_STUB_DEV_FIELD(pfnDestroyResource);
+
+  AEROGPU_STUB_DEV_FIELD(pfnCalcPrivateShaderResourceViewSize);
+  AEROGPU_STUB_DEV_FIELD(pfnCreateShaderResourceView);
+  AEROGPU_STUB_DEV_FIELD(pfnDestroyShaderResourceView);
+
+  AEROGPU_STUB_DEV_FIELD(pfnCalcPrivateRenderTargetViewSize);
+  AEROGPU_STUB_DEV_FIELD(pfnCreateRenderTargetView);
+  AEROGPU_STUB_DEV_FIELD(pfnDestroyRenderTargetView);
+
+  AEROGPU_STUB_DEV_FIELD(pfnCalcPrivateDepthStencilViewSize);
+  AEROGPU_STUB_DEV_FIELD(pfnCreateDepthStencilView);
+  AEROGPU_STUB_DEV_FIELD(pfnDestroyDepthStencilView);
+
+  AEROGPU_STUB_DEV_FIELD(pfnCalcPrivateUnorderedAccessViewSize);
+  AEROGPU_STUB_DEV_FIELD(pfnCreateUnorderedAccessView);
+  AEROGPU_STUB_DEV_FIELD(pfnDestroyUnorderedAccessView);
+
+  AEROGPU_STUB_DEV_FIELD(pfnCalcPrivateVertexShaderSize);
+  AEROGPU_STUB_DEV_FIELD(pfnCreateVertexShader);
+  AEROGPU_STUB_DEV_FIELD(pfnDestroyVertexShader);
+
+  AEROGPU_STUB_DEV_FIELD(pfnCalcPrivatePixelShaderSize);
+  AEROGPU_STUB_DEV_FIELD(pfnCreatePixelShader);
+  AEROGPU_STUB_DEV_FIELD(pfnDestroyPixelShader);
+
+  AEROGPU_STUB_DEV_FIELD(pfnCalcPrivateGeometryShaderSize);
+  AEROGPU_STUB_DEV_FIELD(pfnCreateGeometryShader);
+  AEROGPU_STUB_DEV_FIELD(pfnCreateGeometryShaderWithStreamOutput);
+  AEROGPU_STUB_DEV_FIELD(pfnDestroyGeometryShader);
+
+  AEROGPU_STUB_DEV_FIELD(pfnCalcPrivateHullShaderSize);
+  AEROGPU_STUB_DEV_FIELD(pfnCreateHullShader);
+  AEROGPU_STUB_DEV_FIELD(pfnDestroyHullShader);
+
+  AEROGPU_STUB_DEV_FIELD(pfnCalcPrivateDomainShaderSize);
+  AEROGPU_STUB_DEV_FIELD(pfnCreateDomainShader);
+  AEROGPU_STUB_DEV_FIELD(pfnDestroyDomainShader);
+
+  AEROGPU_STUB_DEV_FIELD(pfnCalcPrivateComputeShaderSize);
+  AEROGPU_STUB_DEV_FIELD(pfnCreateComputeShader);
+  AEROGPU_STUB_DEV_FIELD(pfnDestroyComputeShader);
+
+  AEROGPU_STUB_DEV_FIELD(pfnCalcPrivateClassLinkageSize);
+  AEROGPU_STUB_DEV_FIELD(pfnCreateClassLinkage);
+  AEROGPU_STUB_DEV_FIELD(pfnDestroyClassLinkage);
+
+  AEROGPU_STUB_DEV_FIELD(pfnCalcPrivateClassInstanceSize);
+  AEROGPU_STUB_DEV_FIELD(pfnCreateClassInstance);
+  AEROGPU_STUB_DEV_FIELD(pfnDestroyClassInstance);
+
+  AEROGPU_STUB_DEV_FIELD(pfnCalcPrivateElementLayoutSize);
+  AEROGPU_STUB_DEV_FIELD(pfnCreateElementLayout);
+  AEROGPU_STUB_DEV_FIELD(pfnDestroyElementLayout);
+
+  AEROGPU_STUB_DEV_FIELD(pfnCalcPrivateSamplerSize);
+  AEROGPU_STUB_DEV_FIELD(pfnCreateSampler);
+  AEROGPU_STUB_DEV_FIELD(pfnDestroySampler);
+
+  AEROGPU_STUB_DEV_FIELD(pfnCalcPrivateBlendStateSize);
+  AEROGPU_STUB_DEV_FIELD(pfnCreateBlendState);
+  AEROGPU_STUB_DEV_FIELD(pfnDestroyBlendState);
+
+  AEROGPU_STUB_DEV_FIELD(pfnCalcPrivateRasterizerStateSize);
+  AEROGPU_STUB_DEV_FIELD(pfnCreateRasterizerState);
+  AEROGPU_STUB_DEV_FIELD(pfnDestroyRasterizerState);
+
+  AEROGPU_STUB_DEV_FIELD(pfnCalcPrivateDepthStencilStateSize);
+  AEROGPU_STUB_DEV_FIELD(pfnCreateDepthStencilState);
+  AEROGPU_STUB_DEV_FIELD(pfnDestroyDepthStencilState);
+
+  AEROGPU_STUB_DEV_FIELD(pfnCalcPrivateQuerySize);
+  AEROGPU_STUB_DEV_FIELD(pfnCreateQuery);
+  AEROGPU_STUB_DEV_FIELD(pfnDestroyQuery);
+
+  AEROGPU_STUB_DEV_FIELD(pfnCalcPrivatePredicateSize);
+  AEROGPU_STUB_DEV_FIELD(pfnCreatePredicate);
+  AEROGPU_STUB_DEV_FIELD(pfnDestroyPredicate);
+
+  AEROGPU_STUB_DEV_FIELD(pfnCalcPrivateCounterSize);
+  AEROGPU_STUB_DEV_FIELD(pfnCreateCounter);
+  AEROGPU_STUB_DEV_FIELD(pfnDestroyCounter);
+
+  // Deferred contexts / command lists. Names differ slightly across WDKs.
+  AEROGPU_STUB_DEV_FIELD(pfnCalcPrivateDeviceContextSize);
+  AEROGPU_STUB_DEV_FIELD(pfnCreateDeviceContext);
+  AEROGPU_STUB_DEV_FIELD(pfnDestroyDeviceContext);
+
+  AEROGPU_STUB_DEV_FIELD(pfnCalcPrivateDeferredContextSize);
+  AEROGPU_STUB_DEV_FIELD(pfnCreateDeferredContext);
+  AEROGPU_STUB_DEV_FIELD(pfnDestroyDeferredContext);
+
+  AEROGPU_STUB_DEV_FIELD(pfnCalcPrivateCommandListSize);
+  AEROGPU_STUB_DEV_FIELD(pfnCreateCommandList);
+  AEROGPU_STUB_DEV_FIELD(pfnDestroyCommandList);
+
+  // D3D11.1+ (guarded for header compatibility).
+  AEROGPU_STUB_DEV_FIELD(pfnCalcPrivateDeviceContextStateSize);
+  AEROGPU_STUB_DEV_FIELD(pfnCreateDeviceContextState);
+  AEROGPU_STUB_DEV_FIELD(pfnDestroyDeviceContextState);
+
+#undef AEROGPU_STUB_DEV_FIELD
+
+  return f;
+}();
+
+static const D3D11DDI_DEVICECONTEXTFUNCS kStubCtxFuncs = [] {
+  D3D11DDI_DEVICECONTEXTFUNCS f = {};
+
+#define AEROGPU_STUB_CTX_FIELD(member)                                                                \
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::member) {                                                   \
+    f.member = &DdiErrorStub<decltype(f.member)>::Call;                                                \
+  }
+
+  AEROGPU_STUB_CTX_FIELD(pfnIaSetInputLayout);
+  AEROGPU_STUB_CTX_FIELD(pfnIaSetVertexBuffers);
+  AEROGPU_STUB_CTX_FIELD(pfnIaSetIndexBuffer);
+  AEROGPU_STUB_CTX_FIELD(pfnIaSetTopology);
+
+  AEROGPU_STUB_CTX_FIELD(pfnVsSetShader);
+  AEROGPU_STUB_CTX_FIELD(pfnVsSetConstantBuffers);
+  AEROGPU_STUB_CTX_FIELD(pfnVsSetShaderResources);
+  AEROGPU_STUB_CTX_FIELD(pfnVsSetSamplers);
+
+  AEROGPU_STUB_CTX_FIELD(pfnHsSetShader);
+  AEROGPU_STUB_CTX_FIELD(pfnHsSetConstantBuffers);
+  AEROGPU_STUB_CTX_FIELD(pfnHsSetShaderResources);
+  AEROGPU_STUB_CTX_FIELD(pfnHsSetSamplers);
+
+  AEROGPU_STUB_CTX_FIELD(pfnDsSetShader);
+  AEROGPU_STUB_CTX_FIELD(pfnDsSetConstantBuffers);
+  AEROGPU_STUB_CTX_FIELD(pfnDsSetShaderResources);
+  AEROGPU_STUB_CTX_FIELD(pfnDsSetSamplers);
+
+  AEROGPU_STUB_CTX_FIELD(pfnGsSetShader);
+  AEROGPU_STUB_CTX_FIELD(pfnGsSetConstantBuffers);
+  AEROGPU_STUB_CTX_FIELD(pfnGsSetShaderResources);
+  AEROGPU_STUB_CTX_FIELD(pfnGsSetSamplers);
+
+  AEROGPU_STUB_CTX_FIELD(pfnSoSetTargets);
+
+  AEROGPU_STUB_CTX_FIELD(pfnPsSetShader);
+  AEROGPU_STUB_CTX_FIELD(pfnPsSetConstantBuffers);
+  AEROGPU_STUB_CTX_FIELD(pfnPsSetShaderResources);
+  AEROGPU_STUB_CTX_FIELD(pfnPsSetSamplers);
+
+  AEROGPU_STUB_CTX_FIELD(pfnCsSetShader);
+  AEROGPU_STUB_CTX_FIELD(pfnCsSetConstantBuffers);
+  AEROGPU_STUB_CTX_FIELD(pfnCsSetShaderResources);
+  AEROGPU_STUB_CTX_FIELD(pfnCsSetSamplers);
+  AEROGPU_STUB_CTX_FIELD(pfnCsSetUnorderedAccessViews);
+
+  AEROGPU_STUB_CTX_FIELD(pfnSetViewports);
+  AEROGPU_STUB_CTX_FIELD(pfnSetScissorRects);
+  AEROGPU_STUB_CTX_FIELD(pfnSetRasterizerState);
+  AEROGPU_STUB_CTX_FIELD(pfnSetBlendState);
+  AEROGPU_STUB_CTX_FIELD(pfnSetDepthStencilState);
+  AEROGPU_STUB_CTX_FIELD(pfnSetRenderTargets);
+  AEROGPU_STUB_CTX_FIELD(pfnSetRenderTargetsAndUnorderedAccessViews);
+
+  AEROGPU_STUB_CTX_FIELD(pfnDraw);
+  AEROGPU_STUB_CTX_FIELD(pfnDrawIndexed);
+  AEROGPU_STUB_CTX_FIELD(pfnDrawInstanced);
+  AEROGPU_STUB_CTX_FIELD(pfnDrawIndexedInstanced);
+  AEROGPU_STUB_CTX_FIELD(pfnDrawAuto);
+  AEROGPU_STUB_CTX_FIELD(pfnDrawIndexedInstancedIndirect);
+  AEROGPU_STUB_CTX_FIELD(pfnDrawInstancedIndirect);
+
+  AEROGPU_STUB_CTX_FIELD(pfnDispatch);
+  AEROGPU_STUB_CTX_FIELD(pfnDispatchIndirect);
+
+  AEROGPU_STUB_CTX_FIELD(pfnCopySubresourceRegion);
+  AEROGPU_STUB_CTX_FIELD(pfnCopyResource);
+  AEROGPU_STUB_CTX_FIELD(pfnUpdateSubresourceUP);
+  AEROGPU_STUB_CTX_FIELD(pfnUpdateSubresource);
+  AEROGPU_STUB_CTX_FIELD(pfnCopyStructureCount);
+
+  AEROGPU_STUB_CTX_FIELD(pfnClearRenderTargetView);
+  AEROGPU_STUB_CTX_FIELD(pfnClearDepthStencilView);
+  AEROGPU_STUB_CTX_FIELD(pfnClearUnorderedAccessViewUint);
+  AEROGPU_STUB_CTX_FIELD(pfnClearUnorderedAccessViewFloat);
+
+  AEROGPU_STUB_CTX_FIELD(pfnGenerateMips);
+  AEROGPU_STUB_CTX_FIELD(pfnResolveSubresource);
+  AEROGPU_STUB_CTX_FIELD(pfnSetResourceMinLOD);
+  AEROGPU_STUB_CTX_FIELD(pfnGetResourceMinLOD);
+
+  AEROGPU_STUB_CTX_FIELD(pfnMap);
+  AEROGPU_STUB_CTX_FIELD(pfnUnmap);
+  AEROGPU_STUB_CTX_FIELD(pfnStagingResourceMap);
+  AEROGPU_STUB_CTX_FIELD(pfnStagingResourceUnmap);
+  AEROGPU_STUB_CTX_FIELD(pfnDynamicIABufferMapDiscard);
+  AEROGPU_STUB_CTX_FIELD(pfnDynamicIABufferMapNoOverwrite);
+  AEROGPU_STUB_CTX_FIELD(pfnDynamicIABufferUnmap);
+  AEROGPU_STUB_CTX_FIELD(pfnDynamicConstantBufferMapDiscard);
+  AEROGPU_STUB_CTX_FIELD(pfnDynamicConstantBufferUnmap);
+
+  AEROGPU_STUB_CTX_FIELD(pfnBegin);
+  AEROGPU_STUB_CTX_FIELD(pfnEnd);
+  AEROGPU_STUB_CTX_FIELD(pfnGetData);
+  AEROGPU_STUB_CTX_FIELD(pfnSetPredication);
+
+  AEROGPU_STUB_CTX_FIELD(pfnClearState);
+  AEROGPU_STUB_CTX_FIELD(pfnFlush);
+  AEROGPU_STUB_CTX_FIELD(pfnPresent);
+  AEROGPU_STUB_CTX_FIELD(pfnRotateResourceIdentities);
+
+  AEROGPU_STUB_CTX_FIELD(pfnExecuteCommandList);
+  AEROGPU_STUB_CTX_FIELD(pfnFinishCommandList);
+
+  // Optional debug annotation hooks.
+  AEROGPU_STUB_CTX_FIELD(pfnSetMarker);
+  AEROGPU_STUB_CTX_FIELD(pfnBeginEvent);
+  AEROGPU_STUB_CTX_FIELD(pfnEndEvent);
+
+#undef AEROGPU_STUB_CTX_FIELD
+
+  // Avoid spamming SetErrorCb for common "reset/unbind" sequences (ClearState).
+#define AEROGPU_STUB_CTX_NOOP_FIELD(member)                                                           \
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::member) {                                                   \
+    f.member = &DdiNoopStub<decltype(f.member)>::Call;                                                 \
+  }
+
+  AEROGPU_STUB_CTX_NOOP_FIELD(pfnClearState);
+  AEROGPU_STUB_CTX_NOOP_FIELD(pfnSetPredication);
+  AEROGPU_STUB_CTX_NOOP_FIELD(pfnSoSetTargets);
+
+  AEROGPU_STUB_CTX_NOOP_FIELD(pfnVsSetShader);
+  AEROGPU_STUB_CTX_NOOP_FIELD(pfnVsSetConstantBuffers);
+  AEROGPU_STUB_CTX_NOOP_FIELD(pfnVsSetShaderResources);
+  AEROGPU_STUB_CTX_NOOP_FIELD(pfnVsSetSamplers);
+
+  AEROGPU_STUB_CTX_NOOP_FIELD(pfnHsSetShader);
+  AEROGPU_STUB_CTX_NOOP_FIELD(pfnHsSetConstantBuffers);
+  AEROGPU_STUB_CTX_NOOP_FIELD(pfnHsSetShaderResources);
+  AEROGPU_STUB_CTX_NOOP_FIELD(pfnHsSetSamplers);
+
+  AEROGPU_STUB_CTX_NOOP_FIELD(pfnDsSetShader);
+  AEROGPU_STUB_CTX_NOOP_FIELD(pfnDsSetConstantBuffers);
+  AEROGPU_STUB_CTX_NOOP_FIELD(pfnDsSetShaderResources);
+  AEROGPU_STUB_CTX_NOOP_FIELD(pfnDsSetSamplers);
+
+  AEROGPU_STUB_CTX_NOOP_FIELD(pfnGsSetShader);
+  AEROGPU_STUB_CTX_NOOP_FIELD(pfnGsSetConstantBuffers);
+  AEROGPU_STUB_CTX_NOOP_FIELD(pfnGsSetShaderResources);
+  AEROGPU_STUB_CTX_NOOP_FIELD(pfnGsSetSamplers);
+
+  AEROGPU_STUB_CTX_NOOP_FIELD(pfnPsSetShader);
+  AEROGPU_STUB_CTX_NOOP_FIELD(pfnPsSetConstantBuffers);
+  AEROGPU_STUB_CTX_NOOP_FIELD(pfnPsSetShaderResources);
+  AEROGPU_STUB_CTX_NOOP_FIELD(pfnPsSetSamplers);
+
+  AEROGPU_STUB_CTX_NOOP_FIELD(pfnCsSetShader);
+  AEROGPU_STUB_CTX_NOOP_FIELD(pfnCsSetConstantBuffers);
+  AEROGPU_STUB_CTX_NOOP_FIELD(pfnCsSetShaderResources);
+  AEROGPU_STUB_CTX_NOOP_FIELD(pfnCsSetSamplers);
+  AEROGPU_STUB_CTX_NOOP_FIELD(pfnCsSetUnorderedAccessViews);
+
+  AEROGPU_STUB_CTX_NOOP_FIELD(pfnSetRenderTargetsAndUnorderedAccessViews);
+
+  // Hints/annotations are safe to ignore.
+  AEROGPU_STUB_CTX_NOOP_FIELD(pfnDiscardResource);
+  AEROGPU_STUB_CTX_NOOP_FIELD(pfnDiscardView);
+  AEROGPU_STUB_CTX_NOOP_FIELD(pfnSetMarker);
+  AEROGPU_STUB_CTX_NOOP_FIELD(pfnBeginEvent);
+  AEROGPU_STUB_CTX_NOOP_FIELD(pfnEndEvent);
+  AEROGPU_STUB_CTX_NOOP_FIELD(pfnSetResourceMinLOD);
+
+  // Cleanup paths should never fail noisily.
+  AEROGPU_STUB_CTX_NOOP_FIELD(pfnUnmap);
+  AEROGPU_STUB_CTX_NOOP_FIELD(pfnStagingResourceUnmap);
+  AEROGPU_STUB_CTX_NOOP_FIELD(pfnDynamicIABufferUnmap);
+  AEROGPU_STUB_CTX_NOOP_FIELD(pfnDynamicConstantBufferUnmap);
+
+#undef AEROGPU_STUB_CTX_NOOP_FIELD
+
+  return f;
+}();
+
 HRESULT AEROGPU_APIENTRY CreateDevice11(D3D10DDI_HADAPTER hAdapter, D3D11DDIARG_CREATEDEVICE* pCreate) {
   if (!pCreate || !pCreate->hDevice.pDrvPrivate || !pCreate->pDeviceFuncs || !pCreate->pDeviceContextFuncs) {
     return E_INVALIDARG;
@@ -3500,8 +3890,7 @@ HRESULT AEROGPU_APIENTRY CreateDevice11(D3D10DDI_HADAPTER hAdapter, D3D11DDIARG_
   // device creation / initialization than a simple triangle sample would
   // suggest. Ensure we never leave NULL function pointers in the tables by
   // starting from fully-stubbed defaults and overriding implemented entrypoints.
-  D3D11DDI_DEVICEFUNCS device_funcs = {};
-  InitDeviceFuncsWithStubs(&device_funcs);
+  D3D11DDI_DEVICEFUNCS device_funcs = kStubDeviceFuncs;
   device_funcs.pfnDestroyDevice = &DestroyDevice11;
   device_funcs.pfnCalcPrivateResourceSize = &CalcPrivateResourceSize11;
   device_funcs.pfnCreateResource = &CreateResource11;
@@ -3555,8 +3944,7 @@ HRESULT AEROGPU_APIENTRY CreateDevice11(D3D10DDI_HADAPTER hAdapter, D3D11DDIARG_
   AssertNoNullDdiTable("D3D11DDI_DEVICEFUNCS", &device_funcs, sizeof(device_funcs));
   *pCreate->pDeviceFuncs = device_funcs;
 
-  D3D11DDI_DEVICECONTEXTFUNCS ctx_funcs = {};
-  InitDeviceContextFuncsWithStubs(&ctx_funcs);
+  D3D11DDI_DEVICECONTEXTFUNCS ctx_funcs = kStubCtxFuncs;
   ctx_funcs.pfnIaSetInputLayout = &IaSetInputLayout11;
   ctx_funcs.pfnIaSetVertexBuffers = &IaSetVertexBuffers11;
   ctx_funcs.pfnIaSetIndexBuffer = &IaSetIndexBuffer11;
