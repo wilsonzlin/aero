@@ -1,6 +1,9 @@
 //! AeroGPU Guest↔Host command stream protocol (host-side parser).
 //!
-//! This module mirrors the C ABI defined in `drivers/aerogpu/protocol/aerogpu_cmd.h`.
+//! ABI source of truth: `drivers/aerogpu/protocol/aerogpu_cmd.h`.
+//!
+//! To avoid drift, `aero-gpu` delegates ABI constants and basic decoding helpers to the canonical
+//! `aero-protocol` crate.
 //! The host consumes a byte slice containing:
 //! - `aerogpu_cmd_stream_header`
 //! - a sequence of command packets, each starting with `aerogpu_cmd_hdr`
@@ -8,163 +11,22 @@
 //! The parser is intentionally conservative:
 //! - validates sizes and alignment
 //! - skips unknown opcodes using `size_bytes`
-//! - never performs unaligned reads into `repr(C)` structs
+//! - never performs unaligned reads into `repr(C, packed)` structs
 //!
 //! This allows the protocol to be consumed safely from guest-provided memory.
 
-use core::fmt;
+use core::{fmt, mem::size_of};
 
-pub use aero_protocol::aerogpu::aerogpu_cmd::{
-    AEROGPU_CMD_STREAM_MAGIC, AEROGPU_INPUT_LAYOUT_BLOB_MAGIC, AEROGPU_INPUT_LAYOUT_BLOB_VERSION,
-    AEROGPU_MAX_RENDER_TARGETS,
+use aero_protocol::aerogpu::aerogpu_cmd as protocol;
+use aero_protocol::aerogpu::aerogpu_pci::AerogpuAbiError;
+
+pub use protocol::{
+    AerogpuCmdHdr as AeroGpuCmdHdr, AerogpuCmdOpcode as AeroGpuOpcode,
+    AerogpuCmdStreamHeader as AeroGpuCmdStreamHeader, AEROGPU_CMD_STREAM_MAGIC,
+    AEROGPU_INPUT_LAYOUT_BLOB_MAGIC, AEROGPU_INPUT_LAYOUT_BLOB_VERSION, AEROGPU_MAX_RENDER_TARGETS,
 };
 
-use aero_protocol::aerogpu::aerogpu_cmd::{
-    AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode,
-    AerogpuCmdStreamHeader as ProtocolCmdStreamHeader,
-    AerogpuVertexBufferBinding as ProtocolVertexBufferBinding,
-};
-use aero_protocol::aerogpu::aerogpu_pci::{parse_and_validate_abi_version_u32, AerogpuAbiError};
-
-const STREAM_HEADER_SIZE: usize = ProtocolCmdStreamHeader::SIZE_BYTES;
-const CMD_HDR_SIZE: usize = ProtocolCmdHdr::SIZE_BYTES;
-const VERTEX_BUFFER_BINDING_SIZE: usize = ProtocolVertexBufferBinding::SIZE_BYTES;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AeroGpuCmdStreamHeader {
-    pub magic: u32,
-    pub abi_version: u32,
-    pub size_bytes: u32,
-    pub flags: u32,
-    pub reserved0: u32,
-    pub reserved1: u32,
-}
-
-impl AeroGpuCmdStreamHeader {
-    pub fn is_magic_valid(&self) -> bool {
-        self.magic == AEROGPU_CMD_STREAM_MAGIC
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AeroGpuCmdHdr {
-    pub opcode: u32,
-    pub size_bytes: u32,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u32)]
-pub enum AeroGpuOpcode {
-    Nop = AerogpuCmdOpcode::Nop as u32,
-    DebugMarker = AerogpuCmdOpcode::DebugMarker as u32,
-
-    // Resource / memory
-    CreateBuffer = AerogpuCmdOpcode::CreateBuffer as u32,
-    CreateTexture2d = AerogpuCmdOpcode::CreateTexture2d as u32,
-    DestroyResource = AerogpuCmdOpcode::DestroyResource as u32,
-    ResourceDirtyRange = AerogpuCmdOpcode::ResourceDirtyRange as u32,
-    UploadResource = AerogpuCmdOpcode::UploadResource as u32,
-
-    // Shaders
-    CreateShaderDxbc = AerogpuCmdOpcode::CreateShaderDxbc as u32,
-    DestroyShader = AerogpuCmdOpcode::DestroyShader as u32,
-    BindShaders = AerogpuCmdOpcode::BindShaders as u32,
-    SetShaderConstantsF = AerogpuCmdOpcode::SetShaderConstantsF as u32,
-
-    // Input layouts
-    CreateInputLayout = AerogpuCmdOpcode::CreateInputLayout as u32,
-    DestroyInputLayout = AerogpuCmdOpcode::DestroyInputLayout as u32,
-    SetInputLayout = AerogpuCmdOpcode::SetInputLayout as u32,
-
-    // Pipeline state
-    SetBlendState = AerogpuCmdOpcode::SetBlendState as u32,
-    SetDepthStencilState = AerogpuCmdOpcode::SetDepthStencilState as u32,
-    SetRasterizerState = AerogpuCmdOpcode::SetRasterizerState as u32,
-
-    // Render targets + dynamic state
-    SetRenderTargets = AerogpuCmdOpcode::SetRenderTargets as u32,
-    SetViewport = AerogpuCmdOpcode::SetViewport as u32,
-    SetScissor = AerogpuCmdOpcode::SetScissor as u32,
-
-    // Input assembler
-    SetVertexBuffers = AerogpuCmdOpcode::SetVertexBuffers as u32,
-    SetIndexBuffer = AerogpuCmdOpcode::SetIndexBuffer as u32,
-    SetPrimitiveTopology = AerogpuCmdOpcode::SetPrimitiveTopology as u32,
-
-    // Resource binding / state
-    SetTexture = AerogpuCmdOpcode::SetTexture as u32,
-    SetSamplerState = AerogpuCmdOpcode::SetSamplerState as u32,
-    SetRenderState = AerogpuCmdOpcode::SetRenderState as u32,
-
-    // Drawing
-    Clear = AerogpuCmdOpcode::Clear as u32,
-    Draw = AerogpuCmdOpcode::Draw as u32,
-    DrawIndexed = AerogpuCmdOpcode::DrawIndexed as u32,
-
-    // Presentation
-    Present = AerogpuCmdOpcode::Present as u32,
-    PresentEx = AerogpuCmdOpcode::PresentEx as u32,
-
-    // D3D9Ex/DWM shared surface interop.
-    ExportSharedSurface = AerogpuCmdOpcode::ExportSharedSurface as u32,
-    ImportSharedSurface = AerogpuCmdOpcode::ImportSharedSurface as u32,
-
-    // Explicit flush.
-    Flush = AerogpuCmdOpcode::Flush as u32,
-}
-
-impl AeroGpuOpcode {
-    fn from_u32(v: u32) -> Option<Self> {
-        Some(match v {
-            x if x == Self::Nop as u32 => Self::Nop,
-            x if x == Self::DebugMarker as u32 => Self::DebugMarker,
-
-            x if x == Self::CreateBuffer as u32 => Self::CreateBuffer,
-            x if x == Self::CreateTexture2d as u32 => Self::CreateTexture2d,
-            x if x == Self::DestroyResource as u32 => Self::DestroyResource,
-            x if x == Self::ResourceDirtyRange as u32 => Self::ResourceDirtyRange,
-            x if x == Self::UploadResource as u32 => Self::UploadResource,
-
-            x if x == Self::CreateShaderDxbc as u32 => Self::CreateShaderDxbc,
-            x if x == Self::DestroyShader as u32 => Self::DestroyShader,
-            x if x == Self::BindShaders as u32 => Self::BindShaders,
-            x if x == Self::SetShaderConstantsF as u32 => Self::SetShaderConstantsF,
-
-            x if x == Self::CreateInputLayout as u32 => Self::CreateInputLayout,
-            x if x == Self::DestroyInputLayout as u32 => Self::DestroyInputLayout,
-            x if x == Self::SetInputLayout as u32 => Self::SetInputLayout,
-
-            x if x == Self::SetBlendState as u32 => Self::SetBlendState,
-            x if x == Self::SetDepthStencilState as u32 => Self::SetDepthStencilState,
-            x if x == Self::SetRasterizerState as u32 => Self::SetRasterizerState,
-
-            x if x == Self::SetRenderTargets as u32 => Self::SetRenderTargets,
-            x if x == Self::SetViewport as u32 => Self::SetViewport,
-            x if x == Self::SetScissor as u32 => Self::SetScissor,
-
-            x if x == Self::SetVertexBuffers as u32 => Self::SetVertexBuffers,
-            x if x == Self::SetIndexBuffer as u32 => Self::SetIndexBuffer,
-            x if x == Self::SetPrimitiveTopology as u32 => Self::SetPrimitiveTopology,
-
-            x if x == Self::SetTexture as u32 => Self::SetTexture,
-            x if x == Self::SetSamplerState as u32 => Self::SetSamplerState,
-            x if x == Self::SetRenderState as u32 => Self::SetRenderState,
-
-            x if x == Self::Clear as u32 => Self::Clear,
-            x if x == Self::Draw as u32 => Self::Draw,
-            x if x == Self::DrawIndexed as u32 => Self::DrawIndexed,
-
-            x if x == Self::Present as u32 => Self::Present,
-            x if x == Self::PresentEx as u32 => Self::PresentEx,
-
-            x if x == Self::ExportSharedSurface as u32 => Self::ExportSharedSurface,
-            x if x == Self::ImportSharedSurface as u32 => Self::ImportSharedSurface,
-
-            x if x == Self::Flush as u32 => Self::Flush,
-            _ => return None,
-        })
-    }
-}
+use protocol::{decode_cmd_hdr_le, decode_cmd_stream_header_le, AerogpuCmdDecodeError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AeroGpuBlendState {
@@ -204,7 +66,7 @@ pub struct AeroGpuInputLayoutBlobHeader {
 
 impl AeroGpuInputLayoutBlobHeader {
     pub fn parse(bytes: &[u8]) -> Option<Self> {
-        if bytes.len() < 16 {
+        if bytes.len() < protocol::AerogpuInputLayoutBlobHeader::SIZE_BYTES {
             return None;
         }
         Some(Self {
@@ -229,7 +91,7 @@ pub struct AeroGpuInputLayoutElementDxgi {
 
 impl AeroGpuInputLayoutElementDxgi {
     pub fn parse(bytes: &[u8]) -> Option<Self> {
-        if bytes.len() < 28 {
+        if bytes.len() < protocol::AerogpuInputLayoutElementDxgi::SIZE_BYTES {
             return None;
         }
         Some(Self {
@@ -473,441 +335,321 @@ impl fmt::Display for AeroGpuCmdStreamParseError {
 
 impl std::error::Error for AeroGpuCmdStreamParseError {}
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct AeroGpuCmdStreamView<'a> {
     pub header: AeroGpuCmdStreamHeader,
     pub cmds: Vec<AeroGpuCmd<'a>>,
 }
 
-fn read_i32_le(bytes: &[u8]) -> i32 {
-    i32::from_le_bytes(bytes.try_into().unwrap())
+impl<'a> fmt::Debug for AeroGpuCmdStreamView<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let header = (
+            self.header.magic,
+            self.header.abi_version,
+            self.header.size_bytes,
+            self.header.flags,
+            self.header.reserved0,
+            self.header.reserved1,
+        );
+
+        f.debug_struct("AeroGpuCmdStreamView")
+            .field("header", &header)
+            .field("cmds", &self.cmds)
+            .finish()
+    }
 }
+
+impl<'a> PartialEq for AeroGpuCmdStreamView<'a> {
+    fn eq(&self, other: &Self) -> bool {
+        self.header.magic == other.header.magic
+            && self.header.abi_version == other.header.abi_version
+            && self.header.size_bytes == other.header.size_bytes
+            && self.header.flags == other.header.flags
+            && self.header.reserved0 == other.header.reserved0
+            && self.header.reserved1 == other.header.reserved1
+            && self.cmds == other.cmds
+    }
+}
+
+impl<'a> Eq for AeroGpuCmdStreamView<'a> {}
 
 fn read_u32_le(bytes: &[u8]) -> u32 {
     u32::from_le_bytes(bytes.try_into().unwrap())
 }
 
-fn read_u64_le(bytes: &[u8]) -> u64 {
-    u64::from_le_bytes(bytes.try_into().unwrap())
+fn map_cmd_stream_header_error(bytes: &[u8], err: AerogpuCmdDecodeError) -> AeroGpuCmdStreamParseError {
+    match err {
+        AerogpuCmdDecodeError::BufferTooSmall => AeroGpuCmdStreamParseError::BufferTooSmall,
+        AerogpuCmdDecodeError::BadMagic { found } => AeroGpuCmdStreamParseError::InvalidMagic(found),
+        AerogpuCmdDecodeError::Abi(err) => match err {
+            AerogpuAbiError::UnsupportedMajor { found } => {
+                AeroGpuCmdStreamParseError::UnsupportedAbiMajor { found }
+            }
+        },
+        AerogpuCmdDecodeError::BadSizeBytes { found } => AeroGpuCmdStreamParseError::InvalidSizeBytes {
+            size_bytes: found,
+            buffer_len: bytes.len(),
+        },
+        _ => AeroGpuCmdStreamParseError::BufferTooSmall,
+    }
 }
 
-fn checked_subslice<'a>(
-    bytes: &'a [u8],
-    offset: usize,
-    len: usize,
-) -> Result<&'a [u8], AeroGpuCmdStreamParseError> {
-    let end = offset
-        .checked_add(len)
-        .ok_or(AeroGpuCmdStreamParseError::BufferTooSmall)?;
-    bytes
-        .get(offset..end)
-        .ok_or(AeroGpuCmdStreamParseError::BufferTooSmall)
+fn map_cmd_hdr_error(err: AerogpuCmdDecodeError) -> AeroGpuCmdStreamParseError {
+    match err {
+        AerogpuCmdDecodeError::BufferTooSmall => AeroGpuCmdStreamParseError::BufferTooSmall,
+        AerogpuCmdDecodeError::BadSizeBytes { found } => AeroGpuCmdStreamParseError::InvalidCmdSizeBytes(found),
+        AerogpuCmdDecodeError::SizeNotAligned { found } => AeroGpuCmdStreamParseError::MisalignedCmdSizeBytes(found),
+        _ => AeroGpuCmdStreamParseError::BufferTooSmall,
+    }
 }
 
-fn get_u8(bytes: &[u8], offset: usize) -> Result<u8, AeroGpuCmdStreamParseError> {
-    bytes
-        .get(offset)
-        .copied()
-        .ok_or(AeroGpuCmdStreamParseError::BufferTooSmall)
+fn map_payload_decode_error(_err: AerogpuCmdDecodeError) -> AeroGpuCmdStreamParseError {
+    AeroGpuCmdStreamParseError::BufferTooSmall
 }
 
-fn get_u32(bytes: &[u8], offset: usize) -> Result<u32, AeroGpuCmdStreamParseError> {
-    Ok(read_u32_le(checked_subslice(bytes, offset, 4)?))
-}
+fn read_packed_prefix<T: Copy>(bytes: &[u8]) -> Result<T, AeroGpuCmdStreamParseError> {
+    if bytes.len() < size_of::<T>() {
+        return Err(AeroGpuCmdStreamParseError::BufferTooSmall);
+    }
 
-fn get_i32(bytes: &[u8], offset: usize) -> Result<i32, AeroGpuCmdStreamParseError> {
-    Ok(read_i32_le(checked_subslice(bytes, offset, 4)?))
-}
-
-fn get_u64(bytes: &[u8], offset: usize) -> Result<u64, AeroGpuCmdStreamParseError> {
-    Ok(read_u64_le(checked_subslice(bytes, offset, 8)?))
+    // SAFETY: Bounds checked above and `read_unaligned` avoids alignment requirements.
+    Ok(unsafe { core::ptr::read_unaligned(bytes.as_ptr() as *const T) })
 }
 
 pub fn parse_cmd_stream(
     bytes: &[u8],
 ) -> Result<AeroGpuCmdStreamView<'_>, AeroGpuCmdStreamParseError> {
-    if bytes.len() < STREAM_HEADER_SIZE {
-        return Err(AeroGpuCmdStreamParseError::BufferTooSmall);
-    }
+    let header = decode_cmd_stream_header_le(bytes)
+        .map_err(|err| map_cmd_stream_header_error(bytes, err))?;
 
-    let magic = read_u32_le(&bytes[0..4]);
-    if magic != AEROGPU_CMD_STREAM_MAGIC {
-        return Err(AeroGpuCmdStreamParseError::InvalidMagic(magic));
-    }
-    let abi_version = read_u32_le(&bytes[4..8]);
-    let size_bytes = read_u32_le(&bytes[8..12]);
-    let flags = read_u32_le(&bytes[12..16]);
-    let reserved0 = read_u32_le(&bytes[16..20]);
-    let reserved1 = read_u32_le(&bytes[20..24]);
-
-    let header = AeroGpuCmdStreamHeader {
-        magic,
-        abi_version,
-        size_bytes,
-        flags,
-        reserved0,
-        reserved1,
-    };
-
-    match parse_and_validate_abi_version_u32(header.abi_version) {
-        Ok(_) => {}
-        Err(AerogpuAbiError::UnsupportedMajor { found }) => {
-            return Err(AeroGpuCmdStreamParseError::UnsupportedAbiMajor { found });
-        }
-    }
-
-    let size_bytes_usize = size_bytes as usize;
-    if size_bytes_usize < STREAM_HEADER_SIZE || size_bytes_usize > bytes.len() {
+    let size_bytes_usize = header.size_bytes as usize;
+    if size_bytes_usize < AeroGpuCmdStreamHeader::SIZE_BYTES || size_bytes_usize > bytes.len() {
         return Err(AeroGpuCmdStreamParseError::InvalidSizeBytes {
-            size_bytes,
+            size_bytes: header.size_bytes,
             buffer_len: bytes.len(),
         });
     }
 
     let mut cmds = Vec::new();
-    let mut offset = STREAM_HEADER_SIZE;
+    let mut offset = AeroGpuCmdStreamHeader::SIZE_BYTES;
     while offset < size_bytes_usize {
-        if offset + CMD_HDR_SIZE > size_bytes_usize {
-            return Err(AeroGpuCmdStreamParseError::BufferTooSmall);
-        }
-        let opcode = read_u32_le(&bytes[offset..offset + 4]);
-        let cmd_size_bytes = read_u32_le(&bytes[offset + 4..offset + 8]);
-        if cmd_size_bytes < CMD_HDR_SIZE as u32 {
-            return Err(AeroGpuCmdStreamParseError::InvalidCmdSizeBytes(
-                cmd_size_bytes,
-            ));
-        }
-        if cmd_size_bytes % 4 != 0 {
-            return Err(AeroGpuCmdStreamParseError::MisalignedCmdSizeBytes(
-                cmd_size_bytes,
-            ));
-        }
-        let cmd_size_usize = cmd_size_bytes as usize;
-        let end = offset.checked_add(cmd_size_usize).ok_or(
-            AeroGpuCmdStreamParseError::InvalidCmdSizeBytes(cmd_size_bytes),
-        )?;
+        let cmd_hdr = decode_cmd_hdr_le(&bytes[offset..size_bytes_usize]).map_err(map_cmd_hdr_error)?;
+        let cmd_size_usize = cmd_hdr.size_bytes as usize;
+        let end = offset
+            .checked_add(cmd_size_usize)
+            .ok_or(AeroGpuCmdStreamParseError::InvalidCmdSizeBytes(cmd_hdr.size_bytes))?;
         if end > size_bytes_usize {
             return Err(AeroGpuCmdStreamParseError::BufferTooSmall);
         }
 
-        let payload = &bytes[offset + CMD_HDR_SIZE..end];
-        let cmd = match AeroGpuOpcode::from_u32(opcode) {
+        let packet = &bytes[offset..end];
+        let payload = &bytes[offset + AeroGpuCmdHdr::SIZE_BYTES..end];
+
+        let cmd = match AeroGpuOpcode::from_u32(cmd_hdr.opcode) {
             Some(AeroGpuOpcode::Nop) => AeroGpuCmd::Nop,
             Some(AeroGpuOpcode::DebugMarker) => AeroGpuCmd::DebugMarker { bytes: payload },
+
             Some(AeroGpuOpcode::CreateBuffer) => {
-                // struct aerogpu_cmd_create_buffer (40 bytes total, 32 after hdr)
-                if payload.len() < 32 {
-                    return Err(AeroGpuCmdStreamParseError::BufferTooSmall);
-                }
-                let buffer_handle = get_u32(payload, 0)?;
-                let usage_flags = get_u32(payload, 4)?;
-                let size_bytes = get_u64(payload, 8)?;
-                let backing_alloc_id = get_u32(payload, 16)?;
-                let backing_offset_bytes = get_u32(payload, 20)?;
+                let cmd: protocol::AerogpuCmdCreateBuffer = read_packed_prefix(packet)?;
                 AeroGpuCmd::CreateBuffer {
-                    buffer_handle,
-                    usage_flags,
-                    size_bytes,
-                    backing_alloc_id,
-                    backing_offset_bytes,
+                    buffer_handle: u32::from_le(cmd.buffer_handle),
+                    usage_flags: u32::from_le(cmd.usage_flags),
+                    size_bytes: u64::from_le(cmd.size_bytes),
+                    backing_alloc_id: u32::from_le(cmd.backing_alloc_id),
+                    backing_offset_bytes: u32::from_le(cmd.backing_offset_bytes),
                 }
             }
             Some(AeroGpuOpcode::CreateTexture2d) => {
-                // struct aerogpu_cmd_create_texture2d (56 bytes total, 48 after hdr)
-                if payload.len() < 48 {
-                    return Err(AeroGpuCmdStreamParseError::BufferTooSmall);
-                }
-                let texture_handle = get_u32(payload, 0)?;
-                let usage_flags = get_u32(payload, 4)?;
-                let format = get_u32(payload, 8)?;
-                let width = get_u32(payload, 12)?;
-                let height = get_u32(payload, 16)?;
-                let mip_levels = get_u32(payload, 20)?;
-                let array_layers = get_u32(payload, 24)?;
-                let row_pitch_bytes = get_u32(payload, 28)?;
-                let backing_alloc_id = get_u32(payload, 32)?;
-                let backing_offset_bytes = get_u32(payload, 36)?;
+                let cmd: protocol::AerogpuCmdCreateTexture2d = read_packed_prefix(packet)?;
                 AeroGpuCmd::CreateTexture2d {
-                    texture_handle,
-                    usage_flags,
-                    format,
-                    width,
-                    height,
-                    mip_levels,
-                    array_layers,
-                    row_pitch_bytes,
-                    backing_alloc_id,
-                    backing_offset_bytes,
+                    texture_handle: u32::from_le(cmd.texture_handle),
+                    usage_flags: u32::from_le(cmd.usage_flags),
+                    format: u32::from_le(cmd.format),
+                    width: u32::from_le(cmd.width),
+                    height: u32::from_le(cmd.height),
+                    mip_levels: u32::from_le(cmd.mip_levels),
+                    array_layers: u32::from_le(cmd.array_layers),
+                    row_pitch_bytes: u32::from_le(cmd.row_pitch_bytes),
+                    backing_alloc_id: u32::from_le(cmd.backing_alloc_id),
+                    backing_offset_bytes: u32::from_le(cmd.backing_offset_bytes),
                 }
             }
             Some(AeroGpuOpcode::DestroyResource) => {
-                if payload.len() < 8 {
-                    return Err(AeroGpuCmdStreamParseError::BufferTooSmall);
+                let cmd: protocol::AerogpuCmdDestroyResource = read_packed_prefix(packet)?;
+                AeroGpuCmd::DestroyResource {
+                    resource_handle: u32::from_le(cmd.resource_handle),
                 }
-                let resource_handle = get_u32(payload, 0)?;
-                AeroGpuCmd::DestroyResource { resource_handle }
             }
             Some(AeroGpuOpcode::ResourceDirtyRange) => {
-                if payload.len() < 24 {
-                    return Err(AeroGpuCmdStreamParseError::BufferTooSmall);
-                }
-                let resource_handle = get_u32(payload, 0)?;
-                let offset_bytes = get_u64(payload, 8)?;
-                let size_bytes = get_u64(payload, 16)?;
+                let cmd: protocol::AerogpuCmdResourceDirtyRange = read_packed_prefix(packet)?;
                 AeroGpuCmd::ResourceDirtyRange {
-                    resource_handle,
-                    offset_bytes,
-                    size_bytes,
+                    resource_handle: u32::from_le(cmd.resource_handle),
+                    offset_bytes: u64::from_le(cmd.offset_bytes),
+                    size_bytes: u64::from_le(cmd.size_bytes),
                 }
             }
             Some(AeroGpuOpcode::UploadResource) => {
-                if payload.len() < 24 {
-                    return Err(AeroGpuCmdStreamParseError::BufferTooSmall);
-                }
-                let resource_handle = get_u32(payload, 0)?;
-                let offset_bytes = get_u64(payload, 8)?;
-                let size_bytes = get_u64(payload, 16)?;
-                let data_len = usize::try_from(size_bytes)
-                    .map_err(|_| AeroGpuCmdStreamParseError::BufferTooSmall)?;
-                let data_end = 24usize
-                    .checked_add(data_len)
-                    .ok_or(AeroGpuCmdStreamParseError::BufferTooSmall)?;
-                if payload.len() < data_end {
-                    return Err(AeroGpuCmdStreamParseError::BufferTooSmall);
-                }
-                let data = &payload[24..data_end];
+                let (cmd, data) = protocol::decode_cmd_upload_resource_payload_le(packet)
+                    .map_err(map_payload_decode_error)?;
                 AeroGpuCmd::UploadResource {
-                    resource_handle,
-                    offset_bytes,
-                    size_bytes,
+                    resource_handle: cmd.resource_handle,
+                    offset_bytes: cmd.offset_bytes,
+                    size_bytes: cmd.size_bytes,
                     data,
                 }
             }
+
             Some(AeroGpuOpcode::CreateShaderDxbc) => {
-                if payload.len() < 16 {
-                    return Err(AeroGpuCmdStreamParseError::BufferTooSmall);
-                }
-                let shader_handle = get_u32(payload, 0)?;
-                let stage = get_u32(payload, 4)?;
-                let dxbc_size_bytes = get_u32(payload, 8)?;
-                let dxbc_len = dxbc_size_bytes as usize;
-                let dxbc_end = 16usize
-                    .checked_add(dxbc_len)
-                    .ok_or(AeroGpuCmdStreamParseError::BufferTooSmall)?;
-                if payload.len() < dxbc_end {
-                    return Err(AeroGpuCmdStreamParseError::BufferTooSmall);
-                }
-                let dxbc_bytes = &payload[16..dxbc_end];
+                let (cmd, dxbc_bytes) = protocol::decode_cmd_create_shader_dxbc_payload_le(packet)
+                    .map_err(map_payload_decode_error)?;
                 AeroGpuCmd::CreateShaderDxbc {
-                    shader_handle,
-                    stage,
-                    dxbc_size_bytes,
+                    shader_handle: cmd.shader_handle,
+                    stage: cmd.stage,
+                    dxbc_size_bytes: cmd.dxbc_size_bytes,
                     dxbc_bytes,
                 }
             }
             Some(AeroGpuOpcode::DestroyShader) => {
-                if payload.len() < 8 {
-                    return Err(AeroGpuCmdStreamParseError::BufferTooSmall);
+                let cmd: protocol::AerogpuCmdDestroyShader = read_packed_prefix(packet)?;
+                AeroGpuCmd::DestroyShader {
+                    shader_handle: u32::from_le(cmd.shader_handle),
                 }
-                let shader_handle = get_u32(payload, 0)?;
-                AeroGpuCmd::DestroyShader { shader_handle }
             }
             Some(AeroGpuOpcode::BindShaders) => {
-                if payload.len() < 16 {
-                    return Err(AeroGpuCmdStreamParseError::BufferTooSmall);
+                let cmd: protocol::AerogpuCmdBindShaders = read_packed_prefix(packet)?;
+                AeroGpuCmd::BindShaders {
+                    vs: u32::from_le(cmd.vs),
+                    ps: u32::from_le(cmd.ps),
+                    cs: u32::from_le(cmd.cs),
                 }
-                let vs = get_u32(payload, 0)?;
-                let ps = get_u32(payload, 4)?;
-                let cs = get_u32(payload, 8)?;
-                AeroGpuCmd::BindShaders { vs, ps, cs }
             }
             Some(AeroGpuOpcode::SetShaderConstantsF) => {
-                if payload.len() < 16 {
-                    return Err(AeroGpuCmdStreamParseError::BufferTooSmall);
-                }
-                let stage = get_u32(payload, 0)?;
-                let start_register = get_u32(payload, 4)?;
-                let vec4_count = get_u32(payload, 8)?;
+                let cmd: protocol::AerogpuCmdSetShaderConstantsF = read_packed_prefix(packet)?;
+                let vec4_count = u32::from_le(cmd.vec4_count);
                 let data_len = (vec4_count as usize)
                     .checked_mul(16)
                     .ok_or(AeroGpuCmdStreamParseError::BufferTooSmall)?;
-                let data_end = 16usize
+                let data_start = protocol::AerogpuCmdSetShaderConstantsF::SIZE_BYTES;
+                let data_end = data_start
                     .checked_add(data_len)
                     .ok_or(AeroGpuCmdStreamParseError::BufferTooSmall)?;
-                if payload.len() < data_end {
-                    return Err(AeroGpuCmdStreamParseError::BufferTooSmall);
-                }
-                let data = &payload[16..data_end];
+                let data = packet
+                    .get(data_start..data_end)
+                    .ok_or(AeroGpuCmdStreamParseError::BufferTooSmall)?;
                 AeroGpuCmd::SetShaderConstantsF {
-                    stage,
-                    start_register,
+                    stage: u32::from_le(cmd.stage),
+                    start_register: u32::from_le(cmd.start_register),
                     vec4_count,
                     data,
                 }
             }
+
             Some(AeroGpuOpcode::CreateInputLayout) => {
-                if payload.len() < 12 {
-                    return Err(AeroGpuCmdStreamParseError::BufferTooSmall);
-                }
-                let input_layout_handle = get_u32(payload, 0)?;
-                let blob_size_bytes = get_u32(payload, 4)?;
-                let blob_len = blob_size_bytes as usize;
-                let blob_end = 12usize
-                    .checked_add(blob_len)
-                    .ok_or(AeroGpuCmdStreamParseError::BufferTooSmall)?;
-                if payload.len() < blob_end {
-                    return Err(AeroGpuCmdStreamParseError::BufferTooSmall);
-                }
-                let blob_bytes = &payload[12..blob_end];
+                let (cmd, blob_bytes) = protocol::decode_cmd_create_input_layout_blob_le(packet)
+                    .map_err(map_payload_decode_error)?;
                 AeroGpuCmd::CreateInputLayout {
-                    input_layout_handle,
-                    blob_size_bytes,
+                    input_layout_handle: cmd.input_layout_handle,
+                    blob_size_bytes: cmd.blob_size_bytes,
                     blob_bytes,
                 }
             }
             Some(AeroGpuOpcode::DestroyInputLayout) => {
-                if payload.len() < 8 {
-                    return Err(AeroGpuCmdStreamParseError::BufferTooSmall);
-                }
-                let input_layout_handle = get_u32(payload, 0)?;
+                let cmd: protocol::AerogpuCmdDestroyInputLayout = read_packed_prefix(packet)?;
                 AeroGpuCmd::DestroyInputLayout {
-                    input_layout_handle,
+                    input_layout_handle: u32::from_le(cmd.input_layout_handle),
                 }
             }
             Some(AeroGpuOpcode::SetInputLayout) => {
-                if payload.len() < 8 {
-                    return Err(AeroGpuCmdStreamParseError::BufferTooSmall);
-                }
-                let input_layout_handle = get_u32(payload, 0)?;
+                let cmd: protocol::AerogpuCmdSetInputLayout = read_packed_prefix(packet)?;
                 AeroGpuCmd::SetInputLayout {
-                    input_layout_handle,
+                    input_layout_handle: u32::from_le(cmd.input_layout_handle),
                 }
             }
+
             Some(AeroGpuOpcode::SetBlendState) => {
-                if payload.len() < 20 {
-                    return Err(AeroGpuCmdStreamParseError::BufferTooSmall);
-                }
-                let enable = get_u32(payload, 0)?;
-                let src_factor = get_u32(payload, 4)?;
-                let dst_factor = get_u32(payload, 8)?;
-                let blend_op = get_u32(payload, 12)?;
-                let color_write_mask = get_u8(payload, 16)?;
+                let cmd: protocol::AerogpuCmdSetBlendState = read_packed_prefix(packet)?;
+                let state = cmd.state;
                 AeroGpuCmd::SetBlendState {
                     state: AeroGpuBlendState {
-                        enable,
-                        src_factor,
-                        dst_factor,
-                        blend_op,
-                        color_write_mask,
+                        enable: u32::from_le(state.enable),
+                        src_factor: u32::from_le(state.src_factor),
+                        dst_factor: u32::from_le(state.dst_factor),
+                        blend_op: u32::from_le(state.blend_op),
+                        color_write_mask: state.color_write_mask,
                     },
                 }
             }
             Some(AeroGpuOpcode::SetDepthStencilState) => {
-                if payload.len() < 20 {
-                    return Err(AeroGpuCmdStreamParseError::BufferTooSmall);
-                }
-                let depth_enable = get_u32(payload, 0)?;
-                let depth_write_enable = get_u32(payload, 4)?;
-                let depth_func = get_u32(payload, 8)?;
-                let stencil_enable = get_u32(payload, 12)?;
-                let stencil_read_mask = get_u8(payload, 16)?;
-                let stencil_write_mask = get_u8(payload, 17)?;
+                let cmd: protocol::AerogpuCmdSetDepthStencilState = read_packed_prefix(packet)?;
+                let state = cmd.state;
                 AeroGpuCmd::SetDepthStencilState {
                     state: AeroGpuDepthStencilState {
-                        depth_enable,
-                        depth_write_enable,
-                        depth_func,
-                        stencil_enable,
-                        stencil_read_mask,
-                        stencil_write_mask,
+                        depth_enable: u32::from_le(state.depth_enable),
+                        depth_write_enable: u32::from_le(state.depth_write_enable),
+                        depth_func: u32::from_le(state.depth_func),
+                        stencil_enable: u32::from_le(state.stencil_enable),
+                        stencil_read_mask: state.stencil_read_mask,
+                        stencil_write_mask: state.stencil_write_mask,
                     },
                 }
             }
             Some(AeroGpuOpcode::SetRasterizerState) => {
-                if payload.len() < 24 {
-                    return Err(AeroGpuCmdStreamParseError::BufferTooSmall);
-                }
-                let fill_mode = get_u32(payload, 0)?;
-                let cull_mode = get_u32(payload, 4)?;
-                let front_ccw = get_u32(payload, 8)?;
-                let scissor_enable = get_u32(payload, 12)?;
-                let depth_bias = get_i32(payload, 16)?;
+                let cmd: protocol::AerogpuCmdSetRasterizerState = read_packed_prefix(packet)?;
+                let state = cmd.state;
                 AeroGpuCmd::SetRasterizerState {
                     state: AeroGpuRasterizerState {
-                        fill_mode,
-                        cull_mode,
-                        front_ccw,
-                        scissor_enable,
-                        depth_bias,
+                        fill_mode: u32::from_le(state.fill_mode),
+                        cull_mode: u32::from_le(state.cull_mode),
+                        front_ccw: u32::from_le(state.front_ccw),
+                        scissor_enable: u32::from_le(state.scissor_enable),
+                        depth_bias: i32::from_le(state.depth_bias),
                     },
                 }
             }
+
             Some(AeroGpuOpcode::SetRenderTargets) => {
-                if payload.len() < 40 {
-                    return Err(AeroGpuCmdStreamParseError::BufferTooSmall);
-                }
-                let color_count = get_u32(payload, 0)?;
-                let depth_stencil = get_u32(payload, 4)?;
-                let mut colors = [0u32; AEROGPU_MAX_RENDER_TARGETS];
-                for (idx, slot) in colors.iter_mut().enumerate() {
-                    *slot = get_u32(payload, 8 + idx * 4)?;
-                }
+                let cmd: protocol::AerogpuCmdSetRenderTargets = read_packed_prefix(packet)?;
                 AeroGpuCmd::SetRenderTargets {
-                    color_count,
-                    depth_stencil,
-                    colors,
+                    color_count: u32::from_le(cmd.color_count),
+                    depth_stencil: u32::from_le(cmd.depth_stencil),
+                    colors: cmd.colors.map(u32::from_le),
                 }
             }
             Some(AeroGpuOpcode::SetViewport) => {
-                if payload.len() < 24 {
-                    return Err(AeroGpuCmdStreamParseError::BufferTooSmall);
-                }
-                let x_f32 = get_u32(payload, 0)?;
-                let y_f32 = get_u32(payload, 4)?;
-                let width_f32 = get_u32(payload, 8)?;
-                let height_f32 = get_u32(payload, 12)?;
-                let min_depth_f32 = get_u32(payload, 16)?;
-                let max_depth_f32 = get_u32(payload, 20)?;
+                let cmd: protocol::AerogpuCmdSetViewport = read_packed_prefix(packet)?;
                 AeroGpuCmd::SetViewport {
-                    x_f32,
-                    y_f32,
-                    width_f32,
-                    height_f32,
-                    min_depth_f32,
-                    max_depth_f32,
+                    x_f32: u32::from_le(cmd.x_f32),
+                    y_f32: u32::from_le(cmd.y_f32),
+                    width_f32: u32::from_le(cmd.width_f32),
+                    height_f32: u32::from_le(cmd.height_f32),
+                    min_depth_f32: u32::from_le(cmd.min_depth_f32),
+                    max_depth_f32: u32::from_le(cmd.max_depth_f32),
                 }
             }
             Some(AeroGpuOpcode::SetScissor) => {
-                if payload.len() < 16 {
-                    return Err(AeroGpuCmdStreamParseError::BufferTooSmall);
-                }
-                let x = get_i32(payload, 0)?;
-                let y = get_i32(payload, 4)?;
-                let width = get_i32(payload, 8)?;
-                let height = get_i32(payload, 12)?;
+                let cmd: protocol::AerogpuCmdSetScissor = read_packed_prefix(packet)?;
                 AeroGpuCmd::SetScissor {
-                    x,
-                    y,
-                    width,
-                    height,
+                    x: i32::from_le(cmd.x),
+                    y: i32::from_le(cmd.y),
+                    width: i32::from_le(cmd.width),
+                    height: i32::from_le(cmd.height),
                 }
             }
+
             Some(AeroGpuOpcode::SetVertexBuffers) => {
-                if payload.len() < 8 {
-                    return Err(AeroGpuCmdStreamParseError::BufferTooSmall);
-                }
-                let start_slot = get_u32(payload, 0)?;
-                let buffer_count = get_u32(payload, 4)?;
+                let cmd: protocol::AerogpuCmdSetVertexBuffers = read_packed_prefix(packet)?;
+                let start_slot = u32::from_le(cmd.start_slot);
+                let buffer_count = u32::from_le(cmd.buffer_count);
                 let bindings_len = (buffer_count as usize)
-                    .checked_mul(VERTEX_BUFFER_BINDING_SIZE)
+                    .checked_mul(protocol::AerogpuVertexBufferBinding::SIZE_BYTES)
                     .ok_or(AeroGpuCmdStreamParseError::BufferTooSmall)?;
-                let bindings_end = 8usize
+                let bindings_start = size_of::<protocol::AerogpuCmdSetVertexBuffers>();
+                let bindings_end = bindings_start
                     .checked_add(bindings_len)
                     .ok_or(AeroGpuCmdStreamParseError::BufferTooSmall)?;
-                if payload.len() < bindings_end {
-                    return Err(AeroGpuCmdStreamParseError::BufferTooSmall);
-                }
-                let bindings_bytes = &payload[8..bindings_end];
+                let bindings_bytes = packet
+                    .get(bindings_start..bindings_end)
+                    .ok_or(AeroGpuCmdStreamParseError::BufferTooSmall)?;
                 AeroGpuCmd::SetVertexBuffers {
                     start_slot,
                     buffer_count,
@@ -915,161 +657,113 @@ pub fn parse_cmd_stream(
                 }
             }
             Some(AeroGpuOpcode::SetIndexBuffer) => {
-                if payload.len() < 16 {
-                    return Err(AeroGpuCmdStreamParseError::BufferTooSmall);
-                }
-                let buffer = get_u32(payload, 0)?;
-                let format = get_u32(payload, 4)?;
-                let offset_bytes = get_u32(payload, 8)?;
+                let cmd: protocol::AerogpuCmdSetIndexBuffer = read_packed_prefix(packet)?;
                 AeroGpuCmd::SetIndexBuffer {
-                    buffer,
-                    format,
-                    offset_bytes,
+                    buffer: u32::from_le(cmd.buffer),
+                    format: u32::from_le(cmd.format),
+                    offset_bytes: u32::from_le(cmd.offset_bytes),
                 }
             }
             Some(AeroGpuOpcode::SetPrimitiveTopology) => {
-                if payload.len() < 8 {
-                    return Err(AeroGpuCmdStreamParseError::BufferTooSmall);
+                let cmd: protocol::AerogpuCmdSetPrimitiveTopology = read_packed_prefix(packet)?;
+                AeroGpuCmd::SetPrimitiveTopology {
+                    topology: u32::from_le(cmd.topology),
                 }
-                let topology = get_u32(payload, 0)?;
-                AeroGpuCmd::SetPrimitiveTopology { topology }
             }
             Some(AeroGpuOpcode::SetTexture) => {
-                if payload.len() < 16 {
-                    return Err(AeroGpuCmdStreamParseError::BufferTooSmall);
-                }
-                let shader_stage = get_u32(payload, 0)?;
-                let slot = get_u32(payload, 4)?;
-                let texture = get_u32(payload, 8)?;
+                let cmd: protocol::AerogpuCmdSetTexture = read_packed_prefix(packet)?;
                 AeroGpuCmd::SetTexture {
-                    shader_stage,
-                    slot,
-                    texture,
+                    shader_stage: u32::from_le(cmd.shader_stage),
+                    slot: u32::from_le(cmd.slot),
+                    texture: u32::from_le(cmd.texture),
                 }
             }
             Some(AeroGpuOpcode::SetSamplerState) => {
-                if payload.len() < 16 {
-                    return Err(AeroGpuCmdStreamParseError::BufferTooSmall);
-                }
-                let shader_stage = get_u32(payload, 0)?;
-                let slot = get_u32(payload, 4)?;
-                let state = get_u32(payload, 8)?;
-                let value = get_u32(payload, 12)?;
+                let cmd: protocol::AerogpuCmdSetSamplerState = read_packed_prefix(packet)?;
                 AeroGpuCmd::SetSamplerState {
-                    shader_stage,
-                    slot,
-                    state,
-                    value,
+                    shader_stage: u32::from_le(cmd.shader_stage),
+                    slot: u32::from_le(cmd.slot),
+                    state: u32::from_le(cmd.state),
+                    value: u32::from_le(cmd.value),
                 }
             }
             Some(AeroGpuOpcode::SetRenderState) => {
-                if payload.len() < 8 {
-                    return Err(AeroGpuCmdStreamParseError::BufferTooSmall);
+                let cmd: protocol::AerogpuCmdSetRenderState = read_packed_prefix(packet)?;
+                AeroGpuCmd::SetRenderState {
+                    state: u32::from_le(cmd.state),
+                    value: u32::from_le(cmd.value),
                 }
-                let state = get_u32(payload, 0)?;
-                let value = get_u32(payload, 4)?;
-                AeroGpuCmd::SetRenderState { state, value }
             }
+
             Some(AeroGpuOpcode::Clear) => {
-                if payload.len() < 28 {
-                    return Err(AeroGpuCmdStreamParseError::BufferTooSmall);
-                }
-                let flags = get_u32(payload, 0)?;
-                let mut color_rgba_f32 = [0u32; 4];
-                for (idx, slot) in color_rgba_f32.iter_mut().enumerate() {
-                    *slot = get_u32(payload, 4 + idx * 4)?;
-                }
-                let depth_f32 = get_u32(payload, 20)?;
-                let stencil = get_u32(payload, 24)?;
+                let cmd: protocol::AerogpuCmdClear = read_packed_prefix(packet)?;
                 AeroGpuCmd::Clear {
-                    flags,
-                    color_rgba_f32,
-                    depth_f32,
-                    stencil,
+                    flags: u32::from_le(cmd.flags),
+                    color_rgba_f32: cmd.color_rgba_f32.map(u32::from_le),
+                    depth_f32: u32::from_le(cmd.depth_f32),
+                    stencil: u32::from_le(cmd.stencil),
                 }
             }
             Some(AeroGpuOpcode::Draw) => {
-                if payload.len() < 16 {
-                    return Err(AeroGpuCmdStreamParseError::BufferTooSmall);
-                }
-                let vertex_count = get_u32(payload, 0)?;
-                let instance_count = get_u32(payload, 4)?;
-                let first_vertex = get_u32(payload, 8)?;
-                let first_instance = get_u32(payload, 12)?;
+                let cmd: protocol::AerogpuCmdDraw = read_packed_prefix(packet)?;
                 AeroGpuCmd::Draw {
-                    vertex_count,
-                    instance_count,
-                    first_vertex,
-                    first_instance,
+                    vertex_count: u32::from_le(cmd.vertex_count),
+                    instance_count: u32::from_le(cmd.instance_count),
+                    first_vertex: u32::from_le(cmd.first_vertex),
+                    first_instance: u32::from_le(cmd.first_instance),
                 }
             }
             Some(AeroGpuOpcode::DrawIndexed) => {
-                if payload.len() < 20 {
-                    return Err(AeroGpuCmdStreamParseError::BufferTooSmall);
-                }
-                let index_count = get_u32(payload, 0)?;
-                let instance_count = get_u32(payload, 4)?;
-                let first_index = get_u32(payload, 8)?;
-                let base_vertex = get_i32(payload, 12)?;
-                let first_instance = get_u32(payload, 16)?;
+                let cmd: protocol::AerogpuCmdDrawIndexed = read_packed_prefix(packet)?;
                 AeroGpuCmd::DrawIndexed {
-                    index_count,
-                    instance_count,
-                    first_index,
-                    base_vertex,
-                    first_instance,
+                    index_count: u32::from_le(cmd.index_count),
+                    instance_count: u32::from_le(cmd.instance_count),
+                    first_index: u32::from_le(cmd.first_index),
+                    base_vertex: i32::from_le(cmd.base_vertex),
+                    first_instance: u32::from_le(cmd.first_instance),
                 }
             }
+
             Some(AeroGpuOpcode::Present) => {
-                if payload.len() < 8 {
-                    return Err(AeroGpuCmdStreamParseError::BufferTooSmall);
+                let cmd: protocol::AerogpuCmdPresent = read_packed_prefix(packet)?;
+                AeroGpuCmd::Present {
+                    scanout_id: u32::from_le(cmd.scanout_id),
+                    flags: u32::from_le(cmd.flags),
                 }
-                let scanout_id = read_u32_le(&payload[0..4]);
-                let flags = read_u32_le(&payload[4..8]);
-                AeroGpuCmd::Present { scanout_id, flags }
             }
             Some(AeroGpuOpcode::PresentEx) => {
-                if payload.len() < 16 {
-                    return Err(AeroGpuCmdStreamParseError::BufferTooSmall);
-                }
-                let scanout_id = read_u32_le(&payload[0..4]);
-                let flags = read_u32_le(&payload[4..8]);
-                let d3d9_present_flags = read_u32_le(&payload[8..12]);
+                let cmd: protocol::AerogpuCmdPresentEx = read_packed_prefix(packet)?;
                 AeroGpuCmd::PresentEx {
-                    scanout_id,
-                    flags,
-                    d3d9_present_flags,
+                    scanout_id: u32::from_le(cmd.scanout_id),
+                    flags: u32::from_le(cmd.flags),
+                    d3d9_present_flags: u32::from_le(cmd.d3d9_present_flags),
                 }
             }
+
             Some(AeroGpuOpcode::ExportSharedSurface) => {
-                if payload.len() < 16 {
-                    return Err(AeroGpuCmdStreamParseError::BufferTooSmall);
-                }
-                let resource_handle = get_u32(payload, 0)?;
-                let share_token = get_u64(payload, 8)?;
+                let cmd: protocol::AerogpuCmdExportSharedSurface = read_packed_prefix(packet)?;
                 AeroGpuCmd::ExportSharedSurface {
-                    resource_handle,
-                    share_token,
+                    resource_handle: u32::from_le(cmd.resource_handle),
+                    share_token: u64::from_le(cmd.share_token),
                 }
             }
             Some(AeroGpuOpcode::ImportSharedSurface) => {
-                if payload.len() < 16 {
-                    return Err(AeroGpuCmdStreamParseError::BufferTooSmall);
-                }
-                let out_resource_handle = get_u32(payload, 0)?;
-                let share_token = get_u64(payload, 8)?;
+                let cmd: protocol::AerogpuCmdImportSharedSurface = read_packed_prefix(packet)?;
                 AeroGpuCmd::ImportSharedSurface {
-                    out_resource_handle,
-                    share_token,
+                    out_resource_handle: u32::from_le(cmd.out_resource_handle),
+                    share_token: u64::from_le(cmd.share_token),
                 }
             }
+
             Some(AeroGpuOpcode::Flush) => {
-                if payload.len() < 8 {
-                    return Err(AeroGpuCmdStreamParseError::BufferTooSmall);
-                }
+                let _: protocol::AerogpuCmdFlush = read_packed_prefix(packet)?;
                 AeroGpuCmd::Flush
             }
-            None => AeroGpuCmd::Unknown { opcode, payload },
+
+            None => AeroGpuCmd::Unknown {
+                opcode: cmd_hdr.opcode,
+                payload,
+            },
         };
 
         cmds.push(cmd);
