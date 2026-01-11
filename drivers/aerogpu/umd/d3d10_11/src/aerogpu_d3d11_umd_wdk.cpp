@@ -48,6 +48,12 @@ constexpr bool NtSuccess(NTSTATUS st) {
   return st >= 0;
 }
 
+constexpr HRESULT kDxgiErrorWasStillDrawing = static_cast<HRESULT>(0x887A000Au); // DXGI_ERROR_WAS_STILL_DRAWING
+
+#ifndef STATUS_TIMEOUT
+  #define STATUS_TIMEOUT ((NTSTATUS)0x00000102L)
+#endif
+
 static bool GetPrimaryDisplayName(wchar_t out[CCHDEVICENAME]) {
   if (!out) {
     return false;
@@ -88,6 +94,7 @@ struct AeroGpuD3dkmtProcs {
   decltype(&D3DKMTOpenAdapterFromHdc) pfn_open_adapter_from_hdc = nullptr;
   decltype(&D3DKMTCloseAdapter) pfn_close_adapter = nullptr;
   decltype(&D3DKMTQueryAdapterInfo) pfn_query_adapter_info = nullptr;
+  decltype(&D3DKMTWaitForSynchronizationObject) pfn_wait_for_syncobj = nullptr;
 };
 
 static const AeroGpuD3dkmtProcs& GetAeroGpuD3dkmtProcs() {
@@ -106,6 +113,8 @@ static const AeroGpuD3dkmtProcs& GetAeroGpuD3dkmtProcs() {
     p.pfn_close_adapter = reinterpret_cast<decltype(&D3DKMTCloseAdapter)>(GetProcAddress(gdi32, "D3DKMTCloseAdapter"));
     p.pfn_query_adapter_info =
         reinterpret_cast<decltype(&D3DKMTQueryAdapterInfo)>(GetProcAddress(gdi32, "D3DKMTQueryAdapterInfo"));
+    p.pfn_wait_for_syncobj = reinterpret_cast<decltype(&D3DKMTWaitForSynchronizationObject)>(
+        GetProcAddress(gdi32, "D3DKMTWaitForSynchronizationObject"));
     return p;
   }();
   return procs;
@@ -350,8 +359,18 @@ static const void* GetDeviceCallbacks(const D3D11DDIARG_CREATEDEVICE* cd) {
   if constexpr (has_member_pDeviceCallbacks<D3D11DDIARG_CREATEDEVICE>::value) {
     return cd->pDeviceCallbacks;
   }
+  return nullptr;
+}
+
+static const void* GetDdiCallbacks(const D3D11DDIARG_CREATEDEVICE* cd) {
+  if (!cd) {
+    return nullptr;
+  }
   if constexpr (has_member_pUMCallbacks<D3D11DDIARG_CREATEDEVICE>::value) {
     return cd->pUMCallbacks;
+  }
+  if constexpr (has_member_pDeviceCallbacks<D3D11DDIARG_CREATEDEVICE>::value) {
+    return cd->pDeviceCallbacks;
   }
   return nullptr;
 }
@@ -409,6 +428,15 @@ static D3D11DDI_HRTDEVICE MakeRtDeviceHandle(Device* dev) {
   return h;
 }
 
+static D3D10DDI_HRTDEVICE MakeRtDeviceHandle10(Device* dev) {
+  D3D10DDI_HRTDEVICE h{};
+  h.pDrvPrivate = dev ? dev->runtime_device : nullptr;
+  return h;
+}
+
+template <typename Fn, typename HandleA, typename HandleB, typename... Args>
+decltype(auto) CallCbMaybeHandle(Fn fn, HandleA handle_a, HandleB handle_b, Args&&... args);
+
 static void SetError(Device* dev, HRESULT hr) {
   if (!dev) {
     return;
@@ -416,7 +444,618 @@ static void SetError(Device* dev, HRESULT hr) {
   auto* callbacks = reinterpret_cast<const D3D11DDI_DEVICECALLBACKS*>(dev->runtime_callbacks);
   if (callbacks && callbacks->pfnSetErrorCb && dev->runtime_device) {
     callbacks->pfnSetErrorCb(MakeRtDeviceHandle(dev), hr);
+    return;
   }
+
+  // Some header revisions expose `pUMCallbacks` as a bare `D3DDDI_DEVICECALLBACKS`
+  // table. As a fallback, attempt to call SetErrorCb through that path.
+  auto* wddm_cb = reinterpret_cast<const D3DDDI_DEVICECALLBACKS*>(dev->runtime_ddi_callbacks);
+  if (wddm_cb && wddm_cb->pfnSetErrorCb && dev->runtime_device) {
+    CallCbMaybeHandle(wddm_cb->pfnSetErrorCb, MakeRtDeviceHandle(dev), MakeRtDeviceHandle10(dev), hr);
+  }
+}
+
+static void atomic_max_u64(std::atomic<uint64_t>* target, uint64_t value) {
+  if (!target) {
+    return;
+  }
+  uint64_t cur = target->load(std::memory_order_relaxed);
+  while (cur < value && !target->compare_exchange_weak(cur, value, std::memory_order_relaxed)) {
+  }
+}
+
+template <typename Fn, typename HandleA, typename HandleB, typename... Args>
+decltype(auto) CallCbMaybeHandle(Fn fn, HandleA handle_a, HandleB handle_b, Args&&... args) {
+  if constexpr (std::is_invocable_v<Fn, HandleA, Args...>) {
+    return fn(handle_a, std::forward<Args>(args)...);
+  } else if constexpr (std::is_invocable_v<Fn, HandleB, Args...>) {
+    return fn(handle_b, std::forward<Args>(args)...);
+  } else {
+    return fn(std::forward<Args>(args)...);
+  }
+}
+
+template <typename T>
+struct fn_first_param;
+
+template <typename Ret, typename Arg0, typename... Rest>
+struct fn_first_param<Ret(__stdcall*)(Arg0, Rest...)> {
+  using type = Arg0;
+};
+
+template <typename Ret, typename Arg0, typename... Rest>
+struct fn_first_param<Ret(*)(Arg0, Rest...)> {
+  using type = Arg0;
+};
+
+template <typename T, typename = void>
+struct has_pfnCreateDeviceCb : std::false_type {};
+template <typename T>
+struct has_pfnCreateDeviceCb<T, std::void_t<decltype(std::declval<T>().pfnCreateDeviceCb)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_pfnDestroyDeviceCb : std::false_type {};
+template <typename T>
+struct has_pfnDestroyDeviceCb<T, std::void_t<decltype(std::declval<T>().pfnDestroyDeviceCb)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_pfnCreateContextCb2 : std::false_type {};
+template <typename T>
+struct has_pfnCreateContextCb2<T, std::void_t<decltype(std::declval<T>().pfnCreateContextCb2)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_pfnCreateContextCb : std::false_type {};
+template <typename T>
+struct has_pfnCreateContextCb<T, std::void_t<decltype(std::declval<T>().pfnCreateContextCb)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_pfnDestroyContextCb : std::false_type {};
+template <typename T>
+struct has_pfnDestroyContextCb<T, std::void_t<decltype(std::declval<T>().pfnDestroyContextCb)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_pfnDestroySynchronizationObjectCb : std::false_type {};
+template <typename T>
+struct has_pfnDestroySynchronizationObjectCb<T, std::void_t<decltype(std::declval<T>().pfnDestroySynchronizationObjectCb)>>
+    : std::true_type {};
+
+template <typename CallbacksT>
+HRESULT create_device_from_callbacks(const CallbacksT& callbacks, void* hAdapter, D3DKMT_HANDLE* hDeviceOut) {
+  if (!hDeviceOut) {
+    return E_INVALIDARG;
+  }
+  *hDeviceOut = 0;
+
+  if constexpr (!has_pfnCreateDeviceCb<CallbacksT>::value) {
+    (void)callbacks;
+    (void)hAdapter;
+    return E_NOTIMPL;
+  } else {
+    if (!callbacks.pfnCreateDeviceCb) {
+      return E_FAIL;
+    }
+
+    using Fn = decltype(callbacks.pfnCreateDeviceCb);
+    using ArgPtr = typename fn_first_param<Fn>::type;
+    using Arg = std::remove_const_t<std::remove_pointer_t<ArgPtr>>;
+    Arg data{};
+    data.hAdapter = hAdapter;
+
+    HRESULT hr = callbacks.pfnCreateDeviceCb(static_cast<ArgPtr>(&data));
+    if (FAILED(hr)) {
+      return hr;
+    }
+    *hDeviceOut = data.hDevice;
+    return (*hDeviceOut != 0) ? S_OK : E_FAIL;
+  }
+}
+
+template <typename CallbacksT>
+void destroy_device_if_present(const CallbacksT& callbacks, D3DKMT_HANDLE hDevice) {
+  if constexpr (has_pfnDestroyDeviceCb<CallbacksT>::value) {
+    if (!hDevice || !callbacks.pfnDestroyDeviceCb) {
+      return;
+    }
+
+    using Fn = decltype(callbacks.pfnDestroyDeviceCb);
+    using ArgPtr = typename fn_first_param<Fn>::type;
+    using Arg = std::remove_const_t<std::remove_pointer_t<ArgPtr>>;
+    Arg data{};
+    data.hDevice = hDevice;
+    (void)callbacks.pfnDestroyDeviceCb(static_cast<ArgPtr>(&data));
+  } else {
+    (void)callbacks;
+    (void)hDevice;
+  }
+}
+
+template <typename CallbacksT, typename FnT>
+HRESULT create_context_common(const CallbacksT& callbacks,
+                             FnT fn,
+                             D3DKMT_HANDLE hDevice,
+                             D3DKMT_HANDLE* hContextOut,
+                             D3DKMT_HANDLE* hSyncObjectOut) {
+  (void)callbacks;
+  if (!hContextOut || !hSyncObjectOut) {
+    return E_INVALIDARG;
+  }
+  *hContextOut = 0;
+  *hSyncObjectOut = 0;
+
+  using ArgPtr = typename fn_first_param<FnT>::type;
+  using Arg = std::remove_const_t<std::remove_pointer_t<ArgPtr>>;
+  Arg data{};
+  data.hDevice = hDevice;
+  data.NodeOrdinal = 0;
+  data.EngineAffinity = 0;
+  std::memset(&data.Flags, 0, sizeof(data.Flags));
+  data.pPrivateDriverData = nullptr;
+  data.PrivateDriverDataSize = 0;
+
+  HRESULT hr = fn(static_cast<ArgPtr>(&data));
+  if (FAILED(hr)) {
+    return hr;
+  }
+
+  *hContextOut = data.hContext;
+  *hSyncObjectOut = data.hSyncObject;
+  return (*hContextOut != 0 && *hSyncObjectOut != 0) ? S_OK : E_FAIL;
+}
+
+template <typename CallbacksT>
+HRESULT create_context_from_callbacks(const CallbacksT& callbacks,
+                                      D3DKMT_HANDLE hDevice,
+                                      D3DKMT_HANDLE* hContextOut,
+                                      D3DKMT_HANDLE* hSyncObjectOut) {
+  // Prefer CreateContextCb2 when present (WDDM 1.1+), but fall back to the
+  // original entrypoint for older interface versions.
+  if constexpr (has_pfnCreateContextCb2<CallbacksT>::value) {
+    if (callbacks.pfnCreateContextCb2) {
+      return create_context_common(callbacks, callbacks.pfnCreateContextCb2, hDevice, hContextOut, hSyncObjectOut);
+    }
+  }
+
+  if constexpr (has_pfnCreateContextCb<CallbacksT>::value) {
+    if (callbacks.pfnCreateContextCb) {
+      return create_context_common(callbacks, callbacks.pfnCreateContextCb, hDevice, hContextOut, hSyncObjectOut);
+    }
+    return E_FAIL;
+  }
+
+  (void)callbacks;
+  (void)hDevice;
+  return E_NOTIMPL;
+}
+
+template <typename CallbacksT>
+void destroy_sync_object_if_present(const CallbacksT& callbacks, D3DKMT_HANDLE hSyncObject) {
+  if constexpr (has_pfnDestroySynchronizationObjectCb<CallbacksT>::value) {
+    if (!hSyncObject || !callbacks.pfnDestroySynchronizationObjectCb) {
+      return;
+    }
+
+    using Fn = decltype(callbacks.pfnDestroySynchronizationObjectCb);
+    using ArgPtr = typename fn_first_param<Fn>::type;
+    using Arg = std::remove_const_t<std::remove_pointer_t<ArgPtr>>;
+    Arg data{};
+    data.hSyncObject = hSyncObject;
+    (void)callbacks.pfnDestroySynchronizationObjectCb(static_cast<ArgPtr>(&data));
+  }
+}
+
+template <typename CallbacksT>
+void destroy_context_if_present(const CallbacksT& callbacks, D3DKMT_HANDLE hContext) {
+  if constexpr (has_pfnDestroyContextCb<CallbacksT>::value) {
+    if (!hContext || !callbacks.pfnDestroyContextCb) {
+      return;
+    }
+
+    using Fn = decltype(callbacks.pfnDestroyContextCb);
+    using ArgPtr = typename fn_first_param<Fn>::type;
+    using Arg = std::remove_const_t<std::remove_pointer_t<ArgPtr>>;
+    Arg data{};
+    data.hContext = hContext;
+    (void)callbacks.pfnDestroyContextCb(static_cast<ArgPtr>(&data));
+  }
+}
+
+static void DestroyWddmContext(Device* dev) {
+  if (!dev) {
+    return;
+  }
+  auto* cb = reinterpret_cast<const D3DDDI_DEVICECALLBACKS*>(dev->runtime_ddi_callbacks);
+  if (!cb) {
+    dev->kmt_device = 0;
+    dev->kmt_context = 0;
+    dev->kmt_fence_syncobj = 0;
+    return;
+  }
+
+  destroy_sync_object_if_present(*cb, static_cast<D3DKMT_HANDLE>(dev->kmt_fence_syncobj));
+  destroy_context_if_present(*cb, static_cast<D3DKMT_HANDLE>(dev->kmt_context));
+  destroy_device_if_present(*cb, static_cast<D3DKMT_HANDLE>(dev->kmt_device));
+
+  dev->kmt_device = 0;
+  dev->kmt_context = 0;
+  dev->kmt_fence_syncobj = 0;
+}
+
+static HRESULT InitWddmContext(Device* dev, void* hAdapter) {
+  if (!dev) {
+    return E_INVALIDARG;
+  }
+
+  auto* cb = reinterpret_cast<const D3DDDI_DEVICECALLBACKS*>(dev->runtime_ddi_callbacks);
+  if (!cb) {
+    return E_FAIL;
+  }
+
+  D3DKMT_HANDLE hDevice = 0;
+  HRESULT hr = create_device_from_callbacks(*cb, hAdapter, &hDevice);
+  if (FAILED(hr)) {
+    return hr;
+  }
+
+  D3DKMT_HANDLE hContext = 0;
+  D3DKMT_HANDLE hSyncObject = 0;
+  hr = create_context_from_callbacks(*cb, hDevice, &hContext, &hSyncObject);
+  if (FAILED(hr)) {
+    destroy_device_if_present(*cb, hDevice);
+    return hr;
+  }
+
+  dev->kmt_device = static_cast<uint32_t>(hDevice);
+  dev->kmt_context = static_cast<uint32_t>(hContext);
+  dev->kmt_fence_syncobj = static_cast<uint32_t>(hSyncObject);
+  return S_OK;
+}
+
+static HRESULT WaitForFence(Device* dev, uint64_t fence_value, UINT64 timeout) {
+  if (!dev) {
+    return E_INVALIDARG;
+  }
+  if (fence_value == 0) {
+    return S_OK;
+  }
+
+  if (dev->last_completed_fence.load(std::memory_order_relaxed) >= fence_value) {
+    return S_OK;
+  }
+
+  if (!dev->kmt_fence_syncobj) {
+    return E_FAIL;
+  }
+
+  const auto& procs = GetAeroGpuD3dkmtProcs();
+  if (!procs.pfn_wait_for_syncobj) {
+    return E_FAIL;
+  }
+
+  const D3DKMT_HANDLE handles[1] = {static_cast<D3DKMT_HANDLE>(dev->kmt_fence_syncobj)};
+  const UINT64 fence_values[1] = {fence_value};
+
+  D3DKMT_WAITFORSYNCHRONIZATIONOBJECT args{};
+  args.ObjectCount = 1;
+  args.ObjectHandleArray = handles;
+  args.FenceValueArray = fence_values;
+  args.Timeout = timeout;
+
+  const NTSTATUS st = procs.pfn_wait_for_syncobj(&args);
+  if (st == STATUS_TIMEOUT) {
+    return kDxgiErrorWasStillDrawing;
+  }
+  if (!NtSuccess(st)) {
+    return E_FAIL;
+  }
+
+  atomic_max_u64(&dev->last_completed_fence, fence_value);
+  return S_OK;
+}
+
+static void TrackStagingWriteLocked(Device* dev, Resource* dst) {
+  if (!dev || !dst) {
+    return;
+  }
+  if (dst->usage != kD3D11UsageStaging) {
+    return;
+  }
+  if ((dst->cpu_access_flags & kD3D11CpuAccessRead) == 0) {
+    return;
+  }
+  dev->pending_staging_writes.push_back(dst);
+}
+
+static uint64_t SubmitWddmLocked(Device* dev, bool want_present, HRESULT* out_hr) {
+  if (out_hr) {
+    *out_hr = S_OK;
+  }
+  if (!dev || dev->cmd.empty()) {
+    return 0;
+  }
+
+  dev->cmd.finalize();
+
+  const auto* cb = reinterpret_cast<const D3DDDI_DEVICECALLBACKS*>(dev->runtime_ddi_callbacks);
+  if (!cb || !cb->pfnAllocateCb || !cb->pfnRenderCb || !cb->pfnDeallocateCb) {
+    if (out_hr) {
+      *out_hr = E_FAIL;
+    }
+    dev->cmd.reset();
+    dev->pending_staging_writes.clear();
+    return 0;
+  }
+
+  const uint8_t* src = dev->cmd.data();
+  const size_t src_size = dev->cmd.size();
+  if (src_size < sizeof(aerogpu_cmd_stream_header)) {
+    if (out_hr) {
+      *out_hr = E_FAIL;
+    }
+    dev->cmd.reset();
+    dev->pending_staging_writes.clear();
+    return 0;
+  }
+
+  const D3D11DDI_HRTDEVICE hrt_device11 = MakeRtDeviceHandle(dev);
+  const D3D10DDI_HRTDEVICE hrt_device10 = MakeRtDeviceHandle10(dev);
+
+  uint64_t last_fence = 0;
+
+  // Chunk at packet boundaries if the runtime returns a smaller-than-requested
+  // DMA buffer.
+  size_t cur = sizeof(aerogpu_cmd_stream_header);
+  while (cur < src_size) {
+    const size_t remaining_packets_bytes = src_size - cur;
+    const UINT request_bytes = static_cast<UINT>(remaining_packets_bytes + sizeof(aerogpu_cmd_stream_header));
+
+    D3DDDICB_ALLOCATE alloc = {};
+    __if_exists(D3DDDICB_ALLOCATE::hContext) {
+      alloc.hContext = static_cast<D3DKMT_HANDLE>(dev->kmt_context);
+    }
+    __if_exists(D3DDDICB_ALLOCATE::DmaBufferSize) {
+      alloc.DmaBufferSize = request_bytes;
+    }
+    __if_exists(D3DDDICB_ALLOCATE::CommandBufferSize) {
+      alloc.CommandBufferSize = request_bytes;
+    }
+    __if_exists(D3DDDICB_ALLOCATE::AllocationListSize) {
+      alloc.AllocationListSize = 0;
+    }
+    __if_exists(D3DDDICB_ALLOCATE::PatchLocationListSize) {
+      alloc.PatchLocationListSize = 0;
+    }
+
+    HRESULT alloc_hr = CallCbMaybeHandle(cb->pfnAllocateCb, hrt_device11, hrt_device10, &alloc);
+
+    void* dma_ptr = nullptr;
+    UINT dma_cap = 0;
+    __if_exists(D3DDDICB_ALLOCATE::pDmaBuffer) {
+      dma_ptr = alloc.pDmaBuffer;
+    }
+    __if_exists(D3DDDICB_ALLOCATE::pCommandBuffer) {
+      dma_ptr = alloc.pCommandBuffer;
+    }
+    __if_exists(D3DDDICB_ALLOCATE::DmaBufferSize) {
+      dma_cap = alloc.DmaBufferSize;
+    }
+    __if_exists(D3DDDICB_ALLOCATE::CommandBufferSize) {
+      dma_cap = alloc.CommandBufferSize;
+    }
+
+    if (FAILED(alloc_hr) || !dma_ptr || dma_cap == 0) {
+      if (out_hr) {
+        *out_hr = FAILED(alloc_hr) ? alloc_hr : E_OUTOFMEMORY;
+      }
+      dev->cmd.reset();
+      dev->pending_staging_writes.clear();
+      return 0;
+    }
+
+    if (dma_cap < sizeof(aerogpu_cmd_stream_header) + sizeof(aerogpu_cmd_hdr)) {
+      D3DDDICB_DEALLOCATE dealloc = {};
+      __if_exists(D3DDDICB_DEALLOCATE::pDmaBuffer) {
+        dealloc.pDmaBuffer = alloc.pDmaBuffer;
+      }
+      __if_exists(D3DDDICB_DEALLOCATE::pCommandBuffer) {
+        dealloc.pCommandBuffer = alloc.pCommandBuffer;
+      }
+      __if_exists(D3DDDICB_DEALLOCATE::pAllocationList) {
+        dealloc.pAllocationList = alloc.pAllocationList;
+      }
+      __if_exists(D3DDDICB_DEALLOCATE::pPatchLocationList) {
+        dealloc.pPatchLocationList = alloc.pPatchLocationList;
+      }
+      CallCbMaybeHandle(cb->pfnDeallocateCb, hrt_device11, hrt_device10, &dealloc);
+
+      if (out_hr) {
+        *out_hr = E_OUTOFMEMORY;
+      }
+      dev->cmd.reset();
+      dev->pending_staging_writes.clear();
+      return 0;
+    }
+
+    // Build chunk within dma_cap.
+    const size_t chunk_begin = cur;
+    size_t chunk_end = cur;
+    size_t chunk_size = sizeof(aerogpu_cmd_stream_header);
+
+    while (chunk_end < src_size) {
+      const auto* pkt = reinterpret_cast<const aerogpu_cmd_hdr*>(src + chunk_end);
+      const size_t pkt_size = static_cast<size_t>(pkt->size_bytes);
+      if (pkt_size < sizeof(aerogpu_cmd_hdr) || (pkt_size & 3u) != 0 || chunk_end + pkt_size > src_size) {
+        assert(false && "AeroGPU command stream contains an invalid packet");
+        break;
+      }
+      if (chunk_size + pkt_size > dma_cap) {
+        break;
+      }
+      chunk_end += pkt_size;
+      chunk_size += pkt_size;
+    }
+
+    if (chunk_end == chunk_begin) {
+      D3DDDICB_DEALLOCATE dealloc = {};
+      __if_exists(D3DDDICB_DEALLOCATE::pDmaBuffer) {
+        dealloc.pDmaBuffer = alloc.pDmaBuffer;
+      }
+      __if_exists(D3DDDICB_DEALLOCATE::pCommandBuffer) {
+        dealloc.pCommandBuffer = alloc.pCommandBuffer;
+      }
+      __if_exists(D3DDDICB_DEALLOCATE::pAllocationList) {
+        dealloc.pAllocationList = alloc.pAllocationList;
+      }
+      __if_exists(D3DDDICB_DEALLOCATE::pPatchLocationList) {
+        dealloc.pPatchLocationList = alloc.pPatchLocationList;
+      }
+      CallCbMaybeHandle(cb->pfnDeallocateCb, hrt_device11, hrt_device10, &dealloc);
+
+      if (out_hr) {
+        *out_hr = E_OUTOFMEMORY;
+      }
+      dev->cmd.reset();
+      dev->pending_staging_writes.clear();
+      return 0;
+    }
+
+    // Copy header + selected packets into the runtime DMA buffer.
+    auto* dst = static_cast<uint8_t*>(dma_ptr);
+    std::memcpy(dst, src, sizeof(aerogpu_cmd_stream_header));
+    std::memcpy(dst + sizeof(aerogpu_cmd_stream_header), src + chunk_begin, chunk_size - sizeof(aerogpu_cmd_stream_header));
+    auto* hdr = reinterpret_cast<aerogpu_cmd_stream_header*>(dst);
+    hdr->size_bytes = static_cast<uint32_t>(chunk_size);
+
+    const bool is_last_chunk = (chunk_end == src_size);
+    const bool do_present = want_present && is_last_chunk && cb->pfnPresentCb != nullptr;
+
+    HRESULT submit_hr = S_OK;
+    uint64_t submission_fence = 0;
+    if (do_present) {
+      D3DDDICB_PRESENT present = {};
+      __if_exists(D3DDDICB_PRESENT::hContext) {
+        present.hContext = static_cast<D3DKMT_HANDLE>(dev->kmt_context);
+      }
+      __if_exists(D3DDDICB_PRESENT::pDmaBuffer) {
+        present.pDmaBuffer = alloc.pDmaBuffer;
+      }
+      __if_exists(D3DDDICB_PRESENT::pCommandBuffer) {
+        present.pCommandBuffer = dma_ptr;
+      }
+      __if_exists(D3DDDICB_PRESENT::DmaBufferSize) {
+        present.DmaBufferSize = static_cast<UINT>(chunk_size);
+      }
+      __if_exists(D3DDDICB_PRESENT::CommandLength) {
+        present.CommandLength = static_cast<UINT>(chunk_size);
+      }
+      __if_exists(D3DDDICB_PRESENT::pAllocationList) {
+        present.pAllocationList = alloc.pAllocationList;
+      }
+      __if_exists(D3DDDICB_PRESENT::AllocationListSize) {
+        present.AllocationListSize = 0;
+      }
+      __if_exists(D3DDDICB_PRESENT::pPatchLocationList) {
+        present.pPatchLocationList = alloc.pPatchLocationList;
+      }
+      __if_exists(D3DDDICB_PRESENT::PatchLocationListSize) {
+        present.PatchLocationListSize = 0;
+      }
+
+      submit_hr = CallCbMaybeHandle(cb->pfnPresentCb, hrt_device11, hrt_device10, &present);
+      __if_exists(D3DDDICB_PRESENT::NewFenceValue) {
+        submission_fence = static_cast<uint64_t>(present.NewFenceValue);
+      }
+      __if_exists(D3DDDICB_PRESENT::SubmissionFenceId) {
+        if (!submission_fence) {
+          submission_fence = static_cast<uint64_t>(present.SubmissionFenceId);
+        }
+      }
+    } else {
+      D3DDDICB_RENDER render = {};
+      __if_exists(D3DDDICB_RENDER::hContext) {
+        render.hContext = static_cast<D3DKMT_HANDLE>(dev->kmt_context);
+      }
+      __if_exists(D3DDDICB_RENDER::pDmaBuffer) {
+        render.pDmaBuffer = alloc.pDmaBuffer;
+      }
+      __if_exists(D3DDDICB_RENDER::pCommandBuffer) {
+        render.pCommandBuffer = dma_ptr;
+      }
+      __if_exists(D3DDDICB_RENDER::DmaBufferSize) {
+        render.DmaBufferSize = static_cast<UINT>(chunk_size);
+      }
+      __if_exists(D3DDDICB_RENDER::CommandLength) {
+        render.CommandLength = static_cast<UINT>(chunk_size);
+      }
+      __if_exists(D3DDDICB_RENDER::pAllocationList) {
+        render.pAllocationList = alloc.pAllocationList;
+      }
+      __if_exists(D3DDDICB_RENDER::AllocationListSize) {
+        render.AllocationListSize = 0;
+      }
+      __if_exists(D3DDDICB_RENDER::pPatchLocationList) {
+        render.pPatchLocationList = alloc.pPatchLocationList;
+      }
+      __if_exists(D3DDDICB_RENDER::PatchLocationListSize) {
+        render.PatchLocationListSize = 0;
+      }
+
+      submit_hr = CallCbMaybeHandle(cb->pfnRenderCb, hrt_device11, hrt_device10, &render);
+      __if_exists(D3DDDICB_RENDER::NewFenceValue) {
+        submission_fence = static_cast<uint64_t>(render.NewFenceValue);
+      }
+      __if_exists(D3DDDICB_RENDER::SubmissionFenceId) {
+        if (!submission_fence) {
+          submission_fence = static_cast<uint64_t>(render.SubmissionFenceId);
+        }
+      }
+    }
+
+    // Always return submission buffers to the runtime.
+    {
+      D3DDDICB_DEALLOCATE dealloc = {};
+      __if_exists(D3DDDICB_DEALLOCATE::pDmaBuffer) {
+        dealloc.pDmaBuffer = alloc.pDmaBuffer;
+      }
+      __if_exists(D3DDDICB_DEALLOCATE::pCommandBuffer) {
+        dealloc.pCommandBuffer = alloc.pCommandBuffer;
+      }
+      __if_exists(D3DDDICB_DEALLOCATE::pAllocationList) {
+        dealloc.pAllocationList = alloc.pAllocationList;
+      }
+      __if_exists(D3DDDICB_DEALLOCATE::pPatchLocationList) {
+        dealloc.pPatchLocationList = alloc.pPatchLocationList;
+      }
+      CallCbMaybeHandle(cb->pfnDeallocateCb, hrt_device11, hrt_device10, &dealloc);
+    }
+
+    if (FAILED(submit_hr)) {
+      if (out_hr) {
+        *out_hr = submit_hr;
+      }
+      dev->cmd.reset();
+      dev->pending_staging_writes.clear();
+      return 0;
+    }
+
+    if (submission_fence != 0) {
+      last_fence = submission_fence;
+    }
+
+    cur = chunk_end;
+  }
+
+  if (last_fence != 0) {
+    atomic_max_u64(&dev->last_submitted_fence, last_fence);
+    for (Resource* res : dev->pending_staging_writes) {
+      if (res) {
+        res->last_gpu_write_fence = last_fence;
+      }
+    }
+  }
+  dev->pending_staging_writes.clear();
+
+  dev->cmd.reset();
+  return last_fence;
 }
 
 static Device* DeviceFromContext(D3D11DDI_HDEVICECONTEXT hCtx) {
@@ -1096,6 +1735,7 @@ void AEROGPU_APIENTRY DestroyDevice11(D3D11DDI_HDEVICE hDevice) {
     return;
   }
   auto* dev = FromHandle<D3D11DDI_HDEVICE, Device>(hDevice);
+  DestroyWddmContext(dev);
   dev->~Device();
 }
 
@@ -1333,6 +1973,9 @@ void AEROGPU_APIENTRY DestroyResource11(D3D11DDI_HDEVICE hDevice, D3D11DDI_HRESO
     cmd->resource_handle = res->handle;
     cmd->reserved0 = 0;
   }
+  dev->pending_staging_writes.erase(
+      std::remove(dev->pending_staging_writes.begin(), dev->pending_staging_writes.end(), res),
+      dev->pending_staging_writes.end());
   res->~Resource();
 }
 
@@ -2483,6 +3126,7 @@ void AEROGPU_APIENTRY CopyResource11(D3D11DDI_HDEVICECONTEXT hCtx, D3D11DDI_HRES
     cmd->size_bytes = bytes;
     cmd->flags = AEROGPU_COPY_FLAG_NONE;
     cmd->reserved0 = 0;
+    TrackStagingWriteLocked(dev, dst);
     return;
   }
 
@@ -2505,6 +3149,7 @@ void AEROGPU_APIENTRY CopyResource11(D3D11DDI_HDEVICECONTEXT hCtx, D3D11DDI_HRES
     cmd->height = dst->height;
     cmd->flags = AEROGPU_COPY_FLAG_NONE;
     cmd->reserved0 = 0;
+    TrackStagingWriteLocked(dev, dst);
     return;
   }
 }
@@ -2561,6 +3206,7 @@ void AEROGPU_APIENTRY CopySubresourceRegion11(D3D11DDI_HDEVICECONTEXT hCtx,
     cmd->size_bytes = bytes;
     cmd->flags = AEROGPU_COPY_FLAG_NONE;
     cmd->reserved0 = 0;
+    TrackStagingWriteLocked(dev, dst);
     return;
   }
 
@@ -2610,6 +3256,7 @@ void AEROGPU_APIENTRY CopySubresourceRegion11(D3D11DDI_HDEVICECONTEXT hCtx,
     cmd->height = copy_height;
     cmd->flags = AEROGPU_COPY_FLAG_NONE;
     cmd->reserved0 = 0;
+    TrackStagingWriteLocked(dev, dst);
     return;
   }
 
@@ -2660,23 +3307,32 @@ static HRESULT MapCore11(D3D11DDI_HDEVICECONTEXT hCtx,
     return E_INVALIDARG;
   }
 
-  // Map(READ) on a staging resource is a synchronization point. Ensure any
-  // pending GPU work is flushed before waiting so applications don't have to
-  // call Flush() explicitly.
+  // Win7 readback path: the runtime expects Map(READ) on staging resources to
+  // block (or return DXGI_ERROR_WAS_STILL_DRAWING for DO_NOT_WAIT) until the GPU
+  // has finished writing the staging allocation.
   if (want_read && res->usage == kD3D11UsageStaging) {
-    const uint64_t fence = submit_locked(dev);
-    if (fence != 0 && dev->adapter) {
+    // Make sure any pending work is actually submitted so we have a fence to
+    // wait on.
+    if (!dev->cmd.empty()) {
+      HRESULT submit_hr = S_OK;
+      SubmitWddmLocked(dev, false, &submit_hr);
+      if (FAILED(submit_hr)) {
+        SetError(dev, submit_hr);
+        return submit_hr;
+      }
+    }
+
+    const uint64_t fence = res->last_gpu_write_fence;
+    if (fence != 0) {
       const bool do_not_wait = (map_flags & D3D11_MAP_FLAG_DO_NOT_WAIT) != 0;
-      std::unique_lock<std::mutex> fence_lock(dev->adapter->fence_mutex);
-      if (do_not_wait) {
-        if (dev->adapter->completed_fence < fence) {
-          SetError(dev, DXGI_ERROR_WAS_STILL_DRAWING);
-          return DXGI_ERROR_WAS_STILL_DRAWING;
-        }
-      } else {
-        while (dev->adapter->completed_fence < fence) {
-          dev->adapter->fence_cv.wait(fence_lock);
-        }
+      const UINT64 timeout = do_not_wait ? 0ull : ~0ull;
+      const HRESULT wait_hr = WaitForFence(dev, fence, timeout);
+      if (wait_hr == kDxgiErrorWasStillDrawing) {
+        return wait_hr;
+      }
+      if (FAILED(wait_hr)) {
+        SetError(dev, wait_hr);
+        return wait_hr;
       }
     }
   }
@@ -3027,7 +3683,15 @@ void AEROGPU_APIENTRY Flush11(D3D11DDI_HDEVICECONTEXT hCtx) {
     return;
   }
   std::lock_guard<std::mutex> lock(dev->mutex);
-  (void)flush_locked(dev);
+  if (auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_flush>(AEROGPU_CMD_FLUSH)) {
+    cmd->reserved0 = 0;
+    cmd->reserved1 = 0;
+  }
+  HRESULT hr = S_OK;
+  SubmitWddmLocked(dev, false, &hr);
+  if (FAILED(hr)) {
+    SetError(dev, hr);
+  }
 }
 
 HRESULT AEROGPU_APIENTRY Present11(D3D11DDI_HDEVICECONTEXT hCtx, const D3D10DDIARG_PRESENT* pPresent) {
@@ -3069,8 +3733,9 @@ HRESULT AEROGPU_APIENTRY Present11(D3D11DDI_HDEVICECONTEXT hCtx, const D3D10DDIA
     vsync = (dev->adapter->umd_private.flags & AEROGPU_UMDPRIV_FLAG_HAS_VBLANK) != 0;
   }
   cmd->flags = vsync ? AEROGPU_PRESENT_FLAG_VSYNC : AEROGPU_PRESENT_FLAG_NONE;
-  submit_locked(dev);
-  return S_OK;
+  HRESULT hr = S_OK;
+  SubmitWddmLocked(dev, true, &hr);
+  return FAILED(hr) ? hr : S_OK;
 }
 
 void AEROGPU_APIENTRY RotateResourceIdentities11(D3D11DDI_HDEVICECONTEXT hCtx, D3D11DDI_HRESOURCE* pResources, UINT numResources) {
@@ -3230,11 +3895,26 @@ HRESULT AEROGPU_APIENTRY CreateDevice11(D3D10DDI_HADAPTER hAdapter, D3D11DDIARG_
   auto* dev = new (pCreateDevice->hDevice.pDrvPrivate) Device();
   dev->adapter = adapter;
   dev->runtime_callbacks = GetDeviceCallbacks(pCreateDevice);
+  dev->runtime_ddi_callbacks = GetDdiCallbacks(pCreateDevice);
   dev->runtime_device = GetRtDevicePrivate(pCreateDevice);
 
   auto* ctx = new (ctx_mem) AeroGpuDeviceContext();
   ctx->dev = dev;
   dev->immediate_context = ctx;
+
+  HRESULT wddm_hr = InitWddmContext(dev, hAdapter.pDrvPrivate);
+  if (FAILED(wddm_hr) || !dev->kmt_context || !dev->kmt_fence_syncobj) {
+    DestroyWddmContext(dev);
+    ctx->~AeroGpuDeviceContext();
+    dev->~Device();
+    return FAILED(wddm_hr) ? wddm_hr : E_FAIL;
+  }
+  if (!GetAeroGpuD3dkmtProcs().pfn_wait_for_syncobj) {
+    DestroyWddmContext(dev);
+    ctx->~AeroGpuDeviceContext();
+    dev->~Device();
+    return E_FAIL;
+  }
 
   // Win7 runtimes are known to call a surprisingly large chunk of the D3D11 DDI
   // surface (even for simple triangle samples). Start from fully-stubbed

@@ -246,6 +246,11 @@ struct Resource {
   // CPU-visible backing storage for resource uploads / staging reads.
   std::vector<uint8_t> storage;
 
+  // Fence value of the most recent GPU submission that writes into this resource
+  // (conservative). Used by the WDK D3D11 UMD for staging readback Map(READ)
+  // synchronization.
+  uint64_t last_gpu_write_fence = 0;
+
   // Map/unmap tracking (system-memory-backed implementation).
   bool mapped = false;
   uint32_t mapped_map_type = 0;
@@ -292,6 +297,10 @@ struct Device {
   // Opaque pointer to the runtime's device callback table (contains e.g.
   // pfnSetErrorCb).
   const void* runtime_callbacks = nullptr;
+  // Opaque pointer to the runtime's shared WDDM device callback table
+  // (`D3DDDI_DEVICECALLBACKS`). Populated by the WDK D3D11 build for real Win7
+  // WDDM submissions + fence waits.
+  const void* runtime_ddi_callbacks = nullptr;
   // Opaque pointer to the runtime device handle's private storage. This is used
   // for callbacks that require a `*HRTDEVICE` (e.g. `pfnSetErrorCb`) without
   // including WDK-specific handle types in this shared header.
@@ -303,6 +312,20 @@ struct Device {
   std::mutex mutex;
 
   aerogpu::CmdWriter cmd;
+
+  // WDDM submission state (Win7/WDDM 1.1). Handles are stored as plain integers
+  // to keep this header WDK-free; the WDK build casts them to `D3DKMT_HANDLE`.
+  uint32_t kmt_device = 0;
+  uint32_t kmt_context = 0;
+  uint32_t kmt_fence_syncobj = 0;
+
+  std::atomic<uint64_t> last_submitted_fence{0};
+  std::atomic<uint64_t> last_completed_fence{0};
+
+  // Staging resources written by commands recorded since the last submission.
+  // After submission, their `last_gpu_write_fence` is updated to the returned
+  // fence value.
+  std::vector<Resource*> pending_staging_writes;
 
   // Cached state (shared for the initial immediate-context-only implementation).
   aerogpu_handle_t current_rtv = 0;
