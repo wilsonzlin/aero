@@ -163,9 +163,9 @@ fn windows_device_contract_aerogpu_matches_protocol_constants() {
     assert!(!contains_needle(&contract_md_text, "A0E0"));
     // This repository previously had an early prototype AeroGPU Windows stack using vendor 1AE0.
     // That vendor ID is deprecated and must never appear in the canonical binding contract.
-    let legacy_vendor = concat!("VEN_", "1AE0");
-    assert!(!contains_needle(&contract_text, legacy_vendor));
-    assert!(!contains_needle(&contract_md_text, legacy_vendor));
+    let legacy_vendor_id = "1AE0";
+    assert!(!contains_needle(&contract_text, legacy_vendor_id));
+    assert!(!contains_needle(&contract_md_text, legacy_vendor_id));
     // Historical contract drafts used a different INF name; keep the canonical contract pinned to
     // `drivers/aerogpu/packaging/win7/aerogpu.inf`.
     assert!(!contains_needle(&contract_text, "aero-gpu.inf"));

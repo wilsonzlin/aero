@@ -34,7 +34,7 @@
 ;   drivers/aerogpu/packaging/win7/
 ; and binds to:
 ;   - PCI\VEN_A3A0&DEV_0001 (canonical)
-;   - PCI\VEN_1AED&DEV_0001 (legacy)
+; The legacy bring-up PCI ID `PCI\VEN_1AED&DEV_0001` is supported by the KMD but requires a custom INF.
 ;
 ; Do NOT ship this INF as part of production Guest Tools media.
 ;

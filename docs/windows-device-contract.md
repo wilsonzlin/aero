@@ -88,9 +88,6 @@ Legacy bring-up ABI note:
 > Legacy note: some bring-up builds may still expose the legacy AeroGPU HWID `PCI\VEN_1AED&DEV_0001`.
 > This is not the default device model, and the shipped Win7 AeroGPU INFs do **not** match it (by design).
 > If you need it, use a custom INF and enable the legacy device model feature (`emulator/aerogpu-legacy`).
->
-> Older prototypes used PCI vendor ID `1AE0`; those stacks are deprecated and must not be treated as the
-> Windows driver binding contract.
 
 ## Device table (normative)
 
