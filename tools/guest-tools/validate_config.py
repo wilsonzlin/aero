@@ -325,13 +325,25 @@ def _validate_hwid_contract(
             f"- If devices.cmd is wrong/out-of-date, update {devices_var} to match the supported IDs.\n"
         )
 
-    # Enforce that every explicit HWID-family regex in the spec is represented by
-    # at least one HWID in devices.cmd.
+    # Enforce that every "base" PCI HWID pattern in the spec is represented by at
+    # least one HWID in devices.cmd.
     #
     # This catches regressions where the packager spec is updated to require
     # multiple HWID families (e.g. AeroGPU's canonical A3A0 + legacy 1AED), but
     # devices.cmd only lists one of them.
-    patterns_requiring_match = [p for p in patterns if re.search(r"(?i)(VEN_|VID_)", p)]
+    #
+    # We intentionally *do not* require patterns that include SUBSYS/REV/class-code
+    # qualifiers to match the `devices.cmd` list, since Guest Tools config usually
+    # lists only the vendor/device pair.
+    patterns_requiring_match = [
+        p
+        for p in patterns
+        if re.search(r"(?i)(VEN_|VID_)", p)
+        and re.search(r"(?i)(DEV_|DID_)", p)
+        and not re.search(r"(?i)&SUBSYS_", p)
+        and not re.search(r"(?i)&REV_", p)
+        and not re.search(r"(?i)&CC_", p)
+    ]
     unmatched_patterns = _find_unmatched_patterns(patterns_requiring_match, hwids)
     if unmatched_patterns:
         raise ValidationError(
