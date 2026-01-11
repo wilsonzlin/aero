@@ -40,6 +40,13 @@
 {$AERO_DOMAIN:localhost} {
 	encode zstd gzip
 
+	# WebSocket L2 tunnel proxy endpoint.
+	@aero_l2 path /l2*
+	handle @aero_l2 {
+		import aero_headers
+		reverse_proxy {$AERO_L2_PROXY_UPSTREAM:aero-l2-proxy:8090}
+	}
+
 	# WebSocket TCP proxy endpoint and HTTP APIs.
 	@aero_gateway path /tcp* /tcp-mux* /session* /dns-query* /dns-json* /api* /healthz* /readyz* /version* /metrics*
 	handle @aero_gateway {

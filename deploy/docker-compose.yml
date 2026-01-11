@@ -25,6 +25,9 @@ services:
       # Gateway upstream within the docker network.
       AERO_GATEWAY_UPSTREAM: ${AERO_GATEWAY_UPSTREAM:-aero-gateway:8080}
 
+      # L2 tunnel proxy upstream within the docker network.
+      AERO_L2_PROXY_UPSTREAM: ${AERO_L2_PROXY_UPSTREAM:-aero-l2-proxy:8090}
+
       # HSTS toggle (0 disables, recommended 31536000+ for production).
       AERO_HSTS_MAX_AGE: ${AERO_HSTS_MAX_AGE:-0}
 
@@ -51,6 +54,7 @@ services:
         read_only: true
     depends_on:
       - aero-gateway
+      - aero-l2-proxy
 
   # Backend "gateway" (HTTP + WS) that the browser talks to.
   #
@@ -82,6 +86,19 @@ services:
       # Optional defense-in-depth: also set COOP/COEP headers at the gateway.
       # (The proxy already sets these at the edge.)
       CROSS_ORIGIN_ISOLATION: ${CROSS_ORIGIN_ISOLATION:-0}
+
+  # L2 tunnel proxy (WebSocket).
+  #
+  # Receives Ethernet frames over WebSocket upgrades at /l2 and provides a
+  # server-side network stack / egress policy for the VM.
+  aero-l2-proxy:
+    image: ${AERO_L2_PROXY_IMAGE:-aero-l2-proxy:dev}
+    build:
+      context: ..
+      dockerfile: crates/aero-l2-proxy/Dockerfile
+    restart: unless-stopped
+    expose:
+      - "8090"
 
 volumes:
   caddy_data:

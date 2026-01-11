@@ -7,13 +7,13 @@ This directory contains **production** and **local-dev** deployment artifacts th
    - `SharedArrayBuffer` + WASM threads
    - some high-performance browser execution patterns
 3) Set additional hardening headers (CSP, Referrer-Policy, Permissions-Policy, etc.)
-4) Reverse-proxy backend HTTP APIs and WebSocket upgrades (e.g. `/tcp`) to the Aero gateway
+4) Reverse-proxy backend HTTP APIs and WebSocket upgrades (e.g. `/tcp`, `/l2`) to backend services
 
 The recommended topology is **single-origin**:
 
 ```
-Browser  ──HTTPS/WSS──▶  Caddy (edge)  ──HTTP/WS──▶  aero-gateway
-                  same-origin for UI + APIs (no CORS needed)
+Browser  ──HTTPS/WSS──▶  Caddy (edge)  ──HTTP/WS──▶  aero-gateway / aero-l2-proxy
+                   same-origin for UI + APIs (no CORS needed)
 ```
 
 ## Files
@@ -21,6 +21,7 @@ Browser  ──HTTPS/WSS──▶  Caddy (edge)  ──HTTP/WS──▶  aero-ga
 - `deploy/docker-compose.yml` – runs:
   - `aero-proxy` (Caddy) on `:80/:443`
   - `aero-gateway` (`backend/aero-gateway`) on the internal docker network
+  - `aero-l2-proxy` (L2 tunnel proxy) on the internal docker network
 - `deploy/caddy/Caddyfile` – TLS termination, COOP/COEP headers, reverse proxy rules
 - `deploy/scripts/smoke.sh` – builds + boots the compose stack and asserts key headers
 - `deploy/static/index.html` – a small **smoke test page** to validate `window.crossOriginIsolated`
@@ -118,6 +119,8 @@ cp deploy/.env.example deploy/.env
   - For production, prefer a published image and remove the compose `build:` stanza (or override it).
 - `AERO_GATEWAY_UPSTREAM` (default: `aero-gateway:8080`)
   - Only change if your gateway listens on a different port inside docker.
+- `AERO_L2_PROXY_UPSTREAM` (default: `aero-l2-proxy:8090`)
+  - Only change if your L2 proxy listens on a different port inside docker.
 - `AERO_HSTS_MAX_AGE` (default: `0`)
   - `0` disables HSTS (good for local dev)
   - Recommended production value: `31536000` (1 year)
@@ -253,6 +256,38 @@ NODE_TLS_REJECT_UNAUTHORIZED=0 npx wscat -c "wss://localhost/tcp?v=1&target=exam
 
 If you see a successful handshake but the connection immediately closes, the
 gateway may be rejecting the query parameters or target.
+
+## L2 tunnel proxy (/l2)
+
+The **L2 tunnel proxy** (`aero-l2-proxy`) provides an Ethernet (L2) tunnel over
+WebSocket:
+
+- The browser connects to `wss://<AERO_DOMAIN>/l2`
+- Caddy proxies the WebSocket upgrade to the `aero-l2-proxy` container
+- The connection uses subprotocol: `aero-l2-tunnel-v1`
+
+This endpoint is intended for the “Option C” architecture (tunneling Ethernet
+frames to a server-side network stack / NAT / policy layer).
+
+### Run locally
+
+```bash
+docker compose -f deploy/docker-compose.yml up
+```
+
+### Validate the upgrade (WSS)
+
+Using `wscat`:
+
+```bash
+NODE_TLS_REJECT_UNAUTHORIZED=0 npx wscat -c "wss://localhost/l2" -s aero-l2-tunnel-v1
+```
+
+Using `websocat`:
+
+```bash
+websocat --insecure --protocol aero-l2-tunnel-v1 wss://localhost/l2
+```
 
 ## CORS / origin strategy
 
