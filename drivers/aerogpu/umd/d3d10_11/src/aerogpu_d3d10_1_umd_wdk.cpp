@@ -4513,15 +4513,7 @@ HRESULT OpenAdapter_WDK(D3D10DDIARG_OPENADAPTER* pOpenData) {
 extern "C" {
 
 HRESULT AEROGPU_APIENTRY OpenAdapter10(D3D10DDIARG_OPENADAPTER* pOpenData) {
-#if defined(_WIN32)
-  bool should_log_module_path = aerogpu_d3d10_11_log_enabled();
-#if AEROGPU_D3D10_TRACE
-  should_log_module_path = should_log_module_path || (::aerogpu::d3d10trace::level() > 0);
-#endif
-  if (should_log_module_path) {
-    LogModulePathOnce();
-  }
-#endif
+  LogModulePathOnce();
   AEROGPU_D3D10_11_LOG_CALL();
   AEROGPU_D3D10_TRACEF("OpenAdapter10");
   if (!pOpenData) {
@@ -4536,15 +4528,7 @@ HRESULT AEROGPU_APIENTRY OpenAdapter10(D3D10DDIARG_OPENADAPTER* pOpenData) {
 }
 
 HRESULT AEROGPU_APIENTRY OpenAdapter10_2(D3D10DDIARG_OPENADAPTER* pOpenData) {
-#if defined(_WIN32)
-  bool should_log_module_path = aerogpu_d3d10_11_log_enabled();
-#if AEROGPU_D3D10_TRACE
-  should_log_module_path = should_log_module_path || (::aerogpu::d3d10trace::level() > 0);
-#endif
-  if (should_log_module_path) {
-    LogModulePathOnce();
-  }
-#endif
+  LogModulePathOnce();
   AEROGPU_D3D10_11_LOG_CALL();
   AEROGPU_D3D10_TRACEF("OpenAdapter10_2");
   if (!pOpenData) {

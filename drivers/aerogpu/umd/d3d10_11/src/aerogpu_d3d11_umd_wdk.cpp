@@ -4341,9 +4341,9 @@ HRESULT OpenAdapter11Impl(D3D10DDIARG_OPENADAPTER* pOpenData) {
     return E_INVALIDARG;
   }
 
-  if (aerogpu_d3d10_11_log_enabled()) {
-    LogModulePathOnce();
-  }
+  // Always emit the module path once. This is the quickest way to confirm the
+  // correct UMD bitness was loaded on Win7 x64 (System32 vs SysWOW64).
+  LogModulePathOnce();
   AEROGPU_D3D10_11_LOG_CALL();
 
   // Win7 D3D11 uses `D3D10DDIARG_OPENADAPTER` for negotiation:

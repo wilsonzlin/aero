@@ -7947,13 +7947,9 @@ HRESULT AEROGPU_APIENTRY GetCaps(D3D10DDI_HADAPTER, const D3D10DDIARG_GETCAPS* p
 
 HRESULT OpenAdapterCommon(D3D10DDIARG_OPENADAPTER* pOpenData) {
 #if defined(_WIN32)
-  bool should_log_module_path = aerogpu_d3d10_11_log_enabled();
-#if AEROGPU_D3D10_TRACE
-  should_log_module_path = should_log_module_path || (::aerogpu::d3d10trace::level() > 0);
-#endif
-  if (should_log_module_path) {
-    LogModulePathOnce();
-  }
+  // Always emit the module path once. This is the quickest way to confirm the
+  // correct UMD bitness was loaded on Win7 x64 (System32 vs SysWOW64).
+  LogModulePathOnce();
 #endif
 
   AEROGPU_D3D10_11_LOG_CALL();
