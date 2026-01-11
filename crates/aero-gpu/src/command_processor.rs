@@ -439,7 +439,9 @@ impl AeroGpuCommandProcessor {
                         // Underlying shared surfaces can outlive the original handle while aliases
                         // remain alive. Reject handle reuse in that case to avoid corrupting the
                         // aliasing tables.
-                        return Err(CommandProcessorError::SharedSurfaceHandleInUse(buffer_handle));
+                        return Err(CommandProcessorError::SharedSurfaceHandleInUse(
+                            buffer_handle,
+                        ));
                     }
                     if size_bytes == 0 || size_bytes % 4 != 0 {
                         return Err(CommandProcessorError::InvalidCreateBuffer);
