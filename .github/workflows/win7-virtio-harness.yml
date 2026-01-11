@@ -27,6 +27,12 @@ permissions:
   contents: read
   actions: read
 
+# This workflow boots a real Windows 7 VM image under QEMU on a shared self-hosted runner.
+# Avoid overlapping runs to prevent resource contention (and conflicts on fixed host ports like 18080).
+concurrency:
+  group: win7-virtio-harness
+  cancel-in-progress: false
+
 jobs:
   win7-virtio-harness:
     # Opt-in only: requires a self-hosted runner with QEMU installed and a prepared Win7 disk image.
