@@ -59,6 +59,7 @@ fn iterates_valid_stream_and_decodes_variable_payloads() {
     let dxbc_bytes = b"DXBC!";
     let upload_bytes = b"hello world";
     let input_layout_blob = b"ILAYblob";
+    let sampler_handles = [10u32, 11, 12];
 
     let mut create_shader_payload = Vec::new();
     push_u32(&mut create_shader_payload, 0xAABB_CCDD); // shader_handle
@@ -97,6 +98,31 @@ fn iterates_valid_stream_and_decodes_variable_payloads() {
     push_u32(&mut set_vertex_buffers_payload, 4); // offset_bytes
     push_u32(&mut set_vertex_buffers_payload, 0); // reserved0
 
+    let mut set_samplers_payload = Vec::new();
+    push_u32(&mut set_samplers_payload, 1); // shader_stage
+    push_u32(&mut set_samplers_payload, 2); // start_slot
+    push_u32(&mut set_samplers_payload, sampler_handles.len() as u32); // sampler_count
+    push_u32(&mut set_samplers_payload, 0); // reserved0
+    for h in sampler_handles {
+        push_u32(&mut set_samplers_payload, h);
+    }
+
+    let mut set_constant_buffers_payload = Vec::new();
+    push_u32(&mut set_constant_buffers_payload, 0); // shader_stage
+    push_u32(&mut set_constant_buffers_payload, 0); // start_slot
+    push_u32(&mut set_constant_buffers_payload, 2); // buffer_count
+    push_u32(&mut set_constant_buffers_payload, 0); // reserved0
+    // binding[0]
+    push_u32(&mut set_constant_buffers_payload, 100); // buffer
+    push_u32(&mut set_constant_buffers_payload, 0); // offset_bytes
+    push_u32(&mut set_constant_buffers_payload, 64); // size_bytes
+    push_u32(&mut set_constant_buffers_payload, 0); // reserved0
+    // binding[1]
+    push_u32(&mut set_constant_buffers_payload, 101); // buffer
+    push_u32(&mut set_constant_buffers_payload, 16); // offset_bytes
+    push_u32(&mut set_constant_buffers_payload, 128); // size_bytes
+    push_u32(&mut set_constant_buffers_payload, 0); // reserved0
+
     let stream = build_stream(vec![
         build_packet(AerogpuCmdOpcode::Nop as u32, Vec::new()),
         build_packet(
@@ -115,6 +141,11 @@ fn iterates_valid_stream_and_decodes_variable_payloads() {
             AerogpuCmdOpcode::SetVertexBuffers as u32,
             set_vertex_buffers_payload,
         ),
+        build_packet(AerogpuCmdOpcode::SetSamplers as u32, set_samplers_payload),
+        build_packet(
+            AerogpuCmdOpcode::SetConstantBuffers as u32,
+            set_constant_buffers_payload,
+        ),
     ]);
 
     let iter = AerogpuCmdStreamIter::new(&stream).unwrap();
@@ -127,7 +158,7 @@ fn iterates_valid_stream_and_decodes_variable_payloads() {
     assert_eq!(size_bytes as usize, stream.len());
 
     let packets = iter.collect::<Result<Vec<_>, _>>().unwrap();
-    assert_eq!(packets.len(), 5);
+    assert_eq!(packets.len(), 7);
     assert_eq!(packets[0].opcode, Some(AerogpuCmdOpcode::Nop));
     assert!(packets[0].payload.is_empty());
 
@@ -177,6 +208,36 @@ fn iterates_valid_stream_and_decodes_variable_payloads() {
     assert_eq!(binding1_buffer, 22);
     assert_eq!(binding1_stride, 32);
     assert_eq!(binding1_offset, 4);
+
+    let (set_samplers, handles) = packets[5].decode_set_samplers_payload_le().unwrap();
+    let shader_stage = set_samplers.shader_stage;
+    let start_slot = set_samplers.start_slot;
+    let sampler_count = set_samplers.sampler_count;
+    assert_eq!(shader_stage, 1);
+    assert_eq!(start_slot, 2);
+    assert_eq!(sampler_count, 3);
+    assert_eq!(handles, &[10u32, 11, 12]);
+
+    let (set_cbs, bindings) = packets[6].decode_set_constant_buffers_payload_le().unwrap();
+    let shader_stage = set_cbs.shader_stage;
+    let start_slot = set_cbs.start_slot;
+    let buffer_count = set_cbs.buffer_count;
+    assert_eq!(shader_stage, 0);
+    assert_eq!(start_slot, 0);
+    assert_eq!(buffer_count, 2);
+    assert_eq!(bindings.len(), 2);
+    let binding0_buffer = bindings[0].buffer;
+    let binding0_offset_bytes = bindings[0].offset_bytes;
+    let binding0_size_bytes = bindings[0].size_bytes;
+    let binding1_buffer = bindings[1].buffer;
+    let binding1_offset_bytes = bindings[1].offset_bytes;
+    let binding1_size_bytes = bindings[1].size_bytes;
+    assert_eq!(binding0_buffer, 100);
+    assert_eq!(binding0_offset_bytes, 0);
+    assert_eq!(binding0_size_bytes, 64);
+    assert_eq!(binding1_buffer, 101);
+    assert_eq!(binding1_offset_bytes, 16);
+    assert_eq!(binding1_size_bytes, 128);
 }
 
 #[test]
@@ -216,12 +277,32 @@ fn variable_payload_decoders_allow_trailing_bytes() {
     let mut set_vertex_buffers_payload = Vec::new();
     push_u32(&mut set_vertex_buffers_payload, 2); // start_slot
     push_u32(&mut set_vertex_buffers_payload, 1); // buffer_count
-                                                  // binding[0]
+                                                   // binding[0]
     push_u32(&mut set_vertex_buffers_payload, 11); // buffer
     push_u32(&mut set_vertex_buffers_payload, 16); // stride_bytes
     push_u32(&mut set_vertex_buffers_payload, 0); // offset_bytes
     push_u32(&mut set_vertex_buffers_payload, 0); // reserved0
     push_u32(&mut set_vertex_buffers_payload, 0xDEAD_BEEF); // trailing extension
+
+    let mut set_samplers_payload = Vec::new();
+    push_u32(&mut set_samplers_payload, 1); // shader_stage
+    push_u32(&mut set_samplers_payload, 0); // start_slot
+    push_u32(&mut set_samplers_payload, 1); // sampler_count
+    push_u32(&mut set_samplers_payload, 0); // reserved0
+    push_u32(&mut set_samplers_payload, 10); // handles[0]
+    push_u32(&mut set_samplers_payload, 0xDEAD_BEEF); // trailing extension
+
+    let mut set_constant_buffers_payload = Vec::new();
+    push_u32(&mut set_constant_buffers_payload, 0); // shader_stage
+    push_u32(&mut set_constant_buffers_payload, 0); // start_slot
+    push_u32(&mut set_constant_buffers_payload, 1); // buffer_count
+    push_u32(&mut set_constant_buffers_payload, 0); // reserved0
+    // binding[0]
+    push_u32(&mut set_constant_buffers_payload, 100); // buffer
+    push_u32(&mut set_constant_buffers_payload, 0); // offset_bytes
+    push_u32(&mut set_constant_buffers_payload, 64); // size_bytes
+    push_u32(&mut set_constant_buffers_payload, 0); // reserved0
+    push_u32(&mut set_constant_buffers_payload, 0xDEAD_BEEF); // trailing extension
 
     let stream = build_stream(vec![
         build_packet(
@@ -240,13 +321,18 @@ fn variable_payload_decoders_allow_trailing_bytes() {
             AerogpuCmdOpcode::SetVertexBuffers as u32,
             set_vertex_buffers_payload,
         ),
+        build_packet(AerogpuCmdOpcode::SetSamplers as u32, set_samplers_payload),
+        build_packet(
+            AerogpuCmdOpcode::SetConstantBuffers as u32,
+            set_constant_buffers_payload,
+        ),
     ]);
 
     let packets = AerogpuCmdStreamIter::new(&stream)
         .unwrap()
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
-    assert_eq!(packets.len(), 4);
+    assert_eq!(packets.len(), 6);
 
     let (_create_shader, parsed_dxbc) = packets[0].decode_create_shader_dxbc_payload_le().unwrap();
     assert_eq!(parsed_dxbc, dxbc_bytes);
@@ -261,6 +347,14 @@ fn variable_payload_decoders_allow_trailing_bytes() {
     assert_eq!(bindings.len(), 1);
     let buffer = bindings[0].buffer;
     assert_eq!(buffer, 11);
+
+    let (_set_samplers, handles) = packets[4].decode_set_samplers_payload_le().unwrap();
+    assert_eq!(handles, &[10u32]);
+
+    let (_set_cbs, bindings) = packets[5].decode_set_constant_buffers_payload_le().unwrap();
+    assert_eq!(bindings.len(), 1);
+    let buffer = bindings[0].buffer;
+    assert_eq!(buffer, 100);
 }
 
 #[test]
