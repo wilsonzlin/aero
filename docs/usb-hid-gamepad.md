@@ -14,8 +14,10 @@ The UHCI root hub model exposes only two downstream ports (`PORTSC1`/`PORTSC2`).
 approach (separate USB devices for keyboard, mouse, and gamepad) would require three
 ports or an external USB hub.
 
-To avoid implementing an external hub (or multiple UHCI controllers), the emulator
-provides a **single USB device** with multiple HID interfaces:
+The emulator provides a **single USB device** with multiple HID interfaces so the
+default input stack (keyboard + mouse + gamepad) consumes only one port and leaves
+the other root port free (e.g. for WebHID/WebUSB passthrough devices, potentially
+behind an external USB hub device).
 
 - Windows 7 enumerates the device as a composite device (`usbccgp.sys` parent PDO)
 - Each HID interface binds via the in-box HID stack (`hidusb.sys` + `hidclass.sys`)

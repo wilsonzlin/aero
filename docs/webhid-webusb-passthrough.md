@@ -140,7 +140,9 @@ based forwarding. See [`docs/11-browser-apis.md`](./11-browser-apis.md).
 The guest-visible device is modeled as:
 
 - **UHCI host controller** (USB 1.1)
-- **root hub** (currently limited; see “Current limitations”)
+- **root hub** (2 ports)
+- (optional) **external USB hub device** (USB class `0x09`) attached behind a root port to
+  provide additional downstream ports
 - **one generic HID device per physical passthrough device**
 
 On attach, the worker hot-plugs the device onto an available UHCI port, which
@@ -261,8 +263,11 @@ Recommended guardrails:
 
 - **UHCI root hub: 2 ports**
   - Only two devices can be attached *directly* to the root hub.
-  - Supporting more simultaneous passthrough devices likely requires attaching a
-    virtual USB hub to a root port and mapping physical devices behind it.
+  - The emulator now includes an external USB hub device model (`UsbHubDevice`, USB class `0x09`)
+    that can be attached behind a root port to expose additional downstream ports (and is covered
+    by UHCI integration tests).
+  - Host integrations still need to decide *when* to attach a hub (e.g. always keep one root port
+    reserved for a hub and hot-plug passthrough devices behind it).
 - **No low-speed modeling**
   - Low-speed (1.5 Mbps) USB devices are not modeled correctly yet.
   - Expect some HID peripherals to fail enumeration or behave incorrectly.
