@@ -465,6 +465,44 @@ static void test_aero_layout_validation_ok_with_larger_lengths(void) {
     expect_layout_result("aero_layout_validation_ok_with_larger_lengths.strict", res, VIRTIO_PCI_AERO_LAYOUT_VALIDATE_OK);
 }
 
+static void test_aero_layout_validation_cap_length_exceeds_bar0(void) {
+    uint8_t cfg[256];
+    uint64_t bars[VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT];
+    virtio_pci_parsed_caps_t caps;
+    virtio_pci_cap_parse_result_t parseRes;
+    virtio_pci_bar_info_t barInfo[VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT];
+    virtio_pci_aero_layout_validate_result_t res;
+
+    memset(cfg, 0, sizeof(cfg));
+    memset(bars, 0, sizeof(bars));
+    memset(&caps, 0, sizeof(caps));
+    memset(barInfo, 0, sizeof(barInfo));
+
+    write_le16(&cfg[VIRTIO_PCI_CAP_PARSER_PCI_STATUS_OFFSET], VIRTIO_PCI_CAP_PARSER_PCI_STATUS_CAP_LIST);
+    cfg[VIRTIO_PCI_CAP_PARSER_PCI_CAP_PTR_OFFSET] = 0x40;
+
+    /* COMMON extends beyond BAR0 (BAR0 length is 0x4000 for the contract). */
+    add_virtio_cap(cfg, 0x40, 0x54, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_COMMON, 0, 0x0000, 0x5000, 16);
+    add_virtio_notify_cap(cfg, 0x54, 0x70, 0, 0x1000, 0x0200, 4);
+    add_virtio_cap(cfg, 0x70, 0x80, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_ISR, 0, 0x2000, 0x0040, 16);
+    add_virtio_cap(cfg, 0x80, 0x00, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_DEVICE, 0, 0x3000, 0x0200, 16);
+
+    bars[0] = 0xA0000000ULL;
+
+    parseRes = virtio_pci_cap_parse(cfg, sizeof(cfg), bars, &caps);
+    expect_result("aero_layout_validation_cap_length_exceeds_bar0.parse", parseRes, VIRTIO_PCI_CAP_PARSE_OK);
+    if (parseRes != VIRTIO_PCI_CAP_PARSE_OK) {
+        return;
+    }
+
+    barInfo[0].present = 1;
+    barInfo[0].is_memory = 1;
+    barInfo[0].length = 0x4000;
+
+    res = virtio_pci_validate_aero_pci_layout(&caps, barInfo, VIRTIO_PCI_LAYOUT_POLICY_AERO_STRICT);
+    expect_layout_result("aero_layout_validation_cap_length_exceeds_bar0.strict", res, VIRTIO_PCI_AERO_LAYOUT_VALIDATE_ERR_COMMON_MISMATCH);
+}
+
 static void test_aero_layout_validation_common_len_too_small(void) {
     uint8_t cfg[256];
     uint64_t bars[VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT];
@@ -2107,6 +2145,7 @@ int main(void) {
     test_aero_layout_validation_bad_argument_unknown_policy();
     test_aero_layout_validation_permissive_ignores_missing_bar0();
     test_aero_layout_validation_ok_with_larger_lengths();
+    test_aero_layout_validation_cap_length_exceeds_bar0();
     test_aero_layout_validation_common_len_too_small();
     test_aero_layout_validation_notify_len_too_small();
     test_aero_layout_validation_isr_len_too_small();

@@ -33,7 +33,9 @@ static int virtio_pci_aero_cap_matches(
     const virtio_pci_cap_region_t *cap,
     uint8_t expected_bar,
     uint32_t expected_offset,
-    uint32_t min_length) {
+    uint32_t min_length,
+    uint64_t expected_bar_len) {
+    uint64_t cap_end;
     if (cap == NULL) {
         return 0;
     }
@@ -47,6 +49,15 @@ static int virtio_pci_aero_cap_matches(
     }
 
     if (cap->length < min_length) {
+        return 0;
+    }
+
+    /* Refuse capabilities that claim a region larger than the BAR. Even in strict
+     * mode we allow *longer-than-minimum* lengths, but the region must still fit
+     * within BAR0 to avoid mapping or touching MMIO beyond the assigned resource.
+     */
+    cap_end = (uint64_t)cap->offset + (uint64_t)cap->length;
+    if (cap_end > expected_bar_len) {
         return 0;
     }
 
@@ -81,20 +92,22 @@ virtio_pci_aero_layout_validate_result_t virtio_pci_validate_aero_pci_layout(
         return VIRTIO_PCI_AERO_LAYOUT_VALIDATE_ERR_BAR0_TOO_SMALL;
     }
 
-    if (!virtio_pci_aero_cap_matches(&caps->common_cfg, 0, VIRTIO_PCI_AERO_COMMON_OFF, VIRTIO_PCI_AERO_COMMON_MIN_LEN)) {
+    if (!virtio_pci_aero_cap_matches(
+            &caps->common_cfg, 0, VIRTIO_PCI_AERO_COMMON_OFF, VIRTIO_PCI_AERO_COMMON_MIN_LEN, bars[0].length)) {
         return VIRTIO_PCI_AERO_LAYOUT_VALIDATE_ERR_COMMON_MISMATCH;
     }
 
-    if (!virtio_pci_aero_cap_matches(&caps->notify_cfg, 0, VIRTIO_PCI_AERO_NOTIFY_OFF, VIRTIO_PCI_AERO_NOTIFY_MIN_LEN)) {
+    if (!virtio_pci_aero_cap_matches(
+            &caps->notify_cfg, 0, VIRTIO_PCI_AERO_NOTIFY_OFF, VIRTIO_PCI_AERO_NOTIFY_MIN_LEN, bars[0].length)) {
         return VIRTIO_PCI_AERO_LAYOUT_VALIDATE_ERR_NOTIFY_MISMATCH;
     }
 
-    if (!virtio_pci_aero_cap_matches(&caps->isr_cfg, 0, VIRTIO_PCI_AERO_ISR_OFF, VIRTIO_PCI_AERO_ISR_MIN_LEN)) {
+    if (!virtio_pci_aero_cap_matches(&caps->isr_cfg, 0, VIRTIO_PCI_AERO_ISR_OFF, VIRTIO_PCI_AERO_ISR_MIN_LEN, bars[0].length)) {
         return VIRTIO_PCI_AERO_LAYOUT_VALIDATE_ERR_ISR_MISMATCH;
     }
 
     if (!virtio_pci_aero_cap_matches(
-            &caps->device_cfg, 0, VIRTIO_PCI_AERO_DEVICE_OFF, VIRTIO_PCI_AERO_DEVICE_MIN_LEN)) {
+            &caps->device_cfg, 0, VIRTIO_PCI_AERO_DEVICE_OFF, VIRTIO_PCI_AERO_DEVICE_MIN_LEN, bars[0].length)) {
         return VIRTIO_PCI_AERO_LAYOUT_VALIDATE_ERR_DEVICE_MISMATCH;
     }
 
