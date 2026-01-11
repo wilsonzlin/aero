@@ -132,7 +132,10 @@ impl UsbDevice for UsbWebUsbPassthroughDevice {
         self.pending_address = None;
 
         // Intercept SET_ADDRESS so it is never forwarded to the host.
-        if setup.request == USB_REQUEST_SET_ADDRESS {
+        //
+        // Note: Only match Standard/Device recipient requests (`bmRequestType & 0x7f == 0`), so
+        // vendor/class requests that happen to use `bRequest == 0x05` still get passed through.
+        if (setup.request_type & 0x7f) == 0x00 && setup.request == USB_REQUEST_SET_ADDRESS {
             if setup.request_type != 0x00
                 || setup.index != 0
                 || setup.length != 0
@@ -409,5 +412,52 @@ impl UsbDevice for UsbWebUsbPassthroughDevice {
             }
             _ => UsbHandshake::Nak,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::passthrough::UsbHostCompletionOut;
+
+    #[test]
+    fn vendor_brequest_0x05_is_not_treated_as_set_address() {
+        let mut dev = UsbWebUsbPassthroughDevice::new();
+
+        // Vendor-specific Host->Device request that happens to use bRequest=0x05.
+        // This must be forwarded to the host (not virtualized as SET_ADDRESS).
+        let setup = UsbSetupPacket {
+            request_type: 0x40,
+            request: USB_REQUEST_SET_ADDRESS,
+            value: 0x1234,
+            index: 0,
+            length: 0,
+        };
+
+        dev.handle_setup(setup);
+        let actions = dev.drain_actions();
+        assert_eq!(actions.len(), 1);
+        let (id, host_setup, host_data) = match &actions[0] {
+            UsbHostAction::ControlOut { id, setup, data } => (*id, *setup, data.as_slice()),
+            other => panic!("unexpected action: {other:?}"),
+        };
+        assert_eq!(host_setup.bm_request_type, 0x40);
+        assert_eq!(host_setup.b_request, USB_REQUEST_SET_ADDRESS);
+        assert_eq!(host_setup.w_value, 0x1234);
+        assert_eq!(host_setup.w_index, 0);
+        assert_eq!(host_setup.w_length, 0);
+        assert!(host_data.is_empty());
+
+        // Poll status stage while pending.
+        let mut buf = [0u8; 0];
+        assert_eq!(dev.handle_in(0, &mut buf), UsbHandshake::Nak);
+
+        // Complete the host transfer and ensure it does not apply a new USB address.
+        dev.push_completion(UsbHostCompletion::ControlOut {
+            id,
+            result: UsbHostCompletionOut::Success { bytes_written: 0 },
+        });
+        assert_eq!(dev.handle_in(0, &mut buf), UsbHandshake::Ack { bytes: 0 });
+        assert_eq!(dev.address(), 0);
     }
 }
