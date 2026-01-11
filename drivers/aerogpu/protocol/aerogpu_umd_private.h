@@ -67,6 +67,7 @@ typedef uint64_t aerogpu_umdpriv_u64;
 /* `flags` bitfield values for `aerogpu_umd_private_v1`. */
 #define AEROGPU_UMDPRIV_FLAG_IS_LEGACY (1u << 0)
 #define AEROGPU_UMDPRIV_FLAG_HAS_VBLANK (1u << 1)
+/* A shared fence page is configured and usable (not just supported). */
 #define AEROGPU_UMDPRIV_FLAG_HAS_FENCE_PAGE (1u << 2)
 
 /*

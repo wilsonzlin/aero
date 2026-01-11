@@ -900,6 +900,7 @@ static NTSTATUS APIENTRY AeroGpuDdiQueryAdapterInfo(_In_ const HANDLE hAdapter,
         ULONG magic = 0;
         ULONG abiVersion = 0;
         ULONGLONG features = 0;
+        ULONGLONG fencePageGpa = 0;
 
         if (adapter->Bar0) {
             magic = AeroGpuReadRegU32(adapter, AEROGPU_UMDPRIV_MMIO_REG_MAGIC);
@@ -908,6 +909,17 @@ static NTSTATUS APIENTRY AeroGpuDdiQueryAdapterInfo(_In_ const HANDLE hAdapter,
                 const ULONG lo = AeroGpuReadRegU32(adapter, AEROGPU_UMDPRIV_MMIO_REG_FEATURES_LO);
                 const ULONG hi = AeroGpuReadRegU32(adapter, AEROGPU_UMDPRIV_MMIO_REG_FEATURES_HI);
                 features = ((ULONGLONG)hi << 32) | (ULONGLONG)lo;
+
+                /*
+                 * The UMD-private blob exposes a convenience flag indicating
+                 * whether a shared fence page is configured/usable. Distinguish
+                 * this from the raw feature bit (which only indicates support).
+                 */
+                if (features & AEROGPU_UMDPRIV_FEATURE_FENCE_PAGE) {
+                    const ULONG fenceLo = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FENCE_GPA_LO);
+                    const ULONG fenceHi = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FENCE_GPA_HI);
+                    fencePageGpa = ((ULONGLONG)fenceHi << 32) | (ULONGLONG)fenceLo;
+                }
             }
         }
 
@@ -922,7 +934,7 @@ static NTSTATUS APIENTRY AeroGpuDdiQueryAdapterInfo(_In_ const HANDLE hAdapter,
         if (features & AEROGPU_UMDPRIV_FEATURE_VBLANK) {
             flags |= AEROGPU_UMDPRIV_FLAG_HAS_VBLANK;
         }
-        if (features & AEROGPU_UMDPRIV_FEATURE_FENCE_PAGE) {
+        if (fencePageGpa != 0) {
             flags |= AEROGPU_UMDPRIV_FLAG_HAS_FENCE_PAGE;
         }
         out->flags = flags;
