@@ -429,15 +429,16 @@ static int RunD3D11DepthTestSanity(int argc, char** argv) {
     verts[i].color[3] = 1.0f;
   }
 
-  // Far triangle (green) at z=0.8.
-  verts[3].pos[0] = -0.5f;
-  verts[3].pos[1] = -0.5f;
+  // Far triangle (green) at z=0.8. Use a fullscreen triangle so the final image contains both
+  // colors simultaneously (blue in the overlap, green elsewhere) when depth testing works.
+  verts[3].pos[0] = -1.0f;
+  verts[3].pos[1] = -1.0f;
   verts[3].pos[2] = 0.8f;
-  verts[4].pos[0] = 0.0f;
-  verts[4].pos[1] = 0.5f;
+  verts[4].pos[0] = -1.0f;
+  verts[4].pos[1] = 3.0f;
   verts[4].pos[2] = 0.8f;
-  verts[5].pos[0] = 0.5f;
-  verts[5].pos[1] = -0.5f;
+  verts[5].pos[0] = 3.0f;
+  verts[5].pos[1] = -1.0f;
   verts[5].pos[2] = 0.8f;
   for (int i = 3; i < 6; ++i) {
     verts[i].color[0] = 0.0f;
@@ -478,13 +479,13 @@ static int RunD3D11DepthTestSanity(int argc, char** argv) {
     clear_flags |= D3D11_CLEAR_STENCIL;
   }
 
-  // Validate ClearDepthStencilView deterministically:
-  // 1) Clear to 1.0 to establish a known depth state.
-  // 2) Clear to 0.0, then draw a far triangle (z=0.8) in the LEFT viewport. It must be rejected.
-  // 3) Clear back to 1.0, then draw the far triangle in the RIGHT viewport. It must pass.
-  // 4) Draw a near triangle (z=0.2) in the RIGHT viewport; it must win, and the far triangle must
-  //    be rejected afterwards due to depth writes.
-  context->ClearDepthStencilView(dsv.get(), clear_flags, 1.0f, 0);
+  // Validate ClearDepthStencilView + depth testing deterministically:
+  // 1) Clear depth to 0.0, then draw a far fullscreen triangle (z=0.8) in the LEFT viewport.
+  //    It must be rejected (color stays red).
+  // 2) Clear depth to 1.0, then in the RIGHT viewport draw:
+  //    - near triangle (blue, z=0.2) first
+  //    - far fullscreen triangle (green, z=0.8) second
+  //    Result should be blue in the overlap (center) and green elsewhere (e.g. bottom-right).
   context->ClearDepthStencilView(dsv.get(), clear_flags, 0.0f, 0);
 
   // Left half.
@@ -503,11 +504,9 @@ static int RunD3D11DepthTestSanity(int argc, char** argv) {
   vp.Width = (FLOAT)(kWidth / 2);
   vp.Height = (FLOAT)kHeight;
   context->RSSetViewports(1, &vp);
-  // Far triangle passes (depth=1.0).
-  context->Draw(3, 3);
-  // Near triangle passes and overwrites the far triangle.
+  // Near triangle first.
   context->Draw(3, 0);
-  // Far triangle should now be rejected (depth=0.2 from the near draw).
+  // Far triangle second (should draw outside the near triangle only).
   context->Draw(3, 3);
 
   // Explicitly unbind to exercise the "bind NULL to clear" path (common during ClearState).
@@ -558,8 +557,11 @@ static int RunD3D11DepthTestSanity(int argc, char** argv) {
       aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, kWidth / 4, kHeight / 2);
   const uint32_t right_center =
       aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, 3 * kWidth / 4, kHeight / 2);
+  const uint32_t right_corner =
+      aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, kWidth - 4, kHeight - 4);
   const uint32_t expected_red = 0xFFFF0000u;
   const uint32_t expected_blue = 0xFF0000FFu;
+  const uint32_t expected_green = 0xFF00FF00u;
 
   if (dump) {
     const std::wstring bmp_path = aerogpu_test::JoinPath(dir, L"d3d11_depth_test_sanity.bmp");
@@ -585,18 +587,21 @@ static int RunD3D11DepthTestSanity(int argc, char** argv) {
 
   if ((corner & 0x00FFFFFFu) != (expected_red & 0x00FFFFFFu) ||
       (left_center & 0x00FFFFFFu) != (expected_red & 0x00FFFFFFu) ||
-      (right_center & 0x00FFFFFFu) != (expected_blue & 0x00FFFFFFu)) {
+      (right_center & 0x00FFFFFFu) != (expected_blue & 0x00FFFFFFu) ||
+      (right_corner & 0x00FFFFFFu) != (expected_green & 0x00FFFFFFu)) {
     PrintD3D11DeviceRemovedReasonIfFailed(kTestName, device.get());
     return reporter.Fail(
         "pixel mismatch (%s): corner=0x%08lX expected 0x%08lX; left_center=0x%08lX expected 0x%08lX; "
-        "right_center=0x%08lX expected 0x%08lX",
+        "right_center=0x%08lX expected 0x%08lX; right_corner=0x%08lX expected 0x%08lX",
         depth_format_label,
         (unsigned long)corner,
         (unsigned long)expected_red,
         (unsigned long)left_center,
         (unsigned long)expected_red,
         (unsigned long)right_center,
-        (unsigned long)expected_blue);
+        (unsigned long)expected_blue,
+        (unsigned long)right_corner,
+        (unsigned long)expected_green);
   }
 
   return reporter.Pass();
