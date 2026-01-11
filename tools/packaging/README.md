@@ -33,7 +33,7 @@ cd tools/packaging/aero_packager
 #     certs/*.{cer,crt,p7b}
 #     licenses/** (optional; third-party license texts / attribution files)
 #
-# spec.json declares which drivers are required + expected HWIDs.
+# spec.json declares which drivers to include (required + optional) and expected HWID regexes.
 
 cargo run --release -- \
   --drivers-dir /path/to/drivers \
@@ -56,9 +56,13 @@ powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-guest-tools-from
   -BuildId local
 ```
 
-This uses the validation spec at:
+This uses the in-repo "minimal" spec by default:
 
 - `tools/packaging/specs/win7-virtio-win.json`
+
+To also include optional virtio drivers (if present in the input), use:
+
+- `tools/packaging/specs/win7-virtio-full.json`
 
 When built from a virtio-win ISO/root, the wrapper script also attempts to
 propagate upstream license/notice files into the packaged outputs under:
@@ -80,3 +84,16 @@ SOURCE_DATE_EPOCH=0 cargo run --release -- ...
 The packager uses a small JSON spec to validate and sanity-check the driver artifacts before packaging.
 
 See `tools/packaging/aero_packager/testdata/spec.json` for a minimal example.
+
+The current schema uses a unified `drivers` list:
+
+```json
+{
+  "drivers": [
+    {"name": "viostor", "required": true, "expected_hardware_ids": ["PCI\\\\VEN_1AF4&DEV_(1001|1042)"]},
+    {"name": "viosnd", "required": false, "expected_hardware_ids": ["PCI\\\\VEN_1AF4&DEV_(1018|1059)"]}
+  ]
+}
+```
+
+Legacy specs using `required_drivers` are still accepted and treated as `required=true` entries.

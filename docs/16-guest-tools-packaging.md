@@ -73,7 +73,7 @@ The tool produces the following in the output directory:
 
 The packaged media also includes `THIRD_PARTY_NOTICES.md` at the ISO/zip root.
 
-The ISO/zip root layout matches what `guest-tools/setup.cmd` expects (and may include optional verification scripts):
+The ISO/zip root layout matches what `guest-tools/setup.cmd` expects:
 
 ```
 /
