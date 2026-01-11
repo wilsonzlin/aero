@@ -805,7 +805,10 @@ fn d3d9_cmd_stream_clear_stencil_masks_to_8_bits() {
         Ok(exec) => exec,
         Err(AerogpuD3d9Error::AdapterNotFound) => {
             common::skip_or_panic(
-                concat!(module_path!(), "::d3d9_cmd_stream_clear_stencil_masks_to_8_bits"),
+                concat!(
+                    module_path!(),
+                    "::d3d9_cmd_stream_clear_stencil_masks_to_8_bits"
+                ),
                 "wgpu adapter not found",
             );
             return;
@@ -898,10 +901,7 @@ fn d3d9_cmd_stream_clear_stencil_masks_to_8_bits() {
         .expect("stencil readback should succeed");
 
     assert_eq!(stencil_at(&stencil, width, 0, 0), expected);
-    assert_eq!(
-        stencil_at(&stencil, width, width - 1, height - 1),
-        expected
-    );
+    assert_eq!(stencil_at(&stencil, width, width - 1, height - 1), expected);
 }
 
 #[test]
