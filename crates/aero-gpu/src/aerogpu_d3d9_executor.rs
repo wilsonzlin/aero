@@ -814,6 +814,12 @@ impl AerogpuD3d9Executor {
                             "guest-backed textures with mip_levels/array_layers > 1 are not supported".into(),
                         ));
                     }
+                    if row_pitch_bytes == 0 {
+                        return Err(AerogpuD3d9Error::Validation(
+                            "CREATE_TEXTURE2D: row_pitch_bytes must be non-zero when backing_alloc_id != 0"
+                                .into(),
+                        ));
+                    }
                     let entry = ctx
                         .alloc_table
                         .and_then(|t| t.get(backing_alloc_id))
@@ -822,16 +828,12 @@ impl AerogpuD3d9Executor {
                     let expected_row_pitch = width.checked_mul(bpp).ok_or_else(|| {
                         AerogpuD3d9Error::Validation("CREATE_TEXTURE2D: row pitch overflow".into())
                     })?;
-                    if row_pitch_bytes != 0 && row_pitch_bytes < expected_row_pitch {
+                    if row_pitch_bytes < expected_row_pitch {
                         return Err(AerogpuD3d9Error::Validation(format!(
                             "CREATE_TEXTURE2D: row_pitch_bytes {row_pitch_bytes} is smaller than required {expected_row_pitch}"
                         )));
                     }
-                    let row_pitch = if row_pitch_bytes != 0 {
-                        row_pitch_bytes
-                    } else {
-                        expected_row_pitch
-                    };
+                    let row_pitch = row_pitch_bytes;
                     let required =
                         (row_pitch as u64)
                             .checked_mul(height as u64)

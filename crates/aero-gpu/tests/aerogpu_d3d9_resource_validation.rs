@@ -1,5 +1,6 @@
 mod common;
 
+use aero_d3d9::shader::ShaderStage as D3d9ShaderStage;
 use aero_gpu::aerogpu_executor::{AllocEntry, AllocTable};
 use aero_gpu::{AerogpuD3d9Error, AerogpuD3d9Executor, VecGuestMemory};
 use aero_protocol::aerogpu::aerogpu_cmd::AerogpuShaderStage;
@@ -149,6 +150,61 @@ fn d3d9_create_shader_dxbc_rejects_zero_handle() {
 }
 
 #[test]
+fn d3d9_create_shader_dxbc_rejects_unsupported_stage() {
+    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
+        Ok(exec) => exec,
+        Err(AerogpuD3d9Error::AdapterNotFound) => {
+            eprintln!("skipping resource validation test: wgpu adapter not found");
+            return;
+        }
+        Err(err) => panic!("failed to create executor: {err}"),
+    };
+
+    let mut writer = AerogpuCmdWriter::new();
+    writer.create_shader_dxbc(1, AerogpuShaderStage::Compute, &[]);
+    let stream = writer.finish();
+
+    match exec.execute_cmd_stream(&stream) {
+        Ok(_) => panic!("expected CREATE_SHADER_DXBC with compute stage to be rejected"),
+        Err(AerogpuD3d9Error::Validation(msg)) => assert!(msg.contains("unsupported")),
+        Err(other) => panic!("unexpected error: {other:?}"),
+    }
+}
+
+#[test]
+fn d3d9_create_shader_dxbc_rejects_stage_mismatch() {
+    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
+        Ok(exec) => exec,
+        Err(AerogpuD3d9Error::AdapterNotFound) => {
+            eprintln!("skipping resource validation test: wgpu adapter not found");
+            return;
+        }
+        Err(err) => panic!("failed to create executor: {err}"),
+    };
+
+    let vs_bytes = assemble_vs_passthrough_pos();
+
+    // Submit a vertex shader but label it as pixel stage.
+    let mut writer = AerogpuCmdWriter::new();
+    writer.create_shader_dxbc(1, AerogpuShaderStage::Pixel, &vs_bytes);
+    let stream = writer.finish();
+
+    match exec.execute_cmd_stream(&stream) {
+        Ok(_) => panic!("expected CREATE_SHADER_DXBC stage mismatch to be rejected"),
+        Err(AerogpuD3d9Error::ShaderStageMismatch {
+            shader_handle,
+            expected,
+            actual,
+        }) => {
+            assert_eq!(shader_handle, 1);
+            assert_eq!(expected, D3d9ShaderStage::Pixel);
+            assert_eq!(actual, D3d9ShaderStage::Vertex);
+        }
+        Err(other) => panic!("unexpected error: {other:?}"),
+    }
+}
+
+#[test]
 fn d3d9_create_input_layout_rejects_zero_handle() {
     let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
         Ok(exec) => exec,
@@ -166,6 +222,40 @@ fn d3d9_create_input_layout_rejects_zero_handle() {
     match exec.execute_cmd_stream(&stream) {
         Ok(_) => panic!("expected CREATE_INPUT_LAYOUT with handle=0 to be rejected"),
         Err(AerogpuD3d9Error::Validation(msg)) => assert!(msg.contains("reserved")),
+        Err(other) => panic!("unexpected error: {other:?}"),
+    }
+}
+
+#[test]
+fn d3d9_create_texture2d_rejects_guest_backed_row_pitch_zero() {
+    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
+        Ok(exec) => exec,
+        Err(AerogpuD3d9Error::AdapterNotFound) => {
+            eprintln!("skipping resource validation test: wgpu adapter not found");
+            return;
+        }
+        Err(err) => panic!("failed to create executor: {err}"),
+    };
+
+    // backing_alloc_id != 0 requires a non-zero row pitch.
+    let mut writer = AerogpuCmdWriter::new();
+    writer.create_texture2d(
+        1,                                  // texture_handle
+        0,                                  // usage_flags
+        AerogpuFormat::R8G8B8A8Unorm as u32, // format
+        1,                                  // width
+        1,                                  // height
+        1,                                  // mip_levels
+        1,                                  // array_layers
+        0,                                  // row_pitch_bytes (invalid for guest-backed)
+        1,                                  // backing_alloc_id
+        0,                                  // backing_offset_bytes
+    );
+    let stream = writer.finish();
+
+    match exec.execute_cmd_stream(&stream) {
+        Ok(_) => panic!("expected CREATE_TEXTURE2D with guest backing and row_pitch_bytes=0 to be rejected"),
+        Err(AerogpuD3d9Error::Validation(msg)) => assert!(msg.contains("row_pitch_bytes")),
         Err(other) => panic!("unexpected error: {other:?}"),
     }
 }
@@ -284,6 +374,46 @@ fn d3d9_create_resource_rejects_handle_already_used_by_shader() {
     match exec.execute_cmd_stream(&stream) {
         Ok(_) => panic!("expected CREATE_BUFFER handle collision to be rejected"),
         Err(AerogpuD3d9Error::ResourceHandleInUse(3)) => {}
+        Err(other) => panic!("unexpected error: {other:?}"),
+    }
+}
+
+#[test]
+fn d3d9_import_shared_surface_rejects_alias_handle_already_used_by_shader() {
+    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
+        Ok(exec) => exec,
+        Err(AerogpuD3d9Error::AdapterNotFound) => {
+            eprintln!("skipping resource validation test: wgpu adapter not found");
+            return;
+        }
+        Err(err) => panic!("failed to create executor: {err}"),
+    };
+
+    const TOKEN: u64 = 0x1122_3344_5566_7788;
+
+    let vs_bytes = assemble_vs_passthrough_pos();
+
+    let mut writer = AerogpuCmdWriter::new();
+    writer.create_texture2d(
+        1,                                  // texture_handle
+        0,                                  // usage_flags
+        AerogpuFormat::R8G8B8A8Unorm as u32, // format
+        1,
+        1,
+        1,
+        1,
+        4,
+        0,
+        0,
+    );
+    writer.export_shared_surface(1, TOKEN);
+    writer.create_shader_dxbc(2, AerogpuShaderStage::Vertex, &vs_bytes);
+    writer.import_shared_surface(2, TOKEN);
+
+    let stream = writer.finish();
+    match exec.execute_cmd_stream(&stream) {
+        Ok(_) => panic!("expected IMPORT_SHARED_SURFACE handle collision to be rejected"),
+        Err(AerogpuD3d9Error::ResourceHandleInUse(2)) => {}
         Err(other) => panic!("unexpected error: {other:?}"),
     }
 }
