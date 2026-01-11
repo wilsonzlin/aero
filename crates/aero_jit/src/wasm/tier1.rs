@@ -338,7 +338,7 @@ impl Tier1WasmCodegen {
 
         emitter
             .func
-            .instruction(&Instruction::LocalGet(layout.next_rip_local()));
+            .instruction(&Instruction::LocalGet(layout.scratch_local()));
         emitter.func.instruction(&Instruction::Return);
         emitter.func.instruction(&Instruction::End);
 
