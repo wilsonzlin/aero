@@ -9,6 +9,7 @@ import {
   L2_TUNNEL_TYPE_FRAME,
   L2_TUNNEL_TYPE_PING,
   L2_TUNNEL_TYPE_PONG,
+  L2_TUNNEL_SUBPROTOCOL,
   L2_TUNNEL_VERSION,
   L2TunnelDecodeError,
   decodeL2Message,
@@ -34,6 +35,7 @@ type L2InvalidVector = {
 
 type RootVectors = {
   version: number;
+  // Key matches `L2_TUNNEL_SUBPROTOCOL`.
   "aero-l2-tunnel-v1": {
     valid: L2ValidVector[];
     invalid: L2InvalidVector[];
@@ -68,7 +70,7 @@ describe("l2TunnelProtocol", () => {
     const vectors = loadVectors();
     expect(vectors.version).toBe(1);
 
-    for (const v of vectors["aero-l2-tunnel-v1"].valid) {
+    for (const v of vectors[L2_TUNNEL_SUBPROTOCOL].valid) {
       const payload = decodeHex(v.payloadHex);
       const expectedWire = decodeHex(v.wireHex);
 
@@ -99,7 +101,7 @@ describe("l2TunnelProtocol", () => {
       expect(encodeHex(encoded)).toBe(v.wireHex);
     }
 
-    for (const v of vectors["aero-l2-tunnel-v1"].invalid) {
+    for (const v of vectors[L2_TUNNEL_SUBPROTOCOL].invalid) {
       const wire = decodeHex(v.wireHex);
       try {
         decodeL2Message(wire);
