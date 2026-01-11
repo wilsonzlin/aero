@@ -172,6 +172,10 @@ async function stableCacheId(key: string): Promise<string> {
   }
 }
 
+function idbOverlayBindingKey(overlayDiskId: string): string {
+  return `overlay-binding:${overlayDiskId}`;
+}
+
 async function idbDeleteRemoteChunkCache(db: IDBDatabase, cacheKey: string): Promise<void> {
   const tx = db.transaction(["remote_chunks", "remote_chunk_meta"], "readwrite");
   const chunksStore = tx.objectStore("remote_chunks");
@@ -721,6 +725,7 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
             await idbDeleteRemoteChunkCache(db, derivedCacheKey);
             await idbDeleteRemoteChunkCache(db, meta.cache.fileName);
             await idbDeleteRemoteChunkCache(db, meta.cache.overlayFileName);
+            await idbDeleteRemoteChunkCache(db, idbOverlayBindingKey(meta.cache.overlayFileName));
             await idbDeleteDiskData(db, meta.cache.fileName);
             await idbDeleteDiskData(db, meta.cache.overlayFileName);
           } finally {
