@@ -1113,6 +1113,14 @@ impl D3D9Runtime {
             .get(&buffer_id)
             .ok_or(RuntimeError::UnknownBuffer(buffer_id))?;
 
+        let alignment = wgpu::COPY_BUFFER_ALIGNMENT;
+        let size_bytes = data.len() as u64;
+        if offset % alignment != 0 || size_bytes % alignment != 0 {
+            return Err(RuntimeError::Validation(format!(
+                "buffer writes must be {alignment}-byte aligned (offset={offset} size_bytes={size_bytes})"
+            )));
+        }
+
         let write_end = offset.saturating_add(data.len() as u64);
         if write_end > buffer.size {
             return Err(RuntimeError::BufferWriteOutOfBounds {

@@ -126,6 +126,16 @@ impl AerogpuResourceManager {
     ) -> Result<()> {
         self.ensure_resource_handle_unused(handle)?;
 
+        if size_bytes == 0 {
+            bail!("CreateBuffer: size_bytes must be > 0");
+        }
+        let alignment = wgpu::COPY_BUFFER_ALIGNMENT;
+        if size_bytes % alignment != 0 {
+            bail!(
+                "CreateBuffer: size_bytes must be a multiple of {alignment} (got {size_bytes})"
+            );
+        }
+
         let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("aerogpu buffer"),
             size: size_bytes,
@@ -435,6 +445,14 @@ impl AerogpuResourceManager {
             if buf.backing.is_some() {
                 bail!("UploadResource: buffer {handle} is backed by a guest allocation");
             }
+            let alignment = wgpu::COPY_BUFFER_ALIGNMENT;
+            if range.offset_bytes % alignment != 0 || range.size_bytes % alignment != 0 {
+                bail!(
+                    "UploadResource: buffer offset_bytes and size_bytes must be {alignment}-byte aligned (offset_bytes={} size_bytes={})",
+                    range.offset_bytes,
+                    range.size_bytes
+                );
+            }
             self.queue
                 .write_buffer(&buf.buffer, range.offset_bytes, bytes);
             return Ok(());
@@ -502,6 +520,14 @@ impl AerogpuResourceManager {
                 "buffer {handle} backing range out of bounds: alloc_size={} offset={} size={}",
                 alloc.size_bytes,
                 backing.alloc_offset_bytes,
+                buf.size
+            );
+        }
+
+        let alignment = wgpu::COPY_BUFFER_ALIGNMENT;
+        if buf.size % alignment != 0 {
+            bail!(
+                "buffer {handle} size_bytes must be a multiple of {alignment} (got {})",
                 buf.size
             );
         }

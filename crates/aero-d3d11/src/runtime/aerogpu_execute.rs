@@ -172,6 +172,13 @@ impl AerogpuCmdRuntime {
             .buffers
             .get(&handle)
             .ok_or_else(|| anyhow!("unknown buffer handle {handle}"))?;
+        let alignment = wgpu::COPY_BUFFER_ALIGNMENT;
+        let size_bytes = data.len() as u64;
+        if offset % alignment != 0 || size_bytes % alignment != 0 {
+            bail!(
+                "write_buffer: offset and size must be {alignment}-byte aligned (offset={offset} size_bytes={size_bytes})"
+            );
+        }
         if offset.saturating_add(data.len() as u64) > buf.size {
             bail!(
                 "write_buffer out of bounds: offset={} len={} size={}",

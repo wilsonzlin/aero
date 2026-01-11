@@ -366,6 +366,13 @@ impl D3D11Runtime {
             .buffers
             .get(&id)
             .ok_or_else(|| anyhow!("unknown buffer {id}"))?;
+        let alignment = wgpu::COPY_BUFFER_ALIGNMENT;
+        let size_bytes = bytes.len() as u64;
+        if offset % alignment != 0 || size_bytes % alignment != 0 {
+            bail!(
+                "UpdateBuffer offset/size must be {alignment}-byte aligned (offset={offset} size_bytes={size_bytes})"
+            );
+        }
         self.queue.write_buffer(&buffer.buffer, offset, bytes);
         Ok(())
     }
