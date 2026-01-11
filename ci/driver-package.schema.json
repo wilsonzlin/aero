@@ -12,6 +12,7 @@
     "infFiles": {
       "type": "array",
       "description": "Optional list of INF files (paths relative to the driver directory) to stage for this driver. If omitted, CI discovers all .inf files under the driver directory. Use this to disambiguate drivers that ship multiple INFs (e.g. optional feature variants) that should not be packaged together.",
+      "minItems": 1,
       "items": {
         "type": "string",
         "minLength": 1,

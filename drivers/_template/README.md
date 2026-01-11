@@ -14,6 +14,7 @@ The manifest can declare:
 
 - explicit list of `.inf` files to stage (`infFiles`) to avoid packaging multiple optional INFs together
   - paths are relative to the driver directory
+  - if omitted, CI stages all `.inf` files discovered under the driver directory
   - if present, the list must be non-empty
 - WOW64 payload DLL file names to copy from x86 build outputs into the x64 staged package (`wow64Files`)
   - entries must be file names only (no path separators)
