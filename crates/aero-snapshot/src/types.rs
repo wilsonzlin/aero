@@ -293,9 +293,14 @@ impl CpuState {
         }
         r.read_exact(&mut state.fxsave)?;
         // Optional CPU v2 extension. Older v2 snapshots may end at the FXSAVE bytes.
-        let mut ext_len_bytes = [0u8; 4];
-        match r.read_exact(&mut ext_len_bytes) {
+        let mut ext_len_first = [0u8; 1];
+        match r.read_exact(&mut ext_len_first) {
             Ok(()) => {
+                let mut ext_len_bytes = [0u8; 4];
+                ext_len_bytes[0] = ext_len_first[0];
+                // If we saw at least one byte of the extension length prefix, the remaining
+                // bytes must be present too; otherwise the snapshot is truncated/corrupt.
+                r.read_exact(&mut ext_len_bytes[1..])?;
                 const MAX_CPU_V2_EXT_LEN: u32 = 1024 * 1024;
                 let ext_len = u32::from_le_bytes(ext_len_bytes);
                 if ext_len > MAX_CPU_V2_EXT_LEN {
@@ -316,10 +321,11 @@ impl CpuState {
                 }
             }
             Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                // No extension present (legacy v2 snapshots).
                 return Ok(state);
             }
             Err(e) => return Err(e.into()),
-        }
+        };
         Ok(state)
     }
 
