@@ -133,6 +133,13 @@ pub struct PciConfigSpace {
     bars: [PciBarState; 6],
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PciConfigSpaceState {
+    pub bytes: [u8; PCI_CONFIG_SPACE_SIZE],
+    pub bar_base: [u64; 6],
+    pub bar_probe: [bool; 6],
+}
+
 impl PciConfigSpace {
     pub const INTERRUPT_LINE_OFFSET: u16 = 0x3C;
     pub const INTERRUPT_PIN_OFFSET: u16 = 0x3D;
@@ -381,6 +388,42 @@ impl PciConfigSpace {
         self.capabilities
             .iter_mut()
             .find_map(|cap| cap.as_any_mut().downcast_mut::<T>())
+    }
+
+    pub fn snapshot_state(&self) -> PciConfigSpaceState {
+        // Bring capability-backed bytes (MSI, etc.) up to date so the snapshot reflects what the
+        // guest would observe on the next config-space read. Snapshotting should not mutate the
+        // device, so this synchronizes into a temporary buffer.
+        let mut bytes = self.bytes;
+        for cap in &self.capabilities {
+            cap.sync_to_config(&mut bytes);
+        }
+
+        PciConfigSpaceState {
+            bytes,
+            bar_base: core::array::from_fn(|index| self.bars[index].base),
+            bar_probe: core::array::from_fn(|index| self.bars[index].probe),
+        }
+    }
+
+    pub fn restore_state(&mut self, state: &PciConfigSpaceState) {
+        self.bytes = state.bytes;
+        for i in 0..self.bars.len() {
+            self.bars[i].base = state.bar_base[i];
+            self.bars[i].probe = state.bar_probe[i];
+        }
+
+        // Restore BAR bytes for known BAR definitions, ensuring the raw config-space bytes match
+        // the emulation state used by BAR reads/writes.
+        for i in 0..self.bars.len() {
+            if self.bars[i].def.is_some() {
+                let base = self.bars[i].base;
+                self.write_bar_base_to_bytes(i, base);
+            }
+        }
+
+        self.sync_capabilities_from_config();
+        self.sync_capabilities_to_config();
     }
 
     fn allocate_capability_offset(&mut self, len: u8) -> u8 {

@@ -44,6 +44,14 @@ impl MsiCapability {
         self.message_data
     }
 
+    pub fn mask_bits(&self) -> u32 {
+        self.mask_bits
+    }
+
+    pub fn pending_bits(&self) -> u32 {
+        self.pending_bits
+    }
+
     pub fn message(&self) -> MsiMessage {
         MsiMessage {
             address: self.message_address,
@@ -198,6 +206,15 @@ impl PciCapability for MsiCapability {
             } else {
                 Self::read_u32(config, base + 0x0c)
             };
+
+            self.pending_bits = if self.is_64bit {
+                Self::read_u32(config, base + 0x14)
+            } else {
+                Self::read_u32(config, base + 0x10)
+            };
+        } else {
+            self.mask_bits = 0;
+            self.pending_bits = 0;
         }
     }
 

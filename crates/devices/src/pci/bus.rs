@@ -1,6 +1,10 @@
-use crate::pci::config::{PciBarChange, PciCommandChange, PciConfigSpace, PciConfigWriteEffects};
+use crate::pci::config::{
+    PciBarChange, PciCommandChange, PciConfigSpace, PciConfigSpaceState, PciConfigWriteEffects,
+};
 use crate::pci::{PciBarKind, PciBarRange, PciBdf, PciDevice};
 use crate::pci::{PciResourceAllocator, PciResourceError};
+use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
+use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter};
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -201,6 +205,128 @@ impl PciBus {
     }
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct PciBusSnapshot {
+    devices: Vec<PciDeviceSnapshot>,
+}
+
+#[derive(Debug, Clone)]
+struct PciDeviceSnapshot {
+    bdf: PciBdf,
+    config: PciConfigSpaceState,
+}
+
+impl PciBusSnapshot {
+    pub fn save_from(bus: &PciBus) -> Self {
+        let mut devices = Vec::with_capacity(bus.devices.len());
+        for (bdf, dev) in bus.devices.iter() {
+            devices.push(PciDeviceSnapshot {
+                bdf: *bdf,
+                config: dev.config().snapshot_state(),
+            });
+        }
+        Self { devices }
+    }
+
+    pub fn restore_into(&self, bus: &mut PciBus) -> SnapshotResult<()> {
+        for entry in &self.devices {
+            let Some(dev) = bus.devices.get_mut(&entry.bdf) else {
+                continue;
+            };
+            dev.config_mut().restore_state(&entry.config);
+        }
+
+        bus.mapped_bars.clear();
+        for bdf in bus.iter_device_addrs().collect::<Vec<_>>() {
+            let (command, bar_ranges) = {
+                let Some(dev) = bus.devices.get(&bdf) else {
+                    continue;
+                };
+                let cfg = dev.config();
+                (cfg.command(), core::array::from_fn(|index| cfg.bar_range(index as u8)))
+            };
+
+            bus.refresh_device_decoding(bdf, command, &bar_ranges);
+        }
+
+        Ok(())
+    }
+}
+
+impl IoSnapshot for PciBusSnapshot {
+    const DEVICE_ID: [u8; 4] = *b"PCIB";
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+
+    fn save_state(&self) -> Vec<u8> {
+        const TAG_DEVICES: u16 = 1;
+
+        let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
+
+        let mut enc = Encoder::new().u32(self.devices.len() as u32);
+        for entry in &self.devices {
+            enc = enc
+                .u8(entry.bdf.bus)
+                .u8(entry.bdf.device)
+                .u8(entry.bdf.function)
+                .bytes(&entry.config.bytes);
+
+            for i in 0..6 {
+                enc = enc.u64(entry.config.bar_base[i]).bool(entry.config.bar_probe[i]);
+            }
+        }
+
+        w.field_bytes(TAG_DEVICES, enc.finish());
+        w.finish()
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        use crate::pci::capabilities::PCI_CONFIG_SPACE_SIZE;
+
+        const TAG_DEVICES: u16 = 1;
+
+        let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
+        r.ensure_device_major(Self::DEVICE_VERSION.major)?;
+
+        self.devices.clear();
+
+        let Some(buf) = r.bytes(TAG_DEVICES) else {
+            return Ok(());
+        };
+
+        let mut d = Decoder::new(buf);
+        let count = d.u32()? as usize;
+        let mut by_bdf = BTreeMap::new();
+        for _ in 0..count {
+            let bdf = PciBdf::new(d.u8()?, d.u8()?, d.u8()?);
+
+            let mut config_bytes = [0u8; PCI_CONFIG_SPACE_SIZE];
+            config_bytes.copy_from_slice(d.bytes(PCI_CONFIG_SPACE_SIZE)?);
+
+            let mut bar_base = [0u64; 6];
+            let mut bar_probe = [false; 6];
+            for i in 0..6 {
+                bar_base[i] = d.u64()?;
+                bar_probe[i] = d.bool()?;
+            }
+
+            let config = PciConfigSpaceState {
+                bytes: config_bytes,
+                bar_base,
+                bar_probe,
+            };
+            by_bdf.insert(bdf, config);
+        }
+        d.finish()?;
+
+        self.devices = by_bdf
+            .into_iter()
+            .map(|(bdf, config)| PciDeviceSnapshot { bdf, config })
+            .collect();
+
+        Ok(())
+    }
+}
+
 /// Emulation of PCI Configuration Mechanism #1 (0xCF8/0xCFC).
 #[derive(Debug, Default)]
 pub struct PciConfigMechanism1 {
@@ -269,6 +395,32 @@ impl PciConfigMechanism1 {
             }
             _ => {}
         }
+    }
+}
+
+impl IoSnapshot for PciConfigMechanism1 {
+    const DEVICE_ID: [u8; 4] = *b"PCF1";
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+
+    fn save_state(&self) -> Vec<u8> {
+        const TAG_ADDR: u16 = 1;
+
+        let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
+        w.field_u32(TAG_ADDR, self.addr);
+        w.finish()
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        const TAG_ADDR: u16 = 1;
+
+        let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
+        r.ensure_device_major(Self::DEVICE_VERSION.major)?;
+
+        if let Some(addr) = r.u32(TAG_ADDR)? {
+            self.addr = addr & !0x3;
+        }
+
+        Ok(())
     }
 }
 

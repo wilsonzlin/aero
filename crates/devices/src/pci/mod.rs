@@ -15,10 +15,10 @@ mod resources;
 
 pub use acpi::{build_prt_bus0, dsdt_asl, PciPrtEntry, ACPI_PCI_ROOT_NAME};
 pub use bios::bios_post;
-pub use bus::{PciBus, PciConfigMechanism1, PciMappedBar};
+pub use bus::{PciBus, PciBusSnapshot, PciConfigMechanism1, PciMappedBar};
 pub use config::{
     PciBarDefinition, PciBarKind, PciBarRange, PciCommandChange, PciConfigSpace,
-    PciConfigWriteEffects, PciDevice, PciSubsystemIds, PciVendorDeviceId,
+    PciConfigSpaceState, PciConfigWriteEffects, PciDevice, PciSubsystemIds, PciVendorDeviceId,
 };
 pub use irq_router::{
     GsiLevelSink, IoApicPicMirrorSink, PciIntxRouter, PciIntxRouterConfig, PicIrqLevelSink,

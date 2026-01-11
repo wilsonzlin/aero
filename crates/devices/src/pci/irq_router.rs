@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
+use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotResult, SnapshotVersion, SnapshotWriter};
 use aero_platform::interrupts::{InterruptInput, PlatformInterruptMode, PlatformInterrupts};
 
 use super::{PciBdf, PciConfigSpace, PciInterruptPin};
@@ -211,6 +213,96 @@ impl PciIntxRouter {
         sink: &mut dyn GsiLevelSink,
     ) {
         self.set_intx_level(bdf, pin, false, sink);
+    }
+}
+
+impl IoSnapshot for PciIntxRouter {
+    const DEVICE_ID: [u8; 4] = *b"INTX";
+    const DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
+
+    fn save_state(&self) -> Vec<u8> {
+        const TAG_CFG: u16 = 1;
+        const TAG_SOURCES: u16 = 2;
+
+        let mut w = SnapshotWriter::new(Self::DEVICE_ID, Self::DEVICE_VERSION);
+
+        let cfg = Encoder::new()
+            .u32(self.cfg.pirq_to_gsi[0])
+            .u32(self.cfg.pirq_to_gsi[1])
+            .u32(self.cfg.pirq_to_gsi[2])
+            .u32(self.cfg.pirq_to_gsi[3])
+            .finish();
+        w.field_bytes(TAG_CFG, cfg);
+
+        let mut sources: Vec<(PciBdf, u8)> = self
+            .source_level
+            .iter()
+            .filter_map(|(src, level)| {
+                if *level {
+                    Some((src.bdf, src.pin.to_config_u8()))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        sources.sort_by_key(|(bdf, pin)| (bdf.bus, bdf.device, bdf.function, *pin));
+
+        let mut enc = Encoder::new().u32(sources.len() as u32);
+        for (bdf, pin) in sources {
+            enc = enc
+                .u8(bdf.bus)
+                .u8(bdf.device)
+                .u8(bdf.function)
+                .u8(pin)
+                .bool(true);
+        }
+        w.field_bytes(TAG_SOURCES, enc.finish());
+
+        w.finish()
+    }
+
+    fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        const TAG_CFG: u16 = 1;
+        const TAG_SOURCES: u16 = 2;
+
+        let r = SnapshotReader::parse(bytes, Self::DEVICE_ID)?;
+        r.ensure_device_major(Self::DEVICE_VERSION.major)?;
+
+        if let Some(buf) = r.bytes(TAG_CFG) {
+            let mut d = Decoder::new(buf);
+            self.cfg.pirq_to_gsi = [d.u32()?, d.u32()?, d.u32()?, d.u32()?];
+            d.finish()?;
+        }
+
+        self.source_level.clear();
+        self.gsi_assert_count.clear();
+
+        if let Some(buf) = r.bytes(TAG_SOURCES) {
+            let mut d = Decoder::new(buf);
+            let count = d.u32()? as usize;
+            for _ in 0..count {
+                let bdf = PciBdf::new(d.u8()?, d.u8()?, d.u8()?);
+                let pin_u8 = d.u8()?;
+                let level = d.bool()?;
+                let Some(pin) = PciInterruptPin::from_config_u8(pin_u8) else {
+                    continue;
+                };
+                if level {
+                    self.source_level.insert(IntxSource { bdf, pin }, true);
+                }
+            }
+            d.finish()?;
+        }
+
+        for (src, level) in &self.source_level {
+            if !*level {
+                continue;
+            }
+            let gsi = self.gsi_for_intx(src.bdf, src.pin);
+            *self.gsi_assert_count.entry(gsi).or_insert(0) += 1;
+        }
+
+        Ok(())
     }
 }
 
