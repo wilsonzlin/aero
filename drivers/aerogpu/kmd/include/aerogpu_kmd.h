@@ -98,6 +98,11 @@ typedef struct _AEROGPU_ADAPTER {
     ULONG CurrentFormat; /* aerogpu_scanout_format */
     BOOLEAN SourceVisible;
 
+    /* VBlank / scanline estimation state (see DxgkDdiGetScanLine). */
+    volatile ULONGLONG LastVblankSeq;
+    volatile ULONGLONG LastVblankInterruptTime100ns;
+    ULONG VblankPeriodNs;
+
     AEROGPU_SUBMISSION_LOG SubmissionLog;
 } AEROGPU_ADAPTER;
 

@@ -26,6 +26,7 @@ drivers/aerogpu/tests/win7/
   d3d9ex_dwm_probe/
   vblank_wait_sanity/
   dwm_flush_pacing/
+  d3d9_raster_status_pacing/
   vblank_wait_pacing/
   d3d11_triangle/
   readback_sanity/
@@ -123,6 +124,7 @@ In a Win7 VM with AeroGPU installed and working correctly:
 * `vblank_wait_sanity` validates that `D3DKMTWaitForVerticalBlankEvent` blocks on vblank and does not show huge stalls (fails fast on missing/broken vblank interrupt wiring)
 * `dwm_flush_pacing` measures `DwmFlush()` pacing and fails on extremely fast returns (not vsync paced) or very large gaps (`--samples=N` controls sample count; default 120)
 * `vblank_wait_pacing` directly measures `D3DKMTWaitForVerticalBlankEvent()` pacing and fails on immediate returns (avg ≤ 2ms) or stalls (avg ≥ 50ms / max ≥ 250ms). On a 60 Hz display it typically reports ~16.6ms.
+* `d3d9_raster_status_pacing` samples `IDirect3DDevice9::GetRasterStatus` and fails if `InVBlank` never becomes true or scanline is stuck (useful for `DxgkDdiGetScanLine` bring-up)
 * `d3d9ex_triangle` renders a green triangle over a red clear and confirms **corner red + center green** via readback
 * `d3d11_triangle` renders a green triangle over a red clear and confirms **corner red + center green** via readback
 * `readback_sanity` renders to an offscreen render target and validates readback pixels (corner red, center green)

@@ -4,8 +4,9 @@
 
 /*
  * The miniport driver currently includes `aerogpu_protocol.h` (legacy combined
- * header) via `aerogpu_kmd.h`. For dbgctl's vblank introspection we need MMIO
- * register offsets from the newer PCI/MMIO ABI header.
+ * header) via `aerogpu_kmd.h`. For vblank timing (dbgctl introspection and
+ * DxgkDdiGetScanLine) we need MMIO register offsets from the newer PCI/MMIO ABI
+ * header.
  *
  * Both headers define some overlapping legacy macro names (e.g.
  * AEROGPU_PCI_VENDOR_ID). Undefine those before including `aerogpu_pci.h` to
@@ -22,6 +23,8 @@
 #endif
 
 #include "aerogpu_pci.h"
+
+#define AEROGPU_VBLANK_PERIOD_NS_DEFAULT 16666667u
 
 /*
  * WDDM miniport entrypoint from dxgkrnl.
@@ -272,6 +275,7 @@ static NTSTATUS APIENTRY AeroGpuDdiAddDevice(_In_ PDEVICE_OBJECT PhysicalDeviceO
     adapter->CurrentPitch = 1024 * 4;
     adapter->CurrentFormat = AEROGPU_SCANOUT_X8R8G8B8;
     adapter->SourceVisible = TRUE;
+    adapter->VblankPeriodNs = AEROGPU_VBLANK_PERIOD_NS_DEFAULT;
 
     *MiniportDeviceContext = adapter;
     AEROGPU_LOG0("AddDevice");
@@ -678,8 +682,104 @@ static NTSTATUS APIENTRY AeroGpuDdiSetVidPnSourceVisibility(_In_ const HANDLE hA
     return STATUS_SUCCESS;
 }
 
+static __forceinline ULONGLONG AeroGpuAtomicReadU64(_In_ volatile ULONGLONG* Value)
+{
+    return (ULONGLONG)InterlockedCompareExchange64((volatile LONGLONG*)Value, 0, 0);
+}
+
+static __forceinline VOID AeroGpuAtomicWriteU64(_Inout_ volatile ULONGLONG* Value, _In_ ULONGLONG NewValue)
+{
+    InterlockedExchange64((volatile LONGLONG*)Value, (LONGLONG)NewValue);
+}
+
+static NTSTATUS APIENTRY AeroGpuDdiGetScanLine(_In_ const HANDLE hAdapter, _Inout_ DXGKARG_GETSCANLINE* pGetScanLine)
+{
+    AEROGPU_ADAPTER* adapter = (AEROGPU_ADAPTER*)hAdapter;
+    if (!adapter || !pGetScanLine) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (pGetScanLine->VidPnSourceId != AEROGPU_VIDPN_SOURCE_ID) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    const ULONG height = adapter->CurrentHeight ? adapter->CurrentHeight : 1u;
+    ULONG vblankLines = height / 20;
+    if (vblankLines < 10) {
+        vblankLines = 10;
+    }
+
+    const ULONG totalLines = height + vblankLines;
+
+    const ULONGLONG now100ns = KeQueryInterruptTime();
+    ULONGLONG periodNs = adapter->VblankPeriodNs ? (ULONGLONG)adapter->VblankPeriodNs : (ULONGLONG)AEROGPU_VBLANK_PERIOD_NS_DEFAULT;
+    ULONGLONG posNs = 0;
+
+    BOOLEAN hasVblankRegs = FALSE;
+    if (adapter->Bar0) {
+        const ULONGLONG features = (ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FEATURES_LO) |
+                                   ((ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FEATURES_HI) << 32);
+        hasVblankRegs = (features & AEROGPU_FEATURE_VBLANK) != 0;
+    }
+
+    if (hasVblankRegs && adapter->Bar0) {
+        const ULONG mmioPeriod = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS);
+        if (mmioPeriod != 0) {
+            adapter->VblankPeriodNs = mmioPeriod;
+            periodNs = (ULONGLONG)mmioPeriod;
+        } else {
+            periodNs = (ULONGLONG)AEROGPU_VBLANK_PERIOD_NS_DEFAULT;
+        }
+
+        const ULONGLONG seq = (ULONGLONG)AeroGpuReadRegU64HiLoHi(adapter,
+                                                                 AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO,
+                                                                 AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_HI);
+
+        const ULONGLONG cachedSeq = AeroGpuAtomicReadU64(&adapter->LastVblankSeq);
+        if (seq != cachedSeq) {
+            AeroGpuAtomicWriteU64(&adapter->LastVblankSeq, seq);
+            AeroGpuAtomicWriteU64(&adapter->LastVblankInterruptTime100ns, now100ns);
+        }
+
+        ULONGLONG lastVblank100ns = AeroGpuAtomicReadU64(&adapter->LastVblankInterruptTime100ns);
+        if (lastVblank100ns == 0) {
+            /* First observation: anchor the cadence to "now". */
+            AeroGpuAtomicWriteU64(&adapter->LastVblankSeq, seq);
+            AeroGpuAtomicWriteU64(&adapter->LastVblankInterruptTime100ns, now100ns);
+            lastVblank100ns = now100ns;
+        }
+
+        ULONGLONG delta100ns = (now100ns >= lastVblank100ns) ? (now100ns - lastVblank100ns) : 0;
+        ULONGLONG deltaNs = delta100ns * 100ull;
+        posNs = (periodNs != 0) ? (deltaNs % periodNs) : 0;
+    } else {
+        /*
+         * Fallback path for devices without vblank timing registers:
+         * simulate a fixed 60Hz cadence from KeQueryInterruptTime().
+         */
+        const ULONGLONG nowNs = now100ns * 100ull;
+        if (periodNs == 0) {
+            periodNs = (ULONGLONG)AEROGPU_VBLANK_PERIOD_NS_DEFAULT;
+        }
+        posNs = nowNs % periodNs;
+    }
+
+    ULONGLONG line = 0;
+    if (periodNs != 0 && totalLines != 0) {
+        line = (posNs * (ULONGLONG)totalLines) / periodNs;
+        if (line >= (ULONGLONG)totalLines) {
+            line = (ULONGLONG)totalLines - 1;
+        }
+    }
+
+    pGetScanLine->InVerticalBlank = (line >= (ULONGLONG)height) ? TRUE : FALSE;
+    pGetScanLine->ScanLine = (ULONG)line;
+
+    return STATUS_SUCCESS;
+}
+
 static NTSTATUS APIENTRY AeroGpuDdiUpdateActiveVidPnPresentPath(_In_ const HANDLE hAdapter,
-                                                                _Inout_ DXGKARG_UPDATEACTIVEVIDPNPRESENTPATH* pUpdate)
+                                                                 _Inout_ DXGKARG_UPDATEACTIVEVIDPNPRESENTPATH* pUpdate)
 {
     UNREFERENCED_PARAMETER(hAdapter);
     UNREFERENCED_PARAMETER(pUpdate);
@@ -1520,6 +1620,7 @@ NTSTATUS DriverEntry(_In_ PDRIVER_OBJECT DriverObject, _In_ PUNICODE_STRING Regi
 
     init.DxgkDdiSetVidPnSourceAddress = AeroGpuDdiSetVidPnSourceAddress;
     init.DxgkDdiSetVidPnSourceVisibility = AeroGpuDdiSetVidPnSourceVisibility;
+    init.DxgkDdiGetScanLine = AeroGpuDdiGetScanLine;
 
     init.DxgkDdiCreateAllocation = AeroGpuDdiCreateAllocation;
     init.DxgkDdiDestroyAllocation = AeroGpuDdiDestroyAllocation;
