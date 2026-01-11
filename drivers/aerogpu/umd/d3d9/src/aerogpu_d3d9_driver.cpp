@@ -2287,9 +2287,6 @@ HRESULT AEROGPU_D3D9_CALL device_create_swap_chain(
   }
 
   const auto& pp = pCreateSwapChain->present_params;
-  if (!pp.windowed) {
-    return E_NOTIMPL;
-  }
   if (d3d9_format_to_aerogpu(pp.backbuffer_format) == AEROGPU_FORMAT_INVALID) {
     return E_INVALIDARG;
   }
@@ -2550,9 +2547,6 @@ HRESULT reset_swap_chain_locked(Device* dev, SwapChain* sc, const AEROGPU_D3D9DD
     return E_INVALIDARG;
   }
 
-  if (!pp.windowed) {
-    return E_NOTIMPL;
-  }
   if (d3d9_format_to_aerogpu(pp.backbuffer_format) == AEROGPU_FORMAT_INVALID) {
     return E_INVALIDARG;
   }
