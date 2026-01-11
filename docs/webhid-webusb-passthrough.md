@@ -94,9 +94,9 @@ Guest Windows USB/HID stack
 
 ## Current status
 
-The repo has the core building blocks for passthrough, but the “main thread owns
-`HIDDevice`, I/O worker owns the USB device model” split is **not yet wired
-end-to-end** in the web runtime.
+The repo has the core building blocks for passthrough, and the “main thread owns
+`HIDDevice`, I/O worker owns the USB device model” split is wired end-to-end in
+the web runtime via a small broker/proxy protocol.
 
 Already implemented:
 
@@ -108,6 +108,9 @@ Already implemented:
   - `UsbPassthroughBridge` (wraps `UsbPassthroughDevice` for WebUSB host action/completion RPC)
 - **Main-thread WebHID UX / bookkeeping (TypeScript)**
   - `WebHidPassthroughManager` + the debug panel UI
+- **Main-thread ↔ I/O worker WebHID broker (TypeScript)**
+  - `WebHidBroker` (`web/src/hid/webhid_broker.ts`) + protocol (`web/src/hid/hid_proxy_protocol.ts`)
+  - forwards input reports to the worker and executes output/feature report requests coming back
 
 Dev-only scaffolding (useful for tests / manual bring-up, but **not** the target architecture):
 
@@ -115,12 +118,8 @@ Dev-only scaffolding (useful for tests / manual bring-up, but **not** the target
   wires `HIDDevice` events into a WASM `WebHidPassthroughBridge` instance (no
   I/O worker boundary yet).
 
-Still missing / in progress (production wiring):
+Still missing / in progress:
 
-- Main↔worker report forwarding (input reports to worker, output/feature report
-  requests back to main thread).
-  - `web/src/platform/hid_passthrough_protocol.ts` currently only models
-    attach/detach; it will need to grow message types for report traffic.
 - Worker-side guest USB topology ownership (UHCI controller + hub + hotplug
   policy + port allocation beyond the 2 root hub ports).
 - Snapshot/restore integration for passthrough device state (queued reports,
@@ -157,7 +156,7 @@ The main-thread “passthrough manager” is responsible for:
 ### Forwarding mechanism
 
 For MVP correctness, forwarding can be `postMessage` with small typed payloads
-(e.g. `{ type: 'hid:in', deviceId, reportId, data: Uint8Array }`).
+(e.g. `{ type: 'hid.inputReport', deviceId, reportId, data: Uint8Array }`).
 
 For performance, move to a fixed-size shared-memory ring buffer:
 
@@ -358,10 +357,12 @@ Recommended guardrails:
   - WebUSB host action/completion queue: `crates/aero-usb/src/passthrough.rs` (`UsbPassthroughDevice`)
 - **Host-side (TypeScript)**
   - WebHID attach/detach + debug UI: `web/src/platform/webhid_passthrough.ts`
-  - Main↔worker message schema (currently attach/detach only): `web/src/platform/hid_passthrough_protocol.ts`
+  - Main↔worker WebHID proxy protocol (production): `web/src/hid/hid_proxy_protocol.ts`
+  - Legacy/experimental passthrough protocol: `web/src/platform/hid_passthrough_protocol.ts`
   - WebHID normalization (input to descriptor synthesis): `web/src/hid/webhid_normalize.ts`
+  - Main-thread broker implementation: `web/src/hid/webhid_broker.ts`
   - Dev-only main-thread runtime wiring WebHID ↔ WASM bridge: `web/src/usb/webhid_passthrough_runtime.ts`
-  - Intended production wiring point (I/O worker): `web/src/workers/io.worker.ts` (HID passthrough not wired yet)
+  - I/O worker wiring point (WASM bridge + report queues): `web/src/workers/io.worker.ts`
 
 ## Related docs
 
