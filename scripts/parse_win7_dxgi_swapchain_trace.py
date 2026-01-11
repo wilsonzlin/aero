@@ -87,6 +87,20 @@ class WdkFlagMasks:
     createallocation: Dict[str, int] = field(default_factory=dict)
 
 
+def _decode_priv_flags(priv_flags: int) -> List[str]:
+    names: List[str] = []
+    if priv_flags & (1 << 0):
+        names.append("shared")
+    if priv_flags & (1 << 1):
+        names.append("cpu_visible")
+    if priv_flags & (1 << 2):
+        names.append("staging")
+    extra = priv_flags & ~((1 << 0) | (1 << 1) | (1 << 2))
+    if extra:
+        names.append(f"unknown(0x{extra:08X})")
+    return names
+
+
 def _decode_flag_names(value: int, masks: Dict[str, int]) -> Tuple[List[str], int]:
     names: List[str] = []
     covered = 0
@@ -405,6 +419,7 @@ def parse_createalloc_dump(lines: Iterable[str]) -> Optional[CreateAllocationTra
 
 def _createalloc_entry_dict(e: CreateAllocationDesc, masks: Optional[WdkFlagMasks]) -> dict:
     d = asdict(e)
+    d["priv_flags_names"] = _decode_priv_flags(e.priv_flags)
     if masks is None:
         return d
 
@@ -462,6 +477,8 @@ def main(argv: List[str]) -> int:
 
     createalloc: Optional[CreateAllocationTrace] = None
     createalloc_filtered_since: Optional[int] = None
+    createalloc_filtered_delta: Optional[int] = None
+    createalloc_filtered_truncated: Optional[bool] = None
     if args.createalloc_after_path:
         with open(args.createalloc_after_path, "r", encoding="utf-8", errors="replace") as f:
             createalloc = parse_createalloc_dump(f)
@@ -470,7 +487,9 @@ def main(argv: List[str]) -> int:
                 before = parse_createalloc_dump(f)
             if before is not None:
                 createalloc_filtered_since = before.write_index
+                createalloc_filtered_delta = createalloc.write_index - before.write_index
                 createalloc.entries = [e for e in createalloc.entries if e.seq >= before.write_index]
+                createalloc_filtered_truncated = createalloc_filtered_delta > len(createalloc.entries)
     elif args.createalloc_path:
         with open(args.createalloc_path, "r", encoding="utf-8", errors="replace") as f:
             createalloc = parse_createalloc_dump(f)
@@ -578,7 +597,12 @@ def main(argv: List[str]) -> int:
         "present_events": [{"api": api, "sync": sync, "src_handle": src} for (api, sync, src) in presents],
     }
     if createalloc_filtered_since is not None:
-        output["createalloc_filtered_since_write_index"] = createalloc_filtered_since
+        output["createalloc_filter"] = {
+            "since_write_index": createalloc_filtered_since,
+            "delta": createalloc_filtered_delta,
+            "filtered_count": len(createalloc.entries) if createalloc is not None else 0,
+            "truncated": bool(createalloc_filtered_truncated),
+        }
     if wdk_masks is not None:
         output["wdk_abi_flag_masks"] = {
             "allocationinfo": wdk_masks.allocationinfo,
@@ -639,6 +663,12 @@ def main(argv: List[str]) -> int:
         print("  (none found)")
 
     print("")
+    if createalloc_filtered_truncated:
+        print(
+            "WARNING: CreateAllocation delta exceeds captured entries; the dbgctl dump likely wrapped. "
+            "Capture a tighter before/after window or reduce allocation noise."
+        )
+        print("")
     for h in candidate_handles if candidate_handles else rotate_handles:
         d = resources.get(h)
         if not d:
@@ -676,6 +706,9 @@ def main(argv: List[str]) -> int:
                             f"create_flags=0x{e.create_flags:08X} priv_flags=0x{e.priv_flags:08X} "
                             f"flags=0x{e.flags_in:08X}->0x{e.flags_out:08X}"
                         )
+                        priv_names = _decode_priv_flags(e.priv_flags)
+                        if priv_names:
+                            line += f" priv=[{','.join(priv_names)}]"
                         if wdk_masks is not None:
                             (create_names, create_unknown) = _decode_flag_names(e.create_flags, wdk_masks.createallocation)
                             (in_names, in_unknown) = _decode_flag_names(e.flags_in, wdk_masks.allocationinfo)
