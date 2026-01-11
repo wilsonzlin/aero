@@ -7,6 +7,32 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const COMMAND_OUTPUT_LIMIT = 200_000;
+
+function appendLimitedOutput(prev, chunk) {
+  let out = prev + chunk.toString("utf8");
+  if (out.length > COMMAND_OUTPUT_LIMIT) out = out.slice(-COMMAND_OUTPUT_LIMIT);
+  return out;
+}
+
+function signalProcessTree(child, signal) {
+  if (!child.pid) return;
+  // `detached: true` makes the child process leader of a new process group (POSIX).
+  // Kill the group so `cargo build` doesn't leak rustc processes on timeouts.
+  if (process.platform !== "win32") {
+    try {
+      process.kill(-child.pid, signal);
+      return;
+    } catch {
+      // Fall back to killing the main pid.
+    }
+  }
+  try {
+    child.kill(signal);
+  } catch {
+    // ignore
+  }
+}
 
 let cargoTargetDirPromise;
 async function getCargoTargetDir() {
@@ -14,6 +40,7 @@ async function getCargoTargetDir() {
   cargoTargetDirPromise = (async () => {
     const { stdout } = await runCommand("cargo", ["metadata", "--format-version=1", "--no-deps"], {
       cwd: REPO_ROOT,
+      timeoutMs: 30_000,
     });
     const meta = JSON.parse(stdout);
     assert.equal(typeof meta.target_directory, "string");
@@ -32,7 +59,10 @@ let buildPromise;
 async function ensureProxyBuilt() {
   if (buildPromise) return buildPromise;
   buildPromise = (async () => {
-    await runCommand("cargo", ["build", "--locked", "-p", "aero-l2-proxy"], { cwd: REPO_ROOT });
+    await runCommand("cargo", ["build", "--locked", "-p", "aero-l2-proxy"], {
+      cwd: REPO_ROOT,
+      timeoutMs: 10 * 60_000,
+    });
     const binPath = await getProxyBinPath();
     await access(binPath);
   })();
@@ -136,27 +166,72 @@ async function waitForListeningAddr(child) {
   });
 }
 
-async function runCommand(command, args, { cwd, env } = {}) {
+async function runCommand(command, args, { cwd, env, timeoutMs = 60_000 } = {}) {
   return new Promise((resolve, reject) => {
+    let stdout = "";
+    let stderr = "";
+
     const child = spawn(command, args, {
       cwd,
-      env,
+      env: {
+        ...env,
+        ...(command === "cargo"
+          ? {
+              // Prevent progress bars from spamming logs on CI timeouts.
+              CARGO_TERM_COLOR: "never",
+              CARGO_TERM_PROGRESS_WHEN: "never",
+            }
+          : null),
+      },
+      detached: process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],
     });
 
-    const stdoutChunks = [];
-    const stderrChunks = [];
-    child.stdout.on("data", (c) => stdoutChunks.push(c));
-    child.stderr.on("data", (c) => stderrChunks.push(c));
-    child.once("error", reject);
+    const onStdout = (c) => {
+      stdout = appendLimitedOutput(stdout, c);
+    };
+    const onStderr = (c) => {
+      stderr = appendLimitedOutput(stderr, c);
+    };
+    child.stdout?.on("data", onStdout);
+    child.stderr?.on("data", onStderr);
+
+    let settled = false;
+    const settle = (err, result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      child.stdout?.off("data", onStdout);
+      child.stderr?.off("data", onStderr);
+      err ? reject(err) : resolve(result);
+    };
+
+    const timeout = setTimeout(() => {
+      const why = `command timed out after ${timeoutMs}ms: ${command} ${args.join(" ")}`;
+      stopCommand(child)
+        .then(() => settle(new Error(`${why}\n\n${stdout}${stderr}`)))
+        .catch(() => settle(new Error(`${why}\n\n${stdout}${stderr}`)));
+    }, timeoutMs);
+    timeout.unref();
+
+    const stopCommand = async (proc) => {
+      if (proc.exitCode !== null || proc.signalCode !== null) return;
+
+      signalProcessTree(proc, "SIGTERM");
+      const exited = await Promise.race([once(proc, "exit"), sleep(2_000).then(() => null)]);
+      if (exited !== null) return;
+
+      signalProcessTree(proc, "SIGKILL");
+      await once(proc, "exit");
+    };
+
+    child.once("error", (err) => settle(err));
     child.once("exit", (code, signal) => {
-      const stdout = Buffer.concat(stdoutChunks).toString("utf8");
-      const stderr = Buffer.concat(stderrChunks).toString("utf8");
       if (code === 0) {
-        resolve({ stdout, stderr });
+        settle(null, { stdout, stderr });
         return;
       }
-      reject(
+      settle(
         new Error(
           `command failed: ${command} ${args.join(" ")} (code=${code}, signal=${signal})\n\n${stdout}${stderr}`,
         ),
@@ -190,4 +265,3 @@ export async function startRustL2Proxy(env = {}) {
     },
   };
 }
-
