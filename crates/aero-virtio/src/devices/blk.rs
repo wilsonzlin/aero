@@ -215,7 +215,11 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                 continue;
             }
             let take = avail.min(hdr.len() - hdr_written);
-            let Ok(src) = mem.get_slice(d.addr + d_off as u64, take) else {
+            let Some(addr) = d.addr.checked_add(d_off as u64) else {
+                header_ok = false;
+                break;
+            };
+            let Ok(src) = mem.get_slice(addr, take) else {
                 header_ok = false;
                 break;
             };
@@ -270,8 +274,11 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                                 status = VIRTIO_BLK_S_IOERR;
                                 break;
                             }
-                            let Ok(dst) = mem.get_slice_mut(d.addr + *seg_off as u64, *seg_len)
-                            else {
+                            let Some(addr) = d.addr.checked_add(*seg_off as u64) else {
+                                status = VIRTIO_BLK_S_IOERR;
+                                break;
+                            };
+                            let Ok(dst) = mem.get_slice_mut(addr, *seg_len) else {
                                 status = VIRTIO_BLK_S_IOERR;
                                 break;
                             };
@@ -302,7 +309,11 @@ impl<B: BlockBackend + 'static> VirtioDevice for VirtioBlk<B> {
                                 status = VIRTIO_BLK_S_IOERR;
                                 break;
                             }
-                            let Ok(src) = mem.get_slice(d.addr + *seg_off as u64, *seg_len) else {
+                            let Some(addr) = d.addr.checked_add(*seg_off as u64) else {
+                                status = VIRTIO_BLK_S_IOERR;
+                                break;
+                            };
+                            let Ok(src) = mem.get_slice(addr, *seg_len) else {
                                 status = VIRTIO_BLK_S_IOERR;
                                 break;
                             };
