@@ -219,6 +219,9 @@ async function spawnRelayServer(extraEnv = {}) {
     });
 
     // Surface relay crashes in the test output.
+    // Note: the relay logs to stdout by default, so we must drain both streams to
+    // avoid deadlocking on a full pipe buffer.
+    child.stdout.on("data", (chunk) => process.stderr.write(chunk));
     child.stderr.on("data", (chunk) => process.stderr.write(chunk));
 
     try {
