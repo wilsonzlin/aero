@@ -128,6 +128,11 @@ aerogpu_add_win7_test(d3d9ex_shared_surface_ipc
 )
 target_link_libraries(d3d9ex_shared_surface_ipc PRIVATE user32 gdi32 d3d9)
 
+aerogpu_add_win7_test(d3d9ex_shared_surface_many_producers
+  d3d9ex_shared_surface_many_producers/main.cpp
+)
+target_link_libraries(d3d9ex_shared_surface_many_producers PRIVATE user32 gdi32 d3d9)
+
 aerogpu_add_win7_test(d3d9ex_shared_allocations
   d3d9ex_shared_allocations/main.cpp
 )
