@@ -2875,8 +2875,9 @@ function renderWebUsbPassthroughDemoWorkerPanel(): HTMLElement {
     switch (lastResult.status) {
       case "success": {
         const bytes = lastResult.data;
-        const idVendor = bytes.length >= 10 ? bytes[8]! | (bytes[9]! << 8) : null;
-        const idProduct = bytes.length >= 12 ? bytes[10]! | (bytes[11]! << 8) : null;
+        const isDeviceDescriptor = bytes.length >= 12 && bytes[0] === 18 && bytes[1] === 1;
+        const idVendor = isDeviceDescriptor ? bytes[8]! | (bytes[9]! << 8) : null;
+        const idProduct = isDeviceDescriptor ? bytes[10]! | (bytes[11]! << 8) : null;
         resultLine.textContent =
           idVendor !== null && idProduct !== null
             ? `Result: success (vid=0x${idVendor.toString(16).padStart(4, "0")} pid=0x${idProduct.toString(16).padStart(4, "0")})`

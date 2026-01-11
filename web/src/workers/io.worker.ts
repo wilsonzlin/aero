@@ -864,8 +864,9 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
                 if (import.meta.env.DEV && msg.type === "usb.demoResult") {
                   if (msg.result.status === "success") {
                     const bytes = msg.result.data;
-                    const idVendor = bytes.length >= 10 ? bytes[8]! | (bytes[9]! << 8) : null;
-                    const idProduct = bytes.length >= 12 ? bytes[10]! | (bytes[11]! << 8) : null;
+                    const isDeviceDescriptor = bytes.length >= 12 && bytes[0] === 18 && bytes[1] === 1;
+                    const idVendor = isDeviceDescriptor ? bytes[8]! | (bytes[9]! << 8) : null;
+                    const idProduct = isDeviceDescriptor ? bytes[10]! | (bytes[11]! << 8) : null;
                     console.log("[io.worker] WebUSB demo result ok", {
                       bytes: Array.from(bytes),
                       idVendor,
