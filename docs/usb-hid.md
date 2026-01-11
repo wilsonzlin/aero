@@ -14,6 +14,10 @@ For WebHID passthrough (synthesizing HID report descriptors from WebHID metadata
 because browsers do not expose raw report descriptor bytes), see
 [`docs/webhid-hid-report-descriptor-synthesis.md`](./webhid-hid-report-descriptor-synthesis.md).
 
+For the end-to-end “real device” passthrough architecture and security model
+(main thread owns the handle; worker models UHCI + a generic HID device), see
+[`docs/webhid-webusb-passthrough.md`](./webhid-webusb-passthrough.md).
+
 ---
 
 ## Keyboard: `KeyboardEvent.code` → HID Usage (Keyboard/Keypad page 0x07)
