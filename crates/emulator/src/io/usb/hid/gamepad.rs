@@ -103,6 +103,14 @@ impl UsbHidGamepadHandle {
     pub fn set_axes(&self, x: i8, y: i8, rx: i8, ry: i8) {
         self.0.borrow_mut().set_axes(x, y, rx, ry);
     }
+
+    /// Updates the entire 8-byte gamepad report state in one call.
+    ///
+    /// This is useful for host-side gamepad polling, where the full state is refreshed at a
+    /// fixed rate and should enqueue at most one report per poll.
+    pub fn set_report(&self, report: GamepadReport) {
+        self.0.borrow_mut().set_report(report);
+    }
 }
 
 impl Default for UsbHidGamepadHandle {
@@ -230,6 +238,29 @@ impl UsbHidGamepad {
             self.ry = ry;
             self.enqueue_current_report();
         }
+    }
+
+    pub fn set_report(&mut self, report: GamepadReport) {
+        let hat = match report.hat {
+            v if v <= 7 => v,
+            _ => 8,
+        };
+        let x = report.x.clamp(-127, 127);
+        let y = report.y.clamp(-127, 127);
+        let rx = report.rx.clamp(-127, 127);
+        let ry = report.ry.clamp(-127, 127);
+
+        if self.buttons == report.buttons && self.hat == hat && self.x == x && self.y == y && self.rx == rx && self.ry == ry {
+            return;
+        }
+
+        self.buttons = report.buttons;
+        self.hat = hat;
+        self.x = x;
+        self.y = y;
+        self.rx = rx;
+        self.ry = ry;
+        self.enqueue_current_report();
     }
 
     pub fn current_input_report(&self) -> GamepadReport {

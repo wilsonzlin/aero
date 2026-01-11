@@ -2,7 +2,7 @@ use crate::io::input::ps2_set2_bytes_for_key_event;
 use crate::io::ps2::{Ps2Controller, Ps2MouseButton};
 use crate::io::usb::hid::hid_usage_from_js_code;
 use crate::io::usb::hid::composite::UsbCompositeHidInputHandle;
-use crate::io::usb::hid::gamepad::UsbHidGamepadHandle;
+use crate::io::usb::hid::gamepad::{GamepadReport, UsbHidGamepadHandle};
 use crate::io::usb::hid::keyboard::UsbHidKeyboardHandle;
 use crate::io::usb::hid::mouse::UsbHidMouseHandle;
 use crate::io::virtio::devices::input as vio_input;
@@ -217,6 +217,21 @@ impl InputPipeline {
         Ok(())
     }
 
+    /// Updates the entire gamepad state (8-byte input report) in a single call.
+    ///
+    /// This is primarily intended for host-side polling loops (e.g. browser Gamepad API),
+    /// where the full state is refreshed at a fixed rate and should enqueue at most one report
+    /// per poll.
+    pub fn handle_gamepad_report(&mut self, report: GamepadReport) -> Result<(), VirtQueueError> {
+        match self.policy {
+            InputRoutingPolicy::UsbOnly | InputRoutingPolicy::Auto => {
+                self.inject_gamepad_report_usb(report);
+            }
+            InputRoutingPolicy::Ps2Only | InputRoutingPolicy::VirtioOnly => {}
+        }
+        Ok(())
+    }
+
     fn inject_key_ps2(&mut self, code: &str, pressed: bool) {
         let Some(ps2) = self.ps2.as_mut() else {
             return;
@@ -401,6 +416,17 @@ impl InputPipeline {
             return;
         };
         pad.set_axes(x, y, rx, ry);
+    }
+
+    fn inject_gamepad_report_usb(&mut self, report: GamepadReport) {
+        if let Some(dev) = self.usb_composite.as_ref().filter(|d| d.configured()) {
+            dev.gamepad_set_report(report);
+            return;
+        }
+        let Some(pad) = self.usb_gamepad.as_ref().filter(|d| d.configured()) else {
+            return;
+        };
+        pad.set_report(report);
     }
 }
 
@@ -729,6 +755,61 @@ mod tests {
             Some(vec![0x03, 0x00, 0x02, 0x01, 0xff, 0x05, 0xfb, 0x00])
         );
 
+        assert_eq!(gamepad.poll_interrupt_in(0x81), None);
+    }
+
+    #[test]
+    fn usb_composite_gamepad_report_injection_emits_single_report() {
+        let mut composite = UsbCompositeHidInputHandle::new();
+        configure_usb_device(&mut composite);
+
+        let mut pipeline = InputPipeline::new(None, None, InputRoutingPolicy::UsbOnly)
+            .with_usb_composite_hid(composite.clone());
+
+        let report = GamepadReport {
+            buttons: 0x0003,
+            hat: 2,
+            x: 1,
+            y: -1,
+            rx: 5,
+            ry: -5,
+        };
+
+        pipeline.handle_gamepad_report(report).unwrap();
+        assert_eq!(
+            composite.poll_interrupt_in(0x83),
+            Some(vec![0x03, 0x00, 0x02, 0x01, 0xff, 0x05, 0xfb, 0x00])
+        );
+
+        // Re-sending an identical report should not enqueue another update.
+        pipeline.handle_gamepad_report(report).unwrap();
+        assert_eq!(composite.poll_interrupt_in(0x83), None);
+    }
+
+    #[test]
+    fn usb_gamepad_report_injection_emits_single_report() {
+        let mut gamepad = UsbHidGamepadHandle::new();
+        configure_usb_device(&mut gamepad);
+
+        let mut pipeline =
+            InputPipeline::new(None, None, InputRoutingPolicy::UsbOnly).with_usb_gamepad(gamepad.clone());
+
+        let report = GamepadReport {
+            buttons: 0x0003,
+            hat: 2,
+            x: 1,
+            y: -1,
+            rx: 5,
+            ry: -5,
+        };
+
+        pipeline.handle_gamepad_report(report).unwrap();
+        assert_eq!(
+            gamepad.poll_interrupt_in(0x81),
+            Some(vec![0x03, 0x00, 0x02, 0x01, 0xff, 0x05, 0xfb, 0x00])
+        );
+
+        pipeline.handle_gamepad_report(report).unwrap();
         assert_eq!(gamepad.poll_interrupt_in(0x81), None);
     }
 
