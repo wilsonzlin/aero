@@ -16,13 +16,13 @@
  * virtio-snd requests are submitted as:
  *   header + payload SG elements + response/status
  *
- * 32 descriptors covers the expected maximum shape:
- *   1 header + up to 30 payload SG elements + 1 response/status.
+ * Contract v1 uses 16-entry indirect tables:
+ *   1 header + up to 14 payload SG elements + 1 response/status.
  *
  * The driver allocates one indirect table per ring entry so the maximum number
  * of in-flight requests equals the ring size.
  */
-#define VIRTIOSND_QUEUE_SPLIT_INDIRECT_MAX_DESC 32u
+#define VIRTIOSND_QUEUE_SPLIT_INDIRECT_MAX_DESC 16u
 #define VIRTIOSND_QUEUE_SPLIT_INDIRECT_TABLE_COUNT(_qsz) (_qsz)
 
 typedef struct _VIRTIOSND_QUEUE_SPLIT {

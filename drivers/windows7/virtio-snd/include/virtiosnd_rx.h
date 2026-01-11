@@ -39,8 +39,11 @@
  *  - 1 OUT header descriptor
  *  - N IN payload descriptors
  *  - 1 IN status descriptor
+ *
+ * Contract v1 uses INDIRECT_MAX_DESC = 16, so:
+ *   N <= 16 - 2 = 14
  */
-#define VIRTIOSND_RX_MAX_PAYLOAD_SG 30u
+#define VIRTIOSND_RX_MAX_PAYLOAD_SG 14u
 
 typedef struct _VIRTIOSND_RX_SEGMENT {
     UINT64 addr;
