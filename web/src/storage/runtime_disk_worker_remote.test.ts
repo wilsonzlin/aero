@@ -6,7 +6,9 @@ import type { RemoteRangeDiskMetadataStore, RemoteRangeDiskSparseCacheFactory } 
 import { RemoteRangeDisk } from "./remote_range_disk";
 import { MemorySparseDisk } from "./memory_sparse_disk";
 
-function createRangeFetch(data: Uint8Array): { fetch: typeof fetch; calls: Array<{ method: string; range?: string }> } {
+function createRangeFetch(
+  data: Uint8Array<ArrayBuffer>,
+): { fetch: typeof fetch; calls: Array<{ method: string; range?: string }> } {
   const calls: Array<{ method: string; range?: string }> = [];
   const toArrayBuffer = (bytes: Uint8Array): ArrayBuffer => {
     const buf = new ArrayBuffer(bytes.byteLength);
@@ -49,7 +51,7 @@ function createRangeFetch(data: Uint8Array): { fetch: typeof fetch; calls: Array
 
 describe("RuntimeDiskWorker (remote)", () => {
   it("opens and reads a remote range disk (read-only)", async () => {
-    const base = new Uint8Array(512 * 8);
+    const base = new Uint8Array(new ArrayBuffer(512 * 8));
     for (let i = 0; i < base.length; i++) base[i] = (i * 13) & 0xff;
 
     const { fetch: fetcher, calls } = createRangeFetch(base);

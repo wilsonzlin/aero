@@ -5,7 +5,7 @@ import { RemoteRangeDisk } from "./remote_range_disk";
 import { MemorySparseDisk } from "./memory_sparse_disk";
 import { OpfsCowDisk } from "./opfs_cow";
 
-function createRangeFetch(data: Uint8Array): { fetch: typeof fetch; getCalls: () => number } {
+function createRangeFetch(data: Uint8Array<ArrayBuffer>): { fetch: typeof fetch; getCalls: () => number } {
   let calls = 0;
   const toArrayBuffer = (bytes: Uint8Array): ArrayBuffer => {
     const buf = new ArrayBuffer(bytes.byteLength);
@@ -48,7 +48,7 @@ function createRangeFetch(data: Uint8Array): { fetch: typeof fetch; getCalls: ()
 
 describe("RemoteRangeDisk + COW overlay", () => {
   it("serves overlay writes over base reads", async () => {
-    const baseBytes = new Uint8Array(512 * 8);
+    const baseBytes = new Uint8Array(new ArrayBuffer(512 * 8));
     for (let i = 0; i < baseBytes.length; i++) baseBytes[i] = (i * 7 + 3) & 0xff;
 
     const { fetch: fetcher, getCalls } = createRangeFetch(baseBytes);

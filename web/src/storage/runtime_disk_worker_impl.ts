@@ -604,17 +604,17 @@ async function openDiskFromMetadata(
   }
 
   // IndexedDB backend: disk data is stored in the `chunks` store (sparse).
-  const disk = await IdbChunkDisk.open(meta.id, meta.sizeBytes);
+  const disk = await IdbChunkDisk.open(localMeta.id, localMeta.sizeBytes);
   return {
     disk,
     readOnly,
     backendSnapshot: {
       kind: "local",
       backend: "idb",
-      key: meta.id,
-      format: meta.format,
-      diskKind: meta.kind,
-      sizeBytes: meta.sizeBytes,
+      key: localMeta.id,
+      format: localMeta.format,
+      diskKind: localMeta.kind,
+      sizeBytes: localMeta.sizeBytes,
     },
   };
 }
