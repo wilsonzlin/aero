@@ -18,6 +18,10 @@ What this test plan verifies:
   - `virtiosnd.sys` built for x86 or x64 and placed next to the INF for installation
 - Test signing enabled in the guest (or a properly production-signed driver package).
 
+If you want Windows to bind the driver automatically on first boot (no manual “Have Disk…” step), see:
+
+- `../offline-install/README.md` — offline/slipstream staging with DISM (`install.wim`, offline `\Windows\`, and optional `boot.wim`)
+
 Optional (but recommended for headless hosts):
 
 - A QEMU audio backend that works without host audio hardware, e.g. `-audiodev wav,...` or `-audiodev none,...`.
