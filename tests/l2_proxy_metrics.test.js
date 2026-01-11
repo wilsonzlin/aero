@@ -52,31 +52,92 @@ function parseMetric(body, name) {
 
 async function waitForOpen(ws, timeoutMs = 2_000) {
   return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error("timeout waiting for websocket open")), timeoutMs);
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error("timeout waiting for websocket open"));
+    }, timeoutMs);
     timeout.unref();
-    ws.once("open", () => {
+
+    let settled = false;
+    const cleanup = () => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timeout);
+      ws.off("open", onOpen);
+      ws.off("error", onError);
+      ws.off("close", onClose);
+      ws.off("unexpected-response", onUnexpectedResponse);
+    };
+
+    const onOpen = () => {
+      cleanup();
       resolve();
-    });
-    ws.once("error", (err) => {
-      clearTimeout(timeout);
+    };
+
+    const onError = (err) => {
+      cleanup();
       reject(err);
-    });
+    };
+
+    const onClose = (code, reason) => {
+      cleanup();
+      reject(
+        new Error(
+          `websocket closed before open (code=${code}, reason=${reason.toString("utf8")})`,
+        ),
+      );
+    };
+
+    const onUnexpectedResponse = (_req, res) => {
+      const chunks = [];
+      res.on("data", (c) => chunks.push(c));
+      res.on("end", () => {
+        cleanup();
+        reject(
+          new Error(
+            `unexpected websocket response (${res.statusCode ?? 0}): ${Buffer.concat(chunks).toString("utf8")}`,
+          ),
+        );
+      });
+      res.on("error", onError);
+    };
+
+    ws.on("open", onOpen);
+    ws.on("error", onError);
+    ws.on("close", onClose);
+    ws.on("unexpected-response", onUnexpectedResponse);
   });
 }
 
 async function waitForClose(ws, timeoutMs = 2_000) {
   return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error("timeout waiting for websocket close")), timeoutMs);
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error("timeout waiting for websocket close"));
+    }, timeoutMs);
     timeout.unref();
-    ws.once("close", (code, reason) => {
+
+    let settled = false;
+    const cleanup = () => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timeout);
+      ws.off("close", onClose);
+      ws.off("error", onError);
+    };
+
+    const onClose = (code, reason) => {
+      cleanup();
       resolve({ code, reason: reason.toString("utf8") });
-    });
-    ws.once("error", (err) => {
-      clearTimeout(timeout);
+    };
+
+    const onError = (err) => {
+      cleanup();
       reject(err);
-    });
+    };
+
+    ws.on("close", onClose);
+    ws.on("error", onError);
   });
 }
 
