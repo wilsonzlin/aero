@@ -51,6 +51,11 @@ extern "C" {
  *  - No allocations; suitable for DISPATCH_LEVEL.
  *  - If the mapping would require > UINT16_MAX SG elements, the function
  *    returns STATUS_INVALID_PARAMETER.
+ *  - The resulting addresses are derived from PFNs (CPU physical addresses).
+ *    This is suitable for environments where the virtio device consumes guest
+ *    physical addresses directly. If your platform requires DMA remapping /
+ *    IOMMU translation, you must obtain device/bus addresses from the OS DMA
+ *    framework instead of PFNs.
  */
 NTSTATUS VirtioSgBuildFromPfns(const UINT64 *pfns, UINT32 pfn_count, size_t first_page_offset, size_t byte_length,
 			      BOOLEAN device_write, VIRTQ_SG *out, UINT16 out_cap, UINT16 *out_count);
