@@ -1,3 +1,4 @@
+use crate::common;
 use aero_d3d11::runtime::execute::D3D11Runtime;
 use aero_gpu::protocol_d3d11::{
     BindingDesc, BindingType, BufferUsage, CmdWriter, DxgiFormat, PipelineKind, PrimitiveTopology,
@@ -18,7 +19,10 @@ fn d3d11_render_textured_quad() {
         let mut rt = match D3D11Runtime::new_for_tests().await {
             Ok(rt) => rt,
             Err(e) => {
-                eprintln!("wgpu unavailable ({e:#}); skipping render smoke test");
+                common::skip_or_panic(
+                    concat!(module_path!(), "::d3d11_render_textured_quad"),
+                    &format!("wgpu unavailable ({e:#})"),
+                );
                 return;
             }
         };
@@ -242,7 +246,10 @@ fn d3d11_compute_writes_storage_buffer() {
         let mut rt = match D3D11Runtime::new_for_tests().await {
             Ok(rt) => rt,
             Err(e) => {
-                eprintln!("wgpu unavailable ({e:#}); skipping compute smoke test");
+                common::skip_or_panic(
+                    concat!(module_path!(), "::d3d11_compute_writes_storage_buffer"),
+                    &format!("wgpu unavailable ({e:#})"),
+                );
                 return;
             }
         };
@@ -324,7 +331,10 @@ fn d3d11_compute_writes_storage_texture() {
         let mut rt = match D3D11Runtime::new_for_tests().await {
             Ok(rt) => rt,
             Err(e) => {
-                eprintln!("wgpu unavailable ({e:#}); skipping compute texture smoke test");
+                common::skip_or_panic(
+                    concat!(module_path!(), "::d3d11_compute_writes_storage_texture"),
+                    &format!("wgpu unavailable ({e:#})"),
+                );
                 return;
             }
         };
@@ -388,7 +398,13 @@ fn d3d11_update_texture2d_unaligned_bytes_per_row() {
         let mut rt = match D3D11Runtime::new_for_tests().await {
             Ok(rt) => rt,
             Err(e) => {
-                eprintln!("wgpu unavailable ({e:#}); skipping texture upload smoke test");
+                common::skip_or_panic(
+                    concat!(
+                        module_path!(),
+                        "::d3d11_update_texture2d_unaligned_bytes_per_row"
+                    ),
+                    &format!("wgpu unavailable ({e:#})"),
+                );
                 return;
             }
         };
