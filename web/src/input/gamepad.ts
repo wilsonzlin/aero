@@ -121,11 +121,17 @@ export function packGamepadReport(fields: GamepadReportFields): PackedGamepadRep
   const buttons = fields.buttons & 0xffff;
   const b0 = buttons & 0xff;
   const b1 = (buttons >>> 8) & 0xff;
-  const b2 = fields.hat & 0x0f;
-  const b3 = fields.x & 0xff;
-  const b4 = fields.y & 0xff;
-  const b5 = fields.rx & 0xff;
-  const b6 = fields.ry & 0xff;
+  // Match emulator-side clamping semantics (`UsbHidGamepad::set_hat` / `set_axes`).
+  const hat = Number.isFinite(fields.hat) && fields.hat >= 0 && fields.hat <= GAMEPAD_HAT_NEUTRAL ? fields.hat : GAMEPAD_HAT_NEUTRAL;
+  const b2 = hat & 0x0f;
+  const x = Math.max(-127, Math.min(127, fields.x | 0));
+  const y = Math.max(-127, Math.min(127, fields.y | 0));
+  const rx = Math.max(-127, Math.min(127, fields.rx | 0));
+  const ry = Math.max(-127, Math.min(127, fields.ry | 0));
+  const b3 = x & 0xff;
+  const b4 = y & 0xff;
+  const b5 = rx & 0xff;
+  const b6 = ry & 0xff;
   const b7 = 0;
 
   const packedLo = (b0 | (b1 << 8) | (b2 << 16) | (b3 << 24)) | 0;

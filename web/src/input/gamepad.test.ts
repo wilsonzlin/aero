@@ -71,6 +71,22 @@ describe("packGamepadReport", () => {
     const bytes = Array.from(unpackGamepadReport(packedLo, packedHi));
     expect(bytes).toEqual([0x34, 0x12, 0x02, 0x01, 0xff, 0x7f, 0x81, 0x00]);
   });
+
+  it("clamps out-of-range hat/axes values", () => {
+    const { packedLo, packedHi } = packGamepadReport({
+      buttons: 0,
+      hat: 99,
+      x: 200,
+      y: -200,
+      rx: 0,
+      ry: 0,
+    });
+
+    const bytes = Array.from(unpackGamepadReport(packedLo, packedHi));
+    expect(bytes[2]).toBe(GAMEPAD_HAT_NEUTRAL);
+    expect(bytes[3]).toBe(0x7f);
+    expect(bytes[4]).toBe(0x81);
+  });
 });
 
 describe("GamepadCapture", () => {
