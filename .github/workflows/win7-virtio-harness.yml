@@ -63,6 +63,19 @@ jobs:
           command -v qemu-system-x86_64 >/dev/null || { echo "ERROR: qemu-system-x86_64 not found in PATH" >&2; exit 1; }
           command -v python3 >/dev/null || { echo "ERROR: python3 not found in PATH" >&2; exit 1; }
 
+      - name: Record tool versions (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "qemu-system-x86_64:"
+            qemu-system-x86_64 --version || true
+            echo ""
+            echo "python3:"
+            python3 --version || true
+          } > out/win7-virtio-harness/tool-versions.txt
+
       - name: Validate prerequisites (Windows)
         if: runner.os == 'Windows'
         shell: powershell
@@ -76,6 +89,22 @@ jobs:
           if (!(Get-Command qemu-system-x86_64 -ErrorAction SilentlyContinue)) {
             throw "qemu-system-x86_64 not found in PATH"
           }
+
+      - name: Record tool versions (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $outPath = Join-Path $env:GITHUB_WORKSPACE 'out\win7-virtio-harness\tool-versions.txt'
+          $qemu = (Get-Command qemu-system-x86_64 -ErrorAction SilentlyContinue)
+          $qemuVer = if ($qemu) { (& $qemu.Source --version 2>&1 | Out-String) } else { "qemu-system-x86_64 not found`n" }
+          @(
+            "qemu-system-x86_64:",
+            $qemuVer.TrimEnd(),
+            "",
+            "powershell:",
+            $PSVersionTable.PSVersion.ToString()
+          ) | Out-File -FilePath $outPath -Encoding utf8
 
       - name: Find prebuilt selftest artifact (win7-virtio-selftest)
         id: selftest_run
