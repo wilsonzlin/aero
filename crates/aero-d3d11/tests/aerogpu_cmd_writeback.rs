@@ -513,6 +513,163 @@ fn copy_texture2d_writeback_roundtrip() {
 }
 
 #[test]
+fn copy_texture2d_writeback_roundtrip_async() {
+    pollster::block_on(async {
+        let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+            Ok(exec) => exec,
+            Err(e) => {
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                return;
+            }
+        };
+
+        const SRC: u32 = 1;
+        const DST: u32 = 2;
+
+        let alloc = AerogpuAllocEntry {
+            alloc_id: 1,
+            flags: 0,
+            gpa: 0x100,
+            size_bytes: 0x4000,
+            reserved0: 0,
+        };
+        let allocs = [alloc];
+
+        let width = 7u32;
+        let height = 4u32;
+        let row_pitch = 32u32; // larger than width*4; not wgpu-aligned
+
+        let src_backing_offset = 0u32;
+        let dst_backing_offset = 0x200u32;
+
+        let dst_x = 1u32;
+        let dst_y = 2u32;
+        let src_x = 2u32;
+        let src_y = 1u32;
+        let copy_w = 3u32;
+        let copy_h = 2u32;
+
+        let texture_bytes_len = (row_pitch as usize) * (height as usize);
+
+        let mut src_bytes = vec![0x77u8; texture_bytes_len];
+        for y in 0..height {
+            for x in 0..width {
+                let idx = y as usize * row_pitch as usize + x as usize * 4;
+                src_bytes[idx] = x as u8;
+                src_bytes[idx + 1] = y as u8;
+                src_bytes[idx + 2] = x.wrapping_add(y) as u8;
+                src_bytes[idx + 3] = 0xFF;
+            }
+        }
+
+        let dst_bytes = vec![0x11u8; texture_bytes_len];
+
+        let mut guest_mem = VecGuestMemory::new(0x8000);
+        guest_mem
+            .write(alloc.gpa + src_backing_offset as u64, &src_bytes)
+            .expect("write src texture bytes");
+        guest_mem
+            .write(alloc.gpa + dst_backing_offset as u64, &dst_bytes)
+            .expect("write dst texture bytes");
+
+        let mut stream = Vec::new();
+        // Stream header (24 bytes)
+        stream.extend_from_slice(&AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
+        stream.extend_from_slice(&AEROGPU_ABI_VERSION_U32.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // size_bytes (patched later)
+        stream.extend_from_slice(&0u32.to_le_bytes()); // flags
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved1
+
+        // CREATE_TEXTURE2D SRC
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CreateTexture2d as u32);
+        stream.extend_from_slice(&SRC.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // usage_flags
+        stream.extend_from_slice(&(AerogpuFormat::R8G8B8A8Unorm as u32).to_le_bytes());
+        stream.extend_from_slice(&width.to_le_bytes());
+        stream.extend_from_slice(&height.to_le_bytes());
+        stream.extend_from_slice(&1u32.to_le_bytes()); // mip_levels
+        stream.extend_from_slice(&1u32.to_le_bytes()); // array_layers
+        stream.extend_from_slice(&row_pitch.to_le_bytes());
+        stream.extend_from_slice(&alloc.alloc_id.to_le_bytes());
+        stream.extend_from_slice(&src_backing_offset.to_le_bytes());
+        stream.extend_from_slice(&0u64.to_le_bytes()); // reserved0
+        end_cmd(&mut stream, start);
+
+        // CREATE_TEXTURE2D DST
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CreateTexture2d as u32);
+        stream.extend_from_slice(&DST.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // usage_flags
+        stream.extend_from_slice(&(AerogpuFormat::R8G8B8A8Unorm as u32).to_le_bytes());
+        stream.extend_from_slice(&width.to_le_bytes());
+        stream.extend_from_slice(&height.to_le_bytes());
+        stream.extend_from_slice(&1u32.to_le_bytes()); // mip_levels
+        stream.extend_from_slice(&1u32.to_le_bytes()); // array_layers
+        stream.extend_from_slice(&row_pitch.to_le_bytes());
+        stream.extend_from_slice(&alloc.alloc_id.to_le_bytes());
+        stream.extend_from_slice(&dst_backing_offset.to_le_bytes());
+        stream.extend_from_slice(&0u64.to_le_bytes()); // reserved0
+        end_cmd(&mut stream, start);
+
+        // RESOURCE_DIRTY_RANGE src
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::ResourceDirtyRange as u32);
+        stream.extend_from_slice(&SRC.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        stream.extend_from_slice(&0u64.to_le_bytes()); // offset_bytes
+        stream.extend_from_slice(&(texture_bytes_len as u64).to_le_bytes());
+        end_cmd(&mut stream, start);
+
+        // COPY_TEXTURE2D (WRITEBACK_DST)
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CopyTexture2d as u32);
+        stream.extend_from_slice(&DST.to_le_bytes()); // dst_texture
+        stream.extend_from_slice(&SRC.to_le_bytes()); // src_texture
+        stream.extend_from_slice(&0u32.to_le_bytes()); // dst_mip_level
+        stream.extend_from_slice(&0u32.to_le_bytes()); // dst_array_layer
+        stream.extend_from_slice(&0u32.to_le_bytes()); // src_mip_level
+        stream.extend_from_slice(&0u32.to_le_bytes()); // src_array_layer
+        stream.extend_from_slice(&dst_x.to_le_bytes());
+        stream.extend_from_slice(&dst_y.to_le_bytes());
+        stream.extend_from_slice(&src_x.to_le_bytes());
+        stream.extend_from_slice(&src_y.to_le_bytes());
+        stream.extend_from_slice(&copy_w.to_le_bytes());
+        stream.extend_from_slice(&copy_h.to_le_bytes());
+        stream.extend_from_slice(&AEROGPU_COPY_FLAG_WRITEBACK_DST.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        end_cmd(&mut stream, start);
+
+        // Patch stream size in header.
+        let total_size = stream.len() as u32;
+        stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
+            .copy_from_slice(&total_size.to_le_bytes());
+
+        exec.execute_cmd_stream_async(&stream, Some(&allocs), &mut guest_mem)
+            .await
+            .expect("execute_cmd_stream_async should succeed");
+        exec.poll_wait();
+
+        let mut expected_dst = dst_bytes;
+        for row in 0..copy_h {
+            for col in 0..copy_w {
+                let sx = src_x + col;
+                let sy = src_y + row;
+                let dx = dst_x + col;
+                let dy = dst_y + row;
+
+                let src_idx = sy as usize * row_pitch as usize + sx as usize * 4;
+                let dst_idx = dy as usize * row_pitch as usize + dx as usize * 4;
+                expected_dst[dst_idx..dst_idx + 4]
+                    .copy_from_slice(&src_bytes[src_idx..src_idx + 4]);
+            }
+        }
+
+        let dst_base = (alloc.gpa + dst_backing_offset as u64) as usize;
+        let mem = guest_mem.as_slice();
+        let actual = &mem[dst_base..dst_base + expected_dst.len()];
+        assert_eq!(actual, expected_dst.as_slice());
+    });
+}
+
+#[test]
 fn copy_texture2d_writeback_does_not_clobber_uncopied_pixels() {
     pollster::block_on(async {
         let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
