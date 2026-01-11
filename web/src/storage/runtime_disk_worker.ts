@@ -411,10 +411,21 @@ async function openDiskFromSnapshot(entry: RuntimeDiskSnapshotEntry): Promise<Di
   };
 }
 
+// Serialize all worker requests to avoid races between in-flight disk I/O and snapshot/restore.
+// This keeps snapshot semantics simple: `prepareSnapshot()` will only run after all previous
+// reads/writes have completed and no new ones will start until it finishes.
+let requestChain: Promise<void> = Promise.resolve();
+
 globalThis.onmessage = (ev: MessageEvent<RequestMessage>) => {
   const msg = ev.data;
   if (!msg || msg.type !== "request") return;
-  void handleRequest(msg).catch((err) => postErr(msg.requestId, err));
+  requestChain = requestChain.then(async () => {
+    try {
+      await handleRequest(msg);
+    } catch (err) {
+      postErr(msg.requestId, err);
+    }
+  });
 };
 
 async function handleRequest(msg: RequestMessage): Promise<void> {
