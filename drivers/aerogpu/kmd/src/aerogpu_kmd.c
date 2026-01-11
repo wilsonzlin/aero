@@ -2703,9 +2703,12 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
                     queueDpc = TRUE;
 
                     if (adapter->DxgkInterface.DxgkCbNotifyInterrupt && adapter->VblankInterruptTypeValid) {
+                        KeMemoryBarrier();
+                        const DXGK_INTERRUPT_TYPE vblankType = adapter->VblankInterruptType;
+
                         DXGKARGCB_NOTIFY_INTERRUPT notify;
                         RtlZeroMemory(&notify, sizeof(notify));
-                        notify.InterruptType = adapter->VblankInterruptType;
+                        notify.InterruptType = vblankType;
                         *(ULONG*)((PUCHAR)&notify + FIELD_OFFSET(DXGKARGCB_NOTIFY_INTERRUPT, DmaCompleted)) =
                             AEROGPU_VIDPN_SOURCE_ID;
                         adapter->DxgkInterface.DxgkCbNotifyInterrupt(adapter->StartInfo.hDxgkHandle, &notify);
