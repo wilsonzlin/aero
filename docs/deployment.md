@@ -58,6 +58,7 @@ Currently validated files:
 
 - `web/vite.config.ts`
 - `vite.harness.config.ts`
+- `deploy/k8s/chart/aero-gateway/values.yaml` (Helm chart defaults)
 - `web/public/_headers`
 - `deploy/cloudflare-pages/_headers`
 - `netlify.toml`
@@ -66,7 +67,6 @@ Currently validated files:
 - `deploy/vercel.json`
 - `deploy/caddy/Caddyfile`
 - `deploy/nginx/nginx.conf`
-- `deploy/k8s/chart/aero-gateway/values.yaml`
 
 ```bash
 npm ci
