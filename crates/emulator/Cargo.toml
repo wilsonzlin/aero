@@ -26,7 +26,7 @@ aero-edid = { path = "../aero-edid" }
 aero-io-snapshot = { path = "../aero-io-snapshot" }
 aero-snapshot = { path = "../aero-snapshot" }
 aero-platform = { path = "../platform" }
-aero-ipc = { path = "../aero-ipc" }
+aero-ipc = { path = "../aero-ipc", features = ["wasm"] }
 aero-gpu-trace = { path = "../aero-gpu-trace", optional = true }
 aero-protocol = { path = "../../emulator/protocol" }
 aero-gpu = { path = "../aero-gpu", optional = true }
