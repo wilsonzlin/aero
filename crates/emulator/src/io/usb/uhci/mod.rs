@@ -71,57 +71,186 @@ impl UhciController {
         self.irq_level = pending;
     }
 
-    fn io_read(&self, offset: u16, size: usize) -> u32 {
-        match (offset, size) {
-            (REG_USBCMD, 2) => self.regs.usbcmd as u32,
-            (REG_USBSTS, 2) => self.regs.usbsts as u32,
-            (REG_USBINTR, 2) => self.regs.usbintr as u32,
-            (REG_FRNUM, 2) => self.regs.frnum as u32,
-            (REG_FLBASEADD, 4) => self.regs.flbaseadd,
-            (REG_SOFMOD, 1) => self.regs.sofmod as u32,
-            (REG_PORTSC1, 2) => self.hub.read_portsc(0) as u32,
-            (REG_PORTSC2, 2) => self.hub.read_portsc(1) as u32,
-            _ => u32::MAX,
+    fn write_usbcmd(&mut self, value: u16) {
+        // UHCI 1.1 spec, section 2.1.1 "USB Command (USBCMD)".
+        if value & USBCMD_HCRESET != 0 {
+            self.reset();
+            return;
         }
+
+        let prev = self.regs.usbcmd;
+        let mut cmd = value & USBCMD_WRITE_MASK;
+
+        // Global reset is latched in USBCMD (software clears it), but the act of *setting*
+        // the bit resets controller state.
+        if cmd & USBCMD_GRESET != 0 && prev & USBCMD_GRESET == 0 {
+            self.reset();
+        }
+
+        // Force Global Resume latches in USBCMD; raising it latches RESUMEDETECT in USBSTS.
+        if cmd & USBCMD_FGR != 0 && prev & USBCMD_FGR == 0 {
+            self.regs.usbsts |= USBSTS_RESUMEDETECT;
+        }
+
+        // While global reset is asserted the controller shouldn't be running.
+        if cmd & USBCMD_GRESET != 0 {
+            cmd &= !USBCMD_RS;
+        }
+
+        self.regs.usbcmd = cmd;
+        self.regs.update_halted();
+    }
+
+    fn write_usbsts(&mut self, value: u16) {
+        // UHCI 1.1 spec, section 2.1.2 "USB Status (USBSTS)".
+        // Write-1-to-clear status bits.
+        let w1c = value & USBSTS_W1C_MASK;
+        self.regs.usbsts &= !w1c;
+    }
+
+    fn write_usbintr(&mut self, value: u16) {
+        // UHCI 1.1 spec, section 2.1.3 "USB Interrupt Enable (USBINTR)".
+        self.regs.usbintr = value & 0x0f;
+    }
+
+    fn write_frnum(&mut self, value: u16) {
+        // UHCI 1.1 spec, section 2.1.4 "Frame Number (FRNUM)".
+        self.regs.frnum = value & 0x07ff;
+    }
+
+    fn write_flbaseadd(&mut self, value: u32) {
+        // UHCI 1.1 spec, section 2.1.5 "Frame List Base Address (FLBASEADD)".
+        self.regs.flbaseadd = value & 0xffff_f000;
+    }
+
+    fn io_read_u8(&self, offset: u16) -> u8 {
+        const REG_USBCMD_HI: u16 = REG_USBCMD + 1;
+        const REG_USBSTS_HI: u16 = REG_USBSTS + 1;
+        const REG_USBINTR_HI: u16 = REG_USBINTR + 1;
+        const REG_FRNUM_HI: u16 = REG_FRNUM + 1;
+        const REG_FLBASEADD_END: u16 = REG_FLBASEADD + 3;
+        const REG_PORTSC1_HI: u16 = REG_PORTSC1 + 1;
+        const REG_PORTSC2_HI: u16 = REG_PORTSC2 + 1;
+
+        match offset {
+            REG_USBCMD => (self.regs.usbcmd & 0x00ff) as u8,
+            REG_USBCMD_HI => (self.regs.usbcmd >> 8) as u8,
+            REG_USBSTS => (self.regs.usbsts & 0x00ff) as u8,
+            REG_USBSTS_HI => (self.regs.usbsts >> 8) as u8,
+            REG_USBINTR => (self.regs.usbintr & 0x00ff) as u8,
+            REG_USBINTR_HI => (self.regs.usbintr >> 8) as u8,
+            REG_FRNUM => (self.regs.frnum & 0x00ff) as u8,
+            REG_FRNUM_HI => (self.regs.frnum >> 8) as u8,
+            REG_FLBASEADD..=REG_FLBASEADD_END => {
+                let shift = (offset - REG_FLBASEADD) * 8;
+                (self.regs.flbaseadd >> shift) as u8
+            }
+            REG_SOFMOD => self.regs.sofmod,
+            REG_PORTSC1 => (self.hub.read_portsc(0) & 0x00ff) as u8,
+            REG_PORTSC1_HI => (self.hub.read_portsc(0) >> 8) as u8,
+            REG_PORTSC2 => (self.hub.read_portsc(1) & 0x00ff) as u8,
+            REG_PORTSC2_HI => (self.hub.read_portsc(1) >> 8) as u8,
+            _ => 0,
+        }
+    }
+
+    fn io_write_u8(&mut self, offset: u16, value: u8) {
+        const REG_USBCMD_HI: u16 = REG_USBCMD + 1;
+        const REG_USBSTS_HI: u16 = REG_USBSTS + 1;
+        const REG_USBINTR_HI: u16 = REG_USBINTR + 1;
+        const REG_FRNUM_HI: u16 = REG_FRNUM + 1;
+        const REG_FLBASEADD_END: u16 = REG_FLBASEADD + 3;
+        const REG_PORTSC1_HI: u16 = REG_PORTSC1 + 1;
+        const REG_PORTSC2_HI: u16 = REG_PORTSC2 + 1;
+
+        match offset {
+            REG_USBCMD => {
+                let v = (self.regs.usbcmd & 0xff00) | (value as u16);
+                self.write_usbcmd(v);
+            }
+            REG_USBCMD_HI => {
+                let v = (self.regs.usbcmd & 0x00ff) | ((value as u16) << 8);
+                self.write_usbcmd(v);
+            }
+            REG_USBSTS => {
+                let v = (self.regs.usbsts & 0xff00) | (value as u16);
+                self.write_usbsts(v);
+            }
+            REG_USBSTS_HI => {
+                let v = (self.regs.usbsts & 0x00ff) | ((value as u16) << 8);
+                self.write_usbsts(v);
+            }
+            REG_USBINTR => {
+                let v = (self.regs.usbintr & 0xff00) | (value as u16);
+                self.write_usbintr(v);
+            }
+            REG_USBINTR_HI => {
+                let v = (self.regs.usbintr & 0x00ff) | ((value as u16) << 8);
+                self.write_usbintr(v);
+            }
+            REG_FRNUM => {
+                let v = (self.regs.frnum & 0xff00) | (value as u16);
+                self.write_frnum(v);
+            }
+            REG_FRNUM_HI => {
+                let v = (self.regs.frnum & 0x00ff) | ((value as u16) << 8);
+                self.write_frnum(v);
+            }
+            REG_FLBASEADD..=REG_FLBASEADD_END => {
+                let shift = (offset - REG_FLBASEADD) * 8;
+                let mask = !(0xffu32 << shift);
+                let v = (self.regs.flbaseadd & mask) | ((value as u32) << shift);
+                self.write_flbaseadd(v);
+            }
+            REG_SOFMOD => self.regs.sofmod = value,
+            REG_PORTSC1 => {
+                let cur = self.hub.read_portsc(0);
+                let v = (cur & 0xff00) | (value as u16);
+                self.hub.write_portsc(0, v);
+            }
+            REG_PORTSC1_HI => {
+                let cur = self.hub.read_portsc(0);
+                let v = (cur & 0x00ff) | ((value as u16) << 8);
+                self.hub.write_portsc(0, v);
+            }
+            REG_PORTSC2 => {
+                let cur = self.hub.read_portsc(1);
+                let v = (cur & 0xff00) | (value as u16);
+                self.hub.write_portsc(1, v);
+            }
+            REG_PORTSC2_HI => {
+                let cur = self.hub.read_portsc(1);
+                let v = (cur & 0x00ff) | ((value as u16) << 8);
+                self.hub.write_portsc(1, v);
+            }
+            _ => {}
+        }
+    }
+
+    fn io_read(&self, offset: u16, size: usize) -> u32 {
+        let mut out = 0u32;
+        for i in 0..size.min(4) {
+            out |= (self.io_read_u8(offset.wrapping_add(i as u16)) as u32) << (i * 8);
+        }
+        out
     }
 
     fn io_write(&mut self, offset: u16, size: usize, value: u32) {
         match (offset, size) {
-            (REG_USBCMD, 2) => {
-                let value = value as u16;
-                if value & USBCMD_HCRESET != 0 {
-                    self.reset();
-                    return;
-                }
-                let prev = self.regs.usbcmd;
-                let mut cmd = value & USBCMD_WRITE_MASK;
-
-                // Global reset is latched in USBCMD (software clears it), but the act of *setting*
-                // the bit resets controller state.
-                if cmd & USBCMD_GRESET != 0 && prev & USBCMD_GRESET == 0 {
-                    self.reset();
-                }
-
-                // While global reset is asserted the controller shouldn't be running.
-                if cmd & USBCMD_GRESET != 0 {
-                    cmd &= !USBCMD_RS;
-                }
-
-                self.regs.usbcmd = cmd;
-                self.regs.update_halted();
-            }
-            (REG_USBSTS, 2) => {
-                // Write-1-to-clear status bits.
-                let w1c = value as u16 & USBSTS_W1C_MASK;
-                self.regs.usbsts &= !w1c;
-            }
-            (REG_USBINTR, 2) => self.regs.usbintr = value as u16 & 0x0f,
-            (REG_FRNUM, 2) => self.regs.frnum = value as u16 & 0x07ff,
-            (REG_FLBASEADD, 4) => self.regs.flbaseadd = value & 0xffff_f000,
+            (REG_USBCMD, 2) => self.write_usbcmd(value as u16),
+            (REG_USBSTS, 2) => self.write_usbsts(value as u16),
+            (REG_USBINTR, 2) => self.write_usbintr(value as u16),
+            (REG_FRNUM, 2) => self.write_frnum(value as u16),
+            (REG_FLBASEADD, 4) => self.write_flbaseadd(value),
             (REG_SOFMOD, 1) => self.regs.sofmod = value as u8,
             (REG_PORTSC1, 2) => self.hub.write_portsc(0, value as u16),
             (REG_PORTSC2, 2) => self.hub.write_portsc(1, value as u16),
-            _ => {}
+            _ => {
+                for i in 0..size.min(4) {
+                    let byte = ((value >> (i * 8)) & 0xff) as u8;
+                    self.io_write_u8(offset.wrapping_add(i as u16), byte);
+                }
+            }
         }
         self.update_irq();
     }

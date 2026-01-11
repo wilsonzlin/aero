@@ -211,3 +211,56 @@ fn uhci_pci_bar_relocation_updates_io_window() {
         USBCMD_CF | USBCMD_MAXP
     );
 }
+
+#[test]
+fn uhci_register_block_supports_byte_accesses() {
+    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+
+    // Default USBCMD has MAXP set (bit7, low byte).
+    assert_eq!(uhci.port_read(REG_USBCMD, 1) as u8, USBCMD_MAXP as u8);
+    assert_eq!(uhci.port_read(REG_USBCMD + 1, 1) as u8, 0);
+
+    // Set RS via an 8-bit write (must include MAXP to preserve it since MAXP is in the same byte).
+    uhci.port_write(REG_USBCMD, 1, (USBCMD_MAXP | USBCMD_RS) as u32);
+    assert_eq!(
+        uhci.port_read(REG_USBCMD, 2) as u16 & (USBCMD_MAXP | USBCMD_RS),
+        USBCMD_MAXP | USBCMD_RS
+    );
+    assert_eq!(uhci.port_read(REG_USBSTS, 2) as u16 & USBSTS_HCHALTED, 0);
+
+    // USBINTR is also byte-accessible (low byte only).
+    uhci.port_write(REG_USBINTR, 1, USBINTR_TIMEOUT_CRC as u32);
+    assert_eq!(
+        uhci.port_read(REG_USBINTR, 2) as u16,
+        USBINTR_TIMEOUT_CRC
+    );
+}
+
+#[test]
+fn uhci_fgr_latches_resume_detect_and_can_irq() {
+    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+
+    // Enable resume interrupts.
+    uhci.port_write(REG_USBINTR, 2, USBINTR_RESUME as u32);
+    assert!(!uhci.irq_level());
+
+    // Raising FGR latches RESUMEDETECT in USBSTS and asserts IRQ.
+    uhci.port_write(
+        REG_USBCMD,
+        2,
+        (USBCMD_MAXP | USBCMD_RS | USBCMD_FGR) as u32,
+    );
+    assert_ne!(
+        uhci.port_read(REG_USBSTS, 2) as u16 & USBSTS_RESUMEDETECT,
+        0
+    );
+    assert!(uhci.irq_level());
+
+    // W1C should clear RESUMEDETECT and drop IRQ.
+    uhci.port_write(REG_USBSTS, 2, USBSTS_RESUMEDETECT as u32);
+    assert_eq!(
+        uhci.port_read(REG_USBSTS, 2) as u16 & USBSTS_RESUMEDETECT,
+        0
+    );
+    assert!(!uhci.irq_level());
+}
