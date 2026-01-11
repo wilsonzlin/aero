@@ -114,4 +114,3 @@ fn win7_contract_common_cfg_queue_sizes_match_spec() {
     let mut snd_pci = VirtioPciDevice::new(Box::new(snd), Box::new(InterruptLog::default()));
     assert_queue_layout(&mut snd_pci, 4, &[64, 64, 256, 64]);
 }
-

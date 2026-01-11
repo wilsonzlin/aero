@@ -207,10 +207,7 @@ async fn idle_timeout_resets_on_inbound_keepalive() {
     .await;
 
     let val = fetch_metric(addr, "aero_l2_idle_timeouts_total").await;
-    assert_eq!(
-        val, start_metric,
-        "expected no idle timeout closures"
-    );
+    assert_eq!(val, start_metric, "expected no idle timeout closures");
 
     proxy.shutdown().await;
 }
