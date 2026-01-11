@@ -1163,9 +1163,18 @@ function renderRemoteDiskPanel(): HTMLElement {
     el("option", { value: "range", text: "HTTP Range" }),
     el("option", { value: "chunked", text: "Chunked manifest.json" }),
   ) as HTMLSelectElement;
+  const cacheBackendSelect = el(
+    "select",
+    {},
+    el("option", { value: "auto", text: "cache: auto" }),
+    el("option", { value: "opfs", text: "cache: OPFS" }),
+    el("option", { value: "idb", text: "cache: IndexedDB" }),
+  ) as HTMLSelectElement;
   const urlInput = el("input", { type: "url", placeholder: "http://localhost:9000/disk-images/large.bin" }) as HTMLInputElement;
   const blockSizeInput = el("input", { type: "number", value: String(1024), min: "4" }) as HTMLInputElement;
   const cacheLimitInput = el("input", { type: "number", value: String(512), min: "0" }) as HTMLInputElement;
+  const prefetchInput = el("input", { type: "number", value: String(2), min: "0" }) as HTMLInputElement;
+  const maxConcurrentFetchesInput = el("input", { type: "number", value: String(4), min: "1" }) as HTMLInputElement;
   const stats = el("pre", { text: "" });
   const output = el("pre", { text: "" });
 
@@ -1192,6 +1201,8 @@ function renderRemoteDiskPanel(): HTMLElement {
   function updateModeUi(): void {
     const chunked = modeSelect.value === "chunked";
     blockSizeInput.disabled = chunked;
+    cacheBackendSelect.disabled = chunked;
+    maxConcurrentFetchesInput.disabled = !chunked;
     urlInput.placeholder = chunked
       ? "http://localhost:9000/disk-images/manifest.json"
       : "http://localhost:9000/disk-images/large.bin";
@@ -1231,13 +1242,19 @@ function renderRemoteDiskPanel(): HTMLElement {
     const cacheLimitMiB = Number(cacheLimitInput.value);
     const cacheLimitBytes = cacheLimitMiB <= 0 ? null : cacheLimitMiB * 1024 * 1024;
 
+    const prefetchSequential = Math.max(0, Number(prefetchInput.value) | 0);
     const opened =
       modeSelect.value === "chunked"
-        ? await client.openChunked(url, { cacheLimitBytes, prefetchSequentialChunks: 2 })
+        ? await client.openChunked(url, {
+            cacheLimitBytes,
+            prefetchSequentialChunks: prefetchSequential,
+            maxConcurrentFetches: Math.max(1, Number(maxConcurrentFetchesInput.value) | 0),
+          })
         : await client.openRemote(url, {
             blockSize: Number(blockSizeInput.value) * 1024,
             cacheLimitBytes,
-            prefetchSequentialBlocks: 2,
+            prefetchSequentialBlocks: prefetchSequential,
+            cacheBackend: cacheBackendSelect.value === "auto" ? undefined : (cacheBackendSelect.value as "opfs" | "idb"),
           });
     handle = opened.handle;
     updateButtons();
@@ -1376,6 +1393,7 @@ function renderRemoteDiskPanel(): HTMLElement {
       enabledInput,
       el("label", { text: "Mode:" }),
       modeSelect,
+      cacheBackendSelect,
       el("label", { text: "URL:" }),
       urlInput,
     ),
@@ -1386,6 +1404,10 @@ function renderRemoteDiskPanel(): HTMLElement {
       blockSizeInput,
       el("label", { text: "Cache MiB (0=off):" }),
       cacheLimitInput,
+      el("label", { text: "Prefetch:" }),
+      prefetchInput,
+      el("label", { text: "Max inflight (chunked):" }),
+      maxConcurrentFetchesInput,
       probeButton,
       readButton,
       flushButton,
