@@ -17,8 +17,10 @@
 
 #include <d3d10_1umddi.h>
 #include <d3d10_1.h>
+#include <d3dkmthk.h>
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstring>
 #include <mutex>
@@ -27,10 +29,20 @@
 #include <vector>
 
 #include "aerogpu_cmd_writer.h"
+#include "../../../protocol/aerogpu_dbgctl_escape.h"
+
+#ifndef NT_SUCCESS
+  #define NT_SUCCESS(Status) (((NTSTATUS)(Status)) >= 0)
+#endif
+
+#ifndef STATUS_TIMEOUT
+  #define STATUS_TIMEOUT ((NTSTATUS)0x00000102L)
+#endif
 
 namespace {
 
 constexpr aerogpu_handle_t kInvalidHandle = 0;
+constexpr HRESULT kDxgiErrorWasStillDrawing = static_cast<HRESULT>(0x887A000Au); // DXGI_ERROR_WAS_STILL_DRAWING
 
 // DXGI_FORMAT subset (numeric values from dxgiformat.h).
 constexpr uint32_t kDxgiFormatR8G8B8A8Unorm = 28;
@@ -178,6 +190,16 @@ struct AeroGpuDevice {
 
   aerogpu::CmdWriter cmd;
 
+  // Fence tracking for WDDM-backed synchronization (used by Map READ / DO_NOT_WAIT semantics).
+  std::atomic<uint64_t> last_submitted_fence{0};
+  std::atomic<uint64_t> last_completed_fence{0};
+
+  // Monitored fence state for Win7/WDDM 1.1.
+  // These fields are expected to be initialized by the real WDDM submission path.
+  D3DKMT_HANDLE kmt_fence_syncobj = 0;
+  volatile uint64_t* monitored_fence_value = nullptr;
+  D3DKMT_HANDLE kmt_adapter = 0;
+
   aerogpu_handle_t current_rtv = 0;
   aerogpu_handle_t current_dsv = 0;
   aerogpu_handle_t current_vs = 0;
@@ -195,6 +217,178 @@ TObject* FromHandle(THandle h) {
   return reinterpret_cast<TObject*>(h.pDrvPrivate);
 }
 
+void atomic_max_u64(std::atomic<uint64_t>* target, uint64_t value) {
+  if (!target) {
+    return;
+  }
+
+  uint64_t cur = target->load(std::memory_order_relaxed);
+  while (cur < value && !target->compare_exchange_weak(cur, value, std::memory_order_relaxed)) {
+  }
+}
+
+struct AeroGpuD3dkmtProcs {
+  decltype(&D3DKMTEscape) pfn_escape = nullptr;
+  decltype(&D3DKMTWaitForSynchronizationObject) pfn_wait_for_syncobj = nullptr;
+};
+
+const AeroGpuD3dkmtProcs& GetAeroGpuD3dkmtProcs() {
+  static AeroGpuD3dkmtProcs procs = [] {
+    AeroGpuD3dkmtProcs p{};
+    HMODULE gdi32 = GetModuleHandleW(L"gdi32.dll");
+    if (!gdi32) {
+      gdi32 = LoadLibraryW(L"gdi32.dll");
+    }
+    if (!gdi32) {
+      return p;
+    }
+
+    p.pfn_escape = reinterpret_cast<decltype(&D3DKMTEscape)>(GetProcAddress(gdi32, "D3DKMTEscape"));
+    p.pfn_wait_for_syncobj = reinterpret_cast<decltype(&D3DKMTWaitForSynchronizationObject)>(
+        GetProcAddress(gdi32, "D3DKMTWaitForSynchronizationObject"));
+    return p;
+  }();
+  return procs;
+}
+
+void UpdateCompletedFence(AeroGpuDevice* dev, uint64_t completed) {
+  if (!dev) {
+    return;
+  }
+
+  atomic_max_u64(&dev->last_completed_fence, completed);
+
+  if (!dev->adapter) {
+    return;
+  }
+
+  AeroGpuAdapter* adapter = dev->adapter;
+  {
+    std::lock_guard<std::mutex> lock(adapter->fence_mutex);
+    if (adapter->completed_fence < completed) {
+      adapter->completed_fence = completed;
+    }
+  }
+  adapter->fence_cv.notify_all();
+}
+
+uint64_t AeroGpuQueryCompletedFence(AeroGpuDevice* dev) {
+  if (!dev) {
+    return 0;
+  }
+
+  if (dev->monitored_fence_value) {
+    const uint64_t completed = *dev->monitored_fence_value;
+    UpdateCompletedFence(dev, completed);
+    return completed;
+  }
+
+  // Dev-only fallback: ask the KMD for its fence tracking state via Escape.
+  if (dev->kmt_adapter) {
+    const AeroGpuD3dkmtProcs& procs = GetAeroGpuD3dkmtProcs();
+    if (procs.pfn_escape) {
+      aerogpu_escape_query_fence_out q{};
+      q.hdr.version = AEROGPU_ESCAPE_VERSION;
+      q.hdr.op = AEROGPU_ESCAPE_OP_QUERY_FENCE;
+      q.hdr.size = sizeof(q);
+      q.hdr.reserved0 = 0;
+
+      D3DKMT_ESCAPE e{};
+      e.hAdapter = dev->kmt_adapter;
+      e.hDevice = 0;
+      e.hContext = 0;
+      e.Type = D3DKMT_ESCAPE_DRIVERPRIVATE;
+      e.Flags.Value = 0;
+      e.pPrivateDriverData = &q;
+      e.PrivateDriverDataSize = sizeof(q);
+
+      const NTSTATUS st = procs.pfn_escape(&e);
+      if (NT_SUCCESS(st)) {
+        atomic_max_u64(&dev->last_submitted_fence, static_cast<uint64_t>(q.last_submitted_fence));
+        UpdateCompletedFence(dev, static_cast<uint64_t>(q.last_completed_fence));
+      }
+    }
+  }
+
+  if (dev->adapter) {
+    uint64_t completed = 0;
+    {
+      std::lock_guard<std::mutex> lock(dev->adapter->fence_mutex);
+      completed = dev->adapter->completed_fence;
+    }
+    UpdateCompletedFence(dev, completed);
+  }
+
+  return dev->last_completed_fence.load(std::memory_order_relaxed);
+}
+
+// Waits for `fence` to be completed. `timeout_ms == 0` means "infinite wait".
+//
+// On timeout, returns `DXGI_ERROR_WAS_STILL_DRAWING` (useful for D3D11 Map DO_NOT_WAIT).
+HRESULT AeroGpuWaitForFence(AeroGpuDevice* dev, uint64_t fence, uint32_t timeout_ms) {
+  if (!dev) {
+    return E_INVALIDARG;
+  }
+  if (fence == 0) {
+    return S_OK;
+  }
+
+  if (AeroGpuQueryCompletedFence(dev) >= fence) {
+    return S_OK;
+  }
+
+  const AeroGpuD3dkmtProcs& procs = GetAeroGpuD3dkmtProcs();
+  if (dev->kmt_fence_syncobj && procs.pfn_wait_for_syncobj) {
+    const D3DKMT_HANDLE handles[1] = {dev->kmt_fence_syncobj};
+    const UINT64 fence_values[1] = {fence};
+
+    D3DKMT_WAITFORSYNCHRONIZATIONOBJECT args{};
+    args.hAdapter = dev->kmt_adapter;
+    args.ObjectCount = 1;
+    args.ObjectHandleArray = handles;
+    args.FenceValueArray = fence_values;
+    args.Timeout = timeout_ms ? static_cast<UINT64>(timeout_ms) : ~0ull;
+
+    const NTSTATUS st = procs.pfn_wait_for_syncobj(&args);
+    if (st == STATUS_TIMEOUT) {
+      return kDxgiErrorWasStillDrawing;
+    }
+    if (!NT_SUCCESS(st)) {
+      return E_FAIL;
+    }
+
+    (void)AeroGpuQueryCompletedFence(dev);
+    return S_OK;
+  }
+
+  // Fallback for bring-up: treat submissions as synchronous and wait on the local CV.
+  if (!dev->adapter) {
+    return E_FAIL;
+  }
+
+  AeroGpuAdapter* adapter = dev->adapter;
+  std::unique_lock<std::mutex> lock(adapter->fence_mutex);
+  auto ready = [&] { return adapter->completed_fence >= fence; };
+
+  if (ready()) {
+    atomic_max_u64(&dev->last_completed_fence, adapter->completed_fence);
+    return S_OK;
+  }
+
+  if (timeout_ms == 0) {
+    adapter->fence_cv.wait(lock, ready);
+    atomic_max_u64(&dev->last_completed_fence, adapter->completed_fence);
+    return S_OK;
+  }
+
+  if (!adapter->fence_cv.wait_for(lock, std::chrono::milliseconds(timeout_ms), ready)) {
+    return kDxgiErrorWasStillDrawing;
+  }
+
+  atomic_max_u64(&dev->last_completed_fence, adapter->completed_fence);
+  return S_OK;
+}
+
 uint64_t submit_locked(AeroGpuDevice* dev) {
   if (!dev || dev->cmd.empty()) {
     return 0;
@@ -208,12 +402,22 @@ uint64_t submit_locked(AeroGpuDevice* dev) {
   dev->cmd.finalize();
 
   uint64_t fence = 0;
+  const bool complete_immediately = (dev->kmt_fence_syncobj == 0 && dev->monitored_fence_value == nullptr);
   {
     std::lock_guard<std::mutex> lock(adapter->fence_mutex);
     fence = adapter->next_fence++;
-    adapter->completed_fence = fence;
+    if (complete_immediately) {
+      adapter->completed_fence = fence;
+    }
   }
-  adapter->fence_cv.notify_all();
+  if (complete_immediately) {
+    adapter->fence_cv.notify_all();
+  }
+
+  atomic_max_u64(&dev->last_submitted_fence, fence);
+  if (complete_immediately) {
+    atomic_max_u64(&dev->last_completed_fence, fence);
+  }
 
   dev->cmd.reset();
   return fence;
