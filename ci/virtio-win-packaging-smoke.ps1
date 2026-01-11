@@ -229,6 +229,32 @@ if ($OmitOptionalDrivers) {
       throw "Expected make-driver-pack.ps1 to report missing optional driver '$want'. Reported: $($missingNames -join ', ')"
     }
   }
+
+  # -StrictOptional is intended to catch missing optional drivers when they're explicitly requested.
+  Write-Host "Validating -StrictOptional rejects missing optional drivers..."
+  $strictPackOutDir = Join-Path $OutRoot "driver-pack-out-strict"
+  Ensure-EmptyDirectory -Path $strictPackOutDir
+  $strictPackLog = Join-Path $logsDir "make-driver-pack-strict.log"
+  & pwsh -NoProfile -ExecutionPolicy Bypass -File $driverPackScript `
+    -VirtioWinRoot $syntheticRoot `
+    -OutDir $strictPackOutDir `
+    -Drivers "viostor","netkvm","viosnd","vioinput" `
+    -StrictOptional `
+    -NoZip *>&1 | Tee-Object -FilePath $strictPackLog
+  if ($LASTEXITCODE -eq 0) {
+    throw "Expected make-driver-pack.ps1 -StrictOptional to fail when optional drivers are missing. See $strictPackLog"
+  }
+} else {
+  if ($driverPackManifest.optional_drivers_missing_any) {
+    $missingNames = @($driverPackManifest.optional_drivers_missing | ForEach-Object { $_.name })
+    throw "Expected make-driver-pack.ps1 to include optional drivers, but optional_drivers_missing_any=true. Missing: $($missingNames -join ', ')"
+  }
+  $driversIncluded = @($driverPackManifest.drivers | ForEach-Object { $_.ToString().ToLowerInvariant() })
+  foreach ($want in @("viosnd", "vioinput")) {
+    if (-not ($driversIncluded -contains $want)) {
+      throw "Expected make-driver-pack.ps1 to include optional driver '$want' when present. Included drivers: $($driversIncluded -join ', ')"
+    }
+  }
 }
 
 $guestToolsOutDir = Join-Path $OutRoot "guest-tools-out"
