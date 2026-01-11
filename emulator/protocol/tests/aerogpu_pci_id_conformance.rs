@@ -242,7 +242,7 @@ fn aerogpu_pci_ids_match_repo_contracts() {
     // the stable Windows device binding contract.
     assert!(
         !patterns.contains(&legacy_hwid),
-        "{}: aero-gpu hardware_id_patterns must not include legacy bring-up HWID `{legacy_hwid}`. Found: {patterns:?}",
+        "{}: aero-gpu hardware_id_patterns must not include legacy bring-up `{legacy_hwid}`. Found: {patterns:?}",
         contract_path.display()
     );
 }

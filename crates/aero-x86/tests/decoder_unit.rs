@@ -274,6 +274,19 @@ fn regression_cases_are_stable() {
 }
 
 #[test]
+fn decodes_mov_segment_reg_in_long_mode() {
+    // yaxpeax-x86 rejects this in long mode, but iced-x86 accepts it:
+    //   mov word ptr [rsi], ss
+    let inst = decode(&[0x44, 0x8C, 0x16], DecodeMode::Bits64, 0).unwrap();
+    assert_eq!(inst.length, 3);
+    assert!(inst.operands.iter().any(|op| matches!(op, Operand::Memory(_))));
+    assert!(inst
+        .operands
+        .iter()
+        .any(|op| matches!(op, Operand::Segment { reg: SegmentReg::SS })));
+}
+
+#[test]
 fn reserved_nop_0f18_models_rm_and_reg_operands() {
     // iced-x86 exposes `0F 18 /r` as a "reserved NOP" with two operands (`r/m`, `r`).
     for bytes in [[0x0F, 0x18, 0x60, 0x00], [0x0F, 0x19, 0x07, 0x00]] {

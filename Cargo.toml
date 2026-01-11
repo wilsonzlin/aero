@@ -15,7 +15,6 @@ members = [
     "crates/aero-gpu-utils",
     "crates/aero-gpu-wasm",
     "crates/aero-shared",
-    "crates/aero-emulator",
     "crates/aero-core",
     "crates/aero-tests",
     "crates/aero-http-range",
@@ -66,7 +65,6 @@ members = [
     "tools/bcd_patch",
     "tools/qemu_diff",
     "crates/virtio-gpu-proto",
-    "crates/vm",
     "crates/aero-usb",
     "crates/st-idb",
     "crates/conformance",
@@ -92,7 +90,6 @@ exclude = [
 [dev-dependencies]
 aero-d3d9 = { path = "crates/aero-d3d9" }
 aero-d3d11 = { path = "crates/aero-d3d11" }
-aero-emulator = { path = "crates/aero-emulator" }
 aero-gpu = { path = "crates/aero-gpu" }
 anyhow = "1.0"
 bytemuck = { version = "1.14", features = ["derive"] }

@@ -9,4 +9,3 @@ aero-snapshot = { path = "../aero-snapshot" }
 
 [dev-dependencies]
 blake3 = "1"
-

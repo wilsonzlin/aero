@@ -13,8 +13,11 @@
 
 use std::cell::RefCell;
 use std::fmt;
+use std::io::{Cursor, Read, Seek, Write};
 use std::rc::Rc;
 use std::sync::Arc;
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use aero_cpu_core::assist::AssistContext;
 use aero_cpu_core::interp::tier0::exec::{run_batch_with_assists, BatchExit};
@@ -28,6 +31,7 @@ use aero_devices::serial::{register_serial16550, Serial16550, SharedSerial16550}
 use aero_platform::chipset::{A20GateHandle, ChipsetState};
 use aero_platform::io::IoPortBus;
 use aero_platform::reset::{ResetKind, ResetLatch};
+use aero_snapshot as snapshot;
 use firmware::bios::{build_bios_rom, Bios, BiosBus, BiosConfig, BIOS_BASE};
 use machine::{
     A20Gate as FirmwareA20Gate, BlockDevice, CpuState as FirmwareCpuState, FirmwareMemory,
@@ -36,6 +40,7 @@ use machine::{
 use memory::{DenseMemory, PhysicalMemoryBus};
 
 const FAST_A20_PORT: u16 = 0x92;
+const SNAPSHOT_DIRTY_PAGE_SIZE: u32 = 4096;
 
 /// Configuration for [`Machine`].
 #[derive(Debug, Clone)]
@@ -171,9 +176,72 @@ impl BlockDevice for VecBlockDevice {
     }
 }
 
+#[derive(Debug, Clone)]
+struct DirtyBitmap {
+    bits: Vec<u64>,
+    pages: usize,
+    page_size: usize,
+}
+
+impl DirtyBitmap {
+    fn new(mem_len: u64, page_size: u32) -> Self {
+        let page_size = page_size as usize;
+        let pages = usize::try_from(
+            mem_len
+                .checked_add((page_size as u64).saturating_sub(1))
+                .unwrap_or(mem_len)
+                / (page_size as u64),
+        )
+        .unwrap_or(0);
+        let words = pages.div_ceil(64);
+        Self {
+            bits: vec![0u64; words],
+            pages,
+            page_size,
+        }
+    }
+
+    fn mark_addr(&mut self, addr: u64) {
+        let page = usize::try_from(addr / self.page_size as u64).unwrap_or(usize::MAX);
+        if page >= self.pages {
+            return;
+        }
+        let word = page / 64;
+        let bit = page % 64;
+        if let Some(slot) = self.bits.get_mut(word) {
+            *slot |= 1u64 << bit;
+        }
+    }
+
+    fn take(&mut self) -> Vec<u64> {
+        let mut pages = Vec::new();
+        for (word_idx, word) in self.bits.iter_mut().enumerate() {
+            let mut w = *word;
+            if w == 0 {
+                continue;
+            }
+            *word = 0;
+            while w != 0 {
+                let bit = w.trailing_zeros() as usize;
+                let page = word_idx * 64 + bit;
+                if page < self.pages {
+                    pages.push(page as u64);
+                }
+                w &= !(1u64 << bit);
+            }
+        }
+        pages
+    }
+
+    fn clear(&mut self) {
+        self.bits.fill(0);
+    }
+}
+
 struct SystemMemory {
     a20: A20GateHandle,
     inner: RefCell<PhysicalMemoryBus>,
+    dirty: DirtyBitmap,
 }
 
 impl SystemMemory {
@@ -191,6 +259,7 @@ impl SystemMemory {
         Ok(Self {
             a20,
             inner: RefCell::new(inner),
+            dirty: DirtyBitmap::new(ram_size_bytes, SNAPSHOT_DIRTY_PAGE_SIZE),
         })
     }
 
@@ -200,6 +269,14 @@ impl SystemMemory {
         } else {
             addr & !(1u64 << 20)
         }
+    }
+
+    fn take_dirty_pages(&mut self) -> Vec<u64> {
+        self.dirty.take()
+    }
+
+    fn clear_dirty(&mut self) {
+        self.dirty.clear();
     }
 }
 
@@ -229,6 +306,7 @@ impl MemoryAccess for SystemMemory {
     fn write_u8(&mut self, addr: u64, val: u8) {
         let addr = self.translate_a20(addr);
         self.inner.borrow_mut().write_physical_u8(addr, val);
+        self.dirty.mark_addr(addr);
     }
 
     fn fetch_code(&self, _addr: u64, _len: usize) -> &[u8] {
@@ -322,6 +400,9 @@ pub struct Machine {
     serial: Option<SharedSerial16550>,
     i8042: Option<SharedI8042Controller>,
     serial_log: Vec<u8>,
+
+    next_snapshot_id: u64,
+    last_snapshot_id: Option<u64>,
 }
 
 impl Machine {
@@ -346,6 +427,8 @@ impl Machine {
             serial: None,
             i8042: None,
             serial_log: Vec::new(),
+            next_snapshot_id: 1,
+            last_snapshot_id: None,
         };
 
         machine.reset();
@@ -379,6 +462,69 @@ impl Machine {
         if let Some(ctrl) = &self.i8042 {
             ctrl.borrow_mut().inject_browser_key(code, pressed);
         }
+    }
+
+    pub fn take_snapshot_full(&mut self) -> snapshot::Result<Vec<u8>> {
+        self.take_snapshot_with_options(snapshot::SaveOptions::default())
+    }
+
+    pub fn save_snapshot_full_to<W: Write + Seek>(&mut self, w: &mut W) -> snapshot::Result<()> {
+        self.save_snapshot_to(w, snapshot::SaveOptions::default())
+    }
+
+    pub fn take_snapshot_dirty(&mut self) -> snapshot::Result<Vec<u8>> {
+        let mut options = snapshot::SaveOptions::default();
+        options.ram.mode = snapshot::RamMode::Dirty;
+        self.take_snapshot_with_options(options)
+    }
+
+    pub fn save_snapshot_dirty_to<W: Write + Seek>(&mut self, w: &mut W) -> snapshot::Result<()> {
+        let mut options = snapshot::SaveOptions::default();
+        options.ram.mode = snapshot::RamMode::Dirty;
+        self.save_snapshot_to(w, options)
+    }
+
+    pub fn restore_snapshot_bytes(&mut self, bytes: &[u8]) -> snapshot::Result<()> {
+        self.restore_snapshot_from_checked(&mut Cursor::new(bytes))
+    }
+
+    pub fn restore_snapshot_from<R: Read>(&mut self, r: &mut R) -> snapshot::Result<()> {
+        snapshot::restore_snapshot(r, self)
+    }
+
+    pub fn restore_snapshot_from_checked<R: Read + Seek>(&mut self, r: &mut R) -> snapshot::Result<()> {
+        // Restoring a snapshot is conceptually "rewinding time", so discard any accumulated host
+        // output/state from the current execution.
+        self.flush_serial();
+        if let Some(uart) = &self.serial {
+            let _ = uart.borrow_mut().take_tx();
+        }
+        self.serial_log.clear();
+        self.reset_latch.clear();
+
+        let expected_parent_snapshot_id = self.last_snapshot_id;
+        snapshot::restore_snapshot_with_options(
+            r,
+            self,
+            snapshot::RestoreOptions {
+                expected_parent_snapshot_id,
+            },
+        )
+    }
+
+    fn save_snapshot_to<W: Write + Seek>(
+        &mut self,
+        w: &mut W,
+        options: snapshot::SaveOptions,
+    ) -> snapshot::Result<()> {
+        self.flush_serial();
+        snapshot::save_snapshot(w, self, options)
+    }
+
+    fn take_snapshot_with_options(&mut self, options: snapshot::SaveOptions) -> snapshot::Result<Vec<u8>> {
+        let mut cursor = Cursor::new(Vec::new());
+        self.save_snapshot_to(&mut cursor, options)?;
+        Ok(cursor.into_inner())
     }
 
     /// Reset the machine and transfer control to firmware POST (boot sector).
@@ -445,6 +591,7 @@ impl Machine {
         sync_firmware_to_core(&fw_cpu, &mut self.cpu);
         self.cpu.halted = false;
         self.cpu.a20_enabled = self.chipset.a20().enabled();
+        self.mem.clear_dirty();
     }
 
     /// Run the CPU for at most `max_insts` guest instructions.
@@ -518,6 +665,181 @@ impl Machine {
         if !tx.is_empty() {
             self.serial_log.extend_from_slice(&tx);
         }
+    }
+}
+
+impl snapshot::SnapshotSource for Machine {
+    fn snapshot_meta(&mut self) -> snapshot::SnapshotMeta {
+        let snapshot_id = self.next_snapshot_id;
+        self.next_snapshot_id = self.next_snapshot_id.saturating_add(1);
+
+        #[cfg(target_arch = "wasm32")]
+        let created_unix_ms = 0u64;
+        #[cfg(not(target_arch = "wasm32"))]
+        let created_unix_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+            .try_into()
+            .unwrap_or(u64::MAX);
+
+        let meta = snapshot::SnapshotMeta {
+            snapshot_id,
+            parent_snapshot_id: self.last_snapshot_id,
+            created_unix_ms,
+            label: None,
+        };
+        self.last_snapshot_id = Some(snapshot_id);
+        meta
+    }
+
+    fn cpu_state(&self) -> snapshot::CpuState {
+        snapshot::cpu_state_from_cpu_core(&self.cpu)
+    }
+
+    fn mmu_state(&self) -> snapshot::MmuState {
+        snapshot::mmu_state_from_cpu_core(&self.cpu)
+    }
+
+    fn device_states(&self) -> Vec<snapshot::DeviceState> {
+        const V1: u16 = 1;
+        let mut devices = Vec::new();
+
+        // Firmware snapshot: required for deterministic BIOS interrupt behavior.
+        let bios_snapshot = self.bios.snapshot(&self.mem);
+        let mut bios_bytes = Vec::new();
+        if bios_snapshot.encode(&mut bios_bytes).is_ok() {
+            devices.push(snapshot::DeviceState {
+                id: snapshot::DeviceId::BIOS,
+                version: V1,
+                flags: 0,
+                data: bios_bytes,
+            });
+        }
+
+        // Memory/chipset glue.
+        devices.push(snapshot::DeviceState {
+            id: snapshot::DeviceId::MEMORY,
+            version: V1,
+            flags: 0,
+            data: vec![self.chipset.a20().enabled() as u8],
+        });
+
+        // Accumulated serial output (drained from the UART by `Machine::run_slice`).
+        devices.push(snapshot::DeviceState {
+            id: snapshot::DeviceId::SERIAL,
+            version: V1,
+            flags: 0,
+            data: self.serial_log.clone(),
+        });
+
+        devices
+    }
+
+    fn disk_overlays(&self) -> snapshot::DiskOverlayRefs {
+        snapshot::DiskOverlayRefs::default()
+    }
+
+    fn ram_len(&self) -> usize {
+        usize::try_from(self.cfg.ram_size_bytes).unwrap_or(0)
+    }
+
+    fn read_ram(&self, offset: u64, buf: &mut [u8]) -> snapshot::Result<()> {
+        let end = offset
+            .checked_add(buf.len() as u64)
+            .ok_or(snapshot::SnapshotError::Corrupt("ram offset overflow"))?;
+        if end > self.cfg.ram_size_bytes {
+            return Err(snapshot::SnapshotError::Corrupt("ram read out of range"));
+        }
+        self.mem.inner.borrow_mut().read_physical(offset, buf);
+        Ok(())
+    }
+
+    fn dirty_page_size(&self) -> u32 {
+        SNAPSHOT_DIRTY_PAGE_SIZE
+    }
+
+    fn take_dirty_pages(&mut self) -> Option<Vec<u64>> {
+        Some(self.mem.take_dirty_pages())
+    }
+}
+
+impl snapshot::SnapshotTarget for Machine {
+    fn restore_meta(&mut self, meta: snapshot::SnapshotMeta) {
+        self.last_snapshot_id = Some(meta.snapshot_id);
+        self.next_snapshot_id = self
+            .next_snapshot_id
+            .max(meta.snapshot_id.saturating_add(1));
+    }
+
+    fn restore_cpu_state(&mut self, state: snapshot::CpuState) {
+        snapshot::apply_cpu_state_to_cpu_core(&state, &mut self.cpu);
+    }
+
+    fn restore_mmu_state(&mut self, state: snapshot::MmuState) {
+        snapshot::apply_mmu_state_to_cpu_core(&state, &mut self.cpu);
+    }
+
+    fn restore_device_states(&mut self, states: Vec<snapshot::DeviceState>) {
+        for state in states {
+            match state.id {
+                snapshot::DeviceId::BIOS => {
+                    if state.version != 1 {
+                        continue;
+                    }
+                    let snapshot = match firmware::bios::BiosSnapshot::decode(&mut Cursor::new(
+                        &state.data,
+                    )) {
+                        Ok(v) => v,
+                        Err(_) => continue,
+                    };
+                    self.bios.restore_snapshot(snapshot, &mut self.mem);
+                }
+                snapshot::DeviceId::MEMORY => {
+                    if state.version != 1 {
+                        continue;
+                    }
+                    let enabled = state.data.first().copied().unwrap_or(0) != 0;
+                    self.chipset.a20().set_enabled(enabled);
+                    self.cpu.a20_enabled = enabled;
+                }
+                snapshot::DeviceId::SERIAL => {
+                    if state.version != 1 {
+                        continue;
+                    }
+                    if let Some(uart) = &self.serial {
+                        let _ = uart.borrow_mut().take_tx();
+                    }
+                    self.serial_log = state.data;
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn restore_disk_overlays(&mut self, _overlays: snapshot::DiskOverlayRefs) {}
+
+    fn ram_len(&self) -> usize {
+        usize::try_from(self.cfg.ram_size_bytes).unwrap_or(0)
+    }
+
+    fn write_ram(&mut self, offset: u64, data: &[u8]) -> snapshot::Result<()> {
+        let end = offset
+            .checked_add(data.len() as u64)
+            .ok_or(snapshot::SnapshotError::Corrupt("ram offset overflow"))?;
+        if end > self.cfg.ram_size_bytes {
+            return Err(snapshot::SnapshotError::Corrupt("ram write out of range"));
+        }
+        self.mem.inner.borrow_mut().write_physical(offset, data);
+        Ok(())
+    }
+
+    fn post_restore(&mut self) -> snapshot::Result<()> {
+        self.reset_latch.clear();
+        self.assist = AssistContext::default();
+        self.mem.clear_dirty();
+        self.cpu.a20_enabled = self.chipset.a20().enabled();
+        Ok(())
     }
 }
 

@@ -499,6 +499,7 @@ queue), while still being efficient for **SPSC** use (per-worker cmd/evt).
 
 ## Next Steps
 
+1. **Read [VM crate map](./vm-crate-map.md)** for the canonical Rust VM core crate graph (browser + host) and layering rules.
 1. **Read [CPU Emulation](./02-cpu-emulation.md)** for x86-64 implementation details
 2. **Read [Memory Management](./03-memory-management.md)** for MMU/paging design
 3. **Read [Graphics Subsystem](./04-graphics-subsystem.md)** for DirectX translation

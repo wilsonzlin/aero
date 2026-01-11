@@ -1131,9 +1131,8 @@ pub struct DemoVm {
 impl DemoVm {
     #[wasm_bindgen(constructor)]
     pub fn new(ram_size_bytes: u32) -> Self {
-        Self {
-            inner: aero_vm::Vm::new(ram_size_bytes as usize),
-        }
+        let inner = aero_vm::Vm::new(ram_size_bytes as usize);
+        Self { inner }
     }
 
     pub fn run_steps(&mut self, steps: u32) {

@@ -100,6 +100,8 @@ fn a20_state_is_shared_between_devices_memory_and_bios() {
     platform.io.register(0x60, Box::new(i8042.port60()));
     platform.io.register(0x64, Box::new(i8042.port64()));
 
+    assert!(!a20.enabled());
+
     // 3) Wire BIOS INT 15h A20 services to the platform A20 line.
     let mut bios = Bios::new(BiosConfig {
         enable_acpi: false,

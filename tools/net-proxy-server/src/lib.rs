@@ -127,19 +127,27 @@ async fn handle_ws_client(stream: TcpStream) -> anyhow::Result<()> {
                     .body(Some("invalid path".to_string()))
                     .expect("builder"));
             }
-            let query = uri.query().unwrap_or("");
+            let query = uri.query().unwrap_or("").trim();
 
             let mut host: Option<String> = None;
             let mut port: Option<u16> = None;
+
             for (k, v) in url::form_urlencoded::parse(query.as_bytes()) {
                 match k.as_ref() {
+                    // Backwards-compatible format:
+                    //   /tcp?target=example.com:443
                     "target" => {
                         if let Some(parsed) = parse_target(&v) {
                             target = Some(parsed);
                         }
                     }
+                    // Preferred explicit query format used by the web runtime:
+                    //   /tcp?host=example.com&port=443
                     "host" => {
-                        host = Some(v.into_owned());
+                        let v = v.trim();
+                        if !v.is_empty() {
+                            host = Some(v.to_string());
+                        }
                     }
                     "port" => {
                         if let Ok(p) = v.parse::<u16>() {
@@ -151,8 +159,16 @@ async fn handle_ws_client(stream: TcpStream) -> anyhow::Result<()> {
             }
 
             if target.is_none() {
-                if let (Some(host), Some(port)) = (host, port) {
-                    target = Some((normalize_host(&host), port));
+                if let (Some(host), Some(port)) = (host.as_deref(), port) {
+                    target = Some((normalize_host(host), port));
+                }
+            }
+
+            // Some clients use a bare `host:port` query string (without key/value
+            // pairs), e.g. `/tcp?example.com:443`.
+            if target.is_none() && !query.contains('=') && !query.contains('&') {
+                if let Some(parsed) = parse_target(query) {
+                    target = Some(parsed);
                 }
             }
 

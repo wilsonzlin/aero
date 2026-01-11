@@ -23,7 +23,6 @@ version = "0.1.0"
 dependencies = [
  "aero-d3d11",
  "aero-d3d9",
- "aero-emulator",
  "aero-gpu",
  "anyhow",
  "bytemuck",
@@ -183,10 +182,20 @@ dependencies = [
 ]
 
 [[package]]
-name = "aero-emulator"
+name = "aero-gateway-rs"
 version = "0.1.0"
 dependencies = [
- "aero-protocol",
+ "axum",
+ "base64 0.22.1",
+ "dashmap",
+ "futures-util",
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -351,6 +360,7 @@ dependencies = [
  "aero-cpu-core",
  "aero-devices",
  "aero-platform",
+ "aero-snapshot",
  "firmware",
  "machine",
  "memory",
@@ -5011,16 +5021,6 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 [[package]]
 name = "virtio-gpu-proto"
 version = "0.1.0"
-
-[[package]]
-name = "vm"
-version = "0.1.0"
-dependencies = [
- "aero-cpu-core",
- "aero-snapshot",
- "firmware",
- "machine",
-]
 
 [[package]]
 name = "wait-timeout"

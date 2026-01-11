@@ -49,12 +49,23 @@ pub fn decode(bytes: &[u8], mode: DecodeMode, ip: u64) -> Result<DecodedInst, De
         opcode.opcode_ext = Some((modrm >> 3) & 0x7);
     }
 
-    // Validate opcodes whose ModRM.reg must be a fixed extension.
-    if opcode.map == OpcodeMap::Primary
-        && matches!(opcode.opcode, 0xC6 | 0xC7)
-        && opcode.opcode_ext != Some(0)
-    {
-        return Err(DecodeError::Invalid);
+    // Validate opcodes whose ModRM.reg is a fixed extension.
+    //
+    // `0xC6`/`0xC7` are normally `MOV r/m, imm` (Group 11, `/0`), but Intel TSX also
+    // defines `XABORT` (`C6 F8 ib`) and `XBEGIN` (`C7 F8 iw/id`) using `/7` with a
+    // fixed ModRM byte of `0xF8`.
+    if opcode.map == OpcodeMap::Primary && matches!(opcode.opcode, 0xC6 | 0xC7) {
+        match opcode.opcode_ext {
+            Some(0) => {}
+            Some(7) => {
+                let modrm_off = prefix_len + opcode_len;
+                let modrm = *bytes.get(modrm_off).ok_or(DecodeError::UnexpectedEof)?;
+                if modrm != 0xF8 {
+                    return Err(DecodeError::Invalid);
+                }
+            }
+            _ => return Err(DecodeError::Invalid),
+        }
     }
 
     if opcode.map == OpcodeMap::Extended {
@@ -135,6 +146,16 @@ pub fn decode(bytes: &[u8], mode: DecodeMode, ip: u64) -> Result<DecodedInst, De
         opcode,
     ) {
         Ok(v) => v,
+        Err(DecodeError::Invalid)
+            if mode == DecodeMode::Bits64
+                && opcode.map == OpcodeMap::Primary
+                && matches!(opcode.opcode, 0x8C | 0x8E) =>
+        {
+            // yaxpeax-x86 rejects some long-mode encodings of MOV to/from segment registers even
+            // though they are accepted by real hardware and iced-x86. Fall back to the
+            // iced-powered decoder for these opcodes to keep validity in sync.
+            decode_with_aero_cpu_decoder(bytes, mode, ip, prefixes, address_size)?
+        }
         Err(DecodeError::Invalid) if mode == DecodeMode::Bits64 => {
             let prefix_bytes = bytes.get(..prefix_len).unwrap_or(&[]);
             let rex_count = prefix_bytes
@@ -251,6 +272,18 @@ pub fn decode(bytes: &[u8], mode: DecodeMode, ip: u64) -> Result<DecodedInst, De
         return Err(DecodeError::TooLong);
     }
 
+    // Segment register moves always operate on 16-bit operands, regardless of mode/prefixes.
+    let mut inst_operand_size = operand_size;
+    if opcode.map == OpcodeMap::Primary && matches!(opcode.opcode, 0x8C | 0x8E) {
+        inst_operand_size = OperandSize::Bits16;
+        for op in &mut operands {
+            if let Operand::Gpr { size, high8, .. } = op {
+                *size = OperandSize::Bits16;
+                *high8 = false;
+            }
+        }
+    }
+
     // If prefix scanning already consumed 15 bytes, we don't have space for opcode.
     if prefix_len >= MAX_INST_LEN {
         return Err(DecodeError::TooLong);
@@ -260,7 +293,7 @@ pub fn decode(bytes: &[u8], mode: DecodeMode, ip: u64) -> Result<DecodedInst, De
         opcode,
         mode,
         prefixes,
-        operand_size,
+        inst_operand_size,
         address_size,
         &mut operands,
     );
@@ -272,7 +305,7 @@ pub fn decode(bytes: &[u8], mode: DecodeMode, ip: u64) -> Result<DecodedInst, De
         length: inst_len as u8,
         opcode,
         prefixes,
-        operand_size,
+        operand_size: inst_operand_size,
         address_size,
         operands,
         flags,

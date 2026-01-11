@@ -13,6 +13,10 @@
 
 use core::fmt;
 
+use crate::sm4::opcode::{
+    OPERAND_EXTENDED_BIT, OPCODE_EXTENDED_BIT, OPCODE_LEN_MASK, OPCODE_LEN_SHIFT, OPCODE_MASK,
+    OPCODE_CUSTOMDATA, OPCODE_MOV, OPCODE_NOP, OPCODE_RET,
+};
 use crate::sm4::{ShaderStage, Sm4Program};
 
 #[derive(Debug, Clone)]
@@ -201,8 +205,8 @@ fn extract_movs(program: &Sm4Program) -> Result<Vec<Mov>, WgslBootstrapError> {
     let mut movs = Vec::new();
     while i < toks.len() {
         let opcode_token = toks[i];
-        let opcode = opcode_token & 0x7ff;
-        let len = ((opcode_token >> 11) & 0x1fff) as usize;
+        let opcode = opcode_token & OPCODE_MASK;
+        let len = ((opcode_token >> OPCODE_LEN_SHIFT) & OPCODE_LEN_MASK) as usize;
         if len == 0 {
             return Err(WgslBootstrapError::UnexpectedTokenStream(
                 "instruction length cannot be zero",
@@ -214,14 +218,12 @@ fn extract_movs(program: &Sm4Program) -> Result<Vec<Mov>, WgslBootstrapError> {
             ));
         }
 
+        let inst_tokens = &toks[i..i + len];
+
         // NOTE: opcode numeric ranges:
         // - executable instructions: < 0x100
         // - declarations: >= 0x100
         const DECL_OPCODE_MIN: u32 = 0x100;
-        const OPCODE_MOV: u32 = 0x01;
-        const OPCODE_RET: u32 = 0x3e;
-        const OPCODE_NOP: u32 = 0x00;
-        const OPCODE_CUSTOMDATA: u32 = 0x1f;
         const CUSTOMDATA_CLASS_COMMENT: u32 = 0;
 
         match opcode {
@@ -232,23 +234,32 @@ fn extract_movs(program: &Sm4Program) -> Result<Vec<Mov>, WgslBootstrapError> {
                 // Ignore comment blocks; other custom-data classes are not supported by the
                 // bootstrap translator because they can affect shader semantics (e.g. immediate
                 // constant buffers).
-                if len >= 2 && toks[i + 1] == CUSTOMDATA_CLASS_COMMENT {
+                if inst_tokens.get(1).copied() == Some(CUSTOMDATA_CLASS_COMMENT) {
                     // Ignore.
                 } else {
                     return Err(WgslBootstrapError::UnsupportedInstruction { opcode });
                 }
             }
             OPCODE_MOV => {
-                if len != 5 {
+                let mut cursor = 1usize;
+                let mut has_extended = (opcode_token & OPCODE_EXTENDED_BIT) != 0;
+                while has_extended {
+                    if cursor >= inst_tokens.len() {
+                        return Err(WgslBootstrapError::BadInstructionLength { opcode, len });
+                    }
+                    let ext = inst_tokens[cursor];
+                    cursor += 1;
+                    has_extended = (ext & OPCODE_EXTENDED_BIT) != 0;
+                }
+
+                if inst_tokens.len() < cursor + 4 {
                     return Err(WgslBootstrapError::BadInstructionLength { opcode, len });
                 }
                 let dst = parse_reg_operand(
-                    toks.get(i + 1..i + 3)
-                        .ok_or(WgslBootstrapError::OperandOutOfBounds)?,
+                    &inst_tokens[cursor..cursor + 2],
                 )?;
                 let src = parse_reg_operand(
-                    toks.get(i + 3..i + 5)
-                        .ok_or(WgslBootstrapError::OperandOutOfBounds)?,
+                    &inst_tokens[cursor + 2..cursor + 4],
                 )?;
                 movs.push(Mov { dst, src });
             }
@@ -277,10 +288,8 @@ fn parse_reg_operand(tokens: &[u32]) -> Result<RegRef, WgslBootstrapError> {
         ));
     }
     let token = tokens[0];
-    if (token & 0x8000_0000) != 0 {
-        return Err(WgslBootstrapError::UnsupportedOperand(
-            "extended operand token",
-        ));
+    if (token & OPERAND_EXTENDED_BIT) != 0 {
+        return Err(WgslBootstrapError::UnsupportedOperand("extended operand token"));
     }
 
     let ty = (token >> 4) & 0xff;

@@ -13,6 +13,7 @@ were considered, and what the consequences are.
 - [ADR 0005: AeroGPU PCI IDs and ABI (canonical + deprecation plan)](./0005-aerogpu-pci-ids-and-abi.md)
 - [ADR 0006: Node monorepo tooling (npm workspaces + single lockfile)](./0006-node-monorepo-tooling.md)
 - [ADR 0007: Rust crate naming (workspace package names)](./0007-rust-crate-naming.md)
+- [ADR 0008: Canonical VM core crate (`aero-machine`)](./0008-canonical-vm-core.md)
 - [ADR 0009: Rust toolchain policy (pinned stable + pinned nightly for threaded WASM)](./0009-rust-toolchain-policy.md)
 - [ADR 0010: Canonical audio stack (aero-audio + aero-virtio; legacy emulator audio gated)](./0010-canonical-audio-stack.md)
 - [ADR 0012: Commit `Cargo.lock` for reproducible Rust builds](./0012-cargo-lock-policy.md)
