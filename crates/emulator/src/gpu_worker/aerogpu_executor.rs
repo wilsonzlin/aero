@@ -1243,6 +1243,7 @@ impl InFlightSubmission {
 mod tests {
     use super::*;
 
+    use aero_protocol::aerogpu::aerogpu_cmd::AEROGPU_CMD_STREAM_MAGIC;
     use crate::devices::aerogpu_ring::{
         AEROGPU_FENCE_PAGE_MAGIC, AEROGPU_RING_MAGIC, FENCE_PAGE_COMPLETED_FENCE_OFFSET,
         FENCE_PAGE_MAGIC_OFFSET, RING_HEAD_OFFSET, RING_TAIL_OFFSET,
@@ -1439,6 +1440,97 @@ mod tests {
         assert_eq!(allocs.len(), entry_count as usize);
         assert_eq!(allocs[0].alloc_id, 1);
         assert_eq!(allocs[1].alloc_id, 2);
+    }
+
+    #[derive(Debug, Default)]
+    struct RejectingBackend;
+
+    impl AeroGpuCommandBackend for RejectingBackend {
+        fn reset(&mut self) {}
+
+        fn submit(
+            &mut self,
+            _mem: &mut dyn MemoryBus,
+            _submission: AeroGpuBackendSubmission,
+        ) -> Result<(), String> {
+            Err("backend rejected submission".to_string())
+        }
+
+        fn poll_completions(&mut self) -> Vec<AeroGpuBackendCompletion> {
+            Vec::new()
+        }
+
+        fn read_scanout_rgba8(&mut self, _scanout_id: u32) -> Option<AeroGpuBackendScanout> {
+            None
+        }
+    }
+
+    #[test]
+    fn executor_completes_fence_when_backend_rejects_submission() {
+        let mut mem = Bus::new(0x8000);
+        let ring_gpa = 0x1000u64;
+        let fence_gpa = 0x2000u64;
+        let cmd_gpa = 0x3000u64;
+
+        // Minimal command stream: header only (no packets).
+        let cmd_size_bytes = ProtocolCmdStreamHeader::SIZE_BYTES as u32;
+        mem.write_u32(cmd_gpa + 0, AEROGPU_CMD_STREAM_MAGIC);
+        mem.write_u32(cmd_gpa + 4, AeroGpuRegs::default().abi_version);
+        mem.write_u32(cmd_gpa + 8, cmd_size_bytes);
+        mem.write_u32(cmd_gpa + 12, 0); // flags
+        mem.write_u32(cmd_gpa + 16, 0); // reserved0
+        mem.write_u32(cmd_gpa + 20, 0); // reserved1
+
+        // One ring entry with a fence.
+        write_ring_header(&mut mem, ring_gpa, 1, 0, 1);
+        let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+        mem.write_u32(desc_gpa + 0, AeroGpuSubmitDesc::SIZE_BYTES);
+        mem.write_u32(desc_gpa + 4, 0); // flags
+        mem.write_u32(desc_gpa + 8, 0); // context_id
+        mem.write_u32(desc_gpa + 12, 0); // engine_id
+        mem.write_u64(desc_gpa + 16, cmd_gpa);
+        mem.write_u32(desc_gpa + 24, cmd_size_bytes);
+        mem.write_u64(desc_gpa + 32, 0); // alloc_table_gpa
+        mem.write_u32(desc_gpa + 40, 0); // alloc_table_size_bytes
+        mem.write_u64(desc_gpa + 48, 7); // signal_fence
+
+        let ring_size_bytes =
+            u32::try_from(AEROGPU_RING_HEADER_SIZE_BYTES + AeroGpuSubmitDesc::SIZE_BYTES as u64)
+                .unwrap();
+
+        let mut regs = AeroGpuRegs::default();
+        regs.ring_gpa = ring_gpa;
+        regs.ring_size_bytes = ring_size_bytes;
+        regs.ring_control = ring_control::ENABLE;
+        regs.fence_gpa = fence_gpa;
+        regs.irq_enable = irq_bits::FENCE;
+
+        let mut exec = AeroGpuExecutor::new(AeroGpuExecutorConfig {
+            verbose: false,
+            keep_last_submissions: 0,
+            fence_completion: AeroGpuFenceCompletionMode::Deferred,
+        });
+        exec.set_backend(Box::new(RejectingBackend::default()));
+
+        exec.process_doorbell(&mut regs, &mut mem);
+
+        // Backend submission failures should still allow fences to advance so the guest makes progress.
+        assert_eq!(regs.completed_fence, 7);
+        assert_eq!(regs.stats.gpu_exec_errors, 1);
+        assert_ne!(regs.irq_status & irq_bits::ERROR, 0);
+
+        let ring = AeroGpuRingHeader::read_from(&mut mem, ring_gpa);
+        assert_eq!(ring.head, 1);
+        assert_eq!(ring.tail, 1);
+
+        assert_eq!(
+            mem.read_u32(fence_gpa + FENCE_PAGE_MAGIC_OFFSET),
+            AEROGPU_FENCE_PAGE_MAGIC
+        );
+        assert_eq!(
+            mem.read_u64(fence_gpa + FENCE_PAGE_COMPLETED_FENCE_OFFSET),
+            7
+        );
     }
 }
 
