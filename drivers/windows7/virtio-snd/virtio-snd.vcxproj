@@ -108,6 +108,8 @@
     <ClCompile Include="src\**\*.c" />
     <ClCompile Include="..\..\windows\virtio\common\virtqueue_split.c" />
     <ClCompile Include="..\..\win7\virtio\virtio-core\portable\virtio_pci_cap_parser.c" />
+    <ClCompile Include="..\..\win7\virtio\virtio-core\portable\virtio_pci_identity.c" />
+    <ClCompile Include="..\virtio\common\src\virtio_pci_contract.c" />
 
     <!-- WDM modern virtio-pci helpers (Tasks 422/424). -->
     <ClCompile Include="..\virtio\common\src\*_wdm*.c">
