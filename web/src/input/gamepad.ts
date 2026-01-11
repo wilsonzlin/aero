@@ -37,6 +37,15 @@ export interface PackedGamepadReport {
   packedHi: number;
 }
 
+export interface DecodedGamepadReport {
+  buttons: number;
+  hat: number;
+  x: number;
+  y: number;
+  rx: number;
+  ry: number;
+}
+
 /**
  * Converts a normalized Gamepad axis (typically in [-1, 1]) to a signed 8-bit
  * integer in [-127, 127] with a deadzone around 0.
@@ -152,6 +161,49 @@ export function unpackGamepadReport(packedLo: number, packedHi: number): Uint8Ar
   out[6] = (packedHi >>> 16) & 0xff;
   out[7] = (packedHi >>> 24) & 0xff;
   return out;
+}
+
+/**
+ * Decodes a packed 8-byte HID gamepad report (`InputEventType.GamepadReport`)
+ * into fields.
+ *
+ * Note: This is primarily intended for debugging/diagnostics and therefore
+ * returns a new object.
+ */
+export function decodeGamepadReport(packedLo: number, packedHi: number): DecodedGamepadReport {
+  const lo = packedLo | 0;
+  const hi = packedHi | 0;
+  return {
+    buttons: lo & 0xffff,
+    hat: (lo >>> 16) & 0x0f,
+    x: lo >> 24,
+    y: (hi << 24) >> 24,
+    rx: (hi << 16) >> 24,
+    ry: (hi << 8) >> 24,
+  };
+}
+
+export function formatGamepadHat(hat: number): string {
+  switch (hat & 0x0f) {
+    case 0:
+      return "up";
+    case 1:
+      return "up-right";
+    case 2:
+      return "right";
+    case 3:
+      return "down-right";
+    case 4:
+      return "down";
+    case 5:
+      return "down-left";
+    case 6:
+      return "left";
+    case 7:
+      return "up-left";
+    default:
+      return "neutral";
+  }
 }
 
 export function encodeBrowserGamepadReport(gamepad: BrowserGamepadLike, deadzone: number): PackedGamepadReport {
