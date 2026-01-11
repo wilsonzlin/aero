@@ -36,6 +36,20 @@ In practice, different header/runtime combinations can expose different callback
 
 The UMD logs the available callback pointers once at `CreateDevice` so Win7 bring-up can confirm which path the runtime is using.
 
+### Runtime variance: patch list + sync object
+
+Win7 D3D9 runtimes (and different WDK header/interface vintages) can legitimately vary in the WDDM submission buffers returned by `CreateContext`:
+
+- The patch-location list pointer/size (`pPatchLocationList` / `PatchLocationListSize`) may be **NULL** and/or **0-sized**.
+- The monitored-fence sync object handle (`hSyncObject`) may be **0** on some paths.
+
+AeroGPU intentionally uses a **no patch list** strategy and always submits with **`NumPatchLocations = 0`**.
+
+For fence waiting / throttling:
+
+- If `hSyncObject` is present, the UMD prefers kernel waits via `D3DKMTWaitForSynchronizationObject` for bounded waits (e.g. PresentEx max-frame-latency throttling).
+- If `hSyncObject` is absent, the UMD falls back to polling the AeroGPU KMD fence counters via `D3DKMTEscape` (`AerogpuKmdQuery`), throttled to avoid spamming syscalls in tight EVENT-query polling loops.
+
 ## Command stream writer
 
 UMD command emission uses a small serialization helper in:
