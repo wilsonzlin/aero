@@ -30,10 +30,16 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 VCXPROJ = REPO_ROOT / "drivers/windows7/virtio-snd/virtio-snd.vcxproj"
-INF_FILES = [
-    REPO_ROOT / "drivers/windows7/virtio-snd/inf/aero-virtio-snd.inf",
-    REPO_ROOT / "drivers/windows7/virtio-snd/inf/virtio-snd.inf",
-]
+#
+# virtio-snd ships with a primary, strict Aero contract INF
+# (`aero-virtio-snd.inf`). A legacy filename alias INF may optionally be present
+# as `virtio-snd.inf` (often checked in as `virtio-snd.inf.disabled` to avoid
+# accidental dual-INF shipping). Treat the alias as optional in this guardrail.
+#
+INF_FILES = [REPO_ROOT / "drivers/windows7/virtio-snd/inf/aero-virtio-snd.inf"]
+_ALIAS_INF = REPO_ROOT / "drivers/windows7/virtio-snd/inf/virtio-snd.inf"
+if _ALIAS_INF.exists():
+    INF_FILES.append(_ALIAS_INF)
 
 # These are project-relative paths (relative to drivers/windows7/virtio-snd/).
 REQUIRED_SOURCES = {
@@ -273,4 +279,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
