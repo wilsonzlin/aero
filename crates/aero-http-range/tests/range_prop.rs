@@ -143,8 +143,15 @@ fn accepts_weird_whitespace() {
 fn accepts_zero_padded_numbers_longer_than_20_digits() {
     let start = format!("{}1", "0".repeat(25));
     let end = format!("{}2", "0".repeat(25));
-    let header = format!("bytes={start}-{end}");
+    let suffix = format!("{}3", "0".repeat(25));
+    let header = format!("bytes={start}-{end},-{suffix}");
 
     let specs = parse_range_header(&header).expect("zero padded values should parse");
-    assert_eq!(specs, vec![ByteRangeSpec::FromTo { start: 1, end: 2 }]);
+    assert_eq!(
+        specs,
+        vec![
+            ByteRangeSpec::FromTo { start: 1, end: 2 },
+            ByteRangeSpec::Suffix { len: 3 },
+        ]
+    );
 }

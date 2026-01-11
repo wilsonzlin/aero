@@ -204,7 +204,7 @@ fn parse_u64_decimal(s: &str) -> Result<u64, RangeParseError> {
     const MAX_DECIMAL_DIGITS: usize = 64;
 
     let mut s = s;
-    if s.len() > MAX_DECIMAL_DIGITS {
+    if s.is_empty() || s.len() > MAX_DECIMAL_DIGITS {
         return Err(RangeParseError::InvalidNumber);
     }
 
@@ -217,9 +217,6 @@ fn parse_u64_decimal(s: &str) -> Result<u64, RangeParseError> {
     }
 
     let mut value: u64 = 0;
-    if s.is_empty() {
-        return Err(RangeParseError::InvalidNumber);
-    }
     for b in s.bytes() {
         if !b.is_ascii_digit() {
             return Err(RangeParseError::InvalidNumber);
