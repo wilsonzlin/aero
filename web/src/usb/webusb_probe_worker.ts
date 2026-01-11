@@ -4,8 +4,7 @@ import { formatWebUsbError } from "../platform/webusb_troubleshooting";
 
 type ProbeRequest =
   | { type: "probe" }
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  | { type: "clone-test"; device: any };
+  | { type: "clone-test"; device: unknown };
 
 type ProbeResponse =
   | { type: "probe-result"; report: unknown }
@@ -13,35 +12,42 @@ type ProbeResponse =
   | { type: "error"; error: string };
 
 function summarizeUsbDevice(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  device: any,
+  device: unknown,
 ): Record<string, unknown> | null {
   if (!device || typeof device !== "object") return null;
+  const d = device as {
+    productName?: unknown;
+    manufacturerName?: unknown;
+    serialNumber?: unknown;
+    vendorId?: unknown;
+    productId?: unknown;
+    opened?: unknown;
+  };
   return {
-    productName: device.productName,
-    manufacturerName: device.manufacturerName,
-    serialNumber: device.serialNumber,
-    vendorId: device.vendorId,
-    productId: device.productId,
-    opened: device.opened,
+    productName: d.productName,
+    manufacturerName: d.manufacturerName,
+    serialNumber: d.serialNumber,
+    vendorId: d.vendorId,
+    productId: d.productId,
+    opened: d.opened,
   };
 }
 
 async function probe(): Promise<unknown> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const usb: any = (navigator as unknown as { usb?: unknown }).usb;
+  const usb = (navigator as unknown as { usb?: unknown }).usb;
   const hasUsb = typeof usb !== "undefined";
+  const usbObj = usb && typeof usb === "object" ? (usb as { getDevices?: unknown; requestDevice?: unknown }) : null;
 
   const report: Record<string, unknown> = {
     isSecureContext: (globalThis as typeof globalThis & { isSecureContext?: boolean }).isSecureContext === true,
     hasUsb,
-    hasGetDevices: typeof usb?.getDevices === "function",
-    hasRequestDevice: typeof usb?.requestDevice === "function",
+    hasGetDevices: typeof usbObj?.getDevices === "function",
+    hasRequestDevice: typeof usbObj?.requestDevice === "function",
   };
 
-  if (typeof usb?.getDevices === "function") {
+  if (typeof usbObj?.getDevices === "function") {
     try {
-      const devices = await usb.getDevices();
+      const devices = await (usb as USB).getDevices();
       report.getDevices = {
         ok: true,
         count: Array.isArray(devices) ? devices.length : null,
@@ -78,11 +84,15 @@ ctx.onmessage = (ev: MessageEvent<ProbeRequest>) => {
     }
     case "clone-test": {
       try {
+        const deviceObj =
+          msg.device && typeof msg.device === "object"
+            ? (msg.device as { open?: unknown; transferIn?: unknown; transferOut?: unknown })
+            : null;
         const report = {
           received: summarizeUsbDevice(msg.device),
-          hasOpen: typeof msg.device?.open === "function",
-          hasTransferIn: typeof msg.device?.transferIn === "function",
-          hasTransferOut: typeof msg.device?.transferOut === "function",
+          hasOpen: typeof deviceObj?.open === "function",
+          hasTransferIn: typeof deviceObj?.transferIn === "function",
+          hasTransferOut: typeof deviceObj?.transferOut === "function",
         };
         const resp: ProbeResponse = { type: "clone-result", report };
         ctx.postMessage(resp);

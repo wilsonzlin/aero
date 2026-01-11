@@ -35,7 +35,8 @@ export type UsbHostCompletion =
   | { kind: "bulkOut"; id: number; status: "error"; message: string };
 
 export function isWebUsbSupported(): boolean {
-  return typeof (globalThis as any).navigator !== "undefined" && !!(globalThis as any).navigator?.usb;
+  if (typeof navigator === "undefined") return false;
+  return !!(navigator as Navigator & { usb?: USB }).usb;
 }
 
 function assertWebUsbSupported(): void {
@@ -58,8 +59,7 @@ function wrapWithCause(message: string, cause: unknown): Error {
   // attaching `cause` is still useful for debugging and for our WebUSB
   // troubleshooting helper, which can walk `Error.cause` chains.
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (error as any).cause = cause;
+    (error as Error & { cause?: unknown }).cause = cause;
   } catch {
     // ignore
   }
