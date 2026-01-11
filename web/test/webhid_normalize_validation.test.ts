@@ -109,6 +109,23 @@ test("normalizeCollections(validate): rejects unitExponent out of range with an 
   });
 });
 
+test("normalizeCollections(validate): rejects total report bit length overflow with an item path", () => {
+  const hugeItem: HidReportItem = { ...BASE_ITEM, reportSize: 255, reportCount: 65535 };
+  const items: HidReportItem[] = [];
+  for (let i = 0; i < 258; i++) items.push({ ...hugeItem });
+
+  const collections: HidCollectionInfo[] = [
+    {
+      ...baseCollection(),
+      inputReports: [{ reportId: 0, items }],
+    },
+  ];
+
+  assert.throws(() => normalizeCollections(collections, { validate: true }), {
+    message: /total report bit length overflows u32.*collections\[0\]\.inputReports\[0\]\.items\[257\]/,
+  });
+});
+
 test("normalizeCollections: rejects excessive collection depth with a path", () => {
   const root = baseCollection() as unknown as { children: any[] };
   let current: { children: any[] } = root;

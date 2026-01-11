@@ -358,6 +358,7 @@ export function normalizeCollections(
 function validateCollections(collections: readonly NormalizedHidCollectionInfo[]): void {
   let hasNonZeroReportId = false;
   let firstZeroReportPath: Path | null = null;
+  const reportBits = new Map<string, bigint>();
 
   const visitCollection = (collection: NormalizedHidCollectionInfo, path: Path): void => {
     const visitReportList = (
@@ -367,6 +368,8 @@ function validateCollections(collections: readonly NormalizedHidCollectionInfo[]
       for (let reportIdx = 0; reportIdx < reports.length; reportIdx++) {
         const report = reports[reportIdx];
         const reportPath = [...path, `${listName}[${reportIdx}]`];
+        const reportKey = `${listName}:${report.reportId}`;
+        let totalBits = reportBits.get(reportKey) ?? 0n;
 
         if (report.reportId === 0) {
           if (firstZeroReportPath === null) firstZeroReportPath = reportPath;
@@ -402,6 +405,11 @@ function validateCollections(collections: readonly NormalizedHidCollectionInfo[]
               itemPath,
               `reportSize*reportCount overflows u32 (${item.reportSize}*${item.reportCount})`,
             );
+          }
+
+          totalBits += bits;
+          if (totalBits > MAX_U32) {
+            throw err(itemPath, "total report bit length overflows u32");
           }
 
           if (item.reportCount > MAX_REPORT_COUNT) {
@@ -448,6 +456,8 @@ function validateCollections(collections: readonly NormalizedHidCollectionInfo[]
             );
           }
         }
+
+        reportBits.set(reportKey, totalBits);
       }
     };
 
