@@ -515,7 +515,9 @@ void fill_wait_for_sync_object_args(WaitArgsT* args,
   if constexpr (has_member_ObjectHandleArray<WaitArgsT>::value) {
     using FieldT = std::remove_reference_t<decltype(args->ObjectHandleArray)>;
     if constexpr (std::is_pointer_v<FieldT>) {
-      args->ObjectHandleArray = handles;
+      using Pointee = std::remove_pointer_t<FieldT>;
+      using Base = std::remove_const_t<Pointee>;
+      args->ObjectHandleArray = reinterpret_cast<FieldT>(const_cast<Base*>(handles));
     } else if constexpr (std::is_array_v<FieldT>) {
       args->ObjectHandleArray[0] = handles ? handles[0] : 0;
     } else {
@@ -524,7 +526,9 @@ void fill_wait_for_sync_object_args(WaitArgsT* args,
   } else if constexpr (has_member_hSyncObjects<WaitArgsT>::value) {
     using FieldT = std::remove_reference_t<decltype(args->hSyncObjects)>;
     if constexpr (std::is_pointer_v<FieldT>) {
-      args->hSyncObjects = handles;
+      using Pointee = std::remove_pointer_t<FieldT>;
+      using Base = std::remove_const_t<Pointee>;
+      args->hSyncObjects = reinterpret_cast<FieldT>(const_cast<Base*>(handles));
     } else if constexpr (std::is_array_v<FieldT>) {
       args->hSyncObjects[0] = handles ? handles[0] : 0;
     } else {
@@ -536,7 +540,9 @@ void fill_wait_for_sync_object_args(WaitArgsT* args,
   if constexpr (has_member_FenceValueArray<WaitArgsT>::value) {
     using FieldT = std::remove_reference_t<decltype(args->FenceValueArray)>;
     if constexpr (std::is_pointer_v<FieldT>) {
-      args->FenceValueArray = fence_values;
+      using Pointee = std::remove_pointer_t<FieldT>;
+      using Base = std::remove_const_t<Pointee>;
+      args->FenceValueArray = reinterpret_cast<FieldT>(const_cast<Base*>(fence_values));
     } else if constexpr (std::is_array_v<FieldT>) {
       args->FenceValueArray[0] = fence_value;
     } else {
@@ -545,7 +551,9 @@ void fill_wait_for_sync_object_args(WaitArgsT* args,
   } else if constexpr (has_member_FenceValue<WaitArgsT>::value) {
     using FieldT = std::remove_reference_t<decltype(args->FenceValue)>;
     if constexpr (std::is_pointer_v<FieldT>) {
-      args->FenceValue = fence_values;
+      using Pointee = std::remove_pointer_t<FieldT>;
+      using Base = std::remove_const_t<Pointee>;
+      args->FenceValue = reinterpret_cast<FieldT>(const_cast<Base*>(fence_values));
     } else if constexpr (std::is_array_v<FieldT>) {
       args->FenceValue[0] = fence_value;
     } else {
