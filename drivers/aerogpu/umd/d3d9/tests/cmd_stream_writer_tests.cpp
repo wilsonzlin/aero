@@ -1136,6 +1136,132 @@ bool TestCreateResourceRejectsUnsupportedGpuFormat() {
   return Check(create_res.hResource.pDrvPrivate == nullptr, "CreateResource failure does not return a handle");
 }
 
+bool TestCreateResourceIgnoresStaleAllocPrivDataForNonShared() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3D9DDI_HADAPTER hAdapter{};
+    D3D9DDI_HDEVICE hDevice{};
+    AEROGPU_D3D9DDI_HRESOURCE hResource{};
+    bool has_adapter = false;
+    bool has_device = false;
+    bool has_resource = false;
+
+    ~Cleanup() {
+      if (has_resource && device_funcs.pfnDestroyResource) {
+        device_funcs.pfnDestroyResource(hDevice, hResource);
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  if (!Check(open.hAdapter.pDrvPrivate != nullptr, "OpenAdapter2 returned adapter handle")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnCreateResource != nullptr, "CreateResource must be available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  std::vector<uint8_t> dma(4096, 0);
+  dev->cmd.set_span(dma.data(), dma.size());
+
+  // Simulate stale output-buffer contents: prior to
+  // `fix(aerogpu-d3d9): avoid consuming uninitialized alloc privdata` the driver
+  // would incorrectly consume these bytes and treat the resource as shared even
+  // though the runtime did not request sharing.
+  aerogpu_wddm_alloc_priv stale{};
+  stale.magic = AEROGPU_WDDM_ALLOC_PRIV_MAGIC;
+  stale.version = AEROGPU_WDDM_ALLOC_PRIV_VERSION;
+  stale.alloc_id = 0x4242u;
+  stale.flags = AEROGPU_WDDM_ALLOC_PRIV_FLAG_IS_SHARED;
+  stale.share_token = 0x1122334455667788ull;
+  stale.size_bytes = 0x1000u;
+
+  AEROGPU_D3D9DDIARG_CREATERESOURCE create_res{};
+  create_res.type = 0;
+  create_res.format = 22u; // D3DFMT_X8R8G8B8
+  create_res.width = 32;
+  create_res.height = 32;
+  create_res.depth = 1;
+  create_res.mip_levels = 1;
+  create_res.usage = 0x00000001u; // D3DUSAGE_RENDERTARGET
+  create_res.pool = 0;
+  create_res.size = 0;
+  create_res.hResource.pDrvPrivate = nullptr;
+  create_res.pSharedHandle = nullptr; // not a shared resource
+  create_res.pKmdAllocPrivateData = &stale;
+  create_res.KmdAllocPrivateDataSize = sizeof(stale);
+  create_res.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_res);
+  if (!Check(hr == S_OK, "CreateResource(non-shared)")) {
+    return false;
+  }
+  cleanup.hResource = create_res.hResource;
+  cleanup.has_resource = true;
+
+  auto* res = reinterpret_cast<Resource*>(create_res.hResource.pDrvPrivate);
+  if (!Check(res != nullptr, "resource pointer")) {
+    return false;
+  }
+  if (!Check(!res->is_shared, "non-shared CreateResource does not become is_shared via stale privdata")) {
+    return false;
+  }
+  if (!Check(res->share_token == 0, "non-shared CreateResource does not inherit share_token via stale privdata")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  if (!Check(ValidateStream(dma.data(), dma.size()), "stream validates")) {
+    return false;
+  }
+  if (!Check(CountOpcode(dma.data(), dma.size(), AEROGPU_CMD_EXPORT_SHARED_SURFACE) == 0,
+             "non-shared CreateResource does not emit EXPORT_SHARED_SURFACE")) {
+    return false;
+  }
+
+  // Make cleanup safe: switch back to vector mode so subsequent destroy calls
+  // can't fail due to span-buffer capacity constraints.
+  dev->cmd.set_vector();
+  return true;
+}
+
 bool TestSharedResourceCreateAndOpenEmitsExportImport() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
@@ -4297,6 +4423,7 @@ int main() {
   failures += !aerogpu::TestAdapterMultisampleQualityLevels();
   failures += !aerogpu::TestAdapterCachingUpdatesCallbacks();
   failures += !aerogpu::TestCreateResourceRejectsUnsupportedGpuFormat();
+  failures += !aerogpu::TestCreateResourceIgnoresStaleAllocPrivDataForNonShared();
   failures += !aerogpu::TestSharedResourceCreateAndOpenEmitsExportImport();
   failures += !aerogpu::TestPresentStatsAndFrameLatency();
   failures += !aerogpu::TestGetDisplayModeExReturnsPrimaryMode();
