@@ -41,7 +41,7 @@ Common flags:
 * `--require-umd` – require that the expected AeroGPU user-mode driver DLL is loaded in-process (useful when `--allow-*` flags are set).
 * `--require-agpu` – for tests with AGPU-only validation paths (e.g. ring descriptor/alloc table checks), fail instead of skipping when the active device/ring format is legacy.
 * `--display \\.\DISPLAYn` – for `vblank_wait`: pick a display (default: primary).
-* `--allow-remote` – skip tests that are not meaningful under RDP (`SM_REMOTESESSION=1`): `d3d9ex_dwm_probe`, `d3d9ex_submit_fence_stress`, `dwm_flush_pacing`, `wait_vblank_pacing`, `vblank_wait`, `vblank_wait_pacing`, `vblank_wait_sanity`, `get_scanline_sanity`, `scanout_state_sanity`, `d3d9_raster_status_sanity`, `d3d9_raster_status_pacing`.
+* `--allow-remote` – skip tests that are not meaningful under RDP (`SM_REMOTESESSION=1`): `d3d9ex_dwm_probe`, `d3d9ex_submit_fence_stress`, `dwm_flush_pacing`, `wait_vblank_pacing`, `vblank_wait`, `vblank_wait_pacing`, `vblank_wait_sanity`, `vblank_state_sanity`, `get_scanline_sanity`, `scanout_state_sanity`, `d3d9_raster_status_sanity`, `d3d9_raster_status_pacing`.
 * `--help` / `/?` – print per-test usage.
 
 ## Layout
@@ -63,6 +63,7 @@ drivers/aerogpu/tests/win7/
   wait_vblank_pacing/
   vblank_wait_pacing/
   vblank_wait/
+  vblank_state_sanity/
   get_scanline_sanity/
   scanout_state_sanity/
   d3d9_raster_status_sanity/
@@ -295,6 +296,7 @@ In a Win7 VM with AeroGPU installed and working correctly:
 * `vblank_wait` directly measures `D3DKMTWaitForVerticalBlankEvent()` pacing on the selected display (default: primary) and fails on immediate returns (avg < 2ms) or stalls (max > 250ms). On a 60 Hz display it typically reports ~16.6ms.
 * `dwm_flush_pacing` measures `DwmFlush()` pacing and fails on extremely fast returns (not vsync paced) or very large gaps (`--samples=N` controls sample count; default 120)
 * `vblank_wait_pacing` directly measures `D3DKMTWaitForVerticalBlankEvent()` pacing and fails on immediate returns (avg ≤ 2ms) or stalls (avg ≥ 50ms / max ≥ 250ms). On a 60 Hz display it typically reports ~16.6ms.
+* `vblank_state_sanity` queries the KMD `QUERY_VBLANK` escape repeatedly and validates monotonic vblank sequence/timestamps and that the measured cadence roughly matches the reported `vblank_period_ns`
 * `get_scanline_sanity` calls `D3DKMTGetScanLine()` repeatedly and validates that scanline values vary and stay within the visible screen height (`--samples=N` controls sample count; default 200)
 * `scanout_state_sanity` queries AeroGPU scanout state via `AEROGPU_ESCAPE_OP_QUERY_SCANOUT` and validates that cached mode state matches the MMIO scanout registers and desktop resolution (catches broken/missing `DxgkDdiCommitVidPn` mode caching)
 * `d3d9_raster_status_sanity` samples `IDirect3DDevice9::GetRasterStatus` and fails if vblank state never toggles or `ScanLine` is stuck (validates `D3DKMTGetScanLine` → `DxgkDdiGetScanLine` basic correctness)

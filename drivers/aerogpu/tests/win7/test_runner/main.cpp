@@ -899,6 +899,7 @@ int main(int argc, char** argv) {
       "vblank_wait",
       "wait_vblank_pacing",
       "vblank_wait_pacing",
+      "vblank_state_sanity",
       "get_scanline_sanity",
       "scanout_state_sanity",
       "d3d9_raster_status_sanity",

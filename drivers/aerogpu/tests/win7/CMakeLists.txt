@@ -83,6 +83,11 @@ aerogpu_add_win7_test(vblank_wait_pacing
 )
 target_link_libraries(vblank_wait_pacing PRIVATE user32 gdi32)
 
+aerogpu_add_win7_test(vblank_state_sanity
+  vblank_state_sanity/main.cpp
+)
+target_link_libraries(vblank_state_sanity PRIVATE user32 gdi32)
+
 aerogpu_add_win7_test(get_scanline_sanity
   get_scanline_sanity/main.cpp
 )

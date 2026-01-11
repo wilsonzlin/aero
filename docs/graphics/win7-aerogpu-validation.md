@@ -308,6 +308,7 @@ For quick guest-side sanity checks:
 * DWM pacing (end-to-end compositor path): `drivers/aerogpu/tests/win7/dwm_flush_pacing`
 * Direct vblank interrupt/wait path (independent of DWM): `drivers/aerogpu/tests/win7/wait_vblank_pacing` (targets VidPn source 0; tune hang detection via `--wait-timeout-ms`)
   * Scanline/raster status plumbing (`D3DKMTGetScanLine` → `DxgkDdiGetScanLine`): `drivers/aerogpu/tests/win7/get_scanline_sanity`
+  * Vblank counter/timestamp registers (`AEROGPU_ESCAPE_OP_QUERY_VBLANK`): `drivers/aerogpu/tests/win7/vblank_state_sanity`
   * Scanout mode caching vs MMIO scanout state (`DxgkDdiCommitVidPn`): `drivers/aerogpu/tests/win7/scanout_state_sanity`
   * D3D9 raster status (`IDirect3DDevice9::GetRasterStatus`): `drivers/aerogpu/tests/win7/d3d9_raster_status_sanity` and `drivers/aerogpu/tests/win7/d3d9_raster_status_pacing`
   * D3D9Ex EVENT query behavior (non-blocking `GetData(D3DGETDATA_DONOTFLUSH)` + eventual signal; window hidden by default): `drivers/aerogpu/tests/win7/d3d9ex_event_query`
