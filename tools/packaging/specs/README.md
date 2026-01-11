@@ -27,6 +27,9 @@ Intended for packaging Guest Tools using a driver payload extracted from **virti
 - Requires: `viostor` (virtio-blk) + `netkvm` (virtio-net)
 - Includes only the drivers listed in the spec (other driver directories present in the input
   are ignored).
+- Note: `aero_packager` will override `AERO_VIRTIO_BLK_SERVICE` / `AERO_VIRTIO_NET_SERVICE` in the
+  packaged `config/devices.cmd` to match these virtio-win service names so `guest-tools/setup.cmd`
+  can validate and pre-seed boot-critical storage correctly.
 
 ## `win7-virtio-full.json`
 

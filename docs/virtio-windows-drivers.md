@@ -95,6 +95,11 @@ Guest Tools uses:
 
 Note: `config/devices.cmd` is generated at packaging time from `docs/windows-device-contract.json` (the machine-readable device contract).
 
+When packaging Guest Tools from **virtio-win** drivers, `aero_packager` overrides the
+`AERO_VIRTIO_*_SERVICE` values in the packaged `config/devices.cmd` so `setup.cmd` validates and
+pre-seeds against virtio-win INF `AddService` names (e.g. `viostor`, `netkvm`). The PCI HWID list
+still follows the Aero contract (modern-only + `REV_01`).
+
 ### Licensing policy (project requirement)
 
 Aero aims for permissive licensing (MIT/Apache-2.0). This doc’s approach is only acceptable if the driver code we ship is under a license compatible with redistribution alongside an MIT/Apache project.
