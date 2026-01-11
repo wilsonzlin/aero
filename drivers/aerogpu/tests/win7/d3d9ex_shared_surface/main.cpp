@@ -683,7 +683,8 @@ static int RunChild(int argc,
     SetEvent(opened_event);
   }
   if (ready_event) {
-    DWORD wait = WaitForSingleObject(ready_event, 10000);
+    // Allow the parent to take up to ~20s total (it enforces its own 20s end-to-end budget).
+    DWORD wait = WaitForSingleObject(ready_event, 20000);
     if (wait != WAIT_OBJECT_0) {
       if (done_event) {
         SetEvent(done_event);
@@ -1099,11 +1100,7 @@ static int RunParent(int argc,
   if (validate_sharing) {
     HANDLE wait_open[2] = {opened_event, pi.hProcess};
     DWORD wait_budget = RemainingTimeoutMs(start_ticks, kChildTimeoutMs);
-    DWORD opened_timeout = 0;
-    if (wait_budget) {
-      opened_timeout = (wait_budget < 10000) ? wait_budget : 10000;
-    }
-    DWORD opened_wait = WaitForMultipleObjects(2, wait_open, FALSE, opened_timeout);
+    DWORD opened_wait = WaitForMultipleObjects(2, wait_open, FALSE, wait_budget);
     if (opened_wait != WAIT_OBJECT_0) {
       DWORD exit_code = 1;
       GetExitCodeProcess(pi.hProcess, &exit_code);
@@ -1167,11 +1164,7 @@ static int RunParent(int argc,
 
     HANDLE wait_done[2] = {done_event, pi.hProcess};
     wait_budget = RemainingTimeoutMs(start_ticks, kChildTimeoutMs);
-    DWORD done_timeout = 0;
-    if (wait_budget) {
-      done_timeout = (wait_budget < 10000) ? wait_budget : 10000;
-    }
-    DWORD done_wait = WaitForMultipleObjects(2, wait_done, FALSE, done_timeout);
+    DWORD done_wait = WaitForMultipleObjects(2, wait_done, FALSE, wait_budget);
     if (done_wait != WAIT_OBJECT_0) {
       DWORD exit_code = 1;
       GetExitCodeProcess(pi.hProcess, &exit_code);
