@@ -87,12 +87,15 @@ QEMU may expose the virtio-snd PCI frontend under one of these device names:
 
 Many QEMU virtio PCI devices enumerate as **transitional** by default. For virtio-snd this typically
 means Windows will see `DEV_1018` unless you explicitly disable legacy mode. The
-shipped Aero virtio-snd contract INF requires the modern ID space (`DEV_1059`), so to bind the **contract v1**
-package you must use:
+shipped Aero virtio-snd contract INF requires the modern ID space (`DEV_1059`). To get `DEV_1059`
+under QEMU, use:
 
 ```bash
 -device virtio-sound-pci,disable-legacy=on
 ```
+
+Note: the strict Aero contract v1 INF is also revision-gated (`REV_01`); see the next section for
+`x-pci-revision=0x01` when validating the contract-v1 identity under QEMU.
 
 If you just want to run with stock QEMU defaults (transitional `DEV_1018`), install the legacy package
 (`inf/aero-virtio-snd-legacy.inf` + `virtiosnd_legacy.sys`) instead.
