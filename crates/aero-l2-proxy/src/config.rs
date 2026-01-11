@@ -41,6 +41,11 @@ pub struct SecurityConfig {
     pub max_connections: usize,
     /// Concurrent tunnel cap per authenticated gateway session (`0` disables).
     pub max_tunnels_per_session: usize,
+    /// Whether to trust proxy-provided client IP headers (`Forwarded`/`X-Forwarded-For`) for
+    /// per-IP limits and logging.
+    pub trust_proxy: bool,
+    /// Per-client-IP concurrent tunnel cap (`0` disables).
+    pub max_connections_per_ip: u32,
     /// Total bytes per connection (rx + tx, `0` disables).
     pub max_bytes_per_connection: u64,
     /// Inbound messages per second per connection (`0` disables).
@@ -72,6 +77,8 @@ impl Default for SecurityConfig {
             session_secret: None,
             max_connections: 64,
             max_tunnels_per_session: 1,
+            trust_proxy: false,
+            max_connections_per_ip: 0,
             max_bytes_per_connection: 0,
             max_frames_per_second: 0,
         }
@@ -214,6 +221,16 @@ impl SecurityConfig {
             .and_then(|v| v.parse::<usize>().ok())
             .unwrap_or(Self::default().max_tunnels_per_session);
 
+        let trust_proxy = std::env::var("AERO_L2_TRUST_PROXY")
+            .ok()
+            .map(|v| matches!(v.trim(), "1" | "true" | "TRUE" | "yes" | "YES" | "on" | "ON"))
+            .unwrap_or(false);
+
+        let max_connections_per_ip = std::env::var("AERO_L2_MAX_CONNECTIONS_PER_IP")
+            .ok()
+            .and_then(|v| v.parse::<u32>().ok())
+            .unwrap_or(0);
+
         let max_bytes_per_connection = std::env::var("AERO_L2_MAX_BYTES_PER_CONNECTION")
             .ok()
             .and_then(|v| v.parse::<u64>().ok())
@@ -235,6 +252,8 @@ impl SecurityConfig {
             session_secret,
             max_connections,
             max_tunnels_per_session,
+            trust_proxy,
+            max_connections_per_ip,
             max_bytes_per_connection,
             max_frames_per_second,
         })

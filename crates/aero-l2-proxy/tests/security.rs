@@ -79,6 +79,20 @@ fn assert_http_status(err: WsError, expected: StatusCode) {
     }
 }
 
+fn parse_metric(body: &str, name: &str) -> Option<u64> {
+    for line in body.lines() {
+        let line = line.trim();
+        if line.starts_with('#') || line.is_empty() {
+            continue;
+        }
+        let (k, v) = line.split_once(' ')?;
+        if k == name {
+            return v.parse().ok();
+        }
+    }
+    None
+}
+
 fn make_session_token(secret: &str, sid: &str, exp_secs: u64) -> String {
     let payload = serde_json::json!({
         "v": 1,
@@ -664,6 +678,82 @@ async fn max_tunnels_per_session_enforced() {
     req.headers_mut()
         .insert("cookie", HeaderValue::from_str(&cookie).unwrap());
     let (mut ws2, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+    let _ = ws2.send(Message::Close(None)).await;
+
+    proxy.shutdown().await;
+}
+
+#[tokio::test]
+async fn max_connections_per_ip_enforced_with_x_forwarded_for_when_trusting_proxy() {
+    let _lock = ENV_LOCK.lock().await;
+    let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
+    let _common = CommonL2Env::new();
+    let _open = EnvVarGuard::unset("AERO_L2_OPEN");
+    let _allowed = EnvVarGuard::set("AERO_L2_ALLOWED_ORIGINS", "*");
+    let _fallback_allowed = EnvVarGuard::unset("ALLOWED_ORIGINS");
+    let _allowed_extra = EnvVarGuard::unset("AERO_L2_ALLOWED_ORIGINS_EXTRA");
+    let _allowed_hosts = EnvVarGuard::unset("AERO_L2_ALLOWED_HOSTS");
+    let _trust_proxy_host = EnvVarGuard::unset("AERO_L2_TRUST_PROXY_HOST");
+    let _token = EnvVarGuard::unset("AERO_L2_TOKEN");
+    let _auth_mode = EnvVarGuard::unset("AERO_L2_AUTH_MODE");
+    let _trust_proxy = EnvVarGuard::set("AERO_L2_TRUST_PROXY", "1");
+    let _max_per_ip = EnvVarGuard::set("AERO_L2_MAX_CONNECTIONS_PER_IP", "1");
+
+    let cfg = ProxyConfig::from_env().unwrap();
+    let proxy = start_server(cfg).await.unwrap();
+    let addr = proxy.local_addr();
+
+    let mut req = base_ws_request(addr);
+    req.headers_mut()
+        .insert("origin", HeaderValue::from_static("https://any.test"));
+    req.headers_mut()
+        .insert("x-forwarded-for", HeaderValue::from_static("203.0.113.1"));
+    let (mut ws1, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+
+    // A different forwarded IP should be allowed concurrently.
+    let mut req = base_ws_request(addr);
+    req.headers_mut()
+        .insert("origin", HeaderValue::from_static("https://any.test"));
+    req.headers_mut()
+        .insert("x-forwarded-for", HeaderValue::from_static("203.0.113.2"));
+    let (mut ws2, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+
+    // A second connection from the same forwarded IP is rejected.
+    let mut req = base_ws_request(addr);
+    req.headers_mut()
+        .insert("origin", HeaderValue::from_static("https://any.test"));
+    req.headers_mut()
+        .insert("x-forwarded-for", HeaderValue::from_static("203.0.113.1"));
+    let err = tokio_tungstenite::connect_async(req)
+        .await
+        .expect_err("expected per-IP max connections enforcement");
+    assert_http_status(err, StatusCode::TOO_MANY_REQUESTS);
+
+    let body = reqwest::get(format!("http://{addr}/metrics"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    let exceeded = parse_metric(&body, "l2_upgrade_ip_limit_exceeded_total").unwrap();
+    assert!(
+        exceeded >= 1,
+        "expected ip-limit exceeded counter >= 1, got {exceeded}"
+    );
+
+    let _ = ws1.send(Message::Close(None)).await;
+
+    // Wait for the server-side session to observe the close and release the permit.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let mut req = base_ws_request(addr);
+    req.headers_mut()
+        .insert("origin", HeaderValue::from_static("https://any.test"));
+    req.headers_mut()
+        .insert("x-forwarded-for", HeaderValue::from_static("203.0.113.1"));
+    let (mut ws3, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+    let _ = ws3.send(Message::Close(None)).await;
+
     let _ = ws2.send(Message::Close(None)).await;
 
     proxy.shutdown().await;

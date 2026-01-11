@@ -1,8 +1,10 @@
 use std::{
-    net::SocketAddr,
+    collections::HashMap,
+    net::{IpAddr, SocketAddr},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
+        Mutex,
     },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -10,7 +12,9 @@ use std::{
 use axum::{
     extract::{
         ws::{WebSocket, WebSocketUpgrade},
-        ConnectInfo, OriginalUri, State,
+        ConnectInfo,
+        OriginalUri,
+        State,
     },
     http::{header, HeaderMap, StatusCode},
     response::IntoResponse,
@@ -52,6 +56,7 @@ pub(crate) struct AppState {
     pub(crate) metrics: Metrics,
     pub(crate) capture: CaptureManager,
     pub(crate) connections: Option<Arc<Semaphore>>,
+    pub(crate) connections_per_ip: Option<Arc<IpConnectionLimiter>>,
     pub(crate) session_tunnels: Option<Arc<SessionTunnelTracker>>,
     pub(crate) shutting_down: Arc<AtomicBool>,
     pub(crate) shutdown_rx: watch::Receiver<bool>,
@@ -127,6 +132,11 @@ pub async fn start_server(cfg: ProxyConfig) -> std::io::Result<ServerHandle> {
 
     let connections = (cfg.security.max_connections != 0)
         .then(|| Arc::new(Semaphore::new(cfg.security.max_connections)));
+    let connections_per_ip = (cfg.security.max_connections_per_ip != 0).then(|| {
+        Arc::new(IpConnectionLimiter::new(
+            cfg.security.max_connections_per_ip,
+        ))
+    });
 
     let session_tunnels = (cfg.security.max_tunnels_per_session != 0).then(|| {
         Arc::new(SessionTunnelTracker::new(
@@ -144,6 +154,7 @@ pub async fn start_server(cfg: ProxyConfig) -> std::io::Result<ServerHandle> {
         metrics,
         capture,
         connections,
+        connections_per_ip,
         session_tunnels,
         shutting_down: shutting_down.clone(),
         shutdown_rx: sessions_shutdown_rx,
@@ -251,12 +262,10 @@ async fn metrics(State(state): State<AppState>) -> impl IntoResponse {
 async fn l2_ws_handler(
     ws: WebSocketUpgrade,
     State(state): State<AppState>,
+    ConnectInfo(connect_info): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     OriginalUri(uri): OriginalUri,
-    ConnectInfo(client_addr): ConnectInfo<SocketAddr>,
 ) -> impl IntoResponse {
-    let client_ip = client_addr.ip();
-
     if state.shutting_down.load(Ordering::SeqCst) {
         return (StatusCode::SERVICE_UNAVAILABLE, "shutting down").into_response();
     }
@@ -268,9 +277,34 @@ async fn l2_ws_handler(
             .into_response();
     }
 
+    let (client_ip, client_ip_source) =
+        derive_client_ip(state.cfg.security.trust_proxy, &headers, connect_info);
+
     let session_id = match enforce_security(&state, &headers, &uri, client_ip) {
         Ok(session_id) => session_id,
         Err(resp) => return *resp,
+    };
+
+    let ip_permit = match &state.connections_per_ip {
+        None => None,
+        Some(limiter) => match limiter.try_acquire(client_ip) {
+            Ok(permit) => Some(permit),
+            Err(IpLimitExceeded { limit, active }) => {
+                state.metrics.upgrade_ip_limit_exceeded();
+                tracing::warn!(
+                    client_ip = %client_ip,
+                    client_ip_source = ?client_ip_source,
+                    max_connections_per_ip = limit,
+                    active_connections = active,
+                    "rejecting l2 upgrade: per-IP connection limit exceeded",
+                );
+                return (
+                    StatusCode::TOO_MANY_REQUESTS,
+                    "max connections per ip exceeded".to_string(),
+                )
+                    .into_response();
+            }
+        },
     };
 
     let permit = match &state.connections {
@@ -324,6 +358,7 @@ async fn l2_ws_handler(
     ws.protocols([TUNNEL_SUBPROTOCOL])
         .on_upgrade(move |socket| async move {
             let _permit = permit;
+            let _ip_permit = ip_permit;
             let _session_tunnel_permit = session_tunnel_permit;
             handle_l2_ws(socket, state).await;
         })
@@ -1154,4 +1189,158 @@ fn has_subprotocol(headers: &HeaderMap, required: &str) -> bool {
         .split(',')
         .map(str::trim)
         .any(|proto| proto == required)
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ClientIpSource {
+    ConnectInfo,
+    Forwarded,
+    XForwardedFor,
+}
+
+fn derive_client_ip(
+    trust_proxy: bool,
+    headers: &HeaderMap,
+    connect_info: SocketAddr,
+) -> (IpAddr, ClientIpSource) {
+    let remote_ip = connect_info.ip();
+    if !trust_proxy {
+        return (remote_ip, ClientIpSource::ConnectInfo);
+    }
+
+    if let Some(ip) = client_ip_from_forwarded(headers) {
+        return (ip, ClientIpSource::Forwarded);
+    }
+
+    if let Some(ip) = client_ip_from_x_forwarded_for(headers) {
+        return (ip, ClientIpSource::XForwardedFor);
+    }
+
+    (remote_ip, ClientIpSource::ConnectInfo)
+}
+
+fn client_ip_from_forwarded(headers: &HeaderMap) -> Option<IpAddr> {
+    headers
+        .get_all("forwarded")
+        .iter()
+        .find_map(|value| value.to_str().ok().and_then(parse_forwarded_for))
+}
+
+fn parse_forwarded_for(value: &str) -> Option<IpAddr> {
+    for element in value.split(',') {
+        for param in element.split(';') {
+            let param = param.trim();
+            if param.len() < 4 || !param[..4].eq_ignore_ascii_case("for=") {
+                continue;
+            }
+
+            let mut raw = param[4..].trim();
+            if let Some(stripped) = raw
+                .strip_prefix('"')
+                .and_then(|value| value.strip_suffix('"'))
+            {
+                raw = stripped;
+            }
+
+            if raw.is_empty() {
+                continue;
+            }
+
+            if let Some(stripped) = raw.strip_prefix('[') {
+                let Some(end) = stripped.find(']') else {
+                    continue;
+                };
+                raw = &stripped[..end];
+            }
+
+            if let Ok(ip) = raw.parse::<IpAddr>() {
+                return Some(ip);
+            }
+
+            if let Ok(addr) = raw.parse::<SocketAddr>() {
+                return Some(addr.ip());
+            }
+        }
+    }
+
+    None
+}
+
+fn client_ip_from_x_forwarded_for(headers: &HeaderMap) -> Option<IpAddr> {
+    headers
+        .get_all("x-forwarded-for")
+        .iter()
+        .find_map(|value| value.to_str().ok().and_then(parse_x_forwarded_for))
+}
+
+fn parse_x_forwarded_for(value: &str) -> Option<IpAddr> {
+    let first = value.split(',').next()?.trim();
+    if first.is_empty() {
+        return None;
+    }
+
+    if let Ok(ip) = first.parse::<IpAddr>() {
+        return Some(ip);
+    }
+
+    first.parse::<SocketAddr>().ok().map(|addr| addr.ip())
+}
+
+struct IpConnectionLimiter {
+    max: u32,
+    counts: Mutex<HashMap<IpAddr, u32>>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct IpLimitExceeded {
+    limit: u32,
+    active: u32,
+}
+
+impl IpConnectionLimiter {
+    fn new(max: u32) -> Self {
+        Self {
+            max,
+            counts: Mutex::new(HashMap::new()),
+        }
+    }
+
+    fn try_acquire(self: &Arc<Self>, ip: IpAddr) -> Result<IpConnectionPermit, IpLimitExceeded> {
+        let mut counts = self.counts.lock().unwrap_or_else(|err| err.into_inner());
+        let active = counts.entry(ip).or_insert(0);
+        if *active >= self.max {
+            return Err(IpLimitExceeded {
+                limit: self.max,
+                active: *active,
+            });
+        }
+        *active += 1;
+        Ok(IpConnectionPermit {
+            ip,
+            limiter: Arc::clone(self),
+        })
+    }
+
+    fn release(&self, ip: IpAddr) {
+        let mut counts = self.counts.lock().unwrap_or_else(|err| err.into_inner());
+        let Some(active) = counts.get_mut(&ip) else {
+            return;
+        };
+        if *active <= 1 {
+            counts.remove(&ip);
+        } else {
+            *active -= 1;
+        }
+    }
+}
+
+struct IpConnectionPermit {
+    ip: IpAddr,
+    limiter: Arc<IpConnectionLimiter>,
+}
+
+impl Drop for IpConnectionPermit {
+    fn drop(&mut self) {
+        self.limiter.release(self.ip);
+    }
 }

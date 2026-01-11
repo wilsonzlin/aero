@@ -28,6 +28,7 @@ struct MetricsInner {
     upgrade_reject_auth_invalid_total: AtomicU64,
     upgrade_reject_max_connections_total: AtomicU64,
     upgrade_reject_max_tunnels_per_session_total: AtomicU64,
+    upgrade_ip_limit_exceeded_total: AtomicU64,
 
     // Frames/bytes
     frames_rx_total: AtomicU64,
@@ -77,6 +78,7 @@ impl Metrics {
                 upgrade_reject_auth_invalid_total: AtomicU64::new(0),
                 upgrade_reject_max_connections_total: AtomicU64::new(0),
                 upgrade_reject_max_tunnels_per_session_total: AtomicU64::new(0),
+                upgrade_ip_limit_exceeded_total: AtomicU64::new(0),
                 frames_rx_total: AtomicU64::new(0),
                 frames_tx_total: AtomicU64::new(0),
                 bytes_rx_total: AtomicU64::new(0),
@@ -180,6 +182,13 @@ impl Metrics {
     pub fn upgrade_reject_max_tunnels_per_session(&self) {
         self.inner
             .upgrade_reject_max_tunnels_per_session_total
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn upgrade_ip_limit_exceeded(&self) {
+        self.upgrade_rejected();
+        self.inner
+            .upgrade_ip_limit_exceeded_total
             .fetch_add(1, Ordering::Relaxed);
     }
 
@@ -314,6 +323,10 @@ impl Metrics {
             .inner
             .upgrade_reject_max_tunnels_per_session_total
             .load(Ordering::Relaxed);
+        let upgrade_ip_limit_exceeded_total = self
+            .inner
+            .upgrade_ip_limit_exceeded_total
+            .load(Ordering::Relaxed);
         let frames_rx_total = self.inner.frames_rx_total.load(Ordering::Relaxed);
         let frames_tx_total = self.inner.frames_tx_total.load(Ordering::Relaxed);
         let bytes_rx_total = self.inner.bytes_rx_total.load(Ordering::Relaxed);
@@ -386,6 +399,11 @@ impl Metrics {
             &mut out,
             "l2_upgrade_reject_max_tunnels_per_session_total",
             upgrade_reject_max_tunnels_per_session_total,
+        );
+        push_counter(
+            &mut out,
+            "l2_upgrade_ip_limit_exceeded_total",
+            upgrade_ip_limit_exceeded_total,
         );
 
         push_counter(&mut out, "l2_frames_rx_total", frames_rx_total);
