@@ -463,11 +463,13 @@ function Update-DevicesCmdStorageServiceFromDrivers {
     } else {
       # Disambiguate using the presence of <service>.sys in the staged driver tree.
       $matching = @()
-      foreach ($k in $serviceCandidates) {
-        $sysName = "$k.sys"
-        $hit = Get-ChildItem -LiteralPath $StageDriversRoot -Recurse -File -Filter $sysName -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($hit) { $matching += $k }
-      }
+       foreach ($k in $serviceCandidates) {
+         $sysName = "$k.sys"
+         $hit = Get-ChildItem -LiteralPath $StageDriversRoot -Recurse -File -ErrorAction SilentlyContinue |
+           Where-Object { $_.Name -ieq $sysName } |
+           Select-Object -First 1
+         if ($hit) { $matching += $k }
+       }
       if ($matching.Count -eq 1) {
         $selected = $matching[0]
       } else {
