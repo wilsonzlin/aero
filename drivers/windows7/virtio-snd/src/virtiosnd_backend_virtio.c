@@ -125,8 +125,7 @@ struct _VIRTIOSND_BACKEND {
 
     PKINTERRUPT InterruptObject;
     KDPC Dpc;
-    KEVENT DpcIdleEvent;
-    volatile LONG DpcInProgress;
+    volatile LONG DpcInFlight;
     volatile LONG PendingIsrStatus;
 
     volatile UINT16** NotifyAddrCache;
@@ -377,6 +376,7 @@ VirtioSndBackendDpc(_In_ PKDPC Dpc, _In_opt_ PVOID DeferredContext, _In_opt_ PVO
 {
     PVIRTIOSND_BACKEND backend;
     KIRQL oldIrql;
+    LONG remaining;
 
     UNREFERENCED_PARAMETER(Dpc);
     UNREFERENCED_PARAMETER(SystemArgument1);
@@ -385,10 +385,6 @@ VirtioSndBackendDpc(_In_ PKDPC Dpc, _In_opt_ PVOID DeferredContext, _In_opt_ PVO
     backend = (PVIRTIOSND_BACKEND)DeferredContext;
     if (backend == NULL) {
         return;
-    }
-
-    if (InterlockedIncrement(&backend->DpcInProgress) == 1) {
-        KeClearEvent(&backend->DpcIdleEvent);
     }
 
     if (InterlockedCompareExchange(&backend->ShuttingDown, 0, 0) != 0) {
@@ -405,9 +401,10 @@ VirtioSndBackendDpc(_In_ PKDPC Dpc, _In_opt_ PVOID DeferredContext, _In_opt_ PVO
     VirtioSndBackendDrainTxLocked(backend);
     KeReleaseSpinLock(&backend->TxLock, oldIrql);
 
-Exit:
-    if (InterlockedDecrement(&backend->DpcInProgress) == 0) {
-        KeSetEvent(&backend->DpcIdleEvent, IO_NO_INCREMENT, FALSE);
+ Exit:
+    remaining = InterlockedDecrement(&backend->DpcInFlight);
+    if (remaining < 0) {
+        (VOID)InterlockedExchange(&backend->DpcInFlight, 0);
     }
 }
 
@@ -443,7 +440,9 @@ VirtioSndBackendIsr(_In_ PKINTERRUPT Interrupt, _In_ PVOID ServiceContext)
     }
 
     InterlockedOr(&backend->PendingIsrStatus, (LONG)isr);
-    KeInsertQueueDpc(&backend->Dpc, NULL, NULL);
+    if (KeInsertQueueDpc(&backend->Dpc, NULL, NULL)) {
+        (VOID)InterlockedIncrement(&backend->DpcInFlight);
+    }
     return TRUE;
 }
 
@@ -813,8 +812,7 @@ VirtioSndBackend_Create(PDEVICE_OBJECT DeviceObject,
     KeInitializeSpinLock(&backend->TxLock);
 
     KeInitializeDpc(&backend->Dpc, VirtioSndBackendDpc, backend);
-    KeInitializeEvent(&backend->DpcIdleEvent, NotificationEvent, TRUE);
-    backend->DpcInProgress = 0;
+    backend->DpcInFlight = 0;
 
     status = VirtioPciModernInitWdm(DeviceObject, LowerDeviceObject, &backend->Virtio);
     if (!NT_SUCCESS(status)) {
@@ -887,6 +885,7 @@ VOID
 VirtioSndBackend_Destroy(PVIRTIOSND_BACKEND Backend)
 {
     ULONG cacheBytes;
+    LARGE_INTEGER delay;
 
     if (Backend == NULL) {
         return;
@@ -899,8 +898,19 @@ VirtioSndBackend_Destroy(PVIRTIOSND_BACKEND Backend)
         Backend->InterruptObject = NULL;
     }
 
-    KeRemoveQueueDpc(&Backend->Dpc);
-    KeWaitForSingleObject(&Backend->DpcIdleEvent, Executive, KernelMode, FALSE, NULL);
+    if (KeRemoveQueueDpc(&Backend->Dpc)) {
+        LONG remaining = InterlockedDecrement(&Backend->DpcInFlight);
+        if (remaining < 0) {
+            (VOID)InterlockedExchange(&Backend->DpcInFlight, 0);
+        }
+    }
+
+    /* Wait for any in-flight DPC to finish before freeing queues/MMIO state. */
+    delay.QuadPart = -10 * 1000; /* 1ms */
+    while (InterlockedCompareExchange(&Backend->DpcInFlight, 0, 0) != 0) {
+        KeDelayExecutionThread(KernelMode, FALSE, &delay);
+    }
+    (VOID)InterlockedExchange(&Backend->PendingIsrStatus, 0);
 
     if (Backend->Virtio.CommonCfg != NULL) {
         VirtioPciResetDevice(&Backend->Virtio);
