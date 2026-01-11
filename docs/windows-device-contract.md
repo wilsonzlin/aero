@@ -48,8 +48,9 @@ Device IDs follow the virtio 1.0+ “modern” virtio-pci Device ID space:
 pci_device_id = 0x1040 + virtio_device_id
 ```
 
-`AERO-W7-VIRTIO` v1 uses the modern ID space and a modern-only transport; transitional IDs
-(`0x1000 + (virtio_device_id - 1)`) are out of scope for the contract.
+Where `virtio_device_id` is the virtio device type ID (e.g. 1 = virtio-net, 2 = virtio-blk).
+
+`AERO-W7-VIRTIO` v1 uses the modern ID space and a modern-only transport. Aero virtio devices MUST expose PCI Revision ID `0x01`; transitional virtio-pci IDs are out of scope for the contract.
 
 The emulator emits the modern IDs by default.
 
@@ -83,11 +84,11 @@ All numeric values are shown as hexadecimal.
 
 | Device | PCI Vendor:Device | Subsystem Vendor:Device | Class Code (base/sub/prog) | Windows service | INF name |
 |---|---:|---:|---:|---|---|
-| virtio-blk | `1AF4:1042` | `1AF4:0002` | `01/00/00` (mass storage / SCSI) | `aerovioblk` | `aero-virtio-blk.inf` |
-| virtio-net | `1AF4:1041` | `1AF4:0001` | `02/00/00` (network / ethernet) | `aerovionet` | `aero-virtio-net.inf` |
-| virtio-snd | `1AF4:1059` | `1AF4:0019` | `04/01/00` (multimedia / audio) | `aeroviosnd` | `aero-virtio-snd.inf` |
-| virtio-input (keyboard) | `1AF4:1052` | `1AF4:0010` | `09/80/00` (input / other) | `aerovioinput` | `aero-virtio-input.inf` |
-| virtio-input (mouse) | `1AF4:1052` | `1AF4:0011` | `09/80/00` (input / other) | `aerovioinput` | `aero-virtio-input.inf` |
+| virtio-blk | `1AF4:1042` (REV `0x01`) | `1AF4:0002` | `01/00/00` (mass storage / SCSI) | `aerovblk` | `aerovblk.inf` |
+| virtio-net | `1AF4:1041` (REV `0x01`) | `1AF4:0001` | `02/00/00` (network / ethernet) | `aerovnet` | `aerovnet.inf` |
+| virtio-snd | `1AF4:1059` (REV `0x01`) | `1AF4:0019` | `04/01/00` (multimedia / audio) | `aeroviosnd` | `aero-virtio-snd.inf` |
+| virtio-input (keyboard) | `1AF4:1052` (REV `0x01`) | `1AF4:0010` | `09/80/00` (input / other) | `aerovioinput` | `aero-virtio-input.inf` |
+| virtio-input (mouse) | `1AF4:1052` (REV `0x01`) | `1AF4:0011` | `09/80/00` (input / other) | `aerovioinput` | `aero-virtio-input.inf` |
 | Aero GPU | `A3A0:0001` | `A3A0:0001` | `03/00/00` (display / VGA) | `AeroGPU` | `aerogpu.inf` |
 
 Notes:
@@ -97,8 +98,8 @@ Notes:
 - `aerogpu_dx11.inf` is an optional alternative INF that binds to the same device IDs and additionally installs D3D10/11 user-mode components.
 
 Compatibility note (non-canonical virtio PCI Device IDs):
- 
-Transitional virtio-pci IDs (e.g. `1AF4:1000`, `1AF4:1018`) are intentionally out of scope for `AERO-W7-VIRTIO` v1 and are not part of the Aero Win7 virtio contract.
+  
+Transitional virtio-pci IDs are intentionally out of scope for `AERO-W7-VIRTIO` v1 and are not part of the Aero Win7 virtio contract.
 
 ## Windows hardware IDs and driver binding
 
@@ -119,18 +120,23 @@ Where:
 ### Binding requirements (normative)
 
 - Each driver INF must match **at least** the vendor/device pair: `PCI\VEN_xxxx&DEV_yyyy`.
-- Matching MAY additionally be revision-gated (`&REV_RR`) and/or subsystem-qualified (`&SUBSYS_SSSSVVVV`) for safety, but then the emulator **must** keep those values stable.
+- For contract version safety, matching SHOULD be revision-gated (`&REV_01`) and/or the driver should validate the PCI Revision ID at runtime.
+- Matching MAY additionally be subsystem-qualified (`&SUBSYS_SSSSVVVV`) for safety, but then the emulator **must** keep those values stable.
 
-Example (illustrative) INF model entries:
+Examples (illustrative) INF model entries:
 
 ```ini
-; aero-virtio-blk.inf
 [Manufacturer]
 %MfgName% = AeroModels,NTx86,NTamd64
 
 [AeroModels.NTamd64]
-%AeroVirtioBlk.DeviceDesc% = AeroVirtioBlk_Install, PCI\VEN_1AF4&DEV_1042
-%AeroVirtioBlk.DeviceDesc% = AeroVirtioBlk_Install, PCI\VEN_1AF4&DEV_1042&SUBSYS_00021AF4
+; aerovblk.inf
+%AeroVirtioBlk.DeviceDesc% = AeroVirtioBlk_Install, PCI\VEN_1AF4&DEV_1042&REV_01
+%AeroVirtioBlk.DeviceDesc% = AeroVirtioBlk_Install, PCI\VEN_1AF4&DEV_1042&SUBSYS_00021AF4&REV_01
+
+; aerovnet.inf
+%AeroVirtioNet.DeviceDesc% = AeroVirtioNet_Install, PCI\VEN_1AF4&DEV_1041&REV_01
+%AeroVirtioNet.DeviceDesc% = AeroVirtioNet_Install, PCI\VEN_1AF4&DEV_1041&SUBSYS_00011AF4&REV_01
 ```
 
 ### Boot-critical storage (`CriticalDeviceDatabase`)
@@ -143,11 +149,15 @@ Where `<hardware-id>` is the hardware ID with backslashes replaced (commonly `PC
 
 The required mapping for virtio-blk is:
 
-- `hardware ID` → `Service = aerovioblk`
+- `hardware ID` → `Service = aerovblk`
 
 ## Virtio transport contract
 
 This section is intentionally “high level”: it specifies what the Windows drivers can rely on without locking down byte-exact BAR offsets.
+
+The definitive, testable virtio transport/device behavior contract is:
+
+- [`docs/windows7-virtio-driver-contract.md`](./windows7-virtio-driver-contract.md)
 
 ### PCI config space
 
@@ -155,16 +165,21 @@ For virtio devices listed in this contract (see `AERO-W7-VIRTIO` for the definit
 
 - `vendor_id = 0x1AF4`
 - `device_id` matches the table above
+- `revision_id = 0x01` (Aero virtio contract v1; used for optional `REV_01` INF matching)
 - `subsystem_vendor_id = 0x1AF4`
 - `subsystem_device_id` matches `AERO-W7-VIRTIO`
-- `revision_id = 0x01` (Aero virtio contract v1; used for optional `REV_01` INF matching)
 - `class_code` matches the table above
 
-### BARs / MMIO vs I/O ports
+### BARs / MMIO
 
 Virtio devices MUST implement the **virtio-pci modern** programming interface as specified by `AERO-W7-VIRTIO`.
 
 In particular, `AERO-W7-VIRTIO` v1 is **modern-only** (no legacy/transitional I/O port BAR).
+
+Aero’s Windows drivers must:
+
+- Use the **PCI capability-based MMIO regions** (common config / notify / ISR / device config).
+- Not require legacy I/O-port operation for correctness.
 
 ### Interrupts
 
@@ -228,6 +243,6 @@ Consumers must not assume any particular device ordering and must tolerate new d
 
 - `pci_vendor_id` / `pci_device_id` are hex strings with `0x` prefix (e.g. `"0x1AF4"`).
 - `pci_device_id` is the **canonical** emulator-presented Device ID for the device entry. If a driver/tool also supports additional compatibility IDs (for example, virtio transitional IDs), those MUST be represented in `hardware_id_patterns`.
-- `hardware_id_patterns` are Windows PnP PCI hardware ID strings using backslashes (e.g. `"PCI\\VEN_1AF4&DEV_1042"`).
+- `hardware_id_patterns` are Windows PnP PCI hardware ID strings using backslashes (e.g. `"PCI\\VEN_1AF4&DEV_1042&REV_01"`).
   - They are intended to be **directly usable** in INF matching and transformable into registry key names for `CriticalDeviceDatabase`.
   - Tools must treat them as case-insensitive.
