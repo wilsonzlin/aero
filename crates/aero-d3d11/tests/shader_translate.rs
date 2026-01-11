@@ -7,6 +7,7 @@ use aero_d3d11::{
 const FOURCC_SHEX: FourCC = FourCC(*b"SHEX");
 const FOURCC_ISGN: FourCC = FourCC(*b"ISGN");
 const FOURCC_OSGN: FourCC = FourCC(*b"OSGN");
+const SAMPLER_BINDING_BASE: u32 = 128;
 
 fn build_dxbc(chunks: &[(FourCC, Vec<u8>)]) -> Vec<u8> {
     let chunk_count = u32::try_from(chunks.len()).expect("too many chunks for test");
@@ -248,18 +249,31 @@ fn translates_pixel_texture_sample_and_bindings() {
     assert_wgsl_parses(&translated.wgsl);
     assert!(translated.wgsl.contains("@fragment"));
     assert!(translated.wgsl.contains("textureSample(t0, s0"));
+    assert!(translated
+        .wgsl
+        .contains("@group(1) @binding(0) var t0: texture_2d<f32>;"));
+    assert!(translated.wgsl.contains(&format!(
+        "@group(1) @binding({SAMPLER_BINDING_BASE}) var s0: sampler;"
+    )));
 
     // Reflection should surface required texture/sampler slots.
-    assert!(translated
+    let tex_binding = translated
         .reflection
         .bindings
         .iter()
-        .any(|b| matches!(b.kind, BindingKind::Texture2D { slot: 0 })));
-    assert!(translated
+        .find(|b| matches!(b.kind, BindingKind::Texture2D { slot: 0 }))
+        .expect("missing texture binding");
+    assert_eq!(tex_binding.group, 1);
+    assert_eq!(tex_binding.binding, 0);
+
+    let sampler_binding = translated
         .reflection
         .bindings
         .iter()
-        .any(|b| matches!(b.kind, BindingKind::Sampler { slot: 0 })));
+        .find(|b| matches!(b.kind, BindingKind::Sampler { slot: 0 }))
+        .expect("missing sampler binding");
+    assert_eq!(sampler_binding.group, 1);
+    assert_eq!(sampler_binding.binding, SAMPLER_BINDING_BASE);
 }
 
 #[test]
@@ -358,6 +372,15 @@ fn translates_cbuffer_and_arithmetic_ops() {
     assert!(translated.wgsl.contains("struct Cb0"));
     assert!(translated.wgsl.contains("var<uniform> cb0"));
     assert!(translated.wgsl.contains("dot((")); // dp3/dp4
+
+    let cb_binding = translated
+        .reflection
+        .bindings
+        .iter()
+        .find(|b| matches!(b.kind, BindingKind::ConstantBuffer { slot: 0, .. }))
+        .expect("missing constant buffer binding");
+    assert_eq!(cb_binding.group, 0);
+    assert_eq!(cb_binding.binding, 0);
 }
 
 #[test]

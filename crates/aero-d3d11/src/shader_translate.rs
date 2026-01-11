@@ -798,6 +798,16 @@ struct ResourceUsage {
 }
 
 impl ResourceUsage {
+    /// Offset for sampler bindings inside bind group 1.
+    ///
+    /// D3D11 has separate register spaces for SRVs (`t#`) and samplers (`s#`).
+    /// We want stable binding numbers derived from those indices while keeping
+    /// SRVs and samplers in the same bind group (see `docs/16-d3d10-11-translation.md`).
+    ///
+    /// Using `128` matches the D3D11 common-shader SRV slot count and ensures the
+    /// `t#` and `s#` binding ranges do not overlap.
+    const SAMPLER_BINDING_BASE: u32 = 128;
+
     fn bindings(&self, stage: ShaderStage) -> Vec<Binding> {
         let visibility = match stage {
             ShaderStage::Vertex => wgpu::ShaderStages::VERTEX,
@@ -824,8 +834,8 @@ impl ResourceUsage {
         }
         for &slot in &self.samplers {
             out.push(Binding {
-                group: 2,
-                binding: slot,
+                group: 1,
+                binding: Self::SAMPLER_BINDING_BASE + slot,
                 visibility,
                 kind: BindingKind::Sampler { slot },
             });
@@ -852,7 +862,10 @@ impl ResourceUsage {
             w.line("");
         }
         for &slot in &self.samplers {
-            w.line(&format!("@group(2) @binding({slot}) var s{slot}: sampler;"));
+            let binding = Self::SAMPLER_BINDING_BASE + slot;
+            w.line(&format!(
+                "@group(1) @binding({binding}) var s{slot}: sampler;"
+            ));
         }
         if !self.samplers.is_empty() {
             w.line("");
