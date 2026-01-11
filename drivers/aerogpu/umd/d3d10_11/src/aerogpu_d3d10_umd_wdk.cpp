@@ -587,6 +587,9 @@ struct AeroGpuDevice {
   D3D10DDI_DEVICECALLBACKS callbacks = {};
   const D3DDDI_DEVICECALLBACKS* um_callbacks = nullptr;
   uint64_t last_submitted_fence = 0;
+  // Best-effort WDDM context propagation for WDK/OS callback struct variants
+  // that include `hContext` in D3DDDICB_* submission structs.
+  D3DKMT_HANDLE hContext = 0;
 
   std::mutex mutex;
   aerogpu::CmdWriter cmd;
@@ -802,6 +805,15 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
   };
 
   uint64_t last_fence = 0;
+  auto log_missing_context_once = [&] {
+    static std::atomic<bool> logged = false;
+    bool expected = false;
+    if (logged.compare_exchange_strong(expected, true)) {
+      AEROGPU_D3D10_11_LOG(
+          "d3d10_wdk_submit: D3DDDICB_* exposes hContext but submissions are using hContext=0; "
+          "this may require creating a WDDM context via pfnCreateContextCb2");
+    }
+  };
 
   // Chunk at packet boundaries if the runtime returns a smaller-than-requested DMA buffer.
   size_t cur = sizeof(aerogpu_cmd_stream_header);
@@ -811,6 +823,9 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
         static_cast<UINT>(remaining_packets_bytes + sizeof(aerogpu_cmd_stream_header));
 
     D3DDDICB_ALLOCATE alloc = {};
+    __if_exists(D3DDDICB_ALLOCATE::hContext) {
+      alloc.hContext = dev->hContext;
+    }
     __if_exists(D3DDDICB_ALLOCATE::DmaBufferSize) {
       alloc.DmaBufferSize = request_bytes;
     }
@@ -825,6 +840,13 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
     }
 
     HRESULT alloc_hr = CallCbMaybeHandle(cb->pfnAllocateCb, dev->hrt_device, &alloc);
+    __if_exists(D3DDDICB_ALLOCATE::hContext) {
+      if (alloc.hContext != 0) {
+        dev->hContext = alloc.hContext;
+      } else if (dev->hContext == 0) {
+        log_missing_context_once();
+      }
+    }
 
     void* dma_ptr = nullptr;
     UINT dma_cap = 0;
@@ -955,6 +977,12 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
     uint64_t submission_fence = 0;
     if (do_present) {
       D3DDDICB_PRESENT present = {};
+      __if_exists(D3DDDICB_PRESENT::hContext) {
+        present.hContext = dev->hContext;
+        if (present.hContext == 0) {
+          log_missing_context_once();
+        }
+      }
       __if_exists(D3DDDICB_PRESENT::pDmaBuffer) {
         present.pDmaBuffer = alloc.pDmaBuffer;
       }
@@ -997,6 +1025,12 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
       }
     } else {
       D3DDDICB_RENDER render = {};
+      __if_exists(D3DDDICB_RENDER::hContext) {
+        render.hContext = dev->hContext;
+        if (render.hContext == 0) {
+          log_missing_context_once();
+        }
+      }
       __if_exists(D3DDDICB_RENDER::pDmaBuffer) {
         render.pDmaBuffer = alloc.pDmaBuffer;
       }
