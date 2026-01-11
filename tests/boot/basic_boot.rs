@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 use firmware::bios::{build_bios_rom, Bios, BiosConfig, BIOS_SIZE, EBDA_BASE};
 use machine::{CpuState, InMemoryDisk, MemoryAccess, PhysicalMemory};
 
