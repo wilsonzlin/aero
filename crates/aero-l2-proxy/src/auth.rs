@@ -1,6 +1,7 @@
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use ring::hmac;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionClaims {
@@ -22,13 +23,6 @@ pub enum SessionVerifyError {
 struct SessionTokenPayload<'a> {
     v: u8,
     sid: &'a str,
-    exp: u64,
-}
-
-#[derive(Debug, Deserialize)]
-struct SessionTokenPayloadOwned {
-    v: u8,
-    sid: String,
     exp: u64,
 }
 
@@ -72,24 +66,51 @@ pub fn verify_session_token(
         .decode(payload_b64)
         .map_err(|_| SessionVerifyError::InvalidBase64)?;
 
-    let payload: SessionTokenPayloadOwned =
-        serde_json::from_slice(&payload_raw).map_err(|_| SessionVerifyError::InvalidJson)?;
+    let payload: Value = serde_json::from_slice(&payload_raw).map_err(|_| SessionVerifyError::InvalidJson)?;
+    let obj = payload
+        .as_object()
+        .ok_or(SessionVerifyError::InvalidJson)?;
 
-    if payload.v != 1 || payload.sid.is_empty() {
+    // Gateway session tokens are authored by `backend/aero-gateway/src/session.ts`.
+    //
+    // That implementation treats `v` as a JS number and compares it with `!== 1`, which means any
+    // JSON number that parses to `1` (e.g. `1` or `1.0`) is accepted. Mirror that behavior so the
+    // proxy verifier stays byte-for-byte compatible with the gateway.
+    let version = obj
+        .get("v")
+        .and_then(Value::as_f64)
+        .ok_or(SessionVerifyError::InvalidClaims)?;
+    if version != 1.0 {
         return Err(SessionVerifyError::InvalidClaims);
     }
 
-    let expires_at_ms = payload
-        .exp
-        .checked_mul(1000)
+    let sid = obj
+        .get("sid")
+        .and_then(Value::as_str)
+        .filter(|sid| !sid.is_empty())
         .ok_or(SessionVerifyError::InvalidClaims)?;
-    if expires_at_ms <= now_ms {
+
+    let exp = obj
+        .get("exp")
+        .and_then(Value::as_f64)
+        .filter(|exp| exp.is_finite())
+        .ok_or(SessionVerifyError::InvalidClaims)?;
+    // Match the gateway semantics: exp is expressed in seconds (unix time), and expiration is
+    // checked by comparing exp*1000 with Date.now() milliseconds.
+    let expires_at_ms = exp * 1000.0;
+    if expires_at_ms <= now_ms as f64 {
         return Err(SessionVerifyError::Expired);
     }
 
+    let exp = if exp >= 0.0 && exp <= u64::MAX as f64 {
+        exp as u64
+    } else {
+        return Err(SessionVerifyError::InvalidClaims);
+    };
+
     Ok(SessionClaims {
-        sid: payload.sid,
-        exp: payload.exp,
+        sid: sid.to_string(),
+        exp,
     })
 }
 
@@ -124,11 +145,6 @@ pub enum JwtVerifyError {
 struct JwtHeader<'a> {
     alg: &'a str,
     typ: &'a str,
-}
-
-#[derive(Debug, Deserialize)]
-struct JwtHeaderOwned {
-    alg: String,
 }
 
 pub fn mint_relay_jwt_hs256(claims: &RelayJwtClaims, secret: &[u8]) -> String {
@@ -166,10 +182,25 @@ pub fn verify_relay_jwt_hs256(
     let header_raw = URL_SAFE_NO_PAD
         .decode(header_b64)
         .map_err(|_| JwtVerifyError::InvalidBase64)?;
-    let header: JwtHeaderOwned =
-        serde_json::from_slice(&header_raw).map_err(|_| JwtVerifyError::InvalidJson)?;
-    if header.alg != "HS256" {
+
+    let header: Value = serde_json::from_slice(&header_raw).map_err(|_| JwtVerifyError::InvalidJson)?;
+    let header_obj = header
+        .as_object()
+        .ok_or(JwtVerifyError::InvalidJson)?;
+    let alg = header_obj
+        .get("alg")
+        .and_then(Value::as_str)
+        .ok_or(JwtVerifyError::InvalidJson)?;
+    if alg != "HS256" {
         return Err(JwtVerifyError::UnsupportedAlg);
+    }
+    // Reject tokens that carry a non-string `typ` value (including explicit `null`). This mirrors
+    // the shared protocol vectors in `protocol-vectors/auth-tokens.json` and hardens parsing
+    // against weird/malformed header encodings.
+    if let Some(typ) = header_obj.get("typ") {
+        if !typ.is_string() {
+            return Err(JwtVerifyError::InvalidClaims);
+        }
     }
 
     let sig = URL_SAFE_NO_PAD
