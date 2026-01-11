@@ -6,6 +6,10 @@ This document describes two related pieces of the USB input story:
 2. The **USB composite HID device** topology used to present **keyboard + mouse + gamepad**
    while consuming only **one UHCI root hub port**.
 
+> Source of truth: [ADR 0015](./adr/0015-canonical-usb-stack.md) defines the canonical USB/UHCI
+> stack for the browser runtime (`crates/aero-usb` + `web/` host integration). This document focuses
+> on the HID composite/report contract on top of that stack.
+
 ---
 
 ## Why a composite HID device?

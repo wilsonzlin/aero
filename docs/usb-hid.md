@@ -4,6 +4,10 @@ This project models input devices as **USB HID** (Human Interface Device) periph
 
 This document is **separate** from PS/2 scancodes (see `docs/08-input-devices.md`), because USB HID uses **usages** (IDs from standardized tables), not scancodes.
 
+> Source of truth: [ADR 0015](./adr/0015-canonical-usb-stack.md) defines the canonical USB/UHCI
+> stack for the browser runtime (`crates/aero-usb` + `web/` host integration). This document focuses
+> on HID usages and report formats on top of that stack.
+
 The Rust-side mapping helpers for the browser/WASM USB stack live in `aero_usb::web`
 (`crates/aero-usb/src/web.rs`) (e.g. `keyboard_code_to_hid_usage`, `mouse_button_to_hid_mask`).
 (A legacy native emulator harness keeps older equivalents under `crates/emulator`, but the web
