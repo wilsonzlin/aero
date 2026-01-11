@@ -7,13 +7,21 @@
 #include <type_traits>
 #include <vector>
 
-#include "aerogpu_cmd.h"
+#include "../../../protocol/aerogpu_cmd.h"
 
 namespace aerogpu {
 
 inline size_t align_up(size_t v, size_t a) {
   return (v + (a - 1)) & ~(a - 1);
 }
+
+enum class CmdStreamError : uint32_t {
+  kOk = 0,
+  kNoBuffer = 1,
+  kInsufficientSpace = 2,
+  kInvalidArgument = 3,
+  kSizeTooLarge = 4,
+};
 
 // Span-backed command stream writer.
 //
@@ -30,11 +38,19 @@ class SpanCmdStreamWriter {
   void set_buffer(uint8_t* buf, size_t capacity) {
     buf_ = buf;
     capacity_ = capacity;
+    cursor_ = 0;
+    error_ = CmdStreamError::kOk;
   }
 
   void reset() {
     cursor_ = 0;
-    if (!buf_ || capacity_ < sizeof(aerogpu_cmd_stream_header)) {
+    error_ = CmdStreamError::kOk;
+    if (!buf_) {
+      error_ = CmdStreamError::kNoBuffer;
+      return;
+    }
+    if (capacity_ < sizeof(aerogpu_cmd_stream_header)) {
+      error_ = CmdStreamError::kInsufficientSpace;
       return;
     }
 
@@ -61,9 +77,17 @@ class SpanCmdStreamWriter {
     return cursor_;
   }
 
+  size_t len() const {
+    return bytes_used();
+  }
+
   // Compatibility with existing `CmdWriter` call sites.
   size_t size() const {
     return bytes_used();
+  }
+
+  CmdStreamError error() const {
+    return error_;
   }
 
   size_t bytes_remaining() const {
@@ -74,20 +98,36 @@ class SpanCmdStreamWriter {
   }
 
   bool empty() const {
-    return cursor_ == sizeof(aerogpu_cmd_stream_header);
+    return cursor_ <= sizeof(aerogpu_cmd_stream_header);
   }
 
   void finalize() {
-    if (!buf_ || capacity_ < sizeof(aerogpu_cmd_stream_header)) {
+    if (!buf_) {
+      error_ = CmdStreamError::kNoBuffer;
+      return;
+    }
+    if (capacity_ < sizeof(aerogpu_cmd_stream_header)) {
+      error_ = CmdStreamError::kInsufficientSpace;
       return;
     }
 
     if (cursor_ > std::numeric_limits<uint32_t>::max()) {
+      error_ = CmdStreamError::kSizeTooLarge;
       return;
     }
 
     auto* stream = reinterpret_cast<aerogpu_cmd_stream_header*>(buf_);
     stream->size_bytes = static_cast<uint32_t>(cursor_);
+  }
+
+  template <typename T>
+  T* TryAppendFixed(uint32_t opcode) {
+    return append_fixed<T>(opcode);
+  }
+
+  template <typename HeaderT>
+  HeaderT* TryAppendWithPayload(uint32_t opcode, const void* payload, size_t payload_size) {
+    return append_with_payload<HeaderT>(opcode, payload, payload_size);
   }
 
   template <typename T>
@@ -102,11 +142,17 @@ class SpanCmdStreamWriter {
     static_assert(std::is_trivial<HeaderT>::value, "packets must be POD");
     static_assert(sizeof(HeaderT) >= sizeof(aerogpu_cmd_hdr), "packets must contain aerogpu_cmd_hdr");
 
+    if (error_ != CmdStreamError::kOk) {
+      return nullptr;
+    }
+
     if (payload_size && !payload) {
+      error_ = CmdStreamError::kInvalidArgument;
       return nullptr;
     }
 
     if (payload_size > std::numeric_limits<size_t>::max() - sizeof(HeaderT)) {
+      error_ = CmdStreamError::kSizeTooLarge;
       return nullptr;
     }
 
@@ -123,25 +169,47 @@ class SpanCmdStreamWriter {
   }
 
  private:
-  uint8_t* append_raw(uint32_t opcode, size_t cmd_size) {
-    if (!buf_ || capacity_ < sizeof(aerogpu_cmd_stream_header)) {
+   uint8_t* append_raw(uint32_t opcode, size_t cmd_size) {
+    if (error_ != CmdStreamError::kOk) {
       return nullptr;
     }
 
+    if (!buf_) {
+      error_ = CmdStreamError::kNoBuffer;
+      return nullptr;
+    }
+    if (capacity_ < sizeof(aerogpu_cmd_stream_header)) {
+      error_ = CmdStreamError::kInsufficientSpace;
+      return nullptr;
+    }
+
+    // If a buffer was rebound via set_buffer(), ensure the stream header is
+    // re-initialized before we emit packets.
+    if (cursor_ == 0) {
+      reset();
+      if (error_ != CmdStreamError::kOk) {
+        return nullptr;
+      }
+    }
+
     if (cmd_size < sizeof(aerogpu_cmd_hdr)) {
+      error_ = CmdStreamError::kInvalidArgument;
       return nullptr;
     }
 
     if (cmd_size > std::numeric_limits<size_t>::max() - 3) {
+      error_ = CmdStreamError::kSizeTooLarge;
       return nullptr;
     }
     const size_t aligned_size = align_up(cmd_size, 4);
 
     if (aligned_size > std::numeric_limits<uint32_t>::max()) {
+      error_ = CmdStreamError::kSizeTooLarge;
       return nullptr;
     }
 
     if (cursor_ > capacity_ || aligned_size > capacity_ - cursor_) {
+      error_ = CmdStreamError::kInsufficientSpace;
       return nullptr;
     }
 
@@ -159,12 +227,14 @@ class SpanCmdStreamWriter {
   uint8_t* buf_ = nullptr;
   size_t capacity_ = 0;
   size_t cursor_ = 0;
+  CmdStreamError error_ = CmdStreamError::kOk;
 };
 
 // Vector-backed writer used for portable bring-up builds.
 class VectorCmdStreamWriter {
  public:
   void reset() {
+    error_ = CmdStreamError::kOk;
     buf_.clear();
     buf_.resize(sizeof(aerogpu_cmd_stream_header), 0);
 
@@ -188,8 +258,16 @@ class VectorCmdStreamWriter {
     return buf_.size();
   }
 
+  size_t len() const {
+    return bytes_used();
+  }
+
   size_t size() const {
     return bytes_used();
+  }
+
+  CmdStreamError error() const {
+    return error_;
   }
 
   size_t bytes_remaining() const {
@@ -199,6 +277,16 @@ class VectorCmdStreamWriter {
 
   bool empty() const {
     return buf_.size() <= sizeof(aerogpu_cmd_stream_header);
+  }
+
+  template <typename T>
+  T* TryAppendFixed(uint32_t opcode) {
+    return append_fixed<T>(opcode);
+  }
+
+  template <typename HeaderT>
+  HeaderT* TryAppendWithPayload(uint32_t opcode, const void* payload, size_t payload_size) {
+    return append_with_payload<HeaderT>(opcode, payload, payload_size);
   }
 
   template <typename T>
@@ -213,11 +301,17 @@ class VectorCmdStreamWriter {
     static_assert(std::is_trivial<HeaderT>::value, "packets must be POD");
     static_assert(sizeof(HeaderT) >= sizeof(aerogpu_cmd_hdr), "packets must contain aerogpu_cmd_hdr");
 
+    if (error_ != CmdStreamError::kOk) {
+      return nullptr;
+    }
+
     if (payload_size && !payload) {
+      error_ = CmdStreamError::kInvalidArgument;
       return nullptr;
     }
 
     if (payload_size > std::numeric_limits<size_t>::max() - sizeof(HeaderT)) {
+      error_ = CmdStreamError::kSizeTooLarge;
       return nullptr;
     }
 
@@ -237,13 +331,35 @@ class VectorCmdStreamWriter {
     if (buf_.size() < sizeof(aerogpu_cmd_stream_header)) {
       return;
     }
+    if (buf_.size() > std::numeric_limits<uint32_t>::max()) {
+      error_ = CmdStreamError::kSizeTooLarge;
+      return;
+    }
     auto* stream = reinterpret_cast<aerogpu_cmd_stream_header*>(buf_.data());
     stream->size_bytes = static_cast<uint32_t>(buf_.size());
   }
 
  private:
   uint8_t* append_raw(uint32_t opcode, size_t cmd_size) {
+    if (error_ != CmdStreamError::kOk) {
+      return nullptr;
+    }
+
+    // Ensure the stream header is present even if callers forgot to reset().
+    if (buf_.empty()) {
+      reset();
+    }
+
+    if (cmd_size < sizeof(aerogpu_cmd_hdr)) {
+      error_ = CmdStreamError::kInvalidArgument;
+      return nullptr;
+    }
+
     const size_t aligned_size = align_up(cmd_size, 4);
+    if (aligned_size > std::numeric_limits<uint32_t>::max()) {
+      error_ = CmdStreamError::kSizeTooLarge;
+      return nullptr;
+    }
 
     const size_t offset = buf_.size();
     buf_.resize(offset + aligned_size, 0);
@@ -255,6 +371,7 @@ class VectorCmdStreamWriter {
   }
 
   std::vector<uint8_t> buf_;
+  CmdStreamError error_ = CmdStreamError::kOk;
 };
 
 // Type-erased wrapper used by the UMD. Defaults to a vector-backed stream for
@@ -307,8 +424,16 @@ class CmdStreamWriter {
     return (mode_ == Mode::Span) ? span_.bytes_used() : vec_.bytes_used();
   }
 
+  size_t len() const {
+    return bytes_used();
+  }
+
   size_t size() const {
     return bytes_used();
+  }
+
+  CmdStreamError error() const {
+    return (mode_ == Mode::Span) ? span_.error() : vec_.error();
   }
 
   size_t bytes_remaining() const {
@@ -317,6 +442,16 @@ class CmdStreamWriter {
 
   bool empty() const {
     return (mode_ == Mode::Span) ? span_.empty() : vec_.empty();
+  }
+
+  template <typename T>
+  T* TryAppendFixed(uint32_t opcode) {
+    return append_fixed<T>(opcode);
+  }
+
+  template <typename HeaderT>
+  HeaderT* TryAppendWithPayload(uint32_t opcode, const void* payload, size_t payload_size) {
+    return append_with_payload<HeaderT>(opcode, payload, payload_size);
   }
 
   template <typename T>
@@ -340,4 +475,3 @@ class CmdStreamWriter {
 };
 
 } // namespace aerogpu
-

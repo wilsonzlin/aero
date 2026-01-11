@@ -7,5 +7,4 @@
 namespace aerogpu {
 
 using CmdWriter = CmdStreamWriter;
-
 } // namespace aerogpu
