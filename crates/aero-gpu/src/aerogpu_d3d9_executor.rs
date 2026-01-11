@@ -673,9 +673,18 @@ impl AerogpuD3d9Executor {
                 backing_offset_bytes,
                 ..
             } => {
+                if width == 0 || height == 0 {
+                    return Err(AerogpuD3d9Error::Validation(
+                        "CREATE_TEXTURE2D: width/height must be non-zero".into(),
+                    ));
+                }
+                if mip_levels == 0 || array_layers == 0 {
+                    return Err(AerogpuD3d9Error::Validation(
+                        "CREATE_TEXTURE2D: mip_levels/array_layers must be >= 1".into(),
+                    ));
+                }
                 let format = map_aerogpu_format(format)?;
-                let mip_level_count = mip_levels.max(1);
-                let array_layers = array_layers.max(1);
+                let mip_level_count = mip_levels;
                 let backing = if backing_alloc_id == 0 {
                     None
                 } else {
