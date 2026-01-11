@@ -107,16 +107,16 @@ call :query_value FeatureScore
 echo.
 echo --- Validation ---
 if "%IS_X64%"=="1" (
-  call :require_value_contains InstalledDisplayDrivers aerogpu_d3d9_x64
-  call :require_value_contains InstalledDisplayDriversWow aerogpu_d3d9
+  call :require_value InstalledDisplayDrivers REG_MULTI_SZ aerogpu_d3d9_x64
+  call :require_value InstalledDisplayDriversWow REG_MULTI_SZ aerogpu_d3d9
   if "%REQUIRE_DX11%"=="1" (
-    call :require_value_contains UserModeDriverName aerogpu_d3d10_x64.dll
-    call :require_value_contains UserModeDriverNameWow aerogpu_d3d10.dll
+    call :require_value UserModeDriverName REG_SZ aerogpu_d3d10_x64.dll
+    call :require_value UserModeDriverNameWow REG_SZ aerogpu_d3d10.dll
   )
 ) else (
-  call :require_value_contains InstalledDisplayDrivers aerogpu_d3d9
+  call :require_value InstalledDisplayDrivers REG_MULTI_SZ aerogpu_d3d9
   if "%REQUIRE_DX11%"=="1" (
-    call :require_value_contains UserModeDriverName aerogpu_d3d10.dll
+    call :require_value UserModeDriverName REG_SZ aerogpu_d3d10.dll
   )
 )
 
@@ -174,15 +174,23 @@ if errorlevel 1 (
 exit /b 0
 
 rem -----------------------------------------------------------------------------
-:require_value_contains
+:require_value
 set "NAME=%~1"
-set "EXPECT=%~2"
+set "TYPE=%~2"
+set "EXPECT=%~3"
+
+set "OK=1"
+
+"%REGEXE%" query "%AEROGPU_KEY%" /v %NAME% 2>nul | findstr /i /l /c:"%TYPE%" >nul
+if errorlevel 1 set "OK=0"
 
 "%REGEXE%" query "%AEROGPU_KEY%" /v %NAME% 2>nul | findstr /i /l /c:"%EXPECT%" >nul
-if errorlevel 1 (
-  echo ERROR: %NAME% missing or does not contain "%EXPECT%"
-  set "FAIL=1"
+if errorlevel 1 set "OK=0"
+
+if "%OK%"=="1" (
+  echo OK:   %NAME% (%TYPE%) contains "%EXPECT%"
 ) else (
-  echo OK:   %NAME% contains "%EXPECT%"
+  echo ERROR: %NAME% missing or does not match expected type/data (%TYPE%, "%EXPECT%")
+  set "FAIL=1"
 )
 exit /b 0
