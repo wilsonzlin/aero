@@ -10,3 +10,6 @@ The canonical (non-legacy) AeroGPU PCI IDs are defined in
 Use these legacy INFs only when running an emulator build that intentionally exposes the
 legacy AeroGPU device model/ABI.
 
+This requires building the emulator with the legacy device model enabled:
+
+`cargo build -p emulator --features emulator/aerogpu-legacy`
