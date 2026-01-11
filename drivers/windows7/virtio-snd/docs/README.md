@@ -10,6 +10,15 @@ The driver currently:
 
 It **does not** yet implement virtio-pci transport, virtqueues, or any PortCls miniports, so it will not expose audio endpoints yet.
 
+## Compatibility / Aero contract v1
+
+This driver package targets the **Aero Windows 7 virtio device contract v1**:
+
+- **Transport:** virtio-pci **modern** only (virtio 1.0+; PCI vendor-specific capabilities + MMIO)
+- **Interrupts:** **INTx required** (this WDM driver does not opt into MSI/MSI-X)
+
+See: [`docs/windows7-virtio-driver-contract.md`](../../../../docs/windows7-virtio-driver-contract.md) (virtio-snd §3.4, versioning §4).
+
 ## Design notes
 
 - PortCls/WaveRT plan: [`portcls-wavert-design.md`](portcls-wavert-design.md)
@@ -224,9 +233,22 @@ The output will be under `objfre_win7_*` (or `objchk_win7_*` for checked builds)
 
 ### PCI Hardware IDs
 
-`inf/virtio-snd.inf` currently matches:
+Contract v1 virtio-snd devices enumerate as:
 
-- `PCI\VEN_1AF4&DEV_1059` (assumed virtio 1.x sound; `0x1040 + VIRTIO_ID_SOUND`)
-- `PCI\VEN_1AF4&DEV_1018` (assumed transitional/legacy sound; `0x1000 + (VIRTIO_ID_SOUND - 1)`)
+- Vendor ID: `VEN_1AF4`
+- Device ID: `DEV_1059` (`0x1040 + VIRTIO_ID_SOUND` where `VIRTIO_ID_SOUND = 25`)
+- Revision ID: `REV_01` (contract major version = 1)
+- Subsystem ID: `SUBSYS_0003xxxx` (Aero uses `SUBSYS_00031AF4`)
 
-These IDs are included as a starting point; confirm against the virtio specification / device configuration used by the emulator.
+`inf/virtio-snd.inf` matches the **revision-gated** modern HWID:
+
+- `PCI\VEN_1AF4&DEV_1059&REV_01`
+
+For additional safety in environments that expose multiple virtio-snd devices, you can further restrict the match to Aero’s subsystem ID:
+
+- `PCI\VEN_1AF4&DEV_1059&SUBSYS_00031AF4&REV_01`
+
+Notes:
+
+- The **transitional/legacy** virtio-snd PCI device ID (`DEV_1018`) is intentionally **not** matched by this INF (Aero contract v1 is modern-only).
+- This WDM driver currently uses **INTx only**. The INF does **not** include the registry settings required to request MSI/MSI-X from Windows.
