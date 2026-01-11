@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { initWasm } from "./wasm_loader";
+import { computeGuestRamLayout, guestToLinear } from "./shared_layout";
 
 function sharedMemorySupported(): boolean {
   if (typeof WebAssembly === "undefined" || typeof WebAssembly.Memory !== "function") return false;
@@ -25,13 +26,17 @@ describe("runtime/wasm_loader (memory injection)", () => {
     (globalThis as any).crossOriginIsolated = true;
 
     try {
-      const memory = new WebAssembly.Memory({ initial: 2, maximum: 2, shared: true });
+      // Avoid poking at the low addresses reserved for the Rust/WASM runtime by
+      // probing inside the guest RAM region.
+      const desiredGuestBytes = 1 * 1024 * 1024;
+      const layout = computeGuestRamLayout(desiredGuestBytes);
+      const memory = new WebAssembly.Memory({ initial: layout.wasm_pages, maximum: 65536, shared: true });
 
       try {
         const { api } = await initWasm({ variant: "threaded", memory });
 
         const view = new DataView(memory.buffer);
-        const offset = 0x100;
+        const offset = guestToLinear(layout, 0x100);
 
         view.setUint32(offset, 0x11223344, true);
         expect(api.mem_load_u32(offset)).toBe(0x11223344);
