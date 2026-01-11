@@ -98,6 +98,7 @@ typedef struct _AEROGPU_ALLOCATION {
     SIZE_T SizeBytes;
     ULONG Flags;
     PHYSICAL_ADDRESS LastKnownPa; /* updated from allocation lists */
+    ULONG PitchBytes; /* Optional row pitch (bytes) for linear surface allocations; 0 if not applicable/unknown. */
 
     /*
      * CPU mapping state for DxgkDdiLock / DxgkDdiUnlock.

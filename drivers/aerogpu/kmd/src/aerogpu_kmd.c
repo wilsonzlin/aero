@@ -12,6 +12,7 @@
 
 /* Internal-only bits stored in AEROGPU_ALLOCATION::Flags (not exposed to UMD). */
 #define AEROGPU_KMD_ALLOC_FLAG_OPENED 0x80000000u
+#define AEROGPU_KMD_ALLOC_FLAG_PRIMARY 0x40000000u
 
 #define AEROGPU_CMD_OPCODE_RELEASE_SHARED_SURFACE 0x712u
 
@@ -2396,6 +2397,7 @@ static NTSTATUS APIENTRY AeroGpuDdiCreateAllocation(_In_ const HANDLE hAdapter,
 
         ULONG allocId = 0;
         ULONGLONG shareToken = 0;
+        ULONG pitchBytes = 0;
 
         /*
          * WDDM allocation private driver data (if provided).
@@ -2440,6 +2442,22 @@ static NTSTATUS APIENTRY AeroGpuDdiCreateAllocation(_In_ const HANDLE hAdapter,
 
                 allocId = (ULONG)priv->alloc_id;
                 shareToken = (ULONGLONG)priv->share_token;
+
+                /*
+                 * Optional surface metadata.
+                 *
+                 * reserved0 is a shared UMD/KMD extension field used by multiple
+                 * stacks (e.g. D3D9 shared-surface descriptors). Only interpret
+                 * it as a pitch encoding when the descriptor marker is not set.
+                 */
+                pitchBytes = 0;
+                if (!AEROGPU_WDDM_ALLOC_PRIV_DESC_PRESENT(priv->reserved0)) {
+                    pitchBytes = (ULONG)(priv->reserved0 & 0xFFFFFFFFu);
+                    if (pitchBytes != 0 && (aerogpu_wddm_u64)pitchBytes > priv->size_bytes) {
+                        status = STATUS_INVALID_PARAMETER;
+                        goto Rollback;
+                    }
+                }
             }
         }
 
@@ -2471,7 +2489,11 @@ static NTSTATUS APIENTRY AeroGpuDdiCreateAllocation(_In_ const HANDLE hAdapter,
         alloc->ShareToken = shareToken;
         alloc->SizeBytes = info->Size;
         alloc->Flags = (isShared ? AEROGPU_WDDM_ALLOC_PRIV_FLAG_SHARED : 0);
+        if (info->Flags.Primary) {
+            alloc->Flags |= AEROGPU_KMD_ALLOC_FLAG_PRIMARY;
+        }
         alloc->LastKnownPa.QuadPart = 0;
+        alloc->PitchBytes = pitchBytes;
         ExInitializeFastMutex(&alloc->CpuMapMutex);
         alloc->CpuMapRefCount = 0;
         alloc->CpuMapUserVa = NULL;
@@ -2634,6 +2656,19 @@ static NTSTATUS APIENTRY AeroGpuDdiOpenAllocation(_In_ const HANDLE hAdapter,
             goto Cleanup;
         }
 
+        ULONG pitchBytes = 0;
+        if (!AEROGPU_WDDM_ALLOC_PRIV_DESC_PRESENT(priv->reserved0)) {
+            pitchBytes = (ULONG)(priv->reserved0 & 0xFFFFFFFFu);
+            if (pitchBytes != 0 && (aerogpu_wddm_u64)pitchBytes > priv->size_bytes) {
+                AEROGPU_LOG("OpenAllocation: invalid pitch_bytes in private data (alloc_id=%lu pitch=%lu size=%I64u)",
+                           (ULONG)priv->alloc_id,
+                           pitchBytes,
+                           (ULONGLONG)priv->size_bytes);
+                st = STATUS_INVALID_PARAMETER;
+                goto Cleanup;
+            }
+        }
+
         AEROGPU_ALLOCATION* alloc =
             (AEROGPU_ALLOCATION*)ExAllocatePoolWithTag(NonPagedPool, sizeof(*alloc), AEROGPU_POOL_TAG);
         if (!alloc) {
@@ -2647,6 +2682,7 @@ static NTSTATUS APIENTRY AeroGpuDdiOpenAllocation(_In_ const HANDLE hAdapter,
         alloc->SizeBytes = (SIZE_T)priv->size_bytes;
         alloc->Flags = ((ULONG)priv->flags) | AEROGPU_KMD_ALLOC_FLAG_OPENED;
         alloc->LastKnownPa.QuadPart = 0;
+        alloc->PitchBytes = pitchBytes;
         ExInitializeFastMutex(&alloc->CpuMapMutex);
         alloc->CpuMapRefCount = 0;
         alloc->CpuMapUserVa = NULL;
@@ -2820,6 +2856,31 @@ static NTSTATUS APIENTRY AeroGpuDdiLock(_In_ const HANDLE hAdapter, _Inout_ DXGK
     }
 
     pLock->pData = (PUCHAR)alloc->CpuMapUserVa + alloc->CpuMapPageOffset + offset;
+
+    /*
+     * Pitch metadata (optional).
+     *
+     * On Win7, the runtime's D3DKMTLock path can return row/slice pitch for
+     * surface allocations. dxgkrnl may pre-populate Pitch/SlicePitch; only fill
+     * them when they are currently 0 so we don't clobber a runtime-provided
+     * value.
+     */
+    if (pLock->Pitch == 0) {
+        ULONG pitch = alloc->PitchBytes;
+        if (pitch == 0 && (alloc->Flags & AEROGPU_KMD_ALLOC_FLAG_PRIMARY) && adapter->CurrentPitch != 0) {
+            pitch = adapter->CurrentPitch;
+        }
+        pLock->Pitch = pitch;
+    }
+    if (pLock->SlicePitch == 0 && pLock->Pitch != 0) {
+        if ((alloc->Flags & AEROGPU_KMD_ALLOC_FLAG_PRIMARY) && adapter->CurrentHeight != 0) {
+            ULONGLONG slice = (ULONGLONG)pLock->Pitch * (ULONGLONG)adapter->CurrentHeight;
+            if (slice > (ULONGLONG)MAXULONG) {
+                slice = (ULONGLONG)MAXULONG;
+            }
+            pLock->SlicePitch = (ULONG)slice;
+        }
+    }
 
 Exit:
     if (!NT_SUCCESS(st)) {

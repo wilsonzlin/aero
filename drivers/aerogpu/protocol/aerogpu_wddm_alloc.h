@@ -158,10 +158,15 @@ typedef struct aerogpu_wddm_alloc_priv {
   aerogpu_wddm_u64 size_bytes;
 
   /*
-   * Reserved for UMD-private extensions.
+   * Reserved for UMD/KMD extensions.
    *
-   * See the AEROGPU_WDDM_ALLOC_PRIV_DESC_* macros above for an optional encoding
-   * used by the D3D9 UMD to reconstruct shared surfaces at OpenResource time.
+   * Current uses:
+   * - D3D9 shared-surface description encoding:
+   *     bit63 == 1 (see AEROGPU_WDDM_ALLOC_PRIV_DESC_* macros above).
+   * - Optional pitch metadata for linear surface allocations:
+   *     bit63 == 0 and bits[31:0] = row pitch in bytes, or 0 if unknown.
+   *
+   * Keep this field backward-compatible: older binaries may leave it as 0.
    */
   aerogpu_wddm_u64 reserved0;
 } aerogpu_wddm_alloc_priv;
