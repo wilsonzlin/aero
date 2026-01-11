@@ -148,7 +148,9 @@ Write-Host ("  From: {0}" -f $srcPath)
 Write-Host ("  To:   {0}" -f $dstPath)
 Write-Host ""
 Write-Host "Next:"
-Write-Host "  1) scripts\\make-cat.cmd"
-Write-Host "  2) scripts\\sign-driver.cmd"
-Write-Host "  3) scripts\\package-release.ps1"
+$variantArg = if ($Variant -eq 'legacy') { ' legacy' } else { '' }
+$packageVariantArg = if ($Variant -eq 'legacy') { ' -Variant legacy' } else { '' }
+Write-Host ("  1) scripts\\make-cat.cmd{0}" -f $variantArg)
+Write-Host ("  2) scripts\\sign-driver.cmd{0}" -f $variantArg)
+Write-Host ("  3) scripts\\package-release.ps1{0}" -f $packageVariantArg)
 
