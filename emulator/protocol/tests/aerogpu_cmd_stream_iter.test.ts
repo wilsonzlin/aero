@@ -10,6 +10,7 @@ import {
   AerogpuShaderStage,
   decodeCmdCreateInputLayoutBlob,
   decodeCmdCreateShaderDxbcPayload,
+  decodeCmdSetShaderConstantsFPayload,
   decodeCmdSetVertexBuffersBindings,
   decodeCmdUploadResourcePayload,
   iterCmdStream,
@@ -21,12 +22,14 @@ test("iterCmdStream yields packets and variable-payload decoders round-trip", ()
   const dxbcBytes = new Uint8Array([0xaa, 0xbb, 0xcc, 0xdd, 0xee]);
   const blobBytes = new Uint8Array([0x11, 0x22, 0x33]);
   const uploadBytes = new Uint8Array([1, 2, 3, 4, 5, 6, 7]);
+  const shaderConstants = new Float32Array([1.25, -2.5, 0, 42, 0.5, 1000, -0.25, 3.14]);
   const bindings = [
     { buffer: 10, strideBytes: 16, offsetBytes: 0 },
     { buffer: 11, strideBytes: 32, offsetBytes: 64 },
   ];
 
   w.createShaderDxbc(100, AerogpuShaderStage.Vertex, dxbcBytes);
+  w.setShaderConstantsF(AerogpuShaderStage.Pixel, 5, shaderConstants);
   w.createInputLayout(200, blobBytes);
   w.setVertexBuffers(1, bindings);
   w.uploadResource(300, 0x1234n, uploadBytes);
@@ -43,6 +46,7 @@ test("iterCmdStream yields packets and variable-payload decoders round-trip", ()
     packets.map((p) => p.opcode),
     [
       AerogpuCmdOpcode.CreateShaderDxbc,
+      AerogpuCmdOpcode.SetShaderConstantsF,
       AerogpuCmdOpcode.CreateInputLayout,
       AerogpuCmdOpcode.SetVertexBuffers,
       AerogpuCmdOpcode.UploadResource,
@@ -60,17 +64,26 @@ test("iterCmdStream yields packets and variable-payload decoders round-trip", ()
   }
 
   {
+    const decoded = decodeCmdSetShaderConstantsFPayload(extended, offset);
+    assert.equal(decoded.stage, AerogpuShaderStage.Pixel);
+    assert.equal(decoded.startRegister, 5);
+    assert.equal(decoded.vec4Count, shaderConstants.length / 4);
+    assert.deepEqual(Array.from(decoded.data), Array.from(shaderConstants));
+    offset += packets[1]!.sizeBytes;
+  }
+
+  {
     const decoded = decodeCmdCreateInputLayoutBlob(extended, offset);
     assert.equal(decoded.inputLayoutHandle, 200);
     assert.deepEqual(decoded.blobBytes, blobBytes);
-    offset += packets[1]!.sizeBytes;
+    offset += packets[2]!.sizeBytes;
   }
 
   {
     const decoded = decodeCmdSetVertexBuffersBindings(extended, offset);
     assert.equal(decoded.startSlot, 1);
     assert.deepEqual(decoded.bindings, bindings);
-    offset += packets[2]!.sizeBytes;
+    offset += packets[3]!.sizeBytes;
   }
 
   {
@@ -79,7 +92,7 @@ test("iterCmdStream yields packets and variable-payload decoders round-trip", ()
     assert.equal(decoded.offsetBytes, 0x1234n);
     assert.equal(decoded.sizeBytes, BigInt(uploadBytes.byteLength));
     assert.deepEqual(decoded.dataBytes, uploadBytes);
-    offset += packets[3]!.sizeBytes;
+    offset += packets[4]!.sizeBytes;
   }
 
   assert.equal(offset, stream.byteLength);
@@ -100,4 +113,3 @@ test("iterCmdStream rejects streams where a packet overruns cmd_stream.size_byte
 
   assert.throws(() => Array.from(iterCmdStream(bad)), /overruns stream/);
 });
-
