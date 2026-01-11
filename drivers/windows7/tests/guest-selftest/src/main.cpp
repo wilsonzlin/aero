@@ -116,7 +116,9 @@ static bool ContainsInsensitive(const std::wstring& haystack, const std::wstring
 #define HID_CTL_CODE(id) CTL_CODE(FILE_DEVICE_KEYBOARD, (id), METHOD_NEITHER, FILE_ANY_ACCESS)
 #endif
 #ifndef IOCTL_HID_GET_REPORT_DESCRIPTOR
-#define IOCTL_HID_GET_REPORT_DESCRIPTOR HID_CTL_CODE(0x002)
+// WDK `hidclass.h` defines IOCTL_HID_GET_REPORT_DESCRIPTOR as function code 1
+// (pairs with IOCTL_HID_GET_DEVICE_DESCRIPTOR=0, IOCTL_HID_READ_REPORT=2, etc).
+#define IOCTL_HID_GET_REPORT_DESCRIPTOR HID_CTL_CODE(1)
 #endif
 
 static std::wstring NormalizeGuidLikeString(std::wstring s) {
