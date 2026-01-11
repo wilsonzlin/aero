@@ -119,6 +119,20 @@ fn virtio_snd_pci_ids_match_windows_device_contract() {
 
     // Contract JSON specifies the canonical INF filename; it must exist in-tree and match the same HWID.
     let inf_name = require_str(virtio_snd, "inf_name");
+    let service_name = require_str(virtio_snd, "driver_service_name");
+    let virtio_device_type = virtio_snd
+        .get("virtio_device_type")
+        .and_then(|value| value.as_u64())
+        .unwrap_or_else(|| panic!("virtio_device_type must be a number"));
+
+    assert_eq!(
+        virtio_device_type,
+        u64::from(VIRTIO_SND.subsystem_id),
+        "{}: virtio-snd virtio_device_type drift: contract is {virtio_device_type}, emulator profile subsystem_id is {}",
+        contract_path.display(),
+        VIRTIO_SND.subsystem_id
+    );
+
     let inf_path = root.join("drivers/windows7/virtio-snd/inf").join(inf_name);
     assert!(
         inf_path.is_file(),
@@ -127,4 +141,5 @@ fn virtio_snd_pci_ids_match_windows_device_contract() {
         inf_path.display()
     );
     assert_file_contains_case_insensitive(&inf_path, &expected_hwid_short);
+    assert_file_contains_case_insensitive(&inf_path, &format!("AddService = {service_name}"));
 }
