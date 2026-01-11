@@ -87,78 +87,181 @@ function isGpuBenchReport(result) {
     result.tool === "aero-gpu-bench" &&
     result.environment &&
     typeof result.environment === "object" &&
-    result.scenarios &&
-    typeof result.scenarios === "object" &&
-    !Array.isArray(result.scenarios)
+    ((result.scenarios && typeof result.scenarios === "object" && !Array.isArray(result.scenarios)) ||
+      (result.raw &&
+        typeof result.raw === "object" &&
+        result.raw.scenarios &&
+        typeof result.raw.scenarios === "object" &&
+        !Array.isArray(result.raw.scenarios) &&
+        result.summary &&
+        typeof result.summary === "object" &&
+        result.summary.scenarios &&
+        typeof result.summary.scenarios === "object" &&
+        !Array.isArray(result.summary.scenarios)))
   );
 }
 
 function normaliseGpuBenchResult(result) {
-  const rawScenarios = result.scenarios;
-  if (rawScenarios === null || typeof rawScenarios !== "object" || Array.isArray(rawScenarios)) {
-    throw new Error("GPU bench report scenarios must be an object keyed by scenario id");
-  }
-
   const scenarios = {};
 
   /**
    * @param {Record<string, any>} metrics
    * @param {string} name
-   * @param {any} rawValue
+   * @param {any[]} samples
    * @param {{unit: string, better: "higher" | "lower", scale?: number}=} opts
    */
-  function addMetric(metrics, name, rawValue, opts) {
-    if (rawValue === null || rawValue === undefined) return;
-    if (typeof rawValue !== "number" || !Number.isFinite(rawValue)) return;
-    const value = opts?.scale ? rawValue * opts.scale : rawValue;
-    if (!Number.isFinite(value)) return;
+  function addMetricFromSamples(metrics, name, samples, opts) {
+    if (!Array.isArray(samples) || samples.length === 0) return;
+    const finite = samples.filter((v) => typeof v === "number" && Number.isFinite(v));
+    if (finite.length === 0) return;
+    const stats = computeStats(finite);
+    const scale = opts?.scale ?? 1;
+    const value = stats.mean * scale;
     metrics[name] = {
       value,
       unit: opts?.unit ?? "",
       better: opts?.better ?? "lower",
       samples: {
-        n: 1,
-        min: value,
-        max: value,
-        stdev: 0,
-        cv: 0,
+        n: stats.n,
+        min: stats.min * scale,
+        max: stats.max * scale,
+        stdev: stats.stdev * scale,
+        cv: stats.cv,
       },
     };
   }
 
-  for (const [scenarioId, scenario] of Object.entries(rawScenarios)) {
-    if (scenario === null || typeof scenario !== "object") {
-      throw new Error(`GPU bench scenario ${scenarioId} must be an object`);
-    }
-    if (scenario.status && scenario.status !== "ok") {
-      continue;
-    }
+  const isV2 = result.raw?.scenarios && result.summary?.scenarios;
 
-    const derived = scenario.derived ?? {};
-    const telemetry = scenario.telemetry ?? {};
-
-    /** @type {Record<string, any>} */
-    const metrics = {};
-
-    addMetric(metrics, "fps_avg", derived.fpsAvg, { unit: "fps", better: "higher" });
-    addMetric(metrics, "frame_time_ms_p50", derived.frameTimeMsP50, { unit: "ms", better: "lower" });
-    addMetric(metrics, "frame_time_ms_p95", derived.frameTimeMsP95, { unit: "ms", better: "lower" });
-    addMetric(metrics, "present_latency_ms_p95", derived.presentLatencyMsP95, { unit: "ms", better: "lower" });
-    addMetric(metrics, "shader_translation_ms_mean", derived.shaderTranslationMsMean, { unit: "ms", better: "lower" });
-    addMetric(metrics, "shader_compilation_ms_mean", derived.shaderCompilationMsMean, { unit: "ms", better: "lower" });
-    addMetric(metrics, "pipeline_cache_hit_rate_pct", derived.pipelineCacheHitRate, {
-      unit: "%",
-      better: "higher",
-      scale: 100,
-    });
-    addMetric(metrics, "texture_upload_mb_s_avg", derived.textureUploadMBpsAvg, { unit: "MB/s", better: "higher" });
-    addMetric(metrics, "dropped_frames", telemetry.droppedFrames, { unit: "frames", better: "lower" });
-
-    if (Object.keys(metrics).length === 0) {
-      continue;
+  if (!isV2) {
+    const rawScenarios = result.scenarios;
+    if (rawScenarios === null || typeof rawScenarios !== "object" || Array.isArray(rawScenarios)) {
+      throw new Error("GPU bench report scenarios must be an object keyed by scenario id");
     }
 
-    scenarios[`gpu/${scenarioId}`] = { metrics };
+    for (const [scenarioId, scenario] of Object.entries(rawScenarios)) {
+      if (scenario === null || typeof scenario !== "object") {
+        throw new Error(`GPU bench scenario ${scenarioId} must be an object`);
+      }
+      if (scenario.status && scenario.status !== "ok") {
+        continue;
+      }
+
+      const derived = scenario.derived ?? {};
+      const telemetry = scenario.telemetry ?? {};
+
+      /** @type {Record<string, any>} */
+      const metrics = {};
+
+      addMetricFromSamples(metrics, "fps_avg", [derived.fpsAvg], { unit: "fps", better: "higher" });
+      addMetricFromSamples(metrics, "frame_time_ms_p50", [derived.frameTimeMsP50], { unit: "ms", better: "lower" });
+      addMetricFromSamples(metrics, "frame_time_ms_p95", [derived.frameTimeMsP95], { unit: "ms", better: "lower" });
+      addMetricFromSamples(metrics, "present_latency_ms_p95", [derived.presentLatencyMsP95], { unit: "ms", better: "lower" });
+      addMetricFromSamples(metrics, "shader_translation_ms_mean", [derived.shaderTranslationMsMean], { unit: "ms", better: "lower" });
+      addMetricFromSamples(metrics, "shader_compilation_ms_mean", [derived.shaderCompilationMsMean], { unit: "ms", better: "lower" });
+      addMetricFromSamples(metrics, "pipeline_cache_hit_rate_pct", [derived.pipelineCacheHitRate], {
+        unit: "%",
+        better: "higher",
+        scale: 100,
+      });
+      addMetricFromSamples(metrics, "texture_upload_mb_s_avg", [derived.textureUploadMBpsAvg], {
+        unit: "MB/s",
+        better: "higher",
+      });
+      addMetricFromSamples(metrics, "dropped_frames", [telemetry.droppedFrames], { unit: "frames", better: "lower" });
+
+      if (Object.keys(metrics).length === 0) {
+        continue;
+      }
+
+      scenarios[`gpu/${scenarioId}`] = { metrics };
+    }
+  } else {
+    const rawScenarios = result.raw.scenarios;
+    const summaryScenarios = result.summary.scenarios;
+
+    for (const [scenarioId, summaryScenario] of Object.entries(summaryScenarios)) {
+      if (!summaryScenario || typeof summaryScenario !== "object") continue;
+      if (summaryScenario.status !== "ok") continue;
+
+      const rawScenario = rawScenarios?.[scenarioId];
+      if (!rawScenario || typeof rawScenario !== "object") continue;
+
+      const iterations = Array.isArray(rawScenario.iterations) ? rawScenario.iterations : [];
+      const okIterations = iterations.filter((it) => it && typeof it === "object" && it.status === "ok");
+
+      const samples = {
+        fpsAvg: [],
+        frameTimeMsP50: [],
+        frameTimeMsP95: [],
+        presentLatencyMsP95: [],
+        shaderTranslationMsMean: [],
+        shaderCompilationMsMean: [],
+        pipelineCacheHitRate: [],
+        textureUploadMBpsAvg: [],
+        droppedFrames: [],
+      };
+
+      for (const it of okIterations) {
+        const derived = it.derived ?? {};
+        const telemetry = it.telemetry ?? {};
+
+        if (typeof derived.fpsAvg === "number" && Number.isFinite(derived.fpsAvg)) samples.fpsAvg.push(derived.fpsAvg);
+        if (typeof derived.frameTimeMsP50 === "number" && Number.isFinite(derived.frameTimeMsP50)) {
+          samples.frameTimeMsP50.push(derived.frameTimeMsP50);
+        }
+        if (typeof derived.frameTimeMsP95 === "number" && Number.isFinite(derived.frameTimeMsP95)) {
+          samples.frameTimeMsP95.push(derived.frameTimeMsP95);
+        }
+        if (typeof derived.presentLatencyMsP95 === "number" && Number.isFinite(derived.presentLatencyMsP95)) {
+          samples.presentLatencyMsP95.push(derived.presentLatencyMsP95);
+        }
+        if (typeof derived.shaderTranslationMsMean === "number" && Number.isFinite(derived.shaderTranslationMsMean)) {
+          samples.shaderTranslationMsMean.push(derived.shaderTranslationMsMean);
+        }
+        if (typeof derived.shaderCompilationMsMean === "number" && Number.isFinite(derived.shaderCompilationMsMean)) {
+          samples.shaderCompilationMsMean.push(derived.shaderCompilationMsMean);
+        }
+        if (typeof derived.pipelineCacheHitRate === "number" && Number.isFinite(derived.pipelineCacheHitRate)) {
+          samples.pipelineCacheHitRate.push(derived.pipelineCacheHitRate);
+        }
+        if (typeof derived.textureUploadMBpsAvg === "number" && Number.isFinite(derived.textureUploadMBpsAvg)) {
+          samples.textureUploadMBpsAvg.push(derived.textureUploadMBpsAvg);
+        }
+        if (typeof telemetry.droppedFrames === "number" && Number.isFinite(telemetry.droppedFrames)) {
+          samples.droppedFrames.push(telemetry.droppedFrames);
+        }
+      }
+
+      /** @type {Record<string, any>} */
+      const metrics = {};
+
+      addMetricFromSamples(metrics, "fps_avg", samples.fpsAvg, { unit: "fps", better: "higher" });
+      addMetricFromSamples(metrics, "frame_time_ms_p50", samples.frameTimeMsP50, { unit: "ms", better: "lower" });
+      addMetricFromSamples(metrics, "frame_time_ms_p95", samples.frameTimeMsP95, { unit: "ms", better: "lower" });
+      addMetricFromSamples(metrics, "present_latency_ms_p95", samples.presentLatencyMsP95, { unit: "ms", better: "lower" });
+      addMetricFromSamples(metrics, "shader_translation_ms_mean", samples.shaderTranslationMsMean, {
+        unit: "ms",
+        better: "lower",
+      });
+      addMetricFromSamples(metrics, "shader_compilation_ms_mean", samples.shaderCompilationMsMean, {
+        unit: "ms",
+        better: "lower",
+      });
+      addMetricFromSamples(metrics, "pipeline_cache_hit_rate_pct", samples.pipelineCacheHitRate, {
+        unit: "%",
+        better: "higher",
+        scale: 100,
+      });
+      addMetricFromSamples(metrics, "texture_upload_mb_s_avg", samples.textureUploadMBpsAvg, {
+        unit: "MB/s",
+        better: "higher",
+      });
+      addMetricFromSamples(metrics, "dropped_frames", samples.droppedFrames, { unit: "frames", better: "lower" });
+
+      if (Object.keys(metrics).length === 0) continue;
+      scenarios[`gpu/${scenarioId}`] = { metrics };
+    }
   }
 
   const environment = {};
@@ -166,6 +269,10 @@ function normaliseGpuBenchResult(result) {
     if (typeof result.environment.userAgent === "string") environment.userAgent = result.environment.userAgent;
     if (typeof result.environment.webgpu === "boolean") environment.webgpu = result.environment.webgpu;
     if (typeof result.environment.webgl2 === "boolean") environment.webgl2 = result.environment.webgl2;
+  }
+  if (result.meta && typeof result.meta === "object") {
+    if (typeof result.meta.nodeVersion === "string") environment.node = result.meta.nodeVersion;
+    if (Number.isFinite(result.meta.iterations)) environment.iterations = result.meta.iterations;
   }
 
   return { scenarios, environment: Object.keys(environment).length ? environment : undefined };

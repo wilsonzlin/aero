@@ -72,6 +72,7 @@ jobs:
             --scenarios vga_text_scroll,vbe_lfb_blit,webgpu_triangle_batch,d3d9_state_churn \
             --scenario-params perf-results/gpu/scenario_params.json \
             --swiftshader true \
+            --iterations ${{ env.PERF_ITERATIONS }} \
             --output perf-results/gpu/raw.json
 
       - name: Run storage perf (nightly)

@@ -117,6 +117,77 @@ test("normaliseBenchResult supports aero-gpu-bench report format", () => {
   assert.equal(scenarios["gpu/vga_text_scroll"].metrics.dropped_frames.value, 0);
 });
 
+test("normaliseBenchResult supports aero-gpu-bench schemaVersion=2 (raw+summary) format", () => {
+  const { scenarios, environment } = normaliseBenchResult({
+    schemaVersion: 2,
+    tool: "aero-gpu-bench",
+    startedAt: "2025-01-01T00:00:00Z",
+    finishedAt: "2025-01-01T00:00:01Z",
+    meta: { iterations: 3, nodeVersion: "v20.0.0" },
+    environment: { userAgent: "UA", webgpu: false, webgl2: true },
+    raw: {
+      scenarios: {
+        vga_text_scroll: {
+          id: "vga_text_scroll",
+          name: "VGA text scroll",
+          params: {},
+          iterations: [
+            {
+              iteration: 0,
+              status: "ok",
+              durationMs: 100,
+              params: {},
+              telemetry: { droppedFrames: 0 },
+              derived: { fpsAvg: 60, pipelineCacheHitRate: 0.5 },
+            },
+            {
+              iteration: 1,
+              status: "ok",
+              durationMs: 100,
+              params: {},
+              telemetry: { droppedFrames: 1 },
+              derived: { fpsAvg: 58, pipelineCacheHitRate: 0.4 },
+            },
+            {
+              iteration: 2,
+              status: "ok",
+              durationMs: 100,
+              params: {},
+              telemetry: { droppedFrames: 0 },
+              derived: { fpsAvg: 62, pipelineCacheHitRate: 0.6 },
+            },
+          ],
+        },
+      },
+    },
+    summary: {
+      scenarios: {
+        vga_text_scroll: {
+          id: "vga_text_scroll",
+          name: "VGA text scroll",
+          status: "ok",
+          metrics: {},
+        },
+      },
+    },
+  });
+
+  assert.equal(environment.userAgent, "UA");
+  assert.equal(environment.webgpu, false);
+  assert.equal(environment.webgl2, true);
+  assert.equal(environment.node, "v20.0.0");
+  assert.equal(environment.iterations, 3);
+
+  assert.ok(scenarios["gpu/vga_text_scroll"], "expected normalised gpu/vga_text_scroll scenario");
+  assert.equal(scenarios["gpu/vga_text_scroll"].metrics.fps_avg.samples.n, 3);
+  assert.equal(scenarios["gpu/vga_text_scroll"].metrics.fps_avg.value, 60); // mean of [60,58,62]
+  assert.equal(scenarios["gpu/vga_text_scroll"].metrics.pipeline_cache_hit_rate_pct.value, 50); // mean of [0.5,0.4,0.6]*100
+  assert.ok(
+    Math.abs(scenarios["gpu/vga_text_scroll"].metrics.dropped_frames.value - 1 / 3) < 1e-9,
+    "expected dropped_frames mean to match",
+  );
+});
+
 test("appendHistoryEntry merges multiple inputs for the same entry id", () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "aero-history-"));
   const historyPath = path.join(tmpDir, "history.json");
