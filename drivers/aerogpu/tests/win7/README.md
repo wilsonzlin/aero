@@ -4,6 +4,10 @@ This directory contains small Windows 7 **guest-side** test programs intended to
 
 Each test prints a clear `PASS:` / `FAIL:` line to stdout and returns a non-zero exit code on failure. Some tests can optionally dump a `.bmp` to disk for manual inspection (`--dump`).
 
+For D3D11 UMD bring-up (Win7 FL10_0), including which `d3d11umddi.h` function-table entries must be non-null vs safely stubbable, see:
+
+* `docs/graphics/win7-d3d11ddi-function-tables.md`
+
 The suite also includes an optional `aerogpu_timeout_runner.exe` helper (built by default) used by `run_all.cmd` to enforce a per-test timeout. Override the default timeout by setting `AEROGPU_TEST_TIMEOUT_MS` in the environment.
 
 Common flags:
