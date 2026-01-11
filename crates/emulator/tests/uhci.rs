@@ -196,12 +196,13 @@ impl UsbDeviceModel for DummyInterruptOutDevice {
 }
 
 struct TestInterruptInDevice {
+    ep: u8,
     data: Vec<u8>,
 }
 
 impl TestInterruptInDevice {
-    fn new(data: Vec<u8>) -> Self {
-        Self { data }
+    fn new(ep: u8, data: Vec<u8>) -> Self {
+        Self { ep, data }
     }
 }
 
@@ -215,7 +216,7 @@ impl UsbDeviceModel for TestInterruptInDevice {
     }
 
     fn poll_interrupt_in(&mut self, ep: u8) -> Option<Vec<u8>> {
-        (ep == 0x81).then(|| self.data.clone())
+        (ep == self.ep).then(|| self.data.clone())
     }
 }
 
@@ -984,7 +985,7 @@ fn uhci_qh_does_not_skip_inactive_tds() {
     let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
     uhci.controller
         .hub_mut()
-        .attach(0, Box::new(TestInterruptInDevice::new(vec![1, 2, 3, 4])));
+        .attach(0, Box::new(TestInterruptInDevice::new(0x81, vec![1, 2, 3, 4])));
     reset_port(&mut uhci, &mut mem, 0x10);
 
     uhci.port_write(0x08, 4, FRAME_LIST_BASE);
@@ -1016,6 +1017,61 @@ fn uhci_qh_does_not_skip_inactive_tds() {
 
     let qh_elem = mem.read_u32(QH_ADDR as u64 + 4);
     assert_eq!(qh_elem, TD0);
+
+    let st1 = mem.read_u32(TD1 as u64 + 4);
+    assert!(st1 & TD_STATUS_ACTIVE != 0);
+
+    assert_eq!(
+        mem.slice(BUF_DATA as usize..BUF_DATA as usize + sentinel.len()),
+        sentinel
+    );
+}
+
+#[test]
+fn uhci_qh_does_not_skip_nak_tds() {
+    let mut mem = TestMemBus::new(0x20000);
+    init_frame_list(&mut mem, QH_ADDR);
+
+    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    uhci.controller.hub_mut().attach(
+        0,
+        Box::new(TestInterruptInDevice::new(0x82, vec![0x11, 0x22, 0x33, 0x44])),
+    );
+    reset_port(&mut uhci, &mut mem, 0x10);
+
+    uhci.port_write(0x08, 4, FRAME_LIST_BASE);
+    uhci.port_write(0x00, 2, 0x0001);
+
+    let sentinel = [0x5a, 0x5a, 0x5a, 0x5a];
+    mem.write_physical(BUF_DATA as u64, &sentinel);
+
+    // QH -> TD0(active IN, NAK) -> TD1(active IN, would return data). On NAK, UHCI must stop
+    // processing the QH for this frame and must not advance the element pointer to TD1.
+    write_td(
+        &mut mem,
+        TD0,
+        TD1,
+        td_status(true, false),
+        td_token(PID_IN, 0, 1, 0, sentinel.len()),
+        BUF_DATA,
+    );
+    write_td(
+        &mut mem,
+        TD1,
+        1,
+        td_status(true, true),
+        td_token(PID_IN, 0, 2, 0, sentinel.len()),
+        BUF_DATA,
+    );
+
+    run_one_frame(&mut uhci, &mut mem, TD0);
+
+    let qh_elem = mem.read_u32(QH_ADDR as u64 + 4);
+    assert_eq!(qh_elem, TD0);
+
+    let st0 = mem.read_u32(TD0 as u64 + 4);
+    assert!(st0 & TD_STATUS_ACTIVE != 0);
+    assert!(st0 & (1 << 19) != 0); // NAK
 
     let st1 = mem.read_u32(TD1 as u64 + 4);
     assert!(st1 & TD_STATUS_ACTIVE != 0);
