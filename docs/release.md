@@ -1,6 +1,6 @@
 # Release process
 
-This repository ships two primary production artifacts:
+This repository ships the following production artifacts:
 
 1. **Static web build** (`web/dist/`)
    - Includes both WASM variants (**threaded** + **single fallback**).
