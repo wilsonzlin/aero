@@ -18,6 +18,7 @@
 #include <cassert>
 #include <cstdint>
 #include <cstddef>
+#include <limits>
 #include <cstdio>
 #include <cmath>
 #include <cstring>
@@ -1227,7 +1228,16 @@ static uint64_t SubmitWddmLocked(Device* dev, bool want_present, HRESULT* out_hr
   size_t cur = sizeof(aerogpu_cmd_stream_header);
   while (cur < src_size) {
     const size_t remaining_packets_bytes = src_size - cur;
-    const UINT request_bytes = static_cast<UINT>(remaining_packets_bytes + sizeof(aerogpu_cmd_stream_header));
+    const size_t request_sz = remaining_packets_bytes + sizeof(aerogpu_cmd_stream_header);
+    if (request_sz > static_cast<size_t>(std::numeric_limits<UINT>::max())) {
+      if (out_hr) {
+        *out_hr = E_OUTOFMEMORY;
+      }
+      dev->cmd.reset();
+      dev->pending_staging_writes.clear();
+      return 0;
+    }
+    const UINT request_bytes = static_cast<UINT>(request_sz);
 
     auto deallocate = [&](const D3DDDICB_ALLOCATE& alloc, void* dma_priv_ptr, UINT dma_priv_size) {
       D3DDDICB_DEALLOCATE dealloc = {};
