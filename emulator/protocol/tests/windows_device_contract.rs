@@ -661,7 +661,6 @@ fn no_aerogpu_1aed_tokens_outside_quarantined_legacy_locations() {
     let allowed_prefixes: &[&[u8]] = &[
         b"drivers/aerogpu/legacy/",
         b"drivers/aerogpu/protocol/legacy/",
-        b"drivers/aerogpu/legacy/",
         b"drivers/aerogpu/packaging/win7/README.md",
         b"drivers/aerogpu/packaging/win7/legacy/",
         b"prototype/legacy-win7-aerogpu-1ae0/",
