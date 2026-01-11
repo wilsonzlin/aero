@@ -90,9 +90,9 @@ pub enum ControlResponse {
 }
 
 pub trait UsbDeviceModel {
-    fn get_device_descriptor(&self) -> &'static [u8];
-    fn get_config_descriptor(&self) -> &'static [u8];
-    fn get_hid_report_descriptor(&self) -> &'static [u8];
+    fn get_device_descriptor(&self) -> &[u8];
+    fn get_config_descriptor(&self) -> &[u8];
+    fn get_hid_report_descriptor(&self) -> &[u8];
 
     /// Resets device state due to a USB bus reset (e.g. PORTSC reset).
     ///
@@ -113,6 +113,18 @@ pub trait UsbDeviceModel {
     ///
     /// Returning `None` indicates the endpoint would NAK (no data available).
     fn poll_interrupt_in(&mut self, ep: u8) -> Option<Vec<u8>>;
+
+    /// Handles interrupt OUT transfers for non-control endpoints.
+    ///
+    /// Returning [`crate::io::usb::core::UsbOutResult::Stall`] indicates the endpoint is not
+    /// implemented.
+    fn handle_interrupt_out(
+        &mut self,
+        _ep_addr: u8,
+        _data: &[u8],
+    ) -> crate::io::usb::core::UsbOutResult {
+        crate::io::usb::core::UsbOutResult::Stall
+    }
 
     /// Advance device-internal timers by 1ms.
     ///

@@ -1,8 +1,12 @@
+use std::cell::RefCell;
 use std::ops::Range;
+use std::rc::Rc;
 
 use emulator::io::usb::hid::composite::UsbCompositeHidInputHandle;
 use emulator::io::usb::hid::gamepad::UsbHidGamepadHandle;
 use emulator::io::usb::hid::keyboard::UsbHidKeyboardHandle;
+use emulator::io::usb::core::UsbOutResult;
+use emulator::io::usb::{ControlResponse, SetupPacket, UsbDeviceModel};
 use emulator::io::usb::uhci::regs::{REG_USBCMD, USBCMD_MAXP, USBCMD_RS};
 use emulator::io::usb::uhci::{UhciController, UhciPciDevice};
 use emulator::io::PortIO;
@@ -23,6 +27,7 @@ const PID_OUT: u8 = 0xe1;
 const PID_SETUP: u8 = 0x2d;
 
 const TD_STATUS_ACTIVE: u32 = 1 << 23;
+const TD_STATUS_STALLED: u32 = 1 << 22;
 const TD_CTRL_IOC: u32 = 1 << 24;
 
 // UHCI root hub PORTSC bits (Intel UHCI spec / Linux uhci-hcd).
@@ -132,6 +137,54 @@ fn reset_port(uhci: &mut UhciPciDevice, mem: &mut TestMemBus, portsc: u16) {
     write_portsc(uhci, portsc, PORTSC_PR);
     for _ in 0..50 {
         uhci.tick_1ms(mem);
+    }
+}
+
+#[derive(Clone, Debug)]
+struct DummyInterruptOutDevice {
+    received: Rc<RefCell<Vec<(u8, Vec<u8>)>>>,
+}
+
+impl DummyInterruptOutDevice {
+    fn new() -> Self {
+        Self {
+            received: Rc::new(RefCell::new(Vec::new())),
+        }
+    }
+
+    fn received(&self) -> Vec<(u8, Vec<u8>)> {
+        self.received.borrow().clone()
+    }
+}
+
+impl UsbDeviceModel for DummyInterruptOutDevice {
+    fn get_device_descriptor(&self) -> &[u8] {
+        &[]
+    }
+
+    fn get_config_descriptor(&self) -> &[u8] {
+        &[]
+    }
+
+    fn get_hid_report_descriptor(&self) -> &[u8] {
+        &[]
+    }
+
+    fn handle_control_request(
+        &mut self,
+        _setup: SetupPacket,
+        _data_stage: Option<&[u8]>,
+    ) -> ControlResponse {
+        ControlResponse::Stall
+    }
+
+    fn poll_interrupt_in(&mut self, _ep: u8) -> Option<Vec<u8>> {
+        None
+    }
+
+    fn handle_interrupt_out(&mut self, ep_addr: u8, data: &[u8]) -> UsbOutResult {
+        self.received.borrow_mut().push((ep_addr, data.to_vec()));
+        UsbOutResult::Ack
     }
 }
 
@@ -571,4 +624,71 @@ fn uhci_composite_hid_device_exposes_keyboard_mouse_gamepad() {
         mem.slice(BUF_INT as usize..BUF_INT as usize + 8),
         [0x01, 0x00, 0, 0, 0, 0, 0, 0]
     );
+}
+
+#[test]
+fn uhci_interrupt_out_reaches_device_model() {
+    let mut mem = TestMemBus::new(0x20000);
+    init_frame_list(&mut mem, QH_ADDR);
+
+    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    let device = DummyInterruptOutDevice::new();
+    uhci.controller.hub_mut().attach(0, Box::new(device.clone()));
+    reset_port(&mut uhci, &mut mem, 0x10);
+
+    uhci.port_write(0x08, 4, FRAME_LIST_BASE);
+    uhci.port_write(0x00, 2, 0x0001);
+
+    let payload = [0xde, 0xad, 0xbe, 0xef];
+    mem.write_physical(BUF_DATA as u64, &payload);
+
+    write_td(
+        &mut mem,
+        TD0,
+        1,
+        td_status(true, false),
+        td_token(PID_OUT, 0, 1, 0, payload.len()),
+        BUF_DATA,
+    );
+
+    run_one_frame(&mut uhci, &mut mem, TD0);
+
+    assert_eq!(device.received(), vec![(0x01, payload.to_vec())]);
+
+    let st0 = mem.read_u32(TD0 as u64 + 4);
+    assert_eq!(st0 & TD_STATUS_ACTIVE, 0);
+    assert_eq!(st0 & TD_STATUS_STALLED, 0);
+}
+
+#[test]
+fn uhci_interrupt_out_unimplemented_endpoint_stalls() {
+    let mut mem = TestMemBus::new(0x20000);
+    init_frame_list(&mut mem, QH_ADDR);
+
+    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    uhci.controller
+        .hub_mut()
+        .attach(0, Box::new(UsbHidKeyboardHandle::new()));
+    reset_port(&mut uhci, &mut mem, 0x10);
+
+    uhci.port_write(0x08, 4, FRAME_LIST_BASE);
+    uhci.port_write(0x00, 2, 0x0001);
+
+    let payload = [0x01u8, 0x02, 0x03];
+    mem.write_physical(BUF_DATA as u64, &payload);
+
+    write_td(
+        &mut mem,
+        TD0,
+        1,
+        td_status(true, false),
+        td_token(PID_OUT, 0, 1, 0, payload.len()),
+        BUF_DATA,
+    );
+
+    run_one_frame(&mut uhci, &mut mem, TD0);
+
+    let st0 = mem.read_u32(TD0 as u64 + 4);
+    assert_eq!(st0 & TD_STATUS_ACTIVE, 0);
+    assert_ne!(st0 & TD_STATUS_STALLED, 0);
 }

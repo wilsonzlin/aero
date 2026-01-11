@@ -128,7 +128,8 @@ impl AttachedUsbDevice {
 
     pub fn handle_out(&mut self, endpoint: u8, data: &[u8]) -> UsbOutResult {
         if endpoint != 0 {
-            return UsbOutResult::Stall;
+            let ep_addr = endpoint & 0x0f;
+            return self.model.handle_interrupt_out(ep_addr, data);
         }
         let Some(state) = self.control.as_mut() else {
             return UsbOutResult::Stall;

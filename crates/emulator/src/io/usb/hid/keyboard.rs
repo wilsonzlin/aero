@@ -87,16 +87,16 @@ impl Default for UsbHidKeyboardHandle {
 }
 
 impl UsbDeviceModel for UsbHidKeyboardHandle {
-    fn get_device_descriptor(&self) -> &'static [u8] {
-        self.0.borrow().get_device_descriptor()
+    fn get_device_descriptor(&self) -> &[u8] {
+        &DEVICE_DESCRIPTOR
     }
 
-    fn get_config_descriptor(&self) -> &'static [u8] {
-        self.0.borrow().get_config_descriptor()
+    fn get_config_descriptor(&self) -> &[u8] {
+        &CONFIG_DESCRIPTOR
     }
 
-    fn get_hid_report_descriptor(&self) -> &'static [u8] {
-        self.0.borrow().get_hid_report_descriptor()
+    fn get_hid_report_descriptor(&self) -> &[u8] {
+        &HID_REPORT_DESCRIPTOR
     }
 
     fn reset(&mut self) {
@@ -224,15 +224,15 @@ impl UsbHidKeyboard {
 }
 
 impl UsbDeviceModel for UsbHidKeyboard {
-    fn get_device_descriptor(&self) -> &'static [u8] {
+    fn get_device_descriptor(&self) -> &[u8] {
         &DEVICE_DESCRIPTOR
     }
 
-    fn get_config_descriptor(&self) -> &'static [u8] {
+    fn get_config_descriptor(&self) -> &[u8] {
         &CONFIG_DESCRIPTOR
     }
 
-    fn get_hid_report_descriptor(&self) -> &'static [u8] {
+    fn get_hid_report_descriptor(&self) -> &[u8] {
         &HID_REPORT_DESCRIPTOR
     }
 

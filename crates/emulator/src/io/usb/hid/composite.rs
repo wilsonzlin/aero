@@ -338,16 +338,18 @@ impl Default for UsbCompositeHidInputHandle {
 }
 
 impl UsbDeviceModel for UsbCompositeHidInputHandle {
-    fn get_device_descriptor(&self) -> &'static [u8] {
-        self.0.borrow().get_device_descriptor()
+    fn get_device_descriptor(&self) -> &[u8] {
+        &DEVICE_DESCRIPTOR
     }
 
-    fn get_config_descriptor(&self) -> &'static [u8] {
-        self.0.borrow().get_config_descriptor()
+    fn get_config_descriptor(&self) -> &[u8] {
+        &CONFIG_DESCRIPTOR
     }
 
-    fn get_hid_report_descriptor(&self) -> &'static [u8] {
-        self.0.borrow().get_hid_report_descriptor()
+    fn get_hid_report_descriptor(&self) -> &[u8] {
+        // Composite devices expose per-interface report descriptors; return the keyboard
+        // report descriptor as a sensible default.
+        &super::keyboard::HID_REPORT_DESCRIPTOR
     }
 
     fn reset(&mut self) {
@@ -464,15 +466,15 @@ impl UsbCompositeHidInput {
 }
 
 impl UsbDeviceModel for UsbCompositeHidInput {
-    fn get_device_descriptor(&self) -> &'static [u8] {
+    fn get_device_descriptor(&self) -> &[u8] {
         &DEVICE_DESCRIPTOR
     }
 
-    fn get_config_descriptor(&self) -> &'static [u8] {
+    fn get_config_descriptor(&self) -> &[u8] {
         &CONFIG_DESCRIPTOR
     }
 
-    fn get_hid_report_descriptor(&self) -> &'static [u8] {
+    fn get_hid_report_descriptor(&self) -> &[u8] {
         // The composite device exposes multiple report descriptors; callers should use
         // GET_DESCRIPTOR(REPORT) routed by interface number. Return the keyboard report
         // descriptor as a sane default.
