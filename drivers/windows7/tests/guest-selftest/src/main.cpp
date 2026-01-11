@@ -5,7 +5,9 @@
 
 #include <windows.h>
 
+#include <cfgmgr32.h>
 #include <mmsystem.h>
+#include <mmddk.h>
 #include <setupapi.h>
 
 #include <devguid.h>
@@ -1076,6 +1078,44 @@ static std::string WaveOutErrorText(MMRESULT mm) {
   return fallback;
 }
 
+static std::optional<std::wstring> CmGetDeviceIdStringW(DEVINST inst) {
+  ULONG len = 0;
+  CONFIGRET cr = CM_Get_Device_ID_SizeW(&len, inst, 0);
+  if (cr != CR_SUCCESS) return std::nullopt;
+  std::wstring buf(static_cast<size_t>(len) + 1, L'\0');
+  cr = CM_Get_Device_IDW(inst, buf.data(), static_cast<ULONG>(buf.size()), 0);
+  if (cr != CR_SUCCESS) return std::nullopt;
+  buf.resize(wcslen(buf.c_str()));
+  return buf;
+}
+
+static std::optional<bool> WaveOutDevnodeTreeContainsVirtioSnd(Logger& log, HWAVEOUT hwo) {
+  // Some WDM audio drivers support mapping waveOut devices back to a PnP devnode. This allows us to
+  // verify that we're actually opening the virtio-snd device when using WAVE_MAPPER fallback.
+  DEVINST inst = 0;
+  const MMRESULT mm =
+      waveOutMessage(hwo, DRV_QUERYDEVNODE, reinterpret_cast<DWORD_PTR>(&inst), 0);
+  if (mm != MMSYSERR_NOERROR) {
+    log.Logf("virtio-snd: waveOutMessage(DRV_QUERYDEVNODE) failed: %s", WaveOutErrorText(mm).c_str());
+    return std::nullopt;
+  }
+
+  DEVINST cur = inst;
+  for (int depth = 0; depth < 8; depth++) {
+    const auto id = CmGetDeviceIdStringW(cur);
+    if (id.has_value()) {
+      if (ContainsInsensitive(*id, L"VEN_1AF4&DEV_1059")) return true;
+    }
+
+    DEVINST parent = 0;
+    const CONFIGRET cr = CM_Get_Parent(&parent, cur, 0);
+    if (cr != CR_SUCCESS) break;
+    cur = parent;
+  }
+
+  return false;
+}
+
 static bool IsVirtioSndHardwareId(const std::vector<std::wstring>& hwids) {
   for (const auto& id : hwids) {
     if (ContainsInsensitive(id, L"PCI\\VEN_1AF4&DEV_1059")) return true;
@@ -1169,7 +1209,7 @@ static std::optional<UINT> FindWaveOutDeviceIdByNameHints(Logger& log,
 }
 
 static bool WaveOutPlaybackSmokeTest(Logger& log, UINT device_id, const std::wstring& device_name_hint,
-                                     MMRESULT* open_rc_out) {
+                                     MMRESULT* open_rc_out, bool verify_virtio_snd_devnode) {
   if (open_rc_out) *open_rc_out = MMSYSERR_NOERROR;
 
   HANDLE done_event = CreateEventW(nullptr, FALSE, FALSE, nullptr);
@@ -1206,6 +1246,22 @@ static bool WaveOutPlaybackSmokeTest(Logger& log, UINT device_id, const std::wst
                WideToUtf8(caps.szPname).c_str());
     } else {
       log.Logf("virtio-snd: opened waveOut device id=%u", actual_id);
+    }
+  }
+
+  if (verify_virtio_snd_devnode) {
+    const auto is_virtio = WaveOutDevnodeTreeContainsVirtioSnd(log, hwo);
+    if (!is_virtio.has_value()) {
+      log.LogLine("virtio-snd: unable to verify waveOut devnode maps to virtio-snd");
+      waveOutClose(hwo);
+      CloseHandle(done_event);
+      return false;
+    }
+    if (!*is_virtio) {
+      log.LogLine("virtio-snd: waveOut device devnode does not appear to be virtio-snd");
+      waveOutClose(hwo);
+      CloseHandle(done_event);
+      return false;
     }
   }
 
@@ -1310,9 +1366,10 @@ static TestVerdict VirtioSndTest(Logger& log, const Options& opt) {
   // Retry transient waveOutOpen failures for a short, bounded time to avoid false negatives.
   const DWORD open_timeout_ms = 15000;
   const DWORD deadline = GetTickCount() + open_timeout_ms;
+  const bool verify_devnode = !chosen_id.has_value();
   while (static_cast<int32_t>(GetTickCount() - deadline) < 0) {
     MMRESULT open_rc = MMSYSERR_NOERROR;
-    if (WaveOutPlaybackSmokeTest(log, open_id, chosen_name, &open_rc)) {
+    if (WaveOutPlaybackSmokeTest(log, open_id, chosen_name, &open_rc, verify_devnode)) {
       return TestVerdict::kPass;
     }
 
