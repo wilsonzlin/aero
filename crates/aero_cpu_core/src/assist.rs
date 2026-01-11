@@ -975,7 +975,7 @@ fn read_descriptor_low_for_selector<B: CpuBus>(
 }
 
 fn tss32_ring0_stack<B: CpuBus>(state: &CpuState, bus: &mut B) -> Result<(u16, u32), Exception> {
-    if state.tables.tr.is_unusable() || !state.tables.tr.is_present() {
+    if state.tables.tr.is_unusable() || !state.tables.tr.is_present() || (state.tables.tr.selector >> 3) == 0 {
         return Err(Exception::ts(0));
     }
     let base = state.tables.tr.base;

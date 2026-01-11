@@ -175,6 +175,7 @@ fn tier0_assists_protected_int_iret_switches_to_tss_stack() {
     state.tables.idtr.base = IDT_BASE;
     state.tables.idtr.limit = (0x80 * 8 + 7) as u16;
     // Mark TR as usable and point it at the in-memory TSS.
+    state.tables.tr.selector = 0x28;
     state.tables.tr.base = TSS_BASE;
     state.tables.tr.limit = 0x67;
     state.tables.tr.access = SEG_ACCESS_PRESENT;

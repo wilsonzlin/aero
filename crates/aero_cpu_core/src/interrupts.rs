@@ -558,7 +558,10 @@ fn deliver_protected_mode<B: CpuBus>(
                 }
             },
             None => {
-                if state.tables.tr.is_unusable() || !state.tables.tr.is_present() {
+                if state.tables.tr.is_unusable()
+                    || !state.tables.tr.is_present()
+                    || (state.tables.tr.selector >> 3) == 0
+                {
                     return deliver_exception(
                         bus,
                         state,
@@ -783,7 +786,10 @@ fn deliver_long_mode<B: CpuBus>(
                 }
             },
             None => {
-                if state.tables.tr.is_unusable() || !state.tables.tr.is_present() {
+                if state.tables.tr.is_unusable()
+                    || !state.tables.tr.is_present()
+                    || (state.tables.tr.selector >> 3) == 0
+                {
                     return deliver_exception(
                         bus,
                         state,
@@ -851,7 +857,10 @@ fn deliver_long_mode<B: CpuBus>(
                 }
             },
             None => {
-                if state.tables.tr.is_unusable() || !state.tables.tr.is_present() {
+                if state.tables.tr.is_unusable()
+                    || !state.tables.tr.is_present()
+                    || (state.tables.tr.selector >> 3) == 0
+                {
                     return deliver_exception(
                         bus,
                         state,

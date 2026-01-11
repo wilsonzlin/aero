@@ -358,7 +358,10 @@ impl CpuState {
 
     /// Reads the ring-0 stack for 32-bit privilege switching (SS0:ESP0).
     pub fn tss32_ring0_stack(&mut self, bus: &mut impl CpuBus) -> Result<(u16, u32), Exception> {
-        if self.tables.tr.is_unusable() || !self.tables.tr.is_present() {
+        if self.tables.tr.is_unusable()
+            || !self.tables.tr.is_present()
+            || selector_index(self.tables.tr.selector) == 0
+        {
             return Err(Exception::ts(0));
         }
         let base = self.tables.tr.base;
@@ -370,7 +373,10 @@ impl CpuState {
 
     /// Reads the ring-0 stack pointer for 64-bit privilege switching (RSP0).
     pub fn tss64_rsp0(&mut self, bus: &mut impl CpuBus) -> Result<u64, Exception> {
-        if self.tables.tr.is_unusable() || !self.tables.tr.is_present() {
+        if self.tables.tr.is_unusable()
+            || !self.tables.tr.is_present()
+            || selector_index(self.tables.tr.selector) == 0
+        {
             return Err(Exception::ts(0));
         }
         let base = self.tables.tr.base;
@@ -383,7 +389,10 @@ impl CpuState {
         if !(1..=7).contains(&index) {
             return Err(Exception::ts(0));
         }
-        if self.tables.tr.is_unusable() || !self.tables.tr.is_present() {
+        if self.tables.tr.is_unusable()
+            || !self.tables.tr.is_present()
+            || selector_index(self.tables.tr.selector) == 0
+        {
             return Err(Exception::ts(0));
         }
         let base = self.tables.tr.base;
@@ -393,7 +402,10 @@ impl CpuState {
 
     /// Placeholder hook for the TSS I/O bitmap base.
     pub fn tss64_iomap_base(&mut self, bus: &mut impl CpuBus) -> Result<u16, Exception> {
-        if self.tables.tr.is_unusable() || !self.tables.tr.is_present() {
+        if self.tables.tr.is_unusable()
+            || !self.tables.tr.is_present()
+            || selector_index(self.tables.tr.selector) == 0
+        {
             return Err(Exception::ts(0));
         }
         bus.read_u16(self.tables.tr.base + 0x66)
