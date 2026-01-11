@@ -100,6 +100,30 @@ impl AttachedUsbDevice {
         // aborted by a new SETUP, the pending address must be discarded.
         self.pending_address = None;
 
+        // Intercept SET_ADDRESS so device models don't need to track address state.
+        //
+        // USB 2.0 spec 9.4.6: SET_ADDRESS is always HostToDevice with wLength=0 and wIndex=0.
+        // We always virtualize it and never forward it to the underlying model/physical device.
+        if setup.request_type() == RequestType::Standard
+            && setup.recipient() == RequestRecipient::Device
+            && setup.b_request == USB_REQUEST_SET_ADDRESS
+        {
+            if setup.request_direction() != RequestDirection::HostToDevice
+                || setup.w_index != 0
+                || setup.w_length != 0
+                || setup.w_value > 127
+            {
+                return UsbOutResult::Stall;
+            }
+
+            self.pending_address = Some((setup.w_value & 0x00ff) as u8);
+            self.control = Some(ControlState {
+                setup,
+                stage: ControlStage::StatusIn,
+            });
+            return UsbOutResult::Ack;
+        }
+
         let stage = match setup.request_direction() {
             RequestDirection::DeviceToHost => {
                 let resp = self.model.handle_control_request(setup, None);
@@ -140,17 +164,7 @@ impl AttachedUsbDevice {
                 }
             }
             RequestDirection::HostToDevice => {
-                // Intercept SET_ADDRESS so device models don't need to track address state.
-                if setup.request_type() == RequestType::Standard
-                    && setup.recipient() == RequestRecipient::Device
-                    && setup.b_request == USB_REQUEST_SET_ADDRESS
-                {
-                    if setup.w_index != 0 || setup.w_length != 0 || setup.w_value > 127 {
-                        return UsbOutResult::Stall;
-                    }
-                    self.pending_address = Some((setup.w_value & 0x00ff) as u8);
-                    ControlStage::StatusIn
-                } else if setup.w_length == 0 {
+                if setup.w_length == 0 {
                     match self.model.handle_control_request(setup, None) {
                         ControlResponse::Ack => ControlStage::StatusIn,
                         ControlResponse::Nak => ControlStage::StatusInPending { data: None },
@@ -387,6 +401,18 @@ mod tests {
                 w_value: 5,
                 w_index: 0,
                 w_length: 1,
+            }),
+            UsbOutResult::Stall
+        );
+
+        // Invalid direction (must be HostToDevice).
+        assert_eq!(
+            dev.handle_setup(SetupPacket {
+                bm_request_type: 0x80, // DeviceToHost | Standard | Device
+                b_request: USB_REQUEST_SET_ADDRESS,
+                w_value: 5,
+                w_index: 0,
+                w_length: 0,
             }),
             UsbOutResult::Stall
         );
