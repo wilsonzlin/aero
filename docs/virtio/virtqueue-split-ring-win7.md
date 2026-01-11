@@ -37,7 +37,7 @@ Related Aero Windows driver references:
 
 The working implementation that corresponds to this guide lives at:
 
-* `drivers/windows/virtio/common/` (`virtqueue_split.h/.c`, `virtio_ring.h`, `virtio_osdep.h`)
+* `drivers/windows/virtio/common/` (`virtqueue_split.h/.c`, `virtio_ring.h`, `virtio_osdep.h`, `virtio_sg_pfn.h/.c`)
 
 It includes a user-mode simulation harness in:
 
@@ -771,6 +771,10 @@ That has two important implications:
 For a reusable, transport-agnostic split-ring engine that does not depend on WDF, see:
 
 * `drivers/windows/virtio/common/`
+
+For a WDF-free PFN/MDL → `VIRTQ_SG` builder suitable for populating split-ring descriptors (including `INDIRECT_DESC` tables), see:
+
+* `drivers/windows/virtio/common/virtio_sg_pfn.h/.c`
 
 For a concrete WDM consumer of that engine, see:
 
