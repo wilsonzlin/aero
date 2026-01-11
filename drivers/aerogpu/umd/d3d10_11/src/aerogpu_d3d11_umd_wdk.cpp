@@ -1584,7 +1584,16 @@ HRESULT AEROGPU_APIENTRY GetCaps11(D3D10DDI_HADAPTER, const D3D11DDIARG_GETCAPS*
   const UINT size = pGetCaps->DataSize;
 
 #if defined(AEROGPU_D3D10_11_CAPS_LOG)
-  AEROGPU_D3D10_11_LOG("GetCaps11 type=%u size=%u", (unsigned)static_cast<uint32_t>(pGetCaps->Type), (unsigned)size);
+  // Emit caps queries unconditionally when AEROGPU_D3D10_11_CAPS_LOG is defined;
+  // the runtime-controlled AEROGPU_D3D10_11_LOG gate is often disabled in retail
+  // builds during early bring-up.
+  char buf[128] = {};
+  snprintf(buf,
+           sizeof(buf),
+           "aerogpu-d3d11: GetCaps11 type=%u size=%u\n",
+           (unsigned)static_cast<uint32_t>(pGetCaps->Type),
+           (unsigned)size);
+  OutputDebugStringA(buf);
 #endif
 
   auto zero_out = [&] { std::memset(data, 0, size); };
