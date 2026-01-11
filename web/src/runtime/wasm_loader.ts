@@ -21,6 +21,14 @@ export type SharedRingBufferHandle = {
     free(): void;
 };
 
+export type UhciControllerBridgeHandle = {
+    io_read(offset: number, size: number): number;
+    io_write(offset: number, size: number, value: number): void;
+    tick_1ms(): void;
+    irq_asserted(): boolean;
+    free(): void;
+};
+
 export interface WasmApi {
     greet(name: string): string;
     add(a: number, b: number): number;
@@ -173,10 +181,10 @@ export interface WasmApi {
     };
 
     /**
-      * WebUSB UHCI passthrough enumeration harness (drives UHCI TDs and emits `UsbHostAction`s).
-      *
-      * Note: optional until all deployed WASM builds include it.
-      */
+     * WebUSB UHCI passthrough enumeration harness (drives UHCI TDs and emits `UsbHostAction`s).
+     *
+     * Note: optional until all deployed WASM builds include it.
+     */
     WebUsbUhciPassthroughHarness?: new () => {
         /**
          * Human-readable state string for debugging.

@@ -174,6 +174,7 @@ export class WebUsbPassthroughRuntime {
   readonly #bridge: UsbPassthroughBridgeLike;
   readonly #port: UsbBrokerPortLike;
   readonly #pollIntervalMs: number;
+  readonly #maxActionsPerPoll: number;
 
   /**
    * `usb.selected ok:false` indicates the passthrough device is unavailable
@@ -195,6 +196,8 @@ export class WebUsbPassthroughRuntime {
   #pollInFlight = false;
 
   readonly #pending = new Map<number, PendingItem>();
+  #backlog: unknown[] = [];
+  #backlogIndex = 0;
 
   #actionRing: UsbProxyRing | null = null;
   #completionRing: UsbProxyRing | null = null;
@@ -211,6 +214,14 @@ export class WebUsbPassthroughRuntime {
     port: UsbBrokerPortLike;
     pollIntervalMs?: number;
     /**
+     * Maximum number of actions to forward per {@link pollOnce} invocation.
+     *
+     * This bounds per-tick work in the I/O worker: UHCI may emit many actions in
+     * a burst (e.g. bulk transfers), and draining+forwarding all of them in one
+     * tick can starve unrelated I/O tasks.
+     */
+    maxActionsPerPoll?: number;
+    /**
      * Override the initial "blocked" state.
      *
      * By default the runtime starts unblocked so it still functions even if it is
@@ -223,6 +234,8 @@ export class WebUsbPassthroughRuntime {
     this.#bridge = options.bridge;
     this.#port = options.port;
     this.#pollIntervalMs = options.pollIntervalMs ?? 8;
+    const max = options.maxActionsPerPoll ?? 64;
+    this.#maxActionsPerPoll = Number.isFinite(max) && max > 0 ? Math.floor(max) : Number.POSITIVE_INFINITY;
     this.#blocked = options.initiallyBlocked ?? false;
 
     this.#onMessage = (ev) => {
@@ -296,6 +309,8 @@ export class WebUsbPassthroughRuntime {
     this.#desiredRunning = false;
     this.stopPolling();
     this.cancelPending("WebUSB passthrough stopped.");
+    this.#backlog = [];
+    this.#backlogIndex = 0;
   }
 
   destroy(): void {
@@ -335,23 +350,40 @@ export class WebUsbPassthroughRuntime {
     try {
       this.drainCompletionRing();
 
-      let drained: unknown;
-      try {
-        drained = this.#bridge.drain_actions();
-      } catch (err) {
-        this.#lastError = formatError(err);
-        return;
+      let drained: unknown[];
+      if (this.#backlogIndex < this.#backlog.length) {
+        drained = this.#backlog;
+      } else {
+        let raw: unknown;
+        try {
+          raw = this.#bridge.drain_actions();
+        } catch (err) {
+          this.#lastError = formatError(err);
+          return;
+        }
+
+        if (raw == null) return;
+        if (!Array.isArray(raw)) {
+          this.#lastError = `UsbPassthroughBridge.drain_actions() returned non-array: ${typeof raw}`;
+          return;
+        }
+        this.#backlog = raw;
+        this.#backlogIndex = 0;
+        drained = this.#backlog;
       }
 
-      if (!drained) return;
-      if (!Array.isArray(drained)) {
-        this.#lastError = `UsbPassthroughBridge.drain_actions() returned non-array: ${typeof drained}`;
-        return;
+      const start = this.#backlogIndex;
+      const end = Math.min(drained.length, start + this.#maxActionsPerPoll);
+      const batch = drained.slice(start, end);
+      this.#backlogIndex = end;
+      if (this.#backlogIndex >= drained.length) {
+        this.#backlog = [];
+        this.#backlogIndex = 0;
       }
 
       const awaiters: Array<Promise<UsbHostCompletion>> = [];
 
-      for (const raw of drained) {
+      for (const raw of batch) {
         const record = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : null;
         let extractedId: number | null = null;
         let extractedKind: UsbHostActionKind | null = null;
@@ -366,6 +398,9 @@ export class WebUsbPassthroughRuntime {
             this.#bridge.reset();
           } catch (resetErr) {
             this.#lastError = `${this.#lastError}; reset failed: ${formatError(resetErr)}`;
+          } finally {
+            this.#backlog = [];
+            this.#backlogIndex = 0;
           }
           break;
         }
@@ -379,6 +414,9 @@ export class WebUsbPassthroughRuntime {
             this.#bridge.reset();
           } catch (resetErr) {
             this.#lastError = `${this.#lastError}; reset failed: ${formatError(resetErr)}`;
+          } finally {
+            this.#backlog = [];
+            this.#backlogIndex = 0;
           }
           break;
         }
@@ -407,6 +445,9 @@ export class WebUsbPassthroughRuntime {
               this.#bridge.reset();
             } catch (resetErr) {
               this.#lastError = `${this.#lastError}; reset failed: ${formatError(resetErr)}`;
+            } finally {
+              this.#backlog = [];
+              this.#backlogIndex = 0;
             }
             this.cancelPending("WebUSB passthrough reset due to invalid action from WASM.");
             break;
@@ -516,6 +557,8 @@ export class WebUsbPassthroughRuntime {
     this.#blocked = true;
     this.stopPolling();
     this.cancelPending(msg.error ?? "WebUSB device not selected.");
+    this.#backlog = [];
+    this.#backlogIndex = 0;
 
     try {
       this.#bridge.reset();

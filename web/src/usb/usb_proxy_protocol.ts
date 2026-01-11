@@ -25,13 +25,29 @@ export type UsbSelectedMessage = {
   info?: { vendorId: number; productId: number; productName?: string };
 };
 
+export type UsbGuestWebUsbSnapshot = {
+  /** WASM exports are present and the guest-visible passthrough device can be attached. */
+  available: boolean;
+  /** Whether the guest-visible WebUSB proxy device is currently attached to the emulated UHCI bus. */
+  attached: boolean;
+  /** `true` when `usb.selected ok:false` is active (no physical device selected). */
+  blocked: boolean;
+  /** UHCI root port index the device attaches to (0-based). */
+  rootPort: number;
+  /** Optional error text (e.g. attach failure). */
+  lastError: string | null;
+};
+
+export type UsbGuestWebUsbStatusMessage = { type: "usb.guest.status"; snapshot: UsbGuestWebUsbSnapshot };
+
 export type UsbProxyMessage =
   | UsbActionMessage
   | UsbCompletionMessage
   | UsbRingAttachMessage
   | UsbSelectDeviceMessage
   | UsbQuerySelectedMessage
-  | UsbSelectedMessage;
+  | UsbSelectedMessage
+  | UsbGuestWebUsbStatusMessage;
 
 function transferablesForBytes(bytes: Uint8Array): Transferable[] | undefined {
   // Only `ArrayBuffer` instances are transferable. `SharedArrayBuffer` can be structured-cloned but not transferred.
@@ -203,6 +219,18 @@ export function isUsbSelectedMessage(value: unknown): value is UsbSelectedMessag
   return true;
 }
 
+export function isUsbGuestWebUsbStatusMessage(value: unknown): value is UsbGuestWebUsbStatusMessage {
+  if (!isRecord(value) || value.type !== "usb.guest.status") return false;
+  if (!isRecord(value.snapshot)) return false;
+  const snap = value.snapshot;
+  if (typeof snap.available !== "boolean") return false;
+  if (typeof snap.attached !== "boolean") return false;
+  if (typeof snap.blocked !== "boolean") return false;
+  if (!isUint32(snap.rootPort)) return false;
+  if (snap.lastError !== null && typeof snap.lastError !== "string") return false;
+  return true;
+}
+
 export function isUsbProxyMessage(value: unknown): value is UsbProxyMessage {
   return (
     isUsbActionMessage(value) ||
@@ -210,7 +238,8 @@ export function isUsbProxyMessage(value: unknown): value is UsbProxyMessage {
     isUsbRingAttachMessage(value) ||
     isUsbSelectDeviceMessage(value) ||
     isUsbQuerySelectedMessage(value) ||
-    isUsbSelectedMessage(value)
+    isUsbSelectedMessage(value) ||
+    isUsbGuestWebUsbStatusMessage(value)
   );
 }
 

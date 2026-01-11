@@ -258,6 +258,49 @@ describe("usb/WebUsbPassthroughRuntime", () => {
     expect(port.posted).toEqual([]);
   });
 
+  it("limits forwarded actions per pollOnce when maxActionsPerPoll is set", async () => {
+    const port = new FakePort();
+
+    const actions: UsbHostAction[] = [
+      { kind: "bulkIn", id: 1, endpoint: 0x81, length: 8 },
+      { kind: "bulkIn", id: 2, endpoint: 0x81, length: 8 },
+      { kind: "bulkIn", id: 3, endpoint: 0x81, length: 8 },
+    ];
+
+    const drain_actions = vi.fn(() => actions);
+    const bridge: UsbPassthroughBridgeLike = {
+      drain_actions,
+      push_completion: vi.fn(),
+      reset: vi.fn(),
+      free: vi.fn(),
+    };
+
+    const runtime = new WebUsbPassthroughRuntime({
+      bridge,
+      port: port as unknown as MessagePort,
+      pollIntervalMs: 0,
+      maxActionsPerPoll: 2,
+    });
+    port.emit({ type: "usb.selected", ok: true, info: { vendorId: 1, productId: 2 } });
+
+    const p1 = runtime.pollOnce();
+    expect(port.posted).toEqual([
+      { type: "usb.action", action: actions[0] },
+      { type: "usb.action", action: actions[1] },
+    ]);
+    expect(drain_actions).toHaveBeenCalledTimes(1);
+
+    port.emit({ type: "usb.completion", completion: { kind: "bulkIn", id: 1, status: "stall" } satisfies UsbHostCompletion });
+    port.emit({ type: "usb.completion", completion: { kind: "bulkIn", id: 2, status: "stall" } satisfies UsbHostCompletion });
+    await p1;
+
+    const p2 = runtime.pollOnce();
+    expect(drain_actions).toHaveBeenCalledTimes(1);
+    expect(port.posted.slice(2)).toEqual([{ type: "usb.action", action: actions[2] }]);
+    port.emit({ type: "usb.completion", completion: { kind: "bulkIn", id: 3, status: "stall" } satisfies UsbHostCompletion });
+    await p2;
+  });
+
   it("normalizes BigInt ids emitted by WASM into Number ids for the broker protocol", async () => {
     const port = new FakePort();
 

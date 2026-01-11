@@ -1,5 +1,6 @@
 import { explainWebUsbError, formatWebUsbError } from "../platform/webusb_troubleshooting";
 import type { UsbBroker } from "./usb_broker";
+import { isUsbGuestWebUsbStatusMessage, isUsbSelectedMessage, type UsbGuestWebUsbSnapshot } from "./usb_proxy_protocol";
 
 function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -45,6 +46,7 @@ export function renderWebUsbBrokerPanel(broker: UsbBroker): HTMLElement {
 
   const knownList = el("ul");
   const status = el("pre", { text: "" });
+  const guestStatus = el("pre", { text: "Guest-visible passthrough: (waiting for I/O worker…)" });
 
   const errorTitle = el("div", { class: "bad", text: "" });
   const errorDetails = el("div", { class: "hint", text: "" });
@@ -97,6 +99,27 @@ export function renderWebUsbBrokerPanel(broker: UsbBroker): HTMLElement {
   forgetButton.hidden = true;
 
   let selected: SelectedInfo | null = null;
+  let guestSnapshot: UsbGuestWebUsbSnapshot | null = null;
+
+  const updateGuestStatus = (): void => {
+    const snap = guestSnapshot;
+    if (!snap) {
+      guestStatus.textContent = "Guest-visible passthrough: (waiting for I/O worker…)";
+      return;
+    }
+
+    const root = `rootPort=${snap.rootPort}`;
+    const state = !snap.available
+      ? "unavailable"
+      : snap.attached
+        ? "attached"
+        : snap.blocked
+          ? "blocked"
+          : "detached";
+    const lines = [`Guest-visible passthrough: ${state} (${root})`];
+    if (snap.lastError) lines.push(`lastError: ${snap.lastError}`);
+    guestStatus.textContent = lines.join("\n");
+  };
 
   const updateForgetButton = (): void => {
     if (!supported || !selected) {
@@ -202,17 +225,24 @@ export function renderWebUsbBrokerPanel(broker: UsbBroker): HTMLElement {
       const channel = new MessageChannel();
       broker.attachWorkerPort(channel.port1);
       channel.port2.addEventListener("message", (ev: MessageEvent<unknown>) => {
-        const data = ev.data as Partial<{ type: string; ok: boolean; error?: string; info?: unknown }> | undefined;
-        if (!data || data.type !== "usb.selected") return;
-        if (data.ok && data.info && typeof data.info === "object") {
-          const info = data.info as SelectedInfo;
-          setStatus(info);
-          clearError();
-        } else {
-          setStatus(null);
-          if (typeof data.error === "string") {
-            showError(data.error);
+        const data = ev.data;
+        if (isUsbSelectedMessage(data)) {
+          if (data.ok && data.info && typeof data.info === "object") {
+            const info = data.info as SelectedInfo;
+            setStatus(info);
+            clearError();
+          } else {
+            setStatus(null);
+            if (typeof data.error === "string") {
+              showError(data.error);
+            }
           }
+          return;
+        }
+
+        if (isUsbGuestWebUsbStatusMessage(data)) {
+          guestSnapshot = data.snapshot;
+          updateGuestStatus();
         }
       });
       channel.port2.start();
@@ -263,6 +293,7 @@ export function renderWebUsbBrokerPanel(broker: UsbBroker): HTMLElement {
     el("div", { class: "row" }, selectButton, refreshButton),
     el("div", { class: "row" }, detachButton, forgetButton),
     status,
+    guestStatus,
     el("h4", { text: "Known devices (navigator.usb.getDevices())" }),
     knownList,
     errorTitle,

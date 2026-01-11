@@ -36,7 +36,14 @@ import { UART_COM1, Uart16550, type SerialOutputSink } from "../io/devices/uart1
 import { AeroIpcIoServer, type AeroIpcIoDiskResult, type AeroIpcIoDispatchTarget } from "../io/ipc/aero_ipc_io";
 import type { MountConfig } from "../storage/metadata";
 import { RuntimeDiskClient, type DiskImageMetadata } from "../storage/runtime_disk_client";
-import type { UsbActionMessage, UsbCompletionMessage, UsbHostAction, UsbSelectedMessage } from "../usb/usb_proxy_protocol";
+import type {
+  UsbActionMessage,
+  UsbCompletionMessage,
+  UsbGuestWebUsbSnapshot,
+  UsbGuestWebUsbStatusMessage,
+  UsbHostAction,
+  UsbSelectedMessage,
+} from "../usb/usb_proxy_protocol";
 import { applyUsbSelectedToWebUsbUhciBridge } from "../usb/uhci_webusb_bridge";
 import type { UsbUhciHarnessStartMessage, UsbUhciHarnessStatusMessage, UsbUhciHarnessStopMessage, WebUsbUhciHarnessRuntimeSnapshot } from "../usb/webusb_harness_runtime";
 import { WebUsbUhciHarnessRuntime } from "../usb/webusb_harness_runtime";
@@ -125,83 +132,142 @@ let webUsbUhciBridge: WebUsbUhciBridge | null = null;
 let webUsbUhciIrqAsserted = false;
 let lastUsbSelected: UsbSelectedMessage | null = null;
 
-const WEBUSB_UHCI_IRQ_LINE = 11;
+const WEBUSB_UHCI_IRQ_LINE = 0x0c;
 const WEBUSB_UHCI_FRAMES_PER_TICK = 8;
+const WEBUSB_GUEST_ROOT_PORT = 0;
+
+let webUsbGuestAttached = false;
+let webUsbGuestLastError: string | null = null;
+let lastWebUsbGuestSnapshot: UsbGuestWebUsbSnapshot | null = null;
+
+function formatWebUsbGuestError(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  return String(err);
+}
+
+function emitWebUsbGuestStatus(): void {
+  const snapshot: UsbGuestWebUsbSnapshot = {
+    available: webUsbUhciBridge !== null,
+    attached: webUsbGuestAttached,
+    blocked: !usbAvailable,
+    rootPort: WEBUSB_GUEST_ROOT_PORT,
+    lastError: webUsbGuestLastError,
+  };
+
+  const prev = lastWebUsbGuestSnapshot;
+  if (
+    prev &&
+    prev.available === snapshot.available &&
+    prev.attached === snapshot.attached &&
+    prev.blocked === snapshot.blocked &&
+    prev.rootPort === snapshot.rootPort &&
+    prev.lastError === snapshot.lastError
+  ) {
+    return;
+  }
+  lastWebUsbGuestSnapshot = snapshot;
+
+  // Routed through the main-thread UsbBroker so the WebUSB broker panel can display guest-visible attachment state.
+  ctx.postMessage({ type: "usb.guest.status", snapshot } satisfies UsbGuestWebUsbStatusMessage);
+}
 
 const uhciHidTopology = new UhciHidTopologyManager();
 
 function maybeInitUhciDevice(): void {
-  if (webUsbUhciBridge || uhciDevice) return;
   const api = wasmApi;
   const mgr = deviceManager;
   if (!api || !mgr) return;
   if (!guestBase) return;
 
-  const Bridge = api.UhciControllerBridge;
-  if (Bridge) {
-    if (!guestSize) return;
-    try {
-      const bridge = new Bridge(guestBase >>> 0, guestSize >>> 0);
-      const dev = new UhciPciDevice({ bridge, irqSink: mgr.irqSink });
-      uhciDevice = dev;
-      mgr.registerPciDevice(dev);
-      mgr.addTickable(dev);
-      uhciHidTopology.setUhciBridge(bridge as unknown as any);
-    } catch (err) {
-      console.warn("[io.worker] Failed to initialize UHCI controller bridge", err);
+  if (!uhciDevice) {
+    const Bridge = api.UhciControllerBridge;
+    if (Bridge) {
+      try {
+        const bridge = new Bridge(guestBase >>> 0, guestSize >>> 0);
+        const dev = new UhciPciDevice({ bridge, irqSink: mgr.irqSink });
+        uhciDevice = dev;
+        mgr.registerPciDevice(dev);
+        mgr.addTickable(dev);
+        uhciHidTopology.setUhciBridge(bridge as unknown as any);
+      } catch (err) {
+        console.warn("[io.worker] Failed to initialize UHCI controller bridge", err);
+      }
     }
-    return;
   }
 
-  const WebBridge = api.WebUsbUhciBridge;
-  if (WebBridge) {
-    try {
-      webUsbUhciBridge = new WebBridge(guestBase >>> 0);
+  if (!webUsbUhciBridge) {
+    const WebBridge = api.WebUsbUhciBridge;
+    if (WebBridge) {
+      try {
+        webUsbUhciBridge = new WebBridge(guestBase >>> 0);
 
-      mgr.registerPciDevice(new UhciWebUsbPciDevice(webUsbUhciBridge));
+        mgr.registerPciDevice(new UhciWebUsbPciDevice(webUsbUhciBridge));
 
-      // Tick UHCI at 1kHz-equivalent cadence (approximate: 8 frames per 8ms IO tick).
-      mgr.addTickable({
-        tick: () => {
-          const bridge = webUsbUhciBridge;
-          if (!bridge) return;
-          bridge.step_frames(WEBUSB_UHCI_FRAMES_PER_TICK);
+        // Tick UHCI at 1kHz-equivalent cadence (approximate: 8 frames per 8ms IO tick).
+        mgr.addTickable({
+          tick: () => {
+            const bridge = webUsbUhciBridge;
+            if (!bridge) return;
+            bridge.step_frames(WEBUSB_UHCI_FRAMES_PER_TICK);
 
-          const level = bridge.irq_level();
-          if (level && !webUsbUhciIrqAsserted) {
-            mgr.irqSink.raiseIrq(WEBUSB_UHCI_IRQ_LINE);
-            webUsbUhciIrqAsserted = true;
-          } else if (!level && webUsbUhciIrqAsserted) {
-            mgr.irqSink.lowerIrq(WEBUSB_UHCI_IRQ_LINE);
-            webUsbUhciIrqAsserted = false;
-          }
-        },
-      });
-
-      if (!usbPassthroughRuntime) {
-        usbPassthroughRuntime = new WebUsbPassthroughRuntime({
-          bridge: webUsbUhciBridge,
-          port: ctx,
-          pollIntervalMs: 0,
-          initiallyBlocked: !usbAvailable,
+            const level = bridge.irq_level();
+            if (level && !webUsbUhciIrqAsserted) {
+              mgr.irqSink.raiseIrq(WEBUSB_UHCI_IRQ_LINE);
+              webUsbUhciIrqAsserted = true;
+            } else if (!level && webUsbUhciIrqAsserted) {
+              mgr.irqSink.lowerIrq(WEBUSB_UHCI_IRQ_LINE);
+              webUsbUhciIrqAsserted = false;
+            }
+          },
         });
-        usbPassthroughRuntime.start();
-        if (import.meta.env.DEV) {
-          usbPassthroughDebugTimer = setInterval(() => {
-            console.debug("[io.worker] WebUSB UHCI pending_summary()", usbPassthroughRuntime?.pendingSummary());
-          }, 1000) as unknown as number;
-        }
-      }
 
-      if (lastUsbSelected) {
-        applyUsbSelectedToWebUsbUhciBridge(webUsbUhciBridge, lastUsbSelected);
+        if (!usbPassthroughRuntime) {
+          usbPassthroughRuntime = new WebUsbPassthroughRuntime({
+            bridge: webUsbUhciBridge,
+            port: ctx,
+            pollIntervalMs: 0,
+            initiallyBlocked: !usbAvailable,
+          });
+          usbPassthroughRuntime.start();
+          if (import.meta.env.DEV) {
+            usbPassthroughDebugTimer = setInterval(() => {
+              console.debug("[io.worker] WebUSB UHCI pending_summary()", usbPassthroughRuntime?.pendingSummary());
+            }, 1000) as unknown as number;
+          }
+        }
+
+        if (lastUsbSelected) {
+          try {
+            applyUsbSelectedToWebUsbUhciBridge(webUsbUhciBridge, lastUsbSelected);
+            webUsbGuestAttached = lastUsbSelected.ok;
+            webUsbGuestLastError = null;
+          } catch (err) {
+            console.warn("[io.worker] Failed to apply usb.selected to WebUsbUhciBridge", err);
+            webUsbGuestAttached = false;
+            webUsbGuestLastError = `Failed to apply usb.selected to WebUsbUhciBridge: ${formatWebUsbGuestError(err)}`;
+          }
+        } else {
+          webUsbGuestAttached = false;
+          webUsbGuestLastError = null;
+        }
+      } catch (err) {
+        console.warn("[io.worker] Failed to initialize WebUSB UHCI bridge", err);
+        webUsbUhciBridge = null;
+        webUsbUhciIrqAsserted = false;
+        webUsbGuestAttached = false;
+        webUsbGuestLastError = `Failed to initialize WebUsbUhciBridge: ${formatWebUsbGuestError(err)}`;
       }
-    } catch (err) {
-      console.warn("[io.worker] Failed to initialize WebUSB UHCI bridge", err);
-      webUsbUhciBridge = null;
-      webUsbUhciIrqAsserted = false;
+      emitWebUsbGuestStatus();
+    } else {
+      // Guest-visible WebUSB passthrough requires `WebUsbUhciBridge`; if it is missing, surface an "unavailable" status.
+      webUsbGuestAttached = false;
+      if (usbAvailable) {
+        webUsbGuestLastError = "WebUsbUhciBridge export unavailable (guest-visible WebUSB passthrough unsupported in this WASM build).";
+      } else {
+        webUsbGuestLastError = null;
+      }
+      emitWebUsbGuestStatus();
     }
-    return;
   }
 }
 
@@ -1233,11 +1299,26 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       if (webUsbUhciBridge) {
         try {
           applyUsbSelectedToWebUsbUhciBridge(webUsbUhciBridge, msg);
+          webUsbGuestAttached = msg.ok;
+          webUsbGuestLastError = null;
         } catch (err) {
           console.warn("[io.worker] Failed to apply usb.selected to WebUsbUhciBridge", err);
+          webUsbGuestAttached = false;
+          webUsbGuestLastError = `Failed to apply usb.selected to WebUsbUhciBridge: ${formatWebUsbGuestError(err)}`;
+        }
+      } else {
+        webUsbGuestAttached = false;
+        if (!msg.ok) {
+          webUsbGuestLastError = null;
+        } else if (wasmApi && !wasmApi.WebUsbUhciBridge) {
+          webUsbGuestLastError =
+            "WebUsbUhciBridge export unavailable (guest-visible WebUSB passthrough unsupported in this WASM build).";
+        } else {
+          webUsbGuestLastError = null;
         }
       }
       usbDemo?.onUsbSelected(msg);
+      emitWebUsbGuestStatus();
 
       // Dev-only smoke test: once a device is selected on the main thread, request the
       // first 18 bytes of the device descriptor to prove the cross-thread broker works.

@@ -1,11 +1,14 @@
 import {
   getTransferablesForUsbCompletionMessage,
   isUsbActionMessage,
+  isUsbGuestWebUsbStatusMessage,
   isUsbQuerySelectedMessage,
   isUsbSelectDeviceMessage,
   usbErrorCompletion,
   type UsbActionMessage,
   type UsbCompletionMessage,
+  type UsbGuestWebUsbSnapshot,
+  type UsbGuestWebUsbStatusMessage,
   type UsbHostAction,
   type UsbHostCompletion,
   type UsbRingAttachMessage,
@@ -83,6 +86,7 @@ export class UsbBroker {
   private device: USBDevice | null = null;
   private backend: WebUsbBackend | null = null;
   private selectedInfo: UsbDeviceInfo | null = null;
+  private guestStatus: UsbGuestWebUsbSnapshot | null = null;
 
   private disconnectError: string | null = null;
   private disconnectSignal = createDeferred<string>();
@@ -322,6 +326,12 @@ export class UsbBroker {
           return;
         }
 
+        if (isUsbGuestWebUsbStatusMessage(data)) {
+          this.guestStatus = data.snapshot;
+          this.broadcastGuestStatus({ type: "usb.guest.status", snapshot: data.snapshot });
+          return;
+        }
+
         // If the message uses the `usb.action` envelope but fails schema validation, synthesize an
         // error completion (when possible) so worker-side runtimes don't deadlock waiting for a reply.
         if (isRecord(data) && data.type === "usb.action") {
@@ -352,6 +362,13 @@ export class UsbBroker {
         this.postToPort(port, { type: "usb.selected", ok: true, info: this.selectedInfo } satisfies UsbSelectedMessage);
       } else if (this.disconnectError) {
         this.postToPort(port, { type: "usb.selected", ok: false, error: this.disconnectError } satisfies UsbSelectedMessage);
+      }
+
+      if (this.guestStatus) {
+        this.postToPort(
+          port,
+          { type: "usb.guest.status", snapshot: this.guestStatus } satisfies UsbGuestWebUsbStatusMessage,
+        );
       }
     }
   }
@@ -554,7 +571,10 @@ export class UsbBroker {
     this.broadcast({ type: "usb.selected", ok: false, error: reason } satisfies UsbSelectedMessage);
   }
 
-  private postToPort(port: MessagePort | Worker, msg: UsbCompletionMessage | UsbSelectedMessage | UsbRingAttachMessage): void {
+  private postToPort(
+    port: MessagePort | Worker,
+    msg: UsbCompletionMessage | UsbSelectedMessage | UsbGuestWebUsbStatusMessage | UsbRingAttachMessage,
+  ): void {
     const transfer = msg.type === "usb.completion" ? getTransferablesForUsbCompletionMessage(msg) : undefined;
     if (transfer) {
       try {
@@ -581,6 +601,12 @@ export class UsbBroker {
   }
 
   private broadcast(msg: UsbSelectedMessage): void {
+    for (const port of this.ports) {
+      this.postToPort(port, msg);
+    }
+  }
+
+  private broadcastGuestStatus(msg: UsbGuestWebUsbStatusMessage): void {
     for (const port of this.ports) {
       this.postToPort(port, msg);
     }

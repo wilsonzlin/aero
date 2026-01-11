@@ -112,6 +112,12 @@ describe("usb/usb_proxy_protocol", () => {
     const ringAttach = { type: "usb.ringAttach", actionRing: new SharedArrayBuffer(16), completionRing: new SharedArrayBuffer(16) };
     expect(isUsbRingAttachMessage(ringAttach)).toBe(true);
     expect(isUsbProxyMessage(ringAttach)).toBe(true);
+    expect(
+      isUsbProxyMessage({
+        type: "usb.guest.status",
+        snapshot: { available: true, attached: false, blocked: true, rootPort: 0, lastError: null },
+      }),
+    ).toBe(true);
 
     expect(isUsbProxyMessage({ type: "usb.action", action: { kind: "bulkIn", id: 1 } })).toBe(false);
     expect(isUsbProxyMessage({ type: "unknown" })).toBe(false);
