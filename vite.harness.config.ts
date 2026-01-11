@@ -5,7 +5,7 @@
 // - Importing source modules across the repo (e.g. `/web/src/...`) in a browser context
 //
 // The production/canonical browser host lives in `web/` (see ADR 0001).
-import { defineConfig, type Plugin } from 'vite';
+import { defineConfig, type Connect, type Plugin } from 'vite';
 
 import {
   baselineSecurityHeaders,
@@ -17,8 +17,8 @@ const coopCoepSetting = (process.env.VITE_DISABLE_COOP_COEP ?? '').toLowerCase()
 const coopCoepDisabled = coopCoepSetting === '1' || coopCoepSetting === 'true';
 
 function wasmMimeTypePlugin(): Plugin {
-  const installWasmMiddleware = (middlewares: { use: (...args: any[]) => any }) => {
-    middlewares.use((req: { url?: string }, res: { setHeader: (name: string, value: string) => void }, next: () => void) => {
+  const installWasmMiddleware = (middlewares: Connect.Server) => {
+    middlewares.use((req, res, next) => {
       // `instantiateStreaming` requires the correct MIME type.
       const pathname = req.url?.split('?', 1)[0];
       if (pathname?.endsWith('.wasm')) {
