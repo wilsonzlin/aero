@@ -32,6 +32,14 @@ const TD_CTRL_ACTIVE: u32 = 1 << 23;
 const TD_CTRL_IOC: u32 = 1 << 24;
 const TD_CTRL_ACTLEN_MASK: u32 = 0x7FF;
 
+// Error bits (mirrors `aero_usb::uhci` constants).
+const TD_CTRL_BITSTUFF: u32 = 1 << 17;
+const TD_CTRL_CRCERR: u32 = 1 << 18;
+const TD_CTRL_NAK: u32 = 1 << 19;
+const TD_CTRL_BABBLE: u32 = 1 << 20;
+const TD_CTRL_DBUFERR: u32 = 1 << 21;
+const TD_CTRL_STALLED: u32 = 1 << 22;
+
 const TD_TOKEN_DEVADDR_SHIFT: u32 = 8;
 const TD_TOKEN_ENDPT_SHIFT: u32 = 15;
 const TD_TOKEN_D: u32 = 1 << 19;
@@ -170,6 +178,7 @@ enum HarnessPhase {
 struct ControlChain {
     first_td: u32,
     last_td: u32,
+    td_addrs: Vec<u32>,
     data_tds: Vec<(u32, u32)>, // (td_addr, buf_addr)
     direction_in: bool,
 }
@@ -177,6 +186,46 @@ struct ControlChain {
 impl ControlChain {
     fn is_complete(&self, mem: &VecMemory) -> bool {
         mem.read_u32(self.last_td + 4) & TD_CTRL_ACTIVE == 0
+    }
+
+    fn error_reason(&self, mem: &VecMemory) -> Option<String> {
+        for td_addr in &self.td_addrs {
+            let ctrl_sts = mem.read_u32(*td_addr + 4);
+            if ctrl_sts & TD_CTRL_ACTIVE != 0 {
+                continue;
+            }
+
+            // Ignore the "NAK" bit for detection; it's used while ACTIVE.
+            let err_bits = ctrl_sts & (TD_CTRL_STALLED | TD_CTRL_CRCERR | TD_CTRL_BABBLE | TD_CTRL_DBUFERR | TD_CTRL_BITSTUFF);
+            if err_bits == 0 {
+                continue;
+            }
+
+            let mut reasons = Vec::new();
+            if err_bits & TD_CTRL_STALLED != 0 {
+                reasons.push("stall");
+            }
+            if err_bits & TD_CTRL_CRCERR != 0 {
+                reasons.push("crc/timeout");
+            }
+            if err_bits & TD_CTRL_BABBLE != 0 {
+                reasons.push("babble");
+            }
+            if err_bits & TD_CTRL_DBUFERR != 0 {
+                reasons.push("dbuferr");
+            }
+            if err_bits & TD_CTRL_BITSTUFF != 0 {
+                reasons.push("bitstuff");
+            }
+
+            let reason = if reasons.is_empty() {
+                "unknown".to_string()
+            } else {
+                reasons.join("+")
+            };
+            return Some(format!("UHCI TD error at 0x{td_addr:08x}: {reason} (ctrl_sts=0x{ctrl_sts:08x})"));
+        }
+        None
     }
 
     fn collect_in_bytes(&self, mem: &VecMemory) -> Vec<u8> {
@@ -215,6 +264,8 @@ struct WebUsbProxyDeviceInner {
     ctl_in_offset: usize,
     ctl_action_id: Option<u32>,
     ctl_action_kind: Option<&'static str>,
+
+    last_error: Option<String>,
 }
 
 impl WebUsbProxyDeviceInner {
@@ -233,6 +284,7 @@ impl WebUsbProxyDeviceInner {
             ctl_in_offset: 0,
             ctl_action_id: None,
             ctl_action_kind: None,
+            last_error: None,
         }
     }
 
@@ -263,6 +315,7 @@ impl WebUsbProxyDeviceInner {
         self.ctl_in_offset = 0;
         self.ctl_action_id = None;
         self.ctl_action_kind = None;
+        self.last_error = None;
         self.ctl_setup = Some(setup);
     }
 
@@ -360,6 +413,10 @@ impl WebUsbProxyDeviceInner {
         self.ctl_expected_len = 0;
         self.ctl_dir_in = false;
     }
+
+    fn take_last_error(&mut self) -> Option<String> {
+        self.last_error.take()
+    }
 }
 
 #[derive(Clone)]
@@ -387,6 +444,7 @@ impl UsbDevice for WebUsbProxyDevice {
         inner.pending_address = None;
         inner.actions.clear();
         inner.completions.clear();
+        inner.last_error = None;
         inner.begin_control_transfer(BusSetupPacket {
             request_type: 0,
             request: 0,
@@ -474,8 +532,14 @@ impl UsbDevice for WebUsbProxyDevice {
                             inner.ctl_in_buf = data;
                             inner.ctl_in_offset = 0;
                         }
-                        UsbHostCompletionIn::Stall => return UsbHandshake::Stall,
-                        UsbHostCompletionIn::Error { .. } => return UsbHandshake::Timeout,
+                        UsbHostCompletionIn::Stall => {
+                            inner.last_error = Some("WebUSB controlIn stalled".to_string());
+                            return UsbHandshake::Stall;
+                        }
+                        UsbHostCompletionIn::Error { message } => {
+                            inner.last_error = Some(message);
+                            return UsbHandshake::Timeout;
+                        }
                     },
                     _ => return UsbHandshake::Timeout,
                 }
@@ -515,8 +579,14 @@ impl UsbDevice for WebUsbProxyDevice {
                     inner.finish_control_transfer();
                     UsbHandshake::Ack { bytes: 0 }
                 }
-                UsbHostCompletionOut::Stall => UsbHandshake::Stall,
-                UsbHostCompletionOut::Error { .. } => UsbHandshake::Timeout,
+                UsbHostCompletionOut::Stall => {
+                    inner.last_error = Some("WebUSB controlOut stalled".to_string());
+                    UsbHandshake::Stall
+                }
+                UsbHostCompletionOut::Error { message } => {
+                    inner.last_error = Some(message);
+                    UsbHandshake::Timeout
+                }
             },
             _ => UsbHandshake::Timeout,
         }
@@ -580,6 +650,8 @@ fn build_control_in_chain(
     let status_td = alloc.alloc(0x20, 0x10);
     tds.push((status_td, 0, 0, PID_OUT, true));
 
+    let td_addrs: Vec<u32> = tds.iter().map(|(td_addr, _, _, _, _)| *td_addr).collect();
+
     for i in 0..tds.len() {
         let (td_addr, buf_addr, len, pid, dtoggle) = tds[i];
         let link = if i + 1 == tds.len() {
@@ -604,6 +676,7 @@ fn build_control_in_chain(
     ControlChain {
         first_td: setup_td,
         last_td: status_td,
+        td_addrs,
         data_tds,
         direction_in: true,
     }
@@ -650,9 +723,12 @@ fn build_control_out_no_data_chain(
     write_qh(mem, qh_addr, LINK_PTR_T, setup_td);
     install_frame_list(mem, fl_base, qh_addr);
 
+    let td_addrs = vec![setup_td, status_td];
+
     ControlChain {
         first_td: setup_td,
         last_td: status_td,
+        td_addrs,
         data_tds: Vec::new(),
         direction_in: false,
     }
@@ -738,6 +814,21 @@ impl WebUsbUhciPassthroughHarness {
     pub fn tick(&mut self) {
         // Drive one UHCI frame worth of work.
         self.ctrl.step_frame(&mut self.mem, &mut self.irq);
+
+        if let Some(chain) = &self.pending_chain {
+            if let Some(err) = chain.error_reason(&self.mem) {
+                self.phase = HarnessPhase::Error;
+                self.phase_detail = err;
+                self.pending_chain = None;
+                return;
+            }
+        }
+        if let Some(err) = self.device.borrow_mut().take_last_error() {
+            self.phase = HarnessPhase::Error;
+            self.phase_detail = err;
+            self.pending_chain = None;
+            return;
+        }
 
         match self.phase {
             HarnessPhase::ResetPort => {
