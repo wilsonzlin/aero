@@ -1,6 +1,6 @@
 use aero_snapshot::RamMode;
 use firmware::bios::{Bios, BiosConfig};
-use machine::{CpuExit, InMemoryDisk, MemoryAccess};
+use machine::{CpuExit, InMemoryDisk, MemoryAccess, FLAG_CF, FLAG_ZF, FLAG_ALWAYS_ON};
 use vm::{SnapshotError, SnapshotOptions, Vm};
 
 fn boot_sector_with(bytes: &[u8]) -> [u8; 512] {
@@ -301,4 +301,68 @@ fn snapshot_restore_full_snapshot_ignores_existing_last_snapshot_id() {
     assert_eq!(restored.cpu.rip, expected_rip);
     assert_eq!(restored.cpu.cs.selector, expected_cs);
     assert_eq!(restored.mem.read_u8(0x7C00), expected_boot_opcode);
+}
+
+#[test]
+fn snapshot_round_trip_preserves_cpu_registers_segments_and_flags() {
+    let cfg = BiosConfig {
+        memory_size_bytes: 16 * 1024 * 1024,
+        boot_drive: 0x80,
+        ..BiosConfig::default()
+    };
+    let bios = Bios::new(cfg.clone());
+    let disk = InMemoryDisk::from_boot_sector(boot_sector_with(&[]));
+
+    let mut vm = Vm::new(16 * 1024 * 1024, bios, disk);
+    vm.reset();
+
+    vm.cpu.rax = 0x1122_3344_5566_7788;
+    vm.cpu.rbx = 0x8877_6655_4433_2211;
+    vm.cpu.rcx = 0xDEAD_BEEF;
+    vm.cpu.rdx = 0xFEED_FACE;
+    vm.cpu.rsi = 0xA5A5_A5A5;
+    vm.cpu.rdi = 0x5A5A_5A5A;
+    vm.cpu.rbp = 0x1357_9BDF;
+    vm.cpu.rsp = 0x2468_ACF0;
+    vm.cpu.rip = 0x7C55;
+
+    vm.cpu.cs.selector = 0x1111;
+    vm.cpu.ds.selector = 0x2222;
+    vm.cpu.es.selector = 0x3333;
+    vm.cpu.ss.selector = 0x4444;
+
+    // Deliberately omit FLAG_ALWAYS_ON to ensure restores always re-assert it.
+    vm.cpu.rflags = FLAG_CF | FLAG_ZF;
+
+    vm.cpu.pending_bios_int = Some(0x10);
+    vm.cpu.halted = true;
+
+    let snapshot = vm.save_snapshot(SnapshotOptions::default()).unwrap();
+
+    let expected_rflags = (FLAG_CF | FLAG_ZF) | FLAG_ALWAYS_ON;
+
+    let bios2 = Bios::new(cfg);
+    let disk2 = InMemoryDisk::from_boot_sector(boot_sector_with(&[]));
+    let mut restored = Vm::new(16 * 1024 * 1024, bios2, disk2);
+    restored.reset();
+    restored.restore_snapshot(&snapshot).unwrap();
+
+    assert_eq!(restored.cpu.rax, 0x1122_3344_5566_7788);
+    assert_eq!(restored.cpu.rbx, 0x8877_6655_4433_2211);
+    assert_eq!(restored.cpu.rcx, 0xDEAD_BEEF);
+    assert_eq!(restored.cpu.rdx, 0xFEED_FACE);
+    assert_eq!(restored.cpu.rsi, 0xA5A5_A5A5);
+    assert_eq!(restored.cpu.rdi, 0x5A5A_5A5A);
+    assert_eq!(restored.cpu.rbp, 0x1357_9BDF);
+    assert_eq!(restored.cpu.rsp, 0x2468_ACF0);
+    assert_eq!(restored.cpu.rip, 0x7C55);
+
+    assert_eq!(restored.cpu.cs.selector, 0x1111);
+    assert_eq!(restored.cpu.ds.selector, 0x2222);
+    assert_eq!(restored.cpu.es.selector, 0x3333);
+    assert_eq!(restored.cpu.ss.selector, 0x4444);
+
+    assert_eq!(restored.cpu.rflags, expected_rflags);
+    assert_eq!(restored.cpu.pending_bios_int, Some(0x10));
+    assert!(restored.cpu.halted);
 }
