@@ -2872,6 +2872,13 @@ static NTSTATUS APIENTRY AeroGpuDdiControlInterrupt(_In_ const HANDLE hAdapter,
             KIRQL oldIrql;
             KeAcquireSpinLock(&adapter->IrqEnableLock, &oldIrql);
 
+            ULONG enable = 0;
+            if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
+                enable = adapter->IrqEnableMask;
+            } else {
+                enable = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE);
+            }
+
             /*
              * Clear any pending vblank status before enabling delivery.
              *
@@ -2879,27 +2886,23 @@ static NTSTATUS APIENTRY AeroGpuDdiControlInterrupt(_In_ const HANDLE hAdapter,
              * IRQ is masked; without this defensive ACK, a later enable could
              * trigger an immediate "stale" interrupt and break
              * D3DKMTWaitForVerticalBlankEvent pacing.
+             *
+             * Only clear the bit when transitioning from disabled -> enabled to
+             * avoid dropping an in-flight vblank interrupt if dxgkrnl calls
+             * EnableInterrupt repeatedly.
              */
-            if (EnableInterrupt) {
+            if (EnableInterrupt && (enable & AEROGPU_IRQ_SCANOUT_VBLANK) == 0) {
                 AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, AEROGPU_IRQ_SCANOUT_VBLANK);
             }
 
-            ULONG enable = 0;
-            if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
-                enable = adapter->IrqEnableMask;
-                if (EnableInterrupt) {
-                    enable |= AEROGPU_IRQ_SCANOUT_VBLANK;
-                } else {
-                    enable &= ~AEROGPU_IRQ_SCANOUT_VBLANK;
-                }
-                adapter->IrqEnableMask = enable;
+            if (EnableInterrupt) {
+                enable |= AEROGPU_IRQ_SCANOUT_VBLANK;
             } else {
-                enable = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE);
-                if (EnableInterrupt) {
-                    enable |= AEROGPU_IRQ_SCANOUT_VBLANK;
-                } else {
-                    enable &= ~AEROGPU_IRQ_SCANOUT_VBLANK;
-                }
+                enable &= ~AEROGPU_IRQ_SCANOUT_VBLANK;
+            }
+
+            if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
+                adapter->IrqEnableMask = enable;
             }
 
             AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, enable);
