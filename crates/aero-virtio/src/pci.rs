@@ -659,7 +659,7 @@ impl VirtioPciDevice {
                 self.config_space[cap_off + 2] = *cap_len;
                 self.config_space[cap_off + 3] = *cfg_type;
                 self.config_space[cap_off + 4] = 0; // BAR0
-                                                    // padding [5..8]
+                                                     // padding [5..8]
                 self.config_space[cap_off + 8..cap_off + 12].copy_from_slice(&offset.to_le_bytes());
                 self.config_space[cap_off + 12..cap_off + 16]
                     .copy_from_slice(&length.to_le_bytes());

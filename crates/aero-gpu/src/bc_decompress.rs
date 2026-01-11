@@ -391,13 +391,14 @@ mod tests {
         // Row 0 alpha 255.
         assert_eq!(&rgba[0..4], &[255, 255, 255, 255]);
         // Row 1 alpha 0.
-        let row1 = 4 * 4;
+        let row_stride = 4 * 4;
+        let row1 = row_stride;
         assert_eq!(&rgba[row1..row1 + 4], &[255, 255, 255, 0]);
         // Row 2 alpha 218 (floor(6*255/7)).
-        let row2 = 2 * 4 * 4;
+        let row2 = 2 * row_stride;
         assert_eq!(&rgba[row2..row2 + 4], &[255, 255, 255, 218]);
         // Row 3 alpha 36 (floor(1*255/7)).
-        let row3 = 3 * 4 * 4;
+        let row3 = 3 * row_stride;
         assert_eq!(&rgba[row3..row3 + 4], &[255, 255, 255, 36]);
     }
 
@@ -420,13 +421,14 @@ mod tests {
         // Row 0 alpha 255.
         assert_eq!(&rgba[0..4], &[255, 255, 255, 255]);
         // Row 1 alpha 0.
-        let row1 = 4 * 4;
+        let row_stride = 4 * 4;
+        let row1 = row_stride;
         assert_eq!(&rgba[row1..row1 + 4], &[255, 255, 255, 0]);
         // Row 2 alpha 136.
-        let row2 = 2 * 4 * 4;
+        let row2 = 2 * row_stride;
         assert_eq!(&rgba[row2..row2 + 4], &[255, 255, 255, 136]);
         // Row 3 alpha 17.
-        let row3 = 3 * 4 * 4;
+        let row3 = 3 * row_stride;
         assert_eq!(&rgba[row3..row3 + 4], &[255, 255, 255, 17]);
     }
 }

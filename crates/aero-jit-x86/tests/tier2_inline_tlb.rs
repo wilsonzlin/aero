@@ -421,8 +421,8 @@ fn run_trace(
     memory.read(&store, 0, &mut got_mem).unwrap();
 
     let mut gpr = [0u64; 16];
-    for (i, reg) in gpr.iter_mut().enumerate() {
-        *reg = read_u64_le(&got_mem, cpu_ptr_usize + (abi::CPU_GPR_OFF[i] as usize));
+    for (dst, off) in gpr.iter_mut().zip(abi::CPU_GPR_OFF.iter()) {
+        *dst = read_u64_le(&got_mem, cpu_ptr_usize + (*off as usize));
     }
 
     (ret, got_mem[..ram.len()].to_vec(), gpr, *store.data())

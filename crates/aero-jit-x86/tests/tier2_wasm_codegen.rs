@@ -421,9 +421,9 @@ fn write_cpu_state(bytes: &mut [u8], cpu: &aero_cpu_core::state::CpuState) {
         bytes.len() >= abi::CPU_STATE_SIZE as usize,
         "cpu state buffer too small"
     );
-    for (i, gpr) in cpu.gpr.iter().enumerate() {
-        let off = abi::CPU_GPR_OFF[i] as usize;
-        bytes[off..off + 8].copy_from_slice(&gpr.to_le_bytes());
+    for (&off, reg) in abi::CPU_GPR_OFF.iter().zip(cpu.gpr.iter()) {
+        let off = off as usize;
+        bytes[off..off + 8].copy_from_slice(&reg.to_le_bytes());
     }
     bytes[abi::CPU_RIP_OFF as usize..abi::CPU_RIP_OFF as usize + 8]
         .copy_from_slice(&cpu.rip.to_le_bytes());
@@ -433,8 +433,8 @@ fn write_cpu_state(bytes: &mut [u8], cpu: &aero_cpu_core::state::CpuState) {
 
 fn read_cpu_state(bytes: &[u8]) -> ([u64; 16], u64, u64) {
     let mut gpr = [0u64; 16];
-    for (i, reg) in gpr.iter_mut().enumerate() {
-        *reg = read_u64_le(bytes, abi::CPU_GPR_OFF[i] as usize);
+    for (dst, off) in gpr.iter_mut().zip(abi::CPU_GPR_OFF.iter()) {
+        *dst = read_u64_le(bytes, *off as usize);
     }
     let rip = read_u64_le(bytes, abi::CPU_RIP_OFF as usize);
     let rflags = read_u64_le(bytes, abi::CPU_RFLAGS_OFF as usize);

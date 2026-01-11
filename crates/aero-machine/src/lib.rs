@@ -408,7 +408,7 @@ impl CpuBus for Bus<'_> {
     fn fetch(&mut self, vaddr: u64, max_len: usize) -> Result<[u8; 15], Exception> {
         let mut buf = [0u8; 15];
         let len = max_len.min(15);
-        for (i, slot) in buf.iter_mut().enumerate().take(len) {
+        for (i, slot) in buf[..len].iter_mut().enumerate() {
             *slot = self.mem.read_u8(vaddr.wrapping_add(i as u64));
         }
         Ok(buf)

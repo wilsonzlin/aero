@@ -4635,7 +4635,7 @@ impl AerogpuD3d11Executor {
         if dirty_len == 0 {
             return Ok(());
         }
-        if dirty.start % wgpu::COPY_BUFFER_ALIGNMENT != 0 {
+        if !dirty.start.is_multiple_of(wgpu::COPY_BUFFER_ALIGNMENT) {
             bail!(
                 "buffer {buffer_handle} dirty range start {} does not respect COPY_BUFFER_ALIGNMENT",
                 dirty.start
@@ -4670,7 +4670,8 @@ impl AerogpuD3d11Executor {
                 .read(gpa + (offset - dirty.start), &mut tmp)
                 .map_err(anyhow_guest_mem)?;
 
-            let write_len = if !n.is_multiple_of(wgpu::COPY_BUFFER_ALIGNMENT as usize) {
+            let align = wgpu::COPY_BUFFER_ALIGNMENT as usize;
+            let write_len = if !n.is_multiple_of(align) {
                 if offset + n as u64 != dirty.end || dirty.end != buffer_size {
                     bail!("buffer {buffer_handle} upload is not COPY_BUFFER_ALIGNMENT-aligned");
                 }

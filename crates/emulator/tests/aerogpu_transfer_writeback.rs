@@ -16,6 +16,17 @@ use emulator::io::pci::MmioDevice;
 use memory::Bus;
 use memory::MemoryBus;
 
+fn test_device_config() -> AeroGpuDeviceConfig {
+    AeroGpuDeviceConfig {
+        executor: AeroGpuExecutorConfig {
+            verbose: false,
+            keep_last_submissions: 0,
+            fence_completion: AeroGpuFenceCompletionMode::Deferred,
+        },
+        ..Default::default()
+    }
+}
+
 fn push_u32(out: &mut Vec<u8>, v: u32) {
     out.extend_from_slice(&v.to_le_bytes());
 }
@@ -72,16 +83,7 @@ fn drive_until_fence(mem: &mut Bus, dev: &mut AeroGpuPciDevice, fence: u64) {
 fn aerogpu_copy_texture2d_writeback_updates_guest_memory() {
     let mut mem = Bus::new(0x20_000);
 
-    let cfg = AeroGpuDeviceConfig {
-        executor: AeroGpuExecutorConfig {
-            verbose: false,
-            keep_last_submissions: 0,
-            fence_completion: AeroGpuFenceCompletionMode::Deferred,
-        },
-        ..Default::default()
-    };
-
-    let mut dev = AeroGpuPciDevice::new(cfg, 0);
+    let mut dev = AeroGpuPciDevice::new(test_device_config(), 0);
     dev.set_backend(Box::new(
         NativeAeroGpuBackend::new_headless().expect("native backend should initialize"),
     ));
@@ -260,16 +262,7 @@ fn aerogpu_copy_texture2d_writeback_updates_guest_memory() {
 fn aerogpu_copy_buffer_writeback_updates_guest_memory() {
     let mut mem = Bus::new(0x20_000);
 
-    let cfg = AeroGpuDeviceConfig {
-        executor: AeroGpuExecutorConfig {
-            verbose: false,
-            keep_last_submissions: 0,
-            fence_completion: AeroGpuFenceCompletionMode::Deferred,
-        },
-        ..Default::default()
-    };
-
-    let mut dev = AeroGpuPciDevice::new(cfg, 0);
+    let mut dev = AeroGpuPciDevice::new(test_device_config(), 0);
     dev.set_backend(Box::new(
         NativeAeroGpuBackend::new_headless().expect("native backend should initialize"),
     ));
@@ -412,16 +405,7 @@ fn aerogpu_copy_buffer_writeback_updates_guest_memory() {
 fn aerogpu_copy_buffer_writeback_respects_offsets() {
     let mut mem = Bus::new(0x20_000);
 
-    let cfg = AeroGpuDeviceConfig {
-        executor: AeroGpuExecutorConfig {
-            verbose: false,
-            keep_last_submissions: 0,
-            fence_completion: AeroGpuFenceCompletionMode::Deferred,
-        },
-        ..Default::default()
-    };
-
-    let mut dev = AeroGpuPciDevice::new(cfg, 0);
+    let mut dev = AeroGpuPciDevice::new(test_device_config(), 0);
     dev.set_backend(Box::new(
         NativeAeroGpuBackend::new_headless().expect("native backend should initialize"),
     ));
@@ -584,16 +568,7 @@ fn aerogpu_copy_buffer_writeback_respects_offsets() {
 fn aerogpu_copy_texture2d_writeback_subrect_updates_guest_memory() {
     let mut mem = Bus::new(0x20_000);
 
-    let cfg = AeroGpuDeviceConfig {
-        executor: AeroGpuExecutorConfig {
-            verbose: false,
-            keep_last_submissions: 0,
-            fence_completion: AeroGpuFenceCompletionMode::Deferred,
-        },
-        ..Default::default()
-    };
-
-    let mut dev = AeroGpuPciDevice::new(cfg, 0);
+    let mut dev = AeroGpuPciDevice::new(test_device_config(), 0);
     dev.set_backend(Box::new(
         NativeAeroGpuBackend::new_headless().expect("native backend should initialize"),
     ));
@@ -799,16 +774,7 @@ fn aerogpu_copy_texture2d_writeback_subrect_updates_guest_memory() {
 fn aerogpu_copy_buffer_writeback_requires_guest_backing() {
     let mut mem = Bus::new(0x20_000);
 
-    let cfg = AeroGpuDeviceConfig {
-        executor: AeroGpuExecutorConfig {
-            verbose: false,
-            keep_last_submissions: 0,
-            fence_completion: AeroGpuFenceCompletionMode::Deferred,
-        },
-        ..Default::default()
-    };
-
-    let mut dev = AeroGpuPciDevice::new(cfg, 0);
+    let mut dev = AeroGpuPciDevice::new(test_device_config(), 0);
     dev.set_backend(Box::new(
         NativeAeroGpuBackend::new_headless().expect("native backend should initialize"),
     ));
@@ -924,16 +890,7 @@ fn aerogpu_copy_buffer_writeback_requires_guest_backing() {
 fn aerogpu_copy_texture2d_writeback_requires_guest_backing() {
     let mut mem = Bus::new(0x20_000);
 
-    let cfg = AeroGpuDeviceConfig {
-        executor: AeroGpuExecutorConfig {
-            verbose: false,
-            keep_last_submissions: 0,
-            fence_completion: AeroGpuFenceCompletionMode::Deferred,
-        },
-        ..Default::default()
-    };
-
-    let mut dev = AeroGpuPciDevice::new(cfg, 0);
+    let mut dev = AeroGpuPciDevice::new(test_device_config(), 0);
     dev.set_backend(Box::new(
         NativeAeroGpuBackend::new_headless().expect("native backend should initialize"),
     ));

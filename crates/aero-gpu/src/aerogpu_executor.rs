@@ -1872,6 +1872,7 @@ fn fs_main() -> @location(0) vec4<f32> {
         Ok(out)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn exec_copy_buffer(
         &mut self,
         args: CopyBufferArgs,
@@ -2031,6 +2032,7 @@ fn fs_main() -> @location(0) vec4<f32> {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn exec_copy_texture2d(
         &mut self,
         args: CopyTexture2dArgs,
@@ -2667,6 +2669,7 @@ fn fs_main() -> @location(0) vec4<f32> {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn exec_draw_indexed(
         &mut self,
         args: DrawIndexedArgs,

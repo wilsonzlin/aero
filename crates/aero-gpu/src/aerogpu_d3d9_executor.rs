@@ -1640,7 +1640,7 @@ impl AerogpuD3d9Executor {
                         "CREATE_BUFFER: size_bytes must be > 0".into(),
                     ));
                 }
-                if size_bytes % wgpu::COPY_BUFFER_ALIGNMENT != 0 {
+                if !size_bytes.is_multiple_of(wgpu::COPY_BUFFER_ALIGNMENT) {
                     return Err(AerogpuD3d9Error::Validation(format!(
                         "CREATE_BUFFER: size_bytes must be a multiple of {} (got {size_bytes})",
                         wgpu::COPY_BUFFER_ALIGNMENT
@@ -2237,9 +2237,10 @@ impl AerogpuD3d9Executor {
                         )));
                     }
 
-                    if dst_offset_bytes % wgpu::COPY_BUFFER_ALIGNMENT != 0
-                        || src_offset_bytes % wgpu::COPY_BUFFER_ALIGNMENT != 0
-                        || size_bytes % wgpu::COPY_BUFFER_ALIGNMENT != 0
+                    let align = wgpu::COPY_BUFFER_ALIGNMENT;
+                    if !dst_offset_bytes.is_multiple_of(align)
+                        || !src_offset_bytes.is_multiple_of(align)
+                        || !size_bytes.is_multiple_of(align)
                     {
                         return Err(AerogpuD3d9Error::Validation(format!(
                             "COPY_BUFFER: offsets and size must be {}-byte aligned (dst_offset_bytes={dst_offset_bytes} src_offset_bytes={src_offset_bytes} size_bytes={size_bytes})",

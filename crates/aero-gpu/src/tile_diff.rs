@@ -61,6 +61,7 @@ impl TileDiff {
         dirty
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn tile_differs(
         &self,
         frame_data: &[u8],

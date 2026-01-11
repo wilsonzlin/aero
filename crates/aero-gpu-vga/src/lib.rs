@@ -191,7 +191,7 @@ impl VgaDevice {
     pub fn set_text_mode_80x25(&mut self) {
         // Attribute mode control: bit0=0 => text.
         self.attribute[0x10] = 1 << 2; // line graphics enable
-                                       // Identity palette mapping for indices 0..15.
+        // Identity palette mapping for indices 0..15.
         for i in 0..16 {
             self.attribute[i] = i as u8;
         }

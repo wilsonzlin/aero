@@ -22,6 +22,17 @@ use emulator::io::pci::MmioDevice;
 use memory::Bus;
 use memory::MemoryBus;
 
+fn test_device_config() -> AeroGpuDeviceConfig {
+    AeroGpuDeviceConfig {
+        executor: AeroGpuExecutorConfig {
+            verbose: false,
+            keep_last_submissions: 0,
+            fence_completion: AeroGpuFenceCompletionMode::Deferred,
+        },
+        ..Default::default()
+    }
+}
+
 fn push_u8(out: &mut Vec<u8>, v: u8) {
     out.push(v);
 }
@@ -151,16 +162,7 @@ fn assemble_ps_passthrough_color() -> Vec<u8> {
 fn aerogpu_ring_submission_executes_d3d9_cmd_stream_and_presents_scanout() {
     let mut mem = Bus::new(0x40_000);
 
-    let cfg = AeroGpuDeviceConfig {
-        executor: AeroGpuExecutorConfig {
-            verbose: false,
-            keep_last_submissions: 0,
-            fence_completion: AeroGpuFenceCompletionMode::Deferred,
-        },
-        ..Default::default()
-    };
-
-    let mut dev = AeroGpuPciDevice::new(cfg, 0);
+    let mut dev = AeroGpuPciDevice::new(test_device_config(), 0);
     let backend = match NativeAeroGpuBackend::new_headless() {
         Ok(backend) => backend,
         Err(aero_gpu::AerogpuD3d9Error::AdapterNotFound) => {
@@ -525,16 +527,7 @@ fn aerogpu_ring_submission_executes_d3d9_cmd_stream_and_presents_scanout() {
 fn aerogpu_ring_submission_executes_d3d9_cmd_stream_with_alloc_table_and_dirty_ranges() {
     let mut mem = Bus::new(0x80_000);
 
-    let cfg = AeroGpuDeviceConfig {
-        executor: AeroGpuExecutorConfig {
-            verbose: false,
-            keep_last_submissions: 0,
-            fence_completion: AeroGpuFenceCompletionMode::Deferred,
-        },
-        ..Default::default()
-    };
-
-    let mut dev = AeroGpuPciDevice::new(cfg, 0);
+    let mut dev = AeroGpuPciDevice::new(test_device_config(), 0);
     let backend = match NativeAeroGpuBackend::new_headless() {
         Ok(backend) => backend,
         Err(aero_gpu::AerogpuD3d9Error::AdapterNotFound) => {
@@ -932,16 +925,7 @@ fn aerogpu_ring_submission_executes_d3d9_cmd_stream_with_alloc_table_and_dirty_r
 fn aerogpu_ring_submission_executes_win7_fixedfunc_triangle_stream() {
     let mut mem = Bus::new(0x40_000);
 
-    let cfg = AeroGpuDeviceConfig {
-        executor: AeroGpuExecutorConfig {
-            verbose: false,
-            keep_last_submissions: 0,
-            fence_completion: AeroGpuFenceCompletionMode::Deferred,
-        },
-        ..Default::default()
-    };
-
-    let mut dev = AeroGpuPciDevice::new(cfg, 0);
+    let mut dev = AeroGpuPciDevice::new(test_device_config(), 0);
     let backend = match NativeAeroGpuBackend::new_headless() {
         Ok(backend) => backend,
         Err(aero_gpu::AerogpuD3d9Error::AdapterNotFound) => {
@@ -1227,16 +1211,7 @@ fn aerogpu_ring_submission_executes_win7_fixedfunc_triangle_stream() {
 fn aerogpu_ring_submission_isolates_pixel_constants_per_context() {
     let mut mem = Bus::new(0x60_000);
 
-    let cfg = AeroGpuDeviceConfig {
-        executor: AeroGpuExecutorConfig {
-            verbose: false,
-            keep_last_submissions: 0,
-            fence_completion: AeroGpuFenceCompletionMode::Deferred,
-        },
-        ..Default::default()
-    };
-
-    let mut dev = AeroGpuPciDevice::new(cfg, 0);
+    let mut dev = AeroGpuPciDevice::new(test_device_config(), 0);
     let backend = match NativeAeroGpuBackend::new_headless() {
         Ok(backend) => backend,
         Err(aero_gpu::AerogpuD3d9Error::AdapterNotFound) => {
@@ -1643,16 +1618,7 @@ fn aerogpu_ring_submission_isolates_pixel_constants_per_context() {
 fn aerogpu_ring_submission_copy_texture2d_writeback_writes_guest_memory() {
     let mut mem = Bus::new(0x40_000);
 
-    let cfg = AeroGpuDeviceConfig {
-        executor: AeroGpuExecutorConfig {
-            verbose: false,
-            keep_last_submissions: 0,
-            fence_completion: AeroGpuFenceCompletionMode::Deferred,
-        },
-        ..Default::default()
-    };
-
-    let mut dev = AeroGpuPciDevice::new(cfg, 0);
+    let mut dev = AeroGpuPciDevice::new(test_device_config(), 0);
     let backend = match NativeAeroGpuBackend::new_headless() {
         Ok(backend) => backend,
         Err(aero_gpu::AerogpuD3d9Error::AdapterNotFound) => {
@@ -1842,16 +1808,7 @@ fn aerogpu_ring_submission_copy_texture2d_writeback_writes_guest_memory() {
 fn aerogpu_ring_submission_completes_fence_on_d3d9_executor_error() {
     let mut mem = Bus::new(0x40_000);
 
-    let cfg = AeroGpuDeviceConfig {
-        executor: AeroGpuExecutorConfig {
-            verbose: false,
-            keep_last_submissions: 0,
-            fence_completion: AeroGpuFenceCompletionMode::Deferred,
-        },
-        ..Default::default()
-    };
-
-    let mut dev = AeroGpuPciDevice::new(cfg, 0);
+    let mut dev = AeroGpuPciDevice::new(test_device_config(), 0);
     let backend = match NativeAeroGpuBackend::new_headless() {
         Ok(backend) => backend,
         Err(aero_gpu::AerogpuD3d9Error::AdapterNotFound) => {

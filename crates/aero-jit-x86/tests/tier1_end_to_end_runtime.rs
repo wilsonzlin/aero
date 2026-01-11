@@ -94,11 +94,13 @@ impl Interpreter<TestCpu> for Tier1Interpreter {
     }
 }
 
+type Tier1Dispatcher = ExecDispatcher<Tier1Interpreter, SharedWasmtimeBackend, Tier1CompileQueue>;
+type Tier1TestCompiler = Tier1Compiler<SharedWasmtimeBackend, SharedWasmtimeBackend>;
 type RuntimeSetup = (
     SharedWasmtimeBackend,
     Tier1CompileQueue,
-    ExecDispatcher<Tier1Interpreter, SharedWasmtimeBackend, Tier1CompileQueue>,
-    Tier1Compiler<SharedWasmtimeBackend, SharedWasmtimeBackend>,
+    Tier1Dispatcher,
+    Tier1TestCompiler,
     TestCpu,
 );
 

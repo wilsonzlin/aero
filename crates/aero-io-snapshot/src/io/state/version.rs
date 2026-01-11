@@ -311,14 +311,19 @@ impl<'a> SnapshotReader<'a> {
 pub mod codec {
     use super::{SnapshotError, SnapshotResult};
 
-    #[derive(Default)]
     pub struct Encoder {
         pub buf: Vec<u8>,
     }
 
+    impl Default for Encoder {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
     impl Encoder {
         pub fn new() -> Self {
-            Self::default()
+            Self { buf: Vec::new() }
         }
 
         pub fn bytes(mut self, bytes: &[u8]) -> Self {

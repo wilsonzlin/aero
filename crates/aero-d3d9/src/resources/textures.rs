@@ -659,21 +659,24 @@ fn decompress_bc3_to_bgra8(width: u32, height: u32, src: &[u8]) -> Result<Vec<u8
 }
 
 fn bc3_alpha_table(a0: u8, a1: u8) -> [u8; 8] {
+    let a0_u16 = u16::from(a0);
+    let a1_u16 = u16::from(a1);
+
     let mut table = [0u8; 8];
     table[0] = a0;
     table[1] = a1;
-    if a0 > a1 {
-        table[2] = ((6u16 * a0 as u16 + a1 as u16) / 7) as u8;
-        table[3] = ((5u16 * a0 as u16 + 2u16 * a1 as u16) / 7) as u8;
-        table[4] = ((4u16 * a0 as u16 + 3u16 * a1 as u16) / 7) as u8;
-        table[5] = ((3u16 * a0 as u16 + 4u16 * a1 as u16) / 7) as u8;
-        table[6] = ((2u16 * a0 as u16 + 5u16 * a1 as u16) / 7) as u8;
-        table[7] = ((a0 as u16 + 6u16 * a1 as u16) / 7) as u8;
+    if a0_u16 > a1_u16 {
+        table[2] = ((6u16 * a0_u16 + a1_u16) / 7) as u8;
+        table[3] = ((5u16 * a0_u16 + 2u16 * a1_u16) / 7) as u8;
+        table[4] = ((4u16 * a0_u16 + 3u16 * a1_u16) / 7) as u8;
+        table[5] = ((3u16 * a0_u16 + 4u16 * a1_u16) / 7) as u8;
+        table[6] = ((2u16 * a0_u16 + 5u16 * a1_u16) / 7) as u8;
+        table[7] = ((a0_u16 + 6u16 * a1_u16) / 7) as u8;
     } else {
-        table[2] = ((4u16 * a0 as u16 + a1 as u16) / 5) as u8;
-        table[3] = ((3u16 * a0 as u16 + 2u16 * a1 as u16) / 5) as u8;
-        table[4] = ((2u16 * a0 as u16 + 3u16 * a1 as u16) / 5) as u8;
-        table[5] = ((a0 as u16 + 4u16 * a1 as u16) / 5) as u8;
+        table[2] = ((4u16 * a0_u16 + a1_u16) / 5) as u8;
+        table[3] = ((3u16 * a0_u16 + 2u16 * a1_u16) / 5) as u8;
+        table[4] = ((2u16 * a0_u16 + 3u16 * a1_u16) / 5) as u8;
+        table[5] = ((a0_u16 + 4u16 * a1_u16) / 5) as u8;
         table[6] = 0;
         table[7] = 255;
     }

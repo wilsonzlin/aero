@@ -733,15 +733,15 @@ impl Cpu {
     /// `RDTSC` instruction semantics (writes EDX:EAX).
     pub fn instr_rdtsc(&mut self) {
         let tsc = self.time.read_tsc();
-        self.rax = (tsc as u32) as u64;
-        self.rdx = ((tsc >> 32) as u32) as u64;
+        self.rax = u64::from(tsc as u32);
+        self.rdx = u64::from((tsc >> 32) as u32);
     }
 
     /// `RDTSCP` instruction semantics (writes EDX:EAX and ECX = IA32_TSC_AUX).
     pub fn instr_rdtscp(&mut self) {
         let tsc = self.time.read_tsc();
-        self.rax = (tsc as u32) as u64;
-        self.rdx = ((tsc >> 32) as u32) as u64;
+        self.rax = u64::from(tsc as u32);
+        self.rdx = u64::from((tsc >> 32) as u32);
         self.rcx = self.msr.tsc_aux as u64;
     }
 
@@ -820,15 +820,15 @@ impl Cpu {
     pub fn instr_rdmsr(&mut self) -> Result<(), Exception> {
         let msr_index = self.rcx as u32;
         let value = self.rdmsr_value(msr_index)?;
-        self.rax = (value as u32) as u64;
-        self.rdx = ((value >> 32) as u32) as u64;
+        self.rax = u64::from(value as u32);
+        self.rdx = u64::from((value >> 32) as u32);
         Ok(())
     }
 
     /// WRMSR instruction semantics (ECX selects MSR, value from EDX:EAX).
     pub fn instr_wrmsr(&mut self) -> Result<(), Exception> {
         let msr_index = self.rcx as u32;
-        let value = (self.rdx << 32) | (self.rax as u32 as u64);
+        let value = (self.rdx << 32) | u64::from(self.rax as u32);
         self.wrmsr_value(msr_index, value)
     }
 

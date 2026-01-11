@@ -123,7 +123,7 @@ impl Ep0Control {
 }
 
 fn hub_bitmap_len(num_ports: usize) -> usize {
-    (num_ports + 1).div_ceil(8)
+    num_ports.saturating_add(1).div_ceil(8)
 }
 
 fn build_hub_config_descriptor(interrupt_bitmap_len: usize) -> Vec<u8> {

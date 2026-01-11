@@ -108,7 +108,7 @@ fn copy_rgba8_to_padded_strided(
 ) {
     debug_assert!(src_stride >= width.saturating_mul(4));
     debug_assert!((rgba.len() as u64) >= (src_stride as u64) * (height as u64));
-    debug_assert_eq!(padded_bpr % wgpu::COPY_BYTES_PER_ROW_ALIGNMENT, 0);
+    debug_assert!(padded_bpr.is_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT));
 
     let unpadded_bpr = width * 4;
     debug_assert!(padded_bpr >= unpadded_bpr);
