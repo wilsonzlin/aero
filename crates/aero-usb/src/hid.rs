@@ -2056,9 +2056,7 @@ impl UsbHidCompositeInput {
                 }
                 Some(status.to_le_bytes().to_vec())
             }
-            (0x81, REQ_GET_STATUS) => {
-                (setup.value == 0 && setup.index <= 2).then_some(vec![0, 0])
-            }
+            (0x81, REQ_GET_STATUS) => (setup.value == 0 && setup.index <= 2).then_some(vec![0, 0]),
             (0x82, REQ_GET_STATUS) => {
                 if setup.value != 0 {
                     return None;
