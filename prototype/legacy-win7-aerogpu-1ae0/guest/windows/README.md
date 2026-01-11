@@ -13,8 +13,12 @@ Notable differences from the supported stack:
 
 ## Canonical AeroGPU driver stack (supported)
 
-The in-tree, supported AeroGPU stack lives under `drivers/aerogpu/` and uses the current PCI IDs
-(`PCI\VEN_A3A0&DEV_0001` and `PCI\VEN_1AED&DEV_0001`).
+The in-tree, supported AeroGPU stack lives under `drivers/aerogpu/` and binds to the canonical PCI
+ID `PCI\VEN_A3A0&DEV_0001`.
+
+The legacy bring-up PCI ID `PCI\VEN_1AED&DEV_0001` is supported by the KMD for compatibility but is
+intentionally **not** matched by the shipped Win7 INFs (installing against it requires a custom
+INF).
 
 The canonical source of truth for **Windows driver binding** (PCI IDs, service names, INF names) is:
 

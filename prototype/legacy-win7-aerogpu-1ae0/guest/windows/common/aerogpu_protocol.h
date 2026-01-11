@@ -1,5 +1,15 @@
 #pragma once
 
+// WARNING: LEGACY/ARCHIVED PROTOTYPE (VEN_1AE0)
+//
+// This header describes the deprecated AeroGPU 1AE0 guest↔host ABI used only by the
+// archived prototype driver stack under `prototype/legacy-win7-aerogpu-1ae0/`.
+//
+// It is not referenced by the canonical Windows driver/device binding contract
+// (`docs/windows-device-contract.{md,json}`).
+//
+// Supported AeroGPU ABIs live under `drivers/aerogpu/protocol/` (vendors 1AED and A3A0).
+//
 // AeroGPU guest↔host ABI (minimal v1)
 //
 // This header is shared by the Windows kernel-mode miniport (KMD) and the

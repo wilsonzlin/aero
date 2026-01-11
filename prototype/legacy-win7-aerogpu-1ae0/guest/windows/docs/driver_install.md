@@ -4,6 +4,7 @@
 > **Archived prototype:** this driver stack is kept for historical reference and is **not** the supported Win7 AeroGPU driver package.
 >
 > - Targets the deprecated AeroGPU `VEN_1AE0` prototype device and does not match the supported AeroGPU ABIs (`VEN_A3A0` / `VEN_1AED`).
+> - Not referenced by the canonical Windows driver/device binding contract (`docs/windows-device-contract.{md,json}`).
 > - On Win7 x64 it is **not WOW64-complete** (no x86 UMD). **32-bit D3D9 apps will fail.**
 > - Use the supported Win7 driver package under [`drivers/aerogpu/packaging/win7/`](../../../../../drivers/aerogpu/packaging/win7/README.md)
 >   and stage via [`drivers/aerogpu/build/stage_packaging_win7.cmd`](../../../../../drivers/aerogpu/build/stage_packaging_win7.cmd).
@@ -72,7 +73,7 @@ If you generate a catalog (`aerogpu.cat`) via `inf2cat`, include it as well.
 ## Notes
 
 - PCI IDs: the prototype INF binds to `PCI\VEN_1AE0&DEV_0001`. The supported driver package binds to
-  `PCI\VEN_A3A0&DEV_0001` + `PCI\VEN_1AED&DEV_0001`.
+  `PCI\VEN_A3A0&DEV_0001` (legacy bring-up `PCI\VEN_1AED&DEV_0001` is KMD-supported but requires a custom INF).
 - Do not use class-code matching: older revisions of this prototype INF matched by display class code
   (`PCI\CC_030000`), which is extremely broad and can hijack display binding on unrelated devices.
   This is intentionally disabled; see comments in the INF.

@@ -12,6 +12,14 @@
 ;
 ; AeroGPU WDDM 1.1 display + D3D9 UMD driver package (Windows 7)
 ;
+; WARNING: LEGACY/ARCHIVED PROTOTYPE (VEN_1AE0)
+;
+; This INF targets the deprecated AeroGPU 1AE0 ABI and is not referenced by the
+; canonical Windows driver/device binding contract (docs/windows-device-contract.{md,json}).
+;
+; For supported installs, use the canonical Win7 AeroGPU package under:
+;   drivers/aerogpu/packaging/win7/aerogpu.inf
+;
 ; This is a minimal, test-signing friendly INF. It installs:
 ;  - aerogpu_kmd.sys      (kernel-mode display miniport)
 ;  - aerogpu_d3d9umd.dll  (Direct3D 9 user-mode driver)
