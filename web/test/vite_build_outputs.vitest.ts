@@ -32,6 +32,7 @@ describe("web Vite build outputs", () => {
           child.kill();
           reject(new Error("vite build timed out"));
         }, VITE_BUILD_TIMEOUT_MS);
+        (timer as unknown as { unref?: () => void }).unref?.();
 
         child.on("error", (err) => {
           clearTimeout(timer);

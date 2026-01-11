@@ -19,6 +19,7 @@ async function waitForWorkerMessage(worker: Worker, predicate: (msg: unknown) =>
       cleanup();
       reject(new Error(`timed out after ${timeoutMs}ms waiting for worker message`));
     }, timeoutMs);
+    (timer as unknown as { unref?: () => void }).unref?.();
 
     const onMessage = (msg: unknown) => {
       const maybeProtocol = msg as Partial<ProtocolMessage> | undefined;
