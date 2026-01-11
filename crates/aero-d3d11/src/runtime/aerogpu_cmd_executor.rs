@@ -12,12 +12,12 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
     decode_cmd_copy_buffer_le, decode_cmd_copy_texture2d_le,
     decode_cmd_create_input_layout_blob_le, decode_cmd_create_shader_dxbc_payload_le,
     decode_cmd_set_vertex_buffers_bindings_le, decode_cmd_upload_resource_payload_le,
-    AerogpuCmdOpcode, AerogpuCmdStreamHeader, AerogpuCmdStreamIter, AEROGPU_CLEAR_COLOR,
-    AEROGPU_CLEAR_DEPTH, AEROGPU_CLEAR_STENCIL, AEROGPU_COPY_FLAG_WRITEBACK_DST,
-    AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER, AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL,
-    AEROGPU_RESOURCE_USAGE_INDEX_BUFFER, AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
-    AEROGPU_RESOURCE_USAGE_SCANOUT, AEROGPU_RESOURCE_USAGE_TEXTURE,
-    AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
+    AerogpuCmdOpcode, AerogpuCmdStreamHeader, AerogpuCmdStreamIter, AerogpuSamplerAddressMode,
+    AerogpuSamplerFilter, AEROGPU_CLEAR_COLOR, AEROGPU_CLEAR_DEPTH, AEROGPU_CLEAR_STENCIL,
+    AEROGPU_COPY_FLAG_WRITEBACK_DST, AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER,
+    AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL, AEROGPU_RESOURCE_USAGE_INDEX_BUFFER,
+    AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_SCANOUT,
+    AEROGPU_RESOURCE_USAGE_TEXTURE, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
 };
 use aero_protocol::aerogpu::aerogpu_ring::AerogpuAllocEntry;
 use anyhow::{anyhow, bail, Context, Result};
@@ -181,6 +181,23 @@ struct Texture2dResource {
     host_shadow: Option<Vec<u8>>,
 }
 
+#[derive(Debug, Clone, Copy)]
+#[allow(dead_code)]
+struct AerogpuSamplerDesc {
+    filter: u32,
+    address_u: u32,
+    address_v: u32,
+    address_w: u32,
+}
+
+#[derive(Debug)]
+struct SamplerResource {
+    sampler: wgpu::Sampler,
+    #[cfg(debug_assertions)]
+    #[allow(dead_code)]
+    desc: AerogpuSamplerDesc,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ShaderStage {
     Vertex,
@@ -232,7 +249,7 @@ struct InputLayoutResource {
 struct AerogpuD3d11Resources {
     buffers: HashMap<u32, BufferResource>,
     textures: HashMap<u32, Texture2dResource>,
-    samplers: HashMap<u32, wgpu::Sampler>,
+    samplers: HashMap<u32, SamplerResource>,
     shaders: HashMap<u32, ShaderResource>,
     input_layouts: HashMap<u32, InputLayoutResource>,
 }
@@ -2241,38 +2258,50 @@ impl AerogpuD3d11Executor {
         if cmd_bytes.len() != 28 {
             bail!("CREATE_SAMPLER: expected 28 bytes, got {}", cmd_bytes.len());
         }
-
         let sampler_handle = read_u32_le(cmd_bytes, 8)?;
         let filter_u32 = read_u32_le(cmd_bytes, 12)?;
         let address_u_u32 = read_u32_le(cmd_bytes, 16)?;
         let address_v_u32 = read_u32_le(cmd_bytes, 20)?;
         let address_w_u32 = read_u32_le(cmd_bytes, 24)?;
 
-        let filter = match filter_u32 {
-            0 => wgpu::FilterMode::Nearest,
-            1 => wgpu::FilterMode::Linear,
-            other => bail!("CREATE_SAMPLER: unknown filter {other}"),
-        };
-        let address = |v: u32| -> Result<wgpu::AddressMode> {
-            Ok(match v {
-                0 => wgpu::AddressMode::ClampToEdge,
-                1 => wgpu::AddressMode::Repeat,
-                2 => wgpu::AddressMode::MirrorRepeat,
-                other => bail!("CREATE_SAMPLER: unknown address mode {other}"),
-            })
-        };
+        if sampler_handle == 0 {
+            bail!("CREATE_SAMPLER: sampler_handle must be non-zero");
+        }
+
+        let filter = map_sampler_filter(filter_u32)
+            .ok_or_else(|| anyhow!("CREATE_SAMPLER: unknown filter {filter_u32}"))?;
+        let address_u = map_sampler_address_mode(address_u_u32)
+            .ok_or_else(|| anyhow!("CREATE_SAMPLER: unknown address_u {address_u_u32}"))?;
+        let address_v = map_sampler_address_mode(address_v_u32)
+            .ok_or_else(|| anyhow!("CREATE_SAMPLER: unknown address_v {address_v_u32}"))?;
+        let address_w = map_sampler_address_mode(address_w_u32)
+            .ok_or_else(|| anyhow!("CREATE_SAMPLER: unknown address_w {address_w_u32}"))?;
 
         let sampler = self.device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("aerogpu_cmd sampler"),
-            address_mode_u: address(address_u_u32)?,
-            address_mode_v: address(address_v_u32)?,
-            address_mode_w: address(address_w_u32)?,
+            address_mode_u: address_u,
+            address_mode_v: address_v,
+            address_mode_w: address_w,
             mag_filter: filter,
             min_filter: filter,
             mipmap_filter: filter,
             ..Default::default()
         });
-        self.resources.samplers.insert(sampler_handle, sampler);
+
+        #[cfg(debug_assertions)]
+        let resource = SamplerResource {
+            sampler,
+            desc: AerogpuSamplerDesc {
+                filter: filter_u32,
+                address_u: address_u_u32,
+                address_v: address_v_u32,
+                address_w: address_w_u32,
+            },
+        };
+        #[cfg(not(debug_assertions))]
+        let resource = SamplerResource { sampler };
+
+        self.resources.samplers.insert(sampler_handle, resource);
         Ok(())
     }
 
@@ -2286,6 +2315,8 @@ impl AerogpuD3d11Executor {
         }
         let sampler_handle = read_u32_le(cmd_bytes, 8)?;
         self.resources.samplers.remove(&sampler_handle);
+
+        // Clean up bindings in state.
         for slots in [
             &mut self.state.samplers_vs,
             &mut self.state.samplers_ps,
@@ -2301,12 +2332,9 @@ impl AerogpuD3d11Executor {
     }
 
     fn exec_set_samplers(&mut self, cmd_bytes: &[u8]) -> Result<()> {
-        // struct aerogpu_cmd_set_samplers (24 bytes) + sampler handles.
+        // struct aerogpu_cmd_set_samplers (24 bytes) + aerogpu_handle_t samplers[sampler_count]
         if cmd_bytes.len() < 24 {
-            bail!(
-                "SET_SAMPLERS: expected at least 24 bytes, got {}",
-                cmd_bytes.len()
-            );
+            bail!("SET_SAMPLERS: truncated packet");
         }
         let stage_u32 = read_u32_le(cmd_bytes, 8)?;
         let start_slot_u32 = read_u32_le(cmd_bytes, 12)?;
@@ -2318,12 +2346,17 @@ impl AerogpuD3d11Executor {
         let sampler_count: usize = sampler_count_u32
             .try_into()
             .map_err(|_| anyhow!("SET_SAMPLERS: sampler_count out of range"))?;
-        let expected = 24 + sampler_count * 4;
-        if cmd_bytes.len() != expected {
+
+        let payload_bytes = sampler_count
+            .checked_mul(4)
+            .ok_or_else(|| anyhow!("SET_SAMPLERS: sampler_count overflow"))?;
+        let required = 24usize
+            .checked_add(payload_bytes)
+            .ok_or_else(|| anyhow!("SET_SAMPLERS: packet size overflow"))?;
+        if cmd_bytes.len() < required {
             bail!(
-                "SET_SAMPLERS: size mismatch: cmd_bytes={} expected={}",
-                cmd_bytes.len(),
-                expected
+                "SET_SAMPLERS: expected at least {required} bytes, got {}",
+                cmd_bytes.len()
             );
         }
 
@@ -2334,9 +2367,13 @@ impl AerogpuD3d11Executor {
             _ => bail!("SET_SAMPLERS: unknown shader stage {stage_u32}"),
         };
 
-        if slots.len() < start_slot + sampler_count {
-            slots.resize(start_slot + sampler_count, None);
+        let end_slot = start_slot
+            .checked_add(sampler_count)
+            .ok_or_else(|| anyhow!("SET_SAMPLERS: slot range overflow"))?;
+        if slots.len() < end_slot {
+            slots.resize(end_slot, None);
         }
+
         for i in 0..sampler_count {
             let handle = read_u32_le(cmd_bytes, 24 + i * 4)?;
             slots[start_slot + i] = if handle == 0 { None } else { Some(handle) };
@@ -2346,12 +2383,10 @@ impl AerogpuD3d11Executor {
     }
 
     fn exec_set_constant_buffers(&mut self, cmd_bytes: &[u8]) -> Result<()> {
-        // struct aerogpu_cmd_set_constant_buffers (24 bytes) + bindings.
+        // struct aerogpu_cmd_set_constant_buffers (24 bytes)
+        // + aerogpu_constant_buffer_binding bindings[buffer_count] (16 bytes each)
         if cmd_bytes.len() < 24 {
-            bail!(
-                "SET_CONSTANT_BUFFERS: expected at least 24 bytes, got {}",
-                cmd_bytes.len()
-            );
+            bail!("SET_CONSTANT_BUFFERS: truncated packet");
         }
         let stage_u32 = read_u32_le(cmd_bytes, 8)?;
         let start_slot_u32 = read_u32_le(cmd_bytes, 12)?;
@@ -2363,12 +2398,17 @@ impl AerogpuD3d11Executor {
         let buffer_count: usize = buffer_count_u32
             .try_into()
             .map_err(|_| anyhow!("SET_CONSTANT_BUFFERS: buffer_count out of range"))?;
-        let expected = 24 + buffer_count * 16;
-        if cmd_bytes.len() != expected {
+
+        let payload_bytes = buffer_count
+            .checked_mul(16)
+            .ok_or_else(|| anyhow!("SET_CONSTANT_BUFFERS: buffer_count overflow"))?;
+        let required = 24usize
+            .checked_add(payload_bytes)
+            .ok_or_else(|| anyhow!("SET_CONSTANT_BUFFERS: packet size overflow"))?;
+        if cmd_bytes.len() < required {
             bail!(
-                "SET_CONSTANT_BUFFERS: size mismatch: cmd_bytes={} expected={}",
-                cmd_bytes.len(),
-                expected
+                "SET_CONSTANT_BUFFERS: expected at least {required} bytes, got {}",
+                cmd_bytes.len()
             );
         }
 
@@ -2378,8 +2418,12 @@ impl AerogpuD3d11Executor {
             2 => &mut self.state.constant_buffers_cs,
             _ => bail!("SET_CONSTANT_BUFFERS: unknown shader stage {stage_u32}"),
         };
-        if slots.len() < start_slot + buffer_count {
-            slots.resize(start_slot + buffer_count, None);
+
+        let end_slot = start_slot
+            .checked_add(buffer_count)
+            .ok_or_else(|| anyhow!("SET_CONSTANT_BUFFERS: slot range overflow"))?;
+        if slots.len() < end_slot {
+            slots.resize(end_slot, None);
         }
 
         for i in 0..buffer_count {
@@ -2388,7 +2432,6 @@ impl AerogpuD3d11Executor {
             let offset_bytes = read_u32_le(cmd_bytes, base + 4)?;
             let size_bytes = read_u32_le(cmd_bytes, base + 8)?;
             // reserved0 @ +12 ignored.
-
             slots[start_slot + i] = if buffer == 0 {
                 None
             } else {
@@ -3254,7 +3297,7 @@ fn build_bind_groups(
                 BindingKind::Sampler { .. } => {
                     let handle = resolve_sampler_binding(state, b);
                     let sampler = handle
-                        .and_then(|h| resources.samplers.get(&h))
+                        .and_then(|h| resources.samplers.get(&h).map(|s| &s.sampler))
                         .unwrap_or(fallback_sampler);
                     wgpu::BindingResource::Sampler(sampler)
                 }
@@ -3890,6 +3933,23 @@ fn map_blend_op(v: u32) -> Option<wgpu::BlendOperation> {
         2 => wgpu::BlendOperation::ReverseSubtract,
         3 => wgpu::BlendOperation::Min,
         4 => wgpu::BlendOperation::Max,
+        _ => return None,
+    })
+}
+
+fn map_sampler_filter(v: u32) -> Option<wgpu::FilterMode> {
+    Some(match v {
+        x if x == AerogpuSamplerFilter::Nearest as u32 => wgpu::FilterMode::Nearest,
+        x if x == AerogpuSamplerFilter::Linear as u32 => wgpu::FilterMode::Linear,
+        _ => return None,
+    })
+}
+
+fn map_sampler_address_mode(v: u32) -> Option<wgpu::AddressMode> {
+    Some(match v {
+        x if x == AerogpuSamplerAddressMode::ClampToEdge as u32 => wgpu::AddressMode::ClampToEdge,
+        x if x == AerogpuSamplerAddressMode::Repeat as u32 => wgpu::AddressMode::Repeat,
+        x if x == AerogpuSamplerAddressMode::MirrorRepeat as u32 => wgpu::AddressMode::MirrorRepeat,
         _ => return None,
     })
 }
