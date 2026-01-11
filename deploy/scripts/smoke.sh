@@ -327,9 +327,61 @@ function checkTcpUpgrade(cookiePair) {
   });
 }
 
+function checkUdpRelayToken(cookiePair) {
+  return new Promise((resolve, reject) => {
+    const req = https.request(
+      {
+        host,
+        port,
+        method: "POST",
+        path: "/udp-relay/token",
+        rejectUnauthorized: false,
+        headers: {
+          origin: `https://${host}`,
+          cookie: cookiePair,
+          "content-length": "0",
+        },
+      },
+      (res) => {
+        const status = res.statusCode ?? 0;
+        res.setEncoding("utf8");
+        let body = "";
+        res.on("data", (chunk) => {
+          body += chunk;
+        });
+        res.on("end", () => {
+          if (status < 200 || status >= 300) {
+            reject(new Error(`unexpected /udp-relay/token status: ${status} body: ${body}`));
+            return;
+          }
+          let parsed;
+          try {
+            parsed = JSON.parse(body);
+          } catch (err) {
+            reject(new Error(`invalid JSON from /udp-relay/token: ${body}`));
+            return;
+          }
+          if (parsed?.authMode !== "api_key") {
+            reject(new Error(`unexpected authMode from /udp-relay/token: ${JSON.stringify(parsed)}`));
+            return;
+          }
+          if (typeof parsed?.token !== "string" || parsed.token.length === 0) {
+            reject(new Error(`missing token from /udp-relay/token: ${JSON.stringify(parsed)}`));
+            return;
+          }
+          resolve();
+        });
+      },
+    );
+    req.on("error", reject);
+    req.end();
+  });
+}
+
 (async () => {
   const cookie = await requestSessionCookie();
   await checkTcpUpgrade(cookie);
+  await checkUdpRelayToken(cookie);
 })().catch((err) => {
   console.error("tcp upgrade check failed:", err);
   process.exit(1);
