@@ -24,6 +24,43 @@ static void PrintD3D11DeviceRemovedReasonIfFailed(const char* test_name, ID3D11D
   }
 }
 
+static void DumpBytesToFile(const char* test_name,
+                            aerogpu_test::TestReporter* reporter,
+                            const wchar_t* file_name,
+                            const void* data,
+                            UINT byte_count) {
+  if (!file_name || !data || byte_count == 0) {
+    return;
+  }
+  const std::wstring dir = aerogpu_test::GetModuleDir();
+  const std::wstring path = aerogpu_test::JoinPath(dir, file_name);
+  HANDLE h =
+      CreateFileW(path.c_str(), GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+  if (h == INVALID_HANDLE_VALUE) {
+    aerogpu_test::PrintfStdout("INFO: %s: dump CreateFileW(%ls) failed: %s",
+                               test_name,
+                               file_name,
+                               aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
+    return;
+  }
+  DWORD written = 0;
+  if (!WriteFile(h, data, byte_count, &written, NULL) || written != byte_count) {
+    aerogpu_test::PrintfStdout("INFO: %s: dump WriteFile(%ls) failed: %s",
+                               test_name,
+                               file_name,
+                               aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
+  } else {
+    aerogpu_test::PrintfStdout("INFO: %s: dumped %u bytes to %ls",
+                               test_name,
+                               (unsigned)byte_count,
+                               path.c_str());
+    if (reporter) {
+      reporter->AddArtifactPathW(path);
+    }
+  }
+  CloseHandle(h);
+}
+
 static const char kDepthHlsl[] = R"(struct VSIn {
   float3 pos : POSITION;
   float4 color : COLOR0;
@@ -533,6 +570,15 @@ static int RunD3D11DepthTestSanity(int argc, char** argv) {
     } else {
       reporter.AddArtifactPathW(bmp_path);
     }
+
+    // Also dump a tightly-packed raw BGRA32 buffer for easier machine inspection.
+    std::vector<uint8_t> tight((size_t)kWidth * (size_t)kHeight * 4u, 0);
+    for (int y = 0; y < kHeight; ++y) {
+      const uint8_t* src_row = (const uint8_t*)map.pData + (size_t)y * (size_t)map.RowPitch;
+      memcpy(&tight[(size_t)y * (size_t)kWidth * 4u], src_row, (size_t)kWidth * 4u);
+    }
+    DumpBytesToFile(
+        kTestName, &reporter, L"d3d11_depth_test_sanity.bin", &tight[0], (UINT)tight.size());
   }
 
   context->Unmap(staging.get(), 0);
