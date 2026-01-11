@@ -96,10 +96,16 @@ If you want the full Guest Tools ISO (scripts + certs + drivers), use:
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-guest-tools-from-virtio-win.ps1 `
   -VirtioWinIso C:\path\to\virtio-win.iso `
+  -Profile full `
   -OutDir .\dist\guest-tools
 ```
 
 On non-Windows hosts, extract first with `tools/virtio-win/extract.py` and pass `-VirtioWinRoot` instead.
+
+Profiles:
+
+- `-Profile full` (default): includes optional virtio drivers when available (`vioinput`, `viosnd`)
+- `-Profile minimal`: storage + network only (`viostor`, `netkvm`)
 
 This emits `aero-guest-tools.iso` and `aero-guest-tools.zip` under `dist/guest-tools/`.
 
