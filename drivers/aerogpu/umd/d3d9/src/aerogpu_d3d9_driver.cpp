@@ -25,6 +25,7 @@
 #include "aerogpu_d3d9_caps.h"
 #include "aerogpu_d3d9_blit.h"
 #include "aerogpu_d3d9_objects.h"
+#include "aerogpu_d3d9_submit.h"
 #include "aerogpu_log.h"
 #include "aerogpu_alloc.h"
 
@@ -4587,6 +4588,11 @@ HRESULT OpenAdapterCommon(const char* entrypoint,
 }
 
 } // namespace
+
+uint64_t submit_locked(Device* dev, bool is_present) {
+  return submit(dev, is_present);
+}
+
 } // namespace aerogpu
 
 // -----------------------------------------------------------------------------
