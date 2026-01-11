@@ -1072,13 +1072,13 @@ impl AerogpuD3d9Executor {
         used_samplers.sort_unstable();
         used_samplers.dedup();
 
-        // Match `aero-d3d9` shader generation: bindings are allocated sequentially for the
-        // *used* sampler indices (not `1 + 2*sampler_index`).
-        let mut next_binding = 1u32;
-        for _sampler in &used_samplers {
-            let tex_binding = next_binding;
-            let samp_binding = next_binding + 1;
-            next_binding += 2;
+        // Match `aero-d3d9` shader generation: bindings are derived from the D3D9 sampler register
+        // index to keep them stable across shader stages.
+        //   texture binding = 1 + 2*s
+        //   sampler binding = 2 + 2*s
+        for sampler in &used_samplers {
+            let tex_binding = 1u32 + u32::from(*sampler) * 2;
+            let samp_binding = tex_binding + 1;
             bgl_entries.push(wgpu::BindGroupLayoutEntry {
                 binding: tex_binding,
                 visibility: wgpu::ShaderStages::FRAGMENT,
@@ -1338,12 +1338,9 @@ impl AerogpuD3d9Executor {
             resource: self.constants_buffer.as_entire_binding(),
         });
 
-        // Must use the same sequential binding assignment as above.
-        let mut next_binding = 1u32;
         for s in used_samplers {
-            let tex_binding = next_binding;
-            let samp_binding = next_binding + 1;
-            next_binding += 2;
+            let tex_binding = 1u32 + u32::from(*s) * 2;
+            let samp_binding = tex_binding + 1;
             let tex_handle = self
                 .state
                 .textures_ps
