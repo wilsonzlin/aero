@@ -2226,6 +2226,12 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     if (!res->storage.empty()) {
       emit_upload_resource_locked(dev, res, 0, res->storage.size());
     }
+    if (res->wddm_allocation_handle != 0 &&
+        std::find(dev->wddm_submit_allocation_handles.begin(),
+                  dev->wddm_submit_allocation_handles.end(),
+                  res->wddm_allocation_handle) == dev->wddm_submit_allocation_handles.end()) {
+      dev->wddm_submit_allocation_handles.push_back(res->wddm_allocation_handle);
+    }
     AEROGPU_D3D10_RET_HR(S_OK);
   }
 
@@ -2399,6 +2405,12 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     cmd->reserved0 = 0;
     if (!res->storage.empty()) {
       emit_upload_resource_locked(dev, res, 0, res->storage.size());
+    }
+    if (res->wddm_allocation_handle != 0 &&
+        std::find(dev->wddm_submit_allocation_handles.begin(),
+                  dev->wddm_submit_allocation_handles.end(),
+                  res->wddm_allocation_handle) == dev->wddm_submit_allocation_handles.end()) {
+      dev->wddm_submit_allocation_handles.push_back(res->wddm_allocation_handle);
     }
     AEROGPU_D3D10_RET_HR(S_OK);
   }
