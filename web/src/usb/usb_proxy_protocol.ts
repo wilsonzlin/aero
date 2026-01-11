@@ -2,8 +2,7 @@ import type {
   SetupPacket as UsbSetupPacket,
   UsbHostAction,
   UsbHostCompletion,
-  UsbHostCompletion as WebUsbHostCompletion,
-} from "./webusb_backend";
+} from "./usb_passthrough_types";
 
 export type { UsbHostAction, UsbHostCompletion, UsbSetupPacket };
 
@@ -118,10 +117,10 @@ export function usbErrorCompletion(kind: UsbHostAction["kind"], id: number, mess
   switch (kind) {
     case "controlIn":
     case "bulkIn":
-      return { kind, id, status: "error", message } satisfies WebUsbHostCompletion;
+      return { kind, id, status: "error", message } satisfies UsbHostCompletion;
     case "controlOut":
     case "bulkOut":
-      return { kind, id, status: "error", message } satisfies WebUsbHostCompletion;
+      return { kind, id, status: "error", message } satisfies UsbHostCompletion;
     default: {
       const neverKind: never = kind;
       throw new Error(`Unknown USB action kind: ${String(neverKind)}`);
