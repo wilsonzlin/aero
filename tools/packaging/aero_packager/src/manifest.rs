@@ -12,7 +12,7 @@ pub enum SigningPolicy {
     #[value(name = "production", alias = "prod", alias = "whql")]
     Production,
     /// No signing expectations. Used for development scenarios where drivers may not be signed.
-    #[value(name = "none")]
+    #[value(name = "none", alias = "nointegritychecks", alias = "no-integrity-checks")]
     None,
 }
 

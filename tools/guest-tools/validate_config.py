@@ -5,6 +5,8 @@ Lightweight consistency checker for Guest Tools config vs packaging specs.
 Why this exists:
 - `guest-tools/config/devices.cmd` drives boot-critical driver installation (service
   names + HWIDs).
+- `devices.cmd` is generated from the canonical device contract
+  (`docs/windows-device-contract.json`) during Guest Tools packaging.
 - `tools/packaging/specs/*.json` drives `aero_packager` validation when building Guest
   Tools media (ISO/zip) from driver packages (either upstream virtio-win or the
   in-repo Aero drivers produced by CI).
@@ -225,7 +227,7 @@ def load_devices_cmd(path: Path) -> DevicesConfig:
     if not virtio_blk_service:
         raise ValidationError(
             "devices.cmd AERO_VIRTIO_BLK_SERVICE is empty.\n"
-            "Remediation: set AERO_VIRTIO_BLK_SERVICE to the storage driver's INF AddService name.\n"
+            "Remediation: update docs/windows-device-contract.json (virtio-blk.driver_service_name) and regenerate Guest Tools.\n"
             f"File: {path}"
         )
 
@@ -435,7 +437,7 @@ def _validate_hwid_contract(
     if not hwids:
         raise ValidationError(
             f"{devices_var} is empty.\n"
-            f"Remediation: set {devices_var} in guest-tools/config/devices.cmd to the emulator-presented PCI HWIDs for {driver_kind}."
+            f"Remediation: update docs/windows-device-contract.json (hardware_id_patterns for {driver_kind}) and regenerate Guest Tools."
         )
 
     if not patterns:
@@ -458,10 +460,8 @@ def _validate_hwid_contract(
             f"devices.cmd {devices_var}:\n{_format_bullets(hwids)}\n"
             "\n"
             "Remediation:\n"
-            "- If the emulator/device contract changed (new PCI VEN/DEV IDs), update BOTH:\n"
-            f"  * guest-tools/config/devices.cmd ({devices_var})\n"
-            f"  * {spec_path} ({driver_name}.expected_hardware_ids)\n"
-            f"- Otherwise, fix the regex in {spec_path.name} so it matches the HWIDs used by Guest Tools.\n"
+            f"- Update {spec_path} ({driver_name}.expected_hardware_ids) so it matches the HWIDs in {devices_var}.\n"
+            "- If the underlying device contract changed, update docs/windows-device-contract.json and regenerate Guest Tools.\n"
         )
 
     uncovered = _find_uncovered_hwids(patterns, hwids)
@@ -475,7 +475,7 @@ def _validate_hwid_contract(
             "\n"
             "Remediation:\n"
             f"- If the emulator/device contract changed, expand {driver_name}.expected_hardware_ids in the spec to cover the new IDs.\n"
-            f"- If devices.cmd is wrong/out-of-date, update {devices_var} to match the supported IDs.\n"
+            f"- If {devices_var} is wrong/out-of-date, update docs/windows-device-contract.json and regenerate Guest Tools.\n"
         )
 
     # Enforce that every "base" PCI HWID pattern in the spec is represented by at
@@ -509,7 +509,7 @@ def _validate_hwid_contract(
             f"devices.cmd {devices_var}:\n{_format_bullets(hwids)}\n"
             "\n"
             "Remediation:\n"
-            f"- If the emulator/device contract supports multiple HWID families, include each supported HWID in {devices_var}.\n"
+            f"- If the emulator/device contract supports multiple HWID families, ensure {devices_var} includes each supported HWID (via docs/windows-device-contract.json) and regenerate Guest Tools.\n"
             f"- Otherwise, remove/adjust the extra pattern(s) in {spec_path.name}.\n"
         )
 
@@ -520,10 +520,10 @@ def validate(devices: DevicesConfig, spec_path: Path, spec_expected: Mapping[str
     # Storage service name: `devices.cmd` must declare the storage driver's INF AddService
     # name so `guest-tools/setup.cmd` can preseed BOOT_START + CriticalDeviceDatabase keys.
     #
-    # The in-repo Guest Tools config tracks the Aero device contract
-    # (`docs/windows-device-contract.json`). When packaging Guest Tools from other driver
-    # sets (e.g. virtio-win), wrapper scripts are responsible for patching the staged
-    # `devices.cmd` to match the packaged INF(s).
+    # The in-repo Guest Tools config (`devices.cmd`) is generated from the canonical
+    # Aero device contract (`docs/windows-device-contract.json`). If the packaged storage
+    # driver changes its INF AddService name, update the contract and regenerate Guest Tools
+    # (do not hand-edit devices.cmd).
     contract_path = REPO_ROOT / "docs/windows-device-contract.json"
     contract = load_windows_device_contract(contract_path)
     virtio_blk_contract = contract.get("virtio-blk")
@@ -538,8 +538,8 @@ def validate(devices: DevicesConfig, spec_path: Path, spec_expected: Mapping[str
             f"windows-device-contract.json virtio-blk.driver_service_name: {expected_blk_service!r}\n"
             "\n"
             "Remediation:\n"
-            "- Update guest-tools/config/devices.cmd (AERO_VIRTIO_BLK_SERVICE) to match the virtio-blk INF AddService name.\n"
-            "- Update docs/windows-device-contract.json if the contract/service name intentionally changed.\n"
+            "- Update docs/windows-device-contract.json (virtio-blk.driver_service_name) to match the virtio-blk INF AddService name.\n"
+            "- Regenerate guest-tools/config/devices.cmd (it is derived from the contract).\n"
         )
 
     virtio_net_contract = contract.get("virtio-net")
@@ -564,10 +564,7 @@ def validate(devices: DevicesConfig, spec_path: Path, spec_expected: Mapping[str
                 f"Missing from devices.cmd {devices_var}:\n{_format_bullets(missing_patterns)}\n"
                 "\n"
                 "Remediation:\n"
-                "- If the emulator/device contract changed, update BOTH:\n"
-                f"  * {contract_path} ({device_name}.hardware_id_patterns)\n"
-                f"  * guest-tools/config/devices.cmd ({devices_var})\n"
-                "- Otherwise, revert the contract change or fix devices.cmd so the boot-critical IDs are seeded correctly.\n"
+                f"- Update {contract_path} ({device_name}.hardware_id_patterns) and regenerate guest-tools/config/devices.cmd.\n"
             )
 
     # Validate boot-critical/early-boot device HWID lists against the contract. The packager specs
