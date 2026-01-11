@@ -434,12 +434,13 @@ static int RunWaitVblankPacing(int argc, char** argv) {
 
   aerogpu_test::PrintfStdout(
       "INFO: %s: D3DKMTWaitForVerticalBlankEvent pacing over %u samples: avg=%.3fms min=%.3fms "
-      "max=%.3fms",
+      "max=%.3fms (wait_timeout_ms=%lu)",
       kTestName,
       (unsigned)collected,
       avg_ms,
       min_ms,
-      max_ms);
+      max_ms,
+      (unsigned long)wait_timeout_ms);
 
   if (avg_ms < 2.0) {
     return aerogpu_test::Fail(kTestName, "unexpectedly fast vblank pacing (avg=%.3fms)", avg_ms);
