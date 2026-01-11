@@ -43,6 +43,25 @@ try {
   el.className = "bad";
 }
 
+let sessionOk = false;
+try {
+  const res = await fetch("/session", {
+    method: "POST",
+    cache: "no-store",
+    headers: { "content-type": "application/json" },
+    body: "{}",
+  });
+  const json = await res.json().catch(() => null);
+  sessionOk = res.ok && typeof json?.session?.expiresAt === "string";
+  const el = document.querySelector("#session");
+  el.textContent = sessionOk ? "ok" : `unexpected (${res.status})`;
+  el.className = sessionOk ? "ok" : "bad";
+} catch (err) {
+  const el = document.querySelector("#session");
+  el.textContent = "failed";
+  el.className = "bad";
+}
+
 try {
   const wsProto = location.protocol === "https:" ? "wss:" : "ws:";
   const wsUrl = new URL("/tcp", `${wsProto}//${location.host}`);
@@ -55,25 +74,30 @@ try {
   wsUrl.searchParams.set("host", "example.com");
   wsUrl.searchParams.set("port", "80");
   const wsEl = document.querySelector("#ws");
-  const ws = new WebSocket(wsUrl.toString());
-  const timeout = setTimeout(() => {
-    wsEl.textContent = "timeout";
+  if (!sessionOk) {
+    wsEl.textContent = "skipped (no session)";
     wsEl.className = "bad";
-    ws.close();
-  }, 5000);
+  } else {
+    const ws = new WebSocket(wsUrl.toString());
+    const timeout = setTimeout(() => {
+      wsEl.textContent = "timeout";
+      wsEl.className = "bad";
+      ws.close();
+    }, 5000);
 
-  ws.onopen = () => {
-    clearTimeout(timeout);
-    wsEl.textContent = "ok";
-    wsEl.className = "ok";
-    ws.close();
-  };
+    ws.onopen = () => {
+      clearTimeout(timeout);
+      wsEl.textContent = "ok";
+      wsEl.className = "ok";
+      ws.close();
+    };
 
-  ws.onerror = () => {
-    clearTimeout(timeout);
-    wsEl.textContent = "failed";
-    wsEl.className = "bad";
-  };
+    ws.onerror = () => {
+      clearTimeout(timeout);
+      wsEl.textContent = "failed";
+      wsEl.className = "bad";
+    };
+  }
 } catch (err) {
   const el = document.querySelector("#ws");
   el.textContent = "failed";
