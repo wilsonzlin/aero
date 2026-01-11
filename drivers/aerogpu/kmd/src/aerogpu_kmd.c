@@ -1012,12 +1012,24 @@ static NTSTATUS APIENTRY AeroGpuDdiStartDevice(_In_ const PVOID MiniportDeviceCo
         }
 
         abiVersion = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_VERSION);
+        /*
+         * Legacy devices may still expose the versioned feature bits and IRQ/vblank timing block
+         * (mirroring `aerogpu_pci.h`). Read FEATURES so we can advertise optional capabilities
+         * like vblank without requiring a full ring ABI migration.
+         */
+        if (adapter->Bar0Length >= (AEROGPU_MMIO_REG_FEATURES_HI + sizeof(ULONG))) {
+            features = (ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FEATURES_LO) |
+                       ((ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FEATURES_HI) << 32);
+        }
         if (magic != AEROGPU_LEGACY_MMIO_MAGIC) {
             AEROGPU_LOG("StartDevice: unknown MMIO magic=0x%08lx (expected 0x%08x); assuming legacy ABI",
                         magic,
                         AEROGPU_LEGACY_MMIO_MAGIC);
         }
-        AEROGPU_LOG("StartDevice: ABI=legacy magic=0x%08lx version=0x%08lx", magic, abiVersion);
+        AEROGPU_LOG("StartDevice: ABI=legacy magic=0x%08lx version=0x%08lx features=0x%I64x",
+                    magic,
+                    abiVersion,
+                    (unsigned long long)features);
     }
 
     adapter->DeviceAbiVersion = abiVersion;
@@ -1531,7 +1543,7 @@ static NTSTATUS APIENTRY AeroGpuDdiGetScanLine(_In_ const HANDLE hAdapter, _Inou
         return STATUS_INVALID_PARAMETER;
     }
 
-    if (!adapter->Bar0 || adapter->AbiKind != AEROGPU_ABI_KIND_V1 || !adapter->SupportsVblank) {
+    if (!adapter->Bar0 || !adapter->SupportsVblank) {
         return STATUS_NOT_SUPPORTED;
     }
 
@@ -2523,48 +2535,99 @@ static BOOLEAN APIENTRY AeroGpuDdiInterruptRoutine(_In_ const PVOID MiniportDevi
             }
         }
     } else {
-        /* Legacy ABI: only fence interrupts are supported. */
-        const ULONG status = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_INT_STATUS);
-        if ((status & AEROGPU_LEGACY_INT_FENCE) == 0) {
-            if (status != 0) {
-                AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_INT_ACK, status);
+        const ULONG legacyStatus = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_INT_STATUS);
+
+        if ((legacyStatus & AEROGPU_LEGACY_INT_FENCE) == 0) {
+            if (legacyStatus != 0) {
+                AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_INT_ACK, legacyStatus);
                 static LONG g_UnexpectedLegacyIrqWarned = 0;
                 if (InterlockedExchange(&g_UnexpectedLegacyIrqWarned, 1) == 0) {
                     DbgPrintEx(DPFLTR_IHVVIDEO_ID,
                                DPFLTR_ERROR_LEVEL,
                                "aerogpu-kmd: unexpected legacy INT_STATUS bits (status=0x%08lx)\n",
-                               status);
+                               legacyStatus);
                 }
-                return TRUE;
+                any = TRUE;
             }
-            return FALSE;
+        } else {
+            const ULONGLONG completedFence64 =
+                (ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_FENCE_COMPLETED);
+            AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_INT_ACK, legacyStatus);
+
+            ULONG completedFence32 = (ULONG)completedFence64;
+            const ULONG lastCompleted32 = (ULONG)adapter->LastCompletedFence;
+            const ULONG lastSubmitted32 = (ULONG)adapter->LastSubmittedFence;
+            if (completedFence32 < lastCompleted32) {
+                completedFence32 = lastCompleted32;
+            }
+            if (completedFence32 > lastSubmitted32) {
+                completedFence32 = lastSubmitted32;
+            }
+
+            adapter->LastCompletedFence = (ULONGLONG)completedFence32;
+            any = TRUE;
+            queueDpc = TRUE;
+
+            if (adapter->DxgkInterface.DxgkCbNotifyInterrupt) {
+                DXGKARGCB_NOTIFY_INTERRUPT notify;
+                RtlZeroMemory(&notify, sizeof(notify));
+                notify.InterruptType = DXGK_INTERRUPT_TYPE_DMA_COMPLETED;
+                notify.DmaCompleted.SubmissionFenceId = completedFence32;
+                notify.DmaCompleted.NodeOrdinal = AEROGPU_NODE_ORDINAL;
+                notify.DmaCompleted.EngineOrdinal = AEROGPU_ENGINE_ORDINAL;
+                adapter->DxgkInterface.DxgkCbNotifyInterrupt(adapter->StartInfo.hDxgkHandle, &notify);
+            }
         }
 
-        const ULONGLONG completedFence64 = (ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_FENCE_COMPLETED);
-        AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_INT_ACK, status);
+        const BOOLEAN haveIrqRegs =
+            adapter->Bar0Length >= (AEROGPU_MMIO_REG_IRQ_STATUS + sizeof(ULONG));
+        if (haveIrqRegs) {
+            const ULONG irqStatus = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_IRQ_STATUS);
+            const ULONG handled = irqStatus & (AEROGPU_IRQ_SCANOUT_VBLANK | AEROGPU_IRQ_ERROR);
+            if (handled != 0) {
+                AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, handled);
 
-        ULONG completedFence32 = (ULONG)completedFence64;
-        const ULONG lastCompleted32 = (ULONG)adapter->LastCompletedFence;
-        const ULONG lastSubmitted32 = (ULONG)adapter->LastSubmittedFence;
-        if (completedFence32 < lastCompleted32) {
-            completedFence32 = lastCompleted32;
-        }
-        if (completedFence32 > lastSubmitted32) {
-            completedFence32 = lastSubmitted32;
-        }
+                if ((handled & AEROGPU_IRQ_ERROR) != 0) {
+                    static LONG g_IrqErrorLoggedLegacy = 0;
+                    if (InterlockedExchange(&g_IrqErrorLoggedLegacy, 1) == 0) {
+                        DbgPrintEx(DPFLTR_IHVVIDEO_ID,
+                                   DPFLTR_ERROR_LEVEL,
+                                   "aerogpu-kmd: device IRQ error (IRQ_STATUS=0x%08lx)\n",
+                                   irqStatus);
+                    }
+                    any = TRUE;
+                    queueDpc = TRUE;
+                }
 
-        adapter->LastCompletedFence = (ULONGLONG)completedFence32;
-        any = TRUE;
-        queueDpc = TRUE;
+                if ((handled & AEROGPU_IRQ_SCANOUT_VBLANK) != 0) {
+                    const ULONGLONG now100ns = KeQueryInterruptTime();
+                    const ULONGLONG seq = AeroGpuReadRegU64HiLoHi(adapter,
+                                                                 AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO,
+                                                                 AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_HI);
+                    const ULONGLONG timeNs = AeroGpuReadRegU64HiLoHi(adapter,
+                                                                    AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_LO,
+                                                                    AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_HI);
+                    const ULONG periodNs = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS);
+                    if (periodNs != 0) {
+                        adapter->VblankPeriodNs = periodNs;
+                    }
+                    AeroGpuAtomicWriteU64(&adapter->LastVblankSeq, seq);
+                    AeroGpuAtomicWriteU64(&adapter->LastVblankTimeNs, timeNs);
+                    AeroGpuAtomicWriteU64(&adapter->LastVblankInterruptTime100ns, now100ns);
 
-        if (adapter->DxgkInterface.DxgkCbNotifyInterrupt) {
-            DXGKARGCB_NOTIFY_INTERRUPT notify;
-            RtlZeroMemory(&notify, sizeof(notify));
-            notify.InterruptType = DXGK_INTERRUPT_TYPE_DMA_COMPLETED;
-            notify.DmaCompleted.SubmissionFenceId = completedFence32;
-            notify.DmaCompleted.NodeOrdinal = AEROGPU_NODE_ORDINAL;
-            notify.DmaCompleted.EngineOrdinal = AEROGPU_ENGINE_ORDINAL;
-            adapter->DxgkInterface.DxgkCbNotifyInterrupt(adapter->StartInfo.hDxgkHandle, &notify);
+                    any = TRUE;
+                    queueDpc = TRUE;
+
+                    if (adapter->DxgkInterface.DxgkCbNotifyInterrupt && adapter->VblankInterruptTypeValid) {
+                        DXGKARGCB_NOTIFY_INTERRUPT notify;
+                        RtlZeroMemory(&notify, sizeof(notify));
+                        notify.InterruptType = adapter->VblankInterruptType;
+                        *(ULONG*)((PUCHAR)&notify + FIELD_OFFSET(DXGKARGCB_NOTIFY_INTERRUPT, DmaCompleted)) =
+                            AEROGPU_VIDPN_SOURCE_ID;
+                        adapter->DxgkInterface.DxgkCbNotifyInterrupt(adapter->StartInfo.hDxgkHandle, &notify);
+                    }
+                }
+            }
         }
     }
 
@@ -2602,16 +2665,12 @@ static NTSTATUS APIENTRY AeroGpuDdiControlInterrupt(_In_ const HANDLE hAdapter,
         return STATUS_SUCCESS;
     }
 
-    /*
-     * The legacy ABI does not expose an IRQ enable mask and does not deliver
-     * scanout vblank interrupts. Treat interrupt control requests as best-effort.
-     */
-    if (adapter->AbiKind != AEROGPU_ABI_KIND_V1) {
-        return (InterruptType == DXGK_INTERRUPT_TYPE_DMA_COMPLETED) ? STATUS_SUCCESS : STATUS_NOT_SUPPORTED;
-    }
-
     /* Fence/DMA completion interrupt gating. */
     if (InterruptType == DXGK_INTERRUPT_TYPE_DMA_COMPLETED) {
+        if (adapter->AbiKind != AEROGPU_ABI_KIND_V1) {
+            /* Legacy ABI does not expose an IRQ enable mask for fence interrupts. */
+            return STATUS_SUCCESS;
+        }
         {
             KIRQL oldIrql;
             KeAcquireSpinLock(&adapter->IrqEnableLock, &oldIrql);
@@ -2648,6 +2707,9 @@ static NTSTATUS APIENTRY AeroGpuDdiControlInterrupt(_In_ const HANDLE hAdapter,
     }
 
     if (!adapter->SupportsVblank) {
+        return STATUS_NOT_SUPPORTED;
+    }
+    if (adapter->Bar0Length < (AEROGPU_MMIO_REG_IRQ_ENABLE + sizeof(ULONG))) {
         return STATUS_NOT_SUPPORTED;
     }
 
