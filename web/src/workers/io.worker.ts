@@ -162,14 +162,20 @@ function maybeEmitPerfSample(): void {
   if (!perfWriter || !perfFrameHeader) return;
   const enabled = Atomics.load(perfFrameHeader, PERF_FRAME_HEADER_ENABLED_INDEX) !== 0;
   const frameId = Atomics.load(perfFrameHeader, PERF_FRAME_HEADER_FRAME_ID_INDEX) >>> 0;
-  if (!enabled) {
+  if (!enabled || frameId === 0) {
     perfLastFrameId = frameId;
     perfIoMs = 0;
     perfIoReadBytes = 0;
     perfIoWriteBytes = 0;
     return;
   }
-  if (frameId === 0 || frameId === perfLastFrameId) return;
+  if (perfLastFrameId === 0) {
+    // First observed frame ID after enabling perf. Establish a baseline so we
+    // only flush on the next frame boundary.
+    perfLastFrameId = frameId;
+    return;
+  }
+  if (frameId === perfLastFrameId) return;
   perfLastFrameId = frameId;
 
   const ioMs = perfIoMs > 0 ? perfIoMs : 0.01;
