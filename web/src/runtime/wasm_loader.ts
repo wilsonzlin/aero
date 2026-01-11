@@ -198,6 +198,42 @@ export interface WasmApi {
     };
 
     /**
+     * Guest-visible UHCI controller runtime (shared guest RAM + hotplug for WebHID/WebUSB passthrough).
+     *
+     * Note: optional until all deployed WASM builds include it.
+     */
+    UhciRuntime?: new (guestBase: number, guestSize: number) => {
+        io_base(): number;
+        irq_line(): number;
+        irq_level(): boolean;
+
+        port_read(offset: number, size: number): number;
+        port_write(offset: number, size: number, value: number): void;
+
+        tick_1ms(): void;
+        step_frame(): void;
+
+        webhid_attach(
+            deviceId: number,
+            vendorId: number,
+            productId: number,
+            productName: string | undefined,
+            collectionsJson: unknown,
+            preferredPort?: number,
+        ): number;
+        webhid_detach(deviceId: number): void;
+        webhid_push_input_report(deviceId: number, reportId: number, data: Uint8Array): void;
+        webhid_drain_output_reports(): Array<{ deviceId: number; reportType: "output" | "feature"; reportId: number; data: Uint8Array }>;
+
+        webusb_attach(preferredPort?: number): number;
+        webusb_detach(): void;
+        webusb_drain_actions(): UsbHostAction[];
+        webusb_push_completion(completion: UsbHostCompletion): void;
+
+        free(): void;
+    };
+
+    /**
      * WebUSB UHCI passthrough enumeration harness (drives UHCI TDs and emits `UsbHostAction`s).
      *
      * Note: optional until all deployed WASM builds include it.
@@ -538,6 +574,7 @@ function toApi(mod: RawWasmModule): WasmApi {
         WebHidPassthroughBridge: mod.WebHidPassthroughBridge,
         UsbHidPassthroughBridge: mod.UsbHidPassthroughBridge,
         UsbPassthroughBridge: mod.UsbPassthroughBridge,
+        UhciRuntime: mod.UhciRuntime,
         WebUsbUhciPassthroughHarness: mod.WebUsbUhciPassthroughHarness,
         UhciControllerBridge: mod.UhciControllerBridge,
         WebUsbUhciBridge: mod.WebUsbUhciBridge,

@@ -9,7 +9,7 @@ import { perf } from "../perf/perf";
 import { installWorkerPerfHandlers } from "../perf/worker";
 import { PerfWriter } from "../perf/writer.js";
 import { PERF_FRAME_HEADER_ENABLED_INDEX, PERF_FRAME_HEADER_FRAME_ID_INDEX } from "../perf/shared.js";
-import { initWasmForContext, type WasmApi } from "../runtime/wasm_context";
+import { initWasmForContext, type WasmApi, type WasmVariant } from "../runtime/wasm_context";
 import {
   IO_IPC_CMD_QUEUE_KIND,
   IO_IPC_EVT_QUEUE_KIND,
@@ -30,7 +30,7 @@ import {
 import { DeviceManager, type IrqSink } from "../io/device_manager";
 import { I8042Controller } from "../io/devices/i8042";
 import { PciTestDevice } from "../io/devices/pci_test_device";
-import { UhciPciDevice } from "../io/devices/uhci";
+import { UhciPciDevice, type UhciControllerBridgeLike } from "../io/devices/uhci";
 import { UART_COM1, Uart16550, type SerialOutputSink } from "../io/devices/uart16550";
 import { AeroIpcIoServer, type AeroIpcIoDiskResult, type AeroIpcIoDispatchTarget } from "../io/ipc/aero_ipc_io";
 import type { MountConfig } from "../storage/metadata";
@@ -42,6 +42,7 @@ import {
   type UsbGuestWebUsbSnapshot,
   type UsbGuestWebUsbStatusMessage,
   type UsbHostAction,
+  type UsbHostCompletion,
   type UsbRingAttachMessage,
   type UsbSelectedMessage,
 } from "../usb/usb_proxy_protocol";
@@ -144,7 +145,229 @@ let webUsbGuestBridge: WebUsbGuestBridge | null = null;
 let lastUsbSelected: UsbSelectedMessage | null = null;
 let usbRingAttach: UsbRingAttachMessage | null = null;
 
+type UhciRuntimeCtor = NonNullable<WasmApi["UhciRuntime"]>;
+type UhciRuntimeInstance = InstanceType<UhciRuntimeCtor>;
+let uhciRuntime: UhciRuntimeInstance | null = null;
+let uhciRuntimeWebUsbBridge: UhciRuntimeWebUsbBridge | null = null;
+let uhciRuntimeHidGuest: WasmUhciHidGuestBridge | null = null;
+
+let pendingWasmInit: { api: WasmApi; variant: WasmVariant } | null = null;
+let wasmReadySent = false;
+
 const WEBUSB_GUEST_ROOT_PORT = 1;
+
+// Keep broker IDs from overlapping between multiple concurrent USB action sources (UHCI runtime,
+// harness panel, demo driver, etc). The demo uses 1_000_000_000 and the harness uses 2_000_000_000.
+const UHCI_RUNTIME_WEBUSB_ID_BASE = 3_000_000_000;
+const MAX_HID_OUTPUT_REPORTS_PER_TICK = 64;
+
+function rewriteUsbHostActionId(action: UsbHostAction, id: number): UsbHostAction {
+  switch (action.kind) {
+    case "controlIn":
+      return { kind: "controlIn", id, setup: action.setup };
+    case "controlOut":
+      return { kind: "controlOut", id, setup: action.setup, data: action.data };
+    case "bulkIn":
+      return { kind: "bulkIn", id, endpoint: action.endpoint, length: action.length };
+    case "bulkOut":
+      return { kind: "bulkOut", id, endpoint: action.endpoint, data: action.data };
+    default: {
+      const neverKind: never = action;
+      throw new Error(`Unknown UsbHostAction kind: ${String((neverKind as unknown as { kind?: unknown }).kind)}`);
+    }
+  }
+}
+
+function rewriteUsbHostCompletionId(completion: UsbHostCompletion, id: number): UsbHostCompletion {
+  switch (completion.kind) {
+    case "controlIn":
+    case "bulkIn":
+      if (completion.status === "success") return { kind: completion.kind, id, status: "success", data: completion.data };
+      if (completion.status === "stall") return { kind: completion.kind, id, status: "stall" };
+      return { kind: completion.kind, id, status: "error", message: completion.message };
+    case "controlOut":
+    case "bulkOut":
+      if (completion.status === "success") {
+        return { kind: completion.kind, id, status: "success", bytesWritten: completion.bytesWritten };
+      }
+      if (completion.status === "stall") return { kind: completion.kind, id, status: "stall" };
+      return { kind: completion.kind, id, status: "error", message: completion.message };
+    default: {
+      const neverKind: never = completion;
+      throw new Error(`Unknown UsbHostCompletion kind: ${String((neverKind as unknown as { kind?: unknown }).kind)}`);
+    }
+  }
+}
+
+class UhciRuntimeWebUsbBridge {
+  readonly #uhci: UhciRuntimeInstance;
+  readonly #rootPort: number;
+
+  #connected = false;
+  #nextBrokerId = UHCI_RUNTIME_WEBUSB_ID_BASE;
+  readonly #pendingByBrokerId = new Map<number, { wasmId: number; kind: UsbHostAction["kind"] }>();
+
+  constructor(opts: { uhci: UhciRuntimeInstance; rootPort: number }) {
+    this.#uhci = opts.uhci;
+    this.#rootPort = opts.rootPort >>> 0;
+  }
+
+  set_connected(connected: boolean): void {
+    const desired = Boolean(connected);
+    if (desired === this.#connected) return;
+    this.#connected = desired;
+    if (!desired) {
+      this.#uhci.webusb_detach();
+      return;
+    }
+
+    const assigned = this.#uhci.webusb_attach(this.#rootPort);
+    if (assigned !== this.#rootPort) {
+      console.warn(`[io.worker] UhciRuntime.webusb_attach assigned unexpected port=${assigned} (wanted ${this.#rootPort})`);
+    }
+  }
+
+  drain_actions(): UsbHostAction[] | null {
+    if (!this.#connected) return null;
+    const actions = this.#uhci.webusb_drain_actions();
+    if (!Array.isArray(actions) || actions.length === 0) return null;
+
+    const out: UsbHostAction[] = [];
+    for (const action of actions) {
+      const brokerId = this.allocBrokerId();
+      this.#pendingByBrokerId.set(brokerId, { wasmId: action.id, kind: action.kind });
+      out.push(rewriteUsbHostActionId(action, brokerId));
+    }
+    return out.length === 0 ? null : out;
+  }
+
+  push_completion(completion: UsbHostCompletion): void {
+    const mapping = this.#pendingByBrokerId.get(completion.id);
+    if (!mapping) return;
+    this.#pendingByBrokerId.delete(completion.id);
+
+    let rewritten: UsbHostCompletion;
+    if (completion.kind !== mapping.kind) {
+      rewritten = {
+        kind: mapping.kind,
+        id: mapping.wasmId,
+        status: "error",
+        message: `USB completion kind mismatch (expected ${mapping.kind}, got ${completion.kind})`,
+      };
+    } else {
+      rewritten = rewriteUsbHostCompletionId(completion, mapping.wasmId);
+    }
+
+    this.#uhci.webusb_push_completion(rewritten);
+  }
+
+  reset(): void {
+    this.#pendingByBrokerId.clear();
+    if (!this.#connected) return;
+    // `UsbWebUsbPassthroughDevice` doesn't currently expose a "soft reset" hook.
+    // Detach+reattach clears in-flight control transfers so the guest isn't stuck NAKing forever.
+    this.#uhci.webusb_detach();
+    this.#uhci.webusb_attach(this.#rootPort);
+  }
+
+  pending_summary(): unknown {
+    return {
+      connected: this.#connected,
+      pending: this.#pendingByBrokerId.size,
+      nextBrokerId: this.#nextBrokerId,
+    };
+  }
+
+  free(): void {
+    // The UHCI runtime itself is owned by the UHCI PCI device bridge.
+    this.#pendingByBrokerId.clear();
+  }
+
+  private allocBrokerId(): number {
+    const id = this.#nextBrokerId;
+    this.#nextBrokerId += 1;
+    if (this.#nextBrokerId > 0xffff_ffff) {
+      throw new Error(`UhciRuntimeWebUsbBridge ran out of valid broker action IDs (next=${this.#nextBrokerId})`);
+    }
+    return id;
+  }
+}
+
+class WasmUhciHidGuestBridge implements HidGuestBridge {
+  readonly #uhci: UhciRuntimeInstance;
+  readonly #host: HidHostSink;
+  readonly #attached = new Set<number>();
+
+  constructor(opts: { uhci: UhciRuntimeInstance; host: HidHostSink }) {
+    this.#uhci = opts.uhci;
+    this.#host = opts.host;
+  }
+
+  attach(msg: HidAttachMessage): void {
+    this.detach({ type: "hid.detach", deviceId: msg.deviceId });
+    const preferredPort = msg.guestPath?.[0] ?? msg.guestPort;
+    try {
+      this.#uhci.webhid_attach(
+        msg.deviceId >>> 0,
+        msg.vendorId >>> 0,
+        msg.productId >>> 0,
+        msg.productName,
+        msg.collections,
+        preferredPort === undefined ? undefined : (preferredPort >>> 0),
+      );
+      this.#attached.add(msg.deviceId);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.#host.error(`UHCI runtime hid.attach failed: ${message}`, msg.deviceId);
+    }
+  }
+
+  detach(msg: HidDetachMessage): void {
+    this.#attached.delete(msg.deviceId);
+    try {
+      this.#uhci.webhid_detach(msg.deviceId >>> 0);
+    } catch {
+      // ignore
+    }
+  }
+
+  inputReport(msg: HidInputReportMessage): void {
+    try {
+      this.#uhci.webhid_push_input_report(msg.deviceId >>> 0, msg.reportId >>> 0, msg.data);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.#host.error(`UHCI runtime hid.inputReport failed: ${message}`, msg.deviceId);
+    }
+  }
+
+  poll(): void {
+    let drained: Array<{ deviceId: number; reportType: "output" | "feature"; reportId: number; data: Uint8Array }> = [];
+    try {
+      drained = this.#uhci.webhid_drain_output_reports();
+    } catch {
+      return;
+    }
+
+    if (!Array.isArray(drained) || drained.length === 0) return;
+    let remaining = MAX_HID_OUTPUT_REPORTS_PER_TICK;
+    for (const report of drained) {
+      if (remaining <= 0) return;
+      remaining -= 1;
+      this.#host.sendReport({
+        deviceId: report.deviceId >>> 0,
+        reportType: report.reportType,
+        reportId: report.reportId >>> 0,
+        data: report.data,
+      });
+    }
+  }
+
+  destroy(): void {
+    for (const deviceId of Array.from(this.#attached)) {
+      this.detach({ type: "hid.detach", deviceId });
+    }
+  }
+}
 
 let webUsbGuestAttached = false;
 let webUsbGuestLastError: string | null = null;
@@ -183,11 +406,90 @@ function emitWebUsbGuestStatus(): void {
 
 const uhciHidTopology = new UhciHidTopologyManager();
 
+function maybeSendWasmReady(): void {
+  if (wasmReadySent) return;
+  const init = pendingWasmInit;
+  if (!init) return;
+  // Readiness implies the guest-visible UHCI controller is registered and the WASM-side HID
+  // passthrough bridge is installed, so `hid.attach` can immediately hotplug into the guest.
+  if (!uhciDevice) return;
+  if (!wasmHidGuest) return;
+  try {
+    if (Atomics.load(status, StatusIndex.StopRequested) === 1) return;
+  } catch {
+    // ignore if status isn't initialized yet.
+  }
+
+  let value = 0;
+  try {
+    value = init.api.add(20, 22);
+  } catch {
+    value = 0;
+  }
+  ctx.postMessage({ type: MessageType.WASM_READY, role, variant: init.variant, value } satisfies ProtocolMessage);
+  wasmReadySent = true;
+}
+
+function maybeInitUhciRuntime(): void {
+  if (uhciRuntime || uhciDevice) return;
+  const api = wasmApi;
+  const mgr = deviceManager;
+  if (!api || !mgr) return;
+  const Ctor = api.UhciRuntime;
+  if (!Ctor) return;
+  if (!guestBase || !guestSize) return;
+
+  let runtime: UhciRuntimeInstance;
+  try {
+    runtime = new Ctor(guestBase >>> 0, guestSize >>> 0);
+  } catch (err) {
+    console.warn("[io.worker] Failed to initialize UHCI runtime", err);
+    return;
+  }
+
+  const bridge: UhciControllerBridgeLike = {
+    io_read: (offset, size) => runtime.port_read(offset >>> 0, size >>> 0) >>> 0,
+    io_write: (offset, size, value) => runtime.port_write(offset >>> 0, size >>> 0, value >>> 0),
+    step_frame: () => runtime.step_frame(),
+    tick_1ms: () => runtime.tick_1ms(),
+    irq_asserted: () => runtime.irq_level(),
+    free: () => {
+      try {
+        runtime.free();
+      } catch {
+        // ignore
+      }
+    },
+  };
+
+  try {
+    const dev = new UhciPciDevice({ bridge, irqSink: mgr.irqSink });
+    uhciDevice = dev;
+    uhciRuntime = runtime;
+    mgr.registerPciDevice(dev);
+    mgr.addTickable(dev);
+    uhciHidTopology.setUhciBridge(null);
+  } catch (err) {
+    console.warn("[io.worker] Failed to register UHCI runtime PCI device", err);
+    try {
+      runtime.free();
+    } catch {
+      // ignore
+    }
+    uhciRuntime = null;
+    uhciDevice = null;
+  }
+}
+
 function maybeInitUhciDevice(): void {
   const api = wasmApi;
   const mgr = deviceManager;
   if (!api || !mgr) return;
   if (!guestBase) return;
+
+  if (api.UhciRuntime) {
+    maybeInitUhciRuntime();
+  }
 
   if (!uhciDevice) {
     const Bridge = api.UhciControllerBridge;
@@ -225,6 +527,46 @@ function maybeInitUhciDevice(): void {
   }
 
   if (!webUsbGuestBridge) {
+    if (uhciRuntime) {
+      const runtimeBridge = new UhciRuntimeWebUsbBridge({ uhci: uhciRuntime, rootPort: WEBUSB_GUEST_ROOT_PORT });
+      webUsbGuestBridge = runtimeBridge;
+      uhciRuntimeWebUsbBridge = runtimeBridge;
+
+      if (!usbPassthroughRuntime) {
+        usbPassthroughRuntime = new WebUsbPassthroughRuntime({
+          bridge: runtimeBridge,
+          port: ctx,
+          pollIntervalMs: 0,
+          initiallyBlocked: !usbAvailable,
+          initialRingAttach: usbRingAttach ?? undefined,
+        });
+        usbPassthroughRuntime.start();
+        if (import.meta.env.DEV) {
+          usbPassthroughDebugTimer = setInterval(() => {
+            console.debug("[io.worker] UHCI runtime WebUSB pending_summary()", usbPassthroughRuntime?.pendingSummary());
+          }, 1000) as unknown as number;
+        }
+      }
+
+      if (lastUsbSelected) {
+        try {
+          applyUsbSelectedToWebUsbUhciBridge(runtimeBridge, lastUsbSelected);
+          webUsbGuestAttached = lastUsbSelected.ok;
+          webUsbGuestLastError = null;
+        } catch (err) {
+          console.warn("[io.worker] Failed to apply usb.selected to UHCI runtime WebUSB bridge", err);
+          webUsbGuestAttached = false;
+          webUsbGuestLastError = `Failed to apply usb.selected to UHCI runtime: ${formatWebUsbGuestError(err)}`;
+        }
+      } else {
+        webUsbGuestAttached = false;
+        webUsbGuestLastError = null;
+      }
+
+      emitWebUsbGuestStatus();
+      return;
+    }
+
     const bridge = uhciControllerBridge;
     const hasWebUsb =
       bridge &&
@@ -543,7 +885,6 @@ let currentConfig: AeroConfig | null = null;
 let currentConfigVersion = 0;
 
 function maybeInitWasmHidGuestBridge(): void {
-  if (wasmHidGuest) return;
   const api = wasmApi;
   if (!api) return;
 
@@ -551,12 +892,20 @@ function maybeInitWasmHidGuestBridge(): void {
   // initialize the bridge before the UHCI controller exists, devices would never be visible to the
   // guest OS (PCI hotplug isn't modeled yet).
   maybeInitUhciDevice();
-  if (api.UhciControllerBridge && !uhciControllerBridge) {
+  if (wasmHidGuest) {
+    maybeSendWasmReady();
     return;
   }
+  if (!uhciRuntime && api.UhciControllerBridge && !uhciControllerBridge) return;
 
   try {
-    wasmHidGuest = new WasmHidGuestBridge(api, hidHostSink, uhciHidTopology);
+    if (uhciRuntime) {
+      uhciRuntimeHidGuest = new WasmUhciHidGuestBridge({ uhci: uhciRuntime, host: hidHostSink });
+      wasmHidGuest = uhciRuntimeHidGuest;
+    } else {
+      if (api.UhciControllerBridge && !uhciControllerBridge) return;
+      wasmHidGuest = new WasmHidGuestBridge(api, hidHostSink, uhciHidTopology);
+    }
   } catch (err) {
     console.warn("[io.worker] Failed to initialize WebHID passthrough WASM bridge", err);
     return;
@@ -582,6 +931,8 @@ function maybeInitWasmHidGuestBridge(): void {
     hidGuestInMemory.devices.clear();
     hidGuestInMemory.inputReports.clear();
   }
+
+  maybeSendWasmReady();
 }
 
 let started = false;
@@ -777,17 +1128,18 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
   try {
     void perf.spanAsync("wasm:init", async () => {
       try {
-        const { api } = await initWasmForContext({
+        const { api, variant } = await initWasmForContext({
           variant: init.wasmVariant ?? "auto",
           module: init.wasmModule,
           memory: init.guestMemory,
         });
         wasmApi = api;
+        pendingWasmInit = { api, variant };
         usbHid = new api.UsbHidBridge();
         maybeInitUhciDevice();
 
         maybeInitWasmHidGuestBridge();
-        if (api.UsbPassthroughDemo && !usbDemo) {
+        if (!api.UhciRuntime && api.UsbPassthroughDemo && !usbDemo) {
           try {
             usbDemoApi = new api.UsbPassthroughDemo();
             usbDemo = new UsbPassthroughDemoRuntime({
@@ -1183,7 +1535,7 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
         webUsbGuestAttached = false;
         if (!msg.ok) {
           webUsbGuestLastError = null;
-        } else if (wasmApi && !wasmApi.UhciControllerBridge) {
+        } else if (wasmApi && !wasmApi.UhciControllerBridge && !wasmApi.UhciRuntime) {
           webUsbGuestLastError =
             "UhciControllerBridge export unavailable (guest-visible WebUSB passthrough unsupported in this WASM build).";
         } else {
@@ -1198,7 +1550,7 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
 
       // Dev-only smoke test: once a device is selected on the main thread, request the
       // first 18 bytes of the device descriptor to prove the cross-thread broker works.
-      if (msg.ok && import.meta.env.DEV && !usbDemo) {
+      if (msg.ok && import.meta.env.DEV && !usbDemo && !wasmApi?.UhciRuntime) {
         const id = usbDemoNextId++;
         const action: UsbHostAction = {
           kind: "controlIn",

@@ -1,0 +1,550 @@
+import { expect, test } from "@playwright/test";
+
+const BASE_URL = "http://127.0.0.1:5173";
+
+async function hasThreadedWasmBundle(page: import("@playwright/test").Page): Promise<boolean> {
+  // `wasm_loader.ts` fetches this path when instantiating the threaded build.
+  const resp = await page.request.get(`${BASE_URL}/web/src/wasm/pkg-threaded/aero_wasm_bg.wasm`);
+  return resp.ok();
+}
+
+test("runtime UHCI: WebHID + WebUSB passthrough are guest-visible (NAK while pending)", async ({ page }) => {
+  test.setTimeout(45_000);
+
+  await page.goto(`${BASE_URL}/`, { waitUntil: "load" });
+
+  test.skip(!(await hasThreadedWasmBundle(page)), "threaded WASM bundle (pkg-threaded) is missing");
+
+  const support = await page.evaluate(() => {
+    let wasmThreads = false;
+    try {
+      // eslint-disable-next-line no-new
+      new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
+      wasmThreads = true;
+    } catch {
+      wasmThreads = false;
+    }
+    return {
+      crossOriginIsolated: globalThis.crossOriginIsolated === true,
+      sharedArrayBuffer: typeof SharedArrayBuffer !== "undefined",
+      atomics: typeof Atomics !== "undefined",
+      wasmThreads,
+    };
+  });
+
+  test.skip(!support.crossOriginIsolated || !support.sharedArrayBuffer, "SharedArrayBuffer requires COOP/COEP headers.");
+  test.skip(!support.atomics || !support.wasmThreads, "Shared WebAssembly.Memory (WASM threads) is unavailable.");
+
+  const result = await page.evaluate(async () => {
+    const { allocateSharedMemorySegments, createSharedMemoryViews } = await import("/web/src/runtime/shared_layout.ts");
+    const { MessageType } = await import("/web/src/runtime/protocol.ts");
+
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 16 });
+    const views = createSharedMemoryViews(segments);
+
+    const ioWorker = new Worker(new URL("/web/src/workers/io.worker.ts", location.href), { type: "module" });
+
+    let ioReady = false;
+    let ioWasmReady = false;
+    let ioError: string | null = null;
+
+    const usbActions: unknown[] = [];
+
+    ioWorker.onmessage = (ev) => {
+      const data = ev.data as any;
+      if (!data) return;
+
+      if (data.type === MessageType.READY && data.role === "io") {
+        ioReady = true;
+        return;
+      }
+      if (data.type === MessageType.WASM_READY && data.role === "io") {
+        ioWasmReady = true;
+        return;
+      }
+      if (data.type === MessageType.ERROR && data.role === "io") {
+        ioError = typeof data.message === "string" ? data.message : String(data.message);
+        return;
+      }
+      if (data.type === "usb.action") {
+        usbActions.push(data.action);
+        return;
+      }
+    };
+
+    ioWorker.postMessage({
+      kind: "init",
+      role: "io",
+      controlSab: segments.control,
+      guestMemory: segments.guestMemory,
+      vgaFramebuffer: segments.vgaFramebuffer,
+      ioIpcSab: segments.ioIpc,
+      sharedFramebuffer: segments.sharedFramebuffer,
+      sharedFramebufferOffsetBytes: segments.sharedFramebufferOffsetBytes,
+    });
+    ioWorker.postMessage({ type: "setBootDisks", mounts: {}, hdd: null, cd: null });
+
+    const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+    const waitFor = async (predicate: () => boolean, timeoutMs: number, name: string) => {
+      const deadline = performance.now() + timeoutMs;
+      while (performance.now() < deadline) {
+        if (ioError) throw new Error(`io.worker error while waiting for ${name}: ${ioError}`);
+        if (predicate()) return;
+        await sleep(5);
+      }
+      throw new Error(`Timed out waiting for ${name}`);
+    };
+
+    await waitFor(() => ioReady, 10_000, "io READY");
+    await waitFor(() => ioWasmReady, 20_000, "io WASM_READY");
+
+    const guestSab = segments.guestMemory.buffer as unknown as SharedArrayBuffer;
+
+     const guestWorkerCode = `
+       import { openRingByKind } from "/web/src/ipc/ipc.ts";
+       import { IO_IPC_CMD_QUEUE_KIND, IO_IPC_EVT_QUEUE_KIND } from "/web/src/runtime/shared_layout.ts";
+       import { AeroIpcIoClient } from "/web/src/io/ipc/aero_ipc_io.ts";
+
+       const UHCI_BASE = 0x5000;
+
+       const PCI_ADDR = 0x0cf8;
+       const PCI_DATA = 0x0cfc;
+
+       function pciAddr(bus, dev, func, reg) {
+         return (0x80000000 | ((bus & 0xff) << 16) | ((dev & 0x1f) << 11) | ((func & 0x07) << 8) | (reg & 0xfc)) >>> 0;
+       }
+
+       function pciRead32(io, bus, dev, func, reg) {
+         io.portWrite(PCI_ADDR, 4, pciAddr(bus, dev, func, reg));
+         return io.portRead(PCI_DATA, 4) >>> 0;
+       }
+
+       function pciWrite32(io, bus, dev, func, reg, value) {
+         io.portWrite(PCI_ADDR, 4, pciAddr(bus, dev, func, reg));
+         io.portWrite(PCI_DATA, 4, value >>> 0);
+       }
+
+       function findUhciDevice(io) {
+         for (let dev = 0; dev < 32; dev++) {
+           const id = pciRead32(io, 0, dev, 0, 0x00);
+           const vendorId = id & 0xffff;
+           const deviceId = (id >>> 16) & 0xffff;
+           if (vendorId === 0xffff) continue;
+           if (vendorId === 0x8086 && deviceId === 0x7112) return dev;
+         }
+         return -1;
+       }
+
+       const REG_USBCMD = 0x00;
+       const REG_USBINTR = 0x04;
+       const REG_FRNUM = 0x06;
+       const REG_FRBASEADD = 0x08;
+       const REG_PORTSC1 = 0x10;
+      const REG_PORTSC2 = 0x12;
+
+      const USBCMD_RUN = 1 << 0;
+      const USBCMD_MAXP = 1 << 7;
+      const USBINTR_IOC = 1 << 2;
+
+      const PORTSC_CCS = 1 << 0;
+      const PORTSC_PED = 1 << 2;
+
+      const LINK_PTR_T = 1 << 0;
+      const LINK_PTR_Q = 1 << 1;
+
+      const TD_CTRL_NAK = 1 << 19;
+      const TD_CTRL_ACTIVE = 1 << 23;
+      const TD_CTRL_IOC = 1 << 24;
+
+      const TD_TOKEN_DEVADDR_SHIFT = 8;
+      const TD_TOKEN_ENDPT_SHIFT = 15;
+      const TD_TOKEN_MAXLEN_SHIFT = 21;
+
+      const PID_SETUP = 0x2d;
+      const PID_IN = 0x69;
+      const PID_OUT = 0xe1;
+
+      const sleepArr = new Int32Array(new SharedArrayBuffer(4));
+      function sleep(ms) {
+        Atomics.wait(sleepArr, 0, 0, ms);
+      }
+
+      function le16(v) {
+        return [v & 0xff, (v >>> 8) & 0xff];
+      }
+
+      function setupPacketBytes(pkt) {
+        return Uint8Array.from([
+          pkt.bmRequestType & 0xff,
+          pkt.bRequest & 0xff,
+          ...le16(pkt.wValue >>> 0),
+          ...le16(pkt.wIndex >>> 0),
+          ...le16(pkt.wLength >>> 0),
+        ]);
+      }
+
+      function tdToken(pid, devAddr, endpt, maxLen) {
+        const maxlenField = maxLen === 0 ? (0x7ff << TD_TOKEN_MAXLEN_SHIFT) : ((maxLen - 1) << TD_TOKEN_MAXLEN_SHIFT);
+        return (
+          (pid & 0xff) |
+          ((devAddr & 0x7f) << TD_TOKEN_DEVADDR_SHIFT) |
+          ((endpt & 0x0f) << TD_TOKEN_ENDPT_SHIFT) |
+          (maxlenField >>> 0)
+        ) >>> 0;
+      }
+
+      function writeU32(dv, paddr, value) {
+        dv.setUint32(paddr >>> 0, value >>> 0, true);
+      }
+
+      function readU32(dv, paddr) {
+        return dv.getUint32(paddr >>> 0, true) >>> 0;
+      }
+
+      function findConnectedPort(io) {
+        const p1 = io.portRead(UHCI_BASE + REG_PORTSC1, 2) & 0xffff;
+        if (p1 & PORTSC_CCS) return 0;
+        const p2 = io.portRead(UHCI_BASE + REG_PORTSC2, 2) & 0xffff;
+        if (p2 & PORTSC_CCS) return 1;
+        return -1;
+      }
+
+      function enablePort(io, portIndex) {
+        const reg = portIndex === 0 ? REG_PORTSC1 : REG_PORTSC2;
+        io.portWrite(UHCI_BASE + reg, 2, PORTSC_PED);
+      }
+
+      function setupFrameListAndQh(dv) {
+        const FRAME_LIST = 0x1000;
+        const QH = 0x2000;
+        for (let i = 0; i < 1024; i++) {
+          writeU32(dv, FRAME_LIST + i * 4, (QH | LINK_PTR_Q) >>> 0);
+        }
+        // QH head = terminate, element = TD_SETUP (filled later)
+        writeU32(dv, QH + 0x00, LINK_PTR_T);
+        writeU32(dv, QH + 0x04, LINK_PTR_T);
+        return { FRAME_LIST, QH };
+      }
+
+      function setupControlChain(dv, setupBytes, inLen) {
+        const TD_SETUP = 0x3000;
+        const TD_IN = 0x3010;
+        const TD_STATUS = 0x3020;
+        const BUF_SETUP = 0x4000;
+        const BUF_DATA = 0x4100;
+
+        // Copy setup packet bytes.
+        new Uint8Array(dv.buffer, dv.byteOffset + BUF_SETUP, 8).set(setupBytes);
+
+        // TD: SETUP
+        writeU32(dv, TD_SETUP + 0x00, TD_IN);
+        writeU32(dv, TD_SETUP + 0x04, (TD_CTRL_ACTIVE | 0x7ff) >>> 0);
+        writeU32(dv, TD_SETUP + 0x08, tdToken(PID_SETUP, 0, 0, 8));
+        writeU32(dv, TD_SETUP + 0x0c, BUF_SETUP);
+
+        // TD: IN (data)
+        writeU32(dv, TD_IN + 0x00, TD_STATUS);
+        writeU32(dv, TD_IN + 0x04, (TD_CTRL_ACTIVE | 0x7ff) >>> 0);
+        writeU32(dv, TD_IN + 0x08, tdToken(PID_IN, 0, 0, inLen));
+        writeU32(dv, TD_IN + 0x0c, BUF_DATA);
+
+        // TD: OUT (status)
+        writeU32(dv, TD_STATUS + 0x00, LINK_PTR_T);
+        writeU32(dv, TD_STATUS + 0x04, (TD_CTRL_ACTIVE | TD_CTRL_IOC | 0x7ff) >>> 0);
+        writeU32(dv, TD_STATUS + 0x08, tdToken(PID_OUT, 0, 0, 0));
+        writeU32(dv, TD_STATUS + 0x0c, 0);
+
+        return { TD_SETUP, TD_IN, TD_STATUS, BUF_DATA };
+      }
+
+      function waitForTdInactive(dv, tdAddr, timeoutMs) {
+        const start = performance.now();
+        while (performance.now() - start < timeoutMs) {
+          const ctrl = readU32(dv, tdAddr + 0x04);
+          if ((ctrl & TD_CTRL_ACTIVE) === 0) return ctrl >>> 0;
+          sleep(1);
+        }
+        throw new Error("timeout waiting for TD to complete");
+      }
+
+      self.onmessage = (ev) => {
+        const { ioIpc, guestSab, mode, guestBase, guestSize, setup, inLen } = ev.data;
+
+         const cmdQ = openRingByKind(ioIpc, IO_IPC_CMD_QUEUE_KIND);
+         const evtQ = openRingByKind(ioIpc, IO_IPC_EVT_QUEUE_KIND);
+         const io = new AeroIpcIoClient(cmdQ, evtQ);
+
+         const dv = new DataView(guestSab, guestBase, guestSize);
+
+         // Ensure the UHCI controller's PCI BAR is mapped at UHCI_BASE and I/O decoding is enabled.
+         const uhciDev = findUhciDevice(io);
+         if (uhciDev === -1) {
+           self.postMessage({ type: "error", message: "UHCI PCI device not found" });
+           return;
+         }
+         // BAR0: I/O space (bit0=1), 0x20-byte register block.
+         pciWrite32(io, 0, uhciDev, 0, 0x10, (UHCI_BASE | 1) >>> 0);
+         // Command register: enable I/O decoding (bit0=1).
+         pciWrite32(io, 0, uhciDev, 0, 0x04, 0x0001);
+
+         // Find which root port is connected.
+         const deadline = performance.now() + 5000;
+         let portIndex = -1;
+         while (performance.now() < deadline) {
+          portIndex = findConnectedPort(io);
+          if (portIndex !== -1) break;
+          sleep(5);
+        }
+        if (portIndex === -1) {
+          self.postMessage({ type: "error", message: "no UHCI root port reports a connected device" });
+          return;
+        }
+
+        enablePort(io, portIndex);
+
+        // Frame list + QH.
+        const { FRAME_LIST, QH } = setupFrameListAndQh(dv);
+
+        const setupBytes = setupPacketBytes(setup);
+        const chain = setupControlChain(dv, setupBytes, inLen);
+        writeU32(dv, QH + 0x04, chain.TD_SETUP);
+
+        // Program UHCI registers.
+        io.portWrite(UHCI_BASE + REG_USBINTR, 2, USBINTR_IOC);
+        io.portWrite(UHCI_BASE + REG_FRNUM, 2, 0);
+        io.portWrite(UHCI_BASE + REG_FRBASEADD, 4, FRAME_LIST);
+        io.portWrite(UHCI_BASE + REG_USBCMD, 2, (USBCMD_RUN | USBCMD_MAXP) >>> 0);
+
+        if (mode === "hidConfig") {
+          waitForTdInactive(dv, chain.TD_STATUS, 5000);
+          const data = Array.from(new Uint8Array(dv.buffer, dv.byteOffset + chain.BUF_DATA, inLen));
+          self.postMessage({ type: "hid.result", portIndex, data });
+          return;
+        }
+
+        if (mode === "webusbDevice") {
+          const start = performance.now();
+          let nakNotified = false;
+          while (performance.now() - start < 5000) {
+            const ctrl = readU32(dv, chain.TD_IN + 0x04);
+            if (!nakNotified && (ctrl & TD_CTRL_ACTIVE) !== 0 && (ctrl & TD_CTRL_NAK) !== 0) {
+              const qhElem = readU32(dv, QH + 0x04);
+              nakNotified = true;
+              self.postMessage({ type: "webusb.nakObserved", ctrl, qhElem });
+            }
+            if ((ctrl & TD_CTRL_ACTIVE) === 0) break;
+            sleep(1);
+          }
+
+          waitForTdInactive(dv, chain.TD_STATUS, 5000);
+          const data = Array.from(new Uint8Array(dv.buffer, dv.byteOffset + chain.BUF_DATA, inLen));
+          const inCtrlFinal = readU32(dv, chain.TD_IN + 0x04);
+          self.postMessage({ type: "webusb.result", portIndex, data, nakObserved: nakNotified, inCtrlFinal });
+          return;
+        }
+
+        self.postMessage({ type: "error", message: "unknown mode" });
+      };
+    `;
+
+    const guestUrl = URL.createObjectURL(new Blob([guestWorkerCode], { type: "text/javascript" }));
+
+    const runGuest = async (payload: any): Promise<any> => {
+      const worker = new Worker(guestUrl, { type: "module" });
+      try {
+        return await new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => reject(new Error("timeout waiting for guest worker")), 15_000);
+          worker.onmessage = (ev) => {
+            clearTimeout(timeout);
+            resolve(ev.data);
+          };
+          worker.onerror = (err) => {
+            clearTimeout(timeout);
+            reject(err);
+          };
+          worker.postMessage(payload);
+        });
+      } finally {
+        worker.terminate();
+      }
+    };
+
+    // -------------------------
+    // Phase 1: WebHID config descriptor proves guest-visible HID device.
+    // -------------------------
+
+    const collections = [
+      {
+        usagePage: 0x01,
+        usage: 0x02,
+        collectionType: 0x01,
+        children: [],
+        inputReports: [
+          {
+            reportId: 0,
+            items: [
+              {
+                usagePage: 0x01,
+                usages: [0x30],
+                usageMinimum: 0,
+                usageMaximum: 0,
+                reportSize: 8,
+                reportCount: 1,
+                unitExponent: 0,
+                unit: 0,
+                logicalMinimum: 0,
+                logicalMaximum: 255,
+                physicalMinimum: 0,
+                physicalMaximum: 255,
+                strings: [],
+                stringMinimum: 0,
+                stringMaximum: 0,
+                designators: [],
+                designatorMinimum: 0,
+                designatorMaximum: 0,
+                isAbsolute: true,
+                isArray: false,
+                isBufferedBytes: false,
+                isConstant: false,
+                isLinear: true,
+                isRange: false,
+                isRelative: false,
+                isVolatile: false,
+                hasNull: false,
+                hasPreferredState: true,
+                isWrapped: false,
+              },
+            ],
+          },
+        ],
+        outputReports: [],
+        featureReports: [],
+      },
+    ];
+
+    ioWorker.postMessage({
+      type: "hid.attach",
+      deviceId: 1,
+      vendorId: 0x1234,
+      productId: 0x5678,
+      productName: "Playwright HID",
+      guestPort: 0,
+      collections,
+      hasInterruptOut: false,
+    });
+
+    const hidResult = await runGuest({
+      mode: "hidConfig",
+      ioIpc: segments.ioIpc,
+      guestSab,
+      guestBase: views.guestLayout.guest_base,
+      guestSize: views.guestLayout.guest_size,
+      setup: { bmRequestType: 0x80, bRequest: 0x06, wValue: 0x0200, wIndex: 0, wLength: 34 },
+      inLen: 34,
+    });
+
+    ioWorker.postMessage({ type: "hid.detach", deviceId: 1 });
+
+    // -------------------------
+    // Phase 2: WebUSB device descriptor proves TD-level NAK while awaiting host completion.
+    // -------------------------
+
+    usbActions.length = 0;
+    ioWorker.postMessage({
+      type: "usb.selected",
+      ok: true,
+      info: { vendorId: 0x1d6b, productId: 0x0104, productName: "Playwright WebUSB" },
+    });
+
+    const expectedDeviceDescriptor = [
+      0x12, 0x01, 0x00, 0x02, 0x00, 0x00, 0x00, 0x40, 0x34, 0x12, 0x78, 0x56, 0x00, 0x01, 0x01, 0x02, 0x03, 0x01,
+    ];
+
+    let nakObserved = false;
+    let completionSent = false;
+
+    const webusbWorker = new Worker(guestUrl, { type: "module" });
+    const webusbResultPromise = new Promise<any>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error("timeout waiting for webusb guest worker")), 20_000);
+      webusbWorker.onmessage = (ev) => {
+        const data = ev.data as any;
+        if (data?.type === "webusb.nakObserved") {
+          nakObserved = true;
+          return;
+        }
+        clearTimeout(timeout);
+        resolve(data);
+      };
+      webusbWorker.onerror = (err) => {
+        clearTimeout(timeout);
+        reject(err);
+      };
+    });
+
+    const maybeSendCompletion = () => {
+      if (completionSent) return;
+      if (!nakObserved) return;
+      const action = usbActions[0] as any;
+      if (!action || typeof action !== "object") return;
+      if (action.kind !== "controlIn" || typeof action.id !== "number") return;
+      completionSent = true;
+
+      const data = new Uint8Array(expectedDeviceDescriptor);
+      ioWorker.postMessage(
+        { type: "usb.completion", completion: { kind: "controlIn", id: action.id, status: "success", data } },
+        [data.buffer],
+      );
+    };
+
+    webusbWorker.postMessage({
+      mode: "webusbDevice",
+      ioIpc: segments.ioIpc,
+      guestSab,
+      guestBase: views.guestLayout.guest_base,
+      guestSize: views.guestLayout.guest_size,
+      setup: { bmRequestType: 0x80, bRequest: 0x06, wValue: 0x0100, wIndex: 0, wLength: 18 },
+      inLen: 18,
+    });
+
+    // Poll for usb.action + nakObserved before sending the completion to prove NAK-while-pending.
+    const completionDeadline = performance.now() + 10_000;
+    while (!completionSent && performance.now() < completionDeadline) {
+      maybeSendCompletion();
+      await sleep(5);
+    }
+    if (!completionSent) {
+      throw new Error(`did not observe NAK+usb.action (nakObserved=${nakObserved} actions=${usbActions.length})`);
+    }
+
+    const webusbResult = await webusbResultPromise.finally(() => webusbWorker.terminate());
+    ioWorker.postMessage({ type: "usb.selected", ok: false, error: "test complete" });
+
+    URL.revokeObjectURL(guestUrl);
+    ioWorker.terminate();
+
+    return {
+      hidResult,
+      webusbResult,
+      usbActions: usbActions.slice(),
+      expectedDeviceDescriptor,
+    };
+  });
+
+  if (result.hidResult?.type === "error") {
+    throw new Error(String(result.hidResult.message));
+  }
+  if (result.webusbResult?.type === "error") {
+    throw new Error(String(result.webusbResult.message));
+  }
+
+  const hidData = (result.hidResult as { data: number[] }).data;
+  expect(hidData.length).toBe(34);
+  // Interface descriptor begins at offset 9; bInterfaceClass is at offset 9+5.
+  expect(hidData[14]).toBe(0x03);
+
+  // WebUSB: should emit exactly one controlIn action and the guest TD should NAK until completion.
+  expect(result.usbActions).toHaveLength(1);
+  expect((result.usbActions[0] as any).kind).toBe("controlIn");
+  expect((result.webusbResult as any).nakObserved).toBe(true);
+  expect((result.webusbResult as any).data).toEqual(result.expectedDeviceDescriptor);
+});
