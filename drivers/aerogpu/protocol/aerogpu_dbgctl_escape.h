@@ -48,11 +48,6 @@ enum aerogpu_dbgctl_selftest_error {
   AEROGPU_DBGCTL_SELFTEST_ERR_TIMEOUT = 5,
 };
 
-enum aerogpu_dbgctl_vblank_flags {
-  /* KMD observed AEROGPU_FEATURE_VBLANK and populated vblank fields. */
-  AEROGPU_DBGCTL_VBLANK_SUPPORTED = (1u << 0),
-};
-
 #pragma pack(push, 1)
 
 /*
