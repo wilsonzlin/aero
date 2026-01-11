@@ -665,7 +665,7 @@ async fn missing_required_header_fails_open_with_http_error() {
     config.options.max_retries = 1;
 
     let err = StreamingDisk::open(config).await.err().unwrap();
-    assert!(matches!(err, StreamingDiskError::Http(_)));
+    assert!(matches!(err, StreamingDiskError::HttpStatus { .. }));
 
     let _ = shutdown.send(());
 }

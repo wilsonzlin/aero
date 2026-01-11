@@ -36,6 +36,9 @@ pub enum StreamingDiskError {
     #[error("remote server does not support HTTP Range requests")]
     RangeNotSupported,
 
+    #[error("remote request failed with HTTP status {status}")]
+    HttpStatus { status: reqwest::StatusCode },
+
     #[error("remote request failed: {0}")]
     Http(String),
 
@@ -1002,13 +1005,20 @@ impl StreamingDisk {
             match self.fetch_range_once(start, end, token).await {
                 Ok(bytes) => return Ok(bytes),
                 Err(e) => {
-                    if matches!(
-                        e,
+                    let should_retry = match &e {
                         StreamingDiskError::RangeNotSupported
-                            | StreamingDiskError::Integrity { .. }
-                            | StreamingDiskError::ValidatorMismatch { .. }
-                            | StreamingDiskError::Cancelled
-                    ) {
+                        | StreamingDiskError::Integrity { .. }
+                        | StreamingDiskError::ValidatorMismatch { .. }
+                        | StreamingDiskError::Cancelled => false,
+                        StreamingDiskError::HttpStatus { status } => {
+                            status.is_server_error()
+                                || *status == reqwest::StatusCode::REQUEST_TIMEOUT
+                                || *status == reqwest::StatusCode::TOO_MANY_REQUESTS
+                        }
+                        _ => true,
+                    };
+
+                    if !should_retry {
                         return Err(e);
                     }
                     last_err = Some(e);
@@ -1097,10 +1107,9 @@ impl StreamingDisk {
             if resp.status().is_success() {
                 return Err(StreamingDiskError::RangeNotSupported);
             }
-            return Err(StreamingDiskError::Http(format!(
-                "unexpected status {}",
-                resp.status()
-            )));
+            return Err(StreamingDiskError::HttpStatus {
+                status: resp.status(),
+            });
         }
 
         if let Some(encoding) = resp
@@ -1200,10 +1209,9 @@ async fn probe_remote_size_and_validator(
         if resp.status().is_success() {
             return Err(StreamingDiskError::RangeNotSupported);
         }
-        return Err(StreamingDiskError::Http(format!(
-            "unexpected status {}",
-            resp.status()
-        )));
+        return Err(StreamingDiskError::HttpStatus {
+            status: resp.status(),
+        });
     }
 
     let validator = extract_validator(resp.headers());
