@@ -1410,9 +1410,25 @@ static void UnbindResourceFromSrvsLocked(Device* dev, aerogpu_handle_t resource)
   for (uint32_t slot = 0; slot < kMaxShaderResourceSlots; ++slot) {
     if (dev->vs_srvs[slot] == resource) {
       SetShaderResourceSlotLocked(dev, AEROGPU_SHADER_STAGE_VERTEX, slot, 0);
+      if (dev->vs_srvs[slot] == 0) {
+        if (slot < dev->current_vs_srvs.size()) {
+          dev->current_vs_srvs[slot] = nullptr;
+        }
+        if (slot == 0) {
+          dev->current_vs_srv0 = nullptr;
+        }
+      }
     }
     if (dev->ps_srvs[slot] == resource) {
       SetShaderResourceSlotLocked(dev, AEROGPU_SHADER_STAGE_PIXEL, slot, 0);
+      if (dev->ps_srvs[slot] == 0) {
+        if (slot < dev->current_ps_srvs.size()) {
+          dev->current_ps_srvs[slot] = nullptr;
+        }
+        if (slot == 0) {
+          dev->current_ps_srv0 = nullptr;
+        }
+      }
     }
   }
 }
@@ -3907,13 +3923,16 @@ void AEROGPU_APIENTRY VsSetConstantBuffers11(D3D11DDI_HDEVICECONTEXT hCtx,
     return;
   }
   std::lock_guard<std::mutex> lock(dev->mutex);
-  if (StartSlot == 0 && NumBuffers >= 1) {
-    dev->current_vs_cb0 = (phBuffers && phBuffers[0].pDrvPrivate) ? FromHandle<D3D11DDI_HRESOURCE, Resource>(phBuffers[0])
-                                                                  : nullptr;
-    dev->current_vs_cb0_first_constant = pFirstConstant ? pFirstConstant[0] : 0;
-    dev->current_vs_cb0_num_constants = pNumConstants ? pNumConstants[0] : 0;
-  }
   SetConstantBuffers11Locked(dev, AEROGPU_SHADER_STAGE_VERTEX, StartSlot, NumBuffers, phBuffers, pFirstConstant, pNumConstants);
+  if (StartSlot == 0 && NumBuffers >= 1) {
+    Resource* buf = (phBuffers && phBuffers[0].pDrvPrivate) ? FromHandle<D3D11DDI_HRESOURCE, Resource>(phBuffers[0]) : nullptr;
+    const aerogpu_handle_t expected = (buf && buf->kind == ResourceKind::Buffer) ? buf->handle : 0;
+    if (dev->vs_constant_buffers[0].buffer == expected) {
+      dev->current_vs_cb0 = expected ? buf : nullptr;
+      dev->current_vs_cb0_first_constant = pFirstConstant ? pFirstConstant[0] : 0;
+      dev->current_vs_cb0_num_constants = pNumConstants ? pNumConstants[0] : 0;
+    }
+  }
 }
 
 void AEROGPU_APIENTRY PsSetConstantBuffers11(D3D11DDI_HDEVICECONTEXT hCtx,
@@ -3927,13 +3946,16 @@ void AEROGPU_APIENTRY PsSetConstantBuffers11(D3D11DDI_HDEVICECONTEXT hCtx,
     return;
   }
   std::lock_guard<std::mutex> lock(dev->mutex);
-  if (StartSlot == 0 && NumBuffers >= 1) {
-    dev->current_ps_cb0 = (phBuffers && phBuffers[0].pDrvPrivate) ? FromHandle<D3D11DDI_HRESOURCE, Resource>(phBuffers[0])
-                                                                  : nullptr;
-    dev->current_ps_cb0_first_constant = pFirstConstant ? pFirstConstant[0] : 0;
-    dev->current_ps_cb0_num_constants = pNumConstants ? pNumConstants[0] : 0;
-  }
   SetConstantBuffers11Locked(dev, AEROGPU_SHADER_STAGE_PIXEL, StartSlot, NumBuffers, phBuffers, pFirstConstant, pNumConstants);
+  if (StartSlot == 0 && NumBuffers >= 1) {
+    Resource* buf = (phBuffers && phBuffers[0].pDrvPrivate) ? FromHandle<D3D11DDI_HRESOURCE, Resource>(phBuffers[0]) : nullptr;
+    const aerogpu_handle_t expected = (buf && buf->kind == ResourceKind::Buffer) ? buf->handle : 0;
+    if (dev->ps_constant_buffers[0].buffer == expected) {
+      dev->current_ps_cb0 = expected ? buf : nullptr;
+      dev->current_ps_cb0_first_constant = pFirstConstant ? pFirstConstant[0] : 0;
+      dev->current_ps_cb0_num_constants = pNumConstants ? pNumConstants[0] : 0;
+    }
+  }
 }
 void AEROGPU_APIENTRY GsSetConstantBuffers11(D3D11DDI_HDEVICECONTEXT, UINT, UINT, const D3D11DDI_HRESOURCE*, const UINT*, const UINT*) {}
 
@@ -4138,23 +4160,15 @@ void AEROGPU_APIENTRY CsSetUnorderedAccessViews11(D3D11DDI_HDEVICECONTEXT hCtx,
 }
 
 void AEROGPU_APIENTRY VsSetShaderResources11(D3D11DDI_HDEVICECONTEXT hCtx,
-                                              UINT StartSlot,
-                                              UINT NumViews,
-                                              const D3D11DDI_HSHADERRESOURCEVIEW* phViews) {
+                                               UINT StartSlot,
+                                               UINT NumViews,
+                                               const D3D11DDI_HSHADERRESOURCEVIEW* phViews) {
   auto* dev = DeviceFromContext(hCtx);
   if (!dev || NumViews == 0) {
     return;
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
-  if (StartSlot == 0 && NumViews >= 1) {
-    Resource* bound = nullptr;
-    if (phViews && phViews[0].pDrvPrivate) {
-      auto* view = FromHandle<D3D11DDI_HSHADERRESOURCEVIEW, ShaderResourceView>(phViews[0]);
-      bound = view ? view->resource : nullptr;
-    }
-    dev->current_vs_srv0 = bound;
-  }
   if (StartSlot >= kMaxShaderResourceSlots) {
     return;
   }
@@ -4171,35 +4185,32 @@ void AEROGPU_APIENTRY VsSetShaderResources11(D3D11DDI_HDEVICECONTEXT hCtx,
         res = view->resource;
         tex = res ? res->handle : view->texture;
       }
-    }
-    if (slot < dev->current_vs_srvs.size()) {
-      dev->current_vs_srvs[slot] = res;
     }
     if (tex) {
       UnbindResourceFromOutputsLocked(dev, tex);
     }
     SetShaderResourceSlotLocked(dev, AEROGPU_SHADER_STAGE_VERTEX, slot, tex);
+    if (dev->vs_srvs[slot] == tex) {
+      if (slot < dev->current_vs_srvs.size()) {
+        dev->current_vs_srvs[slot] = res;
+      }
+      if (slot == 0) {
+        dev->current_vs_srv0 = res;
+      }
+    }
   }
 }
 
 void AEROGPU_APIENTRY PsSetShaderResources11(D3D11DDI_HDEVICECONTEXT hCtx,
-                                              UINT StartSlot,
-                                              UINT NumViews,
-                                              const D3D11DDI_HSHADERRESOURCEVIEW* phViews) {
+                                               UINT StartSlot,
+                                               UINT NumViews,
+                                               const D3D11DDI_HSHADERRESOURCEVIEW* phViews) {
   auto* dev = DeviceFromContext(hCtx);
   if (!dev || NumViews == 0) {
     return;
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
-  if (StartSlot == 0 && NumViews >= 1) {
-    Resource* bound = nullptr;
-    if (phViews && phViews[0].pDrvPrivate) {
-      auto* view = FromHandle<D3D11DDI_HSHADERRESOURCEVIEW, ShaderResourceView>(phViews[0]);
-      bound = view ? view->resource : nullptr;
-    }
-    dev->current_ps_srv0 = bound;
-  }
   if (StartSlot >= kMaxShaderResourceSlots) {
     return;
   }
@@ -4217,13 +4228,18 @@ void AEROGPU_APIENTRY PsSetShaderResources11(D3D11DDI_HDEVICECONTEXT hCtx,
         tex = res ? res->handle : view->texture;
       }
     }
-    if (slot < dev->current_ps_srvs.size()) {
-      dev->current_ps_srvs[slot] = res;
-    }
     if (tex) {
       UnbindResourceFromOutputsLocked(dev, tex);
     }
     SetShaderResourceSlotLocked(dev, AEROGPU_SHADER_STAGE_PIXEL, slot, tex);
+    if (dev->ps_srvs[slot] == tex) {
+      if (slot < dev->current_ps_srvs.size()) {
+        dev->current_ps_srvs[slot] = res;
+      }
+      if (slot == 0) {
+        dev->current_ps_srv0 = res;
+      }
+    }
   }
 }
 
