@@ -2702,9 +2702,8 @@ static bool WaveOutToneTest(Logger& log, const std::vector<std::wstring>& match_
     if (inst_id.has_value()) {
       log.Logf("virtio-snd: waveOut[%u]=%s instance_id=%s", i, WideToUtf8(caps.szPname).c_str(),
                WideToUtf8(*inst_id).c_str());
-      if (ContainsInsensitive(*inst_id, L"VEN_1AF4&DEV_1059")) {
-        score += 500;
-      } else if (allow_transitional && ContainsInsensitive(*inst_id, L"VEN_1AF4&DEV_1018")) {
+      const auto inst_info = GetVirtioSndPciIdInfoFromString(*inst_id);
+      if (inst_info.modern || (allow_transitional && inst_info.transitional)) {
         score += 500;
       }
       const auto hwids = GetHardwareIdsForInstanceId(*inst_id);
@@ -2862,9 +2861,8 @@ static TestResult WaveInCaptureTest(Logger& log, const std::vector<std::wstring>
     if (inst_id.has_value()) {
       log.Logf("virtio-snd: waveIn[%u]=%s instance_id=%s", i, WideToUtf8(caps.szPname).c_str(),
                WideToUtf8(*inst_id).c_str());
-      if (ContainsInsensitive(*inst_id, L"VEN_1AF4&DEV_1059")) {
-        score += 500;
-      } else if (allow_transitional && ContainsInsensitive(*inst_id, L"VEN_1AF4&DEV_1018")) {
+      const auto inst_info = GetVirtioSndPciIdInfoFromString(*inst_id);
+      if (inst_info.modern || (allow_transitional && inst_info.transitional)) {
         score += 500;
       }
       const auto hwids = GetHardwareIdsForInstanceId(*inst_id);
