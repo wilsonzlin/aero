@@ -237,6 +237,12 @@ On a clean Win7 SP1 VM:
    packaging\win7\verify_umd_registration.cmd
    ```
 
+   If you installed the DX11-capable package (`aerogpu_dx11.inf`), require the D3D10/11 checks as well:
+
+   ```bat
+   packaging\win7\verify_umd_registration.cmd dx11
+   ```
+
 4. Confirm UMD DLL placement:
     - x64 VM:
       - `C:\Windows\System32\aerogpu_d3d9_x64.dll` exists

@@ -12,12 +12,33 @@ rem ----------------------------------------------------------------------------
 
 set "FAIL=0"
 
+set "REQUIRE_DX11=0"
+if /i "%~1"=="dx11" set "REQUIRE_DX11=1"
+if /i "%~1"=="--dx11" set "REQUIRE_DX11=1"
+if /i "%~1"=="aerogpu_dx11.inf" set "REQUIRE_DX11=1"
+if /i "%~1"=="aerogpu_dx11" set "REQUIRE_DX11=1"
+
+if /i "%~1"=="--help" goto :usage
+if /i "%~1"=="-h" goto :usage
+if /i "%~1"=="/?" goto :usage
+if not "%~1"=="" (
+  if not "%REQUIRE_DX11%"=="1" (
+    echo ERROR: Unknown argument: %~1
+    goto :usage_fail
+  )
+)
+
 set "SYS32=%SystemRoot%\System32"
 rem Access real System32 when running under WoW64 (32-bit cmd.exe on 64-bit Windows).
 if defined PROCESSOR_ARCHITEW6432 set "SYS32=%SystemRoot%\Sysnative"
 set "REGEXE=%SYS32%\reg.exe"
 
 echo === AeroGPU UMD registration check (Win7) ===
+if "%REQUIRE_DX11%"=="1" (
+  echo INFO: Mode=DX11 (require D3D10/11 UMD registration/placement)
+) else (
+  echo INFO: Mode=D3D9 only (D3D10/11 treated as optional)
+)
 echo INFO: SystemRoot=%SystemRoot%
 echo INFO: PROCESSOR_ARCHITECTURE=%PROCESSOR_ARCHITECTURE%
 echo INFO: PROCESSOR_ARCHITEW6432=%PROCESSOR_ARCHITEW6432%
@@ -33,15 +54,24 @@ if "%IS_X64%"=="1" (
   call :check_file_required "%SystemRoot%\System32\aerogpu_d3d9_x64.dll"
   call :check_file_required "%SystemRoot%\SysWOW64\aerogpu_d3d9.dll"
   echo.
-  echo INFO: Optional files (only if you installed aerogpu_dx11.inf)
-  call :check_file_optional "%SystemRoot%\System32\aerogpu_d3d10_x64.dll"
-  call :check_file_optional "%SystemRoot%\SysWOW64\aerogpu_d3d10.dll"
+  if "%REQUIRE_DX11%"=="1" (
+    call :check_file_required "%SystemRoot%\System32\aerogpu_d3d10_x64.dll"
+    call :check_file_required "%SystemRoot%\SysWOW64\aerogpu_d3d10.dll"
+  ) else (
+    echo INFO: Optional files (only if you installed aerogpu_dx11.inf)
+    call :check_file_optional "%SystemRoot%\System32\aerogpu_d3d10_x64.dll"
+    call :check_file_optional "%SystemRoot%\SysWOW64\aerogpu_d3d10.dll"
+  )
 ) else (
   echo INFO: Detected x86 Windows
   call :check_file_required "%SystemRoot%\System32\aerogpu_d3d9.dll"
   echo.
-  echo INFO: Optional files (only if you installed aerogpu_dx11.inf)
-  call :check_file_optional "%SystemRoot%\System32\aerogpu_d3d10.dll"
+  if "%REQUIRE_DX11%"=="1" (
+    call :check_file_required "%SystemRoot%\System32\aerogpu_d3d10.dll"
+  ) else (
+    echo INFO: Optional files (only if you installed aerogpu_dx11.inf)
+    call :check_file_optional "%SystemRoot%\System32\aerogpu_d3d10.dll"
+  )
 )
 echo.
 
@@ -75,6 +105,22 @@ call :query_value UserModeDriverNameWow
 call :query_value FeatureScore
 
 echo.
+echo --- Validation ---
+if "%IS_X64%"=="1" (
+  call :require_value_contains InstalledDisplayDrivers aerogpu_d3d9_x64
+  call :require_value_contains InstalledDisplayDriversWow aerogpu_d3d9
+  if "%REQUIRE_DX11%"=="1" (
+    call :require_value_contains UserModeDriverName aerogpu_d3d10_x64.dll
+    call :require_value_contains UserModeDriverNameWow aerogpu_d3d10.dll
+  )
+) else (
+  call :require_value_contains InstalledDisplayDrivers aerogpu_d3d9
+  if "%REQUIRE_DX11%"=="1" (
+    call :require_value_contains UserModeDriverName aerogpu_d3d10.dll
+  )
+)
+
+echo.
 if "%FAIL%"=="0" (
   echo OK
   exit /b 0
@@ -82,6 +128,18 @@ if "%FAIL%"=="0" (
   echo FAIL
   exit /b 1
 )
+
+rem -----------------------------------------------------------------------------
+:usage
+echo Usage:
+echo   verify_umd_registration.cmd           ^(D3D9-only checks; D3D10/11 optional^)
+echo   verify_umd_registration.cmd dx11      ^(require D3D10/11 registration/placement^)
+echo.
+exit /b 0
+
+:usage_fail
+call :usage
+exit /b 1
 
 rem -----------------------------------------------------------------------------
 :check_file_required
@@ -112,5 +170,19 @@ echo [%NAME%]
 "%REGEXE%" query "%AEROGPU_KEY%" /v %NAME% 2>nul
 if errorlevel 1 (
   echo (not present)
+)
+exit /b 0
+
+rem -----------------------------------------------------------------------------
+:require_value_contains
+set "NAME=%~1"
+set "EXPECT=%~2"
+
+"%REGEXE%" query "%AEROGPU_KEY%" /v %NAME% 2>nul | findstr /i /l /c:"%EXPECT%" >nul
+if errorlevel 1 (
+  echo ERROR: %NAME% missing or does not contain "%EXPECT%"
+  set "FAIL=1"
+) else (
+  echo OK:   %NAME% contains "%EXPECT%"
 )
 exit /b 0
