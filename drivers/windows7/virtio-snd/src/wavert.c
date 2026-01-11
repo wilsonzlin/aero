@@ -209,6 +209,36 @@ VirtIoSndWaveRtWriteClockRegister(_Inout_ PVIRTIOSND_WAVERT_STREAM Stream, _In_ 
 }
 
 static VOID
+VirtIoSndWaveRtResetStopState(_Inout_ PVIRTIOSND_WAVERT_STREAM Stream)
+{
+    KIRQL oldIrql;
+    PKEVENT oldEvent;
+
+    oldEvent = NULL;
+    KeAcquireSpinLock(&Stream->Lock, &oldIrql);
+    Stream->State = KSSTATE_STOP;
+    Stream->FrozenLinearFrames = 0;
+    Stream->FrozenQpc = 0;
+    Stream->StartQpc = 0;
+    Stream->StartLinearFrames = 0;
+    Stream->SubmittedLinearPositionBytes = 0;
+    Stream->SubmittedRingPositionBytes = 0;
+    Stream->PacketCount = 0;
+    oldEvent = Stream->NotificationEvent;
+    Stream->NotificationEvent = NULL;
+    if (Stream->PositionRegister != NULL) {
+        Stream->PositionRegister->PlayOffset = 0;
+        Stream->PositionRegister->WriteOffset = 0;
+    }
+    VirtIoSndWaveRtWriteClockRegister(Stream, 0);
+    KeReleaseSpinLock(&Stream->Lock, oldIrql);
+
+    if (oldEvent != NULL) {
+        ObDereferenceObject(oldEvent);
+    }
+}
+
+static VOID
 VirtIoSndWaveRtStopTimer(_Inout_ PVIRTIOSND_WAVERT_STREAM Stream)
 {
     KIRQL oldIrql;
@@ -1009,6 +1039,15 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_SetState(_In_ IMiniportW
             ringBytes = (ULONG)((stream->FrozenLinearFrames * (ULONGLONG)VIRTIOSND_BLOCK_ALIGN) % (ULONGLONG)stream->BufferSize);
         }
         VirtIoSndWaveRtUpdateRegisters(stream, ringBytes, nowQpcValue);
+
+        /*
+         * Apply the non-RUN state immediately so:
+         *  - QPC position reporting freezes (GetPositionSnapshot uses Frozen*).
+         *  - The periodic DPC exits quickly even if a timer tick races with this transition.
+         *
+         * Backend STOP/RELEASE operations are still issued below (outside the spinlock).
+         */
+        stream->State = State;
     }
 
     if (oldState == KSSTATE_STOP && State == KSSTATE_ACQUIRE) {
@@ -1087,6 +1126,9 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_SetState(_In_ IMiniportW
     }
 
     if (!NT_SUCCESS(status)) {
+        if (State == KSSTATE_STOP) {
+            VirtIoSndWaveRtResetStopState(stream);
+        }
         return status;
     }
 
@@ -1187,30 +1229,7 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_SetState(_In_ IMiniportW
 
         VirtIoSndWaveRtStartTimer(stream);
     } else if (State == KSSTATE_STOP) {
-        PKEVENT oldEvent;
-
-        oldEvent = NULL;
-        KeAcquireSpinLock(&stream->Lock, &oldIrql);
-        stream->State = KSSTATE_STOP;
-        stream->FrozenLinearFrames = 0;
-        stream->FrozenQpc = 0;
-        stream->StartQpc = 0;
-        stream->StartLinearFrames = 0;
-        stream->SubmittedLinearPositionBytes = 0;
-        stream->SubmittedRingPositionBytes = 0;
-        stream->PacketCount = 0;
-        oldEvent = stream->NotificationEvent;
-        stream->NotificationEvent = NULL;
-        if (stream->PositionRegister != NULL) {
-            stream->PositionRegister->PlayOffset = 0;
-            stream->PositionRegister->WriteOffset = 0;
-        }
-        VirtIoSndWaveRtWriteClockRegister(stream, 0);
-        KeReleaseSpinLock(&stream->Lock, oldIrql);
-
-        if (oldEvent != NULL) {
-            ObDereferenceObject(oldEvent);
-        }
+        VirtIoSndWaveRtResetStopState(stream);
     } else {
         KeAcquireSpinLock(&stream->Lock, &oldIrql);
         stream->State = State;
