@@ -241,14 +241,24 @@ static int RunD3D11DynamicConstantBufferSanity(int argc, char** argv) {
   vp.MaxDepth = 1.0f;
   context->RSSetViewports(1, &vp);
 
-  // A fullscreen triangle (covers the viewport using the top-left rule).
-  Vertex verts[3];
+  // A fullscreen triangle followed by a smaller centered triangle. We update the same dynamic
+  // constant buffer between draws using Map(WRITE_DISCARD) and validate both colors in a single
+  // readback (corner vs center).
+  Vertex verts[6];
+  // Fullscreen triangle (covers the viewport using the top-left rule).
   verts[0].pos[0] = -1.0f;
   verts[0].pos[1] = -1.0f;
   verts[1].pos[0] = -1.0f;
   verts[1].pos[1] = 3.0f;
   verts[2].pos[0] = 3.0f;
   verts[2].pos[1] = -1.0f;
+  // Centered triangle (covers the center pixel but should not touch the corners).
+  verts[3].pos[0] = -0.5f;
+  verts[3].pos[1] = -0.5f;
+  verts[4].pos[0] = 0.0f;
+  verts[4].pos[1] = 0.5f;
+  verts[5].pos[0] = 0.5f;
+  verts[5].pos[1] = -0.5f;
 
   D3D11_BUFFER_DESC vb_desc;
   ZeroMemory(&vb_desc, sizeof(vb_desc));
@@ -315,6 +325,23 @@ static int RunD3D11DynamicConstantBufferSanity(int argc, char** argv) {
   context->ClearRenderTargetView(rtv.get(), clear_rgba);
   context->Draw(3, 0);
 
+  // Update the constant buffer again after it has been bound and used, to exercise the discard
+  // path more realistically.
+  ZeroMemory(&cb_map, sizeof(cb_map));
+  hr = context->Map(cb.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &cb_map);
+  if (FAILED(hr)) {
+    return FailD3D11WithRemovedReason(
+        kTestName, "Map(constant buffer, WRITE_DISCARD #2)", hr, device.get());
+  }
+  cb_data = (ConstantBufferData*)cb_map.pData;
+  cb_data->color[0] = 0.0f;
+  cb_data->color[1] = 1.0f;
+  cb_data->color[2] = 0.0f;
+  cb_data->color[3] = 1.0f;
+  context->Unmap(cb.get(), 0);
+
+  context->Draw(3, 3);
+
   // Read back the result via a staging texture.
   D3D11_TEXTURE2D_DESC st_desc = tex_desc;
   st_desc.Usage = D3D11_USAGE_STAGING;
@@ -341,7 +368,8 @@ static int RunD3D11DynamicConstantBufferSanity(int argc, char** argv) {
   const uint32_t corner = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, 5, 5);
   const uint32_t center =
       aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, kWidth / 2, kHeight / 2);
-  const uint32_t expected = 0xFF0000FFu;
+  const uint32_t expected_corner = 0xFF0000FFu;
+  const uint32_t expected_center = 0xFF00FF00u;
 
   if (dump) {
     std::string err;
@@ -358,8 +386,8 @@ static int RunD3D11DynamicConstantBufferSanity(int argc, char** argv) {
 
   context->Unmap(staging.get(), 0);
 
-  if ((corner & 0x00FFFFFFu) != (expected & 0x00FFFFFFu) ||
-      (center & 0x00FFFFFFu) != (expected & 0x00FFFFFFu)) {
+  if ((corner & 0x00FFFFFFu) != (expected_corner & 0x00FFFFFFu) ||
+      (center & 0x00FFFFFFu) != (expected_center & 0x00FFFFFFu)) {
     return aerogpu_test::Fail(kTestName,
                               "pixel mismatch: corner(5,5)=0x%08lX center=0x%08lX",
                               (unsigned long)corner,
