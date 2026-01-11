@@ -19,6 +19,19 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function isSccacheWrapper(value) {
+  if (!value) return false;
+  const v = String(value).toLowerCase();
+  return (
+    v === 'sccache' ||
+    v === 'sccache.exe' ||
+    v.endsWith('/sccache') ||
+    v.endsWith('\\sccache') ||
+    v.endsWith('/sccache.exe') ||
+    v.endsWith('\\sccache.exe')
+  );
+}
+
 function getRepoRoot() {
   return path.join(__dirname, '..', '..', '..');
 }
@@ -305,10 +318,16 @@ async function startDiskGatewayServer({ appOrigin, publicFixturePath, privateFix
   };
 
   // Some environments configure a rustc wrapper (e.g. `sccache`) via global Cargo config.
-  // That can make this harness flaky when the wrapper isn't available. Disable it by default
-  // unless explicitly opted into via env vars.
-  if (!('RUSTC_WRAPPER' in env) && !('CARGO_BUILD_RUSTC_WRAPPER' in env)) {
+  // That can make this harness flaky when the wrapper isn't available. Detect `sccache` wrappers
+  // and override them.
+  const usesSccache = ['RUSTC_WRAPPER', 'RUSTC_WORKSPACE_WRAPPER', 'CARGO_BUILD_RUSTC_WRAPPER', 'CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER'].some((k) =>
+    isSccacheWrapper(env[k]),
+  );
+  if (usesSccache || (!('RUSTC_WRAPPER' in env) && !('CARGO_BUILD_RUSTC_WRAPPER' in env))) {
     env.RUSTC_WRAPPER = '';
+    env.RUSTC_WORKSPACE_WRAPPER = '';
+    env.CARGO_BUILD_RUSTC_WRAPPER = '';
+    env.CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER = '';
   }
 
   // Allow running these e2e helpers with a per-checkout Cargo home without having to

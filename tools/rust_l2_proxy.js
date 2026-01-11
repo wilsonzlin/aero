@@ -15,6 +15,19 @@ const BUILD_TIMEOUT_MS = 10 * 60_000;
 const BUILD_LOCK_TIMEOUT_MS = BUILD_TIMEOUT_MS + 2 * 60_000;
 const BUILD_LOCK_RETRY_MS = 200;
 
+function isSccacheWrapper(value) {
+  if (!value) return false;
+  const v = value.toLowerCase();
+  return (
+    v === "sccache" ||
+    v === "sccache.exe" ||
+    v.endsWith("/sccache") ||
+    v.endsWith("\\sccache") ||
+    v.endsWith("/sccache.exe") ||
+    v.endsWith("\\sccache.exe")
+  );
+}
+
 function appendLimitedOutput(prev, chunk) {
   let out = prev + chunk.toString("utf8");
   if (out.length > COMMAND_OUTPUT_LIMIT) out = out.slice(-COMMAND_OUTPUT_LIMIT);
@@ -137,35 +150,47 @@ async function ensureProxyBuilt() {
   if (buildPromise) return buildPromise;
   buildPromise = (async () => {
     const binPath = await getProxyBinPath();
-    // Fast path: binary already exists (e.g. tests running multiple files in the same checkout).
-    try {
-      await access(binPath);
-      return;
-    } catch {
-      // continue
-    }
-
     await withBuildLock(async () => {
-      // Another worker may have completed the build while we were waiting.
-      try {
-        await access(binPath);
-        return;
-      } catch {
-        // continue
-      }
-
       const targetDir = await getCargoTargetDir();
       const env = { CARGO_TARGET_DIR: targetDir };
       // Avoid global Cargo package cache locks when running concurrent CI jobs / agents.
       env.CARGO_HOME = process.env.AERO_L2_PROXY_TEST_CARGO_HOME ?? path.join(targetDir, "node-test-cargo-home");
       await mkdir(env.CARGO_HOME, { recursive: true });
-      await runCommand("cargo", ["build", "--quiet", "--locked", "-p", "aero-l2-proxy"], {
-        cwd: REPO_ROOT,
-        env,
-        // A cold `cargo build` of the full dependency graph can be slow on CI runners.
-        // Keep this bounded (deterministic) but generous enough to avoid flakes.
-        timeoutMs: BUILD_TIMEOUT_MS,
-      });
+
+      // Always invoke `cargo build` so the binary stays in sync with the checked out sources.
+      // (Relying solely on the existence of the previous build output can lead to stale binaries
+      // when the repo is updated between test runs.)
+      const baseArgs = ["build", "--quiet", "--locked", "-p", "aero-l2-proxy"];
+      const binExists = await access(binPath)
+        .then(() => true)
+        .catch(() => false);
+
+      // If we already have a binary, prefer an offline build first to avoid unnecessary network
+      // churn during repeated Node test runs.
+      let triedOffline = false;
+      if (binExists) {
+        triedOffline = true;
+        try {
+          await runCommand("cargo", [...baseArgs, "--offline"], {
+            cwd: REPO_ROOT,
+            env,
+            timeoutMs: BUILD_TIMEOUT_MS,
+          });
+        } catch {
+          // Fall back to an online build (e.g. if the isolated CARGO_HOME is missing cached deps).
+          triedOffline = false;
+        }
+      }
+
+      if (!binExists || !triedOffline) {
+        await runCommand("cargo", baseArgs, {
+          cwd: REPO_ROOT,
+          env,
+          // A cold `cargo build` of the full dependency graph can be slow on CI runners.
+          // Keep this bounded (deterministic) but generous enough to avoid flakes.
+          timeoutMs: BUILD_TIMEOUT_MS,
+        });
+      }
       await access(binPath);
     });
   })();
@@ -291,10 +316,17 @@ async function runCommand(command, args, { cwd, env, timeoutMs = 60_000 } = {}) 
       childEnv.CARGO_TERM_PROGRESS_WHEN = "never";
 
       // This helper is used from Node unit tests that spawn `cargo build`.
-      // Some developer/CI environments enable a global rustc wrapper (e.g. `sccache`) via user
-      // Cargo config, which can make these tests flaky when the wrapper daemon is unavailable.
-      // Disable the wrapper by default unless explicitly opted into via env vars.
-      if (!("RUSTC_WRAPPER" in childEnv) && !("CARGO_BUILD_RUSTC_WRAPPER" in childEnv)) {
+      // Some developer/CI environments enable a global rustc wrapper (most commonly `sccache`)
+      // via environment variables. When the wrapper daemon/socket is unhealthy, Cargo can fail
+      // before compiling anything. Detect `sccache` wrappers and override them.
+      const wrapperVars = [
+        "RUSTC_WRAPPER",
+        "RUSTC_WORKSPACE_WRAPPER",
+        "CARGO_BUILD_RUSTC_WRAPPER",
+        "CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER",
+      ];
+      const usesSccache = wrapperVars.some((k) => isSccacheWrapper(childEnv[k]));
+      if (usesSccache || (!("RUSTC_WRAPPER" in childEnv) && !("CARGO_BUILD_RUSTC_WRAPPER" in childEnv))) {
         if (process.platform === "win32") {
           // Windows wrapper execution semantics differ (batch files vs executables).
           // Keep the existing "empty string disables" behavior.
@@ -305,6 +337,9 @@ async function runCommand(command, args, { cwd, env, timeoutMs = 60_000 } = {}) 
           // failing if the wrapper daemon is unavailable.
           childEnv.RUSTC_WRAPPER = path.join(REPO_ROOT, "tools", "rustc-wrapper.sh");
         }
+        childEnv.RUSTC_WORKSPACE_WRAPPER = "";
+        childEnv.CARGO_BUILD_RUSTC_WRAPPER = "";
+        childEnv.CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER = "";
       }
     }
 
