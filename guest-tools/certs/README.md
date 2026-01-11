@@ -24,6 +24,6 @@ If you are building Guest Tools media that ships only WHQL/production-signed dri
 
 When building with `tools/packaging/aero_packager`, set:
 
-- `--signing-policy none`
+- `--signing-policy production` (or `none`)
 
 and ensure this directory contains **zero** certificate files (`*.cer/*.crt/*.p7b`) so the installer will not import anything into the machine trust stores.
