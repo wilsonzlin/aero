@@ -74,14 +74,20 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 #[cfg(target_arch = "wasm32")]
 use aero_usb::{
+    hid::{GamepadReport, UsbHidGamepad, UsbHidKeyboard, UsbHidMouse},
     hid::passthrough::UsbHidPassthrough,
     hid::webhid,
-    hid::{GamepadReport, UsbHidGamepad, UsbHidKeyboard, UsbHidMouse},
-    passthrough::{
-        PendingSummary as UsbPassthroughPendingSummary, UsbHostCompletion, UsbPassthroughDevice,
-    },
     usb::{UsbDevice, UsbHandshake},
 };
+
+#[cfg(any(target_arch = "wasm32", test))]
+use aero_usb::passthrough::{
+    ControlResponse, SetupPacket, UsbHostAction, UsbHostCompletion, UsbHostCompletionIn,
+    UsbPassthroughDevice,
+};
+
+#[cfg(target_arch = "wasm32")]
+use aero_usb::passthrough::PendingSummary as UsbPassthroughPendingSummary;
 
 // wasm-bindgen's "threads" transform expects TLS metadata symbols (e.g.
 // `__tls_size`) to exist in shared-memory builds. Those symbols are only emitted
@@ -775,11 +781,248 @@ impl UsbPassthroughBridge {
     }
 }
 
+// -------------------------------------------------------------------------------------------------
+// WebUSB passthrough demo driver
+// -------------------------------------------------------------------------------------------------
+
+#[cfg(any(target_arch = "wasm32", test))]
+#[derive(Debug, Default)]
+struct UsbPassthroughDemoCore {
+    device: UsbPassthroughDevice,
+    pending_control: Option<SetupPacket>,
+    ready_result: Option<UsbHostCompletionIn>,
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+impl UsbPassthroughDemoCore {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn reset(&mut self) {
+        self.device.reset();
+        self.pending_control = None;
+        self.ready_result = None;
+    }
+
+    fn queue_get_device_descriptor(&mut self, len: u16) {
+        let setup = SetupPacket {
+            bm_request_type: 0x80,
+            b_request: 0x06,
+            w_value: 0x0100,
+            w_index: 0,
+            w_length: len,
+        };
+        self.queue_control_in(setup);
+    }
+
+    fn queue_get_config_descriptor(&mut self, len: u16) {
+        let setup = SetupPacket {
+            bm_request_type: 0x80,
+            b_request: 0x06,
+            w_value: 0x0200,
+            w_index: 0,
+            w_length: len,
+        };
+        self.queue_control_in(setup);
+    }
+
+    fn queue_control_in(&mut self, setup: SetupPacket) {
+        self.pending_control = Some(setup);
+        match self.device.handle_control_request(setup, None) {
+            ControlResponse::Nak => {}
+            ControlResponse::Data(data) => {
+                self.pending_control = None;
+                self.ready_result = Some(UsbHostCompletionIn::Success { data });
+            }
+            ControlResponse::Stall => {
+                self.pending_control = None;
+                self.ready_result = Some(UsbHostCompletionIn::Stall);
+            }
+            ControlResponse::Timeout => {
+                self.pending_control = None;
+                self.ready_result = Some(UsbHostCompletionIn::Error {
+                    message: "timeout".to_string(),
+                });
+            }
+            ControlResponse::Ack => {
+                self.pending_control = None;
+                self.ready_result = Some(UsbHostCompletionIn::Error {
+                    message: "unexpected ACK for control-in request".to_string(),
+                });
+            }
+        }
+    }
+
+    fn drain_actions(&mut self) -> Vec<UsbHostAction> {
+        self.device.drain_actions()
+    }
+
+    fn push_completion(&mut self, completion: UsbHostCompletion) {
+        self.device.push_completion(completion);
+    }
+
+    fn poll_last_result(&mut self) -> Option<UsbHostCompletionIn> {
+        if let Some(result) = self.ready_result.take() {
+            return Some(result);
+        }
+
+        let setup = self.pending_control?;
+        match self.device.handle_control_request(setup, None) {
+            ControlResponse::Nak => None,
+            ControlResponse::Data(data) => {
+                self.pending_control = None;
+                Some(UsbHostCompletionIn::Success { data })
+            }
+            ControlResponse::Stall => {
+                self.pending_control = None;
+                Some(UsbHostCompletionIn::Stall)
+            }
+            ControlResponse::Timeout => {
+                self.pending_control = None;
+                Some(UsbHostCompletionIn::Error {
+                    message: "timeout".to_string(),
+                })
+            }
+            ControlResponse::Ack => {
+                self.pending_control = None;
+                Some(UsbHostCompletionIn::Error {
+                    message: "unexpected ACK for control-in request".to_string(),
+                })
+            }
+        }
+    }
+}
+
+/// WASM export: minimal driver that queues a GET_DESCRIPTOR(Device) request to prove the
+/// WebUSB action↔completion contract end-to-end.
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+pub struct UsbPassthroughDemo {
+    inner: UsbPassthroughDemoCore,
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+impl UsbPassthroughDemo {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Self {
+        Self {
+            inner: UsbPassthroughDemoCore::new(),
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.inner.reset();
+    }
+
+    pub fn queue_get_device_descriptor(&mut self, len: u16) {
+        self.inner.queue_get_device_descriptor(len);
+    }
+
+    pub fn queue_get_config_descriptor(&mut self, len: u16) {
+        self.inner.queue_get_config_descriptor(len);
+    }
+
+    pub fn drain_actions(&mut self) -> Result<JsValue, JsValue> {
+        let actions = self.inner.drain_actions();
+        serde_wasm_bindgen::to_value(&actions).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    pub fn push_completion(&mut self, completion: JsValue) -> Result<(), JsValue> {
+        let completion: UsbHostCompletion =
+            serde_wasm_bindgen::from_value(completion).map_err(|e| JsValue::from_str(&e.to_string()))?;
+        self.inner.push_completion(completion);
+        Ok(())
+    }
+
+    pub fn poll_last_result(&mut self) -> Result<JsValue, JsValue> {
+        let result = self.inner.poll_last_result();
+        serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+}
+
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 pub struct SineTone {
     phase: f32,
     scratch: Vec<f32>,
+}
+
+#[cfg(test)]
+mod usb_passthrough_demo_tests {
+    use super::*;
+
+    #[test]
+    fn get_device_descriptor_queues_one_control_in_action() {
+        let mut demo = UsbPassthroughDemoCore::new();
+        demo.queue_get_device_descriptor(18);
+
+        let actions = demo.drain_actions();
+        assert_eq!(actions.len(), 1);
+
+        let action = actions.into_iter().next().unwrap();
+        match action {
+            UsbHostAction::ControlIn { setup, .. } => {
+                assert_eq!(setup.bm_request_type, 0x80);
+                assert_eq!(setup.b_request, 0x06);
+                assert_eq!(setup.w_value, 0x0100);
+                assert_eq!(setup.w_index, 0);
+                assert_eq!(setup.w_length, 18);
+            }
+            other => panic!("unexpected action: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn pushing_completion_then_polling_returns_bytes() {
+        let mut demo = UsbPassthroughDemoCore::new();
+        demo.queue_get_device_descriptor(4);
+
+        let actions = demo.drain_actions();
+        let action = actions.into_iter().next().expect("queued action");
+        let id = match action {
+            UsbHostAction::ControlIn { id, .. } => id,
+            other => panic!("unexpected action: {other:?}"),
+        };
+
+        demo.push_completion(UsbHostCompletion::ControlIn {
+            id,
+            result: UsbHostCompletionIn::Success {
+                data: vec![1, 2, 3, 4, 5, 6],
+            },
+        });
+
+        let result = demo.poll_last_result();
+        assert_eq!(
+            result,
+            Some(UsbHostCompletionIn::Success {
+                data: vec![1, 2, 3, 4],
+            })
+        );
+        assert_eq!(demo.poll_last_result(), None);
+    }
+
+    #[test]
+    fn reset_then_queue_get_config_descriptor_emits_control_in() {
+        let mut demo = UsbPassthroughDemoCore::new();
+        demo.queue_get_device_descriptor(18);
+        assert!(!demo.drain_actions().is_empty());
+
+        demo.reset();
+        demo.queue_get_config_descriptor(9);
+
+        let actions = demo.drain_actions();
+        assert_eq!(actions.len(), 1);
+        let action = actions.into_iter().next().unwrap();
+        match action {
+            UsbHostAction::ControlIn { setup, .. } => {
+                assert_eq!(setup.w_value, 0x0200);
+                assert_eq!(setup.w_length, 9);
+            }
+            other => panic!("unexpected action: {other:?}"),
+        }
+    }
 }
 
 #[cfg(target_arch = "wasm32")]

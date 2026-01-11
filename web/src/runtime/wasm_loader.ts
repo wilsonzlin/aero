@@ -170,10 +170,10 @@ export interface WasmApi {
     };
 
     /**
-     * WebUSB UHCI passthrough enumeration harness (drives UHCI TDs and emits `UsbHostAction`s).
-     *
-     * Note: optional until all deployed WASM builds include it.
-     */
+      * WebUSB UHCI passthrough enumeration harness (drives UHCI TDs and emits `UsbHostAction`s).
+      *
+      * Note: optional until all deployed WASM builds include it.
+      */
     WebUsbUhciPassthroughHarness?: new () => {
         /**
          * Human-readable state string for debugging.
@@ -219,10 +219,25 @@ export interface WasmApi {
     };
 
     /**
-     * Synthesize a HID report descriptor from WebHID-normalized collections metadata.
+     * WebUSB passthrough demo driver (queues GET_DESCRIPTOR to validate action↔completion wiring).
      *
-     * Optional while older wasm builds are still in circulation.
+     * Optional for older WASM builds.
      */
+    UsbPassthroughDemo?: new () => {
+        reset(): void;
+        queue_get_device_descriptor(len: number): void;
+        queue_get_config_descriptor(len: number): void;
+        drain_actions(): unknown;
+        push_completion(completion: unknown): void;
+        poll_last_result(): unknown;
+        free(): void;
+    };
+
+    /**
+      * Synthesize a HID report descriptor from WebHID-normalized collections metadata.
+      *
+      * Optional while older wasm builds are still in circulation.
+      */
     synthesize_webhid_report_descriptor?: (collectionsJson: unknown) => Uint8Array;
     CpuWorkerDemo?: new (
         ramSizeBytes: number,
@@ -482,6 +497,7 @@ function toApi(mod: RawWasmModule): WasmApi {
         UhciControllerBridge: mod.UhciControllerBridge,
         WebUsbUhciBridge: mod.WebUsbUhciBridge,
         synthesize_webhid_report_descriptor: mod.synthesize_webhid_report_descriptor,
+        UsbPassthroughDemo: mod.UsbPassthroughDemo,
         CpuWorkerDemo: mod.CpuWorkerDemo,
         AeroApi: mod.AeroApi,
         DemoVm: mod.DemoVm,

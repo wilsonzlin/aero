@@ -1,0 +1,192 @@
+import {
+  usbErrorCompletion,
+  type UsbActionMessage,
+  type UsbCompletionMessage,
+  type UsbHostAction,
+  type UsbHostCompletion,
+  type UsbSelectedMessage,
+} from "./usb_proxy_protocol";
+
+type WasmUsbSetupPacket = {
+  bmRequestType: number;
+  bRequest: number;
+  wValue: number;
+  wIndex: number;
+  wLength: number;
+};
+
+type WasmUsbHostAction =
+  | { kind: "controlIn"; id: number; setup: WasmUsbSetupPacket }
+  | { kind: "controlOut"; id: number; setup: WasmUsbSetupPacket; data: Uint8Array | number[] }
+  | { kind: "bulkIn"; id: number; endpoint: number; length: number }
+  | { kind: "bulkOut"; id: number; endpoint: number; data: Uint8Array | number[] };
+
+export type UsbPassthroughDemoResult =
+  | { status: "success"; data: Uint8Array }
+  | { status: "stall" }
+  | { status: "error"; message: string };
+
+export type UsbPassthroughDemoResultMessage = { type: "usb.demoResult"; result: UsbPassthroughDemoResult };
+
+export function isUsbPassthroughDemoResultMessage(value: unknown): value is UsbPassthroughDemoResultMessage {
+  if (!value || typeof value !== "object") return false;
+  const msg = value as { type?: unknown; result?: unknown };
+  if (msg.type !== "usb.demoResult") return false;
+  if (!msg.result || typeof msg.result !== "object") return false;
+  const result = msg.result as { status?: unknown };
+  return result.status === "success" || result.status === "stall" || result.status === "error";
+}
+
+export interface UsbPassthroughDemoApi {
+  reset(): void;
+  queue_get_device_descriptor(len: number): void;
+  queue_get_config_descriptor(len: number): void;
+  drain_actions(): unknown;
+  push_completion(completion: unknown): void;
+  poll_last_result(): unknown;
+}
+
+function coerceBytes(value: unknown): Uint8Array | null {
+  if (value instanceof Uint8Array) return value;
+  if (Array.isArray(value)) {
+    const out = new Uint8Array(value.length);
+    for (let i = 0; i < value.length; i += 1) {
+      const b = value[i];
+      if (typeof b !== "number" || !Number.isFinite(b)) return null;
+      out[i] = b & 0xff;
+    }
+    return out;
+  }
+  return null;
+}
+
+function wasmActionToProxyAction(action: WasmUsbHostAction): UsbHostAction | null {
+  switch (action.kind) {
+    case "controlIn":
+      return { kind: "controlIn", id: action.id, setup: action.setup };
+    case "controlOut": {
+      const data = coerceBytes(action.data);
+      if (!data) return null;
+      return { kind: "controlOut", id: action.id, setup: action.setup, data };
+    }
+    case "bulkIn":
+      return { kind: "bulkIn", id: action.id, endpoint: action.endpoint, length: action.length };
+    case "bulkOut": {
+      const data = coerceBytes(action.data);
+      if (!data) return null;
+      return { kind: "bulkOut", id: action.id, endpoint: action.endpoint, data };
+    }
+    default: {
+      const neverAction: never = action;
+      throw new Error(`Unknown wasm USB action kind: ${String((neverAction as { kind?: unknown }).kind)}`);
+    }
+  }
+}
+
+function parseDemoResult(raw: unknown): UsbPassthroughDemoResult | null {
+  if (!raw || typeof raw !== "object") return null;
+  const v = raw as { status?: unknown; data?: unknown; message?: unknown };
+  if (v.status === "stall") return { status: "stall" };
+  if (v.status === "error") return { status: "error", message: typeof v.message === "string" ? v.message : "error" };
+  if (v.status === "success") {
+    const data = coerceBytes(v.data);
+    if (!data) return null;
+    return { status: "success", data };
+  }
+  return null;
+}
+
+const USB_PASSTHROUGH_DEMO_ID_BASE = 1_000_000_000;
+
+export class UsbPassthroughDemoRuntime {
+  readonly #demo: UsbPassthroughDemoApi;
+  readonly #postMessage: (msg: UsbActionMessage | UsbPassthroughDemoResultMessage) => void;
+  readonly #inflightByProxyId = new Map<number, { wasmId: number; kind: UsbHostAction["kind"] }>();
+  #nextProxyId = USB_PASSTHROUGH_DEMO_ID_BASE;
+
+  constructor(opts: { demo: UsbPassthroughDemoApi; postMessage: (msg: UsbActionMessage | UsbPassthroughDemoResultMessage) => void }) {
+    this.#demo = opts.demo;
+    this.#postMessage = opts.postMessage;
+  }
+
+  reset(): void {
+    this.#demo.reset();
+    this.#inflightByProxyId.clear();
+    this.#nextProxyId = USB_PASSTHROUGH_DEMO_ID_BASE;
+  }
+
+  onUsbSelected(msg: UsbSelectedMessage): void {
+    if (!msg.ok) {
+      this.reset();
+      return;
+    }
+    this.reset();
+    this.#demo.queue_get_device_descriptor(18);
+  }
+
+  onUsbCompletion(msg: UsbCompletionMessage): void {
+    const completion = msg.completion;
+    const info = this.#inflightByProxyId.get(completion.id);
+    if (!info) return;
+    this.#inflightByProxyId.delete(completion.id);
+
+    if (completion.kind !== info.kind) {
+      this.#demo.push_completion(
+        usbErrorCompletion(
+          info.kind,
+          info.wasmId,
+          `USB completion kind mismatch (expected ${info.kind}, got ${completion.kind})`,
+        ),
+      );
+      this.pollResults();
+      return;
+    }
+
+    this.#demo.push_completion({ ...completion, id: info.wasmId } satisfies UsbHostCompletion);
+    this.pollResults();
+  }
+
+  tick(): void {
+    let rawActions: unknown;
+    try {
+      rawActions = this.#demo.drain_actions();
+    } catch {
+      return;
+    }
+
+    if (!Array.isArray(rawActions)) return;
+    for (const raw of rawActions) {
+      if (!raw || typeof raw !== "object") continue;
+      const action = raw as WasmUsbHostAction;
+      if (typeof (action as { kind?: unknown }).kind !== "string" || typeof (action as { id?: unknown }).id !== "number") continue;
+
+      const proxy = wasmActionToProxyAction(action);
+      if (!proxy) continue;
+
+      const proxyId = this.#nextProxyId;
+      this.#nextProxyId += 1;
+      if (!Number.isSafeInteger(proxyId) || proxyId < 0 || proxyId > 0xffff_ffff) {
+        throw new Error(`USB passthrough demo ran out of valid action IDs (next=${this.#nextProxyId})`);
+      }
+
+      this.#inflightByProxyId.set(proxyId, { wasmId: proxy.id, kind: proxy.kind });
+      this.#postMessage({ type: "usb.action", action: { ...proxy, id: proxyId } });
+    }
+  }
+
+  pollResults(): void {
+    while (true) {
+      let raw: unknown;
+      try {
+        raw = this.#demo.poll_last_result();
+      } catch {
+        return;
+      }
+
+      if (raw === null || raw === undefined) return;
+      const result = parseDemoResult(raw);
+      if (!result) return;
+      this.#postMessage({ type: "usb.demoResult", result });
+    }
+  }
+}

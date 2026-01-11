@@ -41,6 +41,7 @@ import { applyUsbSelectedToWebUsbUhciBridge } from "../usb/uhci_webusb_bridge";
 import type { UsbUhciHarnessStartMessage, UsbUhciHarnessStatusMessage, UsbUhciHarnessStopMessage, WebUsbUhciHarnessRuntimeSnapshot } from "../usb/webusb_harness_runtime";
 import { WebUsbUhciHarnessRuntime } from "../usb/webusb_harness_runtime";
 import { WebUsbPassthroughRuntime } from "../usb/webusb_passthrough_runtime";
+import { UsbPassthroughDemoRuntime, type UsbPassthroughDemoResultMessage } from "../usb/usb_passthrough_demo_runtime";
 import {
   isHidAttachMessage,
   isHidDetachMessage,
@@ -193,6 +194,10 @@ function maybeInitUhciDevice(): void {
     console.warn("[io.worker] Failed to initialize UHCI controller bridge", err);
   }
 }
+
+type UsbPassthroughDemo = InstanceType<NonNullable<WasmApi["UsbPassthroughDemo"]>>;
+let usbDemo: UsbPassthroughDemoRuntime | null = null;
+let usbDemoApi: UsbPassthroughDemo | null = null;
 
 let hidInputRing: HidReportRing | null = null;
 let hidOutputRing: HidReportRing | null = null;
@@ -875,6 +880,45 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
           }
         }
 
+        if (api.UsbPassthroughDemo && !usbDemo) {
+          try {
+            usbDemoApi = new api.UsbPassthroughDemo();
+            usbDemo = new UsbPassthroughDemoRuntime({
+              demo: usbDemoApi,
+              postMessage: (msg: UsbActionMessage | UsbPassthroughDemoResultMessage) => {
+                ctx.postMessage(msg as unknown);
+                if (import.meta.env.DEV && msg.type === "usb.demoResult") {
+                  if (msg.result.status === "success") {
+                    const bytes = msg.result.data;
+                    const idVendor = bytes.length >= 10 ? bytes[8]! | (bytes[9]! << 8) : null;
+                    const idProduct = bytes.length >= 12 ? bytes[10]! | (bytes[11]! << 8) : null;
+                    console.log("[io.worker] WebUSB demo result ok", {
+                      bytes: Array.from(bytes),
+                      idVendor,
+                      idProduct,
+                    });
+                  } else {
+                    console.log("[io.worker] WebUSB demo result", msg.result);
+                  }
+                }
+              },
+            });
+
+            if (lastUsbSelected) {
+              usbDemo.onUsbSelected(lastUsbSelected);
+            }
+          } catch (err) {
+            console.warn("[io.worker] Failed to initialize WebUSB passthrough demo", err);
+            try {
+              usbDemoApi?.free();
+            } catch {
+              // ignore
+            }
+            usbDemoApi = null;
+            usbDemo = null;
+          }
+        }
+
         if (import.meta.env.DEV && api.WebUsbUhciPassthroughHarness && !usbUhciHarnessRuntime) {
           const ctor = api.WebUsbUhciPassthroughHarness;
           try {
@@ -1162,10 +1206,11 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
           console.warn("[io.worker] Failed to apply usb.selected to WebUsbUhciBridge", err);
         }
       }
+      usbDemo?.onUsbSelected(msg);
 
       // Dev-only smoke test: once a device is selected on the main thread, request the
       // first 18 bytes of the device descriptor to prove the cross-thread broker works.
-      if (msg.ok && import.meta.env.DEV) {
+      if (msg.ok && import.meta.env.DEV && !usbDemo) {
         const id = usbDemoNextId++;
         const action: UsbHostAction = {
           kind: "controlIn",
@@ -1185,6 +1230,7 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
 
     if ((data as Partial<UsbCompletionMessage>).type === "usb.completion") {
       const msg = data as UsbCompletionMessage;
+      usbDemo?.onUsbCompletion(msg);
       if (import.meta.env.DEV) {
         if (msg.completion.status === "success" && "data" in msg.completion) {
           console.log("[io.worker] WebUSB completion success", msg.completion.kind, msg.completion.id, Array.from(msg.completion.data));
@@ -1301,6 +1347,8 @@ function startIoIpcServer(): void {
       hidGuest.poll?.();
       void usbPassthroughRuntime?.pollOnce();
       usbUhciHarnessRuntime?.pollOnce();
+      usbDemo?.tick();
+      usbDemo?.pollResults();
 
       if (perfActive) perfIoMs += performance.now() - t0;
       maybeEmitPerfSample();
@@ -1622,6 +1670,14 @@ function shutdown(): void {
       usbUhciHarnessRuntime = null;
       uhciDevice?.destroy();
       uhciDevice = null;
+      try {
+        usbDemoApi?.free();
+      } catch {
+        // ignore
+      }
+      usbDemoApi = null;
+      usbDemo = null;
+      lastUsbSelected = null;
       deviceManager = null;
       i8042 = null;
       pushEvent({ kind: "log", level: "info", message: "worker shutdown" });
