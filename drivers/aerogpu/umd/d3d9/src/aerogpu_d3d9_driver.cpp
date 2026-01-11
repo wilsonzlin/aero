@@ -4030,6 +4030,9 @@ void wddm_deallocate_buffers_impl(Device* dev,
   if constexpr (has_member_hContext<Arg>::value) {
     args.hContext = dev->wddm_context.hContext;
   }
+  if constexpr (has_member_hDevice<Arg>::value) {
+    args.hDevice = dev->wddm_device;
+  }
   if constexpr (has_member_pDmaBuffer<Arg>::value) {
     args.pDmaBuffer = dma_buffer;
   }
@@ -4114,6 +4117,9 @@ HRESULT wddm_acquire_submit_buffers_allocate_impl(Device* dev, CallbackFn cb, ui
   std::memset(&args, 0, sizeof(args));
   if constexpr (has_member_hContext<Arg>::value) {
     args.hContext = dev->wddm_context.hContext;
+  }
+  if constexpr (has_member_hDevice<Arg>::value) {
+    args.hDevice = dev->wddm_device;
   }
   if constexpr (has_member_DmaBufferSize<Arg>::value) {
     args.DmaBufferSize = request_bytes;
@@ -4267,6 +4273,9 @@ HRESULT wddm_acquire_submit_buffers_get_command_buffer_impl(Device* dev, Callbac
   std::memset(&args, 0, sizeof(args));
   if constexpr (has_member_hContext<Arg>::value) {
     args.hContext = dev->wddm_context.hContext;
+  }
+  if constexpr (has_member_hDevice<Arg>::value) {
+    args.hDevice = dev->wddm_device;
   }
 
   const HRESULT hr = cb(static_cast<ArgPtr>(&args));
