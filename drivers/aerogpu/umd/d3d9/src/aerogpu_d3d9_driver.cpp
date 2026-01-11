@@ -3591,103 +3591,103 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   }
 
   std::memset(pDeviceFuncs, 0, sizeof(*pDeviceFuncs));
-  pDeviceFuncs->pfnDestroyDevice = device_destroy;
-  pDeviceFuncs->pfnCreateResource = device_create_resource;
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+
+  // The translation layer uses a reduced set of DDI argument structs (prefixed
+  // with AEROGPU_D3D9DDIARG_*). In WDK builds, cast the entrypoints to the
+  // runtime's expected function pointer types.
+#define AEROGPU_SET_D3D9DDI_FN(member, fn)                                                            \
+  do {                                                                                                \
+    pDeviceFuncs->member = reinterpret_cast<decltype(pDeviceFuncs->member)>(fn);                      \
+  } while (0)
+
+  AEROGPU_SET_D3D9DDI_FN(pfnDestroyDevice, device_destroy);
+  AEROGPU_SET_D3D9DDI_FN(pfnCreateResource, device_create_resource);
   if constexpr (aerogpu_has_member_pfnOpenResource<D3D9DDI_DEVICEFUNCS>::value) {
-    pDeviceFuncs->pfnOpenResource =
-        reinterpret_cast<decltype(pDeviceFuncs->pfnOpenResource)>(device_open_resource);
+    AEROGPU_SET_D3D9DDI_FN(pfnOpenResource, device_open_resource);
   }
   if constexpr (aerogpu_has_member_pfnOpenResource2<D3D9DDI_DEVICEFUNCS>::value) {
-    pDeviceFuncs->pfnOpenResource2 =
-        reinterpret_cast<decltype(pDeviceFuncs->pfnOpenResource2)>(device_open_resource2);
+    AEROGPU_SET_D3D9DDI_FN(pfnOpenResource2, device_open_resource2);
   }
-#endif
-  pDeviceFuncs->pfnDestroyResource = device_destroy_resource;
-  pDeviceFuncs->pfnLock = device_lock;
-  pDeviceFuncs->pfnUnlock = device_unlock;
+  AEROGPU_SET_D3D9DDI_FN(pfnDestroyResource, device_destroy_resource);
+  AEROGPU_SET_D3D9DDI_FN(pfnLock, device_lock);
+  AEROGPU_SET_D3D9DDI_FN(pfnUnlock, device_unlock);
 
-  pDeviceFuncs->pfnSetRenderTarget = device_set_render_target;
-  pDeviceFuncs->pfnSetDepthStencil = device_set_depth_stencil;
-  pDeviceFuncs->pfnSetViewport = device_set_viewport;
-  pDeviceFuncs->pfnSetScissorRect = device_set_scissor;
-  pDeviceFuncs->pfnSetTexture = device_set_texture;
-  pDeviceFuncs->pfnSetSamplerState = device_set_sampler_state;
-  pDeviceFuncs->pfnSetRenderState = device_set_render_state;
+  AEROGPU_SET_D3D9DDI_FN(pfnSetRenderTarget, device_set_render_target);
+  AEROGPU_SET_D3D9DDI_FN(pfnSetDepthStencil, device_set_depth_stencil);
+  AEROGPU_SET_D3D9DDI_FN(pfnSetViewport, device_set_viewport);
+  AEROGPU_SET_D3D9DDI_FN(pfnSetScissorRect, device_set_scissor);
+  AEROGPU_SET_D3D9DDI_FN(pfnSetTexture, device_set_texture);
+  AEROGPU_SET_D3D9DDI_FN(pfnSetSamplerState, device_set_sampler_state);
+  AEROGPU_SET_D3D9DDI_FN(pfnSetRenderState, device_set_render_state);
 
-  pDeviceFuncs->pfnCreateVertexDecl = device_create_vertex_decl;
-  pDeviceFuncs->pfnSetVertexDecl = device_set_vertex_decl;
-  pDeviceFuncs->pfnDestroyVertexDecl = device_destroy_vertex_decl;
+  AEROGPU_SET_D3D9DDI_FN(pfnCreateVertexDecl, device_create_vertex_decl);
+  AEROGPU_SET_D3D9DDI_FN(pfnSetVertexDecl, device_set_vertex_decl);
+  AEROGPU_SET_D3D9DDI_FN(pfnDestroyVertexDecl, device_destroy_vertex_decl);
 
-  pDeviceFuncs->pfnCreateShader = device_create_shader;
-  pDeviceFuncs->pfnSetShader = device_set_shader;
-  pDeviceFuncs->pfnDestroyShader = device_destroy_shader;
-  pDeviceFuncs->pfnSetShaderConstF = device_set_shader_const_f;
+  AEROGPU_SET_D3D9DDI_FN(pfnCreateShader, device_create_shader);
+  AEROGPU_SET_D3D9DDI_FN(pfnSetShader, device_set_shader);
+  AEROGPU_SET_D3D9DDI_FN(pfnDestroyShader, device_destroy_shader);
+  AEROGPU_SET_D3D9DDI_FN(pfnSetShaderConstF, device_set_shader_const_f);
 
-  pDeviceFuncs->pfnSetStreamSource = device_set_stream_source;
-  pDeviceFuncs->pfnSetIndices = device_set_indices;
+  AEROGPU_SET_D3D9DDI_FN(pfnSetStreamSource, device_set_stream_source);
+  AEROGPU_SET_D3D9DDI_FN(pfnSetIndices, device_set_indices);
 
-  pDeviceFuncs->pfnClear = device_clear;
-  pDeviceFuncs->pfnDrawPrimitive = device_draw_primitive;
-  pDeviceFuncs->pfnDrawIndexedPrimitive = device_draw_indexed_primitive;
-  pDeviceFuncs->pfnCreateSwapChain = device_create_swap_chain;
-  pDeviceFuncs->pfnDestroySwapChain = device_destroy_swap_chain;
-  pDeviceFuncs->pfnGetSwapChain = device_get_swap_chain;
-  pDeviceFuncs->pfnSetSwapChain = device_set_swap_chain;
-  pDeviceFuncs->pfnReset = device_reset;
-  pDeviceFuncs->pfnResetEx = device_reset_ex;
-  pDeviceFuncs->pfnCheckDeviceState = device_check_device_state;
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+  AEROGPU_SET_D3D9DDI_FN(pfnClear, device_clear);
+  AEROGPU_SET_D3D9DDI_FN(pfnDrawPrimitive, device_draw_primitive);
+  AEROGPU_SET_D3D9DDI_FN(pfnDrawIndexedPrimitive, device_draw_indexed_primitive);
+  AEROGPU_SET_D3D9DDI_FN(pfnCreateSwapChain, device_create_swap_chain);
+  AEROGPU_SET_D3D9DDI_FN(pfnDestroySwapChain, device_destroy_swap_chain);
+  AEROGPU_SET_D3D9DDI_FN(pfnGetSwapChain, device_get_swap_chain);
+  AEROGPU_SET_D3D9DDI_FN(pfnSetSwapChain, device_set_swap_chain);
+  AEROGPU_SET_D3D9DDI_FN(pfnReset, device_reset);
+  AEROGPU_SET_D3D9DDI_FN(pfnResetEx, device_reset_ex);
+  AEROGPU_SET_D3D9DDI_FN(pfnCheckDeviceState, device_check_device_state);
+
   if constexpr (aerogpu_has_member_pfnWaitForVBlank<D3D9DDI_DEVICEFUNCS>::value) {
-    pDeviceFuncs->pfnWaitForVBlank =
-        reinterpret_cast<decltype(pDeviceFuncs->pfnWaitForVBlank)>(device_wait_for_vblank);
+    AEROGPU_SET_D3D9DDI_FN(pfnWaitForVBlank, device_wait_for_vblank);
   }
   if constexpr (aerogpu_has_member_pfnSetGPUThreadPriority<D3D9DDI_DEVICEFUNCS>::value) {
-    pDeviceFuncs->pfnSetGPUThreadPriority =
-        reinterpret_cast<decltype(pDeviceFuncs->pfnSetGPUThreadPriority)>(device_set_gpu_thread_priority);
+    AEROGPU_SET_D3D9DDI_FN(pfnSetGPUThreadPriority, device_set_gpu_thread_priority);
   }
   if constexpr (aerogpu_has_member_pfnGetGPUThreadPriority<D3D9DDI_DEVICEFUNCS>::value) {
-    pDeviceFuncs->pfnGetGPUThreadPriority =
-        reinterpret_cast<decltype(pDeviceFuncs->pfnGetGPUThreadPriority)>(device_get_gpu_thread_priority);
+    AEROGPU_SET_D3D9DDI_FN(pfnGetGPUThreadPriority, device_get_gpu_thread_priority);
   }
   if constexpr (aerogpu_has_member_pfnCheckResourceResidency<D3D9DDI_DEVICEFUNCS>::value) {
-    pDeviceFuncs->pfnCheckResourceResidency =
-        reinterpret_cast<decltype(pDeviceFuncs->pfnCheckResourceResidency)>(device_check_resource_residency);
+    AEROGPU_SET_D3D9DDI_FN(pfnCheckResourceResidency, device_check_resource_residency);
   }
   if constexpr (aerogpu_has_member_pfnQueryResourceResidency<D3D9DDI_DEVICEFUNCS>::value) {
-    pDeviceFuncs->pfnQueryResourceResidency =
-        reinterpret_cast<decltype(pDeviceFuncs->pfnQueryResourceResidency)>(device_query_resource_residency);
+    AEROGPU_SET_D3D9DDI_FN(pfnQueryResourceResidency, device_query_resource_residency);
   }
   if constexpr (aerogpu_has_member_pfnGetDisplayModeEx<D3D9DDI_DEVICEFUNCS>::value) {
-    pDeviceFuncs->pfnGetDisplayModeEx =
-        reinterpret_cast<decltype(pDeviceFuncs->pfnGetDisplayModeEx)>(device_get_display_mode_ex);
+    AEROGPU_SET_D3D9DDI_FN(pfnGetDisplayModeEx, device_get_display_mode_ex);
   }
   if constexpr (aerogpu_has_member_pfnComposeRects<D3D9DDI_DEVICEFUNCS>::value) {
-    pDeviceFuncs->pfnComposeRects =
-        reinterpret_cast<decltype(pDeviceFuncs->pfnComposeRects)>(device_compose_rects);
+    AEROGPU_SET_D3D9DDI_FN(pfnComposeRects, device_compose_rects);
   }
-#endif
-  pDeviceFuncs->pfnRotateResourceIdentities = device_rotate_resource_identities;
-  pDeviceFuncs->pfnPresent = device_present;
-  pDeviceFuncs->pfnPresentEx = device_present_ex;
-  pDeviceFuncs->pfnFlush = device_flush;
-  pDeviceFuncs->pfnSetMaximumFrameLatency = device_set_maximum_frame_latency;
-  pDeviceFuncs->pfnGetMaximumFrameLatency = device_get_maximum_frame_latency;
-  pDeviceFuncs->pfnGetPresentStats = device_get_present_stats;
-  pDeviceFuncs->pfnGetLastPresentCount = device_get_last_present_count;
 
-  pDeviceFuncs->pfnCreateQuery = device_create_query;
-  pDeviceFuncs->pfnDestroyQuery = device_destroy_query;
-  pDeviceFuncs->pfnIssueQuery = device_issue_query;
-  pDeviceFuncs->pfnGetQueryData = device_get_query_data;
-  pDeviceFuncs->pfnGetRenderTargetData = device_get_render_target_data;
-  pDeviceFuncs->pfnCopyRects = device_copy_rects;
-  pDeviceFuncs->pfnWaitForIdle = device_wait_for_idle;
+  AEROGPU_SET_D3D9DDI_FN(pfnRotateResourceIdentities, device_rotate_resource_identities);
+  AEROGPU_SET_D3D9DDI_FN(pfnPresent, device_present);
+  AEROGPU_SET_D3D9DDI_FN(pfnPresentEx, device_present_ex);
+  AEROGPU_SET_D3D9DDI_FN(pfnFlush, device_flush);
+  AEROGPU_SET_D3D9DDI_FN(pfnSetMaximumFrameLatency, device_set_maximum_frame_latency);
+  AEROGPU_SET_D3D9DDI_FN(pfnGetMaximumFrameLatency, device_get_maximum_frame_latency);
+  AEROGPU_SET_D3D9DDI_FN(pfnGetPresentStats, device_get_present_stats);
+  AEROGPU_SET_D3D9DDI_FN(pfnGetLastPresentCount, device_get_last_present_count);
 
-  pDeviceFuncs->pfnBlt = device_blt;
-  pDeviceFuncs->pfnColorFill = device_color_fill;
-  pDeviceFuncs->pfnUpdateSurface = device_update_surface;
-  pDeviceFuncs->pfnUpdateTexture = device_update_texture;
+  AEROGPU_SET_D3D9DDI_FN(pfnCreateQuery, device_create_query);
+  AEROGPU_SET_D3D9DDI_FN(pfnDestroyQuery, device_destroy_query);
+  AEROGPU_SET_D3D9DDI_FN(pfnIssueQuery, device_issue_query);
+  AEROGPU_SET_D3D9DDI_FN(pfnGetQueryData, device_get_query_data);
+  AEROGPU_SET_D3D9DDI_FN(pfnGetRenderTargetData, device_get_render_target_data);
+  AEROGPU_SET_D3D9DDI_FN(pfnCopyRects, device_copy_rects);
+  AEROGPU_SET_D3D9DDI_FN(pfnWaitForIdle, device_wait_for_idle);
+
+  AEROGPU_SET_D3D9DDI_FN(pfnBlt, device_blt);
+  AEROGPU_SET_D3D9DDI_FN(pfnColorFill, device_color_fill);
+  AEROGPU_SET_D3D9DDI_FN(pfnUpdateSurface, device_update_surface);
+  AEROGPU_SET_D3D9DDI_FN(pfnUpdateTexture, device_update_texture);
+
+#undef AEROGPU_SET_D3D9DDI_FN
 
   dev.release();
   return S_OK;
