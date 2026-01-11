@@ -64,6 +64,72 @@ static int FailD3D11WithRemovedReason(aerogpu_test::TestReporter* reporter,
   return aerogpu_test::FailHresult(test_name, what, hr);
 }
 
+static void PrintDeviceRemovedReasonIfAny(const char* test_name, ID3D11Device* device) {
+  if (!device) {
+    return;
+  }
+  HRESULT reason = device->GetDeviceRemovedReason();
+  if (reason != S_OK) {
+    aerogpu_test::PrintfStdout(
+        "INFO: %s: device removed reason: %s", test_name, aerogpu_test::HresultToString(reason).c_str());
+  }
+}
+
+static void DumpBytesToFile(const char* test_name,
+                            aerogpu_test::TestReporter* reporter,
+                            const wchar_t* file_name,
+                            const void* data,
+                            UINT byte_count) {
+  if (!file_name || !data || byte_count == 0) {
+    return;
+  }
+  const std::wstring dir = aerogpu_test::GetModuleDir();
+  const std::wstring path = aerogpu_test::JoinPath(dir, file_name);
+  HANDLE h =
+      CreateFileW(path.c_str(), GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+  if (h == INVALID_HANDLE_VALUE) {
+    aerogpu_test::PrintfStdout("INFO: %s: dump CreateFileW(%ls) failed: %s",
+                               test_name,
+                               file_name,
+                               aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
+    return;
+  }
+  DWORD written = 0;
+  if (!WriteFile(h, data, byte_count, &written, NULL) || written != byte_count) {
+    aerogpu_test::PrintfStdout("INFO: %s: dump WriteFile(%ls) failed: %s",
+                               test_name,
+                               file_name,
+                               aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
+  } else {
+    aerogpu_test::PrintfStdout("INFO: %s: dumped %u bytes to %ls",
+                               test_name,
+                               (unsigned)byte_count,
+                               path.c_str());
+    if (reporter) {
+      reporter->AddArtifactPathW(path);
+    }
+  }
+  CloseHandle(h);
+}
+
+static void DumpTightBgra32(const char* test_name,
+                            aerogpu_test::TestReporter* reporter,
+                            const wchar_t* file_name,
+                            const void* data,
+                            UINT row_pitch,
+                            int width,
+                            int height) {
+  if (!data || width <= 0 || height <= 0 || row_pitch < (UINT)(width * 4)) {
+    return;
+  }
+  std::vector<uint8_t> tight((size_t)width * (size_t)height * 4u, 0);
+  for (int y = 0; y < height; ++y) {
+    const uint8_t* src_row = (const uint8_t*)data + (size_t)y * (size_t)row_pitch;
+    memcpy(&tight[(size_t)y * (size_t)width * 4u], src_row, (size_t)width * 4u);
+  }
+  DumpBytesToFile(test_name, reporter, file_name, &tight[0], (UINT)tight.size());
+}
+
 static int RunD3D11Texture(int argc, char** argv) {
   const char* kTestName = "d3d11_texture";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
@@ -484,6 +550,13 @@ static int RunD3D11Texture(int argc, char** argv) {
     } else {
       aerogpu_test::PrintfStdout("INFO: %s: BMP dump failed: %s", kTestName, err.c_str());
     }
+    DumpTightBgra32(kTestName,
+                    &reporter,
+                    L"d3d11_texture.bin",
+                    map.pData,
+                    map.RowPitch,
+                    (int)bb_desc.Width,
+                    (int)bb_desc.Height);
   }
 
   context->Unmap(staging.get(), 0);
@@ -495,9 +568,12 @@ static int RunD3D11Texture(int argc, char** argv) {
 
   if ((center & 0x00FFFFFFu) != (expected & 0x00FFFFFFu) ||
       (corner & 0x00FFFFFFu) != (expected_corner & 0x00FFFFFFu)) {
-    return reporter.Fail("pixel mismatch: center=0x%08lX corner(5,5)=0x%08lX",
+    PrintDeviceRemovedReasonIfAny(kTestName, device.get());
+    return reporter.Fail("pixel mismatch: center=0x%08lX expected 0x%08lX; corner(5,5)=0x%08lX expected 0x%08lX",
                          (unsigned long)center,
-                         (unsigned long)corner);
+                         (unsigned long)expected,
+                         (unsigned long)corner,
+                         (unsigned long)expected_corner);
   }
 
   return reporter.Pass();
