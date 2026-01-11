@@ -1,7 +1,8 @@
 use aero_d3d11::{
-    parse_signatures, translate_sm4_module_to_wgsl, BindingKind, DxbcFile, DxbcSignatureParameter,
-    FourCC, OperandModifier, RegFile, RegisterRef, SamplerRef, ShaderModel, ShaderStage, Sm4Inst,
-    Sm4Module, SrcKind, SrcOperand, Swizzle, TextureRef, WriteMask,
+    parse_signatures, translate_sm4_module_to_wgsl, BindingKind, Builtin, DxbcFile,
+    DxbcSignatureParameter, FourCC, OperandModifier, RegFile, RegisterRef, SamplerRef,
+    ShaderModel, ShaderStage, Sm4Decl, Sm4Inst, Sm4Module, SrcKind, SrcOperand, Swizzle,
+    TextureRef, WriteMask,
 };
 
 const FOURCC_SHEX: FourCC = FourCC(*b"SHEX");
@@ -485,4 +486,170 @@ fn translates_texture_load_ld() {
     assert_wgsl_validates(&translated.wgsl);
     assert!(translated.wgsl.contains("textureLoad(t0"));
     assert!(translated.wgsl.contains("bitcast<i32>(0x00000001u)"));
+}
+
+#[test]
+fn translates_vs_system_value_builtins_from_siv_decls() {
+    const D3D_NAME_POSITION: u32 = 1;
+    const D3D_NAME_VERTEX_ID: u32 = 6;
+    const D3D_NAME_INSTANCE_ID: u32 = 8;
+
+    let isgn_params = vec![
+        sig_param("VID", 0, 0, 0b0001),
+        sig_param("IID", 0, 1, 0b0001),
+        sig_param("POSITION", 0, 2, 0b1111),
+    ];
+    let osgn_params = vec![
+        // Use a non-canonical semantic so the translator must rely on `dcl_output_siv`.
+        sig_param("OUTPOS", 0, 0, 0b1111),
+        sig_param("COLOR", 0, 1, 0b1111),
+    ];
+
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, Vec::new()),
+        (FOURCC_ISGN, build_signature_chunk(&isgn_params)),
+        (FOURCC_OSGN, build_signature_chunk(&osgn_params)),
+    ]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    let module = Sm4Module {
+        stage: ShaderStage::Vertex,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: vec![
+            Sm4Decl::InputSiv {
+                reg: 0,
+                mask: WriteMask::X,
+                sys_value: D3D_NAME_VERTEX_ID,
+            },
+            Sm4Decl::InputSiv {
+                reg: 1,
+                mask: WriteMask::X,
+                sys_value: D3D_NAME_INSTANCE_ID,
+            },
+            Sm4Decl::Input {
+                reg: 2,
+                mask: WriteMask::XYZW,
+            },
+            Sm4Decl::OutputSiv {
+                reg: 0,
+                mask: WriteMask::XYZW,
+                sys_value: D3D_NAME_POSITION,
+            },
+            Sm4Decl::Output {
+                reg: 1,
+                mask: WriteMask::XYZW,
+            },
+        ],
+        instructions: vec![
+            // o0 = v2 (position)
+            Sm4Inst::Mov {
+                dst: dst(RegFile::Output, 0, WriteMask::XYZW),
+                src: src_reg(RegFile::Input, 2),
+            },
+            // r0 = v0 (vertex id)
+            Sm4Inst::Mov {
+                dst: dst(RegFile::Temp, 0, WriteMask::XYZW),
+                src: src_reg(RegFile::Input, 0),
+            },
+            // r1 = v1 (instance id)
+            Sm4Inst::Mov {
+                dst: dst(RegFile::Temp, 1, WriteMask::XYZW),
+                src: src_reg(RegFile::Input, 1),
+            },
+            // o1 = r0 + r1
+            Sm4Inst::Add {
+                dst: dst(RegFile::Output, 1, WriteMask::XYZW),
+                a: src_reg(RegFile::Temp, 0),
+                b: src_reg(RegFile::Temp, 1),
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+    assert!(translated
+        .wgsl
+        .contains("@builtin(vertex_index) vertex_id: u32"));
+    assert!(translated
+        .wgsl
+        .contains("@builtin(instance_index) instance_id: u32"));
+    assert!(translated.wgsl.contains("@location(2) v2: vec4<f32>"));
+    assert!(!translated.wgsl.contains("@location(0) v0:"));
+
+    let v0 = translated
+        .reflection
+        .inputs
+        .iter()
+        .find(|p| p.register == 0)
+        .expect("missing v0 reflection");
+    assert_eq!(v0.builtin, Some(Builtin::VertexIndex));
+    assert_eq!(v0.location, None);
+
+    let v1 = translated
+        .reflection
+        .inputs
+        .iter()
+        .find(|p| p.register == 1)
+        .expect("missing v1 reflection");
+    assert_eq!(v1.builtin, Some(Builtin::InstanceIndex));
+    assert_eq!(v1.location, None);
+
+    let o0 = translated
+        .reflection
+        .outputs
+        .iter()
+        .find(|p| p.register == 0)
+        .expect("missing o0 reflection");
+    assert_eq!(o0.builtin, Some(Builtin::Position));
+    assert_eq!(o0.location, None);
+}
+
+#[test]
+fn translates_ps_front_facing_builtin_from_system_value_type() {
+    const D3D_NAME_IS_FRONT_FACE: u32 = 9;
+
+    let mut front_facing = sig_param("SIV", 0, 0, 0b0001);
+    front_facing.system_value_type = D3D_NAME_IS_FRONT_FACE;
+
+    let isgn_params = vec![front_facing, sig_param("TEXCOORD", 0, 1, 0b0011)];
+    let osgn_params = vec![sig_param("SV_Target", 0, 0, 0b1111)];
+
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, Vec::new()),
+        (FOURCC_ISGN, build_signature_chunk(&isgn_params)),
+        (FOURCC_OSGN, build_signature_chunk(&osgn_params)),
+    ]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    let module = Sm4Module {
+        stage: ShaderStage::Pixel,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: Vec::new(),
+        instructions: vec![
+            Sm4Inst::Mov {
+                dst: dst(RegFile::Output, 0, WriteMask::XYZW),
+                src: src_reg(RegFile::Input, 0),
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+    assert!(translated
+        .wgsl
+        .contains("@builtin(front_facing) front_facing: bool"));
+    assert!(!translated.wgsl.contains("@location(0) v0:"));
+
+    let v0 = translated
+        .reflection
+        .inputs
+        .iter()
+        .find(|p| p.register == 0)
+        .expect("missing v0 reflection");
+    assert_eq!(v0.builtin, Some(Builtin::FrontFacing));
+    assert_eq!(v0.location, None);
 }
