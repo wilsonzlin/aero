@@ -130,8 +130,18 @@ static void expect_layout_result(
             name,
             virtio_pci_aero_layout_validate_result_str(got),
             (int)got,
-            virtio_pci_aero_layout_validate_result_str(want),
-            (int)want);
+             virtio_pci_aero_layout_validate_result_str(want),
+             (int)want);
+}
+
+static void expect_str_not_unknown(const char *name, const char *got) {
+    ++tests_run;
+    if (got != NULL && strcmp(got, "UNKNOWN") != 0) {
+        return;
+    }
+
+    ++tests_failed;
+    fprintf(stderr, "FAIL %s: got=%s\n", name, (got != NULL) ? got : "(null)");
 }
 
 static void test_valid_all_caps(void) {
@@ -1962,6 +1972,92 @@ static void test_aero_layout_validation_permissive_ignores_missing_bar0(void) {
                          VIRTIO_PCI_AERO_LAYOUT_VALIDATE_OK);
 }
 
+static void test_result_str_coverage(void) {
+    expect_str_not_unknown("cap_parse_result_str.OK", virtio_pci_cap_parse_result_str(VIRTIO_PCI_CAP_PARSE_OK));
+    expect_str_not_unknown("cap_parse_result_str.BAD_ARGUMENT",
+                           virtio_pci_cap_parse_result_str(VIRTIO_PCI_CAP_PARSE_ERR_BAD_ARGUMENT));
+    expect_str_not_unknown("cap_parse_result_str.CFG_SPACE_TOO_SMALL",
+                           virtio_pci_cap_parse_result_str(VIRTIO_PCI_CAP_PARSE_ERR_CFG_SPACE_TOO_SMALL));
+    expect_str_not_unknown("cap_parse_result_str.NO_CAP_LIST",
+                           virtio_pci_cap_parse_result_str(VIRTIO_PCI_CAP_PARSE_ERR_NO_CAP_LIST));
+    expect_str_not_unknown("cap_parse_result_str.CAP_PTR_OUT_OF_RANGE",
+                           virtio_pci_cap_parse_result_str(VIRTIO_PCI_CAP_PARSE_ERR_CAP_PTR_OUT_OF_RANGE));
+    expect_str_not_unknown("cap_parse_result_str.CAP_PTR_UNALIGNED",
+                           virtio_pci_cap_parse_result_str(VIRTIO_PCI_CAP_PARSE_ERR_CAP_PTR_UNALIGNED));
+    expect_str_not_unknown("cap_parse_result_str.CAP_HEADER_TRUNCATED",
+                           virtio_pci_cap_parse_result_str(VIRTIO_PCI_CAP_PARSE_ERR_CAP_HEADER_TRUNCATED));
+    expect_str_not_unknown("cap_parse_result_str.CAP_NEXT_UNALIGNED",
+                           virtio_pci_cap_parse_result_str(VIRTIO_PCI_CAP_PARSE_ERR_CAP_NEXT_UNALIGNED));
+    expect_str_not_unknown("cap_parse_result_str.CAP_NEXT_OUT_OF_RANGE",
+                           virtio_pci_cap_parse_result_str(VIRTIO_PCI_CAP_PARSE_ERR_CAP_NEXT_OUT_OF_RANGE));
+    expect_str_not_unknown("cap_parse_result_str.CAP_LIST_LOOP",
+                           virtio_pci_cap_parse_result_str(VIRTIO_PCI_CAP_PARSE_ERR_CAP_LIST_LOOP));
+    expect_str_not_unknown("cap_parse_result_str.CAP_LEN_TOO_SMALL",
+                           virtio_pci_cap_parse_result_str(VIRTIO_PCI_CAP_PARSE_ERR_CAP_LEN_TOO_SMALL));
+    expect_str_not_unknown("cap_parse_result_str.NOTIFY_CAP_LEN_TOO_SMALL",
+                           virtio_pci_cap_parse_result_str(VIRTIO_PCI_CAP_PARSE_ERR_NOTIFY_CAP_LEN_TOO_SMALL));
+    expect_str_not_unknown("cap_parse_result_str.CAP_TRUNCATED",
+                           virtio_pci_cap_parse_result_str(VIRTIO_PCI_CAP_PARSE_ERR_CAP_TRUNCATED));
+    expect_str_not_unknown("cap_parse_result_str.BAR_INDEX_OUT_OF_RANGE",
+                           virtio_pci_cap_parse_result_str(VIRTIO_PCI_CAP_PARSE_ERR_BAR_INDEX_OUT_OF_RANGE));
+    expect_str_not_unknown("cap_parse_result_str.BAR_ADDRESS_MISSING",
+                           virtio_pci_cap_parse_result_str(VIRTIO_PCI_CAP_PARSE_ERR_BAR_ADDRESS_MISSING));
+    expect_str_not_unknown("cap_parse_result_str.DUPLICATE_CFG_TYPE",
+                           virtio_pci_cap_parse_result_str(VIRTIO_PCI_CAP_PARSE_ERR_DUPLICATE_CFG_TYPE));
+    expect_str_not_unknown("cap_parse_result_str.MISSING_COMMON_CFG",
+                           virtio_pci_cap_parse_result_str(VIRTIO_PCI_CAP_PARSE_ERR_MISSING_COMMON_CFG));
+    expect_str_not_unknown("cap_parse_result_str.MISSING_NOTIFY_CFG",
+                           virtio_pci_cap_parse_result_str(VIRTIO_PCI_CAP_PARSE_ERR_MISSING_NOTIFY_CFG));
+    expect_str_not_unknown("cap_parse_result_str.MISSING_ISR_CFG",
+                           virtio_pci_cap_parse_result_str(VIRTIO_PCI_CAP_PARSE_ERR_MISSING_ISR_CFG));
+    expect_str_not_unknown("cap_parse_result_str.MISSING_DEVICE_CFG",
+                           virtio_pci_cap_parse_result_str(VIRTIO_PCI_CAP_PARSE_ERR_MISSING_DEVICE_CFG));
+
+    expect_str_not_unknown("layout_result_str.OK",
+                           virtio_pci_aero_layout_validate_result_str(VIRTIO_PCI_AERO_LAYOUT_VALIDATE_OK));
+    expect_str_not_unknown(
+        "layout_result_str.BAD_ARGUMENT",
+        virtio_pci_aero_layout_validate_result_str(VIRTIO_PCI_AERO_LAYOUT_VALIDATE_ERR_BAD_ARGUMENT));
+    expect_str_not_unknown(
+        "layout_result_str.BAR0_MISSING",
+        virtio_pci_aero_layout_validate_result_str(VIRTIO_PCI_AERO_LAYOUT_VALIDATE_ERR_BAR0_MISSING));
+    expect_str_not_unknown(
+        "layout_result_str.BAR0_NOT_MMIO",
+        virtio_pci_aero_layout_validate_result_str(VIRTIO_PCI_AERO_LAYOUT_VALIDATE_ERR_BAR0_NOT_MMIO));
+    expect_str_not_unknown(
+        "layout_result_str.BAR0_TOO_SMALL",
+        virtio_pci_aero_layout_validate_result_str(VIRTIO_PCI_AERO_LAYOUT_VALIDATE_ERR_BAR0_TOO_SMALL));
+    expect_str_not_unknown(
+        "layout_result_str.COMMON_MISMATCH",
+        virtio_pci_aero_layout_validate_result_str(VIRTIO_PCI_AERO_LAYOUT_VALIDATE_ERR_COMMON_MISMATCH));
+    expect_str_not_unknown(
+        "layout_result_str.NOTIFY_MISMATCH",
+        virtio_pci_aero_layout_validate_result_str(VIRTIO_PCI_AERO_LAYOUT_VALIDATE_ERR_NOTIFY_MISMATCH));
+    expect_str_not_unknown(
+        "layout_result_str.ISR_MISMATCH",
+        virtio_pci_aero_layout_validate_result_str(VIRTIO_PCI_AERO_LAYOUT_VALIDATE_ERR_ISR_MISMATCH));
+    expect_str_not_unknown(
+        "layout_result_str.DEVICE_MISMATCH",
+        virtio_pci_aero_layout_validate_result_str(VIRTIO_PCI_AERO_LAYOUT_VALIDATE_ERR_DEVICE_MISMATCH));
+    expect_str_not_unknown(
+        "layout_result_str.NOTIFY_MULTIPLIER_MISMATCH",
+        virtio_pci_aero_layout_validate_result_str(VIRTIO_PCI_AERO_LAYOUT_VALIDATE_ERR_NOTIFY_MULTIPLIER_MISMATCH));
+
+    expect_str_not_unknown("identity_result_str.OK", virtio_pci_identity_result_str(VIRTIO_PCI_IDENTITY_OK));
+    expect_str_not_unknown("identity_result_str.BAD_ARGUMENT",
+                           virtio_pci_identity_result_str(VIRTIO_PCI_IDENTITY_ERR_BAD_ARGUMENT));
+    expect_str_not_unknown("identity_result_str.CFG_SPACE_TOO_SMALL",
+                           virtio_pci_identity_result_str(VIRTIO_PCI_IDENTITY_ERR_CFG_SPACE_TOO_SMALL));
+    expect_str_not_unknown("identity_result_str.VENDOR_MISMATCH",
+                           virtio_pci_identity_result_str(VIRTIO_PCI_IDENTITY_ERR_VENDOR_MISMATCH));
+    expect_str_not_unknown("identity_result_str.DEVICE_ID_NOT_MODERN",
+                           virtio_pci_identity_result_str(VIRTIO_PCI_IDENTITY_ERR_DEVICE_ID_NOT_MODERN));
+    expect_str_not_unknown("identity_result_str.DEVICE_ID_NOT_ALLOWED",
+                           virtio_pci_identity_result_str(VIRTIO_PCI_IDENTITY_ERR_DEVICE_ID_NOT_ALLOWED));
+    expect_str_not_unknown("identity_result_str.REVISION_MISMATCH",
+                           virtio_pci_identity_result_str(VIRTIO_PCI_IDENTITY_ERR_REVISION_MISMATCH));
+}
+
 int main(void) {
     test_valid_all_caps();
     test_contract_v1_parse_fixed_layout_ok();
@@ -2034,6 +2130,7 @@ int main(void) {
     test_identity_contract_v1_ok_null_out_identity();
     test_identity_contract_v1_allowed_list_empty_ok();
     test_identity_contract_v1_cfg_space_too_small();
+    test_result_str_coverage();
 
     if (tests_failed == 0) {
         printf("virtio_pci_cap_parser_test: %d checks passed\n", tests_run);
