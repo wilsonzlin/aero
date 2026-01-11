@@ -2191,8 +2191,16 @@ static bool WaveOutToneTest(Logger& log, const std::vector<std::wstring>& match_
   }
 
   if (device_id == UINT_MAX || best_score <= 0) {
-    log.LogLine("virtio-snd: waveOut no matching device found; using WAVE_MAPPER");
-    device_id = WAVE_MAPPER;
+    if (num == 1) {
+      // Some audio stacks (or SDK header combinations) may not expose a usable device instance ID
+      // via DRV_QUERYDEVICEINSTANCEID, and the device name may not mention "virtio". If there is
+      // only a single waveOut device, assume it is the virtio-snd-backed endpoint.
+      device_id = 0;
+      log.LogLine("virtio-snd: waveOut no matching device; using only device_id=0");
+    } else {
+      log.LogLine("virtio-snd: waveOut no matching device found");
+      return false;
+    }
   } else {
     log.Logf("virtio-snd: waveOut using device_id=%u score=%d", device_id, best_score);
   }
