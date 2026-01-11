@@ -56,6 +56,7 @@ Must be non-null and must succeed:
 
 * `pfnGetCaps`
 * `pfnCalcPrivateDeviceSize`
+* `pfnCalcPrivateDeviceContextSize` (if present in your `D3D11DDI_ADAPTERFUNCS` layout)
 * `pfnCreateDevice` (must fill both device + immediate context tables)
 * `pfnCloseAdapter`
 
@@ -167,8 +168,8 @@ For exact Win7 WDK symbol names/fields (`D3D11DDIARG_CREATEDEVICE::hRTDevice`, `
 
 For Win7 stability, the simplest pattern is:
 
-1. Build a “fully stubbed” `D3D11DDI_DEVICEFUNCS` / `D3D11DDI_DEVICECONTEXTFUNCS` where **every field is non-null**.
-2. In `pfnCreateDevice`, start from the stub table and overwrite only the functions you’ve implemented.
+1. Build a “fully stubbed” `D3D11DDI_ADAPTERFUNCS` / `D3D11DDI_DEVICEFUNCS` / `D3D11DDI_DEVICECONTEXTFUNCS` where **every field is non-null**.
+2. In `OpenAdapter11` and `pfnCreateDevice`, start from the stub table and overwrite only the functions you’ve implemented.
 
 This is robust against:
 
