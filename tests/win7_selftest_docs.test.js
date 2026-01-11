@@ -9,6 +9,7 @@ const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const docs = [
   "drivers/windows7/tests/README.md",
   "drivers/windows7/tests/guest-selftest/README.md",
+  "drivers/windows7/tests/host-harness/README.md",
   "drivers/windows7/virtio-snd/tests/qemu/README.md",
 ];
 
@@ -49,4 +50,3 @@ test("Windows 7 virtio selftest docs avoid stale marker formats", () => {
     }
   }
 });
-
