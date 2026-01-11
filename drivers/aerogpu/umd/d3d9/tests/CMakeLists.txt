@@ -1,3 +1,10 @@
+cmake_minimum_required(VERSION 3.16)
+
+if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    project(aerogpu_d3d9_tests CXX)
+    enable_testing()
+endif ()
+
 add_executable(aerogpu_cmd_stream_writer_tests
     cmd_stream_writer_tests.cpp
     ${CMAKE_CURRENT_LIST_DIR}/../src/aerogpu_d3d9_blit.cpp
