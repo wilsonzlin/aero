@@ -1398,7 +1398,67 @@ function renderAudioPanel(): HTMLElement {
     },
   });
 
-  return el("div", { class: "panel" }, el("h2", { text: "Audio" }), el("div", { class: "row" }, button), status);
+  const workerButton = el("button", {
+    id: "init-audio-output-worker",
+    text: "Init audio output (worker tone)",
+    onclick: async () => {
+      status.textContent = "";
+      stopTone();
+
+      try {
+        workerCoordinator.start(configManager.getState().effective);
+      } catch (err) {
+        status.textContent = err instanceof Error ? err.message : String(err);
+        return;
+      }
+
+      const output = await createAudioOutput({
+        sampleRate: 48_000,
+        latencyHint: "interactive",
+        ringBufferFrames: Math.floor(48_000 / 5),
+      });
+      // Expose for Playwright smoke tests.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (globalThis as any).__aeroAudioOutputWorker = output;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (globalThis as any).__aeroAudioToneBackendWorker = "cpu-worker-wasm";
+      if (!output.enabled) {
+        status.textContent = output.message;
+        return;
+      }
+
+      try {
+        // Prefill the entire ring with silence so the CPU worker has time to attach
+        // and begin writing without incurring startup underruns.
+        output.writeInterleaved(
+          new Float32Array(output.ringBuffer.capacityFrames * output.ringBuffer.channelCount),
+          output.context.sampleRate,
+        );
+
+        workerCoordinator.setAudioOutputRingBuffer(
+          output.ringBuffer.buffer,
+          output.context.sampleRate,
+          output.ringBuffer.channelCount,
+          output.ringBuffer.capacityFrames,
+        );
+
+        await output.resume();
+      } catch (err) {
+        status.textContent = err instanceof Error ? err.message : String(err);
+        return;
+      }
+
+      status.textContent = "Audio initialized (worker tone backend).";
+    },
+  });
+
+  return el(
+    "div",
+    { class: "panel" },
+    el("h2", { text: "Audio" }),
+    el("div", { class: "row" }, button, workerButton),
+    status,
+  );
 }
 
 function renderMicrophonePanel(): HTMLElement {
