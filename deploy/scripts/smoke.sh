@@ -571,6 +571,7 @@ function checkDnsQuery(cookiePair) {
           .split(";", 1)[0]
           .trim()
           .toLowerCase();
+        const cacheControl = String(res.headers["cache-control"] ?? "").trim().toLowerCase();
 
         const chunks = [];
         res.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
@@ -582,6 +583,10 @@ function checkDnsQuery(cookiePair) {
           }
           if (contentType !== "application/dns-message") {
             reject(new Error(`unexpected /dns-query content-type: ${contentType}`));
+            return;
+          }
+          if (cacheControl !== "no-store") {
+            reject(new Error(`unexpected /dns-query cache-control: ${cacheControl}`));
             return;
           }
           if (body.length < 12) {
