@@ -1661,6 +1661,7 @@ dependencies = [
  "aero-gpu",
  "aero-gpu-trace",
  "aero-io-snapshot",
+ "aero-ipc",
  "aero-net-e1000",
  "aero-net-stack",
  "aero-platform",
