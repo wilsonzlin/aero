@@ -129,6 +129,7 @@ Backend layer (WaveRT ↔ virtio-snd):
 - Default backend: `src/backend_virtio.c` (submits one period of PCM to `txq` each tick).
 - Fallback backend: `src/backend_null.c` (silent; used for debugging and when virtio bring-up fails).
 - To force the Null backend even when virtio is available, set `ForceNullBackend` (`REG_DWORD`) = `1` under the device's **Device Parameters** key.
+  - When `ForceNullBackend=1`, the adapter will also tolerate virtio transport start failures (no Code 10) so PortCls/WaveRT behavior can be tested even if the virtio-snd device/emulator is unavailable.
 
 Virtio transport + protocol engines (AERO-W7-VIRTIO v1 modern transport):
 
