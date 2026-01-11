@@ -13,6 +13,7 @@
 #include "aerogpu_d3d9_submit.h"
 
 #include "aerogpu_cmd_stream_writer.h"
+#include "aerogpu_pci.h"
 
 namespace aerogpu {
 
@@ -680,6 +681,149 @@ bool TestEventQueryGetDataSemantics() {
     return false;
   }
 
+  return true;
+}
+
+bool TestAdapterCapsAndQueryAdapterInfo() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_HADAPTER hAdapter{};
+    bool has_adapter = false;
+    ~Cleanup() {
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  if (!Check(open.hAdapter.pDrvPrivate != nullptr, "OpenAdapter2 returned adapter handle")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  if (!Check(cleanup.adapter_funcs.pfnGetCaps != nullptr, "pfnGetCaps is non-null")) {
+    return false;
+  }
+  if (!Check(cleanup.adapter_funcs.pfnQueryAdapterInfo != nullptr, "pfnQueryAdapterInfo is non-null")) {
+    return false;
+  }
+
+  D3DCAPS9 caps{};
+  D3D9DDIARG_GETCAPS get_caps{};
+  get_caps.Type = D3DDDICAPS_GETD3D9CAPS;
+  get_caps.pData = &caps;
+  get_caps.DataSize = sizeof(caps);
+  hr = cleanup.adapter_funcs.pfnGetCaps(open.hAdapter, &get_caps);
+  if (!Check(hr == S_OK, "GetCaps(GETD3D9CAPS)")) {
+    return false;
+  }
+  if (!Check((caps.Caps2 & D3DCAPS2_CANRENDERWINDOWED) != 0, "Caps2 includes CANRENDERWINDOWED")) {
+    return false;
+  }
+  if (!Check((caps.Caps2 & D3DCAPS2_CANSHARERESOURCE) != 0, "Caps2 includes CANSHARERESOURCE")) {
+    return false;
+  }
+  if (!Check(caps.VertexShaderVersion >= D3DVS_VERSION(2, 0), "VertexShaderVersion >= 2.0")) {
+    return false;
+  }
+  if (!Check(caps.PixelShaderVersion >= D3DPS_VERSION(2, 0), "PixelShaderVersion >= 2.0")) {
+    return false;
+  }
+
+  uint32_t format_count = 0;
+  D3D9DDIARG_GETCAPS get_fmt_count{};
+  get_fmt_count.Type = D3DDDICAPS_GETFORMATCOUNT;
+  get_fmt_count.pData = &format_count;
+  get_fmt_count.DataSize = sizeof(format_count);
+  hr = cleanup.adapter_funcs.pfnGetCaps(open.hAdapter, &get_fmt_count);
+  if (!Check(hr == S_OK, "GetCaps(GETFORMATCOUNT)")) {
+    return false;
+  }
+  if (!Check(format_count == 4, "format_count == 4")) {
+    return false;
+  }
+
+  struct GetFormatPayload {
+    uint32_t index;
+    uint32_t format;
+    uint32_t ops;
+  };
+
+  constexpr uint32_t kD3DUsageRenderTarget = 0x00000001u;
+  constexpr uint32_t kD3DUsageDepthStencil = 0x00000002u;
+  constexpr uint32_t kExpectedFormats[4] = {
+      22u, // D3DFMT_X8R8G8B8
+      21u, // D3DFMT_A8R8G8B8
+      32u, // D3DFMT_A8B8G8R8
+      75u, // D3DFMT_D24S8
+  };
+
+  for (uint32_t i = 0; i < format_count; ++i) {
+    GetFormatPayload payload{};
+    payload.index = i;
+    payload.format = 0;
+    payload.ops = 0;
+
+    D3D9DDIARG_GETCAPS get_fmt{};
+    get_fmt.Type = D3DDDICAPS_GETFORMAT;
+    get_fmt.pData = &payload;
+    get_fmt.DataSize = sizeof(payload);
+    hr = cleanup.adapter_funcs.pfnGetCaps(open.hAdapter, &get_fmt);
+    if (!Check(hr == S_OK, "GetCaps(GETFORMAT)")) {
+      return false;
+    }
+    if (!Check(payload.format == kExpectedFormats[i], "format enumeration matches expected list")) {
+      return false;
+    }
+
+    const uint32_t expected_ops = (payload.format == 75u) ? kD3DUsageDepthStencil : kD3DUsageRenderTarget;
+    if (!Check(payload.ops == expected_ops, "format ops mask matches expected usage")) {
+      return false;
+    }
+  }
+
+  D3DADAPTER_IDENTIFIER9 ident{};
+  D3D9DDIARG_QUERYADAPTERINFO query_ident{};
+  query_ident.Type = D3DDDIQUERYADAPTERINFO_GETADAPTERIDENTIFIER;
+  query_ident.pData = &ident;
+  query_ident.DataSize = sizeof(ident);
+  hr = cleanup.adapter_funcs.pfnQueryAdapterInfo(open.hAdapter, &query_ident);
+  if (!Check(hr == S_OK, "QueryAdapterInfo(GETADAPTERIDENTIFIER)")) {
+    return false;
+  }
+  if (!Check(ident.Driver[0] != '\0', "identifier Driver is non-empty")) {
+    return false;
+  }
+  if (!Check(ident.VendorId == AEROGPU_PCI_VENDOR_ID, "identifier VendorId matches AeroGPU")) {
+    return false;
+  }
+  if (!Check(ident.DeviceId == AEROGPU_PCI_DEVICE_ID, "identifier DeviceId matches AeroGPU")) {
+    return false;
+  }
+
+  LUID luid{};
+  D3D9DDIARG_QUERYADAPTERINFO query_luid{};
+  query_luid.Type = D3DDDIQUERYADAPTERINFO_GETADAPTERLUID;
+  query_luid.pData = &luid;
+  query_luid.DataSize = sizeof(luid);
+  hr = cleanup.adapter_funcs.pfnQueryAdapterInfo(open.hAdapter, &query_luid);
+  if (!Check(hr == S_OK, "QueryAdapterInfo(GETADAPTERLUID)")) {
+    return false;
+  }
   return true;
 }
 
@@ -2194,6 +2338,7 @@ int main() {
   failures += !aerogpu::TestFixedPacketPadding();
   failures += !aerogpu::TestOwnedAndBorrowedStreamsMatch();
   failures += !aerogpu::TestEventQueryGetDataSemantics();
+  failures += !aerogpu::TestAdapterCapsAndQueryAdapterInfo();
   failures += !aerogpu::TestAllocationListSplitResetsOnEmptySubmit();
   failures += !aerogpu::TestInvalidPayloadArgs();
   failures += !aerogpu::TestDestroyBoundShaderUnbinds();
