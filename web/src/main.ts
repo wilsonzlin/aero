@@ -2966,8 +2966,8 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
     // This runs before `ensureVgaPresenter()` so we don't accidentally create a
     // main-thread context right before attempting `transferControlToOffscreen()`.
     const gpuWorker = workerCoordinator.getWorker("gpu");
-    const sharedFramebuffer = workerCoordinator.getVgaFramebuffer();
-    if (!gpuWorker || !frameStateSab || !sharedFramebuffer) {
+    const vgaFramebuffer = workerCoordinator.getVgaFramebuffer();
+    if (!gpuWorker || !frameStateSab || !vgaFramebuffer) {
       frameScheduler?.stop();
       frameScheduler = null;
       schedulerWorker = null;
@@ -2976,7 +2976,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
     } else if (
       schedulerWorker !== gpuWorker ||
       schedulerFrameStateSab !== frameStateSab ||
-      schedulerSharedFramebuffer !== sharedFramebuffer
+      schedulerSharedFramebuffer !== vgaFramebuffer
     ) {
       let offscreen: OffscreenCanvas | undefined;
       if (useWorkerPresentation) {
@@ -3012,7 +3012,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
       frameScheduler = startFrameScheduler({
         gpuWorker,
         sharedFrameState: frameStateSab,
-        sharedFramebuffer,
+        sharedFramebuffer: vgaFramebuffer,
         sharedFramebufferOffsetBytes: 0,
         canvas: offscreen,
         initOptions: offscreen
@@ -3026,7 +3026,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
       });
       schedulerWorker = gpuWorker;
       schedulerFrameStateSab = frameStateSab;
-      schedulerSharedFramebuffer = sharedFramebuffer;
+      schedulerSharedFramebuffer = vgaFramebuffer;
     }
 
     if (anyActive) {
