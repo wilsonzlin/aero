@@ -137,4 +137,65 @@ AEROGPU_ABI_STATIC_ASSERT(
     "offsetof(D3DDDIARG_OPENADAPTER, pAdapterFuncs) does not match expected value");
 #endif
 
+// -----------------------------------------------------------------------------
+// Optional: D3D9 resource DDI arg structs (CreateResource/OpenResource)
+// -----------------------------------------------------------------------------
+// These are the structs passed to the device function table entrypoints. AeroGPU's
+// repo-local build uses `AEROGPU_D3D9DDIARG_*` compat structs and `reinterpret_cast`
+// on WDK builds, so keeping the subset we consume ABI-stable is important.
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_SIZEOF_D3D9DDIARG_CREATERESOURCE)
+AEROGPU_ABI_STATIC_ASSERT(
+    sizeof(D3D9DDIARG_CREATERESOURCE) == AEROGPU_D3D9_WDK_ABI_EXPECT_SIZEOF_D3D9DDIARG_CREATERESOURCE,
+    "sizeof(D3D9DDIARG_CREATERESOURCE) does not match expected value");
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDIARG_CREATERESOURCE_pPrivateDriverData)
+AEROGPU_ABI_STATIC_ASSERT(
+    offsetof(D3D9DDIARG_CREATERESOURCE, pPrivateDriverData) ==
+        AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDIARG_CREATERESOURCE_pPrivateDriverData,
+    "offsetof(D3D9DDIARG_CREATERESOURCE, pPrivateDriverData) does not match expected value");
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDIARG_CREATERESOURCE_PrivateDriverDataSize)
+AEROGPU_ABI_STATIC_ASSERT(
+    offsetof(D3D9DDIARG_CREATERESOURCE, PrivateDriverDataSize) ==
+        AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDIARG_CREATERESOURCE_PrivateDriverDataSize,
+    "offsetof(D3D9DDIARG_CREATERESOURCE, PrivateDriverDataSize) does not match expected value");
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDIARG_CREATERESOURCE_hAllocation)
+AEROGPU_ABI_STATIC_ASSERT(
+    offsetof(D3D9DDIARG_CREATERESOURCE, hAllocation) ==
+        AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDIARG_CREATERESOURCE_hAllocation,
+    "offsetof(D3D9DDIARG_CREATERESOURCE, hAllocation) does not match expected value");
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_SIZEOF_D3D9DDIARG_OPENRESOURCE)
+AEROGPU_ABI_STATIC_ASSERT(
+    sizeof(D3D9DDIARG_OPENRESOURCE) == AEROGPU_D3D9_WDK_ABI_EXPECT_SIZEOF_D3D9DDIARG_OPENRESOURCE,
+    "sizeof(D3D9DDIARG_OPENRESOURCE) does not match expected value");
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDIARG_OPENRESOURCE_pPrivateDriverData)
+AEROGPU_ABI_STATIC_ASSERT(
+    offsetof(D3D9DDIARG_OPENRESOURCE, pPrivateDriverData) ==
+        AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDIARG_OPENRESOURCE_pPrivateDriverData,
+    "offsetof(D3D9DDIARG_OPENRESOURCE, pPrivateDriverData) does not match expected value");
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDIARG_OPENRESOURCE_PrivateDriverDataSize)
+AEROGPU_ABI_STATIC_ASSERT(
+    offsetof(D3D9DDIARG_OPENRESOURCE, PrivateDriverDataSize) ==
+        AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDIARG_OPENRESOURCE_PrivateDriverDataSize,
+    "offsetof(D3D9DDIARG_OPENRESOURCE, PrivateDriverDataSize) does not match expected value");
+#endif
+
+#if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDIARG_OPENRESOURCE_hAllocation)
+AEROGPU_ABI_STATIC_ASSERT(
+    offsetof(D3D9DDIARG_OPENRESOURCE, hAllocation) ==
+        AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_D3D9DDIARG_OPENRESOURCE_hAllocation,
+    "offsetof(D3D9DDIARG_OPENRESOURCE, hAllocation) does not match expected value");
+#endif
+
 #endif // AEROGPU_D3D9_USE_WDK_DDI
