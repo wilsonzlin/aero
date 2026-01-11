@@ -23,7 +23,7 @@ import argparse
 import json
 import re
 import sys
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 
@@ -55,9 +55,69 @@ class CreateResourceDesc:
     raw_line: str = ""
 
 
+@dataclass
+class CreateAllocationDesc:
+    seq: int = 0
+    call_seq: int = 0
+    create_flags: int = 0
+    alloc_index: int = 0
+    num_allocations: int = 0
+    alloc_id: int = 0
+    share_token: int = 0
+    size_bytes: int = 0
+    priv_flags: int = 0
+    pitch_bytes: int = 0
+    flags_in: int = 0
+    flags_out: int = 0
+    raw_line: str = ""
+
+
+@dataclass
+class CreateAllocationTrace:
+    write_index: int = 0
+    entry_count: int = 0
+    entries: List[CreateAllocationDesc] = field(default_factory=list)
+
+
+def _bytes_per_pixel_dxgi(fmt: int) -> Optional[int]:
+    # Keep this intentionally tiny: we only need the common swapchain formats for backbuffer matching.
+    # DXGI_FORMAT enum values come from dxgiformat.h.
+    if fmt in (28, 87, 88):  # R8G8B8A8_UNORM / B8G8R8A8_UNORM / B8G8R8X8_UNORM
+        return 4
+    if fmt in (45, 40):  # D24_UNORM_S8_UINT / D32_FLOAT
+        return 4
+    return None
+
+
+def _align_up(v: int, align: int) -> int:
+    if align <= 0:
+        return v
+    return (v + align - 1) & ~(align - 1)
+
+
+def _expected_alloc_size(d: CreateResourceDesc) -> Optional[int]:
+    if d.created_kind == "tex2d":
+        if d.created_row_pitch and d.height:
+            return d.created_row_pitch * d.height
+        bpp = _bytes_per_pixel_dxgi(d.fmt)
+        if bpp and d.width and d.height:
+            row_pitch = _align_up(d.width * bpp, 256)
+            return row_pitch * d.height
+        return None
+    if d.created_kind == "buffer":
+        if d.created_size:
+            return d.created_size
+        if d.byte_width:
+            return d.byte_width
+        return None
+    if d.byte_width:
+        return d.byte_width
+    return None
+
+
 def _parse_int(line: str, key: str) -> Optional[int]:
-    # Use a word-boundary match so short keys like `h=` do not accidentally
-    # match substrings inside longer keys like `byteWidth=`.
+    # Use a word boundary so short keys like `h=` do not accidentally match substrings
+    # inside other keys like `byteWidth=...`.
     m = re.search(rf"\b{re.escape(key)}=(\d+)", line)
     if not m:
         return None
@@ -210,11 +270,68 @@ def iter_trace_lines(lines: Iterable[str]) -> Iterable[str]:
         yield line[i:].rstrip("\r\n")
 
 
+def parse_createalloc_dump(lines: Iterable[str]) -> Optional[CreateAllocationTrace]:
+    """
+    Parse the output of `aerogpu_dbgctl --dump-createalloc`.
+
+    The tool is built without WDK headers, so this dump is the easiest way to capture
+    the numeric `DXGK_ALLOCATIONINFO::Flags.Value` bits the Win7 runtime requested.
+    """
+    trace = CreateAllocationTrace(write_index=0, entry_count=0, entries=[])
+
+    re_header = re.compile(r"write_index=(\d+)\s+entry_count=(\d+)")
+    re_entry = re.compile(
+        r"^\s*\[\d+\]\s+seq=(\d+)\s+call=(\d+)\s+create_flags=0x([0-9a-fA-F]+)\s+"
+        r"alloc\[(\d+)/(\d+)\]\s+alloc_id=(\d+)\s+share_token=0x([0-9a-fA-F]+)\s+"
+        r"size=(\d+)\s+priv_flags=0x([0-9a-fA-F]+)\s+pitch=(\d+)\s+"
+        r"flags=0x([0-9a-fA-F]+)->0x([0-9a-fA-F]+)\s*$"
+    )
+
+    saw_any = False
+    for line in lines:
+        m = re_header.search(line)
+        if m:
+            trace.write_index = int(m.group(1), 10)
+            trace.entry_count = int(m.group(2), 10)
+            saw_any = True
+            continue
+
+        m = re_entry.match(line)
+        if not m:
+            continue
+
+        saw_any = True
+        e = CreateAllocationDesc()
+        e.seq = int(m.group(1), 10)
+        e.call_seq = int(m.group(2), 10)
+        e.create_flags = int(m.group(3), 16)
+        e.alloc_index = int(m.group(4), 10)
+        e.num_allocations = int(m.group(5), 10)
+        e.alloc_id = int(m.group(6), 10)
+        e.share_token = int(m.group(7), 16)
+        e.size_bytes = int(m.group(8), 10)
+        e.priv_flags = int(m.group(9), 16)
+        e.pitch_bytes = int(m.group(10), 10)
+        e.flags_in = int(m.group(11), 16)
+        e.flags_out = int(m.group(12), 16)
+        e.raw_line = line.rstrip("\r\n")
+        trace.entries.append(e)
+
+    if not saw_any:
+        return None
+    return trace
+
+
 def main(argv: List[str]) -> int:
     ap = argparse.ArgumentParser(
         description="Parse AeroGPU Win7 trace_resources logs and extract DXGI swapchain backbuffer descriptors."
     )
     ap.add_argument("path", nargs="?", help="Path to captured log file (default: stdin).")
+    ap.add_argument(
+        "--createalloc",
+        dest="createalloc_path",
+        help="Optional path to `aerogpu_dbgctl --dump-createalloc` output for correlating backbuffers to CreateAllocation flags.",
+    )
     ap.add_argument(
         "--json",
         dest="json_path",
@@ -229,6 +346,11 @@ def main(argv: List[str]) -> int:
             lines = list(iter_trace_lines(f))
     else:
         lines = list(iter_trace_lines(sys.stdin))
+
+    createalloc: Optional[CreateAllocationTrace] = None
+    if args.createalloc_path:
+        with open(args.createalloc_path, "r", encoding="utf-8", errors="replace") as f:
+            createalloc = parse_createalloc_dump(f)
 
     pending: Optional[CreateResourceDesc] = None
     resources: Dict[int, CreateResourceDesc] = {}
@@ -325,6 +447,26 @@ def main(argv: List[str]) -> int:
         "resources_by_handle": {str(k): asdict(v) for (k, v) in resources.items()},
         "present_events": [{"api": api, "sync": sync, "src_handle": src} for (api, sync, src) in presents],
     }
+    if createalloc is not None:
+        output["createalloc_trace"] = {
+            "write_index": createalloc.write_index,
+            "entry_count": createalloc.entry_count,
+            "entries": [asdict(e) for e in createalloc.entries],
+        }
+
+        matches: Dict[str, List[dict]] = {}
+        for h in rotate_handles:
+            d = resources.get(h)
+            if not d:
+                continue
+            expected = _expected_alloc_size(d)
+            if expected is None:
+                continue
+            matched = [asdict(e) for e in createalloc.entries if e.size_bytes == expected]
+            if matched:
+                matches[str(h)] = matched
+        output["swapchain_createalloc_matches"] = matches
+
     if dangling is not None:
         output["dangling_create_resource"] = asdict(dangling)
 
@@ -374,6 +516,21 @@ def main(argv: List[str]) -> int:
         elif d.created_kind == "buffer":
             print(f"  size_bytes={d.created_size}")
         print(f"  raw: {d.raw_line}")
+
+        if createalloc is not None:
+            expected = _expected_alloc_size(d)
+            if expected is not None:
+                matched = [e for e in createalloc.entries if e.size_bytes == expected]
+                if matched:
+                    print(f"  createalloc candidates (size_bytes={expected}):")
+                    for e in matched:
+                        print(
+                            f"    call={e.call_seq} alloc_id={e.alloc_id} size={e.size_bytes} pitch={e.pitch_bytes} "
+                            f"create_flags=0x{e.create_flags:08X} priv_flags=0x{e.priv_flags:08X} "
+                            f"flags=0x{e.flags_in:08X}->0x{e.flags_out:08X}"
+                        )
+                else:
+                    print(f"  createalloc candidates: (none match size_bytes={expected})")
         print("")
 
     if presents:

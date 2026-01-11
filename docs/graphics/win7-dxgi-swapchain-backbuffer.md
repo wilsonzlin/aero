@@ -109,6 +109,15 @@ python scripts/parse_win7_dxgi_swapchain_trace.py aerogpu_d3d10_11_umd.log
 python scripts/parse_win7_dxgi_swapchain_trace.py --json=swapchain_trace.json aerogpu_d3d10_11_umd.log
 ```
 
+If you also captured `aerogpu_dbgctl --dump-createalloc` output, you can pass it to the parser to
+correlate swapchain backbuffer handles to recent `DxgkDdiCreateAllocation` flag values (matched by
+allocation size):
+
+```bash
+python scripts/parse_win7_dxgi_swapchain_trace.py --createalloc=createalloc.txt aerogpu_d3d10_11_umd.log
+python scripts/parse_win7_dxgi_swapchain_trace.py --json=swapchain_trace.json --createalloc=createalloc.txt aerogpu_d3d10_11_umd.log
+```
+
 ### Capturing KMD-facing allocation flags (optional but recommended)
 
 To understand which **WDDM allocation flags** are required for `Present` stability, capture what
