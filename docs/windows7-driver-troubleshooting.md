@@ -99,6 +99,8 @@ If Windows fails to boot after switching the system disk from **AHCI → virtio-
 
 Why this works: Windows can only boot from a storage controller if its driver is installed and configured as boot-critical. Going back to AHCI restores the known-good boot path so you can fix the driver configuration from inside Windows.
 
+If you ran `setup.cmd /skipstorage` (check for `C:\AeroGuestTools\storage-preseed.skipped.txt`), storage pre-seeding was intentionally skipped. In that case, do **not** switch the boot disk to virtio-blk until you re-run `setup.cmd` **without** `/skipstorage` using Guest Tools media that includes the virtio-blk storage driver.
+
 Tip: in `report.txt`, check:
 
 - **virtio-blk Storage Service**: should show the configured storage service with `Start=0 (BOOT_START)`
@@ -265,6 +267,8 @@ Windows is booting from a disk controller whose driver is not installed or not c
    - Re-run `setup.cmd` as Administrator.
    - Reboot once (still on AHCI) to let Windows finish driver staging.
 3. Switch to virtio-blk again.
+
+If you installed Guest Tools with `setup.cmd /skipstorage`, storage pre-seeding was skipped by design. Re-run `setup.cmd` without `/skipstorage` using media that includes the virtio-blk driver before attempting to boot from virtio-blk.
 
 **Tip: change one device class at a time**
 
