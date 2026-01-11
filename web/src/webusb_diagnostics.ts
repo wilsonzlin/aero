@@ -243,19 +243,69 @@ function renderDeviceTree(device: USBDevice, classification: WebUsbDeviceClassif
   );
 }
 
-function findFirstClaimCandidate(classification: WebUsbDeviceClassification): { configValue: number; interfaceNumber: number } | null {
-  for (const cfg of classification.configurations) {
+type ClaimCandidate = {
+  configValue: number;
+  interfaceNumber: number;
+  alternateSetting: number;
+  bulkIn: number;
+  bulkOut: number;
+  reason: string;
+};
+
+function findBestClaimCandidate(device: USBDevice, classification: WebUsbDeviceClassification): ClaimCandidate | null {
+  // Preference order:
+  // 1) First unprotected alternate with BOTH bulk IN and bulk OUT endpoints (typical for vendor bulk devices).
+  // 2) First unprotected alternate with any bulk endpoint.
+  // 3) First unprotected alternate (even if interrupt-only).
+  let firstAny: ClaimCandidate | null = null;
+  let firstBulk: ClaimCandidate | null = null;
+  let firstBulkBidirectional: ClaimCandidate | null = null;
+
+  for (const cfg of device.configurations ?? []) {
+    const cfgInfo = classification.configurations.find((c) => c.configurationValue === cfg.configurationValue);
+
     for (const iface of cfg.interfaces) {
-      if (iface.isClaimable) {
-        return { configValue: cfg.configurationValue, interfaceNumber: iface.interfaceNumber };
+      const ifaceInfo = cfgInfo?.interfaces.find((i) => i.interfaceNumber === iface.interfaceNumber);
+
+      for (const alt of iface.alternates) {
+        const altInfo = ifaceInfo?.alternates.find((a) => a.alternateSetting === alt.alternateSetting);
+        const isProtected = altInfo?.isProtected ?? isWebUsbProtectedInterfaceClass(alt.interfaceClass);
+        if (isProtected) continue;
+
+        const endpoints = alt.endpoints ?? [];
+        const bulkIn = endpoints.filter((ep) => ep.type === "bulk" && ep.direction === "in").length;
+        const bulkOut = endpoints.filter((ep) => ep.type === "bulk" && ep.direction === "out").length;
+
+        const candidate: ClaimCandidate = {
+          configValue: cfg.configurationValue,
+          interfaceNumber: iface.interfaceNumber,
+          alternateSetting: alt.alternateSetting,
+          bulkIn,
+          bulkOut,
+          reason:
+            bulkIn && bulkOut
+              ? "unprotected + bidirectional bulk endpoints"
+              : bulkIn || bulkOut
+                ? "unprotected + bulk endpoints"
+                : "unprotected (no bulk endpoints)",
+        };
+
+        firstAny ??= candidate;
+        if (bulkIn || bulkOut) {
+          firstBulk ??= candidate;
+        }
+        if (bulkIn && bulkOut) {
+          firstBulkBidirectional ??= candidate;
+        }
       }
     }
   }
-  return null;
+
+  return firstBulkBidirectional ?? firstBulk ?? firstAny;
 }
 
 async function tryOpenAndClaim(device: USBDevice, classification: WebUsbDeviceClassification): Promise<string> {
-  const candidate = findFirstClaimCandidate(classification);
+  const candidate = findBestClaimCandidate(device, classification);
   if (!candidate) {
     throw new Error("No claimable interfaces found (all interfaces appear to be WebUSB-protected).");
   }
@@ -265,8 +315,26 @@ async function tryOpenAndClaim(device: USBDevice, classification: WebUsbDeviceCl
     await device.selectConfiguration(candidate.configValue);
   }
 
-  await device.claimInterface(candidate.interfaceNumber);
-  return `Success: opened + claimed interface ${candidate.interfaceNumber} (configuration ${candidate.configValue}).`;
+  const cfg = device.configuration;
+  const iface = cfg?.interfaces?.find((i) => i.interfaceNumber === candidate.interfaceNumber);
+  if (!iface?.claimed) {
+    await device.claimInterface(candidate.interfaceNumber);
+  }
+
+  // Selecting the alternate setting is not strictly required for `claimInterface()`,
+  // but helps confirm that the bulk endpoints we enumerated are actually selectable.
+  const devMaybeAlt = device as USBDevice & {
+    selectAlternateInterface?: (interfaceNumber: number, alternateSetting: number) => Promise<void>;
+  };
+  if (typeof devMaybeAlt.selectAlternateInterface === "function") {
+    await devMaybeAlt.selectAlternateInterface(candidate.interfaceNumber, candidate.alternateSetting);
+  }
+
+  return (
+    `Success: opened + claimed interface ${candidate.interfaceNumber} ` +
+    `(configuration ${candidate.configValue}, alternate ${candidate.alternateSetting}). ` +
+    `bulkIn=${candidate.bulkIn} bulkOut=${candidate.bulkOut} (${candidate.reason}).`
+  );
 }
 
 function renderWhyDevicesDontShow(ppUsb: boolean | null): HTMLElement {
@@ -458,7 +526,7 @@ function main(): void {
   };
 
   const requestBtn = el("button", { text: "Request USB device" }) as HTMLButtonElement;
-  const claimBtn = el("button", { text: "Try open + claim (first claimable interface)", disabled: "true" }) as HTMLButtonElement;
+  const claimBtn = el("button", { text: "Try open + claim (best claimable interface)", disabled: "true" }) as HTMLButtonElement;
   const copyBtn = el("button", { text: "Copy JSON summary", disabled: "true" }) as HTMLButtonElement;
   const refreshKnownBtn = el("button", { text: "Refresh granted devices" }) as HTMLButtonElement;
 
