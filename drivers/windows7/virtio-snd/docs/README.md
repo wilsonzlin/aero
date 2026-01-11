@@ -16,7 +16,9 @@ The driver currently:
 
 - Sets up split-ring virtqueues (control/event/tx) using the reusable backend in `virtiosnd_queue_split.c`
 - Connects **INTx** and drains used-ring entries in a DPC
-- Includes control/TX protocol engines (`virtiosnd_control.c` / `virtiosnd_tx.c`), but they are not yet wired into the ISR/DPC path or exposed via a PortCls miniport
+- Includes control/TX protocol engines (`virtiosnd_control.c` / `virtiosnd_tx.c`):
+  - The INTx DPC routes used-ring completions to these engines (when initialized).
+  - They are not yet exposed via a PortCls miniport (WaveRT), so Windows will not enumerate an audio endpoint.
 
 It **does not** yet implement any PortCls miniports (WaveRT), so it will not expose audio endpoints yet.
 
