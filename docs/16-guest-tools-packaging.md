@@ -184,7 +184,7 @@ Outputs:
 ```bash
 cd tools/packaging/aero_packager
 
-SOURCE_DATE_EPOCH=0 cargo run --release -- \
+SOURCE_DATE_EPOCH=0 cargo run --release --locked -- \
   --drivers-dir /path/to/drivers \
   --guest-tools-dir /path/to/guest-tools \
   --spec /path/to/spec.json \
@@ -256,7 +256,7 @@ Legacy specs using the older top-level `required_drivers` list are still accepte
 GitHub Actions runs a dedicated workflow (`guest-tools-packager`) on PRs that touch Guest Tools
 packaging inputs (`tools/packaging/**`, `guest-tools/**`, etc.). It covers:
 
-- `cargo test --manifest-path tools/packaging/aero_packager/Cargo.toml`
+- `cargo test --locked --manifest-path tools/packaging/aero_packager/Cargo.toml`
 - A smoke packaging run that verifies the in-repo `guest-tools/` directory can be packaged (using the
   packager's dummy driver fixtures).
 - A lightweight consistency check that ensures `guest-tools/config/devices.cmd` (service name + HWIDs)

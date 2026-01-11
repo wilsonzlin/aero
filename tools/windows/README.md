@@ -31,7 +31,7 @@ Build the offline injector once:
 
 ```powershell
 cd tools\win-offline-cert-injector
-cargo build --release
+cargo build --release --locked
 ```
 
 ### Usage examples

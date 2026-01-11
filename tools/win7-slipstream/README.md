@@ -25,7 +25,7 @@ Related documentation:
 
 ```bash
 cd tools/win7-slipstream
-cargo build --release
+cargo build --release --locked
 ```
 
 Binary: `target/release/aero-win7-slipstream`
@@ -85,7 +85,7 @@ Notes:
 ### Patch an ISO (auto arch detection, test signing)
 
 ```bash
-cargo run --release -- \
+cargo run --release --locked -- \
   patch-iso \
   --input /path/to/Win7SP1.iso \
   --output /path/to/Win7SP1-Aero.iso \
@@ -100,7 +100,7 @@ cargo run --release -- \
 ### Verify an output ISO
 
 ```bash
-cargo run --release -- verify-iso --input /path/to/Win7SP1-Aero.iso --verbose
+cargo run --release --locked -- verify-iso --input /path/to/Win7SP1-Aero.iso --verbose
 ```
 
 ## Output layout

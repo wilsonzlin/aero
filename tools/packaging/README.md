@@ -36,7 +36,7 @@ cd tools/packaging/aero_packager
 #
 # spec.json declares which drivers to include (required + optional) and expected HWID regexes.
 
-cargo run --release -- \
+cargo run --release --locked -- \
   --drivers-dir /path/to/drivers \
   --guest-tools-dir /path/to/guest-tools \
   --spec /path/to/spec.json \
@@ -81,7 +81,7 @@ The packager aims to be reproducible: **same inputs → bit-identical outputs**.
 Timestamps in the ISO/zip are controlled by `SOURCE_DATE_EPOCH` (or `--source-date-epoch`).
 
 ```bash
-SOURCE_DATE_EPOCH=0 cargo run --release -- ...
+SOURCE_DATE_EPOCH=0 cargo run --release --locked -- ...
 ```
 
 ## Spec format

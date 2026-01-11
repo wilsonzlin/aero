@@ -590,11 +590,11 @@ function Add-OfflineTrustedCertificate {
     }
   }
   if (-not $injector) {
-    throw ("win-offline-cert-injector.exe not found. Build it with:`n`n" +
-      "  cd tools\\win-offline-cert-injector`n" +
-      "  cargo build --release`n`n" +
-      "Then re-run this script.")
-  }
+      throw ("win-offline-cert-injector.exe not found. Build it with:`n`n" +
+        "  cd tools\\win-offline-cert-injector`n" +
+        "  cargo build --release --locked`n`n" +
+        "Then re-run this script.")
+    }
 
   # Inject using CryptoAPI so the registry-backed store entry (including the `Blob` bytes) matches
   # what Windows would create on a live system.

@@ -183,7 +183,7 @@ $CertPath = "C:\certs\AeroTestRoot.cer"
 
 # Build once (or use a prebuilt binary)
 cd tools\win-offline-cert-injector
-cargo build --release
+cargo build --release --locked
 
 .\target\release\win-offline-cert-injector.exe `
   --windows-dir $MountDir `

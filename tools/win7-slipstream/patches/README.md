@@ -50,7 +50,7 @@ On Windows you can inject certificates into an offline `SOFTWARE` hive **directl
 
 ```powershell
 cd tools\win-offline-cert-injector
-cargo build --release
+cargo build --release --locked
 
 .\target\release\win-offline-cert-injector.exe `
   --hive X:\mount\Windows\System32\config\SOFTWARE `
@@ -67,7 +67,7 @@ To avoid guessing the registry representation, generate the `.reg` using CryptoA
 
 ```powershell
 cd tools\win-certstore-regblob-export
-cargo build --release
+cargo build --release --locked
 ```
 
 #### Windows (reg.exe / reg import)

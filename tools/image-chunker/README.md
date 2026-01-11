@@ -7,7 +7,7 @@ This enables CDN-friendly delivery without relying on HTTP `Range` requests: cli
 ## Build
 
 ```bash
-cargo build --release --manifest-path tools/image-chunker/Cargo.toml
+cargo build --release --locked --manifest-path tools/image-chunker/Cargo.toml
 ```
 
 Binary path:

@@ -195,7 +195,7 @@ function Invoke-WinOfflineCertInjector {
   )
 
   $resolvedInjector = Resolve-WinOfflineCertInjectorPath -ExplicitPath $InjectorPath
-  if (-not $resolvedInjector) { throw "win-offline-cert-injector not found. Build it with: cd tools\\win-offline-cert-injector; cargo build --release" }
+  if (-not $resolvedInjector) { throw "win-offline-cert-injector not found. Build it with: cd tools\\win-offline-cert-injector; cargo build --release --locked" }
 
   # Our native injector uses CryptoAPI to write the registry-backed certificate store entries
   # (including the correct `Blob` REG_BINARY values), and edits the offline SOFTWARE hive in-place.

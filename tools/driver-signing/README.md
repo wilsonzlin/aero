@@ -53,7 +53,7 @@ inject the certificate into an **offline** Windows image by editing the offline 
 
 ```powershell
 cd tools\win-offline-cert-injector
-cargo build --release
+cargo build --release --locked
 
 .\target\release\win-offline-cert-injector.exe `
   --windows-dir X:\mount `

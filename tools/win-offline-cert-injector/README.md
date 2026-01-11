@@ -8,7 +8,7 @@ This is primarily intended for WinPE / setup / first-boot scenarios where test-s
 
 ```powershell
 cd tools\win-offline-cert-injector
-cargo build --release
+cargo build --release --locked
 ```
 
 ## Usage
