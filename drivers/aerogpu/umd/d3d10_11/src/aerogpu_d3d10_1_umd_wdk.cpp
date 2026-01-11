@@ -2850,6 +2850,12 @@ void AEROGPU_APIENTRY IaSetVertexBuffers(D3D10DDI_HDEVICE hDevice,
   }
 
   if (buffer_count == 0) {
+    // We only model vertex buffer slot 0 in the minimal bring-up path. If the
+    // runtime unbinds a different slot, ignore it rather than accidentally
+    // clearing slot 0 state.
+    if (start_slot != 0) {
+      return;
+    }
     std::lock_guard<std::mutex> lock(dev->mutex);
     dev->current_vb_res = nullptr;
     dev->current_vb_stride = 0;
@@ -2857,7 +2863,7 @@ void AEROGPU_APIENTRY IaSetVertexBuffers(D3D10DDI_HDEVICE hDevice,
 
     auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_vertex_buffers>(
         AEROGPU_CMD_SET_VERTEX_BUFFERS, nullptr, 0);
-    cmd->start_slot = start_slot;
+    cmd->start_slot = 0;
     cmd->buffer_count = 0;
     return;
   }
