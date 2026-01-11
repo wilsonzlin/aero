@@ -520,14 +520,16 @@ static int RunD3D11TextureSamplingSanity(int argc, char** argv) {
                          kWidth * 4);
   }
 
-  const int x0 = 8;
-  const int y0 = 8;
-  const int x1 = 56;
-  const int y1 = 8;
-  const int x2 = 8;
-  const int y2 = 56;
-  const int x3 = 40;
-  const int y3 = 40;
+  // Pick pixels near texel centers (each texel covers 16x16 pixels at 64x64 output) to avoid any
+  // ambiguity around point sampling.
+  const int x0 = 7;
+  const int y0 = 7;
+  const int x1 = 55;
+  const int y1 = 7;
+  const int x2 = 7;
+  const int y2 = 55;
+  const int x3 = 39;
+  const int y3 = 39;
 
   const uint32_t p0 = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, x0, y0);
   const uint32_t p1 = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, x1, y1);

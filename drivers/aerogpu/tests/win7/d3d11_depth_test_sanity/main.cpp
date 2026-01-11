@@ -272,44 +272,70 @@ static int RunD3D11DepthTestSanity(int argc, char** argv) {
   }
 
   DXGI_FORMAT depth_format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+  const char* depth_format_label = "D24_UNORM_S8_UINT";
   ComPtr<ID3D11Texture2D> depth_tex;
   ComPtr<ID3D11DepthStencilView> dsv;
+  HRESULT hr_d24_tex = S_OK;
+  HRESULT hr_d24_dsv = S_OK;
+  HRESULT hr_d32_tex = S_OK;
+  HRESULT hr_d32_dsv = S_OK;
 
-  for (int attempt = 0; attempt < 2; ++attempt) {
-    D3D11_TEXTURE2D_DESC depth_desc;
-    ZeroMemory(&depth_desc, sizeof(depth_desc));
-    depth_desc.Width = kWidth;
-    depth_desc.Height = kHeight;
-    depth_desc.MipLevels = 1;
-    depth_desc.ArraySize = 1;
-    depth_desc.Format = depth_format;
-    depth_desc.SampleDesc.Count = 1;
-    depth_desc.SampleDesc.Quality = 0;
-    depth_desc.Usage = D3D11_USAGE_DEFAULT;
-    depth_desc.BindFlags = D3D11_BIND_DEPTH_STENCIL;
-    depth_desc.CPUAccessFlags = 0;
-    depth_desc.MiscFlags = 0;
+  D3D11_TEXTURE2D_DESC depth_desc;
+  ZeroMemory(&depth_desc, sizeof(depth_desc));
+  depth_desc.Width = kWidth;
+  depth_desc.Height = kHeight;
+  depth_desc.MipLevels = 1;
+  depth_desc.ArraySize = 1;
+  depth_desc.Format = depth_format;
+  depth_desc.SampleDesc.Count = 1;
+  depth_desc.SampleDesc.Quality = 0;
+  depth_desc.Usage = D3D11_USAGE_DEFAULT;
+  depth_desc.BindFlags = D3D11_BIND_DEPTH_STENCIL;
+  depth_desc.CPUAccessFlags = 0;
+  depth_desc.MiscFlags = 0;
 
-    depth_tex.reset();
-    dsv.reset();
-    hr = device->CreateTexture2D(&depth_desc, NULL, depth_tex.put());
-    if (FAILED(hr)) {
-      if (attempt == 0) {
-        depth_format = DXGI_FORMAT_D32_FLOAT;
-        continue;
-      }
-      return reporter.FailHresult("CreateTexture2D(depth)", hr);
-    }
-
+  hr = device->CreateTexture2D(&depth_desc, NULL, depth_tex.put());
+  if (FAILED(hr)) {
+    hr_d24_tex = hr;
+  } else {
     hr = device->CreateDepthStencilView(depth_tex.get(), NULL, dsv.put());
     if (FAILED(hr)) {
-      if (attempt == 0) {
-        depth_format = DXGI_FORMAT_D32_FLOAT;
-        continue;
-      }
-      return reporter.FailHresult("CreateDepthStencilView", hr);
+      hr_d24_dsv = hr;
     }
-    break;
+  }
+
+  if (!depth_tex || !dsv) {
+    // Fall back to D32_FLOAT when D24S8 isn't supported (common for early bring-up).
+    depth_tex.reset();
+    dsv.reset();
+    depth_format = DXGI_FORMAT_D32_FLOAT;
+    depth_format_label = "D32_FLOAT";
+    depth_desc.Format = depth_format;
+
+    hr = device->CreateTexture2D(&depth_desc, NULL, depth_tex.put());
+    if (FAILED(hr)) {
+      hr_d32_tex = hr;
+      return reporter.Fail("CreateTexture2D(depth) failed: %s => %s; fallback %s => %s",
+                           "D24_UNORM_S8_UINT",
+                           aerogpu_test::HresultToString(hr_d24_tex).c_str(),
+                           "D32_FLOAT",
+                           aerogpu_test::HresultToString(hr_d32_tex).c_str());
+    }
+    hr = device->CreateDepthStencilView(depth_tex.get(), NULL, dsv.put());
+    if (FAILED(hr)) {
+      hr_d32_dsv = hr;
+      return reporter.Fail("CreateDepthStencilView(depth) failed: %s => %s; fallback %s => %s",
+                           "D24_UNORM_S8_UINT",
+                           aerogpu_test::HresultToString(hr_d24_dsv).c_str(),
+                           "D32_FLOAT",
+                           aerogpu_test::HresultToString(hr_d32_dsv).c_str());
+    }
+    aerogpu_test::PrintfStdout("INFO: %s: depth format %s unavailable (%s / %s); using %s",
+                               kTestName,
+                               "D24_UNORM_S8_UINT",
+                               aerogpu_test::HresultToString(hr_d24_tex).c_str(),
+                               aerogpu_test::HresultToString(hr_d24_dsv).c_str(),
+                               depth_format_label);
   }
 
   D3D11_DEPTH_STENCIL_DESC dss_desc;
@@ -516,8 +542,9 @@ static int RunD3D11DepthTestSanity(int argc, char** argv) {
       (right_center & 0x00FFFFFFu) != (expected_blue & 0x00FFFFFFu)) {
     PrintD3D11DeviceRemovedReasonIfFailed(kTestName, device.get());
     return reporter.Fail(
-        "pixel mismatch: corner=0x%08lX expected 0x%08lX; left_center=0x%08lX expected 0x%08lX; "
+        "pixel mismatch (%s): corner=0x%08lX expected 0x%08lX; left_center=0x%08lX expected 0x%08lX; "
         "right_center=0x%08lX expected 0x%08lX",
+        depth_format_label,
         (unsigned long)corner,
         (unsigned long)expected_red,
         (unsigned long)left_center,
