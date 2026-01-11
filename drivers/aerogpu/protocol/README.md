@@ -44,14 +44,13 @@ This directory currently contains two PCI/MMIO ABIs:
 
 Both IDs are project-specific (not PCI-SIG assigned). Both identify as a VGA-compatible display controller (base class `0x03`, subclass `0x00`, prog-if `0x00`).
 
-The in-tree Win7 packaging INFs (`drivers/aerogpu/packaging/win7/*.inf`) bind to the versioned device by default:
+The in-tree Win7 packaging INFs (`drivers/aerogpu/packaging/win7/*.inf`) intentionally match both:
 
-- `VEN_A3A0&DEV_0001` (versioned ABI)
+- `VEN_A3A0&DEV_0001` (versioned ABI; canonical/current)
+- `VEN_1AED&DEV_0001` (legacy bring-up ABI)
 
-The legacy bring-up device ID (`VEN_1AED&DEV_0001`) is still supported by the KMD for bring-up/compatibility, but requires:
-
-- enabling the emulator legacy device model (feature `emulator/aerogpu-legacy`), and
-- a custom INF that matches `PCI\\VEN_1AED&DEV_0001` (the shipped INFs intentionally do **not** match the legacy device).
+Using the legacy bring-up device ID still requires the emulator to expose the legacy device model
+(feature `emulator/aerogpu-legacy`), but it does **not** require a custom INF.
 
 For a quick overview of the canonical AeroGPU PCI IDs (new vs legacy) and which emulator device
 models implement each ABI, see: `docs/abi/aerogpu-pci-identity.md`.
