@@ -494,6 +494,40 @@ static void TestRejectWrongOffsets(void)
 	ExpectInitFail("wrong_offsets", &dev, VIRTIO_PCI_MODERN_INIT_ERR_CAP_LAYOUT_MISMATCH);
 }
 
+static void TestCompatAllowsNonContractOffsets(void)
+{
+	FAKE_DEV dev;
+	VIRTIO_PCI_MODERN_OS_INTERFACE os;
+	VIRTIO_PCI_MODERN_TRANSPORT t;
+	NTSTATUS st;
+
+	FakeDevInitValid(&dev);
+
+	/*
+	 * COMPAT mode relaxes the fixed-offset requirement (e.g. for QEMU-style
+	 * layouts) as long as BAR0-only virtio caps exist and satisfy minimum sizes.
+	 */
+	WriteLe32(&dev.Cfg[0x40 + 8], 0x0100); /* COMMON */
+	WriteLe32(&dev.Cfg[0x50 + 8], 0x1100); /* NOTIFY */
+	WriteLe32(&dev.Cfg[0x64 + 8], 0x2100); /* ISR */
+	WriteLe32(&dev.Cfg[0x74 + 8], 0x3100); /* DEVICE */
+
+	os = GetOs(&dev);
+	st = VirtioPciModernTransportInit(&t, &os, VIRTIO_PCI_MODERN_TRANSPORT_MODE_COMPAT, 0x10000000u, sizeof(dev.Bar0));
+	if (st != STATUS_SUCCESS) {
+		fprintf(stderr, "FAIL compat_offsets_ok: status=0x%x InitError=%s (%u)\n", (unsigned)st,
+			VirtioPciModernTransportInitErrorStr(t.InitError), (unsigned)t.InitError);
+		abort();
+	}
+
+	assert((const UINT8 *)t.CommonCfg == dev.Bar0 + 0x0100);
+	assert((const UINT8 *)t.NotifyBase == dev.Bar0 + 0x1100);
+	assert((const UINT8 *)t.IsrStatus == dev.Bar0 + 0x2100);
+	assert((const UINT8 *)t.DeviceCfg == dev.Bar0 + 0x3100);
+
+	VirtioPciModernTransportUninit(&t);
+}
+
 static void TestRejectBar0TooSmall(void)
 {
 	FAKE_DEV dev;
@@ -1122,6 +1156,7 @@ int main(void)
 	TestRejectCapNextBelow0x40();
 	TestRejectWrongNotifyMultiplier();
 	TestRejectWrongOffsets();
+	TestCompatAllowsNonContractOffsets();
 	TestRejectBar0TooSmall();
 	TestRejectUnalignedCapNext();
 	TestRejectCapListLoop();
