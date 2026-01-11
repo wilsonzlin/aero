@@ -918,6 +918,11 @@ fn parse_target(target: &str) -> Result<(String, u16), &'static str> {
     if host.is_empty() {
         return Err("missing host");
     }
+    // Match the canonical gateway behavior: `target=<host>:<port>` requires bracketed IPv6
+    // (otherwise the host/port split is ambiguous).
+    if host.contains(':') {
+        return Err("IPv6 targets must be bracketed");
+    }
     let port: u16 = port.parse().map_err(|_| "invalid port")?;
     if port == 0 {
         return Err("invalid port");
