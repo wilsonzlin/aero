@@ -1546,22 +1546,6 @@ static NTSTATUS APIENTRY AeroGpuDdiGetScanLine(_In_ const HANDLE hAdapter, _Inou
         return STATUS_INVALID_PARAMETER;
     }
 
-    if (!adapter->Bar0 || !adapter->SupportsVblank) {
-        return STATUS_NOT_SUPPORTED;
-    }
-
-    if (adapter->Bar0Length < (AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS + sizeof(ULONG))) {
-        return STATUS_NOT_SUPPORTED;
-    }
-
-    const ULONG mmioPeriod = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS);
-    if (mmioPeriod == 0) {
-        return STATUS_NOT_SUPPORTED;
-    }
-
-    adapter->VblankPeriodNs = mmioPeriod;
-    const ULONGLONG periodNs = (ULONGLONG)mmioPeriod;
-
     const ULONG height = adapter->CurrentHeight ? adapter->CurrentHeight : 1u;
     ULONG vblankLines = height / 20;
     if (vblankLines < 20) {
@@ -1575,84 +1559,112 @@ static NTSTATUS APIENTRY AeroGpuDdiGetScanLine(_In_ const HANDLE hAdapter, _Inou
 
     const ULONGLONG now100ns = KeQueryInterruptTime();
 
-    ULONGLONG seq = AeroGpuReadRegU64HiLoHi(adapter,
-                                           AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO,
-                                           AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_HI);
-    ULONGLONG timeNs = AeroGpuReadRegU64HiLoHi(adapter,
-                                               AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_LO,
-                                               AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_HI);
-    {
-        const ULONGLONG seq2 = AeroGpuReadRegU64HiLoHi(adapter,
-                                                       AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO,
-                                                       AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_HI);
-        if (seq2 != seq) {
-            seq = seq2;
-            timeNs = AeroGpuReadRegU64HiLoHi(adapter,
-                                             AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_LO,
-                                             AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_HI);
+    ULONGLONG periodNs = adapter->VblankPeriodNs ? (ULONGLONG)adapter->VblankPeriodNs : (ULONGLONG)AEROGPU_VBLANK_PERIOD_NS_DEFAULT;
+    BOOLEAN haveVblankRegs = FALSE;
+    if (adapter->Bar0 && adapter->AbiKind == AEROGPU_ABI_KIND_V1 && adapter->SupportsVblank &&
+        adapter->Bar0Length >= (AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS + sizeof(ULONG))) {
+        const ULONG mmioPeriod = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS);
+        if (mmioPeriod != 0) {
+            adapter->VblankPeriodNs = mmioPeriod;
+            periodNs = (ULONGLONG)mmioPeriod;
+        } else if (periodNs == 0) {
+            periodNs = (ULONGLONG)AEROGPU_VBLANK_PERIOD_NS_DEFAULT;
         }
+        haveVblankRegs = TRUE;
+    } else if (periodNs == 0) {
+        periodNs = (ULONGLONG)AEROGPU_VBLANK_PERIOD_NS_DEFAULT;
     }
 
-    const ULONGLONG cachedSeq = AeroGpuAtomicReadU64(&adapter->LastVblankSeq);
-    const ULONGLONG cachedTimeNs = AeroGpuAtomicReadU64(&adapter->LastVblankTimeNs);
-    ULONGLONG lastVblank100ns = AeroGpuAtomicReadU64(&adapter->LastVblankInterruptTime100ns);
-    if (seq != cachedSeq) {
-        /*
-         * Update our guest-time estimate of when the most recent vblank occurred.
-         *
-         * Prefer advancing by the device's monotonic VBLANK_TIME_NS delta (mapped to
-         * 100ns units) to avoid phase drift if the nominal period changes.
-         * Fall back to `deltaSeq * period` if timestamps are not usable.
-         */
-        ULONGLONG newLastVblank100ns = now100ns;
+    ULONGLONG posNs = 0;
 
-        if (lastVblank100ns != 0 && cachedSeq != 0) {
-            ULONGLONG advance100ns = 0;
+    if (haveVblankRegs) {
+        ULONGLONG seq = AeroGpuReadRegU64HiLoHi(adapter,
+                                               AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO,
+                                               AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_HI);
+        ULONGLONG timeNs = AeroGpuReadRegU64HiLoHi(adapter,
+                                                   AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_LO,
+                                                   AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_HI);
+        {
+            const ULONGLONG seq2 = AeroGpuReadRegU64HiLoHi(adapter,
+                                                           AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO,
+                                                           AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_HI);
+            if (seq2 != seq) {
+                seq = seq2;
+                timeNs = AeroGpuReadRegU64HiLoHi(adapter,
+                                                 AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_LO,
+                                                 AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_HI);
+            }
+        }
 
-            if (cachedTimeNs != 0 && timeNs != 0) {
-                const ULONGLONG deltaDeviceNs = timeNs - cachedTimeNs;
-                advance100ns = deltaDeviceNs / 100ull;
-            } else {
-                const ULONGLONG deltaSeq = seq - cachedSeq;
-                if (deltaSeq != 0) {
-                    if (deltaSeq > (~0ull / periodNs)) {
-                        advance100ns = ~0ull;
-                    } else {
-                        const ULONGLONG advanceNs = deltaSeq * periodNs;
-                        advance100ns = advanceNs / 100ull;
+        const ULONGLONG cachedSeq = AeroGpuAtomicReadU64(&adapter->LastVblankSeq);
+        const ULONGLONG cachedTimeNs = AeroGpuAtomicReadU64(&adapter->LastVblankTimeNs);
+        ULONGLONG lastVblank100ns = AeroGpuAtomicReadU64(&adapter->LastVblankInterruptTime100ns);
+        if (seq != cachedSeq) {
+            /*
+             * Update our guest-time estimate of when the most recent vblank occurred.
+             *
+             * Prefer advancing by the device's monotonic VBLANK_TIME_NS delta (mapped to
+             * 100ns units) to avoid phase drift if the nominal period changes.
+             * Fall back to `deltaSeq * period` if timestamps are not usable.
+             */
+            ULONGLONG newLastVblank100ns = now100ns;
+
+            if (lastVblank100ns != 0 && cachedSeq != 0) {
+                ULONGLONG advance100ns = 0;
+
+                if (cachedTimeNs != 0 && timeNs != 0 && timeNs >= cachedTimeNs) {
+                    const ULONGLONG deltaDeviceNs = timeNs - cachedTimeNs;
+                    advance100ns = deltaDeviceNs / 100ull;
+                } else {
+                    const ULONGLONG deltaSeq = seq - cachedSeq;
+                    if (deltaSeq != 0) {
+                        if (deltaSeq > (~0ull / periodNs)) {
+                            advance100ns = ~0ull;
+                        } else {
+                            const ULONGLONG advanceNs = deltaSeq * periodNs;
+                            advance100ns = advanceNs / 100ull;
+                        }
                     }
+                }
+
+                ULONGLONG predicted = lastVblank100ns;
+                if (advance100ns == ~0ull || predicted > (~0ull - advance100ns)) {
+                    predicted = ~0ull;
+                } else {
+                    predicted += advance100ns;
+                }
+
+                if (predicted <= now100ns) {
+                    newLastVblank100ns = predicted;
                 }
             }
 
-            ULONGLONG predicted = lastVblank100ns;
-            if (advance100ns == ~0ull || predicted > (~0ull - advance100ns)) {
-                predicted = ~0ull;
-            } else {
-                predicted += advance100ns;
-            }
-
-            if (predicted <= now100ns) {
-                newLastVblank100ns = predicted;
-            }
+            AeroGpuAtomicWriteU64(&adapter->LastVblankSeq, seq);
+            AeroGpuAtomicWriteU64(&adapter->LastVblankTimeNs, timeNs);
+            AeroGpuAtomicWriteU64(&adapter->LastVblankInterruptTime100ns, newLastVblank100ns);
+            lastVblank100ns = newLastVblank100ns;
         }
 
-        AeroGpuAtomicWriteU64(&adapter->LastVblankSeq, seq);
-        AeroGpuAtomicWriteU64(&adapter->LastVblankTimeNs, timeNs);
-        AeroGpuAtomicWriteU64(&adapter->LastVblankInterruptTime100ns, newLastVblank100ns);
-        lastVblank100ns = newLastVblank100ns;
-    }
+        if (lastVblank100ns == 0) {
+            /* First observation: anchor the cadence to "now". */
+            AeroGpuAtomicWriteU64(&adapter->LastVblankSeq, seq);
+            AeroGpuAtomicWriteU64(&adapter->LastVblankTimeNs, timeNs);
+            AeroGpuAtomicWriteU64(&adapter->LastVblankInterruptTime100ns, now100ns);
+            lastVblank100ns = now100ns;
+        }
 
-    if (lastVblank100ns == 0) {
-        /* First observation: anchor the cadence to "now". */
-        AeroGpuAtomicWriteU64(&adapter->LastVblankSeq, seq);
-        AeroGpuAtomicWriteU64(&adapter->LastVblankTimeNs, timeNs);
-        AeroGpuAtomicWriteU64(&adapter->LastVblankInterruptTime100ns, now100ns);
-        lastVblank100ns = now100ns;
+        ULONGLONG delta100ns = (now100ns >= lastVblank100ns) ? (now100ns - lastVblank100ns) : 0;
+        ULONGLONG deltaNs = delta100ns * 100ull;
+        posNs = (periodNs != 0) ? (deltaNs % periodNs) : 0;
+    } else {
+        /*
+         * Fallback path for devices without vblank timing registers: simulate a
+         * fixed cadence from KeQueryInterruptTime(). This keeps D3D9-era apps
+         * that poll raster status from busy-waiting forever.
+         */
+        const ULONGLONG nowNs = now100ns * 100ull;
+        posNs = (periodNs != 0) ? (nowNs % periodNs) : 0;
     }
-
-    ULONGLONG delta100ns = (now100ns >= lastVblank100ns) ? (now100ns - lastVblank100ns) : 0;
-    ULONGLONG deltaNs = delta100ns * 100ull;
-    const ULONGLONG posNs = deltaNs % periodNs;
 
     ULONGLONG line = 0;
     if (periodNs != 0 && totalLines != 0) {
