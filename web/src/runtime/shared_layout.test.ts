@@ -6,6 +6,7 @@ import { Worker, type WorkerOptions } from "node:worker_threads";
 import {
   COMMAND_RING_CAPACITY_BYTES,
   CONTROL_BYTES,
+  CPU_WORKER_DEMO_FRAMEBUFFER_OFFSET_BYTES,
   EVENT_RING_CAPACITY_BYTES,
   RUNTIME_RESERVED_BYTES,
   STATUS_BYTES,
@@ -16,10 +17,10 @@ import {
 } from "./shared_layout";
 
 describe("runtime/shared_layout", () => {
-  // Shared-memory layout includes a demo shared framebuffer region embedded in
-  // the guest `WebAssembly.Memory`. Allocate enough guest RAM to fit that region
-  // (1 MiB is too small once the runtime reserved bytes are accounted for).
-  const TEST_GUEST_RAM_MIB = 5;
+  // Most unit tests can use a tiny guest RAM size; when the guest memory is too
+  // small to embed the demo shared framebuffer, the allocator falls back to a
+  // standalone SharedArrayBuffer for the framebuffer.
+  const TEST_GUEST_RAM_MIB = 1;
 
   it("places status + rings without overlap", () => {
     const regions: Array<{ name: string; start: number; end: number }> = [
@@ -125,5 +126,17 @@ describe("runtime/shared_layout", () => {
     expect(views.guestU8.buffer).toBe(segments.guestMemory.buffer);
     expect(views.sharedFramebuffer).toBe(segments.sharedFramebuffer);
     expect(views.sharedFramebufferOffsetBytes).toBe(segments.sharedFramebufferOffsetBytes);
+  });
+
+  it("falls back to standalone shared framebuffer when guest RAM is too small to embed it", () => {
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
+    expect(segments.sharedFramebuffer).not.toBe(segments.guestMemory.buffer);
+    expect(segments.sharedFramebufferOffsetBytes).toBe(0);
+  });
+
+  it("embeds shared framebuffer in guest memory when there is enough guest RAM", () => {
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 16 });
+    expect(segments.sharedFramebuffer).toBe(segments.guestMemory.buffer);
+    expect(segments.sharedFramebufferOffsetBytes).toBe(RUNTIME_RESERVED_BYTES + CPU_WORKER_DEMO_FRAMEBUFFER_OFFSET_BYTES);
   });
 });
