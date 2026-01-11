@@ -1217,8 +1217,12 @@ try {
         foreach ($k in $serviceSet.Keys) { $summary.media_add_services += $serviceSet[$k] }
 
         if ($cfgVirtioBlkService -and (-not $serviceSet.ContainsKey($cfgVirtioBlkService.ToLower()))) {
-            $status = Merge-Status $status "WARN"
-            $details += ("config\\devices.cmd AERO_VIRTIO_BLK_SERVICE='" + $cfgVirtioBlkService + "' does not match any AddService name found in packaged INFs. Boot-critical registry seeding may be wrong for this media.")
+            if ($storagePreseedSkipped) {
+                $details += ("NOTE: storage pre-seeding was skipped by setup.cmd (/skipstorage). config\\devices.cmd AERO_VIRTIO_BLK_SERVICE='" + $cfgVirtioBlkService + "' does not match any AddService name found in packaged INFs (expected for partial driver payloads).")
+            } else {
+                $status = Merge-Status $status "WARN"
+                $details += ("config\\devices.cmd AERO_VIRTIO_BLK_SERVICE='" + $cfgVirtioBlkService + "' does not match any AddService name found in packaged INFs. Boot-critical registry seeding may be wrong for this media.")
+            }
         }
         if ($cfgVirtioBlkHwids -and $cfgVirtioBlkHwids.Count -gt 0 -and $mediaHwids.Count -gt 0) {
             $missingCfg = @()
@@ -1230,8 +1234,12 @@ try {
                 if (-not $found) { $missingCfg += $h }
             }
             if ($missingCfg.Count -gt 0) {
-                $status = Merge-Status $status "WARN"
-                $details += ("config\\devices.cmd virtio-blk HWIDs not found in any packaged INF: " + ($missingCfg -join ", ") + ". Media may be the wrong version/arch.")
+                if ($storagePreseedSkipped) {
+                    $details += ("NOTE: storage pre-seeding was skipped by setup.cmd (/skipstorage). config\\devices.cmd virtio-blk HWIDs not found in any packaged INF: " + ($missingCfg -join ", ") + " (expected for partial driver payloads).")
+                } else {
+                    $status = Merge-Status $status "WARN"
+                    $details += ("config\\devices.cmd virtio-blk HWIDs not found in any packaged INF: " + ($missingCfg -join ", ") + ". Media may be the wrong version/arch.")
+                }
             }
         }
 
