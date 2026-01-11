@@ -6,7 +6,7 @@ import {
   startPageServer,
   type DiskImageServer,
   type PageServer,
-} from "../fixtures/servers";
+} from "../../fixtures/servers";
 
 const IMAGE_SIZE = 1024;
 const IMAGE = buildTestImage(IMAGE_SIZE);
