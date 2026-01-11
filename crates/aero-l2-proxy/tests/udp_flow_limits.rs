@@ -1,16 +1,18 @@
 use std::{
     net::{Ipv4Addr, SocketAddr},
-    sync::Mutex,
     time::Duration,
 };
 
 use aero_l2_proxy::{start_server, ProxyConfig, TUNNEL_SUBPROTOCOL};
 use aero_net_stack::packet::*;
 use futures_util::{SinkExt, StreamExt};
-use tokio::{net::UdpSocket, sync::oneshot};
+use tokio::{
+    net::UdpSocket,
+    sync::{oneshot, Mutex},
+};
 use tokio_tungstenite::tungstenite::{client::IntoClientRequest, http::HeaderValue, Message};
 
-static ENV_LOCK: Mutex<()> = Mutex::new(());
+static ENV_LOCK: Mutex<()> = Mutex::const_new(());
 
 struct EnvVarGuard {
     key: &'static str,
@@ -21,6 +23,12 @@ impl EnvVarGuard {
     fn set(key: &'static str, value: &str) -> Self {
         let prior = std::env::var(key).ok();
         std::env::set_var(key, value);
+        Self { key, prior }
+    }
+
+    fn unset(key: &'static str) -> Self {
+        let prior = std::env::var(key).ok();
+        std::env::remove_var(key);
         Self { key, prior }
     }
 }
@@ -215,7 +223,7 @@ fn wrap_udp_ipv4_eth(
 
 #[tokio::test]
 async fn udp_flow_cap_drops_new_flows() {
-    let _lock = ENV_LOCK.lock().unwrap();
+    let _lock = ENV_LOCK.lock().await;
 
     let udp_echo = start_udp_echo_server().await;
     let udp_port = udp_echo.addr.port();
@@ -225,6 +233,11 @@ async fn udp_flow_cap_drops_new_flows() {
 
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
     let _open = EnvVarGuard::set("AERO_L2_OPEN", "1");
+    let _allowed = EnvVarGuard::unset("AERO_L2_ALLOWED_ORIGINS");
+    let _fallback_allowed = EnvVarGuard::unset("ALLOWED_ORIGINS");
+    let _allowed_extra = EnvVarGuard::unset("AERO_L2_ALLOWED_ORIGINS_EXTRA");
+    let _allowed_hosts = EnvVarGuard::unset("AERO_L2_ALLOWED_HOSTS");
+    let _trust_proxy_host = EnvVarGuard::unset("AERO_L2_TRUST_PROXY_HOST");
     let _allowed_udp = EnvVarGuard::set("AERO_L2_ALLOWED_UDP_PORTS", &udp_port_str);
     let _udp_forward = EnvVarGuard::set("AERO_L2_UDP_FORWARD", &udp_forward);
     let _cap = EnvVarGuard::set("AERO_L2_MAX_UDP_FLOWS_PER_TUNNEL", "2");
@@ -333,7 +346,7 @@ async fn udp_flow_cap_drops_new_flows() {
 
 #[tokio::test]
 async fn udp_flow_idle_timeout_closes_flow() {
-    let _lock = ENV_LOCK.lock().unwrap();
+    let _lock = ENV_LOCK.lock().await;
 
     let udp_echo = start_udp_echo_server().await;
     let udp_port = udp_echo.addr.port();
@@ -343,6 +356,11 @@ async fn udp_flow_idle_timeout_closes_flow() {
 
     let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
     let _open = EnvVarGuard::set("AERO_L2_OPEN", "1");
+    let _allowed = EnvVarGuard::unset("AERO_L2_ALLOWED_ORIGINS");
+    let _fallback_allowed = EnvVarGuard::unset("ALLOWED_ORIGINS");
+    let _allowed_extra = EnvVarGuard::unset("AERO_L2_ALLOWED_ORIGINS_EXTRA");
+    let _allowed_hosts = EnvVarGuard::unset("AERO_L2_ALLOWED_HOSTS");
+    let _trust_proxy_host = EnvVarGuard::unset("AERO_L2_TRUST_PROXY_HOST");
     let _allowed_udp = EnvVarGuard::set("AERO_L2_ALLOWED_UDP_PORTS", &udp_port_str);
     let _udp_forward = EnvVarGuard::set("AERO_L2_UDP_FORWARD", &udp_forward);
     let _cap = EnvVarGuard::set("AERO_L2_MAX_UDP_FLOWS_PER_TUNNEL", "0");
