@@ -93,6 +93,38 @@ static const UCHAR g_AeroGpuEdid[128] = {
     0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x00, 0x45
 };
 
+static BOOLEAN AeroGpuTryParseEdidPreferredMode(_In_reads_bytes_(128) const UCHAR* Edid, _Out_ ULONG* Width, _Out_ ULONG* Height)
+{
+    if (!Edid || !Width || !Height) {
+        return FALSE;
+    }
+
+    *Width = 0;
+    *Height = 0;
+
+    /*
+     * Base EDID block detailed timing descriptor #1 begins at offset 54.
+     * See VESA EDID 1.3/1.4: byte layout for detailed timing descriptors.
+     */
+    enum { kDtdOffset = 54 };
+    const UCHAR* dtd = Edid + kDtdOffset;
+
+    const USHORT pixelClock10khz = (USHORT)dtd[0] | ((USHORT)dtd[1] << 8);
+    if (pixelClock10khz == 0) {
+        return FALSE;
+    }
+
+    const ULONG hActive = (ULONG)dtd[2] | (((ULONG)(dtd[4] & 0xF0u)) << 4);
+    const ULONG vActive = (ULONG)dtd[5] | (((ULONG)(dtd[7] & 0xF0u)) << 4);
+    if (hActive == 0 || vActive == 0) {
+        return FALSE;
+    }
+
+    *Width = hActive;
+    *Height = vActive;
+    return TRUE;
+}
+
 /* ---- DMA buffer private data plumbing ---------------------------------- */
 
 static VOID AeroGpuFreeSubmissionMeta(_In_opt_ AEROGPU_SUBMISSION_META* Meta);
@@ -1440,7 +1472,7 @@ static NTSTATUS AeroGpuWaitForAllocationIdle(_Inout_ AEROGPU_ADAPTER* Adapter,
 /* ---- DxgkDdi* ----------------------------------------------------------- */
 
 static NTSTATUS APIENTRY AeroGpuDdiAddDevice(_In_ PDEVICE_OBJECT PhysicalDeviceObject,
-                                              _Outptr_ PVOID* MiniportDeviceContext)
+                                               _Outptr_ PVOID* MiniportDeviceContext)
 {
     if (!MiniportDeviceContext) {
         return STATUS_INVALID_PARAMETER;
@@ -1477,6 +1509,26 @@ static NTSTATUS APIENTRY AeroGpuDdiAddDevice(_In_ PDEVICE_OBJECT PhysicalDeviceO
     adapter->CurrentFormat = AEROGPU_FORMAT_B8G8R8X8_UNORM;
     adapter->SourceVisible = TRUE;
     adapter->VblankPeriodNs = AEROGPU_VBLANK_PERIOD_NS_DEFAULT;
+
+    /*
+     * Prefer the EDID's detailed timing descriptor as the default cached mode.
+     *
+     * The display stack may query standard allocation sizing before it has
+     * committed a VidPN; defaulting to the EDID preferred mode avoids allocating
+     * an obviously wrong primary surface (which can cause scanline/vblank sanity
+     * checks to fail in real Win7 guests).
+     */
+    {
+        ULONG w = 0;
+        ULONG h = 0;
+        if (AeroGpuTryParseEdidPreferredMode(g_AeroGpuEdid, &w, &h)) {
+            adapter->CurrentWidth = w;
+            adapter->CurrentHeight = h;
+            if (w != 0 && w <= (0xFFFFFFFFu / 4u)) {
+                adapter->CurrentPitch = w * 4u;
+            }
+        }
+    }
 
     /*
      * Initialise so that the first InterlockedIncrement() yields
@@ -2157,12 +2209,9 @@ static NTSTATUS APIENTRY AeroGpuDdiCommitVidPn(_In_ const HANDLE hAdapter, _In_ 
         return STATUS_INVALID_PARAMETER;
     }
 
-    if (pCommitVidPn->AffectedVidPnSourceId != AEROGPU_VIDPN_SOURCE_ID) {
-        return STATUS_INVALID_PARAMETER;
-    }
-
     if (!adapter->DxgkInterface.DxgkCbQueryVidPnInterface || !pCommitVidPn->hFunctionalVidPn) {
-        return STATUS_NOT_SUPPORTED;
+        /* Keep legacy behavior: accept the commit even if we can't introspect it. */
+        return STATUS_SUCCESS;
     }
 
     DXGK_VIDPN_INTERFACE vidpn;
@@ -2170,17 +2219,17 @@ static NTSTATUS APIENTRY AeroGpuDdiCommitVidPn(_In_ const HANDLE hAdapter, _In_ 
     NTSTATUS status =
         adapter->DxgkInterface.DxgkCbQueryVidPnInterface(adapter->StartInfo.hDxgkHandle, pCommitVidPn->hFunctionalVidPn, &vidpn);
     if (!NT_SUCCESS(status)) {
-        return status;
+        return STATUS_SUCCESS;
     }
 
     if (!vidpn.pfnGetSourceModeSet || !vidpn.pfnGetSourceModeSetInterface || !vidpn.pfnReleaseSourceModeSet) {
-        return STATUS_NOT_SUPPORTED;
+        return STATUS_SUCCESS;
     }
 
     D3DKMDT_HVIDPNSOURCEMODESET hSourceModeSet = 0;
-    status = vidpn.pfnGetSourceModeSet(pCommitVidPn->hFunctionalVidPn, pCommitVidPn->AffectedVidPnSourceId, &hSourceModeSet);
+    status = vidpn.pfnGetSourceModeSet(pCommitVidPn->hFunctionalVidPn, AEROGPU_VIDPN_SOURCE_ID, &hSourceModeSet);
     if (!NT_SUCCESS(status)) {
-        return status;
+        return STATUS_SUCCESS;
     }
 
     DXGK_VIDPNSOURCEMODESET_INTERFACE sms;
@@ -2188,24 +2237,24 @@ static NTSTATUS APIENTRY AeroGpuDdiCommitVidPn(_In_ const HANDLE hAdapter, _In_ 
     status = vidpn.pfnGetSourceModeSetInterface(pCommitVidPn->hFunctionalVidPn, hSourceModeSet, &sms);
     if (!NT_SUCCESS(status)) {
         vidpn.pfnReleaseSourceModeSet(pCommitVidPn->hFunctionalVidPn, hSourceModeSet);
-        return status;
+        return STATUS_SUCCESS;
     }
 
     if (!sms.pfnAcquirePinnedModeInfo || !sms.pfnReleaseModeInfo) {
         vidpn.pfnReleaseSourceModeSet(pCommitVidPn->hFunctionalVidPn, hSourceModeSet);
-        return STATUS_NOT_SUPPORTED;
+        return STATUS_SUCCESS;
     }
 
     const D3DKMDT_VIDPN_SOURCE_MODE* pinned = NULL;
     status = sms.pfnAcquirePinnedModeInfo(hSourceModeSet, &pinned);
     if (!NT_SUCCESS(status)) {
         vidpn.pfnReleaseSourceModeSet(pCommitVidPn->hFunctionalVidPn, hSourceModeSet);
-        return status;
+        return STATUS_SUCCESS;
     }
 
     if (!pinned) {
         vidpn.pfnReleaseSourceModeSet(pCommitVidPn->hFunctionalVidPn, hSourceModeSet);
-        return STATUS_INVALID_PARAMETER;
+        return STATUS_SUCCESS;
     }
 
     const ULONG width = pinned->Format.Graphics.PrimSurfSize.cx;
@@ -2214,7 +2263,7 @@ static NTSTATUS APIENTRY AeroGpuDdiCommitVidPn(_In_ const HANDLE hAdapter, _In_ 
     if (width == 0 || height == 0 || width > (0xFFFFFFFFu / 4u)) {
         sms.pfnReleaseModeInfo(hSourceModeSet, pinned);
         vidpn.pfnReleaseSourceModeSet(pCommitVidPn->hFunctionalVidPn, hSourceModeSet);
-        return STATUS_INVALID_PARAMETER;
+        return STATUS_SUCCESS;
     }
 
     adapter->CurrentWidth = width;
