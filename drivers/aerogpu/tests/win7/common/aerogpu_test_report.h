@@ -470,11 +470,15 @@ class TestReporter {
 
 // Reporter-aware variants of common failure helpers.
 //
-// Many tests predate `TestReporter` and use helpers in aerogpu_test_common.h that call
-// aerogpu_test::Fail() directly. When those helpers are used from a `--json`-enabled test,
-// the printed FAIL line is correct but the JSON report ends up with `"failure": null`
-// because the reporter was never finalized. These wrappers preserve the original stdout
-// diagnostics while correctly populating the JSON failure message.
+// Many tests predate `TestReporter` and use helpers in `aerogpu_test_common.h` that call
+// `aerogpu_test::Fail()` directly. `Fail()` now records the formatted message so a
+// `--json`-enabled `TestReporter` can still emit a useful `"failure"` field even when the
+// test returns without explicitly calling `reporter.Fail(...)`.
+//
+// These wrappers remain useful because they:
+//   - preserve the original stdout diagnostics, and
+//   - route failures through `TestReporter` so the report is finalized immediately (and can
+//     embed additional context like process bitness / module paths).
 static inline int RequireAeroGpuUmdLoaded(TestReporter* reporter,
                                           const char* test_name,
                                           const wchar_t* expected_module_base_name,
