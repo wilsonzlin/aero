@@ -22,6 +22,8 @@ jobs:
   build-web:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      NODE_VERSION: "20.11.1"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -32,7 +34,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
           cache-dependency-path: web/package-lock.json
 
@@ -99,6 +101,10 @@ jobs:
           test -f web/dist/_headers
           test -f web/dist/aero.version.json
 
+          # Ensure both wasm build variants were produced (threaded + single fallback).
+          test -f web/src/wasm/pkg-single/aero_wasm_bg.wasm
+          test -f web/src/wasm/pkg-threaded/aero_wasm_bg.wasm
+
           wasm_count="$(find web/dist -name '*.wasm' | wc -l | tr -d '[:space:]')"
           if [[ "${wasm_count}" -lt 2 ]]; then
             echo "Expected at least 2 .wasm files in web/dist (single + threaded), found: ${wasm_count}" >&2
@@ -137,4 +143,3 @@ jobs:
             ${{ steps.package.outputs.artifact }}
             ${{ steps.package.outputs.artifact }}.sha256
           generate_release_notes: true
-

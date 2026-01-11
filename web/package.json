@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "build:wasm:microbench": "wasm-pack build ../crates/aero-microbench --target web --release --out-dir ../../web/src/wasm/aero_microbench",
+    "build:wasm:microbench": "wasm-pack build --target web --release --out-dir ../../web/src/wasm/aero_microbench ../crates/aero-microbench --locked",
     "wasm:build:threaded": "node ./scripts/build_wasm.mjs threaded",
     "wasm:build:single": "node ./scripts/build_wasm.mjs single",
     "wasm:ensure": "node ./scripts/ensure_wasm.mjs",
