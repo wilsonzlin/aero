@@ -853,6 +853,17 @@ fn virtio_pci_reset_deasserts_intx_and_clears_isr() {
         assert_eq!(state.lowered, 1);
         assert!(!state.asserted);
     }
+    // Contract v1: reset disables all queues and clears queue addresses.
+    assert_eq!(bar_read_u16(&mut dev, caps.common + 0x1c), 0);
+    let desc_lo = bar_read_u32(&mut dev, caps.common + 0x20);
+    let desc_hi = bar_read_u32(&mut dev, caps.common + 0x24);
+    let avail_lo = bar_read_u32(&mut dev, caps.common + 0x28);
+    let avail_hi = bar_read_u32(&mut dev, caps.common + 0x2c);
+    let used_lo = bar_read_u32(&mut dev, caps.common + 0x30);
+    let used_hi = bar_read_u32(&mut dev, caps.common + 0x34);
+    assert_eq!((u64::from(desc_hi) << 32) | u64::from(desc_lo), 0);
+    assert_eq!((u64::from(avail_hi) << 32) | u64::from(avail_lo), 0);
+    assert_eq!((u64::from(used_hi) << 32) | u64::from(used_lo), 0);
     assert_eq!(bar_read_u8(&mut dev, caps.isr), 0);
 }
 
