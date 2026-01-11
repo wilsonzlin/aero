@@ -378,9 +378,10 @@ struct DepthStencilState {
 impl Default for DepthStencilState {
     fn default() -> Self {
         Self {
-            depth_enable: false,
-            depth_write_enable: false,
-            depth_func: 7, // ALWAYS
+            // Match D3D9 API defaults.
+            depth_enable: true,
+            depth_write_enable: true,
+            depth_func: 3, // LESS_EQUAL
             stencil_enable: false,
             stencil_read_mask: 0xFF,
             stencil_write_mask: 0xFF,
@@ -403,7 +404,9 @@ struct RasterizerState {
 impl Default for RasterizerState {
     fn default() -> Self {
         Self {
-            cull_mode: 0,
+            // D3D9 defaults to `D3DCULL_CCW` with `FRONTCOUNTERCLOCKWISE = FALSE`, which translates
+            // to back-face culling.
+            cull_mode: cmd::AerogpuCullMode::Back as u32,
             front_ccw: false,
             scissor_enable: false,
             depth_bias: 0,
@@ -463,26 +466,33 @@ fn create_constants_buffer(device: &wgpu::Device) -> wgpu::Buffer {
 }
 
 fn create_default_samplers(device: &wgpu::Device) -> [Arc<wgpu::Sampler>; MAX_SAMPLERS] {
-    let sampler = Arc::new(device.create_sampler(&wgpu::SamplerDescriptor {
-        label: Some("aerogpu-d3d9.sampler_ps_default"),
-        address_mode_u: wgpu::AddressMode::ClampToEdge,
-        address_mode_v: wgpu::AddressMode::ClampToEdge,
-        address_mode_w: wgpu::AddressMode::ClampToEdge,
-        mag_filter: wgpu::FilterMode::Linear,
-        min_filter: wgpu::FilterMode::Linear,
-        mipmap_filter: wgpu::FilterMode::Nearest,
-        ..Default::default()
-    }));
+    let sampler = Arc::new(create_wgpu_sampler(device, &D3d9SamplerState::default()));
     std::array::from_fn(|_| sampler.clone())
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct D3d9SamplerState {
     address_u: u32,
     address_v: u32,
     min_filter: u32,
     mag_filter: u32,
     mip_filter: u32,
+}
+
+impl Default for D3d9SamplerState {
+    fn default() -> Self {
+        // Match D3D9 sampler defaults:
+        // - ADDRESSU/V = WRAP (1)
+        // - MIN/MAG = POINT (1)
+        // - MIP = NONE (0)
+        Self {
+            address_u: d3d9::D3DTADDRESS_WRAP,
+            address_v: d3d9::D3DTADDRESS_WRAP,
+            min_filter: d3d9::D3DTEXF_POINT,
+            mag_filter: d3d9::D3DTEXF_POINT,
+            mip_filter: d3d9::D3DTEXF_NONE,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -4454,7 +4464,7 @@ impl AerogpuD3d9Executor {
             .render_states
             .get(d3d9::D3DRS_CULLMODE as usize)
             .copied()
-            .unwrap_or(0);
+            .unwrap_or(d3d9::D3DCULL_CCW);
 
         let front_ccw = self.state.rasterizer_state.front_ccw;
         let mapped = match raw {

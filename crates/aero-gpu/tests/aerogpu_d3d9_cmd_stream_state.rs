@@ -153,8 +153,11 @@ fn fullscreen_triangle_pos_tex(uv: [[f32; 2]; 3]) -> Vec<u8> {
     let mut vb = Vec::new();
     let verts = [
         ([-1.0f32, -1.0, 0.0, 1.0], [uv[0][0], uv[0][1], 0.0, 0.0]),
-        ([3.0f32, -1.0, 0.0, 1.0], [uv[1][0], uv[1][1], 0.0, 0.0]),
+        // D3D9 defaults to `FRONTCOUNTERCLOCKWISE = FALSE`, meaning clockwise triangles are
+        // front-facing. Use a clockwise fullscreen triangle so tests don't need to touch cull
+        // state.
         ([-1.0f32, 3.0, 0.0, 1.0], [uv[2][0], uv[2][1], 0.0, 0.0]),
+        ([3.0f32, -1.0, 0.0, 1.0], [uv[1][0], uv[1][1], 0.0, 0.0]),
     ];
     for (pos, tex) in verts {
         for f in pos {
@@ -171,8 +174,8 @@ fn fullscreen_triangle_pos() -> Vec<u8> {
     let mut vb = Vec::new();
     let verts = [
         [-1.0f32, -1.0, 0.0, 1.0],
-        [3.0f32, -1.0, 0.0, 1.0],
         [-1.0f32, 3.0, 0.0, 1.0],
+        [3.0f32, -1.0, 0.0, 1.0],
     ];
     for pos in verts {
         for f in pos {
@@ -1815,6 +1818,7 @@ fn d3d9_cmd_stream_stencil_clip_mask() {
     const AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER: u32 = cmd::AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER;
     const AEROGPU_TOPOLOGY_TRIANGLELIST: u32 = cmd::AerogpuPrimitiveTopology::TriangleList as u32;
     const AEROGPU_CLEAR_COLOR: u32 = cmd::AEROGPU_CLEAR_COLOR;
+    const AEROGPU_CLEAR_DEPTH: u32 = cmd::AEROGPU_CLEAR_DEPTH;
     const AEROGPU_CLEAR_STENCIL: u32 = cmd::AEROGPU_CLEAR_STENCIL;
 
     const RT_HANDLE: u32 = 1;
@@ -1950,7 +1954,10 @@ fn d3d9_cmd_stream_stencil_clip_mask() {
         });
 
         emit_packet(out, OPC_CLEAR, |out| {
-            push_u32(out, AEROGPU_CLEAR_COLOR | AEROGPU_CLEAR_STENCIL);
+            push_u32(
+                out,
+                AEROGPU_CLEAR_COLOR | AEROGPU_CLEAR_DEPTH | AEROGPU_CLEAR_STENCIL,
+            );
             push_f32(out, 1.0);
             push_f32(out, 0.0);
             push_f32(out, 0.0);
