@@ -8,7 +8,7 @@ use wasm_bindgen::prelude::*;
 // Re-export Aero IPC SharedArrayBuffer ring helpers so the generated `aero-wasm`
 // wasm-pack package exposes them to JS (both threaded + single builds).
 #[cfg(target_arch = "wasm32")]
-pub use aero_ipc::wasm::SharedRingBuffer;
+pub use aero_ipc::wasm::{open_ring_by_kind, SharedRingBuffer};
 
 #[cfg(target_arch = "wasm32")]
 mod guest_layout;
