@@ -637,3 +637,124 @@ fn virtio_net_tx_drops_invalid_sized_frames_but_completes_chain() {
     assert_eq!(read_u32_le(&mem, tx_used + 12).unwrap(), 2);
     assert_eq!(read_u32_le(&mem, tx_used + 16).unwrap(), 0);
 }
+
+#[test]
+fn virtio_net_rx_drops_invalid_sized_frames_without_consuming_chain() {
+    let backing = Rc::new(RefCell::new(LoopbackNet::default()));
+    let backend = SharedNet(backing.clone());
+
+    let net = VirtioNet::new(backend, [0x02, 0x00, 0x00, 0x00, 0x00, 0x05]);
+    let mut dev = VirtioPciDevice::new(Box::new(net), Box::new(InterruptLog::default()));
+    let caps = parse_caps(&dev);
+    let mut mem = GuestRam::new(0x20000);
+
+    // Feature negotiation: accept everything the device offers.
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE,
+    );
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
+    );
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 0);
+    let f0 = bar_read_u32(&mut dev, caps.common + 0x04);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 0);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f0);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 1);
+    let f1 = bar_read_u32(&mut dev, caps.common + 0x04);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 1);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f1);
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK,
+    );
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE
+            | VIRTIO_STATUS_DRIVER
+            | VIRTIO_STATUS_FEATURES_OK
+            | VIRTIO_STATUS_DRIVER_OK,
+    );
+
+    // Configure RX queue 0.
+    let rx_desc = 0x1000;
+    let rx_avail = 0x2000;
+    let rx_used = 0x3000;
+    bar_write_u16(&mut dev, &mut mem, caps.common + 0x16, 0);
+    bar_write_u64(&mut dev, &mut mem, caps.common + 0x20, rx_desc);
+    bar_write_u64(&mut dev, &mut mem, caps.common + 0x28, rx_avail);
+    bar_write_u64(&mut dev, &mut mem, caps.common + 0x30, rx_used);
+    bar_write_u16(&mut dev, &mut mem, caps.common + 0x1c, 1);
+
+    // Post a receive buffer with ample capacity.
+    let rx_hdr_addr = 0x4000;
+    let rx_payload_addr = 0x4100;
+    mem.write(rx_hdr_addr, &vec![0xaa; VirtioNetHdr::BASE_LEN])
+        .unwrap();
+    mem.write(rx_payload_addr, &vec![0xbb; 2048]).unwrap();
+
+    write_desc(
+        &mut mem,
+        rx_desc,
+        0,
+        rx_hdr_addr,
+        VirtioNetHdr::BASE_LEN as u32,
+        VIRTQ_DESC_F_NEXT | VIRTQ_DESC_F_WRITE,
+        1,
+    );
+    write_desc(
+        &mut mem,
+        rx_desc,
+        1,
+        rx_payload_addr,
+        2048,
+        VIRTQ_DESC_F_WRITE,
+        0,
+    );
+
+    write_u16_le(&mut mem, rx_avail, 0).unwrap();
+    write_u16_le(&mut mem, rx_avail + 2, 1).unwrap();
+    write_u16_le(&mut mem, rx_avail + 4, 0).unwrap();
+    write_u16_le(&mut mem, rx_used, 0).unwrap();
+    write_u16_le(&mut mem, rx_used + 2, 0).unwrap();
+
+    dev.bar0_write(
+        caps.notify + 0 * u64::from(caps.notify_mult),
+        &0u16.to_le_bytes(),
+        &mut mem,
+    );
+    assert_eq!(read_u16_le(&mem, rx_used + 2).unwrap(), 0);
+
+    // Undersized (<14) frame: must be dropped without consuming the chain.
+    backing.borrow_mut().rx_packets.push(vec![0u8; 10]);
+    dev.poll(&mut mem);
+    assert_eq!(read_u16_le(&mem, rx_used + 2).unwrap(), 0);
+
+    // Oversized (>1514) frame: must be dropped without consuming the chain.
+    backing.borrow_mut().rx_packets.push(vec![0u8; 1515]);
+    dev.poll(&mut mem);
+    assert_eq!(read_u16_le(&mem, rx_used + 2).unwrap(), 0);
+
+    // A valid 14-byte Ethernet frame should now be delivered using the same chain.
+    let frame = b"\xaa\xbb\xcc\xdd\xee\xff\x00\x01\x02\x03\x04\x05\x08\x00".to_vec();
+    backing.borrow_mut().rx_packets.push(frame.clone());
+    dev.poll(&mut mem);
+    assert_eq!(read_u16_le(&mem, rx_used + 2).unwrap(), 1);
+    assert_eq!(
+        read_u32_le(&mem, rx_used + 8).unwrap(),
+        (VirtioNetHdr::BASE_LEN + frame.len()) as u32
+    );
+    assert_eq!(
+        mem.get_slice(rx_payload_addr, frame.len()).unwrap(),
+        frame.as_slice()
+    );
+}
