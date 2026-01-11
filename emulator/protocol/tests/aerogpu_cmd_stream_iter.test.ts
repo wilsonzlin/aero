@@ -128,3 +128,57 @@ test("decodeCmdDebugMarkerPayload trims padding and decodes UTF-8", () => {
   assert.equal(decoded.marker, "hello");
   assert.deepEqual(decoded.markerBytes, new TextEncoder().encode("hello"));
 });
+
+test("variable-payload decoders reject size/count fields that would overrun packet size_bytes", () => {
+  const packetOffset = AEROGPU_CMD_STREAM_HEADER_SIZE;
+
+  {
+    const w = new AerogpuCmdWriter();
+    w.createShaderDxbc(1, AerogpuShaderStage.Vertex, new Uint8Array([1, 2, 3, 4]));
+    const bytes = w.finish();
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    // dxbc_size_bytes @ +16
+    view.setUint32(packetOffset + 16, 5, true); // claims larger than packet provides
+    assert.throws(() => decodeCmdCreateShaderDxbcPayload(bytes, packetOffset), /size mismatch/);
+  }
+
+  {
+    const w = new AerogpuCmdWriter();
+    w.createInputLayout(1, new Uint8Array([0xaa, 0xbb, 0xcc, 0xdd]));
+    const bytes = w.finish();
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    // blob_size_bytes @ +12
+    view.setUint32(packetOffset + 12, 5, true);
+    assert.throws(() => decodeCmdCreateInputLayoutBlob(bytes, packetOffset), /size mismatch/);
+  }
+
+  {
+    const w = new AerogpuCmdWriter();
+    w.uploadResource(1, 0n, new Uint8Array([1, 2, 3, 4]));
+    const bytes = w.finish();
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    // size_bytes (u64) @ +24
+    view.setBigUint64(packetOffset + 24, 5n, true);
+    assert.throws(() => decodeCmdUploadResourcePayload(bytes, packetOffset), /size mismatch/);
+  }
+
+  {
+    const w = new AerogpuCmdWriter();
+    w.setVertexBuffers(0, [{ buffer: 1, strideBytes: 4, offsetBytes: 0 }]);
+    const bytes = w.finish();
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    // buffer_count @ +12
+    view.setUint32(packetOffset + 12, 2, true);
+    assert.throws(() => decodeCmdSetVertexBuffersBindings(bytes, packetOffset), /size mismatch/);
+  }
+
+  {
+    const w = new AerogpuCmdWriter();
+    w.setShaderConstantsF(AerogpuShaderStage.Pixel, 0, new Float32Array([1, 2, 3, 4]));
+    const bytes = w.finish();
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    // vec4_count @ +16
+    view.setUint32(packetOffset + 16, 2, true);
+    assert.throws(() => decodeCmdSetShaderConstantsFPayload(bytes, packetOffset), /too small/);
+  }
+});
