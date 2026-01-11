@@ -2,11 +2,14 @@ use aero_gpu::aerogpu_executor::{AllocEntry, AllocTable};
 use aero_gpu::{AerogpuD3d9Error, AerogpuD3d9Executor, VecGuestMemory};
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdStreamHeader as ProtocolCmdStreamHeader,
+    AEROGPU_CMD_STREAM_MAGIC,
 };
+use aero_protocol::aerogpu::aerogpu_pci::AEROGPU_ABI_MAJOR;
 
 const CMD_STREAM_SIZE_BYTES_OFFSET: usize =
     core::mem::offset_of!(ProtocolCmdStreamHeader, size_bytes);
 const CMD_HDR_SIZE_BYTES_OFFSET: usize = core::mem::offset_of!(ProtocolCmdHdr, size_bytes);
+const AEROGPU_ABI_VERSION_U32_COMPAT: u32 = AEROGPU_ABI_MAJOR << 16; // minor=0
 
 fn push_u8(out: &mut Vec<u8>, v: u8) {
     out.push(v);
@@ -40,8 +43,8 @@ fn build_stream(packets: impl FnOnce(&mut Vec<u8>)) -> Vec<u8> {
     let mut out = Vec::new();
 
     // aerogpu_cmd_stream_header (24 bytes)
-    push_u32(&mut out, 0x444D_4341); // "ACMD"
-    push_u32(&mut out, 0x0001_0000); // abi_version (major=1 minor=0)
+    push_u32(&mut out, AEROGPU_CMD_STREAM_MAGIC);
+    push_u32(&mut out, AEROGPU_ABI_VERSION_U32_COMPAT);
     push_u32(&mut out, 0); // size_bytes (patch later)
     push_u32(&mut out, 0); // flags
     push_u32(&mut out, 0); // reserved0
