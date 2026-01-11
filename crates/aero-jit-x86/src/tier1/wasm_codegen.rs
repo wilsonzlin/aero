@@ -73,12 +73,19 @@ impl Tier1WasmCodegen {
         block: &IrBlock,
         options: Tier1WasmOptions,
     ) -> Vec<u8> {
-        #[cfg(not(feature = "tier1-inline-tlb"))]
         let mut options = options;
-        #[cfg(feature = "tier1-inline-tlb")]
-        let options = options;
         #[cfg(not(feature = "tier1-inline-tlb"))]
         {
+            options.inline_tlb = false;
+        }
+        if options.inline_tlb
+            && !block
+                .insts
+                .iter()
+                .any(|inst| matches!(inst, IrInst::Load { .. } | IrInst::Store { .. }))
+        {
+            // Inline-TLB is a pure memory fast-path; blocks with no memory ops don't need the extra
+            // imports/locals.
             options.inline_tlb = false;
         }
         let mut module = Module::new();

@@ -91,14 +91,25 @@ impl Tier2WasmCodegen {
         plan: &RegAllocPlan,
         options: Tier2WasmOptions,
     ) -> Vec<u8> {
-        let has_code_version_guards = trace
-            .iter_instrs()
-            .any(|inst| matches!(inst, Instr::GuardCodeVersion { .. }));
+        let mut has_load_mem = false;
+        let mut has_store_mem = false;
+        let mut has_code_version_guards = false;
+        for inst in trace.iter_instrs() {
+            match *inst {
+                Instr::LoadMem { .. } => has_load_mem = true,
+                Instr::StoreMem { .. } => has_store_mem = true,
+                Instr::GuardCodeVersion { .. } => has_code_version_guards = true,
+                _ => {}
+            }
+        }
+
+        let has_mem_ops = has_load_mem || has_store_mem;
+        let mut options = options;
+        // Enabling the inline-TLB fast-path only matters if the trace performs memory accesses.
+        options.inline_tlb &= has_mem_ops;
+
         let needs_code_page_version_import =
             options.code_version_guard_import && has_code_version_guards;
-        let has_store_mem = trace
-            .iter_instrs()
-            .any(|inst| matches!(inst, Instr::StoreMem { .. }));
         let needs_code_version_table = (options.inline_tlb && has_store_mem)
             || (!options.code_version_guard_import && has_code_version_guards);
 
