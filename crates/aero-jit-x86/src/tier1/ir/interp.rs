@@ -346,8 +346,11 @@ fn execute_block_cpu<B: Tier1Bus>(block: &IrBlock, cpu: &mut TestCpu, bus: &mut 
                 let e = temps[if_false.0 as usize];
                 temps[dst.0 as usize] = width.truncate(if c != 0 { t } else { e });
             }
-            IrInst::CallHelper { helper, .. } => {
-                panic!("helper call not implemented in debug interpreter: {helper}");
+            IrInst::CallHelper { .. } => {
+                // The Tier-1 debug interpreter is only used to validate x86→IR translation. It has
+                // no access to the runtime helper implementations, so treat helper calls as a
+                // conservative interpreter bailout (matching Tier-1 WASM codegen).
+                return ExecResult::ExitToInterpreter { next_rip: cpu.rip };
             }
         }
     }
