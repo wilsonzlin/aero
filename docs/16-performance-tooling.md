@@ -347,6 +347,33 @@ node --experimental-strip-types scripts/compare_gpu_benchmarks.ts \
   --cvThreshold 0.5
 ```
 
+### Run the Storage I/O benchmark (Playwright + OPFS/IndexedDB)
+
+The storage microbench runs in a real Chromium instance via Playwright and measures:
+
+- sequential read/write throughput (MB/s)
+- random 4K read latency (p50/p95)
+
+It prefers OPFS (sync access handle when available) and falls back to IndexedDB. The benchmark
+uses a fixed RNG seed in CI so random I/O patterns are repeatable.
+
+Run the scenario runner (writes `report.json`, `storage_bench.json`, and `perf_export.json`):
+
+```bash
+npm run bench:storage -- --out-dir storage-perf-results/head
+```
+
+Compare two `storage_bench.json` outputs and write a Markdown diff (plus optional JSON summary):
+
+```bash
+node --experimental-strip-types scripts/compare_storage_benchmarks.ts \
+  --baseline storage-perf-results/base/storage_bench.json \
+  --current storage-perf-results/head/storage_bench.json \
+  --outDir storage-perf-results \
+  --thresholdPct 15 \
+  --json
+```
+
 ### Interpreting summary output and variance warnings
 
 When the summary shows a high **CV** (coefficient of variation):
