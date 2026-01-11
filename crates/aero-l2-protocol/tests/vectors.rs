@@ -243,8 +243,7 @@ fn l2_tunnel_vectors_match_golden_bytes() {
                     // code (u16 BE) | msg_len (u16 BE) | msg (UTF-8)
                     let mut expected_payload = Vec::new();
                     expected_payload.extend_from_slice(&code.to_be_bytes());
-                    expected_payload
-                        .extend_from_slice(&(message.len() as u16).to_be_bytes());
+                    expected_payload.extend_from_slice(&(message.len() as u16).to_be_bytes());
                     expected_payload.extend_from_slice(message.as_bytes());
                     assert_eq!(
                         expected_payload, payload,

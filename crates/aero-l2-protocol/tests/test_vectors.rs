@@ -111,8 +111,7 @@ fn l2_tunnel_vectors_roundtrip() {
         if let Some(structured) = &vector.structured {
             let mut expected_payload = Vec::new();
             expected_payload.extend_from_slice(&structured.code.to_be_bytes());
-            expected_payload
-                .extend_from_slice(&(structured.message.len() as u16).to_be_bytes());
+            expected_payload.extend_from_slice(&(structured.message.len() as u16).to_be_bytes());
             expected_payload.extend_from_slice(structured.message.as_bytes());
             assert_eq!(expected_payload, payload, "{}", vector.name);
         }

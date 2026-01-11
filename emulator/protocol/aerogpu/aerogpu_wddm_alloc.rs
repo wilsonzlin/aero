@@ -37,7 +37,11 @@ pub const AEROGPU_WDDM_ALLOC_PRIV_DESC_MARKER: u64 = 0x8000_0000_0000_0000;
 pub const AEROGPU_WDDM_ALLOC_PRIV_DESC_MAX_WIDTH: u32 = 0xFFFF;
 pub const AEROGPU_WDDM_ALLOC_PRIV_DESC_MAX_HEIGHT: u32 = 0x7FFF;
 
-pub const fn aerogpu_wddm_alloc_priv_desc_pack(format_u32: u32, width_u32: u32, height_u32: u32) -> u64 {
+pub const fn aerogpu_wddm_alloc_priv_desc_pack(
+    format_u32: u32,
+    width_u32: u32,
+    height_u32: u32,
+) -> u64 {
     AEROGPU_WDDM_ALLOC_PRIV_DESC_MARKER
         | (format_u32 as u64 & 0xFFFF_FFFF)
         | ((width_u32 as u64 & 0xFFFF) << 32)

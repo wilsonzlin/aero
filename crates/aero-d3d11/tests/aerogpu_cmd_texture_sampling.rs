@@ -242,15 +242,15 @@ fn build_ps_ld_t0_dxbc() -> Vec<u8> {
         register: 0,
         mask: 0x0f,
     }]);
- 
+
     let version_token = 0x40u32; // ps_4_0
     let ld_opcode_token = 0x4cu32 | (10u32 << 11);
     let ret_token = 0x3eu32 | (1u32 << 11);
- 
+
     let dst_o0 = 0x0010_f022u32;
     let imm_vec4 = 0x0000_f042u32;
     let t0 = 0x0010_0072u32;
- 
+
     let mut tokens = vec![
         version_token,
         0, // length patched below
@@ -267,12 +267,12 @@ fn build_ps_ld_t0_dxbc() -> Vec<u8> {
         ret_token,
     ];
     tokens[1] = tokens.len() as u32;
- 
+
     let mut shdr = Vec::with_capacity(tokens.len() * 4);
     for t in tokens {
         shdr.extend_from_slice(&t.to_le_bytes());
     }
- 
+
     build_dxbc(&[(*b"ISGN", isgn), (*b"OSGN", osgn), (*b"SHDR", shdr)])
 }
 
