@@ -1,9 +1,10 @@
 //! Legacy AeroGPU PCI/MMIO device model ("ARGP").
 //!
 //! The repository currently contains two guest↔host ABI generations:
-//! - Versioned ABI ("AGPU"): `drivers/aerogpu/protocol/aerogpu_pci.h` + `aerogpu_ring.h` + `aerogpu_cmd.h`
+//! - Versioned ABI ("AGPU"): `drivers/aerogpu/protocol/aerogpu_pci.h` +
+//!   `drivers/aerogpu/protocol/aerogpu_ring.h` + `drivers/aerogpu/protocol/aerogpu_cmd.h`,
 //!   implemented by `crates/emulator/src/devices/pci/aerogpu.rs`.
-//! - Legacy bring-up ABI ("ARGP"): `drivers/aerogpu/protocol/aerogpu_protocol.h`
+//! - Legacy bring-up ABI ("ARGP"): `drivers/aerogpu/protocol/legacy/aerogpu_protocol_legacy.h`,
 //!   implemented by this module.
 //!
 //! The Win7 KMD in `drivers/aerogpu/kmd` supports both ABIs and auto-detects the
@@ -22,7 +23,7 @@ use aero_protocol::aerogpu::aerogpu_pci as protocol_pci;
 use crate::devices::aerogpu_scanout::{AeroGpuFormat, AeroGpuScanoutConfig};
 use crate::io::pci::{MmioDevice, PciConfigSpace, PciDevice};
 
-// Constants mirrored from `drivers/aerogpu/protocol/aerogpu_protocol.h`.
+// Constants mirrored from `drivers/aerogpu/protocol/legacy/aerogpu_protocol_legacy.h`.
 const AEROGPU_LEGACY_PCI_VENDOR_ID: u16 = 0x1aed;
 const AEROGPU_LEGACY_PCI_DEVICE_ID: u16 = 0x0001;
 

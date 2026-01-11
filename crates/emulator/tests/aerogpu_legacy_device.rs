@@ -43,7 +43,7 @@ impl MemoryBus for VecMemory {
     }
 }
 
-// Legacy MMIO offsets from `drivers/aerogpu/protocol/aerogpu_protocol.h`.
+// Legacy MMIO offsets from `drivers/aerogpu/protocol/legacy/aerogpu_protocol_legacy.h`.
 mod mmio {
     pub const RING_BASE_LO: u64 = 0x0010;
     pub const RING_BASE_HI: u64 = 0x0014;

@@ -14,8 +14,8 @@ This repo currently has **two AeroGPU ABI generations**:
 
 | ABI generation | PCI IDs | Header (source of truth) | Host device model |
 |---|---:|---|---|
-| New, versioned ABI | `VID=0xA3A0, DID=0x0001` (`PCI\VEN_A3A0&DEV_0001`) | `drivers/aerogpu/protocol/aerogpu_pci.h` (+ `aerogpu_ring.h`) | `crates/emulator/src/devices/pci/aerogpu.rs` |
-| Legacy bring-up ABI | `VID=0x1AED, DID=0x0001` (`PCI\VEN_1AED&DEV_0001`) | `drivers/aerogpu/protocol/aerogpu_protocol.h` | `crates/emulator/src/devices/pci/aerogpu_legacy.rs` (feature `emulator/aerogpu-legacy`) |
+| New, versioned ABI | `VID=0xA3A0, DID=0x0001` (`PCI\VEN_A3A0&DEV_0001`) | `drivers/aerogpu/protocol/aerogpu_pci.h` (+ `aerogpu_ring.h`, `aerogpu_cmd.h`) | `crates/emulator/src/devices/pci/aerogpu.rs` |
+| Legacy bring-up ABI | `VID=0x1AED, DID=0x0001` (`PCI\VEN_1AED&DEV_0001`) | `drivers/aerogpu/protocol/legacy/aerogpu_protocol_legacy.h` | `crates/emulator/src/devices/pci/aerogpu_legacy.rs` (feature `emulator/aerogpu-legacy`) |
 
 ## PCI class identity (base class / subclass / prog-if)
 
@@ -38,7 +38,7 @@ Notes:
 
 ## Why two ABIs exist
 
-`drivers/aerogpu/protocol/aerogpu_protocol.h` is the original, minimal ABI used
+`drivers/aerogpu/protocol/legacy/aerogpu_protocol_legacy.h` is the original, minimal ABI used
 to bring up the Windows 7 WDDM stack. It still exists because there is
 guest-side code that speaks it and the emulator still has a compatible device
 model (`aerogpu_legacy.rs`, behind the `emulator/aerogpu-legacy` feature).

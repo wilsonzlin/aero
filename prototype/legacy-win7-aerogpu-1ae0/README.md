@@ -9,8 +9,8 @@ On Windows 7 x64, the archived 1AE0 Windows driver package is also **not WOW64-c
 
 Supported AeroGPU ABIs in this repo:
 
-- **Legacy bring-up ABI (1AED)**: `drivers/aerogpu/protocol/aerogpu_protocol.h` and the emulator
-  device `crates/emulator/src/devices/pci/aerogpu_legacy.rs`.
+- **Legacy bring-up ABI (1AED)**: `drivers/aerogpu/protocol/legacy/aerogpu_protocol_legacy.h` and the emulator
+  device `crates/emulator/src/devices/pci/aerogpu_legacy.rs` (feature `emulator/aerogpu-legacy`).
 - **Current versioned ABI (A3A0)**: `drivers/aerogpu/protocol/aerogpu_{pci,ring,cmd}.h` and the
   emulator device `crates/emulator/src/devices/pci/aerogpu.rs`.
 

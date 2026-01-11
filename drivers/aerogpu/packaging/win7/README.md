@@ -95,13 +95,14 @@ By default, both `aerogpu.inf` and `aerogpu_dx11.inf` bind to the canonical Aero
 PCI\VEN_A3A0&DEV_0001  (canonical / current, versioned ABI / "AGPU")
 ```
 
-The Win7 KMD supports a legacy bring-up device enumerated as `PCI\VEN_1AED&DEV_0001` ("ARGP"), but the shipped INFs
+The Win7 KMD still has a compatibility path for the deprecated legacy bring-up device ("ARGP"), but the shipped INFs
 intentionally do **not** match it (to discourage accidental installs against the legacy device model). If you need the
-legacy device model for bring-up/compatibility, install using a custom INF that matches `PCI\VEN_1AED&DEV_0001` and
-build the emulator with the legacy device model enabled (feature `emulator/aerogpu-legacy`).
+legacy device model for bring-up/compatibility, install using the legacy INFs under
+`drivers/aerogpu/packaging/win7/legacy/` and build the emulator with the legacy device model enabled (feature
+`emulator/aerogpu-legacy`).
 
 See `docs/abi/aerogpu-pci-identity.md` for the full context and the matching emulator device models. The Win7 KMD
-supports both ABIs and auto-detects which one is active based on MMIO magic; see `drivers/aerogpu/kmd/README.md`.
+supports multiple ABIs and auto-detects which one is active based on MMIO magic; see `drivers/aerogpu/kmd/README.md`.
 
 Before installing, confirm your VM's device model reports the expected Hardware ID:
 
@@ -313,8 +314,9 @@ cd \path\to\repo\drivers\aerogpu\tests\win7
 build_all_vs2010.cmd
 :: Choose the VID/DID that matches your VM's Hardware Ids:
 run_all.cmd --require-vid=0xA3A0 --require-did=0x0001
-:: Legacy bring-up device model (requires a custom INF + emulator/aerogpu-legacy):
-run_all.cmd --require-vid=0x1AED --require-did=0x0001
+:: If using the deprecated legacy device model, pass the matching VID/DID (see docs/abi/aerogpu-pci-identity.md).
+:: Note: legacy bring-up requires the legacy INFs under drivers/aerogpu/packaging/win7/legacy/ and enabling the emulator
+:: legacy device model (feature emulator/aerogpu-legacy).
 ```
 
 Use the VID/DID shown in Device Manager → Display adapters → Properties → Details → **Hardware Ids** (or the HW ID used in the `[AeroGPU_Models.*]` sections of the INF).

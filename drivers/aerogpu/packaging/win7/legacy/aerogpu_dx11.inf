@@ -1,22 +1,19 @@
-; AeroGPU Windows 7 SP1 (WDDM 1.1) display driver package
+; Legacy AeroGPU Windows 7 SP1 (WDDM 1.1) display driver package (D3D9 + D3D10/11)
 ;
-; This INF is intended for test-signed development installs.
+; This INF extends aerogpu.inf by registering/copying the optional D3D10/11 UMDs.
+; It is intended for use with the legacy AeroGPU PCI identity (VEN_1AED).
 ;
 ; IMPORTANT:
 ;   - The Hardware ID(s) below MUST match the AeroGPU PCI device model.
-;   - This Win7 package binds to the canonical, versioned AeroGPU device model:
-;       PCI\VEN_A3A0&DEV_0001  (drivers/aerogpu/protocol/aerogpu_pci.h)
-;   - The deprecated legacy device model is intentionally not matched by this INF.
-;     Use the legacy INFs under drivers/aerogpu/packaging/win7/legacy/ if needed.
+;   - Legacy HWID (deprecated):
+;       PCI\VEN_1AED&DEV_0001
 ;
 ; Expected package contents (same directory as this INF):
 ;   - aerogpu.sys                 (kernel-mode miniport)
 ;   - aerogpu_d3d9.dll            (32-bit D3D9 UMD)
 ;   - aerogpu_d3d9_x64.dll        (64-bit D3D9 UMD)
-;
-; Optional (use aerogpu_dx11.inf if you ship D3D10/11 UMDs):
-;   - aerogpu_d3d10.dll
-;   - aerogpu_d3d10_x64.dll
+;   - aerogpu_d3d10.dll           (32-bit D3D10/11 UMD)
+;   - aerogpu_d3d10_x64.dll       (64-bit D3D10/11 UMD)
 ;
 
 [Version]
@@ -25,16 +22,16 @@ Class       = Display
 ClassGuid   = {4d36e968-e325-11ce-bfc1-08002be10318}
 Provider    = %AeroGPU.Provider%
 DriverVer   = 01/01/2026,0.0.1.0
-CatalogFile = aerogpu.cat
+CatalogFile = aerogpu_dx11.cat
 
 [Manufacturer]
 %AeroGPU.Manufacturer% = AeroGPU_Models,NTx86.6.1,NTamd64.6.1
 
 [AeroGPU_Models.NTx86.6.1]
-%AeroGPU.DeviceDesc% = AeroGPU_Install, PCI\VEN_A3A0&DEV_0001
+%AeroGPU.DeviceDesc% = AeroGPU_Install, PCI\VEN_1AED&DEV_0001
 
 [AeroGPU_Models.NTamd64.6.1]
-%AeroGPU.DeviceDesc% = AeroGPU_Install, PCI\VEN_A3A0&DEV_0001
+%AeroGPU.DeviceDesc% = AeroGPU_Install, PCI\VEN_1AED&DEV_0001
 
 ; -------------------------------
 ; Install (x86)
@@ -64,16 +61,19 @@ aerogpu.sys
 
 [AeroGPU_UMD_x86.CopyFiles]
 aerogpu_d3d9.dll
+aerogpu_d3d10.dll
 
 [AeroGPU_UMD_x64.CopyFiles]
 aerogpu_d3d9_x64.dll
+aerogpu_d3d10_x64.dll
 
 [AeroGPU_UMD_Wow64.CopyFiles]
 aerogpu_d3d9.dll
+aerogpu_d3d10.dll
 
 [DestinationDirs]
-DefaultDestDir           = 11
-AeroGPU_KMD.CopyFiles    = 12
+DefaultDestDir              = 11
+AeroGPU_KMD.CopyFiles       = 12
 AeroGPU_UMD_x86.CopyFiles   = 11
 AeroGPU_UMD_x64.CopyFiles   = 11
 ; SysWOW64 is under %SystemRoot% on x64.
@@ -83,19 +83,24 @@ AeroGPU_UMD_Wow64.CopyFiles = 10,SysWOW64
 ; Registry settings
 ; -------------------------------
 [AeroGPU_Device_AddReg_x86]
-; Driver ranking (lower is better). Value chosen to be non-zero but not special.
-HKR,,FeatureScore,%REG_DWORD%,0x000000F8
+HKR,,FeatureScore,0x00010001,0x000000F8
 
 ; D3D9 UMD registration (32-bit).
-; InstalledDisplayDrivers entries are base names (no extension).
-HKR,,InstalledDisplayDrivers,%REG_MULTI_SZ%,"aerogpu_d3d9"
+HKR,,InstalledDisplayDrivers,0x00010000,"aerogpu_d3d9"
+
+; D3D10/11 UMD registration (32-bit).
+HKR,,UserModeDriverName,0,"aerogpu_d3d10.dll"
 
 [AeroGPU_Device_AddReg_amd64]
-HKR,,FeatureScore,%REG_DWORD%,0x000000F8
+HKR,,FeatureScore,0x00010001,0x000000F8
 
 ; D3D9 UMD registration (64-bit + WoW32).
-HKR,,InstalledDisplayDrivers,%REG_MULTI_SZ%,"aerogpu_d3d9_x64"
-HKR,,InstalledDisplayDriversWow,%REG_MULTI_SZ%,"aerogpu_d3d9"
+HKR,,InstalledDisplayDrivers,0x00010000,"aerogpu_d3d9_x64"
+HKR,,InstalledDisplayDriversWow,0x00010000,"aerogpu_d3d9"
+
+; D3D10/11 UMD registration (64-bit + WoW32).
+HKR,,UserModeDriverName,0,"aerogpu_d3d10_x64.dll"
+HKR,,UserModeDriverNameWow,0,"aerogpu_d3d10.dll"
 
 ; -------------------------------
 ; Service installation
@@ -117,12 +122,15 @@ LoadOrderGroup = Video
 [SourceDisksFiles.x86]
 aerogpu.sys = 1
 aerogpu_d3d9.dll = 1
+aerogpu_d3d10.dll = 1
 
 [SourceDisksFiles.amd64]
 aerogpu.sys = 1
 aerogpu_d3d9_x64.dll = 1
-; x64 installs need WoW32 D3D9 UMDs as well.
+aerogpu_d3d10_x64.dll = 1
+; x64 installs need WoW32 UMDs as well.
 aerogpu_d3d9.dll = 1
+aerogpu_d3d10.dll = 1
 
 [Strings]
 AeroGPU.Provider     = "AeroGPU"
@@ -130,7 +138,3 @@ AeroGPU.Manufacturer = "AeroGPU"
 AeroGPU.DeviceDesc   = "AeroGPU Display Adapter"
 AeroGPU.ServiceDesc  = "AeroGPU WDDM Miniport"
 AeroGPU.DiskName     = "AeroGPU Driver Disk"
-
-; AddReg type helpers (kept explicit so UMD registration keys stay correct).
-REG_DWORD     = 0x00010001
-REG_MULTI_SZ  = 0x00010000

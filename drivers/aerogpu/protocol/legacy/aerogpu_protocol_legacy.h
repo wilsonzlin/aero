@@ -1,5 +1,5 @@
 /*
- * AeroGPU Protocol (LEGACY bring-up ABI)
+ * AeroGPU Protocol (LEGACY / DEPRECATED bring-up ABI)
  *
  * This header defines the original guest<->emulator ABI for the AeroGPU virtual
  * device ("ARGP", PCI 1AED:0001).
@@ -7,6 +7,8 @@
  * It is kept for reference and for compatibility with the emulator's legacy
  * AeroGPU device model (feature `emulator/aerogpu-legacy`). The current AeroGPU
  * KMD/UMDs do **not** use this header directly.
+ *
+ * This file is intentionally isolated under `drivers/aerogpu/protocol/legacy/`.
  *
  * The canonical, versioned AeroGPU device ABI is defined in:
  *   - `drivers/aerogpu/protocol/README.md`

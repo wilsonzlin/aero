@@ -38,6 +38,10 @@ Notes:
   `expected_hardware_ids_from_devices_cmd_var`) so the packager stays in sync with the in-guest
   installer configuration. Any additional `expected_hardware_ids` regexes in the spec are also
   enforced.
+  The default device contract/config targets the canonical, versioned AeroGPU device (`PCI\\VEN_A3A0&DEV_0001`);
+  the deprecated legacy bring-up device is intentionally excluded from the default Guest Tools media. If you
+  need it for compatibility/bring-up, install using the legacy INFs under `drivers/aerogpu/packaging/win7/legacy/`
+  and build the emulator with the legacy device model enabled (feature `emulator/aerogpu-legacy`).
 
 ## `win7-signed.json`
 

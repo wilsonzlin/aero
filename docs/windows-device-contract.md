@@ -69,25 +69,26 @@ Aero GPU is a custom PCI device (not virtio). It uses project-specific virtual P
   - Windows hardware IDs:
     - `PCI\VEN_A3A0&DEV_0001`
     - `PCI\VEN_A3A0&DEV_0001&SUBSYS_0001A3A0` (optional; only if the INF matches it)
+ 
 Legacy bring-up ABI note:
 
-- The Win7 KMD supports a legacy bring-up AeroGPU ABI (`PCI\VEN_1AED&DEV_0001`, protocol header `drivers/aerogpu/protocol/aerogpu_protocol.h`).
+- The Win7 KMD still has a compatibility path for the deprecated legacy bring-up AeroGPU ABI.
 - The canonical in-tree Win7 AeroGPU INFs (`drivers/aerogpu/packaging/win7/{aerogpu.inf,aerogpu_dx11.inf}`) intentionally bind **only** to `PCI\VEN_A3A0&DEV_0001`.
 - Installing against the legacy device model requires:
   - building the emulator with the legacy device model enabled (feature `emulator/aerogpu-legacy`), and
-  - using a custom INF that matches `PCI\VEN_1AED&DEV_0001`.
+  - using the legacy INFs under `drivers/aerogpu/packaging/win7/legacy/`.
 
 > Note: these are virtual-only IDs used inside the guest; they are not required to be PCI-SIG allocated.
 >
 > Source of truth for AeroGPU PCI IDs:
 > - Versioned ABI ID: `drivers/aerogpu/protocol/aerogpu_pci.h`
-> - Legacy bring-up ABI ID: `drivers/aerogpu/protocol/aerogpu_protocol.h`
+> - Legacy bring-up ABI ID (deprecated): `drivers/aerogpu/protocol/legacy/aerogpu_protocol_legacy.h`
 > - Guest Tools install/verify config: `guest-tools/config/devices.cmd`
 > See also: `docs/abi/aerogpu-pci-identity.md` (context on why two IDs exist, and which emulator device models implement each ABI).
 >
-> Legacy note: some bring-up builds may still expose the legacy AeroGPU HWID `PCI\VEN_1AED&DEV_0001`.
-> This is not the default device model, and the shipped Win7 AeroGPU INFs do **not** match it (by design).
-> If you need it, use a custom INF and enable the legacy device model feature (`emulator/aerogpu-legacy`).
+> Legacy note: some bring-up builds may still expose the deprecated legacy AeroGPU HWID. This is not
+> the default device model, and the shipped Win7 AeroGPU INFs do **not** match it (by design). If you
+> need it, use the legacy INFs and enable the legacy device model feature (`emulator/aerogpu-legacy`).
 
 ## Device table (normative)
 
@@ -106,8 +107,8 @@ Notes:
 
 - Aero GPU INF path: `drivers/aerogpu/packaging/win7/aerogpu.inf`
 - `aerogpu.inf` / `aerogpu_dx11.inf` bind to `PCI\VEN_A3A0&DEV_0001` (canonical / current ABI).
-  - The Win7 KMD also supports a legacy `PCI\VEN_1AED&DEV_0001` bring-up device model, but installing against it requires a custom INF and enabling the legacy device model feature (`emulator/aerogpu-legacy`).
 - `aerogpu_dx11.inf` is an optional alternative INF that binds to the same device IDs and additionally installs D3D10/11 user-mode components.
+- The deprecated legacy bring-up AeroGPU HWID requires the legacy INFs under `drivers/aerogpu/packaging/win7/legacy/` and enabling the legacy device model feature (`emulator/aerogpu-legacy`).
 
 Compatibility note (non-canonical virtio PCI Device IDs):
 

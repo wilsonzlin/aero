@@ -8,7 +8,7 @@
  *   - Contain no pointers / arch-sized types (void*, size_t, HANDLE, etc.).
  *   - Use fixed-width integers and explicit packing, with size assertions.
  *
- * NOTE: This header intentionally does NOT include `aerogpu_protocol.h` (legacy
+ * NOTE: This header intentionally does NOT include `legacy/aerogpu_protocol_legacy.h` (legacy
  * bring-up ABI) because it defines conflicting global constants with the
  * versioned protocol (`aerogpu_cmd.h` / `aerogpu_pci.h`). Keep this file
  * self-contained.

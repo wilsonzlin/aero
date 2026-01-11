@@ -106,7 +106,8 @@ fn aerogpu_pci_ids_match_repo_contracts() {
     let new_hwid = format!("PCI\\VEN_{new_vendor_id:04X}&DEV_{new_device_id:04X}");
 
     // Legacy bring-up ABI PCI identity is defined in the Windows driver header.
-    let legacy_header_path = repo_root.join("drivers/aerogpu/protocol/aerogpu_protocol.h");
+    let legacy_header_path =
+        repo_root.join("drivers/aerogpu/protocol/legacy/aerogpu_protocol_legacy.h");
     let legacy_header = read_file(&legacy_header_path);
     let legacy_vendor_id =
         parse_c_define_u16(&legacy_header, &legacy_header_path, "AEROGPU_PCI_VENDOR_ID");
@@ -128,6 +129,14 @@ fn aerogpu_pci_ids_match_repo_contracts() {
         );
 
         assert_file_not_contains(&path, &legacy_hwid);
+    }
+
+    for relative_path in [
+        "drivers/aerogpu/packaging/win7/legacy/aerogpu.inf",
+        "drivers/aerogpu/packaging/win7/legacy/aerogpu_dx11.inf",
+    ] {
+        let path = repo_root.join(relative_path);
+        assert_file_contains(&path, &legacy_hwid);
     }
 
     // Guest Tools config is generated from the canonical Windows device contract, which binds only

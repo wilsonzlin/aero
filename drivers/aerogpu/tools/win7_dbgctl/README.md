@@ -11,19 +11,17 @@ via BAR0 MMIO magic:
 
 - **Versioned ABI device**: `PCI\\VEN_A3A0&DEV_0001` ("AGPU")  
   Ring = `aerogpu_ring_header` + `aerogpu_submit_desc` slots.
-- **Legacy bring-up ABI device**: `PCI\\VEN_1AED&DEV_0001` ("ARGP")  
-  Ring = legacy `aerogpu_legacy_ring_entry` entries (see `drivers/aerogpu/kmd/include/aerogpu_legacy_abi.h`).
+- **Legacy bring-up ABI device** ("ARGP", deprecated)  
+  Ring = legacy `aerogpu_legacy_ring_entry` entries (see `drivers/aerogpu/kmd/include/aerogpu_legacy_abi.h` and `docs/abi/aerogpu-pci-identity.md`).
   Note: the emulator legacy device model is optional (feature `emulator/aerogpu-legacy`).
 
 Note: the shipped Win7 driver packages (`drivers/aerogpu/packaging/win7`) bind to the canonical `PCI\\VEN_A3A0&DEV_0001`
-HWID only. Installing against the legacy bring-up HWID requires a custom INF that matches `PCI\\VEN_1AED&DEV_0001`.
+HWID only. Installing against the legacy bring-up device model requires the legacy INFs under
+`drivers/aerogpu/packaging/win7/legacy/` and enabling the emulator legacy device model (feature `emulator/aerogpu-legacy`).
 
 `--query-version` (alias: `--query-device`), `--query-fence`, `--dump-ring`, and `--selftest` rely on dbgctl escape
 packets implemented by the installed KMD. The tool is primarily developed against the versioned ("AGPU") path, but
 keeps best-effort compatibility decoding for legacy ("ARGP") devices and older KMD builds.
-
-Note: the in-tree Win7 packaging INFs bind only to `PCI\\VEN_A3A0&DEV_0001`; installing against the legacy device model
-requires a custom INF that matches `PCI\\VEN_1AED&DEV_0001`.
 
 ## Features
 

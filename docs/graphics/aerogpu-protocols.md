@@ -35,7 +35,7 @@ active ABI via BAR0 MMIO magic (see `drivers/aerogpu/protocol/README.md` and
 
 There is also a **legacy bring-up** PCI/MMIO ABI:
 
-- Header: `drivers/aerogpu/protocol/aerogpu_protocol.h`
+- Header: `drivers/aerogpu/protocol/legacy/aerogpu_protocol_legacy.h`
 - Host device model: `crates/emulator/src/devices/pci/aerogpu_legacy.rs` (feature `emulator/aerogpu-legacy`)
 
 It exists for migration/compatibility and should generally not be the target for new features.

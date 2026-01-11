@@ -6,8 +6,8 @@
 ;   - The Hardware ID(s) below MUST match the AeroGPU PCI device model.
 ;   - This Win7 package binds to the canonical, versioned AeroGPU device model:
 ;       PCI\VEN_A3A0&DEV_0001  (drivers/aerogpu/protocol/aerogpu_pci.h)
-;     The legacy bring-up device model uses a different vendor ID (see
-;     drivers/aerogpu/protocol/aerogpu_protocol.h) and requires a custom INF.
+;   - The deprecated legacy device model is intentionally not matched by this INF.
+;     Use the legacy INFs under drivers/aerogpu/packaging/win7/legacy/ if needed.
 ;
 ; Expected package contents (same directory as this INF):
 ;   - aerogpu.sys                 (kernel-mode miniport)

@@ -18,7 +18,7 @@
  * - Fixed-width fields and packed layout.
  * - Versioned so we can extend without breaking older binaries.
  *
- * NOTE: This header intentionally does NOT include `aerogpu_protocol.h` (legacy
+ * NOTE: This header intentionally does NOT include `legacy/aerogpu_protocol_legacy.h` (legacy
  * bring-up ABI) because that header defines conflicting global enum constants
  * with the versioned protocol (`aerogpu_cmd.h`). Keep this file self-contained.
  */

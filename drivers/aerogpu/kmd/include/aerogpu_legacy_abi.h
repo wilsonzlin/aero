@@ -3,7 +3,7 @@
 /*
  * Minimal legacy AeroGPU ABI definitions required by the Win7 WDDM KMD.
  *
- * The legacy ABI was formerly defined by `drivers/aerogpu/protocol/aerogpu_protocol.h`,
+ * The legacy ABI was formerly defined by `drivers/aerogpu/protocol/legacy/aerogpu_protocol_legacy.h`,
  * but that header macro-conflicts with the versioned ABI headers
  * (`aerogpu_pci.h` + `aerogpu_ring.h`). This header intentionally contains only
  * the subset of constants/structs required to keep the legacy device working.
@@ -80,4 +80,3 @@ typedef struct aerogpu_legacy_submission_desc_allocation {
     uint32_t size_bytes;
     uint32_t reserved0;
 } aerogpu_legacy_submission_desc_allocation;
-

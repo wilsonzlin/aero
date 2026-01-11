@@ -11,6 +11,8 @@ drivers/aerogpu/kmd/
 ```
 
 ## Device ABI status (versioned vs legacy)
+ 
+The legacy bring-up device ABI is defined in `drivers/aerogpu/protocol/legacy/aerogpu_protocol_legacy.h`.
 
 The Win7 AeroGPU KMD supports two AeroGPU PCI/MMIO ABIs:
 
@@ -22,21 +24,21 @@ The Win7 AeroGPU KMD supports two AeroGPU PCI/MMIO ABIs:
   * PCI IDs: `VID=0xA3A0`, `DID=0x0001`
   * Emulator device model: `crates/emulator/src/devices/pci/aerogpu.rs`
 * **Legacy bring-up ABI (compatibility, "ARGP")**
-  * Historical reference: `drivers/aerogpu/protocol/aerogpu_protocol.h`
-  * The KMD does **not** include `aerogpu_protocol.h` directly; it uses a minimal internal shim:
+  * Historical reference: `drivers/aerogpu/protocol/legacy/aerogpu_protocol_legacy.h`
+  * The KMD does **not** include `aerogpu_protocol_legacy.h` directly; it uses a minimal internal shim:
     `include/aerogpu_legacy_abi.h`
   * PCI IDs: `VID=0x1AED`, `DID=0x0001`
   * Emulator device model: `crates/emulator/src/devices/pci/aerogpu_legacy.rs`
-  * This ABI is retained for compatibility during migration and is expected to be removed once Task 530 completes.
+* This ABI is retained for compatibility during migration and is expected to be removed once Task 530 completes.
 
 The Win7 packaging INFs (`drivers/aerogpu/packaging/win7/*.inf`) bind to the canonical, versioned device:
 
 * `PCI\\VEN_A3A0&DEV_0001` (versioned ABI)
 
-The legacy bring-up device ID (`PCI\\VEN_1AED&DEV_0001`) is still supported by the KMD for bring-up/compatibility, but requires:
+The legacy bring-up device is still supported by the KMD for bring-up/compatibility, but requires:
 
 * enabling the emulator legacy device model (`emulator` feature `aerogpu-legacy`), and
-* installing with a custom INF that matches `PCI\\VEN_1AED&DEV_0001`.
+* installing with the legacy INFs under `drivers/aerogpu/packaging/win7/legacy/`.
 
 During `DxgkDdiStartDevice`, the KMD reads BAR0 `AEROGPU_MMIO_REG_MAGIC`:
 
@@ -205,7 +207,7 @@ are defined in `drivers/aerogpu/protocol/aerogpu_dbgctl_escape.h`.
 
 - `AEROGPU_ESCAPE_OP_QUERY_DEVICE_V2` (see `drivers/aerogpu/protocol/aerogpu_dbgctl_escape.h`)
   - returns the detected device ABI (`detected_mmio_magic`), ABI version, and (for versioned devices) feature bits
-  - older tools may use the legacy `AEROGPU_ESCAPE_OP_QUERY_DEVICE` response (see `drivers/aerogpu/protocol/aerogpu_escape.h`; legacy ABI details in `drivers/aerogpu/protocol/aerogpu_protocol.h`)
+  - older tools may use the legacy `AEROGPU_ESCAPE_OP_QUERY_DEVICE` response (see `drivers/aerogpu/protocol/aerogpu_escape.h`; legacy ABI details in `drivers/aerogpu/protocol/legacy/aerogpu_protocol_legacy.h`)
 
 Additional debug/control escapes used by `drivers/aerogpu/tools/win7_dbgctl`:
 

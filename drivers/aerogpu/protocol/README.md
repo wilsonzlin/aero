@@ -8,11 +8,11 @@ This directory defines the **stable, versioned ABI contract** between:
 The contract is expressed as C/C++ headers suitable for **Windows 7-targeted WDK builds** (WDK10+ supported) and for host-side parsing.
 
 > Note: This directory contains both the **versioned ABI** (the canonical long-term contract) and a
-> **legacy bring-up ABI** (`aerogpu_protocol.h`). The legacy header is kept for reference and for the
-> emulator’s legacy AeroGPU device model (`crates/emulator/src/devices/pci/aerogpu_legacy.rs`, feature
-> `emulator/aerogpu-legacy`). The in-tree Win7 KMD does **not** include `aerogpu_protocol.h` directly
-> (it uses a minimal internal shim in `drivers/aerogpu/kmd/include/aerogpu_legacy_abi.h`), but it can
-> still speak the legacy transport for compatibility.
+> **legacy bring-up ABI** (`legacy/aerogpu_protocol_legacy.h`). The legacy header is kept for reference and
+> for the emulator’s legacy AeroGPU device model (`crates/emulator/src/devices/pci/aerogpu_legacy.rs`, feature
+> `emulator/aerogpu-legacy`). The in-tree Win7 KMD does **not** include the legacy header directly (it uses a
+> minimal internal shim in `drivers/aerogpu/kmd/include/aerogpu_legacy_abi.h`), but it can still speak the
+> legacy transport for compatibility.
 >
 > Current status: UMDs in this repo emit the versioned command stream (`aerogpu_cmd.h`). The Win7 KMD supports both the versioned and legacy submission transports and auto-detects which ABI is active based on the device MMIO magic; see `drivers/aerogpu/kmd/README.md`.
 
@@ -31,7 +31,7 @@ The contract is expressed as C/C++ headers suitable for **Windows 7-targeted WDK
 - `aerogpu_win7_abi.h` – driver-private WOW64-stable user↔kernel ABI blobs (no pointers; fixed layout across x86/x64).
 - `aerogpu_escape.h` – driver-private `DxgkDdiEscape` packet header + base ops (UMD/tool ↔ KMD control channel).
 - `aerogpu_dbgctl_escape.h` – driver-private `DxgkDdiEscape` packets used by bring-up tooling (`drivers/aerogpu/tools/win7_dbgctl`). (Layered on top of `aerogpu_escape.h`; ring dumps report canonical submit fields like `cmd_gpa`/`cmd_size_bytes`/`signal_fence`.)
-- `aerogpu_protocol.h` – **legacy bring-up ABI** (monolithic header; PCI `1AED:0001`). Deprecated/legacy-only; kept for reference and for the emulator legacy device model.
+- `legacy/aerogpu_protocol_legacy.h` – deprecated bring-up ABI kept for backwards compatibility.
 - `vblank.md` – vblank IRQ + timing registers required for Win7 DWM/D3D pacing.
 
 ## ABI variants and PCI IDs
@@ -41,19 +41,13 @@ This directory currently contains two PCI/MMIO ABIs:
 - **Versioned ABI (current)** – `aerogpu_pci.h` + `aerogpu_ring.h` + `aerogpu_cmd.h`, PCI `A3A0:0001` (`VEN_A3A0&DEV_0001`).
   - Uses the major/minor compatibility model below (major breaking, minor forwards compatible).
   - Emulator device model: `crates/emulator/src/devices/pci/aerogpu.rs`.
-- **Legacy bring-up ABI** – `aerogpu_protocol.h`, PCI `1AED:0001` (`VEN_1AED&DEV_0001`).
+- **Legacy bring-up ABI (deprecated)** – `legacy/aerogpu_protocol_legacy.h`.
   - Emulator device model: `crates/emulator/src/devices/pci/aerogpu_legacy.rs` (feature `emulator/aerogpu-legacy`).
 
 Both IDs are project-specific (not PCI-SIG assigned). Both identify as a VGA-compatible display controller (base class `0x03`, subclass `0x00`, prog-if `0x00`).
 
-The in-tree Win7 packaging INFs (`drivers/aerogpu/packaging/win7/*.inf`) bind to the versioned device by default:
-
-- `VEN_A3A0&DEV_0001` (versioned ABI)
-
-The legacy bring-up device ID (`VEN_1AED&DEV_0001`) is still supported by the KMD for bring-up/compatibility, but requires:
-
-- enabling the emulator legacy device model (feature `emulator/aerogpu-legacy`), and
-- a custom INF that matches `PCI\\VEN_1AED&DEV_0001` (the shipped INFs intentionally do **not** match the legacy device).
+The in-tree Win7 packaging INFs (`drivers/aerogpu/packaging/win7/*.inf`) bind to the versioned `VEN_A3A0&DEV_0001` device by default.
+If you are intentionally using the deprecated legacy device model/ABI, use the INFs under `drivers/aerogpu/packaging/win7/legacy/` instead (and enable the emulator legacy device model via feature `emulator/aerogpu-legacy`).
 
 For a quick overview of the canonical AeroGPU PCI IDs (new vs legacy) and which emulator device
 models implement each ABI, see: `docs/abi/aerogpu-pci-identity.md`.

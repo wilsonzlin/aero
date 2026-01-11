@@ -25,6 +25,27 @@ modern device IDs for net/blk:
 - `PCI\VEN_1AF4&DEV_1041` (virtio-net, `REV_01`)
 - `PCI\VEN_1AF4&DEV_1042` (virtio-blk, `REV_01`)
 
+Some devices include multiple IDs (for example `REV`/`SUBSYS`-qualified variants) so Guest Tools can
+recognize either enumeration.
+
+For Aero virtio devices, these IDs are expected to follow the repo's device contract (virtio-pci
+modern-only IDs plus PCI Revision ID `0x01`). Keep `devices.cmd` consistent with:
+
+- `docs/windows7-virtio-driver-contract.md` (behavioral contract)
+- `docs/windows-device-contract.json` (machine-readable manifest)
+
 `AERO_VIRTIO_BLK_SERVICE` MUST match the virtio-blk storage driver's INF `AddService` name, because `setup.cmd`
 uses it to mark the storage service as `BOOT_START` and to pre-seed `CriticalDeviceDatabase` entries.
 (For Aero in-tree drivers, this is `aerovblk` from `drivers/windows7/virtio/blk/aerovblk.inf`.)
+
+## AeroGPU PCI IDs
+
+The supported AeroGPU Windows driver stack binds to the canonical versioned ABI:
+
+- `PCI\VEN_A3A0&DEV_0001`
+
+The deprecated legacy bring-up ABI uses a different HWID and is intentionally not part of the
+default Guest Tools config. If you need legacy bring-up, use the legacy AeroGPU INFs under
+`drivers/aerogpu/packaging/win7/legacy/` and supply a custom `devices.cmd`.
+
+The older 1AE0-family vendor ID is deprecated/stale and should not be used.
