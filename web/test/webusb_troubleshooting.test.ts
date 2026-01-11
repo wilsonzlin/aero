@@ -168,6 +168,19 @@ test("explainWebUsbError: SecurityError mentions protected interface classes", (
   assert.ok(res.hints.some((hint) => hint.toLowerCase().includes("hid")));
 });
 
+test("explainWebUsbError: protected-class SecurityError omits driver binding hints", () => {
+  const res = withUserAgent("Node.js/25", () =>
+    explainWebUsbError({
+      name: "SecurityError",
+      message: "Access denied. Protected interface class.",
+    }),
+  );
+
+  assert.ok(res.hints.some((hint) => hint.toLowerCase().includes("protected")));
+  assert.ok(!res.hints.some((hint) => hint.includes("WinUSB")));
+  assert.ok(!res.hints.some((hint) => hint.toLowerCase().includes("udev")));
+});
+
 test("explainWebUsbError: includes secure-context hint when isSecureContext is false", () => {
   const prev = (globalThis as typeof globalThis & { isSecureContext?: unknown }).isSecureContext;
   (globalThis as typeof globalThis & { isSecureContext?: boolean }).isSecureContext = false;

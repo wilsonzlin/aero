@@ -217,11 +217,12 @@ export function explainWebUsbError(err: unknown): WebUsbErrorExplanation {
   ]);
 
   const driverOrPermissionsLikely =
-    mentionsClaimInterface ||
-    mentionsOpen ||
-    (mentionsPermissionDenied && includesAny(msgLower, ["claim", "interface", "open"])) ||
-    name === "NotReadableError" ||
-    name === "NetworkError";
+    !mentionsProtectedInterface &&
+    (mentionsClaimInterface ||
+      mentionsOpen ||
+      (mentionsPermissionDenied && includesAny(msgLower, ["claim", "open"])) ||
+      name === "NotReadableError" ||
+      name === "NetworkError");
 
   // --- Titles (short, user-facing) ---
   let title = "WebUSB operation failed";
