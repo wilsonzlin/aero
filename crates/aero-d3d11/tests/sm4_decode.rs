@@ -724,6 +724,47 @@ fn decodes_sample_via_structural_fallback() {
 }
 
 #[test]
+fn does_not_misclassify_scalar_resource_op_as_ld() {
+    const OPCODE_UNKNOWN_LD: u32 = 0x4b;
+
+    let mut body = Vec::<u32>::new();
+
+    // Unknown opcode with ld-like operand types but a scalar coordinate (common in `resinfo`).
+    let coord = imm32_scalar(0f32.to_bits());
+    let mut inst = vec![opcode_token(
+        OPCODE_UNKNOWN_LD,
+        (1 + 2 + coord.len() + 2) as u32,
+    )];
+    inst.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
+    inst.extend_from_slice(&coord);
+    inst.extend_from_slice(&reg_src(
+        OPERAND_TYPE_RESOURCE,
+        &[0],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    body.extend_from_slice(&inst);
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    let tokens = make_sm5_program_tokens(0, &body);
+    let program =
+        Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
+    let module = program.decode().expect("decode");
+
+    assert!(matches!(
+        module.instructions[0],
+        Sm4Inst::Unknown {
+            opcode: OPCODE_UNKNOWN_LD
+        }
+    ));
+    assert!(!module
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Sm4Inst::Ld { .. })));
+}
+
+#[test]
 fn decodes_ld_texture_load() {
     let mut body = Vec::<u32>::new();
 

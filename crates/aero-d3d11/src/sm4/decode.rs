@@ -510,6 +510,12 @@ fn try_decode_ld_like(
         Ok(v) => v,
         Err(_) => return Ok(None),
     };
+    // `ld` expects at least a 2D coordinate. Avoid misclassifying other
+    // instructions with a `dst, scalar, resource` operand pattern (e.g. resinfo)
+    // as texture loads.
+    if coord.swizzle.0.iter().all(|&c| c == coord.swizzle.0[0]) {
+        return Ok(None);
+    }
     let texture = match decode_texture_ref(&mut r) {
         Ok(v) => v,
         Err(_) => return Ok(None),
