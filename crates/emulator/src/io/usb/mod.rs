@@ -6,6 +6,7 @@ pub mod passthrough;
 pub mod uhci;
 
 pub use core::{UsbInResult, UsbOutResult};
+use crate::io::usb::hub::UsbTopologyError;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SetupPacket {
@@ -102,27 +103,6 @@ pub enum ControlResponse {
     Stall,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum UsbHubAttachError {
-    NotAHub,
-    InvalidPort,
-    PortOccupied,
-    NoDevice,
-}
-
-impl std::fmt::Display for UsbHubAttachError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            UsbHubAttachError::NotAHub => write!(f, "device is not a USB hub"),
-            UsbHubAttachError::InvalidPort => write!(f, "invalid hub port"),
-            UsbHubAttachError::PortOccupied => write!(f, "hub port is already occupied"),
-            UsbHubAttachError::NoDevice => write!(f, "no device attached to hub port"),
-        }
-    }
-}
-
-impl std::error::Error for UsbHubAttachError {}
-
 pub trait UsbDeviceModel {
     /// Returns the number of downstream ports if this device is a hub.
     fn hub_port_count(&self) -> Option<u8> {
@@ -135,40 +115,48 @@ pub trait UsbDeviceModel {
         &mut self,
         port: u8,
         model: Box<dyn UsbDeviceModel>,
-    ) -> Result<(), UsbHubAttachError> {
+    ) -> Result<(), UsbTopologyError> {
+        let port = port as usize;
         let Some(hub) = self.as_hub_mut() else {
-            return Err(UsbHubAttachError::NotAHub);
+            return Err(UsbTopologyError::NotAHub { depth: 0, port });
         };
 
-        let port = port
-            .checked_sub(1)
-            .ok_or(UsbHubAttachError::InvalidPort)? as usize;
-        if port >= hub.num_ports() {
-            return Err(UsbHubAttachError::InvalidPort);
+        let num_ports = hub.num_ports();
+        if port == 0 || port > num_ports {
+            return Err(UsbTopologyError::PortOutOfRange {
+                depth: 0,
+                port,
+                num_ports,
+            });
         }
-        if hub.downstream_device_mut(port).is_some() {
-            return Err(UsbHubAttachError::PortOccupied);
+        let idx = port - 1;
+        if hub.downstream_device_mut(idx).is_some() {
+            return Err(UsbTopologyError::PortOccupied { depth: 0, port });
         }
-        hub.attach_downstream(port, model);
+        hub.attach_downstream(idx, model);
         Ok(())
     }
 
     /// Detach any device model from the specified downstream port (1-based).
-    fn hub_detach_device(&mut self, port: u8) -> Result<(), UsbHubAttachError> {
+    fn hub_detach_device(&mut self, port: u8) -> Result<(), UsbTopologyError> {
+        let port = port as usize;
         let Some(hub) = self.as_hub_mut() else {
-            return Err(UsbHubAttachError::NotAHub);
+            return Err(UsbTopologyError::NotAHub { depth: 0, port });
         };
 
-        let port = port
-            .checked_sub(1)
-            .ok_or(UsbHubAttachError::InvalidPort)? as usize;
-        if port >= hub.num_ports() {
-            return Err(UsbHubAttachError::InvalidPort);
+        let num_ports = hub.num_ports();
+        if port == 0 || port > num_ports {
+            return Err(UsbTopologyError::PortOutOfRange {
+                depth: 0,
+                port,
+                num_ports,
+            });
         }
-        if hub.downstream_device_mut(port).is_none() {
-            return Err(UsbHubAttachError::NoDevice);
+        let idx = port - 1;
+        if hub.downstream_device_mut(idx).is_none() {
+            return Err(UsbTopologyError::NoDeviceAtPort { depth: 0, port });
         }
-        hub.detach_downstream(port);
+        hub.detach_downstream(idx);
         Ok(())
     }
 
@@ -181,19 +169,23 @@ pub trait UsbDeviceModel {
     fn hub_port_device_mut(
         &mut self,
         port: u8,
-    ) -> Result<&mut crate::io::usb::core::AttachedUsbDevice, UsbHubAttachError> {
+    ) -> Result<&mut crate::io::usb::core::AttachedUsbDevice, UsbTopologyError> {
+        let port = port as usize;
         let Some(hub) = self.as_hub_mut() else {
-            return Err(UsbHubAttachError::NotAHub);
+            return Err(UsbTopologyError::NotAHub { depth: 0, port });
         };
 
-        let port = port
-            .checked_sub(1)
-            .ok_or(UsbHubAttachError::InvalidPort)? as usize;
-        if port >= hub.num_ports() {
-            return Err(UsbHubAttachError::InvalidPort);
+        let num_ports = hub.num_ports();
+        if port == 0 || port > num_ports {
+            return Err(UsbTopologyError::PortOutOfRange {
+                depth: 0,
+                port,
+                num_ports,
+            });
         }
-        hub.downstream_device_mut(port)
-            .ok_or(UsbHubAttachError::NoDevice)
+        let idx = port - 1;
+        hub.downstream_device_mut(idx)
+            .ok_or(UsbTopologyError::NoDeviceAtPort { depth: 0, port })
     }
 
     /// Resets device state due to a USB bus reset (e.g. PORTSC reset).

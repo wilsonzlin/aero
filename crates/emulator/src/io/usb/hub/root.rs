@@ -1,5 +1,7 @@
 use crate::io::usb::core::AttachedUsbDevice;
-use crate::io::usb::{UsbDeviceModel, UsbHubAttachError};
+use crate::io::usb::UsbDeviceModel;
+
+use super::UsbTopologyError;
 
 struct Port {
     device: Option<AttachedUsbDevice>,
@@ -165,22 +167,39 @@ impl RootHub {
         }
     }
 
+    /// Attach a new USB device model at `path`.
+    ///
+    /// `path` is a list of port numbers describing a walk from the UHCI root hub to a downstream
+    /// hub port:
+    ///
+    /// - `path[0]` is the *root hub* port index (0-based).
+    /// - `path[1..]` are *downstream hub* port numbers (1-based, as in USB descriptors).
+    ///
+    /// The final element selects the port to attach to; all preceding hops must already have a
+    /// device attached and must be USB hubs.
     pub fn attach_at_path(
         &mut self,
         path: &[u8],
         model: Box<dyn UsbDeviceModel>,
-    ) -> Result<(), UsbHubAttachError> {
+    ) -> Result<(), UsbTopologyError> {
         let Some((&root_port, rest)) = path.split_first() else {
-            return Err(UsbHubAttachError::InvalidPort);
+            return Err(UsbTopologyError::EmptyPath);
         };
         let Some(p) = self.ports.get_mut(root_port as usize) else {
-            return Err(UsbHubAttachError::InvalidPort);
+            return Err(UsbTopologyError::PortOutOfRange {
+                depth: 0,
+                port: root_port as usize,
+                num_ports: self.ports.len(),
+            });
         };
 
         // If only a root port is provided, attach directly to the root hub.
         if rest.is_empty() {
             if p.device.is_some() {
-                return Err(UsbHubAttachError::PortOccupied);
+                return Err(UsbTopologyError::PortOccupied {
+                    depth: 0,
+                    port: root_port as usize,
+                });
             }
             p.device = Some(AttachedUsbDevice::new(model));
             p.connected = true;
@@ -189,29 +208,50 @@ impl RootHub {
         }
 
         let Some(root_dev) = p.device.as_mut() else {
-            return Err(UsbHubAttachError::NoDevice);
+            return Err(UsbTopologyError::NoDeviceAtPort {
+                depth: 0,
+                port: root_port as usize,
+            });
         };
 
         let (&leaf_port, hub_path) = rest.split_last().expect("rest is non-empty");
         let mut hub_dev = root_dev;
-        for &hop in hub_path {
-            hub_dev = hub_dev.model_mut().hub_port_device_mut(hop)?;
+        for (depth, &hop) in hub_path.iter().enumerate() {
+            let depth = depth + 1;
+            hub_dev = hub_dev
+                .model_mut()
+                .hub_port_device_mut(hop)
+                .map_err(|e| e.with_depth(depth))?;
         }
-        hub_dev.model_mut().hub_attach_device(leaf_port, model)
+        let leaf_depth = path.len() - 1;
+        hub_dev
+            .model_mut()
+            .hub_attach_device(leaf_port, model)
+            .map_err(|e| e.with_depth(leaf_depth))
     }
 
-    pub fn detach_at_path(&mut self, path: &[u8]) -> Result<(), UsbHubAttachError> {
+    /// Detach any USB device model at `path`.
+    ///
+    /// Path semantics match [`RootHub::attach_at_path`].
+    pub fn detach_at_path(&mut self, path: &[u8]) -> Result<(), UsbTopologyError> {
         let Some((&root_port, rest)) = path.split_first() else {
-            return Err(UsbHubAttachError::InvalidPort);
+            return Err(UsbTopologyError::EmptyPath);
         };
         let Some(p) = self.ports.get_mut(root_port as usize) else {
-            return Err(UsbHubAttachError::InvalidPort);
+            return Err(UsbTopologyError::PortOutOfRange {
+                depth: 0,
+                port: root_port as usize,
+                num_ports: self.ports.len(),
+            });
         };
 
         // If only a root port is provided, detach directly from the root hub.
         if rest.is_empty() {
             if p.device.is_none() {
-                return Err(UsbHubAttachError::NoDevice);
+                return Err(UsbTopologyError::NoDeviceAtPort {
+                    depth: 0,
+                    port: root_port as usize,
+                });
             }
             p.device = None;
             if p.connected {
@@ -226,15 +266,26 @@ impl RootHub {
         }
 
         let Some(root_dev) = p.device.as_mut() else {
-            return Err(UsbHubAttachError::NoDevice);
+            return Err(UsbTopologyError::NoDeviceAtPort {
+                depth: 0,
+                port: root_port as usize,
+            });
         };
 
         let (&leaf_port, hub_path) = rest.split_last().expect("rest is non-empty");
         let mut hub_dev = root_dev;
-        for &hop in hub_path {
-            hub_dev = hub_dev.model_mut().hub_port_device_mut(hop)?;
+        for (depth, &hop) in hub_path.iter().enumerate() {
+            let depth = depth + 1;
+            hub_dev = hub_dev
+                .model_mut()
+                .hub_port_device_mut(hop)
+                .map_err(|e| e.with_depth(depth))?;
         }
-        hub_dev.model_mut().hub_detach_device(leaf_port)
+        let leaf_depth = path.len() - 1;
+        hub_dev
+            .model_mut()
+            .hub_detach_device(leaf_port)
+            .map_err(|e| e.with_depth(leaf_depth))
     }
 
     pub fn read_portsc(&self, port: usize) -> u16 {

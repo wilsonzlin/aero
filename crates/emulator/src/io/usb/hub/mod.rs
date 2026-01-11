@@ -1,5 +1,6 @@
 use crate::io::usb::core::AttachedUsbDevice;
 use crate::io::usb::UsbDeviceModel;
+use thiserror::Error;
 
 mod root;
 mod device;
@@ -41,22 +42,46 @@ pub trait UsbHub {
     fn num_ports(&self) -> usize;
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Errors produced when configuring or traversing the USB hub topology.
+///
+/// For path-based APIs (e.g. [`RootHub::attach_at_path`]), `depth` refers to the index within the
+/// provided path slice where the failure occurred.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum UsbTopologyError {
+    #[error("USB topology path is empty")]
     EmptyPath,
+    #[error("invalid port {port} at depth {depth} (hub has {num_ports} ports)")]
     PortOutOfRange {
         depth: usize,
         port: usize,
         num_ports: usize,
     },
-    NoDeviceAtPort {
-        depth: usize,
-        port: usize,
-    },
-    NotAHub {
-        depth: usize,
-        port: usize,
-    },
+    #[error("port {port} at depth {depth} is already occupied")]
+    PortOccupied { depth: usize, port: usize },
+    #[error("no device attached at port {port} (depth {depth})")]
+    NoDeviceAtPort { depth: usize, port: usize },
+    #[error("cannot traverse port {port} at depth {depth}: device is not a USB hub")]
+    NotAHub { depth: usize, port: usize },
+}
+
+impl UsbTopologyError {
+    fn with_depth(self, depth: usize) -> Self {
+        match self {
+            UsbTopologyError::EmptyPath => UsbTopologyError::EmptyPath,
+            UsbTopologyError::PortOutOfRange {
+                port,
+                num_ports,
+                ..
+            } => UsbTopologyError::PortOutOfRange {
+                depth,
+                port,
+                num_ports,
+            },
+            UsbTopologyError::PortOccupied { port, .. } => UsbTopologyError::PortOccupied { depth, port },
+            UsbTopologyError::NoDeviceAtPort { port, .. } => UsbTopologyError::NoDeviceAtPort { depth, port },
+            UsbTopologyError::NotAHub { port, .. } => UsbTopologyError::NotAHub { depth, port },
+        }
+    }
 }
 
 #[cfg(test)]
