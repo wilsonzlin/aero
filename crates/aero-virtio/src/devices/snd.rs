@@ -105,7 +105,12 @@ pub struct VirtioSnd<O: AudioSink, I: AudioCaptureSource = NullCaptureSource> {
     playback: PcmStream,
     capture: PcmStream,
     capture_telemetry: CaptureTelemetry,
+    /// Host/output sample rate for the playback/TX path (guest 48kHz -> host/output rate).
     host_sample_rate_hz: u32,
+    /// Host/input sample rate for the capture/RX path (host/input rate -> guest 48kHz).
+    ///
+    /// Defaults to `host_sample_rate_hz`, but may be overridden if the microphone capture graph
+    /// runs at a different sample rate than the output `AudioContext`.
     capture_sample_rate_hz: u32,
     /// Resampler for the playback/TX path (guest 48kHz -> host/output rate).
     resampler: LinearResampler,

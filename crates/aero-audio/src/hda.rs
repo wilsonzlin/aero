@@ -826,7 +826,13 @@ pub struct HdaController {
     pub audio_out: AudioRingBuffer,
 
     irq_pending: bool,
+    /// Host/output sample rate used when producing audio into the output sink.
     output_rate_hz: u32,
+    /// Host/input sample rate used when consuming microphone samples for the capture stream.
+    ///
+    /// Defaults to `output_rate_hz`, but may be overridden if microphone capture uses a separate
+    /// `AudioContext` (and therefore potentially a different `AudioContext.sampleRate`) than the
+    /// output AudioWorklet graph.
     capture_sample_rate_hz: u32,
 }
 
