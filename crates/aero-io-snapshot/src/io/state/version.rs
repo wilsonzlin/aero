@@ -433,7 +433,10 @@ pub mod codec {
 
         pub fn vec_bytes(&mut self) -> SnapshotResult<Vec<Vec<u8>>> {
             let count = self.u32()? as usize;
-            let mut out = Vec::with_capacity(count);
+            // `count` is untrusted (loaded from snapshot bytes). Avoid pre-allocating based on it
+            // so corrupted snapshots cannot trigger pathological allocations before we validate
+            // the declared element lengths.
+            let mut out = Vec::new();
             for _ in 0..count {
                 let len = self.u32()? as usize;
                 out.push(self.take(len)?.to_vec());
