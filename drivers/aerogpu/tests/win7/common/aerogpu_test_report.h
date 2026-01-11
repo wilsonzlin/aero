@@ -316,6 +316,9 @@ class TestReporter {
   TestReporter(const char* test_name, int argc, char** argv)
       : enabled_(false), finalized_(false) {
     report_.test_name = test_name ? test_name : "";
+    // Avoid leaking a stale failure message from a previous run (or from earlier
+    // validation inside this test before the reporter is constructed).
+    ClearLastFailureMessage();
 
     // Parse `--json[=PATH]` without the ambiguity of `--json PATH` consuming
     // the next flag (e.g. `--json --dump`). We only consume the next argv as a
@@ -439,6 +442,12 @@ class TestReporter {
     // status, but ensure the report is still emitted.
     if (!finalized_ && report_.status.empty()) {
       report_.status = "FAIL";
+    }
+    if (!finalized_ && report_.failure.empty()) {
+      const std::string& last_failure = GetLastFailureMessage();
+      if (!last_failure.empty()) {
+        report_.failure = last_failure;
+      }
     }
 
     std::string json = BuildTestReportJson(report_);

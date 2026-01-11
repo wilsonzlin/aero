@@ -23,6 +23,10 @@
 
 namespace aerogpu_test {
 
+#ifndef va_copy
+#define va_copy(dest, src) ((dest) = (src))
+#endif
+
 #ifndef ARRAYSIZE
 #define ARRAYSIZE(a) (sizeof(a) / sizeof((a)[0]))
 #endif
@@ -282,10 +286,61 @@ static inline void PrintfStdout(const char* fmt, ...) {
   printf("\n");
 }
 
+// Best-effort "last failure" capture for JSON reporting.
+//
+// Many Win7 validation tests still use `aerogpu_test::Fail()` directly (instead of
+// calling `aerogpu_test::TestReporter::Fail()`), which historically resulted in
+// JSON reports with `"failure": null`. To keep those tests debuggable in
+// automation, `Fail()` stores the formatted message here; `TestReporter` can
+// then pick it up when the test returns without explicitly finalizing the
+// reporter.
+static inline std::string& LastFailureMessageStorage() {
+  static std::string s;
+  return s;
+}
+
+static inline void ClearLastFailureMessage() {
+  LastFailureMessageStorage().clear();
+}
+
+static inline const std::string& GetLastFailureMessage() {
+  return LastFailureMessageStorage();
+}
+
 static inline int Fail(const char* test_name, const char* fmt, ...) {
   printf("FAIL: %s: ", test_name);
   va_list ap;
   va_start(ap, fmt);
+  // Capture the message for any active JSON reporter in this translation unit.
+  char stack_buf[512];
+  std::string msg;
+  va_list ap_copy;
+  va_copy(ap_copy, ap);
+  int n = _vsnprintf(stack_buf, sizeof(stack_buf), fmt, ap_copy);
+  va_end(ap_copy);
+  if (n >= 0 && n < (int)sizeof(stack_buf)) {
+    msg.assign(stack_buf, stack_buf + n);
+  } else {
+    size_t cap = 1024;
+    for (int i = 0; i < 8; ++i) {
+      std::vector<char> buf(cap);
+      va_copy(ap_copy, ap);
+      n = _vsnprintf(&buf[0], buf.size(), fmt, ap_copy);
+      va_end(ap_copy);
+      if (n >= 0 && (size_t)n < buf.size()) {
+        msg.assign(&buf[0], &buf[0] + n);
+        break;
+      }
+      cap *= 2;
+      if (cap > 128 * 1024) {
+        break;
+      }
+    }
+    if (msg.empty()) {
+      msg = "<formatting failed>";
+    }
+  }
+  LastFailureMessageStorage() = msg;
   vprintf(fmt, ap);
   va_end(ap);
   printf("\n");
