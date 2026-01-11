@@ -1,3 +1,10 @@
+// Canonical WebUSB passthrough wire contract types.
+//
+// Keep in sync with:
+// - Rust types: `crates/aero-usb/src/passthrough.rs`
+// - Cross-language fixture: `docs/fixtures/webusb_passthrough_wire.json`
+// - Stack selection ADR: `docs/adr/0015-canonical-usb-stack.md`
+
 export interface SetupPacket {
   bmRequestType: number;
   bRequest: number;
