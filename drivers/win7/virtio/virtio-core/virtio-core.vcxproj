@@ -65,6 +65,8 @@
     <None Include="include\virtio_spec.h" />
     <None Include="portable\virtio_pci_cap_parser.c" />
     <None Include="portable\virtio_pci_cap_parser.h" />
+    <None Include="portable\virtio_pci_aero_layout.c" />
+    <None Include="portable\virtio_pci_aero_layout.h" />
     <None Include="src\virtio_pci_caps.c" />
     <None Include="src\virtio_pci_modern.c" />
   </ItemGroup>

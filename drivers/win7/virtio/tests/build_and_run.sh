@@ -11,6 +11,7 @@ CC_BIN="${CC:-cc}"
   -I"${SCRIPT_DIR}/../virtio-core/portable" \
   -o "${OUT_DIR}/virtio_pci_cap_parser_test" \
   "${SCRIPT_DIR}/virtio_pci_cap_parser_test.c" \
-  "${SCRIPT_DIR}/../virtio-core/portable/virtio_pci_cap_parser.c"
+  "${SCRIPT_DIR}/../virtio-core/portable/virtio_pci_cap_parser.c" \
+  "${SCRIPT_DIR}/../virtio-core/portable/virtio_pci_aero_layout.c"
 
 "${OUT_DIR}/virtio_pci_cap_parser_test"

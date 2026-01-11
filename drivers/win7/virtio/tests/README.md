@@ -11,6 +11,11 @@ portable Virtio 1.0+ "modern" capability parser:
 - discovers the required modern capabilities (common/notify/isr/device)
 - reports deterministic error codes for malformed inputs
 
+They also validate the optional **Aero contract** layout enforcement helper:
+
+- permissive mode accepts arbitrary valid modern layouts (e.g. QEMU-style)
+- strict mode requires the Aero-fixed BAR0 + capability placement
+
 ## Run
 
 From the repo root:
@@ -28,3 +33,4 @@ CC=clang ./drivers/win7/virtio/tests/build_and_run.sh
 ## Related code
 
 - Parser: `drivers/win7/virtio/virtio-core/portable/virtio_pci_cap_parser.{h,c}`
+- Aero layout validation: `drivers/win7/virtio/virtio-core/portable/virtio_pci_aero_layout.{h,c}`

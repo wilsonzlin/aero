@@ -1,5 +1,9 @@
 #include "../include/virtio_pci_modern.h"
 
+#if VIRTIO_CORE_ENFORCE_AERO_MMIO_LAYOUT
+#include "../portable/virtio_pci_aero_layout.h"
+#endif
+
 #ifndef PCI_WHICHSPACE_CONFIG
 #define PCI_WHICHSPACE_CONFIG 0
 #endif
@@ -192,6 +196,58 @@ VirtioPciModernValidateCapInBar(
 
     return STATUS_SUCCESS;
 }
+
+#if VIRTIO_CORE_ENFORCE_AERO_MMIO_LAYOUT
+static NTSTATUS
+VirtioPciModernValidateAeroMmioLayout(_In_ const VIRTIO_PCI_MODERN_DEVICE *Dev)
+{
+    virtio_pci_parsed_caps_t portableCaps;
+    virtio_pci_bar_info_t portableBars[VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT];
+    virtio_pci_aero_layout_validate_result_t res;
+    ULONG i;
+
+    RtlZeroMemory(&portableCaps, sizeof(portableCaps));
+    RtlZeroMemory(portableBars, sizeof(portableBars));
+
+    portableCaps.common_cfg.bar = Dev->Caps.CommonCfg.Bar;
+    portableCaps.common_cfg.offset = Dev->Caps.CommonCfg.Offset;
+    portableCaps.common_cfg.length = Dev->Caps.CommonCfg.Length;
+
+    portableCaps.notify_cfg.bar = Dev->Caps.NotifyCfg.Bar;
+    portableCaps.notify_cfg.offset = Dev->Caps.NotifyCfg.Offset;
+    portableCaps.notify_cfg.length = Dev->Caps.NotifyCfg.Length;
+
+    portableCaps.isr_cfg.bar = Dev->Caps.IsrCfg.Bar;
+    portableCaps.isr_cfg.offset = Dev->Caps.IsrCfg.Offset;
+    portableCaps.isr_cfg.length = Dev->Caps.IsrCfg.Length;
+
+    portableCaps.device_cfg.bar = Dev->Caps.DeviceCfg.Bar;
+    portableCaps.device_cfg.offset = Dev->Caps.DeviceCfg.Offset;
+    portableCaps.device_cfg.length = Dev->Caps.DeviceCfg.Length;
+
+    portableCaps.notify_off_multiplier = Dev->Caps.NotifyOffMultiplier;
+
+    for (i = 0; i < VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT; i++) {
+        /*
+         * Treat a BAR as "present" only after we have matched it to a CM
+         * resource and mapped it (length/VA are known).
+         */
+        portableBars[i].present = (Dev->Bars[i].Length != 0 && Dev->Bars[i].Va != NULL) ? 1 : 0;
+        portableBars[i].is_memory = Dev->Bars[i].IsMemory ? 1 : 0;
+        portableBars[i].length = (uint64_t)Dev->Bars[i].Length;
+    }
+
+    res = virtio_pci_validate_aero_pci_layout(&portableCaps, portableBars, VIRTIO_PCI_LAYOUT_POLICY_AERO_STRICT);
+    if (res != VIRTIO_PCI_AERO_LAYOUT_VALIDATE_OK) {
+        VIRTIO_CORE_PRINT("Aero virtio-pci layout validation failed: %s (%d)\n",
+                          virtio_pci_aero_layout_validate_result_str(res),
+                          (int)res);
+        return STATUS_DEVICE_CONFIGURATION_ERROR;
+    }
+
+    return STATUS_SUCCESS;
+}
+#endif
 
 static PCSTR
 VirtioPciCfgTypeToString(_In_ UCHAR CfgType)
@@ -579,6 +635,14 @@ VirtioPciModernMapBars(
         VirtioPciModernUnmapBars(Dev);
         return status;
     }
+
+#if VIRTIO_CORE_ENFORCE_AERO_MMIO_LAYOUT
+    status = VirtioPciModernValidateAeroMmioLayout(Dev);
+    if (!NT_SUCCESS(status)) {
+        VirtioPciModernUnmapBars(Dev);
+        return status;
+    }
+#endif
 
     /*
      * Validate every discovered virtio vendor capability against the

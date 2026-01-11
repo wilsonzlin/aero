@@ -132,6 +132,24 @@ All capabilities reference **BAR0** with the following offsets/lengths:
 - Reads from undefined MMIO offsets within BAR0 MUST return all-zeros for the requested width.
 - Writes to undefined MMIO offsets within BAR0 MUST be ignored.
 
+#### 1.4.2 Driver validation policy (permissive vs strict)
+
+The Windows 7 virtio transport code in this repo supports **two** layout validation modes:
+
+- **Permissive (default):** accept any valid virtio-pci modern capability placement (for example, QEMU’s multi-BAR layout), as long as the required capabilities are present and well-formed.
+- **Strict (contract conformance):** enforce the fixed BAR0 layout in §1.4 and fail device initialization early if the layout does not match:
+  - BAR0 is MMIO and `len >= 0x4000`
+  - COMMON/NOTIFY/ISR/DEVICE all have `bar = 0` and the contract offsets (with the contract lengths as minimums)
+  - `notify_off_multiplier == 4`
+
+To enable **strict** mode in the shared transport library (`virtio-core`), build the driver(s) with:
+
+```
+VIRTIO_CORE_ENFORCE_AERO_MMIO_LAYOUT=1
+```
+
+This switch is intended for emulator/device-model conformance testing; the default permissive mode keeps QEMU usable as a compatibility test target.
+
 ### 1.5 Common configuration (`virtio_pci_common_cfg`)
 
 The common configuration region is a MMIO mapping of `struct virtio_pci_common_cfg` (little-endian). For the canonical packed C layout, see `drivers/win7/virtio/virtio-core/include/virtio_pci_modern.h`.
