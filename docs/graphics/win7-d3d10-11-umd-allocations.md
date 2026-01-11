@@ -1,4 +1,4 @@
-# Win7 (WDDM 1.1) D3D10/D3D11 UMD allocation contract (Win7-era WDK reference)
+# Win7 (WDDM 1.1) D3D10/D3D11 UMD allocation contract (WDK 7.1 / Win7-era WDK reference)
 
 This document is the **single authoritative, implementation-oriented spec** for how a **Windows 7** (**WDDM 1.1**) **D3D10/D3D11 user-mode display driver (UMD)** allocates and frees memory through the Win7-era D3D UMD contracts.
 
@@ -9,7 +9,7 @@ This document is the **single authoritative, implementation-oriented spec** for 
 >
 > This doc focuses on (1) for `CreateResource`, but also lists (2) because the callback names (`AllocateCb`/`DeallocateCb`) are otherwise confusing.
 
-It is written against Win7-era user-mode DDI headers:
+It is written against Win7-era user-mode DDI headers (the canonical set is WDK 7.1 / WinDDK 7600.16385.1, but newer Windows Kits often ship compatible headers with extra fields):
 
 * `d3d10umddi.h`
 * `d3d11umddi.h`
@@ -139,7 +139,7 @@ UMD CreateResource
   |
   |    Runtime returns:
   |      - alloc.hKMResource
-  |      - pAllocationInfo[i].hAllocation for each allocation
+  |      - pAllocationInfo[i].hKMAllocation / hAllocation for each allocation (name is header-dependent)
   |
   v
 dxgkrnl / VidMm
@@ -160,7 +160,7 @@ Return to runtime
 The only “real” outputs from `pfnAllocateCb` that the UMD must preserve are:
 
 * `D3DDDICB_ALLOCATE::hKMResource` (resource-level kernel handle)
-* `D3DDDI_ALLOCATIONINFO::hAllocation` for every allocation entry
+* `D3DDDI_ALLOCATIONINFO::{hKMAllocation|hAllocation}` for every allocation entry (name is header-dependent)
 * (if creating a shared resource) `D3DDDICB_ALLOCATE::hSection`
 
 Everything else is driver-owned bookkeeping.
@@ -181,7 +181,7 @@ The D3D10/D3D11 runtime expects the UMD to create and destroy WDDM allocations f
 These calls use:
 
 * `D3DDDICB_ALLOCATE` with `NumAllocations` + `pAllocationInfo` (array of `D3DDDI_ALLOCATIONINFO`)
-* `D3DDDICB_DEALLOCATE` with `NumAllocations` + `phAllocations` (array of `D3DKMT_HANDLE`)
+* `D3DDDICB_DEALLOCATE` with `NumAllocations` + `HandleList` / `phAllocations` (array of `D3DKMT_HANDLE`; name is header-dependent)
 
 ### 3.2 DMA buffer (command buffer) allocation callbacks: `pfnAllocateCb` / `pfnDeallocateCb`
 
@@ -225,7 +225,9 @@ Notes:
 
 ## 4) Allocation data structures (field lists)
 
-> Naming: fields below are **verbatim Win7-era header identifiers**; descriptions are the meaning in the UMD allocation contract.
+> Naming: Win7-capable header sets are not perfectly uniform (WDK 7.1 vs later Windows Kits often add fields or rename members).
+> This doc uses **WDK 7.1-style spellings where possible**, and calls out common **header-dependent** member names explicitly.
+> If in doubt, build and run `drivers/aerogpu/tools/win7_wdk_probe` against *your* headers and follow the identifiers it reports.
 
 ### 4.1 `D3DDDICB_ALLOCATE` (from `d3dumddi.h`)
 
@@ -247,7 +249,7 @@ On Win7/WDDM 1.1 it is used in two distinct places:
 * `D3DDDI_ALLOCATIONINFO* pAllocationInfo`
   * Array of per-allocation descriptors:
     * UMD fills `Size`/`Alignment`/`Flags`/`pPrivateDriverData`…
-    * runtime returns `hAllocation` in each entry.
+    * runtime returns `hKMAllocation` (sometimes named `hAllocation`) in each entry.
 * `VOID* pPrivateDriverData`
   * Optional resource-level private data blob for KMD (rare in minimal designs; most metadata is per-allocation).
 * `UINT PrivateDriverDataSize`
@@ -255,12 +257,26 @@ On Win7/WDDM 1.1 it is used in two distinct places:
 * `HANDLE hSection`
   * **Out (shared resources):** section handle for cross-process sharing (`IDXGIResource::GetSharedHandle`).
 * `D3DDDICB_ALLOCATEFLAGS Flags`
-  * Resource-level allocation flags (notably `Primary` for DXGI primaries/backbuffers).
+  * Resource-level allocation flags (header-dependent bitfield).
+  * For Win7 `CreateResource` allocation calls you will commonly set:
+    * `CreateResource = 1` (indicates this is a resource-backing allocation, not a DMA buffer allocation)
+    * `CreateShared = 1` for shared resources
+    * `Primary = 1` for DXGI primaries/backbuffers
 
-#### `D3DDDICB_ALLOCATEFLAGS` (swapchain/backbuffer-relevant bits)
+* `ResourceFlags`
+  * Resource classification flags (header-dependent bitfield).
+  * Common bits:
+    * `RenderTarget = 1` for RTV-capable resources
+    * `ZBuffer = 1` for depth/stencil resources
 
-For Win7 swapchains, the critical bit is:
+#### `D3DDDICB_ALLOCATEFLAGS` (common bits used by AeroGPU)
 
+The Win7 bring-up set of bits you should expect to touch:
+
+* `CreateResource`
+  * Set for **resource backing** allocations (the `CreateResource` path).
+* `CreateShared`
+  * Set when creating a **shared** resource (DXGI shared handles).
 * `Primary`
   * Set for scanout-capable allocations (DXGI swapchain backbuffers / primaries).
 
@@ -294,8 +310,8 @@ For Win7 swapchains, the critical bit is:
 * `D3DDDI_HRESOURCE hResource`
 * `D3DDDI_HKMRESOURCE hKMResource`
 * `UINT NumAllocations`
-* `const D3DKMT_HANDLE* phAllocations`
-  * Array of allocation handles (`hAllocation`) to free.
+* `const D3DKMT_HANDLE* HandleList` / `phAllocations`
+  * Array of allocation handles (`hKMAllocation` / `hAllocation`) to free (member name is header-dependent).
 
 #### 4.2.2 DMA buffer release fields (submission path)
 
@@ -314,18 +330,22 @@ This is the per-allocation descriptor used for **resource backing allocations**.
 
 The D3D10/11 DDIs reuse this layout via the `D3D10DDI_ALLOCATIONINFO` / `D3D11DDI_ALLOCATIONINFO` typedefs, and `D3DDDICB_ALLOCATE::pAllocationInfo` points at an array of this type.
 
-Fields:
+Fields (subset relevant to the UMD allocation contract; see `win7_wdk_probe` for the full header layout):
 
-* `D3DKMT_HANDLE hAllocation`
-  * **Out**: kernel allocation handle for this allocation entry.
-* `UINT64 Size`
+* `D3DKMT_HANDLE hKMAllocation` / `hAllocation`
+  * **Out**: kernel allocation handle for this allocation entry (member name is header-dependent).
+* `SIZE_T Size`
   * **In**: allocation size in bytes.
-* `UINT64 Alignment`
+* `SIZE_T Alignment`
   * **In**: required alignment (0 = default).
 * `D3DDDI_ALLOCATIONINFOFLAGS Flags`
-  * Per-allocation flags (CPU visibility, primary, etc).
+  * Per-allocation flags (notably `CpuVisible`, and sometimes `Primary`).
+* `SupportedReadSegmentSet`
+  * **In**: bitmask of memory segments this allocation may be placed into for CPU reads.
+* `SupportedWriteSegmentSet`
+  * **In**: bitmask of memory segments this allocation may be placed into for CPU writes.
 * `VOID* pPrivateDriverData`
-  * Optional per-allocation private data blob for KMD.
+  * Optional per-allocation private data blob for KMD (copied by the runtime during `pfnAllocateCb`).
 * `UINT PrivateDriverDataSize`
   * Size of `pPrivateDriverData` in bytes.
 
@@ -338,8 +358,8 @@ The Win7 bring-up set of flags you should expect to set in practice:
 * `CpuVisible`
   * Must be set for staging allocations that are CPU-mapped via `pfnLockCb`/`pfnUnlockCb`.
   * AeroGPU MVP often sets this for *all* allocations because it uses the single CPU-visible system segment.
-* `RenderTarget`
-  * Set for RTV-capable allocations (swapchain buffers, render targets).
+> Note: “RenderTarget vs ZBuffer” classification is commonly expressed via `D3DDDICB_ALLOCATE::ResourceFlags`
+> (e.g. `ResourceFlags.RenderTarget`, `ResourceFlags.ZBuffer`) rather than per-allocation flags.
 
 > `D3DDDI_ALLOCATIONINFOFLAGS` contains more bits (overlay, shared, etc). Keep your initial implementation conservative: set only what you understand and what your KMD uses.
 
@@ -350,11 +370,11 @@ In the Win7-era D3D10/11 UMD DDI, the DDIs reuse the `d3dumddi.h` allocation inf
 * `D3D10DDI_ALLOCATIONINFO`
 * `D3D11DDI_ALLOCATIONINFO`
 
-Conceptually, **they are the same structure as** `D3DDDI_ALLOCATIONINFO` (the D3D10/11 headers typedef/alias this for API namespacing).
+Conceptually, **they are the same structure as** `D3DDDI_ALLOCATIONINFO` (the D3D10/11 headers typically typedef/alias this for API namespacing), but member spellings may differ (notably `hKMAllocation` vs `hAllocation`) and newer WDKs may add extra fields.
 
 Practical implication:
 
-* The allocation info array you fill for `CreateResource` can be passed directly to `D3DDDICB_ALLOCATE::pAllocationInfo` when calling `pfnAllocateCb`, and the runtime returns `hAllocation` handles in the same array.
+* The allocation info array you fill for `CreateResource` can be passed directly to `D3DDDICB_ALLOCATE::pAllocationInfo` when calling `pfnAllocateCb`, and the runtime returns allocation handles in the same array (`hKMAllocation` / `hAllocation`, depending on headers).
 
 ---
 
@@ -416,14 +436,16 @@ When the resource is a DXGI swapchain backbuffer / primary, the DDI exposes this
 * `pPrimaryDesc != NULL` → treat this resource as a **primary/backbuffer** allocation.
 * Allocate with both:
   * `D3DDDICB_ALLOCATEFLAGS.Primary = 1` (resource-level)
-  * `D3DDDI_ALLOCATIONINFOFLAGS::Primary = 1` (per-allocation)
+  * `D3DDDI_ALLOCATIONINFOFLAGS::Primary = 1` (per-allocation, if your header exposes it)
+* And (for all swapchain backbuffers) treat the resource as an RTV-capable surface:
+  * `D3DDDICB_ALLOCATE::ResourceFlags.RenderTarget = 1` (header-dependent bitfield)
 
 ### 5.4 D3D10 parity (`D3D10DDIARG_CREATERESOURCE`)
 
 The D3D10 DDI uses `D3D10DDIARG_CREATERESOURCE` (from `d3d10umddi.h`) and the same *WDDM resource allocation model* as D3D11 on Win7:
 
 * the runtime asks the UMD to fill an allocation-info array (`D3D10DDI_ALLOCATIONINFO* pAllocationInfo`), and
-* the UMD calls `pfnAllocateCb` with `D3DDDICB_ALLOCATE` to create the allocation(s) and receive `hAllocation` handles.
+* the UMD calls `pfnAllocateCb` with `D3DDDICB_ALLOCATE` to create the allocation(s) and receive allocation handles (`hKMAllocation` / `hAllocation`, depending on headers).
 
 For allocation purposes, the D3D10 create-resource argument carries the same “shape” of data as the D3D11 one:
 
@@ -448,19 +470,19 @@ In practice for AeroGPU, you can share almost all of the resource-allocation log
 
 The table below is a pragmatic “works first” allocation plan for AeroGPU’s MVP memory model (**single system-memory segment**, CPU-visible).
 
-| Resource class | Allocation count strategy | Size computation | Flags you must set |
+| Resource class | Allocation count strategy | Size computation | AllocateCb fields you must set |
 |---|---:|---|---|
-| Buffer | 1 allocation per resource | `Size = ByteWidth` (optionally align up to 256) | `CpuVisible` if CPU reads/writes are expected (dynamic/staging or `CPUAccessFlags != 0`) |
-| Texture2D (default) | 1 allocation per resource | `rowPitch = Align(Width * bytesPerPixel(Format), 256)`; `Size = rowPitch * Height` (no mips/arrays in MVP) | `RenderTarget` if `BindFlags & D3D11_BIND_RENDER_TARGET`; `CpuVisible` only if CPU access is requested |
-| Swapchain backbuffer | 1 allocation per backbuffer | Same as Texture2D, but match the swapchain format exactly (commonly `DXGI_FORMAT_B8G8R8A8_UNORM`) | `D3DDDICB_ALLOCATEFLAGS.Primary`; allocation `Flags.Primary`; allocation `Flags.RenderTarget`; typically `CpuVisible` in AeroGPU MVP |
-| Staging Texture2D | 1 allocation per resource | Same as Texture2D | Allocation `Flags.CpuVisible` (required); bind flags are typically 0; use `pfnLockCb`/`pfnUnlockCb` in `Map`/`Unmap` |
+| Buffer | 1 allocation per resource | `Size = ByteWidth` (optionally align up to 256) | `alloc.Flags.CreateResource = 1`; `alloc_info.Flags.CpuVisible = 1` if CPU reads/writes are expected (dynamic/staging or `CPUAccessFlags != 0`); `alloc_info.SupportedReadSegmentSet = alloc_info.SupportedWriteSegmentSet = 1` (single-segment MVP) |
+| Texture2D (default) | 1 allocation per resource | `rowPitch = Align(Width * bytesPerPixel(Format), 256)`; `Size = rowPitch * Height` (no mips/arrays in MVP) | `alloc.Flags.CreateResource = 1`; `alloc.ResourceFlags.RenderTarget = 1` if `BindFlags & D3D11_BIND_RENDER_TARGET`; `alloc_info.Flags.CpuVisible = 1` only if CPU access is requested; `alloc_info.SupportedReadSegmentSet = alloc_info.SupportedWriteSegmentSet = 1` |
+| Swapchain backbuffer | 1 allocation per backbuffer | Same as Texture2D, but match the swapchain format exactly (commonly `DXGI_FORMAT_B8G8R8A8_UNORM`) | `alloc.Flags.CreateResource = 1`; `alloc.Flags.Primary = 1`; `alloc.ResourceFlags.RenderTarget = 1`; often `alloc_info.Flags.CpuVisible = 1` in AeroGPU MVP; set segment sets to `1` |
+| Staging Texture2D | 1 allocation per resource | Same as Texture2D | `alloc.Flags.CreateResource = 1`; `alloc_info.Flags.CpuVisible = 1` (required); set segment sets to `1`; use `pfnLockCb`/`pfnUnlockCb` in `Map`/`Unmap` |
 
 Notes / constraints for MVP:
 
 * **Mipmaps and arrays:** simplest bring-up assumes `MipLevels == 1` and `ArraySize == 1`. If you see otherwise, either:
   * allocate one big linear blob and compute subresource offsets, or
   * return NOT_SUPPORTED / set error until implemented.
-* **Depth/stencil:** treat as Texture2D sizing-wise; set `RenderTarget`-like flags only if your KMD/translator cares. The runtime’s bind flags still control whether DSV creation is legal.
+* **Depth/stencil:** treat as Texture2D sizing-wise; set `alloc.ResourceFlags.ZBuffer = 1` when the resource is DSV/depth-backed. The runtime’s bind flags still control whether DSV creation is legal.
 * **All-system-memory (AeroGPU):** the KMD already advertises a single `CpuVisible` system segment (`DXGKQAITYPE_QUERYSEGMENT`). In that world, marking `CpuVisible` broadly is acceptable and keeps Map/Unmap simple.
 
 ---

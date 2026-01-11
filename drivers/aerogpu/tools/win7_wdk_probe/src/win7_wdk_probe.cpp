@@ -187,12 +187,34 @@ int main() {
 
   // Per-allocation descriptor passed to AllocateCb during CreateResource.
   PRINT_SIZE(D3DDDI_ALLOCATIONINFO);
+  // Header revisions differ on the member name that receives the returned KM allocation handle.
+  PRINT_OFF_OPT(D3DDDI_ALLOCATIONINFO, hKMAllocation);
   PRINT_OFF_OPT(D3DDDI_ALLOCATIONINFO, hAllocation);
   PRINT_OFF_OPT(D3DDDI_ALLOCATIONINFO, Size);
   PRINT_OFF_OPT(D3DDDI_ALLOCATIONINFO, Alignment);
   PRINT_OFF_OPT(D3DDDI_ALLOCATIONINFO, Flags);
+  // Segment sets (required for correct VidMm placement on WDDM 1.1).
+  PRINT_OFF_OPT(D3DDDI_ALLOCATIONINFO, SupportedReadSegmentSet);
+  PRINT_OFF_OPT(D3DDDI_ALLOCATIONINFO, SupportedWriteSegmentSet);
+  PRINT_OFF_OPT(D3DDDI_ALLOCATIONINFO, EvictionSegmentSet);
   PRINT_OFF_OPT(D3DDDI_ALLOCATIONINFO, pPrivateDriverData);
   PRINT_OFF_OPT(D3DDDI_ALLOCATIONINFO, PrivateDriverDataSize);
+  // `D3DDDI_ALLOCATIONINFOFLAGS` is typically embedded as `D3DDDI_ALLOCATIONINFO::Flags`.
+  PRINT_SIZE(decltype(((D3DDDI_ALLOCATIONINFO*)nullptr)->Flags));
+#if defined(_MSC_VER)
+  {
+    using FlagsT = decltype(((D3DDDI_ALLOCATIONINFO*)nullptr)->Flags);
+    printf("  D3DDDI_ALLOCATIONINFO::Flags members (header-dependent):\n");
+    __if_exists(FlagsT::Value) { printf("    Value\n"); }
+    __if_not_exists(FlagsT::Value) { printf("    Value <n/a>\n"); }
+    __if_exists(FlagsT::CpuVisible) { printf("    CpuVisible\n"); }
+    __if_not_exists(FlagsT::CpuVisible) { printf("    CpuVisible <n/a>\n"); }
+    __if_exists(FlagsT::Primary) { printf("    Primary\n"); }
+    __if_not_exists(FlagsT::Primary) { printf("    Primary <n/a>\n"); }
+    __if_exists(FlagsT::RenderTarget) { printf("    RenderTarget\n"); }
+    __if_not_exists(FlagsT::RenderTarget) { printf("    RenderTarget <n/a>\n"); }
+  }
+#endif
   PrintSeparator();
 
   // D3D11 adapter GetCaps / CheckFeatureSupport surfaces (helps keep pfnGetCaps implementations correct).
@@ -344,6 +366,32 @@ int main() {
     PRINT_OFF_OPT(D3DDDICB_ALLOCATE, PrivateDriverDataSize);
     PRINT_OFF_OPT(D3DDDICB_ALLOCATE, hSection);
     PRINT_OFF_OPT(D3DDDICB_ALLOCATE, Flags);
+    PRINT_OFF_OPT(D3DDDICB_ALLOCATE, ResourceFlags);
+#if defined(_MSC_VER)
+    // Bitfield members are header-dependent; print presence to help debug header mismatches.
+    {
+      using FlagsT = decltype(((D3DDDICB_ALLOCATE*)nullptr)->Flags);
+      printf("  D3DDDICB_ALLOCATE::Flags members (header-dependent):\n");
+      __if_exists(FlagsT::Value) { printf("    Value\n"); }
+      __if_not_exists(FlagsT::Value) { printf("    Value <n/a>\n"); }
+      __if_exists(FlagsT::CreateResource) { printf("    CreateResource\n"); }
+      __if_not_exists(FlagsT::CreateResource) { printf("    CreateResource <n/a>\n"); }
+      __if_exists(FlagsT::CreateShared) { printf("    CreateShared\n"); }
+      __if_not_exists(FlagsT::CreateShared) { printf("    CreateShared <n/a>\n"); }
+      __if_exists(FlagsT::Primary) { printf("    Primary\n"); }
+      __if_not_exists(FlagsT::Primary) { printf("    Primary <n/a>\n"); }
+    }
+    __if_exists(D3DDDICB_ALLOCATE::ResourceFlags) {
+      using RF = decltype(((D3DDDICB_ALLOCATE*)nullptr)->ResourceFlags);
+      printf("  D3DDDICB_ALLOCATE::ResourceFlags members (header-dependent):\n");
+      __if_exists(RF::Value) { printf("    Value\n"); }
+      __if_not_exists(RF::Value) { printf("    Value <n/a>\n"); }
+      __if_exists(RF::RenderTarget) { printf("    RenderTarget\n"); }
+      __if_not_exists(RF::RenderTarget) { printf("    RenderTarget <n/a>\n"); }
+      __if_exists(RF::ZBuffer) { printf("    ZBuffer\n"); }
+      __if_not_exists(RF::ZBuffer) { printf("    ZBuffer <n/a>\n"); }
+    }
+#endif
     printf("  D3DDDICB_ALLOCATE: submission DMA buffer members\n");
     PRINT_OFF_OPT(D3DDDICB_ALLOCATE, hContext);
     PRINT_OFF_OPT(D3DDDICB_ALLOCATE, DmaBufferSize);
@@ -370,6 +418,7 @@ int main() {
     PRINT_OFF_OPT(D3DDDICB_DEALLOCATE, hKMResource);
     PRINT_OFF_OPT(D3DDDICB_DEALLOCATE, NumAllocations);
     PRINT_OFF_OPT(D3DDDICB_DEALLOCATE, phAllocations);
+    PRINT_OFF_OPT(D3DDDICB_DEALLOCATE, HandleList);
     printf("  D3DDDICB_DEALLOCATE: submission DMA buffer members\n");
     PRINT_OFF_OPT(D3DDDICB_DEALLOCATE, pDmaBuffer);
     PRINT_OFF_OPT(D3DDDICB_DEALLOCATE, pCommandBuffer);
