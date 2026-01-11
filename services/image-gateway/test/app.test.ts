@@ -1,9 +1,18 @@
-import { GetObjectCommand, HeadBucketCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
+import {
+  CreateMultipartUploadCommand,
+  GetObjectCommand,
+  HeadBucketCommand,
+  HeadObjectCommand,
+} from "@aws-sdk/client-s3";
 import type { S3Client } from "@aws-sdk/client-s3";
 import { describe, expect, it } from "vitest";
 
 import { buildApp } from "../src/app";
-import type { Config } from "../src/config";
+import {
+  CACHE_CONTROL_PRIVATE_NO_STORE,
+  CACHE_CONTROL_PUBLIC_IMMUTABLE,
+  type Config,
+} from "../src/config";
 import { MemoryImageStore } from "../src/store";
 
 function makeConfig(overrides: Partial<Config> = {}): Config {
@@ -24,6 +33,7 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
 
     imageBasePath: "/images",
     partSizeBytes: 64 * 1024 * 1024,
+    imageCacheControl: CACHE_CONTROL_PRIVATE_NO_STORE,
 
     authMode: "dev",
     port: 0,
@@ -35,6 +45,75 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
 }
 
 describe("app", () => {
+  it("starts multipart uploads with anti-transform S3 metadata (default cache policy)", async () => {
+    const config = makeConfig();
+    const store = new MemoryImageStore();
+
+    let createMultipartInput: CreateMultipartUploadCommand["input"] | undefined;
+
+    const s3 = {
+      async send(command: unknown) {
+        if (command instanceof CreateMultipartUploadCommand) {
+          createMultipartInput = command.input;
+          return { UploadId: "upload-1" };
+        }
+        throw new Error("unexpected command");
+      },
+    } as unknown as S3Client;
+
+    const app = buildApp({ config, s3, store });
+    await app.ready();
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/images",
+      headers: { "x-user-id": "user-1" },
+    });
+
+    expect(res.statusCode).toBe(200);
+
+    expect(createMultipartInput).toBeDefined();
+    expect(createMultipartInput).toMatchObject({
+      Bucket: "bucket",
+      ContentType: "application/octet-stream",
+      CacheControl: CACHE_CONTROL_PRIVATE_NO_STORE,
+      ContentEncoding: "identity",
+    });
+    expect(createMultipartInput?.Key).toMatch(/^images\/user-1\//);
+    expect(createMultipartInput?.Key).toMatch(/\/disk\.img$/);
+  });
+
+  it("supports public immutable cache-control for newly created objects", async () => {
+    const config = makeConfig({ imageCacheControl: CACHE_CONTROL_PUBLIC_IMMUTABLE });
+    const store = new MemoryImageStore();
+
+    let createMultipartInput: CreateMultipartUploadCommand["input"] | undefined;
+
+    const s3 = {
+      async send(command: unknown) {
+        if (command instanceof CreateMultipartUploadCommand) {
+          createMultipartInput = command.input;
+          return { UploadId: "upload-1" };
+        }
+        throw new Error("unexpected command");
+      },
+    } as unknown as S3Client;
+
+    const app = buildApp({ config, s3, store });
+    await app.ready();
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/images",
+      headers: { "x-user-id": "user-1" },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(createMultipartInput).toMatchObject({
+      CacheControl: CACHE_CONTROL_PUBLIC_IMMUTABLE,
+    });
+  });
+
   it("serves HEAD /v1/images/:id/range with size + validator headers", async () => {
     const config = makeConfig();
     const store = new MemoryImageStore();

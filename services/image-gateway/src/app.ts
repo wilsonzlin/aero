@@ -272,7 +272,8 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
         Bucket: deps.config.s3Bucket,
         Key: s3Key,
         ContentType: "application/octet-stream",
-        CacheControl: "no-transform",
+        CacheControl: deps.config.imageCacheControl,
+        ContentEncoding: "identity",
       })
     );
 

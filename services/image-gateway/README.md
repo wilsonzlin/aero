@@ -17,6 +17,28 @@ This service implements a minimal, swappable auth + owner model (dev stub) and s
 
 API documentation: see [`openapi.yaml`](./openapi.yaml).
 
+## Disk object headers (CloudFront/S3 fast path)
+
+In production, the high-throughput path is **CloudFront → S3** (the client streams bytes directly from the CDN).
+That means response headers do **not** come from `GET /v1/images/:id/range` (the proxy fallback); they come from the
+S3 object metadata that was set when the object was created.
+
+When starting the multipart upload, `image-gateway` sets these S3 object headers:
+
+- `Content-Type: application/octet-stream`
+- `Cache-Control: …, no-transform` (see `IMAGE_CACHE_CONTROL` below)
+- `Content-Encoding: identity`
+
+These are required defence-in-depth to prevent CDNs/intermediaries from applying transforms (especially compression)
+that would make disk `Range` offsets meaningless.
+
+This only affects **newly created** objects; existing S3 objects will keep whatever metadata they currently have.
+
+### CloudFront “Compress objects automatically”
+
+For disk images, CloudFront compression must be **disabled**. If “Compress objects automatically” is enabled for the
+disk cache behavior, CloudFront may return a `Content-Encoding` other than `identity`, breaking deterministic ranges.
+
 ## Setup
 
 ```bash
@@ -71,6 +93,9 @@ Useful optional knobs:
 - `CORS_ALLOW_ORIGIN` (default `*`, used for browser CORS; set an explicit origin if you need credentialed requests / cookie-based auth)
 - `CROSS_ORIGIN_RESOURCE_POLICY` (default `same-site`, sent on the range-proxy responses as defence-in-depth for COEP; see `docs/16-disk-image-streaming-auth.md`)
 - `MULTIPART_PART_SIZE_BYTES` (default `67108864` / 64MiB; must be 5MiB–5GiB)
+- `IMAGE_CACHE_CONTROL=private-no-store|public-immutable` (default `private-no-store`)
+  - `private-no-store` sets `Cache-Control: private, no-store, no-transform` (safe for private images)
+  - `public-immutable` sets `Cache-Control: public, max-age=31536000, immutable, no-transform` (only safe when keys are immutable/versioned and access control is enforced elsewhere, e.g. signed CloudFront URL/cookie)
 
 ### Local MinIO (optional)
 

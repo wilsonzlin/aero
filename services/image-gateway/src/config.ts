@@ -6,6 +6,12 @@ export type AuthMode = "dev" | "none";
 export type CloudFrontAuthMode = "cookie" | "url";
 export type CrossOriginResourcePolicy = "same-origin" | "same-site" | "cross-origin";
 
+export type ImageCacheControlMode = "public-immutable" | "private-no-store";
+
+export const CACHE_CONTROL_PUBLIC_IMMUTABLE =
+  "public, max-age=31536000, immutable, no-transform";
+export const CACHE_CONTROL_PRIVATE_NO_STORE = "private, no-store, no-transform";
+
 export interface Config {
   s3Bucket: string;
   awsRegion: string;
@@ -23,6 +29,7 @@ export interface Config {
 
   imageBasePath: string;
   partSizeBytes: number;
+  imageCacheControl: string;
 
   authMode: AuthMode;
   port: number;
@@ -77,6 +84,30 @@ function parseCrossOriginResourcePolicy(
   throw new Error(
     `Invalid CROSS_ORIGIN_RESOURCE_POLICY: ${raw}. Expected same-origin, same-site, or cross-origin.`
   );
+}
+
+function parseCacheControlMode(value: string | undefined): ImageCacheControlMode {
+  const normalized = (value ?? "private-no-store").trim();
+  if (
+    normalized === "public-immutable" ||
+    normalized === "CACHE_CONTROL_PUBLIC_IMMUTABLE"
+  ) {
+    return "public-immutable";
+  }
+  if (
+    normalized === "private-no-store" ||
+    normalized === "CACHE_CONTROL_PRIVATE_NO_STORE"
+  ) {
+    return "private-no-store";
+  }
+  throw new Error(
+    `Invalid IMAGE_CACHE_CONTROL: ${value} (expected "public-immutable"/"CACHE_CONTROL_PUBLIC_IMMUTABLE" or "private-no-store"/"CACHE_CONTROL_PRIVATE_NO_STORE")`
+  );
+}
+
+function cacheControlForMode(mode: ImageCacheControlMode): string {
+  if (mode === "public-immutable") return CACHE_CONTROL_PUBLIC_IMMUTABLE;
+  return CACHE_CONTROL_PRIVATE_NO_STORE;
 }
 
 function normalizeBasePath(basePath: string): string {
@@ -160,6 +191,9 @@ export function loadConfig(): Config {
     imageBasePath: normalizeBasePath(process.env.IMAGE_BASE_PATH ?? "/images"),
     // 64MiB: a reasonable default for large disk images (and well above S3's 5MiB minimum).
     partSizeBytes,
+    imageCacheControl: cacheControlForMode(
+      parseCacheControlMode(process.env.IMAGE_CACHE_CONTROL)
+    ),
 
     authMode,
     port: parseIntEnv("PORT", 3000),
