@@ -2108,6 +2108,7 @@ void APIENTRY Unmap(D3D10DDI_HDEVICE hDevice, const D3D10DDIARG_UNMAP* pUnmap) {
 // D3D10 runtime never observes E_NOTIMPL for common map patterns.
 // -------------------------------------------------------------------------------------------------
 
+template <typename = void>
 HRESULT APIENTRY StagingResourceMap(D3D10DDI_HDEVICE hDevice,
                                     D3D10DDI_HRESOURCE hResource,
                                     UINT subresource,
@@ -2152,6 +2153,7 @@ HRESULT APIENTRY StagingResourceMap(D3D10DDI_HDEVICE hDevice,
   return S_OK;
 }
 
+template <typename = void>
 void APIENTRY StagingResourceUnmap(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hResource, UINT subresource) {
   if (!hDevice.pDrvPrivate || !hResource.pDrvPrivate) {
     return;
@@ -2168,6 +2170,7 @@ void APIENTRY StagingResourceUnmap(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE 
   unmap_resource_locked(hDevice, dev, res, static_cast<uint32_t>(subresource));
 }
 
+template <typename = void>
 HRESULT APIENTRY DynamicIABufferMapDiscard(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hResource, void** ppData) {
   if (!ppData) {
     return E_INVALIDARG;
@@ -2190,6 +2193,7 @@ HRESULT APIENTRY DynamicIABufferMapDiscard(D3D10DDI_HDEVICE hDevice, D3D10DDI_HR
   return S_OK;
 }
 
+template <typename = void>
 HRESULT APIENTRY DynamicIABufferMapNoOverwrite(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hResource, void** ppData) {
   if (!ppData) {
     return E_INVALIDARG;
@@ -2212,6 +2216,7 @@ HRESULT APIENTRY DynamicIABufferMapNoOverwrite(D3D10DDI_HDEVICE hDevice, D3D10DD
   return S_OK;
 }
 
+template <typename = void>
 void APIENTRY DynamicIABufferUnmap(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hResource) {
   if (!hDevice.pDrvPrivate || !hResource.pDrvPrivate) {
     return;
@@ -2228,6 +2233,7 @@ void APIENTRY DynamicIABufferUnmap(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE 
   unmap_resource_locked(hDevice, dev, res, /*subresource=*/0);
 }
 
+template <typename = void>
 HRESULT APIENTRY DynamicConstantBufferMapDiscard(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hResource, void** ppData) {
   if (!ppData) {
     return E_INVALIDARG;
@@ -2250,6 +2256,7 @@ HRESULT APIENTRY DynamicConstantBufferMapDiscard(D3D10DDI_HDEVICE hDevice, D3D10
   return S_OK;
 }
 
+template <typename = void>
 void APIENTRY DynamicConstantBufferUnmap(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hResource) {
   if (!hDevice.pDrvPrivate || !hResource.pDrvPrivate) {
     return;
@@ -4468,25 +4475,25 @@ HRESULT APIENTRY CreateDevice(D3D10DDI_HADAPTER hAdapter, const D3D10DDIARG_CREA
     funcs.pfnWriteToSubresource = &NotImpl<decltype(funcs.pfnWriteToSubresource)>::Fn;
   }
   if constexpr (has_pfnStagingResourceMap<D3D10DDI_DEVICEFUNCS>::value) {
-    funcs.pfnStagingResourceMap = &StagingResourceMap;
+    funcs.pfnStagingResourceMap = &StagingResourceMap<>;
   }
   if constexpr (has_pfnStagingResourceUnmap<D3D10DDI_DEVICEFUNCS>::value) {
-    funcs.pfnStagingResourceUnmap = &StagingResourceUnmap;
+    funcs.pfnStagingResourceUnmap = &StagingResourceUnmap<>;
   }
   if constexpr (has_pfnDynamicIABufferMapDiscard<D3D10DDI_DEVICEFUNCS>::value) {
-    funcs.pfnDynamicIABufferMapDiscard = &DynamicIABufferMapDiscard;
+    funcs.pfnDynamicIABufferMapDiscard = &DynamicIABufferMapDiscard<>;
   }
   if constexpr (has_pfnDynamicIABufferMapNoOverwrite<D3D10DDI_DEVICEFUNCS>::value) {
-    funcs.pfnDynamicIABufferMapNoOverwrite = &DynamicIABufferMapNoOverwrite;
+    funcs.pfnDynamicIABufferMapNoOverwrite = &DynamicIABufferMapNoOverwrite<>;
   }
   if constexpr (has_pfnDynamicIABufferUnmap<D3D10DDI_DEVICEFUNCS>::value) {
-    funcs.pfnDynamicIABufferUnmap = &DynamicIABufferUnmap;
+    funcs.pfnDynamicIABufferUnmap = &DynamicIABufferUnmap<>;
   }
   if constexpr (has_pfnDynamicConstantBufferMapDiscard<D3D10DDI_DEVICEFUNCS>::value) {
-    funcs.pfnDynamicConstantBufferMapDiscard = &DynamicConstantBufferMapDiscard;
+    funcs.pfnDynamicConstantBufferMapDiscard = &DynamicConstantBufferMapDiscard<>;
   }
   if constexpr (has_pfnDynamicConstantBufferUnmap<D3D10DDI_DEVICEFUNCS>::value) {
-    funcs.pfnDynamicConstantBufferUnmap = &DynamicConstantBufferUnmap;
+    funcs.pfnDynamicConstantBufferUnmap = &DynamicConstantBufferUnmap<>;
   }
   if constexpr (has_pfnCalcPrivateQuerySize<D3D10DDI_DEVICEFUNCS>::value) {
     funcs.pfnCalcPrivateQuerySize = &NotImpl<decltype(funcs.pfnCalcPrivateQuerySize)>::Fn;
