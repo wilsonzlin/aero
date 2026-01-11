@@ -536,7 +536,7 @@ fn aerogpu_cmd_rebinds_allocation_backed_constant_buffer_between_draws_uploads_s
         let cb_a_offset = vb_size; // vb_size is 4-byte aligned.
         let cb_b_offset = cb_a_offset + cb_size;
 
-        let guest_mem = VecGuestMemory::new(0x2000);
+        let mut guest_mem = VecGuestMemory::new(0x2000);
         guest_mem.write(alloc_gpa + vb_offset, vb_bytes).unwrap();
         guest_mem.write(alloc_gpa + cb_a_offset, cb_bytes).unwrap();
         guest_mem.write(alloc_gpa + cb_b_offset, cb_bytes).unwrap();
@@ -774,7 +774,7 @@ fn aerogpu_cmd_rebinds_allocation_backed_constant_buffer_between_draws_uploads_s
         let total_size = stream.len() as u32;
         stream[8..12].copy_from_slice(&total_size.to_le_bytes());
 
-        exec.execute_cmd_stream(&stream, Some(&allocs), &guest_mem)
+        exec.execute_cmd_stream(&stream, Some(&allocs), &mut guest_mem)
             .unwrap();
         exec.poll_wait();
 
