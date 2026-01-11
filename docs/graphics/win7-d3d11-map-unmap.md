@@ -6,6 +6,7 @@ It exists to stop future implementers from reverse‑engineering Win7 runtime be
 
 * `drivers/aerogpu/tests/win7/d3d11_triangle/`
 * `drivers/aerogpu/tests/win7/readback_sanity/`
+* `drivers/aerogpu/tests/win7/d3d11_map_roundtrip/`
 
 > Header references: symbol/type names in this doc are from **WDK 7.1** user-mode DDI headers:
 > `d3d11umddi.h` (D3D11 UMD DDI), `d3d10umddi.h` (some D3D10-era shared DDI enums/types still used by D3D11 on Win7), and `d3dumddi.h` (common runtime callback types like `D3DDDICB_LOCK`).
@@ -73,8 +74,13 @@ void APIENTRY pfnUnmap(
 
 Notes:
 
-* `pfnMap` returns `HRESULT` because it must be able to return `DXGI_ERROR_WAS_STILL_DRAWING` for DO_NOT_WAIT.
-* `pfnUnmap` is `void` (errors must be reported via `pfnSetErrorCb`).
+* Depending on the negotiated D3D11 DDI interface version, `pfnMap` may return
+  `HRESULT` or be `void`.
+  * If it returns `HRESULT`, it must return `DXGI_ERROR_WAS_STILL_DRAWING` when
+    `D3D11_MAP_FLAG_DO_NOT_WAIT` is set and the map would block.
+  * If it is `void`, failures (including `DXGI_ERROR_WAS_STILL_DRAWING`) must be
+    reported via `pfnSetErrorCb`.
+* `pfnUnmap` is typically `void` (errors must be reported via `pfnSetErrorCb`).
 
 ### 1.2 Runtime callback table entries used by Map/Unmap
 
@@ -421,5 +427,6 @@ An implementation matches Win7 expectations when:
 
 * `drivers/aerogpu/tests/win7/d3d11_triangle` reliably reads the expected center/corner pixels via staging `Map(READ)`.
 * `drivers/aerogpu/tests/win7/readback_sanity` reliably reads expected pixels via staging `Map(READ)`.
+* `drivers/aerogpu/tests/win7/d3d11_map_roundtrip` reliably round-trips a staging texture via `Map(WRITE)` + `Unmap` + `Map(READ)`.
 * `Map(DO_NOT_WAIT)` returns `DXGI_ERROR_WAS_STILL_DRAWING` when the staging destination is still busy (can be validated by adding a stress variant test).
 * Invalid Map usage returns `E_INVALIDARG` and invalid Unmap reports `E_INVALIDARG` via `pfnSetErrorCb` (no silent success).

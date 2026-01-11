@@ -3721,6 +3721,11 @@ struct AeroGpuDevice {
 
   aerogpu::CmdWriter cmd;
 
+  // Portable build error reporting: some DDIs are void and report failure via a
+  // runtime callback (pfnSetErrorCb). In the non-WDK build we track the last
+  // error on the device for unit tests / bring-up logging.
+  HRESULT last_error = S_OK;
+
   // Fence tracking for WDDM-backed synchronization. Higher-level D3D10/11 code (e.g. Map READ on
   // staging resources) can use these values to wait for GPU completion.
   std::atomic<uint64_t> last_submitted_fence{0};
@@ -4301,10 +4306,10 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     auto* res = new (hResource.pDrvPrivate) AeroGpuResource();
     res->handle = allocate_global_handle(dev->adapter);
     res->kind = ResourceKind::Buffer;
-    res->bind_flags = pDesc->BindFlags;
-    res->misc_flags = pDesc->MiscFlags;
     res->usage = pDesc->Usage;
     res->cpu_access_flags = pDesc->CPUAccessFlags;
+    res->bind_flags = pDesc->BindFlags;
+    res->misc_flags = pDesc->MiscFlags;
     res->size_bytes = pDesc->ByteWidth;
 
     if (res->size_bytes > static_cast<uint64_t>(SIZE_MAX)) {
@@ -4324,7 +4329,7 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       const auto& init = pDesc->pInitialData[0];
       if (!init.pSysMem || res->size_bytes == 0) {
         res->~AeroGpuResource();
-        AEROGPU_D3D10_RET_HR(E_INVALIDARG);
+        return E_INVALIDARG;
       }
       std::memcpy(res->storage.data(), init.pSysMem, static_cast<size_t>(res->size_bytes));
 
@@ -4395,10 +4400,10 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     auto* res = new (hResource.pDrvPrivate) AeroGpuResource();
     res->handle = allocate_global_handle(dev->adapter);
     res->kind = ResourceKind::Texture2D;
-    res->bind_flags = pDesc->BindFlags;
-    res->misc_flags = pDesc->MiscFlags;
     res->usage = pDesc->Usage;
     res->cpu_access_flags = pDesc->CPUAccessFlags;
+    res->bind_flags = pDesc->BindFlags;
+    res->misc_flags = pDesc->MiscFlags;
     res->width = pDesc->Width;
     res->height = pDesc->Height;
     res->mip_levels = mip_levels;
@@ -4439,7 +4444,7 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       const auto& init = pDesc->pInitialData[0];
       if (!init.pSysMem) {
         res->~AeroGpuResource();
-        AEROGPU_D3D10_RET_HR(E_INVALIDARG);
+        return E_INVALIDARG;
       }
       const uint64_t bytes_per_row = static_cast<uint64_t>(res->width) * static_cast<uint64_t>(bpp);
       const uint32_t src_pitch = init.SysMemPitch ? init.SysMemPitch : static_cast<uint32_t>(bytes_per_row);
@@ -5892,6 +5897,144 @@ void AEROGPU_APIENTRY DrawIndexed(D3D10DDI_HDEVICE hDevice, uint32_t index_count
   cmd->first_instance = 0;
 }
 
+void AEROGPU_APIENTRY Map(D3D10DDI_HDEVICE hDevice, const AEROGPU_D3D11DDIARG_MAP* pMap) {
+  if (!hDevice.pDrvPrivate || !pMap || !pMap->hResource.pDrvPrivate || !pMap->pMappedSubresource) {
+    return;
+  }
+
+  auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+  auto* res = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(pMap->hResource);
+  if (!dev || !res) {
+    return;
+  }
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  dev->last_error = S_OK;
+
+  if (pMap->Subresource != 0) {
+    dev->last_error = E_NOTIMPL;
+    return;
+  }
+
+  if (res->mapped) {
+    dev->last_error = E_FAIL;
+    return;
+  }
+
+  const bool wants_read = pMap->MapType == AEROGPU_D3D11_MAP_READ || pMap->MapType == AEROGPU_D3D11_MAP_READ_WRITE;
+  const bool wants_write = pMap->MapType == AEROGPU_D3D11_MAP_WRITE || pMap->MapType == AEROGPU_D3D11_MAP_READ_WRITE ||
+                           pMap->MapType == AEROGPU_D3D11_MAP_WRITE_DISCARD ||
+                           pMap->MapType == AEROGPU_D3D11_MAP_WRITE_NO_OVERWRITE;
+
+  if (wants_read && (res->cpu_access_flags & AEROGPU_D3D11_CPU_ACCESS_READ) == 0) {
+    dev->last_error = E_INVALIDARG;
+    return;
+  }
+  if (wants_write && (res->cpu_access_flags & AEROGPU_D3D11_CPU_ACCESS_WRITE) == 0) {
+    dev->last_error = E_INVALIDARG;
+    return;
+  }
+
+  // Map(READ) on a staging resource is a synchronization point. The minimal
+  // implementation flushes any pending work so the read observes completed GPU
+  // writes once Copy/resolve paths are added.
+  if (wants_read) {
+    const uint64_t fence = submit_locked(dev);
+    if (fence != 0 && dev->adapter) {
+      const bool do_not_wait = (pMap->MapFlags & AEROGPU_D3D11_MAP_FLAG_DO_NOT_WAIT) != 0;
+      std::unique_lock<std::mutex> fence_lock(dev->adapter->fence_mutex);
+      if (do_not_wait) {
+        if (dev->adapter->completed_fence < fence) {
+          dev->last_error = DXGI_ERROR_WAS_STILL_DRAWING;
+          return;
+        }
+      } else {
+        while (dev->adapter->completed_fence < fence) {
+          dev->adapter->fence_cv.wait(fence_lock);
+        }
+      }
+    }
+  }
+
+  if (res->storage.empty()) {
+    size_t bytes = 0;
+    if (res->kind == ResourceKind::Buffer) {
+      bytes = static_cast<size_t>(res->size_bytes);
+    } else if (res->kind == ResourceKind::Texture2D) {
+      bytes = static_cast<size_t>(res->row_pitch_bytes) * static_cast<size_t>(res->height);
+    } else {
+      dev->last_error = E_NOTIMPL;
+      return;
+    }
+    try {
+      res->storage.resize(bytes);
+    } catch (...) {
+      dev->last_error = E_OUTOFMEMORY;
+      return;
+    }
+  }
+
+  if (pMap->MapType == AEROGPU_D3D11_MAP_WRITE_DISCARD) {
+    // Contents become undefined; clear to zero for deterministic tests.
+    std::memset(res->storage.data(), 0, res->storage.size());
+  }
+
+  auto* mapped = pMap->pMappedSubresource;
+  mapped->pData = res->storage.data();
+  if (res->kind == ResourceKind::Texture2D) {
+    mapped->RowPitch = res->row_pitch_bytes;
+    mapped->DepthPitch = res->row_pitch_bytes * res->height;
+  } else {
+    mapped->RowPitch = static_cast<uint32_t>(res->size_bytes);
+    mapped->DepthPitch = 0;
+  }
+
+  res->mapped = true;
+  res->mapped_subresource = pMap->Subresource;
+  res->mapped_map_type = pMap->MapType;
+}
+
+void AEROGPU_APIENTRY Unmap(D3D10DDI_HDEVICE hDevice, const AEROGPU_D3D11DDIARG_UNMAP* pUnmap) {
+  if (!hDevice.pDrvPrivate || !pUnmap || !pUnmap->hResource.pDrvPrivate) {
+    return;
+  }
+
+  auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+  auto* res = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(pUnmap->hResource);
+  if (!dev || !res) {
+    return;
+  }
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  dev->last_error = S_OK;
+
+  if (!res->mapped || res->mapped_subresource != pUnmap->Subresource) {
+    return;
+  }
+
+  const bool was_write = res->mapped_map_type == AEROGPU_D3D11_MAP_WRITE ||
+                         res->mapped_map_type == AEROGPU_D3D11_MAP_READ_WRITE ||
+                         res->mapped_map_type == AEROGPU_D3D11_MAP_WRITE_DISCARD ||
+                         res->mapped_map_type == AEROGPU_D3D11_MAP_WRITE_NO_OVERWRITE;
+
+  res->mapped = false;
+  res->mapped_subresource = 0;
+  res->mapped_map_type = 0;
+
+  if (!was_write || res->storage.empty()) {
+    return;
+  }
+
+  // Make CPU writes visible to subsequent GPU reads by marking the resource dirty
+  // for the host-side uploader.
+  const uint64_t size_bytes = (res->kind == ResourceKind::Buffer) ? res->size_bytes : res->storage.size();
+  auto* dirty = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+  dirty->resource_handle = res->handle;
+  dirty->reserved0 = 0;
+  dirty->offset_bytes = 0;
+  dirty->size_bytes = size_bytes;
+}
+
 HRESULT AEROGPU_APIENTRY Present(D3D10DDI_HDEVICE hDevice, const AEROGPU_DDIARG_PRESENT* pPresent) {
   AEROGPU_D3D10_11_LOG_CALL();
   AEROGPU_D3D10_TRACEF("Present hDevice=%p syncInterval=%u backbuffer=%p",
@@ -6133,11 +6276,11 @@ HRESULT AEROGPU_APIENTRY CreateDevice(D3D10DDI_HADAPTER hAdapter, const D3D10DDI
 
   funcs.pfnDraw = &Draw;
   funcs.pfnDrawIndexed = &DrawIndexed;
+  funcs.pfnMap = &Map;
+  funcs.pfnUnmap = &Unmap;
   funcs.pfnPresent = &Present;
   funcs.pfnFlush = &Flush;
   funcs.pfnRotateResourceIdentities = &RotateResourceIdentities;
-  funcs.pfnMap = &Map;
-  funcs.pfnUnmap = &Unmap;
   funcs.pfnUpdateSubresourceUP = &UpdateSubresourceUP;
   funcs.pfnCopyResource = &CopyResource;
   funcs.pfnCopySubresourceRegion = &CopySubresourceRegion;

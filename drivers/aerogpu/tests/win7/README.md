@@ -73,6 +73,7 @@ drivers/aerogpu/tests/win7/
   dxgi_swapchain_probe/
   d3d11_swapchain_rotate_sanity/
   d3d11_map_dynamic_buffer_sanity/
+  d3d11_map_roundtrip/
   d3d11_update_subresource_texture_sanity/
   d3d11_texture_sampling_sanity/
   d3d11_dynamic_constant_buffer_sanity/
@@ -247,6 +248,7 @@ In a Win7 VM with AeroGPU installed and working correctly:
 * `dxgi_swapchain_probe` creates a 2-buffer windowed DXGI swapchain and presents a few vsync-paced frames (useful for swapchain/backbuffer tracing)
 * `d3d11_swapchain_rotate_sanity` creates a 2-buffer swapchain, clears buffer0 red + buffer1 green, presents, then validates that DXGI rotated buffer identities (expects **buffer0 green + buffer1 red**)
 * `d3d11_map_dynamic_buffer_sanity` exercises dynamic buffer CPU-write paths (`Map(WRITE_DISCARD)` + `Map(WRITE_NO_OVERWRITE)`), stresses DISCARD renaming hazards, and validates vertex/index/constant buffer map paths via staging readback
+* `d3d11_map_roundtrip` validates `Map/Unmap` on a `D3D11_USAGE_STAGING` texture by writing a checker pattern via `Map(WRITE)` and reading it back via `Map(READ)` (no rendering required)
 * `d3d11_update_subresource_texture_sanity` validates `UpdateSubresource` on both textures (full + boxed update, padded RowPitch) and a DEFAULT constant buffer (full + boxed range update) via staging readback
 * `readback_sanity` renders to an offscreen render target and validates readback pixels (corner red, center green)
 * `d3d11_texture_sampling_sanity` renders a textured quad into an offscreen render target and validates a few sampled texels via readback (requires feature level >= 10_0)

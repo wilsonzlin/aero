@@ -28,6 +28,10 @@
 #include "aerogpu_d3d10_11_internal.h"
 #include "aerogpu_d3d10_11_log.h"
 
+#ifndef DXGI_ERROR_WAS_STILL_DRAWING
+  #define DXGI_ERROR_WAS_STILL_DRAWING ((HRESULT)0x887A000AL)
+#endif
+
 namespace {
 
 using namespace aerogpu::d3d10_11;
@@ -2514,10 +2518,30 @@ static HRESULT MapCore11(D3D11DDI_HDEVICECONTEXT hCtx,
     SetError(dev, E_INVALIDARG);
     return E_INVALIDARG;
   }
-  if (want_write && !(res->cpu_access_flags & kD3D11CpuAccessWrite) && res->usage != kD3D11UsageDynamic &&
-      res->usage != kD3D11UsageStaging) {
+  if (want_write && !(res->cpu_access_flags & kD3D11CpuAccessWrite)) {
     SetError(dev, E_INVALIDARG);
     return E_INVALIDARG;
+  }
+
+  // Map(READ) on a staging resource is a synchronization point. Ensure any
+  // pending GPU work is flushed before waiting so applications don't have to
+  // call Flush() explicitly.
+  if (want_read && res->usage == kD3D11UsageStaging) {
+    const uint64_t fence = submit_locked(dev);
+    if (fence != 0 && dev->adapter) {
+      const bool do_not_wait = (map_flags & D3D11_MAP_FLAG_DO_NOT_WAIT) != 0;
+      std::unique_lock<std::mutex> fence_lock(dev->adapter->fence_mutex);
+      if (do_not_wait) {
+        if (dev->adapter->completed_fence < fence) {
+          SetError(dev, DXGI_ERROR_WAS_STILL_DRAWING);
+          return DXGI_ERROR_WAS_STILL_DRAWING;
+        }
+      } else {
+        while (dev->adapter->completed_fence < fence) {
+          dev->adapter->fence_cv.wait(fence_lock);
+        }
+      }
+    }
   }
 
   if (map_u32 == D3D11_MAP_WRITE_DISCARD && res->kind == ResourceKind::Buffer) {
