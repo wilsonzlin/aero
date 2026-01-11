@@ -722,11 +722,14 @@ NTSTATUS VirtioPciModernTransportNegotiateFeatures(VIRTIO_PCI_MODERN_TRANSPORT *
 		VirtioPciModernTransportAddStatus(t, VIRTIO_STATUS_FAILED);
 		return STATUS_NOT_SUPPORTED;
 	}
-	if (t->Mode == VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT && (device_features & forbidden) != 0) {
-		/* Contract v1 devices must not offer EVENT_IDX or PACKED ring. */
-		VirtioPciModernTransportAddStatus(t, VIRTIO_STATUS_FAILED);
-		return STATUS_NOT_SUPPORTED;
-	}
+	/*
+	 * Never negotiate EVENT_IDX or PACKED ring.
+	 *
+	 * Note: Some virtio-pci implementations (including QEMU) advertise these features even
+	 * when the driver chooses not to negotiate them. Since the Windows 7 drivers in this
+	 * repo operate correctly without EVENT_IDX/PACKED, do not fail feature negotiation
+	 * simply because the device offers them.
+	 */
 
 	if ((required & ~device_features) != 0) {
 		VirtioPciModernTransportAddStatus(t, VIRTIO_STATUS_FAILED);

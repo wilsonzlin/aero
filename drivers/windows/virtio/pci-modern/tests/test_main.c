@@ -782,27 +782,35 @@ static void TestNegotiateFeaturesStrictRejectNoIndirectDesc(void)
 	VirtioPciModernTransportUninit(&t);
 }
 
-static void TestNegotiateFeaturesStrictRejectEventIdxOffered(void)
+static void TestNegotiateFeaturesStrictDoesNotNegotiateEventIdxOffered(void)
 {
 	FAKE_DEV dev;
 	VIRTIO_PCI_MODERN_OS_INTERFACE os;
 	VIRTIO_PCI_MODERN_TRANSPORT t;
 	UINT64 negotiated;
 	NTSTATUS st;
+	UINT64 required;
+	UINT64 wanted;
 
 	FakeDevInitValid(&dev);
-	/* Contract v1 devices must not offer EVENT_IDX; STRICT rejects it. */
+	/* Device offers EVENT_IDX. STRICT must still succeed but must not negotiate it. */
 	dev.DeviceFeatures = VIRTIO_F_VERSION_1 | ((UINT64)1u << 28) | ((UINT64)1u << 29);
 
 	os = GetOs(&dev);
 	st = VirtioPciModernTransportInit(&t, &os, VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT, 0x10000000u, sizeof(dev.Bar0));
 	assert(st == STATUS_SUCCESS);
 
-	negotiated = 0xDEADBEEFDEADBEEFull;
-	st = VirtioPciModernTransportNegotiateFeatures(&t, 0, (UINT64)1u << 29, &negotiated);
-	assert(st == STATUS_NOT_SUPPORTED);
-	assert(negotiated == 0);
-	assert((VirtioPciModernTransportGetStatus(&t) & VIRTIO_STATUS_FAILED) != 0);
+	required = (UINT64)1u << 28; /* INDIRECT_DESC */
+	wanted = (UINT64)1u << 29;   /* EVENT_IDX (must be masked out) */
+	negotiated = 0;
+	st = VirtioPciModernTransportNegotiateFeatures(&t, required, wanted, &negotiated);
+	assert(st == STATUS_SUCCESS);
+	assert((negotiated & ((UINT64)1u << 29)) == 0);
+	assert((negotiated & ((UINT64)1u << 34)) == 0);
+	assert((negotiated & VIRTIO_F_VERSION_1) != 0);
+	assert((negotiated & required) == required);
+	assert(dev.DriverFeatures == negotiated);
+	assert((VirtioPciModernTransportGetStatus(&t) & VIRTIO_STATUS_FAILED) == 0);
 
 	VirtioPciModernTransportUninit(&t);
 }
@@ -835,27 +843,34 @@ static void TestNegotiateFeaturesCompatDoesNotNegotiateEventIdx(void)
 	VirtioPciModernTransportUninit(&t);
 }
 
-static void TestNegotiateFeaturesStrictRejectPackedRingOffered(void)
+static void TestNegotiateFeaturesStrictDoesNotNegotiatePackedRingOffered(void)
 {
 	FAKE_DEV dev;
 	VIRTIO_PCI_MODERN_OS_INTERFACE os;
 	VIRTIO_PCI_MODERN_TRANSPORT t;
 	UINT64 negotiated;
 	NTSTATUS st;
+	UINT64 required;
+	UINT64 wanted;
 
 	FakeDevInitValid(&dev);
-	/* Contract v1 devices must not offer PACKED ring; STRICT rejects it. */
+	/* Device offers PACKED ring. STRICT must still succeed but must not negotiate it. */
 	dev.DeviceFeatures = VIRTIO_F_VERSION_1 | ((UINT64)1u << 28) | ((UINT64)1u << 34);
 
 	os = GetOs(&dev);
 	st = VirtioPciModernTransportInit(&t, &os, VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT, 0x10000000u, sizeof(dev.Bar0));
 	assert(st == STATUS_SUCCESS);
 
-	negotiated = 0xDEADBEEFDEADBEEFull;
-	st = VirtioPciModernTransportNegotiateFeatures(&t, 0, (UINT64)1u << 34, &negotiated);
-	assert(st == STATUS_NOT_SUPPORTED);
-	assert(negotiated == 0);
-	assert((VirtioPciModernTransportGetStatus(&t) & VIRTIO_STATUS_FAILED) != 0);
+	required = (UINT64)1u << 28; /* INDIRECT_DESC */
+	wanted = (UINT64)1u << 34;   /* PACKED (must be masked out) */
+	negotiated = 0;
+	st = VirtioPciModernTransportNegotiateFeatures(&t, required, wanted, &negotiated);
+	assert(st == STATUS_SUCCESS);
+	assert((negotiated & ((UINT64)1u << 34)) == 0);
+	assert((negotiated & VIRTIO_F_VERSION_1) != 0);
+	assert((negotiated & required) == required);
+	assert(dev.DriverFeatures == negotiated);
+	assert((VirtioPciModernTransportGetStatus(&t) & VIRTIO_STATUS_FAILED) == 0);
 
 	VirtioPciModernTransportUninit(&t);
 }
@@ -1329,9 +1344,9 @@ int main(void)
 	TestNegotiateFeaturesOk();
 	TestNegotiateFeaturesRejectNoVersion1();
 	TestNegotiateFeaturesStrictRejectNoIndirectDesc();
-	TestNegotiateFeaturesStrictRejectEventIdxOffered();
+	TestNegotiateFeaturesStrictDoesNotNegotiateEventIdxOffered();
 	TestNegotiateFeaturesCompatDoesNotNegotiateEventIdx();
-	TestNegotiateFeaturesStrictRejectPackedRingOffered();
+	TestNegotiateFeaturesStrictDoesNotNegotiatePackedRingOffered();
 	TestNegotiateFeaturesCompatDoesNotNegotiatePackedRing();
 	TestQueueSetupAndNotify();
 	TestCompatInitAcceptsRelocatedCaps();

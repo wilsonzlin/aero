@@ -49,8 +49,8 @@ Feature negotiation additionally enforces:
 
 - `VIRTIO_F_VERSION_1` is required
 - STRICT mode requires the device to offer `VIRTIO_F_RING_INDIRECT_DESC` (bit 28)
-- `VIRTIO_F_RING_EVENT_IDX` is **never** negotiated (and STRICT mode rejects devices that offer it)
-- `VIRTIO_F_RING_PACKED` is **never** negotiated (and STRICT mode rejects devices that offer it)
+- `VIRTIO_F_RING_EVENT_IDX` is **never** negotiated
+- `VIRTIO_F_RING_PACKED` is **never** negotiated
 
 `COMPAT` mode keeps the safety checks but relaxes the fixed-offset requirement to ease QEMU/transitional experimentation.
 
