@@ -46,6 +46,22 @@ The binding device/driver contract lives at:
 - Interrupts must work with PCI **INTx** and the virtio ISR status byte
   (read-to-ack).
 
+Contract v1 also fixes a single BAR0 layout so miniports can initialize from a
+BAR0 mapping without “searching”:
+
+| Capability | BAR | Offset | Length |
+|-----------|----:|-------:|-------:|
+| Common configuration (`COMMON_CFG`) | 0 | `0x0000` | `0x0100` |
+| Notify (`NOTIFY_CFG`)              | 0 | `0x1000` | `0x0100` |
+| ISR (`ISR_CFG`)                   | 0 | `0x2000` | `0x0020` |
+| Device config (`DEVICE_CFG`)      | 0 | `0x3000` | `0x0100` |
+
+Notify semantics:
+
+- `notify_off_multiplier = 4`
+- Drivers compute the doorbell address as:
+  `notify_base + queue_notify_off(queue) * notify_off_multiplier`
+
 The legacy/transitional I/O-port transport is **not** required by contract v1 and
 is retained only for compatibility/testing with transitional/QEMU devices.
 
