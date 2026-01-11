@@ -33,7 +33,11 @@ Note that the legacy and versioned ABIs use **different PCI IDs**:
 * Legacy (`aerogpu_protocol.h`): `VID=0x1AED`, `DID=0x0001`
 * Versioned (`aerogpu_pci.h`): `VID=0xA3A0`, `DID=0x0001`
 
-See `drivers/aerogpu/protocol/README.md` for ABI details.
+Make sure your Win7 INF and your emulator device model agree on which VID/DID to expose.
+
+See:
+* `drivers/aerogpu/protocol/README.md` for ABI details.
+* `docs/abi/aerogpu-pci-identity.md` for the canonical PCI IDs and the matching emulator device models.
 
 ## Building (WDK 10 / MSBuild)
 

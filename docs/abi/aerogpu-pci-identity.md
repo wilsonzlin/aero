@@ -42,6 +42,10 @@ The supported Windows 7 driver package lives under:
 An older `guest/windows/*` AeroGPU driver stack existed during early bring-up;
 it is **not** the supported driver package.
 
+## Related docs
+
+* `docs/windows-device-contract.md` – normative Windows driver/device binding contract for all paravirtual devices (including AeroGPU).
+
 ## Deprecated / stale IDs
 
 Older prototypes in this repository used a different PCI vendor ID (`VEN_1AE0`)
