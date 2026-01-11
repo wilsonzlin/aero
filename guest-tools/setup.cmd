@@ -866,11 +866,35 @@ if exist "%STOR_TARGET%" (
 rem Ensure the service exists and is BOOT_START.
 set "SVC_KEY=HKLM\SYSTEM\CurrentControlSet\Services\%STOR_SERVICE%"
 "%SYS32%\reg.exe" add "%SVC_KEY%" /f >>"%LOG%" 2>&1
+if errorlevel 1 (
+  call :log "ERROR: Failed to create/verify service key: %SVC_KEY%"
+  exit /b 1
+)
 "%SYS32%\reg.exe" add "%SVC_KEY%" /v Type /t REG_DWORD /d 1 /f >>"%LOG%" 2>&1
+if errorlevel 1 (
+  call :log "ERROR: Failed to set Type for service key: %SVC_KEY%"
+  exit /b 1
+)
 "%SYS32%\reg.exe" add "%SVC_KEY%" /v Start /t REG_DWORD /d 0 /f >>"%LOG%" 2>&1
+if errorlevel 1 (
+  call :log "ERROR: Failed to set Start for service key: %SVC_KEY%"
+  exit /b 1
+)
 "%SYS32%\reg.exe" add "%SVC_KEY%" /v ErrorControl /t REG_DWORD /d 1 /f >>"%LOG%" 2>&1
+if errorlevel 1 (
+  call :log "ERROR: Failed to set ErrorControl for service key: %SVC_KEY%"
+  exit /b 1
+)
 "%SYS32%\reg.exe" add "%SVC_KEY%" /v Group /t REG_SZ /d "SCSI miniport" /f >>"%LOG%" 2>&1
+if errorlevel 1 (
+  call :log "ERROR: Failed to set Group for service key: %SVC_KEY%"
+  exit /b 1
+)
 "%SYS32%\reg.exe" add "%SVC_KEY%" /v ImagePath /t REG_EXPAND_SZ /d "system32\drivers\%STOR_SYS%" /f >>"%LOG%" 2>&1
+if errorlevel 1 (
+  call :log "ERROR: Failed to set ImagePath for service key: %SVC_KEY%"
+  exit /b 1
+)
 
 rem CriticalDeviceDatabase pre-seed: map PCI hardware IDs to the storage service.
 set "CDD_BASE=HKLM\SYSTEM\CurrentControlSet\Control\CriticalDeviceDatabase"
@@ -924,12 +948,23 @@ set "SERVICE=%~2"
 set "CLASSGUID=%~3"
 
 "%SYS32%\reg.exe" add "%CDD_KEY%" /f >>"%LOG%" 2>&1
-"%SYS32%\reg.exe" add "%CDD_KEY%" /v Service /t REG_SZ /d "%SERVICE%" /f >>"%LOG%" 2>&1
-"%SYS32%\reg.exe" add "%CDD_KEY%" /v ClassGUID /t REG_SZ /d "%CLASSGUID%" /f >>"%LOG%" 2>&1
-"%SYS32%\reg.exe" add "%CDD_KEY%" /v Class /t REG_SZ /d "SCSIAdapter" /f >>"%LOG%" 2>&1
-
 if errorlevel 1 (
-  call :log "ERROR: Failed to write CriticalDeviceDatabase key: %CDD_KEY%"
+  call :log "ERROR: Failed to create CriticalDeviceDatabase key: %CDD_KEY%"
+  exit /b 1
+)
+"%SYS32%\reg.exe" add "%CDD_KEY%" /v Service /t REG_SZ /d "%SERVICE%" /f >>"%LOG%" 2>&1
+if errorlevel 1 (
+  call :log "ERROR: Failed to set Service for CriticalDeviceDatabase key: %CDD_KEY%"
+  exit /b 1
+)
+"%SYS32%\reg.exe" add "%CDD_KEY%" /v ClassGUID /t REG_SZ /d "%CLASSGUID%" /f >>"%LOG%" 2>&1
+if errorlevel 1 (
+  call :log "ERROR: Failed to set ClassGUID for CriticalDeviceDatabase key: %CDD_KEY%"
+  exit /b 1
+)
+"%SYS32%\reg.exe" add "%CDD_KEY%" /v Class /t REG_SZ /d "SCSIAdapter" /f >>"%LOG%" 2>&1
+if errorlevel 1 (
+  call :log "ERROR: Failed to set Class for CriticalDeviceDatabase key: %CDD_KEY%"
   exit /b 1
 )
 exit /b 0
