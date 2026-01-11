@@ -400,14 +400,14 @@ For each entrypoint:
 - **Can be deferred:** Multi-engine, per-process isolation beyond what dxgkrnl provides.
  
 #### `DxgkDdiCreateAllocation`
- 
+  
 - **Purpose:** Create GPU allocations (textures, render targets, vertex buffers, command buffers, etc).
 - **AeroGPU MVP behavior:**
-  - Create allocations backed by **locked system memory pages** (nonpaged) so the emulator can safely read them.
-  - Store:
-    - allocation size, format, pitch (if surface)
-    - PFN array / guest physical addresses
-    - usage hints (render target vs texture vs buffer)
+   - Create allocations backed by **locked system memory pages** (nonpaged) so the emulator can safely read them.
+   - Store:
+     - allocation size, format, pitch (if surface)
+     - guest physical base address (GPA) + size in bytes (for MVP, allocate physically-contiguous backing so this is a single range, matching `aerogpu_alloc_entry`)
+     - usage hints (render target vs texture vs buffer)
 - **Can be deferred:** Dedicated VRAM placement, compression/tiling, swizzling.
  
 #### `DxgkDdiDestroyAllocation`
