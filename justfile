@@ -12,23 +12,47 @@
 #   just test
 #
 # Optional configuration:
-#   WEB_DIR=web just dev
-#   WEB_DIR=web WASM_CRATE_DIR=crates/aero-wasm just wasm-watch
+#   AERO_NODE_DIR=web just dev
+#   AERO_NODE_DIR=web AERO_WASM_CRATE_DIR=crates/aero-wasm just wasm-watch
 
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
-WEB_DIR := env_var_or_default("WEB_DIR", "web")
+# Canonical: AERO_NODE_DIR. Back-compat aliases: AERO_WEB_DIR, WEB_DIR.
+WEB_DIR := env_var_or_default("AERO_NODE_DIR", env_var_or_default("AERO_WEB_DIR", env_var_or_default("WEB_DIR", "web")))
+
+[private]
+_warn_deprecated_env:
+  #!/usr/bin/env bash
+  set -euo pipefail
+
+  if [[ -n "${AERO_WEB_DIR:-}" && -z "${AERO_NODE_DIR:-}" ]]; then
+    echo "warning: AERO_WEB_DIR is deprecated; use AERO_NODE_DIR instead" >&2
+  fi
+  if [[ -n "${WEB_DIR:-}" && -z "${AERO_NODE_DIR:-}" ]]; then
+    echo "warning: WEB_DIR is deprecated; use AERO_NODE_DIR instead" >&2
+  fi
+
+  if [[ -n "${AERO_WASM_DIR:-}" && -z "${AERO_WASM_CRATE_DIR:-}" ]]; then
+    echo "warning: AERO_WASM_DIR is deprecated; use AERO_WASM_CRATE_DIR instead" >&2
+  fi
+  if [[ -n "${WASM_CRATE_DIR:-}" && -z "${AERO_WASM_CRATE_DIR:-}" ]]; then
+    echo "warning: WASM_CRATE_DIR is deprecated; use AERO_WASM_CRATE_DIR instead" >&2
+  fi
 
 [private]
 _detect_wasm_crate_dir:
   #!/usr/bin/env bash
   set -euo pipefail
 
+  just _warn_deprecated_env
+
   args=(--allow-missing)
-  if [[ -n "${WASM_CRATE_DIR:-}" ]]; then
-    args+=(--wasm-crate-dir "${WASM_CRATE_DIR}")
-  elif [[ -n "${AERO_WASM_CRATE_DIR:-}" ]]; then
+  if [[ -n "${AERO_WASM_CRATE_DIR:-}" ]]; then
     args+=(--wasm-crate-dir "${AERO_WASM_CRATE_DIR}")
+  elif [[ -n "${AERO_WASM_DIR:-}" ]]; then
+    args+=(--wasm-crate-dir "${AERO_WASM_DIR}")
+  elif [[ -n "${WASM_CRATE_DIR:-}" ]]; then
+    args+=(--wasm-crate-dir "${WASM_CRATE_DIR}")
   fi
 
   out="$(./scripts/ci/detect-wasm-crate.sh "${args[@]}")"
@@ -49,6 +73,8 @@ default:
 setup:
   #!/usr/bin/env bash
   set -euo pipefail
+
+  just _warn_deprecated_env
 
   echo "==> Rust: installing pinned toolchains + wasm32 target"
   if ! command -v rustup >/dev/null; then
@@ -122,6 +148,8 @@ wasm:
   #!/usr/bin/env bash
   set -euo pipefail
 
+  just _warn_deprecated_env
+
   # Prefer the web app's wasm build scripts, which produce both:
   # - web/src/wasm/pkg-single
   # - web/src/wasm/pkg-threaded (shared-memory)
@@ -140,7 +168,7 @@ wasm:
   # Fallback: build a single wasm-pack package directly from a detected crate.
   wasm_dir="$(just _detect_wasm_crate_dir)"
   if [[ -z "${wasm_dir}" ]]; then
-    echo "==> wasm: no web wasm build scripts found and no Rust wasm crate detected (set WASM_CRATE_DIR=...); nothing to build"
+    echo "==> wasm: no web wasm build scripts found and no Rust wasm crate detected (set AERO_WASM_CRATE_DIR=...); nothing to build"
     exit 0
   fi
   if ! command -v wasm-pack >/dev/null; then
@@ -155,6 +183,8 @@ wasm:
 wasm-single:
   #!/usr/bin/env bash
   set -euo pipefail
+
+  just _warn_deprecated_env
 
   if [[ -f "{{WEB_DIR}}/package.json" ]]; then
     if (cd "{{WEB_DIR}}" && node -e "const p=require('./package.json'); process.exit((p.scripts && p.scripts['wasm:build:single']) ? 0 : 1)" >/dev/null 2>&1); then
@@ -174,6 +204,8 @@ wasm-single:
 wasm-threaded:
   #!/usr/bin/env bash
   set -euo pipefail
+
+  just _warn_deprecated_env
 
   if [[ -f "{{WEB_DIR}}/package.json" ]]; then
     if (cd "{{WEB_DIR}}" && node -e "const p=require('./package.json'); process.exit((p.scripts && p.scripts['wasm:build:threaded']) ? 0 : 1)" >/dev/null 2>&1); then
@@ -261,9 +293,11 @@ wasm-watch:
   #!/usr/bin/env bash
   set -euo pipefail
 
+  just _warn_deprecated_env
+
   wasm_dir="$(just _detect_wasm_crate_dir)"
   if [[ -z "${wasm_dir}" ]]; then
-    echo "==> wasm-watch: no Rust wasm crate found (set WASM_CRATE_DIR=...); nothing to watch"
+    echo "==> wasm-watch: no Rust wasm crate found (set AERO_WASM_CRATE_DIR=...); nothing to watch"
     exit 0
   fi
 
@@ -281,6 +315,8 @@ wasm-watch:
 build:
   #!/usr/bin/env bash
   set -euo pipefail
+
+  just _warn_deprecated_env
 
   echo "==> Building wasm (single + threaded)"
   just wasm
@@ -300,6 +336,8 @@ build:
 test:
   #!/usr/bin/env bash
   set -euo pipefail
+
+  just _warn_deprecated_env
 
   if [[ -f "Cargo.toml" ]]; then
     echo "==> Rust: cargo test"

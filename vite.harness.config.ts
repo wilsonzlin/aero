@@ -13,8 +13,8 @@ import {
   cspHeaders,
 } from './scripts/security_headers.mjs';
 
-const coopCoepDisabled =
-  process.env.VITE_DISABLE_COOP_COEP === '1' || process.env.VITE_DISABLE_COOP_COEP === 'true';
+const coopCoepSetting = (process.env.VITE_DISABLE_COOP_COEP ?? '').toLowerCase();
+const coopCoepDisabled = coopCoepSetting === '1' || coopCoepSetting === 'true';
 
 export default defineConfig({
   // Reuse `web/public` across the repo so test assets and `_headers` templates

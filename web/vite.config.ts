@@ -12,8 +12,8 @@ import {
 
 const rootDir = fileURLToPath(new URL(".", import.meta.url));
 
-const coopCoepDisabled =
-  process.env.VITE_DISABLE_COOP_COEP === "1" || process.env.VITE_DISABLE_COOP_COEP === "true";
+const coopCoepSetting = (process.env.VITE_DISABLE_COOP_COEP ?? "").toLowerCase();
+const coopCoepDisabled = coopCoepSetting === "1" || coopCoepSetting === "true";
 
 type AeroBuildInfo = Readonly<{
   version: string;

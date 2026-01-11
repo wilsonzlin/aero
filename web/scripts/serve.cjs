@@ -18,6 +18,8 @@ function parseArgs(argv) {
 
 const { host, port } = parseArgs(process.argv);
 const rootDir = path.join(__dirname, '..');
+const coopCoepSetting = String(process.env.VITE_DISABLE_COOP_COEP ?? '').toLowerCase();
+const coopCoepDisabled = coopCoepSetting === '1' || coopCoepSetting === 'true';
 
 function contentTypeFor(filePath) {
   switch (path.extname(filePath)) {
@@ -121,8 +123,12 @@ const server = http.createServer((req, res) => {
     const commonHeaders = {
       // The real Aero project requires COOP/COEP for SharedArrayBuffer. Keeping these
       // headers here makes the demo behave like production from day one.
-      'Cross-Origin-Opener-Policy': 'same-origin',
-      'Cross-Origin-Embedder-Policy': 'require-corp',
+      ...(coopCoepDisabled
+        ? {}
+        : {
+            'Cross-Origin-Opener-Policy': 'same-origin',
+            'Cross-Origin-Embedder-Policy': 'require-corp',
+          }),
     };
 
     if (absPath.endsWith('.ts') || absPath.endsWith('.tsx')) {

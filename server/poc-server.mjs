@@ -10,6 +10,8 @@ const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, '..');
 const webPublicRoot = path.join(repoRoot, 'web', 'public');
 const webDistRoot = path.join(repoRoot, 'web', 'dist');
+const coopCoepSetting = String(process.env.VITE_DISABLE_COOP_COEP ?? '').toLowerCase();
+const coopCoepDisabled = coopCoepSetting === '1' || coopCoepSetting === 'true';
 
 function parsePort() {
   const args = process.argv.slice(2);
@@ -50,11 +52,13 @@ function cspHeader(mode) {
 }
 
 function withCommonHeaders(res) {
-  // COOP/COEP are required for SharedArrayBuffer + threads and (in Chrome) more accurate memory measurement APIs.
-  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
-  res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
-  res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
-  res.setHeader('Origin-Agent-Cluster', '?1');
+  if (!coopCoepDisabled) {
+    // COOP/COEP are required for SharedArrayBuffer + threads and (in Chrome) more accurate memory measurement APIs.
+    res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+    res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
+    res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
+    res.setHeader('Origin-Agent-Cluster', '?1');
+  }
   res.setHeader('Cache-Control', 'no-store');
 }
 
