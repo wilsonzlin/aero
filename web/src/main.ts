@@ -3117,12 +3117,22 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
 
   const restartButton = el("button", {
     text: "Restart VM",
-    onclick: () => {
+    onclick: async () => {
       frameScheduler?.stop();
       frameScheduler = null;
       schedulerWorker = null;
       schedulerFrameStateSab = null;
       schedulerSharedFramebuffer = null;
+      try {
+        // Keep restart behavior consistent with the initial start button: use the
+        // latest disk mounts from DiskManager, even if the user changed them since
+        // the last boot.
+        const diskManager = await diskManagerPromise;
+        bootDiskSelection = await getBootDiskSelection(diskManager);
+      } catch (err) {
+        error.textContent = err instanceof Error ? err.message : String(err);
+        bootDiskSelection = null;
+      }
       try {
         workerCoordinator.restart();
       } catch (err) {
@@ -3290,14 +3300,16 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
       if (ioWorker) {
         usbBroker.attachWorkerPort(ioWorker);
         webHidBroker.attachWorkerPort(ioWorker);
-        if (bootDiskSelection) {
-          ioWorker.postMessage({
-            type: "setBootDisks",
-            mounts: bootDiskSelection.mounts,
-            hdd: bootDiskSelection.hdd ?? null,
-            cd: bootDiskSelection.cd ?? null,
-          });
-        }
+        // io.worker waits for the first `setBootDisks` message before reporting READY.
+        // Ensure we always send *something* so non-VM worker harnesses (audio demos, etc)
+        // don't wedge the io worker in "starting" forever.
+        const selection = bootDiskSelection;
+        ioWorker.postMessage({
+          type: "setBootDisks",
+          mounts: selection?.mounts ?? {},
+          hdd: selection?.hdd ?? null,
+          cd: selection?.cd ?? null,
+        });
       }
       attachedIoWorker = ioWorker;
     }
