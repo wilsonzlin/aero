@@ -64,6 +64,12 @@ test(
 
     await vm.reset();
     assert.equal(vm.state, 'stopped');
+
+    await vm.start({ mode: 'cooperativeInfiniteLoop' });
+    const heartbeat = await onceEvent(vm, 'heartbeat');
+    assert.ok(heartbeat.detail.totalInstructions > 0);
+    await vm.shutdown();
+    assert.equal(vm.state, 'stopped');
   },
 );
 
