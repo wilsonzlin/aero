@@ -81,7 +81,8 @@ jobs:
           set -euo pipefail
 
           echo "BUILD_TIMESTAMP=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_ENV"
-          echo "GIT_SHA=${GITHUB_SHA}" >> "$GITHUB_ENV"
+          # Always derive the SHA from the checked-out ref (workflow_dispatch may override ref).
+          echo "GIT_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
 
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
             version="${GITHUB_REF_NAME}"
