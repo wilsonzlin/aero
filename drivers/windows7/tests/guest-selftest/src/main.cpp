@@ -50,7 +50,7 @@ struct Options {
   std::wstring blk_root;
   // Skip the virtio-snd test (always emits a SKIP marker).
   bool disable_snd = false;
-  // If set, missing virtio-snd causes a FAIL marker (instead of SKIP).
+  // Enable the virtio-snd test. Missing device or playback failure causes overall FAIL.
   bool require_snd = false;
 
   DWORD net_timeout_sec = 120;
@@ -2247,7 +2247,8 @@ static void PrintUsage() {
       "  --dns-host <hostname>     Hostname for DNS resolution test\n"
       "  --log-file <path>         Log file path (default C:\\\\aero-virtio-selftest.log)\n"
       "  --disable-snd             Skip virtio-snd test (emit SKIP)\n"
-      "  --require-snd             Fail if virtio-snd is missing (default: SKIP)\n"
+      "  --test-snd                Run virtio-snd test (FAIL if missing/playback fails)\n"
+      "  --require-snd             Alias for --test-snd\n"
       "  --net-timeout-sec <sec>   Wait time for DHCP/link\n"
       "  --io-size-mib <mib>       virtio-blk test file size\n"
       "  --io-chunk-kib <kib>      virtio-blk chunk size\n"
@@ -2344,7 +2345,7 @@ int wmain(int argc, wchar_t** argv) {
   }
 
   if (opt.disable_snd && opt.require_snd) {
-    printf("--disable-snd and --require-snd cannot both be set\n");
+    printf("--disable-snd and --test-snd/--require-snd cannot both be set\n");
     PrintUsage();
     return 2;
   }
@@ -2373,19 +2374,16 @@ int wmain(int argc, wchar_t** argv) {
 
   if (opt.disable_snd) {
     log.LogLine("virtio-snd: disabled by --disable-snd");
-    log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP");
+    log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|disabled");
+  } else if (!opt.require_snd) {
+    log.LogLine("virtio-snd: skipped (enable with --test-snd)");
+    log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|flag_not_set");
   } else {
     const auto snd_pci = DetectVirtioSndPciDevices(log);
     if (snd_pci.empty()) {
       log.LogLine("virtio-snd: PCI\\VEN_1AF4&DEV_1059 or PCI\\VEN_1AF4&DEV_1018 device not detected");
-      if (opt.require_snd) {
-        log.LogLine("virtio-snd: --require-snd set; failing");
-        log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL");
-        all_ok = false;
-      } else {
-        log.LogLine("virtio-snd: skipping (use --require-snd to require device)");
-        log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP");
-      }
+      log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|device_missing");
+      all_ok = false;
     } else {
       std::vector<std::wstring> match_names;
       for (const auto& d : snd_pci) {
