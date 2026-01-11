@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -43,6 +44,17 @@ function requireLabel({ relPath, anyOf = [], mustContain = [] }) {
   };
 }
 
+function gitTrackedFiles() {
+  const res = spawnSync('git', ['ls-files'], { cwd: repoRoot, encoding: 'utf8' });
+  if (res.status !== 0) {
+    throw new Error(`git ls-files failed: ${res.stderr || res.stdout}`);
+  }
+  return res.stdout
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
 const errors = [];
 
 // Canonical deployment entry points should say so explicitly.
@@ -53,9 +65,16 @@ errors.push(
   }),
 );
 
-// Root-level compose files exist for service-specific development and should be
-// clearly marked to avoid conflicting with production manifests.
-for (const relPath of ['docker-compose.yml', 'compose.yaml', 'infra/local-object-store/docker-compose.yml']) {
+// Any other Compose manifests are treated as reference-only examples, since the
+// canonical production entry point is `deploy/docker-compose.yml`.
+const tracked = gitTrackedFiles();
+const composeManifests = [
+  ...tracked.filter((path) => path.endsWith('docker-compose.yml')),
+  ...tracked.filter((path) => path === 'compose.yaml' || path === 'compose.yml'),
+];
+
+for (const relPath of composeManifests) {
+  if (relPath === 'deploy/docker-compose.yml') continue;
   errors.push(
     requireLabel({
       relPath,

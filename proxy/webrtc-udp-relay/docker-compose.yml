@@ -1,3 +1,4 @@
+# EXAMPLE: Local compose stack for the optional WebRTC UDP relay service.
 #
 # Profiles:
 # - relay-only: just the WebRTC UDP relay service
