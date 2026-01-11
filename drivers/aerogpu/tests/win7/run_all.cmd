@@ -35,6 +35,7 @@ for %%A in (%*) do (
   for /f "tokens=1 delims==" %%a in ("!ARG!") do (
     if /I "%%a"=="--timeout-ms" set "SKIP_ARG=1"
   )
+  if /I "!ARG!"=="--no-timeout" set "SKIP_ARG=1"
   if not defined SKIP_ARG set "TEST_ARGS=!TEST_ARGS! !ARG!"
 )
 set "RUNNER=%BIN%\\aerogpu_timeout_runner.exe"
