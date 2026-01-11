@@ -143,6 +143,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Setup Node workspace
+        id: node-workspace
         uses: ./.github/actions/setup-node-workspace
 
       - name: Setup Playwright (cached)
@@ -150,7 +151,7 @@ jobs:
         with:
           browsers: chromium
           working-directory: backend/aero-gateway
-          lockfile: package-lock.json
+          lockfile: ${{ steps.node-workspace.outputs.lockfile }}
 
       - name: Run Playwright E2E tests
         run: npm -w backend/aero-gateway run test:e2e -- --project=chromium

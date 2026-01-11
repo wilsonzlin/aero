@@ -44,7 +44,7 @@ jobs:
         with:
           browsers: chromium
           working-directory: tools/perf
-          lockfile: package-lock.json
+          lockfile: ${{ steps.node-workspace.outputs.lockfile }}
 
       - name: Run browser perf (nightly)
         run: node scripts/ci/run_browser_perf.mjs --workspace "${{ steps.node-workspace.outputs.dir }}" --preview --preview-port 4173 --out-dir perf-results/nightly
