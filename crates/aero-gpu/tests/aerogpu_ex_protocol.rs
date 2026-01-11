@@ -526,6 +526,42 @@ fn exporting_same_token_for_different_resources_across_submissions_is_an_error()
 }
 
 #[test]
+fn reusing_destroyed_underlying_handle_while_alias_alive_is_an_error() {
+    const TOKEN: u64 = 0xAABB_CCDD_EEFF_0001;
+
+    let submit1 = build_stream(|out| {
+        emit_create_texture_rgba8(out, 0x10);
+        emit_packet(out, AerogpuCmdOpcode::ExportSharedSurface as u32, |out| {
+            push_u32(out, 0x10);
+            push_u32(out, 0);
+            push_u64(out, TOKEN);
+        });
+        emit_packet(out, AerogpuCmdOpcode::ImportSharedSurface as u32, |out| {
+            push_u32(out, 0x20);
+            push_u32(out, 0);
+            push_u64(out, TOKEN);
+        });
+        emit_packet(out, AerogpuCmdOpcode::DestroyResource as u32, |out| {
+            push_u32(out, 0x10);
+            push_u32(out, 0);
+        });
+    });
+
+    let submit2 = build_stream(|out| {
+        // Reusing the original handle would collide with the still-alive underlying id.
+        emit_create_texture_rgba8(out, 0x10);
+    });
+
+    let mut processor = AeroGpuCommandProcessor::new();
+    processor
+        .process_submission(&submit1, 1)
+        .expect("submission 1 should succeed");
+
+    let err = processor.process_submission(&submit2, 2).unwrap_err();
+    assert!(matches!(err, CommandProcessorError::SharedSurfaceHandleInUse(0x10)));
+}
+
+#[test]
 fn rejects_unsupported_abi_major() {
     let stream = build_stream_with_abi((AEROGPU_ABI_MAJOR + 1) << 16, |_| {});
     let err = parse_cmd_stream(&stream).unwrap_err();

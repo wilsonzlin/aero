@@ -19,6 +19,7 @@ pub enum CommandProcessorError {
     Parse(AeroGpuCmdStreamParseError),
     UnknownShareToken(u64),
     UnknownSharedSurfaceHandle(u32),
+    SharedSurfaceHandleInUse(u32),
     ShareTokenAlreadyExported {
         share_token: u64,
         existing: u32,
@@ -40,6 +41,9 @@ impl std::fmt::Display for CommandProcessorError {
             }
             CommandProcessorError::UnknownSharedSurfaceHandle(handle) => {
                 write!(f, "unknown shared surface handle 0x{handle:08X}")
+            }
+            CommandProcessorError::SharedSurfaceHandleInUse(handle) => {
+                write!(f, "shared surface handle 0x{handle:08X} is already in use")
             }
             CommandProcessorError::ShareTokenAlreadyExported {
                 share_token,
@@ -122,12 +126,18 @@ impl AeroGpuCommandProcessor {
         self.shared_surface_by_token.get(&share_token).copied()
     }
 
-    fn register_shared_surface(&mut self, handle: u32) {
+    fn register_shared_surface(&mut self, handle: u32) -> Result<(), CommandProcessorError> {
         if self.shared_surface_handles.contains_key(&handle) {
-            return;
+            return Ok(());
+        }
+        // Handle reuse would corrupt the aliasing tables because this processor uses protocol
+        // handles as the underlying resource id.
+        if self.shared_surface_refcounts.contains_key(&handle) {
+            return Err(CommandProcessorError::SharedSurfaceHandleInUse(handle));
         }
         self.shared_surface_handles.insert(handle, handle);
         *self.shared_surface_refcounts.entry(handle).or_insert(0) += 1;
+        Ok(())
     }
 
     fn resolve_shared_surface_handle(&self, handle: u32) -> Option<u32> {
@@ -167,7 +177,7 @@ impl AeroGpuCommandProcessor {
         for cmd in stream.cmds {
             match cmd {
                 AeroGpuCmd::CreateTexture2d { texture_handle, .. } => {
-                    self.register_shared_surface(texture_handle);
+                    self.register_shared_surface(texture_handle)?;
                 }
                 AeroGpuCmd::DestroyResource { resource_handle } => {
                     self.destroy_shared_surface_handle(resource_handle);
