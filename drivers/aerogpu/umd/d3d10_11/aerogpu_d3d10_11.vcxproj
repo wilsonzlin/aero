@@ -65,13 +65,17 @@
       Set /p:AeroGpuUseWdkHeaders=0 to build against the repository's minimal
       compat ABI subset instead.
 
-      When enabled, /p:AeroGpuWdkRoot should point at a Win7-era WDK layout root
+      When enabled, /p:AeroGpuWdkRoot may be set to a Win7-era WDK 7.1 (WinDDK)
+      layout root
       (typically %WINDDK% / C:\WinDDK\7600.16385.1) so d3d10umddi.h/d3d11umddi.h
-      resolve via $(AeroGpuWdkRoot)\inc\{api,ddk}.
+      resolve via $(AeroGpuWdkRoot)\inc\{api,ddk}. If AeroGpuWdkRoot is unset,
+      the build falls back to the toolchain's standard include paths (WDK10+).
     -->
     <AeroGpuUseWdkHeaders Condition="'$(AeroGpuUseWdkHeaders)'==''">1</AeroGpuUseWdkHeaders>
-    <AeroGpuWdkRoot Condition="'$(AeroGpuWdkRoot)'=='' and '$(WDKROOT)'!=''">$(WDKROOT)</AeroGpuWdkRoot>
-    <AeroGpuWdkRoot Condition="'$(AeroGpuWdkRoot)'==''">$(WINDDK)</AeroGpuWdkRoot>
+    <AeroGpuWdkRoot Condition="'$(AeroGpuWdkRoot)'=='' and '$(WINDDK)'!=''">$(WINDDK)</AeroGpuWdkRoot>
+    <AeroGpuWdkRoot Condition="'$(AeroGpuWdkRoot)'=='' and '$(WDK_ROOT)'!=''">$(WDK_ROOT)</AeroGpuWdkRoot>
+    <!-- Avoid treating a modern WDKROOT (Windows Kits 10+) as a WinDDK-style root. -->
+    <AeroGpuWdkRoot Condition="'$(AeroGpuWdkRoot)'=='' and '$(WDKROOT)'!='' and Exists('$(WDKROOT)\\inc\\api\\d3d10umddi.h')">$(WDKROOT)</AeroGpuWdkRoot>
   </PropertyGroup>
 
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
@@ -172,9 +176,8 @@
     </ClCompile>
   </ItemDefinitionGroup>
 
-  <Target Name="AeroGpuValidateWdkHeaders" BeforeTargets="ClCompile" Condition="'$(AeroGpuUseWdkHeaders)'=='1'">
-    <Error Condition="'$(AeroGpuWdkRoot)'==''"
-           Text="AeroGpuUseWdkHeaders=1 but AeroGpuWdkRoot is not set. Pass /p:AeroGpuWdkRoot=C:\\WinDDK\\7600.16385.1 or set WINDDK/WDKROOT." />
+  <Target Name="AeroGpuValidateWdkHeaders" BeforeTargets="ClCompile"
+          Condition="'$(AeroGpuUseWdkHeaders)'=='1' and '$(AeroGpuWdkRoot)'!=''">
     <Error Condition="!Exists('$(AeroGpuWdkRoot)\\inc\\api\\d3d10umddi.h')"
            Text="WDK header not found: $(AeroGpuWdkRoot)\\inc\\api\\d3d10umddi.h" />
     <Error Condition="!Exists('$(AeroGpuWdkRoot)\\inc\\api\\d3d10_1umddi.h')"

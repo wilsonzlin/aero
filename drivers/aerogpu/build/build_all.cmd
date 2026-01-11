@@ -28,8 +28,8 @@ set "UMD_D3D10_11_SLN=%UMD_D3D10_11_DIR%\aerogpu_d3d10_11.sln"
 
 set "OUT_ROOT=%SCRIPT_DIR%\out"
 
-rem Optional Win7-era WDK root (used only for D3D10/11 UMD DDI headers).
-rem If not found, the D3D10/11 UMD builds in the repo-local/stub header mode.
+rem Optional WDK 7.1 root (WinDDK layout; used only for D3D10/11 UMD DDI headers).
+rem If not found, the D3D10/11 UMD build relies on the toolchain's default include paths (WDK10+).
 set "WDKROOT="
 if defined WINDDK set "WDKROOT=%WINDDK%"
 if not defined WDKROOT if defined WDK_ROOT set "WDKROOT=%WDK_ROOT%"
@@ -82,13 +82,6 @@ if not exist "%UMD_D3D9_PROJ%" (
 set "HAVE_D3D10_11=0"
 if exist "%UMD_D3D10_11_SLN%" (
   set "HAVE_D3D10_11=1"
-)
-if "%HAVE_D3D10_11%"=="1" (
-  rem The D3D10/11 UMD is compiled against the Win7-era D3D DDI headers.
-  rem Provide WDKROOT (e.g. C:\WinDDK\7600.16385.1) so MSBuild can find
-  rem d3d10umddi.h/d3d11umddi.h.
-  call :ensure_wdk_root
-  if errorlevel 1 exit /b 1
 )
 if "%HAVE_D3D10_11%"=="0" (
   echo NOTE: Optional D3D10/11 UMD not found; skipping:
@@ -214,31 +207,3 @@ if errorlevel 1 (
   )
 
 endlocal & exit /b 0
-
-rem -----------------------------------------------------------------------------
-rem :ensure_wdk_root
-rem
-rem The D3D10/11 UMD builds against Win7-era D3D DDI headers (d3d10umddi.h /
-rem d3d11umddi.h). These are most readily available via a WinDDK 7600-era WDK install.
-rem Set WDKROOT (and WINDDK for compatibility) if not already configured.
-rem -----------------------------------------------------------------------------
-:ensure_wdk_root
-if defined WDKROOT goto :wdk_ok
-if defined WINDDK set "WDKROOT=%WINDDK%" & goto :wdk_ok
-if defined WDK_ROOT set "WDKROOT=%WDK_ROOT%" & goto :wdk_ok
-
-if exist "C:\WinDDK\7600.16385.1\inc\api\d3d10umddi.h" (
-  set "WDKROOT=C:\WinDDK\7600.16385.1"
-  goto :wdk_ok
-)
-
-echo ERROR: WDKROOT not set and Win7 D3D10/11 UMD DDI headers were not found.
-echo        Set WDKROOT (or WINDDK) to a WDK root that contains d3d10umddi.h, e.g.:
-echo          set WDKROOT=C:\WinDDK\7600.16385.1
-exit /b 1
-
-:wdk_ok
-if not defined WINDDK set "WINDDK=%WDKROOT%"
-exit /b 0
-
-
