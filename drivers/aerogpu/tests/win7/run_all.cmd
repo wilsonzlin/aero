@@ -175,7 +175,7 @@ echo   --producers affects d3d9ex_shared_surface_many_producers: number of produ
 echo   --wait-timeout-ms affects wait_vblank_pacing and vblank_wait_sanity: per-wait timeout for D3DKMTWaitForVerticalBlankEvent.
 echo   --display affects vblank_wait ^(defaults to primary display: \\.\DISPLAY1^).
 echo   --allow-remote skips tests that are not meaningful in RDP sessions ^(SM_REMOTESESSION=1^): d3d9ex_dwm_probe, d3d9ex_submit_fence_stress, dwm_flush_pacing, vblank_wait, wait_vblank_pacing, vblank_wait_pacing, vblank_wait_sanity, get_scanline_sanity, d3d9_raster_status_sanity, d3d9_raster_status_pacing.
-echo   --show affects d3d9ex_event_query, d3d9ex_shared_surface, d3d9ex_shared_surface_ipc, d3d9ex_shared_surface_wow64, and d3d9ex_shared_surface_many_producers: show their windows (overrides --hidden).
+echo   --show affects d3d9ex_event_query, d3d9ex_submit_fence_stress, d3d9ex_shared_surface, d3d9ex_shared_surface_ipc, d3d9ex_shared_surface_wow64, and d3d9ex_shared_surface_many_producers: show their windows (overrides --hidden).
 echo   d3d9ex_shared_surface validates cross-process pixel sharing by default; use --no-validate-sharing to skip readback validation ^(--dump always validates^).
 echo   --json emits machine-readable JSON (forwarded to each test). To get an aggregated suite report, run bin\\aerogpu_test_runner.exe directly.
 echo   Use --timeout-ms=NNNN ^(or --timeout-ms NNNN^) or set AEROGPU_TEST_TIMEOUT_MS to override the default per-test timeout (%TIMEOUT_MS% ms) when aerogpu_timeout_runner.exe is present.

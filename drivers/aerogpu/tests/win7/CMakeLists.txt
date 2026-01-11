@@ -133,6 +133,62 @@ aerogpu_add_win7_test(d3d9ex_shared_surface_ipc
 )
 target_link_libraries(d3d9ex_shared_surface_ipc PRIVATE user32 gdi32 d3d9)
 
+if(CMAKE_SIZEOF_VOID_P EQUAL 4)
+  aerogpu_add_win7_test(d3d9ex_shared_surface_wow64
+    d3d9ex_shared_surface_wow64/producer_main.cpp
+  )
+  target_link_libraries(d3d9ex_shared_surface_wow64 PRIVATE user32 gdi32 d3d9)
+
+  set(AEROGPU_WIN7_BUILD_WOW64_CONSUMER_DEFAULT OFF)
+  if(MSVC AND CMAKE_GENERATOR MATCHES "Visual Studio" AND CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "AMD64|x86_64")
+    set(AEROGPU_WIN7_BUILD_WOW64_CONSUMER_DEFAULT ON)
+  endif()
+  option(AEROGPU_WIN7_BUILD_WOW64_CONSUMER
+         "Build the x64 consumer helper binary required by d3d9ex_shared_surface_wow64"
+         ${AEROGPU_WIN7_BUILD_WOW64_CONSUMER_DEFAULT})
+
+  if(AEROGPU_WIN7_BUILD_WOW64_CONSUMER AND MSVC AND CMAKE_GENERATOR MATCHES "Visual Studio")
+    set(AEROGPU_WIN7_WOW64_CONSUMER_BIN
+        "${AEROGPU_TEST_BIN_DIR}/d3d9ex_shared_surface_wow64_consumer_x64.exe")
+    set(AEROGPU_WIN7_WOW64_CONSUMER_BUILD_DIR "${CMAKE_CURRENT_BINARY_DIR}/wow64_consumer_x64")
+    set(AEROGPU_WIN7_WOW64_CONSUMER_CMAKE_ARGS
+        -G "${CMAKE_GENERATOR}"
+        -A x64
+    )
+    if(CMAKE_GENERATOR_TOOLSET)
+      list(APPEND AEROGPU_WIN7_WOW64_CONSUMER_CMAKE_ARGS -T "${CMAKE_GENERATOR_TOOLSET}")
+    endif()
+
+    add_custom_command(
+      OUTPUT "${AEROGPU_WIN7_WOW64_CONSUMER_BIN}"
+      COMMAND "${CMAKE_COMMAND}"
+              -S "${CMAKE_CURRENT_LIST_DIR}"
+              -B "${AEROGPU_WIN7_WOW64_CONSUMER_BUILD_DIR}"
+              ${AEROGPU_WIN7_WOW64_CONSUMER_CMAKE_ARGS}
+      COMMAND "${CMAKE_COMMAND}"
+              --build "${AEROGPU_WIN7_WOW64_CONSUMER_BUILD_DIR}"
+              --config $<CONFIG>
+              --target d3d9ex_shared_surface_wow64_consumer_x64
+      DEPENDS
+        "${CMAKE_CURRENT_LIST_FILE}"
+        "${CMAKE_CURRENT_LIST_DIR}/d3d9ex_shared_surface_wow64/consumer_main.cpp"
+        "${CMAKE_CURRENT_LIST_DIR}/d3d9ex_shared_surface_wow64/wow64_shared_surface_common.h"
+      COMMENT "Building d3d9ex_shared_surface_wow64_consumer_x64.exe"
+      VERBATIM
+    )
+    add_custom_target(d3d9ex_shared_surface_wow64_consumer_x64
+      DEPENDS "${AEROGPU_WIN7_WOW64_CONSUMER_BIN}"
+    )
+    add_dependencies(d3d9ex_shared_surface_wow64 d3d9ex_shared_surface_wow64_consumer_x64)
+  endif()
+elseif(CMAKE_SIZEOF_VOID_P EQUAL 8)
+  # Consumer helper binary (x64 only). Build the producer in a Win32 configuration.
+  aerogpu_add_win7_test(d3d9ex_shared_surface_wow64_consumer_x64
+    d3d9ex_shared_surface_wow64/consumer_main.cpp
+  )
+  target_link_libraries(d3d9ex_shared_surface_wow64_consumer_x64 PRIVATE user32 gdi32 d3d9)
+endif()
+
 aerogpu_add_win7_test(d3d9ex_shared_surface_many_producers
   d3d9ex_shared_surface_many_producers/main.cpp
 )
