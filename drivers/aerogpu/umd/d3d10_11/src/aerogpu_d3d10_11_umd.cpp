@@ -4323,6 +4323,7 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     }
 
     const bool has_initial_data = (pDesc->pInitialData && pDesc->InitialDataCount);
+    const bool is_guest_backed = (res->backing_alloc_id != 0);
     bool wddm_initial_upload = false;
     if (has_initial_data) {
       const auto& init = pDesc->pInitialData[0];
@@ -4333,7 +4334,7 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       std::memcpy(res->storage.data(), init.pSysMem, static_cast<size_t>(res->size_bytes));
 
 #if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS)
-      if (res->wddm_allocation) {
+      if (is_guest_backed && res->wddm_allocation) {
         const HRESULT hr = UploadInitialDataToWddmAllocation(
             dev, res->wddm_allocation, init.pSysMem, static_cast<size_t>(res->size_bytes));
         if (FAILED(hr)) {
@@ -4360,7 +4361,20 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
 #endif
 
     if (has_initial_data) {
-      if (!wddm_initial_upload) {
+      if (is_guest_backed) {
+        if (!wddm_initial_upload) {
+          // Guest-backed resources must be initialized via the WDDM allocation + RESOURCE_DIRTY_RANGE
+          // path; inline UPLOAD_RESOURCE is only valid for host-owned resources.
+          res->~AeroGpuResource();
+          return E_FAIL;
+        }
+
+        auto* dirty = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+        dirty->resource_handle = res->handle;
+        dirty->reserved0 = 0;
+        dirty->offset_bytes = 0;
+        dirty->size_bytes = res->size_bytes;
+      } else {
         auto* upload = dev->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
             AEROGPU_CMD_UPLOAD_RESOURCE, res->storage.data(), res->storage.size());
         upload->resource_handle = res->handle;
@@ -4368,12 +4382,6 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
         upload->offset_bytes = 0;
         upload->size_bytes = res->size_bytes;
       }
-
-      auto* dirty = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
-      dirty->resource_handle = res->handle;
-      dirty->reserved0 = 0;
-      dirty->offset_bytes = 0;
-      dirty->size_bytes = res->size_bytes;
     }
     AEROGPU_D3D10_RET_HR(S_OK);
   }
@@ -4433,6 +4441,7 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     }
 
     const bool has_initial_data = (pDesc->pInitialData && pDesc->InitialDataCount);
+    const bool is_guest_backed = (res->backing_alloc_id != 0);
     bool wddm_initial_upload = false;
     if (has_initial_data) {
       if (res->mip_levels != 1 || res->array_size != 1) {
@@ -4453,7 +4462,7 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       }
 
 #if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS)
-      if (res->wddm_allocation) {
+      if (is_guest_backed && res->wddm_allocation) {
         const HRESULT hr = UploadInitialDataTex2DToWddmAllocation(dev,
                                                                   res->wddm_allocation,
                                                                   init.pSysMem,
@@ -4500,7 +4509,20 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
 #endif
 
     if (has_initial_data) {
-      if (!wddm_initial_upload) {
+      const uint64_t dirty_size =
+          static_cast<uint64_t>(res->row_pitch_bytes) * static_cast<uint64_t>(res->height);
+      if (is_guest_backed) {
+        if (!wddm_initial_upload) {
+          res->~AeroGpuResource();
+          return E_FAIL;
+        }
+
+        auto* dirty = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+        dirty->resource_handle = res->handle;
+        dirty->reserved0 = 0;
+        dirty->offset_bytes = 0;
+        dirty->size_bytes = dirty_size;
+      } else {
         auto* upload = dev->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
             AEROGPU_CMD_UPLOAD_RESOURCE, res->storage.data(), res->storage.size());
         upload->resource_handle = res->handle;
@@ -4508,12 +4530,6 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
         upload->offset_bytes = 0;
         upload->size_bytes = res->storage.size();
       }
-
-      auto* dirty = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
-      dirty->resource_handle = res->handle;
-      dirty->reserved0 = 0;
-      dirty->offset_bytes = 0;
-      dirty->size_bytes = static_cast<uint64_t>(res->row_pitch_bytes) * static_cast<uint64_t>(res->height);
     }
     AEROGPU_D3D10_RET_HR(S_OK);
   }
