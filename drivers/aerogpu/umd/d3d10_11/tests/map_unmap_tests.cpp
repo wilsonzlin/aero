@@ -853,6 +853,40 @@ bool TestMapFlagsValidation() {
   return true;
 }
 
+bool TestDynamicMapFlagsValidation() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false), "InitTestDevice(dynamic map flags)")) {
+    return false;
+  }
+
+  TestResource buf{};
+  if (!Check(CreateBuffer(&dev,
+                          /*byte_width=*/32,
+                          AEROGPU_D3D11_USAGE_DYNAMIC,
+                          kD3D11BindVertexBuffer,
+                          AEROGPU_D3D11_CPU_ACCESS_WRITE,
+                          &buf),
+             "CreateBuffer(dynamic VB)")) {
+    return false;
+  }
+
+  AEROGPU_DDI_MAPPED_SUBRESOURCE mapped = {};
+  const HRESULT hr = dev.device_funcs.pfnMap(dev.hDevice,
+                                             buf.hResource,
+                                             /*subresource=*/0,
+                                             AEROGPU_DDI_MAP_WRITE_DISCARD,
+                                             /*map_flags=*/0x1,
+                                             &mapped);
+  if (!Check(hr == E_INVALIDARG, "MapDiscard with unknown MapFlags bits should fail")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, buf.hResource);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
 bool TestHostOwnedDynamicIABufferUploads() {
   TestDevice dev{};
   if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false), "InitTestDevice(dynamic ia host-owned)")) {
@@ -1088,6 +1122,7 @@ int main() {
   ok &= TestGuestBackedTextureUnmapDirtyRange();
   ok &= TestMapUsageValidation();
   ok &= TestMapFlagsValidation();
+  ok &= TestDynamicMapFlagsValidation();
   ok &= TestHostOwnedDynamicIABufferUploads();
   ok &= TestGuestBackedDynamicIABufferDirtyRange();
   ok &= TestDynamicBufferUsageValidation();

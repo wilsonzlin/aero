@@ -8022,10 +8022,10 @@ void AEROGPU_APIENTRY DynamicConstantBufferUnmap(D3D10DDI_HDEVICE hDevice, D3D10
 }
 HRESULT AEROGPU_APIENTRY Map(D3D10DDI_HDEVICE hDevice,
                              D3D10DDI_HRESOURCE hResource,
-                              uint32_t subresource,
-                              uint32_t map_type,
-                              uint32_t map_flags,
-                              AEROGPU_DDI_MAPPED_SUBRESOURCE* pMapped) {
+                             uint32_t subresource,
+                             uint32_t map_type,
+                             uint32_t map_flags,
+                             AEROGPU_DDI_MAPPED_SUBRESOURCE* pMapped) {
   AEROGPU_D3D10_11_LOG("pfnMap subresource=%u map_type=%u map_flags=0x%X",
                        static_cast<unsigned>(subresource),
                        static_cast<unsigned>(map_type),
@@ -8037,6 +8037,9 @@ HRESULT AEROGPU_APIENTRY Map(D3D10DDI_HDEVICE hDevice,
   auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
   auto* res = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(hResource);
   if (!dev || !res) {
+    return E_INVALIDARG;
+  }
+  if ((map_flags & ~static_cast<uint32_t>(AEROGPU_D3D11_MAP_FLAG_DO_NOT_WAIT)) != 0) {
     return E_INVALIDARG;
   }
 
