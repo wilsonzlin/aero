@@ -626,7 +626,8 @@ export class WebSocketL2TunnelClient extends BaseL2TunnelClient {
   }
 
   private buildWebSocketUrl(): string {
-    const url = new URL(this.gatewayBaseUrl);
+    const baseHref = (globalThis as unknown as { location?: { href?: unknown } }).location?.href;
+    const url = baseHref && typeof baseHref === "string" ? new URL(this.gatewayBaseUrl, baseHref) : new URL(this.gatewayBaseUrl);
     if (url.protocol === "http:") url.protocol = "ws:";
     if (url.protocol === "https:") url.protocol = "wss:";
 

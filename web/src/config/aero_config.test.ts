@@ -62,6 +62,10 @@ describe("AeroConfig", () => {
   expect(parsed.overrides.proxyUrl).toBe("https://example.com");
   expect(parsed.issues.some((i) => i.key === "proxyUrl")).toBe(false);
 
+  const rel = parseAeroConfigOverrides({ proxyUrl: "/l2" });
+  expect(rel.overrides.proxyUrl).toBe("/l2");
+  expect(rel.issues.some((i) => i.key === "proxyUrl")).toBe(false);
+
   const bad = parseAeroConfigOverrides({ proxyUrl: "ftp://example.com" });
   expect(bad.overrides.proxyUrl).toBeNull();
   expect(bad.issues.some((i) => i.key === "proxyUrl")).toBe(true);
@@ -93,6 +97,12 @@ describe("AeroConfig", () => {
   expect(parsed.lockedKeys.has("enableWorkers")).toBe(true);
   expect(parsed.lockedKeys.has("proxyUrl")).toBe(true);
   expect(parsed.overrides.proxyUrl).toBe("https://example.com");
+  });
+
+  it("query parsing: accepts same-origin proxy paths", () => {
+  const parsed = parseAeroConfigQueryOverrides("?proxy=%2Fl2");
+  expect(parsed.lockedKeys.has("proxyUrl")).toBe(true);
+  expect(parsed.overrides.proxyUrl).toBe("/l2");
   });
 
   it("capability detection: does not throw in non-browser environments", () => {

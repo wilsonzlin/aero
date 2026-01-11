@@ -243,6 +243,42 @@ describe("net/l2Tunnel", () => {
     }
   });
 
+  it("WebSocket client accepts same-origin /path base URLs when location.href is available", async () => {
+    const g = globalThis as unknown as Record<string, unknown>;
+    const originalWs = g.WebSocket;
+    const originalLocation = (g as { location?: unknown }).location;
+
+    FakeWebSocket.nextProtocol = L2_TUNNEL_SUBPROTOCOL;
+    resetFakeWebSocket();
+    g.WebSocket = FakeWebSocket as unknown as WebSocketConstructor;
+    (g as { location?: unknown }).location = { href: "https://gateway.example.com/app/index.html" };
+
+    const events: L2TunnelEvent[] = [];
+    const client = new WebSocketL2TunnelClient("/base", (ev) => events.push(ev), {
+      keepaliveMinMs: 60_000,
+      keepaliveMaxMs: 60_000,
+    });
+
+    try {
+      client.connect();
+      expect(FakeWebSocket.last?.url).toBe("wss://gateway.example.com/base/l2");
+      FakeWebSocket.last?.open();
+      expect(events[0]?.type).toBe("open");
+    } finally {
+      client.close();
+      if (originalWs === undefined) {
+        delete (g as { WebSocket?: unknown }).WebSocket;
+      } else {
+        g.WebSocket = originalWs;
+      }
+      if (originalLocation === undefined) {
+        delete (g as { location?: unknown }).location;
+      } else {
+        (g as { location?: unknown }).location = originalLocation;
+      }
+    }
+  });
+
   it("disables keepalive when keepaliveMinMs=keepaliveMaxMs=0", async () => {
     const g = globalThis as unknown as Record<string, unknown>;
     const original = g.WebSocket;

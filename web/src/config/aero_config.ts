@@ -191,12 +191,18 @@ export function parseAndValidateProxyUrl(
   if (v === undefined) return null;
   if (v === null) return { proxyUrl: null };
 
+  // Support same-origin relative paths (common for deployments where the gateway
+  // is hosted alongside the web app).
+  if (v.startsWith("/")) {
+    return { proxyUrl: v };
+  }
+
   try {
     const parsed = new URL(v);
     if (parsed.protocol !== "ws:" && parsed.protocol !== "wss:" && parsed.protocol !== "http:" && parsed.protocol !== "https:") {
       return {
         proxyUrl: null,
-        issue: "proxyUrl must be a ws://, wss://, http://, or https:// URL.",
+        issue: "proxyUrl must be a ws://, wss://, http://, https://, or /path URL.",
       };
     }
     return { proxyUrl: v };
