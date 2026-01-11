@@ -123,10 +123,17 @@ pub enum Sm4Inst {
     },
     /// `ld dest, coord, t#` (e.g. `Texture2D.Load`).
     ///
-    /// Note: `coord` and `lod` are integer-typed in SM4/SM5. The current FL10_0
-    /// translator represents temporaries as `vec4<f32>` and assumes any integer
-    /// coordinates are carried in those float lanes as exact integer values; WGSL
-    /// emission uses `i32(...)` conversions when calling `textureLoad`.
+    /// Note: `coord` and `lod` are integer-typed in SM4/SM5.
+    ///
+    /// The current FL10_0 translator keeps temporaries as `vec4<f32>` and uses
+    /// lightweight conversions at the call site:
+    ///
+    /// - Texel coordinates (`coord.xy`) are assumed to be carried as exact integer
+    ///   values in float lanes and are converted via `i32(...)` when emitting
+    ///   `textureLoad`.
+    /// - The mip level (`lod`) is commonly encoded/propagated as raw integer bits
+    ///   (even when decoded as `ImmediateF32`), so WGSL emission preserves those
+    ///   bits via `bitcast<vec4<i32>>` when passing the level to `textureLoad`.
     Ld {
         dst: DstOperand,
         /// Texel coordinate (x/y in `.xy`).
