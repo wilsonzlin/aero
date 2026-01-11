@@ -159,9 +159,8 @@ Quick start:
 
 ```bash
 cp deploy/.env.example deploy/.env
-# Then edit deploy/.env and set SESSION_SECRET (required for the default `/l2` cookie auth).
-# Example:
-#   SESSION_SECRET=$(openssl rand -hex 32)
+# For production, set a strong SESSION_SECRET (also required if you enable `/l2` cookie auth).
+# Example: SESSION_SECRET=$(openssl rand -hex 32)
 ```
 
 - `AERO_DOMAIN` (default: `localhost`)
@@ -182,9 +181,9 @@ cp deploy/.env.example deploy/.env
 - `AERO_L2_ALLOWED_ORIGINS_EXTRA` (default: empty)
   - Optional comma-prefixed origins appended to the L2 proxy Origin allowlist.
   - Example: `,https://localhost:5173`
-- `AERO_L2_AUTH_MODE` (default: `cookie`)
+- `AERO_L2_AUTH_MODE` (default: empty / `none`)
   - Authentication mode for `/l2` (handled by `crates/aero-l2-proxy`).
-  - Supported values: `cookie`, `none`, `api_key`, `jwt`, `cookie_or_jwt`.
+  - Supported values: `none`, `cookie`, `api_key`, `jwt`, `cookie_or_jwt`.
 - `AERO_L2_SESSION_SECRET` (optional override)
   - Secret for validating the `aero_session` cookie when `AERO_L2_AUTH_MODE=cookie|cookie_or_jwt`.
   - `crates/aero-l2-proxy` reads this from `AERO_L2_SESSION_SECRET` and falls back to
@@ -228,7 +227,8 @@ Gateway environment variables (used by `backend/aero-gateway` and passed through
   - Used to derive the default `ALLOWED_ORIGINS` allowlist.
 - `SESSION_SECRET` (strongly recommended for production)
   - HMAC secret used to sign the `aero_session` cookie minted by `POST /session`.
-  - Used to authenticate privileged endpoints like `/tcp` and `/l2` (when `AERO_L2_AUTH_MODE=cookie`, which is the default in this deploy stack).
+  - Used to authenticate privileged endpoints like `/tcp` and `/l2` when the L2 proxy is configured for
+    cookie auth (`AERO_L2_AUTH_MODE=cookie` / `cookie_or_jwt`).
   - If unset, the gateway generates a temporary secret at startup and sessions won’t survive restarts.
   - When using cookie auth for the L2 tunnel (`AERO_L2_AUTH_MODE=cookie` / `cookie_or_jwt`), `crates/aero-l2-proxy`
     must share the same signing secret so it can validate the `aero_session` cookie minted by the gateway.
@@ -463,12 +463,12 @@ WebSocket:
 - Caddy proxies the WebSocket upgrade to the `aero-l2-proxy` container
 - The connection uses subprotocol: `aero-l2-tunnel-v1`
 
-### L2 tunnel auth (default: cookie)
+### L2 tunnel auth (cookie)
 
-In this deploy stack, `/l2` uses the same cookie-backed gateway session as `/tcp` by default
-(`AERO_L2_AUTH_MODE=cookie` in `deploy/docker-compose.yml`).
+`/l2` enforces an Origin allowlist by default. For production deployments you should also enable
+authentication. The recommended mode for single-origin browser clients is cookie session auth
+(`AERO_L2_AUTH_MODE=cookie`):
 
-- `/l2` enforces an Origin allowlist by default.
 - `aero-l2-proxy` validates the `aero_session` cookie minted by the gateway (`POST /session`).
   - Browser WebSocket handshakes include cookies automatically for same-origin connections.
   - CLI clients must provide `Cookie: aero_session=...` on the WebSocket upgrade.
