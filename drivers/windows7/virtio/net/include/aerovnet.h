@@ -3,7 +3,7 @@
 #include <ndis.h>
 
 #include "../../common/include/virtio_pci_modern_miniport.h"
-#include "../../common/include/virtqueue_split.h"
+#include "../../common/include/virtqueue_split_legacy.h"
 #include "../../common/os_shim/virtio_os_ndis.h"
 
 // Driver identity

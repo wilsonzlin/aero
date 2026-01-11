@@ -6,7 +6,7 @@ INCLUDES=$(INCLUDES);.\include;..\common\include;..\common\os_shim;..\..\..\win7
 
 SOURCES=src\aerovblk.c \
         ..\common\src\virtio_pci_modern_miniport.c \
-        ..\common\src\virtqueue_split.c \
+        ..\common\src\virtqueue_split_legacy.c \
         ..\common\os_shim\virtio_os_storport.c \
         ..\..\..\win7\virtio\virtio-core\portable\virtio_pci_cap_parser.c
 
