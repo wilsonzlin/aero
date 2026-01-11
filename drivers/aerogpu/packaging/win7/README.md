@@ -75,6 +75,15 @@ Then copy one of these directories into the Win7 VM and run `install.cmd` there:
 - `out/packages/aerogpu/x86/` (Windows 7 x86)
 - `out/packages/aerogpu/x64/` (Windows 7 x64)
 
+If the packages were signed with `ci/sign-drivers.ps1`, also copy the test certificate into the VM and trust it before installing:
+
+1. Copy `out/certs/aero-test.cer` into this directory (or anywhere in the VM).
+2. Run (as Administrator):
+
+```bat
+trust_test_cert.cmd aero-test.cer
+```
+
 This avoids installing any SDK/WDK tooling in the guest.
 
 ### Optional: sign inside the Win7 VM with `sign_test.cmd`
@@ -87,18 +96,24 @@ To run `sign_test.cmd` inside the Windows 7 VM, you need tooling from a Windows 
 
 ## 4) Test-signing + install steps (Win7 SP1 VM)
 
-### 4.1 Enable test signing + sign the package
+### 4.1 Enable test signing + trust the signing certificate
 
 1. Boot the Win7 VM.
 2. Copy this folder into the VM (including the built `.sys`/`.dll` files).
 3. Open an **elevated** Command Prompt (Run as Administrator).
-4. Run:
+4. If you already signed the package on the build host, run:
+
+```bat
+trust_test_cert.cmd aero-test.cer
+```
+
+If you want to generate and sign the package **inside** the Win7 VM, run instead:
 
 ```bat
 sign_test.cmd
 ```
 
-This will:
+`sign_test.cmd` will:
 
 - `bcdedit /set testsigning on`
 - Create a self-signed code signing cert (`aerogpu_test.cer` / `aerogpu_test.pfx`)

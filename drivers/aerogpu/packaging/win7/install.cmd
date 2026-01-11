@@ -40,7 +40,9 @@ set "PNP_ERR=%ERRORLEVEL%"
 
 if not "%PNP_ERR%"=="0" (
   echo [WARN] pnputil returned errorlevel %PNP_ERR%.
-  echo [WARN] If this is a signature error, ensure you ran sign_test.cmd and rebooted with test-signing enabled.
+  echo [WARN] If this is a signature error, ensure you rebooted with test-signing enabled and the signing certificate trusted:
+  echo [WARN]   - If you signed inside the VM: run sign_test.cmd, then reboot.
+  echo [WARN]   - If you signed on the build host: run trust_test_cert.cmd aero-test.cer, then reboot.
   echo [WARN] Attempting devcon fallback (if available)...
 
   call :FindDevcon
