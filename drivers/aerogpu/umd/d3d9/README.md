@@ -41,6 +41,23 @@ For present submissions specifically, some runtimes expose only `pfnRenderCb` (w
 
 The UMD logs the available callback pointers once at `CreateDevice` so Win7 bring-up can confirm which path the runtime is using.
 
+## Win7/WDDM DMA buffer acquisition (CreateContext vs Allocate/GetCommandBuffer)
+
+Win7-era D3D runtimes are not entirely consistent about how they provide the **DMA command buffer** + **allocation list** + **DMA private data** needed for submission:
+
+- Some runtimes return **persistent** pointers in `D3DDDIARG_CREATECONTEXT` and then rotate them through the submit callback out-params (e.g. `pNewCommandBuffer` / `pNewAllocationList`).
+- Other runtimes return **NULL or undersized** buffers from `CreateContext` and expect the UMD to acquire per-submit buffers via the callback trio:
+  - `pfnGetCommandBufferCb` (preferred when available), or
+  - `pfnAllocateCb` / `pfnDeallocateCb`.
+
+The AeroGPU D3D9 UMD supports both models. Command emission calls `ensure_cmd_space()`, which (in WDDM builds) routes through `wddm_ensure_recording_buffers()` to guarantee that:
+
+- `Device::cmd` is bound to a runtime-owned DMA buffer large enough for the next packet,
+- `AllocationListTracker` is rebound to the active runtime-provided allocation list, and
+- `pDmaBufferPrivateData` is present and at least `AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES`.
+
+When the UMD acquires transient buffers via `AllocateCb`, it returns them via `DeallocateCb` after submission (or at device teardown if the buffer was never submitted).
+
 ### DMA buffer private data (UMD→dxgkrnl→KMD) and security
 
 Win7/WDDM submission callbacks include a `pDmaBufferPrivateData` pointer + size.
