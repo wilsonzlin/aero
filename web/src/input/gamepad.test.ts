@@ -21,6 +21,11 @@ describe("computeGamepadHat", () => {
     expect(computeGamepadHat(true, false, false, true)).toBe(7); // up-left
     expect(computeGamepadHat(false, false, false, false)).toBe(GAMEPAD_HAT_NEUTRAL);
   });
+
+  it("treats impossible opposing d-pad combinations as neutral", () => {
+    expect(computeGamepadHat(true, false, true, false)).toBe(GAMEPAD_HAT_NEUTRAL); // up + down
+    expect(computeGamepadHat(false, true, false, true)).toBe(GAMEPAD_HAT_NEUTRAL); // left + right
+  });
 });
 
 describe("quantizeGamepadAxis", () => {

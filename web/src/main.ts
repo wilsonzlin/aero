@@ -2157,12 +2157,44 @@ function renderInputPanel(): HTMLElement {
           const pressed = ((packed >>> 8) & 1) !== 0;
           append(`hid: usage=0x${usage.toString(16).padStart(2, "0")} ${pressed ? "down" : "up"}`);
         } else if (type === InputEventType.GamepadReport) {
-          const lo = words[off + 2] >>> 0;
-          const hi = words[off + 3] >>> 0;
-          const bytes = [];
-          for (let j = 0; j < 4; j += 1) bytes.push((lo >>> (j * 8)) & 0xff);
-          for (let j = 0; j < 4; j += 1) bytes.push((hi >>> (j * 8)) & 0xff);
-          append(`pad: ${bytes.map((b) => b.toString(16).padStart(2, "0")).join(" ")}`);
+          const lo = words[off + 2] | 0;
+          const hi = words[off + 3] | 0;
+
+          // Must match `crates/emulator/src/io/usb/hid/gamepad.rs`:
+          //   [buttons u16 le, hat (low nibble), x, y, rx, ry, pad0]
+          const buttons = lo & 0xffff;
+          const hat = (lo >>> 16) & 0x0f;
+          const x = lo >> 24;
+          const y = (hi << 24) >> 24;
+          const rx = (hi << 16) >> 24;
+          const ry = (hi << 8) >> 24;
+
+          const hatStr = (() => {
+            switch (hat) {
+              case 0:
+                return "up";
+              case 1:
+                return "up-right";
+              case 2:
+                return "right";
+              case 3:
+                return "down-right";
+              case 4:
+                return "down";
+              case 5:
+                return "down-left";
+              case 6:
+                return "left";
+              case 7:
+                return "up-left";
+              default:
+                return "neutral";
+            }
+          })();
+
+          append(
+            `pad: buttons=0x${buttons.toString(16).padStart(4, "0")} hat=${hatStr} x=${x} y=${y} rx=${rx} ry=${ry}`,
+          );
         } else if (type === InputEventType.MouseButtons) {
           append(`mouse: buttons=0x${(words[off + 2] >>> 0).toString(16)}`);
         } else if (type === InputEventType.MouseWheel) {
