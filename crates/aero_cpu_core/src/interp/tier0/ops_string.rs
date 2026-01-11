@@ -272,6 +272,44 @@ fn advance_n(value: u64, elem_size: usize, count: u64, df: bool, addr_size: Addr
     }
 }
 
+fn addr_mask(addr_size: AddrSize) -> u64 {
+    match addr_size {
+        AddrSize::A16 => 0xFFFF,
+        AddrSize::A32 => 0xFFFF_FFFF,
+        AddrSize::A64 => u64::MAX,
+    }
+}
+
+fn offsets_contiguous_without_wrap(offset: u64, count: u64, elem_size: usize, df: bool, addr_size: AddrSize) -> bool {
+    // Address-size wrapping means offsets are only contiguous in linear memory if they do not wrap
+    // within the repeated range. Only check this for 16/32-bit address sizes (64-bit wrap is
+    // effectively impossible in practice).
+    if matches!(addr_size, AddrSize::A64) {
+        return true;
+    }
+    if count == 0 {
+        return true;
+    }
+
+    let span = match count
+        .checked_sub(1)
+        .and_then(|c| c.checked_mul(elem_size as u64))
+    {
+        Some(v) => v,
+        None => return false,
+    };
+
+    if df {
+        offset >= span
+    } else {
+        let end = match offset.checked_add(span) {
+            Some(v) => v,
+            None => return false,
+        };
+        end <= addr_mask(addr_size)
+    }
+}
+
 fn src_segment(instr: &Instruction) -> Register {
     let seg = instr.segment_prefix();
     if seg == Register::None {
@@ -339,46 +377,58 @@ fn exec_movs<B: CpuBus>(
 
     // REP MOVS* fast path.
     if rep_mode != RepMode::None && bus.supports_bulk_copy() {
-        let total_bytes = (count as usize).saturating_mul(elem_size);
-        if total_bytes >= BULK_THRESHOLD_BYTES {
-            let si = read_si(state, addr_size);
-            let di = read_di(state, addr_size);
+        let si = read_si(state, addr_size);
+        let di = read_di(state, addr_size);
 
-            let src0 = linear(state, src_seg, si);
-            let dst0 = linear(state, Register::ES, di);
+        if offsets_contiguous_without_wrap(si, count, elem_size, df, addr_size)
+            && offsets_contiguous_without_wrap(di, count, elem_size, df, addr_size)
+        {
+            if let Some(total_bytes_u64) = (elem_size as u64).checked_mul(count) {
+                // `CpuBus::bulk_copy` takes a `usize` length, so only use it when the total size fits.
+                // This avoids truncation bugs on 32-bit hosts (e.g. wasm32).
+                if total_bytes_u64 >= BULK_THRESHOLD_BYTES as u64 && total_bytes_u64 <= usize::MAX as u64 {
+                    let back_count = count.saturating_sub(1);
+                    let src_offset = if df {
+                        advance_n(si, elem_size, back_count, true, addr_size)
+                    } else {
+                        si
+                    };
+                    let dst_offset = if df {
+                        advance_n(di, elem_size, back_count, true, addr_size)
+                    } else {
+                        di
+                    };
 
-            let (src_start, dst_start) = if df {
-                // `si`/`di` point at the last element; bulk op wants the lowest address.
-                let back = (count - 1).wrapping_mul(elem_size as u64);
-                (src0.wrapping_sub(back), dst0.wrapping_sub(back))
-            } else {
-                (src0, dst0)
-            };
+                    let src_start = linear(state, src_seg, src_offset);
+                    let dst_start = linear(state, Register::ES, dst_offset);
 
-            let len = total_bytes as u64;
-            let src_end = src_start.wrapping_add(len);
-            let dst_end = dst_start.wrapping_add(len);
+                    if let (Some(src_end), Some(dst_end)) = (
+                        src_start.checked_add(total_bytes_u64),
+                        dst_start.checked_add(total_bytes_u64),
+                    ) {
+                        let overlap = src_start < dst_end && dst_start < src_end;
+                        let hazard = if !overlap {
+                            false
+                        } else if !df {
+                            // DF=0 copies low->high. Hazard when destination starts inside source at a higher
+                            // address.
+                            src_start < dst_start && dst_start < src_end
+                        } else {
+                            // DF=1 copies high->low. Hazard when source starts inside destination at a higher
+                            // address.
+                            dst_start < src_start && src_start < dst_end
+                        };
 
-            let overlap = src_start < dst_end && dst_start < src_end;
-            let hazard = if !overlap {
-                false
-            } else if !df {
-                // DF=0 copies low->high. Hazard when destination starts inside source at a higher
-                // address.
-                src_start < dst_start && dst_start < src_end
-            } else {
-                // DF=1 copies high->low. Hazard when source starts inside destination at a higher
-                // address.
-                dst_start < src_start && src_start < dst_end
-            };
-
-            if !hazard && bus.bulk_copy(dst_start, src_start, total_bytes)? {
-                let si_new = advance_n(si, elem_size, count, df, addr_size);
-                let di_new = advance_n(di, elem_size, count, df, addr_size);
-                write_si(state, addr_size, si_new);
-                write_di(state, addr_size, di_new);
-                write_count(state, addr_size, 0);
-                return Ok(());
+                        if !hazard && bus.bulk_copy(dst_start, src_start, total_bytes_u64 as usize)? {
+                            let si_new = advance_n(si, elem_size, count, df, addr_size);
+                            let di_new = advance_n(di, elem_size, count, df, addr_size);
+                            write_si(state, addr_size, si_new);
+                            write_di(state, addr_size, di_new);
+                            write_count(state, addr_size, 0);
+                            return Ok(());
+                        }
+                    }
+                }
             }
         }
     }
@@ -428,23 +478,31 @@ fn exec_stos<B: CpuBus>(
 
     // REP STOS* fast path.
     if rep_mode != RepMode::None && bus.supports_bulk_set() {
-        let total_bytes = (count as usize).saturating_mul(elem_size);
-        if total_bytes >= BULK_THRESHOLD_BYTES {
-            let di = read_di(state, addr_size);
-            let dst0 = linear(state, Register::ES, di);
-            let dst_start = if df {
-                let back = (count - 1).wrapping_mul(elem_size as u64);
-                dst0.wrapping_sub(back)
-            } else {
-                dst0
-            };
+        let di = read_di(state, addr_size);
 
-            let pattern = stos_pattern(state, elem_size)?;
-            if bus.bulk_set(dst_start, &pattern[..elem_size], count as usize)? {
-                let di_new = advance_n(di, elem_size, count, df, addr_size);
-                write_di(state, addr_size, di_new);
-                write_count(state, addr_size, 0);
-                return Ok(());
+        if offsets_contiguous_without_wrap(di, count, elem_size, df, addr_size) {
+            if let Some(total_bytes_u64) = (elem_size as u64).checked_mul(count) {
+                if total_bytes_u64 >= BULK_THRESHOLD_BYTES as u64
+                    && total_bytes_u64 <= usize::MAX as u64
+                    && count <= usize::MAX as u64
+                {
+                    let back_count = count.saturating_sub(1);
+                    let dst_offset = if df {
+                        advance_n(di, elem_size, back_count, true, addr_size)
+                    } else {
+                        di
+                    };
+
+                    let dst_start = linear(state, Register::ES, dst_offset);
+
+                    let pattern = stos_pattern(state, elem_size)?;
+                    if bus.bulk_set(dst_start, &pattern[..elem_size], count as usize)? {
+                        let di_new = advance_n(di, elem_size, count, df, addr_size);
+                        write_di(state, addr_size, di_new);
+                        write_count(state, addr_size, 0);
+                        return Ok(());
+                    }
+                }
             }
         }
     }

@@ -537,3 +537,86 @@ fn rep_lodsb_repeats_and_consumes_ecx() {
     assert_eq!(state.read_reg(Register::ESI), 0x104);
     assert_eq!(state.read_reg(Register::ECX), 0);
 }
+
+#[test]
+fn rep_movsb_addr16_wrap_skips_bulk_copy_and_uses_wrapping_offsets() {
+    // In 16-bit address-size mode, SI/DI wrap at 0x10000. If the range wraps, the accessed
+    // addresses are not contiguous in linear memory and we must not use bulk-copy fast paths.
+    //
+    // This test also ensures we don't corrupt instruction memory by placing the code far from the
+    // wrapped data.
+    let count = 128u16;
+    let code_addr = 0x8000u64;
+
+    let code = [0xF3, 0xA4, 0xF4]; // rep movsb; hlt
+    let mut bus = CountingBus::new(0x30000);
+    bus.inner.load(code_addr, &code);
+
+    let mut state = CpuState::new(CpuMode::Bit16);
+    state.set_rip(code_addr);
+    state.set_rflags(0x2);
+    state.segments.cs.base = 0;
+    state.segments.ds.base = 0;
+    state.segments.es.base = 0x20000;
+    state.write_reg(Register::SI, 0xFFC0);
+    state.write_reg(Register::DI, 0x0100);
+    state.write_reg(Register::CX, count as u64);
+
+    // Source wraps: [0xFFC0..0xFFFF] then [0x0000..0x003F]
+    for i in 0..64u64 {
+        bus.inner.write_u8(0xFFC0 + i, 0xAA).unwrap();
+        bus.inner.write_u8(i, 0xBB).unwrap();
+        // This is what an incorrect bulk-copy would read instead of wrapping to 0x0000.
+        bus.inner.write_u8(0x10000 + i, 0xCC).unwrap();
+    }
+
+    run_to_halt(&mut state, &mut bus, 100_000);
+
+    assert_eq!(bus.bulk_copy_calls, 0);
+    assert_eq!(state.read_reg(Register::CX), 0);
+    assert_eq!(state.read_reg(Register::SI), 0x0040);
+    assert_eq!(state.read_reg(Register::DI), 0x0180);
+
+    let dst_base = 0x20000 + 0x0100;
+    for i in 0..64u64 {
+        assert_eq!(bus.inner.read_u8(dst_base + i).unwrap(), 0xAA);
+        assert_eq!(bus.inner.read_u8(dst_base + 64 + i).unwrap(), 0xBB);
+    }
+}
+
+#[test]
+fn rep_stosb_addr16_wrap_skips_bulk_set_and_uses_wrapping_offsets() {
+    // Same idea as the MOVSB test above, but for STOSB bulk-set behavior.
+    let count = 128u16;
+    let code_addr = 0x8000u64;
+
+    let code = [0xF3, 0xAA, 0xF4]; // rep stosb; hlt
+    let mut bus = CountingBus::new(0x20000);
+    bus.inner.load(code_addr, &code);
+
+    let mut state = CpuState::new(CpuMode::Bit16);
+    state.set_rip(code_addr);
+    state.set_rflags(0x2);
+    state.segments.cs.base = 0;
+    state.segments.es.base = 0;
+    state.write_reg(Register::DI, 0xFFC0);
+    state.write_reg(Register::CX, count as u64);
+    state.write_reg(Register::AL, 0x5A);
+
+    for i in 0..64u64 {
+        bus.inner.write_u8(0x10000 + i, 0xCC).unwrap();
+    }
+
+    run_to_halt(&mut state, &mut bus, 100_000);
+
+    assert_eq!(bus.bulk_set_calls, 0);
+    assert_eq!(state.read_reg(Register::CX), 0);
+    assert_eq!(state.read_reg(Register::DI), 0x0040);
+
+    for i in 0..64u64 {
+        assert_eq!(bus.inner.read_u8(0xFFC0 + i).unwrap(), 0x5A);
+        assert_eq!(bus.inner.read_u8(i).unwrap(), 0x5A);
+        // Incorrect bulk-set would have overwritten this region instead of wrapping to 0x0000.
+        assert_eq!(bus.inner.read_u8(0x10000 + i).unwrap(), 0xCC);
+    }
+}
