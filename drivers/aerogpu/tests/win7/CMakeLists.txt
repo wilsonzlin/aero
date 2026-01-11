@@ -209,6 +209,11 @@ aerogpu_add_win7_test(d3d10_1_triangle
 )
 target_link_libraries(d3d10_1_triangle PRIVATE user32 gdi32 d3d10_1 d3d10 dxgi)
 
+aerogpu_add_win7_test(d3d10_1_map_do_not_wait
+  d3d10_1_map_do_not_wait/main.cpp
+)
+target_link_libraries(d3d10_1_map_do_not_wait PRIVATE d3d10_1 d3d10 dxgi)
+
 aerogpu_add_win7_test(d3d10_caps_smoke
   d3d10_caps_smoke/main.cpp
 )

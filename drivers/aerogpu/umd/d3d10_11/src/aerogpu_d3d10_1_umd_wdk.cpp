@@ -57,7 +57,7 @@ namespace {
 
 constexpr aerogpu_handle_t kInvalidHandle = 0;
 constexpr HRESULT kDxgiErrorWasStillDrawing = static_cast<HRESULT>(0x887A000Au); // DXGI_ERROR_WAS_STILL_DRAWING
-constexpr uint32_t kD3DMapFlagDoNotWait = 0x100000;
+constexpr uint32_t kAeroGpuTimeoutMsInfinite = ~0u;
 
 // Emit the exact DLL path once so bring-up on Win7 x64 can quickly confirm the
 // correct UMD bitness was loaded (System32 vs SysWOW64).
@@ -947,9 +947,13 @@ uint64_t AeroGpuQueryCompletedFence(AeroGpuDevice* dev) {
   return dev->last_completed_fence.load(std::memory_order_relaxed);
 }
 
-// Waits for `fence` to be completed. `timeout_ms == 0` means "infinite wait".
+// Waits for `fence` to be completed.
 //
-// On timeout, returns `DXGI_ERROR_WAS_STILL_DRAWING` (useful for D3D11 Map DO_NOT_WAIT).
+// `timeout_ms` semantics match D3D11 / DXGI Map expectations:
+// - 0: non-blocking poll
+// - kAeroGpuTimeoutMsInfinite: infinite wait
+//
+// On timeout/poll miss, returns `DXGI_ERROR_WAS_STILL_DRAWING`.
 HRESULT AeroGpuWaitForFence(AeroGpuDevice* dev, uint64_t fence, uint32_t timeout_ms) {
   if (!dev) {
     return E_INVALIDARG;
@@ -965,7 +969,7 @@ HRESULT AeroGpuWaitForFence(AeroGpuDevice* dev, uint64_t fence, uint32_t timeout
   if (dev->kmt_fence_syncobj) {
     D3DKMT_HANDLE handles[1] = {dev->kmt_fence_syncobj};
     UINT64 fence_values[1] = {fence};
-    const UINT64 timeout = timeout_ms ? static_cast<UINT64>(timeout_ms) : ~0ull;
+    const UINT64 timeout = (timeout_ms == kAeroGpuTimeoutMsInfinite) ? ~0ull : static_cast<UINT64>(timeout_ms);
 
     // Prefer the runtime's wait callback when available; it matches the Win7 DDI
     // contract and avoids direct-thunk WOW64 quirks.
@@ -1028,92 +1032,17 @@ HRESULT AeroGpuWaitForFence(AeroGpuDevice* dev, uint64_t fence, uint32_t timeout
   }
 
   if (timeout_ms == 0) {
-    adapter->fence_cv.wait(lock, ready);
-    atomic_max_u64(&dev->last_completed_fence, adapter->completed_fence);
-    return S_OK;
+    return kDxgiErrorWasStillDrawing;
   }
 
-  if (!adapter->fence_cv.wait_for(lock, std::chrono::milliseconds(timeout_ms), ready)) {
+  if (timeout_ms == kAeroGpuTimeoutMsInfinite) {
+    adapter->fence_cv.wait(lock, ready);
+  } else if (!adapter->fence_cv.wait_for(lock, std::chrono::milliseconds(timeout_ms), ready)) {
     return kDxgiErrorWasStillDrawing;
   }
 
   atomic_max_u64(&dev->last_completed_fence, adapter->completed_fence);
   return S_OK;
-}
-
-HRESULT AeroGpuPollFence(AeroGpuDevice* dev, uint64_t fence) {
-  if (!dev) {
-    return E_INVALIDARG;
-  }
-  if (fence == 0) {
-    return S_OK;
-  }
-
-  if (AeroGpuQueryCompletedFence(dev) >= fence) {
-    return S_OK;
-  }
-
-  if (dev->kmt_fence_syncobj) {
-    D3DKMT_HANDLE handles[1] = {dev->kmt_fence_syncobj};
-    UINT64 fence_values[1] = {fence};
-
-    // Prefer the runtime's wait callback when available; it matches the Win7 DDI
-    // contract and avoids direct-thunk WOW64 quirks.
-    const D3DDDI_DEVICECALLBACKS* cb = dev->callbacks;
-    bool have_wait_cb = false;
-    __if_exists(D3DDDI_DEVICECALLBACKS::pfnWaitForSynchronizationObjectCb) {
-      have_wait_cb = (cb && cb->pfnWaitForSynchronizationObjectCb);
-    }
-    if (have_wait_cb) {
-      D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT args{};
-      FillWaitForSyncObjectArgs(&args, dev->kmt_context, /*hAdapter=*/0, handles, fence_values, fence, /*timeout=*/0);
-
-      const HRESULT hr = CallCbMaybeHandle(cb->pfnWaitForSynchronizationObjectCb, dev->hrt_device, &args);
-      if (hr == kDxgiErrorWasStillDrawing || hr == HRESULT_FROM_WIN32(WAIT_TIMEOUT) ||
-          hr == HRESULT_FROM_WIN32(ERROR_TIMEOUT) || hr == static_cast<HRESULT>(0x10000102L)) {
-        return kDxgiErrorWasStillDrawing;
-      }
-      if (FAILED(hr)) {
-        return E_FAIL;
-      }
-
-      UpdateCompletedFence(dev, fence);
-      (void)AeroGpuQueryCompletedFence(dev);
-      return S_OK;
-    }
-
-    const AeroGpuD3dkmtProcs& procs = GetAeroGpuD3dkmtProcs();
-    if (procs.pfn_wait_for_syncobj) {
-      D3DKMT_WAITFORSYNCHRONIZATIONOBJECT args{};
-      FillWaitForSyncObjectArgs(&args, dev->kmt_context, dev->kmt_adapter, handles, fence_values, fence, /*timeout=*/0);
-
-      const NTSTATUS st = procs.pfn_wait_for_syncobj(&args);
-      if (st == STATUS_TIMEOUT) {
-        return kDxgiErrorWasStillDrawing;
-      }
-      if (!NT_SUCCESS(st)) {
-        return E_FAIL;
-      }
-
-      UpdateCompletedFence(dev, fence);
-      (void)AeroGpuQueryCompletedFence(dev);
-      return S_OK;
-    }
-
-    return E_FAIL;
-  }
-
-  if (!dev->adapter) {
-    return E_FAIL;
-  }
-
-  uint64_t completed = 0;
-  {
-    std::lock_guard<std::mutex> lock(dev->adapter->fence_mutex);
-    completed = dev->adapter->completed_fence;
-  }
-  UpdateCompletedFence(dev, completed);
-  return (completed >= fence) ? S_OK : kDxgiErrorWasStillDrawing;
 }
 
 uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
@@ -2447,6 +2376,42 @@ constexpr uint32_t kD3DMapWrite = 2;
 constexpr uint32_t kD3DMapReadWrite = 3;
 constexpr uint32_t kD3DMapWriteDiscard = 4;
 constexpr uint32_t kD3DMapWriteNoOverwrite = 5;
+// D3D10_MAP_FLAG_DO_NOT_WAIT (numeric value from d3d10.h / d3d10_1.h).
+constexpr uint32_t kD3DMapFlagDoNotWait = 0x100000;
+
+HRESULT sync_read_map_locked(AeroGpuDevice* dev, const AeroGpuResource* res, uint32_t map_type, uint32_t map_flags) {
+  if (!dev || !res) {
+    return E_INVALIDARG;
+  }
+  const bool want_read = (map_type == kD3DMapRead || map_type == kD3DMapReadWrite);
+  if (!want_read) {
+    return S_OK;
+  }
+
+  // Only apply implicit readback synchronization for staging-style resources.
+  // (This file is still conservative and uses the device fence rather than per-resource tracking.)
+  if (res->bind_flags != 0) {
+    return S_OK;
+  }
+
+  // Ensure any pending command stream is submitted so we have a fence to observe.
+  if (!dev->cmd.empty()) {
+    HRESULT submit_hr = S_OK;
+    submit_locked(dev, /*want_present=*/false, &submit_hr);
+    if (FAILED(submit_hr)) {
+      return submit_hr;
+    }
+  }
+
+  const uint64_t fence = dev->last_submitted_fence.load(std::memory_order_relaxed);
+  if (fence == 0) {
+    return S_OK;
+  }
+
+  const bool do_not_wait = (map_flags & kD3DMapFlagDoNotWait) != 0;
+  const uint32_t timeout_ms = do_not_wait ? 0u : kAeroGpuTimeoutMsInfinite;
+  return AeroGpuWaitForFence(dev, fence, timeout_ms);
+}
 
 uint64_t resource_total_bytes(const AeroGpuResource* res) {
   if (!res) {
@@ -2612,24 +2577,13 @@ HRESULT AEROGPU_APIENTRY StagingResourceMap(D3D10DDI_HDEVICE hDevice,
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
-  const uint32_t map_type_u = static_cast<uint32_t>(map_type);
-  if (map_type_u == kD3DMapRead || map_type_u == kD3DMapReadWrite) {
-    if (!dev->cmd.empty()) {
-      HRESULT submit_hr = S_OK;
-      submit_locked(dev, /*want_present=*/false, &submit_hr);
-      if (FAILED(submit_hr)) {
-        return submit_hr;
-      }
-    }
-    // STAGING READ must observe results of prior GPU work (CopyResource, etc).
-    const uint64_t fence = dev->last_submitted_fence.load(std::memory_order_relaxed);
-    HRESULT wait = (map_flags & kD3DMapFlagDoNotWait) ? AeroGpuPollFence(dev, fence) : AeroGpuWaitForFence(dev, fence, 0);
-    if (FAILED(wait)) {
-      return wait;
-    }
-  }
   if (res->kind != ResourceKind::Texture2D) {
     return E_INVALIDARG;
+  }
+  const uint32_t map_type_u = static_cast<uint32_t>(map_type);
+  HRESULT sync_hr = sync_read_map_locked(dev, res, map_type_u, map_flags);
+  if (FAILED(sync_hr)) {
+    return sync_hr;
   }
   return map_resource_locked(res, subresource, map_type_u, pMapped);
 }
@@ -2816,19 +2770,9 @@ HRESULT AEROGPU_APIENTRY Map(D3D10DDI_HDEVICE hDevice,
   }
 
   // Conservative: only support generic map on buffers and staging textures for now.
-  if (map_type_u == kD3DMapRead || map_type_u == kD3DMapReadWrite) {
-    if (!dev->cmd.empty()) {
-      HRESULT submit_hr = S_OK;
-      submit_locked(dev, /*want_present=*/false, &submit_hr);
-      if (FAILED(submit_hr)) {
-        return submit_hr;
-      }
-    }
-    const uint64_t fence = dev->last_submitted_fence.load(std::memory_order_relaxed);
-    HRESULT wait = (map_flags & kD3DMapFlagDoNotWait) ? AeroGpuPollFence(dev, fence) : AeroGpuWaitForFence(dev, fence, 0);
-    if (FAILED(wait)) {
-      return wait;
-    }
+  HRESULT sync_hr = sync_read_map_locked(dev, res, map_type_u, map_flags);
+  if (FAILED(sync_hr)) {
+    return sync_hr;
   }
   if (res->kind == ResourceKind::Texture2D && res->bind_flags == 0) {
     return map_resource_locked(res, subresource, map_type_u, pMapped);
@@ -4006,24 +3950,11 @@ void AEROGPU_APIENTRY Map(D3D10DDI_HDEVICE hDevice,
     }
   }
 
-  if (map_type_u == kD3DMapRead || map_type_u == kD3DMapReadWrite) {
-    if (!dev->cmd.empty()) {
-      HRESULT submit_hr = S_OK;
-      submit_locked(dev, /*want_present=*/false, &submit_hr);
-      if (FAILED(submit_hr)) {
-        set_error(dev, submit_hr);
-        return;
-      }
-    }
-    const uint64_t fence = dev->last_submitted_fence.load(std::memory_order_relaxed);
-    HRESULT wait =
-        (map_flags_u & kD3DMapFlagDoNotWait) ? AeroGpuPollFence(dev, fence) : AeroGpuWaitForFence(dev, fence, 0);
-    if (FAILED(wait)) {
-      set_error(dev, wait);
-      return;
-    }
+  const HRESULT sync_hr = sync_read_map_locked(dev, res, map_type_u, map_flags_u);
+  if (FAILED(sync_hr)) {
+    set_error(dev, sync_hr);
+    return;
   }
-
   const HRESULT hr = map_resource_locked(res, pMap->Subresource, map_type_u, pOut);
   if (FAILED(hr)) {
     set_error(dev, hr);
