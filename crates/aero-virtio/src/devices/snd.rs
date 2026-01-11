@@ -452,9 +452,12 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
     }
 
     fn handle_tx_chain(&mut self, mem: &mut dyn GuestMemory, chain: &DescriptorChain) -> u32 {
+        const MAX_TX_PCM_BYTES: u64 = 4 * 1024 * 1024;
+
         let mut hdr = [0u8; 8];
         let mut hdr_len = 0usize;
         let mut parsed_stream = false;
+        let mut pcm_bytes = 0u64;
 
         let mut pending_lo: Option<u8> = None;
         let mut pending_left: Option<f32> = None;
@@ -486,6 +489,11 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
                 }
 
                 parsed_stream = true;
+            }
+
+            pcm_bytes = pcm_bytes.saturating_add(slice.len() as u64);
+            if pcm_bytes > MAX_TX_PCM_BYTES {
+                return VIRTIO_SND_S_BAD_MSG;
             }
 
             for &b in slice {
