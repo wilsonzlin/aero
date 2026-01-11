@@ -611,7 +611,7 @@ static CONFIG_DESCRIPTOR: [u8; 34] = [
     0x0a, // bInterval (10ms)
 ];
 
-static HID_REPORT_DESCRIPTOR: [u8; 76] = [
+pub(super) static HID_REPORT_DESCRIPTOR: [u8; 76] = [
     0x05, 0x01, // Usage Page (Generic Desktop)
     0x09, 0x05, // Usage (Game Pad)
     0xa1, 0x01, // Collection (Application)

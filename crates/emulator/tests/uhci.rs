@@ -578,7 +578,7 @@ fn uhci_composite_hid_device_exposes_keyboard_mouse_gamepad() {
 
     composite.key_event(0x04, true); // 'a'
     composite.mouse_movement(10, -5);
-    composite.gamepad_button_event(0x0001, true);
+    composite.gamepad_button_event(1, true);
 
     // Poll keyboard interrupt endpoint 1.
     write_td(
@@ -622,7 +622,7 @@ fn uhci_composite_hid_device_exposes_keyboard_mouse_gamepad() {
     run_one_frame(&mut uhci, &mut mem, TD0);
     assert_eq!(
         mem.slice(BUF_INT as usize..BUF_INT as usize + 8),
-        [0x01, 0x00, 0, 0, 0, 0, 0, 0]
+        [0x01, 0x00, 0x08, 0, 0, 0, 0, 0]
     );
 }
 

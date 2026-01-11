@@ -7,9 +7,10 @@ use crate::io::usb::{
 };
 
 use super::{
-    build_string_descriptor_utf16le, clamp_response, keyboard::KeyboardReport, mouse::MouseReport,
-    HidProtocol, HID_REQUEST_GET_IDLE, HID_REQUEST_GET_PROTOCOL, HID_REQUEST_GET_REPORT,
-    HID_REQUEST_SET_IDLE, HID_REQUEST_SET_PROTOCOL, HID_REQUEST_SET_REPORT,
+    build_string_descriptor_utf16le, clamp_response, gamepad::GamepadReport,
+    keyboard::KeyboardReport, mouse::MouseReport, HidProtocol, HID_REQUEST_GET_IDLE,
+    HID_REQUEST_GET_PROTOCOL, HID_REQUEST_GET_REPORT, HID_REQUEST_SET_IDLE,
+    HID_REQUEST_SET_PROTOCOL, HID_REQUEST_SET_REPORT,
     USB_DESCRIPTOR_TYPE_CONFIGURATION, USB_DESCRIPTOR_TYPE_DEVICE, USB_DESCRIPTOR_TYPE_HID,
     USB_DESCRIPTOR_TYPE_HID_REPORT, USB_DESCRIPTOR_TYPE_STRING, USB_FEATURE_DEVICE_REMOTE_WAKEUP,
     USB_FEATURE_ENDPOINT_HALT, USB_REQUEST_CLEAR_FEATURE, USB_REQUEST_GET_CONFIGURATION,
@@ -28,7 +29,7 @@ const GAMEPAD_INTERRUPT_IN_EP: u8 = 0x83;
 
 const MAX_PENDING_KEYBOARD_REPORTS: usize = 64;
 const MAX_PENDING_MOUSE_REPORTS: usize = 128;
-const MAX_PENDING_GAMEPAD_REPORTS: usize = 64;
+const MAX_PENDING_GAMEPAD_REPORTS: usize = 128;
 
 #[derive(Debug, Clone)]
 struct KeyboardInterface {
@@ -220,7 +221,11 @@ struct GamepadInterface {
     protocol: HidProtocol,
 
     buttons: u16,
-    axes: [i8; 6],
+    hat: u8,
+    x: i8,
+    y: i8,
+    rx: i8,
+    ry: i8,
 
     last_report: [u8; 8],
     pending_reports: VecDeque<[u8; 8]>,
@@ -228,12 +233,26 @@ struct GamepadInterface {
 
 impl GamepadInterface {
     fn new() -> Self {
+        let initial_report = GamepadReport {
+            buttons: 0,
+            hat: 8,
+            x: 0,
+            y: 0,
+            rx: 0,
+            ry: 0,
+        }
+        .to_bytes();
+
         Self {
             idle_rate: 0,
             protocol: HidProtocol::Report,
             buttons: 0,
-            axes: [0; 6],
-            last_report: [0; 8],
+            hat: 8,
+            x: 0,
+            y: 0,
+            rx: 0,
+            ry: 0,
+            last_report: initial_report,
             pending_reports: VecDeque::new(),
         }
     }
@@ -242,7 +261,7 @@ impl GamepadInterface {
         self.pending_reports.clear();
     }
 
-    fn button_event(&mut self, button_mask: u16, pressed: bool) {
+    fn buttons_mask_event(&mut self, button_mask: u16, pressed: bool) {
         let before = self.buttons;
         if pressed {
             self.buttons |= button_mask;
@@ -254,17 +273,60 @@ impl GamepadInterface {
         }
     }
 
-    fn current_input_report(&self) -> [u8; 8] {
-        let mut out = [0u8; 8];
-        out[0..2].copy_from_slice(&self.buttons.to_le_bytes());
-        for (idx, axis) in self.axes.iter().enumerate() {
-            out[2 + idx] = *axis as u8;
+    fn button_event(&mut self, button_idx: u8, pressed: bool) {
+        if !(1..=16).contains(&button_idx) {
+            return;
         }
-        out
+        let mask = 1u16 << (button_idx - 1);
+        self.buttons_mask_event(mask, pressed);
+    }
+
+    fn set_buttons(&mut self, buttons: u16) {
+        if self.buttons != buttons {
+            self.buttons = buttons;
+            self.enqueue_current_report();
+        }
+    }
+
+    fn set_hat(&mut self, hat: Option<u8>) {
+        let hat = match hat {
+            Some(v) if v <= 7 => v,
+            _ => 8,
+        };
+        if self.hat != hat {
+            self.hat = hat;
+            self.enqueue_current_report();
+        }
+    }
+
+    fn set_axes(&mut self, x: i8, y: i8, rx: i8, ry: i8) {
+        let x = x.clamp(-127, 127);
+        let y = y.clamp(-127, 127);
+        let rx = rx.clamp(-127, 127);
+        let ry = ry.clamp(-127, 127);
+
+        if self.x != x || self.y != y || self.rx != rx || self.ry != ry {
+            self.x = x;
+            self.y = y;
+            self.rx = rx;
+            self.ry = ry;
+            self.enqueue_current_report();
+        }
+    }
+
+    fn current_input_report(&self) -> GamepadReport {
+        GamepadReport {
+            buttons: self.buttons,
+            hat: self.hat,
+            x: self.x,
+            y: self.y,
+            rx: self.rx,
+            ry: self.ry,
+        }
     }
 
     fn enqueue_current_report(&mut self) {
-        let report = self.current_input_report();
+        let report = self.current_input_report().to_bytes();
         if report != self.last_report {
             self.last_report = report;
             if self.pending_reports.len() >= MAX_PENDING_GAMEPAD_REPORTS {
@@ -323,11 +385,27 @@ impl UsbCompositeHidInputHandle {
         self.0.borrow_mut().mouse.wheel(delta);
     }
 
-    pub fn gamepad_button_event(&self, button_mask: u16, pressed: bool) {
+    pub fn gamepad_button_event(&self, button_idx: u8, pressed: bool) {
+        self.0.borrow_mut().gamepad.button_event(button_idx, pressed);
+    }
+
+    pub fn gamepad_buttons_mask_event(&self, button_mask: u16, pressed: bool) {
         self.0
             .borrow_mut()
             .gamepad
-            .button_event(button_mask, pressed);
+            .buttons_mask_event(button_mask, pressed);
+    }
+
+    pub fn gamepad_set_buttons(&self, buttons: u16) {
+        self.0.borrow_mut().gamepad.set_buttons(buttons);
+    }
+
+    pub fn gamepad_set_hat(&self, hat: Option<u8>) {
+        self.0.borrow_mut().gamepad.set_hat(hat);
+    }
+
+    pub fn gamepad_set_axes(&self, x: i8, y: i8, rx: i8, ry: i8) {
+        self.0.borrow_mut().gamepad.set_axes(x, y, rx, ry);
     }
 }
 
@@ -419,7 +497,7 @@ impl UsbCompositeHidInput {
         match interface {
             KEYBOARD_INTERFACE => Some(&super::keyboard::HID_REPORT_DESCRIPTOR),
             MOUSE_INTERFACE => Some(&super::mouse::HID_REPORT_DESCRIPTOR),
-            GAMEPAD_INTERFACE => Some(&GAMEPAD_REPORT_DESCRIPTOR),
+            GAMEPAD_INTERFACE => Some(&super::gamepad::HID_REPORT_DESCRIPTOR),
             _ => None,
         }
     }
@@ -819,7 +897,10 @@ impl UsbDeviceModel for UsbCompositeHidInput {
                                 return ControlResponse::Stall;
                             }
                             ControlResponse::Data(clamp_response(
-                                self.gamepad.current_input_report().to_vec(),
+                                self.gamepad
+                                    .current_input_report()
+                                    .to_bytes()
+                                    .to_vec(),
                                 setup.w_length,
                             ))
                         }
@@ -915,10 +996,10 @@ static DEVICE_DESCRIPTOR: [u8; 18] = [
     0x40, // bMaxPacketSize0 (64)
     0x34,
     0x12, // idVendor (0x1234)
-    0x03,
-    0x00, // idProduct (0x0003)
-    0x01,
-    0x00, // bcdDevice (1.00)
+    0x04,
+    0x00, // idProduct (0x0004)
+    0x00,
+    0x01, // bcdDevice (1.00)
     0x01, // iManufacturer
     0x02, // iProduct
     0x00, // iSerialNumber
@@ -1012,7 +1093,7 @@ static CONFIG_DESCRIPTOR: [u8; 84] = [
     0x00, // bCountryCode
     0x01, // bNumDescriptors
     USB_DESCRIPTOR_TYPE_HID_REPORT,
-    GAMEPAD_REPORT_DESCRIPTOR.len() as u8,
+    super::gamepad::HID_REPORT_DESCRIPTOR.len() as u8,
     0x00, // wDescriptorLength
     // Endpoint descriptor (Interrupt IN)
     0x07, // bLength
@@ -1022,34 +1103,6 @@ static CONFIG_DESCRIPTOR: [u8; 84] = [
     0x08,
     0x00, // wMaxPacketSize (8)
     0x0a, // bInterval (10ms)
-];
-
-// Simple gamepad: 16 buttons (2 bytes) + 6 signed axes (6 bytes) = 8-byte report.
-static GAMEPAD_REPORT_DESCRIPTOR: [u8; 47] = [
-    0x05, 0x01, // Usage Page (Generic Desktop)
-    0x09, 0x05, // Usage (Game Pad)
-    0xa1, 0x01, // Collection (Application)
-    0x15, 0x00, //   Logical Minimum (0)
-    0x25, 0x01, //   Logical Maximum (1)
-    0x75, 0x01, //   Report Size (1)
-    0x95, 0x10, //   Report Count (16)
-    0x05, 0x09, //   Usage Page (Button)
-    0x19, 0x01, //   Usage Minimum (Button 1)
-    0x29, 0x10, //   Usage Maximum (Button 16)
-    0x81, 0x02, //   Input (Data,Var,Abs)
-    0x05, 0x01, //   Usage Page (Generic Desktop)
-    0x15, 0x81, //   Logical Minimum (-127)
-    0x25, 0x7f, //   Logical Maximum (127)
-    0x75, 0x08, //   Report Size (8)
-    0x95, 0x06, //   Report Count (6)
-    0x09, 0x30, //   Usage (X)
-    0x09, 0x31, //   Usage (Y)
-    0x09, 0x32, //   Usage (Z)
-    0x09, 0x35, //   Usage (Rz)
-    0x09, 0x33, //   Usage (Rx)
-    0x09, 0x34, //   Usage (Ry)
-    0x81, 0x02, //   Input (Data,Var,Abs)
-    0xc0, // End Collection
 ];
 
 #[cfg(test)]
@@ -1117,7 +1170,10 @@ mod tests {
         );
 
         assert_eq!(hid2[1], USB_DESCRIPTOR_TYPE_HID);
-        assert_eq!(w_le(hid2, 7) as usize, GAMEPAD_REPORT_DESCRIPTOR.len());
+        assert_eq!(
+            w_le(hid2, 7) as usize,
+            super::super::gamepad::HID_REPORT_DESCRIPTOR.len()
+        );
     }
 
     #[test]
@@ -1127,7 +1183,7 @@ mod tests {
         for (iface, expected) in [
             (KEYBOARD_INTERFACE, &super::super::keyboard::HID_REPORT_DESCRIPTOR[..]),
             (MOUSE_INTERFACE, &super::super::mouse::HID_REPORT_DESCRIPTOR[..]),
-            (GAMEPAD_INTERFACE, &GAMEPAD_REPORT_DESCRIPTOR[..]),
+            (GAMEPAD_INTERFACE, &super::super::gamepad::HID_REPORT_DESCRIPTOR[..]),
         ] {
             let resp = dev.handle_control_request(
                 SetupPacket {
