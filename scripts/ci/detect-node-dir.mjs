@@ -6,8 +6,8 @@
  * selection across CI and local tooling (including `cargo xtask`).
  *
  * Output (stdout): key=value lines
- * - dir=<workspace dir>         (relative to repo root when possible; "." means repo root)
- * - lockfile=<package-lock.json> (relative to repo root when possible; empty when missing)
+ * - dir=<workspace dir>         (relative to the current working directory when possible; "." means cwd)
+ * - lockfile=<package-lock.json> (relative to the current working directory when possible; empty when missing)
  *
  * Logs are written to stderr.
  */
@@ -22,6 +22,7 @@ function usageAndExit() {
             "Usage: detect-node-dir.mjs [options]",
             "",
             "Options:",
+            "  --root <dir>            Checkout root directory to search (default: repo root).",
             "  --node-dir <path>        Override workspace directory (same as AERO_NODE_DIR).",
             "  --require-lockfile       Fail if package-lock.json is missing in the workspace.",
             "  --allow-missing           Exit 0 with empty outputs when no workspace is found.",
@@ -41,8 +42,8 @@ function toPosixPath(p) {
     return p.replaceAll("\\", "/");
 }
 
-function toRepoRelativePath(repoRoot, absPath) {
-    const rel = path.relative(repoRoot, absPath);
+function toOutputRelativePath(outputRoot, absPath) {
+    const rel = path.relative(outputRoot, absPath);
     if (rel === "") {
         return ".";
     }
@@ -52,8 +53,8 @@ function toRepoRelativePath(repoRoot, absPath) {
     return toPosixPath(absPath);
 }
 
-function resolveWorkspace(repoRoot, dirArg, reason) {
-    const dirAbs = path.isAbsolute(dirArg) ? path.normalize(dirArg) : path.normalize(path.join(repoRoot, dirArg));
+function resolveWorkspace(searchRoot, dirArg, reason) {
+    const dirAbs = path.isAbsolute(dirArg) ? path.normalize(dirArg) : path.normalize(path.join(searchRoot, dirArg));
     const pkgJson = path.join(dirAbs, "package.json");
     if (!existsSync(pkgJson)) {
         die(
@@ -65,6 +66,7 @@ function resolveWorkspace(repoRoot, dirArg, reason) {
 }
 
 const argv = process.argv.slice(2);
+let rootArg = null;
 let overrideDir = null;
 let allowMissing = false;
 let requireLockfile = false;
@@ -77,6 +79,22 @@ for (let i = 0; i < argv.length; i++) {
     }
     if (arg === "--allow-missing" || arg === "--optional") {
         allowMissing = true;
+        continue;
+    }
+    if (arg === "--root") {
+        const next = argv[i + 1];
+        if (!next) {
+            die("--root requires a value");
+        }
+        rootArg = next;
+        i++;
+        continue;
+    }
+    if (arg.startsWith("--root=")) {
+        rootArg = arg.split("=", 2)[1] ?? "";
+        if (!rootArg) {
+            die("--root requires a value");
+        }
         continue;
     }
     if (arg === "--require-lockfile") {
@@ -133,19 +151,21 @@ if (!githubOutputPath) {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, "../..");
+const outputRoot = path.resolve(process.cwd());
+const searchRoot = rootArg ? path.resolve(outputRoot, rootArg) : repoRoot;
 
 let workspaceAbs = null;
 let resolutionReason = "";
 
 if (overrideDir) {
-    workspaceAbs = resolveWorkspace(repoRoot, overrideDir, "override");
+    workspaceAbs = resolveWorkspace(searchRoot, overrideDir, "override");
     resolutionReason = "override";
 } else {
-    const candidates = [repoRoot, path.join(repoRoot, "frontend"), path.join(repoRoot, "web")];
+    const candidates = [searchRoot, path.join(searchRoot, "frontend"), path.join(searchRoot, "web")];
     for (const candidate of candidates) {
         if (existsSync(path.join(candidate, "package.json"))) {
             workspaceAbs = candidate;
-            resolutionReason = `auto (${toRepoRelativePath(repoRoot, candidate)})`;
+            resolutionReason = `auto (${toOutputRelativePath(outputRoot, candidate)})`;
             break;
         }
     }
@@ -167,16 +187,16 @@ if (!workspaceAbs) {
 const lockfileAbs = path.join(workspaceAbs, "package-lock.json");
 let lockfile = "";
 if (existsSync(lockfileAbs)) {
-    lockfile = toRepoRelativePath(repoRoot, lockfileAbs);
+    lockfile = toOutputRelativePath(outputRoot, lockfileAbs);
 } else if (requireLockfile) {
     die(
-        `package-lock.json not found at '${toRepoRelativePath(repoRoot, lockfileAbs)}'. ` +
+        `package-lock.json not found at '${toOutputRelativePath(outputRoot, lockfileAbs)}'. ` +
             "This workflow expects npm; ensure a lockfile exists.",
     );
 }
 
 const out = {
-    dir: toRepoRelativePath(repoRoot, workspaceAbs),
+    dir: toOutputRelativePath(outputRoot, workspaceAbs),
     lockfile,
 };
 
@@ -194,4 +214,3 @@ process.stdout.write(
         .map(([k, v]) => `${k}=${v}`)
         .join("\n") + "\n",
 );
-

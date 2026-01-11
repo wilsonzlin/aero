@@ -1,7 +1,17 @@
 #!/usr/bin/env node
-import fs from "node:fs";
+/**
+ * Deprecated wrapper around `detect-node-dir.mjs`.
+ *
+ * This script exists for backwards compatibility with older CI workflows that
+ * referenced `detect_node_workspace.mjs`. New callers should use:
+ *
+ *   node scripts/ci/detect-node-dir.mjs [--root <dir>] --require-lockfile
+ */
+
+import { spawnSync } from "node:child_process";
 import path from "node:path";
 import process from "node:process";
+import { fileURLToPath } from "node:url";
 
 function usage(exitCode) {
   const msg = `
@@ -10,15 +20,7 @@ Usage:
 
 Detects the Node workspace directory (where package.json lives) within a checkout.
 
-Resolution order:
-  1) $AERO_NODE_DIR (relative to --root)
-  2) <root>/package.json
-  3) <root>/frontend/package.json
-  4) <root>/web/package.json
-
-Outputs (default): key=value lines suitable for $GITHUB_OUTPUT
-  - dir=<workspace dir>
-  - lockfile=<path to package-lock.json>
+This is a compatibility wrapper around scripts/ci/detect-node-dir.mjs.
 
 Options:
   --root <dir>   Checkout root directory to search (default: .)
@@ -58,66 +60,47 @@ function parseArgs(argv) {
   return opts;
 }
 
-function nonEmpty(value) {
-  if (typeof value !== "string") return null;
-  const v = value.trim();
-  return v.length ? v : null;
+function parseKeyValue(stdout) {
+  const out = {};
+  for (const line of stdout.split(/\r?\n/u)) {
+    const idx = line.indexOf("=");
+    if (idx === -1) continue;
+    const key = line.slice(0, idx).trim();
+    const value = line.slice(idx + 1).trim();
+    if (!key) continue;
+    out[key] = value;
+  }
+  return out;
 }
 
 function main() {
   const opts = parseArgs(process.argv.slice(2));
 
-  const rootArg = opts.root ?? ".";
-  const rootAbs = path.resolve(process.cwd(), rootArg);
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = path.dirname(__filename);
+  const detectScript = path.join(__dirname, "detect-node-dir.mjs");
 
-  const override = nonEmpty(process.env.AERO_NODE_DIR);
-  const candidates = override ? [override] : [".", "frontend", "web"];
+  const args = ["--root", opts.root, "--require-lockfile"];
 
-  let workspaceRel = null;
-  for (const rel of candidates) {
-    const pkg = rel === "." ? path.join(rootAbs, "package.json") : path.join(rootAbs, rel, "package.json");
-    if (fs.existsSync(pkg)) {
-      workspaceRel = rel;
-      break;
-    }
+  // Forward stderr so the underlying resolver can log resolution details.
+  const result = spawnSync(process.execPath, [detectScript, ...args], {
+    cwd: process.cwd(),
+    stdio: ["ignore", "pipe", "inherit"],
+    encoding: "utf8",
+  });
+
+  if ((result.status ?? 1) !== 0) {
+    process.exit(result.status ?? 1);
   }
 
-  if (!workspaceRel) {
-    // eslint-disable-next-line no-console
-    console.error(
-      `package.json not found under ${rootArg}. Set AERO_NODE_DIR to the directory containing package.json.`,
-    );
-    process.exit(1);
-  }
-
-  const lockfileAbs =
-    workspaceRel === "."
-      ? path.join(rootAbs, "package-lock.json")
-      : path.join(rootAbs, workspaceRel, "package-lock.json");
-
-  if (!fs.existsSync(lockfileAbs)) {
-    // eslint-disable-next-line no-console
-    console.error(
-      `package-lock.json not found at '${path.relative(process.cwd(), lockfileAbs)}'. This workflow expects npm; ensure a lockfile exists.`,
-    );
-    process.exit(1);
-  }
-
-  const dirOut = workspaceRel === "." ? rootArg : path.join(rootArg, workspaceRel);
-  const lockfileOut =
-    workspaceRel === "." ? path.join(rootArg, "package-lock.json") : path.join(rootArg, workspaceRel, "package-lock.json");
-
+  const stdout = result.stdout ?? "";
   if (opts.json) {
     // eslint-disable-next-line no-console
-    console.log(JSON.stringify({ dir: dirOut, lockfile: lockfileOut }, null, 2));
+    console.log(JSON.stringify(parseKeyValue(stdout), null, 2));
     return;
   }
 
-  // key=value pairs: suitable for `>> $GITHUB_OUTPUT`
-  // eslint-disable-next-line no-console
-  console.log(`dir=${dirOut}`);
-  // eslint-disable-next-line no-console
-  console.log(`lockfile=${lockfileOut}`);
+  process.stdout.write(stdout);
 }
 
 main();
