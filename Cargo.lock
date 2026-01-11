@@ -402,6 +402,7 @@ version = "0.1.0"
 dependencies = [
  "aero-devices-input",
  "aero-io-snapshot",
+ "aero_cpu_core",
  "lz4_flex",
  "proptest",
  "rand 0.8.5",

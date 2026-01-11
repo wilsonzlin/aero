@@ -2,8 +2,8 @@ use std::io::Cursor;
 use std::ops::Range;
 
 use aero_snapshot::{
-    CpuState, DeviceId, DeviceState, DiskOverlayRefs, MmuState, RamMode, SaveOptions, SnapshotMeta,
-    SnapshotSource, SnapshotTarget,
+    CpuMode, CpuState, DeviceId, DeviceState, DiskOverlayRefs, MmuState, RamMode, SaveOptions,
+    SegmentState, SnapshotMeta, SnapshotSource, SnapshotTarget,
 };
 use firmware::bios::BiosSnapshot;
 use machine::{A20Gate, BlockDevice, CpuState as MachineCpuState, PhysicalMemory, FLAG_ALWAYS_ON};
@@ -45,13 +45,15 @@ fn machine_cpu_to_snapshot(cpu: &MachineCpuState) -> CpuState {
         r15: 0,
         rip: cpu.rip,
         rflags: cpu.rflags,
-        cs: cpu.cs.selector,
-        ds: cpu.ds.selector,
-        es: cpu.es.selector,
-        fs: 0,
-        gs: 0,
-        ss: cpu.ss.selector,
-        xmm: [0u128; 16],
+        mode: CpuMode::Real,
+        halted: cpu.halted,
+        cs: SegmentState::real_mode(cpu.cs.selector),
+        ds: SegmentState::real_mode(cpu.ds.selector),
+        es: SegmentState::real_mode(cpu.es.selector),
+        fs: SegmentState::real_mode(0),
+        gs: SegmentState::real_mode(0),
+        ss: SegmentState::real_mode(cpu.ss.selector),
+        ..CpuState::default()
     }
 }
 
@@ -66,10 +68,11 @@ fn snapshot_cpu_to_machine(state: CpuState, cpu: &mut MachineCpuState) {
     cpu.rsp = state.rsp;
     cpu.rip = state.rip;
     cpu.rflags = state.rflags | FLAG_ALWAYS_ON;
-    cpu.cs.selector = state.cs;
-    cpu.ds.selector = state.ds;
-    cpu.es.selector = state.es;
-    cpu.ss.selector = state.ss;
+    cpu.cs.selector = state.cs.selector;
+    cpu.ds.selector = state.ds.selector;
+    cpu.es.selector = state.es.selector;
+    cpu.ss.selector = state.ss.selector;
+    cpu.halted = state.halted;
 }
 
 fn encode_cpu_internal(cpu: &MachineCpuState) -> Vec<u8> {

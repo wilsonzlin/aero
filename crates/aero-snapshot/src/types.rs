@@ -6,6 +6,7 @@ use crate::io::{ReadLeExt, WriteLeExt};
 
 const MAX_LABEL_LEN: u32 = 4 * 1024;
 const MAX_DISK_PATH_LEN: u32 = 64 * 1024;
+const FXSAVE_AREA_SIZE: usize = 512;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct SnapshotMeta {
@@ -60,7 +61,7 @@ impl SnapshotMeta {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CpuState {
     pub rax: u64,
     pub rbx: u64,
@@ -79,18 +80,62 @@ pub struct CpuState {
     pub r14: u64,
     pub r15: u64,
     pub rip: u64,
+    /// Materialized architectural RFLAGS value.
     pub rflags: u64,
-    pub cs: u16,
-    pub ds: u16,
-    pub es: u16,
-    pub fs: u16,
-    pub gs: u16,
-    pub ss: u16,
+    pub mode: CpuMode,
+    pub halted: bool,
+    pub es: SegmentState,
+    pub cs: SegmentState,
+    pub ss: SegmentState,
+    pub ds: SegmentState,
+    pub fs: SegmentState,
+    pub gs: SegmentState,
+    pub fpu: FpuState,
+    pub mxcsr: u32,
     pub xmm: [u128; 16],
+    /// Raw FXSAVE area bytes (512 bytes).
+    pub fxsave: [u8; FXSAVE_AREA_SIZE],
+}
+
+impl Default for CpuState {
+    fn default() -> Self {
+        Self {
+            rax: 0,
+            rbx: 0,
+            rcx: 0,
+            rdx: 0,
+            rsi: 0,
+            rdi: 0,
+            rbp: 0,
+            rsp: 0,
+            r8: 0,
+            r9: 0,
+            r10: 0,
+            r11: 0,
+            r12: 0,
+            r13: 0,
+            r14: 0,
+            r15: 0,
+            rip: 0,
+            rflags: 0,
+            mode: CpuMode::default(),
+            halted: false,
+            es: SegmentState::default(),
+            cs: SegmentState::default(),
+            ss: SegmentState::default(),
+            ds: SegmentState::default(),
+            fs: SegmentState::default(),
+            gs: SegmentState::default(),
+            fpu: FpuState::default(),
+            mxcsr: 0,
+            xmm: [0u128; 16],
+            fxsave: [0u8; FXSAVE_AREA_SIZE],
+        }
+    }
 }
 
 impl CpuState {
-    pub fn encode<W: Write>(&self, w: &mut W) -> Result<()> {
+    pub fn encode_v1<W: Write>(&self, w: &mut W) -> Result<()> {
         w.write_u64_le(self.rax)?;
         w.write_u64_le(self.rbx)?;
         w.write_u64_le(self.rcx)?;
@@ -109,19 +154,19 @@ impl CpuState {
         w.write_u64_le(self.r15)?;
         w.write_u64_le(self.rip)?;
         w.write_u64_le(self.rflags)?;
-        w.write_u16_le(self.cs)?;
-        w.write_u16_le(self.ds)?;
-        w.write_u16_le(self.es)?;
-        w.write_u16_le(self.fs)?;
-        w.write_u16_le(self.gs)?;
-        w.write_u16_le(self.ss)?;
+        w.write_u16_le(self.cs.selector)?;
+        w.write_u16_le(self.ds.selector)?;
+        w.write_u16_le(self.es.selector)?;
+        w.write_u16_le(self.fs.selector)?;
+        w.write_u16_le(self.gs.selector)?;
+        w.write_u16_le(self.ss.selector)?;
         for xmm in self.xmm {
             w.write_u128_le(xmm)?;
         }
         Ok(())
     }
 
-    pub fn decode<R: Read>(r: &mut R) -> Result<Self> {
+    pub fn decode_v1<R: Read>(r: &mut R) -> Result<Self> {
         let mut state = CpuState::default();
         state.rax = r.read_u64_le()?;
         state.rbx = r.read_u64_le()?;
@@ -141,16 +186,226 @@ impl CpuState {
         state.r15 = r.read_u64_le()?;
         state.rip = r.read_u64_le()?;
         state.rflags = r.read_u64_le()?;
-        state.cs = r.read_u16_le()?;
-        state.ds = r.read_u16_le()?;
-        state.es = r.read_u16_le()?;
-        state.fs = r.read_u16_le()?;
-        state.gs = r.read_u16_le()?;
-        state.ss = r.read_u16_le()?;
+        // v1 stores selectors only. Populate the hidden caches with real-mode defaults to make
+        // best-effort v1 restores usable for simple guests.
+        state.cs = SegmentState::real_mode(r.read_u16_le()?);
+        state.ds = SegmentState::real_mode(r.read_u16_le()?);
+        state.es = SegmentState::real_mode(r.read_u16_le()?);
+        state.fs = SegmentState::real_mode(r.read_u16_le()?);
+        state.gs = SegmentState::real_mode(r.read_u16_le()?);
+        state.ss = SegmentState::real_mode(r.read_u16_le()?);
         for xmm in &mut state.xmm {
             *xmm = r.read_u128_le()?;
         }
         Ok(state)
+    }
+
+    pub fn encode_v2<W: Write>(&self, w: &mut W) -> Result<()> {
+        // GPRs in architectural order (RAX, RCX, RDX, RBX, RSP, RBP, RSI, RDI, R8..R15).
+        w.write_u64_le(self.rax)?;
+        w.write_u64_le(self.rcx)?;
+        w.write_u64_le(self.rdx)?;
+        w.write_u64_le(self.rbx)?;
+        w.write_u64_le(self.rsp)?;
+        w.write_u64_le(self.rbp)?;
+        w.write_u64_le(self.rsi)?;
+        w.write_u64_le(self.rdi)?;
+        w.write_u64_le(self.r8)?;
+        w.write_u64_le(self.r9)?;
+        w.write_u64_le(self.r10)?;
+        w.write_u64_le(self.r11)?;
+        w.write_u64_le(self.r12)?;
+        w.write_u64_le(self.r13)?;
+        w.write_u64_le(self.r14)?;
+        w.write_u64_le(self.r15)?;
+        w.write_u64_le(self.rip)?;
+        w.write_u64_le(self.rflags)?;
+        w.write_u8(self.mode as u8)?;
+        w.write_u8(self.halted as u8)?;
+        self.es.encode(w)?;
+        self.cs.encode(w)?;
+        self.ss.encode(w)?;
+        self.ds.encode(w)?;
+        self.fs.encode(w)?;
+        self.gs.encode(w)?;
+        self.fpu.encode(w)?;
+        w.write_u32_le(self.mxcsr)?;
+        for xmm in self.xmm {
+            w.write_u128_le(xmm)?;
+        }
+        w.write_bytes(&self.fxsave)?;
+        Ok(())
+    }
+
+    pub fn decode_v2<R: Read>(r: &mut R) -> Result<Self> {
+        let mut state = CpuState::default();
+        state.rax = r.read_u64_le()?;
+        state.rcx = r.read_u64_le()?;
+        state.rdx = r.read_u64_le()?;
+        state.rbx = r.read_u64_le()?;
+        state.rsp = r.read_u64_le()?;
+        state.rbp = r.read_u64_le()?;
+        state.rsi = r.read_u64_le()?;
+        state.rdi = r.read_u64_le()?;
+        state.r8 = r.read_u64_le()?;
+        state.r9 = r.read_u64_le()?;
+        state.r10 = r.read_u64_le()?;
+        state.r11 = r.read_u64_le()?;
+        state.r12 = r.read_u64_le()?;
+        state.r13 = r.read_u64_le()?;
+        state.r14 = r.read_u64_le()?;
+        state.r15 = r.read_u64_le()?;
+        state.rip = r.read_u64_le()?;
+        state.rflags = r.read_u64_le()?;
+        state.mode = CpuMode::decode(r.read_u8()?)?;
+        state.halted = r.read_u8()? != 0;
+        state.es = SegmentState::decode(r)?;
+        state.cs = SegmentState::decode(r)?;
+        state.ss = SegmentState::decode(r)?;
+        state.ds = SegmentState::decode(r)?;
+        state.fs = SegmentState::decode(r)?;
+        state.gs = SegmentState::decode(r)?;
+        state.fpu = FpuState::decode(r)?;
+        state.mxcsr = r.read_u32_le()?;
+        for xmm in &mut state.xmm {
+            *xmm = r.read_u128_le()?;
+        }
+        r.read_exact(&mut state.fxsave)?;
+        Ok(state)
+    }
+
+    /// Encode using the latest supported CPU section version.
+    pub fn encode<W: Write>(&self, w: &mut W) -> Result<()> {
+        self.encode_v2(w)
+    }
+
+    /// Decode using the latest supported CPU section version.
+    pub fn decode<R: Read>(r: &mut R) -> Result<Self> {
+        Self::decode_v2(r)
+    }
+}
+
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CpuMode {
+    Real = 0,
+    Protected = 1,
+    Long = 2,
+    Vm86 = 3,
+}
+
+impl Default for CpuMode {
+    fn default() -> Self {
+        Self::Real
+    }
+}
+
+impl CpuMode {
+    fn decode(v: u8) -> Result<Self> {
+        match v {
+            0 => Ok(Self::Real),
+            1 => Ok(Self::Protected),
+            2 => Ok(Self::Long),
+            3 => Ok(Self::Vm86),
+            _ => Err(SnapshotError::Corrupt("invalid CPU mode")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct SegmentState {
+    pub selector: u16,
+    pub base: u64,
+    pub limit: u32,
+    /// VMX-style access rights (AR bytes) plus "unusable" bit.
+    pub access: u32,
+}
+
+impl SegmentState {
+    fn encode<W: Write>(&self, w: &mut W) -> Result<()> {
+        w.write_u16_le(self.selector)?;
+        w.write_u64_le(self.base)?;
+        w.write_u32_le(self.limit)?;
+        w.write_u32_le(self.access)?;
+        Ok(())
+    }
+
+    fn decode<R: Read>(r: &mut R) -> Result<Self> {
+        Ok(Self {
+            selector: r.read_u16_le()?,
+            base: r.read_u64_le()?,
+            limit: r.read_u32_le()?,
+            access: r.read_u32_le()?,
+        })
+    }
+
+    pub fn real_mode(selector: u16) -> Self {
+        Self {
+            selector,
+            base: (selector as u64) << 4,
+            limit: 0xFFFF,
+            access: 0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct FpuState {
+    pub fcw: u16,
+    pub fsw: u16,
+    pub ftw: u16,
+    pub top: u8,
+    pub fop: u16,
+    pub fip: u64,
+    pub fdp: u64,
+    pub fcs: u16,
+    pub fds: u16,
+    pub st: [u128; 8],
+}
+
+impl FpuState {
+    fn encode<W: Write>(&self, w: &mut W) -> Result<()> {
+        w.write_u16_le(self.fcw)?;
+        w.write_u16_le(self.fsw)?;
+        w.write_u16_le(self.ftw)?;
+        w.write_u8(self.top)?;
+        w.write_u16_le(self.fop)?;
+        w.write_u64_le(self.fip)?;
+        w.write_u64_le(self.fdp)?;
+        w.write_u16_le(self.fcs)?;
+        w.write_u16_le(self.fds)?;
+        for st in self.st {
+            w.write_u128_le(st)?;
+        }
+        Ok(())
+    }
+
+    fn decode<R: Read>(r: &mut R) -> Result<Self> {
+        let fcw = r.read_u16_le()?;
+        let fsw = r.read_u16_le()?;
+        let ftw = r.read_u16_le()?;
+        let top = r.read_u8()?;
+        let fop = r.read_u16_le()?;
+        let fip = r.read_u64_le()?;
+        let fdp = r.read_u64_le()?;
+        let fcs = r.read_u16_le()?;
+        let fds = r.read_u16_le()?;
+        let mut st = [0u128; 8];
+        for slot in &mut st {
+            *slot = r.read_u128_le()?;
+        }
+        Ok(Self {
+            fcw,
+            fsw,
+            ftw,
+            top,
+            fop,
+            fip,
+            fdp,
+            fcs,
+            fds,
+            st,
+        })
     }
 }
 
@@ -172,9 +427,9 @@ pub struct VcpuSnapshot {
 }
 
 impl VcpuSnapshot {
-    pub fn encode<W: Write>(&self, w: &mut W) -> Result<()> {
+    pub fn encode_v1<W: Write>(&self, w: &mut W) -> Result<()> {
         w.write_u32_le(self.apic_id)?;
-        self.cpu.encode(w)?;
+        self.cpu.encode_v1(w)?;
         let internal_len: u64 = self
             .internal_state
             .len()
@@ -185,9 +440,9 @@ impl VcpuSnapshot {
         Ok(())
     }
 
-    pub fn decode<R: Read>(r: &mut R, max_internal_len: u64) -> Result<Self> {
+    pub fn decode_v1<R: Read>(r: &mut R, max_internal_len: u64) -> Result<Self> {
         let apic_id = r.read_u32_le()?;
-        let cpu = CpuState::decode(r)?;
+        let cpu = CpuState::decode_v1(r)?;
         let internal_len = r.read_u64_le()?;
         if internal_len > max_internal_len {
             return Err(SnapshotError::Corrupt("vCPU internal state too large"));
@@ -199,6 +454,42 @@ impl VcpuSnapshot {
             internal_state,
         })
     }
+
+    pub fn encode_v2<W: Write>(&self, w: &mut W) -> Result<()> {
+        w.write_u32_le(self.apic_id)?;
+        self.cpu.encode_v2(w)?;
+        let internal_len: u64 = self
+            .internal_state
+            .len()
+            .try_into()
+            .map_err(|_| SnapshotError::Corrupt("vCPU internal state too large"))?;
+        w.write_u64_le(internal_len)?;
+        w.write_bytes(&self.internal_state)?;
+        Ok(())
+    }
+
+    pub fn decode_v2<R: Read>(r: &mut R, max_internal_len: u64) -> Result<Self> {
+        let apic_id = r.read_u32_le()?;
+        let cpu = CpuState::decode_v2(r)?;
+        let internal_len = r.read_u64_le()?;
+        if internal_len > max_internal_len {
+            return Err(SnapshotError::Corrupt("vCPU internal state too large"));
+        }
+        let internal_state = r.read_exact_vec(internal_len as usize)?;
+        Ok(Self {
+            apic_id,
+            cpu,
+            internal_state,
+        })
+    }
+
+    pub fn encode<W: Write>(&self, w: &mut W) -> Result<()> {
+        self.encode_v2(w)
+    }
+
+    pub fn decode<R: Read>(r: &mut R, max_internal_len: u64) -> Result<Self> {
+        Self::decode_v2(r, max_internal_len)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -208,15 +499,37 @@ pub struct MmuState {
     pub cr3: u64,
     pub cr4: u64,
     pub cr8: u64,
+    pub dr0: u64,
+    pub dr1: u64,
+    pub dr2: u64,
+    pub dr3: u64,
+    pub dr4: u64,
+    pub dr5: u64,
+    pub dr6: u64,
+    pub dr7: u64,
     pub efer: u64,
+    pub star: u64,
+    pub lstar: u64,
+    pub cstar: u64,
+    pub sfmask: u64,
+    pub sysenter_cs: u64,
+    pub sysenter_eip: u64,
+    pub sysenter_esp: u64,
+    pub fs_base: u64,
+    pub gs_base: u64,
+    pub kernel_gs_base: u64,
+    pub apic_base: u64,
+    pub tsc: u64,
     pub gdtr_base: u64,
     pub gdtr_limit: u16,
     pub idtr_base: u64,
     pub idtr_limit: u16,
+    pub ldtr: SegmentState,
+    pub tr: SegmentState,
 }
 
 impl MmuState {
-    pub fn encode<W: Write>(&self, w: &mut W) -> Result<()> {
+    pub fn encode_v1<W: Write>(&self, w: &mut W) -> Result<()> {
         w.write_u64_le(self.cr0)?;
         w.write_u64_le(self.cr2)?;
         w.write_u64_le(self.cr3)?;
@@ -230,7 +543,7 @@ impl MmuState {
         Ok(())
     }
 
-    pub fn decode<R: Read>(r: &mut R) -> Result<Self> {
+    pub fn decode_v1<R: Read>(r: &mut R) -> Result<Self> {
         Ok(Self {
             cr0: r.read_u64_le()?,
             cr2: r.read_u64_le()?,
@@ -242,7 +555,160 @@ impl MmuState {
             gdtr_limit: r.read_u16_le()?,
             idtr_base: r.read_u64_le()?,
             idtr_limit: r.read_u16_le()?,
+            ..Self::default()
         })
+    }
+
+    pub fn encode_v2<W: Write>(&self, w: &mut W) -> Result<()> {
+        w.write_u64_le(self.cr0)?;
+        w.write_u64_le(self.cr2)?;
+        w.write_u64_le(self.cr3)?;
+        w.write_u64_le(self.cr4)?;
+        w.write_u64_le(self.cr8)?;
+
+        w.write_u64_le(self.dr0)?;
+        w.write_u64_le(self.dr1)?;
+        w.write_u64_le(self.dr2)?;
+        w.write_u64_le(self.dr3)?;
+        w.write_u64_le(self.dr4)?;
+        w.write_u64_le(self.dr5)?;
+        w.write_u64_le(self.dr6)?;
+        w.write_u64_le(self.dr7)?;
+
+        w.write_u64_le(self.efer)?;
+        w.write_u64_le(self.star)?;
+        w.write_u64_le(self.lstar)?;
+        w.write_u64_le(self.cstar)?;
+        w.write_u64_le(self.sfmask)?;
+        w.write_u64_le(self.sysenter_cs)?;
+        w.write_u64_le(self.sysenter_eip)?;
+        w.write_u64_le(self.sysenter_esp)?;
+        w.write_u64_le(self.fs_base)?;
+        w.write_u64_le(self.gs_base)?;
+        w.write_u64_le(self.kernel_gs_base)?;
+        w.write_u64_le(self.apic_base)?;
+        w.write_u64_le(self.tsc)?;
+
+        w.write_u64_le(self.gdtr_base)?;
+        w.write_u16_le(self.gdtr_limit)?;
+        w.write_u64_le(self.idtr_base)?;
+        w.write_u16_le(self.idtr_limit)?;
+        self.ldtr.encode(w)?;
+        self.tr.encode(w)?;
+        Ok(())
+    }
+
+    pub fn decode_v2<R: Read>(r: &mut R) -> Result<Self> {
+        Ok(Self {
+            cr0: r.read_u64_le()?,
+            cr2: r.read_u64_le()?,
+            cr3: r.read_u64_le()?,
+            cr4: r.read_u64_le()?,
+            cr8: r.read_u64_le()?,
+
+            dr0: r.read_u64_le()?,
+            dr1: r.read_u64_le()?,
+            dr2: r.read_u64_le()?,
+            dr3: r.read_u64_le()?,
+            dr4: r.read_u64_le()?,
+            dr5: r.read_u64_le()?,
+            dr6: r.read_u64_le()?,
+            dr7: r.read_u64_le()?,
+
+            efer: r.read_u64_le()?,
+            star: r.read_u64_le()?,
+            lstar: r.read_u64_le()?,
+            cstar: r.read_u64_le()?,
+            sfmask: r.read_u64_le()?,
+            sysenter_cs: r.read_u64_le()?,
+            sysenter_eip: r.read_u64_le()?,
+            sysenter_esp: r.read_u64_le()?,
+            fs_base: r.read_u64_le()?,
+            gs_base: r.read_u64_le()?,
+            kernel_gs_base: r.read_u64_le()?,
+            apic_base: r.read_u64_le()?,
+            tsc: r.read_u64_le()?,
+
+            gdtr_base: r.read_u64_le()?,
+            gdtr_limit: r.read_u16_le()?,
+            idtr_base: r.read_u64_le()?,
+            idtr_limit: r.read_u16_le()?,
+            ldtr: SegmentState::decode(r)?,
+            tr: SegmentState::decode(r)?,
+        })
+    }
+
+    /// Encode using the latest supported MMU section version.
+    pub fn encode<W: Write>(&self, w: &mut W) -> Result<()> {
+        self.encode_v2(w)
+    }
+
+    /// Decode using the latest supported MMU section version.
+    pub fn decode<R: Read>(r: &mut R) -> Result<Self> {
+        Self::decode_v2(r)
+    }
+}
+
+/// Non-architectural CPU bookkeeping that must be restored to resume deterministically.
+///
+/// This is intended to be stored as a `DeviceState` entry with `DeviceId::CPU_INTERNAL` and
+/// `version = 2`.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct CpuInternalState {
+    /// Interrupt inhibition/shadow counter (e.g. STI shadow).
+    pub interrupt_inhibit: u8,
+    /// FIFO of pending externally injected interrupt vectors (PIC/APIC).
+    pub pending_external_interrupts: Vec<u8>,
+}
+
+impl CpuInternalState {
+    pub const VERSION: u16 = 2;
+
+    pub fn encode<W: Write>(&self, w: &mut W) -> Result<()> {
+        w.write_u8(self.interrupt_inhibit)?;
+        let len: u32 = self
+            .pending_external_interrupts
+            .len()
+            .try_into()
+            .map_err(|_| SnapshotError::Corrupt("too many pending interrupts"))?;
+        w.write_u32_le(len)?;
+        w.write_bytes(&self.pending_external_interrupts)?;
+        Ok(())
+    }
+
+    pub fn decode<R: Read>(r: &mut R) -> Result<Self> {
+        const MAX_PENDING_INTERRUPTS: u32 = 1024 * 1024;
+        let interrupt_inhibit = r.read_u8()?;
+        let len = r.read_u32_le()?;
+        if len > MAX_PENDING_INTERRUPTS {
+            return Err(SnapshotError::Corrupt("too many pending interrupts"));
+        }
+        let pending_external_interrupts = r.read_exact_vec(len as usize)?;
+        Ok(Self {
+            interrupt_inhibit,
+            pending_external_interrupts,
+        })
+    }
+
+    pub fn to_device_state(&self) -> Result<DeviceState> {
+        let mut data = Vec::with_capacity(1 + 4 + self.pending_external_interrupts.len());
+        self.encode(&mut data)?;
+        Ok(DeviceState {
+            id: DeviceId::CPU_INTERNAL,
+            version: Self::VERSION,
+            flags: 0,
+            data,
+        })
+    }
+
+    pub fn from_device_state(state: &DeviceState) -> Result<Self> {
+        if state.id != DeviceId::CPU_INTERNAL {
+            return Err(SnapshotError::Corrupt("expected CPU_INTERNAL device state"));
+        }
+        if state.version != Self::VERSION {
+            return Err(SnapshotError::Corrupt("unsupported CPU_INTERNAL device version"));
+        }
+        Self::decode(&mut std::io::Cursor::new(&state.data))
     }
 }
 

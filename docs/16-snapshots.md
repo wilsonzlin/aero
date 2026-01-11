@@ -47,13 +47,14 @@ This framing enables **backward-compatible schema evolution**:
 - `DISKS` entries are written in canonical order: `disk_id`.
 - Dirty-page RAM snapshots canonicalize the dirty page list: sorted ascending, deduplicated, and validated against the guest RAM size.
 
-### Core sections (v1)
+### Core sections (format v1)
 
 | Section | Contents |
 |--------:|----------|
 | `META` | Snapshot id, parent id, timestamp, optional label |
-| `CPU` | Architectural CPU state (GPRs, RIP, RFLAGS, segment selectors, XMM regs) |
-| `MMU` | Paging/descriptor-table state (CR0/2/3/4/8, EFER, GDTR/IDTR) |
+| `CPU` | Architectural CPU state (v1: minimal; v2: `aero_cpu_core::state::CpuState` compatible) |
+| `CPUS` | Multi-vCPU CPU state (v1: minimal; v2: `aero_cpu_core::state::CpuState` compatible) |
+| `MMU` | System/MMU state (v1: minimal; v2: control/debug/MSR + descriptor tables) |
 | `DEVICES` | List of device states (PIC/APIC/PIT/RTC/PCI/Disk/VGA/etc) as typed TLVs |
 | `DISKS` | References to disk base images + overlay images |
 | `RAM` | Guest RAM contents (either full snapshot or dirty-page diff) |
@@ -69,6 +70,93 @@ This framing enables **backward-compatible schema evolution**:
 This standardizes device payloads on a deterministic, forward-compatible TLV encoding. `aero-snapshot` provides opt-in helpers behind the `io-snapshot` feature: `aero_snapshot::io_snapshot_bridge::{device_state_from_io_snapshot, apply_io_snapshot_to_device}`.
 
 ---
+
+## CPU section encoding
+
+### CPU section v1 (section_version = 1)
+
+Legacy encoding used by early/minimal VMs. Only includes:
+
+- 16 GPRs (u64), RIP (u64), RFLAGS (u64)
+- Segment selectors only (CS/DS/ES/FS/GS/SS as u16)
+- XMM0-15 (u128)
+
+### CPU section v2 (section_version = 2)
+
+Supports snapshot/restore for the `aero_cpu_core::state::CpuState` execution core.
+
+All fields are written **in the order below** (little-endian):
+
+- **GPRs (u64 each)** in architectural order: `RAX, RCX, RDX, RBX, RSP, RBP, RSI, RDI, R8..R15`
+- `u64 RIP`
+- `u64 RFLAGS` (materialized; no lazy-flags encoding)
+- `u8 CPU_MODE` (`0=Real, 1=Protected, 2=Long, 3=Vm86`)
+- `u8 HALTED` (0/1)
+- **SegmentState** for `ES, CS, SS, DS, FS, GS` (in that order), each:
+  - `u16 selector`
+  - `u64 base`
+  - `u32 limit`
+  - `u32 access` (VMX-style "AR bytes" + `unusable` bit at 16)
+- **x87/FPU state**:
+  - `u16 fcw`
+  - `u16 fsw`
+  - `u16 ftw`
+  - `u8 top`
+  - `u16 fop`
+  - `u64 fip`
+  - `u64 fdp`
+  - `u16 fcs`
+  - `u16 fds`
+  - `u128 st[8]` (ST0..ST7 FXSAVE slots)
+- **SSE state**:
+  - `u32 MXCSR`
+  - `u128 XMM[16]` (XMM0..XMM15)
+- `u8 FXSAVE_AREA[512]` (raw 512-byte image; currently `FXSAVE64`-compatible layout)
+
+---
+
+## MMU section encoding
+
+### MMU section v1 (section_version = 1)
+
+Legacy encoding:
+
+- `u64 CR0, CR2, CR3, CR4, CR8`
+- `u64 EFER`
+- `u64 GDTR_BASE`, `u16 GDTR_LIMIT`
+- `u64 IDTR_BASE`, `u16 IDTR_LIMIT`
+
+### MMU section v2 (section_version = 2)
+
+All fields are written **in the order below**:
+
+- `u64 CR0, CR2, CR3, CR4, CR8`
+- `u64 DR0, DR1, DR2, DR3, DR4, DR5, DR6, DR7`
+- **MSRs (u64 each)**:
+  - `EFER`
+  - `STAR, LSTAR, CSTAR, SFMASK`
+  - `SYSENTER_CS, SYSENTER_EIP, SYSENTER_ESP`
+  - `FS_BASE, GS_BASE, KERNEL_GS_BASE`
+  - `APIC_BASE`
+  - `TSC`
+- `u64 GDTR_BASE`, `u16 GDTR_LIMIT`
+- `u64 IDTR_BASE`, `u16 IDTR_LIMIT`
+- **SegmentState** `LDTR` then `TR` (same layout as CPU v2 SegmentState)
+
+---
+
+## CPU internal (device) encoding
+
+Some CPU execution state is not part of the architectural `CPU`/`MMU` sections (e.g. pending
+external interrupts). If needed, it is stored in the `DEVICES` section as a device entry:
+
+- `DeviceId::CPU_INTERNAL` (`9`)
+
+### CPU_INTERNAL device v2 (device_version = 2)
+
+- `u8 interrupt_inhibit` (interrupt shadow / inhibit counter)
+- `u32 pending_len`
+- `u8 pending_external_interrupts[pending_len]`
 
 ## Guest RAM encoding
 

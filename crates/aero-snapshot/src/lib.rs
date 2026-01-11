@@ -3,6 +3,7 @@ mod format;
 mod inspect;
 mod io;
 mod ram;
+mod cpu_core;
 mod types;
 
 #[cfg(feature = "io-snapshot")]
@@ -16,8 +17,13 @@ pub use crate::inspect::{
     inspect_snapshot, read_snapshot_meta, RamHeaderSummary, SnapshotIndex, SnapshotSectionInfo,
 };
 pub use crate::ram::{Compression, RamMode, RamWriteOptions};
+pub use crate::cpu_core::{
+    apply_cpu_state_to_cpu_core, apply_mmu_state_to_cpu_core, cpu_core_from_snapshot,
+    cpu_state_from_cpu_core, mmu_state_from_cpu_core, snapshot_from_cpu_core,
+};
 pub use crate::types::{
-    CpuState, DeviceState, DiskOverlayRef, DiskOverlayRefs, MmuState, SnapshotMeta, VcpuSnapshot,
+    CpuInternalState, CpuMode, CpuState, DeviceState, DiskOverlayRef, DiskOverlayRefs, FpuState,
+    MmuState, SegmentState, SnapshotMeta, VcpuSnapshot,
 };
 
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -140,9 +146,9 @@ pub fn save_snapshot<W: Write + Seek, S: SnapshotSource>(
 
     let cpus = source.cpu_states();
     if cpus.len() == 1 && cpus[0].apic_id == 0 && cpus[0].internal_state.is_empty() {
-        write_section(w, SectionId::CPU, 1, 0, |w| cpus[0].cpu.encode(w))?;
+        write_section(w, SectionId::CPU, 2, 0, |w| cpus[0].cpu.encode_v2(w))?;
     } else {
-        write_section(w, SectionId::CPUS, 1, 0, |w| {
+        write_section(w, SectionId::CPUS, 2, 0, |w| {
             let count: u32 = cpus
                 .len()
                 .try_into()
@@ -151,7 +157,7 @@ pub fn save_snapshot<W: Write + Seek, S: SnapshotSource>(
 
             for cpu in &cpus {
                 let mut entry = Vec::new();
-                cpu.encode(&mut entry)?;
+                cpu.encode_v2(&mut entry)?;
                 let entry_len: u64 = entry
                     .len()
                     .try_into()
@@ -163,7 +169,7 @@ pub fn save_snapshot<W: Write + Seek, S: SnapshotSource>(
         })?;
     }
 
-    write_section(w, SectionId::MMU, 1, 0, |w| source.mmu_state().encode(w))?;
+    write_section(w, SectionId::MMU, 2, 0, |w| source.mmu_state().encode_v2(w))?;
 
     write_section(w, SectionId::DEVICES, 1, 0, |w| {
         let mut devices = source.device_states();
@@ -253,7 +259,15 @@ pub fn restore_snapshot<R: Read, T: SnapshotTarget>(r: &mut R, target: &mut T) -
             }
             id if id == SectionId::CPU => {
                 if header.version == 1 {
-                    let cpu = CpuState::decode(&mut section_reader)?;
+                    let cpu = CpuState::decode_v1(&mut section_reader)?;
+                    target.restore_cpu_states(vec![VcpuSnapshot {
+                        apic_id: 0,
+                        cpu,
+                        internal_state: Vec::new(),
+                    }])?;
+                    seen_cpu = true;
+                } else if header.version >= 2 {
+                    let cpu = CpuState::decode_v2(&mut section_reader)?;
                     target.restore_cpu_states(vec![VcpuSnapshot {
                         apic_id: 0,
                         cpu,
@@ -269,7 +283,20 @@ pub fn restore_snapshot<R: Read, T: SnapshotTarget>(r: &mut R, target: &mut T) -
                     for _ in 0..count {
                         let entry_len = section_reader.read_u64_le()?;
                         let mut entry_reader = (&mut section_reader).take(entry_len);
-                        let cpu = VcpuSnapshot::decode(&mut entry_reader, 64 * 1024 * 1024)?;
+                        let cpu = VcpuSnapshot::decode_v1(&mut entry_reader, 64 * 1024 * 1024)?;
+                        // Skip any forward-compatible additions to the vCPU entry.
+                        std::io::copy(&mut entry_reader, &mut std::io::sink())?;
+                        cpus.push(cpu);
+                    }
+                    target.restore_cpu_states(cpus)?;
+                    seen_cpu = true;
+                } else if header.version >= 2 {
+                    let count = section_reader.read_u32_le()? as usize;
+                    let mut cpus = Vec::with_capacity(count.min(64));
+                    for _ in 0..count {
+                        let entry_len = section_reader.read_u64_le()?;
+                        let mut entry_reader = (&mut section_reader).take(entry_len);
+                        let cpu = VcpuSnapshot::decode_v2(&mut entry_reader, 64 * 1024 * 1024)?;
                         // Skip any forward-compatible additions to the vCPU entry.
                         std::io::copy(&mut entry_reader, &mut std::io::sink())?;
                         cpus.push(cpu);
@@ -280,7 +307,10 @@ pub fn restore_snapshot<R: Read, T: SnapshotTarget>(r: &mut R, target: &mut T) -
             }
             id if id == SectionId::MMU => {
                 if header.version == 1 {
-                    let mmu = MmuState::decode(&mut section_reader)?;
+                    let mmu = MmuState::decode_v1(&mut section_reader)?;
+                    target.restore_mmu_state(mmu);
+                } else if header.version >= 2 {
+                    let mmu = MmuState::decode_v2(&mut section_reader)?;
                     target.restore_mmu_state(mmu);
                 }
             }

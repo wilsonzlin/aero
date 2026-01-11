@@ -1,8 +1,9 @@
 use std::io::Cursor;
 
 use aero_snapshot::{
-    save_snapshot, Compression, CpuState, DeviceId, DeviceState, DiskOverlayRef, DiskOverlayRefs,
-    MmuState, RamMode, RamWriteOptions, SaveOptions, SnapshotMeta, SnapshotSource,
+    save_snapshot, Compression, CpuMode, CpuState, DeviceId, DeviceState, DiskOverlayRef,
+    DiskOverlayRefs, MmuState, RamMode, RamWriteOptions, SaveOptions, SegmentState, SnapshotMeta,
+    SnapshotSource,
 };
 use rand::{rngs::StdRng, seq::SliceRandom, SeedableRng};
 
@@ -86,13 +87,15 @@ fn make_source(seed: u64) -> RandomOrderSource {
         r15: 16,
         rip: 17,
         rflags: 18,
-        cs: 19,
-        ds: 20,
-        es: 21,
-        fs: 22,
-        gs: 23,
-        ss: 24,
-        xmm: [0u128; 16],
+        mode: CpuMode::Real,
+        halted: false,
+        cs: SegmentState::real_mode(19),
+        ds: SegmentState::real_mode(20),
+        es: SegmentState::real_mode(21),
+        fs: SegmentState::real_mode(22),
+        gs: SegmentState::real_mode(23),
+        ss: SegmentState::real_mode(24),
+        ..CpuState::default()
     };
 
     let mmu = MmuState {
@@ -106,6 +109,7 @@ fn make_source(seed: u64) -> RandomOrderSource {
         gdtr_limit: 0x30,
         idtr_base: 0x2000,
         idtr_limit: 0x40,
+        ..MmuState::default()
     };
 
     let mut devices = vec![
@@ -200,4 +204,3 @@ fn save_snapshot_is_deterministic_across_input_orders() {
         }
     }
 }
-
