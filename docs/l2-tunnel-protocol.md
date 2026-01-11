@@ -212,7 +212,7 @@ dev/test-only and must not be treated as a security boundary for production depl
 
 By default, `aero-l2-proxy` requires an `Origin` header on the WebSocket upgrade request and validates it against an allowlist:
 
-- `AERO_L2_ALLOWED_ORIGINS`: comma-separated list of allowed origins (exact match after normalization).
+- `AERO_L2_ALLOWED_ORIGINS`: comma-separated list of allowed origins (exact match).
   - Example: `https://app.example.com,https://staging.example.com`
   - `*` allows any Origin value (still requires the header to be present).
 
