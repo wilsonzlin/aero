@@ -47,6 +47,8 @@ The binding device/driver contract lives at:
 
 **Contract v1 requires the virtio-pci _modern_ transport.** In particular:
 
+- Contract major version is encoded in **PCI Revision ID**:
+  - **Revision ID = `0x01`** for contract v1 devices.
 - Device discovery is via PCI vendor-specific capabilities:
   `COMMON_CFG`, `NOTIFY_CFG`, `ISR_CFG`, `DEVICE_CFG`.
 - Drivers map **BAR0 MMIO** and access the above regions as little-endian MMIO.
