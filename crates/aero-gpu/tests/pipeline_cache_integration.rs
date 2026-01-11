@@ -1,10 +1,12 @@
+mod common;
+
 use aero_gpu::pipeline_cache::{PipelineCache, PipelineCacheConfig};
 use aero_gpu::pipeline_key::{
     ColorTargetKey, ComputePipelineKey, PipelineLayoutKey, RenderPipelineKey, ShaderStage,
 };
 use aero_gpu::{GpuCapabilities, GpuError};
 
-fn create_test_device() -> Option<(wgpu::Device, wgpu::Queue)> {
+fn create_test_device(test_name: &str) -> Option<(wgpu::Device, wgpu::Queue)> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -30,26 +32,34 @@ fn create_test_device() -> Option<(wgpu::Device, wgpu::Queue)> {
         power_preference: wgpu::PowerPreference::LowPower,
         compatible_surface: None,
         force_fallback_adapter: true,
-    }))?;
+    }));
+    let Some(adapter) = adapter else {
+        common::skip_or_panic(test_name, "no wgpu adapter available");
+        return None;
+    };
 
-    let (device, queue) = pollster::block_on(adapter.request_device(
+    let (device, queue) = match pollster::block_on(adapter.request_device(
         &wgpu::DeviceDescriptor {
             label: Some("aero-gpu integration test device"),
             required_features: wgpu::Features::empty(),
             required_limits: wgpu::Limits::downlevel_defaults(),
         },
         None,
-    ))
-    .ok()?;
+    )) {
+        Ok(v) => v,
+        Err(err) => {
+            common::skip_or_panic(test_name, &format!("request_device failed: {err}"));
+            return None;
+        }
+    };
 
     Some((device, queue))
 }
 
 #[test]
 fn render_pipeline_is_cached() {
-    let Some((device, _queue)) = create_test_device() else {
-        // Some environments (e.g. CI without software adapters) cannot initialize wgpu.
-        // The cache itself is covered by unit tests; skip this integration test in that case.
+    let test_name = concat!(module_path!(), "::render_pipeline_is_cached");
+    let Some((device, _queue)) = create_test_device(test_name) else {
         return;
     };
 
@@ -164,7 +174,11 @@ fn render_pipeline_is_cached() {
 
 #[test]
 fn compute_pipeline_is_gated_by_capabilities() {
-    let Some((device, _queue)) = create_test_device() else {
+    let test_name = concat!(
+        module_path!(),
+        "::compute_pipeline_is_gated_by_capabilities"
+    );
+    let Some((device, _queue)) = create_test_device(test_name) else {
         return;
     };
 

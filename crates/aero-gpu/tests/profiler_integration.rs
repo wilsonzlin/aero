@@ -1,3 +1,5 @@
+mod common;
+
 use aero_gpu::{GpuBackendKind, GpuCapabilities, GpuProfiler, GpuProfilerConfig};
 
 #[test]
@@ -14,7 +16,7 @@ fn gpu_profiler_reports_gpu_time_when_supported_otherwise_falls_back() {
         force_fallback_adapter: false,
     }));
     let Some(adapter) = adapter else {
-        // CI environments without a usable adapter should not fail this crate.
+        common::skip_or_panic(module_path!(), "no wgpu adapter available");
         return;
     };
 
@@ -27,15 +29,19 @@ fn gpu_profiler_reports_gpu_time_when_supported_otherwise_falls_back() {
         wgpu::Features::empty()
     };
 
-    let Ok((device, queue)) = pollster::block_on(adapter.request_device(
+    let (device, queue) = match pollster::block_on(adapter.request_device(
         &wgpu::DeviceDescriptor {
             label: Some("aero-gpu profiler integration test"),
             required_features: requested_features,
             required_limits: wgpu::Limits::downlevel_defaults(),
         },
         None,
-    )) else {
-        return;
+    )) {
+        Ok(pair) => pair,
+        Err(err) => {
+            common::skip_or_panic(module_path!(), &format!("request_device failed: {err}"));
+            return;
+        }
     };
 
     let supports_timestamp_query =

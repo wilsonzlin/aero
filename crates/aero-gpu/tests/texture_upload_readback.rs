@@ -1,3 +1,5 @@
+mod common;
+
 use std::borrow::Cow;
 
 use aero_gpu::{
@@ -31,6 +33,7 @@ fn fs_main(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
 
 #[test]
 fn upload_blit_readback_roundtrip() {
+    const TEST_NAME: &str = concat!(module_path!(), "::upload_blit_readback_roundtrip");
     pollster::block_on(async {
         #[cfg(target_os = "linux")]
         {
@@ -64,7 +67,7 @@ fn upload_blit_readback_roundtrip() {
         {
             Some(adapter) => adapter,
             None => {
-                // Headless CI environments can legitimately have no usable adapter.
+                common::skip_or_panic(TEST_NAME, "no wgpu adapter available");
                 return;
             }
         };
@@ -81,7 +84,10 @@ fn upload_blit_readback_roundtrip() {
             .await
         {
             Ok(pair) => pair,
-            Err(_) => return,
+            Err(err) => {
+                common::skip_or_panic(TEST_NAME, &format!("request_device failed: {err}"));
+                return;
+            }
         };
 
         // Force BC fallback to exercise CPU decompression + RGBA8 upload.
@@ -267,6 +273,10 @@ fn upload_blit_readback_roundtrip() {
 
 #[test]
 fn upload_large_rgba8_uses_staging_copy_and_roundtrips() {
+    const TEST_NAME: &str = concat!(
+        module_path!(),
+        "::upload_large_rgba8_uses_staging_copy_and_roundtrips"
+    );
     pollster::block_on(async {
         #[cfg(target_os = "linux")]
         {
@@ -297,7 +307,10 @@ fn upload_large_rgba8_uses_staging_copy_and_roundtrips() {
             .await
         {
             Some(adapter) => adapter,
-            None => return,
+            None => {
+                common::skip_or_panic(TEST_NAME, "no wgpu adapter available");
+                return;
+            }
         };
 
         let (device, queue) = match adapter
@@ -312,7 +325,10 @@ fn upload_large_rgba8_uses_staging_copy_and_roundtrips() {
             .await
         {
             Ok(pair) => pair,
-            Err(_) => return,
+            Err(err) => {
+                common::skip_or_panic(TEST_NAME, &format!("request_device failed: {err}"));
+                return;
+            }
         };
 
         let caps = GpuCapabilities::from_device(&device);

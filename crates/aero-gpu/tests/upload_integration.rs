@@ -1,3 +1,5 @@
+mod common;
+
 use aero_gpu::{GpuCapabilities, UploadRingBuffer, UploadRingBufferDescriptor};
 use bytemuck::{Pod, Zeroable};
 
@@ -7,7 +9,7 @@ struct Vertex {
     pos: [f32; 2],
 }
 
-fn try_create_device() -> Option<(wgpu::Device, wgpu::Queue)> {
+fn try_create_device(test_name: &str) -> Option<(wgpu::Device, wgpu::Queue)> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -39,25 +41,37 @@ fn try_create_device() -> Option<(wgpu::Device, wgpu::Queue)> {
         power_preference: wgpu::PowerPreference::LowPower,
         compatible_surface: None,
         force_fallback_adapter: false,
-    }))?;
+    }));
+    let Some(adapter) = adapter else {
+        common::skip_or_panic(test_name, "no wgpu adapter available");
+        return None;
+    };
 
-    let (device, queue) = pollster::block_on(adapter.request_device(
+    let (device, queue) = match pollster::block_on(adapter.request_device(
         &wgpu::DeviceDescriptor {
             label: Some("aero-gpu upload integration test"),
             required_features: wgpu::Features::empty(),
             required_limits: wgpu::Limits::downlevel_defaults(),
         },
         None,
-    ))
-    .ok()?;
+    )) {
+        Ok(v) => v,
+        Err(err) => {
+            common::skip_or_panic(test_name, &format!("request_device failed: {err}"));
+            return None;
+        }
+    };
 
     Some((device, queue))
 }
 
 #[test]
 fn upload_each_frame_without_validation_errors() {
-    let Some((device, queue)) = try_create_device() else {
-        // CI environments without a usable adapter should not fail this crate.
+    let test_name = concat!(
+        module_path!(),
+        "::upload_each_frame_without_validation_errors"
+    );
+    let Some((device, queue)) = try_create_device(test_name) else {
         return;
     };
 
