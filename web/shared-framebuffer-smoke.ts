@@ -159,6 +159,7 @@ async function main() {
       sharedFrameState,
       sharedFramebuffer: shared,
       sharedFramebufferOffsetBytes: 0,
+      options: { preferWebGpu: false },
     },
     [offscreen],
   );

@@ -771,30 +771,29 @@ const handleTick = async () => {
   presenting = true;
   try {
     const presentStartMs = performance.now();
-    const didPresent = await presentOnce();
-    perfGpuMs += performance.now() - presentStartMs;
-    if (didPresent) {
-      framesPresented += 1;
+        const didPresent = await presentOnce();
+        perfGpuMs += performance.now() - presentStartMs;
+        if (didPresent) {
+          framesPresented += 1;
 
       const now = performance.now();
       if (lastFrameStartMs !== null) {
         telemetry.beginFrame(lastFrameStartMs);
 
         const frame = getCurrentFrameInfo();
-        const textureUploadBytes = frame?.sharedLayout
-          ? estimateTextureUploadBytes(frame.sharedLayout, null)
-          : frame
-            ? estimateFullFrameUploadBytes(frame.width, frame.height)
-            : 0;
-        telemetry.recordTextureUploadBytes(textureUploadBytes);
-        perf.counter("textureUploadBytes", textureUploadBytes);
-        perfUploadBytes += textureUploadBytes;
-        perfUploadBytes += textureUploadBytes;
-        telemetry.endFrame(now);
+          const textureUploadBytes = frame?.sharedLayout
+            ? estimateTextureUploadBytes(frame.sharedLayout, null)
+            : frame
+              ? estimateFullFrameUploadBytes(frame.width, frame.height)
+              : 0;
+          telemetry.recordTextureUploadBytes(textureUploadBytes);
+          perf.counter("textureUploadBytes", textureUploadBytes);
+          perfUploadBytes += textureUploadBytes;
+          telemetry.endFrame(now);
+        }
+        lastFrameStartMs = now;
       }
-      lastFrameStartMs = now;
-    }
-  } catch (err) {
+    } catch (err) {
     sendError(err);
   } finally {
     presenting = false;
@@ -1162,7 +1161,25 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
         try {
           await maybeSendReady();
 
-          const seq = getCurrentFrameInfo()?.frameSeq;
+          // Ensure the screenshot reflects the latest presented pixels. The shared
+          // framebuffer producer can advance `frameSeq` before the presenter runs,
+          // so relying on the header sequence alone can lead to mismatched
+          // (seq, pixels) pairs in smoke tests and automation.
+          if (frameState) {
+            while (presenting) {
+              await new Promise((resolve) => setTimeout(resolve, 0));
+            }
+
+            if (shouldPresentWithSharedState()) {
+              await handleTick();
+            }
+
+            while (presenting) {
+              await new Promise((resolve) => setTimeout(resolve, 0));
+            }
+          }
+
+          const seq = frameState ? lastPresentedSeq : getCurrentFrameInfo()?.frameSeq;
 
           if (presenter) {
             const shot = await presenter.screenshot();

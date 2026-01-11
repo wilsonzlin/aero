@@ -116,8 +116,12 @@ async function main() {
 
   try {
     const requestedBackend = getBackendParam();
-    const preferWebGpu = requestedBackend !== "webgl2";
     const disableWebGpu = getBoolParam("disableWebGpu");
+    // In practice, WebGPU-in-worker can be flaky in headless Chromium unless
+    // launched with the dedicated WebGPU project flags. Prefer WebGL2 for the
+    // default smoke test, but still allow forcing WebGPU (or testing fallback)
+    // via query params.
+    const preferWebGpu = requestedBackend === "webgpu" || disableWebGpu;
 
     const gpu = createGpuWorker({
       canvas,
