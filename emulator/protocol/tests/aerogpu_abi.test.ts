@@ -82,6 +82,11 @@ import {
   AEROGPU_RESOURCE_USAGE_SCANOUT,
   AEROGPU_RESOURCE_USAGE_TEXTURE,
   AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
+  AerogpuBlendFactor,
+  AerogpuBlendOp,
+  AerogpuCompareFunc,
+  AerogpuCullMode,
+  AerogpuFillMode,
   AerogpuCmdOpcode,
   AerogpuPrimitiveTopology,
   decodeCmdHdr,
@@ -527,6 +532,35 @@ test("TypeScript layout matches C headers", () => {
 
   assert.equal(konst("AEROGPU_PRESENT_FLAG_NONE"), BigInt(AEROGPU_PRESENT_FLAG_NONE));
   assert.equal(konst("AEROGPU_PRESENT_FLAG_VSYNC"), BigInt(AEROGPU_PRESENT_FLAG_VSYNC));
+
+  assert.equal(konst("AEROGPU_BLEND_ZERO"), BigInt(AerogpuBlendFactor.Zero));
+  assert.equal(konst("AEROGPU_BLEND_ONE"), BigInt(AerogpuBlendFactor.One));
+  assert.equal(konst("AEROGPU_BLEND_SRC_ALPHA"), BigInt(AerogpuBlendFactor.SrcAlpha));
+  assert.equal(konst("AEROGPU_BLEND_INV_SRC_ALPHA"), BigInt(AerogpuBlendFactor.InvSrcAlpha));
+  assert.equal(konst("AEROGPU_BLEND_DEST_ALPHA"), BigInt(AerogpuBlendFactor.DestAlpha));
+  assert.equal(konst("AEROGPU_BLEND_INV_DEST_ALPHA"), BigInt(AerogpuBlendFactor.InvDestAlpha));
+
+  assert.equal(konst("AEROGPU_BLEND_OP_ADD"), BigInt(AerogpuBlendOp.Add));
+  assert.equal(konst("AEROGPU_BLEND_OP_SUBTRACT"), BigInt(AerogpuBlendOp.Subtract));
+  assert.equal(konst("AEROGPU_BLEND_OP_REV_SUBTRACT"), BigInt(AerogpuBlendOp.RevSubtract));
+  assert.equal(konst("AEROGPU_BLEND_OP_MIN"), BigInt(AerogpuBlendOp.Min));
+  assert.equal(konst("AEROGPU_BLEND_OP_MAX"), BigInt(AerogpuBlendOp.Max));
+
+  assert.equal(konst("AEROGPU_COMPARE_NEVER"), BigInt(AerogpuCompareFunc.Never));
+  assert.equal(konst("AEROGPU_COMPARE_LESS"), BigInt(AerogpuCompareFunc.Less));
+  assert.equal(konst("AEROGPU_COMPARE_EQUAL"), BigInt(AerogpuCompareFunc.Equal));
+  assert.equal(konst("AEROGPU_COMPARE_LESS_EQUAL"), BigInt(AerogpuCompareFunc.LessEqual));
+  assert.equal(konst("AEROGPU_COMPARE_GREATER"), BigInt(AerogpuCompareFunc.Greater));
+  assert.equal(konst("AEROGPU_COMPARE_NOT_EQUAL"), BigInt(AerogpuCompareFunc.NotEqual));
+  assert.equal(konst("AEROGPU_COMPARE_GREATER_EQUAL"), BigInt(AerogpuCompareFunc.GreaterEqual));
+  assert.equal(konst("AEROGPU_COMPARE_ALWAYS"), BigInt(AerogpuCompareFunc.Always));
+
+  assert.equal(konst("AEROGPU_FILL_SOLID"), BigInt(AerogpuFillMode.Solid));
+  assert.equal(konst("AEROGPU_FILL_WIREFRAME"), BigInt(AerogpuFillMode.Wireframe));
+
+  assert.equal(konst("AEROGPU_CULL_NONE"), BigInt(AerogpuCullMode.None));
+  assert.equal(konst("AEROGPU_CULL_FRONT"), BigInt(AerogpuCullMode.Front));
+  assert.equal(konst("AEROGPU_CULL_BACK"), BigInt(AerogpuCullMode.Back));
 
   assert.equal(konst("AEROGPU_INPUT_LAYOUT_BLOB_MAGIC"), BigInt(AEROGPU_INPUT_LAYOUT_BLOB_MAGIC));
   assert.equal(konst("AEROGPU_INPUT_LAYOUT_BLOB_VERSION"), BigInt(AEROGPU_INPUT_LAYOUT_BLOB_VERSION));

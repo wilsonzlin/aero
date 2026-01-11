@@ -4,26 +4,23 @@ use std::process::Command;
 use std::sync::OnceLock;
 
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    decode_cmd_hdr_le, AerogpuBlendState, AerogpuCmdBindShaders, AerogpuCmdClear,
+    decode_cmd_hdr_le, AerogpuBlendFactor, AerogpuBlendOp, AerogpuBlendState, AerogpuCmdBindShaders, AerogpuCmdClear,
     AerogpuCmdCopyBuffer, AerogpuCmdCopyTexture2d, AerogpuCmdCreateBuffer, AerogpuCmdCreateInputLayout,
-    AerogpuCmdCreateShaderDxbc, AerogpuCmdCreateTexture2d, AerogpuCmdDestroyInputLayout,
-    AerogpuCmdDestroyResource, AerogpuCmdDestroyShader, AerogpuCmdDraw, AerogpuCmdDrawIndexed,
-    AerogpuCmdExportSharedSurface, AerogpuCmdFlush, AerogpuCmdHdr, AerogpuCmdImportSharedSurface,
-    AerogpuCmdOpcode, AerogpuCmdPresent, AerogpuCmdPresentEx, AerogpuCmdResourceDirtyRange,
-    AerogpuCmdSetBlendState, AerogpuCmdSetDepthStencilState, AerogpuCmdSetIndexBuffer,
-    AerogpuCmdSetInputLayout, AerogpuCmdSetPrimitiveTopology, AerogpuCmdSetRasterizerState,
-    AerogpuCmdSetRenderState, AerogpuCmdSetRenderTargets, AerogpuCmdSetSamplerState,
-    AerogpuCmdSetScissor, AerogpuCmdSetShaderConstantsF, AerogpuCmdSetTexture,
-    AerogpuCmdSetVertexBuffers, AerogpuCmdSetViewport, AerogpuCmdStreamFlags, AerogpuCmdStreamHeader,
-    AerogpuCmdUploadResource,
-    AerogpuDepthStencilState, AerogpuInputLayoutBlobHeader, AerogpuInputLayoutElementDxgi,
-    AerogpuPrimitiveTopology, AerogpuRasterizerState, AerogpuVertexBufferBinding,
-    AEROGPU_CLEAR_COLOR, AEROGPU_CLEAR_DEPTH, AEROGPU_CLEAR_STENCIL, AEROGPU_CMD_STREAM_MAGIC,
-    AEROGPU_COPY_FLAG_NONE, AEROGPU_COPY_FLAG_WRITEBACK_DST, AEROGPU_INPUT_LAYOUT_BLOB_MAGIC,
-    AEROGPU_INPUT_LAYOUT_BLOB_VERSION, AEROGPU_MAX_RENDER_TARGETS, AEROGPU_PRESENT_FLAG_NONE,
-    AEROGPU_PRESENT_FLAG_VSYNC, AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER, AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL,
-    AEROGPU_RESOURCE_USAGE_INDEX_BUFFER, AEROGPU_RESOURCE_USAGE_NONE, AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
-    AEROGPU_RESOURCE_USAGE_SCANOUT, AEROGPU_RESOURCE_USAGE_TEXTURE, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
+    AerogpuCmdCreateShaderDxbc, AerogpuCmdCreateTexture2d, AerogpuCmdDestroyInputLayout, AerogpuCmdDestroyResource,
+    AerogpuCmdDestroyShader, AerogpuCmdDraw, AerogpuCmdDrawIndexed, AerogpuCmdExportSharedSurface, AerogpuCmdFlush,
+    AerogpuCmdHdr, AerogpuCmdImportSharedSurface, AerogpuCmdOpcode, AerogpuCmdPresent, AerogpuCmdPresentEx,
+    AerogpuCmdResourceDirtyRange, AerogpuCmdSetBlendState, AerogpuCmdSetDepthStencilState, AerogpuCmdSetIndexBuffer,
+    AerogpuCmdSetInputLayout, AerogpuCmdSetPrimitiveTopology, AerogpuCmdSetRasterizerState, AerogpuCmdSetRenderState,
+    AerogpuCmdSetRenderTargets, AerogpuCmdSetSamplerState, AerogpuCmdSetScissor, AerogpuCmdSetShaderConstantsF,
+    AerogpuCmdSetTexture, AerogpuCmdSetVertexBuffers, AerogpuCmdSetViewport, AerogpuCmdStreamFlags,
+    AerogpuCmdStreamHeader, AerogpuCmdUploadResource, AerogpuCompareFunc, AerogpuCullMode, AerogpuDepthStencilState,
+    AerogpuFillMode, AerogpuInputLayoutBlobHeader, AerogpuInputLayoutElementDxgi, AerogpuPrimitiveTopology,
+    AerogpuRasterizerState, AerogpuVertexBufferBinding, AEROGPU_CLEAR_COLOR, AEROGPU_CLEAR_DEPTH, AEROGPU_CLEAR_STENCIL,
+    AEROGPU_CMD_STREAM_MAGIC, AEROGPU_COPY_FLAG_NONE, AEROGPU_COPY_FLAG_WRITEBACK_DST, AEROGPU_INPUT_LAYOUT_BLOB_MAGIC,
+    AEROGPU_INPUT_LAYOUT_BLOB_VERSION, AEROGPU_MAX_RENDER_TARGETS, AEROGPU_PRESENT_FLAG_NONE, AEROGPU_PRESENT_FLAG_VSYNC,
+    AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER, AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL, AEROGPU_RESOURCE_USAGE_INDEX_BUFFER,
+    AEROGPU_RESOURCE_USAGE_NONE, AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_SCANOUT,
+    AEROGPU_RESOURCE_USAGE_TEXTURE, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
 };
 use aero_protocol::aerogpu::aerogpu_pci::{
     parse_and_validate_abi_version_u32, AerogpuAbiError, AerogpuFormat, AEROGPU_ABI_MAJOR,
@@ -754,6 +751,56 @@ fn rust_layout_matches_c_headers() {
         abi.konst("AEROGPU_PRESENT_FLAG_VSYNC"),
         AEROGPU_PRESENT_FLAG_VSYNC as u64
     );
+
+    assert_eq!(abi.konst("AEROGPU_BLEND_ZERO"), AerogpuBlendFactor::Zero as u64);
+    assert_eq!(abi.konst("AEROGPU_BLEND_ONE"), AerogpuBlendFactor::One as u64);
+    assert_eq!(abi.konst("AEROGPU_BLEND_SRC_ALPHA"), AerogpuBlendFactor::SrcAlpha as u64);
+    assert_eq!(
+        abi.konst("AEROGPU_BLEND_INV_SRC_ALPHA"),
+        AerogpuBlendFactor::InvSrcAlpha as u64
+    );
+    assert_eq!(abi.konst("AEROGPU_BLEND_DEST_ALPHA"), AerogpuBlendFactor::DestAlpha as u64);
+    assert_eq!(
+        abi.konst("AEROGPU_BLEND_INV_DEST_ALPHA"),
+        AerogpuBlendFactor::InvDestAlpha as u64
+    );
+
+    assert_eq!(abi.konst("AEROGPU_BLEND_OP_ADD"), AerogpuBlendOp::Add as u64);
+    assert_eq!(abi.konst("AEROGPU_BLEND_OP_SUBTRACT"), AerogpuBlendOp::Subtract as u64);
+    assert_eq!(
+        abi.konst("AEROGPU_BLEND_OP_REV_SUBTRACT"),
+        AerogpuBlendOp::RevSubtract as u64
+    );
+    assert_eq!(abi.konst("AEROGPU_BLEND_OP_MIN"), AerogpuBlendOp::Min as u64);
+    assert_eq!(abi.konst("AEROGPU_BLEND_OP_MAX"), AerogpuBlendOp::Max as u64);
+
+    assert_eq!(abi.konst("AEROGPU_COMPARE_NEVER"), AerogpuCompareFunc::Never as u64);
+    assert_eq!(abi.konst("AEROGPU_COMPARE_LESS"), AerogpuCompareFunc::Less as u64);
+    assert_eq!(abi.konst("AEROGPU_COMPARE_EQUAL"), AerogpuCompareFunc::Equal as u64);
+    assert_eq!(
+        abi.konst("AEROGPU_COMPARE_LESS_EQUAL"),
+        AerogpuCompareFunc::LessEqual as u64
+    );
+    assert_eq!(
+        abi.konst("AEROGPU_COMPARE_GREATER"),
+        AerogpuCompareFunc::Greater as u64
+    );
+    assert_eq!(
+        abi.konst("AEROGPU_COMPARE_NOT_EQUAL"),
+        AerogpuCompareFunc::NotEqual as u64
+    );
+    assert_eq!(
+        abi.konst("AEROGPU_COMPARE_GREATER_EQUAL"),
+        AerogpuCompareFunc::GreaterEqual as u64
+    );
+    assert_eq!(abi.konst("AEROGPU_COMPARE_ALWAYS"), AerogpuCompareFunc::Always as u64);
+
+    assert_eq!(abi.konst("AEROGPU_FILL_SOLID"), AerogpuFillMode::Solid as u64);
+    assert_eq!(abi.konst("AEROGPU_FILL_WIREFRAME"), AerogpuFillMode::Wireframe as u64);
+
+    assert_eq!(abi.konst("AEROGPU_CULL_NONE"), AerogpuCullMode::None as u64);
+    assert_eq!(abi.konst("AEROGPU_CULL_FRONT"), AerogpuCullMode::Front as u64);
+    assert_eq!(abi.konst("AEROGPU_CULL_BACK"), AerogpuCullMode::Back as u64);
 
     assert_eq!(
         abi.konst("AEROGPU_INPUT_LAYOUT_BLOB_MAGIC"),

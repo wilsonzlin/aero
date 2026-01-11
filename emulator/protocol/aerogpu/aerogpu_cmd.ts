@@ -113,6 +113,55 @@ export const AerogpuIndexFormat = {
 } as const;
 
 export type AerogpuIndexFormat = (typeof AerogpuIndexFormat)[keyof typeof AerogpuIndexFormat];
+
+export const AerogpuBlendFactor = {
+  Zero: 0,
+  One: 1,
+  SrcAlpha: 2,
+  InvSrcAlpha: 3,
+  DestAlpha: 4,
+  InvDestAlpha: 5,
+} as const;
+
+export type AerogpuBlendFactor = (typeof AerogpuBlendFactor)[keyof typeof AerogpuBlendFactor];
+
+export const AerogpuBlendOp = {
+  Add: 0,
+  Subtract: 1,
+  RevSubtract: 2,
+  Min: 3,
+  Max: 4,
+} as const;
+
+export type AerogpuBlendOp = (typeof AerogpuBlendOp)[keyof typeof AerogpuBlendOp];
+
+export const AerogpuCompareFunc = {
+  Never: 0,
+  Less: 1,
+  Equal: 2,
+  LessEqual: 3,
+  Greater: 4,
+  NotEqual: 5,
+  GreaterEqual: 6,
+  Always: 7,
+} as const;
+
+export type AerogpuCompareFunc = (typeof AerogpuCompareFunc)[keyof typeof AerogpuCompareFunc];
+
+export const AerogpuFillMode = {
+  Solid: 0,
+  Wireframe: 1,
+} as const;
+
+export type AerogpuFillMode = (typeof AerogpuFillMode)[keyof typeof AerogpuFillMode];
+
+export const AerogpuCullMode = {
+  None: 0,
+  Front: 1,
+  Back: 2,
+} as const;
+
+export type AerogpuCullMode = (typeof AerogpuCullMode)[keyof typeof AerogpuCullMode];
 export const AerogpuPrimitiveTopology = {
   PointList: 1,
   LineList: 2,
