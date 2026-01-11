@@ -855,6 +855,7 @@ impl snapshot::SnapshotTarget for Machine {
     fn post_restore(&mut self) -> snapshot::Result<()> {
         self.reset_latch.clear();
         self.assist = AssistContext::default();
+        self.cpu.pending = Default::default();
         self.mem.clear_dirty();
         self.cpu.a20_enabled = self.chipset.a20().enabled();
         Ok(())
@@ -1001,5 +1002,27 @@ mod tests {
 
         assert_eq!(restored.cpu.state.msr.tsc, 0x1234);
         assert_eq!(restored.cpu.time.read_tsc(), 0x1234);
+    }
+
+    #[test]
+    fn snapshot_restore_clears_cpu_pending_state() {
+        let cfg = MachineConfig {
+            ram_size_bytes: 2 * 1024 * 1024,
+            ..Default::default()
+        };
+
+        let mut src = Machine::new(cfg.clone()).unwrap();
+        let snap = src.take_snapshot_full().unwrap();
+
+        let mut restored = Machine::new(cfg).unwrap();
+        restored.cpu.pending.raise_software_interrupt(0x80, 0);
+        restored.cpu.pending.inject_external_interrupt(0x20);
+        assert!(restored.cpu.pending.has_pending_event());
+        assert!(!restored.cpu.pending.external_interrupts.is_empty());
+
+        restored.restore_snapshot_bytes(&snap).unwrap();
+
+        assert!(!restored.cpu.pending.has_pending_event());
+        assert!(restored.cpu.pending.external_interrupts.is_empty());
     }
 }
