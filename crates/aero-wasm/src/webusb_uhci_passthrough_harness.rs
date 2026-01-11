@@ -393,11 +393,7 @@ pub struct WebUsbUhciPassthroughHarness {
 
 impl WebUsbUhciPassthroughHarness {
     fn passthrough_device_mut(&mut self) -> &mut UsbWebUsbPassthroughDevice {
-        let port = self
-            .ctrl
-            .bus_mut()
-            .port_mut(0)
-            .expect("UHCI port 0 exists");
+        let port = self.ctrl.bus_mut().port_mut(0).expect("UHCI port 0 exists");
         let dev = port.device.as_mut().expect("UHCI port 0 device attached");
         dev.as_any_mut()
             .downcast_mut::<UsbWebUsbPassthroughDevice>()
@@ -673,7 +669,9 @@ impl WebUsbUhciPassthroughHarness {
                 _ => {}
             },
             UsbHostCompletion::BulkIn { result, .. } => match result {
-                UsbHostCompletionIn::Stall => self.last_error = Some("WebUSB bulkIn stalled".to_string()),
+                UsbHostCompletionIn::Stall => {
+                    self.last_error = Some("WebUSB bulkIn stalled".to_string())
+                }
                 UsbHostCompletionIn::Error { message } => self.last_error = Some(message.clone()),
                 _ => {}
             },

@@ -837,7 +837,11 @@ mod tests {
             length: 0,
         });
 
-        assert_eq!(dev.address(), 0, "address must not update during SETUP stage");
+        assert_eq!(
+            dev.address(),
+            0,
+            "address must not update during SETUP stage"
+        );
         assert!(
             dev.drain_actions().is_empty(),
             "SET_ADDRESS must not be forwarded to the host"
