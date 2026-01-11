@@ -253,10 +253,10 @@ function render(): void {
     renderRemoteDiskPanel(),
     renderAudioPanel(),
     renderMicrophonePanel(),
-    renderWebUsbPanel(),
+    renderWebUsbPanel(report),
+    renderWebUsbDiagnosticsPanel(),
     renderWebHidPassthroughPanel(),
     renderInputPanel(),
-    renderWebUsbPanel(report),
     renderWorkersPanel(report),
     renderIpcDemoPanel(),
     renderMicrobenchPanel(),
@@ -2062,10 +2062,10 @@ function renderWebHidPassthroughPanel(): HTMLElement {
   return el("div", { class: "panel" }, host);
 }
 
-function renderWebUsbPanel(): HTMLElement {
+function renderWebUsbDiagnosticsPanel(): HTMLElement {
   const host = el("div");
   mountWebUsbDiagnosticsPanel(host);
-  return el("div", { class: "panel" }, host);
+  return el("div", { class: "panel" }, el("h2", { text: "WebUSB diagnostics" }), host);
 }
 
 function renderMicrobenchPanel(): HTMLElement {
