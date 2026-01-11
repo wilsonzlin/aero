@@ -214,6 +214,12 @@ AEROGPU_DEFINE_HAS_MEMBER(pfnSetCurrentTexturePalette);
 AEROGPU_DEFINE_HAS_MEMBER(pfnSetClipStatus);
 AEROGPU_DEFINE_HAS_MEMBER(pfnGetClipStatus);
 AEROGPU_DEFINE_HAS_MEMBER(pfnGetGammaRamp);
+AEROGPU_DEFINE_HAS_MEMBER(pfnDrawRectPatch);
+AEROGPU_DEFINE_HAS_MEMBER(pfnDrawTriPatch);
+AEROGPU_DEFINE_HAS_MEMBER(pfnDeletePatch);
+AEROGPU_DEFINE_HAS_MEMBER(pfnProcessVertices);
+AEROGPU_DEFINE_HAS_MEMBER(pfnGetRasterStatus);
+AEROGPU_DEFINE_HAS_MEMBER(pfnSetDialogBoxMode);
 
 // OpenResource arg fields (vary across WDK versions).
 AEROGPU_DEFINE_HAS_MEMBER(hAllocation);
@@ -340,6 +346,19 @@ AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetClipStatus, D3d9TraceFunc::DeviceSetClipStatu
 // runtime does not consume uninitialized output data.
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetClipStatus, D3d9TraceFunc::DeviceGetClipStatus, D3DERR_NOTAVAILABLE);
 AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetGammaRamp, D3d9TraceFunc::DeviceGetGammaRamp, D3DERR_NOTAVAILABLE);
+
+// Patch rendering (N-Patch/patches) and ProcessVertices are not supported yet.
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnDrawRectPatch, D3d9TraceFunc::DeviceDrawRectPatch, D3DERR_NOTAVAILABLE);
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnDrawTriPatch, D3d9TraceFunc::DeviceDrawTriPatch, D3DERR_NOTAVAILABLE);
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnDeletePatch, D3d9TraceFunc::DeviceDeletePatch, D3DERR_NOTAVAILABLE);
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnProcessVertices, D3d9TraceFunc::DeviceProcessVertices, D3DERR_NOTAVAILABLE);
+
+// GetRasterStatus is used by some clients to sync to vblank; we already provide
+// WaitForVBlank, so return a clean "not available" for this legacy query.
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnGetRasterStatus, D3d9TraceFunc::DeviceGetRasterStatus, D3DERR_NOTAVAILABLE);
+
+// Dialog-box mode impacts present/occlusion semantics; treat as a no-op for bring-up.
+AEROGPU_D3D9_DEFINE_DDI_STUB(pfnSetDialogBoxMode, D3d9TraceFunc::DeviceSetDialogBoxMode, S_OK);
 
 #undef AEROGPU_D3D9_DEFINE_DDI_STUB
 #endif
@@ -7781,6 +7800,36 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
     AEROGPU_SET_D3D9DDI_FN(
         pfnGetGammaRamp,
         aerogpu_d3d9_stub_pfnGetGammaRamp<decltype(pDeviceFuncs->pfnGetGammaRamp)>::pfnGetGammaRamp);
+  }
+  if constexpr (aerogpu_has_member_pfnDrawRectPatch<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(
+        pfnDrawRectPatch,
+        aerogpu_d3d9_stub_pfnDrawRectPatch<decltype(pDeviceFuncs->pfnDrawRectPatch)>::pfnDrawRectPatch);
+  }
+  if constexpr (aerogpu_has_member_pfnDrawTriPatch<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(
+        pfnDrawTriPatch,
+        aerogpu_d3d9_stub_pfnDrawTriPatch<decltype(pDeviceFuncs->pfnDrawTriPatch)>::pfnDrawTriPatch);
+  }
+  if constexpr (aerogpu_has_member_pfnDeletePatch<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(
+        pfnDeletePatch,
+        aerogpu_d3d9_stub_pfnDeletePatch<decltype(pDeviceFuncs->pfnDeletePatch)>::pfnDeletePatch);
+  }
+  if constexpr (aerogpu_has_member_pfnProcessVertices<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(
+        pfnProcessVertices,
+        aerogpu_d3d9_stub_pfnProcessVertices<decltype(pDeviceFuncs->pfnProcessVertices)>::pfnProcessVertices);
+  }
+  if constexpr (aerogpu_has_member_pfnGetRasterStatus<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(
+        pfnGetRasterStatus,
+        aerogpu_d3d9_stub_pfnGetRasterStatus<decltype(pDeviceFuncs->pfnGetRasterStatus)>::pfnGetRasterStatus);
+  }
+  if constexpr (aerogpu_has_member_pfnSetDialogBoxMode<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(
+        pfnSetDialogBoxMode,
+        aerogpu_d3d9_stub_pfnSetDialogBoxMode<decltype(pDeviceFuncs->pfnSetDialogBoxMode)>::pfnSetDialogBoxMode);
   }
 
   AEROGPU_SET_D3D9DDI_FN(pfnSetStreamSource, device_set_stream_source);

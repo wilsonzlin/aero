@@ -334,6 +334,18 @@ const char* func_name(D3d9TraceFunc func) {
       return "Device::GetClipStatus (stub)";
     case D3d9TraceFunc::DeviceGetGammaRamp:
       return "Device::GetGammaRamp (stub)";
+    case D3d9TraceFunc::DeviceDrawRectPatch:
+      return "Device::DrawRectPatch (stub)";
+    case D3d9TraceFunc::DeviceDrawTriPatch:
+      return "Device::DrawTriPatch (stub)";
+    case D3d9TraceFunc::DeviceDeletePatch:
+      return "Device::DeletePatch (stub)";
+    case D3d9TraceFunc::DeviceProcessVertices:
+      return "Device::ProcessVertices (stub)";
+    case D3d9TraceFunc::DeviceGetRasterStatus:
+      return "Device::GetRasterStatus (stub)";
+    case D3d9TraceFunc::DeviceSetDialogBoxMode:
+      return "Device::SetDialogBoxMode (stub)";
     case D3d9TraceFunc::kCount:
       break;
   }
