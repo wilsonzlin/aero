@@ -112,6 +112,69 @@ describe("bridgeHarnessDrainActions", () => {
     expect(backend.execute).toHaveBeenCalledTimes(1);
   });
 
+  it("rejects bigint ids that cannot fit in a uint32", async () => {
+    const setup = { bmRequestType: 0x80, bRequest: 0x06, wValue: 0x0100, wIndex: 0, wLength: 18 };
+    const harness = {
+      drain_actions: () => [{ kind: "controlIn", id: 0x1_0000_0000n, setup }],
+      push_completion: (_completion: UsbHostCompletion) => {},
+    };
+    const backend = {
+      execute: vi.fn(async (_action: UsbHostAction): Promise<UsbHostCompletion> => {
+        return { kind: "controlIn", id: 0, status: "stall" } satisfies UsbHostCompletion;
+      }),
+    };
+
+    await expect(bridgeHarnessDrainActions(harness, backend)).rejects.toThrow(/uint32/i);
+    expect(backend.execute).not.toHaveBeenCalled();
+  });
+
+  it("accepts ArrayBuffer payloads and normalizes them to Uint8Array", async () => {
+    const bytes = new Uint8Array([1, 2, 3]).buffer;
+    const harness = {
+      drain_actions: () => [{ kind: "bulkOut", id: 1, endpoint: 0x02, data: bytes }],
+      push_completion: (_completion: UsbHostCompletion) => {},
+    };
+    const backend = {
+      execute: vi.fn(async (action: UsbHostAction): Promise<UsbHostCompletion> => {
+        if (action.kind !== "bulkOut") throw new Error("expected bulkOut action");
+        expect(action.data).toBeInstanceOf(Uint8Array);
+        expect(Array.from(action.data)).toEqual([1, 2, 3]);
+        return {
+          kind: "bulkOut",
+          id: action.id,
+          status: "success",
+          bytesWritten: action.data.byteLength,
+        } satisfies UsbHostCompletion;
+      }),
+    };
+
+    await bridgeHarnessDrainActions(harness, backend);
+    expect(backend.execute).toHaveBeenCalledTimes(1);
+  });
+
+  it("accepts number[] payloads and normalizes them to Uint8Array", async () => {
+    const harness = {
+      drain_actions: () => [{ kind: "bulkOut", id: 1, endpoint: 0x02, data: [1, 2, 3] }],
+      push_completion: (_completion: UsbHostCompletion) => {},
+    };
+    const backend = {
+      execute: vi.fn(async (action: UsbHostAction): Promise<UsbHostCompletion> => {
+        if (action.kind !== "bulkOut") throw new Error("expected bulkOut action");
+        expect(action.data).toBeInstanceOf(Uint8Array);
+        expect(Array.from(action.data)).toEqual([1, 2, 3]);
+        return {
+          kind: "bulkOut",
+          id: action.id,
+          status: "success",
+          bytesWritten: action.data.byteLength,
+        } satisfies UsbHostCompletion;
+      }),
+    };
+
+    await bridgeHarnessDrainActions(harness, backend);
+    expect(backend.execute).toHaveBeenCalledTimes(1);
+  });
+
   it("accepts SharedArrayBuffer payloads and normalizes them to Uint8Array", async () => {
     if (typeof SharedArrayBuffer === "undefined") return;
 
