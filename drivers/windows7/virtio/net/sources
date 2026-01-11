@@ -1,4 +1,4 @@
-# WDK build configuration (WDK 7.1 / "build" utility).
+# WDK build configuration (WinDDK 7600 / "build" utility).
 #
 # This driver is an NDIS 6.20 miniport for Windows 7 SP1 (x86/x64).
 

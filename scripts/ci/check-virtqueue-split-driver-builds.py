@@ -171,7 +171,7 @@ def main() -> None:
             )
 
     # ---------------------------------------------------------------------
-    # WDK 7.1 build.exe SOURCES files (deprecated but kept in-tree)
+    # WinDDK 7600 build.exe SOURCES files (deprecated but kept in-tree)
     # ---------------------------------------------------------------------
     sources_files: dict[str, tuple[Path, str, str, str]] = {
         "virtio-blk": (
