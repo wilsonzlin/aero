@@ -313,6 +313,7 @@ static int ValidateAdapter(const char* test_name,
 static int RunConsumer(int argc, char** argv) {
   const char* kTestName = "d3d9ex_shared_surface_ipc_consumer";
 
+  const bool dump = aerogpu_test::HasArg(argc, argv, "--dump");
   const bool allow_microsoft = aerogpu_test::HasArg(argc, argv, "--allow-microsoft");
   const bool allow_non_aerogpu = aerogpu_test::HasArg(argc, argv, "--allow-non-aerogpu");
   const bool require_umd = aerogpu_test::HasArg(argc, argv, "--require-umd");
@@ -442,10 +443,43 @@ static int RunConsumer(int argc, char** argv) {
 
   const uint32_t expected = 0xFF112233u;  // BGRA = (0x33,0x22,0x11,0xFF).
   if ((pixel & 0x00FFFFFFu) != (expected & 0x00FFFFFFu)) {
+    if (dump) {
+      HRESULT hr_dump = sysmem->LockRect(&lr, NULL, D3DLOCK_READONLY);
+      if (SUCCEEDED(hr_dump)) {
+        std::string dump_err;
+        if (!aerogpu_test::WriteBmp32BGRA(
+                aerogpu_test::JoinPath(aerogpu_test::GetModuleDir(), L"d3d9ex_shared_surface_ipc.bmp"),
+                64,
+                64,
+                lr.pBits,
+                (int)lr.Pitch,
+                &dump_err)) {
+          aerogpu_test::PrintfStdout("INFO: %s: BMP dump failed: %s", kTestName, dump_err.c_str());
+        }
+        sysmem->UnlockRect();
+      }
+    }
     return aerogpu_test::Fail(kTestName,
                               "pixel mismatch: got=0x%08lX expected=0x%08lX",
                               (unsigned long)pixel,
                               (unsigned long)expected);
+  }
+
+  if (dump) {
+    HRESULT hr_dump = sysmem->LockRect(&lr, NULL, D3DLOCK_READONLY);
+    if (SUCCEEDED(hr_dump)) {
+      std::string dump_err;
+      if (!aerogpu_test::WriteBmp32BGRA(
+              aerogpu_test::JoinPath(aerogpu_test::GetModuleDir(), L"d3d9ex_shared_surface_ipc.bmp"),
+              64,
+              64,
+              lr.pBits,
+              (int)lr.Pitch,
+              &dump_err)) {
+        aerogpu_test::PrintfStdout("INFO: %s: BMP dump failed: %s", kTestName, dump_err.c_str());
+      }
+      sysmem->UnlockRect();
+    }
   }
 
   aerogpu_test::PrintfStdout("PASS: %s", kTestName);
@@ -456,12 +490,13 @@ static int RunProducer(int argc, char** argv) {
   const char* kTestName = "d3d9ex_shared_surface_ipc";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
-        "Usage: %s.exe [--show] [--require-vid=0x####] [--require-did=0x####] [--allow-microsoft] "
+        "Usage: %s.exe [--dump] [--show] [--require-vid=0x####] [--require-did=0x####] [--allow-microsoft] "
         "[--allow-non-aerogpu] [--require-umd]",
         kTestName);
     return 0;
   }
 
+  const bool dump = aerogpu_test::HasArg(argc, argv, "--dump");
   const bool allow_microsoft = aerogpu_test::HasArg(argc, argv, "--allow-microsoft");
   const bool allow_non_aerogpu = aerogpu_test::HasArg(argc, argv, "--allow-non-aerogpu");
   const bool require_umd = aerogpu_test::HasArg(argc, argv, "--require-umd");
@@ -601,6 +636,9 @@ static int RunProducer(int argc, char** argv) {
   // We patch the placeholder digits in the child's command line before resuming it.
   std::wstring cmdline = std::wstring(L"\"") + exe_path +
                          L"\" --consumer --shared-handle=0x0000000000000000";
+  if (dump) {
+    cmdline += L" --dump";
+  }
   if (has_require_vid) {
     cmdline += L" --require-vid=";
     cmdline += std::wstring(require_vid_str.begin(), require_vid_str.end());
