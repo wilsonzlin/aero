@@ -220,7 +220,7 @@ static int RunWaitVblankPacing(int argc, char** argv) {
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
         "Usage: %s.exe [--samples=N] [--wait-timeout-ms=N] [--allow-remote]", kTestName);
-    aerogpu_test::PrintfStdout("Default: --samples=120");
+    aerogpu_test::PrintfStdout("Default: --samples=120 --wait-timeout-ms=2000");
     aerogpu_test::PrintfStdout("Measures KMD vblank pacing by timing D3DKMTWaitForVerticalBlankEvent().");
     return 0;
   }
