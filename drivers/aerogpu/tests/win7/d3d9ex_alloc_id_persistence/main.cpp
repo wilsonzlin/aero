@@ -422,6 +422,17 @@ struct SharedIpc {
 
 static int RunChild(int argc, char** argv) {
   const char* kTestName = "d3d9ex_alloc_id_persistence_child";
+  if (aerogpu_test::HasHelpArg(argc, argv)) {
+    aerogpu_test::PrintfStdout(
+        "Usage: %s.exe --child --parent-pid=<pid> --parent-shared-handle=0x#### --ipc-map=<name> "
+        "--ready-event=<name> --parent-event=<name> --child-event=<name> [--dump] [--show] [--json[=PATH]] "
+        "[--iterations=N] [--require-vid=0x####] [--require-did=0x####] [--allow-microsoft] [--allow-non-aerogpu] "
+        "[--require-umd]",
+        kTestName);
+    return 0;
+  }
+
+  aerogpu_test::TestReporter reporter(kTestName, argc, argv);
 
   const bool dump = aerogpu_test::HasArg(argc, argv, "--dump");
   const bool allow_microsoft = aerogpu_test::HasArg(argc, argv, "--allow-microsoft");
@@ -760,16 +771,16 @@ static int RunChild(int argc, char** argv) {
     }
   }
 
-  aerogpu_test::PrintfStdout("PASS: %s", kTestName);
-  return 0;
+  return reporter.Pass();
 }
 
 static int RunParent(int argc, char** argv) {
   const char* kTestName = "d3d9ex_alloc_id_persistence";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
-        "Usage: %s.exe [--dump] [--show] [--json[=PATH]] [--iterations=N] [--require-vid=0x####] [--require-did=0x####] "
-        "[--allow-microsoft] [--allow-non-aerogpu] [--require-umd]",
+        "Usage: %s.exe [--dump] [--show] [--json[=PATH]] [--iterations=N] "
+        "[--require-vid=0x####] [--require-did=0x####] [--allow-microsoft] [--allow-non-aerogpu] "
+        "[--require-umd]",
         kTestName);
     return 0;
   }
