@@ -255,6 +255,28 @@ mod tests {
     }
 
     #[test]
+    fn udp_port_allowlist_is_deny_by_default_when_set() {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+        let (_allow_private, _tcp, _udp, _allowed_domains, _blocked_domains) = base_env();
+
+        let policy = EgressPolicy::from_env().expect("policy from env");
+        assert!(policy.allows_udp_port(53));
+
+        // When set to the empty string, the allowlist is enabled but contains zero ports, so all
+        // ports should be denied.
+        let _udp = EnvVarGuard::set("AERO_L2_ALLOWED_UDP_PORTS", "");
+        let policy = EgressPolicy::from_env().expect("policy from env");
+        assert!(!policy.allows_udp_port(53));
+
+        // When set to a list, only those ports are allowed.
+        let _udp = EnvVarGuard::set("AERO_L2_ALLOWED_UDP_PORTS", "53,123");
+        let policy = EgressPolicy::from_env().expect("policy from env");
+        assert!(policy.allows_udp_port(53));
+        assert!(policy.allows_udp_port(123));
+        assert!(!policy.allows_udp_port(9999));
+    }
+
+    #[test]
     fn invalid_port_allowlist_entry_is_rejected() {
         let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
         let (_allow_private, _tcp, _udp, _allowed_domains, _blocked_domains) = base_env();
@@ -264,6 +286,20 @@ mod tests {
         let msg = format!("{err:#}");
         assert!(
             msg.contains("AERO_L2_ALLOWED_TCP_PORTS") && msg.contains("tcp port allowlist"),
+            "expected error to mention env var and include context, got {msg:?}"
+        );
+    }
+
+    #[test]
+    fn invalid_udp_port_allowlist_entry_is_rejected() {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+        let (_allow_private, _tcp, _udp, _allowed_domains, _blocked_domains) = base_env();
+
+        let _udp = EnvVarGuard::set("AERO_L2_ALLOWED_UDP_PORTS", "nope");
+        let err = EgressPolicy::from_env().expect_err("expected invalid port list");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("AERO_L2_ALLOWED_UDP_PORTS") && msg.contains("udp port allowlist"),
             "expected error to mention env var and include context, got {msg:?}"
         );
     }
