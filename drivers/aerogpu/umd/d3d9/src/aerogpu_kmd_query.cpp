@@ -1,9 +1,15 @@
 #include "aerogpu_kmd_query.h"
 
+#include <cstddef>
 #include <cstring>
+#include <type_traits>
+#include <utility>
 
 #if defined(_WIN32)
   #include "aerogpu_dbgctl_escape.h"
+#if defined(AEROGPU_D3D9_USE_WDK_DDI)
+  #include <d3dkmthk.h>
+#endif
 #endif
 
 namespace aerogpu {
@@ -53,6 +59,169 @@ struct D3DKMT_ESCAPEFLAGS {
 };
 
 static_assert(sizeof(aerogpu_escape_query_fence_out) == 32, "aerogpu_escape_query_fence_out ABI mismatch");
+
+// Minimal portable definition for the Win7 `D3DKMT_WAITFORSYNCHRONIZATIONOBJECT`
+// ABI.
+//
+// When building against the real WDK headers, `AerogpuD3DKMTWaitForSynchronizationObject`
+// is validated against `D3DKMT_WAITFORSYNCHRONIZATIONOBJECT` via static assertions.
+// Repository builds (no WDK headers) use this struct directly when calling the
+// gdi32.dll thunk.
+// D3DKMT wait structs are defined with 8-byte packing. Be explicit so WOW64/x86
+// builds don't accidentally inherit a different packing configuration from
+// downstream toolchains.
+#pragma pack(push, 8)
+struct AerogpuD3DKMTWaitForSynchronizationObject {
+  uint32_t ObjectCount;
+  union {
+    const uint32_t* ObjectHandleArray;
+    uint32_t hSyncObjects; // single-handle alias used by some header revisions
+  };
+  union {
+    const uint64_t* FenceValueArray;
+    uint64_t FenceValue; // single-fence alias in some headers
+  };
+  uint64_t Timeout;
+};
+#pragma pack(pop)
+
+static_assert(std::is_standard_layout<AerogpuD3DKMTWaitForSynchronizationObject>::value,
+              "D3DKMT wait args must have a stable ABI");
+#if defined(_WIN64)
+static_assert(sizeof(AerogpuD3DKMTWaitForSynchronizationObject) == 32, "Unexpected D3DKMT wait args size (x64)");
+static_assert(offsetof(AerogpuD3DKMTWaitForSynchronizationObject, ObjectCount) == 0, "Unexpected ObjectCount offset");
+static_assert(offsetof(AerogpuD3DKMTWaitForSynchronizationObject, ObjectHandleArray) == 8,
+              "Unexpected ObjectHandleArray offset");
+static_assert(offsetof(AerogpuD3DKMTWaitForSynchronizationObject, FenceValueArray) == 16, "Unexpected FenceValueArray offset");
+static_assert(offsetof(AerogpuD3DKMTWaitForSynchronizationObject, Timeout) == 24, "Unexpected Timeout offset");
+#else
+static_assert(sizeof(AerogpuD3DKMTWaitForSynchronizationObject) == 24, "Unexpected D3DKMT wait args size (x86)");
+static_assert(offsetof(AerogpuD3DKMTWaitForSynchronizationObject, ObjectCount) == 0, "Unexpected ObjectCount offset");
+static_assert(offsetof(AerogpuD3DKMTWaitForSynchronizationObject, ObjectHandleArray) == 4,
+              "Unexpected ObjectHandleArray offset");
+static_assert(offsetof(AerogpuD3DKMTWaitForSynchronizationObject, FenceValueArray) == 8, "Unexpected FenceValueArray offset");
+static_assert(offsetof(AerogpuD3DKMTWaitForSynchronizationObject, Timeout) == 16, "Unexpected Timeout offset");
+#endif
+
+#if defined(AEROGPU_D3D9_USE_WDK_DDI)
+template <typename T, typename = void>
+struct has_member_ObjectHandleArray : std::false_type {};
+template <typename T>
+struct has_member_ObjectHandleArray<T, std::void_t<decltype(std::declval<T&>().ObjectHandleArray)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_hSyncObjects : std::false_type {};
+template <typename T>
+struct has_member_hSyncObjects<T, std::void_t<decltype(std::declval<T&>().hSyncObjects)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_FenceValueArray : std::false_type {};
+template <typename T>
+struct has_member_FenceValueArray<T, std::void_t<decltype(std::declval<T&>().FenceValueArray)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_FenceValue : std::false_type {};
+template <typename T>
+struct has_member_FenceValue<T, std::void_t<decltype(std::declval<T&>().FenceValue)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_Timeout : std::false_type {};
+template <typename T>
+struct has_member_Timeout<T, std::void_t<decltype(std::declval<T&>().Timeout)>> : std::true_type {};
+
+template <typename WdkT,
+          bool HasObjectHandleArray = has_member_ObjectHandleArray<WdkT>::value,
+          bool HasHSyncObjects = has_member_hSyncObjects<WdkT>::value>
+struct AerogpuWaitSyncObjObjectHandleOffsetAssert {};
+
+template <typename WdkT>
+struct AerogpuWaitSyncObjObjectHandleOffsetAssert<WdkT, true, false> {
+  static_assert(offsetof(AerogpuD3DKMTWaitForSynchronizationObject, ObjectHandleArray) == offsetof(WdkT, ObjectHandleArray),
+                "D3DKMT_WAITFORSYNCHRONIZATIONOBJECT ABI mismatch (ObjectHandleArray offset)");
+};
+
+template <typename WdkT>
+struct AerogpuWaitSyncObjObjectHandleOffsetAssert<WdkT, false, true> {
+  static_assert(offsetof(AerogpuD3DKMTWaitForSynchronizationObject, ObjectHandleArray) == offsetof(WdkT, hSyncObjects),
+                "D3DKMT_WAITFORSYNCHRONIZATIONOBJECT ABI mismatch (hSyncObjects offset)");
+};
+
+template <typename WdkT>
+struct AerogpuWaitSyncObjObjectHandleOffsetAssert<WdkT, true, true> {
+  static_assert(offsetof(AerogpuD3DKMTWaitForSynchronizationObject, ObjectHandleArray) == offsetof(WdkT, ObjectHandleArray),
+                "D3DKMT_WAITFORSYNCHRONIZATIONOBJECT ABI mismatch (ObjectHandleArray offset)");
+  static_assert(offsetof(AerogpuD3DKMTWaitForSynchronizationObject, ObjectHandleArray) == offsetof(WdkT, hSyncObjects),
+                "D3DKMT_WAITFORSYNCHRONIZATIONOBJECT ABI mismatch (hSyncObjects offset)");
+};
+
+template <typename WdkT,
+          bool HasFenceValueArray = has_member_FenceValueArray<WdkT>::value,
+          bool HasFenceValue = has_member_FenceValue<WdkT>::value>
+struct AerogpuWaitSyncObjFenceValueOffsetAssert {};
+
+template <typename WdkT>
+struct AerogpuWaitSyncObjFenceValueOffsetAssert<WdkT, true, false> {
+  static_assert(offsetof(AerogpuD3DKMTWaitForSynchronizationObject, FenceValueArray) == offsetof(WdkT, FenceValueArray),
+                "D3DKMT_WAITFORSYNCHRONIZATIONOBJECT ABI mismatch (FenceValueArray offset)");
+};
+
+template <typename WdkT>
+struct AerogpuWaitSyncObjFenceValueOffsetAssert<WdkT, false, true> {
+  static_assert(offsetof(AerogpuD3DKMTWaitForSynchronizationObject, FenceValueArray) == offsetof(WdkT, FenceValue),
+                "D3DKMT_WAITFORSYNCHRONIZATIONOBJECT ABI mismatch (FenceValue offset)");
+};
+
+template <typename WdkT>
+struct AerogpuWaitSyncObjFenceValueOffsetAssert<WdkT, true, true> {
+  static_assert(offsetof(AerogpuD3DKMTWaitForSynchronizationObject, FenceValueArray) == offsetof(WdkT, FenceValueArray),
+                "D3DKMT_WAITFORSYNCHRONIZATIONOBJECT ABI mismatch (FenceValueArray offset)");
+  static_assert(offsetof(AerogpuD3DKMTWaitForSynchronizationObject, FenceValueArray) == offsetof(WdkT, FenceValue),
+                "D3DKMT_WAITFORSYNCHRONIZATIONOBJECT ABI mismatch (FenceValue offset)");
+};
+
+template <typename WdkT, bool HasTimeout = has_member_Timeout<WdkT>::value>
+struct AerogpuWaitSyncObjTimeoutOffsetAssert {};
+
+template <typename WdkT>
+struct AerogpuWaitSyncObjTimeoutOffsetAssert<WdkT, true> {
+  static_assert(offsetof(AerogpuD3DKMTWaitForSynchronizationObject, Timeout) == offsetof(WdkT, Timeout),
+                "D3DKMT_WAITFORSYNCHRONIZATIONOBJECT ABI mismatch (Timeout offset)");
+};
+
+template <typename WdkT>
+struct AerogpuWaitForSyncObjectAbiAsserts
+    : AerogpuWaitSyncObjObjectHandleOffsetAssert<WdkT>,
+      AerogpuWaitSyncObjFenceValueOffsetAssert<WdkT>,
+      AerogpuWaitSyncObjTimeoutOffsetAssert<WdkT> {
+  static_assert(has_member_ObjectHandleArray<WdkT>::value || has_member_hSyncObjects<WdkT>::value,
+                "D3DKMT_WAITFORSYNCHRONIZATIONOBJECT missing sync-object handle member");
+  static_assert(has_member_FenceValueArray<WdkT>::value || has_member_FenceValue<WdkT>::value,
+                "D3DKMT_WAITFORSYNCHRONIZATIONOBJECT missing fence value member");
+  static_assert(has_member_Timeout<WdkT>::value, "D3DKMT_WAITFORSYNCHRONIZATIONOBJECT missing Timeout member");
+  static_assert(sizeof(AerogpuD3DKMTWaitForSynchronizationObject) == sizeof(WdkT),
+                "D3DKMT_WAITFORSYNCHRONIZATIONOBJECT ABI mismatch (size)");
+
+  static_assert(offsetof(AerogpuD3DKMTWaitForSynchronizationObject, ObjectCount) == offsetof(WdkT, ObjectCount),
+                "D3DKMT_WAITFORSYNCHRONIZATIONOBJECT ABI mismatch (ObjectCount offset)");
+};
+
+// Instantiate ABI checks for the WDK struct when available.
+template struct AerogpuWaitForSyncObjectAbiAsserts<D3DKMT_WAITFORSYNCHRONIZATIONOBJECT>;
+#endif
+
+FARPROC LoadD3dkmtWaitForSyncObjectProc() {
+  static FARPROC proc = []() -> FARPROC {
+    HMODULE gdi32 = GetModuleHandleW(L"gdi32.dll");
+    if (!gdi32) {
+      gdi32 = LoadLibraryW(L"gdi32.dll");
+    }
+    if (!gdi32) {
+      return nullptr;
+    }
+    return GetProcAddress(gdi32, "D3DKMTWaitForSynchronizationObject");
+  }();
+  return proc;
+}
 
 } // namespace
 
@@ -123,6 +292,7 @@ bool AerogpuKmdQuery::InitFromLuid(LUID adapter_luid) {
       reinterpret_cast<PFND3DKMTQueryAdapterInfo>(GetProcAddress(gdi32_, "D3DKMTQueryAdapterInfo"));
   escape_ = reinterpret_cast<PFND3DKMTEscape>(GetProcAddress(gdi32_, "D3DKMTEscape"));
   get_scanline_ = reinterpret_cast<PFND3DKMTGetScanLine>(GetProcAddress(gdi32_, "D3DKMTGetScanLine"));
+  wait_for_sync_object_ = GetProcAddress(gdi32_, "D3DKMTWaitForSynchronizationObject");
 
   if (!close_adapter_ || !escape_) {
     ShutdownLocked();
@@ -302,6 +472,7 @@ bool AerogpuKmdQuery::InitFromHdc(HDC hdc) {
       reinterpret_cast<PFND3DKMTQueryAdapterInfo>(GetProcAddress(gdi32_, "D3DKMTQueryAdapterInfo"));
   escape_ = reinterpret_cast<PFND3DKMTEscape>(GetProcAddress(gdi32_, "D3DKMTEscape"));
   get_scanline_ = reinterpret_cast<PFND3DKMTGetScanLine>(GetProcAddress(gdi32_, "D3DKMTGetScanLine"));
+  wait_for_sync_object_ = GetProcAddress(gdi32_, "D3DKMTWaitForSynchronizationObject");
 
   if (!open_adapter_from_hdc_ || !close_adapter_ || !escape_) {
     ShutdownLocked();
@@ -366,6 +537,7 @@ void AerogpuKmdQuery::ShutdownLocked() {
   query_adapter_info_ = nullptr;
   escape_ = nullptr;
   get_scanline_ = nullptr;
+  wait_for_sync_object_ = nullptr;
 
   umdriverprivate_type_known_ = false;
   umdriverprivate_type_ = 0;
@@ -544,6 +716,81 @@ bool AerogpuKmdQuery::QueryFence(uint64_t* last_submitted, uint64_t* last_comple
 uint32_t AerogpuKmdQuery::GetKmtAdapterHandle() {
   std::lock_guard<std::mutex> lock(mutex_);
   return adapter_;
+}
+
+long AerogpuKmdQuery::WaitForSyncObject(uint32_t sync_object, uint64_t fence_value, uint32_t timeout_ms) {
+  constexpr NTSTATUS kStatusNotSupported = static_cast<NTSTATUS>(0xC00000BBL); // STATUS_NOT_SUPPORTED
+  constexpr NTSTATUS kStatusSuccess = static_cast<NTSTATUS>(0x00000000L);      // STATUS_SUCCESS
+
+  if (fence_value == 0) {
+    return kStatusSuccess;
+  }
+  if (!sync_object) {
+    return kStatusNotSupported;
+  }
+
+  FARPROC wait_proc = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    wait_proc = wait_for_sync_object_;
+  }
+  if (!wait_proc) {
+    wait_proc = LoadD3dkmtWaitForSyncObjectProc();
+  }
+  if (!wait_proc) {
+    return kStatusNotSupported;
+  }
+
+  const uint64_t timeout_kmt = (timeout_ms == INFINITE) ? ~0ull : static_cast<uint64_t>(timeout_ms);
+
+#if defined(AEROGPU_D3D9_USE_WDK_DDI)
+  using WaitFn = decltype(&D3DKMTWaitForSynchronizationObject);
+  auto* wait_fn = reinterpret_cast<WaitFn>(wait_proc);
+
+  const D3DKMT_HANDLE handles[1] = {static_cast<D3DKMT_HANDLE>(sync_object)};
+  const UINT64 fences[1] = {static_cast<UINT64>(fence_value)};
+
+  D3DKMT_WAITFORSYNCHRONIZATIONOBJECT args{};
+  args.ObjectCount = 1;
+  if constexpr (has_member_ObjectHandleArray<D3DKMT_WAITFORSYNCHRONIZATIONOBJECT>::value) {
+    args.ObjectHandleArray = handles;
+  } else if constexpr (has_member_hSyncObjects<D3DKMT_WAITFORSYNCHRONIZATIONOBJECT>::value) {
+    using FieldT = std::remove_reference_t<decltype(args.hSyncObjects)>;
+    if constexpr (std::is_pointer_v<FieldT>) {
+      args.hSyncObjects = handles;
+    } else {
+      args.hSyncObjects = handles[0];
+    }
+  }
+  if constexpr (has_member_FenceValueArray<D3DKMT_WAITFORSYNCHRONIZATIONOBJECT>::value) {
+    args.FenceValueArray = fences;
+  } else if constexpr (has_member_FenceValue<D3DKMT_WAITFORSYNCHRONIZATIONOBJECT>::value) {
+    using FieldT = std::remove_reference_t<decltype(args.FenceValue)>;
+    if constexpr (std::is_pointer_v<FieldT>) {
+      args.FenceValue = fences;
+    } else {
+      args.FenceValue = fences[0];
+    }
+  }
+  if constexpr (has_member_Timeout<D3DKMT_WAITFORSYNCHRONIZATIONOBJECT>::value) {
+    args.Timeout = static_cast<decltype(args.Timeout)>(timeout_kmt);
+  }
+
+  return wait_fn(&args);
+#else
+  using WaitFn = NTSTATUS(WINAPI*)(AerogpuD3DKMTWaitForSynchronizationObject* pData);
+  auto* wait_fn = reinterpret_cast<WaitFn>(wait_proc);
+
+  const uint32_t handles[1] = {sync_object};
+  const uint64_t fences[1] = {fence_value};
+
+  AerogpuD3DKMTWaitForSynchronizationObject args{};
+  args.ObjectCount = 1;
+  args.ObjectHandleArray = handles;
+  args.FenceValueArray = fences;
+  args.Timeout = timeout_kmt;
+  return wait_fn(&args);
+#endif
 }
 
 bool AerogpuKmdQuery::QueryUmdPrivate(aerogpu_umd_private_v1* out) {

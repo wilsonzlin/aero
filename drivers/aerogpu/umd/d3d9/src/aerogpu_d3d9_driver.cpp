@@ -489,8 +489,7 @@ WddmAllocationHandle get_wddm_allocation_from_open_resource(const AEROGPU_D3D9DD
   const auto& wdk = *reinterpret_cast<const D3D9DDIARG_OPENRESOURCE*>(args);
   return extract_primary_wddm_allocation_handle(wdk);
 #else
-  (void)args;
-  return 0;
+  return static_cast<WddmAllocationHandle>(args->wddm_hAllocation);
 #endif
 }
 } // namespace
@@ -664,57 +663,7 @@ using AerogpuNtStatus = LONG;
 
 constexpr AerogpuNtStatus kStatusSuccess = 0x00000000L;
 constexpr AerogpuNtStatus kStatusTimeout = 0x00000102L;
-
-#pragma pack(push, 8)
-struct AerogpuD3DKMTWaitForSynchronizationObject {
-  UINT ObjectCount;
-  union {
-    const WddmHandle* ObjectHandleArray;
-    WddmHandle hSyncObjects;
-  };
-  union {
-    const uint64_t* FenceValueArray;
-    uint64_t FenceValue;
-  };
-  uint64_t Timeout;
-};
-#pragma pack(pop)
-
-static_assert(std::is_standard_layout<AerogpuD3DKMTWaitForSynchronizationObject>::value,
-              "D3DKMT wait args must have a stable ABI");
-#if defined(_WIN64)
-static_assert(sizeof(AerogpuD3DKMTWaitForSynchronizationObject) == 32, "Unexpected D3DKMT wait args size (x64)");
-static_assert(offsetof(AerogpuD3DKMTWaitForSynchronizationObject, ObjectCount) == 0, "Unexpected ObjectCount offset");
-static_assert(offsetof(AerogpuD3DKMTWaitForSynchronizationObject, ObjectHandleArray) == 8,
-              "Unexpected ObjectHandleArray offset");
-static_assert(offsetof(AerogpuD3DKMTWaitForSynchronizationObject, FenceValueArray) == 16, "Unexpected FenceValueArray offset");
-static_assert(offsetof(AerogpuD3DKMTWaitForSynchronizationObject, Timeout) == 24, "Unexpected Timeout offset");
-#else
-static_assert(sizeof(AerogpuD3DKMTWaitForSynchronizationObject) == 24, "Unexpected D3DKMT wait args size (x86)");
-static_assert(offsetof(AerogpuD3DKMTWaitForSynchronizationObject, ObjectCount) == 0, "Unexpected ObjectCount offset");
-static_assert(offsetof(AerogpuD3DKMTWaitForSynchronizationObject, ObjectHandleArray) == 4,
-              "Unexpected ObjectHandleArray offset");
-static_assert(offsetof(AerogpuD3DKMTWaitForSynchronizationObject, FenceValueArray) == 8, "Unexpected FenceValueArray offset");
-static_assert(offsetof(AerogpuD3DKMTWaitForSynchronizationObject, Timeout) == 16, "Unexpected Timeout offset");
-#endif
-
-using PFND3DKMTWaitForSynchronizationObject =
-    AerogpuNtStatus(WINAPI*)(AerogpuD3DKMTWaitForSynchronizationObject* pData);
-
-PFND3DKMTWaitForSynchronizationObject load_d3dkmt_wait_for_sync_object() {
-  static PFND3DKMTWaitForSynchronizationObject fn = []() -> PFND3DKMTWaitForSynchronizationObject {
-    HMODULE gdi32 = GetModuleHandleW(L"gdi32.dll");
-    if (!gdi32) {
-      gdi32 = LoadLibraryW(L"gdi32.dll");
-    }
-    if (!gdi32) {
-      return nullptr;
-    }
-    return reinterpret_cast<PFND3DKMTWaitForSynchronizationObject>(
-        GetProcAddress(gdi32, "D3DKMTWaitForSynchronizationObject"));
-  }();
-  return fn;
-}
+constexpr AerogpuNtStatus kStatusNotSupported = static_cast<AerogpuNtStatus>(0xC00000BBL);
 #endif
 
 FenceWaitResult wait_for_fence(Device* dev, uint64_t fence_value, uint32_t timeout_ms) {
@@ -740,29 +689,26 @@ FenceWaitResult wait_for_fence(Device* dev, uint64_t fence_value, uint32_t timeo
   if (timeout_ms != 0) {
     const WddmHandle sync_object = dev->wddm_context.hSyncObject;
     if (sync_object != 0) {
-      auto* wait_fn = load_d3dkmt_wait_for_sync_object();
-      if (wait_fn) {
-        const WddmHandle handles[1] = {sync_object};
-        const uint64_t fences[1] = {fence_value};
-
-        AerogpuD3DKMTWaitForSynchronizationObject args{};
-        args.ObjectCount = 1;
-        args.ObjectHandleArray = handles;
-        args.FenceValueArray = fences;
-        args.Timeout = timeout_ms;
-
-        const AerogpuNtStatus st = wait_fn(&args);
-        if (st == kStatusSuccess) {
-          {
-            std::lock_guard<std::mutex> lock(adapter->fence_mutex);
-            adapter->completed_fence = std::max(adapter->completed_fence, fence_value);
-          }
-          adapter->fence_cv.notify_all();
-          return FenceWaitResult::Complete;
+      const AerogpuNtStatus st = static_cast<AerogpuNtStatus>(
+          adapter->kmd_query.WaitForSyncObject(static_cast<uint32_t>(sync_object), fence_value, timeout_ms));
+      {
+        static std::once_flag once;
+        std::call_once(once, [st, timeout_ms] {
+          aerogpu::logf("aerogpu-d3d9: wait_for_fence using syncobj wait (timeout_ms=%u) NTSTATUS=0x%08lx\n",
+                        static_cast<unsigned>(timeout_ms),
+                        static_cast<unsigned long>(st));
+        });
+      }
+      if (st == kStatusSuccess) {
+        {
+          std::lock_guard<std::mutex> lock(adapter->fence_mutex);
+          adapter->completed_fence = std::max(adapter->completed_fence, fence_value);
         }
-        if (st == kStatusTimeout) {
-          return FenceWaitResult::NotReady;
-        }
+        adapter->fence_cv.notify_all();
+        return FenceWaitResult::Complete;
+      }
+      if (st == kStatusTimeout) {
+        return FenceWaitResult::NotReady;
       }
     }
   }
@@ -783,26 +729,22 @@ FenceWaitResult wait_for_fence(Device* dev, uint64_t fence_value, uint32_t timeo
     if (!adapter->kmd_query_available.load(std::memory_order_acquire)) {
       const WddmHandle sync_object = dev->wddm_context.hSyncObject;
       if (sync_object != 0) {
-        auto* wait_fn = load_d3dkmt_wait_for_sync_object();
-        if (wait_fn) {
-          const WddmHandle handles[1] = {sync_object};
-          const uint64_t fences[1] = {fence_value};
-
-          AerogpuD3DKMTWaitForSynchronizationObject args{};
-          args.ObjectCount = 1;
-          args.ObjectHandleArray = handles;
-          args.FenceValueArray = fences;
-          args.Timeout = 0; // poll
-
-          const AerogpuNtStatus st = wait_fn(&args);
-          if (st == kStatusSuccess) {
-            {
-              std::lock_guard<std::mutex> lock(adapter->fence_mutex);
-              adapter->completed_fence = std::max(adapter->completed_fence, fence_value);
-            }
-            adapter->fence_cv.notify_all();
-            return FenceWaitResult::Complete;
+        const AerogpuNtStatus st = static_cast<AerogpuNtStatus>(
+            adapter->kmd_query.WaitForSyncObject(static_cast<uint32_t>(sync_object), fence_value, /*timeout_ms=*/0));
+        {
+          static std::once_flag once;
+          std::call_once(once, [st] {
+            aerogpu::logf("aerogpu-d3d9: wait_for_fence using syncobj poll NTSTATUS=0x%08lx\n",
+                          static_cast<unsigned long>(st));
+          });
+        }
+        if (st == kStatusSuccess) {
+          {
+            std::lock_guard<std::mutex> lock(adapter->fence_mutex);
+            adapter->completed_fence = std::max(adapter->completed_fence, fence_value);
           }
+          adapter->fence_cv.notify_all();
+          return FenceWaitResult::Complete;
         }
       }
     }
@@ -812,6 +754,15 @@ FenceWaitResult wait_for_fence(Device* dev, uint64_t fence_value, uint32_t timeo
   }
 
   const uint64_t deadline = monotonic_ms() + timeout_ms;
+#if defined(_WIN32)
+  {
+    static std::once_flag once;
+    std::call_once(once, [timeout_ms] {
+      aerogpu::logf("aerogpu-d3d9: wait_for_fence falling back to polling (timeout_ms=%u)\n",
+                    static_cast<unsigned>(timeout_ms));
+    });
+  }
+#endif
   while (monotonic_ms() < deadline) {
     if (refresh_fence_snapshot(adapter).last_completed >= fence_value) {
       return FenceWaitResult::Complete;
@@ -7583,9 +7534,14 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
 
     const bool has_sync_object = (dev->wddm_context.hSyncObject != 0);
     const bool kmd_query_available = adapter->kmd_query_available.load(std::memory_order_acquire);
-    const bool has_wait_fn = (load_d3dkmt_wait_for_sync_object() != nullptr);
-
-    const bool sync_object_wait_available = has_sync_object && has_wait_fn;
+    AerogpuNtStatus sync_probe = kStatusNotSupported;
+    if (has_sync_object) {
+      sync_probe = static_cast<AerogpuNtStatus>(
+          adapter->kmd_query.WaitForSyncObject(static_cast<uint32_t>(dev->wddm_context.hSyncObject),
+                                               /*fence_value=*/1,
+                                               /*timeout_ms=*/0));
+    }
+    const bool sync_object_wait_available = has_sync_object && (sync_probe != kStatusNotSupported);
 
     // `wait_for_fence()` uses different mechanisms depending on whether the caller
     // is doing a bounded wait (PresentEx throttling) or a non-blocking poll (EVENT

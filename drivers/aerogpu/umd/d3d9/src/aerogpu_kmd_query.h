@@ -72,6 +72,17 @@ class AerogpuKmdQuery {
   // VidPnSourceId; in those cases this returns false and callers should fall
   // back to a time-based sleep.
   bool GetVidPnSourceId(uint32_t* out_vid_pn_source_id);
+#if defined(_WIN32)
+  // Waits for a monitored-fence synchronization object to reach `fence_value`.
+  //
+  // `timeout_ms` is in milliseconds:
+  // - 0: poll (do not block)
+  // - INFINITE (0xFFFFFFFF): "infinite" wait (translated to ~0ull for the KMT ABI)
+  //
+  // Returns the NTSTATUS result of `D3DKMTWaitForSynchronizationObject`, or
+  // STATUS_NOT_SUPPORTED if the thunk is unavailable.
+  long WaitForSyncObject(uint32_t sync_object, uint64_t fence_value, uint32_t timeout_ms);
+#endif
 
   // Waits until the completed fence is >= `fence`, or until `timeout_ms`
   // elapses. Uses cooperative polling (Sleep(0/1)), not a busy spin.
@@ -128,6 +139,7 @@ class AerogpuKmdQuery {
   PFND3DKMTQueryAdapterInfo query_adapter_info_ = nullptr;
   PFND3DKMTEscape escape_ = nullptr;
   PFND3DKMTGetScanLine get_scanline_ = nullptr;
+  FARPROC wait_for_sync_object_ = nullptr;
 
   D3DKMT_HANDLE adapter_ = 0;
   LUID adapter_luid_ = {};
