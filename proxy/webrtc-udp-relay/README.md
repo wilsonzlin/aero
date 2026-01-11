@@ -35,7 +35,11 @@ To apply formatting locally, run `make fmt`.
 From this directory:
 
 ```bash
-go run ./cmd/aero-webrtc-udp-relay
+# For local dev without auth:
+AUTH_MODE=none go run ./cmd/aero-webrtc-udp-relay
+
+# Or, to use API key auth (default when AUTH_MODE is unset):
+# API_KEY=secret go run ./cmd/aero-webrtc-udp-relay
 ```
 
 Then:
