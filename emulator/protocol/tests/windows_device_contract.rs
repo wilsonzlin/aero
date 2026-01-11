@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -38,6 +39,32 @@ fn contains_case_insensitive(haystack: &[String], needle: &str) -> bool {
     haystack
         .iter()
         .any(|value| value.eq_ignore_ascii_case(needle))
+}
+
+fn inf_add_service_names(inf_text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for raw_line in inf_text.lines() {
+        let line = raw_line.trim();
+        if line.is_empty() || line.starts_with(';') {
+            continue;
+        }
+        let line = line.split(';').next().unwrap_or("").trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        if !line.to_ascii_lowercase().starts_with("addservice") {
+            continue;
+        }
+        let Some((_, rhs)) = line.split_once('=') else {
+            continue;
+        };
+        let name = rhs.split(',').next().unwrap_or("").trim();
+        if !name.is_empty() {
+            out.push(name.to_string());
+        }
+    }
+    out
 }
 
 #[test]
@@ -199,6 +226,92 @@ fn contains_needle(haystack: &str, needle: &str) -> bool {
     haystack
         .to_ascii_uppercase()
         .contains(&needle.to_ascii_uppercase())
+}
+
+#[test]
+fn windows_device_contract_driver_service_names_match_driver_infs() {
+    let root = repo_root();
+    let contract_path = root.join("docs/windows-device-contract.json");
+    let contract_text = std::fs::read_to_string(&contract_path)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", contract_path.display()));
+    let contract_json: serde_json::Value = serde_json::from_str(&contract_text)
+        .unwrap_or_else(|err| panic!("failed to parse {}: {err}", contract_path.display()));
+    let devices = contract_json
+        .get("devices")
+        .and_then(|value| value.as_array())
+        .unwrap_or_else(|| panic!("contract JSON must contain devices[] array"));
+
+    let contract_entry = |name: &str| -> &serde_json::Value {
+        devices
+            .iter()
+            .find(|device| device.get("device").and_then(|d| d.as_str()) == Some(name))
+            .unwrap_or_else(|| panic!("contract JSON is missing the {name} device entry"))
+    };
+
+    let cases = [
+        (
+            "virtio-blk",
+            root.join("drivers/windows7/virtio/blk/aerovblk.inf"),
+        ),
+        (
+            "virtio-net",
+            root.join("drivers/windows7/virtio/net/aerovnet.inf"),
+        ),
+        (
+            "virtio-snd",
+            root.join("drivers/windows7/virtio-snd/inf/aero-virtio-snd.inf"),
+        ),
+        (
+            "virtio-input",
+            root.join("drivers/windows/virtio-input/virtio-input.inf"),
+        ),
+        ("aero-gpu", root.join("drivers/aerogpu/packaging/win7/aerogpu.inf")),
+    ];
+
+    for (device_name, inf_path) in cases {
+        let contract = contract_entry(device_name);
+        let contract_service = require_json_str(contract, "driver_service_name");
+        let contract_inf_name = require_json_str(contract, "inf_name");
+
+        assert!(
+            inf_path.is_file(),
+            "expected INF for {device_name} to exist at {}",
+            inf_path.display()
+        );
+        assert_eq!(
+            inf_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or_default(),
+            contract_inf_name,
+            "windows-device-contract.json {device_name}.inf_name must match the in-tree INF filename"
+        );
+
+        let inf_text = std::fs::read_to_string(&inf_path)
+            .unwrap_or_else(|err| panic!("failed to read {}: {err}", inf_path.display()));
+        let services: BTreeSet<String> = inf_add_service_names(&inf_text)
+            .into_iter()
+            .map(|service| service.to_ascii_lowercase())
+            .collect();
+        assert!(
+            !services.is_empty(),
+            "INF {} does not contain any AddService entries",
+            inf_path.display()
+        );
+        assert_eq!(
+            services.len(),
+            1,
+            "INF {} must install exactly one service via AddService, got: {services:?}",
+            inf_path.display()
+        );
+        let inf_service = services.iter().next().unwrap();
+        assert_eq!(
+            contract_service.to_ascii_lowercase(),
+            *inf_service,
+            "windows-device-contract.json {device_name}.driver_service_name must match INF AddService name (INF: {})",
+            inf_path.display()
+        );
+    }
 }
 
 #[test]
