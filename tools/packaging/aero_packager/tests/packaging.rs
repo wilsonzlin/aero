@@ -440,13 +440,69 @@ fn package_rejects_private_key_materials_in_licenses_dir() -> anyhow::Result<()>
         signing_policy: aero_packager::SigningPolicy::TestSigning,
         source_date_epoch: 0,
     };
-
     let err = aero_packager::package_guest_tools(&config).unwrap_err();
     let msg = format!("{err:#}");
     assert!(
         msg.contains("private key material in licenses directory"),
         "unexpected error: {msg}"
     );
+    Ok(())
+}
+
+#[test]
+fn debug_symbols_are_excluded_from_packaged_driver_dirs() -> anyhow::Result<()> {
+    let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let testdata = repo_root.join("testdata");
+    let spec_path = testdata.join("spec.json");
+    let drivers_dir = testdata.join("drivers");
+    let guest_tools_dir = testdata.join("guest-tools");
+
+    // Baseline package.
+    let out_base = tempfile::tempdir()?;
+    let config_base = aero_packager::PackageConfig {
+        drivers_dir: drivers_dir.clone(),
+        guest_tools_dir: guest_tools_dir.clone(),
+        out_dir: out_base.path().to_path_buf(),
+        spec_path: spec_path.clone(),
+        version: "1.2.3".to_string(),
+        build_id: "test".to_string(),
+        volume_id: "AERO_GUEST_TOOLS".to_string(),
+        signing_policy: aero_packager::SigningPolicy::TestSigning,
+        source_date_epoch: 0,
+    };
+    let outputs_base = aero_packager::package_guest_tools(&config_base)?;
+    let iso_base = fs::read(&outputs_base.iso_path)?;
+    let zip_base = fs::read(&outputs_base.zip_path)?;
+    let manifest_base = fs::read(&outputs_base.manifest_path)?;
+
+    // Add a dummy PDB (debug symbol) to the driver directory and ensure it is not packaged.
+    let drivers_tmp = tempfile::tempdir()?;
+    copy_dir_all(&drivers_dir, drivers_tmp.path())?;
+    for arch in ["x86", "amd64"] {
+        fs::write(
+            drivers_tmp.path().join(format!("{arch}/testdrv/test.pdb")),
+            b"dummy pdb",
+        )?;
+    }
+
+    let out_pdb = tempfile::tempdir()?;
+    let config_pdb = aero_packager::PackageConfig {
+        drivers_dir: drivers_tmp.path().to_path_buf(),
+        out_dir: out_pdb.path().to_path_buf(),
+        ..config_base
+    };
+    let outputs_pdb = aero_packager::package_guest_tools(&config_pdb)?;
+    let iso_pdb = fs::read(&outputs_pdb.iso_path)?;
+    let tree = aero_packager::read_joliet_tree(&iso_pdb)?;
+
+    assert!(!tree.contains("drivers/x86/testdrv/test.pdb"));
+    assert!(!tree.contains("drivers/amd64/testdrv/test.pdb"));
+
+    // Excluded debug symbols should not affect deterministic outputs.
+    assert_eq!(iso_base, iso_pdb);
+    assert_eq!(zip_base, fs::read(&outputs_pdb.zip_path)?);
+    assert_eq!(manifest_base, fs::read(&outputs_pdb.manifest_path)?);
+
     Ok(())
 }
 
