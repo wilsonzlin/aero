@@ -20,7 +20,12 @@ import { importFileToOpfs } from './platform/opfs';
 import { createWebUsbBroker } from './platform/webusb_broker';
 import { requestWebGpuDevice } from './platform/webgpu';
 import { VmCoordinator } from './emulator/vmCoordinator.js';
-import { MicCapture } from '../web/src/audio/mic_capture';
+import { MicCapture, micRingBufferReadInto, type MicRingBuffer } from '../web/src/audio/mic_capture';
+import {
+  CAPACITY_SAMPLES_INDEX as MIC_CAPACITY_SAMPLES_INDEX,
+  HEADER_BYTES as MIC_HEADER_BYTES,
+  HEADER_U32_LEN as MIC_HEADER_U32_LEN,
+} from '../web/src/audio/mic_ring.js';
 import { startSyntheticMic, type SyntheticMicSource } from '../web/src/audio/synthetic_mic';
 import type { AeroConfig } from '../web/src/config/aero_config';
 import { WorkerCoordinator } from '../web/src/runtime/coordinator';
@@ -969,6 +974,7 @@ function renderAudioPanel(): HTMLElement {
   const workerCoordinator = new WorkerCoordinator();
   let hdaDemoWorker: Worker | null = null;
   let hdaDemoStats: { [k: string]: unknown } | null = null;
+  let loopbackTimer: number | null = null;
   let syntheticMic: SyntheticMicSource | null = null;
 
   function stopTone() {
@@ -976,6 +982,17 @@ function renderAudioPanel(): HTMLElement {
       window.clearInterval(toneTimer);
       toneTimer = null;
     }
+  }
+
+  function stopLoopback(): void {
+    if (loopbackTimer !== null) {
+      window.clearInterval(loopbackTimer);
+      loopbackTimer = null;
+    }
+    syntheticMic?.stop();
+    syntheticMic = null;
+    workerCoordinator.setMicrophoneRingBuffer(null, 0);
+    workerCoordinator.setAudioOutputRingBuffer(null, 0, 0, 0);
   }
 
   function stopHdaDemo(): void {
@@ -986,15 +1003,9 @@ function renderAudioPanel(): HTMLElement {
     hdaDemoStats = null;
   }
 
-  function stopLoopback(): void {
-    syntheticMic?.stop();
-    syntheticMic = null;
-    workerCoordinator.setMicrophoneRingBuffer(null, 0);
-    workerCoordinator.setAudioOutputRingBuffer(null, 0, 0, 0);
-  }
-
   function startTone(output: Exclude<Awaited<ReturnType<typeof createAudioOutput>>, { enabled: false }>) {
     stopTone();
+    stopLoopback();
     stopHdaDemo();
 
     const freqHz = 440;
@@ -1250,15 +1261,15 @@ function renderAudioPanel(): HTMLElement {
         ringBufferFrames: 16_384, // ~340ms @ 48k; gives the worker/WASM init some slack.
       });
 
-      // Expose for Playwright.
-      (
+      const globals =
         globalThis as typeof globalThis & {
           __aeroAudioOutputLoopback?: unknown;
           __aeroAudioLoopbackBackend?: unknown;
           __aeroSyntheticMic?: unknown;
-        }
-      ).__aeroAudioOutputLoopback = output;
+        };
 
+      // Expose for Playwright.
+      globals.__aeroAudioOutputLoopback = output;
       if (!output.enabled) {
         status.textContent = output.message;
         return;
@@ -1278,11 +1289,7 @@ function renderAudioPanel(): HTMLElement {
         return;
       }
 
-      (
-        globalThis as typeof globalThis & {
-          __aeroSyntheticMic?: unknown;
-        }
-      ).__aeroSyntheticMic = syntheticMic;
+      globals.__aeroSyntheticMic = syntheticMic;
 
       // Prefill ~200ms of silence so the AudioWorklet doesn't count underruns while the
       // workers spin up and attach the loopback plumbing.
@@ -1302,6 +1309,8 @@ function renderAudioPanel(): HTMLElement {
         logLevel: "info",
       };
 
+      let backend: "worker" | "main" = "worker";
+      let workerError: string | null = null;
       try {
         workerCoordinator.start(workerConfig);
         workerCoordinator.setMicrophoneRingBuffer(syntheticMic.ringBuffer, syntheticMic.sampleRate);
@@ -1311,19 +1320,62 @@ function renderAudioPanel(): HTMLElement {
           output.ringBuffer.channelCount,
           output.ringBuffer.capacityFrames,
         );
-        (
-          globalThis as typeof globalThis & {
-            __aeroAudioLoopbackBackend?: unknown;
-          }
-        ).__aeroAudioLoopbackBackend = "worker";
+      } catch (err) {
+        backend = "main";
+        workerError = err instanceof Error ? err.message : String(err);
 
+        // Ensure we don't have both the worker and main thread consuming the mic/output rings.
+        workerCoordinator.setMicrophoneRingBuffer(null, 0);
+        workerCoordinator.setAudioOutputRingBuffer(null, 0, 0, 0);
+
+        const header = new Uint32Array(syntheticMic.ringBuffer, 0, MIC_HEADER_U32_LEN);
+        const capacity = Atomics.load(header, MIC_CAPACITY_SAMPLES_INDEX) >>> 0;
+        const data = new Float32Array(syntheticMic.ringBuffer, MIC_HEADER_BYTES, capacity);
+        const micRb: MicRingBuffer = { sab: syntheticMic.ringBuffer, header, data, capacity };
+
+        let tmpMono = new Float32Array(256);
+        let tmpInterleaved = new Float32Array(256 * output.ringBuffer.channelCount);
+
+        loopbackTimer = window.setInterval(() => {
+          const target = Math.floor(output.context.sampleRate / 5);
+          const level = output.getBufferLevelFrames();
+          let need = Math.max(0, target - level);
+          if (need === 0) return;
+
+          while (need > 0) {
+            const chunk = Math.min(need, 256);
+            if (tmpMono.length < chunk) tmpMono = new Float32Array(chunk);
+            const read = micRingBufferReadInto(micRb, tmpMono.subarray(0, chunk));
+            if (read === 0) break;
+
+            const cc = output.ringBuffer.channelCount;
+            const outSamples = read * cc;
+            if (tmpInterleaved.length < outSamples) tmpInterleaved = new Float32Array(outSamples);
+            for (let i = 0; i < read; i++) {
+              const s = tmpMono[i];
+              const base = i * cc;
+              for (let c = 0; c < cc; c++) tmpInterleaved[base + c] = s;
+            }
+
+            const written = output.writeInterleaved(tmpInterleaved.subarray(0, outSamples), sr);
+            if (written === 0) break;
+            need -= written;
+          }
+        }, 25);
+      }
+
+      globals.__aeroAudioLoopbackBackend = backend;
+
+      try {
         await output.resume();
       } catch (err) {
         status.textContent = err instanceof Error ? err.message : String(err);
         return;
       }
 
-      status.textContent = "Audio loopback initialized (backend=worker).";
+      status.textContent = workerError
+        ? `Audio loopback initialized (backend=${backend}). Worker init failed: ${workerError}`
+        : `Audio loopback initialized (backend=${backend}).`;
     },
   });
 
