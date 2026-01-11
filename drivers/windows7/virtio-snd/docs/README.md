@@ -121,11 +121,19 @@ weakening the default Aero contract-v1 INF:
 | **Aero contract v1 (default)** | `Release` | `virtiosnd.sys` | `inf/aero-virtio-snd.inf` | `PCI\VEN_1AF4&DEV_1059&REV_01` |
 | **QEMU compatibility (optional)** | `Legacy` | `virtiosnd_legacy.sys` | `inf/aero-virtio-snd-legacy.inf` | `PCI\VEN_1AF4&DEV_1018` (transitional; no revision gate) |
 
-The two INFs intentionally have **no overlapping hardware IDs**, so they do not compete for the
-same device.
+The two packaging INFs intentionally have **no overlapping hardware IDs**, so they do not compete
+for the same device.
 
 Note: only the **Aero contract v1** variant is CI-packaged by default; the QEMU compatibility variant is a manual,
 opt-in package.
+
+Additionally, the repo keeps an older legacy virtio-pci **I/O-port** transport build for bring-up:
+
+- MSBuild project: `virtio-snd-ioport-legacy.vcxproj`
+- SYS: `virtiosnd_ioport.sys`
+- INF: `inf/aero-virtio-snd-ioport.inf` (matches `PCI\VEN_1AF4&DEV_1018&REV_00`)
+
+This I/O-port variant is not part of `AERO-W7-VIRTIO` v1 and is not staged by CI/Guest Tools.
 
 ## Architecture (what’s built by default)
 
@@ -184,7 +192,7 @@ Notes:
 * **Interrupts:** **INTx** only (MSI/MSI-X not currently used by this driver package).
 * **Feature negotiation:** contract v1 requires 64-bit feature negotiation (`VIRTIO_F_VERSION_1` is bit 32) and `VIRTIO_F_RING_INDIRECT_DESC` (bit 28).
 
-## Legacy / transitional virtio-pci I/O-port path (not shipped)
+## Legacy / transitional virtio-pci paths (opt-in bring-up)
 
 The repository also contains an older **legacy/transitional virtio-pci I/O-port** bring-up path (for example
 `src/backend_virtio_legacy.c`, `src/aeroviosnd_hw.c`, and `drivers/windows7/virtio/common/src/virtio_pci_legacy.c`).
@@ -193,8 +201,7 @@ negotiates the low 32 bits of virtio feature flags (so it cannot negotiate `VIRT
 contract INF (`inf/aero-virtio-snd.inf`) does not bind to transitional IDs (use `inf/aero-virtio-snd-legacy.inf` for
 stock QEMU defaults).
 
-CI guardrail: PRs must keep `virtio-snd.vcxproj` on the modern-only backend. See
-`scripts/ci/check-virtio-snd-vcxproj-sources.py`.
+CI guardrail: PRs must keep `virtio-snd.vcxproj` on the modern-only backend. See `scripts/ci/check-virtio-snd-vcxproj-sources.py`.
 
 ## Design notes
 

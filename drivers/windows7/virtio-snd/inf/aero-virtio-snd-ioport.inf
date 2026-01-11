@@ -1,0 +1,123 @@
+; SPDX-License-Identifier: MIT OR Apache-2.0
+;
+; aero-virtio-snd-ioport.inf (Windows 7) - legacy virtio-pci I/O-port transport install.
+;
+; Purpose:
+;   This is an opt-in bring-up package for virtio-snd devices that enumerate under the
+;   transitional virtio-pci ID (PCI\VEN_1AF4&DEV_1018, usually REV_00) and require the
+;   legacy I/O-port transport.
+;
+; Notes:
+;   - This is NOT part of the Aero `AERO-W7-VIRTIO` v1 contract (modern-only).
+;   - The default/shipped package is `aero-virtio-snd.inf` + `virtiosnd.sys` (DEV_1059&REV_01).
+;   - This package installs a separate binary: `virtiosnd_ioport.sys`.
+;
+; HWID binding policy:
+;   - Matches transitional ID + revision: PCI\VEN_1AF4&DEV_1018&REV_00
+;   - Does NOT match Aero contract-v1 ID: PCI\VEN_1AF4&DEV_1059&REV_01
+
+[Version]
+Signature   = "$WINDOWS NT$"
+Class       = MEDIA
+ClassGuid   = {4d36e96c-e325-11ce-bfc1-08002be10318}
+Provider    = %ProviderName%
+DriverVer   = 01/10/2026,0.0.0.1
+CatalogFile = aero-virtio-snd-ioport.cat
+
+[Manufacturer]
+%ProviderName% = VirtioSndIoPortModels,NTx86,NTamd64
+
+[VirtioSndIoPortModels.NTx86]
+%VirtioSndIoPort.DeviceDesc% = VirtioSndIoPort_Install, PCI\VEN_1AF4&DEV_1018&REV_00
+
+[VirtioSndIoPortModels.NTamd64]
+%VirtioSndIoPort.DeviceDesc% = VirtioSndIoPort_Install, PCI\VEN_1AF4&DEV_1018&REV_00
+
+[DestinationDirs]
+VirtioSndIoPort.CopyFiles = 12
+
+[VirtioSndIoPort_Install.NT]
+Include  = ks.inf, wdmaudio.inf
+Needs    = KS.Registration, WDMAUDIO.Registration
+CopyFiles = VirtioSndIoPort.CopyFiles
+AddReg    = VirtioSndIoPort.AddReg
+
+[VirtioSndIoPort_Install.NT.Interfaces]
+AddInterface = %KSCATEGORY_AUDIO%,    %KSNAME_Wave%,     VirtioSndIoPort.Wave.Interface
+AddInterface = %KSCATEGORY_RENDER%,   %KSNAME_Wave%,     VirtioSndIoPort.Wave.Interface
+AddInterface = %KSCATEGORY_REALTIME%, %KSNAME_Wave%,     VirtioSndIoPort.Wave.Interface
+AddInterface = %KSCATEGORY_AUDIO%,    %KSNAME_Topology%, VirtioSndIoPort.Topology.Interface
+AddInterface = %KSCATEGORY_TOPOLOGY%, %KSNAME_Topology%, VirtioSndIoPort.Topology.Interface
+
+[VirtioSndIoPort.Wave.Interface]
+AddReg = VirtioSndIoPort.Wave.Interface.AddReg
+
+[VirtioSndIoPort.Wave.Interface.AddReg]
+HKR,,CLSID,,%KSProxy.CLSID%
+HKR,,FriendlyName,,%VirtioSndIoPort.EndpointDesc%
+
+[VirtioSndIoPort.Topology.Interface]
+AddReg = VirtioSndIoPort.Topology.Interface.AddReg
+
+[VirtioSndIoPort.Topology.Interface.AddReg]
+HKR,,CLSID,,%KSProxy.CLSID%
+HKR,,FriendlyName,,%VirtioSndIoPort.TopologyDesc%
+
+[VirtioSndIoPort.AddReg]
+HKR,,CLSID,,%KSProxy.CLSID%
+HKR,,FriendlyName,,%VirtioSndIoPort.DeviceDesc%
+HKR,,DevLoader,,*ntkern
+HKR,,NTMPDriver,,virtiosnd_ioport.sys
+HKR,,AssociatedFilters,0x00010000,%KSNAME_Wave%,%KSNAME_Topology%
+HKR,Drivers,SubClasses,,"wave,topology"
+HKR,Drivers,Driver,,wdmaud.sys
+HKR,Drivers\wave,Driver,,virtiosnd_ioport.sys
+HKR,Drivers\wave,Description,,%VirtioSndIoPort.EndpointDesc%
+HKR,Drivers\topology,Driver,,virtiosnd_ioport.sys
+HKR,Drivers\topology,Description,,%VirtioSndIoPort.TopologyDesc%
+
+HKR,%KSNAME_Wave%,CLSID,,%KSProxy.CLSID%
+HKR,%KSNAME_Wave%,FriendlyName,,%VirtioSndIoPort.EndpointDesc%
+HKR,%KSNAME_Wave%,Driver,,virtiosnd_ioport.sys
+
+HKR,%KSNAME_Topology%,CLSID,,%KSProxy.CLSID%
+HKR,%KSNAME_Topology%,FriendlyName,,%VirtioSndIoPort.TopologyDesc%
+HKR,%KSNAME_Topology%,Driver,,virtiosnd_ioport.sys
+
+[VirtioSndIoPort.CopyFiles]
+virtiosnd_ioport.sys
+
+[VirtioSndIoPort_Install.NT.Services]
+AddService = aeroviosnd_ioport, 0x00000002, VirtioSndIoPort_Service_Inst
+
+[VirtioSndIoPort_Service_Inst]
+DisplayName   = %VirtioSndIoPort.ServiceDesc%
+ServiceType   = 1
+StartType     = 3
+ErrorControl  = 1
+ServiceBinary = %12%\virtiosnd_ioport.sys
+
+[SourceDisksNames]
+1 = %DiskName%,,,
+
+[SourceDisksFiles]
+virtiosnd_ioport.sys = 1
+
+[Strings]
+ProviderName                 = "Aero Project"
+DiskName                     = "Aero virtio-snd (I/O-port legacy) Driver Disk"
+VirtioSndIoPort.DeviceDesc   = "Aero VirtIO Sound Device (I/O-port legacy)"
+VirtioSndIoPort.ServiceDesc  = "Aero VirtIO Sound Driver (I/O-port legacy)"
+
+KSProxy.CLSID        = "{17CCA71B-ECD7-11D0-B908-00A0C9223196}"
+KSCATEGORY_AUDIO     = "{6994AD04-93EF-11D0-A3CC-00A0C9223196}"
+KSCATEGORY_RENDER    = "{65E8773E-8F56-11D0-A3B9-00A0C9223196}"
+KSCATEGORY_REALTIME  = "{EB115FF2-0D1B-11D0-A8E0-00A0C9223196}"
+KSCATEGORY_TOPOLOGY  = "{DDA54A40-1E4C-11D1-A050-405705C10000}"
+
+KSNAME_Wave          = "Wave"
+KSNAME_Topology      = "Topology"
+
+VirtioSndIoPort.EndpointDesc  = "Aero VirtIO Sound Output (I/O-port legacy)"
+VirtioSndIoPort.TopologyDesc  = "Aero VirtIO Sound Topology (I/O-port legacy)"
+

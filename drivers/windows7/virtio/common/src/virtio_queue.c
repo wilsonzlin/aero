@@ -130,9 +130,17 @@ NTSTATUS VirtioQueueCreate(_Inout_ VIRTIO_PCI_DEVICE* Device, _Out_ VIRTIO_QUEUE
 
 VOID VirtioQueueDelete(_Inout_ VIRTIO_PCI_DEVICE* Device, _Inout_ VIRTIO_QUEUE* Queue) {
   if (Queue->RingVa) {
-    /* Detach the ring from the device before freeing its memory. */
-    VirtioPciSelectQueue(Device, Queue->QueueIndex);
-    VirtioPciWriteQueuePfn(Device, 0);
+    /*
+     * Detach the ring from the device before freeing its memory.
+     *
+     * On surprise removal the PCI resources may no longer be accessible; allow
+     * callers to clear Device->IoBase to suppress port I/O while still freeing
+     * the queue memory.
+     */
+    if (Device != NULL && Device->IoBase != NULL) {
+      VirtioPciSelectQueue(Device, Queue->QueueIndex);
+      VirtioPciWriteQueuePfn(Device, 0);
+    }
 
     MmFreeContiguousMemory(Queue->RingVa);
     Queue->RingVa = NULL;

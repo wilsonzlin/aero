@@ -54,8 +54,7 @@ The repository also contains an older legacy/transitional virtio-pci I/O-port pa
 `src/backend_virtio_legacy.c`, `src/aeroviosnd_hw.c`, and `drivers/windows7/virtio/common`). It is
 kept for historical bring-up and ad-hoc compatibility testing only.
 
-CI guardrail: PRs must keep `virtio-snd.vcxproj` on the modern-only backend. See
-`scripts/ci/check-virtio-snd-vcxproj-sources.py`.
+CI guardrail: PRs must keep `virtio-snd.vcxproj` on the modern-only backend. See `scripts/ci/check-virtio-snd-vcxproj-sources.py`.
 
 ## Default build architecture (virtio-pci modern endpoint driver)
 

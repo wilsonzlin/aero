@@ -139,13 +139,15 @@ static NTSTATUS VirtIoSndBackendLegacy_Release(_In_ PVOID Context)
 static NTSTATUS
 VirtIoSndBackendLegacy_WritePeriod(
     _In_ PVOID Context,
-    _In_opt_ const VOID* Pcm1,
+    _In_ UINT64 Pcm1DmaAddr,
     _In_ SIZE_T Pcm1Bytes,
-    _In_opt_ const VOID* Pcm2,
+    _In_ UINT64 Pcm2DmaAddr,
     _In_ SIZE_T Pcm2Bytes
     )
 {
     PAEROVIOSND_BACKEND_LEGACY ctx = (PAEROVIOSND_BACKEND_LEGACY)Context;
+    const VOID* pcm1;
+    const VOID* pcm2;
     SIZE_T totalBytes;
     ULONG periodBytes;
     NTSTATUS status;
@@ -174,7 +176,9 @@ VirtIoSndBackendLegacy_WritePeriod(
      */
     (VOID)VirtIoSndBackendLegacy_DrainTxCompletions(ctx->Dx);
 
-    submit = Pcm1;
+    pcm1 = (Pcm1DmaAddr != 0) ? (const VOID *)(ULONG_PTR)Pcm1DmaAddr : NULL;
+    pcm2 = (Pcm2DmaAddr != 0) ? (const VOID *)(ULONG_PTR)Pcm2DmaAddr : NULL;
+    submit = pcm1;
 
     if (Pcm2Bytes != 0 || submit == NULL) {
         if (ctx->Staging == NULL || ctx->StagingBytes < periodBytes) {
@@ -182,15 +186,15 @@ VirtIoSndBackendLegacy_WritePeriod(
         }
 
         if (Pcm1Bytes != 0) {
-            if (Pcm1 != NULL) {
-                RtlCopyMemory(ctx->Staging, Pcm1, Pcm1Bytes);
+            if (pcm1 != NULL) {
+                RtlCopyMemory(ctx->Staging, pcm1, Pcm1Bytes);
             } else {
                 RtlZeroMemory(ctx->Staging, Pcm1Bytes);
             }
         }
         if (Pcm2Bytes != 0) {
-            if (Pcm2 != NULL) {
-                RtlCopyMemory(ctx->Staging + Pcm1Bytes, Pcm2, Pcm2Bytes);
+            if (pcm2 != NULL) {
+                RtlCopyMemory(ctx->Staging + Pcm1Bytes, pcm2, Pcm2Bytes);
             } else {
                 RtlZeroMemory(ctx->Staging + Pcm1Bytes, Pcm2Bytes);
             }

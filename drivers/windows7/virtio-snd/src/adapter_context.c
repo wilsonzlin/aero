@@ -9,7 +9,7 @@
 typedef struct _VIRTIOSND_ADAPTER_CONTEXT_ENTRY {
     LIST_ENTRY ListEntry;
     PUNKNOWN UnknownAdapter;
-    PVIRTIOSND_DEVICE_EXTENSION Dx;
+    VIRTIOSND_PORTCLS_DX Dx;
     BOOLEAN ForceNullBackend;
 } VIRTIOSND_ADAPTER_CONTEXT_ENTRY, *PVIRTIOSND_ADAPTER_CONTEXT_ENTRY;
 
@@ -85,7 +85,7 @@ VirtIoSndAdapterContext_Initialize(VOID)
 
 _Use_decl_annotations_
 NTSTATUS
-VirtIoSndAdapterContext_Register(PUNKNOWN UnknownAdapter, PVIRTIOSND_DEVICE_EXTENSION Dx, BOOLEAN ForceNullBackend)
+VirtIoSndAdapterContext_Register(PUNKNOWN UnknownAdapter, VIRTIOSND_PORTCLS_DX Dx, BOOLEAN ForceNullBackend)
 {
     NTSTATUS status;
     PVIRTIOSND_ADAPTER_CONTEXT_ENTRY newEntry;
@@ -207,10 +207,10 @@ VirtIoSndAdapterContext_Unregister(PUNKNOWN UnknownAdapter)
 }
 
 _Use_decl_annotations_
-PVIRTIOSND_DEVICE_EXTENSION
+VIRTIOSND_PORTCLS_DX
 VirtIoSndAdapterContext_Lookup(PUNKNOWN UnknownAdapter, BOOLEAN* ForceNullBackendOut)
 {
-    PVIRTIOSND_DEVICE_EXTENSION dx;
+    VIRTIOSND_PORTCLS_DX dx;
     PUNKNOWN key;
     BOOLEAN keyNeedsRelease;
     KIRQL oldIrql;
@@ -283,11 +283,16 @@ VirtIoSndAdapterContext_UnregisterAndStop(PUNKNOWN UnknownAdapter, BOOLEAN MarkR
     }
 
     if (entry->Dx != NULL) {
+#if defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
+        UNREFERENCED_PARAMETER(MarkRemoved);
+        VirtIoSndHwStop(entry->Dx);
+#else
         if (MarkRemoved) {
             entry->Dx->Removed = TRUE;
         }
 
         VirtIoSndStopHardware(entry->Dx);
+#endif
     }
 
     IUnknown_Release(entry->UnknownAdapter);

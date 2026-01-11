@@ -61,6 +61,12 @@ Optional (QEMU/transitional) build outputs:
 - `out/drivers/windows7/virtio-snd/x86/virtiosnd_legacy.sys`
 - `out/drivers/windows7/virtio-snd/x64/virtiosnd_legacy.sys`
 
+Optional (legacy virtio-pci **I/O-port** bring-up) build:
+
+- MSBuild project: `drivers/windows7/virtio-snd/virtio-snd-ioport-legacy.vcxproj`
+- Output SYS: `virtiosnd_ioport.sys`
+- INF: `drivers/windows7/virtio-snd/inf/aero-virtio-snd-ioport.inf`
+
 To stage an installable/signable package, copy the appropriate `virtiosnd.sys` into:
 
 ```text

@@ -46,6 +46,9 @@ References:
     - `virtiosnd_legacy.sys` built for x86 or x64 (MSBuild `Configuration=Legacy`)
     - Note: this compatibility package is **not** included in the default CI/Guest Tools driver bundle
       (see `ci-package.json`). Build/package it manually (`Configuration=Legacy`) if you need it.
+  - **Optional: legacy I/O-port transport** (older bring-up; not part of `AERO-W7-VIRTIO` v1):
+    - `inf/aero-virtio-snd-ioport.inf`
+    - `virtiosnd_ioport.sys` built for x86 or x64 (MSBuild `virtio-snd-ioport-legacy.vcxproj`)
 - Important: `aero-virtio-snd.inf` is revision-gated and binds only to the Aero contract v1 HWID
   (`PCI\VEN_1AF4&DEV_1059&REV_01`). If the device does not expose that HWID, Windows will not
   bind this package until you adjust QEMU device options (see below).
@@ -136,6 +139,7 @@ use the opt-in legacy package in that case.
 |---|---|---|---|
 | Aero contract v1 (modern-only; default build) | `PCI\VEN_1AF4&DEV_1059&REV_01` | `aero-virtio-snd.inf` | `virtiosnd.sys` |
 | QEMU transitional (optional) | `PCI\VEN_1AF4&DEV_1018` (transitional; see Device Manager for full list) | `aero-virtio-snd-legacy.inf` | `virtiosnd_legacy.sys` |
+| QEMU transitional (I/O-port legacy; optional) | `PCI\VEN_1AF4&DEV_1018&REV_00` | `aero-virtio-snd-ioport.inf` | `virtiosnd_ioport.sys` |
 
 The shipped INF (`inf/aero-virtio-snd.inf`) is intentionally strict and matches only:
 
@@ -236,6 +240,9 @@ pnputil -i -a X:\path\to\aero-virtio-snd.inf
 
 REM Stock QEMU (transitional PCI\VEN_1AF4&DEV_1018):
 pnputil -i -a X:\path\to\aero-virtio-snd-legacy.inf
+
+REM Transitional (legacy I/O-port transport, REV_00):
+pnputil -i -a X:\path\to\aero-virtio-snd-ioport.inf
 ```
 
 Reboot if prompted.

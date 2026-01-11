@@ -5,7 +5,11 @@
 #include "portcls_compat.h"
 #include "topology.h"
 #include "trace.h"
+#if defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
+#include "aeroviosnd.h"
+#else
 #include "virtiosnd.h"
+#endif
 
 #ifndef KSAUDIO_SPEAKER_MONO
 // Some WDK environments may not define KSAUDIO_SPEAKER_MONO; it maps to FRONT_CENTER.

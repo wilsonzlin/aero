@@ -58,6 +58,10 @@ strict Aero INF match (`...&REV_01`) reliably. In that case, use the opt-in QEMU
 
 - `inf/aero-virtio-snd-legacy.inf` + `virtiosnd_legacy.sys` (binds transitional virtio-snd: `PCI\VEN_1AF4&DEV_1018`)
 
+If you need a legacy **I/O-port** transport driver (older bring-up), the tree also contains:
+
+- `inf/aero-virtio-snd-ioport.inf` + `virtiosnd_ioport.sys` (matches `PCI\VEN_1AF4&DEV_1018&REV_00`)
+
 The repository also contains an optional **legacy filename alias** INF (`inf/virtio-snd.inf.disabled`). If you rename
 it back to `virtio-snd.inf` (and regenerate/sign `virtio-snd.cat`), it installs the same driver/service as
 `aero-virtio-snd.inf` and matches the same contract-v1 HWIDs, but provides the legacy filename for compatibility with

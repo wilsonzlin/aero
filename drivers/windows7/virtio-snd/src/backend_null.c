@@ -4,7 +4,11 @@
 
 #include "backend.h"
 #include "trace.h"
+#if defined(AERO_VIRTIO_SND_IOPORT_LEGACY)
+#include "aeroviosnd.h"
+#else
 #include "virtiosnd.h"
+#endif
 
 typedef struct _VIRTIOSND_BACKEND_NULL {
     VIRTIOSND_BACKEND Backend;
