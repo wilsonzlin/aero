@@ -12,7 +12,8 @@ This directory contains the host-side scripts used to run the Windows 7 guest se
 - A **prepared Windows 7 image** that:
   - has the virtio drivers installed (virtio-blk + virtio-net + virtio-input, modern-only)
   - has virtio-snd installed if you intend to test audio
-    - the guest selftest will exercise virtio-snd playback automatically when a virtio-snd device is present
+    - the guest selftest will exercise virtio-snd playback automatically when a virtio-snd device is present and confirm
+      a capture endpoint is registered
     - use `--disable-snd` to skip virtio-snd testing, or `--test-snd` / `--require-snd` to fail if the device is missing
   - has `aero-virtio-selftest.exe` installed
   - runs the selftest automatically on boot and logs to `COM1`
@@ -225,6 +226,7 @@ only if you explicitly want the base image to be mutated.
     - `AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS`
     - `AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS`
     - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS` or `...|SKIP` (if `-WithVirtioSnd` / `--with-virtio-snd` is set, it must be `PASS`)
+    - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|PASS` or `...|SKIP` (if `-WithVirtioSnd` / `--with-virtio-snd` is set, it must be `PASS`)
     - `AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS`
 
 ### Why `x-pci-revision=0x01`?

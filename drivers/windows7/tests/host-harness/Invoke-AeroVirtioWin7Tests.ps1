@@ -53,8 +53,9 @@ param(
   [string]$HttpPath = "/aero-virtio-selftest",
 
   # If set, attach a virtio-snd device (virtio-sound-pci / virtio-snd-pci).
-  # Note: the guest selftest always emits a virtio-snd marker, but will report SKIP if the virtio-snd
-  # PCI device is missing. When -WithVirtioSnd is enabled, the harness requires virtio-snd to PASS.
+  # Note: the guest selftest always emits virtio-snd markers (playback + capture), but will report SKIP if the
+  # virtio-snd PCI device is missing or the test was disabled. When -WithVirtioSnd is enabled, the harness
+  # requires both virtio-snd and virtio-snd-capture to PASS.
   [Parameter(Mandatory = $false)]
   [Alias("EnableVirtioSnd")]
   [switch]$WithVirtioSnd,
@@ -303,8 +304,8 @@ function Wait-AeroSelftestResult {
             return @{ Result = "MISSING_VIRTIO_INPUT"; Tail = $tail }
           }
 
-          # Also ensure the virtio-snd marker is present, so older selftest binaries that predate
-          # virtio-snd testing cannot accidentally pass.
+          # Also ensure the virtio-snd markers are present (playback + capture), so older selftest binaries
+          # that predate virtio-snd testing cannot accidentally pass.
           if ($sawVirtioSndFail) {
             return @{ Result = "FAIL"; Tail = $tail }
           }

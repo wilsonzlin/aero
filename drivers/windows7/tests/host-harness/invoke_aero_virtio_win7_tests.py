@@ -28,9 +28,11 @@ It:
 - launches QEMU with virtio-blk + virtio-net + virtio-input (and optionally virtio-snd) and COM1 redirected to a log file
   - in transitional mode virtio-input is skipped (with a warning) if QEMU does not advertise virtio-keyboard-pci/virtio-mouse-pci
 - captures QEMU stderr to `<serial-base>.qemu.stderr.log` (next to the serial log) for debugging early exits
-- tails the serial log until it sees AERO_VIRTIO_SELFTEST|RESULT|PASS/FAIL
-  - in default (non-transitional) mode, a PASS result also requires per-test markers for virtio-blk, virtio-input,
-    virtio-snd (PASS or SKIP), and virtio-net so older selftest binaries cannot accidentally pass
+ - tails the serial log until it sees AERO_VIRTIO_SELFTEST|RESULT|PASS/FAIL
+   - in default (non-transitional) mode, a PASS result also requires per-test markers for virtio-blk, virtio-input,
+     virtio-snd (PASS or SKIP), virtio-snd-capture (PASS or SKIP), and virtio-net so older selftest binaries cannot
+     accidentally pass
+   - when --with-virtio-snd is enabled, virtio-snd and virtio-snd-capture must PASS (not SKIP)
 """
 
 from __future__ import annotations
@@ -315,7 +317,7 @@ def main() -> int:
         action="store_true",
         help=(
             "Attach a virtio-snd device (virtio-sound-pci). When enabled, the harness requires the guest virtio-snd "
-            "selftest to PASS (not SKIP)."
+            "selftests (playback + capture) to PASS (not SKIP)."
         ),
     )
     parser.add_argument(
@@ -719,11 +721,27 @@ def main() -> int:
                                     result_code = 1
                                     break
                             else:
-                                # Even when virtio-snd isn't attached, require the marker so older selftest binaries
-                                # (that predate virtio-snd testing) cannot accidentally pass.
+                                # Even when virtio-snd isn't attached, require the markers so older selftest binaries
+                                # (that predate virtio-snd playback/capture coverage) cannot accidentally pass.
                                 if not (saw_virtio_snd_pass or saw_virtio_snd_skip):
                                     print(
                                         "FAIL: selftest RESULT=PASS but did not emit virtio-snd test marker",
+                                        file=sys.stderr,
+                                    )
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
+                                if saw_virtio_snd_capture_fail:
+                                    print(
+                                        "FAIL: selftest RESULT=PASS but virtio-snd-capture test reported FAIL",
+                                        file=sys.stderr,
+                                    )
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
+                                if not (saw_virtio_snd_capture_pass or saw_virtio_snd_capture_skip):
+                                    print(
+                                        "FAIL: selftest RESULT=PASS but did not emit virtio-snd-capture test marker",
                                         file=sys.stderr,
                                     )
                                     _print_tail(serial_log)

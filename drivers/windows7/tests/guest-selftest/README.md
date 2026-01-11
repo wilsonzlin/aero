@@ -178,3 +178,5 @@ schtasks /Create /F /TN "AeroVirtioSelftest" /SC ONSTART /RU SYSTEM ^
 ```
 
 The host harness expects the tool to run automatically and print a final `AERO_VIRTIO_SELFTEST|RESULT|...` line to COM1.
+When the host harness attaches virtio-snd (`-WithVirtioSnd` / `--with-virtio-snd`), it also expects both
+`AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS` and `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|PASS` (not `SKIP`).
