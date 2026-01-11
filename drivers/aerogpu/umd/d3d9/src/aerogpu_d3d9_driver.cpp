@@ -1933,6 +1933,11 @@ struct has_pfnPresentCb : std::false_type {};
 template <typename T>
 struct has_pfnPresentCb<T, std::void_t<decltype(std::declval<T>().pfnPresentCb)>> : std::true_type {};
 
+template <typename T, typename = void>
+struct has_pfnSubmitCommandCb : std::false_type {};
+template <typename T>
+struct has_pfnSubmitCommandCb<T, std::void_t<decltype(std::declval<T>().pfnSubmitCommandCb)>> : std::true_type {};
+
 template <typename Fn>
 struct fn_first_param;
 
@@ -2132,15 +2137,12 @@ void fill_submit_args(ArgsT& args, Device* dev, uint32_t command_length_bytes, b
     args.pPatchLocationList = patch_list_available ? dev->wddm_context.pPatchLocationList : nullptr;
   }
   if constexpr (has_member_PatchLocationListSize<ArgsT>::value) {
-    if (patch_list_available) {
-      if constexpr (has_member_NumPatchLocations<ArgsT>::value) {
-        args.PatchLocationListSize = dev->wddm_context.PatchLocationListSize;
-      } else {
-        args.PatchLocationListSize = dev->wddm_context.patch_location_entries_used;
-      }
-    } else {
-      args.PatchLocationListSize = 0;
-    }
+    // AeroGPU intentionally submits with an empty patch-location list. Some WDK
+    // vintages interpret PatchLocationListSize as the number of patch locations
+    // (used), while others split capacity vs. used across
+    // {PatchLocationListSize, NumPatchLocations}. To avoid ambiguity, always
+    // pass the used count here (0 for AeroGPU).
+    args.PatchLocationListSize = patch_list_available ? dev->wddm_context.patch_location_entries_used : 0;
   }
   if constexpr (has_member_NumPatchLocations<ArgsT>::value) {
     args.NumPatchLocations = patch_list_available ? dev->wddm_context.patch_location_entries_used : 0;
@@ -2437,11 +2439,22 @@ uint64_t submit(Device* dev, bool is_present) {
 
       HRESULT submit_hr = E_NOTIMPL;
       const uint32_t cmd_len = static_cast<uint32_t>(cmd_bytes);
-      bool tried_present_cb = false;
-      if (is_present) {
+      // Win7-era D3D9 runtimes commonly wire submissions through
+      // `pfnSubmitCommandCb` (D3DDDIARG_SUBMITCOMMAND). Newer header vintages (or
+      // other APIs) may instead use Render/Present callbacks. Try
+      // SubmitCommandCb first so we reliably reach the KMD's
+      // DxgkDdiSubmitCommand path and obtain a per-submission SubmissionFenceId.
+      if constexpr (has_pfnSubmitCommandCb<WddmDeviceCallbacks>::value) {
+        if (dev->wddm_callbacks.pfnSubmitCommandCb) {
+          submission_fence = 0;
+          submit_hr = invoke_submit_callback(dev, dev->wddm_callbacks.pfnSubmitCommandCb, cmd_len, /*is_present=*/is_present,
+                                             &submission_fence);
+        }
+      }
+
+      if (!SUCCEEDED(submit_hr)) {
         if constexpr (has_pfnPresentCb<WddmDeviceCallbacks>::value) {
-          if (dev->wddm_callbacks.pfnPresentCb) {
-            tried_present_cb = true;
+          if (is_present && dev->wddm_callbacks.pfnPresentCb) {
             submission_fence = 0;
             submit_hr = invoke_submit_callback(dev, dev->wddm_callbacks.pfnPresentCb, cmd_len, /*is_present=*/true,
                                                &submission_fence);
@@ -2449,9 +2462,7 @@ uint64_t submit(Device* dev, bool is_present) {
         }
       }
 
-      // If no PresentCb is available, route present-like submissions through
-      // RenderCb as a fallback.
-      if (!is_present || !tried_present_cb) {
+      if (!SUCCEEDED(submit_hr)) {
         if constexpr (has_pfnRenderCb<WddmDeviceCallbacks>::value) {
           if (dev->wddm_callbacks.pfnRenderCb) {
             submission_fence = 0;
