@@ -20,6 +20,8 @@ WORKDIR /repo
 # Copy package manifests first to maximize layer caching.
 COPY package.json package-lock.json ./
 COPY backend/aero-gateway/package.json backend/aero-gateway/package.json
+COPY .nvmrc .nvmrc
+COPY scripts/check-node-version.mjs scripts/check-node-version.mjs
 
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 
