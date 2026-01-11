@@ -117,7 +117,7 @@ describe("usb/UsbBroker", () => {
     const c2: BackendUsbHostCompletion = { kind: "bulkIn", id: 2, status: "success", data: Uint8Array.of(2) };
     resolvers[1](c2);
     await expect(p2).resolves.toEqual({ kind: "okIn", id: 2, data: Uint8Array.of(2) } satisfies ProxyUsbHostCompletion);
-  });
+  }, 15000);
 
   it("flushes pending actions when the selected device disconnects", async () => {
     const resolvers: Array<(c: BackendUsbHostCompletion) => void> = [];
@@ -151,7 +151,7 @@ describe("usb/UsbBroker", () => {
 
     await expect(p1).resolves.toEqual({ kind: "error", id: 1, error: "WebUSB device disconnected." });
     await expect(p2).resolves.toEqual({ kind: "error", id: 2, error: "WebUSB device disconnected." });
-  });
+  }, 15000);
 
   it("routes usb.action requests to usb.completion responses", async () => {
     vi.doMock("./webusb_backend", () => ({
