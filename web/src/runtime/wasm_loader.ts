@@ -71,7 +71,11 @@ export interface WasmApi {
      * Note: This is optional for older WASM builds.
      */
     UsbPassthroughBridge?: new () => {
-        drain_actions(): UsbHostAction[];
+        /**
+         * Drains queued host actions. Returns `null` when there are no pending
+         * actions (to keep worker-side polling allocation-free when idle).
+         */
+        drain_actions(): UsbHostAction[] | null;
         push_completion(completion: UsbHostCompletion): void;
         reset(): void;
         pending_summary(): {

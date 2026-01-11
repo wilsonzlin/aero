@@ -172,6 +172,20 @@ describe("usb/WebUsbPassthroughRuntime", () => {
     expect(drain_actions).toHaveBeenCalledTimes(1);
   });
 
+  it("treats null/undefined drain_actions() as \"no work\" (idle polling fast path)", async () => {
+    const port = new FakePort();
+    const bridge: UsbPassthroughBridgeLike = {
+      drain_actions: vi.fn(() => null),
+      push_completion: vi.fn(),
+      reset: vi.fn(),
+      free: vi.fn(),
+    };
+
+    const runtime = new WebUsbPassthroughRuntime({ bridge, port: port as unknown as MessagePort, pollIntervalMs: 0 });
+    await runtime.pollOnce();
+    expect(port.posted).toEqual([]);
+  });
+
   it("normalizes BigInt ids emitted by WASM into Number ids for the broker protocol", async () => {
     const port = new FakePort();
 
