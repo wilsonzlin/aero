@@ -326,6 +326,17 @@ reports):
 - `logicalMinimum` MUST be `<= logicalMaximum`.
 - `physicalMinimum` MUST be `<= physicalMaximum`.
 
+### Numeric type bounds (JSON schema)
+
+The normalized WebHID JSON contract is consumed by Rust (`crates/aero-usb`) and therefore must fit
+in the Rust value types:
+
+- All unsigned numeric fields (`u32`) MUST be integers in `0..=4294967295`:
+  - `usagePage`, `usage`, `usageMinimum`, `usageMaximum`, `unit`
+  - all entries of `usages`, `strings`, `designators`
+- All signed numeric fields (`i32`) MUST be integers in `-2147483648..=2147483647`:
+  - `logicalMinimum`, `logicalMaximum`, `physicalMinimum`, `physicalMaximum`
+
 ### Collection tree bounds
 
 - Collection nesting depth MUST be <= 32.

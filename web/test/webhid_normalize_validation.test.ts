@@ -65,6 +65,20 @@ test("normalizeCollections(validate): rejects mixed reportIds", () => {
   });
 });
 
+test("normalizeCollections(validate): rejects non-u32 collection usagePage with a path", () => {
+  const collections: HidCollectionInfo[] = [
+    {
+      ...baseCollection(),
+      usagePage: -1,
+      inputReports: [{ reportId: 0, items: [BASE_ITEM] }],
+    },
+  ];
+
+  assert.throws(() => normalizeCollections(collections, { validate: true }), {
+    message: /usagePage.*collections\[0\]/,
+  });
+});
+
 test("normalizeCollections(validate): rejects isRange items with usages out of order", () => {
   // Use a huge `usages` list so the normalizer does not attempt to derive
   // usageMinimum/Maximum from it (bounded by MAX_RANGE_CONTIGUITY_CHECK_LEN),
@@ -80,6 +94,38 @@ test("normalizeCollections(validate): rejects isRange items with usages out of o
 
   assert.throws(() => normalizeCollections(collections, { validate: true }), {
     message: /collections\[0\]\.inputReports\[0\]\.items\[0\]/,
+  });
+});
+
+test("normalizeCollections(validate): rejects non-u32 usages values with a path", () => {
+  const badItem: HidReportItem = { ...BASE_ITEM, usages: [-1] };
+  const collections: HidCollectionInfo[] = [
+    {
+      ...baseCollection(),
+      inputReports: [{ reportId: 0, items: [badItem] }],
+    },
+  ];
+
+  assert.throws(() => normalizeCollections(collections, { validate: true }), {
+    message: /usages\[0\].*collections\[0\]\.inputReports\[0\]\.items\[0\]/,
+  });
+});
+
+test("normalizeCollections(validate): rejects logicalMinimum outside i32 with a path", () => {
+  const collections: HidCollectionInfo[] = [
+    {
+      ...baseCollection(),
+      inputReports: [
+        {
+          reportId: 0,
+          items: [{ ...BASE_ITEM, logicalMinimum: 2147483648, logicalMaximum: 2147483648 }],
+        },
+      ],
+    },
+  ];
+
+  assert.throws(() => normalizeCollections(collections, { validate: true }), {
+    message: /logicalMinimum.*collections\[0\]\.inputReports\[0\]\.items\[0\]/,
   });
 });
 

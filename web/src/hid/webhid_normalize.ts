@@ -111,6 +111,9 @@ const MAX_COLLECTION_DEPTH = 32;
 const MAX_REPORT_SIZE_BITS = 255;
 const MAX_REPORT_COUNT = 65_535;
 const MAX_U32 = 0xffff_ffffn;
+const MAX_U32_NUM = 0xffff_ffff;
+const MIN_I32 = -0x8000_0000;
+const MAX_I32 = 0x7fff_ffff;
 
 type Path = string[];
 
@@ -120,6 +123,32 @@ function pathToString(path: Path): string {
 
 function err(path: Path, message: string): Error {
   return new Error(`${message} (at ${pathToString(path)})`);
+}
+
+function validateU32(value: unknown, name: string, path: Path): void {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0 || value > MAX_U32_NUM) {
+    throw err(path, `${name} must be an integer in [0, ${MAX_U32_NUM}] (got ${String(value)})`);
+  }
+}
+
+function validateI32(value: unknown, name: string, path: Path): void {
+  if (
+    typeof value !== "number" ||
+    !Number.isSafeInteger(value) ||
+    value < MIN_I32 ||
+    value > MAX_I32
+  ) {
+    throw err(path, `${name} must be an integer in [${MIN_I32}, ${MAX_I32}] (got ${String(value)})`);
+  }
+}
+
+function validateU32Array(values: unknown, name: string, path: Path): void {
+  if (!Array.isArray(values)) {
+    throw err(path, `${name} must be an array (got ${String(values)})`);
+  }
+  for (let i = 0; i < values.length; i++) {
+    validateU32(values[i], `${name}[${i}]`, path);
+  }
 }
 
 function normalizeCollectionType(type: HidCollectionTypeLike, path: Path): HidCollectionTypeCode {
@@ -380,6 +409,9 @@ function validateCollections(collections: readonly NormalizedHidCollectionInfo[]
   const reportBits = new Map<string, bigint>();
 
   const visitCollection = (collection: NormalizedHidCollectionInfo, path: Path): void => {
+    validateU32(collection.usagePage, "usagePage", path);
+    validateU32(collection.usage, "usage", path);
+
     const visitReportList = (
       reports: readonly NormalizedHidReportInfo[],
       listName: "inputReports" | "outputReports" | "featureReports",
@@ -399,6 +431,22 @@ function validateCollections(collections: readonly NormalizedHidCollectionInfo[]
         for (let itemIdx = 0; itemIdx < report.items.length; itemIdx++) {
           const item = report.items[itemIdx];
           const itemPath = [...reportPath, `items[${itemIdx}]`];
+
+          validateU32(item.usagePage, "usagePage", itemPath);
+          validateU32Array(item.usages, "usages", itemPath);
+          validateU32(item.usageMinimum, "usageMinimum", itemPath);
+          validateU32(item.usageMaximum, "usageMaximum", itemPath);
+          validateU32Array(item.strings, "strings", itemPath);
+          validateU32(item.stringMinimum, "stringMinimum", itemPath);
+          validateU32(item.stringMaximum, "stringMaximum", itemPath);
+          validateU32Array(item.designators, "designators", itemPath);
+          validateU32(item.designatorMinimum, "designatorMinimum", itemPath);
+          validateU32(item.designatorMaximum, "designatorMaximum", itemPath);
+          validateU32(item.unit, "unit", itemPath);
+          validateI32(item.logicalMinimum, "logicalMinimum", itemPath);
+          validateI32(item.logicalMaximum, "logicalMaximum", itemPath);
+          validateI32(item.physicalMinimum, "physicalMinimum", itemPath);
+          validateI32(item.physicalMaximum, "physicalMaximum", itemPath);
 
           if (
             !Number.isSafeInteger(item.reportSize) ||
