@@ -240,9 +240,12 @@ Security model requirement for Aero:
 
 Revocation:
 
-- There is no portable JS API to revoke permission.
-- The user must revoke via browser UI (site settings / device permissions).
-  The app should provide a help link/instructions in its settings panel.
+- There is no **portable** JS API to revoke permission across browsers.
+- Some Chromium builds expose `HIDDevice.forget()` / `USBDevice.forget()` which can
+  revoke the permission in-app when available.
+- Otherwise, the user must revoke via browser UI (site settings / device permissions).
+  The app should provide a help link/instructions in its settings panel and keep
+  the fallback UX available even when `forget()` is supported.
 
 ### Explicit warnings and safer defaults
 
