@@ -475,7 +475,7 @@ In this deploy stack, `/l2` uses the same cookie-backed gateway session as `/tcp
   - CLI clients must provide `Cookie: aero_session=...` on the WebSocket upgrade.
 
 For non-browser clients / internal bridges, you can switch to token-based auth
-(`AERO_L2_AUTH_MODE=api_key|jwt`) or accept either a cookie or JWT (`AERO_L2_AUTH_MODE=cookie_or_jwt`).
+(`AERO_L2_AUTH_MODE=api_key|jwt`) or accept either a cookie or a token/JWT (`AERO_L2_AUTH_MODE=cookie_or_jwt|cookie_or_api_key`).
 Credentials can be provided via:
 
 - Query params: `?token=<value>` (or `?apiKey=<value>` for API-key auth)

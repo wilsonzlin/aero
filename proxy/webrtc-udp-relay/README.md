@@ -251,7 +251,7 @@ must satisfy the proxy's Origin allowlist and auth policy:
   - Use `L2_BACKEND_ORIGIN` to pin a specific Origin value (must be in the backend allowlist).
 - **Auth:** if the backend uses gateway session cookies (`AERO_L2_AUTH_MODE=cookie`), enable
   `L2_BACKEND_FORWARD_AERO_SESSION=1` so the relay forwards `Cookie: aero_session=<...>` extracted
-  from the signaling request. Otherwise, use token/JWT auth (`AERO_L2_AUTH_MODE=api_key|jwt|cookie_or_jwt`)
+  from the signaling request. Otherwise, use token/JWT auth (`AERO_L2_AUTH_MODE=api_key|jwt|cookie_or_jwt|cookie_or_api_key`)
   and configure `L2_BACKEND_TOKEN` and/or `L2_BACKEND_AUTH_FORWARD_MODE`.
 
 #### Docker / docker-compose

@@ -118,7 +118,7 @@ Backend `Origin` handling (relevant for `crates/aero-l2-proxy` Origin allowlists
     unless overridden by `L2_BACKEND_ORIGIN`/`L2_BACKEND_ORIGIN_OVERRIDE`.
 
 Backend token authentication (relevant for `crates/aero-l2-proxy`
-`AERO_L2_AUTH_MODE=api_key|jwt|cookie_or_jwt`):
+`AERO_L2_AUTH_MODE=api_key|jwt|cookie_or_jwt|cookie_or_api_key`):
 
 - `L2_BACKEND_TOKEN` (optional): If set, the relay offers an additional WebSocket
   subprotocol `aero-l2-token.<token>` alongside the required `aero-l2-tunnel-v1`
