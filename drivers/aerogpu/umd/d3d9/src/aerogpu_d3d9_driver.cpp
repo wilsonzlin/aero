@@ -1444,8 +1444,11 @@ HRESULT convert_xyzrhw_to_clipspace_locked(
     const float rhw = read_f32_unaligned(src + 12);
 
     const float w = (rhw != 0.0f) ? (1.0f / rhw) : 1.0f;
-    const float ndc_x = ((x - vp_x) / vp_w) * 2.0f - 1.0f;
-    const float ndc_y = 1.0f - ((y - vp_y) / vp_h) * 2.0f;
+    // D3D9's viewport transform uses a -0.5 pixel center convention. Invert it
+    // so typical D3D9 pre-transformed vertex coordinates line up with pixel
+    // centers.
+    const float ndc_x = ((x + 0.5f - vp_x) / vp_w) * 2.0f - 1.0f;
+    const float ndc_y = 1.0f - ((y + 0.5f - vp_y) / vp_h) * 2.0f;
     const float ndc_z = z;
 
     write_f32_unaligned(dst + 0, ndc_x * w);
@@ -4443,6 +4446,20 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive(
       return E_OUTOFMEMORY;
     }
 
+    // Ensure the command buffer has space before we track allocations; tracking
+    // may force a submission split, and command-buffer splits must not occur
+    // after tracking or the allocation list would be out of sync.
+    if (!ensure_cmd_space(dev, align_up(sizeof(aerogpu_cmd_draw), 4))) {
+      (void)emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes);
+      return E_OUTOFMEMORY;
+    }
+
+    hr = track_draw_state_locked(dev);
+    if (FAILED(hr)) {
+      (void)emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes);
+      return hr;
+    }
+
     auto* cmd = append_fixed_locked<aerogpu_cmd_draw>(dev, AEROGPU_CMD_DRAW);
     if (!cmd) {
       (void)emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes);
@@ -4549,6 +4566,20 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive_up(
   if (!emit_set_topology_locked(dev, topology)) {
     (void)emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes);
     return E_OUTOFMEMORY;
+  }
+
+  // Ensure the command buffer has space before we track allocations; tracking
+  // may force a submission split, and command-buffer splits must not occur
+  // after tracking or the allocation list would be out of sync.
+  if (!ensure_cmd_space(dev, align_up(sizeof(aerogpu_cmd_draw), 4))) {
+    (void)emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes);
+    return E_OUTOFMEMORY;
+  }
+
+  hr = track_draw_state_locked(dev);
+  if (FAILED(hr)) {
+    (void)emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes);
+    return hr;
   }
 
   auto* cmd = append_fixed_locked<aerogpu_cmd_draw>(dev, AEROGPU_CMD_DRAW);
@@ -4691,6 +4722,22 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
     if (!emit_set_topology_locked(dev, topology)) {
       (void)emit_set_stream_source_locked(dev, 0, saved_stream.vb, saved_stream.offset_bytes, saved_stream.stride_bytes);
       return E_OUTOFMEMORY;
+    }
+
+    // Ensure the command buffer has space before we track allocations; tracking
+    // may force a submission split, and command-buffer splits must not occur
+    // after tracking or the allocation list would be out of sync.
+    if (!ensure_cmd_space(dev, align_up(sizeof(aerogpu_cmd_draw), 4))) {
+      (void)emit_set_stream_source_locked(
+          dev, 0, saved_stream.vb, saved_stream.offset_bytes, saved_stream.stride_bytes);
+      return E_OUTOFMEMORY;
+    }
+
+    hr = track_draw_state_locked(dev);
+    if (FAILED(hr)) {
+      (void)emit_set_stream_source_locked(
+          dev, 0, saved_stream.vb, saved_stream.offset_bytes, saved_stream.stride_bytes);
+      return hr;
     }
 
     auto* cmd = append_fixed_locked<aerogpu_cmd_draw>(dev, AEROGPU_CMD_DRAW);
