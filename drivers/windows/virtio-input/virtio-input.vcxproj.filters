@@ -42,6 +42,9 @@
     <ClCompile Include="..\virtio\kmdf\virtio_pci_interrupts.c">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\virtio\common\virtqueue_split.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="src\virtio_statusq.c">
       <Filter>Source Files</Filter>
     </ClCompile>
