@@ -133,8 +133,8 @@ For a disk image or chunk object that never changes once published:
 Ensure:
 
 - `Access-Control-Allow-Methods: GET, HEAD, OPTIONS`
-- `Access-Control-Allow-Headers: Range`
-- `Access-Control-Expose-Headers: Accept-Ranges, Content-Range, Content-Length, ETag`
+- `Access-Control-Allow-Headers: Range, If-Range, If-None-Match, If-Modified-Since, Authorization` (include only what you use)
+- `Access-Control-Expose-Headers: Accept-Ranges, Content-Range, Content-Length, ETag, Last-Modified`
 
 If using S3 as origin, configure the bucket CORS rules accordingly. If using a custom origin, ensure OPTIONS is handled.
 

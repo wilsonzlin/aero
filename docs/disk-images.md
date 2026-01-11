@@ -40,12 +40,22 @@ Browsers will block cross-origin reads unless the server is configured for CORS.
 For a self-contained local setup (MinIO + optional reverse proxy) to validate Range + CORS behavior, see:
 [`infra/local-object-store/README.md`](../infra/local-object-store/README.md).
 
-At minimum, the response should include headers similar to:
+Because `Range` is not a CORS-safelisted request header, cross-origin reads will trigger an `OPTIONS`
+preflight. At minimum, the server should respond with headers similar to:
+
+*Preflight (`OPTIONS`) response*:
 
 ```
 Access-Control-Allow-Origin: https://your-aero-origin.example
-Access-Control-Allow-Headers: Range
-Access-Control-Expose-Headers: Accept-Ranges, Content-Range, Content-Length
+Access-Control-Allow-Methods: GET, HEAD, OPTIONS
+Access-Control-Allow-Headers: Range, If-Range, If-None-Match, If-Modified-Since
+```
+
+*Disk bytes (`GET`/`HEAD`) response*:
+
+```
+Access-Control-Allow-Origin: https://your-aero-origin.example
+Access-Control-Expose-Headers: Accept-Ranges, Content-Range, Content-Length, ETag, Last-Modified
 ```
 
 Notes:
