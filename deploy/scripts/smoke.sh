@@ -1088,10 +1088,9 @@ const crypto = require("node:crypto");
 
 const host = "localhost";
 const port = 443;
-const path = "/l2";
 const expectedProtocol = "aero-l2-tunnel-v1";
 
-function requestSessionCookie() {
+function requestSessionInfo() {
   return new Promise((resolve, reject) => {
     const body = Buffer.from("{}", "utf8");
     const req = https.request(
@@ -1107,6 +1106,12 @@ function requestSessionCookie() {
         },
       },
       (res) => {
+        res.setEncoding("utf8");
+        let bodyText = "";
+        res.on("data", (chunk) => {
+          bodyText += chunk;
+        });
+
         const setCookie = res.headers["set-cookie"];
         if (!setCookie) {
           reject(new Error("missing Set-Cookie from /session"));
@@ -1122,7 +1127,23 @@ function requestSessionCookie() {
           reject(new Error(`unexpected session cookie from /session: ${cookiePair}`));
           return;
         }
-        resolve(cookiePair);
+        res.on("end", () => {
+          let payload;
+          try {
+            payload = JSON.parse(bodyText || "{}");
+          } catch (err) {
+            reject(new Error(`invalid JSON from /session: ${err}`));
+            return;
+          }
+
+          const l2Path = payload?.endpoints?.l2;
+          if (typeof l2Path !== "string" || l2Path.length === 0) {
+            reject(new Error("missing endpoints.l2 in /session response"));
+            return;
+          }
+
+          resolve({ cookiePair, l2Path });
+        });
       },
     );
     req.on("error", reject);
@@ -1130,7 +1151,7 @@ function requestSessionCookie() {
   });
 }
 
-async function checkL2Upgrade(cookiePair) {
+async function checkL2Upgrade(cookiePair, path) {
   const key = crypto.randomBytes(16).toString("base64");
   const req = [
     `GET ${path} HTTP/1.1`,
@@ -1154,7 +1175,7 @@ async function checkL2Upgrade(cookiePair) {
   });
 
   const timeout = setTimeout(() => {
-    console.error("timeout waiting for /l2 upgrade response");
+    console.error(`timeout waiting for ${path} upgrade response`);
     process.exit(1);
   }, 2_000);
 
@@ -1175,18 +1196,18 @@ async function checkL2Upgrade(cookiePair) {
     const lines = headerBlock.split("\r\n");
     const statusLine = lines[0] ?? "";
     if (!statusLine.includes(" 101 ")) {
-      console.error(`unexpected status line from /l2: ${statusLine}`);
+      console.error(`unexpected status line from ${path}: ${statusLine}`);
       process.exit(1);
     }
 
     const protoLine = lines.find((line) => /^sec-websocket-protocol:/i.test(line));
     if (!protoLine) {
-      console.error("missing Sec-WebSocket-Protocol in /l2 upgrade response");
+      console.error(`missing Sec-WebSocket-Protocol in ${path} upgrade response`);
       process.exit(1);
     }
     const proto = protoLine.split(":", 2)[1]?.trim() ?? "";
     if (proto !== expectedProtocol) {
-      console.error(`unexpected subprotocol for /l2 (expected ${expectedProtocol}, got ${proto})`);
+      console.error(`unexpected subprotocol for ${path} (expected ${expectedProtocol}, got ${proto})`);
       process.exit(1);
     }
 
@@ -1195,13 +1216,13 @@ async function checkL2Upgrade(cookiePair) {
 
   socket.on("error", (err) => {
     clearTimeout(timeout);
-    console.error("error waiting for /l2 upgrade response:", err);
+    console.error(`error waiting for ${path} upgrade response:`, err);
     process.exit(1);
   });
 }
 
-requestSessionCookie()
-  .then((cookie) => checkL2Upgrade(cookie))
+requestSessionInfo()
+  .then(({ cookiePair, l2Path }) => checkL2Upgrade(cookiePair, l2Path))
   .catch((err) => {
     console.error("l2 upgrade check failed:", err);
     process.exit(1);
