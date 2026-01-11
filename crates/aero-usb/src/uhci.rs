@@ -32,6 +32,9 @@ const USBSTS_USBINT: u16 = 1 << 0;
 const USBSTS_USBERRINT: u16 = 1 << 1;
 const USBSTS_HC_HALT: u16 = 1 << 5;
 
+/// Bits which are write-1-to-clear in USBSTS.
+const USBSTS_W1C_MASK: u16 = USBSTS_USBINT | USBSTS_USBERRINT;
+
 const USBINTR_TIMEOUT_CRC: u16 = 1 << 0;
 const USBINTR_IOC: u16 = 1 << 2;
 const USBINTR_SHORT_PACKET: u16 = 1 << 3;
@@ -338,8 +341,9 @@ impl UhciController {
             }
             (REG_USBSTS, 2) => {
                 // Write-1-to-clear.
-                self.usbsts &= !value16;
-                if value16 & USBSTS_USBINT != 0 {
+                let w1c = value16 & USBSTS_W1C_MASK;
+                self.usbsts &= !w1c;
+                if w1c & USBSTS_USBINT != 0 {
                     self.usbint_causes = 0;
                 }
                 self.update_irq(irq);
@@ -1423,5 +1427,25 @@ mod tests {
         assert_ne!(ctrl.usbint_causes & USBINT_CAUSE_IOC, 0);
         assert!(irq.raised);
         assert_eq!(irq.last_irq, Some(11));
+    }
+
+    #[test]
+    fn usb_sts_write_one_to_clear_does_not_clear_hchalted() {
+        let io_base = 0x3400;
+        let mut ctrl = UhciController::new(io_base, 11);
+        let mut irq = TestIrq::default();
+
+        // Simulate a halted controller with pending USBINT and USBERRINT bits.
+        ctrl.usbsts = USBSTS_HC_HALT | USBSTS_USBINT | USBSTS_USBERRINT;
+        ctrl.usbint_causes = USBINT_CAUSE_IOC | USBINT_CAUSE_SHORT_PACKET;
+
+        // Many drivers write all-1s to clear W1C bits. This must not clear the HCHALTED bit.
+        ctrl.port_write(io_base + REG_USBSTS, 2, 0xFFFF, &mut irq);
+
+        assert_ne!(ctrl.usbsts & USBSTS_HC_HALT, 0);
+        assert_eq!(ctrl.usbsts & USBSTS_USBINT, 0);
+        assert_eq!(ctrl.usbsts & USBSTS_USBERRINT, 0);
+        assert_eq!(ctrl.usbint_causes, 0);
+        assert!(!irq.raised);
     }
 }
