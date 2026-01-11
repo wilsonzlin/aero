@@ -11,7 +11,7 @@ use aero_virtio::pci::{
     VIRTIO_PCI_CAP_NOTIFY_CFG, VIRTIO_STATUS_ACKNOWLEDGE, VIRTIO_STATUS_DRIVER,
     VIRTIO_STATUS_DRIVER_OK, VIRTIO_STATUS_FEATURES_OK,
 };
-use aero_virtio::queue::{VIRTQ_DESC_F_NEXT, VIRTQ_DESC_F_WRITE};
+use aero_virtio::queue::{VIRTQ_AVAIL_F_NO_INTERRUPT, VIRTQ_DESC_F_NEXT, VIRTQ_DESC_F_WRITE};
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -1004,6 +1004,88 @@ fn virtio_pci_isr_read_acknowledges_and_deasserts_intx() {
         let state = irq_state.borrow();
         assert_eq!(state.raised, 2);
         assert_eq!(state.lowered, 2);
+        assert!(!state.asserted);
+    }
+    assert_eq!(bar_read_u8(&mut dev, caps.isr), 0);
+}
+
+#[test]
+fn virtio_pci_no_interrupt_flag_suppresses_queue_interrupts() {
+    let input = VirtioInput::new(VirtioInputDeviceKind::Keyboard);
+    let (irq, irq_state) = SharedLegacyIrq::new();
+    let mut dev = VirtioPciDevice::new(Box::new(input), Box::new(irq));
+    let caps = parse_caps(&dev);
+    let mut mem = GuestRam::new(0x10000);
+
+    // Standard init and feature negotiation.
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE,
+    );
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
+    );
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 0);
+    let f0 = bar_read_u32(&mut dev, caps.common + 0x04);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 0);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f0);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 1);
+    let f1 = bar_read_u32(&mut dev, caps.common + 0x04);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 1);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f1);
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK,
+    );
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE
+            | VIRTIO_STATUS_DRIVER
+            | VIRTIO_STATUS_FEATURES_OK
+            | VIRTIO_STATUS_DRIVER_OK,
+    );
+
+    // Configure status queue 1.
+    let desc = 0x1000;
+    let avail = 0x2000;
+    let used = 0x3000;
+    bar_write_u16(&mut dev, &mut mem, caps.common + 0x16, 1);
+    bar_write_u64(&mut dev, &mut mem, caps.common + 0x20, desc);
+    bar_write_u64(&mut dev, &mut mem, caps.common + 0x28, avail);
+    bar_write_u64(&mut dev, &mut mem, caps.common + 0x30, used);
+    bar_write_u16(&mut dev, &mut mem, caps.common + 0x1c, 1);
+
+    let buf = 0x4000;
+    mem.write(buf, &[0u8; 4]).unwrap();
+    write_desc(&mut mem, desc, 0, buf, 4, 0, 0);
+
+    // Post the descriptor with NO_INTERRUPT set.
+    write_u16_le(&mut mem, avail, VIRTQ_AVAIL_F_NO_INTERRUPT).unwrap();
+    write_u16_le(&mut mem, avail + 2, 1).unwrap();
+    write_u16_le(&mut mem, avail + 4, 0).unwrap();
+    write_u16_le(&mut mem, used, 0).unwrap();
+    write_u16_le(&mut mem, used + 2, 0).unwrap();
+
+    dev.bar0_write(
+        caps.notify + 1 * u64::from(caps.notify_mult),
+        &1u16.to_le_bytes(),
+        &mut mem,
+    );
+
+    assert_eq!(read_u16_le(&mem, used + 2).unwrap(), 1);
+    {
+        let state = irq_state.borrow();
+        assert_eq!(state.raised, 0);
+        assert_eq!(state.lowered, 0);
         assert!(!state.asserted);
     }
     assert_eq!(bar_read_u8(&mut dev, caps.isr), 0);
