@@ -129,7 +129,14 @@ deprecated_alloc_privdata_header="drivers/aerogpu/protocol/aerogpu_alloc_privdat
 if [[ -f "$deprecated_alloc_privdata_header" ]]; then
   die "$deprecated_alloc_privdata_header is deprecated; use drivers/aerogpu/protocol/aerogpu_wddm_alloc.h instead"
 fi
-if git grep -n "aerogpu_alloc_privdata" -- docs drivers >/dev/null; then
+# Ban any stale references anywhere in the repo (including language mirrors), but
+# exclude this guardrail script and the dedicated share-token contract checker
+# which necessarily reference the banned identifier.
+if git grep -n "aerogpu_alloc_privdata" -- \
+  . \
+  ':(exclude)scripts/ci/check-repo-layout.sh' \
+  ':(exclude)scripts/ci/check-aerogpu-share-token-contract.py' \
+  >/dev/null; then
   die "stale references to aerogpu_alloc_privdata found (use drivers/aerogpu/protocol/aerogpu_wddm_alloc.h instead)"
 fi
 
