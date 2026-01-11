@@ -815,8 +815,19 @@ impl HdaController {
                 let stream = ((offset - REG_SD_BASE) / SD_STRIDE) as usize;
                 let reg = (offset - REG_SD_BASE) % SD_STRIDE;
                 let sd = &self.streams[stream];
+                if reg < SD_REG_LPIB {
+                    let start = (reg - SD_REG_CTL) as usize;
+                    if size > 4 || start.saturating_add(size) > 4 {
+                        return 0;
+                    }
+                    let bytes = sd.ctl.to_le_bytes();
+                    let mut out = 0u64;
+                    for i in 0..size {
+                        out |= (bytes[start + i] as u64) << (8 * i);
+                    }
+                    return out;
+                }
                 match (reg, size) {
-                    (SD_REG_CTL, 4) => sd.ctl as u64,
                     (SD_REG_LPIB, 4) => sd.lpib as u64,
                     (SD_REG_CBL, 4) => sd.cbl as u64,
                     (SD_REG_LVI, 2) => sd.lvi as u64,
@@ -920,18 +931,80 @@ impl HdaController {
             {
                 let stream = ((offset - REG_SD_BASE) / SD_STRIDE) as usize;
                 let reg = (offset - REG_SD_BASE) % SD_STRIDE;
-                let sd = &mut self.streams[stream];
-                match (reg, size) {
-                    (SD_REG_CTL, 4) => {
+                if reg < SD_REG_LPIB {
+                    if reg == SD_REG_CTL + 3 && size == 1 {
+                        // SDSTS is RW1C.
+                        self.clear_stream_status(stream, value as u8);
+                        return;
+                    }
+
+                    if reg == SD_REG_CTL && size == 4 {
+                        // Combined SDnCTL/SDnSTS dword write.
+                        //
+                        // Real hardware exposes SDnSTS as a separate byte register at offset 0x03.
+                        // Some callers may still issue a dword write where the upper byte is used
+                        // as a RW1C clear mask. To keep the model robust, treat the upper byte as
+                        // status clear, then apply the low 24-bit control update.
                         let v = value as u32;
+                        let sts_clear = (v >> 24) as u8;
+                        if sts_clear != 0 {
+                            self.clear_stream_status(stream, sts_clear);
+                        }
+
+                        let sd = &mut self.streams[stream];
                         let prev = sd.ctl;
-                        sd.ctl = v;
-                        if (v & SD_CTL_RST) != 0 && (prev & SD_CTL_RST) == 0 {
+                        let prev_ctl = prev & 0x00ff_ffff;
+                        let status = sd.ctl & 0xff00_0000;
+                        let write_ctl = v & 0x00ff_ffff;
+                        let new_ctl = if write_ctl == 0 && sts_clear != 0 {
+                            // Heuristic: status-only write should not stop the stream.
+                            prev_ctl
+                        } else {
+                            write_ctl
+                        };
+                        sd.ctl = status | new_ctl;
+
+                        if (sd.ctl & SD_CTL_RST) != 0 && (prev & SD_CTL_RST) == 0 {
                             // Stream reset asserted.
                             sd.lpib = 0;
+                            sd.ctl &= 0x00ff_ffff;
+                            self.intsts &= !(1 << stream);
+                            self.recalc_intsts_gis();
                             self.stream_rt[stream].reset(self.output_rate_hz);
+                            self.update_irq_line();
                         }
+                        return;
                     }
+
+                    // We only model writes fully contained in the SDnCTL bytes (0..2). Writes
+                    // touching the SDnSTS byte must use the 1-byte RW1C path above.
+                    let start = (reg - SD_REG_CTL) as usize;
+                    if size > 4 || start.saturating_add(size) > 3 {
+                        return;
+                    }
+
+                    let sd = &mut self.streams[stream];
+                    let mut bytes = sd.ctl.to_le_bytes();
+                    for i in 0..size {
+                        bytes[start + i] = ((value >> (8 * i)) & 0xff) as u8;
+                    }
+                    let prev = sd.ctl;
+                    sd.ctl = u32::from_le_bytes(bytes);
+                    if (sd.ctl & SD_CTL_RST) != 0 && (prev & SD_CTL_RST) == 0 {
+                        // Stream reset asserted.
+                        sd.lpib = 0;
+                        // Clear any latched status/interrupt state for this stream.
+                        sd.ctl &= 0x00ff_ffff;
+                        self.intsts &= !(1 << stream);
+                        self.recalc_intsts_gis();
+                        self.stream_rt[stream].reset(self.output_rate_hz);
+                        self.update_irq_line();
+                    }
+                    return;
+                }
+
+                let sd = &mut self.streams[stream];
+                match (reg, size) {
                     (SD_REG_LPIB, 4) => {
                         // Read-only in hardware.
                     }
@@ -1081,6 +1154,37 @@ impl HdaController {
 
         // Set BCIS in SDSTS (upper byte of SDnCTL in this simplified model).
         self.streams[stream].ctl |= SD_STS_BCIS << 24;
+        self.update_irq_line();
+    }
+
+    fn recalc_intsts_gis(&mut self) {
+        if (self.intsts & (INTSTS_CIS | 0x3fff_ffff)) != 0 {
+            self.intsts |= INTSTS_GIS;
+        } else {
+            self.intsts &= !INTSTS_GIS;
+        }
+    }
+
+    fn clear_stream_status(&mut self, stream: usize, clear: u8) {
+        if clear == 0 {
+            return;
+        }
+
+        let sd = &mut self.streams[stream];
+        let prev = (sd.ctl >> 24) as u8;
+        let new = prev & !clear;
+        if prev == new {
+            return;
+        }
+        sd.ctl = (sd.ctl & 0x00ff_ffff) | ((new as u32) << 24);
+
+        // In hardware, clearing SDSTS.BCIS also clears the corresponding SIS bit in INTSTS.
+        let bcis = SD_STS_BCIS as u8;
+        if (prev & bcis) != 0 && (new & bcis) == 0 {
+            self.intsts &= !(1 << stream);
+        }
+
+        self.recalc_intsts_gis();
         self.update_irq_line();
     }
 
@@ -1330,8 +1434,12 @@ impl HdaController {
 
                 if rt.bdl_offset >= entry.len {
                     rt.bdl_offset = 0;
-                    if entry.ioc && (sd.ctl & SD_CTL_IOCE) != 0 {
-                        fire_ioc = true;
+                    if entry.ioc {
+                        // Latch BCIS regardless of IOCE (IOCE only controls interrupt generation).
+                        sd.ctl |= SD_STS_BCIS << 24;
+                        if (sd.ctl & SD_CTL_IOCE) != 0 {
+                            fire_ioc = true;
+                        }
                     }
                     if rt.bdl_index >= sd.lvi {
                         rt.bdl_index = 0;
@@ -1401,8 +1509,11 @@ impl HdaController {
 
                 if rt.bdl_offset >= entry.len {
                     rt.bdl_offset = 0;
-                    if entry.ioc && (sd.ctl & SD_CTL_IOCE) != 0 {
-                        fire_ioc = true;
+                    if entry.ioc {
+                        sd.ctl |= SD_STS_BCIS << 24;
+                        if (sd.ctl & SD_CTL_IOCE) != 0 {
+                            fire_ioc = true;
+                        }
                     }
                     if rt.bdl_index >= sd.lvi {
                         rt.bdl_index = 0;
