@@ -31,6 +31,10 @@ async function webGpuIsUsable(page: any): Promise<boolean> {
       ]);
     };
 
+    // Some Chromium environments can create an adapter/device but still fail for
+    // real rendering/readback (e.g. `GPUBuffer.mapAsync` aborts). Do a minimal
+    // render+readback to ensure WebGPU is actually usable before running
+    // validation comparisons.
     const adapter = await withTimeout(navigator.gpu.requestAdapter({ powerPreference: "high-performance" }), 1000);
     if (!adapter) return false;
 
@@ -43,12 +47,28 @@ async function webGpuIsUsable(page: any): Promise<boolean> {
       // Ignore: destroy is optional in older implementations.
     }
 
-    return true;
+    try {
+      const canvas = document.createElement("canvas");
+      canvas.width = 8;
+      canvas.height = 8;
+      document.body.appendChild(canvas);
+      const mod = await withTimeout(import("/web/src/gpu/validation-scene.ts"), 2000);
+      if (!mod) return false;
+      const fn = (mod as any).renderGpuColorTestCardAndHash;
+      if (typeof fn !== "function") return false;
+      const ok = await withTimeout(
+        fn(canvas, { backend: "webgpu", width: 8, height: 8, outputColorSpace: "srgb", alphaMode: "opaque" }),
+        2000,
+      );
+      return typeof ok === "string" && ok.length > 0;
+    } catch {
+      return false;
+    }
   });
 }
 
 test.describe("gpu color policy", () => {
-  test("webgpu and webgl2 match (sRGB + opaque)", async ({ page }) => {
+  test("webgpu and webgl2 match (sRGB + opaque) @webgpu", async ({ page }) => {
     test.skip(!(await webGpuIsUsable(page)), "WebGPU is not available/usable in this Playwright environment.");
 
     const common = { width: 128, height: 128, outputColorSpace: "srgb", alphaMode: "opaque" };
@@ -57,7 +77,7 @@ test.describe("gpu color policy", () => {
     expect(webgpu).toBe(webgl2);
   });
 
-  test("webgpu and webgl2 match (linear + opaque)", async ({ page }) => {
+  test("webgpu and webgl2 match (linear + opaque) @webgpu", async ({ page }) => {
     test.skip(!(await webGpuIsUsable(page)), "WebGPU is not available/usable in this Playwright environment.");
 
     const common = { width: 128, height: 128, outputColorSpace: "linear", alphaMode: "opaque" };
