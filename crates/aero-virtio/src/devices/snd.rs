@@ -635,6 +635,11 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
         if payload_bytes % 2 != 0 {
             status = VIRTIO_SND_S_BAD_MSG;
         }
+        // Avoid unbounded host allocations if the guest provides a pathologically large capture
+        // buffer chain (important for native builds; wasm32 naturally constrains this).
+        if status == VIRTIO_SND_S_OK && payload_bytes > 4 * 1024 * 1024 {
+            status = VIRTIO_SND_S_BAD_MSG;
+        }
 
         if resp_desc.len < 8 {
             status = VIRTIO_SND_S_BAD_MSG;
