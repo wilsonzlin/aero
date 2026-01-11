@@ -14,18 +14,20 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdResourceDirtyRange, AerogpuCmdSetBlendState, AerogpuCmdSetConstantBuffers,
     AerogpuCmdSetDepthStencilState, AerogpuCmdSetIndexBuffer, AerogpuCmdSetInputLayout,
     AerogpuCmdSetPrimitiveTopology, AerogpuCmdSetRasterizerState, AerogpuCmdSetRenderState,
-    AerogpuCmdSetRenderTargets, AerogpuCmdSetSamplers, AerogpuCmdSetSamplerState,
+    AerogpuCmdSetRenderTargets, AerogpuCmdSetSamplerState, AerogpuCmdSetSamplers,
     AerogpuCmdSetScissor, AerogpuCmdSetShaderConstantsF, AerogpuCmdSetTexture,
-    AerogpuCmdSetVertexBuffers, AerogpuCmdSetViewport, AerogpuCmdStreamFlags, AerogpuCmdStreamHeader,
-    AerogpuCmdUploadResource, AerogpuCompareFunc, AerogpuConstantBufferBinding, AerogpuCullMode,
-    AerogpuDepthStencilState, AerogpuFillMode, AerogpuIndexFormat, AerogpuInputLayoutBlobHeader,
-    AerogpuInputLayoutElementDxgi, AerogpuPrimitiveTopology, AerogpuRasterizerState, AerogpuShaderStage,
+    AerogpuCmdSetVertexBuffers, AerogpuCmdSetViewport, AerogpuCmdStreamFlags,
+    AerogpuCmdStreamHeader, AerogpuCmdUploadResource, AerogpuCompareFunc,
+    AerogpuConstantBufferBinding, AerogpuCullMode, AerogpuDepthStencilState, AerogpuFillMode,
+    AerogpuIndexFormat, AerogpuInputLayoutBlobHeader, AerogpuInputLayoutElementDxgi,
+    AerogpuPrimitiveTopology, AerogpuRasterizerState, AerogpuShaderStage,
     AerogpuVertexBufferBinding, AEROGPU_CLEAR_COLOR, AEROGPU_CLEAR_DEPTH, AEROGPU_CLEAR_STENCIL,
     AEROGPU_CMD_STREAM_MAGIC, AEROGPU_COPY_FLAG_NONE, AEROGPU_COPY_FLAG_WRITEBACK_DST,
     AEROGPU_INPUT_LAYOUT_BLOB_MAGIC, AEROGPU_INPUT_LAYOUT_BLOB_VERSION, AEROGPU_MAX_RENDER_TARGETS,
     AEROGPU_PRESENT_FLAG_NONE, AEROGPU_PRESENT_FLAG_VSYNC, AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER,
-    AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL, AEROGPU_RESOURCE_USAGE_INDEX_BUFFER, AEROGPU_RESOURCE_USAGE_NONE,
-    AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_SCANOUT, AEROGPU_RESOURCE_USAGE_TEXTURE,
+    AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL, AEROGPU_RESOURCE_USAGE_INDEX_BUFFER,
+    AEROGPU_RESOURCE_USAGE_NONE, AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+    AEROGPU_RESOURCE_USAGE_SCANOUT, AEROGPU_RESOURCE_USAGE_TEXTURE,
     AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
 };
 use aero_protocol::aerogpu::aerogpu_pci::{
@@ -635,7 +637,10 @@ fn rust_layout_matches_c_headers() {
     assert_cmd_size!(AerogpuCmdCreateSampler, "aerogpu_cmd_create_sampler");
     assert_cmd_size!(AerogpuCmdDestroySampler, "aerogpu_cmd_destroy_sampler");
     assert_cmd_size!(AerogpuCmdSetSamplers, "aerogpu_cmd_set_samplers");
-    assert_size!(AerogpuConstantBufferBinding, "aerogpu_constant_buffer_binding");
+    assert_size!(
+        AerogpuConstantBufferBinding,
+        "aerogpu_constant_buffer_binding"
+    );
     assert_cmd_size!(
         AerogpuCmdSetConstantBuffers,
         "aerogpu_cmd_set_constant_buffers"
