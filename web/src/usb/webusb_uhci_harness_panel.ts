@@ -301,7 +301,7 @@ function readHarnessState(harness: unknown): string {
       try {
         const out = (v as () => unknown)();
         if (typeof out === "string") return out;
-        return JSON.stringify(out);
+        return safeJson(out);
       } catch (err) {
         return `error reading ${key}(): ${err instanceof Error ? err.message : String(err)}`;
       }
