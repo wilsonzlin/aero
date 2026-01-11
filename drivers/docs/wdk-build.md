@@ -12,7 +12,7 @@ High-level steps:
 2. Run `LaunchBuildEnv.cmd` from the EWDK to open a build shell.
 3. Build driver solutions from that shell using `msbuild`.
 
-In-tree Aero driver projects should live under `drivers/wdk/` and can be built via:
+In-tree Aero driver projects (when present) live under `drivers/wdk/` and can be built via:
 
 ```powershell
 .\drivers\wdk\build.ps1
@@ -32,11 +32,25 @@ Windows 7 is WDDM 1.1 and uses older kernel/driver ABI expectations. When buildi
 
 ## AeroGPU (Win7 WDDM) source builds
 
-The in-tree AeroGPU Windows 7 WDDM driver stack has its own build tooling under:
+The in-tree AeroGPU Windows 7 WDDM driver stack lives under `drivers/aerogpu/` (start at `drivers/aerogpu/README.md`).
 
-- `drivers/aerogpu/build/README.md`
+It is built with **WDK10 + MSBuild** (no WDK 7.1 `build.exe` flow). The primary entrypoint is:
 
-It uses **WDK 7.1 BUILD** for the KMD and **MSBuild** for the UMDs.
+- `drivers\aerogpu\aerogpu.sln`
+
+From a WDK/VS developer prompt (or an EWDK `LaunchBuildEnv.cmd` shell):
+
+```powershell
+msbuild .\drivers\aerogpu\aerogpu.sln /m /t:Build /p:Configuration=Release /p:Platform=x64
+msbuild .\drivers\aerogpu\aerogpu.sln /m /t:Build /p:Configuration=Release /p:Platform=Win32
+```
+
+For a fully scripted/reproducible build (matching CI), use the pipeline documented in `docs/16-windows7-driver-build-and-signing.md`:
+
+```powershell
+.\ci\install-wdk.ps1
+.\ci\build-drivers.ps1 -ToolchainJson .\out\toolchain.json -Drivers aerogpu
+```
 
 ## virtio-win source builds
 

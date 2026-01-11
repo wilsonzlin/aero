@@ -192,7 +192,7 @@ The UMD should explicitly *not* advertise features it cannot execute correctly (
  
 This section lists the **minimum DxgkDdi callbacks** we will implement for a working WDDM 1.1 driver on Windows 7, grouped by responsibility.
  
-> **Implementation rule:** The exact prototype and “required vs optional” status must be validated against **WDK 7.1** headers (`d3dkmddi.h` / `dispmprt.h`) during implementation. The list below is the architectural contract we will target.
+> **Implementation rule:** The exact prototype and “required vs optional” status must be validated against the Windows 7 / WDDM 1.1 WDK headers (`d3dkmddi.h` / `dispmprt.h`) from the toolchain we build with. The list below is the architectural contract we will target.
  
 For each entrypoint:
  
@@ -431,7 +431,7 @@ For each entrypoint:
   - lightweight state for debugging/validation
 - **Can be deferred:** Context priority, preemption granularity, virtualization.
  
-#### `DxgkDdiRender` (or `DxgkDdiSubmitCommand` depending on WDK 7.1 DDI)
+#### `DxgkDdiRender` (or `DxgkDdiSubmitCommand` depending on the DDI version)
  
 - **Purpose:** Submit a command buffer plus its referenced allocations to the GPU.
 - **AeroGPU MVP behavior:**
@@ -725,17 +725,26 @@ We will **not** implement these in the first functional driver (they must return
 ## 9. Toolchain / build / signing (Windows 7 SP1)
  
 ### 9.1 Supported build environment
+  
+AeroGPU is built with the **WDK10 + MSBuild** toolchain (Visual Studio / Build Tools). The build entrypoint is:
  
-**KMD (aerogpu.sys):**
-  
-- **WDK:** Windows Driver Kit 7.1 (targets Windows 7 / WDDM 1.1)
-- **Compiler:** VS2008 SP1 or VS2010 toolchain as used by WDK 7.1 build environments
-- **Build system:** WDK `build` (recommended for reproducibility)
-  
-**UMDs (aerogpu_d3d9*.dll, optional aerogpu_d3d10*.dll):**
-  
-- **MSBuild:** Visual Studio Build Tools / Visual Studio (see `drivers/aerogpu/build/README.md` for the exact supported versions)
-- **Build entrypoint:** `drivers\aerogpu\build\build_all.cmd`
+- `drivers\aerogpu\aerogpu.sln`
+
+Recommended (matches CI, pins tool versions): follow `docs/16-windows7-driver-build-and-signing.md`:
+
+```powershell
+.\ci\install-wdk.ps1
+.\ci\build-drivers.ps1 -ToolchainJson .\out\toolchain.json -Drivers aerogpu
+```
+
+Or build the solution directly from a WDK/VS developer prompt (or an EWDK `LaunchBuildEnv.cmd` shell):
+
+```cmd
+msbuild drivers\aerogpu\aerogpu.sln /m /t:Build /p:Configuration=Release /p:Platform=x64
+msbuild drivers\aerogpu\aerogpu.sln /m /t:Build /p:Configuration=Release /p:Platform=Win32
+```
+
+See `drivers/aerogpu/README.md` for driver layout/entrypoints and `docs/16-windows7-driver-build-and-signing.md` for the current packaging/signing workflow.
  
 ### 9.2 Test signing + installation workflow
  
