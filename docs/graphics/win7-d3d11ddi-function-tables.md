@@ -43,6 +43,40 @@ Practical rule:
 
 Do **not** “half-stub” a `void` DDI by silently doing nothing if it is supposed to create/modify state the runtime relies on; that often leads to later GPU hangs or invalid command streams.
 
+### Non-null discipline: stub-fill, then override
+
+For Win7 stability, the simplest pattern is:
+
+1. Build a “fully stubbed” `D3D11DDI_DEVICEFUNCS` / `D3D11DDI_DEVICECONTEXTFUNCS` where **every field is non-null**.
+2. In `pfnCreateDevice`, start from the stub table and overwrite only the functions you’ve implemented.
+
+This is robust against:
+
+* “surprise” runtime calls into rarely-used entrypoints during initialization, and
+* adding fields when you switch `D3D11DDI_INTERFACE_VERSION` (new fields defaulting to NULL is a common crash source).
+
+Pseudocode shape:
+
+```c
+// 1) A stub that matches the failure style of the DDI entrypoint.
+static HRESULT APIENTRY Stub_HRESULT(...) { return E_NOTIMPL; }
+static void APIENTRY Stub_VOID(D3D11DDI_HDEVICE hDevice, ...) {
+  g_DeviceCallbacks.pfnSetErrorCb(hDevice, E_NOTIMPL);
+}
+
+// 2) A fully-populated table (every field assigned).
+static const D3D11DDI_DEVICEFUNCS kStubDeviceFuncs = { /* ...all fields... */ };
+static const D3D11DDI_DEVICECONTEXTFUNCS kStubCtxFuncs = { /* ...all fields... */ };
+
+// 3) In CreateDevice: copy then override.
+*pCreateDevice->pDeviceFuncs = kStubDeviceFuncs;
+*pCreateDevice->pDeviceContextFuncs = kStubCtxFuncs;
+pCreateDevice->pDeviceFuncs->pfnCreateResource = &MyCreateResource;
+pCreateDevice->pDeviceContextFuncs->pfnDraw = &MyDraw;
+```
+
+Don’t overthink the stub implementation: `E_NOTIMPL` + `SetErrorCb(E_NOTIMPL)` is enough as long as it never dereferences invalid handles.
+
 ---
 
 ## 1) Win7 loader flow (what calls what, in what order)
@@ -310,6 +344,12 @@ Resource/CB/sampler binding for FL10_0 pipeline:
 | `pfnSetDepthStencilState` | REQUIRED-BUT-STUBBABLE | Accept + store; if depth unsupported, keep it effectively disabled. |
 | `pfnSetRenderTargets` | REQUIRED | Must bind RTVs/DSV for draws and clears. |
 
+### 5.3.1 State reset / convenience
+
+| Field | Status | Notes / stub guidance |
+|---|---|---|
+| `pfnClearState` | REQUIRED-BUT-STUBBABLE | Many apps call `ID3D11DeviceContext::ClearState`. If stubbed, call `SetErrorCb(E_NOTIMPL)`; better is to reset all cached bindings to defaults. |
+
 ### 5.4 Clears and draws
 
 | Field | Status | Notes / stub guidance |
@@ -331,6 +371,13 @@ Resource/CB/sampler binding for FL10_0 pipeline:
 | `pfnResolveSubresource` | OPTIONAL | Stub until MSAA is implemented. |
 | `pfnGenerateMips` | OPTIONAL | Stub until autogen mips are implemented. |
 
+### 5.5.1 Queries / predication (often unused for bring-up)
+
+| Field | Status | Notes / stub guidance |
+|---|---|---|
+| `pfnBegin` / `pfnEnd` | OPTIONAL | If unimplemented, use `SetErrorCb(E_NOTIMPL)` on non-null queries. |
+| `pfnSetPredication` | OPTIONAL | Stub with `SetErrorCb(E_NOTIMPL)` until queries/predication are implemented. |
+
 ### 5.6 Map/Unmap (dynamic updates + staging readback)
 
 | Field | Status | Notes / stub guidance |
@@ -342,6 +389,7 @@ Special note for Win7 bring-up:
 
 * The tests call `Map(..., D3D11_MAP_READ, 0, ...)` (no `DO_NOT_WAIT`). It is acceptable for Map to block waiting for the copy to complete, but it must be bounded and backed by a real fence (avoid TDRs).
 * If you implement a “submit-on-Flush” backend, make sure `CopyResource + Flush + Map(READ)` results in completed readback data.
+* Some D3D11 DDI interface versions expose additional map-style entrypoints (for example, staging-specific map helpers). If your chosen `D3D11DDI_DEVICECONTEXTFUNCS` struct has them, wire them to the same underlying map/unmap implementation and keep them non-null.
 
 ### 5.7 Flush / submission
 

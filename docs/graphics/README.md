@@ -13,6 +13,7 @@ This directory contains “graphics stack” implementation notes and bring-up c
 
 - `win7-d3d9ex-umd-minimal.md` — minimal D3D9Ex UMD/DDI surface for DWM + basic D3D9 apps.
 - `win7-d3d10-11-umd-minimal.md` — minimal D3D10 + D3D11 UMD/DDI surface (SM4/SM5) plus DXGI swapchain expectations (targeting FL10_0 bring-up, roadmap to FL11_0).
+- `win7-d3d11ddi-function-tables.md` — D3D11 `d3d11umddi.h` function-table checklist for Win7 (which table entries must be non-null vs safely stubbed for FL10_0 bring-up).
 
 ## Strategy / prototypes
 
