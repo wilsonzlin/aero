@@ -7,23 +7,20 @@
 
 namespace {
 
-class TopologyMiniport final : public IMiniportTopology {
+class TopologyMiniport : public IMiniportTopology {
 public:
     explicit TopologyMiniport(_In_opt_ PUNKNOWN OuterUnknown)
         : m_RefCount(1), m_OuterUnknown(OuterUnknown), m_NonDelegatingUnknown(this), m_AdapterUnknown(NULL)
     {
     }
 
-    ~TopologyMiniport() override
+    virtual ~TopologyMiniport()
     {
         if (m_AdapterUnknown != NULL) {
             m_AdapterUnknown->Release();
             m_AdapterUnknown = NULL;
         }
     }
-
-    TopologyMiniport(const TopologyMiniport&) = delete;
-    TopologyMiniport& operator=(const TopologyMiniport&) = delete;
 
     void* operator new(size_t Size, POOL_TYPE PoolType)
     {
@@ -48,7 +45,7 @@ public:
     //
     // IUnknown (delegating). When aggregated, forward to the outer unknown.
     //
-    STDMETHODIMP QueryInterface(_In_ REFIID InterfaceId, _Outptr_ void** Object) override
+    STDMETHODIMP QueryInterface(_In_ REFIID InterfaceId, _Outptr_ void** Object)
     {
         if (m_OuterUnknown != NULL) {
             return m_OuterUnknown->QueryInterface(InterfaceId, Object);
@@ -56,7 +53,7 @@ public:
         return NonDelegatingQueryInterface(InterfaceId, Object);
     }
 
-    STDMETHODIMP_(ULONG) AddRef() override
+    STDMETHODIMP_(ULONG) AddRef()
     {
         if (m_OuterUnknown != NULL) {
             return m_OuterUnknown->AddRef();
@@ -64,7 +61,7 @@ public:
         return NonDelegatingAddRef();
     }
 
-    STDMETHODIMP_(ULONG) Release() override
+    STDMETHODIMP_(ULONG) Release()
     {
         if (m_OuterUnknown != NULL) {
             return m_OuterUnknown->Release();
@@ -79,7 +76,7 @@ public:
     Init(_In_opt_ PUNKNOWN UnknownAdapter,
          _In_opt_ PRESOURCELIST ResourceList,
          _In_ PPORT Port,
-         _Outptr_result_maybenull_ PSERVICEGROUP* ServiceGroup) override
+         _Outptr_result_maybenull_ PSERVICEGROUP* ServiceGroup)
     {
         UNREFERENCED_PARAMETER(ResourceList);
         UNREFERENCED_PARAMETER(Port);
@@ -98,7 +95,7 @@ public:
         return STATUS_SUCCESS;
     }
 
-    STDMETHODIMP_(NTSTATUS) GetDescription(_Out_ PPCFILTER_DESCRIPTOR* OutFilterDescriptor) override;
+    STDMETHODIMP_(NTSTATUS) GetDescription(_Out_ PPCFILTER_DESCRIPTOR* OutFilterDescriptor);
 
     STDMETHODIMP_(NTSTATUS)
     DataRangeIntersection(_In_ ULONG PinId,
@@ -106,7 +103,7 @@ public:
                           _In_ PKSDATARANGE MatchingDataRange,
                           _In_ ULONG OutputBufferLength,
                           _Out_writes_bytes_to_opt_(OutputBufferLength, *ResultantFormatLength) PVOID ResultantFormat,
-                          _Out_ PULONG ResultantFormatLength) override
+                          _Out_ PULONG ResultantFormatLength)
     {
         UNREFERENCED_PARAMETER(PinId);
         UNREFERENCED_PARAMETER(DataRange);
@@ -120,18 +117,18 @@ public:
     }
 
 private:
-    class NonDelegatingUnknown final : public IUnknown {
+    class NonDelegatingUnknown : public IUnknown {
     public:
         explicit NonDelegatingUnknown(_In_ TopologyMiniport* Parent) : m_Parent(Parent) {}
 
-        STDMETHODIMP QueryInterface(_In_ REFIID InterfaceId, _Outptr_ void** Object) override
+        STDMETHODIMP QueryInterface(_In_ REFIID InterfaceId, _Outptr_ void** Object)
         {
             return m_Parent->NonDelegatingQueryInterface(InterfaceId, Object);
         }
 
-        STDMETHODIMP_(ULONG) AddRef() override { return m_Parent->NonDelegatingAddRef(); }
+        STDMETHODIMP_(ULONG) AddRef() { return m_Parent->NonDelegatingAddRef(); }
 
-        STDMETHODIMP_(ULONG) Release() override { return m_Parent->NonDelegatingRelease(); }
+        STDMETHODIMP_(ULONG) Release() { return m_Parent->NonDelegatingRelease(); }
 
     private:
         TopologyMiniport* m_Parent;
@@ -147,14 +144,14 @@ private:
 
         *Object = NULL;
 
-        if (IsEqualGUIDAligned(InterfaceId, IID_IUnknown)) {
+        if (IsEqualGUID(InterfaceId, IID_IUnknown)) {
             *Object = reinterpret_cast<void*>(&m_NonDelegatingUnknown);
             NonDelegatingAddRef();
             return S_OK;
         }
 
-        if (IsEqualGUIDAligned(InterfaceId, IID_IMiniport) ||
-            IsEqualGUIDAligned(InterfaceId, IID_IMiniportTopology)) {
+        if (IsEqualGUID(InterfaceId, IID_IMiniport) ||
+            IsEqualGUID(InterfaceId, IID_IMiniportTopology)) {
             *Object = static_cast<IMiniportTopology*>(this);
             AddRef();
             return S_OK;
@@ -179,6 +176,10 @@ private:
     PUNKNOWN m_OuterUnknown;
     NonDelegatingUnknown m_NonDelegatingUnknown;
     PUNKNOWN m_AdapterUnknown;
+
+    // Non-copyable (C++03 friendly).
+    TopologyMiniport(const TopologyMiniport&);
+    TopologyMiniport& operator=(const TopologyMiniport&);
 };
 
 //
@@ -194,8 +195,8 @@ static const KSPIN_DESCRIPTOR g_TopologyPinDescriptors[] = {
         NULL,
         0,
         NULL,
-        KSPIN_DATAFLOW_OUT,
-        KSPIN_COMMUNICATION_NONE,
+        KSPIN_DATAFLOW_IN,
+        KSPIN_COMMUNICATION_BRIDGE,
         &KSNODETYPE_WAVE_OUT,
         &KSPINNAME_WAVE_OUT
     },
@@ -208,7 +209,7 @@ static const KSPIN_DESCRIPTOR g_TopologyPinDescriptors[] = {
         NULL,
         0,
         NULL,
-        KSPIN_DATAFLOW_IN,
+        KSPIN_DATAFLOW_OUT,
         KSPIN_COMMUNICATION_NONE,
         &KSNODETYPE_SPEAKER,
         &KSPINNAME_SPEAKER
@@ -217,15 +218,15 @@ static const KSPIN_DESCRIPTOR g_TopologyPinDescriptors[] = {
 
 static const PCPIN_DESCRIPTOR g_TopologyPins[] = {
     {
-        0,
-        0,
+        1,
+        1,
         0,
         NULL,
         g_TopologyPinDescriptors[VIRTIO_SND_TOPOLOGY_PIN_WAVE_BRIDGE],
     },
     {
-        0,
-        0,
+        1,
+        1,
         0,
         NULL,
         g_TopologyPinDescriptors[VIRTIO_SND_TOPOLOGY_PIN_SPEAKER],
@@ -236,8 +237,13 @@ static const PCCONNECTION_DESCRIPTOR g_TopologyConnections[] = {
     {KSFILTER_NODE, VIRTIO_SND_TOPOLOGY_PIN_WAVE_BRIDGE, KSFILTER_NODE, VIRTIO_SND_TOPOLOGY_PIN_SPEAKER},
 };
 
+static const GUID* g_TopologyCategories[] = {
+    &KSCATEGORY_AUDIO,
+    &KSCATEGORY_TOPOLOGY,
+};
+
 static const PCFILTER_DESCRIPTOR g_TopologyFilterDescriptor = {
-    0, // Version
+    1, // Version
     NULL, // AutomationTable
     sizeof(PCPIN_DESCRIPTOR),
     RTL_NUMBER_OF(g_TopologyPins),
@@ -248,6 +254,8 @@ static const PCFILTER_DESCRIPTOR g_TopologyFilterDescriptor = {
     sizeof(PCCONNECTION_DESCRIPTOR),
     RTL_NUMBER_OF(g_TopologyConnections),
     g_TopologyConnections,
+    RTL_NUMBER_OF(g_TopologyCategories),
+    g_TopologyCategories,
 };
 
 STDMETHODIMP_(NTSTATUS) TopologyMiniport::GetDescription(_Out_ PPCFILTER_DESCRIPTOR* OutFilterDescriptor)

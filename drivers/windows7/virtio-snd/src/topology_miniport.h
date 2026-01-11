@@ -14,7 +14,7 @@
 // Windows 7 expects for endpoint enumeration and basic KS topology discovery.
 //
 
-enum VIRTIO_SND_TOPOLOGY_PIN : ULONG {
+enum VIRTIO_SND_TOPOLOGY_PIN {
     //
     // Bridge pin that is physically connected to the WaveRT filter's bridge pin
     // via PcRegisterPhysicalConnection (adapter driver).
