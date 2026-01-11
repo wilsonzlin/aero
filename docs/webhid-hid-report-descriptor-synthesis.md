@@ -167,7 +167,7 @@ The synthesis treats these flags as a single `u16` and emits either a 1-byte or 
 - if `flags <= 0xFF`: emit 1 byte
 - otherwise: emit 2 bytes (little-endian)
 
-Implementation note: we reuse the canonical synthesizer in `crates/emulator/src/io/usb/hid/report_descriptor.rs`, which encodes a minimal subset of main-item flags (see below). This is sufficient for the keyboard/mouse descriptors we ship today and for the devices covered by our WebHID fixtures, but it is not a perfect reconstruction of all possible HID main-item flag combinations.
+Implementation note: we reuse the canonical synthesizer in `crates/emulator/src/io/usb/hid/report_descriptor.rs`, which preserves the main-item flags exposed by WebHID (including `hasNull` for hat switches) while following the HID 1.11 bit assignments for each main item kind.
 
 ### Bit layout (LSB = bit 0)
 
@@ -188,24 +188,19 @@ Bits are defined by the HID specification as:
 
 ### Derivation from WebHID booleans
 
-The current synthesis encodes only the subset supported by `report_descriptor.rs`:
+The synthesis preserves the main-item flag booleans exposed by WebHID using the HID 1.11 bit layout:
 
-| WebHID property | HID bit |
-| --- | ---: |
-| `isConstant` | 0 |
-| `isArray` (inverted: `!isArray` means Variable) | 1 |
-| `isAbsolute` (inverted: `!isAbsolute` means Relative) | 2 |
-| `isBufferedBytes` (Input) | 7 |
-| `isVolatile` (Output/Feature) | 7 |
-| `isBufferedBytes` (Output/Feature) | 8 |
-
-The remaining WebHID booleans (`isWrapped`, `isLinear`, `hasPreferredState`, `hasNull`, …) are currently ignored during synthesis.
-
-For `Input` items, the HID specification uses **bit 7** for “Buffered Bytes” instead of volatility; we encode that directly so Input buffered-bytes items synthesize using the spec-canonical 1-byte encoding (`0x81` with bit 7 set in the payload, e.g. `0x81 0x80`).
-
-For `Output`/`Feature` items, the HID specification uses **bit 8** for “Buffered Bytes”; we encode that directly (and thus emit a 2-byte payload when it is set).
-
-For `Output`/`Feature` items, the HID specification uses **bit 7** for “Volatile”; we encode that directly (and the payload remains 1 byte unless bit 8 is also set).
+| WebHID property | HID bit | Notes |
+| --- | ---: | --- |
+| `isConstant` | 0 | `true` sets bit 0 (Constant). |
+| `isArray` | 1 | Inverted (`false` sets bit 1 = Variable). |
+| `isAbsolute` | 2 | Inverted (`false` sets bit 2 = Relative). |
+| `isWrapped` | 3 | `true` sets bit 3 (Wrap). |
+| `isLinear` | 4 | Inverted (`false` sets bit 4 = Non Linear). |
+| `hasPreferredState` | 5 | Inverted (`false` sets bit 5 = No Preferred). |
+| `hasNull` | 6 | `true` sets bit 6 (Null State). |
+| `isVolatile` | 7 (Output/Feature) | Ignored for Input (bit 7 is Buffered Bytes for Input). |
+| `isBufferedBytes` | 7 (Input) / 8 (Output/Feature) | Input uses bit 7; Output/Feature uses bit 8 (requires 2-byte payload). |
 
 ---
 

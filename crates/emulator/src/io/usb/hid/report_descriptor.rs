@@ -5,6 +5,10 @@ use thiserror::Error;
 
 const MAX_EXPANDED_USAGE_RANGE: u32 = 4096;
 
+fn default_true() -> bool {
+    true
+}
+
 /// WebHID-like view of a parsed HID report descriptor.
 ///
 /// This is intentionally a minimal subset that is sufficient for:
@@ -39,8 +43,17 @@ pub struct HidReportItem {
     pub is_array: bool,
     pub is_absolute: bool,
     pub is_buffered_bytes: bool,
+    #[serde(default)]
     pub is_volatile: bool,
     pub is_constant: bool,
+    #[serde(default)]
+    pub is_wrapped: bool,
+    #[serde(default = "default_true")]
+    pub is_linear: bool,
+    #[serde(default = "default_true")]
+    pub has_preferred_state: bool,
+    #[serde(default)]
+    pub has_null: bool,
     pub is_range: bool,
     pub logical_minimum: i32,
     pub logical_maximum: i32,
@@ -302,6 +315,10 @@ pub fn parse_report_descriptor(
                         let is_constant = (flags & (1 << 0)) != 0;
                         let is_array = (flags & (1 << 1)) == 0;
                         let is_absolute = (flags & (1 << 2)) == 0;
+                        let is_wrapped = (flags & (1 << 3)) != 0;
+                        let is_linear = (flags & (1 << 4)) == 0;
+                        let has_preferred_state = (flags & (1 << 5)) == 0;
+                        let has_null = (flags & (1 << 6)) != 0;
                         // HID 1.11:
                         // - Input: bit7 is Bit Field / Buffered Bytes, bit8+ reserved.
                         // - Output/Feature: bit7 is Non Volatile / Volatile, bit8 is Bit Field /
@@ -348,6 +365,10 @@ pub fn parse_report_descriptor(
                             is_buffered_bytes,
                             is_volatile,
                             is_constant,
+                            is_wrapped,
+                            is_linear,
+                            has_preferred_state,
+                            has_null,
                             is_range,
                             logical_minimum: global.logical_minimum,
                             logical_maximum: global.logical_maximum,
@@ -668,6 +689,18 @@ fn synthesize_report(
         if !item.is_absolute {
             flags |= 1 << 2;
         }
+        if item.is_wrapped {
+            flags |= 1 << 3;
+        }
+        if !item.is_linear {
+            flags |= 1 << 4;
+        }
+        if !item.has_preferred_state {
+            flags |= 1 << 5;
+        }
+        if item.has_null {
+            flags |= 1 << 6;
+        }
         match kind {
             // HID 1.11 Input main item uses bit7 for Buffered Bytes and has no Volatile flag.
             ReportKind::Input => {
@@ -693,10 +726,10 @@ fn synthesize_report(
                 emit_item(out, ItemType::Main, main_tag, &[flags as u8])?;
             }
             ReportKind::Output | ReportKind::Feature => {
-                if item.is_buffered_bytes {
-                    emit_item(out, ItemType::Main, main_tag, &flags.to_le_bytes())?;
-                } else {
+                if flags <= u8::MAX as u16 {
                     emit_item(out, ItemType::Main, main_tag, &[flags as u8])?;
+                } else {
+                    emit_item(out, ItemType::Main, main_tag, &flags.to_le_bytes())?;
                 }
             }
         }
@@ -1039,7 +1072,7 @@ pub fn max_feature_report_bytes(collections: &[HidCollectionInfo]) -> u32 {
 mod tests {
     use super::*;
 
-    use crate::io::usb::hid::{keyboard, mouse};
+    use crate::io::usb::hid::{gamepad, keyboard, mouse};
 
     fn roundtrip(desc: &[u8]) {
         let parsed = parse_report_descriptor(desc).unwrap();
@@ -1049,9 +1082,10 @@ mod tests {
     }
 
     #[test]
-    fn roundtrip_keyboard_and_mouse() {
+    fn roundtrip_keyboard_mouse_and_gamepad() {
         roundtrip(&keyboard::HID_REPORT_DESCRIPTOR);
         roundtrip(&mouse::HID_REPORT_DESCRIPTOR);
+        roundtrip(&gamepad::HID_REPORT_DESCRIPTOR);
     }
 
     #[test]
@@ -1071,6 +1105,28 @@ mod tests {
             .collections;
         assert!(!has_report_ids(&collections));
         assert_eq!(max_input_report_bytes(&collections), 4);
+    }
+
+    #[test]
+    fn synth_preserves_hat_switch_null_state_flag() {
+        let parsed = parse_report_descriptor(&gamepad::HID_REPORT_DESCRIPTOR).unwrap();
+        let collection = parsed.collections.first().expect("missing gamepad collection");
+        let report = collection
+            .input_reports
+            .first()
+            .expect("missing gamepad input report");
+        let hat_item = report
+            .items
+            .iter()
+            .find(|item| item.usage_page == 0x01 && item.usages.iter().any(|&u| u == 0x39))
+            .expect("missing hat switch item");
+        assert!(hat_item.has_null, "expected hat switch item to have NullState flag");
+
+        let synthesized = synthesize_report_descriptor(&parsed.collections).unwrap();
+        assert!(
+            synthesized.windows(2).any(|w| w == [0x81, 0x42]),
+            "expected synthesized descriptor to include Input flags with NullState bit (0x81 0x42): {synthesized:02x?}"
+        );
     }
 
     #[test]
@@ -1137,6 +1193,10 @@ mod tests {
                     is_buffered_bytes: false,
                     is_volatile: false,
                     is_constant: false,
+                    is_wrapped: false,
+                    is_linear: true,
+                    has_preferred_state: true,
+                    has_null: false,
                     is_range: false,
                     logical_minimum: 0,
                     logical_maximum: 1,
@@ -1178,6 +1238,10 @@ mod tests {
                     is_buffered_bytes: false,
                     is_volatile: false,
                     is_constant: false,
+                    is_wrapped: false,
+                    is_linear: true,
+                    has_preferred_state: true,
+                    has_null: false,
                     is_range: false,
                     logical_minimum: 0,
                     logical_maximum: 1,
@@ -1223,6 +1287,10 @@ mod tests {
                     is_buffered_bytes: false,
                     is_volatile: false,
                     is_constant: false,
+                    is_wrapped: false,
+                    is_linear: true,
+                    has_preferred_state: true,
+                    has_null: false,
                     is_range: false,
                     logical_minimum: -127,
                     logical_maximum: 127,
@@ -1264,6 +1332,10 @@ mod tests {
                     is_buffered_bytes: false,
                     is_volatile: false,
                     is_constant: false,
+                    is_wrapped: false,
+                    is_linear: true,
+                    has_preferred_state: true,
+                    has_null: false,
                     is_range: false,
                     logical_minimum: 0,
                     logical_maximum: 1,
@@ -1358,6 +1430,10 @@ mod tests {
                     is_buffered_bytes: false,
                     is_volatile: false,
                     is_constant: false,
+                    is_wrapped: false,
+                    is_linear: true,
+                    has_preferred_state: true,
+                    has_null: false,
                     is_range: false,
                     logical_minimum: 0,
                     logical_maximum: 1,
@@ -1398,6 +1474,10 @@ mod tests {
                     is_buffered_bytes: true,
                     is_volatile: false,
                     is_constant: false,
+                    is_wrapped: false,
+                    is_linear: true,
+                    has_preferred_state: true,
+                    has_null: false,
                     is_range: false,
                     logical_minimum: 0,
                     logical_maximum: 0,
@@ -1419,6 +1499,10 @@ mod tests {
                     is_buffered_bytes: true,
                     is_volatile: false,
                     is_constant: false,
+                    is_wrapped: false,
+                    is_linear: true,
+                    has_preferred_state: true,
+                    has_null: false,
                     is_range: false,
                     logical_minimum: 0,
                     logical_maximum: 0,
@@ -1440,6 +1524,10 @@ mod tests {
                     is_buffered_bytes: true,
                     is_volatile: false,
                     is_constant: false,
+                    is_wrapped: false,
+                    is_linear: true,
+                    has_preferred_state: true,
+                    has_null: false,
                     is_range: false,
                     logical_minimum: 0,
                     logical_maximum: 0,
@@ -1634,6 +1722,10 @@ mod tests {
                     is_buffered_bytes: false,
                     is_volatile: false,
                     is_constant: false,
+                    is_wrapped: false,
+                    is_linear: true,
+                    has_preferred_state: true,
+                    has_null: false,
                     is_range: true,
                     logical_minimum: 0,
                     logical_maximum: 1,
@@ -1673,6 +1765,10 @@ mod tests {
                     is_buffered_bytes: false,
                     is_volatile: false,
                     is_constant: false,
+                    is_wrapped: false,
+                    is_linear: true,
+                    has_preferred_state: true,
+                    has_null: false,
                     is_range: true,
                     logical_minimum: 0,
                     logical_maximum: 1,
@@ -1761,6 +1857,10 @@ mod tests {
             is_buffered_bytes: false,
             is_volatile: false,
             is_constant: false,
+            is_wrapped: false,
+            is_linear: true,
+            has_preferred_state: true,
+            has_null: false,
             is_range: false,
             logical_minimum: 0,
             logical_maximum: 0,
@@ -1898,7 +1998,14 @@ mod proptests {
         (
             any::<bool>(),                  // is_array
             any::<bool>(),                  // is_absolute
-            (any::<bool>(), any::<bool>()), // (is_constant, is_buffered_bytes)
+            (
+                any::<bool>(),
+                any::<bool>(),
+                any::<bool>(),
+                any::<bool>(),
+                any::<bool>(),
+                any::<bool>(),
+            ), // (is_constant, is_buffered_bytes, is_wrapped, is_linear, has_preferred_state, has_null)
             is_volatile,
             any::<bool>(), // is_range
             1u32..=32u32,  // report_size
@@ -1913,7 +2020,14 @@ mod proptests {
                 |(
                     is_array,
                     is_absolute,
-                    (is_constant, is_buffered_bytes),
+                    (
+                        is_constant,
+                        is_buffered_bytes,
+                        is_wrapped,
+                        is_linear,
+                        has_preferred_state,
+                        has_null,
+                    ),
                     is_volatile,
                     is_range,
                     report_size,
@@ -1941,6 +2055,10 @@ mod proptests {
                         is_buffered_bytes,
                         is_volatile,
                         is_constant,
+                        is_wrapped,
+                        is_linear,
+                        has_preferred_state,
+                        has_null,
                         is_range,
                         logical_minimum,
                         logical_maximum,
