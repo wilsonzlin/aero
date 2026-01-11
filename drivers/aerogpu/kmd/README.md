@@ -130,6 +130,8 @@ same preserved WDDM allocation private driver data blob as `alloc_id`
 - For **shared allocations**, dxgkrnl preserves the blob and returns the exact same bytes on
   `OpenResource`/`DxgkDdiOpenAllocation` in another process, ensuring both processes observe the
   same `share_token`.
+- The KMD validates the private-data blob (magic/version/alloc_id/share_token) and can store the
+  token in its allocation bookkeeping as needed.
 
 Do **not** derive `share_token` from the numeric value of the D3D shared `HANDLE`: handle values are process-local and not stable cross-process.
 

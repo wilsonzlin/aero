@@ -187,8 +187,9 @@ Define a guest/host sharing model that does **not** attempt to expose host OS ha
 - The D3D9/D3D9Ex API surface uses a user-mode `HANDLE` (`pSharedHandle`) to represent “shared resources”.
   - This value is a normal Windows handle: **process-local**, not stable cross-process, and commonly different in the consumer after `DuplicateHandle`.
   - **AeroGPU does _not_ use the numeric `HANDLE` value as the protocol `share_token`.**
-- In the AeroGPU protocol, `share_token` is a stable 64-bit value persisted in WDDM allocation private driver data (`aerogpu_wddm_alloc_priv.share_token` in `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`).
-  - The guest UMD generates a collision-resistant `share_token` and stores it in the preserved blob for shared allocations.
+- In the AeroGPU protocol, `share_token` is a stable 64-bit value persisted in the preserved WDDM allocation private driver data blob (`aerogpu_wddm_alloc_priv.share_token` in `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`).
+  - The guest UMD generates a collision-resistant `share_token` and stores it in the blob for shared allocations.
+  - dxgkrnl preserves the blob and returns the exact same bytes on cross-process `OpenResource`, so both processes observe the same `share_token`.
   - **Do not** treat the raw Win32 `HANDLE` value itself as a stable cross-process token. The handle is still required for correctness (it is how another process asks Windows to open the shared resource), but it is not a good host-mapping key.
 
 Expected sequence:
@@ -200,7 +201,7 @@ Expected sequence:
 
 2. **Open shared resource → import (token)**
    - Consumer process opens the resource via the OS shared handle mechanism (the handle must already be valid in the consumer process via `DuplicateHandle`/inheritance).
-   - dxgkrnl returns the preserved allocation private driver data bytes on `OpenResource`, so the opening UMD instance recovers the same `share_token`.
+   - dxgkrnl returns the preserved allocation private driver data bytes on `OpenResource`, so the opening UMD instance recovers the same `share_token` (from `aerogpu_wddm_alloc_priv.share_token`).
    - The UMD submits `IMPORT_SHARED_SURFACE { share_token } -> resource_handle` to obtain a host resource alias.
 
 **Key invariant:** `share_token` must be stable across processes inside the guest VM. The preserved allocation private driver data blob (`aerogpu_wddm_alloc_priv.share_token`) is stable; user-mode `HANDLE` numeric values are not.

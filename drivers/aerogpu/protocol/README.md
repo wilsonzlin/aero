@@ -196,7 +196,9 @@ This enables compact command streams that use small IDs instead of repeating GPA
   processes and must not be derived from process-local handle values.
   Canonical contract: the guest UMD generates a collision-resistant `share_token`
   and persists it in the preserved WDDM allocation private driver data blob
-  (`aerogpu_wddm_alloc_priv.share_token`; see `aerogpu_wddm_alloc.h`).
+  (`aerogpu_wddm_alloc_priv.share_token` in `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`).
+  dxgkrnl preserves the blob and returns the exact same bytes on cross-process
+  `OpenResource`, so both processes observe the same `share_token`.
 - The KMD treats `alloc_id` as an **input** (UMD→KMD), validates it, and forwards
   the corresponding GPA/size to the host in `aerogpu_alloc_entry`.
 
