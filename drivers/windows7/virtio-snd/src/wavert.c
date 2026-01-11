@@ -1031,8 +1031,6 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_SetState(_In_ IMiniportW
     periodBytes = stream->PeriodBytes;
     bufferDma = stream->BufferDma.DmaAddr;
     bufferVa = stream->BufferDma.Va;
-
-    stream->State = State;
     KeReleaseSpinLock(&stream->Lock, oldIrql);
 
     /*
@@ -1118,6 +1116,7 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_SetState(_In_ IMiniportW
         stream->QpcFrequency = (ULONGLONG)qpcFreq.QuadPart;
         stream->StartQpc = nowQpcValue;
         stream->StartLinearFrames = stream->FrozenLinearFrames;
+        stream->State = KSSTATE_RUN;
 
         startLinearFrames = stream->StartLinearFrames;
         startOffsetBytes = 0;
@@ -1192,6 +1191,7 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_SetState(_In_ IMiniportW
 
         oldEvent = NULL;
         KeAcquireSpinLock(&stream->Lock, &oldIrql);
+        stream->State = KSSTATE_STOP;
         stream->FrozenLinearFrames = 0;
         stream->FrozenQpc = 0;
         stream->StartQpc = 0;
@@ -1211,6 +1211,10 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_SetState(_In_ IMiniportW
         if (oldEvent != NULL) {
             ObDereferenceObject(oldEvent);
         }
+    } else {
+        KeAcquireSpinLock(&stream->Lock, &oldIrql);
+        stream->State = State;
+        KeReleaseSpinLock(&stream->Lock, oldIrql);
     }
 
     return STATUS_SUCCESS;
