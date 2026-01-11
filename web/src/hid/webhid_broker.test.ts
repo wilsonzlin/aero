@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createIpcBuffer, openRingByKind } from "../ipc/ipc";
+import { RingBuffer } from "../ipc/ring_buffer";
 import { WebHidPassthroughManager } from "../platform/webhid_passthrough";
 import { StatusIndex } from "../runtime/shared_layout";
 import { HidReportRing, HidReportType } from "../usb/hid_report_ring";
@@ -129,12 +130,17 @@ describe("hid/WebHidBroker", () => {
     const port = new FakePort();
     broker.attachWorkerPort(port as unknown as MessagePort);
 
+    const ringInit = port.posted.find((p) => (p.msg as { type?: unknown }).type === "hid.ring.init")?.msg as
+      | { sab: SharedArrayBuffer; offsetBytes: number }
+      | undefined;
+    expect(ringInit).toBeTruthy();
+    const inputReportRing = new RingBuffer(ringInit!.sab, ringInit!.offsetBytes);
+
     const ringAttach = port.posted.find((p) => (p.msg as { type?: unknown }).type === "hid.ringAttach")?.msg as
       | { inputRing: SharedArrayBuffer; outputRing: SharedArrayBuffer }
       | undefined;
     expect(ringAttach).toBeTruthy();
 
-    const inputRing = new HidReportRing(ringAttach!.inputRing);
     const outputRing = new HidReportRing(ringAttach!.outputRing);
 
     const device = new FakeHidDevice();
@@ -145,10 +151,12 @@ describe("hid/WebHidBroker", () => {
     // No per-report postMessage; the input is queued via the SharedArrayBuffer ring.
     expect(port.posted.length).toBe(before);
 
-    const rec = inputRing.pop();
-    expect(rec).not.toBeNull();
-    expect(rec).toMatchObject({ deviceId: id, reportType: HidReportType.Input, reportId: 5 });
-    expect(Array.from(rec!.payload)).toEqual([1, 2, 3]);
+    const payload = inputReportRing.tryPop();
+    expect(payload).toBeTruthy();
+    const decoded = decodeHidInputReportRingRecord(payload!);
+    expect(decoded).toBeTruthy();
+    expect(decoded).toMatchObject({ deviceId: id, reportId: 5 });
+    expect(Array.from(decoded!.data)).toEqual([1, 2, 3]);
 
     // Worker -> main output/feature reports also flow through the ring.
     outputRing.push(id, HidReportType.Output, 7, Uint8Array.of(9));

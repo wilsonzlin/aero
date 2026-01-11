@@ -47,6 +47,7 @@ import {
   isHidDetachMessage,
   isHidInputReportMessage,
   isHidRingAttachMessage,
+  isHidRingInitMessage,
   type HidAttachMessage,
   type HidDetachMessage,
   type HidErrorMessage,
@@ -54,6 +55,7 @@ import {
   type HidLogMessage,
   type HidProxyMessage,
   type HidRingAttachMessage,
+  type HidRingInitMessage,
   type HidSendReportMessage,
 } from "../hid/hid_proxy_protocol";
 import { UhciHidTopologyManager } from "../hid/uhci_hid_topology";
@@ -92,6 +94,7 @@ let eventRing: RingBuffer | null = null;
 let ioCmdRing: RingBuffer | null = null;
 let ioEvtRing: RingBuffer | null = null;
 let hidInRing: RingBuffer | null = null;
+let hidProxyInputRing: RingBuffer | null = null;
 const pendingIoEvents: Uint8Array[] = [];
 
 const DISK_ERROR_NO_ACTIVE_DISK = 1;
@@ -1162,6 +1165,12 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       return;
     }
 
+    if (isHidRingInitMessage(data)) {
+      const msg = data as HidRingInitMessage;
+      hidProxyInputRing = new RingBuffer(msg.sab, msg.offsetBytes);
+      return;
+    }
+
     if (isHidRingAttachMessage(data)) {
       attachHidRings(data);
       return;
@@ -1359,6 +1368,16 @@ function startIoIpcServer(): void {
       const hidRing = hidInRing;
       if (hidRing) {
         const res = drainIoHidInputRing(hidRing, (msg) => hidGuest.inputReport(msg));
+        if (res.forwarded > 0) {
+          Atomics.add(status, StatusIndex.IoHidInputReportCounter, res.forwarded);
+        }
+        if (res.invalid > 0) {
+          Atomics.add(status, StatusIndex.IoHidInputReportDropCounter, res.invalid);
+        }
+      }
+      const proxyRing = hidProxyInputRing;
+      if (proxyRing) {
+        const res = drainIoHidInputRing(proxyRing, (msg) => hidGuest.inputReport(msg));
         if (res.forwarded > 0) {
           Atomics.add(status, StatusIndex.IoHidInputReportCounter, res.forwarded);
         }

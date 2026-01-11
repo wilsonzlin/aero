@@ -1,4 +1,5 @@
 import { WebHidPassthroughManager } from "../platform/webhid_passthrough";
+import { alignUp, RECORD_ALIGN, ringCtrl } from "../ipc/layout";
 import { RingBuffer } from "../ipc/ring_buffer";
 import { StatusIndex } from "../runtime/shared_layout";
 import { normalizeCollections, type NormalizedHidCollectionInfo } from "./webhid_normalize";
@@ -11,6 +12,7 @@ import {
   type HidInputReportMessage,
   type HidProxyMessage,
   type HidRingAttachMessage,
+  type HidRingInitMessage,
   type HidSendReportMessage,
 } from "./hid_proxy_protocol";
 import type { GuestUsbPath } from "../platform/hid_passthrough_protocol";
@@ -32,6 +34,12 @@ export type WebHidLastInputReportInfo = {
   tsMs: number;
   byteLength: number;
 };
+
+export type WebHidInputReportRingStats = Readonly<{
+  enabled: boolean;
+  pushed: number;
+  dropped: number;
+}>;
 
 function computeHasInterruptOut(collections: NormalizedHidCollectionInfo[]): boolean {
   const stack = [...collections];
@@ -62,6 +70,9 @@ export class WebHidBroker {
   #workerPortListener: EventListener | null = null;
 
   #inputReportRing: RingBuffer | null = null;
+  #inputReportRingPushed = 0;
+  #inputReportRingDropped = 0;
+  readonly #inputReportRingCapacityBytes: number;
   #status: Int32Array | null = null;
 
   #nextDeviceId = 1;
@@ -83,8 +94,9 @@ export class WebHidBroker {
   #managerUnsubscribe: (() => void) | null = null;
   #prevManagerAttached = new Set<HIDDevice>();
 
-  constructor(options: { manager?: WebHidPassthroughManager } = {}) {
+  constructor(options: { manager?: WebHidPassthroughManager; inputReportRingCapacityBytes?: number } = {}) {
     this.manager = options.manager ?? new WebHidPassthroughManager();
+    this.#inputReportRingCapacityBytes = options.inputReportRingCapacityBytes ?? 2 * 1024 * 1024;
 
     // Ensure we clean up bridged state when the underlying manager closes a device
     // (e.g., after a physical disconnect).
@@ -136,6 +148,16 @@ export class WebHidBroker {
     }
     this.#inputReportRing = ring;
     this.#status = status;
+    this.#inputReportRingPushed = 0;
+    this.#inputReportRingDropped = 0;
+  }
+
+  getInputReportRingStats(): WebHidInputReportRingStats {
+    return {
+      enabled: this.#inputReportRing !== null,
+      pushed: this.#inputReportRingPushed,
+      dropped: this.#inputReportRingDropped,
+    };
   }
 
   getLastInputReportInfo(device: HIDDevice): WebHidLastInputReportInfo | null {
@@ -179,6 +201,7 @@ export class WebHidBroker {
     // When using addEventListener() MessagePorts need start() to begin dispatch.
     (port as unknown as { start?: () => void }).start?.();
 
+    this.#maybeInitInputReportRing(port);
     this.#attachRings(port);
     this.#emit();
   }
@@ -213,6 +236,7 @@ export class WebHidBroker {
 
     this.#workerPort = null;
     this.#workerPortListener = null;
+    this.#inputReportRing = null;
     this.#emit();
   }
 
@@ -241,6 +265,22 @@ export class WebHidBroker {
     // keep the test runner alive when a broker isn't explicitly destroyed.
     this.#outputRingDrainTimer = setInterval(() => this.#drainOutputRing(), 8);
     (this.#outputRingDrainTimer as unknown as { unref?: () => void }).unref?.();
+  }
+
+  #maybeInitInputReportRing(worker: MessagePort | Worker): void {
+    // If the ring was explicitly configured by the caller, respect that.
+    if (this.#inputReportRing) return;
+    if (!this.#canUseSharedMemory()) return;
+
+    const cap = alignUp(this.#inputReportRingCapacityBytes >>> 0, RECORD_ALIGN);
+    const sab = new SharedArrayBuffer(ringCtrl.BYTES + cap);
+    new Int32Array(sab, 0, ringCtrl.WORDS).set([0, 0, 0, cap]);
+    this.#inputReportRing = new RingBuffer(sab, 0);
+    this.#inputReportRingPushed = 0;
+    this.#inputReportRingDropped = 0;
+
+    const msg: HidRingInitMessage = { type: "hid.ring.init", sab, offsetBytes: 0 };
+    this.#postToWorker(worker, msg);
   }
 
   #detachRings(): void {
@@ -359,9 +399,11 @@ export class WebHidBroker {
           dest.set(src, HID_INPUT_REPORT_RECORD_HEADER_BYTES);
         });
         if (ok) {
+          this.#inputReportRingPushed += 1;
           return;
         }
         // Drop rather than blocking/spinning; this is a best-effort fast path.
+        this.#inputReportRingDropped += 1;
         const status = this.#status;
         if (status) {
           try {
