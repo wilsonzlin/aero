@@ -2,6 +2,7 @@ export type DemoVmWorkerInitRequest = { id: number; type: "init"; ramBytes: numb
 export type DemoVmWorkerRunStepsRequest = { id: number; type: "runSteps"; steps: number };
 export type DemoVmWorkerSnapshotFullToOpfsRequest = { id: number; type: "snapshotFullToOpfs"; path: string };
 export type DemoVmWorkerRestoreFromOpfsRequest = { id: number; type: "restoreFromOpfs"; path: string };
+export type DemoVmWorkerGetSerialStatsRequest = { id: number; type: "getSerialStats" };
 export type DemoVmWorkerGetSerialOutputLenRequest = { id: number; type: "getSerialOutputLen" };
 export type DemoVmWorkerShutdownRequest = { id: number; type: "shutdown" };
 
@@ -10,6 +11,7 @@ export type DemoVmWorkerRequest =
   | DemoVmWorkerRunStepsRequest
   | DemoVmWorkerSnapshotFullToOpfsRequest
   | DemoVmWorkerRestoreFromOpfsRequest
+  | DemoVmWorkerGetSerialStatsRequest
   | DemoVmWorkerGetSerialOutputLenRequest
   | DemoVmWorkerShutdownRequest;
 
@@ -31,6 +33,7 @@ export type DemoVmWorkerInitResult = {
 
 export type DemoVmWorkerStepResult = { steps: number; serialBytes: number | null };
 export type DemoVmWorkerSerialOutputLenResult = { serialBytes: number | null };
+export type DemoVmWorkerSerialStatsResult = { steps: number; serialBytes: number | null };
 
 export function isDemoVmWorkerMessage(value: unknown): value is DemoVmWorkerMessage {
   if (!value || typeof value !== "object") return false;
@@ -41,4 +44,3 @@ export function isDemoVmWorkerMessage(value: unknown): value is DemoVmWorkerMess
     type === "error"
   );
 }
-

@@ -1,42 +1,15 @@
 /// <reference lib="webworker" />
 
 import { initWasmForContext, type WasmApi, type WasmVariant } from "../runtime/wasm_context";
-
-type InitRequest = { id: number; type: "init"; ramBytes: number };
-type RunStepsRequest = { id: number; type: "runSteps"; steps: number };
-type SnapshotFullToOpfsRequest = { id: number; type: "snapshotFullToOpfs"; path: string };
-type RestoreFromOpfsRequest = { id: number; type: "restoreFromOpfs"; path: string };
-type GetSerialStatsRequest = { id: number; type: "getSerialStats" };
-type GetSerialOutputLenRequest = { id: number; type: "getSerialOutputLen" };
-type ShutdownRequest = { id: number; type: "shutdown" };
-
-type WorkerRequest =
-  | InitRequest
-  | RunStepsRequest
-  | SnapshotFullToOpfsRequest
-  | RestoreFromOpfsRequest
-  | GetSerialStatsRequest
-  | GetSerialOutputLenRequest
-  | ShutdownRequest;
-
-type RpcResultOk<T> = { type: "rpcResult"; id: number; ok: true; result: T };
-type RpcResultErr = { type: "rpcResult"; id: number; ok: false; error: string };
-type RpcResult<T> = RpcResultOk<T> | RpcResultErr;
-
-type StatusUpdateMessage = { type: "status"; steps: number; serialBytes: number | null };
-type ErrorMessage = { type: "error"; message: string };
-
-type WorkerToMainMessage =
-  | RpcResult<unknown>
-  | StatusUpdateMessage
-  | ErrorMessage;
-
-type InitResult = {
-  wasmVariant: WasmVariant;
-  syncAccessHandles: boolean;
-  streamingSnapshots: boolean;
-  streamingRestore: boolean;
-};
+import type {
+  DemoVmWorkerInitResult,
+  DemoVmWorkerMessage,
+  DemoVmWorkerRequest,
+  DemoVmWorkerRpcResultErr,
+  DemoVmWorkerSerialOutputLenResult,
+  DemoVmWorkerSerialStatsResult,
+  DemoVmWorkerStepResult,
+} from "./demo_vm_worker_protocol";
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 
@@ -70,7 +43,7 @@ function getSerialOutputLenFromVm(current: InstanceType<WasmApi["DemoVm"]>): num
   }
 }
 
-function post(msg: WorkerToMainMessage): void {
+function post(msg: DemoVmWorkerMessage): void {
   ctx.postMessage(msg);
 }
 
@@ -118,7 +91,7 @@ function startStepLoop(): void {
   }, TICK_MS);
 }
 
-async function handleInit(ramBytes: number): Promise<InitResult> {
+async function handleInit(ramBytes: number): Promise<DemoVmWorkerInitResult> {
   stopStepLoop();
   if (vm) {
     vm.free();
@@ -160,7 +133,7 @@ async function handleInit(ramBytes: number): Promise<InitResult> {
   return { wasmVariant: wasmVariant, syncAccessHandles, streamingSnapshots, streamingRestore };
 }
 
-async function handleRunSteps(steps: number): Promise<{ steps: number; serialBytes: number | null }> {
+async function handleRunSteps(steps: number): Promise<DemoVmWorkerStepResult> {
   const current = ensureVm();
   current.run_steps(steps);
   const maybeLen = getSerialOutputLenFromVm(current);
@@ -176,7 +149,7 @@ async function handleRunSteps(steps: number): Promise<{ steps: number; serialByt
   return state;
 }
 
-async function handleSnapshotFullToOpfs(path: string): Promise<{ serialBytes: number | null }> {
+async function handleSnapshotFullToOpfs(path: string): Promise<DemoVmWorkerSerialOutputLenResult> {
   const current = ensureVm();
 
   const fn = (current as unknown as { snapshot_full_to_opfs?: (path: string) => unknown }).snapshot_full_to_opfs;
@@ -197,7 +170,7 @@ async function handleSnapshotFullToOpfs(path: string): Promise<{ serialBytes: nu
   return { serialBytes: snapshotSerialBytes };
 }
 
-async function handleRestoreFromOpfs(path: string): Promise<{ serialBytes: number | null }> {
+async function handleRestoreFromOpfs(path: string): Promise<DemoVmWorkerSerialOutputLenResult> {
   const current = ensureVm();
 
   const fn = (current as unknown as { restore_snapshot_from_opfs?: (path: string) => unknown }).restore_snapshot_from_opfs;
@@ -228,11 +201,11 @@ async function handleRestoreFromOpfs(path: string): Promise<{ serialBytes: numbe
   return state;
 }
 
-async function handleGetSerialOutputLen(): Promise<{ serialBytes: number | null }> {
+async function handleGetSerialOutputLen(): Promise<DemoVmWorkerSerialOutputLenResult> {
   return { serialBytes };
 }
 
-async function handleGetSerialStats(): Promise<{ steps: number; serialBytes: number | null }> {
+async function handleGetSerialStats(): Promise<DemoVmWorkerSerialStatsResult> {
   return { steps: stepsTotal, serialBytes };
 }
 
@@ -247,7 +220,7 @@ async function handleShutdown(): Promise<void> {
   shouldClose = true;
 }
 
-async function handleRequest(req: WorkerRequest): Promise<unknown> {
+async function handleRequest(req: DemoVmWorkerRequest): Promise<unknown> {
   switch (req.type) {
     case "init":
       return await handleInit(req.ramBytes);
@@ -271,7 +244,7 @@ async function handleRequest(req: WorkerRequest): Promise<unknown> {
 }
 
 ctx.onmessage = (ev: MessageEvent<unknown>) => {
-  const req = ev.data as WorkerRequest;
+  const req = ev.data as DemoVmWorkerRequest;
   if (!req || typeof req !== "object" || typeof (req as { type?: unknown }).type !== "string") {
     postError("Invalid message received by demo VM snapshot worker.");
     return;
@@ -281,10 +254,10 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
     .then(async () => {
       try {
         const result = await handleRequest(req);
-        post({ type: "rpcResult", id: req.id, ok: true, result } satisfies RpcResult<unknown>);
+        post({ type: "rpcResult", id: req.id, ok: true, result } satisfies DemoVmWorkerMessage);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        post({ type: "rpcResult", id: req.id, ok: false, error: message } satisfies RpcResultErr);
+        post({ type: "rpcResult", id: req.id, ok: false, error: message } satisfies DemoVmWorkerRpcResultErr);
         postError(message);
       } finally {
         if (shouldClose) {
