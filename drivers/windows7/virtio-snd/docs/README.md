@@ -26,11 +26,11 @@ Backend:
 - If the transport cannot be started (bring-up/debug), the driver falls back to a **Null backend** (silent; logs write sizes via `DbgPrint` in checked builds).
 
 Virtio transport:
-
+ 
 - Sets up split-ring virtqueues (control/event/tx/rx) using the reusable backend in `virtiosnd_queue_split.c`
   - Note: rxq (capture) is initialized for transport bring-up but capture buffers are not submitted yet.
-- Connects **INTx** and routes used-ring completions to the control/TX protocol engines in a DPC
-- Includes control/TX protocol engines (`virtiosnd_control.c` / `virtiosnd_tx.c`) and thin wrappers (`VirtIoSndHwSendControl` / `VirtIoSndHwSubmitTx`) used by the WaveRT virtio backend.
+- Connects **INTx** and routes used-ring completions to the control/TX/RX protocol engines in a DPC
+- Includes control/TX/RX protocol engines (`virtiosnd_control.c` / `virtiosnd_tx.c` / `virtiosnd_rx.c`) and thin wrappers (`VirtIoSndHwSendControl` / `VirtIoSndHwSubmitTx`) used by the WaveRT virtio backend (render). Capture endpoint plumbing is not implemented yet.
 
 ## Compatibility / Aero contract v1
 
@@ -57,25 +57,27 @@ See: [`docs/windows7-virtio-driver-contract.md`](../../../../docs/windows7-virti
   - [`crates/aero-virtio/tests/virtio_snd.rs`](../../../../crates/aero-virtio/tests/virtio_snd.rs)
 
 ## Protocol implemented (Aero subset)
-
+ 
 This driver targets the **Aero Windows 7 virtio device contract v1** (virtio-snd §3.4).
-The contract (and emulator) define two fixed-format PCM streams, but today the driver
-only exposes/uses **stream 0** (playback/output) for render.
-
+The contract (and emulator) define two fixed-format PCM streams. The driver currently
+only exposes **stream 0** (playback/output) as a Windows render endpoint; capture is not
+yet exposed via PortCls.
+ 
 - Stream 0 (playback/output): 48,000 Hz, stereo (2ch), signed 16-bit little-endian (`S16_LE`)
-- Stream 1 (capture/input): 48,000 Hz, mono (1ch), signed 16-bit little-endian (`S16_LE`) (not yet implemented by this driver)
-
+- Stream 1 (capture/input): 48,000 Hz, mono (1ch), signed 16-bit little-endian (`S16_LE`) (capture endpoint TBD)
+ 
 Basic playback uses `controlq` + `txq`. `rxq` is initialized for transport bring-up but
-capture buffers are not submitted yet.
+capture buffers are not submitted by the current PortCls miniport yet.
 
 All multi-byte fields described below are **little-endian**.
 
 ### Controlq (queue 0) commands supported
 
 The controlq request payload begins with a 32-bit `code` and the response always begins with a 32-bit `status`.
-
-Contract v1 requires these request codes (for both streams 0 and 1). The current
-driver uses them only for **stream 0** (playback):
+ 
+Contract v1 requires these request codes (for both streams 0 and 1). The driver’s
+control engine implements the v1 subset for both streams, but the current PortCls
+integration only drives **stream 0** (playback):
 
 - `VIRTIO_SND_R_PCM_INFO (0x0100)`
 - `VIRTIO_SND_R_PCM_SET_PARAMS (0x0101)`

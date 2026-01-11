@@ -19,12 +19,16 @@ Implemented components (code pointers):
 - Virtio transport + split virtqueues + INTx ISR/DPC routing:
   `src/virtio_pci_modern_wdm.c`, `src/virtiosnd_queue_split.c`,
   `src/virtiosnd_intx.c`, `src/virtiosnd_hw.c`
-- virtio-snd control/TX protocol engines used by the WaveRT virtio backend:
-  `src/virtiosnd_control.c`, `src/virtiosnd_tx.c` (via
-  `VirtIoSndHwSendControl` / `VirtIoSndHwSubmitTx` in `src/virtiosnd_hw.c`)
+- virtio-snd protocol engines (control/TX/RX):
+  `src/virtiosnd_control.c`, `src/virtiosnd_tx.c`, `src/virtiosnd_rx.c`
+  - The current PortCls render endpoint drives control + TX via
+    `VirtIoSndHwSendControl` / `VirtIoSndHwSubmitTx` in `src/virtiosnd_hw.c`.
+  - The RX engine exists for future capture integration (no PortCls capture
+    endpoint yet).
 
-Capture (`rxq`, stream id `1`) is defined by the contract, but the driver does
-not submit capture buffers yet.
+Capture (`rxq`, stream id `1`) is defined by the contract. The driver brings up
+`rxq` and contains an RX streaming engine, but the current PortCls integration is
+render-only and does not submit capture buffers yet.
 
 ## High-level architecture
 
