@@ -7,6 +7,7 @@ use machine::{BlockDevice, CpuExit, CpuState, PhysicalMemory};
 
 pub use snapshot::{SnapshotError, SnapshotOptions};
 
+#[deprecated(note = "This toy VM was used for early firmware tests; use `aero_machine::Machine` (crates/aero-machine) instead")]
 pub struct Vm<D: BlockDevice> {
     pub cpu: CpuState,
     pub mem: PhysicalMemory,

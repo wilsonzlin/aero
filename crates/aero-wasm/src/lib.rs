@@ -948,12 +948,22 @@ impl AeroApi {
     }
 }
 
+// -------------------------------------------------------------------------------------------------
+// Legacy demo VM (snapshotting) API
+// -------------------------------------------------------------------------------------------------
+
+/// Deterministic stub VM used by the snapshot demo panels.
+///
+/// Deprecated in favor of the canonical full-system VM (`Machine`).
 #[wasm_bindgen]
+#[deprecated(note = "DemoVm is a stub VM kept for snapshot demos; use `Machine` (aero_machine::Machine) instead")]
 pub struct DemoVm {
+    #[allow(deprecated)]
     inner: aero_vm::Vm,
 }
 
 #[wasm_bindgen]
+#[allow(deprecated)]
 impl DemoVm {
     #[wasm_bindgen(constructor)]
     pub fn new(ram_size_bytes: u32) -> Self {
@@ -1224,5 +1234,114 @@ impl CpuWorkerDemo {
             let _ = now_ms;
             0
         }
+    }
+}
+
+#[wasm_bindgen]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RunExitKind {
+    Completed,
+    Halted,
+    ResetRequested,
+    Assist,
+    Exception,
+}
+
+#[wasm_bindgen]
+pub struct RunExit {
+    kind: RunExitKind,
+    executed: u32,
+    detail: String,
+}
+
+#[wasm_bindgen]
+impl RunExit {
+    #[wasm_bindgen(getter)]
+    pub fn kind(&self) -> RunExitKind {
+        self.kind
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn executed(&self) -> u32 {
+        self.executed
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn detail(&self) -> String {
+        self.detail.clone()
+    }
+}
+
+impl RunExit {
+    fn from_native(exit: aero_machine::RunExit) -> Self {
+        let executed = exit.executed().min(u64::from(u32::MAX)) as u32;
+        match exit {
+            aero_machine::RunExit::Completed { .. } => Self {
+                kind: RunExitKind::Completed,
+                executed,
+                detail: String::new(),
+            },
+            aero_machine::RunExit::Halted { .. } => Self {
+                kind: RunExitKind::Halted,
+                executed,
+                detail: String::new(),
+            },
+            aero_machine::RunExit::ResetRequested { kind, .. } => Self {
+                kind: RunExitKind::ResetRequested,
+                executed,
+                detail: format!("{kind:?}"),
+            },
+            aero_machine::RunExit::Assist { reason, .. } => Self {
+                kind: RunExitKind::Assist,
+                executed,
+                detail: format!("{reason:?}"),
+            },
+            aero_machine::RunExit::Exception { exception, .. } => Self {
+                kind: RunExitKind::Exception,
+                executed,
+                detail: exception.to_string(),
+            },
+        }
+    }
+}
+
+#[wasm_bindgen]
+pub struct Machine {
+    inner: aero_machine::Machine,
+}
+
+#[wasm_bindgen]
+impl Machine {
+    #[wasm_bindgen(constructor)]
+    pub fn new(ram_size_bytes: u32) -> Result<Self, JsValue> {
+        let cfg = aero_machine::MachineConfig {
+            ram_size_bytes: ram_size_bytes as u64,
+            ..Default::default()
+        };
+        let inner = aero_machine::Machine::new(cfg).map_err(|e| JsValue::from_str(&e.to_string()))?;
+        Ok(Self { inner })
+    }
+
+    pub fn reset(&mut self) {
+        self.inner.reset();
+    }
+
+    pub fn set_disk_image(&mut self, bytes: &[u8]) -> Result<(), JsValue> {
+        self.inner
+            .set_disk_image(bytes.to_vec())
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    pub fn run_slice(&mut self, max_insts: u32) -> RunExit {
+        RunExit::from_native(self.inner.run_slice(max_insts as u64))
+    }
+
+    /// Returns and clears any accumulated serial output.
+    pub fn serial_output(&mut self) -> Vec<u8> {
+        self.inner.take_serial_output()
+    }
+
+    pub fn inject_browser_key(&mut self, code: &str, pressed: bool) {
+        self.inner.inject_browser_key(code, pressed);
     }
 }

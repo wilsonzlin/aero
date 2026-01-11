@@ -266,6 +266,7 @@ function render(): void {
     ),
     renderWasmPanel(),
     renderGraphicsPanel(report),
+    renderMachinePanel(),
     renderSnapshotPanel(),
     renderWebGpuPanel(),
     renderGpuWorkerPanel(),
@@ -428,6 +429,86 @@ function downloadFile(file: File, filename: string): void {
   a.click();
   // Allow the browser to start the download before revoking the URL.
   window.setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+function renderMachinePanel(): HTMLElement {
+  const status = el("pre", { text: "Initializing canonical machine…" });
+  const output = el("pre", { text: "" });
+  const error = el("pre", { text: "" });
+
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+
+  function setError(msg: string): void {
+    error.textContent = msg;
+    console.error(msg);
+  }
+
+  function buildSerialBootSector(message: string): Uint8Array {
+    const msgBytes = encoder.encode(message);
+    const sector = new Uint8Array(512);
+    let off = 0;
+
+    // mov dx, 0x3f8
+    sector.set([0xba, 0xf8, 0x03], off);
+    off += 3;
+
+    for (const b of msgBytes) {
+      // mov al, imm8
+      sector.set([0xb0, b], off);
+      off += 2;
+      // out dx, al
+      sector[off] = 0xee;
+      off += 1;
+    }
+
+    // hlt
+    sector[off] = 0xf4;
+
+    // Boot signature.
+    sector[510] = 0x55;
+    sector[511] = 0xaa;
+    return sector;
+  }
+
+  wasmInitPromise
+    .then(({ api, variant }) => {
+      const machine = new api.Machine(2 * 1024 * 1024);
+      machine.set_disk_image(buildSerialBootSector("Hello from aero-machine\\n"));
+      machine.reset();
+
+      status.textContent = `Machine ready (WASM ${variant}). Booting…`;
+
+      const timer = window.setInterval(() => {
+        const exit = machine.run_slice(50_000);
+        const bytes = machine.serial_output();
+        if (bytes.byteLength) {
+          output.textContent = `${output.textContent ?? ""}${decoder.decode(bytes)}`;
+        }
+
+        status.textContent = `run_slice: kind=${exit.kind} executed=${exit.executed} detail=${exit.detail}`;
+        exit.free();
+
+        // `RunExitKind::Completed` is 0. Stop once the guest halts/requests reset/needs assist.
+        if (exit.kind !== 0) {
+          window.clearInterval(timer);
+        }
+      }, 50);
+    })
+    .catch((err) => {
+      const message = err instanceof Error ? err.message : String(err);
+      status.textContent = "Machine unavailable (WASM init failed)";
+      setError(message);
+    });
+
+  return el(
+    "div",
+    { class: "panel" },
+    el("h2", { text: "Machine (canonical VM) – serial boot demo" }),
+    status,
+    output,
+    error,
+  );
 }
 
 function renderSnapshotPanel(): HTMLElement {

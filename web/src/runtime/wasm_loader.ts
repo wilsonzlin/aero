@@ -89,6 +89,11 @@ export interface WasmApi {
         free(): void;
     };
     AeroApi: new () => { version(): string; free(): void };
+    /**
+     * Legacy deterministic stub VM used for snapshotting demos.
+     *
+     * Deprecated in favor of `Machine` (the canonical full-system VM).
+     */
     DemoVm: new (ramSizeBytes: number) => {
         run_steps(steps: number): void;
         serial_output(): Uint8Array;
@@ -120,6 +125,18 @@ export interface WasmApi {
          * Note: this requires running in a Dedicated Worker (sync access handles are worker-only).
          */
         restore_snapshot_from_opfs?(path: string): Promise<void>;
+        free(): void;
+    };
+
+    /**
+     * Canonical full-system VM (`aero_machine::Machine`).
+     */
+    Machine: new (ramSizeBytes: number) => {
+        reset(): void;
+        set_disk_image(bytes: Uint8Array): void;
+        run_slice(maxInsts: number): { kind: number; executed: number; detail: string; free(): void };
+        serial_output(): Uint8Array;
+        inject_browser_key(code: string, pressed: boolean): void;
         free(): void;
     };
 
@@ -287,6 +304,7 @@ function toApi(mod: RawWasmModule): WasmApi {
         CpuWorkerDemo: mod.CpuWorkerDemo,
         AeroApi: mod.AeroApi,
         DemoVm: mod.DemoVm,
+        Machine: mod.Machine,
         WorkletBridge: mod.WorkletBridge,
         create_worklet_bridge: mod.create_worklet_bridge,
         attach_worklet_bridge: mod.attach_worklet_bridge,

@@ -48,6 +48,7 @@ members = [
     "crates/aero-debug",
     "crates/aero-interrupts",
     "crates/aero-d3d11",
+    "crates/aero-machine",
     "crates/devices",
     "crates/emulator",
     "crates/firmware",

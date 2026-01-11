@@ -17,10 +17,11 @@ were considered, and what the consequences are.
 - [ADR 0010: Canonical audio stack (aero-audio + aero-virtio; legacy emulator audio gated)](./0010-canonical-audio-stack.md)
 - [ADR 0012: Commit `Cargo.lock` for reproducible Rust builds](./0012-cargo-lock-policy.md)
 - [ADR 0013: AeroGPU PCI IDs and ABI (canonical + deprecation plan)](./0013-aerogpu-pci-ids-and-abi.md)
-
+- [ADR 0014: Canonical machine/VM stack (`aero-machine`)](./0014-canonical-machine-stack.md)
+ 
 ## Creating a new ADR
-
-1. Pick the next number (`0014-...`).
+ 
+1. Pick the next number (`0015-...`).
 2. Use a descriptive slug (`kebab-case`).
 3. Include these sections:
    - **Context**

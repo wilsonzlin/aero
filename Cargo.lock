@@ -343,6 +343,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "aero-machine"
+version = "0.1.0"
+dependencies = [
+ "aero-cpu-core",
+ "aero-devices",
+ "aero-platform",
+ "firmware",
+ "machine",
+ "memory",
+ "pretty_assertions",
+]
+
+[[package]]
 name = "aero-mem"
 version = "0.1.0"
 dependencies = [
@@ -597,6 +610,7 @@ name = "aero-wasm"
 version = "0.1.0"
 dependencies = [
  "aero-audio",
+ "aero-machine",
  "aero-opfs",
  "aero-platform",
  "aero-shared",

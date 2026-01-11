@@ -9,6 +9,7 @@ use aero_snapshot::{
 
 const DEFAULT_PAGE_SIZE: u32 = 4096;
 
+#[deprecated(note = "aero-vm is a stub/demo VM; use `aero_machine::Machine` (crates/aero-machine) instead")]
 #[derive(Debug, Clone)]
 pub struct Vm {
     cpu: CpuState,

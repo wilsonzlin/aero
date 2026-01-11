@@ -8,6 +8,8 @@
 //!   region mechanism.
 //! - A sector-based block device abstraction for boot disks.
 
+#![deprecated(note = "This crate contains toy real-mode CPU/memory building blocks used by early firmware tests; use `aero_machine::Machine` (crates/aero-machine) for the canonical full-system VM instead.")]
+
 pub mod cpu;
 pub mod disk;
 pub mod memory;
