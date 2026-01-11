@@ -169,7 +169,7 @@ In a Win7 VM with AeroGPU installed and working correctly:
 * `d3d10_triangle` renders a green triangle over a red clear and confirms **corner red + center green** via readback
 * `d3d10_1_triangle` uses `D3D10CreateDeviceAndSwapChain1` (hardware), verifies the D3D10.1 runtime path (`d3d10_1.dll`) and the AeroGPU `OpenAdapter10_2` export, and confirms **corner red + center green** via readback
 * `d3d11_triangle` renders a green triangle over a red clear and confirms **corner red + center green** via readback
-* `d3d11_map_dynamic_buffer_sanity` writes a dynamic buffer via `Map(WRITE_DISCARD)` and verifies the bytes via `CopyResource` + staging readback
+* `d3d11_map_dynamic_buffer_sanity` writes a dynamic buffer via `Map(WRITE_DISCARD)` + `Map(WRITE_NO_OVERWRITE)` and verifies the bytes via `CopyResource` + staging readback
 * `d3d11_update_subresource_texture_sanity` uploads a deterministic `B8G8R8A8` pattern via `UpdateSubresource` and verifies it via staging readback
 * `readback_sanity` renders to an offscreen render target and validates readback pixels (corner red, center green)
 

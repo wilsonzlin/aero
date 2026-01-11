@@ -31,13 +31,14 @@ static int RunD3D11MapDynamicBufferSanity(int argc, char** argv) {
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
         "Usage: %s.exe [--require-vid=0x####] [--require-did=0x####] [--allow-microsoft] "
-        "[--allow-non-aerogpu]",
+        "[--allow-non-aerogpu] [--require-umd]",
         kTestName);
     return 0;
   }
 
   const bool allow_microsoft = aerogpu_test::HasArg(argc, argv, "--allow-microsoft");
   const bool allow_non_aerogpu = aerogpu_test::HasArg(argc, argv, "--allow-non-aerogpu");
+  const bool require_umd = aerogpu_test::HasArg(argc, argv, "--require-umd");
   uint32_t require_vid = 0;
   uint32_t require_did = 0;
   bool has_require_vid = false;
@@ -146,6 +147,13 @@ static int RunD3D11MapDynamicBufferSanity(int argc, char** argv) {
         kTestName, "QueryInterface(IDXGIDevice) (required for --require-vid/--require-did)", hr);
   }
 
+  if (require_umd || (!allow_microsoft && !allow_non_aerogpu)) {
+    int umd_rc = aerogpu_test::RequireAeroGpuD3D10UmdLoaded(kTestName);
+    if (umd_rc != 0) {
+      return umd_rc;
+    }
+  }
+
   const UINT kByteWidth = 4096;
 
   D3D11_BUFFER_DESC dyn_desc;
@@ -163,6 +171,13 @@ static int RunD3D11MapDynamicBufferSanity(int argc, char** argv) {
     return aerogpu_test::FailHresult(kTestName, "CreateBuffer(dynamic)", hr);
   }
 
+  // Bind the buffer as a vertex buffer to increase the chance the runtime exercises the dynamic IA
+  // buffer Map DDIs (rather than a generic resource map path).
+  UINT stride = 1;
+  UINT offset = 0;
+  ID3D11Buffer* vbs[] = {dynamic_buf.get()};
+  context->IASetVertexBuffers(0, 1, vbs, &stride, &offset);
+
   D3D11_MAPPED_SUBRESOURCE map;
   ZeroMemory(&map, sizeof(map));
   hr = context->Map(dynamic_buf.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &map);
@@ -179,6 +194,25 @@ static int RunD3D11MapDynamicBufferSanity(int argc, char** argv) {
     dst[i] = PatternByte(i);
   }
 
+  context->Unmap(dynamic_buf.get(), 0);
+
+  // Also exercise WRITE_NO_OVERWRITE (common path in real apps using ring-buffered dynamic vertex
+  // buffers).
+  ZeroMemory(&map, sizeof(map));
+  hr = context->Map(dynamic_buf.get(), 0, D3D11_MAP_WRITE_NO_OVERWRITE, 0, &map);
+  if (FAILED(hr)) {
+    return FailD3D11WithRemovedReason(kTestName, "Map(dynamic, WRITE_NO_OVERWRITE)", hr, device.get());
+  }
+  if (!map.pData) {
+    context->Unmap(dynamic_buf.get(), 0);
+    return aerogpu_test::Fail(kTestName, "Map(dynamic, WRITE_NO_OVERWRITE) returned NULL pData");
+  }
+
+  const size_t kOverwriteStart = kByteWidth / 2;
+  uint8_t* dst2 = (uint8_t*)map.pData;
+  for (size_t i = kOverwriteStart; i < kByteWidth; ++i) {
+    dst2[i] = (uint8_t)(PatternByte(i) ^ 0x5Au);
+  }
   context->Unmap(dynamic_buf.get(), 0);
 
   D3D11_BUFFER_DESC st_desc;
@@ -211,7 +245,10 @@ static int RunD3D11MapDynamicBufferSanity(int argc, char** argv) {
 
   const uint8_t* got = (const uint8_t*)map.pData;
   for (size_t i = 0; i < kByteWidth; ++i) {
-    const uint8_t expected = PatternByte(i);
+    uint8_t expected = PatternByte(i);
+    if (i >= kOverwriteStart) {
+      expected = (uint8_t)(expected ^ 0x5Au);
+    }
     if (got[i] != expected) {
       context->Unmap(staging_buf.get(), 0);
       return aerogpu_test::Fail(kTestName,
@@ -232,4 +269,3 @@ int main(int argc, char** argv) {
   aerogpu_test::ConfigureProcessForAutomation();
   return RunD3D11MapDynamicBufferSanity(argc, argv);
 }
-
