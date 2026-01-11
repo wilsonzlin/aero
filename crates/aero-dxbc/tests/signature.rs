@@ -258,6 +258,28 @@ fn signature_chunk_table_out_of_bounds_is_rejected() {
 }
 
 #[test]
+fn signature_chunk_param_offset_into_header_is_rejected() {
+    // Declares one entry but points the table offset into the 8-byte header.
+    let bytes = [1u32.to_le_bytes(), 4u32.to_le_bytes()].concat();
+
+    let err = parse_signature_chunk(&bytes).unwrap_err();
+    assert!(matches!(err, DxbcError::InvalidChunk { .. }));
+    assert!(err.context().contains("param_offset"));
+    assert!(err.context().contains("header"));
+}
+
+#[test]
+fn signature_chunk_param_offset_unaligned_is_rejected() {
+    // Declares one entry but uses a misaligned table offset.
+    let bytes = [1u32.to_le_bytes(), 9u32.to_le_bytes()].concat();
+
+    let err = parse_signature_chunk(&bytes).unwrap_err();
+    assert!(matches!(err, DxbcError::InvalidChunk { .. }));
+    assert!(err.context().contains("param_offset"));
+    assert!(err.context().contains("aligned"));
+}
+
+#[test]
 fn signature_chunk_bad_semantic_offset_is_rejected() {
     let mut bytes = build_signature_chunk();
     // Overwrite entry 0 semantic_name_offset to point outside the chunk.
