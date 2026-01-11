@@ -67,6 +67,10 @@ export class DemoVmWorkerClient {
     return await this.#rpc<DemoVmWorkerSerialOutputLenResult>({ type: "snapshotFullToOpfs", path });
   }
 
+  async snapshotDirtyToOpfs(path: string): Promise<DemoVmWorkerSerialOutputLenResult> {
+    return await this.#rpc<DemoVmWorkerSerialOutputLenResult>({ type: "snapshotDirtyToOpfs", path });
+  }
+
   async restoreFromOpfs(path: string): Promise<DemoVmWorkerSerialOutputLenResult> {
     return await this.#rpc<DemoVmWorkerSerialOutputLenResult>({ type: "restoreFromOpfs", path });
   }

@@ -119,6 +119,8 @@ async function handleInit(ramBytes: number): Promise<DemoVmWorkerInitResult> {
 
   const streamingSnapshots =
     typeof (newVm as unknown as { snapshot_full_to_opfs?: unknown }).snapshot_full_to_opfs === "function";
+  const streamingDirtySnapshots =
+    typeof (newVm as unknown as { snapshot_dirty_to_opfs?: unknown }).snapshot_dirty_to_opfs === "function";
   const streamingRestore =
     typeof (newVm as unknown as { restore_snapshot_from_opfs?: unknown }).restore_snapshot_from_opfs === "function";
 
@@ -130,7 +132,7 @@ async function handleInit(ramBytes: number): Promise<DemoVmWorkerInitResult> {
 
   startStepLoop();
 
-  return { wasmVariant: wasmVariant, syncAccessHandles, streamingSnapshots, streamingRestore };
+  return { wasmVariant: wasmVariant, syncAccessHandles, streamingSnapshots, streamingDirtySnapshots, streamingRestore };
 }
 
 async function handleRunSteps(steps: number): Promise<DemoVmWorkerStepResult> {
@@ -155,6 +157,27 @@ async function handleSnapshotFullToOpfs(path: string): Promise<DemoVmWorkerSeria
   const fn = (current as unknown as { snapshot_full_to_opfs?: (path: string) => unknown }).snapshot_full_to_opfs;
   if (typeof fn !== "function") {
     throw new Error("DemoVm.snapshot_full_to_opfs is unavailable (WASM build missing streaming snapshot exports).");
+  }
+
+  stopStepLoop();
+  let snapshotSerialBytes: number | null = serialBytes;
+  try {
+    await fn.call(current, path);
+    snapshotSerialBytes = serialBytes;
+    savedSerialBytesByPath.set(path, snapshotSerialBytes);
+  } finally {
+    startStepLoop();
+  }
+
+  return { serialBytes: snapshotSerialBytes };
+}
+
+async function handleSnapshotDirtyToOpfs(path: string): Promise<DemoVmWorkerSerialOutputLenResult> {
+  const current = ensureVm();
+
+  const fn = (current as unknown as { snapshot_dirty_to_opfs?: (path: string) => unknown }).snapshot_dirty_to_opfs;
+  if (typeof fn !== "function") {
+    throw new Error("DemoVm.snapshot_dirty_to_opfs is unavailable (WASM build missing streaming dirty snapshot exports).");
   }
 
   stopStepLoop();
@@ -228,6 +251,8 @@ async function handleRequest(req: DemoVmWorkerRequest): Promise<unknown> {
       return await handleRunSteps(req.steps);
     case "snapshotFullToOpfs":
       return await handleSnapshotFullToOpfs(req.path);
+    case "snapshotDirtyToOpfs":
+      return await handleSnapshotDirtyToOpfs(req.path);
     case "restoreFromOpfs":
       return await handleRestoreFromOpfs(req.path);
     case "getSerialStats":

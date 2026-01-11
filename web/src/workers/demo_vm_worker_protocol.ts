@@ -1,6 +1,7 @@
 export type DemoVmWorkerInitRequest = { id: number; type: "init"; ramBytes: number };
 export type DemoVmWorkerRunStepsRequest = { id: number; type: "runSteps"; steps: number };
 export type DemoVmWorkerSnapshotFullToOpfsRequest = { id: number; type: "snapshotFullToOpfs"; path: string };
+export type DemoVmWorkerSnapshotDirtyToOpfsRequest = { id: number; type: "snapshotDirtyToOpfs"; path: string };
 export type DemoVmWorkerRestoreFromOpfsRequest = { id: number; type: "restoreFromOpfs"; path: string };
 export type DemoVmWorkerGetSerialStatsRequest = { id: number; type: "getSerialStats" };
 export type DemoVmWorkerGetSerialOutputLenRequest = { id: number; type: "getSerialOutputLen" };
@@ -10,6 +11,7 @@ export type DemoVmWorkerRequest =
   | DemoVmWorkerInitRequest
   | DemoVmWorkerRunStepsRequest
   | DemoVmWorkerSnapshotFullToOpfsRequest
+  | DemoVmWorkerSnapshotDirtyToOpfsRequest
   | DemoVmWorkerRestoreFromOpfsRequest
   | DemoVmWorkerGetSerialStatsRequest
   | DemoVmWorkerGetSerialOutputLenRequest
@@ -28,6 +30,7 @@ export type DemoVmWorkerInitResult = {
   wasmVariant: string;
   syncAccessHandles: boolean;
   streamingSnapshots: boolean;
+  streamingDirtySnapshots: boolean;
   streamingRestore: boolean;
 };
 
