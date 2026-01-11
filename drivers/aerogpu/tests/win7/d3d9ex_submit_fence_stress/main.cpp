@@ -1,201 +1,57 @@
 #include "..\\common\\aerogpu_test_common.h"
+#include "..\\common\\aerogpu_test_kmt.h"
 #include "..\\common\\aerogpu_test_report.h"
 
 #include <d3d9.h>
 
-#include "..\\..\\..\\protocol\\aerogpu_dbgctl_escape.h"
+#include "..\\..\\..\\protocol\\aerogpu_ring.h"
 
 #include <deque>
 
 using aerogpu_test::ComPtr;
+using aerogpu_test::kmt::D3DKMT_FUNCS;
+using aerogpu_test::kmt::D3DKMT_HANDLE;
+using aerogpu_test::kmt::NTSTATUS;
 
-typedef LONG NTSTATUS;
-
-#ifndef NT_SUCCESS
-#define NT_SUCCESS(Status) (((NTSTATUS)(Status)) >= 0)
-#endif
-
-#ifndef STATUS_NOT_SUPPORTED
-#define STATUS_NOT_SUPPORTED ((NTSTATUS)0xC00000BBL)
-#endif
-
-typedef UINT D3DKMT_HANDLE;
-
-typedef struct D3DKMT_OPENADAPTERFROMHDC {
-  HDC hDc;
-  D3DKMT_HANDLE hAdapter;
-  LUID AdapterLuid;
-  UINT VidPnSourceId;
-} D3DKMT_OPENADAPTERFROMHDC;
-
-typedef struct D3DKMT_CLOSEADAPTER {
-  D3DKMT_HANDLE hAdapter;
-} D3DKMT_CLOSEADAPTER;
-
-typedef enum D3DKMT_ESCAPETYPE {
-  D3DKMT_ESCAPE_DRIVERPRIVATE = 0,
-} D3DKMT_ESCAPETYPE;
-
-typedef struct D3DKMT_ESCAPEFLAGS {
-  union {
-    struct {
-      UINT HardwareAccess : 1;
-      UINT Reserved : 31;
-    };
-    UINT Value;
-  };
-} D3DKMT_ESCAPEFLAGS;
-
-typedef struct D3DKMT_ESCAPE {
-  D3DKMT_HANDLE hAdapter;
-  D3DKMT_HANDLE hDevice;
-  D3DKMT_HANDLE hContext;
-  D3DKMT_ESCAPETYPE Type;
-  D3DKMT_ESCAPEFLAGS Flags;
-  VOID* pPrivateDriverData;
-  UINT PrivateDriverDataSize;
-} D3DKMT_ESCAPE;
-
-typedef NTSTATUS(WINAPI* PFND3DKMTOpenAdapterFromHdc)(D3DKMT_OPENADAPTERFROMHDC* pData);
-typedef NTSTATUS(WINAPI* PFND3DKMTCloseAdapter)(D3DKMT_CLOSEADAPTER* pData);
-typedef NTSTATUS(WINAPI* PFND3DKMTEscape)(D3DKMT_ESCAPE* pData);
-
-typedef struct D3DKMT_FUNCS {
-  HMODULE gdi32;
-  PFND3DKMTOpenAdapterFromHdc OpenAdapterFromHdc;
-  PFND3DKMTCloseAdapter CloseAdapter;
-  PFND3DKMTEscape Escape;
-} D3DKMT_FUNCS;
-
-static bool LoadD3DKMT(D3DKMT_FUNCS* out, std::string* err) {
-  ZeroMemory(out, sizeof(*out));
-
-  out->gdi32 = LoadLibraryW(L"gdi32.dll");
-  if (!out->gdi32) {
-    if (err) {
-      *err = "LoadLibraryW(gdi32.dll) failed";
-    }
-    return false;
+static const char* RingFormatToString(uint32_t fmt) {
+  switch (fmt) {
+    case AEROGPU_DBGCTL_RING_FORMAT_LEGACY:
+      return "legacy";
+    case AEROGPU_DBGCTL_RING_FORMAT_AGPU:
+      return "agpu";
+    default:
+      return "unknown";
   }
-
-  out->OpenAdapterFromHdc =
-      (PFND3DKMTOpenAdapterFromHdc)GetProcAddress(out->gdi32, "D3DKMTOpenAdapterFromHdc");
-  out->CloseAdapter = (PFND3DKMTCloseAdapter)GetProcAddress(out->gdi32, "D3DKMTCloseAdapter");
-  out->Escape = (PFND3DKMTEscape)GetProcAddress(out->gdi32, "D3DKMTEscape");
-
-  if (!out->OpenAdapterFromHdc || !out->CloseAdapter || !out->Escape) {
-    if (err) {
-      *err =
-          "Required D3DKMT* exports not found in gdi32.dll. This test requires Windows Vista+ (WDDM).";
-    }
-    if (out->gdi32) {
-      FreeLibrary(out->gdi32);
-      out->gdi32 = NULL;
-    }
-    return false;
-  }
-
-  return true;
 }
 
-static bool OpenPrimaryKmtAdapter(const D3DKMT_FUNCS* f, D3DKMT_HANDLE* out_adapter, std::string* err) {
-  if (!f || !out_adapter) {
-    return false;
-  }
-  *out_adapter = 0;
+static void DumpRingDumpV2(const char* test_name, const aerogpu_escape_dump_ring_v2_inout& dump) {
+  aerogpu_test::PrintfStdout(
+      "INFO: %s: ring dump v2: ring_id=%lu format=%s size_bytes=%lu head=0x%08lX tail=0x%08lX desc_count=%lu",
+      test_name,
+      (unsigned long)dump.ring_id,
+      RingFormatToString((uint32_t)dump.ring_format),
+      (unsigned long)dump.ring_size_bytes,
+      (unsigned long)dump.head,
+      (unsigned long)dump.tail,
+      (unsigned long)dump.desc_count);
 
-  HDC hdc = GetDC(NULL);
-  if (!hdc) {
-    if (err) {
-      *err = "GetDC(NULL) failed";
-    }
-    return false;
+  uint32_t count = dump.desc_count;
+  if (count > AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS) {
+    count = AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS;
   }
-
-  D3DKMT_OPENADAPTERFROMHDC open;
-  ZeroMemory(&open, sizeof(open));
-  open.hDc = hdc;
-  NTSTATUS st = f->OpenAdapterFromHdc(&open);
-  ReleaseDC(NULL, hdc);
-
-  if (!NT_SUCCESS(st) || open.hAdapter == 0) {
-    if (err) {
-      char buf[128];
-      _snprintf(buf, sizeof(buf), "D3DKMTOpenAdapterFromHdc failed (NTSTATUS=0x%08lX)",
-                (unsigned long)st);
-      buf[sizeof(buf) - 1] = 0;
-      *err = buf;
-    }
-    return false;
+  for (uint32_t i = 0; i < count; ++i) {
+    const aerogpu_dbgctl_ring_desc_v2& d = dump.desc[i];
+    aerogpu_test::PrintfStdout(
+        "INFO: %s:   desc[%lu]: fence=%I64u flags=0x%08lX cmd_gpa=0x%I64X cmd_size=%lu alloc_table_gpa=0x%I64X alloc_table_size=%lu",
+        test_name,
+        (unsigned long)i,
+        (unsigned long long)d.fence,
+        (unsigned long)d.flags,
+        (unsigned long long)d.cmd_gpa,
+        (unsigned long)d.cmd_size_bytes,
+        (unsigned long long)d.alloc_table_gpa,
+        (unsigned long)d.alloc_table_size_bytes);
   }
-
-  *out_adapter = open.hAdapter;
-  return true;
-}
-
-static void CloseKmtAdapter(const D3DKMT_FUNCS* f, D3DKMT_HANDLE adapter) {
-  if (!f || !adapter) {
-    return;
-  }
-  D3DKMT_CLOSEADAPTER close;
-  ZeroMemory(&close, sizeof(close));
-  close.hAdapter = adapter;
-  (void)f->CloseAdapter(&close);
-}
-
-static bool QueryKmdFence(const D3DKMT_FUNCS* f,
-                          D3DKMT_HANDLE adapter,
-                          unsigned long long* out_submitted,
-                          unsigned long long* out_completed,
-                          NTSTATUS* out_status) {
-  if (out_submitted) {
-    *out_submitted = 0;
-  }
-  if (out_completed) {
-    *out_completed = 0;
-  }
-  if (out_status) {
-    *out_status = 0;
-  }
-  if (!f || !adapter || !f->Escape) {
-    if (out_status) {
-      *out_status = (NTSTATUS)0xC000000DL; // STATUS_INVALID_PARAMETER
-    }
-    return false;
-  }
-
-  aerogpu_escape_query_fence_out q;
-  ZeroMemory(&q, sizeof(q));
-  q.hdr.version = AEROGPU_ESCAPE_VERSION;
-  q.hdr.op = AEROGPU_ESCAPE_OP_QUERY_FENCE;
-  q.hdr.size = sizeof(q);
-  q.hdr.reserved0 = 0;
-
-  D3DKMT_ESCAPE e;
-  ZeroMemory(&e, sizeof(e));
-  e.hAdapter = adapter;
-  e.hDevice = 0;
-  e.hContext = 0;
-  e.Type = D3DKMT_ESCAPE_DRIVERPRIVATE;
-  e.Flags.Value = 0;
-  e.pPrivateDriverData = &q;
-  e.PrivateDriverDataSize = sizeof(q);
-
-  const NTSTATUS st = f->Escape(&e);
-  if (out_status) {
-    *out_status = st;
-  }
-  if (!NT_SUCCESS(st)) {
-    return false;
-  }
-
-  if (out_submitted) {
-    *out_submitted = (unsigned long long)q.last_submitted_fence;
-  }
-  if (out_completed) {
-    *out_completed = (unsigned long long)q.last_completed_fence;
-  }
-  return true;
 }
 
 class DbwinCapture {
@@ -538,9 +394,11 @@ static int RunSubmitFenceStress(int argc, char** argv) {
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
         "Usage: %s.exe [--iterations=N] [--show] [--json[=PATH]] [--allow-remote] [--allow-microsoft] "
-        "[--allow-non-aerogpu] [--require-umd]",
+        "[--allow-non-aerogpu] [--require-umd] [--require-agpu]",
         kTestName);
-    aerogpu_test::PrintfStdout("Stresses D3D9Ex submits and validates per-submission fences via AeroGPU debug output.");
+    aerogpu_test::PrintfStdout(
+        "Stresses D3D9Ex submits and validates per-submission fences via AeroGPU debug output. "
+        "On AGPU devices, also validates PRESENT flag + alloc table presence via ring dump v2.");
     return 0;
   }
 
@@ -554,6 +412,7 @@ static int RunSubmitFenceStress(int argc, char** argv) {
   const bool allow_microsoft = aerogpu_test::HasArg(argc, argv, "--allow-microsoft");
   const bool allow_non_aerogpu = aerogpu_test::HasArg(argc, argv, "--allow-non-aerogpu");
   const bool require_umd = aerogpu_test::HasArg(argc, argv, "--require-umd");
+  const bool require_agpu = aerogpu_test::HasArg(argc, argv, "--require-agpu");
   const bool show_window =
       aerogpu_test::HasArg(argc, argv, "--show-window") || aerogpu_test::HasArg(argc, argv, "--show");
 
@@ -656,7 +515,7 @@ static int RunSubmitFenceStress(int argc, char** argv) {
                                                     &err);
   }
 
-  if (require_umd || (!allow_microsoft && !allow_non_aerogpu)) {
+  if (require_umd || require_agpu || (!allow_microsoft && !allow_non_aerogpu)) {
     int umd_rc = aerogpu_test::RequireAeroGpuD3D9UmdLoaded(&reporter, kTestName);
     if (umd_rc != 0) {
       return umd_rc;
@@ -670,7 +529,7 @@ static int RunSubmitFenceStress(int argc, char** argv) {
 
   D3DKMT_FUNCS kmt;
   std::string kmt_err;
-  if (!LoadD3DKMT(&kmt, &kmt_err)) {
+  if (!aerogpu_test::kmt::LoadD3DKMT(&kmt, &kmt_err)) {
     if (validate_fences) {
       return reporter.Fail("%s", kmt_err.c_str());
     }
@@ -680,7 +539,7 @@ static int RunSubmitFenceStress(int argc, char** argv) {
   D3DKMT_HANDLE kmt_adapter = 0;
   if (kmt.gdi32) {
     std::string open_err;
-    if (!OpenPrimaryKmtAdapter(&kmt, &kmt_adapter, &open_err)) {
+    if (!aerogpu_test::kmt::OpenPrimaryAdapter(&kmt, &kmt_adapter, &open_err)) {
       if (validate_fences) {
         return reporter.Fail("%s", open_err.c_str());
       }
@@ -692,14 +551,14 @@ static int RunSubmitFenceStress(int argc, char** argv) {
   unsigned long long base_completed = 0;
   if (kmt_adapter) {
     NTSTATUS st = 0;
-    if (QueryKmdFence(&kmt, kmt_adapter, &base_submitted, &base_completed, &st)) {
+    if (aerogpu_test::kmt::AerogpuQueryFence(&kmt, kmt_adapter, &base_submitted, &base_completed, &st)) {
       aerogpu_test::PrintfStdout(
           "INFO: %s: KMD fences before: submitted=%I64u completed=%I64u",
           kTestName,
           base_submitted,
           base_completed);
     } else if (validate_fences) {
-      if (st == STATUS_NOT_SUPPORTED) {
+      if (st == aerogpu_test::kmt::kStatusNotSupported) {
         return reporter.Fail("AeroGPU KMD fence escape not supported (NTSTATUS=0x%08lX)", (unsigned long)st);
       }
       return reporter.Fail("D3DKMTEscape(query-fence) failed (NTSTATUS=0x%08lX)", (unsigned long)st);
@@ -710,21 +569,21 @@ static int RunSubmitFenceStress(int argc, char** argv) {
   if (validate_fences) {
     std::string dbwin_err;
     if (!dbwin.Start(&dbwin_err)) {
-      CloseKmtAdapter(&kmt, kmt_adapter);
+      aerogpu_test::kmt::CloseAdapter(&kmt, kmt_adapter);
       return reporter.Fail("DBWIN capture init failed: %s", dbwin_err.c_str());
     }
   }
 
   hr = dev->SetMaximumFrameLatency(1);
   if (FAILED(hr)) {
-    CloseKmtAdapter(&kmt, kmt_adapter);
+    aerogpu_test::kmt::CloseAdapter(&kmt, kmt_adapter);
     return reporter.FailHresult("IDirect3DDevice9Ex::SetMaximumFrameLatency(1)", hr);
   }
 
   ComPtr<IDirect3DQuery9> query;
   hr = dev->CreateQuery(D3DQUERYTYPE_EVENT, query.put());
   if (FAILED(hr) || !query) {
-    CloseKmtAdapter(&kmt, kmt_adapter);
+    aerogpu_test::kmt::CloseAdapter(&kmt, kmt_adapter);
     return reporter.FailHresult("IDirect3DDevice9Ex::CreateQuery(EVENT)", hr);
   }
 
@@ -737,6 +596,8 @@ static int RunSubmitFenceStress(int argc, char** argv) {
   const DWORD pid = GetCurrentProcessId();
   unsigned long long last_fence = 0;
   bool saw_was_still_drawing = false;
+  bool validated_ring_desc = false;
+  const bool enforce_agpu_ring_checks = require_umd || require_agpu;
 
   for (uint32_t i = 0; i < iterations; ++i) {
     MSG msg;
@@ -747,13 +608,13 @@ static int RunSubmitFenceStress(int argc, char** argv) {
 
     hr = dev->Clear(0, NULL, D3DCLEAR_TARGET, D3DCOLOR_XRGB((int)(i & 255), 0, 0), 1.0f, 0);
     if (FAILED(hr)) {
-      CloseKmtAdapter(&kmt, kmt_adapter);
+      aerogpu_test::kmt::CloseAdapter(&kmt, kmt_adapter);
       return reporter.FailHresult("Clear", hr);
     }
 
     hr = query->Issue(D3DISSUE_END);
     if (FAILED(hr)) {
-      CloseKmtAdapter(&kmt, kmt_adapter);
+      aerogpu_test::kmt::CloseAdapter(&kmt, kmt_adapter);
       return reporter.FailHresult("IDirect3DQuery9::Issue(END)", hr);
     }
 
@@ -761,15 +622,15 @@ static int RunSubmitFenceStress(int argc, char** argv) {
     std::string issue_line;
     if (validate_fences) {
       if (!dbwin.WaitForSubmitFence(pid, 2000, /*expected_present=*/0, &issue_fence, &issue_line)) {
-        CloseKmtAdapter(&kmt, kmt_adapter);
+        aerogpu_test::kmt::CloseAdapter(&kmt, kmt_adapter);
         return reporter.Fail("timed out waiting for submit fence log (iteration %u)", (unsigned)(i + 1));
       }
       if (issue_fence == 0) {
-        CloseKmtAdapter(&kmt, kmt_adapter);
+        aerogpu_test::kmt::CloseAdapter(&kmt, kmt_adapter);
         return reporter.Fail("got fence=0 from submit log: %s", issue_line.c_str());
       }
       if (last_fence != 0 && issue_fence <= last_fence) {
-        CloseKmtAdapter(&kmt, kmt_adapter);
+        aerogpu_test::kmt::CloseAdapter(&kmt, kmt_adapter);
         return reporter.Fail("non-monotonic submit fence: prev=%I64u cur=%I64u (line: %s)",
                               last_fence,
                               issue_fence,
@@ -786,11 +647,11 @@ static int RunSubmitFenceStress(int argc, char** argv) {
         break;
       }
       if (hr != S_FALSE && hr != D3DERR_WASSTILLDRAWING) {
-        CloseKmtAdapter(&kmt, kmt_adapter);
+        aerogpu_test::kmt::CloseAdapter(&kmt, kmt_adapter);
         return reporter.FailHresult("IDirect3DQuery9::GetData(FLUSH)", hr);
       }
       if ((GetTickCount() - start) > 5000) {
-        CloseKmtAdapter(&kmt, kmt_adapter);
+        aerogpu_test::kmt::CloseAdapter(&kmt, kmt_adapter);
         return reporter.Fail("query did not complete within 5s (iteration %u)", (unsigned)(i + 1));
       }
       Sleep(0);
@@ -800,12 +661,12 @@ static int RunSubmitFenceStress(int argc, char** argv) {
       unsigned long long submitted = 0;
       unsigned long long completed = 0;
       NTSTATUS st = 0;
-      if (!QueryKmdFence(&kmt, kmt_adapter, &submitted, &completed, &st)) {
-        CloseKmtAdapter(&kmt, kmt_adapter);
+      if (!aerogpu_test::kmt::AerogpuQueryFence(&kmt, kmt_adapter, &submitted, &completed, &st)) {
+        aerogpu_test::kmt::CloseAdapter(&kmt, kmt_adapter);
         return reporter.Fail("D3DKMTEscape(query-fence) failed (NTSTATUS=0x%08lX)", (unsigned long)st);
       }
       if (completed < issue_fence) {
-        CloseKmtAdapter(&kmt, kmt_adapter);
+        aerogpu_test::kmt::CloseAdapter(&kmt, kmt_adapter);
         return reporter.Fail(
             "query completed but KMD fence is behind: fence=%I64u completed=%I64u submitted=%I64u",
             issue_fence,
@@ -825,35 +686,170 @@ static int RunSubmitFenceStress(int argc, char** argv) {
       if (hr == D3DERR_WASSTILLDRAWING) {
         saw_was_still_drawing = true;
       } else {
-        CloseKmtAdapter(&kmt, kmt_adapter);
+        aerogpu_test::kmt::CloseAdapter(&kmt, kmt_adapter);
         return reporter.FailHresult("IDirect3DDevice9Ex::PresentEx(DONOTWAIT)", hr);
       }
       if ((GetTickCount() - present_start) > 5000) {
-        CloseKmtAdapter(&kmt, kmt_adapter);
+        aerogpu_test::kmt::CloseAdapter(&kmt, kmt_adapter);
         return reporter.Fail("PresentEx(DONOTWAIT) did not make progress within 5s");
       }
       Sleep(0);
     }
 
     if (validate_fences) {
+      aerogpu_escape_dump_ring_v2_inout dump_at_present;
+      ZeroMemory(&dump_at_present, sizeof(dump_at_present));
+      NTSTATUS dump_at_present_status = 0;
+      bool have_dump_at_present = false;
+
+      // Capture a ring dump snapshot *before* waiting on DBWIN so we minimize the chance of racing
+      // the device consuming the descriptor.
+      if (!validated_ring_desc && kmt_adapter) {
+        have_dump_at_present =
+            aerogpu_test::kmt::AerogpuDumpRingV2(&kmt, kmt_adapter, /*ring_id=*/0, &dump_at_present, &dump_at_present_status);
+      }
+
       unsigned long long present_fence = 0;
       std::string present_line;
       if (!dbwin.WaitForSubmitFence(pid, 2000, /*expected_present=*/1, &present_fence, &present_line)) {
-        CloseKmtAdapter(&kmt, kmt_adapter);
+        aerogpu_test::kmt::CloseAdapter(&kmt, kmt_adapter);
         return reporter.Fail("timed out waiting for present submit fence log");
       }
       if (present_fence == 0) {
-        CloseKmtAdapter(&kmt, kmt_adapter);
+        aerogpu_test::kmt::CloseAdapter(&kmt, kmt_adapter);
         return reporter.Fail("got fence=0 from present submit log: %s", present_line.c_str());
       }
       if (present_fence <= last_fence) {
-        CloseKmtAdapter(&kmt, kmt_adapter);
+        aerogpu_test::kmt::CloseAdapter(&kmt, kmt_adapter);
         return reporter.Fail("non-monotonic present fence: prev=%I64u cur=%I64u (line: %s)",
                               last_fence,
                               present_fence,
                               present_line.c_str());
       }
       last_fence = present_fence;
+
+      // Validate that PRESENT submissions are marked as such in the ring descriptor and that
+      // submissions referencing guest-backed allocations include an alloc table (alloc_table_gpa).
+      if (!validated_ring_desc && kmt_adapter) {
+        aerogpu_escape_dump_ring_v2_inout dump = dump_at_present;
+        NTSTATUS dump_status = dump_at_present_status;
+        bool have_dump = have_dump_at_present;
+
+        aerogpu_dbgctl_ring_desc_v2 present_desc;
+        uint32_t present_desc_index = 0;
+        bool found_present_desc = false;
+        bool skip_ring_asserts = false;
+
+        // Retry for a short bounded window (best-effort). This avoids flakes if the device consumes
+        // the ring entry quickly.
+        const DWORD retry_start = GetTickCount();
+        for (;;) {
+          if (!have_dump) {
+            have_dump =
+                aerogpu_test::kmt::AerogpuDumpRingV2(&kmt, kmt_adapter, /*ring_id=*/0, &dump, &dump_status);
+          }
+          if (!have_dump) {
+            break;
+          }
+
+          // On legacy devices, the ring dump doesn't provide alloc tables; treat as optional unless
+          // the caller explicitly requires AGPU.
+          if (dump.ring_format != AEROGPU_DBGCTL_RING_FORMAT_AGPU) {
+            if (enforce_agpu_ring_checks) {
+              DumpRingDumpV2(kTestName, dump);
+              aerogpu_test::kmt::CloseAdapter(&kmt, kmt_adapter);
+              return reporter.Fail("expected AGPU ring format for ring dump v2, got %s (ring_format=%lu)",
+                                   RingFormatToString((uint32_t)dump.ring_format),
+                                   (unsigned long)dump.ring_format);
+            }
+            aerogpu_test::PrintfStdout(
+                "INFO: %s: ring format is %s; skipping ring descriptor assertions (pass --require-agpu to fail)",
+                kTestName,
+                RingFormatToString((uint32_t)dump.ring_format));
+            skip_ring_asserts = true;
+            break;
+          }
+
+          found_present_desc = aerogpu_test::kmt::FindRingDescByFence(dump,
+                                                                     present_fence,
+                                                                     &present_desc,
+                                                                     &present_desc_index);
+          if (!found_present_desc) {
+            aerogpu_dbgctl_ring_desc_v2 last_desc;
+            uint32_t last_idx = 0;
+            if (aerogpu_test::kmt::GetLastWrittenRingDesc(dump, &last_desc, &last_idx) &&
+                (unsigned long long)last_desc.fence == present_fence) {
+              present_desc = last_desc;
+              present_desc_index = last_idx;
+              found_present_desc = true;
+            }
+          }
+
+          if (found_present_desc) {
+            break;
+          }
+
+          if ((GetTickCount() - retry_start) > 250) {
+            break;
+          }
+
+          // Retry with a fresh dump.
+          have_dump = false;
+          Sleep(0);
+        }
+
+        if (skip_ring_asserts) {
+          validated_ring_desc = true;
+        } else if (!have_dump) {
+          if (!enforce_agpu_ring_checks && dump_status == aerogpu_test::kmt::kStatusNotSupported) {
+            aerogpu_test::PrintfStdout(
+                "INFO: %s: ring dump v2 escape not supported (NTSTATUS=0x%08lX); skipping ring descriptor assertions",
+                kTestName,
+                (unsigned long)dump_status);
+            validated_ring_desc = true;
+          } else {
+            aerogpu_test::kmt::CloseAdapter(&kmt, kmt_adapter);
+            return reporter.Fail("D3DKMTEscape(dump-ring-v2) failed (NTSTATUS=0x%08lX)",
+                                 (unsigned long)dump_status);
+          }
+        } else if (!found_present_desc) {
+          DumpRingDumpV2(kTestName, dump);
+          aerogpu_test::kmt::CloseAdapter(&kmt, kmt_adapter);
+          return reporter.Fail("failed to find ring descriptor for present fence=%I64u", present_fence);
+        } else {
+          aerogpu_test::PrintfStdout(
+              "INFO: %s: matched ring desc[%lu] for present fence=%I64u flags=0x%08lX alloc_table_gpa=0x%I64X alloc_table_size=%lu",
+              kTestName,
+              (unsigned long)present_desc_index,
+              present_fence,
+              (unsigned long)present_desc.flags,
+              (unsigned long long)present_desc.alloc_table_gpa,
+              (unsigned long)present_desc.alloc_table_size_bytes);
+
+          if ((present_desc.flags & AEROGPU_SUBMIT_FLAG_PRESENT) == 0) {
+            DumpRingDumpV2(kTestName, dump);
+            aerogpu_test::kmt::CloseAdapter(&kmt, kmt_adapter);
+            return reporter.Fail(
+                "present fence=%I64u missing AEROGPU_SUBMIT_FLAG_PRESENT in ring descriptor (flags=0x%08lX)",
+                present_fence,
+                (unsigned long)present_desc.flags);
+          }
+
+          if (present_desc.alloc_table_gpa == 0 ||
+              present_desc.alloc_table_size_bytes < sizeof(struct aerogpu_alloc_table_header)) {
+            DumpRingDumpV2(kTestName, dump);
+            aerogpu_test::kmt::CloseAdapter(&kmt, kmt_adapter);
+            return reporter.Fail(
+                "present fence=%I64u has missing/invalid alloc table: alloc_table_gpa=0x%I64X alloc_table_size=%lu (expected >= %lu)",
+                present_fence,
+                (unsigned long long)present_desc.alloc_table_gpa,
+                (unsigned long)present_desc.alloc_table_size_bytes,
+                (unsigned long)sizeof(struct aerogpu_alloc_table_header));
+          }
+
+          validated_ring_desc = true;
+        }
+      }
     }
   }
 
@@ -867,7 +863,7 @@ static int RunSubmitFenceStress(int argc, char** argv) {
     aerogpu_test::PrintfStdout("INFO: %s: PresentEx(DONOTWAIT) never returned D3DERR_WASSTILLDRAWING", kTestName);
   }
 
-  CloseKmtAdapter(&kmt, kmt_adapter);
+  aerogpu_test::kmt::CloseAdapter(&kmt, kmt_adapter);
   return reporter.Pass();
 }
 
