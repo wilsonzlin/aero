@@ -211,6 +211,25 @@ static int RunD3D9ExDwmDdiSanity(int argc, char** argv) {
     return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::SetMaximumFrameLatency(1)", hr);
   }
 
+  UINT max_frame_latency = 0;
+  {
+    LARGE_INTEGER before;
+    QueryPerformanceCounter(&before);
+    hr = dev->GetMaximumFrameLatency(&max_frame_latency);
+    LARGE_INTEGER after;
+    QueryPerformanceCounter(&after);
+    const double call_ms = QpcToMs(after.QuadPart - before.QuadPart, qpc_freq);
+    if (call_ms > kMaxSingleCallMs) {
+      return aerogpu_test::Fail(kTestName, "GetMaximumFrameLatency appears to block (%.3f ms)", call_ms);
+    }
+  }
+  if (FAILED(hr)) {
+    return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::GetMaximumFrameLatency", hr);
+  }
+  if (max_frame_latency < 1 || max_frame_latency > 16) {
+    return aerogpu_test::Fail(kTestName, "GetMaximumFrameLatency returned %u (expected [1,16])", (unsigned)max_frame_latency);
+  }
+
   const int kPresentThrottleIters = 60;
   for (int i = 0; i < kPresentThrottleIters; ++i) {
     hr = dev->Clear(0, NULL, D3DCLEAR_TARGET, D3DCOLOR_XRGB(i & 1 ? 0 : 255, 0, 0), 1.0f, 0);
@@ -231,6 +250,66 @@ static int RunD3D9ExDwmDdiSanity(int argc, char** argv) {
     if (FAILED(hr)) {
       return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::PresentEx(throttle)", hr);
     }
+  }
+
+  // --- Present statistics: must succeed and remain non-blocking (DWM probes these) ---
+  const int kPresentStatsIters = 200;
+  UINT last_present_count = 0;
+  for (int i = 0; i < kPresentStatsIters; ++i) {
+    D3DPRESENTSTATS st;
+    ZeroMemory(&st, sizeof(st));
+
+    LARGE_INTEGER before;
+    QueryPerformanceCounter(&before);
+    hr = dev->GetPresentStats(&st);
+    LARGE_INTEGER after;
+    QueryPerformanceCounter(&after);
+
+    const double call_ms = QpcToMs(after.QuadPart - before.QuadPart, qpc_freq);
+    if (call_ms > kMaxSingleCallMs) {
+      return aerogpu_test::Fail(kTestName, "GetPresentStats appears to block (%.3f ms)", call_ms);
+    }
+    if (FAILED(hr)) {
+      return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::GetPresentStats", hr);
+    }
+
+    QueryPerformanceCounter(&before);
+    hr = dev->GetLastPresentCount(&last_present_count);
+    QueryPerformanceCounter(&after);
+    const double last_ms = QpcToMs(after.QuadPart - before.QuadPart, qpc_freq);
+    if (last_ms > kMaxSingleCallMs) {
+      return aerogpu_test::Fail(kTestName, "GetLastPresentCount appears to block (%.3f ms)", last_ms);
+    }
+    if (FAILED(hr)) {
+      return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::GetLastPresentCount", hr);
+    }
+
+    if (st.PresentCount < last_present_count) {
+      return aerogpu_test::Fail(kTestName,
+                                "present stats invalid: PresentCount=%u LastPresentCount=%u",
+                                (unsigned)st.PresentCount,
+                                (unsigned)last_present_count);
+    }
+  }
+
+  // --- Display mode query: must succeed and not block ---
+  D3DDISPLAYMODEEX mode;
+  ZeroMemory(&mode, sizeof(mode));
+  mode.Size = sizeof(mode);
+  D3DDISPLAYROTATION rotation = D3DDISPLAYROTATION_IDENTITY;
+  {
+    LARGE_INTEGER before;
+    QueryPerformanceCounter(&before);
+    hr = dev->GetDisplayModeEx(0, &mode, &rotation);
+    LARGE_INTEGER after;
+    QueryPerformanceCounter(&after);
+    const double call_ms = QpcToMs(after.QuadPart - before.QuadPart, qpc_freq);
+    if (call_ms > kMaxSingleCallMs) {
+      return aerogpu_test::Fail(kTestName, "GetDisplayModeEx appears to block (%.3f ms)", call_ms);
+    }
+  }
+  if (FAILED(hr)) {
+    return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::GetDisplayModeEx", hr);
   }
 
   // --- WaitForVBlank: must always be bounded (and not hang in remote/non-vblank setups) ---
