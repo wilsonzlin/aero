@@ -384,4 +384,121 @@ describe("usb/UsbBroker", () => {
 
     await expect(p1).resolves.toEqual({ kind: "error", id: 1, error: "WebUSB device replaced." });
   });
+
+  it("detachSelectedDevice() broadcasts usb.selected and blocks further actions until a new selection", async () => {
+    vi.doMock("./webusb_backend", () => ({
+      WebUsbBackend: class {
+        async ensureOpenAndClaimed(): Promise<void> {}
+
+        async execute(): Promise<BackendUsbHostCompletion> {
+          throw new Error("not used");
+        }
+      },
+    }));
+
+    const device = {
+      vendorId: 0x1234,
+      productId: 0x5678,
+      close: vi.fn(async () => {}),
+    } as unknown as USBDevice;
+
+    stubNavigatorUsb({ requestDevice: vi.fn(async () => device) });
+
+    const { UsbBroker } = await import("./usb_broker");
+    const broker = new UsbBroker();
+
+    const port = new FakePort();
+    broker.attachWorkerPort(port as unknown as MessagePort);
+
+    await broker.requestDevice();
+    port.posted.length = 0;
+
+    await broker.detachSelectedDevice("device detached");
+
+    const selected = port.posted.filter((m) => (m as { type?: unknown }).type === "usb.selected");
+    expect(selected).toEqual([{ type: "usb.selected", ok: false, error: "device detached" }]);
+
+    await expect(broker.execute({ kind: "bulkIn", id: 1, ep: 1, length: 8 })).resolves.toEqual({
+      kind: "error",
+      id: 1,
+      error: "device detached",
+    });
+  });
+
+  it("forgetSelectedDevice() calls USBDevice.forget (when available) and resets to no-device state", async () => {
+    vi.doMock("./webusb_backend", () => ({
+      WebUsbBackend: class {
+        async ensureOpenAndClaimed(): Promise<void> {}
+
+        async execute(): Promise<BackendUsbHostCompletion> {
+          throw new Error("not used");
+        }
+      },
+    }));
+
+    const close = vi.fn(async () => {});
+    const forget = vi.fn(async () => {});
+    const device = {
+      vendorId: 0x1234,
+      productId: 0x5678,
+      close,
+      forget,
+    } as unknown as USBDevice;
+
+    stubNavigatorUsb({ requestDevice: vi.fn(async () => device) });
+
+    const { UsbBroker } = await import("./usb_broker");
+    const broker = new UsbBroker();
+
+    const port = new FakePort();
+    broker.attachWorkerPort(port as unknown as MessagePort);
+
+    await broker.attachKnownDevice(device);
+    port.posted.length = 0;
+
+    expect(broker.canForgetSelectedDevice()).toBe(true);
+    await broker.forgetSelectedDevice();
+
+    expect(forget).toHaveBeenCalledTimes(1);
+    expect(close).toHaveBeenCalled();
+    expect(broker.canForgetSelectedDevice()).toBe(false);
+
+    const selected = port.posted.filter((m) => (m as { type?: unknown }).type === "usb.selected");
+    expect(selected).toEqual([{ type: "usb.selected", ok: false }]);
+
+    await expect(broker.execute({ kind: "bulkIn", id: 123, ep: 1, length: 8 })).resolves.toEqual({
+      kind: "error",
+      id: 123,
+      error: "WebUSB device not selected.",
+    });
+  });
+
+  it("subscribeToDeviceChanges() fires for navigator.usb connect/disconnect events", async () => {
+    vi.doMock("./webusb_backend", () => ({
+      WebUsbBackend: class {
+        async ensureOpenAndClaimed(): Promise<void> {}
+
+        async execute(): Promise<BackendUsbHostCompletion> {
+          throw new Error("not used");
+        }
+      },
+    }));
+
+    const device = { vendorId: 1, productId: 2, close: async () => {} } as unknown as USBDevice;
+    const usb = new FakeUsb(device);
+    stubNavigatorUsb(usb);
+
+    const { UsbBroker } = await import("./usb_broker");
+    const broker = new UsbBroker();
+
+    const onChange = vi.fn();
+    broker.subscribeToDeviceChanges(onChange);
+
+    await broker.attachKnownDevice(device);
+
+    usb.dispatchEvent(new Event("connect"));
+    usb.dispatchDisconnect(device);
+
+    expect(onChange).toHaveBeenCalledTimes(2);
+  });
 });
