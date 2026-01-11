@@ -2874,7 +2874,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
   let vgaSab: SharedArrayBuffer | null = null;
   let schedulerWorker: Worker | null = null;
   let schedulerFrameStateSab: SharedArrayBuffer | null = null;
-  let schedulerSharedFramebuffer: SharedArrayBuffer | null = null;
+  let schedulerSharedFramebuffer: { sab: SharedArrayBuffer; offsetBytes: number } | null = null;
   let attachedIoWorker: Worker | null = null;
 
   workerCoordinator.addEventListener("fatal", (ev) => {
@@ -3019,8 +3019,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
     // This runs before `ensureVgaPresenter()` so we don't accidentally create a
     // main-thread context right before attempting `transferControlToOffscreen()`.
     const gpuWorker = workerCoordinator.getWorker("gpu");
-    const vgaFramebuffer = workerCoordinator.getVgaFramebuffer();
-    if (!gpuWorker || !frameStateSab || !vgaFramebuffer) {
+    if (!gpuWorker || !frameStateSab || !sharedFramebuffer) {
       frameScheduler?.stop();
       frameScheduler = null;
       schedulerWorker = null;
@@ -3029,7 +3028,8 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
     } else if (
       schedulerWorker !== gpuWorker ||
       schedulerFrameStateSab !== frameStateSab ||
-      schedulerSharedFramebuffer !== vgaFramebuffer
+      schedulerSharedFramebuffer?.sab !== sharedFramebuffer.sab ||
+      schedulerSharedFramebuffer?.offsetBytes !== sharedFramebuffer.offsetBytes
     ) {
       let offscreen: OffscreenCanvas | undefined;
       if (useWorkerPresentation) {
@@ -3065,11 +3065,13 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
       frameScheduler = startFrameScheduler({
         gpuWorker,
         sharedFrameState: frameStateSab,
-        sharedFramebuffer: vgaFramebuffer,
-        sharedFramebufferOffsetBytes: 0,
+        sharedFramebuffer: sharedFramebuffer.sab,
+        sharedFramebufferOffsetBytes: sharedFramebuffer.offsetBytes,
         canvas: offscreen,
         initOptions: offscreen
           ? {
+              forceBackend: "webgl2_raw",
+              disableWebGpu: true,
               outputWidth: 640,
               outputHeight: 480,
               dpr: window.devicePixelRatio || 1,
@@ -3079,7 +3081,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
       });
       schedulerWorker = gpuWorker;
       schedulerFrameStateSab = frameStateSab;
-      schedulerSharedFramebuffer = vgaFramebuffer;
+      schedulerSharedFramebuffer = sharedFramebuffer;
     }
 
     if (anyActive) {

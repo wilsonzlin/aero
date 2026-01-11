@@ -24,8 +24,6 @@ import {
   type ConfigUpdateMessage,
   MessageType,
   type ProtocolMessage,
-  type ResetRequestMessage,
-  type SerialOutputMessage,
   type SetAudioRingBufferMessage,
   type SetMicrophoneRingBufferMessage,
   type WorkerInitMessage,
@@ -996,7 +994,6 @@ export class WorkerCoordinator {
       return;
     }
 
-<<<<<<< HEAD
     if (role === "gpu") {
       if (isGpuWorkerGpuErrorMessage(data)) {
         const err = data.error as { message?: unknown; stack?: unknown } | undefined;
@@ -1025,40 +1022,6 @@ export class WorkerCoordinator {
       }
     }
 
-=======
-    const maybeSerial = data as Partial<SerialOutputMessage>;
-    if (
-      maybeSerial?.kind === "serial.output" &&
-      typeof maybeSerial.port === "number" &&
-      maybeSerial.data instanceof Uint8Array
-    ) {
-      this.serialOutputBytes += maybeSerial.data.byteLength;
-      const text = this.serialDecoder.decode(maybeSerial.data);
-      this.serialOutputText += text;
-      const maxChars = 16 * 1024;
-      if (this.serialOutputText.length > maxChars) {
-        this.serialOutputText = this.serialOutputText.slice(this.serialOutputText.length - maxChars);
-      }
-
-      // Mirror to console for quick visibility during bring-up.
-      const portStr = `0x${(maybeSerial.port >>> 0).toString(16)}`;
-      // eslint-disable-next-line no-console
-      console.log(`[serial ${portStr}] ${text}`);
-      return;
-    }
-
-    const maybeReset = data as Partial<ResetRequestMessage>;
-    if (maybeReset?.kind === "reset.request") {
-      this.resetRequestCount += 1;
-      this.lastResetRequestAtMs = typeof performance !== "undefined" ? performance.now() : Date.now();
-      // eslint-disable-next-line no-console
-      console.warn("[vm] reset requested");
-      return;
-    }
-
-    // Workers use structured `postMessage` for low-rate control/status messages
-    // (READY/ERROR/WASM_READY plus bus-side events like serial output).
->>>>>>> 6eaf33cb (feat(web): wire CPU↔IO device bus via AIPC rings)
     const msg = data as Partial<ProtocolMessage>;
     if (msg?.type === MessageType.READY) {
       info.status = { state: "ready" };
@@ -1209,6 +1172,20 @@ export class WorkerCoordinator {
       case "ack":
         this.lastHeartbeatFromRing = evt.seq;
         return;
+      case "serialOutput": {
+        this.serialOutputBytes += evt.data.byteLength;
+        const text = this.serialDecoder.decode(evt.data);
+        this.serialOutputText += text;
+        const maxChars = 16 * 1024;
+        if (this.serialOutputText.length > maxChars) {
+          this.serialOutputText = this.serialOutputText.slice(this.serialOutputText.length - maxChars);
+        }
+
+        const portStr = `0x${(evt.port >>> 0).toString(16)}`;
+        // eslint-disable-next-line no-console
+        console.log(`[serial ${portStr}] ${text}`);
+        return;
+      }
       case "log": {
         const prefix = `[${info.role}]`;
         switch (evt.level) {
@@ -1234,6 +1211,8 @@ export class WorkerCoordinator {
         return;
       }
       case "resetRequest":
+        this.resetRequestCount += 1;
+        this.lastResetRequestAtMs = nowMs();
         if (perf.traceEnabled) perf.instant("vm:reset:request", "p", { role: info.role });
         this.reset("resetRequest");
         return;
