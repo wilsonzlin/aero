@@ -215,9 +215,20 @@ impl TimeSource {
             return None;
         }
         let host_delta_ns = host_now_ns.saturating_sub(state.host_anchor_ns);
-        let guest_now_ns = state
+        let guest_now_ns_raw = state
             .guest_anchor_ns
             .saturating_add(state.speed.host_delta_to_guest_ns(host_delta_ns));
+        // `now_ns()` is guaranteed monotonic by clamping against `last_guest_now_ns`,
+        // but `host_duration_until_guest_ns` is used by timer scheduling logic and
+        // must agree with that monotonic view of time as well.
+        //
+        // A caller can observe a newer `now_ns()` value on another thread between
+        // this method's host clock read and the state lock acquisition. In that
+        // case, `guest_now_ns_raw` can lag behind what the system considers
+        // "current" guest time. Clamp to `last_guest_now_ns` to avoid returning a
+        // non-zero sleep for a deadline that has already passed.
+        let last_guest_now_ns = self.last_guest_now_ns.load(Ordering::SeqCst);
+        let guest_now_ns = guest_now_ns_raw.max(last_guest_now_ns);
 
         if guest_deadline_ns <= guest_now_ns {
             return Some(Duration::ZERO);
