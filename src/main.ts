@@ -968,13 +968,6 @@ function renderAudioPanel(): HTMLElement {
   const workerCoordinator = new WorkerCoordinator();
   let hdaDemoWorker: Worker | null = null;
 
-  function stopHdaDemo(): void {
-    if (!hdaDemoWorker) return;
-    hdaDemoWorker.postMessage({ type: "audioOutputHdaDemo.stop" });
-    hdaDemoWorker.terminate();
-    hdaDemoWorker = null;
-  }
-
   function stopTone() {
     if (toneTimer !== null) {
       window.clearInterval(toneTimer);
@@ -982,8 +975,16 @@ function renderAudioPanel(): HTMLElement {
     }
   }
 
+  function stopHdaDemo(): void {
+    if (!hdaDemoWorker) return;
+    hdaDemoWorker.postMessage({ type: "audioOutputHdaDemo.stop" });
+    hdaDemoWorker.terminate();
+    hdaDemoWorker = null;
+  }
+
   function startTone(output: Exclude<Awaited<ReturnType<typeof createAudioOutput>>, { enabled: false }>) {
     stopTone();
+    stopHdaDemo();
 
     const freqHz = 440;
     const gain = 0.1;
@@ -1150,7 +1151,6 @@ function renderAudioPanel(): HTMLElement {
       // Back-compat: other tests/debug helpers look for `__aeroAudioOutput`.
       (globalThis as typeof globalThis & { __aeroAudioOutput?: unknown }).__aeroAudioOutput = output;
       (globalThis as typeof globalThis & { __aeroAudioToneBackend?: unknown }).__aeroAudioToneBackend = "wasm-hda";
-
       if (!output.enabled) {
         status.textContent = output.message;
         return;

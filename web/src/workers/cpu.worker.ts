@@ -171,16 +171,19 @@ async function startHdaDemo(msg: AudioOutputHdaDemoStartMessage): Promise<void> 
   }
 
   hdaDemoInstance = demo;
-  hdaDemoHeader = new Uint32Array(msg.ringBuffer, 0, 4);
+  const header = new Uint32Array(msg.ringBuffer, 0, 4);
+  hdaDemoHeader = header;
   hdaDemoCapacityFrames = capacityFrames;
   hdaDemoSampleRate = sampleRate;
 
   // Keep ~200ms buffered.
   const targetFrames = Math.min(capacityFrames, Math.floor(sampleRate / 5));
-  // Prime the buffer immediately.
-  if (typeof demo.tick === "function") {
+  // Prime up to the target fill level (without overrunning if the buffer is already full).
+  const level = ringBufferLevelFrames(header, capacityFrames);
+  const prime = Math.max(0, targetFrames - level);
+  if (prime > 0 && typeof demo.tick === "function") {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-    demo.tick(targetFrames);
+    demo.tick(prime);
   }
 
   hdaDemoTimer = ctx.setInterval(() => {

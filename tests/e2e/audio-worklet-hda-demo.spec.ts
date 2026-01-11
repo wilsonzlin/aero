@@ -8,7 +8,7 @@ test("AudioWorklet output runs and does not underrun with HDA DMA demo", async (
   await page.click("#init-audio-output-hda-demo");
 
   await page.waitForFunction(() => {
-    // Exposed by `web/src/main.ts`.
+    // Exposed by the audio UI entrypoint (`src/main.ts` in the root app).
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const out = (globalThis as any).__aeroAudioOutputHdaDemo;
     return out?.enabled === true && out?.context?.state === "running";
@@ -37,6 +37,7 @@ test("AudioWorklet output runs and does not underrun with HDA DMA demo", async (
       write,
       bufferLevelFrames: typeof out?.getBufferLevelFrames === "function" ? out.getBufferLevelFrames() : null,
       underruns: typeof out?.getUnderrunCount === "function" ? out.getUnderrunCount() : null,
+      overruns: typeof out?.getOverrunCount === "function" ? out.getOverrunCount() : null,
     };
   });
 
@@ -49,4 +50,5 @@ test("AudioWorklet output runs and does not underrun with HDA DMA demo", async (
   // Startup can be racy across CI environments; allow up to one render quantum.
   // Underruns are counted as missing frames (a single render quantum is 128 frames).
   expect(result.underruns).toBeLessThanOrEqual(128);
-}); 
+  expect(result.overruns).toBe(0);
+});
