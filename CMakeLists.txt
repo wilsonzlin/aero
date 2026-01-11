@@ -3,9 +3,17 @@ cmake_minimum_required(VERSION 3.16)
 project(aero_windows7_virtio_common C)
 
 option(AERO_VIRTIO_BUILD_TESTS "Build host-side virtio common tests" ON)
+option(AERO_AEROGPU_BUILD_TESTS "Build host-side AeroGPU command stream tests" ON)
+
+if (AERO_AEROGPU_BUILD_TESTS)
+    enable_language(CXX)
+endif ()
+
+if (AERO_VIRTIO_BUILD_TESTS OR AERO_AEROGPU_BUILD_TESTS)
+    enable_testing()
+endif ()
 
 if (AERO_VIRTIO_BUILD_TESTS)
-    enable_testing()
     if (EXISTS "${CMAKE_CURRENT_LIST_DIR}/drivers/windows7/virtio/common/tests/CMakeLists.txt")
         add_subdirectory(drivers/windows7/virtio/common/tests)
     endif ()
@@ -29,4 +37,8 @@ if (AERO_VIRTIO_BUILD_TESTS)
     if (EXISTS "${CMAKE_CURRENT_LIST_DIR}/drivers/win7/virtio/tests/CMakeLists.txt")
         add_subdirectory(drivers/win7/virtio/tests)
     endif ()
+endif ()
+
+if (AERO_AEROGPU_BUILD_TESTS)
+    add_subdirectory(drivers/aerogpu/umd/d3d9/tests)
 endif ()
