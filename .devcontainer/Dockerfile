@@ -2,13 +2,11 @@
 
 FROM mcr.microsoft.com/devcontainers/base:ubuntu-22.04
 
-ARG NODE_VERSION=20.11.1
-
 SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
 
 # Native tooling for building + testing:
 # - Rust (stable + nightly + wasm target + rust-src)
-# - Node (pinned to the same version as CI)
+# - Node (pinned via .nvmrc, matching CI)
 # - wasm-pack + wasm-opt (Binaryen)
 # - QEMU + boot test deps (mtools, nasm, unzip)
 # - ACPICA tools (iasl)
@@ -61,13 +59,18 @@ RUN apt-get update \
     fonts-liberation \
   && rm -rf /var/lib/apt/lists/*
 
-RUN arch="$(dpkg --print-architecture)" \
+# Keep Node in lockstep with CI/local tooling.
+COPY .nvmrc /tmp/aero-node-version/.nvmrc
+
+RUN node_version="$(tr -d 'v' < /tmp/aero-node-version/.nvmrc | tr -d '[:space:]')" \
+  && if [[ -z "${node_version}" ]]; then echo "error: failed to read Node version from /tmp/aero-node-version/.nvmrc" >&2; exit 1; fi \
+  && arch="$(dpkg --print-architecture)" \
   && case "${arch}" in \
     amd64) node_arch="x64" ;; \
     arm64) node_arch="arm64" ;; \
     *) echo "Unsupported architecture: ${arch}" >&2; exit 1 ;; \
   esac \
-  && curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${node_arch}.tar.xz" -o /tmp/node.tar.xz \
+  && curl -fsSL "https://nodejs.org/dist/v${node_version}/node-v${node_version}-linux-${node_arch}.tar.xz" -o /tmp/node.tar.xz \
   && tar -xJf /tmp/node.tar.xz --strip-components=1 -C /usr/local \
   && rm /tmp/node.tar.xz \
   && node --version \

@@ -71,7 +71,7 @@ node tools/perf/run.mjs --out-dir perf-results/local --iterations 7 --url http:/
 
 CI pins:
 
-- Node via `actions/setup-node` (`NODE_VERSION` in workflow)
+- Node via `actions/setup-node` using the repo root [`.nvmrc`](../../.nvmrc) (`node-version-file`)
 - Playwright via the `playwright-core` dependency, pinned by `tools/perf/package-lock.json`
 - Chromium only (installed via `node node_modules/playwright-core/cli.js install chromium`)
 

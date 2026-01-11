@@ -91,6 +91,11 @@ jobs:
       - name: Check repository policy
         run: scripts/ci/check-repo-policy.sh
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
       - name: Check security header templates
         run: node scripts/ci/check-security-headers.mjs
 

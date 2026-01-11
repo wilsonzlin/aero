@@ -22,7 +22,7 @@ The container image installs:
   - The threaded-WASM nightly toolchain is pinned in `scripts/toolchains.json` (`rust.nightlyWasm`).
   - `wasm32-unknown-unknown` target for both
   - `rust-src` for nightly (required for `-Z build-std` threaded/shared-memory WASM builds)
-- Node.js **v20.11.1** (matching CI’s pinned Node 20.x version)
+- Node.js version pinned in the repo root [`.nvmrc`](../.nvmrc) (matching CI)
 - `wasm-pack`
 - Binaryen (`wasm-opt`)
 - QEMU + boot-test deps: `qemu-system-x86`, `mtools`, `nasm`, `unzip`
