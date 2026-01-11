@@ -55,9 +55,9 @@ it’s obvious which driver binaries are expected to link which engine):
   - `drivers/windows7/virtio-blk/sources` (WinDDK 7600 / WDK 7.1 `build.exe`)
   - `drivers/windows7/virtio-net/aero_virtio_net.vcxproj`
   - `drivers/windows7/virtio-net/sources` (WinDDK 7600 / WDK 7.1 `build.exe`)
-  - `drivers/windows7/virtio-snd/virtio-snd.vcxproj`
+  - `drivers/windows7/virtio-snd/aero_virtio_snd.vcxproj`
   - `drivers/windows7/virtio-snd/src/sources` (WinDDK 7600 / WDK 7.1 `build.exe`)
-  - `drivers/windows7/virtio-input/virtio-input.vcxproj`
+  - `drivers/windows7/virtio-input/aero_virtio_input.vcxproj`
   - `drivers/windows7/virtio-input/sources` (WinDDK 7600 / WDK 7.1 `build.exe`)
   - Host tests:
     - `drivers/windows/virtio/common/tests/CMakeLists.txt`

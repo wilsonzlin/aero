@@ -10,7 +10,7 @@ Why this exists:
     legacy transport sources, but the resulting `aero_virtio_snd.sys` cannot start
     against Aero's modern virtio device contract.
 
-This check parses `virtio-snd.vcxproj` and enforces:
+This check parses `aero_virtio_snd.vcxproj` and enforces:
   - Required modern transport sources are included.
   - Known legacy transport sources are NOT included.
   - The project output name matches the shipped INF's NTMPDriver (`aero_virtio_snd.sys`).
@@ -27,7 +27,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-VCXPROJ = REPO_ROOT / "drivers/windows7/virtio-snd/virtio-snd.vcxproj"
+VCXPROJ = REPO_ROOT / "drivers/windows7/virtio-snd/aero_virtio_snd.vcxproj"
 AERO_INF = REPO_ROOT / "drivers/windows7/virtio-snd/inf/aero_virtio_snd.inf"
 LEGACY_INF = REPO_ROOT / "drivers/windows7/virtio-snd/inf/aero-virtio-snd-legacy.inf"
 
@@ -376,7 +376,7 @@ def main() -> None:
     missing = sorted(p for p in REQUIRED_REPO_SOURCES if p not in repo_rel)
     if missing:
         fail(
-            "virtio-snd.vcxproj is missing required modern sources:\n"
+            "aero_virtio_snd.vcxproj is missing required modern sources:\n"
             + "\n".join(f"  - {p}" for p in missing)
         )
 
@@ -396,7 +396,7 @@ def main() -> None:
 
     if forbidden_found:
         fail(
-            "virtio-snd.vcxproj includes forbidden legacy transport sources:\n"
+            "aero_virtio_snd.vcxproj includes forbidden legacy transport sources:\n"
             + "\n".join(f"  - {p}" for p in forbidden_found)
         )
 
@@ -423,7 +423,7 @@ def main() -> None:
         )
     if not vcxproj_has_target_name(VCXPROJ, "virtiosnd_legacy"):
         fail(
-            "virtio-snd.vcxproj missing Legacy build target name "
+            "aero_virtio_snd.vcxproj missing Legacy build target name "
             "(expected <TargetName>virtiosnd_legacy</TargetName>)\n"
             f"  file: {VCXPROJ.as_posix()}"
         )

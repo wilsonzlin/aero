@@ -133,7 +133,7 @@ def main() -> None:
         ),
         # virtio-input targets Win7 (KMDF 1.9) and uses the canonical split virtqueue engine.
         "virtio-input": (
-            REPO_ROOT / "drivers/windows7/virtio-input/virtio-input.vcxproj",
+            REPO_ROOT / "drivers/windows7/virtio-input/aero_virtio_input.vcxproj",
             "virtqueue_split.c",
             "virtqueue_split_legacy.c",
             "windows/virtio/common",

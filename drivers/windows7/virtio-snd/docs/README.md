@@ -201,7 +201,7 @@ negotiates the low 32 bits of virtio feature flags (so it cannot negotiate `VIRT
 contract INF (`inf/aero_virtio_snd.inf`) does not bind to transitional IDs (use `inf/aero-virtio-snd-legacy.inf` for
 stock QEMU defaults).
 
-CI guardrail: PRs must keep `virtio-snd.vcxproj` on the modern-only backend. See `scripts/ci/check-virtio-snd-vcxproj-sources.py`.
+CI guardrail: PRs must keep `aero_virtio_snd.vcxproj` on the modern-only backend. See `scripts/ci/check-virtio-snd-vcxproj-sources.py`.
 
 ## Design notes
 
@@ -423,7 +423,7 @@ If the miniport submits PCM faster than the period schedule (e.g. "fill the queu
 
 CI builds the driver using:
 
-* `drivers/windows7/virtio-snd/virtio-snd.vcxproj`
+* `drivers/windows7/virtio-snd/aero_virtio_snd.vcxproj`
 
 Configuration notes:
 

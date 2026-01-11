@@ -17,7 +17,7 @@ The intended developer workflow is:
 | --- | --- |
 | `SOURCES.md` | Clean-room/source tracking record (see `drivers/windows7/LEGAL.md` §2.6). |
 | `src/`, `include/` | Driver sources (shared by both build systems). |
-| `virtio-snd.vcxproj` | **CI-supported** MSBuild project (WDK10; builds `aero_virtio_snd.sys`). |
+| `aero_virtio_snd.vcxproj` | **CI-supported** MSBuild project (WDK10; builds `aero_virtio_snd.sys`). |
 | `makefile`, `src/sources` | Legacy WinDDK 7600 / WDK 7.1 `build.exe` files (deprecated). |
 | `inf/` | Driver package staging directory (INF/CAT/SYS live together for “Have Disk…” installs). |
 | `scripts/` | Utilities for generating a test cert, generating the catalog, signing, and optional release packaging. |
@@ -41,7 +41,7 @@ You need the following tools in `PATH` (typically by opening a WDK Developer Com
 
 This driver is built in CI via the MSBuild project:
 
-- `drivers/windows7/virtio-snd/virtio-snd.vcxproj`
+- `drivers/windows7/virtio-snd/aero_virtio_snd.vcxproj`
 
 From a Windows host with the WDK installed:
 
