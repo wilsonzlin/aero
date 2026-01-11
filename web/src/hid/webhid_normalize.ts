@@ -182,6 +182,7 @@ export type NormalizeCollectionsOptions = {
 };
 
 function normalizeReportItem(item: HidReportItem, path: Path): NormalizedHidReportItem {
+  const usagePage = item.usagePage ?? 0;
   const rawUsages = item.usages ?? [];
 
   // Reject the ambiguous case where the caller claims a non-degenerate range but only provides a
@@ -207,7 +208,7 @@ function normalizeReportItem(item: HidReportItem, path: Path): NormalizedHidRepo
   let usageMinimum = item.usageMinimum ?? 0;
   let usageMaximum = item.usageMaximum ?? 0;
 
-  if (isRange && rawUsages.length >= 2 && rawUsages.length <= MAX_RANGE_CONTIGUITY_CHECK_LEN) {
+  if (isRange && rawUsages.length >= 1 && rawUsages.length <= MAX_RANGE_CONTIGUITY_CHECK_LEN) {
     // Derive min/max from the explicit usage list so we don't depend on the browser's bookkeeping
     // (or on hand-authored metadata) for small ranges.
     let min = rawUsages[0]!;
@@ -224,29 +225,29 @@ function normalizeReportItem(item: HidReportItem, path: Path): NormalizedHidRepo
   // representation (even for a degenerate range where `min === max`).
   const usages = isRange ? [usageMinimum, usageMaximum] : Array.from(rawUsages);
 
-  const isAbsolute = item.isAbsolute ?? true;
+  const isAbsolute = item.isAbsolute ?? (item.isRelative !== undefined ? !item.isRelative : true);
   const isRelative = item.isRelative ?? !isAbsolute;
   const isWrapped = item.isWrapped ?? item.wrap ?? false;
 
   return {
-    usagePage: item.usagePage,
+    usagePage,
     usages,
     usageMinimum,
     usageMaximum,
-    reportSize: item.reportSize,
-    reportCount: item.reportCount,
-    unitExponent: item.unitExponent,
-    unit: item.unit,
-    logicalMinimum: item.logicalMinimum,
-    logicalMaximum: item.logicalMaximum,
-    physicalMinimum: item.physicalMinimum,
-    physicalMaximum: item.physicalMaximum,
+    reportSize: item.reportSize ?? 0,
+    reportCount: item.reportCount ?? 0,
+    unitExponent: item.unitExponent ?? 0,
+    unit: item.unit ?? 0,
+    logicalMinimum: item.logicalMinimum ?? 0,
+    logicalMaximum: item.logicalMaximum ?? 0,
+    physicalMinimum: item.physicalMinimum ?? 0,
+    physicalMaximum: item.physicalMaximum ?? 0,
     strings: Array.from(item.strings ?? []),
-    stringMinimum: item.stringMinimum,
-    stringMaximum: item.stringMaximum,
+    stringMinimum: item.stringMinimum ?? 0,
+    stringMaximum: item.stringMaximum ?? 0,
     designators: Array.from(item.designators ?? []),
-    designatorMinimum: item.designatorMinimum,
-    designatorMaximum: item.designatorMaximum,
+    designatorMinimum: item.designatorMinimum ?? 0,
+    designatorMaximum: item.designatorMaximum ?? 0,
 
     isAbsolute,
     isArray: item.isArray ?? false,
@@ -333,8 +334,8 @@ function normalizeCollection(
     }
 
     return {
-      usagePage: collection.usagePage,
-      usage: collection.usage,
+      usagePage: collection.usagePage ?? 0,
+      usage: collection.usage ?? 0,
       collectionType: normalizeCollectionType(collection.type, [...path, "type"]),
       children,
       inputReports: normalizeReportList(collection.inputReports ?? [], "inputReports", path),
