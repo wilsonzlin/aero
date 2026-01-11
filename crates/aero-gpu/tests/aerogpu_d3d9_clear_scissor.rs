@@ -158,6 +158,10 @@ fn pixel_at(pixels: &[u8], width: u32, x: u32, y: u32) -> [u8; 4] {
     ]
 }
 
+fn stencil_at(stencil: &[u8], width: u32, x: u32, y: u32) -> u8 {
+    stencil[(y * width + x) as usize]
+}
+
 #[test]
 fn d3d9_cmd_stream_clear_respects_scissor_rect() {
     let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
@@ -415,7 +419,13 @@ fn d3d9_cmd_stream_clear_stencil_respects_scissor_rect() {
     let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
         Ok(exec) => exec,
         Err(AerogpuD3d9Error::AdapterNotFound) => {
-            eprintln!("skipping D3D9 scissored stencil clear test: wgpu adapter not found");
+            common::skip_or_panic(
+                concat!(
+                    module_path!(),
+                    "::d3d9_cmd_stream_clear_stencil_respects_scissor_rect"
+                ),
+                "wgpu adapter not found",
+            );
             return;
         }
         Err(err) => panic!("failed to create executor: {err}"),
@@ -790,11 +800,122 @@ fn d3d9_cmd_stream_clear_depth_respects_scissor_rect() {
 }
 
 #[test]
+fn d3d9_cmd_stream_clear_stencil_masks_to_8_bits() {
+    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
+        Ok(exec) => exec,
+        Err(AerogpuD3d9Error::AdapterNotFound) => {
+            common::skip_or_panic(
+                concat!(module_path!(), "::d3d9_cmd_stream_clear_stencil_masks_to_8_bits"),
+                "wgpu adapter not found",
+            );
+            return;
+        }
+        Err(err) => panic!("failed to create executor: {err}"),
+    };
+
+    const RT_HANDLE: u32 = 1;
+    const DS_HANDLE: u32 = 2;
+
+    let width = 64u32;
+    let height = 64u32;
+
+    // D3D9 takes a 32-bit stencil clear value but only the low 8 bits apply for D24S8.
+    let stencil_value = 0x1234u32;
+    let expected = (stencil_value & 0xFF) as u8;
+
+    let stream = build_stream(|out| {
+        emit_packet(out, AerogpuCmdOpcode::CreateTexture2d as u32, |out| {
+            push_u32(out, RT_HANDLE);
+            push_u32(
+                out,
+                AEROGPU_RESOURCE_USAGE_TEXTURE | AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+            );
+            push_u32(out, AerogpuFormat::R8G8B8A8Unorm as u32);
+            push_u32(out, width);
+            push_u32(out, height);
+            push_u32(out, 1); // mip_levels
+            push_u32(out, 1); // array_layers
+            push_u32(out, width * 4); // row_pitch_bytes
+            push_u32(out, 0); // backing_alloc_id
+            push_u32(out, 0); // backing_offset_bytes
+            push_u64(out, 0); // reserved0
+        });
+
+        emit_packet(out, AerogpuCmdOpcode::CreateTexture2d as u32, |out| {
+            push_u32(out, DS_HANDLE);
+            push_u32(
+                out,
+                AEROGPU_RESOURCE_USAGE_TEXTURE | AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL,
+            );
+            push_u32(out, AerogpuFormat::D24UnormS8Uint as u32);
+            push_u32(out, width);
+            push_u32(out, height);
+            push_u32(out, 1); // mip_levels
+            push_u32(out, 1); // array_layers
+            push_u32(out, 0); // row_pitch_bytes
+            push_u32(out, 0); // backing_alloc_id
+            push_u32(out, 0); // backing_offset_bytes
+            push_u64(out, 0); // reserved0
+        });
+
+        emit_packet(out, AerogpuCmdOpcode::SetRenderTargets as u32, |out| {
+            push_u32(out, 1); // color_count
+            push_u32(out, DS_HANDLE); // depth_stencil
+            push_u32(out, RT_HANDLE);
+            for _ in 0..7 {
+                push_u32(out, 0);
+            }
+        });
+
+        emit_packet(out, AerogpuCmdOpcode::SetViewport as u32, |out| {
+            push_f32(out, 0.0);
+            push_f32(out, 0.0);
+            push_f32(out, width as f32);
+            push_f32(out, height as f32);
+            push_f32(out, 0.0);
+            push_f32(out, 1.0);
+        });
+
+        // Full target clear with a stencil value that does not fit in 8 bits.
+        emit_packet(out, AerogpuCmdOpcode::Clear as u32, |out| {
+            push_u32(
+                out,
+                AEROGPU_CLEAR_COLOR | AEROGPU_CLEAR_DEPTH | AEROGPU_CLEAR_STENCIL,
+            );
+            push_f32(out, 0.0);
+            push_f32(out, 0.0);
+            push_f32(out, 0.0);
+            push_f32(out, 1.0);
+            push_f32(out, 1.0); // depth
+            push_u32(out, stencil_value);
+        });
+    });
+
+    exec.execute_cmd_stream(&stream)
+        .expect("execute should succeed");
+
+    let (_out_w, _out_h, stencil) = pollster::block_on(exec.readback_texture_stencil8(DS_HANDLE))
+        .expect("stencil readback should succeed");
+
+    assert_eq!(stencil_at(&stencil, width, 0, 0), expected);
+    assert_eq!(
+        stencil_at(&stencil, width, width - 1, height - 1),
+        expected
+    );
+}
+
+#[test]
 fn d3d9_cmd_stream_clear_depth_d24s8_respects_scissor_rect() {
     let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
         Ok(exec) => exec,
         Err(AerogpuD3d9Error::AdapterNotFound) => {
-            eprintln!("skipping D3D9 scissored D24S8 depth clear test: wgpu adapter not found");
+            common::skip_or_panic(
+                concat!(
+                    module_path!(),
+                    "::d3d9_cmd_stream_clear_depth_d24s8_respects_scissor_rect"
+                ),
+                "wgpu adapter not found",
+            );
             return;
         }
         Err(err) => panic!("failed to create executor: {err}"),

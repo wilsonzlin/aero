@@ -3078,7 +3078,7 @@ impl AerogpuD3d9Executor {
             }),
             stencil_ops: depth_has_stencil.then(|| wgpu::Operations {
                 load: if clear_stencil_enabled {
-                    wgpu::LoadOp::Clear(stencil)
+                    wgpu::LoadOp::Clear(stencil & 0xFF)
                 } else {
                     wgpu::LoadOp::Load
                 },
