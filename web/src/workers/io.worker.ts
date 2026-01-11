@@ -30,7 +30,7 @@ import { I8042Controller } from "../io/devices/i8042";
 import { PciTestDevice } from "../io/devices/pci_test_device";
 import { UART_COM1, Uart16550, type SerialOutputSink } from "../io/devices/uart16550";
 import { openSyncAccessHandleInDedicatedWorker } from "../platform/opfs.ts";
-import { RemoteStreamingDisk, type RemoteDiskCacheStatus } from "../platform/remote_disk";
+import { RemoteStreamingDisk, type RemoteDiskCacheStatus, type RemoteDiskTelemetrySnapshot } from "../platform/remote_disk";
 import { DEFAULT_OPFS_DISK_IMAGES_DIRECTORY } from "../storage/disk_image_store";
 import type { WorkerOpenToken } from "../storage/disk_image_store";
 import type { UsbActionMessage, UsbCompletionMessage, UsbHostAction, UsbSelectedMessage } from "../usb/usb_proxy_protocol";
@@ -93,6 +93,7 @@ type OpenRemoteDiskRequest = {
   };
 };
 type GetRemoteDiskCacheStatusRequest = { id: number; type: "getRemoteDiskCacheStatus" };
+type GetRemoteDiskTelemetryRequest = { id: number; type: "getRemoteDiskTelemetry" };
 type ClearRemoteDiskCacheRequest = { id: number; type: "clearRemoteDiskCache" };
 type FlushRemoteDiskCacheRequest = { id: number; type: "flushRemoteDiskCache" };
 type CloseRemoteDiskRequest = { id: number; type: "closeRemoteDisk" };
@@ -125,6 +126,10 @@ type OpenRemoteDiskResult =
 type GetRemoteDiskCacheStatusResult =
   | { id: number; type: "getRemoteDiskCacheStatusResult"; ok: true; status: RemoteDiskCacheStatus }
   | { id: number; type: "getRemoteDiskCacheStatusResult"; ok: false; error: string };
+
+type GetRemoteDiskTelemetryResult =
+  | { id: number; type: "getRemoteDiskTelemetryResult"; ok: true; telemetry: RemoteDiskTelemetrySnapshot }
+  | { id: number; type: "getRemoteDiskTelemetryResult"; ok: false; error: string };
 
 type ClearRemoteDiskCacheResult =
   | { id: number; type: "clearRemoteDiskCacheResult"; ok: true }
@@ -328,6 +333,31 @@ async function handleGetRemoteDiskCacheStatus(msg: GetRemoteDiskCacheStatusReque
   }
 }
 
+async function handleGetRemoteDiskTelemetry(msg: GetRemoteDiskTelemetryRequest): Promise<void> {
+  const t0 = performance.now();
+  try {
+    if (!activeRemoteDisk) throw new Error("No remote disk is open.");
+    const telemetry = activeRemoteDisk.getTelemetrySnapshot();
+    const res: GetRemoteDiskTelemetryResult = {
+      id: msg.id,
+      type: "getRemoteDiskTelemetryResult",
+      ok: true,
+      telemetry,
+    };
+    ctx.postMessage(res);
+  } catch (err) {
+    const res: GetRemoteDiskTelemetryResult = {
+      id: msg.id,
+      type: "getRemoteDiskTelemetryResult",
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+    ctx.postMessage(res);
+  } finally {
+    perfIoMs += performance.now() - t0;
+  }
+}
+
 async function handleClearRemoteDiskCache(msg: ClearRemoteDiskCacheRequest): Promise<void> {
   const t0 = performance.now();
   try {
@@ -397,6 +427,7 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       | Partial<OpenActiveDiskRequest>
       | Partial<OpenRemoteDiskRequest>
       | Partial<GetRemoteDiskCacheStatusRequest>
+      | Partial<GetRemoteDiskTelemetryRequest>
       | Partial<ClearRemoteDiskCacheRequest>
       | Partial<FlushRemoteDiskCacheRequest>
       | Partial<CloseRemoteDiskRequest>
@@ -426,6 +457,11 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
 
     if ((data as Partial<GetRemoteDiskCacheStatusRequest>).type === "getRemoteDiskCacheStatus") {
       void handleGetRemoteDiskCacheStatus(data as GetRemoteDiskCacheStatusRequest);
+      return;
+    }
+
+    if ((data as Partial<GetRemoteDiskTelemetryRequest>).type === "getRemoteDiskTelemetry") {
+      void handleGetRemoteDiskTelemetry(data as GetRemoteDiskTelemetryRequest);
       return;
     }
 

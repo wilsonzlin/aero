@@ -1,5 +1,5 @@
 import type { WorkerOpenToken } from "../storage/disk_image_store";
-import type { RemoteDiskCacheStatus } from "../platform/remote_disk";
+import type { RemoteDiskCacheStatus, RemoteDiskTelemetrySnapshot } from "../platform/remote_disk";
 import { createIpcBuffer, openRingByKind } from "../ipc/ipc";
 import { RECORD_ALIGN, ringCtrl } from "../ipc/layout";
 import { decodeEvent, encodeCommand } from "../ipc/protocol";
@@ -88,6 +88,20 @@ type GetRemoteDiskCacheStatusErrorResponse = {
   error: string;
 };
 
+type GetRemoteDiskTelemetryRequest = { id: number; type: "getRemoteDiskTelemetry" };
+type GetRemoteDiskTelemetryResponse = {
+  id: number;
+  type: "getRemoteDiskTelemetryResult";
+  ok: true;
+  telemetry: RemoteDiskTelemetrySnapshot;
+};
+type GetRemoteDiskTelemetryErrorResponse = {
+  id: number;
+  type: "getRemoteDiskTelemetryResult";
+  ok: false;
+  error: string;
+};
+
 type ClearRemoteDiskCacheRequest = { id: number; type: "clearRemoteDiskCache" };
 type ClearRemoteDiskCacheResponse = { id: number; type: "clearRemoteDiskCacheResult"; ok: true };
 type ClearRemoteDiskCacheErrorResponse = { id: number; type: "clearRemoteDiskCacheResult"; ok: false; error: string };
@@ -115,6 +129,8 @@ type WorkerResponse =
   | OpenRemoteDiskErrorResponse
   | GetRemoteDiskCacheStatusResponse
   | GetRemoteDiskCacheStatusErrorResponse
+  | GetRemoteDiskTelemetryResponse
+  | GetRemoteDiskTelemetryErrorResponse
   | ClearRemoteDiskCacheResponse
   | ClearRemoteDiskCacheErrorResponse
   | FlushRemoteDiskCacheResponse
@@ -196,6 +212,15 @@ export class IoWorkerClient {
   async getRemoteDiskCacheStatus(): Promise<GetRemoteDiskCacheStatusResponse> {
     const id = this.#nextId++;
     const req: GetRemoteDiskCacheStatusRequest = { id, type: "getRemoteDiskCacheStatus" };
+    return await new Promise((resolve, reject) => {
+      this.#pending.set(id, { resolve, reject });
+      this.#worker.postMessage(req);
+    });
+  }
+
+  async getRemoteDiskTelemetry(): Promise<GetRemoteDiskTelemetryResponse> {
+    const id = this.#nextId++;
+    const req: GetRemoteDiskTelemetryRequest = { id, type: "getRemoteDiskTelemetry" };
     return await new Promise((resolve, reject) => {
       this.#pending.set(id, { resolve, reject });
       this.#worker.postMessage(req);

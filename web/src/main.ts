@@ -35,6 +35,7 @@ import { createDefaultDiskImageStore } from "./storage/default_disk_image_store"
 import type { DiskImageInfo, WorkerOpenToken } from "./storage/disk_image_store";
 import { formatByteSize } from "./storage/disk_image_store";
 import { RuntimeDiskClient } from "./storage/runtime_disk_client";
+import type { RemoteDiskTelemetrySnapshot } from "./platform/remote_disk";
 import { IoWorkerClient } from "./workers/io_worker_client";
 import { type JitWorkerResponse } from "./workers/jit_protocol";
 import { JitWorkerClient } from "./workers/jit_worker_client";
@@ -1420,6 +1421,8 @@ function renderRemoteDiskPanel(): HTMLElement {
   let statsPollPending = false;
   let statsBaseline: Awaited<ReturnType<RuntimeDiskClient["stats"]>> | null = null;
   let statsBaselineAtMs: number | null = null;
+  let rangeStatsBaseline: RemoteDiskTelemetrySnapshot | null = null;
+  let rangeStatsBaselineAtMs: number | null = null;
 
   const saveSettings = () => {
     const payload = {
@@ -1474,7 +1477,7 @@ function renderRemoteDiskPanel(): HTMLElement {
     readButton.disabled = !enabled;
     flushButton.disabled = !enabled || !hasOpenDisk();
     clearButton.disabled = !enabled || !hasOpenDisk();
-    resetStatsButton.disabled = !enabled || handle === null;
+    resetStatsButton.disabled = !enabled || !hasOpenDisk();
     closeButton.disabled = !enabled || !hasOpenDisk();
   }
 
@@ -1527,6 +1530,8 @@ function renderRemoteDiskPanel(): HTMLElement {
     handle = null;
     statsBaseline = null;
     statsBaselineAtMs = null;
+    rangeStatsBaseline = null;
+    rangeStatsBaselineAtMs = null;
 
     if (cur !== null) {
       try {
@@ -1560,6 +1565,8 @@ function renderRemoteDiskPanel(): HTMLElement {
     if (!url) throw new Error("Enter a URL first.");
     statsBaseline = null;
     statsBaselineAtMs = null;
+    rangeStatsBaseline = null;
+    rangeStatsBaselineAtMs = null;
 
     const cacheLimitMiB = Number(cacheLimitInput.value);
     const cacheLimitBytes = cacheLimitMiB <= 0 ? null : cacheLimitMiB * 1024 * 1024;
@@ -1605,6 +1612,14 @@ function renderRemoteDiskPanel(): HTMLElement {
     rangeOpened = true;
     rangeSize = openRes.size;
     updateButtons();
+    try {
+      const res = await ioWorker.getRemoteDiskTelemetry();
+      rangeStatsBaseline = res.telemetry;
+      rangeStatsBaselineAtMs = Date.now();
+    } catch {
+      rangeStatsBaseline = null;
+      rangeStatsBaselineAtMs = null;
+    }
     return { mode: "range", size: openRes.size };
   }
 
@@ -1668,16 +1683,39 @@ function renderRemoteDiskPanel(): HTMLElement {
       }
 
       if (!rangeOpened) return;
-      const res = await ioWorker.getRemoteDiskCacheStatus();
+      const res = await ioWorker.getRemoteDiskTelemetry();
       if (!rangeOpened) return;
-      const remote = res.status;
+      const remote = res.telemetry;
+
+      const baselineRemote = rangeStatsBaseline;
+      const baseBlockRequests = baselineRemote?.blockRequests ?? 0;
+      const baseCacheHits = baselineRemote?.cacheHits ?? 0;
+      const baseCacheMisses = baselineRemote?.cacheMisses ?? 0;
+      const baseInflightJoins = baselineRemote?.inflightJoins ?? 0;
+      const baseRequests = baselineRemote?.requests ?? 0;
+      const baseBytesDownloaded = baselineRemote?.bytesDownloaded ?? 0;
+
+      const deltaCacheHits = remote.cacheHits - baseCacheHits;
+      const deltaCacheMisses = remote.cacheMisses - baseCacheMisses;
+      const hitRateDenom = deltaCacheHits + deltaCacheMisses;
+      const hitRate = hitRateDenom > 0 ? deltaCacheHits / hitRateDenom : 0;
       const cacheCoverage = remote.totalSize > 0 ? remote.cachedBytes / remote.totalSize : 0;
       const cacheLimitText = remote.cacheLimitBytes === null ? "off" : formatBytes(remote.cacheLimitBytes);
+      const deltaBytesDownloaded = remote.bytesDownloaded - baseBytesDownloaded;
+      const lastFetchRangeText = remote.lastFetchRange
+        ? `${formatBytes(remote.lastFetchRange.start)}-${formatBytes(remote.lastFetchRange.end - 1)}`
+        : "—";
+      const lastFetchAtText = remote.lastFetchAtMs === null ? "—" : new Date(remote.lastFetchAtMs).toLocaleTimeString();
+      const sinceText = rangeStatsBaselineAtMs === null ? "—" : new Date(rangeStatsBaselineAtMs).toLocaleTimeString();
 
       stats.textContent =
         `imageSize=${formatBytes(remote.totalSize)}\n` +
         `cache=${formatBytes(remote.cachedBytes)} (${(cacheCoverage * 100).toFixed(2)}%) limit=${cacheLimitText}\n` +
-        `cachedRanges=${remote.cachedRanges.length}`;
+        `blockSize=${formatBytes(remote.blockSize)}\n` +
+        `since=${sinceText}\n` +
+        `requests=${remote.requests - baseRequests} bytesDownloaded=${formatBytes(deltaBytesDownloaded)}\n` +
+        `blockRequests=${remote.blockRequests - baseBlockRequests} hits=${deltaCacheHits} misses=${deltaCacheMisses} inflightJoins=${remote.inflightJoins - baseInflightJoins} hitRate=${(hitRate * 100).toFixed(1)}%\n` +
+        `inflightFetches=${remote.inflightFetches} lastFetch=${lastFetchAtText} ${lastFetchRangeText} (${remote.lastFetchMs === null ? "—" : remote.lastFetchMs.toFixed(1)}ms)`;
     } catch (err) {
       stats.textContent = err instanceof Error ? err.message : String(err);
     } finally {
@@ -1788,8 +1826,14 @@ function renderRemoteDiskPanel(): HTMLElement {
         }
       } else {
         await ioWorker.clearRemoteDiskCache();
-        statsBaseline = null;
-        statsBaselineAtMs = null;
+        try {
+          const res = await ioWorker.getRemoteDiskTelemetry();
+          rangeStatsBaseline = res.telemetry;
+          rangeStatsBaselineAtMs = Date.now();
+        } catch {
+          rangeStatsBaseline = null;
+          rangeStatsBaselineAtMs = null;
+        }
       }
       progress.value = 1;
       output.textContent = "Cache cleared.";
@@ -1804,12 +1848,19 @@ function renderRemoteDiskPanel(): HTMLElement {
     output.textContent = "";
     progress.value = 0;
     try {
-      if (handle === null) {
+      if (!hasOpenDisk()) {
         output.textContent = "Nothing to reset (probe/open first).";
         return;
       }
-      statsBaseline = await client.stats(handle);
-      statsBaselineAtMs = Date.now();
+      if (modeSelect.value === "chunked") {
+        if (handle === null) throw new Error("No chunked disk handle is open.");
+        statsBaseline = await client.stats(handle);
+        statsBaselineAtMs = Date.now();
+      } else {
+        const res = await ioWorker.getRemoteDiskTelemetry();
+        rangeStatsBaseline = res.telemetry;
+        rangeStatsBaselineAtMs = Date.now();
+      }
       progress.value = 1;
       output.textContent = "Stats reset.";
       void refreshStats();
