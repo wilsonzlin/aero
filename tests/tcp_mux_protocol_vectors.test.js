@@ -4,7 +4,9 @@ import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
 
 import {
+  TCP_MUX_SUBPROTOCOL,
   TcpMuxFrameParser,
+  TcpMuxMsgType,
   decodeTcpMuxClosePayload,
   decodeTcpMuxErrorPayload,
   decodeTcpMuxOpenPayload,
@@ -27,6 +29,19 @@ const vectors = loadVectors();
 assert.equal(vectors.schema, 1);
 
 describe("tools/net-proxy-server tcp-mux protocol vectors", () => {
+  it("subprotocol matches the public contract", () => {
+    assert.equal(TCP_MUX_SUBPROTOCOL, "aero-tcp-mux-v1");
+  });
+
+  it("message type constants match the wire protocol", () => {
+    assert.equal(TcpMuxMsgType.OPEN, 1);
+    assert.equal(TcpMuxMsgType.DATA, 2);
+    assert.equal(TcpMuxMsgType.CLOSE, 3);
+    assert.equal(TcpMuxMsgType.ERROR, 4);
+    assert.equal(TcpMuxMsgType.PING, 5);
+    assert.equal(TcpMuxMsgType.PONG, 6);
+  });
+
   for (const v of vectors.frames) {
     it(`frame/${v.name}`, () => {
       const payload = decodeB64(v.payload_b64);
