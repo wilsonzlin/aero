@@ -225,7 +225,8 @@ Aero mapping (current code):
       subsequent **DATA (IN)** stage is NAKed until the asynchronous host completion arrives (this
       is how “WebUSB Promise pending” is represented).
     - `ControlResponse::Data(bytes)` → SETUP TD ACKs and the bytes become the source for subsequent
-      IN DATA TDs.
+      IN DATA TDs (including `bytes=[]` which results in a zero-length DATA packet / ZLP when
+      `wLength > 0`).
     - `ControlResponse::Ack` → SETUP TD ACKs. If `wLength > 0`, the control pipe still completes a
       one-shot **DATA (IN)** stage with a zero-length packet (ZLP), then proceeds to STATUS.
       Otherwise (`wLength == 0`) it skips directly to STATUS.
