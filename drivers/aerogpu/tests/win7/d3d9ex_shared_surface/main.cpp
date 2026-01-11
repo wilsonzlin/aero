@@ -1317,12 +1317,12 @@ static int RunSharedSurfaceTest(int argc, char** argv) {
   const char* kTestName = "d3d9ex_shared_surface";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
-        "Usage: %s.exe [--dump] [--show] [--validate-sharing] [--no-validate-sharing] [--require-vid=0x####] "
+        "Usage: %s.exe [--dump] [--hidden] [--show] [--validate-sharing] [--no-validate-sharing] [--require-vid=0x####] "
         "[--require-did=0x####] [--allow-microsoft] [--allow-non-aerogpu] [--require-umd]",
         kTestName);
     aerogpu_test::PrintfStdout("Note: pixel sharing is validated by default; pass --no-validate-sharing to skip readback validation.");
     aerogpu_test::PrintfStdout("Note: --dump implies --validate-sharing.");
-    aerogpu_test::PrintfStdout("Note: window is hidden by default; pass --show to display it.");
+    aerogpu_test::PrintfStdout("Note: window is shown by default; pass --hidden to hide it.");
     aerogpu_test::PrintfStdout(
         "Internal: %s.exe --child --resource=texture|rendertarget --shared-handle=0x... "
         "[--ready-event=NAME --opened-event=NAME --done-event=NAME] [--require-umd] (used by parent)",
@@ -1339,9 +1339,12 @@ static int RunSharedSurfaceTest(int argc, char** argv) {
   const bool allow_microsoft = aerogpu_test::HasArg(argc, argv, "--allow-microsoft");
   const bool allow_non_aerogpu = aerogpu_test::HasArg(argc, argv, "--allow-non-aerogpu");
   const bool require_umd = aerogpu_test::HasArg(argc, argv, "--require-umd");
-  // This test spawns a child process and is primarily intended for automation; default to creating
-  // the parent window hidden (pass --show to display it).
-  const bool hidden = !aerogpu_test::HasArg(argc, argv, "--show");
+  bool hidden = aerogpu_test::HasArg(argc, argv, "--hidden");
+  // --show is a d3d9ex_shared_surface-specific override, useful when running the suite with
+  // --hidden but wanting to observe this particular test.
+  if (aerogpu_test::HasArg(argc, argv, "--show")) {
+    hidden = false;
+  }
 
   AdapterRequirements req;
   ZeroMemory(&req, sizeof(req));
