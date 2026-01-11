@@ -523,6 +523,25 @@ function Invoke-AeroVirtioSndWavVerification {
   }
 }
 
+function Write-AeroQemuStderrTail {
+  param(
+    [Parameter(Mandatory = $true)] [string]$Path
+  )
+
+  if (-not (Test-Path -LiteralPath $Path)) { return }
+
+  $lines = @()
+  try {
+    $lines = Get-Content -LiteralPath $Path -Tail 200 -ErrorAction SilentlyContinue
+  } catch {
+    return
+  }
+  if ($lines.Count -eq 0) { return }
+
+  Write-Host "`n--- QEMU stderr tail ---"
+  $lines | ForEach-Object { Write-Host $_ }
+}
+
 $DiskImagePath = (Resolve-Path -LiteralPath $DiskImagePath).Path
 
 $serialParent = Split-Path -Parent $SerialLogPath
@@ -542,6 +561,11 @@ $httpListener = Start-AeroSelftestHttpServer -Port $HttpPort -Path $HttpPath
 try {
   $serialChardev = "file,id=charserial0,path=$SerialLogPath"
   $netdev = "user,id=net0"
+  $serialBase = [System.IO.Path]::GetFileNameWithoutExtension((Split-Path -Leaf $SerialLogPath))
+  $qemuStderrPath = Join-Path (Split-Path -Parent $SerialLogPath) "$serialBase.qemu.stderr.log"
+  if (Test-Path -LiteralPath $qemuStderrPath) {
+    Remove-Item -LiteralPath $qemuStderrPath -Force
+  }
   if ($VirtioTransitional) {
     if ($WithVirtioSnd -or (-not [string]::IsNullOrEmpty($VirtioSndWavPath)) -or $VirtioSndAudioBackend -ne "none") {
       throw "-VirtioTransitional is incompatible with virtio-snd options. Remove -VirtioTransitional or pass a custom device via -QemuExtraArgs."
@@ -635,7 +659,7 @@ try {
   Write-Host "Launching QEMU:"
   Write-Host "  $QemuSystem $($qemuArgs -join ' ')"
 
-  $proc = Start-Process -FilePath $QemuSystem -ArgumentList $qemuArgs -PassThru
+  $proc = Start-Process -FilePath $QemuSystem -ArgumentList $qemuArgs -PassThru -RedirectStandardError $qemuStderrPath
   $scriptExitCode = 0
 
   try {
@@ -672,6 +696,7 @@ try {
         Write-Host "`n--- Serial tail ---"
         Get-Content -LiteralPath $SerialLogPath -Tail 200 -ErrorAction SilentlyContinue
       }
+      Write-AeroQemuStderrTail -Path $qemuStderrPath
       $scriptExitCode = 3
     }
     "TIMEOUT" {
