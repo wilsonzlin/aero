@@ -527,7 +527,8 @@ Resource/CB/sampler binding for FL10_0 pipeline:
 | Field | Status | Notes / stub guidance |
 |---|---|---|
 | `pfnPsSetConstantBuffers` | REQUIRED | Used by `d3d11_dynamic_constant_buffer_sanity`. Runtime may call with NULL to clear; handle that without error. |
-| `pfnVsSetConstantBuffers` / `pfnGsSetConstantBuffers` | REQUIRED-BUT-STUBBABLE | Keep non-null; implement as stages gain coverage. |
+| `pfnVsSetConstantBuffers` | REQUIRED | Used by `d3d11_dynamic_constant_buffer_sanity` (binds the CB to both VS and PS). Runtime may call with NULL to clear; handle that without error. |
+| `pfnGsSetConstantBuffers` | REQUIRED-BUT-STUBBABLE | Keep non-null; implement as stages gain coverage. |
 | `pfnPsSetShaderResources` | REQUIRED | Used by `d3d11_texture_sampling_sanity`; handle NULL to unbind. |
 | `pfnVsSetShaderResources` / `pfnGsSetShaderResources` | REQUIRED-BUT-STUBBABLE | Keep non-null; implement as stages gain coverage. |
 | `pfnPsSetSamplers` | REQUIRED | Used by `d3d11_texture_sampling_sanity`; handle NULL to unbind. |

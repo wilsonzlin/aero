@@ -323,6 +323,7 @@ static int RunD3D11DynamicConstantBufferSanity(int argc, char** argv) {
   context->PSSetShader(ps.get(), NULL, 0);
 
   ID3D11Buffer* cbs[] = {cb.get()};
+  context->VSSetConstantBuffers(0, 1, cbs);
   context->PSSetConstantBuffers(0, 1, cbs);
 
   const FLOAT clear_rgba[4] = {1.0f, 0.0f, 0.0f, 1.0f};
@@ -352,6 +353,7 @@ static int RunD3D11DynamicConstantBufferSanity(int argc, char** argv) {
 
   // Explicitly unbind the constant buffer to exercise the "bind NULL to clear" path.
   ID3D11Buffer* null_cbs[] = {NULL};
+  context->VSSetConstantBuffers(0, 1, null_cbs);
   context->PSSetConstantBuffers(0, 1, null_cbs);
 
   // Read back the result via a staging texture.
