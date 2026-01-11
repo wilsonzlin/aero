@@ -265,6 +265,9 @@ struct AeroGpuAdapter {
 
   D3D10DDI_HRTADAPTER hrt_adapter = {};
   const void* adapter_callbacks = nullptr;
+
+  // Optional D3DKMT adapter handle for dev-only escapes (e.g. QUERY_FENCE).
+  D3DKMT_HANDLE kmt_adapter = 0;
 #endif
 };
 
@@ -421,6 +424,16 @@ struct AeroGpuDevice {
   D3D10DDI_HRTDEVICE hrt_device10 = {};
   D3D11DDI_HDEVICE hDevice = {};
 
+  // Fence tracking for WDDM-backed synchronization.
+  std::atomic<uint64_t> last_submitted_fence{0};
+  std::atomic<uint64_t> last_completed_fence{0};
+
+  // Kernel-mode WDDM objects used for fence wait/query.
+  D3DKMT_HANDLE kmt_device = 0;
+  D3DKMT_HANDLE kmt_fence_syncobj = 0;
+  volatile uint64_t* monitored_fence_value = nullptr;
+  D3DKMT_HANDLE kmt_adapter = 0;
+
   AeroGpuImmediateContext* immediate = nullptr;
 };
 
@@ -489,6 +502,8 @@ struct AeroGpuD3dkmtProcs {
   decltype(&D3DKMTOpenAdapterFromHdc) pfn_open_adapter_from_hdc = nullptr;
   decltype(&D3DKMTCloseAdapter) pfn_close_adapter = nullptr;
   decltype(&D3DKMTQueryAdapterInfo) pfn_query_adapter_info = nullptr;
+  decltype(&D3DKMTEscape) pfn_escape = nullptr;
+  decltype(&D3DKMTWaitForSynchronizationObject) pfn_wait_for_syncobj = nullptr;
 };
 
 const AeroGpuD3dkmtProcs& GetAeroGpuD3dkmtProcs() {
@@ -507,9 +522,61 @@ const AeroGpuD3dkmtProcs& GetAeroGpuD3dkmtProcs() {
     p.pfn_close_adapter = reinterpret_cast<decltype(&D3DKMTCloseAdapter)>(GetProcAddress(gdi32, "D3DKMTCloseAdapter"));
     p.pfn_query_adapter_info =
         reinterpret_cast<decltype(&D3DKMTQueryAdapterInfo)>(GetProcAddress(gdi32, "D3DKMTQueryAdapterInfo"));
+    p.pfn_escape = reinterpret_cast<decltype(&D3DKMTEscape)>(GetProcAddress(gdi32, "D3DKMTEscape"));
+    p.pfn_wait_for_syncobj = reinterpret_cast<decltype(&D3DKMTWaitForSynchronizationObject)>(
+        GetProcAddress(gdi32, "D3DKMTWaitForSynchronizationObject"));
     return p;
   }();
   return procs;
+}
+
+void InitKmtAdapterHandle(AeroGpuAdapter* adapter) {
+  if (!adapter || adapter->kmt_adapter) {
+    return;
+  }
+
+  const AeroGpuD3dkmtProcs& procs = GetAeroGpuD3dkmtProcs();
+  if (!procs.pfn_open_adapter_from_hdc) {
+    return;
+  }
+
+  wchar_t displayName[CCHDEVICENAME] = {};
+  if (!GetPrimaryDisplayName(displayName)) {
+    return;
+  }
+
+  HDC hdc = CreateDCW(L"DISPLAY", displayName, nullptr, nullptr);
+  if (!hdc) {
+    return;
+  }
+
+  D3DKMT_OPENADAPTERFROMHDC open{};
+  open.hDc = hdc;
+  open.hAdapter = 0;
+  std::memset(&open.AdapterLuid, 0, sizeof(open.AdapterLuid));
+  open.VidPnSourceId = 0;
+
+  const NTSTATUS st = procs.pfn_open_adapter_from_hdc(&open);
+  DeleteDC(hdc);
+
+  if (NT_SUCCESS(st) && open.hAdapter) {
+    adapter->kmt_adapter = open.hAdapter;
+  }
+}
+
+void DestroyKmtAdapterHandle(AeroGpuAdapter* adapter) {
+  if (!adapter || !adapter->kmt_adapter) {
+    return;
+  }
+
+  const AeroGpuD3dkmtProcs& procs = GetAeroGpuD3dkmtProcs();
+  if (procs.pfn_close_adapter) {
+    D3DKMT_CLOSEADAPTER close{};
+    close.hAdapter = adapter->kmt_adapter;
+    (void)procs.pfn_close_adapter(&close);
+  }
+
+  adapter->kmt_adapter = 0;
 }
 
 static bool QueryUmdPrivateFromPrimaryDisplay(aerogpu_umd_private_v1* out) {
@@ -889,6 +956,105 @@ decltype(auto) CallCbMaybeHandle(Fn fn, HandleA handle_a, HandleB handle_b, Args
   }
 }
 
+void atomic_max_u64(std::atomic<uint64_t>* target, uint64_t value) {
+  if (!target) {
+    return;
+  }
+
+  uint64_t cur = target->load(std::memory_order_relaxed);
+  while (cur < value && !target->compare_exchange_weak(cur, value, std::memory_order_relaxed)) {
+  }
+}
+
+uint64_t AeroGpuQueryCompletedFence(AeroGpuDevice* dev) {
+  if (!dev) {
+    return 0;
+  }
+
+  if (dev->monitored_fence_value) {
+    const uint64_t completed = *dev->monitored_fence_value;
+    atomic_max_u64(&dev->last_completed_fence, completed);
+    return completed;
+  }
+
+  // Dev-only fallback: ask the KMD for its fence tracking state via Escape.
+  if (dev->kmt_adapter) {
+    const AeroGpuD3dkmtProcs& procs = GetAeroGpuD3dkmtProcs();
+    if (procs.pfn_escape) {
+      aerogpu_escape_query_fence_out q{};
+      q.hdr.version = AEROGPU_ESCAPE_VERSION;
+      q.hdr.op = AEROGPU_ESCAPE_OP_QUERY_FENCE;
+      q.hdr.size = sizeof(q);
+      q.hdr.reserved0 = 0;
+
+      D3DKMT_ESCAPE e{};
+      e.hAdapter = dev->kmt_adapter;
+      e.hDevice = 0;
+      e.hContext = 0;
+      e.Type = D3DKMT_ESCAPE_DRIVERPRIVATE;
+      e.Flags.Value = 0;
+      e.pPrivateDriverData = &q;
+      e.PrivateDriverDataSize = sizeof(q);
+
+      const NTSTATUS st = procs.pfn_escape(&e);
+      if (NT_SUCCESS(st)) {
+        atomic_max_u64(&dev->last_submitted_fence, static_cast<uint64_t>(q.last_submitted_fence));
+        atomic_max_u64(&dev->last_completed_fence, static_cast<uint64_t>(q.last_completed_fence));
+        return static_cast<uint64_t>(q.last_completed_fence);
+      }
+    }
+  }
+
+  return dev->last_completed_fence.load(std::memory_order_relaxed);
+}
+
+// Waits for `fence` to be completed. `timeout_ms == 0` means "infinite wait".
+//
+// On timeout, returns `DXGI_ERROR_WAS_STILL_DRAWING` (useful for D3D11 Map DO_NOT_WAIT).
+HRESULT AeroGpuWaitForFence(AeroGpuDevice* dev, uint64_t fence, uint32_t timeout_ms) {
+  if (!dev) {
+    return E_INVALIDARG;
+  }
+  if (fence == 0) {
+    return S_OK;
+  }
+
+  if (AeroGpuQueryCompletedFence(dev) >= fence) {
+    return S_OK;
+  }
+
+  if (!dev->kmt_fence_syncobj) {
+    return E_FAIL;
+  }
+
+  const AeroGpuD3dkmtProcs& procs = GetAeroGpuD3dkmtProcs();
+  if (!procs.pfn_wait_for_syncobj) {
+    return E_FAIL;
+  }
+
+  const D3DKMT_HANDLE handles[1] = {dev->kmt_fence_syncobj};
+  const UINT64 fence_values[1] = {fence};
+
+  D3DKMT_WAITFORSYNCHRONIZATIONOBJECT args{};
+  args.ObjectCount = 1;
+  args.ObjectHandleArray = handles;
+  args.FenceValueArray = fence_values;
+  args.Timeout = timeout_ms ? static_cast<UINT64>(timeout_ms) : ~0ull;
+
+  const NTSTATUS st = procs.pfn_wait_for_syncobj(&args);
+  if (st == STATUS_TIMEOUT) {
+    return kDxgiErrorWasStillDrawing;
+  }
+  if (!NT_SUCCESS(st)) {
+    return E_FAIL;
+  }
+
+  // Waiting succeeded => the fence is at least complete even if we cannot query a monitored value.
+  atomic_max_u64(&dev->last_completed_fence, fence);
+  (void)AeroGpuQueryCompletedFence(dev);
+  return S_OK;
+}
+
 uint64_t submit_locked(AeroGpuImmediateContext* ctx, bool want_present, HRESULT* out_hr) {
   if (out_hr) {
     *out_hr = S_OK;
@@ -1148,6 +1314,9 @@ uint64_t submit_locked(AeroGpuImmediateContext* ctx, bool want_present, HRESULT*
     cur = chunk_end;
   }
 
+  if (last_fence != 0) {
+    atomic_max_u64(&dev->last_submitted_fence, last_fence);
+  }
   ctx->cmd.reset();
   return last_fence;
 }
@@ -3015,6 +3184,7 @@ HRESULT AEROGPU_APIENTRY CreateDevice11(D3D10DDI_HADAPTER hAdapter, D3D11DDIARG_
 
   auto* dev = new (pCreate->hDevice.pDrvPrivate) AeroGpuDevice();
   dev->adapter = adapter;
+  dev->kmt_adapter = adapter->kmt_adapter;
   dev->hDevice = pCreate->hDevice;
   __if_exists(D3D11DDIARG_CREATEDEVICE::hRTDevice) {
     dev->hrt_device = pCreate->hRTDevice;
@@ -3200,6 +3370,7 @@ HRESULT AEROGPU_APIENTRY CreateDevice11(D3D10DDI_HADAPTER hAdapter, D3D11DDIARG_
 
 void AEROGPU_APIENTRY CloseAdapter11(D3D10DDI_HADAPTER hAdapter) {
   auto* adapter = FromHandle<D3D10DDI_HADAPTER, AeroGpuAdapter>(hAdapter);
+  DestroyKmtAdapterHandle(adapter);
   delete adapter;
 }
 
@@ -3227,6 +3398,7 @@ HRESULT OpenAdapter11Wdk(D3D10DDIARG_OPENADAPTER* pOpenData) {
 
   auto* adapter = new AeroGpuAdapter();
   adapter->d3d11_ddi_interface_version = pOpenData->Version;
+  InitKmtAdapterHandle(adapter);
   InitUmdPrivate(adapter);
   pOpenData->hAdapter.pDrvPrivate = adapter;
   __if_exists(D3D10DDIARG_OPENADAPTER::hRTAdapter) {
