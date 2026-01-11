@@ -2,6 +2,7 @@ use aero_cpu_core::interp::tier0::exec::{run_batch, BatchExit};
 use aero_cpu_core::mem::{CpuBus, FlatTestBus};
 use aero_cpu_core::state::{CpuMode, CpuState, FLAG_CF, FLAG_DF, FLAG_SF, FLAG_ZF};
 use aero_x86::Register;
+use std::collections::BTreeMap;
 
 fn run_to_halt<B: CpuBus>(state: &mut CpuState, bus: &mut B, max: u64) {
     let mut steps = 0u64;
@@ -29,6 +30,174 @@ struct CountingBus {
     inner: FlatTestBus,
     bulk_copy_calls: usize,
     bulk_set_calls: usize,
+}
+
+#[derive(Debug, Default)]
+struct SparseBus {
+    mem: BTreeMap<u64, u8>,
+    bulk_copy_calls: usize,
+    bulk_set_calls: usize,
+}
+
+impl SparseBus {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn load(&mut self, addr: u64, bytes: &[u8]) {
+        for (i, b) in bytes.iter().copied().enumerate() {
+            self.mem.insert(addr + i as u64, b);
+        }
+    }
+
+    fn read_u8_raw(&self, addr: u64) -> u8 {
+        self.mem.get(&addr).copied().unwrap_or(0)
+    }
+}
+
+impl CpuBus for SparseBus {
+    fn read_u8(&mut self, vaddr: u64) -> Result<u8, aero_cpu_core::Exception> {
+        Ok(self.read_u8_raw(vaddr))
+    }
+
+    fn read_u16(&mut self, vaddr: u64) -> Result<u16, aero_cpu_core::Exception> {
+        let b0 = self.read_u8_raw(vaddr) as u16;
+        let b1 = self.read_u8_raw(vaddr + 1) as u16;
+        Ok(b0 | (b1 << 8))
+    }
+
+    fn read_u32(&mut self, vaddr: u64) -> Result<u32, aero_cpu_core::Exception> {
+        let mut out = 0u32;
+        for i in 0..4 {
+            out |= (self.read_u8_raw(vaddr + i) as u32) << (i * 8);
+        }
+        Ok(out)
+    }
+
+    fn read_u64(&mut self, vaddr: u64) -> Result<u64, aero_cpu_core::Exception> {
+        let mut out = 0u64;
+        for i in 0..8 {
+            out |= (self.read_u8_raw(vaddr + i) as u64) << (i * 8);
+        }
+        Ok(out)
+    }
+
+    fn read_u128(&mut self, vaddr: u64) -> Result<u128, aero_cpu_core::Exception> {
+        let mut out = 0u128;
+        for i in 0..16 {
+            out |= (self.read_u8_raw(vaddr + i) as u128) << (i * 8);
+        }
+        Ok(out)
+    }
+
+    fn write_u8(&mut self, vaddr: u64, val: u8) -> Result<(), aero_cpu_core::Exception> {
+        self.mem.insert(vaddr, val);
+        Ok(())
+    }
+
+    fn write_u16(&mut self, vaddr: u64, val: u16) -> Result<(), aero_cpu_core::Exception> {
+        for (i, b) in val.to_le_bytes().iter().copied().enumerate() {
+            self.mem.insert(vaddr + i as u64, b);
+        }
+        Ok(())
+    }
+
+    fn write_u32(&mut self, vaddr: u64, val: u32) -> Result<(), aero_cpu_core::Exception> {
+        for (i, b) in val.to_le_bytes().iter().copied().enumerate() {
+            self.mem.insert(vaddr + i as u64, b);
+        }
+        Ok(())
+    }
+
+    fn write_u64(&mut self, vaddr: u64, val: u64) -> Result<(), aero_cpu_core::Exception> {
+        for (i, b) in val.to_le_bytes().iter().copied().enumerate() {
+            self.mem.insert(vaddr + i as u64, b);
+        }
+        Ok(())
+    }
+
+    fn write_u128(&mut self, vaddr: u64, val: u128) -> Result<(), aero_cpu_core::Exception> {
+        for (i, b) in val.to_le_bytes().iter().copied().enumerate() {
+            self.mem.insert(vaddr + i as u64, b);
+        }
+        Ok(())
+    }
+
+    fn supports_bulk_copy(&self) -> bool {
+        true
+    }
+
+    fn bulk_copy(
+        &mut self,
+        dst: u64,
+        src: u64,
+        len: usize,
+    ) -> Result<bool, aero_cpu_core::Exception> {
+        self.bulk_copy_calls += 1;
+        if len == 0 || dst == src {
+            return Ok(true);
+        }
+
+        // Perform a memmove-style copy in *u64* address space. This intentionally does not apply
+        // any x86 wrapping semantics so tests can detect when Tier-0 incorrectly uses the bulk
+        // fast path across wrapped address ranges.
+        let mut tmp = vec![0u8; len];
+        for (i, slot) in tmp.iter_mut().enumerate() {
+            *slot = self.read_u8_raw(src + i as u64);
+        }
+        for (i, b) in tmp.into_iter().enumerate() {
+            self.mem.insert(dst + i as u64, b);
+        }
+        Ok(true)
+    }
+
+    fn supports_bulk_set(&self) -> bool {
+        true
+    }
+
+    fn bulk_set(
+        &mut self,
+        dst: u64,
+        pattern: &[u8],
+        repeat: usize,
+    ) -> Result<bool, aero_cpu_core::Exception> {
+        self.bulk_set_calls += 1;
+        if repeat == 0 || pattern.is_empty() {
+            return Ok(true);
+        }
+
+        // Like `bulk_copy`, operate on the raw u64 address range without applying wrapping.
+        for i in 0..repeat {
+            for (j, b) in pattern.iter().copied().enumerate() {
+                let addr = dst + (i * pattern.len() + j) as u64;
+                self.mem.insert(addr, b);
+            }
+        }
+
+        Ok(true)
+    }
+
+    fn fetch(&mut self, vaddr: u64, max_len: usize) -> Result<[u8; 15], aero_cpu_core::Exception> {
+        let mut buf = [0u8; 15];
+        let len = max_len.min(15);
+        for i in 0..len {
+            buf[i] = self.read_u8_raw(vaddr + i as u64);
+        }
+        Ok(buf)
+    }
+
+    fn io_read(&mut self, _port: u16, _size: u32) -> Result<u64, aero_cpu_core::Exception> {
+        Ok(0)
+    }
+
+    fn io_write(
+        &mut self,
+        _port: u16,
+        _size: u32,
+        _val: u64,
+    ) -> Result<(), aero_cpu_core::Exception> {
+        Ok(())
+    }
 }
 
 impl CountingBus {
@@ -732,5 +901,83 @@ fn rep_stosb_a20_wrap_skips_bulk_set_and_uses_wrapping_addresses() {
     for i in 0..count as u64 {
         let addr = (dst_base + i) & 0xFFFFF;
         assert_eq!(bus.inner.read_u8(addr).unwrap(), 0x5A);
+    }
+}
+
+#[test]
+fn rep_movsb_linear32_wrap_skips_bulk_copy_and_uses_wrapping_addresses() {
+    // In non-long modes, linear addresses are 32-bit. A high segment base can make the linear
+    // address range wrap at 4GiB even when the SI/DI offsets themselves don't wrap, so we must not
+    // use bulk-copy fast paths.
+    let count = 128u32;
+    let code_addr = 0x8000u64;
+
+    let code = [0xF3, 0xA4, 0xF4]; // rep movsb; hlt
+    let mut bus = SparseBus::new();
+    bus.load(code_addr, &code);
+
+    let mut state = CpuState::new(CpuMode::Bit32);
+    state.set_rip(code_addr);
+    state.set_rflags(0x2);
+    state.segments.ds.base = 0xFFFF_FFC0;
+    state.segments.es.base = 0;
+    state.write_reg(Register::ESI, 0);
+    state.write_reg(Register::EDI, 0x0100);
+    state.write_reg(Register::ECX, count as u64);
+
+    // Source wraps: [0xFFFF_FFC0..0xFFFF_FFFF] then [0x0000_0000..0x0000_003F].
+    for i in 0..64u64 {
+        bus.write_u8(0xFFFF_FFC0 + i, 0xAA).unwrap();
+        bus.write_u8(i, 0xBB).unwrap();
+        // Incorrect bulk-copy would read these bytes instead of wrapping back to 0x0000_0000.
+        bus.write_u8(0x1_0000_0000 + i, 0xCC).unwrap();
+    }
+
+    run_to_halt(&mut state, &mut bus, 100_000);
+
+    assert_eq!(bus.bulk_copy_calls, 0);
+    assert_eq!(state.read_reg(Register::ECX), 0);
+    assert_eq!(state.read_reg(Register::ESI), count as u64);
+    assert_eq!(state.read_reg(Register::EDI), 0x0100 + count as u64);
+
+    for i in 0..64u64 {
+        assert_eq!(bus.read_u8(0x0100 + i).unwrap(), 0xAA);
+        assert_eq!(bus.read_u8(0x0100 + 64 + i).unwrap(), 0xBB);
+        assert_eq!(bus.read_u8(0x1_0000_0000 + i).unwrap(), 0xCC);
+    }
+}
+
+#[test]
+fn rep_stosb_linear32_wrap_skips_bulk_set_and_uses_wrapping_addresses() {
+    let count = 128u32;
+    let code_addr = 0x8000u64;
+
+    let code = [0xF3, 0xAA, 0xF4]; // rep stosb; hlt
+    let mut bus = SparseBus::new();
+    bus.load(code_addr, &code);
+
+    let mut state = CpuState::new(CpuMode::Bit32);
+    state.set_rip(code_addr);
+    state.set_rflags(0x2);
+    state.segments.es.base = 0xFFFF_FFC0;
+    state.write_reg(Register::EDI, 0);
+    state.write_reg(Register::ECX, count as u64);
+    state.write_reg(Register::AL, 0x5A);
+
+    for i in 0..64u64 {
+        bus.write_u8(i, 0xCC).unwrap();
+        bus.write_u8(0x1_0000_0000 + i, 0xCC).unwrap();
+    }
+
+    run_to_halt(&mut state, &mut bus, 100_000);
+
+    assert_eq!(bus.bulk_set_calls, 0);
+    assert_eq!(state.read_reg(Register::ECX), 0);
+    assert_eq!(state.read_reg(Register::EDI), count as u64);
+
+    for i in 0..64u64 {
+        assert_eq!(bus.read_u8(0xFFFF_FFC0 + i).unwrap(), 0x5A);
+        assert_eq!(bus.read_u8(i).unwrap(), 0x5A);
+        assert_eq!(bus.read_u8(0x1_0000_0000 + i).unwrap(), 0xCC);
     }
 }

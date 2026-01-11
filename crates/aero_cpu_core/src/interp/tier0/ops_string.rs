@@ -316,26 +316,38 @@ fn offsets_contiguous_without_wrap(
     }
 }
 
-fn a20_range_contiguous(state: &CpuState, start: u64, total_bytes: u64) -> bool {
+fn linear_range_contiguous(state: &CpuState, start: u64, total_bytes: u64) -> bool {
     if total_bytes == 0 {
         return true;
     }
-    if state.a20_enabled || !matches!(state.mode, CpuMode::Real | CpuMode::Vm86) {
-        return true;
-    }
 
-    // With A20 disabled, bit 20 is forced low. A repeated range is only contiguous in
-    // masked address space when it stays within a single 1MiB window (no bit-20
-    // boundary crossing).
     let span = match total_bytes.checked_sub(1) {
         Some(v) => v,
         None => return true,
     };
-    let start_low = start & 0xFFFFF;
-    match start_low.checked_add(span) {
-        Some(end_low) => end_low <= 0xFFFFF,
-        None => false,
+
+    // Tier-0 bulk operations assume the touched linear addresses are contiguous. In non-long modes,
+    // the architectural linear address space is only 32 bits wide, so ranges that cross 4GiB wrap
+    // are non-contiguous even though individual byte accesses remain valid.
+    if state.mode != CpuMode::Long {
+        match start.checked_add(span) {
+            Some(end) if end <= 0xFFFF_FFFF => {}
+            _ => return false,
+        }
     }
+
+    // With A20 disabled, physical bit 20 is forced low. A repeated range is only contiguous in
+    // masked address space when it stays within a single 1MiB window (no bit-20 boundary
+    // crossing).
+    if !state.a20_enabled && matches!(state.mode, CpuMode::Real | CpuMode::Vm86) {
+        let start_low = start & 0xFFFFF;
+        match start_low.checked_add(span) {
+            Some(end_low) if end_low <= 0xFFFFF => {}
+            _ => return false,
+        }
+    }
+
+    true
 }
 
 fn src_segment(instr: &Instruction) -> Register {
@@ -432,8 +444,8 @@ fn exec_movs<B: CpuBus>(
                     let src_start = linear(state, src_seg, src_offset);
                     let dst_start = linear(state, Register::ES, dst_offset);
 
-                    if a20_range_contiguous(state, src_start, total_bytes_u64)
-                        && a20_range_contiguous(state, dst_start, total_bytes_u64)
+                    if linear_range_contiguous(state, src_start, total_bytes_u64)
+                        && linear_range_contiguous(state, dst_start, total_bytes_u64)
                     {
                         if let (Some(src_end), Some(dst_end)) = (
                             src_start.checked_add(total_bytes_u64),
@@ -532,7 +544,7 @@ fn exec_stos<B: CpuBus>(
                     let dst_start = linear(state, Register::ES, dst_offset);
 
                     let pattern = stos_pattern(state, elem_size)?;
-                    if a20_range_contiguous(state, dst_start, total_bytes_u64)
+                    if linear_range_contiguous(state, dst_start, total_bytes_u64)
                         && bus.bulk_set(dst_start, &pattern[..elem_size], count as usize)?
                     {
                         let di_new = advance_n(di, elem_size, count, df, addr_size);
