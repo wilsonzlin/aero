@@ -2,11 +2,13 @@
 
 This directory contains a **WDF-free**, reusable C transport module implementing the **virtio-pci modern** (Virtio 1.0+) transport for Aero Windows 7 guest drivers.
 
-It is designed to be linked into:
+It is designed to be linked into **WDM** (non-KMDF) drivers such as:
 
-- `virtio-blk` (Storport miniport)
-- `virtio-net` (NDIS 6.20 miniport)
 - `virtio-snd` (WDM/PortCls)
+
+Note: Aero's Windows 7 **miniport** drivers (`virtio-blk`, `virtio-net`) use the
+miniport-friendly shim under `drivers/windows7/virtio/common/` instead of this
+module.
 
 ## What this module provides
 

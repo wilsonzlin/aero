@@ -3,10 +3,13 @@
 This page describes the **WDM** (non-KMDF) bring-up flow for Aero
 **virtio-pci modern** devices (Virtio 1.0+, PCI vendor capabilities + MMIO).
 
-For all in-tree non-KMDF Windows 7 virtio drivers, the canonical transport
-implementation is:
+For WDM (non-KMDF) Windows 7 virtio drivers in this repo (for example
+`virtio-snd`), the canonical transport implementation is:
 
 - `drivers/windows/virtio/pci-modern/` (`VirtioPciModernTransport*`)
+
+Note: Windows 7 **miniport** drivers (`virtio-blk`, `virtio-net`) use the
+miniport-friendly shim under `drivers/windows7/virtio/common/` instead.
 
 It is implemented in:
 
