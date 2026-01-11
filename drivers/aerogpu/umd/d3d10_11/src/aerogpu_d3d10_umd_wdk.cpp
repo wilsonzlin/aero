@@ -580,6 +580,16 @@ void APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hReso
 
   std::lock_guard<std::mutex> lock(dev->mutex);
 
+  if (dev->current_rtv_res == res) {
+    dev->current_rtv_res = nullptr;
+    dev->current_rtv = 0;
+  }
+  if (dev->current_vb_res == res) {
+    dev->current_vb_res = nullptr;
+    dev->current_vb_stride = 0;
+    dev->current_vb_offset = 0;
+  }
+
   if (res->handle != kInvalidHandle) {
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_destroy_resource>(AEROGPU_CMD_DESTROY_RESOURCE);
     cmd->resource_handle = res->handle;
