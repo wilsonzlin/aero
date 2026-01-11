@@ -891,6 +891,7 @@ int main(int argc, char** argv) {
 
   // Legacy fallback list (for older checkouts without tests_manifest.txt).
   const char* const kFallbackTests[] = {
+      "device_state_sanity",
       "d3d9ex_dwm_probe",
       "d3d9ex_event_query",
       "d3d9ex_dwm_ddi_sanity",

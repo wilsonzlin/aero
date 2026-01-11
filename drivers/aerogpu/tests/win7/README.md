@@ -43,7 +43,7 @@ Common flags:
 * `--require-agpu` – for tests with AGPU-only validation paths (e.g. ring descriptor/alloc table checks), fail instead of skipping when the active device/ring format is legacy.
 * `--display \\.\DISPLAYn` – for `vblank_wait`: pick a display (default: primary).
 * `--ring-id=N` – for `ring_state_sanity`: which ring ID to dump (default 0).
-* `--allow-remote` – skip tests that are not meaningful under RDP (`SM_REMOTESESSION=1`): `d3d9ex_dwm_probe`, `d3d9ex_submit_fence_stress`, `fence_state_sanity`, `ring_state_sanity`, `dwm_flush_pacing`, `wait_vblank_pacing`, `vblank_wait`, `vblank_wait_pacing`, `vblank_wait_sanity`, `vblank_state_sanity`, `get_scanline_sanity`, `scanout_state_sanity`, `dump_createalloc_sanity`, `umd_private_sanity`, `d3d9_raster_status_sanity`, `d3d9_raster_status_pacing`.
+* `--allow-remote` – skip tests that are not meaningful under RDP (`SM_REMOTESESSION=1`): `device_state_sanity`, `d3d9ex_dwm_probe`, `d3d9ex_submit_fence_stress`, `fence_state_sanity`, `ring_state_sanity`, `dwm_flush_pacing`, `wait_vblank_pacing`, `vblank_wait`, `vblank_wait_pacing`, `vblank_wait_sanity`, `vblank_state_sanity`, `get_scanline_sanity`, `scanout_state_sanity`, `dump_createalloc_sanity`, `umd_private_sanity`, `d3d9_raster_status_sanity`, `d3d9_raster_status_pacing`.
 * `--help` / `/?` – print per-test usage.
 
 ## Layout
@@ -57,6 +57,7 @@ drivers/aerogpu/tests/win7/
   common/
   timeout_runner/
   test_runner/
+  device_state_sanity/
   d3d9ex_dwm_probe/
   d3d9ex_event_query/
   d3d9ex_dwm_ddi_sanity/
@@ -293,6 +294,7 @@ You can find the correct VID/DID in the Win7 guest via:
 
 In a Win7 VM with AeroGPU installed and working correctly:
 
+* `device_state_sanity` queries AeroGPU device state via the `QUERY_DEVICE(_V2)` escape and validates the returned MMIO magic and ABI version (useful for diagnosing “not actually on AeroGPU” scenarios early)
 * `d3d9ex_dwm_probe` reports composition enabled (or successfully enables it)
 * `d3d9ex_event_query` validates that `GetData(D3DGETDATA_DONOTFLUSH)` is non-blocking (initial poll before `Flush`), that `D3DQUERYTYPE_EVENT` eventually signals, and stresses interleaved submissions + `PresentEx(D3DPRESENT_DONOTWAIT)` throttling (default: 2 threads; pass `--process-stress` to run the stress phase across 2 processes). Window is hidden by default; pass `--show` to display it.
 * `d3d9ex_dwm_ddi_sanity` sanity-checks D3D9Ex/DDI calls used by DWM and common apps (`CheckDeviceState`, `WaitForVBlank`, GPU thread priority, resource residency) to ensure they are non-blocking and return expected values
