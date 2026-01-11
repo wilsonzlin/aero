@@ -20,7 +20,15 @@ param(
   # Source Guest Tools directory (scripts/config/certs).
   [string] $GuestToolsDir = "guest-tools",
 
-  # Public certificate used to sign the driver catalogs.
+  # Driver signing / boot policy embedded in Guest Tools manifest.json.
+  #
+  # - testsigning: media is intended for test-signed/custom-signed drivers (default)
+  # - nointegritychecks: media may prompt to disable signature enforcement (not recommended)
+  # - none: media is intended for WHQL/production-signed drivers (no cert injection)
+  [ValidateSet("none", "testsigning", "nointegritychecks")]
+  [string] $SigningPolicy = "testsigning",
+
+  # Public certificate used to sign the driver catalogs (required unless SigningPolicy=none).
   [string] $CertPath = "out/certs/aero-test.cer",
 
   # Output directory for final artifacts.
@@ -224,6 +232,22 @@ function Copy-GuestToolsWithCert {
     Remove-Item -Force -ErrorAction SilentlyContinue
 
   Copy-Item -LiteralPath $CertSourcePath -Destination (Join-Path $certsDir "aero-test.cer") -Force
+}
+
+function Copy-GuestToolsWithoutCert {
+  param(
+    [Parameter(Mandatory = $true)][string] $SourceDir,
+    [Parameter(Mandatory = $true)][string] $DestDir
+  )
+
+  Copy-Item -LiteralPath $SourceDir -Destination $DestDir -Recurse -Force
+
+  $certsDir = Join-Path $DestDir "certs"
+  if (Test-Path -LiteralPath $certsDir -PathType Container) {
+    Get-ChildItem -LiteralPath $certsDir -File -ErrorAction SilentlyContinue |
+      Where-Object { $_.Extension -in @(".cer", ".crt", ".p7b") } |
+      Remove-Item -Force -ErrorAction SilentlyContinue
+  }
 }
 
 function Resolve-ArchDirName {
@@ -520,8 +544,10 @@ if (-not (Test-Path -LiteralPath $inputRootResolved)) {
 if (-not (Test-Path -LiteralPath $guestToolsResolved -PathType Container)) {
   throw "GuestToolsDir does not exist: '$guestToolsResolved'."
 }
-if (-not (Test-Path -LiteralPath $certPathResolved -PathType Leaf)) {
-  throw "CertPath does not exist: '$certPathResolved'."
+if ($SigningPolicy -ine "none") {
+  if (-not (Test-Path -LiteralPath $certPathResolved -PathType Leaf)) {
+    throw "CertPath does not exist: '$certPathResolved'."
+  }
 }
 
 if ([string]::IsNullOrWhiteSpace($Version)) {
@@ -556,7 +582,11 @@ try {
   Ensure-EmptyDirectory -Path $stagePackagerOut
 
   Write-Host "Staging Guest Tools..."
-  Copy-GuestToolsWithCert -SourceDir $guestToolsResolved -DestDir $stageGuestTools -CertSourcePath $certPathResolved
+  if ($SigningPolicy -ine "none") {
+    Copy-GuestToolsWithCert -SourceDir $guestToolsResolved -DestDir $stageGuestTools -CertSourcePath $certPathResolved
+  } else {
+    Copy-GuestToolsWithoutCert -SourceDir $guestToolsResolved -DestDir $stageGuestTools
+  }
 
   Write-Host "Staging signed drivers..."
 
@@ -616,6 +646,7 @@ try {
   Write-Host "  version: $Version"
   Write-Host "  build  : $BuildId"
   Write-Host "  epoch  : $epoch"
+  Write-Host "  policy : $SigningPolicy"
   Write-Host "  out    : $outDirResolved"
 
   & cargo run --manifest-path $packagerManifest --release --locked -- `
@@ -626,6 +657,7 @@ try {
     --version $Version `
     --build-id $BuildId `
     --volume-id $volumeId `
+    --signing-policy $SigningPolicy `
     --source-date-epoch $epoch
   if ($LASTEXITCODE -ne 0) {
     throw "aero_packager failed (exit code $LASTEXITCODE)."

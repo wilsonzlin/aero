@@ -114,9 +114,12 @@ contains both:
 - standalone driver bundles (`AeroVirtIO-Win7-*.zip` / `.iso` / optional `.vhd`)
 - Guest Tools media (`aero-guest-tools.iso` / `aero-guest-tools.zip`)
 
-It also injects the public signing certificate (`out/certs/aero-test.cer`) into the staged
-Guest Tools tree so the packaged installer media trusts the exact certificate used to sign
-the driver catalogs.
+By default (`-SigningPolicy testsigning`), it injects the public signing certificate
+(`out/certs/aero-test.cer`) into the staged Guest Tools tree so the packaged installer media
+trusts the exact certificate used to sign the driver catalogs.
+
+For WHQL/production-signed drivers, pass `-SigningPolicy none` to build Guest Tools media
+without injecting (or requiring) any custom certificate files.
 
 ## `ci/make-fat-image.ps1`
 
