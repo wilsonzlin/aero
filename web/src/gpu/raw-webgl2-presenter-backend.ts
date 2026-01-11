@@ -300,7 +300,7 @@ export class RawWebGl2Presenter implements Presenter {
     assertWebGlOk(gl, 'readPixels');
 
     const flipped = flipImageVertically(pixels, w, h);
-    return { width: w, height: h, pixels: flipped.buffer };
+    return { width: w, height: h, pixels: flipped.buffer as ArrayBuffer };
   }
 
   public destroy(): void {

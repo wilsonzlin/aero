@@ -141,7 +141,12 @@ const parseCandidate = (v: unknown): Candidate => {
 
   const sdpMLineIndex = v.sdpMLineIndex;
   if (sdpMLineIndex !== undefined && sdpMLineIndex !== null) {
-    if (!Number.isInteger(sdpMLineIndex) || sdpMLineIndex < 0 || sdpMLineIndex > 0xffff) {
+    if (
+      typeof sdpMLineIndex !== 'number' ||
+      !Number.isInteger(sdpMLineIndex) ||
+      sdpMLineIndex < 0 ||
+      sdpMLineIndex > 0xffff
+    ) {
       throw new UdpRelaySignalingDecodeError('invalid_json', 'invalid candidate.sdpMLineIndex');
     }
   }

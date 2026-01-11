@@ -512,11 +512,14 @@ function renderSnapshotPanel(): HTMLElement {
     importInput.disabled = !enabled;
   }
 
-  async function rpc<T>(msg: Omit<SnapshotWorkerRequest, "id">): Promise<T> {
+  type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
+  type SnapshotWorkerRpcRequest = DistributiveOmit<SnapshotWorkerRequest, "id">;
+
+  async function rpc<T>(msg: SnapshotWorkerRpcRequest): Promise<T> {
     const activeWorker = worker;
     if (!activeWorker) throw new Error("Snapshot worker is not available.");
     const id = nextRpcId++;
-    const req: SnapshotWorkerRequest = { id, ...(msg as SnapshotWorkerRequest) };
+    const req = { ...msg, id } as SnapshotWorkerRequest;
     return await new Promise<T>((resolve, reject) => {
       pending.set(id, { resolve: (v) => resolve(v as T), reject });
       try {
@@ -2570,7 +2573,18 @@ function renderMicrophonePanel(): HTMLElement {
 
 function renderWebHidPassthroughPanel(): HTMLElement {
   const host = el("div");
-  mountWebHidPassthroughPanel(host, new WebHidPassthroughManager());
+  const manager = new WebHidPassthroughManager({
+    target: {
+      postMessage: (message) => {
+        const ioWorker = workerCoordinator.getIoWorker();
+        if (!ioWorker) {
+          throw new Error("I/O worker is not running. Start workers before attaching WebHID devices.");
+        }
+        ioWorker.postMessage(message);
+      },
+    },
+  });
+  mountWebHidPassthroughPanel(host, manager);
   return el("div", { class: "panel" }, host);
 }
 
@@ -3221,7 +3235,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
     // This runs before `ensureVgaPresenter()` so we don't accidentally create a
     // main-thread context right before attempting `transferControlToOffscreen()`.
     const gpuWorker = workerCoordinator.getWorker("gpu");
-    if (!gpuWorker || !frameStateSab || !sharedFramebuffer) {
+    if (!gpuWorker || !frameStateSab || !sharedFramebufferInfo) {
       frameScheduler?.stop();
       frameScheduler = null;
       schedulerWorker = null;
@@ -3230,8 +3244,8 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
     } else if (
       schedulerWorker !== gpuWorker ||
       schedulerFrameStateSab !== frameStateSab ||
-      schedulerSharedFramebuffer?.sab !== sharedFramebuffer.sab ||
-      schedulerSharedFramebuffer?.offsetBytes !== sharedFramebuffer.offsetBytes
+      schedulerSharedFramebuffer?.sab !== sharedFramebufferInfo.sab ||
+      schedulerSharedFramebuffer?.offsetBytes !== sharedFramebufferInfo.offsetBytes
     ) {
       let offscreen: OffscreenCanvas | undefined;
       if (useWorkerPresentation) {
@@ -3267,8 +3281,8 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
       frameScheduler = startFrameScheduler({
         gpuWorker,
         sharedFrameState: frameStateSab,
-        sharedFramebuffer: sharedFramebuffer.sab,
-        sharedFramebufferOffsetBytes: sharedFramebuffer.offsetBytes,
+        sharedFramebuffer: sharedFramebufferInfo.sab,
+        sharedFramebufferOffsetBytes: sharedFramebufferInfo.offsetBytes,
         canvas: offscreen,
         initOptions: offscreen
           ? {
@@ -3283,7 +3297,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
       });
       schedulerWorker = gpuWorker;
       schedulerFrameStateSab = frameStateSab;
-      schedulerSharedFramebuffer = sharedFramebuffer;
+      schedulerSharedFramebuffer = sharedFramebufferInfo;
     }
 
     if (anyActive) {

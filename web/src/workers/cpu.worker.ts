@@ -239,7 +239,11 @@ let audioChannelCount = 0;
 let audioCapacityFrames = 0;
 
 let workletBridge: unknown | null = null;
-let sineTone: { write: (...args: unknown[]) => number; free?: () => void } | null = null;
+type SineToneHandle = {
+  write: (bridge: unknown, frames: number, freqHz: number, sampleRate: number, gain: number) => number;
+  free?: () => void;
+};
+let sineTone: SineToneHandle | null = null;
 
 let nextAudioFillDeadlineMs = 0;
 
@@ -467,7 +471,7 @@ function maybeInitAudioOutput(): void {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       workletBridge = (wasmApi.attach_worklet_bridge as any)(audioRingBuffer, audioCapacityFrames, audioChannelCount);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      sineTone = new (wasmApi.SineTone as any)() as { write: (...args: unknown[]) => number; free?: () => void };
+      sineTone = new (wasmApi.SineTone as any)() as SineToneHandle;
       nextAudioFillDeadlineMs = performance.now();
       return;
     } catch (err) {
@@ -587,7 +591,7 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
     });
     return;
   }
-  if (msg?.kind === "config.update") {
+  if ((msg as { kind?: unknown }).kind === "config.update") {
     currentConfig = (msg as ConfigUpdateMessage).config;
     currentConfigVersion = (msg as ConfigUpdateMessage).version;
     ctx.postMessage({ kind: "config.ack", version: currentConfigVersion } satisfies ConfigAckMessage);

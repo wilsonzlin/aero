@@ -1533,9 +1533,10 @@ async function maybeSendReady(): Promise<void> {
     return;
   }
 
-  if (presenter) {
+  const existingPresenter = presenter;
+  if (existingPresenter) {
     runtimeReadySent = true;
-    postToMain({ type: "ready", backendKind: presenter.backend, fallback: presenterFallback });
+    postToMain({ type: "ready", backendKind: existingPresenter.backend, fallback: presenterFallback });
     return;
   }
 
@@ -1553,10 +1554,11 @@ async function maybeSendReady(): Promise<void> {
   }
 
   await presenterInitPromise;
-  if (!presenter) return;
+  const readyPresenter: Presenter | null = presenter;
+  if (!readyPresenter) return;
 
   runtimeReadySent = true;
-  postToMain({ type: "ready", backendKind: presenter.backend, fallback: presenterFallback });
+  postToMain({ type: "ready", backendKind: readyPresenter.backend, fallback: presenterFallback });
 }
 
 const handleRuntimeInit = (init: WorkerInitMessage) => {
@@ -1736,9 +1738,10 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
         presentFn = null;
         presentModule = null;
         wasmInitPromise = null;
-        if (runtimeOptions?.wasmModuleUrl) {
+        const wasmModuleUrl = runtimeOptions?.wasmModuleUrl;
+        if (wasmModuleUrl) {
           wasmInitPromise = perf
-            .spanAsync("wasm:init", () => loadPresentFnFromModuleUrl(runtimeOptions.wasmModuleUrl!))
+            .spanAsync("wasm:init", () => loadPresentFnFromModuleUrl(wasmModuleUrl))
             .catch((err) => {
               sendError(err);
             })

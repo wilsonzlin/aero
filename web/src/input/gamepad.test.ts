@@ -128,16 +128,16 @@ describe("GamepadCapture", () => {
     // Explicit neutral.
     capture.emitNeutral(queue, 5);
 
-    let posted: InputBatchMessage | null = null;
+    const state: { posted: InputBatchMessage | null } = { posted: null };
     const target: InputBatchTarget = {
-      postMessage: (msg) => {
-        posted = msg;
+      postMessage: (msg, _transfer) => {
+        state.posted = msg;
       },
     };
     queue.flush(target);
-    if (!posted) throw new Error("expected flush to post a batch");
+    if (!state.posted) throw new Error("expected flush to post a batch");
 
-    const words = new Int32Array(posted.buffer);
+    const words = new Int32Array(state.posted.buffer);
     expect(words[0]).toBe(3);
 
     const expected1 = packGamepadReport({ buttons: 1, hat: GAMEPAD_HAT_NEUTRAL, x: 0, y: 0, rx: 0, ry: 0 });

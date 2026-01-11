@@ -385,7 +385,21 @@ export class IoWorkerClient {
         { kind: IO_IPC_EVT_QUEUE_KIND, capacityBytes: IO_IPC_RING_CAPACITY_BYTES },
       ]).buffer;
 
-      const segments = { control: controlSab, guestMemory, vgaFramebuffer, ioIpc: ioIpcSab };
+      // The full runtime embeds the demo CPU→GPU shared framebuffer inside guest RAM.
+      // For the standalone I/O worker client we don't need that, but the init/shared
+      // memory contracts still require a buffer + offset. Reuse the guest SAB with
+      // offset 0 to satisfy the contract.
+      const sharedFramebuffer = guestMemory.buffer as unknown as SharedArrayBuffer;
+      const sharedFramebufferOffsetBytes = 0;
+
+      const segments = {
+        control: controlSab,
+        guestMemory,
+        vgaFramebuffer,
+        ioIpc: ioIpcSab,
+        sharedFramebuffer,
+        sharedFramebufferOffsetBytes,
+      };
       const views = createSharedMemoryViews(segments);
 
       const initMsg: WorkerInitMessage = {
@@ -395,6 +409,8 @@ export class IoWorkerClient {
         guestMemory,
         vgaFramebuffer,
         ioIpcSab,
+        sharedFramebuffer,
+        sharedFramebufferOffsetBytes,
       };
       this.#worker.postMessage(initMsg);
 

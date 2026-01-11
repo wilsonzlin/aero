@@ -54,20 +54,27 @@ export interface StorageBenchResult {
   backend: StorageBenchBackend;
   api_mode: StorageBenchApiMode;
   config: Required<
-    Pick<
-      StorageBenchOpts,
-      | "backend"
-      | "random_seed"
-      | "seq_total_mb"
-      | "seq_chunk_mb"
-      | "seq_runs"
-      | "warmup_mb"
-      | "random_ops"
-      | "random_runs"
-      | "random_space_mb"
-      | "include_random_write"
+    Omit<
+      Pick<
+        StorageBenchOpts,
+        | "backend"
+        | "random_seed"
+        | "seq_total_mb"
+        | "seq_chunk_mb"
+        | "seq_runs"
+        | "warmup_mb"
+        | "random_ops"
+        | "random_runs"
+        | "random_space_mb"
+        | "include_random_write"
+      >,
+      "random_seed"
     >
-  >;
+  > & {
+    // `StorageBenchOpts.random_seed` is optional. Results always include the key for
+    // easier JSON/UI handling, but it may be `undefined` to indicate "use Math.random".
+    random_seed: number | undefined;
+  };
   sequential_write: StorageBenchThroughputSummary;
   sequential_read: StorageBenchThroughputSummary;
   random_read_4k: StorageBenchLatencySummary;

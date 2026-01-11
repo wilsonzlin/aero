@@ -249,12 +249,12 @@ function serializeError(err: unknown): { message: string; name?: string; stack?:
 
 function postOk(requestId: number, result: unknown, transfer?: Transferable[]): void {
   const msg: ResponseMessage = { type: "response", requestId, ok: true, result };
-  (globalThis as DedicatedWorkerGlobalScope).postMessage(msg, transfer ?? []);
+  (globalThis as unknown as DedicatedWorkerGlobalScope).postMessage(msg, transfer ?? []);
 }
 
 function postErr(requestId: number, err: unknown): void {
   const msg: ResponseMessage = { type: "response", requestId, ok: false, error: serializeError(err) };
-  (globalThis as DedicatedWorkerGlobalScope).postMessage(msg);
+  (globalThis as unknown as DedicatedWorkerGlobalScope).postMessage(msg);
 }
 
 function emptyIoTelemetry(): DiskIoTelemetry {
@@ -418,26 +418,27 @@ async function openDisk(meta: DiskImageMetadata, mode: OpenMode, overlayBlockSiz
       throw err;
     }
   }
-  const readOnly = meta.kind === "cd" || meta.format === "iso";
+  const localMeta = meta;
+  const readOnly = localMeta.kind === "cd" || localMeta.format === "iso";
 
-  if (meta.backend === "opfs") {
+  if (localMeta.backend === "opfs") {
     async function openBase(): Promise<AsyncSectorDisk> {
-      switch (meta.format) {
+      switch (localMeta.format) {
         case "aerospar": {
-          const disk = await OpfsAeroSparseDisk.open(meta.fileName);
-          if (disk.capacityBytes !== meta.sizeBytes) {
+          const disk = await OpfsAeroSparseDisk.open(localMeta.fileName);
+          if (disk.capacityBytes !== localMeta.sizeBytes) {
             await disk.close?.();
-            throw new Error(`disk size mismatch: expected=${meta.sizeBytes} actual=${disk.capacityBytes}`);
+            throw new Error(`disk size mismatch: expected=${localMeta.sizeBytes} actual=${disk.capacityBytes}`);
           }
           return disk;
         }
         case "raw":
         case "iso":
         case "unknown":
-          return await OpfsRawDisk.open(meta.fileName, { create: false, sizeBytes: meta.sizeBytes });
+          return await OpfsRawDisk.open(localMeta.fileName, { create: false, sizeBytes: localMeta.sizeBytes });
         case "qcow2":
         case "vhd":
-          throw new Error(`unsupported OPFS disk format ${meta.format} (convert to aerospar first)`);
+          throw new Error(`unsupported OPFS disk format ${localMeta.format} (convert to aerospar first)`);
       }
     }
 
@@ -447,13 +448,13 @@ async function openDisk(meta: DiskImageMetadata, mode: OpenMode, overlayBlockSiz
       let overlay: OpfsAeroSparseDisk | null = null;
       try {
         base = await openBase();
-        const overlayName = `${meta.id}.overlay.aerospar`;
+        const overlayName = `${localMeta.id}.overlay.aerospar`;
 
         try {
           overlay = await OpfsAeroSparseDisk.open(overlayName);
         } catch {
           overlay = await OpfsAeroSparseDisk.create(overlayName, {
-            diskSizeBytes: meta.sizeBytes,
+            diskSizeBytes: localMeta.sizeBytes,
             blockSizeBytes: overlayBlockSizeBytes ?? RANGE_STREAM_CHUNK_SIZE,
           });
         }
@@ -465,23 +466,23 @@ async function openDisk(meta: DiskImageMetadata, mode: OpenMode, overlayBlockSiz
           backendSnapshot: {
             kind: "local",
             backend: "opfs",
-            key: meta.fileName,
-            format: meta.format,
-            diskKind: meta.kind,
-            sizeBytes: meta.sizeBytes,
+            key: localMeta.fileName,
+            format: localMeta.format,
+            diskKind: localMeta.kind,
+            sizeBytes: localMeta.sizeBytes,
             overlay: {
               fileName: overlayName,
-              diskSizeBytes: meta.sizeBytes,
+              diskSizeBytes: localMeta.sizeBytes,
               blockSizeBytes: overlay.blockSizeBytes,
             },
           },
         };
       } catch (err) {
-        await overlay?.close?.();
+        await (overlay as OpfsAeroSparseDisk | null)?.close?.();
         await base?.close?.();
         // If SyncAccessHandle isn't available, sparse overlays can't work efficiently.
         // Fall back to direct raw writes (still in a worker, but slower).
-        if (meta.format !== "raw" && meta.format !== "iso" && meta.format !== "unknown") throw err;
+        if (localMeta.format !== "raw" && localMeta.format !== "iso" && localMeta.format !== "unknown") throw err;
       }
     }
 
@@ -493,16 +494,16 @@ async function openDisk(meta: DiskImageMetadata, mode: OpenMode, overlayBlockSiz
       backendSnapshot: {
         kind: "local",
         backend: "opfs",
-        key: meta.fileName,
-        format: meta.format,
-        diskKind: meta.kind,
-        sizeBytes: meta.sizeBytes,
+        key: localMeta.fileName,
+        format: localMeta.format,
+        diskKind: localMeta.kind,
+        sizeBytes: localMeta.sizeBytes,
       },
     };
   }
 
   // IndexedDB backend: disk data is stored in the `chunks` store (sparse).
-  const disk = await IdbChunkDisk.open(meta.id, meta.sizeBytes);
+  const disk = await IdbChunkDisk.open(localMeta.id, localMeta.sizeBytes);
   return {
     disk,
     readOnly,
@@ -510,10 +511,10 @@ async function openDisk(meta: DiskImageMetadata, mode: OpenMode, overlayBlockSiz
     backendSnapshot: {
       kind: "local",
       backend: "idb",
-      key: meta.id,
-      format: meta.format,
-      diskKind: meta.kind,
-      sizeBytes: meta.sizeBytes,
+      key: localMeta.id,
+      format: localMeta.format,
+      diskKind: localMeta.kind,
+      sizeBytes: localMeta.sizeBytes,
     },
   };
 }

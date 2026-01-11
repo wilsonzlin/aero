@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mountWebHidPassthroughPanel, WebHidPassthroughManager } from "./webhid_passthrough";
+
+import type { HidPassthroughMessage } from "./hid_passthrough_protocol";
+import { getNoFreeGuestUsbPortsMessage, mountWebHidPassthroughPanel, WebHidPassthroughManager } from "./webhid_passthrough";
 
 const originalNavigatorDescriptor = Object.getOwnPropertyDescriptor(globalThis, "navigator");
 const originalDocumentDescriptor = Object.getOwnPropertyDescriptor(globalThis, "document");
@@ -183,7 +185,73 @@ describe("WebHidPassthroughManager UI (mocked WebHID)", () => {
 
     expect((hid.requestDevice as unknown as ReturnType<typeof vi.fn>).mock.calls.length).toBe(0);
     expect((device.open as unknown as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1);
-    expect(manager.getState().attachedDevices).toEqual([device]);
+
+    const attached = manager.getState().attachedDevices;
+    expect(attached).toHaveLength(1);
+    expect(attached[0]?.device).toBe(device);
+    expect(attached[0]?.guestPort).toBe(0);
+  });
+});
+
+class TestTarget {
+  readonly messages: HidPassthroughMessage[] = [];
+
+  postMessage(message: HidPassthroughMessage): void {
+    this.messages.push(message);
+  }
+}
+
+describe("WebHID guest port allocation (UHCI 2-port root)", () => {
+  it("assigns ports 0 and 1 when attaching two devices", async () => {
+    const target = new TestTarget();
+    const manager = new WebHidPassthroughManager({ hid: null, target });
+
+    const devA = { vendorId: 1, productId: 1, productName: "A", open: vi.fn(async () => {}), close: vi.fn(async () => {}) } as unknown as HIDDevice;
+    const devB = { vendorId: 2, productId: 2, productName: "B", open: vi.fn(async () => {}), close: vi.fn(async () => {}) } as unknown as HIDDevice;
+
+    await manager.attachKnownDevice(devA);
+    await manager.attachKnownDevice(devB);
+
+    expect(target.messages).toHaveLength(2);
+    expect(target.messages[0]).toMatchObject({ type: "hid:attach", guestPort: 0 });
+    expect(target.messages[1]).toMatchObject({ type: "hid:attach", guestPort: 1 });
+
+    expect(manager.getState().attachedDevices.map((d) => d.guestPort)).toEqual([0, 1]);
+  });
+
+  it("rejects a third attach and does not post a worker message", async () => {
+    const target = new TestTarget();
+    const manager = new WebHidPassthroughManager({ hid: null, target });
+
+    const devA = { vendorId: 1, productId: 1, productName: "A", open: vi.fn(async () => {}), close: vi.fn(async () => {}) } as unknown as HIDDevice;
+    const devB = { vendorId: 2, productId: 2, productName: "B", open: vi.fn(async () => {}), close: vi.fn(async () => {}) } as unknown as HIDDevice;
+    const devC = { vendorId: 3, productId: 3, productName: "C", open: vi.fn(async () => {}), close: vi.fn(async () => {}) } as unknown as HIDDevice;
+
+    await manager.attachKnownDevice(devA);
+    await manager.attachKnownDevice(devB);
+    await expect(manager.attachKnownDevice(devC)).rejects.toThrow(getNoFreeGuestUsbPortsMessage());
+
+    expect(target.messages).toHaveLength(2);
+    expect(manager.getState().attachedDevices).toHaveLength(2);
+  });
+
+  it("frees ports on detach and reuses the lowest free port", async () => {
+    const target = new TestTarget();
+    const manager = new WebHidPassthroughManager({ hid: null, target });
+
+    const devA = { vendorId: 1, productId: 1, productName: "A", open: vi.fn(async () => {}), close: vi.fn(async () => {}) } as unknown as HIDDevice;
+    const devB = { vendorId: 2, productId: 2, productName: "B", open: vi.fn(async () => {}), close: vi.fn(async () => {}) } as unknown as HIDDevice;
+    const devC = { vendorId: 3, productId: 3, productName: "C", open: vi.fn(async () => {}), close: vi.fn(async () => {}) } as unknown as HIDDevice;
+
+    await manager.attachKnownDevice(devA);
+    await manager.attachKnownDevice(devB);
+    await manager.detachDevice(devA);
+
+    await manager.attachKnownDevice(devC);
+
+    expect(target.messages).toHaveLength(4);
+    expect(target.messages[2]).toMatchObject({ type: "hid:detach", guestPort: 0 });
+    expect(target.messages[3]).toMatchObject({ type: "hid:attach", guestPort: 0 });
   });
 });
 

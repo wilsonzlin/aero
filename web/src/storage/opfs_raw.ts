@@ -12,7 +12,7 @@ type SyncAccessHandle = {
 
 type FileHandle = {
   createSyncAccessHandle?: () => Promise<SyncAccessHandle>;
-  createWritable(): Promise<FileSystemWritableFileStream>;
+  createWritable(options?: FileSystemCreateWritableOptions): Promise<FileSystemWritableFileStream>;
   getFile(): Promise<File>;
 };
 
@@ -119,7 +119,9 @@ export class OpfsRawDisk implements AsyncSectorDisk {
     }
 
     const writable = await this.access.file.createWritable({ keepExistingData: true });
-    await writable.write({ type: "write", position: offset, data });
+    // `FileSystemWritableFileStream` does not currently accept views backed by
+    // SharedArrayBuffer, so ensure the payload is ArrayBuffer-backed.
+    await writable.write({ type: "write", position: offset, data: new Uint8Array(data) });
     await writable.close();
   }
 

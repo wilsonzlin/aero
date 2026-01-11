@@ -11,15 +11,33 @@
  * object suitable for JSON serialization.
  */
 
-/** @typedef {{count:number, min:number|null, max:number|null, mean:number|null, p50:number|null, p95:number|null, p99:number|null}} HistogramStats */
-/** @typedef {{bucketSize:number, min:number, max:number, underflow:number, overflow:number, buckets:number[], stats:HistogramStats}} HistogramSnapshot */
+export type HistogramStats = {
+  count: number;
+  min: number | null;
+  max: number | null;
+  mean: number | null;
+  p50: number | null;
+  p95: number | null;
+  p99: number | null;
+};
+
+export type HistogramSnapshot = {
+  bucketSize: number;
+  min: number;
+  max: number;
+  underflow: number;
+  overflow: number;
+  buckets: number[];
+  stats: HistogramStats;
+};
+
+type HistogramConfig = { bucketSize: number; min: number; max: number };
 
 class FixedHistogram {
   bucketSize = 0;
   min = 0;
   max = 1;
 
-  /** @type {Uint32Array} */
   _buckets = new Uint32Array(0);
 
   _underflow = 0;
@@ -29,10 +47,7 @@ class FixedHistogram {
   _minSeen = Infinity;
   _maxSeen = -Infinity;
 
-  /**
-   * @param {{bucketSize:number, min:number, max:number}} cfg
-   */
-  constructor(cfg) {
+  constructor(cfg: HistogramConfig) {
     if (!(cfg.bucketSize > 0)) {
       throw new Error("Histogram bucketSize must be > 0");
     }
@@ -60,10 +75,7 @@ class FixedHistogram {
     this._maxSeen = -Infinity;
   }
 
-  /**
-   * @param {number} value
-   */
-  add(value) {
+  add(value: number): void {
     if (!Number.isFinite(value)) {
       return;
     }
@@ -84,11 +96,7 @@ class FixedHistogram {
     this._buckets[idx] += 1;
   }
 
-  /**
-   * @param {number} p 0..1
-   * @returns {number|null}
-   */
-  percentile(p) {
+  percentile(p: number): number | null {
     if (!(p >= 0 && p <= 1)) {
       throw new Error("percentile p must be in [0, 1]");
     }
@@ -111,8 +119,7 @@ class FixedHistogram {
     return this.max;
   }
 
-  /** @returns {HistogramStats} */
-  stats() {
+  stats(): HistogramStats {
     if (this._count === 0) {
       return {
         count: 0,
@@ -135,8 +142,7 @@ class FixedHistogram {
     };
   }
 
-  /** @returns {HistogramSnapshot} */
-  snapshot() {
+  snapshot(): HistogramSnapshot {
     return {
       bucketSize: this.bucketSize,
       min: this.min,
@@ -157,22 +163,35 @@ class FixedHistogram {
   }
 }
 
-/**
- * @typedef {{
- *   wallTimeTotalMs: number|null,
- *   frameTimeMs: HistogramSnapshot,
- *   presentLatencyMs: HistogramSnapshot,
- *   droppedFrames: number,
- *   shaderTranslationMs: HistogramSnapshot,
- *   shaderCompilationMs: HistogramSnapshot,
- *   pipelineCache: {hits:number, misses:number, hitRate:number|null, entries:number|null, sizeBytes:number|null},
- *   textureUpload: {
- *     bytesTotal:number,
- *     bytesPerFrame: HistogramSnapshot,
- *     bandwidthBytesPerSecAvg:number|null
- *   }
- * }} GpuTelemetrySnapshot
- */
+export type GpuTelemetrySnapshot = {
+  wallTimeTotalMs: number | null;
+  frameTimeMs: HistogramSnapshot;
+  presentLatencyMs: HistogramSnapshot;
+  droppedFrames: number;
+  shaderTranslationMs: HistogramSnapshot;
+  shaderCompilationMs: HistogramSnapshot;
+  pipelineCache: {
+    hits: number;
+    misses: number;
+    hitRate: number | null;
+    entries: number | null;
+    sizeBytes: number | null;
+  };
+  textureUpload: {
+    bytesTotal: number;
+    bytesPerFrame: HistogramSnapshot;
+    bandwidthBytesPerSecAvg: number | null;
+  };
+};
+
+export type GpuTelemetryOptions = {
+  frameBudgetMs?: number;
+  frameTimeHistogram?: HistogramConfig;
+  presentLatencyHistogram?: HistogramConfig;
+  shaderTranslationHistogram?: HistogramConfig;
+  shaderCompilationHistogram?: HistogramConfig;
+  textureUploadBytesPerFrameHistogram?: HistogramConfig;
+};
 
 /**
  * Telemetry collector.
@@ -184,23 +203,15 @@ class FixedHistogram {
 export class GpuTelemetry {
   frameBudgetMs = 1000 / 60;
 
-  /** @type {number|null} */
-  _frameStartMs = null;
-  /** @type {number|null} */
-  _firstFrameStartMs = null;
-  /** @type {number|null} */
-  _lastFrameEndMs = null;
+  _frameStartMs: number | null = null;
+  _firstFrameStartMs: number | null = null;
+  _lastFrameEndMs: number | null = null;
   _currentFrameTextureUploadBytes = 0;
 
-  /** @type {FixedHistogram} */
   frameTimeMs = new FixedHistogram({ bucketSize: 0.5, min: 0, max: 100 });
-  /** @type {FixedHistogram} */
   presentLatencyMs = new FixedHistogram({ bucketSize: 0.25, min: 0, max: 50 });
-  /** @type {FixedHistogram} */
   shaderTranslationMs = new FixedHistogram({ bucketSize: 0.1, min: 0, max: 50 });
-  /** @type {FixedHistogram} */
   shaderCompilationMs = new FixedHistogram({ bucketSize: 0.1, min: 0, max: 50 });
-  /** @type {FixedHistogram} */
   textureUploadBytesPerFrame = new FixedHistogram({
     bucketSize: 256 * 1024,
     min: 0,
@@ -211,24 +222,12 @@ export class GpuTelemetry {
 
   pipelineCacheHits = 0;
   pipelineCacheMisses = 0;
-  /** @type {number|null} */
-  pipelineCacheEntries = null;
-  /** @type {number|null} */
-  pipelineCacheSizeBytes = null;
+  pipelineCacheEntries: number | null = null;
+  pipelineCacheSizeBytes: number | null = null;
 
   textureUploadBytesTotal = 0;
 
-  /**
-   * @param {{
-   *   frameBudgetMs?: number,
-   *   frameTimeHistogram?: {bucketSize:number, min:number, max:number},
-   *   presentLatencyHistogram?: {bucketSize:number, min:number, max:number},
-   *   shaderTranslationHistogram?: {bucketSize:number, min:number, max:number},
-   *   shaderCompilationHistogram?: {bucketSize:number, min:number, max:number},
-   *   textureUploadBytesPerFrameHistogram?: {bucketSize:number, min:number, max:number},
-   * }=} opts
-   */
-  constructor(opts = {}) {
+  constructor(opts: GpuTelemetryOptions = {}) {
     this.frameBudgetMs = opts.frameBudgetMs ?? this.frameBudgetMs;
 
     if (opts.frameTimeHistogram) {
@@ -270,10 +269,7 @@ export class GpuTelemetry {
     this.textureUploadBytesTotal = 0;
   }
 
-  /**
-   * @param {number} [nowMs]
-   */
-  beginFrame(nowMs = performance.now()) {
+  beginFrame(nowMs: number = performance.now()): void {
     if (this._firstFrameStartMs == null) {
       this._firstFrameStartMs = nowMs;
     }
@@ -281,10 +277,7 @@ export class GpuTelemetry {
     this._currentFrameTextureUploadBytes = 0;
   }
 
-  /**
-   * @param {number} [nowMs]
-   */
-  endFrame(nowMs = performance.now()) {
+  endFrame(nowMs: number = performance.now()): void {
     if (this._frameStartMs == null) {
       return;
     }
@@ -308,41 +301,26 @@ export class GpuTelemetry {
     this._frameStartMs = null;
   }
 
-  /**
-   * @param {number} latencyMs
-   */
-  recordPresentLatencyMs(latencyMs) {
+  recordPresentLatencyMs(latencyMs: number): void {
     this.presentLatencyMs.add(latencyMs);
   }
 
-  /**
-   * @param {number} ms
-   */
-  recordShaderTranslationMs(ms) {
+  recordShaderTranslationMs(ms: number): void {
     this.shaderTranslationMs.add(ms);
   }
 
-  /**
-   * @param {number} ms
-   */
-  recordShaderCompilationMs(ms) {
+  recordShaderCompilationMs(ms: number): void {
     this.shaderCompilationMs.add(ms);
   }
 
-  /**
-   * @param {number} bytes
-   */
-  recordTextureUploadBytes(bytes) {
+  recordTextureUploadBytes(bytes: number): void {
     if (!Number.isFinite(bytes) || bytes <= 0) {
       return;
     }
     this._currentFrameTextureUploadBytes += bytes;
   }
 
-  /**
-   * @param {number} [count]
-   */
-  recordDroppedFrames(count = 1) {
+  recordDroppedFrames(count: number = 1): void {
     if (!Number.isFinite(count) || count <= 0) {
       return;
     }
@@ -357,10 +335,7 @@ export class GpuTelemetry {
     this.pipelineCacheMisses += 1;
   }
 
-  /**
-   * @param {{entries?: number|null, sizeBytes?: number|null}} stats
-   */
-  setPipelineCacheStats(stats) {
+  setPipelineCacheStats(stats: { entries?: number | null; sizeBytes?: number | null }): void {
     if ("entries" in stats) {
       this.pipelineCacheEntries = stats.entries ?? null;
     }
@@ -369,8 +344,7 @@ export class GpuTelemetry {
     }
   }
 
-  /** @returns {GpuTelemetrySnapshot} */
-  snapshot() {
+  snapshot(): GpuTelemetrySnapshot {
     const cacheLookups = this.pipelineCacheHits + this.pipelineCacheMisses;
     const hitRate = cacheLookups === 0 ? null : this.pipelineCacheHits / cacheLookups;
 
@@ -409,7 +383,7 @@ export class GpuTelemetry {
 // Optional global registration to make it easy for benchmark pages and ad-hoc
 // debugging to access the implementation without a bundler.
 if (typeof globalThis !== "undefined") {
-  const g = /** @type {any} */ (globalThis);
+  const g = globalThis as any;
   if (!g.AeroGpuTelemetry) {
     g.AeroGpuTelemetry = { GpuTelemetry };
   } else if (!g.AeroGpuTelemetry.GpuTelemetry) {

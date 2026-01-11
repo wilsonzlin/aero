@@ -129,10 +129,8 @@ export class WebGpuPresenter {
   /** @type {GPUBindGroup} */
   bindGroup;
 
-  /** @type {GPUTexture | null} */
-  srcTex = null;
-  /** @type {GPUTextureView | null} */
-  srcView = null;
+  srcTex: GPUTexture | null = null;
+  srcView: GPUTextureView | null = null;
   /** @type {number} */
   srcWidth = 0;
   /** @type {number} */
@@ -313,17 +311,19 @@ export class WebGpuPresenter {
       const format =
         this.opts.framebufferColorSpace === "srgb" ? ("rgba8unorm-srgb" as const) : ("rgba8unorm" as const);
 
-      this.srcTex = this.device.createTexture({
+      const srcTex = this.device.createTexture({
         size: { width, height },
         format,
         usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
       });
-      this.srcView = this.srcTex.createView();
+      const srcView = srcTex.createView();
+      this.srcTex = srcTex;
+      this.srcView = srcView;
 
       this.bindGroup = this.device.createBindGroup({
         layout: this.pipeline.getBindGroupLayout(0),
         entries: [
-          { binding: 0, resource: this.srcView },
+          { binding: 0, resource: srcView },
           { binding: 1, resource: this.sampler },
           { binding: 2, resource: { buffer: this.paramsBuffer } },
         ],
@@ -332,7 +332,7 @@ export class WebGpuPresenter {
 
     this.queue.writeTexture(
       { texture: this.srcTex! },
-      rgba,
+      rgba as unknown as GPUAllowSharedBufferSource,
       { bytesPerRow: width * 4 },
       { width, height },
     );

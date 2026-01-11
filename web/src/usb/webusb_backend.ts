@@ -147,11 +147,11 @@ export function dataViewToUint8Array(view: DataView): Uint8Array {
   return out;
 }
 
-function ensureArrayBufferBacked(bytes: Uint8Array): Uint8Array {
+function ensureArrayBufferBacked(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
   // TypeScript's `BufferSource` type excludes `SharedArrayBuffer` in some lib.dom
   // versions, even though Chromium accepts it for WebUSB calls. Keep the backend
   // strict-friendly by copying when the buffer is shared.
-  if (bytes.buffer instanceof ArrayBuffer) return bytes;
+  if (bytes.buffer instanceof ArrayBuffer) return bytes as unknown as Uint8Array<ArrayBuffer>;
   const out = new Uint8Array(bytes.byteLength);
   out.set(bytes);
   return out;

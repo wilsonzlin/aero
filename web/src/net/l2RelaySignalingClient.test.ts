@@ -107,6 +107,11 @@ class FakePeerConnection {
   }
 }
 
+function resetFakePeerConnection(): void {
+  FakePeerConnection.last = null;
+  FakePeerConnection.nextDataChannel = null;
+}
+
 function installMockFetch(): () => void {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
@@ -141,19 +146,19 @@ describe("net/l2RelaySignalingClient", () => {
     g.RTCPeerConnection = FakePeerConnection as unknown as typeof RTCPeerConnection;
     const restoreFetch = installMockFetch();
 
-    FakePeerConnection.last = null;
+    resetFakePeerConnection();
     FakePeerConnection.nextDataChannel = new FakeRtcDataChannel("open");
 
     try {
       await connectL2RelaySignaling({ baseUrl: "https://relay.example.com", mode: "http-offer" });
       const pc = FakePeerConnection.last;
-      expect(pc).not.toBeNull();
+      if (!pc) throw new Error("expected peer connection to be created");
 
-      expect(pc!.createdLabel).toBe("l2");
-      expect(pc!.createdInit).toBeDefined();
-      expect(pc!.createdInit?.ordered).toBe(false);
-      expect(pc!.createdInit?.maxRetransmits).toBeUndefined();
-      expect(pc!.createdInit?.maxPacketLifeTime).toBeUndefined();
+      expect(pc.createdLabel).toBe("l2");
+      expect(pc.createdInit).toBeDefined();
+      expect(pc.createdInit?.ordered).toBe(false);
+      expect(pc.createdInit?.maxRetransmits).toBeUndefined();
+      expect(pc.createdInit?.maxPacketLifeTime).toBeUndefined();
     } finally {
       restoreFetch();
       if (originalPc === undefined) delete g.RTCPeerConnection;
@@ -167,7 +172,7 @@ describe("net/l2RelaySignalingClient", () => {
     g.RTCPeerConnection = FakePeerConnection as unknown as typeof RTCPeerConnection;
     const restoreFetch = installMockFetch();
 
-    FakePeerConnection.last = null;
+    resetFakePeerConnection();
     const dc = new FakeRtcDataChannel("connecting");
     FakePeerConnection.nextDataChannel = dc;
 
@@ -196,7 +201,7 @@ describe("net/l2RelaySignalingClient", () => {
     g.RTCPeerConnection = FakePeerConnection as unknown as typeof RTCPeerConnection;
     const restoreFetch = installMockFetch();
 
-    FakePeerConnection.last = null;
+    resetFakePeerConnection();
     const dc = new FakeRtcDataChannel("connecting");
     FakePeerConnection.nextDataChannel = dc;
 
@@ -206,7 +211,9 @@ describe("net/l2RelaySignalingClient", () => {
       dc.emitError();
 
       await expect(promise).rejects.toThrow("data channel error");
-      expect(FakePeerConnection.last?.closed).toBe(true);
+      const pc = FakePeerConnection.last;
+      if (!pc) throw new Error("expected peer connection to be created");
+      expect(pc.closed).toBe(true);
     } finally {
       restoreFetch();
       if (originalPc === undefined) delete g.RTCPeerConnection;

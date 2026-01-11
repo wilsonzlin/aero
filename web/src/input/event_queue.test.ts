@@ -8,17 +8,17 @@ describe("InputEventQueue", () => {
     queue.pushKeyScancode(10, 0xaa, 1);
     queue.pushGamepadReport(20, 0x11223344, 0x55667788);
 
-    let posted: InputBatchMessage | null = null;
+    const state: { posted: InputBatchMessage | null } = { posted: null };
     const target: InputBatchTarget = {
-      postMessage: (msg) => {
-        posted = msg;
+      postMessage: (msg, _transfer) => {
+        state.posted = msg;
       },
     };
 
     queue.flush(target);
-    if (!posted) throw new Error("expected flush to post a batch");
+    if (!state.posted) throw new Error("expected flush to post a batch");
 
-    const words = new Int32Array(posted.buffer);
+    const words = new Int32Array(state.posted.buffer);
     expect(words[0]).toBe(2); // count
 
     // Event 0: key scancode
@@ -34,4 +34,3 @@ describe("InputEventQueue", () => {
     expect(words[9] >>> 0).toBe(0x55667788);
   });
 });
-

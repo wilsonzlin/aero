@@ -24,7 +24,7 @@ globalThis.onmessage = (ev: MessageEvent<InitMessage>) => {
   const io = new IoClient(req, resp, {
     onSerialOutput: (port, data) => {
       // Mirror the debug UI event shape.
-      (globalThis as DedicatedWorkerGlobalScope).postMessage({
+      (globalThis as unknown as DedicatedWorkerGlobalScope).postMessage({
         type: "SerialOutput",
         port,
         data: Array.from(data),
@@ -38,6 +38,5 @@ globalThis.onmessage = (ev: MessageEvent<InitMessage>) => {
     io.portWrite(0x3f8, 1, b);
   }
 
-  (globalThis as DedicatedWorkerGlobalScope).postMessage({ type: "done" });
+  (globalThis as unknown as DedicatedWorkerGlobalScope).postMessage({ type: "done" });
 };
-

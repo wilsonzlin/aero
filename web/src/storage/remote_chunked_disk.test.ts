@@ -6,14 +6,14 @@ import type { AddressInfo } from "node:net";
 import { RemoteChunkedDisk, type BinaryStore } from "./remote_chunked_disk";
 
 class TestMemoryStore implements BinaryStore {
-  readonly files = new Map<string, Uint8Array>();
+  readonly files = new Map<string, Uint8Array<ArrayBuffer>>();
 
-  async read(path: string): Promise<Uint8Array | null> {
+  async read(path: string): Promise<Uint8Array<ArrayBuffer> | null> {
     const data = this.files.get(path);
     return data ? data.slice() : null;
   }
 
-  async write(path: string, data: Uint8Array): Promise<void> {
+  async write(path: string, data: Uint8Array<ArrayBuffer>): Promise<void> {
     this.files.set(path, data.slice());
   }
 
@@ -29,8 +29,12 @@ class TestMemoryStore implements BinaryStore {
   }
 }
 
+function toArrayBufferUint8(data: Uint8Array): Uint8Array<ArrayBuffer> {
+  return data.buffer instanceof ArrayBuffer ? (data as unknown as Uint8Array<ArrayBuffer>) : new Uint8Array(data);
+}
+
 async function sha256Hex(data: Uint8Array): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", data);
+  const digest = await crypto.subtle.digest("SHA-256", toArrayBufferUint8(data));
   const bytes = new Uint8Array(digest);
   return Array.from(bytes)
     .map((b) => b.toString(16).padStart(2, "0"))

@@ -34,10 +34,11 @@ declare global {
   }
 }
 
-const canvas = document.getElementById("canvas");
-if (!(canvas instanceof HTMLCanvasElement)) {
+const canvasEl = document.getElementById("canvas");
+if (!(canvasEl instanceof HTMLCanvasElement)) {
   throw new Error("Canvas element not found");
 }
+const canvas: HTMLCanvasElement = canvasEl;
 
 let worker: Worker | null = null;
 let sharedFramebuffer: SharedArrayBuffer | null = null;
@@ -125,11 +126,12 @@ async function init(opts: {
   Atomics.store(frameState, FRAME_STATUS_INDEX, FRAME_PRESENTED);
   Atomics.store(frameState, FRAME_SEQ_INDEX, 0);
 
-  if (!("transferControlToOffscreen" in canvas)) {
+  type TransferCanvas = HTMLCanvasElement & { transferControlToOffscreen: () => OffscreenCanvas };
+  if (typeof (canvas as Partial<TransferCanvas>).transferControlToOffscreen !== "function") {
     throw new Error("OffscreenCanvas is not supported in this browser.");
   }
 
-  const offscreen = canvas.transferControlToOffscreen();
+  const offscreen = (canvas as TransferCanvas).transferControlToOffscreen();
   worker = new Worker(new URL("./workers/gpu.worker.ts", import.meta.url), { type: "module" });
 
   readyPromise = new Promise<GpuRuntimeReadyMessage>((resolve, reject) => {
@@ -235,4 +237,3 @@ async function screenshot(): Promise<{ width: number; height: number; pixels: Ui
 
 window.__aeroTest = { init, present, screenshot };
 window.addEventListener("beforeunload", () => destroyWorker());
-

@@ -46,7 +46,7 @@ export type SyncAccessHandleLike = {
 
 interface RandomAccessSource {
   readonly size: number;
-  readAt(offset: number, length: number): Promise<Uint8Array>;
+  readAt(offset: number, length: number): Promise<Uint8Array<ArrayBuffer>>;
 }
 
 class FileSource implements RandomAccessSource {
@@ -57,7 +57,7 @@ class FileSource implements RandomAccessSource {
   get size(): number {
     return this.file.size;
   }
-  async readAt(offset: number, length: number): Promise<Uint8Array> {
+  async readAt(offset: number, length: number): Promise<Uint8Array<ArrayBuffer>> {
     const end = offset + length;
     if (offset < 0 || length < 0 || end > this.file.size) {
       throw new RangeError(`readAt out of range: ${offset}+${length} (size=${this.file.size})`);
@@ -79,7 +79,7 @@ class UrlSource implements RandomAccessSource {
     this.size = size;
     this.signal = signal;
   }
-  async readAt(offset: number, length: number): Promise<Uint8Array> {
+  async readAt(offset: number, length: number): Promise<Uint8Array<ArrayBuffer>> {
     const end = offset + length;
     if (offset < 0 || length < 0 || end > this.size) {
       throw new RangeError(`readAt out of range: ${offset}+${length} (size=${this.size})`);

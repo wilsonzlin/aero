@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { once } from "node:events";
-import { Worker } from "node:worker_threads";
+import { Worker, type WorkerOptions } from "node:worker_threads";
 
 import { createIpcBuffer } from "../../ipc/ipc.ts";
 import { queueKind } from "../../ipc/layout.ts";
@@ -26,13 +26,13 @@ describe("io/ipc/aero_ipc_io (worker_threads)", () => {
       type: "module",
       workerData: { ipcBuffer, tickIntervalMs: 1 },
       execArgv: ["--experimental-strip-types"],
-    });
+    } as unknown as WorkerOptions);
 
     const cpuWorker = new Worker(new URL("./test_workers/aipc_cpu_roundtrip_worker.ts", import.meta.url), {
       type: "module",
       workerData: { ipcBuffer },
       execArgv: ["--experimental-strip-types"],
-    });
+    } as unknown as WorkerOptions);
 
     try {
       const [result] = (await withTimeout(once(cpuWorker, "message") as Promise<[any]>, 4000, "cpu worker result")) as [

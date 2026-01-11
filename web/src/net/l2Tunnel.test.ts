@@ -10,7 +10,9 @@ import {
   encodeL2Frame,
   encodePing,
 } from "../shared/l2TunnelProtocol.ts";
-import { L2_TUNNEL_SUBPROTOCOL, WebRtcL2TunnelClient, WebSocketL2TunnelClient } from "./l2Tunnel.ts";
+import { L2_TUNNEL_SUBPROTOCOL, WebRtcL2TunnelClient, WebSocketL2TunnelClient, type L2TunnelEvent } from "./l2Tunnel.ts";
+
+type WebSocketConstructor = new (url: string, protocols?: string | string[]) => WebSocket;
 
 function microtask(): Promise<void> {
   return new Promise((resolve) => queueMicrotask(resolve));
@@ -104,10 +106,14 @@ class FakeWebSocket {
   }
 }
 
+function resetFakeWebSocket(): void {
+  FakeWebSocket.last = null;
+}
+
 describe("net/l2Tunnel", () => {
   it("forwards FRAME messages and responds to PING", async () => {
     const channel = new FakeRtcDataChannel();
-    const events: unknown[] = [];
+    const events: L2TunnelEvent[] = [];
 
     const client = new WebRtcL2TunnelClient(channel as unknown as RTCDataChannel, (ev) => events.push(ev), {
       // Keepalive timers would keep the vitest process alive; we close at the end
@@ -150,7 +156,7 @@ describe("net/l2Tunnel", () => {
 
   it("decodes structured ERROR payloads", async () => {
     const channel = new FakeRtcDataChannel();
-    const events: unknown[] = [];
+    const events: L2TunnelEvent[] = [];
 
     const client = new WebRtcL2TunnelClient(channel as unknown as RTCDataChannel, (ev) => events.push(ev), {
       keepaliveMinMs: 60_000,
@@ -193,11 +199,11 @@ describe("net/l2Tunnel", () => {
 
     // Ensure a deterministic negotiated protocol for this test.
     FakeWebSocket.nextProtocol = L2_TUNNEL_SUBPROTOCOL;
-    FakeWebSocket.last = null;
+    resetFakeWebSocket();
 
     g.WebSocket = FakeWebSocket as unknown as WebSocketConstructor;
 
-    const events: unknown[] = [];
+    const events: L2TunnelEvent[] = [];
     const client = new WebSocketL2TunnelClient("https://gateway.example.com/base", (ev) => events.push(ev), {
       keepaliveMinMs: 60_000,
       keepaliveMaxMs: 60_000,
@@ -225,11 +231,11 @@ describe("net/l2Tunnel", () => {
     const original = g.WebSocket;
 
     FakeWebSocket.nextProtocol = "";
-    FakeWebSocket.last = null;
+    resetFakeWebSocket();
 
     g.WebSocket = FakeWebSocket as unknown as WebSocketConstructor;
 
-    const events: unknown[] = [];
+    const events: L2TunnelEvent[] = [];
     const client = new WebSocketL2TunnelClient("wss://gateway.example.com/l2", (ev) => events.push(ev), {
       keepaliveMinMs: 60_000,
       keepaliveMaxMs: 60_000,
@@ -258,11 +264,11 @@ describe("net/l2Tunnel", () => {
     const original = g.WebSocket;
 
     FakeWebSocket.nextProtocol = L2_TUNNEL_SUBPROTOCOL;
-    FakeWebSocket.last = null;
+    resetFakeWebSocket();
 
     g.WebSocket = FakeWebSocket as unknown as WebSocketConstructor;
 
-    const events: unknown[] = [];
+    const events: L2TunnelEvent[] = [];
     const client = new WebSocketL2TunnelClient("wss://gateway.example.com/l2", (ev) => events.push(ev), {
       keepaliveMinMs: 60_000,
       keepaliveMaxMs: 60_000,

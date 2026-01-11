@@ -229,12 +229,16 @@ function bytesToHex(bytes: Uint8Array): string {
   return out;
 }
 
+function toArrayBufferUint8(data: Uint8Array): Uint8Array<ArrayBuffer> {
+  return data.buffer instanceof ArrayBuffer ? (data as unknown as Uint8Array<ArrayBuffer>) : new Uint8Array(data);
+}
+
 async function sha256Hex(data: Uint8Array): Promise<string> {
   const subtle = (globalThis as typeof globalThis & { crypto?: Crypto }).crypto?.subtle;
   if (!subtle) {
     throw new Error("sha256 manifest verification requires WebCrypto (crypto.subtle)");
   }
-  const digest = await subtle.digest("SHA-256", data);
+  const digest = await subtle.digest("SHA-256", toArrayBufferUint8(data));
   return bytesToHex(new Uint8Array(digest));
 }
 

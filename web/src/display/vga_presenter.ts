@@ -7,53 +7,50 @@ import {
   HEADER_INDEX_STRIDE_BYTES,
   HEADER_INDEX_WIDTH,
   loadHeaderI32,
+  type FramebufferCopyFrame,
+  type SharedFramebufferView,
 } from "./framebuffer_protocol";
 import { perf } from "../perf/perf";
 
-/**
- * @typedef {"auto" | "pixelated" | "smooth"} VgaScaleMode
- */
+export type VgaScaleMode = "auto" | "pixelated" | "smooth";
 
-/**
- * @typedef {object} VgaPresenterOptions
- * @property {VgaScaleMode} [scaleMode]
- * @property {boolean} [integerScaling]
- * @property {boolean} [autoResizeToClient]
- * @property {number} [maxPresentHz]
- * @property {string} [clearColor]
- */
+export type VgaPresenterOptions = {
+  scaleMode?: VgaScaleMode;
+  integerScaling?: boolean;
+  autoResizeToClient?: boolean;
+  maxPresentHz?: number;
+  clearColor?: string;
+};
 
-/**
- * @typedef {import("./framebuffer_protocol").SharedFramebufferView} SharedFramebufferView
- * @typedef {import("./framebuffer_protocol").FramebufferCopyFrame} FramebufferCopyFrame
- */
+type PresenterCanvas = HTMLCanvasElement | OffscreenCanvas;
+type PresenterCanvasRenderingContext2D = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 
-function hasRaf() {
+function hasRaf(): boolean {
   return typeof requestAnimationFrame === "function";
 }
 
-function cancelRaf(id) {
+function cancelRaf(id: number): void {
   if (typeof cancelAnimationFrame === "function") {
     cancelAnimationFrame(id);
   }
 }
 
-function clampPositiveInt(name, value) {
+function clampPositiveInt(name: string, value: number): number {
   if (!Number.isFinite(value) || value <= 0) {
     throw new Error(`Invalid ${name}: ${value}`);
   }
   return value;
 }
 
-function get2dContext(canvas) {
-  const ctx = canvas.getContext("2d", { alpha: false });
+function get2dContext(canvas: PresenterCanvas): PresenterCanvasRenderingContext2D {
+  const ctx = canvas.getContext("2d", { alpha: false }) as PresenterCanvasRenderingContext2D | null;
   if (!ctx) {
     throw new Error("2D canvas context not available");
   }
   return ctx;
 }
 
-function createScratchCanvas(width, height) {
+function createScratchCanvas(width: number, height: number): PresenterCanvas {
   if (typeof OffscreenCanvas !== "undefined") {
     return new OffscreenCanvas(width, height);
   }
@@ -72,15 +69,35 @@ function createScratchCanvas(width, height) {
  * presenter will drop frames if they are produced faster than it presents.
  */
 export class VgaPresenter {
-  /**
-   * @param {HTMLCanvasElement | OffscreenCanvas} canvas
-   * @param {VgaPresenterOptions} [options]
-   */
-  constructor(canvas, options = {}) {
+  private canvas: PresenterCanvas;
+  private ctx: PresenterCanvasRenderingContext2D;
+  private options: Required<VgaPresenterOptions>;
+
+  private shared: SharedFramebufferView | null = null;
+  private copy: FramebufferCopyFrame | null = null;
+
+  private running = false;
+  private lastPresentedFrame = -1;
+  private lastConfigCounter = -1;
+  private nextPresentTimeMs = 0;
+  private timerHandle: ReturnType<typeof setTimeout> | null = null;
+  private rafHandle: number | null = null;
+
+  private srcCanvas: PresenterCanvas | null = null;
+  private srcCtx: PresenterCanvasRenderingContext2D | null = null;
+  private srcImageData: ImageData | null = null;
+  private srcImageBytes: Uint8ClampedArray<ArrayBuffer> | null = null;
+  private srcWidth = 0;
+  private srcHeight = 0;
+  private srcStrideBytes = 0;
+  private srcFormat = 0;
+
+  private resizeObserver: ResizeObserver | null = null;
+
+  constructor(canvas: PresenterCanvas, options: VgaPresenterOptions = {}) {
     this.canvas = canvas;
     this.ctx = get2dContext(canvas);
 
-    /** @type {VgaPresenterOptions} */
     this.options = {
       scaleMode: options.scaleMode ?? "auto",
       integerScaling: options.integerScaling ?? true,
@@ -89,40 +106,23 @@ export class VgaPresenter {
       clearColor: options.clearColor ?? "#000",
     };
 
-    /** @type {SharedFramebufferView | null} */
-    this.shared = null;
-    /** @type {FramebufferCopyFrame | null} */
-    this.copy = null;
-
-    this.running = false;
-    this.lastPresentedFrame = -1;
-    this.lastConfigCounter = -1;
-    this.nextPresentTimeMs = 0;
-    this.timerHandle = null;
-    this.rafHandle = null;
-
-    this.srcCanvas = null;
-    this.srcCtx = null;
-    this.srcImageData = null;
-    this.srcImageBytes = null;
-    this.srcWidth = 0;
-    this.srcHeight = 0;
-    this.srcStrideBytes = 0;
-    this.srcFormat = 0;
-
-    this.resizeObserver = null;
-    if (typeof ResizeObserver !== "undefined" && this.isHtmlCanvas() && this.options.autoResizeToClient) {
+    if (
+      typeof ResizeObserver !== "undefined" &&
+      this.options.autoResizeToClient &&
+      typeof HTMLCanvasElement !== "undefined" &&
+      this.canvas instanceof HTMLCanvasElement
+    ) {
       this.resizeObserver = new ResizeObserver(() => this.syncCanvasBackingStoreToClient());
       this.resizeObserver.observe(this.canvas);
       this.syncCanvasBackingStoreToClient();
     }
   }
 
-  isHtmlCanvas() {
+  private isHtmlCanvas(): boolean {
     return typeof HTMLCanvasElement !== "undefined" && this.canvas instanceof HTMLCanvasElement;
   }
 
-  destroy() {
+  destroy(): void {
     this.stop();
     if (this.resizeObserver) {
       this.resizeObserver.disconnect();
@@ -136,7 +136,7 @@ export class VgaPresenter {
     }
   }
 
-  start() {
+  start(): void {
     if (this.running) return;
     this.running = true;
     // Schedule an immediate present attempt on `start()`. We store the *next*
@@ -147,7 +147,7 @@ export class VgaPresenter {
     this.scheduleNextTick();
   }
 
-  stop() {
+  stop(): void {
     this.running = false;
     if (this.rafHandle != null) {
       cancelRaf(this.rafHandle);
@@ -159,28 +159,19 @@ export class VgaPresenter {
     }
   }
 
-  /**
-   * @param {SharedFramebufferView | null} shared
-   */
-  setSharedFramebuffer(shared) {
+  setSharedFramebuffer(shared: SharedFramebufferView | null): void {
     this.shared = shared;
     this.copy = null;
     this.lastPresentedFrame = -1;
     this.lastConfigCounter = -1;
   }
 
-  /**
-   * Pushes a copied frame into the presenter (used when SharedArrayBuffer is
-   * unavailable). Only the most recent copy frame will be displayed.
-   *
-   * @param {FramebufferCopyFrame} frame
-   */
-  pushCopyFrame(frame) {
+  pushCopyFrame(frame: FramebufferCopyFrame): void {
     this.copy = frame;
     this.shared = null;
   }
 
-  scheduleNextTick() {
+  scheduleNextTick(): void {
     if (!this.running) return;
 
     const intervalMs = 1000 / clampPositiveInt("maxPresentHz", this.options.maxPresentHz);
@@ -204,7 +195,7 @@ export class VgaPresenter {
     this.timerHandle = setTimeout(() => this.tick(), delay <= 0 ? 0 : Math.min(delay, intervalMs));
   }
 
-  tick() {
+  tick(): void {
     if (!this.running) return;
 
     perf.spanBegin("frame");
@@ -236,7 +227,7 @@ export class VgaPresenter {
     }
   }
 
-  presentLatestFrame() {
+  presentLatestFrame(): void {
     if (this.shared) {
       this.presentShared(this.shared);
       return;
@@ -246,10 +237,7 @@ export class VgaPresenter {
     }
   }
 
-  /**
-   * @param {SharedFramebufferView} shared
-   */
-  presentShared(shared) {
+  presentShared(shared: SharedFramebufferView): void {
     const header = shared.header;
 
     const format = loadHeaderI32(header, HEADER_INDEX_FORMAT);
@@ -269,7 +257,7 @@ export class VgaPresenter {
       if (width <= 0 || height <= 0 || strideBytes < width * 4) {
         return;
       }
-      this.reconfigureSource(width, height, strideBytes, format, shared.pixelsU8Clamped);
+      this.reconfigureSource(width, height, strideBytes, format);
       this.lastConfigCounter = configCounter;
     }
 
@@ -285,10 +273,7 @@ export class VgaPresenter {
     this.lastPresentedFrame = frameCounter;
   }
 
-  /**
-   * @param {FramebufferCopyFrame} frame
-   */
-  presentCopy(frame) {
+  presentCopy(frame: FramebufferCopyFrame): void {
     if (frame.format !== FRAMEBUFFER_FORMAT_RGBA8888) {
       return;
     }
@@ -298,7 +283,7 @@ export class VgaPresenter {
     }
 
     if (frame.width !== this.srcWidth || frame.height !== this.srcHeight || frame.strideBytes !== this.srcStrideBytes) {
-      this.reconfigureSource(frame.width, frame.height, frame.strideBytes, frame.format, null);
+      this.reconfigureSource(frame.width, frame.height, frame.strideBytes, frame.format);
     }
 
     const u8c = frame.pixelsU8 instanceof Uint8ClampedArray ? frame.pixelsU8 : new Uint8ClampedArray(frame.pixelsU8.buffer, frame.pixelsU8.byteOffset, frame.pixelsU8.byteLength);
@@ -307,21 +292,22 @@ export class VgaPresenter {
     this.lastPresentedFrame = frame.frameCounter;
   }
 
-  syncCanvasBackingStoreToClient() {
+  syncCanvasBackingStoreToClient(): void {
     if (!this.isHtmlCanvas()) return;
+    const canvas = this.canvas as HTMLCanvasElement;
 
     const dpr = typeof devicePixelRatio === "number" && Number.isFinite(devicePixelRatio) ? devicePixelRatio : 1;
-    const cssWidth = this.canvas.clientWidth;
-    const cssHeight = this.canvas.clientHeight;
+    const cssWidth = canvas.clientWidth;
+    const cssHeight = canvas.clientHeight;
     if (cssWidth <= 0 || cssHeight <= 0) return;
 
     const width = Math.max(1, Math.floor(cssWidth * dpr));
     const height = Math.max(1, Math.floor(cssHeight * dpr));
-    if (this.canvas.width !== width) this.canvas.width = width;
-    if (this.canvas.height !== height) this.canvas.height = height;
+    if (canvas.width !== width) canvas.width = width;
+    if (canvas.height !== height) canvas.height = height;
   }
 
-  reconfigureSource(width, height, strideBytes, format, sharedPixelsOrNull) {
+  reconfigureSource(width: number, height: number, strideBytes: number, format: number): void {
     width = clampPositiveInt("width", width);
     height = clampPositiveInt("height", height);
     strideBytes = clampPositiveInt("strideBytes", strideBytes);
@@ -338,22 +324,14 @@ export class VgaPresenter {
     this.srcCanvas = createScratchCanvas(width, height);
     this.srcCtx = get2dContext(this.srcCanvas);
 
-    // Use a contiguous backing store for ImageData since putImageData expects
-    // tightly packed rows.
-    //
-    // Note: Chromium disallows constructing ImageData backed by a
-    // SharedArrayBuffer (the Uint8ClampedArray must not be "shared"), so even in
-    // the shared-memory transport path we still need a private staging buffer.
-    // This avoids `Failed to construct 'ImageData': The provided Uint8ClampedArray value must not be shared.`
-    this.srcImageBytes = new Uint8ClampedArray(width * height * 4);
-
-    this.srcImageData = new ImageData(this.srcImageBytes, width, height);
+    // `ImageData` does not accept SharedArrayBuffer-backed views, so always keep
+    // a private, tightly-packed ArrayBuffer-backed copy here.
+    const imageBytes = new Uint8ClampedArray(width * height * 4) as Uint8ClampedArray<ArrayBuffer>;
+    this.srcImageBytes = imageBytes;
+    this.srcImageData = new ImageData(imageBytes, width, height);
   }
 
-  /**
-   * @param {Uint8ClampedArray} pixels
-   */
-  blitToSourceCanvas(pixels) {
+  blitToSourceCanvas(pixels: Uint8ClampedArray): void {
     if (!this.srcCanvas || !this.srcCtx || !this.srcImageData || !this.srcImageBytes) {
       return;
     }
@@ -371,15 +349,14 @@ export class VgaPresenter {
         const dstStart = y * rowBytes;
         this.srcImageBytes.set(pixels.subarray(srcStart, srcStart + rowBytes), dstStart);
       }
-    } else if (this.srcImageBytes.buffer !== pixels.buffer || this.srcImageBytes.byteOffset !== pixels.byteOffset) {
-      // Copy into our own backing store (copy-frame path).
+    } else {
       this.srcImageBytes.set(pixels.subarray(0, width * height * 4));
     }
 
     this.srcCtx.putImageData(this.srcImageData, 0, 0);
   }
 
-  drawToCanvas() {
+  drawToCanvas(): void {
     if (!this.srcCanvas) return;
 
     const ctx = this.ctx;
@@ -391,7 +368,7 @@ export class VgaPresenter {
     const srcH = this.srcHeight;
     if (srcW <= 0 || srcH <= 0) return;
 
-    const scaleMode = this.options.scaleMode ?? "auto";
+    const scaleMode = this.options.scaleMode;
     const usePixelated = scaleMode === "pixelated" || (scaleMode === "auto" && srcW <= 640 && srcH <= 480);
     ctx.imageSmoothingEnabled = !usePixelated;
 
@@ -410,12 +387,12 @@ export class VgaPresenter {
     const y = Math.floor((dstH - drawH) / 2);
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.fillStyle = this.options.clearColor ?? "#000";
+    ctx.fillStyle = this.options.clearColor;
     ctx.fillRect(0, 0, dstW, dstH);
     ctx.drawImage(this.srcCanvas, 0, 0, srcW, srcH, x, y, drawW, drawH);
 
     if (this.isHtmlCanvas()) {
-      this.canvas.style.imageRendering = usePixelated ? "pixelated" : "auto";
+      (this.canvas as HTMLCanvasElement).style.imageRendering = usePixelated ? "pixelated" : "auto";
     }
   }
 }
@@ -428,7 +405,11 @@ export class VgaPresenter {
  * @param {SharedFramebufferView} shared
  * @param {VgaPresenterOptions} [options]
  */
-export function createWorkerPresenter(canvas, shared, options) {
+export function createWorkerPresenter(
+  canvas: OffscreenCanvas,
+  shared: SharedFramebufferView,
+  options?: VgaPresenterOptions,
+): VgaPresenter {
   const presenter = new VgaPresenter(canvas, options);
   presenter.setSharedFramebuffer(shared);
   presenter.start();

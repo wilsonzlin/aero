@@ -159,8 +159,8 @@ abstract class BaseL2TunnelClient implements L2TunnelClient {
   private sendQueueBytes = 0;
 
   private flushScheduled = false;
-  private drainRetryTimer: number | null = null;
-  private keepaliveTimer: number | null = null;
+  private drainRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  private keepaliveTimer: ReturnType<typeof setTimeout> | null = null;
 
   private lastErrorEmitAt = 0;
 
@@ -612,7 +612,13 @@ export class WebRtcL2TunnelClient extends BaseL2TunnelClient {
   }
 
   protected transportSend(data: Uint8Array): void {
-    this.channel.send(data);
+    // Some lib.dom versions model `RTCDataChannel.send()` as accepting only
+    // `ArrayBuffer`-backed views. At runtime, we still prefer avoiding copies,
+    // but ensure the type is compatible (and avoid passing SharedArrayBuffer-
+    // backed views to APIs that may not accept them).
+    const view: Uint8Array<ArrayBuffer> =
+      data.buffer instanceof ArrayBuffer ? (data as unknown as Uint8Array<ArrayBuffer>) : new Uint8Array(data);
+    this.channel.send(view);
   }
 
   protected closeTransport(): void {

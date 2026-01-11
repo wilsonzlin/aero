@@ -4,7 +4,14 @@ export * from "./keyboard";
 export * from "./mouse";
 export * from "./gamepad";
 export * from "./pointer_lock";
-export * from "./scancode";
+export {
+  codeToSet2,
+  set2Break,
+  set2Make,
+  shouldPreventDefaultForKeyboardEvent,
+  translateCodeToSet2MakeCode,
+} from "./scancode";
+export type { Set2Scancode } from "./scancode";
 export * from "./event_router";
 export * from "./queue";
 export * from "./scancodes";

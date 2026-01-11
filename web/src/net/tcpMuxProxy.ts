@@ -81,7 +81,7 @@ export function encodeTcpMuxFrame(msgType: TcpMuxMsgType, streamId: number, payl
 }
 
 export class TcpMuxFrameParser {
-  private buffer = new Uint8Array(0);
+  private buffer: Uint8Array = new Uint8Array(0);
   private readonly maxPayloadBytes: number;
 
   constructor(opts: { maxPayloadBytes?: number } = {}) {

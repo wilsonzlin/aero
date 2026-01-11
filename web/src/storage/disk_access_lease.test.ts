@@ -38,7 +38,7 @@ describe("DiskAccessLeaseRefresher", () => {
 describe("fetchWithDiskAccessLease", () => {
   it("refreshes and retries once on 401/403", async () => {
     const fetchFn = vi
-      .fn<typeof fetch>()
+      .fn<[RequestInfo | URL, RequestInit?], Promise<Response>>()
       .mockResolvedValueOnce(new Response("forbidden", { status: 403 }))
       .mockResolvedValueOnce(new Response(new Uint8Array([1, 2, 3]), { status: 206 }));
 
@@ -63,7 +63,7 @@ describe("fetchWithDiskAccessLease", () => {
 
   it("does not retry more than once", async () => {
     const fetchFn = vi
-      .fn<typeof fetch>()
+      .fn<[RequestInfo | URL, RequestInit?], Promise<Response>>()
       .mockResolvedValueOnce(new Response("forbidden", { status: 403 }))
       .mockResolvedValueOnce(new Response("forbidden", { status: 403 }));
 
@@ -85,7 +85,7 @@ describe("fetchWithDiskAccessLease", () => {
 describe("fetchWithDiskAccessLeaseForUrl", () => {
   it("recomputes the request URL after refresh when given a URL provider", async () => {
     const fetchFn = vi
-      .fn<typeof fetch>()
+      .fn<[RequestInfo | URL, RequestInit?], Promise<Response>>()
       .mockResolvedValueOnce(new Response("forbidden", { status: 403 }))
       .mockResolvedValueOnce(new Response("ok", { status: 200 }));
 

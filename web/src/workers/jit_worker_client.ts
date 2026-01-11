@@ -84,7 +84,7 @@ export class JitWorkerClient {
     });
   }
 
-  private #rejectAll(err: Error): void {
+  #rejectAll(err: Error): void {
     const pending = Array.from(this.#pending.values());
     this.#pending.clear();
     for (const entry of pending) {

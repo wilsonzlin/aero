@@ -5,29 +5,19 @@
  * hidden, and renders from a structured telemetry snapshot.
  */
 
-/**
- * @param {number} n
- * @param {number} digits
- */
-function fmtFixed(n, digits) {
+function fmtFixed(n: number | null, digits: number): string {
   if (n == null || !Number.isFinite(n)) return "n/a";
   return n.toFixed(digits);
 }
 
-/**
- * @param {number|null} ms
- */
-function fmtMs(ms) {
+function fmtMs(ms: number | null): string {
   if (ms == null || !Number.isFinite(ms)) return "n/a";
   if (ms >= 1000) return `${fmtFixed(ms / 1000, 2)}s`;
   if (ms >= 10) return `${fmtFixed(ms, 1)}ms`;
   return `${fmtFixed(ms, 2)}ms`;
 }
 
-/**
- * @param {number|null} bytes
- */
-function fmtBytes(bytes) {
+function fmtBytes(bytes: number | null): string {
   if (bytes == null || !Number.isFinite(bytes)) return "n/a";
   const abs = Math.abs(bytes);
   if (abs >= 1024 * 1024 * 1024) return `${fmtFixed(bytes / (1024 * 1024 * 1024), 2)} GiB`;
@@ -36,43 +26,37 @@ function fmtBytes(bytes) {
   return `${fmtFixed(bytes, 0)} B`;
 }
 
-/**
- * @param {number|null} value
- */
-function fmtPct(value) {
+function fmtPct(value: number | null): string {
   if (value == null || !Number.isFinite(value)) return "n/a";
   return `${fmtFixed(value * 100, 1)}%`;
 }
 
-/** @typedef {any} GpuTelemetrySnapshot */
+type GpuTelemetrySnapshot = any;
+
+export type DebugOverlayOptions = {
+  toggleKey?: string;
+  updateIntervalMs?: number;
+  parent?: HTMLElement;
+};
 
 export class DebugOverlay {
-  /** @type {() => (GpuTelemetrySnapshot | null)} */
-  _getSnapshot = () => null;
-  _toggleKey = "F2";
-  _updateIntervalMs = 250;
-  /** @type {HTMLElement | null} */
-  _parent = null;
+  private _getSnapshot: () => GpuTelemetrySnapshot | null;
+  private _toggleKey: string;
+  private _updateIntervalMs: number;
+  private _parent: HTMLElement | null;
 
-  _visible = false;
-  /** @type {HTMLDivElement | null} */
-  _root = null;
-  /** @type {number | null} */
-  _interval = null;
+  private _visible = false;
+  private _root: HTMLDivElement | null = null;
+  private _interval: number | null = null;
 
-  /** @type {(ev: KeyboardEvent) => void} */
-  _onKeyDown = () => {};
+  private _onKeyDown: (ev: KeyboardEvent) => void;
 
-  /**
-   * @param {() => (GpuTelemetrySnapshot | null)} getSnapshot
-   * @param {{
-   *   toggleKey?: string,
-   *   updateIntervalMs?: number,
-   *   parent?: HTMLElement,
-   * }=} opts
-   */
-  constructor(getSnapshot, opts = {}) {
+  constructor(getSnapshot: () => GpuTelemetrySnapshot | null, opts: DebugOverlayOptions = {}) {
     this._getSnapshot = getSnapshot;
+    this._toggleKey = "F2";
+    this._updateIntervalMs = 250;
+    this._parent = null;
+
     this._toggleKey = opts.toggleKey ?? this._toggleKey;
     this._updateIntervalMs = opts.updateIntervalMs ?? this._updateIntervalMs;
     this._parent = opts.parent ?? (typeof document !== "undefined" ? document.body : null);
@@ -85,7 +69,7 @@ export class DebugOverlay {
     };
   }
 
-  attach() {
+  attach(): void {
     if (this._root) return;
     if (!this._parent || typeof document === "undefined") return;
 
@@ -109,7 +93,7 @@ export class DebugOverlay {
     window.addEventListener("keydown", this._onKeyDown, { capture: true });
   }
 
-  detach() {
+  detach(): void {
     if (!this._root) return;
     this.hide();
     window.removeEventListener("keydown", this._onKeyDown, { capture: true });
@@ -117,7 +101,7 @@ export class DebugOverlay {
     this._root = null;
   }
 
-  show() {
+  show(): void {
     this.attach();
     if (!this._root) return;
     if (this._visible) return;
@@ -129,7 +113,7 @@ export class DebugOverlay {
     this._render();
   }
 
-  hide() {
+  hide(): void {
     if (!this._root) return;
     if (!this._visible) return;
 
@@ -142,12 +126,12 @@ export class DebugOverlay {
     }
   }
 
-  toggle() {
+  toggle(): void {
     if (this._visible) this.hide();
     else this.show();
   }
 
-  _render() {
+  private _render(): void {
     if (!this._root) return;
 
     const s = this._getSnapshot();
@@ -171,7 +155,7 @@ export class DebugOverlay {
     const up = s.textureUpload ?? null;
     const upAvgBytesPerFrame = up?.bytesPerFrame?.stats?.mean ?? null;
 
-    const lines = [];
+    const lines: string[] = [];
     lines.push(`GPU Telemetry (toggle: ${this._toggleKey})`);
     const framesReceived = typeof s.framesReceived === "number" ? s.framesReceived : null;
     const framesPresented = typeof s.framesPresented === "number" ? s.framesPresented : null;
@@ -225,7 +209,7 @@ export class DebugOverlay {
 }
 
 if (typeof globalThis !== "undefined") {
-  const g = /** @type {any} */ (globalThis);
+  const g = globalThis as any;
   if (!g.AeroDebugOverlay) {
     g.AeroDebugOverlay = { DebugOverlay };
   } else if (!g.AeroDebugOverlay.DebugOverlay) {

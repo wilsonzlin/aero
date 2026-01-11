@@ -97,7 +97,7 @@ function parseIpv6(ip: string): Uint8Array {
   return bytes;
 }
 
-function encodeDatagram(srcPort: number, dstIp: string, dstPort: number, payload: Uint8Array): Uint8Array {
+function encodeDatagram(srcPort: number, dstIp: string, dstPort: number, payload: Uint8Array): Uint8Array<ArrayBuffer> {
   if (dstIp.includes(":") || (dstIp.startsWith("[") && dstIp.endsWith("]"))) {
     const ip6 = parseIpv6(dstIp);
     return encodeUdpRelayV2Datagram({
@@ -105,14 +105,14 @@ function encodeDatagram(srcPort: number, dstIp: string, dstPort: number, payload
       remoteIp: ip6,
       remotePort: dstPort,
       payload,
-    });
+    }) as Uint8Array<ArrayBuffer>;
   }
   return encodeUdpRelayV1Datagram({
     guestPort: srcPort,
     remoteIpv4: parseIpv4(dstIp),
     remotePort: dstPort,
     payload,
-  });
+  }) as Uint8Array<ArrayBuffer>;
 }
 
 /**

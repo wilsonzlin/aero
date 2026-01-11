@@ -104,13 +104,17 @@ function createTestPattern(width: number, height: number): Uint8Array {
   return out;
 }
 
-function readPixelsTopLeft(gl: WebGL2RenderingContext, width: number, height: number): Uint8ClampedArray {
+function readPixelsTopLeft(
+  gl: WebGL2RenderingContext,
+  width: number,
+  height: number,
+): Uint8ClampedArray<ArrayBuffer> {
   const pixels = new Uint8Array(width * height * 4);
   gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
 
   // WebGL readPixels origin is bottom-left; convert to top-left.
   const rowStride = width * 4;
-  const flipped = new Uint8ClampedArray(pixels.length);
+  const flipped = new Uint8ClampedArray(pixels.length) as Uint8ClampedArray<ArrayBuffer>;
   for (let y = 0; y < height; y += 1) {
     const srcStart = (height - 1 - y) * rowStride;
     const dstStart = y * rowStride;

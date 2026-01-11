@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { RingBuffer } from "../ipc/ring_buffer";
 import { RECORD_ALIGN, ringCtrl } from "../ipc/layout";
-import { Worker } from "node:worker_threads";
+import { Worker, type WorkerOptions } from "node:worker_threads";
 import {
   COMMAND_RING_CAPACITY_BYTES,
   CONTROL_BYTES,
@@ -87,7 +87,7 @@ describe("runtime/shared_layout", () => {
       type: "module",
       workerData: { sab: segments.control, offsetBytes: regions.command.byteOffset, count },
       execArgv: ["--experimental-strip-types"],
-    });
+    } as unknown as WorkerOptions);
 
     try {
       for (let i = 0; i < count; i++) {

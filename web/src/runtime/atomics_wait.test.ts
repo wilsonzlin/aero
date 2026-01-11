@@ -1,4 +1,4 @@
-import { Worker } from 'node:worker_threads';
+import { Worker, type WorkerOptions } from 'node:worker_threads';
 import { describe, expect, it, vi } from 'vitest';
 
 import { notify, waitUntilNotEqual } from './atomics_wait';
@@ -97,7 +97,7 @@ describe('waitUntilNotEqual', () => {
           }, 10);
         });
       `,
-        { eval: true, type: 'module', workerData: { sab } },
+        { eval: true, type: 'module', workerData: { sab } } as unknown as WorkerOptions,
       );
 
       try {

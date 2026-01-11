@@ -31,6 +31,7 @@ function dataViewFromBytes(bytes: number[]): DataView {
 function fakeUsbDevice(partial: Partial<USBDevice>): USBDevice {
   const configuration: USBConfiguration = {
     configurationValue: 1,
+    configurationName: null,
     interfaces: [],
   };
 

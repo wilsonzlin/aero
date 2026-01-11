@@ -32,7 +32,7 @@ function flipRgba8VerticallyInPlace(rgba: Uint8Array, width: number, height: num
 }
 
 async function sha256Hex(bytes: Uint8Array): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  const digest = await crypto.subtle.digest("SHA-256", bytes as unknown as BufferSource);
   return Array.from(new Uint8Array(digest))
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
@@ -84,4 +84,3 @@ export async function renderGpuColorTestCardAndHash(canvas: HTMLCanvasElement, o
 
   throw new Error(`unknown backend: ${opts.backend}`);
 }
-

@@ -225,7 +225,7 @@ export async function opfsExportToPort(
     if (typeof CompressionStream === "undefined") {
       throw new Error("CompressionStream not supported in this browser");
     }
-    stream = stream.pipeThrough(new CompressionStream("gzip"));
+    stream = stream.pipeThrough(new CompressionStream("gzip") as unknown as TransformStream<Uint8Array, Uint8Array>);
     // When compressing, we do not know final size ahead of time.
     return streamToPortWithChecksum(stream, port, onProgress, undefined, "export");
   }
@@ -468,7 +468,7 @@ export async function idbExportToPort(
         },
       });
 
-      const stream = rawStream.pipeThrough(new CompressionStream("gzip"));
+      const stream = rawStream.pipeThrough(new CompressionStream("gzip") as unknown as TransformStream<Uint8Array, Uint8Array>);
       // Report raw (pre-compression) progress, but checksum the actual stream output.
       return await streamToPortWithChecksum(stream, port, undefined, undefined, "export");
     }
