@@ -48,6 +48,10 @@ let currentConfigVersion = 0;
 
 const NET_IDLE_WAIT_MS = 1000;
 const NET_PENDING_RX_POLL_MS = 20;
+// Mirror the IO worker tick rate so we don't spin/drain NET_TX aggressively when
+// the tunnel is backpressured (L2TunnelForwarder intentionally stops draining on
+// send errors to avoid turning transient stalls into bursts of drops).
+const NET_TX_BACKPRESSURE_SLEEP_MS = 8;
 const L2_STATS_LOG_INTERVAL_MS = 1000;
 
 function nowMs(): number {
@@ -132,6 +136,7 @@ async function runLoop(): Promise<void> {
   // Use a single loop: drain control commands, pump the forwarder, then park on
   // the NET_TX ring while idle. The `waitForDataAsync` call keeps the worker
   // responsive to WebSocket and `postMessage()` events while avoiding spin.
+  let lastTxBackpressureDrops = 0;
   while (Atomics.load(status, StatusIndex.StopRequested) !== 1) {
     drainRuntimeCommands();
     if (Atomics.load(status, StatusIndex.StopRequested) === 1) break;
@@ -142,7 +147,15 @@ async function runLoop(): Promise<void> {
       l2TunnelTelemetry?.tick(nowMs());
     }
 
-    const pendingRx = forwarder.stats().rxPendingFrames > 0;
+    const stats = forwarder.stats();
+    const pendingRx = stats.rxPendingFrames > 0;
+    const txBackpressureDrops = stats.txDroppedTunnelBackpressure;
+    const sawTxBackpressure = txBackpressureDrops !== lastTxBackpressureDrops;
+    lastTxBackpressureDrops = txBackpressureDrops;
+    if (sawTxBackpressure) {
+      await new Promise((resolve) => setTimeout(resolve, NET_TX_BACKPRESSURE_SLEEP_MS));
+      continue;
+    }
     const timeoutMs = pendingRx ? NET_PENDING_RX_POLL_MS : NET_IDLE_WAIT_MS;
     await txRing.waitForDataAsync(timeoutMs);
   }
