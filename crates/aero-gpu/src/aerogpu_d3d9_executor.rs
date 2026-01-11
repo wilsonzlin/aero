@@ -2907,7 +2907,7 @@ impl AerogpuD3d9Executor {
                 height,
             } => {
                 if width <= 0 || height <= 0 {
-                    self.state.scissor = None;
+                    self.state.scissor = Some((0, 0, 0, 0));
                     return Ok(());
                 }
 
@@ -2920,7 +2920,7 @@ impl AerogpuD3d9Executor {
                 let right = x.saturating_add(width).max(0);
                 let bottom = y.saturating_add(height).max(0);
                 if right <= left || bottom <= top {
-                    self.state.scissor = None;
+                    self.state.scissor = Some((0, 0, 0, 0));
                     return Ok(());
                 }
                 self.state.scissor = Some((
