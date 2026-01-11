@@ -9,3 +9,4 @@ Populate these directories at release time:
 
 Typical layout is one folder per device (virtio-blk/net/snd/input, Aero GPU), but any structure is fine as long as the `*.inf` files are present.
 
+Driver packages should also include any INF-referenced payload files alongside the INF (at minimum `.sys` + `.cat`, and optionally coinstallers/UMDs such as `*.dll`).
