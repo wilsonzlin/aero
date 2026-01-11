@@ -184,7 +184,7 @@ The D3D9Ex UMD is responsible for translating the Microsoft D3D9 runtime’s DDI
 
 ### Device discovery (active ABI + feature bits)
 
-Because the repo also contains a legacy bring-up ABI (`ARGP`) alongside the newer versioned ABI (`AGPU`), UMDs should not hardcode assumptions about:
+Because the repo also contains a legacy bring-up ABI (`ARGP`) alongside the newer versioned ABI (`AGPU`) (legacy is optional and feature-gated behind `emulator/aerogpu-legacy`), UMDs should not hardcode assumptions about:
 
 - which BAR0/MMIO ABI they are running against,
 - which optional features are available (`AEROGPU_FEATURE_VBLANK`, `AEROGPU_FEATURE_FENCE_PAGE`, etc.).

@@ -5,8 +5,9 @@ driver stack and the Aero emulator’s virtual GPU device model.
 
 > Note: The repository also contains a legacy bring-up AeroGPU ABI (`drivers/aerogpu/protocol/aerogpu_protocol.h`,
 > PCI `1AED:0001`, MMIO magic `"ARGP"`). The Win7 KMD supports both legacy and versioned devices (auto-detected via BAR0
-> MMIO magic), but this document describes only the **versioned** ABI
-> (`aerogpu_pci.h`/`aerogpu_ring.h`/`aerogpu_cmd.h`, PCI `A3A0:0001`, MMIO magic `"AGPU"`). See
+> MMIO magic), but the emulator's legacy device model is feature-gated (`emulator/aerogpu-legacy`) and the shipped Win7
+> INFs intentionally bind only to the canonical, versioned device (`A3A0:0001`, MMIO magic `"AGPU"`). This document
+> describes only the **versioned** ABI (`aerogpu_pci.h`/`aerogpu_ring.h`/`aerogpu_cmd.h`). See
 > `docs/abi/aerogpu-pci-identity.md` for the canonical mapping.
 
 ## Normative source-of-truth (and generated mirrors)
