@@ -431,7 +431,7 @@ impl UsbHidPassthrough {
     fn handle_no_data_request(&mut self, setup: SetupPacket) -> bool {
         match (setup.request_type, setup.request) {
             (0x00, REQ_SET_ADDRESS) => {
-                if setup.value > 127 {
+                if setup.index != 0 || setup.value > 127 {
                     return false;
                 }
                 self.pending_address = Some((setup.value & 0x7F) as u8);
@@ -556,6 +556,11 @@ impl UsbDevice for UsbHidPassthrough {
     }
 
     fn handle_setup(&mut self, setup: SetupPacket) {
+        // A new SETUP packet aborts any in-flight control transfer, so discard side effects that
+        // should only apply if the previous transfer reaches the status stage.
+        self.pending_address = None;
+        self.pending_configuration = None;
+
         self.ep0.begin(setup);
 
         let supported = if setup.length == 0 {
