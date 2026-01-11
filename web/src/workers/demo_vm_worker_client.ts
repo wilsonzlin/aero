@@ -44,6 +44,12 @@ export class DemoVmWorkerClient {
       this.#handleMessage(msg);
     });
 
+    this.#worker.addEventListener("messageerror", () => {
+      const err = new Error("DemoVmWorkerClient worker message could not be deserialized.");
+      this.#destroy(err);
+      this.#onFatalError?.(err);
+    });
+
     this.#worker.addEventListener("error", (event: ErrorEvent) => {
       const err = new Error(event.message);
       this.#destroy(err);
