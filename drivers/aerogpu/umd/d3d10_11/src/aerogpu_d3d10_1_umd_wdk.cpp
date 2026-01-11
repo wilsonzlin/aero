@@ -468,7 +468,10 @@ struct AeroGpuSampler {
   uint32_t dummy = 0;
 };
 
-using SetErrorFn = void(AEROGPU_APIENTRY*)(D3D10DDI_HRTDEVICE, HRESULT);
+// Win7-era WDK headers disagree on whether pfnSetErrorCb takes HRTDEVICE or
+// HDEVICE. Keep the callback typed exactly as declared by the active headers,
+// then use `std::is_invocable_v` at call sites to choose the right handle type.
+using SetErrorFn = decltype(std::declval<std::remove_pointer_t<decltype(std::declval<D3D10_1DDIARG_CREATEDEVICE>().pCallbacks)>>().pfnSetErrorCb);
 
 struct AeroGpuDevice {
   uint32_t live_cookie = kAeroGpuDeviceLiveCookie;
@@ -959,10 +962,19 @@ void set_error(AeroGpuDevice* dev, HRESULT hr) {
   // quickly correlate failures to the last DDI call.
   AEROGPU_D3D10_11_LOG("SetErrorCb hr=0x%08X", static_cast<unsigned>(hr));
   AEROGPU_D3D10_TRACEF("SetErrorCb hr=0x%08X", static_cast<unsigned>(hr));
-  if (!dev || !dev->pfn_set_error || !dev->hrt_device.pDrvPrivate) {
+  if (!dev || !dev->pfn_set_error) {
     return;
   }
-  dev->pfn_set_error(dev->hrt_device, hr);
+  if constexpr (std::is_invocable_v<SetErrorFn, D3D10DDI_HDEVICE, HRESULT>) {
+    D3D10DDI_HDEVICE hDevice{};
+    hDevice.pDrvPrivate = dev;
+    dev->pfn_set_error(hDevice, hr);
+  } else {
+    if (!dev->hrt_device.pDrvPrivate) {
+      return;
+    }
+    CallCbMaybeHandle(dev->pfn_set_error, dev->hrt_device, hr);
+  }
 }
 
 static void InitLockForWrite(D3DDDICB_LOCK* lock) {
