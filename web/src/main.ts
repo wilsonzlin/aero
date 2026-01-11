@@ -1583,6 +1583,13 @@ function renderRemoteDiskPanel(): HTMLElement {
       });
       handle = opened.handle;
       updateButtons();
+      try {
+        statsBaseline = await client.stats(opened.handle);
+        statsBaselineAtMs = Date.now();
+      } catch {
+        statsBaseline = null;
+        statsBaselineAtMs = null;
+      }
       return { mode: "chunked", handle: opened.handle };
     }
 
@@ -1772,10 +1779,17 @@ function renderRemoteDiskPanel(): HTMLElement {
       if (modeSelect.value === "chunked") {
         if (handle === null) throw new Error("No chunked disk handle is open.");
         await client.clearCache(handle);
-        statsBaseline = null;
-        statsBaselineAtMs = null;
+        try {
+          statsBaseline = await client.stats(handle);
+          statsBaselineAtMs = Date.now();
+        } catch {
+          statsBaseline = null;
+          statsBaselineAtMs = null;
+        }
       } else {
         await ioWorker.clearRemoteDiskCache();
+        statsBaseline = null;
+        statsBaselineAtMs = null;
       }
       progress.value = 1;
       output.textContent = "Cache cleared.";

@@ -748,7 +748,11 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
   ): Promise<RemoteChunkedDisk> {
     if (!params.sourceId) throw new Error("sourceId must not be empty");
 
-    const resolved: Required<Omit<RemoteChunkedDiskOptions, "credentials">> = {
+    type ResolvedRemoteChunkedDiskOptions =
+      Required<Omit<RemoteChunkedDiskOptions, "credentials" | "cacheImageId" | "cacheVersion">> &
+        Pick<RemoteChunkedDiskOptions, "cacheImageId" | "cacheVersion">;
+
+    const resolved: ResolvedRemoteChunkedDiskOptions = {
       cacheLimitBytes: options.cacheLimitBytes ?? 512 * 1024 * 1024,
       maxConcurrentFetches: options.maxConcurrentFetches ?? 4,
       prefetchSequentialChunks: options.prefetchSequentialChunks ?? 2,

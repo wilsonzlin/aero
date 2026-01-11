@@ -330,7 +330,8 @@ export function allocateSharedMemorySegments(options?: {
     );
   }
 
-  if (!(guestMemory.buffer instanceof SharedArrayBuffer)) {
+  const guestBuffer = guestMemory.buffer as unknown as ArrayBuffer | SharedArrayBuffer;
+  if (!(guestBuffer instanceof SharedArrayBuffer)) {
     throw new Error(
       "Shared WebAssembly.Memory is unavailable (memory.buffer is not a SharedArrayBuffer). " +
         "Ensure COOP/COEP headers are set and the browser supports WASM threads.",
@@ -348,7 +349,7 @@ export function allocateSharedMemorySegments(options?: {
   //
   // This is embedded directly in the shared guest `WebAssembly.Memory` so the
   // CPU worker's WASM code can write/publish frames without any JS-side copies.
-  const sharedFramebuffer = guestMemory.buffer as unknown as SharedArrayBuffer;
+  const sharedFramebuffer = guestBuffer;
   const sharedFramebufferOffsetBytes = layout.guest_base + CPU_WORKER_DEMO_FRAMEBUFFER_OFFSET_BYTES;
   const sharedFramebufferLayout = computeSharedFramebufferLayout(
     CPU_WORKER_DEMO_FRAMEBUFFER_WIDTH,
@@ -358,9 +359,9 @@ export function allocateSharedMemorySegments(options?: {
     CPU_WORKER_DEMO_FRAMEBUFFER_TILE_SIZE,
   );
   const requiredBytes = sharedFramebufferOffsetBytes + sharedFramebufferLayout.totalBytes;
-  if (requiredBytes > guestMemory.buffer.byteLength) {
+  if (requiredBytes > guestBuffer.byteLength) {
     throw new Error(
-      `Guest memory too small for shared framebuffer: need >= ${requiredBytes} bytes, got ${guestMemory.buffer.byteLength} bytes`,
+      `Guest memory too small for shared framebuffer: need >= ${requiredBytes} bytes, got ${guestBuffer.byteLength} bytes`,
     );
   }
   const sharedHeader = new Int32Array(sharedFramebuffer, sharedFramebufferOffsetBytes, SHARED_FRAMEBUFFER_HEADER_U32_LEN);

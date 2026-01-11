@@ -106,6 +106,16 @@ type GpuWorkerErrorEventMessage = {
   event: { category?: string; message?: string };
 };
 
+type SerialOutputMessage = {
+  kind: "serial.output";
+  port: number;
+  data: Uint8Array;
+};
+
+type ResetRequestMessage = {
+  kind: "reset.request";
+};
+
 function nowMs(): number {
   return typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
 }

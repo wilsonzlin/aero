@@ -1469,6 +1469,13 @@ function renderRemoteDiskPanel(): HTMLElement {
           });
     handle = opened.handle;
     updateButtons();
+    try {
+      statsBaseline = await client.stats(opened.handle);
+      statsBaselineAtMs = Date.now();
+    } catch {
+      statsBaseline = null;
+      statsBaselineAtMs = null;
+    }
     return opened.handle;
   }
 
@@ -1597,8 +1604,13 @@ function renderRemoteDiskPanel(): HTMLElement {
         return;
       }
       await client.clearCache(handle);
-      statsBaseline = null;
-      statsBaselineAtMs = null;
+      try {
+        statsBaseline = await client.stats(handle);
+        statsBaselineAtMs = Date.now();
+      } catch {
+        statsBaseline = null;
+        statsBaselineAtMs = null;
+      }
       progress.value = 1;
       void refreshStats();
       output.textContent = 'Cache cleared.';
