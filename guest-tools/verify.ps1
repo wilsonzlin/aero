@@ -745,12 +745,12 @@ $cfgVirtioInputRegex = Build-HwidPrefixRegex $cfgVirtioInputHwids
 $cfgGpuRegex = Build-HwidPrefixRegex $cfgGpuHwids
 if (-not $cfgGpuRegex -or ("" + $cfgGpuRegex).Trim().Length -eq 0) {
     # Fallback when Guest Tools config is missing/out-of-date:
-    # - AeroGPU: canonical A3A0:0001 and legacy bring-up 1AED:0001
+    # - AeroGPU: canonical A3A0:0001
     # - virtio-gpu (optional): vendor 1AF4, device 1050 (virtio_device_id=16)
     #
     # Note: older AeroGPU prototype stacks used different vendor IDs; those are deprecated and
     # intentionally not matched here.
-    $cfgGpuRegex = '(?i)^(?:PCI\\(?:VEN|VID)_(?:A3A0|1AED)&(?:DEV|DID)_0001|PCI\\(?:VEN|VID)_1AF4&(?:DEV|DID)_1050)'
+    $cfgGpuRegex = '(?i)^(?:PCI\\(?:VEN|VID)_A3A0&(?:DEV|DID)_0001|PCI\\(?:VEN|VID)_1AF4&(?:DEV|DID)_1050)'
 }
 
 $outDir = "C:\AeroGuestTools"
