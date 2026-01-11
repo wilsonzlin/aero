@@ -394,6 +394,7 @@ impl AerogpuInputLayoutBlobHeader {
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
 pub struct AerogpuInputLayoutElementDxgi {
+    /// FNV-1a 32-bit hash of the semantic name after canonicalizing to ASCII uppercase.
     pub semantic_name_hash: u32,
     pub semantic_index: u32,
     pub dxgi_format: u32,

@@ -425,6 +425,9 @@ export const AEROGPU_INPUT_LAYOUT_BLOB_HEADER_OFF_VERSION = 4;
 export const AEROGPU_INPUT_LAYOUT_BLOB_HEADER_OFF_ELEMENT_COUNT = 8;
 export const AEROGPU_INPUT_LAYOUT_BLOB_HEADER_OFF_RESERVED0 = 12;
 
+// D3D10/11 semantics are case-insensitive; guest UMDs hash the semantic name after
+// canonicalizing it to ASCII uppercase (FNV-1a 32-bit), so the host can match ILAY
+// elements to the vertex shader input signature.
 export const AEROGPU_INPUT_LAYOUT_ELEMENT_DXGI_OFF_SEMANTIC_NAME_HASH = 0;
 export const AEROGPU_INPUT_LAYOUT_ELEMENT_DXGI_OFF_SEMANTIC_INDEX = 4;
 export const AEROGPU_INPUT_LAYOUT_ELEMENT_DXGI_OFF_DXGI_FORMAT = 8;
