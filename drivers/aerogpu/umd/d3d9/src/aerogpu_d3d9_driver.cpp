@@ -4076,6 +4076,7 @@ void wddm_deallocate_active_buffers(Device* dev) {
   WddmPatchLocationList* patch_list = dev->wddm_context.allocated_pPatchLocationList;
   void* dma_priv = dev->wddm_context.allocated_pDmaBufferPrivateData;
   uint32_t dma_priv_bytes = dev->wddm_context.allocated_DmaBufferPrivateDataSize;
+  const bool dma_priv_from_allocate = dev->wddm_context.dma_priv_from_allocate;
 
   if constexpr (has_pfnDeallocateCb<WddmDeviceCallbacks>::value) {
     if (dev->wddm_callbacks.pfnDeallocateCb) {
@@ -4085,23 +4086,18 @@ void wddm_deallocate_active_buffers(Device* dev) {
 
   // Prevent use-after-free on any deallocated runtime-provided buffers.
   //
-  // The runtime is allowed to rotate submit-buffer pointers in the submit
-  // callback out-params (pNewCommandBuffer/pNewAllocationList/...). Preserve any
-  // rotated pointers that do not alias the buffers we are deallocating so we can
-  // keep using them without forcing an extra Allocate/GetCommandBuffer roundtrip.
-  if (dev->wddm_context.pCommandBuffer == cmd_buffer || dev->wddm_context.pCommandBuffer == dma_buffer) {
-    dev->wddm_context.pCommandBuffer = nullptr;
-    dev->wddm_context.CommandBufferSize = 0;
-  }
-  if (dev->wddm_context.pAllocationList == alloc_list) {
-    dev->wddm_context.pAllocationList = nullptr;
-    dev->wddm_context.AllocationListSize = 0;
-  }
-  if (dev->wddm_context.pPatchLocationList == patch_list) {
-    dev->wddm_context.pPatchLocationList = nullptr;
-    dev->wddm_context.PatchLocationListSize = 0;
-  }
-  if (dev->wddm_context.pDmaBufferPrivateData == dma_priv) {
+  // In the AllocateCb/DeallocateCb acquisition model, treat any "rotated" submit
+  // buffer pointers (pNewCommandBuffer/pNewAllocationList/...) as advisory: once
+  // we return the AllocateCb buffers, the rotated pointers are not guaranteed to
+  // remain valid. Force the next `ensure_cmd_space()` to reacquire buffers via
+  // GetCommandBufferCb/AllocateCb.
+  dev->wddm_context.pCommandBuffer = nullptr;
+  dev->wddm_context.CommandBufferSize = 0;
+  dev->wddm_context.pAllocationList = nullptr;
+  dev->wddm_context.AllocationListSize = 0;
+  dev->wddm_context.pPatchLocationList = nullptr;
+  dev->wddm_context.PatchLocationListSize = 0;
+  if (dma_priv_from_allocate || (dma_priv && dev->wddm_context.pDmaBufferPrivateData == dma_priv)) {
     dev->wddm_context.pDmaBufferPrivateData = nullptr;
     dev->wddm_context.DmaBufferPrivateDataSize = 0;
   }
