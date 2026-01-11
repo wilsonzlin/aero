@@ -460,7 +460,7 @@ impl AerogpuD3d11Executor {
         &mut self,
         stream_bytes: &[u8],
         allocs: Option<&[AerogpuAllocEntry]>,
-        guest_mem: &dyn GuestMemory,
+        guest_mem: &dyn aero_gpu::GuestMemory,
     ) -> Result<ExecuteReport> {
         let iter = AerogpuCmdStreamIter::new(stream_bytes)
             .map_err(|e| anyhow!("aerogpu_cmd: invalid cmd stream: {e:?}"))?;
