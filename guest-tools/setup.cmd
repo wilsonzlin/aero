@@ -406,7 +406,7 @@ if exist "%MANIFEST_FILE%" (
       call :log "WARNING: manifest.json has unknown signing_policy: !FOUND_POLICY! (defaulting to testsigning)."
       set "SIGNING_POLICY=testsigning"
     ) else (
-      call :log "Signing policy from manifest.json: %SIGNING_POLICY%"
+      call :log "Signing policy from manifest.json: !SIGNING_POLICY!"
     )
   ) else (
     call :log "WARNING: manifest.json present but signing_policy was not detected (defaulting to testsigning)."
