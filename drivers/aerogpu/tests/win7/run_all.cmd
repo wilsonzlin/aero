@@ -45,8 +45,8 @@ if exist "%RUNNER%" (
 
 call :run_test d3d9ex_dwm_probe !TEST_ARGS!
 call :run_test d3d9ex_event_query !TEST_ARGS!
-call :run_test wait_vblank_pacing !TEST_ARGS!
 call :run_test vblank_wait_sanity !TEST_ARGS!
+call :run_test wait_vblank_pacing !TEST_ARGS!
 call :run_test vblank_wait_pacing !TEST_ARGS!
 call :run_test get_scanline_sanity !TEST_ARGS!
 call :run_test d3d9_raster_status_sanity !TEST_ARGS!
