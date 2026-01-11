@@ -24,7 +24,7 @@ Browser  ──HTTPS/WSS──▶  Caddy (edge)  ──HTTP/WS──▶  aero-ga
 - `deploy/caddy/Caddyfile` – TLS termination, COOP/COEP headers, reverse proxy rules
 - `deploy/scripts/smoke.sh` – builds + boots the compose stack and asserts key headers
 - `deploy/static/index.html` – a small **smoke test page** to validate `window.crossOriginIsolated`
-- `deploy/k8s/` – Kubernetes/Helm deployment for `aero-gateway` with Ingress TLS + COOP/COEP/CSP headers
+- `deploy/k8s/` – Kubernetes/Helm deployment for `aero-gateway` with Ingress TLS + COOP/COEP headers
 
 For CSP details and tradeoffs (including why Aero needs `'wasm-unsafe-eval'` for WASM-based JIT),
 see: `docs/security-headers.md`.
@@ -112,6 +112,9 @@ cp deploy/.env.example deploy/.env
 - `AERO_HSTS_MAX_AGE` (default: `0`)
   - `0` disables HSTS (good for local dev)
   - Recommended production value: `31536000` (1 year)
+- `AERO_FRONTEND_ROOT` (default: `./static`)
+  - Which directory Caddy serves as `/` (mounted at `/srv` in the container).
+  - Recommended: `../web/dist` (after building the real frontend)
 - `AERO_CSP_CONNECT_SRC_EXTRA` (default: empty)
   - Optional additional origins to allow in the Caddy Content Security Policy `connect-src`.
   - Use this if the frontend needs to connect to a separate origin for networking (e.g. a TCP proxy service).

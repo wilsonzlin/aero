@@ -23,6 +23,8 @@ images
 # Local environment (may contain secrets).
 .env
 .env.*
+.certs
+**/.certs
 
 # Local-only notes for agent workflow.
 scratchpad.md

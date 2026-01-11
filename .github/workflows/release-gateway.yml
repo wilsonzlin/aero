@@ -69,7 +69,8 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
-          context: backend/aero-gateway
+          context: .
+          file: backend/aero-gateway/Dockerfile
           push: true
           provenance: false
           tags: ${{ steps.meta.outputs.tags }}
