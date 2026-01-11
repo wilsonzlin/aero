@@ -68,4 +68,3 @@ func TestJWTVerifierVectors(t *testing.T) {
 		t.Fatalf("expected bad-signature token to be rejected")
 	}
 }
-
