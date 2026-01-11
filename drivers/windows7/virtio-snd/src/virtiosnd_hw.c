@@ -196,7 +196,13 @@ VOID VirtIoSndStopHardware(PVIRTIOSND_DEVICE_EXTENSION Dx)
 
     VirtIoSndIntxDisconnect(Dx);
 
-    VirtIoSndResetDeviceBestEffort(Dx);
+    /*
+     * On SURPRISE_REMOVAL the device may already be gone from the PCI bus. Avoid
+     * MMIO accesses (device_status reset handshake) in that case.
+     */
+    if (!Dx->Removed) {
+        VirtIoSndResetDeviceBestEffort(Dx);
+    }
 
     /*
      * Cancel and drain protocol operations before teardown so request DMA common
