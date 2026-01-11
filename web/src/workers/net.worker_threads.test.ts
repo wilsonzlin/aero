@@ -143,6 +143,47 @@ describe("workers/net.worker (worker_threads)", () => {
       expect(received).not.toBeNull();
       expect(Array.from(received!)).toEqual(Array.from(inbound));
 
+      // Ensure pending RX frames flush promptly once the guest consumes NET_RX.
+      // Fill NET_RX to capacity with a small number of large records, then inject another frame.
+      const fillerLen = 64 * 1024;
+      const filler = new Uint8Array(fillerLen);
+      filler.fill(0xaa);
+      let fillerCount = 0;
+      while (netRxRing.tryPush(filler)) fillerCount += 1;
+      expect(fillerCount).toBeGreaterThan(0);
+
+      const inbound2 = Uint8Array.of(4, 3, 2, 1);
+      worker.postMessage({ type: "ws.inject", data: encodeL2Frame(inbound2) });
+
+      // Give the worker a chance to observe pendingRx>0 and park on the NET_RX head.
+      await new Promise<void>((resolve) => setTimeout(resolve, 300));
+
+      const flushStart = Date.now();
+      const flushDeadline = flushStart + 2000;
+      let flushed: Uint8Array | null = null;
+      while (!flushed && Date.now() < flushDeadline) {
+        const didConsume = netRxRing.consumeNext((payload) => {
+          if (
+            payload.byteLength === inbound2.byteLength &&
+            payload[0] === inbound2[0] &&
+            payload[1] === inbound2[1] &&
+            payload[2] === inbound2[2] &&
+            payload[3] === inbound2[3]
+          ) {
+            flushed = payload.slice();
+          }
+        });
+        if (!didConsume) {
+          await new Promise<void>((resolve) => setTimeout(resolve, 5));
+        } else if (!flushed) {
+          // Give the worker a chance to observe the freed space and flush pending RX.
+          await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        }
+      }
+      expect(flushed).not.toBeNull();
+      expect(Array.from(flushed!)).toEqual(Array.from(inbound2));
+      expect(Date.now() - flushStart).toBeLessThan(500);
+
       // If the tunnel closes unexpectedly, the net worker should reconnect and
       // resume forwarding frames.
       worker.postMessage({ type: "ws.close", code: 1000, reason: "test" });

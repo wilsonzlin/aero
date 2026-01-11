@@ -300,7 +300,7 @@ async function runLoop(): Promise<void> {
       await new Promise((resolve) => setTimeout(resolve, NET_TX_BACKPRESSURE_SLEEP_MS));
       continue;
     }
-    const timeoutMs = pendingRx ? NET_PENDING_RX_POLL_MS : NET_IDLE_WAIT_MS;
+    const timeoutMs = pendingRx ? (hasWaitAsync ? L2_STATS_LOG_INTERVAL_MS : NET_PENDING_RX_POLL_MS) : NET_IDLE_WAIT_MS;
     if (hasWaitAsync) {
       if (pendingRx) {
         await Promise.race([txRing.waitForDataAsync(timeoutMs), rxRing.waitForConsumeAsync(timeoutMs)]);
