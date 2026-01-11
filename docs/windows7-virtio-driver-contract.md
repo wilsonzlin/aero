@@ -864,6 +864,10 @@ Contract major versions are encoded as:
 
 Drivers MUST refuse to bind to devices with an unknown major version (Revision ID not recognized), unless explicitly built to support it.
 
+> Implementation note (non-normative): many QEMU virtio PCI device models report `REV_00` by default.
+> For contract-v1 testing under QEMU, pass `x-pci-revision=0x01` on each `-device virtio-*-pci,...`
+> argument (the Win7 host harness in `drivers/windows7/tests/host-harness/` does this automatically).
+
 ### 4.2 Compatibility rules
 
 - Major version bump: breaking changes allowed.
