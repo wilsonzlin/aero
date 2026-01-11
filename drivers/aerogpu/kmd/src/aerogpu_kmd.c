@@ -3288,7 +3288,8 @@ static NTSTATUS APIENTRY AeroGpuDdiSubmitCommand(_In_ const HANDLE hAdapter,
 
     const ULONGLONG fence = (ULONGLONG)pSubmitCommand->SubmissionFenceId;
 
-    ULONG type = AEROGPU_SUBMIT_PAGING;
+    ULONG dmaSizeBytes = (ULONG)pSubmitCommand->DmaBufferSize;
+    ULONG type = (dmaSizeBytes != 0) ? AEROGPU_SUBMIT_RENDER : AEROGPU_SUBMIT_PAGING;
     ULONG contextId = 0;
     AEROGPU_SUBMISSION_META* meta = NULL;
     if (pSubmitCommand->pDmaBufferPrivateData &&
@@ -3311,7 +3312,7 @@ static NTSTATUS APIENTRY AeroGpuDdiSubmitCommand(_In_ const HANDLE hAdapter,
      * Build the per-submit allocation table on-demand so guest-backed resources
      * remain resolvable by alloc_id.
      */
-    if (!meta && pSubmitCommand->AllocationListSize && pSubmitCommand->pAllocationList) {
+    if (!meta && dmaSizeBytes != 0 && pSubmitCommand->AllocationListSize && pSubmitCommand->pAllocationList) {
         NTSTATUS st = AeroGpuBuildAndAttachMeta(pSubmitCommand->AllocationListSize, pSubmitCommand->pAllocationList, &meta);
         if (!NT_SUCCESS(st)) {
             return st;
@@ -3333,7 +3334,6 @@ static NTSTATUS APIENTRY AeroGpuDdiSubmitCommand(_In_ const HANDLE hAdapter,
     PHYSICAL_ADDRESS dmaPa;
     dmaPa.QuadPart = 0;
     PVOID dmaVa = NULL;
-    ULONG dmaSizeBytes = (ULONG)pSubmitCommand->DmaBufferSize;
 
     /*
      * Defensive: some user-mode/runtime paths report DMA buffer *capacity* rather
