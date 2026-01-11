@@ -968,11 +968,11 @@ mod tests {
         push_u32(&mut blob, 0); // per-vertex
         push_u32(&mut blob, 0); // step rate
 
-        // POSITION0 in slot 15.
+        // POSITION0 in slot 31.
         push_u32(&mut blob, pos_hash);
         push_u32(&mut blob, 0);
         push_u32(&mut blob, 6); // R32G32B32_FLOAT
-        push_u32(&mut blob, 15); // slot 15
+        push_u32(&mut blob, 31); // slot 31
         push_u32(&mut blob, 0); // offset 0
         push_u32(&mut blob, 0); // per-vertex
         push_u32(&mut blob, 0); // step rate
@@ -991,15 +991,15 @@ mod tests {
             },
         ];
 
-        let mut strides = vec![0u32; 16];
+        let mut strides = vec![0u32; 32];
         strides[0] = 8;
-        strides[15] = 12;
+        strides[31] = 12;
         let binding = InputLayoutBinding::new(&layout, &strides);
 
-        // Preserve-slots mapping fails because WebGPU can't address slot 15 directly.
+        // Preserve-slots mapping fails because WebGPU can't address slot 31 directly.
         assert!(matches!(
             map_layout_to_shader_locations(&binding, &signature),
-            Err(InputLayoutError::TooManyVertexBuffers { max_slot: 15, .. })
+            Err(InputLayoutError::TooManyVertexBuffers { max_slot: 31, .. })
         ));
 
         // Compact mapping succeeds and provides a D3D->WebGPU slot map.
@@ -1007,7 +1007,7 @@ mod tests {
             map_layout_to_shader_locations_compact(&binding, &signature).expect("compact mapping");
         assert_eq!(mapped.buffers.len(), 2);
         assert_eq!(mapped.d3d_slot_to_wgpu_slot.get(&0), Some(&0));
-        assert_eq!(mapped.d3d_slot_to_wgpu_slot.get(&15), Some(&1));
+        assert_eq!(mapped.d3d_slot_to_wgpu_slot.get(&31), Some(&1));
 
         assert_eq!(mapped.buffers[0].array_stride, 8);
         assert_eq!(mapped.buffers[0].attributes.len(), 1);
