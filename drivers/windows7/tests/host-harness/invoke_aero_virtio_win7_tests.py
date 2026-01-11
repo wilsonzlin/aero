@@ -202,7 +202,7 @@ def main() -> int:
         "--enable-virtio-snd",
         dest="enable_virtio_snd",
         action="store_true",
-        help="Attach a virtio-snd device (virtio-sound-pci). Required unless the guest selftest is configured with --disable-snd.",
+        help="Attach a virtio-snd device (virtio-sound-pci). Use this when the guest selftest is configured to run virtio-snd (via --test-snd/--require-snd).",
     )
     parser.add_argument(
         "--virtio-snd-audio-backend",

@@ -39,7 +39,8 @@ pwsh ./drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1 `
 
 ### Optional: attach virtio-snd (audio)
 
-If your test image includes the virtio-snd driver, you can ask the harness to attach a virtio-snd PCI device:
+If your test image includes the virtio-snd driver **and is provisioned to run the guest virtio-snd test**
+(via `aero-virtio-selftest.exe --test-snd` / `--require-snd`), you can ask the harness to attach a virtio-snd PCI device:
 
 ```powershell
 pwsh ./drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1 `
@@ -168,7 +169,8 @@ python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
 Notes:
 
 - Verification requires the **guest virtio-snd selftest** to actually run (use an image provisioned with the virtio-snd
-  driver; to require the guest test section, provision with `--require-snd` / `-RequireSnd`).
+  driver; to enable the guest test section, provision with `--test-snd` / `--require-snd` (for example via
+  `New-AeroWin7TestImage.ps1 -RequireSnd`)).
 - The harness prints a single-line marker suitable for log scraping:
   `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_WAV|PASS|...` or `...|FAIL|reason=<...>`.
 
@@ -275,9 +277,10 @@ pwsh ./drivers/windows7/tests/host-harness/New-AeroWin7TestImage.ps1 `
   -BlkRoot "D:\aero-virtio-selftest\"
 ```
 
-By default the guest selftest runs the virtio-snd section (and will FAIL if no virtio-snd render endpoint is present).
-To exercise it, make sure you:
-- include the virtio-snd driver in the drivers directory you provision into the guest, and
+By default the guest selftest **skips** the virtio-snd section unless it is enabled via `--test-snd` / `--require-snd`.
+To exercise virtio-snd, make sure you:
+- include the virtio-snd driver in the drivers directory you provision into the guest,
+- provision the scheduled task with `--test-snd` / `--require-snd` (for example via `New-AeroWin7TestImage.ps1 -RequireSnd`), and
 - attach a virtio-snd device when running the harness (`-WithVirtioSnd` / `--with-virtio-snd`).
 
 To disable the guest selftest's virtio-snd section even if a device is present (adds `--disable-snd` to the scheduled task):

@@ -55,7 +55,7 @@ param(
   [Parameter(Mandatory = $false)]
   [switch]$AutoReboot,
 
-  # Deprecated (no-op): virtio-snd is always tested by the guest selftest.
+  # If set, enable the guest selftest's virtio-snd section (adds `--test-snd` to the scheduled task).
   # Kept for backwards compatibility with older automation that passed -RequireSnd.
   [Parameter(Mandatory = $false)]
   [switch]$RequireSnd,
@@ -299,17 +299,18 @@ if (-not [string]::IsNullOrEmpty($BlkRoot)) {
   $blkArg = " --blk-root " + '\"' + $BlkRoot + '\"'
 }
 
+if ($RequireSnd -and $DisableSnd) {
+  throw "RequireSnd and DisableSnd cannot both be set."
+}
+
+$testSndArg = ""
 if ($RequireSnd) {
-  Write-Warning "-RequireSnd is deprecated; virtio-snd is always tested by aero-virtio-selftest.exe."
+  $testSndArg = " --test-snd"
 }
 
 $disableSndArg = ""
 if ($DisableSnd) {
   $disableSndArg = " --disable-snd"
-}
-
-if ($RequireSnd -and $DisableSnd) {
-  throw "RequireSnd and DisableSnd cannot both be set."
 }
 
 $enableTestSigningCmd = ""
@@ -359,7 +360,7 @@ $enableTestSigningCmd
 
 REM Configure auto-run on boot (runs as SYSTEM).
 schtasks /Create /F /TN "AeroVirtioSelftest" /SC ONSTART /RU SYSTEM ^
-  /TR "\"C:\AeroTests\aero-virtio-selftest.exe\" --http-url \"$HttpUrl\" --dns-host \"$DnsHost\"$blkArg$disableSndArg" >> "%LOG%" 2>&1
+  /TR "\"C:\AeroTests\aero-virtio-selftest.exe\" --http-url \"$HttpUrl\" --dns-host \"$DnsHost\"$blkArg$testSndArg$disableSndArg" >> "%LOG%" 2>&1
 
 echo [AERO] provision done >> "%LOG%"
 $autoRebootCmd
@@ -393,9 +394,9 @@ After reboot, the host harness can boot the VM and parse PASS/FAIL from COM1 ser
 
 Notes:
 - The virtio-blk selftest requires a usable/mounted virtio volume. If your VM boots from a non-virtio disk,
-  consider attaching a separate virtio data disk with a drive letter and using the selftest option `--blk-root`.
-- By default, virtio-snd is tested and the selftest will FAIL if the virtio-snd endpoint is missing.
-- To skip the virtio-snd test entirely (even if a device is present), generate this media with `-DisableSnd`.
+   consider attaching a separate virtio data disk with a drive letter and using the selftest option `--blk-root`.
+- By default, virtio-snd is skipped. To enable it, generate this media with `-RequireSnd` (adds `--test-snd`).
+- To skip the virtio-snd test entirely (even if enabled), generate this media with `-DisableSnd`.
 - For unsigned/test-signed drivers on Win7 x64, consider generating this media with `-EnableTestSigning -AutoReboot`.
 "@
 
