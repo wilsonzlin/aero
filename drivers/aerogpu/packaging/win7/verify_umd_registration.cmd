@@ -279,10 +279,18 @@ set "EXPECT_RE=!EXPECT:.=[.]!"
 rem Match the expected value as a full token at end-of-line (avoid false positives
 rem like "aerogpu_d3d9" matching "aerogpu_d3d9_x64", or accidental ".dll" suffixes
 rem on InstalledDisplayDrivers values).
-set "EXPECT_TRAILER="
-if /i "%TYPE%"=="REG_MULTI_SZ" set "EXPECT_TRAILER=(\\0)?"
-"%REGEXE%" query "%AEROGPU_KEY%" /v %NAME% 2>nul | findstr /i /r /c:"%EXPECT_RE%%EXPECT_TRAILER%[ ]*$" >nul
-if errorlevel 1 set "OK=0"
+if /i "%TYPE%"=="REG_MULTI_SZ" (
+  rem reg.exe typically prints REG_MULTI_SZ values with "\0" terminators. Accept
+  rem both forms to avoid false negatives across Windows versions/tools.
+  "%REGEXE%" query "%AEROGPU_KEY%" /v %NAME% 2>nul | findstr /i /r /c:"%EXPECT_RE%\\0[ ]*$" >nul
+  if errorlevel 1 (
+    "%REGEXE%" query "%AEROGPU_KEY%" /v %NAME% 2>nul | findstr /i /r /c:"%EXPECT_RE%[ ]*$" >nul
+    if errorlevel 1 set "OK=0"
+  )
+) else (
+  "%REGEXE%" query "%AEROGPU_KEY%" /v %NAME% 2>nul | findstr /i /r /c:"%EXPECT_RE%[ ]*$" >nul
+  if errorlevel 1 set "OK=0"
+)
 
 if "%OK%"=="1" (
   echo OK:   %NAME% (%TYPE%) == "%EXPECT%"
