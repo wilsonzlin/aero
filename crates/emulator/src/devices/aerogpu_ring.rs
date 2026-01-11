@@ -130,6 +130,24 @@ mod tests {
         let hdr = make_valid_header_with_abi(abi_version);
         assert!(!hdr.is_valid(hdr.size_bytes));
     }
+
+    #[test]
+    fn ring_header_validation_accepts_mmio_size_larger_than_declared_size() {
+        let abi_version = (AEROGPU_ABI_MAJOR << 16) | AEROGPU_ABI_MINOR;
+        let hdr = make_valid_header_with_abi(abi_version);
+
+        // Forward-compat: the MMIO-programmed ring mapping may be larger than the ring header's
+        // declared size (e.g. page rounding / extension space).
+        assert!(hdr.is_valid(hdr.size_bytes + 4096));
+    }
+
+    #[test]
+    fn ring_header_validation_rejects_declared_size_exceeding_mmio_size() {
+        let abi_version = (AEROGPU_ABI_MAJOR << 16) | AEROGPU_ABI_MINOR;
+        let hdr = make_valid_header_with_abi(abi_version);
+
+        assert!(!hdr.is_valid(hdr.size_bytes - 1));
+    }
 }
 
 #[derive(Clone, Debug)]
