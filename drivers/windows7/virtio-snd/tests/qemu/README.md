@@ -278,10 +278,16 @@ The selftest logs to:
    ```
 2. Run it (elevated CMD recommended):
    ```bat
+   REM Contract v1 device (DEV_1059):
    C:\AeroTests\aero-virtio-selftest.exe --test-snd
+ 
+   REM Stock QEMU transitional device (DEV_1018) + legacy INF/package:
+   C:\AeroTests\aero-virtio-selftest.exe --test-snd --allow-virtio-snd-transitional
    ```
    Notes:
    - `--test-snd` (alias: `--require-snd`) enables virtio-snd playback testing. Missing virtio-snd is treated as a FAIL in this mode.
+   - If your device enumerates as transitional (`PCI\\VEN_1AF4&DEV_1018`), pass `--allow-virtio-snd-transitional`
+     so the selftest accepts the transitional ID (intended for QEMU bring-up/regression).
    - If you run without `--test-snd` / `--require-snd`, the tool emits `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|flag_not_set`.
    - Use `--disable-snd` to force `SKIP` even when capture/playback flags are present.
 3. Review `C:\aero-virtio-selftest.log` and locate the virtio-snd marker:
