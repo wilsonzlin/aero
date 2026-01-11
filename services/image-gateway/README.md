@@ -5,6 +5,7 @@
 Related docs:
 - [Disk Image Lifecycle and Access Control](../../docs/17-disk-image-lifecycle-and-access-control.md) (hosted uploads/ownership/sharing/writeback)
 - [Disk Image Streaming (HTTP Range + Auth + COOP/COEP)](../../docs/16-disk-image-streaming-auth.md) (normative disk-bytes endpoint behavior)
+- [Chunked Disk Image Format (no Range)](../../docs/18-chunked-disk-image-format.md) (manifest + chunk objects; avoids CORS preflight)
 - [deployment/cloudfront-disk-streaming.md](../../docs/deployment/cloudfront-disk-streaming.md) (concrete CloudFront setup)
 
 The intended production path is:
@@ -230,6 +231,34 @@ CloudFront must be configured to:
 
 - allow `Range` requests (forward the `Range` header to S3)
 - return `206 Partial Content` responses for ranged reads
+
+## Chunked disk image delivery (no `Range`)
+
+In addition to `Range` streaming, `image-gateway` can serve disk images in a **chunked** format:
+
+- `manifest.json` + `chunks/00000000.bin`, `chunks/00000001.bin`, ...
+- Plain `GET` requests only (no `Range` header), which avoids CORS preflight for cross-origin deployments.
+
+See [`docs/18-chunked-disk-image-format.md`](../../docs/18-chunked-disk-image-format.md) and the publisher CLI at
+[`tools/image-chunker/`](../../tools/image-chunker/README.md).
+
+Endpoints:
+
+- `GET/HEAD /v1/images/:imageId/chunked/manifest`
+- `GET/HEAD /v1/images/:imageId/chunked/chunks/:chunkIndex` (`:chunkIndex` can be `42` or `00000042.bin`)
+
+If CloudFront is configured, these endpoints redirect to CloudFront (stable URLs for cookie mode; signed URLs for url mode).
+
+`GET /v1/images/:imageId/stream-url` may include a `chunked` section:
+
+```json
+{
+  "chunked": {
+    "delivery": "chunked",
+    "manifestUrl": "..."
+  }
+}
+```
 - disable compression / transformations (no `Content-Encoding` other than `identity`)
 - include the streaming-safe headers described in `docs/16-disk-image-streaming-auth.md`:
   - `Cache-Control: no-transform`
