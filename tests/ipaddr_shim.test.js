@@ -1,7 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import ipaddr from "ipaddr.js";
+let ipaddr;
+try {
+  ({ default: ipaddr } = await import("ipaddr.js"));
+} catch {
+  // Keep `node --test tests/*.test.js` runnable in offline environments that
+  // don't install `node_modules/`.
+  ({ default: ipaddr } = await import("../scripts/ipaddr-shim.mjs"));
+}
 
 test("ipaddr.js basic parsing works (ipv4 + ipv6)", () => {
   assert.equal(ipaddr.parse("1.2.3.4").kind(), "ipv4");
@@ -30,4 +37,3 @@ test("ipaddr.js range classification matches expected categories", () => {
   assert.equal(ipaddr.parse("fc00::1").range(), "uniqueLocal");
   assert.equal(ipaddr.parse("fe80::1").range(), "linkLocal");
 });
-
