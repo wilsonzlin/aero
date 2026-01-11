@@ -77,7 +77,7 @@ struct Vertex {
 }
 
 #[test]
-fn aerogpu_cmd_depth_test_blocks_far_fragments() {
+fn aerogpu_cmd_depth_write_disable_allows_far_overwrite() {
     pollster::block_on(async {
         let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
             Ok(exec) => exec,
@@ -278,10 +278,10 @@ fn aerogpu_cmd_depth_test_blocks_far_fragments() {
         stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
         end_cmd(&mut stream, start);
 
-        // SET_DEPTH_STENCIL_STATE (depth enabled, compare LESS)
+        // SET_DEPTH_STENCIL_STATE (depth enabled, compare LESS, *no* depth writes).
         let start = begin_cmd(&mut stream, AerogpuCmdOpcode::SetDepthStencilState as u32);
         stream.extend_from_slice(&1u32.to_le_bytes()); // depth_enable
-        stream.extend_from_slice(&1u32.to_le_bytes()); // depth_write_enable
+        stream.extend_from_slice(&0u32.to_le_bytes()); // depth_write_enable
         stream.extend_from_slice(&(AerogpuCompareFunc::Less as u32).to_le_bytes());
         stream.extend_from_slice(&0u32.to_le_bytes()); // stencil_enable
         stream.push(0); // stencil_read_mask
@@ -321,7 +321,7 @@ fn aerogpu_cmd_depth_test_blocks_far_fragments() {
             .expect("readback should succeed");
         assert_eq!(pixels.len(), 4 * 4 * 4);
         for px in pixels.chunks_exact(4) {
-            assert_eq!(px, &[0, 0, 255, 255]);
+            assert_eq!(px, &[255, 0, 0, 255]);
         }
     });
 }
