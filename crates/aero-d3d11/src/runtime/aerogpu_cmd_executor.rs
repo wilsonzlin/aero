@@ -1577,6 +1577,7 @@ impl AerogpuD3d11Executor {
                 | OPCODE_SET_SAMPLER_STATE
                 | OPCODE_SET_SAMPLERS
                 | OPCODE_SET_CONSTANT_BUFFERS
+                | OPCODE_CLEAR
                 | OPCODE_NOP
                 | OPCODE_DEBUG_MARKER => {}
                 _ => break, // leave the opcode for the outer loop
@@ -1670,6 +1671,17 @@ impl AerogpuD3d11Executor {
                 // binds don't force a restart.
                 if colors != self.state.render_targets || depth_stencil != self.state.depth_stencil
                 {
+                    break;
+                }
+            }
+
+            if opcode == OPCODE_CLEAR {
+                // CLEAR requires ending the pass unless it is a no-op (flags == 0).
+                if cmd_bytes.len() < 12 {
+                    break;
+                }
+                let flags = read_u32_le(cmd_bytes, 8)?;
+                if flags != 0 {
                     break;
                 }
             }
@@ -2247,6 +2259,7 @@ impl AerogpuD3d11Executor {
                 OPCODE_BIND_SHADERS => self.exec_bind_shaders(cmd_bytes)?,
                 OPCODE_SET_INPUT_LAYOUT => self.exec_set_input_layout(cmd_bytes)?,
                 OPCODE_SET_RENDER_TARGETS => self.exec_set_render_targets(cmd_bytes)?,
+                OPCODE_CLEAR => {}
                 OPCODE_SET_VERTEX_BUFFERS => {
                     let Ok((cmd, bindings)) = decode_cmd_set_vertex_buffers_bindings_le(cmd_bytes)
                     else {
@@ -4068,6 +4081,13 @@ impl AerogpuD3d11Executor {
             return Ok(());
         }
 
+        let flags = read_u32_le(cmd_bytes, 8)?;
+        if flags == 0 {
+            // Clearing with no flags set is a no-op; avoid forcing an otherwise-unnecessary render
+            // pass boundary.
+            return Ok(());
+        }
+
         let render_targets = self.state.render_targets.clone();
         let depth_stencil = self.state.depth_stencil;
         for &handle in &render_targets {
@@ -4077,7 +4097,6 @@ impl AerogpuD3d11Executor {
             self.ensure_texture_uploaded(encoder, handle, allocs, guest_mem)?;
         }
 
-        let flags = read_u32_le(cmd_bytes, 8)?;
         let color = [
             f32::from_bits(read_u32_le(cmd_bytes, 12)?),
             f32::from_bits(read_u32_le(cmd_bytes, 16)?),
