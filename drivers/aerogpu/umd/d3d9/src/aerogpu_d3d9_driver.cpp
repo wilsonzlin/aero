@@ -4924,6 +4924,11 @@ HRESULT AEROGPU_D3D9_CALL device_present_ex(
       return trace.ret(hr);
     }
 
+    // Submit any pending render work via the Render callback before issuing a
+    // Present submission. This ensures the KMD/emulator observes distinct
+    // render vs present submissions (DxgkDdiRender vs DxgkDdiPresent).
+    (void)submit(dev, /*is_present=*/false);
+
     auto* cmd = append_fixed_locked<aerogpu_cmd_present_ex>(dev, AEROGPU_CMD_PRESENT_EX);
     if (!cmd) {
       return trace.ret(E_OUTOFMEMORY);
@@ -5000,6 +5005,11 @@ HRESULT AEROGPU_D3D9_CALL device_present(
     if (hr != S_OK) {
       return trace.ret(hr);
     }
+
+    // Submit any pending render work via the Render callback before issuing a
+    // Present submission. This ensures the KMD/emulator observes distinct
+    // render vs present submissions (DxgkDdiRender vs DxgkDdiPresent).
+    (void)submit(dev, /*is_present=*/false);
 
     auto* cmd = append_fixed_locked<aerogpu_cmd_present_ex>(dev, AEROGPU_CMD_PRESENT_EX);
     if (!cmd) {
