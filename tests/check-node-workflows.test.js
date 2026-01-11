@@ -152,3 +152,72 @@ test("check-node-workflows: accepts Dockerfiles that use an ARG NODE_VERSION def
     fs.rmSync(temp.repoRoot, { recursive: true, force: true });
   }
 });
+
+test("check-node-workflows: rejects workspace engines.node mismatch", () => {
+  const temp = setupTempRepo();
+  try {
+    writeJson(path.join(temp.repoRoot, "package.json"), {
+      name: "temp",
+      private: true,
+      type: "module",
+      workspaces: ["web"],
+      engines: { node: `>=${pinnedNode} <${pinnedMajor + 1}` },
+    });
+    writeJson(path.join(temp.repoRoot, "web/package.json"), {
+      name: "temp-web",
+      private: true,
+      type: "module",
+      engines: { node: ">=0.0.0" },
+    });
+
+    const workflowsDir = path.join(temp.repoRoot, ".github/workflows");
+    fs.mkdirSync(workflowsDir, { recursive: true });
+    fs.writeFileSync(path.join(workflowsDir, "ok.yml"), "name: ok\non: [push]\njobs: {}\n");
+
+    const res = runCheck(temp);
+    assert.notEqual(res.status, 0);
+    assert.match(res.stderr, /engines\.node mismatch/);
+  } finally {
+    fs.rmSync(temp.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("check-node-workflows: rejects root engines.node drift from .nvmrc", () => {
+  const temp = setupTempRepo();
+  try {
+    writeJson(path.join(temp.repoRoot, "package.json"), {
+      name: "temp",
+      private: true,
+      type: "module",
+      workspaces: [],
+      engines: { node: `>=${pinnedNode} <${pinnedMajor + 2}` },
+    });
+
+    const workflowsDir = path.join(temp.repoRoot, ".github/workflows");
+    fs.mkdirSync(workflowsDir, { recursive: true });
+    fs.writeFileSync(path.join(workflowsDir, "ok.yml"), "name: ok\non: [push]\njobs: {}\n");
+
+    const res = runCheck(temp);
+    assert.notEqual(res.status, 0);
+    assert.match(res.stderr, /engines\.node is out of sync with \.nvmrc/);
+  } finally {
+    fs.rmSync(temp.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("check-node-workflows: rejects non-semver .nvmrc values", () => {
+  const temp = setupTempRepo();
+  try {
+    fs.writeFileSync(path.join(temp.repoRoot, ".nvmrc"), `${pinnedMajor}\n`);
+
+    const workflowsDir = path.join(temp.repoRoot, ".github/workflows");
+    fs.mkdirSync(workflowsDir, { recursive: true });
+    fs.writeFileSync(path.join(workflowsDir, "ok.yml"), "name: ok\non: [push]\njobs: {}\n");
+
+    const res = runCheck(temp);
+    assert.notEqual(res.status, 0);
+    assert.match(res.stderr, /invalid \.nvmrc value/);
+  } finally {
+    fs.rmSync(temp.repoRoot, { recursive: true, force: true });
+  }
+});
