@@ -1,5 +1,6 @@
 use aero_d3d11::runtime::aerogpu_resources::{AerogpuResourceManager, DirtyRange};
 use aero_protocol::aerogpu::aerogpu_cmd::{
+    AEROGPU_INPUT_LAYOUT_BLOB_MAGIC, AEROGPU_INPUT_LAYOUT_BLOB_VERSION,
     AEROGPU_RESOURCE_USAGE_TEXTURE, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
 };
 use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
@@ -252,6 +253,38 @@ fn create_texture2d_requires_row_pitch_for_backed_textures() -> Result<()> {
         assert!(err
             .to_string()
             .contains("row_pitch_bytes is required for allocation-backed textures"));
+        Ok(())
+    })
+}
+
+#[test]
+fn handles_are_namespaced_per_object_type() -> Result<()> {
+    pollster::block_on(async {
+        let (device, queue) = create_device_queue().await?;
+        let mut resources = AerogpuResourceManager::new(device, queue);
+
+        // The protocol uses separate handle namespaces for resources, shaders, and input layouts.
+        // Ensure we can reuse the same numeric handle across object types.
+        let handle = 7u32;
+
+        resources.create_buffer(handle, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER, 16, 0, 0)?;
+
+        let mut ilay = Vec::new();
+        ilay.extend_from_slice(&AEROGPU_INPUT_LAYOUT_BLOB_MAGIC.to_le_bytes());
+        ilay.extend_from_slice(&AEROGPU_INPUT_LAYOUT_BLOB_VERSION.to_le_bytes());
+        ilay.extend_from_slice(&1u32.to_le_bytes()); // element_count
+        ilay.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+                                                     // element 0
+        ilay.extend_from_slice(&0u32.to_le_bytes()); // semantic_name_hash
+        ilay.extend_from_slice(&0u32.to_le_bytes()); // semantic_index
+        ilay.extend_from_slice(&2u32.to_le_bytes()); // DXGI_FORMAT_R32G32B32A32_FLOAT
+        ilay.extend_from_slice(&0u32.to_le_bytes()); // input_slot
+        ilay.extend_from_slice(&0u32.to_le_bytes()); // aligned_byte_offset
+        ilay.extend_from_slice(&0u32.to_le_bytes()); // input_slot_class
+        ilay.extend_from_slice(&0u32.to_le_bytes()); // instance_data_step_rate
+
+        resources.create_input_layout(handle, ilay)?;
+
         Ok(())
     })
 }

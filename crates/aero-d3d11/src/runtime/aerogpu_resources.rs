@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    AerogpuHandle, AerogpuShaderStage, AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER,
-    AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL, AEROGPU_RESOURCE_USAGE_INDEX_BUFFER,
-    AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_SCANOUT,
-    AEROGPU_RESOURCE_USAGE_TEXTURE, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
+    AerogpuHandle, AerogpuShaderStage,
+    AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER, AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL,
+    AEROGPU_RESOURCE_USAGE_INDEX_BUFFER, AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+    AEROGPU_RESOURCE_USAGE_SCANOUT, AEROGPU_RESOURCE_USAGE_TEXTURE, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
 };
 use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
 use aero_protocol::aerogpu::aerogpu_ring::AerogpuAllocEntry;
@@ -136,7 +136,7 @@ impl AerogpuResourceManager {
         backing_alloc_id: u32,
         backing_offset_bytes: u32,
     ) -> Result<()> {
-        self.ensure_handle_unused(handle)?;
+        self.ensure_resource_handle_unused(handle)?;
 
         let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("aerogpu buffer"),
@@ -175,7 +175,7 @@ impl AerogpuResourceManager {
         backing_alloc_id: u32,
         backing_offset_bytes: u32,
     ) -> Result<()> {
-        self.ensure_handle_unused(handle)?;
+        self.ensure_resource_handle_unused(handle)?;
 
         if width == 0 || height == 0 {
             bail!("CreateTexture2d: width/height must be non-zero");
@@ -258,7 +258,7 @@ impl AerogpuResourceManager {
         stage: u32,
         dxbc_bytes: &[u8],
     ) -> Result<()> {
-        self.ensure_handle_unused(handle)?;
+        self.ensure_shader_handle_unused(handle)?;
 
         let stage = match stage {
             x if x == AerogpuShaderStage::Vertex as u32 => AerogpuShaderStage::Vertex,
@@ -311,7 +311,7 @@ impl AerogpuResourceManager {
     }
 
     pub fn create_input_layout(&mut self, handle: AerogpuHandle, blob: Vec<u8>) -> Result<()> {
-        self.ensure_handle_unused(handle)?;
+        self.ensure_input_layout_handle_unused(handle)?;
 
         self.input_layouts.insert(
             handle,
@@ -590,13 +590,23 @@ impl AerogpuResourceManager {
         Ok(())
     }
 
-    fn ensure_handle_unused(&self, handle: AerogpuHandle) -> Result<()> {
-        if self.buffers.contains_key(&handle)
-            || self.textures2d.contains_key(&handle)
-            || self.shaders.contains_key(&handle)
-            || self.input_layouts.contains_key(&handle)
-        {
-            bail!("handle {handle} is already in use");
+    fn ensure_resource_handle_unused(&self, handle: AerogpuHandle) -> Result<()> {
+        if self.buffers.contains_key(&handle) || self.textures2d.contains_key(&handle) {
+            bail!("resource handle {handle} is already in use");
+        }
+        Ok(())
+    }
+
+    fn ensure_shader_handle_unused(&self, handle: AerogpuHandle) -> Result<()> {
+        if self.shaders.contains_key(&handle) {
+            bail!("shader handle {handle} is already in use");
+        }
+        Ok(())
+    }
+
+    fn ensure_input_layout_handle_unused(&self, handle: AerogpuHandle) -> Result<()> {
+        if self.input_layouts.contains_key(&handle) {
+            bail!("input layout handle {handle} is already in use");
         }
         Ok(())
     }
@@ -896,6 +906,7 @@ fn fnv1a64(bytes: &[u8]) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::input_layout::{AEROGPU_INPUT_LAYOUT_BLOB_MAGIC, AEROGPU_INPUT_LAYOUT_BLOB_VERSION};
 
     #[test]
     fn maps_aerogpu_formats() {
@@ -960,8 +971,8 @@ mod tests {
     #[test]
     fn parses_input_layout_blob_v1() {
         let mut blob = Vec::new();
-        blob.extend_from_slice(&crate::input_layout::AEROGPU_INPUT_LAYOUT_BLOB_MAGIC.to_le_bytes());
-        blob.extend_from_slice(&crate::input_layout::AEROGPU_INPUT_LAYOUT_BLOB_VERSION.to_le_bytes());
+        blob.extend_from_slice(&AEROGPU_INPUT_LAYOUT_BLOB_MAGIC.to_le_bytes());
+        blob.extend_from_slice(&AEROGPU_INPUT_LAYOUT_BLOB_VERSION.to_le_bytes());
         blob.extend_from_slice(&1u32.to_le_bytes()); // element_count
         blob.extend_from_slice(&0u32.to_le_bytes()); // reserved0
                                                      // element
@@ -973,9 +984,12 @@ mod tests {
         blob.extend_from_slice(&0u32.to_le_bytes()); // input_slot_class
         blob.extend_from_slice(&0u32.to_le_bytes()); // instance_data_step_rate
 
-        let layout = InputLayoutDesc::parse(&blob).unwrap();
-        assert_eq!(layout.elements.len(), 1);
-        assert_eq!(layout.elements[0].semantic_name_hash, 123);
-        assert_eq!(layout.elements[0].dxgi_format, 28);
+        let desc = InputLayoutDesc::parse(&blob).unwrap();
+        assert_eq!(desc.header.magic, AEROGPU_INPUT_LAYOUT_BLOB_MAGIC);
+        assert_eq!(desc.header.version, AEROGPU_INPUT_LAYOUT_BLOB_VERSION);
+        assert_eq!(desc.header.element_count, 1);
+        assert_eq!(desc.elements.len(), 1);
+        assert_eq!(desc.elements[0].semantic_name_hash, 123);
+        assert_eq!(desc.elements[0].dxgi_format, 28);
     }
 }
