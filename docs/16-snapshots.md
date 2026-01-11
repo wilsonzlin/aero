@@ -112,6 +112,13 @@ All fields are written **in the order below** (little-endian):
   - `u32 MXCSR`
   - `u128 XMM[16]` (XMM0..XMM15)
 - `u8 FXSAVE_AREA[512]` (raw 512-byte image; currently `FXSAVE64`-compatible layout)
+- **CPU v2 extension (optional)**:
+  - `u32 EXT_LEN`
+  - `u8 EXT[EXT_LEN]` (currently `EXT_LEN = 4`):
+    - `u8 A20_ENABLED` (0/1)
+    - `u8 IRQ13_PENDING` (0/1)
+    - `u8 PENDING_BIOS_INT_VALID` (0/1)
+    - `u8 PENDING_BIOS_INT` (interrupt vector)
 
 ---
 

@@ -84,6 +84,14 @@ pub struct CpuState {
     pub rflags: u64,
     pub mode: CpuMode,
     pub halted: bool,
+    /// Interrupt vector recorded by a real-mode `INT n` instruction so a subsequent BIOS ROM stub
+    /// `HLT` can be surfaced as a BIOS hypercall.
+    pub pending_bios_int: u8,
+    pub pending_bios_int_valid: bool,
+    /// A20 gate (real mode address wrap) state.
+    pub a20_enabled: bool,
+    /// x87 external interrupt indicator for `CR0.NE = 0` mode (IRQ13).
+    pub irq13_pending: bool,
     pub es: SegmentState,
     pub cs: SegmentState,
     pub ss: SegmentState,
@@ -120,6 +128,10 @@ impl Default for CpuState {
             rflags: 0,
             mode: CpuMode::default(),
             halted: false,
+            pending_bios_int: 0,
+            pending_bios_int_valid: false,
+            a20_enabled: true,
+            irq13_pending: false,
             es: SegmentState::default(),
             cs: SegmentState::default(),
             ss: SegmentState::default(),
@@ -234,6 +246,15 @@ impl CpuState {
             w.write_u128_le(xmm)?;
         }
         w.write_bytes(&self.fxsave)?;
+        // Extension fields appended to CPU v2 after the initial v2 release.
+        //
+        // The length prefix keeps the encoding forward-compatible when new fields are added.
+        const CPU_V2_EXT_LEN: u32 = 4;
+        w.write_u32_le(CPU_V2_EXT_LEN)?;
+        w.write_u8(self.a20_enabled as u8)?;
+        w.write_u8(self.irq13_pending as u8)?;
+        w.write_u8(self.pending_bios_int_valid as u8)?;
+        w.write_u8(self.pending_bios_int)?;
         Ok(())
     }
 
@@ -271,6 +292,34 @@ impl CpuState {
             *xmm = r.read_u128_le()?;
         }
         r.read_exact(&mut state.fxsave)?;
+        // Optional CPU v2 extension. Older v2 snapshots may end at the FXSAVE bytes.
+        let mut ext_len_bytes = [0u8; 4];
+        match r.read_exact(&mut ext_len_bytes) {
+            Ok(()) => {
+                const MAX_CPU_V2_EXT_LEN: u32 = 1024 * 1024;
+                let ext_len = u32::from_le_bytes(ext_len_bytes);
+                if ext_len > MAX_CPU_V2_EXT_LEN {
+                    return Err(SnapshotError::Corrupt("cpu v2 extension too large"));
+                }
+                let ext = r.read_exact_vec(ext_len as usize)?;
+                if ext_len >= 1 {
+                    state.a20_enabled = ext[0] != 0;
+                }
+                if ext_len >= 2 {
+                    state.irq13_pending = ext[1] != 0;
+                }
+                if ext_len >= 3 {
+                    state.pending_bios_int_valid = ext[2] != 0;
+                }
+                if ext_len >= 4 {
+                    state.pending_bios_int = ext[3];
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                return Ok(state);
+            }
+            Err(e) => return Err(e.into()),
+        }
         Ok(state)
     }
 
@@ -706,7 +755,9 @@ impl CpuInternalState {
             return Err(SnapshotError::Corrupt("expected CPU_INTERNAL device state"));
         }
         if state.version != Self::VERSION {
-            return Err(SnapshotError::Corrupt("unsupported CPU_INTERNAL device version"));
+            return Err(SnapshotError::Corrupt(
+                "unsupported CPU_INTERNAL device version",
+            ));
         }
         Self::decode(&mut std::io::Cursor::new(&state.data))
     }

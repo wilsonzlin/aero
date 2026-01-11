@@ -7,13 +7,18 @@ use aero_cpu_core::Exception;
 use aero_snapshot::{
     apply_cpu_state_to_cpu_core, apply_mmu_state_to_cpu_core, cpu_core_from_snapshot,
     cpu_state_from_cpu_core, mmu_state_from_cpu_core, restore_snapshot, save_snapshot,
-    CpuInternalState, CpuState, MmuState, SaveOptions, SnapshotMeta, SnapshotSource, SnapshotTarget,
+    CpuInternalState, CpuState, MmuState, SaveOptions, SnapshotMeta, SnapshotSource,
+    SnapshotTarget,
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
 fn assert_core_state_eq(a: &CoreCpuState, b: &CoreCpuState) {
-    fn assert_seg_eq(name: &str, a: &aero_cpu_core::state::Segment, b: &aero_cpu_core::state::Segment) {
+    fn assert_seg_eq(
+        name: &str,
+        a: &aero_cpu_core::state::Segment,
+        b: &aero_cpu_core::state::Segment,
+    ) {
         assert_eq!(a.selector, b.selector, "{name} selector differs");
         assert_eq!(a.base, b.base, "{name} base differs");
         assert_eq!(a.limit, b.limit, "{name} limit differs");
@@ -25,6 +30,16 @@ fn assert_core_state_eq(a: &CoreCpuState, b: &CoreCpuState) {
     assert_eq!(a.rflags_snapshot(), b.rflags_snapshot(), "rflags differ");
     assert_eq!(a.mode, b.mode, "mode differs");
     assert_eq!(a.halted, b.halted, "halted differs");
+    assert_eq!(
+        a.pending_bios_int, b.pending_bios_int,
+        "pending_bios_int differs"
+    );
+    assert_eq!(
+        a.pending_bios_int_valid, b.pending_bios_int_valid,
+        "pending_bios_int_valid differs"
+    );
+    assert_eq!(a.a20_enabled, b.a20_enabled, "a20_enabled differs");
+    assert_eq!(a.irq13_pending, b.irq13_pending, "irq13_pending differs");
 
     assert_seg_eq("cs", &a.segments.cs, &b.segments.cs);
     assert_seg_eq("ds", &a.segments.ds, &b.segments.ds);
@@ -55,9 +70,18 @@ fn assert_core_state_eq(a: &CoreCpuState, b: &CoreCpuState) {
     assert_eq!(a.msr.lstar, b.msr.lstar, "msr.lstar differs");
     assert_eq!(a.msr.cstar, b.msr.cstar, "msr.cstar differs");
     assert_eq!(a.msr.fmask, b.msr.fmask, "msr.fmask differs");
-    assert_eq!(a.msr.sysenter_cs, b.msr.sysenter_cs, "msr.sysenter_cs differs");
-    assert_eq!(a.msr.sysenter_eip, b.msr.sysenter_eip, "msr.sysenter_eip differs");
-    assert_eq!(a.msr.sysenter_esp, b.msr.sysenter_esp, "msr.sysenter_esp differs");
+    assert_eq!(
+        a.msr.sysenter_cs, b.msr.sysenter_cs,
+        "msr.sysenter_cs differs"
+    );
+    assert_eq!(
+        a.msr.sysenter_eip, b.msr.sysenter_eip,
+        "msr.sysenter_eip differs"
+    );
+    assert_eq!(
+        a.msr.sysenter_esp, b.msr.sysenter_esp,
+        "msr.sysenter_esp differs"
+    );
     assert_eq!(a.msr.fs_base, b.msr.fs_base, "msr.fs_base differs");
     assert_eq!(a.msr.gs_base, b.msr.gs_base, "msr.gs_base differs");
     assert_eq!(
@@ -84,6 +108,10 @@ fn random_core_state(rng: &mut impl Rng) -> CoreCpuState {
         _ => CoreCpuMode::Vm86,
     };
     core.halted = rng.gen();
+    core.pending_bios_int = rng.gen();
+    core.pending_bios_int_valid = rng.gen();
+    core.a20_enabled = rng.gen();
+    core.irq13_pending = rng.gen();
 
     fn fill_seg(rng: &mut impl Rng, s: &mut aero_cpu_core::state::Segment) {
         s.selector = rng.gen();
@@ -405,9 +433,11 @@ fn cpu_core_execute_snapshot_restore_continue() {
         0x64, 0x8B, 0x05, 0x00, 0x00, 0x00, 0x00, // mov eax, fs:[0]
         0x83, 0xF8, 0x04, // cmp eax, 4
         0x75, 0x0D, // jne else (+0x0D)
-        0x64, 0xC7, 0x05, 0x08, 0x00, 0x00, 0x00, 0x11, 0x11, 0x11, 0x11, // mov fs:[8], 0x11111111
+        0x64, 0xC7, 0x05, 0x08, 0x00, 0x00, 0x00, 0x11, 0x11, 0x11,
+        0x11, // mov fs:[8], 0x11111111
         0xEB, 0x0B, // jmp end (+0x0B)
-        0x64, 0xC7, 0x05, 0x08, 0x00, 0x00, 0x00, 0x22, 0x22, 0x22, 0x22, // mov fs:[8], 0x22222222
+        0x64, 0xC7, 0x05, 0x08, 0x00, 0x00, 0x00, 0x22, 0x22, 0x22,
+        0x22, // mov fs:[8], 0x22222222
         0xF4, // hlt
     ];
 
@@ -464,14 +494,21 @@ fn cpu_core_execute_snapshot_restore_continue() {
 
     assert_eq!(resumed.mem, expected_mem);
     assert_eq!(resumed.cpu_internal.interrupt_inhibit, 1);
-    assert_eq!(resumed.cpu_internal.pending_external_interrupts, vec![0x20, 0x21]);
+    assert_eq!(
+        resumed.cpu_internal.pending_external_interrupts,
+        vec![0x20, 0x21]
+    );
     assert_eq!(
         resumed.cpu.gpr[core_gpr::RAX] as u32,
         4,
         "eax should contain loaded value"
     );
     assert_eq!(
-        u32::from_le_bytes(resumed.mem[(FS_BASE as usize + 8)..(FS_BASE as usize + 12)].try_into().unwrap()),
+        u32::from_le_bytes(
+            resumed.mem[(FS_BASE as usize + 8)..(FS_BASE as usize + 12)]
+                .try_into()
+                .unwrap()
+        ),
         0x1111_1111,
         "branch should follow ZF=1 path after restore"
     );

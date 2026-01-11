@@ -48,6 +48,10 @@ pub fn cpu_state_from_cpu_core(core: &CoreCpuState) -> CpuState {
         CoreCpuMode::Vm86 => CpuMode::Vm86,
     };
     cpu.halted = core.halted;
+    cpu.pending_bios_int = core.pending_bios_int;
+    cpu.pending_bios_int_valid = core.pending_bios_int_valid;
+    cpu.a20_enabled = core.a20_enabled;
+    cpu.irq13_pending = core.irq13_pending;
 
     cpu.es = segment_from_core(&core.segments.es);
     cpu.cs = segment_from_core(&core.segments.cs);
@@ -141,6 +145,10 @@ pub fn apply_cpu_state_to_cpu_core(cpu: &CpuState, core: &mut CoreCpuState) {
         CpuMode::Vm86 => CoreCpuMode::Vm86,
     };
     core.halted = cpu.halted;
+    core.pending_bios_int = cpu.pending_bios_int;
+    core.pending_bios_int_valid = cpu.pending_bios_int_valid;
+    core.a20_enabled = cpu.a20_enabled;
+    core.irq13_pending = cpu.irq13_pending;
 
     apply_segment_to_core(&cpu.es, &mut core.segments.es);
     apply_segment_to_core(&cpu.cs, &mut core.segments.cs);
@@ -249,4 +257,3 @@ fn fxsave64_bytes(
 
     out
 }
-
