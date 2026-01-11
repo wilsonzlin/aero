@@ -69,3 +69,28 @@ fn wait_with_pending_unmasked_exception_ne0_sets_irq13_pending() {
     assert!(state.irq13_pending);
 }
 
+#[test]
+fn finit_waits_and_raises_mf() {
+    // finit (wait + fninit)
+    let code = [0x9B, 0xDB, 0xE3];
+    let mut state = CpuState::new(CpuMode::Bit32);
+    state.control.cr0 |= CR0_NE;
+    state.fpu.fcw = 0x037E; // unmask invalid operation
+    state.fpu.fsw = 0x0001; // pending invalid operation
+    assert_eq!(exec_single(&code, &mut state), Err(Exception::X87Fpu));
+    // Should fault before executing FNINIT, so the pending exception is still present.
+    assert_eq!(state.fpu.fsw & 0x3F, 0x0001);
+}
+
+#[test]
+fn fstsw_wait_form_raises_mf_before_writing_ax() {
+    // fstsw ax (wait + fnstsw ax)
+    let code = [0x9B, 0xDF, 0xE0];
+    let mut state = CpuState::new(CpuMode::Bit32);
+    state.control.cr0 |= CR0_NE;
+    state.fpu.fcw = 0x037E; // unmask invalid operation
+    state.fpu.fsw = 0x0001; // pending invalid operation
+    state.write_reg(Register::AX, 0xBEEF);
+    assert_eq!(exec_single(&code, &mut state), Err(Exception::X87Fpu));
+    assert_eq!(state.read_reg(Register::AX), 0xBEEF);
+}

@@ -65,11 +65,22 @@ pub fn exec<B: CpuBus>(
     next_ip: u64,
 ) -> Result<ExecOutcome, Exception> {
     let instr = &decoded.instr;
-    if instr.mnemonic() == Mnemonic::Wait {
+    let mnem = instr.mnemonic();
+
+    if mnem == Mnemonic::Wait {
         return exec_wait(state);
     }
 
     check_x87_available(state)?;
+
+    // `FINIT`/`FCLEX`/`FST*` are the "wait" forms (encoded as `WAIT` + `FN...`).
+    // They must perform `WAIT` semantics before touching the x87 state.
+    if matches!(
+        mnem,
+        Mnemonic::Finit | Mnemonic::Fclex | Mnemonic::Fstcw | Mnemonic::Fstsw
+    ) {
+        do_wait(state)?;
+    }
 
     // The architectural x87 state is stored in `state.fpu` (FXSAVE-compatible
     // image). For convenience, the x87 interpreter operates on a transient
@@ -78,7 +89,7 @@ pub fn exec<B: CpuBus>(
     x87.load_from_fpu_state(&state.fpu);
 
     let res = (|| {
-        match instr.mnemonic() {
+        match mnem {
             Mnemonic::Finit | Mnemonic::Fninit => {
                 x87.fninit();
                 Ok(ExecOutcome::Continue)
@@ -205,6 +216,11 @@ fn check_x87_available(state: &CpuState) -> Result<(), Exception> {
 }
 
 fn exec_wait(state: &mut CpuState) -> Result<ExecOutcome, Exception> {
+    do_wait(state)?;
+    Ok(ExecOutcome::Continue)
+}
+
+fn do_wait(state: &mut CpuState) -> Result<(), Exception> {
     let cr0 = state.control.cr0;
     if (cr0 & CR0_EM) != 0 {
         return Err(Exception::InvalidOpcode);
@@ -219,8 +235,7 @@ fn exec_wait(state: &mut CpuState) -> Result<ExecOutcome, Exception> {
         }
         state.irq13_pending = true;
     }
-
-    Ok(ExecOutcome::Continue)
+    Ok(())
 }
 
 fn map_x87_fault(_: X87Fault) -> Exception {
