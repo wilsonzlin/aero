@@ -9,6 +9,7 @@ Notable differences from the supported stack:
 
 - Bound to the legacy AeroGPU PCI ID family `PCI\VEN_1AE0&DEV_0001`
 - Used a different guest↔host protocol/ABI than the current AeroGPU device model
+- Checked-in build configuration is **x64-only** (no x86 build)
 - Was **not WOW64-complete** on Win7 x64 (no x86 UMD), so **32-bit D3D9 apps would fail**
 
 ## Canonical AeroGPU driver stack (supported)

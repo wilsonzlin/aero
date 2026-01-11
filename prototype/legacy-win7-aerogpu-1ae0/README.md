@@ -7,6 +7,8 @@ repository.
 On Windows 7 x64, the archived 1AE0 Windows driver package is also **not WOW64-complete**
 (it does not ship/install an x86 UMD), so 32-bit D3D9 apps will fail.
 
+The checked-in driver projects in this archive are also **x64-only** (no x86 builds).
+
 Supported AeroGPU ABIs in this repo:
 
 - **Legacy bring-up ABI (1AED; deprecated)**: `drivers/aerogpu/protocol/legacy/aerogpu_protocol_legacy.h` and the emulator

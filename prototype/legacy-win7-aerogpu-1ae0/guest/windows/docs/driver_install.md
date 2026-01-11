@@ -5,6 +5,7 @@
 >
 > - Targets the deprecated AeroGPU `VEN_1AE0` prototype device and does not match the supported AeroGPU ABIs (`VEN_A3A0` / `VEN_1AED`).
 > - Not referenced by the canonical Windows driver/device binding contract (`docs/windows-device-contract.{md,json}`).
+> - The checked-in build configuration is **x64-only** (no x86 build).
 > - On Win7 x64 it is **not WOW64-complete** (no x86 UMD). **32-bit D3D9 apps will fail.**
 > - Use the supported Win7 driver package under [`drivers/aerogpu/packaging/win7/`](../../../../../drivers/aerogpu/packaging/win7/README.md)
 >   and stage via [`drivers/aerogpu/build/stage_packaging_win7.cmd`](../../../../../drivers/aerogpu/build/stage_packaging_win7.cmd).
@@ -25,7 +26,7 @@ It does **not** match the supported AeroGPU ABIs in this repository:
 
 ## Prerequisites
 
-- Windows 7 SP1 (x86 or x64) VM/image.
+- Windows 7 SP1 **x64** VM/image (this archived stack only builds x64 binaries).
 - A host/emulator build that exposes the deprecated AeroGPU 1AE0 PCI device and implements the
   MMIO + command ring ABI described in
   `prototype/legacy-win7-aerogpu-1ae0/guest/windows/common/aerogpu_protocol.h`.
