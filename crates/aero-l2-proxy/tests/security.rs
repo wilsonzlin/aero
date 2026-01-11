@@ -306,8 +306,7 @@ async fn allowed_origins_extra_appends_without_replacing_base() {
     let _open = EnvVarGuard::unset("AERO_L2_OPEN");
     let _allowed = EnvVarGuard::unset("AERO_L2_ALLOWED_ORIGINS");
     let _fallback_allowed = EnvVarGuard::set("ALLOWED_ORIGINS", "https://base.test");
-    let _allowed_extra =
-        EnvVarGuard::set("AERO_L2_ALLOWED_ORIGINS_EXTRA", ",https://extra.test");
+    let _allowed_extra = EnvVarGuard::set("AERO_L2_ALLOWED_ORIGINS_EXTRA", ",https://extra.test");
     let _allowed_hosts = EnvVarGuard::unset("AERO_L2_ALLOWED_HOSTS");
     let _trust_proxy_host = EnvVarGuard::unset("AERO_L2_TRUST_PROXY_HOST");
     let _token = EnvVarGuard::unset("AERO_L2_TOKEN");
