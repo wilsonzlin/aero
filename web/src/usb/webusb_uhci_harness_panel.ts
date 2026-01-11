@@ -62,6 +62,26 @@ function normalizeU32(value: unknown): number {
   return asNum;
 }
 
+function isUsbEndpointAddress(value: number): boolean {
+  // `value` should be a USB endpoint address, not just an endpoint number:
+  // - bit7 = direction (IN=1, OUT=0)
+  // - bits4..6 must be 0 (endpoint numbers are 0..=15)
+  // - endpoint 0 is the control pipe and should not be used for bulk/interrupt actions
+  return (value & 0x70) === 0 && (value & 0x0f) !== 0;
+}
+
+function assertUsbInEndpointAddress(value: number): void {
+  if (!isUsbEndpointAddress(value) || (value & 0x80) === 0) {
+    throw new Error(`Expected IN endpoint address (e.g. 0x81), got 0x${value.toString(16)}`);
+  }
+}
+
+function assertUsbOutEndpointAddress(value: number): void {
+  if (!isUsbEndpointAddress(value) || (value & 0x80) !== 0) {
+    throw new Error(`Expected OUT endpoint address (e.g. 0x02), got 0x${value.toString(16)}`);
+  }
+}
+
 function normalizeUsbHostAction(raw: unknown): UsbHostAction {
   if (!raw || typeof raw !== "object") {
     throw new Error(`Expected USB action to be object, got ${raw === null ? "null" : typeof raw}`);
@@ -82,10 +102,16 @@ function normalizeUsbHostAction(raw: unknown): UsbHostAction {
       if (!isUsbSetupPacket(setup)) throw new Error("controlOut missing/invalid setup packet");
       return { kind: "controlOut", id, setup, data: normalizeBytes(obj.data) };
     }
-    case "bulkIn":
-      return { kind: "bulkIn", id, endpoint: normalizeU8(obj.endpoint), length: normalizeU32(obj.length) };
-    case "bulkOut":
-      return { kind: "bulkOut", id, endpoint: normalizeU8(obj.endpoint), data: normalizeBytes(obj.data) };
+    case "bulkIn": {
+      const endpoint = normalizeU8(obj.endpoint);
+      assertUsbInEndpointAddress(endpoint);
+      return { kind: "bulkIn", id, endpoint, length: normalizeU32(obj.length) };
+    }
+    case "bulkOut": {
+      const endpoint = normalizeU8(obj.endpoint);
+      assertUsbOutEndpointAddress(endpoint);
+      return { kind: "bulkOut", id, endpoint, data: normalizeBytes(obj.data) };
+    }
     default:
       throw new Error(`Unknown USB action kind: ${String(kind)}`);
   }
