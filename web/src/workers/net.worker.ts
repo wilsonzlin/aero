@@ -46,7 +46,10 @@ let l2TunnelTelemetry: L2TunnelTelemetry | null = null;
 let currentConfig: AeroConfig | null = null;
 let currentConfigVersion = 0;
 
-const NET_IDLE_WAIT_MS = 1000;
+// Even when idle, wake periodically so pending tunnel→guest frames buffered due
+// to NET_RX backpressure get a chance to flush without waiting for NET_TX
+// activity.
+const NET_IDLE_WAIT_MS = 250;
 const NET_PENDING_RX_POLL_MS = 20;
 // Mirror the IO worker tick rate so we don't spin/drain NET_TX aggressively when
 // the tunnel is backpressured (L2TunnelForwarder intentionally stops draining on
