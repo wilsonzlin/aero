@@ -87,8 +87,13 @@ services:
 
       # Session signing secret (cookie auth). Strongly recommended for production.
       #
+      # REQUIRED for the default `/l2` cookie auth mode in this deploy stack
+      # (`AERO_L2_AUTH_MODE=cookie` on `aero-l2-proxy`), so the gateway and L2 proxy can
+      # validate the same `aero_session` cookies.
+      #
       # If unset, the gateway generates a temporary secret at startup and
-      # sessions will not survive restarts.
+      # sessions will not survive restarts (and `aero-l2-proxy` will refuse to
+      # start in cookie auth mode).
       SESSION_SECRET: ${SESSION_SECRET:-}
       # Alias supported by the gateway (deploy stack uses SESSION_SECRET as the canonical knob).
       AERO_GATEWAY_SESSION_SECRET: ${SESSION_SECRET:-}
@@ -142,7 +147,7 @@ services:
 
       # L2 tunnel auth (Option C).
       #
-      # Default: no authentication (`none`), only Origin allowlisting.
+      # Default: cookie session auth (`cookie`), matching the gateway’s privileged endpoints (/tcp).
       #
       # Cookie session auth (recommended for single-origin deployments) validates the
       # `aero_session` cookie minted by `backend/aero-gateway` at `POST /session`.
@@ -152,7 +157,7 @@ services:
       # SESSION_SECRET / AERO_GATEWAY_SESSION_SECRET.
       #
       # Supported auth modes: none, cookie, api_key, jwt, cookie_or_jwt
-      AERO_L2_AUTH_MODE: ${AERO_L2_AUTH_MODE:-}
+      AERO_L2_AUTH_MODE: ${AERO_L2_AUTH_MODE:-cookie}
       AERO_L2_SESSION_SECRET: ${AERO_L2_SESSION_SECRET:-}
       SESSION_SECRET: ${SESSION_SECRET:-}
 
