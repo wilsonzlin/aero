@@ -508,6 +508,68 @@ static int DoQueryVersion(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
             (unsigned long long)qf.last_completed_fence);
   };
 
+  const auto DumpUmdPrivateSummary = [&]() {
+    if (!f->QueryAdapterInfo) {
+      wprintf(L"UMDRIVERPRIVATE: (not available)\n");
+      return;
+    }
+
+    aerogpu_umd_private_v1 blob;
+    ZeroMemory(&blob, sizeof(blob));
+
+    UINT foundType = 0xFFFFFFFFu;
+    NTSTATUS lastStatus = 0;
+    for (UINT type = 0; type < 256; ++type) {
+      ZeroMemory(&blob, sizeof(blob));
+      NTSTATUS stUmd = QueryAdapterInfoWithTimeout(f, hAdapter, type, &blob, sizeof(blob));
+      lastStatus = stUmd;
+      if (!NT_SUCCESS(stUmd)) {
+        if (stUmd == STATUS_TIMEOUT) {
+          break;
+        }
+        continue;
+      }
+
+      if (blob.size_bytes < sizeof(blob) || blob.struct_version != AEROGPU_UMDPRIV_STRUCT_VERSION_V1) {
+        continue;
+      }
+
+      const uint32_t magic = blob.device_mmio_magic;
+      if (magic != 0 && magic != AEROGPU_UMDPRIV_MMIO_MAGIC_LEGACY_ARGP && magic != AEROGPU_UMDPRIV_MMIO_MAGIC_NEW_AGPU) {
+        continue;
+      }
+
+      foundType = type;
+      break;
+    }
+
+    if (foundType == 0xFFFFFFFFu) {
+      if (lastStatus == STATUS_TIMEOUT) {
+        wprintf(L"UMDRIVERPRIVATE: (timed out)\n");
+      } else {
+        wprintf(L"UMDRIVERPRIVATE: (not found)\n");
+      }
+      return;
+    }
+
+    wchar_t magicStr[5] = {0, 0, 0, 0, 0};
+    {
+      const uint32_t m = blob.device_mmio_magic;
+      magicStr[0] = (wchar_t)((m >> 0) & 0xFF);
+      magicStr[1] = (wchar_t)((m >> 8) & 0xFF);
+      magicStr[2] = (wchar_t)((m >> 16) & 0xFF);
+      magicStr[3] = (wchar_t)((m >> 24) & 0xFF);
+    }
+
+    wprintf(L"UMDRIVERPRIVATE: type=%lu magic=0x%08lx (%s) abi=0x%08lx features=0x%I64x flags=0x%08lx\n",
+            (unsigned long)foundType,
+            (unsigned long)blob.device_mmio_magic,
+            magicStr,
+            (unsigned long)blob.device_abi_version_u32,
+            (unsigned long long)blob.device_features,
+            (unsigned long)blob.flags);
+  };
+
   const auto DumpRingSummary = [&]() {
     aerogpu_escape_dump_ring_v2_inout q2;
     ZeroMemory(&q2, sizeof(q2));
@@ -724,6 +786,7 @@ static int DoQueryVersion(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
             (unsigned long)minor);
 
     DumpFenceSnapshot();
+    DumpUmdPrivateSummary();
     DumpRingSummary();
     DumpScanoutSnapshot();
     DumpVblankSnapshot();
@@ -784,6 +847,7 @@ static int DoQueryVersion(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
   }
 
   DumpFenceSnapshot();
+  DumpUmdPrivateSummary();
   DumpRingSummary();
   DumpScanoutSnapshot();
   DumpVblankSnapshot();
