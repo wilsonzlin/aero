@@ -1,5 +1,5 @@
 use aero_virtio::devices::blk::{
-    BlockBackend, VirtioBlk, VIRTIO_BLK_T_FLUSH, VIRTIO_BLK_T_GET_ID, VIRTIO_BLK_T_IN,
+    BlockBackend, VirtioBlk, VIRTIO_BLK_S_UNSUPP, VIRTIO_BLK_T_FLUSH, VIRTIO_BLK_T_IN,
     VIRTIO_BLK_T_OUT,
 };
 use aero_virtio::memory::{write_u16_le, write_u32_le, write_u64_le, GuestMemory, GuestRam};
@@ -259,7 +259,7 @@ fn virtio_blk_config_exposes_capacity_and_block_size() {
     let seg_max = bar_read_u32(&mut dev, caps.device + 12);
     let blk_size = bar_read_u32(&mut dev, caps.device + 20);
 
-    assert_eq!(size_max, 0xffff_ffff);
+    assert_eq!(size_max, 0);
     assert_eq!(seg_max, 126);
     assert_eq!(blk_size, 512);
 }
@@ -340,11 +340,11 @@ fn virtio_blk_processes_multi_segment_write_then_read() {
     kick_queue0(&mut dev, &caps, &mut mem);
     assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
 
-    // GET_ID request (writes 20 bytes).
+    // Unsupported request type should return UNSUPP.
     let id_buf = 0xB000;
     mem.write(id_buf, &[0u8; 20]).unwrap();
     mem.write(status, &[0xff]).unwrap();
-    write_u32_le(&mut mem, header, VIRTIO_BLK_T_GET_ID).unwrap();
+    write_u32_le(&mut mem, header, 8).unwrap();
     write_u64_le(&mut mem, header + 8, 0).unwrap();
     write_desc(&mut mem, DESC_TABLE, 0, header, 16, 0x0001, 1);
     write_desc(&mut mem, DESC_TABLE, 1, id_buf, 20, 0x0001 | 0x0002, 2);
@@ -352,8 +352,7 @@ fn virtio_blk_processes_multi_segment_write_then_read() {
     write_u16_le(&mut mem, AVAIL_RING + 4 + 6, 0).unwrap();
     write_u16_le(&mut mem, AVAIL_RING + 2, 4).unwrap();
     kick_queue0(&mut dev, &caps, &mut mem);
-    assert_eq!(mem.get_slice(status, 1).unwrap()[0], 0);
-    assert_eq!(mem.get_slice(id_buf, 20).unwrap(), b"aero-virtio-testdisk");
+    assert_eq!(mem.get_slice(status, 1).unwrap()[0], VIRTIO_BLK_S_UNSUPP);
 }
 
 #[test]

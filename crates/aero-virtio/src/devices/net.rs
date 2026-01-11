@@ -13,11 +13,9 @@ pub const VIRTIO_NET_F_HOST_TSO4: u64 = 1 << 11;
 pub const VIRTIO_NET_F_HOST_TSO6: u64 = 1 << 12;
 pub const VIRTIO_NET_F_HOST_ECN: u64 = 1 << 13;
 pub const VIRTIO_NET_F_MRG_RXBUF: u64 = 1 << 15;
+pub const VIRTIO_NET_F_STATUS: u64 = 1 << 16;
 
-#[derive(Debug, Clone, Copy, Default)]
-pub struct VirtioNetOffloadConfig {
-    pub disable_offloads: bool,
-}
+pub const VIRTIO_NET_S_LINK_UP: u16 = 1;
 
 pub trait NetBackend {
     fn transmit(&mut self, packet: &[u8]);
@@ -47,25 +45,15 @@ impl NetBackend for LoopbackNet {
 pub struct VirtioNet<B: NetBackend> {
     backend: B,
     mac: [u8; 6],
-    offload_config: VirtioNetOffloadConfig,
     negotiated_features: u64,
     rx_buffers: VecDeque<DescriptorChain>,
 }
 
 impl<B: NetBackend> VirtioNet<B> {
     pub fn new(backend: B, mac: [u8; 6]) -> Self {
-        Self::new_with_offload_config(backend, mac, VirtioNetOffloadConfig::default())
-    }
-
-    pub fn new_with_offload_config(
-        backend: B,
-        mac: [u8; 6],
-        offload_config: VirtioNetOffloadConfig,
-    ) -> Self {
         Self {
             backend,
             mac,
-            offload_config,
             negotiated_features: 0,
             rx_buffers: VecDeque::new(),
         }
@@ -82,19 +70,10 @@ impl<B: NetBackend + 'static> VirtioDevice for VirtioNet<B> {
     }
 
     fn device_features(&self) -> u64 {
-        let mut features = VIRTIO_F_VERSION_1
-            | VIRTIO_F_RING_INDIRECT_DESC
-            | VIRTIO_NET_F_MAC
-            | VIRTIO_NET_F_MRG_RXBUF;
-
-        if !self.offload_config.disable_offloads {
-            features |= VIRTIO_NET_F_CSUM
-                | VIRTIO_NET_F_HOST_TSO4
-                | VIRTIO_NET_F_HOST_TSO6
-                | VIRTIO_NET_F_HOST_ECN;
-        }
-
-        features
+        // Contract v1 (AERO-W7-VIRTIO) for virtio-net is intentionally strict:
+        // - No mergeable RX buffers (fixed 10-byte virtio_net_hdr).
+        // - No checksum/GSO offloads.
+        VIRTIO_F_VERSION_1 | VIRTIO_F_RING_INDIRECT_DESC | VIRTIO_NET_F_MAC | VIRTIO_NET_F_STATUS
     }
 
     fn set_features(&mut self, features: u64) {
@@ -136,11 +115,20 @@ impl<B: NetBackend + 'static> VirtioDevice for VirtioNet<B> {
     }
 
     fn read_config(&self, offset: u64, data: &mut [u8]) {
-        data.fill(0);
+        let mut cfg = [0u8; 10];
+        cfg[0..6].copy_from_slice(&self.mac);
+        cfg[6..8].copy_from_slice(&VIRTIO_NET_S_LINK_UP.to_le_bytes());
+        cfg[8..10].copy_from_slice(&1u16.to_le_bytes()); // max_virtqueue_pairs
+
         let start = offset as usize;
-        if start < self.mac.len() {
-            let end = (start + data.len()).min(self.mac.len());
-            data[..end - start].copy_from_slice(&self.mac[start..end]);
+        if start >= cfg.len() {
+            data.fill(0);
+            return;
+        }
+        let end = usize::min(cfg.len(), start + data.len());
+        data[..end - start].copy_from_slice(&cfg[start..end]);
+        if end - start < data.len() {
+            data[end - start..].fill(0);
         }
     }
 
@@ -215,9 +203,6 @@ impl<B: NetBackend> VirtioNet<B> {
                     hdr.needs_csum() || hdr.gso_type_base() != net_offload::VIRTIO_NET_HDR_GSO_NONE;
 
                 let mut allow_offload = true;
-                if wants_offload && self.offload_config.disable_offloads {
-                    allow_offload = false;
-                }
                 if hdr.needs_csum() && (self.negotiated_features & VIRTIO_NET_F_CSUM) == 0 {
                     allow_offload = false;
                 }
@@ -241,13 +226,18 @@ impl<B: NetBackend> VirtioNet<B> {
                     allow_offload = false;
                 }
 
+                // Contract v1 ignores virtio_net_hdr contents because no offload or mergeable
+                // features are negotiated. For robustness, if a guest sets offload flags anyway,
+                // we still transmit the packet unchanged (rather than silently dropping it).
                 if wants_offload && allow_offload {
                     if let Ok(tx_packets) = net_offload::process_tx_packet(hdr, &packet) {
                         for pkt in tx_packets {
-                            self.backend.transmit(&pkt);
+                            if pkt.len() >= 14 && pkt.len() <= 1514 {
+                                self.backend.transmit(&pkt);
+                            }
                         }
                     }
-                } else if !wants_offload {
+                } else if packet.len() >= 14 && packet.len() <= 1514 {
                     self.backend.transmit(&packet);
                 }
             }
@@ -275,32 +265,50 @@ impl<B: NetBackend> VirtioNet<B> {
     ) -> Result<bool, VirtioDeviceError> {
         let mut need_irq = false;
         let hdr_len = self.negotiated_hdr_len();
-        let header_bytes = VirtioNetHdr {
-            flags: 0,
-            gso_type: 0,
-            hdr_len: 0,
-            gso_size: 0,
-            csum_start: 0,
-            csum_offset: 0,
-            num_buffers: if hdr_len == VirtioNetHdr::LEN { 1 } else { 0 },
-        }
-        .to_bytes_le();
+        let header_bytes = VirtioNetHdr::default().to_bytes_le();
 
-        while let Some(chain) = self.rx_buffers.pop_front() {
+        // Drain any invalid RX buffers so they don't permanently block the queue.
+        while let Some(chain) = self.rx_buffers.front() {
             let descs = chain.descriptors();
-            if descs.is_empty() || descs.iter().any(|d| !d.is_write_only()) {
-                need_irq |= queue
-                    .add_used(mem, chain.head_index(), 0)
-                    .map_err(|_| VirtioDeviceError::IoError)?;
+            if !descs.is_empty()
+                && descs.iter().all(|d| d.is_write_only())
+                && descs[0].len as usize >= hdr_len
+            {
+                break;
+            }
+            let chain = self.rx_buffers.pop_front().unwrap();
+            need_irq |= queue
+                .add_used(mem, chain.head_index(), 0)
+                .map_err(|_| VirtioDeviceError::IoError)?;
+        }
+
+        while let Some(pkt) = self.backend.poll_receive() {
+            // Contract v1: drop undersized/oversized Ethernet frames.
+            if pkt.len() < 14 || pkt.len() > 1514 {
                 continue;
             }
 
-            let Some(pkt) = self.backend.poll_receive() else {
-                self.rx_buffers.push_front(chain);
-                break;
+            // Find a posted RX buffer with enough writable capacity for header + payload.
+            let needed = hdr_len + pkt.len();
+            let Some(index) = self.rx_buffers.iter().position(|chain| {
+                let descs = chain.descriptors();
+                if descs.is_empty() || !descs.iter().all(|d| d.is_write_only()) {
+                    return false;
+                }
+                if (descs[0].len as usize) < hdr_len {
+                    return false;
+                }
+                let capacity: usize = descs.iter().map(|d| d.len as usize).sum();
+                capacity >= needed
+            }) else {
+                // No buffer available: drop the frame.
+                continue;
             };
 
-            let mut written = 0usize;
+            let Some(chain) = self.rx_buffers.remove(index) else {
+                continue;
+            };
+            let descs = chain.descriptors();
             let mut header_off = 0usize;
             let mut remaining_pkt = pkt.as_slice();
 
@@ -314,21 +322,28 @@ impl<B: NetBackend> VirtioNet<B> {
                     dst[..take].copy_from_slice(&header_bytes[header_off..header_off + take]);
                     header_off += take;
                     off += take;
-                    written += take;
                 }
                 if off < dst.len() && !remaining_pkt.is_empty() {
                     let take = remaining_pkt.len().min(dst.len() - off);
                     dst[off..off + take].copy_from_slice(&remaining_pkt[..take]);
                     remaining_pkt = &remaining_pkt[take..];
-                    written += take;
                 }
                 if header_off == hdr_len && remaining_pkt.is_empty() {
                     break;
                 }
             }
 
+            if header_off != hdr_len || !remaining_pkt.is_empty() {
+                // Should not happen because we pre-flight capacity, but treat as a malformed
+                // chain and complete it so the driver can recycle the buffer.
+                need_irq |= queue
+                    .add_used(mem, chain.head_index(), 0)
+                    .map_err(|_| VirtioDeviceError::IoError)?;
+                continue;
+            }
+
             need_irq |= queue
-                .add_used(mem, chain.head_index(), written as u32)
+                .add_used(mem, chain.head_index(), needed as u32)
                 .map_err(|_| VirtioDeviceError::IoError)?;
         }
 
@@ -394,33 +409,16 @@ mod tests {
     }
 
     #[test]
-    fn feature_negotiation_hides_offloads_when_disabled() {
-        let dev = VirtioNet::new_with_offload_config(
-            LoopbackNet::default(),
-            [0; 6],
-            VirtioNetOffloadConfig {
-                disable_offloads: true,
-            },
-        );
+    fn device_features_match_win7_contract_v1() {
+        let dev = VirtioNet::new(LoopbackNet::default(), [0; 6]);
         let features = <VirtioNet<LoopbackNet> as VirtioDevice>::device_features(&dev);
-        assert_eq!(features & VIRTIO_NET_F_CSUM, 0);
-        assert_eq!(features & VIRTIO_NET_F_HOST_TSO4, 0);
-        assert_eq!(features & VIRTIO_NET_F_HOST_TSO6, 0);
-    }
-
-    #[test]
-    fn feature_negotiation_advertises_offloads_when_enabled() {
-        let dev = VirtioNet::new_with_offload_config(
-            LoopbackNet::default(),
-            [0; 6],
-            VirtioNetOffloadConfig {
-                disable_offloads: false,
-            },
+        assert_eq!(
+            features,
+            VIRTIO_F_VERSION_1
+                | VIRTIO_F_RING_INDIRECT_DESC
+                | VIRTIO_NET_F_MAC
+                | VIRTIO_NET_F_STATUS
         );
-        let features = <VirtioNet<LoopbackNet> as VirtioDevice>::device_features(&dev);
-        assert_ne!(features & VIRTIO_NET_F_CSUM, 0);
-        assert_ne!(features & VIRTIO_NET_F_HOST_TSO4, 0);
-        assert_ne!(features & VIRTIO_NET_F_HOST_TSO6, 0);
     }
 
     #[test]
@@ -446,7 +444,7 @@ mod tests {
         hdr_bytes[4..6].copy_from_slice(&mss.to_le_bytes());
         mem.write(header_addr, &hdr_bytes).unwrap();
 
-        let packet = build_ipv4_tcp_packet(3000, 0x18);
+        let packet = vec![0u8; 14];
         mem.write(packet_addr, &packet).unwrap();
 
         write_desc(
@@ -495,7 +493,7 @@ mod tests {
         };
         let irq = dev.process_queue(1, chain, &mut queue, &mut mem).unwrap();
         assert!(irq);
-        assert!(dev.backend_mut().tx_packets.is_empty());
+        assert_eq!(dev.backend_mut().tx_packets, vec![packet]);
 
         assert_eq!(read_u16_le(&mem, used + 2).unwrap(), 1);
     }

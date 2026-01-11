@@ -1,7 +1,7 @@
 use aero_virtio::devices::net::{LoopbackNet, NetBackend, VirtioNet};
 use aero_virtio::devices::net_offload::VirtioNetHdr;
 use aero_virtio::memory::{
-    read_u16_le, write_u16_le, write_u32_le, write_u64_le, GuestMemory, GuestRam,
+    read_u16_le, read_u32_le, write_u16_le, write_u32_le, write_u64_le, GuestMemory, GuestRam,
 };
 use aero_virtio::pci::{
     InterruptLog, VirtioPciDevice, PCI_VENDOR_ID_VIRTIO, VIRTIO_PCI_CAP_COMMON_CFG,
@@ -199,8 +199,9 @@ fn virtio_net_tx_and_rx_complete_via_pci_transport() {
     // TX: header + payload.
     let hdr_addr = 0x7000;
     let payload_addr = 0x7100;
-    let hdr = [0u8; VirtioNetHdr::LEN];
-    let payload = b"\xde\xad\xbe\xef";
+    let hdr = [0u8; VirtioNetHdr::BASE_LEN];
+    // Contract v1: virtio-net frames must be between 14 and 1514 bytes.
+    let payload = b"\x00\x11\x22\x33\x44\x55\x66\x77\x88\x99\xaa\xbb\x08\x00";
     mem.write(hdr_addr, &hdr).unwrap();
     mem.write(payload_addr, payload).unwrap();
 
@@ -236,6 +237,8 @@ fn virtio_net_tx_and_rx_complete_via_pci_transport() {
     );
 
     assert_eq!(backing.borrow().tx_packets, vec![payload.to_vec()]);
+    assert_eq!(read_u16_le(&mem, tx_used + 2).unwrap(), 1);
+    assert_eq!(read_u32_le(&mem, tx_used + 8).unwrap(), 0);
 
     // RX: guest posts a buffer, then host delivers a packet later.
     let rx_hdr_addr = 0x7200;
@@ -275,23 +278,24 @@ fn virtio_net_tx_and_rx_complete_via_pci_transport() {
     );
     assert_eq!(read_u16_le(&mem, rx_used + 2).unwrap(), 0);
 
-    backing
-        .borrow_mut()
-        .rx_packets
-        .push(b"\x01\x02\x03\x04\x05".to_vec());
+    let rx_packet = b"\xaa\xbb\xcc\xdd\xee\xff\x00\x01\x02\x03\x04\x05\x08\x00".to_vec();
+    backing.borrow_mut().rx_packets.push(rx_packet.clone());
     dev.poll(&mut mem);
 
     let used_idx = read_u16_le(&mem, rx_used + 2).unwrap();
     assert_eq!(used_idx, 1);
+    assert_eq!(
+        read_u32_le(&mem, rx_used + 8).unwrap(),
+        (VirtioNetHdr::BASE_LEN + rx_packet.len()) as u32
+    );
 
-    let mut expected_hdr = [0u8; VirtioNetHdr::LEN];
-    expected_hdr[10..12].copy_from_slice(&1u16.to_le_bytes());
+    let expected_hdr = [0u8; VirtioNetHdr::BASE_LEN];
     assert_eq!(
         mem.get_slice(rx_hdr_addr, expected_hdr.len()).unwrap(),
         &expected_hdr
     );
     assert_eq!(
-        mem.get_slice(rx_payload_addr, 5).unwrap(),
-        b"\x01\x02\x03\x04\x05"
+        mem.get_slice(rx_payload_addr, rx_packet.len()).unwrap(),
+        rx_packet.as_slice()
     );
 }
