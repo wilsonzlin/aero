@@ -60,6 +60,72 @@ static int FailD3D11WithRemovedReason(aerogpu_test::TestReporter* reporter,
   return aerogpu_test::FailHresult(test_name, what, hr);
 }
 
+static void PrintDeviceRemovedReasonIfAny(const char* test_name, ID3D11Device* device) {
+  if (!device) {
+    return;
+  }
+  HRESULT reason = device->GetDeviceRemovedReason();
+  if (reason != S_OK) {
+    aerogpu_test::PrintfStdout(
+        "INFO: %s: device removed reason: %s", test_name, aerogpu_test::HresultToString(reason).c_str());
+  }
+}
+
+static void DumpBytesToFile(const char* test_name,
+                            aerogpu_test::TestReporter* reporter,
+                            const wchar_t* file_name,
+                            const void* data,
+                            UINT byte_count) {
+  if (!file_name || !data || byte_count == 0) {
+    return;
+  }
+  const std::wstring dir = aerogpu_test::GetModuleDir();
+  const std::wstring path = aerogpu_test::JoinPath(dir, file_name);
+  HANDLE h =
+      CreateFileW(path.c_str(), GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+  if (h == INVALID_HANDLE_VALUE) {
+    aerogpu_test::PrintfStdout("INFO: %s: dump CreateFileW(%ls) failed: %s",
+                               test_name,
+                               file_name,
+                               aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
+    return;
+  }
+  DWORD written = 0;
+  if (!WriteFile(h, data, byte_count, &written, NULL) || written != byte_count) {
+    aerogpu_test::PrintfStdout("INFO: %s: dump WriteFile(%ls) failed: %s",
+                               test_name,
+                               file_name,
+                               aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
+  } else {
+    aerogpu_test::PrintfStdout("INFO: %s: dumped %u bytes to %ls",
+                               test_name,
+                               (unsigned)byte_count,
+                               path.c_str());
+    if (reporter) {
+      reporter->AddArtifactPathW(path);
+    }
+  }
+  CloseHandle(h);
+}
+
+static void DumpTightBgra32(const char* test_name,
+                            aerogpu_test::TestReporter* reporter,
+                            const wchar_t* file_name,
+                            const void* data,
+                            UINT row_pitch,
+                            int width,
+                            int height) {
+  if (!data || width <= 0 || height <= 0 || row_pitch < (UINT)(width * 4)) {
+    return;
+  }
+  std::vector<uint8_t> tight((size_t)width * (size_t)height * 4u, 0);
+  for (int y = 0; y < height; ++y) {
+    const uint8_t* src_row = (const uint8_t*)data + (size_t)y * (size_t)row_pitch;
+    memcpy(&tight[(size_t)y * (size_t)width * 4u], src_row, (size_t)width * 4u);
+  }
+  DumpBytesToFile(test_name, reporter, file_name, &tight[0], (UINT)tight.size());
+}
+
 static int RunD3D11RSOMStateSanity(int argc, char** argv) {
   const char* kTestName = "d3d11_rs_om_state_sanity";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
@@ -546,6 +612,13 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
       } else {
         reporter.AddArtifactPathW(bmp_path);
       }
+      DumpTightBgra32(kTestName,
+                      &reporter,
+                      L"d3d11_rs_om_state_sanity_scissor.bin",
+                      map.pData,
+                      map.RowPitch,
+                      kWidth,
+                      kHeight);
     }
 
     context->Unmap(staging.get(), 0);
@@ -559,6 +632,7 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     if ((inside & 0x00FFFFFFu) != expected_green_rgb ||
         (inside_a < kExpectedAlphaHalf - kAlphaTol || inside_a > kExpectedAlphaHalf + kAlphaTol) ||
         (outside & 0x00FFFFFFu) != expected_red_rgb || outside_a != 0xFFu) {
+      PrintDeviceRemovedReasonIfAny(kTestName, device.get());
       return reporter.Fail(
           "scissor failed: inside(5,%d)=0x%08lX (a=%u) expected ~(rgb=0x%06lX a~%u), "
           "outside(%d,%d)=0x%08lX (a=%u) expected ~(rgb=0x%06lX a=%u)",
@@ -616,6 +690,13 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
       } else {
         reporter.AddArtifactPathW(bmp_path);
       }
+      DumpTightBgra32(kTestName,
+                      &reporter,
+                      L"d3d11_rs_om_state_sanity_scissor_null_state.bin",
+                      map.pData,
+                      map.RowPitch,
+                      kWidth,
+                      kHeight);
     }
 
     context->Unmap(staging.get(), 0);
@@ -628,6 +709,7 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
         (outside_null & 0x00FFFFFFu) != expected_green_rgb ||
         (outside_null_a < kExpectedAlphaHalf - kAlphaTol ||
          outside_null_a > kExpectedAlphaHalf + kAlphaTol)) {
+      PrintDeviceRemovedReasonIfAny(kTestName, device.get());
       return reporter.Fail(
           "scissor NULL state failed: inside(5,%d)=0x%08lX (a=%u) expected ~(rgb=0x%06lX a~%u), "
           "outside(%d,%d)=0x%08lX (a=%u) expected ~(rgb=0x%06lX a~%u)",
@@ -683,6 +765,13 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
       } else {
         reporter.AddArtifactPathW(bmp_path);
       }
+      DumpTightBgra32(kTestName,
+                      &reporter,
+                      L"d3d11_rs_om_state_sanity_scissor_disabled.bin",
+                      map.pData,
+                      map.RowPitch,
+                      kWidth,
+                      kHeight);
     }
 
     context->Unmap(staging.get(), 0);
@@ -695,6 +784,7 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
         (outside_disabled & 0x00FFFFFFu) != expected_green_rgb ||
         (outside_disabled_a < kExpectedAlphaHalf - kAlphaTol ||
          outside_disabled_a > kExpectedAlphaHalf + kAlphaTol)) {
+      PrintDeviceRemovedReasonIfAny(kTestName, device.get());
       return reporter.Fail(
           "scissor disable failed: inside(5,%d)=0x%08lX (a=%u) expected ~(rgb=0x%06lX a~%u), "
           "outside(%d,%d)=0x%08lX (a=%u) expected ~(rgb=0x%06lX a~%u)",
@@ -760,12 +850,20 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
       } else {
         reporter.AddArtifactPathW(bmp_path);
       }
+      DumpTightBgra32(kTestName,
+                      &reporter,
+                      L"d3d11_rs_om_state_sanity_cull_culled.bin",
+                      map.pData,
+                      map.RowPitch,
+                      kWidth,
+                      kHeight);
     }
     context->Unmap(staging.get(), 0);
 
     const uint32_t expected_red = 0xFFFF0000u;
     const uint8_t center_culled_a = (uint8_t)((center_culled >> 24) & 0xFFu);
     if ((center_culled & 0x00FFFFFFu) != (expected_red & 0x00FFFFFFu)) {
+      PrintDeviceRemovedReasonIfAny(kTestName, device.get());
       return reporter.Fail("cull failed (expected culled): center(%d,%d)=0x%08lX expected ~0x%08lX",
                            cx,
                            cy,
@@ -773,6 +871,7 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
                            (unsigned long)expected_red);
     }
     if (center_culled_a != 0xFFu) {
+      PrintDeviceRemovedReasonIfAny(kTestName, device.get());
       return reporter.Fail("cull failed (expected culled): center(%d,%d) alpha mismatch: got %u expected 255",
                            cx,
                            cy,
@@ -812,12 +911,20 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
       } else {
         reporter.AddArtifactPathW(bmp_path);
       }
+      DumpTightBgra32(kTestName,
+                      &reporter,
+                      L"d3d11_rs_om_state_sanity_cull_none.bin",
+                      map.pData,
+                      map.RowPitch,
+                      kWidth,
+                      kHeight);
     }
     context->Unmap(staging.get(), 0);
 
     const uint32_t expected_green = 0xFF00FF00u;
     const uint8_t center_no_cull_a = (uint8_t)((center_no_cull >> 24) & 0xFFu);
     if ((center_no_cull & 0x00FFFFFFu) != (expected_green & 0x00FFFFFFu)) {
+      PrintDeviceRemovedReasonIfAny(kTestName, device.get());
       return reporter.Fail(
           "cull failed (expected visible with CullMode=NONE): center(%d,%d)=0x%08lX expected ~0x%08lX",
           cx,
@@ -826,6 +933,7 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
           (unsigned long)expected_green);
     }
     if (center_no_cull_a < kExpectedAlphaHalf - kAlphaTol || center_no_cull_a > kExpectedAlphaHalf + kAlphaTol) {
+      PrintDeviceRemovedReasonIfAny(kTestName, device.get());
       return reporter.Fail(
           "cull failed (expected visible with CullMode=NONE): center(%d,%d) alpha mismatch: got %u expected ~%u",
           cx,
@@ -870,10 +978,18 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
       } else {
         reporter.AddArtifactPathW(bmp_path);
       }
+      DumpTightBgra32(kTestName,
+                      &reporter,
+                      L"d3d11_rs_om_state_sanity_cull_drawn.bin",
+                      map.pData,
+                      map.RowPitch,
+                      kWidth,
+                      kHeight);
     }
     context->Unmap(staging.get(), 0);
 
     if ((center_drawn & 0x00FFFFFFu) != (expected_green & 0x00FFFFFFu)) {
+      PrintDeviceRemovedReasonIfAny(kTestName, device.get());
       return reporter.Fail("cull failed (expected visible): center(%d,%d)=0x%08lX expected ~0x%08lX",
                            cx,
                            cy,
@@ -882,6 +998,7 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     }
     const uint8_t center_drawn_a = (uint8_t)((center_drawn >> 24) & 0xFFu);
     if (center_drawn_a < kExpectedAlphaHalf - kAlphaTol || center_drawn_a > kExpectedAlphaHalf + kAlphaTol) {
+      PrintDeviceRemovedReasonIfAny(kTestName, device.get());
       return reporter.Fail("cull failed (expected visible): center(%d,%d) alpha mismatch: got %u expected ~%u",
                            cx,
                            cy,
@@ -924,10 +1041,18 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
       } else {
         reporter.AddArtifactPathW(bmp_path);
       }
+      DumpTightBgra32(kTestName,
+                      &reporter,
+                      L"d3d11_rs_om_state_sanity_cull_null_state.bin",
+                      map.pData,
+                      map.RowPitch,
+                      kWidth,
+                      kHeight);
     }
     context->Unmap(staging.get(), 0);
 
     if ((center_null & 0x00FFFFFFu) != (expected_red & 0x00FFFFFFu)) {
+      PrintDeviceRemovedReasonIfAny(kTestName, device.get());
       return reporter.Fail("cull NULL state failed: center(%d,%d)=0x%08lX expected ~0x%08lX",
                            cx,
                            cy,
@@ -936,6 +1061,7 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     }
     const uint8_t center_null_a = (uint8_t)((center_null >> 24) & 0xFFu);
     if (center_null_a != 0xFFu) {
+      PrintDeviceRemovedReasonIfAny(kTestName, device.get());
       return reporter.Fail("cull NULL state failed: center(%d,%d) alpha mismatch: got %u expected 255",
                            cx,
                            cy,
@@ -988,12 +1114,20 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
       } else {
         reporter.AddArtifactPathW(bmp_path);
       }
+      DumpTightBgra32(kTestName,
+                      &reporter,
+                      L"d3d11_rs_om_state_sanity_depth_clip_enabled.bin",
+                      map.pData,
+                      map.RowPitch,
+                      kWidth,
+                      kHeight);
     }
     context->Unmap(staging.get(), 0);
 
     const uint32_t expected_red = 0xFFFF0000u;
     const uint8_t center_clipped_a = (uint8_t)((center_clipped >> 24) & 0xFFu);
     if ((center_clipped & 0x00FFFFFFu) != (expected_red & 0x00FFFFFFu)) {
+      PrintDeviceRemovedReasonIfAny(kTestName, device.get());
       return reporter.Fail(
           "depth clip failed (expected clipped): center(%d,%d)=0x%08lX expected ~0x%08lX",
           cx,
@@ -1002,6 +1136,7 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
           (unsigned long)expected_red);
     }
     if (center_clipped_a != 0xFFu) {
+      PrintDeviceRemovedReasonIfAny(kTestName, device.get());
       return reporter.Fail(
           "depth clip failed (expected clipped): center(%d,%d) alpha mismatch: got %u expected 255",
           cx,
@@ -1040,12 +1175,20 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
       } else {
         reporter.AddArtifactPathW(bmp_path);
       }
+      DumpTightBgra32(kTestName,
+                      &reporter,
+                      L"d3d11_rs_om_state_sanity_depth_clip_disabled.bin",
+                      map.pData,
+                      map.RowPitch,
+                      kWidth,
+                      kHeight);
     }
     context->Unmap(staging.get(), 0);
 
     const uint32_t expected_green = 0xFF00FF00u;
     const uint8_t center_unclipped_a = (uint8_t)((center_unclipped >> 24) & 0xFFu);
     if ((center_unclipped & 0x00FFFFFFu) != (expected_green & 0x00FFFFFFu)) {
+      PrintDeviceRemovedReasonIfAny(kTestName, device.get());
       return reporter.Fail(
           "depth clip failed (expected visible when disabled): center(%d,%d)=0x%08lX expected ~0x%08lX",
           cx,
@@ -1055,6 +1198,7 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     }
     if (center_unclipped_a < kExpectedAlphaHalf - kAlphaTol ||
         center_unclipped_a > kExpectedAlphaHalf + kAlphaTol) {
+      PrintDeviceRemovedReasonIfAny(kTestName, device.get());
       return reporter.Fail(
           "depth clip failed (expected visible when disabled): center(%d,%d) alpha mismatch: got %u expected ~%u",
           cx,
@@ -1093,10 +1237,18 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
       } else {
         reporter.AddArtifactPathW(bmp_path);
       }
+      DumpTightBgra32(kTestName,
+                      &reporter,
+                      L"d3d11_rs_om_state_sanity_depth_clip_null_state.bin",
+                      map.pData,
+                      map.RowPitch,
+                      kWidth,
+                      kHeight);
     }
     context->Unmap(staging.get(), 0);
 
     if ((center_null & 0x00FFFFFFu) != (expected_red & 0x00FFFFFFu)) {
+      PrintDeviceRemovedReasonIfAny(kTestName, device.get());
       return reporter.Fail(
           "depth clip NULL state failed (expected clipped): center(%d,%d)=0x%08lX expected ~0x%08lX",
           cx,
@@ -1106,6 +1258,7 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     }
     const uint8_t depth_null_a = (uint8_t)((center_null >> 24) & 0xFFu);
     if (depth_null_a != 0xFFu) {
+      PrintDeviceRemovedReasonIfAny(kTestName, device.get());
       return reporter.Fail(
           "depth clip NULL state failed (expected clipped): center(%d,%d) alpha mismatch: got %u expected 255",
           cx,
@@ -1158,6 +1311,13 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
       } else {
         reporter.AddArtifactPathW(bmp_path);
       }
+      DumpTightBgra32(kTestName,
+                      &reporter,
+                      L"d3d11_rs_om_state_sanity_blend.bin",
+                      map.pData,
+                      map.RowPitch,
+                      kWidth,
+                      kHeight);
     }
 
     context->Unmap(staging.get(), 0);
@@ -1175,6 +1335,7 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
 
     if ((r < exp_r - tol || r > exp_r + tol) || (g < exp_g - tol || g > exp_g + tol) ||
         (b < exp_b - tol || b > exp_b + tol) || (a < exp_a - tol || a > exp_a + tol)) {
+      PrintDeviceRemovedReasonIfAny(kTestName, device.get());
       return reporter.Fail(
           "blend failed: center(%d,%d)=0x%08lX (r=%u g=%u b=%u a=%u) expected ~(r=%u g=%u b=%u a=%u) tol=%u",
           cx,
@@ -1225,6 +1386,13 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
       } else {
         reporter.AddArtifactPathW(bmp_path);
       }
+      DumpTightBgra32(kTestName,
+                      &reporter,
+                      L"d3d11_rs_om_state_sanity_blend_disabled.bin",
+                      map.pData,
+                      map.RowPitch,
+                      kWidth,
+                      kHeight);
     }
     context->Unmap(staging.get(), 0);
 
@@ -1234,6 +1402,7 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     const uint8_t a2 = (uint8_t)((center_disabled >> 24) & 0xFFu);
     const uint8_t exp_a2 = 0x80;
     if (r2 != 0 || g2 != 0xFFu || b2 != 0 || (a2 < exp_a2 - tol || a2 > exp_a2 + tol)) {
+      PrintDeviceRemovedReasonIfAny(kTestName, device.get());
       return reporter.Fail(
           "blend disable failed: center(%d,%d)=0x%08lX (r=%u g=%u b=%u a=%u) expected ~(r=0 g=255 b=0 a=%u) tol=%u",
           cx,
@@ -1283,6 +1452,13 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
       } else {
         reporter.AddArtifactPathW(bmp_path);
       }
+      DumpTightBgra32(kTestName,
+                      &reporter,
+                      L"d3d11_rs_om_state_sanity_write_mask.bin",
+                      map.pData,
+                      map.RowPitch,
+                      kWidth,
+                      kHeight);
     }
 
     context->Unmap(staging.get(), 0);
@@ -1293,6 +1469,7 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
       const uint8_t g3 = (uint8_t)((center_mask >> 8) & 0xFFu);
       const uint8_t r3 = (uint8_t)((center_mask >> 16) & 0xFFu);
       const uint8_t a3 = (uint8_t)((center_mask >> 24) & 0xFFu);
+      PrintDeviceRemovedReasonIfAny(kTestName, device.get());
       return reporter.Fail(
           "write mask failed: center(%d,%d)=0x%08lX (r=%u g=%u b=%u a=%u) expected ~0x%08lX",
           cx,
@@ -1306,6 +1483,7 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     }
     const uint8_t a3 = (uint8_t)((center_mask >> 24) & 0xFFu);
     if (a3 != 0xFFu) {
+      PrintDeviceRemovedReasonIfAny(kTestName, device.get());
       return reporter.Fail("write mask failed: expected alpha preserved (0xFF), got a=%u (center=0x%08lX)",
                            (unsigned)a3,
                            (unsigned long)center_mask);
@@ -1346,6 +1524,13 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
       } else {
         reporter.AddArtifactPathW(bmp_path);
       }
+      DumpTightBgra32(kTestName,
+                      &reporter,
+                      L"d3d11_rs_om_state_sanity_blend_factor.bin",
+                      map.pData,
+                      map.RowPitch,
+                      kWidth,
+                      kHeight);
     }
     context->Unmap(staging.get(), 0);
 
@@ -1361,6 +1546,7 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     const uint8_t tol2 = 2;
     if ((r4 < exp_r2 - tol2 || r4 > exp_r2 + tol2) || (g4 < exp_g2 - tol2 || g4 > exp_g2 + tol2) ||
         (b4 < exp_b2 - tol2 || b4 > exp_b2 + tol2) || (a4 < exp_a3 - tol2 || a4 > exp_a3 + tol2)) {
+      PrintDeviceRemovedReasonIfAny(kTestName, device.get());
       return reporter.Fail(
           "blend factor failed: center(%d,%d)=0x%08lX (r=%u g=%u b=%u a=%u) expected ~(r=%u g=%u b=%u a=%u) tol=%u",
           cx,
@@ -1412,17 +1598,26 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
       } else {
         reporter.AddArtifactPathW(bmp_path);
       }
+      DumpTightBgra32(kTestName,
+                      &reporter,
+                      L"d3d11_rs_om_state_sanity_sample_mask_0.bin",
+                      map.pData,
+                      map.RowPitch,
+                      kWidth,
+                      kHeight);
     }
     context->Unmap(staging.get(), 0);
 
     const uint32_t expected_red = 0xFFFF0000u;
     const uint8_t a5 = (uint8_t)((center_sm0 >> 24) & 0xFFu);
     if (a5 != 0xFFu) {
+      PrintDeviceRemovedReasonIfAny(kTestName, device.get());
       return reporter.Fail("sample mask failed: expected alpha preserved (0xFF), got a=%u (center=0x%08lX)",
                            (unsigned)a5,
                            (unsigned long)center_sm0);
     }
     if ((center_sm0 & 0x00FFFFFFu) != (expected_red & 0x00FFFFFFu)) {
+      PrintDeviceRemovedReasonIfAny(kTestName, device.get());
       return reporter.Fail("sample mask failed: center(%d,%d)=0x%08lX expected ~0x%08lX",
                            cx,
                            cy,
