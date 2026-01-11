@@ -79,12 +79,14 @@ export class UhciHidTopologyManager {
     }
   }
 
-  #maybeAttachHub(rootPort: number): void {
+  #maybeAttachHub(rootPort: number, opts: { minPortCount?: number } = {}): void {
     const uhci = this.#uhci;
     if (!uhci) return;
     if (this.#hubAttachedRoots.has(rootPort)) return;
 
-    const portCount = this.#hubPortCountByRoot.get(rootPort) ?? this.#defaultHubPortCount;
+    const configured = this.#hubPortCountByRoot.get(rootPort) ?? this.#defaultHubPortCount;
+    const minPortCount = opts.minPortCount ?? 0;
+    const portCount = Math.max(configured, minPortCount);
     try {
       uhci.attach_hub(rootPort >>> 0, portCount >>> 0);
       this.#hubAttachedRoots.add(rootPort);
@@ -110,7 +112,9 @@ export class UhciHidTopologyManager {
 
     const rootPort = rec.path[0] ?? 0;
     if (rec.path.length > 1) {
-      this.#maybeAttachHub(rootPort);
+      // Ensure the hub has enough downstream ports to cover the requested path.
+      const requestedPort = rec.path[1] ?? 0;
+      this.#maybeAttachHub(rootPort, { minPortCount: requestedPort });
     }
 
     // Clear any existing device at that path first. This keeps the worker resilient

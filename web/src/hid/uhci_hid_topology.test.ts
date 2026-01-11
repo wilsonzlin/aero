@@ -45,6 +45,17 @@ describe("hid/UhciHidTopologyManager", () => {
     expect(uhci.attach_hub).toHaveBeenCalledWith(0, 8);
   });
 
+  it("ensures hubs have enough ports for the requested guest path", () => {
+    const mgr = new UhciHidTopologyManager({ defaultHubPortCount: 16 });
+    const uhci = createFakeUhci();
+    const dev = { kind: "device" };
+
+    mgr.attachDevice(1, [0, 20], "webhid", dev);
+    mgr.setUhciBridge(uhci);
+
+    expect(uhci.attach_hub).toHaveBeenCalledWith(0, 20);
+  });
+
   it("detaches guest paths when devices are removed", () => {
     const mgr = new UhciHidTopologyManager({ defaultHubPortCount: 16 });
     const uhci = createFakeUhci();
