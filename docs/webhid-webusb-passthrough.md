@@ -39,6 +39,12 @@ larger passthrough bridge:
 - error mapping, timeouts, cancellation
 - device reset/configuration state tracking
 
+Implementation status note:
+
+- The repo already contains early scaffolding for WebUSB passthrough (Rust-side
+  `UsbPassthroughDevice` + host-side WebUSB broker/client RPC + descriptor fixups),
+  but it is not yet treated as the MVP path compared to WebHID.
+
 The intended end-state is to use the same “main-thread owns the handle, worker
 models the USB device” architecture described below, but with a richer transfer
 bridge.
