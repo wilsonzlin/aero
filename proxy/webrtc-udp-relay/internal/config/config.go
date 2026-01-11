@@ -55,11 +55,11 @@ const (
 	EnvTURNRESTUsernamePrefix = "TURN_REST_USERNAME_PREFIX"
 	EnvTURNRESTRealm          = "TURN_REST_REALM"
 
-	DefaultListenAddr       = "127.0.0.1:8080"
-	DefaultShutdown         = 15 * time.Second
-	DefaultICEGatherTimeout = 2 * time.Second
-	DefaultViolationWindow  = 10 * time.Second
-	DefaultMode        Mode = ModeDev
+	DefaultListenAddr            = "127.0.0.1:8080"
+	DefaultShutdown              = 15 * time.Second
+	DefaultICEGatherTimeout      = 2 * time.Second
+	DefaultViolationWindow       = 10 * time.Second
+	DefaultMode             Mode = ModeDev
 
 	DefaultUDPBindingIdleTimeout     = 60 * time.Second
 	DefaultUDPReadBufferBytes        = 65535

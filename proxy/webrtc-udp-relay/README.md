@@ -182,14 +182,16 @@ The E2E test builds and runs a small Go relay helper under `e2e/relay-server-go/
   - `POST /offer` (non-trickle offer/answer, versioned JSON)
   - `GET /webrtc/signal` (WebSocket signaling with trickle ICE)
   - `POST /webrtc/offer` (HTTP offer/answer fallback; non-trickle)
+- Signaling authentication (`AUTH_MODE=none|api_key|jwt`) on HTTP + WebSocket endpoints
 - WebRTC DataChannel (`udp`) ↔ UDP datagram relay with per-guest-port UDP bindings and destination policy enforcement
+- Per-session quota/rate limiting for UDP + relay→client DataChannel traffic (with optional hard-close after repeated violations)
 - Protocol documentation (`PROTOCOL.md`)
 - Playwright E2E test harness (`e2e/`) that verifies Chromium ↔ relay interoperability for the `udp` DataChannel.
 
-## Pending (future tasks)
+## Future work
 
-- Tighter integration with per-session rate limiting (pps/bps) for the data plane
-- Auth and additional policy controls (allowlists, additional destination restrictions, etc)
+- Expose metrics via a real backend (Prometheus/OTel) instead of the current in-memory counter map
+- Additional policy controls (destination allowlists, per-origin restrictions, etc.)
 
 ## Ports
 
@@ -227,6 +229,21 @@ The service supports configuration via environment variables and equivalent flag
 - `DATACHANNEL_SEND_QUEUE_BYTES` / `--datachannel-send-queue-bytes` (default `1048576`)
 - `PREFER_V2` / `--prefer-v2` (default `false`) — prefer v2 framing for relay→client packets once the client demonstrates v2 support
 
+### Quota + rate limiting (env + flags)
+
+Per-session quotas and rate limits are enforced on the **data plane** (WebRTC DataChannel ↔ UDP):
+
+- `MAX_SESSIONS` / `--max-sessions` (default `0` = unlimited)
+- `MAX_UDP_PPS_PER_SESSION` / `--max-udp-pps-per-session` (default `0` = unlimited) — outbound UDP packets/sec per session
+- `MAX_UDP_BPS_PER_SESSION` / `--max-udp-bps-per-session` (default `0` = unlimited) — outbound UDP bytes/sec per session
+- `MAX_UDP_PPS_PER_DEST` / `--max-udp-pps-per-dest` (default `0` = unlimited) — outbound UDP packets/sec per destination per session
+- `MAX_UNIQUE_DESTINATIONS_PER_SESSION` / `--max-unique-destinations-per-session` (default `0` = unlimited)
+- `MAX_DC_BPS_PER_SESSION` / `--max-dc-bps-per-session` (default `0` = unlimited) — relay→client DataChannel bytes/sec per session
+- `HARD_CLOSE_AFTER_VIOLATIONS` / `--hard-close-after-violations` (default `0` = disabled) — close the session after N rate/quota violations
+- `VIOLATION_WINDOW_SECONDS` / `--violation-window` (default `10s`) — sliding window for `HARD_CLOSE_AFTER_VIOLATIONS`
+
+When a session is hard-closed, the relay terminates the associated WebRTC PeerConnection.
+
 ### Signaling config
 
 #### Authentication
@@ -254,6 +271,15 @@ or:
 
 Tradeoff: query parameters can leak into browser history, reverse-proxy logs, and monitoring.
 Prefer the first-message `{type:"auth"}` flow when possible.
+
+For HTTP signaling endpoints (`POST /offer`, `POST /webrtc/offer`, `POST /session`), clients can use headers:
+
+- `AUTH_MODE=api_key`:
+  - Preferred: `X-API-Key: ...`
+  - Fallback: `?apiKey=...`
+- `AUTH_MODE=jwt`:
+  - Preferred: `Authorization: Bearer ...`
+  - Fallback: `?token=...`
 
 #### Auth & resource limits
 

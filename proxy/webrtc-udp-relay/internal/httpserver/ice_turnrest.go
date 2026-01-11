@@ -30,4 +30,3 @@ func iceServerHasTURNURL(server webrtc.ICEServer) bool {
 	}
 	return false
 }
-

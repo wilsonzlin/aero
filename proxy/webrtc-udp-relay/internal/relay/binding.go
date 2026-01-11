@@ -31,6 +31,7 @@ type UdpPortBinding struct {
 	cfg       Config
 	codec     udpproto.Codec
 	queue     *sendQueue
+	session   *Session
 
 	lastUsed atomic.Int64
 
@@ -44,7 +45,7 @@ type UdpPortBinding struct {
 	once   sync.Once
 }
 
-func newUdpPortBinding(guestPort uint16, cfg Config, codec udpproto.Codec, queue *sendQueue, clientSupportsV2 *atomic.Bool) (*UdpPortBinding, error) {
+func newUdpPortBinding(guestPort uint16, cfg Config, codec udpproto.Codec, queue *sendQueue, clientSupportsV2 *atomic.Bool, session *Session) (*UdpPortBinding, error) {
 	conn4, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
 	if err != nil {
 		return nil, err
@@ -64,6 +65,7 @@ func newUdpPortBinding(guestPort uint16, cfg Config, codec udpproto.Codec, queue
 		cfg:              cfg,
 		codec:            codec,
 		queue:            queue,
+		session:          session,
 		allowed:          make(map[remoteKey]time.Time),
 		clientSupportsV2: clientSupportsV2,
 	}
@@ -208,6 +210,9 @@ func (b *UdpPortBinding) readLoopConn(conn *net.UDPConn) {
 			}
 		}
 		if err != nil {
+			continue
+		}
+		if b.session != nil && !b.session.HandleInboundToClient(out) {
 			continue
 		}
 		b.queue.Enqueue(out)

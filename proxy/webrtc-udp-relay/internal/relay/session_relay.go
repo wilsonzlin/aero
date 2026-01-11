@@ -31,10 +31,11 @@ type SessionRelayStats struct {
 // A SessionRelay is bound to exactly one DataChannel ("udp") and multiplexes
 // guest-port semantics by maintaining a UDP socket per guest port.
 type SessionRelay struct {
-	dc     DataChannelSender
-	cfg    Config
-	policy DestinationPolicy
-	codec  udpproto.Codec
+	dc      DataChannelSender
+	cfg     Config
+	policy  DestinationPolicy
+	codec   udpproto.Codec
+	session *Session
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -52,7 +53,7 @@ type SessionRelay struct {
 	clientSupportsV2 atomic.Bool
 }
 
-func NewSessionRelay(dc DataChannelSender, cfg Config, policy DestinationPolicy) *SessionRelay {
+func NewSessionRelay(dc DataChannelSender, cfg Config, policy DestinationPolicy, session *Session) *SessionRelay {
 	cfg = cfg.withDefaults()
 	codec, err := udpproto.NewCodec(cfg.MaxDatagramPayloadBytes)
 	if err != nil {
@@ -65,6 +66,7 @@ func NewSessionRelay(dc DataChannelSender, cfg Config, policy DestinationPolicy)
 		cfg:      cfg,
 		policy:   policy,
 		codec:    codec,
+		session:  session,
 		ctx:      ctx,
 		cancel:   cancel,
 		queue:    newSendQueue(cfg.DataChannelSendQueueBytes),
@@ -182,7 +184,7 @@ func (s *SessionRelay) getOrCreateBinding(guestPort uint16) (*UdpPortBinding, er
 		return nil, ErrTooManyBindings
 	}
 
-	b, err := newUdpPortBinding(guestPort, s.cfg, s.codec, s.queue, &s.clientSupportsV2)
+	b, err := newUdpPortBinding(guestPort, s.cfg, s.codec, s.queue, &s.clientSupportsV2, s.session)
 	if err != nil {
 		s.mu.Unlock()
 		if evicted != nil {
@@ -248,6 +250,13 @@ func (s *SessionRelay) HandleDataChannelMessage(msg []byte) {
 	}
 
 	remote := net.UDPAddrFromAddrPort(netip.AddrPortFrom(f.RemoteIP, f.RemotePort))
+
+	if s.session != nil {
+		destKey := netip.AddrPortFrom(f.RemoteIP, f.RemotePort).String()
+		if !s.session.HandleClientDatagram(f.GuestPort, destKey, f.Payload) {
+			return
+		}
+	}
 
 	b, err := s.getOrCreateBinding(f.GuestPort)
 	if err != nil {

@@ -25,6 +25,10 @@ type Session struct {
 	violations    int
 
 	onClose func()
+
+	// onHardClose is invoked when the session is hard-closed due to repeated
+	// rate/quota violations (as configured by HARD_CLOSE_AFTER_VIOLATIONS).
+	onHardClose func()
 }
 
 func newSession(id string, cfg config.Config, m *metrics.Metrics, clock ratelimit.Clock, onClose func()) *Session {
@@ -68,6 +72,32 @@ func (s *Session) Close() {
 	}
 }
 
+// OnHardClose registers fn to run when the session is hard-closed due to
+// repeated violations.
+//
+// It is safe to call multiple times; callbacks are chained in registration
+// order.
+func (s *Session) OnHardClose(fn func()) {
+	if fn == nil {
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.closed {
+		return
+	}
+
+	prev := s.onHardClose
+	s.onHardClose = func() {
+		if prev != nil {
+			prev()
+		}
+		fn()
+	}
+}
+
 func (s *Session) closeLocked() func() {
 	if s.closed {
 		return nil
@@ -94,8 +124,11 @@ func (s *Session) EnsureBinding(srcPort uint16) error {
 	if s.cfg.MaxUDPBindingsPerSession > 0 && len(s.bindings) >= s.cfg.MaxUDPBindingsPerSession {
 		s.metrics.Inc(metrics.DropReasonQuotaExceeded)
 		s.metrics.Inc("too_many_bindings")
-		onClose := s.recordViolationLocked(s.clock.Now())
+		onHardClose, onClose := s.recordViolationLocked(s.clock.Now())
 		s.mu.Unlock()
+		if onHardClose != nil {
+			onHardClose()
+		}
 		if onClose != nil {
 			onClose()
 		}
@@ -153,16 +186,19 @@ func (s *Session) HandleInboundToClient(payload []byte) bool {
 
 func (s *Session) recordViolation() {
 	s.mu.Lock()
-	onClose := s.recordViolationLocked(s.clock.Now())
+	onHardClose, onClose := s.recordViolationLocked(s.clock.Now())
 	s.mu.Unlock()
+	if onHardClose != nil {
+		onHardClose()
+	}
 	if onClose != nil {
 		onClose()
 	}
 }
 
-func (s *Session) recordViolationLocked(now time.Time) func() {
+func (s *Session) recordViolationLocked(now time.Time) (func(), func()) {
 	if s.cfg.HardCloseAfterViolations <= 0 || s.closed {
-		return nil
+		return nil, nil
 	}
 
 	if !s.lastViolation.IsZero() && s.cfg.ViolationWindow > 0 && now.Sub(s.lastViolation) > s.cfg.ViolationWindow {
@@ -172,8 +208,11 @@ func (s *Session) recordViolationLocked(now time.Time) func() {
 	s.lastViolation = now
 	s.violations++
 	if s.violations >= s.cfg.HardCloseAfterViolations {
-		return s.closeLocked()
+		s.metrics.Inc(metrics.SessionHardClosed)
+		onHardClose := s.onHardClose
+		s.onHardClose = nil
+		return onHardClose, s.closeLocked()
 	}
 
-	return nil
+	return nil, nil
 }

@@ -195,6 +195,21 @@ The relay supports multiple signaling surfaces:
 - `GET /webrtc/signal`: WebSocket signaling with trickle ICE (recommended; fastest connect).
 - `POST /webrtc/offer`: HTTP offer → answer (non-trickle ICE fallback; simplest clients/tests).
 
+### Authentication
+
+When `AUTH_MODE != none`, **all** signaling endpoints (`POST /offer`, `POST /webrtc/offer`, `POST /session`, `GET /webrtc/signal`) require credentials.
+
+HTTP endpoints accept credentials via:
+
+- `AUTH_MODE=api_key`:
+  - Preferred: `X-API-Key: ...`
+  - Fallback: `?apiKey=...`
+- `AUTH_MODE=jwt`:
+  - Preferred: `Authorization: Bearer ...`
+  - Fallback: `?token=...`
+
+For WebSocket authentication, see "WebSocket signaling (trickle ICE)" below.
+
 ### POST /offer (v1, versioned JSON, non-trickle ICE)
 
 Client → relay:
@@ -229,7 +244,48 @@ This endpoint waits for ICE gathering to complete so that candidates are embedde
 
 All signaling messages are JSON objects with a required `type` field.
 
+#### Authentication
+
+Browsers can't set arbitrary headers on the WebSocket upgrade request, so the relay supports two auth delivery options.
+
+- `AUTH_MODE=none`: no credentials required.
+- `AUTH_MODE=api_key`: API key required.
+- `AUTH_MODE=jwt`: JWT (HS256) required.
+
+When `AUTH_MODE != none`, clients MUST authenticate using **one** of:
+
+1. **Preferred:** send credentials in the first WebSocket message:
+
+```json
+{ "type": "auth", "apiKey": "..." }
+```
+
+or:
+
+```json
+{ "type": "auth", "token": "..." }
+```
+
+2. **Fallback (non-browser tooling):** include credentials in the WebSocket URL query string:
+
+- `AUTH_MODE=api_key` → `?apiKey=...`
+- `AUTH_MODE=jwt` → `?token=...`
+
+The server enforces `SIGNALING_AUTH_TIMEOUT` for unauthenticated sockets and will close the connection if authentication does not complete in time.
+
 #### Client → Server messages
+
+Auth (required when `AUTH_MODE != none`, unless using query-string auth):
+
+```json
+{ "type": "auth", "apiKey": "..." }
+```
+
+or:
+
+```json
+{ "type": "auth", "token": "..." }
+```
 
 Offer:
 
@@ -287,6 +343,7 @@ Error `code` values are currently best-effort and intended for debugging:
 - `unexpected_message` (invalid ordering such as candidate-before-offer)
 - `unauthorized`
 - `too_many_sessions`
+- `rate_limited`
 - `internal_error`
 
 #### WebSocket flow
@@ -327,4 +384,3 @@ The server waits up to a small timeout (configurable; default ~2s) for ICE gathe
 Limitations:
 
 - Because this endpoint does not support trickle ICE, clients should also wait for ICE gathering to complete before sending the offer, otherwise the offer may not contain usable candidates.
-

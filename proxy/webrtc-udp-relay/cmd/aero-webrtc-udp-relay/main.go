@@ -72,6 +72,11 @@ func main() {
 
 	srv := httpserver.New(cfg, logger, build)
 	sessionMgr := relay.NewSessionManager(cfg, nil, nil)
+	authz, err := signaling.NewAuthAuthorizer(cfg)
+	if err != nil {
+		logger.Error("failed to configure signaling auth", "err", err)
+		os.Exit(2)
+	}
 	relayCfg := relay.Config{
 		MaxUDPBindingsPerSession:  cfg.MaxUDPBindingsPerSession,
 		UDPBindingIdleTimeout:     cfg.UDPBindingIdleTimeout,
@@ -85,8 +90,12 @@ func main() {
 		ICEServers:          cfg.PeerConnectionICEServers(),
 		RelayConfig:         relayCfg,
 		Policy:              destPolicy,
-		Authorizer:          signaling.AllowAllAuthorizer{},
+		Authorizer:          authz,
 		ICEGatheringTimeout: cfg.ICEGatheringTimeout,
+
+		SignalingAuthTimeout:          cfg.SignalingAuthTimeout,
+		MaxSignalingMessageBytes:      cfg.MaxSignalingMessageBytes,
+		MaxSignalingMessagesPerSecond: cfg.MaxSignalingMessagesPerSecond,
 	})
 	sig.RegisterRoutes(srv.Mux())
 

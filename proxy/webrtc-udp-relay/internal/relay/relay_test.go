@@ -38,7 +38,7 @@ func TestSessionRelay_BindingEviction(t *testing.T) {
 		UDPReadBufferBytes:        2048,
 		DataChannelSendQueueBytes: 1 << 20,
 	}
-	r := NewSessionRelay(dc, cfg, p)
+	r := NewSessionRelay(dc, cfg, p, nil)
 	t.Cleanup(r.Close)
 
 	send := func(guestPort uint16) {
@@ -88,7 +88,7 @@ func TestSessionRelay_IdleTimeoutCleanup(t *testing.T) {
 		UDPReadBufferBytes:        2048,
 		DataChannelSendQueueBytes: 1 << 20,
 	}
-	r := NewSessionRelay(dc, cfg, p)
+	r := NewSessionRelay(dc, cfg, p, nil)
 	t.Cleanup(r.Close)
 
 	r.HandleDataChannelMessage(mustEncode(t, udpproto.Datagram{
@@ -121,7 +121,7 @@ func TestUdpPortBinding_RemoteAllowlist(t *testing.T) {
 	cfg.UDPReadBufferBytes = 2048
 	cfg.DataChannelSendQueueBytes = 1 << 20
 
-	r := NewSessionRelay(dc, cfg, p)
+	r := NewSessionRelay(dc, cfg, p, nil)
 	t.Cleanup(r.Close)
 
 	remote1, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
@@ -220,7 +220,7 @@ func TestSessionRelay_IPv6EchoV2(t *testing.T) {
 	cfg.UDPReadBufferBytes = 2048
 	cfg.DataChannelSendQueueBytes = 1 << 20
 
-	r := NewSessionRelay(dc, cfg, p)
+	r := NewSessionRelay(dc, cfg, p, nil)
 	t.Cleanup(r.Close)
 
 	payload := []byte("hello over ipv6")
@@ -273,7 +273,7 @@ func TestSessionRelay_PreferV2NegotiatedForIPv4(t *testing.T) {
 	cfg.UDPReadBufferBytes = 2048
 	cfg.DataChannelSendQueueBytes = 1 << 20
 
-	r := NewSessionRelay(dc, cfg, p)
+	r := NewSessionRelay(dc, cfg, p, nil)
 	t.Cleanup(r.Close)
 
 	remote, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})

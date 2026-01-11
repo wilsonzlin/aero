@@ -65,6 +65,9 @@ func TestSession_HardModeClosesAfterViolations(t *testing.T) {
 	if !s.Closed() {
 		t.Fatalf("expected session to close in hard mode")
 	}
+	if m.Get(metrics.SessionHardClosed) == 0 {
+		t.Fatalf("expected session_hard_closed metric increment")
+	}
 }
 
 func TestSession_EnforcesUniqueDestinationQuota(t *testing.T) {

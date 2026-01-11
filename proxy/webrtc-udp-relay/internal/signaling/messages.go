@@ -12,6 +12,7 @@ import (
 type MessageType string
 
 const (
+	MessageTypeAuth      MessageType = "auth"
 	MessageTypeOffer     MessageType = "offer"
 	MessageTypeAnswer    MessageType = "answer"
 	MessageTypeCandidate MessageType = "candidate"
@@ -74,6 +75,9 @@ type SignalMessage struct {
 	SDP       *SDP        `json:"sdp,omitempty"`
 	Candidate *Candidate  `json:"candidate,omitempty"`
 
+	APIKey string `json:"apiKey,omitempty"`
+	Token  string `json:"token,omitempty"`
+
 	Code    string `json:"code,omitempty"`
 	Message string `json:"message,omitempty"`
 }
@@ -97,6 +101,16 @@ func ParseSignalMessage(data []byte) (SignalMessage, error) {
 
 func (m SignalMessage) Validate() error {
 	switch m.Type {
+	case MessageTypeAuth:
+		if m.APIKey == "" && m.Token == "" {
+			return fmt.Errorf("auth message missing apiKey/token")
+		}
+		if m.APIKey != "" && m.Token != "" {
+			return fmt.Errorf("auth message must not include both apiKey and token")
+		}
+		if m.SDP != nil || m.Candidate != nil || m.Code != "" || m.Message != "" {
+			return fmt.Errorf("auth message has unexpected fields")
+		}
 	case MessageTypeOffer:
 		if m.SDP == nil {
 			return fmt.Errorf("offer message missing sdp")
@@ -104,7 +118,7 @@ func (m SignalMessage) Validate() error {
 		if m.SDP.Type != "offer" {
 			return fmt.Errorf("offer message has sdp.type=%q", m.SDP.Type)
 		}
-		if m.Candidate != nil || m.Code != "" || m.Message != "" {
+		if m.Candidate != nil || m.APIKey != "" || m.Token != "" || m.Code != "" || m.Message != "" {
 			return fmt.Errorf("offer message has unexpected fields")
 		}
 	case MessageTypeAnswer:
@@ -114,25 +128,25 @@ func (m SignalMessage) Validate() error {
 		if m.SDP.Type != "answer" {
 			return fmt.Errorf("answer message has sdp.type=%q", m.SDP.Type)
 		}
-		if m.Candidate != nil || m.Code != "" || m.Message != "" {
+		if m.Candidate != nil || m.APIKey != "" || m.Token != "" || m.Code != "" || m.Message != "" {
 			return fmt.Errorf("answer message has unexpected fields")
 		}
 	case MessageTypeCandidate:
 		if m.Candidate == nil {
 			return fmt.Errorf("candidate message missing candidate")
 		}
-		if m.SDP != nil || m.Code != "" || m.Message != "" {
+		if m.SDP != nil || m.APIKey != "" || m.Token != "" || m.Code != "" || m.Message != "" {
 			return fmt.Errorf("candidate message has unexpected fields")
 		}
 	case MessageTypeClose:
-		if m.SDP != nil || m.Candidate != nil || m.Code != "" || m.Message != "" {
+		if m.SDP != nil || m.Candidate != nil || m.APIKey != "" || m.Token != "" || m.Code != "" || m.Message != "" {
 			return fmt.Errorf("close message has unexpected fields")
 		}
 	case MessageTypeError:
 		if m.Code == "" || m.Message == "" {
 			return fmt.Errorf("error message missing code/message")
 		}
-		if m.SDP != nil || m.Candidate != nil {
+		if m.SDP != nil || m.Candidate != nil || m.APIKey != "" || m.Token != "" {
 			return fmt.Errorf("error message has unexpected fields")
 		}
 	default:

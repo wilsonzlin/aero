@@ -15,6 +15,7 @@ type Session struct {
 	pc         *webrtc.PeerConnection
 	relayCfg   relay.Config
 	destPolicy *policy.DestinationPolicy
+	quota      *relay.Session
 	onClose    func()
 
 	mu    sync.Mutex
@@ -22,7 +23,7 @@ type Session struct {
 	close sync.Once
 }
 
-func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.Config, destPolicy *policy.DestinationPolicy, onClose func()) (*Session, error) {
+func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.Config, destPolicy *policy.DestinationPolicy, quota *relay.Session, onClose func()) (*Session, error) {
 	if api == nil {
 		api = webrtc.NewAPI()
 	}
@@ -35,7 +36,17 @@ func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.C
 		pc:         pc,
 		relayCfg:   relayCfg,
 		destPolicy: destPolicy,
+		quota:      quota,
 		onClose:    onClose,
+	}
+
+	if quota != nil {
+		quota.OnHardClose(func() {
+			// Close asynchronously so we never block a UDP read loop on pion teardown.
+			go func() {
+				_ = s.Close()
+			}()
+		})
 	}
 
 	pc.OnDataChannel(func(dc *webrtc.DataChannel) {
@@ -43,7 +54,7 @@ func NewSession(api *webrtc.API, iceServers []webrtc.ICEServer, relayCfg relay.C
 			return
 		}
 
-		r := relay.NewSessionRelay(dc, relayCfg, destPolicy)
+		r := relay.NewSessionRelay(dc, relayCfg, destPolicy, quota)
 
 		s.mu.Lock()
 		if s.r != nil {

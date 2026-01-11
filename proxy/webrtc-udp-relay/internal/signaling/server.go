@@ -9,14 +9,17 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"sync"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/pion/webrtc/v4"
-	xwebsocket "golang.org/x/net/websocket"
 
+	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/metrics"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/policy"
+	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/ratelimit"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/relay"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/webrtcpeer"
 )
@@ -43,6 +46,13 @@ type Config struct {
 	// ICEGatheringTimeout bounds how long the relay waits for candidate gathering
 	// on non-trickle HTTP endpoints (e.g. /webrtc/offer).
 	ICEGatheringTimeout time.Duration
+
+	// WebSocket auth timeout for AUTH_MODE!=none.
+	SignalingAuthTimeout time.Duration
+
+	// WebSocket inbound signaling hardening.
+	MaxSignalingMessageBytes      int64
+	MaxSignalingMessagesPerSecond int
 }
 
 // Server implements the relay's HTTP/WebSocket signaling surface.
@@ -71,6 +81,11 @@ type Server struct {
 	Authorizer          Authorizer
 	ICEGatheringTimeout time.Duration
 
+	SignalingAuthTimeout time.Duration
+
+	MaxSignalingMessageBytes      int64
+	MaxSignalingMessagesPerSecond int
+
 	mu             sync.Mutex
 	webrtcSessions []*webrtcpeer.Session
 	preSessions    []*relay.Session
@@ -78,13 +93,17 @@ type Server struct {
 
 func NewServer(cfg Config) *Server {
 	return &Server{
-		Sessions:            cfg.Sessions,
-		WebRTC:              cfg.WebRTC,
-		ICEServers:          cfg.ICEServers,
-		RelayConfig:         cfg.RelayConfig,
-		Policy:              cfg.Policy,
-		Authorizer:          cfg.Authorizer,
-		ICEGatheringTimeout: cfg.ICEGatheringTimeout,
+		Sessions:             cfg.Sessions,
+		WebRTC:               cfg.WebRTC,
+		ICEServers:           cfg.ICEServers,
+		RelayConfig:          cfg.RelayConfig,
+		Policy:               cfg.Policy,
+		Authorizer:           cfg.Authorizer,
+		ICEGatheringTimeout:  cfg.ICEGatheringTimeout,
+		SignalingAuthTimeout: cfg.SignalingAuthTimeout,
+
+		MaxSignalingMessageBytes:      cfg.MaxSignalingMessageBytes,
+		MaxSignalingMessagesPerSecond: cfg.MaxSignalingMessagesPerSecond,
 	}
 }
 
@@ -151,9 +170,47 @@ func (s *Server) iceGatheringTimeout() time.Duration {
 	return s.ICEGatheringTimeout
 }
 
+func (s *Server) signalingAuthTimeout() time.Duration {
+	if s.SignalingAuthTimeout <= 0 {
+		return 2 * time.Second
+	}
+	return s.SignalingAuthTimeout
+}
+
+func (s *Server) maxSignalingMessageBytes() int64 {
+	if s.MaxSignalingMessageBytes <= 0 {
+		return 64 * 1024
+	}
+	return s.MaxSignalingMessageBytes
+}
+
+func (s *Server) maxSignalingMessagesPerSecond() int {
+	if s.MaxSignalingMessagesPerSecond <= 0 {
+		return 50
+	}
+	return s.MaxSignalingMessagesPerSecond
+}
+
+func (s *Server) incMetric(name string) {
+	if s.Sessions == nil {
+		return
+	}
+	m := s.Sessions.Metrics()
+	if m == nil {
+		return
+	}
+	m.Inc(name)
+}
+
 func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	if s.Sessions == nil {
 		http.Error(w, "session manager not configured", http.StatusInternalServerError)
+		return
+	}
+
+	if err := s.authorizer().Authorize(r, nil); err != nil {
+		s.incMetric(metrics.AuthFailure)
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
@@ -198,6 +255,7 @@ func (s *Server) handleOffer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.authorizer().Authorize(r, &ClientHello{Type: MessageTypeOffer}); err != nil {
+		s.incMetric(metrics.AuthFailure)
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -222,7 +280,7 @@ func (s *Server) handleOffer(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	sess, err := webrtcpeer.NewSession(s.WebRTC, s.ICEServers, s.RelayConfig, s.Policy, cleanupRelaySession)
+	sess, err := webrtcpeer.NewSession(s.WebRTC, s.ICEServers, s.RelayConfig, s.Policy, relaySession, cleanupRelaySession)
 	if err != nil {
 		cleanupRelaySession()
 		http.Error(w, "failed to create session", http.StatusInternalServerError)
@@ -303,6 +361,7 @@ func (s *Server) handleWebRTCOffer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.authorizer().Authorize(r, &ClientHello{Type: MessageTypeOffer}); err != nil {
+		s.incMetric(metrics.AuthFailure)
 		writeJSONError(w, http.StatusUnauthorized, "unauthorized", err.Error())
 		return
 	}
@@ -323,7 +382,7 @@ func (s *Server) handleWebRTCOffer(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	sess, err := webrtcpeer.NewSession(s.WebRTC, s.ICEServers, s.RelayConfig, s.Policy, cleanupRelaySession)
+	sess, err := webrtcpeer.NewSession(s.WebRTC, s.ICEServers, s.RelayConfig, s.Policy, relaySession, cleanupRelaySession)
 	if err != nil {
 		cleanupRelaySession()
 		writeJSONError(w, http.StatusInternalServerError, "internal_error", err.Error())
@@ -380,52 +439,33 @@ func (s *Server) handleWebSocketSignal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	wsSrv := &xwebsocket.Server{
-		Handler: xwebsocket.Handler(func(conn *xwebsocket.Conn) {
-			req := conn.Request()
-			authorizer := s.authorizer()
-
-			_, relaySession, err := s.allocateRelaySession()
-			if errors.Is(err, relay.ErrTooManySessions) {
-				_ = sendWSError(conn, "too_many_sessions", "too many sessions")
-				_ = conn.Close()
-				return
-			}
-			if err != nil {
-				_ = sendWSError(conn, "internal_error", err.Error())
-				_ = conn.Close()
-				return
-			}
-
-			cleanupRelaySession := func() {
-				if relaySession != nil {
-					relaySession.Close()
-				}
-				_ = conn.Close()
-			}
-
-			sess, err := webrtcpeer.NewSession(s.WebRTC, s.ICEServers, s.RelayConfig, s.Policy, cleanupRelaySession)
-			if err != nil {
-				cleanupRelaySession()
-				_ = sendWSError(conn, "internal_error", err.Error())
-				return
-			}
-			s.mu.Lock()
-			s.webrtcSessions = append(s.webrtcSessions, sess)
-			s.mu.Unlock()
-
-			ws := &wsSession{
-				conn:       conn,
-				req:        req,
-				authorizer: authorizer,
-				session:    sess,
-			}
-			ws.installPeerHandlers()
-			ws.run()
-		}),
+	upgrader := websocket.Upgrader{
+		// Origin checks are enforced by the outer httpserver origin middleware. For
+		// unit tests that don't use httpserver.Server, accept all origins here.
+		CheckOrigin: func(r *http.Request) bool { return true },
 	}
 
-	wsSrv.ServeHTTP(w, r)
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		return
+	}
+
+	ws := &wsSession{
+		srv:        s,
+		conn:       conn,
+		req:        r,
+		authorizer: s.authorizer(),
+
+		authTimeout: s.signalingAuthTimeout(),
+		limiter: ratelimit.NewTokenBucket(
+			ratelimit.RealClock{},
+			int64(s.maxSignalingMessagesPerSecond()),
+			int64(s.maxSignalingMessagesPerSecond()),
+		),
+
+		maxMessageBytes: s.maxSignalingMessageBytes(),
+	}
+	ws.run()
 }
 
 func (s *Server) allocateRelaySession() (string, *relay.Session, error) {
@@ -450,18 +490,6 @@ func newSessionID() (string, error) {
 		return "", fmt.Errorf("generate session id: %w", err)
 	}
 	return hex.EncodeToString(buf[:]), nil
-}
-
-func sendWSError(conn *xwebsocket.Conn, code, message string) error {
-	data, err := json.Marshal(SignalMessage{
-		Type:    MessageTypeError,
-		Code:    code,
-		Message: message,
-	})
-	if err != nil {
-		return err
-	}
-	return xwebsocket.Message.Send(conn, string(data))
 }
 
 type httpOfferRequest struct {
@@ -521,11 +549,18 @@ func expectEOF(dec *json.Decoder) error {
 }
 
 type wsSession struct {
-	conn *xwebsocket.Conn
+	srv  *Server
+	conn *websocket.Conn
 	req  *http.Request
 
-	session    *webrtcpeer.Session
 	authorizer Authorizer
+
+	authTimeout     time.Duration
+	maxMessageBytes int64
+	limiter         *ratelimit.TokenBucket
+
+	session      *webrtcpeer.Session
+	relaySession *relay.Session
 
 	writeMu sync.Mutex
 
@@ -561,87 +596,186 @@ func (wss *wsSession) installPeerHandlers() {
 	})
 }
 
+const wsWriteWait = 1 * time.Second
+
 func (wss *wsSession) run() {
 	defer wss.Close()
 
+	wss.conn.SetReadLimit(wss.maxMessageBytes)
+
 	var haveOffer bool
-	var authorized bool
+
+	authorized := false
+	if err := wss.authorizer.Authorize(wss.req, nil); err != nil {
+		if IsAuthMissing(err) {
+			_ = wss.conn.SetReadDeadline(time.Now().Add(wss.authTimeout))
+		} else {
+			wss.srv.incMetric(metrics.AuthFailure)
+			_ = wss.fail("unauthorized", unauthorizedMessage(err), websocket.ClosePolicyViolation, "unauthorized")
+			return
+		}
+	} else {
+		authorized = true
+	}
 
 	for {
-		var raw string
-		err := xwebsocket.Message.Receive(wss.conn, &raw)
-		if err != nil {
+		if wss.limiter != nil && !wss.limiter.Allow(1) {
+			wss.srv.incMetric(metrics.DropReasonRateLimited)
+			_ = wss.fail("rate_limited", "rate limit exceeded", websocket.ClosePolicyViolation, "rate limit exceeded")
 			return
 		}
 
-		msg, err := ParseSignalMessage([]byte(raw))
+		msgType, data, err := wss.conn.ReadMessage()
 		if err != nil {
-			_ = wss.sendError("bad_message", err.Error())
+			if !authorized && isTimeout(err) {
+				wss.srv.incMetric(metrics.AuthFailure)
+				wss.closeWith(websocket.ClosePolicyViolation, "authentication timeout")
+			}
+			return
+		}
+		if msgType != websocket.TextMessage {
+			_ = wss.fail("bad_message", "expected text message", websocket.CloseUnsupportedData, "expected text message")
+			return
+		}
+
+		msg, err := ParseSignalMessage(data)
+		if err != nil {
+			_ = wss.fail("bad_message", err.Error(), websocket.ClosePolicyViolation, "bad message")
 			return
 		}
 
 		if !authorized {
-			if err := wss.authorizer.Authorize(wss.req, &ClientHello{Type: msg.Type}); err != nil {
-				_ = wss.sendError("unauthorized", err.Error())
+			if msg.Type != MessageTypeAuth {
+				wss.srv.incMetric(metrics.AuthFailure)
+				_ = wss.fail("unauthorized", "authentication required", websocket.ClosePolicyViolation, "authentication required")
 				return
 			}
+
+			cred := msg.APIKey
+			if cred == "" {
+				cred = msg.Token
+			}
+			if err := wss.authorizer.Authorize(wss.req, &ClientHello{Type: MessageTypeAuth, Credential: cred}); err != nil {
+				wss.srv.incMetric(metrics.AuthFailure)
+				_ = wss.fail("unauthorized", unauthorizedMessage(err), websocket.ClosePolicyViolation, "unauthorized")
+				return
+			}
+
 			authorized = true
+			_ = wss.conn.SetReadDeadline(time.Time{})
+			continue
 		}
 
 		switch msg.Type {
+		case MessageTypeAuth:
+			// Be tolerant: clients may send an auth message even when already
+			// authenticated (e.g. query-string fallback or AUTH_MODE=none).
+			if !haveOffer {
+				continue
+			}
+			_ = wss.fail("unexpected_message", "auth received after offer", websocket.ClosePolicyViolation, "unexpected message")
+			return
 		case MessageTypeOffer:
 			if haveOffer {
-				_ = wss.sendError("unexpected_message", "offer already received")
+				_ = wss.fail("unexpected_message", "offer already received", websocket.ClosePolicyViolation, "unexpected message")
 				return
 			}
 			haveOffer = true
 			if err := wss.handleOffer(*msg.SDP); err != nil {
-				_ = wss.sendError("internal_error", err.Error())
+				var protoErr *wsProtocolError
+				if errors.As(err, &protoErr) {
+					_ = wss.fail(protoErr.Code, protoErr.Message, websocket.ClosePolicyViolation, protoErr.Code)
+					return
+				}
+				_ = wss.fail("internal_error", err.Error(), websocket.CloseInternalServerErr, "internal error")
 				return
 			}
 		case MessageTypeCandidate:
 			if !haveOffer {
-				_ = wss.sendError("unexpected_message", "candidate received before offer")
+				_ = wss.fail("unexpected_message", "candidate received before offer", websocket.ClosePolicyViolation, "unexpected message")
 				return
 			}
 			if err := wss.handleRemoteCandidate(*msg.Candidate); err != nil {
-				_ = wss.sendError("internal_error", err.Error())
+				_ = wss.fail("bad_message", err.Error(), websocket.ClosePolicyViolation, "bad message")
 				return
 			}
 		case MessageTypeClose:
 			return
 		default:
-			_ = wss.sendError("bad_message", fmt.Sprintf("unexpected message type %q", msg.Type))
+			_ = wss.fail("bad_message", fmt.Sprintf("unexpected message type %q", msg.Type), websocket.ClosePolicyViolation, "bad message")
 			return
 		}
 	}
 }
 
+type wsProtocolError struct {
+	Code    string
+	Message string
+}
+
+func (e *wsProtocolError) Error() string { return e.Code + ": " + e.Message }
+
 func (wss *wsSession) handleOffer(offerWire SDP) error {
+	if wss.srv == nil {
+		return &wsProtocolError{Code: "internal_error", Message: "server not configured"}
+	}
+
 	offer, err := offerWire.ToPion()
+	if err != nil {
+		return &wsProtocolError{Code: "bad_message", Message: err.Error()}
+	}
+	if offer.Type != webrtc.SDPTypeOffer {
+		return &wsProtocolError{Code: "bad_message", Message: "sdp.type must be \"offer\""}
+	}
+
+	_, relaySession, err := wss.srv.allocateRelaySession()
+	if errors.Is(err, relay.ErrTooManySessions) {
+		return &wsProtocolError{Code: "too_many_sessions", Message: "too many sessions"}
+	}
 	if err != nil {
 		return err
 	}
-	if offer.Type != webrtc.SDPTypeOffer {
-		return fmt.Errorf("sdp.type must be \"offer\"")
+	wss.relaySession = relaySession
+
+	cleanupRelaySession := func() {
+		if relaySession != nil {
+			relaySession.Close()
+		}
+		_ = wss.conn.Close()
 	}
 
-	pc := wss.session.PeerConnection()
+	sess, err := webrtcpeer.NewSession(wss.srv.WebRTC, wss.srv.ICEServers, wss.srv.RelayConfig, wss.srv.Policy, relaySession, cleanupRelaySession)
+	if err != nil {
+		cleanupRelaySession()
+		return err
+	}
+	wss.srv.mu.Lock()
+	wss.srv.webrtcSessions = append(wss.srv.webrtcSessions, sess)
+	wss.srv.mu.Unlock()
+
+	wss.session = sess
+	wss.installPeerHandlers()
+
+	pc := sess.PeerConnection()
 
 	if err := pc.SetRemoteDescription(offer); err != nil {
-		return err
+		_ = sess.Close()
+		return &wsProtocolError{Code: "bad_message", Message: err.Error()}
 	}
 
 	answer, err := pc.CreateAnswer(nil)
 	if err != nil {
+		_ = sess.Close()
 		return err
 	}
 	if err := pc.SetLocalDescription(answer); err != nil {
+		_ = sess.Close()
 		return err
 	}
 
 	local := pc.LocalDescription()
 	if local == nil {
+		_ = sess.Close()
 		return errors.New("missing local description after SetLocalDescription")
 	}
 
@@ -649,6 +783,7 @@ func (wss *wsSession) handleOffer(offerWire SDP) error {
 		Type: MessageTypeAnswer,
 		SDP:  ptr(SDPFromPion(*local)),
 	}); err != nil {
+		_ = sess.Close()
 		return err
 	}
 
@@ -685,16 +820,24 @@ func (wss *wsSession) send(msg SignalMessage) error {
 
 	wss.writeMu.Lock()
 	defer wss.writeMu.Unlock()
-	return xwebsocket.Message.Send(wss.conn, string(data))
+	_ = wss.conn.SetWriteDeadline(time.Now().Add(wsWriteWait))
+	return wss.conn.WriteMessage(websocket.TextMessage, data)
 }
 
-func (wss *wsSession) sendError(code, message string) error {
+func (wss *wsSession) fail(code, message string, closeCode int, closeReason string) error {
 	_ = wss.send(SignalMessage{
 		Type:    MessageTypeError,
 		Code:    code,
 		Message: message,
 	})
+	wss.closeWith(closeCode, closeReason)
 	return nil
+}
+
+func (wss *wsSession) closeWith(code int, reason string) {
+	wss.writeMu.Lock()
+	defer wss.writeMu.Unlock()
+	_ = wss.conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(code, reason), time.Now().Add(wsWriteWait))
 }
 
 func (wss *wsSession) Close() {
@@ -702,9 +845,16 @@ func (wss *wsSession) Close() {
 		if wss.session != nil {
 			_ = wss.session.Close()
 		}
+		if wss.session == nil && wss.relaySession != nil {
+			wss.relaySession.Close()
+		}
 		_ = wss.conn.Close()
 	})
 }
 
-func ptr[T any](v T) *T { return &v }
+func isTimeout(err error) bool {
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
+}
 
+func ptr[T any](v T) *T { return &v }

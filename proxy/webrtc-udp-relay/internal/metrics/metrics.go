@@ -8,6 +8,13 @@ const (
 	DropReasonRateLimited     = "rate_limited"
 	DropReasonQuotaExceeded   = "quota_exceeded"
 	DropReasonTooManySessions = "too_many_sessions"
+
+	// Auth failures across HTTP and WebSocket signaling endpoints.
+	AuthFailure = "auth_failure"
+
+	// SessionHardClosed counts relay sessions that were hard-closed due to repeated
+	// rate/quota violations.
+	SessionHardClosed = "session_hard_closed"
 )
 
 // Metrics is a minimal, concurrency-safe counter registry.
