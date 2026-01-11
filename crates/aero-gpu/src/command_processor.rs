@@ -494,7 +494,9 @@ impl AeroGpuCommandProcessor {
                             ));
                         }
                     } else if self.shared_surface_refcounts.contains_key(&texture_handle) {
-                        return Err(CommandProcessorError::SharedSurfaceHandleInUse(texture_handle));
+                        return Err(CommandProcessorError::SharedSurfaceHandleInUse(
+                            texture_handle,
+                        ));
                     }
                     if width == 0 || height == 0 || mip_levels == 0 || array_layers == 0 {
                         return Err(CommandProcessorError::InvalidCreateTexture2d);
