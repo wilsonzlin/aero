@@ -244,7 +244,7 @@ This still relies on user-mode teardown running. If we need host cleanup to trac
 | Task | Status | Notes |
 | ---- | ------ | ----- |
 | 639 | ✅ Verified | Host-side shared-surface lifetime: `DESTROY_RESOURCE` + refcounting (original + aliases) + collision validation + multi-submission coverage (see `crates/aero-gpu/src/protocol.rs`, `crates/aero-gpu/src/command_processor.rs`, and `crates/aero-gpu/tests/aerogpu_d3d9_shared_surface.rs`). |
-| 639-FU | 🔵 Blocked | (Hardening) Win7 KMD/UMD: define + implement a **cross-process shared-surface destruction contract** so host cleanup tracks WDDM kernel object lifetime even across abnormal termination (KMD-driven global refcount; host-visible “last close” signal keyed by `share_token`). Depends on Task 578 and Task 594. |
+| 639-FU | 🟡 Optional | (Hardening) Win7 KMD/UMD: define + implement a **cross-process shared-surface destruction contract** so host cleanup tracks WDDM kernel object lifetime even across abnormal termination (KMD-driven global refcount; host-visible “last close” signal keyed by `share_token`). Depends on Task 578 and Task 594. |
 
 #### `D3DPOOL_DEFAULT` semantics for Ex
 
