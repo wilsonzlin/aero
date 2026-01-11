@@ -612,7 +612,7 @@ NTSTATUS VirtIoSndHwSubmitRxSg(PVIRTIOSND_DEVICE_EXTENSION Dx, const VIRTIOSND_R
         return STATUS_INVALID_DEVICE_STATE;
     }
 
-    if (InterlockedCompareExchange(&Dx->RxEngineInitialized, 0, 0) == 0 || Dx->Rx.Queue == NULL) {
+    if (InterlockedCompareExchange(&Dx->RxEngineInitialized, 0, 0) == 0 || Dx->Rx.Queue == NULL || Dx->Rx.Requests == NULL) {
         return STATUS_INVALID_DEVICE_STATE;
     }
 
@@ -634,7 +634,7 @@ ULONG VirtIoSndHwDrainRxCompletions(PVIRTIOSND_DEVICE_EXTENSION Dx, EVT_VIRTIOSN
         return 0;
     }
 
-    if (InterlockedCompareExchange(&Dx->RxEngineInitialized, 0, 0) == 0 || Dx->Rx.Queue == NULL) {
+    if (InterlockedCompareExchange(&Dx->RxEngineInitialized, 0, 0) == 0 || Dx->Rx.Queue == NULL || Dx->Rx.Requests == NULL) {
         return 0;
     }
 
