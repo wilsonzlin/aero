@@ -6873,6 +6873,7 @@ void AEROGPU_APIENTRY RotateResourceIdentities11(D3D11DDI_HDEVICECONTEXT hCtx, D
   struct ResourceIdentity {
     aerogpu_handle_t handle = 0;
     Resource::WddmIdentity wddm;
+    uint32_t wddm_allocation_handle = 0;
     std::vector<uint8_t> storage;
     uint64_t last_gpu_write_fence = 0;
     bool mapped = false;
@@ -6889,6 +6890,7 @@ void AEROGPU_APIENTRY RotateResourceIdentities11(D3D11DDI_HDEVICECONTEXT hCtx, D
     }
     id.handle = res->handle;
     id.wddm = std::move(res->wddm);
+    id.wddm_allocation_handle = res->wddm_allocation_handle;
     id.storage = std::move(res->storage);
     id.last_gpu_write_fence = res->last_gpu_write_fence;
     id.mapped = res->mapped;
@@ -6905,6 +6907,7 @@ void AEROGPU_APIENTRY RotateResourceIdentities11(D3D11DDI_HDEVICECONTEXT hCtx, D
     }
     res->handle = id.handle;
     res->wddm = std::move(id.wddm);
+    res->wddm_allocation_handle = id.wddm_allocation_handle;
     res->storage = std::move(id.storage);
     res->last_gpu_write_fence = id.last_gpu_write_fence;
     res->mapped = id.mapped;
