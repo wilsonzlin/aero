@@ -1,5 +1,8 @@
 //! USB subsystem building blocks: a minimal UHCI host controller model and basic USB HID devices.
 //!
+//! This crate is the canonical USB/UHCI implementation for Aero's browser/WASM runtime
+//! (see `docs/adr/0015-canonical-usb-stack.md`).
+//!
 //! This crate intentionally focuses on correctness and testability over completeness. It is
 //! designed to be wired into the emulator's PCI + I/O port framework later.
 
