@@ -2020,6 +2020,53 @@ void AEROGPU_APIENTRY SetRenderTargets11(D3D11DDI_HDEVICECONTEXT hCtx,
   }
 }
 
+// D3D11 exposes OMSetRenderTargetsAndUnorderedAccessViews which may map to
+// interface-version-specific DDIs. For bring-up, wire any such entrypoints back
+// to our simple RTV/DSV binder and ignore UAV bindings.
+template <typename FnPtr>
+struct SetRenderTargetsAndUavsThunk;
+
+template <typename... Args>
+struct SetRenderTargetsAndUavsThunk<void(AEROGPU_APIENTRY*)(Args...)> {
+  static void AEROGPU_APIENTRY Impl(Args... args) {
+    ((void)args, ...);
+  }
+};
+
+template <typename... Tail>
+struct SetRenderTargetsAndUavsThunk<
+    void(AEROGPU_APIENTRY*)(D3D11DDI_HDEVICECONTEXT,
+                            UINT,
+                            const D3D11DDI_HRENDERTARGETVIEW*,
+                            D3D11DDI_HDEPTHSTENCILVIEW,
+                            Tail...)> {
+  static void AEROGPU_APIENTRY Impl(D3D11DDI_HDEVICECONTEXT hCtx,
+                                    UINT NumViews,
+                                    const D3D11DDI_HRENDERTARGETVIEW* phRtvs,
+                                    D3D11DDI_HDEPTHSTENCILVIEW hDsv,
+                                    Tail... tail) {
+    ((void)tail, ...);
+    SetRenderTargets11(hCtx, NumViews, phRtvs, hDsv);
+  }
+};
+
+template <typename... Tail>
+struct SetRenderTargetsAndUavsThunk<
+    void(AEROGPU_APIENTRY*)(D3D11DDI_HDEVICECONTEXT,
+                            UINT,
+                            D3D11DDI_HRENDERTARGETVIEW*,
+                            D3D11DDI_HDEPTHSTENCILVIEW,
+                            Tail...)> {
+  static void AEROGPU_APIENTRY Impl(D3D11DDI_HDEVICECONTEXT hCtx,
+                                    UINT NumViews,
+                                    D3D11DDI_HRENDERTARGETVIEW* phRtvs,
+                                    D3D11DDI_HDEPTHSTENCILVIEW hDsv,
+                                    Tail... tail) {
+    ((void)tail, ...);
+    SetRenderTargets11(hCtx, NumViews, phRtvs, hDsv);
+  }
+};
+
 static uint8_t U8FromFloat01(float v) {
   if (std::isnan(v)) {
     v = 0.0f;
@@ -2305,6 +2352,30 @@ void AEROGPU_APIENTRY Draw11(D3D11DDI_HDEVICECONTEXT hCtx, UINT VertexCount, UIN
   cmd->first_instance = 0;
 }
 
+void AEROGPU_APIENTRY DrawInstanced11(D3D11DDI_HDEVICECONTEXT hCtx,
+                                      UINT VertexCountPerInstance,
+                                      UINT InstanceCount,
+                                      UINT StartVertexLocation,
+                                      UINT StartInstanceLocation) {
+  auto* dev = DeviceFromContext(hCtx);
+  if (!dev) {
+    return;
+  }
+  if (VertexCountPerInstance == 0 || InstanceCount == 0) {
+    return;
+  }
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  // The bring-up software renderer does not understand instance data. Draw a
+  // single instance so staging readback tests still have sensible contents.
+  SoftwareDrawTriangleList(dev, VertexCountPerInstance, StartVertexLocation);
+  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_draw>(AEROGPU_CMD_DRAW);
+  cmd->vertex_count = VertexCountPerInstance;
+  cmd->instance_count = InstanceCount;
+  cmd->first_vertex = StartVertexLocation;
+  cmd->first_instance = StartInstanceLocation;
+}
+
 void AEROGPU_APIENTRY DrawIndexed11(D3D11DDI_HDEVICECONTEXT hCtx, UINT IndexCount, UINT StartIndexLocation, INT BaseVertexLocation) {
   auto* dev = DeviceFromContext(hCtx);
   if (!dev) {
@@ -2318,6 +2389,29 @@ void AEROGPU_APIENTRY DrawIndexed11(D3D11DDI_HDEVICECONTEXT hCtx, UINT IndexCoun
   cmd->first_index = StartIndexLocation;
   cmd->base_vertex = BaseVertexLocation;
   cmd->first_instance = 0;
+}
+
+void AEROGPU_APIENTRY DrawIndexedInstanced11(D3D11DDI_HDEVICECONTEXT hCtx,
+                                             UINT IndexCountPerInstance,
+                                             UINT InstanceCount,
+                                             UINT StartIndexLocation,
+                                             INT BaseVertexLocation,
+                                             UINT StartInstanceLocation) {
+  auto* dev = DeviceFromContext(hCtx);
+  if (!dev) {
+    return;
+  }
+  if (IndexCountPerInstance == 0 || InstanceCount == 0) {
+    return;
+  }
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_draw_indexed>(AEROGPU_CMD_DRAW_INDEXED);
+  cmd->index_count = IndexCountPerInstance;
+  cmd->instance_count = InstanceCount;
+  cmd->first_index = StartIndexLocation;
+  cmd->base_vertex = BaseVertexLocation;
+  cmd->first_instance = StartInstanceLocation;
 }
 
 void AEROGPU_APIENTRY CopyResource11(D3D11DDI_HDEVICECONTEXT hCtx, D3D11DDI_HRESOURCE hDstResource, D3D11DDI_HRESOURCE hSrcResource) {
@@ -3182,12 +3276,22 @@ HRESULT AEROGPU_APIENTRY CreateDevice11(D3D10DDI_HADAPTER hAdapter, D3D11DDIARG_
   ctx_funcs->pfnSetBlendState = &SetBlendState11;
   ctx_funcs->pfnSetDepthStencilState = &SetDepthStencilState11;
   ctx_funcs->pfnSetRenderTargets = &SetRenderTargets11;
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnSetRenderTargetsAndUnorderedAccessViews) {
+    ctx_funcs->pfnSetRenderTargetsAndUnorderedAccessViews =
+        &SetRenderTargetsAndUavsThunk<decltype(ctx_funcs->pfnSetRenderTargetsAndUnorderedAccessViews)>::Impl;
+  }
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnSetRenderTargetsAndUnorderedAccessViews11_1) {
+    ctx_funcs->pfnSetRenderTargetsAndUnorderedAccessViews11_1 =
+        &SetRenderTargetsAndUavsThunk<decltype(ctx_funcs->pfnSetRenderTargetsAndUnorderedAccessViews11_1)>::Impl;
+  }
 
   ctx_funcs->pfnClearState = &ClearState11;
   ctx_funcs->pfnClearRenderTargetView = &ClearRenderTargetView11;
   ctx_funcs->pfnClearDepthStencilView = &ClearDepthStencilView11;
   ctx_funcs->pfnDraw = &Draw11;
   ctx_funcs->pfnDrawIndexed = &DrawIndexed11;
+  ctx_funcs->pfnDrawInstanced = &DrawInstanced11;
+  ctx_funcs->pfnDrawIndexedInstanced = &DrawIndexedInstanced11;
 
   ctx_funcs->pfnCopyResource = &CopyResource11;
   ctx_funcs->pfnCopySubresourceRegion = &CopySubresourceRegion11;
