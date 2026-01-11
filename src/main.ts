@@ -9,7 +9,6 @@ import { perf } from '../web/src/perf/perf';
 import { installAeroGlobal } from '../web/src/runtime/aero_global';
 import { installNetTraceUI, type NetTraceBackend } from '../web/src/net/trace_ui';
 import { RuntimeDiskClient } from '../web/src/storage/runtime_disk_client';
-import { formatByteSize } from '../web/src/storage/disk_image_store';
 
 import { createHotspotsPanel } from './ui/hud_hotspots.js';
 import type { HotspotEntry, PerfExport as HotspotPerfExport } from './perf/aero_perf.js';
@@ -77,6 +76,20 @@ declare global {
   interface Window {
     __jit_smoke_result?: CpuWorkerToMainMessage;
   }
+}
+
+function formatByteSize(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return '—';
+  if (bytes === 0) return '0 B';
+  const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
+  let n = bytes;
+  let unit = 0;
+  while (n >= 1024 && unit < units.length - 1) {
+    n /= 1024;
+    unit += 1;
+  }
+  const digits = unit === 0 ? 0 : n >= 100 ? 0 : n >= 10 ? 1 : 2;
+  return `${n.toFixed(digits)} ${units[unit]}`;
 }
 
 async function runJitSmokeTest(output: HTMLPreElement): Promise<void> {

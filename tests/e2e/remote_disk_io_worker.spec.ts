@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 
 import { buildTestImage, startDiskImageServer, type DiskImageServer } from "../fixtures/servers";
 
-test.describe("remote disk IO worker (HTTP Range → shared memory)", () => {
+test.describe("runtime disk worker (HTTP Range)", () => {
   const IMAGE_SIZE = 4096;
   const IMAGE = buildTestImage(IMAGE_SIZE);
 
@@ -16,38 +16,52 @@ test.describe("remote disk IO worker (HTTP Range → shared memory)", () => {
     await server.close();
   });
 
-  test("can open and diskRead into shared WebAssembly.Memory", async ({ page }) => {
+  test("can open and read bytes via RuntimeDiskClient", async ({ page }) => {
     await page.goto("http://127.0.0.1:5173/", { waitUntil: "load" });
 
     const result = await page.evaluate(
       async ({ url }) => {
-        if (!globalThis.crossOriginIsolated || typeof SharedArrayBuffer === "undefined") {
-          throw new Error("test requires crossOriginIsolated + SharedArrayBuffer");
-        }
+        const { RuntimeDiskClient } = await import("/web/src/storage/runtime_disk_client.ts");
 
-        const { IoWorkerClient } = await import("/web/src/workers/io_worker_client.ts");
-
-        const io = new IoWorkerClient();
+        const io = new RuntimeDiskClient();
+        let handle: number | null = null;
         try {
-          const openRes = await io.openRemoteDisk(url, {
+          const openRes = await io.openRemote(url, {
             blockSize: 1024,
-            // Keep the test portable across browsers/contexts without OPFS.
-            cacheLimitMiB: null,
+            // Keep the test portable across browsers/contexts without OPFS/IDB.
+            cacheLimitBytes: 0,
             prefetchSequentialBlocks: 0,
           });
+          handle = openRes.handle;
 
           const diskOffset = 123;
           const length = 64;
           const guestOffset = 256;
 
-          const guestMemory = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
+          const guestMemory = new WebAssembly.Memory({ initial: 1, maximum: 1 });
 
-          await io.diskReadIntoSharedMemory({ diskOffset, guestMemory, guestOffset, length });
+          const sectorSize = openRes.sectorSize;
+          const startLba = Math.floor(diskOffset / sectorSize);
+          const offset = diskOffset - startLba * sectorSize;
+          const end = diskOffset + length;
+          const endLba = Math.ceil(end / sectorSize);
+          const readBytes = Math.max(0, endLba - startLba) * sectorSize;
+
+          const data = await io.read(openRes.handle, startLba, readBytes);
+          const slice = data.slice(offset, offset + length);
+          new Uint8Array(guestMemory.buffer, guestOffset, length).set(slice);
 
           const bytes = Array.from(new Uint8Array(guestMemory.buffer, guestOffset, length));
 
-          return { size: openRes.size, bytes, diskOffset };
+          return { size: openRes.capacityBytes, bytes, diskOffset };
         } finally {
+          if (handle !== null) {
+            try {
+              await io.closeDisk(handle);
+            } catch {
+              // ignore
+            }
+          }
           io.close();
         }
       },
@@ -58,4 +72,3 @@ test.describe("remote disk IO worker (HTTP Range → shared memory)", () => {
     expect(result.bytes).toEqual(Array.from(IMAGE.subarray(result.diskOffset, result.diskOffset + result.bytes.length)));
   });
 });
-
