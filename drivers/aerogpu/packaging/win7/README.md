@@ -82,12 +82,13 @@ By default, both `aerogpu.inf` and `aerogpu_dx11.inf` bind to the canonical Aero
 PCI\VEN_A3A0&DEV_0001  (canonical / current)
 ```
 
-The Win7 KMD supports a legacy bring-up ABI enumerated as `PCI\VEN_1AED&DEV_0001`, but the shipped
-INFs intentionally do **not** match it (to discourage accidental installs against the legacy device
-model). If you enable the legacy device model for bring-up, install using a custom INF that matches
-`PCI\VEN_1AED&DEV_0001`.
+The Win7 KMD supports a legacy bring-up device enumerated as `PCI\VEN_1AED&DEV_0001` ("ARGP"), but the shipped
+INFs intentionally do **not** match it (to discourage accidental installs against the legacy device model). If you need
+the legacy device model for bring-up/compatibility, install using a custom INF that matches `PCI\VEN_1AED&DEV_0001`
+and build the emulator with the legacy device model enabled (feature `emulator/aerogpu-legacy`).
 
-See `docs/abi/aerogpu-pci-identity.md` for the full context and the matching emulator device models.
+See `docs/abi/aerogpu-pci-identity.md` for the full context and the matching emulator device models. The Win7 KMD
+supports both ABIs and auto-detects which one is active based on MMIO magic; see `drivers/aerogpu/kmd/README.md`.
 
 Before installing, confirm your VM's device model reports the above Hardware ID:
 
