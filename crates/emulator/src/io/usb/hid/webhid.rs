@@ -211,17 +211,17 @@ fn convert_collection(
         input_reports: collection
             .input_reports
             .iter()
-            .map(convert_report)
+            .map(|report| convert_report(report_descriptor::HidReportKind::Input, report))
             .collect::<Result<_>>()?,
         output_reports: collection
             .output_reports
             .iter()
-            .map(convert_report)
+            .map(|report| convert_report(report_descriptor::HidReportKind::Output, report))
             .collect::<Result<_>>()?,
         feature_reports: collection
             .feature_reports
             .iter()
-            .map(convert_report)
+            .map(|report| convert_report(report_descriptor::HidReportKind::Feature, report))
             .collect::<Result<_>>()?,
         children: collection
             .children
@@ -231,7 +231,10 @@ fn convert_collection(
     })
 }
 
-fn convert_report(report: &HidReportInfo) -> Result<report_descriptor::HidReportInfo> {
+fn convert_report(
+    kind: report_descriptor::HidReportKind,
+    report: &HidReportInfo,
+) -> Result<report_descriptor::HidReportInfo> {
     if report.report_id > 0xFF {
         return Err(HidDescriptorSynthesisError::ReportIdOutOfRange {
             report_id: report.report_id,
@@ -243,12 +246,15 @@ fn convert_report(report: &HidReportInfo) -> Result<report_descriptor::HidReport
         items: report
             .items
             .iter()
-            .map(convert_item)
+            .map(|item| convert_item(kind, item))
             .collect::<Result<_>>()?,
     })
 }
 
-fn convert_item(item: &HidReportItem) -> Result<report_descriptor::HidReportItem> {
+fn convert_item(
+    kind: report_descriptor::HidReportKind,
+    item: &HidReportItem,
+) -> Result<report_descriptor::HidReportItem> {
     if !(-8..=7).contains(&item.unit_exponent) {
         return Err(HidDescriptorSynthesisError::UnitExponentOutOfRange {
             unit_exponent: item.unit_exponent,
@@ -291,11 +297,21 @@ fn convert_item(item: &HidReportItem) -> Result<report_descriptor::HidReportItem
         item.usages.clone()
     };
 
+    // HID 1.11:
+    // - Input main items do not have a Volatile flag (bit7 is Buffered Bytes for Input).
+    // - Output/Feature main items use bit7 for Volatile.
+    let is_volatile = match kind {
+        report_descriptor::HidReportKind::Input => false,
+        report_descriptor::HidReportKind::Output | report_descriptor::HidReportKind::Feature => {
+            item.is_volatile
+        }
+    };
+
     Ok(report_descriptor::HidReportItem {
         is_array: item.is_array,
         is_absolute: item.is_absolute,
         is_buffered_bytes: item.is_buffered_bytes,
-        is_volatile: item.is_volatile,
+        is_volatile,
         is_constant: item.is_constant,
         is_wrapped: item.is_wrapped,
         is_linear: item.is_linear,
@@ -428,6 +444,20 @@ mod tests {
         assert!(
             !desc.windows(3).any(|w| w == [0x82, 0x00, 0x01]),
             "did not expect Input Buffered Bytes to be encoded as a 2-byte payload (0x82 0x00 0x01): {desc:02x?}"
+        );
+    }
+
+    #[test]
+    fn hat_switch_null_state_synthesizes_to_input_0x42() {
+        let mut item = make_item(0);
+        // Spec-canonical hat switch main item flags: Data,Var,Abs,Null (0x42).
+        item.has_null = true;
+        let collections = make_collections(item);
+
+        let desc = synthesize_report_descriptor(&collections).unwrap();
+        assert!(
+            desc.windows(2).any(|w| w == [0x81, 0x42]),
+            "expected Input item with Null State flag (0x81 0x42): {desc:02x?}"
         );
     }
 
