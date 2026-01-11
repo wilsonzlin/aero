@@ -676,16 +676,32 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
         }
       } else {
         if (meta.cache.backend === "opfs") {
+          if (meta.remote.delivery === "chunked") {
+            // Chunked remote delivery caches bytes under the RemoteCacheManager directory (derived key),
+            // not the legacy `meta.cache.fileName` aerospar cache file.
+            try {
+              const cacheKey = await RemoteCacheManager.deriveCacheKey({
+                imageId: meta.remote.imageId,
+                version: meta.remote.version,
+                deliveryType: meta.remote.delivery,
+              });
+              const manager = await RemoteCacheManager.openOpfs();
+              await manager.clearCache(cacheKey);
+            } catch {
+              // best-effort cleanup
+            }
+          }
+
           await opfsDeleteDisk(meta.cache.fileName);
           // Snapshot/restore uses a small binding file to associate the OPFS cache file with the
-          // immutable remote base identity. Best-effort cleanup when the disk is deleted.
+          // immutable remote base identity (range delivery only). Best-effort cleanup when the disk is deleted.
           await opfsDeleteDisk(`${meta.cache.fileName}.binding.json`);
           // RemoteRangeDisk persists its own small metadata file keyed by the remote base identity.
           // Best-effort cleanup when deleting the disk.
           if (meta.remote.delivery === "range") {
             const imageKey = `${meta.remote.imageId}:${meta.remote.version}:${meta.remote.delivery}`;
             const cacheId = await stableCacheId(imageKey);
-            await opfsDeleteDisk(`remote-range-meta-${cacheId}.json`);
+            await opfsDeleteDisk(`remote-range-cache-${cacheId}.json`);
           }
           await opfsDeleteDisk(meta.cache.overlayFileName);
         } else {
