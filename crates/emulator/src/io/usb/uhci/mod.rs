@@ -56,10 +56,13 @@ impl UhciController {
 
     fn update_irq(&mut self) {
         let mut pending = false;
-        if self.regs.usbsts & USBSTS_USBINT != 0
-            && (self.regs.usbintr & (USBINTR_IOC | USBINTR_SHORT_PACKET)) != 0
-        {
-            pending = true;
+        if self.regs.usbsts & USBSTS_USBINT != 0 {
+            if (self.regs.usbint_causes & USBINT_CAUSE_IOC != 0 && self.regs.usbintr & USBINTR_IOC != 0)
+                || (self.regs.usbint_causes & USBINT_CAUSE_SHORT_PACKET != 0
+                    && self.regs.usbintr & USBINTR_SHORT_PACKET != 0)
+            {
+                pending = true;
+            }
         }
         if self.regs.usbsts & USBSTS_USBERRINT != 0 && self.regs.usbintr & USBINTR_TIMEOUT_CRC != 0
         {
@@ -107,6 +110,9 @@ impl UhciController {
         // Write-1-to-clear status bits.
         let w1c = value & USBSTS_W1C_MASK;
         self.regs.usbsts &= !w1c;
+        if w1c & USBSTS_USBINT != 0 {
+            self.regs.usbint_causes = 0;
+        }
     }
 
     fn write_usbintr(&mut self, value: u16) {
@@ -271,6 +277,7 @@ impl UhciController {
                 mem,
                 hub: &mut self.hub,
                 usbsts: &mut self.regs.usbsts,
+                usbint_causes: &mut self.regs.usbint_causes,
             };
             process_frame(&mut ctx, self.regs.flbaseadd, frame_index);
         }

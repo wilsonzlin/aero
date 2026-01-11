@@ -223,6 +223,66 @@ fn uhci_usbint_sets_even_when_interrupts_disabled() {
 }
 
 #[test]
+fn uhci_short_packet_does_not_irq_when_short_interrupt_disabled() {
+    #[derive(Clone)]
+    struct ShortInDevice;
+
+    impl UsbDeviceModel for ShortInDevice {
+        fn handle_control_request(
+            &mut self,
+            _setup: SetupPacket,
+            _data_stage: Option<&[u8]>,
+        ) -> ControlResponse {
+            ControlResponse::Stall
+        }
+
+        fn handle_in_transfer(&mut self, _ep: u8, _max_len: usize) -> UsbInResult {
+            // Always return a short packet.
+            UsbInResult::Data(vec![0xaa, 0xbb])
+        }
+    }
+
+    const BUF: u32 = 0x4000;
+    const TD_CTRL_SPD: u32 = 1 << 29;
+
+    let mut mem = Bus::new(0x20000);
+    init_frame_list(&mut mem, QH_ADDR);
+
+    write_td(
+        &mut mem,
+        TD0,
+        1,
+        TD_STATUS_ACTIVE | TD_CTRL_SPD,
+        td_token(PID_IN, 0, 1, 0, 8),
+        BUF,
+    );
+    write_qh(&mut mem, QH_ADDR, TD0);
+
+    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    uhci.controller.hub_mut().attach(0, Box::new(ShortInDevice));
+    uhci.controller.hub_mut().force_enable_for_tests(0);
+
+    uhci.port_write(REG_FLBASEADD, 4, FRAME_LIST_BASE);
+    // Enable IOC interrupts only; short-packet interrupts disabled.
+    uhci.port_write(REG_USBINTR, 2, USBINTR_IOC as u32);
+    uhci.port_write(REG_USBCMD, 2, (USBCMD_RS | USBCMD_MAXP) as u32);
+
+    uhci.tick_1ms(&mut mem);
+
+    // Status bit still latches.
+    assert_ne!(
+        uhci.port_read(REG_USBSTS, 2) as u16 & USBSTS_USBINT,
+        0
+    );
+    // But IRQ should not assert because only a short-packet event occurred.
+    assert!(!uhci.irq_level());
+
+    // Enabling short-packet interrupts afterwards should cause the pending USBINT to assert IRQ.
+    uhci.port_write(REG_USBINTR, 2, (USBINTR_IOC | USBINTR_SHORT_PACKET) as u32);
+    assert!(uhci.irq_level());
+}
+
+#[test]
 fn uhci_usbsts_byte_writes_do_not_cross_clear_w1c_bits() {
     let mut mem = Bus::new(0x20000);
     init_frame_list(&mut mem, QH_ADDR);

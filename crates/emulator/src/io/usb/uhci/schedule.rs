@@ -4,7 +4,7 @@ use crate::io::usb::core::{UsbInResult, UsbOutResult};
 use crate::io::usb::hub::RootHub;
 use crate::io::usb::SetupPacket;
 
-use super::regs::{USBSTS_USBERRINT, USBSTS_USBINT};
+use super::regs::{USBINT_CAUSE_IOC, USBINT_CAUSE_SHORT_PACKET, USBSTS_USBERRINT, USBSTS_USBINT};
 
 const PID_IN: u8 = 0x69;
 const PID_OUT: u8 = 0xe1;
@@ -43,6 +43,7 @@ pub(crate) struct ScheduleContext<'a, M: MemoryBus + ?Sized> {
     pub mem: &'a mut M,
     pub hub: &'a mut RootHub,
     pub usbsts: &'a mut u16,
+    pub usbint_causes: &'a mut u16,
 }
 
 pub(crate) fn process_frame<M: MemoryBus + ?Sized>(
@@ -204,6 +205,7 @@ fn process_single_td<M: MemoryBus + ?Sized>(
                     complete_td(ctx, td_addr, status, 8, false);
                     if status & TD_CTRL_IOC != 0 {
                         *ctx.usbsts |= USBSTS_USBINT;
+                        *ctx.usbint_causes |= USBINT_CAUSE_IOC;
                     }
                     TdProgress::Advanced {
                         next_link,
@@ -236,6 +238,7 @@ fn process_single_td<M: MemoryBus + ?Sized>(
                     complete_td(ctx, td_addr, status, out_data.len(), false);
                     if status & TD_CTRL_IOC != 0 {
                         *ctx.usbsts |= USBSTS_USBINT;
+                        *ctx.usbint_causes |= USBINT_CAUSE_IOC;
                     }
                     TdProgress::Advanced {
                         next_link,
@@ -270,10 +273,12 @@ fn process_single_td<M: MemoryBus + ?Sized>(
                 complete_td(ctx, td_addr, status, data.len(), false);
                 if status & TD_CTRL_IOC != 0 {
                     *ctx.usbsts |= USBSTS_USBINT;
+                    *ctx.usbint_causes |= USBINT_CAUSE_IOC;
                 }
                 let stop = short && status & TD_CTRL_SPD != 0;
                 if stop {
                     *ctx.usbsts |= USBSTS_USBINT;
+                    *ctx.usbint_causes |= USBINT_CAUSE_SHORT_PACKET;
                 }
                 TdProgress::Advanced { next_link, stop }
             }

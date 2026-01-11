@@ -41,11 +41,18 @@ pub const USBINTR_RESUME: u16 = 1 << 1;
 pub const USBINTR_IOC: u16 = 1 << 2;
 pub const USBINTR_SHORT_PACKET: u16 = 1 << 3;
 
+// Internal helper bits used to accurately gate IRQ generation for USBINT events.
+// UHCI shares a single USBSTS_USBINT status bit for both IOC and short-packet interrupts; real
+// hardware still gates IRQ generation using the per-cause USBINTR bits.
+pub const USBINT_CAUSE_IOC: u16 = 1 << 0;
+pub const USBINT_CAUSE_SHORT_PACKET: u16 = 1 << 1;
+
 #[derive(Debug, Clone)]
 pub struct UhciRegs {
     pub usbcmd: u16,
     pub usbsts: u16,
     pub usbintr: u16,
+    pub usbint_causes: u16,
     pub frnum: u16,
     pub flbaseadd: u32,
     pub sofmod: u8,
@@ -57,6 +64,7 @@ impl UhciRegs {
             usbcmd: USBCMD_MAXP,
             usbsts: 0,
             usbintr: 0,
+            usbint_causes: 0,
             frnum: 0,
             flbaseadd: 0,
             sofmod: 64,
