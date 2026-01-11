@@ -78,7 +78,8 @@ jobs:
           fi
 
           # Use Release to keep runtimes low and to exercise optimized builds.
-          cmake -S . -B build-virtio-host-tests-linux -DAERO_VIRTIO_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Release
+          # Disable unrelated driver test suites to keep this job focused and fast.
+          cmake -S . -B build-virtio-host-tests-linux -DAERO_VIRTIO_BUILD_TESTS=ON -DAERO_AEROGPU_BUILD_TESTS=OFF -DCMAKE_BUILD_TYPE=Release
           cmake --build build-virtio-host-tests-linux
           ctest --test-dir build-virtio-host-tests-linux --output-on-failure
 
@@ -116,11 +117,11 @@ jobs:
           }
 
           # Validate both architectures (x86 + x64) without requiring any VM.
-          cmake -S . -B build-virtio-common-x64 -A x64 -DAERO_VIRTIO_BUILD_TESTS=ON
+          cmake -S . -B build-virtio-common-x64 -A x64 -DAERO_VIRTIO_BUILD_TESTS=ON -DAERO_AEROGPU_BUILD_TESTS=OFF
           cmake --build build-virtio-common-x64 --config Release
           ctest --test-dir build-virtio-common-x64 --output-on-failure -C Release
 
-          cmake -S . -B build-virtio-common-x86 -A Win32 -DAERO_VIRTIO_BUILD_TESTS=ON
+          cmake -S . -B build-virtio-common-x86 -A Win32 -DAERO_VIRTIO_BUILD_TESTS=ON -DAERO_AEROGPU_BUILD_TESTS=OFF
           cmake --build build-virtio-common-x86 --config Release
           ctest --test-dir build-virtio-common-x86 --output-on-failure -C Release
 

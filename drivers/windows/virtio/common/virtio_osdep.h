@@ -132,13 +132,17 @@ typedef void VOID;
 #define VIRTIO_WMB() KeMemoryBarrier()
 #else
 /* User-mode / non-Windows test build */
-#if defined(_MSC_VER) && !defined(__clang__)
+#if defined(_MSC_VER)
 /*
  * MSVC historically does not ship a C11 <stdatomic.h>. The host-side unit tests
  * are single-threaded, but we still want real barriers to keep the code
  * behavior consistent across compilers/architectures.
  *
  * Interlocked ops provide a full fence on Windows.
+ *
+ * Note: clang-cl also defines _MSC_VER, and typically uses the MSVC runtime
+ * headers, which may not include <stdatomic.h>. Prefer the Interlocked-based
+ * barrier in that environment as well.
  */
 #include <intrin.h>
 static __inline void VirtioMemoryBarrier(void)
