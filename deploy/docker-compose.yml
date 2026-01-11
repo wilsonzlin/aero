@@ -4,6 +4,26 @@
 name: aero
 
 services:
+  # Shared gateway session secret (cookie signing).
+  #
+  # The canonical deploy stack defaults `/l2` to cookie auth (same session cookie as `/tcp`), so
+  # `aero-gateway` and `aero-l2-proxy` must share a signing secret.
+  #
+  # To keep `docker compose up` working out of the box, this helper generates a random secret (once)
+  # and stores it in a Docker volume. You can (and should) override it for production via `.env`.
+  aero-session-secret:
+    image: alpine:3.19
+    restart: "no"
+    volumes:
+      - session_secret:/session_secret
+    command: >
+      sh -c 'set -e;
+      if [ ! -f /session_secret/SESSION_SECRET ]; then
+        umask 077;
+        head -c 32 /dev/urandom | base64 | tr -d "\n" > /session_secret/SESSION_SECRET;
+        chmod 0644 /session_secret/SESSION_SECRET;
+      fi'
+
   # Reverse proxy / TLS terminator.
   #
   # Responsibilities:
@@ -76,8 +96,20 @@ services:
       args:
         GIT_SHA: ${AERO_GATEWAY_GIT_SHA:-dev}
     restart: unless-stopped
+    depends_on:
+      aero-session-secret:
+        condition: service_completed_successfully
     expose:
       - "8080"
+    volumes:
+      - session_secret:/session_secret:ro
+    command: >
+      sh -c 'set -e;
+      if [ -z "$$SESSION_SECRET" ]; then
+        export SESSION_SECRET="$$(cat /session_secret/SESSION_SECRET)";
+      fi;
+      export AERO_GATEWAY_SESSION_SECRET="$$SESSION_SECRET";
+      exec node dist/index.js'
     environment:
       # Common gateway deployment knobs (supported by backend/aero-gateway).
       #
@@ -87,17 +119,13 @@ services:
 
       # Session signing secret (cookie auth). Strongly recommended for production.
       #
-      # If unset, the gateway generates a temporary secret at startup and
-      # sessions will not survive restarts.
+      # If unset, `aero-session-secret` generates a random secret and persists it in a Docker volume
+      # so sessions survive restarts (until `docker compose down -v`).
       #
       # This deploy stack defaults `/l2` to cookie auth (`AERO_L2_AUTH_MODE=cookie` on `aero-l2-proxy`),
       # so the L2 proxy must share this secret to validate the same `aero_session` cookies minted by
       # the gateway.
-      #
-      # If SESSION_SECRET is unset, `aero-l2-proxy` will refuse to start in cookie auth mode.
       SESSION_SECRET: ${SESSION_SECRET:-}
-      # Alias supported by the gateway (deploy stack uses SESSION_SECRET as the canonical knob).
-      AERO_GATEWAY_SESSION_SECRET: ${SESSION_SECRET:-}
 
       # Optional explicit origin allowlist (comma-separated). When unset/empty, the
       # gateway defaults to allowing the origin derived from PUBLIC_BASE_URL.
@@ -133,6 +161,23 @@ services:
       context: ..
       dockerfile: crates/aero-l2-proxy/Dockerfile
     restart: unless-stopped
+    depends_on:
+      aero-session-secret:
+        condition: service_completed_successfully
+    volumes:
+      - session_secret:/session_secret:ro
+    entrypoint:
+      - sh
+      - -c
+      - >-
+        set -e;
+        if [ -z "$$AERO_L2_SESSION_SECRET" ] && [ -z "$$SESSION_SECRET" ]; then
+          export SESSION_SECRET="$$(cat /session_secret/SESSION_SECRET)";
+        fi;
+        if [ -z "$$AERO_L2_SESSION_SECRET" ]; then
+          export AERO_L2_SESSION_SECRET="$$SESSION_SECRET";
+        fi;
+        exec aero-l2-proxy
     environment:
       # L2 proxy listen address inside the container.
       AERO_L2_PROXY_LISTEN_ADDR: ${AERO_L2_PROXY_LISTEN_ADDR:-0.0.0.0:8090}
@@ -308,3 +353,4 @@ services:
 volumes:
   caddy_data:
   caddy_config:
+  session_secret:

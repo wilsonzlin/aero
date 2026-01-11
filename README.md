@@ -303,7 +303,7 @@ Browsers cannot open arbitrary TCP/UDP sockets directly. Aero’s guest networki
 - **L2 tunnel (Option C):** [`crates/aero-l2-proxy`](./crates/aero-l2-proxy/) provides an Ethernet (L2) tunnel over WebSocket:
   - `WS /l2` (subprotocol `aero-l2-tunnel-v1`)
   - Browser clients should call `POST /session` first and use the gateway response for discovery (`endpoints.l2`) and tuning (`limits.l2`) instead of hardcoding paths.
-  - Deployment note: the canonical `deploy/docker-compose.yml` stack enforces an Origin allowlist on `/l2` by default. For production deployments, enable authentication (recommended: cookie-backed gateway sessions via `AERO_L2_AUTH_MODE=cookie` on `aero-l2-proxy`) and set `SESSION_SECRET` so the gateway and L2 proxy share the signing secret.
+  - Deployment note: the canonical `deploy/docker-compose.yml` stack enforces an Origin allowlist and authenticates `/l2` upgrades by default using the gateway `aero_session` cookie (`AERO_L2_AUTH_MODE=cookie`). The gateway and L2 proxy must share `SESSION_SECRET` (set it explicitly for production, or let the deploy stack generate and persist a random secret in a Docker volume).
 
   Wire contract: [`docs/l2-tunnel-protocol.md`](./docs/l2-tunnel-protocol.md)
 

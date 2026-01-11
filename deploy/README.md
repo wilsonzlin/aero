@@ -159,10 +159,10 @@ Quick start:
 
 ```bash
 cp deploy/.env.example deploy/.env
-# Then edit deploy/.env and set SESSION_SECRET (required for the default `/l2` cookie auth;
-# also strongly recommended for production).
-# Example:
-#   SESSION_SECRET=$(openssl rand -hex 32)
+# For production, set a strong SESSION_SECRET explicitly (recommended).
+# If unset, `deploy/docker-compose.yml` generates and persists a random secret in a Docker volume
+# (sessions survive restarts until `docker compose down -v`).
+# Example: SESSION_SECRET=$(openssl rand -hex 32)
 ```
 
 - `AERO_DOMAIN` (default: `localhost`)
@@ -230,10 +230,10 @@ Gateway environment variables (used by `backend/aero-gateway` and passed through
 - `SESSION_SECRET` (strongly recommended for production)
   - HMAC secret used to sign the `aero_session` cookie minted by `POST /session`.
   - Used to authenticate privileged endpoints like `/tcp` and `/l2` (default in this deploy stack).
-  - If unset, the gateway generates a temporary secret at startup and sessions won’t survive restarts.
+  - If unset, the deploy stack generates and persists a random secret in a Docker volume (sessions
+    survive restarts until `docker compose down -v`).
   - When using cookie auth for the L2 tunnel (`AERO_L2_AUTH_MODE=cookie` / `cookie_or_jwt`), `crates/aero-l2-proxy`
     must share the same signing secret so it can validate the `aero_session` cookie minted by the gateway.
-    If `SESSION_SECRET` is unset, `aero-l2-proxy` will refuse to start in cookie auth mode.
 - `ALLOWED_ORIGINS` (optional, comma-separated)
   - Set explicitly if you need to allow additional origins (e.g. a dev server).
 - `TRUST_PROXY` (default in compose: `1`)
