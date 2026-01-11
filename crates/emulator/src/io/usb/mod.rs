@@ -127,11 +127,28 @@ pub trait UsbDeviceModel {
         crate::io::usb::core::UsbOutResult::Stall
     }
 
+    /// If this device model is a USB hub, expose it as a [`crate::io::usb::hub::UsbHub`] for
+    /// topology-aware routing.
+    ///
+    /// Hub device models should override this to return `Some(self)`.
+    fn as_hub(&self) -> Option<&dyn crate::io::usb::hub::UsbHub> {
+        None
+    }
+
+    /// Mutable variant of [`UsbDeviceModel::as_hub`].
+    fn as_hub_mut(&mut self) -> Option<&mut dyn crate::io::usb::hub::UsbHub> {
+        None
+    }
+
     /// Advance device-internal timers by 1ms.
     ///
     /// This is used for devices like USB hubs where operations such as port reset
     /// completion are time-based.
-    fn tick_1ms(&mut self) {}
+    fn tick_1ms(&mut self) {
+        if let Some(hub) = self.as_hub_mut() {
+            hub.tick_1ms();
+        }
+    }
 
     /// If this device is a USB hub, route an address lookup to its downstream devices.
     ///
@@ -140,8 +157,9 @@ pub trait UsbDeviceModel {
     /// to search their downstream ports.
     fn child_device_mut_for_address(
         &mut self,
-        _address: u8,
+        address: u8,
     ) -> Option<&mut crate::io::usb::core::AttachedUsbDevice> {
-        None
+        self.as_hub_mut()
+            .and_then(|hub| hub.downstream_device_mut_for_address(address))
     }
 }

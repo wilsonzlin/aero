@@ -57,6 +57,14 @@ impl AttachedUsbDevice {
         self.address
     }
 
+    pub fn as_hub(&self) -> Option<&dyn crate::io::usb::hub::UsbHub> {
+        self.model.as_hub()
+    }
+
+    pub fn as_hub_mut(&mut self) -> Option<&mut dyn crate::io::usb::hub::UsbHub> {
+        self.model.as_hub_mut()
+    }
+
     pub fn reset(&mut self) {
         self.address = 0;
         self.pending_address = None;
