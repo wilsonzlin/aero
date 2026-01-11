@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  getTransferablesForUsbActionMessage,
+  getTransferablesForUsbCompletionMessage,
   isUsbActionMessage,
   isUsbCompletionMessage,
   isUsbHostAction,
@@ -116,5 +118,22 @@ describe("usb/usb_proxy_protocol", () => {
     };
     const clonedCompletion = structuredClone(completion) as unknown;
     expect(isUsbProxyMessage(clonedCompletion)).toBe(true);
+  });
+
+  it("provides transferables for bulk/control payloads", () => {
+    const actionMsg: UsbActionMessage = {
+      type: "usb.action",
+      action: { kind: "bulkOut", id: 1, endpoint: 1, data: Uint8Array.of(1, 2, 3) },
+    };
+    expect(getTransferablesForUsbActionMessage(actionMsg)).toEqual([actionMsg.action.data.buffer]);
+
+    const completionMsg: UsbCompletionMessage = {
+      type: "usb.completion",
+      completion: { kind: "bulkIn", id: 2, status: "success", data: Uint8Array.of(9) },
+    };
+    expect(getTransferablesForUsbCompletionMessage(completionMsg)).toEqual([completionMsg.completion.data.buffer]);
+
+    const stall: UsbCompletionMessage = { type: "usb.completion", completion: { kind: "bulkIn", id: 3, status: "stall" } };
+    expect(getTransferablesForUsbCompletionMessage(stall)).toBeUndefined();
   });
 });

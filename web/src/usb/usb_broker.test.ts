@@ -54,6 +54,7 @@ class FakeUsbSequence extends EventTarget {
 
 class FakePort {
   readonly posted: unknown[] = [];
+  readonly transfers: Array<Transferable[] | undefined> = [];
   private readonly listeners: Array<(ev: MessageEvent<unknown>) => void> = [];
 
   addEventListener(type: string, listener: (ev: MessageEvent<unknown>) => void): void {
@@ -65,8 +66,9 @@ class FakePort {
     // No-op; browsers require MessagePort.start() when using addEventListener.
   }
 
-  postMessage(msg: unknown): void {
+  postMessage(msg: unknown, transfer?: Transferable[]): void {
     this.posted.push(msg);
+    this.transfers.push(transfer);
   }
 
   emit(msg: unknown): void {
@@ -273,6 +275,7 @@ describe("usb/UsbBroker", () => {
 
     // Ignore the initial usb.selected broadcast during attachment.
     port.posted.length = 0;
+    port.transfers.length = 0;
 
     port.emit({ type: "usb.action", action: { kind: "bulkOut", id: 1, endpoint: 1, data: Uint8Array.of(1) } });
     port.emit({ type: "usb.action", action: { kind: "bulkOut", id: 2, endpoint: 1, data: Uint8Array.of(2) } });
@@ -288,6 +291,46 @@ describe("usb/UsbBroker", () => {
       { type: "usb.completion", completion: { kind: "bulkOut", id: 1, status: "success", bytesWritten: 2 } },
       { type: "usb.completion", completion: { kind: "bulkOut", id: 2, status: "success", bytesWritten: 4 } },
     ]);
+  });
+
+  it("transfers completion payload buffers when posting usb.completion messages", async () => {
+    vi.doMock("./webusb_backend", () => ({
+      WebUsbBackend: class {
+        async ensureOpenAndClaimed(): Promise<void> {}
+
+        async execute(action: { id: number }): Promise<BackendUsbHostCompletion> {
+          return { kind: "bulkIn", id: action.id, status: "success", data: Uint8Array.of(action.id) };
+        }
+      },
+    }));
+
+    const device = { vendorId: 1, productId: 2, close: async () => {} } as unknown as USBDevice;
+    const usb = new FakeUsb(device);
+    stubNavigatorUsb(usb);
+
+    const { UsbBroker } = await import("./usb_broker");
+
+    const broker = new UsbBroker();
+    await broker.requestDevice();
+
+    const port = new FakePort();
+    broker.attachWorkerPort(port as unknown as MessagePort);
+    port.posted.length = 0;
+    port.transfers.length = 0;
+
+    port.emit({ type: "usb.action", action: { kind: "bulkIn", id: 1, endpoint: 1, length: 1 } });
+
+    await new Promise((r) => setTimeout(r, 0));
+
+    const idx = port.posted.findIndex((m) => (m as { type?: unknown }).type === "usb.completion");
+    expect(idx).toBeGreaterThanOrEqual(0);
+
+    const msg = port.posted[idx] as { type: string; completion: ProxyUsbHostCompletion };
+    expect(msg.type).toBe("usb.completion");
+    expect(msg.completion).toEqual({ kind: "bulkIn", id: 1, status: "success", data: Uint8Array.of(1) });
+
+    if (msg.completion.kind !== "bulkIn" || msg.completion.status !== "success") throw new Error("unreachable");
+    expect(port.transfers[idx]).toEqual([msg.completion.data.buffer]);
   });
 
   it("does not resend usb.selected when attaching the same port twice", async () => {
@@ -412,6 +455,7 @@ describe("usb/UsbBroker", () => {
 
     await broker.requestDevice();
     port.posted.length = 0;
+    port.transfers.length = 0;
 
     await broker.detachSelectedDevice("device detached");
 
@@ -456,6 +500,7 @@ describe("usb/UsbBroker", () => {
 
     await broker.attachKnownDevice(device);
     port.posted.length = 0;
+    port.transfers.length = 0;
 
     expect(broker.canForgetSelectedDevice()).toBe(true);
     await broker.forgetSelectedDevice();

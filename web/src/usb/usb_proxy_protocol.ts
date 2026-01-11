@@ -14,6 +14,45 @@ export type UsbSelectedMessage = {
 
 export type UsbProxyMessage = UsbActionMessage | UsbCompletionMessage | UsbSelectDeviceMessage | UsbSelectedMessage;
 
+function transferablesForBytes(bytes: Uint8Array): Transferable[] | undefined {
+  // Only `ArrayBuffer` instances are transferable. `SharedArrayBuffer` can be structured-cloned but not transferred.
+  if (bytes.buffer instanceof ArrayBuffer) return [bytes.buffer];
+  return undefined;
+}
+
+export function getTransferablesForUsbActionMessage(msg: UsbActionMessage): Transferable[] | undefined {
+  const action = msg.action;
+  switch (action.kind) {
+    case "controlOut":
+    case "bulkOut":
+      return transferablesForBytes(action.data);
+    default:
+      return undefined;
+  }
+}
+
+export function getTransferablesForUsbCompletionMessage(msg: UsbCompletionMessage): Transferable[] | undefined {
+  const completion = msg.completion;
+  switch (completion.kind) {
+    case "controlIn":
+    case "bulkIn":
+      return completion.status === "success" ? transferablesForBytes(completion.data) : undefined;
+    default:
+      return undefined;
+  }
+}
+
+export function getTransferablesForUsbProxyMessage(msg: UsbProxyMessage): Transferable[] | undefined {
+  switch (msg.type) {
+    case "usb.action":
+      return getTransferablesForUsbActionMessage(msg);
+    case "usb.completion":
+      return getTransferablesForUsbCompletionMessage(msg);
+    default:
+      return undefined;
+  }
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }

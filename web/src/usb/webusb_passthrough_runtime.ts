@@ -2,6 +2,7 @@ import {
   isUsbCompletionMessage,
   isUsbSelectedMessage,
   isUsbSetupPacket,
+  getTransferablesForUsbActionMessage,
   usbErrorCompletion,
   type UsbActionMessage,
   type UsbHostAction,
@@ -61,11 +62,23 @@ function normalizeU32(value: unknown): number | null {
   return asNum;
 }
 
+function ensureArrayBufferBacked(bytes: Uint8Array): Uint8Array {
+  // `postMessage(..., transfer)` only supports `ArrayBuffer`, not `SharedArrayBuffer`.
+  // Copy here so USB payloads can be transferred between the worker and main thread.
+  if (bytes.buffer instanceof ArrayBuffer) return bytes;
+  const out = new Uint8Array(bytes.byteLength);
+  out.set(bytes);
+  return out;
+}
+
 function normalizeBytes(value: unknown): Uint8Array | null {
-  if (value instanceof Uint8Array) return value;
+  if (value instanceof Uint8Array) return ensureArrayBufferBacked(value);
   if (value instanceof ArrayBuffer) return new Uint8Array(value);
   if (typeof SharedArrayBuffer !== "undefined" && value instanceof SharedArrayBuffer) {
-    return new Uint8Array(value);
+    const src = new Uint8Array(value);
+    const out = new Uint8Array(src.byteLength);
+    out.set(src);
+    return out;
   }
   if (Array.isArray(value)) {
     if (!value.every((v) => typeof v === "number" && Number.isFinite(v))) return null;
@@ -359,7 +372,12 @@ export class WebUsbPassthroughRuntime {
 
         const msg: UsbActionMessage = { type: "usb.action", action };
         try {
-          this.#port.postMessage(msg);
+          const transfer = getTransferablesForUsbActionMessage(msg);
+          if (transfer) {
+            this.#port.postMessage(msg, transfer);
+          } else {
+            this.#port.postMessage(msg);
+          }
         } catch (err) {
           this.#pending.delete(actionId);
           try {

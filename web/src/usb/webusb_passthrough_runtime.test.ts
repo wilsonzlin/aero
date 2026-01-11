@@ -7,6 +7,7 @@ type Listener = (ev: MessageEvent<unknown>) => void;
 
 class FakePort {
   readonly posted: unknown[] = [];
+  readonly transfers: Array<Transferable[] | undefined> = [];
   private readonly listeners = new Set<Listener>();
 
   addEventListener(type: string, listener: Listener): void {
@@ -23,8 +24,9 @@ class FakePort {
     // No-op; browsers require MessagePort.start() when using addEventListener.
   }
 
-  postMessage(msg: unknown): void {
+  postMessage(msg: unknown, transfer?: Transferable[]): void {
     this.posted.push(msg);
+    this.transfers.push(transfer);
   }
 
   emit(msg: unknown): void {
@@ -64,6 +66,7 @@ describe("usb/WebUsbPassthroughRuntime", () => {
       { type: "usb.action", action: actions[0] },
       { type: "usb.action", action: actions[1] },
     ]);
+    expect(port.transfers).toEqual([undefined, [actions[1].data.buffer]]);
 
     port.emit({
       type: "usb.completion",

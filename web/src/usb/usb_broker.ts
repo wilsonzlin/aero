@@ -1,4 +1,5 @@
 import {
+  getTransferablesForUsbCompletionMessage,
   isUsbActionMessage,
   isUsbSelectDeviceMessage,
   usbErrorCompletion,
@@ -430,7 +431,12 @@ export class UsbBroker {
 
   private postToPort(port: MessagePort | Worker, msg: UsbCompletionMessage | UsbSelectedMessage): void {
     try {
-      port.postMessage(msg);
+      const transfer = msg.type === "usb.completion" ? getTransferablesForUsbCompletionMessage(msg) : undefined;
+      if (transfer) {
+        port.postMessage(msg, transfer);
+      } else {
+        port.postMessage(msg);
+      }
     } catch {
       this.detachWorkerPort(port);
     }
