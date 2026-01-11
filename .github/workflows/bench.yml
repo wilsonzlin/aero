@@ -7,14 +7,14 @@ on:
     - cron: "0 3 * * *"
   pull_request:
     # Only run benchmarks when performance-sensitive code changes.
-    paths:
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "crates/aero_cpu_core/**"
-      - "crates/aero_x86/**"
-      - "crates/aero-cpu-decoder/**"
-      - "scripts/bench_compare.py"
-      - ".github/workflows/bench.yml"
+      paths:
+        - "Cargo.toml"
+        - "Cargo.lock"
+        - "crates/aero-cpu-core/**"
+        - "crates/aero-x86/**"
+        - "crates/aero-cpu-decoder/**"
+        - "scripts/bench_compare.py"
+        - ".github/workflows/bench.yml"
 
 concurrency:
   group: bench-${{ github.ref }}
@@ -84,9 +84,9 @@ jobs:
           PY
 
           if command -v taskset >/dev/null 2>&1; then
-            taskset -c 0 cargo bench ${{ steps.setup-rust.outputs.cargo_locked_flag }} -p aero_cpu_core --bench emulator_critical -- --noplot
+            taskset -c 0 cargo bench ${{ steps.setup-rust.outputs.cargo_locked_flag }} -p aero-cpu-core --bench emulator_critical -- --noplot
           else
-            cargo bench ${{ steps.setup-rust.outputs.cargo_locked_flag }} -p aero_cpu_core --bench emulator_critical -- --noplot
+            cargo bench ${{ steps.setup-rust.outputs.cargo_locked_flag }} -p aero-cpu-core --bench emulator_critical -- --noplot
           fi
 
           # Criterion writes benchmark results to `target/criterion`. Move the results
@@ -117,9 +117,9 @@ jobs:
           PY
 
           if command -v taskset >/dev/null 2>&1; then
-            taskset -c 0 cargo bench ${{ steps.setup-rust.outputs.cargo_locked_flag }} -p aero_cpu_core --bench emulator_critical -- --noplot
+            taskset -c 0 cargo bench ${{ steps.setup-rust.outputs.cargo_locked_flag }} -p aero-cpu-core --bench emulator_critical -- --noplot
           else
-            cargo bench ${{ steps.setup-rust.outputs.cargo_locked_flag }} -p aero_cpu_core --bench emulator_critical -- --noplot
+            cargo bench ${{ steps.setup-rust.outputs.cargo_locked_flag }} -p aero-cpu-core --bench emulator_critical -- --noplot
           fi
 
           rm -rf target/bench-new/criterion
@@ -152,9 +152,9 @@ jobs:
           PY
 
           if command -v taskset >/dev/null 2>&1; then
-            taskset -c 0 cargo bench ${{ steps.setup-rust.outputs.cargo_locked_flag }} -p aero_cpu_core --bench emulator_critical -- --noplot
+            taskset -c 0 cargo bench ${{ steps.setup-rust.outputs.cargo_locked_flag }} -p aero-cpu-core --bench emulator_critical -- --noplot
           else
-            cargo bench ${{ steps.setup-rust.outputs.cargo_locked_flag }} -p aero_cpu_core --bench emulator_critical -- --noplot
+            cargo bench ${{ steps.setup-rust.outputs.cargo_locked_flag }} -p aero-cpu-core --bench emulator_critical -- --noplot
           fi
 
           rm -rf target/bench-new/criterion

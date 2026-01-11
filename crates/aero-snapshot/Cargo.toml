@@ -9,7 +9,7 @@ io-snapshot = ["dep:aero-io-snapshot"]
 
 [dependencies]
 aero-io-snapshot = { path = "../aero-io-snapshot", optional = true }
-aero_cpu_core = { path = "../aero_cpu_core" }
+aero-cpu-core = { path = "../aero-cpu-core" }
 lz4_flex = "0.11"
 thiserror = "1"
 

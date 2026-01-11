@@ -858,17 +858,17 @@ tool invoked by tests).
 
 - `tools/qemu_diff/` builds a tiny bootable floppy image and runs it under an external
   `qemu-system-*` binary.
-- `crates/aero_cpu_core` contains snippet runners that execute under the tier-0 engine (both a
+- `crates/aero-cpu-core` contains snippet runners that execute under the tier-0 engine (both a
   single-step path and a batch path) and compares results against QEMU.
 
 Run locally:
 
 ```bash
 # Tier-0 batch vs tier-0 single-step equivalence (always runs)
-cargo test --locked -p aero_cpu_core
+cargo test --locked -p aero-cpu-core
 
 # Differential tests vs QEMU (skips if QEMU is not installed)
-cargo test --locked -p aero_cpu_core --features qemu-diff
+cargo test --locked -p aero-cpu-core --features qemu-diff
 ```
 
 ```rust

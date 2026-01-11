@@ -508,7 +508,7 @@ Current benchmarks:
 
 ```bash
 # Full (slower, more stable)
-cargo bench --locked -p aero_cpu_core --bench emulator_critical -- --noplot
+cargo bench --locked -p aero-cpu-core --bench emulator_critical -- --noplot
 ```
 
 Criterion writes results to `target/criterion/`.
@@ -521,7 +521,7 @@ runs don't overwrite each other.
 In CI we run a shorter benchmark configuration to keep PR runtime low:
 
 ```bash
-AERO_BENCH_PROFILE=ci cargo bench --locked -p aero_cpu_core --bench emulator_critical -- --noplot
+AERO_BENCH_PROFILE=ci cargo bench --locked -p aero-cpu-core --bench emulator_critical -- --noplot
 ```
 
 ## Benchmark regression CI

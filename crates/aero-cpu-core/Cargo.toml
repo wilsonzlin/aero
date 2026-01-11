@@ -1,0 +1,25 @@
+[package]
+name = "aero-cpu-core"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[features]
+default = []
+legacy-interp = []
+qemu-diff = ["dep:qemu_diff"]
+
+[dependencies]
+aero-x86 = { path = "../aero-x86" }
+aero-perf = { path = "../aero-perf" }
+aero-mmu = { path = "../aero-mmu" }
+qemu_diff = { path = "../../tools/qemu_diff", optional = true }
+
+[dev-dependencies]
+criterion = "0.5"
+memoffset = "0.9"
+
+[[bench]]
+name = "emulator_critical"
+harness = false
+required-features = ["legacy-interp"]

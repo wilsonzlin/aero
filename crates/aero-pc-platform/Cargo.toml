@@ -6,7 +6,7 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 aero-mmu = { path = "../aero-mmu" }
-aero_cpu_core = { path = "../aero_cpu_core" }
+aero-cpu-core = { path = "../aero-cpu-core" }
 aero-devices = { path = "../devices" }
 aero-interrupts = { path = "../aero-interrupts" }
 aero-platform = { path = "../platform" }

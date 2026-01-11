@@ -185,6 +185,9 @@ jobs:
           cargo metadata ${{ steps.setup-rust.outputs.cargo_locked_flag }} --format-version 1 --manifest-path tools/packaging/aero_packager/Cargo.toml >/dev/null
           cargo metadata ${{ steps.setup-rust.outputs.cargo_locked_flag }} --format-version 1 --manifest-path server/disk-gateway/Cargo.toml >/dev/null
 
+      - name: Check workspace crate-name collisions
+        run: python3 scripts/ci/check-crate-name-collisions.py
+
       - name: Prepare net traces dir
         run: mkdir -p target/net-traces
       - name: Generate test fixtures

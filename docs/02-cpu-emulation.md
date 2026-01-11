@@ -4,7 +4,7 @@
 
 The CPU emulation engine is the heart of Aero. It must accurately emulate the x86-64 architecture at sufficient speed to run Windows 7 smoothly. This document details the design of a tiered execution system combining interpretation and JIT compilation.
 
-> **Note (implementation):** The canonical CPU engine lives in `crates/aero_cpu_core`.
+> **Note (implementation):** The canonical CPU engine lives in `crates/aero-cpu-core`.
 > An older prototype implementation previously lived in `crates/aero-cpu`; it has been retired to
 > avoid duplicated CPU state/decoder/JIT plumbing.
 

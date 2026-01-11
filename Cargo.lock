@@ -60,6 +60,18 @@ name = "aero-core"
 version = "0.1.0"
 
 [[package]]
+name = "aero-cpu-core"
+version = "0.1.0"
+dependencies = [
+ "aero-mmu",
+ "aero-perf",
+ "aero-x86",
+ "criterion",
+ "memoffset",
+ "qemu_diff",
+]
+
+[[package]]
 name = "aero-cpu-decoder"
 version = "0.1.0"
 dependencies = [
@@ -129,12 +141,12 @@ name = "aero-devices"
 version = "0.1.0"
 dependencies = [
  "aero-acpi",
+ "aero-cpu-core",
  "aero-devices-input",
  "aero-interrupts",
  "aero-io-snapshot",
  "aero-platform",
  "aero-snapshot",
- "aero_cpu_core",
  "memory",
  "serde_json",
 ]
@@ -292,6 +304,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "aero-jit-proto"
+version = "0.1.0"
+dependencies = [
+ "bitflags 2.10.0",
+ "perf",
+]
+
+[[package]]
+name = "aero-jit-x86"
+version = "0.1.0"
+dependencies = [
+ "aero-cpu-core",
+ "aero-types",
+ "aero-x86",
+ "memoffset",
+ "rand 0.8.5",
+ "rand_chacha 0.3.1",
+ "thiserror 2.0.17",
+ "wasm-encoder 0.244.0",
+ "wasmi",
+ "wasmparser 0.244.0",
+ "wasmtime",
+]
+
+[[package]]
 name = "aero-l2-protocol"
 version = "0.1.0"
 
@@ -404,12 +441,12 @@ version = "0.1.0"
 name = "aero-pc-platform"
 version = "0.1.0"
 dependencies = [
+ "aero-cpu-core",
  "aero-devices",
  "aero-interrupts",
  "aero-mmu",
  "aero-pc-constants",
  "aero-platform",
- "aero_cpu_core",
  "memory",
 ]
 
@@ -450,9 +487,9 @@ dependencies = [
 name = "aero-snapshot"
 version = "0.1.0"
 dependencies = [
+ "aero-cpu-core",
  "aero-devices-input",
  "aero-io-snapshot",
- "aero_cpu_core",
  "lz4_flex",
  "proptest",
  "rand 0.8.5",
@@ -511,8 +548,8 @@ dependencies = [
 name = "aero-tests"
 version = "0.1.0"
 dependencies = [
- "aero_cpu_core",
- "aero_x86",
+ "aero-cpu-core",
+ "aero-x86",
  "iced-x86",
  "proptest",
 ]
@@ -527,6 +564,10 @@ version = "0.1.0"
 dependencies = [
  "aero-time",
 ]
+
+[[package]]
+name = "aero-types"
+version = "0.1.0"
 
 [[package]]
 name = "aero-usb"
@@ -588,44 +629,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "aero_cpu_core"
-version = "0.1.0"
-dependencies = [
- "aero-mmu",
- "aero-perf",
- "aero_x86",
- "criterion",
- "memoffset",
- "qemu_diff",
-]
-
-[[package]]
-name = "aero_jit"
-version = "0.1.0"
-dependencies = [
- "aero_cpu_core",
- "aero_types",
- "aero_x86",
- "memoffset",
- "rand 0.8.5",
- "rand_chacha 0.3.1",
- "thiserror 2.0.17",
- "wasm-encoder 0.244.0",
- "wasmi",
- "wasmparser 0.244.0",
- "wasmtime",
-]
-
-[[package]]
-name = "aero_types"
-version = "0.1.0"
-
-[[package]]
-name = "aero_x86"
+name = "aero-x86"
 version = "0.1.0"
 dependencies = [
  "aero-cpu-decoder",
- "aero_types",
+ "aero-types",
  "iced-x86",
  "proptest",
  "yaxpeax-arch",
@@ -5008,8 +5016,8 @@ version = "0.1.0"
 name = "vm"
 version = "0.1.0"
 dependencies = [
+ "aero-cpu-core",
  "aero-snapshot",
- "aero_cpu_core",
  "firmware",
  "machine",
 ]

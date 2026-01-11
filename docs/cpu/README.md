@@ -6,11 +6,11 @@ Windows 7 boot and many drivers gate behavior based on CPUID leaves and feature 
 - enable paging features we don’t support (e.g. NX without EFER.NXE behavior),
 - or fail early during boot due to missing mandatory capabilities.
 
-This repository models CPUID + MSR behavior in `crates/aero_cpu_core`, exposing a coherent x86-64 feature surface for a Windows 7 guest.
+This repository models CPUID + MSR behavior in `crates/aero-cpu-core`, exposing a coherent x86-64 feature surface for a Windows 7 guest.
 
 ## Implemented CPUID Leaves
 
-The CPUID dispatcher in `crates/aero_cpu_core/src/cpuid.rs` implements common leaves used by Windows 7 and typical drivers:
+The CPUID dispatcher in `crates/aero-cpu-core/src/cpuid.rs` implements common leaves used by Windows 7 and typical drivers:
 
 - `0x0000_0000` – vendor string + max basic leaf
 - `0x0000_0001` – signature + baseline feature flags
@@ -42,7 +42,7 @@ This keeps it explicit *where* a feature bit is reported, which helps avoid acci
 
 ### Profiles
 
-`CpuProfile` (see `crates/aero_cpu_core/src/cpuid.rs`) defines two intended configurations:
+`CpuProfile` (see `crates/aero-cpu-core/src/cpuid.rs`) defines two intended configurations:
 
 1. **Win7Minimum** – minimum viable x86-64 CPU for Windows 7 boot:
    - x86-64 / long mode (`LM`)
@@ -73,4 +73,4 @@ Some CPUID bits imply MSR behavior. The crate enforces the most important ones f
 - If `CPUID.80000001:EDX[SYSCALL]` is cleared, writes to `EFER.SCE` are masked.
 - If `CPUID.80000001:EDX[LM]` is cleared, writes to `EFER.LME` are masked.
 
-Unit tests in `crates/aero_cpu_core/tests/cpuid_policy.rs` validate these coherency rules.
+Unit tests in `crates/aero-cpu-core/tests/cpuid_policy.rs` validate these coherency rules.

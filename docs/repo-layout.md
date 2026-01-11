@@ -30,14 +30,15 @@ The Rust codebase is a workspace rooted at:
 
 #### Crate naming convention (important)
 
-Prefer `aero-*` crate names for new crates.
+Crates should use `aero-foo` **kebab-case** package names and matching `crates/aero-foo/`
+directories. Note that Rust `use` paths still normalize `-` → `_` (e.g. `aero-cpu-core` is
+imported as `aero_cpu_core`).
 
-This repo still contains some older crates that are either:
+This repo still contains some older crates that are not `aero-*` prefixed (e.g. `crates/emulator`,
+`crates/memory`). These remain in the workspace for now, but **new crates should follow the
+convention**.
 
-- not `aero-*` prefixed (e.g. `crates/emulator`, `crates/memory`), and/or
-- use underscore naming (e.g. `crates/aero_cpu_core`, `crates/aero_types`)
-
-These are in the workspace for now, but **new crates should not add more naming variants**.
+See [`docs/adr/0007-rust-crate-naming.md`](./adr/0007-rust-crate-naming.md).
 
 #### Graphics ABI note (AeroGPU)
 

@@ -1,0 +1,479 @@
+#![cfg(debug_assertions)]
+
+mod tier1_common;
+
+use aero_cpu_core::state::CpuState;
+use aero_jit_x86::abi;
+use aero_jit_x86::tier1::{discover_block, translate_block, BlockLimits};
+use aero_jit_x86::Tier1Bus;
+use aero_types::{Cond, Flag, FlagSet, Gpr, Width};
+use aero_x86::tier1::{AluOp, DecodedInst, InstKind, Operand};
+use tier1_common::{
+    read_flag, read_gpr, read_gpr_part, write_cpu_to_wasm_bytes, write_flag, write_gpr,
+    write_gpr_part, CpuSnapshot, SimpleBus,
+};
+
+fn parity_even(byte: u8) -> bool {
+    byte.count_ones() % 2 == 0
+}
+
+#[derive(Debug, Clone, Copy)]
+struct FlagVals {
+    cf: bool,
+    pf: bool,
+    af: bool,
+    zf: bool,
+    sf: bool,
+    of: bool,
+}
+
+fn compute_logic_flags(width: Width, result: u64) -> FlagVals {
+    let r = width.truncate(result);
+    let sign_bit = 1u64 << (width.bits() - 1);
+    FlagVals {
+        cf: false,
+        pf: parity_even(r as u8),
+        af: false,
+        zf: r == 0,
+        sf: (r & sign_bit) != 0,
+        of: false,
+    }
+}
+
+fn compute_add_flags(width: Width, lhs: u64, rhs: u64, result: u64) -> FlagVals {
+    let mask = width.mask();
+    let lhs = lhs & mask;
+    let rhs = rhs & mask;
+    let result = result & mask;
+    let bits = width.bits();
+    let sign_bit = 1u64 << (bits - 1);
+
+    let wide = (lhs as u128) + (rhs as u128);
+    let cf = (wide >> bits) != 0;
+    let of = ((lhs ^ result) & (rhs ^ result) & sign_bit) != 0;
+    let af = ((lhs ^ rhs ^ result) & 0x10) != 0;
+    FlagVals {
+        cf,
+        pf: parity_even(result as u8),
+        af,
+        zf: result == 0,
+        sf: (result & sign_bit) != 0,
+        of,
+    }
+}
+
+fn compute_sub_flags(width: Width, lhs: u64, rhs: u64, result: u64) -> FlagVals {
+    let mask = width.mask();
+    let lhs = lhs & mask;
+    let rhs = rhs & mask;
+    let result = result & mask;
+    let bits = width.bits();
+    let sign_bit = 1u64 << (bits - 1);
+
+    let cf = lhs < rhs;
+    let of = ((lhs ^ rhs) & (lhs ^ result) & sign_bit) != 0;
+    let af = ((lhs ^ rhs ^ result) & 0x10) != 0;
+    FlagVals {
+        cf,
+        pf: parity_even(result as u8),
+        af,
+        zf: result == 0,
+        sf: (result & sign_bit) != 0,
+        of,
+    }
+}
+
+fn write_flagset(cpu: &mut CpuState, mask: FlagSet, vals: FlagVals) {
+    if mask.contains(FlagSet::CF) {
+        write_flag(cpu, Flag::Cf, vals.cf);
+    }
+    if mask.contains(FlagSet::PF) {
+        write_flag(cpu, Flag::Pf, vals.pf);
+    }
+    if mask.contains(FlagSet::AF) {
+        write_flag(cpu, Flag::Af, vals.af);
+    }
+    if mask.contains(FlagSet::ZF) {
+        write_flag(cpu, Flag::Zf, vals.zf);
+    }
+    if mask.contains(FlagSet::SF) {
+        write_flag(cpu, Flag::Sf, vals.sf);
+    }
+    if mask.contains(FlagSet::OF) {
+        write_flag(cpu, Flag::Of, vals.of);
+    }
+}
+
+fn eval_cond(cpu: &CpuState, cond: Cond) -> bool {
+    cond.eval(
+        read_flag(cpu, Flag::Cf),
+        read_flag(cpu, Flag::Pf),
+        read_flag(cpu, Flag::Zf),
+        read_flag(cpu, Flag::Sf),
+        read_flag(cpu, Flag::Of),
+    )
+}
+
+fn calc_addr(inst: &DecodedInst, cpu: &CpuState, addr: &aero_x86::tier1::Address) -> u64 {
+    let mut out = 0u64;
+    if addr.rip_relative {
+        out = out.wrapping_add(inst.next_rip());
+    }
+    if let Some(base) = addr.base {
+        out = out.wrapping_add(read_gpr(cpu, base));
+    }
+    if let Some(index) = addr.index {
+        out = out.wrapping_add(read_gpr(cpu, index).wrapping_mul(addr.scale as u64));
+    }
+    out = out.wrapping_add(addr.disp as i64 as u64);
+    out
+}
+
+fn read_op<B: Tier1Bus>(
+    inst: &DecodedInst,
+    cpu: &CpuState,
+    bus: &B,
+    op: &Operand,
+    width: Width,
+) -> u64 {
+    match op {
+        Operand::Imm(v) => width.truncate(*v),
+        Operand::Reg(r) => read_gpr_part(cpu, r.gpr, width, r.high8),
+        Operand::Mem(addr) => bus.read(calc_addr(inst, cpu, addr), width),
+    }
+}
+
+fn write_op<B: Tier1Bus>(
+    inst: &DecodedInst,
+    cpu: &mut CpuState,
+    bus: &mut B,
+    op: &Operand,
+    width: Width,
+    value: u64,
+) {
+    let v = width.truncate(value);
+    match op {
+        Operand::Imm(_) => panic!("cannot write to immediate"),
+        Operand::Reg(r) => write_gpr_part(cpu, r.gpr, width, r.high8, v),
+        Operand::Mem(addr) => bus.write(calc_addr(inst, cpu, addr), width, v),
+    }
+}
+
+fn exec_x86_block<B: Tier1Bus>(insts: &[DecodedInst], cpu: &mut CpuState, bus: &mut B) {
+    for inst in insts {
+        let next = inst.next_rip();
+        match &inst.kind {
+            InstKind::Mov { dst, src, width } => {
+                let v = read_op(inst, cpu, bus, src, *width);
+                write_op(inst, cpu, bus, dst, *width, v);
+                cpu.rip = next;
+            }
+            InstKind::Lea { dst, addr, width } => {
+                let a = calc_addr(inst, cpu, addr);
+                write_gpr_part(cpu, dst.gpr, *width, false, a);
+                cpu.rip = next;
+            }
+            InstKind::Alu {
+                op,
+                dst,
+                src,
+                width,
+            } => {
+                let l = read_op(inst, cpu, bus, dst, *width);
+                let r = read_op(inst, cpu, bus, src, *width);
+                let (res, flags) = match op {
+                    AluOp::Add => {
+                        let res = width.truncate(l.wrapping_add(r));
+                        (res, compute_add_flags(*width, l, r, res))
+                    }
+                    AluOp::Sub => {
+                        let res = width.truncate(l.wrapping_sub(r));
+                        (res, compute_sub_flags(*width, l, r, res))
+                    }
+                    AluOp::And => {
+                        let res = width.truncate(l & r);
+                        (res, compute_logic_flags(*width, res))
+                    }
+                    AluOp::Or => {
+                        let res = width.truncate(l | r);
+                        (res, compute_logic_flags(*width, res))
+                    }
+                    AluOp::Xor => {
+                        let res = width.truncate(l ^ r);
+                        (res, compute_logic_flags(*width, res))
+                    }
+                };
+                write_flagset(cpu, FlagSet::ALU, flags);
+                write_op(inst, cpu, bus, dst, *width, res);
+                cpu.rip = next;
+            }
+            InstKind::Cmp { lhs, rhs, width } => {
+                let l = read_op(inst, cpu, bus, lhs, *width);
+                let r = read_op(inst, cpu, bus, rhs, *width);
+                let res = width.truncate(l.wrapping_sub(r));
+                write_flagset(cpu, FlagSet::ALU, compute_sub_flags(*width, l, r, res));
+                cpu.rip = next;
+            }
+            InstKind::Test { lhs, rhs, width } => {
+                let l = read_op(inst, cpu, bus, lhs, *width);
+                let r = read_op(inst, cpu, bus, rhs, *width);
+                let res = width.truncate(l & r);
+                write_flagset(cpu, FlagSet::ALU, compute_logic_flags(*width, res));
+                cpu.rip = next;
+            }
+            InstKind::Inc { dst, width } => {
+                let l = read_op(inst, cpu, bus, dst, *width);
+                let res = width.truncate(l.wrapping_add(1));
+                let flags = compute_add_flags(*width, l, 1, res);
+                write_flagset(cpu, FlagSet::ALU.without(FlagSet::CF), flags);
+                write_op(inst, cpu, bus, dst, *width, res);
+                cpu.rip = next;
+            }
+            InstKind::Dec { dst, width } => {
+                let l = read_op(inst, cpu, bus, dst, *width);
+                let res = width.truncate(l.wrapping_sub(1));
+                let flags = compute_sub_flags(*width, l, 1, res);
+                write_flagset(cpu, FlagSet::ALU.without(FlagSet::CF), flags);
+                write_op(inst, cpu, bus, dst, *width, res);
+                cpu.rip = next;
+            }
+            InstKind::Push { src } => {
+                let v = read_op(inst, cpu, bus, src, Width::W64);
+                let rsp = read_gpr(cpu, Gpr::Rsp);
+                let new_rsp = rsp.wrapping_sub(8);
+                write_gpr(cpu, Gpr::Rsp, new_rsp);
+                bus.write(new_rsp, Width::W64, v);
+                cpu.rip = next;
+            }
+            InstKind::Pop { dst } => {
+                let rsp = read_gpr(cpu, Gpr::Rsp);
+                let v = bus.read(rsp, Width::W64);
+                write_gpr(cpu, Gpr::Rsp, rsp.wrapping_add(8));
+                write_op(inst, cpu, bus, dst, Width::W64, v);
+                cpu.rip = next;
+            }
+            InstKind::Setcc { cond, dst } => {
+                let v = eval_cond(cpu, *cond) as u64;
+                write_op(inst, cpu, bus, dst, Width::W8, v);
+                cpu.rip = next;
+            }
+            InstKind::Cmovcc {
+                cond,
+                dst,
+                src,
+                width,
+            } => {
+                if eval_cond(cpu, *cond) {
+                    let v = read_op(inst, cpu, bus, src, *width);
+                    write_gpr_part(cpu, dst.gpr, *width, false, v);
+                }
+                cpu.rip = next;
+            }
+            InstKind::JmpRel { target } => {
+                cpu.rip = *target;
+                break;
+            }
+            InstKind::JccRel { cond, target } => {
+                cpu.rip = if eval_cond(cpu, *cond) { *target } else { next };
+                break;
+            }
+            InstKind::CallRel { target } => {
+                let rsp = read_gpr(cpu, Gpr::Rsp);
+                let new_rsp = rsp.wrapping_sub(8);
+                write_gpr(cpu, Gpr::Rsp, new_rsp);
+                bus.write(new_rsp, Width::W64, next);
+                cpu.rip = *target;
+                break;
+            }
+            InstKind::Ret => {
+                let rsp = read_gpr(cpu, Gpr::Rsp);
+                let target = bus.read(rsp, Width::W64);
+                write_gpr(cpu, Gpr::Rsp, rsp.wrapping_add(8));
+                cpu.rip = target;
+                break;
+            }
+            InstKind::Invalid => {
+                cpu.rip = next;
+                break;
+            }
+        }
+    }
+}
+
+fn assert_block_ir(
+    code: &[u8],
+    entry_rip: u64,
+    cpu: CpuState,
+    mut bus: SimpleBus,
+    expected_ir: &str,
+) {
+    bus.load(entry_rip, code);
+
+    let block = discover_block(&bus, entry_rip, BlockLimits::default());
+    let ir = translate_block(&block);
+    assert_eq!(ir.to_text(), expected_ir);
+
+    let cpu_initial = cpu;
+    let mut cpu_x86 = cpu_initial.clone();
+    let mut bus_x86 = bus.clone();
+    exec_x86_block(&block.insts, &mut cpu_x86, &mut bus_x86);
+
+    let mut bus_ir = bus;
+    let mut cpu_ir_bytes = vec![0u8; abi::CPU_STATE_SIZE as usize];
+    write_cpu_to_wasm_bytes(&cpu_initial, &mut cpu_ir_bytes);
+    let _ = aero_jit_x86::tier1::ir::interp::execute_block(&ir, &mut cpu_ir_bytes, &mut bus_ir);
+
+    assert_eq!(
+        CpuSnapshot::from_wasm_bytes(&cpu_ir_bytes),
+        CpuSnapshot::from_cpu(&cpu_x86),
+        "CPU state mismatch\nIR:\n{}\n",
+        ir.to_text()
+    );
+    assert_eq!(bus_ir.mem(), bus_x86.mem(), "memory mismatch");
+}
+
+#[test]
+fn mov_add_cmp_sete_ret() {
+    // mov eax, 5
+    // add eax, 7
+    // cmp eax, 12
+    // sete al
+    // ret
+    let code = [
+        0xb8, 0x05, 0x00, 0x00, 0x00, // mov eax, 5
+        0x83, 0xc0, 0x07, // add eax, 7
+        0x83, 0xf8, 0x0c, // cmp eax, 12
+        0x0f, 0x94, 0xc0, // sete al
+        0xc3, // ret
+    ];
+
+    let entry = 0x1000u64;
+    let mut cpu = CpuState::default();
+    cpu.rip = entry;
+    write_gpr(&mut cpu, Gpr::Rsp, 0x8000);
+
+    let mut bus = SimpleBus::new(0x10000);
+    bus.write(0x8000, Width::W64, 0x2000);
+
+    let expected = "\
+block 0x1000:
+  v0 = const.i32 0x5
+  write.eax v0
+  v1 = read.eax
+  v2 = const.i32 0x7
+  v3 = add.i32 v1, v2 ; flags=CF|PF|AF|ZF|SF|OF
+  write.eax v3
+  v4 = read.eax
+  v5 = const.i32 0xc
+  cmpflags.i32 v4, v5 ; flags=CF|PF|AF|ZF|SF|OF
+  v6 = evalcond.e
+  write.al v6
+  v7 = read.rsp
+  v8 = load.i64 [v7]
+  v9 = const.i64 0x8
+  v10 = add.i64 v7, v9
+  write.rsp v10
+  term jmp [v8]
+";
+
+    assert_block_ir(&code, entry, cpu, bus, expected);
+}
+
+#[test]
+fn call_rel32() {
+    // call 0x1010
+    let code = [
+        0xe8, 0x0b, 0x00, 0x00, 0x00, // call +0x0b (next rip = 0x1005)
+    ];
+    let entry = 0x1000u64;
+
+    let mut cpu = CpuState::default();
+    cpu.rip = entry;
+    write_gpr(&mut cpu, Gpr::Rsp, 0x9000);
+
+    let bus = SimpleBus::new(0x10000);
+
+    let expected = "\
+block 0x1000:
+  v0 = read.rsp
+  v1 = const.i64 0x8
+  v2 = sub.i64 v0, v1
+  write.rsp v2
+  v3 = const.i64 0x1005
+  store.i64 [v2], v3
+  term jmp 0x1010
+";
+
+    assert_block_ir(&code, entry, cpu, bus, expected);
+}
+
+#[test]
+fn cmp_jne_not_taken() {
+    // mov eax, 0
+    // cmp eax, 0
+    // jne +5
+    let code = [
+        0xb8, 0x00, 0x00, 0x00, 0x00, // mov eax, 0
+        0x83, 0xf8, 0x00, // cmp eax, 0
+        0x75, 0x05, // jne +5
+    ];
+    let entry = 0x3000u64;
+
+    let mut cpu = CpuState::default();
+    cpu.rip = entry;
+
+    let bus = SimpleBus::new(0x10000);
+
+    let expected = "\
+block 0x3000:
+  v0 = const.i32 0x0
+  write.eax v0
+  v1 = read.eax
+  v2 = const.i32 0x0
+  cmpflags.i32 v1, v2 ; flags=CF|PF|AF|ZF|SF|OF
+  v3 = evalcond.ne
+  term jcc v3, 0x300f, 0x300a
+";
+
+    assert_block_ir(&code, entry, cpu, bus, expected);
+}
+
+#[test]
+fn lea_sib_ret() {
+    // lea rax, [rcx + rdx*4 + 0x10]
+    // ret
+    let code = [
+        0x48, 0x8d, 0x44, 0x91, 0x10, // lea rax, [rcx + rdx*4 + 0x10]
+        0xc3, // ret
+    ];
+    let entry = 0x4000u64;
+
+    let mut cpu = CpuState::default();
+    cpu.rip = entry;
+    write_gpr(&mut cpu, Gpr::Rsp, 0x8800);
+    write_gpr(&mut cpu, Gpr::Rcx, 0x100);
+    write_gpr(&mut cpu, Gpr::Rdx, 0x2);
+
+    let mut bus = SimpleBus::new(0x10000);
+    bus.write(0x8800, Width::W64, 0x5000);
+
+    let expected = "\
+block 0x4000:
+  v0 = read.rcx
+  v1 = read.rdx
+  v2 = const.i64 0x2
+  v3 = shl.i64 v1, v2
+  v4 = add.i64 v0, v3
+  v5 = const.i64 0x10
+  v6 = add.i64 v4, v5
+  write.rax v6
+  v7 = read.rsp
+  v8 = load.i64 [v7]
+  v9 = const.i64 0x8
+  v10 = add.i64 v7, v9
+  write.rsp v10
+  term jmp [v8]
+";
+
+    assert_block_ir(&code, entry, cpu, bus, expected);
+}

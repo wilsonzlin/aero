@@ -22,7 +22,7 @@ async function handleCompileRequest(req: CompileBlockRequest & { type: 'CompileB
     return;
   }
 
-  // Placeholder for the real Rust JIT (`crates/aero_jit` via wasm-bindgen).
+  // Placeholder for the real Rust JIT (`crates/aero-jit-proto` via wasm-bindgen).
   // The glue is identical: generate bytes → validate → WebAssembly.compile().
   const wasmBytes = copyWasmBytes(JIT_BLOCK_WASM_BYTES);
 
