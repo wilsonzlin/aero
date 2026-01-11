@@ -96,6 +96,7 @@ The legacy USB stack in `crates/emulator` (`emulator::io::usb`) is considered **
         - `web/src/usb/usb_proxy_protocol.ts` (`usb.ringAttach`)
         - `web/src/usb/usb_broker.ts`
         - `web/src/usb/webusb_passthrough_runtime.ts`
+        - `web/src/usb/usb_proxy_ring_dispatcher.ts` (completion-ring fan-out when multiple runtimes subscribe)
 - Long-term, the UHCI controller should be integrated into the canonical VM wiring described by
   [ADR 0014](./0014-canonical-machine-stack.md):
   - `aero_machine::Machine` (in the I/O worker) owns the UHCI controller device model.

@@ -470,7 +470,7 @@ Recommended guardrails:
   - Main↔worker report proxying protocol: `web/src/hid/hid_proxy_protocol.ts`
   - SharedArrayBuffer report ring: `web/src/usb/hid_report_ring.ts`
   - WebUSB broker/executor: `web/src/usb/usb_broker.ts`, `web/src/usb/webusb_backend.ts`
-  - WebUSB proxy protocol + SAB ring fast path: `web/src/usb/usb_proxy_protocol.ts`, `web/src/usb/usb_proxy_ring.ts`
+  - WebUSB proxy protocol + SAB ring fast path: `web/src/usb/usb_proxy_protocol.ts`, `web/src/usb/usb_proxy_ring.ts`, `web/src/usb/usb_proxy_ring_dispatcher.ts`
   - Worker-side WebUSB passthrough runtime: `web/src/usb/webusb_passthrough_runtime.ts`
   - Guest-visible UHCI PCI device (production): `web/src/io/devices/uhci.ts`
   - (Dev/harness) Standalone WebUSB UHCI PCI device: `web/src/io/devices/uhci_webusb.ts`
