@@ -684,9 +684,10 @@ static void TestNegotiateFeaturesRejectNoVersion1(void)
 	st = VirtioPciModernTransportInit(&t, &os, VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT, 0x10000000u, sizeof(dev.Bar0));
 	assert(st == STATUS_SUCCESS);
 
-	negotiated = 0;
+	negotiated = 0xDEADBEEFDEADBEEFull;
 	st = VirtioPciModernTransportNegotiateFeatures(&t, 0, 0, &negotiated);
 	assert(st == STATUS_NOT_SUPPORTED);
+	assert(negotiated == 0);
 	assert((VirtioPciModernTransportGetStatus(&t) & VIRTIO_STATUS_FAILED) != 0);
 
 	VirtioPciModernTransportUninit(&t);
@@ -707,9 +708,10 @@ static void TestNegotiateFeaturesStrictRejectNoIndirectDesc(void)
 	st = VirtioPciModernTransportInit(&t, &os, VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT, 0x10000000u, sizeof(dev.Bar0));
 	assert(st == STATUS_SUCCESS);
 
-	negotiated = 0;
+	negotiated = 0xDEADBEEFDEADBEEFull;
 	st = VirtioPciModernTransportNegotiateFeatures(&t, 0, 0, &negotiated);
 	assert(st == STATUS_NOT_SUPPORTED);
+	assert(negotiated == 0);
 	assert((VirtioPciModernTransportGetStatus(&t) & VIRTIO_STATUS_FAILED) != 0);
 
 	VirtioPciModernTransportUninit(&t);
@@ -731,9 +733,10 @@ static void TestNegotiateFeaturesStrictRejectEventIdxOffered(void)
 	st = VirtioPciModernTransportInit(&t, &os, VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT, 0x10000000u, sizeof(dev.Bar0));
 	assert(st == STATUS_SUCCESS);
 
-	negotiated = 0;
+	negotiated = 0xDEADBEEFDEADBEEFull;
 	st = VirtioPciModernTransportNegotiateFeatures(&t, 0, (UINT64)1u << 29, &negotiated);
 	assert(st == STATUS_NOT_SUPPORTED);
+	assert(negotiated == 0);
 	assert((VirtioPciModernTransportGetStatus(&t) & VIRTIO_STATUS_FAILED) != 0);
 
 	VirtioPciModernTransportUninit(&t);
@@ -783,9 +786,10 @@ static void TestNegotiateFeaturesStrictRejectPackedRingOffered(void)
 	st = VirtioPciModernTransportInit(&t, &os, VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT, 0x10000000u, sizeof(dev.Bar0));
 	assert(st == STATUS_SUCCESS);
 
-	negotiated = 0;
+	negotiated = 0xDEADBEEFDEADBEEFull;
 	st = VirtioPciModernTransportNegotiateFeatures(&t, 0, (UINT64)1u << 34, &negotiated);
 	assert(st == STATUS_NOT_SUPPORTED);
+	assert(negotiated == 0);
 	assert((VirtioPciModernTransportGetStatus(&t) & VIRTIO_STATUS_FAILED) != 0);
 
 	VirtioPciModernTransportUninit(&t);
