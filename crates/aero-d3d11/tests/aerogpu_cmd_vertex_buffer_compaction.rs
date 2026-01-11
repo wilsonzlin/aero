@@ -1,6 +1,8 @@
 mod common;
 
-use aero_d3d11::input_layout::{fnv1a_32, AEROGPU_INPUT_LAYOUT_BLOB_MAGIC, AEROGPU_INPUT_LAYOUT_BLOB_VERSION};
+use aero_d3d11::input_layout::{
+    fnv1a_32, AEROGPU_INPUT_LAYOUT_BLOB_MAGIC, AEROGPU_INPUT_LAYOUT_BLOB_VERSION,
+};
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
 use aero_gpu::guest_memory::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::{
@@ -371,4 +373,3 @@ fn aerogpu_cmd_compacts_sparse_vertex_buffer_slots() {
         }
     });
 }
-

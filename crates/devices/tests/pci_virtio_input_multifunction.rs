@@ -153,11 +153,12 @@ fn virtio_input_is_exposed_as_multifunction_keyboard_and_mouse_pair() {
 
     let virtio_input_functions = found
         .iter()
-        .filter(|info| info.matches_vendor_device(PCI_VENDOR_ID_VIRTIO, PCI_DEVICE_ID_VIRTIO_INPUT_MODERN))
+        .filter(|info| {
+            info.matches_vendor_device(PCI_VENDOR_ID_VIRTIO, PCI_DEVICE_ID_VIRTIO_INPUT_MODERN)
+        })
         .count();
     assert_eq!(
         virtio_input_functions, 2,
         "expected exactly two virtio-input functions (keyboard + mouse)"
     );
 }
-

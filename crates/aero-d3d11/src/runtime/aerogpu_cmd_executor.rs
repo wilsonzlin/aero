@@ -2183,10 +2183,7 @@ impl AerogpuD3d11Executor {
     fn exec_create_sampler(&mut self, cmd_bytes: &[u8]) -> Result<()> {
         // struct aerogpu_cmd_create_sampler (28 bytes)
         if cmd_bytes.len() != 28 {
-            bail!(
-                "CREATE_SAMPLER: expected 28 bytes, got {}",
-                cmd_bytes.len()
-            );
+            bail!("CREATE_SAMPLER: expected 28 bytes, got {}", cmd_bytes.len());
         }
 
         let sampler_handle = read_u32_le(cmd_bytes, 8)?;
@@ -3004,7 +3001,8 @@ fn build_bind_groups(
     let mut out = Vec::with_capacity(group_layouts.len());
     for (group, cached_layout) in group_layouts.iter().enumerate() {
         let group_u32 = group as u32;
-        let group_bindings: Vec<&Binding> = bindings.iter().filter(|b| b.group == group_u32).collect();
+        let group_bindings: Vec<&Binding> =
+            bindings.iter().filter(|b| b.group == group_u32).collect();
 
         // Some constant-buffer bindings require an aligned staging buffer (WebGPU enforces a higher
         // offset alignment than D3D11). Build them up-front so we can safely reference them when

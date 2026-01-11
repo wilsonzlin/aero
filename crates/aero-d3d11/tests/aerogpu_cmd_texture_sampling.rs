@@ -1,7 +1,7 @@
 mod common;
 
 use std::fs;
- 
+
 use aero_d3d11::input_layout::fnv1a_32;
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
 use aero_gpu::VecGuestMemory;
@@ -30,11 +30,11 @@ const OPCODE_SET_SAMPLER_STATE: u32 = 0x0511;
 const OPCODE_CREATE_SAMPLER: u32 = 0x0520;
 const OPCODE_SET_SAMPLERS: u32 = 0x0522;
 const OPCODE_SET_CONSTANT_BUFFERS: u32 = 0x0523;
- 
+
 const OPCODE_CLEAR: u32 = 0x0600;
 const OPCODE_DRAW: u32 = 0x0601;
 const OPCODE_PRESENT: u32 = 0x0700;
- 
+
 const AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER: u32 = 1u32 << 0;
 const AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER: u32 = 1u32 << 2;
 const AEROGPU_RESOURCE_USAGE_TEXTURE: u32 = 1u32 << 3;
@@ -554,9 +554,7 @@ fn aerogpu_cmd_set_samplers_binds_created_sampler() {
         let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
             Ok(exec) => exec,
             Err(e) => {
-                eprintln!(
-                    "wgpu unavailable ({e:#}); skipping aerogpu_cmd set samplers bind test"
-                );
+                eprintln!("wgpu unavailable ({e:#}); skipping aerogpu_cmd set samplers bind test");
                 return;
             }
         };
