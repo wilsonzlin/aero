@@ -224,6 +224,9 @@ Guest Tools may support additional command-line flags. Common examples include:
 - `setup.cmd /nointegritychecks` / `setup.cmd /forcenointegritychecks` (x64: enable `nointegritychecks`; **not recommended**)
 - `setup.cmd /forcesigningpolicy:none|testsigning|nointegritychecks` (override `manifest.json` `signing_policy`)
 - `setup.cmd /noreboot` (do not prompt for reboot/shutdown at the end)
+- `setup.cmd /skipstorage` (alias: `/skip-storage`)  
+  Skip boot-critical virtio-blk storage pre-seeding. Intended for partial Guest Tools payloads (for example AeroGPU-only development builds).  
+  **Unsafe to switch the boot disk from AHCI → virtio-blk** until you later run `setup.cmd` again **without** `/skipstorage` (or manually replicate the registry/service steps).
 
 To see the supported options for your build, you can also run:
 
@@ -334,6 +337,12 @@ The safest approach is to get `setup.cmd` working, because it:
 - pre-seeds `HKLM\SYSTEM\CurrentControlSet\Control\CriticalDeviceDatabase\...` for the expected virtio-blk PCI IDs (based on `X:\config\devices.cmd`).
 
 If you cannot run `setup.cmd`, do **not** switch the boot disk to virtio-blk until you have replicated those registry/service steps.
+
+If you are using a **partial** Guest Tools build that does not include the virtio-blk storage driver (for example a GPU-only development build), you can still run:
+
+- `setup.cmd /skipstorage`
+
+to install certificates and stage the non-storage drivers. In that case, **leave the boot disk on AHCI** until you later re-run `setup.cmd` without `/skipstorage` using media that includes the virtio-blk driver (or you manually configure the service + CriticalDeviceDatabase keys).
 
 ## Step 4: Reboot (still on baseline devices)
 

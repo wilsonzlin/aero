@@ -699,6 +699,8 @@ $cfgGpuRegex = Build-HwidPrefixRegex $cfgGpuHwids
 $outDir = "C:\AeroGuestTools"
 $jsonPath = Join-Path $outDir "report.json"
 $txtPath = Join-Path $outDir "report.txt"
+$storagePreseedSkipMarker = Join-Path $outDir "storage-preseed.skipped.txt"
+$storagePreseedSkipped = (Test-Path $storagePreseedSkipMarker)
 
 $report = @{
     schema_version = 1
@@ -999,7 +1001,7 @@ try {
     $sum = ""
     $det = @()
 
-    $hasAny = (Test-Path $installLog) -or (Test-Path $pkgList) -or (Test-Path $certList)
+    $hasAny = (Test-Path $installLog) -or (Test-Path $pkgList) -or (Test-Path $certList) -or (Test-Path $storagePreseedSkipMarker)
     if (-not $hasAny) {
         $st = "WARN"
         $sum = "No Guest Tools setup state files found under " + $outDir + " (setup.cmd may not have been run yet)."
@@ -1007,6 +1009,7 @@ try {
         $sum = "install.log=" + (Test-Path $installLog) + ", installed-driver-packages=" + $gtInstalledDriverPackages.Count + ", installed-certs=" + $installedCertThumbprints.Count
         if (Test-Path $stateTestSign) { $det += "TestSigning was enabled by setup.cmd (marker file present)." }
         if (Test-Path $stateNoIntegrity) { $det += "nointegritychecks was enabled by setup.cmd (marker file present)." }
+        if (Test-Path $storagePreseedSkipMarker) { $det += "Storage pre-seeding was skipped by setup.cmd (/skipstorage) (marker file present)." }
     }
 
     $data = @{
@@ -1021,6 +1024,8 @@ try {
         testsigning_marker_exists = (Test-Path $stateTestSign)
         nointegritychecks_marker_path = $stateNoIntegrity
         nointegritychecks_marker_exists = (Test-Path $stateNoIntegrity)
+        storage_preseed_skipped_marker_path = $storagePreseedSkipMarker
+        storage_preseed_skipped_marker_exists = (Test-Path $storagePreseedSkipMarker)
     }
 
     Add-Check "guest_tools_setup_state" "Guest Tools Setup State" $st $sum $data $det
@@ -1959,6 +1964,10 @@ try {
 
 # --- virtio-blk storage service ---
 try {
+    $rerunHint = "Re-run setup.cmd"
+    if ($storagePreseedSkipped) { $rerunHint = "Run setup.cmd again without /skipstorage once virtio-blk drivers are available" }
+    $rerunHintSentence = $rerunHint + "."
+
     $candidates = @("viostor","aeroviostor","virtio_blk","virtio-blk","aerostor","aeroblk")
     if ($cfgVirtioBlkService) { $candidates = @($cfgVirtioBlkService) + $candidates }
     $candDedup = @()
@@ -2005,9 +2014,14 @@ try {
     $svcSummary = ""
     $svcDetails = @()
 
+    if ($storagePreseedSkipped) {
+        $svcDetails += ("Storage pre-seeding was intentionally skipped by setup.cmd (/skipstorage). Do NOT switch the boot disk to virtio-blk until pre-seeding has been performed (marker: " + $storagePreseedSkipMarker + ").")
+    }
+
     if (-not $found) {
         $svcStatus = "WARN"
         $svcSummary = "virtio-blk service not found (tried: " + ($candidates -join ", ") + ")."
+        if ($storagePreseedSkipped) { $svcSummary += " NOTE: storage pre-seeding was skipped by setup.cmd (/skipstorage)." }
         $svcDetails += ("If Aero storage drivers are installed, expected a driver service like '" + $expected + "'.")
         $svcDetails += "See: docs/windows7-driver-troubleshooting.md#issue-storage-controller-switch-gotchas-boot-loops-0x7b"
     } else {
@@ -2049,6 +2063,7 @@ try {
         $found.resolved_image_exists = $resolvedImageExists
 
         $svcSummary = "Found service '" + $found.name + "': state=" + $found.state + ", start_mode=" + $found.start_mode
+        if ($storagePreseedSkipped) { $svcSummary += " NOTE: storage pre-seeding was skipped by setup.cmd (/skipstorage)." }
         if ($found.registry_start_type) {
             $svcDetails += ("Registry Start=" + $found.registry_start_value + " (" + $found.registry_start_type + ")")
         }
@@ -2076,16 +2091,16 @@ try {
         if (-not $expectedSysExists -and ($resolvedImageExists -ne $true)) {
             $svcStatus = Merge-Status $svcStatus "WARN"
             $bootCriticalIssue = $true
-            $svcDetails += "Storage driver binary not found under System32\\drivers. Switching the boot disk to virtio-blk may fail (0x7B). Re-run setup.cmd."
+            $svcDetails += ("Storage driver binary not found under System32\\drivers. Switching the boot disk to virtio-blk may fail (0x7B). " + $rerunHintSentence)
         }
         if ($found.registry_start_value -eq $null) {
             $svcStatus = Merge-Status $svcStatus "WARN"
             $bootCriticalIssue = $true
-            $svcDetails += "Storage service Start value is missing/unreadable. Expected Start=0 (BOOT_START). Switching the boot disk to virtio-blk may fail (0x7B)."
+            $svcDetails += ("Storage service Start value is missing/unreadable. Expected Start=0 (BOOT_START). Switching the boot disk to virtio-blk may fail (0x7B). " + $rerunHintSentence)
         } elseif ($found.registry_start_value -ne 0) {
             $svcStatus = Merge-Status $svcStatus "WARN"
             $bootCriticalIssue = $true
-            $svcDetails += "Storage service is not configured as BOOT_START (Start=0). Switching the boot disk to virtio-blk may fail (0x7B). Re-run setup.cmd."
+            $svcDetails += ("Storage service is not configured as BOOT_START (Start=0). Switching the boot disk to virtio-blk may fail (0x7B). " + $rerunHintSentence)
         }
         if ($found.registry_type -ne $null -and $found.registry_type -ne 1) {
             $svcStatus = Merge-Status $svcStatus "WARN"
@@ -2126,6 +2141,10 @@ try {
 
 # --- virtio-blk boot-critical registry (CriticalDeviceDatabase) ---
 try {
+    $rerunHint = "Re-run setup.cmd"
+    if ($storagePreseedSkipped) { $rerunHint = "Run setup.cmd again without /skipstorage once virtio-blk drivers are available" }
+    $rerunHintSentence = $rerunHint + "."
+
     if (-not $cfgVirtioBlkService -or -not $cfgVirtioBlkHwids -or $cfgVirtioBlkHwids.Count -eq 0) {
         $data = @{
             config_loaded = $gtConfig.found
@@ -2240,19 +2259,21 @@ try {
         if ($missingRequired -gt 0 -or $mismatchService -gt 0 -or $mismatchClass -gt 0 -or $mismatchGuid -gt 0) {
             $status = "WARN"
         }
-
+ 
         $summary = "Checked CriticalDeviceDatabase for service '" + $expectedService + "' (HWIDs: " + $cfgVirtioBlkHwids.Count + "; missing_required=" + $missingRequired + ", missing_optional=" + $missingOptional + ", mismatched_service=" + $mismatchService + ", mismatched_class=" + $mismatchClass + ", mismatched_guid=" + $mismatchGuid + ")"
+        if ($storagePreseedSkipped) { $summary += " NOTE: storage pre-seeding was skipped by setup.cmd (/skipstorage)." }
 
         $details = @()
+        if ($storagePreseedSkipped) { $details += "Storage pre-seeding was intentionally skipped by setup.cmd (/skipstorage). Do NOT switch the boot disk to virtio-blk unless you later pre-seed storage (setup.cmd without /skipstorage) or manually configure the required keys." }
         if ($missingRequired -gt 0) {
             $details += "Missing CriticalDeviceDatabase keys for the configured virtio-blk HWIDs can cause 0x7B (INACCESSIBLE_BOOT_DEVICE) when switching the boot disk to virtio-blk."
             foreach ($h in $perHwid) {
                 if (-not $h.required_key_exists) { $details += ("FAIL: Missing key: " + $h.base_key) }
             }
         }
-        if ($mismatchService -gt 0) { $details += "Some CriticalDeviceDatabase keys map to a different storage service than expected. Re-run setup.cmd and ensure config\\devices.cmd matches the storage driver's INF AddService name." }
+        if ($mismatchService -gt 0) { $details += ("Some CriticalDeviceDatabase keys map to a different storage service than expected. " + $rerunHintSentence + " Ensure config\\devices.cmd matches the storage driver's INF AddService name.") }
         if ($missingOptional -gt 0) { $details += "Some compatible-ID keys (&CC_010000 / &CC_0100) are missing. Usually OK, but adding them improves early-boot matching coverage." }
-        if ($mismatchClass -gt 0 -or $mismatchGuid -gt 0) { $details += "Some keys have unexpected Class/ClassGUID. Re-run setup.cmd to regenerate CriticalDeviceDatabase entries." }
+        if ($mismatchClass -gt 0 -or $mismatchGuid -gt 0) { $details += ("Some keys have unexpected Class/ClassGUID. " + $rerunHint + " to regenerate CriticalDeviceDatabase entries.") }
 
         if ($status -ne "PASS") {
             $details += "See: docs/windows7-driver-troubleshooting.md#issue-storage-controller-switch-gotchas-boot-loops-0x7b"

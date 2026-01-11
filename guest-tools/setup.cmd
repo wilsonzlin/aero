@@ -28,6 +28,7 @@ set "PKG_LIST=%INSTALL_ROOT%\installed-driver-packages.txt"
 set "CERT_LIST=%INSTALL_ROOT%\installed-certs.txt"
 set "STATE_TESTSIGN=%INSTALL_ROOT%\testsigning.enabled-by-aero.txt"
 set "STATE_NOINTEGRITY=%INSTALL_ROOT%\nointegritychecks.enabled-by-aero.txt"
+set "STATE_STORAGE_SKIPPED=%INSTALL_ROOT%\storage-preseed.skipped.txt"
 
 set "ARG_FORCE=0"
 set "ARG_STAGE_ONLY=0"
@@ -36,6 +37,7 @@ set "ARG_SKIP_TESTSIGN=0"
 set "ARG_FORCE_NOINTEGRITY=0"
 set "ARG_FORCE_SIGNING_POLICY="
 set "ARG_NO_REBOOT=0"
+set "ARG_SKIP_STORAGE=0"
 
 set "SIGNING_POLICY=testsigning"
 
@@ -65,6 +67,8 @@ for %%A in (%*) do (
   if /i "%%~A"=="/forcesigningpolicy:nointegritychecks" set "ARG_FORCE_SIGNING_POLICY=nointegritychecks"
   if /i "%%~A"=="/noreboot" set "ARG_NO_REBOOT=1"
   if /i "%%~A"=="/no-reboot" set "ARG_NO_REBOOT=1"
+  if /i "%%~A"=="/skipstorage" set "ARG_SKIP_STORAGE=1"
+  if /i "%%~A"=="/skip-storage" set "ARG_SKIP_STORAGE=1"
 )
 
 rem /force implies fully non-interactive behavior.
@@ -96,15 +100,33 @@ call :check_kb3033929
 call :install_certs || goto :fail
 call :maybe_enable_testsigning || goto :fail
 call :stage_all_drivers || goto :fail
-call :preseed_storage_boot || goto :fail
+if "%ARG_SKIP_STORAGE%"=="1" (
+  call :skip_storage_preseed || goto :fail
+) else (
+  call :clear_storage_skip_marker
+  call :preseed_storage_boot || goto :fail
+)
 
 call :log ""
 call :log "Setup complete."
 call :log "Next steps:"
 call :log "  1) Power off or reboot the VM."
-call :log "  2) Switch devices to virtio (blk/net/snd/input) and Aero GPU."
+if "%ARG_SKIP_STORAGE%"=="1" (
+  call :log "  2) Switch NON-BOOT devices to virtio (net/snd/input) and Aero GPU."
+  call :log "     Leave the boot disk on AHCI. Storage pre-seeding was skipped (/skipstorage)."
+) else (
+  call :log "  2) Switch devices to virtio (blk/net/snd/input) and Aero GPU."
+)
 call :log "  3) Boot Windows; Plug and Play should bind the devices to Aero drivers."
 call :log ""
+if "%ARG_SKIP_STORAGE%"=="1" (
+  call :log "WARNING: Boot-critical virtio-blk storage pre-seeding was skipped."
+  call :log "         Switching the boot disk from AHCI -> virtio-blk may BSOD with 0x7B (INACCESSIBLE_BOOT_DEVICE)"
+  call :log "         because the required registry/service plumbing was not written."
+  call :log "         If you later want to boot from virtio-blk, re-run setup.cmd without /skipstorage using a Guest Tools build"
+  call :log "         that includes the virtio-blk storage driver."
+  call :log ""
+)
 call :log "Recovery if boot fails after switching storage to virtio-blk:"
 call :log "  - switch storage back to AHCI and boot"
 call :log "  - review %LOG%"
@@ -130,6 +152,7 @@ echo   /forcenointegritychecks  Same as /nointegritychecks
 echo   /forcesigningpolicy:none^|testsigning^|nointegritychecks
 echo                      Override the signing policy read from manifest.json (if present)
 echo   /noreboot            Do not prompt to reboot/shutdown at the end
+echo   /skipstorage         Skip boot-critical virtio-blk storage pre-seeding (alias: /skip-storage; advanced; unsafe to switch boot disk to virtio-blk)
 echo.
 echo Logs are written to C:\AeroGuestTools\install.log
 popd >nul 2>&1
@@ -824,6 +847,30 @@ for %%H in (%AERO_VIRTIO_BLK_HWIDS%) do (
   call :add_cdd_keys "%%~H" "%STOR_SERVICE%" "%SCSIADAPTER_GUID%" || exit /b 1
 )
 
+exit /b 0
+
+:skip_storage_preseed
+call :log ""
+call :log "Skipping boot-critical virtio-blk storage pre-seeding (/skipstorage)."
+call :log "WARNING: Do NOT switch the boot disk from AHCI -> virtio-blk after this run."
+call :log "         Windows may BSOD with 0x7B (INACCESSIBLE_BOOT_DEVICE) because storage registry/service keys were not written."
+call :log "         Re-run setup.cmd without /skipstorage once virtio-blk drivers are available on the Guest Tools media."
+
+> "%STATE_STORAGE_SKIPPED%" echo storage pre-seeding intentionally skipped by Aero Guest Tools on %DATE% %TIME%
+if not exist "%STATE_STORAGE_SKIPPED%" (
+  call :log "ERROR: Failed to write marker file: %STATE_STORAGE_SKIPPED%"
+  exit /b 1
+)
+call :log "Wrote marker file: %STATE_STORAGE_SKIPPED%"
+exit /b 0
+
+:clear_storage_skip_marker
+if exist "%STATE_STORAGE_SKIPPED%" (
+  del /q "%STATE_STORAGE_SKIPPED%" >nul 2>&1
+  if exist "%STATE_STORAGE_SKIPPED%" (
+    call :log "WARNING: Failed to remove marker file: %STATE_STORAGE_SKIPPED%"
+  )
+)
 exit /b 0
 
 :add_cdd_keys

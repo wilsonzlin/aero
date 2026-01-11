@@ -35,10 +35,12 @@ Designed for the standard flow:
 4. Stages all driver packages found under:
    - `drivers\x86\` (on Win7 x86)
    - `drivers\amd64\` (on Win7 x64)
-5. Adds boot-critical registry plumbing for switching the boot disk from AHCI → virtio-blk:
+5. Adds boot-critical registry plumbing for switching the boot disk from AHCI → virtio-blk (**required before switching storage**):
    - Validates that the configured storage service name (`AERO_VIRTIO_BLK_SERVICE`) exists in at least one staged driver INF as an `AddService` name (fails fast if not).
    - `HKLM\SYSTEM\CurrentControlSet\Control\CriticalDeviceDatabase\PCI#VEN_xxxx&DEV_yyyy...`
    - `HKLM\SYSTEM\CurrentControlSet\Services\<storage-service>\Start=0` etc.
+
+   This step can be skipped with `/skipstorage` (alias: `/skip-storage`) for GPU-only installs / development builds that do not ship the virtio-blk driver.
 
 ### Output
 
@@ -47,6 +49,7 @@ Designed for the standard flow:
 - `C:\AeroGuestTools\install.log`
 - `C:\AeroGuestTools\installed-driver-packages.txt` (for best-effort uninstall)
 - `C:\AeroGuestTools\installed-certs.txt` (for best-effort uninstall)
+- `C:\AeroGuestTools\storage-preseed.skipped.txt` (only when `/skipstorage` is used)
 
 ### Usage
 
@@ -91,6 +94,9 @@ Optional flags:
   Override the `signing_policy` read from `manifest.json` (if present).
 - `setup.cmd /noreboot`  
   Do not prompt for shutdown/reboot at the end.
+- `setup.cmd /skipstorage` (alias: `/skip-storage`)  
+  Skip boot-critical virtio-blk storage pre-seeding. This is intended for partial Guest Tools payloads (for example AeroGPU-only development builds).  
+  **Do not switch the boot disk from AHCI → virtio-blk** unless you later re-run `setup.cmd` without `/skipstorage` using Guest Tools media that includes the virtio-blk driver; otherwise Windows may BSOD with `0x0000007B INACCESSIBLE_BOOT_DEVICE`.
 
 Exit codes (for automation):
 
