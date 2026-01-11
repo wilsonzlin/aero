@@ -1302,6 +1302,7 @@ static int RunSharedSurfaceTest(int argc, char** argv) {
         "[--require-did=0x####] [--allow-microsoft] [--allow-non-aerogpu] [--require-umd]",
         kTestName);
     aerogpu_test::PrintfStdout("Note: --dump implies --validate-sharing.");
+    aerogpu_test::PrintfStdout("Note: window is hidden by default; pass --show to display it.");
     aerogpu_test::PrintfStdout(
         "Internal: %s.exe --child --resource=texture|rendertarget --shared-handle=0x... "
         "[--ready-event=NAME --opened-event=NAME --done-event=NAME] [--require-umd] (used by parent)",
