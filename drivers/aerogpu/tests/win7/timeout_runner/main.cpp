@@ -8,6 +8,10 @@ static void PrintUsage() {
   printf("\n");
   printf("Runs a child process with a wall-clock timeout.\n");
   printf("If the child exceeds the timeout, it is terminated and a non-zero exit code is returned.\n");
+  printf("\n");
+  printf("JSON reporting:\n");
+  printf("If the child command line includes --json[=PATH], this wrapper deletes any stale JSON\n");
+  printf("output up front and writes a fallback JSON report on timeout/crash/missing output.\n");
 }
 
 static std::string QuoteArgForCreateProcess(const char* arg) {
