@@ -296,9 +296,10 @@ FenceSnapshot refresh_fence_snapshot(Adapter* adapter) {
   // it to at most once per millisecond tick to avoid burning CPU in the kernel.
   //
   // Note: we intentionally do *not* use the escape's \"last submitted\" fence as
-  // a per-submission fence ID. Under multi-process workloads (DWM + apps) it is
-  // global and can be dominated by another process's submissions. Per-submission
-  // fence IDs must come from the runtime callbacks (SubmissionFenceId).
+  // a per-submission fence ID when polling. Under multi-process workloads (DWM +
+  // apps) it is global and can be dominated by another process's submissions.
+  // Per-submission fence IDs must come from the runtime callbacks
+  // (SubmissionFenceId).
   const uint64_t now_ms = monotonic_ms();
   bool should_query_kmd = false;
   {
@@ -2054,7 +2055,6 @@ uint64_t submit(Device* dev, bool is_present) {
       adapter->next_fence = std::max(adapter->next_fence, adapter->last_submitted_fence + 1);
       adapter->last_kmd_fence_query_ms = monotonic_ms();
       updated = (adapter->last_submitted_fence != prev_submitted) || (adapter->completed_fence != prev_completed);
-      fence = adapter->last_submitted_fence;
     }
 
     if (fence) {
@@ -2062,7 +2062,6 @@ uint64_t submit(Device* dev, bool is_present) {
       const uint64_t prev_submitted = adapter->last_submitted_fence;
       adapter->last_submitted_fence = std::max(adapter->last_submitted_fence, fence);
       adapter->next_fence = std::max(adapter->next_fence, adapter->last_submitted_fence + 1);
-      fence = adapter->last_submitted_fence;
       updated = updated || (adapter->last_submitted_fence != prev_submitted);
     }
   }
