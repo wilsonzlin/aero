@@ -35,8 +35,15 @@ So, a fully-qualified expected HWID looks like:
 
 * `PCI\VEN_1AF4&DEV_1059&SUBSYS_00031AF4&REV_01`
 
-The INF should still match the **short** `PCI\VEN_1AF4&DEV_1059` form so that it can bind even if a
-different hypervisor uses different subsystem IDs/revision IDs.
+The Aero driver INF is intentionally **revision-gated** so it will not bind to devices that do not
+claim to implement contract v1:
+
+* `PCI\VEN_1AF4&DEV_1059&REV_01`
+
+For additional safety you can also match the subsystem-qualified form, but that is currently
+commented out in the INF:
+
+* `PCI\VEN_1AF4&DEV_1059&SUBSYS_00031AF4&REV_01`
 
 ## QEMU mapping
 
@@ -53,6 +60,19 @@ means Windows will see `DEV_1018` unless you explicitly disable legacy mode:
 ```bash
 -device virtio-sound-pci,disable-legacy=on
 ```
+
+### QEMU vs Aero contract v1 (REV_01)
+
+The Aero INF matches `REV_01` (contract v1). Many QEMU device models report `REV_00` by default, so
+Windows will not bind the Aero driver unless the device reports `REV_01`.
+
+If you see `REV_00` in Device Manager → Hardware Ids, you have a few options:
+
+* If your QEMU build supports overriding PCI identification fields, set the revision/subsystem to
+  match the Aero contract v1 values. (Some builds expose `x-pci-*` properties; consult
+  `qemu-system-x86_64 -device virtio-sound-pci,help`.)
+* Alternatively, for bring-up on stock QEMU you can temporarily loosen the INF match to drop the
+  `&REV_01` constraint (not recommended for Aero contract conformance).
 
 ### Verify the emitted PCI ID (no guest required)
 
@@ -71,7 +91,6 @@ Audio: PCI device 1af4:1059
 ## Windows 7 caveats
 
 * The “Hardware Ids” list in Device Manager includes more-specific forms (with `SUBSYS_...` and
-  `REV_...`). The INF should match at least the short form `PCI\VEN_1AF4&DEV_1059`.
-* The transitional ID `PCI\VEN_1AF4&DEV_1018` may be kept in the INF to ease bring-up on QEMU
-  defaults, but **Aero contract v1 is modern-only** (use `disable-legacy=on` and validate `DEV_1059`
-  when testing contract conformance).
+  `REV_...`). The Aero INF matches the revision-gated form `PCI\VEN_1AF4&DEV_1059&REV_01`.
+* The transitional ID `PCI\VEN_1AF4&DEV_1018` exists in the virtio spec, but **Aero contract v1 is
+  modern-only** (use `disable-legacy=on` and validate that Windows sees `DEV_1059`).

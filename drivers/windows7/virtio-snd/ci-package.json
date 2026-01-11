@@ -1,4 +1,10 @@
 {
   "$schema": "../../../ci/driver-package.schema.json",
-  "additionalFiles": ["docs/README.md", "docs/pci-hwids.md", "tests/qemu/README.md"]
+  "additionalFiles": [
+    "docs/README.md",
+    "docs/pci-hwids.md",
+    "docs/portcls-wavert-design.md",
+    "tests/offline-install/README.md",
+    "tests/qemu/README.md"
+  ]
 }
