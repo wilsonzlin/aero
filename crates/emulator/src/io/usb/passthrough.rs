@@ -73,6 +73,7 @@ struct ControlInflight {
 #[derive(Debug, Clone)]
 struct EpInflight {
     id: u64,
+    len: usize,
 }
 
 #[derive(Debug)]
@@ -265,10 +266,17 @@ impl UsbDeviceModel for UsbPassthroughDevice {
 
     fn handle_in_transfer(&mut self, ep: u8, len: usize) -> UsbInResult {
         if let Some(inflight) = self.ep_inflight.get(&ep) {
-            if let Some(result) = self.take_result(inflight.id) {
+            let inflight_id = inflight.id;
+            let inflight_len = inflight.len;
+            if let Some(result) = self.take_result(inflight_id) {
                 self.ep_inflight.remove(&ep);
                 return match result {
-                    UsbHostResult::OkIn { data } => UsbInResult::Data(data),
+                    UsbHostResult::OkIn { mut data } => {
+                        if data.len() > inflight_len {
+                            data.truncate(inflight_len);
+                        }
+                        UsbInResult::Data(data)
+                    }
                     UsbHostResult::Stall
                     | UsbHostResult::Timeout
                     | UsbHostResult::Error(_)
@@ -281,7 +289,7 @@ impl UsbDeviceModel for UsbPassthroughDevice {
         let id = self.alloc_id();
         self.actions
             .push_back(UsbHostAction::BulkIn { id, ep, len });
-        self.ep_inflight.insert(ep, EpInflight { id });
+        self.ep_inflight.insert(ep, EpInflight { id, len });
         UsbInResult::Nak
     }
 
@@ -306,7 +314,7 @@ impl UsbDeviceModel for UsbPassthroughDevice {
             ep,
             data: data.to_vec(),
         });
-        self.ep_inflight.insert(ep, EpInflight { id });
+        self.ep_inflight.insert(ep, EpInflight { id, len: data.len() });
         UsbOutResult::Nak
     }
 }
@@ -536,6 +544,33 @@ mod tests {
         assert_eq!(
             dev.handle_out_transfer(0x02, &out_payload),
             UsbOutResult::Ack
+        );
+    }
+
+    #[test]
+    fn bulk_in_completion_is_truncated_to_requested_len() {
+        let mut dev = UsbPassthroughHandle::new();
+
+        assert_eq!(dev.handle_in_transfer(0x81, 2), UsbInResult::Nak);
+        let id = match dev.pop_action().expect("expected BulkIn action") {
+            UsbHostAction::BulkIn { id, ep, len } => {
+                assert_eq!(ep, 0x81);
+                assert_eq!(len, 2);
+                id
+            }
+            other => panic!("unexpected action: {other:?}"),
+        };
+
+        dev.push_completion(UsbHostCompletion::Completed {
+            id,
+            result: UsbHostResult::OkIn {
+                data: vec![1, 2, 3, 4],
+            },
+        });
+
+        assert_eq!(
+            dev.handle_in_transfer(0x81, 2),
+            UsbInResult::Data(vec![1, 2])
         );
     }
 
