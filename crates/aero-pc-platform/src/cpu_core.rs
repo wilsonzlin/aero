@@ -462,6 +462,25 @@ impl CpuBus for PcCpuBus {
         const BUF_SIZE: usize = 4096;
         let mut buf = [0u8; BUF_SIZE];
 
+        // Fast-path: if the chunk size is a multiple of the pattern length, each
+        // chunk begins at pattern offset 0. We can fill the scratch buffer once
+        // and reuse it for all chunks.
+        if BUF_SIZE % pattern.len() == 0 {
+            for (i, slot) in buf.iter_mut().enumerate() {
+                *slot = pattern[i % pattern.len()];
+            }
+
+            let mut offset = 0usize;
+            while offset < total {
+                let chunk_len = (total - offset).min(BUF_SIZE);
+                let dst_addr = dst + offset as u64;
+                self.write_bytes_access(dst_addr, &buf[..chunk_len], AccessType::Write)?;
+                offset += chunk_len;
+            }
+
+            return Ok(true);
+        }
+
         let mut offset = 0usize;
         while offset < total {
             let chunk_len = (total - offset).min(BUF_SIZE);
