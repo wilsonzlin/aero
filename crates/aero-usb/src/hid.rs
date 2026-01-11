@@ -2022,7 +2022,13 @@ impl UsbHidCompositeInput {
                         )
                     }
                     (0, 2) => Some(vec![self.keyboard_leds]),
-                    (1, 1) => Some(vec![self.mouse_buttons & 0x07, 0, 0, 0]),
+                    (1, 1) => {
+                        if self.protocols[1] == 0 {
+                            Some(vec![self.mouse_buttons & 0x07, 0, 0])
+                        } else {
+                            Some(vec![self.mouse_buttons & 0x07, 0, 0, 0])
+                        }
+                    }
                     (2, 1) => Some(self.gamepad_report.to_bytes().to_vec()),
                     _ => None,
                 }
@@ -2246,7 +2252,8 @@ impl UsbDevice for UsbHidCompositeInput {
                 let Some(report) = self.pending_mouse_reports.pop_front() else {
                     return UsbHandshake::Nak;
                 };
-                let len = buf.len().min(report.len());
+                let report_len = if self.protocols[1] == 0 { 3 } else { report.len() };
+                let len = buf.len().min(report_len);
                 buf[..len].copy_from_slice(&report[..len]);
                 return UsbHandshake::Ack { bytes: len };
             }
