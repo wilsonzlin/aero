@@ -192,12 +192,13 @@ Dev escape hatch:
 Origin enforcement is not sufficient to protect an internet-exposed L2 endpoint: non-browser
 clients can omit or forge `Origin`.
 
-If `AERO_L2_TOKEN` is set, the L2 proxy requires a matching token during the WebSocket upgrade:
-
-- Recommended: `wss://proxy.example.com/l2?token=<value>`
-- Optional: `Sec-WebSocket-Protocol: aero-l2-token.<value>` (in addition to `aero-l2-tunnel-v1`)
-
-Missing/incorrect tokens reject the upgrade with **HTTP 401**.
+ If `AERO_L2_TOKEN` is set, the L2 proxy requires a matching token during the WebSocket upgrade:
+ 
+ - Recommended: `wss://proxy.example.com/l2?token=<value>`
+ - Optional: include an additional `Sec-WebSocket-Protocol` entry `aero-l2-token.<value>` (offered
+   alongside `aero-l2-tunnel-v1`)
+ 
+ Missing/incorrect tokens reject the upgrade with **HTTP 401**.
 
 ### 3) WebRTC L2 bridging (relay forwards token + Origin)
 

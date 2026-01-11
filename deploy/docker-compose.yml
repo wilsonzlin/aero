@@ -162,7 +162,8 @@ services:
       #
       # If set, upgrades must include the token via (in addition to cookie/jwt as configured):
       # - `?token=<value>` query param, OR
-      # - `Sec-WebSocket-Protocol: aero-l2-token.<value>` (in addition to `aero-l2-tunnel-v1`)
+      # - an additional `Sec-WebSocket-Protocol` entry `aero-l2-token.<value>` (offered alongside
+      #   `aero-l2-tunnel-v1`)
       AERO_L2_TOKEN: ${AERO_L2_TOKEN:-}
 
       # Egress policy (highly recommended to set allowlists for production deployments).
@@ -228,7 +229,7 @@ services:
       #
       # Optional backend hardening:
       #   L2_BACKEND_ORIGIN=https://example.com       # alias: L2_BACKEND_ORIGIN_OVERRIDE
-      #   L2_BACKEND_TOKEN=sekrit                     # Sec-WebSocket-Protocol: aero-l2-token.<token>
+      #   L2_BACKEND_TOKEN=sekrit                     # offer Sec-WebSocket-Protocol entry aero-l2-token.<token> alongside aero-l2-tunnel-v1
       #
       # Then ensure the relay can forward auth material / headers to the backend:
       #   L2_BACKEND_AUTH_FORWARD_MODE=query
