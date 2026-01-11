@@ -101,6 +101,7 @@ static const VIRTIOSND_QUEUE_OPS g_hostQueueOps = {
     HostQueueSubmit,
     HostQueuePopUsed,
     HostQueueKick,
+    NULL,
     HostQueueDisableInterrupts,
     HostQueueEnableInterrupts,
 };
@@ -148,4 +149,3 @@ void VirtioSndHostQueuePushUsed(_Inout_ VIRTIOSND_HOST_QUEUE* Q, _In_opt_ void* 
     Q->Used[Q->UsedTail].UsedLen = UsedLen;
     Q->UsedTail = nextTail;
 }
-

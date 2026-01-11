@@ -74,6 +74,12 @@ VirtIoSndRxInit(VIRTIOSND_RX_ENGINE* Rx, PVIRTIOSND_DMA_CONTEXT DmaCtx, const VI
     if (count == 0) {
         count = 16u;
     }
+    {
+        USHORT qsz = VirtioSndQueueGetSize(Queue);
+        if (qsz != 0 && count > (ULONG)qsz) {
+            count = (ULONG)qsz;
+        }
+    }
     if (count > (ULONG)VIRTIOSND_QUEUE_SIZE_RXQ) {
         count = (ULONG)VIRTIOSND_QUEUE_SIZE_RXQ;
     }

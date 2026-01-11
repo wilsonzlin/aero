@@ -160,6 +160,19 @@ VirtioSndQueueSplitKick(_In_ void* ctx)
     VirtioSndQueueSplitUnlock(qs, &lock_state);
 }
 
+static USHORT
+VirtioSndQueueSplitGetSize(_In_ void* ctx)
+{
+    VIRTIOSND_QUEUE_SPLIT* qs;
+
+    qs = (VIRTIOSND_QUEUE_SPLIT*)ctx;
+    if (qs == NULL) {
+        return 0;
+    }
+
+    return qs->QueueSize;
+}
+
 static VOID
 VirtioSndQueueSplitDisableInterrupts(_In_ void* ctx)
 {
@@ -198,6 +211,7 @@ static const VIRTIOSND_QUEUE_OPS g_VirtioSndQueueSplitOps = {
     VirtioSndQueueSplitSubmit,
     VirtioSndQueueSplitPopUsed,
     VirtioSndQueueSplitKick,
+    VirtioSndQueueSplitGetSize,
     VirtioSndQueueSplitDisableInterrupts,
     VirtioSndQueueSplitEnableInterrupts,
 };

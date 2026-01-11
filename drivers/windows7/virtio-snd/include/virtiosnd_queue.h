@@ -49,6 +49,19 @@ typedef struct _VIRTIOSND_QUEUE_OPS {
     VOID (*Kick)(_In_ void *ctx);
 
     /*
+     * Optional virtqueue size query.
+     *
+     * Returns the number of entries in the backing virtqueue ring (descriptor
+     * count). Callers may use this to clamp per-request state allocations to
+     * avoid allocating more request contexts than can ever be in flight.
+     *
+     * Implementations that do not expose a fixed size may leave this NULL.
+     *
+     * IRQL: <= DISPATCH_LEVEL.
+     */
+    USHORT (*GetSize)(_In_ void *ctx);
+
+    /*
      * Optional interrupt suppression controls.
      *
      * Contract v1 drivers may choose to suppress interrupts for high-frequency
@@ -88,6 +101,15 @@ static __inline BOOLEAN
 VirtioSndQueuePopUsed(_In_ const VIRTIOSND_QUEUE *Queue, _Out_ void **CookieOut, _Out_ UINT32 *UsedLenOut)
 {
     return Queue->Ops->PopUsed(Queue->Ctx, CookieOut, UsedLenOut);
+}
+
+static __inline USHORT
+VirtioSndQueueGetSize(_In_ const VIRTIOSND_QUEUE *Queue)
+{
+    if (Queue == NULL || Queue->Ops == NULL || Queue->Ops->GetSize == NULL) {
+        return 0;
+    }
+    return Queue->Ops->GetSize(Queue->Ctx);
 }
 
 static __inline VOID
