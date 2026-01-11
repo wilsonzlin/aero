@@ -370,10 +370,10 @@ function render(): void {
 
 function renderWebUsbDiagnosticsPanel(report: PlatformFeatureReport): HTMLElement {
   const link = el("a", {
-    href: "./webusb_diagnostics.html",
+    href: "/webusb_diagnostics.html",
     target: "_blank",
     rel: "noopener",
-    text: "./webusb_diagnostics.html",
+    text: "/webusb_diagnostics.html",
   });
 
   const secure = (globalThis as typeof globalThis & { isSecureContext?: boolean }).isSecureContext === true;

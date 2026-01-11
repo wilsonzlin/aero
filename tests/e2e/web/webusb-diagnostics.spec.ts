@@ -1,8 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 test("webusb diagnostics page loads (no hardware required)", async ({ page }) => {
-  // Served under `/web/` during Playwright runs (repo-root Vite harness).
-  await page.goto("/web/webusb_diagnostics.html", { waitUntil: "load" });
+  await page.goto("/webusb_diagnostics.html", { waitUntil: "load" });
 
   await expect(page.getByRole("heading", { name: "WebUSB diagnostics / enumeration" })).toBeVisible();
 
