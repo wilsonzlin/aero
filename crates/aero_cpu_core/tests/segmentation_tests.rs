@@ -451,6 +451,40 @@ fn tss32_ring0_stack_read() {
 }
 
 #[test]
+fn tss32_ring0_stack_read_enforces_tr_limit() {
+    let mut cpu = CpuState::new(CpuMode::Real);
+    cpu.set_protected_enable(true);
+
+    let mut bus = FlatTestBus::new(0x4000);
+    let gdt_base = 0x100;
+    let tss_base = 0x900;
+
+    let null = 0u64;
+    let code32 = make_descriptor(0, 0xFFFFF, 0xA, true, 0, true, false, false, true, true);
+    // Limit too small to contain SS0 at +8..+9.
+    let tss_desc = make_descriptor(
+        tss_base as u32,
+        0x8,
+        0x9,
+        false,
+        0,
+        true,
+        false,
+        false,
+        false,
+        false,
+    );
+    setup_gdt(&mut bus, gdt_base, &[null, code32, tss_desc]);
+    cpu.set_gdtr(gdt_base, (3 * 8 - 1) as u16);
+
+    cpu.load_seg(&mut bus, Seg::CS, 0x08, LoadReason::FarControlTransfer)
+        .unwrap();
+    cpu.load_tr(&mut bus, 0x10).unwrap();
+
+    assert_eq!(cpu.tss32_ring0_stack(&mut bus), Err(Exception::ts(0)));
+}
+
+#[test]
 fn tss64_rsp0_and_ist_reads() {
     let mut cpu = CpuState::new(CpuMode::Real);
     cpu.set_protected_enable(true);
@@ -485,4 +519,46 @@ fn tss64_rsp0_and_ist_reads() {
     assert_eq!(cpu.tss64_ist(&mut bus, 1).unwrap(), ist1);
     assert_eq!(cpu.tss64_iomap_base(&mut bus).unwrap(), iomap_base);
     assert_eq!(cpu.tss64_ist(&mut bus, 0), Err(Exception::ts(0)));
+}
+
+#[test]
+fn tss64_read_helpers_enforce_tr_limit() {
+    let mut cpu = CpuState::new(CpuMode::Real);
+    cpu.set_protected_enable(true);
+
+    let mut bus = FlatTestBus::new(0x8000);
+    let gdt_base = 0x100;
+    let tss_base = 0x2000u64;
+
+    let null = 0u64;
+    let code64 = make_descriptor(0, 0xFFFFF, 0xA, true, 0, true, false, true, false, true);
+
+    // Limit too small to contain RSP0 at +4..+11.
+    let (tss_low, tss_high) = make_system_descriptor_16(tss_base, 0x0A, 0x9, 0, true);
+    setup_gdt(&mut bus, gdt_base, &[null, code64, tss_low, tss_high]);
+    cpu.set_gdtr(gdt_base, (4 * 8 - 1) as u16);
+
+    cpu.set_cr4(cpu.control.cr4 | CR4_PAE);
+    cpu.set_efer(cpu.msr.efer | EFER_LME);
+    cpu.set_cr0(cpu.control.cr0 | CR0_PG);
+    cpu.load_seg(&mut bus, Seg::CS, 0x08, LoadReason::FarControlTransfer)
+        .unwrap();
+    assert_eq!(cpu.cpu_mode(), CpuMode::Long);
+
+    cpu.load_tr(&mut bus, 0x10).unwrap();
+    assert_eq!(cpu.tss64_rsp0(&mut bus), Err(Exception::ts(0)));
+
+    // Limit too small to contain IST1 at +0x24..+0x2B.
+    let (tss_low, tss_high) = make_system_descriptor_16(tss_base, 0x2A, 0x9, 0, true);
+    setup_gdt(&mut bus, gdt_base, &[null, code64, tss_low, tss_high]);
+    cpu.set_gdtr(gdt_base, (4 * 8 - 1) as u16);
+    cpu.load_tr(&mut bus, 0x10).unwrap();
+    assert_eq!(cpu.tss64_ist(&mut bus, 1), Err(Exception::ts(0)));
+
+    // Limit too small to contain I/O map base at +0x66..+0x67.
+    let (tss_low, tss_high) = make_system_descriptor_16(tss_base, 0x66, 0x9, 0, true);
+    setup_gdt(&mut bus, gdt_base, &[null, code64, tss_low, tss_high]);
+    cpu.set_gdtr(gdt_base, (4 * 8 - 1) as u16);
+    cpu.load_tr(&mut bus, 0x10).unwrap();
+    assert_eq!(cpu.tss64_iomap_base(&mut bus), Err(Exception::ts(0)));
 }
