@@ -174,6 +174,9 @@ cp deploy/.env.example deploy/.env
   - Only change if your gateway listens on a different port inside docker.
 - `AERO_L2_PROXY_UPSTREAM` (default: `aero-l2-proxy:8090`)
   - Only change if your L2 proxy listens on a different port inside docker.
+- `AERO_L2_ALLOWED_ORIGINS_EXTRA` (default: empty)
+  - Optional comma-prefixed origins appended to the L2 proxy Origin allowlist.
+  - Example: `,https://localhost:5173`
 - `AERO_WEBRTC_UDP_RELAY_IMAGE` (default: `aero-webrtc-udp-relay:dev`)
   - When unset, docker compose builds the UDP relay from `proxy/webrtc-udp-relay/`.
 - `AERO_WEBRTC_UDP_RELAY_UPSTREAM` (default: `aero-webrtc-udp-relay:8080`)

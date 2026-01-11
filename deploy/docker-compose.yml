@@ -129,6 +129,13 @@ services:
       # L2 proxy listen address inside the container.
       AERO_L2_PROXY_LISTEN_ADDR: ${AERO_L2_PROXY_LISTEN_ADDR:-0.0.0.0:8090}
 
+      # Origin enforcement (recommended).
+      #
+      # By default, only allow the same HTTPS origin served by the reverse proxy.
+      # Append additional dev origins (comma-prefixed) via:
+      #   AERO_L2_ALLOWED_ORIGINS_EXTRA=",https://localhost:5173"
+      AERO_L2_ALLOWED_ORIGINS: https://${AERO_DOMAIN:-localhost}${AERO_L2_ALLOWED_ORIGINS_EXTRA:-}
+
       # Egress policy (highly recommended to set allowlists for production deployments).
       AERO_L2_ALLOW_PRIVATE_IPS: ${AERO_L2_ALLOW_PRIVATE_IPS:-0}
       # NOTE: Leave these unset by default; setting them to an empty string means
