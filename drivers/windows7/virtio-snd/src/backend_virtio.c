@@ -335,6 +335,168 @@ VirtIoSndBackendVirtio_WritePeriod(
 }
 
 static NTSTATUS
+VirtIoSndBackendVirtio_WritePeriodSg(
+    _In_ PVOID Context,
+    _In_reads_(SegmentCount) const VIRTIOSND_TX_SEGMENT* Segments,
+    _In_ ULONG SegmentCount
+    )
+{
+    PVIRTIOSND_BACKEND_VIRTIO ctx;
+    PVIRTIOSND_DEVICE_EXTENSION dx;
+    ULONG periodBytes;
+    ULONGLONG totalBytes;
+    ULONG i;
+    NTSTATUS status;
+
+    ctx = VirtIoSndBackendVirtioFromContext(Context);
+    if (ctx == NULL || ctx->Dx == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+    dx = ctx->Dx;
+
+    if (dx->Removed) {
+        return STATUS_DEVICE_REMOVED;
+    }
+    if (!dx->Started) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+
+    if (SegmentCount != 0 && Segments == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+    if (SegmentCount > VIRTIOSND_TX_MAX_SEGMENTS) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    periodBytes = ctx->RenderPeriodBytes;
+    if (periodBytes == 0) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+
+    totalBytes = 0;
+    for (i = 0; i < SegmentCount; ++i) {
+        if (Segments[i].Length == 0) {
+            return STATUS_INVALID_PARAMETER;
+        }
+        totalBytes += (ULONGLONG)Segments[i].Length;
+        if (totalBytes > (ULONGLONG)MAXULONG) {
+            return STATUS_INVALID_BUFFER_SIZE;
+        }
+    }
+
+    if (totalBytes != (ULONGLONG)periodBytes) {
+        return STATUS_INVALID_BUFFER_SIZE;
+    }
+    if ((totalBytes % (ULONGLONG)VirtioSndTxFrameSizeBytes()) != 0) {
+        return STATUS_INVALID_BUFFER_SIZE;
+    }
+
+    if (SegmentCount == 0) {
+        return STATUS_SUCCESS;
+    }
+
+    (VOID)VirtIoSndHwDrainTxCompletions(dx);
+    if (dx->Tx.FatalError) {
+        return STATUS_DEVICE_HARDWARE_ERROR;
+    }
+
+    KeMemoryBarrier();
+
+    status = VirtIoSndHwSubmitTxSg(dx, Segments, SegmentCount);
+    if (status == STATUS_INSUFFICIENT_RESOURCES || status == STATUS_DEVICE_BUSY) {
+        (VOID)VirtIoSndHwDrainTxCompletions(dx);
+        if (dx->Tx.FatalError) {
+            return STATUS_DEVICE_HARDWARE_ERROR;
+        }
+
+        status = VirtIoSndHwSubmitTxSg(dx, Segments, SegmentCount);
+        if (status == STATUS_INSUFFICIENT_RESOURCES || status == STATUS_DEVICE_BUSY) {
+            return STATUS_DEVICE_BUSY;
+        }
+    }
+
+    (VOID)VirtIoSndHwDrainTxCompletions(dx);
+    if (dx->Tx.FatalError) {
+        return STATUS_DEVICE_HARDWARE_ERROR;
+    }
+
+    return status;
+}
+
+static NTSTATUS
+VirtIoSndBackendVirtio_WritePeriodCopy(
+    _In_ PVOID Context,
+    _In_opt_ const VOID *Pcm1,
+    _In_ ULONG Pcm1Bytes,
+    _In_opt_ const VOID *Pcm2,
+    _In_ ULONG Pcm2Bytes,
+    _In_ BOOLEAN AllowSilenceFill
+    )
+{
+    PVIRTIOSND_BACKEND_VIRTIO ctx;
+    PVIRTIOSND_DEVICE_EXTENSION dx;
+    ULONG periodBytes;
+    ULONG totalBytes;
+    NTSTATUS status;
+
+    ctx = VirtIoSndBackendVirtioFromContext(Context);
+    if (ctx == NULL || ctx->Dx == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+    dx = ctx->Dx;
+
+    if (dx->Removed) {
+        return STATUS_DEVICE_REMOVED;
+    }
+    if (!dx->Started) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+
+    periodBytes = ctx->RenderPeriodBytes;
+    if (periodBytes == 0) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+
+    totalBytes = Pcm1Bytes + Pcm2Bytes;
+    if (totalBytes < Pcm1Bytes) {
+        return STATUS_INVALID_BUFFER_SIZE;
+    }
+    if (totalBytes != periodBytes) {
+        return STATUS_INVALID_BUFFER_SIZE;
+    }
+    if ((totalBytes % VirtioSndTxFrameSizeBytes()) != 0) {
+        return STATUS_INVALID_BUFFER_SIZE;
+    }
+
+    (VOID)VirtIoSndHwDrainTxCompletions(dx);
+    if (dx->Tx.FatalError) {
+        return STATUS_DEVICE_HARDWARE_ERROR;
+    }
+
+    KeMemoryBarrier();
+
+    status = VirtIoSndHwSubmitTx(dx, Pcm1, Pcm1Bytes, Pcm2, Pcm2Bytes, AllowSilenceFill);
+    if (status == STATUS_INSUFFICIENT_RESOURCES || status == STATUS_DEVICE_BUSY) {
+        (VOID)VirtIoSndHwDrainTxCompletions(dx);
+        if (dx->Tx.FatalError) {
+            return STATUS_DEVICE_HARDWARE_ERROR;
+        }
+
+        status = VirtIoSndHwSubmitTx(dx, Pcm1, Pcm1Bytes, Pcm2, Pcm2Bytes, AllowSilenceFill);
+        if (status == STATUS_INSUFFICIENT_RESOURCES || status == STATUS_DEVICE_BUSY) {
+            return STATUS_DEVICE_BUSY;
+        }
+    }
+
+    (VOID)VirtIoSndHwDrainTxCompletions(dx);
+    if (dx->Tx.FatalError) {
+        return STATUS_DEVICE_HARDWARE_ERROR;
+    }
+
+    return status;
+}
+
+static NTSTATUS
 VirtIoSndBackendVirtio_SetParamsCapture(_In_ PVOID Context, _In_ ULONG BufferBytes, _In_ ULONG PeriodBytes)
 {
     PVIRTIOSND_BACKEND_VIRTIO ctx;
@@ -611,6 +773,8 @@ static const VIRTIOSND_BACKEND_OPS g_VirtIoSndBackendVirtioOps = {
     VirtIoSndBackendVirtio_Stop,
     VirtIoSndBackendVirtio_Release,
     VirtIoSndBackendVirtio_WritePeriod,
+    VirtIoSndBackendVirtio_WritePeriodSg,
+    VirtIoSndBackendVirtio_WritePeriodCopy,
     VirtIoSndBackendVirtio_SetParamsCapture,
     VirtIoSndBackendVirtio_PrepareCapture,
     VirtIoSndBackendVirtio_StartCapture,

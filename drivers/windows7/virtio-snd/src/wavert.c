@@ -420,6 +420,7 @@ VirtIoSndWaveRtDpcRoutine(
     KIRQL oldIrql;
     ULONG periodBytes;
     ULONG bufferSize;
+    PVOID bufferVa;
     UINT64 bufferDma;
     PMDL bufferMdl;
     PKEVENT notifyEvent;
@@ -458,6 +459,7 @@ VirtIoSndWaveRtDpcRoutine(
 
     periodBytes = stream->PeriodBytes;
     bufferSize = stream->BufferSize;
+    bufferVa = stream->BufferDma.Va;
     bufferDma = VirtIoSndWaveRtBackendBase(&stream->BufferDma);
     bufferMdl = stream->BufferMdl;
     notifyEvent = stream->NotificationEvent;
@@ -702,9 +704,6 @@ VirtIoSndWaveRtDpcRoutine(
 
         while (submitBudget-- != 0) {
             ULONGLONG queuedBytes;
-            ULONG remaining;
-            ULONG first;
-            ULONG second;
             NTSTATUS writeStatus;
 
             queuedBytes = submittedLinearBytes - playLinearBytes;
@@ -712,15 +711,68 @@ VirtIoSndWaveRtDpcRoutine(
                 break;
             }
 
-            remaining = bufferSize - submittedRingBytes;
-            first = (remaining < periodBytes) ? remaining : periodBytes;
-            second = periodBytes - first;
+            writeStatus = STATUS_INVALID_DEVICE_STATE;
 
-            writeStatus = VirtIoSndBackend_WritePeriod(backend,
-                                                       bufferDma + (UINT64)submittedRingBytes,
-                                                       first,
-                                                       (second != 0) ? bufferDma : 0,
-                                                       second);
+            if (backend->Ops != NULL && backend->Ops->WritePeriodSg != NULL && bufferMdl != NULL) {
+                virtio_sg_entry_t sg[VIRTIOSND_TX_MAX_SEGMENTS];
+                USHORT sgCount;
+                VIRTIOSND_TX_SEGMENT segs[VIRTIOSND_TX_MAX_SEGMENTS];
+                USHORT i;
+
+                sgCount = 0;
+                writeStatus = VirtIoSndSgBuildFromMdlRegion(
+                    bufferMdl,
+                    bufferSize,
+                    submittedRingBytes,
+                    periodBytes,
+                    TRUE,
+                    sg,
+                    (USHORT)RTL_NUMBER_OF(sg),
+                    &sgCount);
+                if (NT_SUCCESS(writeStatus)) {
+                    for (i = 0; i < sgCount; i++) {
+                        segs[i].Address.QuadPart = (LONGLONG)sg[i].addr;
+                        segs[i].Length = (ULONG)sg[i].len;
+                    }
+
+                    writeStatus = VirtIoSndBackend_WritePeriodSg(backend, segs, (ULONG)sgCount);
+                }
+            }
+
+            if (!NT_SUCCESS(writeStatus) && backend->Ops != NULL && backend->Ops->WritePeriodCopy != NULL && bufferVa != NULL) {
+                ULONG remaining;
+                ULONG first;
+                ULONG second;
+
+                remaining = bufferSize - submittedRingBytes;
+                first = (remaining < periodBytes) ? remaining : periodBytes;
+                second = periodBytes - first;
+
+                writeStatus = VirtIoSndBackend_WritePeriodCopy(
+                    backend,
+                    (const UCHAR*)bufferVa + submittedRingBytes,
+                    first,
+                    (second != 0) ? bufferVa : NULL,
+                    second,
+                    FALSE /* AllowSilenceFill */);
+            }
+
+            if (!NT_SUCCESS(writeStatus)) {
+                ULONG remaining;
+                ULONG first;
+                ULONG second;
+
+                remaining = bufferSize - submittedRingBytes;
+                first = (remaining < periodBytes) ? remaining : periodBytes;
+                second = periodBytes - first;
+
+                writeStatus = VirtIoSndBackend_WritePeriod(
+                    backend,
+                    bufferDma + (UINT64)submittedRingBytes,
+                    first,
+                    (second != 0) ? bufferDma : 0,
+                    second);
+            }
             if (!NT_SUCCESS(writeStatus)) {
                 break;
             }
@@ -1549,6 +1601,7 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_SetState(_In_ IMiniportW
     ULONG periodBytes;
     UINT64 bufferDma;
     PVOID bufferVa;
+    PMDL bufferMdl;
     NTSTATUS status;
 
     if (State != KSSTATE_STOP && State != KSSTATE_ACQUIRE && State != KSSTATE_PAUSE && State != KSSTATE_RUN) {
@@ -1569,6 +1622,7 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_SetState(_In_ IMiniportW
     periodBytes = 0;
     bufferDma = 0;
     bufferVa = NULL;
+    bufferMdl = NULL;
 
     KeAcquireSpinLock(&stream->Lock, &oldIrql);
     oldState = stream->State;
@@ -2059,6 +2113,7 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_SetState(_In_ IMiniportW
     periodBytes = stream->PeriodBytes;
     bufferDma = VirtIoSndWaveRtBackendBase(&stream->BufferDma);
     bufferVa = stream->BufferDma.Va;
+    bufferMdl = stream->BufferMdl;
     KeReleaseSpinLock(&stream->Lock, oldIrql);
 
     /*
@@ -2183,9 +2238,6 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_SetState(_In_ IMiniportW
 
             while (submitBudget-- != 0) {
                 ULONGLONG queuedBytes;
-                ULONG remaining;
-                ULONG first;
-                ULONG second;
                 NTSTATUS writeStatus;
 
                 queuedBytes = submittedLinearBytes - playLinearBytes;
@@ -2193,15 +2245,68 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtStream_SetState(_In_ IMiniportW
                     break;
                 }
 
-                remaining = bufferSize - submittedRingBytes;
-                first = (remaining < periodBytes) ? remaining : periodBytes;
-                second = periodBytes - first;
+                writeStatus = STATUS_INVALID_DEVICE_STATE;
 
-                writeStatus = VirtIoSndBackend_WritePeriod(backend,
-                                                           bufferDma + (UINT64)submittedRingBytes,
-                                                           first,
-                                                           (second != 0) ? bufferDma : 0,
-                                                           second);
+                if (backend->Ops != NULL && backend->Ops->WritePeriodSg != NULL && bufferMdl != NULL) {
+                    virtio_sg_entry_t sg[VIRTIOSND_TX_MAX_SEGMENTS];
+                    USHORT sgCount;
+                    VIRTIOSND_TX_SEGMENT segs[VIRTIOSND_TX_MAX_SEGMENTS];
+                    USHORT i;
+
+                    sgCount = 0;
+                    writeStatus = VirtIoSndSgBuildFromMdlRegion(
+                        bufferMdl,
+                        bufferSize,
+                        submittedRingBytes,
+                        periodBytes,
+                        TRUE,
+                        sg,
+                        (USHORT)RTL_NUMBER_OF(sg),
+                        &sgCount);
+                    if (NT_SUCCESS(writeStatus)) {
+                        for (i = 0; i < sgCount; i++) {
+                            segs[i].Address.QuadPart = (LONGLONG)sg[i].addr;
+                            segs[i].Length = (ULONG)sg[i].len;
+                        }
+
+                        writeStatus = VirtIoSndBackend_WritePeriodSg(backend, segs, (ULONG)sgCount);
+                    }
+                }
+
+                if (!NT_SUCCESS(writeStatus) && backend->Ops != NULL && backend->Ops->WritePeriodCopy != NULL && bufferVa != NULL) {
+                    ULONG remaining;
+                    ULONG first;
+                    ULONG second;
+
+                    remaining = bufferSize - submittedRingBytes;
+                    first = (remaining < periodBytes) ? remaining : periodBytes;
+                    second = periodBytes - first;
+
+                    writeStatus = VirtIoSndBackend_WritePeriodCopy(
+                        backend,
+                        (const UCHAR*)bufferVa + submittedRingBytes,
+                        first,
+                        (second != 0) ? bufferVa : NULL,
+                        second,
+                        FALSE /* AllowSilenceFill */);
+                }
+
+                if (!NT_SUCCESS(writeStatus)) {
+                    ULONG remaining;
+                    ULONG first;
+                    ULONG second;
+
+                    remaining = bufferSize - submittedRingBytes;
+                    first = (remaining < periodBytes) ? remaining : periodBytes;
+                    second = periodBytes - first;
+
+                    writeStatus = VirtIoSndBackend_WritePeriod(
+                        backend,
+                        bufferDma + (UINT64)submittedRingBytes,
+                        first,
+                        (second != 0) ? bufferDma : 0,
+                        second);
+                }
                 if (!NT_SUCCESS(writeStatus)) {
                     break;
                 }

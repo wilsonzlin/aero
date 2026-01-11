@@ -4,6 +4,7 @@
 
 #include <ntddk.h>
 
+#include "virtiosnd_tx.h"
 #include "virtiosnd_rx.h"
 
 typedef struct _VIRTIOSND_DEVICE_EXTENSION VIRTIOSND_DEVICE_EXTENSION, *PVIRTIOSND_DEVICE_EXTENSION;
@@ -22,6 +23,33 @@ typedef struct _VIRTIOSND_BACKEND_OPS {
         _In_ SIZE_T Pcm1Bytes,
         _In_ UINT64 Pcm2DmaAddr,
         _In_ SIZE_T Pcm2Bytes);
+
+    /*
+     * Optional: scatter/gather TX period submission.
+     *
+     * This allows WaveRT to submit from an MDL-backed cyclic buffer without
+     * copying, even when the underlying pages are physically non-contiguous.
+     */
+    _IRQL_requires_max_(DISPATCH_LEVEL)
+    NTSTATUS (*WritePeriodSg)(
+        _In_ PVOID Context,
+        _In_reads_(SegmentCount) const VIRTIOSND_TX_SEGMENT* Segments,
+        _In_ ULONG SegmentCount);
+
+    /*
+     * Optional: copy-based TX submission.
+     *
+     * This is used as a fallback when SG submission cannot represent a period
+     * within the virtio indirect descriptor limits.
+     */
+    _IRQL_requires_max_(DISPATCH_LEVEL)
+    NTSTATUS (*WritePeriodCopy)(
+        _In_ PVOID Context,
+        _In_opt_ const VOID *Pcm1,
+        _In_ ULONG Pcm1Bytes,
+        _In_opt_ const VOID *Pcm2,
+        _In_ ULONG Pcm2Bytes,
+        _In_ BOOLEAN AllowSilenceFill);
 
     /* Capture (stream 1 / RX) support. */
     NTSTATUS (*SetParamsCapture)(_In_ PVOID Context, _In_ ULONG BufferBytes, _In_ ULONG PeriodBytes);
@@ -119,6 +147,37 @@ VirtIoSndBackend_WritePeriod(
         return STATUS_INVALID_DEVICE_STATE;
     }
     return Backend->Ops->WritePeriod(Backend->Context, Pcm1DmaAddr, Pcm1Bytes, Pcm2DmaAddr, Pcm2Bytes);
+}
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+static __inline NTSTATUS
+VirtIoSndBackend_WritePeriodSg(
+    _In_ PVIRTIOSND_BACKEND Backend,
+    _In_reads_(SegmentCount) const VIRTIOSND_TX_SEGMENT* Segments,
+    _In_ ULONG SegmentCount
+    )
+{
+    if (Backend == NULL || Backend->Ops == NULL || Backend->Ops->WritePeriodSg == NULL) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+    return Backend->Ops->WritePeriodSg(Backend->Context, Segments, SegmentCount);
+}
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+static __inline NTSTATUS
+VirtIoSndBackend_WritePeriodCopy(
+    _In_ PVIRTIOSND_BACKEND Backend,
+    _In_opt_ const VOID *Pcm1,
+    _In_ ULONG Pcm1Bytes,
+    _In_opt_ const VOID *Pcm2,
+    _In_ ULONG Pcm2Bytes,
+    _In_ BOOLEAN AllowSilenceFill
+    )
+{
+    if (Backend == NULL || Backend->Ops == NULL || Backend->Ops->WritePeriodCopy == NULL) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+    return Backend->Ops->WritePeriodCopy(Backend->Context, Pcm1, Pcm1Bytes, Pcm2, Pcm2Bytes, AllowSilenceFill);
 }
 
 _IRQL_requires_max_(PASSIVE_LEVEL)

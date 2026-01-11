@@ -99,6 +99,77 @@ VirtIoSndBackendNull_WritePeriod(
 }
 
 static NTSTATUS
+VirtIoSndBackendNull_WritePeriodSg(
+    _In_ PVOID Context,
+    _In_reads_(SegmentCount) const VIRTIOSND_TX_SEGMENT* Segments,
+    _In_ ULONG SegmentCount
+    )
+{
+    PVIRTIOSND_BACKEND_NULL ctx = (PVIRTIOSND_BACKEND_NULL)Context;
+    ULONGLONG totalBytes;
+    ULONG i;
+
+    if (ctx == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+    if (Segments == NULL && SegmentCount != 0) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    totalBytes = 0;
+    for (i = 0; i < SegmentCount; ++i) {
+        totalBytes += (ULONGLONG)Segments[i].Length;
+    }
+
+    ctx->TotalBytesWritten += totalBytes;
+
+    if (ctx->RenderRunning) {
+        VIRTIOSND_TRACE(
+            "backend(null): WritePeriodSg segs=%lu bytes=%I64u (total=%I64u)\n",
+            SegmentCount,
+            totalBytes,
+            ctx->TotalBytesWritten);
+    }
+
+    return STATUS_SUCCESS;
+}
+
+static NTSTATUS
+VirtIoSndBackendNull_WritePeriodCopy(
+    _In_ PVOID Context,
+    _In_opt_ const VOID *Pcm1,
+    _In_ ULONG Pcm1Bytes,
+    _In_opt_ const VOID *Pcm2,
+    _In_ ULONG Pcm2Bytes,
+    _In_ BOOLEAN AllowSilenceFill
+    )
+{
+    PVIRTIOSND_BACKEND_NULL ctx = (PVIRTIOSND_BACKEND_NULL)Context;
+    ULONGLONG bytes;
+
+    UNREFERENCED_PARAMETER(Pcm1);
+    UNREFERENCED_PARAMETER(Pcm2);
+    UNREFERENCED_PARAMETER(AllowSilenceFill);
+
+    if (ctx == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    bytes = (ULONGLONG)Pcm1Bytes + (ULONGLONG)Pcm2Bytes;
+    ctx->TotalBytesWritten += bytes;
+
+    if (ctx->RenderRunning) {
+        VIRTIOSND_TRACE(
+            "backend(null): WritePeriodCopy %lu+%lu (total=%I64u)\n",
+            Pcm1Bytes,
+            Pcm2Bytes,
+            ctx->TotalBytesWritten);
+    }
+
+    return STATUS_SUCCESS;
+}
+
+static NTSTATUS
 VirtIoSndBackendNull_SetParamsCapture(_In_ PVOID Context, _In_ ULONG BufferBytes, _In_ ULONG PeriodBytes)
 {
     PVIRTIOSND_BACKEND_NULL ctx = (PVIRTIOSND_BACKEND_NULL)Context;
@@ -213,6 +284,8 @@ static const VIRTIOSND_BACKEND_OPS g_VirtIoSndBackendNullOps = {
     VirtIoSndBackendNull_Stop,
     VirtIoSndBackendNull_Release,
     VirtIoSndBackendNull_WritePeriod,
+    VirtIoSndBackendNull_WritePeriodSg,
+    VirtIoSndBackendNull_WritePeriodCopy,
     VirtIoSndBackendNull_SetParamsCapture,
     VirtIoSndBackendNull_PrepareCapture,
     VirtIoSndBackendNull_StartCapture,
