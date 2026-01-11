@@ -50,11 +50,40 @@ static bool ParseProbeApi(const std::string& s, ProbeApi* out_api) {
   return false;
 }
 
+static const char* SwapEffectName(DXGI_SWAP_EFFECT e) {
+  switch (e) {
+    case DXGI_SWAP_EFFECT_DISCARD:
+      return "discard";
+    case DXGI_SWAP_EFFECT_SEQUENTIAL:
+      return "sequential";
+    default:
+      return "unknown";
+  }
+}
+
+static bool ParseSwapEffect(const std::string& s, DXGI_SWAP_EFFECT* out) {
+  if (!out) {
+    return false;
+  }
+  if (s.empty()) {
+    return false;
+  }
+  if (lstrcmpiA(s.c_str(), "discard") == 0) {
+    *out = DXGI_SWAP_EFFECT_DISCARD;
+    return true;
+  }
+  if (lstrcmpiA(s.c_str(), "sequential") == 0) {
+    *out = DXGI_SWAP_EFFECT_SEQUENTIAL;
+    return true;
+  }
+  return false;
+}
+
 static int FailD3D11WithRemovedReason(aerogpu_test::TestReporter* reporter,
-                                      const char* test_name,
-                                      const char* what,
-                                      HRESULT hr,
-                                      ID3D11Device* device) {
+                                       const char* test_name,
+                                       const char* what,
+                                       HRESULT hr,
+                                       ID3D11Device* device) {
   if (device) {
     HRESULT reason = device->GetDeviceRemovedReason();
     if (FAILED(reason)) {
@@ -295,7 +324,8 @@ static int RunDxgiSwapchainProbe(int argc, char** argv) {
   const char* kTestName = "dxgi_swapchain_probe";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
-        "Usage: %s.exe [--api=d3d11|d3d10|d3d10_1] [--width=N] [--height=N] [--hidden] [--frames=N] [--json[=PATH]] "
+        "Usage: %s.exe [--api=d3d11|d3d10|d3d10_1] [--width=N] [--height=N] [--buffers=1|2] "
+        "[--swap-effect=discard|sequential] [--hidden] [--frames=N] [--json[=PATH]] "
         "[--require-vid=0x####] "
         "[--require-did=0x####] [--allow-microsoft] [--allow-non-aerogpu] [--require-umd]",
         kTestName);
@@ -361,6 +391,24 @@ static int RunDxgiSwapchainProbe(int argc, char** argv) {
     height = 1;
   }
 
+  uint32_t buffers = 2;
+  aerogpu_test::GetArgUint32(argc, argv, "--buffers", &buffers);
+  if (buffers < 1 || buffers > 2) {
+    return reporter.Fail("invalid --buffers value: %u (expected 1 or 2)", (unsigned)buffers);
+  }
+
+  DXGI_SWAP_EFFECT swap_effect = DXGI_SWAP_EFFECT_DISCARD;
+  std::string swap_effect_str;
+  if (aerogpu_test::GetArgValue(argc, argv, "--swap-effect", &swap_effect_str)) {
+    if (swap_effect_str.empty()) {
+      return reporter.Fail("--swap-effect requires a value (discard|sequential)");
+    }
+    if (!ParseSwapEffect(swap_effect_str, &swap_effect)) {
+      return reporter.Fail("invalid --swap-effect value: %s (expected discard|sequential)",
+                           swap_effect_str.c_str());
+    }
+  }
+
   HWND hwnd = aerogpu_test::CreateBasicWindow(L"AeroGPU_DXGISwapchainProbe",
                                               L"AeroGPU DXGI Swapchain Probe",
                                               (int)width,
@@ -380,17 +428,19 @@ static int RunDxgiSwapchainProbe(int argc, char** argv) {
   scd.SampleDesc.Count = 1;
   scd.SampleDesc.Quality = 0;
   scd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-  scd.BufferCount = 2;
+  scd.BufferCount = buffers;
   scd.OutputWindow = hwnd;
   scd.Windowed = TRUE;
-  scd.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
+  scd.SwapEffect = swap_effect;
   scd.Flags = 0;
 
-  aerogpu_test::PrintfStdout("INFO: %s: api=%s size=%ux%u",
+  aerogpu_test::PrintfStdout("INFO: %s: api=%s size=%ux%u buffers=%u swap_effect=%s",
                              kTestName,
                              ProbeApiName(api),
                              (unsigned)width,
-                             (unsigned)height);
+                             (unsigned)height,
+                             (unsigned)buffers,
+                             SwapEffectName(swap_effect));
 
   if (api == kProbeApiD3D10) {
     ComPtr<ID3D10Device> device;
@@ -439,19 +489,23 @@ static int RunDxgiSwapchainProbe(int argc, char** argv) {
     if (FAILED(hr)) {
       return reporter.FailHresult("IDXGISwapChain::GetBuffer(0)", hr);
     }
-    hr = swapchain->GetBuffer(1, __uuidof(ID3D10Texture2D), (void**)backbuffer1.put());
-    if (FAILED(hr)) {
-      return reporter.FailHresult("IDXGISwapChain::GetBuffer(1)", hr);
+    if (buffers > 1) {
+      hr = swapchain->GetBuffer(1, __uuidof(ID3D10Texture2D), (void**)backbuffer1.put());
+      if (FAILED(hr)) {
+        return reporter.FailHresult("IDXGISwapChain::GetBuffer(1)", hr);
+      }
     }
 
     D3D10_TEXTURE2D_DESC bb0_desc;
-    D3D10_TEXTURE2D_DESC bb1_desc;
     backbuffer0->GetDesc(&bb0_desc);
-    backbuffer1->GetDesc(&bb1_desc);
     PrintTexDesc(kTestName, "backbuffer[0]", bb0_desc);
-    PrintTexDesc(kTestName, "backbuffer[1]", bb1_desc);
     DumpSharedHandleInfo(kTestName, "backbuffer[0]", backbuffer0.get());
-    DumpSharedHandleInfo(kTestName, "backbuffer[1]", backbuffer1.get());
+    if (buffers > 1) {
+      D3D10_TEXTURE2D_DESC bb1_desc;
+      backbuffer1->GetDesc(&bb1_desc);
+      PrintTexDesc(kTestName, "backbuffer[1]", bb1_desc);
+      DumpSharedHandleInfo(kTestName, "backbuffer[1]", backbuffer1.get());
+    }
 
     ComPtr<ID3D10RenderTargetView> rtv0;
     ComPtr<ID3D10RenderTargetView> rtv1;
@@ -459,9 +513,11 @@ static int RunDxgiSwapchainProbe(int argc, char** argv) {
     if (FAILED(hr)) {
       return reporter.FailHresult("CreateRenderTargetView(backbuffer[0])", hr);
     }
-    hr = device->CreateRenderTargetView(backbuffer1.get(), NULL, rtv1.put());
-    if (FAILED(hr)) {
-      return reporter.FailHresult("CreateRenderTargetView(backbuffer[1])", hr);
+    if (buffers > 1) {
+      hr = device->CreateRenderTargetView(backbuffer1.get(), NULL, rtv1.put());
+      if (FAILED(hr)) {
+        return reporter.FailHresult("CreateRenderTargetView(backbuffer[1])", hr);
+      }
     }
 
     D3D10_VIEWPORT vp;
@@ -474,7 +530,7 @@ static int RunDxgiSwapchainProbe(int argc, char** argv) {
     device->RSSetViewports(1, &vp);
 
     for (uint32_t frame = 0; frame < frames; ++frame) {
-      ID3D10RenderTargetView* rtv = (frame & 1) ? rtv1.get() : rtv0.get();
+      ID3D10RenderTargetView* rtv = (buffers > 1 && (frame & 1)) ? rtv1.get() : rtv0.get();
       ID3D10RenderTargetView* rtvs[] = {rtv};
       device->OMSetRenderTargets(1, rtvs, NULL);
 
@@ -548,19 +604,23 @@ static int RunDxgiSwapchainProbe(int argc, char** argv) {
     if (FAILED(hr)) {
       return reporter.FailHresult("IDXGISwapChain::GetBuffer(0)", hr);
     }
-    hr = swapchain->GetBuffer(1, __uuidof(ID3D10Texture2D), (void**)backbuffer1.put());
-    if (FAILED(hr)) {
-      return reporter.FailHresult("IDXGISwapChain::GetBuffer(1)", hr);
+    if (buffers > 1) {
+      hr = swapchain->GetBuffer(1, __uuidof(ID3D10Texture2D), (void**)backbuffer1.put());
+      if (FAILED(hr)) {
+        return reporter.FailHresult("IDXGISwapChain::GetBuffer(1)", hr);
+      }
     }
 
     D3D10_TEXTURE2D_DESC bb0_desc;
-    D3D10_TEXTURE2D_DESC bb1_desc;
     backbuffer0->GetDesc(&bb0_desc);
-    backbuffer1->GetDesc(&bb1_desc);
     PrintTexDesc(kTestName, "backbuffer[0]", bb0_desc);
-    PrintTexDesc(kTestName, "backbuffer[1]", bb1_desc);
     DumpSharedHandleInfo(kTestName, "backbuffer[0]", backbuffer0.get());
-    DumpSharedHandleInfo(kTestName, "backbuffer[1]", backbuffer1.get());
+    if (buffers > 1) {
+      D3D10_TEXTURE2D_DESC bb1_desc;
+      backbuffer1->GetDesc(&bb1_desc);
+      PrintTexDesc(kTestName, "backbuffer[1]", bb1_desc);
+      DumpSharedHandleInfo(kTestName, "backbuffer[1]", backbuffer1.get());
+    }
 
     ComPtr<ID3D10RenderTargetView> rtv0;
     ComPtr<ID3D10RenderTargetView> rtv1;
@@ -568,9 +628,11 @@ static int RunDxgiSwapchainProbe(int argc, char** argv) {
     if (FAILED(hr)) {
       return reporter.FailHresult("CreateRenderTargetView(backbuffer[0])", hr);
     }
-    hr = device->CreateRenderTargetView(backbuffer1.get(), NULL, rtv1.put());
-    if (FAILED(hr)) {
-      return reporter.FailHresult("CreateRenderTargetView(backbuffer[1])", hr);
+    if (buffers > 1) {
+      hr = device->CreateRenderTargetView(backbuffer1.get(), NULL, rtv1.put());
+      if (FAILED(hr)) {
+        return reporter.FailHresult("CreateRenderTargetView(backbuffer[1])", hr);
+      }
     }
 
     D3D10_VIEWPORT vp;
@@ -583,7 +645,7 @@ static int RunDxgiSwapchainProbe(int argc, char** argv) {
     device->RSSetViewports(1, &vp);
 
     for (uint32_t frame = 0; frame < frames; ++frame) {
-      ID3D10RenderTargetView* rtv = (frame & 1) ? rtv1.get() : rtv0.get();
+      ID3D10RenderTargetView* rtv = (buffers > 1 && (frame & 1)) ? rtv1.get() : rtv0.get();
       ID3D10RenderTargetView* rtvs[] = {rtv};
       device->OMSetRenderTargets(1, rtvs, NULL);
 
@@ -663,19 +725,23 @@ static int RunDxgiSwapchainProbe(int argc, char** argv) {
     if (FAILED(hr)) {
       return reporter.FailHresult("IDXGISwapChain::GetBuffer(0)", hr);
     }
-    hr = swapchain->GetBuffer(1, __uuidof(ID3D11Texture2D), (void**)backbuffer1.put());
-    if (FAILED(hr)) {
-      return reporter.FailHresult("IDXGISwapChain::GetBuffer(1)", hr);
+    if (buffers > 1) {
+      hr = swapchain->GetBuffer(1, __uuidof(ID3D11Texture2D), (void**)backbuffer1.put());
+      if (FAILED(hr)) {
+        return reporter.FailHresult("IDXGISwapChain::GetBuffer(1)", hr);
+      }
     }
 
     D3D11_TEXTURE2D_DESC bb0_desc;
-    D3D11_TEXTURE2D_DESC bb1_desc;
     backbuffer0->GetDesc(&bb0_desc);
-    backbuffer1->GetDesc(&bb1_desc);
     PrintTexDesc(kTestName, "backbuffer[0]", bb0_desc);
-    PrintTexDesc(kTestName, "backbuffer[1]", bb1_desc);
     DumpSharedHandleInfo(kTestName, "backbuffer[0]", backbuffer0.get());
-    DumpSharedHandleInfo(kTestName, "backbuffer[1]", backbuffer1.get());
+    if (buffers > 1) {
+      D3D11_TEXTURE2D_DESC bb1_desc;
+      backbuffer1->GetDesc(&bb1_desc);
+      PrintTexDesc(kTestName, "backbuffer[1]", bb1_desc);
+      DumpSharedHandleInfo(kTestName, "backbuffer[1]", backbuffer1.get());
+    }
 
     ComPtr<ID3D11RenderTargetView> rtv0;
     ComPtr<ID3D11RenderTargetView> rtv1;
@@ -683,9 +749,11 @@ static int RunDxgiSwapchainProbe(int argc, char** argv) {
     if (FAILED(hr)) {
       return reporter.FailHresult("CreateRenderTargetView(backbuffer[0])", hr);
     }
-    hr = device->CreateRenderTargetView(backbuffer1.get(), NULL, rtv1.put());
-    if (FAILED(hr)) {
-      return reporter.FailHresult("CreateRenderTargetView(backbuffer[1])", hr);
+    if (buffers > 1) {
+      hr = device->CreateRenderTargetView(backbuffer1.get(), NULL, rtv1.put());
+      if (FAILED(hr)) {
+        return reporter.FailHresult("CreateRenderTargetView(backbuffer[1])", hr);
+      }
     }
 
     D3D11_VIEWPORT vp;
@@ -698,7 +766,7 @@ static int RunDxgiSwapchainProbe(int argc, char** argv) {
     context->RSSetViewports(1, &vp);
 
     for (uint32_t frame = 0; frame < frames; ++frame) {
-      ID3D11RenderTargetView* rtv = (frame & 1) ? rtv1.get() : rtv0.get();
+      ID3D11RenderTargetView* rtv = (buffers > 1 && (frame & 1)) ? rtv1.get() : rtv0.get();
       context->OMSetRenderTargets(1, &rtv, NULL);
 
       const FLOAT clear_rgba[4] = {(frame & 1) ? 0.0f : 1.0f, (frame & 1) ? 1.0f : 0.0f, 0.0f, 1.0f};
