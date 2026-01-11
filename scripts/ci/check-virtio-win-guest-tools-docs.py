@@ -95,7 +95,11 @@ def check_docs() -> list[str]:
             # "By default ... -Profile full. ... use -Profile minimal").
             # Also avoid crossing semicolons because docs sometimes write:
             # "By default ... -Profile full; use -Profile minimal ..." (which should not fail CI).
-            re.compile(r"(?i)\bBy default\b[^.;]{0,200}`?-Profile\s+minimal`?"),
+            # Additionally, avoid flagging sentences that mention `-Profile full` before mentioning
+            # `-Profile minimal` as an alternative.
+            re.compile(
+                r"(?i)\bBy default\b(?:(?!`?-Profile\s+full`?)[^.;]){0,200}`?-Profile\s+minimal`?"
+            ),
         ),
         (
             "claims -Profile minimal is used by default",
@@ -115,7 +119,9 @@ def check_docs() -> list[str]:
         ),
         (
             "claims by-default uses --profile minimal",
-            re.compile(r"(?i)\bBy default\b[^.;]{0,200}`?--profile\s+minimal`?"),
+            re.compile(
+                r"(?i)\bBy default\b(?:(?!`?--profile\s+full`?)[^.;]){0,200}`?--profile\s+minimal`?"
+            ),
         ),
         (
             "claims --profile minimal is used by default",
