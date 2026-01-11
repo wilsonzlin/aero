@@ -10,7 +10,8 @@ End-to-end, Aero’s Windows 7 driver pipeline is:
 2. Stage a driver package (INF + SYS + any coinstallers)
 3. Generate catalogs (`.cat`) with `Inf2Cat`
 4. Test-sign catalogs/binaries for development/CI
-5. Install drivers on Windows 7 (post-install or during Windows Setup)
+5. Bundle signed packages into distributable artifacts (driver bundle ZIP/ISO and/or Guest Tools media)
+6. Install drivers on Windows 7 (post-install or during Windows Setup)
 
 The repo provides PowerShell entrypoints that CI and local builds can share:
 
@@ -20,13 +21,14 @@ The repo provides PowerShell entrypoints that CI and local builds can share:
 - `ci/make-catalogs.ps1` → stage packages + run `Inf2Cat` into `out/packages/`
 - `ci/sign-drivers.ps1` → create a test cert + sign `.sys`/`.cat` under `out/packages/` (signed catalogs cover INF-referenced payload files like user-mode DLLs)
 - `ci/package-drivers.ps1` → create `.zip` bundles and an optional `.iso` for “Load driver” installs
+- `ci/package-guest-tools.ps1` → build Guest Tools media (`aero-guest-tools.iso`/`.zip`) from signed packages using a packager spec (selects a subset of drivers)
 
 These scripts are orchestrated in CI by:
 
 - `.github/workflows/drivers-win7.yml` (**canonical** PR/push workflow; builds + catalogs + test-signs + packages)
   - Driver bundles: `win7-drivers` (from `out/artifacts/`)
   - Raw signed packages + cert: `win7-drivers-signed-packages` (from `out/packages/**` + `out/certs/aero-test.cer`)
-  - Guest Tools media: `aero-guest-tools` (ISO/zip/manifest)
+  - Guest Tools media: `aero-guest-tools` (via `ci/package-guest-tools.ps1`; ISO/zip/manifest)
 - `.github/workflows/release-drivers-win7.yml` (tagged releases; publishes the packaged artifacts to GitHub Releases)
 
 ---
@@ -114,13 +116,17 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
 
 `ci/build-drivers.ps1` only builds drivers that are explicitly marked as **CI-packaged** by placing a `ci-package.json` manifest at the *driver root* (for example `drivers/windows7/virtio/net/ci-package.json`).
 
-This avoids accidentally shipping dev/test drivers (and conflicting INFs / hardware ID matches) in CI-produced driver bundles and Guest Tools.
+`ci-package.json` is the explicit CI packaging gate: CI discovery starts from `drivers/**/ci-package.json` and only those drivers can flow into `out/drivers/`, `out/packages/`, and the final driver bundle artifacts. (Guest Tools media is further filtered by a separate packager spec; see below.)
 
 The CI discovery rule is:
 
-- Driver root contains a build target: `<dirName>.sln` **or** exactly one `*.vcxproj`
-- Driver root contains at least one `*.inf` somewhere under its tree (excluding `obj/`, `out/`, `build/`, `target/`)
-- Driver root contains `ci-package.json`
+- Candidate driver roots are discovered from directories under `drivers/` that contain `ci-package.json`.
+- Each candidate driver root must contain:
+  - a build target: `<dirName>.sln` **or** exactly one `*.vcxproj`
+  - at least one `*.inf` somewhere under its tree (excluding `obj/`, `out/`, `build/`, `target/`)
+- MakeFileProj/Makefile wrapper projects (legacy WDK `build.exe`) are skipped by default.
+  - Pass `-IncludeMakefileProjects` to opt in.
+  - For mixed solutions (MSBuild projects + wrapper projects), CI builds only the non-wrapper `*.vcxproj` projects.
 
 To add a new driver to CI packaging:
 
@@ -136,7 +142,9 @@ See also the examples under `drivers/_template/`:
 - `ci-package.inf-wow64-example.json`
 - `ci-package.wdf-example.json`
 
-> Note: CI only builds drivers with `ci-package.json`; drivers without it are treated as dev/test and skipped.
+> Note: CI only builds/stages drivers with `ci-package.json`; drivers without it are treated as dev/test and skipped.
+>
+> `drivers/win7/virtio/virtio-transport-test/` is a KMDF smoke-test driver and **is CI-packaged** (it contains `ci-package.json`). Its `virtio-transport-test.inf` intentionally binds a **non-contract** virtio PCI HWID (`PCI\VEN_1AF4&DEV_1040`) so it cannot steal binding from production virtio devices if multiple driver packages are staged or you bulk-install from a driver bundle.
 >
 > `drivers/windows/virtio-input/` is CI-packaged and binds to the real virtio-input PCI HWID (`PCI\VEN_1AF4&DEV_1052`). Keep its INF/HWID matches unique (avoid duplicate INFs that bind the same IDs) so Guest Tools packaging and the Win7 host harness remain deterministic.
 
@@ -150,6 +158,15 @@ Outputs:
 - MSBuild logs under `out/logs/drivers/` (including `.binlog` for deep debugging)
 
 ### 3) Stage packages + generate catalogs (`Inf2Cat`)
+
+`ci/make-catalogs.ps1` stages driver packages under `out/packages/` by combining:
+
+- packaging assets from `drivers/<driver>/` (INF files, optional coinstallers, etc), and
+- built binaries from `out/drivers/<driver>/<arch>/`,
+
+then runs `Inf2Cat` in each staged package directory.
+
+Only drivers that opt into CI packaging via `drivers/<driver>/ci-package.json` are staged. The manifest can also constrain which INF files are included via `infFiles` (recommended when a driver directory contains multiple INFs).
 
 ```powershell
 .\ci\make-catalogs.ps1 -ToolchainJson .\out\toolchain.json
@@ -216,6 +233,26 @@ The packaged artifacts include:
 
 - `aero-test.cer`
 - `INSTALL.txt` with the exact commands for test signing + certificate import + `pnputil`
+
+These driver bundle artifacts include **all** staged CI-packaged drivers under `out/packages/`. Some CI-packaged drivers may be dev/test-oriented (for example `virtio-transport-test`) but are safe to ship in the bundle as long as their INF does not bind production HWIDs.
+
+### 6) Package Guest Tools media (ISO/ZIP) (optional)
+
+`ci/package-guest-tools.ps1` consumes the signed driver packages under `out/packages/` and produces the Guest Tools ISO/zip. Unlike the driver bundle ZIP/ISO, Guest Tools includes only the drivers selected by the packager spec:
+
+- `tools/packaging/specs/win7-aero-guest-tools.json`
+
+This means a driver can be CI-packaged (built + cataloged + signed) and appear in the driver bundle artifacts, but still be omitted from Guest Tools if it is not selected by the spec (for example `virtio-transport-test`).
+
+```powershell
+.\ci\package-guest-tools.ps1 -InputRoot .\out\packages -CertPath .\out\certs\aero-test.cer -OutDir .\out\artifacts
+```
+
+Outputs:
+
+- `out/artifacts/aero-guest-tools.iso`
+- `out/artifacts/aero-guest-tools.zip`
+- `out/artifacts/aero-guest-tools.manifest.json`
 
 ---
 
