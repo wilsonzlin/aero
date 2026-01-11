@@ -225,3 +225,82 @@ impl VirtQueue {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use memory::DenseMemory;
+
+    fn write_desc(mem: &mut DenseMemory, base: u64, index: u16, desc: Descriptor) {
+        let off = base + (index as u64) * 16;
+        mem.write_u64_le(off, desc.addr).unwrap();
+        mem.write_u32_le(off + 8, desc.len).unwrap();
+        mem.write_u16_le(off + 12, desc.flags).unwrap();
+        mem.write_u16_le(off + 14, desc.next).unwrap();
+    }
+
+    fn init_avail(mem: &mut DenseMemory, avail: u64, flags: u16, idx: u16, head: u16) {
+        mem.write_u16_le(avail, flags).unwrap();
+        mem.write_u16_le(avail + 2, idx).unwrap();
+        mem.write_u16_le(avail + 4, head).unwrap();
+    }
+
+    #[test]
+    fn peek_available_does_not_consume_and_consume_available_advances() {
+        let mut mem = DenseMemory::new(0x4000).unwrap();
+
+        let desc_table = 0x1000;
+        let avail = 0x2000;
+        let used = 0x3000;
+
+        write_desc(
+            &mut mem,
+            desc_table,
+            0,
+            Descriptor {
+                addr: 0x80,
+                len: 4,
+                flags: 0,
+                next: 0,
+            },
+        );
+        init_avail(&mut mem, avail, 0, 1, 0);
+
+        let mut vq = VirtQueue::new(8, desc_table, avail, used);
+        let first = vq.peek_available(&mem).unwrap().unwrap();
+        let second = vq.peek_available(&mem).unwrap().unwrap();
+        assert_eq!(first, second);
+
+        assert!(vq.consume_available(&mem).unwrap());
+        assert!(vq.peek_available(&mem).unwrap().is_none());
+        assert!(!vq.consume_available(&mem).unwrap());
+    }
+
+    #[test]
+    fn peek_then_pop_available_returns_same_chain() {
+        let mut mem = DenseMemory::new(0x4000).unwrap();
+
+        let desc_table = 0x1000;
+        let avail = 0x2000;
+        let used = 0x3000;
+
+        write_desc(
+            &mut mem,
+            desc_table,
+            0,
+            Descriptor {
+                addr: 0x80,
+                len: 4,
+                flags: 0,
+                next: 0,
+            },
+        );
+        init_avail(&mut mem, avail, 0, 1, 0);
+
+        let mut vq = VirtQueue::new(8, desc_table, avail, used);
+        let peeked = vq.peek_available(&mem).unwrap().unwrap();
+        let popped = vq.pop_available(&mem).unwrap().unwrap();
+        assert_eq!(peeked, popped);
+        assert!(vq.peek_available(&mem).unwrap().is_none());
+    }
+}
