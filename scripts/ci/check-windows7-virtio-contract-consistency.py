@@ -35,6 +35,20 @@ WINDOWS_DEVICE_CONTRACT_MD = REPO_ROOT / "docs/windows-device-contract.md"
 WINDOWS_DEVICE_CONTRACT_JSON = REPO_ROOT / "docs/windows-device-contract.json"
 WINDOWS_DEVICE_CONTRACT_VIRTIO_WIN_JSON = REPO_ROOT / "docs/windows-device-contract-virtio-win.json"
 
+# The Windows 7 virtio test harness docs/log strings should always reference the
+# canonical INF basenames shipped by this repo. When we rename driver packages,
+# it's easy to update the INFs but forget to update these examples.
+WIN7_VIRTIO_TESTS_ROOT = REPO_ROOT / "drivers/windows7/tests"
+DEPRECATED_WIN7_TEST_INF_BASENAMES: tuple[str, ...] = (
+    # Pre-rename INF basenames.
+    "aerovblk.inf",
+    "aerovnet.inf",
+    # Old virtio-snd INF basename (hyphenated); canonical is now aero_virtio_snd.inf.
+    "aero-virtio-snd.inf",
+    # Old virtio-input INF basename; canonical is now aero_virtio_input.inf.
+    "virtio-input.inf",
+)
+
 # Guest Tools packager specs that hardcode expected HWID regexes. These should
 # stay aligned with the canonical Windows device contract; otherwise Guest Tools
 # builds can silently start rejecting/accepting the wrong drivers.
@@ -148,6 +162,25 @@ def parse_contract_major_version(md: str) -> int:
     if not m:
         fail(f"could not parse contract major version from {W7_VIRTIO_CONTRACT_MD.as_posix()}")
     return int(m.group("major"), 10)
+
+
+def scan_text_tree_for_substrings(root: Path, needles: Iterable[str]) -> list[str]:
+    hits: list[str] = []
+    needles = tuple(needles)
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if not any(needle in text for needle in needles):
+            continue
+        for line_no, line in enumerate(text.splitlines(), start=1):
+            for needle in needles:
+                if needle in line:
+                    hits.append(f"{path.as_posix()}:{line_no}: contains {needle!r}")
+    return hits
 
 
 def parse_c_define_hex(text: str, name: str, *, file: Path) -> int | None:
@@ -1110,6 +1143,15 @@ def main() -> None:
         contract_pci_device_ids,
         contract_subsystem_ids,
     ) = parse_w7_contract_pci_identification_tables(w7_md)
+
+    deprecated_hits = scan_text_tree_for_substrings(WIN7_VIRTIO_TESTS_ROOT, DEPRECATED_WIN7_TEST_INF_BASENAMES)
+    if deprecated_hits:
+        errors.append(
+            format_error(
+                "Win7 virtio tests reference deprecated INF basenames. Update docs/examples to use canonical aero_virtio_*.inf files:",
+                deprecated_hits,
+            )
+        )
 
     # Ensure the contract doesn't silently grow new virtio devices without also
     # extending this checker.
