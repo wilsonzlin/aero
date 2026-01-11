@@ -576,6 +576,15 @@ fn should_include_driver_file(
     if file_name.starts_with('.') {
         return Ok(false);
     }
+    // Also ignore common Windows shell metadata files to keep outputs stable for
+    // local builds on Windows.
+    let file_name_lower = file_name.to_ascii_lowercase();
+    if matches!(
+        file_name_lower.as_str(),
+        "thumbs.db" | "ehthumbs.db" | "desktop.ini"
+    ) {
+        return Ok(false);
+    }
 
     let ext = path
         .extension()

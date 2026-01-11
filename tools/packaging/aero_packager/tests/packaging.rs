@@ -598,6 +598,75 @@ fn driver_dll_extensions_are_handled_case_insensitively() -> anyhow::Result<()> 
 }
 
 #[test]
+fn windows_shell_metadata_files_are_excluded_from_driver_dirs() -> anyhow::Result<()> {
+    let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let testdata = repo_root.join("testdata");
+    let spec_path = testdata.join("spec.json");
+    let drivers_dir = testdata.join("drivers");
+    let guest_tools_dir = testdata.join("guest-tools");
+
+    let out_base = tempfile::tempdir()?;
+    let config_base = aero_packager::PackageConfig {
+        drivers_dir: drivers_dir.clone(),
+        guest_tools_dir: guest_tools_dir.clone(),
+        out_dir: out_base.path().to_path_buf(),
+        spec_path: spec_path.clone(),
+        version: "1.2.3".to_string(),
+        build_id: "test".to_string(),
+        volume_id: "AERO_GUEST_TOOLS".to_string(),
+        signing_policy: aero_packager::SigningPolicy::TestSigning,
+        source_date_epoch: 0,
+    };
+    let outputs_base = aero_packager::package_guest_tools(&config_base)?;
+    let iso_base = fs::read(&outputs_base.iso_path)?;
+    let zip_base = fs::read(&outputs_base.zip_path)?;
+    let manifest_base = fs::read(&outputs_base.manifest_path)?;
+
+    let drivers_tmp = tempfile::tempdir()?;
+    copy_dir_all(&drivers_dir, drivers_tmp.path())?;
+    for arch in ["x86", "amd64"] {
+        fs::write(
+            drivers_tmp
+                .path()
+                .join(format!("{arch}/testdrv/Thumbs.db")),
+            b"dummy thumbs",
+        )?;
+        fs::write(
+            drivers_tmp
+                .path()
+                .join(format!("{arch}/testdrv/desktop.ini")),
+            b"dummy ini",
+        )?;
+    }
+
+    let out = tempfile::tempdir()?;
+    let config = aero_packager::PackageConfig {
+        drivers_dir: drivers_tmp.path().to_path_buf(),
+        out_dir: out.path().to_path_buf(),
+        ..config_base
+    };
+    let outputs = aero_packager::package_guest_tools(&config)?;
+    let iso_bytes = fs::read(&outputs.iso_path)?;
+    let tree = aero_packager::read_joliet_tree(&iso_bytes)?;
+
+    for unexpected in [
+        "drivers/x86/testdrv/Thumbs.db",
+        "drivers/amd64/testdrv/Thumbs.db",
+        "drivers/x86/testdrv/desktop.ini",
+        "drivers/amd64/testdrv/desktop.ini",
+    ] {
+        assert!(!tree.contains(unexpected), "unexpected file packaged: {unexpected}");
+    }
+
+    // Excluding metadata files should keep outputs stable.
+    assert_eq!(iso_base, iso_bytes);
+    assert_eq!(zip_base, fs::read(&outputs.zip_path)?);
+    assert_eq!(manifest_base, fs::read(&outputs.manifest_path)?);
+
+    Ok(())
+}
+
+#[test]
 fn package_outputs_allow_empty_certs_when_signing_policy_none() -> anyhow::Result<()> {
     let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let testdata = repo_root.join("testdata");
