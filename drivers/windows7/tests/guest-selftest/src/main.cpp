@@ -832,7 +832,8 @@ static const GUID kKsCategoryTopology = {0xdda54a40,
                                           0x11d1,
                                           {0xa0, 0x50, 0x40, 0x57, 0x05, 0xc1, 0x00, 0x00}};
 
-static std::vector<VirtioSndPciDevice> DetectVirtioSndPciDevices(Logger& log, bool allow_transitional) {
+static std::vector<VirtioSndPciDevice> DetectVirtioSndPciDevices(Logger& log, bool allow_transitional,
+                                                                 bool verbose = true) {
   std::vector<VirtioSndPciDevice> out;
   std::vector<VirtioSndPciDevice> ignored_transitional;
 
@@ -841,7 +842,9 @@ static std::vector<VirtioSndPciDevice> DetectVirtioSndPciDevices(Logger& log, bo
       // function, so it should always show up here if present.
       SetupDiGetClassDevsW(nullptr, L"PCI", nullptr, DIGCF_PRESENT | DIGCF_ALLCLASSES);
   if (devinfo == INVALID_HANDLE_VALUE) {
-    log.Logf("virtio-snd: SetupDiGetClassDevs(enumerator=PCI) failed: %lu", GetLastError());
+    if (verbose) {
+      log.Logf("virtio-snd: SetupDiGetClassDevs(enumerator=PCI) failed: %lu", GetLastError());
+    }
     return out;
   }
 
@@ -904,40 +907,47 @@ static std::vector<VirtioSndPciDevice> DetectVirtioSndPciDevices(Logger& log, bo
       snd.cm_status = status;
       snd.cm_problem = static_cast<DWORD>(problem);
     } else {
-      log.Logf("virtio-snd: CM_Get_DevNode_Status failed pnp_id=%s cr=%lu",
-               WideToUtf8(snd.instance_id).c_str(), static_cast<unsigned long>(cr));
+      if (verbose) {
+        log.Logf("virtio-snd: CM_Get_DevNode_Status failed pnp_id=%s cr=%lu",
+                 WideToUtf8(snd.instance_id).c_str(), static_cast<unsigned long>(cr));
+      }
       snd.cm_status = 0;
       snd.cm_problem = MAXDWORD;
     }
 
-    log.Logf("virtio-snd: detected PCI device instance_id=%s name=%s modern=%d rev01=%d transitional=%d allowed=%d",
-             WideToUtf8(snd.instance_id).c_str(), WideToUtf8(snd.description).c_str(), id_info.modern ? 1 : 0,
-             id_info.modern_rev01 ? 1 : 0, id_info.transitional ? 1 : 0, allowed ? 1 : 0);
-    if (!hwids.empty()) {
-      log.Logf("virtio-snd: detected PCI device hwid0=%s", WideToUtf8(hwids[0]).c_str());
+    if (verbose) {
+      log.Logf(
+          "virtio-snd: detected PCI device instance_id=%s name=%s modern=%d rev01=%d transitional=%d allowed=%d",
+          WideToUtf8(snd.instance_id).c_str(), WideToUtf8(snd.description).c_str(), id_info.modern ? 1 : 0,
+          id_info.modern_rev01 ? 1 : 0, id_info.transitional ? 1 : 0, allowed ? 1 : 0);
+      if (!hwids.empty()) {
+        log.Logf("virtio-snd: detected PCI device hwid0=%s", WideToUtf8(hwids[0]).c_str());
+      }
     }
     const std::wstring expected_service = snd.is_transitional && !snd.is_modern
                                               ? kVirtioSndExpectedServiceTransitional
                                               : kVirtioSndExpectedServiceModern;
-    if (id_info.modern && !id_info.modern_rev01) {
-      log.Logf(
-          "virtio-snd: pci device pnp_id=%s missing REV_01 (Aero contract v1 expects REV_01; QEMU needs x-pci-revision=0x01)",
-          WideToUtf8(snd.instance_id).c_str());
+    if (verbose) {
+      if (id_info.modern && !id_info.modern_rev01) {
+        log.Logf(
+            "virtio-snd: pci device pnp_id=%s missing REV_01 (Aero contract v1 expects REV_01; QEMU needs x-pci-revision=0x01)",
+            WideToUtf8(snd.instance_id).c_str());
+      }
+      log.Logf("virtio-snd: pci driver service=%s inf=%s section=%s (expected service=%s)",
+               WideToUtf8(snd.service).c_str(), WideToUtf8(snd.inf_path).c_str(),
+               WideToUtf8(snd.inf_section).c_str(), WideToUtf8(expected_service).c_str());
+      if (!snd.driver_desc.empty() || !snd.provider_name.empty() || !snd.driver_version.empty() ||
+          !snd.driver_date.empty() || !snd.matching_device_id.empty()) {
+        log.Logf("virtio-snd: pci driver desc=%s provider=%s version=%s date=%s match_id=%s",
+                 WideToUtf8(snd.driver_desc).c_str(), WideToUtf8(snd.provider_name).c_str(),
+                 WideToUtf8(snd.driver_version).c_str(), WideToUtf8(snd.driver_date).c_str(),
+                 WideToUtf8(snd.matching_device_id).c_str());
+      }
+      log.Logf("virtio-snd: pci cm_status=0x%08lx(%s) cm_problem=%lu(%s: %s)",
+               static_cast<unsigned long>(snd.cm_status), CmStatusFlagsToString(snd.cm_status).c_str(),
+               static_cast<unsigned long>(snd.cm_problem), CmProblemCodeToName(snd.cm_problem),
+               CmProblemCodeToMeaning(snd.cm_problem));
     }
-    log.Logf("virtio-snd: pci driver service=%s inf=%s section=%s (expected service=%s)",
-             WideToUtf8(snd.service).c_str(), WideToUtf8(snd.inf_path).c_str(),
-             WideToUtf8(snd.inf_section).c_str(), WideToUtf8(expected_service).c_str());
-    if (!snd.driver_desc.empty() || !snd.provider_name.empty() || !snd.driver_version.empty() ||
-        !snd.driver_date.empty() || !snd.matching_device_id.empty()) {
-      log.Logf("virtio-snd: pci driver desc=%s provider=%s version=%s date=%s match_id=%s",
-               WideToUtf8(snd.driver_desc).c_str(), WideToUtf8(snd.provider_name).c_str(),
-               WideToUtf8(snd.driver_version).c_str(), WideToUtf8(snd.driver_date).c_str(),
-               WideToUtf8(snd.matching_device_id).c_str());
-    }
-    log.Logf("virtio-snd: pci cm_status=0x%08lx(%s) cm_problem=%lu(%s: %s)",
-             static_cast<unsigned long>(snd.cm_status), CmStatusFlagsToString(snd.cm_status).c_str(),
-             static_cast<unsigned long>(snd.cm_problem), CmProblemCodeToName(snd.cm_problem),
-             CmProblemCodeToMeaning(snd.cm_problem));
     if (allowed) {
       out.push_back(std::move(snd));
     } else {
@@ -946,11 +956,12 @@ static std::vector<VirtioSndPciDevice> DetectVirtioSndPciDevices(Logger& log, bo
   }
 
   SetupDiDestroyDeviceInfoList(devinfo);
-  if (!allow_transitional && out.empty() && !ignored_transitional.empty()) {
+  if (verbose && !allow_transitional && out.empty() && !ignored_transitional.empty()) {
     log.LogLine("virtio-snd: found transitional PCI\\VEN_1AF4&DEV_1018 device(s) but ignoring them "
                 "(contract v1 modern-only)");
-    log.LogLine("virtio-snd: QEMU hint: use disable-legacy=on,x-pci-revision=0x01 for virtio-snd (recommended); "
-                "or use --allow-virtio-snd-transitional + the legacy driver package for backcompat");
+    log.LogLine(
+        "virtio-snd: QEMU hint: use disable-legacy=on,x-pci-revision=0x01 for virtio-snd (recommended); "
+        "or use --allow-virtio-snd-transitional + the legacy driver package for backcompat");
   }
   return out;
 }
@@ -3747,7 +3758,7 @@ int wmain(int argc, wchar_t** argv) {
                static_cast<int32_t>(GetTickCount() - deadline_ms) < 0) {
           attempt++;
           Sleep(250);
-          snd_pci = DetectVirtioSndPciDevices(log, opt.allow_virtio_snd_transitional);
+          snd_pci = DetectVirtioSndPciDevices(log, opt.allow_virtio_snd_transitional, false);
           binding = SummarizeVirtioSndPciBinding(snd_pci);
           if (binding.ok) {
             log.Logf("virtio-snd: pci binding became healthy after wait (attempt=%d)", attempt);
