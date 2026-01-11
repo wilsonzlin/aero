@@ -544,6 +544,8 @@ enum aerogpu_blend_factor {
   AEROGPU_BLEND_INV_SRC_ALPHA = 3,
   AEROGPU_BLEND_DEST_ALPHA = 4,
   AEROGPU_BLEND_INV_DEST_ALPHA = 5,
+  AEROGPU_BLEND_BLEND_FACTOR = 6,
+  AEROGPU_BLEND_INV_BLEND_FACTOR = 7,
 };
 
 enum aerogpu_blend_op {
@@ -562,10 +564,15 @@ struct aerogpu_blend_state {
   uint32_t blend_op; /* aerogpu_blend_op */
   uint8_t color_write_mask; /* bit0=R bit1=G bit2=B bit3=A */
   uint8_t reserved0[3];
+  uint32_t src_factor_alpha; /* aerogpu_blend_factor */
+  uint32_t dst_factor_alpha; /* aerogpu_blend_factor */
+  uint32_t blend_op_alpha; /* aerogpu_blend_op */
+  uint32_t blend_constant_rgba_f32[4]; /* IEEE-754 float bits */
+  uint32_t sample_mask; /* D3D11 sample mask */
 };
 #pragma pack(pop)
 
-AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_blend_state) == 20);
+AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_blend_state) == 52);
 
 #pragma pack(push, 1)
 struct aerogpu_cmd_set_blend_state {
@@ -574,7 +581,7 @@ struct aerogpu_cmd_set_blend_state {
 };
 #pragma pack(pop)
 
-AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_set_blend_state) == 28);
+AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_set_blend_state) == 60);
 
 enum aerogpu_compare_func {
   AEROGPU_COMPARE_NEVER = 0,

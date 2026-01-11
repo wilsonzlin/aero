@@ -455,6 +455,8 @@ pub enum AerogpuBlendFactor {
     InvSrcAlpha = 3,
     DestAlpha = 4,
     InvDestAlpha = 5,
+    BlendFactor = 6,
+    InvBlendFactor = 7,
 }
 
 #[repr(u32)]
@@ -476,10 +478,15 @@ pub struct AerogpuBlendState {
     pub blend_op: u32,
     pub color_write_mask: u8,
     pub reserved0: [u8; 3],
+    pub src_factor_alpha: u32,
+    pub dst_factor_alpha: u32,
+    pub blend_op_alpha: u32,
+    pub blend_constant_rgba_f32: [u32; 4],
+    pub sample_mask: u32,
 }
 
 impl AerogpuBlendState {
-    pub const SIZE_BYTES: usize = 20;
+    pub const SIZE_BYTES: usize = 52;
 }
 
 #[repr(C, packed)]
@@ -490,7 +497,7 @@ pub struct AerogpuCmdSetBlendState {
 }
 
 impl AerogpuCmdSetBlendState {
-    pub const SIZE_BYTES: usize = 28;
+    pub const SIZE_BYTES: usize = 60;
 }
 
 #[repr(u32)]

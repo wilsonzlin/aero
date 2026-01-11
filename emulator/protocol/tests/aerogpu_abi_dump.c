@@ -219,6 +219,11 @@ int main(void) {
   PRINT_OFF("aerogpu_blend_state", struct aerogpu_blend_state, blend_op);
   PRINT_OFF("aerogpu_blend_state", struct aerogpu_blend_state, color_write_mask);
   PRINT_OFF("aerogpu_blend_state", struct aerogpu_blend_state, reserved0);
+  PRINT_OFF("aerogpu_blend_state", struct aerogpu_blend_state, src_factor_alpha);
+  PRINT_OFF("aerogpu_blend_state", struct aerogpu_blend_state, dst_factor_alpha);
+  PRINT_OFF("aerogpu_blend_state", struct aerogpu_blend_state, blend_op_alpha);
+  PRINT_OFF("aerogpu_blend_state", struct aerogpu_blend_state, blend_constant_rgba_f32);
+  PRINT_OFF("aerogpu_blend_state", struct aerogpu_blend_state, sample_mask);
 
   PRINT_OFF("aerogpu_cmd_set_blend_state", struct aerogpu_cmd_set_blend_state, hdr);
   PRINT_OFF("aerogpu_cmd_set_blend_state", struct aerogpu_cmd_set_blend_state, state);
@@ -642,6 +647,8 @@ int main(void) {
   PRINT_CONST(AEROGPU_BLEND_INV_SRC_ALPHA);
   PRINT_CONST(AEROGPU_BLEND_DEST_ALPHA);
   PRINT_CONST(AEROGPU_BLEND_INV_DEST_ALPHA);
+  PRINT_CONST(AEROGPU_BLEND_BLEND_FACTOR);
+  PRINT_CONST(AEROGPU_BLEND_INV_BLEND_FACTOR);
 
   PRINT_CONST(AEROGPU_BLEND_OP_ADD);
   PRINT_CONST(AEROGPU_BLEND_OP_SUBTRACT);

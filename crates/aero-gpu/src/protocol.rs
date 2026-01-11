@@ -713,15 +713,23 @@ pub fn parse_cmd_stream(
             }
 
             Some(AeroGpuOpcode::SetBlendState) => {
-                let cmd: protocol::AerogpuCmdSetBlendState = read_packed_prefix(packet)?;
-                let state = cmd.state;
                 AeroGpuCmd::SetBlendState {
                     state: AeroGpuBlendState {
-                        enable: u32::from_le(state.enable),
-                        src_factor: u32::from_le(state.src_factor),
-                        dst_factor: u32::from_le(state.dst_factor),
-                        blend_op: u32::from_le(state.blend_op),
-                        color_write_mask: state.color_write_mask,
+                        enable: read_u32_le(packet.get(8..12).ok_or(
+                            AeroGpuCmdStreamParseError::BufferTooSmall,
+                        )?),
+                        src_factor: read_u32_le(packet.get(12..16).ok_or(
+                            AeroGpuCmdStreamParseError::BufferTooSmall,
+                        )?),
+                        dst_factor: read_u32_le(packet.get(16..20).ok_or(
+                            AeroGpuCmdStreamParseError::BufferTooSmall,
+                        )?),
+                        blend_op: read_u32_le(packet.get(20..24).ok_or(
+                            AeroGpuCmdStreamParseError::BufferTooSmall,
+                        )?),
+                        color_write_mask: *packet
+                            .get(24)
+                            .ok_or(AeroGpuCmdStreamParseError::BufferTooSmall)?,
                     },
                 }
             }

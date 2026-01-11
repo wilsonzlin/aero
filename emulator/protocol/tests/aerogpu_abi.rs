@@ -1465,6 +1465,36 @@ fn rust_layout_matches_c_headers() {
         "aerogpu_blend_state",
         "reserved0"
     );
+    assert_off!(
+        AerogpuBlendState,
+        src_factor_alpha,
+        "aerogpu_blend_state",
+        "src_factor_alpha"
+    );
+    assert_off!(
+        AerogpuBlendState,
+        dst_factor_alpha,
+        "aerogpu_blend_state",
+        "dst_factor_alpha"
+    );
+    assert_off!(
+        AerogpuBlendState,
+        blend_op_alpha,
+        "aerogpu_blend_state",
+        "blend_op_alpha"
+    );
+    assert_off!(
+        AerogpuBlendState,
+        blend_constant_rgba_f32,
+        "aerogpu_blend_state",
+        "blend_constant_rgba_f32"
+    );
+    assert_off!(
+        AerogpuBlendState,
+        sample_mask,
+        "aerogpu_blend_state",
+        "sample_mask"
+    );
     assert_cmd_hdr_off!(AerogpuCmdSetBlendState, "aerogpu_cmd_set_blend_state");
     assert_off!(
         AerogpuCmdSetBlendState,
@@ -3117,6 +3147,14 @@ fn rust_layout_matches_c_headers() {
         &mut cmd_consts_seen,
         "AEROGPU_BLEND_INV_DEST_ALPHA",
         AerogpuBlendFactor::InvDestAlpha as u64,
+    );
+    assert_eq!(
+        abi.konst("AEROGPU_BLEND_BLEND_FACTOR"),
+        AerogpuBlendFactor::BlendFactor as u64
+    );
+    assert_eq!(
+        abi.konst("AEROGPU_BLEND_INV_BLEND_FACTOR"),
+        AerogpuBlendFactor::InvBlendFactor as u64
     );
 
     check_const(

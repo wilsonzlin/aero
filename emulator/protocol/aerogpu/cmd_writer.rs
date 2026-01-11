@@ -906,6 +906,34 @@ impl AerogpuCmdWriter {
         blend_op: AerogpuBlendOp,
         color_write_mask: u8,
     ) {
+        self.set_blend_state_ext(
+            enable,
+            src_factor,
+            dst_factor,
+            blend_op,
+            src_factor,
+            dst_factor,
+            blend_op,
+            [0.0; 4],
+            0xFFFF_FFFF,
+            color_write_mask,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn set_blend_state_ext(
+        &mut self,
+        enable: bool,
+        src_factor: AerogpuBlendFactor,
+        dst_factor: AerogpuBlendFactor,
+        blend_op: AerogpuBlendOp,
+        src_factor_alpha: AerogpuBlendFactor,
+        dst_factor_alpha: AerogpuBlendFactor,
+        blend_op_alpha: AerogpuBlendOp,
+        blend_constant_rgba: [f32; 4],
+        sample_mask: u32,
+        color_write_mask: u8,
+    ) {
         use super::aerogpu_cmd::AerogpuBlendState;
 
         let base = self.append_raw(
@@ -932,6 +960,27 @@ impl AerogpuCmdWriter {
         self.write_u8_at(
             state_base + offset_of!(AerogpuBlendState, color_write_mask),
             color_write_mask,
+        );
+
+        self.write_u32_at(
+            state_base + offset_of!(AerogpuBlendState, src_factor_alpha),
+            src_factor_alpha as u32,
+        );
+        self.write_u32_at(
+            state_base + offset_of!(AerogpuBlendState, dst_factor_alpha),
+            dst_factor_alpha as u32,
+        );
+        self.write_u32_at(
+            state_base + offset_of!(AerogpuBlendState, blend_op_alpha),
+            blend_op_alpha as u32,
+        );
+        let constant_base = state_base + offset_of!(AerogpuBlendState, blend_constant_rgba_f32);
+        for (i, c) in blend_constant_rgba.iter().enumerate() {
+            self.write_u32_at(constant_base + i * 4, c.to_bits());
+        }
+        self.write_u32_at(
+            state_base + offset_of!(AerogpuBlendState, sample_mask),
+            sample_mask,
         );
     }
 

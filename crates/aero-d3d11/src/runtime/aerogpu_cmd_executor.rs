@@ -281,6 +281,8 @@ struct AerogpuD3d11State {
     // mapped onto sensible defaults.
     blend: Option<wgpu::BlendState>,
     color_write_mask: wgpu::ColorWrites,
+    blend_constant: [f32; 4],
+    sample_mask: u32,
     depth_enable: bool,
     depth_write_enable: bool,
     depth_compare: wgpu::CompareFunction,
@@ -318,6 +320,8 @@ impl Default for AerogpuD3d11State {
             constant_buffers_cs: Vec::new(),
             blend: None,
             color_write_mask: wgpu::ColorWrites::ALL,
+            blend_constant: [0.0; 4],
+            sample_mask: 0xFFFF_FFFF,
             depth_enable: true,
             depth_write_enable: true,
             depth_compare: wgpu::CompareFunction::Less,
@@ -892,6 +896,12 @@ impl AerogpuD3d11Executor {
                 }
             }
         }
+        pass.set_blend_constant(wgpu::Color {
+            r: state.blend_constant[0] as f64,
+            g: state.blend_constant[1] as f64,
+            b: state.blend_constant[2] as f64,
+            a: state.blend_constant[3] as f64,
+        });
 
         pass.set_pipeline(pipeline);
         for (group, bind_group) in bind_groups.iter().enumerate() {
@@ -954,12 +964,18 @@ impl AerogpuD3d11Executor {
             })?;
 
             match opcode {
-                OPCODE_DRAW => exec_draw(&mut pass, cmd_bytes)?,
+                OPCODE_DRAW => {
+                    if (state.sample_mask & 1) != 0 {
+                        exec_draw(&mut pass, cmd_bytes)?;
+                    }
+                }
                 OPCODE_DRAW_INDEXED => {
                     if state.index_buffer.is_none() {
                         bail!("DRAW_INDEXED without index buffer");
                     }
-                    exec_draw_indexed(&mut pass, cmd_bytes)?;
+                    if (state.sample_mask & 1) != 0 {
+                        exec_draw_indexed(&mut pass, cmd_bytes)?;
+                    }
                 }
                 OPCODE_NOP | OPCODE_DEBUG_MARKER => {}
                 _ => {}
@@ -2380,10 +2396,10 @@ impl AerogpuD3d11Executor {
     }
 
     fn exec_set_blend_state(&mut self, cmd_bytes: &[u8]) -> Result<()> {
-        // struct aerogpu_cmd_set_blend_state (28 bytes)
-        if cmd_bytes.len() != 28 {
+        // struct aerogpu_cmd_set_blend_state (28 bytes minimum; extended in newer ABI versions).
+        if cmd_bytes.len() < 28 {
             bail!(
-                "SET_BLEND_STATE: expected 28 bytes, got {}",
+                "SET_BLEND_STATE: expected at least 28 bytes, got {}",
                 cmd_bytes.len()
             );
         }
@@ -2395,6 +2411,45 @@ impl AerogpuD3d11Executor {
 
         self.state.color_write_mask = map_color_write_mask(write_mask);
 
+        // Optional extended fields (default when absent).
+        let src_factor_alpha = if cmd_bytes.len() >= 32 {
+            read_u32_le(cmd_bytes, 28)?
+        } else {
+            src_factor
+        };
+        let dst_factor_alpha = if cmd_bytes.len() >= 36 {
+            read_u32_le(cmd_bytes, 32)?
+        } else {
+            dst_factor
+        };
+        let op_alpha = if cmd_bytes.len() >= 40 {
+            read_u32_le(cmd_bytes, 36)?
+        } else {
+            op
+        };
+
+        let mut blend_constant = [0.0f32; 4];
+        if cmd_bytes.len() >= 44 {
+            blend_constant[0] = f32::from_bits(read_u32_le(cmd_bytes, 40)?);
+        }
+        if cmd_bytes.len() >= 48 {
+            blend_constant[1] = f32::from_bits(read_u32_le(cmd_bytes, 44)?);
+        }
+        if cmd_bytes.len() >= 52 {
+            blend_constant[2] = f32::from_bits(read_u32_le(cmd_bytes, 48)?);
+        }
+        if cmd_bytes.len() >= 56 {
+            blend_constant[3] = f32::from_bits(read_u32_le(cmd_bytes, 52)?);
+        }
+        let sample_mask = if cmd_bytes.len() >= 60 {
+            read_u32_le(cmd_bytes, 56)?
+        } else {
+            0xFFFF_FFFF
+        };
+
+        self.state.blend_constant = blend_constant;
+        self.state.sample_mask = sample_mask;
+
         if !enable {
             self.state.blend = None;
             return Ok(());
@@ -2404,6 +2459,10 @@ impl AerogpuD3d11Executor {
         let dst = map_blend_factor(dst_factor).unwrap_or(wgpu::BlendFactor::Zero);
         let op = map_blend_op(op).unwrap_or(wgpu::BlendOperation::Add);
 
+        let src_a = map_blend_factor(src_factor_alpha).unwrap_or(src);
+        let dst_a = map_blend_factor(dst_factor_alpha).unwrap_or(dst);
+        let op_a = map_blend_op(op_alpha).unwrap_or(op);
+
         self.state.blend = Some(wgpu::BlendState {
             color: wgpu::BlendComponent {
                 src_factor: src,
@@ -2411,9 +2470,9 @@ impl AerogpuD3d11Executor {
                 operation: op,
             },
             alpha: wgpu::BlendComponent {
-                src_factor: src,
-                dst_factor: dst,
-                operation: op,
+                src_factor: src_a,
+                dst_factor: dst_a,
+                operation: op_a,
             },
         });
         Ok(())
@@ -3796,6 +3855,8 @@ fn map_blend_factor(v: u32) -> Option<wgpu::BlendFactor> {
         3 => wgpu::BlendFactor::OneMinusSrcAlpha,
         4 => wgpu::BlendFactor::DstAlpha,
         5 => wgpu::BlendFactor::OneMinusDstAlpha,
+        6 => wgpu::BlendFactor::Constant,
+        7 => wgpu::BlendFactor::OneMinusConstant,
         _ => return None,
     })
 }

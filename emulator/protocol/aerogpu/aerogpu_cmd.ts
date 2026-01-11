@@ -282,6 +282,8 @@ export const AerogpuBlendFactor = {
   InvSrcAlpha: 3,
   DestAlpha: 4,
   InvDestAlpha: 5,
+  BlendFactor: 6,
+  InvBlendFactor: 7,
 } as const;
 
 export type AerogpuBlendFactor = (typeof AerogpuBlendFactor)[keyof typeof AerogpuBlendFactor];
@@ -393,8 +395,8 @@ export const AEROGPU_INPUT_LAYOUT_ELEMENT_DXGI_SIZE = 28;
 export const AEROGPU_CMD_CREATE_INPUT_LAYOUT_SIZE = 20;
 export const AEROGPU_CMD_DESTROY_INPUT_LAYOUT_SIZE = 16;
 export const AEROGPU_CMD_SET_INPUT_LAYOUT_SIZE = 16;
-export const AEROGPU_BLEND_STATE_SIZE = 20;
-export const AEROGPU_CMD_SET_BLEND_STATE_SIZE = 28;
+export const AEROGPU_BLEND_STATE_SIZE = 52;
+export const AEROGPU_CMD_SET_BLEND_STATE_SIZE = 60;
 export const AEROGPU_DEPTH_STENCIL_STATE_SIZE = 20;
 export const AEROGPU_CMD_SET_DEPTH_STENCIL_STATE_SIZE = 28;
 export const AEROGPU_RASTERIZER_STATE_SIZE = 24;
@@ -1125,6 +1127,11 @@ export class AerogpuCmdWriter {
     dstFactor: AerogpuBlendFactor,
     blendOp: AerogpuBlendOp,
     colorWriteMask: number,
+    srcFactorAlpha: AerogpuBlendFactor = srcFactor,
+    dstFactorAlpha: AerogpuBlendFactor = dstFactor,
+    blendOpAlpha: AerogpuBlendOp = blendOp,
+    blendConstantRgba: [number, number, number, number] = [0, 0, 0, 0],
+    sampleMask = 0xffffffff,
   ): void {
     const base = this.appendRaw(AerogpuCmdOpcode.SetBlendState, AEROGPU_CMD_SET_BLEND_STATE_SIZE);
     this.view.setUint32(base + 8, enable ? 1 : 0, true);
@@ -1132,6 +1139,13 @@ export class AerogpuCmdWriter {
     this.view.setUint32(base + 16, dstFactor, true);
     this.view.setUint32(base + 20, blendOp, true);
     this.view.setUint8(base + 24, colorWriteMask);
+    this.view.setUint32(base + 28, srcFactorAlpha, true);
+    this.view.setUint32(base + 32, dstFactorAlpha, true);
+    this.view.setUint32(base + 36, blendOpAlpha, true);
+    for (let i = 0; i < 4; i++) {
+      this.view.setFloat32(base + 40 + i * 4, blendConstantRgba[i]!, true);
+    }
+    this.view.setUint32(base + 56, sampleMask >>> 0, true);
   }
 
   setDepthStencilState(
