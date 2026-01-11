@@ -118,6 +118,16 @@
     <ClCompile Remove="src\driver.c" />
   </ItemGroup>
 
+  <!--
+    virtiosnd_backend_virtio.c is a standalone virtio-core + virtqueue_split based backend
+    intended for a separate PortCls/WaveRT integration path. The current virtiosnd WDM
+    driver skeleton uses its own transport/queue plumbing, so exclude this optional
+    backend from the default build to avoid pulling in conflicting dependencies.
+  -->
+  <ItemGroup>
+    <ClCompile Remove="src\virtiosnd_backend_virtio.c" />
+  </ItemGroup>
+
   <ItemGroup>
     <ClInclude Include="include\**\*.h" />
     <ClInclude Include="src\**\*.h" />
