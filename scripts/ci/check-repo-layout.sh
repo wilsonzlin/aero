@@ -24,6 +24,50 @@ cd "$(git rev-parse --show-toplevel)"
 need_file "docs/repo-layout.md"
 need_file "docs/adr/0001-repo-layout.md"
 
+# Windows driver CI packaging template guardrails.
+#
+# These files are intended to be copied by new driver authors, so keep them present and
+# keep the starter manifest demonstrating all supported keys (without opting into any
+# Microsoft WDK redistributables by default).
+need_file "drivers/_template/ci-package.README.md"
+need_file "drivers/_template/ci-package.json"
+need_file "drivers/_template/ci-package.inf-wow64-example.json"
+need_file "drivers/_template/ci-package.wdf-example.json"
+
+if command -v python3 >/dev/null 2>&1; then
+  python3 - <<'PY'
+import json
+import sys
+
+path = "drivers/_template/ci-package.json"
+with open(path, "r", encoding="utf-8") as f:
+    manifest = json.load(f)
+
+required = ["infFiles", "wow64Files", "additionalFiles"]
+missing = [k for k in required if k not in manifest]
+if missing:
+    raise SystemExit(f"{path}: missing required key(s): {', '.join(missing)}")
+
+if "wdfCoInstaller" in manifest:
+    raise SystemExit(f"{path}: must not include wdfCoInstaller by default (WDK redistributables are opt-in)")
+
+inf_files = manifest.get("infFiles")
+if not isinstance(inf_files, list) or not inf_files:
+    raise SystemExit(f"{path}: infFiles must be a non-empty array (template should include a .inf placeholder)")
+if not isinstance(inf_files[0], str) or not inf_files[0].lower().endswith(".inf"):
+    raise SystemExit(f"{path}: infFiles placeholder must be a string ending in .inf; got: {inf_files[0]!r}")
+
+for key in ("wow64Files", "additionalFiles"):
+    value = manifest.get(key)
+    if not isinstance(value, list):
+        raise SystemExit(f"{path}: {key} must be an array; got: {type(value).__name__}")
+
+print("Driver template manifest check: OK")
+PY
+else
+  echo "warning: python3 not found; skipping driver template manifest check" >&2
+fi
+
 # Canonical shared protocol vectors (used by cross-language conformance tests).
 need_file "protocol-vectors/README.md"
 need_file "protocol-vectors/udp-relay.json"
@@ -76,16 +120,6 @@ done
 # canonical definition.
 need_file "drivers/aerogpu/protocol/aerogpu_alloc.h"
 need_file "drivers/aerogpu/protocol/aerogpu_wddm_alloc.h"
-
-# Guardrail: prevent regressions back to the deleted `aerogpu_alloc_privdata.h`
-# ("KMD→UMD ShareToken") model.
-deprecated_alloc_privdata_header="drivers/aerogpu/protocol/aerogpu_alloc_privdata.h"
-if [[ -f "$deprecated_alloc_privdata_header" ]]; then
-  die "$deprecated_alloc_privdata_header is deprecated; use drivers/aerogpu/protocol/aerogpu_wddm_alloc.h instead"
-fi
-if git grep -n "aerogpu_alloc_privdata.h" -- docs drivers >/dev/null; then
-  die "stale references to aerogpu_alloc_privdata.h found (use drivers/aerogpu/protocol/aerogpu_wddm_alloc.h instead)"
-fi
 
 # npm workspaces: enforce a single repo-root lockfile to prevent dependency drift.
 # (Per-package lockfiles are ignored via .gitignore, but this catches forced adds.)

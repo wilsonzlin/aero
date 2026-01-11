@@ -132,8 +132,8 @@ To add a new driver to CI packaging:
 
 1. Copy `drivers/_template/ci-package.json` into your driver root as `ci-package.json`
 2. Update the `$schema` relative path as needed
-3. Optionally set `infFiles` to an explicit allowlist (recommended if the driver directory contains multiple INFs).
-   - If omitted, CI auto-discovers all `*.inf` files under the driver directory.
+3. Replace the `infFiles` placeholder (or remove the `infFiles` key to enable CI auto-discovery of all `*.inf` files under the driver directory).
+   - If the driver directory contains multiple INFs, an explicit `infFiles` allowlist is recommended to avoid packaging unrelated variants together.
 4. Optionally set `wow64Files` if the x64 package needs specific 32-bit user-mode payload DLLs copied in from the x86 build output (WOW64 components).
    - Ensure WOW64 DLL names do not collide with 64-bit build output names, since WOW64 payloads are copied into the x64 package root.
 
