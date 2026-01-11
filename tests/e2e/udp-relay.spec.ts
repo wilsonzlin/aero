@@ -1,7 +1,8 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 
 import dgram from 'node:dgram';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import crypto from 'node:crypto';
 import { once } from 'node:events';
 import net from 'node:net';
 
@@ -69,7 +70,20 @@ type RelayProcess = {
   close: () => Promise<void>;
 };
 
-async function startRelay(): Promise<RelayProcess> {
+type RelayAuthConfig =
+  | { authMode: 'none' }
+  | { authMode: 'api_key'; apiKey: string }
+  | { authMode: 'jwt'; jwtSecret: string; token: string };
+
+function makeJWT(secret: string): string {
+  const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
+  const payload = Buffer.from(JSON.stringify({})).toString('base64url');
+  const unsigned = `${header}.${payload}`;
+  const sig = crypto.createHmac('sha256', secret).update(unsigned).digest('base64url');
+  return `${unsigned}.${sig}`;
+}
+
+async function startRelay(auth: RelayAuthConfig): Promise<RelayProcess> {
   const port = await getFreeTcpPort();
 
   const proc = spawn(
@@ -82,8 +96,12 @@ async function startRelay(): Promise<RelayProcess> {
         ...process.env,
         // Allow the Vite dev server origin to fetch /webrtc/ice and connect to WS.
         ALLOWED_ORIGINS: '*',
-        // Default in relay may require auth; keep tests explicit.
-        AUTH_MODE: 'none',
+        // Allow loopback destinations for local UDP echo tests.
+        DESTINATION_POLICY_PRESET: 'dev',
+        // Keep tests explicit about auth requirements.
+        AUTH_MODE: auth.authMode,
+        ...(auth.authMode === 'api_key' ? { API_KEY: auth.apiKey } : {}),
+        ...(auth.authMode === 'jwt' ? { JWT_SECRET: auth.jwtSecret } : {}),
         AERO_WEBRTC_UDP_RELAY_LOG_LEVEL: 'error',
       },
     },
@@ -107,28 +125,23 @@ async function startRelay(): Promise<RelayProcess> {
   };
 }
 
-test.describe('udp relay (webrtc)', () => {
+test.describe.serial('udp relay (webrtc)', () => {
   test.skip(({ browserName }) => browserName !== 'chromium', 'WebRTC UDP relay test is Chromium-only');
   test.describe.configure({ timeout: 60_000 });
 
-  let relay: RelayProcess;
   let echo: UdpEchoServer;
 
   test.beforeAll(async () => {
     echo = await startUdpEchoServer();
-    relay = await startRelay();
   });
 
   test.afterAll(async () => {
     await echo.close();
-    await relay.close();
   });
 
-  test('connectUdpRelay establishes DataChannel and relays UDP', async ({ page }) => {
-    await page.goto('http://127.0.0.1:5173/', { waitUntil: 'load' });
-
-    const result = await page.evaluate(
-      async ({ relayOrigin, echoPort }) => {
+  async function runRoundTrip(page: Page, relayOrigin: string, authToken?: string) {
+    return await page.evaluate(
+      async ({ relayOrigin, echoPort, authToken }) => {
         const { connectUdpRelay } = await import('/web/src/net/udpRelaySignalingClient.ts');
 
         const payload = new Uint8Array([1, 2, 3, 4, 5]);
@@ -141,6 +154,7 @@ test.describe('udp relay (webrtc)', () => {
 
         const conn = await connectUdpRelay({
           baseUrl: relayOrigin,
+          authToken,
           sink: (evt) => resolveEvent?.(evt),
         });
 
@@ -162,12 +176,48 @@ test.describe('udp relay (webrtc)', () => {
           conn.close();
         }
       },
-      { relayOrigin: relay.origin, echoPort: echo.port },
+      { relayOrigin, echoPort: echo.port, authToken },
     );
+  }
 
+  function expectEcho(result: { srcIp: string; srcPort: number; dstPort: number; data: number[] }) {
     expect(result.srcIp).toBe('127.0.0.1');
     expect(result.srcPort).toBe(echo.port);
     expect(result.dstPort).toBe(45_000);
     expect(result.data).toEqual([1, 2, 3, 4, 5]);
+  }
+
+  test('connectUdpRelay authenticates with api_key (query-string fallback)', async ({ page }) => {
+    const apiKey = 'secret';
+    const relay = await startRelay({ authMode: 'api_key', apiKey });
+    try {
+      await page.goto('http://127.0.0.1:5173/', { waitUntil: 'load' });
+      expectEcho(await runRoundTrip(page, relay.origin, apiKey));
+    } finally {
+      await relay.close();
+    }
+  });
+
+  test('connectUdpRelay authenticates with jwt', async ({ page }) => {
+    const jwtSecret = 'supersecret';
+    const token = makeJWT(jwtSecret);
+    const relay = await startRelay({ authMode: 'jwt', jwtSecret, token });
+    try {
+      await page.goto('http://127.0.0.1:5173/', { waitUntil: 'load' });
+      expectEcho(await runRoundTrip(page, relay.origin, token));
+    } finally {
+      await relay.close();
+    }
+  });
+
+  test('connectUdpRelay establishes DataChannel and relays UDP', async ({ page }) => {
+    const relay = await startRelay({ authMode: 'none' });
+    await page.goto('http://127.0.0.1:5173/', { waitUntil: 'load' });
+
+    try {
+      expectEcho(await runRoundTrip(page, relay.origin));
+    } finally {
+      await relay.close();
+    }
   });
 });
