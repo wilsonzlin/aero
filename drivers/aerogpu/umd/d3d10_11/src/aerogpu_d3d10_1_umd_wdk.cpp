@@ -926,8 +926,8 @@ HRESULT AeroGpuPollFence(AeroGpuDevice* dev, uint64_t fence) {
   }
 
   if (dev->kmt_fence_syncobj) {
-    const D3DKMT_HANDLE handles[1] = {dev->kmt_fence_syncobj};
-    const UINT64 fence_values[1] = {fence};
+    D3DKMT_HANDLE handles[1] = {dev->kmt_fence_syncobj};
+    UINT64 fence_values[1] = {fence};
 
     // Prefer the runtime's wait callback when available; it matches the Win7 DDI
     // contract and avoids direct-thunk WOW64 quirks.
