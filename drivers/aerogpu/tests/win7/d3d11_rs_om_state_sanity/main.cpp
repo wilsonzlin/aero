@@ -697,6 +697,46 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
                                 (unsigned long)center_drawn,
                                 (unsigned long)expected_green);
     }
+
+    // Finally: RSSetState(NULL) should restore the default rasterizer state, which culls backfaces with
+    // FrontCounterClockwise=FALSE (CW is front). Our CCW triangle should be culled (center remains red).
+    context->RSSetState(NULL);
+    context->ClearRenderTargetView(rtv.get(), clear_red);
+    context->Draw(3, 0);
+
+    context->CopyResource(staging.get(), rt_tex.get());
+    context->Flush();
+
+    ZeroMemory(&map, sizeof(map));
+    hr = context->Map(staging.get(), 0, D3D11_MAP_READ, 0, &map);
+    if (FAILED(hr)) {
+      return FailD3D11WithRemovedReason(kTestName, "Map(staging) [cull NULL state]", hr, device.get());
+    }
+
+    const uint32_t center_null = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, cx, cy);
+    if (dump) {
+      std::string err;
+      if (!aerogpu_test::WriteBmp32BGRA(
+              aerogpu_test::JoinPath(dir, L"d3d11_rs_om_state_sanity_cull_null_state.bmp"),
+              kWidth,
+              kHeight,
+              map.pData,
+              (int)map.RowPitch,
+              &err)) {
+        aerogpu_test::PrintfStdout("INFO: %s: cull(NULL state) BMP dump failed: %s", kTestName, err.c_str());
+      }
+    }
+    context->Unmap(staging.get(), 0);
+
+    const uint32_t expected_red = 0xFFFF0000u;
+    if ((center_null & 0x00FFFFFFu) != (expected_red & 0x00FFFFFFu)) {
+      return aerogpu_test::Fail(kTestName,
+                                "cull NULL state failed: center(%d,%d)=0x%08lX expected ~0x%08lX",
+                                cx,
+                                cy,
+                                (unsigned long)center_null,
+                                (unsigned long)expected_red);
+    }
   }
 
   // Subtest 3: Blend (green with alpha=0.5 over red should yield ~yellow).
