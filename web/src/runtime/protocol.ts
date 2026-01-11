@@ -8,25 +8,27 @@ import type { WorkerRole } from "./shared_layout";
  *
  * High-frequency traffic uses the AIPC command/event rings (`web/src/ipc/*`).
  */
-export enum MessageType {
-  READY = 1,
-  ERROR = 5,
-  WASM_READY = 6,
-}
+export const MessageType = {
+  READY: 1,
+  ERROR: 5,
+  WASM_READY: 6,
+} as const;
+
+export type MessageType = (typeof MessageType)[keyof typeof MessageType];
 
 export type ReadyMessage = {
-  type: MessageType.READY;
+  type: typeof MessageType.READY;
   role: WorkerRole;
 };
 
 export type ErrorMessage = {
-  type: MessageType.ERROR;
+  type: typeof MessageType.ERROR;
   role: WorkerRole;
   message: string;
 };
 
 export type WasmReadyMessage = {
-  type: MessageType.WASM_READY;
+  type: typeof MessageType.WASM_READY;
   role: WorkerRole;
   variant: WasmVariant;
   value: number;

@@ -18,28 +18,33 @@ export const SHARED_FRAMEBUFFER_HEADER_BYTE_LEN = SHARED_FRAMEBUFFER_HEADER_U32_
 
 export const SHARED_FRAMEBUFFER_ALIGNMENT = 64 as const;
 
-export enum SharedFramebufferHeaderIndex {
-  MAGIC = 0,
-  VERSION = 1,
-  WIDTH = 2,
-  HEIGHT = 3,
-  STRIDE_BYTES = 4,
-  FORMAT = 5,
-  ACTIVE_INDEX = 6,
-  FRAME_SEQ = 7,
-  FRAME_DIRTY = 8,
-  TILE_SIZE = 9,
-  TILES_X = 10,
-  TILES_Y = 11,
-  DIRTY_WORDS_PER_BUFFER = 12,
-  BUF0_FRAME_SEQ = 13,
-  BUF1_FRAME_SEQ = 14,
-  FLAGS = 15,
-}
+export const SharedFramebufferHeaderIndex = {
+  MAGIC: 0,
+  VERSION: 1,
+  WIDTH: 2,
+  HEIGHT: 3,
+  STRIDE_BYTES: 4,
+  FORMAT: 5,
+  ACTIVE_INDEX: 6,
+  FRAME_SEQ: 7,
+  FRAME_DIRTY: 8,
+  TILE_SIZE: 9,
+  TILES_X: 10,
+  TILES_Y: 11,
+  DIRTY_WORDS_PER_BUFFER: 12,
+  BUF0_FRAME_SEQ: 13,
+  BUF1_FRAME_SEQ: 14,
+  FLAGS: 15,
+} as const;
 
-export enum FramebufferFormat {
-  RGBA8 = 0,
-}
+export type SharedFramebufferHeaderIndex =
+  (typeof SharedFramebufferHeaderIndex)[keyof typeof SharedFramebufferHeaderIndex];
+
+export const FramebufferFormat = {
+  RGBA8: 0,
+} as const;
+
+export type FramebufferFormat = (typeof FramebufferFormat)[keyof typeof FramebufferFormat];
 
 export interface SharedFramebufferLayout {
   width: number;

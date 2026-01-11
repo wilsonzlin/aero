@@ -204,7 +204,7 @@ describe("runtime/shared_layout", () => {
   });
 
   it("defines unique status indices within bounds", () => {
-    const values = Object.values(StatusIndex).filter((v): v is number => typeof v === "number");
+    const values = Object.values(StatusIndex);
     const unique = new Set(values);
     expect(unique.size).toBe(values.length);
     for (const idx of unique) {

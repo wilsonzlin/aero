@@ -99,7 +99,7 @@ describe("workers/net.worker (worker_threads)", () => {
     const shimUrl = new URL("./test_workers/net_worker_node_shim.ts", import.meta.url);
     const worker = new Worker(new URL("./net.worker.ts", import.meta.url), {
       type: "module",
-      execArgv: ["--experimental-transform-types", "--import", registerUrl.href, "--import", shimUrl.href],
+      execArgv: ["--experimental-strip-types", "--import", registerUrl.href, "--import", shimUrl.href],
     } as unknown as WorkerOptions);
 
     try {

@@ -22,39 +22,39 @@ export type WorkerRole = (typeof WORKER_ROLES)[number];
 export const STATUS_INTS = 64;
 export const STATUS_BYTES = STATUS_INTS * 4;
 
-export enum StatusIndex {
-  HeartbeatCounter = 0,
-  StopRequested = 1,
+export const StatusIndex = {
+  HeartbeatCounter: 0,
+  StopRequested: 1,
 
   // I/O worker input telemetry (optional; used by tests and perf instrumentation).
-  IoInputBatchCounter = 2,
-  IoInputEventCounter = 3,
+  IoInputBatchCounter: 2,
+  IoInputEventCounter: 3,
 
   // Audio telemetry (producer-side). Values are updated by the worker producing
   // audio for the AudioWorklet ring buffer.
   //
   // Counters are expressed in frames and stored as wrapping u32 values.
-  AudioBufferLevelFrames = 4,
-  AudioUnderrunCount = 5,
-  AudioOverrunCount = 6,
+  AudioBufferLevelFrames: 4,
+  AudioUnderrunCount: 5,
+  AudioOverrunCount: 6,
 
-  CpuReady = 8,
-  GpuReady = 9,
-  IoReady = 10,
-  JitReady = 11,
-  NetReady = 15,
+  CpuReady: 8,
+  GpuReady: 9,
+  IoReady: 10,
+  JitReady: 11,
+  NetReady: 15,
 
   // I/O worker HID passthrough telemetry.
-  IoHidAttachCounter = 12,
-  IoHidDetachCounter = 13,
-  IoHidInputReportCounter = 14,
-  IoHidInputReportDropCounter = 19,
+  IoHidAttachCounter: 12,
+  IoHidDetachCounter: 13,
+  IoHidInputReportCounter: 14,
+  IoHidInputReportDropCounter: 19,
 
   // Device-bus state observed by the CPU worker.
   // These are primarily for debugging/observability until the real CPU core is wired up.
-  CpuIrqBitmapLo = 32,
-  CpuIrqBitmapHi = 33,
-  CpuA20Enabled = 34,
+  CpuIrqBitmapLo: 32,
+  CpuIrqBitmapHi: 33,
+  CpuA20Enabled: 34,
 
   /**
    * Guest RAM layout contract (in bytes, stored as u32).
@@ -65,10 +65,12 @@ export enum StatusIndex {
    * This is written once by the coordinator when allocating the shared memory
    * segments and then treated as immutable for the life of that VM instance.
    */
-  GuestBase = 16,
-  GuestSize = 17,
-  RuntimeReserved = 18,
-}
+  GuestBase: 16,
+  GuestSize: 17,
+  RuntimeReserved: 18,
+} as const;
+
+export type StatusIndex = (typeof StatusIndex)[keyof typeof StatusIndex];
 
 export const COMMAND_RING_CAPACITY_BYTES = 32 * 1024;
 export const EVENT_RING_CAPACITY_BYTES = 32 * 1024;
