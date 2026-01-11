@@ -139,7 +139,7 @@ schtasks /Create /F /TN "AeroVirtioSelftest" /SC ONSTART /RU SYSTEM ^
   /TR "\"C:\AeroTests\aero-virtio-selftest.exe\" --http-url http://10.0.2.2:18080/aero-virtio-selftest --dns-host host.lan"
 ```
 
-To require virtio-snd (fail the overall run if `PCI\VEN_1AF4&DEV_1059` / `PCI\VEN_1AF4&DEV_1018` is missing):
+To require virtio-snd (fail the overall run if the modern `PCI\VEN_1AF4&DEV_1059` device is missing):
 
 ```bat
 schtasks /Create /F /TN "AeroVirtioSelftest" /SC ONSTART /RU SYSTEM ^
@@ -147,6 +147,9 @@ schtasks /Create /F /TN "AeroVirtioSelftest" /SC ONSTART /RU SYSTEM ^
 ```
 
 (Alias: `--test-snd`.)
+
+Note: If your QEMU setup enumerates virtio-snd as the transitional ID (`DEV_1018`), you can allow it explicitly with
+`--allow-virtio-snd-transitional` (debug/backcompat only; the Aero contract v1 driver is modern-only).
 
 To explicitly skip virtio-snd:
 
