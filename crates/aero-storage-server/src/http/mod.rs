@@ -68,6 +68,10 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers()["access-control-allow-origin"].to_str().unwrap(),
+            "*"
+        );
 
         let body = response.into_body().collect().await.unwrap().to_bytes();
         let text = String::from_utf8(body.to_vec()).unwrap();
