@@ -90,6 +90,35 @@ func readWSBinary(t *testing.T, c *websocket.Conn, timeout time.Duration) []byte
 	}
 }
 
+func TestUDPWebSocketServer_ReadyIncludesSessionIDWithoutSessionManager(t *testing.T) {
+	cfg := config.Config{
+		AuthMode:                 config.AuthModeNone,
+		SignalingAuthTimeout:     50 * time.Millisecond,
+		MaxSignalingMessageBytes: 64 * 1024,
+	}
+	relayCfg := DefaultConfig()
+
+	srv, err := NewUDPWebSocketServer(cfg, nil, relayCfg, policy.NewDevDestinationPolicy(), nil)
+	if err != nil {
+		t.Fatalf("NewUDPWebSocketServer: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle("GET /udp", srv)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	c := dialWS(t, ts.URL, "/udp")
+	ready := readWSJSON(t, c, 2*time.Second)
+	if ready["type"] != "ready" {
+		t.Fatalf("expected ready message, got %#v", ready)
+	}
+	sessionID, _ := ready["sessionId"].(string)
+	if sessionID == "" {
+		t.Fatalf("expected non-empty sessionId, got %#v", ready["sessionId"])
+	}
+}
+
 func TestUDPWebSocketServer_RelaysV1IPv4(t *testing.T) {
 	echo, echoPort := startUDPEchoServer(t, "udp4", net.IPv4(127, 0, 0, 1))
 	defer echo.Close()

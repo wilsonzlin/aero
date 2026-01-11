@@ -218,6 +218,16 @@ func (s *UDPWebSocketServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		defer sess.Close()
 		sessionID = sess.ID()
+	} else {
+		// Still emit a sessionId for better observability when quota enforcement is
+		// disabled (e.g. standalone testing). This ID is informational only.
+		id, err := newSessionID()
+		if err != nil {
+			s.log.Warn("udp_ws_session_id_generation_failed", "err", err)
+			sessionID = "unknown"
+		} else {
+			sessionID = id
+		}
 	}
 
 	s.log.Info("udp_ws_connected", "session_id", sessionID, "remote_addr", r.RemoteAddr)
