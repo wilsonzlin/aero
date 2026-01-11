@@ -45,6 +45,16 @@ same `share_token`.
 
 At no point should the AeroGPU protocol key off the user-mode `HANDLE` numeric value.
 
+## Lifetime: invalidating `share_token` on final close
+
+For correctness and to avoid leaking host-side shared-surface mappings, the host must eventually drop the `share_token → resource` entry used by `IMPORT_SHARED_SURFACE`.
+
+On Win7/WDDM 1.1, the KMD tracks the allocation wrapper lifetime across processes and emits:
+
+- `AEROGPU_CMD_RELEASE_SHARED_SURFACE { share_token }`
+
+when the **final** wrapper for a shared surface is released (tolerant of Win7’s varying `CloseAllocation`/`DestroyAllocation` call patterns). After this, new imports by that token must fail; existing alias handles remain valid until they are destroyed.
+
 ## Validation: cross-process Win7 test
 
 Use the cross-process shared-surface test app *(Task 613)*:

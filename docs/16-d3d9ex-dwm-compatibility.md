@@ -230,23 +230,22 @@ For correctness **and** to avoid leaking host-side GPU objects, the `share_token
 
 - `AEROGPU_CMD_EXPORT_SHARED_SURFACE` creates/updates the `share_token → resource` mapping (idempotent when re-exporting the same token/underlying surface).
 - `AEROGPU_CMD_IMPORT_SHARED_SURFACE` increments the underlying surface refcount and returns a new alias handle referencing the same underlying resource.
+- `AEROGPU_CMD_RELEASE_SHARED_SURFACE` removes the `share_token → resource` mapping so future imports fail (existing handles/aliases remain valid).
 - `AEROGPU_CMD_DESTROY_RESOURCE` decrements the refcount for any handle (original or alias) referencing a shared surface; when it hits 0, the host destroys the underlying resource and drops all `share_token` mappings to it.
 - The host rejects `EXPORT_SHARED_SURFACE` collisions (same token mapped to a different underlying resource) and validates that alias handles resolve correctly.
 
 **Win7 guest driver semantics (current):**
 
-The Win7 D3D9 UMD now emits `AEROGPU_CMD_DESTROY_RESOURCE` for shared resources on per-process close (including alias handles). Because the host maintains a refcount across original + imported handles, this is safe and allows the host to drop `share_token` mappings when the last handle is destroyed.
+The Win7 D3D9 UMD emits `AEROGPU_CMD_DESTROY_RESOURCE` for shared resources on per-process close (including alias handles). Because the host maintains a refcount across original + imported handles, this is safe for **resource lifetime** (host objects are destroyed when the last handle is destroyed).
 
-**Hardening gap (optional):**
-
-This still relies on user-mode teardown running. If we need host cleanup to track the WDDM kernel object lifetime even across abnormal termination (or future non-UMD sharing paths), add a KMD-driven global refcount keyed by `share_token` plus a host-visible “last close” signal.
+Separately, the Win7 KMD tracks the **WDDM kernel allocation wrapper** lifetime across processes (Win7 call patterns for `CloseAllocation`/`DestroyAllocation` vary). When the final wrapper for a shared surface is released, the KMD emits `AEROGPU_CMD_RELEASE_SHARED_SURFACE` so the host can drop the `share_token → resource` mapping even if user-mode teardown is not relied on for mapping cleanup.
 
 ##### Task status (shared-surface lifetime)
 
 | Task | Status | Notes |
 | ---- | ------ | ----- |
 | 639 | ✅ Verified | Host-side shared-surface lifetime: `DESTROY_RESOURCE` + refcounting (original + aliases) + collision validation + multi-submission coverage (see `crates/aero-gpu/src/protocol.rs`, `crates/aero-gpu/src/command_processor.rs`, and `crates/aero-gpu/tests/aerogpu_d3d9_shared_surface.rs`). |
-| 639-FU | 🟡 Optional | (Hardening) Win7 KMD/UMD: define + implement a **cross-process shared-surface destruction contract** so host cleanup tracks WDDM kernel object lifetime even across abnormal termination (KMD-driven global refcount; host-visible “last close” signal keyed by `share_token`). Depends on Task 578 and Task 594. |
+| 639-FU | ✅ Verified | (Hardening) Win7 KMD emits `RELEASE_SHARED_SURFACE` keyed by `share_token` when the final cross-process allocation wrapper is released, so the host can invalidate `share_token` mappings without relying on a particular Win7 Close/Destroy callback pattern. |
 
 #### `D3DPOOL_DEFAULT` semantics for Ex
 

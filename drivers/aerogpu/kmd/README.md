@@ -105,6 +105,8 @@ To support D3D9Ex + DWM redirected surfaces and other cross-process shared alloc
 - `alloc_id` (32-bit, nonzero): UMD-owned allocation ID used by the per-submit allocation table (`alloc_id → {gpa, size_bytes, flags}`).
 - `share_token` (64-bit, nonzero for shared allocations): stable cross-process token persisted by the UMD and used by the AeroGPU command stream shared-surface ops (`EXPORT_SHARED_SURFACE` / `IMPORT_SHARED_SURFACE`).
 
+For robustness against Win7's varying `CloseAllocation` / `DestroyAllocation` call patterns, the KMD also maintains an adapter-global open refcount keyed by `share_token`. When the final cross-process allocation wrapper for a shared surface is released, the KMD emits `RELEASE_SHARED_SURFACE { share_token }` (a best-effort internal ring submission) so the host can remove the `share_token → resource` mapping used for future `IMPORT_SHARED_SURFACE` calls.
+
 ### `alloc_id` (UMD → KMD input; preserved across `OpenResource`)
 
 `alloc_id` is carried in **WDDM allocation private driver data** (`aerogpu_wddm_alloc_priv.alloc_id`):
