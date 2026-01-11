@@ -42,6 +42,7 @@ const ctx = self as unknown as DedicatedWorkerGlobalScope;
 let api: WasmApi | null = null;
 let variant: WasmVariant | null = null;
 let vm: InstanceType<WasmApi["DemoVm"]> | null = null;
+let shouldClose = false;
 
 let stepsTotal = 0;
 let serialBytes: number | null = 0;
@@ -50,6 +51,10 @@ const savedSerialBytesByPath = new Map<string, number | null>();
 let stepTimer: number | null = null;
 const STEPS_PER_TICK = 5_000;
 const TICK_MS = 250;
+
+// Serialize all commands that touch the VM so that async snapshot/restore calls
+// cannot overlap (e.g. autosave timer firing while the user hits "Load").
+let commandChain: Promise<void> = Promise.resolve();
 
 function post(msg: WorkerToMainMessage): void {
   ctx.postMessage(msg);
@@ -177,7 +182,7 @@ async function handleShutdown(): Promise<void> {
   }
   api = null;
   variant = null;
-  ctx.close();
+  shouldClose = true;
 }
 
 async function handleRequest(req: WorkerRequest): Promise<unknown> {
@@ -210,14 +215,24 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
     return;
   }
 
-  void (async () => {
-    try {
-      const result = await handleRequest(req);
-      post({ type: "rpcResult", id: req.id, ok: true, result } satisfies RpcResult<unknown>);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      post({ type: "rpcResult", id: req.id, ok: false, error: message } satisfies RpcResultErr);
-      postError(message);
-    }
-  })();
+  commandChain = commandChain
+    .then(async () => {
+      try {
+        const result = await handleRequest(req);
+        post({ type: "rpcResult", id: req.id, ok: true, result } satisfies RpcResult<unknown>);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        post({ type: "rpcResult", id: req.id, ok: false, error: message } satisfies RpcResultErr);
+        postError(message);
+      } finally {
+        if (shouldClose) {
+          ctx.close();
+        }
+      }
+    })
+    .catch((err) => {
+      // Defensive: this should be unreachable because we catch per-command errors
+      // above, but keep the chain alive if something unexpected slips through.
+      postError(err instanceof Error ? err.message : String(err));
+    });
 };
