@@ -775,8 +775,8 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
   res->is_shared_alias = open_existing_shared;
 
   consume_wddm_alloc_priv(res.get(),
-                          pCreateResource->pKmdAllocPrivateData,
-                          pCreateResource->KmdAllocPrivateDataSize,
+                          pCreateResource->pPrivateDriverData,
+                          pCreateResource->PrivateDriverDataSize,
                           res->is_shared);
 
   // Heuristic: if size is provided, treat as buffer; otherwise treat as a 2D image.
