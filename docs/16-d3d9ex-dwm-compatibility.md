@@ -228,14 +228,14 @@ For correctness **and** to avoid leaking host-side GPU objects, the `share_token
 
 The Win7 D3D9 UMD currently avoids emitting `AEROGPU_CMD_DESTROY_RESOURCE` for shared resources on per-process close, because it cannot safely know whether other processes (e.g. DWM) still hold the shared surface open. This intentionally trades correctness for stability and leaks host-side shared resources today.
 
-The follow-up work is therefore to make the guest-side destruction signal safe and deterministic by tying it to the WDDM kernel lifetime of the underlying shared allocation (KMD-driven global refcount).
+The follow-up work is therefore to make shared-surface destruction safe and deterministic by tying it to the WDDM kernel lifetime of the underlying shared allocation (KMD-driven global refcount) and providing a host-visible “last close” signal.
 
 ##### Task status (shared-surface lifetime)
 
 | Task | Status | Notes |
 | ---- | ------ | ----- |
 | 639 | ✅ Verified | Host-side shared-surface lifetime: `DESTROY_RESOURCE` + refcounting (original + aliases) + collision validation + multi-submission coverage (see `crates/aero-gpu/src/protocol.rs`, `crates/aero-gpu/src/command_processor.rs`, and `crates/aero-gpu/tests/aerogpu_d3d9_shared_surface.rs`). |
-| 639-FU | 🔵 Blocked | Win7 KMD/UMD: define + implement a **cross-process shared-surface destruction contract** so the host can drop `share_token` mappings when the last open is closed (KMD-driven global refcount; emit/synthesize `AEROGPU_CMD_DESTROY_RESOURCE` on last-close). Depends on Task 578 and Task 594. |
+| 639-FU | 🔵 Blocked | Win7 KMD/UMD: define + implement a **cross-process shared-surface destruction contract** so the host can drop `share_token` mappings when the last open is closed (KMD-driven global refcount; host-visible “last close” signal, e.g. a protocol op keyed by `share_token`). Depends on Task 578 and Task 594. |
 
 #### `D3DPOOL_DEFAULT` semantics for Ex
 
