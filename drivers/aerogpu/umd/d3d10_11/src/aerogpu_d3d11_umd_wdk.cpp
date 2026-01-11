@@ -648,6 +648,16 @@ struct has_member_DmaBufferPrivateDataSize : std::false_type {};
 template <typename T>
 struct has_member_DmaBufferPrivateDataSize<T, std::void_t<decltype(std::declval<T>().DmaBufferPrivateDataSize)>> : std::true_type {};
 
+template <typename T, typename = void>
+struct has_member_pMonitoredFenceValue : std::false_type {};
+template <typename T>
+struct has_member_pMonitoredFenceValue<T, std::void_t<decltype(std::declval<T>().pMonitoredFenceValue)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_pFenceValue : std::false_type {};
+template <typename T>
+struct has_member_pFenceValue<T, std::void_t<decltype(std::declval<T>().pFenceValue)>> : std::true_type {};
+
 template <typename CallbacksT>
 HRESULT create_device_from_callbacks(const CallbacksT& callbacks, void* hAdapter, D3DKMT_HANDLE* hDeviceOut) {
   if (!hDeviceOut) {
@@ -704,6 +714,7 @@ HRESULT create_context_common(const CallbacksT& callbacks,
                               D3DKMT_HANDLE hDevice,
                               D3DKMT_HANDLE* hContextOut,
                               D3DKMT_HANDLE* hSyncObjectOut,
+                              volatile uint64_t** monitored_fence_value_out,
                               void** dma_private_data_out,
                               UINT* dma_private_data_size_out) {
   (void)callbacks;
@@ -712,6 +723,9 @@ HRESULT create_context_common(const CallbacksT& callbacks,
   }
   *hContextOut = 0;
   *hSyncObjectOut = 0;
+  if (monitored_fence_value_out) {
+    *monitored_fence_value_out = nullptr;
+  }
 
   using ArgPtr = typename fn_first_param<FnT>::type;
   using Arg = std::remove_const_t<std::remove_pointer_t<ArgPtr>>;
@@ -730,6 +744,14 @@ HRESULT create_context_common(const CallbacksT& callbacks,
 
   *hContextOut = data.hContext;
   *hSyncObjectOut = data.hSyncObject;
+
+  if (monitored_fence_value_out) {
+    if constexpr (has_member_pMonitoredFenceValue<Arg>::value) {
+      *monitored_fence_value_out = reinterpret_cast<volatile uint64_t*>(data.pMonitoredFenceValue);
+    } else if constexpr (has_member_pFenceValue<Arg>::value) {
+      *monitored_fence_value_out = reinterpret_cast<volatile uint64_t*>(data.pFenceValue);
+    }
+  }
 
   if (dma_private_data_out) {
     *dma_private_data_out = nullptr;
@@ -763,6 +785,7 @@ HRESULT create_context_from_callbacks(const CallbacksT& callbacks,
                                        D3DKMT_HANDLE hDevice,
                                        D3DKMT_HANDLE* hContextOut,
                                        D3DKMT_HANDLE* hSyncObjectOut,
+                                       volatile uint64_t** monitored_fence_value_out,
                                        void** dma_private_data_out,
                                        UINT* dma_private_data_size_out) {
   // Prefer CreateContextCb2 when present (WDDM 1.1+), but fall back to the
@@ -774,6 +797,7 @@ HRESULT create_context_from_callbacks(const CallbacksT& callbacks,
                                    hDevice,
                                    hContextOut,
                                    hSyncObjectOut,
+                                   monitored_fence_value_out,
                                    dma_private_data_out,
                                    dma_private_data_size_out);
     }
@@ -786,6 +810,7 @@ HRESULT create_context_from_callbacks(const CallbacksT& callbacks,
                                    hDevice,
                                    hContextOut,
                                    hSyncObjectOut,
+                                   monitored_fence_value_out,
                                    dma_private_data_out,
                                    dma_private_data_size_out);
     }
@@ -794,6 +819,9 @@ HRESULT create_context_from_callbacks(const CallbacksT& callbacks,
 
   (void)callbacks;
   (void)hDevice;
+  if (monitored_fence_value_out) {
+    *monitored_fence_value_out = nullptr;
+  }
   return E_NOTIMPL;
 }
 
@@ -840,6 +868,7 @@ static void DestroyWddmContext(Device* dev) {
     dev->kmt_fence_syncobj = 0;
     dev->wddm_dma_private_data = nullptr;
     dev->wddm_dma_private_data_bytes = 0;
+    dev->monitored_fence_value = nullptr;
     return;
   }
 
@@ -852,6 +881,7 @@ static void DestroyWddmContext(Device* dev) {
   dev->kmt_fence_syncobj = 0;
   dev->wddm_dma_private_data = nullptr;
   dev->wddm_dma_private_data_bytes = 0;
+  dev->monitored_fence_value = nullptr;
 }
 
 static HRESULT InitWddmContext(Device* dev, void* hAdapter) {
@@ -872,9 +902,16 @@ static HRESULT InitWddmContext(Device* dev, void* hAdapter) {
 
   D3DKMT_HANDLE hContext = 0;
   D3DKMT_HANDLE hSyncObject = 0;
+  volatile uint64_t* monitored_fence_value = nullptr;
   void* dma_private_data = nullptr;
   UINT dma_private_data_bytes = 0;
-  hr = create_context_from_callbacks(*cb, hDevice, &hContext, &hSyncObject, &dma_private_data, &dma_private_data_bytes);
+  hr = create_context_from_callbacks(*cb,
+                                     hDevice,
+                                     &hContext,
+                                     &hSyncObject,
+                                     &monitored_fence_value,
+                                     &dma_private_data,
+                                     &dma_private_data_bytes);
   if (FAILED(hr)) {
     destroy_device_if_present(*cb, hDevice);
     return hr;
@@ -885,6 +922,7 @@ static HRESULT InitWddmContext(Device* dev, void* hAdapter) {
   dev->kmt_fence_syncobj = static_cast<uint32_t>(hSyncObject);
   dev->wddm_dma_private_data = dma_private_data;
   dev->wddm_dma_private_data_bytes = static_cast<uint32_t>(dma_private_data_bytes);
+  dev->monitored_fence_value = monitored_fence_value;
   if (!dev->wddm_dma_private_data ||
       dev->wddm_dma_private_data_bytes < static_cast<uint32_t>(AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES)) {
     AEROGPU_D3D10_11_LOG("wddm_submit: D3D11 CreateContext did not provide usable dma private data ptr=%p bytes=%u (need >=%u)",
@@ -1020,6 +1058,10 @@ static HRESULT WaitForFence(Device* dev, uint64_t fence_value, UINT64 timeout) {
   }
   if (fence_value == 0) {
     return S_OK;
+  }
+
+  if (dev->monitored_fence_value) {
+    atomic_max_u64(&dev->last_completed_fence, static_cast<uint64_t>(*dev->monitored_fence_value));
   }
 
   if (dev->last_completed_fence.load(std::memory_order_relaxed) >= fence_value) {
@@ -1244,9 +1286,19 @@ static uint64_t SubmitWddmLocked(Device* dev, bool want_present, HRESULT* out_hr
     dma_priv_size_dealloc = dma_priv_size;
     dma_priv_size_submit = dma_priv_size;
 
-    if (FAILED(alloc_hr) || !dma_ptr || dma_cap == 0) {
+    if (FAILED(alloc_hr)) {
       if (out_hr) {
-        *out_hr = FAILED(alloc_hr) ? alloc_hr : E_OUTOFMEMORY;
+        *out_hr = alloc_hr;
+      }
+      dev->cmd.reset();
+      dev->pending_staging_writes.clear();
+      return 0;
+    }
+
+    if (!dma_ptr || dma_cap == 0) {
+      deallocate(alloc, dma_priv_ptr_dealloc, dma_priv_size_dealloc);
+      if (out_hr) {
+        *out_hr = E_OUTOFMEMORY;
       }
       dev->cmd.reset();
       dev->pending_staging_writes.clear();
