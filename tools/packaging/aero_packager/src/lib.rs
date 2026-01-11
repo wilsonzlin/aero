@@ -335,6 +335,10 @@ fn collect_files(config: &PackageConfig, driver_plan: &DriverPlan) -> Result<Vec
 }
 
 fn validate_drivers(spec: &PackagingSpec, drivers_dir: &Path) -> Result<DriverPlan> {
+    if spec.drivers.is_empty() {
+        bail!("packaging spec contains no drivers");
+    }
+
     let mut seen_driver_names = HashSet::<String>::new();
     for drv in &spec.drivers {
         let name = drv.name.trim();

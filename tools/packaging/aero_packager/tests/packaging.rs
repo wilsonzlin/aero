@@ -591,6 +591,39 @@ fn driver_names_with_whitespace_are_rejected() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[test]
+fn empty_driver_list_is_rejected() -> anyhow::Result<()> {
+    let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let testdata = repo_root.join("testdata");
+
+    let drivers_dir = testdata.join("drivers");
+    let guest_tools_dir = testdata.join("guest-tools");
+
+    let spec_dir = tempfile::tempdir()?;
+    let spec_path = spec_dir.path().join("spec.json");
+    let spec = serde_json::json!({ "drivers": [] });
+    fs::write(&spec_path, serde_json::to_vec_pretty(&spec)?)?;
+
+    let out = tempfile::tempdir()?;
+    let config = aero_packager::PackageConfig {
+        drivers_dir,
+        guest_tools_dir,
+        out_dir: out.path().to_path_buf(),
+        spec_path,
+        version: "0.0.0".to_string(),
+        build_id: "test".to_string(),
+        volume_id: "AERO_GUEST_TOOLS".to_string(),
+        signing_policy: aero_packager::SigningPolicy::TestSigning,
+        source_date_epoch: 0,
+    };
+
+    let err = aero_packager::package_guest_tools(&config).unwrap_err();
+    let msg = format!("{err:#}");
+    assert!(msg.contains("contains no drivers"), "unexpected error: {msg}");
+
+    Ok(())
+}
+
 fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) -> anyhow::Result<()> {
     fs::create_dir_all(dst)?;
     for entry in fs::read_dir(src)? {
