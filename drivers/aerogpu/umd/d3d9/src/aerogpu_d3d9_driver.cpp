@@ -6,6 +6,7 @@
 #include <cwchar>
 #include <memory>
 #include <thread>
+#include <type_traits>
 #include <unordered_map>
 
 #if defined(_WIN32)
@@ -79,6 +80,31 @@ constexpr uint32_t kMaxFrameLatencyMax = 16;
 // Bounded wait for PresentEx throttling. This must be finite to avoid hangs in
 // DWM/PresentEx call sites if the GPU stops making forward progress.
 constexpr uint32_t kPresentThrottleMaxWaitMs = 100;
+
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+// Some D3D9 UMD DDI members vary across WDK header vintages. Use compile-time
+// detection (SFINAE) so the UMD can populate as many entrypoints as possible
+// without hard-failing compilation when a member is absent.
+//
+// This mirrors the approach in `tools/wdk_abi_probe/`.
+#define AEROGPU_DEFINE_HAS_MEMBER(member)                                                      \
+  template <typename T, typename = void>                                                       \
+  struct aerogpu_has_member_##member : std::false_type {};                                      \
+  template <typename T>                                                                        \
+  struct aerogpu_has_member_##member<T, std::void_t<decltype(&T::member)>> : std::true_type {}
+
+AEROGPU_DEFINE_HAS_MEMBER(pfnOpenResource);
+AEROGPU_DEFINE_HAS_MEMBER(pfnOpenResource2);
+AEROGPU_DEFINE_HAS_MEMBER(pfnWaitForVBlank);
+AEROGPU_DEFINE_HAS_MEMBER(pfnSetGPUThreadPriority);
+AEROGPU_DEFINE_HAS_MEMBER(pfnGetGPUThreadPriority);
+AEROGPU_DEFINE_HAS_MEMBER(pfnCheckResourceResidency);
+AEROGPU_DEFINE_HAS_MEMBER(pfnQueryResourceResidency);
+AEROGPU_DEFINE_HAS_MEMBER(pfnGetDisplayModeEx);
+AEROGPU_DEFINE_HAS_MEMBER(pfnComposeRects);
+
+#undef AEROGPU_DEFINE_HAS_MEMBER
+#endif
 
 uint64_t monotonic_ms() {
 #if defined(_WIN32)
@@ -3243,6 +3269,16 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   std::memset(pDeviceFuncs, 0, sizeof(*pDeviceFuncs));
   pDeviceFuncs->pfnDestroyDevice = device_destroy;
   pDeviceFuncs->pfnCreateResource = device_create_resource;
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+  if constexpr (aerogpu_has_member_pfnOpenResource<D3D9DDI_DEVICEFUNCS>::value) {
+    pDeviceFuncs->pfnOpenResource =
+        reinterpret_cast<decltype(pDeviceFuncs->pfnOpenResource)>(device_open_resource);
+  }
+  if constexpr (aerogpu_has_member_pfnOpenResource2<D3D9DDI_DEVICEFUNCS>::value) {
+    pDeviceFuncs->pfnOpenResource2 =
+        reinterpret_cast<decltype(pDeviceFuncs->pfnOpenResource2)>(device_open_resource2);
+  }
+#endif
   pDeviceFuncs->pfnDestroyResource = device_destroy_resource;
   pDeviceFuncs->pfnLock = device_lock;
   pDeviceFuncs->pfnUnlock = device_unlock;
@@ -3277,6 +3313,36 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   pDeviceFuncs->pfnReset = device_reset;
   pDeviceFuncs->pfnResetEx = device_reset_ex;
   pDeviceFuncs->pfnCheckDeviceState = device_check_device_state;
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+  if constexpr (aerogpu_has_member_pfnWaitForVBlank<D3D9DDI_DEVICEFUNCS>::value) {
+    pDeviceFuncs->pfnWaitForVBlank =
+        reinterpret_cast<decltype(pDeviceFuncs->pfnWaitForVBlank)>(device_wait_for_vblank);
+  }
+  if constexpr (aerogpu_has_member_pfnSetGPUThreadPriority<D3D9DDI_DEVICEFUNCS>::value) {
+    pDeviceFuncs->pfnSetGPUThreadPriority =
+        reinterpret_cast<decltype(pDeviceFuncs->pfnSetGPUThreadPriority)>(device_set_gpu_thread_priority);
+  }
+  if constexpr (aerogpu_has_member_pfnGetGPUThreadPriority<D3D9DDI_DEVICEFUNCS>::value) {
+    pDeviceFuncs->pfnGetGPUThreadPriority =
+        reinterpret_cast<decltype(pDeviceFuncs->pfnGetGPUThreadPriority)>(device_get_gpu_thread_priority);
+  }
+  if constexpr (aerogpu_has_member_pfnCheckResourceResidency<D3D9DDI_DEVICEFUNCS>::value) {
+    pDeviceFuncs->pfnCheckResourceResidency =
+        reinterpret_cast<decltype(pDeviceFuncs->pfnCheckResourceResidency)>(device_check_resource_residency);
+  }
+  if constexpr (aerogpu_has_member_pfnQueryResourceResidency<D3D9DDI_DEVICEFUNCS>::value) {
+    pDeviceFuncs->pfnQueryResourceResidency =
+        reinterpret_cast<decltype(pDeviceFuncs->pfnQueryResourceResidency)>(device_query_resource_residency);
+  }
+  if constexpr (aerogpu_has_member_pfnGetDisplayModeEx<D3D9DDI_DEVICEFUNCS>::value) {
+    pDeviceFuncs->pfnGetDisplayModeEx =
+        reinterpret_cast<decltype(pDeviceFuncs->pfnGetDisplayModeEx)>(device_get_display_mode_ex);
+  }
+  if constexpr (aerogpu_has_member_pfnComposeRects<D3D9DDI_DEVICEFUNCS>::value) {
+    pDeviceFuncs->pfnComposeRects =
+        reinterpret_cast<decltype(pDeviceFuncs->pfnComposeRects)>(device_compose_rects);
+  }
+#endif
   pDeviceFuncs->pfnRotateResourceIdentities = device_rotate_resource_identities;
   pDeviceFuncs->pfnPresent = device_present;
   pDeviceFuncs->pfnPresentEx = device_present_ex;
