@@ -25,7 +25,13 @@ export type PlatformFeatureReport = {
   wasmThreads: boolean;
   /** Whether WebGPU is exposed (`navigator.gpu`). */
   webgpu: boolean;
-  /** Whether WebUSB is exposed (`navigator.usb`). */
+  /**
+   * Whether WebUSB is exposed (`navigator.usb`) in this context.
+   *
+   * WebUSB is only available in secure contexts (HTTPS / localhost), so we gate
+   * on `globalThis.isSecureContext === true` in addition to checking for the
+   * `navigator.usb` API surface.
+   */
   webusb: boolean;
   /** Whether OPFS is exposed (`navigator.storage.getDirectory`). */
   opfs: boolean;
@@ -118,7 +124,11 @@ export function detectPlatformFeatures(): PlatformFeatureReport {
   const jit_dynamic_wasm = detectDynamicWasmCompilation();
 
   const webgpu = typeof navigator !== 'undefined' && !!(navigator as Navigator & { gpu?: unknown }).gpu;
-  const webusb = typeof navigator !== 'undefined' && typeof (navigator as Navigator & { usb?: unknown }).usb !== 'undefined';
+  const webusb =
+    typeof navigator !== 'undefined' &&
+    globalThis.isSecureContext === true &&
+    'usb' in navigator &&
+    !!(navigator as Navigator & { usb?: unknown }).usb;
   const opfs =
     typeof navigator !== 'undefined' &&
     typeof navigator.storage !== 'undefined' &&
