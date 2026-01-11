@@ -6,6 +6,7 @@ import {
   type WebUsbDeviceClassification,
 } from "./platform/webusb";
 import { explainWebUsbError, formatWebUsbError } from "./platform/webusb_troubleshooting";
+import { hex16, hex8 } from "./usb/usb_hex";
 
 function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -34,6 +35,8 @@ function el<K extends keyof HTMLElementTagNameMap>(
 
 function fmtHex(value: number, width = 2): string {
   const clamped = Number.isFinite(value) ? value >>> 0 : 0;
+  if (width === 2) return hex8(clamped);
+  if (width === 4) return hex16(clamped);
   return `0x${clamped.toString(16).padStart(width, "0")}`;
 }
 
