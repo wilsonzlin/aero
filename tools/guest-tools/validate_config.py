@@ -46,6 +46,20 @@ _DRIVER_NAME_ALIASES = {
 
 TRANSITIONAL_VIRTIO_DEVICE_IDS = frozenset({"1000", "1001", "1011", "1018"})
 
+# Transitional virtio-pci device IDs use the same subsystem IDs as the modern devices.
+# We use these as additional test HWID forms when checking whether a spec regex can match
+# transitional IDs (e.g. a pattern might require `&REV_01` and/or `&SUBSYS_...`).
+_TRANSITIONAL_VIRTIO_SUBSYS_IDS = {
+    # virtio-net
+    "1000": ("00011AF4",),
+    # virtio-blk
+    "1001": ("00021AF4",),
+    # virtio-input (keyboard + mouse)
+    "1011": ("00101AF4", "00111AF4"),
+    # virtio-snd
+    "1018": ("00191AF4",),
+}
+
 MODERN_ONLY_VIRTIO_SPECS = frozenset(
     {
         "win7-aero-guest-tools.json",
@@ -553,8 +567,12 @@ def _pattern_matches_transitional_virtio_device_ids(pattern: str) -> List[str]:
 
     matches: List[str] = []
     for dev in sorted(TRANSITIONAL_VIRTIO_DEVICE_IDS):
-        hwid = f"PCI\\VEN_1AF4&DEV_{dev}"
-        if regex.search(hwid):
+        base = f"PCI\\VEN_1AF4&DEV_{dev}"
+        candidates = [base, f"{base}&REV_01"]
+        for subsys in _TRANSITIONAL_VIRTIO_SUBSYS_IDS.get(dev, ()):
+            candidates.append(f"{base}&SUBSYS_{subsys}")
+            candidates.append(f"{base}&SUBSYS_{subsys}&REV_01")
+        if any(regex.search(hwid) for hwid in candidates):
             matches.append(dev)
     return matches
 

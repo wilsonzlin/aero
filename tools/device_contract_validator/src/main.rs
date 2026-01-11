@@ -1338,11 +1338,25 @@ fn find_transitional_virtio_device_ids(pattern: &str) -> Vec<String> {
 }
 
 fn pattern_matches_transitional_virtio_device_ids(re: &regex::Regex) -> Vec<String> {
-    let transitional = ["1000", "1001", "1011", "1018"];
+    let transitional: &[(&str, &[&str])] = &[
+        // virtio-net
+        ("1000", &["00011AF4"]),
+        // virtio-blk
+        ("1001", &["00021AF4"]),
+        // virtio-input (keyboard + mouse)
+        ("1011", &["00101AF4", "00111AF4"]),
+        // virtio-snd
+        ("1018", &["00191AF4"]),
+    ];
     let mut out = Vec::new();
-    for dev in transitional {
-        let hwid = format!(r"PCI\VEN_1AF4&DEV_{dev}");
-        if re.is_match(&hwid) {
+    for (dev, subsys_ids) in transitional {
+        let base = format!(r"PCI\VEN_1AF4&DEV_{dev}");
+        let mut candidates = vec![base.clone(), format!("{base}&REV_01")];
+        for subsys in *subsys_ids {
+            candidates.push(format!("{base}&SUBSYS_{subsys}"));
+            candidates.push(format!("{base}&SUBSYS_{subsys}&REV_01"));
+        }
+        if candidates.iter().any(|hwid| re.is_match(hwid)) {
             out.push(dev.to_string());
         }
     }
@@ -1496,6 +1510,20 @@ mod tests {
             .unwrap();
         let matched = pattern_matches_transitional_virtio_device_ids(&re);
         assert_eq!(matched, vec!["1000", "1001", "1011", "1018"]);
+
+        let re = regex::RegexBuilder::new(r"PCI\\VEN_1AF4&DEV_10..&REV_01")
+            .case_insensitive(true)
+            .build()
+            .unwrap();
+        let matched = pattern_matches_transitional_virtio_device_ids(&re);
+        assert_eq!(matched, vec!["1000", "1001", "1011", "1018"]);
+
+        let re = regex::RegexBuilder::new(r"PCI\\VEN_1AF4&DEV_10..&SUBSYS_00011AF4&REV_01")
+            .case_insensitive(true)
+            .build()
+            .unwrap();
+        let matched = pattern_matches_transitional_virtio_device_ids(&re);
+        assert_eq!(matched, vec!["1000"]);
 
         let re = regex::RegexBuilder::new(r"PCI\\VEN_1AF4&DEV_1041")
             .case_insensitive(true)
