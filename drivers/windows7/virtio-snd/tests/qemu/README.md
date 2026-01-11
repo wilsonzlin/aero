@@ -281,22 +281,21 @@ The selftest logs to:
    REM Contract v1 device (DEV_1059):
    C:\AeroTests\aero-virtio-selftest.exe --test-snd
  
-   REM Stock QEMU transitional device (DEV_1018) + legacy INF/package:
-   C:\AeroTests\aero-virtio-selftest.exe --test-snd --allow-virtio-snd-transitional
-   ```
-   Notes:
-   - `--test-snd` (alias: `--require-snd`) enables virtio-snd playback testing. Missing virtio-snd is treated as a FAIL in this mode.
-   - If your device enumerates as transitional (`PCI\\VEN_1AF4&DEV_1018`), pass `--allow-virtio-snd-transitional`
-     so the selftest accepts the transitional ID (intended for QEMU bring-up/regression).
-   - If you run without `--test-snd` / `--require-snd`, the tool emits `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|flag_not_set`.
-   - Use `--disable-snd` to force `SKIP` even when capture/playback flags are present.
-3. Review `C:\aero-virtio-selftest.log` and locate the virtio-snd marker:
+    REM Stock QEMU transitional device (DEV_1018) + legacy INF/package:
+    C:\AeroTests\aero-virtio-selftest.exe --test-snd --allow-virtio-snd-transitional
+    ```
+    Notes:
+    - `--test-snd` (alias: `--require-snd`) enables virtio-snd playback testing. Missing virtio-snd is treated as a FAIL in this mode.
+    - If your device enumerates as transitional (`PCI\\VEN_1AF4&DEV_1018`), pass `--allow-virtio-snd-transitional`
+      so the selftest accepts the transitional ID (intended for QEMU bring-up/regression).
+    - If you run without `--test-snd` / `--require-snd`, the tool emits `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP`
+      (and `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set`).
+    - Use `--disable-snd` to force `SKIP` even when capture/playback flags are present.
+ 3. Review `C:\aero-virtio-selftest.log` and locate the virtio-snd marker:
       - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS`
-      - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL` (playback failed)
-      - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|device_missing` (virtio-snd PCI function not detected)
-      - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|flag_not_set` (virtio-snd playback not enabled)
-      - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|topology_interface_missing` (driver bound but Topology KS interface missing)
-      - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|disabled` (the test was disabled via `--disable-snd`)
+      - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL` (playback failed; also used when the device is missing or the Topology KS interface is missing)
+      - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|driver_not_bound` / `...|wrong_service` / `...|device_error` (driver binding not healthy)
+      - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP` (playback not enabled, or skipped via `--disable-snd`; see log text / capture marker for details)
 
 If WASAPI fails, the tool logs a line like:
 
