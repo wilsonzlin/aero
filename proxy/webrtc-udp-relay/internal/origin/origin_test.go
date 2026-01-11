@@ -88,3 +88,37 @@ func TestIsAllowed_DefaultSameHostTreatsDefaultPortsAsEquivalent(t *testing.T) {
 		t.Fatalf("expected non-default port to be rejected")
 	}
 }
+
+func TestIsAllowed_DefaultSameHostNormalizesIPv4Addresses(t *testing.T) {
+	normalized, host, ok := NormalizeHeader("http://010.0.0.1")
+	if !ok {
+		t.Fatalf("NormalizeHeader ok=false")
+	}
+	if normalized != "http://8.0.0.1" {
+		t.Fatalf("normalized=%q, want %q", normalized, "http://8.0.0.1")
+	}
+	if host != "8.0.0.1" {
+		t.Fatalf("host=%q, want %q", host, "8.0.0.1")
+	}
+
+	if !IsAllowed(normalized, host, "010.0.0.1", nil) {
+		t.Fatalf("expected non-canonical host header to be treated as equivalent")
+	}
+}
+
+func TestIsAllowed_DefaultSameHostNormalizesIPv6Addresses(t *testing.T) {
+	normalized, host, ok := NormalizeHeader("http://[::FFFF:192.0.2.1]")
+	if !ok {
+		t.Fatalf("NormalizeHeader ok=false")
+	}
+	if normalized != "http://[::ffff:c000:201]" {
+		t.Fatalf("normalized=%q, want %q", normalized, "http://[::ffff:c000:201]")
+	}
+	if host != "[::ffff:c000:201]" {
+		t.Fatalf("host=%q, want %q", host, "[::ffff:c000:201]")
+	}
+
+	if !IsAllowed(normalized, host, "[::FFFF:192.0.2.1]", nil) {
+		t.Fatalf("expected non-canonical host header to be treated as equivalent")
+	}
+}

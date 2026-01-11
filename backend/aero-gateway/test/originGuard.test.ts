@@ -31,3 +31,11 @@ test('isOriginAllowed handles wildcard (but still requires a valid origin)', () 
   assert.equal(isOriginAllowed('https://evil.com', ['*']), true);
   assert.equal(isOriginAllowed('https://evil.com/path', ['*']), false);
 });
+
+test('default same-host policy normalizes IP addresses', () => {
+  assert.equal(isOriginAllowed('http://010.0.0.1', [], '8.0.0.1'), true);
+  assert.equal(isOriginAllowed('http://8.0.0.1', [], '010.0.0.1'), true);
+
+  assert.equal(isOriginAllowed('http://[::FFFF:192.0.2.1]', [], '[::ffff:c000:201]'), true);
+  assert.equal(isOriginAllowed('http://[::ffff:c000:201]', [], '[::FFFF:192.0.2.1]'), true);
+});

@@ -13,12 +13,27 @@
     { "name": "strip_default_port_http", "rawOriginHeader": "http://example.com:80", "normalizedOrigin": "http://example.com" },
     { "name": "keep_non_default_port_https", "rawOriginHeader": "https://example.com:444", "normalizedOrigin": "https://example.com:444" },
     { "name": "keep_non_default_port_http", "rawOriginHeader": "http://example.com:8080", "normalizedOrigin": "http://example.com:8080" },
+    { "name": "ipv4_octal", "rawOriginHeader": "http://010.0.0.1", "normalizedOrigin": "http://8.0.0.1" },
+    { "name": "ipv4_octal_padded", "rawOriginHeader": "http://001.002.003.004", "normalizedOrigin": "http://1.2.3.4" },
+    { "name": "ipv4_hex", "rawOriginHeader": "http://0x7f.0x0.0x0.0x1", "normalizedOrigin": "http://127.0.0.1" },
+    { "name": "ipv4_shorthand", "rawOriginHeader": "http://127.1", "normalizedOrigin": "http://127.0.0.1" },
+    { "name": "ipv4_32bit", "rawOriginHeader": "http://4294967295", "normalizedOrigin": "http://255.255.255.255" },
     { "name": "ipv6_http", "rawOriginHeader": "http://[::1]", "normalizedOrigin": "http://[::1]" },
     { "name": "ipv6_http_strip_default_port", "rawOriginHeader": "http://[::1]:80", "normalizedOrigin": "http://[::1]" },
     {
       "name": "ipv6_lowercase_and_strip_default_port_https",
       "rawOriginHeader": "https://[2001:DB8::1]:443/",
       "normalizedOrigin": "https://[2001:db8::1]"
+    },
+    {
+      "name": "ipv6_expanded",
+      "rawOriginHeader": "https://[2001:0DB8:0000:0000:0000:0000:0000:0001]:443/",
+      "normalizedOrigin": "https://[2001:db8::1]"
+    },
+    {
+      "name": "ipv6_v4_mapped",
+      "rawOriginHeader": "http://[::FFFF:192.0.2.1]",
+      "normalizedOrigin": "http://[::ffff:c000:201]"
     },
 
     { "name": "reject_empty", "rawOriginHeader": "", "expectError": true },
@@ -34,6 +49,11 @@
     { "name": "reject_empty_port", "rawOriginHeader": "https://example.com:", "expectError": true },
     { "name": "reject_empty_port_slash", "rawOriginHeader": "https://example.com:/", "expectError": true },
     { "name": "reject_port_zero", "rawOriginHeader": "https://example.com:0", "expectError": true },
+    { "name": "reject_invalid_ipv4_octal_digit", "rawOriginHeader": "http://08", "expectError": true },
+    { "name": "reject_invalid_ipv4_octet", "rawOriginHeader": "http://256.0.0.1", "expectError": true },
+    { "name": "reject_invalid_ipv4_all_octets", "rawOriginHeader": "http://999.999.999.999", "expectError": true },
+    { "name": "reject_invalid_ipv4_overflow", "rawOriginHeader": "http://4294967296", "expectError": true },
+    { "name": "reject_hostname_ends_in_number", "rawOriginHeader": "http://example.1", "expectError": true },
     { "name": "reject_percent_encoding", "rawOriginHeader": "https://%65xample.com", "expectError": true },
     { "name": "reject_tab", "rawOriginHeader": "https://example.com\t:443", "expectError": true },
     { "name": "reject_newline", "rawOriginHeader": "https://example.com\n.evil.com", "expectError": true },
@@ -159,6 +179,27 @@
       "allowedOrigins": [],
       "requestHost": "[::1]:80",
       "rawOriginHeader": "http://[::1]",
+      "expectAllowed": true
+    },
+    {
+      "name": "default_same_host_allows_ipv4_octal_in_origin",
+      "allowedOrigins": [],
+      "requestHost": "8.0.0.1",
+      "rawOriginHeader": "http://010.0.0.1",
+      "expectAllowed": true
+    },
+    {
+      "name": "default_same_host_allows_ipv4_octal_in_host_header",
+      "allowedOrigins": [],
+      "requestHost": "010.0.0.1",
+      "rawOriginHeader": "http://8.0.0.1",
+      "expectAllowed": true
+    },
+    {
+      "name": "default_same_host_allows_ipv6_v4_mapped",
+      "allowedOrigins": [],
+      "requestHost": "[::ffff:c000:201]",
+      "rawOriginHeader": "http://[::FFFF:192.0.2.1]",
       "expectAllowed": true
     },
     {

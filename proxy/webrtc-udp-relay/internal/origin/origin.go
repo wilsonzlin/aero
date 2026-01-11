@@ -1,6 +1,7 @@
 package origin
 
 import (
+	"net/netip"
 	"net/url"
 	"strconv"
 	"strings"
@@ -68,7 +69,10 @@ func NormalizeHeader(originHeader string) (normalizedOrigin string, host string,
 		return "", "", false
 	}
 
-	hostname := strings.ToLower(rawHostname)
+	hostname, ok := canonicalizeHostname(strings.ToLower(rawHostname))
+	if !ok {
+		return "", "", false
+	}
 	if hostname == "" {
 		return "", "", false
 	}
@@ -150,7 +154,10 @@ func normalizeRequestHost(requestHost, scheme string) (string, bool) {
 		return "", false
 	}
 
-	hostname := strings.ToLower(rawHostname)
+	hostname, ok := canonicalizeHostname(strings.ToLower(rawHostname))
+	if !ok {
+		return "", false
+	}
 	if hostname == "" {
 		return "", false
 	}
@@ -185,6 +192,238 @@ func isASCIIOriginString(s string) bool {
 		}
 	}
 	return true
+}
+
+const ipv4SaturationLimit = uint64(1) << 32
+
+func canonicalizeHostname(hostname string) (string, bool) {
+	if hostname == "" {
+		return "", false
+	}
+
+	// Bracketed IPv6 literals are stripped of brackets by splitHostPort but will
+	// still contain ":".
+	if strings.Contains(hostname, ":") {
+		// WHATWG URLs (and browser Origin headers) do not include IPv6 zone
+		// identifiers.
+		if strings.Contains(hostname, "%") {
+			return "", false
+		}
+		addr, err := netip.ParseAddr(hostname)
+		if err != nil || !addr.Is6() {
+			return "", false
+		}
+		return serializeIPv6(addr), true
+	}
+
+	// Match WHATWG host parsing: if the host ends in a number, it must parse as an
+	// IPv4 address (including octal/hex and shorthand forms). Otherwise the URL is
+	// invalid.
+	if endsInIPv4Number(hostname) {
+		addr, ok := parseIPv4Address(hostname)
+		if !ok {
+			return "", false
+		}
+		return serializeIPv4(addr), true
+	}
+
+	return hostname, true
+}
+
+func endsInIPv4Number(host string) bool {
+	parts := strings.Split(host, ".")
+	if len(parts) > 0 && parts[len(parts)-1] == "" {
+		// Remove exactly one trailing dot component (WHATWG "ends in a number").
+		parts = parts[:len(parts)-1]
+	}
+	if len(parts) == 0 {
+		return false
+	}
+	return isIPv4NumberCandidate(parts[len(parts)-1])
+}
+
+func isIPv4NumberCandidate(part string) bool {
+	if part == "" {
+		return false
+	}
+
+	if len(part) >= 2 && part[0] == '0' && (part[1] == 'x' || part[1] == 'X') {
+		// `0x` (empty hex) is treated as 0, but non-hex digits should be rejected.
+		for i := 2; i < len(part); i++ {
+			digit, ok := digitValue(part[i])
+			if !ok || digit >= 16 {
+				return false
+			}
+		}
+		return true
+	}
+
+	for i := 0; i < len(part); i++ {
+		if part[i] < '0' || part[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func parseIPv4Address(input string) (uint32, bool) {
+	parts := strings.Split(input, ".")
+	if len(parts) > 0 && parts[len(parts)-1] == "" {
+		// IPv4 parser removes exactly one trailing empty segment.
+		parts = parts[:len(parts)-1]
+	}
+	if len(parts) == 0 || len(parts) > 4 {
+		return 0, false
+	}
+
+	nums := make([]uint64, 0, len(parts))
+	for _, part := range parts {
+		if part == "" {
+			return 0, false
+		}
+		n, ok := parseIPv4Number(part)
+		if !ok {
+			return 0, false
+		}
+		nums = append(nums, n)
+	}
+
+	if len(nums) > 1 {
+		for _, n := range nums[:len(nums)-1] {
+			if n > 255 {
+				return 0, false
+			}
+		}
+	}
+
+	// The last component may use the remaining bytes (e.g. "127.1").
+	last := nums[len(nums)-1]
+	remainingBytes := 5 - len(nums)
+	maxLast := (uint64(1) << uint(8*remainingBytes)) - 1
+	if last > maxLast {
+		return 0, false
+	}
+
+	value := last
+	for i, n := range nums[:len(nums)-1] {
+		shift := uint(8 * (3 - i))
+		value += n << shift
+	}
+	if value >= ipv4SaturationLimit {
+		return 0, false
+	}
+	return uint32(value), true
+}
+
+func parseIPv4Number(part string) (uint64, bool) {
+	if part == "" {
+		return 0, false
+	}
+
+	base := uint64(10)
+	input := part
+	if len(part) >= 2 && part[0] == '0' && (part[1] == 'x' || part[1] == 'X') {
+		base = 16
+		input = part[2:]
+		// `0x` is treated as 0 by WHATWG parsing (and Node's URL implementation).
+		if input == "" {
+			return 0, true
+		}
+	} else if len(part) > 1 && part[0] == '0' {
+		base = 8
+		input = part[1:]
+	}
+
+	var out uint64
+	for i := 0; i < len(input); i++ {
+		c := input[i]
+		digit, ok := digitValue(c)
+		if !ok || digit >= base {
+			return 0, false
+		}
+
+		if out < ipv4SaturationLimit {
+			out = out*base + digit
+			if out >= ipv4SaturationLimit {
+				out = ipv4SaturationLimit
+			}
+		}
+	}
+
+	return out, true
+}
+
+func digitValue(c byte) (uint64, bool) {
+	switch {
+	case c >= '0' && c <= '9':
+		return uint64(c - '0'), true
+	case c >= 'a' && c <= 'f':
+		return uint64(10 + (c - 'a')), true
+	case c >= 'A' && c <= 'F':
+		return uint64(10 + (c - 'A')), true
+	default:
+		return 0, false
+	}
+}
+
+func serializeIPv4(addr uint32) string {
+	return strconv.FormatUint(uint64(addr>>24), 10) + "." +
+		strconv.FormatUint(uint64((addr>>16)&0xff), 10) + "." +
+		strconv.FormatUint(uint64((addr>>8)&0xff), 10) + "." +
+		strconv.FormatUint(uint64(addr&0xff), 10)
+}
+
+func serializeIPv6(addr netip.Addr) string {
+	b := addr.As16()
+	segments := [8]uint16{
+		uint16(b[0])<<8 | uint16(b[1]),
+		uint16(b[2])<<8 | uint16(b[3]),
+		uint16(b[4])<<8 | uint16(b[5]),
+		uint16(b[6])<<8 | uint16(b[7]),
+		uint16(b[8])<<8 | uint16(b[9]),
+		uint16(b[10])<<8 | uint16(b[11]),
+		uint16(b[12])<<8 | uint16(b[13]),
+		uint16(b[14])<<8 | uint16(b[15]),
+	}
+
+	bestStart, bestLen := -1, 0
+	curStart, curLen := -1, 0
+	for i := 0; i < len(segments); i++ {
+		if segments[i] == 0 {
+			if curStart == -1 {
+				curStart, curLen = i, 1
+			} else {
+				curLen++
+			}
+			continue
+		}
+
+		if curLen >= 2 && curLen > bestLen {
+			bestStart, bestLen = curStart, curLen
+		}
+		curStart, curLen = -1, 0
+	}
+	if curLen >= 2 && curLen > bestLen {
+		bestStart, bestLen = curStart, curLen
+	}
+
+	var out strings.Builder
+	needSep := false
+	for i := 0; i < len(segments); i++ {
+		if bestStart != -1 && i == bestStart {
+			out.WriteString("::")
+			needSep = false
+			i += bestLen - 1
+			continue
+		}
+		if needSep {
+			out.WriteByte(':')
+		}
+		out.WriteString(strconv.FormatUint(uint64(segments[i]), 16))
+		needSep = true
+	}
+
+	return out.String()
 }
 
 // splitHostPort splits an authority host[:port] string.

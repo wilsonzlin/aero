@@ -28,6 +28,63 @@ fn host_from_normalized_origin(normalized_origin: &str) -> Option<&str> {
     Some(host)
 }
 
+fn serialize_ipv6(addr: &std::net::Ipv6Addr) -> String {
+    let segments = addr.segments();
+
+    let mut best_start: Option<usize> = None;
+    let mut best_len = 0;
+    let mut cur_start: Option<usize> = None;
+    let mut cur_len = 0;
+
+    for (i, seg) in segments.iter().enumerate() {
+        if *seg == 0 {
+            if cur_start.is_none() {
+                cur_start = Some(i);
+                cur_len = 1;
+            } else {
+                cur_len += 1;
+            }
+            continue;
+        }
+
+        if cur_len >= 2 && cur_len > best_len {
+            best_start = cur_start;
+            best_len = cur_len;
+        }
+        cur_start = None;
+        cur_len = 0;
+    }
+
+    if cur_len >= 2 && cur_len > best_len {
+        best_start = cur_start;
+        best_len = cur_len;
+    }
+
+    let mut out = String::new();
+    let mut need_sep = false;
+    let mut i = 0;
+    while i < segments.len() {
+        if best_start == Some(i) {
+            out.push_str("::");
+            need_sep = false;
+            i += best_len;
+            if i >= segments.len() {
+                break;
+            }
+            continue;
+        }
+
+        if need_sep {
+            out.push(':');
+        }
+        out.push_str(&format!("{:x}", segments[i]));
+        need_sep = true;
+        i += 1;
+    }
+
+    out
+}
+
 fn normalize_request_host(request_host: &str, scheme: &'static str) -> Option<String> {
     let trimmed = request_host.trim();
     if trimmed.is_empty() {
@@ -70,7 +127,7 @@ fn normalize_request_host(request_host: &str, scheme: &'static str) -> Option<St
     let host = match url.host()? {
         Host::Domain(domain) => domain.to_ascii_lowercase(),
         Host::Ipv4(addr) => addr.to_string(),
-        Host::Ipv6(addr) => format!("[{addr}]"),
+        Host::Ipv6(addr) => format!("[{}]", serialize_ipv6(&addr)),
     };
 
     let mut port = url.port();
@@ -173,7 +230,7 @@ pub fn normalize_origin(input: &str) -> Option<String> {
     let host = match url.host()? {
         Host::Domain(domain) => domain.to_ascii_lowercase(),
         Host::Ipv4(addr) => addr.to_string(),
-        Host::Ipv6(addr) => format!("[{addr}]"),
+        Host::Ipv6(addr) => format!("[{}]", serialize_ipv6(&addr)),
     };
 
     let mut port = url.port();
