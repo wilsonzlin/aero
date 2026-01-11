@@ -183,7 +183,10 @@ export type GpuRuntimeSubmitAerogpuMessage = GpuWorkerMessageBase & {
    *
    * This is required for correctness when multiple guest processes submit
    * interleaved AeroGPU command streams: host-side execution state (resources,
-   * bindings, present counters, etc) must be isolated per context.
+   * bindings, pipeline state, etc) must be isolated per context.
+   *
+   * Note: the runtime-wide monotonic `presentCount` reported in `submit_complete`
+   * is global across all contexts.
    */
   contextId: number;
   /**
