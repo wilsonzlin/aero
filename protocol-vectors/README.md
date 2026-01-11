@@ -19,7 +19,9 @@ break CI by failing a vector test.
 
 - `udp-relay.json` — WebRTC DataChannel / WebSocket `/udp` UDP relay framing (v1 + v2).
 - `tcp-mux-v1.json` — `aero-tcp-mux-v1` WebSocket multiplexed TCP framing.
-- `l2-tunnel-v1.json` — `aero-l2-tunnel-v1` L2 tunnel framing (FRAME/PING/PONG/ERROR).
+- `l2-tunnel-v1.json` — legacy `aero-l2-tunnel-v1` framing vectors.
+  - New canonical cross-language vectors live in
+    `crates/conformance/test-vectors/aero-vectors-v1.json` (key: `aero-l2-tunnel-v1`).
 
 ## Updating vectors
 
