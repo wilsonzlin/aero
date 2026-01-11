@@ -339,14 +339,13 @@ export class VgaPresenter {
     this.srcCtx = get2dContext(this.srcCanvas);
 
     // Use a contiguous backing store for ImageData since putImageData expects
-    // tightly packed rows. If stride matches width*4 and we have a shared view,
-    // we can point ImageData directly at it; otherwise we allocate.
-    const tightlyPacked = strideBytes === width * 4;
-    if (tightlyPacked && sharedPixelsOrNull) {
-      this.srcImageBytes = sharedPixelsOrNull.subarray(0, width * height * 4);
-    } else {
-      this.srcImageBytes = new Uint8ClampedArray(width * height * 4);
-    }
+    // tightly packed rows.
+    //
+    // Note: Chromium disallows constructing ImageData backed by a
+    // SharedArrayBuffer (the Uint8ClampedArray must not be "shared"), so even in
+    // the shared-memory transport path we still need a private staging buffer.
+    // This avoids `Failed to construct 'ImageData': The provided Uint8ClampedArray value must not be shared.`
+    this.srcImageBytes = new Uint8ClampedArray(width * height * 4);
 
     this.srcImageData = new ImageData(this.srcImageBytes, width, height);
   }
