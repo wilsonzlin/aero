@@ -100,8 +100,12 @@ typedef struct aerogpu_wddm_alloc_priv {
    * When AEROGPU_WDDM_ALLOC_PRIV_FLAG_SHARED is set, this must be non-zero and
    * identical for every allocation that is part of the same shared resource.
    *
-   * Recommended scheme (simple, collision-resistant if alloc_id is global):
-   *   share_token = (u64)alloc_id
+   * Recommended schemes:
+   * - If alloc_id is globally unique across guest processes:
+   *     share_token = (u64)alloc_id
+   * - If alloc_id is only unique within a process, include a process-unique
+   *   component, for example:
+   *     share_token = ((u64)process_id << 32) | (u64)alloc_id
    */
   aerogpu_wddm_u64 share_token;
 

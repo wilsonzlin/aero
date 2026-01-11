@@ -737,8 +737,9 @@ AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_present_ex) == 24);
  *   processes. On Win7 WDDM 1.1 this is achieved by having the UMD generate the
  *   token at CreateResource time and store it in the WDDM allocation private
  *   data blob that dxgkrnl preserves and returns on OpenResource/OpenAllocation
- *   (see `aerogpu_wddm_alloc.h`). A simple recommended scheme is
- *   `share_token = (uint64_t)alloc_id`.
+ *   (see `aerogpu_wddm_alloc.h`). A simple recommended scheme (if alloc_id is
+ *   globally unique) is `share_token = (uint64_t)alloc_id`; otherwise include a
+ *   process-unique component, e.g. `((u64)pid << 32) | alloc_id`.
  * - The host stores a mapping of (share_token -> resource).
  * - MVP limitation: the shared resource must be backed by a single guest
  *   allocation (i.e. one contiguous guest memory range).

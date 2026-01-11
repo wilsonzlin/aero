@@ -137,7 +137,8 @@ This enables compact command streams that use small IDs instead of repeating GPA
   private data blob so it can be recovered in another process. See
   `aerogpu_wddm_alloc.h`.
 - For D3D9Ex shared surfaces, a simple recommended scheme is
-  `share_token = (uint64_t)alloc_id` (as long as alloc_id is global and stable).
+  `share_token = (uint64_t)alloc_id` (as long as alloc_id is global and stable);
+  otherwise include a process-unique component, e.g. `((u64)pid << 32) | alloc_id`.
 - The KMD treats `alloc_id` as an **input** (UMD→KMD), validates it, and forwards
   the corresponding GPA/size to the host in `aerogpu_alloc_entry`.
 

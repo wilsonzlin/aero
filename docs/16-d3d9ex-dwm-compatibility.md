@@ -208,7 +208,10 @@ prefer deriving `share_token` from the preserved per-allocation ID (`alloc_id`, 
 instead of using raw Win32/D3DKMT handle values (which are process-local).
 The recommended scheme is:
 
-- `share_token = (uint64_t)alloc_id`
+- If `alloc_id` is globally unique across guest processes:
+  - `share_token = (uint64_t)alloc_id`
+- Otherwise include a process-unique component, for example:
+  - `share_token = ((uint64_t)pid << 32) | (uint64_t)alloc_id`
 
 See `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h` for the concrete private-data structure used to persist `alloc_id`/`share_token` across `CreateAllocation`/`OpenAllocation`.
 

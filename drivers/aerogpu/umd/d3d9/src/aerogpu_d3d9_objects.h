@@ -99,6 +99,9 @@ struct Query {
 
 struct Adapter {
   std::atomic<uint32_t> next_handle{1};
+  // UMD-owned allocation IDs used in WDDM allocation private driver data
+  // (aerogpu_wddm_alloc_priv.alloc_id).
+  std::atomic<uint32_t> next_alloc_id{1};
 
   // Different D3D9 runtimes/headers may use different numeric encodings for the
   // EVENT query type at the DDI boundary. Once we observe the first EVENT query

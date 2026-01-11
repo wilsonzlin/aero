@@ -817,6 +817,44 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
     return E_OUTOFMEMORY;
   }
 
+  if (wants_shared && !open_existing_shared) {
+    if (!pCreateResource->pKmdAllocPrivateData ||
+        pCreateResource->KmdAllocPrivateDataSize < sizeof(aerogpu_wddm_alloc_priv)) {
+      logf("aerogpu-d3d9: Create shared resource missing private data buffer (have=%u need=%zu)\n",
+           pCreateResource->KmdAllocPrivateDataSize,
+           sizeof(aerogpu_wddm_alloc_priv));
+      return kD3DErrInvalidCall;
+    }
+
+    // Generate a stable UMD-owned alloc_id + share_token and persist them in
+    // allocation private data so they survive OpenResource in another process.
+    uint32_t alloc_id = dev->adapter->next_alloc_id.fetch_add(1, std::memory_order_relaxed);
+    alloc_id &= AEROGPU_WDDM_ALLOC_ID_UMD_MAX;
+    if (alloc_id == 0) {
+      alloc_id = 1;
+    }
+
+#if defined(_WIN32)
+    const uint64_t share_token =
+        (static_cast<uint64_t>(GetCurrentProcessId()) << 32) | static_cast<uint64_t>(alloc_id);
+#else
+    const uint64_t share_token = static_cast<uint64_t>(alloc_id);
+#endif
+
+    aerogpu_wddm_alloc_priv priv{};
+    priv.magic = AEROGPU_WDDM_ALLOC_PRIV_MAGIC;
+    priv.version = AEROGPU_WDDM_ALLOC_PRIV_VERSION;
+    priv.alloc_id = alloc_id;
+    priv.flags = AEROGPU_WDDM_ALLOC_PRIV_FLAG_IS_SHARED;
+    priv.share_token = share_token;
+    priv.size_bytes = static_cast<aerogpu_wddm_u64>(res->size_bytes);
+    priv.reserved0 = 0;
+    std::memcpy(pCreateResource->pKmdAllocPrivateData, &priv, sizeof(priv));
+
+    res->backing_alloc_id = alloc_id;
+    res->share_token = share_token;
+  }
+
   if (open_existing_shared) {
     if (!res->share_token) {
       logf("aerogpu-d3d9: Open shared resource missing share_token (alloc_id=%u)\n", res->backing_alloc_id);
