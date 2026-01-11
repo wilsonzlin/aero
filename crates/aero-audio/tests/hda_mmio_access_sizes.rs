@@ -54,11 +54,12 @@ fn stream_lvi_and_fifow_allow_word_access() {
     hda.mmio_write(lvi_off, 2, 0x1234);
     hda.mmio_write(fifow_off, 2, 0x5678);
 
-    assert_eq!(hda.mmio_read(lvi_off, 2) as u16, 0x1234);
+    // SDnLVI is 8 bits in the Intel HDA spec; upper bits are reserved and must read as 0.
+    assert_eq!(hda.mmio_read(lvi_off, 2) as u16, 0x0034);
     assert_eq!(hda.mmio_read(fifow_off, 2) as u16, 0x5678);
 
     // A 32-bit access at 0x0C spans LVI + FIFOW.
-    assert_eq!(hda.mmio_read(lvi_off, 4) as u32, 0x5678_1234);
+    assert_eq!(hda.mmio_read(lvi_off, 4) as u32, 0x5678_0034);
 }
 
 #[test]

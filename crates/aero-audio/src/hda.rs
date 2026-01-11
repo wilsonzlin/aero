@@ -1471,8 +1471,18 @@ impl HdaController {
                 let current = (sd.lvi as u32)
                     | ((sd.fifow as u32) << (((SD_REG_FIFOW - SD_REG_LVI) * 8) as u32));
                 let new = mmio_write_sub_u32(current, reg - SD_REG_LVI, size, value);
-                sd.lvi = (new & 0xffff) as u16;
+                // SDnLVI is 8 bits in the Intel HDA spec; upper bits are reserved.
+                sd.lvi = (new & 0xff) as u16;
                 sd.fifow = (new >> 16) as u16;
+
+                // Keep the stream runtime's BDL cursor consistent with the guest-programmed
+                // LVI. This avoids out-of-range BDL entry reads if the guest shrinks LVI while
+                // a stream is running.
+                let rt = &mut self.stream_rt[stream];
+                if rt.bdl_index > sd.lvi {
+                    rt.bdl_index = 0;
+                    rt.bdl_offset = 0;
+                }
                 return;
             }
             if reg >= SD_REG_FIFOS && reg + size as u64 <= SD_REG_FMT + 2 {
@@ -2051,7 +2061,8 @@ impl HdaController {
             sd.ctl = s.ctl;
             sd.lpib = s.lpib;
             sd.cbl = s.cbl;
-            sd.lvi = s.lvi;
+            // SDnLVI is 8 bits in the Intel HDA spec; upper bits are reserved.
+            sd.lvi = s.lvi & 0xff;
             sd.fifow = s.fifow;
             sd.fifos = s.fifos;
             sd.fmt = s.fmt;

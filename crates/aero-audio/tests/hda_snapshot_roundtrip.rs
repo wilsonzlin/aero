@@ -710,3 +710,20 @@ fn hda_snapshot_restore_clamps_capture_frame_accum_to_avoid_huge_capture_steps()
     capture.push_samples(&[0.0; 128]);
     restored.process_with_capture(&mut mem, 1, &mut capture);
 }
+
+#[test]
+fn hda_snapshot_restore_masks_stream_lvi_to_8bit() {
+    let hda = HdaController::new();
+    let mut snap = hda.snapshot_state(AudioWorkletRingState {
+        capacity_frames: 256,
+        write_pos: 0,
+        read_pos: 0,
+    });
+
+    snap.streams[0].lvi = 0x1234;
+
+    let mut restored = HdaController::new();
+    restored.restore_state(&snap);
+
+    assert_eq!(restored.stream_mut(0).lvi, 0x34);
+}
