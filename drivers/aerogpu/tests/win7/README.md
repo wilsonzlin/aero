@@ -157,4 +157,4 @@ In a Win7 VM with AeroGPU installed and working correctly:
 * `readback_sanity` renders to an offscreen render target and validates readback pixels (corner red, center green)
 
 All rendering tests also print the active adapter description + VendorId/DeviceId to help confirm the expected GPU/driver is being exercised.
-The D3D9Ex and D3D11-based tests also print the resolved path of the loaded AeroGPU UMD DLL (e.g. `aerogpu_d3d9.dll` vs `aerogpu_d3d9_x64.dll`) to validate WOW64 registration.
+The D3D9Ex and D3D10/11-based tests also print the resolved path of the loaded AeroGPU UMD DLL (e.g. `aerogpu_d3d9.dll` vs `aerogpu_d3d9_x64.dll`) to validate WOW64 registration.

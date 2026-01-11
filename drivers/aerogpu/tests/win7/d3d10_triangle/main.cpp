@@ -30,13 +30,14 @@ static int RunD3D10Triangle(int argc, char** argv) {
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
         "Usage: %s.exe [--dump] [--hidden] [--require-vid=0x####] [--require-did=0x####] "
-        "[--allow-microsoft] [--allow-non-aerogpu]",
+        "[--allow-microsoft] [--allow-non-aerogpu] [--require-umd]",
         kTestName);
     return 0;
   }
   const bool dump = aerogpu_test::HasArg(argc, argv, "--dump");
   const bool allow_microsoft = aerogpu_test::HasArg(argc, argv, "--allow-microsoft");
   const bool allow_non_aerogpu = aerogpu_test::HasArg(argc, argv, "--allow-non-aerogpu");
+  const bool require_umd = aerogpu_test::HasArg(argc, argv, "--require-umd");
   const bool hidden = aerogpu_test::HasArg(argc, argv, "--hidden");
   uint32_t require_vid = 0;
   uint32_t require_did = 0;
@@ -163,6 +164,13 @@ static int RunD3D10Triangle(int argc, char** argv) {
     return aerogpu_test::FailHresult(kTestName,
                                      "QueryInterface(IDXGIDevice) (required for --require-vid/--require-did)",
                                      hr);
+  }
+
+  if (require_umd || (!allow_microsoft && !allow_non_aerogpu)) {
+    int umd_rc = aerogpu_test::RequireAeroGpuD3D10UmdLoaded(kTestName);
+    if (umd_rc != 0) {
+      return umd_rc;
+    }
   }
 
   ComPtr<ID3D10Texture2D> backbuffer;
@@ -347,4 +355,3 @@ int main(int argc, char** argv) {
   Sleep(30);
   return rc;
 }
-
