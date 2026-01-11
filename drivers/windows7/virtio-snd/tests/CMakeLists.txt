@@ -27,6 +27,7 @@ add_executable(virtiosnd_proto_tests
     test_queue.c
     test_dma.c
     ${CMAKE_CURRENT_LIST_DIR}/../src/virtio_snd_proto.c
+    ${CMAKE_CURRENT_LIST_DIR}/../src/virtiosnd_control_proto.c
     ${CMAKE_CURRENT_LIST_DIR}/../src/virtiosnd_control.c
     ${CMAKE_CURRENT_LIST_DIR}/../src/virtiosnd_tx.c
     ${CMAKE_CURRENT_LIST_DIR}/../src/virtiosnd_rx.c
