@@ -75,7 +75,8 @@ typedef struct D3DKMT_FUNCS {
 static void PrintUsage() {
   fwprintf(stderr,
            L"Usage:\n"
-           L"  aerogpu_dbgctl [--display \\\\.\\DISPLAY1] [--ring-id N] [--timeout-ms N] <command>\n"
+           L"  aerogpu_dbgctl [--display \\\\.\\DISPLAY1] [--ring-id N] [--timeout-ms N]\n"
+           L"               [--vblank-samples N] [--vblank-interval-ms N] <command>\n"
            L"\n"
            L"Commands:\n"
            L"  --list-displays\n"
@@ -301,35 +302,86 @@ static int DoDumpRing(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t ri
   return 0;
 }
 
-static int DoDumpVblank(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t vidpnSourceId) {
-  aerogpu_escape_dump_vblank_inout q;
-  ZeroMemory(&q, sizeof(q));
-  q.hdr.version = AEROGPU_ESCAPE_VERSION;
-  q.hdr.op = AEROGPU_ESCAPE_OP_DUMP_VBLANK;
-  q.hdr.size = sizeof(q);
-  q.hdr.reserved0 = 0;
-  q.vidpn_source_id = vidpnSourceId;
+static bool QueryVblank(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t vidpnSourceId,
+                        aerogpu_escape_dump_vblank_inout *out) {
+  ZeroMemory(out, sizeof(*out));
+  out->hdr.version = AEROGPU_ESCAPE_VERSION;
+  out->hdr.op = AEROGPU_ESCAPE_OP_DUMP_VBLANK;
+  out->hdr.size = sizeof(*out);
+  out->hdr.reserved0 = 0;
+  out->vidpn_source_id = vidpnSourceId;
 
-  NTSTATUS st = SendAerogpuEscape(f, hAdapter, &q, sizeof(q));
+  NTSTATUS st = SendAerogpuEscape(f, hAdapter, out, sizeof(*out));
   if (!NT_SUCCESS(st)) {
     PrintNtStatus(L"D3DKMTEscape(dump-vblank) failed", f, st);
-    return 2;
+    return false;
+  }
+  return true;
+}
+
+static void PrintVblankSnapshot(const aerogpu_escape_dump_vblank_inout *q) {
+  wprintf(L"Vblank (VidPn source %lu)\n", (unsigned long)q->vidpn_source_id);
+  wprintf(L"  IRQ_STATUS: 0x%08lx\n", (unsigned long)q->irq_status);
+  wprintf(L"  IRQ_ENABLE: 0x%08lx\n", (unsigned long)q->irq_enable);
+
+  if ((q->flags & AEROGPU_DBGCTL_VBLANK_SUPPORTED) == 0) {
+    wprintf(L"  vblank: not supported (AEROGPU_FEATURE_VBLANK not set)\n");
+    return;
   }
 
-  wprintf(L"Vblank (VidPn source %lu)\n", (unsigned long)q.vidpn_source_id);
-  wprintf(L"  IRQ_STATUS: 0x%08lx\n", (unsigned long)q.irq_status);
-  wprintf(L"  IRQ_ENABLE: 0x%08lx\n", (unsigned long)q.irq_enable);
-
-  wprintf(L"  vblank_seq: 0x%I64x (%I64u)\n", (unsigned long long)q.vblank_seq, (unsigned long long)q.vblank_seq);
+  wprintf(L"  vblank_seq: 0x%I64x (%I64u)\n", (unsigned long long)q->vblank_seq, (unsigned long long)q->vblank_seq);
   wprintf(L"  last_vblank_time_ns: 0x%I64x (%I64u ns)\n",
-           (unsigned long long)q.last_vblank_time_ns,
-           (unsigned long long)q.last_vblank_time_ns);
+          (unsigned long long)q->last_vblank_time_ns,
+          (unsigned long long)q->last_vblank_time_ns);
 
-  if (q.vblank_period_ns != 0) {
-    const double hz = 1000000000.0 / (double)q.vblank_period_ns;
-    wprintf(L"  vblank_period_ns: %lu (~%.3f Hz)\n", (unsigned long)q.vblank_period_ns, hz);
+  if (q->vblank_period_ns != 0) {
+    const double hz = 1000000000.0 / (double)q->vblank_period_ns;
+    wprintf(L"  vblank_period_ns: %lu (~%.3f Hz)\n", (unsigned long)q->vblank_period_ns, hz);
   } else {
     wprintf(L"  vblank_period_ns: 0\n");
+  }
+}
+
+static int DoDumpVblank(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t vidpnSourceId, uint32_t samples,
+                        uint32_t intervalMs) {
+  if (samples == 0) {
+    samples = 1;
+  }
+  if (samples > 10000) {
+    samples = 10000;
+  }
+
+  aerogpu_escape_dump_vblank_inout q;
+  aerogpu_escape_dump_vblank_inout prev;
+  bool havePrev = false;
+
+  for (uint32_t i = 0; i < samples; ++i) {
+    if (!QueryVblank(f, hAdapter, vidpnSourceId, &q)) {
+      return 2;
+    }
+
+    if (samples > 1) {
+      wprintf(L"Sample %lu/%lu:\n", (unsigned long)(i + 1), (unsigned long)samples);
+    }
+    PrintVblankSnapshot(&q);
+
+    if (havePrev && (q.flags & AEROGPU_DBGCTL_VBLANK_SUPPORTED) != 0 &&
+        (prev.flags & AEROGPU_DBGCTL_VBLANK_SUPPORTED) != 0) {
+      const uint64_t dseq = q.vblank_seq - prev.vblank_seq;
+      const uint64_t dt = q.last_vblank_time_ns - prev.last_vblank_time_ns;
+      wprintf(L"  delta: seq=%I64u time=%I64u ns\n", (unsigned long long)dseq, (unsigned long long)dt);
+      if (dseq != 0 && dt != 0) {
+        const double hz = (double)dseq * 1000000000.0 / (double)dt;
+        wprintf(L"  observed: ~%.3f Hz\n", hz);
+      }
+    }
+
+    prev = q;
+    havePrev = true;
+
+    if (i + 1 < samples) {
+      Sleep(intervalMs);
+    }
   }
 
   return 0;
@@ -361,6 +413,8 @@ int wmain(int argc, wchar_t **argv) {
   const wchar_t *displayNameOpt = NULL;
   uint32_t ringId = 0;
   uint32_t timeoutMs = 2000;
+  uint32_t vblankSamples = 1;
+  uint32_t vblankIntervalMs = 250;
   enum {
     CMD_NONE = 0,
     CMD_LIST_DISPLAYS,
@@ -415,6 +469,26 @@ int wmain(int argc, wchar_t **argv) {
         return 1;
       }
       timeoutMs = (uint32_t)wcstoul(argv[++i], NULL, 0);
+      continue;
+    }
+
+    if (wcscmp(a, L"--vblank-samples") == 0) {
+      if (i + 1 >= argc) {
+        fwprintf(stderr, L"--vblank-samples requires an argument\n");
+        PrintUsage();
+        return 1;
+      }
+      vblankSamples = (uint32_t)wcstoul(argv[++i], NULL, 0);
+      continue;
+    }
+
+    if (wcscmp(a, L"--vblank-interval-ms") == 0) {
+      if (i + 1 >= argc) {
+        fwprintf(stderr, L"--vblank-interval-ms requires an argument\n");
+        PrintUsage();
+        return 1;
+      }
+      vblankIntervalMs = (uint32_t)wcstoul(argv[++i], NULL, 0);
       continue;
     }
 
@@ -510,7 +584,7 @@ int wmain(int argc, wchar_t **argv) {
     rc = DoDumpRing(&f, open.hAdapter, ringId);
     break;
   case CMD_DUMP_VBLANK:
-    rc = DoDumpVblank(&f, open.hAdapter, (uint32_t)open.VidPnSourceId);
+    rc = DoDumpVblank(&f, open.hAdapter, (uint32_t)open.VidPnSourceId, vblankSamples, vblankIntervalMs);
     break;
   case CMD_SELFTEST:
     rc = DoSelftest(&f, open.hAdapter, timeoutMs);

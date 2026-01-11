@@ -370,7 +370,7 @@ Even if you can’t run GPUView in the VM, a saved ETL is still valuable for off
 2. **Reproduce the issue quickly** (Aero enable, dxdiag test, your sample).
 3. **Snapshot state immediately after**
    ```bat
-   aerogpu_dbgctl status
+   aerogpu_dbgctl --query-version
    aerogpu_dbgctl --query-fence
    aerogpu_dbgctl --dump-ring --ring-id 0
    aerogpu_dbgctl --dump-vblank

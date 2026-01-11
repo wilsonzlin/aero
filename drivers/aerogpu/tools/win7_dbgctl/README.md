@@ -29,7 +29,8 @@ Minimum supported commands:
 ## Usage
 
 ```
-aerogpu_dbgctl [--display \\.\DISPLAY1] [--ring-id N] [--timeout-ms N] <command>
+aerogpu_dbgctl [--display \\.\DISPLAY1] [--ring-id N] [--timeout-ms N] \
+               [--vblank-samples N] [--vblank-interval-ms N] <command>
 ```
 
 Examples:
@@ -40,6 +41,7 @@ aerogpu_dbgctl --query-version
 aerogpu_dbgctl --query-fence
 aerogpu_dbgctl --dump-ring --ring-id 0
 aerogpu_dbgctl --dump-vblank
+aerogpu_dbgctl --dump-vblank --vblank-samples 10 --vblank-interval-ms 200
 aerogpu_dbgctl --selftest --timeout-ms 2000
 ```
 
