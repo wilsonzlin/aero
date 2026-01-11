@@ -36,12 +36,16 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      - name: Run virtio common host tests (CMake)
+      - name: Run virtio host tests (CMake)
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          if (!(Test-Path -LiteralPath 'drivers/windows7/virtio/common/tests/CMakeLists.txt')) {
-            Write-Host "No drivers/windows7/virtio/common/tests found; skipping virtio common tests."
+
+          $hasWin7VirtioCommon = Test-Path -LiteralPath 'drivers/windows7/virtio/common/tests/CMakeLists.txt'
+          $hasPortableVirtqSplit = Test-Path -LiteralPath 'drivers/windows/virtio/common/tests/CMakeLists.txt'
+
+          if (!$hasWin7VirtioCommon -and !$hasPortableVirtqSplit) {
+            Write-Host "No virtio host tests found; skipping."
             exit 0
           }
 

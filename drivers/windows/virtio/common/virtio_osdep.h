@@ -119,11 +119,40 @@ typedef void VOID;
 #define VIRTIO_WMB() KeMemoryBarrier()
 #else
 /* User-mode / non-Windows test build */
+#if defined(_MSC_VER) && !defined(__clang__)
+/*
+ * MSVC historically does not ship a C11 <stdatomic.h>. The host-side unit tests
+ * are single-threaded, but we still want real barriers to keep the code
+ * behavior consistent across compilers/architectures.
+ *
+ * Interlocked ops provide a full fence on Windows.
+ */
+#include <intrin.h>
+static __inline void VirtioMemoryBarrier(void)
+{
+	volatile long barrier = 0;
+	(void)_InterlockedExchange(&barrier, 1);
+}
+
+#define VIRTIO_MB() VirtioMemoryBarrier()
+#define VIRTIO_RMB() VirtioMemoryBarrier()
+#define VIRTIO_WMB() VirtioMemoryBarrier()
+#elif defined(__STDC_VERSION__) && (__STDC_VERSION__ >= 201112L) && !defined(__STDC_NO_ATOMICS__)
 #include <stdatomic.h>
 
 #define VIRTIO_MB() atomic_thread_fence(memory_order_seq_cst)
 #define VIRTIO_RMB() atomic_thread_fence(memory_order_seq_cst)
 #define VIRTIO_WMB() atomic_thread_fence(memory_order_seq_cst)
+#elif defined(__GNUC__) || defined(__clang__)
+/* Pre-C11 fallback (GCC/Clang). */
+#define VIRTIO_MB() __sync_synchronize()
+#define VIRTIO_RMB() __sync_synchronize()
+#define VIRTIO_WMB() __sync_synchronize()
+#else
+#define VIRTIO_MB() ((void)0)
+#define VIRTIO_RMB() ((void)0)
+#define VIRTIO_WMB() ((void)0)
+#endif
 #endif
 
 /* -------------------------------------------------------------------------- */
