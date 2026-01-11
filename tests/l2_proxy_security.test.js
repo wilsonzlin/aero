@@ -114,6 +114,38 @@ test("l2 proxy requires Origin by default", { timeout: L2_PROXY_TEST_TIMEOUT_MS 
   }
 });
 
+test("l2 proxy supports ALLOWED_ORIGINS fallback", { timeout: L2_PROXY_TEST_TIMEOUT_MS }, async () => {
+  const proxy = await startRustL2Proxy({
+    AERO_L2_OPEN: "0",
+    // Ensure fallback is used even if callers pass through an empty env var.
+    AERO_L2_ALLOWED_ORIGINS: "",
+    ALLOWED_ORIGINS: "https://app.example.com",
+    AERO_L2_TOKEN: "",
+    AERO_L2_MAX_CONNECTIONS: "0",
+  });
+
+  try {
+    const denied = await connectOrReject(`ws://127.0.0.1:${proxy.port}/l2`);
+    assert.equal(denied.ok, false);
+    assert.equal(denied.status, 403);
+
+    const disallowed = await connectOrReject(`ws://127.0.0.1:${proxy.port}/l2`, {
+      headers: { origin: "https://evil.example.com" },
+    });
+    assert.equal(disallowed.ok, false);
+    assert.equal(disallowed.status, 403);
+
+    const allowed = await connectOrReject(`ws://127.0.0.1:${proxy.port}/l2`, {
+      headers: { origin: "https://app.example.com" },
+    });
+    assert.equal(allowed.ok, true);
+    allowed.ws.close(1000, "done");
+    await waitForClose(allowed.ws);
+  } finally {
+    await proxy.close();
+  }
+});
+
 test("l2 proxy enforces token auth when configured", { timeout: L2_PROXY_TEST_TIMEOUT_MS }, async () => {
   const proxy = await startRustL2Proxy({
     AERO_L2_OPEN: "0",
