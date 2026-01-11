@@ -944,6 +944,8 @@ static int RunParent(int argc,
   }
   if (validate_sharing) {
     cmdline += L" --validate-sharing";
+  } else {
+    cmdline += L" --no-validate-sharing";
   }
   if (req.allow_microsoft) {
     cmdline += L" --allow-microsoft";
