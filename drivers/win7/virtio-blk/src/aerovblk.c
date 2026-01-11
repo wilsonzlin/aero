@@ -1448,9 +1448,15 @@ BOOLEAN AerovblkHwStartIo(_In_ PVOID deviceExtension, _Inout_ PSCSI_REQUEST_BLOC
             return TRUE;
         }
 
-        /* Contract v1 requires lengths in multiples of 512 bytes. */
+        /*
+         * Contract v1 requires lengths in multiples of 512 bytes.
+         *
+         * Also require Storport's DataTransferLength to exactly match the CDB
+         * transfer length so we never overrun the requested LBA range if some
+         * upper layer provides an oversized buffer.
+         */
         if (bytes64 == 0 || (bytes64 % AEROVBLK_LOGICAL_SECTOR_SIZE) != 0 || bytes64 > 0xFFFFFFFFull ||
-            srb->DataTransferLength < (ULONG)bytes64) {
+            srb->DataTransferLength != (ULONG)bytes64) {
             AerovblkSetSense(devExt, srb, SCSI_SENSE_ILLEGAL_REQUEST, 0x24, 0x00);
             AerovblkCompleteSrb(devExt, srb, SRB_STATUS_INVALID_REQUEST | SRB_STATUS_AUTOSENSE_VALID);
             return TRUE;
@@ -1504,7 +1510,7 @@ BOOLEAN AerovblkHwStartIo(_In_ PVOID deviceExtension, _Inout_ PSCSI_REQUEST_BLOC
             return TRUE;
         }
 
-        if ((bytes64 % AEROVBLK_LOGICAL_SECTOR_SIZE) != 0 || bytes64 > 0xFFFFFFFFull || srb->DataTransferLength < (ULONG)bytes64) {
+        if ((bytes64 % AEROVBLK_LOGICAL_SECTOR_SIZE) != 0 || bytes64 > 0xFFFFFFFFull || srb->DataTransferLength != (ULONG)bytes64) {
             AerovblkSetSense(devExt, srb, SCSI_SENSE_ILLEGAL_REQUEST, 0x24, 0x00);
             AerovblkCompleteSrb(devExt, srb, SRB_STATUS_INVALID_REQUEST | SRB_STATUS_AUTOSENSE_VALID);
             return TRUE;
