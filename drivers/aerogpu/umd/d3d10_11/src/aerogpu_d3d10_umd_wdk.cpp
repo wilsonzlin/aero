@@ -814,8 +814,16 @@ TObject* FromHandle(THandle h) {
 
 template <typename Fn, typename Handle, typename... Args>
 decltype(auto) CallCbMaybeHandle(Fn fn, Handle handle, Args&&... args) {
+  // Some WDK revisions disagree on whether the first parameter is a D3D10 or
+  // D3D11 runtime device handle; try both when the call site supplies the D3D10
+  // handle wrapper.
   if constexpr (std::is_invocable_v<Fn, Handle, Args...>) {
     return fn(handle, std::forward<Args>(args)...);
+  } else if constexpr (std::is_same_v<Handle, D3D10DDI_HRTDEVICE> &&
+                       std::is_invocable_v<Fn, D3D11DDI_HRTDEVICE, Args...>) {
+    D3D11DDI_HRTDEVICE h11{};
+    h11.pDrvPrivate = handle.pDrvPrivate;
+    return fn(h11, std::forward<Args>(args)...);
   } else {
     return fn(std::forward<Args>(args)...);
   }
@@ -1254,7 +1262,7 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     dealloc.hKMResource = static_cast<D3DKMT_HANDLE>(res->wddm.km_resource_handle);
     dealloc.NumAllocations = static_cast<UINT>(km_allocs.size());
     dealloc.HandleList = km_allocs.empty() ? nullptr : km_allocs.data();
-    dev->callbacks.pfnDeallocateCb(dev->hrt_device, &dealloc);
+    CallCbMaybeHandle(dev->callbacks.pfnDeallocateCb, dev->hrt_device, &dealloc);
     res->wddm.km_allocation_handles.clear();
     res->wddm.km_resource_handle = 0;
   };
@@ -1309,7 +1317,7 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     alloc.ResourceFlags.RenderTarget = is_rt ? 1u : 0u;
     alloc.ResourceFlags.ZBuffer = is_ds ? 1u : 0u;
 
-    const HRESULT hr = dev->callbacks.pfnAllocateCb(dev->hrt_device, &alloc);
+    const HRESULT hr = CallCbMaybeHandle(dev->callbacks.pfnAllocateCb, dev->hrt_device, &alloc);
     if (FAILED(hr)) {
       return hr;
     }
@@ -1584,7 +1592,7 @@ void APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hReso
     dealloc.hKMResource = static_cast<D3DKMT_HANDLE>(res->wddm.km_resource_handle);
     dealloc.NumAllocations = static_cast<UINT>(km_allocs.size());
     dealloc.HandleList = km_allocs.empty() ? nullptr : km_allocs.data();
-    const HRESULT hr = dev->callbacks.pfnDeallocateCb(dev->hrt_device, &dealloc);
+    const HRESULT hr = CallCbMaybeHandle(dev->callbacks.pfnDeallocateCb, dev->hrt_device, &dealloc);
     if (FAILED(hr)) {
       SetError(hDevice, hr);
     }

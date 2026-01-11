@@ -474,8 +474,16 @@ void atomic_max_u64(std::atomic<uint64_t>* target, uint64_t value) {
 
 template <typename Fn, typename Handle, typename... Args>
 decltype(auto) CallCbMaybeHandle(Fn fn, Handle handle, Args&&... args) {
+  // Some WDK revisions disagree on whether the first parameter is a D3D10 or
+  // D3D11 runtime device handle; try both when the call site supplies the D3D10
+  // handle wrapper.
   if constexpr (std::is_invocable_v<Fn, Handle, Args...>) {
     return fn(handle, std::forward<Args>(args)...);
+  } else if constexpr (std::is_same_v<Handle, D3D10DDI_HRTDEVICE> &&
+                       std::is_invocable_v<Fn, D3D11DDI_HRTDEVICE, Args...>) {
+    D3D11DDI_HRTDEVICE h11{};
+    h11.pDrvPrivate = handle.pDrvPrivate;
+    return fn(h11, std::forward<Args>(args)...);
   } else {
     return fn(std::forward<Args>(args)...);
   }
