@@ -33,10 +33,10 @@ Each worker can emit structured `log` events on its runtime event ring. The coor
 these with a `[role]` prefix in the browser console and records `WARN`/`ERROR` logs in the nonfatal
 event stream.
 
-Example (L2 tunnel forwarder telemetry from the I/O worker):
+Example (L2 tunnel forwarder telemetry from the network worker):
 
 ```
-[io] l2: open tx=... rx=... drop+{...} pending=...
+[net] l2: open tx=... rx=... drop+{...} pending=...
 ```
 
 ---

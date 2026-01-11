@@ -55,11 +55,12 @@ See `docs/ipc-protocol.md` (queue kinds) and `web/src/runtime/shared_layout.ts` 
 
 ### Browser-side observability (L2 forwarder telemetry)
 
-The I/O worker periodically emits low-rate runtime `log` events summarizing the L2 tunnel forwarder
-state and drop counters. These surface in the dev console with the coordinator's role prefix, e.g.:
+The network worker periodically emits low-rate runtime `log` events summarizing the L2 tunnel
+forwarder state and drop counters. These surface in the dev console with the coordinator's role
+prefix, e.g.:
 
 ```
-[io] l2: open tx=10f/100B rx=20f/200B drop+{rx_full=0, pending=1, tx_bp=0} pending=0f/0B
+[net] l2: open tx=10f/100B rx=20f/200B drop+{rx_full=0, pending=1, tx_bp=0} pending=0f/0B
 ```
 
 - Logs are emitted at ~1Hz when `proxyUrl` is configured.
@@ -69,7 +70,7 @@ state and drop counters. These surface in the dev console with the coordinator's
 
 See:
 - `web/src/net/l2TunnelForwarder.ts` (counters + log formatting helper)
-- `web/src/workers/io.worker.ts` (periodic + transition log emission)
+- `web/src/workers/net.worker.ts` (periodic + transition log emission)
 
 ### Key docs and repo components
 

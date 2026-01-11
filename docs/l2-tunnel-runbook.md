@@ -97,10 +97,10 @@ const l2 = new WebSocketL2TunnelClient("ws://127.0.0.1:8090", sink, {
 
 #### Browser-side observability (worker runtime)
 
-When running the full worker-based emulator runtime, the I/O worker emits low-rate `log` events on
-the runtime event ring to help debug L2 tunnel bring-up/backpressure:
+When running the full worker-based emulator runtime, the network worker emits low-rate `log` events
+on the runtime event ring to help debug L2 tunnel bring-up/backpressure:
 
-- Look for `[io] l2: ...` logs in the dev console (e.g. `l2: open tx=... rx=... drop+{...}`).
+- Look for `[net] l2: ...` logs in the dev console (e.g. `l2: open tx=... rx=... drop+{...}`).
 - Connection transitions (`l2: connecting/open/closed/error`) are logged immediately.
 - When drop deltas are non-zero, the periodic stats log is emitted at `WARN` so it also appears in
   the coordinator's nonfatal stream.

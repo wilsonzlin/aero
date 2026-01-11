@@ -49,7 +49,7 @@ describe("net/l2TunnelTelemetry", () => {
 
     telemetry.tick(0);
     expect(logs).toHaveLength(2);
-    expect(logs[1]!.level).toBe("info");
+    expect(logs[1]!.level).toBe("warn");
     expect(logs[1]!.message).toContain("l2: connecting");
     expect(logs[1]!.message).toContain("tx=1f/10B");
     expect(logs[1]!.message).toContain("rx=2f/20B");
@@ -70,6 +70,7 @@ describe("net/l2TunnelTelemetry", () => {
 
     telemetry.tick(1000);
     expect(logs).toHaveLength(3);
+    expect(logs[2]!.level).toBe("warn");
     expect(logs[2]!.message).toContain("drop+{rx_full=2, pending=0, tx_bp=1}");
   });
 
@@ -128,4 +129,3 @@ describe("net/l2TunnelTelemetry", () => {
     expect(logs.at(-1)!.message).toContain("drop+{rx_full=0, pending=0, tx_bp=0}");
   });
 });
-

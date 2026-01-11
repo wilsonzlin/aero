@@ -65,7 +65,11 @@ export class L2TunnelTelemetry {
     this.lastStats = stats;
 
     try {
-      this.opts.emitLog("info", formatL2TunnelForwarderLog({ connection: this.connection, stats, dropsSinceLast }));
+      const anyDrops =
+        dropsSinceLast.rxDroppedNetRxFull > 0 ||
+        dropsSinceLast.rxDroppedPendingOverflow > 0 ||
+        dropsSinceLast.txDroppedTunnelBackpressure > 0;
+      this.opts.emitLog(anyDrops ? "warn" : "info", formatL2TunnelForwarderLog({ connection: this.connection, stats, dropsSinceLast }));
     } catch {
       // Best-effort; never throw from the IO worker tick loop.
     }

@@ -140,13 +140,13 @@ async function runLoop(): Promise<void> {
   // responsive to WebSocket and `postMessage()` events while avoiding spin.
   let lastTxBackpressureDrops = 0;
   while (Atomics.load(status, StatusIndex.StopRequested) !== 1) {
+    const now = nowMs();
     drainRuntimeCommands();
     if (Atomics.load(status, StatusIndex.StopRequested) === 1) break;
 
     forwarder.tick();
-
     if (l2TunnelProxyUrl !== null) {
-      l2TunnelTelemetry?.tick(nowMs());
+      l2TunnelTelemetry?.tick(now);
     }
 
     const stats = forwarder.stats();
@@ -226,7 +226,9 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
       netTxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_TX_QUEUE_KIND);
       netRxRing = openRingByKind(segments.ioIpc, IO_IPC_NET_RX_QUEUE_KIND);
 
-      l2Forwarder = new L2TunnelForwarder(netTxRing, netRxRing, { onTunnelEvent: (ev) => l2TunnelTelemetry?.onTunnelEvent(ev) });
+      l2Forwarder = new L2TunnelForwarder(netTxRing, netRxRing, {
+        onTunnelEvent: (ev) => l2TunnelTelemetry?.onTunnelEvent(ev),
+      });
       l2TunnelTelemetry = new L2TunnelTelemetry({
         intervalMs: L2_STATS_LOG_INTERVAL_MS,
         getStats: () => l2Forwarder!.stats(),
