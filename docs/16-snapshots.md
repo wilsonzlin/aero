@@ -70,6 +70,17 @@ This framing enables **backward-compatible schema evolution**:
 
 This standardizes device payloads on a deterministic, forward-compatible TLV encoding. `aero-snapshot` provides opt-in helpers behind the `io-snapshot` feature: `aero_snapshot::io_snapshot_bridge::{device_state_from_io_snapshot, apply_io_snapshot_to_device}`.
 
+### PCI core state (`aero-devices`)
+
+The PCI core in `crates/devices` snapshots only **guest-visible PCI-layer state** (not device-internal emulation state) using `aero-io-snapshot` TLVs with the following inner `DEVICE_ID`s:
+
+- `PCPT` — `PciConfigPorts`: wraps the config mechanism state and per-function config spaces:
+  - `PCF1` — `PciConfigMechanism1` 0xCF8 address latch
+  - `PCIB` — `PciBusSnapshot` (per-BDF 256-byte config space image + BAR base/probe state)
+- `INTX` — `PciIntxRouter` (PIRQ routing + asserted INTx levels)
+
+Note: `PciIntxRouter::load_state()` restores internal refcounts but cannot touch the platform interrupt sink; snapshot restore code should call `PciIntxRouter::sync_levels_to_sink()` after restoring the platform interrupt controller to re-drive asserted GSIs.
+
 ---
 
 ## CPU section encoding
