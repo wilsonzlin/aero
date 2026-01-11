@@ -23,6 +23,11 @@ enum {
 
 	AERO_W7_VIRTIO_NOTIFY_MULTIPLIER = 4,
 
+	/* Bounded reset poll (virtio status reset handshake). */
+	VIRTIO_PCI_RESET_TIMEOUT_US = 1000000u,
+	VIRTIO_PCI_RESET_POLL_DELAY_US = 1000u,
+	VIRTIO_PCI_CONFIG_MAX_READ_RETRIES = 10u,
+
 	/* Standard PCI config offsets */
 	PCI_CFG_STATUS_OFF = 0x06,
 	PCI_CFG_REVISION_OFF = 0x08,
@@ -463,7 +468,7 @@ VOID VirtioPciModernTransportUninit(VIRTIO_PCI_MODERN_TRANSPORT *t)
 
 VOID VirtioPciModernTransportResetDevice(VIRTIO_PCI_MODERN_TRANSPORT *t)
 {
-	UINT32 i;
+	UINT32 waited_us;
 
 	if (t == NULL || t->CommonCfg == NULL || t->Os == NULL) {
 		return;
@@ -477,11 +482,11 @@ VOID VirtioPciModernTransportResetDevice(VIRTIO_PCI_MODERN_TRANSPORT *t)
 	 * Poll until the device acknowledges reset (bounded).
 	 * Win7 uses this pattern across transports.
 	 */
-	for (i = 0; i < 1000u; ++i) {
+	for (waited_us = 0; waited_us < VIRTIO_PCI_RESET_TIMEOUT_US; waited_us += VIRTIO_PCI_RESET_POLL_DELAY_US) {
 		if (t->CommonCfg->device_status == 0) {
 			return;
 		}
-		t->Os->StallUs(t->OsContext, 10);
+		t->Os->StallUs(t->OsContext, VIRTIO_PCI_RESET_POLL_DELAY_US);
 	}
 }
 
@@ -763,7 +768,7 @@ NTSTATUS VirtioPciModernTransportReadDeviceConfig(VIRTIO_PCI_MODERN_TRANSPORT *t
 
 	out = (UINT8 *)buffer;
 
-	for (attempt = 0; attempt < 3u; ++attempt) {
+	for (attempt = 0; attempt < VIRTIO_PCI_CONFIG_MAX_READ_RETRIES; ++attempt) {
 		UINT8 gen1 = t->CommonCfg->config_generation;
 		for (i = 0; i < length; ++i) {
 			out[i] = t->DeviceCfg[offset + i];
@@ -797,7 +802,7 @@ NTSTATUS VirtioPciModernTransportWriteDeviceConfig(VIRTIO_PCI_MODERN_TRANSPORT *
 
 	in = (const UINT8 *)buffer;
 
-	for (attempt = 0; attempt < 3u; ++attempt) {
+	for (attempt = 0; attempt < VIRTIO_PCI_CONFIG_MAX_READ_RETRIES; ++attempt) {
 		UINT8 gen1 = t->CommonCfg->config_generation;
 		for (i = 0; i < length; ++i) {
 			t->DeviceCfg[offset + i] = in[i];

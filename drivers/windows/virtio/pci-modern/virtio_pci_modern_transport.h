@@ -9,7 +9,7 @@
  *
  * It hard-enforces the AERO-W7-VIRTIO v1 transport contract (docs/):
  *   - PCI Revision ID == 0x01
- *   - BAR0 is MMIO (no legacy I/O port BAR0)
+ *   - BAR0 is 64-bit MMIO (no legacy I/O port BAR0)
  *   - COMMON/NOTIFY/ISR/DEVICE vendor caps present and reference BAR0
  *   - Fixed BAR0 offsets: 0x0000 / 0x1000 / 0x2000 / 0x3000
  *   - notify_off_multiplier == 4
