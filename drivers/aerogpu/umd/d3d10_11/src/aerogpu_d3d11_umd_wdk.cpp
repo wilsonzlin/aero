@@ -6103,6 +6103,9 @@ void AEROGPU_APIENTRY DrawIndexedInstanced11(D3D11DDI_HDEVICECONTEXT hCtx,
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
+  // The bring-up software renderer does not understand instance data. Draw a
+  // single instance so staging readback tests still have sensible contents.
+  SoftwareDrawIndexedTriangleList(dev, IndexCountPerInstance, StartIndexLocation, BaseVertexLocation);
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_draw_indexed>(AEROGPU_CMD_DRAW_INDEXED);
   cmd->index_count = IndexCountPerInstance;
   cmd->instance_count = InstanceCount;
