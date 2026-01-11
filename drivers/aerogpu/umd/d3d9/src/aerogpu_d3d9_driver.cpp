@@ -463,6 +463,10 @@ Resource* as_resource(AEROGPU_D3D9DDI_HRESOURCE hRes) {
   return reinterpret_cast<Resource*>(hRes.pDrvPrivate);
 }
 
+SwapChain* as_swapchain(AEROGPU_D3D9DDI_HSWAPCHAIN hSwapChain) {
+  return reinterpret_cast<SwapChain*>(hSwapChain.pDrvPrivate);
+}
+
 Shader* as_shader(AEROGPU_D3D9DDI_HSHADER hShader) {
   return reinterpret_cast<Shader*>(hShader.pDrvPrivate);
 }
@@ -866,11 +870,24 @@ HRESULT AEROGPU_D3D9_CALL device_destroy(AEROGPU_D3D9DDI_HDEVICE hDevice) {
     return S_OK;
   }
 
-  // Best-effort: flush any outstanding work so we don't abandon a partially
-  // constructed submission stream.
   {
     std::lock_guard<std::mutex> lock(dev->mutex);
     destroy_blit_objects_locked(dev);
+    for (SwapChain* sc : dev->swapchains) {
+      if (!sc) {
+        continue;
+      }
+      for (Resource* bb : sc->backbuffers) {
+        if (!bb) {
+          continue;
+        }
+        emit_destroy_resource_locked(dev, bb->handle);
+        delete bb;
+      }
+      delete sc;
+    }
+    dev->swapchains.clear();
+    dev->current_swapchain = nullptr;
     flush_locked(dev);
   }
 
@@ -879,7 +896,6 @@ HRESULT AEROGPU_D3D9_CALL device_destroy(AEROGPU_D3D9DDI_HDEVICE hDevice) {
   wddm_destroy_device(dev->wddm_callbacks, dev->wddm_device);
   dev->wddm_device = 0;
 #endif
-
   delete dev;
   return S_OK;
 }
@@ -909,6 +925,53 @@ static void consume_wddm_alloc_priv(Resource* res,
   if (is_shared_resource && res->share_token == 0 && res->backing_alloc_id != 0) {
     res->share_token = static_cast<uint64_t>(res->backing_alloc_id);
   }
+}
+
+HRESULT create_backbuffer_locked(Device* dev, Resource* res, uint32_t format, uint32_t width, uint32_t height) {
+  if (!dev || !dev->adapter || !res) {
+    return E_INVALIDARG;
+  }
+
+  const uint32_t bpp = bytes_per_pixel(format);
+  width = std::max(1u, width);
+  height = std::max(1u, height);
+
+  res->handle = dev->adapter->next_handle.fetch_add(1);
+  res->kind = ResourceKind::Surface;
+  res->type = 0;
+  res->format = format;
+  res->width = width;
+  res->height = height;
+  res->depth = 1;
+  res->mip_levels = 1;
+  res->usage = kD3DUsageRenderTarget;
+  res->pool = kD3DPOOL_DEFAULT;
+  res->backing_alloc_id = 0;
+  res->share_token = 0;
+  res->is_shared = false;
+  res->is_shared_alias = false;
+  res->wddm_hAllocation = 0;
+  res->row_pitch = width * bpp;
+  res->slice_pitch = res->row_pitch * height;
+  res->locked = false;
+  res->locked_offset = 0;
+  res->locked_size = 0;
+  res->locked_flags = 0;
+
+  uint64_t total = static_cast<uint64_t>(res->slice_pitch);
+  if (total > 0x7FFFFFFFu) {
+    return E_OUTOFMEMORY;
+  }
+  res->size_bytes = static_cast<uint32_t>(total);
+
+  try {
+    res->storage.resize(res->size_bytes);
+  } catch (...) {
+    return E_OUTOFMEMORY;
+  }
+
+  emit_create_resource_locked(dev, res);
+  return S_OK;
 }
 
 HRESULT AEROGPU_D3D9_CALL device_create_resource(
@@ -1109,8 +1172,291 @@ HRESULT AEROGPU_D3D9_CALL device_destroy_resource(
   // NOTE: For now we emit DESTROY_RESOURCE for both original resources and
   // shared-surface aliases. The host command processor is expected to normalize
   // alias lifetimes, but proper cross-process refcounting may be needed later.
+  for (SwapChain* sc : dev->swapchains) {
+    if (!sc) {
+      continue;
+    }
+    auto& bbs = sc->backbuffers;
+    bbs.erase(std::remove(bbs.begin(), bbs.end(), res), bbs.end());
+  }
   emit_destroy_resource_locked(dev, res->handle);
   delete res;
+  return S_OK;
+}
+
+HRESULT AEROGPU_D3D9_CALL device_create_swap_chain(
+    AEROGPU_D3D9DDI_HDEVICE hDevice,
+    AEROGPU_D3D9DDIARG_CREATESWAPCHAIN* pCreateSwapChain) {
+  if (!hDevice.pDrvPrivate || !pCreateSwapChain) {
+    return E_INVALIDARG;
+  }
+
+  auto* dev = as_device(hDevice);
+  if (!dev || !dev->adapter) {
+    return E_FAIL;
+  }
+
+  const auto& pp = pCreateSwapChain->present_params;
+  if (!pp.windowed) {
+    return E_NOTIMPL;
+  }
+  if (d3d9_format_to_aerogpu(pp.backbuffer_format) == AEROGPU_FORMAT_INVALID) {
+    return E_INVALIDARG;
+  }
+
+  const uint32_t width = pp.backbuffer_width ? pp.backbuffer_width : 1u;
+  const uint32_t height = pp.backbuffer_height ? pp.backbuffer_height : 1u;
+  const uint32_t backbuffer_count = std::max(1u, pp.backbuffer_count);
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+
+  auto sc = std::make_unique<SwapChain>();
+  sc->handle = dev->adapter->next_handle.fetch_add(1);
+  sc->hwnd = pp.hDeviceWindow;
+  sc->width = width;
+  sc->height = height;
+  sc->format = pp.backbuffer_format;
+  sc->sync_interval = pp.presentation_interval;
+  sc->swap_effect = pp.swap_effect;
+  sc->flags = pp.flags;
+
+  sc->backbuffers.reserve(backbuffer_count);
+  for (uint32_t i = 0; i < backbuffer_count; i++) {
+    auto bb = std::make_unique<Resource>();
+    HRESULT hr = create_backbuffer_locked(dev, bb.get(), sc->format, sc->width, sc->height);
+    if (hr < 0) {
+      for (Resource* created : sc->backbuffers) {
+        if (!created) {
+          continue;
+        }
+        emit_destroy_resource_locked(dev, created->handle);
+        delete created;
+      }
+      return hr;
+    }
+    sc->backbuffers.push_back(bb.release());
+  }
+
+  pCreateSwapChain->hBackBuffer.pDrvPrivate = sc->backbuffers.empty() ? nullptr : sc->backbuffers[0];
+  pCreateSwapChain->hSwapChain.pDrvPrivate = sc.get();
+
+  dev->swapchains.push_back(sc.release());
+  if (!dev->current_swapchain) {
+    dev->current_swapchain = dev->swapchains.back();
+  }
+
+  if (!dev->render_targets[0] && pCreateSwapChain->hBackBuffer.pDrvPrivate) {
+    dev->render_targets[0] = as_resource(pCreateSwapChain->hBackBuffer);
+    emit_set_render_targets_locked(dev);
+  }
+
+  return S_OK;
+}
+
+HRESULT AEROGPU_D3D9_CALL device_destroy_swap_chain(
+    AEROGPU_D3D9DDI_HDEVICE hDevice,
+    AEROGPU_D3D9DDI_HSWAPCHAIN hSwapChain) {
+  auto* dev = as_device(hDevice);
+  auto* sc = as_swapchain(hSwapChain);
+  if (!dev || !sc) {
+    delete sc;
+    return S_OK;
+  }
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+
+  auto it = std::find(dev->swapchains.begin(), dev->swapchains.end(), sc);
+  if (it != dev->swapchains.end()) {
+    dev->swapchains.erase(it);
+  }
+  if (dev->current_swapchain == sc) {
+    dev->current_swapchain = dev->swapchains.empty() ? nullptr : dev->swapchains[0];
+  }
+
+  for (Resource* bb : sc->backbuffers) {
+    if (!bb) {
+      continue;
+    }
+    emit_destroy_resource_locked(dev, bb->handle);
+    delete bb;
+  }
+
+  delete sc;
+  return S_OK;
+}
+
+HRESULT AEROGPU_D3D9_CALL device_get_swap_chain(
+    AEROGPU_D3D9DDI_HDEVICE hDevice,
+    uint32_t index,
+    AEROGPU_D3D9DDI_HSWAPCHAIN* phSwapChain) {
+  if (!hDevice.pDrvPrivate || !phSwapChain) {
+    return E_INVALIDARG;
+  }
+  auto* dev = as_device(hDevice);
+  if (!dev) {
+    return E_INVALIDARG;
+  }
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  if (index >= dev->swapchains.size()) {
+    phSwapChain->pDrvPrivate = nullptr;
+    return E_INVALIDARG;
+  }
+  phSwapChain->pDrvPrivate = dev->swapchains[index];
+  return S_OK;
+}
+
+HRESULT AEROGPU_D3D9_CALL device_set_swap_chain(
+    AEROGPU_D3D9DDI_HDEVICE hDevice,
+    AEROGPU_D3D9DDI_HSWAPCHAIN hSwapChain) {
+  if (!hDevice.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+  auto* dev = as_device(hDevice);
+  if (!dev) {
+    return E_INVALIDARG;
+  }
+  auto* sc = as_swapchain(hSwapChain);
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  if (sc) {
+    auto it = std::find(dev->swapchains.begin(), dev->swapchains.end(), sc);
+    if (it == dev->swapchains.end()) {
+      return E_INVALIDARG;
+    }
+  }
+  dev->current_swapchain = sc;
+  return S_OK;
+}
+
+HRESULT reset_swap_chain_locked(Device* dev, SwapChain* sc, const AEROGPU_D3D9DDI_PRESENT_PARAMETERS& pp) {
+  if (!dev || !dev->adapter || !sc) {
+    return E_INVALIDARG;
+  }
+
+  if (!pp.windowed) {
+    return E_NOTIMPL;
+  }
+  if (d3d9_format_to_aerogpu(pp.backbuffer_format) == AEROGPU_FORMAT_INVALID) {
+    return E_INVALIDARG;
+  }
+
+  const uint32_t new_width = pp.backbuffer_width ? pp.backbuffer_width : sc->width;
+  const uint32_t new_height = pp.backbuffer_height ? pp.backbuffer_height : sc->height;
+  const uint32_t new_count = std::max(1u, pp.backbuffer_count);
+
+  sc->hwnd = pp.hDeviceWindow ? pp.hDeviceWindow : sc->hwnd;
+  sc->width = new_width;
+  sc->height = new_height;
+  sc->format = pp.backbuffer_format;
+  sc->sync_interval = pp.presentation_interval;
+  sc->swap_effect = pp.swap_effect;
+  sc->flags = pp.flags;
+
+  // Grow/shrink backbuffer array if needed.
+  while (sc->backbuffers.size() > new_count) {
+    Resource* bb = sc->backbuffers.back();
+    sc->backbuffers.pop_back();
+    if (bb) {
+      emit_destroy_resource_locked(dev, bb->handle);
+      delete bb;
+    }
+  }
+  while (sc->backbuffers.size() < new_count) {
+    auto bb = std::make_unique<Resource>();
+    HRESULT hr = create_backbuffer_locked(dev, bb.get(), sc->format, sc->width, sc->height);
+    if (hr < 0) {
+      return hr;
+    }
+    sc->backbuffers.push_back(bb.release());
+  }
+
+  // Recreate backbuffer storage/handles.
+  for (Resource* bb : sc->backbuffers) {
+    if (!bb) {
+      continue;
+    }
+    emit_destroy_resource_locked(dev, bb->handle);
+    HRESULT hr = create_backbuffer_locked(dev, bb, sc->format, sc->width, sc->height);
+    if (hr < 0) {
+      return hr;
+    }
+  }
+
+  emit_set_render_targets_locked(dev);
+  return S_OK;
+}
+
+HRESULT AEROGPU_D3D9_CALL device_reset(
+    AEROGPU_D3D9DDI_HDEVICE hDevice,
+    const AEROGPU_D3D9DDIARG_RESET* pReset) {
+  if (!hDevice.pDrvPrivate || !pReset) {
+    return E_INVALIDARG;
+  }
+  auto* dev = as_device(hDevice);
+  if (!dev) {
+    return E_INVALIDARG;
+  }
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  SwapChain* sc = dev->current_swapchain;
+  if (!sc && !dev->swapchains.empty()) {
+    sc = dev->swapchains[0];
+  }
+  if (!sc) {
+    return S_OK;
+  }
+
+  return reset_swap_chain_locked(dev, sc, pReset->present_params);
+}
+
+HRESULT AEROGPU_D3D9_CALL device_reset_ex(
+    AEROGPU_D3D9DDI_HDEVICE hDevice,
+    const AEROGPU_D3D9DDIARG_RESET* pReset) {
+  return device_reset(hDevice, pReset);
+}
+
+HRESULT AEROGPU_D3D9_CALL device_check_device_state(
+    AEROGPU_D3D9DDI_HDEVICE,
+    HWND) {
+  return S_OK;
+}
+
+HRESULT AEROGPU_D3D9_CALL device_rotate_resource_identities(
+    AEROGPU_D3D9DDI_HDEVICE hDevice,
+    AEROGPU_D3D9DDI_HRESOURCE* pResources,
+    uint32_t resource_count) {
+  if (!hDevice.pDrvPrivate || !pResources || resource_count < 2) {
+    return E_INVALIDARG;
+  }
+  auto* dev = as_device(hDevice);
+  if (!dev) {
+    return E_INVALIDARG;
+  }
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+
+  auto* first = as_resource(pResources[0]);
+  if (!first) {
+    return E_INVALIDARG;
+  }
+  const aerogpu_handle_t saved = first->handle;
+
+  for (uint32_t i = 0; i + 1 < resource_count; ++i) {
+    auto* dst = as_resource(pResources[i]);
+    auto* src = as_resource(pResources[i + 1]);
+    if (!dst || !src) {
+      return E_INVALIDARG;
+    }
+    dst->handle = src->handle;
+  }
+
+  auto* last = as_resource(pResources[resource_count - 1]);
+  if (last) {
+    last->handle = saved;
+  }
+
+  emit_set_render_targets_locked(dev);
   return S_OK;
 }
 
@@ -1849,6 +2195,22 @@ HRESULT AEROGPU_D3D9_CALL device_present_ex(
 
   dev->present_count++;
   dev->last_present_qpc = qpc_now();
+  SwapChain* sc = dev->current_swapchain;
+  if (!sc && !dev->swapchains.empty()) {
+    sc = dev->swapchains[0];
+  }
+  if (sc) {
+    sc->present_count++;
+    sc->last_present_fence = present_fence;
+    if (sc->backbuffers.size() > 1 && sc->swap_effect != 0u) {
+      const aerogpu_handle_t saved = sc->backbuffers[0]->handle;
+      for (size_t i = 0; i + 1 < sc->backbuffers.size(); ++i) {
+        sc->backbuffers[i]->handle = sc->backbuffers[i + 1]->handle;
+      }
+      sc->backbuffers.back()->handle = saved;
+      emit_set_render_targets_locked(dev);
+    }
+  }
   return S_OK;
 }
 
@@ -1881,6 +2243,49 @@ HRESULT AEROGPU_D3D9_CALL device_present(
 
   dev->present_count++;
   dev->last_present_qpc = qpc_now();
+  SwapChain* sc = as_swapchain(pPresent->hSwapChain);
+  if (sc) {
+    auto it = std::find(dev->swapchains.begin(), dev->swapchains.end(), sc);
+    if (it == dev->swapchains.end()) {
+      sc = nullptr;
+    }
+  }
+  if (!sc) {
+    sc = dev->current_swapchain;
+  }
+  if (!sc && (pPresent->hWnd || pPresent->hSrc.pDrvPrivate)) {
+    for (SwapChain* candidate : dev->swapchains) {
+      if (!candidate) {
+        continue;
+      }
+      if (pPresent->hWnd && candidate->hwnd == pPresent->hWnd) {
+        sc = candidate;
+        break;
+      }
+      if (pPresent->hSrc.pDrvPrivate) {
+        auto* src = as_resource(pPresent->hSrc);
+        if (src && std::find(candidate->backbuffers.begin(), candidate->backbuffers.end(), src) != candidate->backbuffers.end()) {
+          sc = candidate;
+          break;
+        }
+      }
+    }
+  }
+  if (!sc && !dev->swapchains.empty()) {
+    sc = dev->swapchains[0];
+  }
+  if (sc) {
+    sc->present_count++;
+    sc->last_present_fence = present_fence;
+    if (sc->backbuffers.size() > 1 && sc->swap_effect != 0u) {
+      const aerogpu_handle_t saved = sc->backbuffers[0]->handle;
+      for (size_t i = 0; i + 1 < sc->backbuffers.size(); ++i) {
+        sc->backbuffers[i]->handle = sc->backbuffers[i + 1]->handle;
+      }
+      sc->backbuffers.back()->handle = saved;
+      emit_set_render_targets_locked(dev);
+    }
+  }
   return S_OK;
 }
 
@@ -2193,6 +2598,14 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   pDeviceFuncs->pfnClear = device_clear;
   pDeviceFuncs->pfnDrawPrimitive = device_draw_primitive;
   pDeviceFuncs->pfnDrawIndexedPrimitive = device_draw_indexed_primitive;
+  pDeviceFuncs->pfnCreateSwapChain = device_create_swap_chain;
+  pDeviceFuncs->pfnDestroySwapChain = device_destroy_swap_chain;
+  pDeviceFuncs->pfnGetSwapChain = device_get_swap_chain;
+  pDeviceFuncs->pfnSetSwapChain = device_set_swap_chain;
+  pDeviceFuncs->pfnReset = device_reset;
+  pDeviceFuncs->pfnResetEx = device_reset_ex;
+  pDeviceFuncs->pfnCheckDeviceState = device_check_device_state;
+  pDeviceFuncs->pfnRotateResourceIdentities = device_rotate_resource_identities;
   pDeviceFuncs->pfnPresent = device_present;
   pDeviceFuncs->pfnPresentEx = device_present_ex;
   pDeviceFuncs->pfnFlush = device_flush;

@@ -82,6 +82,23 @@ struct Resource {
   std::vector<uint8_t> storage;
 };
 
+struct SwapChain {
+  aerogpu_handle_t handle = 0;
+  HWND hwnd = nullptr;
+
+  uint32_t width = 0;
+  uint32_t height = 0;
+  uint32_t format = 0;
+  uint32_t sync_interval = 0;
+  uint32_t swap_effect = 0;
+  uint32_t flags = 0;
+
+  std::vector<Resource*> backbuffers;
+
+  uint64_t present_count = 0;
+  uint64_t last_present_fence = 0;
+};
+
 struct Shader {
   aerogpu_handle_t handle = 0;
   AEROGPU_D3D9DDI_SHADER_STAGE stage = AEROGPU_D3D9DDI_SHADER_STAGE_VS;
@@ -201,6 +218,8 @@ struct Device {
   std::deque<uint64_t> inflight_present_fences;
   uint32_t present_count = 0;
   uint64_t last_present_qpc = 0;
+  std::vector<SwapChain*> swapchains;
+  SwapChain* current_swapchain = nullptr;
 
   // Cached pipeline state.
   Resource* render_targets[4] = {nullptr, nullptr, nullptr, nullptr};
