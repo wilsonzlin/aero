@@ -440,11 +440,9 @@ fn deliver_tier0_exception<B: crate::mem::CpuBus>(
             (ArchException::SimdFloatingPoint, None, None)
         }
         InterpException::MemoryFault => {
-            panic!("non-architectural memory fault at rip={faulting_rip:#x}")
+            (ArchException::GeneralProtection, Some(0), None)
         }
-        InterpException::Unimplemented(name) => {
-            panic!("unimplemented instruction at rip={faulting_rip:#x}: {name}")
-        }
+        InterpException::Unimplemented(_) => (ArchException::InvalidOpcode, None, None),
     };
 
     cpu.cpu
