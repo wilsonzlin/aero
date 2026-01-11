@@ -85,15 +85,23 @@ fn shared_surface_import_with_zero_token_is_an_error() {
 }
 
 #[test]
+fn shared_surface_export_with_zero_handle_is_an_error() {
+    let mut table = SharedSurfaceTable::default();
+    assert!(matches!(
+        table.export(0, 0x1122_3344_5566_7788),
+        Err(SharedSurfaceError::InvalidHandle(0))
+    ));
+}
+
+#[test]
 fn shared_surface_import_with_zero_alias_handle_is_an_error() {
     let mut table = SharedSurfaceTable::default();
     let token = 0xAAu64;
 
     table.register_handle(1);
     table.export(1, token).unwrap();
-
     assert!(matches!(
         table.import(0, token),
-        Err(SharedSurfaceError::UnknownHandle(0))
+        Err(SharedSurfaceError::InvalidHandle(0))
     ));
 }

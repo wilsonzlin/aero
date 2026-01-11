@@ -4,6 +4,8 @@ use thiserror::Error;
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub(crate) enum SharedSurfaceError {
+    #[error("invalid shared surface handle 0x{0:08X} (0 is reserved)")]
+    InvalidHandle(u32),
     #[error("unknown shared surface handle 0x{0:08X}")]
     UnknownHandle(u32),
     #[error("invalid shared surface token 0x{0:016X} (0 is reserved)")]
@@ -76,6 +78,9 @@ impl SharedSurfaceTable {
         resource_handle: u32,
         share_token: u64,
     ) -> Result<(), SharedSurfaceError> {
+        if resource_handle == 0 {
+            return Err(SharedSurfaceError::InvalidHandle(resource_handle));
+        }
         if share_token == 0 {
             return Err(SharedSurfaceError::InvalidToken(share_token));
         }
@@ -106,7 +111,7 @@ impl SharedSurfaceTable {
         share_token: u64,
     ) -> Result<(), SharedSurfaceError> {
         if out_resource_handle == 0 {
-            return Err(SharedSurfaceError::UnknownHandle(out_resource_handle));
+            return Err(SharedSurfaceError::InvalidHandle(out_resource_handle));
         }
         if share_token == 0 {
             return Err(SharedSurfaceError::InvalidToken(share_token));

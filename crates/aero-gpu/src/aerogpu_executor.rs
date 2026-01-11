@@ -1690,7 +1690,6 @@ fn fs_main() -> @location(0) vec4<f32> {
                 .ok_or_else(|| {
                     ExecutorError::Validation("COPY_TEXTURE2D: dst_x overflow".into())
                 })?;
-
             let entry = table.get(dst_backing.alloc_id).ok_or_else(|| {
                 ExecutorError::Validation(format!(
                     "COPY_TEXTURE2D: missing alloc table entry for alloc_id={} (dst_texture={dst_texture})",
