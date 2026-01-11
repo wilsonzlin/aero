@@ -1564,6 +1564,7 @@ impl AerogpuD3d11Executor {
                 | OPCODE_DRAW_INDEXED
                 | OPCODE_BIND_SHADERS
                 | OPCODE_SET_INPUT_LAYOUT
+                | OPCODE_SET_BLEND_STATE
                 | OPCODE_SET_VIEWPORT
                 | OPCODE_SET_SCISSOR
                 | OPCODE_SET_VERTEX_BUFFERS
@@ -1643,6 +1644,65 @@ impl AerogpuD3d11Executor {
                         break;
                     }
                 } else {
+                    break;
+                }
+            }
+
+            if opcode == OPCODE_SET_BLEND_STATE {
+                // `struct aerogpu_cmd_set_blend_state` (28 bytes minimum; extended in newer ABI
+                // versions).
+                if cmd_bytes.len() < 28 {
+                    break;
+                }
+                let enable = read_u32_le(cmd_bytes, 8)? != 0;
+                let src_factor = read_u32_le(cmd_bytes, 12)?;
+                let dst_factor = read_u32_le(cmd_bytes, 16)?;
+                let op = read_u32_le(cmd_bytes, 20)?;
+                let write_mask = cmd_bytes[24];
+
+                let next_write_mask = map_color_write_mask(write_mask);
+                let src_factor_alpha = if cmd_bytes.len() >= 32 {
+                    read_u32_le(cmd_bytes, 28)?
+                } else {
+                    src_factor
+                };
+                let dst_factor_alpha = if cmd_bytes.len() >= 36 {
+                    read_u32_le(cmd_bytes, 32)?
+                } else {
+                    dst_factor
+                };
+                let op_alpha = if cmd_bytes.len() >= 40 {
+                    read_u32_le(cmd_bytes, 36)?
+                } else {
+                    op
+                };
+
+                let next_blend = if !enable {
+                    None
+                } else {
+                    let src = map_blend_factor(src_factor).unwrap_or(wgpu::BlendFactor::One);
+                    let dst = map_blend_factor(dst_factor).unwrap_or(wgpu::BlendFactor::Zero);
+                    let op = map_blend_op(op).unwrap_or(wgpu::BlendOperation::Add);
+
+                    let src_a = map_blend_factor(src_factor_alpha).unwrap_or(src);
+                    let dst_a = map_blend_factor(dst_factor_alpha).unwrap_or(dst);
+                    let op_a = map_blend_op(op_alpha).unwrap_or(op);
+
+                    Some(wgpu::BlendState {
+                        color: wgpu::BlendComponent {
+                            src_factor: src,
+                            dst_factor: dst,
+                            operation: op,
+                        },
+                        alpha: wgpu::BlendComponent {
+                            src_factor: src_a,
+                            dst_factor: dst_a,
+                            operation: op_a,
+                        },
+                    })
+                };
+
+                if next_blend != self.state.blend || next_write_mask != self.state.color_write_mask {
                     break;
                 }
             }
@@ -1987,6 +2047,15 @@ impl AerogpuD3d11Executor {
                             }
                         }
                     }
+                }
+                OPCODE_SET_BLEND_STATE => {
+                    self.exec_set_blend_state(cmd_bytes)?;
+                    pass.set_blend_constant(wgpu::Color {
+                        r: self.state.blend_constant[0] as f64,
+                        g: self.state.blend_constant[1] as f64,
+                        b: self.state.blend_constant[2] as f64,
+                        a: self.state.blend_constant[3] as f64,
+                    });
                 }
                 OPCODE_BIND_SHADERS => self.exec_bind_shaders(cmd_bytes)?,
                 OPCODE_SET_INPUT_LAYOUT => self.exec_set_input_layout(cmd_bytes)?,
