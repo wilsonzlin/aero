@@ -234,6 +234,18 @@ if missing_fallback or extra_fallback:
         msg.append(f"extra: {', '.join(extra_fallback)}")
     raise SystemExit(f"{runner_path}: kFallbackTests[] does not match tests_manifest.txt ({'; '.join(msg)})")
 
+# Keep the execution order stable: the fallback list should be identical to the
+# manifest list, not just set-equal.
+if fallback_tests_list != manifest_tests:
+    for i, (got, want) in enumerate(zip(fallback_tests_list, manifest_tests)):
+        if got != want:
+            raise SystemExit(
+                f"{runner_path}: kFallbackTests[] order mismatch at index {i}: got {got!r} expected {want!r}"
+            )
+    raise SystemExit(
+        f"{runner_path}: kFallbackTests[] length/order mismatch (fallback={len(fallback_tests_list)} manifest={len(manifest_tests)})"
+    )
+
 print("Win7 test suite manifest/doc/cmake check: OK")
 PY
 else
