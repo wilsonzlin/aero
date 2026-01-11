@@ -10,7 +10,7 @@ At a high level, Aero drivers use two virtio-pci transport styles:
 - **Modern (Virtio 1.0+ / contract v1):** BAR MMIO + `COMMON/NOTIFY/ISR/DEVICE` capabilities
 - **Legacy/transitional (virtio 0.9):** I/O-port register set (PFN-based queue programming)
 
-This directory contains implementations and helpers for both, with two main consumer models:
+This directory contains implementations and helpers for both. Windows-facing code has two main consumer models:
 
 - **Miniport-style (NDIS / StorPort):** `virtio_pci_modern_miniport.*`
   - caller provides a BAR0 MMIO mapping and a PCI config snapshot
@@ -86,6 +86,14 @@ Queue programming (modern):
   - `queue_desc`: 16-byte aligned
   - `queue_avail`: 2-byte aligned
   - `queue_used`: 4-byte aligned
+- Windows 7 drivers should program the 64-bit queue address fields using two
+  32-bit MMIO accesses (`*_lo` then `*_hi`) rather than a single 64-bit MMIO write.
+
+Selector serialization:
+
+- `common_cfg` contains device-global selector registers (`*_feature_select`,
+  `queue_select`). Multi-step sequences that depend on selectors must be
+  serialized (for example, via a per-device spin lock).
 
 Even though Aero contract v1 fixes the BAR0 offsets, drivers should still validate
 that the device exposes the required virtio vendor-specific PCI capabilities
