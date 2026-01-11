@@ -184,7 +184,7 @@ static int RunD3D11Triangle(int argc, char** argv) {
   }
 
   if (require_umd || (!allow_microsoft && !allow_non_aerogpu)) {
-    int umd_rc = aerogpu_test::RequireAeroGpuD3D10UmdLoaded(kTestName);
+    int umd_rc = aerogpu_test::RequireAeroGpuD3D10UmdLoaded(&reporter, kTestName);
     if (umd_rc != 0) {
       return umd_rc;
     }
@@ -192,11 +192,11 @@ static int RunD3D11Triangle(int argc, char** argv) {
     // This test is specifically intended to exercise the D3D11 runtime path (d3d11.dll), which
     // should in turn use the UMD's OpenAdapter11 entrypoint.
     if (!GetModuleHandleW(L"d3d11.dll")) {
-      return aerogpu_test::Fail(kTestName, "d3d11.dll is not loaded");
+      return reporter.Fail("d3d11.dll is not loaded");
     }
     HMODULE umd = GetModuleHandleW(aerogpu_test::ExpectedAeroGpuD3D10UmdModuleBaseName());
     if (!umd) {
-      return aerogpu_test::Fail(kTestName, "failed to locate loaded AeroGPU D3D10/11 UMD module");
+      return reporter.Fail("failed to locate loaded AeroGPU D3D10/11 UMD module");
     }
     FARPROC open_adapter_11 = GetProcAddress(umd, "OpenAdapter11");
     if (!open_adapter_11) {
@@ -204,8 +204,7 @@ static int RunD3D11Triangle(int argc, char** argv) {
       open_adapter_11 = GetProcAddress(umd, "_OpenAdapter11@4");
     }
     if (!open_adapter_11) {
-      return aerogpu_test::Fail(
-          kTestName, "expected AeroGPU D3D10/11 UMD to export OpenAdapter11 (D3D11 entrypoint)");
+      return reporter.Fail("expected AeroGPU D3D10/11 UMD to export OpenAdapter11 (D3D11 entrypoint)");
     }
   }
 
@@ -336,10 +335,9 @@ static int RunD3D11Triangle(int argc, char** argv) {
   D3D11_TEXTURE2D_DESC bb_desc;
   backbuffer->GetDesc(&bb_desc);
   if (bb_desc.Format != DXGI_FORMAT_B8G8R8A8_UNORM) {
-    return aerogpu_test::Fail(kTestName,
-                              "unexpected backbuffer format: %u (expected DXGI_FORMAT_B8G8R8A8_UNORM=%u)",
-                              (unsigned)bb_desc.Format,
-                              (unsigned)DXGI_FORMAT_B8G8R8A8_UNORM);
+    return reporter.Fail("unexpected backbuffer format: %u (expected DXGI_FORMAT_B8G8R8A8_UNORM=%u)",
+                         (unsigned)bb_desc.Format,
+                         (unsigned)DXGI_FORMAT_B8G8R8A8_UNORM);
   }
 
   D3D11_TEXTURE2D_DESC st_desc = bb_desc;
@@ -365,15 +363,14 @@ static int RunD3D11Triangle(int argc, char** argv) {
   }
   if (!map.pData) {
     context->Unmap(staging.get(), 0);
-    return aerogpu_test::Fail(kTestName, "Map(staging) returned NULL pData");
+    return reporter.Fail("Map(staging) returned NULL pData");
   }
   const UINT min_row_pitch = bb_desc.Width * 4;
   if (map.RowPitch < min_row_pitch) {
     context->Unmap(staging.get(), 0);
-    return aerogpu_test::Fail(kTestName,
-                              "Map(staging) returned too-small RowPitch=%u (min=%u)",
-                              (unsigned)map.RowPitch,
-                              (unsigned)min_row_pitch);
+    return reporter.Fail("Map(staging) returned too-small RowPitch=%u (min=%u)",
+                         (unsigned)map.RowPitch,
+                         (unsigned)min_row_pitch);
   }
 
   const int cx = (int)bb_desc.Width / 2;

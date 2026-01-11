@@ -203,7 +203,7 @@ static int RunD3D11GeometryShaderSmoke(int argc, char** argv) {
   }
 
   if (require_umd || (!allow_microsoft && !allow_non_aerogpu)) {
-    int umd_rc = aerogpu_test::RequireAeroGpuD3D10UmdLoaded(kTestName);
+    int umd_rc = aerogpu_test::RequireAeroGpuD3D10UmdLoaded(&reporter, kTestName);
     if (umd_rc != 0) {
       return umd_rc;
     }

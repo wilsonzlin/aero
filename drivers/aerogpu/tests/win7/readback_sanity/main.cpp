@@ -150,7 +150,7 @@ static int RunReadbackSanity(int argc, char** argv) {
   }
 
   if (require_umd || (!allow_microsoft && !allow_non_aerogpu)) {
-    int umd_rc = aerogpu_test::RequireAeroGpuD3D10UmdLoaded(kTestName);
+    int umd_rc = aerogpu_test::RequireAeroGpuD3D10UmdLoaded(&reporter, kTestName);
     if (umd_rc != 0) {
       return umd_rc;
     }
@@ -320,15 +320,14 @@ static int RunReadbackSanity(int argc, char** argv) {
   }
   if (!map.pData) {
     context->Unmap(staging.get(), 0);
-    return aerogpu_test::Fail(kTestName, "Map(staging) returned NULL pData");
+    return reporter.Fail("Map(staging) returned NULL pData");
   }
   const UINT min_row_pitch = kWidth * 4;
   if (map.RowPitch < min_row_pitch) {
     context->Unmap(staging.get(), 0);
-    return aerogpu_test::Fail(kTestName,
-                              "Map(staging) returned too-small RowPitch=%u (min=%u)",
-                              (unsigned)map.RowPitch,
-                              (unsigned)min_row_pitch);
+    return reporter.Fail("Map(staging) returned too-small RowPitch=%u (min=%u)",
+                         (unsigned)map.RowPitch,
+                         (unsigned)min_row_pitch);
   }
 
   const uint32_t corner = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, 0, 0);

@@ -451,4 +451,90 @@ class TestReporter {
   TestReport report_;
 };
 
+// Reporter-aware variants of common failure helpers.
+//
+// Many tests predate `TestReporter` and use helpers in aerogpu_test_common.h that call
+// aerogpu_test::Fail() directly. When those helpers are used from a `--json`-enabled test,
+// the printed FAIL line is correct but the JSON report ends up with `"failure": null`
+// because the reporter was never finalized. These wrappers preserve the original stdout
+// diagnostics while correctly populating the JSON failure message.
+static inline int RequireAeroGpuUmdLoaded(TestReporter* reporter,
+                                          const char* test_name,
+                                          const wchar_t* expected_module_base_name,
+                                          const char* api_label,
+                                          const char* reg_key_hint) {
+  const char* tn = test_name ? test_name : "<unknown>";
+  const char* api = api_label ? api_label : "<unknown>";
+  const char* reg = reg_key_hint ? reg_key_hint : "<unknown>";
+  const wchar_t* expected = expected_module_base_name ? expected_module_base_name : L"<null>";
+
+  std::wstring path;
+  std::string err;
+  if (GetLoadedModulePathByBaseName(expected, &path, &err)) {
+    if (!path.empty()) {
+      PrintfStdout("INFO: %s: loaded AeroGPU %s UMD (%s%s): %ls",
+                   tn,
+                   api,
+                   GetProcessBitnessString(),
+                   GetWow64SuffixString(),
+                   path.c_str());
+    } else if (!err.empty()) {
+      PrintfStdout("INFO: %s: loaded AeroGPU %s UMD module %ls (%s%s; path unavailable: %s)",
+                   tn,
+                   api,
+                   expected,
+                   GetProcessBitnessString(),
+                   GetWow64SuffixString(),
+                   err.c_str());
+    } else {
+      PrintfStdout("INFO: %s: loaded AeroGPU %s UMD module %ls (%s%s; path unavailable)",
+                   tn,
+                   api,
+                   expected,
+                   GetProcessBitnessString(),
+                   GetWow64SuffixString());
+    }
+    return 0;
+  }
+
+  DumpLoadedAeroGpuUmdModules(tn);
+  if (reporter) {
+    return reporter->Fail(
+        "expected AeroGPU %s UMD DLL %ls to be loaded in-process (process=%s%s), but it was not. "
+        "Likely causes: incorrect INF registry keys (%s), incorrect UMD exports/decoration (stdcall), "
+        "or missing DLL in System32/SysWOW64.",
+        api,
+        expected,
+        GetProcessBitnessString(),
+        GetWow64SuffixString(),
+        reg);
+  }
+  return Fail(
+      tn,
+      "expected AeroGPU %s UMD DLL %ls to be loaded in-process (process=%s%s), but it was not. "
+      "Likely causes: incorrect INF registry keys (%s), incorrect UMD exports/decoration (stdcall), "
+      "or missing DLL in System32/SysWOW64.",
+      api,
+      expected,
+      GetProcessBitnessString(),
+      GetWow64SuffixString(),
+      reg);
+}
+
+static inline int RequireAeroGpuD3D9UmdLoaded(TestReporter* reporter, const char* test_name) {
+  return RequireAeroGpuUmdLoaded(reporter,
+                                 test_name,
+                                 ExpectedAeroGpuD3D9UmdModuleBaseName(),
+                                 "D3D9",
+                                 "InstalledDisplayDrivers/InstalledDisplayDriversWow");
+}
+
+static inline int RequireAeroGpuD3D10UmdLoaded(TestReporter* reporter, const char* test_name) {
+  return RequireAeroGpuUmdLoaded(reporter,
+                                 test_name,
+                                 ExpectedAeroGpuD3D10UmdModuleBaseName(),
+                                 "D3D10/11",
+                                 "UserModeDriverName/UserModeDriverNameWow");
+}
+
 }  // namespace aerogpu_test
