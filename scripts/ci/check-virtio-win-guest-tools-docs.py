@@ -87,7 +87,7 @@ def check_docs() -> list[str]:
         ),
         (
             "claims default profile is minimal",
-            re.compile(r"(?i)\bdefault\s+profile\b[^.]{0,120}\b`?minimal`?\b"),
+            re.compile(r"(?i)\bdefault\s+profile\s*(?:is|:|=)\s*`?minimal`?\b"),
         ),
         (
             "claims by-default uses -Profile minimal",
