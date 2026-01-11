@@ -5,7 +5,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
-// WDK 7.1 headers (Win7 / WDDM 1.1).
+// Win7-era D3D UMD DDI headers (Win7 / WDDM 1.1).
 #include <d3d10umddi.h>
 #include <d3d11umddi.h>
 #include <d3dumddi.h>
@@ -19,7 +19,7 @@ static void PrintSeparator() {
 #define PRINT_OFF(T, F) printf("  %-46s offsetof=%lu\n", #F, (unsigned long)offsetof(T, F))
 
 int main() {
-  printf("AeroGPU Win7 WDK 7.1 probe (arch=%s)\n", (sizeof(void*) == 8) ? "x64" : "x86");
+  printf("AeroGPU Win7 WDK header/layout probe (arch=%s)\n", (sizeof(void*) == 8) ? "x64" : "x86");
   PrintSeparator();
 
   PRINT_SIZE(void*);
@@ -80,4 +80,3 @@ int main() {
   printf("Done.\n");
   return 0;
 }
-
