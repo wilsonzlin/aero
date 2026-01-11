@@ -74,6 +74,19 @@ On Windows 7 / WDDM 1.1 the Direct3D runtimes locate the display driver’s user
   - x86: `UserModeDriverName = "aerogpu_d3d10.dll"`
   - x64: `UserModeDriverName = "aerogpu_d3d10_x64.dll"`, `UserModeDriverNameWow = "aerogpu_d3d10.dll"`
 
+To inspect what was actually written after install, you can query the adapter’s device key from an elevated Command Prompt:
+
+```bat
+:: Find the AeroGPU adapter instance key under the Display class (note the \0000 / \0001 path):
+reg query "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Class\\{4d36e968-e325-11ce-bfc1-08002be10318}" /s /f "AeroGPU Display Adapter" /d
+
+:: Then query values (replace <KEY> with the path printed above):
+reg query "<KEY>" /v InstalledDisplayDrivers
+reg query "<KEY>" /v InstalledDisplayDriversWow
+reg query "<KEY>" /v UserModeDriverName
+reg query "<KEY>" /v UserModeDriverNameWow
+```
+
 ## 2) Confirm the PCI Hardware ID(s) (required)
 
 By default, both `aerogpu.inf` and `aerogpu_dx11.inf` bind to the canonical AeroGPU PCI Hardware ID:
