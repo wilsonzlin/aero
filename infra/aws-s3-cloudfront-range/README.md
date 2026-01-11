@@ -48,8 +48,29 @@ If you set `kms_key_arn` to enable SSE-KMS encryption for the bucket, ensure the
 ## Prerequisites
 
 - Terraform **0.13+**
+- Optional: [`tflint`](https://github.com/terraform-linters/tflint) (this repo pins config via `.tflint.hcl`)
 - AWS credentials configured for Terraform (env vars, profile, or IAM role)
 - AWS provider plugin will be downloaded during `terraform init`
+
+## CI validation (Terraform + tflint)
+
+CI runs:
+
+- `terraform fmt -check -recursive`
+- `terraform init -backend=false`
+- `terraform validate`
+- `tflint` (AWS ruleset)
+
+To reproduce locally:
+
+```bash
+cd infra/aws-s3-cloudfront-range
+terraform fmt -check -recursive
+terraform init -backend=false -input=false
+terraform validate
+tflint --init
+tflint
+```
 
 ## Quick start
 
