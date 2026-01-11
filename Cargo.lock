@@ -383,19 +383,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "aero-net-proxy-server"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "futures-util",
- "tokio",
- "tokio-tungstenite 0.26.2",
- "tracing",
- "tracing-subscriber",
- "url",
-]
-
-[[package]]
 name = "aero-net-stack"
 version = "0.1.0"
 dependencies = [

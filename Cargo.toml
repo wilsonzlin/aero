@@ -71,7 +71,6 @@ members = [
     "crates/aero-usb",
     "crates/st-idb",
     "crates/conformance",
-    "tools/net-proxy-server",
     "emulator/protocol",
     "crates/aero-gpu-vga",
     "drivers/protocol/virtio",
