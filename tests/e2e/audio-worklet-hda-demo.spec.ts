@@ -4,6 +4,11 @@ test("AudioWorklet output runs and does not underrun with HDA DMA demo", async (
   test.setTimeout(60_000);
   test.skip(test.info().project.name !== "chromium", "AudioWorklet output test only runs on Chromium.");
 
+  // The HDA demo boots a dedicated worker that loads and instantiates a large WASM module.
+  // When Chromium doesn't have a cached compilation artifact yet (common in CI), this can take
+  // longer than Playwright's default 30s timeout.
+  page.setDefaultTimeout(60_000);
+
   await page.goto("http://127.0.0.1:4173/", { waitUntil: "load" });
 
   await page.click("#init-audio-hda-demo");
@@ -29,7 +34,8 @@ test("AudioWorklet output runs and does not underrun with HDA DMA demo", async (
       return ((write - (initialWrite as number)) >>> 0) > 0;
     },
     initialWrite,
-    { timeout: 10_000 },
+    // Allow enough time for WASM compilation + worker startup in CI.
+    { timeout: 45_000 },
   );
 
   await page.waitForFunction(() => {
