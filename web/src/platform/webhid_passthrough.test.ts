@@ -452,27 +452,24 @@ describe("WebHID guest path allocation (external hub on root port 0)", () => {
     expect(target.messages[1]).toMatchObject({ type: "hid:attach", guestPath: [0, 1], numericDeviceId });
   });
 
-  it("falls back to root port 1 when the hub is full and only errors once all paths are exhausted", async () => {
+  it("errors once the external hub is full (root port 1 reserved)", async () => {
     const target = new TestTarget();
     const manager = new WebHidPassthroughManager({ hid: null, target, externalHubPortCount: 2 });
 
     const devA = makeDevice(1, 1, "A");
     const devB = makeDevice(2, 2, "B");
     const devC = makeDevice(3, 3, "C");
-    const devD = makeDevice(4, 4, "D");
 
     await manager.attachKnownDevice(devA);
     await manager.attachKnownDevice(devB);
-    await manager.attachKnownDevice(devC);
-    await expect(manager.attachKnownDevice(devD)).rejects.toThrow(getNoFreeGuestUsbPortsMessage({ externalHubPortCount: 2 }));
+    await expect(manager.attachKnownDevice(devC)).rejects.toThrow(getNoFreeGuestUsbPortsMessage({ externalHubPortCount: 2 }));
 
-    expect(target.messages).toHaveLength(4);
+    expect(target.messages).toHaveLength(3);
     expect(target.messages[0]).toMatchObject({ type: "hid:attachHub", guestPath: [0], portCount: 2 });
     expect(target.messages[1]).toMatchObject({ type: "hid:attach", guestPath: [0, 1] });
     expect(target.messages[2]).toMatchObject({ type: "hid:attach", guestPath: [0, 2] });
-    expect(target.messages[3]).toMatchObject({ type: "hid:attach", guestPath: [1] });
 
-    expect(manager.getState().attachedDevices).toHaveLength(3);
+    expect(manager.getState().attachedDevices).toHaveLength(2);
   });
 
   it("forgets known devices without calling requestDevice()", async () => {

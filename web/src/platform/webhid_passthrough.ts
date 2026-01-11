@@ -19,15 +19,15 @@ export interface HidPassthroughTarget {
 
 export const UHCI_ROOT_PORTS: readonly GuestUsbRootPort[] = [0, 1];
 export const EXTERNAL_HUB_ROOT_PORT: GuestUsbRootPort = 0;
-export const DIRECT_ATTACH_ROOT_PORT: GuestUsbRootPort = 1;
+// Root port 1 is reserved for the guest-visible WebUSB passthrough device (see `io.worker.ts`).
 
 export const DEFAULT_EXTERNAL_HUB_PORT_COUNT = 16;
 const DEFAULT_NUMERIC_DEVICE_ID_BASE = 0x4000_0000;
 
 export function getNoFreeGuestUsbPortsMessage(options: { externalHubPortCount?: number } = {}): string {
   const hubPortCount = options.externalHubPortCount ?? DEFAULT_EXTERNAL_HUB_PORT_COUNT;
-  const total = (hubPortCount >>> 0) + 1;
-  return `No free guest USB attachment paths (${total} total: ${hubPortCount} hub-backed + 1 direct). Detach an existing device first.`;
+  const total = hubPortCount >>> 0;
+  return `No free guest USB attachment paths (${total} total: ${hubPortCount} hub-backed). Detach an existing device first.`;
 }
 
 export type WebHidPassthroughAttachment = {
@@ -96,7 +96,6 @@ export class WebHidPassthroughManager {
   readonly #devicePaths = new Map<string, GuestUsbPath>();
   readonly #usedExternalHubPorts = new Set<number>();
   #externalHubAttached = false;
-  #directAttachUsed = false;
   readonly #inputReportListeners = new Map<string, (event: HIDInputReportEvent) => void>();
 
   readonly #deviceIds = new WeakMap<HIDDevice, string>();
@@ -489,20 +488,10 @@ export class WebHidPassthroughManager {
       return [EXTERNAL_HUB_ROOT_PORT, hubPort];
     }
 
-    // If the hub is full, fall back to a single direct device on root port 1.
-    if (!this.#directAttachUsed) {
-      return [DIRECT_ATTACH_ROOT_PORT];
-    }
-
     return null;
   }
 
   #trackAllocatedPath(path: GuestUsbPath): void {
-    if (path[0] === DIRECT_ATTACH_ROOT_PORT) {
-      this.#directAttachUsed = true;
-      return;
-    }
-
     if (path[0] === EXTERNAL_HUB_ROOT_PORT && path.length >= 2) {
       const hubPort = path[1]!;
       this.#usedExternalHubPorts.add(hubPort);
@@ -510,11 +499,6 @@ export class WebHidPassthroughManager {
   }
 
   #untrackAllocatedPath(path: GuestUsbPath): void {
-    if (path[0] === DIRECT_ATTACH_ROOT_PORT) {
-      this.#directAttachUsed = false;
-      return;
-    }
-
     if (path[0] === EXTERNAL_HUB_ROOT_PORT && path.length >= 2) {
       const hubPort = path[1]!;
       this.#usedExternalHubPorts.delete(hubPort);
