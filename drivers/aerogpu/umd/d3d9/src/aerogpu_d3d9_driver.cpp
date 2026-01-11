@@ -1745,6 +1745,14 @@ HRESULT emit_upload_buffer_locked(Device* dev, Resource* res, const void* data, 
   if (!dev || !res || !data || size_bytes == 0) {
     return E_INVALIDARG;
   }
+  if (res->backing_alloc_id != 0) {
+    // Host-side validation rejects UPLOAD_RESOURCE for guest-backed resources.
+    // Callers must update guest-backed buffers via Lock/Unlock + RESOURCE_DIRTY_RANGE.
+    logf("aerogpu-d3d9: emit_upload_buffer_locked called on guest-backed resource handle=%u alloc_id=%u\n",
+         static_cast<unsigned>(res->handle),
+         static_cast<unsigned>(res->backing_alloc_id));
+    return E_INVALIDARG;
+  }
   if (size_bytes > res->size_bytes) {
     return E_INVALIDARG;
   }
