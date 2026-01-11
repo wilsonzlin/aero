@@ -1,6 +1,7 @@
 use std::ops::Range;
 
 use emulator::io::usb::hid::keyboard::UsbHidKeyboardHandle;
+use emulator::io::usb::hid::{UsbHidPassthroughHandle, UsbHidPassthroughOutputReport};
 use emulator::io::usb::hub::UsbHubDevice;
 use emulator::io::usb::uhci::{UhciController, UhciPciDevice};
 use emulator::io::PortIO;
@@ -296,6 +297,64 @@ fn enumerate_keyboard(uhci: &mut UhciPciDevice, mem: &mut TestMemBus, address: u
         34,
     );
     assert_tds_ok(mem, &[TD0, TD1, TD2]);
+
+    // SET_CONFIGURATION(1)
+    control_no_data(
+        uhci,
+        mem,
+        address,
+        [0x00, 0x09, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00],
+    );
+    assert_tds_ok(mem, &[TD0, TD1]);
+}
+
+fn enumerate_hid_passthrough_device(
+    uhci: &mut UhciPciDevice,
+    mem: &mut TestMemBus,
+    address: u8,
+    expected_vendor_id: u16,
+    expected_product_id: u16,
+) {
+    // GET_DESCRIPTOR(Device) at address 0 (default-address state).
+    control_in(
+        uhci,
+        mem,
+        0,
+        [0x80, 0x06, 0x00, 0x01, 0x00, 0x00, 18, 0x00],
+        BUF_DATA,
+        18,
+    );
+    assert_tds_ok(mem, &[TD0, TD1, TD2]);
+
+    let device_desc = mem.slice(BUF_DATA as usize..BUF_DATA as usize + 18);
+    assert_eq!(&device_desc[..2], &[0x12, 0x01]);
+    let vendor_id = u16::from_le_bytes([device_desc[8], device_desc[9]]);
+    let product_id = u16::from_le_bytes([device_desc[10], device_desc[11]]);
+    assert_eq!(vendor_id, expected_vendor_id);
+    assert_eq!(product_id, expected_product_id);
+
+    // SET_ADDRESS(address)
+    control_no_data(
+        uhci,
+        mem,
+        0,
+        [0x00, 0x05, address, 0x00, 0x00, 0x00, 0x00, 0x00],
+    );
+    assert_tds_ok(mem, &[TD0, TD1]);
+
+    // GET_DESCRIPTOR(Configuration) at new address.
+    // We request 64 bytes so this helper works for passthrough devices with/without an interrupt
+    // OUT endpoint (41 vs 34 bytes total).
+    control_in(
+        uhci,
+        mem,
+        address,
+        [0x80, 0x06, 0x00, 0x02, 0x00, 0x00, 64, 0x00],
+        BUF_DATA,
+        64,
+    );
+    assert_tds_ok(mem, &[TD0, TD1, TD2]);
+    assert_eq!(mem.mem[BUF_DATA as usize + 1], 0x02); // config desc
 
     // SET_CONFIGURATION(1)
     control_no_data(
@@ -711,5 +770,237 @@ fn uhci_external_hub_enumerates_multiple_downstream_hid_devices() {
     assert_eq!(
         mem.slice(BUF_KBD3_INT as usize..BUF_KBD3_INT as usize + 8),
         [0x00, 0x00, 0x06, 0, 0, 0, 0, 0]
+    );
+}
+
+#[test]
+fn uhci_external_hub_enumerates_multiple_passthrough_hid_devices() {
+    let mut mem = TestMemBus::new(0x20000);
+    init_frame_list(&mut mem, QH_ADDR);
+
+    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+
+    // A minimal vendor-defined report descriptor producing an 8-byte input report.
+    let report_descriptor = vec![
+        0x06, 0x00, 0xff, // Usage Page (Vendor-defined 0xFF00)
+        0x09, 0x01, // Usage (1)
+        0xa1, 0x01, // Collection (Application)
+        0x15, 0x00, // Logical Minimum (0)
+        0x26, 0xff, 0x00, // Logical Maximum (255)
+        0x75, 0x08, // Report Size (8)
+        0x95, 0x08, // Report Count (8)
+        0x09, 0x01, // Usage (1)
+        0x81, 0x02, // Input (Data,Var,Abs)
+        0xc0, // End Collection
+    ];
+
+    // Root port 0 has an external hub with 3 "WebHID-style" passthrough devices.
+    let dev1 = UsbHidPassthroughHandle::new(
+        0x1234,
+        0x0001,
+        "Vendor".to_string(),
+        "Device 1".to_string(),
+        None,
+        report_descriptor.clone(),
+        true,
+        None,
+        None,
+        None,
+    );
+    let dev2 = UsbHidPassthroughHandle::new(
+        0x1234,
+        0x0002,
+        "Vendor".to_string(),
+        "Device 2".to_string(),
+        None,
+        report_descriptor.clone(),
+        true,
+        None,
+        None,
+        None,
+    );
+    let dev3 = UsbHidPassthroughHandle::new(
+        0x1234,
+        0x0003,
+        "Vendor".to_string(),
+        "Device 3".to_string(),
+        None,
+        report_descriptor.clone(),
+        true,
+        None,
+        None,
+        None,
+    );
+
+    let mut hub = UsbHubDevice::new();
+    hub.attach(1, Box::new(dev1.clone()));
+    hub.attach(2, Box::new(dev2.clone()));
+    hub.attach(3, Box::new(dev3.clone()));
+    uhci.controller.hub_mut().attach(0, Box::new(hub));
+
+    // Enable the root port and start the controller.
+    reset_root_port(&mut uhci, &mut mem, 0x10);
+    uhci.port_write(0x08, 4, FRAME_LIST_BASE);
+    uhci.port_write(0x00, 2, 0x0001);
+
+    // Enumerate the hub itself at address 0 -> address 1, then configure it.
+    control_in(
+        &mut uhci,
+        &mut mem,
+        0,
+        [0x80, 0x06, 0x00, 0x01, 0x00, 0x00, 18, 0x00],
+        BUF_DATA,
+        18,
+    );
+    assert_tds_ok(&mut mem, &[TD0, TD1, TD2]);
+
+    control_no_data(
+        &mut uhci,
+        &mut mem,
+        0,
+        [0x00, 0x05, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00],
+    );
+    assert_tds_ok(&mut mem, &[TD0, TD1]);
+
+    control_in(
+        &mut uhci,
+        &mut mem,
+        1,
+        [0x80, 0x06, 0x00, 0x02, 0x00, 0x00, 25, 0x00],
+        BUF_DATA,
+        25,
+    );
+    assert_tds_ok(&mut mem, &[TD0, TD1, TD2]);
+
+    control_no_data(
+        &mut uhci,
+        &mut mem,
+        1,
+        [0x00, 0x09, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00],
+    );
+    assert_tds_ok(&mut mem, &[TD0, TD1]);
+
+    // Power + reset each port, then enumerate each device.
+    power_reset_and_clear_hub_port(&mut uhci, &mut mem, 1, 1);
+    enumerate_hid_passthrough_device(&mut uhci, &mut mem, 5, 0x1234, 0x0001);
+
+    power_reset_and_clear_hub_port(&mut uhci, &mut mem, 1, 2);
+    enumerate_hid_passthrough_device(&mut uhci, &mut mem, 6, 0x1234, 0x0002);
+
+    power_reset_and_clear_hub_port(&mut uhci, &mut mem, 1, 3);
+    enumerate_hid_passthrough_device(&mut uhci, &mut mem, 7, 0x1234, 0x0003);
+
+    // Functional proof: each device has independent interrupt IN and OUT endpoints.
+    let report1 = [0x01u8, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
+    let report2 = [0x11u8, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18];
+    let report3 = [0x21u8, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28];
+
+    dev1.push_input_report(0, &report1);
+    dev2.push_input_report(0, &report2);
+    dev3.push_input_report(0, &report3);
+
+    write_td(
+        &mut mem,
+        TD0,
+        1,
+        td_status(true, false),
+        td_token(PID_IN, 5, 1, 0, 8),
+        BUF_KBD_INT,
+    );
+    run_one_frame(&mut uhci, &mut mem, TD0);
+    assert_eq!(
+        mem.slice(BUF_KBD_INT as usize..BUF_KBD_INT as usize + 8),
+        report1
+    );
+
+    write_td(
+        &mut mem,
+        TD0,
+        1,
+        td_status(true, false),
+        td_token(PID_IN, 6, 1, 0, 8),
+        BUF_KBD2_INT,
+    );
+    run_one_frame(&mut uhci, &mut mem, TD0);
+    assert_eq!(
+        mem.slice(BUF_KBD2_INT as usize..BUF_KBD2_INT as usize + 8),
+        report2
+    );
+
+    write_td(
+        &mut mem,
+        TD0,
+        1,
+        td_status(true, false),
+        td_token(PID_IN, 7, 1, 0, 8),
+        BUF_KBD3_INT,
+    );
+    run_one_frame(&mut uhci, &mut mem, TD0);
+    assert_eq!(
+        mem.slice(BUF_KBD3_INT as usize..BUF_KBD3_INT as usize + 8),
+        report3
+    );
+
+    let out1 = [0xaa, 0xbb, 0xcc];
+    mem.write_physical(BUF_DATA as u64, &out1);
+    write_td(
+        &mut mem,
+        TD0,
+        1,
+        td_status(true, false),
+        td_token(PID_OUT, 5, 1, 0, out1.len()),
+        BUF_DATA,
+    );
+    run_one_frame(&mut uhci, &mut mem, TD0);
+    assert_tds_ok(&mut mem, &[TD0]);
+    assert_eq!(
+        dev1.pop_output_report(),
+        Some(UsbHidPassthroughOutputReport {
+            report_type: 2,
+            report_id: 0,
+            data: out1.to_vec()
+        })
+    );
+
+    let out2 = [0x10, 0x20];
+    mem.write_physical(BUF_DATA as u64, &out2);
+    write_td(
+        &mut mem,
+        TD0,
+        1,
+        td_status(true, false),
+        td_token(PID_OUT, 6, 1, 0, out2.len()),
+        BUF_DATA,
+    );
+    run_one_frame(&mut uhci, &mut mem, TD0);
+    assert_tds_ok(&mut mem, &[TD0]);
+    assert_eq!(
+        dev2.pop_output_report(),
+        Some(UsbHidPassthroughOutputReport {
+            report_type: 2,
+            report_id: 0,
+            data: out2.to_vec()
+        })
+    );
+
+    let out3 = [0xde, 0xad, 0xbe, 0xef];
+    mem.write_physical(BUF_DATA as u64, &out3);
+    write_td(
+        &mut mem,
+        TD0,
+        1,
+        td_status(true, false),
+        td_token(PID_OUT, 7, 1, 0, out3.len()),
+        BUF_DATA,
+    );
+    run_one_frame(&mut uhci, &mut mem, TD0);
+    assert_tds_ok(&mut mem, &[TD0]);
+    assert_eq!(
+        dev3.pop_output_report(),
+        Some(UsbHidPassthroughOutputReport {
+            report_type: 2,
+            report_id: 0,
+            data: out3.to_vec()
+        })
     );
 }
