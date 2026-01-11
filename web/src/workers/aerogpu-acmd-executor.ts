@@ -750,9 +750,8 @@ export const executeAerogpuCmdStream = (
           throw new Error("aerogpu: COPY_BUFFER out of bounds");
         }
 
-        const tmp = src.data.slice(srcOffsetBytes, srcOffsetBytes + sizeBytes);
-        dst.data.set(tmp, dstOffsetBytes);
-
+        type CopyBufferWriteback = { guest: Uint8Array; gpa: number };
+        let writeback: CopyBufferWriteback | null = null;
         if (flags === AEROGPU_COPY_FLAG_WRITEBACK_DST) {
           const backing = dst.backing;
           if (!backing) {
@@ -772,8 +771,14 @@ export const executeAerogpuCmdStream = (
             );
           }
 
-          const gpa = alloc.gpa + backing.offsetBytes + dstOffsetBytes;
-          sliceGuestChecked(guest, gpa, sizeBytes, `buffer ${dstBuffer} writeback`).set(tmp);
+          writeback = { guest, gpa: alloc.gpa + backing.offsetBytes + dstOffsetBytes };
+        }
+
+        const tmp = src.data.slice(srcOffsetBytes, srcOffsetBytes + sizeBytes);
+        dst.data.set(tmp, dstOffsetBytes);
+
+        if (writeback) {
+          sliceGuestChecked(writeback.guest, writeback.gpa, sizeBytes, `buffer ${dstBuffer} writeback`).set(tmp);
         }
         break;
       }
@@ -828,11 +833,9 @@ export const executeAerogpuCmdStream = (
           const srcOff = ((srcY + row) * src.width + srcX) * 4;
           tmp.set(src.data.subarray(srcOff, srcOff + rowBytes), row * rowBytes);
         }
-        for (let row = 0; row < height; row += 1) {
-          const dstOff = ((dstY + row) * dst.width + dstX) * 4;
-          dst.data.set(tmp.subarray(row * rowBytes, (row + 1) * rowBytes), dstOff);
-        }
 
+        type CopyTexture2dWriteback = { guest: Uint8Array; baseGpa: number };
+        let writeback: CopyTexture2dWriteback | null = null;
         if (flags === AEROGPU_COPY_FLAG_WRITEBACK_DST) {
           const backing = dst.backing;
           if (!backing) {
@@ -856,24 +859,32 @@ export const executeAerogpuCmdStream = (
             );
           }
 
-          const baseGpa = alloc.gpa + backing.offsetBytes;
+          writeback = { guest, baseGpa: alloc.gpa + backing.offsetBytes };
+        }
+
+        for (let row = 0; row < height; row += 1) {
+          const dstOff = ((dstY + row) * dst.width + dstX) * 4;
+          dst.data.set(tmp.subarray(row * rowBytes, (row + 1) * rowBytes), dstOff);
+        }
+
+        if (writeback) {
           for (let row = 0; row < height; row += 1) {
-            const srcOff = ((dstY + row) * dst.width + dstX) * 4;
             const dstBackingOff = (dstY + row) * dst.rowPitchBytes + dstX * 4;
+            const tmpOff = row * rowBytes;
             const dstRowBytes = sliceGuestChecked(
-              guest,
-              baseGpa + dstBackingOff,
+              writeback.guest,
+              writeback.baseGpa + dstBackingOff,
               rowBytes,
               `texture ${dstTexture} writeback`,
             );
 
             if (dst.format === AEROGPU_FORMAT_R8G8B8A8_UNORM) {
-              dstRowBytes.set(dst.data.subarray(srcOff, srcOff + rowBytes));
+              dstRowBytes.set(tmp.subarray(tmpOff, tmpOff + rowBytes));
               continue;
             }
 
             for (let i = 0; i < rowBytes; i += 4) {
-              writeTexelFromRgba(dst.format, dst.data, srcOff + i, dstRowBytes, i);
+              writeTexelFromRgba(dst.format, tmp, tmpOff + i, dstRowBytes, i);
             }
           }
         }
