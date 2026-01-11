@@ -688,11 +688,14 @@ template <typename T>
 struct has_member_pFenceValue<T, std::void_t<decltype(std::declval<T>().pFenceValue)>> : std::true_type {};
 
 template <typename CallbacksT>
-HRESULT create_device_from_callbacks(const CallbacksT& callbacks, void* hAdapter, D3DKMT_HANDLE* hDeviceOut) {
+HRESULT create_device_from_callbacks(const CallbacksT& callbacks, Device* dev, void* hAdapter, D3DKMT_HANDLE* hDeviceOut) {
   if (!hDeviceOut) {
     return E_INVALIDARG;
   }
   *hDeviceOut = 0;
+  if (!dev || !dev->runtime_device) {
+    return E_INVALIDARG;
+  }
 
   if constexpr (!has_pfnCreateDeviceCb<CallbacksT>::value) {
     (void)callbacks;
@@ -703,13 +706,15 @@ HRESULT create_device_from_callbacks(const CallbacksT& callbacks, void* hAdapter
       return E_FAIL;
     }
 
-    using Fn = decltype(callbacks.pfnCreateDeviceCb);
-    using ArgPtr = typename fn_first_param<Fn>::type;
-    using Arg = std::remove_const_t<std::remove_pointer_t<ArgPtr>>;
-    Arg data{};
-    data.hAdapter = hAdapter;
+    D3DDDICB_CREATEDEVICE data{};
+    __if_exists(D3DDDICB_CREATEDEVICE::hAdapter) {
+      data.hAdapter = hAdapter;
+    }
 
-    HRESULT hr = callbacks.pfnCreateDeviceCb(static_cast<ArgPtr>(&data));
+    const HRESULT hr = CallCbMaybeHandle(callbacks.pfnCreateDeviceCb,
+                                         MakeRtDeviceHandle(dev),
+                                         MakeRtDeviceHandle10(dev),
+                                         &data);
     if (FAILED(hr)) {
       return hr;
     }
@@ -719,26 +724,29 @@ HRESULT create_device_from_callbacks(const CallbacksT& callbacks, void* hAdapter
 }
 
 template <typename CallbacksT>
-void destroy_device_if_present(const CallbacksT& callbacks, D3DKMT_HANDLE hDevice) {
+void destroy_device_if_present(const CallbacksT& callbacks, Device* dev, D3DKMT_HANDLE hDevice) {
   if constexpr (has_pfnDestroyDeviceCb<CallbacksT>::value) {
-    if (!hDevice || !callbacks.pfnDestroyDeviceCb) {
+    if (!dev || !dev->runtime_device || !hDevice || !callbacks.pfnDestroyDeviceCb) {
       return;
     }
 
-    using Fn = decltype(callbacks.pfnDestroyDeviceCb);
-    using ArgPtr = typename fn_first_param<Fn>::type;
-    using Arg = std::remove_const_t<std::remove_pointer_t<ArgPtr>>;
-    Arg data{};
-    data.hDevice = hDevice;
-    (void)callbacks.pfnDestroyDeviceCb(static_cast<ArgPtr>(&data));
+    D3DDDICB_DESTROYDEVICE data{};
+    __if_exists(D3DDDICB_DESTROYDEVICE::hDevice) {
+      data.hDevice = hDevice;
+    }
+    (void)CallCbMaybeHandle(callbacks.pfnDestroyDeviceCb,
+                            MakeRtDeviceHandle(dev),
+                            MakeRtDeviceHandle10(dev),
+                            &data);
   } else {
     (void)callbacks;
+    (void)dev;
     (void)hDevice;
   }
 }
 
-template <typename CallbacksT, typename FnT>
-HRESULT create_context_common(const CallbacksT& callbacks,
+template <typename FnT>
+HRESULT create_context_common(Device* dev,
                               FnT fn,
                               D3DKMT_HANDLE hDevice,
                               D3DKMT_HANDLE* hContextOut,
@@ -746,8 +754,7 @@ HRESULT create_context_common(const CallbacksT& callbacks,
                               volatile uint64_t** monitored_fence_value_out,
                               void** dma_private_data_out,
                               UINT* dma_private_data_size_out) {
-  (void)callbacks;
-  if (!hContextOut || !hSyncObjectOut) {
+  if (!dev || !dev->runtime_device || !fn || !hContextOut || !hSyncObjectOut) {
     return E_INVALIDARG;
   }
   *hContextOut = 0;
@@ -756,17 +763,24 @@ HRESULT create_context_common(const CallbacksT& callbacks,
     *monitored_fence_value_out = nullptr;
   }
 
-  using ArgPtr = typename fn_first_param<FnT>::type;
-  using Arg = std::remove_const_t<std::remove_pointer_t<ArgPtr>>;
-  Arg data{};
-  data.hDevice = hDevice;
-  data.NodeOrdinal = 0;
-  data.EngineAffinity = 0;
-  std::memset(&data.Flags, 0, sizeof(data.Flags));
-  data.pPrivateDriverData = nullptr;
-  data.PrivateDriverDataSize = 0;
+  D3DDDICB_CREATECONTEXT data{};
+  __if_exists(D3DDDICB_CREATECONTEXT::hDevice) {
+    data.hDevice = hDevice;
+  }
+  __if_exists(D3DDDICB_CREATECONTEXT::NodeOrdinal) {
+    data.NodeOrdinal = 0;
+  }
+  __if_exists(D3DDDICB_CREATECONTEXT::EngineAffinity) {
+    data.EngineAffinity = 0;
+  }
+  __if_exists(D3DDDICB_CREATECONTEXT::pPrivateDriverData) {
+    data.pPrivateDriverData = nullptr;
+  }
+  __if_exists(D3DDDICB_CREATECONTEXT::PrivateDriverDataSize) {
+    data.PrivateDriverDataSize = 0;
+  }
 
-  HRESULT hr = fn(static_cast<ArgPtr>(&data));
+  const HRESULT hr = CallCbMaybeHandle(fn, MakeRtDeviceHandle(dev), MakeRtDeviceHandle10(dev), &data);
   if (FAILED(hr)) {
     return hr;
   }
@@ -775,24 +789,24 @@ HRESULT create_context_common(const CallbacksT& callbacks,
   *hSyncObjectOut = data.hSyncObject;
 
   if (monitored_fence_value_out) {
-    if constexpr (has_member_pMonitoredFenceValue<Arg>::value) {
+    if constexpr (has_member_pMonitoredFenceValue<decltype(data)>::value) {
       *monitored_fence_value_out = reinterpret_cast<volatile uint64_t*>(data.pMonitoredFenceValue);
-    } else if constexpr (has_member_pFenceValue<Arg>::value) {
+    } else if constexpr (has_member_pFenceValue<decltype(data)>::value) {
       *monitored_fence_value_out = reinterpret_cast<volatile uint64_t*>(data.pFenceValue);
     }
   }
 
   if (dma_private_data_out) {
     *dma_private_data_out = nullptr;
-    if constexpr (has_member_pDmaBufferPrivateData<Arg>::value) {
+    if constexpr (has_member_pDmaBufferPrivateData<decltype(data)>::value) {
       *dma_private_data_out = data.pDmaBufferPrivateData;
     }
   }
   if (dma_private_data_size_out) {
     *dma_private_data_size_out = 0;
-    if constexpr (has_member_DmaBufferPrivateDataSize<Arg>::value) {
+    if constexpr (has_member_DmaBufferPrivateDataSize<decltype(data)>::value) {
       *dma_private_data_size_out = data.DmaBufferPrivateDataSize;
-      if constexpr (has_member_pDmaBufferPrivateData<Arg>::value) {
+      if constexpr (has_member_pDmaBufferPrivateData<decltype(data)>::value) {
         if (*dma_private_data_size_out == 0 && data.pDmaBufferPrivateData) {
           // Some WDK/runtime combinations carry the size field but leave it as 0.
           // Treat that as "unknown" and fall back to the fixed AeroGPU Win7
@@ -800,7 +814,7 @@ HRESULT create_context_common(const CallbacksT& callbacks,
           *dma_private_data_size_out = static_cast<UINT>(AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES);
         }
       }
-    } else if constexpr (has_member_pDmaBufferPrivateData<Arg>::value) {
+    } else if constexpr (has_member_pDmaBufferPrivateData<decltype(data)>::value) {
       if (data.pDmaBufferPrivateData) {
         *dma_private_data_size_out = static_cast<UINT>(AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES);
       }
@@ -811,6 +825,7 @@ HRESULT create_context_common(const CallbacksT& callbacks,
 
 template <typename CallbacksT>
 HRESULT create_context_from_callbacks(const CallbacksT& callbacks,
+                                       Device* dev,
                                        D3DKMT_HANDLE hDevice,
                                        D3DKMT_HANDLE* hContextOut,
                                        D3DKMT_HANDLE* hSyncObjectOut,
@@ -821,7 +836,7 @@ HRESULT create_context_from_callbacks(const CallbacksT& callbacks,
   // original entrypoint for older interface versions.
   if constexpr (has_pfnCreateContextCb2<CallbacksT>::value) {
     if (callbacks.pfnCreateContextCb2) {
-      return create_context_common(callbacks,
+      return create_context_common(dev,
                                    callbacks.pfnCreateContextCb2,
                                    hDevice,
                                    hContextOut,
@@ -834,7 +849,7 @@ HRESULT create_context_from_callbacks(const CallbacksT& callbacks,
 
   if constexpr (has_pfnCreateContextCb<CallbacksT>::value) {
     if (callbacks.pfnCreateContextCb) {
-      return create_context_common(callbacks,
+      return create_context_common(dev,
                                    callbacks.pfnCreateContextCb,
                                    hDevice,
                                    hContextOut,
@@ -847,6 +862,7 @@ HRESULT create_context_from_callbacks(const CallbacksT& callbacks,
   }
 
   (void)callbacks;
+  (void)dev;
   (void)hDevice;
   if (monitored_fence_value_out) {
     *monitored_fence_value_out = nullptr;
@@ -855,34 +871,38 @@ HRESULT create_context_from_callbacks(const CallbacksT& callbacks,
 }
 
 template <typename CallbacksT>
-void destroy_sync_object_if_present(const CallbacksT& callbacks, D3DKMT_HANDLE hSyncObject) {
+void destroy_sync_object_if_present(const CallbacksT& callbacks, Device* dev, D3DKMT_HANDLE hSyncObject) {
   if constexpr (has_pfnDestroySynchronizationObjectCb<CallbacksT>::value) {
-    if (!hSyncObject || !callbacks.pfnDestroySynchronizationObjectCb) {
+    if (!dev || !dev->runtime_device || !hSyncObject || !callbacks.pfnDestroySynchronizationObjectCb) {
       return;
     }
 
-    using Fn = decltype(callbacks.pfnDestroySynchronizationObjectCb);
-    using ArgPtr = typename fn_first_param<Fn>::type;
-    using Arg = std::remove_const_t<std::remove_pointer_t<ArgPtr>>;
-    Arg data{};
-    data.hSyncObject = hSyncObject;
-    (void)callbacks.pfnDestroySynchronizationObjectCb(static_cast<ArgPtr>(&data));
+    D3DDDICB_DESTROYSYNCHRONIZATIONOBJECT data{};
+    __if_exists(D3DDDICB_DESTROYSYNCHRONIZATIONOBJECT::hSyncObject) {
+      data.hSyncObject = hSyncObject;
+    }
+    (void)CallCbMaybeHandle(callbacks.pfnDestroySynchronizationObjectCb,
+                            MakeRtDeviceHandle(dev),
+                            MakeRtDeviceHandle10(dev),
+                            &data);
   }
 }
 
 template <typename CallbacksT>
-void destroy_context_if_present(const CallbacksT& callbacks, D3DKMT_HANDLE hContext) {
+void destroy_context_if_present(const CallbacksT& callbacks, Device* dev, D3DKMT_HANDLE hContext) {
   if constexpr (has_pfnDestroyContextCb<CallbacksT>::value) {
-    if (!hContext || !callbacks.pfnDestroyContextCb) {
+    if (!dev || !dev->runtime_device || !hContext || !callbacks.pfnDestroyContextCb) {
       return;
     }
 
-    using Fn = decltype(callbacks.pfnDestroyContextCb);
-    using ArgPtr = typename fn_first_param<Fn>::type;
-    using Arg = std::remove_const_t<std::remove_pointer_t<ArgPtr>>;
-    Arg data{};
-    data.hContext = hContext;
-    (void)callbacks.pfnDestroyContextCb(static_cast<ArgPtr>(&data));
+    D3DDDICB_DESTROYCONTEXT data{};
+    __if_exists(D3DDDICB_DESTROYCONTEXT::hContext) {
+      data.hContext = hContext;
+    }
+    (void)CallCbMaybeHandle(callbacks.pfnDestroyContextCb,
+                            MakeRtDeviceHandle(dev),
+                            MakeRtDeviceHandle10(dev),
+                            &data);
   }
 }
 
@@ -901,9 +921,9 @@ static void DestroyWddmContext(Device* dev) {
     return;
   }
 
-  destroy_sync_object_if_present(*cb, static_cast<D3DKMT_HANDLE>(dev->kmt_fence_syncobj));
-  destroy_context_if_present(*cb, static_cast<D3DKMT_HANDLE>(dev->kmt_context));
-  destroy_device_if_present(*cb, static_cast<D3DKMT_HANDLE>(dev->kmt_device));
+  destroy_sync_object_if_present(*cb, dev, static_cast<D3DKMT_HANDLE>(dev->kmt_fence_syncobj));
+  destroy_context_if_present(*cb, dev, static_cast<D3DKMT_HANDLE>(dev->kmt_context));
+  destroy_device_if_present(*cb, dev, static_cast<D3DKMT_HANDLE>(dev->kmt_device));
 
   dev->kmt_device = 0;
   dev->kmt_context = 0;
@@ -924,7 +944,7 @@ static HRESULT InitWddmContext(Device* dev, void* hAdapter) {
   }
 
   D3DKMT_HANDLE hDevice = 0;
-  HRESULT hr = create_device_from_callbacks(*cb, hAdapter, &hDevice);
+  HRESULT hr = create_device_from_callbacks(*cb, dev, hAdapter, &hDevice);
   if (FAILED(hr)) {
     return hr;
   }
@@ -935,6 +955,7 @@ static HRESULT InitWddmContext(Device* dev, void* hAdapter) {
   void* dma_private_data = nullptr;
   UINT dma_private_data_bytes = 0;
   hr = create_context_from_callbacks(*cb,
+                                     dev,
                                      hDevice,
                                      &hContext,
                                      &hSyncObject,
@@ -942,7 +963,7 @@ static HRESULT InitWddmContext(Device* dev, void* hAdapter) {
                                      &dma_private_data,
                                      &dma_private_data_bytes);
   if (FAILED(hr)) {
-    destroy_device_if_present(*cb, hDevice);
+    destroy_device_if_present(*cb, dev, hDevice);
     return hr;
   }
 
@@ -1299,10 +1320,15 @@ static uint64_t SubmitWddmLocked(Device* dev, bool want_present, HRESULT* out_hr
     UINT dma_cap = 0;
     __if_exists(D3DDDICB_ALLOCATE::pDmaBuffer) {
       dma_buf = alloc.pDmaBuffer;
-      command_buf = alloc.pDmaBuffer;
     }
     __if_exists(D3DDDICB_ALLOCATE::pCommandBuffer) {
       command_buf = alloc.pCommandBuffer;
+    }
+    if (!command_buf) {
+      command_buf = dma_buf;
+    }
+    if (!dma_buf) {
+      dma_buf = command_buf;
     }
     __if_exists(D3DDDICB_ALLOCATE::pAllocationList) {
       allocation_list_ptr = alloc.pAllocationList;
@@ -1318,9 +1344,7 @@ static uint64_t SubmitWddmLocked(Device* dev, bool want_present, HRESULT* out_hr
         dma_cap = alloc.CommandBufferSize;
       }
     }
-    if (!dma_buf) {
-      dma_buf = command_buf;
-    }
+
 
     void* dma_priv_ptr = nullptr;
     UINT dma_priv_size = 0;
