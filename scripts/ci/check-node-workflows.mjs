@@ -136,21 +136,52 @@ for (const filename of workflowFiles) {
   const lines = contents.split(/\r?\n/);
 
   for (let i = 0; i < lines.length; i += 1) {
-    if (!/^\s*-\s*uses:\s*actions\/setup-node@v4\b/.test(lines[i])) continue;
+    // Most workflows format steps as:
+    //   - name: Setup Node
+    //     uses: actions/setup-node@v4
+    // but some omit the name and use:
+    //   - uses: actions/setup-node@v4
+    //
+    // We intentionally enforce pinning even for the common multi-line form.
+    if (!/^\s*(?:-\s*)?uses:\s*actions\/setup-node@v4\b/.test(lines[i])) continue;
 
-    const indent = lines[i].match(/^(\s*)/)?.[1]?.length ?? 0;
-    const stepLines = [];
-    for (let j = i + 1; j < lines.length; j += 1) {
-      // New step at the same indentation -> end of current step.
-      if (new RegExp(`^\\s{${indent}}-\\s`).test(lines[j])) break;
-      stepLines.push(lines[j]);
+    const usesLine = i;
+    const usesIndent = lines[i].match(/^(\s*)/)?.[1]?.length ?? 0;
+
+    let stepIndent = usesIndent;
+    let stepStart = i;
+    if (/^\s*uses:\s*actions\/setup-node@v4\b/.test(lines[i])) {
+      // `uses:` is indented under a preceding `- name:` list item.
+      stepIndent = Math.max(0, usesIndent - 2);
+      for (let k = i - 1; k >= 0; k -= 1) {
+        const line = lines[k];
+        const trimmed = line.trim();
+        if (trimmed === "" || trimmed.startsWith("#")) continue;
+        const indent = line.match(/^(\s*)/)?.[1]?.length ?? 0;
+        if (indent < stepIndent) break;
+        if (new RegExp(`^\\s{${stepIndent}}-\\s`).test(line)) {
+          stepStart = k;
+          break;
+        }
+      }
     }
+
+    let stepEnd = lines.length;
+    for (let j = stepStart + 1; j < lines.length; j += 1) {
+      // New step at the same indentation -> end of current step.
+      if (new RegExp(`^\\s{${stepIndent}}-\\s`).test(lines[j])) {
+        stepEnd = j;
+        break;
+      }
+    }
+
+    const stepLines = lines.slice(stepStart, stepEnd);
 
     const hasNodeVersion = stepLines.some((line) => /^\s*node-version\s*:/.test(line));
     if (hasNodeVersion) {
       errors.push({
         file: filename,
-        line: i + 1,
+        line: usesLine + 1,
         message: "actions/setup-node@v4 uses 'node-version:'. Use 'node-version-file: .nvmrc' instead.",
       });
     }
@@ -159,9 +190,10 @@ for (const filename of workflowFiles) {
     if (!nodeVersionFileLine) {
       errors.push({
         file: filename,
-        line: i + 1,
+        line: usesLine + 1,
         message: "actions/setup-node@v4 is missing 'node-version-file: .nvmrc'.",
       });
+      i = stepEnd - 1;
       continue;
     }
 
@@ -170,10 +202,13 @@ for (const filename of workflowFiles) {
     if (!value.endsWith(".nvmrc")) {
       errors.push({
         file: filename,
-        line: i + 1,
+        line: usesLine + 1,
         message: `node-version-file should point at a .nvmrc file (got ${JSON.stringify(value)}).`,
       });
     }
+
+    // Don't re-scan the interior of the current step.
+    i = stepEnd - 1;
   }
 }
 
