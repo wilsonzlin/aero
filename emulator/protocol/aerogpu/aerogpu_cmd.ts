@@ -86,6 +86,13 @@ export interface AerogpuCmdPacket {
   offsetBytes: number;
   endBytes: number;
   hdr: AerogpuCmdHdr;
+  opcode: number;
+  sizeBytes: number;
+  /**
+   * Packet payload bytes after `aerogpu_cmd_hdr` (including any trailing padding).
+   *
+   * Matches Rust `AerogpuCmdPacket.payload`.
+   */
   payload: Uint8Array;
 }
 
@@ -146,12 +153,18 @@ export class AerogpuCmdStreamIter implements IterableIterator<AerogpuCmdPacket> 
       offsetBytes: this.cursor,
       endBytes: end,
       hdr,
+      opcode: hdr.opcode,
+      sizeBytes: hdr.sizeBytes,
       payload,
     };
 
     this.cursor = end;
     return { done: false, value: packet };
   }
+}
+
+export function* iterCmdStream(bytes: Uint8Array): Generator<AerogpuCmdPacket> {
+  yield* new AerogpuCmdStreamIter(bytes);
 }
 
 export const AerogpuCmdOpcode = {
@@ -363,7 +376,6 @@ export const AEROGPU_CMD_PRESENT_EX_SIZE = 24;
 export const AEROGPU_CMD_EXPORT_SHARED_SURFACE_SIZE = 24;
 export const AEROGPU_CMD_IMPORT_SHARED_SURFACE_SIZE = 24;
 export const AEROGPU_CMD_FLUSH_SIZE = 16;
-
 export interface AerogpuVertexBufferBinding {
   buffer: AerogpuHandle;
   strideBytes: number;
@@ -390,6 +402,257 @@ function alignUp(v: number, a: number): number {
     throw new Error(`alignUp: result not a safe integer (v=${v}, a=${a})`);
   }
   return aligned;
+}
+
+function u64ToSafeNumber(v: bigint, label: string): number {
+  const n = Number(v);
+  if (!Number.isFinite(n) || !Number.isSafeInteger(n)) {
+    throw new Error(`u64 out of JS safe integer range for ${label}: ${v.toString()}`);
+  }
+  return n;
+}
+
+function alignUp4U32(v: number): number {
+  // `v` is expected to be a u32, so this stays within JS safe integers.
+  return alignUp(v, 4);
+}
+
+export interface AerogpuCmdCreateShaderDxbcPayload {
+  shaderHandle: AerogpuHandle;
+  stage: number;
+  dxbcSizeBytes: number;
+  reserved0: number;
+  dxbcBytes: Uint8Array;
+}
+
+export function decodeCmdCreateShaderDxbcPayload(
+  bytes: Uint8Array,
+  packetOffset: number,
+): AerogpuCmdCreateShaderDxbcPayload {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const hdr = decodeCmdHdr(view, packetOffset);
+  if (hdr.opcode !== AerogpuCmdOpcode.CreateShaderDxbc) {
+    throw new Error(`Unexpected opcode: 0x${hdr.opcode.toString(16)} (expected CREATE_SHADER_DXBC)`);
+  }
+
+  const packetEnd = packetOffset + hdr.sizeBytes;
+  if (packetEnd > bytes.byteLength) {
+    throw new Error("Buffer too small for CREATE_SHADER_DXBC packet");
+  }
+  if (hdr.sizeBytes < AEROGPU_CMD_CREATE_SHADER_DXBC_SIZE) {
+    throw new Error(`CREATE_SHADER_DXBC packet too small: ${hdr.sizeBytes}`);
+  }
+
+  const shaderHandle = view.getUint32(packetOffset + 8, true);
+  const stage = view.getUint32(packetOffset + 12, true);
+  const dxbcSizeBytes = view.getUint32(packetOffset + 16, true);
+  const reserved0 = view.getUint32(packetOffset + 20, true);
+
+  const expected = AEROGPU_CMD_CREATE_SHADER_DXBC_SIZE + alignUp4U32(dxbcSizeBytes);
+  if (hdr.sizeBytes !== expected) {
+    throw new Error(`CREATE_SHADER_DXBC payload size mismatch: expected ${expected}, got ${hdr.sizeBytes}`);
+  }
+
+  const dxbcStart = packetOffset + AEROGPU_CMD_CREATE_SHADER_DXBC_SIZE;
+  const dxbcEnd = dxbcStart + dxbcSizeBytes;
+  return {
+    shaderHandle,
+    stage,
+    dxbcSizeBytes,
+    reserved0,
+    dxbcBytes: bytes.subarray(dxbcStart, dxbcEnd),
+  };
+}
+
+export interface AerogpuCmdCreateInputLayoutBlobPayload {
+  inputLayoutHandle: AerogpuHandle;
+  blobSizeBytes: number;
+  reserved0: number;
+  blobBytes: Uint8Array;
+}
+
+export function decodeCmdCreateInputLayoutBlob(
+  bytes: Uint8Array,
+  packetOffset: number,
+): AerogpuCmdCreateInputLayoutBlobPayload {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const hdr = decodeCmdHdr(view, packetOffset);
+  if (hdr.opcode !== AerogpuCmdOpcode.CreateInputLayout) {
+    throw new Error(`Unexpected opcode: 0x${hdr.opcode.toString(16)} (expected CREATE_INPUT_LAYOUT)`);
+  }
+
+  const packetEnd = packetOffset + hdr.sizeBytes;
+  if (packetEnd > bytes.byteLength) {
+    throw new Error("Buffer too small for CREATE_INPUT_LAYOUT packet");
+  }
+  if (hdr.sizeBytes < AEROGPU_CMD_CREATE_INPUT_LAYOUT_SIZE) {
+    throw new Error(`CREATE_INPUT_LAYOUT packet too small: ${hdr.sizeBytes}`);
+  }
+
+  const inputLayoutHandle = view.getUint32(packetOffset + 8, true);
+  const blobSizeBytes = view.getUint32(packetOffset + 12, true);
+  const reserved0 = view.getUint32(packetOffset + 16, true);
+
+  const expected = AEROGPU_CMD_CREATE_INPUT_LAYOUT_SIZE + alignUp4U32(blobSizeBytes);
+  if (hdr.sizeBytes !== expected) {
+    throw new Error(`CREATE_INPUT_LAYOUT payload size mismatch: expected ${expected}, got ${hdr.sizeBytes}`);
+  }
+
+  const blobStart = packetOffset + AEROGPU_CMD_CREATE_INPUT_LAYOUT_SIZE;
+  const blobEnd = blobStart + blobSizeBytes;
+  return {
+    inputLayoutHandle,
+    blobSizeBytes,
+    reserved0,
+    blobBytes: bytes.subarray(blobStart, blobEnd),
+  };
+}
+
+export interface AerogpuCmdUploadResourcePayload {
+  resourceHandle: AerogpuHandle;
+  reserved0: number;
+  offsetBytes: bigint;
+  sizeBytes: bigint;
+  dataBytes: Uint8Array;
+}
+
+export function decodeCmdUploadResourcePayload(bytes: Uint8Array, packetOffset: number): AerogpuCmdUploadResourcePayload {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const hdr = decodeCmdHdr(view, packetOffset);
+  if (hdr.opcode !== AerogpuCmdOpcode.UploadResource) {
+    throw new Error(`Unexpected opcode: 0x${hdr.opcode.toString(16)} (expected UPLOAD_RESOURCE)`);
+  }
+
+  const packetEnd = packetOffset + hdr.sizeBytes;
+  if (packetEnd > bytes.byteLength) {
+    throw new Error("Buffer too small for UPLOAD_RESOURCE packet");
+  }
+  if (hdr.sizeBytes < AEROGPU_CMD_UPLOAD_RESOURCE_SIZE) {
+    throw new Error(`UPLOAD_RESOURCE packet too small: ${hdr.sizeBytes}`);
+  }
+
+  const resourceHandle = view.getUint32(packetOffset + 8, true);
+  const reserved0 = view.getUint32(packetOffset + 12, true);
+  const offsetBytes = view.getBigUint64(packetOffset + 16, true);
+  const sizeBytes = view.getBigUint64(packetOffset + 24, true);
+
+  const dataSize = u64ToSafeNumber(sizeBytes, "upload_resource.size_bytes");
+  const expected = AEROGPU_CMD_UPLOAD_RESOURCE_SIZE + alignUp4U32(dataSize);
+  if (hdr.sizeBytes !== expected) {
+    throw new Error(`UPLOAD_RESOURCE payload size mismatch: expected ${expected}, got ${hdr.sizeBytes}`);
+  }
+
+  const dataStart = packetOffset + AEROGPU_CMD_UPLOAD_RESOURCE_SIZE;
+  const dataEnd = dataStart + dataSize;
+  return {
+    resourceHandle,
+    reserved0,
+    offsetBytes,
+    sizeBytes,
+    dataBytes: bytes.subarray(dataStart, dataEnd),
+  };
+}
+
+export interface AerogpuCmdSetVertexBuffersBindingsPayload {
+  startSlot: number;
+  bufferCount: number;
+  bindings: AerogpuVertexBufferBinding[];
+}
+
+export function decodeCmdSetVertexBuffersBindings(
+  bytes: Uint8Array,
+  packetOffset: number,
+): AerogpuCmdSetVertexBuffersBindingsPayload {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const hdr = decodeCmdHdr(view, packetOffset);
+  if (hdr.opcode !== AerogpuCmdOpcode.SetVertexBuffers) {
+    throw new Error(`Unexpected opcode: 0x${hdr.opcode.toString(16)} (expected SET_VERTEX_BUFFERS)`);
+  }
+
+  const packetEnd = packetOffset + hdr.sizeBytes;
+  if (packetEnd > bytes.byteLength) {
+    throw new Error("Buffer too small for SET_VERTEX_BUFFERS packet");
+  }
+  if (hdr.sizeBytes < AEROGPU_CMD_SET_VERTEX_BUFFERS_SIZE) {
+    throw new Error(`SET_VERTEX_BUFFERS packet too small: ${hdr.sizeBytes}`);
+  }
+
+  const startSlot = view.getUint32(packetOffset + 8, true);
+  const bufferCount = view.getUint32(packetOffset + 12, true);
+
+  const bindingsSize = BigInt(bufferCount) * 16n;
+  const expected = BigInt(AEROGPU_CMD_SET_VERTEX_BUFFERS_SIZE) + bindingsSize;
+  if (expected !== BigInt(hdr.sizeBytes)) {
+    throw new Error(`SET_VERTEX_BUFFERS payload size mismatch: expected ${expected}, got ${hdr.sizeBytes}`);
+  }
+
+  if (bindingsSize > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new Error(`SET_VERTEX_BUFFERS bindings too large: ${bufferCount}`);
+  }
+
+  const bindings: AerogpuVertexBufferBinding[] = [];
+  const bindingsStart = packetOffset + AEROGPU_CMD_SET_VERTEX_BUFFERS_SIZE;
+  for (let i = 0; i < bufferCount; i++) {
+    const off = bindingsStart + i * 16;
+    bindings.push({
+      buffer: view.getUint32(off + 0, true),
+      strideBytes: view.getUint32(off + 4, true),
+      offsetBytes: view.getUint32(off + 8, true),
+    });
+  }
+
+  return { startSlot, bufferCount, bindings };
+}
+
+export interface AerogpuCmdSetShaderConstantsFPayload {
+  stage: number;
+  startRegister: number;
+  vec4Count: number;
+  reserved0: number;
+  data: Float32Array;
+}
+
+export function decodeCmdSetShaderConstantsFPayload(
+  bytes: Uint8Array,
+  packetOffset: number,
+): AerogpuCmdSetShaderConstantsFPayload {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const hdr = decodeCmdHdr(view, packetOffset);
+  if (hdr.opcode !== AerogpuCmdOpcode.SetShaderConstantsF) {
+    throw new Error(`Unexpected opcode: 0x${hdr.opcode.toString(16)} (expected SET_SHADER_CONSTANTS_F)`);
+  }
+
+  const packetEnd = packetOffset + hdr.sizeBytes;
+  if (packetEnd > bytes.byteLength) {
+    throw new Error("Buffer too small for SET_SHADER_CONSTANTS_F packet");
+  }
+  if (hdr.sizeBytes < AEROGPU_CMD_SET_SHADER_CONSTANTS_F_SIZE) {
+    throw new Error(`SET_SHADER_CONSTANTS_F packet too small: ${hdr.sizeBytes}`);
+  }
+
+  const stage = view.getUint32(packetOffset + 8, true);
+  const startRegister = view.getUint32(packetOffset + 12, true);
+  const vec4Count = view.getUint32(packetOffset + 16, true);
+  const reserved0 = view.getUint32(packetOffset + 20, true);
+
+  const floatCountBig = BigInt(vec4Count) * 4n;
+  const payloadBytesBig = floatCountBig * 4n;
+  const payloadStart = packetOffset + AEROGPU_CMD_SET_SHADER_CONSTANTS_F_SIZE;
+  const payloadEndBig = BigInt(payloadStart) + payloadBytesBig;
+  if (payloadEndBig > BigInt(packetEnd)) {
+    throw new Error(`SET_SHADER_CONSTANTS_F packet too small for vec4_count=${vec4Count}`);
+  }
+  if (floatCountBig > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new Error(`SET_SHADER_CONSTANTS_F data too large: vec4_count=${vec4Count}`);
+  }
+
+  const floatCount = Number(floatCountBig);
+  const data = new Float32Array(floatCount);
+  for (let i = 0; i < floatCount; i++) {
+    data[i] = view.getFloat32(payloadStart + i * 4, true);
+  }
+
+  return { stage, startRegister, vec4Count, reserved0, data };
 }
 
 /**
