@@ -1495,6 +1495,27 @@ impl AerogpuD3d11Executor {
                         stream_size
                     )
                 })?;
+
+            // Some binding/state updates can be applied inside a render pass only when they do not
+            // require any implicit resource uploads (which must be encoded outside the pass).
+            //
+            // In particular, allocation-backed textures start life `dirty=true` and are uploaded
+            // lazily on first use. If a dirty texture is bound via SET_TEXTURE between draws, we
+            // must end the current pass so the outer loop can upload it before the next draw.
+            if opcode == OPCODE_SET_TEXTURE {
+                // `struct aerogpu_cmd_set_texture` (24 bytes)
+                if cmd_bytes.len() >= 20 {
+                    let texture = read_u32_le(cmd_bytes, 16)?;
+                    if texture != 0 {
+                        if let Some(tex) = self.resources.textures.get(&texture) {
+                            if tex.dirty && tex.backing.is_some() {
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
             iter.next().expect("peeked Some").map_err(|err| {
                 anyhow!("aerogpu_cmd: invalid cmd header @0x{:x}: {err:?}", *cursor)
             })?;
