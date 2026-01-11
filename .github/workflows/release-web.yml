@@ -36,6 +36,9 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
 
+      - name: Check security header templates
+        run: node scripts/ci/check-security-headers.mjs
+
       - name: Setup Rust (pinned stable)
         uses: ./.github/actions/setup-rust
         with:
