@@ -47,6 +47,8 @@ Minimum supported commands:
 
 - `aerogpu_dbgctl --dump-vblank`  
   Dumps vblank timing counters (seq/last time/period) and IRQ status/enable masks.
+  Works on both legacy and new AeroGPU devices as long as the device exposes
+  `AEROGPU_FEATURE_VBLANK` in `FEATURES_LO/HI`.
   Use `--vblank-samples` to observe changes over time and estimate the effective Hz/jitter.
 
   Alias: `aerogpu_dbgctl --query-vblank`
