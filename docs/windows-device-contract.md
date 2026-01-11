@@ -265,3 +265,17 @@ Consumers must not assume any particular device ordering and must tolerate new d
 - `hardware_id_patterns` are Windows PnP PCI hardware ID strings using backslashes (e.g. `"PCI\\VEN_1AF4&DEV_1042&REV_01"`).
   - They are intended to be **directly usable** in INF matching and transformable into registry key names for `CriticalDeviceDatabase`.
   - Tools must treat them as case-insensitive.
+
+### Hardware ID pattern policy (normative)
+
+`windows-device-contract.json` intentionally carries **both** strict and convenience Windows HWID patterns.
+
+- **Strict patterns (automation / contract major version):**
+  - Patterns that include the contract major version as a PCI Revision ID suffix: `&REV_RR`.
+  - For `AERO-W7-VIRTIO` contract v1, this is `&REV_01`.
+  - These patterns are intended for **automation** (Guest Tools generation, conformance checks), because they avoid accidentally matching non-contract devices (for example, QEMU’s default virtio PCI `REV_00`).
+- **Convenience patterns (non-binding / compatibility):**
+  - Patterns that omit `&REV_` and/or `&SUBSYS_`.
+  - These are useful for broad matching (manual driver install, defensive `CriticalDeviceDatabase` seeding), but they may match non-Aero devices or future contract versions.
+
+If there is any disagreement between `windows-device-contract.{md,json}` and the definitive virtio contract (`AERO-W7-VIRTIO`), **`AERO-W7-VIRTIO` is authoritative**.
