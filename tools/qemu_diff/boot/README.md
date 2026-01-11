@@ -1,6 +1,7 @@
 # QEMU differential boot sector
 
-`boot.bin` is a **512-byte** 16-bit real-mode boot sector used by the `qemu_diff` Rust crate.
+`boot.bin` is a **512-byte** 16-bit real-mode boot sector used by the `qemu-diff` Cargo package
+(crate identifier `qemu_diff`).
 
 The repo commits `boot.bin` so the harness does **not** need an assembler in CI.
 
@@ -16,4 +17,3 @@ objcopy -O binary boot.elf boot.bin
 ```
 
 The boot sector prints a single `AERODIFF ...` line to QEMU's `isa-debugcon` (port `0xE9`), then exits QEMU via `isa-debug-exit` (port `0xF4`).
-
