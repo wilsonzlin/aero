@@ -61,6 +61,29 @@ pub fn exec<B: CpuBus>(
     next_ip: u64,
 ) -> Result<ExecOutcome, Exception> {
     let instr = &decoded.instr;
+    if instr.has_lock_prefix() {
+        // The LOCK prefix is only valid for a small set of read-modify-write instructions,
+        // and only when the destination operand is memory.
+        //
+        // Intel SDM Vol 2: "LOCK—Lock Asserted Prefix".
+        match instr.mnemonic() {
+            Mnemonic::Add
+            | Mnemonic::Adc
+            | Mnemonic::Sub
+            | Mnemonic::Sbb
+            | Mnemonic::Inc
+            | Mnemonic::Dec
+            | Mnemonic::Neg
+            | Mnemonic::Not
+            | Mnemonic::And
+            | Mnemonic::Or
+            | Mnemonic::Xor
+            | Mnemonic::Bts
+            | Mnemonic::Btr
+            | Mnemonic::Btc => {}
+            _ => return Err(Exception::InvalidOpcode),
+        }
+    }
     match instr.mnemonic() {
         Mnemonic::Add | Mnemonic::Adc | Mnemonic::Sub | Mnemonic::Sbb | Mnemonic::Cmp => {
             let bits = op_bits(state, instr, 0)?;

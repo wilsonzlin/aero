@@ -587,3 +587,14 @@ fn xchg_memory_operand_is_implicitly_atomic_and_swaps() {
     assert_eq!(bus.read_u32(addr).unwrap(), 0x1234_5678);
     assert_eq!(state.read_reg(Register::EAX), 0xAABB_CCDD);
 }
+
+#[test]
+fn lock_prefix_on_non_lockable_alu_instruction_is_invalid_opcode() {
+    let mut state = CpuState::new(CpuMode::Bit64);
+    let mut bus = FlatTestBus::new(BUS_SIZE);
+
+    // LOCK CLC
+    bus.load(CODE_BASE, &[0xF0, 0xF8]);
+    state.set_rip(CODE_BASE);
+    assert_eq!(step(&mut state, &mut bus), Err(Exception::InvalidOpcode));
+}
