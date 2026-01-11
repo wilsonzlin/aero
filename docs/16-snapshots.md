@@ -163,6 +163,10 @@ All fields are written **in the order below**:
   - `FS_BASE, GS_BASE, KERNEL_GS_BASE`
   - `APIC_BASE`
   - `TSC`
+
+Note: the execution core also tracks virtual time/TSC progression in non-ABI runtime state
+(`aero_cpu_core::time::TimeSource`, typically `CpuCore.time`). Snapshot restore code should
+re-seed that time source from `TSC` (and keep `CpuState.msr.tsc` coherent) when restoring a VM.
 - `u64 GDTR_BASE`, `u16 GDTR_LIMIT`
 - `u64 IDTR_BASE`, `u16 IDTR_LIMIT`
 - **SegmentState** `LDTR` then `TR` (same layout as CPU v2 SegmentState)
