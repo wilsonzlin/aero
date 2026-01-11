@@ -209,7 +209,12 @@ struct DeviceStateStream {
 
 struct Device {
   explicit Device(Adapter* adapter) : adapter(adapter) {
+    // In WDK builds the runtime provides the DMA command buffer later during
+    // device/context creation, so defer command stream initialization until the
+    // buffer is bound (avoid any std::vector allocation in the WDDM path).
+#if !(defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI))
     cmd.reset();
+#endif
 
     // Initialize D3D9 state caches to API defaults so helper paths can save and
     // restore state even if the runtime never explicitly sets it.

@@ -378,9 +378,7 @@ class VectorCmdStreamWriter {
 // portability, but can be rebound to a span for direct WDDM DMA-buffer emission.
 class CmdStreamWriter {
  public:
-  CmdStreamWriter() {
-    reset();
-  }
+  CmdStreamWriter() = default;
 
   explicit CmdStreamWriter(uint8_t* buf, size_t capacity) {
     set_span(buf, capacity);
