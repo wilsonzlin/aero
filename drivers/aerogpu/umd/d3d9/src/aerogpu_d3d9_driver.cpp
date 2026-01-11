@@ -1561,9 +1561,12 @@ HRESULT convert_xyzrhw_to_clipspace_locked(
 //
 // The D3D9 UMD uses a best-effort cross-process monotonic counter (implemented
 // via a named file mapping) to derive 31-bit alloc_id values for shared
-// allocations. The mapping name is intentionally stable so different in-guest
-// UMD versions can coexist briefly without breaking the cross-process uniqueness
-// guarantee.
+// allocations.
+//
+// The mapping name is intentionally stable and generic: the UMD can be loaded
+// into multiple guest processes (and different in-guest UMD versions may
+// coexist briefly), and the same counter is also reused to allocate protocol
+// object handles (see `allocate_global_handle()`).
 uint64_t allocate_shared_alloc_id_token(Adapter* adapter) {
   if (!adapter) {
     return 0;
@@ -4196,27 +4199,32 @@ HRESULT AEROGPU_D3D9_CALL device_destroy_vertex_decl(
 }
 
 HRESULT AEROGPU_D3D9_CALL device_set_fvf(AEROGPU_D3D9DDI_HDEVICE hDevice, uint32_t fvf) {
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceSetFVF,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      static_cast<uint64_t>(fvf),
+                      0,
+                      0);
   if (!hDevice.pDrvPrivate) {
-    return E_INVALIDARG;
+    return trace.ret(E_INVALIDARG);
   }
 
   auto* dev = as_device(hDevice);
   if (!dev) {
-    return E_INVALIDARG;
+    return trace.ret(E_INVALIDARG);
   }
   std::lock_guard<std::mutex> lock(dev->mutex);
 
   if (fvf == dev->fvf) {
-    return S_OK;
+    return trace.ret(S_OK);
   }
 
   if (fvf != 0 && fvf != kSupportedFvfXyzrhwDiffuse) {
-    return E_NOTIMPL;
+    return trace.ret(E_NOTIMPL);
   }
 
   if (fvf == 0) {
     dev->fvf = 0;
-    return S_OK;
+    return trace.ret(S_OK);
   }
 
   if (!dev->fvf_vertex_decl) {
@@ -4231,15 +4239,15 @@ HRESULT AEROGPU_D3D9_CALL device_set_fvf(AEROGPU_D3D9DDI_HDEVICE hDevice, uint32
 
     dev->fvf_vertex_decl = create_internal_vertex_decl_locked(dev, elems, sizeof(elems));
     if (!dev->fvf_vertex_decl) {
-      return E_OUTOFMEMORY;
+      return trace.ret(E_OUTOFMEMORY);
     }
   }
 
   if (!emit_set_input_layout_locked(dev, dev->fvf_vertex_decl)) {
-    return E_OUTOFMEMORY;
+    return trace.ret(E_OUTOFMEMORY);
   }
   dev->fvf = fvf;
-  return S_OK;
+  return trace.ret(S_OK);
 }
 
 HRESULT AEROGPU_D3D9_CALL device_create_shader(
@@ -4769,20 +4777,26 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive_up(
     uint32_t primitive_count,
     const void* pVertexData,
     uint32_t stride_bytes) {
+  const uint64_t packed = d3d9_trace_pack_u32_u32(primitive_count, stride_bytes);
+  D3d9TraceCall trace(D3d9TraceFunc::DeviceDrawPrimitiveUP,
+                      d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
+                      static_cast<uint64_t>(type),
+                      packed,
+                      d3d9_trace_arg_ptr(pVertexData));
   if (!hDevice.pDrvPrivate || !pVertexData || stride_bytes == 0) {
-    return E_INVALIDARG;
+    return trace.ret(E_INVALIDARG);
   }
 
   auto* dev = as_device(hDevice);
   if (!dev) {
-    return E_INVALIDARG;
+    return trace.ret(E_INVALIDARG);
   }
   std::lock_guard<std::mutex> lock(dev->mutex);
 
   const uint32_t vertex_count = vertex_count_from_primitive(type, primitive_count);
   const uint64_t size_u64 = static_cast<uint64_t>(vertex_count) * stride_bytes;
   if (size_u64 == 0 || size_u64 > 0x7FFFFFFFu) {
-    return E_INVALIDARG;
+    return trace.ret(E_INVALIDARG);
   }
 
   DeviceStateStream saved = dev->streams[0];
@@ -4794,7 +4808,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive_up(
   if (dev->fvf == kSupportedFvfXyzrhwDiffuse && !dev->user_vs && !dev->user_ps) {
     HRESULT hr = convert_xyzrhw_to_clipspace_locked(dev, pVertexData, stride_bytes, vertex_count, &converted);
     if (FAILED(hr)) {
-      return hr;
+      return trace.ret(hr);
     }
     upload_data = converted.data();
     upload_size = static_cast<uint32_t>(converted.size());
@@ -4802,29 +4816,29 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive_up(
 
   HRESULT hr = ensure_up_vertex_buffer_locked(dev, upload_size);
   if (FAILED(hr)) {
-    return hr;
+    return trace.ret(hr);
   }
   hr = emit_upload_buffer_locked(dev, dev->up_vertex_buffer, upload_data, upload_size);
   if (FAILED(hr)) {
-    return hr;
+    return trace.ret(hr);
   }
 
   if (!emit_set_stream_source_locked(dev, 0, dev->up_vertex_buffer, 0, stride_bytes)) {
-    return E_OUTOFMEMORY;
+    return trace.ret(E_OUTOFMEMORY);
   }
 
   if (dev->fvf == kSupportedFvfXyzrhwDiffuse && !dev->user_vs && !dev->user_ps) {
     hr = ensure_fixedfunc_pipeline_locked(dev);
     if (FAILED(hr)) {
       (void)emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes);
-      return hr;
+      return trace.ret(hr);
     }
   }
 
   const uint32_t topology = d3d9_prim_to_topology(type);
   if (!emit_set_topology_locked(dev, topology)) {
     (void)emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes);
-    return E_OUTOFMEMORY;
+    return trace.ret(E_OUTOFMEMORY);
   }
 
   // Ensure the command buffer has space before we track allocations; tracking
@@ -4832,18 +4846,18 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive_up(
   // after tracking or the allocation list would be out of sync.
   if (!ensure_cmd_space(dev, align_up(sizeof(aerogpu_cmd_draw), 4))) {
     (void)emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes);
-    return E_OUTOFMEMORY;
+    return trace.ret(E_OUTOFMEMORY);
   }
   hr = track_draw_state_locked(dev);
   if (FAILED(hr)) {
     (void)emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes);
-    return hr;
+    return trace.ret(hr);
   }
 
   auto* cmd = append_fixed_locked<aerogpu_cmd_draw>(dev, AEROGPU_CMD_DRAW);
   if (!cmd) {
     (void)emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes);
-    return E_OUTOFMEMORY;
+    return trace.ret(E_OUTOFMEMORY);
   }
   cmd->vertex_count = vertex_count;
   cmd->instance_count = 1;
@@ -4851,9 +4865,9 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive_up(
   cmd->first_instance = 0;
 
   if (!emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes)) {
-    return E_OUTOFMEMORY;
+    return trace.ret(E_OUTOFMEMORY);
   }
-  return S_OK;
+  return trace.ret(S_OK);
 }
 
 HRESULT AEROGPU_D3D9_CALL device_draw_primitive2(

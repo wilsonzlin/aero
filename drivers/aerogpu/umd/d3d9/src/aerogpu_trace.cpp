@@ -238,6 +238,8 @@ const char* func_name(D3d9TraceFunc func) {
       return "Device::Clear";
     case D3d9TraceFunc::DeviceDrawPrimitive:
       return "Device::DrawPrimitive";
+    case D3d9TraceFunc::DeviceDrawPrimitiveUP:
+      return "Device::DrawPrimitiveUP";
     case D3d9TraceFunc::DeviceDrawIndexedPrimitive:
       return "Device::DrawIndexedPrimitive";
     case D3d9TraceFunc::DevicePresent:
@@ -278,6 +280,8 @@ const char* func_name(D3d9TraceFunc func) {
       return "Device::GetQueryData";
     case D3d9TraceFunc::DeviceWaitForIdle:
       return "Device::WaitForIdle";
+    case D3d9TraceFunc::DeviceSetFVF:
+      return "Device::SetFVF";
     case D3d9TraceFunc::kCount:
       break;
   }

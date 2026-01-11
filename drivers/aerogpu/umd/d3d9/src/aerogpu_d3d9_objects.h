@@ -173,8 +173,10 @@ struct Adapter {
   std::atomic<bool> event_query_type_known{false};
   std::atomic<uint32_t> event_query_type{0};
 
-  // Monotonic cross-process token allocator used to derive stable 31-bit
-  // `alloc_id` values for shared allocations.
+  // Monotonic cross-process token allocator used to derive stable IDs across
+  // guest processes. The D3D9 UMD uses it primarily to derive stable 31-bit
+  // `alloc_id` values for shared allocations, and it is also reused to allocate
+  // protocol object handles (`aerogpu_handle_t`).
   //
   // The D3D9 UMD may be loaded into multiple guest processes (DWM + apps), so we
   // coordinate token allocation cross-process via a named file mapping (see

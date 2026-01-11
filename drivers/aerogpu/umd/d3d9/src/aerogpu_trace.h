@@ -104,6 +104,10 @@ enum class D3d9TraceFunc : uint16_t {
   DeviceGetQueryData,
   DeviceWaitForIdle,
 
+  // New entrypoints should be appended to avoid renumbering existing trace IDs.
+  DeviceSetFVF,
+  DeviceDrawPrimitiveUP,
+
   kCount,
 };
 
