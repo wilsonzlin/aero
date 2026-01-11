@@ -344,6 +344,8 @@ HRESULT APIENTRY Map(hContext, hResource, Subresource, MapType, MapFlags, pOut) 
   // Translate to runtime lock.
   D3DDDICB_LOCK lock = {};
   lock.hAllocation = res->allocation_handle;
+  // Field spelling varies by WDK revision (`SubResourceIndex` / `SubresourceIndex`);
+  // use the exact name exposed by the header you build against.
   lock.SubresourceIndex = Subresource;
   lock.Flags = translate_map_to_lockflags(MapType);
   // Field spelling varies by WDK revision (`DoNotWait` / `DonotWait`); use the
@@ -386,6 +388,8 @@ void APIENTRY Unmap(hContext, hResource, Subresource) {
 
   D3DDDICB_UNLOCK unlock = {};
   unlock.hAllocation = res->allocation_handle;
+  // Field spelling varies by WDK revision (`SubResourceIndex` / `SubresourceIndex`);
+  // use the exact name exposed by the header you build against.
   unlock.SubresourceIndex = Subresource;
 
   HRESULT hr = callbacks->pfnUnlockCb(/* see header: typically hRTDevice */, &unlock);

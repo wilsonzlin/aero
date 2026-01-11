@@ -455,10 +455,16 @@ practice, Windows 7 call patterns can vary, so the AeroGPU KMD must be tolerant
 of either callback being used to release a handle.
  
 #### `DxgkDdiLock` / `DxgkDdiUnlock`
- 
+  
 - **Purpose:** Map/unmap allocation memory for CPU access.
 - **AeroGPU MVP behavior:** Since allocations are system-memory-backed, lock returns a CPU VA; unlock is a no-op besides bookkeeping.
 - **Can be deferred:** Cache management, write-combined mappings.
+
+These callbacks are also exercised indirectly by **D3D10/D3D11 `Map`/`Unmap`** via the runtime’s `pfnLockCb` / `pfnUnlockCb` path (the UMD does not “invent” CPU pointers on Win7/WDDM; the runtime owns the mapping).
+
+See:
+
+- [`win7-d3d11-map-unmap.md`](./win7-d3d11-map-unmap.md)
  
 #### `DxgkDdiBuildPagingBuffer` (MVP: “no paging”)
  

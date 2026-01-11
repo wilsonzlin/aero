@@ -282,6 +282,21 @@ int main() {
     PRINT_OFF_OPT(D3DDDICB_LOCK, SlicePitch);
     __if_exists(D3DDDICB_LOCKFLAGS) {
       PRINT_SIZE(D3DDDICB_LOCKFLAGS);
+      printf("  D3DDDICB_LOCKFLAGS members (header-dependent):\n");
+      __if_exists(D3DDDICB_LOCKFLAGS::ReadOnly) { printf("    ReadOnly\n"); }
+      __if_not_exists(D3DDDICB_LOCKFLAGS::ReadOnly) { printf("    ReadOnly <n/a>\n"); }
+      __if_exists(D3DDDICB_LOCKFLAGS::WriteOnly) { printf("    WriteOnly\n"); }
+      __if_not_exists(D3DDDICB_LOCKFLAGS::WriteOnly) { printf("    WriteOnly <n/a>\n"); }
+      __if_exists(D3DDDICB_LOCKFLAGS::Write) { printf("    Write\n"); }
+      __if_not_exists(D3DDDICB_LOCKFLAGS::Write) { printf("    Write <n/a>\n"); }
+      __if_exists(D3DDDICB_LOCKFLAGS::Discard) { printf("    Discard\n"); }
+      __if_not_exists(D3DDDICB_LOCKFLAGS::Discard) { printf("    Discard <n/a>\n"); }
+      __if_exists(D3DDDICB_LOCKFLAGS::NoOverwrite) { printf("    NoOverwrite\n"); }
+      __if_not_exists(D3DDDICB_LOCKFLAGS::NoOverwrite) { printf("    NoOverwrite <n/a>\n"); }
+      __if_exists(D3DDDICB_LOCKFLAGS::DoNotWait) { printf("    DoNotWait\n"); }
+      __if_not_exists(D3DDDICB_LOCKFLAGS::DoNotWait) { printf("    DoNotWait <n/a>\n"); }
+      __if_exists(D3DDDICB_LOCKFLAGS::DonotWait) { printf("    DonotWait\n"); }
+      __if_not_exists(D3DDDICB_LOCKFLAGS::DonotWait) { printf("    DonotWait <n/a>\n"); }
     }
     PrintSeparator();
   }
