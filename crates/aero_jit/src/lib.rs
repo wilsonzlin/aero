@@ -44,5 +44,3 @@ pub const TLB_FLAG_IS_RAM: u64 = 1 << 3;
 pub mod backend;
 
 pub use tier1_bus::Tier1Bus;
-#[cfg(feature = "legacy-baseline")]
-pub mod legacy;
