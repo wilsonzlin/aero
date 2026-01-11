@@ -159,6 +159,7 @@ export function explainWebUsbError(err: unknown): WebUsbErrorExplanation {
   const mentionsPermissionsPolicy = includesAny(msgLower, ["permissions policy", "permission policy", "feature policy"]);
   const mentionsAbort = includesAny(msgLower, ["abort", "aborted", "aborterror", "cancelled", "canceled"]);
   const mentionsIsochronous = includesAny(msgLower, ["isochronous"]);
+  const mentionsClone = includesAny(msgLower, ["datacloneerror", "could not be cloned", "data clone", "structured clone"]);
   const mentionsEndpoint = includesAny(msgLower, ["endpoint"]);
   const mentionsClaimInterface = includesAny(msgLower, ["claiminterface", "claim interface", "unable to claim"]);
   const mentionsOpen = includesAny(msgLower, ["failed to open", "unable to open", "open()"]);
@@ -190,6 +191,10 @@ export function explainWebUsbError(err: unknown): WebUsbErrorExplanation {
     case "NotFoundError":
       title = "No USB device selected (or the device was disconnected)";
       details = "The browser did not have an active permission grant for a device.";
+      break;
+    case "DataCloneError":
+      title = "WebUSB device handle cannot be transferred to a worker";
+      details = "The browser failed to structured-clone a USBDevice (or related handle) across threads.";
       break;
     case "AbortError":
       title = "WebUSB operation was aborted";
@@ -228,6 +233,8 @@ export function explainWebUsbError(err: unknown): WebUsbErrorExplanation {
         title = "User gesture required for WebUSB";
       } else if (mentionsSecureContext) {
         title = "Secure context required for WebUSB";
+      } else if (mentionsClone) {
+        title = "WebUSB device handle cannot be transferred to a worker";
       } else if (mentionsClaimInterface) {
         title = "Unable to claim the USB interface";
       } else if (mentionsOpen) {
@@ -277,6 +284,15 @@ export function explainWebUsbError(err: unknown): WebUsbErrorExplanation {
       "If `device.configuration` is null, call `await device.selectConfiguration(1)` (or the appropriate configuration) before `claimInterface()`.",
     );
     addHint("Close/release the device when done (`releaseInterface`, `close`) and avoid double-claiming interfaces.");
+  }
+
+  if (name === "DataCloneError" || mentionsClone) {
+    addHint(
+      "Some browsers do not support structured-cloning `USBDevice` objects. Keep WebUSB calls on the same thread (typically the main thread) and proxy I/O to workers instead of sending the device handle.",
+    );
+    addHint(
+      "If `WorkerNavigator.usb` is available, a worker can call `navigator.usb.getDevices()` to obtain permitted devices after the main thread has granted permission via `requestDevice()`.",
+    );
   }
 
   if (name === "InvalidAccessError") {

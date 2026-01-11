@@ -168,3 +168,14 @@ test("explainWebUsbError: OperationError suggests reset/replug", () => {
   assert.ok(res.title.toLowerCase().includes("operation"));
   assert.ok(res.hints.some((hint) => hint.toLowerCase().includes("replug") || hint.toLowerCase().includes("reset")));
 });
+
+test("explainWebUsbError: DataCloneError suggests keeping WebUSB on the main thread", () => {
+  const res = explainWebUsbError({
+    name: "DataCloneError",
+    message: "USBDevice could not be cloned.",
+  });
+
+  assert.ok(res.title.toLowerCase().includes("worker") || res.title.toLowerCase().includes("transferred"));
+  assert.ok(res.hints.some((hint) => hint.toLowerCase().includes("structured")));
+  assert.ok(res.hints.some((hint) => hint.toLowerCase().includes("main thread")));
+});
