@@ -347,6 +347,28 @@ if ($TestIsoMode) {
   if ($isoManifest.source.derived_version -ne $fakeVirtioWinVersion) {
     throw "ISO-mode driver pack manifest derived_version mismatch: expected '$fakeVirtioWinVersion', got '$($isoManifest.source.derived_version)'"
   }
+
+  $isoNoticeCopied = @($isoManifest.source.license_notice_files_copied)
+  foreach ($want in @("license.txt", "notice.txt")) {
+    if (-not ($isoNoticeCopied -contains $want)) {
+      throw "ISO-mode driver pack manifest did not record copied notice file '$want' in source.license_notice_files_copied. Got: $($isoNoticeCopied -join ', ')"
+    }
+    $noticePath = Join-Path (Join-Path (Join-Path $isoDriverPackRoot "licenses") "virtio-win") $want
+    if (-not (Test-Path -LiteralPath $noticePath -PathType Leaf)) {
+      throw "Expected ISO-mode driver pack to include notice file: $noticePath"
+    }
+  }
+
+  if ($isoManifest.optional_drivers_missing_any) {
+    $missingNames = @($isoManifest.optional_drivers_missing | ForEach-Object { $_.name })
+    throw "Expected ISO-mode driver pack to include optional drivers, but optional_drivers_missing_any=true. Missing: $($missingNames -join ', ')"
+  }
+  $isoDriversRequested = @($isoManifest.drivers_requested | ForEach-Object { $_.ToString().ToLowerInvariant() })
+  foreach ($want in @("viostor", "netkvm", "viosnd", "vioinput")) {
+    if (-not ($isoDriversRequested -contains $want)) {
+      throw "Expected ISO-mode driver pack to request driver '$want'. Got: $($isoDriversRequested -join ', ')"
+    }
+  }
 }
 
 if ($OmitOptionalDrivers) {
