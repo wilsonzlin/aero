@@ -141,8 +141,8 @@ struct Adapter {
   // EVENT query type at the DDI boundary. Once we observe the first EVENT query
   // type value we lock it in per-adapter, so we don't accidentally treat other
   // query types (e.g. pipeline stats) as EVENT.
-  bool event_query_type_known = false;
-  uint32_t event_query_type = 0;
+  std::atomic<bool> event_query_type_known{false};
+  std::atomic<uint32_t> event_query_type{0};
 
   std::mutex fence_mutex;
   std::condition_variable fence_cv;

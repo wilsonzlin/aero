@@ -2380,16 +2380,18 @@ HRESULT AEROGPU_D3D9_CALL device_create_query(
   bool is_event = false;
   {
     std::lock_guard<std::mutex> lock(adapter->fence_mutex);
-    if (!adapter->event_query_type_known) {
+    if (!adapter->event_query_type_known.load(std::memory_order_acquire)) {
       // Accept both the public D3DQUERYTYPE_EVENT (8) encoding and the DDI-style
       // encoding where EVENT is the first enum entry (0). Once observed, lock
       // in the value so we don't accidentally treat other query types as EVENT.
       if (pCreateQuery->type == 0u || pCreateQuery->type == kD3DQueryTypeEvent) {
-        adapter->event_query_type_known = true;
-        adapter->event_query_type = pCreateQuery->type;
+        adapter->event_query_type.store(pCreateQuery->type, std::memory_order_relaxed);
+        adapter->event_query_type_known.store(true, std::memory_order_release);
       }
     }
-    is_event = adapter->event_query_type_known && (pCreateQuery->type == adapter->event_query_type);
+    const bool known = adapter->event_query_type_known.load(std::memory_order_acquire);
+    const uint32_t event_type = adapter->event_query_type.load(std::memory_order_relaxed);
+    is_event = known && (pCreateQuery->type == event_type);
   }
 
   if (!is_event) {
@@ -2427,8 +2429,10 @@ HRESULT AEROGPU_D3D9_CALL device_issue_query(
   std::lock_guard<std::mutex> lock(dev->mutex);
 
   Adapter* adapter = dev->adapter;
-  const bool is_event = adapter->event_query_type_known ? (q->type == adapter->event_query_type)
-                                                        : (q->type == 0u || q->type == kD3DQueryTypeEvent);
+  const bool event_known = adapter->event_query_type_known.load(std::memory_order_acquire);
+  const uint32_t event_type = adapter->event_query_type.load(std::memory_order_relaxed);
+  const bool is_event =
+      event_known ? (q->type == event_type) : (q->type == 0u || q->type == kD3DQueryTypeEvent);
   if (!is_event) {
     return D3DERR_NOTAVAILABLE;
   }
@@ -2469,8 +2473,10 @@ HRESULT AEROGPU_D3D9_CALL device_get_query_data(
   }
   Adapter* adapter = dev->adapter;
 
-  const bool is_event = adapter->event_query_type_known ? (q->type == adapter->event_query_type)
-                                                        : (q->type == 0u || q->type == kD3DQueryTypeEvent);
+  const bool event_known = adapter->event_query_type_known.load(std::memory_order_acquire);
+  const uint32_t event_type = adapter->event_query_type.load(std::memory_order_relaxed);
+  const bool is_event =
+      event_known ? (q->type == event_type) : (q->type == 0u || q->type == kD3DQueryTypeEvent);
   if (!is_event) {
     return D3DERR_NOTAVAILABLE;
   }
