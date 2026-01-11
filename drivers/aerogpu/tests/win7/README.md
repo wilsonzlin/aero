@@ -181,6 +181,33 @@ Or run the native runner directly (preferred):
 bin\aerogpu_test_runner.exe
 ```
 
+### Capturing per-test stdout/stderr (automation)
+
+To redirect each test's stdout/stderr to files (useful when running under CI where console output can be truncated):
+
+```cmd
+bin\aerogpu_test_runner.exe --log-dir=logs
+```
+
+This writes (one pair per test) into `logs\`:
+
+* `<test>.stdout.txt`
+* `<test>.stderr.txt`
+
+`--log-dir` may be absolute or relative to `win7\bin\`.
+
+### Capturing driver status on failures (dbgctl)
+
+If you have `aerogpu_dbgctl.exe` available in the guest, the runner can automatically capture a `--status`
+snapshot after test failures/timeouts:
+
+```cmd
+bin\aerogpu_test_runner.exe --log-dir=logs --dbgctl=aerogpu_dbgctl.exe
+```
+
+By default the snapshot is written next to the per-test logs (or next to `report.json` when `--json` is used).
+Use `--dbgctl-timeout-ms=NNNN` to bound how long the runner will wait for `aerogpu_dbgctl.exe` itself (default: 5000ms).
+
 To also write BMP dumps next to the binaries:
 
 ```cmd

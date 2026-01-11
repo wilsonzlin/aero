@@ -10,7 +10,7 @@
 static void PrintUsage() {
   aerogpu_test::PrintfStdout(
       "Usage: aerogpu_test_runner.exe [--bin-dir=DIR] [--manifest=PATH] [--timeout-ms=NNNN] [--no-timeout] "
-      "[--json[=PATH]] [test flags...]");
+      "[--json[=PATH]] [--log-dir=DIR] [--dbgctl=PATH] [--dbgctl-timeout-ms=NNNN] [test flags...]");
   aerogpu_test::PrintfStdout("");
   aerogpu_test::PrintfStdout("Runs the AeroGPU Win7 validation suite and aggregates results.");
   aerogpu_test::PrintfStdout("");
@@ -24,6 +24,10 @@ static void PrintUsage() {
   aerogpu_test::PrintfStdout("  --json[=PATH]         Write a machine-readable JSON suite report.");
   aerogpu_test::PrintfStdout("                        Default path: next to aerogpu_test_runner.exe (report.json)");
   aerogpu_test::PrintfStdout("                        Also writes per-test <test>.json files next to the suite report.");
+  aerogpu_test::PrintfStdout(
+      "  --log-dir=DIR         If set, redirect each test's stdout/stderr to <test>.stdout.txt / <test>.stderr.txt in DIR.");
+  aerogpu_test::PrintfStdout("  --dbgctl=PATH         Optional path to aerogpu_dbgctl.exe; if set, run '--status' after test failures/timeouts.");
+  aerogpu_test::PrintfStdout("  --dbgctl-timeout-ms=NNNN  Timeout for the dbgctl process itself (wrapper kill). Default: 5000.");
   aerogpu_test::PrintfStdout("");
   aerogpu_test::PrintfStdout("All other flags are forwarded to each test (e.g. --dump, --hidden, --require-vid=...).");
 }
@@ -142,10 +146,102 @@ struct RunResult {
   RunResult() : started(false), timed_out(false), exit_code(1) {}
 };
 
+struct ProcessOutputFiles {
+  std::wstring stdout_path;
+  std::wstring stderr_path;
+};
+
+static bool IsAbsolutePathW(const std::wstring& path) {
+  if (path.size() >= 2 && path[1] == L':') {
+    return true;
+  }
+  if (path.size() >= 2 && path[0] == L'\\' && path[1] == L'\\') {
+    return true;
+  }
+  if (!path.empty() && (path[0] == L'\\' || path[0] == L'/')) {
+    return true;
+  }
+  return false;
+}
+
+static bool EnsureDirExistsRecursive(const std::wstring& path, std::string* err) {
+  if (path.empty()) {
+    return true;
+  }
+
+  // Trim trailing separators.
+  std::wstring dir = path;
+  while (!dir.empty()) {
+    wchar_t last = dir[dir.size() - 1];
+    if (last != L'\\' && last != L'/') {
+      break;
+    }
+    dir.resize(dir.size() - 1);
+  }
+  if (dir.empty()) {
+    return true;
+  }
+
+  DWORD attr = GetFileAttributesW(dir.c_str());
+  if (attr != INVALID_FILE_ATTRIBUTES) {
+    if ((attr & FILE_ATTRIBUTE_DIRECTORY) != 0) {
+      return true;
+    }
+    if (err) {
+      *err = "path exists but is not a directory";
+    }
+    return false;
+  }
+
+  // Create parent first (if any).
+  size_t slash = dir.find_last_of(L"\\/");
+  if (slash != std::wstring::npos) {
+    const std::wstring parent = dir.substr(0, slash);
+    if (!parent.empty() && !EnsureDirExistsRecursive(parent, err)) {
+      return false;
+    }
+  }
+
+  if (!CreateDirectoryW(dir.c_str(), NULL)) {
+    DWORD e = GetLastError();
+    if (e != ERROR_ALREADY_EXISTS) {
+      if (err) {
+        *err = "CreateDirectory failed: " + aerogpu_test::Win32ErrorToString(e);
+      }
+      return false;
+    }
+  }
+
+  return true;
+}
+
+static HANDLE CreateInheritableFileForWriteW(const std::wstring& path, std::string* err) {
+  SECURITY_ATTRIBUTES sa;
+  ZeroMemory(&sa, sizeof(sa));
+  sa.nLength = sizeof(sa);
+  sa.bInheritHandle = TRUE;
+
+  HANDLE h = CreateFileW(path.c_str(),
+                         GENERIC_WRITE,
+                         FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                         &sa,
+                         CREATE_ALWAYS,
+                         FILE_ATTRIBUTE_NORMAL,
+                         NULL);
+  if (h == INVALID_HANDLE_VALUE) {
+    if (err) {
+      *err = "CreateFileW failed: " + aerogpu_test::Win32ErrorToString(GetLastError());
+    }
+    return INVALID_HANDLE_VALUE;
+  }
+  return h;
+}
+
 static RunResult RunProcessWithTimeoutW(const std::wstring& exe_path,
                                        const std::vector<std::wstring>& args,
                                        DWORD timeout_ms,
-                                       bool enforce_timeout) {
+                                       bool enforce_timeout,
+                                       const ProcessOutputFiles* output_files) {
   RunResult out;
 
   // Build a CreateProcess-compatible command line that round-trips correctly.
@@ -162,19 +258,60 @@ static RunResult RunProcessWithTimeoutW(const std::wstring& exe_path,
   ZeroMemory(&si, sizeof(si));
   si.cb = sizeof(si);
 
+  HANDLE stdout_file = INVALID_HANDLE_VALUE;
+  HANDLE stderr_file = INVALID_HANDLE_VALUE;
+  if (output_files && (!output_files->stdout_path.empty() || !output_files->stderr_path.empty())) {
+    const std::wstring& stdout_path = output_files->stdout_path;
+    const std::wstring& stderr_path = output_files->stderr_path;
+
+    if (!stdout_path.empty()) {
+      stdout_file = CreateInheritableFileForWriteW(stdout_path, &out.err);
+      if (stdout_file == INVALID_HANDLE_VALUE) {
+        return out;
+      }
+    }
+    if (!stderr_path.empty() && stderr_path == stdout_path) {
+      stderr_file = stdout_file;
+    } else if (!stderr_path.empty()) {
+      stderr_file = CreateInheritableFileForWriteW(stderr_path, &out.err);
+      if (stderr_file == INVALID_HANDLE_VALUE) {
+        if (stdout_file != INVALID_HANDLE_VALUE) {
+          CloseHandle(stdout_file);
+        }
+        return out;
+      }
+    }
+
+    si.dwFlags |= STARTF_USESTDHANDLES;
+    si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+    si.hStdOutput = (stdout_file != INVALID_HANDLE_VALUE) ? stdout_file : GetStdHandle(STD_OUTPUT_HANDLE);
+    si.hStdError = (stderr_file != INVALID_HANDLE_VALUE) ? stderr_file : GetStdHandle(STD_ERROR_HANDLE);
+  }
+
   PROCESS_INFORMATION pi;
   ZeroMemory(&pi, sizeof(pi));
 
+  // Only opt into inheriting handles when we explicitly configured stdio redirection. This keeps the
+  // default behavior closer to the old runner (and avoids leaking unrelated inheritable handles
+  // into child processes in environments where the runner is embedded).
+  const BOOL inherit_handles = (si.dwFlags & STARTF_USESTDHANDLES) ? TRUE : FALSE;
   BOOL ok = CreateProcessW(exe_path.c_str(),
                            &cmdline_buf[0],
                            NULL,
                            NULL,
-                           TRUE,
+                           inherit_handles,
                            0,
                            NULL,
                            NULL,
                            &si,
                            &pi);
+  if (stdout_file != INVALID_HANDLE_VALUE) {
+    CloseHandle(stdout_file);
+  }
+  if (stderr_file != INVALID_HANDLE_VALUE && stderr_file != stdout_file) {
+    CloseHandle(stderr_file);
+  }
+
   if (!ok) {
     out.err = "CreateProcess failed: " + aerogpu_test::Win32ErrorToString(GetLastError());
     return out;
@@ -213,6 +350,57 @@ static RunResult RunProcessWithTimeoutW(const std::wstring& exe_path,
   return out;
 }
 
+static bool DumpDbgctlStatusSnapshotBestEffort(const std::wstring& dbgctl_path,
+                                               const std::wstring& out_dir,
+                                               const std::string& test_name,
+                                               DWORD dbgctl_timeout_ms,
+                                               std::wstring* out_path,
+                                               std::string* err) {
+  if (out_path) {
+    out_path->clear();
+  }
+  if (err) {
+    err->clear();
+  }
+  if (dbgctl_path.empty() || out_dir.empty() || test_name.empty() || dbgctl_timeout_ms == 0) {
+    return false;
+  }
+
+  std::string mk_err;
+  if (!EnsureDirExistsRecursive(out_dir, &mk_err)) {
+    if (err) {
+      *err = mk_err;
+    }
+    return false;
+  }
+
+  const std::wstring leaf = aerogpu_test::Utf8ToWideFallbackAcp("dbgctl_" + test_name + "_status.txt");
+  const std::wstring snapshot_path = aerogpu_test::JoinPath(out_dir, leaf.c_str());
+
+  ProcessOutputFiles out_files;
+  out_files.stdout_path = snapshot_path;
+  out_files.stderr_path = snapshot_path;  // combined
+
+  std::vector<std::wstring> args;
+  args.push_back(L"--status");
+  args.push_back(L"--timeout-ms");
+  args.push_back(aerogpu_test::Utf8ToWideFallbackAcp(
+      aerogpu_test::FormatString("%lu", (unsigned long)dbgctl_timeout_ms)));
+
+  RunResult rr = RunProcessWithTimeoutW(dbgctl_path, args, dbgctl_timeout_ms, true, &out_files);
+  if (!rr.started) {
+    if (err) {
+      *err = rr.err;
+    }
+    return false;
+  }
+
+  if (out_path) {
+    *out_path = snapshot_path;
+  }
+  return true;
+}
+
 static bool ParseRunnerArgs(int argc,
                             char** argv,
                             std::wstring* out_bin_dir,
@@ -221,14 +409,20 @@ static bool ParseRunnerArgs(int argc,
                             bool* out_enforce_timeout,
                             bool* out_emit_json,
                             std::wstring* out_json_path,
+                            std::wstring* out_log_dir,
+                            std::wstring* out_dbgctl_path,
+                            DWORD* out_dbgctl_timeout_ms,
                             std::vector<std::wstring>* out_forwarded_args) {
   if (!out_bin_dir || !out_manifest_path || !out_timeout_ms || !out_enforce_timeout || !out_emit_json ||
-      !out_json_path || !out_forwarded_args) {
+      !out_json_path || !out_log_dir || !out_dbgctl_path || !out_dbgctl_timeout_ms || !out_forwarded_args) {
     return false;
   }
 
   *out_bin_dir = aerogpu_test::GetModuleDir();
   out_manifest_path->clear();
+  out_log_dir->clear();
+  out_dbgctl_path->clear();
+  *out_dbgctl_timeout_ms = 5000;
 
   // Default timeout: env var or 30000ms.
   DWORD timeout_ms = 30000;
@@ -252,6 +446,9 @@ static bool ParseRunnerArgs(int argc,
   const char* const kBinDirPrefix = "--bin-dir=";
   const char* const kManifestPrefix = "--manifest=";
   const char* const kJsonPrefix = "--json=";
+  const char* const kLogDirPrefix = "--log-dir=";
+  const char* const kDbgctlPrefix = "--dbgctl=";
+  const char* const kDbgctlTimeoutPrefix = "--dbgctl-timeout-ms=";
 
   for (int i = 1; i < argc; ++i) {
     const char* arg = argv[i];
@@ -355,6 +552,79 @@ static bool ParseRunnerArgs(int argc,
       } else {
         *out_json_path = aerogpu_test::JoinPath(aerogpu_test::GetModuleDir(), L"report.json");
       }
+      continue;
+    }
+
+    if (aerogpu_test::StrIStartsWith(arg, kLogDirPrefix)) {
+      const std::string val(arg + strlen(kLogDirPrefix));
+      if (val.empty()) {
+        aerogpu_test::PrintfStdout("FAIL: aerogpu_test_runner: --log-dir missing value");
+        return false;
+      }
+      *out_log_dir = aerogpu_test::Utf8ToWideFallbackAcp(val);
+      continue;
+    }
+    if (lstrcmpiA(arg, "--log-dir") == 0) {
+      if (i + 1 >= argc || !argv[i + 1]) {
+        aerogpu_test::PrintfStdout("FAIL: aerogpu_test_runner: --log-dir missing value");
+        return false;
+      }
+      const std::string val(argv[++i]);
+      if (val.empty()) {
+        aerogpu_test::PrintfStdout("FAIL: aerogpu_test_runner: --log-dir missing value");
+        return false;
+      }
+      *out_log_dir = aerogpu_test::Utf8ToWideFallbackAcp(val);
+      continue;
+    }
+
+    if (aerogpu_test::StrIStartsWith(arg, kDbgctlPrefix)) {
+      const std::string val(arg + strlen(kDbgctlPrefix));
+      if (val.empty()) {
+        aerogpu_test::PrintfStdout("FAIL: aerogpu_test_runner: --dbgctl missing value");
+        return false;
+      }
+      *out_dbgctl_path = aerogpu_test::Utf8ToWideFallbackAcp(val);
+      continue;
+    }
+    if (lstrcmpiA(arg, "--dbgctl") == 0) {
+      if (i + 1 >= argc || !argv[i + 1]) {
+        aerogpu_test::PrintfStdout("FAIL: aerogpu_test_runner: --dbgctl missing value");
+        return false;
+      }
+      const std::string val(argv[++i]);
+      if (val.empty()) {
+        aerogpu_test::PrintfStdout("FAIL: aerogpu_test_runner: --dbgctl missing value");
+        return false;
+      }
+      *out_dbgctl_path = aerogpu_test::Utf8ToWideFallbackAcp(val);
+      continue;
+    }
+
+    if (aerogpu_test::StrIStartsWith(arg, kDbgctlTimeoutPrefix)) {
+      const std::string val(arg + strlen(kDbgctlTimeoutPrefix));
+      uint32_t parsed = 0;
+      std::string parse_err;
+      if (!aerogpu_test::ParseUint32(val, &parsed, &parse_err) || parsed == 0) {
+        aerogpu_test::PrintfStdout("FAIL: aerogpu_test_runner: invalid --dbgctl-timeout-ms: %s", parse_err.c_str());
+        return false;
+      }
+      *out_dbgctl_timeout_ms = (DWORD)parsed;
+      continue;
+    }
+    if (lstrcmpiA(arg, "--dbgctl-timeout-ms") == 0) {
+      if (i + 1 >= argc || !argv[i + 1]) {
+        aerogpu_test::PrintfStdout("FAIL: aerogpu_test_runner: --dbgctl-timeout-ms missing value");
+        return false;
+      }
+      const std::string val(argv[++i]);
+      uint32_t parsed = 0;
+      std::string parse_err;
+      if (!aerogpu_test::ParseUint32(val, &parsed, &parse_err) || parsed == 0) {
+        aerogpu_test::PrintfStdout("FAIL: aerogpu_test_runner: invalid --dbgctl-timeout-ms: %s", parse_err.c_str());
+        return false;
+      }
+      *out_dbgctl_timeout_ms = (DWORD)parsed;
       continue;
     }
 
@@ -547,6 +817,9 @@ int main(int argc, char** argv) {
   bool enforce_timeout = true;
   bool emit_json = false;
   std::wstring json_path;
+  std::wstring log_dir;
+  std::wstring dbgctl_path;
+  DWORD dbgctl_timeout_ms = 5000;
   std::vector<std::wstring> forwarded_args;
   if (!ParseRunnerArgs(argc,
                        argv,
@@ -556,11 +829,39 @@ int main(int argc, char** argv) {
                        &enforce_timeout,
                        &emit_json,
                        &json_path,
+                       &log_dir,
+                       &dbgctl_path,
+                       &dbgctl_timeout_ms,
                        &forwarded_args)) {
     return 1;
   }
 
   const aerogpu_test::TestReportAdapterInfo suite_adapter = QueryDefaultAdapterInfo();
+
+  if (!log_dir.empty()) {
+    if (!IsAbsolutePathW(log_dir)) {
+      log_dir = aerogpu_test::JoinPath(bin_dir, log_dir.c_str());
+    }
+    std::string err;
+    if (!EnsureDirExistsRecursive(log_dir, &err)) {
+      aerogpu_test::PrintfStdout("FAIL: aerogpu_test_runner: failed to create log dir %ls: %s",
+                                 log_dir.c_str(),
+                                 err.c_str());
+      return 1;
+    }
+    aerogpu_test::PrintfStdout("INFO: capturing per-test stdout/stderr to %ls", log_dir.c_str());
+  }
+
+  if (!dbgctl_path.empty()) {
+    if (!IsAbsolutePathW(dbgctl_path)) {
+      dbgctl_path = aerogpu_test::JoinPath(bin_dir, dbgctl_path.c_str());
+    }
+    if (!FileExistsW(dbgctl_path)) {
+      aerogpu_test::PrintfStdout("FAIL: aerogpu_test_runner: dbgctl binary not found: %ls",
+                                 dbgctl_path.c_str());
+      return 1;
+    }
+  }
 
   // Legacy fallback list (for older checkouts without tests_manifest.txt).
   const char* const kFallbackTests[] = {
@@ -728,7 +1029,17 @@ int main(int argc, char** argv) {
       args.push_back(L"--json=" + per_test_json_path);
     }
 
-    RunResult rr = RunProcessWithTimeoutW(exe_path, args, timeout_ms, enforce_timeout);
+    ProcessOutputFiles out_files;
+    const ProcessOutputFiles* out_files_ptr = NULL;
+    if (!log_dir.empty()) {
+      out_files_ptr = &out_files;
+      const std::wstring stdout_leaf = aerogpu_test::Utf8ToWideFallbackAcp(test_name + ".stdout.txt");
+      const std::wstring stderr_leaf = aerogpu_test::Utf8ToWideFallbackAcp(test_name + ".stderr.txt");
+      out_files.stdout_path = aerogpu_test::JoinPath(log_dir, stdout_leaf.c_str());
+      out_files.stderr_path = aerogpu_test::JoinPath(log_dir, stderr_leaf.c_str());
+    }
+
+    RunResult rr = RunProcessWithTimeoutW(exe_path, args, timeout_ms, enforce_timeout, out_files_ptr);
     if (!rr.started) {
       failures++;
       aerogpu_test::PrintfStdout("FAIL: %s (failed to start: %s)", test_name.c_str(), rr.err.c_str());
@@ -748,6 +1059,19 @@ int main(int argc, char** argv) {
       fallback.status = "FAIL";
       fallback.exit_code = (int)rr.exit_code;
       fallback.failure = aerogpu_test::FormatString("timed out after %lu ms", (unsigned long)timeout_ms);
+
+      if (!dbgctl_path.empty()) {
+        const std::wstring out_dir = !log_dir.empty() ? log_dir : (!report_dir.empty() ? report_dir : bin_dir);
+        std::wstring snapshot_path;
+        std::string snapshot_err;
+        if (DumpDbgctlStatusSnapshotBestEffort(
+                dbgctl_path, out_dir, test_name, dbgctl_timeout_ms, &snapshot_path, &snapshot_err)) {
+          aerogpu_test::PrintfStdout("INFO: wrote dbgctl status snapshot: %ls", snapshot_path.c_str());
+        } else if (!snapshot_err.empty()) {
+          aerogpu_test::PrintfStdout("INFO: dbgctl snapshot failed: %s", snapshot_err.c_str());
+        }
+      }
+
       if (emit_json) {
         test_json_objects.push_back(aerogpu_test::BuildTestReportJson(fallback));
         WriteTestReportJsonBestEffort(per_test_json_path, fallback);
@@ -758,6 +1082,17 @@ int main(int argc, char** argv) {
     if (rr.exit_code != 0) {
       failures++;
       aerogpu_test::PrintfStdout("FAIL: %s (exit_code=%lu)", test_name.c_str(), (unsigned long)rr.exit_code);
+      if (!dbgctl_path.empty()) {
+        const std::wstring out_dir = !log_dir.empty() ? log_dir : (!report_dir.empty() ? report_dir : bin_dir);
+        std::wstring snapshot_path;
+        std::string snapshot_err;
+        if (DumpDbgctlStatusSnapshotBestEffort(
+                dbgctl_path, out_dir, test_name, dbgctl_timeout_ms, &snapshot_path, &snapshot_err)) {
+          aerogpu_test::PrintfStdout("INFO: wrote dbgctl status snapshot: %ls", snapshot_path.c_str());
+        } else if (!snapshot_err.empty()) {
+          aerogpu_test::PrintfStdout("INFO: dbgctl snapshot failed: %s", snapshot_err.c_str());
+        }
+      }
     } else {
       aerogpu_test::PrintfStdout("PASS: %s", test_name.c_str());
     }

@@ -43,9 +43,9 @@ Guest OS:
 
 Test suite:
 - x86 command:
-  bin\\aerogpu_test_runner.exe --json --require-vid=0xA3A0 --require-did=0x0001 --require-umd
+  bin\\aerogpu_test_runner.exe --json --log-dir=logs --dbgctl=aerogpu_dbgctl.exe --require-vid=0xA3A0 --require-did=0x0001 --require-umd
 - x64 command:
-  bin\\aerogpu_test_runner.exe --json --require-vid=0xA3A0 --require-did=0x0001 --require-umd
+  bin\\aerogpu_test_runner.exe --json --log-dir=logs --dbgctl=aerogpu_dbgctl.exe --require-vid=0xA3A0 --require-did=0x0001 --require-umd
 
 Results summary:
 - Win7 x86: PASS=  FAIL=  SKIP=
@@ -54,6 +54,8 @@ Results summary:
 Artifacts collected:
 - report.json (path):
 - per-test JSON outputs (dir):
+- per-test stdout/stderr logs (dir):
+- dbgctl `--status` snapshots (dbgctl_<test>_status.txt) (dir):
 - failing test --dump outputs (BMP/bin) (dir):
 - Event Viewer: dxgkrnl/display events around failures (exported EVTX):
 - KMD snapshots: aerogpu_dbgctl --query-fence/--dump-ring/--dump-vblank (outputs saved):
