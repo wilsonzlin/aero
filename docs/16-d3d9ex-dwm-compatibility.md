@@ -173,13 +173,22 @@ Define a guest/host handle model that does **not** attempt to expose host OS han
 
 - Guest UMD treats `HANDLE` as an opaque **share token**.
 - On “export” (resource creation with `pSharedHandle != nullptr`):
-  1. Guest allocates a unique 64-bit token (or pointer-sized integer) and writes it to `*pSharedHandle`.
-  2. Guest informs the host: `(token → host_resource_id)` mapping is created.
+  1. Guest derives a stable `share_token` and writes it to `*pSharedHandle`.
+  2. Guest informs the host: `(share_token → host_resource_id)` mapping is created.
 - On “import” (open from a shared handle token):
-  1. Guest passes the token to the host.
+  1. Guest passes the `share_token` to the host.
   2. Host returns an existing host-side resource ID or errors if unknown.
 
 **Key invariant:** the token must be stable across processes inside the guest VM. In real Windows this stability is provided via NT handles + `DuplicateHandle`; in Aero, stability is provided by the virtualization driver + host mapping table.
+
+**Implementation note (AeroGPU/WDDM):**
+prefer computing `share_token` from the KMD-provided stable allocation ID (`alloc_id`, returned via allocation private driver data on Create/Open),
+instead of using raw Win32/D3DKMT handle values (which are process-local).
+The recommended scheme is:
+
+- `share_token = (uint64_t)alloc_id`
+
+Timing-wise: **export** the mapping from the creating process (the one that created the shared handle), and **import** from the opening process (the one that opens that handle) before the resource is used.
 
 #### `D3DPOOL_DEFAULT` semantics for Ex
 

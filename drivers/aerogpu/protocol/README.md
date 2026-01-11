@@ -101,6 +101,21 @@ Each submission may provide an optional **sideband allocation table**:
 
 This enables compact command streams that use small IDs instead of repeating GPAs.
 
+#### Stable `alloc_id` and shared-surface `share_token`
+
+`alloc_id` is a **stable identifier assigned by the Windows KMD** to a WDDM allocation (not a per-submit index).
+The KMD must persist this value in **WDDM allocation private driver data** so that the UMD can retrieve it on:
+
+- allocation create (`DxgkDdiCreateAllocation`), and
+- allocation open (`DxgkDdiOpenAllocation`) when a shared handle is imported by another guest process.
+
+**Requirement:** the same underlying shared allocation must always report the same `alloc_id` across opens.
+
+For cross-process shared surfaces (`AEROGPU_CMD_EXPORT_SHARED_SURFACE` / `AEROGPU_CMD_IMPORT_SHARED_SURFACE`),
+the recommended scheme is:
+
+- `share_token = (uint64_t)alloc_id`
+
 ## Fence / completion model
 
 Fences are **monotonic 64-bit** values chosen by the guest.

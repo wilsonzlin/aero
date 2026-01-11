@@ -149,10 +149,10 @@ Traditional GPU drivers emit a hardware ISA-like DMA stream and rely on complex:
 - patch location lists (relocations)
  
 For AeroGPU we control both sides (guest driver + emulator). The MVP should:
- 
+  
 - Keep the KMD thin (mostly plumbing + bookkeeping)
 - Keep the UMD as the main “translator” from D3D9 state to an emulator-friendly IR
-- Avoid patch lists by using **allocation-indexed references** (see §5)
+- Avoid patch lists by using **stable allocation IDs (`alloc_id`)** (see §5)
  
 ---
 
@@ -171,7 +171,7 @@ The D3D9Ex UMD is responsible for translating the Microsoft D3D9 runtime’s DDI
 - The UMD maintains:
   - A per-device command buffer builder
   - A small state cache (current shaders, render targets, blend state, etc.)
-  - A resource table mapping runtime handles to allocation indices/metadata
+  - A resource table mapping runtime handles to `alloc_id`/metadata
 - On each draw/dispatch boundary, the UMD appends commands to a DMA buffer that is ultimately submitted through dxgkrnl to the KMD.
 - The UMD **must** be able to run under:
   - 32-bit (Windows 7 x86, and WOW64 on x64)
@@ -435,11 +435,11 @@ For each entrypoint:
  
 - **Purpose:** Submit a command buffer plus its referenced allocations to the GPU.
 - **AeroGPU MVP behavior:**
-  1. Validate the submission (bounds, known opcodes, allocation list sizes).
-  2. Build a **sideband allocation table** for the emulator:
-     - allocation index → {guest physical base(s), size, format, pitch}
-  3. Write a submission descriptor into the shared ring and ring the doorbell.
-  4. Return a fence ID to dxgkrnl.
+   1. Validate the submission (bounds, known opcodes, allocation list sizes).
+   2. Build a **sideband allocation table** for the emulator (optional but recommended; see `drivers/aerogpu/protocol/aerogpu_ring.h`):
+      - `alloc_id` → {guest physical base address, size_bytes, flags}
+   3. Write a submission descriptor into the shared ring and ring the doorbell.
+   4. Return a fence ID to dxgkrnl.
 - **Can be deferred:** Patch-location processing (we design the command stream to avoid it), hardware scheduling, multiple queues.
 
 #### `DxgkDdiPreemptCommand` / `DxgkDdiCancelCommand` (if required by the scheduler)
@@ -536,48 +536,46 @@ For each entrypoint:
 This keeps the KMD simple and allows the emulator to access all resources directly from guest RAM.
  
 ### 5.2 Allocation backing and “guest physical” mapping
- 
+  
 For each allocation created by the KMD:
- 
+  
 - Back it with locked system pages (nonpaged) to avoid paging complexity.
 - Track:
-  - PFN list (page frame numbers) / guest physical pages
-  - Size in bytes
-  - Optional: pitch/format for 2D surfaces
- 
+  - Guest physical base address + size in bytes (for MVP, allocate physically-contiguous backing so this is a single range)
+  - A non-zero stable `alloc_id` assigned by the KMD
+  
 **Emulator access model:**
- 
+  
 - The emulator already implements guest physical memory (it must for CPU/MMU).
-- For each submission, KMD sends the emulator a sideband table mapping **allocation indices → guest physical addresses** so the emulator can read textures/buffers and write render targets.
- 
+- For each submission, KMD sends the emulator a sideband table mapping **`alloc_id` → guest physical address + size** so the emulator can read textures/buffers and write render targets.
+
+`alloc_id` must be stable across shared-handle opens. The KMD persists it in **WDDM allocation private driver data** and returns it to the UMD on both allocation create and open (`DxgkDdiCreateAllocation` / `DxgkDdiOpenAllocation`), so multiple guest processes can compute consistent IDs for the same underlying shared allocation.
+  
 ### 5.3 Avoiding complex patch lists
- 
-Traditional WDDM drivers rely on `PATCHLOCATIONLIST` to relocate GPU addresses inside DMA buffers. We avoid this by designing the AeroGPU command stream to use **allocation indices**, not absolute addresses:
- 
+  
+Traditional WDDM drivers rely on `PATCHLOCATIONLIST` to relocate GPU addresses inside DMA buffers. We avoid this by designing the AeroGPU command stream to use **stable allocation IDs (`alloc_id`)**, not absolute addresses:
+  
 **In the command stream:**
- 
-- Resources are referenced by an integer `alloc_idx` (index into the submission’s allocation list).
+  
+- Resources that are backed by guest memory reference their backing allocation via `alloc_id` (for example the `backing_alloc_id` fields in `drivers/aerogpu/protocol/aerogpu_cmd.h`).
 - Offsets are explicit byte offsets from the start of that allocation.
- 
+  
 **Per-submit sideband table (built by KMD):**
- 
+  
 ```
-struct AerogpuAllocRef {
-  u32 alloc_idx;
-  u32 flags;          // render-target, texture, vertex, etc (debug/validation)
+struct aerogpu_alloc_entry {
+  u32 alloc_id;
+  u32 flags;
+  u64 gpa;
   u64 size_bytes;
-  u32 format;         // if surface
-  u32 pitch_bytes;    // if surface
-  u32 page_count;
-  u64 first_page_gpa; // or array of GPAs/PFNs in an out-of-line blob
 };
 ```
- 
+  
 This yields:
- 
+  
 - No relocation logic in KMD.
-- Minimal KMD validation (bounds check: `offset + size <= alloc.size`).
-- Emulator can resolve resource addresses by `alloc_idx` quickly.
+- Minimal KMD validation (bounds check: `offset + size <= alloc.size_bytes`).
+- Emulator can resolve resource addresses by `alloc_id` quickly.
  
 ---
  
