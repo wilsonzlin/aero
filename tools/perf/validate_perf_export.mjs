@@ -1,7 +1,208 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
-import Ajv from "ajv";
+
+/**
+ * `tools/perf/validate_perf_export.mjs` is used by CI and also by the repo's
+ * Node-based unit tests.
+ *
+ * The agent execution environment for unit tests is offline (no `npm install`),
+ * so `node_modules/` is unavailable. Prefer Ajv when it is installed, but fall
+ * back to a tiny in-repo JSON Schema validator for the subset of draft-07 used
+ * by `bench/schema/perf-output.schema.json`.
+ */
+
+async function tryImportAjv() {
+  try {
+    const mod = await import("ajv");
+    return mod?.default ?? null;
+  } catch (err) {
+    if (err && typeof err === "object" && "code" in err && err.code === "ERR_MODULE_NOT_FOUND") {
+      return null;
+    }
+    throw err;
+  }
+}
+
+function resolveJsonPointer(root, pointer) {
+  if (pointer === "#") return root;
+  if (!pointer.startsWith("#/")) return null;
+  const parts = pointer
+    .slice(2)
+    .split("/")
+    .map((p) => p.replaceAll("~1", "/").replaceAll("~0", "~"));
+  let cur = root;
+  for (const part of parts) {
+    if (!cur || typeof cur !== "object") return null;
+    cur = cur[part];
+  }
+  return cur;
+}
+
+function isPlainObject(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function schemaTypeMatches(type, value) {
+  switch (type) {
+    case "null":
+      return value === null;
+    case "boolean":
+      return typeof value === "boolean";
+    case "string":
+      return typeof value === "string";
+    case "number":
+      return typeof value === "number" && Number.isFinite(value);
+    case "integer":
+      return typeof value === "number" && Number.isFinite(value) && Number.isInteger(value);
+    case "array":
+      return Array.isArray(value);
+    case "object":
+      return isPlainObject(value);
+    default:
+      return false;
+  }
+}
+
+function pushError(errors, instancePath, keyword, message, params = {}) {
+  errors.push({ instancePath, keyword, message, params });
+}
+
+function validateSchemaInternal(schema, value, instancePath, rootSchema, errors) {
+  // Resolve `$ref` chains.
+  while (schema && typeof schema === "object" && typeof schema.$ref === "string") {
+    const resolved = resolveJsonPointer(rootSchema, schema.$ref);
+    if (!resolved || typeof resolved !== "object") {
+      pushError(errors, instancePath, "$ref", `unable to resolve schema ref ${schema.$ref}`);
+      return;
+    }
+    schema = resolved;
+  }
+
+  if (!schema || typeof schema !== "object") return;
+
+  const anyOf = Array.isArray(schema.anyOf) ? schema.anyOf : null;
+  const oneOf = Array.isArray(schema.oneOf) ? schema.oneOf : null;
+  const variants = anyOf ?? oneOf;
+  if (variants) {
+    const score = (errs) => {
+      let maxDepth = 0;
+      let sumDepth = 0;
+      for (const err of errs) {
+        const path = typeof err.instancePath === "string" ? err.instancePath : "";
+        const depth = path.split("/").filter((p) => p.length > 0).length;
+        if (depth > maxDepth) maxDepth = depth;
+        sumDepth += depth;
+      }
+      return { count: errs.length, maxDepth, sumDepth };
+    };
+
+    let best = null;
+    let bestScore = null;
+    for (const variant of variants) {
+      const variantErrors = [];
+      validateSchemaInternal(variant, value, instancePath, rootSchema, variantErrors);
+      if (variantErrors.length === 0) {
+        return;
+      }
+      const candidateScore = score(variantErrors);
+      if (
+        !best ||
+        candidateScore.count < bestScore.count ||
+        (candidateScore.count === bestScore.count && candidateScore.maxDepth > bestScore.maxDepth) ||
+        (candidateScore.count === bestScore.count &&
+          candidateScore.maxDepth === bestScore.maxDepth &&
+          candidateScore.sumDepth > bestScore.sumDepth)
+      ) {
+        best = variantErrors;
+        bestScore = candidateScore;
+      }
+    }
+    if (best) errors.push(...best);
+    return;
+  }
+
+  if ("const" in schema) {
+    if (value !== schema.const) {
+      pushError(errors, instancePath, "const", "must be equal to constant", { allowedValue: schema.const });
+      return;
+    }
+  }
+
+  const schemaType = schema.type;
+  if (typeof schemaType === "string") {
+    if (!schemaTypeMatches(schemaType, value)) {
+      pushError(errors, instancePath, "type", `must be ${schemaType}`);
+      return;
+    }
+  } else if (Array.isArray(schemaType)) {
+    const ok = schemaType.some((t) => typeof t === "string" && schemaTypeMatches(t, value));
+    if (!ok) {
+      pushError(errors, instancePath, "type", `must be ${schemaType.join(",")}`);
+      return;
+    }
+  }
+
+  if (typeof value === "number" && Number.isFinite(value)) {
+    if (typeof schema.minimum === "number" && value < schema.minimum) {
+      pushError(errors, instancePath, "minimum", `must be >= ${schema.minimum}`, { comparison: ">=", limit: schema.minimum });
+    }
+  }
+
+  if (typeof value === "string") {
+    if (typeof schema.pattern === "string") {
+      const re = new RegExp(schema.pattern);
+      if (!re.test(value)) {
+        pushError(errors, instancePath, "pattern", `must match pattern ${schema.pattern}`, { pattern: schema.pattern });
+      }
+    }
+  }
+
+  if (Array.isArray(value) && schema.items && typeof schema.items === "object") {
+    for (let i = 0; i < value.length; i += 1) {
+      validateSchemaInternal(schema.items, value[i], `${instancePath}/${i}`, rootSchema, errors);
+    }
+  }
+
+  if (isPlainObject(value)) {
+    const properties = isPlainObject(schema.properties) ? schema.properties : {};
+    const required = Array.isArray(schema.required) ? schema.required : [];
+
+    for (const prop of required) {
+      if (typeof prop !== "string") continue;
+      if (!(prop in value)) {
+        pushError(errors, instancePath, "required", "must have required property", { missingProperty: prop });
+      }
+    }
+
+    for (const [prop, propSchema] of Object.entries(properties)) {
+      if (!(prop in value)) continue;
+      if (!propSchema || typeof propSchema !== "object") continue;
+      validateSchemaInternal(propSchema, value[prop], `${instancePath}/${prop}`, rootSchema, errors);
+    }
+
+    const additional = schema.additionalProperties;
+    if (additional === false) {
+      for (const prop of Object.keys(value)) {
+        if (prop in properties) continue;
+        pushError(errors, instancePath, "additionalProperties", "must NOT have additional properties", {
+          additionalProperty: prop,
+        });
+      }
+    } else if (additional && typeof additional === "object") {
+      for (const prop of Object.keys(value)) {
+        if (prop in properties) continue;
+        validateSchemaInternal(additional, value[prop], `${instancePath}/${prop}`, rootSchema, errors);
+      }
+    }
+  }
+}
+
+function validateWithoutAjv(schemaJson, inputJson) {
+  const errors = [];
+  validateSchemaInternal(schemaJson, inputJson, "", schemaJson, errors);
+  return errors;
+}
 
 function usage(exitCode) {
   const msg = `
@@ -102,16 +303,23 @@ async function main() {
   }
 
   const schemaJson = await readJsonFile(schemaPath, "schema");
-  const ajv = new Ajv({
-    allErrors: true,
-    strict: false,
-  });
+  const Ajv = await tryImportAjv();
 
-  const validate = ajv.compile(schemaJson);
-  const ok = validate(inputJson);
-  if (ok) return;
+  let errors = [];
+  if (Ajv) {
+    const ajv = new Ajv({
+      allErrors: true,
+      strict: false,
+    });
+    const validate = ajv.compile(schemaJson);
+    const ok = validate(inputJson);
+    if (ok) return;
+    errors = Array.isArray(validate.errors) ? validate.errors : [];
+  } else {
+    errors = validateWithoutAjv(schemaJson, inputJson);
+    if (errors.length === 0) return;
+  }
 
-  const errors = Array.isArray(validate.errors) ? validate.errors : [];
   const header = `[perf] schema validation failed for ${path.relative(process.cwd(), inputPath)} (${errors.length} error${
     errors.length === 1 ? "" : "s"
   })`;
@@ -128,4 +336,3 @@ try {
   console.error(err?.message ?? String(err));
   process.exit(1);
 }
-
