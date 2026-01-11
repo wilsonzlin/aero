@@ -94,6 +94,7 @@ import {
   decodeCmdHdr,
   decodeCmdStreamHeader,
 } from "../aerogpu/aerogpu_cmd.ts";
+import * as aerogpuCmd from "../aerogpu/aerogpu_cmd.ts";
 import {
   AEROGPU_ABI_MAJOR,
   AEROGPU_ABI_MINOR,
@@ -554,6 +555,22 @@ test("TypeScript layout matches C headers", () => {
     const actual = (AerogpuCmdOpcode as Record<string, number>)[key];
     assert.ok(actual !== undefined, `missing TS opcode binding for ${cName}`);
     assert.equal(BigInt(actual), value, `opcode value for ${cName}`);
+  }
+
+  // Coverage guard: every opcode (except NOP/DEBUG_MARKER) must have a corresponding
+  // `AEROGPU_CMD_*_SIZE` constant matching the C packet struct size.
+  const cmdAny = aerogpuCmd as unknown as Record<string, unknown>;
+  for (const cName of cOpcodeConsts) {
+    if (cName === "AEROGPU_CMD_NOP" || cName === "AEROGPU_CMD_DEBUG_MARKER") {
+      continue;
+    }
+    const suffix = cName.replace(/^AEROGPU_CMD_/, "").toLowerCase();
+    const structName = `aerogpu_cmd_${suffix}`;
+    const expectedSize = size(structName);
+    const sizeConstName = `${cName}_SIZE`;
+    const actualSize = cmdAny[sizeConstName];
+    assert.equal(typeof actualSize, "number", `missing TS packet size constant ${sizeConstName}`);
+    assert.equal(actualSize, expectedSize, `${sizeConstName} must match sizeof(${structName})`);
   }
 
   assert.equal(konst("AEROGPU_CLEAR_COLOR"), BigInt(AEROGPU_CLEAR_COLOR));

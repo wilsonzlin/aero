@@ -347,20 +347,28 @@ fn rust_layout_matches_c_headers() {
     );
 
     // Command packet sizes.
-    assert_size!(AerogpuCmdCreateBuffer, "aerogpu_cmd_create_buffer");
-    assert_size!(AerogpuCmdCreateTexture2d, "aerogpu_cmd_create_texture2d");
-    assert_size!(AerogpuCmdDestroyResource, "aerogpu_cmd_destroy_resource");
-    assert_size!(
+    let mut cmd_structs_seen: Vec<&'static str> = Vec::new();
+    macro_rules! assert_cmd_size {
+        ($ty:ty, $c_name:literal) => {{
+            assert_size!($ty, $c_name);
+            cmd_structs_seen.push($c_name);
+        }};
+    }
+
+    assert_cmd_size!(AerogpuCmdCreateBuffer, "aerogpu_cmd_create_buffer");
+    assert_cmd_size!(AerogpuCmdCreateTexture2d, "aerogpu_cmd_create_texture2d");
+    assert_cmd_size!(AerogpuCmdDestroyResource, "aerogpu_cmd_destroy_resource");
+    assert_cmd_size!(
         AerogpuCmdResourceDirtyRange,
         "aerogpu_cmd_resource_dirty_range"
     );
-    assert_size!(AerogpuCmdUploadResource, "aerogpu_cmd_upload_resource");
-    assert_size!(AerogpuCmdCopyBuffer, "aerogpu_cmd_copy_buffer");
-    assert_size!(AerogpuCmdCopyTexture2d, "aerogpu_cmd_copy_texture2d");
-    assert_size!(AerogpuCmdCreateShaderDxbc, "aerogpu_cmd_create_shader_dxbc");
-    assert_size!(AerogpuCmdDestroyShader, "aerogpu_cmd_destroy_shader");
-    assert_size!(AerogpuCmdBindShaders, "aerogpu_cmd_bind_shaders");
-    assert_size!(
+    assert_cmd_size!(AerogpuCmdUploadResource, "aerogpu_cmd_upload_resource");
+    assert_cmd_size!(AerogpuCmdCopyBuffer, "aerogpu_cmd_copy_buffer");
+    assert_cmd_size!(AerogpuCmdCopyTexture2d, "aerogpu_cmd_copy_texture2d");
+    assert_cmd_size!(AerogpuCmdCreateShaderDxbc, "aerogpu_cmd_create_shader_dxbc");
+    assert_cmd_size!(AerogpuCmdDestroyShader, "aerogpu_cmd_destroy_shader");
+    assert_cmd_size!(AerogpuCmdBindShaders, "aerogpu_cmd_bind_shaders");
+    assert_cmd_size!(
         AerogpuCmdSetShaderConstantsF,
         "aerogpu_cmd_set_shader_constants_f"
     );
@@ -372,54 +380,74 @@ fn rust_layout_matches_c_headers() {
         AerogpuInputLayoutElementDxgi,
         "aerogpu_input_layout_element_dxgi"
     );
-    assert_size!(
+    assert_cmd_size!(
         AerogpuCmdCreateInputLayout,
         "aerogpu_cmd_create_input_layout"
     );
-    assert_size!(
+    assert_cmd_size!(
         AerogpuCmdDestroyInputLayout,
         "aerogpu_cmd_destroy_input_layout"
     );
-    assert_size!(AerogpuCmdSetInputLayout, "aerogpu_cmd_set_input_layout");
+    assert_cmd_size!(AerogpuCmdSetInputLayout, "aerogpu_cmd_set_input_layout");
     assert_size!(AerogpuBlendState, "aerogpu_blend_state");
-    assert_size!(AerogpuCmdSetBlendState, "aerogpu_cmd_set_blend_state");
+    assert_cmd_size!(AerogpuCmdSetBlendState, "aerogpu_cmd_set_blend_state");
     assert_size!(AerogpuDepthStencilState, "aerogpu_depth_stencil_state");
-    assert_size!(
+    assert_cmd_size!(
         AerogpuCmdSetDepthStencilState,
         "aerogpu_cmd_set_depth_stencil_state"
     );
     assert_size!(AerogpuRasterizerState, "aerogpu_rasterizer_state");
-    assert_size!(
+    assert_cmd_size!(
         AerogpuCmdSetRasterizerState,
         "aerogpu_cmd_set_rasterizer_state"
     );
-    assert_size!(AerogpuCmdSetRenderTargets, "aerogpu_cmd_set_render_targets");
-    assert_size!(AerogpuCmdSetViewport, "aerogpu_cmd_set_viewport");
-    assert_size!(AerogpuCmdSetScissor, "aerogpu_cmd_set_scissor");
+    assert_cmd_size!(AerogpuCmdSetRenderTargets, "aerogpu_cmd_set_render_targets");
+    assert_cmd_size!(AerogpuCmdSetViewport, "aerogpu_cmd_set_viewport");
+    assert_cmd_size!(AerogpuCmdSetScissor, "aerogpu_cmd_set_scissor");
     assert_size!(AerogpuVertexBufferBinding, "aerogpu_vertex_buffer_binding");
-    assert_size!(AerogpuCmdSetVertexBuffers, "aerogpu_cmd_set_vertex_buffers");
-    assert_size!(AerogpuCmdSetIndexBuffer, "aerogpu_cmd_set_index_buffer");
-    assert_size!(
+    assert_cmd_size!(AerogpuCmdSetVertexBuffers, "aerogpu_cmd_set_vertex_buffers");
+    assert_cmd_size!(AerogpuCmdSetIndexBuffer, "aerogpu_cmd_set_index_buffer");
+    assert_cmd_size!(
         AerogpuCmdSetPrimitiveTopology,
         "aerogpu_cmd_set_primitive_topology"
     );
-    assert_size!(AerogpuCmdSetTexture, "aerogpu_cmd_set_texture");
-    assert_size!(AerogpuCmdSetSamplerState, "aerogpu_cmd_set_sampler_state");
-    assert_size!(AerogpuCmdSetRenderState, "aerogpu_cmd_set_render_state");
-    assert_size!(AerogpuCmdClear, "aerogpu_cmd_clear");
-    assert_size!(AerogpuCmdDraw, "aerogpu_cmd_draw");
-    assert_size!(AerogpuCmdDrawIndexed, "aerogpu_cmd_draw_indexed");
-    assert_size!(AerogpuCmdPresent, "aerogpu_cmd_present");
-    assert_size!(AerogpuCmdPresentEx, "aerogpu_cmd_present_ex");
-    assert_size!(
+    assert_cmd_size!(AerogpuCmdSetTexture, "aerogpu_cmd_set_texture");
+    assert_cmd_size!(AerogpuCmdSetSamplerState, "aerogpu_cmd_set_sampler_state");
+    assert_cmd_size!(AerogpuCmdSetRenderState, "aerogpu_cmd_set_render_state");
+    assert_cmd_size!(AerogpuCmdClear, "aerogpu_cmd_clear");
+    assert_cmd_size!(AerogpuCmdDraw, "aerogpu_cmd_draw");
+    assert_cmd_size!(AerogpuCmdDrawIndexed, "aerogpu_cmd_draw_indexed");
+    assert_cmd_size!(AerogpuCmdPresent, "aerogpu_cmd_present");
+    assert_cmd_size!(AerogpuCmdPresentEx, "aerogpu_cmd_present_ex");
+    assert_cmd_size!(
         AerogpuCmdExportSharedSurface,
         "aerogpu_cmd_export_shared_surface"
     );
-    assert_size!(
+    assert_cmd_size!(
         AerogpuCmdImportSharedSurface,
         "aerogpu_cmd_import_shared_surface"
     );
-    assert_size!(AerogpuCmdFlush, "aerogpu_cmd_flush");
+    assert_cmd_size!(AerogpuCmdFlush, "aerogpu_cmd_flush");
+
+    // Coverage guard: every opcode (except NOP/DEBUG_MARKER) must have a corresponding
+    // `aerogpu_cmd_*` packet struct whose size is validated against the C headers.
+    let mut expected_cmd_structs = Vec::new();
+    for c_name in parse_c_cmd_opcode_const_names() {
+        if c_name == "AEROGPU_CMD_NOP" || c_name == "AEROGPU_CMD_DEBUG_MARKER" {
+            continue;
+        }
+        let suffix = c_name
+            .strip_prefix("AEROGPU_CMD_")
+            .expect("opcode constant missing AEROGPU_CMD_ prefix");
+        expected_cmd_structs.push(format!("aerogpu_cmd_{}", suffix.to_ascii_lowercase()));
+    }
+    expected_cmd_structs.sort();
+    expected_cmd_structs.dedup();
+
+    let mut cmd_structs_seen: Vec<String> = cmd_structs_seen.iter().map(|name| (*name).to_string()).collect();
+    cmd_structs_seen.sort();
+    cmd_structs_seen.dedup();
+    assert_eq!(cmd_structs_seen, expected_cmd_structs, "command packet struct coverage");
 
     // Ring structs.
     assert_size!(AerogpuAllocTableHeader, "aerogpu_alloc_table_header");
