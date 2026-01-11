@@ -124,6 +124,7 @@ struct ResourceBacking {
 struct BufferResource {
     buffer: wgpu::Buffer,
     size: u64,
+    gpu_size: u64,
     backing: Option<ResourceBacking>,
     dirty: Option<Range<u64>>,
 }
@@ -978,15 +979,12 @@ impl AerogpuD3d11Executor {
         if size_bytes == 0 {
             bail!("CREATE_BUFFER: size_bytes must be > 0");
         }
-        let alignment = wgpu::COPY_BUFFER_ALIGNMENT;
-        if size_bytes % alignment != 0 {
-            bail!("CREATE_BUFFER: size_bytes must be a multiple of {alignment} (got {size_bytes})");
-        }
 
         let usage = map_buffer_usage_flags(usage_flags);
+        let gpu_size = align_copy_buffer_size(size_bytes)?;
         let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("aerogpu buffer"),
-            size: size_bytes,
+            size: gpu_size,
             usage,
             mapped_at_creation: false,
         });
@@ -1004,6 +1002,7 @@ impl AerogpuD3d11Executor {
         let mut res = BufferResource {
             buffer,
             size: size_bytes,
+            gpu_size,
             backing,
             dirty: None,
         };
@@ -1203,15 +1202,40 @@ impl AerogpuD3d11Executor {
 
         if let Some(buf) = self.resources.buffers.get(&handle) {
             let alignment = wgpu::COPY_BUFFER_ALIGNMENT;
-            if offset % alignment != 0 || size % alignment != 0 {
-                bail!(
-                    "UPLOAD_RESOURCE: buffer offset_bytes and size_bytes must be multiples of {alignment} (offset_bytes={offset} size_bytes={size})"
-                );
+            if offset % alignment != 0 {
+                bail!("UPLOAD_RESOURCE: buffer offset {offset} does not respect COPY_BUFFER_ALIGNMENT");
             }
             if offset.saturating_add(size) > buf.size {
                 bail!("UPLOAD_RESOURCE: buffer upload out of bounds");
             }
-            self.queue.write_buffer(&buf.buffer, offset, data);
+
+            // `wgpu::Queue::write_buffer` requires the write size be a multiple of
+            // `COPY_BUFFER_ALIGNMENT` (4). The AeroGPU command stream is byte-granular (e.g. index
+            // buffers can be 3x u16 = 6 bytes), so we pad writes that reach the end of the buffer.
+            if size % alignment != 0 {
+                if offset.saturating_add(size) != buf.size {
+                    bail!(
+                        "UPLOAD_RESOURCE: unaligned buffer upload is only supported when writing to the end of the buffer"
+                    );
+                }
+                let size_usize: usize = size
+                    .try_into()
+                    .map_err(|_| anyhow!("UPLOAD_RESOURCE: size_bytes out of range"))?;
+                let padded = align4(size_usize);
+                let mut tmp = vec![0u8; padded];
+                tmp[..size_usize].copy_from_slice(data);
+
+                let end = offset
+                    .checked_add(padded as u64)
+                    .ok_or_else(|| anyhow!("UPLOAD_RESOURCE: upload range overflows u64"))?;
+                if end > buf.gpu_size {
+                    bail!("UPLOAD_RESOURCE: padded upload overruns wgpu buffer allocation");
+                }
+
+                self.queue.write_buffer(&buf.buffer, offset, &tmp);
+            } else {
+                self.queue.write_buffer(&buf.buffer, offset, data);
+            }
             if let Some(buf_mut) = self.resources.buffers.get_mut(&handle) {
                 // Uploaded data is now current on the GPU; clear dirty ranges.
                 if let Some(dirty) = buf_mut.dirty.take() {
@@ -2638,6 +2662,12 @@ impl AerogpuD3d11Executor {
 
         // Upload in chunks to avoid allocating massive temporary buffers for big resources.
         const CHUNK: usize = 64 * 1024;
+        if dirty.start % wgpu::COPY_BUFFER_ALIGNMENT != 0 {
+            bail!(
+                "buffer {buffer_handle} dirty range start {} does not respect COPY_BUFFER_ALIGNMENT",
+                dirty.start
+            );
+        }
         let mut offset = dirty.start;
         while offset < dirty.end {
             let remaining = (dirty.end - offset) as usize;
@@ -2646,7 +2676,26 @@ impl AerogpuD3d11Executor {
             guest_mem
                 .read(gpa + (offset - dirty.start) as u64, &mut tmp)
                 .map_err(|e| anyhow_guest_mem(e))?;
-            self.queue.write_buffer(&buf.buffer, offset, &tmp);
+
+            let write_len = if n % (wgpu::COPY_BUFFER_ALIGNMENT as usize) != 0 {
+                if offset + n as u64 != dirty.end || dirty.end != buf.size {
+                    bail!("buffer {buffer_handle} upload is not COPY_BUFFER_ALIGNMENT-aligned");
+                }
+                let padded = align4(n);
+                tmp.resize(padded, 0);
+                padded
+            } else {
+                n
+            };
+
+            let end = offset
+                .checked_add(write_len as u64)
+                .ok_or_else(|| anyhow!("buffer upload range overflows u64"))?;
+            if end > buf.gpu_size {
+                bail!("buffer upload overruns wgpu buffer allocation");
+            }
+
+            self.queue.write_buffer(&buf.buffer, offset, &tmp[..write_len]);
             offset += n as u64;
         }
 
@@ -3700,6 +3749,17 @@ fn texture_format_has_stencil(format: wgpu::TextureFormat) -> bool {
         format,
         wgpu::TextureFormat::Depth24PlusStencil8 | wgpu::TextureFormat::Depth32FloatStencil8
     )
+}
+
+fn align4(n: usize) -> usize {
+    (n + 3) & !3
+}
+
+fn align_copy_buffer_size(size: u64) -> Result<u64> {
+    let mask = wgpu::COPY_BUFFER_ALIGNMENT - 1;
+    size.checked_add(mask)
+        .map(|v| v & !mask)
+        .ok_or_else(|| anyhow!("buffer size overflows u64"))
 }
 fn map_color_write_mask(mask: u8) -> wgpu::ColorWrites {
     let mut out = wgpu::ColorWrites::empty();

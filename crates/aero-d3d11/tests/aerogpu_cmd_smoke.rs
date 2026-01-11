@@ -14,6 +14,7 @@ use aero_protocol::aerogpu::aerogpu_ring::AerogpuAllocEntry;
 const DXBC_VS_PASSTHROUGH: &[u8] = include_bytes!("fixtures/vs_passthrough.dxbc");
 const DXBC_PS_PASSTHROUGH: &[u8] = include_bytes!("fixtures/ps_passthrough.dxbc");
 const ILAY_POS3_COLOR: &[u8] = include_bytes!("fixtures/ilay_pos3_color.bin");
+const CMD_TRIANGLE_SM4: &[u8] = include_bytes!("fixtures/cmd_triangle_sm4.bin");
 
 const OPCODE_CREATE_BUFFER: u32 = AerogpuCmdOpcode::CreateBuffer as u32;
 const OPCODE_CREATE_TEXTURE2D: u32 = AerogpuCmdOpcode::CreateTexture2d as u32;
@@ -61,6 +62,10 @@ fn end_cmd(stream: &mut Vec<u8>, start: usize) {
     stream[start + CMD_HDR_SIZE_BYTES_OFFSET..start + CMD_HDR_SIZE_BYTES_OFFSET + 4]
         .copy_from_slice(&size.to_le_bytes());
     assert_eq!(size % 4, 0, "command not 4-byte aligned");
+}
+
+fn rgba_within(got: &[u8], expected: [u8; 4], tol: u8) -> bool {
+    got.len() == 4 && got.iter().zip(expected).all(|(&g, e)| g.abs_diff(e) <= tol)
 }
 
 #[repr(C)]
@@ -575,5 +580,51 @@ fn aerogpu_cmd_copy_texture2d_writeback_updates_guest_memory() {
         let mut out = [0u8; 16];
         guest_mem.read(dst_gpa, &mut out).unwrap();
         assert_eq!(out, src_pixels);
+    });
+}
+
+#[test]
+fn aerogpu_cmd_replays_cmd_triangle_sm4_fixture() {
+    pollster::block_on(async {
+        let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+            Ok(exec) => exec,
+            Err(e) => {
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+                return;
+            }
+        };
+
+        let guest_mem = VecGuestMemory::new(0);
+        exec.execute_cmd_stream(CMD_TRIANGLE_SM4, None, &guest_mem)
+            .expect("execute_cmd_stream should succeed");
+        exec.poll_wait();
+
+        // Fixture `cmd_triangle_sm4.bin` renders into handle 3 (a 64x64 BGRA8 render target).
+        const RT: u32 = 3;
+        let (width, height) = exec.texture_size(RT).expect("texture size should be known");
+        assert_eq!((width, height), (64, 64));
+
+        let pixels = exec.read_texture_rgba8(RT).await.expect("readback should succeed");
+        assert_eq!(pixels.len(), width as usize * height as usize * 4);
+
+        // Corner pixel is outside the triangle; should match the clear color (0.1, 0.2, 0.3, 1.0).
+        let clear_px = &pixels[0..4];
+        assert!(
+            rgba_within(clear_px, [26, 51, 77, 255], 1),
+            "unexpected clear pixel {clear_px:?}"
+        );
+
+        // A pixel near the center of the render target should be inside the triangle and contain an
+        // interpolated RGB value (the fixture vertex colors are red/green/blue).
+        let center_x = 32usize;
+        let center_y = 32usize;
+        let center_off = (center_y * width as usize + center_x) * 4;
+        let tri_px = &pixels[center_off..center_off + 4];
+        assert!(
+            rgba_within(tri_px, [124, 62, 70, 255], 2),
+            "unexpected triangle pixel at ({center_x},{center_y}): {tri_px:?}"
+        );
+
+        assert_ne!(tri_px, clear_px);
     });
 }
