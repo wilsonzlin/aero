@@ -205,6 +205,10 @@ impl UhciPciDevice {
         (Self::new(controller, io_base), composite)
     }
 
+    pub fn new_with_composite_input(io_base: u16) -> (Self, UsbCompositeHidInputHandle) {
+        Self::new_with_composite_hid(io_base)
+    }
+
     pub fn tick_1ms(&mut self, mem: &mut dyn MemoryBus) {
         self.controller.tick_1ms(mem);
     }
