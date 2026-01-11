@@ -160,6 +160,10 @@ fn windows_device_contract_aerogpu_matches_protocol_constants() {
     // That vendor ID is deprecated and must never appear in the canonical binding contract.
     assert!(!contains_needle(&contract_text, "VEN_1AE0"));
     assert!(!contains_needle(&contract_md_text, "VEN_1AE0"));
+    // Historical contract drafts used a different INF name; keep the canonical contract pinned to
+    // `drivers/aerogpu/packaging/win7/aerogpu.inf`.
+    assert!(!contains_needle(&contract_text, "aero-gpu.inf"));
+    assert!(!contains_needle(&contract_md_text, "aero-gpu.inf"));
     // The contract must only reference the canonical driver packages under `drivers/` (not the
     // removed `guest/windows/` prototype tree).
     assert!(!contains_needle(&contract_text, "guest/windows"));
