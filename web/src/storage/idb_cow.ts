@@ -156,8 +156,17 @@ export class IdbCowDisk implements AsyncSectorDisk {
   }
 
   async close(): Promise<void> {
-    await this.overlay.close?.();
-    await this.base.close?.();
+    let firstErr: unknown;
+    try {
+      await this.overlay.close?.();
+    } catch (err) {
+      firstErr = err;
+    }
+    try {
+      await this.base.close?.();
+    } catch (err) {
+      if (!firstErr) firstErr = err;
+    }
+    if (firstErr) throw firstErr;
   }
 }
-

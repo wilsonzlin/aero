@@ -184,7 +184,10 @@ export class IdbChunkDisk implements AsyncSectorDisk {
   }
 
   async close(): Promise<void> {
-    await this.flush();
-    this.db.close();
+    try {
+      await this.flush();
+    } finally {
+      this.db.close();
+    }
   }
 }
