@@ -59,7 +59,11 @@ pub fn render_rgba8888(
             let b = (x_u32 ^ y_u32).wrapping_add(b_off) & 0xff;
 
             // Write `[r, g, b, 255]` in little-endian form.
-            let rgba = r | (g << 8) | (b << 16) | (0xff << 24);
+            //
+            // WASM linear memory is specified as little-endian, so `to_le()` is
+            // a no-op on wasm32 and keeps host-side tests consistent on any
+            // endianness.
+            let rgba = (r | (g << 8) | (b << 16) | (0xff << 24)).to_le();
             unsafe {
                 core::ptr::write_unaligned(
                     base_ptr.add(row_base + x * BYTES_PER_PIXEL) as *mut u32,
