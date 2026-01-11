@@ -112,6 +112,10 @@ exit /b %RC%
 
 :init_logging
 if not exist "%INSTALL_ROOT%" mkdir "%INSTALL_ROOT%" >nul 2>&1
+if not exist "%INSTALL_ROOT%" (
+  echo ERROR: Could not create "%INSTALL_ROOT%".
+  exit /b 1
+)
 >>"%LOG%" echo ============================================================
 >>"%LOG%" echo [%DATE% %TIME%] Aero Guest Tools uninstall starting
 >>"%LOG%" echo ============================================================
