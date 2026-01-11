@@ -20,6 +20,7 @@ jobs:
     timeout-minutes: 30
     env:
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+      AERO_NODE_DIR: ${{ vars.AERO_NODE_DIR }}
     steps:
       - name: Checkout (candidate)
         uses: actions/checkout@v4
@@ -50,28 +51,28 @@ jobs:
         uses: ./base/.github/actions/setup-playwright
         with:
           browsers: chromium
-          working-directory: ${{ steps.node-workspace-head.outputs.dir }}
+          working-directory: head
           lockfile: ${{ steps.node-workspace-head.outputs.lockfile }}
 
       - name: Setup Playwright (cached, baseline)
         uses: ./base/.github/actions/setup-playwright
         with:
           browsers: chromium
-          working-directory: ${{ steps.node-workspace-base.outputs.dir }}
+          working-directory: base
           lockfile: ${{ steps.node-workspace-base.outputs.lockfile }}
 
       - name: Run storage perf (baseline)
-        working-directory: ${{ steps.node-workspace-base.outputs.dir }}
+        working-directory: base
         run: |
           node --experimental-strip-types bench/runner.ts storage_io \
-            --out-dir ../head/storage-perf-results/base
+            --out-dir "$GITHUB_WORKSPACE/head/storage-perf-results/base"
 
       - name: Validate perf export (baseline)
-        working-directory: ${{ steps.node-workspace-head.outputs.dir }}
+        working-directory: head
         run: node tools/perf/validate_perf_export.mjs --schema bench/schema/perf-output.schema.json --input storage-perf-results/base/perf_export.json
 
       - name: Run storage perf (candidate)
-        working-directory: ${{ steps.node-workspace-head.outputs.dir }}
+        working-directory: head
         run: |
           node --experimental-strip-types bench/runner.ts storage_io \
             --out-dir storage-perf-results/head
@@ -80,11 +81,11 @@ jobs:
           cp storage-perf-results/head/storage_bench.json storage-perf-results/head.json
 
       - name: Validate perf export (candidate)
-        working-directory: ${{ steps.node-workspace-head.outputs.dir }}
+        working-directory: head
         run: node tools/perf/validate_perf_export.mjs --schema bench/schema/perf-output.schema.json --input storage-perf-results/head/perf_export.json
 
       - name: Compare storage perf (job summary)
-        working-directory: ${{ steps.node-workspace-head.outputs.dir }}
+        working-directory: head
         run: |
           set +e
           node --experimental-strip-types bench/compare.ts \
