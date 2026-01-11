@@ -14,12 +14,14 @@ compose() {
   AERO_DOMAIN=localhost \
     AERO_GATEWAY_UPSTREAM=aero-gateway:8080 \
     AERO_L2_PROXY_UPSTREAM=aero-l2-proxy:8090 \
+    AERO_WEBRTC_UDP_RELAY_UPSTREAM=aero-webrtc-udp-relay:8080 \
     AERO_HSTS_MAX_AGE=0 \
     AERO_CSP_CONNECT_SRC_EXTRA= \
     AERO_GATEWAY_UPSTREAM=aero-gateway:8080 \
     AERO_L2_PROXY_UPSTREAM=aero-l2-proxy:8090 \
     AERO_GATEWAY_IMAGE="aero-gateway:${PROJECT_NAME}" \
     AERO_L2_PROXY_IMAGE="aero-l2-proxy:${PROJECT_NAME}" \
+    AERO_WEBRTC_UDP_RELAY_IMAGE="aero-webrtc-udp-relay:${PROJECT_NAME}" \
     TRUST_PROXY=1 \
     CROSS_ORIGIN_ISOLATION=0 \
     AERO_FRONTEND_ROOT="$SMOKE_FRONTEND_ROOT" \
@@ -69,6 +71,14 @@ if ! echo "$health_body" | grep -Eq '(^ok$|\"ok\"[[:space:]]*:[[:space:]]*true)'
   exit 1
 fi
 
+echo "deploy smoke: waiting for https://localhost/webrtc/ice" >&2
+for _ in $(seq 1 60); do
+  if curl -kfsS https://localhost/webrtc/ice >/dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
+
 fetch_headers() {
   local url="$1"
   curl -kfsS -D- -o /dev/null "$url" | tr -d '\r'
@@ -99,11 +109,12 @@ assert_header_exact() {
 
 root_headers="$(fetch_headers https://localhost/)"
 health_headers="$(fetch_headers https://localhost/healthz)"
+webrtc_headers="$(fetch_headers https://localhost/webrtc/ice)"
 wasm_headers="$(fetch_headers "https://localhost/assets/$SMOKE_WASM_NAME")"
 
 assert_header_exact "Cache-Control" "no-cache" "$root_headers"
 
-for headers in "$root_headers" "$health_headers" "$wasm_headers"; do
+for headers in "$root_headers" "$health_headers" "$webrtc_headers" "$wasm_headers"; do
   assert_header_exact "Cross-Origin-Opener-Policy" "same-origin" "$headers"
   assert_header_exact "Cross-Origin-Embedder-Policy" "require-corp" "$headers"
   assert_header_exact "Cross-Origin-Resource-Policy" "same-origin" "$headers"
@@ -135,6 +146,13 @@ done
 
 assert_header_exact "Cache-Control" "public, max-age=31536000, immutable" "$wasm_headers"
 assert_header_exact "Content-Type" "application/wasm" "$wasm_headers"
+
+webrtc_body="$(curl -kfsS https://localhost/webrtc/ice)"
+if ! echo "$webrtc_body" | grep -Eq '\"iceServers\"[[:space:]]*:'; then
+  echo "deploy smoke: unexpected /webrtc/ice body: $webrtc_body" >&2
+  exit 1
+fi
+assert_header_exact "Content-Type" "application/json" "$webrtc_headers"
 
 # /tcp WebSocket upgrade check (requires session cookie).
 #
