@@ -4323,8 +4323,35 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
     res->is_shared = false;
     res->is_shared_alias = false;
 
+    bool allocation_created = false;
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+    // Some D3D9 runtimes do not attach a WDDM allocation handle to systemmem pool
+    // resources. For AeroGPU we still want a real guest-backed allocation so the
+    // host can write pixels directly into guest memory (WRITEBACK_DST) and the
+    // CPU can map it via LockRect. Create a system-memory segment allocation if
+    // the runtime did not supply one.
+    if (res->wddm_hAllocation == 0 && dev->wddm_device != 0) {
+      const HRESULT hr = wddm_create_allocation(dev->wddm_callbacks,
+                                                dev->wddm_device,
+                                                res->size_bytes,
+                                                &priv,
+                                                sizeof(priv),
+                                                &res->wddm_hAllocation);
+      if (FAILED(hr) || res->wddm_hAllocation == 0) {
+        logf("aerogpu-d3d9: AllocateCb failed for systemmem resource hr=0x%08lx handle=%u alloc_id=%u\n",
+             static_cast<unsigned long>(hr),
+             static_cast<unsigned>(res->handle),
+             static_cast<unsigned>(res->backing_alloc_id));
+        return trace.ret(FAILED(hr) ? hr : E_FAIL);
+      }
+      allocation_created = true;
+    }
+#endif
+
     if (res->wddm_hAllocation == 0) {
-      logf("aerogpu-d3d9: Create systemmem resource missing WDDM hAllocation (handle=%u alloc_id=%u)\n",
+      // Without a WDDM allocation handle we cannot participate in the alloc-table
+      // protocol, so WRITEBACK_DST readback is not supported.
+      logf("aerogpu-d3d9: systemmem resource missing WDDM hAllocation (handle=%u alloc_id=%u)\n",
            static_cast<unsigned>(res->handle),
            static_cast<unsigned>(res->backing_alloc_id));
       return trace.ret(E_FAIL);
@@ -4335,6 +4362,12 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
     res->storage.clear();
 
     if (!emit_create_resource_locked(dev, res.get())) {
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+      if (allocation_created && res->wddm_hAllocation != 0 && dev->wddm_device != 0) {
+        (void)wddm_destroy_allocation(dev->wddm_callbacks, dev->wddm_device, res->wddm_hAllocation);
+        res->wddm_hAllocation = 0;
+      }
+#endif
       return trace.ret(E_OUTOFMEMORY);
     }
     pCreateResource->hResource.pDrvPrivate = res.release();
