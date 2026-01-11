@@ -34,6 +34,9 @@ test('GPU worker: submit_aerogpu executes real D3D9 draw via wasm executor', asy
     const offscreen =
       typeof OffscreenCanvas !== 'undefined' && 'transferControlToOffscreen' in HTMLCanvasElement.prototype;
 
+    // Some Chromium environments can create an adapter/device but still fail for real
+    // rendering/readback (e.g. GPUBuffer.mapAsync aborts). Do a tiny mapAsync-based
+    // round-trip so we only pick the WebGPU presenter backend when it's actually usable.
     let webgpu = false;
     try {
       const gpu = (navigator as any).gpu as any;
@@ -41,11 +44,34 @@ test('GPU worker: submit_aerogpu executes real D3D9 draw via wasm executor', asy
         const adapter = await withTimeout(gpu.requestAdapter({ powerPreference: 'high-performance' }), 1000);
         if (adapter?.requestDevice) {
           const device = await withTimeout(adapter.requestDevice(), 1000);
-          webgpu = !!device;
-          try {
-            device?.destroy?.();
-          } catch {
-            // Ignore.
+          if (device) {
+            try {
+              const usage = (globalThis as any).GPUBufferUsage as any;
+              const mapMode = (globalThis as any).GPUMapMode as any;
+              if (usage?.MAP_READ && usage?.COPY_DST && mapMode?.READ !== undefined) {
+                const buf = device.createBuffer({ size: 4, usage: usage.MAP_READ | usage.COPY_DST });
+                device.queue.writeBuffer(buf, 0, new Uint32Array([0x12345678]));
+                try {
+                  device.queue.submit?.([]);
+                } catch {
+                  // Ignore (submit isn't required for writeBuffer, but calling it is harmless when supported).
+                }
+                const mapped = await withTimeout(buf.mapAsync(mapMode.READ), 1000);
+                if (mapped !== null) {
+                  const view = new Uint32Array(buf.getMappedRange());
+                  webgpu = view[0] === 0x12345678;
+                  buf.unmap();
+                }
+              }
+            } catch {
+              webgpu = false;
+            }
+
+            try {
+              device.destroy?.();
+            } catch {
+              // Ignore.
+            }
           }
         }
       }
