@@ -1935,11 +1935,17 @@ impl AerogpuD3d11Executor {
             }
         }
 
-        // The destination GPU texture content has changed; discard any pending "dirty" marker that
-        // would otherwise cause us to overwrite the copy with stale guest-memory contents.
+        // The destination GPU texture content has changed. For mip0/layer0 copies this means the
+        // CPU shadow/dirty tracking for that subresource is now invalid; clear it so later uploads
+        // don't overwrite GPU-produced pixels.
+        //
+        // For other subresources we currently keep `dirty`/`host_shadow` as-is since those track
+        // mip0/layer0-only state.
         if let Some(dst) = self.resources.textures.get_mut(&dst_texture) {
-            dst.dirty = false;
-            dst.host_shadow = None;
+            if dst_mip_level == 0 && dst_array_layer == 0 {
+                dst.dirty = false;
+                dst.host_shadow = None;
+            }
         }
 
         Ok(())
