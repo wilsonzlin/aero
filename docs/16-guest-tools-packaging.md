@@ -97,10 +97,9 @@ guest-tools/
   licenses/ (optional)
   config/
     README.md
-  certs/
+    devices.cmd   (generated during packaging)
+  certs/          (required when signing_policy != none; may be empty/absent when signing_policy=none)
     *.{cer,crt,p7b}
-  certs/ (optional when signing_policy=none)
-    *.{cer,crt,p7b}   (optional)
 ```
 
 `config/devices.cmd` is generated during packaging from the canonical Windows device contract:
