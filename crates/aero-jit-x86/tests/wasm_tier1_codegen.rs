@@ -311,6 +311,52 @@ fn wasm_tier1_call_helper_bails_out_to_interpreter_without_trapping() {
     assert_eq!(out_cpu.gpr[Gpr::Rax.as_u8() as usize], 0x1234);
 }
 
+#[cfg(feature = "tier1-inline-tlb")]
+#[test]
+fn wasm_tier1_inline_tlb_option_is_ignored_for_memory_free_blocks() {
+    let mut b = IrBuilder::new(0x1000);
+    let v0 = b.const_int(Width::W64, 0xdead_beef);
+    b.write_reg(
+        GuestReg::Gpr {
+            reg: Gpr::Rax,
+            width: Width::W64,
+            high8: false,
+        },
+        v0,
+    );
+    let ir = b.finish(IrTerminator::Jump { target: 0x2000 });
+    ir.validate().unwrap();
+
+    let wasm = Tier1WasmCodegen::new().compile_block_with_options(
+        &ir,
+        aero_jit_x86::tier1::Tier1WasmOptions { inline_tlb: true },
+    );
+    validate_wasm(&wasm);
+
+    // This instantiation intentionally does not define `env.mmu_translate` / `env.jit_exit_mmio`,
+    // so it will fail if the code generator still emits inline-TLB imports for a memory-free block.
+    let (mut store, memory, func) = instantiate(&wasm);
+
+    let mut cpu = CpuState::default();
+    cpu.rip = 0x1000;
+    cpu.rflags = abi::RFLAGS_RESERVED1;
+    let mut cpu_bytes = vec![0u8; abi::CPU_STATE_SIZE as usize];
+    write_cpu_to_wasm_bytes(&cpu, &mut cpu_bytes);
+    memory
+        .write(&mut store, CPU_PTR as usize, &cpu_bytes)
+        .unwrap();
+
+    let ret = func.call(&mut store, (CPU_PTR, JIT_CTX_PTR)).unwrap() as u64;
+    assert_eq!(ret, 0x2000);
+
+    memory
+        .read(&store, CPU_PTR as usize, &mut cpu_bytes)
+        .unwrap();
+    let snap = CpuSnapshot::from_wasm_bytes(&cpu_bytes);
+    assert_eq!(snap.rip, 0x2000);
+    assert_eq!(snap.gpr[Gpr::Rax.as_u8() as usize], 0xdead_beef);
+}
+
 #[test]
 fn wasm_tier1_mov_add_cmp_sete_ret() {
     let code = [
