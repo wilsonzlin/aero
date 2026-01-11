@@ -20,6 +20,9 @@ In-tree driver wiring:
   - virtio-blk / virtio-net: legacy portable engine (pairs with the Win7
     miniport virtio-pci modern transport in drivers/windows7/virtio/common).
   - virtio-input / virtio-snd: canonical engine.
+  - host tests:
+    - drivers/windows/virtio/common/tests => virtqueue_split.c
+    - drivers/windows7/virtio/common/tests => virtqueue_split_legacy.c
 
 This script encodes that intended wiring and fails on drift.
 """
@@ -45,6 +48,10 @@ def fail(message: str) -> None:
 
 def normalize(value: str) -> str:
     return value.replace("\\", "/").strip()
+
+
+def normalize_lower(value: str) -> str:
+    return normalize(value).lower()
 
 
 def parse_vcxproj_compiled_clcompile_includes(vcxproj: Path) -> set[str]:
@@ -96,7 +103,7 @@ def require_contains(path: Path, *, needle: str, context: str) -> None:
         text = path.read_text(encoding="utf-8", errors="replace")
     except FileNotFoundError:
         fail(f"missing required file: {path.as_posix()}")
-    if needle not in normalize(text):
+    if needle.lower() not in normalize_lower(text):
         fail(f"{context}: expected {path.as_posix()} to contain: {needle!r}")
 
 
@@ -105,8 +112,23 @@ def forbid_contains(path: Path, *, needle: str, context: str) -> None:
         text = path.read_text(encoding="utf-8", errors="replace")
     except FileNotFoundError:
         fail(f"missing required file: {path.as_posix()}")
-    if needle in normalize(text):
+    if needle.lower() in normalize_lower(text):
         fail(f"{context}: forbidden reference in {path.as_posix()}: {needle!r}")
+
+
+def check_include_hints(*, context: str, include_text: str, required: tuple[str, ...], forbidden: tuple[str, ...]) -> None:
+    include_lower = normalize_lower(include_text)
+
+    missing = [hint for hint in required if hint.lower() not in include_lower]
+    present_forbidden = [hint for hint in forbidden if hint.lower() in include_lower]
+
+    if missing or present_forbidden:
+        details: list[str] = []
+        if missing:
+            details.append("missing: " + ", ".join(repr(h) for h in missing))
+        if present_forbidden:
+            details.append("forbidden: " + ", ".join(repr(h) for h in present_forbidden))
+        fail(f"{context}: include directory drift ({'; '.join(details)})\n  includes: {include_text}")
 
 
 def main() -> None:
@@ -120,34 +142,59 @@ def main() -> None:
     # ---------------------------------------------------------------------
     # MSBuild projects: enforce the expected split-virtqueue engine per driver.
     # ---------------------------------------------------------------------
-    msbuild_projects: dict[str, tuple[Path, str, str, str]] = {
-        # Win7 miniports (StorPort/NDIS) use the Win7 common portable split-ring engine.
-        "virtio-blk": (
-            REPO_ROOT / "drivers/windows7/virtio-blk/aero_virtio_blk.vcxproj",
-            "virtqueue_split_legacy.c",
-            "virtqueue_split.c",
-            "virtio/common/include",
-        ),
-        "virtio-net": (
-            REPO_ROOT / "drivers/windows7/virtio-net/aero_virtio_net.vcxproj",
-            "virtqueue_split_legacy.c",
-            "virtqueue_split.c",
-            "virtio/common/include",
-        ),
+    msbuild_projects: dict[str, dict[str, object]] = {
+        # Win7 miniports (StorPort/NDIS) compile against the Win7 common stack and the
+        # legacy portable virtqueue engine.
+        "virtio-blk": {
+            "proj": REPO_ROOT / "drivers/windows7/virtio-blk/aero_virtio_blk.vcxproj",
+            "expected_src": "virtqueue_split_legacy.c",
+            "forbidden_src": "virtqueue_split.c",
+            "required_includes": (
+                "virtio/common/include",
+                "virtio/common/os_shim",
+                "win7/virtio/virtio-core/portable",
+            ),
+            "forbidden_includes": ("windows/virtio/common",),
+        },
+        "virtio-net": {
+            "proj": REPO_ROOT / "drivers/windows7/virtio-net/aero_virtio_net.vcxproj",
+            "expected_src": "virtqueue_split_legacy.c",
+            "forbidden_src": "virtqueue_split.c",
+            "required_includes": (
+                "virtio/common/include",
+                "virtio/common/os_shim",
+                "win7/virtio/virtio-core/portable",
+            ),
+            "forbidden_includes": ("windows/virtio/common",),
+        },
         # virtio-input targets Win7 (KMDF 1.9) and uses the canonical split virtqueue engine.
-        "virtio-input": (
-            REPO_ROOT / "drivers/windows7/virtio-input/aero_virtio_input.vcxproj",
-            "virtqueue_split.c",
-            "virtqueue_split_legacy.c",
-            "windows/virtio/common",
-        ),
+        "virtio-input": {
+            "proj": REPO_ROOT / "drivers/windows7/virtio-input/aero_virtio_input.vcxproj",
+            "expected_src": "virtqueue_split.c",
+            "forbidden_src": "virtqueue_split_legacy.c",
+            "required_includes": ("windows/virtio/common",),
+            "forbidden_includes": (),
+        },
+        "virtio-snd": {
+            "proj": REPO_ROOT / "drivers/windows7/virtio-snd/aero_virtio_snd.vcxproj",
+            "expected_src": "virtqueue_split.c",
+            "forbidden_src": "virtqueue_split_legacy.c",
+            "required_includes": ("windows/virtio/common",),
+            "forbidden_includes": (),
+        },
     }
 
-    for name, (proj, expected_src, forbidden_src, include_hint) in msbuild_projects.items():
+    for name, cfg in msbuild_projects.items():
+        proj = cfg["proj"]
+        expected_src = cfg["expected_src"]
+        forbidden_src = cfg["forbidden_src"]
+        required_includes = cfg["required_includes"]
+        forbidden_includes = cfg["forbidden_includes"]
+
         compiled = parse_vcxproj_compiled_clcompile_includes(proj)
 
-        expected_suffix = "/" + expected_src.lower()
-        forbidden_suffix = "/" + forbidden_src.lower()
+        expected_suffix = "/" + str(expected_src).lower()
+        forbidden_suffix = "/" + str(forbidden_src).lower()
 
         has_expected = any(p.lower().endswith(expected_suffix) for p in compiled)
         if not has_expected:
@@ -164,50 +211,71 @@ def main() -> None:
                 f"  project: {proj.relative_to(REPO_ROOT).as_posix()}"
             )
 
-        include_dirs = parse_vcxproj_additional_include_dirs(proj).lower()
-        if include_hint.lower() not in include_dirs:
-            fail(
-                f"{name}: MSBuild project missing expected include dir hint ({include_hint})\n"
-                f"  project: {proj.relative_to(REPO_ROOT).as_posix()}\n"
-                f"  AdditionalIncludeDirectories: {include_dirs}"
-            )
+        include_dirs = parse_vcxproj_additional_include_dirs(proj)
+        check_include_hints(
+            context=f"{name}: MSBuild project include dirs",
+            include_text=include_dirs,
+            required=tuple(str(x) for x in required_includes),  # type: ignore[arg-type]
+            forbidden=tuple(str(x) for x in forbidden_includes),  # type: ignore[arg-type]
+        )
 
     # ---------------------------------------------------------------------
     # WinDDK 7600 build.exe SOURCES files (deprecated but kept in-tree)
     # ---------------------------------------------------------------------
-    sources_files: dict[str, tuple[Path, str, str, str]] = {
-        # Miniports: portable split ring.
-        "virtio-blk": (
-            REPO_ROOT / "drivers/windows7/virtio-blk/sources",
-            "virtqueue_split_legacy.c",
-            "virtqueue_split.c",
-            "virtio/common/include",
-        ),
-        "virtio-net": (
-            REPO_ROOT / "drivers/windows7/virtio-net/sources",
-            "virtqueue_split_legacy.c",
-            "virtqueue_split.c",
-            "virtio/common/include",
-        ),
-        # WDM/KMDF: canonical split ring.
-        "virtio-input": (
-            REPO_ROOT / "drivers/windows7/virtio-input/sources",
-            "virtqueue_split.c",
-            "virtqueue_split_legacy.c",
-            "windows/virtio/common",
-        ),
-        "virtio-snd": (
-            REPO_ROOT / "drivers/windows7/virtio-snd/src/sources",
-            "virtqueue_split.c",
-            "virtqueue_split_legacy.c",
-            "windows/virtio/common",
-        ),
+    sources_files: dict[str, dict[str, object]] = {
+        "virtio-blk": {
+            "sources": REPO_ROOT / "drivers/windows7/virtio-blk/sources",
+            "expected_src": "virtqueue_split_legacy.c",
+            "forbidden_src": "virtqueue_split.c",
+            "required_includes": (
+                "virtio/common/include",
+                "virtio/common/os_shim",
+                "win7/virtio/virtio-core/portable",
+            ),
+            "forbidden_includes": ("windows/virtio/common",),
+        },
+        "virtio-net": {
+            "sources": REPO_ROOT / "drivers/windows7/virtio-net/sources",
+            "expected_src": "virtqueue_split_legacy.c",
+            "forbidden_src": "virtqueue_split.c",
+            "required_includes": (
+                "virtio/common/include",
+                "virtio/common/os_shim",
+                "win7/virtio/virtio-core/portable",
+            ),
+            "forbidden_includes": ("windows/virtio/common",),
+        },
+        "virtio-input": {
+            "sources": REPO_ROOT / "drivers/windows7/virtio-input/sources",
+            "expected_src": "virtqueue_split.c",
+            "forbidden_src": "virtqueue_split_legacy.c",
+            "required_includes": ("windows/virtio/common",),
+            "forbidden_includes": (),
+        },
+        "virtio-snd": {
+            "sources": REPO_ROOT / "drivers/windows7/virtio-snd/src/sources",
+            "expected_src": "virtqueue_split.c",
+            "forbidden_src": "virtqueue_split_legacy.c",
+            "required_includes": ("windows/virtio/common",),
+            "forbidden_includes": (),
+        },
     }
 
-    for name, (sources, expected_src, forbidden_src, include_hint) in sources_files.items():
-        require_contains(sources, needle=expected_src, context=f"{name}: SOURCES")
-        forbid_contains(sources, needle=forbidden_src, context=f"{name}: SOURCES")
-        require_contains(sources, needle=include_hint, context=f"{name}: INCLUDES")
+    for name, cfg in sources_files.items():
+        sources = cfg["sources"]
+        expected_src = cfg["expected_src"]
+        forbidden_src = cfg["forbidden_src"]
+        required_includes = cfg["required_includes"]
+        forbidden_includes = cfg["forbidden_includes"]
+
+        require_contains(sources, needle=str(expected_src), context=f"{name}: SOURCES")
+        forbid_contains(sources, needle=str(forbidden_src), context=f"{name}: SOURCES")
+
+        include_context = f"{name}: INCLUDES"
+        for hint in tuple(str(x) for x in required_includes):  # type: ignore[arg-type]
+            require_contains(sources, needle=hint, context=include_context)
+        for hint in tuple(str(x) for x in forbidden_includes):  # type: ignore[arg-type]
+            forbid_contains(sources, needle=hint, context=include_context)
 
     # ---------------------------------------------------------------------
     # Host harnesses: ensure each split-ring implementation is still exercised.
