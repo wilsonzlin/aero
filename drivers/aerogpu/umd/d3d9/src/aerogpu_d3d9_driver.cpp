@@ -148,10 +148,11 @@ constexpr uint32_t kMaxFrameLatencyMax = 16;
 // DWM/PresentEx call sites if the GPU stops making forward progress.
 constexpr uint32_t kPresentThrottleMaxWaitMs = 100;
 
-// Some WDDM/D3D9 callback structs may not expose `SubmissionFenceId` depending on
-// the WDK header vintage. When it is unavailable, we fall back to querying the
-// AeroGPU KMD fence counters via D3DKMTEscape so we still return a real fence
-// value for the submission.
+// Some WDDM/D3D9 callback structs may not expose `SubmissionFenceId`/`NewFenceValue`
+// depending on the WDK header vintage. When the runtime does not provide a
+// per-submission fence value via the callback out-params, we fall back to
+// querying the AeroGPU KMD fence counters via D3DKMTEscape so we still return a
+// real fence value for the submission.
 
 #if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
 // Some D3D9 UMD DDI members vary across WDK header vintages. Use compile-time
@@ -394,8 +395,8 @@ FenceSnapshot refresh_fence_snapshot(Adapter* adapter) {
   // Note: we intentionally do *not* use the escape's \"last submitted\" fence as
   // a per-submission fence ID when polling. Under multi-process workloads (DWM +
   // apps) it is global and can be dominated by another process's submissions.
-  // Per-submission fence IDs must come from the runtime callbacks
-  // (SubmissionFenceId).
+  // Per-submission fence IDs must come from the runtime callbacks (e.g.
+  // SubmissionFenceId / NewFenceValue).
   const uint64_t now_ms = monotonic_ms();
   bool should_query_kmd = false;
   {
@@ -1855,6 +1856,11 @@ template <typename T>
 struct has_member_SubmissionFenceId<T, std::void_t<decltype(std::declval<T>().SubmissionFenceId)>> : std::true_type {};
 
 template <typename T, typename = void>
+struct has_member_NewFenceValue : std::false_type {};
+template <typename T>
+struct has_member_NewFenceValue<T, std::void_t<decltype(std::declval<T>().NewFenceValue)>> : std::true_type {};
+
+template <typename T, typename = void>
 struct has_member_pDmaBufferPrivateData : std::false_type {};
 template <typename T>
 struct has_member_pDmaBufferPrivateData<T, std::void_t<decltype(std::declval<T>().pDmaBufferPrivateData)>> : std::true_type {};
@@ -2016,6 +2022,9 @@ HRESULT invoke_submit_callback(Device* dev, CallbackFn cb, uint32_t command_leng
 
   Arg args{};
   fill_submit_args(args, dev, command_length_bytes);
+  if constexpr (has_member_NewFenceValue<Arg>::value) {
+    args.NewFenceValue = 0;
+  }
   if constexpr (has_member_SubmissionFenceId<Arg>::value) {
     args.SubmissionFenceId = 0;
   }
@@ -2026,9 +2035,16 @@ HRESULT invoke_submit_callback(Device* dev, CallbackFn cb, uint32_t command_leng
   }
 
   if (out_submission_fence) {
-    if constexpr (has_member_SubmissionFenceId<Arg>::value) {
-      *out_submission_fence = static_cast<uint64_t>(args.SubmissionFenceId);
+    uint64_t fence = 0;
+    if constexpr (has_member_NewFenceValue<Arg>::value) {
+      fence = static_cast<uint64_t>(args.NewFenceValue);
     }
+    if (fence == 0) {
+      if constexpr (has_member_SubmissionFenceId<Arg>::value) {
+        fence = static_cast<uint64_t>(args.SubmissionFenceId);
+      }
+    }
+    *out_submission_fence = fence;
   }
 
   // The runtime may rotate command buffers/lists after a submission. Preserve the
@@ -2141,14 +2157,14 @@ uint64_t submit(Device* dev, bool is_present) {
   bool updated = false;
 #if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
   if (submitted_to_kmd) {
-    // Critical: capture the exact `SubmissionFenceId` returned by the runtime
-    // callback for *this* submission.
+    // Critical: capture the exact per-submission fence returned by the runtime
+    // callback for *this* submission (SubmissionFenceId/NewFenceValue).
     fence = submission_fence;
 
-    // Some WDK header vintages do not expose `SubmissionFenceId` on the D3D9
-    // callbacks. In that case, fall back to querying the KMD's fence counters
-    // via DxgkDdiEscape (D3DKMTEscape) so we still return a real fence value and
-    // never "fake complete" fences in-process.
+    // Some WDK header vintages do not expose the callback fence outputs. In
+    // that case, fall back to querying the KMD's fence counters via DxgkDdiEscape
+    // (D3DKMTEscape) so we still return a real fence value and never "fake
+    // complete" fences in-process.
     uint64_t kmd_submitted = 0;
     uint64_t kmd_completed = 0;
     bool kmd_ok = false;

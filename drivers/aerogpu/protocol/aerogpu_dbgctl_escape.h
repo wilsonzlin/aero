@@ -91,8 +91,8 @@ typedef struct aerogpu_escape_query_fence_out {
    * NOTE: `last_submitted_fence` is global across all guest processes using the
    * adapter (DWM + apps). UMDs must not use it to infer the fence ID for an
    * individual submission; per-submission fence IDs come from the D3D runtime
-   * callbacks (`SubmissionFenceId`). `last_completed_fence` is useful for
-   * polling overall GPU forward progress.
+   * callbacks (for example `SubmissionFenceId` / `NewFenceValue`).
+   * `last_completed_fence` is useful for polling overall GPU forward progress.
    */
   aerogpu_escape_u64 last_submitted_fence;
   aerogpu_escape_u64 last_completed_fence;
