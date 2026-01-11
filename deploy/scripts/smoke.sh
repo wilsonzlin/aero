@@ -23,6 +23,7 @@ compose() {
     -u AERO_L2_ALLOWED_UDP_PORTS \
     -u AERO_L2_ALLOWED_DOMAINS \
     -u AERO_L2_BLOCKED_DOMAINS \
+    -u AERO_L2_TOKEN \
     -u AERO_L2_AUTH_MODE \
     -u AERO_L2_API_KEY \
     -u AERO_L2_JWT_SECRET \
@@ -536,7 +537,7 @@ function checkTcpUpgrade(cookiePair) {
   });
 }
 
-function checkL2Upgrade(cookiePair, path) {
+function checkL2Upgrade(path) {
   return new Promise((resolve, reject) => {
     const guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
     const key = crypto.randomBytes(16).toString("base64");
@@ -550,7 +551,6 @@ function checkL2Upgrade(cookiePair, path) {
       "Sec-WebSocket-Version: 13",
       `Sec-WebSocket-Key: ${key}`,
       `Sec-WebSocket-Protocol: ${l2Protocol}`,
-      `Cookie: ${cookiePair}`,
       `Origin: https://${host}`,
       "",
       "",
@@ -622,7 +622,7 @@ function checkL2Upgrade(cookiePair, path) {
   });
 }
 
-function checkL2RejectsMissingCookie(path) {
+function checkL2RejectsMissingOrigin(path) {
   return new Promise((resolve, reject) => {
     const key = crypto.randomBytes(16).toString("base64");
 
@@ -634,7 +634,6 @@ function checkL2RejectsMissingCookie(path) {
       "Sec-WebSocket-Version: 13",
       `Sec-WebSocket-Key: ${key}`,
       `Sec-WebSocket-Protocol: ${l2Protocol}`,
-      `Origin: https://${host}`,
       "",
       "",
     ].join("\r\n");
@@ -668,11 +667,11 @@ function checkL2RejectsMissingCookie(path) {
       const lines = headerBlock.split("\r\n");
       const statusLine = lines[0] ?? "";
       const status = parseStatusCode(statusLine);
-      if (status === 401 || status === 403) {
+      if (status === 403) {
         resolve();
         return;
       }
-      reject(new Error(`expected ${path} without cookie to be rejected with 401/403 (got: ${statusLine})`));
+      reject(new Error(`expected ${path} without Origin to be rejected with 403 (got: ${statusLine})`));
     });
 
     socket.on("error", (err) => {
@@ -1225,7 +1224,7 @@ function checkUdpRelayToken(cookiePair) {
   let lastL2Error;
   for (let attempt = 1; attempt <= 30; attempt++) {
     try {
-      await checkL2Upgrade(session.cookiePair, session.l2Path);
+      await checkL2Upgrade(session.l2Path);
       lastL2Error = undefined;
       break;
     } catch (err) {
@@ -1239,7 +1238,7 @@ function checkUdpRelayToken(cookiePair) {
     throw lastL2Error;
   }
 
-  await checkL2RejectsMissingCookie(session.l2Path);
+  await checkL2RejectsMissingOrigin(session.l2Path);
   const token = await checkUdpRelayToken(session.cookiePair);
   if (token !== session.udpRelayToken) {
     throw new Error(`mismatched udp relay token: /session=${session.udpRelayToken} /udp-relay/token=${token}`);

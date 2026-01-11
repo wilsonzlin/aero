@@ -224,36 +224,19 @@ Dev escape hatch:
 
 - `AERO_L2_OPEN=1` disables Origin enforcement (trusted local development only).
 
-### Authentication (cookie / JWT / API key)
+### Token authentication (WebSocket-compatible)
 
 Origin enforcement is not sufficient to protect an internet-exposed L2 endpoint:
 
 - Non-browser WebSocket clients can omit `Origin`.
 - Non-browser clients can trivially forge an `Origin` header.
 
-The canonical deployment model is to require authentication during the WebSocket upgrade:
+If `AERO_L2_TOKEN` is set, `aero-l2-proxy` requires a matching token during the WebSocket upgrade:
 
-- **Cookie session** (recommended single-origin deployment):
-  - `AERO_L2_AUTH_MODE=cookie`
-  - Clients first call `POST /session` on `backend/aero-gateway` to obtain the `aero_session` cookie,
-    then open `wss://<origin><endpoints.l2>` (the cookie is sent automatically; do not hardcode `/l2`).
-  - The L2 proxy must be configured with the same secret as the gateway:
-    `AERO_L2_SESSION_SECRET` must match the gateway’s `SESSION_SECRET`.
-- **JWT** (recommended for cross-origin / relay bridging):
-  - `AERO_L2_AUTH_MODE=jwt` (or `cookie_or_jwt`)
-  - Configure the verification secret: `AERO_L2_JWT_SECRET=...`
-  - Clients forward a token during upgrade:
-    - Query string: `?token=<jwt>`
-    - Or (preferred when possible): offer an additional WebSocket subprotocol token
-      `aero-l2-token.<token>` alongside `aero-l2-tunnel-v1`. This avoids credentials in URLs/logs,
-      but requires a header-safe token value (RFC 6455 HTTP "token" / RFC 7230 `tchar`; base64url/JWT works).
-- **API key** (simpler, but avoid long-lived keys for public deployments):
-  - `AERO_L2_AUTH_MODE=api_key`
-  - Configure the key: `AERO_L2_API_KEY=...`
-  - Clients forward the key during upgrade (typically via query string, e.g. `?apiKey=<key>` or `?token=<key>`),
-    or via `Sec-WebSocket-Protocol: aero-l2-token.<token>`.
+- Recommended: `?token=<value>` query parameter.
+- Optional: `Sec-WebSocket-Protocol: aero-l2-token.<value>` (to avoid placing tokens in URLs/logs; requires a header-safe token value).
 
-Missing/incorrect credentials MUST reject the upgrade with **HTTP 401** (no WebSocket).
+Missing/incorrect tokens MUST reject the upgrade with **HTTP 401** (no WebSocket).
 
 ### Quotas
 

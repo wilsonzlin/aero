@@ -150,11 +150,10 @@ talks to a single HTTPS origin:
 - `/l2` → **aero-l2-proxy** (Option C; `aero-l2-tunnel-v1`)
 
 Auth note (Option C): `/l2` should be treated like `/tcp` — **Origin allowlist + authentication**
-are required. In the default single-origin deployment model, browsers call `POST /session` first to
-receive the `aero_session` cookie and endpoint discovery metadata, then connect to
-`wss://<origin><endpoints.l2>` (cookie auth; avoid hardcoding the path). For
-cross-origin deployments (or WebRTC relay bridging), configure token-based auth (JWT / API key) and
-forward the credential during the WebSocket upgrade (typically via query params).
+are required. The production Rust L2 proxy (`crates/aero-l2-proxy`) enforces an Origin allowlist by
+default, and can optionally require a pre-shared token (`AERO_L2_TOKEN`) provided via `?token=...`
+(or `aero-l2-token.<token>` in `Sec-WebSocket-Protocol`). When using the gateway session bootstrap,
+prefer `endpoints.l2` from `POST /session` instead of hardcoding `/l2`.
 
 Note: WebRTC’s **data plane** still requires UDP connectivity to the relay’s ICE port range (or a
 TURN server). The reverse proxy only fronts the relay’s HTTP/WebSocket signaling endpoints.

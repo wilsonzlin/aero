@@ -152,8 +152,8 @@ async function startGateway(opts: {
 
 async function startL2Proxy(opts: {
   port: number;
-  sessionSecret: string;
   allowedOrigin: string;
+  token: string;
   udpEchoPort: number;
 }): Promise<ServerProcess> {
   const proc = spawn('cargo', ['run', '--locked', '--quiet', '-p', 'aero-l2-proxy'], {
@@ -164,9 +164,14 @@ async function startL2Proxy(opts: {
       RUST_LOG: process.env.RUST_LOG ?? 'error',
       AERO_L2_PROXY_LISTEN_ADDR: `127.0.0.1:${opts.port}`,
       AERO_L2_ALLOWED_ORIGINS: opts.allowedOrigin,
-      // Cookie auth (Task 817) - the proxy verifies aero-gateway's `aero_session` token.
-      AERO_L2_AUTH_MODE: 'cookie',
-      AERO_L2_SESSION_SECRET: opts.sessionSecret,
+      // Token auth: browser clients pass `?token=...` since WebSocket headers are restricted.
+      AERO_L2_TOKEN: opts.token,
+      // Ensure this test doesn't inherit local developer quotas/keepalive settings.
+      AERO_L2_OPEN: '0',
+      AERO_L2_MAX_CONNECTIONS: '0',
+      AERO_L2_MAX_BYTES_PER_CONNECTION: '0',
+      AERO_L2_MAX_FRAMES_PER_SECOND: '0',
+      AERO_L2_PING_INTERVAL_MS: '0',
       // Deterministic forward maps so the test never depends on external DNS or network.
       AERO_L2_ALLOWED_UDP_PORTS: String(opts.udpEchoPort),
       AERO_L2_UDP_FORWARD: `203.0.113.11:${opts.udpEchoPort}=127.0.0.1:${opts.udpEchoPort}`,
@@ -187,15 +192,16 @@ async function startL2Proxy(opts: {
   };
 }
 
-test.describe.serial('l2 tunnel (cookie auth)', () => {
+test.describe.serial('l2 tunnel (token auth)', () => {
   test.skip(({ browserName }) => browserName !== 'chromium', 'l2 tunnel regression test runs on Chromium only');
   // This spec spawns `cargo run --locked -p aero-l2-proxy`, which may need to compile the
   // Rust crate on first run. Give it ample time so CI isn't flaky on cold caches.
   test.describe.configure({ timeout: 600_000 });
 
-  test('cookie-authenticated WebSocket /l2 negotiates subprotocol and relays frames', async ({ page }) => {
+  test('token-authenticated WebSocket /l2 negotiates subprotocol and relays frames', async ({ page }) => {
     const sessionSecret = 'aero-e2e-session-secret';
     const webOrigin = 'http://127.0.0.1:5173';
+    const l2Token = 'aero-e2e-l2-token';
 
     const udpEcho = await startUdpEchoServer();
     const gatewayPort = await getFreeTcpPort();
@@ -206,12 +212,12 @@ test.describe.serial('l2 tunnel (cookie auth)', () => {
 
     try {
       gateway = await startGateway({ port: gatewayPort, sessionSecret, allowedOrigin: webOrigin });
-      l2Proxy = await startL2Proxy({ port: l2Port, sessionSecret, allowedOrigin: webOrigin, udpEchoPort: udpEcho.port });
+      l2Proxy = await startL2Proxy({ port: l2Port, allowedOrigin: webOrigin, token: l2Token, udpEchoPort: udpEcho.port });
 
       await page.goto('http://127.0.0.1:5173/tests/e2e/fixtures/l2_tunnel.html', { waitUntil: 'load' });
 
       const result = await page.evaluate(
-        async ({ gatewayOrigin, l2ProxyOrigin, udpEchoPort }) => {
+        async ({ gatewayOrigin, l2ProxyOrigin, l2Token, udpEchoPort }) => {
           const { decodeL2Message, encodeL2Frame, L2_TUNNEL_TYPE_FRAME } = await import(
             '/web/src/shared/l2TunnelProtocol.ts'
           );
@@ -463,8 +469,7 @@ test.describe.serial('l2 tunnel (cookie auth)', () => {
           wsBase.pathname = l2Path;
           const wsUrl = wsBase.toString();
 
-          // First, prove that the proxy rejects WebSocket upgrades without the session cookie.
-          // (This catches regressions where cookie auth is accidentally disabled.)
+          // First, prove that the proxy rejects WebSocket upgrades without the token.
           const unauth = await withTimeout(
             new Promise<{ opened: boolean; code?: number; reason?: string }>((resolve) => {
               const ws = new WebSocket(wsUrl, 'aero-l2-tunnel-v1');
@@ -480,30 +485,14 @@ test.describe.serial('l2 tunnel (cookie auth)', () => {
               ws.onclose = (evt) => resolve({ opened, code: evt.code, reason: evt.reason });
             }),
             10_000,
-            'WebSocket without cookie',
+            'WebSocket without token',
           );
           if (unauth.opened) {
-            throw new Error('expected WebSocket /l2 to be rejected without session cookie');
+            throw new Error('expected WebSocket /l2 to be rejected without token');
           }
 
-          // Establish a gateway session cookie (httpOnly) that will be sent on the /l2 WebSocket.
-          const sessionRes = await withTimeout(
-            fetch(`${gatewayOrigin}/session`, {
-              method: 'POST',
-              credentials: 'include',
-              headers: { 'content-type': 'application/json' },
-              body: '{}',
-            }),
-            10_000,
-            'fetch /session',
-          );
-          if (!sessionRes.ok) throw new Error(`session endpoint failed: ${sessionRes.status}`);
-          const sessionJson = await sessionRes.json().catch(() => null);
-          if (sessionJson?.endpoints?.l2 !== l2Path) {
-            throw new Error(`session endpoints.l2 changed between calls (${String(l2Path)} -> ${String(sessionJson?.endpoints?.l2)})`);
-          }
-
-          const ws = new WebSocket(wsUrl, 'aero-l2-tunnel-v1');
+          wsBase.searchParams.set('token', l2Token);
+          const ws = new WebSocket(wsBase.toString(), 'aero-l2-tunnel-v1');
           ws.binaryType = 'arraybuffer';
 
           await withTimeout(
@@ -634,7 +623,7 @@ test.describe.serial('l2 tunnel (cookie auth)', () => {
           ws.close(1000, 'done');
           return { negotiatedProtocol, echoed };
         },
-        { gatewayOrigin: gateway!.origin, l2ProxyOrigin: l2Proxy!.origin, udpEchoPort: udpEcho.port },
+        { gatewayOrigin: gateway!.origin, l2ProxyOrigin: l2Proxy!.origin, l2Token, udpEchoPort: udpEcho.port },
       );
 
       expect(result.negotiatedProtocol).toBe('aero-l2-tunnel-v1');

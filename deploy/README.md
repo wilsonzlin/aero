@@ -179,14 +179,11 @@ cp deploy/.env.example deploy/.env
 - `AERO_L2_ALLOWED_ORIGINS_EXTRA` (default: empty)
   - Optional comma-prefixed origins appended to the L2 proxy Origin allowlist.
   - Example: `,https://localhost:5173`
-- `AERO_L2_AUTH_MODE` (default: `cookie`)
-  - L2 tunnel auth mode for `/l2` (cookie, jwt, api_key, or cookie_or_jwt).
-  - In the default single-origin deployment, cookie auth uses the `aero_session` cookie issued by
-    `POST /session`.
-- `AERO_L2_API_KEY` (optional)
-  - API key to require when `AERO_L2_AUTH_MODE=api_key`.
-- `AERO_L2_JWT_SECRET` (optional)
-  - JWT secret to verify tokens when `AERO_L2_AUTH_MODE=jwt` or `cookie_or_jwt`.
+- `AERO_L2_TOKEN` (optional)
+  - Optional token required by `crates/aero-l2-proxy` during the WebSocket upgrade to `/l2`.
+  - If set, clients must provide the token via:
+    - `?token=<value>` query param, or
+    - `Sec-WebSocket-Protocol: aero-l2-token.<value>` (in addition to `aero-l2-tunnel-v1`).
 - `AERO_WEBRTC_UDP_RELAY_IMAGE` (default: `aero-webrtc-udp-relay:dev`)
   - When unset, docker compose builds the UDP relay from `proxy/webrtc-udp-relay/`.
 - `AERO_WEBRTC_UDP_RELAY_UPSTREAM` (default: `aero-webrtc-udp-relay:8080`)
@@ -212,8 +209,8 @@ Gateway environment variables (used by `backend/aero-gateway` and passed through
   - Used to derive the default `ALLOWED_ORIGINS` allowlist.
 - `SESSION_SECRET` (strongly recommended for production)
   - If unset, the gateway generates a temporary secret at startup and sessions won’t survive restarts.
-  - Note: `aero-l2-proxy` cookie auth also depends on this secret (the L2 proxy must be configured
-    with the same secret to validate the `aero_session` cookie).
+  - Note: `crates/aero-l2-proxy` does not currently validate gateway sessions; configure
+    `AERO_L2_TOKEN` (and/or upstream auth at the edge) if you need L2 tunnel authentication.
 - `ALLOWED_ORIGINS` (optional, comma-separated)
   - Set explicitly if you need to allow additional origins (e.g. a dev server).
 - `TRUST_PROXY` (default in compose: `1`)
@@ -437,8 +434,9 @@ WebSocket:
 - Caddy proxies the WebSocket upgrade to the `aero-l2-proxy` container
 - The connection uses subprotocol: `aero-l2-tunnel-v1`
 
-Auth note: `/l2` is authenticated using the same `aero_session` cookie issued by the gateway at
-`POST /session` (similar to `/tcp`). Create a session before opening the WebSocket.
+Auth note: `/l2` enforces an Origin allowlist by default. For internet-exposed deployments, set
+`AERO_L2_TOKEN` and provide it as `?token=...` (or via `aero-l2-token.<token>` in
+`Sec-WebSocket-Protocol`).
 
 Endpoint discovery note: browser clients should treat the gateway as the canonical bootstrap API and
 avoid hardcoding `/l2`. The `POST /session` response includes `endpoints.l2` (a same-origin path)
@@ -468,14 +466,10 @@ docker compose -f deploy/docker-compose.yml up --build
 Using `wscat`:
 
 ```bash
-# Create a session cookie (copy the `aero_session=...` pair from Set-Cookie):
-curl -k -i -X POST https://localhost/session -H 'content-type: application/json' -d '{}'
-
-# Then include it in the WebSocket upgrade request:
+# If `AERO_L2_TOKEN` is set, provide it via query param:
 NODE_TLS_REJECT_UNAUTHORIZED=0 npx wscat \
-  -c "wss://localhost/l2" \
+  -c "wss://localhost/l2?token=<AERO_L2_TOKEN>" \
   -s aero-l2-tunnel-v1 \
-  -H "Cookie: aero_session=<...>" \
   -o https://localhost
 ```
 
@@ -486,8 +480,7 @@ Using `websocat`:
 # add it explicitly (see `websocat --help` for the exact flag in your version).
 websocat --insecure --protocol aero-l2-tunnel-v1 \
   -H "Origin: https://localhost" \
-  -H "Cookie: aero_session=<...>" \
-  wss://localhost/l2
+  wss://localhost/l2?token=<AERO_L2_TOKEN>
 ```
 
 ### Production note: egress policy

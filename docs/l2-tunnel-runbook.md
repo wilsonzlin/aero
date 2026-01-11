@@ -25,20 +25,15 @@ cargo run --locked -p aero-l2-proxy
 # Optional: override listen address (default: 0.0.0.0:8090)
 # AERO_L2_PROXY_LISTEN_ADDR=127.0.0.1:8090 cargo run --locked -p aero-l2-proxy
 
- # Security knobs (Rust `crates/aero-l2-proxy`):
- # - Origin is enforced by default; configure an allowlist for your dev origin:
- #   AERO_L2_ALLOWED_ORIGINS=http://localhost:5173 cargo run --locked -p aero-l2-proxy
-# - Auth (recommended; matches the gateway’s session model):
-#   - Cookie session (single-origin deployments; requires `aero_session` cookie from `POST /session`):
-#     AERO_L2_AUTH_MODE=cookie AERO_L2_SESSION_SECRET=sekrit cargo run --locked -p aero-l2-proxy
-#   - API key (simple cross-origin / server-to-server; dev-only if long-lived):
-#     AERO_L2_AUTH_MODE=api_key AERO_L2_API_KEY=sekrit cargo run --locked -p aero-l2-proxy
-#   - JWT (recommended for cross-origin / short-lived tokens):
-#     AERO_L2_AUTH_MODE=jwt AERO_L2_JWT_SECRET=sekrit cargo run --locked -p aero-l2-proxy
-#   - Mixed mode (cookie browser clients + JWT for WebRTC relay bridging):
-#     AERO_L2_AUTH_MODE=cookie_or_jwt AERO_L2_SESSION_SECRET=sekrit AERO_L2_JWT_SECRET=sekrit cargo run --locked -p aero-l2-proxy
+# Security knobs (Rust `crates/aero-l2-proxy`):
+# - Origin is enforced by default; configure an allowlist for your dev origin:
+#   AERO_L2_ALLOWED_ORIGINS=http://localhost:5173 cargo run --locked -p aero-l2-proxy
 # - Trusted local dev escape hatch (disables Origin enforcement):
 #   AERO_L2_OPEN=1 cargo run --locked -p aero-l2-proxy
+# - Optional token auth (recommended for internet-exposed deployments):
+#   AERO_L2_TOKEN=sekrit cargo run --locked -p aero-l2-proxy
+#   Clients provide the token via `?token=...` or `Sec-WebSocket-Protocol: aero-l2-token.<token>`
+#   (in addition to `aero-l2-tunnel-v1`).
 #
 # Observability knobs:
 # - Optional: per-session PCAPNG capture (writes one file per tunnel session):
@@ -76,7 +71,7 @@ The existing relay implementation lives at `proxy/webrtc-udp-relay/`:
 cd proxy/webrtc-udp-relay
 
 # Bridge WebRTC DataChannel "l2" to the L2 proxy WebSocket endpoint.
-# (The relay will forward the client's Origin + AUTH_MODE credential by default.)
+# (The relay will forward the client's Origin + token by default.)
 export L2_BACKEND_WS_URL=ws://127.0.0.1:8090/l2
 
 # Optional knobs:
@@ -146,45 +141,37 @@ DHCP verification (until the automated probe covers it):
 Treat the L2 proxy as a **high-risk network egress surface**. A secure deployment needs:
 **Origin enforcement + authentication + egress policy**.
 
-### 1) Single-origin deployment (cookie session) — recommended
+### 1) Origin allowlist (required)
 
-This is the default deployment model in `deploy/docker-compose.yml`:
+By default, `crates/aero-l2-proxy` requires an `Origin` header on the WebSocket upgrade request and
+validates it against an allowlist:
 
-1. The browser calls the gateway to create a session cookie:
+- `AERO_L2_ALLOWED_ORIGINS`: comma-separated list of allowed origins (exact match).
+  - Example: `https://app.example.com,https://staging.example.com`
+  - `*` allows any Origin value (still requires the header to be present).
 
-   - `POST https://<origin>/session` with `credentials: "include"`
-   - The response sets `Set-Cookie: aero_session=...; HttpOnly; Secure`
+Dev escape hatch:
 
-2. The browser opens the L2 tunnel WebSocket on the same origin:
+- `AERO_L2_OPEN=1` disables Origin enforcement (trusted local development only).
 
-   - `wss://<origin>/l2` with subprotocol `aero-l2-tunnel-v1`
-   - The `aero_session` cookie is sent automatically by the browser.
+### 2) Token authentication (recommended)
 
-Server-side configuration requirements:
+Origin enforcement is not sufficient to protect an internet-exposed L2 endpoint: non-browser
+clients can omit or forge `Origin`.
 
-- `backend/aero-gateway` and `crates/aero-l2-proxy` must share the same session signing secret:
-  - `SESSION_SECRET` (gateway)
-  - `AERO_L2_SESSION_SECRET` (L2 proxy)
+If `AERO_L2_TOKEN` is set, the L2 proxy requires a matching token during the WebSocket upgrade:
 
-### 2) Cross-origin deployment (JWT / API key token forwarding)
+- Recommended: `wss://proxy.example.com/l2?token=<value>`
+- Optional: `Sec-WebSocket-Protocol: aero-l2-token.<value>` (in addition to `aero-l2-tunnel-v1`)
 
-If the frontend is hosted on a different origin (or you need non-browser clients), cookies may not
-work. In that case, deploy `aero-l2-proxy` with token-based auth and forward the token during the
-WebSocket upgrade (typically via query string, since browsers can’t set arbitrary WS headers):
+Missing/incorrect tokens reject the upgrade with **HTTP 401**.
 
-- **JWT** (recommended):
-  - Configure: `AERO_L2_AUTH_MODE=jwt` and `AERO_L2_JWT_SECRET=...`
-  - Connect with: `wss://proxy.example.com/l2?token=<jwt>`
-- **API key** (simpler, but avoid long-lived keys for public deployments):
-  - Configure: `AERO_L2_AUTH_MODE=api_key` and `AERO_L2_API_KEY=...`
-  - Connect with: `wss://proxy.example.com/l2?apiKey=<key>`
-
-### 3) WebRTC L2 bridging (relay forwards auth + Origin)
+### 3) WebRTC L2 bridging (relay forwards token + Origin)
 
 When carrying the L2 tunnel over WebRTC, the browser connects to `proxy/webrtc-udp-relay` and the
 relay opens a backend WebSocket to `aero-l2-proxy` and bridges:
 
-- **auth** (forwarded to the backend, e.g. via query string), and
+- **token** (forwarded to the backend, e.g. via query string), and
 - **Origin** (forwarded so the backend can enforce the same allowlist).
 
 In the canonical compose stack, enable the backend wiring in `deploy/.env`:
@@ -197,10 +184,10 @@ L2_BACKEND_FORWARD_ORIGIN=1
 
 Then ensure auth is compatible end-to-end:
 
-- Configure `aero-l2-proxy` to accept the forwarded credential (for example
-  `AERO_L2_AUTH_MODE=cookie_or_jwt`).
+- Configure `aero-l2-proxy` with `AERO_L2_TOKEN=...`.
 - Configure the relay auth mode (`AUTH_MODE=jwt` or `AUTH_MODE=api_key`) so the browser presents a
-  credential that the relay can forward to the backend.
+  credential that the relay can forward to the backend as `?token=...` (or via `aero-l2-token.*` when
+  `L2_BACKEND_AUTH_FORWARD_MODE=subprotocol` is used).
 
 ## Production checklist
 

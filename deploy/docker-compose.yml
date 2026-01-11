@@ -138,18 +138,12 @@ services:
       #   AERO_L2_ALLOWED_ORIGINS_EXTRA=",https://localhost:5173"
       AERO_L2_ALLOWED_ORIGINS: https://${AERO_DOMAIN:-localhost}${AERO_L2_ALLOWED_ORIGINS_EXTRA:-}
 
-      # Authentication (recommended).
+      # Optional token authentication (recommended for internet-exposed deployments).
       #
-      # Default: require the same `aero_session` cookie issued by `aero-gateway` at `POST /session`.
-      #
-      # IMPORTANT: Cookie auth requires `AERO_L2_SESSION_SECRET` to match the gateway's
-      # `SESSION_SECRET`. If you leave SESSION_SECRET unset, the gateway will generate a temporary
-      # secret and the L2 proxy will be unable to validate the cookie.
-      AERO_L2_AUTH_MODE: ${AERO_L2_AUTH_MODE:-cookie}
-      AERO_L2_SESSION_SECRET: ${SESSION_SECRET:-}
-      # Optional token-based auth (for cross-origin deployments or WebRTC relay L2 bridging).
-      AERO_L2_API_KEY: ${AERO_L2_API_KEY:-}
-      AERO_L2_JWT_SECRET: ${AERO_L2_JWT_SECRET:-}
+      # If set, upgrades must include the token via:
+      # - `?token=<value>` query param, OR
+      # - `Sec-WebSocket-Protocol: aero-l2-token.<value>` (in addition to `aero-l2-tunnel-v1`)
+      AERO_L2_TOKEN: ${AERO_L2_TOKEN:-}
 
       # Egress policy (highly recommended to set allowlists for production deployments).
       AERO_L2_ALLOW_PRIVATE_IPS: ${AERO_L2_ALLOW_PRIVATE_IPS:-0}
@@ -212,7 +206,7 @@ services:
       #   L2_BACKEND_ORIGIN=https://example.com       # alias: L2_BACKEND_ORIGIN_OVERRIDE
       #   L2_BACKEND_TOKEN=sekrit                     # Sec-WebSocket-Protocol: aero-l2-token.<token>
       #
-      # Then ensure the relay can forward auth + Origin to the backend:
+      # Then ensure the relay can forward token + Origin to the backend:
       #   L2_BACKEND_AUTH_FORWARD_MODE=query
       #   L2_BACKEND_FORWARD_ORIGIN=1
       - L2_BACKEND_WS_URL
