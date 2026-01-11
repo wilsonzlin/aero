@@ -13,7 +13,7 @@
 
 #include "../include/aerogpu_d3d10_11_umd.h"
 
-#if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS)
+#if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS
 
 #include <d3d10_1umddi.h>
 #include <d3d10_1.h>
@@ -1589,4 +1589,4 @@ HRESULT AEROGPU_APIENTRY OpenAdapter10_2(D3D10DDIARG_OPENADAPTER* pOpenData) {
 
 } // extern "C"
 
-#endif // defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS)
+#endif // defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS
