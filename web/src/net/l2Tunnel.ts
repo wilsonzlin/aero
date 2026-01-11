@@ -593,8 +593,15 @@ export class WebSocketL2TunnelClient extends BaseL2TunnelClient {
       url.pathname = `${path}/l2`;
     }
 
-    if (this.token !== undefined && this.tokenTransport !== "subprotocol") {
-      url.searchParams.set("token", this.token);
+    if (this.token !== undefined) {
+      if (this.tokenTransport === "subprotocol") {
+        // If the caller provided `token` and requested subprotocol transport,
+        // ensure we do not leak/override with a `?token=` value that may already
+        // exist on the base URL.
+        url.searchParams.delete("token");
+      } else {
+        url.searchParams.set("token", this.token);
+      }
     }
 
     return url.toString();
