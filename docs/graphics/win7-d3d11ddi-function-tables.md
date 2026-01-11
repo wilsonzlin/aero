@@ -99,10 +99,18 @@ The D3D11 UMD DDI has two error-reporting styles:
 
 Practical rule:
 
-* If the DDI is `void`, use: `pfnSetErrorCb(hDevice, E_NOTIMPL)` (or `E_INVALIDARG`).
+* If the DDI is `void`, use: `pfnSetErrorCb(<device>, E_NOTIMPL)` (or `E_INVALIDARG`).
 * If the DDI returns `HRESULT`, return the error code directly.
 
 Do **not** “half-stub” a `void` DDI by silently doing nothing if it is supposed to create/modify state the runtime relies on; that often leads to later GPU hangs or invalid command streams.
+
+Important detail: most `void` DDIs live on the **device context table** and are called as:
+
+* `pfnSomething(D3D11DDI_HDEVICECONTEXT hCtx, ...)` (no `hDevice` parameter)
+
+But the error callback is device-scoped. In practice that means your context-private struct should store (or be able to recover) the parent `D3D11DDI_HDEVICE` so stubs can do:
+
+* `g_DeviceCallbacks.pfnSetErrorCb(hDevice, E_NOTIMPL);`
 
 ### Non-null discipline: stub-fill, then override
 
@@ -121,8 +129,8 @@ Pseudocode shape:
 ```c
 // 1) A stub that matches the failure style of the DDI entrypoint.
 static HRESULT APIENTRY Stub_HRESULT(...) { return E_NOTIMPL; }
-static void APIENTRY Stub_VOID(D3D11DDI_HDEVICE hDevice, ...) {
-  g_DeviceCallbacks.pfnSetErrorCb(hDevice, E_NOTIMPL);
+static void APIENTRY Stub_VOID(D3D11DDI_HDEVICECONTEXT hCtx, ...) {
+  g_DeviceCallbacks.pfnSetErrorCb(DeviceFromContext(hCtx), E_NOTIMPL);
 }
 
 // 2) A fully-populated table (every field assigned).
@@ -155,9 +163,8 @@ LoadLibrary(<your_umd>.dll)
 
     runtime calls adapter->pfnGetCaps(...)  [multiple queries]
     runtime calls adapter->pfnCalcPrivateDeviceSize(...)
-    runtime allocates:
-      - driver-private bytes for D3D11DDI_HDEVICE
-      - driver-private bytes for D3D11DDI_HDEVICECONTEXT (immediate context)
+    runtime allocates driver-private memory for the handles it passes to CreateDevice
+    (at least a `D3D11DDI_HDEVICE`, and typically an immediate `D3D11DDI_HDEVICECONTEXT` as well).
 
     runtime calls adapter->pfnCreateDevice(...)
       -> driver constructs device + immediate context in provided private memory
