@@ -3,6 +3,11 @@ This directory contains a **small unprivileged TCP relay** that makes it possibl
 
 Browsers cannot open raw TCP sockets. The only browser‑legal option is a WebSocket to a relay, which then opens TCP sockets on behalf of the browser.
 
+> Note: For local development, prefer [`net-proxy/`](../../net-proxy/) which now also exposes `GET /tcp-mux`
+> (subprotocol `aero-tcp-mux-v1`) and uses the same `AERO_PROXY_OPEN` / `AERO_PROXY_ALLOW` policy model as the
+> repo’s other dev networking relays. This `tools/net-proxy-server` package remains useful as a standalone mux relay
+> for `?token=` auth compatibility testing.
+
 ## Features
 - Single **multiplexed** WebSocket session carries many logical TCP streams
 - Speaks the canonical **`aero-tcp-mux-v1`** framing used by `backend/aero-gateway`
