@@ -82,7 +82,7 @@ starve low-latency device operations.
 For Rust/WASM, the same kind numbers are also exposed as:
 
 ```rust
-use aero_ipc::layout::io_ipc_queue_kind::{CMD, EVT, NET_TX, NET_RX};
+use aero_ipc::layout::io_ipc_queue_kind::{CMD, EVT, HID_IN, NET_TX, NET_RX};
 ```
 
 #### NET_TX / NET_RX semantics
