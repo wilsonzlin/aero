@@ -18,8 +18,9 @@ To keep includes unambiguous:
     name in-tree, and
   - the Win7 common split-ring header is named `virtqueue_split_legacy.h`.
 
-Drivers may include either header depending on which implementation they are using,
-but they must not rely on include path ordering to "pick the right one".
+Shipped drivers are expected to include the canonical `virtqueue_split.h`; the
+legacy header is retained for host-side unit tests and experiments. Regardless,
+drivers must not rely on include path ordering to "pick the right one".
 """
 
 from __future__ import annotations

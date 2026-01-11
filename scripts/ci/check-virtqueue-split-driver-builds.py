@@ -16,8 +16,10 @@ The repository intentionally contains *two* split-ring implementations:
      - drivers/windows7/virtio/common/include/virtqueue_split_legacy.h
      - API surface: `virtqueue_split_*` + `virtio_os_ops_t`
 
-Different in-tree drivers may use different engines. This script encodes the
-current intended wiring and fails on drift.
+All shipped Windows 7 virtio drivers (blk/net/input/snd) are expected to use the
+canonical engine. The legacy portable engine is retained for host-side unit
+tests and compatibility/experimentation. This script encodes that intended
+wiring and fails on drift.
 """
 
 from __future__ import annotations
