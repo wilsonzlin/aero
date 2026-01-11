@@ -1,6 +1,6 @@
 # virtio-core (Win7 KMDF) — Virtio 1.0 PCI “modern” discovery + BAR mapping
 
-This directory contains a small, reusable transport layer for **Virtio 1.0 PCI modern devices** on **Windows 7 (WDK 7.1, KMDF)**.
+This directory contains a small, reusable transport layer for **Virtio 1.0 PCI modern devices** on **Windows 7 (KMDF 1.9)**.
 
 It discovers Virtio vendor-specific PCI capabilities (COMMON/NOTIFY/ISR/DEVICE config) and maps the required BAR(s) into kernel virtual space using `MmMapIoSpace`.
 
@@ -15,11 +15,31 @@ It discovers Virtio vendor-specific PCI capabilities (COMMON/NOTIFY/ISR/DEVICE c
 
 ## Integration (KMDF driver)
 
-1. Add these files to your driver project:
-   - Add `drivers/win7/virtio/virtio-core/src/*.c` and `drivers/win7/virtio/virtio-core/portable/*.c` to the build
-   - Add `drivers/win7/virtio/virtio-core/include` to the include path
+You can integrate `virtio-core` in one of two ways:
 
-2. Add a `VIRTIO_PCI_MODERN_DEVICE` to your device context:
+### Option A: MSBuild static library (recommended)
+
+`drivers/win7/virtio/virtio-core/virtio-core.vcxproj` builds a WDK-compatible static library (`virtio-core.lib`) that can be referenced by driver projects/solutions.
+
+At a high level:
+
+1. Add a **Project Reference** to `..\virtio-core\virtio-core.vcxproj`
+2. Add include paths:
+   - `drivers/win7/virtio/virtio-core/include`
+   - `drivers/win7/virtio/virtio-core/portable` (only needed if you include portable headers directly)
+
+### Option B: Compile sources into your driver
+
+If you need per-driver compile-time configuration (e.g. enabling `VIRTIO_CORE_ENABLE_DIAGNOSTICS` for one driver but not another), you can compile the sources directly:
+
+1. Add these files to your driver project:
+   - `drivers/win7/virtio/virtio-core/src/*.c`
+   - `drivers/win7/virtio/virtio-core/portable/*.c`
+2. Add `drivers/win7/virtio/virtio-core/include` to the include path
+
+After adding virtio-core to your build (either Option A or B), use it from your driver:
+
+1. Add a `VIRTIO_PCI_MODERN_DEVICE` to your device context:
 
 ```c
 #include "virtio_pci_modern.h"
@@ -32,7 +52,7 @@ typedef struct _DEVICE_CONTEXT {
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(DEVICE_CONTEXT, DeviceGetContext);
 ```
 
-3. In `EvtDevicePrepareHardware`, initialize + map:
+2. In `EvtDevicePrepareHardware`, initialize + map:
 
 ```c
 NTSTATUS
@@ -63,7 +83,7 @@ EvtDevicePrepareHardware(
 }
 ```
 
-4. In `EvtDeviceReleaseHardware` (or `EvtDeviceContextCleanup`), unmap + release:
+3. In `EvtDeviceReleaseHardware` (or `EvtDeviceContextCleanup`), unmap + release:
 
 ```c
 VOID
