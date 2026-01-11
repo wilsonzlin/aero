@@ -1775,7 +1775,7 @@ impl AerogpuSubmissionTrace {
                         let size =
                             u64::from_le_bytes(table[off + 16..off + 24].try_into().unwrap());
 
-                        if alloc_id != 0 && gpa != 0 && size != 0 {
+                        if alloc_id != 0 && size != 0 && gpa.checked_add(size).is_some() {
                             let size_u32 = u32::try_from(size).unwrap_or(u32::MAX);
                             if size_u32 <= MAX_CAPTURE_BYTES {
                                 let mut bytes = vec![0u8; size as usize];
