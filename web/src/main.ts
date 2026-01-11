@@ -285,10 +285,10 @@ function render(): void {
 
 function renderWebUsbDiagnosticsPanel(): HTMLElement {
   const link = el("a", {
-    href: "/webusb_diagnostics.html",
+    href: "./webusb_diagnostics.html",
     target: "_blank",
     rel: "noopener",
-    text: "/webusb_diagnostics.html",
+    text: "./webusb_diagnostics.html",
   });
   const supported = typeof (navigator as unknown as { usb?: unknown }).usb !== "undefined";
   return el(
