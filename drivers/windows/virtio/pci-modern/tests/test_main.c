@@ -531,6 +531,78 @@ static void TestRejectMissingDeviceCfgCap(void)
 	ExpectInitFail("missing_device_cfg_cap", &dev, VIRTIO_PCI_MODERN_INIT_ERR_CAP_PARSE_FAILED);
 }
 
+static NTSTATUS OsMapMmioFail(void *ctx, UINT64 pa, UINT32 len, volatile void **va_out)
+{
+	(void)ctx;
+	(void)pa;
+	(void)len;
+	(void)va_out;
+	return STATUS_UNSUCCESSFUL;
+}
+
+static NTSTATUS OsMapMmioNull(void *ctx, UINT64 pa, UINT32 len, volatile void **va_out)
+{
+	(void)ctx;
+	(void)pa;
+	(void)len;
+	*va_out = NULL;
+	return STATUS_SUCCESS;
+}
+
+static void *OsSpinlockCreateFail(void *ctx)
+{
+	(void)ctx;
+	return NULL;
+}
+
+static void TestRejectMapMmioFailure(void)
+{
+	FAKE_DEV dev;
+	VIRTIO_PCI_MODERN_OS_INTERFACE os;
+	VIRTIO_PCI_MODERN_TRANSPORT t;
+	NTSTATUS st;
+
+	FakeDevInitValid(&dev);
+	os = GetOs(&dev);
+	os.MapMmio = OsMapMmioFail;
+
+	st = VirtioPciModernTransportInit(&t, &os, VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT, 0x10000000u, sizeof(dev.Bar0));
+	assert(st == STATUS_UNSUCCESSFUL);
+	assert(t.InitError == VIRTIO_PCI_MODERN_INIT_ERR_MAP_MMIO_FAILED);
+}
+
+static void TestRejectMapMmioNullPointer(void)
+{
+	FAKE_DEV dev;
+	VIRTIO_PCI_MODERN_OS_INTERFACE os;
+	VIRTIO_PCI_MODERN_TRANSPORT t;
+	NTSTATUS st;
+
+	FakeDevInitValid(&dev);
+	os = GetOs(&dev);
+	os.MapMmio = OsMapMmioNull;
+
+	st = VirtioPciModernTransportInit(&t, &os, VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT, 0x10000000u, sizeof(dev.Bar0));
+	assert(st == STATUS_INSUFFICIENT_RESOURCES);
+	assert(t.InitError == VIRTIO_PCI_MODERN_INIT_ERR_MAP_MMIO_FAILED);
+}
+
+static void TestRejectSpinlockCreateFailure(void)
+{
+	FAKE_DEV dev;
+	VIRTIO_PCI_MODERN_OS_INTERFACE os;
+	VIRTIO_PCI_MODERN_TRANSPORT t;
+	NTSTATUS st;
+
+	FakeDevInitValid(&dev);
+	os = GetOs(&dev);
+	os.SpinlockCreate = OsSpinlockCreateFail;
+
+	st = VirtioPciModernTransportInit(&t, &os, VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT, 0x10000000u, sizeof(dev.Bar0));
+	assert(st == STATUS_INSUFFICIENT_RESOURCES);
+	assert(t.InitError == VIRTIO_PCI_MODERN_INIT_ERR_LOCK_CREATE_FAILED);
+}
+
 static void TestNegotiateFeaturesOk(void)
 {
 	FAKE_DEV dev;
@@ -1032,6 +1104,9 @@ int main(void)
 	TestRejectUnalignedCapNext();
 	TestRejectCapListLoop();
 	TestRejectMissingDeviceCfgCap();
+	TestRejectMapMmioFailure();
+	TestRejectMapMmioNullPointer();
+	TestRejectSpinlockCreateFailure();
 	TestNegotiateFeaturesOk();
 	TestNegotiateFeaturesRejectNoVersion1();
 	TestNegotiateFeaturesStrictRejectNoIndirectDesc();
