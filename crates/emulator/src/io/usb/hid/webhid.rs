@@ -295,6 +295,7 @@ fn convert_item(item: &HidReportItem) -> Result<report_descriptor::HidReportItem
         is_array: item.is_array,
         is_absolute: item.is_absolute,
         is_buffered_bytes: item.is_buffered_bytes,
+        is_volatile: item.is_volatile,
         is_constant: item.is_constant,
         is_range: item.is_range,
         logical_minimum: item.logical_minimum,
@@ -362,6 +363,21 @@ mod tests {
         }]
     }
 
+    fn make_output_collections(item: HidReportItem) -> Vec<HidCollectionInfo> {
+        vec![HidCollectionInfo {
+            usage_page: 0x01,
+            usage: 0x02,
+            collection_type: HidCollectionType::Application,
+            children: vec![],
+            input_reports: vec![],
+            output_reports: vec![HidReportInfo {
+                report_id: 0,
+                items: vec![item],
+            }],
+            feature_reports: vec![],
+        }]
+    }
+
     #[test]
     fn unit_exponent_encodes_as_4bit_signed_nibble() {
         let collections = make_collections(make_item(-1));
@@ -396,6 +412,8 @@ mod tests {
         // spec-canonical encoding.
         item.is_array = true;
         item.is_buffered_bytes = true;
+        // Input items do not have a Volatile bit; ensure it is ignored.
+        item.is_volatile = true;
         let collections = make_collections(item);
 
         let desc = synthesize_report_descriptor(&collections).unwrap();
@@ -406,6 +424,35 @@ mod tests {
         assert!(
             !desc.windows(3).any(|w| w == [0x82, 0x00, 0x01]),
             "did not expect Input Buffered Bytes to be encoded as a 2-byte payload (0x82 0x00 0x01): {desc:02x?}"
+        );
+    }
+
+    #[test]
+    fn buffered_bytes_uses_bit8_for_output_main_items() {
+        let mut item = make_item(0);
+        // Keep the low-byte flags clear so the expected 0x0100 encoding is stable.
+        item.is_array = true;
+        item.is_buffered_bytes = true;
+        let collections = make_output_collections(item);
+
+        let desc = synthesize_report_descriptor(&collections).unwrap();
+        assert!(
+            desc.windows(3).any(|w| w == [0x92, 0x00, 0x01]),
+            "expected spec-canonical Output Buffered Bytes encoding (0x92 0x00 0x01): {desc:02x?}"
+        );
+    }
+
+    #[test]
+    fn volatile_sets_bit7_for_output_main_items() {
+        let mut item = make_item(0);
+        item.is_array = true;
+        item.is_volatile = true;
+        let collections = make_output_collections(item);
+
+        let desc = synthesize_report_descriptor(&collections).unwrap();
+        assert!(
+            desc.windows(2).any(|w| w == [0x91, 0x80]),
+            "expected spec-canonical Output Volatile encoding (0x91 0x80): {desc:02x?}"
         );
     }
 

@@ -39,6 +39,7 @@ pub struct HidReportItem {
     pub is_array: bool,
     pub is_absolute: bool,
     pub is_buffered_bytes: bool,
+    pub is_volatile: bool,
     pub is_constant: bool,
     pub is_range: bool,
     pub logical_minimum: i32,
@@ -305,9 +306,12 @@ pub fn parse_report_descriptor(
                         // - Input: bit7 is Bit Field / Buffered Bytes, bit8+ reserved.
                         // - Output/Feature: bit7 is Non Volatile / Volatile, bit8 is Bit Field /
                         //   Buffered Bytes.
-                        let is_buffered_bytes = match tag {
-                            8 => (flags & (1 << 7)) != 0,
-                            9 | 11 => (flags & (1 << 8)) != 0,
+                        let (is_buffered_bytes, is_volatile) = match tag {
+                            // Input main items have no Volatile flag; bit7 is Buffered Bytes.
+                            8 => ((flags & (1 << 7)) != 0, false),
+                            // Output/Feature main items use bit7 for Volatile and bit8 for
+                            // Buffered Bytes.
+                            9 | 11 => ((flags & (1 << 8)) != 0, (flags & (1 << 7)) != 0),
                             _ => unreachable!(),
                         };
 
@@ -342,6 +346,7 @@ pub fn parse_report_descriptor(
                             is_array,
                             is_absolute,
                             is_buffered_bytes,
+                            is_volatile,
                             is_constant,
                             is_range,
                             logical_minimum: global.logical_minimum,
@@ -663,13 +668,23 @@ fn synthesize_report(
         if !item.is_absolute {
             flags |= 1 << 2;
         }
-        if item.is_buffered_bytes {
-            flags |= match kind {
-                // HID 1.11 Input main item uses bit7 for Buffered Bytes.
-                ReportKind::Input => 1 << 7,
-                // HID 1.11 Output/Feature main items use bit8 for Buffered Bytes.
-                ReportKind::Output | ReportKind::Feature => 1 << 8,
-            };
+        match kind {
+            // HID 1.11 Input main item uses bit7 for Buffered Bytes and has no Volatile flag.
+            ReportKind::Input => {
+                if item.is_buffered_bytes {
+                    flags |= 1 << 7;
+                }
+            }
+            // HID 1.11 Output/Feature main items use bit7 for Volatile and bit8 for Buffered
+            // Bytes.
+            ReportKind::Output | ReportKind::Feature => {
+                if item.is_volatile {
+                    flags |= 1 << 7;
+                }
+                if item.is_buffered_bytes {
+                    flags |= 1 << 8;
+                }
+            }
         }
 
         match kind {
@@ -1120,6 +1135,7 @@ mod tests {
                     is_array: false,
                     is_absolute: true,
                     is_buffered_bytes: false,
+                    is_volatile: false,
                     is_constant: false,
                     is_range: false,
                     logical_minimum: 0,
@@ -1160,6 +1176,7 @@ mod tests {
                     is_array: false,
                     is_absolute: true,
                     is_buffered_bytes: false,
+                    is_volatile: false,
                     is_constant: false,
                     is_range: false,
                     logical_minimum: 0,
@@ -1204,6 +1221,7 @@ mod tests {
                     is_array: false,
                     is_absolute: true,
                     is_buffered_bytes: false,
+                    is_volatile: false,
                     is_constant: false,
                     is_range: false,
                     logical_minimum: -127,
@@ -1244,6 +1262,7 @@ mod tests {
                     is_array: false,
                     is_absolute: true,
                     is_buffered_bytes: false,
+                    is_volatile: false,
                     is_constant: false,
                     is_range: false,
                     logical_minimum: 0,
@@ -1337,6 +1356,7 @@ mod tests {
                     is_array: false,
                     is_absolute: true,
                     is_buffered_bytes: false,
+                    is_volatile: false,
                     is_constant: false,
                     is_range: false,
                     logical_minimum: 0,
@@ -1376,6 +1396,7 @@ mod tests {
                     is_array: true,
                     is_absolute: true,
                     is_buffered_bytes: true,
+                    is_volatile: false,
                     is_constant: false,
                     is_range: false,
                     logical_minimum: 0,
@@ -1396,6 +1417,7 @@ mod tests {
                     is_array: true,
                     is_absolute: true,
                     is_buffered_bytes: true,
+                    is_volatile: false,
                     is_constant: false,
                     is_range: false,
                     logical_minimum: 0,
@@ -1416,6 +1438,7 @@ mod tests {
                     is_array: true,
                     is_absolute: true,
                     is_buffered_bytes: true,
+                    is_volatile: false,
                     is_constant: false,
                     is_range: false,
                     logical_minimum: 0,
@@ -1543,6 +1566,7 @@ mod tests {
                     is_array: false,
                     is_absolute: true,
                     is_buffered_bytes: false,
+                    is_volatile: false,
                     is_constant: false,
                     is_range: true,
                     logical_minimum: 0,
@@ -1581,6 +1605,7 @@ mod tests {
                     is_array: false,
                     is_absolute: true,
                     is_buffered_bytes: false,
+                    is_volatile: false,
                     is_constant: false,
                     is_range: true,
                     logical_minimum: 0,
@@ -1638,6 +1663,7 @@ mod tests {
             is_array: false,
             is_absolute: true,
             is_buffered_bytes: false,
+            is_volatile: false,
             is_constant: false,
             is_range: false,
             logical_minimum: 0,
@@ -1767,12 +1793,17 @@ mod proptests {
         })
     }
 
-    fn item_strategy() -> impl Strategy<Value = HidReportItem> {
+    fn item_strategy(kind: HidReportKind) -> BoxedStrategy<HidReportItem> {
+        let is_volatile = match kind {
+            HidReportKind::Input => Just(false).boxed(),
+            HidReportKind::Output | HidReportKind::Feature => any::<bool>().boxed(),
+        };
+
         (
-            any::<bool>(), // is_array
-            any::<bool>(), // is_absolute
-            any::<bool>(), // is_constant
-            any::<bool>(), // is_buffered_bytes
+            any::<bool>(),                  // is_array
+            any::<bool>(),                  // is_absolute
+            (any::<bool>(), any::<bool>()), // (is_constant, is_buffered_bytes)
+            is_volatile,
             any::<bool>(), // is_range
             1u32..=32u32,  // report_size
             0u32..=32u32,  // report_count
@@ -1786,8 +1817,8 @@ mod proptests {
                 |(
                     is_array,
                     is_absolute,
-                    is_constant,
-                    is_buffered_bytes,
+                    (is_constant, is_buffered_bytes),
+                    is_volatile,
                     is_range,
                     report_size,
                     report_count,
@@ -1812,6 +1843,7 @@ mod proptests {
                         is_array,
                         is_absolute,
                         is_buffered_bytes,
+                        is_volatile,
                         is_constant,
                         is_range,
                         logical_minimum,
@@ -1827,16 +1859,17 @@ mod proptests {
                     })
                 },
             )
+            .boxed()
     }
 
-    fn report_list_strategy(use_report_ids: bool) -> BoxedStrategy<Vec<HidReportInfo>> {
+    fn report_list_strategy(kind: HidReportKind, use_report_ids: bool) -> BoxedStrategy<Vec<HidReportInfo>> {
         if use_report_ids {
             // Generate a small set of unique IDs so parse doesn't need to guess whether multiple
             // occurrences should be merged.
             prop::collection::btree_set(1u32..=16, 0..=3)
-                .prop_flat_map(|ids| {
+                .prop_flat_map(move |ids| {
                     let ids: Vec<u32> = ids.into_iter().collect();
-                    prop::collection::vec(prop::collection::vec(item_strategy(), 0..=8), ids.len())
+                    prop::collection::vec(prop::collection::vec(item_strategy(kind), 0..=8), ids.len())
                         .prop_map(move |items| {
                             ids.iter()
                                 .copied()
@@ -1851,12 +1884,10 @@ mod proptests {
             // report_id=0 report.
             prop_oneof![
                 Just(Vec::new()),
-                prop::collection::vec(item_strategy(), 0..=8).prop_map(|items| vec![
-                    HidReportInfo {
-                        report_id: 0,
-                        items,
-                    }
-                ]),
+                prop::collection::vec(item_strategy(kind), 0..=8).prop_map(|items| vec![HidReportInfo {
+                    report_id: 0,
+                    items,
+                }]),
             ]
             .boxed()
         }
@@ -1876,9 +1907,9 @@ mod proptests {
             usage_u16ish(),
             usage_u16ish(),
             collection_type_strategy(),
-            report_list_strategy(use_report_ids),
-            report_list_strategy(use_report_ids),
-            report_list_strategy(use_report_ids),
+            report_list_strategy(HidReportKind::Input, use_report_ids),
+            report_list_strategy(HidReportKind::Output, use_report_ids),
+            report_list_strategy(HidReportKind::Feature, use_report_ids),
             child_strategy,
         )
             .prop_map(
