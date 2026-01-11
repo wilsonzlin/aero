@@ -11,8 +11,6 @@
 // KMD submission path. For repository builds (no WDK), this code uses a minimal
 // DDI ABI subset declared in `include/aerogpu_d3d10_11_umd.h`.
 
-#if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS
-
 #include "../include/aerogpu_d3d10_11_umd.h"
 
 #include <atomic>
@@ -79,6 +77,7 @@ void LogModulePathOnce() {
 constexpr aerogpu_handle_t kInvalidHandle = 0;
 constexpr HRESULT kDxgiErrorWasStillDrawing = static_cast<HRESULT>(0x887A000Au); // DXGI_ERROR_WAS_STILL_DRAWING
 
+#if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS
 // Win7 D3D11 runtime requests a specific user-mode DDI interface version. If we
 // accept a version, we must fill function tables whose struct layout matches
 // that version (otherwise the runtime can crash during device creation).
@@ -89,6 +88,7 @@ static_assert(std::is_member_object_pointer_v<decltype(&D3D11DDI_DEVICEFUNCS::pf
               "Expected D3D11DDI_DEVICEFUNCS::pfnCreateResource");
 static_assert(std::is_member_object_pointer_v<decltype(&D3D11DDI_DEVICECONTEXTFUNCS::pfnDraw)>,
               "Expected D3D11DDI_DEVICECONTEXTFUNCS::pfnDraw");
+#endif
 
 // D3D11_BIND_* subset (numeric values from d3d11.h).
 constexpr uint32_t kD3D11BindVertexBuffer = 0x1;
@@ -1397,14 +1397,6 @@ HRESULT OpenAdapter11Wdk(D3D10DDIARG_OPENADAPTER* pOpenData) {
 } // namespace
 
 extern "C" {
-
-HRESULT AEROGPU_APIENTRY OpenAdapter10(D3D10DDIARG_OPENADAPTER*) {
-  return E_NOTIMPL;
-}
-
-HRESULT AEROGPU_APIENTRY OpenAdapter10_2(D3D10DDIARG_OPENADAPTER*) {
-  return E_NOTIMPL;
-}
 
 HRESULT AEROGPU_APIENTRY OpenAdapter11(D3D10DDIARG_OPENADAPTER* pOpenData) {
   return OpenAdapter11Wdk(pOpenData);
@@ -3071,5 +3063,3 @@ HRESULT AEROGPU_APIENTRY OpenAdapter11(D3D10DDIARG_OPENADAPTER* pOpenData) {
 } // extern "C"
 
 #endif // defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS
-
-#endif // !defined(_WIN32) || !defined(AEROGPU_UMD_USE_WDK_HEADERS)

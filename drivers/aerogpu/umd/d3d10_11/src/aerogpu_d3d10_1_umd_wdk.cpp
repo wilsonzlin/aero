@@ -1587,12 +1587,6 @@ HRESULT AEROGPU_APIENTRY OpenAdapter10_2(D3D10DDIARG_OPENADAPTER* pOpenData) {
   return OpenAdapter10_2_WDK(pOpenData);
 }
 
-HRESULT AEROGPU_APIENTRY OpenAdapter11(D3D10DDIARG_OPENADAPTER* pOpenData) {
-  // D3D11 is a separate DDI; keep the entrypoint present but reject for now.
-  (void)pOpenData;
-  return E_NOTIMPL;
-}
-
 } // extern "C"
 
 #endif // defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS)
