@@ -23,7 +23,7 @@ static __forceinline BOOLEAN VirtioIntxShareVectorFromDescriptor(_In_ const CM_P
 _IRQL_requires_max_(PASSIVE_LEVEL)
 NTSTATUS VirtioIntxConnect(_In_ PDEVICE_OBJECT DeviceObject,
                            _In_ PCM_PARTIAL_RESOURCE_DESCRIPTOR InterruptDescTranslated,
-                           _In_opt_ volatile UCHAR* IsrStatusRegister,
+                           _In_ volatile UCHAR* IsrStatusRegister,
                            _In_opt_ EVT_VIRTIO_INTX_CONFIG_CHANGE* EvtConfigChange,
                            _In_opt_ EVT_VIRTIO_INTX_QUEUE_WORK* EvtQueueWork,
                            _In_opt_ EVT_VIRTIO_INTX_DPC* EvtDpc,
@@ -41,6 +41,9 @@ NTSTATUS VirtioIntxConnect(_In_ PDEVICE_OBJECT DeviceObject,
 
     if (Intx == NULL || InterruptDescTranslated == NULL) {
         return STATUS_INVALID_PARAMETER;
+    }
+    if (IsrStatusRegister == NULL) {
+        return STATUS_INVALID_DEVICE_STATE;
     }
 
     if (InterruptDescTranslated->Type != CmResourceTypeInterrupt) {
