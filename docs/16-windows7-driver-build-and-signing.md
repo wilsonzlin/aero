@@ -21,6 +21,11 @@ The repo provides PowerShell entrypoints that CI and local builds can share:
 - `ci/sign-drivers.ps1` → create a test cert + sign `.sys`/`.dll`/`.cat` under `out/packages/`
 - `ci/package-drivers.ps1` → create `.zip` bundles and an optional `.iso` for “Load driver” installs
 
+These scripts are orchestrated in CI by:
+
+- `.github/workflows/drivers-win7.yml` (**canonical** PR/push workflow; builds + catalogs + test-signs + packages, then uploads `out/artifacts/` as the `win7-drivers` artifact)
+- `.github/workflows/release-drivers-win7.yml` (tagged releases; publishes the packaged artifacts to GitHub Releases)
+
 ---
 
 ## Supported OS targets

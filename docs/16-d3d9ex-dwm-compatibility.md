@@ -322,7 +322,6 @@ The supported, in-tree AeroGPU Windows 7 driver stack lives under `drivers/aerog
 - Guest Windows KMD (WDDM miniport): `drivers/aerogpu/kmd/` (WDDM kernel-mode display driver)
 - Guest tests / probes (D3D9Ex + DWM): `drivers/aerogpu/tests/win7/` (see `d3d9ex_dwm_probe/` for a smoke test)
 - Guest↔host protocol headers (canonical ABI): `drivers/aerogpu/protocol/`
-
 - Host protocol + command processor:
   - `crates/aero-gpu/src/protocol*.rs` (opcode + payload definitions; event types)
   - `crates/aero-gpu/src/command_processor*.rs` (implement `PRESENT_EX`, shared surface import/export, fence signaling)
