@@ -36,7 +36,7 @@ on:
       # virtio-snd testing requires modern-only virtio-pci enumeration (disable-legacy=on, x-pci-revision=0x01).
       # Using the wav backend keeps the runner headless and produces an artifact for debugging regressions.
       with_virtio_snd:
-        description: Attach virtio-snd and require the guest virtio-snd playback + capture + duplex selftests to PASS (guest must be provisioned with --test-snd-capture)
+        description: Attach virtio-snd and require the guest virtio-snd playback + capture + duplex selftests to PASS (guest selftest must run capture/duplex smoke tests; newer aero-virtio-selftest binaries do this automatically when virtio-snd is present, older images need --test-snd-capture or AERO_VIRTIO_SELFTEST_TEST_SND_CAPTURE=1)
         required: false
         default: false
         type: boolean

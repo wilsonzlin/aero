@@ -4259,7 +4259,7 @@ static void PrintUsage() {
       "  --require-snd             Fail if virtio-snd is missing (default: SKIP)\n"
       "  --test-snd                Alias for --require-snd\n"
       "  --require-snd-capture     Fail if virtio-snd capture is missing (default: SKIP)\n"
-      "  --test-snd-capture        Run virtio-snd capture smoke test if available (default: no)\n"
+      "  --test-snd-capture        Run virtio-snd capture smoke test if available (default: auto when virtio-snd is present)\n"
       "  --require-non-silence     Fail capture smoke test if only silence is captured\n"
       "  --allow-virtio-snd-transitional  Also accept legacy PCI\\VEN_1AF4&DEV_1018\n"
       "  --net-timeout-sec <sec>   Wait time for DHCP/link\n"
@@ -4421,14 +4421,14 @@ int wmain(int argc, wchar_t** argv) {
   // virtio-snd:
   //
   // The host harness can optionally attach a virtio-snd PCI function. When the device is present,
-  // exercise the playback path automatically so audio regressions are caught even if the image
-  // runs the selftest without `--test-snd`. Use `--disable-snd` to skip all virtio-snd testing, or
-  // `--test-snd/--require-snd` to fail if the device is missing.
+  // exercise the playback + capture + duplex paths automatically so audio regressions are caught
+  // even if the image runs the selftest without extra flags. Use `--disable-snd` to skip all
+  // virtio-snd testing, or `--test-snd/--require-snd` to fail if the device is missing.
   auto snd_pci =
       opt.disable_snd ? std::vector<VirtioSndPciDevice>{}
                       : DetectVirtioSndPciDevices(log, opt.allow_virtio_snd_transitional);
   const bool want_snd_playback = opt.require_snd || !snd_pci.empty();
-  const bool capture_smoke_test = opt.test_snd_capture || opt.require_non_silence;
+  const bool capture_smoke_test = opt.test_snd_capture || opt.require_non_silence || want_snd_playback;
   const bool want_snd_capture =
       !opt.disable_snd_capture &&
       (opt.require_snd_capture || opt.test_snd_capture || opt.require_non_silence || want_snd_playback);
