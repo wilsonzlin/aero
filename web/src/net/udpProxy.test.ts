@@ -14,6 +14,7 @@ class FakeWebSocket {
   onopen: ((ev: Event) => void) | null = null;
   onmessage: ((ev: MessageEvent) => void) | null = null;
   onclose: ((ev: CloseEvent) => void) | null = null;
+  onerror: ((ev: Event) => void) | null = null;
 
   sent: unknown[] = [];
 
@@ -39,12 +40,16 @@ class FakeWebSocket {
   triggerMessage(data: unknown): void {
     this.onmessage?.({ data } as MessageEvent);
   }
+
+  triggerError(): void {
+    this.onerror?.({} as Event);
+  }
 }
 
 let lastSocket: FakeWebSocket | null = null;
 
 describe("WebSocketUdpProxyClient", () => {
-  it("sends {type:'auth'} first and waits for {type:'ready'} before sending datagrams", () => {
+  it("sends {type:'auth'} first and waits for {type:'ready'} before sending datagrams", async () => {
     const g = globalThis as unknown as Record<string, unknown>;
     const originalWebSocket = g.WebSocket;
     g.WebSocket = FakeWebSocket;
@@ -53,18 +58,19 @@ describe("WebSocketUdpProxyClient", () => {
       const client = new WebSocketUdpProxyClient("ws://example.com", () => {}, {
         auth: { apiKey: "secret" },
       });
-      client.connect();
+      const connectPromise = client.connect();
 
       expect(lastSocket).not.toBeNull();
       lastSocket!.triggerOpen();
 
-      expect(lastSocket!.sent[0]).toBe(JSON.stringify({ type: "auth", apiKey: "secret" }));
+      expect(lastSocket!.sent[0]).toBe(JSON.stringify({ type: "auth", token: "secret", apiKey: "secret" }));
       expect(lastSocket!.sent.length).toBe(1);
 
       client.send(1234, "127.0.0.1", 53, new Uint8Array([1, 2, 3]));
       expect(lastSocket!.sent.length).toBe(1);
 
       lastSocket!.triggerMessage(JSON.stringify({ type: "ready" }));
+      await connectPromise;
       expect(lastSocket!.sent.length).toBe(2);
       expect(lastSocket!.sent[1]).toBeInstanceOf(Uint8Array);
     } finally {

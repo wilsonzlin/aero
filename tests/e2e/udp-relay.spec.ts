@@ -1,10 +1,13 @@
 import { expect, test, type Page } from '@playwright/test';
 
 import dgram from 'node:dgram';
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import crypto from 'node:crypto';
 import { once } from 'node:events';
+import fs from 'node:fs/promises';
 import net from 'node:net';
+import os from 'node:os';
+import path from 'node:path';
 
 type UdpEchoServer = {
   port: number;
@@ -115,13 +118,47 @@ function makeJWT(secret: string): string {
   return `${unsigned}.${sig}`;
 }
 
-async function startRelay(auth: RelayAuthConfig): Promise<RelayProcess> {
-  const port = await getFreeTcpPort();
+async function buildRelayBinary(): Promise<{ tmpDir: string; binPath: string }> {
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'aero-webrtc-udp-relay-e2e-'));
+  const binPath = path.join(tmpDir, 'aero-webrtc-udp-relay');
 
-  const proc = spawn(
-    'go',
-    ['run', './cmd/aero-webrtc-udp-relay', '--listen-addr', `127.0.0.1:${port}`],
-    {
+  const build = spawnSync('go', ['build', '-o', binPath, './cmd/aero-webrtc-udp-relay'], {
+    cwd: 'proxy/webrtc-udp-relay',
+    stdio: 'inherit',
+  });
+  if (build.status !== 0) {
+    await fs.rm(tmpDir, { recursive: true, force: true });
+    throw new Error(`failed to build aero-webrtc-udp-relay (exit ${build.status ?? 'unknown'})`);
+  }
+  return { tmpDir, binPath };
+}
+
+test.describe.serial('udp relay (webrtc)', () => {
+  test.skip(({ browserName }) => browserName !== 'chromium', 'WebRTC UDP relay test is Chromium-only');
+  test.describe.configure({ timeout: 60_000 });
+
+  let echo: UdpEchoServer;
+  let relayBinPath: string;
+  let relayTmpDir: string;
+
+  test.beforeAll(async () => {
+    echo = await startUdpEchoServer();
+    const relayBuild = await buildRelayBinary();
+    relayBinPath = relayBuild.binPath;
+    relayTmpDir = relayBuild.tmpDir;
+  });
+
+  test.afterAll(async () => {
+    await echo.close();
+    if (relayTmpDir) {
+      await fs.rm(relayTmpDir, { recursive: true, force: true });
+    }
+  });
+
+  async function startRelay(auth: RelayAuthConfig): Promise<RelayProcess> {
+    const port = await getFreeTcpPort();
+
+    const proc = spawn(relayBinPath, ['--listen-addr', `127.0.0.1:${port}`], {
       cwd: 'proxy/webrtc-udp-relay',
       stdio: ['ignore', 'pipe', 'pipe'],
       env: {
@@ -136,40 +173,25 @@ async function startRelay(auth: RelayAuthConfig): Promise<RelayProcess> {
         ...(auth.authMode === 'jwt' ? { JWT_SECRET: auth.jwtSecret } : {}),
         AERO_WEBRTC_UDP_RELAY_LOG_LEVEL: 'error',
       },
-    },
-  );
-  // Drain output to avoid the child process blocking on a full pipe buffer.
-  proc.stdout.resume();
-  proc.stderr.resume();
+    });
+    // Drain output to avoid the child process blocking on a full pipe buffer.
+    proc.stdout.resume();
+    proc.stderr.resume();
 
-  const origin = `http://127.0.0.1:${port}`;
-  await waitForReady(origin, 30_000);
+    const origin = `http://127.0.0.1:${port}`;
+    await waitForReady(origin, 30_000);
 
-  return {
-    origin,
-    proc,
-    close: async () => {
-      if (proc.exitCode === null) {
-        proc.kill('SIGTERM');
-        await once(proc, 'exit');
-      }
-    },
-  };
-}
-
-test.describe.serial('udp relay (webrtc)', () => {
-  test.skip(({ browserName }) => browserName !== 'chromium', 'WebRTC UDP relay test is Chromium-only');
-  test.describe.configure({ timeout: 60_000 });
-
-  let echo: UdpEchoServer;
-
-  test.beforeAll(async () => {
-    echo = await startUdpEchoServer();
-  });
-
-  test.afterAll(async () => {
-    await echo.close();
-  });
+    return {
+      origin,
+      proc,
+      close: async () => {
+        if (proc.exitCode === null) {
+          proc.kill('SIGTERM');
+          await once(proc, 'exit');
+        }
+      },
+    };
+  }
 
   async function runRoundTrip(
     page: Page,

@@ -141,6 +141,14 @@ export type WebSocketUdpProxyClientOptions = {
    * never accepts the connection.
    */
   maxPendingDatagrams?: number;
+
+  /**
+   * How long to wait for the relay to send `{type:"ready"}` before rejecting
+   * `connect()`.
+   *
+   * Defaults to 10s.
+   */
+  connectTimeoutMs?: number;
 };
 
 export class WebSocketUdpProxyClient {
@@ -152,12 +160,12 @@ export class WebSocketUdpProxyClient {
   constructor(
     private readonly proxyBaseUrl: string,
     private readonly sink: UdpProxyEventSink,
-    opts: WebSocketUdpProxyClientOptions = {},
+    optsOrAuthToken: WebSocketUdpProxyClientOptions | string = {},
   ) {
-    this.opts = opts;
+    this.opts = typeof optsOrAuthToken === "string" ? { auth: { token: optsOrAuthToken } } : optsOrAuthToken;
   }
 
-  connect(): void {
+  connect(): Promise<void> {
     this.close();
 
     const url = new URL(this.proxyBaseUrl);
@@ -167,90 +175,135 @@ export class WebSocketUdpProxyClient {
 
     const auth = this.opts.auth;
     const authMode = auth?.mode ?? "first_message";
-    if (auth && authMode === "query") {
-      if ("apiKey" in auth) url.searchParams.set("apiKey", auth.apiKey);
-      else url.searchParams.set("token", auth.token);
+    const credential = auth ? ("apiKey" in auth ? auth.apiKey : auth.token) : null;
+    if (credential && authMode === "query") {
+      // Forward/compat: different relay builds may accept either token or apiKey
+      // depending on auth mode. Supplying both allows the client to remain
+      // agnostic.
+      url.searchParams.set("token", credential);
+      url.searchParams.set("apiKey", credential);
     }
 
     const ws = new WebSocket(url.toString());
     ws.binaryType = "arraybuffer";
-    ws.onopen = () => {
-      this.ready = false;
-      this.pending = [];
+    this.ws = ws;
+    this.ready = false;
+    this.pending = [];
 
-      // If auth is configured, prefer sending it as the first WS message. We
-      // wait for the relay's {"type":"ready"} acknowledgment before sending
-      // any datagrams.
-      if (auth && authMode === "first_message") {
-        if ("apiKey" in auth) ws.send(JSON.stringify({ type: "auth", apiKey: auth.apiKey }));
-        else ws.send(JSON.stringify({ type: "auth", token: auth.token }));
-        return;
-      }
+    const timeoutMs = this.opts.connectTimeoutMs ?? 10_000;
 
-      // Back-compat / auth-less mode: if no credentials are configured, allow
-      // sending immediately (older dev relays may not send a ready message).
-      if (!auth) {
-        this.ready = true;
-      }
-    };
-    ws.onmessage = (evt) => {
-      if (typeof evt.data === "string") {
-        // Control plane messages: {type:"ready"} / {type:"error", ...}
-        try {
-          const msg = JSON.parse(evt.data) as { type?: string };
-          if (msg?.type === "ready") {
-            this.ready = true;
-            const queued = this.pending;
-            this.pending = [];
-            for (const pkt of queued) {
-              if (ws.readyState !== WebSocket.OPEN) break;
-              ws.send(pkt);
+    return new Promise((resolve, reject) => {
+      let settled = false;
+
+      const settle = (err?: unknown) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (err) reject(err);
+        else resolve();
+      };
+
+      const timer = setTimeout(() => {
+        if (this.ws === ws) {
+          try {
+            ws.close();
+          } catch {
+            // Ignore.
+          }
+          this.ws = null;
+          this.ready = false;
+          this.pending = [];
+        }
+        settle(new Error("udp relay websocket timed out"));
+      }, timeoutMs);
+
+      ws.onopen = () => {
+        if (this.ws !== ws) return;
+        // If auth is configured, prefer sending it as the first WS message. We
+        // wait for the relay's {"type":"ready"} acknowledgment before sending
+        // any datagrams.
+        if (credential && authMode === "first_message") {
+          ws.send(JSON.stringify({ type: "auth", token: credential, apiKey: credential }));
+        }
+      };
+
+      ws.onmessage = (evt) => {
+        if (this.ws !== ws) return;
+        if (typeof evt.data === "string") {
+          // Control plane messages: {type:"ready"} / {type:"error", ...}
+          try {
+            const msg = JSON.parse(evt.data) as { type?: string; code?: unknown; message?: unknown };
+            if (msg?.type === "ready") {
+              if (!this.ready) {
+                this.ready = true;
+                const queued = this.pending;
+                this.pending = [];
+                for (const pkt of queued) {
+                  if (ws.readyState !== WebSocket.OPEN) break;
+                  ws.send(pkt);
+                }
+              }
+              settle();
+            } else if (msg?.type === "error") {
+              const code = typeof msg.code === "string" ? msg.code : "error";
+              const message = typeof msg.message === "string" ? msg.message : "udp relay error";
+              settle(new Error(`${code}: ${message}`));
+              this.close();
             }
-          } else if (msg?.type === "error") {
-            // Best-effort: close on structured error.
-            this.close();
+          } catch {
+            // Ignore malformed control messages.
+          }
+          return;
+        }
+        if (!(evt.data instanceof ArrayBuffer)) return;
+        const buf = new Uint8Array(evt.data);
+        try {
+          const frame = decodeUdpRelayFrame(buf);
+          if (frame.version === 1) {
+            this.sink({
+              srcIp: formatIpv4(frame.remoteIpv4),
+              srcPort: frame.remotePort,
+              dstPort: frame.guestPort,
+              data: frame.payload,
+            });
+          } else {
+            this.sink({
+              srcIp: frame.addressFamily === 4 ? formatIpv4(frame.remoteIp) : formatIpv6(frame.remoteIp),
+              srcPort: frame.remotePort,
+              dstPort: frame.guestPort,
+              data: frame.payload,
+            });
           }
         } catch {
-          // Ignore malformed control messages.
+          // Drop malformed frames.
         }
-        return;
-      }
-      if (!(evt.data instanceof ArrayBuffer)) return;
-      const buf = new Uint8Array(evt.data);
-      try {
-        const frame = decodeUdpRelayFrame(buf);
-        if (frame.version === 1) {
-          this.sink({
-            srcIp: formatIpv4(frame.remoteIpv4),
-            srcPort: frame.remotePort,
-            dstPort: frame.guestPort,
-            data: frame.payload,
-          });
-        } else {
-          this.sink({
-            srcIp: frame.addressFamily === 4 ? formatIpv4(frame.remoteIp) : formatIpv6(frame.remoteIp),
-            srcPort: frame.remotePort,
-            dstPort: frame.guestPort,
-            data: frame.payload,
-          });
+      };
+
+      ws.onerror = () => {
+        settle(new Error("udp relay websocket error"));
+      };
+
+      ws.onclose = (evt) => {
+        if (this.ws === ws) {
+          this.ws = null;
+          this.ready = false;
+          this.pending = [];
         }
-      } catch {
-        // Drop malformed frames.
-      }
-    };
-    ws.onclose = () => {
-      this.ws = null;
-      this.ready = false;
-      this.pending = [];
-    };
-    this.ws = ws;
+
+        if (!settled) {
+          const code = typeof evt?.code === "number" ? evt.code : 0;
+          const reason = typeof evt?.reason === "string" ? evt.reason : "";
+          settle(new Error(`udp relay websocket closed (${code}): ${reason}`));
+        }
+      };
+    });
   }
 
   send(srcPort: number, dstIp: string, dstPort: number, payload: Uint8Array): void {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    if (!this.ws || this.ws.readyState === WebSocket.CLOSED) return;
     try {
       const pkt = encodeDatagram(srcPort, dstIp, dstPort, payload);
-      if (this.ready) {
+      if (this.ready && this.ws.readyState === WebSocket.OPEN) {
         this.ws.send(pkt);
         return;
       }
