@@ -102,7 +102,7 @@ Notes:
 - Many upstream virtio-win drivers also match the virtio-pci **transitional** ID range (the older `0x1000..` device IDs),
   but Aero contract v1 does not require and may not expose those IDs.
 - The Aero contract major version is encoded in the PCI **Revision ID** (contract v1 = `REV_01`). QEMU virtio devices commonly enumerate as `REV_00` by default.
-  - Aero’s clean-room Win7 drivers may enforce `REV_01` (and some INFs match `&REV_01`).
+  - Aero’s in-tree Win7 virtio driver packages are revision-gated (`&REV_01`), and some drivers also validate the revision at runtime.
   - For QEMU-based testing with strict contract-v1 drivers, pass `x-pci-revision=0x01` on each `-device virtio-*-pci,...` arg (the Win7 host harness under `drivers/windows7/tests/host-harness/` does this automatically).
 
 ### Contract ↔ in-tree drivers ↔ Guest Tools config (net/blk)
@@ -117,7 +117,7 @@ For Aero’s in-tree drivers and Guest Tools installer logic, the identifiers be
 Guest Tools uses:
 
 - `AERO_VIRTIO_BLK_SERVICE` to configure the storage service as `BOOT_START` and to pre-seed `CriticalDeviceDatabase`.
-- `AERO_VIRTIO_*_HWIDS` to enumerate the hardware IDs the installer should expect. For `AERO-W7-VIRTIO` v1, include `&REV_01` when your INFs are revision-gated (for example the in-tree `aero-virtio-snd.inf` matches `...&REV_01`).
+- `AERO_VIRTIO_*_HWIDS` to enumerate the hardware IDs the installer should expect. For `AERO-W7-VIRTIO` v1, include `&REV_01` when your INFs are revision-gated (the in-tree virtio-blk/net/input/snd INFs all match `...&REV_01`).
 
 Note: `guest-tools/config/devices.cmd` is generated from a Windows device contract JSON
 (see `scripts/generate-guest-tools-devices-cmd.py`) and is regenerated during Guest Tools packaging
