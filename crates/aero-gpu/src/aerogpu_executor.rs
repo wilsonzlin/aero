@@ -1850,6 +1850,31 @@ fn coalesce_ranges_u32(ranges: &mut Vec<Range<u32>>) {
 mod tests {
     use super::*;
 
+    fn build_alloc_table(entries: &[(u32, u64, u64)]) -> Vec<u8> {
+        let entry_stride = ring::AerogpuAllocEntry::SIZE_BYTES as u32;
+        let size_bytes = ring::AerogpuAllocTableHeader::SIZE_BYTES as u32
+            + entries.len() as u32 * entry_stride;
+        let mut bytes = vec![0u8; size_bytes as usize];
+
+        bytes[0..4].copy_from_slice(&ring::AEROGPU_ALLOC_TABLE_MAGIC.to_le_bytes());
+        bytes[4..8].copy_from_slice(&pci::AEROGPU_ABI_VERSION_U32.to_le_bytes());
+        bytes[8..12].copy_from_slice(&size_bytes.to_le_bytes());
+        bytes[12..16].copy_from_slice(&(entries.len() as u32).to_le_bytes());
+        bytes[16..20].copy_from_slice(&entry_stride.to_le_bytes());
+        // reserved0 stays zeroed.
+
+        for (i, (alloc_id, gpa, size_bytes)) in entries.iter().copied().enumerate() {
+            let base = ring::AerogpuAllocTableHeader::SIZE_BYTES + i * entry_stride as usize;
+            bytes[base..base + 4].copy_from_slice(&alloc_id.to_le_bytes());
+            // flags = 0
+            bytes[base + 8..base + 16].copy_from_slice(&gpa.to_le_bytes());
+            bytes[base + 16..base + 24].copy_from_slice(&size_bytes.to_le_bytes());
+            // reserved0 stays zeroed.
+        }
+
+        bytes
+    }
+
     #[test]
     fn coalesce_ranges_merges_overlapping_and_adjacent() {
         let mut ranges = vec![10u64..12, 0..4, 4..8, 11..15, 20..20];
@@ -1862,5 +1887,77 @@ mod tests {
         let mut ranges = vec![10u32..12, 0..4, 4..8, 11..15, 20..20];
         coalesce_ranges_u32(&mut ranges);
         assert_eq!(ranges, vec![0..8, 10..15]);
+    }
+
+    #[test]
+    fn alloc_table_decode_accepts_valid_entries() {
+        let guest = crate::guest_memory::VecGuestMemory::new(4096);
+        let table_bytes = build_alloc_table(&[(1, 0x1000, 0x2000), (2, 0x3000, 0x4000)]);
+        let table_gpa = 0x100u64;
+        guest.write(table_gpa, &table_bytes).unwrap();
+
+        let table =
+            AllocTable::decode_from_guest_memory(&guest, table_gpa, table_bytes.len() as u32)
+                .unwrap();
+        assert_eq!(table.get(1).unwrap().gpa, 0x1000);
+        assert_eq!(table.get(1).unwrap().size_bytes, 0x2000);
+        assert_eq!(table.get(2).unwrap().gpa, 0x3000);
+        assert_eq!(table.get(2).unwrap().size_bytes, 0x4000);
+    }
+
+    #[test]
+    fn alloc_table_decode_rejects_alloc_id_zero() {
+        let guest = crate::guest_memory::VecGuestMemory::new(4096);
+        let table_bytes = build_alloc_table(&[(0, 0x1000, 0x2000)]);
+        let table_gpa = 0x200u64;
+        guest.write(table_gpa, &table_bytes).unwrap();
+
+        let err =
+            AllocTable::decode_from_guest_memory(&guest, table_gpa, table_bytes.len() as u32)
+                .unwrap_err();
+        match err {
+            ExecutorError::Validation(message) => {
+                assert!(message.contains("alloc_id must be non-zero"), "{message}");
+            }
+            other => panic!("expected validation error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn alloc_table_decode_rejects_duplicate_alloc_id() {
+        let guest = crate::guest_memory::VecGuestMemory::new(4096);
+        let table_bytes = build_alloc_table(&[(1, 0x1000, 0x2000), (1, 0x3000, 0x4000)]);
+        let table_gpa = 0x300u64;
+        guest.write(table_gpa, &table_bytes).unwrap();
+
+        let err =
+            AllocTable::decode_from_guest_memory(&guest, table_gpa, table_bytes.len() as u32)
+                .unwrap_err();
+        match err {
+            ExecutorError::Validation(message) => {
+                assert!(message.contains("duplicate"), "{message}");
+            }
+            other => panic!("expected validation error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn alloc_table_decode_rejects_size_bytes_too_small_for_layout() {
+        let guest = crate::guest_memory::VecGuestMemory::new(4096);
+        let mut table_bytes = build_alloc_table(&[(1, 0x1000, 0x2000)]);
+        // Corrupt the header size_bytes field so the prefix validation fails.
+        table_bytes[8..12].copy_from_slice(&(ring::AerogpuAllocTableHeader::SIZE_BYTES as u32).to_le_bytes());
+        let table_gpa = 0x400u64;
+        guest.write(table_gpa, &table_bytes).unwrap();
+
+        let err =
+            AllocTable::decode_from_guest_memory(&guest, table_gpa, table_bytes.len() as u32)
+                .unwrap_err();
+        match err {
+            ExecutorError::Validation(message) => {
+                assert!(message.contains("BadSizeField"), "{message}");
+            }
+            other => panic!("expected validation error, got {other:?}"),
+        }
     }
 }
