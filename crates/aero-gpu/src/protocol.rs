@@ -28,6 +28,32 @@ pub use protocol::{
 
 use protocol::{decode_cmd_stream_header_le, AerogpuCmdDecodeError, AerogpuCmdStreamIter};
 
+const INPUT_LAYOUT_BLOB_HEADER_MAGIC_OFFSET: usize =
+    core::mem::offset_of!(protocol::AerogpuInputLayoutBlobHeader, magic);
+const INPUT_LAYOUT_BLOB_HEADER_VERSION_OFFSET: usize =
+    core::mem::offset_of!(protocol::AerogpuInputLayoutBlobHeader, version);
+const INPUT_LAYOUT_BLOB_HEADER_ELEMENT_COUNT_OFFSET: usize =
+    core::mem::offset_of!(protocol::AerogpuInputLayoutBlobHeader, element_count);
+const INPUT_LAYOUT_BLOB_HEADER_RESERVED0_OFFSET: usize =
+    core::mem::offset_of!(protocol::AerogpuInputLayoutBlobHeader, reserved0);
+
+const INPUT_LAYOUT_ELEMENT_DXGI_SEMANTIC_NAME_HASH_OFFSET: usize =
+    core::mem::offset_of!(protocol::AerogpuInputLayoutElementDxgi, semantic_name_hash);
+const INPUT_LAYOUT_ELEMENT_DXGI_SEMANTIC_INDEX_OFFSET: usize =
+    core::mem::offset_of!(protocol::AerogpuInputLayoutElementDxgi, semantic_index);
+const INPUT_LAYOUT_ELEMENT_DXGI_FORMAT_OFFSET: usize =
+    core::mem::offset_of!(protocol::AerogpuInputLayoutElementDxgi, dxgi_format);
+const INPUT_LAYOUT_ELEMENT_DXGI_INPUT_SLOT_OFFSET: usize =
+    core::mem::offset_of!(protocol::AerogpuInputLayoutElementDxgi, input_slot);
+const INPUT_LAYOUT_ELEMENT_DXGI_ALIGNED_BYTE_OFFSET_OFFSET: usize =
+    core::mem::offset_of!(protocol::AerogpuInputLayoutElementDxgi, aligned_byte_offset);
+const INPUT_LAYOUT_ELEMENT_DXGI_INPUT_SLOT_CLASS_OFFSET: usize =
+    core::mem::offset_of!(protocol::AerogpuInputLayoutElementDxgi, input_slot_class);
+const INPUT_LAYOUT_ELEMENT_DXGI_INSTANCE_DATA_STEP_RATE_OFFSET: usize = core::mem::offset_of!(
+    protocol::AerogpuInputLayoutElementDxgi,
+    instance_data_step_rate
+);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AeroGpuBlendState {
     pub enable: u32,
@@ -70,10 +96,22 @@ impl AeroGpuInputLayoutBlobHeader {
             return None;
         }
         Some(Self {
-            magic: read_u32_le(&bytes[0..4]),
-            version: read_u32_le(&bytes[4..8]),
-            element_count: read_u32_le(&bytes[8..12]),
-            reserved0: read_u32_le(&bytes[12..16]),
+            magic: read_u32_le(
+                &bytes[INPUT_LAYOUT_BLOB_HEADER_MAGIC_OFFSET
+                    ..INPUT_LAYOUT_BLOB_HEADER_MAGIC_OFFSET + 4],
+            ),
+            version: read_u32_le(
+                &bytes[INPUT_LAYOUT_BLOB_HEADER_VERSION_OFFSET
+                    ..INPUT_LAYOUT_BLOB_HEADER_VERSION_OFFSET + 4],
+            ),
+            element_count: read_u32_le(
+                &bytes[INPUT_LAYOUT_BLOB_HEADER_ELEMENT_COUNT_OFFSET
+                    ..INPUT_LAYOUT_BLOB_HEADER_ELEMENT_COUNT_OFFSET + 4],
+            ),
+            reserved0: read_u32_le(
+                &bytes[INPUT_LAYOUT_BLOB_HEADER_RESERVED0_OFFSET
+                    ..INPUT_LAYOUT_BLOB_HEADER_RESERVED0_OFFSET + 4],
+            ),
         })
     }
 }
@@ -95,13 +133,34 @@ impl AeroGpuInputLayoutElementDxgi {
             return None;
         }
         Some(Self {
-            semantic_name_hash: read_u32_le(&bytes[0..4]),
-            semantic_index: read_u32_le(&bytes[4..8]),
-            dxgi_format: read_u32_le(&bytes[8..12]),
-            input_slot: read_u32_le(&bytes[12..16]),
-            aligned_byte_offset: read_u32_le(&bytes[16..20]),
-            input_slot_class: read_u32_le(&bytes[20..24]),
-            instance_data_step_rate: read_u32_le(&bytes[24..28]),
+            semantic_name_hash: read_u32_le(
+                &bytes[INPUT_LAYOUT_ELEMENT_DXGI_SEMANTIC_NAME_HASH_OFFSET
+                    ..INPUT_LAYOUT_ELEMENT_DXGI_SEMANTIC_NAME_HASH_OFFSET + 4],
+            ),
+            semantic_index: read_u32_le(
+                &bytes[INPUT_LAYOUT_ELEMENT_DXGI_SEMANTIC_INDEX_OFFSET
+                    ..INPUT_LAYOUT_ELEMENT_DXGI_SEMANTIC_INDEX_OFFSET + 4],
+            ),
+            dxgi_format: read_u32_le(
+                &bytes[INPUT_LAYOUT_ELEMENT_DXGI_FORMAT_OFFSET
+                    ..INPUT_LAYOUT_ELEMENT_DXGI_FORMAT_OFFSET + 4],
+            ),
+            input_slot: read_u32_le(
+                &bytes[INPUT_LAYOUT_ELEMENT_DXGI_INPUT_SLOT_OFFSET
+                    ..INPUT_LAYOUT_ELEMENT_DXGI_INPUT_SLOT_OFFSET + 4],
+            ),
+            aligned_byte_offset: read_u32_le(
+                &bytes[INPUT_LAYOUT_ELEMENT_DXGI_ALIGNED_BYTE_OFFSET_OFFSET
+                    ..INPUT_LAYOUT_ELEMENT_DXGI_ALIGNED_BYTE_OFFSET_OFFSET + 4],
+            ),
+            input_slot_class: read_u32_le(
+                &bytes[INPUT_LAYOUT_ELEMENT_DXGI_INPUT_SLOT_CLASS_OFFSET
+                    ..INPUT_LAYOUT_ELEMENT_DXGI_INPUT_SLOT_CLASS_OFFSET + 4],
+            ),
+            instance_data_step_rate: read_u32_le(
+                &bytes[INPUT_LAYOUT_ELEMENT_DXGI_INSTANCE_DATA_STEP_RATE_OFFSET
+                    ..INPUT_LAYOUT_ELEMENT_DXGI_INSTANCE_DATA_STEP_RATE_OFFSET + 4],
+            ),
         })
     }
 }

@@ -266,6 +266,10 @@ fn upper_snake_to_pascal_case(s: &str) -> String {
         .collect()
 }
 
+fn write_u32_le(buf: &mut [u8], offset: usize, value: u32) {
+    buf[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+}
+
 #[test]
 fn rust_layout_matches_c_headers() {
     let abi = abi_dump();
@@ -2474,7 +2478,11 @@ fn cmd_hdr_rejects_bad_size_bytes() {
     let mut buf = [0u8; AerogpuCmdHdr::SIZE_BYTES];
 
     // Too small (must be >= sizeof(aerogpu_cmd_hdr)).
-    buf[4..8].copy_from_slice(&4u32.to_le_bytes());
+    write_u32_le(
+        &mut buf,
+        core::mem::offset_of!(AerogpuCmdHdr, size_bytes),
+        4,
+    );
     let err = decode_cmd_hdr_le(&buf)
         .err()
         .expect("expected decode error");
@@ -2484,7 +2492,11 @@ fn cmd_hdr_rejects_bad_size_bytes() {
     ));
 
     // Not 4-byte aligned.
-    buf[4..8].copy_from_slice(&10u32.to_le_bytes());
+    write_u32_le(
+        &mut buf,
+        core::mem::offset_of!(AerogpuCmdHdr, size_bytes),
+        10,
+    );
     let err = decode_cmd_hdr_le(&buf)
         .err()
         .expect("expected decode error");
@@ -2494,8 +2506,16 @@ fn cmd_hdr_rejects_bad_size_bytes() {
     ));
 
     // Unknown opcode is OK as long as the size is valid.
-    buf[0..4].copy_from_slice(&0xFFFF_FFFFu32.to_le_bytes());
-    buf[4..8].copy_from_slice(&(AerogpuCmdHdr::SIZE_BYTES as u32).to_le_bytes());
+    write_u32_le(
+        &mut buf,
+        core::mem::offset_of!(AerogpuCmdHdr, opcode),
+        0xFFFF_FFFF,
+    );
+    write_u32_le(
+        &mut buf,
+        core::mem::offset_of!(AerogpuCmdHdr, size_bytes),
+        AerogpuCmdHdr::SIZE_BYTES as u32,
+    );
     let hdr = decode_cmd_hdr_le(&buf).expect("unknown opcodes should be decodable");
     let opcode = hdr.opcode;
     assert_eq!(opcode, 0xFFFF_FFFF);
@@ -2520,7 +2540,11 @@ fn abi_version_accepts_unknown_minor() {
 #[test]
 fn submit_desc_size_accepts_extensions() {
     let mut buf = vec![0u8; 128];
-    buf[0..4].copy_from_slice(&(128u32).to_le_bytes());
+    write_u32_le(
+        &mut buf,
+        core::mem::offset_of!(AerogpuSubmitDesc, desc_size_bytes),
+        128,
+    );
 
     let desc = AerogpuSubmitDesc::decode_from_le_bytes(&buf).unwrap();
     desc.validate_prefix().unwrap();
@@ -2529,7 +2553,11 @@ fn submit_desc_size_accepts_extensions() {
 #[test]
 fn submit_desc_size_rejects_too_small() {
     let mut buf = vec![0u8; AerogpuSubmitDesc::SIZE_BYTES];
-    buf[0..4].copy_from_slice(&(32u32).to_le_bytes());
+    write_u32_le(
+        &mut buf,
+        core::mem::offset_of!(AerogpuSubmitDesc, desc_size_bytes),
+        32,
+    );
 
     let desc = AerogpuSubmitDesc::decode_from_le_bytes(&buf).unwrap();
     let err = desc.validate_prefix().unwrap_err();
@@ -2541,12 +2569,33 @@ fn submit_desc_size_rejects_too_small() {
 
 #[test]
 fn ring_header_accepts_unknown_minor_and_extended_stride() {
+    let header_size_bytes = AerogpuRingHeader::SIZE_BYTES as u32;
     let mut buf = vec![0u8; AerogpuRingHeader::SIZE_BYTES];
-    buf[0..4].copy_from_slice(&AEROGPU_RING_MAGIC.to_le_bytes());
-    buf[4..8].copy_from_slice(&((AEROGPU_ABI_MAJOR << 16) | 999u32).to_le_bytes());
-    buf[8..12].copy_from_slice(&(64u32 + 8u32 * 128u32).to_le_bytes()); // size_bytes
-    buf[12..16].copy_from_slice(&(8u32).to_le_bytes()); // entry_count
-    buf[16..20].copy_from_slice(&(128u32).to_le_bytes()); // entry_stride_bytes
+    write_u32_le(
+        &mut buf,
+        core::mem::offset_of!(AerogpuRingHeader, magic),
+        AEROGPU_RING_MAGIC,
+    );
+    write_u32_le(
+        &mut buf,
+        core::mem::offset_of!(AerogpuRingHeader, abi_version),
+        (AEROGPU_ABI_MAJOR << 16) | 999u32,
+    );
+    write_u32_le(
+        &mut buf,
+        core::mem::offset_of!(AerogpuRingHeader, size_bytes),
+        header_size_bytes + 8u32 * 128u32,
+    );
+    write_u32_le(
+        &mut buf,
+        core::mem::offset_of!(AerogpuRingHeader, entry_count),
+        8,
+    );
+    write_u32_le(
+        &mut buf,
+        core::mem::offset_of!(AerogpuRingHeader, entry_stride_bytes),
+        128,
+    );
 
     let hdr = AerogpuRingHeader::decode_from_le_bytes(&buf).unwrap();
     hdr.validate_prefix().unwrap();
@@ -2554,12 +2603,33 @@ fn ring_header_accepts_unknown_minor_and_extended_stride() {
 
 #[test]
 fn ring_header_rejects_non_power_of_two_entry_count() {
+    let header_size_bytes = AerogpuRingHeader::SIZE_BYTES as u32;
     let mut buf = vec![0u8; AerogpuRingHeader::SIZE_BYTES];
-    buf[0..4].copy_from_slice(&AEROGPU_RING_MAGIC.to_le_bytes());
-    buf[4..8].copy_from_slice(&AEROGPU_ABI_VERSION_U32.to_le_bytes());
-    buf[8..12].copy_from_slice(&(64u32 + 3u32 * 64u32).to_le_bytes()); // size_bytes
-    buf[12..16].copy_from_slice(&(3u32).to_le_bytes()); // entry_count
-    buf[16..20].copy_from_slice(&(64u32).to_le_bytes()); // entry_stride_bytes
+    write_u32_le(
+        &mut buf,
+        core::mem::offset_of!(AerogpuRingHeader, magic),
+        AEROGPU_RING_MAGIC,
+    );
+    write_u32_le(
+        &mut buf,
+        core::mem::offset_of!(AerogpuRingHeader, abi_version),
+        AEROGPU_ABI_VERSION_U32,
+    );
+    write_u32_le(
+        &mut buf,
+        core::mem::offset_of!(AerogpuRingHeader, size_bytes),
+        header_size_bytes + 3u32 * 64u32,
+    );
+    write_u32_le(
+        &mut buf,
+        core::mem::offset_of!(AerogpuRingHeader, entry_count),
+        3,
+    );
+    write_u32_le(
+        &mut buf,
+        core::mem::offset_of!(AerogpuRingHeader, entry_stride_bytes),
+        64,
+    );
 
     let hdr = AerogpuRingHeader::decode_from_le_bytes(&buf).unwrap();
     let err = hdr.validate_prefix().unwrap_err();
@@ -2571,12 +2641,33 @@ fn ring_header_rejects_non_power_of_two_entry_count() {
 
 #[test]
 fn ring_header_rejects_stride_too_small() {
+    let header_size_bytes = AerogpuRingHeader::SIZE_BYTES as u32;
     let mut buf = vec![0u8; AerogpuRingHeader::SIZE_BYTES];
-    buf[0..4].copy_from_slice(&AEROGPU_RING_MAGIC.to_le_bytes());
-    buf[4..8].copy_from_slice(&AEROGPU_ABI_VERSION_U32.to_le_bytes());
-    buf[8..12].copy_from_slice(&(64u32 + 8u32 * 32u32).to_le_bytes()); // size_bytes
-    buf[12..16].copy_from_slice(&(8u32).to_le_bytes()); // entry_count
-    buf[16..20].copy_from_slice(&(32u32).to_le_bytes()); // entry_stride_bytes
+    write_u32_le(
+        &mut buf,
+        core::mem::offset_of!(AerogpuRingHeader, magic),
+        AEROGPU_RING_MAGIC,
+    );
+    write_u32_le(
+        &mut buf,
+        core::mem::offset_of!(AerogpuRingHeader, abi_version),
+        AEROGPU_ABI_VERSION_U32,
+    );
+    write_u32_le(
+        &mut buf,
+        core::mem::offset_of!(AerogpuRingHeader, size_bytes),
+        header_size_bytes + 8u32 * 32u32,
+    );
+    write_u32_le(
+        &mut buf,
+        core::mem::offset_of!(AerogpuRingHeader, entry_count),
+        8,
+    );
+    write_u32_le(
+        &mut buf,
+        core::mem::offset_of!(AerogpuRingHeader, entry_stride_bytes),
+        32,
+    );
 
     let hdr = AerogpuRingHeader::decode_from_le_bytes(&buf).unwrap();
     let err = hdr.validate_prefix().unwrap_err();
@@ -2588,12 +2679,33 @@ fn ring_header_rejects_stride_too_small() {
 
 #[test]
 fn ring_header_rejects_size_too_small_for_layout() {
+    let header_size_bytes = AerogpuRingHeader::SIZE_BYTES as u32;
     let mut buf = vec![0u8; AerogpuRingHeader::SIZE_BYTES];
-    buf[0..4].copy_from_slice(&AEROGPU_RING_MAGIC.to_le_bytes());
-    buf[4..8].copy_from_slice(&AEROGPU_ABI_VERSION_U32.to_le_bytes());
-    buf[8..12].copy_from_slice(&(64u32).to_le_bytes()); // size_bytes
-    buf[12..16].copy_from_slice(&(8u32).to_le_bytes()); // entry_count
-    buf[16..20].copy_from_slice(&(64u32).to_le_bytes()); // entry_stride_bytes
+    write_u32_le(
+        &mut buf,
+        core::mem::offset_of!(AerogpuRingHeader, magic),
+        AEROGPU_RING_MAGIC,
+    );
+    write_u32_le(
+        &mut buf,
+        core::mem::offset_of!(AerogpuRingHeader, abi_version),
+        AEROGPU_ABI_VERSION_U32,
+    );
+    write_u32_le(
+        &mut buf,
+        core::mem::offset_of!(AerogpuRingHeader, size_bytes),
+        header_size_bytes,
+    );
+    write_u32_le(
+        &mut buf,
+        core::mem::offset_of!(AerogpuRingHeader, entry_count),
+        8,
+    );
+    write_u32_le(
+        &mut buf,
+        core::mem::offset_of!(AerogpuRingHeader, entry_stride_bytes),
+        64,
+    );
 
     let hdr = AerogpuRingHeader::decode_from_le_bytes(&buf).unwrap();
     let err = hdr.validate_prefix().unwrap_err();
@@ -2605,12 +2717,33 @@ fn ring_header_rejects_size_too_small_for_layout() {
 
 #[test]
 fn alloc_table_header_accepts_unknown_minor_and_extended_stride() {
+    let header_size_bytes = AerogpuAllocTableHeader::SIZE_BYTES as u32;
     let mut buf = vec![0u8; AerogpuAllocTableHeader::SIZE_BYTES];
-    buf[0..4].copy_from_slice(&AEROGPU_ALLOC_TABLE_MAGIC.to_le_bytes());
-    buf[4..8].copy_from_slice(&((AEROGPU_ABI_MAJOR << 16) | 999u32).to_le_bytes());
-    buf[8..12].copy_from_slice(&(24u32 + 2u32 * 64u32).to_le_bytes()); // size_bytes
-    buf[12..16].copy_from_slice(&(2u32).to_le_bytes()); // entry_count
-    buf[16..20].copy_from_slice(&(64u32).to_le_bytes()); // entry_stride_bytes
+    write_u32_le(
+        &mut buf,
+        core::mem::offset_of!(AerogpuAllocTableHeader, magic),
+        AEROGPU_ALLOC_TABLE_MAGIC,
+    );
+    write_u32_le(
+        &mut buf,
+        core::mem::offset_of!(AerogpuAllocTableHeader, abi_version),
+        (AEROGPU_ABI_MAJOR << 16) | 999u32,
+    );
+    write_u32_le(
+        &mut buf,
+        core::mem::offset_of!(AerogpuAllocTableHeader, size_bytes),
+        header_size_bytes + 2u32 * 64u32,
+    );
+    write_u32_le(
+        &mut buf,
+        core::mem::offset_of!(AerogpuAllocTableHeader, entry_count),
+        2,
+    );
+    write_u32_le(
+        &mut buf,
+        core::mem::offset_of!(AerogpuAllocTableHeader, entry_stride_bytes),
+        64,
+    );
 
     let hdr = AerogpuAllocTableHeader::decode_from_le_bytes(&buf).unwrap();
     hdr.validate_prefix().unwrap();
@@ -2618,12 +2751,33 @@ fn alloc_table_header_accepts_unknown_minor_and_extended_stride() {
 
 #[test]
 fn alloc_table_header_rejects_stride_too_small() {
+    let header_size_bytes = AerogpuAllocTableHeader::SIZE_BYTES as u32;
     let mut buf = vec![0u8; AerogpuAllocTableHeader::SIZE_BYTES];
-    buf[0..4].copy_from_slice(&AEROGPU_ALLOC_TABLE_MAGIC.to_le_bytes());
-    buf[4..8].copy_from_slice(&AEROGPU_ABI_VERSION_U32.to_le_bytes());
-    buf[8..12].copy_from_slice(&(24u32 + 2u32 * 16u32).to_le_bytes()); // size_bytes
-    buf[12..16].copy_from_slice(&(2u32).to_le_bytes()); // entry_count
-    buf[16..20].copy_from_slice(&(16u32).to_le_bytes()); // entry_stride_bytes
+    write_u32_le(
+        &mut buf,
+        core::mem::offset_of!(AerogpuAllocTableHeader, magic),
+        AEROGPU_ALLOC_TABLE_MAGIC,
+    );
+    write_u32_le(
+        &mut buf,
+        core::mem::offset_of!(AerogpuAllocTableHeader, abi_version),
+        AEROGPU_ABI_VERSION_U32,
+    );
+    write_u32_le(
+        &mut buf,
+        core::mem::offset_of!(AerogpuAllocTableHeader, size_bytes),
+        header_size_bytes + 2u32 * 16u32,
+    );
+    write_u32_le(
+        &mut buf,
+        core::mem::offset_of!(AerogpuAllocTableHeader, entry_count),
+        2,
+    );
+    write_u32_le(
+        &mut buf,
+        core::mem::offset_of!(AerogpuAllocTableHeader, entry_stride_bytes),
+        16,
+    );
 
     let hdr = AerogpuAllocTableHeader::decode_from_le_bytes(&buf).unwrap();
     let err = hdr.validate_prefix().unwrap_err();
@@ -2635,12 +2789,33 @@ fn alloc_table_header_rejects_stride_too_small() {
 
 #[test]
 fn alloc_table_header_rejects_size_too_small_for_layout() {
+    let header_size_bytes = AerogpuAllocTableHeader::SIZE_BYTES as u32;
     let mut buf = vec![0u8; AerogpuAllocTableHeader::SIZE_BYTES];
-    buf[0..4].copy_from_slice(&AEROGPU_ALLOC_TABLE_MAGIC.to_le_bytes());
-    buf[4..8].copy_from_slice(&AEROGPU_ABI_VERSION_U32.to_le_bytes());
-    buf[8..12].copy_from_slice(&(24u32).to_le_bytes()); // size_bytes
-    buf[12..16].copy_from_slice(&(2u32).to_le_bytes()); // entry_count
-    buf[16..20].copy_from_slice(&(32u32).to_le_bytes()); // entry_stride_bytes
+    write_u32_le(
+        &mut buf,
+        core::mem::offset_of!(AerogpuAllocTableHeader, magic),
+        AEROGPU_ALLOC_TABLE_MAGIC,
+    );
+    write_u32_le(
+        &mut buf,
+        core::mem::offset_of!(AerogpuAllocTableHeader, abi_version),
+        AEROGPU_ABI_VERSION_U32,
+    );
+    write_u32_le(
+        &mut buf,
+        core::mem::offset_of!(AerogpuAllocTableHeader, size_bytes),
+        header_size_bytes,
+    );
+    write_u32_le(
+        &mut buf,
+        core::mem::offset_of!(AerogpuAllocTableHeader, entry_count),
+        2,
+    );
+    write_u32_le(
+        &mut buf,
+        core::mem::offset_of!(AerogpuAllocTableHeader, entry_stride_bytes),
+        32,
+    );
 
     let hdr = AerogpuAllocTableHeader::decode_from_le_bytes(&buf).unwrap();
     let err = hdr.validate_prefix().unwrap_err();
@@ -2654,5 +2829,6 @@ fn alloc_table_header_rejects_size_too_small_for_layout() {
 fn fence_page_write_updates_expected_bytes() {
     let mut page = [0u8; AerogpuFencePage::SIZE_BYTES];
     write_fence_page_completed_fence_le(&mut page, 0x0102_0304_0506_0708).unwrap();
-    assert_eq!(&page[8..16], &0x0102_0304_0506_0708u64.to_le_bytes());
+    let off = core::mem::offset_of!(AerogpuFencePage, completed_fence);
+    assert_eq!(&page[off..off + 8], &0x0102_0304_0506_0708u64.to_le_bytes());
 }

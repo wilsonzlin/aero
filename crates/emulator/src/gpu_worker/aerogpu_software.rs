@@ -259,13 +259,14 @@ impl AeroGpuSoftwareExecutor {
 
         let mut buf = vec![0u8; size];
         mem.read_physical(gpa, &mut buf);
-        let hdr = ring::AerogpuAllocTableHeader {
-            magic: u32::from_le_bytes(buf[0..4].try_into().unwrap()),
-            abi_version: u32::from_le_bytes(buf[4..8].try_into().unwrap()),
-            size_bytes: u32::from_le_bytes(buf[8..12].try_into().unwrap()),
-            entry_count: u32::from_le_bytes(buf[12..16].try_into().unwrap()),
-            entry_stride_bytes: u32::from_le_bytes(buf[16..20].try_into().unwrap()),
-            reserved0: u32::from_le_bytes(buf[20..24].try_into().unwrap()),
+        let hdr = match ring::AerogpuAllocTableHeader::decode_from_le_bytes(&buf) {
+            Ok(v) => v,
+            Err(_) => {
+                regs.stats.malformed_submissions =
+                    regs.stats.malformed_submissions.saturating_add(1);
+                regs.irq_status |= irq_bits::ERROR;
+                return HashMap::new();
+            }
         };
 
         if hdr.magic != ring::AEROGPU_ALLOC_TABLE_MAGIC {
@@ -299,12 +300,16 @@ impl AeroGpuSoftwareExecutor {
                 regs.irq_status |= irq_bits::ERROR;
                 break;
             }
-            let entry = ring::AerogpuAllocEntry {
-                alloc_id: u32::from_le_bytes(buf[off..off + 4].try_into().unwrap()),
-                flags: u32::from_le_bytes(buf[off + 4..off + 8].try_into().unwrap()),
-                gpa: u64::from_le_bytes(buf[off + 8..off + 16].try_into().unwrap()),
-                size_bytes: u64::from_le_bytes(buf[off + 16..off + 24].try_into().unwrap()),
-                reserved0: u64::from_le_bytes(buf[off + 24..off + 32].try_into().unwrap()),
+            let entry = match ring::AerogpuAllocEntry::decode_from_le_bytes(
+                &buf[off..off + ring::AerogpuAllocEntry::SIZE_BYTES],
+            ) {
+                Ok(v) => v,
+                Err(_) => {
+                    regs.stats.malformed_submissions =
+                        regs.stats.malformed_submissions.saturating_add(1);
+                    regs.irq_status |= irq_bits::ERROR;
+                    break;
+                }
             };
             off += ring::AerogpuAllocEntry::SIZE_BYTES;
 
@@ -328,42 +333,35 @@ impl AeroGpuSoftwareExecutor {
         regs.irq_status |= irq_bits::ERROR;
     }
 
-    fn cmd_read_u32(buf: &[u8], off: usize) -> Option<u32> {
-        buf.get(off..off + 4)
-            .and_then(|b| b.try_into().ok())
-            .map(u32::from_le_bytes)
-    }
+    fn read_packed_prefix<T: Copy>(buf: &[u8]) -> Option<T> {
+        if buf.len() < core::mem::size_of::<T>() {
+            return None;
+        }
 
-    fn cmd_read_i32(buf: &[u8], off: usize) -> Option<i32> {
-        Self::cmd_read_u32(buf, off).map(|v| v as i32)
-    }
-
-    fn cmd_read_u64(buf: &[u8], off: usize) -> Option<u64> {
-        buf.get(off..off + 8)
-            .and_then(|b| b.try_into().ok())
-            .map(u64::from_le_bytes)
-    }
-
-    fn cmd_read_f32_bits(buf: &[u8], off: usize) -> Option<f32> {
-        Self::cmd_read_u32(buf, off).map(f32::from_bits)
+        // SAFETY: Bounds checked above and `read_unaligned` avoids alignment requirements.
+        Some(unsafe { core::ptr::read_unaligned(buf.as_ptr() as *const T) })
     }
 
     fn parse_input_layout_blob(blob: &[u8]) -> ParsedInputLayout {
-        let hdr_size = std::mem::size_of::<cmd::AerogpuInputLayoutBlobHeader>();
-        let elem_size = std::mem::size_of::<cmd::AerogpuInputLayoutElementDxgi>();
+        let hdr_size = cmd::AerogpuInputLayoutBlobHeader::SIZE_BYTES;
+        let elem_size = cmd::AerogpuInputLayoutElementDxgi::SIZE_BYTES;
 
         if blob.len() < hdr_size {
             return ParsedInputLayout::default();
         }
-        let magic = u32::from_le_bytes(blob[0..4].try_into().unwrap());
+        let hdr = match Self::read_packed_prefix::<cmd::AerogpuInputLayoutBlobHeader>(blob) {
+            Some(v) => v,
+            None => return ParsedInputLayout::default(),
+        };
+        let magic = u32::from_le(hdr.magic);
         if magic != cmd::AEROGPU_INPUT_LAYOUT_BLOB_MAGIC {
             return ParsedInputLayout::default();
         }
-        let version = u32::from_le_bytes(blob[4..8].try_into().unwrap());
+        let version = u32::from_le(hdr.version);
         if version != cmd::AEROGPU_INPUT_LAYOUT_BLOB_VERSION {
             return ParsedInputLayout::default();
         }
-        let element_count = u32::from_le_bytes(blob[8..12].try_into().unwrap()) as usize;
+        let element_count = u32::from_le(hdr.element_count) as usize;
         let mut off = hdr_size;
         let needed = match element_count
             .checked_mul(elem_size)
@@ -389,12 +387,17 @@ impl AeroGpuSoftwareExecutor {
 
         let mut out = ParsedInputLayout::default();
         for _ in 0..element_count {
-            let semantic_name_hash = u32::from_le_bytes(blob[off..off + 4].try_into().unwrap());
-            let semantic_index = u32::from_le_bytes(blob[off + 4..off + 8].try_into().unwrap());
-            let dxgi_format = u32::from_le_bytes(blob[off + 8..off + 12].try_into().unwrap());
-            let input_slot = u32::from_le_bytes(blob[off + 12..off + 16].try_into().unwrap());
-            let aligned_byte_offset =
-                u32::from_le_bytes(blob[off + 16..off + 20].try_into().unwrap());
+            let elem = match Self::read_packed_prefix::<cmd::AerogpuInputLayoutElementDxgi>(
+                &blob[off..],
+            ) {
+                Some(v) => v,
+                None => return ParsedInputLayout::default(),
+            };
+            let semantic_name_hash = u32::from_le(elem.semantic_name_hash);
+            let semantic_index = u32::from_le(elem.semantic_index);
+            let dxgi_format = u32::from_le(elem.dxgi_format);
+            let input_slot = u32::from_le(elem.input_slot);
+            let aligned_byte_offset = u32::from_le(elem.aligned_byte_offset);
             off += elem_size;
 
             if semantic_index != 0 {
@@ -1078,14 +1081,15 @@ impl AeroGpuSoftwareExecutor {
         allocs: &HashMap<u32, AllocInfo>,
         packet: &[u8],
     ) -> bool {
-        if packet.len() < cmd::AerogpuCmdHdr::SIZE_BYTES {
-            Self::record_error(regs);
-            return false;
-        }
+        let hdr = match cmd::decode_cmd_hdr_le(packet) {
+            Ok(v) => v,
+            Err(_) => {
+                Self::record_error(regs);
+                return false;
+            }
+        };
 
-        let opcode = u32::from_le_bytes(packet[0..4].try_into().unwrap());
-
-        let Some(op) = cmd::AerogpuCmdOpcode::from_u32(opcode) else {
+        let Some(op) = cmd::AerogpuCmdOpcode::from_u32(hdr.opcode) else {
             // Unknown opcode: forward-compatible skip.
             return true;
         };
@@ -1093,14 +1097,18 @@ impl AeroGpuSoftwareExecutor {
         match op {
             cmd::AerogpuCmdOpcode::Nop | cmd::AerogpuCmdOpcode::DebugMarker => {}
             cmd::AerogpuCmdOpcode::CreateBuffer => {
-                if packet.len() < 40 {
-                    Self::record_error(regs);
-                    return false;
-                }
-                let handle = Self::cmd_read_u32(packet, 8).unwrap_or(0);
-                let size_bytes = Self::cmd_read_u64(packet, 16).unwrap_or(0);
-                let backing_alloc_id = Self::cmd_read_u32(packet, 24).unwrap_or(0);
-                let backing_offset_bytes = Self::cmd_read_u32(packet, 28).unwrap_or(0) as u64;
+                let packet_cmd =
+                    match Self::read_packed_prefix::<cmd::AerogpuCmdCreateBuffer>(packet) {
+                        Some(v) => v,
+                        None => {
+                            Self::record_error(regs);
+                            return false;
+                        }
+                    };
+                let handle = u32::from_le(packet_cmd.buffer_handle);
+                let size_bytes = u64::from_le(packet_cmd.size_bytes);
+                let backing_alloc_id = u32::from_le(packet_cmd.backing_alloc_id);
+                let backing_offset_bytes = u32::from_le(packet_cmd.backing_offset_bytes) as u64;
 
                 if handle == 0 || size_bytes == 0 {
                     return true;
@@ -1124,7 +1132,7 @@ impl AeroGpuSoftwareExecutor {
                         alloc_id: backing_alloc_id,
                         alloc_flags: alloc.flags,
                         gpa: alloc.gpa + backing_offset_bytes,
-                        size_bytes: size_bytes,
+                        size_bytes,
                     });
                 }
 
@@ -1150,19 +1158,23 @@ impl AeroGpuSoftwareExecutor {
                 );
             }
             cmd::AerogpuCmdOpcode::CreateTexture2d => {
-                if packet.len() < 56 {
-                    Self::record_error(regs);
-                    return false;
-                }
-                let handle = Self::cmd_read_u32(packet, 8).unwrap_or(0);
-                let format_u32 = Self::cmd_read_u32(packet, 16).unwrap_or(0);
-                let width = Self::cmd_read_u32(packet, 20).unwrap_or(0);
-                let height = Self::cmd_read_u32(packet, 24).unwrap_or(0);
-                let mip_levels = Self::cmd_read_u32(packet, 28).unwrap_or(1);
-                let array_layers = Self::cmd_read_u32(packet, 32).unwrap_or(1);
-                let row_pitch_bytes = Self::cmd_read_u32(packet, 36).unwrap_or(0);
-                let backing_alloc_id = Self::cmd_read_u32(packet, 40).unwrap_or(0);
-                let backing_offset_bytes = Self::cmd_read_u32(packet, 44).unwrap_or(0) as u64;
+                let packet_cmd =
+                    match Self::read_packed_prefix::<cmd::AerogpuCmdCreateTexture2d>(packet) {
+                        Some(v) => v,
+                        None => {
+                            Self::record_error(regs);
+                            return false;
+                        }
+                    };
+                let handle = u32::from_le(packet_cmd.texture_handle);
+                let format_u32 = u32::from_le(packet_cmd.format);
+                let width = u32::from_le(packet_cmd.width);
+                let height = u32::from_le(packet_cmd.height);
+                let mip_levels = u32::from_le(packet_cmd.mip_levels);
+                let array_layers = u32::from_le(packet_cmd.array_layers);
+                let row_pitch_bytes = u32::from_le(packet_cmd.row_pitch_bytes);
+                let backing_alloc_id = u32::from_le(packet_cmd.backing_alloc_id);
+                let backing_offset_bytes = u32::from_le(packet_cmd.backing_offset_bytes) as u64;
 
                 if handle == 0 || width == 0 || height == 0 {
                     return true;
@@ -1244,11 +1256,15 @@ impl AeroGpuSoftwareExecutor {
                 );
             }
             cmd::AerogpuCmdOpcode::DestroyResource => {
-                if packet.len() < 16 {
-                    Self::record_error(regs);
-                    return false;
-                }
-                let handle = Self::cmd_read_u32(packet, 8).unwrap_or(0);
+                let packet_cmd =
+                    match Self::read_packed_prefix::<cmd::AerogpuCmdDestroyResource>(packet) {
+                        Some(v) => v,
+                        None => {
+                            Self::record_error(regs);
+                            return false;
+                        }
+                    };
+                let handle = u32::from_le(packet_cmd.resource_handle);
                 let resolved = self.resolve_handle(handle);
                 self.buffers.remove(&resolved);
                 self.textures.remove(&resolved);
@@ -1268,13 +1284,17 @@ impl AeroGpuSoftwareExecutor {
                 }
             }
             cmd::AerogpuCmdOpcode::ResourceDirtyRange => {
-                if packet.len() < 32 {
-                    Self::record_error(regs);
-                    return false;
-                }
-                let handle = Self::cmd_read_u32(packet, 8).unwrap_or(0);
-                let offset = Self::cmd_read_u64(packet, 16).unwrap_or(0);
-                let size = Self::cmd_read_u64(packet, 24).unwrap_or(0);
+                let packet_cmd =
+                    match Self::read_packed_prefix::<cmd::AerogpuCmdResourceDirtyRange>(packet) {
+                        Some(v) => v,
+                        None => {
+                            Self::record_error(regs);
+                            return false;
+                        }
+                    };
+                let handle = u32::from_le(packet_cmd.resource_handle);
+                let offset = u64::from_le(packet_cmd.offset_bytes);
+                let size = u64::from_le(packet_cmd.size_bytes);
                 let handle = self.resolve_handle(handle);
                 if size == 0 {
                     return true;
@@ -1304,16 +1324,17 @@ impl AeroGpuSoftwareExecutor {
                     Self::record_error(regs);
                     return false;
                 }
-                let (cmd, payload) = match cmd::decode_cmd_upload_resource_payload_le(packet) {
+                let (packet_cmd, payload) = match cmd::decode_cmd_upload_resource_payload_le(packet)
+                {
                     Ok(v) => v,
                     Err(_) => {
                         Self::record_error(regs);
                         return true;
                     }
                 };
-                let handle = self.resolve_handle(cmd.resource_handle);
-                let offset = cmd.offset_bytes;
-                let size = cmd.size_bytes;
+                let handle = self.resolve_handle(packet_cmd.resource_handle);
+                let offset = packet_cmd.offset_bytes;
+                let size = packet_cmd.size_bytes;
 
                 if size == 0 {
                     return true;
@@ -1369,17 +1390,21 @@ impl AeroGpuSoftwareExecutor {
                 }
             }
             cmd::AerogpuCmdOpcode::CopyBuffer => {
-                if packet.len() < 48 {
-                    Self::record_error(regs);
-                    return false;
-                }
+                let packet_cmd = match Self::read_packed_prefix::<cmd::AerogpuCmdCopyBuffer>(packet)
+                {
+                    Some(v) => v,
+                    None => {
+                        Self::record_error(regs);
+                        return false;
+                    }
+                };
 
-                let dst = Self::cmd_read_u32(packet, 8).unwrap_or(0);
-                let src = Self::cmd_read_u32(packet, 12).unwrap_or(0);
-                let dst_offset = Self::cmd_read_u64(packet, 16).unwrap_or(0);
-                let src_offset = Self::cmd_read_u64(packet, 24).unwrap_or(0);
-                let size = Self::cmd_read_u64(packet, 32).unwrap_or(0);
-                let flags = Self::cmd_read_u32(packet, 40).unwrap_or(0);
+                let dst = u32::from_le(packet_cmd.dst_buffer);
+                let src = u32::from_le(packet_cmd.src_buffer);
+                let dst_offset = u64::from_le(packet_cmd.dst_offset_bytes);
+                let src_offset = u64::from_le(packet_cmd.src_offset_bytes);
+                let size = u64::from_le(packet_cmd.size_bytes);
+                let flags = u32::from_le(packet_cmd.flags);
 
                 if size == 0 {
                     return true;
@@ -1497,24 +1522,28 @@ impl AeroGpuSoftwareExecutor {
                 }
             }
             cmd::AerogpuCmdOpcode::CopyTexture2d => {
-                if packet.len() < 64 {
-                    Self::record_error(regs);
-                    return false;
-                }
+                let packet_cmd =
+                    match Self::read_packed_prefix::<cmd::AerogpuCmdCopyTexture2d>(packet) {
+                        Some(v) => v,
+                        None => {
+                            Self::record_error(regs);
+                            return false;
+                        }
+                    };
 
-                let dst = Self::cmd_read_u32(packet, 8).unwrap_or(0);
-                let src = Self::cmd_read_u32(packet, 12).unwrap_or(0);
-                let dst_mip_level = Self::cmd_read_u32(packet, 16).unwrap_or(0);
-                let dst_array_layer = Self::cmd_read_u32(packet, 20).unwrap_or(0);
-                let src_mip_level = Self::cmd_read_u32(packet, 24).unwrap_or(0);
-                let src_array_layer = Self::cmd_read_u32(packet, 28).unwrap_or(0);
-                let dst_x = Self::cmd_read_u32(packet, 32).unwrap_or(0);
-                let dst_y = Self::cmd_read_u32(packet, 36).unwrap_or(0);
-                let src_x = Self::cmd_read_u32(packet, 40).unwrap_or(0);
-                let src_y = Self::cmd_read_u32(packet, 44).unwrap_or(0);
-                let width = Self::cmd_read_u32(packet, 48).unwrap_or(0);
-                let height = Self::cmd_read_u32(packet, 52).unwrap_or(0);
-                let flags = Self::cmd_read_u32(packet, 56).unwrap_or(0);
+                let dst = u32::from_le(packet_cmd.dst_texture);
+                let src = u32::from_le(packet_cmd.src_texture);
+                let dst_mip_level = u32::from_le(packet_cmd.dst_mip_level);
+                let dst_array_layer = u32::from_le(packet_cmd.dst_array_layer);
+                let src_mip_level = u32::from_le(packet_cmd.src_mip_level);
+                let src_array_layer = u32::from_le(packet_cmd.src_array_layer);
+                let dst_x = u32::from_le(packet_cmd.dst_x);
+                let dst_y = u32::from_le(packet_cmd.dst_y);
+                let src_x = u32::from_le(packet_cmd.src_x);
+                let src_y = u32::from_le(packet_cmd.src_y);
+                let width = u32::from_le(packet_cmd.width);
+                let height = u32::from_le(packet_cmd.height);
+                let flags = u32::from_le(packet_cmd.flags);
 
                 if width == 0 || height == 0 {
                     return true;
@@ -1677,40 +1706,50 @@ impl AeroGpuSoftwareExecutor {
                 let _ = (src_pitch, src_w, src_h);
             }
             cmd::AerogpuCmdOpcode::CreateShaderDxbc => {
-                if packet.len() < 24 {
+                if packet.len() < core::mem::size_of::<cmd::AerogpuCmdCreateShaderDxbc>() {
                     Self::record_error(regs);
                     return false;
                 }
-                let (cmd, dxbc) = match cmd::decode_cmd_create_shader_dxbc_payload_le(packet) {
-                    Ok(v) => v,
-                    Err(_) => {
-                        Self::record_error(regs);
-                        return true;
-                    }
-                };
-                let handle = cmd.shader_handle;
-                let stage = cmd.stage;
-                let dxbc = dxbc.to_vec();
+                let (packet_cmd, dxbc_bytes) =
+                    match cmd::decode_cmd_create_shader_dxbc_payload_le(packet) {
+                        Ok(v) => v,
+                        Err(_) => {
+                            Self::record_error(regs);
+                            return true;
+                        }
+                    };
+
+                let handle = packet_cmd.shader_handle;
+                let stage = packet_cmd.stage;
+                let dxbc = dxbc_bytes.to_vec();
                 if handle != 0 {
                     self.shaders.insert(handle, ShaderResource { stage, dxbc });
                 }
             }
             cmd::AerogpuCmdOpcode::DestroyShader => {
-                if packet.len() < 16 {
-                    Self::record_error(regs);
-                    return false;
-                }
-                let handle = Self::cmd_read_u32(packet, 8).unwrap_or(0);
+                let packet_cmd =
+                    match Self::read_packed_prefix::<cmd::AerogpuCmdDestroyShader>(packet) {
+                        Some(v) => v,
+                        None => {
+                            Self::record_error(regs);
+                            return false;
+                        }
+                    };
+                let handle = u32::from_le(packet_cmd.shader_handle);
                 self.shaders.remove(&handle);
             }
             cmd::AerogpuCmdOpcode::BindShaders => {
-                if packet.len() < 24 {
-                    Self::record_error(regs);
-                    return false;
-                }
-                self.state.vs = Self::cmd_read_u32(packet, 8).unwrap_or(0);
-                self.state.ps = Self::cmd_read_u32(packet, 12).unwrap_or(0);
-                self.state.cs = Self::cmd_read_u32(packet, 16).unwrap_or(0);
+                let packet_cmd =
+                    match Self::read_packed_prefix::<cmd::AerogpuCmdBindShaders>(packet) {
+                        Some(v) => v,
+                        None => {
+                            Self::record_error(regs);
+                            return false;
+                        }
+                    };
+                self.state.vs = u32::from_le(packet_cmd.vs);
+                self.state.ps = u32::from_le(packet_cmd.ps);
+                self.state.cs = u32::from_le(packet_cmd.cs);
             }
             cmd::AerogpuCmdOpcode::SetShaderConstantsF => {
                 // Currently ignored by the software backend.
@@ -1720,15 +1759,17 @@ impl AeroGpuSoftwareExecutor {
                     Self::record_error(regs);
                     return false;
                 }
-                let (cmd, blob) = match cmd::decode_cmd_create_input_layout_blob_le(packet) {
-                    Ok(v) => v,
-                    Err(_) => {
-                        Self::record_error(regs);
-                        return true;
-                    }
-                };
-                let handle = cmd.input_layout_handle;
-                let blob = blob.to_vec();
+                let (packet_cmd, blob_bytes) =
+                    match cmd::decode_cmd_create_input_layout_blob_le(packet) {
+                        Ok(v) => v,
+                        Err(_) => {
+                            Self::record_error(regs);
+                            return true;
+                        }
+                    };
+
+                let handle = packet_cmd.input_layout_handle;
+                let blob = blob_bytes.to_vec();
                 let parsed = Self::parse_input_layout_blob(&blob);
                 if handle != 0 {
                     self.input_layouts
@@ -1736,61 +1777,65 @@ impl AeroGpuSoftwareExecutor {
                 }
             }
             cmd::AerogpuCmdOpcode::DestroyInputLayout => {
-                if packet.len() < 16 {
-                    Self::record_error(regs);
-                    return false;
-                }
-                let handle = Self::cmd_read_u32(packet, 8).unwrap_or(0);
+                let packet_cmd =
+                    match Self::read_packed_prefix::<cmd::AerogpuCmdDestroyInputLayout>(packet) {
+                        Some(v) => v,
+                        None => {
+                            Self::record_error(regs);
+                            return false;
+                        }
+                    };
+                let handle = u32::from_le(packet_cmd.input_layout_handle);
                 self.input_layouts.remove(&handle);
                 if self.state.input_layout == handle {
                     self.state.input_layout = 0;
                 }
             }
             cmd::AerogpuCmdOpcode::SetInputLayout => {
-                if packet.len() < 16 {
-                    Self::record_error(regs);
-                    return false;
-                }
-                self.state.input_layout = Self::cmd_read_u32(packet, 8).unwrap_or(0);
+                let packet_cmd =
+                    match Self::read_packed_prefix::<cmd::AerogpuCmdSetInputLayout>(packet) {
+                        Some(v) => v,
+                        None => {
+                            Self::record_error(regs);
+                            return false;
+                        }
+                    };
+                self.state.input_layout = u32::from_le(packet_cmd.input_layout_handle);
             }
             cmd::AerogpuCmdOpcode::SetBlendState => {
-                if packet.len() < 28 {
-                    Self::record_error(regs);
-                    return false;
-                }
+                let packet_cmd =
+                    match Self::read_packed_prefix::<cmd::AerogpuCmdSetBlendState>(packet) {
+                        Some(v) => v,
+                        None => {
+                            Self::record_error(regs);
+                            return false;
+                        }
+                    };
 
-                let enable = Self::cmd_read_u32(packet, 8).unwrap_or(0) != 0;
-                let src_factor =
-                    Self::cmd_read_u32(packet, 12).unwrap_or(cmd::AerogpuBlendFactor::One as u32);
-                let dst_factor =
-                    Self::cmd_read_u32(packet, 16).unwrap_or(cmd::AerogpuBlendFactor::Zero as u32);
-                let blend_op =
-                    Self::cmd_read_u32(packet, 20).unwrap_or(cmd::AerogpuBlendOp::Add as u32);
-                let write_mask = packet.get(24).copied().unwrap_or(0xF);
-
+                let state = packet_cmd.state;
                 self.state.blend = BlendState {
-                    enable,
-                    src_factor,
-                    dst_factor,
-                    blend_op,
-                    write_mask,
+                    enable: u32::from_le(state.enable) != 0,
+                    src_factor: u32::from_le(state.src_factor),
+                    dst_factor: u32::from_le(state.dst_factor),
+                    blend_op: u32::from_le(state.blend_op),
+                    write_mask: state.color_write_mask,
                 };
             }
             cmd::AerogpuCmdOpcode::SetRasterizerState => {
-                if packet.len() < 32 {
-                    Self::record_error(regs);
-                    return false;
-                }
+                let packet_cmd =
+                    match Self::read_packed_prefix::<cmd::AerogpuCmdSetRasterizerState>(packet) {
+                        Some(v) => v,
+                        None => {
+                            Self::record_error(regs);
+                            return false;
+                        }
+                    };
 
-                let cull_mode =
-                    Self::cmd_read_u32(packet, 12).unwrap_or(cmd::AerogpuCullMode::Back as u32);
-                let front_ccw = Self::cmd_read_u32(packet, 16).unwrap_or(0) != 0;
-                let scissor_enable = Self::cmd_read_u32(packet, 20).unwrap_or(0) != 0;
-
+                let state = packet_cmd.state;
                 self.state.rasterizer = RasterizerState {
-                    cull_mode,
-                    front_ccw,
-                    scissor_enable,
+                    cull_mode: u32::from_le(state.cull_mode),
+                    front_ccw: u32::from_le(state.front_ccw) != 0,
+                    scissor_enable: u32::from_le(state.scissor_enable) != 0,
                 };
             }
             cmd::AerogpuCmdOpcode::SetDepthStencilState
@@ -1800,27 +1845,36 @@ impl AeroGpuSoftwareExecutor {
                 // Parsed but currently ignored by the software backend.
             }
             cmd::AerogpuCmdOpcode::SetRenderTargets => {
-                if packet.len() < 48 {
-                    Self::record_error(regs);
-                    return false;
-                }
+                let packet_cmd =
+                    match Self::read_packed_prefix::<cmd::AerogpuCmdSetRenderTargets>(packet) {
+                        Some(v) => v,
+                        None => {
+                            Self::record_error(regs);
+                            return false;
+                        }
+                    };
+
                 // color_count ignored for now; we accept RT0 and clear the rest.
-                for i in 0..cmd::AEROGPU_MAX_RENDER_TARGETS {
-                    let off = 16 + i * 4;
-                    self.state.render_targets[i] = Self::cmd_read_u32(packet, off).unwrap_or(0);
+                let colors = packet_cmd.colors;
+                for (dst, &src) in self.state.render_targets.iter_mut().zip(colors.iter()) {
+                    *dst = u32::from_le(src);
                 }
             }
             cmd::AerogpuCmdOpcode::SetViewport => {
-                if packet.len() < 32 {
-                    Self::record_error(regs);
-                    return false;
-                }
-                let x = Self::cmd_read_f32_bits(packet, 8).unwrap_or(0.0);
-                let y = Self::cmd_read_f32_bits(packet, 12).unwrap_or(0.0);
-                let width = Self::cmd_read_f32_bits(packet, 16).unwrap_or(0.0);
-                let height = Self::cmd_read_f32_bits(packet, 20).unwrap_or(0.0);
-                let min_depth = Self::cmd_read_f32_bits(packet, 24).unwrap_or(0.0);
-                let max_depth = Self::cmd_read_f32_bits(packet, 28).unwrap_or(1.0);
+                let packet_cmd =
+                    match Self::read_packed_prefix::<cmd::AerogpuCmdSetViewport>(packet) {
+                        Some(v) => v,
+                        None => {
+                            Self::record_error(regs);
+                            return false;
+                        }
+                    };
+                let x = f32::from_bits(u32::from_le(packet_cmd.x_f32));
+                let y = f32::from_bits(u32::from_le(packet_cmd.y_f32));
+                let width = f32::from_bits(u32::from_le(packet_cmd.width_f32));
+                let height = f32::from_bits(u32::from_le(packet_cmd.height_f32));
+                let min_depth = f32::from_bits(u32::from_le(packet_cmd.min_depth_f32));
+                let max_depth = f32::from_bits(u32::from_le(packet_cmd.max_depth_f32));
                 self.state.viewport = Some(Viewport {
                     x,
                     y,
@@ -1831,58 +1885,62 @@ impl AeroGpuSoftwareExecutor {
                 });
             }
             cmd::AerogpuCmdOpcode::SetScissor => {
-                if packet.len() < 24 {
-                    Self::record_error(regs);
-                    return false;
-                }
-                let x = Self::cmd_read_i32(packet, 8).unwrap_or(0);
-                let y = Self::cmd_read_i32(packet, 12).unwrap_or(0);
-                let width = Self::cmd_read_i32(packet, 16).unwrap_or(0);
-                let height = Self::cmd_read_i32(packet, 20).unwrap_or(0);
+                let packet_cmd = match Self::read_packed_prefix::<cmd::AerogpuCmdSetScissor>(packet)
+                {
+                    Some(v) => v,
+                    None => {
+                        Self::record_error(regs);
+                        return false;
+                    }
+                };
                 self.state.scissor = Some(Scissor {
-                    x,
-                    y,
-                    width,
-                    height,
+                    x: i32::from_le(packet_cmd.x),
+                    y: i32::from_le(packet_cmd.y),
+                    width: i32::from_le(packet_cmd.width),
+                    height: i32::from_le(packet_cmd.height),
                 });
             }
             cmd::AerogpuCmdOpcode::SetVertexBuffers => {
-                if packet.len() < std::mem::size_of::<cmd::AerogpuCmdSetVertexBuffers>() {
+                if packet.len() < core::mem::size_of::<cmd::AerogpuCmdSetVertexBuffers>() {
                     Self::record_error(regs);
                     return false;
                 }
-                let (cmd, bindings) = match cmd::decode_cmd_set_vertex_buffers_bindings_le(packet) {
-                    Ok(v) => v,
-                    Err(_) => {
-                        Self::record_error(regs);
-                        return true;
-                    }
-                };
-                let start_slot = cmd.start_slot as usize;
 
-                for (i, binding) in bindings.iter().copied().enumerate() {
+                let (packet_cmd, bindings) =
+                    match cmd::decode_cmd_set_vertex_buffers_bindings_le(packet) {
+                        Ok(v) => v,
+                        Err(_) => {
+                            Self::record_error(regs);
+                            return true;
+                        }
+                    };
+
+                let start_slot = packet_cmd.start_slot as usize;
+                for (i, binding_ref) in bindings.iter().enumerate() {
                     let slot = start_slot + i;
                     if slot >= self.state.vertex_buffers.len() {
                         continue;
                     }
-                    let buffer = u32::from_le(binding.buffer);
-                    let stride_bytes = u32::from_le(binding.stride_bytes);
-                    let offset_bytes = u32::from_le(binding.offset_bytes);
+                    let binding = *binding_ref;
                     self.state.vertex_buffers[slot] = VertexBufferBinding {
-                        buffer,
-                        stride_bytes,
-                        offset_bytes,
+                        buffer: u32::from_le(binding.buffer),
+                        stride_bytes: u32::from_le(binding.stride_bytes),
+                        offset_bytes: u32::from_le(binding.offset_bytes),
                     };
                 }
             }
             cmd::AerogpuCmdOpcode::SetIndexBuffer => {
-                if packet.len() < 24 {
-                    Self::record_error(regs);
-                    return false;
-                }
-                let buffer = Self::cmd_read_u32(packet, 8).unwrap_or(0);
-                let format = Self::cmd_read_u32(packet, 12).unwrap_or(0);
-                let offset_bytes = Self::cmd_read_u32(packet, 16).unwrap_or(0);
+                let packet_cmd =
+                    match Self::read_packed_prefix::<cmd::AerogpuCmdSetIndexBuffer>(packet) {
+                        Some(v) => v,
+                        None => {
+                            Self::record_error(regs);
+                            return false;
+                        }
+                    };
+                let buffer = u32::from_le(packet_cmd.buffer);
+                let format = u32::from_le(packet_cmd.format);
+                let offset_bytes = u32::from_le(packet_cmd.offset_bytes);
                 if buffer == 0 {
                     self.state.index_buffer = None;
                 } else {
@@ -1894,25 +1952,32 @@ impl AeroGpuSoftwareExecutor {
                 }
             }
             cmd::AerogpuCmdOpcode::SetPrimitiveTopology => {
-                if packet.len() < 16 {
-                    Self::record_error(regs);
-                    return false;
-                }
-                self.state.topology = Self::cmd_read_u32(packet, 8).unwrap_or(self.state.topology);
+                let packet_cmd =
+                    match Self::read_packed_prefix::<cmd::AerogpuCmdSetPrimitiveTopology>(packet) {
+                        Some(v) => v,
+                        None => {
+                            Self::record_error(regs);
+                            return false;
+                        }
+                    };
+                self.state.topology = u32::from_le(packet_cmd.topology);
             }
             cmd::AerogpuCmdOpcode::Clear => {
-                if packet.len() < 36 {
-                    Self::record_error(regs);
-                    return false;
-                }
-                let flags = Self::cmd_read_u32(packet, 8).unwrap_or(0);
+                let packet_cmd = match Self::read_packed_prefix::<cmd::AerogpuCmdClear>(packet) {
+                    Some(v) => v,
+                    None => {
+                        Self::record_error(regs);
+                        return false;
+                    }
+                };
+                let flags = u32::from_le(packet_cmd.flags);
                 if flags & cmd::AEROGPU_CLEAR_COLOR == 0 {
                     return true;
                 }
-                let r = Self::cmd_read_f32_bits(packet, 12).unwrap_or(0.0);
-                let g = Self::cmd_read_f32_bits(packet, 16).unwrap_or(0.0);
-                let b = Self::cmd_read_f32_bits(packet, 20).unwrap_or(0.0);
-                let a = Self::cmd_read_f32_bits(packet, 24).unwrap_or(1.0);
+                let r = f32::from_bits(u32::from_le(packet_cmd.color_rgba_f32[0]));
+                let g = f32::from_bits(u32::from_le(packet_cmd.color_rgba_f32[1]));
+                let b = f32::from_bits(u32::from_le(packet_cmd.color_rgba_f32[2]));
+                let a = f32::from_bits(u32::from_le(packet_cmd.color_rgba_f32[3]));
                 let rt_handle = self.resolve_handle(self.state.render_targets[0]);
                 let Some(tex) = self.textures.get_mut(&rt_handle) else {
                     return true;
@@ -1921,12 +1986,15 @@ impl AeroGpuSoftwareExecutor {
                 tex.dirty = true;
             }
             cmd::AerogpuCmdOpcode::Draw => {
-                if packet.len() < 24 {
-                    Self::record_error(regs);
-                    return false;
-                }
-                let vertex_count = Self::cmd_read_u32(packet, 8).unwrap_or(0);
-                let first_vertex = Self::cmd_read_u32(packet, 16).unwrap_or(0);
+                let packet_cmd = match Self::read_packed_prefix::<cmd::AerogpuCmdDraw>(packet) {
+                    Some(v) => v,
+                    None => {
+                        Self::record_error(regs);
+                        return false;
+                    }
+                };
+                let vertex_count = u32::from_le(packet_cmd.vertex_count);
+                let first_vertex = u32::from_le(packet_cmd.first_vertex);
                 if vertex_count == 0 {
                     return true;
                 }
@@ -1937,13 +2005,17 @@ impl AeroGpuSoftwareExecutor {
                 self.draw_triangle_list(regs, mem, &idxs);
             }
             cmd::AerogpuCmdOpcode::DrawIndexed => {
-                if packet.len() < 28 {
-                    Self::record_error(regs);
-                    return false;
-                }
-                let index_count = Self::cmd_read_u32(packet, 8).unwrap_or(0);
-                let first_index = Self::cmd_read_u32(packet, 16).unwrap_or(0);
-                let base_vertex = Self::cmd_read_i32(packet, 20).unwrap_or(0);
+                let packet_cmd =
+                    match Self::read_packed_prefix::<cmd::AerogpuCmdDrawIndexed>(packet) {
+                        Some(v) => v,
+                        None => {
+                            Self::record_error(regs);
+                            return false;
+                        }
+                    };
+                let index_count = u32::from_le(packet_cmd.index_count);
+                let first_index = u32::from_le(packet_cmd.first_index);
+                let base_vertex = i32::from_le(packet_cmd.base_vertex);
                 if index_count == 0 {
                     return true;
                 }
@@ -1974,24 +2046,32 @@ impl AeroGpuSoftwareExecutor {
                 self.draw_triangle_list(regs, mem, &idxs);
             }
             cmd::AerogpuCmdOpcode::ExportSharedSurface => {
-                if packet.len() < 24 {
-                    Self::record_error(regs);
-                    return false;
-                }
-                let handle = Self::cmd_read_u32(packet, 8).unwrap_or(0);
-                let token = Self::cmd_read_u64(packet, 16).unwrap_or(0);
+                let packet_cmd =
+                    match Self::read_packed_prefix::<cmd::AerogpuCmdExportSharedSurface>(packet) {
+                        Some(v) => v,
+                        None => {
+                            Self::record_error(regs);
+                            return false;
+                        }
+                    };
+                let handle = u32::from_le(packet_cmd.resource_handle);
+                let token = u64::from_le(packet_cmd.share_token);
                 if handle != 0 && token != 0 {
                     self.shared_surfaces
                         .insert(token, self.resolve_handle(handle));
                 }
             }
             cmd::AerogpuCmdOpcode::ImportSharedSurface => {
-                if packet.len() < 24 {
-                    Self::record_error(regs);
-                    return false;
-                }
-                let out_handle = Self::cmd_read_u32(packet, 8).unwrap_or(0);
-                let token = Self::cmd_read_u64(packet, 16).unwrap_or(0);
+                let packet_cmd =
+                    match Self::read_packed_prefix::<cmd::AerogpuCmdImportSharedSurface>(packet) {
+                        Some(v) => v,
+                        None => {
+                            Self::record_error(regs);
+                            return false;
+                        }
+                    };
+                let out_handle = u32::from_le(packet_cmd.out_resource_handle);
+                let token = u64::from_le(packet_cmd.share_token);
                 if out_handle == 0 || token == 0 {
                     return true;
                 }
@@ -2007,6 +2087,7 @@ impl AeroGpuSoftwareExecutor {
                 // No-op for software backend (work already executes at submit boundaries).
             }
         }
+
         true
     }
 }
