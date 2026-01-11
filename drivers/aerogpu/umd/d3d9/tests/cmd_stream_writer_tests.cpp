@@ -697,8 +697,29 @@ bool TestEventQueryGetDataSemantics() {
     adapter->completed_fence = fence_value;
   }
 
+  // The UMD may defer making an EVENT query "visible" to GetData(DONOTFLUSH)
+  // until an explicit flush boundary is observed. Even if the fence is already
+  // complete, the query should remain not-ready until a flush/submission
+  // boundary arms it.
   hr = cleanup.device_funcs.pfnGetQueryData(create_dev.hDevice, &get_no_data);
-  if (!Check(hr == S_OK, "GetQueryData (no buffer) ready returns S_OK")) {
+  if (!Check(hr == S_FALSE, "GetQueryData (no buffer) fence complete but unsubmitted returns S_FALSE")) {
+    return false;
+  }
+
+  // GetData(FLUSH) should arm the query without blocking and then report
+  // readiness based on the fence.
+  get_no_data.flags = 0x1u; // D3DGETDATA_FLUSH
+  hr = cleanup.device_funcs.pfnGetQueryData(create_dev.hDevice, &get_no_data);
+  if (!Check(hr == S_OK, "GetQueryData(FLUSH) (no buffer) ready returns S_OK")) {
+    return false;
+  }
+  if (!Check(query->submitted.load(std::memory_order_acquire), "event query marked submitted after FLUSH")) {
+    return false;
+  }
+
+  get_no_data.flags = 0;
+  hr = cleanup.device_funcs.pfnGetQueryData(create_dev.hDevice, &get_no_data);
+  if (!Check(hr == S_OK, "GetQueryData (no buffer) ready returns S_OK after submit")) {
     return false;
   }
 
