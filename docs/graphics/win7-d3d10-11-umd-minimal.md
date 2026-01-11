@@ -245,6 +245,9 @@ Command submission
 
 ### 2.2 D3D11: adapter + device/context entrypoints (D3D11DDI)
 
+For a **table-by-table** checklist of which `d3d11umddi.h` function pointers must be non-null vs safely stubbable for a crash-free Win7 bring-up (FL10_0), see:
+* `docs/graphics/win7-d3d11ddi-function-tables.md`
+
 #### 2.2.1 Mandatory exports / adapter functions
 
 * Export: `OpenAdapter11` (from `d3d11umddi.h`)
