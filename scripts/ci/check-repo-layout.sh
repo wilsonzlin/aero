@@ -130,7 +130,9 @@ done
 # Guest Tools and requires both:
 # - the legacy INFs under `drivers/aerogpu/packaging/win7/legacy/`, and
 # - enabling the legacy emulator device model feature (`emulator/aerogpu-legacy`).
-if git grep -n "1AED" -- guest-tools/verify.ps1 >/dev/null; then
+# Match "1AED" only when it appears as a standalone hex token (not as part of a longer hex
+# string like a certificate thumbprint).
+if git grep -ni -E '(^|[^0-9A-Fa-f])1AED([^0-9A-Fa-f]|$)' -- guest-tools/verify.ps1 >/dev/null; then
   die "guest-tools/verify.ps1 references the deprecated legacy AeroGPU vendor ID (1AED); default Guest Tools are A3A0-only"
 fi
 
