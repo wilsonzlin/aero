@@ -202,7 +202,7 @@ By default, these CI-staged packages are **D3D9-only** and include:
 - `aerogpu.inf` at the package root (canonical `PCI\VEN_A3A0&DEV_0001`)
 - `legacy/aerogpu.inf` for the deprecated legacy bring-up device model (`PCI\VEN_1AED&DEV_0001`)
 
-The optional DX11 INF (`aerogpu_dx11.inf`) is not included unless you customize
+The optional DX11 INFs (`aerogpu_dx11.inf` and `legacy/aerogpu_dx11.inf`) are not included unless you customize
 `drivers/aerogpu/ci-package.json` (see section 0).
 
 See **4.1 Host-signed package** for the Win7 VM install steps.
@@ -254,7 +254,7 @@ packaging\win7\install.cmd
 ```
 
 Note: CI packages include `aerogpu.inf` and `legacy/aerogpu.inf` (D3D9-only) by default. To install the optional
-D3D10/11 UMD variant, see section 0.
+D3D10/11 UMD variant(s) (`aerogpu_dx11.inf` and/or `legacy/aerogpu_dx11.inf`), see section 0.
 
 ### 4.2 Sign inside the Win7 VM (optional)
 
@@ -317,7 +317,7 @@ On a clean Win7 SP1 VM:
    ```
 
    The script also validates D3D10/11 UMD registration if it detects `UserModeDriverName` is present.
-   If you installed the DX11-capable package (`aerogpu_dx11.inf`), you can additionally force the D3D10/11 checks:
+   If you installed the DX11-capable package (`aerogpu_dx11.inf` or `legacy/aerogpu_dx11.inf`), you can additionally force the D3D10/11 checks:
 
    ```bat
    packaging\win7\verify_umd_registration.cmd dx11
@@ -329,16 +329,16 @@ On a clean Win7 SP1 VM:
     - x64 VM:
       - `C:\Windows\System32\aerogpu_d3d9_x64.dll` exists
       - `C:\Windows\SysWOW64\aerogpu_d3d9.dll` exists
-      - (if you installed `aerogpu_dx11.inf`) `C:\Windows\System32\aerogpu_d3d10_x64.dll` exists and `C:\Windows\SysWOW64\aerogpu_d3d10.dll` exists
+      - (if you installed a DX11-capable INF) `C:\Windows\System32\aerogpu_d3d10_x64.dll` exists and `C:\Windows\SysWOW64\aerogpu_d3d10.dll` exists
     - x86 VM:
       - `C:\Windows\System32\aerogpu_d3d9.dll` exists
-      - (if you installed `aerogpu_dx11.inf`) `C:\Windows\System32\aerogpu_d3d10.dll` exists
+      - (if you installed a DX11-capable INF) `C:\Windows\System32\aerogpu_d3d10.dll` exists
 
 ## 6.1) Confirm which UMD DLL actually loaded (32-bit vs 64-bit)
 
 On Win7 x64 it’s possible for a test to “work” while the wrong UMD is being used (e.g. fallback to Microsoft / WARP).
 
-For `aerogpu_dx11.inf`, the expected install on x64 is:
+For a DX11-capable INF (`aerogpu_dx11.inf` or `legacy/aerogpu_dx11.inf`), the expected install on x64 is:
 
 - Native x64 processes load: `C:\Windows\System32\aerogpu_d3d10_x64.dll` (`UserModeDriverName`)
 - WOW64 (32-bit) processes load: `C:\Windows\SysWOW64\aerogpu_d3d10.dll` (`UserModeDriverNameWow`)
@@ -352,12 +352,12 @@ You can sanity-check the **UMD registry values** written by the INF using `reg q
 reg query "HKLM\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}" /s /v InstalledDisplayDrivers
 reg query "HKLM\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}" /s /v InstalledDisplayDriversWow
 
-:: D3D10/11 (x64 key + WOW64 key; requires aerogpu_dx11.inf)
+:: D3D10/11 (x64 key + WOW64 key; requires a DX11-capable INF)
 reg query "HKLM\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}" /s /v UserModeDriverName
 reg query "HKLM\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}" /s /v UserModeDriverNameWow
 ```
 
-Expected values (from `aerogpu_dx11.inf`):
+Expected values (from `aerogpu_dx11.inf` / `legacy/aerogpu_dx11.inf`):
 
 - `UserModeDriverName = aerogpu_d3d10_x64.dll` (x64 only)
 - `UserModeDriverNameWow = aerogpu_d3d10.dll` (x64 only)
@@ -368,7 +368,7 @@ To confirm the **real** AeroGPU UMD loaded for a given process bitness:
 
 1. Run the relevant test executable:
    - D3D9: `drivers\aerogpu\tests\win7\bin\d3d9ex_triangle.exe` (build/run both x86 and x64)
-   - D3D11: `drivers\aerogpu\tests\win7\bin\d3d11_triangle.exe` (build/run both x86 and x64; requires `aerogpu_dx11.inf`)
+   - D3D11: `drivers\aerogpu\tests\win7\bin\d3d11_triangle.exe` (build/run both x86 and x64; requires a DX11-capable INF)
 2. Confirm the loaded module using one of:
    - **Process Explorer**: select the process → View → *Lower Pane View* → *DLLs*, then look for:
      - D3D9: `aerogpu_d3d9.dll` (x86) or `aerogpu_d3d9_x64.dll` (x64)
