@@ -7186,6 +7186,15 @@ HRESULT AEROGPU_D3D9_CALL OpenAdapter(
       set_vid_pn_source_id(pOpenAdapter, adapter->vid_pn_source_id_valid ? adapter->vid_pn_source_id : 0);
     }
     if (kmd_ok) {
+      uint32_t max_slot_id = 0;
+      if (adapter && adapter->kmd_query.QueryMaxAllocationListSlotId(&max_slot_id)) {
+        adapter->max_allocation_list_slot_id = max_slot_id;
+        if (!adapter->max_allocation_list_slot_id_logged.exchange(true)) {
+          aerogpu::logf("aerogpu-d3d9: KMD MaxAllocationListSlotId=%u\n",
+                        static_cast<unsigned>(max_slot_id));
+        }
+      }
+
       uint64_t submitted = 0;
       uint64_t completed = 0;
       if (adapter->kmd_query.QueryFence(&submitted, &completed)) {
@@ -7294,6 +7303,15 @@ HRESULT AEROGPU_D3D9_CALL OpenAdapter2(
       set_vid_pn_source_id(pOpenAdapter, adapter->vid_pn_source_id_valid ? adapter->vid_pn_source_id : 0);
     }
     if (kmd_ok) {
+      uint32_t max_slot_id = 0;
+      if (adapter && adapter->kmd_query.QueryMaxAllocationListSlotId(&max_slot_id)) {
+        adapter->max_allocation_list_slot_id = max_slot_id;
+        if (!adapter->max_allocation_list_slot_id_logged.exchange(true)) {
+          aerogpu::logf("aerogpu-d3d9: KMD MaxAllocationListSlotId=%u\n",
+                        static_cast<unsigned>(max_slot_id));
+        }
+      }
+
       uint64_t submitted = 0;
       uint64_t completed = 0;
       if (adapter->kmd_query.QueryFence(&submitted, &completed)) {
@@ -7400,6 +7418,15 @@ HRESULT AEROGPU_D3D9_CALL OpenAdapterFromHdc(
       set_vid_pn_source_id(pOpenAdapter, adapter->vid_pn_source_id_valid ? adapter->vid_pn_source_id : 0);
     }
     if (kmd_ok) {
+      uint32_t max_slot_id = 0;
+      if (adapter && adapter->kmd_query.QueryMaxAllocationListSlotId(&max_slot_id)) {
+        adapter->max_allocation_list_slot_id = max_slot_id;
+        if (!adapter->max_allocation_list_slot_id_logged.exchange(true)) {
+          aerogpu::logf("aerogpu-d3d9: KMD MaxAllocationListSlotId=%u\n",
+                        static_cast<unsigned>(max_slot_id));
+        }
+      }
+
       uint64_t submitted = 0;
       uint64_t completed = 0;
       if (adapter->kmd_query.QueryFence(&submitted, &completed)) {
@@ -7483,6 +7510,15 @@ HRESULT AEROGPU_D3D9_CALL OpenAdapterFromLuid(
       set_vid_pn_source_id(pOpenAdapter, adapter->vid_pn_source_id_valid ? adapter->vid_pn_source_id : 0);
     }
     if (kmd_ok) {
+      uint32_t max_slot_id = 0;
+      if (adapter && adapter->kmd_query.QueryMaxAllocationListSlotId(&max_slot_id)) {
+        adapter->max_allocation_list_slot_id = max_slot_id;
+        if (!adapter->max_allocation_list_slot_id_logged.exchange(true)) {
+          aerogpu::logf("aerogpu-d3d9: KMD MaxAllocationListSlotId=%u\n",
+                        static_cast<unsigned>(max_slot_id));
+        }
+      }
+
       uint64_t submitted = 0;
       uint64_t completed = 0;
       if (adapter->kmd_query.QueryFence(&submitted, &completed)) {

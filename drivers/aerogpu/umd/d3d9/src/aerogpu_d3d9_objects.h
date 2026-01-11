@@ -162,6 +162,8 @@ struct Adapter {
   // KMD-advertised max allocation-list slot-id (DXGK_DRIVERCAPS::MaxAllocationListSlotId).
   // AeroGPU's Win7 KMD currently reports 0xFFFF.
   uint32_t max_allocation_list_slot_id = 0xFFFFu;
+  // Logging guard so we only emit the driver-caps-derived value once per adapter.
+  std::atomic<bool> max_allocation_list_slot_id_logged{false};
 
   // 64-bit token generator for shared-surface interop (EXPORT/IMPORT_SHARED_SURFACE).
   ShareTokenAllocator share_token_allocator;

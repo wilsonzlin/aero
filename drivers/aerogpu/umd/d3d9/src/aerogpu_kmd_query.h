@@ -83,6 +83,13 @@ class AerogpuKmdQuery {
   // open failure, or query failure).
   bool QueryUmdPrivate(aerogpu_umd_private_v1* out);
 
+  // Queries the KMD-advertised maximum allocation-list slot id
+  // (DXGK_DRIVERCAPS::MaxAllocationListSlotId).
+  //
+  // Returns false if the query path is unavailable (missing exports, adapter
+  // open failure, or query failure).
+  bool QueryMaxAllocationListSlotId(uint32_t* out_max_slot_id);
+
   // Best-effort vblank wait using `D3DKMTGetScanLine` polling.
   //
   // Returns false if the scanline query path is unavailable. Otherwise waits
@@ -112,6 +119,7 @@ class AerogpuKmdQuery {
   using PFND3DKMTGetScanLine = NTSTATUS(__stdcall*)(D3DKMT_GETSCANLINE* pData);
 
   bool ProbeUmdPrivateTypeLocked();
+  bool ProbeDriverCapsTypeLocked();
 
   HMODULE gdi32_ = nullptr;
   PFND3DKMTOpenAdapterFromLuid open_adapter_from_luid_ = nullptr;
@@ -128,6 +136,15 @@ class AerogpuKmdQuery {
 
   bool umdriverprivate_type_known_ = false;
   unsigned int umdriverprivate_type_ = 0;
+
+  // Best-effort numeric constant discovery for KMTQAITYPE_DRIVERCAPS. We avoid
+  // including WDK headers in the repo build and instead probe a small range.
+  bool drivercaps_type_known_ = false;
+  unsigned int drivercaps_type_ = 0;
+  // Some toolchains disagree on 64-bit alignment rules on x86. Record whether
+  // the returned DRIVERCAPS blob uses the expected 4-byte padding after
+  // WDDMVersion (pad=4 => HighestAcceptableAddress at offset 8).
+  unsigned int drivercaps_wddmversion_padding_bytes_ = 4;
 
   // Guards the handle + function pointer lifetime for Shutdown vs. Query.
   // Queries are expected at ~60Hz so a lightweight mutex is fine.

@@ -16,6 +16,28 @@ constexpr bool NtSuccess(long st) {
   return st >= 0;
 }
 
+bool ReadU32At(const void* data, size_t data_size, size_t offset, uint32_t* out) {
+  if (!out) {
+    return false;
+  }
+  if (!data || data_size < offset + sizeof(uint32_t)) {
+    return false;
+  }
+  std::memcpy(out, static_cast<const uint8_t*>(data) + offset, sizeof(uint32_t));
+  return true;
+}
+
+bool ReadU64At(const void* data, size_t data_size, size_t offset, uint64_t* out) {
+  if (!out) {
+    return false;
+  }
+  if (!data || data_size < offset + sizeof(uint64_t)) {
+    return false;
+  }
+  std::memcpy(out, static_cast<const uint8_t*>(data) + offset, sizeof(uint64_t));
+  return true;
+}
+
 enum D3DKMT_ESCAPETYPE {
   D3DKMT_ESCAPE_DRIVERPRIVATE = 0,
 };
@@ -348,6 +370,10 @@ void AerogpuKmdQuery::ShutdownLocked() {
   umdriverprivate_type_known_ = false;
   umdriverprivate_type_ = 0;
 
+  drivercaps_type_known_ = false;
+  drivercaps_type_ = 0;
+  drivercaps_wddmversion_padding_bytes_ = 4;
+
   if (gdi32_) {
     FreeLibrary(gdi32_);
     gdi32_ = nullptr;
@@ -394,6 +420,81 @@ bool AerogpuKmdQuery::ProbeUmdPrivateTypeLocked() {
     umdriverprivate_type_known_ = true;
     umdriverprivate_type_ = type;
     return true;
+  }
+
+  return false;
+}
+
+bool AerogpuKmdQuery::ProbeDriverCapsTypeLocked() {
+  drivercaps_type_known_ = false;
+  drivercaps_type_ = 0;
+  drivercaps_wddmversion_padding_bytes_ = 4;
+
+  if (!adapter_ || !query_adapter_info_) {
+    return false;
+  }
+
+  // We only need the prefix (up to MaxAllocationListSlotId), but some KMDs check
+  // for the full DXGK_DRIVERCAPS size. Provide a generously sized buffer to
+  // avoid STATUS_BUFFER_TOO_SMALL across WDK variants.
+  alignas(8) uint8_t buf[512];
+  std::memset(buf, 0, sizeof(buf));
+
+  D3DKMT_QUERYADAPTERINFO q;
+  std::memset(&q, 0, sizeof(q));
+  q.hAdapter = adapter_;
+  q.pPrivateDriverData = buf;
+  q.PrivateDriverDataSize = static_cast<unsigned int>(sizeof(buf));
+
+  // Avoid hard-coding the WDK's numeric KMTQAITYPE_DRIVERCAPS constant by
+  // probing a small range of values and looking for a plausible DRIVERCAPS
+  // layout.
+  //
+  // We treat a very large `HighestAcceptableAddress` as a strong signal: AeroGPU's
+  // Win7 KMD sets it to all-ones. Keep this heuristic permissive so it continues
+  // to work if the driver ever changes it to something less than ~0ULL.
+  constexpr uint64_t kMinHighestAcceptableAddress = 0xFFFFFFFFull;
+
+  for (unsigned int type = 0; type < 256; ++type) {
+    std::memset(buf, 0, sizeof(buf));
+    q.Type = type;
+
+    const NTSTATUS st = query_adapter_info_(&q);
+    if (!NtSuccess(st)) {
+      continue;
+    }
+
+    // The WDK-defined DXGK_DRIVERCAPS uses MSVC packing rules (8-byte aligned
+    // LARGE_INTEGER), but some non-MSVC toolchains can disagree. Probe both
+    // candidate layouts:
+    //   - pad=4 => HighestAcceptableAddress at offset 8 (expected on Win7).
+    //   - pad=0 => HighestAcceptableAddress at offset 4.
+    for (const unsigned int pad : {4u, 0u}) {
+      const size_t highest_off = 4u + pad;
+      const size_t dma_priv_off = 20u + pad;
+
+      uint64_t highest = 0;
+      uint32_t dma_priv = 0;
+      if (!ReadU64At(buf, sizeof(buf), highest_off, &highest) ||
+          !ReadU32At(buf, sizeof(buf), dma_priv_off, &dma_priv)) {
+        continue;
+      }
+
+      if (highest < kMinHighestAcceptableAddress) {
+        continue;
+      }
+
+      // Sanity check: DMA private data is typically small (tens of bytes). Avoid
+      // mis-identifying other query types that happen to contain ~0ULL.
+      if (dma_priv == 0 || dma_priv > 4096) {
+        continue;
+      }
+
+      drivercaps_type_known_ = true;
+      drivercaps_type_ = type;
+      drivercaps_wddmversion_padding_bytes_ = pad;
+      return true;
+    }
   }
 
   return false;
@@ -476,6 +577,45 @@ bool AerogpuKmdQuery::QueryUmdPrivate(aerogpu_umd_private_v1* out) {
   if (out->size_bytes < sizeof(*out) || out->struct_version != AEROGPU_UMDPRIV_STRUCT_VERSION_V1) {
     return false;
   }
+  return true;
+}
+
+bool AerogpuKmdQuery::QueryMaxAllocationListSlotId(uint32_t* out_max_slot_id) {
+  if (!out_max_slot_id) {
+    return false;
+  }
+
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (!adapter_ || !query_adapter_info_) {
+    return false;
+  }
+
+  if (!drivercaps_type_known_ && !ProbeDriverCapsTypeLocked()) {
+    return false;
+  }
+
+  alignas(8) uint8_t buf[512];
+  std::memset(buf, 0, sizeof(buf));
+
+  D3DKMT_QUERYADAPTERINFO q;
+  std::memset(&q, 0, sizeof(q));
+  q.hAdapter = adapter_;
+  q.Type = drivercaps_type_;
+  q.pPrivateDriverData = buf;
+  q.PrivateDriverDataSize = static_cast<unsigned int>(sizeof(buf));
+
+  const NTSTATUS st = query_adapter_info_(&q);
+  if (!NtSuccess(st)) {
+    return false;
+  }
+
+  const size_t max_alloc_off = 12u + drivercaps_wddmversion_padding_bytes_;
+  uint32_t max_alloc = 0;
+  if (!ReadU32At(buf, sizeof(buf), max_alloc_off, &max_alloc)) {
+    return false;
+  }
+
+  *out_max_slot_id = max_alloc;
   return true;
 }
 
@@ -584,6 +724,10 @@ bool AerogpuKmdQuery::GetVidPnSourceId(uint32_t*) {
 }
 
 bool AerogpuKmdQuery::QueryUmdPrivate(aerogpu_umd_private_v1*) {
+  return false;
+}
+
+bool AerogpuKmdQuery::QueryMaxAllocationListSlotId(uint32_t*) {
   return false;
 }
 
