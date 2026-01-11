@@ -138,7 +138,7 @@ echo   --allow-remote skips tests that are not meaningful in RDP sessions ^(SM_R
 echo   --show affects d3d9ex_event_query, d3d9ex_shared_surface, d3d9ex_shared_surface_ipc, d3d9ex_shared_surface_wow64, and d3d9ex_shared_surface_many_producers: show their windows (overrides --hidden).
 echo   d3d9ex_shared_surface validates cross-process pixel sharing by default; use --no-validate-sharing to skip readback validation ^(--dump always validates^).
 echo   --json emits machine-readable JSON (forwarded to each test). To get an aggregated suite report, run bin\\aerogpu_test_runner.exe directly.
-echo   Use --timeout-ms=NNNN or set AEROGPU_TEST_TIMEOUT_MS to override the default per-test timeout (%TIMEOUT_MS% ms) when aerogpu_timeout_runner.exe is present.
+echo   Use --timeout-ms=NNNN ^(or --timeout-ms NNNN^) or set AEROGPU_TEST_TIMEOUT_MS to override the default per-test timeout (%TIMEOUT_MS% ms) when aerogpu_timeout_runner.exe is present.
 echo   Use --no-timeout to run without enforcing a timeout.
 exit /b 0
 
