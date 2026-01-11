@@ -66,10 +66,39 @@ impl PciDevice for HdaPciDevice {
 
 impl MmioHandler for HdaPciDevice {
     fn read(&mut self, offset: u64, size: usize) -> u64 {
-        self.controller.mmio_read(offset, size)
+        match size {
+            1 | 2 | 4 => self.controller.mmio_read(offset, size),
+            8 => {
+                let lo = self.controller.mmio_read(offset, 4) as u64;
+                let hi = self.controller.mmio_read(offset + 4, 4) as u64;
+                lo | (hi << 32)
+            }
+            _ => {
+                let mut out = 0u64;
+                for i in 0..size.min(8) {
+                    let byte = self.controller.mmio_read(offset + i as u64, 1) & 0xff;
+                    out |= byte << (i * 8);
+                }
+                out
+            }
+        }
     }
 
     fn write(&mut self, offset: u64, size: usize, value: u64) {
-        self.controller.mmio_write(offset, size, value);
+        match size {
+            1 | 2 | 4 => self.controller.mmio_write(offset, size, value),
+            8 => {
+                self.controller.mmio_write(offset, 4, value as u32 as u64);
+                self.controller
+                    .mmio_write(offset + 4, 4, ((value >> 32) as u32) as u64);
+            }
+            _ => {
+                let bytes = value.to_le_bytes();
+                for i in 0..size.min(8) {
+                    self.controller
+                        .mmio_write(offset + i as u64, 1, bytes[i] as u64);
+                }
+            }
+        }
     }
 }
