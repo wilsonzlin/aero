@@ -2037,8 +2037,13 @@ HRESULT APIENTRY Map(D3D10DDI_HDEVICE hDevice, D3D10DDIARG_MAP* pMap) {
   }
 
   uint32_t map_flags_u = 0;
-  __if_exists(D3D10DDIARG_MAP::Flags) {
-    map_flags_u = static_cast<uint32_t>(pMap->Flags);
+  __if_exists(D3D10DDIARG_MAP::MapFlags) {
+    map_flags_u = static_cast<uint32_t>(pMap->MapFlags);
+  }
+  __if_not_exists(D3D10DDIARG_MAP::MapFlags) {
+    __if_exists(D3D10DDIARG_MAP::Flags) {
+      map_flags_u = static_cast<uint32_t>(pMap->Flags);
+    }
   }
 
   bool want_write = false;
