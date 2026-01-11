@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use aero_gpu::guest_memory::GuestMemory;
+use aero_gpu::GuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuHandle, AerogpuShaderStage, AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER,
     AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL, AEROGPU_RESOURCE_USAGE_INDEX_BUFFER,
