@@ -437,6 +437,17 @@ static int RunD3D11TextureSamplingSanity(int argc, char** argv) {
   if (FAILED(hr)) {
     return FailD3D11WithRemovedReason(kTestName, "Map(staging)", hr, device.get());
   }
+  if (!map.pData) {
+    context->Unmap(staging.get(), 0);
+    return aerogpu_test::Fail(kTestName, "Map(staging) returned NULL pData");
+  }
+  if ((int)map.RowPitch < kWidth * 4) {
+    context->Unmap(staging.get(), 0);
+    return aerogpu_test::Fail(kTestName,
+                              "Map(staging) returned unexpected RowPitch=%ld (expected >= %d)",
+                              (long)map.RowPitch,
+                              kWidth * 4);
+  }
 
   const int x0 = 8;
   const int y0 = 8;
