@@ -745,6 +745,48 @@ impl AerogpuD3d11Executor {
         allocs: Option<&[AerogpuAllocEntry]>,
         guest_mem: &mut dyn GuestMemory,
     ) -> Result<ExecuteReport> {
+        #[cfg(target_arch = "wasm32")]
+        {
+            let iter = AerogpuCmdStreamIter::new(stream_bytes)
+                .map_err(|e| anyhow!("aerogpu_cmd: invalid cmd stream: {e:?}"))?;
+            let stream_size = iter.header().size_bytes as usize;
+            let mut cursor = AerogpuCmdStreamHeader::SIZE_BYTES;
+            for next in iter {
+                let packet = next.map_err(|err| {
+                    anyhow!("aerogpu_cmd: invalid cmd header @0x{cursor:x}: {err:?}")
+                })?;
+                let cmd_size = packet.hdr.size_bytes as usize;
+                let cmd_end = cursor
+                    .checked_add(cmd_size)
+                    .ok_or_else(|| anyhow!("aerogpu_cmd: cmd size overflow"))?;
+                let cmd_bytes = stream_bytes.get(cursor..cmd_end).ok_or_else(|| {
+                    anyhow!(
+                        "aerogpu_cmd: cmd overruns stream: cursor=0x{cursor:x} cmd_size=0x{cmd_size:x} stream_size=0x{stream_size:x}"
+                    )
+                })?;
+
+                match packet.hdr.opcode {
+                    OPCODE_COPY_BUFFER => {
+                        let cmd = decode_cmd_copy_buffer_le(cmd_bytes)
+                            .map_err(|e| anyhow!("COPY_BUFFER: invalid payload: {e:?}"))?;
+                        if (cmd.flags & AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0 {
+                            bail!("WRITEBACK_DST requires async execution on wasm (call execute_cmd_stream_async)");
+                        }
+                    }
+                    OPCODE_COPY_TEXTURE2D => {
+                        let cmd = decode_cmd_copy_texture2d_le(cmd_bytes)
+                            .map_err(|e| anyhow!("COPY_TEXTURE2D: invalid payload: {e:?}"))?;
+                        if (cmd.flags & AEROGPU_COPY_FLAG_WRITEBACK_DST) != 0 {
+                            bail!("WRITEBACK_DST requires async execution on wasm (call execute_cmd_stream_async)");
+                        }
+                    }
+                    _ => {}
+                }
+
+                cursor = cmd_end;
+            }
+        }
+
         let mut pending_writebacks = Vec::new();
         let report = self.execute_cmd_stream_inner(
             stream_bytes,
