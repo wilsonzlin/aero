@@ -237,12 +237,15 @@ fn aerogpu_cmd_preserves_upload_copy_ordering() {
 #[test]
 fn aerogpu_cmd_preserves_dirty_range_upload_ordering_for_buffers() {
     pollster::block_on(async {
+        let test_name = concat!(
+            module_path!(),
+            "::aerogpu_cmd_preserves_dirty_range_upload_ordering_for_buffers"
+        );
+
         let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
             Ok(exec) => exec,
             Err(e) => {
-                eprintln!(
-                    "wgpu unavailable ({e:#}); skipping aerogpu_cmd dirty-range buffer ordering test"
-                );
+                common::skip_or_panic(test_name, &format!("wgpu unavailable ({e:#})"));
                 return;
             }
         };
@@ -401,12 +404,15 @@ fn aerogpu_cmd_preserves_dirty_range_upload_ordering_for_buffers() {
 #[test]
 fn aerogpu_cmd_preserves_dirty_range_upload_ordering_for_textures() {
     pollster::block_on(async {
+        let test_name = concat!(
+            module_path!(),
+            "::aerogpu_cmd_preserves_dirty_range_upload_ordering_for_textures"
+        );
+
         let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
             Ok(exec) => exec,
             Err(e) => {
-                eprintln!(
-                    "wgpu unavailable ({e:#}); skipping aerogpu_cmd dirty-range texture ordering test"
-                );
+                common::skip_or_panic(test_name, &format!("wgpu unavailable ({e:#})"));
                 return;
             }
         };
