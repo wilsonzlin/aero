@@ -294,17 +294,21 @@ static inline void PrintfStdout(const char* fmt, ...) {
 // automation, `Fail()` stores the formatted message here; `TestReporter` can
 // then pick it up when the test returns without explicitly finalizing the
 // reporter.
-static INIT_ONCE g_last_failure_init_once = INIT_ONCE_STATIC_INIT;
 static CRITICAL_SECTION g_last_failure_cs;
+static volatile LONG g_last_failure_cs_init = 0;  // 0=uninit, 1=initing, 2=ready
 static std::string g_last_failure_message;
 
-static BOOL CALLBACK InitLastFailureOnce(PINIT_ONCE, PVOID, PVOID*) {
-  InitializeCriticalSection(&g_last_failure_cs);
-  return TRUE;
-}
-
 static inline void EnsureLastFailureInit() {
-  InitOnceExecuteOnce(&g_last_failure_init_once, InitLastFailureOnce, NULL, NULL);
+  const LONG prev = InterlockedCompareExchange(&g_last_failure_cs_init, 1, 0);
+  if (prev == 0) {
+    InitializeCriticalSection(&g_last_failure_cs);
+    InterlockedExchange(&g_last_failure_cs_init, 2);
+    return;
+  }
+  // Wait for the initializing thread to finish.
+  while (InterlockedCompareExchange(&g_last_failure_cs_init, 2, 2) != 2) {
+    Sleep(0);
+  }
 }
 
 static inline void SetLastFailureMessage(const std::string& msg) {
