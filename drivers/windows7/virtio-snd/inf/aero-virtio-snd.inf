@@ -83,7 +83,7 @@ HKR,,AssociatedFilters,0x00010000,%KSNAME_Wave%,%KSNAME_Topology%
 ; both a legacy comma-separated string and a REG_MULTI_SZ list for the modern
 ; PnP audio stack.
 HKR,Drivers,SubClasses,,"wave,topology"
-HKR,Drivers,SubClasses,0x00010000,%KSNAME_Wave%,%KSNAME_Topology%
+HKR,Drivers,SubClasses,0x00010000,"wave","topology"
 HKR,Drivers,Driver,,virtiosnd.sys
 
 HKR,%KSNAME_Wave%,CLSID,,%KSProxy.CLSID%
