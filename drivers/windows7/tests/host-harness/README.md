@@ -266,8 +266,11 @@ Notes:
 - Transitional mode is primarily a **backcompat** option for older QEMU builds and/or older guest images.
   - It uses QEMU’s default `virtio-blk`/`virtio-net` devices and relaxes per-test marker requirements so older
     `aero-virtio-selftest.exe` binaries can still be used.
-  - It does **not** attach virtio-input keyboard/mouse devices; the default harness mode is required for the full
-    virtio-input test coverage.
+  - It *attempts* to attach virtio-input keyboard/mouse devices (`virtio-keyboard-pci` + `virtio-mouse-pci`) so the
+    guest virtio-input selftest can run, but will warn and skip them if the QEMU binary does not advertise those
+    devices.
+    - In transitional mode, virtio-input enumerates with the older transitional ID space (e.g. `DEV_1011`), so you need
+      a virtio-input driver package that binds the transitional IDs.
 
 Note: transitional mode is incompatible with virtio-snd testing (`-WithVirtioSnd` / `--with-virtio-snd`), since virtio-snd
 testing requires the contract-v1 overrides (`disable-legacy=on,x-pci-revision=0x01`).

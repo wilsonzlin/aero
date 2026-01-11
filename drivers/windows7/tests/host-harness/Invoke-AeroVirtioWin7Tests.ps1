@@ -619,6 +619,30 @@ try {
     $drive = "file=$DiskImagePath,if=virtio,cache=writeback"
     if ($Snapshot) { $drive += ",snapshot=on" }
 
+    # Transitional mode is primarily an escape hatch for older QEMU builds (or intentionally
+    # testing legacy driver packages). The guest selftest still expects virtio-input devices,
+    # so attach virtio-keyboard-pci + virtio-mouse-pci when the QEMU binary supports them.
+    $virtioInputArgs = @()
+    $haveVirtioKbd = $false
+    $haveVirtioMouse = $false
+    try {
+      $null = Get-AeroWin7QemuDeviceHelpText -QemuSystem $QemuSystem -DeviceName "virtio-keyboard-pci"
+      $haveVirtioKbd = $true
+    } catch { }
+    try {
+      $null = Get-AeroWin7QemuDeviceHelpText -QemuSystem $QemuSystem -DeviceName "virtio-mouse-pci"
+      $haveVirtioMouse = $true
+    } catch { }
+
+    if ($haveVirtioKbd -and $haveVirtioMouse) {
+      $virtioInputArgs = @(
+        "-device", "virtio-keyboard-pci",
+        "-device", "virtio-mouse-pci"
+      )
+    } else {
+      Write-Warning "QEMU does not advertise virtio-keyboard-pci/virtio-mouse-pci. The guest virtio-input selftest will likely FAIL. Upgrade QEMU or adjust the guest image/selftest expectations."
+    }
+
     $virtioSndArgs = @()
     if ($WithVirtioSnd) {
       $audiodev = ""
@@ -667,7 +691,8 @@ try {
       "-chardev", $serialChardev,
       "-serial", "chardev:charserial0",
       "-netdev", $netdev,
-      "-device", $nic,
+      "-device", $nic
+    ) + $virtioInputArgs + @(
       "-drive", $drive
     ) + $virtioSndArgs + $QemuExtraArgs
   } else {

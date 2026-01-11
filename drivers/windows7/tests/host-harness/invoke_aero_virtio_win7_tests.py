@@ -177,6 +177,14 @@ def _qemu_device_help_text(qemu_system: str, device_name: str) -> str:
     return proc.stdout or ""
 
 
+def _qemu_has_device(qemu_system: str, device_name: str) -> bool:
+    try:
+        _qemu_device_help_text(qemu_system, device_name)
+        return True
+    except RuntimeError:
+        return False
+
+
 def _assert_qemu_supports_aero_w7_virtio_contract_v1(qemu_system: str, *, with_virtio_snd: bool = False) -> None:
     """
     Fail fast with a clear error if the user's QEMU binary can't run the harness in
@@ -409,6 +417,23 @@ def main() -> int:
             if args.snapshot:
                 drive += ",snapshot=on"
 
+            virtio_input_args: list[str] = []
+            if _qemu_has_device(args.qemu_system, "virtio-keyboard-pci") and _qemu_has_device(
+                args.qemu_system, "virtio-mouse-pci"
+            ):
+                virtio_input_args = [
+                    "-device",
+                    "virtio-keyboard-pci",
+                    "-device",
+                    "virtio-mouse-pci",
+                ]
+            else:
+                print(
+                    "WARNING: QEMU does not advertise virtio-keyboard-pci/virtio-mouse-pci. "
+                    "The guest virtio-input selftest will likely FAIL. Upgrade QEMU or adjust the guest image/selftest expectations.",
+                    file=sys.stderr,
+                )
+
             virtio_snd_args: list[str] = []
             if args.enable_virtio_snd:
                 try:
@@ -452,6 +477,7 @@ def main() -> int:
                 "user,id=net0",
                 "-device",
                 "virtio-net-pci,netdev=net0",
+            ] + virtio_input_args + [
                 "-drive",
                 drive,
             ] + virtio_snd_args + qemu_extra
