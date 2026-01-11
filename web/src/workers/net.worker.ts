@@ -52,6 +52,10 @@ let perfWriter: PerfWriter | null = null;
 let perfFrameHeader: Int32Array | null = null;
 let perfLastFrameId = 0;
 let perfIoMs = 0;
+let perfIoReadBytes = 0;
+let perfIoWriteBytes = 0;
+let perfLastTxBytes = 0;
+let perfLastRxBytes = 0;
 
 // Even when idle, wake periodically so pending tunnel→guest frames buffered due
 // to NET_RX backpressure get a chance to flush without waiting for NET_TX
@@ -149,6 +153,8 @@ function maybeEmitPerfSample(): void {
   if (!enabled) {
     perfLastFrameId = frameId;
     perfIoMs = 0;
+    perfIoReadBytes = 0;
+    perfIoWriteBytes = 0;
     return;
   }
   if (frameId === 0) {
@@ -161,7 +167,7 @@ function maybeEmitPerfSample(): void {
     // First observed frame ID after enabling perf. Only emit if we have some
     // accumulated work; otherwise establish a baseline and wait for the next
     // frame boundary.
-    if (perfIoMs <= 0) {
+    if (perfIoMs <= 0 && perfIoReadBytes === 0 && perfIoWriteBytes === 0) {
       perfLastFrameId = frameId;
       return;
     }
@@ -170,8 +176,13 @@ function maybeEmitPerfSample(): void {
   perfLastFrameId = frameId;
 
   const ioMs = perfIoMs > 0 ? perfIoMs : 0.01;
-  perfWriter.frameSample(frameId, { durations: { io_ms: ioMs } });
+  perfWriter.frameSample(frameId, {
+    durations: { io_ms: ioMs },
+    counters: { io_read_bytes: perfIoReadBytes, io_write_bytes: perfIoWriteBytes },
+  });
   perfIoMs = 0;
+  perfIoReadBytes = 0;
+  perfIoWriteBytes = 0;
 }
 
 async function runLoop(): Promise<void> {
@@ -205,6 +216,15 @@ async function runLoop(): Promise<void> {
     const txBackpressureDrops = stats.txDroppedTunnelBackpressure;
     const sawTxBackpressure = txBackpressureDrops !== lastTxBackpressureDrops;
     lastTxBackpressureDrops = txBackpressureDrops;
+
+    const txDeltaBytes = stats.txBytes - perfLastTxBytes;
+    const rxDeltaBytes = stats.rxBytes - perfLastRxBytes;
+    perfLastTxBytes = stats.txBytes;
+    perfLastRxBytes = stats.rxBytes;
+    if (perfActive) {
+      if (Number.isFinite(txDeltaBytes) && txDeltaBytes > 0) perfIoWriteBytes += txDeltaBytes;
+      if (Number.isFinite(rxDeltaBytes) && rxDeltaBytes > 0) perfIoReadBytes += rxDeltaBytes;
+    }
 
     if (perfActive) perfIoMs += nowMs() - t0;
     maybeEmitPerfSample();
@@ -300,6 +320,10 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
         perfFrameHeader = new Int32Array(init.perfChannel.frameHeader);
         perfLastFrameId = 0;
         perfIoMs = 0;
+        perfIoReadBytes = 0;
+        perfIoWriteBytes = 0;
+        perfLastTxBytes = 0;
+        perfLastRxBytes = 0;
       }
 
       // Apply any config already received before the init handshake completed.
