@@ -329,7 +329,11 @@ class DbwinCapture {
     queue_.clear();
   }
 
-  bool WaitForSubmitFence(DWORD pid, DWORD timeout_ms, unsigned long long* out_fence, std::string* out_line) {
+  bool WaitForSubmitFence(DWORD pid,
+                          DWORD timeout_ms,
+                          int expected_present,
+                          unsigned long long* out_fence,
+                          std::string* out_line) {
     if (out_fence) {
       *out_fence = 0;
     }
@@ -373,7 +377,11 @@ class DbwinCapture {
       }
 
       unsigned long long fence = 0;
-      if (TryParseSubmitFence(msg.text.c_str(), &fence)) {
+      int present = -1;
+      if (TryParseSubmitFence(msg.text.c_str(), &fence, &present)) {
+        if (expected_present >= 0 && present != expected_present) {
+          continue;
+        }
         if (out_fence) {
           *out_fence = fence;
         }
@@ -391,13 +399,18 @@ class DbwinCapture {
     std::string text;
   };
 
-  static bool TryParseSubmitFence(const char* line, unsigned long long* out_fence) {
+  static bool TryParseSubmitFence(const char* line, unsigned long long* out_fence, int* out_present) {
+    if (out_fence) {
+      *out_fence = 0;
+    }
+    if (out_present) {
+      *out_present = -1;
+    }
     if (!line || !out_fence) {
       return false;
     }
-    *out_fence = 0;
     // Example line:
-    // aerogpu-d3d9: submit cmd_bytes=123 fence=456
+    // aerogpu-d3d9: submit cmd_bytes=123 fence=456 present=0
     const char* prefix = "aerogpu-d3d9: submit";
     if (!aerogpu_test::StrIContainsA(line, prefix)) {
       return false;
@@ -413,6 +426,16 @@ class DbwinCapture {
       return false;
     }
     *out_fence = fence;
+
+    const char* present_key = strstr(line, "present=");
+    if (present_key && out_present) {
+      present_key += 8;
+      char* pend = NULL;
+      const unsigned long pv = strtoul(present_key, &pend, 10);
+      if (pend && pend != present_key) {
+        *out_present = (pv != 0) ? 1 : 0;
+      }
+    }
     return true;
   }
 
@@ -736,7 +759,7 @@ static int RunSubmitFenceStress(int argc, char** argv) {
     unsigned long long issue_fence = 0;
     std::string issue_line;
     if (validate_fences) {
-      if (!dbwin.WaitForSubmitFence(pid, 2000, &issue_fence, &issue_line)) {
+      if (!dbwin.WaitForSubmitFence(pid, 2000, /*expected_present=*/0, &issue_fence, &issue_line)) {
         CloseKmtAdapter(&kmt, kmt_adapter);
         return aerogpu_test::Fail(kTestName, "timed out waiting for submit fence log (iteration %u)", (unsigned)(i + 1));
       }
@@ -817,7 +840,7 @@ static int RunSubmitFenceStress(int argc, char** argv) {
     if (validate_fences) {
       unsigned long long present_fence = 0;
       std::string present_line;
-      if (!dbwin.WaitForSubmitFence(pid, 2000, &present_fence, &present_line)) {
+      if (!dbwin.WaitForSubmitFence(pid, 2000, /*expected_present=*/1, &present_fence, &present_line)) {
         CloseKmtAdapter(&kmt, kmt_adapter);
         return aerogpu_test::Fail(kTestName, "timed out waiting for present submit fence log");
       }
