@@ -1160,6 +1160,207 @@ bool TestFvfXyzrhwDiffuseDrawPrimitiveUpEmitsFixedfuncCommands() {
   return Check(c0 == kGreen, "XYZRHW->clip: diffuse color preserved");
 }
 
+bool TestFvfXyzrhwDiffuseDrawPrimitiveEmulationConvertsVertices() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3D9DDI_HADAPTER hAdapter{};
+    D3D9DDI_HDEVICE hDevice{};
+    AEROGPU_D3D9DDI_HRESOURCE hVb{};
+    bool has_adapter = false;
+    bool has_device = false;
+    bool has_vb = false;
+
+    ~Cleanup() {
+      if (has_vb && device_funcs.pfnDestroyResource) {
+        device_funcs.pfnDestroyResource(hDevice, hVb);
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnSetFVF != nullptr, "SetFVF must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnCreateResource != nullptr, "CreateResource must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnLock != nullptr && cleanup.device_funcs.pfnUnlock != nullptr, "Lock/Unlock must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnSetStreamSource != nullptr, "SetStreamSource must be available")) {
+    return false;
+  }
+
+  AEROGPU_D3D9DDI_VIEWPORT vp{};
+  vp.x = 0.0f;
+  vp.y = 0.0f;
+  vp.w = 256.0f;
+  vp.h = 256.0f;
+  vp.min_z = 0.0f;
+  vp.max_z = 1.0f;
+  hr = cleanup.device_funcs.pfnSetViewport(create_dev.hDevice, &vp);
+  if (!Check(hr == S_OK, "SetViewport")) {
+    return false;
+  }
+
+  // D3DFVF_XYZRHW (0x4) | D3DFVF_DIFFUSE (0x40).
+  hr = cleanup.device_funcs.pfnSetFVF(create_dev.hDevice, 0x44u);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE)")) {
+    return false;
+  }
+
+  struct Vertex {
+    float x;
+    float y;
+    float z;
+    float rhw;
+    uint32_t color;
+  };
+
+  constexpr uint32_t kGreen = 0xFF00FF00u;
+  Vertex verts[3]{};
+  verts[0] = {256.0f * 0.25f, 256.0f * 0.25f, 0.5f, 1.0f, kGreen};
+  verts[1] = {256.0f * 0.75f, 256.0f * 0.25f, 0.5f, 1.0f, kGreen};
+  verts[2] = {256.0f * 0.50f, 256.0f * 0.75f, 0.5f, 1.0f, kGreen};
+
+  AEROGPU_D3D9DDIARG_CREATERESOURCE create_res{};
+  create_res.type = 0;
+  create_res.format = 0;
+  create_res.width = 0;
+  create_res.height = 0;
+  create_res.depth = 0;
+  create_res.mip_levels = 1;
+  create_res.usage = 0;
+  create_res.pool = 0;
+  create_res.size = sizeof(verts);
+  create_res.hResource.pDrvPrivate = nullptr;
+  create_res.pSharedHandle = nullptr;
+  create_res.pKmdAllocPrivateData = nullptr;
+  create_res.KmdAllocPrivateDataSize = 0;
+  create_res.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_res);
+  if (!Check(hr == S_OK, "CreateResource(vertex buffer)")) {
+    return false;
+  }
+  cleanup.hVb = create_res.hResource;
+  cleanup.has_vb = true;
+
+  AEROGPU_D3D9DDIARG_LOCK lock{};
+  lock.hResource = create_res.hResource;
+  lock.offset_bytes = 0;
+  lock.size_bytes = 0;
+  lock.flags = 0;
+  AEROGPU_D3D9DDI_LOCKED_BOX box{};
+  hr = cleanup.device_funcs.pfnLock(create_dev.hDevice, &lock, &box);
+  if (!Check(hr == S_OK, "Lock(vertex buffer)")) {
+    return false;
+  }
+  if (!Check(box.pData != nullptr, "Lock returns pData")) {
+    return false;
+  }
+  std::memcpy(box.pData, verts, sizeof(verts));
+
+  AEROGPU_D3D9DDIARG_UNLOCK unlock{};
+  unlock.hResource = create_res.hResource;
+  unlock.offset_bytes = 0;
+  unlock.size_bytes = 0;
+  hr = cleanup.device_funcs.pfnUnlock(create_dev.hDevice, &unlock);
+  if (!Check(hr == S_OK, "Unlock(vertex buffer)")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnSetStreamSource(create_dev.hDevice, 0, create_res.hResource, 0, sizeof(Vertex));
+  if (!Check(hr == S_OK, "SetStreamSource")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnDrawPrimitive(create_dev.hDevice, AEROGPU_D3D9DDI_PRIM_TRIANGLELIST, 0, 1);
+  if (!Check(hr == S_OK, "DrawPrimitive")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_CREATE_SHADER_DXBC) >= 2,
+             "fixed-function fallback creates shaders")) {
+    return false;
+  }
+
+  const CmdLoc upload = FindLastOpcode(buf, len, AEROGPU_CMD_UPLOAD_RESOURCE);
+  if (!Check(upload.hdr != nullptr, "upload_resource emitted")) {
+    return false;
+  }
+  const auto* upload_cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(upload.hdr);
+  if (!Check(upload_cmd->size_bytes == sizeof(verts), "upload_resource size matches vertex data")) {
+    return false;
+  }
+
+  const uint8_t* payload = reinterpret_cast<const uint8_t*>(upload_cmd) + sizeof(*upload_cmd);
+  float x0 = 0.0f;
+  float y0 = 0.0f;
+  float z0 = 0.0f;
+  float w0 = 0.0f;
+  uint32_t c0 = 0;
+  std::memcpy(&x0, payload + 0, sizeof(float));
+  std::memcpy(&y0, payload + 4, sizeof(float));
+  std::memcpy(&z0, payload + 8, sizeof(float));
+  std::memcpy(&w0, payload + 12, sizeof(float));
+  std::memcpy(&c0, payload + 16, sizeof(uint32_t));
+
+  const float expected_x0 = ((verts[0].x + 0.5f - vp.x) / vp.w) * 2.0f - 1.0f;
+  const float expected_y0 = 1.0f - ((verts[0].y + 0.5f - vp.y) / vp.h) * 2.0f;
+  if (!Check(std::fabs(x0 - expected_x0) < 1e-6f, "DrawPrimitive: x0 matches half-pixel convention")) {
+    return false;
+  }
+  if (!Check(std::fabs(y0 - expected_y0) < 1e-6f, "DrawPrimitive: y0 matches half-pixel convention")) {
+    return false;
+  }
+  if (!Check(std::fabs(z0 - verts[0].z) < 1e-6f, "DrawPrimitive: z preserved")) {
+    return false;
+  }
+  if (!Check(std::fabs(w0 - 1.0f) < 1e-6f, "DrawPrimitive: w preserved")) {
+    return false;
+  }
+  return Check(c0 == kGreen, "DrawPrimitive: diffuse color preserved");
+}
+
 bool TestResetShrinkUnbindsBackbuffer() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
@@ -1858,6 +2059,7 @@ int main() {
   failures += !aerogpu::TestDestroyBoundShaderUnbinds();
   failures += !aerogpu::TestDestroyBoundVertexDeclUnbinds();
   failures += !aerogpu::TestFvfXyzrhwDiffuseDrawPrimitiveUpEmitsFixedfuncCommands();
+  failures += !aerogpu::TestFvfXyzrhwDiffuseDrawPrimitiveEmulationConvertsVertices();
   failures += !aerogpu::TestResetShrinkUnbindsBackbuffer();
   failures += !aerogpu::TestRotateResourceIdentitiesRebindsChangedHandles();
   failures += !aerogpu::TestPresentBackbufferRotationUndoOnSmallCmdBuffer();

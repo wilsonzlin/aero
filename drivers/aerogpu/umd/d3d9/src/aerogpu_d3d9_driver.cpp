@@ -2557,7 +2557,7 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
 
   if (res->pool != kD3DPOOL_SYSTEMMEM && res->kind != ResourceKind::Buffer) {
     if (d3d9_format_to_aerogpu(res->format) == AEROGPU_FORMAT_INVALID) {
-      return trace.ret(kD3DErrInvalidCall);
+      return trace.ret(D3DERR_INVALIDCALL);
     }
   }
 
@@ -6038,73 +6038,6 @@ HRESULT OpenAdapterCommon(const char* entrypoint,
 }
 
 } // namespace
-
-aerogpu_handle_t allocate_global_handle(Adapter* adapter) {
-  if (!adapter) {
-    return 0;
-  }
-
-#if defined(_WIN32)
-  // Allocate handles from a best-effort cross-process monotonic counter.
-  //
-  // The D3D9 UMD can be loaded into multiple guest processes (DWM + apps) and
-  // each process can submit AeroGPU command streams. Handles are interpreted by
-  // the host as global IDs, so we must avoid collisions across processes.
-  //
-  // We reuse the same named file mapping as the shared-allocation alloc_id token
-  // allocator (see `allocate_shared_alloc_id_token()`).
-  {
-    std::lock_guard<std::mutex> lock(adapter->share_token_mutex);
-
-    if (!adapter->share_token_view) {
-      wchar_t name[128];
-      swprintf(name,
-               sizeof(name) / sizeof(name[0]),
-               L"Local\\AeroGPU.GlobalHandleCounter");
-
-      HANDLE mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, sizeof(uint64_t), name);
-      if (mapping) {
-        void* view = MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(uint64_t));
-        if (view) {
-          adapter->share_token_mapping = mapping;
-          adapter->share_token_view = view;
-        } else {
-          CloseHandle(mapping);
-        }
-      }
-    }
-
-    if (adapter->share_token_view) {
-      auto* counter = reinterpret_cast<volatile LONG64*>(adapter->share_token_view);
-      for (;;) {
-        const LONG64 token = InterlockedIncrement64(counter);
-        const aerogpu_handle_t handle =
-            static_cast<aerogpu_handle_t>(static_cast<uint64_t>(token) & 0xFFFFFFFFu);
-        if (handle != 0) {
-          return handle;
-        }
-      }
-    }
-  }
-
-  // Fallback (should be rare): derive handles from a per-process counter mixed
-  // with PID bits to reduce collision probability if the file mapping APIs fail.
-  const uint32_t pid = static_cast<uint32_t>(GetCurrentProcessId());
-  const uint32_t pid_bits = (pid >> 2) & 0xFFFFu;
-  uint32_t seq = adapter->next_handle.fetch_add(1, std::memory_order_relaxed) & 0xFFFFu;
-  if (seq == 0) {
-    seq = adapter->next_handle.fetch_add(1, std::memory_order_relaxed) & 0xFFFFu;
-  }
-  const aerogpu_handle_t handle = static_cast<aerogpu_handle_t>((pid_bits << 16) | seq);
-  return handle ? handle : 1u;
-#else
-  aerogpu_handle_t handle = adapter->next_handle.fetch_add(1, std::memory_order_relaxed);
-  if (handle == 0) {
-    handle = adapter->next_handle.fetch_add(1, std::memory_order_relaxed);
-  }
-  return handle;
-#endif
-}
 
 uint64_t submit_locked(Device* dev, bool is_present) {
   return submit(dev, is_present);
