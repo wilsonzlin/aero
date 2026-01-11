@@ -70,7 +70,7 @@
   <PropertyGroup Label="UserMacros" />
 
   <PropertyGroup>
-    <!-- Match the binary name referenced by inf/virtio-snd.inf. -->
+    <!-- Match the binary name referenced by inf/aero-virtio-snd.inf. -->
     <TargetName>virtiosnd</TargetName>
     <TargetExt>.sys</TargetExt>
   </PropertyGroup>
