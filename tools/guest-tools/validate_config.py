@@ -82,6 +82,21 @@ class ContractDevice:
     hardware_id_patterns: Tuple[str, ...]
 
 
+def _parse_hex_u16(value: object, *, ctx: str) -> int:
+    if not isinstance(value, str) or not value.strip():
+        raise ValidationError(f"Windows device contract {ctx} must be a non-empty hex string (like 0x1AF4).")
+    s = value.strip()
+    if s.lower().startswith("0x"):
+        s = s[2:]
+    try:
+        n = int(s, 16)
+    except ValueError as e:
+        raise ValidationError(f"Windows device contract {ctx} is not valid hex: {value!r}") from e
+    if n < 0 or n > 0xFFFF:
+        raise ValidationError(f"Windows device contract {ctx} must be a 16-bit hex value, got: {value!r}")
+    return n
+
+
 def load_windows_device_contract(path: Path) -> Mapping[str, ContractDevice]:
     """
     Load the machine-readable Windows device contract JSON.
@@ -110,6 +125,8 @@ def load_windows_device_contract(path: Path) -> Mapping[str, ContractDevice]:
         name = entry.get("device")
         service = entry.get("driver_service_name")
         hwids = entry.get("hardware_id_patterns")
+        pci_vendor_id_raw = entry.get("pci_vendor_id")
+        pci_device_id_raw = entry.get("pci_device_id")
         if not isinstance(name, str) or not name:
             raise ValidationError(f"Windows device contract {path} has a device entry missing valid 'device': {entry!r}")
         if not isinstance(service, str) or not service:
@@ -122,6 +139,53 @@ def load_windows_device_contract(path: Path) -> Mapping[str, ContractDevice]:
             raise ValidationError(
                 f"Windows device contract {path} device {name!r} has invalid/missing 'hardware_id_patterns' (expected list[str])."
             )
+
+        pci_vendor_id = _parse_hex_u16(pci_vendor_id_raw, ctx=f"{path} device {name!r} pci_vendor_id")
+        pci_device_id = _parse_hex_u16(pci_device_id_raw, ctx=f"{path} device {name!r} pci_device_id")
+        expected_substr = f"VEN_{pci_vendor_id:04X}&DEV_{pci_device_id:04X}"
+        for hwid in hwids:
+            if expected_substr not in hwid.upper():
+                raise ValidationError(
+                    f"Windows device contract {path} device {name!r} has hardware_id_patterns entry that does not "
+                    f"match pci_vendor_id/pci_device_id ({expected_substr}): {hwid!r}"
+                )
+
+        # Enforce AERO-W7-VIRTIO v1 invariants for virtio devices (modern-only + REV_01).
+        if name.lower().startswith("virtio-"):
+            if pci_vendor_id != 0x1AF4:
+                raise ValidationError(
+                    f"Windows device contract {path} device {name!r} has unexpected pci_vendor_id 0x{pci_vendor_id:04X} "
+                    "(expected 0x1AF4 for virtio devices)."
+                )
+            virtio_device_type = entry.get("virtio_device_type")
+            if not isinstance(virtio_device_type, int):
+                raise ValidationError(
+                    f"Windows device contract {path} device {name!r} is missing a valid 'virtio_device_type' (expected int)."
+                )
+            expected_pci_device_id = 0x1040 + virtio_device_type
+            if pci_device_id != expected_pci_device_id:
+                raise ValidationError(
+                    f"Windows device contract {path} device {name!r} has pci_device_id 0x{pci_device_id:04X} but "
+                    f"virtio_device_type {virtio_device_type} implies modern virtio PCI Device ID 0x{expected_pci_device_id:04X} "
+                    "(0x1040 + virtio_device_type)."
+                )
+
+            revs = set()
+            for hwid in hwids:
+                for m in re.finditer(r"(?i)&REV_([0-9A-F]{2})", hwid):
+                    revs.add(m.group(1).upper())
+            if not revs:
+                raise ValidationError(
+                    f"Windows device contract {path} device {name!r} is missing any REV_ qualifiers in hardware_id_patterns; "
+                    "AERO-W7-VIRTIO v1 requires PCI Revision ID 0x01 (REV_01)."
+                )
+            bad_revs = {r for r in revs if r != "01"}
+            if bad_revs:
+                bad = ", ".join(sorted(bad_revs))
+                raise ValidationError(
+                    f"Windows device contract {path} device {name!r} has unsupported virtio PCI revision ID(s) in hardware_id_patterns: {bad} "
+                    "(expected only REV_01 for AERO-W7-VIRTIO v1)."
+                )
 
         out[name] = ContractDevice(driver_service_name=service, hardware_id_patterns=tuple(hwids))
 

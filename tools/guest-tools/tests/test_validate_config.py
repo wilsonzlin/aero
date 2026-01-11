@@ -318,6 +318,39 @@ class ValidateConfigTests(unittest.TestCase):
                     windows_device_contract=virtio_contract_path,
                 )
 
+    def test_windows_device_contract_rejects_transitional_virtio_device_ids(self) -> None:
+        # The machine-readable device contract is expected to track AERO-W7-VIRTIO v1, which is
+        # modern-only (0x1040+ device IDs) and revision-gated (REV_01).
+        with tempfile.TemporaryDirectory(prefix="aero-guest-tools-validate-config-") as tmp:
+            tmp_path = Path(tmp)
+            contract_path = tmp_path / "contract.json"
+            contract_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "contract_name": "test",
+                        "contract_version": "0.0.0",
+                        "devices": [
+                            {
+                                "device": "virtio-net",
+                                "pci_vendor_id": "0x1AF4",
+                                "pci_device_id": "0x1000",
+                                "hardware_id_patterns": ["PCI\\VEN_1AF4&DEV_1000&REV_01"],
+                                "driver_service_name": "svc",
+                                "inf_name": "x.inf",
+                                "virtio_device_type": 1,
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(validate_config.ValidationError) as ctx:
+                validate_config.load_windows_device_contract(contract_path)
+
+            self.assertIn("0x1040 + virtio_device_type", str(ctx.exception))
+
     def test_aero_spec_rejects_transitional_virtio_ids(self) -> None:
         # Aero virtio contract v1 is modern-only, so we intentionally reject transitional
         # virtio-pci IDs in the Aero packaging spec.
