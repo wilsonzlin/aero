@@ -344,6 +344,10 @@ impl UsbBus {
     }
 
     pub fn handle_out(&mut self, addr: u8, ep: u8, data: &[u8]) -> UsbHandshake {
+        debug_assert!(
+            (ep & 0xF0) == 0,
+            "UsbBus::handle_out expects an endpoint number (0..=15), got {ep:#04x}"
+        );
         let Some(dev) = self.find_device_mut(addr) else {
             return UsbHandshake::Timeout;
         };
@@ -351,6 +355,10 @@ impl UsbBus {
     }
 
     pub fn handle_in(&mut self, addr: u8, ep: u8, buf: &mut [u8]) -> UsbHandshake {
+        debug_assert!(
+            (ep & 0xF0) == 0,
+            "UsbBus::handle_in expects an endpoint number (0..=15), got {ep:#04x}"
+        );
         let Some(dev) = self.find_device_mut(addr) else {
             return UsbHandshake::Timeout;
         };
