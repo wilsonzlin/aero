@@ -71,6 +71,32 @@ func (s *Session) Closed() bool {
 	return s.closed
 }
 
+// AddOnClose registers an additional callback to run when the session closes.
+//
+// It is safe to call multiple times. If the session is already closed, fn is
+// invoked synchronously.
+func (s *Session) AddOnClose(fn func()) {
+	if fn == nil {
+		return
+	}
+
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		fn()
+		return
+	}
+
+	prev := s.onClose
+	s.onClose = func() {
+		if prev != nil {
+			prev()
+		}
+		fn()
+	}
+	s.mu.Unlock()
+}
+
 func (s *Session) Close() {
 	s.mu.Lock()
 	onClose := s.closeLocked()

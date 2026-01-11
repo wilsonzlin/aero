@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"encoding/json"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -53,6 +54,42 @@ func dialWS(t *testing.T, baseURL, path string) *websocket.Conn {
 	return c
 }
 
+func readWSJSON(t *testing.T, c *websocket.Conn, timeout time.Duration) map[string]any {
+	t.Helper()
+
+	_ = c.SetReadDeadline(time.Now().Add(timeout))
+	msgType, msg, err := c.ReadMessage()
+	if err != nil {
+		t.Fatalf("ReadMessage: %v", err)
+	}
+	if msgType != websocket.TextMessage {
+		t.Fatalf("msgType=%d, want TextMessage", msgType)
+	}
+
+	var out map[string]any
+	if err := json.Unmarshal(msg, &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	return out
+}
+
+func readWSBinary(t *testing.T, c *websocket.Conn, timeout time.Duration) []byte {
+	t.Helper()
+
+	deadline := time.Now().Add(timeout)
+	for {
+		_ = c.SetReadDeadline(deadline)
+		msgType, msg, err := c.ReadMessage()
+		if err != nil {
+			t.Fatalf("ReadMessage: %v", err)
+		}
+		if msgType == websocket.BinaryMessage {
+			return msg
+		}
+		// Ignore text control messages like {"type":"ready"}.
+	}
+}
+
 func TestUDPWebSocketServer_RelaysV1IPv4(t *testing.T) {
 	echo, echoPort := startUDPEchoServer(t, "udp4", net.IPv4(127, 0, 0, 1))
 	defer echo.Close()
@@ -67,7 +104,7 @@ func TestUDPWebSocketServer_RelaysV1IPv4(t *testing.T) {
 	relayCfg := DefaultConfig()
 	relayCfg.PreferV2 = true
 
-	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy())
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
 	if err != nil {
 		t.Fatalf("NewUDPWebSocketServer: %v", err)
 	}
@@ -94,14 +131,7 @@ func TestUDPWebSocketServer_RelaysV1IPv4(t *testing.T) {
 		t.Fatalf("WriteMessage: %v", err)
 	}
 
-	_ = c.SetReadDeadline(time.Now().Add(2 * time.Second))
-	msgType, outPkt, err := c.ReadMessage()
-	if err != nil {
-		t.Fatalf("ReadMessage: %v", err)
-	}
-	if msgType != websocket.BinaryMessage {
-		t.Fatalf("msgType=%d, want BinaryMessage", msgType)
-	}
+	outPkt := readWSBinary(t, c, 2*time.Second)
 
 	outFrame, err := udpproto.Decode(outPkt)
 	if err != nil {
@@ -135,7 +165,7 @@ func TestUDPWebSocketServer_RelaysV2IPv4WhenNegotiated(t *testing.T) {
 	relayCfg := DefaultConfig()
 	relayCfg.PreferV2 = true
 
-	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy())
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
 	if err != nil {
 		t.Fatalf("NewUDPWebSocketServer: %v", err)
 	}
@@ -162,11 +192,7 @@ func TestUDPWebSocketServer_RelaysV2IPv4WhenNegotiated(t *testing.T) {
 		t.Fatalf("WriteMessage: %v", err)
 	}
 
-	_ = c.SetReadDeadline(time.Now().Add(2 * time.Second))
-	_, outPkt, err := c.ReadMessage()
-	if err != nil {
-		t.Fatalf("ReadMessage: %v", err)
-	}
+	outPkt := readWSBinary(t, c, 2*time.Second)
 
 	outFrame, err := udpproto.Decode(outPkt)
 	if err != nil {
@@ -199,7 +225,7 @@ func TestUDPWebSocketServer_RelaysV2IPv6(t *testing.T) {
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := DefaultConfig()
 
-	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy())
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
 	if err != nil {
 		t.Fatalf("NewUDPWebSocketServer: %v", err)
 	}
@@ -226,11 +252,7 @@ func TestUDPWebSocketServer_RelaysV2IPv6(t *testing.T) {
 		t.Fatalf("WriteMessage: %v", err)
 	}
 
-	_ = c.SetReadDeadline(time.Now().Add(2 * time.Second))
-	_, outPkt, err := c.ReadMessage()
-	if err != nil {
-		t.Fatalf("ReadMessage: %v", err)
-	}
+	outPkt := readWSBinary(t, c, 2*time.Second)
 
 	outFrame, err := udpproto.Decode(outPkt)
 	if err != nil {
@@ -266,7 +288,7 @@ func TestUDPWebSocketServer_DroppedByPolicyIncrementsMetric(t *testing.T) {
 	// Production policy denies 127.0.0.0/8 by default.
 	p := policy.NewProductionDestinationPolicy()
 
-	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, p)
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, p, nil)
 	if err != nil {
 		t.Fatalf("NewUDPWebSocketServer: %v", err)
 	}
@@ -295,12 +317,12 @@ func TestUDPWebSocketServer_DroppedByPolicyIncrementsMetric(t *testing.T) {
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if m.Get(wsUDPMetricDroppedByPolicy) > 0 {
+		if m.Get(metrics.UDPWSDroppedDeniedByPolicy) > 0 {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("expected %s metric increment", wsUDPMetricDroppedByPolicy)
+	t.Fatalf("expected %s metric increment", metrics.UDPWSDroppedDeniedByPolicy)
 }
 
 func TestUDPWebSocketServer_RateLimitedIncrementsMetric(t *testing.T) {
@@ -319,7 +341,7 @@ func TestUDPWebSocketServer_RateLimitedIncrementsMetric(t *testing.T) {
 	sm := NewSessionManager(cfg, m, clk)
 	relayCfg := DefaultConfig()
 
-	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy())
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
 	if err != nil {
 		t.Fatalf("NewUDPWebSocketServer: %v", err)
 	}
@@ -346,11 +368,7 @@ func TestUDPWebSocketServer_RateLimitedIncrementsMetric(t *testing.T) {
 	if err := c.WriteMessage(websocket.BinaryMessage, pkt); err != nil {
 		t.Fatalf("WriteMessage #1: %v", err)
 	}
-	_ = c.SetReadDeadline(time.Now().Add(2 * time.Second))
-	_, _, err = c.ReadMessage()
-	if err != nil {
-		t.Fatalf("ReadMessage #1: %v", err)
-	}
+	_ = readWSBinary(t, c, 2*time.Second)
 
 	// Second datagram at the same fake clock timestamp should be dropped.
 	if err := c.WriteMessage(websocket.BinaryMessage, pkt); err != nil {
@@ -359,12 +377,12 @@ func TestUDPWebSocketServer_RateLimitedIncrementsMetric(t *testing.T) {
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if m.Get(wsUDPMetricDroppedByRate) > 0 {
+		if m.Get(metrics.UDPWSDroppedRateLimited) > 0 {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("expected %s metric increment", wsUDPMetricDroppedByRate)
+	t.Fatalf("expected %s metric increment", metrics.UDPWSDroppedRateLimited)
 }
 
 func TestUDPWebSocketServer_FramesInOutMetrics(t *testing.T) {
@@ -380,7 +398,7 @@ func TestUDPWebSocketServer_FramesInOutMetrics(t *testing.T) {
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := DefaultConfig()
 
-	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy())
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
 	if err != nil {
 		t.Fatalf("NewUDPWebSocketServer: %v", err)
 	}
@@ -407,20 +425,22 @@ func TestUDPWebSocketServer_FramesInOutMetrics(t *testing.T) {
 		t.Fatalf("WriteMessage: %v", err)
 	}
 
-	_ = c.SetReadDeadline(time.Now().Add(2 * time.Second))
-	_, _, err = c.ReadMessage()
-	if err != nil {
-		t.Fatalf("ReadMessage: %v", err)
-	}
+	_ = readWSBinary(t, c, 2*time.Second)
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if m.Get(wsUDPMetricFramesIn) > 0 && m.Get(wsUDPMetricFramesOut) > 0 {
+		if m.Get(metrics.UDPWSDatagramsIn) > 0 && m.Get(metrics.UDPWSDatagramsOut) > 0 {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("expected %s and %s metric increments (got in=%d out=%d)", wsUDPMetricFramesIn, wsUDPMetricFramesOut, m.Get(wsUDPMetricFramesIn), m.Get(wsUDPMetricFramesOut))
+	t.Fatalf(
+		"expected %s and %s metric increments (got in=%d out=%d)",
+		metrics.UDPWSDatagramsIn,
+		metrics.UDPWSDatagramsOut,
+		m.Get(metrics.UDPWSDatagramsIn),
+		m.Get(metrics.UDPWSDatagramsOut),
+	)
 }
 
 func TestUDPWebSocketServer_AuthMessageRequired(t *testing.T) {
@@ -434,7 +454,7 @@ func TestUDPWebSocketServer_AuthMessageRequired(t *testing.T) {
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := DefaultConfig()
 
-	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy())
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
 	if err != nil {
 		t.Fatalf("NewUDPWebSocketServer: %v", err)
 	}
@@ -448,6 +468,14 @@ func TestUDPWebSocketServer_AuthMessageRequired(t *testing.T) {
 
 	if err := c.WriteMessage(websocket.BinaryMessage, []byte{0x00}); err != nil {
 		t.Fatalf("WriteMessage: %v", err)
+	}
+
+	msg := readWSJSON(t, c, 500*time.Millisecond)
+	if msg["type"] != "error" {
+		t.Fatalf("expected error message, got %#v", msg)
+	}
+	if msg["code"] != "unauthorized" {
+		t.Fatalf("expected unauthorized code, got %#v", msg)
 	}
 
 	_ = c.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
@@ -478,7 +506,7 @@ func TestUDPWebSocketServer_AuthMessageThenRelay(t *testing.T) {
 	relayCfg := DefaultConfig()
 	relayCfg.PreferV2 = true
 
-	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy())
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
 	if err != nil {
 		t.Fatalf("NewUDPWebSocketServer: %v", err)
 	}
@@ -492,6 +520,11 @@ func TestUDPWebSocketServer_AuthMessageThenRelay(t *testing.T) {
 
 	if err := c.WriteMessage(websocket.TextMessage, []byte(`{"type":"auth","apiKey":"secret"}`)); err != nil {
 		t.Fatalf("WriteMessage auth: %v", err)
+	}
+
+	ready := readWSJSON(t, c, 2*time.Second)
+	if ready["type"] != "ready" {
+		t.Fatalf("expected ready message, got %#v", ready)
 	}
 
 	inFrame := udpproto.Frame{
@@ -509,11 +542,7 @@ func TestUDPWebSocketServer_AuthMessageThenRelay(t *testing.T) {
 		t.Fatalf("WriteMessage: %v", err)
 	}
 
-	_ = c.SetReadDeadline(time.Now().Add(2 * time.Second))
-	_, outPkt, err := c.ReadMessage()
-	if err != nil {
-		t.Fatalf("ReadMessage: %v", err)
-	}
+	outPkt := readWSBinary(t, c, 2*time.Second)
 
 	outFrame, err := udpproto.Decode(outPkt)
 	if err != nil {
@@ -538,7 +567,7 @@ func TestUDPWebSocketServer_AuthMessageRejectsMismatchedKeys(t *testing.T) {
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := DefaultConfig()
 
-	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy())
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
 	if err != nil {
 		t.Fatalf("NewUDPWebSocketServer: %v", err)
 	}
@@ -551,6 +580,14 @@ func TestUDPWebSocketServer_AuthMessageRejectsMismatchedKeys(t *testing.T) {
 	c := dialWS(t, ts.URL, "/udp")
 	if err := c.WriteMessage(websocket.TextMessage, []byte(`{"type":"auth","token":"t1","apiKey":"t2"}`)); err != nil {
 		t.Fatalf("WriteMessage auth: %v", err)
+	}
+
+	msg := readWSJSON(t, c, 500*time.Millisecond)
+	if msg["type"] != "error" {
+		t.Fatalf("expected error message, got %#v", msg)
+	}
+	if msg["code"] != "bad_message" {
+		t.Fatalf("expected bad_message code, got %#v", msg)
 	}
 
 	_ = c.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
@@ -581,7 +618,7 @@ func TestUDPWebSocketServer_IgnoresRedundantAuthMessage(t *testing.T) {
 	relayCfg := DefaultConfig()
 	relayCfg.PreferV2 = true
 
-	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy())
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
 	if err != nil {
 		t.Fatalf("NewUDPWebSocketServer: %v", err)
 	}
@@ -593,6 +630,10 @@ func TestUDPWebSocketServer_IgnoresRedundantAuthMessage(t *testing.T) {
 
 	// Authenticate via query-string, then send an auth message anyway.
 	c := dialWS(t, ts.URL, "/udp?apiKey=secret")
+	ready := readWSJSON(t, c, 2*time.Second)
+	if ready["type"] != "ready" {
+		t.Fatalf("expected ready message, got %#v", ready)
+	}
 	if err := c.WriteMessage(websocket.TextMessage, []byte(`{"type":"auth","apiKey":"secret"}`)); err != nil {
 		t.Fatalf("WriteMessage auth: %v", err)
 	}
@@ -612,11 +653,7 @@ func TestUDPWebSocketServer_IgnoresRedundantAuthMessage(t *testing.T) {
 		t.Fatalf("WriteMessage datagram: %v", err)
 	}
 
-	_ = c.SetReadDeadline(time.Now().Add(2 * time.Second))
-	_, outPkt, err := c.ReadMessage()
-	if err != nil {
-		t.Fatalf("ReadMessage: %v", err)
-	}
+	outPkt := readWSBinary(t, c, 2*time.Second)
 
 	outFrame, err := udpproto.Decode(outPkt)
 	if err != nil {
@@ -702,7 +739,7 @@ func TestUDPWebSocketServer_RecordsBackpressureDrops(t *testing.T) {
 	relayCfg := DefaultConfig()
 	relayCfg.DataChannelSendQueueBytes = 1
 
-	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy())
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
 	if err != nil {
 		t.Fatalf("NewUDPWebSocketServer: %v", err)
 	}
@@ -730,12 +767,12 @@ func TestUDPWebSocketServer_RecordsBackpressureDrops(t *testing.T) {
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if m.Get(wsUDPMetricDroppedBackpress) > 0 {
+		if m.Get(metrics.UDPWSDroppedBackpressure) > 0 {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("expected %s metric increment", wsUDPMetricDroppedBackpress)
+	t.Fatalf("expected %s metric increment", metrics.UDPWSDroppedBackpressure)
 }
 
 func TestUDPWebSocketServer_OriginChecks(t *testing.T) {
@@ -748,7 +785,7 @@ func TestUDPWebSocketServer_OriginChecks(t *testing.T) {
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := DefaultConfig()
 
-	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy())
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
 	if err != nil {
 		t.Fatalf("NewUDPWebSocketServer: %v", err)
 	}
@@ -804,7 +841,7 @@ func TestUDPWebSocketServer_OriginChecks_AllowsConfiguredOrigin(t *testing.T) {
 	sm := NewSessionManager(cfg, m, nil)
 	relayCfg := DefaultConfig()
 
-	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy())
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy(), nil)
 	if err != nil {
 		t.Fatalf("NewUDPWebSocketServer: %v", err)
 	}

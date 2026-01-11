@@ -265,7 +265,8 @@ When a session is hard-closed, the relay terminates the associated WebRTC PeerCo
 #### Authentication
 
 Because browsers can't set arbitrary headers on WebSocket upgrade requests, the signaling server
-supports two auth delivery options:
+supports two auth delivery options. These apply to WebSocket endpoints including `/webrtc/signal`
+and the `/udp` data plane fallback:
 
 1. **Preferred:** send credentials in the first WebSocket message:
 
@@ -305,7 +306,7 @@ For HTTP endpoints (`GET /webrtc/ice`, `POST /offer`, `POST /webrtc/offer`, `POS
 To prevent resource exhaustion:
 
 - Unauthenticated WebSocket connections must authenticate within `SIGNALING_AUTH_TIMEOUT` (default: `2s`).
-- Incoming signaling messages are limited by:
+- Incoming WebSocket control messages (e.g. signaling, `/udp` auth) are limited by:
   - `MAX_SIGNALING_MESSAGE_BYTES` (default: `65536`)
   - `MAX_SIGNALING_MESSAGES_PER_SECOND` (default: `50`)
 

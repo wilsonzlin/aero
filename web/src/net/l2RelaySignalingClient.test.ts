@@ -6,6 +6,7 @@ type Listener = (evt: Event) => void;
 
 class FakeRtcDataChannel {
   label = "";
+  ordered = true;
   readyState: RTCDataChannelState;
   maxRetransmits: number | null = null;
   maxPacketLifeTime: number | null = null;
@@ -85,6 +86,7 @@ class FakePeerConnection {
     const channel = FakePeerConnection.nextDataChannel ?? new FakeRtcDataChannel("open");
     FakePeerConnection.nextDataChannel = null;
     channel.label = label;
+    channel.ordered = init?.ordered ?? true;
     channel.maxRetransmits = init?.maxRetransmits ?? null;
     channel.maxPacketLifeTime = init?.maxPacketLifeTime ?? null;
     this.createdChannel = channel;

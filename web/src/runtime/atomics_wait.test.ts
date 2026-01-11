@@ -18,17 +18,21 @@ describe('waitUntilNotEqual', () => {
     Atomics.store(i32, 0, 0);
 
     const waitSpy = vi.spyOn(Atomics, 'wait');
+    try {
 
-    const promise = waitUntilNotEqual(i32, 0, 0, { canBlock: false, timeoutMs: 500 });
+      const promise = waitUntilNotEqual(i32, 0, 0, { canBlock: false, timeoutMs: 500 });
 
-    // Allow the waiter to arm itself.
-    await Promise.resolve();
+      // Allow the waiter to arm itself.
+      await Promise.resolve();
 
-    Atomics.store(i32, 0, 1);
-    notify(i32, 0, 1);
+      Atomics.store(i32, 0, 1);
+      notify(i32, 0, 1);
 
-    await expect(promise).resolves.toBe('ok');
-    expect(waitSpy).not.toHaveBeenCalled();
+      await expect(promise).resolves.toBe('ok');
+      expect(waitSpy).not.toHaveBeenCalled();
+    } finally {
+      waitSpy.mockRestore();
+    }
   });
 
   it('falls back to polling when Atomics.waitAsync is unavailable', async () => {

@@ -107,7 +107,7 @@ func main() {
 	})
 	sig.RegisterRoutes(srv.Mux())
 
-	udpWS, err := relay.NewUDPWebSocketServer(cfg, sessionMgr, relayCfg, destPolicy)
+	udpWS, err := relay.NewUDPWebSocketServer(cfg, sessionMgr, relayCfg, destPolicy, logger)
 	if err != nil {
 		logger.Error("failed to configure /udp websocket server", "err", err)
 		os.Exit(2)

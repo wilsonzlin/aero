@@ -17,6 +17,20 @@ const (
 	SessionHardClosed = "session_hard_closed"
 )
 
+// WebSocket UDP relay (/udp) counters.
+const (
+	UDPWSConnections           = "udp_ws_connections"
+	UDPWSDatagramsIn           = "udp_ws_datagrams_in"
+	UDPWSDatagramsOut          = "udp_ws_datagrams_out"
+	UDPWSDropped               = "udp_ws_dropped"
+	UDPWSDroppedBackpressure   = "udp_ws_dropped_backpressure"
+	UDPWSDroppedMalformed      = "udp_ws_dropped_malformed"
+	UDPWSDroppedOversized      = "udp_ws_dropped_oversized"
+	UDPWSDroppedRateLimited    = "udp_ws_dropped_rate_limited"
+	UDPWSDroppedQuotaExceeded  = "udp_ws_dropped_quota_exceeded"
+	UDPWSDroppedDeniedByPolicy = "udp_ws_dropped_denied_by_policy"
+)
+
 // Metrics is a minimal, concurrency-safe counter registry.
 //
 // The production relay is expected to plug into a real metrics backend; this

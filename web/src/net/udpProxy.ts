@@ -1,5 +1,4 @@
 import { decodeUdpRelayFrame, encodeUdpRelayV1Datagram, encodeUdpRelayV2Datagram } from "../shared/udpRelayProtocol";
-import { parseSignalMessageJSON } from "../shared/udpRelaySignaling";
 
 export type UdpProxyEvent = {
   srcIp: string;
@@ -121,172 +120,147 @@ function encodeDatagram(srcPort: number, dstIp: string, dstPort: number, payload
  * Wire format is the same as the WebRTC UDP relay datagram framing. See:
  * - proxy/webrtc-udp-relay/PROTOCOL.md
  */
+export type WebSocketUdpProxyAuth =
+  | { apiKey: string; mode?: "first_message" | "query" }
+  | { token: string; mode?: "first_message" | "query" };
+
+export type WebSocketUdpProxyClientOptions = {
+  /**
+   * Optional auth for the /udp WebSocket endpoint.
+   *
+   * The relay supports:
+   *  - query string auth (e.g. ?apiKey=... / ?token=...), and
+   *  - first WebSocket message {type:"auth", ...} (preferred).
+   */
+  auth?: WebSocketUdpProxyAuth;
+
+  /**
+   * Maximum number of outbound datagrams to buffer while waiting for auth/ready.
+   *
+   * Defaults to a small bound to avoid unbounded memory growth if the server
+   * never accepts the connection.
+   */
+  maxPendingDatagrams?: number;
+};
+
 export class WebSocketUdpProxyClient {
   private ws: WebSocket | null = null;
-  private connectPromise: Promise<void> | null = null;
-  private authAccepted = false;
+  private ready = false;
+  private pending: Uint8Array[] = [];
+  private readonly opts: WebSocketUdpProxyClientOptions;
 
   constructor(
     private readonly proxyBaseUrl: string,
     private readonly sink: UdpProxyEventSink,
-    private readonly authToken?: string,
-  ) {}
-
-  connect(): Promise<void> {
-    if (this.ws && this.ws.readyState === WebSocket.OPEN && (!this.authToken || this.authAccepted)) {
-      return Promise.resolve();
-    }
-    if (this.connectPromise) return this.connectPromise;
-
-    this.connectPromise = (this.authToken
-      ? this.connectWithAuth({ includeQueryAuth: false, sendAuthMessage: true }).catch(() =>
-          // Query-string auth is a compatibility fallback for environments where
-          // a first-message auth handshake is not supported.
-          this.connectWithAuth({ includeQueryAuth: true, sendAuthMessage: false }),
-        )
-      : this.connectWithAuth({ includeQueryAuth: false, sendAuthMessage: false }))
-      .finally(() => {
-        this.connectPromise = null;
-      });
-
-    return this.connectPromise;
+    opts: WebSocketUdpProxyClientOptions = {},
+  ) {
+    this.opts = opts;
   }
 
-  private connectWithAuth(opts: { includeQueryAuth: boolean; sendAuthMessage: boolean }): Promise<void> {
+  connect(): void {
     this.close();
-    this.authAccepted = false;
 
     const url = new URL(this.proxyBaseUrl);
     if (url.protocol === "http:") url.protocol = "ws:";
     else if (url.protocol === "https:") url.protocol = "wss:";
     url.pathname = `${url.pathname.replace(/\/$/, "")}/udp`;
-    if (this.authToken && opts.includeQueryAuth) {
-      // Forward/compat: support both jwt token and api_key query param names.
-      url.searchParams.set("token", this.authToken);
-      url.searchParams.set("apiKey", this.authToken);
+
+    const auth = this.opts.auth;
+    const authMode = auth?.mode ?? "first_message";
+    if (auth && authMode === "query") {
+      if ("apiKey" in auth) url.searchParams.set("apiKey", auth.apiKey);
+      else url.searchParams.set("token", auth.token);
     }
 
     const ws = new WebSocket(url.toString());
     ws.binaryType = "arraybuffer";
-    this.ws = ws;
+    ws.onopen = () => {
+      this.ready = false;
+      this.pending = [];
 
-    return new Promise((resolve, reject) => {
-      let settled = false;
-      let graceTimer: ReturnType<typeof setTimeout> | null = null;
-      let connectTimer: ReturnType<typeof setTimeout> | null = null;
+      // If auth is configured, prefer sending it as the first WS message. We
+      // wait for the relay's {"type":"ready"} acknowledgment before sending
+      // any datagrams.
+      if (auth && authMode === "first_message") {
+        if ("apiKey" in auth) ws.send(JSON.stringify({ type: "auth", apiKey: auth.apiKey }));
+        else ws.send(JSON.stringify({ type: "auth", token: auth.token }));
+        return;
+      }
 
-      const settle = (err?: unknown) => {
-        if (settled) return;
-        settled = true;
-        if (graceTimer) clearTimeout(graceTimer);
-        graceTimer = null;
-        if (connectTimer) clearTimeout(connectTimer);
-        connectTimer = null;
-        if (err) {
-          reject(err);
-        } else {
-          resolve();
-        }
-      };
-
-      connectTimer = setTimeout(() => {
+      // Back-compat / auth-less mode: if no credentials are configured, allow
+      // sending immediately (older dev relays may not send a ready message).
+      if (!auth) {
+        this.ready = true;
+      }
+    };
+    ws.onmessage = (evt) => {
+      if (typeof evt.data === "string") {
+        // Control plane messages: {type:"ready"} / {type:"error", ...}
         try {
-          ws.close();
+          const msg = JSON.parse(evt.data) as { type?: string };
+          if (msg?.type === "ready") {
+            this.ready = true;
+            const queued = this.pending;
+            this.pending = [];
+            for (const pkt of queued) {
+              if (ws.readyState !== WebSocket.OPEN) break;
+              ws.send(pkt);
+            }
+          } else if (msg?.type === "error") {
+            // Best-effort: close on structured error.
+            this.close();
+          }
         } catch {
-          // Ignore.
+          // Ignore malformed control messages.
         }
-        settle(new Error("udp websocket connect timed out"));
-      }, 10_000);
-
-      ws.onopen = () => {
-        if (!this.authToken) {
-          this.authAccepted = true;
-          settle();
-          return;
+        return;
+      }
+      if (!(evt.data instanceof ArrayBuffer)) return;
+      const buf = new Uint8Array(evt.data);
+      try {
+        const frame = decodeUdpRelayFrame(buf);
+        if (frame.version === 1) {
+          this.sink({
+            srcIp: formatIpv4(frame.remoteIpv4),
+            srcPort: frame.remotePort,
+            dstPort: frame.guestPort,
+            data: frame.payload,
+          });
+        } else {
+          this.sink({
+            srcIp: frame.addressFamily === 4 ? formatIpv4(frame.remoteIp) : formatIpv6(frame.remoteIp),
+            srcPort: frame.remotePort,
+            dstPort: frame.guestPort,
+            data: frame.payload,
+          });
         }
-
-        if (opts.sendAuthMessage) {
-          try {
-            ws.send(JSON.stringify({ type: "auth", token: this.authToken, apiKey: this.authToken }));
-          } catch {
-            // Ignore; we'll fail if the socket closes.
-          }
-        }
-
-        // Some relay builds do not send an explicit auth acknowledgement for the
-        // UDP WebSocket. Give the connection a small grace period to fail fast
-        // on invalid credentials, then treat it as connected.
-        graceTimer = setTimeout(() => {
-          if (ws.readyState === WebSocket.OPEN) {
-            this.authAccepted = true;
-            settle();
-          }
-        }, 100);
-      };
-
-      ws.onerror = () => {
-        if (!this.authAccepted) settle(new Error("udp websocket error"));
-      };
-
-      ws.onclose = (evt) => {
-        if (!this.authAccepted) {
-          settle(new Error(`udp websocket closed (${evt.code}): ${evt.reason}`));
-        }
-      };
-
-      ws.onmessage = (evt) => {
-        if (evt.data instanceof ArrayBuffer) {
-          if (!this.authAccepted) {
-            this.authAccepted = true;
-            settle();
-          }
-
-          const buf = new Uint8Array(evt.data);
-          try {
-            const frame = decodeUdpRelayFrame(buf);
-            if (frame.version === 1) {
-              this.sink({
-                srcIp: formatIpv4(frame.remoteIpv4),
-                srcPort: frame.remotePort,
-                dstPort: frame.guestPort,
-                data: frame.payload,
-              });
-            } else {
-              this.sink({
-                srcIp: frame.addressFamily === 4 ? formatIpv4(frame.remoteIp) : formatIpv6(frame.remoteIp),
-                srcPort: frame.remotePort,
-                dstPort: frame.guestPort,
-                data: frame.payload,
-              });
-            }
-          } catch {
-            // Drop malformed frames.
-          }
-          return;
-        }
-
-        if (typeof evt.data === "string") {
-          // Control plane messages (auth / errors) are text frames.
-          try {
-            const msg = parseSignalMessageJSON(evt.data);
-            if (msg.type === "error") {
-              settle(new Error(`udp websocket error (${msg.code}): ${msg.message}`));
-            } else if (msg.type === "auth") {
-              this.authAccepted = true;
-              settle();
-            }
-          } catch {
-            // Ignore unknown text messages.
-          }
-        }
-      };
-    });
+      } catch {
+        // Drop malformed frames.
+      }
+    };
+    ws.onclose = () => {
+      this.ws = null;
+      this.ready = false;
+      this.pending = [];
+    };
+    this.ws = ws;
   }
 
   send(srcPort: number, dstIp: string, dstPort: number, payload: Uint8Array): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
     try {
-      this.ws.send(encodeDatagram(srcPort, dstIp, dstPort, payload));
+      const pkt = encodeDatagram(srcPort, dstIp, dstPort, payload);
+      if (this.ready) {
+        this.ws.send(pkt);
+        return;
+      }
+
+      // Auth is configured but not yet accepted; buffer a small amount to avoid
+      // dropping early packets (e.g. DNS) during the handshake.
+      const max = this.opts.maxPendingDatagrams ?? 128;
+      if (this.pending.length < max) {
+        this.pending.push(pkt);
+      }
     } catch {
       // Drop invalid/oversized datagrams.
     }
@@ -295,7 +269,8 @@ export class WebSocketUdpProxyClient {
   close(): void {
     this.ws?.close();
     this.ws = null;
-    this.authAccepted = false;
+    this.ready = false;
+    this.pending = [];
   }
 }
 

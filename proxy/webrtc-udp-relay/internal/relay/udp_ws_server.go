@@ -3,6 +3,8 @@ package relay
 import (
 	"encoding/json"
 	"errors"
+	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/netip"
@@ -21,16 +23,15 @@ import (
 )
 
 const (
-	wsUDPMetricFramesIn          = "udp_ws_frames_in"
-	wsUDPMetricFramesOut         = "udp_ws_frames_out"
-	wsUDPMetricDroppedByPolicy   = "udp_ws_dropped_policy"
-	wsUDPMetricDroppedByRate     = "udp_ws_dropped_rate_limit"
-	wsUDPMetricDroppedBackpress  = "udp_ws_dropped_backpressure"
-	wsUDPWriteWait               = 1 * time.Second
-	wsUDPAuthCloseReason         = "authentication required"
-	wsUDPAuthTimeoutCloseReason  = "authentication timeout"
-	wsUDPInvalidCredsCloseReason = "invalid credentials"
+	wsUDPWriteWait = 1 * time.Second
 )
+
+type udpWSControlMessage struct {
+	Type      string `json:"type"`
+	SessionID string `json:"sessionId,omitempty"`
+	Code      string `json:"code,omitempty"`
+	Message   string `json:"message,omitempty"`
+}
 
 // UDPWebSocketServer implements GET /udp, a WebSocket-based UDP relay fallback
 // that uses the same binary datagram framing as the WebRTC DataChannel.
@@ -40,6 +41,7 @@ const (
 type UDPWebSocketServer struct {
 	cfg      config.Config
 	verifier auth.Verifier
+	log      *slog.Logger
 
 	sessions *SessionManager
 	relayCfg Config
@@ -48,14 +50,18 @@ type UDPWebSocketServer struct {
 	upgrader websocket.Upgrader
 }
 
-func NewUDPWebSocketServer(cfg config.Config, sessions *SessionManager, relayCfg Config, pol *policy.DestinationPolicy) (*UDPWebSocketServer, error) {
+func NewUDPWebSocketServer(cfg config.Config, sessions *SessionManager, relayCfg Config, pol *policy.DestinationPolicy, logger *slog.Logger) (*UDPWebSocketServer, error) {
 	verifier, err := auth.NewVerifier(cfg)
 	if err != nil {
 		return nil, err
 	}
+	if logger == nil {
+		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
 	srv := &UDPWebSocketServer{
 		cfg:      cfg,
 		verifier: verifier,
+		log:      logger,
 		sessions: sessions,
 		relayCfg: relayCfg.WithDefaults(),
 		policy:   pol,
@@ -93,6 +99,16 @@ func (s *UDPWebSocketServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = conn.Close()
 	}
 
+	sendErrorAndClose := func(wsCloseCode int, code, message string) {
+		writeMu.Lock()
+		defer writeMu.Unlock()
+
+		_ = conn.SetWriteDeadline(time.Now().Add(wsUDPWriteWait))
+		_ = conn.WriteJSON(udpWSControlMessage{Type: "error", Code: code, Message: message})
+		_ = conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(wsCloseCode, message), time.Now().Add(wsUDPWriteWait))
+		_ = conn.Close()
+	}
+
 	metricsSink := func() *metrics.Metrics {
 		if s.sessions == nil {
 			return nil
@@ -105,34 +121,48 @@ func (s *UDPWebSocketServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	authenticated := false
-	if cred, err := auth.CredentialFromQuery(s.cfg.AuthMode, r.URL.Query()); err == nil {
-		if err := s.verifier.Verify(cred); err != nil {
-			incAuthFailure()
-			closeConn(websocket.ClosePolicyViolation, wsUDPInvalidCredsCloseReason)
+	if metricsSink != nil {
+		metricsSink.Inc(metrics.UDPWSConnections)
+	}
+
+	authenticated := s.cfg.AuthMode == config.AuthModeNone
+	if !authenticated {
+		if cred, err := auth.CredentialFromQuery(s.cfg.AuthMode, r.URL.Query()); err == nil {
+			if err := s.verifier.Verify(cred); err != nil {
+				incAuthFailure()
+				sendErrorAndClose(websocket.ClosePolicyViolation, "unauthorized", "invalid credentials")
+				return
+			}
+			authenticated = true
+		} else if err != nil && !errors.Is(err, auth.ErrMissingCredentials) {
+			sendErrorAndClose(websocket.CloseInternalServerErr, "internal_error", "invalid auth configuration")
 			return
 		}
-		authenticated = true
-	} else if err != nil && !errors.Is(err, auth.ErrMissingCredentials) {
-		closeConn(websocket.CloseInternalServerErr, "invalid auth configuration")
-		return
 	}
 
 	if !authenticated {
-		_ = conn.SetReadDeadline(time.Now().Add(s.cfg.SignalingAuthTimeout))
-		conn.SetReadLimit(s.cfg.MaxSignalingMessageBytes)
+		authTimeout := s.cfg.SignalingAuthTimeout
+		if authTimeout <= 0 {
+			authTimeout = 2 * time.Second
+		}
+		_ = conn.SetReadDeadline(time.Now().Add(authTimeout))
+		maxAuthBytes := s.cfg.MaxSignalingMessageBytes
+		if maxAuthBytes <= 0 {
+			maxAuthBytes = 64 * 1024
+		}
+		conn.SetReadLimit(maxAuthBytes)
 
 		msgType, msg, err := conn.ReadMessage()
 		if err != nil {
 			if isTimeout(err) {
 				incAuthFailure()
-				closeConn(websocket.ClosePolicyViolation, wsUDPAuthTimeoutCloseReason)
+				sendErrorAndClose(websocket.ClosePolicyViolation, "unauthorized", "authentication timeout")
 			}
 			return
 		}
 		if msgType != websocket.TextMessage {
 			incAuthFailure()
-			closeConn(websocket.ClosePolicyViolation, wsUDPAuthCloseReason)
+			sendErrorAndClose(websocket.ClosePolicyViolation, "unauthorized", "authentication required")
 			return
 		}
 
@@ -141,30 +171,30 @@ func (s *UDPWebSocketServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := json.Unmarshal(msg, &envelope); err != nil || envelope.Type != "auth" {
 			incAuthFailure()
-			closeConn(websocket.ClosePolicyViolation, wsUDPAuthCloseReason)
+			sendErrorAndClose(websocket.ClosePolicyViolation, "unauthorized", "authentication required")
 			return
 		}
 
 		var authMsg auth.WireAuthMessage
 		if err := json.Unmarshal(msg, &authMsg); err != nil {
 			incAuthFailure()
-			closeConn(websocket.CloseUnsupportedData, "invalid auth message")
+			sendErrorAndClose(websocket.CloseUnsupportedData, "bad_message", "invalid auth message")
 			return
 		}
 		if authMsg.APIKey != "" && authMsg.Token != "" && authMsg.APIKey != authMsg.Token {
 			incAuthFailure()
-			closeConn(websocket.ClosePolicyViolation, "invalid auth message")
+			sendErrorAndClose(websocket.ClosePolicyViolation, "bad_message", "invalid auth message")
 			return
 		}
 		cred, err := auth.CredentialFromAuthMessage(s.cfg.AuthMode, authMsg)
 		if err != nil {
 			incAuthFailure()
-			closeConn(websocket.ClosePolicyViolation, "missing credentials")
+			sendErrorAndClose(websocket.ClosePolicyViolation, "unauthorized", "missing credentials")
 			return
 		}
 		if err := s.verifier.Verify(cred); err != nil {
 			incAuthFailure()
-			closeConn(websocket.ClosePolicyViolation, wsUDPInvalidCredsCloseReason)
+			sendErrorAndClose(websocket.ClosePolicyViolation, "unauthorized", "invalid credentials")
 			return
 		}
 
@@ -173,19 +203,31 @@ func (s *UDPWebSocketServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var sess *Session
+	sessionID := ""
 	if s.sessions != nil {
 		var err error
 		sess, err = s.sessions.CreateSession()
 		if errors.Is(err, ErrTooManySessions) {
-			closeConn(websocket.CloseTryAgainLater, "too many sessions")
+			sendErrorAndClose(websocket.CloseTryAgainLater, "too_many_sessions", "too many sessions")
 			return
 		}
 		if err != nil {
-			closeConn(websocket.CloseInternalServerErr, "failed to allocate session")
+			sendErrorAndClose(websocket.CloseInternalServerErr, "internal_error", "failed to allocate session")
 			return
 		}
 		defer sess.Close()
+		sessionID = sess.ID()
 	}
+
+	s.log.Info("udp_ws_connected", "session_id", sessionID, "remote_addr", r.RemoteAddr)
+	defer s.log.Info("udp_ws_disconnected", "session_id", sessionID, "remote_addr", r.RemoteAddr)
+
+	// Signal readiness for clients that need an explicit auth acknowledgement.
+	// Clients that don't understand control messages should ignore this text frame.
+	writeMu.Lock()
+	_ = conn.SetWriteDeadline(time.Now().Add(wsUDPWriteWait))
+	_ = conn.WriteJSON(udpWSControlMessage{Type: "ready", SessionID: sessionID})
+	writeMu.Unlock()
 
 	// Enforce binary datagram frame size limits at the WebSocket layer to avoid
 	// large allocations. v2's max header length is 24 bytes (IPv6).
@@ -214,7 +256,8 @@ func (s *UDPWebSocketServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	relay := NewSessionRelay(sender, s.relayCfg, s.policy, nil)
 	if metricsSink != nil && relay.queue != nil {
 		relay.queue.SetOnDrop(func() {
-			metricsSink.Inc(wsUDPMetricDroppedBackpress)
+			metricsSink.Inc(metrics.UDPWSDropped)
+			metricsSink.Inc(metrics.UDPWSDroppedBackpressure)
 		})
 	}
 	defer relay.Close()
@@ -229,6 +272,10 @@ func (s *UDPWebSocketServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	for {
 		msgType, msg, err := conn.ReadMessage()
 		if err != nil {
+			if metricsSink != nil && errors.Is(err, websocket.ErrReadLimit) {
+				metricsSink.Inc(metrics.UDPWSDropped)
+				metricsSink.Inc(metrics.UDPWSDroppedOversized)
+			}
 			return
 		}
 		if msgType != websocket.BinaryMessage {
@@ -244,12 +291,12 @@ func (s *UDPWebSocketServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					continue
 				}
 			}
-			closeConn(websocket.CloseUnsupportedData, "expected binary message")
+			sendErrorAndClose(websocket.CloseUnsupportedData, "bad_message", "expected binary message")
 			return
 		}
 
 		if metricsSink != nil {
-			metricsSink.Inc(wsUDPMetricFramesIn)
+			metricsSink.Inc(metrics.UDPWSDatagramsIn)
 		}
 
 		// Decode once in the HTTP server so we can apply policy/rate limiting and
@@ -258,19 +305,29 @@ func (s *UDPWebSocketServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// decoded header.
 		frame, err := codec.DecodeFrame(msg)
 		if err != nil {
+			if metricsSink != nil {
+				metricsSink.Inc(metrics.UDPWSDropped)
+				if errors.Is(err, udpproto.ErrPayloadTooLarge) {
+					metricsSink.Inc(metrics.UDPWSDroppedOversized)
+				} else {
+					metricsSink.Inc(metrics.UDPWSDroppedMalformed)
+				}
+			}
 			continue
 		}
 
 		if s.policy == nil {
 			// Fail closed: a nil policy would turn the relay into an open UDP proxy.
 			if metricsSink != nil {
-				metricsSink.Inc(wsUDPMetricDroppedByPolicy)
+				metricsSink.Inc(metrics.UDPWSDropped)
+				metricsSink.Inc(metrics.UDPWSDroppedDeniedByPolicy)
 			}
 			continue
 		}
 		if err := s.policy.AllowUDP(net.IP(frame.RemoteIP.AsSlice()), frame.RemotePort); err != nil {
 			if metricsSink != nil {
-				metricsSink.Inc(wsUDPMetricDroppedByPolicy)
+				metricsSink.Inc(metrics.UDPWSDropped)
+				metricsSink.Inc(metrics.UDPWSDroppedDeniedByPolicy)
 			}
 			continue
 		}
@@ -279,7 +336,8 @@ func (s *UDPWebSocketServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			destKey := netip.AddrPortFrom(frame.RemoteIP, frame.RemotePort).String()
 			if !sess.HandleClientDatagram(frame.GuestPort, destKey, frame.Payload) {
 				if metricsSink != nil {
-					metricsSink.Inc(wsUDPMetricDroppedByRate)
+					metricsSink.Inc(metrics.UDPWSDropped)
+					metricsSink.Inc(metrics.UDPWSDroppedRateLimited)
 				}
 				continue
 			}
@@ -300,7 +358,8 @@ type wsUDPDataChannel struct {
 func (d *wsUDPDataChannel) Send(data []byte) error {
 	if d.session != nil && !d.session.HandleInboundToClient(data) {
 		if d.metrics != nil {
-			d.metrics.Inc(wsUDPMetricDroppedByRate)
+			d.metrics.Inc(metrics.UDPWSDropped)
+			d.metrics.Inc(metrics.UDPWSDroppedRateLimited)
 		}
 		return nil
 	}
@@ -311,7 +370,7 @@ func (d *wsUDPDataChannel) Send(data []byte) error {
 	_ = d.conn.SetWriteDeadline(time.Now().Add(wsUDPWriteWait))
 	err := d.conn.WriteMessage(websocket.BinaryMessage, data)
 	if err == nil && d.metrics != nil {
-		d.metrics.Inc(wsUDPMetricFramesOut)
+		d.metrics.Inc(metrics.UDPWSDatagramsOut)
 	}
 	return err
 }

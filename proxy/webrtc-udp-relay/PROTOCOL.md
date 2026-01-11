@@ -73,14 +73,15 @@ Some environments (or debugging workflows) cannot use WebRTC. The relay also
 supports proxying UDP over a WebSocket connection:
 
 - **Endpoint:** `GET /udp` (upgrades to WebSocket)
-- **Data plane:** identical to the WebRTC DataChannel framing below.
+- **Data plane:** binary framing is identical to the WebRTC `udp` DataChannel
+  framing below.
 
 ### Message semantics
 
 - Each **binary** WebSocket message is treated as exactly one UDP relay datagram
   frame (v1 or v2) as defined in this document.
-- Servers do not stream/fragment/reassemble datagrams beyond WebSocket message
-  boundaries.
+- The relay does not stream/fragment/reassemble datagrams beyond WebSocket
+  message boundaries.
 
 ### Authentication
 
@@ -102,16 +103,45 @@ or:
 {"type":"auth","token":"..."}
 ```
 
-Note: some clients send both `apiKey` and `token` for compatibility. If both are provided, they must match.
+Note: some clients send both `apiKey` and `token` for compatibility. If both are
+provided, they must match.
 
-After the connection is authenticated, the relay expects only **binary**
-datagram frames.
+### Control messages (WebSocket text frames)
+
+Text messages are reserved for control-plane signaling:
+
+- Relay → client ready (sent after authentication completes, or immediately when
+  `AUTH_MODE=none`):
+
+  ```json
+  {"type":"ready","sessionId":"..."}
+  ```
+
+  Clients SHOULD wait for this before sending datagrams when auth is enabled.
+
+- Relay → client error:
+
+  ```json
+  {"type":"error","code":"unauthorized","message":"..."}
+  ```
+
+  The relay then closes the WebSocket connection.
+
+After the connection is ready, the relay expects only **binary** datagram
+frames.
 
 ### Limits / backpressure
 
-- Datagram `payload` length is capped (see "Maximum payload size").
+- Datagram `payload` length is capped by `MAX_DATAGRAM_PAYLOAD_BYTES` (default:
+  1200 bytes).
 - The relay maintains a byte-bounded outbound send queue. When the queue is
   full, outbound frames are dropped to avoid unbounded memory growth.
+
+### Semantics note (reliability)
+
+WebSockets run over TCP and are **reliable and ordered**. The relay still treats
+each message as a logical "datagram", but delivery semantics differ from the
+WebRTC DataChannel configuration above (no best-effort/unordered behavior).
 
 ---
 
