@@ -91,6 +91,16 @@ exports the undecorated names expected by the runtimes:
 - `aerogpu_d3d10_x86.def`
 - `aerogpu_d3d10_x64.def`
 
+#### Quick validation
+
+From a Visual Studio Developer Command Prompt, inspect the DLL exports:
+
+```cmd
+dumpbin /exports aerogpu_d3d10.dll
+```
+
+Verify the output contains `OpenAdapter11` (undecorated).
+
 Recommended build entrypoint (MSBuild/WDK10):
 
 ```cmd
