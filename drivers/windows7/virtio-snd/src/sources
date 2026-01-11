@@ -15,6 +15,7 @@ INCLUDES=$(INCLUDES);..\include;..\..\..\windows\virtio\common;..\..\..\win7\vir
 SOURCES= \
     driver.c \
     pci_interface.c \
+    topology_miniport.cpp \
     virtio_pci_modern_wdm.c \
     virtio_snd_proto.c \
     virtiosnd_control.c \

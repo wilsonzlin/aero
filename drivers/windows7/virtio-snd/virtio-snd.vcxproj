@@ -75,6 +75,7 @@
 
   <ItemGroup>
     <ClCompile Include="src\**\*.c" />
+    <ClCompile Include="src\**\*.cpp" />
     <ClCompile Include="..\..\windows\virtio\common\virtqueue_split.c" />
     <ClCompile Include="..\..\win7\virtio\virtio-core\portable\virtio_pci_cap_parser.c" />
     <ClInclude Include="include\**\*.h" />
