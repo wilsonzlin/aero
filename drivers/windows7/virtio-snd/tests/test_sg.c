@@ -39,6 +39,7 @@ static void test_coalesce_contiguous_pfns(void)
                                                   0,
                                                   3u * VIRTIOSND_SG_PAGE_SIZE,
                                                   VIRTIO_FALSE,
+                                                  VIRTIO_FALSE,
                                                   sg,
                                                   (uint16_t)VIRTIO_ARRAY_SIZE(sg),
                                                   &count);
@@ -47,6 +48,33 @@ static void test_coalesce_contiguous_pfns(void)
     assert(sg[0].addr == ((uint64_t)pfns[0] << VIRTIOSND_SG_PAGE_SHIFT));
     assert(sg[0].len == 3u * VIRTIOSND_SG_PAGE_SIZE);
     assert(sg[0].device_writes == VIRTIO_FALSE);
+}
+
+static void test_device_writes_propagates(void)
+{
+    uintptr_t pfns[] = {0x180u, 0x181u, 0x182u};
+    virtio_sg_entry_t sg[8];
+    uint16_t count;
+    int rc;
+
+    count = 0;
+    rc = virtiosnd_sg_build_from_pfn_array_region(pfns,
+                                                  (uint32_t)VIRTIO_ARRAY_SIZE(pfns),
+                                                  0,
+                                                  3u * VIRTIOSND_SG_PAGE_SIZE,
+                                                  3u * VIRTIOSND_SG_PAGE_SIZE,
+                                                  0,
+                                                  3u * VIRTIOSND_SG_PAGE_SIZE,
+                                                  VIRTIO_FALSE,
+                                                  VIRTIO_TRUE,
+                                                  sg,
+                                                  (uint16_t)VIRTIO_ARRAY_SIZE(sg),
+                                                  &count);
+    assert(rc == VIRTIO_OK);
+    assert(count == 1);
+    assert(sg[0].addr == ((uint64_t)pfns[0] << VIRTIOSND_SG_PAGE_SHIFT));
+    assert(sg[0].len == 3u * VIRTIOSND_SG_PAGE_SIZE);
+    assert(sg[0].device_writes == VIRTIO_TRUE);
 }
 
 static void test_mdl_byte_offset_merges_across_pages(void)
@@ -64,6 +92,7 @@ static void test_mdl_byte_offset_merges_across_pages(void)
                                                   4096u,
                                                   0,
                                                   4096u,
+                                                  VIRTIO_FALSE,
                                                   VIRTIO_FALSE,
                                                   sg,
                                                   (uint16_t)VIRTIO_ARRAY_SIZE(sg),
@@ -99,6 +128,7 @@ static void test_wrap_splits_into_two_ranges(void)
                                                   6144u,
                                                   4096u,
                                                   VIRTIO_TRUE,
+                                                  VIRTIO_FALSE,
                                                   sg,
                                                   (uint16_t)VIRTIO_ARRAY_SIZE(sg),
                                                   &count);
@@ -113,6 +143,31 @@ static void test_wrap_splits_into_two_ranges(void)
     assert(sg[1].len == 2048u);
     assert(sg[1].device_writes == VIRTIO_FALSE);
 
+    /* Same wrap logic for device-write buffers. */
+    count = 0;
+    rc = virtiosnd_sg_build_from_pfn_array_region(pfns,
+                                                  (uint32_t)VIRTIO_ARRAY_SIZE(pfns),
+                                                  0,
+                                                  2u * VIRTIOSND_SG_PAGE_SIZE,
+                                                  2u * VIRTIOSND_SG_PAGE_SIZE,
+                                                  6144u,
+                                                  4096u,
+                                                  VIRTIO_TRUE,
+                                                  VIRTIO_TRUE,
+                                                  sg,
+                                                  (uint16_t)VIRTIO_ARRAY_SIZE(sg),
+                                                  &count);
+    assert(rc == VIRTIO_OK);
+    assert(count == 2);
+
+    assert(sg[0].addr == (((uint64_t)pfns[1] << VIRTIOSND_SG_PAGE_SHIFT) + 2048u));
+    assert(sg[0].len == 2048u);
+    assert(sg[0].device_writes == VIRTIO_TRUE);
+
+    assert(sg[1].addr == ((uint64_t)pfns[0] << VIRTIOSND_SG_PAGE_SHIFT));
+    assert(sg[1].len == 2048u);
+    assert(sg[1].device_writes == VIRTIO_TRUE);
+
     /* MaxElems too small should fail. */
     count = 0;
     rc = virtiosnd_sg_build_from_pfn_array_region(pfns,
@@ -123,6 +178,7 @@ static void test_wrap_splits_into_two_ranges(void)
                                                   6144u,
                                                   4096u,
                                                   VIRTIO_TRUE,
+                                                  VIRTIO_FALSE,
                                                   sg,
                                                   1,
                                                   &count);
@@ -152,6 +208,7 @@ static void test_wrap_can_coalesce_across_boundary(void)
                                                   (2u * VIRTIOSND_SG_PAGE_SIZE) + 2048u,
                                                   4096u,
                                                   VIRTIO_TRUE,
+                                                  VIRTIO_FALSE,
                                                   sg,
                                                   (uint16_t)VIRTIO_ARRAY_SIZE(sg),
                                                   &count);
@@ -187,6 +244,7 @@ static void test_invalid_params(void)
                                                   0,
                                                   0 /* length == 0 => invalid */,
                                                   VIRTIO_FALSE,
+                                                  VIRTIO_FALSE,
                                                   sg,
                                                   (uint16_t)VIRTIO_ARRAY_SIZE(sg),
                                                   &count);
@@ -211,6 +269,7 @@ static void test_rejects_pfn_shift_overflow(void)
                                                   0,
                                                   16,
                                                   VIRTIO_FALSE,
+                                                  VIRTIO_FALSE,
                                                   sg,
                                                   (uint16_t)VIRTIO_ARRAY_SIZE(sg),
                                                   &count);
@@ -222,6 +281,7 @@ static void test_rejects_pfn_shift_overflow(void)
 int main(void)
 {
     test_coalesce_contiguous_pfns();
+    test_device_writes_propagates();
     test_mdl_byte_offset_merges_across_pages();
     test_wrap_splits_into_two_ranges();
     test_wrap_can_coalesce_across_boundary();

@@ -15,7 +15,7 @@
 #include "../../virtio/common/include/virtqueue_split.h"
 
 /*
- * Windows 7 (x86/x64) uses 4KiB pages. The virtio-snd TX path only needs to
+ * Windows 7 (x86/x64) uses 4KiB pages. The virtio-snd DMA paths only need to
  * split/coalesce on these boundaries.
  */
 #define VIRTIOSND_SG_PAGE_SHIFT 12u
@@ -49,22 +49,26 @@ uint32_t virtiosnd_sg_max_elems_for_region(uint32_t mdl_byte_offset,
  * offset_bytes+length_bytes) in logical buffer coordinates. If wrap == TRUE
  * and the region crosses buffer_bytes, it is split into two ranges.
  *
+ * `device_writes` is copied into each virtio_sg_entry_t and controls whether
+ * the corresponding virtqueue descriptor should have VRING_DESC_F_WRITE set.
+ *
  * Returns VIRTIO_OK on success or a negative VIRTIO_ERR_* code on failure:
  *  - VIRTIO_ERR_INVAL: invalid parameters.
  *  - VIRTIO_ERR_NOSPC: MaxElems too small.
  *  - VIRTIO_ERR_RANGE: PFN array too small for the requested mapping.
  */
 int virtiosnd_sg_build_from_pfn_array_region(const uintptr_t *pfn_array,
-                                              uint32_t pfn_count,
-                                              uint32_t mdl_byte_offset,
-                                              uint32_t mdl_byte_count,
-                                              uint32_t buffer_bytes,
-                                              uint32_t offset_bytes,
-                                              uint32_t length_bytes,
-                                              virtio_bool_t wrap,
-                                              virtio_sg_entry_t *out,
-                                              uint16_t max_elems,
-                                              uint16_t *out_count);
+                                               uint32_t pfn_count,
+                                               uint32_t mdl_byte_offset,
+                                               uint32_t mdl_byte_count,
+                                               uint32_t buffer_bytes,
+                                               uint32_t offset_bytes,
+                                               uint32_t length_bytes,
+                                               virtio_bool_t wrap,
+                                               virtio_bool_t device_writes,
+                                               virtio_sg_entry_t *out,
+                                               uint16_t max_elems,
+                                               uint16_t *out_count);
 
 #ifdef __cplusplus
 } /* extern "C" */

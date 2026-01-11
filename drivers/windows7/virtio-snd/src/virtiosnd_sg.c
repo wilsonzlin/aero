@@ -5,6 +5,14 @@
 #include "virtiosnd_sg.h"
 #include "virtiosnd_sg_core.h"
 
+/*
+ * Allow KeFlushIoBuffers to be stubbed in host/unit builds if desired.
+ * The virtio-snd driver build uses the real WDK KeFlushIoBuffers.
+ */
+#ifndef VIRTIOSND_SG_FLUSH_IO_BUFFERS
+#define VIRTIOSND_SG_FLUSH_IO_BUFFERS KeFlushIoBuffers
+#endif
+
 static NTSTATUS virtiosnd_sg_status_from_rc(int rc)
 {
     switch (rc) {
@@ -19,10 +27,40 @@ static NTSTATUS virtiosnd_sg_status_from_rc(int rc)
     }
 }
 
+_Use_decl_annotations_
+VOID VirtIoSndSgFlushIoBuffers(PMDL Mdl, BOOLEAN DeviceWrites)
+{
+    if (Mdl == NULL) {
+        return;
+    }
+
+    /*
+     * Cache coherency rules:
+     *
+     * - DeviceWrites == FALSE (TX / device reads from memory):
+     *     Flush CPU writes before the device DMA engine reads the buffer.
+     *     (ReadOperation=FALSE)
+     *
+     * - DeviceWrites == TRUE (RX / device writes to memory):
+     *     Flush/invalidate CPU cache lines so dirty data won't later be written
+     *     back on top of device-written bytes.
+     *     (ReadOperation=TRUE)
+     *
+     * For RX buffers the caller must call this again after the device signals
+     * completion, before reading device-written data.
+     *
+     * Note: KeFlushIoBuffers operates on the whole MDL. Subrange flushing would
+     * require constructing a partial MDL, which we avoid to keep the helper
+     * DISPATCH_LEVEL-safe and allocation-free. Audio PCM buffers are small, so
+     * flushing the full MDL is acceptable.
+     */
+    VIRTIOSND_SG_FLUSH_IO_BUFFERS(Mdl, DeviceWrites ? TRUE : FALSE, TRUE /* DmaOperation */);
+}
+
 ULONG VirtIoSndSgMaxElemsForMdlRegion(_In_ PMDL Mdl,
-                                     _In_ ULONG BufferBytes,
-                                     _In_ ULONG OffsetBytes,
-                                     _In_ ULONG LengthBytes,
+                                      _In_ ULONG BufferBytes,
+                                      _In_ ULONG OffsetBytes,
+                                      _In_ ULONG LengthBytes,
                                      _In_ BOOLEAN Wrap)
 {
     ULONG mdl_byte_offset;
@@ -44,13 +82,14 @@ ULONG VirtIoSndSgMaxElemsForMdlRegion(_In_ PMDL Mdl,
 }
 
 NTSTATUS VirtIoSndSgBuildFromMdlRegion(_In_ PMDL Mdl,
-                                      _In_ ULONG BufferBytes,
-                                      _In_ ULONG OffsetBytes,
-                                      _In_ ULONG LengthBytes,
-                                      _In_ BOOLEAN Wrap,
-                                      _Out_writes_(MaxElems) virtio_sg_entry_t *Out,
-                                      _In_ USHORT MaxElems,
-                                      _Out_ USHORT *OutCount)
+                                       _In_ ULONG BufferBytes,
+                                       _In_ ULONG OffsetBytes,
+                                       _In_ ULONG LengthBytes,
+                                       _In_ BOOLEAN Wrap,
+                                       _In_ BOOLEAN DeviceWrites,
+                                       _Out_writes_(MaxElems) virtio_sg_entry_t *Out,
+                                       _In_ USHORT MaxElems,
+                                       _Out_ USHORT *OutCount)
 {
     ULONG mdl_byte_offset;
     ULONG mdl_byte_count;
@@ -93,6 +132,7 @@ NTSTATUS VirtIoSndSgBuildFromMdlRegion(_In_ PMDL Mdl,
                                                   OffsetBytes,
                                                   LengthBytes,
                                                   Wrap ? VIRTIO_TRUE : VIRTIO_FALSE,
+                                                  DeviceWrites ? VIRTIO_TRUE : VIRTIO_FALSE,
                                                   Out,
                                                   (uint16_t)MaxElems,
                                                   (uint16_t *)OutCount);
@@ -102,15 +142,11 @@ NTSTATUS VirtIoSndSgBuildFromMdlRegion(_In_ PMDL Mdl,
     }
 
     /*
-     * Make CPU writes visible to the device DMA engine (virtio OUT buffer).
-     *
-     * KeFlushIoBuffers operates on the whole MDL; subrange flush would require
-     * constructing a partial MDL, which we avoid to keep this helper
-     * DISPATCH_LEVEL-safe and allocation-free. Audio PCM buffers are small, so
-     * flushing the full MDL is acceptable.
+     * Flush caches for DMA (TX=device reads, RX=device writes).
+     * For RX buffers, the caller must flush again after completion before
+     * consuming device-written PCM data.
      */
-    KeFlushIoBuffers(Mdl, FALSE /* ReadOperation */, TRUE /* DmaOperation */);
+    VirtIoSndSgFlushIoBuffers(Mdl, DeviceWrites);
 
     return STATUS_SUCCESS;
 }
-

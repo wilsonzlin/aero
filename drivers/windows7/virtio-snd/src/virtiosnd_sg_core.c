@@ -84,6 +84,7 @@ static int virtiosnd_sg_emit_range(const uintptr_t *pfn_array,
                                   uint32_t mdl_byte_offset,
                                   uint32_t range_offset,
                                   uint32_t range_length,
+                                  virtio_bool_t device_writes,
                                   virtio_sg_entry_t *out,
                                   uint16_t max_elems,
                                   uint16_t *inout_count)
@@ -121,7 +122,7 @@ static int virtiosnd_sg_emit_range(const uintptr_t *pfn_array,
         /* Coalesce adjacent physical ranges. */
         if (*inout_count != 0) {
             prev = &out[(uint16_t)(*inout_count - 1u)];
-            if (prev->device_writes == VIRTIO_FALSE && prev->addr <= (VIRTIOSND_U64_MAX - (uint64_t)prev->len) &&
+            if (prev->device_writes == device_writes && prev->addr <= (VIRTIOSND_U64_MAX - (uint64_t)prev->len) &&
                 (prev->addr + (uint64_t)prev->len) == paddr) {
                 uint64_t merged_len;
                 merged_len = (uint64_t)prev->len + (uint64_t)chunk;
@@ -135,7 +136,7 @@ static int virtiosnd_sg_emit_range(const uintptr_t *pfn_array,
                 }
                 out[*inout_count].addr = paddr;
                 out[*inout_count].len = chunk;
-                out[*inout_count].device_writes = VIRTIO_FALSE;
+                out[*inout_count].device_writes = device_writes;
                 (*inout_count)++;
             }
         } else {
@@ -144,7 +145,7 @@ static int virtiosnd_sg_emit_range(const uintptr_t *pfn_array,
             }
             out[0].addr = paddr;
             out[0].len = chunk;
-            out[0].device_writes = VIRTIO_FALSE;
+            out[0].device_writes = device_writes;
             *inout_count = 1;
         }
 
@@ -163,6 +164,7 @@ int virtiosnd_sg_build_from_pfn_array_region(const uintptr_t *pfn_array,
                                              uint32_t offset_bytes,
                                              uint32_t length_bytes,
                                              virtio_bool_t wrap,
+                                             virtio_bool_t device_writes,
                                              virtio_sg_entry_t *out,
                                              uint16_t max_elems,
                                              uint16_t *out_count)
@@ -224,6 +226,7 @@ int virtiosnd_sg_build_from_pfn_array_region(const uintptr_t *pfn_array,
                                     mdl_byte_offset,
                                     offset_bytes,
                                     length_bytes,
+                                    device_writes,
                                     out,
                                     max_elems,
                                     &count);
@@ -250,6 +253,7 @@ int virtiosnd_sg_build_from_pfn_array_region(const uintptr_t *pfn_array,
                                     mdl_byte_offset,
                                     offset_bytes,
                                     len1,
+                                    device_writes,
                                     out,
                                     max_elems,
                                     &count);
@@ -263,6 +267,7 @@ int virtiosnd_sg_build_from_pfn_array_region(const uintptr_t *pfn_array,
                                     mdl_byte_offset,
                                     0,
                                     len2,
+                                    device_writes,
                                     out,
                                     max_elems,
                                     &count);
