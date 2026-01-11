@@ -38,6 +38,11 @@ class GetDataRunner {
       return false;
     }
     thread_ = CreateThread(NULL, 0, ThreadMain, this, 0, NULL);
+    if (thread_) {
+      // Reduce the chance of false-positive "blocked" timings due to thread scheduling jitter.
+      // The test is short-lived and mostly sleeping, so this should not materially impact the system.
+      SetThreadPriority(thread_, THREAD_PRIORITY_HIGHEST);
+    }
     return thread_ != NULL;
   }
 
