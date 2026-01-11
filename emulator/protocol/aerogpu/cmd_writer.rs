@@ -29,7 +29,10 @@ use super::aerogpu_pci::AEROGPU_ABI_VERSION_U32;
 
 fn align_up(v: usize, a: usize) -> usize {
     debug_assert!(a.is_power_of_two());
-    (v + (a - 1)) & !(a - 1)
+    let mask = a - 1;
+    v.checked_add(mask)
+        .unwrap_or_else(|| panic!("align_up overflow: v={v} a={a}"))
+        & !mask
 }
 
 /// Safe command stream builder for `aerogpu_cmd.h`.
@@ -102,7 +105,14 @@ impl AerogpuCmdWriter {
         );
 
         let offset = self.buf.len();
-        self.buf.resize(offset + aligned_size, 0);
+        let new_len = offset
+            .checked_add(aligned_size)
+            .expect("command stream too large for usize");
+        assert!(
+            new_len <= u32::MAX as usize,
+            "command stream too large for u32 size_bytes"
+        );
+        self.buf.resize(new_len, 0);
 
         self.write_u32_at(offset, opcode as u32);
         self.write_u32_at(offset + 4, aligned_size as u32);
@@ -235,8 +245,9 @@ impl AerogpuCmdWriter {
         offset_bytes: u64,
         data: &[u8],
     ) {
-        assert!(data.len() <= u64::MAX as usize);
-        let unpadded_size = size_of::<AerogpuCmdUploadResource>() + data.len();
+        let unpadded_size = size_of::<AerogpuCmdUploadResource>()
+            .checked_add(data.len())
+            .expect("UPLOAD_RESOURCE packet too large (usize overflow)");
         let base = self.append_raw(AerogpuCmdOpcode::UploadResource, unpadded_size);
         self.write_u32_at(
             base + offset_of!(AerogpuCmdUploadResource, resource_handle),
@@ -403,7 +414,9 @@ impl AerogpuCmdWriter {
         dxbc_bytes: &[u8],
     ) {
         assert!(dxbc_bytes.len() <= u32::MAX as usize);
-        let unpadded_size = size_of::<AerogpuCmdCreateShaderDxbc>() + dxbc_bytes.len();
+        let unpadded_size = size_of::<AerogpuCmdCreateShaderDxbc>()
+            .checked_add(dxbc_bytes.len())
+            .expect("CREATE_SHADER_DXBC packet too large (usize overflow)");
         let base = self.append_raw(AerogpuCmdOpcode::CreateShaderDxbc, unpadded_size);
         self.write_u32_at(
             base + offset_of!(AerogpuCmdCreateShaderDxbc, shader_handle),
@@ -447,7 +460,9 @@ impl AerogpuCmdWriter {
 
     pub fn create_input_layout(&mut self, input_layout_handle: AerogpuHandle, blob: &[u8]) {
         assert!(blob.len() <= u32::MAX as usize);
-        let unpadded_size = size_of::<AerogpuCmdCreateInputLayout>() + blob.len();
+        let unpadded_size = size_of::<AerogpuCmdCreateInputLayout>()
+            .checked_add(blob.len())
+            .expect("CREATE_INPUT_LAYOUT packet too large (usize overflow)");
         let base = self.append_raw(AerogpuCmdOpcode::CreateInputLayout, unpadded_size);
         self.write_u32_at(
             base + offset_of!(AerogpuCmdCreateInputLayout, input_layout_handle),
@@ -555,8 +570,12 @@ impl AerogpuCmdWriter {
 
     pub fn set_vertex_buffers(&mut self, start_slot: u32, bindings: &[AerogpuVertexBufferBinding]) {
         assert!(bindings.len() <= u32::MAX as usize);
-        let unpadded_size =
-            size_of::<AerogpuCmdSetVertexBuffers>() + core::mem::size_of_val(bindings);
+        let bindings_size = size_of::<AerogpuVertexBufferBinding>()
+            .checked_mul(bindings.len())
+            .expect("SET_VERTEX_BUFFERS packet too large (usize overflow)");
+        let unpadded_size = size_of::<AerogpuCmdSetVertexBuffers>()
+            .checked_add(bindings_size)
+            .expect("SET_VERTEX_BUFFERS packet too large (usize overflow)");
         let base = self.append_raw(AerogpuCmdOpcode::SetVertexBuffers, unpadded_size);
         self.write_u32_at(
             base + offset_of!(AerogpuCmdSetVertexBuffers, start_slot),
@@ -852,7 +871,13 @@ impl AerogpuCmdWriter {
         assert!(data.len() <= u32::MAX as usize);
 
         let vec4_count = (data.len() / 4) as u32;
-        let unpadded_size = size_of::<AerogpuCmdSetShaderConstantsF>() + data.len() * 4;
+        let payload_size = data
+            .len()
+            .checked_mul(4)
+            .expect("SET_SHADER_CONSTANTS_F packet too large (usize overflow)");
+        let unpadded_size = size_of::<AerogpuCmdSetShaderConstantsF>()
+            .checked_add(payload_size)
+            .expect("SET_SHADER_CONSTANTS_F packet too large (usize overflow)");
         let base = self.append_raw(AerogpuCmdOpcode::SetShaderConstantsF, unpadded_size);
         self.write_u32_at(
             base + offset_of!(AerogpuCmdSetShaderConstantsF, stage),
