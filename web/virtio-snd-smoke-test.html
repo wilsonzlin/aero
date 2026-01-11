@@ -6,7 +6,7 @@
     <title>virtio-snd AudioWorklet smoke test</title>
   </head>
   <body>
-    <button id="play">Play 1s 440Hz tone (S16_LE, 48kHz, stereo)</button>
+    <button id="play">Play 1s 440Hz tone (S16_LE, stereo; resampled to AudioContext.sampleRate)</button>
     <pre id="log"></pre>
     <script type="module" src="./virtio-snd-smoke-test.js"></script>
   </body>

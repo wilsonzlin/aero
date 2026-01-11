@@ -41,16 +41,57 @@ function convertS16ToF32(samples) {
   return out;
 }
 
+function resampleInterleavedStereoF32(samples, srcSampleRate, dstSampleRate) {
+  if (srcSampleRate === dstSampleRate) return samples;
+  const channels = 2;
+  const srcFrames = Math.floor(samples.length / channels);
+  if (srcFrames === 0) return new Float32Array();
+  const dstFrames = Math.round((srcFrames * dstSampleRate) / srcSampleRate);
+  const out = new Float32Array(dstFrames * channels);
+  const step = srcSampleRate / dstSampleRate;
+
+  for (let i = 0; i < dstFrames; i++) {
+    const pos = i * step;
+    const idx = Math.floor(pos);
+    const frac = pos - idx;
+    const aIdx = Math.min(idx, srcFrames - 1);
+    const bIdx = Math.min(idx + 1, srcFrames - 1);
+
+    const aOff = aIdx * channels;
+    const bOff = bIdx * channels;
+    const outOff = i * channels;
+
+    if (frac === 0 || aIdx === bIdx) {
+      out[outOff] = samples[aOff];
+      out[outOff + 1] = samples[aOff + 1];
+      continue;
+    }
+
+    const aL = samples[aOff];
+    const aR = samples[aOff + 1];
+    const bL = samples[bOff];
+    const bR = samples[bOff + 1];
+    out[outOff] = aL + (bL - aL) * frac;
+    out[outOff + 1] = aR + (bR - aR) * frac;
+  }
+
+  return out;
+}
+
 playBtn.addEventListener("click", async () => {
   playBtn.disabled = true;
   try {
-    const ctx = new AudioContext({ sampleRate: 48000, latencyHint: "interactive" });
+    const requestedSampleRate = 48000;
+    const ctx = new AudioContext({ sampleRate: requestedSampleRate, latencyHint: "interactive" });
     await ctx.audioWorklet.addModule("./src/platform/audio-worklet-processor.js");
 
-    const frames = 48000;
+    const srcSampleRate = 48000;
+    const srcFrames = srcSampleRate;
     const channelCount = 2;
-    const capacityFrames = frames + 1024;
-    const totalSamples = frames * channelCount;
+    const dstSampleRate = ctx.sampleRate;
+    const dstFrames = Math.round((srcFrames * dstSampleRate) / srcSampleRate);
+    const capacityFrames = dstFrames + 1024;
+    const totalSamples = dstFrames * channelCount;
     const rb = makeRingBuffer(capacityFrames, channelCount);
 
     const node = new AudioWorkletNode(ctx, "aero-audio-processor", {
@@ -66,12 +107,14 @@ playBtn.addEventListener("click", async () => {
       }
     };
 
-    const toneS16 = generateStereoS16Tone({ frames, sampleRate: 48000, hz: 440 });
+    log(`requestedSampleRate=${requestedSampleRate} actualSampleRate=${dstSampleRate}`);
+    const toneS16 = generateStereoS16Tone({ frames: srcFrames, sampleRate: srcSampleRate, hz: 440 });
     const toneF32 = convertS16ToF32(toneS16);
-    rb.samples.set(toneF32);
+    const toneResampled = resampleInterleavedStereoF32(toneF32, srcSampleRate, dstSampleRate);
+    rb.samples.set(toneResampled);
     Atomics.store(rb.header, 0, 0);
-    Atomics.store(rb.header, 1, frames);
-    log(`Wrote: ${frames} frames (${totalSamples} samples) into Float32 ring buffer`);
+    Atomics.store(rb.header, 1, dstFrames);
+    log(`Wrote: ${dstFrames} frames (${totalSamples} samples) into Float32 ring buffer`);
 
     await ctx.resume();
     log("Playing...");
