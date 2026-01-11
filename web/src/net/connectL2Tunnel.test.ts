@@ -12,6 +12,7 @@ class FakeWebSocket {
   static CLOSED = 3;
 
   static last: FakeWebSocket | null = null;
+  static instances: FakeWebSocket[] = [];
 
   readonly url: string;
   readonly protocols?: string | string[];
@@ -30,6 +31,7 @@ class FakeWebSocket {
     this.url = url;
     this.protocols = protocols;
     FakeWebSocket.last = this;
+    FakeWebSocket.instances.push(this);
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -45,6 +47,7 @@ class FakeWebSocket {
 
 function resetFakeWebSocket(): void {
   FakeWebSocket.last = null;
+  FakeWebSocket.instances = [];
 }
 
 describe("net/connectL2Tunnel", () => {
@@ -138,6 +141,49 @@ describe("net/connectL2Tunnel", () => {
       expect(FakeWebSocket.last?.protocols).toBe(L2_TUNNEL_SUBPROTOCOL);
     } finally {
       tunnel.close();
+      globalThis.fetch = originalFetch;
+      if (originalWs === undefined) delete (globalThis as { WebSocket?: unknown }).WebSocket;
+      else (globalThis as unknown as Record<string, unknown>).WebSocket = originalWs;
+    }
+  });
+
+  it("auto-reconnects on close with exponential backoff", async () => {
+    vi.useFakeTimers();
+    const originalFetch = globalThis.fetch;
+    const originalWs = (globalThis as unknown as Record<string, unknown>).WebSocket;
+
+    const fetchMock = vi.fn(async () => {
+      return new Response("{}", { status: 201, headers: { "Content-Type": "application/json" } });
+    }) as unknown as typeof fetch;
+    globalThis.fetch = fetchMock;
+
+    resetFakeWebSocket();
+    (globalThis as unknown as Record<string, unknown>).WebSocket = FakeWebSocket as unknown as WebSocketConstructor;
+
+    const events: L2TunnelEvent[] = [];
+    const tunnel = await connectL2Tunnel("https://gateway.example.com/base", {
+      mode: "ws",
+      sink: (ev) => events.push(ev),
+      reconnectBaseDelayMs: 10,
+      reconnectMaxDelayMs: 10,
+      reconnectJitterFraction: 0,
+    });
+
+    try {
+      expect(FakeWebSocket.instances.length).toBe(1);
+      const first = FakeWebSocket.instances[0]!;
+
+      // Unexpected transport close should trigger a reconnect attempt after the configured delay.
+      first.close(1006, "abnormal");
+      await vi.advanceTimersByTimeAsync(10);
+
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(FakeWebSocket.instances.length).toBe(2);
+      expect(FakeWebSocket.instances[1]!.url).toBe("wss://gateway.example.com/base/l2");
+      expect(events.some((e) => e.type === "close")).toBe(true);
+    } finally {
+      tunnel.close();
+      vi.useRealTimers();
       globalThis.fetch = originalFetch;
       if (originalWs === undefined) delete (globalThis as { WebSocket?: unknown }).WebSocket;
       else (globalThis as unknown as Record<string, unknown>).WebSocket = originalWs;

@@ -31,6 +31,38 @@ export type ConnectL2TunnelOptions = Readonly<{
    * Defaults to the relay client's default (`ws-trickle`).
    */
   relaySignalingMode?: RelaySignalingMode;
+
+  /**
+   * Automatically reconnect when the tunnel closes unexpectedly.
+   *
+   * Reconnect attempts use exponential backoff with jitter. Manual `close()` will
+   * always stop reconnect attempts.
+   *
+   * Default: true
+   */
+  reconnect?: boolean;
+
+  /**
+   * Base delay (ms) for reconnect backoff.
+   *
+   * Default: 250ms
+   */
+  reconnectBaseDelayMs?: number;
+
+  /**
+   * Maximum delay (ms) for reconnect backoff.
+   *
+   * Default: 30_000ms
+   */
+  reconnectMaxDelayMs?: number;
+
+  /**
+   * Jitter fraction for reconnect backoff (0..1). The actual delay is randomized
+   * within ±(delay * jitterFraction) to avoid synchronized reconnect storms.
+   *
+   * Default: 0.2
+   */
+  reconnectJitterFraction?: number;
 }>;
 
 export type ConnectedL2Tunnel = Readonly<{
@@ -91,6 +123,27 @@ function parseGatewaySessionResponse(text: string): GatewaySessionResponse {
   return json as GatewaySessionResponse;
 }
 
+function validateNonNegativeInt(name: string, value: number): void {
+  if (!Number.isInteger(value) || value < 0) {
+    throw new RangeError(`${name} must be a non-negative integer (got ${value})`);
+  }
+}
+
+function validateFraction01(name: string, value: number): void {
+  if (!Number.isFinite(value) || value < 0 || value > 1) {
+    throw new RangeError(`${name} must be between 0 and 1 (got ${value})`);
+  }
+}
+
+function computeBackoffDelayMs(attempt: number, baseDelayMs: number, maxDelayMs: number, jitterFraction: number): number {
+  // attempt is 1-based.
+  const unclamped = baseDelayMs * 2 ** Math.max(0, attempt - 1);
+  const delay = Math.min(maxDelayMs, unclamped);
+  const jitter = delay * jitterFraction;
+  const randomized = delay + (Math.random() * 2 - 1) * jitter;
+  return Math.max(0, Math.round(randomized));
+}
+
 /**
  * High-level connector for the Option C L2 tunnel.
  *
@@ -100,16 +153,182 @@ function parseGatewaySessionResponse(text: string): GatewaySessionResponse {
  */
 export async function connectL2Tunnel(gatewayBaseUrl: string, opts: ConnectL2TunnelOptions): Promise<ConnectedL2Tunnel> {
   const mode = opts.mode ?? "ws";
+  const reconnectEnabled = opts.reconnect ?? true;
+  const reconnectBaseDelayMs = opts.reconnectBaseDelayMs ?? 250;
+  const reconnectMaxDelayMs = opts.reconnectMaxDelayMs ?? 30_000;
+  const reconnectJitterFraction = opts.reconnectJitterFraction ?? 0.2;
+
+  validateNonNegativeInt("reconnectBaseDelayMs", reconnectBaseDelayMs);
+  validateNonNegativeInt("reconnectMaxDelayMs", reconnectMaxDelayMs);
+  validateFraction01("reconnectJitterFraction", reconnectJitterFraction);
+  if (reconnectBaseDelayMs > reconnectMaxDelayMs) {
+    throw new RangeError(
+      `reconnectBaseDelayMs must be <= reconnectMaxDelayMs (${reconnectBaseDelayMs} > ${reconnectMaxDelayMs})`,
+    );
+  }
+
+  const errorIntervalMs = opts.tunnelOptions?.errorIntervalMs ?? 1000;
+  validateNonNegativeInt("errorIntervalMs", errorIntervalMs);
+
+  let reconnectAttempts = 0;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let closed = false;
+  let generation = 0;
+
+  let currentSendFrame: ((frame: Uint8Array) => void) | null = null;
+  let currentClose: (() => void) | null = null;
+
+  let lastErrorEmitAt = 0;
+  const emitErrorThrottled = (error: unknown) => {
+    const now = Date.now();
+    if (errorIntervalMs > 0 && now - lastErrorEmitAt < errorIntervalMs) return;
+    lastErrorEmitAt = now;
+    opts.sink({ type: "error", error });
+  };
+
+  const clearReconnectTimer = () => {
+    if (reconnectTimer === null) return;
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  };
+
+  const scheduleReconnect = () => {
+    if (closed) return;
+    if (!reconnectEnabled) return;
+    if (reconnectTimer !== null) return;
+    reconnectAttempts += 1;
+    const delayMs = computeBackoffDelayMs(
+      reconnectAttempts,
+      reconnectBaseDelayMs,
+      reconnectMaxDelayMs,
+      reconnectJitterFraction,
+    );
+    reconnectTimer = setTimeout(async () => {
+      reconnectTimer = null;
+      try {
+        await reconnectNow();
+      } catch (err) {
+        // reconnectNow should handle its own scheduling, but keep a safety net
+        // here to avoid an unhandled rejection.
+        emitErrorThrottled(err);
+      }
+    }, delayMs);
+  };
+
+  const makeSink = (gen: number): L2TunnelSink => {
+    return (ev) => {
+      // Ignore late events from superseded tunnels.
+      if (gen !== generation) return;
+
+      if (ev.type === "open") {
+        reconnectAttempts = 0;
+      } else if (ev.type === "close") {
+        // Forward the close event first so callers can treat the tunnel as
+        // disconnected immediately.
+        opts.sink(ev);
+        scheduleReconnect();
+        return;
+      }
+
+      opts.sink(ev);
+    };
+  };
 
   const sessionText = await bootstrapSession(gatewayBaseUrl);
 
+  const installTunnel = (sendFrame: (frame: Uint8Array) => void, close: () => void) => {
+    currentSendFrame = sendFrame;
+    currentClose = close;
+  };
+
+  const teardownTunnel = () => {
+    const close = currentClose;
+    currentSendFrame = null;
+    currentClose = null;
+    try {
+      close?.();
+    } catch {
+      // Ignore.
+    }
+  };
+
+  const reconnectNow = async () => {
+    if (closed) return;
+    teardownTunnel();
+
+    const gen = generation + 1;
+    generation = gen;
+
+    if (mode === "ws") {
+      try {
+        await bootstrapSession(gatewayBaseUrl);
+      } catch (err) {
+        emitErrorThrottled(err);
+        scheduleReconnect();
+        return;
+      }
+
+      const l2 = new WebSocketL2TunnelClient(gatewayBaseUrl, makeSink(gen), opts.tunnelOptions);
+      l2.connect();
+      installTunnel((frame) => l2.sendFrame(frame), () => l2.close());
+      return;
+    }
+
+    if (mode === "webrtc") {
+      let nextSessionText: string;
+      try {
+        nextSessionText = await bootstrapSession(gatewayBaseUrl);
+      } catch (err) {
+        emitErrorThrottled(err);
+        scheduleReconnect();
+        return;
+      }
+
+      let session: GatewaySessionResponse;
+      try {
+        session = parseGatewaySessionResponse(nextSessionText);
+      } catch (err) {
+        emitErrorThrottled(new Error(`invalid gateway session response JSON: ${(err as Error).message}`));
+        scheduleReconnect();
+        return;
+      }
+
+      const relay = session.udpRelay;
+      if (!relay) {
+        emitErrorThrottled(
+          new Error(
+            "mode=webrtc requested but gateway session response did not include udpRelay; ensure the gateway is configured with UDP_RELAY_BASE_URL",
+          ),
+        );
+        return;
+      }
+
+      try {
+        const { l2, close } = await connectL2Relay({
+          baseUrl: relay.baseUrl,
+          authToken: relay.token,
+          mode: opts.relaySignalingMode,
+          sink: makeSink(gen),
+          tunnelOptions: opts.tunnelOptions,
+        });
+        if (closed) {
+          close();
+          return;
+        }
+        installTunnel((frame) => l2.sendFrame(frame), close);
+      } catch (err) {
+        emitErrorThrottled(err);
+        scheduleReconnect();
+      }
+      return;
+    }
+  };
+
   if (mode === "ws") {
-    const l2 = new WebSocketL2TunnelClient(gatewayBaseUrl, opts.sink, opts.tunnelOptions);
+    generation = 1;
+    const l2 = new WebSocketL2TunnelClient(gatewayBaseUrl, makeSink(generation), opts.tunnelOptions);
     l2.connect();
-    return {
-      sendFrame: (frame) => l2.sendFrame(frame),
-      close: () => l2.close(),
-    };
+    installTunnel((frame) => l2.sendFrame(frame), () => l2.close());
   }
 
   if (mode === "webrtc") {
@@ -127,20 +346,32 @@ export async function connectL2Tunnel(gatewayBaseUrl: string, opts: ConnectL2Tun
       );
     }
 
+    generation = 1;
     const { l2, close } = await connectL2Relay({
       baseUrl: relay.baseUrl,
       authToken: relay.token,
       mode: opts.relaySignalingMode,
-      sink: opts.sink,
+      sink: makeSink(generation),
       tunnelOptions: opts.tunnelOptions,
     });
-
-    return {
-      sendFrame: (frame) => l2.sendFrame(frame),
-      close,
-    };
+    installTunnel((frame) => l2.sendFrame(frame), close);
   }
 
-  // Exhaustiveness guard for future modes.
-  throw new Error(`unsupported L2 tunnel mode: ${String(mode)}`);
+  const tunnel: ConnectedL2Tunnel = {
+    sendFrame(frame: Uint8Array): void {
+      if (!currentSendFrame) {
+        emitErrorThrottled(new Error("L2 tunnel is not connected"));
+        return;
+      }
+      currentSendFrame(frame);
+    },
+    close(): void {
+      if (closed) return;
+      closed = true;
+      clearReconnectTimer();
+      teardownTunnel();
+    },
+  };
+
+  return tunnel;
 }
