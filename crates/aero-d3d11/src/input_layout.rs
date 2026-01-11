@@ -42,6 +42,31 @@ pub const MAX_INPUT_SLOTS: u32 = 32;
 pub const MAX_WGPU_VERTEX_BUFFERS: u32 = 8;
 pub const MAX_WGPU_VERTEX_ATTRIBUTES: u32 = 16;
 
+/// Result of mapping a D3D11 ILAY input layout to WebGPU vertex buffer layouts.
+///
+/// WebGPU vertex buffers are indexed 0..N. D3D11 input layouts can reference up to 32 input slots
+/// and the slot indices are part of the draw-time IA state. When using
+/// [`map_layout_to_shader_locations_compact`], only slots referenced by the layout are emitted and
+/// a mapping from D3D slot → WebGPU slot is returned so the executor can bind the correct buffers at
+/// draw time.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MappedInputLayout {
+    /// WebGPU vertex buffer layouts in **WebGPU slot order** (0..N).
+    pub buffers: Vec<VertexBufferLayoutOwned>,
+    /// D3D input slot → WebGPU buffer slot.
+    pub d3d_slot_to_wgpu_slot: BTreeMap<u32, u32>,
+}
+
+impl MappedInputLayout {
+    /// Convenience helper for building a `wgpu::VertexState::buffers` slice.
+    ///
+    /// The returned layouts borrow from `self`, so `self` must outlive the pipeline descriptor
+    /// creation call.
+    pub fn wgpu_vertex_buffer_layouts(&self) -> Vec<wgpu::VertexBufferLayout<'_>> {
+        self.buffers.iter().map(VertexBufferLayoutOwned::as_wgpu).collect()
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InputLayoutBlobHeader {
     pub magic: u32,
@@ -149,6 +174,10 @@ pub enum InputLayoutError {
         max_slot: u32,
         max: u32,
     },
+    TooManyUsedVertexBuffers {
+        count: u32,
+        max: u32,
+    },
     TooManyVertexAttributes {
         count: u32,
         max: u32,
@@ -214,6 +243,10 @@ impl fmt::Display for InputLayoutError {
             InputLayoutError::TooManyVertexBuffers { max_slot, max } => write!(
                 f,
                 "input layout references slot {max_slot}, but WebGPU only supports {max} vertex buffers"
+            ),
+            InputLayoutError::TooManyUsedVertexBuffers { count, max } => write!(
+                f,
+                "input layout uses {count} vertex buffers, but WebGPU only supports {max}"
             ),
             InputLayoutError::TooManyVertexAttributes { count, max } => write!(
                 f,
@@ -625,6 +658,156 @@ pub fn map_layout_to_shader_locations(
     Ok(out)
 }
 
+/// Like [`map_layout_to_shader_locations`], but compacts sparse D3D slot indices into a dense WebGPU
+/// slot range.
+///
+/// Example: if a D3D input layout references slots 0 and 15, WebGPU cannot represent that directly
+/// (it only allows up to 8 vertex buffers, and slot indices are dense). This function will emit
+/// two vertex buffer layouts in WebGPU slots 0 and 1, and return a mapping `{0→0, 15→1}`.
+pub fn map_layout_to_shader_locations_compact(
+    layout: &InputLayoutBinding<'_>,
+    vs_signature: &[VsInputSignatureElement],
+) -> Result<MappedInputLayout, InputLayoutError> {
+    if layout.layout.elements.len() > MAX_WGPU_VERTEX_ATTRIBUTES as usize {
+        return Err(InputLayoutError::TooManyVertexAttributes {
+            count: layout.layout.elements.len() as u32,
+            max: MAX_WGPU_VERTEX_ATTRIBUTES,
+        });
+    }
+
+    let sig_map = build_signature_map(vs_signature);
+
+    struct SlotState {
+        next_offset: u32,
+        required_stride: u32,
+        step_mode: Option<wgpu::VertexStepMode>,
+        attributes: Vec<wgpu::VertexAttribute>,
+    }
+
+    let mut slots: BTreeMap<u32, SlotState> = BTreeMap::new();
+    let mut used_locations: HashMap<u32, ()> = HashMap::new();
+
+    for elem in &layout.layout.elements {
+        let key = SignatureSemanticKey {
+            semantic_name_hash: elem.semantic_name_hash,
+            semantic_index: elem.semantic_index,
+        };
+        let input_register = *sig_map.get(&key).ok_or(InputLayoutError::MissingSemantic {
+            semantic_name_hash: elem.semantic_name_hash,
+            semantic_index: elem.semantic_index,
+        })?;
+
+        if used_locations.insert(input_register, ()).is_some() {
+            return Err(InputLayoutError::DuplicateShaderLocation {
+                shader_location: input_register,
+            });
+        }
+
+        let fmt = dxgi_format_to_vertex_format(elem.dxgi_format)?;
+        let step_mode = match elem.input_slot_class {
+            0 => wgpu::VertexStepMode::Vertex,
+            1 => {
+                if elem.instance_data_step_rate == 0 {
+                    return Err(InputLayoutError::InvalidInstanceStepRate(
+                        elem.instance_data_step_rate,
+                    ));
+                }
+                // Clamp step_rate>1 to 1: WebGPU can't represent it directly.
+                wgpu::VertexStepMode::Instance
+            }
+            other => return Err(InputLayoutError::UnsupportedInputSlotClass(other)),
+        };
+
+        let slot = slots.entry(elem.input_slot).or_insert_with(|| SlotState {
+            next_offset: 0,
+            required_stride: 0,
+            step_mode: None,
+            attributes: Vec::new(),
+        });
+
+        if let Some(prev_mode) = slot.step_mode {
+            if prev_mode != step_mode {
+                return Err(InputLayoutError::MixedStepModeInSlot {
+                    slot: elem.input_slot,
+                    first: prev_mode,
+                    second: step_mode,
+                });
+            }
+        } else {
+            slot.step_mode = Some(step_mode);
+        }
+
+        let offset = if elem.aligned_byte_offset == D3D11_APPEND_ALIGNED_ELEMENT {
+            align_up(slot.next_offset, fmt.align.max(1))
+        } else {
+            elem.aligned_byte_offset
+        };
+
+        if fmt.align > 1 && (offset % fmt.align) != 0 {
+            return Err(InputLayoutError::MisalignedOffset {
+                slot: elem.input_slot,
+                offset,
+                alignment: fmt.align,
+            });
+        }
+
+        let end = offset.checked_add(fmt.size).ok_or(InputLayoutError::OffsetOverflow {
+            slot: elem.input_slot,
+            offset,
+            size: fmt.size,
+        })?;
+        slot.next_offset = end;
+        slot.required_stride = slot.required_stride.max(end);
+
+        slot.attributes.push(wgpu::VertexAttribute {
+            shader_location: input_register,
+            offset: offset as u64,
+            format: fmt.format,
+        });
+    }
+
+    if slots.len() > MAX_WGPU_VERTEX_BUFFERS as usize {
+        return Err(InputLayoutError::TooManyUsedVertexBuffers {
+            count: slots.len() as u32,
+            max: MAX_WGPU_VERTEX_BUFFERS,
+        });
+    }
+
+    let mut buffers = Vec::with_capacity(slots.len());
+    let mut slot_map = BTreeMap::new();
+
+    for (wgpu_slot, (d3d_slot, mut slot_state)) in slots.into_iter().enumerate() {
+        slot_map.insert(d3d_slot, wgpu_slot as u32);
+
+        let stride = layout.slot_strides.get(d3d_slot as usize).copied().unwrap_or(0);
+        if stride == 0 {
+            return Err(InputLayoutError::MissingSlotStride { slot: d3d_slot });
+        }
+        if stride < slot_state.required_stride {
+            return Err(InputLayoutError::StrideTooSmall {
+                slot: d3d_slot,
+                stride,
+                required: slot_state.required_stride,
+            });
+        }
+
+        slot_state
+            .attributes
+            .sort_by_key(|a| (a.shader_location, a.offset));
+
+        buffers.push(VertexBufferLayoutOwned {
+            array_stride: stride as u64,
+            step_mode: slot_state.step_mode.unwrap_or(wgpu::VertexStepMode::Vertex),
+            attributes: slot_state.attributes,
+        });
+    }
+
+    Ok(MappedInputLayout {
+        buffers,
+        d3d_slot_to_wgpu_slot: slot_map,
+    })
+}
+
 /// Compute a 32-bit FNV-1a hash (used for semantic name hashing in the ILAY protocol).
 pub fn fnv1a_32(bytes: &[u8]) -> u32 {
     const OFFSET: u32 = 0x811c_9dc5;
@@ -746,5 +929,77 @@ mod tests {
         assert_eq!(mapped[0].attributes[1].shader_location, 1);
         assert_eq!(mapped[0].attributes[1].offset, 12);
         assert_eq!(mapped[0].attributes[1].format, wgpu::VertexFormat::Float32x2);
+    }
+
+    #[test]
+    fn compacts_sparse_input_slots() {
+        let pos_hash = fnv1a_32(b"POSITION");
+        let uv_hash = fnv1a_32(b"TEXCOORD");
+
+        let mut blob = Vec::new();
+        push_u32(&mut blob, AEROGPU_INPUT_LAYOUT_BLOB_MAGIC);
+        push_u32(&mut blob, AEROGPU_INPUT_LAYOUT_BLOB_VERSION);
+        push_u32(&mut blob, 2); // element_count
+        push_u32(&mut blob, 0); // reserved0
+
+        // TEXCOORD0 in slot 0.
+        push_u32(&mut blob, uv_hash);
+        push_u32(&mut blob, 0);
+        push_u32(&mut blob, 16); // R32G32_FLOAT
+        push_u32(&mut blob, 0); // slot 0
+        push_u32(&mut blob, 0); // offset 0
+        push_u32(&mut blob, 0); // per-vertex
+        push_u32(&mut blob, 0); // step rate
+
+        // POSITION0 in slot 15.
+        push_u32(&mut blob, pos_hash);
+        push_u32(&mut blob, 0);
+        push_u32(&mut blob, 6); // R32G32B32_FLOAT
+        push_u32(&mut blob, 15); // slot 15
+        push_u32(&mut blob, 0); // offset 0
+        push_u32(&mut blob, 0); // per-vertex
+        push_u32(&mut blob, 0); // step rate
+
+        let layout = InputLayoutDesc::parse(&blob).expect("parse failed");
+        let signature = [
+            VsInputSignatureElement {
+                semantic_name_hash: uv_hash,
+                semantic_index: 0,
+                input_register: 0,
+            },
+            VsInputSignatureElement {
+                semantic_name_hash: pos_hash,
+                semantic_index: 0,
+                input_register: 1,
+            },
+        ];
+
+        let mut strides = vec![0u32; 16];
+        strides[0] = 8;
+        strides[15] = 12;
+        let binding = InputLayoutBinding::new(&layout, &strides);
+
+        // Preserve-slots mapping fails because WebGPU can't address slot 15 directly.
+        assert!(matches!(
+            map_layout_to_shader_locations(&binding, &signature),
+            Err(InputLayoutError::TooManyVertexBuffers { max_slot: 15, .. })
+        ));
+
+        // Compact mapping succeeds and provides a D3D->WebGPU slot map.
+        let mapped =
+            map_layout_to_shader_locations_compact(&binding, &signature).expect("compact mapping");
+        assert_eq!(mapped.buffers.len(), 2);
+        assert_eq!(mapped.d3d_slot_to_wgpu_slot.get(&0), Some(&0));
+        assert_eq!(mapped.d3d_slot_to_wgpu_slot.get(&15), Some(&1));
+
+        assert_eq!(mapped.buffers[0].array_stride, 8);
+        assert_eq!(mapped.buffers[0].attributes.len(), 1);
+        assert_eq!(mapped.buffers[0].attributes[0].shader_location, 0);
+        assert_eq!(mapped.buffers[0].attributes[0].format, wgpu::VertexFormat::Float32x2);
+
+        assert_eq!(mapped.buffers[1].array_stride, 12);
+        assert_eq!(mapped.buffers[1].attributes.len(), 1);
+        assert_eq!(mapped.buffers[1].attributes[0].shader_location, 1);
+        assert_eq!(mapped.buffers[1].attributes[0].format, wgpu::VertexFormat::Float32x3);
     }
 }
