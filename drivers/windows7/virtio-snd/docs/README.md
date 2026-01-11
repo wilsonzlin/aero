@@ -160,6 +160,7 @@ Backend layer (WaveRT ↔ virtio-snd):
 - Fallback backend: `src/backend_null.c` (silent; used for debugging and when virtio bring-up fails).
 - To force the Null backend even when virtio is available, set `ForceNullBackend` (`REG_DWORD`) = `1` under the device's **Device Parameters** key.
   - When `ForceNullBackend=1`, the adapter will also tolerate virtio transport start failures (no Code 10) so PortCls/WaveRT behavior can be tested even if the virtio-snd device/emulator is unavailable.
+  - With the Null backend, both render and capture endpoints remain functional from the Windows audio stack’s perspective, but record/play silence.
 
 Virtio transport + protocol engines (AERO-W7-VIRTIO v1 modern transport):
 
