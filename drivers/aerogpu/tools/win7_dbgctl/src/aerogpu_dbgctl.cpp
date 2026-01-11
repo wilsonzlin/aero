@@ -518,6 +518,7 @@ static int DoQueryVersion(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
             (unsigned long)minor);
 
     DumpFenceSnapshot();
+    DumpScanoutSnapshot();
     DumpVblankSnapshot();
     return 0;
   }
