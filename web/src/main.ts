@@ -3032,7 +3032,7 @@ function renderWebUsbPassthroughDemoWorkerPanel(): HTMLElement {
   const hint = el("div", {
     class: "hint",
     text:
-      "Demo: select a WebUSB device via the broker panel. The I/O worker runs a WASM-side UsbPassthroughDemo which queues GET_DESCRIPTOR actions (auto-run on selection; rerun via buttons) and reports the result back as usb.demoResult.",
+      "Demo: select a WebUSB device via the broker panel. The I/O worker runs a WASM-side UsbPassthroughDemo which queues GET_DESCRIPTOR actions (auto-run on selection; rerun via buttons) and reports the result back as usb.demoResult. For configuration descriptors, the panel can rerun with wTotalLength when the initial read is truncated.",
   });
 
   return el(
