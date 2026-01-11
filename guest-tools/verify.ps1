@@ -1466,7 +1466,7 @@ try {
         if ($certsRequired -eq $false) {
             $certStatus = "PASS"
             $certSummary = "No certificate files found under Guest Tools root/certs, and none are required by signing_policy=none."
-            $certDetails += "If you are using custom-signed/test-signed drivers, rebuild Guest Tools with a cert under certs\\ and signing_policy=testsigning."
+            $certDetails += "If you are using custom-signed/test-signed drivers, rebuild Guest Tools with a cert under certs\\ and signing_policy=test."
         } else {
             $certStatus = "WARN"
             $certSummary = "No certificate files found under Guest Tools root/certs and no installed cert list found; unable to verify certificate store."

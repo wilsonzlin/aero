@@ -80,8 +80,13 @@ Guest Tools media built by `tools/packaging/aero_packager` includes a `manifest.
 `setup.cmd` uses this policy to decide whether to prompt for enabling Test Mode / signature bypass on **Windows 7 x64**:
 
 - `none`: do not prompt or change `bcdedit` settings (for WHQL/production-signed drivers).
-- `testsigning`: prompt to enable Test Signing (default for dev/test builds).
-- `nointegritychecks`: prompt to disable signature enforcement (**not recommended**).
+- `production`: same behavior as `none`, but indicates WHQL/production-signed driver catalogs.
+- `test`: prompt to enable Test Signing (default for dev/test builds).
+
+Legacy values in older `manifest.json` are supported and normalized:
+
+- `testsigning` / `test-signing` → `test`
+- `nointegritychecks` / `no-integrity-checks` → `none`
 
 Explicit command-line flags override the manifest.
 
@@ -104,8 +109,8 @@ Optional flags:
   On x64, disable signature enforcement entirely (**not recommended**; use only if test signing is not sufficient).
 - `setup.cmd /forcenointegritychecks`  
   Alias of `/nointegritychecks` (overrides `manifest.json`).
-- `setup.cmd /forcesigningpolicy:none|testsigning|nointegritychecks`  
-  Override the `signing_policy` read from `manifest.json` (if present).
+- `setup.cmd /forcesigningpolicy:none|test|production`  
+  Override the `signing_policy` read from `manifest.json` (if present; legacy aliases: `testsigning`→`test`, `nointegritychecks`→`none`).
 - `setup.cmd /noreboot`  
   Do not prompt for shutdown/reboot at the end.
 - `setup.cmd /skipstorage` (alias: `/skip-storage`)  

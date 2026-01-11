@@ -28,7 +28,7 @@ set "STATE_NOINTEGRITY=%INSTALL_ROOT%\nointegritychecks.enabled-by-aero.txt"
 set "STATE_STORAGE_SKIPPED=%INSTALL_ROOT%\storage-preseed.skipped.txt"
 
 set "ARG_FORCE=0"
-set "SIGNING_POLICY=testsigning"
+set "SIGNING_POLICY=test"
 
 set "ARG_NO_REBOOT=0"
 if /i "%~1"=="/?" goto :usage
@@ -160,7 +160,7 @@ call "%CONFIG_FILE%"
 exit /b 0
 
 :load_signing_policy
-set "SIGNING_POLICY=testsigning"
+set "SIGNING_POLICY=test"
 set "MANIFEST_FILE=%SCRIPT_DIR%manifest.json"
 
 set "FOUND_POLICY="
@@ -174,12 +174,20 @@ if exist "%MANIFEST_FILE%" (
 :load_signing_policy_parsed
 if exist "%MANIFEST_FILE%" (
   if defined FOUND_POLICY (
+    rem Normalize legacy signing_policy values to the current surface (test|production|none).
+    set "SIGNING_POLICY="
+    if /i "!FOUND_POLICY!"=="test" set "SIGNING_POLICY=test"
+    if /i "!FOUND_POLICY!"=="production" set "SIGNING_POLICY=production"
     if /i "!FOUND_POLICY!"=="none" set "SIGNING_POLICY=none"
-    if /i "!FOUND_POLICY!"=="testsigning" set "SIGNING_POLICY=testsigning"
-    if /i "!FOUND_POLICY!"=="nointegritychecks" set "SIGNING_POLICY=nointegritychecks"
-    if /i not "!FOUND_POLICY!"=="none" if /i not "!FOUND_POLICY!"=="testsigning" if /i not "!FOUND_POLICY!"=="nointegritychecks" (
-      call :log "WARNING: manifest.json has unknown signing_policy: !FOUND_POLICY! (defaulting to testsigning)."
-      set "SIGNING_POLICY=testsigning"
+    rem Legacy aliases:
+    if /i "!FOUND_POLICY!"=="testsigning" set "SIGNING_POLICY=test"
+    if /i "!FOUND_POLICY!"=="test-signing" set "SIGNING_POLICY=test"
+    if /i "!FOUND_POLICY!"=="nointegritychecks" set "SIGNING_POLICY=none"
+    if /i "!FOUND_POLICY!"=="no-integrity-checks" set "SIGNING_POLICY=none"
+
+    if not defined SIGNING_POLICY (
+      call :log "WARNING: manifest.json has unknown signing_policy: !FOUND_POLICY! (defaulting to test)."
+      set "SIGNING_POLICY=test"
     ) else (
       call :log "Signing policy from manifest.json: !SIGNING_POLICY!"
     )

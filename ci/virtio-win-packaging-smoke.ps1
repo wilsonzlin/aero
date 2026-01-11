@@ -582,8 +582,10 @@ if ($TestSigningPolicies) {
   if ($testSigningManifest.package.build_id -ne "ci-testsigning") {
     throw "Guest Tools testsigning manifest build_id mismatch: expected ci-testsigning, got $($testSigningManifest.package.build_id)"
   }
-  if ($testSigningManifest.signing_policy -ne "testsigning") {
-    throw "Guest Tools testsigning manifest signing_policy mismatch: expected testsigning, got $($testSigningManifest.signing_policy)"
+  $testSigningPolicy = ("" + $testSigningManifest.signing_policy).ToLowerInvariant()
+  if (($testSigningPolicy -eq "testsigning") -or ($testSigningPolicy -eq "test-signing")) { $testSigningPolicy = "test" }
+  if ($testSigningPolicy -ne "test") {
+    throw "Guest Tools testsigning manifest signing_policy mismatch: expected test, got $($testSigningManifest.signing_policy)"
   }
   if ($testSigningManifest.certs_required -ne $true) {
     throw "Guest Tools testsigning manifest certs_required mismatch: expected true, got $($testSigningManifest.certs_required)"
