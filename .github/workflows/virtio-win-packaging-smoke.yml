@@ -48,6 +48,7 @@ jobs:
           pwsh -NoProfile -ExecutionPolicy Bypass -File "ci/virtio-win-packaging-smoke.ps1"
           -OutRoot "out/virtio-win-packaging-smoke/full"
           -GuestToolsSpecPath "tools/packaging/specs/win7-virtio-full.json"
+          -TestIsoMode
 
       - name: Run virtio-win packaging smoke test (full spec, omit optional drivers)
         shell: pwsh

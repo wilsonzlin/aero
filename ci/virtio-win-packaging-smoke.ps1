@@ -6,7 +6,10 @@ param(
   # Controls the wrapper's extraction defaults (-Profile). When set to "auto" (default),
   # pick a profile that matches the well-known in-repo spec filenames.
   [ValidateSet("auto", "minimal", "full")]
-  [string]$GuestToolsProfile = "auto"
+  [string]$GuestToolsProfile = "auto",
+  # Also exercise the ISO-mounting code paths by creating a synthetic virtio-win ISO
+  # (via IMAPI) and running make-driver-pack.ps1 with -VirtioWinIso.
+  [switch]$TestIsoMode
 )
 
 Set-StrictMode -Version Latest
@@ -67,6 +70,12 @@ function Resolve-Python {
     $cmd = Get-Command $c -ErrorAction SilentlyContinue
     if ($cmd) { return $cmd.Source }
   }
+  return $null
+}
+
+function Resolve-WindowsPowerShell {
+  $cmd = Get-Command "powershell" -ErrorAction SilentlyContinue
+  if ($cmd) { return $cmd.Source }
   return $null
 }
 
@@ -268,6 +277,78 @@ foreach ($want in @("license.txt", "notice.txt")) {
     throw "Driver pack manifest did not record copied notice file '$want' in source.license_notice_files_copied. Got: $($noticeCopied -join ', ')"
   }
 }
+
+if ($TestIsoMode) {
+  $winPs = Resolve-WindowsPowerShell
+  if (-not $winPs) {
+    throw "powershell.exe not found; required for -TestIsoMode (New-IsoFile.ps1 + Mount-DiskImage)."
+  }
+
+  $isoBuilder = Join-Path $repoRoot "ci\\lib\\New-IsoFile.ps1"
+  if (-not (Test-Path -LiteralPath $isoBuilder -PathType Leaf)) {
+    throw "Expected ISO builder script not found: $isoBuilder"
+  }
+
+  $virtioIsoLabel = "VIRTIO_WIN"
+  $virtioIsoPath = Join-Path $OutRoot "virtio-win-synthetic.iso"
+  $isoBuildLog = Join-Path $logsDir "make-synthetic-virtio-win-iso.log"
+
+  Write-Host "Building synthetic virtio-win ISO..."
+  & $winPs -NoProfile -ExecutionPolicy Bypass -File $isoBuilder `
+    -SourcePath $syntheticRoot `
+    -IsoPath $virtioIsoPath `
+    -VolumeLabel $virtioIsoLabel *>&1 | Tee-Object -FilePath $isoBuildLog
+  if ($LASTEXITCODE -ne 0) {
+    throw "Failed to build synthetic virtio-win ISO (exit $LASTEXITCODE). See $isoBuildLog"
+  }
+  if (-not (Test-Path -LiteralPath $virtioIsoPath -PathType Leaf)) {
+    throw "Expected synthetic virtio-win ISO not found: $virtioIsoPath"
+  }
+
+  $virtioIsoPathResolved = (Resolve-Path -LiteralPath $virtioIsoPath).Path
+  $virtioIsoSha = (Get-FileHash -Algorithm SHA256 -Path $virtioIsoPathResolved).Hash.ToLowerInvariant()
+
+  $isoDriverPackOutDir = Join-Path $OutRoot "driver-pack-out-from-iso"
+  Ensure-EmptyDirectory -Path $isoDriverPackOutDir
+  $isoDriverPackLog = Join-Path $logsDir "make-driver-pack-from-iso.log"
+
+  Write-Host "Running make-driver-pack.ps1 from ISO..."
+  & $winPs -NoProfile -ExecutionPolicy Bypass -File $driverPackScript `
+    -VirtioWinIso $virtioIsoPathResolved `
+    -OutDir $isoDriverPackOutDir `
+    -NoZip *>&1 | Tee-Object -FilePath $isoDriverPackLog
+  if ($LASTEXITCODE -ne 0) {
+    throw "make-driver-pack.ps1 failed when invoked with -VirtioWinIso (exit $LASTEXITCODE). See $isoDriverPackLog"
+  }
+
+  $isoDriverPackRoot = Join-Path $isoDriverPackOutDir "aero-win7-driver-pack"
+  if (-not (Test-Path -LiteralPath $isoDriverPackRoot -PathType Container)) {
+    throw "Expected ISO-mode driver pack staging directory not found: $isoDriverPackRoot"
+  }
+
+  $isoManifestPath = Join-Path $isoDriverPackRoot "manifest.json"
+  if (-not (Test-Path -LiteralPath $isoManifestPath -PathType Leaf)) {
+    throw "Expected ISO-mode driver pack manifest not found: $isoManifestPath"
+  }
+
+  $isoManifest = Get-Content -LiteralPath $isoManifestPath -Raw | ConvertFrom-Json
+  if ($isoManifest.source.path -ne $virtioIsoPathResolved) {
+    throw "ISO-mode driver pack manifest source.path mismatch: expected '$virtioIsoPathResolved', got '$($isoManifest.source.path)'"
+  }
+  if (-not $isoManifest.source.hash -or $isoManifest.source.hash.value -ne $virtioIsoSha) {
+    throw "ISO-mode driver pack manifest sha256 mismatch: expected '$virtioIsoSha', got '$($isoManifest.source.hash.value)'"
+  }
+  if ($isoManifest.source.hash.algorithm -ne "sha256") {
+    throw "ISO-mode driver pack manifest hash.algorithm mismatch: expected 'sha256', got '$($isoManifest.source.hash.algorithm)'"
+  }
+  if ($isoManifest.source.volume_label -ne $virtioIsoLabel) {
+    throw "ISO-mode driver pack manifest volume_label mismatch: expected '$virtioIsoLabel', got '$($isoManifest.source.volume_label)'"
+  }
+  if ($isoManifest.source.derived_version -ne $fakeVirtioWinVersion) {
+    throw "ISO-mode driver pack manifest derived_version mismatch: expected '$fakeVirtioWinVersion', got '$($isoManifest.source.derived_version)'"
+  }
+}
+
 if ($OmitOptionalDrivers) {
   if (-not $driverPackManifest.optional_drivers_missing_any) {
     throw "Expected make-driver-pack.ps1 to report optional drivers missing, but optional_drivers_missing_any=false."
