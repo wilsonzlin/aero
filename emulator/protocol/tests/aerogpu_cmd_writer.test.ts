@@ -26,12 +26,9 @@ import {
   AerogpuCullMode,
   AerogpuFillMode,
   AerogpuShaderStage,
+  alignUp,
   decodeCmdStreamHeader,
 } from "../aerogpu/aerogpu_cmd.ts";
-
-function alignUp(v: number, a: number): number {
-  return (v + (a - 1)) & ~(a - 1);
-}
 
 test("AerogpuCmdWriter emits aligned packets and updates stream header size", () => {
   const w = new AerogpuCmdWriter();
