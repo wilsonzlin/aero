@@ -13,10 +13,10 @@ fn hwids_from_patterns(patterns: &[String]) -> Result<Vec<String>> {
     let mut out = Vec::with_capacity(patterns.len());
     for p in patterns {
         if p.is_empty() {
-            bail!("device has an empty hardware_id_patterns entry");
+            bail!("device has empty hardware_id_patterns entry");
         }
         if p.contains('"') {
-            bail!("hardware_id_patterns entry contains an invalid quote (\"): {p:?}");
+            bail!("hardware_id_patterns entries must not contain double quotes: {p:?}");
         }
         out.push(p.clone());
     }

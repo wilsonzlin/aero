@@ -163,10 +163,9 @@ refuses to include any driver package that does not have a corresponding `driver
 For WHQL/production-signed drivers, pass `-SigningPolicy none` to build Guest Tools media
 without injecting (or requiring) any custom certificate files.
 
-Additionally, it will update the staged `guest-tools/config/devices.cmd` storage service
-name (`AERO_VIRTIO_BLK_SERVICE`) to match the packaged virtio-blk driver's `AddService`
-name when it can infer it from the staged INF files. This keeps `guest-tools/setup.cmd`
-boot-critical pre-seeding aligned with the driver set being shipped.
+Additionally, `aero_packager` generates `guest-tools/config/devices.cmd` from the canonical
+device contract (`docs/windows-device-contract.json`) during packaging. This keeps
+`guest-tools/setup.cmd` boot-critical pre-seeding aligned with the contract.
 
 ## `ci/make-fat-image.ps1`
 
