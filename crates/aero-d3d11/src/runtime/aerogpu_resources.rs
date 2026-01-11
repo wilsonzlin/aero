@@ -11,8 +11,8 @@ use aero_protocol::aerogpu::aerogpu_ring::AerogpuAllocEntry;
 use anyhow::{anyhow, bail, Context, Result};
 
 use crate::input_layout::{
-    fnv1a_32, map_layout_to_shader_locations, InputLayoutBinding, InputLayoutDesc,
-    VsInputSignatureElement,
+    fnv1a_32, map_layout_to_shader_locations_compact, InputLayoutBinding, InputLayoutDesc,
+    MappedInputLayout, VsInputSignatureElement,
 };
 use crate::wgsl_bootstrap::translate_sm4_to_wgsl_bootstrap;
 use crate::{parse_signatures, translate_sm4_module_to_wgsl, DxbcFile, ShaderStage, Sm4Program};
@@ -65,17 +65,10 @@ pub struct ShaderResource {
     pub reflection: ShaderReflection,
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct CachedVertexBufferLayout {
-    pub array_stride: u64,
-    pub step_mode: wgpu::VertexStepMode,
-    pub attributes: Vec<wgpu::VertexAttribute>,
-}
-
 #[derive(Clone, Debug)]
 pub struct InputLayoutResource {
     pub layout: InputLayoutDesc,
-    pub mapping_cache: HashMap<u64, Vec<CachedVertexBufferLayout>>,
+    pub mapping_cache: HashMap<u64, MappedInputLayout>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -382,7 +375,7 @@ impl AerogpuResourceManager {
         input_layout_handle: AerogpuHandle,
         vertex_shader_handle: AerogpuHandle,
         slot_strides: &[u32],
-    ) -> Result<&[CachedVertexBufferLayout]> {
+    ) -> Result<&MappedInputLayout> {
         let vs = self
             .shaders
             .get(&vertex_shader_handle)
@@ -407,25 +400,15 @@ impl AerogpuResourceManager {
             };
 
             let binding = InputLayoutBinding::new(desc, slot_strides);
-            let mapped =
-                map_layout_to_shader_locations(&binding, &vs_signature).map_err(|e| anyhow!("{e}"))?;
-
-            let cached: Vec<CachedVertexBufferLayout> = mapped
-                .into_iter()
-                .map(|l| CachedVertexBufferLayout {
-                    array_stride: l.array_stride,
-                    step_mode: l.step_mode,
-                    attributes: l.attributes,
-                })
-                .collect();
-            layout.mapping_cache.insert(cache_key, cached);
+            let mapped = map_layout_to_shader_locations_compact(&binding, &vs_signature)
+                .map_err(|e| anyhow!("{e}"))?;
+            layout.mapping_cache.insert(cache_key, mapped);
         }
 
         Ok(layout
             .mapping_cache
             .get(&cache_key)
-            .expect("mapping cache entry must exist")
-            .as_slice())
+            .expect("mapping cache entry must exist"))
     }
 
     pub fn upload_resource(
