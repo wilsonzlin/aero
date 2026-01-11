@@ -119,9 +119,10 @@ Optional: `drivers\aerogpu\build\build_all.cmd` is a convenience wrapper around 
 
 The project expects the Windows SDK/WDK to provide D3D10/11 DDI headers (e.g. `d3d10umddi.h`, `d3d11umddi.h`) when building the real UMD.  
 
-When building via MSBuild, WDK header usage can be toggled with:
+By default, the Visual Studio project builds against the WDK D3D10/11 DDI
+headers. This can be toggled via MSBuild properties:
 
-* `/p:AeroGpuUseWdkHeaders=1`
+* `/p:AeroGpuUseWdkHeaders=0` (use repo-local compat ABI subset instead)
 * `/p:AeroGpuWdkRoot="C:\WinDDK\7600.16385.1"` (or `%WINDDK%`)
 
 ## Install / Register (INF)

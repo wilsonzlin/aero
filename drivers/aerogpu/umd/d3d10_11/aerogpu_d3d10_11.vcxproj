@@ -59,11 +59,17 @@
 
   <PropertyGroup Label="UserMacros">
     <!--
-      Set /p:AeroGpuUseWdkHeaders=1 to build against the WDK D3D10/11 DDI headers.
-      The build scripts pass /p:AeroGpuWdkRoot pointing at the WDK 7.1 root
-      (typically %WINDDK% / C:\WinDDK\7600.16385.1).
+      This UMD is meant to be consumed by the real Win7 D3D10/D3D11 runtimes, so
+      the default build uses the official WDK D3D10/11 DDI headers.
+
+      Set /p:AeroGpuUseWdkHeaders=0 to build against the repository's minimal
+      compat ABI subset instead.
+
+      When enabled, /p:AeroGpuWdkRoot should point at a WDK 7.1 layout root
+      (typically %WINDDK% / C:\WinDDK\7600.16385.1) so d3d10umddi.h/d3d11umddi.h
+      resolve via $(AeroGpuWdkRoot)\inc\{api,ddk}.
     -->
-    <AeroGpuUseWdkHeaders Condition="'$(AeroGpuUseWdkHeaders)'==''">0</AeroGpuUseWdkHeaders>
+    <AeroGpuUseWdkHeaders Condition="'$(AeroGpuUseWdkHeaders)'==''">1</AeroGpuUseWdkHeaders>
     <AeroGpuWdkRoot Condition="'$(AeroGpuWdkRoot)'==''">$(WINDDK)</AeroGpuWdkRoot>
   </PropertyGroup>
 
