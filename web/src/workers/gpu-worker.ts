@@ -126,6 +126,7 @@ const postRuntimeError = (message: string) => {
 
 let role: WorkerRole = "gpu";
 let status: Int32Array | null = null;
+let guestU8: Uint8Array | null = null;
 
 let frameState: Int32Array | null = null;
 
@@ -190,11 +191,13 @@ type AeroGpuCpuTexture = {
   format: number;
   rowPitchBytes: number;
   data: Uint8Array;
+  backing?: { allocId: number; offsetBytes: number };
 };
 
 type AeroGpuCpuBuffer = {
   sizeBytes: number;
   data: Uint8Array;
+  backing?: { allocId: number; offsetBytes: number };
 };
 
 const aerogpuTextures = new Map<number, AeroGpuCpuTexture>();
@@ -1186,6 +1189,89 @@ const checkedU64ToNumber = (value: bigint, label: string): number => {
   return Number(value);
 };
 
+const AEROGPU_ALLOC_TABLE_MAGIC = 0x434f_4c41; // "ALOC" little-endian
+const AEROGPU_ALLOC_TABLE_HEADER_BYTES = 24;
+const AEROGPU_ALLOC_ENTRY_BYTES = 32;
+
+type AeroGpuAllocTableEntry = { gpa: number; sizeBytes: number };
+type AeroGpuAllocTable = Map<number, AeroGpuAllocTableEntry>;
+
+const decodeAerogpuAllocTable = (buf: ArrayBuffer): AeroGpuAllocTable => {
+  const dv = new DataView(buf);
+  const bufLen = dv.byteLength;
+  if (bufLen < AEROGPU_ALLOC_TABLE_HEADER_BYTES) {
+    throw new Error(`aerogpu: alloc table too small (${bufLen} bytes)`);
+  }
+
+  const magic = dv.getUint32(0, true);
+  if (magic !== AEROGPU_ALLOC_TABLE_MAGIC) {
+    throw new Error(
+      `aerogpu: bad alloc table magic 0x${magic.toString(16)} (expected 0x${AEROGPU_ALLOC_TABLE_MAGIC.toString(16)})`,
+    );
+  }
+
+  const sizeBytes = dv.getUint32(8, true);
+  if (sizeBytes < AEROGPU_ALLOC_TABLE_HEADER_BYTES || sizeBytes > bufLen) {
+    throw new Error(`aerogpu: invalid alloc table size_bytes=${sizeBytes} (buffer_len=${bufLen})`);
+  }
+
+  const entryCount = dv.getUint32(12, true);
+  const entryStrideBytes = dv.getUint32(16, true);
+  if (entryStrideBytes < AEROGPU_ALLOC_ENTRY_BYTES) {
+    throw new Error(`aerogpu: alloc table entry_stride_bytes too small (${entryStrideBytes})`);
+  }
+
+  const requiredBytes = BigInt(AEROGPU_ALLOC_TABLE_HEADER_BYTES) + BigInt(entryCount) * BigInt(entryStrideBytes);
+  if (requiredBytes > BigInt(sizeBytes)) {
+    throw new Error(`aerogpu: alloc table size_bytes too small for layout (${sizeBytes} < ${requiredBytes})`);
+  }
+
+  const out: AeroGpuAllocTable = new Map();
+  for (let i = 0; i < entryCount; i += 1) {
+    const base = AEROGPU_ALLOC_TABLE_HEADER_BYTES + i * entryStrideBytes;
+    if (base + AEROGPU_ALLOC_ENTRY_BYTES > sizeBytes) {
+      throw new Error(`aerogpu: alloc table entry ${i} out of bounds`);
+    }
+
+    const allocId = dv.getUint32(base + 0, true);
+    const gpa = checkedU64ToNumber(dv.getBigUint64(base + 8, true), `allocs[${i}].gpa`);
+    const allocSizeBytes = checkedU64ToNumber(dv.getBigUint64(base + 16, true), `allocs[${i}].size_bytes`);
+    if (out.has(allocId)) {
+      throw new Error(`aerogpu: duplicate alloc_id ${allocId} in alloc table`);
+    }
+    out.set(allocId, { gpa, sizeBytes: allocSizeBytes });
+  }
+
+  return out;
+};
+
+const requireGuestU8 = (): Uint8Array => {
+  if (!guestU8) throw new Error("aerogpu: guest memory is not available (missing WorkerInitMessage)");
+  return guestU8;
+};
+
+const requireAllocTable = (allocTable: AeroGpuAllocTable | null): AeroGpuAllocTable => {
+  if (!allocTable) throw new Error("aerogpu: alloc table is required for backing_alloc_id resources");
+  return allocTable;
+};
+
+const sliceGuestChecked = (guest: Uint8Array, gpa: number, len: number, label: string): Uint8Array => {
+  if (!Number.isFinite(gpa) || !Number.isSafeInteger(gpa) || gpa < 0) {
+    throw new Error(`aerogpu: invalid guest gpa for ${label}: ${gpa}`);
+  }
+  if (!Number.isFinite(len) || !Number.isSafeInteger(len) || len < 0) {
+    throw new Error(`aerogpu: invalid length for ${label}: ${len}`);
+  }
+  const start = gpa;
+  const end = start + len;
+  if (end < start || end > guest.byteLength) {
+    throw new Error(
+      `aerogpu: guest memory out of bounds for ${label} (gpa=${start}, len=${len}, guest_len=${guest.byteLength})`,
+    );
+  }
+  return guest.subarray(start, end);
+};
+
 const presentAerogpuTexture = (tex: AeroGpuCpuTexture): void => {
   aerogpuLastPresentedFrame = { width: tex.width, height: tex.height, rgba8: tex.data.slice().buffer };
 
@@ -1200,7 +1286,7 @@ const presentAerogpuTexture = (tex: AeroGpuCpuTexture): void => {
   presenter.present(tex.data, tex.width * 4);
 };
 
-const executeAerogpuCmdStream = (cmdStream: ArrayBuffer): bigint => {
+const executeAerogpuCmdStream = (cmdStream: ArrayBuffer, allocTable: AeroGpuAllocTable | null): bigint => {
   const dv = new DataView(cmdStream);
   const bufLen = dv.byteLength;
 
@@ -1239,10 +1325,16 @@ const executeAerogpuCmdStream = (cmdStream: ArrayBuffer): bigint => {
         const handle = readU32LeChecked(dv, offset + 8, end, "buffer_handle");
         const sizeBytesU64 = readU64LeChecked(dv, offset + 16, end, "size_bytes");
         const sizeBytes = checkedU64ToNumber(sizeBytesU64, "size_bytes");
+        const backingAllocId = readU32LeChecked(dv, offset + 24, end, "backing_alloc_id");
+        const backingOffsetBytes = readU32LeChecked(dv, offset + 28, end, "backing_offset_bytes");
         if (handle === 0) throw new Error("aerogpu: CREATE_BUFFER invalid handle 0");
         aerogpuTextures.delete(handle);
         if (aerogpuCurrentRenderTarget === handle) aerogpuCurrentRenderTarget = null;
-        aerogpuBuffers.set(handle, { sizeBytes, data: new Uint8Array(sizeBytes) });
+        const buf: AeroGpuCpuBuffer = { sizeBytes, data: new Uint8Array(sizeBytes) };
+        if (backingAllocId !== 0) {
+          buf.backing = { allocId: backingAllocId, offsetBytes: backingOffsetBytes };
+        }
+        aerogpuBuffers.set(handle, buf);
         break;
       }
 
@@ -1257,6 +1349,8 @@ const executeAerogpuCmdStream = (cmdStream: ArrayBuffer): bigint => {
         const mipLevels = readU32LeChecked(dv, offset + 28, end, "mip_levels");
         const arrayLayers = readU32LeChecked(dv, offset + 32, end, "array_layers");
         const rowPitchBytesRaw = readU32LeChecked(dv, offset + 36, end, "row_pitch_bytes");
+        const backingAllocId = readU32LeChecked(dv, offset + 40, end, "backing_alloc_id");
+        const backingOffsetBytes = readU32LeChecked(dv, offset + 44, end, "backing_offset_bytes");
 
         if (handle === 0) throw new Error("aerogpu: CREATE_TEXTURE2D invalid handle 0");
         if (width === 0 || height === 0) {
@@ -1274,12 +1368,15 @@ const executeAerogpuCmdStream = (cmdStream: ArrayBuffer): bigint => {
           throw new Error(`aerogpu: CREATE_TEXTURE2D unsupported format ${format}`);
         }
 
-        const bytesPerRow = width * 4;
-        const rowPitchBytes = rowPitchBytesRaw !== 0 ? rowPitchBytesRaw : bytesPerRow;
-        if (rowPitchBytes < bytesPerRow) {
+        const rowBytes = width * 4;
+        const rowPitchBytes = rowPitchBytesRaw !== 0 ? rowPitchBytesRaw : rowBytes;
+        if (rowPitchBytes < rowBytes) {
           throw new Error(
-            `aerogpu: CREATE_TEXTURE2D row_pitch_bytes too small (${rowPitchBytes} < ${bytesPerRow})`,
+            `aerogpu: CREATE_TEXTURE2D row_pitch_bytes too small (${rowPitchBytes} < ${rowBytes})`,
           );
+        }
+        if (rowPitchBytes % 4 !== 0) {
+          throw new Error(`aerogpu: CREATE_TEXTURE2D row_pitch_bytes must be a multiple of 4 (got ${rowPitchBytes})`);
         }
 
         const byteLenBig = BigInt(width) * BigInt(height) * 4n;
@@ -1293,7 +1390,11 @@ const executeAerogpuCmdStream = (cmdStream: ArrayBuffer): bigint => {
           }
         }
         aerogpuBuffers.delete(handle);
-        aerogpuTextures.set(handle, { width, height, format, rowPitchBytes, data });
+        const tex: AeroGpuCpuTexture = { width, height, format, rowPitchBytes, data };
+        if (backingAllocId !== 0) {
+          tex.backing = { allocId: backingAllocId, offsetBytes: backingOffsetBytes };
+        }
+        aerogpuTextures.set(handle, tex);
         break;
       }
 
@@ -1312,10 +1413,129 @@ const executeAerogpuCmdStream = (cmdStream: ArrayBuffer): bigint => {
         if (cmdSizeBytes < AEROGPU_CMD_RESOURCE_DIRTY_RANGE_SIZE) {
           throw new Error(`aerogpu: RESOURCE_DIRTY_RANGE packet too small (size_bytes=${cmdSizeBytes})`);
         }
-        // This worker-side AeroGPU implementation only supports host-managed resources that are
-        // populated via UPLOAD_RESOURCE. Guest-memory-backed resources (alloc_table + dirty ranges)
-        // are not wired up in the browser runtime yet.
-        throw new Error("aerogpu: RESOURCE_DIRTY_RANGE is not supported by the browser executor (guest backing not implemented)");
+        const handle = readU32LeChecked(dv, offset + 8, end, "resource_handle");
+        const dirtyOffsetBytes = checkedU64ToNumber(readU64LeChecked(dv, offset + 16, end, "offset_bytes"), "offset_bytes");
+        const dirtySizeBytes = checkedU64ToNumber(readU64LeChecked(dv, offset + 24, end, "size_bytes"), "size_bytes");
+        if (dirtySizeBytes === 0) break;
+
+        const guest = requireGuestU8();
+        const table = requireAllocTable(allocTable);
+
+        const buf = aerogpuBuffers.get(handle);
+        if (buf) {
+          const backing = buf.backing;
+          if (!backing) {
+            throw new Error(`aerogpu: RESOURCE_DIRTY_RANGE buffer ${handle} has no backing_alloc_id`);
+          }
+          if (dirtyOffsetBytes + dirtySizeBytes > buf.sizeBytes) {
+            throw new Error(
+              `aerogpu: RESOURCE_DIRTY_RANGE out of bounds for buffer ${handle} (offset=${dirtyOffsetBytes}, size=${dirtySizeBytes}, bufBytes=${buf.sizeBytes})`,
+            );
+          }
+          const alloc = table.get(backing.allocId);
+          if (!alloc) throw new Error(`aerogpu: unknown alloc_id ${backing.allocId} for buffer ${handle}`);
+          if (dirtyOffsetBytes + dirtySizeBytes > alloc.sizeBytes - backing.offsetBytes) {
+            throw new Error(
+              `aerogpu: RESOURCE_DIRTY_RANGE out of bounds for alloc ${backing.allocId} (offset=${dirtyOffsetBytes}, size=${dirtySizeBytes}, allocBytes=${alloc.sizeBytes})`,
+            );
+          }
+
+          const baseGpa = alloc.gpa + backing.offsetBytes;
+          buf.data.set(
+            sliceGuestChecked(guest, baseGpa + dirtyOffsetBytes, dirtySizeBytes, `buffer ${handle}`),
+            dirtyOffsetBytes,
+          );
+          break;
+        }
+
+        const tex = aerogpuTextures.get(handle);
+        if (!tex) {
+          throw new Error(`aerogpu: RESOURCE_DIRTY_RANGE references unknown resource handle ${handle}`);
+        }
+
+        const backing = tex.backing;
+        if (!backing) {
+          throw new Error(`aerogpu: RESOURCE_DIRTY_RANGE texture ${handle} has no backing_alloc_id`);
+        }
+        const alloc = table.get(backing.allocId);
+        if (!alloc) throw new Error(`aerogpu: unknown alloc_id ${backing.allocId} for texture ${handle}`);
+
+        const rowBytes = tex.width * 4;
+        const textureBytes = tex.rowPitchBytes * tex.height;
+        if (dirtyOffsetBytes + dirtySizeBytes > textureBytes) {
+          throw new Error(
+            `aerogpu: RESOURCE_DIRTY_RANGE out of bounds for texture ${handle} (offset=${dirtyOffsetBytes}, size=${dirtySizeBytes}, texBytes=${textureBytes})`,
+          );
+        }
+        if (dirtyOffsetBytes + dirtySizeBytes > alloc.sizeBytes - backing.offsetBytes) {
+          throw new Error(
+            `aerogpu: RESOURCE_DIRTY_RANGE out of bounds for alloc ${backing.allocId} (offset=${dirtyOffsetBytes}, size=${dirtySizeBytes}, allocBytes=${alloc.sizeBytes})`,
+          );
+        }
+
+        const dirtyStart = dirtyOffsetBytes;
+        const dirtyEnd = dirtyOffsetBytes + dirtySizeBytes;
+        const startRow = Math.floor(dirtyStart / tex.rowPitchBytes);
+        const endRow = Math.floor((dirtyEnd - 1) / tex.rowPitchBytes);
+
+        const baseGpa = alloc.gpa + backing.offsetBytes;
+        for (let y = startRow; y <= endRow; y += 1) {
+          const rowBackingStart = y * tex.rowPitchBytes;
+          const rowBackingEnd = rowBackingStart + rowBytes;
+          const start = Math.max(rowBackingStart, dirtyStart);
+          const end = Math.min(rowBackingEnd, dirtyEnd);
+          if (end <= start) continue;
+
+          const copyLen = end - start;
+          const dstRowStart = y * rowBytes;
+          const dst = dstRowStart + (start - rowBackingStart);
+
+          if (tex.format === AEROGPU_FORMAT_R8G8B8A8_UNORM) {
+            tex.data.set(sliceGuestChecked(guest, baseGpa + start, copyLen, `texture ${handle}`), dst);
+            continue;
+          }
+
+          if (dst % 4 !== 0 || copyLen % 4 !== 0) {
+            throw new Error("aerogpu: RESOURCE_DIRTY_RANGE texture uploads must be 4-byte aligned");
+          }
+          const srcBytes = sliceGuestChecked(guest, baseGpa + start, copyLen, `texture ${handle}`);
+          const dstBytes = tex.data;
+          for (let i = 0; i < copyLen; i += 4) {
+            const srcOff = i;
+            const dstOff = dst + i;
+            const r0 = srcBytes[srcOff + 0]!;
+            const g0 = srcBytes[srcOff + 1]!;
+            const b0 = srcBytes[srcOff + 2]!;
+            const a0 = srcBytes[srcOff + 3]!;
+
+            switch (tex.format) {
+              case AEROGPU_FORMAT_R8G8B8X8_UNORM: {
+                dstBytes[dstOff + 0] = r0;
+                dstBytes[dstOff + 1] = g0;
+                dstBytes[dstOff + 2] = b0;
+                dstBytes[dstOff + 3] = 255;
+                break;
+              }
+              case AEROGPU_FORMAT_B8G8R8A8_UNORM: {
+                dstBytes[dstOff + 0] = b0;
+                dstBytes[dstOff + 1] = g0;
+                dstBytes[dstOff + 2] = r0;
+                dstBytes[dstOff + 3] = a0;
+                break;
+              }
+              case AEROGPU_FORMAT_B8G8R8X8_UNORM: {
+                dstBytes[dstOff + 0] = b0;
+                dstBytes[dstOff + 1] = g0;
+                dstBytes[dstOff + 2] = r0;
+                dstBytes[dstOff + 3] = 255;
+                break;
+              }
+              default:
+                throw new Error(`aerogpu: RESOURCE_DIRTY_RANGE unsupported texture format ${tex.format}`);
+            }
+          }
+        }
+        break;
       }
 
       case AEROGPU_CMD_UPLOAD_RESOURCE: {
@@ -1633,7 +1853,8 @@ const handleSubmitAerogpu = async (req: GpuRuntimeSubmitAerogpuMessage): Promise
   let presentDelta = 0n;
   try {
     await maybeSendReady();
-    presentDelta = executeAerogpuCmdStream(req.cmdStream);
+    const allocTable = req.allocTable ? decodeAerogpuAllocTable(req.allocTable) : null;
+    presentDelta = executeAerogpuCmdStream(req.cmdStream, allocTable);
   } catch (err) {
     sendError(err);
   } finally {
@@ -1894,7 +2115,10 @@ const handleRuntimeInit = (init: WorkerInitMessage) => {
     sharedFramebuffer: init.sharedFramebuffer,
     sharedFramebufferOffsetBytes: init.sharedFramebufferOffsetBytes ?? 0,
   };
-  status = createSharedMemoryViews(segments).status;
+  const views = createSharedMemoryViews(segments);
+  status = views.status;
+  // Guest physical addresses (GPAs) in AeroGPU submissions are byte offsets into this view.
+  guestU8 = views.guestU8;
 
   const regions = ringRegionsForWorker(role);
   commandRing = new RingBuffer(segments.control, regions.command.byteOffset);

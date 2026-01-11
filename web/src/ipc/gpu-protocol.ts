@@ -190,7 +190,11 @@ export type GpuRuntimeSubmitAerogpuMessage = GpuWorkerMessageBase & {
    */
   cmdStream: ArrayBuffer;
   /**
-   * Optional allocation table bytes (reserved for future guest-memory backing).
+   * Optional `aerogpu_alloc_table` bytes used to resolve `backing_alloc_id` uploads.
+   *
+   * The table maps `alloc_id -> { gpa, size_bytes }`, where `gpa` is a guest physical
+   * byte offset into the shared guest RAM view supplied to the worker via
+   * `WorkerInitMessage.guestMemory`.
    */
   allocTable?: ArrayBuffer;
 };
