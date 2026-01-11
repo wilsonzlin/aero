@@ -1252,18 +1252,18 @@ mod tests {
         );
 
         dev.push_input_report(1, &[0xaa, 0xbb, 0xcc]);
-        assert_eq!(dev.poll_interrupt_in(INTERRUPT_IN_EP), None);
+        assert_eq!(dev.handle_interrupt_in(INTERRUPT_IN_EP), UsbInResult::Nak);
 
         configure_device(&mut dev);
         assert_eq!(
-            dev.poll_interrupt_in(INTERRUPT_IN_EP).unwrap(),
-            vec![1, 0xaa, 0xbb, 0xcc]
+            dev.handle_interrupt_in(INTERRUPT_IN_EP),
+            UsbInResult::Data(vec![1, 0xaa, 0xbb, 0xcc])
         );
 
         dev.push_input_report(0, &[0x11, 0x22]);
         assert_eq!(
-            dev.poll_interrupt_in(INTERRUPT_IN_EP).unwrap(),
-            vec![0x11, 0x22]
+            dev.handle_interrupt_in(INTERRUPT_IN_EP),
+            UsbInResult::Data(vec![0x11, 0x22])
         );
     }
 
@@ -1505,14 +1505,14 @@ mod tests {
         dev.push_input_report(1, &[0x02]);
 
         assert_eq!(
-            dev.poll_interrupt_in(INTERRUPT_IN_EP).unwrap(),
-            vec![1, 0x01]
+            dev.handle_interrupt_in(INTERRUPT_IN_EP),
+            UsbInResult::Data(vec![1, 0x01])
         );
         assert_eq!(
-            dev.poll_interrupt_in(INTERRUPT_IN_EP).unwrap(),
-            vec![1, 0x02]
+            dev.handle_interrupt_in(INTERRUPT_IN_EP),
+            UsbInResult::Data(vec![1, 0x02])
         );
-        assert_eq!(dev.poll_interrupt_in(INTERRUPT_IN_EP), None);
+        assert_eq!(dev.handle_interrupt_in(INTERRUPT_IN_EP), UsbInResult::Nak);
 
         dev.set_max_pending_output_reports(1);
         assert_eq!(
@@ -1562,8 +1562,12 @@ mod tests {
 
         // Drain and ensure the oldest entries were dropped.
         let mut last = None;
-        while let Some(r) = dev.poll_interrupt_in(INTERRUPT_IN_EP) {
-            last = Some(r);
+        loop {
+            match dev.handle_interrupt_in(INTERRUPT_IN_EP) {
+                UsbInResult::Data(r) => last = Some(r),
+                UsbInResult::Nak => break,
+                UsbInResult::Stall => panic!("unexpected stall draining input reports"),
+            }
         }
         assert_eq!(
             last.unwrap(),

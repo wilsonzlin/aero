@@ -805,10 +805,13 @@ mod tests {
     fn does_not_send_interrupt_reports_until_configured() {
         let mut pad = UsbHidGamepad::new();
         pad.button_event(1, true);
-        assert_eq!(pad.poll_interrupt_in(INTERRUPT_IN_EP), None);
+        assert_eq!(pad.handle_interrupt_in(INTERRUPT_IN_EP), UsbInResult::Nak);
 
         configure_gamepad(&mut pad);
-        assert!(pad.poll_interrupt_in(INTERRUPT_IN_EP).is_some());
+        assert!(matches!(
+            pad.handle_interrupt_in(INTERRUPT_IN_EP),
+            UsbInResult::Data(_)
+        ));
     }
 
     #[test]
