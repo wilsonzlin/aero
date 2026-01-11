@@ -13,6 +13,7 @@
 
 #include "../include/aerogpu_d3d10_11_umd.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -97,6 +98,26 @@ constexpr uint32_t kD3D11BindConstantBuffer = 0x4;
 constexpr uint32_t kD3D11BindShaderResource = 0x8;
 constexpr uint32_t kD3D11BindRenderTarget = 0x20;
 constexpr uint32_t kD3D11BindDepthStencil = 0x40;
+
+// D3D11_USAGE subset (numeric values from d3d11.h).
+constexpr uint32_t kD3D11UsageDefault = 0;
+constexpr uint32_t kD3D11UsageImmutable = 1;
+constexpr uint32_t kD3D11UsageDynamic = 2;
+constexpr uint32_t kD3D11UsageStaging = 3;
+
+// D3D11_CPU_ACCESS_FLAG subset (numeric values from d3d11.h).
+constexpr uint32_t kD3D11CpuAccessWrite = 0x10000;
+constexpr uint32_t kD3D11CpuAccessRead = 0x20000;
+
+// D3D11_MAP subset (numeric values from d3d11.h).
+constexpr uint32_t kD3D11MapRead = 1;
+constexpr uint32_t kD3D11MapWrite = 2;
+constexpr uint32_t kD3D11MapReadWrite = 3;
+constexpr uint32_t kD3D11MapWriteDiscard = 4;
+constexpr uint32_t kD3D11MapWriteNoOverwrite = 5;
+
+// D3D11_MAP_FLAG_DO_NOT_WAIT (numeric value from d3d11.h).
+constexpr uint32_t kD3D11MapFlagDoNotWait = 0x100000;
 
 // DXGI_FORMAT subset (numeric values from dxgiformat.h).
 constexpr uint32_t kDxgiFormatR8G8B8A8Unorm = 28;
@@ -233,6 +254,12 @@ struct AeroGpuResource {
 
   uint32_t bind_flags = 0;
   uint32_t misc_flags = 0;
+  uint32_t usage = 0;
+  uint32_t cpu_access_flags = 0;
+
+  bool mapped = false;
+  uint32_t mapped_subresource = 0;
+  uint32_t mapped_map_type = 0;
 
   // Buffer fields.
   uint64_t size_bytes = 0;
@@ -1708,21 +1735,30 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     res->kind = ResourceKind::Buffer;
     res->bind_flags = pDesc->BindFlags;
     res->misc_flags = pDesc->MiscFlags;
+    res->usage = pDesc->Usage;
+    res->cpu_access_flags = pDesc->CPUAccessFlags;
     res->size_bytes = pDesc->ByteWidth;
 
+    if (res->size_bytes > static_cast<uint64_t>(SIZE_MAX)) {
+      res->~AeroGpuResource();
+      return E_OUTOFMEMORY;
+    }
+    try {
+      res->storage.resize(static_cast<size_t>(res->size_bytes));
+    } catch (...) {
+      res->~AeroGpuResource();
+      return E_OUTOFMEMORY;
+    }
+
+    bool has_initial = false;
     if (pDesc->pInitialData && pDesc->InitialDataCount) {
       const auto& init = pDesc->pInitialData[0];
       if (!init.pSysMem) {
         res->~AeroGpuResource();
         return E_INVALIDARG;
       }
-      try {
-        res->storage.resize(static_cast<size_t>(res->size_bytes));
-      } catch (...) {
-        res->~AeroGpuResource();
-        return E_OUTOFMEMORY;
-      }
       std::memcpy(res->storage.data(), init.pSysMem, static_cast<size_t>(res->size_bytes));
+      has_initial = true;
     }
 
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_buffer>(AEROGPU_CMD_CREATE_BUFFER);
@@ -1733,7 +1769,14 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     cmd->backing_offset_bytes = 0;
     cmd->reserved0 = 0;
 
-    if (!res->storage.empty()) {
+    if (has_initial) {
+      auto* upload = dev->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
+          AEROGPU_CMD_UPLOAD_RESOURCE, res->storage.data(), res->storage.size());
+      upload->resource_handle = res->handle;
+      upload->reserved0 = 0;
+      upload->offset_bytes = 0;
+      upload->size_bytes = res->size_bytes;
+
       auto* dirty = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
       dirty->resource_handle = res->handle;
       dirty->reserved0 = 0;
@@ -1765,13 +1808,38 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     res->kind = ResourceKind::Texture2D;
     res->bind_flags = pDesc->BindFlags;
     res->misc_flags = pDesc->MiscFlags;
+    res->usage = pDesc->Usage;
+    res->cpu_access_flags = pDesc->CPUAccessFlags;
     res->width = pDesc->Width;
     res->height = pDesc->Height;
     res->mip_levels = mip_levels;
     res->array_size = pDesc->ArraySize;
     res->dxgi_format = pDesc->Format;
-    res->row_pitch_bytes = res->width * bytes_per_pixel_aerogpu(aer_fmt);
+    const uint32_t bpp = bytes_per_pixel_aerogpu(aer_fmt);
+    res->row_pitch_bytes = res->width * bpp;
 
+    uint32_t level_w = res->width ? res->width : 1u;
+    uint32_t level_h = res->height ? res->height : 1u;
+    uint64_t total_bytes = 0;
+    for (uint32_t level = 0; level < res->mip_levels; ++level) {
+      const uint32_t level_pitch = level_w * bpp;
+      total_bytes += static_cast<uint64_t>(level_pitch) * static_cast<uint64_t>(level_h);
+      level_w = (level_w > 1) ? (level_w / 2) : 1u;
+      level_h = (level_h > 1) ? (level_h / 2) : 1u;
+    }
+
+    if (total_bytes > static_cast<uint64_t>(SIZE_MAX)) {
+      res->~AeroGpuResource();
+      return E_OUTOFMEMORY;
+    }
+    try {
+      res->storage.resize(static_cast<size_t>(total_bytes));
+    } catch (...) {
+      res->~AeroGpuResource();
+      return E_OUTOFMEMORY;
+    }
+
+    bool has_initial = false;
     if (pDesc->pInitialData && pDesc->InitialDataCount) {
       if (res->mip_levels != 1 || res->array_size != 1) {
         res->~AeroGpuResource();
@@ -1784,18 +1852,6 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
         return E_INVALIDARG;
       }
 
-      const uint64_t total_bytes = static_cast<uint64_t>(res->row_pitch_bytes) * static_cast<uint64_t>(res->height);
-      if (total_bytes > static_cast<uint64_t>(SIZE_MAX)) {
-        res->~AeroGpuResource();
-        return E_OUTOFMEMORY;
-      }
-      try {
-        res->storage.resize(static_cast<size_t>(total_bytes));
-      } catch (...) {
-        res->~AeroGpuResource();
-        return E_OUTOFMEMORY;
-      }
-
       const uint8_t* src = static_cast<const uint8_t*>(init.pSysMem);
       const size_t src_pitch = init.SysMemPitch ? static_cast<size_t>(init.SysMemPitch)
                                                 : static_cast<size_t>(res->row_pitch_bytes);
@@ -1804,6 +1860,7 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
                     src + static_cast<size_t>(y) * src_pitch,
                     res->row_pitch_bytes);
       }
+      has_initial = true;
     }
 
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_texture2d>(AEROGPU_CMD_CREATE_TEXTURE2D);
@@ -1819,7 +1876,14 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     cmd->backing_offset_bytes = 0;
     cmd->reserved0 = 0;
 
-    if (!res->storage.empty()) {
+    if (has_initial) {
+      auto* upload = dev->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
+          AEROGPU_CMD_UPLOAD_RESOURCE, res->storage.data(), res->storage.size());
+      upload->resource_handle = res->handle;
+      upload->reserved0 = 0;
+      upload->offset_bytes = 0;
+      upload->size_bytes = res->storage.size();
+
       auto* dirty = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
       dirty->resource_handle = res->handle;
       dirty->reserved0 = 0;
@@ -1961,6 +2025,19 @@ void unmap_resource_locked(AeroGpuDevice* dev, AeroGpuResource* res, uint32_t su
   }
 
   if (res->mapped_write && res->handle != kInvalidHandle) {
+    // For bring-up, inline the updated bytes into the command stream so the host
+    // does not need to dereference guest allocations.
+    if (res->mapped_offset_bytes + res->mapped_size_bytes <= static_cast<uint64_t>(res->storage.size())) {
+      const auto offset = static_cast<size_t>(res->mapped_offset_bytes);
+      const auto size = static_cast<size_t>(res->mapped_size_bytes);
+      auto* upload = dev->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
+          AEROGPU_CMD_UPLOAD_RESOURCE, res->storage.data() + offset, size);
+      upload->resource_handle = res->handle;
+      upload->reserved0 = 0;
+      upload->offset_bytes = res->mapped_offset_bytes;
+      upload->size_bytes = res->mapped_size_bytes;
+    }
+
     auto* dirty = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
     dirty->resource_handle = res->handle;
     dirty->reserved0 = 0;
@@ -2150,13 +2227,12 @@ void AEROGPU_APIENTRY DynamicConstantBufferUnmap(D3D10DDI_HDEVICE hDevice, D3D10
   std::lock_guard<std::mutex> lock(dev->mutex);
   unmap_resource_locked(dev, res, /*subresource=*/0);
 }
-
 HRESULT AEROGPU_APIENTRY Map(D3D10DDI_HDEVICE hDevice,
                              D3D10DDI_HRESOURCE hResource,
-                             uint32_t subresource,
-                             uint32_t map_type,
-                             uint32_t map_flags,
-                             AEROGPU_DDI_MAPPED_SUBRESOURCE* pMapped) {
+                              uint32_t subresource,
+                              uint32_t map_type,
+                              uint32_t map_flags,
+                              AEROGPU_DDI_MAPPED_SUBRESOURCE* pMapped) {
   AEROGPU_D3D10_11_LOG("pfnMap subresource=%u map_type=%u map_flags=0x%X",
                        static_cast<unsigned>(subresource),
                        static_cast<unsigned>(map_type),
@@ -2241,6 +2317,252 @@ void AEROGPU_APIENTRY Unmap(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hResour
 
   std::lock_guard<std::mutex> lock(dev->mutex);
   unmap_resource_locked(dev, res, subresource);
+}
+
+void AEROGPU_APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice,
+                                          D3D10DDI_HRESOURCE hResource,
+                                          uint32_t dst_subresource,
+                                          const AEROGPU_DDI_BOX* pDstBox,
+                                          const void* pSysMem,
+                                          uint32_t SysMemPitch,
+                                          uint32_t SysMemSlicePitch) {
+  (void)SysMemSlicePitch;
+  if (!hDevice.pDrvPrivate || !hResource.pDrvPrivate || !pSysMem) {
+    return;
+  }
+
+  auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+  auto* res = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(hResource);
+  if (!dev || !res) {
+    return;
+  }
+
+  if (dst_subresource != 0 || pDstBox) {
+    return;
+  }
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+
+  if (res->handle == kInvalidHandle) {
+    return;
+  }
+
+  if (res->kind == ResourceKind::Buffer) {
+    if (res->storage.size() != static_cast<size_t>(res->size_bytes)) {
+      return;
+    }
+    std::memcpy(res->storage.data(), pSysMem, static_cast<size_t>(res->size_bytes));
+  } else if (res->kind == ResourceKind::Texture2D) {
+    if (res->storage.empty()) {
+      return;
+    }
+    const size_t src_pitch = SysMemPitch ? static_cast<size_t>(SysMemPitch) : static_cast<size_t>(res->row_pitch_bytes);
+    const uint8_t* src = static_cast<const uint8_t*>(pSysMem);
+    for (uint32_t y = 0; y < res->height; y++) {
+      std::memcpy(res->storage.data() + static_cast<size_t>(y) * res->row_pitch_bytes,
+                  src + static_cast<size_t>(y) * src_pitch,
+                  res->row_pitch_bytes);
+    }
+  } else {
+    return;
+  }
+
+  auto* upload = dev->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
+      AEROGPU_CMD_UPLOAD_RESOURCE, res->storage.data(), res->storage.size());
+  upload->resource_handle = res->handle;
+  upload->reserved0 = 0;
+  upload->offset_bytes = 0;
+  upload->size_bytes = res->storage.size();
+
+  auto* dirty = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+  dirty->resource_handle = res->handle;
+  dirty->reserved0 = 0;
+  dirty->offset_bytes = 0;
+  dirty->size_bytes = res->storage.size();
+}
+
+void AEROGPU_APIENTRY CopyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hDst, D3D10DDI_HRESOURCE hSrc) {
+  if (!hDevice.pDrvPrivate || !hDst.pDrvPrivate || !hSrc.pDrvPrivate) {
+    return;
+  }
+
+  auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+  auto* dst = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(hDst);
+  auto* src = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(hSrc);
+  if (!dev || !dst || !src) {
+    return;
+  }
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+
+  if (dst->kind != src->kind) {
+    return;
+  }
+
+  // Repository builds keep a conservative CPU backing store; simulate the copy
+  // immediately so a subsequent staging Map(READ) sees the bytes.
+  if (dst->kind == ResourceKind::Buffer) {
+    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_copy_buffer>(AEROGPU_CMD_COPY_BUFFER);
+    cmd->dst_buffer = dst->handle;
+    cmd->src_buffer = src->handle;
+    cmd->dst_offset_bytes = 0;
+    cmd->src_offset_bytes = 0;
+    cmd->size_bytes = std::min(dst->size_bytes, src->size_bytes);
+    cmd->flags = AEROGPU_COPY_FLAG_NONE;
+    cmd->reserved0 = 0;
+
+    const size_t copy_bytes = static_cast<size_t>(cmd->size_bytes);
+    if (copy_bytes && src->storage.size() >= copy_bytes) {
+      if (dst->storage.size() < copy_bytes) {
+        dst->storage.resize(copy_bytes);
+      }
+      std::memcpy(dst->storage.data(), src->storage.data(), copy_bytes);
+    }
+  } else if (dst->kind == ResourceKind::Texture2D) {
+    if (dst->dxgi_format != src->dxgi_format || dst->width == 0 || dst->height == 0) {
+      return;
+    }
+
+    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_copy_texture2d>(AEROGPU_CMD_COPY_TEXTURE2D);
+    cmd->dst_texture = dst->handle;
+    cmd->src_texture = src->handle;
+    cmd->dst_mip_level = 0;
+    cmd->dst_array_layer = 0;
+    cmd->src_mip_level = 0;
+    cmd->src_array_layer = 0;
+    cmd->dst_x = 0;
+    cmd->dst_y = 0;
+    cmd->src_x = 0;
+    cmd->src_y = 0;
+    cmd->width = std::min(dst->width, src->width);
+    cmd->height = std::min(dst->height, src->height);
+    cmd->flags = AEROGPU_COPY_FLAG_NONE;
+    cmd->reserved0 = 0;
+
+    const uint32_t aerogpu_format = dxgi_format_to_aerogpu(src->dxgi_format);
+    const uint32_t bpp = bytes_per_pixel_aerogpu(aerogpu_format);
+    const size_t row_bytes = static_cast<size_t>(cmd->width) * bpp;
+    const size_t copy_rows = static_cast<size_t>(cmd->height);
+    if (!row_bytes || !copy_rows) {
+      return;
+    }
+
+    const size_t dst_required = copy_rows * static_cast<size_t>(dst->row_pitch_bytes);
+    const size_t src_required = copy_rows * static_cast<size_t>(src->row_pitch_bytes);
+    if (src->storage.size() < src_required) {
+      return;
+    }
+    if (dst->storage.size() < dst_required) {
+      dst->storage.resize(dst_required);
+    }
+    if (row_bytes > dst->row_pitch_bytes || row_bytes > src->row_pitch_bytes) {
+      return;
+    }
+
+    for (size_t y = 0; y < copy_rows; y++) {
+      std::memcpy(dst->storage.data() + y * dst->row_pitch_bytes,
+                  src->storage.data() + y * src->row_pitch_bytes,
+                  row_bytes);
+    }
+  }
+}
+
+HRESULT AEROGPU_APIENTRY CopySubresourceRegion(D3D10DDI_HDEVICE hDevice,
+                                               D3D10DDI_HRESOURCE hDst,
+                                               uint32_t dst_subresource,
+                                               uint32_t dst_x,
+                                               uint32_t dst_y,
+                                               uint32_t dst_z,
+                                               D3D10DDI_HRESOURCE hSrc,
+                                               uint32_t src_subresource,
+                                               const AEROGPU_DDI_BOX* pSrcBox) {
+  if (!hDevice.pDrvPrivate || !hDst.pDrvPrivate || !hSrc.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+
+  if (dst_subresource != 0 || src_subresource != 0 || dst_x != 0 || dst_y != 0 || dst_z != 0 || pSrcBox) {
+    return E_NOTIMPL;
+  }
+
+  auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+  auto* dst = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(hDst);
+  auto* src = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(hSrc);
+  if (!dev || !dst || !src) {
+    return E_INVALIDARG;
+  }
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+
+  if (dst->kind != src->kind) {
+    return E_INVALIDARG;
+  }
+
+  if (dst->kind == ResourceKind::Buffer) {
+    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_copy_buffer>(AEROGPU_CMD_COPY_BUFFER);
+    cmd->dst_buffer = dst->handle;
+    cmd->src_buffer = src->handle;
+    cmd->dst_offset_bytes = 0;
+    cmd->src_offset_bytes = 0;
+    cmd->size_bytes = std::min(dst->size_bytes, src->size_bytes);
+    cmd->flags = AEROGPU_COPY_FLAG_NONE;
+    cmd->reserved0 = 0;
+
+    const size_t copy_bytes = static_cast<size_t>(cmd->size_bytes);
+    if (copy_bytes && src->storage.size() >= copy_bytes) {
+      if (dst->storage.size() < copy_bytes) {
+        dst->storage.resize(copy_bytes);
+      }
+      std::memcpy(dst->storage.data(), src->storage.data(), copy_bytes);
+    }
+  } else if (dst->kind == ResourceKind::Texture2D) {
+    if (dst->dxgi_format != src->dxgi_format || dst->width == 0 || dst->height == 0) {
+      return E_INVALIDARG;
+    }
+
+    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_copy_texture2d>(AEROGPU_CMD_COPY_TEXTURE2D);
+    cmd->dst_texture = dst->handle;
+    cmd->src_texture = src->handle;
+    cmd->dst_mip_level = 0;
+    cmd->dst_array_layer = 0;
+    cmd->src_mip_level = 0;
+    cmd->src_array_layer = 0;
+    cmd->dst_x = 0;
+    cmd->dst_y = 0;
+    cmd->src_x = 0;
+    cmd->src_y = 0;
+    cmd->width = std::min(dst->width, src->width);
+    cmd->height = std::min(dst->height, src->height);
+    cmd->flags = AEROGPU_COPY_FLAG_NONE;
+    cmd->reserved0 = 0;
+
+    const uint32_t aerogpu_format = dxgi_format_to_aerogpu(src->dxgi_format);
+    const uint32_t bpp = bytes_per_pixel_aerogpu(aerogpu_format);
+    const size_t row_bytes = static_cast<size_t>(cmd->width) * bpp;
+    const size_t copy_rows = static_cast<size_t>(cmd->height);
+    if (!row_bytes || !copy_rows) {
+      return S_OK;
+    }
+
+    const size_t dst_required = copy_rows * static_cast<size_t>(dst->row_pitch_bytes);
+    const size_t src_required = copy_rows * static_cast<size_t>(src->row_pitch_bytes);
+    if (src->storage.size() < src_required) {
+      return S_OK;
+    }
+    if (dst->storage.size() < dst_required) {
+      dst->storage.resize(dst_required);
+    }
+    if (row_bytes > dst->row_pitch_bytes || row_bytes > src->row_pitch_bytes) {
+      return S_OK;
+    }
+
+    for (size_t y = 0; y < copy_rows; y++) {
+      std::memcpy(dst->storage.data() + y * dst->row_pitch_bytes,
+                  src->storage.data() + y * src->row_pitch_bytes,
+                  row_bytes);
+    }
+  }
+
+  return S_OK;
 }
 
 SIZE_T AEROGPU_APIENTRY CalcPrivateShaderSize(D3D10DDI_HDEVICE, const AEROGPU_DDIARG_CREATESHADER*) {
@@ -2954,6 +3276,11 @@ HRESULT AEROGPU_APIENTRY CreateDevice(D3D10DDI_HADAPTER hAdapter, const D3D10DDI
   funcs.pfnPresent = &Present;
   funcs.pfnFlush = &Flush;
   funcs.pfnRotateResourceIdentities = &RotateResourceIdentities;
+  funcs.pfnMap = &Map;
+  funcs.pfnUnmap = &Unmap;
+  funcs.pfnUpdateSubresourceUP = &UpdateSubresourceUP;
+  funcs.pfnCopyResource = &CopyResource;
+  funcs.pfnCopySubresourceRegion = &CopySubresourceRegion;
 
   // Map/unmap. Win7 D3D11 runtimes may use specialized entrypoints.
   funcs.pfnStagingResourceMap = &StagingResourceMap;

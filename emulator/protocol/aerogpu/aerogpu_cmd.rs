@@ -251,6 +251,7 @@ pub struct AerogpuCmdCopyBuffer {
 impl AerogpuCmdCopyBuffer {
     pub const SIZE_BYTES: usize = 48;
 }
+
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
 pub struct AerogpuCmdCopyTexture2d {
