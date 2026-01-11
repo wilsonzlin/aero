@@ -172,6 +172,8 @@ impl ValidationPath {
 struct ValidationState {
     saw_nonzero_report_id: bool,
     first_zero_report_path: Option<String>,
+    report_bits: BTreeMap<(HidReportKind, u32), u32>,
+    report_paths: BTreeMap<(HidReportKind, u32), String>,
 }
 
 impl ValidationState {
@@ -208,6 +210,40 @@ impl ValidationState {
     }
 }
 
+fn max_report_bytes_from_state(
+    state: &ValidationState,
+    kind: HidReportKind,
+) -> Result<u32, HidDescriptorError> {
+    let mut max = 0u32;
+    let mut found = false;
+
+    for ((k, report_id), &bits) in state.report_bits.iter() {
+        if *k != kind {
+            continue;
+        }
+
+        found = true;
+        let path = state
+            .report_paths
+            .get(&(*k, *report_id))
+            .map(String::as_str)
+            .unwrap_or("reportDescriptor");
+
+        let bytes = bits
+            .checked_add(7)
+            .ok_or_else(|| HidDescriptorError::at(path, "report bit length too large to round to bytes"))?
+            / 8;
+
+        max = max.max(bytes);
+    }
+
+    if found {
+        Ok(max)
+    } else {
+        Ok(0)
+    }
+}
+
 pub fn validate_collections(
     collections: &[HidCollectionInfo],
 ) -> Result<ValidationSummary, HidDescriptorError> {
@@ -220,12 +256,9 @@ pub fn validate_collections(
 
     Ok(ValidationSummary {
         has_report_ids: state.saw_nonzero_report_id,
-        max_input_report_bytes: u32::try_from(max_input_report_bytes(collections))
-            .unwrap_or(u32::MAX),
-        max_output_report_bytes: u32::try_from(max_output_report_bytes(collections))
-            .unwrap_or(u32::MAX),
-        max_feature_report_bytes: u32::try_from(max_feature_report_bytes(collections))
-            .unwrap_or(u32::MAX),
+        max_input_report_bytes: max_report_bytes_from_state(&state, HidReportKind::Input)?,
+        max_output_report_bytes: max_report_bytes_from_state(&state, HidReportKind::Output)?,
+        max_feature_report_bytes: max_report_bytes_from_state(&state, HidReportKind::Feature)?,
     })
 }
 
@@ -242,9 +275,27 @@ fn validate_collection(
         ));
     }
 
-    validate_report_list(&collection.input_reports, "inputReports", path, state)?;
-    validate_report_list(&collection.output_reports, "outputReports", path, state)?;
-    validate_report_list(&collection.feature_reports, "featureReports", path, state)?;
+    validate_report_list(
+        HidReportKind::Input,
+        &collection.input_reports,
+        "inputReports",
+        path,
+        state,
+    )?;
+    validate_report_list(
+        HidReportKind::Output,
+        &collection.output_reports,
+        "outputReports",
+        path,
+        state,
+    )?;
+    validate_report_list(
+        HidReportKind::Feature,
+        &collection.feature_reports,
+        "featureReports",
+        path,
+        state,
+    )?;
 
     for (child_idx, child) in collection.children.iter().enumerate() {
         path.push_indexed("children", child_idx);
@@ -256,6 +307,7 @@ fn validate_collection(
 }
 
 fn validate_report_list(
+    kind: HidReportKind,
     reports: &[HidReportInfo],
     segment: &str,
     path: &mut ValidationPath,
@@ -266,11 +318,19 @@ fn validate_report_list(
 
         let report_path = path.as_string();
         state.validate_report_id(report.report_id, &report_path)?;
+        state
+            .report_paths
+            .entry((kind, report.report_id))
+            .or_insert_with(|| report_path.clone());
 
         for (item_idx, item) in report.items.iter().enumerate() {
             path.push_indexed("items", item_idx);
             let item_path = path.as_string();
-            validate_report_item(item, &item_path)?;
+            let bits = validate_report_item(item, &item_path)?;
+            let entry = state.report_bits.entry((kind, report.report_id)).or_insert(0);
+            *entry = entry.checked_add(bits).ok_or_else(|| {
+                HidDescriptorError::at(&item_path, "total report bit length overflows u32")
+            })?;
             path.pop();
         }
 
@@ -279,7 +339,7 @@ fn validate_report_list(
     Ok(())
 }
 
-fn validate_report_item(item: &HidReportItem, path: &str) -> Result<(), HidDescriptorError> {
+fn validate_report_item(item: &HidReportItem, path: &str) -> Result<u32, HidDescriptorError> {
     if item.report_size == 0 || item.report_size > MAX_REPORT_SIZE_BITS {
         return Err(HidDescriptorError::at(
             path,
@@ -290,15 +350,18 @@ fn validate_report_item(item: &HidReportItem, path: &str) -> Result<(), HidDescr
         ));
     }
 
-    if item.report_size.checked_mul(item.report_count).is_none() {
-        return Err(HidDescriptorError::at(
-            path,
-            format!(
-                "reportSize*reportCount overflows u32 ({}*{})",
-                item.report_size, item.report_count
-            ),
-        ));
-    }
+    let bits = item
+        .report_size
+        .checked_mul(item.report_count)
+        .ok_or_else(|| {
+            HidDescriptorError::at(
+                path,
+                format!(
+                    "reportSize*reportCount overflows u32 ({}*{})",
+                    item.report_size, item.report_count
+                ),
+            )
+        })?;
 
     if item.report_count > MAX_REPORT_COUNT {
         return Err(HidDescriptorError::at(
@@ -362,7 +425,7 @@ fn validate_report_item(item: &HidReportItem, path: &str) -> Result<(), HidDescr
         }
     }
 
-    Ok(())
+    Ok(bits)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
