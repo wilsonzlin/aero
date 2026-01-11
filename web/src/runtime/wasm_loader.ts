@@ -83,6 +83,9 @@ export interface WasmApi {
 
             step_frames(frames: number): void;
             step_frame(): void;
+            /**
+             * Alias for {@link step_frame} retained for older call sites.
+             */
             tick_1ms(): void;
 
             irq_asserted(): boolean;

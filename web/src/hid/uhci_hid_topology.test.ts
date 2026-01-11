@@ -1,0 +1,77 @@
+import { describe, expect, it, vi } from "vitest";
+
+import { UhciHidTopologyManager, type UhciTopologyBridge } from "./uhci_hid_topology";
+
+function createFakeUhci(): UhciTopologyBridge & {
+  attach_hub: ReturnType<typeof vi.fn>;
+  detach_at_path: ReturnType<typeof vi.fn>;
+  attach_webhid_device: ReturnType<typeof vi.fn>;
+  attach_usb_hid_passthrough_device: ReturnType<typeof vi.fn>;
+} {
+  return {
+    attach_hub: vi.fn(),
+    detach_at_path: vi.fn(),
+    attach_webhid_device: vi.fn(),
+    attach_usb_hid_passthrough_device: vi.fn(),
+  };
+}
+
+describe("hid/UhciHidTopologyManager", () => {
+  it("defers device attachment until the UHCI bridge is available", () => {
+    const mgr = new UhciHidTopologyManager({ defaultHubPortCount: 16 });
+    const uhci = createFakeUhci();
+    const dev = { kind: "device" };
+
+    mgr.attachDevice(1, [0, 3], "webhid", dev);
+    expect(uhci.attach_hub).not.toHaveBeenCalled();
+
+    mgr.setUhciBridge(uhci);
+
+    expect(uhci.attach_hub).toHaveBeenCalledTimes(1);
+    expect(uhci.attach_hub).toHaveBeenCalledWith(0, 16);
+    expect(uhci.detach_at_path).toHaveBeenCalledWith([0, 3]);
+    expect(uhci.attach_webhid_device).toHaveBeenCalledWith([0, 3], dev);
+  });
+
+  it("uses explicit hub config when provided", () => {
+    const mgr = new UhciHidTopologyManager({ defaultHubPortCount: 16 });
+    const uhci = createFakeUhci();
+    const dev = { kind: "device" };
+
+    mgr.setHubConfig([0], 8);
+    mgr.attachDevice(1, [0, 2], "webhid", dev);
+    mgr.setUhciBridge(uhci);
+
+    expect(uhci.attach_hub).toHaveBeenCalledWith(0, 8);
+  });
+
+  it("detaches guest paths when devices are removed", () => {
+    const mgr = new UhciHidTopologyManager({ defaultHubPortCount: 16 });
+    const uhci = createFakeUhci();
+    const dev = { kind: "device" };
+
+    mgr.setUhciBridge(uhci);
+    mgr.attachDevice(1, [1], "usb-hid-passthrough", dev);
+    mgr.detachDevice(1);
+
+    // One detach for clearing on attach, one for explicit detach.
+    expect(uhci.detach_at_path).toHaveBeenCalledWith([1]);
+    expect(uhci.attach_usb_hid_passthrough_device).toHaveBeenCalledWith([1], dev);
+    expect(uhci.detach_at_path).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not re-attach hubs once attached", () => {
+    const mgr = new UhciHidTopologyManager({ defaultHubPortCount: 16 });
+    const uhci = createFakeUhci();
+    const dev = { kind: "device" };
+
+    mgr.setUhciBridge(uhci);
+    mgr.attachDevice(1, [0, 1], "webhid", dev);
+    expect(uhci.attach_hub).toHaveBeenCalledTimes(1);
+
+    // Updating the config after the hub has been attached should not replace it.
+    mgr.setHubConfig([0], 8);
+    expect(uhci.attach_hub).toHaveBeenCalledTimes(1);
+  });
+});
+

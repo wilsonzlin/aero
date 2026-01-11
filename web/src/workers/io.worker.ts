@@ -56,6 +56,7 @@ import {
   type HidRingAttachMessage,
   type HidSendReportMessage,
 } from "../hid/hid_proxy_protocol";
+import { UhciHidTopologyManager } from "../hid/uhci_hid_topology";
 import {
   isHidAttachHubMessage as isHidPassthroughAttachHubMessage,
   isHidAttachMessage as isHidPassthroughAttachMessage,
@@ -83,6 +84,7 @@ let role: WorkerRole = "io";
 let status!: Int32Array;
 let guestU8!: Uint8Array;
 let guestBase = 0;
+let guestSize = 0;
 
 let commandRing!: RingBuffer;
 let eventRing: RingBuffer | null = null;
@@ -123,12 +125,30 @@ let lastUsbSelected: UsbSelectedMessage | null = null;
 const WEBUSB_UHCI_IRQ_LINE = 11;
 const WEBUSB_UHCI_FRAMES_PER_TICK = 8;
 
+const uhciHidTopology = new UhciHidTopologyManager();
+
 function maybeInitUhciDevice(): void {
   if (webUsbUhciBridge || uhciDevice) return;
   const api = wasmApi;
   const mgr = deviceManager;
   if (!api || !mgr) return;
   if (!guestBase) return;
+
+  const Bridge = api.UhciControllerBridge;
+  if (Bridge) {
+    if (!guestSize) return;
+    try {
+      const bridge = new Bridge(guestBase >>> 0, guestSize >>> 0);
+      const dev = new UhciPciDevice({ bridge, irqSink: mgr.irqSink });
+      uhciDevice = dev;
+      mgr.registerPciDevice(dev);
+      mgr.addTickable(dev);
+      uhciHidTopology.setUhciBridge(bridge as unknown as any);
+    } catch (err) {
+      console.warn("[io.worker] Failed to initialize UHCI controller bridge", err);
+    }
+    return;
+  }
 
   const WebBridge = api.WebUsbUhciBridge;
   if (WebBridge) {
@@ -179,19 +199,6 @@ function maybeInitUhciDevice(): void {
       webUsbUhciIrqAsserted = false;
     }
     return;
-  }
-
-  const Bridge = api.UhciControllerBridge;
-  if (!Bridge) return;
-
-  try {
-    const bridge = new Bridge(guestBase >>> 0, guestU8.byteLength >>> 0);
-    const dev = new UhciPciDevice({ bridge, irqSink: mgr.irqSink });
-    uhciDevice = dev;
-    mgr.registerPciDevice(dev);
-    mgr.addTickable(dev);
-  } catch (err) {
-    console.warn("[io.worker] Failed to initialize UHCI controller bridge", err);
   }
 }
 
@@ -312,22 +319,23 @@ type HidPassthroughBridge = WebHidPassthroughBridge | UsbHidPassthroughBridge;
 
 class WasmHidGuestBridge implements HidGuestBridge {
   readonly #bridges = new Map<number, HidPassthroughBridge>();
-  readonly #guestPaths = new Map<number, GuestUsbPath>();
 
   constructor(
     private readonly api: WasmApi,
     private readonly host: HidHostSink,
+    private readonly uhciTopology: UhciHidTopologyManager,
   ) {}
 
   attach(msg: HidAttachMessage): void {
     this.detach({ type: "hid.detach", deviceId: msg.deviceId });
-    const guestPath = msg.guestPath ?? (msg.guestPort !== undefined ? [msg.guestPort] : undefined);
+    const guestPath = msg.guestPath ?? (msg.guestPort !== undefined ? ([msg.guestPort] as GuestUsbPath) : undefined);
 
     try {
       const UsbBridge = this.api.UsbHidPassthroughBridge;
       const synthesize = this.api.synthesize_webhid_report_descriptor;
 
       let bridge: HidPassthroughBridge;
+      let kind: "webhid" | "usb-hid-passthrough" = "webhid";
       if (UsbBridge && synthesize) {
         const reportDescriptorBytes = synthesize(msg.collections);
         bridge = new UsbBridge(
@@ -341,6 +349,7 @@ class WasmHidGuestBridge implements HidGuestBridge {
           undefined,
           undefined,
         );
+        kind = "usb-hid-passthrough";
       } else {
         bridge = new this.api.WebHidPassthroughBridge(
           msg.vendorId,
@@ -353,7 +362,9 @@ class WasmHidGuestBridge implements HidGuestBridge {
       }
 
       this.#bridges.set(msg.deviceId, bridge);
-      if (guestPath) this.#guestPaths.set(msg.deviceId, guestPath);
+      if (guestPath) {
+        this.uhciTopology.attachDevice(msg.deviceId, guestPath, kind, bridge);
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.host.error(`Failed to construct WebHID passthrough bridge: ${message}`, msg.deviceId);
@@ -365,7 +376,7 @@ class WasmHidGuestBridge implements HidGuestBridge {
     const existing = this.#bridges.get(msg.deviceId);
     if (!existing) return;
     this.#bridges.delete(msg.deviceId);
-    this.#guestPaths.delete(msg.deviceId);
+    this.uhciTopology.detachDevice(msg.deviceId);
     try {
       existing.free();
     } catch {
@@ -545,6 +556,8 @@ function findFirstSendableReport(
 
 function handleHidPassthroughAttachHub(msg: Extract<HidPassthroughMessage, { type: "hid:attachHub" }>): void {
   hidPassthroughHub = { guestPath: msg.guestPath, ...(msg.portCount !== undefined ? { portCount: msg.portCount } : {}) };
+  uhciHidTopology.setHubConfig(msg.guestPath, msg.portCount);
+  maybeInitUhciDevice();
   if (import.meta.env.DEV) {
     const hint = msg.portCount !== undefined ? ` ports=${msg.portCount}` : "";
     console.info(`[hid] attachHub path=${msg.guestPath.join(".")}${hint}`);
@@ -839,7 +852,7 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
         maybeInitUhciDevice();
 
         try {
-          const wasmHidGuest = new WasmHidGuestBridge(api, hidHostSink);
+          const wasmHidGuest = new WasmHidGuestBridge(api, hidHostSink, uhciHidTopology);
           // Replay any HID messages that arrived before WASM finished initializing so the
           // guest bridge sees a consistent device + input report stream.
           for (const attach of hidGuestInMemory.devices.values()) {
@@ -957,6 +970,7 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
       status = views.status;
       guestU8 = views.guestU8;
       guestBase = views.guestLayout.guest_base >>> 0;
+      guestSize = views.guestLayout.guest_size >>> 0;
       const regions = ringRegionsForWorker(role);
       commandRing = new RingBuffer(segments.control, regions.command.byteOffset);
       eventRing = new RingBuffer(segments.control, regions.event.byteOffset);
@@ -1670,6 +1684,7 @@ function shutdown(): void {
       usbUhciHarnessRuntime = null;
       uhciDevice?.destroy();
       uhciDevice = null;
+      uhciHidTopology.setUhciBridge(null);
       try {
         usbDemoApi?.free();
       } catch {
