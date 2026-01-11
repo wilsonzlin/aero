@@ -1030,6 +1030,74 @@ mod tests {
     }
 
     #[test]
+    fn maps_semantic_indices_with_same_name() {
+        let tex_hash = fnv1a_32(b"TEXCOORD");
+        let mut blob = Vec::new();
+        push_u32(&mut blob, AEROGPU_INPUT_LAYOUT_BLOB_MAGIC);
+        push_u32(&mut blob, AEROGPU_INPUT_LAYOUT_BLOB_VERSION);
+        push_u32(&mut blob, 2); // element_count
+        push_u32(&mut blob, 0); // reserved0
+
+        // TEXCOORD0: float2 @ offset 0
+        push_u32(&mut blob, tex_hash);
+        push_u32(&mut blob, 0); // semantic index
+        push_u32(&mut blob, 16); // R32G32_FLOAT
+        push_u32(&mut blob, 0); // slot 0
+        push_u32(&mut blob, 0); // offset 0
+        push_u32(&mut blob, 0); // per-vertex
+        push_u32(&mut blob, 0); // step rate
+
+        // TEXCOORD1: float2 @ offset 8
+        push_u32(&mut blob, tex_hash);
+        push_u32(&mut blob, 1); // semantic index
+        push_u32(&mut blob, 16); // R32G32_FLOAT
+        push_u32(&mut blob, 0); // slot 0
+        push_u32(&mut blob, 8); // offset 8
+        push_u32(&mut blob, 0); // per-vertex
+        push_u32(&mut blob, 0); // step rate
+
+        let layout = InputLayoutDesc::parse(&blob).expect("parse failed");
+
+        // Use "swapped" registers so we can verify mapping is keyed by semantic_index (not just
+        // semantic name or element order).
+        let signature = [
+            VsInputSignatureElement {
+                semantic_name_hash: tex_hash,
+                semantic_index: 0,
+                input_register: 1,
+            },
+            VsInputSignatureElement {
+                semantic_name_hash: tex_hash,
+                semantic_index: 1,
+                input_register: 0,
+            },
+        ];
+
+        let strides = [16u32];
+        let binding = InputLayoutBinding::new(&layout, &strides);
+        let mapped =
+            map_layout_to_shader_locations_compact(&binding, &signature).expect("compact mapping");
+
+        assert_eq!(mapped.buffers.len(), 1);
+        assert_eq!(mapped.d3d_slot_to_wgpu_slot.get(&0), Some(&0));
+        assert_eq!(mapped.buffers[0].array_stride, 16);
+
+        let attrs = &mapped.buffers[0].attributes;
+        assert_eq!(attrs.len(), 2);
+        let mut loc_at_0 = None;
+        let mut loc_at_8 = None;
+        for a in attrs {
+            match a.offset {
+                0 => loc_at_0 = Some(a.shader_location),
+                8 => loc_at_8 = Some(a.shader_location),
+                _ => {}
+            }
+        }
+        assert_eq!(loc_at_0, Some(1));
+        assert_eq!(loc_at_8, Some(0));
+    }
+
+    #[test]
     fn rejects_layout_with_too_many_vertex_attributes() {
         let element_count = MAX_WGPU_VERTEX_ATTRIBUTES + 1;
 
