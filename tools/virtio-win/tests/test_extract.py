@@ -299,6 +299,23 @@ class VirtioWinExtractTest(unittest.TestCase):
                     expect_pycdlib_path_mode="iso",
                 )
 
+                if have_7z:
+                    out_iso_7z_root = tmp_path / "out-7z-iso"
+                    subprocess.run(
+                        [
+                            sys.executable,
+                            str(extract_script),
+                            "--virtio-win-iso",
+                            str(iso_iso_path),
+                            "--out-root",
+                            str(out_iso_7z_root),
+                            "--backend",
+                            "7z",
+                        ],
+                        check=True,
+                    )
+                    self._assert_extract_output(out_root=out_iso_7z_root, iso_path=iso_iso_path, expect_backend="7z")
+
 
 if __name__ == "__main__":
     unittest.main()

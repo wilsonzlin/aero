@@ -235,6 +235,31 @@ def _strip_iso9660_version_suffix(name: str) -> str:
     return base
 
 
+def _normalize_iso9660_extracted_filenames(out_root: Path) -> None:
+    """
+    Best-effort cleanup after extracting ISO-9660-only paths.
+
+    Some tooling (notably 7z when no Joliet/Rock Ridge is present) will extract files
+    with ISO-9660 version suffixes like `FOO.TXT;1`. Those filenames are surprising to
+    downstream tooling (and Windows), so normalize them in-place.
+    """
+
+    for path in sorted(out_root.rglob("*"), key=lambda p: len(p.parts), reverse=True):
+        if not path.is_file():
+            continue
+        normalized = _strip_iso9660_version_suffix(path.name)
+        if normalized == path.name:
+            continue
+        dst = path.with_name(normalized)
+        if dst.exists():
+            raise SystemExit(
+                "ISO-9660 filename normalization would overwrite an existing file:\n"
+                f"- from: {path}\n"
+                f"- to  : {dst}"
+            )
+        path.rename(dst)
+
+
 def _safe_out_path(out_root: Path, dest_rel_posix: str) -> Path:
     """
     Turn an ISO-relative path (using `/` separators) into a safe on-disk output path.
@@ -564,6 +589,11 @@ def main() -> int:
             targets, missing_optional = _select_extract_targets(tree)
 
             # Root-level license/notice files (best-effort).
+            needs_iso9660_normalization = any(
+                (not is_folder.get(p, False))
+                and (_strip_iso9660_version_suffix(p.split("/")[-1]) != p.split("/")[-1])
+                for p in paths_norm
+            )
             for p in paths_norm:
                 if "/" in p:
                     continue
@@ -576,6 +606,10 @@ def main() -> int:
 
             extra_root_files = extracted_notice_files + extracted_metadata_files
             _extract_with_7z(sevenz, iso_path, out_root, targets, extra_root_files, sep_for_7z)
+            if needs_iso9660_normalization:
+                _normalize_iso9660_extracted_filenames(out_root)
+                extracted_notice_files = [_strip_iso9660_version_suffix(p) for p in extracted_notice_files]
+                extracted_metadata_files = [_strip_iso9660_version_suffix(p) for p in extracted_metadata_files]
         except subprocess.CalledProcessError as e:
             # In auto mode, fall back to a pure-Python extractor if 7z is present but
             # can't read the ISO on this platform.
