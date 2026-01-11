@@ -266,7 +266,9 @@ export interface WasmApi {
     /**
      * Legacy deterministic stub VM used for snapshotting demos.
      *
-     * Deprecated in favor of `Machine` (the canonical full-system VM).
+     * Deprecated in favor of `Machine` (the canonical full-system VM). This is now implemented as
+     * a thin wrapper around the canonical `aero_machine::Machine` so that snapshot demos exercise
+     * the real VM core.
      */
     DemoVm: new (ramSizeBytes: number) => {
         run_steps(steps: number): void;
