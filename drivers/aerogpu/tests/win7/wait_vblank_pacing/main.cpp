@@ -297,6 +297,14 @@ static int RunWaitVblankPacing(int argc, char** argv) {
   }
   h_adapter = open.hAdapter;
 
+  aerogpu_test::PrintfStdout(
+      "INFO: %s: D3DKMT: hAdapter=0x%08X VidPnSourceId=%u LUID=0x%08lX%08lX (target VidPnSourceId=0)",
+      kTestName,
+      (unsigned)open.hAdapter,
+      (unsigned)open.VidPnSourceId,
+      (unsigned long)open.AdapterLuid.HighPart,
+      (unsigned long)open.AdapterLuid.LowPart);
+
   if (open.VidPnSourceId != 0) {
     aerogpu_test::PrintfStdout(
         "INFO: %s: OpenAdapterFromHdc returned VidPnSourceId=%u (test targets VidPnSourceId=0)",
