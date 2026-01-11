@@ -191,20 +191,7 @@ jobs:
           locked: always
 
       - name: Verify Cargo.lock files are present and in sync
-        run: |
-          set -euo pipefail
-          # Use `cargo metadata --locked` as the drift check.
-          #
-          # Important: do not add `--no-deps` here. `cargo metadata --locked --no-deps` can
-          # succeed even when `Cargo.toml` and `Cargo.lock` are out of sync, which would
-          # defeat the drift check.
-          #
-          # Note: `cargo generate-lockfile` is an updater (like `cargo update`) and will
-          # intentionally re-resolve to the latest compatible versions. Using it with
-          # `--locked` can make CI flaky when crates are published between runs.
-          cargo metadata ${{ steps.setup-rust.outputs.cargo_locked_flag }} --format-version 1 >/dev/null
-          cargo metadata ${{ steps.setup-rust.outputs.cargo_locked_flag }} --format-version 1 --manifest-path tools/packaging/aero_packager/Cargo.toml >/dev/null
-          cargo metadata ${{ steps.setup-rust.outputs.cargo_locked_flag }} --format-version 1 --manifest-path server/disk-gateway/Cargo.toml >/dev/null
+        run: scripts/ci/check-cargo-lockfiles.sh
 
       - name: Check workspace crate naming policy
         run: python3 scripts/ci/check-crate-name-collisions.py
