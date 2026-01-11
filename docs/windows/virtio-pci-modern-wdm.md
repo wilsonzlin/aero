@@ -19,6 +19,17 @@ The transport-relevant requirements are:
 - **BAR0** is a **memory BAR** (MMIO), little-endian, size **>= 0x4000**.
 - All required virtio configuration windows are in **BAR0** (contract v1 fixed layout).
 
+Contract v1 fixed layout (all in BAR0):
+
+| Capability | `cfg_type` | Offset | Minimum length |
+|---|---:|---:|---:|
+| `COMMON_CFG` | 1 | `0x0000` | `0x0100` |
+| `NOTIFY_CFG` | 2 | `0x1000` | `0x0100` |
+| `ISR_CFG` | 3 | `0x2000` | `0x0020` |
+| `DEVICE_CFG` | 4 | `0x3000` | `0x0100` |
+
+`NOTIFY_CFG.notify_off_multiplier` is required to be `4` by contract v1.
+
 ### Required virtio vendor capabilities (PCI cap ID `0x09`)
 
 PCI config space must contain a valid capability list with these virtio vendor-specific capabilities:
@@ -181,7 +192,15 @@ StartDevice(_Inout_ DEVICE_CONTEXT *ctx, _In_ PIRP Irp)
     if (!NT_SUCCESS(status)) goto fail_unmap;
 
     // Allocate + program queues (queue memory allocation omitted).
-    // status = VirtioPciSetupQueue(&ctx->Vdev, 0, descPa, availPa, usedPa);
+    ULONGLONG descPa = /* DMA address of descriptor table */;
+    ULONGLONG availPa = /* DMA address of avail ring */;
+    ULONGLONG usedPa = /* DMA address of used ring */;
+
+    status = VirtioPciSetupQueue(&ctx->Vdev, /*QueueIndex=*/0, descPa, availPa, usedPa);
+    if (!NT_SUCCESS(status)) goto fail_reset;
+
+    // Notify after publishing avail entries (shown here for completeness).
+    VirtioPciNotifyQueue(&ctx->Vdev, /*QueueIndex=*/0);
 
     const CM_PARTIAL_RESOURCE_DESCRIPTOR *intDesc = FindTranslatedInterruptDesc(translated);
     status = VirtioIntxConnect(ctx->Self,
@@ -256,4 +275,3 @@ This is useful in environments that don’t have WDM PnP start IRPs/resources (e
 It can be built without WDF (`VIRTIO_CORE_USE_WDF=0`), but it exports several transport helper symbols
 (`VirtioPciResetDevice`, `VirtioPciNegotiateFeatures`, etc.) that overlap with `virtio_pci_modern_wdm`.
 Don’t link both into the same driver without resolving the symbol/name conflicts.
-
