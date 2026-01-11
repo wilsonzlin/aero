@@ -47,4 +47,5 @@ SOURCES= \
     virtiosnd_sg_tx.c \
     ..\..\..\windows\virtio\common\virtqueue_split.c \
     ..\..\..\windows\virtio\pci-modern\virtio_pci_modern_transport.c \
-    ..\..\..\win7\virtio\virtio-core\portable\virtio_pci_cap_parser.c
+    ..\..\..\win7\virtio\virtio-core\portable\virtio_pci_cap_parser.c \
+    ..\..\..\win7\virtio\virtio-core\portable\virtio_pci_identity.c

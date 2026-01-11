@@ -139,6 +139,7 @@
     <ClCompile Include="..\virtio\common\src\virtio_pci_contract.c" />
     <ClCompile Include="..\..\windows\virtio\pci-modern\virtio_pci_modern_transport.c" />
     <ClCompile Include="..\..\win7\virtio\virtio-core\portable\virtio_pci_cap_parser.c" />
+    <ClCompile Include="..\..\win7\virtio\virtio-core\portable\virtio_pci_identity.c" />
   </ItemGroup>
 
   <!--

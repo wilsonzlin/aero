@@ -93,6 +93,8 @@ Contract v1 (virtio-pci modern) references:
 - Aero contract identity validation (`AERO-W7-VIRTIO` v1 / PCI revision gating):
   - `drivers/windows7/virtio/common/src/virtio_pci_contract.c`
     (plus `drivers/windows7/virtio/common/include/virtio_pci_contract.h`)
+  - `drivers/win7/virtio/virtio-core/portable/virtio_pci_identity.c`
+    (plus `drivers/win7/virtio/virtio-core/portable/virtio_pci_identity.h`)
 - Split virtqueue implementation:
   - `drivers/windows/virtio/common/virtqueue_split.c` (plus `drivers/windows/virtio/common/virtqueue_split.h`)
 - Virtio PCI capability parsing:
