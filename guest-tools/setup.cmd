@@ -198,7 +198,7 @@ call :log ""
 call :log "==================== Summary ===================="
 call :log "OS architecture: %OS_ARCH%"
 call :log "Storage service: %AERO_VIRTIO_BLK_SERVICE%"
-call :log "Seeded HWIDs:     %AERO_VIRTIO_BLK_HWIDS%"
+call :log Seeded HWIDs: %AERO_VIRTIO_BLK_HWIDS%
 if "%CHANGED_TESTSIGNING%"=="1" (
   call :log "testsigning:      enabled by this run"
 ) else (
