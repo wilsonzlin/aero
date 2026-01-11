@@ -22,6 +22,14 @@ import {
   parseTCP,
   parseUDP,
 } from "./packets.js";
+import {
+  L2_TUNNEL_SUBPROTOCOL,
+  L2_TUNNEL_TYPE_FRAME,
+  L2_TUNNEL_TYPE_PING,
+  L2_TUNNEL_TYPE_PONG,
+  decodeL2Message,
+  encodeL2Message,
+} from "./l2_tunnel_proto.js";
 
 const ETHERTYPE_ARP = 0x0806;
 const ETHERTYPE_IPV4 = 0x0800;
@@ -61,7 +69,7 @@ class FrameQueue {
 }
 
 async function connectWebSocket(url) {
-  const ws = new WebSocket(url);
+  const ws = new WebSocket(url, L2_TUNNEL_SUBPROTOCOL);
   ws.binaryType = "nodebuffer";
   await new Promise((resolve, reject) => {
     ws.on("open", resolve);
@@ -91,11 +99,25 @@ async function runNetworkingProbe({
 
   ws.on("message", (msg) => {
     const buf = Buffer.isBuffer(msg) ? msg : Buffer.from(msg);
-    frames.push(buf);
+    let decoded;
+    try {
+      decoded = decodeL2Message(buf);
+    } catch {
+      return;
+    }
+
+    if (decoded.type === L2_TUNNEL_TYPE_FRAME) {
+      frames.push(Buffer.from(decoded.payload));
+      return;
+    }
+
+    if (decoded.type === L2_TUNNEL_TYPE_PING) {
+      ws.send(encodeL2Message(L2_TUNNEL_TYPE_PONG, decoded.payload));
+    }
   });
 
   function sendFrame(frameBuf) {
-    ws.send(frameBuf);
+    ws.send(encodeL2Message(L2_TUNNEL_TYPE_FRAME, frameBuf));
   }
 
   async function waitFor(predicate, timeoutMs = 2000) {

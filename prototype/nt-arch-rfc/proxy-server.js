@@ -22,6 +22,14 @@ import {
   parseTCP,
   parseUDP,
 } from "./packets.js";
+import {
+  L2_TUNNEL_SUBPROTOCOL,
+  L2_TUNNEL_TYPE_FRAME,
+  L2_TUNNEL_TYPE_PING,
+  L2_TUNNEL_TYPE_PONG,
+  decodeL2Message,
+  encodeL2Message,
+} from "./l2_tunnel_proto.js";
 
 const ETHERTYPE_ARP = 0x0806;
 const ETHERTYPE_IPV4 = 0x0800;
@@ -47,7 +55,15 @@ async function startProxyServer({
   const gatewayIpBuf = ipToBuffer(gatewayIp);
   const tcpForwardMap = normalizeTcpForwardMap(tcpForward);
 
-  const wss = new WebSocketServer({ host, port });
+  const wss = new WebSocketServer({
+    host,
+    port,
+    handleProtocols: (protocols) => {
+      // Match the normative protocol requirement from docs/l2-tunnel-protocol.md.
+      if (protocols.has(L2_TUNNEL_SUBPROTOCOL)) return L2_TUNNEL_SUBPROTOCOL;
+      return false;
+    },
+  });
   await once(wss, "listening");
 
   const address = wss.address();
@@ -59,7 +75,7 @@ async function startProxyServer({
     const tcpConns = new Map(); // key: `${clientIp}:${clientPort}->${dstIp}:${dstPort}`
 
     function sendEthernet({ dstMac, srcMac, ethertype, payload }) {
-      ws.send(encodeEthernetFrame({ dstMac, srcMac, ethertype, payload }));
+      ws.send(encodeL2Message(L2_TUNNEL_TYPE_FRAME, encodeEthernetFrame({ dstMac, srcMac, ethertype, payload })));
     }
 
     function sendArpReply({ requestEth, requestArp }) {
@@ -222,7 +238,22 @@ async function startProxyServer({
     }
 
     ws.on("message", (msg) => {
-      const frame = Buffer.isBuffer(msg) ? msg : Buffer.from(msg);
+      const raw = Buffer.isBuffer(msg) ? msg : Buffer.from(msg);
+      let decoded;
+      try {
+        decoded = decodeL2Message(raw);
+      } catch {
+        return;
+      }
+
+      if (decoded.type === L2_TUNNEL_TYPE_PING) {
+        ws.send(encodeL2Message(L2_TUNNEL_TYPE_PONG, decoded.payload));
+        return;
+      }
+
+      if (decoded.type !== L2_TUNNEL_TYPE_FRAME) return;
+
+      const frame = decoded.payload;
       let eth;
       try {
         eth = parseEthernetFrame(frame);
