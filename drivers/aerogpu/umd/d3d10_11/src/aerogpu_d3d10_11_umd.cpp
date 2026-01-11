@@ -1906,7 +1906,6 @@ HRESULT AeroGpuWaitForFence(AeroGpuDevice* dev, uint64_t fence, uint32_t timeout
   const UINT64 fence_values[1] = {fence};
 
   D3DKMT_WAITFORSYNCHRONIZATIONOBJECT args{};
-  args.hAdapter = dev->kmt_adapter;
   args.ObjectCount = 1;
   args.ObjectHandleArray = handles;
   args.FenceValueArray = fence_values;
