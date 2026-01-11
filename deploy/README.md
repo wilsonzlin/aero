@@ -411,6 +411,11 @@ WebSocket:
 Auth note: `/l2` is authenticated using the same `aero_session` cookie issued by the gateway at
 `POST /session` (similar to `/tcp`). Create a session before opening the WebSocket.
 
+Endpoint discovery note: browser clients should treat the gateway as the canonical bootstrap API and
+avoid hardcoding `/l2`. The `POST /session` response includes `endpoints.l2` (a same-origin path)
+and `limits.l2` (payload size caps) so the frontend can connect and tune buffering without baking in
+paths or protocol constants.
+
 This endpoint is intended for the “Option C” architecture (tunneling Ethernet
 frames to a server-side network stack / NAT / policy layer).
 
