@@ -59,6 +59,8 @@ export const AerogpuCmdOpcode = {
   DestroyResource: 0x102,
   ResourceDirtyRange: 0x103,
   UploadResource: 0x104,
+  CopyBuffer: 0x105,
+  CopyTexture2d: 0x106,
 
   CreateShaderDxbc: 0x200,
   DestroyShader: 0x201,
@@ -132,6 +134,9 @@ export const AEROGPU_RESOURCE_USAGE_RENDER_TARGET = 1 << 4;
 export const AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL = 1 << 5;
 export const AEROGPU_RESOURCE_USAGE_SCANOUT = 1 << 6;
 
+export const AEROGPU_COPY_FLAG_NONE = 0;
+export const AEROGPU_COPY_FLAG_WRITEBACK_DST = 1 << 0;
+
 export const AEROGPU_MAX_RENDER_TARGETS = 8;
 
 export const AEROGPU_INPUT_LAYOUT_BLOB_MAGIC = 0x59414c49; // "ILAY" LE
@@ -165,6 +170,8 @@ export const AEROGPU_CMD_CREATE_TEXTURE2D_SIZE = 56;
 export const AEROGPU_CMD_DESTROY_RESOURCE_SIZE = 16;
 export const AEROGPU_CMD_RESOURCE_DIRTY_RANGE_SIZE = 32;
 export const AEROGPU_CMD_UPLOAD_RESOURCE_SIZE = 32;
+export const AEROGPU_CMD_COPY_BUFFER_SIZE = 48;
+export const AEROGPU_CMD_COPY_TEXTURE2D_SIZE = 64;
 export const AEROGPU_CMD_CREATE_SHADER_DXBC_SIZE = 24;
 export const AEROGPU_CMD_DESTROY_SHADER_SIZE = 16;
 export const AEROGPU_CMD_BIND_SHADERS_SIZE = 24;

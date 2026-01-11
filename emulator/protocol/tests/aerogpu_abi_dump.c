@@ -22,6 +22,8 @@ int main(void) {
   PRINT_SIZE("aerogpu_cmd_destroy_resource", struct aerogpu_cmd_destroy_resource);
   PRINT_SIZE("aerogpu_cmd_resource_dirty_range", struct aerogpu_cmd_resource_dirty_range);
   PRINT_SIZE("aerogpu_cmd_upload_resource", struct aerogpu_cmd_upload_resource);
+  PRINT_SIZE("aerogpu_cmd_copy_buffer", struct aerogpu_cmd_copy_buffer);
+  PRINT_SIZE("aerogpu_cmd_copy_texture2d", struct aerogpu_cmd_copy_texture2d);
   PRINT_SIZE("aerogpu_cmd_create_shader_dxbc", struct aerogpu_cmd_create_shader_dxbc);
   PRINT_SIZE("aerogpu_cmd_destroy_shader", struct aerogpu_cmd_destroy_shader);
   PRINT_SIZE("aerogpu_cmd_bind_shaders", struct aerogpu_cmd_bind_shaders);
@@ -168,6 +170,7 @@ int main(void) {
   PRINT_CONST(AEROGPU_MMIO_REG_DOORBELL);
   PRINT_CONST(AEROGPU_FEATURE_FENCE_PAGE);
   PRINT_CONST(AEROGPU_FEATURE_VBLANK);
+  PRINT_CONST(AEROGPU_FEATURE_TRANSFER);
   PRINT_CONST(AEROGPU_RING_CONTROL_ENABLE);
   PRINT_CONST(AEROGPU_IRQ_FENCE);
   PRINT_CONST(AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO);
@@ -188,6 +191,9 @@ int main(void) {
   PRINT_CONST(AEROGPU_RESOURCE_USAGE_RENDER_TARGET);
   PRINT_CONST(AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL);
   PRINT_CONST(AEROGPU_RESOURCE_USAGE_SCANOUT);
+
+  PRINT_CONST(AEROGPU_COPY_FLAG_NONE);
+  PRINT_CONST(AEROGPU_COPY_FLAG_WRITEBACK_DST);
 
   PRINT_CONST(AEROGPU_MAX_RENDER_TARGETS);
 

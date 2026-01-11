@@ -169,6 +169,9 @@ pub const AEROGPU_RESOURCE_USAGE_RENDER_TARGET: u32 = 1u32 << 4;
 pub const AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL: u32 = 1u32 << 5;
 pub const AEROGPU_RESOURCE_USAGE_SCANOUT: u32 = 1u32 << 6;
 
+pub const AEROGPU_COPY_FLAG_NONE: u32 = 0;
+pub const AEROGPU_COPY_FLAG_WRITEBACK_DST: u32 = 1u32 << 0;
+
 /* --------------------------- Resource management -------------------------- */
 
 #[repr(C, packed)]
@@ -230,6 +233,39 @@ pub struct AerogpuCmdUploadResource {
 
 impl AerogpuCmdUploadResource {
     pub const SIZE_BYTES: usize = 32;
+}
+
+#[repr(C, packed)]
+#[derive(Clone, Copy)]
+pub struct AerogpuCmdCopyBuffer {
+    pub hdr: AerogpuCmdHdr,
+    pub dst_buffer: AerogpuHandle,
+    pub src_buffer: AerogpuHandle,
+    pub dst_offset_bytes: u64,
+    pub src_offset_bytes: u64,
+    pub size_bytes: u64,
+    pub flags: u32,
+    pub reserved0: u32,
+}
+
+#[repr(C, packed)]
+#[derive(Clone, Copy)]
+pub struct AerogpuCmdCopyTexture2d {
+    pub hdr: AerogpuCmdHdr,
+    pub dst_texture: AerogpuHandle,
+    pub src_texture: AerogpuHandle,
+    pub dst_mip_level: u32,
+    pub dst_array_layer: u32,
+    pub src_mip_level: u32,
+    pub src_array_layer: u32,
+    pub dst_x: u32,
+    pub dst_y: u32,
+    pub src_x: u32,
+    pub src_y: u32,
+    pub width: u32,
+    pub height: u32,
+    pub flags: u32,
+    pub reserved0: u32,
 }
 /* -------------------------------- Shaders -------------------------------- */
 

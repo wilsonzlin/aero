@@ -27,6 +27,8 @@ import {
   AEROGPU_CMD_PRESENT_EX_SIZE,
   AEROGPU_CMD_PRESENT_SIZE,
   AEROGPU_CMD_RESOURCE_DIRTY_RANGE_SIZE,
+  AEROGPU_CMD_COPY_BUFFER_SIZE,
+  AEROGPU_CMD_COPY_TEXTURE2D_SIZE,
   AEROGPU_CMD_SET_BLEND_STATE_SIZE,
   AEROGPU_CMD_SET_DEPTH_STENCIL_STATE_SIZE,
   AEROGPU_CMD_SET_INDEX_BUFFER_SIZE,
@@ -52,6 +54,8 @@ import {
   AEROGPU_CLEAR_COLOR,
   AEROGPU_CLEAR_DEPTH,
   AEROGPU_CLEAR_STENCIL,
+  AEROGPU_COPY_FLAG_NONE,
+  AEROGPU_COPY_FLAG_WRITEBACK_DST,
   AEROGPU_INPUT_LAYOUT_BLOB_HEADER_OFF_ELEMENT_COUNT,
   AEROGPU_INPUT_LAYOUT_BLOB_HEADER_OFF_MAGIC,
   AEROGPU_INPUT_LAYOUT_BLOB_HEADER_OFF_RESERVED0,
@@ -88,6 +92,7 @@ import {
   AEROGPU_ABI_MINOR,
   AEROGPU_ABI_VERSION_U32,
   AEROGPU_FEATURE_FENCE_PAGE,
+  AEROGPU_FEATURE_TRANSFER,
   AEROGPU_FEATURE_VBLANK,
   AEROGPU_IRQ_FENCE,
   AEROGPU_MMIO_MAGIC,
@@ -281,6 +286,8 @@ test("TypeScript layout matches C headers", () => {
   assert.equal(size("aerogpu_cmd_destroy_resource"), AEROGPU_CMD_DESTROY_RESOURCE_SIZE);
   assert.equal(size("aerogpu_cmd_resource_dirty_range"), AEROGPU_CMD_RESOURCE_DIRTY_RANGE_SIZE);
   assert.equal(size("aerogpu_cmd_upload_resource"), AEROGPU_CMD_UPLOAD_RESOURCE_SIZE);
+  assert.equal(size("aerogpu_cmd_copy_buffer"), AEROGPU_CMD_COPY_BUFFER_SIZE);
+  assert.equal(size("aerogpu_cmd_copy_texture2d"), AEROGPU_CMD_COPY_TEXTURE2D_SIZE);
   assert.equal(size("aerogpu_cmd_create_shader_dxbc"), AEROGPU_CMD_CREATE_SHADER_DXBC_SIZE);
   assert.equal(size("aerogpu_cmd_destroy_shader"), AEROGPU_CMD_DESTROY_SHADER_SIZE);
   assert.equal(size("aerogpu_cmd_bind_shaders"), AEROGPU_CMD_BIND_SHADERS_SIZE);
@@ -434,6 +441,7 @@ test("TypeScript layout matches C headers", () => {
   assert.equal(konst("AEROGPU_MMIO_REG_DOORBELL"), BigInt(AEROGPU_MMIO_REG_DOORBELL));
   assert.equal(konst("AEROGPU_FEATURE_FENCE_PAGE"), AEROGPU_FEATURE_FENCE_PAGE);
   assert.equal(konst("AEROGPU_FEATURE_VBLANK"), AEROGPU_FEATURE_VBLANK);
+  assert.equal(konst("AEROGPU_FEATURE_TRANSFER"), AEROGPU_FEATURE_TRANSFER);
   assert.equal(konst("AEROGPU_RING_CONTROL_ENABLE"), BigInt(AEROGPU_RING_CONTROL_ENABLE));
   assert.equal(konst("AEROGPU_IRQ_FENCE"), BigInt(AEROGPU_IRQ_FENCE));
   assert.equal(
@@ -460,6 +468,9 @@ test("TypeScript layout matches C headers", () => {
   assert.equal(konst("AEROGPU_RESOURCE_USAGE_RENDER_TARGET"), BigInt(AEROGPU_RESOURCE_USAGE_RENDER_TARGET));
   assert.equal(konst("AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL"), BigInt(AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL));
   assert.equal(konst("AEROGPU_RESOURCE_USAGE_SCANOUT"), BigInt(AEROGPU_RESOURCE_USAGE_SCANOUT));
+
+  assert.equal(konst("AEROGPU_COPY_FLAG_NONE"), BigInt(AEROGPU_COPY_FLAG_NONE));
+  assert.equal(konst("AEROGPU_COPY_FLAG_WRITEBACK_DST"), BigInt(AEROGPU_COPY_FLAG_WRITEBACK_DST));
 
   assert.equal(konst("AEROGPU_MAX_RENDER_TARGETS"), BigInt(AEROGPU_MAX_RENDER_TARGETS));
   const cOpcodeConsts = parseCcmdOpcodeConstNames();

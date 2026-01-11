@@ -5,30 +5,30 @@ use std::sync::OnceLock;
 
 use aero_protocol::aerogpu::aerogpu_cmd::{
     decode_cmd_hdr_le, AerogpuBlendState, AerogpuCmdBindShaders, AerogpuCmdClear,
-    AerogpuCmdCreateBuffer, AerogpuCmdCreateInputLayout, AerogpuCmdCreateShaderDxbc,
-    AerogpuCmdCreateTexture2d, AerogpuCmdDestroyInputLayout, AerogpuCmdDestroyResource,
-    AerogpuCmdDestroyShader, AerogpuCmdDraw, AerogpuCmdDrawIndexed, AerogpuCmdExportSharedSurface,
-    AerogpuCmdFlush, AerogpuCmdHdr, AerogpuCmdImportSharedSurface, AerogpuCmdOpcode,
-    AerogpuCmdPresent, AerogpuCmdPresentEx, AerogpuCmdResourceDirtyRange, AerogpuCmdSetBlendState,
-    AerogpuCmdSetDepthStencilState, AerogpuCmdSetIndexBuffer, AerogpuCmdSetInputLayout,
-    AerogpuCmdSetPrimitiveTopology, AerogpuCmdSetRasterizerState, AerogpuCmdSetRenderState,
-    AerogpuCmdSetRenderTargets, AerogpuCmdSetSamplerState, AerogpuCmdSetScissor,
-    AerogpuCmdSetShaderConstantsF, AerogpuCmdSetTexture, AerogpuCmdSetVertexBuffers,
-    AerogpuCmdSetViewport, AerogpuCmdStreamFlags, AerogpuCmdStreamHeader, AerogpuCmdUploadResource,
+    AerogpuCmdCopyBuffer, AerogpuCmdCopyTexture2d, AerogpuCmdCreateBuffer, AerogpuCmdCreateInputLayout,
+    AerogpuCmdCreateShaderDxbc, AerogpuCmdCreateTexture2d, AerogpuCmdDestroyInputLayout,
+    AerogpuCmdDestroyResource, AerogpuCmdDestroyShader, AerogpuCmdDraw, AerogpuCmdDrawIndexed,
+    AerogpuCmdExportSharedSurface, AerogpuCmdFlush, AerogpuCmdHdr, AerogpuCmdImportSharedSurface,
+    AerogpuCmdOpcode, AerogpuCmdPresent, AerogpuCmdPresentEx, AerogpuCmdResourceDirtyRange,
+    AerogpuCmdSetBlendState, AerogpuCmdSetDepthStencilState, AerogpuCmdSetIndexBuffer,
+    AerogpuCmdSetInputLayout, AerogpuCmdSetPrimitiveTopology, AerogpuCmdSetRasterizerState,
+    AerogpuCmdSetRenderState, AerogpuCmdSetRenderTargets, AerogpuCmdSetSamplerState,
+    AerogpuCmdSetScissor, AerogpuCmdSetShaderConstantsF, AerogpuCmdSetTexture,
+    AerogpuCmdSetVertexBuffers, AerogpuCmdSetViewport, AerogpuCmdStreamFlags, AerogpuCmdStreamHeader,
+    AerogpuCmdUploadResource,
     AerogpuDepthStencilState, AerogpuInputLayoutBlobHeader, AerogpuInputLayoutElementDxgi,
     AerogpuPrimitiveTopology, AerogpuRasterizerState, AerogpuVertexBufferBinding,
     AEROGPU_CLEAR_COLOR, AEROGPU_CLEAR_DEPTH, AEROGPU_CLEAR_STENCIL, AEROGPU_CMD_STREAM_MAGIC,
-    AEROGPU_INPUT_LAYOUT_BLOB_MAGIC, AEROGPU_INPUT_LAYOUT_BLOB_VERSION, AEROGPU_MAX_RENDER_TARGETS,
-    AEROGPU_PRESENT_FLAG_NONE, AEROGPU_PRESENT_FLAG_VSYNC, AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER,
-    AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL, AEROGPU_RESOURCE_USAGE_INDEX_BUFFER,
-    AEROGPU_RESOURCE_USAGE_NONE, AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
-    AEROGPU_RESOURCE_USAGE_SCANOUT, AEROGPU_RESOURCE_USAGE_TEXTURE,
-    AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
+    AEROGPU_COPY_FLAG_NONE, AEROGPU_COPY_FLAG_WRITEBACK_DST, AEROGPU_INPUT_LAYOUT_BLOB_MAGIC,
+    AEROGPU_INPUT_LAYOUT_BLOB_VERSION, AEROGPU_MAX_RENDER_TARGETS, AEROGPU_PRESENT_FLAG_NONE,
+    AEROGPU_PRESENT_FLAG_VSYNC, AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER, AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL,
+    AEROGPU_RESOURCE_USAGE_INDEX_BUFFER, AEROGPU_RESOURCE_USAGE_NONE, AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+    AEROGPU_RESOURCE_USAGE_SCANOUT, AEROGPU_RESOURCE_USAGE_TEXTURE, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
 };
 use aero_protocol::aerogpu::aerogpu_pci::{
     parse_and_validate_abi_version_u32, AerogpuAbiError, AerogpuFormat, AEROGPU_ABI_MAJOR,
-    AEROGPU_ABI_MINOR, AEROGPU_ABI_VERSION_U32, AEROGPU_FEATURE_FENCE_PAGE, AEROGPU_FEATURE_VBLANK,
-    AEROGPU_IRQ_FENCE, AEROGPU_MMIO_MAGIC, AEROGPU_MMIO_REG_DOORBELL,
+    AEROGPU_ABI_MINOR, AEROGPU_ABI_VERSION_U32, AEROGPU_FEATURE_FENCE_PAGE, AEROGPU_FEATURE_TRANSFER,
+    AEROGPU_FEATURE_VBLANK, AEROGPU_IRQ_FENCE, AEROGPU_MMIO_MAGIC, AEROGPU_MMIO_REG_DOORBELL,
     AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS, AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO,
     AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_LO, AEROGPU_PCI_CLASS_CODE_DISPLAY_CONTROLLER,
     AEROGPU_PCI_DEVICE_ID, AEROGPU_PCI_PROG_IF, AEROGPU_PCI_SUBCLASS_VGA_COMPATIBLE,
@@ -353,6 +353,8 @@ fn rust_layout_matches_c_headers() {
         "aerogpu_cmd_resource_dirty_range"
     );
     assert_size!(AerogpuCmdUploadResource, "aerogpu_cmd_upload_resource");
+    assert_size!(AerogpuCmdCopyBuffer, "aerogpu_cmd_copy_buffer");
+    assert_size!(AerogpuCmdCopyTexture2d, "aerogpu_cmd_copy_texture2d");
     assert_size!(AerogpuCmdCreateShaderDxbc, "aerogpu_cmd_create_shader_dxbc");
     assert_size!(AerogpuCmdDestroyShader, "aerogpu_cmd_destroy_shader");
     assert_size!(AerogpuCmdBindShaders, "aerogpu_cmd_bind_shaders");
@@ -637,6 +639,10 @@ fn rust_layout_matches_c_headers() {
     );
     assert_eq!(abi.konst("AEROGPU_FEATURE_VBLANK"), AEROGPU_FEATURE_VBLANK);
     assert_eq!(
+        abi.konst("AEROGPU_FEATURE_TRANSFER"),
+        AEROGPU_FEATURE_TRANSFER
+    );
+    assert_eq!(
         abi.konst("AEROGPU_RING_CONTROL_ENABLE"),
         AEROGPU_RING_CONTROL_ENABLE as u64
     );
@@ -704,6 +710,13 @@ fn rust_layout_matches_c_headers() {
         abi.konst("AEROGPU_RESOURCE_USAGE_SCANOUT"),
         AEROGPU_RESOURCE_USAGE_SCANOUT as u64
     );
+
+    assert_eq!(abi.konst("AEROGPU_COPY_FLAG_NONE"), AEROGPU_COPY_FLAG_NONE as u64);
+    assert_eq!(
+        abi.konst("AEROGPU_COPY_FLAG_WRITEBACK_DST"),
+        AEROGPU_COPY_FLAG_WRITEBACK_DST as u64
+    );
+
     assert_eq!(abi.konst("AEROGPU_MAX_RENDER_TARGETS"), AEROGPU_MAX_RENDER_TARGETS as u64);
     for c_name in parse_c_cmd_opcode_const_names() {
         let expected_rust = upper_snake_to_pascal_case(
