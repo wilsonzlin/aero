@@ -68,6 +68,11 @@ aerogpu_add_win7_test(fence_state_sanity
 )
 target_link_libraries(fence_state_sanity PRIVATE user32 gdi32)
 
+aerogpu_add_win7_test(ring_state_sanity
+  ring_state_sanity/main.cpp
+)
+target_link_libraries(ring_state_sanity PRIVATE user32 gdi32)
+
 aerogpu_add_win7_test(vblank_wait_sanity
   vblank_wait_sanity/main.cpp
 )

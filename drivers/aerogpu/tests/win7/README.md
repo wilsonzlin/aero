@@ -31,7 +31,7 @@ Common flags:
 * `--no-validate-sharing` – for `d3d9ex_shared_surface`: skip cross-process pixel sharing readback.
 * `--producers=N` – for `d3d9ex_shared_surface_many_producers`: number of producer processes to spawn (default 8).
 * `--samples=N` – control sample count for pacing/sampling tests (defaults vary per test).
-* `--interval-ms=N` – for `vblank_state_sanity` and `fence_state_sanity`: delay between escape samples (default 100).
+* `--interval-ms=N` – for `vblank_state_sanity`, `fence_state_sanity`, and `ring_state_sanity`: delay between escape samples (default 100).
 * `--iterations=N` – iteration count for `d3d9ex_event_query` (query submissions; default 6) and `d3d9ex_submit_fence_stress` (submit iterations; default 200).
 * `--stress-iterations=N` – for `d3d9ex_event_query`: iterations per device in the multi-device stress phase (default 200).
 * `--process-stress` – for `d3d9ex_event_query`: run the stress phase as two separate processes instead of two threads (useful for reproducing multi-process fence contention).
@@ -42,7 +42,8 @@ Common flags:
 * `--require-umd` – require that the expected AeroGPU user-mode driver DLL is loaded in-process (useful when `--allow-*` flags are set).
 * `--require-agpu` – for tests with AGPU-only validation paths (e.g. ring descriptor/alloc table checks), fail instead of skipping when the active device/ring format is legacy.
 * `--display \\.\DISPLAYn` – for `vblank_wait`: pick a display (default: primary).
-* `--allow-remote` – skip tests that are not meaningful under RDP (`SM_REMOTESESSION=1`): `d3d9ex_dwm_probe`, `d3d9ex_submit_fence_stress`, `fence_state_sanity`, `dwm_flush_pacing`, `wait_vblank_pacing`, `vblank_wait`, `vblank_wait_pacing`, `vblank_wait_sanity`, `vblank_state_sanity`, `get_scanline_sanity`, `scanout_state_sanity`, `dump_createalloc_sanity`, `umd_private_sanity`, `d3d9_raster_status_sanity`, `d3d9_raster_status_pacing`.
+* `--ring-id=N` – for `ring_state_sanity`: which ring ID to dump (default 0).
+* `--allow-remote` – skip tests that are not meaningful under RDP (`SM_REMOTESESSION=1`): `d3d9ex_dwm_probe`, `d3d9ex_submit_fence_stress`, `fence_state_sanity`, `ring_state_sanity`, `dwm_flush_pacing`, `wait_vblank_pacing`, `vblank_wait`, `vblank_wait_pacing`, `vblank_wait_sanity`, `vblank_state_sanity`, `get_scanline_sanity`, `scanout_state_sanity`, `dump_createalloc_sanity`, `umd_private_sanity`, `d3d9_raster_status_sanity`, `d3d9_raster_status_pacing`.
 * `--help` / `/?` – print per-test usage.
 
 ## Layout
@@ -61,6 +62,7 @@ drivers/aerogpu/tests/win7/
   d3d9ex_dwm_ddi_sanity/
   d3d9ex_submit_fence_stress/
   fence_state_sanity/
+  ring_state_sanity/
   vblank_wait_sanity/
   wait_vblank_pacing/
   vblank_wait_pacing/
@@ -296,6 +298,7 @@ In a Win7 VM with AeroGPU installed and working correctly:
 * `d3d9ex_dwm_ddi_sanity` sanity-checks D3D9Ex/DDI calls used by DWM and common apps (`CheckDeviceState`, `WaitForVBlank`, GPU thread priority, resource residency) to ensure they are non-blocking and return expected values
 * `d3d9ex_submit_fence_stress` runs a tight `Clear` + `Issue(D3DISSUE_END)` + `PresentEx(D3DPRESENT_DONOTWAIT)` loop and validates that the AeroGPU D3D9 UMD reports **monotonic per-submission fences** via debug logs (captured with the DBWIN protocol); when possible it also cross-checks `AEROGPU_ESCAPE_OP_QUERY_FENCE` completion against the observed fence. On **AGPU** devices it additionally validates that the most recent PRESENT submission is marked with `AEROGPU_SUBMIT_FLAG_PRESENT` in the ring descriptor and that the submission includes a non-zero `alloc_table_gpa` (skipped on legacy devices unless `--require-agpu`/`--require-umd` are specified).
 * `fence_state_sanity` queries the KMD `QUERY_FENCE` escape repeatedly and validates that submitted/completed fences are monotonic and obey `completed <= submitted` (`--samples=N`, `--interval-ms=N`; skips if the escape is not supported)
+* `ring_state_sanity` dumps ring state via `AEROGPU_ESCAPE_OP_DUMP_RING_V2` and validates basic invariants (`cmd_gpa/cmd_size` pairing, AGPU `alloc_table_gpa/alloc_table_size` pairing, monotonic head/tail on AGPU) (`--ring-id=N`, `--samples=N`, `--interval-ms=N`; skips if the escape is not supported)
 * `vblank_wait_sanity` validates that `D3DKMTWaitForVerticalBlankEvent` blocks on vblank and does not show huge stalls (fails fast on missing/broken vblank interrupt wiring)
 * `wait_vblank_pacing` directly measures `D3DKMTWaitForVerticalBlankEvent()` pacing on VidPn source 0 (AeroGPU MVP) and fails on immediate returns (avg < 2ms) or stalls (max > 250ms). On a 60 Hz display it typically reports ~16.6ms.
 * `vblank_wait` directly measures `D3DKMTWaitForVerticalBlankEvent()` pacing on the selected display (default: primary) and fails on immediate returns (avg < 2ms) or stalls (max > 250ms). On a 60 Hz display it typically reports ~16.6ms.

@@ -896,6 +896,7 @@ int main(int argc, char** argv) {
       "d3d9ex_dwm_ddi_sanity",
       "d3d9ex_submit_fence_stress",
       "fence_state_sanity",
+      "ring_state_sanity",
       "vblank_wait_sanity",
       "vblank_wait",
       "wait_vblank_pacing",
