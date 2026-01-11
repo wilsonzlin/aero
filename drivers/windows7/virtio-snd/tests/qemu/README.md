@@ -47,7 +47,7 @@ References:
     - Note: this compatibility package is **not** included in the default CI/Guest Tools driver bundle
       (see `ci-package.json`). Build/package it manually (`Configuration=Legacy`) if you need it.
 - Important: `aero-virtio-snd.inf` is revision-gated and binds only to the Aero contract v1 HWID
-  (`PCI\VEN_1AF4&DEV_1059&REV_01`). If the device does not expose `DEV_1059` and `REV_01`, Windows will not
+  (`PCI\VEN_1AF4&DEV_1059&REV_01`). If the device does not expose that HWID, Windows will not
   bind this package until you adjust QEMU device options (see below).
 - Test signing enabled in the guest (or a properly production-signed driver package).
 

@@ -168,7 +168,7 @@ Virtio transport + protocol engines (AERO-W7-VIRTIO v1 modern transport):
   - `src/virtiosnd_intx.c`
 * `src/virtiosnd_queue_split.c` — split-ring virtqueue wrapper used by the virtio-snd engines
 * `src/virtiosnd_control.c` / `src/virtiosnd_tx.c` / `src/virtiosnd_rx.c` — control/TX/RX protocol engines
-* `drivers/windows7/virtio/common/src/virtio_pci_contract.c` — `AERO-W7-VIRTIO` v1 contract identity validation used at `START_DEVICE` (requires `DEV_1059` + `REV_01`)
+* `drivers/windows7/virtio/common/src/virtio_pci_contract.c` — `AERO-W7-VIRTIO` v1 contract identity validation used at `START_DEVICE` (requires `PCI\VEN_1AF4&DEV_1059&REV_01`)
 * Shared split-ring virtqueue implementation:
   - `drivers/windows/virtio/common/virtqueue_split.c`
 

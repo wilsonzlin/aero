@@ -53,7 +53,7 @@ This section is a convenience summary that MUST remain consistent with that cont
 The authoritative Windows driver-binding values are tracked in [`docs/windows-device-contract.md`](./windows-device-contract.md)
 and [`docs/windows-device-contract.json`](./windows-device-contract.json).
 
-If the device does not report `DEV_1059` and `REV_01`, the shipped INF will not bind. For QEMU, pass:
+If the device does not report the contract-v1 HWID `PCI\VEN_1AF4&DEV_1059&REV_01`, the shipped INF will not bind. For QEMU, pass:
 
 ```text
 -device virtio-sound-pci,disable-legacy=on,x-pci-revision=0x01
@@ -62,7 +62,7 @@ If the device does not report `DEV_1059` and `REV_01`, the shipped INF will not 
 For QEMU bring-up/regression (where the virtio-snd device may enumerate as transitional by default), the repo also
 contains an opt-in compatibility driver package:
 
-- `drivers/windows7/virtio-snd/inf/aero-virtio-snd-legacy.inf` (binds the transitional virtio-snd PCI ID)
+- `drivers/windows7/virtio-snd/inf/aero-virtio-snd-legacy.inf` (binds the transitional virtio-snd PCI ID `PCI\VEN_1AF4&DEV_1018`)
 - `virtiosnd_legacy.sys` (build with MSBuild `Configuration=Legacy`)
 
 ## Device Configuration
