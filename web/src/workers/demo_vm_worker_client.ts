@@ -4,6 +4,7 @@ import {
   type DemoVmWorkerMessage,
   type DemoVmWorkerRequest,
   type DemoVmWorkerSerialOutputLenResult,
+  type DemoVmWorkerSerialStatsResult,
   type DemoVmWorkerStepResult,
 } from "./demo_vm_worker_protocol";
 
@@ -56,6 +57,10 @@ export class DemoVmWorkerClient {
 
   async serialOutputLen(): Promise<DemoVmWorkerSerialOutputLenResult> {
     return await this.#rpc<DemoVmWorkerSerialOutputLenResult>({ type: "getSerialOutputLen" });
+  }
+
+  async serialStats(): Promise<DemoVmWorkerSerialStatsResult> {
+    return await this.#rpc<DemoVmWorkerSerialStatsResult>({ type: "getSerialStats" });
   }
 
   async snapshotFullToOpfs(path: string): Promise<DemoVmWorkerSerialOutputLenResult> {
@@ -128,4 +133,3 @@ export class DemoVmWorkerClient {
     }
   }
 }
-
