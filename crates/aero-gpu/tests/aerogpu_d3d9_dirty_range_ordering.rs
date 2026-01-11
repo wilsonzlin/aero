@@ -239,10 +239,12 @@ fn d3d9_dirty_range_flush_respects_ordering_with_interleaved_draws() {
     let alloc_table = AllocTable::new([(
         VB_ALLOC_ID,
         AllocEntry {
+            flags: 0,
             gpa: VB_GPA,
             size_bytes: 4096,
         },
-    )]);
+    )])
+    .expect("alloc table");
 
     let vs_bytes = assemble_vs_passthrough_pos();
     let ps_bytes = assemble_ps_solid_color_c0();

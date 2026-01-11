@@ -175,9 +175,9 @@ fn decode_alloc_table(bytes: &[u8]) -> Result<AllocTable, String> {
     }
 
     let stride = header.entry_stride_bytes as usize;
-    if stride < AerogpuAllocEntry::SIZE_BYTES {
+    if stride != AerogpuAllocEntry::SIZE_BYTES {
         return Err(format!(
-            "alloc table entry_stride_bytes={} too small (min {})",
+            "alloc table entry_stride_bytes={} does not match expected {}",
             header.entry_stride_bytes,
             AerogpuAllocEntry::SIZE_BYTES
         ));
@@ -205,6 +205,18 @@ fn decode_alloc_table(bytes: &[u8]) -> Result<AllocTable, String> {
         if entry.alloc_id == 0 {
             return Err(format!("alloc table entry {idx} has alloc_id=0"));
         }
+        if entry.gpa == 0 || entry.size_bytes == 0 {
+            return Err(format!(
+                "alloc table entry {idx} has invalid gpa/size (gpa=0x{:x}, size=0x{:x})",
+                entry.gpa, entry.size_bytes
+            ));
+        }
+        if entry.gpa.checked_add(entry.size_bytes).is_none() {
+            return Err(format!(
+                "alloc table entry {idx} gpa+size overflows (gpa=0x{:x}, size=0x{:x})",
+                entry.gpa, entry.size_bytes
+            ));
+        }
         if out.contains_key(&entry.alloc_id) {
             return Err(format!(
                 "alloc table contains duplicate alloc_id={}",
@@ -214,13 +226,14 @@ fn decode_alloc_table(bytes: &[u8]) -> Result<AllocTable, String> {
         out.insert(
             entry.alloc_id,
             AllocEntry {
+                flags: entry.flags,
                 gpa: entry.gpa,
                 size_bytes: entry.size_bytes,
             },
         );
     }
 
-    Ok(AllocTable::new(out))
+    AllocTable::new(out).map_err(|err| format!("invalid alloc table: {err}"))
 }
 
 #[cfg(feature = "aerogpu-native")]

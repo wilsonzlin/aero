@@ -1013,6 +1013,12 @@ fn decode_alloc_table(
             ));
             break;
         }
+        if entry.gpa.checked_add(entry.size_bytes).is_none() {
+            decode_errors.push(AeroGpuSubmissionDecodeError::AllocTable(
+                AeroGpuAllocTableDecodeError::AddressOverflow,
+            ));
+            break;
+        }
         if !seen.insert(entry.alloc_id) {
             decode_errors.push(AeroGpuSubmissionDecodeError::AllocTable(
                 AeroGpuAllocTableDecodeError::DuplicateAllocId,

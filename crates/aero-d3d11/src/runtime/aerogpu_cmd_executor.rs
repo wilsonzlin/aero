@@ -4005,9 +4005,27 @@ impl AllocTable {
         let mut map = HashMap::new();
         for &e in entries {
             if e.alloc_id == 0 {
-                continue;
+                bail!("alloc table entry has alloc_id=0");
             }
-            map.insert(e.alloc_id, e);
+            if e.gpa == 0 || e.size_bytes == 0 {
+                bail!(
+                    "alloc table entry {} has invalid gpa/size: gpa=0x{:x} size=0x{:x}",
+                    e.alloc_id,
+                    e.gpa,
+                    e.size_bytes
+                );
+            }
+            if e.gpa.checked_add(e.size_bytes).is_none() {
+                bail!(
+                    "alloc table entry {} overflows u64: gpa=0x{:x} size=0x{:x}",
+                    e.alloc_id,
+                    e.gpa,
+                    e.size_bytes
+                );
+            }
+            if map.insert(e.alloc_id, e).is_some() {
+                bail!("duplicate alloc_id {} in alloc table", e.alloc_id);
+            }
         }
         Ok(Self { entries: map })
     }

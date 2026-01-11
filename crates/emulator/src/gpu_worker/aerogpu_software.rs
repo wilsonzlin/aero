@@ -15,6 +15,12 @@ const MAX_CMD_STREAM_SIZE_BYTES: usize = 64 * 1024 * 1024;
 const MAX_VERTEX_BUFFER_SLOTS: usize = 32;
 const MAX_TEXTURE_SLOTS: usize = 16;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BackingAccess {
+    Read,
+    Write,
+}
+
 #[derive(Clone, Copy, Debug)]
 struct AllocInfo {
     flags: u32,
@@ -24,10 +30,8 @@ struct AllocInfo {
 
 #[derive(Clone, Debug)]
 struct GuestBacking {
-    #[allow(dead_code)]
     alloc_id: u32,
-    alloc_flags: u32,
-    gpa: u64,
+    alloc_offset_bytes: u64,
     size_bytes: u64,
 }
 
@@ -303,31 +307,35 @@ impl AeroGpuSoftwareExecutor {
         regs: &mut AeroGpuRegs,
         mem: &mut dyn MemoryBus,
         desc: &AeroGpuSubmitDesc,
-    ) -> HashMap<u32, AllocInfo> {
+    ) -> Option<HashMap<u32, AllocInfo>> {
         let gpa = desc.alloc_table_gpa;
         let size_bytes = desc.alloc_table_size_bytes;
+        if gpa == 0 && size_bytes == 0 {
+            return Some(HashMap::new());
+        }
         if gpa == 0 || size_bytes == 0 {
-            return HashMap::new();
+            Self::record_error(regs);
+            return None;
         }
 
         let size: usize = match usize::try_from(size_bytes) {
             Ok(v) => v,
             Err(_) => {
-                regs.stats.malformed_submissions =
-                    regs.stats.malformed_submissions.saturating_add(1);
-                regs.irq_status |= irq_bits::ERROR;
-                return HashMap::new();
+                Self::record_error(regs);
+                return None;
             }
         };
         if size < ring::AerogpuAllocTableHeader::SIZE_BYTES {
-            regs.stats.malformed_submissions = regs.stats.malformed_submissions.saturating_add(1);
-            regs.irq_status |= irq_bits::ERROR;
-            return HashMap::new();
+            Self::record_error(regs);
+            return None;
         }
         if size > MAX_ALLOC_TABLE_SIZE_BYTES {
-            regs.stats.malformed_submissions = regs.stats.malformed_submissions.saturating_add(1);
-            regs.irq_status |= irq_bits::ERROR;
-            return HashMap::new();
+            Self::record_error(regs);
+            return None;
+        }
+        if gpa.checked_add(u64::from(size_bytes)).is_none() {
+            Self::record_error(regs);
+            return None;
         }
 
         let mut buf = vec![0u8; size];
@@ -335,59 +343,75 @@ impl AeroGpuSoftwareExecutor {
         let hdr = match ring::AerogpuAllocTableHeader::decode_from_le_bytes(&buf) {
             Ok(v) => v,
             Err(_) => {
-                regs.stats.malformed_submissions =
-                    regs.stats.malformed_submissions.saturating_add(1);
-                regs.irq_status |= irq_bits::ERROR;
-                return HashMap::new();
+                Self::record_error(regs);
+                return None;
             }
         };
 
         if hdr.magic != ring::AEROGPU_ALLOC_TABLE_MAGIC {
-            regs.stats.malformed_submissions = regs.stats.malformed_submissions.saturating_add(1);
-            regs.irq_status |= irq_bits::ERROR;
-            return HashMap::new();
+            Self::record_error(regs);
+            return None;
         }
         if (hdr.abi_version >> 16) != (regs.abi_version >> 16) {
-            regs.stats.malformed_submissions = regs.stats.malformed_submissions.saturating_add(1);
-            regs.irq_status |= irq_bits::ERROR;
-            return HashMap::new();
+            Self::record_error(regs);
+            return None;
         }
         let total_size = hdr.size_bytes as usize;
         if total_size > size || total_size < ring::AerogpuAllocTableHeader::SIZE_BYTES {
-            regs.stats.malformed_submissions = regs.stats.malformed_submissions.saturating_add(1);
-            regs.irq_status |= irq_bits::ERROR;
-            return HashMap::new();
+            Self::record_error(regs);
+            return None;
         }
         if hdr.entry_stride_bytes as usize != ring::AerogpuAllocEntry::SIZE_BYTES {
-            regs.stats.malformed_submissions = regs.stats.malformed_submissions.saturating_add(1);
-            regs.irq_status |= irq_bits::ERROR;
-            return HashMap::new();
+            Self::record_error(regs);
+            return None;
+        }
+
+        let Ok(entry_count) = usize::try_from(hdr.entry_count) else {
+            Self::record_error(regs);
+            return None;
+        };
+        let Some(entries_bytes) = entry_count.checked_mul(ring::AerogpuAllocEntry::SIZE_BYTES) else {
+            Self::record_error(regs);
+            return None;
+        };
+        let Some(required_bytes) =
+            ring::AerogpuAllocTableHeader::SIZE_BYTES.checked_add(entries_bytes)
+        else {
+            Self::record_error(regs);
+            return None;
+        };
+        if required_bytes > total_size {
+            Self::record_error(regs);
+            return None;
         }
 
         let mut out = HashMap::new();
         let mut off = ring::AerogpuAllocTableHeader::SIZE_BYTES;
-        for _ in 0..hdr.entry_count {
-            if off + ring::AerogpuAllocEntry::SIZE_BYTES > total_size {
-                regs.stats.malformed_submissions =
-                    regs.stats.malformed_submissions.saturating_add(1);
-                regs.irq_status |= irq_bits::ERROR;
-                break;
-            }
-            let entry = match ring::AerogpuAllocEntry::decode_from_le_bytes(
-                &buf[off..off + ring::AerogpuAllocEntry::SIZE_BYTES],
-            ) {
+        for _ in 0..entry_count {
+            let Some(entry_bytes) = buf.get(off..off + ring::AerogpuAllocEntry::SIZE_BYTES) else {
+                Self::record_error(regs);
+                return None;
+            };
+            let entry = match ring::AerogpuAllocEntry::decode_from_le_bytes(entry_bytes) {
                 Ok(v) => v,
                 Err(_) => {
-                    regs.stats.malformed_submissions =
-                        regs.stats.malformed_submissions.saturating_add(1);
-                    regs.irq_status |= irq_bits::ERROR;
-                    break;
+                    Self::record_error(regs);
+                    return None;
                 }
             };
             off += ring::AerogpuAllocEntry::SIZE_BYTES;
 
             if entry.alloc_id == 0 || entry.gpa == 0 || entry.size_bytes == 0 {
-                continue;
+                Self::record_error(regs);
+                return None;
+            }
+            if entry.gpa.checked_add(entry.size_bytes).is_none() {
+                Self::record_error(regs);
+                return None;
+            }
+            if out.contains_key(&entry.alloc_id) {
+                Self::record_error(regs);
+                return None;
             }
             out.insert(
                 entry.alloc_id,
@@ -398,12 +422,64 @@ impl AeroGpuSoftwareExecutor {
                 },
             );
         }
-        out
+        Some(out)
     }
 
     fn record_error(regs: &mut AeroGpuRegs) {
         regs.stats.malformed_submissions = regs.stats.malformed_submissions.saturating_add(1);
         regs.irq_status |= irq_bits::ERROR;
+    }
+
+    fn resolve_guest_backing_gpa(
+        regs: &mut AeroGpuRegs,
+        allocs: &HashMap<u32, AllocInfo>,
+        backing: &GuestBacking,
+        offset_bytes: u64,
+        size_bytes: u64,
+        access: BackingAccess,
+    ) -> Option<u64> {
+        let Some(alloc) = allocs.get(&backing.alloc_id) else {
+            Self::record_error(regs);
+            return None;
+        };
+        if access == BackingAccess::Write && (alloc.flags & ring::AEROGPU_ALLOC_FLAG_READONLY) != 0
+        {
+            Self::record_error(regs);
+            return None;
+        }
+
+        let Some(end) = offset_bytes.checked_add(size_bytes) else {
+            Self::record_error(regs);
+            return None;
+        };
+        if end > backing.size_bytes {
+            Self::record_error(regs);
+            return None;
+        }
+
+        let Some(alloc_offset) = backing.alloc_offset_bytes.checked_add(offset_bytes) else {
+            Self::record_error(regs);
+            return None;
+        };
+        let Some(alloc_end) = alloc_offset.checked_add(size_bytes) else {
+            Self::record_error(regs);
+            return None;
+        };
+        if alloc_end > alloc.size_bytes {
+            Self::record_error(regs);
+            return None;
+        }
+
+        let Some(gpa) = alloc.gpa.checked_add(alloc_offset) else {
+            Self::record_error(regs);
+            return None;
+        };
+        if gpa.checked_add(size_bytes).is_none() {
+            Self::record_error(regs);
+            return None;
+        }
+
+        Some(gpa)
     }
 
     fn read_packed_prefix<T: Copy>(buf: &[u8]) -> Option<T> {
@@ -500,7 +576,12 @@ impl AeroGpuSoftwareExecutor {
         out
     }
 
-    fn flush_dirty_textures(&mut self, regs: &mut AeroGpuRegs, mem: &mut dyn MemoryBus) {
+    fn flush_dirty_textures(
+        &mut self,
+        regs: &mut AeroGpuRegs,
+        mem: &mut dyn MemoryBus,
+        allocs: &HashMap<u32, AllocInfo>,
+    ) {
         for tex in self.textures.values_mut() {
             if !tex.dirty {
                 continue;
@@ -509,17 +590,20 @@ impl AeroGpuSoftwareExecutor {
                 tex.dirty = false;
                 continue;
             };
-            if backing.alloc_flags & ring::AEROGPU_ALLOC_FLAG_READONLY != 0 {
-                Self::record_error(regs);
-                continue;
-            }
-
             let write_len = tex.data.len() as u64;
-            if write_len > backing.size_bytes {
-                Self::record_error(regs);
+            let Some(dst_gpa) = Self::resolve_guest_backing_gpa(
+                regs,
+                allocs,
+                backing,
+                0,
+                write_len,
+                BackingAccess::Write,
+            ) else {
+                // Submission is invalid; don't keep retrying this writeback.
+                tex.dirty = false;
                 continue;
-            }
-            mem.write_physical(backing.gpa, &tex.data);
+            };
+            mem.write_physical(dst_gpa, &tex.data);
             tex.dirty = false;
         }
     }
@@ -1290,6 +1374,7 @@ impl AeroGpuSoftwareExecutor {
         &mut self,
         regs: &mut AeroGpuRegs,
         mem: &mut dyn MemoryBus,
+        allocs: &HashMap<u32, AllocInfo>,
         vertex_indices: &[i32],
     ) {
         let rt_handle = self.resolve_handle(self.state.render_targets[0]);
@@ -1363,19 +1448,22 @@ impl AeroGpuSoftwareExecutor {
             // D3D11 path: ILAY blob present. MVP supports POSITION, optional COLOR, optional TEXCOORD0.
             if let Some(layout) = parsed_layout.as_ref() {
                 if let Some(pos_el) = layout.position {
-                    let pos = match self.read_vertex_elem_position(mem, pos_el, idx_u32) {
-                        Some(v) => v,
-                        None => continue,
-                    };
+                    let pos =
+                        match self.read_vertex_elem_position(regs, mem, allocs, pos_el, idx_u32) {
+                            Some(v) => v,
+                            None => continue,
+                        };
                     let color = match layout.color {
-                        Some(col_el) => match self.read_vertex_elem_f32x4(mem, col_el, idx_u32) {
+                        Some(col_el) => match self.read_vertex_elem_f32x4(
+                            regs, mem, allocs, col_el, idx_u32,
+                        ) {
                             Some(v) => v,
                             None => continue,
                         },
                         None => [1.0, 1.0, 1.0, 1.0],
                     };
                     let uv = match layout.texcoord0 {
-                        Some(uv_el) => match self.read_vertex_elem_f32x2(mem, uv_el, idx_u32) {
+                        Some(uv_el) => match self.read_vertex_elem_f32x2(regs, mem, allocs, uv_el, idx_u32) {
                             Some(v) => v,
                             None => continue,
                         },
@@ -1397,7 +1485,7 @@ impl AeroGpuSoftwareExecutor {
             }
 
             // D3D9 path (FVF XYZRHW|DIFFUSE): stream 0 is {x,y,z,rhw,color_u32}.
-            match self.read_vertex_d3d9(mem, idx_u32) {
+            match self.read_vertex_d3d9(regs, mem, allocs, idx_u32) {
                 Some(v) => vertices.push(v),
                 None => continue,
             }
@@ -1688,7 +1776,13 @@ impl AeroGpuSoftwareExecutor {
         }
     }
 
-    fn read_vertex_d3d9(&mut self, mem: &mut dyn MemoryBus, index: u32) -> Option<Vertex> {
+    fn read_vertex_d3d9(
+        &mut self,
+        regs: &mut AeroGpuRegs,
+        mem: &mut dyn MemoryBus,
+        allocs: &HashMap<u32, AllocInfo>,
+        index: u32,
+    ) -> Option<Vertex> {
         let binding = self
             .state
             .vertex_buffers
@@ -1706,7 +1800,7 @@ impl AeroGpuSoftwareExecutor {
         let start = binding.offset_bytes as u64 + (index as u64) * (binding.stride_bytes as u64);
 
         let mut buf = [0u8; 20];
-        if !self.read_buffer_bytes(mem, handle, start, &mut buf) {
+        if !self.read_buffer_bytes(regs, mem, allocs, handle, start, &mut buf) {
             return None;
         }
 
@@ -1729,7 +1823,9 @@ impl AeroGpuSoftwareExecutor {
 
     fn read_vertex_elem_position(
         &mut self,
+        regs: &mut AeroGpuRegs,
         mem: &mut dyn MemoryBus,
+        allocs: &HashMap<u32, AllocInfo>,
         elem: InputElement,
         index: u32,
     ) -> Option<(f32, f32, f32)> {
@@ -1754,7 +1850,7 @@ impl AeroGpuSoftwareExecutor {
         let bytes = components * 4;
         let mut buf = [0u8; 16];
         let slice = &mut buf[..bytes];
-        if !self.read_buffer_bytes(mem, handle, start, slice) {
+        if !self.read_buffer_bytes(regs, mem, allocs, handle, start, slice) {
             return None;
         }
         let x = f32::from_bits(u32::from_le_bytes(buf[0..4].try_into().unwrap()));
@@ -1769,7 +1865,9 @@ impl AeroGpuSoftwareExecutor {
 
     fn read_vertex_elem_f32x2(
         &mut self,
+        regs: &mut AeroGpuRegs,
         mem: &mut dyn MemoryBus,
+        allocs: &HashMap<u32, AllocInfo>,
         elem: InputElement,
         index: u32,
     ) -> Option<(f32, f32)> {
@@ -1790,7 +1888,7 @@ impl AeroGpuSoftwareExecutor {
         let start =
             binding.offset_bytes as u64 + (index as u64) * stride + elem.aligned_byte_offset as u64;
         let mut buf = [0u8; 8];
-        if !self.read_buffer_bytes(mem, handle, start, &mut buf) {
+        if !self.read_buffer_bytes(regs, mem, allocs, handle, start, &mut buf) {
             return None;
         }
         Some((
@@ -1801,7 +1899,9 @@ impl AeroGpuSoftwareExecutor {
 
     fn read_vertex_elem_f32x4(
         &mut self,
+        regs: &mut AeroGpuRegs,
         mem: &mut dyn MemoryBus,
+        allocs: &HashMap<u32, AllocInfo>,
         elem: InputElement,
         index: u32,
     ) -> Option<[f32; 4]> {
@@ -1822,7 +1922,7 @@ impl AeroGpuSoftwareExecutor {
         let start =
             binding.offset_bytes as u64 + (index as u64) * stride + elem.aligned_byte_offset as u64;
         let mut buf = [0u8; 16];
-        if !self.read_buffer_bytes(mem, handle, start, &mut buf) {
+        if !self.read_buffer_bytes(regs, mem, allocs, handle, start, &mut buf) {
             return None;
         }
         Some([
@@ -1835,7 +1935,9 @@ impl AeroGpuSoftwareExecutor {
 
     fn read_buffer_bytes(
         &mut self,
+        regs: &mut AeroGpuRegs,
         mem: &mut dyn MemoryBus,
+        allocs: &HashMap<u32, AllocInfo>,
         handle: u32,
         offset: u64,
         out: &mut [u8],
@@ -1851,7 +1953,17 @@ impl AeroGpuSoftwareExecutor {
                 if offset + out.len() as u64 > backing.size_bytes {
                     return false;
                 }
-                mem.read_physical(backing.gpa + offset, out);
+                let Some(src_gpa) = Self::resolve_guest_backing_gpa(
+                    regs,
+                    allocs,
+                    backing,
+                    offset,
+                    out.len() as u64,
+                    BackingAccess::Read,
+                ) else {
+                    return false;
+                };
+                mem.read_physical(src_gpa, out);
                 return true;
             }
             let start = match usize::try_from(offset) {
@@ -1904,7 +2016,9 @@ impl AeroGpuSoftwareExecutor {
         };
         let stream_size = iter.header().size_bytes as usize;
 
-        let allocs = self.parse_alloc_table(regs, mem, desc);
+        let Some(allocs) = self.parse_alloc_table(regs, mem, desc) else {
+            return;
+        };
 
         let mut offset = cmd::AerogpuCmdStreamHeader::SIZE_BYTES;
         for packet in iter {
@@ -1937,7 +2051,7 @@ impl AeroGpuSoftwareExecutor {
             offset = end;
         }
 
-        self.flush_dirty_textures(regs, mem);
+        self.flush_dirty_textures(regs, mem, &allocs);
     }
 
     fn dispatch_cmd(
@@ -2010,8 +2124,7 @@ impl AeroGpuSoftwareExecutor {
                     }
                     backing = Some(GuestBacking {
                         alloc_id: backing_alloc_id,
-                        alloc_flags: alloc.flags,
-                        gpa: alloc.gpa + backing_offset_bytes,
+                        alloc_offset_bytes: backing_offset_bytes,
                         size_bytes,
                     });
                 }
@@ -2114,8 +2227,7 @@ impl AeroGpuSoftwareExecutor {
                     }
                     backing = Some(GuestBacking {
                         alloc_id: backing_alloc_id,
-                        alloc_flags: alloc.flags,
-                        gpa: alloc.gpa + backing_offset_bytes,
+                        alloc_offset_bytes: backing_offset_bytes,
                         size_bytes: total_bytes,
                     });
                 }
@@ -2129,7 +2241,17 @@ impl AeroGpuSoftwareExecutor {
                 };
                 let mut data = vec![0u8; total_usize];
                 if let Some(b) = backing.as_ref() {
-                    mem.read_physical(b.gpa, &mut data);
+                    let Some(src_gpa) = Self::resolve_guest_backing_gpa(
+                        regs,
+                        allocs,
+                        b,
+                        0,
+                        total_bytes,
+                        BackingAccess::Read,
+                    ) else {
+                        return true;
+                    };
+                    mem.read_physical(src_gpa, &mut data);
                 }
 
                 self.textures.insert(
@@ -2239,9 +2361,31 @@ impl AeroGpuSoftwareExecutor {
                         Self::record_error(regs);
                         return true;
                     }
-                    let start_usize = offset as usize;
-                    let end_usize = end as usize;
-                    mem.read_physical(backing.gpa + offset, &mut tex.data[start_usize..end_usize]);
+                    let start_usize = match usize::try_from(offset).ok() {
+                        Some(v) => v,
+                        None => {
+                            Self::record_error(regs);
+                            return true;
+                        }
+                    };
+                    let end_usize = match usize::try_from(end).ok() {
+                        Some(v) => v,
+                        None => {
+                            Self::record_error(regs);
+                            return true;
+                        }
+                    };
+                    let Some(src_gpa) = Self::resolve_guest_backing_gpa(
+                        regs,
+                        allocs,
+                        backing,
+                        offset,
+                        size,
+                        BackingAccess::Read,
+                    ) else {
+                        return true;
+                    };
+                    mem.read_physical(src_gpa, &mut tex.data[start_usize..end_usize]);
                 }
             }
             cmd::AerogpuCmdOpcode::UploadResource => {
@@ -2278,15 +2422,17 @@ impl AeroGpuSoftwareExecutor {
                         return true;
                     }
                     if let Some(backing) = buf.backing.as_ref() {
-                        if backing.alloc_flags & ring::AEROGPU_ALLOC_FLAG_READONLY != 0 {
-                            Self::record_error(regs);
+                        let Some(dst_gpa) = Self::resolve_guest_backing_gpa(
+                            regs,
+                            allocs,
+                            backing,
+                            offset,
+                            size,
+                            BackingAccess::Write,
+                        ) else {
                             return true;
-                        }
-                        if end > backing.size_bytes {
-                            Self::record_error(regs);
-                            return true;
-                        }
-                        mem.write_physical(backing.gpa + offset, payload);
+                        };
+                        mem.write_physical(dst_gpa, payload);
                     } else {
                         let start = offset as usize;
                         let end = end as usize;
@@ -2382,11 +2528,17 @@ impl AeroGpuSoftwareExecutor {
 
                 let mut tmp = vec![0u8; size_usize];
                 if let Some(backing) = src_buf.backing.as_ref() {
-                    if src_end > backing.size_bytes {
-                        Self::record_error(regs);
+                    let Some(src_gpa) = Self::resolve_guest_backing_gpa(
+                        regs,
+                        allocs,
+                        backing,
+                        src_offset,
+                        size,
+                        BackingAccess::Read,
+                    ) else {
                         return true;
-                    }
-                    mem.read_physical(backing.gpa + src_offset, &mut tmp);
+                    };
+                    mem.read_physical(src_gpa, &mut tmp);
                 } else {
                     let start = match usize::try_from(src_offset).ok() {
                         Some(v) => v,
@@ -2415,15 +2567,17 @@ impl AeroGpuSoftwareExecutor {
                     .and_then(|buf| buf.backing.as_ref())
                     .cloned()
                 {
-                    if backing.alloc_flags & ring::AEROGPU_ALLOC_FLAG_READONLY != 0 {
-                        Self::record_error(regs);
+                    let Some(dst_gpa) = Self::resolve_guest_backing_gpa(
+                        regs,
+                        allocs,
+                        &backing,
+                        dst_offset,
+                        size,
+                        BackingAccess::Write,
+                    ) else {
                         return true;
-                    }
-                    if dst_end > backing.size_bytes {
-                        Self::record_error(regs);
-                        return true;
-                    }
-                    mem.write_physical(backing.gpa + dst_offset, &tmp);
+                    };
+                    mem.write_physical(dst_gpa, &tmp);
                 } else if let Some(buf) = self.buffers.get_mut(&dst_handle) {
                     let start = match usize::try_from(dst_offset).ok() {
                         Some(v) => v,
@@ -3149,7 +3303,7 @@ impl AeroGpuSoftwareExecutor {
                 for i in 0..vertex_count {
                     idxs.push((first_vertex + i) as i32);
                 }
-                self.draw_triangle_list(regs, mem, &idxs);
+                self.draw_triangle_list(regs, mem, allocs, &idxs);
             }
             cmd::AerogpuCmdOpcode::DrawIndexed => {
                 let packet_cmd =
@@ -3180,7 +3334,7 @@ impl AeroGpuSoftwareExecutor {
                 for i in 0..index_count {
                     let idx_off =
                         ib.offset_bytes as u64 + ((first_index + i) as u64) * (index_size as u64);
-                    if !self.read_buffer_bytes(mem, ib_handle, idx_off, &mut tmp) {
+                    if !self.read_buffer_bytes(regs, mem, allocs, ib_handle, idx_off, &mut tmp) {
                         break;
                     }
                     let raw = if index_size == 2 {
@@ -3190,7 +3344,7 @@ impl AeroGpuSoftwareExecutor {
                     };
                     idxs.push(raw.wrapping_add(base_vertex));
                 }
-                self.draw_triangle_list(regs, mem, &idxs);
+                self.draw_triangle_list(regs, mem, allocs, &idxs);
             }
             cmd::AerogpuCmdOpcode::ExportSharedSurface => {
                 let packet_cmd =

@@ -171,6 +171,10 @@ Each submission may provide an optional **sideband allocation table**:
 
 This enables compact command streams that use small IDs instead of repeating GPAs.
 
+**See [`allocation-table.md`](./allocation-table.md)** for the full end-to-end contract, including:
+validation rules, `backing_offset_bytes` / `row_pitch_bytes` interpretation, aliasing semantics, and
+`READONLY` writeback behavior.
+
 #### `alloc_id` ownership and stability
 
 `alloc_id` values are owned by the **guest UMD**:

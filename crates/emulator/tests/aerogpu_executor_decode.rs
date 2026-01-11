@@ -164,10 +164,16 @@ fn write_submit_desc(
     mem.write_u64(desc_gpa + SUBMIT_DESC_RESERVED0_OFFSET, 0);
 }
 
-fn write_alloc_table(mem: &mut VecMemory, gpa: u64, abi_version: u32, magic: u32) -> u32 {
+fn write_alloc_table_entries(
+    mem: &mut VecMemory,
+    gpa: u64,
+    abi_version: u32,
+    magic: u32,
+    entries: &[(u32, u32, u64, u64)],
+) -> u32 {
     let header_size = AEROGPU_ALLOC_TABLE_HEADER_SIZE_BYTES;
     let entry_stride = AeroGpuAllocEntry::SIZE_BYTES;
-    let entry_count = 1u32;
+    let entry_count = u32::try_from(entries.len()).expect("entry_count overflow");
     let size_bytes = header_size + entry_count * entry_stride;
 
     mem.write_u32(gpa + ALLOC_TABLE_MAGIC_OFFSET, magic);
@@ -177,15 +183,20 @@ fn write_alloc_table(mem: &mut VecMemory, gpa: u64, abi_version: u32, magic: u32
     mem.write_u32(gpa + ALLOC_TABLE_ENTRY_STRIDE_BYTES_OFFSET, entry_stride);
     mem.write_u32(gpa + ALLOC_TABLE_RESERVED0_OFFSET, 0);
 
-    // entry 0
-    let entry_gpa = gpa + u64::from(header_size);
-    mem.write_u32(entry_gpa + ALLOC_ENTRY_ALLOC_ID_OFFSET, 1); // alloc_id
-    mem.write_u32(entry_gpa + ALLOC_ENTRY_FLAGS_OFFSET, 0); // flags
-    mem.write_u64(entry_gpa + ALLOC_ENTRY_GPA_OFFSET, 0x9000); // gpa
-    mem.write_u64(entry_gpa + ALLOC_ENTRY_SIZE_BYTES_OFFSET, 0x1000); // size_bytes
-    mem.write_u64(entry_gpa + ALLOC_ENTRY_RESERVED0_OFFSET, 0);
+    for (idx, (alloc_id, flags, entry_gpa, entry_size_bytes)) in entries.iter().enumerate() {
+        let entry_base = gpa + u64::from(header_size) + (idx as u64) * u64::from(entry_stride);
+        mem.write_u32(entry_base + ALLOC_ENTRY_ALLOC_ID_OFFSET, *alloc_id);
+        mem.write_u32(entry_base + ALLOC_ENTRY_FLAGS_OFFSET, *flags);
+        mem.write_u64(entry_base + ALLOC_ENTRY_GPA_OFFSET, *entry_gpa);
+        mem.write_u64(entry_base + ALLOC_ENTRY_SIZE_BYTES_OFFSET, *entry_size_bytes);
+        mem.write_u64(entry_base + ALLOC_ENTRY_RESERVED0_OFFSET, 0);
+    }
 
     size_bytes
+}
+
+fn write_alloc_table(mem: &mut VecMemory, gpa: u64, abi_version: u32, magic: u32) -> u32 {
+    write_alloc_table_entries(mem, gpa, abi_version, magic, &[(1, 0, 0x9000, 0x1000)])
 }
 
 fn write_cmd_stream_header(
@@ -396,6 +407,144 @@ fn malformed_alloc_table_sets_error_irq_and_advances_head() {
     assert_eq!(regs.completed_fence, 1);
     assert_eq!(regs.stats.malformed_submissions, 1);
     assert_ne!(regs.irq_status & irq_bits::ERROR, 0);
+}
+
+#[test]
+fn duplicate_alloc_id_in_alloc_table_sets_error_irq() {
+    let mut mem = VecMemory::new(0x40_000);
+    let mut regs = AeroGpuRegs::default();
+    let mut exec = AeroGpuExecutor::new(AeroGpuExecutorConfig {
+        verbose: false,
+        keep_last_submissions: 8,
+        fence_completion: AeroGpuFenceCompletionMode::Immediate,
+    });
+
+    let ring_gpa = 0x1000u64;
+    let ring_size = 0x1000u32;
+    write_ring(&mut mem, ring_gpa, ring_size, 8, 0, 1, regs.abi_version);
+
+    let alloc_table_gpa = 0x5000u64;
+    let alloc_table_size_bytes = write_alloc_table_entries(
+        &mut mem,
+        alloc_table_gpa,
+        regs.abi_version,
+        AEROGPU_ALLOC_TABLE_MAGIC,
+        &[
+            (1, 0, 0x9000, 0x1000),
+            // Duplicate alloc_id should be rejected even if other fields differ.
+            (1, 0, 0xA000, 0x1000),
+        ],
+    );
+
+    let cmd_gpa = 0x6000u64;
+    let cmd_size_bytes = write_cmd_stream_header(
+        &mut mem,
+        cmd_gpa,
+        regs.abi_version,
+        24,
+        AEROGPU_CMD_STREAM_MAGIC,
+    );
+
+    let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+    write_submit_desc(
+        &mut mem,
+        desc_gpa,
+        cmd_gpa,
+        cmd_size_bytes,
+        alloc_table_gpa,
+        alloc_table_size_bytes,
+        7,
+    );
+
+    regs.ring_gpa = ring_gpa;
+    regs.ring_size_bytes = ring_size;
+    regs.ring_control = ring_control::ENABLE;
+
+    exec.process_doorbell(&mut regs, &mut mem);
+
+    assert_eq!(mem.read_u32(ring_gpa + RING_HEAD_OFFSET), 1);
+    assert_eq!(regs.completed_fence, 7);
+    assert_eq!(regs.stats.malformed_submissions, 1);
+    assert_ne!(regs.irq_status & irq_bits::ERROR, 0);
+
+    let record = exec
+        .last_submissions
+        .back()
+        .expect("missing submission record");
+    assert!(
+        record.decode_errors.contains(&emulator::gpu_worker::aerogpu_executor::AeroGpuSubmissionDecodeError::AllocTable(
+            emulator::gpu_worker::aerogpu_executor::AeroGpuAllocTableDecodeError::DuplicateAllocId,
+        )),
+        "expected DuplicateAllocId error, got: {:?}",
+        record.decode_errors
+    );
+}
+
+#[test]
+fn alloc_table_entry_address_overflow_sets_error_irq() {
+    let mut mem = VecMemory::new(0x40_000);
+    let mut regs = AeroGpuRegs::default();
+    let mut exec = AeroGpuExecutor::new(AeroGpuExecutorConfig {
+        verbose: false,
+        keep_last_submissions: 8,
+        fence_completion: AeroGpuFenceCompletionMode::Immediate,
+    });
+
+    let ring_gpa = 0x1000u64;
+    let ring_size = 0x1000u32;
+    write_ring(&mut mem, ring_gpa, ring_size, 8, 0, 1, regs.abi_version);
+
+    let alloc_table_gpa = 0x5000u64;
+    let alloc_table_size_bytes = write_alloc_table_entries(
+        &mut mem,
+        alloc_table_gpa,
+        regs.abi_version,
+        AEROGPU_ALLOC_TABLE_MAGIC,
+        &[(1, 0, u64::MAX - 0x10, 0x100)],
+    );
+
+    let cmd_gpa = 0x6000u64;
+    let cmd_size_bytes = write_cmd_stream_header(
+        &mut mem,
+        cmd_gpa,
+        regs.abi_version,
+        24,
+        AEROGPU_CMD_STREAM_MAGIC,
+    );
+
+    let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+    write_submit_desc(
+        &mut mem,
+        desc_gpa,
+        cmd_gpa,
+        cmd_size_bytes,
+        alloc_table_gpa,
+        alloc_table_size_bytes,
+        8,
+    );
+
+    regs.ring_gpa = ring_gpa;
+    regs.ring_size_bytes = ring_size;
+    regs.ring_control = ring_control::ENABLE;
+
+    exec.process_doorbell(&mut regs, &mut mem);
+
+    assert_eq!(mem.read_u32(ring_gpa + RING_HEAD_OFFSET), 1);
+    assert_eq!(regs.completed_fence, 8);
+    assert_eq!(regs.stats.malformed_submissions, 1);
+    assert_ne!(regs.irq_status & irq_bits::ERROR, 0);
+
+    let record = exec
+        .last_submissions
+        .back()
+        .expect("missing submission record");
+    assert!(
+        record.decode_errors.contains(&emulator::gpu_worker::aerogpu_executor::AeroGpuSubmissionDecodeError::AllocTable(
+            emulator::gpu_worker::aerogpu_executor::AeroGpuAllocTableDecodeError::AddressOverflow,
+        )),
+        "expected AddressOverflow error, got: {:?}",
+        record.decode_errors
+    );
 }
 
 #[test]

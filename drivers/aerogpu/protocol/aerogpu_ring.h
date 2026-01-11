@@ -35,25 +35,65 @@ enum aerogpu_engine_id {
 };
 
 /*
- * Optional sideband allocation table:
- * - The submit descriptor can reference a table mapping small allocation IDs
- *   (alloc_id) to guest physical addresses and sizes.
- * - Commands may reference allocations by alloc_id (e.g. via `backing_alloc_id`
- *   in `aerogpu_cmd_create_buffer` / `aerogpu_cmd_create_texture2d`).
+ * Optional sideband allocation table (per-submit):
  *
- * `alloc_id` values must remain stable for the lifetime of the underlying WDDM
- * allocation. For shared allocations, the UMD stores alloc_id in the preserved
- * WDDM allocation private data blob so it can be recovered on OpenResource (see
- * `aerogpu_wddm_alloc.h`). For standard allocations created without AeroGPU
- * private data, the KMD may synthesize alloc_id values from a reserved
- * namespace.
+ * Motivation:
+ * - AeroGPU command packets can reference guest-backed memory via `alloc_id`
+ *   (`backing_alloc_id` in CREATE_BUFFER/CREATE_TEXTURE2D).
+ * - The host must be able to resolve `alloc_id -> (GPA, size, flags)` for the
+ *   *current submission*, because WDDM may remap allocations between submits.
  *
- * Guest-memory access rules:
- * - If any command in a submission requires the host to READ or WRITE guest
- *   backing memory for an allocation, the submission MUST provide an allocation
- *   table entry for that alloc_id.
- * - The host must reject (validation error) any guest-memory writeback to an
- *   allocation marked AEROGPU_ALLOC_FLAG_READONLY.
+ * alloc_id namespaces and stability (see `aerogpu_wddm_alloc.h`):
+ * - alloc_id 0 is reserved/invalid.
+ * - 1..0x7fffffff: UMD-owned namespace. IDs MUST be stable for the lifetime of
+ *   the underlying WDDM allocation and collision-resistant across guest
+ *   processes (DWM may reference allocations from many processes in one
+ *   submission).
+ * - 0x80000000..0xffffffff: reserved for KMD-synthesised IDs when the runtime
+ *   creates allocations without an AeroGPU private-data blob.
+ * - Multiple WDDM handles may alias the same underlying allocation (e.g.
+ *   CreateAllocation vs OpenAllocation). Aliases MUST share the same alloc_id.
+ *   The per-submit allocation table is keyed by alloc_id: the KMD must
+ *   deduplicate identical aliases and fail the submission if the same alloc_id
+ *   maps to different GPAs.
+ *
+ * Table format:
+ * - The submit descriptor points to `alloc_table_gpa/alloc_table_size_bytes`.
+ * - The table is:
+ *     [aerogpu_alloc_table_header]
+ *     [entry 0: aerogpu_alloc_entry]
+ *     [entry 1: aerogpu_alloc_entry]
+ *     ...
+ * - `aerogpu_alloc_table_header::size_bytes` is the total size including header
+ *   + entries and MUST be <= `alloc_table_size_bytes` from the descriptor.
+ *
+ * Host validation rules (when alloc_table is present):
+ * - `alloc_table_gpa` and `alloc_table_size_bytes` must be both zero (absent) or
+ *   both non-zero (present).
+ * - header.magic must equal AEROGPU_ALLOC_TABLE_MAGIC.
+ * - ABI major version must match. Minor may be newer.
+ * - header.entry_stride_bytes must be == sizeof(struct aerogpu_alloc_entry).
+ * - header.entry_count * header.entry_stride_bytes must fit within
+ *   header.size_bytes.
+ * - Each entry must have alloc_id != 0, gpa != 0, size_bytes != 0, and
+ *   gpa+size_bytes must not overflow.
+ * - alloc_id values must be unique within a table (duplicates are a validation
+ *   error).
+ * - The host must reject (validation error) any command that references
+ *   `backing_alloc_id != 0` if the table is absent or does not contain that
+ *   alloc_id.
+ *
+ * Backing layout (see `aerogpu_cmd.h`):
+ * - backing_offset_bytes is relative to the alloc table entry's base GPA.
+ * - For buffers: the backing range is
+ *     [backing_offset_bytes, backing_offset_bytes + size_bytes).
+ * - For textures: backing memory is linear with `row_pitch_bytes` bytes per row
+ *   and `height` rows starting at backing_offset_bytes.
+ *
+ * READONLY:
+ * - The host must not write to guest backing memory for allocations marked
+ *   AEROGPU_ALLOC_FLAG_READONLY. Any command that would cause guest-memory
+ *   writeback to a READONLY allocation must be rejected.
  *
  * Fence ordering:
  * - The host must only advance `completed_fence` for a submission after all

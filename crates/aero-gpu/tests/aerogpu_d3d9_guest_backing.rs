@@ -207,6 +207,7 @@ fn d3d9_cmd_stream_flushes_guest_backed_resources_from_dirty_ranges() {
         (
             VB_ALLOC_ID,
             AllocEntry {
+                flags: 0,
                 gpa: VB_GPA,
                 size_bytes: 4096,
             },
@@ -214,11 +215,13 @@ fn d3d9_cmd_stream_flushes_guest_backed_resources_from_dirty_ranges() {
         (
             TEX_ALLOC_ID,
             AllocEntry {
+                flags: 0,
                 gpa: TEX_GPA,
                 size_bytes: 4096,
             },
         ),
-    ]);
+    ])
+    .expect("alloc table");
 
     let vs_bytes = assemble_vs_fullscreen_pos_tex();
     let ps_bytes = assemble_ps_sample_tex0();
@@ -488,10 +491,12 @@ fn d3d9_copy_texture2d_flushes_dst_dirty_ranges_before_sampling() {
     let alloc_table = AllocTable::new([(
         DST_ALLOC_ID,
         AllocEntry {
+            flags: 0,
             gpa: DST_GPA,
             size_bytes: 4096,
         },
-    )]);
+    )])
+    .expect("alloc table");
 
     let vs_bytes = assemble_vs_fullscreen_pos_tex();
     let ps_bytes = assemble_ps_sample_tex0();
@@ -744,10 +749,12 @@ fn d3d9_copy_buffer_writeback_writes_guest_backing() {
     let alloc_table = AllocTable::new([(
         DST_ALLOC_ID,
         AllocEntry {
+            flags: 0,
             gpa: DST_GPA,
             size_bytes: 0x1000,
         },
-    )]);
+    )])
+    .expect("alloc table");
 
     let pattern = [
         0xDEu8, 0xAD, 0xBE, 0xEF, 0xAA, 0xBB, 0xCC, 0xDD, 0x10, 0x20, 0x30, 0x40, 0x55, 0x66, 0x77,
@@ -1014,10 +1021,12 @@ fn d3d9_copy_texture2d_writeback_writes_guest_backing() {
     let alloc_table = AllocTable::new([(
         DST_ALLOC_ID,
         AllocEntry {
+            flags: 0,
             gpa: DST_GPA,
             size_bytes: 0x1000,
         },
-    )]);
+    )])
+    .expect("alloc table");
 
     let stream = build_stream(|out| {
         // Host-owned source texture.

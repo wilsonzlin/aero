@@ -640,10 +640,12 @@ fn d3d9_create_texture2d_rejects_guest_backed_row_pitch_too_small() {
     let alloc_table = AllocTable::new([(
         1,
         AllocEntry {
-            gpa: 0,
+            flags: 0,
+            gpa: 0x1000,
             size_bytes: 0x1000,
         },
-    )]);
+    )])
+    .expect("alloc table");
 
     // width=2 => required row_pitch is 8 bytes for RGBA8, but we pass 4.
     let mut writer = AerogpuCmdWriter::new();

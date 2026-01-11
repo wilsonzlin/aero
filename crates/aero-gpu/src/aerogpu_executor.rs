@@ -105,6 +105,7 @@ impl ExecutionReport {
 
 #[derive(Debug, Clone, Copy)]
 pub struct AllocEntry {
+    pub flags: u32,
     pub gpa: u64,
     pub size_bytes: u64,
 }
@@ -115,14 +116,60 @@ pub struct AllocTable {
 }
 
 impl AllocTable {
-    pub fn new(entries: impl IntoIterator<Item = (u32, AllocEntry)>) -> Self {
-        Self {
-            entries: entries.into_iter().collect(),
+    pub fn new(entries: impl IntoIterator<Item = (u32, AllocEntry)>) -> Result<Self, ExecutorError> {
+        let mut map = HashMap::<u32, AllocEntry>::new();
+        for (alloc_id, entry) in entries {
+            if alloc_id == 0 {
+                return Err(ExecutorError::Validation(
+                    "alloc table entry alloc_id must be non-zero".into(),
+                ));
+            }
+            if entry.gpa == 0 || entry.size_bytes == 0 {
+                return Err(ExecutorError::Validation(format!(
+                    "alloc table entry {alloc_id} has invalid gpa/size"
+                )));
+            }
+            if entry.gpa.checked_add(entry.size_bytes).is_none() {
+                return Err(ExecutorError::Validation(format!(
+                    "alloc table entry {alloc_id} gpa+size overflow"
+                )));
+            }
+            if map.insert(alloc_id, entry).is_some() {
+                return Err(ExecutorError::Validation(format!(
+                    "alloc table contains duplicate alloc_id={alloc_id}"
+                )));
+            }
         }
+        Ok(Self { entries: map })
     }
 
     pub fn get(&self, alloc_id: u32) -> Option<&AllocEntry> {
         self.entries.get(&alloc_id)
+    }
+
+    fn resolve_gpa(&self, alloc_id: u32, offset: u64, size: u64) -> Result<u64, ExecutorError> {
+        let entry = self.get(alloc_id).ok_or_else(|| {
+            ExecutorError::Validation(format!("missing alloc table entry for alloc_id={alloc_id}"))
+        })?;
+
+        let end = offset.checked_add(size).ok_or_else(|| {
+            ExecutorError::Validation("alloc table range offset+size overflow".into())
+        })?;
+        if end > entry.size_bytes {
+            return Err(ExecutorError::Validation(format!(
+                "alloc table range out of bounds for alloc_id={alloc_id} (offset=0x{offset:x}, size=0x{size:x}, alloc_size=0x{:x})",
+                entry.size_bytes
+            )));
+        }
+
+        let gpa = entry.gpa.checked_add(offset).ok_or_else(|| {
+            ExecutorError::Validation("alloc table gpa+offset overflow".into())
+        })?;
+        if gpa.checked_add(size).is_none() {
+            return Err(ExecutorError::Validation("alloc table gpa+size overflow".into()));
+        }
+
+        Ok(gpa)
     }
 
     pub fn decode_from_guest_memory(
@@ -133,6 +180,14 @@ impl AllocTable {
         if table_gpa == 0 || table_size_bytes == 0 {
             return Err(ExecutorError::Validation(
                 "alloc table gpa/size must be non-zero".into(),
+            ));
+        }
+        if table_gpa
+            .checked_add(u64::from(table_size_bytes))
+            .is_none()
+        {
+            return Err(ExecutorError::Validation(
+                "alloc table gpa+size overflow".into(),
             ));
         }
 
@@ -161,56 +216,56 @@ impl AllocTable {
                 "invalid alloc table header size_bytes={size_bytes} (provided buffer size={table_size_bytes})"
             )));
         }
+        if header.entry_stride_bytes != ring::AerogpuAllocEntry::SIZE_BYTES as u32 {
+            return Err(ExecutorError::Validation(format!(
+                "invalid alloc table entry_stride_bytes={} (expected {})",
+                header.entry_stride_bytes,
+                ring::AerogpuAllocEntry::SIZE_BYTES
+            )));
+        }
 
         let entry_count = header.entry_count;
         let entry_stride_bytes = header.entry_stride_bytes;
 
-        let mut table = AllocTable::default();
+        let mut entries = Vec::<(u32, AllocEntry)>::with_capacity(entry_count as usize);
         for i in 0..entry_count {
+            let entry_offset = (i as u64)
+                .checked_mul(entry_stride_bytes as u64)
+                .ok_or_else(|| ExecutorError::Validation("alloc table entry offset overflow".into()))?;
             let entry_gpa = table_gpa
-                + ring::AerogpuAllocTableHeader::SIZE_BYTES as u64
-                + (i as u64) * (entry_stride_bytes as u64);
+                .checked_add(ring::AerogpuAllocTableHeader::SIZE_BYTES as u64)
+                .and_then(|gpa| gpa.checked_add(entry_offset))
+                .ok_or_else(|| ExecutorError::Validation("alloc table entry gpa overflow".into()))?;
             let mut entry_bytes = [0u8; ring::AerogpuAllocEntry::SIZE_BYTES];
             guest_memory.read(entry_gpa, &mut entry_bytes)?;
 
-            let entry =
-                ring::AerogpuAllocEntry::decode_from_le_bytes(&entry_bytes).map_err(|err| {
-                    ExecutorError::Validation(format!(
-                        "failed to decode alloc table entry {i}: {err:?}"
-                    ))
-                })?;
-            let alloc_id = entry.alloc_id;
-            if alloc_id == 0 {
-                return Err(ExecutorError::Validation(
-                    "alloc table entry alloc_id must be non-zero".into(),
-                ));
-            }
-            if table.entries.contains_key(&alloc_id) {
-                return Err(ExecutorError::Validation(format!(
-                    "alloc table contains duplicate alloc_id={alloc_id}"
-                )));
-            }
-
-            let gpa = entry.gpa;
-            let size_bytes = entry.size_bytes;
-
-            table
-                .entries
-                .insert(alloc_id, AllocEntry { gpa, size_bytes });
+            let entry = ring::AerogpuAllocEntry::decode_from_le_bytes(&entry_bytes).map_err(|err| {
+                ExecutorError::Validation(format!("failed to decode alloc table entry {i}: {err:?}"))
+            })?;
+            entries.push((
+                entry.alloc_id,
+                AllocEntry {
+                    flags: entry.flags,
+                    gpa: entry.gpa,
+                    size_bytes: entry.size_bytes,
+                },
+            ));
         }
 
-        Ok(table)
+        AllocTable::new(entries)
     }
 }
 
 #[derive(Debug, Clone, Copy)]
 struct GuestBufferBacking {
-    base_gpa: u64,
+    alloc_id: u32,
+    alloc_offset_bytes: u64,
 }
 
 #[derive(Debug, Clone, Copy)]
 struct GuestTextureBacking {
-    base_gpa: u64,
+    alloc_id: u32,
+    alloc_offset_bytes: u64,
     row_pitch_bytes: u32,
     size_bytes: u64,
 }
@@ -573,6 +628,7 @@ fn fs_main() -> @location(0) vec4<f32> {
                     size_bytes,
                     flags,
                     guest_memory,
+                    alloc_table,
                 ),
                 AeroGpuCmd::CopyTexture2d {
                     dst_texture,
@@ -641,6 +697,7 @@ fn fs_main() -> @location(0) vec4<f32> {
                     first_vertex,
                     first_instance,
                     guest_memory,
+                    alloc_table,
                 ),
                 AeroGpuCmd::DrawIndexed {
                     index_count,
@@ -655,6 +712,7 @@ fn fs_main() -> @location(0) vec4<f32> {
                     base_vertex,
                     first_instance,
                     guest_memory,
+                    alloc_table,
                 ),
                 _ => Ok(()),
             };
@@ -726,7 +784,8 @@ fn fs_main() -> @location(0) vec4<f32> {
             }
 
             Some(GuestBufferBacking {
-                base_gpa: entry.gpa + backing_offset,
+                alloc_id: backing_alloc_id,
+                alloc_offset_bytes: backing_offset,
             })
         };
 
@@ -875,7 +934,8 @@ fn fs_main() -> @location(0) vec4<f32> {
             }
 
             Some(GuestTextureBacking {
-                base_gpa: entry.gpa + backing_offset,
+                alloc_id: backing_alloc_id,
+                alloc_offset_bytes: backing_offset,
                 row_pitch_bytes,
                 size_bytes: required_bytes,
             })
@@ -1230,6 +1290,7 @@ fn fs_main() -> @location(0) vec4<f32> {
         size_bytes: u64,
         flags: u32,
         guest_memory: &dyn GuestMemory,
+        alloc_table: Option<&AllocTable>,
     ) -> Result<(), ExecutorError> {
         if size_bytes == 0 {
             return Ok(());
@@ -1295,8 +1356,8 @@ fn fs_main() -> @location(0) vec4<f32> {
         }
 
         // Flush any pending CPU writes before the copy reads/writes the buffers.
-        self.flush_buffer_if_dirty(src_buffer, guest_memory)?;
-        self.flush_buffer_if_dirty(dst_buffer, guest_memory)?;
+        self.flush_buffer_if_dirty(src_buffer, guest_memory, alloc_table)?;
+        self.flush_buffer_if_dirty(dst_buffer, guest_memory, alloc_table)?;
 
         let (src, dst) = {
             let src = self.buffers.get(&src_buffer).ok_or_else(|| {
@@ -1860,6 +1921,7 @@ fn fs_main() -> @location(0) vec4<f32> {
         first_vertex: u32,
         first_instance: u32,
         guest_memory: &dyn GuestMemory,
+        alloc_table: Option<&AllocTable>,
     ) -> Result<(), ExecutorError> {
         let Some(rt) = self.state.render_target else {
             return Err(ExecutorError::Validation(
@@ -1878,9 +1940,9 @@ fn fs_main() -> @location(0) vec4<f32> {
         };
 
         // Upload pending dirty ranges for any guest-backed resources used by this draw.
-        self.flush_texture_if_dirty(rt, guest_memory)?;
-        self.flush_buffer_if_dirty(vb.buffer, guest_memory)?;
-        self.flush_texture_if_dirty(tex0, guest_memory)?;
+        self.flush_texture_if_dirty(rt, guest_memory, alloc_table)?;
+        self.flush_buffer_if_dirty(vb.buffer, guest_memory, alloc_table)?;
+        self.flush_texture_if_dirty(tex0, guest_memory, alloc_table)?;
 
         let rt_tex = self
             .textures
@@ -1969,6 +2031,7 @@ fn fs_main() -> @location(0) vec4<f32> {
         base_vertex: i32,
         first_instance: u32,
         guest_memory: &dyn GuestMemory,
+        alloc_table: Option<&AllocTable>,
     ) -> Result<(), ExecutorError> {
         let Some(rt) = self.state.render_target else {
             return Err(ExecutorError::Validation(
@@ -1991,10 +2054,10 @@ fn fs_main() -> @location(0) vec4<f32> {
             ));
         };
 
-        self.flush_texture_if_dirty(rt, guest_memory)?;
-        self.flush_buffer_if_dirty(vb.buffer, guest_memory)?;
-        self.flush_buffer_if_dirty(ib.buffer, guest_memory)?;
-        self.flush_texture_if_dirty(tex0, guest_memory)?;
+        self.flush_texture_if_dirty(rt, guest_memory, alloc_table)?;
+        self.flush_buffer_if_dirty(vb.buffer, guest_memory, alloc_table)?;
+        self.flush_buffer_if_dirty(ib.buffer, guest_memory, alloc_table)?;
+        self.flush_texture_if_dirty(tex0, guest_memory, alloc_table)?;
 
         let rt_tex = self.textures.get(&rt).ok_or_else(|| {
             ExecutorError::Validation(format!("DRAW_INDEXED render target {rt} missing"))
@@ -2095,6 +2158,7 @@ fn fs_main() -> @location(0) vec4<f32> {
         &mut self,
         handle: u32,
         guest_memory: &dyn GuestMemory,
+        alloc_table: Option<&AllocTable>,
     ) -> Result<(), ExecutorError> {
         let Some(buffer) = self.buffers.get_mut(&handle) else {
             return Err(ExecutorError::Validation(format!(
@@ -2109,6 +2173,12 @@ fn fs_main() -> @location(0) vec4<f32> {
             return Ok(());
         }
 
+        let table = alloc_table.ok_or_else(|| {
+            ExecutorError::Validation(format!(
+                "dirty guest-backed buffer {handle} requires alloc_table"
+            ))
+        })?;
+
         for range in &buffer.dirty_ranges {
             let aligned_start = align_down_u64(range.start, wgpu::COPY_BUFFER_ALIGNMENT);
             let aligned_end =
@@ -2119,7 +2189,12 @@ fn fs_main() -> @location(0) vec4<f32> {
             let len_usize = usize::try_from(len)
                 .map_err(|_| ExecutorError::Validation("buffer dirty range too large".into()))?;
             let mut data = vec![0u8; len_usize];
-            guest_memory.read(backing.base_gpa + aligned_start, &mut data)?;
+
+            let alloc_offset = backing.alloc_offset_bytes.checked_add(aligned_start).ok_or_else(|| {
+                ExecutorError::Validation("buffer alloc offset overflow".into())
+            })?;
+            let src_gpa = table.resolve_gpa(backing.alloc_id, alloc_offset, len)?;
+            guest_memory.read(src_gpa, &mut data)?;
             self.queue
                 .write_buffer(&buffer.buffer, aligned_start, &data);
         }
@@ -2132,6 +2207,7 @@ fn fs_main() -> @location(0) vec4<f32> {
         &mut self,
         handle: u32,
         guest_memory: &dyn GuestMemory,
+        alloc_table: Option<&AllocTable>,
     ) -> Result<(), ExecutorError> {
         let Some(tex) = self.textures.get_mut(&handle) else {
             return Err(ExecutorError::Validation(format!(
@@ -2145,6 +2221,12 @@ fn fs_main() -> @location(0) vec4<f32> {
         if tex.dirty_ranges.is_empty() {
             return Ok(());
         }
+
+        let table = alloc_table.ok_or_else(|| {
+            ExecutorError::Validation(format!(
+                "dirty guest-backed texture {handle} requires alloc_table"
+            ))
+        })?;
 
         let row_pitch = backing.row_pitch_bytes as u64;
         let mut row_ranges = Vec::<Range<u32>>::new();
@@ -2182,7 +2264,18 @@ fn fs_main() -> @location(0) vec4<f32> {
             let mut staging = vec![0u8; upload_bpr as usize * height as usize];
             for i in 0..height {
                 let row = rows.start + i;
-                let src_gpa = backing.base_gpa + (row as u64) * row_pitch;
+                let row_off = (row as u64)
+                    .checked_mul(row_pitch)
+                    .ok_or_else(|| ExecutorError::Validation("texture row offset overflow".into()))?;
+                let alloc_offset = backing
+                    .alloc_offset_bytes
+                    .checked_add(row_off)
+                    .ok_or_else(|| ExecutorError::Validation("texture alloc offset overflow".into()))?;
+                let src_gpa = table.resolve_gpa(
+                    backing.alloc_id,
+                    alloc_offset,
+                    unpadded_bpr as u64,
+                )?;
                 let dst_off = i as usize * upload_bpr as usize;
                 guest_memory.read(
                     src_gpa,
