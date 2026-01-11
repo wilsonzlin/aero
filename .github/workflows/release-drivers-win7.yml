@@ -165,10 +165,15 @@ jobs:
             -Version '${{ github.ref_name }}' `
             -BuildId '${{ github.run_id }}'
 
+          # ci/package-guest-tools.ps1 writes `aero-guest-tools.manifest.json`; provide
+          # a `manifest.json` alias for downstream tooling that expects the raw packager name.
+          Copy-Item -LiteralPath 'artifacts/aero-guest-tools.manifest.json' -Destination 'artifacts/manifest.json' -Force
+
           foreach ($path in @(
             'artifacts/aero-guest-tools.iso',
             'artifacts/aero-guest-tools.zip',
-            'artifacts/aero-guest-tools.manifest.json'
+            'artifacts/aero-guest-tools.manifest.json',
+            'artifacts/manifest.json'
           )) {
             if (!(Test-Path -LiteralPath $path)) {
               throw "Missing expected Guest Tools output: $path"
@@ -182,6 +187,7 @@ jobs:
             artifacts/*.zip
             artifacts/*.iso
             artifacts/aero-guest-tools.manifest.json
+            artifacts/manifest.json
             artifacts/*.cer
             artifacts/*.vhd
             artifacts/*.exe

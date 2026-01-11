@@ -10,7 +10,8 @@ on:
       - ".github/workflows/drivers-win7.yml"
     paths-ignore:
       - "docs/**"
-      - "**/*.md"
+      - "drivers/**/*.md"
+      - "ci/**/*.md"
   push:
     branches:
       - main
@@ -22,7 +23,8 @@ on:
       - ".github/workflows/drivers-win7.yml"
     paths-ignore:
       - "docs/**"
-      - "**/*.md"
+      - "drivers/**/*.md"
+      - "ci/**/*.md"
   workflow_dispatch:
 
 jobs:
@@ -466,10 +468,14 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          # ci/package-guest-tools.ps1 writes `aero-guest-tools.manifest.json`; provide
+          # a `manifest.json` alias for downstream tooling that expects the raw packager name.
+          Copy-Item -LiteralPath 'out/guest-tools/aero-guest-tools.manifest.json' -Destination 'out/guest-tools/manifest.json' -Force
           foreach ($path in @(
             'out/guest-tools/aero-guest-tools.iso',
             'out/guest-tools/aero-guest-tools.zip',
-            'out/guest-tools/aero-guest-tools.manifest.json'
+            'out/guest-tools/aero-guest-tools.manifest.json',
+            'out/guest-tools/manifest.json'
           )) {
             if (!(Test-Path -LiteralPath $path)) {
               throw "Missing expected Guest Tools output: $path"
@@ -484,4 +490,5 @@ jobs:
             out/guest-tools/aero-guest-tools.iso
             out/guest-tools/aero-guest-tools.zip
             out/guest-tools/aero-guest-tools.manifest.json
+            out/guest-tools/manifest.json
           if-no-files-found: error
