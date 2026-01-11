@@ -397,7 +397,12 @@ async function openDisk(meta: DiskImageMetadata, mode: OpenMode, overlayBlockSiz
         }
       } else {
         const manifestUrl = await resolveRemoteChunkedManifestUrl(meta);
-        baseDisk = await RemoteChunkedDisk.open(manifestUrl, { cacheBackend: remoteCacheBackend, credentials: "same-origin" });
+        baseDisk = await RemoteChunkedDisk.open(manifestUrl, {
+          cacheBackend: remoteCacheBackend,
+          credentials: "same-origin",
+          cacheImageId: meta.remote.imageId,
+          cacheVersion: meta.remote.version,
+        });
         if (baseDisk.capacityBytes !== meta.sizeBytes) {
           await baseDisk.close?.();
           throw new Error(`disk size mismatch: expected=${meta.sizeBytes} actual=${baseDisk.capacityBytes}`);
@@ -424,7 +429,12 @@ async function openDisk(meta: DiskImageMetadata, mode: OpenMode, overlayBlockSiz
         }
       } else if (meta.remote.delivery === "chunked") {
         const manifestUrl = await resolveRemoteChunkedManifestUrl(meta);
-        baseDisk = await RemoteChunkedDisk.open(manifestUrl, { cacheBackend: remoteCacheBackend, credentials: "same-origin" });
+        baseDisk = await RemoteChunkedDisk.open(manifestUrl, {
+          cacheBackend: remoteCacheBackend,
+          credentials: "same-origin",
+          cacheImageId: meta.remote.imageId,
+          cacheVersion: meta.remote.version,
+        });
         if (baseDisk.capacityBytes !== meta.sizeBytes) {
           await baseDisk.close?.();
           throw new Error(`disk size mismatch: expected=${meta.sizeBytes} actual=${baseDisk.capacityBytes}`);

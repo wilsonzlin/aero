@@ -1,6 +1,4 @@
-// @vitest-environment jsdom
-
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { installHud } from "./hud";
 import type { PerfApi, PerfHudSnapshot } from "./types";
@@ -22,16 +20,191 @@ function defer<T>(): Deferred<T> {
 }
 
 describe("Perf HUD Trace JSON export", () => {
+  const originalDocument = (globalThis as typeof globalThis & { document?: unknown }).document;
+  const originalWindow = (globalThis as typeof globalThis & { window?: unknown }).window;
+  const originalHTMLElement = (globalThis as typeof globalThis & { HTMLElement?: unknown }).HTMLElement;
+  const originalHTMLCanvasElement = (globalThis as typeof globalThis & { HTMLCanvasElement?: unknown }).HTMLCanvasElement;
+  const originalHTMLAnchorElement = (globalThis as typeof globalThis & { HTMLAnchorElement?: unknown }).HTMLAnchorElement;
+  const originalHTMLButtonElement = (globalThis as typeof globalThis & { HTMLButtonElement?: unknown }).HTMLButtonElement;
+  const originalHTMLDivElement = (globalThis as typeof globalThis & { HTMLDivElement?: unknown }).HTMLDivElement;
   const originalCreateObjectURL = (URL as unknown as { createObjectURL?: unknown }).createObjectURL;
   const originalRevokeObjectURL = (URL as unknown as { revokeObjectURL?: unknown }).revokeObjectURL;
   const originalBlob = globalThis.Blob;
 
+  class FakeEventTarget {
+    private readonly listeners = new Map<string, Set<(...args: unknown[]) => unknown>>();
+
+    addEventListener(type: string, listener: (...args: unknown[]) => unknown): void {
+      const set = this.listeners.get(type) ?? new Set();
+      set.add(listener);
+      this.listeners.set(type, set);
+    }
+
+    removeEventListener(type: string, listener: (...args: unknown[]) => unknown): void {
+      this.listeners.get(type)?.delete(listener);
+    }
+
+    protected dispatch(type: string): void {
+      for (const listener of this.listeners.get(type) ?? []) {
+        try {
+          const result = listener();
+          if (result && typeof (result as Promise<unknown>).then === "function") {
+            void (result as Promise<unknown>).catch(() => {});
+          }
+        } catch {
+          // Ignore to mimic browser event dispatch (errors surface via console).
+        }
+      }
+    }
+  }
+
+  class FakeHTMLElement extends FakeEventTarget {
+    readonly tagName: string;
+    id = "";
+    className = "";
+    textContent: string | null = "";
+    type = "";
+    hidden = false;
+    disabled = false;
+    href = "";
+    download = "";
+    isContentEditable = false;
+    parentElement: FakeHTMLElement | null = null;
+    private readonly childrenInternal: FakeHTMLElement[] = [];
+
+    constructor(tagName: string) {
+      super();
+      this.tagName = tagName.toUpperCase();
+    }
+
+    append(...nodes: FakeHTMLElement[]): void {
+      for (const node of nodes) {
+        node.parentElement = this;
+        this.childrenInternal.push(node);
+      }
+    }
+
+    remove(): void {
+      const parent = this.parentElement;
+      if (!parent) return;
+      const idx = parent.childrenInternal.indexOf(this);
+      if (idx >= 0) parent.childrenInternal.splice(idx, 1);
+      this.parentElement = null;
+    }
+
+    set innerHTML(_value: string) {
+      this.childrenInternal.length = 0;
+      this.textContent = "";
+    }
+
+    querySelectorAll<T extends FakeHTMLElement = FakeHTMLElement>(selector: string): T[] {
+      const out: FakeHTMLElement[] = [];
+      const isId = selector.startsWith("#");
+      const needle = isId ? selector.slice(1) : selector.toUpperCase();
+      const visit = (el: FakeHTMLElement): void => {
+        for (const child of el.childrenInternal) {
+          if (isId ? child.id === needle : child.tagName === needle) out.push(child);
+          visit(child);
+        }
+      };
+      visit(this);
+      return out as T[];
+    }
+
+    click(): void {
+      if (this.disabled) return;
+      this.dispatch("click");
+    }
+  }
+
+  class FakeHTMLCanvasElement extends FakeHTMLElement {
+    width = 0;
+    height = 0;
+    constructor() {
+      super("canvas");
+    }
+    getContext(_type: string): CanvasRenderingContext2D | null {
+      return null;
+    }
+  }
+
+  class FakeHTMLAnchorElement extends FakeHTMLElement {
+    constructor() {
+      super("a");
+    }
+  }
+
+  class FakeHTMLButtonElement extends FakeHTMLElement {
+    constructor() {
+      super("button");
+    }
+  }
+
+  class FakeHTMLDivElement extends FakeHTMLElement {
+    constructor() {
+      super("div");
+    }
+  }
+
+  class FakeDocument {
+    readonly body = new FakeHTMLElement("body");
+
+    createElement(tagName: string): FakeHTMLElement {
+      switch (tagName.toLowerCase()) {
+        case "canvas":
+          return new FakeHTMLCanvasElement();
+        case "a":
+          return new FakeHTMLAnchorElement();
+        case "button":
+          return new FakeHTMLButtonElement();
+        case "div":
+          return new FakeHTMLDivElement();
+        default:
+          return new FakeHTMLElement(tagName);
+      }
+    }
+
+    querySelector<T extends FakeHTMLElement = FakeHTMLElement>(selector: string): T | null {
+      return this.body.querySelectorAll<T>(selector)[0] ?? null;
+    }
+
+    querySelectorAll<T extends FakeHTMLElement = FakeHTMLElement>(selector: string): T[] {
+      return this.body.querySelectorAll<T>(selector);
+    }
+  }
+
+  beforeEach(() => {
+    const g = globalThis as typeof globalThis & Record<string, unknown>;
+    g.window = {
+      devicePixelRatio: 1,
+      setInterval: globalThis.setInterval.bind(globalThis),
+      clearInterval: globalThis.clearInterval.bind(globalThis),
+      setTimeout: globalThis.setTimeout.bind(globalThis),
+      clearTimeout: globalThis.clearTimeout.bind(globalThis),
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    };
+    g.document = new FakeDocument();
+    g.HTMLElement = FakeHTMLElement;
+    g.HTMLCanvasElement = FakeHTMLCanvasElement;
+    g.HTMLAnchorElement = FakeHTMLAnchorElement;
+    g.HTMLButtonElement = FakeHTMLButtonElement;
+    g.HTMLDivElement = FakeHTMLDivElement;
+  });
+
   afterEach(() => {
-    document.body.innerHTML = "";
+    (globalThis as typeof globalThis & { document?: { body?: { innerHTML: string } } }).document?.body && (document.body.innerHTML = "");
     vi.restoreAllMocks();
     (URL as unknown as { createObjectURL?: unknown }).createObjectURL = originalCreateObjectURL;
     (URL as unknown as { revokeObjectURL?: unknown }).revokeObjectURL = originalRevokeObjectURL;
     globalThis.Blob = originalBlob;
+    (globalThis as typeof globalThis & { document?: unknown }).document = originalDocument;
+    (globalThis as typeof globalThis & { window?: unknown }).window = originalWindow;
+    (globalThis as typeof globalThis & { HTMLElement?: unknown }).HTMLElement = originalHTMLElement;
+    (globalThis as typeof globalThis & { HTMLCanvasElement?: unknown }).HTMLCanvasElement = originalHTMLCanvasElement;
+    (globalThis as typeof globalThis & { HTMLAnchorElement?: unknown }).HTMLAnchorElement = originalHTMLAnchorElement;
+    (globalThis as typeof globalThis & { HTMLButtonElement?: unknown }).HTMLButtonElement = originalHTMLButtonElement;
+    (globalThis as typeof globalThis & { HTMLDivElement?: unknown }).HTMLDivElement = originalHTMLDivElement;
   });
 
   it("awaits exportTrace({ asString: true }) and downloads the returned string", async () => {
