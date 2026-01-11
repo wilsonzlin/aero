@@ -79,6 +79,46 @@ struct has_member_pfnCalcPrivateDeviceContextSize<T, std::void_t<decltype(std::d
     : std::true_type {};
 
 template <typename T, typename = void>
+struct has_member_pfnStagingResourceMap : std::false_type {};
+template <typename T>
+struct has_member_pfnStagingResourceMap<T, std::void_t<decltype(std::declval<T>().pfnStagingResourceMap)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_pfnStagingResourceUnmap : std::false_type {};
+template <typename T>
+struct has_member_pfnStagingResourceUnmap<T, std::void_t<decltype(std::declval<T>().pfnStagingResourceUnmap)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_pfnDynamicIABufferMapDiscard : std::false_type {};
+template <typename T>
+struct has_member_pfnDynamicIABufferMapDiscard<T, std::void_t<decltype(std::declval<T>().pfnDynamicIABufferMapDiscard)>>
+    : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_pfnDynamicIABufferMapNoOverwrite : std::false_type {};
+template <typename T>
+struct has_member_pfnDynamicIABufferMapNoOverwrite<T, std::void_t<decltype(std::declval<T>().pfnDynamicIABufferMapNoOverwrite)>>
+    : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_pfnDynamicIABufferUnmap : std::false_type {};
+template <typename T>
+struct has_member_pfnDynamicIABufferUnmap<T, std::void_t<decltype(std::declval<T>().pfnDynamicIABufferUnmap)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_pfnDynamicConstantBufferMapDiscard : std::false_type {};
+template <typename T>
+struct has_member_pfnDynamicConstantBufferMapDiscard<
+    T,
+    std::void_t<decltype(std::declval<T>().pfnDynamicConstantBufferMapDiscard)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_pfnDynamicConstantBufferUnmap : std::false_type {};
+template <typename T>
+struct has_member_pfnDynamicConstantBufferUnmap<T, std::void_t<decltype(std::declval<T>().pfnDynamicConstantBufferUnmap)>>
+    : std::true_type {};
+
+template <typename T, typename = void>
 struct has_member_pInitialDataUP : std::false_type {};
 template <typename T>
 struct has_member_pInitialDataUP<T, std::void_t<decltype(std::declval<T>().pInitialDataUP)>> : std::true_type {};
@@ -503,6 +543,23 @@ static D3D11DDI_DEVICECONTEXTFUNCS MakeStubContextFuncs11() {
 
   StubPresentAndRotate(&funcs);
   return funcs;
+}
+
+static void UnmapLocked(Device* dev, Resource* res) {
+  if (!dev || !res || !res->mapped) {
+    return;
+  }
+
+  const bool is_write = (res->mapped_map_type != D3D11_MAP_READ);
+  if (is_write && !res->storage.empty()) {
+    EmitUploadLocked(dev, res, res->mapped_offset, res->mapped_size);
+  }
+
+  res->mapped = false;
+  res->mapped_map_type = 0;
+  res->mapped_map_flags = 0;
+  res->mapped_offset = 0;
+  res->mapped_size = 0;
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -1785,7 +1842,7 @@ void AEROGPU_APIENTRY CopySubresourceRegion11(D3D11DDI_HDEVICECONTEXT hCtx,
 
 static HRESULT MapCore11(D3D11DDI_HDEVICECONTEXT hCtx,
                          D3D11DDI_HRESOURCE hResource,
-                         UINT,
+                         UINT subresource,
                          D3D11_DDI_MAP map_type,
                          UINT map_flags,
                          D3D11DDI_MAPPED_SUBRESOURCE* pMapped) {
@@ -1799,6 +1856,10 @@ static HRESULT MapCore11(D3D11DDI_HDEVICECONTEXT hCtx,
 
   auto* res = FromHandle<D3D11DDI_HRESOURCE, Resource>(hResource);
   if (!res) {
+    SetError(dev, E_INVALIDARG);
+    return E_INVALIDARG;
+  }
+  if (subresource != 0) {
     SetError(dev, E_INVALIDARG);
     return E_INVALIDARG;
   }
@@ -1824,6 +1885,16 @@ static HRESULT MapCore11(D3D11DDI_HDEVICECONTEXT hCtx,
     return E_INVALIDARG;
   }
 
+  if (map_u32 == D3D11_MAP_WRITE_DISCARD && res->kind == ResourceKind::Buffer) {
+    // Approximate DISCARD renaming by allocating a fresh CPU backing store.
+    try {
+      res->storage.assign(res->storage.size(), 0);
+    } catch (...) {
+      SetError(dev, E_OUTOFMEMORY);
+      return E_OUTOFMEMORY;
+    }
+  }
+
   res->mapped = true;
   res->mapped_map_type = map_u32;
   res->mapped_map_flags = map_flags;
@@ -1847,6 +1918,10 @@ HRESULT AEROGPU_APIENTRY Map11(D3D11DDI_HDEVICECONTEXT hCtx,
                                D3D11_DDI_MAP map_type,
                                UINT map_flags,
                                D3D11DDI_MAPPED_SUBRESOURCE* pMapped) {
+  AEROGPU_D3D10_11_LOG("pfnMap subresource=%u map_type=%u map_flags=0x%X",
+                       static_cast<unsigned>(subresource),
+                       static_cast<unsigned>(map_type),
+                       static_cast<unsigned>(map_flags));
   return MapCore11(hCtx, hResource, subresource, map_type, map_flags, pMapped);
 }
 
@@ -1856,10 +1931,15 @@ void AEROGPU_APIENTRY Map11Void(D3D11DDI_HDEVICECONTEXT hCtx,
                                 D3D11_DDI_MAP map_type,
                                 UINT map_flags,
                                 D3D11DDI_MAPPED_SUBRESOURCE* pMapped) {
+  AEROGPU_D3D10_11_LOG("pfnMap(void) subresource=%u map_type=%u map_flags=0x%X",
+                       static_cast<unsigned>(subresource),
+                       static_cast<unsigned>(map_type),
+                       static_cast<unsigned>(map_flags));
   (void)MapCore11(hCtx, hResource, subresource, map_type, map_flags, pMapped);
 }
 
 void AEROGPU_APIENTRY Unmap11(D3D11DDI_HDEVICECONTEXT hCtx, D3D11DDI_HRESOURCE hResource, UINT) {
+  AEROGPU_D3D10_11_LOG_CALL();
   auto* dev = DeviceFromContext(hCtx);
   if (!dev || !hResource.pDrvPrivate) {
     return;
@@ -1871,16 +1951,166 @@ void AEROGPU_APIENTRY Unmap11(D3D11DDI_HDEVICECONTEXT hCtx, D3D11DDI_HRESOURCE h
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
-  if (!res->mapped) {
+  UnmapLocked(dev, res);
+}
+
+static HRESULT DynamicBufferMapCore11(D3D11DDI_HDEVICECONTEXT hCtx,
+                                      D3D11DDI_HRESOURCE hResource,
+                                      uint32_t bind_mask,
+                                      uint32_t map_u32,
+                                      void** ppData) {
+  auto* dev = DeviceFromContext(hCtx);
+  if (!dev || !hResource.pDrvPrivate || !ppData) {
+    if (dev) {
+      SetError(dev, E_INVALIDARG);
+    }
+    return E_INVALIDARG;
+  }
+
+  auto* res = FromHandle<D3D11DDI_HRESOURCE, Resource>(hResource);
+  if (!res) {
+    SetError(dev, E_INVALIDARG);
+    return E_INVALIDARG;
+  }
+  if (res->kind != ResourceKind::Buffer) {
+    SetError(dev, E_INVALIDARG);
+    return E_INVALIDARG;
+  }
+  if ((res->bind_flags & bind_mask) == 0) {
+    SetError(dev, E_INVALIDARG);
+    return E_INVALIDARG;
+  }
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  if (res->mapped) {
+    SetError(dev, E_FAIL);
+    return E_FAIL;
+  }
+
+  if (map_u32 == D3D11_MAP_WRITE_DISCARD) {
+    try {
+      res->storage.assign(res->storage.size(), 0);
+    } catch (...) {
+      SetError(dev, E_OUTOFMEMORY);
+      return E_OUTOFMEMORY;
+    }
+  }
+
+  res->mapped = true;
+  res->mapped_map_type = map_u32;
+  res->mapped_map_flags = 0;
+  res->mapped_offset = 0;
+  res->mapped_size = res->storage.size();
+  *ppData = res->storage.empty() ? nullptr : res->storage.data();
+  return S_OK;
+}
+
+HRESULT AEROGPU_APIENTRY StagingResourceMap11(D3D11DDI_HDEVICECONTEXT hCtx,
+                                              D3D11DDI_HRESOURCE hResource,
+                                              UINT subresource,
+                                              D3D11_DDI_MAP map_type,
+                                              UINT map_flags,
+                                              D3D11DDI_MAPPED_SUBRESOURCE* pMapped) {
+  AEROGPU_D3D10_11_LOG("pfnStagingResourceMap subresource=%u map_type=%u map_flags=0x%X",
+                       static_cast<unsigned>(subresource),
+                       static_cast<unsigned>(map_type),
+                       static_cast<unsigned>(map_flags));
+  auto* dev = DeviceFromContext(hCtx);
+  if (!dev || !hResource.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+  auto* res = FromHandle<D3D11DDI_HRESOURCE, Resource>(hResource);
+  if (!res) {
+    SetError(dev, E_INVALIDARG);
+    return E_INVALIDARG;
+  }
+  if (res->usage != kD3D11UsageStaging) {
+    SetError(dev, E_INVALIDARG);
+    return E_INVALIDARG;
+  }
+  return MapCore11(hCtx, hResource, subresource, map_type, map_flags, pMapped);
+}
+
+void AEROGPU_APIENTRY StagingResourceMap11Void(D3D11DDI_HDEVICECONTEXT hCtx,
+                                               D3D11DDI_HRESOURCE hResource,
+                                               UINT subresource,
+                                               D3D11_DDI_MAP map_type,
+                                               UINT map_flags,
+                                               D3D11DDI_MAPPED_SUBRESOURCE* pMapped) {
+  (void)StagingResourceMap11(hCtx, hResource, subresource, map_type, map_flags, pMapped);
+}
+
+void AEROGPU_APIENTRY StagingResourceUnmap11(D3D11DDI_HDEVICECONTEXT hCtx, D3D11DDI_HRESOURCE hResource, UINT) {
+  AEROGPU_D3D10_11_LOG_CALL();
+  auto* dev = DeviceFromContext(hCtx);
+  if (!dev || !hResource.pDrvPrivate) {
     return;
   }
-
-  const bool is_write = (res->mapped_map_type != D3D11_MAP_READ);
-  if (is_write && !res->storage.empty()) {
-    EmitUploadLocked(dev, res, res->mapped_offset, res->mapped_size);
+  auto* res = FromHandle<D3D11DDI_HRESOURCE, Resource>(hResource);
+  if (!res) {
+    return;
   }
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  UnmapLocked(dev, res);
+}
 
-  res->mapped = false;
+HRESULT AEROGPU_APIENTRY DynamicIABufferMapDiscard11(D3D11DDI_HDEVICECONTEXT hCtx, D3D11DDI_HRESOURCE hResource, void** ppData) {
+  AEROGPU_D3D10_11_LOG_CALL();
+  return DynamicBufferMapCore11(hCtx, hResource, kD3D11BindVertexBuffer | kD3D11BindIndexBuffer, D3D11_MAP_WRITE_DISCARD, ppData);
+}
+
+void AEROGPU_APIENTRY DynamicIABufferMapDiscard11Void(D3D11DDI_HDEVICECONTEXT hCtx, D3D11DDI_HRESOURCE hResource, void** ppData) {
+  (void)DynamicIABufferMapDiscard11(hCtx, hResource, ppData);
+}
+
+HRESULT AEROGPU_APIENTRY DynamicIABufferMapNoOverwrite11(D3D11DDI_HDEVICECONTEXT hCtx, D3D11DDI_HRESOURCE hResource, void** ppData) {
+  AEROGPU_D3D10_11_LOG_CALL();
+  return DynamicBufferMapCore11(hCtx,
+                               hResource,
+                               kD3D11BindVertexBuffer | kD3D11BindIndexBuffer,
+                               D3D11_MAP_WRITE_NO_OVERWRITE,
+                               ppData);
+}
+
+void AEROGPU_APIENTRY DynamicIABufferMapNoOverwrite11Void(D3D11DDI_HDEVICECONTEXT hCtx, D3D11DDI_HRESOURCE hResource, void** ppData) {
+  (void)DynamicIABufferMapNoOverwrite11(hCtx, hResource, ppData);
+}
+
+void AEROGPU_APIENTRY DynamicIABufferUnmap11(D3D11DDI_HDEVICECONTEXT hCtx, D3D11DDI_HRESOURCE hResource) {
+  AEROGPU_D3D10_11_LOG_CALL();
+  auto* dev = DeviceFromContext(hCtx);
+  if (!dev || !hResource.pDrvPrivate) {
+    return;
+  }
+  auto* res = FromHandle<D3D11DDI_HRESOURCE, Resource>(hResource);
+  if (!res) {
+    return;
+  }
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  UnmapLocked(dev, res);
+}
+
+HRESULT AEROGPU_APIENTRY DynamicConstantBufferMapDiscard11(D3D11DDI_HDEVICECONTEXT hCtx, D3D11DDI_HRESOURCE hResource, void** ppData) {
+  AEROGPU_D3D10_11_LOG_CALL();
+  return DynamicBufferMapCore11(hCtx, hResource, kD3D11BindConstantBuffer, D3D11_MAP_WRITE_DISCARD, ppData);
+}
+
+void AEROGPU_APIENTRY DynamicConstantBufferMapDiscard11Void(D3D11DDI_HDEVICECONTEXT hCtx, D3D11DDI_HRESOURCE hResource, void** ppData) {
+  (void)DynamicConstantBufferMapDiscard11(hCtx, hResource, ppData);
+}
+
+void AEROGPU_APIENTRY DynamicConstantBufferUnmap11(D3D11DDI_HDEVICECONTEXT hCtx, D3D11DDI_HRESOURCE hResource) {
+  AEROGPU_D3D10_11_LOG_CALL();
+  auto* dev = DeviceFromContext(hCtx);
+  if (!dev || !hResource.pDrvPrivate) {
+    return;
+  }
+  auto* res = FromHandle<D3D11DDI_HRESOURCE, Resource>(hResource);
+  if (!res) {
+    return;
+  }
+  std::lock_guard<std::mutex> lock(dev->mutex);
+  UnmapLocked(dev, res);
 }
 
 void AEROGPU_APIENTRY UpdateSubresourceUP11(D3D11DDI_HDEVICECONTEXT hCtx,
@@ -2145,6 +2375,46 @@ HRESULT AEROGPU_APIENTRY CreateDevice11(D3D10DDI_HADAPTER hAdapter, D3D11DDIARG_
   }
   ctx_funcs->pfnUnmap = &Unmap11;
   ctx_funcs->pfnUpdateSubresourceUP = &UpdateSubresourceUP11;
+
+  if constexpr (has_member_pfnStagingResourceMap<D3D11DDI_DEVICECONTEXTFUNCS>::value) {
+    if constexpr (std::is_same_v<decltype(ctx_funcs->pfnStagingResourceMap), decltype(&StagingResourceMap11)>) {
+      ctx_funcs->pfnStagingResourceMap = &StagingResourceMap11;
+    } else {
+      ctx_funcs->pfnStagingResourceMap = &StagingResourceMap11Void;
+    }
+  }
+  if constexpr (has_member_pfnStagingResourceUnmap<D3D11DDI_DEVICECONTEXTFUNCS>::value) {
+    ctx_funcs->pfnStagingResourceUnmap = &StagingResourceUnmap11;
+  }
+
+  if constexpr (has_member_pfnDynamicIABufferMapDiscard<D3D11DDI_DEVICECONTEXTFUNCS>::value) {
+    if constexpr (std::is_same_v<decltype(ctx_funcs->pfnDynamicIABufferMapDiscard), decltype(&DynamicIABufferMapDiscard11)>) {
+      ctx_funcs->pfnDynamicIABufferMapDiscard = &DynamicIABufferMapDiscard11;
+    } else {
+      ctx_funcs->pfnDynamicIABufferMapDiscard = &DynamicIABufferMapDiscard11Void;
+    }
+  }
+  if constexpr (has_member_pfnDynamicIABufferMapNoOverwrite<D3D11DDI_DEVICECONTEXTFUNCS>::value) {
+    if constexpr (std::is_same_v<decltype(ctx_funcs->pfnDynamicIABufferMapNoOverwrite), decltype(&DynamicIABufferMapNoOverwrite11)>) {
+      ctx_funcs->pfnDynamicIABufferMapNoOverwrite = &DynamicIABufferMapNoOverwrite11;
+    } else {
+      ctx_funcs->pfnDynamicIABufferMapNoOverwrite = &DynamicIABufferMapNoOverwrite11Void;
+    }
+  }
+  if constexpr (has_member_pfnDynamicIABufferUnmap<D3D11DDI_DEVICECONTEXTFUNCS>::value) {
+    ctx_funcs->pfnDynamicIABufferUnmap = &DynamicIABufferUnmap11;
+  }
+
+  if constexpr (has_member_pfnDynamicConstantBufferMapDiscard<D3D11DDI_DEVICECONTEXTFUNCS>::value) {
+    if constexpr (std::is_same_v<decltype(ctx_funcs->pfnDynamicConstantBufferMapDiscard), decltype(&DynamicConstantBufferMapDiscard11)>) {
+      ctx_funcs->pfnDynamicConstantBufferMapDiscard = &DynamicConstantBufferMapDiscard11;
+    } else {
+      ctx_funcs->pfnDynamicConstantBufferMapDiscard = &DynamicConstantBufferMapDiscard11Void;
+    }
+  }
+  if constexpr (has_member_pfnDynamicConstantBufferUnmap<D3D11DDI_DEVICECONTEXTFUNCS>::value) {
+    ctx_funcs->pfnDynamicConstantBufferUnmap = &DynamicConstantBufferUnmap11;
+  }
 
   ctx_funcs->pfnFlush = &Flush11;
   BindPresentAndRotate(ctx_funcs);
