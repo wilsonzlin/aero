@@ -22,6 +22,18 @@ Browser  ──HTTPS/WSS──▶  Caddy (edge)  ──HTTP/WS──▶  aero-ga
 Same-origin for UI + APIs (no CORS needed).
 ```
 
+## Optional: UDP relay service (WebRTC + WebSocket fallback)
+
+The gateway (`backend/aero-gateway`) covers **TCP** (WebSocket) and **DNS-over-HTTPS**. Guest **UDP** requires a separate relay service:
+
+- [`proxy/webrtc-udp-relay`](../proxy/webrtc-udp-relay/) — WebRTC DataChannel (`label="udp"`) with a `GET /udp` WebSocket fallback, using the versioned v1/v2 datagram framing in [`proxy/webrtc-udp-relay/PROTOCOL.md`](../proxy/webrtc-udp-relay/PROTOCOL.md).
+
+To integrate the relay with the gateway (recommended for production):
+
+1. Deploy the relay somewhere reachable by the browser.
+2. Configure the gateway with `UDP_RELAY_BASE_URL` and a matching relay auth mode (`none`, `api_key`, or `jwt`).
+3. The gateway’s `POST /session` response will include an `udpRelay` field (base URL + endpoints + short‑lived token), and clients can optionally refresh the token via `POST /udp-relay/token`.
+
 ## Files
 
 - `deploy/docker-compose.yml` – runs:
