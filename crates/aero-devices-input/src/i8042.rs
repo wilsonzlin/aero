@@ -20,6 +20,19 @@ pub trait IrqSink {
 pub trait SystemControlSink {
     fn set_a20(&mut self, enabled: bool);
     fn request_reset(&mut self);
+
+    /// Returns the current platform A20 gate state if it is observable by the sink.
+    ///
+    /// When this returns `Some`, the i8042 model will:
+    /// - report the A20 state via command `0xD0` (read output port)
+    /// - use the returned value to detect A20 state changes even if the internal
+    ///   output-port latch is stale (e.g. A20 toggled via port 0x92)
+    ///
+    /// Returning `None` preserves legacy behaviour: the output-port A20 bit
+    /// reflects only the last value written via i8042 commands.
+    fn a20_enabled(&self) -> Option<bool> {
+        None
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -410,7 +423,7 @@ impl I8042Controller {
             }
             0xD0 => {
                 // Read output port.
-                self.push_controller_output(self.output_port);
+                self.push_controller_output(self.output_port_for_guest());
             }
             0xD1 => {
                 // Write output port (next data write).
@@ -497,7 +510,9 @@ impl I8042Controller {
         self.output_port = value;
 
         if let Some(sink) = self.sys_ctrl.as_deref_mut() {
-            let prev_a20 = (prev & OUTPUT_PORT_A20) != 0;
+            let prev_a20 = sink
+                .a20_enabled()
+                .unwrap_or_else(|| (prev & OUTPUT_PORT_A20) != 0);
             let new_a20 = (value & OUTPUT_PORT_A20) != 0;
             if prev_a20 != new_a20 {
                 sink.set_a20(new_a20);
@@ -510,6 +525,20 @@ impl I8042Controller {
                 sink.request_reset();
             }
         }
+    }
+
+    fn output_port_for_guest(&self) -> u8 {
+        let mut value = self.output_port;
+        if let Some(sink) = self.sys_ctrl.as_deref() {
+            if let Some(a20) = sink.a20_enabled() {
+                if a20 {
+                    value |= OUTPUT_PORT_A20;
+                } else {
+                    value &= !OUTPUT_PORT_A20;
+                }
+            }
+        }
+        value
     }
 
     fn translation_enabled(&self) -> bool {

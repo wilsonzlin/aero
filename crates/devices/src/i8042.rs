@@ -178,4 +178,8 @@ impl SystemControlSink for PlatformSystemControlSink {
             reset.request_reset(ResetKind::System);
         }
     }
+
+    fn a20_enabled(&self) -> Option<bool> {
+        Some(self.a20.enabled())
+    }
 }

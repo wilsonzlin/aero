@@ -32,13 +32,23 @@ fn a20_state_is_shared_between_devices_and_platform_memory() {
     platform.io.write_u8(0x92, 0x00);
     assert_eq!(platform.memory.read_u8(0x1_00000), 0x11);
 
+    // i8042 output port reads should observe the same line state.
+    platform.io.write_u8(0x64, 0xD0);
+    assert_eq!(platform.io.read_u8(0x60) & 0x02, 0x00);
+
     // Enable A20 via the i8042 output port path and verify separation again.
     platform.io.write_u8(0x64, 0xD1);
     platform.io.write_u8(0x60, 0x03);
     assert_eq!(platform.memory.read_u8(0x0), 0x11);
     assert_eq!(platform.memory.read_u8(0x1_00000), 0x22);
 
+    platform.io.write_u8(0x64, 0xD0);
+    assert_eq!(platform.io.read_u8(0x60) & 0x02, 0x02);
+
     // Disable A20 again and verify aliasing.
     platform.io.write_u8(0x92, 0x00);
     assert_eq!(platform.memory.read_u8(0x1_00000), 0x11);
+
+    platform.io.write_u8(0x64, 0xD0);
+    assert_eq!(platform.io.read_u8(0x60) & 0x02, 0x00);
 }
