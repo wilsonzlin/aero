@@ -362,10 +362,20 @@ static bool ParseRunnerArgs(int argc,
   }
 
   if (out_manifest_path->empty()) {
-    // Default: ..\tests_manifest.txt adjacent to the bin directory.
-    const std::wstring default_manifest = aerogpu_test::JoinPath(*out_bin_dir, L"..\\tests_manifest.txt");
-    if (FileExistsW(default_manifest)) {
-      *out_manifest_path = default_manifest;
+    // Default: look for tests_manifest.txt adjacent to the bin directory (the typical in-tree
+    // layout is win7/tests_manifest.txt with binaries in win7/bin/).
+    const std::wstring default_manifest_parent =
+        aerogpu_test::JoinPath(*out_bin_dir, L"..\\tests_manifest.txt");
+    if (FileExistsW(default_manifest_parent)) {
+      *out_manifest_path = default_manifest_parent;
+    } else {
+      // Also support running from a "bin-only" folder where tests_manifest.txt is placed next to
+      // aerogpu_test_runner.exe.
+      const std::wstring default_manifest_bin =
+          aerogpu_test::JoinPath(*out_bin_dir, L"tests_manifest.txt");
+      if (FileExistsW(default_manifest_bin)) {
+        *out_manifest_path = default_manifest_bin;
+      }
     }
   }
 
@@ -547,6 +557,7 @@ int main(int argc, char** argv) {
 
   std::vector<std::string> tests;
   std::wstring suite_root_dir;
+  bool allow_skipping_missing_tests = false;
   if (!manifest_path.empty()) {
     std::string manifest_err;
     if (!ReadTestsFromManifest(manifest_path, &tests, &manifest_err)) {
@@ -559,6 +570,23 @@ int main(int argc, char** argv) {
     aerogpu_test::PrintfStdout("INFO: manifest=%ls (%u test(s))",
                                manifest_path.c_str(),
                                (unsigned)tests.size());
+
+    // Only skip missing binaries when the manifest is part of a source checkout (i.e. when at least
+    // one test source directory exists next to it). This matches run_all.cmd behavior in-tree, while
+    // keeping "bin-only" distributions strict (missing binaries should fail).
+    for (size_t i = 0; i < tests.size(); ++i) {
+      const std::wstring leaf = aerogpu_test::Utf8ToWideFallbackAcp(tests[i]);
+      const std::wstring test_dir = aerogpu_test::JoinPath(suite_root_dir, leaf.c_str());
+      if (DirExistsW(test_dir)) {
+        allow_skipping_missing_tests = true;
+        break;
+      }
+    }
+    if (!allow_skipping_missing_tests) {
+      aerogpu_test::PrintfStdout(
+          "INFO: aerogpu_test_runner: no test source directories found next to the manifest; "
+          "missing binaries will be treated as failures");
+    }
   } else {
     tests.reserve(ARRAYSIZE(kFallbackTests));
     for (size_t i = 0; i < ARRAYSIZE(kFallbackTests); ++i) {
@@ -594,7 +622,7 @@ int main(int argc, char** argv) {
 
     if (!FileExistsW(exe_path)) {
       bool should_skip = false;
-      if (!suite_root_dir.empty()) {
+      if (allow_skipping_missing_tests && !suite_root_dir.empty()) {
         const std::wstring test_dir_leaf = aerogpu_test::Utf8ToWideFallbackAcp(test_name);
         const std::wstring test_dir = aerogpu_test::JoinPath(suite_root_dir, test_dir_leaf.c_str());
         if (!DirExistsW(test_dir)) {

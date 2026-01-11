@@ -9,3 +9,4 @@ build/
 *.bmp
 *.png
 *.bin
+*.json
