@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
 
-use crate::io::usb::core::{UsbInResult, UsbOutResult};
+use crate::io::usb::core::UsbInResult;
 use crate::io::usb::{
     ControlResponse, RequestDirection, RequestRecipient, RequestType, SetupPacket, UsbDeviceModel,
 };
@@ -469,10 +469,6 @@ impl UsbDeviceModel for UsbHidMouse {
             },
             _ => ControlResponse::Stall,
         }
-    }
-
-    fn handle_out_transfer(&mut self, _ep_addr: u8, _data: &[u8]) -> UsbOutResult {
-        UsbOutResult::Stall
     }
 
     fn handle_interrupt_in(&mut self, ep_addr: u8) -> UsbInResult {
