@@ -28,9 +28,9 @@ export type PlatformFeatureReport = {
   /**
    * Whether WebUSB is exposed (`navigator.usb`) in this context.
    *
-   * WebUSB is only available in secure contexts (HTTPS / localhost), so we gate
-   * on `globalThis.isSecureContext === true` in addition to checking for the
-   * `navigator.usb` API surface.
+   * WebUSB is Chromium-only and only available in secure contexts
+   * (HTTPS / localhost). In practice, browsers hide `navigator.usb` entirely
+   * when it is unavailable, so a simple presence check is sufficient.
    */
   webusb: boolean;
   /** Whether OPFS is exposed (`navigator.storage.getDirectory`). */
@@ -118,18 +118,13 @@ function getAudioContextCtor(): typeof AudioContext | undefined {
 export function detectPlatformFeatures(): PlatformFeatureReport {
   const crossOriginIsolated = (globalThis as typeof globalThis & { crossOriginIsolated?: boolean })
     .crossOriginIsolated === true;
-  const isSecureContext = (globalThis as typeof globalThis & { isSecureContext?: boolean }).isSecureContext === true;
   const sharedArrayBuffer = typeof SharedArrayBuffer !== 'undefined';
   const wasmSimd = detectWasmSimd();
   const wasmThreads = detectWasmThreads(crossOriginIsolated, sharedArrayBuffer);
   const jit_dynamic_wasm = detectDynamicWasmCompilation();
 
   const webgpu = typeof navigator !== 'undefined' && !!(navigator as Navigator & { gpu?: unknown }).gpu;
-  const webusb =
-    typeof navigator !== 'undefined' &&
-    isSecureContext &&
-    'usb' in navigator &&
-    !!(navigator as Navigator & { usb?: unknown }).usb;
+  const webusb = typeof navigator !== 'undefined' && typeof navigator.usb !== 'undefined';
   const opfs =
     typeof navigator !== 'undefined' &&
     typeof navigator.storage !== 'undefined' &&

@@ -516,6 +516,7 @@ export class OpfsLruChunkCache implements RemoteChunkCacheBackend {
 
       const chunks = await this.getOrCreateChunksDir();
       const handle = await chunks.getFileHandle(this.chunkFileName(index), { create: true });
+      const bytes = toArrayBufferUint8(data);
 
       // Prefer SyncAccessHandle writes when running inside a dedicated worker. This avoids building
       // `File` objects and is noticeably faster for high-frequency chunk caching.
@@ -529,10 +530,10 @@ export class OpfsLruChunkCache implements RemoteChunkCacheBackend {
       }
       if (sync) {
         try {
-          sync.truncate(data.byteLength);
-          const written = sync.write(data, { at: 0 });
-          if (written !== data.byteLength) {
-            throw new Error(`short cache write: expected=${data.byteLength} actual=${written}`);
+          sync.truncate(bytes.byteLength);
+          const written = sync.write(bytes, { at: 0 });
+          if (written !== bytes.byteLength) {
+            throw new Error(`short cache write: expected=${bytes.byteLength} actual=${written}`);
           }
           sync.flush();
         } finally {
@@ -541,7 +542,7 @@ export class OpfsLruChunkCache implements RemoteChunkCacheBackend {
       } else {
         const writable = await handle.createWritable({ keepExistingData: false });
         try {
-          await writable.write(toArrayBufferUint8(data));
+          await writable.write(bytes);
           await writable.close();
         } catch (err) {
           try {
