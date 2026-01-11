@@ -1,10 +1,18 @@
 use aero_ipc::ipc::{
     create_ipc_buffer, find_queue_by_kind, parse_ipc_buffer, IpcLayoutError, IpcQueueSpec,
 };
-use aero_ipc::layout::{ipc_header, queue_desc, ring_ctrl};
+use aero_ipc::layout::{ipc_header, queue_desc, queue_kind, ring_ctrl};
 
 fn write_u32_le(buf: &mut [u8], offset: usize, v: u32) {
     buf[offset..offset + 4].copy_from_slice(&v.to_le_bytes());
+}
+
+#[test]
+fn queue_kind_values_are_stable() {
+    assert_eq!(queue_kind::CMD, 0);
+    assert_eq!(queue_kind::EVT, 1);
+    assert_eq!(queue_kind::NET_TX, 2);
+    assert_eq!(queue_kind::NET_RX, 3);
 }
 
 #[test]

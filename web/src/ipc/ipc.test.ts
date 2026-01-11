@@ -4,6 +4,13 @@ import { queueKind } from "./layout.ts";
 import { IpcLayoutError, createIpcBuffer, openRingByKind, parseIpcBuffer } from "./ipc.ts";
 
 describe("ipc/ipc layout", () => {
+  it("uses stable queue kind values", () => {
+    expect(queueKind.CMD).toBe(0);
+    expect(queueKind.EVT).toBe(1);
+    expect(queueKind.NET_TX).toBe(2);
+    expect(queueKind.NET_RX).toBe(3);
+  });
+
   it("creates and parses a buffer with queue descriptors", () => {
     const { buffer, queues } = createIpcBuffer([
       { kind: queueKind.CMD, capacityBytes: 64 },
