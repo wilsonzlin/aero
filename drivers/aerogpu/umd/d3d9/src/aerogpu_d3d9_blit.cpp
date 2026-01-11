@@ -848,7 +848,7 @@ HRESULT update_surface_locked(Device* dev,
                               Resource* src,
                               const RECT* src_rect_in,
                               Resource* dst,
-                              const RECT* dst_rect_in) {
+                              const POINT* dst_point_in) {
   if (!dev || !src || !dst) {
     return E_INVALIDARG;
   }
@@ -862,14 +862,81 @@ HRESULT update_surface_locked(Device* dev,
   }
 
   RECT src_rect{};
-  RECT dst_rect{};
-  if (!clamp_rect(src_rect_in, src->width, src->height, &src_rect) ||
-      !clamp_rect(dst_rect_in, dst->width, dst->height, &dst_rect)) {
+  if (!clamp_rect(src_rect_in, src->width, src->height, &src_rect)) {
     return S_OK;
   }
 
-  const uint32_t copy_w = static_cast<uint32_t>(std::min(src_rect.right - src_rect.left, dst_rect.right - dst_rect.left));
-  const uint32_t copy_h = static_cast<uint32_t>(std::min(src_rect.bottom - src_rect.top, dst_rect.bottom - dst_rect.top));
+  int64_t dst_x = 0;
+  int64_t dst_y = 0;
+  if (dst_point_in) {
+    dst_x = static_cast<int64_t>(dst_point_in->x);
+    dst_y = static_cast<int64_t>(dst_point_in->y);
+  }
+
+  // D3D9 UpdateSurface specifies a destination point (top-left corner). Build a
+  // destination rect by translating the source rect and clip it to the dst
+  // surface bounds. Any out-of-bounds portions are treated as a no-op for
+  // resilience in compositor paths.
+  int64_t src_left = static_cast<int64_t>(src_rect.left);
+  int64_t src_top = static_cast<int64_t>(src_rect.top);
+  int64_t src_right = static_cast<int64_t>(src_rect.right);
+  int64_t src_bottom = static_cast<int64_t>(src_rect.bottom);
+
+  int64_t dst_left = dst_x;
+  int64_t dst_top = dst_y;
+
+  const int64_t dst_w = static_cast<int64_t>(dst->width);
+  const int64_t dst_h = static_cast<int64_t>(dst->height);
+  if (dst_w <= 0 || dst_h <= 0) {
+    return S_OK;
+  }
+
+  const int64_t src_w = src_right - src_left;
+  const int64_t src_h = src_bottom - src_top;
+
+  // Clip negative offsets by advancing the source rect.
+  if (dst_left < 0) {
+    // Compute abs(dst_left) without triggering signed overflow for INT64_MIN.
+    const uint64_t shift_u = static_cast<uint64_t>(-(dst_left + 1)) + 1;
+    if (shift_u >= static_cast<uint64_t>(src_w)) {
+      return S_OK;
+    }
+    src_left += static_cast<int64_t>(shift_u);
+    dst_left = 0;
+  }
+  if (dst_top < 0) {
+    const uint64_t shift_u = static_cast<uint64_t>(-(dst_top + 1)) + 1;
+    if (shift_u >= static_cast<uint64_t>(src_h)) {
+      return S_OK;
+    }
+    src_top += static_cast<int64_t>(shift_u);
+    dst_top = 0;
+  }
+
+  // Entirely out-of-bounds destination.
+  if (dst_left >= dst_w || dst_top >= dst_h) {
+    return S_OK;
+  }
+
+  int64_t dst_right = dst_left + (src_right - src_left);
+  int64_t dst_bottom = dst_top + (src_bottom - src_top);
+
+  // Clip to destination bounds.
+  if (dst_right > dst_w) {
+    src_right -= dst_right - dst_w;
+    dst_right = dst_w;
+  }
+  if (dst_bottom > dst_h) {
+    src_bottom -= dst_bottom - dst_h;
+    dst_bottom = dst_h;
+  }
+
+  if (src_right <= src_left || src_bottom <= src_top) {
+    return S_OK;
+  }
+
+  const uint32_t copy_w = static_cast<uint32_t>(src_right - src_left);
+  const uint32_t copy_h = static_cast<uint32_t>(src_bottom - src_top);
   if (!copy_w || !copy_h) {
     return S_OK;
   }
@@ -881,10 +948,10 @@ HRESULT update_surface_locked(Device* dev,
   }
 
   for (uint32_t y = 0; y < copy_h; ++y) {
-    const uint32_t src_off = (static_cast<uint32_t>(src_rect.top) + y) * src->row_pitch +
-                             static_cast<uint32_t>(src_rect.left) * bpp;
-    const uint32_t dst_off = (static_cast<uint32_t>(dst_rect.top) + y) * dst->row_pitch +
-                             static_cast<uint32_t>(dst_rect.left) * bpp;
+    const uint32_t src_off = (static_cast<uint32_t>(src_top) + y) * src->row_pitch +
+                             static_cast<uint32_t>(src_left) * bpp;
+    const uint32_t dst_off = (static_cast<uint32_t>(dst_top) + y) * dst->row_pitch +
+                             static_cast<uint32_t>(dst_left) * bpp;
     if (src_off + row_bytes > src->storage.size() || dst_off + row_bytes > dst->storage.size()) {
       return E_INVALIDARG;
     }

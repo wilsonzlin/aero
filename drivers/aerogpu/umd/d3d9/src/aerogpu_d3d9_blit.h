@@ -24,7 +24,7 @@ HRESULT update_surface_locked(Device* dev,
                               Resource* src,
                               const RECT* src_rect,
                               Resource* dst,
-                              const RECT* dst_rect);
+                              const POINT* dst_point);
 
 HRESULT update_texture_locked(Device* dev, Resource* src, Resource* dst);
 
@@ -32,4 +32,3 @@ HRESULT update_texture_locked(Device* dev, Resource* src, Resource* dst);
 void destroy_blit_objects_locked(Device* dev);
 
 } // namespace aerogpu
-

@@ -3415,7 +3415,7 @@ HRESULT AEROGPU_D3D9_CALL device_update_surface(AEROGPU_D3D9DDI_HDEVICE hDevice,
 
   std::lock_guard<std::mutex> lock(dev->mutex);
   logf("aerogpu-d3d9: UpdateSurface src=%p dst=%p\n", src, dst);
-  return update_surface_locked(dev, src, pUpdateSurface->pSrcRect, dst, pUpdateSurface->pDstRect);
+  return update_surface_locked(dev, src, pUpdateSurface->pSrcRect, dst, pUpdateSurface->pDstPoint);
 }
 
 HRESULT AEROGPU_D3D9_CALL device_update_texture(AEROGPU_D3D9DDI_HDEVICE hDevice,

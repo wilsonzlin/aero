@@ -47,6 +47,10 @@ typedef struct _RECT {
   long right;
   long bottom;
 } RECT;
+typedef struct _POINT {
+  long x;
+  long y;
+} POINT;
 
   #ifndef TRUE
     #define TRUE 1
@@ -761,7 +765,14 @@ typedef struct AEROGPU_D3D9DDIARG_UPDATESURFACE {
   AEROGPU_D3D9DDI_HRESOURCE hSrc;
   const RECT* pSrcRect; // NULL == full source
   AEROGPU_D3D9DDI_HRESOURCE hDst;
-  const RECT* pDstRect; // NULL == full destination
+  // Destination point in the destination surface.
+  //
+  // D3D9's public API uses a POINT; keep a RECT alias for legacy/bring-up code
+  // paths that may have treated this field as a destination rectangle pointer.
+  union {
+    const POINT* pDstPoint; // NULL == {0,0}
+    const RECT* pDstRect;   // deprecated alias
+  };
   uint32_t flags;       // reserved (0)
 } AEROGPU_D3D9DDIARG_UPDATESURFACE;
 
