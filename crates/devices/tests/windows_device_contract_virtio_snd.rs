@@ -100,8 +100,14 @@ fn virtio_snd_pci_ids_match_windows_device_contract() {
         .collect();
 
     let expected_hwid_short = format!("PCI\\VEN_{vendor_id:04X}&DEV_{device_id:04X}");
+    let expected_hwid_short_rev = format!("PCI\\VEN_{vendor_id:04X}&DEV_{device_id:04X}&REV_01");
     let expected_hwid_subsys = format!(
         "PCI\\VEN_{vendor_id:04X}&DEV_{device_id:04X}&SUBSYS_{subsys_id:04X}{subsys_vendor:04X}",
+        subsys_vendor = VIRTIO_SND.subsystem_vendor_id,
+        subsys_id = VIRTIO_SND.subsystem_id
+    );
+    let expected_hwid_subsys_rev = format!(
+        "PCI\\VEN_{vendor_id:04X}&DEV_{device_id:04X}&SUBSYS_{subsys_id:04X}{subsys_vendor:04X}&REV_01",
         subsys_vendor = VIRTIO_SND.subsystem_vendor_id,
         subsys_id = VIRTIO_SND.subsystem_id
     );
@@ -117,8 +123,24 @@ fn virtio_snd_pci_ids_match_windows_device_contract() {
     assert!(
         patterns
             .iter()
+            .any(|value| value.eq_ignore_ascii_case(&expected_hwid_short_rev)),
+        "{}: virtio-snd hardware_id_patterns missing {expected_hwid_short_rev:?}. Found: {patterns:?}",
+        contract_path.display()
+    );
+
+    assert!(
+        patterns
+            .iter()
             .any(|value| value.eq_ignore_ascii_case(&expected_hwid_subsys)),
         "{}: virtio-snd hardware_id_patterns missing {expected_hwid_subsys:?}. Found: {patterns:?}",
+        contract_path.display()
+    );
+
+    assert!(
+        patterns
+            .iter()
+            .any(|value| value.eq_ignore_ascii_case(&expected_hwid_subsys_rev)),
+        "{}: virtio-snd hardware_id_patterns missing {expected_hwid_subsys_rev:?}. Found: {patterns:?}",
         contract_path.display()
     );
 
@@ -126,7 +148,7 @@ fn virtio_snd_pci_ids_match_windows_device_contract() {
     let root = repo_root();
     assert_file_contains_case_insensitive(
         &root.join("guest-tools/config/devices.cmd"),
-        &expected_hwid_short,
+        &expected_hwid_short_rev,
     );
 
     // Contract JSON specifies the canonical INF filename; it must exist in-tree and match the same HWID.
@@ -152,6 +174,6 @@ fn virtio_snd_pci_ids_match_windows_device_contract() {
         contract_path.display(),
         inf_path.display()
     );
-    assert_file_contains_case_insensitive(&inf_path, &expected_hwid_short);
+    assert_file_contains_case_insensitive(&inf_path, &expected_hwid_short_rev);
     assert_file_contains_case_insensitive(&inf_path, &format!("AddService = {service_name}"));
 }
