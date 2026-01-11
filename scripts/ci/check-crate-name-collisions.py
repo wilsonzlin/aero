@@ -36,6 +36,7 @@ class Pkg:
     name: str
     normalized: str
     path: str
+    lib_crate: str | None
 
 
 def cargo_metadata() -> dict:
@@ -75,10 +76,26 @@ def main() -> int:
         if not name or not manifest:
             continue
 
+        lib_crate = None
+        for target in pkg.get("targets", []):
+            kinds = target.get("kind", [])
+            if any(
+                k in {"lib", "rlib", "cdylib", "staticlib", "proc-macro"} for k in kinds
+            ):
+                lib_crate = target.get("name")
+                break
+
         pkg_dir = os.path.dirname(manifest)
         rel_path = os.path.relpath(pkg_dir, workspace_root)
 
-        pkgs.append(Pkg(name=name, normalized=name.replace("-", "_"), path=rel_path))
+        pkgs.append(
+            Pkg(
+                name=name,
+                normalized=name.replace("-", "_"),
+                path=rel_path,
+                lib_crate=lib_crate,
+            )
+        )
 
     pkgs.sort(key=lambda p: (p.normalized, p.name, p.path))
 
@@ -86,7 +103,7 @@ def main() -> int:
     for p in pkgs:
         groups.setdefault(p.normalized, []).append(p)
 
-    collisions = {k: v for k, v in groups.items() if len(v) > 1}
+    normalized_collisions = {k: v for k, v in groups.items() if len(v) > 1}
     underscored = [p for p in pkgs if "_" in p.name]
     underscored_crates_dirs = []
     for p in pkgs:
@@ -94,7 +111,21 @@ def main() -> int:
         if len(parts) >= 2 and parts[0] == "crates" and "_" in parts[1]:
             underscored_crates_dirs.append(p)
 
-    if not collisions and not underscored and not underscored_crates_dirs:
+    lib_name_mismatches = [p for p in pkgs if p.lib_crate and p.lib_crate != p.normalized]
+
+    lib_groups: Dict[str, List[Pkg]] = {}
+    for p in pkgs:
+        if p.lib_crate:
+            lib_groups.setdefault(p.lib_crate, []).append(p)
+    lib_collisions = {k: v for k, v in lib_groups.items() if len(v) > 1}
+
+    if (
+        not normalized_collisions
+        and not underscored
+        and not underscored_crates_dirs
+        and not lib_name_mismatches
+        and not lib_collisions
+    ):
         print(f"crate-name policy check: OK ({len(pkgs)} workspace packages)")
         return 0
 
@@ -116,11 +147,28 @@ def main() -> int:
             print(f"  - dir: {p.path:30s} package: {p.name}", file=sys.stderr)
         print("", file=sys.stderr)
 
-    if collisions:
+    if lib_name_mismatches:
+        print("custom library crate names detected (lib target name must match package name):", file=sys.stderr)
+        for p in sorted(lib_name_mismatches, key=lambda p: (p.path, p.name)):
+            print(
+                f"  - package: {p.name:25s} lib: {p.lib_crate:25s} path: {p.path}",
+                file=sys.stderr,
+            )
+        print("", file=sys.stderr)
+
+    if lib_collisions:
+        print("Rust crate-name collisions detected between workspace library targets:\n", file=sys.stderr)
+        for crate in sorted(lib_collisions.keys()):
+            print(f"- crate ident: {crate}", file=sys.stderr)
+            for p in lib_collisions[crate]:
+                print(f"    - package: {p.name:25s} path: {p.path}", file=sys.stderr)
+            print("", file=sys.stderr)
+
+    if normalized_collisions:
         print("Rust crate-name collisions detected after `-` → `_` normalization:\n", file=sys.stderr)
-        for norm in sorted(collisions.keys()):
+        for norm in sorted(normalized_collisions.keys()):
             print(f"- normalized ident: {norm}", file=sys.stderr)
-            for p in collisions[norm]:
+            for p in normalized_collisions[norm]:
                 print(f"    - package: {p.name:25s} path: {p.path}", file=sys.stderr)
             print("", file=sys.stderr)
 
