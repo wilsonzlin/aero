@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::process::Command;
 
 pub fn npm() -> Command {
@@ -8,4 +9,11 @@ pub fn npm() -> Command {
     } else {
         Command::new("npm")
     }
+}
+
+pub fn check_node_version(repo_root: &Path) -> Command {
+    let script = repo_root.join("scripts/check-node-version.mjs");
+    let mut cmd = Command::new("node");
+    cmd.current_dir(repo_root).arg(script);
+    cmd
 }

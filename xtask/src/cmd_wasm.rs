@@ -1,6 +1,7 @@
 use crate::error::{Result, XtaskError};
 use crate::paths;
 use crate::runner::Runner;
+use crate::tools;
 use std::process::Command;
 
 pub fn print_help() {
@@ -49,6 +50,9 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
     };
 
     if web_build_script.is_file() {
+        let mut cmd = tools::check_node_version(&repo_root);
+        runner.run_step("Node: check version", &mut cmd)?;
+
         for v in variants {
             let mut cmd = Command::new("node");
             cmd.current_dir(&repo_root)

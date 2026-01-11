@@ -20,8 +20,12 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
     };
 
     let repo_root = paths::repo_root()?;
-    let node_dir = paths::resolve_node_dir(&repo_root, opts.node_dir.as_deref())?;
     let runner = Runner::new();
+
+    let mut cmd = tools::check_node_version(&repo_root);
+    runner.run_step("Node: check version", &mut cmd)?;
+
+    let node_dir = paths::resolve_node_dir(&repo_root, opts.node_dir.as_deref())?;
 
     let script = match opts.action.as_str() {
         "dev" | "build" | "preview" => opts.action,

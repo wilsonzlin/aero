@@ -69,6 +69,12 @@ pub fn cmd(args: Vec<String>) -> Result<()> {
     let repo_root = paths::repo_root()?;
     let runner = Runner::new();
 
+    let needs_node = !opts.skip_wasm || !opts.skip_ts || !opts.skip_e2e;
+    if needs_node {
+        let mut cmd = tools::check_node_version(&repo_root);
+        runner.run_step("Node: check version", &mut cmd)?;
+    }
+
     let require_webgpu = match opts.require_webgpu {
         Some(true) => "1".to_string(),
         Some(false) => "0".to_string(),
