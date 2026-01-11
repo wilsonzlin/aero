@@ -344,6 +344,10 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
     return aerogpu_test::Fail(kTestName, "GetDataRunner start failed");
   }
 
+  // `D3DGETDATA_DONOTFLUSH` is used by DWM to poll EVENT queries; it must return quickly and
+  // must not block waiting for the GPU to finish work.
+  const double kMaxGetDataCallMs = 5.0;
+
   hr = dev->Clear(0, NULL, D3DCLEAR_TARGET, D3DCOLOR_XRGB(8, 8, 8), 1.0f, 0);
   if (FAILED(hr)) {
     return aerogpu_test::FailHresult(kTestName, "Clear(warmup)", hr);
@@ -360,8 +364,21 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
     const DWORD start = GetTickCount();
     for (;;) {
       HRESULT hr_poll = E_FAIL;
-      if (!getdata.GetData(query.get(), NULL, 0, D3DGETDATA_DONOTFLUSH, 200, &hr_poll, NULL, NULL)) {
+      LONGLONG poll_start_qpc = 0;
+      LONGLONG poll_end_qpc = 0;
+      if (!getdata.GetData(query.get(),
+                           NULL,
+                           0,
+                           D3DGETDATA_DONOTFLUSH,
+                           200,
+                           &hr_poll,
+                           &poll_start_qpc,
+                           &poll_end_qpc)) {
         FailFast(kTestName, "GetData(warmup) hung");
+      }
+      const double poll_call_ms = QpcToMs(poll_end_qpc - poll_start_qpc, qpc_freq);
+      if (poll_call_ms > kMaxGetDataCallMs) {
+        return aerogpu_test::Fail(kTestName, "GetData(DONOTFLUSH) warmup poll blocked for %.3fms", poll_call_ms);
       }
       if (hr_poll == S_OK) {
         break;
@@ -376,7 +393,6 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
     }
   }
 
-  const double kMaxImmediateMs = 5.0;
   bool saw_immediate_not_ready = false;
   for (uint32_t it = 0; it < iterations; ++it) {
     hr = dev->Clear(0, NULL, D3DCLEAR_TARGET, D3DCOLOR_XRGB(10 + it, 20 + it, 30 + it), 1.0f, 0);
@@ -409,7 +425,7 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
     } else if (hr_immediate != S_OK) {
       return aerogpu_test::FailHresult(kTestName, "GetData(DONOTFLUSH)", hr_immediate);
     }
-    if (immediate_ms > kMaxImmediateMs) {
+    if (immediate_ms > kMaxGetDataCallMs) {
       return aerogpu_test::Fail(kTestName,
                                 "GetData(DONOTFLUSH) took too long: %.3fms (iteration %u, hr=%s)",
                                 immediate_ms,
@@ -427,8 +443,24 @@ static int RunD3D9ExEventQuery(int argc, char** argv) {
     for (;;) {
       ++polls;
       HRESULT hr_poll = E_FAIL;
-      if (!getdata.GetData(query.get(), NULL, 0, D3DGETDATA_DONOTFLUSH, 200, &hr_poll, NULL, NULL)) {
+      LONGLONG poll_start_qpc = 0;
+      LONGLONG poll_end_qpc = 0;
+      if (!getdata.GetData(query.get(),
+                           NULL,
+                           0,
+                           D3DGETDATA_DONOTFLUSH,
+                           200,
+                           &hr_poll,
+                           &poll_start_qpc,
+                           &poll_end_qpc)) {
         FailFast(kTestName, "GetData poll hung (iteration %u)", (unsigned)it);
+      }
+      const double poll_call_ms = QpcToMs(poll_end_qpc - poll_start_qpc, qpc_freq);
+      if (poll_call_ms > kMaxGetDataCallMs) {
+        return aerogpu_test::Fail(kTestName,
+                                  "GetData(DONOTFLUSH) poll blocked for %.3fms (iteration %u)",
+                                  poll_call_ms,
+                                  (unsigned)it);
       }
       if (hr_poll == S_OK) {
         break;
