@@ -201,7 +201,18 @@ pub fn exec<B: CpuBus>(
     })();
 
     x87.store_to_fpu_state(&mut state.fpu);
-    res
+
+    // When `CR0.NE = 0`, x87 exceptions are reported via the legacy external IRQ13
+    // mechanism rather than `#MF`. We model this by recording `irq13_pending` and
+    // allowing execution to continue.
+    match res {
+        Ok(outcome) => Ok(outcome),
+        Err(Exception::X87Fpu) if (state.control.cr0 & CR0_NE) == 0 => {
+            state.irq13_pending = true;
+            Ok(ExecOutcome::Continue)
+        }
+        Err(e) => Err(e),
+    }
 }
 
 fn check_x87_available(state: &CpuState) -> Result<(), Exception> {

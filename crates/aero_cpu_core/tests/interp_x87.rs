@@ -1,7 +1,7 @@
 use aero_cpu_core::interp::tier0::exec::{run_batch, BatchExit};
 use aero_cpu_core::interp::x87::X87;
 use aero_cpu_core::mem::{CpuBus, FlatTestBus};
-use aero_cpu_core::state::{CpuMode, CpuState};
+use aero_cpu_core::state::{CpuMode, CpuState, CR0_NE};
 use aero_cpu_core::Exception;
 use aero_x86::Register;
 
@@ -194,11 +194,35 @@ fn tier0_unmasked_invalid_raises_mf() {
     bus.load(0x200, &0x037Eu16.to_le_bytes());
 
     let mut state = CpuState::new(CpuMode::Bit32);
+    state.control.cr0 |= CR0_NE;
     state.set_rip(0);
     let res = run_batch(&mut state, &mut bus, 10);
 
     assert_eq!(res.executed, 2);
     assert!(matches!(res.exit, BatchExit::Exception(Exception::X87Fpu)));
+}
+
+#[test]
+fn tier0_unmasked_invalid_ne0_sets_irq13_pending() {
+    // fninit
+    // fldcw word ptr [0x200]     ; unmask invalid operation (IM=0)
+    // fstp dword ptr [0x208]     ; pop empty stack => invalid op => IRQ13 pending (NE=0)
+    // hlt
+    let code = [
+        0xDB, 0xE3, // fninit
+        0xD9, 0x2D, 0x00, 0x02, 0x00, 0x00, // fldcw word ptr [0x200]
+        0xD9, 0x1D, 0x08, 0x02, 0x00, 0x00, // fstp dword ptr [0x208]
+        0xF4, // hlt
+    ];
+
+    let mut bus = FlatTestBus::new(0x3000);
+    bus.load(0, &code);
+    bus.load(0x200, &0x037Eu16.to_le_bytes());
+
+    let mut state = CpuState::new(CpuMode::Bit32);
+    state.set_rip(0);
+    run_to_halt(&mut state, &mut bus, 10);
+    assert!(state.irq13_pending);
 }
 
 #[test]
