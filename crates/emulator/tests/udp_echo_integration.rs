@@ -2,7 +2,8 @@ use std::net::{Ipv4Addr, SocketAddrV4, UdpSocket};
 use std::time::Duration;
 
 use aero_net_stack::packet::{
-    EtherType, EthernetFrame, Ipv4Packet, Ipv4Protocol, MacAddr, UdpDatagram,
+    EtherType, EthernetFrame, EthernetFrameBuilder, Ipv4Packet, Ipv4PacketBuilder, Ipv4Protocol,
+    MacAddr, UdpDatagram, UdpPacketBuilder,
 };
 use emulator::io::net::stack::{Action, NetStackBackend, StackConfig, UdpProxyEvent, UdpTransport};
 
@@ -15,9 +16,34 @@ fn wrap_udp_ipv4_eth(
     dst_port: u16,
     payload: &[u8],
 ) -> Vec<u8> {
-    let udp = UdpDatagram::serialize(src_ip, dst_ip, src_port, dst_port, payload);
-    let ip = Ipv4Packet::serialize(src_ip, dst_ip, Ipv4Protocol::UDP, 1, 64, &udp);
-    EthernetFrame::serialize(dst_mac, src_mac, EtherType::IPV4, &ip)
+    let udp = UdpPacketBuilder {
+        src_port,
+        dst_port,
+        payload,
+    }
+    .build_vec(src_ip, dst_ip)
+    .expect("build UDP");
+    let ip = Ipv4PacketBuilder {
+        dscp_ecn: 0,
+        identification: 1,
+        flags_fragment: 0,
+        ttl: 64,
+        protocol: Ipv4Protocol::UDP,
+        src_ip,
+        dst_ip,
+        options: &[],
+        payload: &udp,
+    }
+    .build_vec()
+    .expect("build IPv4");
+    EthernetFrameBuilder {
+        dest_mac: dst_mac,
+        src_mac,
+        ethertype: EtherType::IPV4,
+        payload: &ip,
+    }
+    .build_vec()
+    .expect("build Ethernet frame")
 }
 
 fn build_dhcp_discover(xid: u32, mac: MacAddr) -> Vec<u8> {
@@ -173,15 +199,15 @@ fn udp_proxy_echo_end_to_end() {
     let frames = backend.drain_frames();
     assert_eq!(frames.len(), 1);
     let eth = EthernetFrame::parse(&frames[0]).unwrap();
-    assert_eq!(eth.ethertype, EtherType::IPV4);
-    let ip = Ipv4Packet::parse(eth.payload).unwrap();
-    assert_eq!(ip.protocol, Ipv4Protocol::UDP);
-    assert_eq!(ip.src, remote_ip);
-    assert_eq!(ip.dst, cfg.guest_ip);
-    let udp = UdpDatagram::parse(ip.payload).unwrap();
-    assert_eq!(udp.src_port, remote_port);
-    assert_eq!(udp.dst_port, guest_port);
-    assert_eq!(udp.payload, echoed);
+    assert_eq!(eth.ethertype(), EtherType::IPV4);
+    let ip = Ipv4Packet::parse(eth.payload()).unwrap();
+    assert_eq!(ip.protocol(), Ipv4Protocol::UDP);
+    assert_eq!(ip.src_ip(), remote_ip);
+    assert_eq!(ip.dst_ip(), cfg.guest_ip);
+    let udp = UdpDatagram::parse(ip.payload()).unwrap();
+    assert_eq!(udp.src_port(), remote_port);
+    assert_eq!(udp.dst_port(), guest_port);
+    assert_eq!(udp.payload(), echoed);
 
     server_handle.join().unwrap();
 }

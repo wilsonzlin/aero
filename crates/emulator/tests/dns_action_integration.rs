@@ -1,7 +1,8 @@
 use std::net::Ipv4Addr;
 
 use aero_net_stack::packet::{
-    EtherType, EthernetFrame, Ipv4Packet, Ipv4Protocol, MacAddr, UdpDatagram,
+    EtherType, EthernetFrame, EthernetFrameBuilder, Ipv4Packet, Ipv4PacketBuilder, Ipv4Protocol,
+    MacAddr, UdpDatagram, UdpPacketBuilder,
 };
 use emulator::io::net::stack::{Action, DnsResolved, IpCidr, NetStackBackend, StackConfig};
 
@@ -14,9 +15,34 @@ fn wrap_udp_ipv4_eth(
     dst_port: u16,
     payload: &[u8],
 ) -> Vec<u8> {
-    let udp = UdpDatagram::serialize(src_ip, dst_ip, src_port, dst_port, payload);
-    let ip = Ipv4Packet::serialize(src_ip, dst_ip, Ipv4Protocol::UDP, 1, 64, &udp);
-    EthernetFrame::serialize(dst_mac, src_mac, EtherType::IPV4, &ip)
+    let udp = UdpPacketBuilder {
+        src_port,
+        dst_port,
+        payload,
+    }
+    .build_vec(src_ip, dst_ip)
+    .expect("build UDP");
+    let ip = Ipv4PacketBuilder {
+        dscp_ecn: 0,
+        identification: 1,
+        flags_fragment: 0,
+        ttl: 64,
+        protocol: Ipv4Protocol::UDP,
+        src_ip,
+        dst_ip,
+        options: &[],
+        payload: &udp,
+    }
+    .build_vec()
+    .expect("build IPv4");
+    EthernetFrameBuilder {
+        dest_mac: dst_mac,
+        src_mac,
+        ethertype: EtherType::IPV4,
+        payload: &ip,
+    }
+    .build_vec()
+    .expect("build Ethernet frame")
 }
 
 fn build_dns_query(id: u16, name: &str, qtype: u16) -> Vec<u8> {
@@ -42,12 +68,12 @@ fn build_dns_query(id: u16, name: &str, qtype: u16) -> Vec<u8> {
 
 fn assert_dns_response_has_a_record(frame: &[u8], id: u16, addr: [u8; 4]) {
     let eth = EthernetFrame::parse(frame).unwrap();
-    assert_eq!(eth.ethertype, EtherType::IPV4);
-    let ip = Ipv4Packet::parse(eth.payload).unwrap();
-    assert_eq!(ip.protocol, Ipv4Protocol::UDP);
-    let udp = UdpDatagram::parse(ip.payload).unwrap();
-    assert_eq!(udp.src_port, 53);
-    let dns = udp.payload;
+    assert_eq!(eth.ethertype(), EtherType::IPV4);
+    let ip = Ipv4Packet::parse(eth.payload()).unwrap();
+    assert_eq!(ip.protocol(), Ipv4Protocol::UDP);
+    let udp = UdpDatagram::parse(ip.payload()).unwrap();
+    assert_eq!(udp.src_port(), 53);
+    let dns = udp.payload();
     assert_eq!(&dns[0..2], &id.to_be_bytes());
     // QR=1
     assert_eq!(dns[2] & 0x80, 0x80);
@@ -59,12 +85,12 @@ fn assert_dns_response_has_a_record(frame: &[u8], id: u16, addr: [u8; 4]) {
 
 fn assert_dns_response_has_rcode(frame: &[u8], id: u16, rcode: u16) {
     let eth = EthernetFrame::parse(frame).unwrap();
-    assert_eq!(eth.ethertype, EtherType::IPV4);
-    let ip = Ipv4Packet::parse(eth.payload).unwrap();
-    assert_eq!(ip.protocol, Ipv4Protocol::UDP);
-    let udp = UdpDatagram::parse(ip.payload).unwrap();
-    assert_eq!(udp.src_port, 53);
-    let dns = udp.payload;
+    assert_eq!(eth.ethertype(), EtherType::IPV4);
+    let ip = Ipv4Packet::parse(eth.payload()).unwrap();
+    assert_eq!(ip.protocol(), Ipv4Protocol::UDP);
+    let udp = UdpDatagram::parse(ip.payload()).unwrap();
+    assert_eq!(udp.src_port(), 53);
+    let dns = udp.payload();
     assert_eq!(&dns[0..2], &id.to_be_bytes());
     // QR=1
     assert_eq!(dns[2] & 0x80, 0x80);

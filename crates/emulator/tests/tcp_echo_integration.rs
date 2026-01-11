@@ -5,7 +5,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use aero_net_stack::packet::{
-    EtherType, EthernetFrame, Ipv4Packet, Ipv4Protocol, MacAddr, TcpFlags, TcpSegment, UdpDatagram,
+    EtherType, EthernetFrame, EthernetFrameBuilder, Ipv4Packet, Ipv4PacketBuilder, Ipv4Protocol,
+    MacAddr, TcpFlags, TcpSegment, TcpSegmentBuilder, UdpPacketBuilder,
 };
 use emulator::io::net::stack::{Action, StackConfig, TcpProxyEvent};
 use emulator::io::net::trace::{
@@ -21,9 +22,34 @@ fn wrap_udp_ipv4_eth(
     dst_port: u16,
     payload: &[u8],
 ) -> Vec<u8> {
-    let udp = UdpDatagram::serialize(src_ip, dst_ip, src_port, dst_port, payload);
-    let ip = Ipv4Packet::serialize(src_ip, dst_ip, Ipv4Protocol::UDP, 1, 64, &udp);
-    EthernetFrame::serialize(dst_mac, src_mac, EtherType::IPV4, &ip)
+    let udp = UdpPacketBuilder {
+        src_port,
+        dst_port,
+        payload,
+    }
+    .build_vec(src_ip, dst_ip)
+    .expect("build UDP");
+    let ip = Ipv4PacketBuilder {
+        dscp_ecn: 0,
+        identification: 1,
+        flags_fragment: 0,
+        ttl: 64,
+        protocol: Ipv4Protocol::UDP,
+        src_ip,
+        dst_ip,
+        options: &[],
+        payload: &udp,
+    }
+    .build_vec()
+    .expect("build IPv4");
+    EthernetFrameBuilder {
+        dest_mac: dst_mac,
+        src_mac,
+        ethertype: EtherType::IPV4,
+        payload: &ip,
+    }
+    .build_vec()
+    .expect("build Ethernet frame")
 }
 
 fn wrap_tcp_ipv4_eth(
@@ -35,14 +61,43 @@ fn wrap_tcp_ipv4_eth(
     dst_port: u16,
     seq: u32,
     ack: u32,
-    flags: u8,
+    flags: TcpFlags,
     payload: &[u8],
 ) -> Vec<u8> {
-    let tcp = TcpSegment::serialize(
-        src_ip, dst_ip, src_port, dst_port, seq, ack, flags, 65535, payload,
-    );
-    let ip = Ipv4Packet::serialize(src_ip, dst_ip, Ipv4Protocol::TCP, 1, 64, &tcp);
-    EthernetFrame::serialize(dst_mac, src_mac, EtherType::IPV4, &ip)
+    let tcp = TcpSegmentBuilder {
+        src_port,
+        dst_port,
+        seq_number: seq,
+        ack_number: ack,
+        flags,
+        window_size: 65535,
+        urgent_pointer: 0,
+        options: &[],
+        payload,
+    }
+    .build_vec(src_ip, dst_ip)
+    .expect("build TCP");
+    let ip = Ipv4PacketBuilder {
+        dscp_ecn: 0,
+        identification: 1,
+        flags_fragment: 0,
+        ttl: 64,
+        protocol: Ipv4Protocol::TCP,
+        src_ip,
+        dst_ip,
+        options: &[],
+        payload: &tcp,
+    }
+    .build_vec()
+    .expect("build IPv4");
+    EthernetFrameBuilder {
+        dest_mac: dst_mac,
+        src_mac,
+        ethertype: EtherType::IPV4,
+        payload: &ip,
+    }
+    .build_vec()
+    .expect("build Ethernet frame")
 }
 
 fn build_dhcp_discover(xid: u32, mac: MacAddr) -> Vec<u8> {
@@ -196,13 +251,10 @@ fn tcp_proxy_echo_end_to_end() {
 
     assert_eq!(frames.len(), 1);
     let eth = EthernetFrame::parse(&frames[0]).unwrap();
-    let ip = Ipv4Packet::parse(eth.payload).unwrap();
-    let synack = TcpSegment::parse(ip.payload).unwrap();
-    assert_eq!(
-        synack.flags & (TcpFlags::SYN | TcpFlags::ACK),
-        TcpFlags::SYN | TcpFlags::ACK
-    );
-    let stack_isn = synack.seq;
+    let ip = Ipv4Packet::parse(eth.payload()).unwrap();
+    let synack = TcpSegment::parse(ip.payload()).unwrap();
+    assert!(synack.flags().contains(TcpFlags::SYN | TcpFlags::ACK));
+    let stack_isn = synack.seq_number();
 
     // Host fulfills connect by opening a real socket, then notifies the stack.
     let stream = TcpStream::connect(addr).unwrap();
@@ -285,9 +337,9 @@ fn tcp_proxy_echo_end_to_end() {
     let frames = stack.drain_frames();
     assert_eq!(frames.len(), 1);
     let eth = EthernetFrame::parse(&frames[0]).unwrap();
-    let ip = Ipv4Packet::parse(eth.payload).unwrap();
-    let seg = TcpSegment::parse(ip.payload).unwrap();
-    assert_eq!(seg.payload, echoed.as_slice());
+    let ip = Ipv4Packet::parse(eth.payload()).unwrap();
+    let seg = TcpSegment::parse(ip.payload()).unwrap();
+    assert_eq!(seg.payload(), echoed.as_slice());
 
     // ACK the echoed data.
     let guest_next = guest_isn + 1 + payload.len() as u32;
@@ -299,7 +351,7 @@ fn tcp_proxy_echo_end_to_end() {
         guest_port,
         addr.port(),
         guest_next,
-        seg.seq + seg.payload.len() as u32,
+        seg.seq_number() + seg.payload().len() as u32,
         TcpFlags::ACK,
         &[],
     );
@@ -316,7 +368,7 @@ fn tcp_proxy_echo_end_to_end() {
         guest_port,
         addr.port(),
         guest_next,
-        seg.seq + seg.payload.len() as u32,
+        seg.seq_number() + seg.payload().len() as u32,
         TcpFlags::ACK | TcpFlags::FIN,
         &[],
     );
@@ -338,9 +390,9 @@ fn tcp_proxy_echo_end_to_end() {
         .iter()
         .find_map(|frame| {
             let eth = EthernetFrame::parse(frame).ok()?;
-            let ip = Ipv4Packet::parse(eth.payload).ok()?;
-            let seg = TcpSegment::parse(ip.payload).ok()?;
-            (seg.flags & TcpFlags::FIN != 0).then_some(seg)
+            let ip = Ipv4Packet::parse(eth.payload()).ok()?;
+            let seg = TcpSegment::parse(ip.payload()).ok()?;
+            seg.flags().contains(TcpFlags::FIN).then_some(seg)
         })
         .expect("FIN from stack");
 
@@ -352,7 +404,7 @@ fn tcp_proxy_echo_end_to_end() {
         guest_port,
         addr.port(),
         guest_next + 1,
-        fin_seg.seq + 1,
+        fin_seg.seq_number() + 1,
         TcpFlags::ACK,
         &[],
     );
