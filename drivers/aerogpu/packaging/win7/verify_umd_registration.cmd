@@ -111,16 +111,35 @@ call :query_value FeatureScore
 
 echo.
 echo --- Validation ---
+
 if "%IS_X64%"=="1" (
   call :require_value InstalledDisplayDrivers REG_MULTI_SZ aerogpu_d3d9_x64
   call :require_value InstalledDisplayDriversWow REG_MULTI_SZ aerogpu_d3d9
-  if "%REQUIRE_DX11%"=="1" (
-    call :require_value UserModeDriverName REG_SZ aerogpu_d3d10_x64.dll
-    call :require_value UserModeDriverNameWow REG_SZ aerogpu_d3d10.dll
-  )
 ) else (
   call :require_value InstalledDisplayDrivers REG_MULTI_SZ aerogpu_d3d9
-  if "%REQUIRE_DX11%"=="1" (
+)
+
+set "VALIDATE_DX11=%REQUIRE_DX11%"
+if "%VALIDATE_DX11%"=="0" (
+  "%REGEXE%" query "%AEROGPU_KEY%" /v UserModeDriverName >nul 2>nul
+  if not errorlevel 1 (
+    set "VALIDATE_DX11=1"
+    echo INFO: Detected UserModeDriverName; validating D3D10/11 registration/placement as well.
+  )
+)
+
+if "%VALIDATE_DX11%"=="1" (
+  if "%IS_X64%"=="1" (
+    if not "%REQUIRE_DX11%"=="1" (
+      call :check_file_required "%SYS32%\aerogpu_d3d10_x64.dll"
+      call :check_file_required "%SystemRoot%\SysWOW64\aerogpu_d3d10.dll"
+    )
+    call :require_value UserModeDriverName REG_SZ aerogpu_d3d10_x64.dll
+    call :require_value UserModeDriverNameWow REG_SZ aerogpu_d3d10.dll
+  ) else (
+    if not "%REQUIRE_DX11%"=="1" (
+      call :check_file_required "%SYS32%\aerogpu_d3d10.dll"
+    )
     call :require_value UserModeDriverName REG_SZ aerogpu_d3d10.dll
   )
 )
