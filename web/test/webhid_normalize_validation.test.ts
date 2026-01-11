@@ -82,3 +82,39 @@ test("normalizeCollections(validate): rejects isRange items with usages out of o
     message: /collections\[0\]\.inputReports\[0\]\.items\[0\]/,
   });
 });
+
+test("normalizeCollections: rejects excessive collection depth with a path", () => {
+  const root = baseCollection() as unknown as { children: any[] };
+  let current: { children: any[] } = root;
+  for (let i = 0; i < 32; i++) {
+    const child = baseCollection() as unknown as { children: any[] };
+    current.children = [child];
+    current = child;
+  }
+
+  let expectedPath = "collections[0]";
+  for (let i = 0; i < 32; i++) expectedPath += ".children[0]";
+
+  try {
+    normalizeCollections([root as unknown as HidCollectionInfo]);
+    assert.fail("expected normalizeCollections() to throw");
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    assert.match(message, /max depth/i);
+    assert.ok(message.endsWith(`(at ${expectedPath})`), message);
+  }
+});
+
+test("normalizeCollections: rejects cyclic collection graphs with a path", () => {
+  const root = baseCollection() as unknown as { children: any[] };
+  root.children = [root];
+
+  try {
+    normalizeCollections([root as unknown as HidCollectionInfo]);
+    assert.fail("expected normalizeCollections() to throw");
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    assert.match(message, /cycle/i);
+    assert.ok(message.endsWith("(at collections[0].children[0])"), message);
+  }
+});

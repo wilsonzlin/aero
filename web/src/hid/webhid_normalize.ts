@@ -107,6 +107,7 @@ export type NormalizedHidReportInfo = Omit<HidReportInfo, "items"> & {
 };
 
 export const MAX_RANGE_CONTIGUITY_CHECK_LEN = 4096;
+const MAX_COLLECTION_DEPTH = 32;
 
 type Path = string[];
 
@@ -288,21 +289,42 @@ function normalizeReportList(
   return out;
 }
 
-function normalizeCollection(collection: HidCollectionInfo, path: Path): NormalizedHidCollectionInfo {
-  const children: NormalizedHidCollectionInfo[] = [];
-  for (let childIdx = 0; childIdx < collection.children.length; childIdx++) {
-    children.push(normalizeCollection(collection.children[childIdx]!, [...path, `children[${childIdx}]`]));
+function normalizeCollection(
+  collection: HidCollectionInfo,
+  path: Path,
+  depth: number,
+  stack: WeakSet<object>,
+): NormalizedHidCollectionInfo {
+  if (depth > MAX_COLLECTION_DEPTH) {
+    throw err(path, `HID collection nesting exceeds max depth ${MAX_COLLECTION_DEPTH}`);
   }
 
-  return {
-    usagePage: collection.usagePage,
-    usage: collection.usage,
-    collectionType: normalizeCollectionType(collection.type, [...path, "type"]),
-    children,
-    inputReports: normalizeReportList(collection.inputReports, "inputReports", path),
-    outputReports: normalizeReportList(collection.outputReports, "outputReports", path),
-    featureReports: normalizeReportList(collection.featureReports, "featureReports", path),
-  };
+  const obj = typeof collection === "object" && collection !== null ? (collection as unknown as object) : null;
+  if (obj) {
+    if (stack.has(obj)) {
+      throw err(path, "HID collection tree contains a cycle");
+    }
+    stack.add(obj);
+  }
+
+  try {
+    const children: NormalizedHidCollectionInfo[] = [];
+    for (let childIdx = 0; childIdx < collection.children.length; childIdx++) {
+      children.push(normalizeCollection(collection.children[childIdx]!, [...path, `children[${childIdx}]`], depth + 1, stack));
+    }
+
+    return {
+      usagePage: collection.usagePage,
+      usage: collection.usage,
+      collectionType: normalizeCollectionType(collection.type, [...path, "type"]),
+      children,
+      inputReports: normalizeReportList(collection.inputReports, "inputReports", path),
+      outputReports: normalizeReportList(collection.outputReports, "outputReports", path),
+      featureReports: normalizeReportList(collection.featureReports, "featureReports", path),
+    };
+  } finally {
+    if (obj) stack.delete(obj);
+  }
 }
 
 // Overload so callsites can pass `HIDDevice.collections` without casts (the WebHID types exposed by
@@ -322,7 +344,7 @@ export function normalizeCollections(
   const rawCollections = collections as readonly HidCollectionInfo[];
   const normalized: NormalizedHidCollectionInfo[] = [];
   for (let i = 0; i < rawCollections.length; i++) {
-    normalized.push(normalizeCollection(rawCollections[i]!, [`collections[${i}]`]));
+    normalized.push(normalizeCollection(rawCollections[i]!, [`collections[${i}]`], 1, new WeakSet()));
   }
   if (options.validate) {
     validateCollections(normalized);
