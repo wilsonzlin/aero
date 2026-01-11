@@ -6,6 +6,10 @@
 
 using aerogpu_test::ComPtr;
 
+#ifndef DXGI_ERROR_WAS_STILL_DRAWING
+  #define DXGI_ERROR_WAS_STILL_DRAWING ((HRESULT)0x887A000AL)
+#endif
+
 static int FailD3D10WithRemovedReason(aerogpu_test::TestReporter* reporter,
                                       const char* test_name,
                                       const char* what,
@@ -183,8 +187,8 @@ static int RunD3D10MapDoNotWait(int argc, char** argv) {
 
   // Use a moderately large surface to increase the likelihood the GPU work is still in-flight
   // when we attempt Map(DO_NOT_WAIT).
-  const int kWidth = 2048;
-  const int kHeight = 2048;
+  const int kWidth = 1024;
+  const int kHeight = 1024;
 
   D3D10_TEXTURE2D_DESC tex_desc;
   ZeroMemory(&tex_desc, sizeof(tex_desc));
@@ -240,7 +244,11 @@ static int RunD3D10MapDoNotWait(int argc, char** argv) {
     return reporter.FailHresult("CreateTexture2D(staging)", hr);
   }
 
-  device->CopyResource(staging.get(), rt_tex.get());
+  // Issue enough work to make it likely that the GPU hasn't completed by the time we try to map.
+  const int kCopyCount = 64;
+  for (int i = 0; i < kCopyCount; ++i) {
+    device->CopyResource(staging.get(), rt_tex.get());
+  }
   device->Flush();
 
   bool saw_still_drawing = false;
