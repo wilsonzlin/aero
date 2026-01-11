@@ -1,4 +1,5 @@
 #include "..\\common\\aerogpu_test_common.h"
+#include "..\\common\\aerogpu_test_report.h"
 
 #include <algorithm>
 
@@ -128,11 +129,13 @@ static int RunGetScanlineSanity(int argc, char** argv) {
   const char* kTestName = "get_scanline_sanity";
 
   if (aerogpu_test::HasHelpArg(argc, argv)) {
-    aerogpu_test::PrintfStdout("Usage: %s.exe [--samples=N] [--allow-remote]", kTestName);
+    aerogpu_test::PrintfStdout("Usage: %s.exe [--samples=N] [--json[=PATH]] [--allow-remote]", kTestName);
     aerogpu_test::PrintfStdout("Default: --samples=200 (min 20)");
     aerogpu_test::PrintfStdout("Calls D3DKMTGetScanLine repeatedly and validates sane, varying results.");
     return 0;
   }
+
+  aerogpu_test::TestReporter reporter(kTestName, argc, argv);
 
   const bool allow_remote = aerogpu_test::HasArg(argc, argv, "--allow-remote");
   uint32_t samples = 200;
@@ -140,7 +143,7 @@ static int RunGetScanlineSanity(int argc, char** argv) {
   if (aerogpu_test::GetArgValue(argc, argv, "--samples", &samples_str)) {
     std::string err;
     if (!aerogpu_test::ParseUint32(samples_str, &samples, &err)) {
-      return aerogpu_test::Fail(kTestName, "invalid --samples: %s", err.c_str());
+      return reporter.Fail("invalid --samples: %s", err.c_str());
     }
   }
   if (samples < 20) {
@@ -150,11 +153,10 @@ static int RunGetScanlineSanity(int argc, char** argv) {
   if (GetSystemMetrics(SM_REMOTESESSION)) {
     if (allow_remote) {
       aerogpu_test::PrintfStdout("INFO: %s: remote session detected; skipping", kTestName);
-      aerogpu_test::PrintfStdout("PASS: %s", kTestName);
-      return 0;
+      reporter.SetSkipped("remote_session");
+      return reporter.Pass();
     }
-    return aerogpu_test::Fail(
-        kTestName,
+    return reporter.Fail(
         "running in a remote session (SM_REMOTESESSION=1). Re-run with --allow-remote to skip.");
   }
 
@@ -162,22 +164,21 @@ static int RunGetScanlineSanity(int argc, char** argv) {
 
   D3DKMT_FUNCS f;
   if (!LoadD3DKMT(&f)) {
-    return aerogpu_test::Fail(kTestName, "failed to load D3DKMT exports from gdi32.dll");
+    return reporter.Fail("failed to load D3DKMT exports from gdi32.dll");
   }
 
   wchar_t display_name[CCHDEVICENAME];
   if (!GetPrimaryDisplayName(display_name)) {
     FreeLibrary(f.gdi32);
-    return aerogpu_test::Fail(kTestName, "failed to determine primary display name");
+    return reporter.Fail("failed to determine primary display name");
   }
 
   HDC hdc = CreateDCW(L"DISPLAY", display_name, NULL, NULL);
   if (!hdc) {
     FreeLibrary(f.gdi32);
-    return aerogpu_test::Fail(kTestName,
-                              "CreateDCW failed for %ls: %s",
-                              display_name,
-                              aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
+    return reporter.Fail("CreateDCW failed for %ls: %s",
+                         display_name,
+                         aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
   }
 
   D3DKMT_OPENADAPTERFROMHDC open;
@@ -187,9 +188,8 @@ static int RunGetScanlineSanity(int argc, char** argv) {
   DeleteDC(hdc);
   if (!NT_SUCCESS(st)) {
     FreeLibrary(f.gdi32);
-    return aerogpu_test::Fail(kTestName,
-                              "D3DKMTOpenAdapterFromHdc failed with %s",
-                              NtStatusToString(st, f.RtlNtStatusToDosError).c_str());
+    return reporter.Fail("D3DKMTOpenAdapterFromHdc failed with %s",
+                         NtStatusToString(st, f.RtlNtStatusToDosError).c_str());
   }
 
   uint32_t in_vblank = 0;
@@ -208,9 +208,8 @@ static int RunGetScanlineSanity(int argc, char** argv) {
 
     st = f.GetScanLine(&s);
     if (!NT_SUCCESS(st)) {
-      rc = aerogpu_test::Fail(kTestName,
-                              "D3DKMTGetScanLine failed with %s",
-                              NtStatusToString(st, f.RtlNtStatusToDosError).c_str());
+      rc = reporter.Fail("D3DKMTGetScanLine failed with %s",
+                         NtStatusToString(st, f.RtlNtStatusToDosError).c_str());
       break;
     }
 
@@ -220,8 +219,9 @@ static int RunGetScanlineSanity(int argc, char** argv) {
       ++out_vblank;
       out_scanlines.push_back((uint32_t)s.ScanLine);
       if (screen_height > 0 && s.ScanLine >= (UINT)screen_height) {
-        rc = aerogpu_test::Fail(
-            kTestName, "ScanLine out of bounds: %u (screen height %d)", (unsigned)s.ScanLine, screen_height);
+        rc = reporter.Fail("ScanLine out of bounds: %u (screen height %d)",
+                           (unsigned)s.ScanLine,
+                           screen_height);
         break;
       }
       if ((uint32_t)s.ScanLine < min_scanline) {
@@ -243,9 +243,8 @@ static int RunGetScanlineSanity(int argc, char** argv) {
 
   if (!NT_SUCCESS(close_st)) {
     if (rc == 0) {
-      rc = aerogpu_test::Fail(kTestName,
-                              "D3DKMTCloseAdapter failed with %s",
-                              NtStatusToString(close_st, f.RtlNtStatusToDosError).c_str());
+      rc = reporter.Fail("D3DKMTCloseAdapter failed with %s",
+                         NtStatusToString(close_st, f.RtlNtStatusToDosError).c_str());
     } else {
       aerogpu_test::PrintfStdout("WARN: %s: D3DKMTCloseAdapter failed with %s",
                                  kTestName,
@@ -277,15 +276,14 @@ static int RunGetScanlineSanity(int argc, char** argv) {
   }
 
   if (out_vblank == 0) {
-    return aerogpu_test::Fail(kTestName, "never observed InVerticalBlank=FALSE");
+    return reporter.Fail("never observed InVerticalBlank=FALSE");
   }
 
   if (distinct.size() <= 1) {
-    return aerogpu_test::Fail(kTestName, "ScanLine appears static (distinct out-of-vblank scanlines=%u)", (unsigned)distinct.size());
+    return reporter.Fail("ScanLine appears static (distinct out-of-vblank scanlines=%u)", (unsigned)distinct.size());
   }
 
-  aerogpu_test::PrintfStdout("PASS: %s", kTestName);
-  return 0;
+  return reporter.Pass();
 }
 
 int main(int argc, char** argv) {

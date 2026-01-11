@@ -1,4 +1,5 @@
 #include "..\\common\\aerogpu_test_common.h"
+#include "..\\common\\aerogpu_test_report.h"
 
 #include <d3d9.h>
 
@@ -10,11 +11,13 @@ static int RunD3D9RasterStatusSanity(int argc, char** argv) {
   const char* kTestName = "d3d9_raster_status_sanity";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
-        "Usage: %s.exe [--samples=N] [--hidden] [--require-vid=0x####] [--require-did=0x####] "
+        "Usage: %s.exe [--samples=N] [--hidden] [--json[=PATH]] [--require-vid=0x####] [--require-did=0x####] "
         "[--allow-microsoft] [--allow-non-aerogpu] [--require-umd] [--allow-remote]",
         kTestName);
     return 0;
   }
+
+  aerogpu_test::TestReporter reporter(kTestName, argc, argv);
 
   const bool allow_microsoft = aerogpu_test::HasArg(argc, argv, "--allow-microsoft");
   const bool allow_non_aerogpu = aerogpu_test::HasArg(argc, argv, "--allow-non-aerogpu");
@@ -31,14 +34,14 @@ static int RunD3D9RasterStatusSanity(int argc, char** argv) {
   if (aerogpu_test::GetArgValue(argc, argv, "--require-vid", &require_vid_str)) {
     std::string err;
     if (!aerogpu_test::ParseUint32(require_vid_str, &require_vid, &err)) {
-      return aerogpu_test::Fail(kTestName, "invalid --require-vid: %s", err.c_str());
+      return reporter.Fail("invalid --require-vid: %s", err.c_str());
     }
     has_require_vid = true;
   }
   if (aerogpu_test::GetArgValue(argc, argv, "--require-did", &require_did_str)) {
     std::string err;
     if (!aerogpu_test::ParseUint32(require_did_str, &require_did, &err)) {
-      return aerogpu_test::Fail(kTestName, "invalid --require-did: %s", err.c_str());
+      return reporter.Fail("invalid --require-did: %s", err.c_str());
     }
     has_require_did = true;
   }
@@ -50,11 +53,10 @@ static int RunD3D9RasterStatusSanity(int argc, char** argv) {
   if (GetSystemMetrics(SM_REMOTESESSION)) {
     if (allow_remote) {
       aerogpu_test::PrintfStdout("INFO: %s: remote session detected; skipping", kTestName);
-      aerogpu_test::PrintfStdout("PASS: %s", kTestName);
-      return 0;
+      reporter.SetSkipped("remote_session");
+      return reporter.Pass();
     }
-    return aerogpu_test::Fail(
-        kTestName,
+    return reporter.Fail(
         "running in a remote session (SM_REMOTESESSION=1). Re-run with --allow-remote to skip.");
   }
 
@@ -67,13 +69,13 @@ static int RunD3D9RasterStatusSanity(int argc, char** argv) {
                                               kHeight,
                                               !hidden);
   if (!hwnd) {
-    return aerogpu_test::Fail(kTestName, "CreateBasicWindow failed");
+    return reporter.Fail("CreateBasicWindow failed");
   }
 
   ComPtr<IDirect3D9Ex> d3d;
   HRESULT hr = Direct3DCreate9Ex(D3D_SDK_VERSION, d3d.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "Direct3DCreate9Ex", hr);
+    return reporter.FailHresult("Direct3DCreate9Ex", hr);
   }
 
   D3DPRESENT_PARAMETERS pp;
@@ -107,7 +109,7 @@ static int RunD3D9RasterStatusSanity(int argc, char** argv) {
                              dev.put());
   }
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "IDirect3D9Ex::CreateDeviceEx", hr);
+    return reporter.FailHresult("IDirect3D9Ex::CreateDeviceEx", hr);
   }
 
   D3DADAPTER_IDENTIFIER9 ident;
@@ -119,36 +121,32 @@ static int RunD3D9RasterStatusSanity(int argc, char** argv) {
                                ident.Description,
                                (unsigned)ident.VendorId,
                                (unsigned)ident.DeviceId);
+    reporter.SetAdapterInfoA(ident.Description, ident.VendorId, ident.DeviceId);
     if (!allow_microsoft && ident.VendorId == 0x1414) {
-      return aerogpu_test::Fail(kTestName,
-                                "refusing to run on Microsoft adapter (VID=0x%04X DID=0x%04X). "
-                                "Install AeroGPU driver or pass --allow-microsoft.",
-                                (unsigned)ident.VendorId,
-                                (unsigned)ident.DeviceId);
+      return reporter.Fail(
+          "refusing to run on Microsoft adapter (VID=0x%04X DID=0x%04X). Install AeroGPU driver or pass --allow-microsoft.",
+          (unsigned)ident.VendorId,
+          (unsigned)ident.DeviceId);
     }
     if (has_require_vid && ident.VendorId != require_vid) {
-      return aerogpu_test::Fail(kTestName,
-                                "adapter VID mismatch: got 0x%04X expected 0x%04X",
-                                (unsigned)ident.VendorId,
-                                (unsigned)require_vid);
+      return reporter.Fail("adapter VID mismatch: got 0x%04X expected 0x%04X",
+                           (unsigned)ident.VendorId,
+                           (unsigned)require_vid);
     }
     if (has_require_did && ident.DeviceId != require_did) {
-      return aerogpu_test::Fail(kTestName,
-                                "adapter DID mismatch: got 0x%04X expected 0x%04X",
-                                (unsigned)ident.DeviceId,
-                                (unsigned)require_did);
+      return reporter.Fail("adapter DID mismatch: got 0x%04X expected 0x%04X",
+                           (unsigned)ident.DeviceId,
+                           (unsigned)require_did);
     }
     if (!allow_non_aerogpu && !has_require_vid && !has_require_did &&
         !(ident.VendorId == 0x1414 && allow_microsoft) &&
         !aerogpu_test::StrIContainsA(ident.Description, "AeroGPU")) {
-      return aerogpu_test::Fail(kTestName,
-                                "adapter does not look like AeroGPU: %s (pass --allow-non-aerogpu "
-                                "or use --require-vid/--require-did)",
-                                ident.Description);
+      return reporter.Fail(
+          "adapter does not look like AeroGPU: %s (pass --allow-non-aerogpu or use --require-vid/--require-did)",
+          ident.Description);
     }
   } else if (has_require_vid || has_require_did) {
-    return aerogpu_test::FailHresult(
-        kTestName, "GetAdapterIdentifier (required for --require-vid/--require-did)", hr);
+    return reporter.FailHresult("GetAdapterIdentifier (required for --require-vid/--require-did)", hr);
   }
 
   if (require_umd || (!allow_microsoft && !allow_non_aerogpu)) {
@@ -180,7 +178,7 @@ static int RunD3D9RasterStatusSanity(int argc, char** argv) {
     ZeroMemory(&rs, sizeof(rs));
     hr = dev->GetRasterStatus(0, &rs);
     if (FAILED(hr)) {
-      return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::GetRasterStatus", hr);
+      return reporter.FailHresult("IDirect3DDevice9Ex::GetRasterStatus", hr);
     }
     iterations++;
 
@@ -234,21 +232,19 @@ static int RunD3D9RasterStatusSanity(int argc, char** argv) {
       (unsigned)distinct_scanlines_not_vblank.size());
 
   if (in_vblank_samples == 0) {
-    return aerogpu_test::Fail(kTestName, "InVBlank was never true (scanline/vblank stuck?)");
+    return reporter.Fail("InVBlank was never true (scanline/vblank stuck?)");
   }
   if (out_vblank_samples == 0) {
-    return aerogpu_test::Fail(kTestName, "InVBlank was never false (scanline/vblank stuck?)");
+    return reporter.Fail("InVBlank was never false (scanline/vblank stuck?)");
   }
   if (distinct_scanlines_not_vblank.size() < (size_t)kMinDistinctScanlines) {
-    return aerogpu_test::Fail(
-        kTestName,
+    return reporter.Fail(
         "distinct ScanLine values (not in vblank) was %u (expected >= %u; ScanLine stuck?)",
         (unsigned)distinct_scanlines_not_vblank.size(),
         (unsigned)kMinDistinctScanlines);
   }
 
-  aerogpu_test::PrintfStdout("PASS: %s", kTestName);
-  return 0;
+  return reporter.Pass();
 }
 
 int main(int argc, char** argv) {
