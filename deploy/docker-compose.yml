@@ -214,6 +214,7 @@ services:
       - L2_BACKEND_WS_TOKEN
       - L2_BACKEND_AUTH_FORWARD_MODE=${L2_BACKEND_AUTH_FORWARD_MODE:-query}
       - L2_BACKEND_FORWARD_ORIGIN=${L2_BACKEND_FORWARD_ORIGIN:-1}
+      - L2_MAX_MESSAGE_BYTES
 
       # UDP egress policy (highly recommended for public deployments).
       - DESTINATION_POLICY_PRESET

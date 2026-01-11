@@ -32,6 +32,7 @@ compose() {
     -u L2_BACKEND_WS_TOKEN \
     -u L2_BACKEND_AUTH_FORWARD_MODE \
     -u L2_BACKEND_FORWARD_ORIGIN \
+    -u L2_MAX_MESSAGE_BYTES \
     AERO_DOMAIN=localhost \
     AERO_GATEWAY_UPSTREAM=aero-gateway:8080 \
     AERO_GATEWAY_GIT_SHA= \
