@@ -2310,7 +2310,7 @@ HRESULT AEROGPU_D3D9_CALL device_create_swap_chain(
         if (!created) {
           continue;
         }
-        emit_destroy_resource_locked(dev, created->handle);
+        (void)emit_destroy_resource_locked(dev, created->handle);
         delete created;
       }
       return hr;
@@ -2318,17 +2318,32 @@ HRESULT AEROGPU_D3D9_CALL device_create_swap_chain(
     sc->backbuffers.push_back(bb.release());
   }
 
-  pCreateSwapChain->hBackBuffer.pDrvPrivate = sc->backbuffers.empty() ? nullptr : sc->backbuffers[0];
+  Resource* first_backbuffer = sc->backbuffers.empty() ? nullptr : sc->backbuffers[0];
+
+  // Default D3D9 behavior: the first backbuffer is bound as render target 0.
+  if (!dev->render_targets[0] && first_backbuffer) {
+    dev->render_targets[0] = first_backbuffer;
+    if (!emit_set_render_targets_locked(dev)) {
+      // Keep driver state consistent with the host by rolling back the implicit
+      // binding and tearing down the partially-created swapchain.
+      dev->render_targets[0] = nullptr;
+      for (Resource* created : sc->backbuffers) {
+        if (!created) {
+          continue;
+        }
+        (void)emit_destroy_resource_locked(dev, created->handle);
+        delete created;
+      }
+      return E_OUTOFMEMORY;
+    }
+  }
+
+  pCreateSwapChain->hBackBuffer.pDrvPrivate = first_backbuffer;
   pCreateSwapChain->hSwapChain.pDrvPrivate = sc.get();
 
   dev->swapchains.push_back(sc.release());
   if (!dev->current_swapchain) {
     dev->current_swapchain = dev->swapchains.back();
-  }
-
-  if (!dev->render_targets[0] && pCreateSwapChain->hBackBuffer.pDrvPrivate) {
-    dev->render_targets[0] = as_resource(pCreateSwapChain->hBackBuffer);
-    emit_set_render_targets_locked(dev);
   }
 
   return S_OK;
@@ -2469,7 +2484,7 @@ HRESULT AEROGPU_D3D9_CALL device_destroy_swap_chain(
     if (!bb) {
       continue;
     }
-    emit_destroy_resource_locked(dev, bb->handle);
+    (void)emit_destroy_resource_locked(dev, bb->handle);
     delete bb;
   }
 
@@ -2639,7 +2654,7 @@ HRESULT reset_swap_chain_locked(Device* dev, SwapChain* sc, const AEROGPU_D3D9DD
     if (!bb) {
       continue;
     }
-    emit_destroy_resource_locked(dev, bb->handle);
+    (void)emit_destroy_resource_locked(dev, bb->handle);
     HRESULT hr = create_backbuffer_locked(dev, bb, sc->format, sc->width, sc->height);
     if (hr < 0) {
       return hr;
@@ -2649,7 +2664,9 @@ HRESULT reset_swap_chain_locked(Device* dev, SwapChain* sc, const AEROGPU_D3D9DD
   if (!dev->render_targets[0] && !sc->backbuffers.empty()) {
     dev->render_targets[0] = sc->backbuffers[0];
   }
-  emit_set_render_targets_locked(dev);
+  if (!emit_set_render_targets_locked(dev)) {
+    return E_OUTOFMEMORY;
+  }
   return S_OK;
 }
 
@@ -2719,27 +2736,33 @@ HRESULT AEROGPU_D3D9_CALL device_rotate_resource_identities(
 
   std::lock_guard<std::mutex> lock(dev->mutex);
 
-  auto* first = as_resource(pResources[0]);
-  if (!first) {
-    return E_INVALIDARG;
-  }
-  const aerogpu_handle_t saved = first->handle;
-
-  for (uint32_t i = 0; i + 1 < resource_count; ++i) {
-    auto* dst = as_resource(pResources[i]);
-    auto* src = as_resource(pResources[i + 1]);
-    if (!dst || !src) {
+  std::vector<Resource*> resources;
+  resources.reserve(resource_count);
+  std::vector<aerogpu_handle_t> saved_handles;
+  saved_handles.reserve(resource_count);
+  for (uint32_t i = 0; i < resource_count; ++i) {
+    auto* res = as_resource(pResources[i]);
+    if (!res) {
       return E_INVALIDARG;
     }
-    dst->handle = src->handle;
+    resources.push_back(res);
+    saved_handles.push_back(res->handle);
+  }
+  const aerogpu_handle_t saved = resources[0]->handle;
+
+  for (uint32_t i = 0; i + 1 < resource_count; ++i) {
+    resources[i]->handle = resources[i + 1]->handle;
   }
 
-  auto* last = as_resource(pResources[resource_count - 1]);
-  if (last) {
-    last->handle = saved;
+  resources[resource_count - 1]->handle = saved;
+
+  if (!emit_set_render_targets_locked(dev)) {
+    for (uint32_t i = 0; i < resource_count; ++i) {
+      resources[i]->handle = saved_handles[i];
+    }
+    return E_OUTOFMEMORY;
   }
 
-  emit_set_render_targets_locked(dev);
   return S_OK;
 }
 
@@ -3639,12 +3662,28 @@ HRESULT AEROGPU_D3D9_CALL device_present_ex(
     sc->present_count++;
     sc->last_present_fence = present_fence;
     if (sc->backbuffers.size() > 1 && sc->swap_effect != 0u) {
+      std::vector<aerogpu_handle_t> saved_handles;
+      saved_handles.reserve(sc->backbuffers.size());
+      for (Resource* bb : sc->backbuffers) {
+        saved_handles.push_back(bb ? bb->handle : 0);
+      }
+
       const aerogpu_handle_t saved = sc->backbuffers[0]->handle;
       for (size_t i = 0; i + 1 < sc->backbuffers.size(); ++i) {
         sc->backbuffers[i]->handle = sc->backbuffers[i + 1]->handle;
       }
       sc->backbuffers.back()->handle = saved;
-      emit_set_render_targets_locked(dev);
+      if (!emit_set_render_targets_locked(dev)) {
+        // Preserve device/host state consistency: if we cannot re-emit the render
+        // target bindings (command buffer too small), undo the rotation so future
+        // draws still target the host's current bindings.
+        for (size_t i = 0; i < sc->backbuffers.size(); ++i) {
+          if (!sc->backbuffers[i]) {
+            continue;
+          }
+          sc->backbuffers[i]->handle = saved_handles[i];
+        }
+      }
     }
   }
   return S_OK;
@@ -3721,12 +3760,25 @@ HRESULT AEROGPU_D3D9_CALL device_present(
     sc->present_count++;
     sc->last_present_fence = present_fence;
     if (sc->backbuffers.size() > 1 && sc->swap_effect != 0u) {
+      std::vector<aerogpu_handle_t> saved_handles;
+      saved_handles.reserve(sc->backbuffers.size());
+      for (Resource* bb : sc->backbuffers) {
+        saved_handles.push_back(bb ? bb->handle : 0);
+      }
+
       const aerogpu_handle_t saved = sc->backbuffers[0]->handle;
       for (size_t i = 0; i + 1 < sc->backbuffers.size(); ++i) {
         sc->backbuffers[i]->handle = sc->backbuffers[i + 1]->handle;
       }
       sc->backbuffers.back()->handle = saved;
-      emit_set_render_targets_locked(dev);
+      if (!emit_set_render_targets_locked(dev)) {
+        for (size_t i = 0; i < sc->backbuffers.size(); ++i) {
+          if (!sc->backbuffers[i]) {
+            continue;
+          }
+          sc->backbuffers[i]->handle = saved_handles[i];
+        }
+      }
     }
   }
   return S_OK;
