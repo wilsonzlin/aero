@@ -4227,14 +4227,15 @@ HRESULT wddm_acquire_submit_buffers_allocate_impl(Device* dev, CallbackFn cb, ui
   dev->wddm_context.pPatchLocationList = patch_list;
   dev->wddm_context.PatchLocationListSize = patch_entries;
 
-  // If CreateContext did not provide DMA buffer private data, accept a pointer
-  // from AllocateCb.
-  if ((!dev->wddm_context.pDmaBufferPrivateData ||
-       dev->wddm_context.DmaBufferPrivateDataSize < expected_dma_priv_bytes) &&
-      dma_priv && dma_priv_bytes >= expected_dma_priv_bytes) {
+  // Prefer the per-buffer DMA private data returned by AllocateCb when it is
+  // available. Some runtimes associate this blob with the allocated DMA buffer
+  // and may rotate it alongside the command buffer.
+  if (dma_priv && dma_priv_bytes >= expected_dma_priv_bytes) {
     dev->wddm_context.pDmaBufferPrivateData = dma_priv;
     dev->wddm_context.DmaBufferPrivateDataSize = dma_priv_bytes;
     dev->wddm_context.dma_priv_from_allocate = true;
+  } else {
+    dev->wddm_context.dma_priv_from_allocate = false;
   }
 
   dev->cmd.set_span(dev->wddm_context.pCommandBuffer, dev->wddm_context.CommandBufferSize);
