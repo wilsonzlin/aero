@@ -636,6 +636,9 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
       } else {
         if (meta.cache.backend === "opfs") {
           await opfsDeleteDisk(meta.cache.fileName);
+          // Snapshot/restore uses a small binding file to associate the OPFS cache file with the
+          // immutable remote base identity. Best-effort cleanup when the disk is deleted.
+          await opfsDeleteDisk(`${meta.cache.fileName}.binding.json`);
           await opfsDeleteDisk(meta.cache.overlayFileName);
         } else {
           const db = await openDiskManagerDb();
