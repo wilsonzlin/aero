@@ -460,6 +460,11 @@ function renderSnapshotPanel(): HTMLElement {
     error: null as string | null,
   });
 
+  function clearError(): void {
+    error.textContent = "";
+    testState.error = null;
+  }
+
   function clearAutosaveTimer(): void {
     if (autosaveTimer !== null) {
       window.clearInterval(autosaveTimer);
@@ -567,17 +572,17 @@ function renderSnapshotPanel(): HTMLElement {
   });
 
   saveButton.onclick = () => {
-    error.textContent = "";
+    clearError();
     saveSnapshot().catch((err) => setError(err instanceof Error ? err.message : String(err)));
   };
 
   loadButton.onclick = () => {
-    error.textContent = "";
+    clearError();
     loadSnapshot().catch((err) => setError(err instanceof Error ? err.message : String(err)));
   };
 
   exportButton.onclick = () => {
-    error.textContent = "";
+    clearError();
     getOpfsFileIfExists(SNAPSHOT_PATH)
       .then((file) => {
         if (!file) {
@@ -591,7 +596,7 @@ function renderSnapshotPanel(): HTMLElement {
   };
 
   deleteButton.onclick = () => {
-    error.textContent = "";
+    clearError();
     removeOpfsEntry(SNAPSHOT_PATH)
       .then(() => {
         status.textContent = "Deleted snapshot from OPFS.";
@@ -601,7 +606,7 @@ function renderSnapshotPanel(): HTMLElement {
 
   importInput.addEventListener("change", () => {
     void (async () => {
-      error.textContent = "";
+      clearError();
       const file = importInput.files?.[0];
       if (!file) return;
       status.textContent = `Importing snapshot (${formatBytes(file.size)})…`;
