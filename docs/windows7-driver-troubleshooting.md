@@ -21,6 +21,7 @@ If you have not installed Guest Tools yet, start here:
 - Driver signature / trust failures:
   - [Device Manager Code 52 (signature and trust failures)](#issue-device-manager-code-52-signature-and-trust-failures)
   - [Catalog hash mismatch (hash not present in specified catalog file)](#issue-catalog-hash-mismatch-hash-not-present-in-specified-catalog-file)
+  - [Guest Tools media integrity check fails (manifest hash mismatch)](#issue-guest-tools-media-integrity-check-fails-manifest-hash-mismatch)
   - [Missing KB3033929 (SHA-256 signature support)](#issue-missing-kb3033929-sha-256-signature-support)
 - Driver installed but not working:
   - [Device Manager Code 28 (drivers not installed)](#issue-device-manager-code-28-drivers-not-installed)
@@ -182,6 +183,28 @@ During driver installation (or on boot), Windows reports an error like:
 2. Ensure KB3033929 is installed if your drivers are SHA-256-signed.
 3. Replace the Guest Tools ISO with a fresh copy (don’t mix driver folders across versions).
 4. Re-run `setup.cmd` as Administrator (or use the manual install fallback).
+
+## Issue: Guest Tools media integrity check fails (manifest hash mismatch)
+
+This issue is specific to the Guest Tools diagnostics output (it’s detected by `verify.cmd`), but it usually causes driver install failures that look like catalog/signature problems.
+
+**Symptom**
+
+- `verify.cmd` reports **FAIL** in **Guest Tools Media Integrity (manifest.json)** and lists:
+  - missing files, and/or
+  - SHA-256 hash mismatches for files on the Guest Tools media.
+
+**Common causes**
+
+- The ISO/zip was corrupted in transit.
+- Only part of the ISO contents were copied/extracted.
+- Files from two different Guest Tools releases were mixed together (for example, overwriting `drivers\` but keeping an older `manifest.json`).
+
+**Fix**
+
+1. Replace the Guest Tools ISO/zip with a fresh copy.
+2. Ensure you copy/extract **the entire media root** (including `drivers\`, `certs\`, `config\`).
+3. Re-run `setup.cmd` as Administrator after replacing the media.
 
 ## Issue: Missing KB3033929 (SHA-256 signature support)
 

@@ -252,6 +252,11 @@ function Add-DeviceBindingCheck(
     }
 
     if ($matches.Count -eq 0) {
+        if ($key -eq "device_binding_storage") {
+            $details += "See: docs/windows7-driver-troubleshooting.md#issue-storage-controller-switch-gotchas-boot-loops-0x7b"
+        } else {
+            $details += "See: docs/windows7-driver-troubleshooting.md#issue-virtio-device-not-found-or-unknown-device-after-switching"
+        }
         Add-Check $key $title "WARN" $missingSummary $data $details
         return
     }
@@ -263,6 +268,18 @@ function Add-DeviceBindingCheck(
     $summary = "Matched devices: " + $matches.Count + " (OK: " + $ok + ", Problem: " + $bad + ")"
     if ($bad -gt 0 -and $ok -gt 0) { $status = "WARN" }
     if ($bad -gt 0 -and $ok -eq 0) { $status = "FAIL" }
+
+    if ($bad -gt 0) {
+        $codes = @{}
+        foreach ($m in $matches) {
+            if ($m.config_manager_error_code -ne $null -and $m.config_manager_error_code -ne 0) {
+                $codes[$m.config_manager_error_code.ToString()] = $true
+            }
+        }
+        if ($codes.ContainsKey("52")) { $details += "See: docs/windows7-driver-troubleshooting.md#issue-device-manager-code-52-signature-and-trust-failures" }
+        if ($codes.ContainsKey("28")) { $details += "See: docs/windows7-driver-troubleshooting.md#issue-device-manager-code-28-drivers-not-installed" }
+        if ($codes.ContainsKey("10")) { $details += "See: docs/windows7-driver-troubleshooting.md#issue-device-manager-code-10-device-cannot-start" }
+    }
 
     Add-Check $key $title $status $summary $data $details
 }
@@ -409,6 +426,153 @@ function Format-Json([string]$json) {
     return $sb.ToString()
 }
 
+function Get-FileSha256Hex([string]$path) {
+    # PowerShell 2.0-compatible SHA-256 helper (Win7 inbox lacks Get-FileHash).
+    try {
+        $stream = [System.IO.File]::OpenRead($path)
+        try {
+            $sha = New-Object System.Security.Cryptography.SHA256Managed
+            try {
+                $hash = $sha.ComputeHash($stream)
+            } finally {
+                try { $sha.Dispose() } catch { }
+            }
+        } finally {
+            try { $stream.Dispose() } catch { }
+        }
+
+        $sb = New-Object System.Text.StringBuilder
+        foreach ($b in $hash) {
+            [void]$sb.AppendFormat("{0:x2}", $b)
+        }
+        return $sb.ToString()
+    } catch {
+        return $null
+    }
+}
+
+function Resolve-InfStringValue([string]$value, [hashtable]$strings) {
+    # Best-effort expansion for values like %Foo% using the INF [Strings] section.
+    if (-not $value) { return $null }
+    $t = ("" + $value).Trim()
+    $t = $t.Trim('"')
+    $m = [regex]::Match($t, '^\%([^%]+)\%$')
+    if ($m.Success -and $strings -and $strings.ContainsKey($m.Groups[1].Value)) {
+        return "" + $strings[$m.Groups[1].Value]
+    }
+    return $t
+}
+
+function Parse-InfMetadata([string]$path) {
+    # Best-effort INF parser (sufficient for Win7 virtio/Aero driver triage).
+    # Extracts:
+    # - Provider (resolved from [Strings] if possible)
+    # - Class
+    # - DriverVer (raw + split date/version if parseable)
+    # - Hardware ID patterns (prefix match candidates; e.g. PCI\VEN_...&DEV_....)
+    # - AddService names (useful for boot-critical storage correlation)
+    $out = @{
+        inf_path = $path
+        inf_file = $null
+        provider = $null
+        provider_raw = $null
+        class = $null
+        driver_ver_raw = $null
+        driver_date = $null
+        driver_version = $null
+        hwid_prefixes = @()
+        add_services = @()
+        parse_errors = @()
+    }
+
+    try { $out.inf_file = [System.IO.Path]::GetFileName($path) } catch { $out.inf_file = $path }
+
+    $lines = $null
+    try {
+        $lines = Get-Content -Path $path -ErrorAction Stop
+    } catch {
+        $out.parse_errors += ("Failed to read: " + $_.Exception.Message)
+        return $out
+    }
+
+    $section = ""
+    $strings = @{}
+    $hwids = @{}
+    $services = @{}
+
+    foreach ($line in $lines) {
+        if ($line -eq $null) { continue }
+        $t = ("" + $line).Trim()
+        if ($t.Length -eq 0) { continue }
+
+        # Strip `;` comments (INF comment syntax). Best-effort (won't handle semicolons in quotes).
+        $semi = $t.IndexOf(';')
+        if ($semi -ge 0) {
+            $t = $t.Substring(0, $semi).Trim()
+            if ($t.Length -eq 0) { continue }
+        }
+
+        if ($t -match '^\[(.+)\]$') {
+            $section = $matches[1].Trim()
+            continue
+        }
+
+        if ($section -match '(?i)^strings$') {
+            if ($t -match '^\s*([^=]+?)\s*=\s*(.+?)\s*$') {
+                $k = $matches[1].Trim()
+                $v = $matches[2].Trim()
+                $v = $v.Trim('"')
+                if ($k.Length -gt 0) { $strings[$k] = $v }
+            }
+            continue
+        }
+
+        if ($section -match '(?i)^version$') {
+            if ($t -match '^(?i)Provider\s*=\s*(.+)$') { $out.provider_raw = $matches[1].Trim(); continue }
+            if ($t -match '^(?i)Class\s*=\s*(.+)$') { $out.class = $matches[1].Trim(); continue }
+            if ($t -match '^(?i)DriverVer\s*=\s*(.+)$') { $out.driver_ver_raw = $matches[1].Trim(); continue }
+        }
+
+        # AddService directives can appear in many sections.
+        $svcMatch = [regex]::Match($t, '^(?i)AddService\s*=\s*([^,\s]+)')
+        if ($svcMatch.Success) {
+            $svc = $svcMatch.Groups[1].Value.Trim()
+            $svc = $svc.Trim('"')
+            if ($svc.Length -gt 0) { $services[$svc.ToLower()] = $svc }
+        }
+
+        # Hardware IDs typically appear as the last token(s) after a comma:
+        #   %Desc% = InstallSection, PCI\VEN_1AF4&DEV_1000
+        if ($t.IndexOf(',') -ge 0) {
+            $parts = $t -split ','
+            if ($parts -and $parts.Length -ge 2) {
+                for ($i = 1; $i -lt $parts.Length; $i++) {
+                    $p = ("" + $parts[$i]).Trim()
+                    $p = $p.Trim('"')
+                    if ($p -match '^(?i)(PCI|USB|HID|ACPI|ROOT|SW)\\') {
+                        $hwids[$p.ToUpper()] = $p
+                    }
+                }
+            }
+        }
+    }
+
+    $out.provider = Resolve-InfStringValue $out.provider_raw $strings
+
+    if ($out.driver_ver_raw) {
+        $m = [regex]::Match($out.driver_ver_raw, '^\s*([^,]+)\s*,\s*(.+?)\s*$')
+        if ($m.Success) {
+            $out.driver_date = $m.Groups[1].Value.Trim()
+            $out.driver_version = $m.Groups[2].Value.Trim()
+        }
+    }
+
+    foreach ($k in $hwids.Keys) { $out.hwid_prefixes += ("" + $hwids[$k]) }
+    foreach ($k in $services.Keys) { $out.add_services += ("" + $services[$k]) }
+
+    return $out
+}
+
 function Write-TextReport([hashtable]$report, [string]$path) {
     $nl = "`r`n"
     $sb = New-Object System.Text.StringBuilder
@@ -427,6 +591,7 @@ function Write-TextReport([hashtable]$report, [string]$path) {
     $orderedKeys = @(
         "os",
         "guest_tools_manifest",
+        "packaged_drivers_summary",
         "guest_tools_setup_state",
         "guest_tools_config",
         "kb3033929",
@@ -434,6 +599,7 @@ function Write-TextReport([hashtable]$report, [string]$path) {
         "signature_mode",
         "driver_packages",
         "bound_devices",
+        "installed_driver_binding_summary",
         "device_binding_storage",
         "device_binding_network",
         "device_binding_graphics",
@@ -538,7 +704,7 @@ $report = @{
     schema_version = 1
     tool = @{
         name = "Aero Guest Tools Verify"
-        version = "2.3.0"
+        version = "2.4.0"
         started_utc = $started.ToUniversalTime().ToString("o")
         ended_utc = $null
         duration_ms = $null
@@ -563,6 +729,10 @@ $report = @{
         status = "PASS"
         summary = ""
     }
+    # Structured, machine-readable summary sections (in addition to per-check data).
+    media_integrity = $null
+    packaged_drivers_summary = $null
+    installed_driver_binding_summary = $null
 }
 
 function Add-Check([string]$key, [string]$title, [string]$status, [string]$summary, $data, [string[]]$details) {
@@ -624,37 +794,179 @@ try {
     Add-Check "os" "OS + Architecture" "WARN" ("Failed: " + $_.Exception.Message) $null @()
 }
 
-# --- Guest Tools manifest (version/build provenance) ---
+# --- Guest Tools manifest (media integrity + provenance) ---
 try {
     $manifestPath = Join-Path $scriptDir "manifest.json"
-    $manifestData = $null
     $mStatus = "PASS"
     $mSummary = ""
     $mDetails = @()
 
+    $mediaIntegrity = @{
+        manifest_present = $false
+        manifest_path = $manifestPath
+        parse_ok = $false
+        schema_version = $null
+        package = $null
+        files_listed = 0
+        files_checked = 0
+        missing_files = @()
+        hash_mismatch_files = @()
+        unreadable_files = @()
+        file_results = @()
+    }
+
     if (-not (Test-Path $manifestPath)) {
         $mStatus = "WARN"
-        $mSummary = "manifest.json not found next to verify.ps1; Guest Tools build metadata unavailable."
+        $mSummary = "manifest.json not found next to verify.ps1; cannot verify Guest Tools media integrity."
+        $mDetails += "Tip: If you obtained the media as a .zip/.iso, ensure the full directory contents were copied intact."
     } else {
+        $mediaIntegrity.manifest_present = $true
         $raw = Get-Content -Path $manifestPath -ErrorAction Stop | Out-String
         $parsed = Parse-JsonCompat $raw
         if (-not $parsed) {
-            $mStatus = "WARN"
-            $mSummary = "manifest.json exists but could not be parsed."
+            $mStatus = "FAIL"
+            $mSummary = "manifest.json exists but could not be parsed. Media may be corrupted."
+            $mDetails += "Remediation: Replace the Guest Tools ISO/zip with a fresh copy."
         } else {
-            $manifestData = @{
-                path = $manifestPath
-                version = (if ($parsed.ContainsKey("version")) { $parsed["version"] } else { $null })
-                build_id = (if ($parsed.ContainsKey("build_id")) { $parsed["build_id"] } else { $null })
-                source_date_epoch = (if ($parsed.ContainsKey("source_date_epoch")) { $parsed["source_date_epoch"] } else { $null })
+            $mediaIntegrity.parse_ok = $true
+
+            $schema = $null
+            if ($parsed.ContainsKey("schema_version")) { $schema = $parsed["schema_version"] }
+            $mediaIntegrity.schema_version = $schema
+
+            $pkg = $null
+            $version = $null
+            $buildId = $null
+            $sde = $null
+            if ($parsed.ContainsKey("package")) {
+                $pkg = $parsed["package"]
+                if ($pkg -and $pkg.ContainsKey("version")) { $version = $pkg["version"] }
+                if ($pkg -and $pkg.ContainsKey("build_id")) { $buildId = $pkg["build_id"] }
+                if ($pkg -and $pkg.ContainsKey("source_date_epoch")) { $sde = $pkg["source_date_epoch"] }
+            } else {
+                # Back-compat: older manifests may have these at the root.
+                if ($parsed.ContainsKey("version")) { $version = $parsed["version"] }
+                if ($parsed.ContainsKey("build_id")) { $buildId = $parsed["build_id"] }
+                if ($parsed.ContainsKey("source_date_epoch")) { $sde = $parsed["source_date_epoch"] }
             }
-            $mSummary = "Guest Tools: version=" + $manifestData.version + ", build_id=" + $manifestData.build_id
+
+            $mediaIntegrity.package = @{
+                name = (if ($pkg -and $pkg.ContainsKey("name")) { $pkg["name"] } else { $null })
+                version = $version
+                build_id = $buildId
+                source_date_epoch = $sde
+            }
+
+            $files = $null
+            if ($parsed.ContainsKey("files")) { $files = $parsed["files"] }
+
+            if (-not $files) {
+                $mStatus = "WARN"
+                $mSummary = "manifest.json parsed but does not contain a 'files' list; cannot verify media integrity."
+            } else {
+                $mediaIntegrity.files_listed = $files.Count
+
+                foreach ($f in $files) {
+                    $rel = $null
+                    $expectedSha = $null
+                    $expectedSize = $null
+
+                    if ($f -and $f.ContainsKey("path")) { $rel = "" + $f["path"] }
+                    if ($f -and $f.ContainsKey("sha256")) { $expectedSha = "" + $f["sha256"] }
+                    if ($f -and $f.ContainsKey("size")) { $expectedSize = $f["size"] }
+
+                    if (-not $rel -or $rel.Length -eq 0) { continue }
+                    $relFs = $rel.Replace("/", "\")
+                    $full = Join-Path $scriptDir $relFs
+                    $exists = Test-Path $full
+
+                    $actualSha = $null
+                    $actualSize = $null
+                    $status = "PASS"
+
+                    if (-not $exists) {
+                        $status = "FAIL"
+                        $mediaIntegrity.missing_files += $rel
+                    } else {
+                        try {
+                            $item = Get-Item -LiteralPath $full -ErrorAction Stop
+                            $actualSize = $item.Length
+                        } catch {
+                            $actualSize = $null
+                        }
+
+                        $actualSha = Get-FileSha256Hex $full
+                        if (-not $actualSha) {
+                            $status = "WARN"
+                            $mediaIntegrity.unreadable_files += $rel
+                        } elseif ($expectedSha -and ($actualSha.ToLower() -ne $expectedSha.ToLower())) {
+                            $status = "FAIL"
+                            $mediaIntegrity.hash_mismatch_files += $rel
+                        }
+                    }
+
+                    $mediaIntegrity.file_results += @{
+                        path = $rel
+                        exists = $exists
+                        expected_sha256 = $expectedSha
+                        actual_sha256 = $actualSha
+                        expected_size = $expectedSize
+                        actual_size = $actualSize
+                        status = $status
+                    }
+                }
+
+                $mediaIntegrity.files_checked = $mediaIntegrity.file_results.Count
+                $missingCount = $mediaIntegrity.missing_files.Count
+                $hashMismatchCount = $mediaIntegrity.hash_mismatch_files.Count
+                $unreadableCount = $mediaIntegrity.unreadable_files.Count
+
+                if ($missingCount -gt 0 -or $hashMismatchCount -gt 0) {
+                    $mStatus = "FAIL"
+                } elseif ($unreadableCount -gt 0) {
+                    $mStatus = "WARN"
+                } else {
+                    $mStatus = "PASS"
+                }
+
+                $mSummary = "Guest Tools media: version=" + $version + ", build_id=" + $buildId + "; files checked=" + $mediaIntegrity.files_checked + " (missing=" + $missingCount + ", hash_mismatch=" + $hashMismatchCount + ", unreadable=" + $unreadableCount + ")"
+
+                if ($missingCount -gt 0) {
+                    foreach ($p in $mediaIntegrity.missing_files) { $mDetails += ("FAIL: Missing file: " + $p) }
+                }
+                if ($hashMismatchCount -gt 0) {
+                    foreach ($r in $mediaIntegrity.file_results) {
+                        if (($r.status -eq "FAIL") -and ($r.exists -eq $true) -and $r.expected_sha256 -and $r.actual_sha256) {
+                            $exp = "" + $r.expected_sha256
+                            $act = "" + $r.actual_sha256
+                            $expShort = $exp
+                            $actShort = $act
+                            if ($expShort.Length -gt 12) { $expShort = $expShort.Substring(0, 12) }
+                            if ($actShort.Length -gt 12) { $actShort = $actShort.Substring(0, 12) }
+                            $mDetails += ("FAIL: SHA-256 mismatch: " + $r.path + " (expected " + $expShort + "... got " + $actShort + "...)")
+                        }
+                    }
+                }
+                if ($unreadableCount -gt 0) {
+                    foreach ($p in $mediaIntegrity.unreadable_files) { $mDetails += ("WARN: Unable to hash file (read error): " + $p) }
+                }
+
+                if ($mStatus -ne "PASS") {
+                    $mDetails += "Remediation: Replace the Guest Tools ISO/zip with a fresh copy (do not mix driver folders across versions)."
+                    $mDetails += "See: docs/windows7-driver-troubleshooting.md#issue-guest-tools-media-integrity-check-fails-manifest-hash-mismatch"
+                }
+            }
         }
     }
 
-    Add-Check "guest_tools_manifest" "Guest Tools Manifest" $mStatus $mSummary $manifestData $mDetails
+    $report.media_integrity = $mediaIntegrity
+    Add-Check "guest_tools_manifest" "Guest Tools Media Integrity (manifest.json)" $mStatus $mSummary $mediaIntegrity $mDetails
 } catch {
-    Add-Check "guest_tools_manifest" "Guest Tools Manifest" "WARN" ("Failed: " + $_.Exception.Message) $null @()
+    $report.media_integrity = @{
+        manifest_path = (Join-Path $scriptDir "manifest.json")
+        error = $_.Exception.Message
+    }
+    Add-Check "guest_tools_manifest" "Guest Tools Media Integrity (manifest.json)" "WARN" ("Failed: " + $_.Exception.Message) $null @()
 }
 
 # --- Guest Tools setup state (C:\AeroGuestTools\*) ---
@@ -756,6 +1068,169 @@ try {
     Add-Check "guest_tools_config" "Guest Tools Config (devices.cmd)" $cfgStatus $cfgSummary $data $cfgDetails
 } catch {
     Add-Check "guest_tools_config" "Guest Tools Config (devices.cmd)" "WARN" ("Failed: " + $_.Exception.Message) $null @()
+}
+
+# --- Packaged drivers on the Guest Tools media (parse INFs for provenance/HWIDs) ---
+$packagedDriversSummary = $null
+try {
+    $is64 = $false
+    if ($report.checks.ContainsKey("os") -and $report.checks.os.data -and $report.checks.os.data.architecture) {
+        $is64 = ("" + $report.checks.os.data.architecture) -match '64'
+    } else {
+        $is64 = ("" + $env:PROCESSOR_ARCHITECTURE) -match '64'
+    }
+
+    $arch = (if ($is64) { "amd64" } else { "x86" })
+    $driversRoot = Join-Path (Join-Path $scriptDir "drivers") $arch
+
+    $summary = @{
+        guest_tools_root = $scriptDir
+        arch = $arch
+        drivers_root = $driversRoot
+        drivers_root_exists = (Test-Path $driversRoot)
+        driver_folders = @()
+        total_driver_folders = 0
+        total_inf_files = 0
+        total_hwid_prefixes = 0
+        total_add_services = 0
+        inf_parse_failures = 0
+    }
+
+    $status = "PASS"
+    $sumText = ""
+    $details = @()
+
+    if (-not (Test-Path $driversRoot)) {
+        $status = "WARN"
+        $sumText = "drivers\\" + $arch + " not found under the Guest Tools root; packaged driver inventory unavailable."
+        $details += "If you are running verify.ps1 from a copied/extracted folder, ensure you copied the full Guest Tools media (including drivers/)."
+    } else {
+        $folders = Get-ChildItem -Path $driversRoot -ErrorAction Stop | Where-Object { $_.PSIsContainer }
+        $summary.total_driver_folders = $folders.Count
+
+        foreach ($folder in $folders) {
+            $infFiles = Get-ChildItem -Path $folder.FullName -Recurse -Filter *.inf -ErrorAction SilentlyContinue | Where-Object { -not $_.PSIsContainer }
+            $sysFiles = Get-ChildItem -Path $folder.FullName -Recurse -Filter *.sys -ErrorAction SilentlyContinue | Where-Object { -not $_.PSIsContainer }
+            $catFiles = Get-ChildItem -Path $folder.FullName -Recurse -Filter *.cat -ErrorAction SilentlyContinue | Where-Object { -not $_.PSIsContainer }
+
+            $infMeta = @()
+            foreach ($inf in $infFiles) {
+                $m = Parse-InfMetadata $inf.FullName
+
+                # Store media-relative path for portability.
+                $rel = $inf.FullName
+                try {
+                    if ($rel.ToLower().StartsWith($scriptDir.ToLower())) {
+                        $rel = $rel.Substring($scriptDir.Length).TrimStart('\')
+                        $rel = $rel.Replace('\', '/')
+                    }
+                } catch { }
+                $m.inf_rel_path = $rel
+
+                if ($m.parse_errors -and $m.parse_errors.Count -gt 0) { $summary.inf_parse_failures++ }
+                $summary.total_inf_files++
+                $summary.total_hwid_prefixes += $m.hwid_prefixes.Count
+                $summary.total_add_services += $m.add_services.Count
+                $infMeta += $m
+            }
+
+            $summary.driver_folders += @{
+                name = "" + $folder.Name
+                path = "" + $folder.FullName
+                inf_count = $infFiles.Count
+                sys_count = $sysFiles.Count
+                cat_count = $catFiles.Count
+                infs = $infMeta
+            }
+        }
+
+        # Cross-check that config\devices.cmd aligns with packaged driver INFs (high-signal for mixed/incorrect media).
+        $serviceSet = @{}
+        $mediaHwids = @()
+        foreach ($pkg in $summary.driver_folders) {
+            if (-not $pkg.infs) { continue }
+            foreach ($inf in $pkg.infs) {
+                if ($inf.add_services) {
+                    foreach ($svc in $inf.add_services) {
+                        if ($svc) { $serviceSet[$svc.ToLower()] = $svc }
+                    }
+                }
+                if ($inf.hwid_prefixes) {
+                    foreach ($h in $inf.hwid_prefixes) {
+                        if ($h) { $mediaHwids += $h }
+                    }
+                }
+            }
+        }
+        $summary.media_add_services = @()
+        foreach ($k in $serviceSet.Keys) { $summary.media_add_services += $serviceSet[$k] }
+
+        if ($cfgVirtioBlkService -and (-not $serviceSet.ContainsKey($cfgVirtioBlkService.ToLower()))) {
+            $status = Merge-Status $status "WARN"
+            $details += ("config\\devices.cmd AERO_VIRTIO_BLK_SERVICE='" + $cfgVirtioBlkService + "' does not match any AddService name found in packaged INFs. Boot-critical registry seeding may be wrong for this media.")
+        }
+        if ($cfgVirtioBlkHwids -and $cfgVirtioBlkHwids.Count -gt 0 -and $mediaHwids.Count -gt 0) {
+            $missingCfg = @()
+            foreach ($h in $cfgVirtioBlkHwids) {
+                $found = $false
+                foreach ($mh in $mediaHwids) {
+                    if ($mh.ToUpper().StartsWith($h.ToUpper())) { $found = $true; break }
+                }
+                if (-not $found) { $missingCfg += $h }
+            }
+            if ($missingCfg.Count -gt 0) {
+                $status = Merge-Status $status "WARN"
+                $details += ("config\\devices.cmd virtio-blk HWIDs not found in any packaged INF: " + ($missingCfg -join ", ") + ". Media may be the wrong version/arch.")
+            }
+        }
+
+        $packagedDriversSummary = $summary
+        $report.packaged_drivers_summary = $summary
+
+        $sumText = "Media driver inventory: arch=" + $arch + ", driver folders=" + $summary.total_driver_folders + ", INFs=" + $summary.total_inf_files + ", HWID prefixes=" + $summary.total_hwid_prefixes
+        if ($summary.total_inf_files -eq 0) {
+            $status = "WARN"
+            $details += "No .inf files found under drivers\\" + $arch + ". Driver installation from this media will fail."
+        }
+        if ($summary.inf_parse_failures -gt 0) {
+            $status = Merge-Status $status "WARN"
+            $details += ($summary.inf_parse_failures.ToString() + " INF file(s) could not be parsed (best-effort).")
+        }
+
+        # High-signal per-folder summary lines (avoid dumping raw INF contents).
+        foreach ($pkg in $summary.driver_folders) {
+            if (-not $pkg.infs -or $pkg.infs.Count -eq 0) {
+                $details += ($pkg.name + ": INFs=0 (sys=" + $pkg.sys_count + ", cat=" + $pkg.cat_count + ")")
+                continue
+            }
+
+            foreach ($inf in $pkg.infs) {
+                $line = $pkg.name + ": " + $inf.inf_rel_path
+                if ($inf.provider) { $line += ", Provider=" + $inf.provider }
+                if ($inf.driver_ver_raw) { $line += ", DriverVer=" + $inf.driver_ver_raw }
+                if ($inf.hwid_prefixes -and $inf.hwid_prefixes.Count -gt 0) {
+                    $hwids = $inf.hwid_prefixes
+                    if ($hwids.Count -le 6) {
+                        $line += ", HWIDs=" + ($hwids -join ", ")
+                    } else {
+                        $preview = @($hwids | Select-Object -First 6)
+                        $line += ", HWIDs=" + ($preview -join ", ") + " ... (" + $hwids.Count + " total)"
+                    }
+                }
+                if ($inf.add_services -and $inf.add_services.Count -gt 0) { $line += ", AddService=" + ($inf.add_services -join ",") }
+                $details += $line
+            }
+        }
+    }
+
+    $report.packaged_drivers_summary = $summary
+    Add-Check "packaged_drivers_summary" "Packaged Drivers (media INFs)" $status $sumText $summary $details
+} catch {
+    $report.packaged_drivers_summary = @{
+        guest_tools_root = $scriptDir
+        error = $_.Exception.Message
+    }
+    Add-Check "packaged_drivers_summary" "Packaged Drivers (media INFs)" "WARN" ("Failed: " + $_.Exception.Message) $null @()
 }
 
 # --- Hotfix: KB3033929 (SHA-256 signature support) ---
@@ -1104,6 +1579,7 @@ try {
 }
 
 # --- Bound devices (WMI Win32_PnPEntity; optional devcon) ---
+$boundDevicesForCorrelation = $null
 try {
     $devconDir = Split-Path -Parent $MyInvocation.MyCommand.Path
     $devconPath = Join-Path $devconDir "devcon.exe"
@@ -1196,6 +1672,9 @@ try {
         }
     }
 
+    # Preserve for later correlation against packaged media drivers.
+    $boundDevicesForCorrelation = $devices
+
     $devcon = $null
     if (Test-Path $devconPath) {
         $devcon = Invoke-Capture $devconPath @("findall","*")
@@ -1222,11 +1701,19 @@ try {
         if ($code52.Count -gt 0) {
             $devStatus = Merge-Status $devStatus "WARN"
             $devDetails += ($code52.Count.ToString() + " device(s) report Code 52 (signature/trust failure). Review Signature Mode + Certificate Store + KB3033929 checks.")
+            $devDetails += "See: docs/windows7-driver-troubleshooting.md#issue-device-manager-code-52-signature-and-trust-failures"
         }
         $code28 = @($devices | Where-Object { $_.config_manager_error_code -eq 28 })
         if ($code28.Count -gt 0) {
             $devStatus = Merge-Status $devStatus "WARN"
             $devDetails += ($code28.Count.ToString() + " device(s) report Code 28 (drivers not installed). Re-run Guest Tools setup / update driver in Device Manager.")
+            $devDetails += "See: docs/windows7-driver-troubleshooting.md#issue-device-manager-code-28-drivers-not-installed"
+        }
+        $code10 = @($devices | Where-Object { $_.config_manager_error_code -eq 10 })
+        if ($code10.Count -gt 0) {
+            $devStatus = Merge-Status $devStatus "WARN"
+            $devDetails += ($code10.Count.ToString() + " device(s) report Code 10 (device cannot start).")
+            $devDetails += "See: docs/windows7-driver-troubleshooting.md#issue-device-manager-code-10-device-cannot-start"
         }
     }
 
@@ -1311,6 +1798,165 @@ try {
     Add-Check "bound_devices" "Bound Devices (WMI Win32_PnPEntity)" "WARN" ("Failed: " + $_.Exception.Message) $null @()
 }
 
+# --- Installed driver binding correlation (media INFs vs active device bindings) ---
+try {
+    $media = $report.packaged_drivers_summary
+    $bindingSummary = @{
+        media_arch = (if ($media -and $media.ContainsKey("arch")) { $media.arch } else { $null })
+        media_drivers_root = (if ($media -and $media.ContainsKey("drivers_root")) { $media.drivers_root } else { $null })
+        hwid_index_size = 0
+        analysed_devices = 0
+        matched_media_driver = 0
+        media_hwid_match_driver_mismatch = 0
+        no_media_match = 0
+        no_signed_driver = 0
+        device_results = @()
+    }
+
+    $status = "PASS"
+    $summaryText = ""
+    $details = @()
+
+    $index = @()
+    if ($media -and $media.ContainsKey("driver_folders") -and $media.driver_folders) {
+        foreach ($pkg in $media.driver_folders) {
+            if (-not $pkg.infs) { continue }
+            foreach ($inf in $pkg.infs) {
+                if (-not $inf.hwid_prefixes) { continue }
+                foreach ($hwid in $inf.hwid_prefixes) {
+                    if (-not $hwid -or $hwid.Length -eq 0) { continue }
+                    $index += @{
+                        hwid_prefix = $hwid
+                        hwid_prefix_upper = ("" + $hwid).ToUpper()
+                        driver_folder = "" + $pkg.name
+                        inf_rel_path = "" + $inf.inf_rel_path
+                        provider = "" + $inf.provider
+                        driver_ver_raw = "" + $inf.driver_ver_raw
+                        driver_version = "" + $inf.driver_version
+                        add_services = $inf.add_services
+                    }
+                }
+            }
+        }
+    }
+    $bindingSummary.hwid_index_size = $index.Count
+
+    if (-not $index -or $index.Count -eq 0) {
+        $status = "WARN"
+        $summaryText = "No HWID patterns were parsed from packaged driver INFs; cannot correlate installed bindings to media."
+        $details += "Verify you are running from a complete Guest Tools ISO/zip and that drivers\\<arch> contains .inf files."
+    } elseif (-not $boundDevicesForCorrelation) {
+        $status = "WARN"
+        $summaryText = "No device inventory available from Win32_PnPEntity; cannot correlate installed bindings to media."
+    } else {
+        $bindingSummary.analysed_devices = $boundDevicesForCorrelation.Count
+
+        foreach ($d in $boundDevicesForCorrelation) {
+            $pnpid = "" + $d.pnp_device_id
+            if (-not $pnpid -or $pnpid.Length -eq 0) { continue }
+            $pnpUpper = $pnpid.ToUpper()
+
+            $bestLen = -1
+            $best = $null
+            foreach ($e in $index) {
+                if ($pnpUpper.StartsWith($e.hwid_prefix_upper)) {
+                    $l = $e.hwid_prefix_upper.Length
+                    if ($l -gt $bestLen) { $bestLen = $l; $best = $e }
+                }
+            }
+
+            $sd = $d.signed_driver
+            $installedProvider = $null
+            $installedVersion = $null
+            $installedInf = $null
+            $installedSigner = $null
+            if ($sd) {
+                $installedProvider = "" + $sd.driver_provider_name
+                $installedVersion = "" + $sd.driver_version
+                $installedInf = "" + $sd.inf_name
+                $installedSigner = "" + $sd.signer
+            }
+
+            $assessment = "NO_MEDIA_MATCH"
+            if (-not $best) {
+                $bindingSummary.no_media_match++
+            } elseif (-not $sd) {
+                $assessment = "MEDIA_HWID_MATCH_NO_SIGNED_DRIVER"
+                $bindingSummary.no_signed_driver++
+            } else {
+                $providerMatch = $false
+                $versionMatch = $false
+
+                if ($best.provider -and $installedProvider -and ($best.provider.ToLower() -eq $installedProvider.ToLower())) { $providerMatch = $true }
+                if (-not $best.provider -or -not $installedProvider) { $providerMatch = $true } # missing data: don't penalize
+
+                if ($best.driver_version -and $installedVersion -and ($best.driver_version.Trim() -eq $installedVersion.Trim())) { $versionMatch = $true }
+                if (-not $best.driver_version -or -not $installedVersion) { $versionMatch = $true }
+
+                if ($providerMatch -and $versionMatch) {
+                    $assessment = "MATCHED_MEDIA_DRIVER"
+                    $bindingSummary.matched_media_driver++
+                } else {
+                    $assessment = "MEDIA_HWID_MATCH_DRIVER_MISMATCH"
+                    $bindingSummary.media_hwid_match_driver_mismatch++
+                }
+            }
+
+            $bindingSummary.device_results += @{
+                name = "" + $d.name
+                manufacturer = "" + $d.manufacturer
+                pnp_device_id = $pnpid
+                pnp_class = "" + $d.pnp_class
+                service = "" + $d.service
+                status = "" + $d.status
+                config_manager_error_code = $d.config_manager_error_code
+                config_manager_error_meaning = "" + $d.config_manager_error_meaning
+                installed_driver = $sd
+                media_match = (if ($best) {
+                    @{
+                        hwid_prefix = "" + $best.hwid_prefix
+                        driver_folder = "" + $best.driver_folder
+                        inf_rel_path = "" + $best.inf_rel_path
+                        provider = "" + $best.provider
+                        driver_ver_raw = "" + $best.driver_ver_raw
+                        driver_version = "" + $best.driver_version
+                        add_services = $best.add_services
+                    }
+                } else { $null })
+                assessment = $assessment
+            }
+
+            $line = $assessment + ": " + $d.name
+            $line += " (PNPDeviceID=" + $pnpid + ")"
+            if ($installedInf) { $line += ", INF=" + $installedInf }
+            if ($installedProvider) { $line += ", Provider=" + $installedProvider }
+            if ($installedVersion) { $line += ", Version=" + $installedVersion }
+            if ($installedSigner) { $line += ", Signer=" + $installedSigner }
+            if ($best) { $line += " | MediaINF=" + $best.inf_rel_path }
+            $details += $line
+        }
+
+        $summaryText = "Analysed " + $bindingSummary.analysed_devices + " relevant device(s): matched=" + $bindingSummary.matched_media_driver + ", mismatch=" + $bindingSummary.media_hwid_match_driver_mismatch + ", no_media_match=" + $bindingSummary.no_media_match + ", no_signed_driver=" + $bindingSummary.no_signed_driver
+
+        if ($bindingSummary.analysed_devices -eq 0) {
+            $status = "WARN"
+            $details += "No virtio/Aero devices were detected. If you expected them, verify the VM hardware profile and run Device Manager -> Scan for hardware changes."
+        } elseif ($bindingSummary.no_media_match -gt 0 -or $bindingSummary.media_hwid_match_driver_mismatch -gt 0 -or $bindingSummary.no_signed_driver -gt 0) {
+            $status = "WARN"
+            $details += "Remediation: If devices are not matching the media, re-run setup.cmd from the correct Guest Tools ISO/zip and avoid mixing driver folders across versions."
+            $details += "See: docs/windows7-driver-troubleshooting.md#issue-virtio-device-not-found-or-unknown-device-after-switching"
+        }
+    }
+
+    $report.installed_driver_binding_summary = $bindingSummary
+    Add-Check "installed_driver_binding_summary" "Installed Driver Binding Correlation (media vs system)" $status $summaryText $bindingSummary $details
+} catch {
+    $report.installed_driver_binding_summary = @{
+        error = $_.Exception.Message
+    }
+    Add-Check "installed_driver_binding_summary" "Installed Driver Binding Correlation (media vs system)" "WARN" ("Failed: " + $_.Exception.Message) $null @()
+}
+
 # --- virtio-blk storage service ---
 try {
     $candidates = @("viostor","aeroviostor","virtio_blk","virtio-blk","aerostor","aeroblk")
@@ -1363,7 +2009,9 @@ try {
         $svcStatus = "WARN"
         $svcSummary = "virtio-blk service not found (tried: " + ($candidates -join ", ") + ")."
         $svcDetails += ("If Aero storage drivers are installed, expected a driver service like '" + $expected + "'.")
+        $svcDetails += "See: docs/windows7-driver-troubleshooting.md#issue-storage-controller-switch-gotchas-boot-loops-0x7b"
     } else {
+        $bootCriticalIssue = $false
         $expectedSys = $cfgVirtioBlkSys
         if (-not $expectedSys) { $expectedSys = $found.name + ".sys" }
         $driversDir = Join-Path (Join-Path $env:SystemRoot "System32") "drivers"
@@ -1414,25 +2062,52 @@ try {
             $svcDetails += ("Resolved ImagePath=" + $resolvedImagePath + " (exists=" + $resolvedImageExists + ")")
         }
         $svcDetails += ("Expected driver file=" + $expectedSysPath + " (exists=" + $expectedSysExists + ")")
+
+        if (-not $found.registry_image_path) {
+            $svcStatus = Merge-Status $svcStatus "WARN"
+            $bootCriticalIssue = $true
+            $svcDetails += "Storage service ImagePath is missing. Boot loading may fail."
+        } elseif ($resolvedImagePath -and ($resolvedImagePath.ToLower() -ne $expectedSysPath.ToLower())) {
+            $svcStatus = Merge-Status $svcStatus "WARN"
+            $bootCriticalIssue = $true
+            $svcDetails += ("Storage service ImagePath does not point to the expected driver file. Expected: " + $expectedSysPath + "; Resolved: " + $resolvedImagePath)
+        }
+
         if (-not $expectedSysExists -and ($resolvedImageExists -ne $true)) {
             $svcStatus = Merge-Status $svcStatus "WARN"
+            $bootCriticalIssue = $true
             $svcDetails += "Storage driver binary not found under System32\\drivers. Switching the boot disk to virtio-blk may fail (0x7B). Re-run setup.cmd."
         }
-        if ($found.registry_start_value -ne $null -and $found.registry_start_value -ne 0) {
+        if ($found.registry_start_value -eq $null) {
             $svcStatus = Merge-Status $svcStatus "WARN"
+            $bootCriticalIssue = $true
+            $svcDetails += "Storage service Start value is missing/unreadable. Expected Start=0 (BOOT_START). Switching the boot disk to virtio-blk may fail (0x7B)."
+        } elseif ($found.registry_start_value -ne 0) {
+            $svcStatus = Merge-Status $svcStatus "WARN"
+            $bootCriticalIssue = $true
             $svcDetails += "Storage service is not configured as BOOT_START (Start=0). Switching the boot disk to virtio-blk may fail (0x7B). Re-run setup.cmd."
         }
         if ($found.registry_type -ne $null -and $found.registry_type -ne 1) {
             $svcStatus = Merge-Status $svcStatus "WARN"
+            $bootCriticalIssue = $true
             $svcDetails += "Storage service Type is not 1 (kernel driver). Boot loading may fail."
         }
-        if ($found.registry_group -and ($found.registry_group.ToLower() -ne "scsi miniport")) {
+        if (-not $found.registry_group -or (("" + $found.registry_group).Trim().Length -eq 0)) {
             $svcStatus = Merge-Status $svcStatus "WARN"
+            $bootCriticalIssue = $true
+            $svcDetails += "Storage service Group is missing/unreadable. Expected Group='SCSI miniport'. Boot loading order may be incorrect."
+        } elseif ($found.registry_group.ToLower() -ne "scsi miniport") {
+            $svcStatus = Merge-Status $svcStatus "WARN"
+            $bootCriticalIssue = $true
             $svcDetails += "Storage service Group is not 'SCSI miniport'. Boot loading order may be incorrect."
         }
         if ($found.registry_error_control -ne $null -and $found.registry_error_control -ne 1) {
             $svcStatus = Merge-Status $svcStatus "WARN"
+            $bootCriticalIssue = $true
             $svcDetails += "Storage service ErrorControl is not 1. Recommended is 1 for boot-critical storage."
+        }
+        if ($bootCriticalIssue) {
+            $svcDetails += "See: docs/windows7-driver-troubleshooting.md#issue-storage-controller-switch-gotchas-boot-loops-0x7b"
         }
         if ($found.state -ne "Running") {
             $svcStatus = "WARN"
@@ -1463,19 +2138,38 @@ try {
         $expectedService = $cfgVirtioBlkService
         $basePath = "HKLM:\SYSTEM\CurrentControlSet\Control\CriticalDeviceDatabase"
 
-        $records = @()
-        $missing = 0
-        $mismatch = 0
-        $mismatchClass = 0
-        $mismatchGuid = 0
-
         $expectedClass = "SCSIAdapter"
         $expectedClassGuid = "{4D36E97B-E325-11CE-BFC1-08002BE10318}"
 
+        $variants = @(
+            @{ suffix = ""; required = $true; kind = "hwid" },
+            @{ suffix = "&CC_010000"; required = $false; kind = "compatible_id" },
+            @{ suffix = "&CC_0100"; required = $false; kind = "compatible_id" }
+        )
+
+        $checkedKeys = @()
+        $perHwid = @()
+
+        $missingRequired = 0
+        $missingOptional = 0
+        $mismatchService = 0
+        $mismatchClass = 0
+        $mismatchGuid = 0
+
         foreach ($hwid in $cfgVirtioBlkHwids) {
             $baseKey = $hwid.Replace("\", "#")
-            foreach ($suffix in @("", "&CC_010000", "&CC_0100")) {
-                $keyName = $baseKey + $suffix
+
+            $hwidEntry = @{
+                hwid = $hwid
+                base_key = $baseKey
+                variants = @()
+                required_key_exists = $false
+                required_key_service = $null
+                required_key_service_matches = $null
+            }
+
+            foreach ($v in $variants) {
+                $keyName = $baseKey + $v.suffix
                 $path = Join-Path $basePath $keyName
 
                 $exists = Test-Path $path
@@ -1493,15 +2187,22 @@ try {
                         $cls = $null
                         $clsGuid = $null
                     }
-                    if ($svc -and ($svc.ToLower() -ne $expectedService.ToLower())) { $mismatch++ }
+
+                    if (-not $svc -or (("" + $svc).Trim().Length -eq 0)) {
+                        $mismatchService++
+                    } elseif ($svc.ToLower() -ne $expectedService.ToLower()) {
+                        $mismatchService++
+                    }
                     if ($cls -and ("" + $cls).ToLower() -ne $expectedClass.ToLower()) { $mismatchClass++ }
                     if ($clsGuid -and ("" + $clsGuid).ToLower() -ne $expectedClassGuid.ToLower()) { $mismatchGuid++ }
                 } else {
-                    $missing++
+                    if ($v.required) { $missingRequired++ } else { $missingOptional++ }
                 }
 
-                $records += @{
+                $checkedKeys += @{
                     key = $keyName
+                    kind = $v.kind
+                    required = $v.required
                     exists = $exists
                     service = $svc
                     expected_service = $expectedService
@@ -1510,25 +2211,62 @@ try {
                     class_guid = $clsGuid
                     expected_class_guid = $expectedClassGuid
                 }
+
+                $hwidEntry.variants += @{
+                    key = $keyName
+                    kind = $v.kind
+                    required = $v.required
+                    exists = $exists
+                    service = $svc
+                }
+
+                if ($v.required) {
+                    $hwidEntry.required_key_exists = $exists
+                    $hwidEntry.required_key_service = $svc
+                    if ($svc -and ($svc.ToLower() -eq $expectedService.ToLower())) {
+                        $hwidEntry.required_key_service_matches = $true
+                    } elseif (-not $exists) {
+                        $hwidEntry.required_key_service_matches = $null
+                    } else {
+                        $hwidEntry.required_key_service_matches = $false
+                    }
+                }
             }
+
+            $perHwid += $hwidEntry
         }
 
         $status = "PASS"
-        if ($missing -gt 0 -or $mismatch -gt 0 -or $mismatchClass -gt 0 -or $mismatchGuid -gt 0) { $status = "WARN" }
+        if ($missingRequired -gt 0 -or $mismatchService -gt 0 -or $mismatchClass -gt 0 -or $mismatchGuid -gt 0) {
+            $status = "WARN"
+        }
 
-        $summary = "Checked " + $records.Count + " CriticalDeviceDatabase key(s) for service '" + $expectedService + "' (missing: " + $missing + ", mismatched service: " + $mismatch + ", mismatched class: " + $mismatchClass + ", mismatched ClassGUID: " + $mismatchGuid + ")"
+        $summary = "Checked CriticalDeviceDatabase for service '" + $expectedService + "' (HWIDs: " + $cfgVirtioBlkHwids.Count + "; missing_required=" + $missingRequired + ", missing_optional=" + $missingOptional + ", mismatched_service=" + $mismatchService + ", mismatched_class=" + $mismatchClass + ", mismatched_guid=" + $mismatchGuid + ")"
+
         $details = @()
-        if ($missing -gt 0) { $details += "Missing CriticalDeviceDatabase keys can cause 0x7B (INACCESSIBLE_BOOT_DEVICE) when switching the boot disk to virtio-blk." }
-        if ($mismatch -gt 0) { $details += "Some keys do not map to the expected storage service; re-run setup.cmd and verify config\\devices.cmd matches your storage driver's INF AddService name." }
+        if ($missingRequired -gt 0) {
+            $details += "Missing CriticalDeviceDatabase keys for the configured virtio-blk HWIDs can cause 0x7B (INACCESSIBLE_BOOT_DEVICE) when switching the boot disk to virtio-blk."
+            foreach ($h in $perHwid) {
+                if (-not $h.required_key_exists) { $details += ("FAIL: Missing key: " + $h.base_key) }
+            }
+        }
+        if ($mismatchService -gt 0) { $details += "Some CriticalDeviceDatabase keys map to a different storage service than expected. Re-run setup.cmd and ensure config\\devices.cmd matches the storage driver's INF AddService name." }
+        if ($missingOptional -gt 0) { $details += "Some compatible-ID keys (&CC_010000 / &CC_0100) are missing. Usually OK, but adding them improves early-boot matching coverage." }
         if ($mismatchClass -gt 0 -or $mismatchGuid -gt 0) { $details += "Some keys have unexpected Class/ClassGUID. Re-run setup.cmd to regenerate CriticalDeviceDatabase entries." }
+
+        if ($status -ne "PASS") {
+            $details += "See: docs/windows7-driver-troubleshooting.md#issue-storage-controller-switch-gotchas-boot-loops-0x7b"
+        }
 
         $data = @{
             config_file = $gtConfig.file_path
             config_service = $expectedService
             configured_hwids = $cfgVirtioBlkHwids
-            checked_keys = $records
+            per_hwid = $perHwid
+            checked_keys = $checkedKeys
             expected_class = $expectedClass
             expected_class_guid = $expectedClassGuid
+            optional_suffixes = @("&CC_010000", "&CC_0100")
         }
         Add-Check "virtio_blk_boot_critical" "virtio-blk Boot Critical Registry" $status $summary $data $details
     }

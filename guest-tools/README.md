@@ -119,15 +119,22 @@ If `-PingTarget` is not provided, the script will attempt to ping the default ga
 Each check produces a `PASS` / `WARN` / `FAIL` result:
 
 - **OS + arch**: version, build, service pack.
-- **Guest Tools manifest**: reads `manifest.json` (if present) to record which Guest Tools build/version produced the media.
+- **Guest Tools media integrity (manifest.json)**:
+  - records Guest Tools version/build metadata (if present),
+  - verifies that the files listed in the manifest exist and match their SHA-256 hashes (detects corrupted/incomplete ISO/zip copies).
 - **Guest Tools setup state**: reads `C:\AeroGuestTools\install.log` and related state files from `setup.cmd` (if present) to show what Guest Tools staged/changed.
 - **Guest Tools config**: reads `config\devices.cmd` to understand expected virtio/Aero PCI IDs and storage service name (used by `setup.cmd` and some verify checks).
+- **Packaged drivers (media INFs)**: parses `.inf` files under `drivers\<arch>\...` on the Guest Tools media to extract:
+  - Provider
+  - `DriverVer`
+  - best-effort HWID patterns (used for later correlation)
 - **KB3033929 (SHA-256 signatures)**: detects whether the hotfix is installed (relevant for SHA-256-signed driver packages on Win7).
 - **Certificate store**: verifies that Guest Tools certificate(s) (from `certs\`, e.g. `*.cer`, `*.crt`, `*.p7b`) are installed into **Local Machine**:
   - Trusted Root Certification Authorities (**Root**)
   - Trusted Publishers (**TrustedPublisher**)
 - **Driver packages**: `pnputil -e` output with a heuristic filter for Aero/virtio-related packages (and, if available, cross-checks packages recorded by `setup.cmd`).
 - **Bound devices**: WMI `Win32_PnPEntity` enumeration (and optional `devcon.exe` if present alongside the script), including best-effort signed driver details via `Win32_PnPSignedDriver` (INF name, version, signer, etc).
+- **Installed driver binding correlation (media vs system)**: correlates the running system’s device bindings (`Win32_PnPSignedDriver`) against the packaged media driver INFs to show which devices are using drivers present on this Guest Tools media vs “unknown/mismatched” drivers.
 - **Device binding by class**: best-effort checks that look for virtio/Aero devices and whether they are error-free in Device Manager:
   - Storage (virtio-blk)
   - Network (virtio-net)
@@ -148,3 +155,11 @@ Each check produces a `PASS` / `WARN` / `FAIL` result:
 
 - `bcdedit` and some driver/service information may be incomplete without Administrator privileges.
 - The tool is designed to work on **Windows 7 SP1** without any external dependencies beyond built-in Windows components.
+
+### `report.json` structured summary sections
+
+In addition to the per-check `checks` object, newer versions of `verify.ps1` include these top-level structured sections:
+
+- `media_integrity`
+- `packaged_drivers_summary`
+- `installed_driver_binding_summary`
