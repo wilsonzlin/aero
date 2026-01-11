@@ -162,7 +162,9 @@ const { l2, close } = await connectL2Relay({
   },
 });
 
-nicTx = (frame) => l2.sendFrame(frame);
+nicTx = (frame) => {
+  l2.sendFrame(frame);
+};
 // Later: close();
 ```
 
