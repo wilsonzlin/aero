@@ -197,7 +197,11 @@ impl VgaEmulator {
 For DirectX, we intercept GPU commands from the virtual WDDM driver:
 
 > The concrete PCI/MMIO device model and the versioned ring/command ABI are
-> specified in [16-gpu-command-abi.md](./16-gpu-command-abi.md).
+> defined by the canonical AeroGPU protocol headers:
+>
+> - [`drivers/aerogpu/protocol/README.md`](../drivers/aerogpu/protocol/README.md)
+>   (`aerogpu_pci.h`, `aerogpu_ring.h`, `aerogpu_cmd.h`)
+> - [`emulator/protocol`](../emulator/protocol) (Rust/TypeScript mirror)
 
 ```rust
 pub struct GpuCommandProcessor {

@@ -1,10 +1,34 @@
-# 16 - Virtual GPU Device + Command ABI
+# 16 - Experimental Virtual GPU Device + Command ABI (`aero-gpu-device`)
 
-This document defines the **emulator-side** virtual GPU device model and the **guest↔host GPU command ABI** used by Aero.
+> Status: **experimental / legacy**.
+>
+> This document describes the standalone ABI used by `crates/aero-gpu-device` for
+> deterministic host-side tests and trace plumbing.
+>
+> It is **NOT** the canonical Windows 7 WDDM AeroGPU guest↔emulator protocol.
 
-The goal is a transport that a Windows WDDM paravirtual driver can talk to, and that the emulator can consume to drive the DirectX→WebGPU translation layer.
+This document defines an **experimental** emulator-side virtual GPU device model and a
+guest↔host GPU command ABI.
 
-> Source of truth for the current implementation: `crates/aero-gpu-device/src/abi.rs`.
+## Canonical AeroGPU WDDM ABI (source of truth)
+
+Contributors working on the real Windows 7 WDDM AeroGPU path should use the protocol
+headers under:
+
+- [`drivers/aerogpu/protocol/README.md`](../drivers/aerogpu/protocol/README.md)
+  - `aerogpu_pci.h` (PCI IDs + BAR/MMIO)
+  - `aerogpu_ring.h` (submission ring + fences)
+  - `aerogpu_cmd.h` (command stream packets)
+- [`emulator/protocol`](../emulator/protocol) (Rust/TypeScript mirror of the headers)
+
+The canonical device model uses project-specific (non-PCI-SIG) vendor IDs:
+
+- `0xA3A0` – current AeroGPU PCI vendor ID (`AEROGPU_PCI_VENDOR_ID`)
+- `0x1AED` – legacy compatibility vendor ID accepted by the Win7 INF
+
+## Source of truth (this experimental ABI)
+
+- `crates/aero-gpu-device/src/abi.rs`
 
 ---
 
@@ -14,7 +38,7 @@ The GPU is exposed to the guest as a PCI device with a single MMIO BAR.
 
 ### PCI identification
 
-- Vendor ID: `0xA0E0` (Aero, unregistered)
+- Experimental PCI vendor ID: `0xA0E0` *(used only by `aero-gpu-device`, not by the Win7 WDDM driver stack)*
 - Device ID: `0x0001`
 - Class code: `0x03` (Display controller)
 - Subclass: `0x02` (3D controller)

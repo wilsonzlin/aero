@@ -170,7 +170,9 @@ To make traces replayable on other machines/browsers:
 This repository includes a tiny **reference** command ABI so we can produce a deterministic
 triangle trace fixture and replay it in CI.
 
-> Real AeroGPU traces are expected to record the stable AeroGPU ring/opcode stream.
+> Real AeroGPU traces are expected to record the canonical WDDM AeroGPU ring/opcode stream as
+> defined by [`drivers/aerogpu/protocol`](../../drivers/aerogpu/protocol/README.md)
+> (and mirrored in [`emulator/protocol`](../../emulator/protocol)).
 > The ABI below exists only to validate the trace container + replayer plumbing.
 
 ### Packet encoding
@@ -202,19 +204,24 @@ All IDs are `u32`. Blob IDs are `u64` split into `(lo: u32, hi: u32)`.
 
 ---
 
-## Appendix B: Recording AeroGPU ABI packets (`aero-gpu-device`)
+## Appendix B: Recording packets from the experimental `aero-gpu-device` ABI
 
-The **real** GPU command stream in this repository is the AeroGPU ring/opcode ABI
-defined by:
-- `docs/16-gpu-command-abi.md` and
-- `crates/aero-gpu-device/src/abi.rs`
+The canonical Windows 7 WDDM AeroGPU PCI/MMIO/ring/command ABI is defined in:
+
+- [`drivers/aerogpu/protocol/README.md`](../../drivers/aerogpu/protocol/README.md)
+  (`aerogpu_pci.h`, `aerogpu_ring.h`, `aerogpu_cmd.h`)
+- [`emulator/protocol`](../../emulator/protocol) (Rust/TypeScript mirror)
+
+`crates/aero-gpu-device` implements a **separate**, standalone ring/opcode ABI that is used
+for deterministic host-side tests and for validating gpu-trace plumbing. It is not the
+WDDM AeroGPU ABI used by the Windows drivers.
 
 When `aero-gpu-device` records traces, it writes `RecordType::Packet` payloads that are
 the exact `GpuCmdHeader + payload` bytes consumed by the command processor.
 
 ### Upload normalization: `src_paddr` → `blob_id`
 
-Many AeroGPU commands refer to guest physical memory addresses (e.g. buffer uploads).
+Many `aero-gpu-device` commands refer to guest physical memory addresses (e.g. buffer uploads).
 To keep traces replayable without the original guest RAM contents, `aero-gpu-device`
 records uploads as blobs and **patches the recorded command packet**:
 
@@ -233,3 +240,6 @@ For traces recorded by `aero-gpu-device`, the trace header’s `command_abi_vers
 ```
 (ABI_MAJOR << 16) | ABI_MINOR
 ```
+
+For traces captured from the canonical WDDM AeroGPU path, `command_abi_version` should be
+`AEROGPU_ABI_VERSION_U32` as defined in `drivers/aerogpu/protocol/aerogpu_pci.h`.
