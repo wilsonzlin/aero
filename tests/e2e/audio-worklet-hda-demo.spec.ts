@@ -62,6 +62,9 @@ test("AudioWorklet output runs and does not underrun with HDA DMA demo", async (
     return stats && typeof stats.totalFramesWritten === "number" && stats.totalFramesWritten > 0;
   });
 
+  // Let the system run for a bit so we catch sustained underruns (not just “it started once”).
+  await page.waitForTimeout(1000);
+
   const result = await page.evaluate(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const out = (globalThis as any).__aeroAudioOutputHdaDemo;
