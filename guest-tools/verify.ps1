@@ -2048,7 +2048,7 @@ try {
     if ($cfgVirtioNetService) { $networkServiceCandidates = @($cfgVirtioNetService) + $networkServiceCandidates }
     $graphicsServiceCandidates = @("AeroGPU","viogpu","aerogpu","aero-gpu")
     if ($cfgGpuService) { $graphicsServiceCandidates = @($cfgGpuService) + $graphicsServiceCandidates }
-    $audioServiceCandidates = @("aero_virtio_snd","aeroviosnd_legacy","aeroviosnd","viosnd","aerosnd","virtiosnd")
+    $audioServiceCandidates = @("aero_virtio_snd","aeroviosnd_legacy","aeroviosnd_ioport","aeroviosnd","viosnd","aerosnd","virtiosnd")
     if ($cfgVirtioSndService) { $audioServiceCandidates = @($cfgVirtioSndService) + $audioServiceCandidates }
     $audioServiceCandidates = Dedup-CaseInsensitive $audioServiceCandidates
 

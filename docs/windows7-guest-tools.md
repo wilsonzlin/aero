@@ -517,6 +517,7 @@ The **Device Binding: Audio (virtio-snd)** check in `report.txt` is derived from
 - `aero_virtio_snd` (Aero clean-room, canonical)
 - `aeroviosnd` (legacy Aero clean-room)
 - `aeroviosnd_legacy` (Aero QEMU compatibility package; transitional virtio-snd `PCI\VEN_1AF4&DEV_1018`)
+- `aeroviosnd_ioport` (Aero legacy I/O-port bring-up package; transitional virtio-snd `PCI\VEN_1AF4&DEV_1018&REV_00`)
 - `viosnd` (upstream virtio-win)
 - `aerosnd`
 - `virtiosnd`
