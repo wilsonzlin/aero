@@ -203,8 +203,19 @@ Configuration env vars (server → server dialing):
 
 - `L2_BACKEND_WS_URL` (optional): Backend `ws://` / `wss://` URL. When unset/empty,
   `l2` DataChannels are rejected.
-- `L2_BACKEND_WS_ORIGIN` (optional): If set, send `Origin: <value>` when dialing the
-  backend WebSocket.
+- `L2_BACKEND_FORWARD_ORIGIN` (default: `true` when `L2_BACKEND_WS_URL` is set):
+  forward a normalized/derived Origin from the client signaling request to the
+  backend WebSocket upgrade request.
+- `L2_BACKEND_ORIGIN_OVERRIDE` (optional): If set, use this Origin value for all
+  backend dials instead of forwarding the client origin. (Alias that overrides
+  `L2_BACKEND_WS_ORIGIN`.)
+- `L2_BACKEND_WS_ORIGIN` (optional): If set, send `Origin: <value>` when dialing
+  the backend WebSocket.
+- `L2_BACKEND_AUTH_FORWARD_MODE` (default `query`): `none|query|subprotocol` —
+  how to forward the relay credential (JWT/API key) to the backend:
+  - `query`: append `token=<credential>` and `apiKey=<credential>`
+  - `subprotocol`: offer `aero-l2-token.<credential>`
+  - `none`: do not forward credentials
 - `L2_BACKEND_WS_TOKEN` (optional): If set, send an additional offered WebSocket
   subprotocol `aero-l2-token.<token>` when dialing the backend (alongside
   `aero-l2-tunnel-v1`).
