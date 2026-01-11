@@ -78,7 +78,6 @@ members = [
     "drivers/protocol/virtio",
     "crates/aero-time",
     "crates/aero-timers",
-    "crates/aero-cpu-time",
     "xtask",
 ]
 

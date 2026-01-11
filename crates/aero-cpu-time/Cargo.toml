@@ -1,8 +1,0 @@
-[package]
-name = "aero-cpu-time"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-aero-timers = { path = "../aero-timers" }
-aero-time = { path = "../aero-time" }
