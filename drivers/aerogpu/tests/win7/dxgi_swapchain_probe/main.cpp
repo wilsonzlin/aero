@@ -1,4 +1,5 @@
 #include "..\\common\\aerogpu_test_common.h"
+#include "..\\common\\aerogpu_test_report.h"
 
 #include <d3d10.h>
 #include <d3d10_1.h>
@@ -49,10 +50,11 @@ static bool ParseProbeApi(const std::string& s, ProbeApi* out_api) {
   return false;
 }
 
-static int FailD3D11WithRemovedReason(const char* test_name,
-                                     const char* what,
-                                     HRESULT hr,
-                                     ID3D11Device* device) {
+static int FailD3D11WithRemovedReason(aerogpu_test::TestReporter* reporter,
+                                      const char* test_name,
+                                      const char* what,
+                                      HRESULT hr,
+                                      ID3D11Device* device) {
   if (device) {
     HRESULT reason = device->GetDeviceRemovedReason();
     if (FAILED(reason)) {
@@ -61,10 +63,14 @@ static int FailD3D11WithRemovedReason(const char* test_name,
                                  aerogpu_test::HresultToString(reason).c_str());
     }
   }
+  if (reporter) {
+    return reporter->FailHresult(what, hr);
+  }
   return aerogpu_test::FailHresult(test_name, what, hr);
 }
 
-static int FailD3D10WithRemovedReason(const char* test_name,
+static int FailD3D10WithRemovedReason(aerogpu_test::TestReporter* reporter,
+                                      const char* test_name,
                                       const char* what,
                                       HRESULT hr,
                                       ID3D10Device* device) {
@@ -75,6 +81,9 @@ static int FailD3D10WithRemovedReason(const char* test_name,
                                  test_name,
                                  aerogpu_test::HresultToString(reason).c_str());
     }
+  }
+  if (reporter) {
+    return reporter->FailHresult(what, hr);
   }
   return aerogpu_test::FailHresult(test_name, what, hr);
 }
@@ -172,6 +181,7 @@ static void DumpSharedHandleInfo(const char* test_name, const char* label, IUnkn
 }
 
 static int CheckAdapterPolicy(const char* test_name,
+                              aerogpu_test::TestReporter* reporter,
                               IUnknown* device,
                               bool allow_microsoft,
                               bool allow_non_aerogpu,
@@ -191,6 +201,10 @@ static int CheckAdapterPolicy(const char* test_name,
     HRESULT hr_adapter = dxgi_device->GetAdapter(adapter.put());
     if (FAILED(hr_adapter)) {
       if (has_require_vid || has_require_did) {
+        if (reporter) {
+          return reporter->FailHresult("IDXGIDevice::GetAdapter (required for --require-vid/--require-did)",
+                                       hr_adapter);
+        }
         return aerogpu_test::FailHresult(
             test_name, "IDXGIDevice::GetAdapter (required for --require-vid/--require-did)", hr_adapter);
       }
@@ -200,6 +214,9 @@ static int CheckAdapterPolicy(const char* test_name,
       HRESULT hr_desc = adapter->GetDesc(&ad);
       if (FAILED(hr_desc)) {
         if (has_require_vid || has_require_did) {
+          if (reporter) {
+            return reporter->FailHresult("IDXGIAdapter::GetDesc (required for --require-vid/--require-did)", hr_desc);
+          }
           return aerogpu_test::FailHresult(
               test_name, "IDXGIAdapter::GetDesc (required for --require-vid/--require-did)", hr_desc);
         }
@@ -209,7 +226,17 @@ static int CheckAdapterPolicy(const char* test_name,
                                    ad.Description,
                                    (unsigned)ad.VendorId,
                                    (unsigned)ad.DeviceId);
+        if (reporter) {
+          reporter->SetAdapterInfoW(ad.Description, ad.VendorId, ad.DeviceId);
+        }
         if (!allow_microsoft && ad.VendorId == 0x1414) {
+          if (reporter) {
+            return reporter->Fail(
+                "refusing to run on Microsoft adapter (VID=0x%04X DID=0x%04X). Install AeroGPU driver or pass "
+                "--allow-microsoft.",
+                (unsigned)ad.VendorId,
+                (unsigned)ad.DeviceId);
+          }
           return aerogpu_test::Fail(test_name,
                                     "refusing to run on Microsoft adapter (VID=0x%04X DID=0x%04X). "
                                     "Install AeroGPU driver or pass --allow-microsoft.",
@@ -217,12 +244,22 @@ static int CheckAdapterPolicy(const char* test_name,
                                     (unsigned)ad.DeviceId);
         }
         if (has_require_vid && ad.VendorId != require_vid) {
+          if (reporter) {
+            return reporter->Fail("adapter VID mismatch: got 0x%04X expected 0x%04X",
+                                  (unsigned)ad.VendorId,
+                                  (unsigned)require_vid);
+          }
           return aerogpu_test::Fail(test_name,
                                     "adapter VID mismatch: got 0x%04X expected 0x%04X",
                                     (unsigned)ad.VendorId,
                                     (unsigned)require_vid);
         }
         if (has_require_did && ad.DeviceId != require_did) {
+          if (reporter) {
+            return reporter->Fail("adapter DID mismatch: got 0x%04X expected 0x%04X",
+                                  (unsigned)ad.DeviceId,
+                                  (unsigned)require_did);
+          }
           return aerogpu_test::Fail(test_name,
                                     "adapter DID mismatch: got 0x%04X expected 0x%04X",
                                     (unsigned)ad.DeviceId,
@@ -231,6 +268,11 @@ static int CheckAdapterPolicy(const char* test_name,
         if (!allow_non_aerogpu && !has_require_vid && !has_require_did &&
             !(ad.VendorId == 0x1414 && allow_microsoft) &&
             !aerogpu_test::StrIContainsW(ad.Description, L"AeroGPU")) {
+          if (reporter) {
+            return reporter->Fail(
+                "adapter does not look like AeroGPU: %ls (pass --allow-non-aerogpu or use --require-vid/--require-did)",
+                ad.Description);
+          }
           return aerogpu_test::Fail(test_name,
                                     "adapter does not look like AeroGPU: %ls (pass --allow-non-aerogpu "
                                     "or use --require-vid/--require-did)",
@@ -239,6 +281,9 @@ static int CheckAdapterPolicy(const char* test_name,
       }
     }
   } else if (has_require_vid || has_require_did) {
+    if (reporter) {
+      return reporter->FailHresult("QueryInterface(IDXGIDevice) (required for --require-vid/--require-did)", hr);
+    }
     return aerogpu_test::FailHresult(
         test_name, "QueryInterface(IDXGIDevice) (required for --require-vid/--require-did)", hr);
   }
@@ -250,28 +295,29 @@ static int RunDxgiSwapchainProbe(int argc, char** argv) {
   const char* kTestName = "dxgi_swapchain_probe";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
-        "Usage: %s.exe [--api=d3d11|d3d10|d3d10_1] [--hidden] [--frames=N] [--require-vid=0x####] [--require-did=0x####] "
-        "[--allow-microsoft] [--allow-non-aerogpu]",
+        "Usage: %s.exe [--api=d3d11|d3d10|d3d10_1] [--hidden] [--frames=N] [--json[=PATH]] [--require-vid=0x####] "
+        "[--require-did=0x####] [--allow-microsoft] [--allow-non-aerogpu] [--require-umd]",
         kTestName);
     return 0;
   }
+
+  aerogpu_test::TestReporter reporter(kTestName, argc, argv);
 
   ProbeApi api = kProbeApiD3D11;
   std::string api_str;
   if (aerogpu_test::GetArgValue(argc, argv, "--api", &api_str)) {
     if (api_str.empty()) {
-      return aerogpu_test::Fail(kTestName, "--api requires a value (d3d11|d3d10|d3d10_1)");
+      return reporter.Fail("--api requires a value (d3d11|d3d10|d3d10_1)");
     }
     if (!ParseProbeApi(api_str, &api)) {
-      return aerogpu_test::Fail(kTestName,
-                                "invalid --api value: %s (expected d3d11|d3d10|d3d10_1)",
-                                api_str.c_str());
+      return reporter.Fail("invalid --api value: %s (expected d3d11|d3d10|d3d10_1)", api_str.c_str());
     }
   }
 
   const bool allow_microsoft = aerogpu_test::HasArg(argc, argv, "--allow-microsoft");
   const bool allow_non_aerogpu = aerogpu_test::HasArg(argc, argv, "--allow-non-aerogpu");
   const bool hidden = aerogpu_test::HasArg(argc, argv, "--hidden");
+  const bool require_umd = aerogpu_test::HasArg(argc, argv, "--require-umd");
 
   uint32_t frames = 2;
   aerogpu_test::GetArgUint32(argc, argv, "--frames", &frames);
@@ -291,14 +337,14 @@ static int RunDxgiSwapchainProbe(int argc, char** argv) {
   if (aerogpu_test::GetArgValue(argc, argv, "--require-vid", &require_vid_str)) {
     std::string err;
     if (!aerogpu_test::ParseUint32(require_vid_str, &require_vid, &err)) {
-      return aerogpu_test::Fail(kTestName, "invalid --require-vid: %s", err.c_str());
+      return reporter.Fail("invalid --require-vid: %s", err.c_str());
     }
     has_require_vid = true;
   }
   if (aerogpu_test::GetArgValue(argc, argv, "--require-did", &require_did_str)) {
     std::string err;
     if (!aerogpu_test::ParseUint32(require_did_str, &require_did, &err)) {
-      return aerogpu_test::Fail(kTestName, "invalid --require-did: %s", err.c_str());
+      return reporter.Fail("invalid --require-did: %s", err.c_str());
     }
     has_require_did = true;
   }
@@ -312,7 +358,7 @@ static int RunDxgiSwapchainProbe(int argc, char** argv) {
                                               kHeight,
                                               !hidden);
   if (!hwnd) {
-    return aerogpu_test::Fail(kTestName, "CreateBasicWindow failed");
+    return reporter.Fail("CreateBasicWindow failed");
   }
 
   DXGI_SWAP_CHAIN_DESC scd;
@@ -346,15 +392,16 @@ static int RunDxgiSwapchainProbe(int argc, char** argv) {
                                                swapchain.put(),
                                                device.put());
     if (FAILED(hr)) {
-      return aerogpu_test::FailHresult(kTestName, "D3D10CreateDeviceAndSwapChain(HARDWARE)", hr);
+      return reporter.FailHresult("D3D10CreateDeviceAndSwapChain(HARDWARE)", hr);
     }
 
     // Sanity check: this mode should load the D3D10 runtime path (d3d10.dll).
     if (!GetModuleHandleW(L"d3d10.dll")) {
-      return aerogpu_test::Fail(kTestName, "d3d10.dll is not loaded");
+      return reporter.Fail("d3d10.dll is not loaded");
     }
 
     int adapter_rc = CheckAdapterPolicy(kTestName,
+                                        &reporter,
                                         device.get(),
                                         allow_microsoft,
                                         allow_non_aerogpu,
@@ -366,15 +413,22 @@ static int RunDxgiSwapchainProbe(int argc, char** argv) {
       return adapter_rc;
     }
 
+    if (require_umd || (!allow_microsoft && !allow_non_aerogpu)) {
+      int umd_rc = aerogpu_test::RequireAeroGpuD3D10UmdLoaded(&reporter, kTestName);
+      if (umd_rc != 0) {
+        return umd_rc;
+      }
+    }
+
     ComPtr<ID3D10Texture2D> backbuffer0;
     ComPtr<ID3D10Texture2D> backbuffer1;
     hr = swapchain->GetBuffer(0, __uuidof(ID3D10Texture2D), (void**)backbuffer0.put());
     if (FAILED(hr)) {
-      return aerogpu_test::FailHresult(kTestName, "IDXGISwapChain::GetBuffer(0)", hr);
+      return reporter.FailHresult("IDXGISwapChain::GetBuffer(0)", hr);
     }
     hr = swapchain->GetBuffer(1, __uuidof(ID3D10Texture2D), (void**)backbuffer1.put());
     if (FAILED(hr)) {
-      return aerogpu_test::FailHresult(kTestName, "IDXGISwapChain::GetBuffer(1)", hr);
+      return reporter.FailHresult("IDXGISwapChain::GetBuffer(1)", hr);
     }
 
     D3D10_TEXTURE2D_DESC bb0_desc;
@@ -390,11 +444,11 @@ static int RunDxgiSwapchainProbe(int argc, char** argv) {
     ComPtr<ID3D10RenderTargetView> rtv1;
     hr = device->CreateRenderTargetView(backbuffer0.get(), NULL, rtv0.put());
     if (FAILED(hr)) {
-      return aerogpu_test::FailHresult(kTestName, "CreateRenderTargetView(backbuffer[0])", hr);
+      return reporter.FailHresult("CreateRenderTargetView(backbuffer[0])", hr);
     }
     hr = device->CreateRenderTargetView(backbuffer1.get(), NULL, rtv1.put());
     if (FAILED(hr)) {
-      return aerogpu_test::FailHresult(kTestName, "CreateRenderTargetView(backbuffer[1])", hr);
+      return reporter.FailHresult("CreateRenderTargetView(backbuffer[1])", hr);
     }
 
     D3D10_VIEWPORT vp;
@@ -416,7 +470,7 @@ static int RunDxgiSwapchainProbe(int argc, char** argv) {
 
       hr = swapchain->Present(1, 0);
       if (FAILED(hr)) {
-        return FailD3D10WithRemovedReason(kTestName, "IDXGISwapChain::Present(1,0)", hr, device.get());
+        return FailD3D10WithRemovedReason(&reporter, kTestName, "IDXGISwapChain::Present(1,0)", hr, device.get());
       }
     }
   } else if (api == kProbeApiD3D10_1) {
@@ -445,17 +499,18 @@ static int RunDxgiSwapchainProbe(int argc, char** argv) {
       }
     }
     if (FAILED(hr)) {
-      return aerogpu_test::FailHresult(kTestName, "D3D10CreateDeviceAndSwapChain1(HARDWARE)", hr);
+      return reporter.FailHresult("D3D10CreateDeviceAndSwapChain1(HARDWARE)", hr);
     }
 
     // Sanity check: this mode should load the D3D10.1 runtime path (d3d10_1.dll).
     if (!GetModuleHandleW(L"d3d10_1.dll")) {
-      return aerogpu_test::Fail(kTestName, "d3d10_1.dll is not loaded");
+      return reporter.Fail("d3d10_1.dll is not loaded");
     }
 
     aerogpu_test::PrintfStdout("INFO: %s: d3d10_1 feature level 0x%04X", kTestName, (unsigned)chosen_level);
 
     int adapter_rc = CheckAdapterPolicy(kTestName,
+                                        &reporter,
                                         device.get(),
                                         allow_microsoft,
                                         allow_non_aerogpu,
@@ -467,15 +522,22 @@ static int RunDxgiSwapchainProbe(int argc, char** argv) {
       return adapter_rc;
     }
 
+    if (require_umd || (!allow_microsoft && !allow_non_aerogpu)) {
+      int umd_rc = aerogpu_test::RequireAeroGpuD3D10UmdLoaded(&reporter, kTestName);
+      if (umd_rc != 0) {
+        return umd_rc;
+      }
+    }
+
     ComPtr<ID3D10Texture2D> backbuffer0;
     ComPtr<ID3D10Texture2D> backbuffer1;
     hr = swapchain->GetBuffer(0, __uuidof(ID3D10Texture2D), (void**)backbuffer0.put());
     if (FAILED(hr)) {
-      return aerogpu_test::FailHresult(kTestName, "IDXGISwapChain::GetBuffer(0)", hr);
+      return reporter.FailHresult("IDXGISwapChain::GetBuffer(0)", hr);
     }
     hr = swapchain->GetBuffer(1, __uuidof(ID3D10Texture2D), (void**)backbuffer1.put());
     if (FAILED(hr)) {
-      return aerogpu_test::FailHresult(kTestName, "IDXGISwapChain::GetBuffer(1)", hr);
+      return reporter.FailHresult("IDXGISwapChain::GetBuffer(1)", hr);
     }
 
     D3D10_TEXTURE2D_DESC bb0_desc;
@@ -491,11 +553,11 @@ static int RunDxgiSwapchainProbe(int argc, char** argv) {
     ComPtr<ID3D10RenderTargetView> rtv1;
     hr = device->CreateRenderTargetView(backbuffer0.get(), NULL, rtv0.put());
     if (FAILED(hr)) {
-      return aerogpu_test::FailHresult(kTestName, "CreateRenderTargetView(backbuffer[0])", hr);
+      return reporter.FailHresult("CreateRenderTargetView(backbuffer[0])", hr);
     }
     hr = device->CreateRenderTargetView(backbuffer1.get(), NULL, rtv1.put());
     if (FAILED(hr)) {
-      return aerogpu_test::FailHresult(kTestName, "CreateRenderTargetView(backbuffer[1])", hr);
+      return reporter.FailHresult("CreateRenderTargetView(backbuffer[1])", hr);
     }
 
     D3D10_VIEWPORT vp;
@@ -517,7 +579,8 @@ static int RunDxgiSwapchainProbe(int argc, char** argv) {
 
       hr = swapchain->Present(1, 0);
       if (FAILED(hr)) {
-        return FailD3D10WithRemovedReason(kTestName,
+        return FailD3D10WithRemovedReason(&reporter,
+                                         kTestName,
                                          "IDXGISwapChain::Present(1,0)",
                                          hr,
                                          (ID3D10Device*)device.get());
@@ -551,17 +614,18 @@ static int RunDxgiSwapchainProbe(int argc, char** argv) {
                                                &chosen_level,
                                                context.put());
     if (FAILED(hr)) {
-      return aerogpu_test::FailHresult(kTestName, "D3D11CreateDeviceAndSwapChain(HARDWARE)", hr);
+      return reporter.FailHresult("D3D11CreateDeviceAndSwapChain(HARDWARE)", hr);
     }
 
     // Sanity check: this mode should load the D3D11 runtime path (d3d11.dll).
     if (!GetModuleHandleW(L"d3d11.dll")) {
-      return aerogpu_test::Fail(kTestName, "d3d11.dll is not loaded");
+      return reporter.Fail("d3d11.dll is not loaded");
     }
 
     aerogpu_test::PrintfStdout("INFO: %s: feature level 0x%04X", kTestName, (unsigned)chosen_level);
 
     int adapter_rc = CheckAdapterPolicy(kTestName,
+                                        &reporter,
                                         device.get(),
                                         allow_microsoft,
                                         allow_non_aerogpu,
@@ -573,15 +637,22 @@ static int RunDxgiSwapchainProbe(int argc, char** argv) {
       return adapter_rc;
     }
 
+    if (require_umd || (!allow_microsoft && !allow_non_aerogpu)) {
+      int umd_rc = aerogpu_test::RequireAeroGpuD3D10UmdLoaded(&reporter, kTestName);
+      if (umd_rc != 0) {
+        return umd_rc;
+      }
+    }
+
     ComPtr<ID3D11Texture2D> backbuffer0;
     ComPtr<ID3D11Texture2D> backbuffer1;
     hr = swapchain->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)backbuffer0.put());
     if (FAILED(hr)) {
-      return aerogpu_test::FailHresult(kTestName, "IDXGISwapChain::GetBuffer(0)", hr);
+      return reporter.FailHresult("IDXGISwapChain::GetBuffer(0)", hr);
     }
     hr = swapchain->GetBuffer(1, __uuidof(ID3D11Texture2D), (void**)backbuffer1.put());
     if (FAILED(hr)) {
-      return aerogpu_test::FailHresult(kTestName, "IDXGISwapChain::GetBuffer(1)", hr);
+      return reporter.FailHresult("IDXGISwapChain::GetBuffer(1)", hr);
     }
 
     D3D11_TEXTURE2D_DESC bb0_desc;
@@ -597,11 +668,11 @@ static int RunDxgiSwapchainProbe(int argc, char** argv) {
     ComPtr<ID3D11RenderTargetView> rtv1;
     hr = device->CreateRenderTargetView(backbuffer0.get(), NULL, rtv0.put());
     if (FAILED(hr)) {
-      return aerogpu_test::FailHresult(kTestName, "CreateRenderTargetView(backbuffer[0])", hr);
+      return reporter.FailHresult("CreateRenderTargetView(backbuffer[0])", hr);
     }
     hr = device->CreateRenderTargetView(backbuffer1.get(), NULL, rtv1.put());
     if (FAILED(hr)) {
-      return aerogpu_test::FailHresult(kTestName, "CreateRenderTargetView(backbuffer[1])", hr);
+      return reporter.FailHresult("CreateRenderTargetView(backbuffer[1])", hr);
     }
 
     D3D11_VIEWPORT vp;
@@ -622,13 +693,12 @@ static int RunDxgiSwapchainProbe(int argc, char** argv) {
 
       hr = swapchain->Present(1, 0);
       if (FAILED(hr)) {
-        return FailD3D11WithRemovedReason(kTestName, "IDXGISwapChain::Present(1,0)", hr, device.get());
+        return FailD3D11WithRemovedReason(&reporter, kTestName, "IDXGISwapChain::Present(1,0)", hr, device.get());
       }
     }
   }
 
-  aerogpu_test::PrintfStdout("PASS: %s", kTestName);
-  return 0;
+  return reporter.Pass();
 }
 
 int main(int argc, char** argv) {
