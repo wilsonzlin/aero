@@ -6877,6 +6877,9 @@ HRESULT map_resource_locked(AeroGpuDevice* dev,
   if (subresource != 0) {
     return E_INVALIDARG;
   }
+  if ((map_flags & ~static_cast<uint32_t>(AEROGPU_D3D11_MAP_FLAG_DO_NOT_WAIT)) != 0) {
+    return E_INVALIDARG;
+  }
 
   bool want_read = false;
   bool want_write = false;
@@ -6893,6 +6896,40 @@ HRESULT map_resource_locked(AeroGpuDevice* dev,
       want_read = true;
       want_write = true;
       break;
+    default:
+      return E_INVALIDARG;
+  }
+
+  // Enforce D3D11 usage rules (mirrors the Win7 runtime validation). This keeps
+  // the portable UMD's behavior aligned with the WDK build and the documented
+  // contract in docs/graphics/win7-d3d11-map-unmap.md.
+  switch (res->usage) {
+    case kD3D11UsageDynamic:
+      if (map_type != AEROGPU_DDI_MAP_WRITE_DISCARD && map_type != AEROGPU_DDI_MAP_WRITE_NO_OVERWRITE) {
+        return E_INVALIDARG;
+      }
+      break;
+    case kD3D11UsageStaging: {
+      const uint32_t access_mask = kD3D11CpuAccessRead | kD3D11CpuAccessWrite;
+      const uint32_t access = res->cpu_access_flags & access_mask;
+      if (access == kD3D11CpuAccessRead) {
+        if (map_type != AEROGPU_DDI_MAP_READ) {
+          return E_INVALIDARG;
+        }
+      } else if (access == kD3D11CpuAccessWrite) {
+        if (map_type != AEROGPU_DDI_MAP_WRITE) {
+          return E_INVALIDARG;
+        }
+      } else if (access == access_mask) {
+        if (map_type != AEROGPU_DDI_MAP_READ && map_type != AEROGPU_DDI_MAP_WRITE &&
+            map_type != AEROGPU_DDI_MAP_READ_WRITE) {
+          return E_INVALIDARG;
+        }
+      } else {
+        return E_INVALIDARG;
+      }
+      break;
+    }
     default:
       return E_INVALIDARG;
   }
@@ -9013,6 +9050,7 @@ void AEROGPU_APIENTRY Unmap(D3D10DDI_HDEVICE hDevice, const AEROGPU_D3D11DDIARG_
   std::lock_guard<std::mutex> lock(dev->mutex);
   dev->last_error = S_OK;
   if (!res->mapped || res->mapped_subresource != pUnmap->Subresource) {
+    dev->last_error = E_INVALIDARG;
     return;
   }
   unmap_resource_locked(dev, res, static_cast<uint32_t>(pUnmap->Subresource));
