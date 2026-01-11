@@ -5,6 +5,8 @@ use aero_cpu_core::mem::{CpuBus, FlatTestBus};
 use aero_cpu_core::state::{CpuMode, CpuState, FLAG_AF, FLAG_CF, FLAG_OF, FLAG_PF, FLAG_SF, FLAG_ZF};
 use aero_x86::Register;
 
+pub mod machine;
+
 pub const BUS_SIZE: usize = 0x10000;
 pub const MEM_BASE: u64 = 0x0500;
 pub const MEM_HASH_LEN: usize = 256;
