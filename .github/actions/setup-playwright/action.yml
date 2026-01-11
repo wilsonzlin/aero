@@ -69,46 +69,76 @@ runs:
         const browsersRaw = (process.env.INPUT_BROWSERS || '').trim()
           || (process.env.INPUT_PROJECT || '').trim()
           || 'chromium';
-        const browsers = browsersRaw.split(/\s+/).filter(Boolean);
-        const browsersKey = [...new Set(browsers)].sort().join('-');
-        
-        let workingDirectory = (process.env.INPUT_WORKING_DIRECTORY || '').trim();
-        if (!workingDirectory) {
-          const aeroNodeDir = (process.env.AERO_NODE_DIR || '').trim();
-          const candidates = [
-            aeroNodeDir || null,
-            '.',
-            'frontend',
-            'web',
-          ].filter(Boolean);
-        
-          for (const dir of candidates) {
-            const pkg = path.resolve(workspace, dir, 'package.json');
-            if (fs.existsSync(pkg)) {
-              workingDirectory = dir;
-              break;
+         const browsers = browsersRaw.split(/\s+/).filter(Boolean);
+         const browsersKey = [...new Set(browsers)].sort().join('-');
+         
+         let workingDirectory = (process.env.INPUT_WORKING_DIRECTORY || '').trim();
+         let resolvedLockfile = '';
+         if (!workingDirectory) {
+          // Prefer using the repo's shared resolver when available so workflows
+          // (and local tooling) agree on the Node workspace directory.
+          const detectScript = path.resolve(workspace, 'scripts/ci/detect-node-dir.mjs');
+          if (fs.existsSync(detectScript)) {
+            const { spawnSync } = require('child_process');
+            const tmpOutput = path.join(os.tmpdir(), `aero-detect-node-dir-${process.pid}-${Date.now()}.txt`);
+            const result = spawnSync('node', [detectScript, '--github-output', tmpOutput], {
+              cwd: workspace,
+              stdio: ['ignore', 'pipe', 'pipe'],
+              encoding: 'utf8',
+            });
+            if ((result.status ?? 1) !== 0) {
+              const details = (result.stderr || result.stdout || '').trim();
+              throw new Error(`setup-playwright: detect-node-dir failed.\n\n${details}`);
+            }
+            for (const line of (result.stdout || '').split(/\r?\n/u)) {
+              const idx = line.indexOf('=');
+              if (idx === -1) continue;
+              const key = line.slice(0, idx).trim();
+              const value = line.slice(idx + 1).trim();
+              if (key === 'dir') workingDirectory = value;
+              if (key === 'lockfile') resolvedLockfile = value;
+            }
+          } else {
+            const aeroNodeDir = (process.env.AERO_NODE_DIR || '').trim();
+            const candidates = [
+              aeroNodeDir || null,
+              '.',
+              'frontend',
+              'web',
+            ].filter(Boolean);
+          
+            for (const dir of candidates) {
+              const pkg = path.resolve(workspace, dir, 'package.json');
+              if (fs.existsSync(pkg)) {
+                workingDirectory = dir;
+                break;
+              }
             }
           }
-        }
-        
-        if (!workingDirectory) {
-          throw new Error(
-            'setup-playwright: could not resolve a Node workspace. ' +
+         }
+         
+         if (!workingDirectory) {
+           throw new Error(
+             'setup-playwright: could not resolve a Node workspace. ' +
               'Set the `working-directory` input (or AERO_NODE_DIR) to the directory containing package.json.'
           );
         }
-        
-        const workingDirAbs = path.resolve(workspace, workingDirectory);
-        
-        let lockfile = (process.env.INPUT_LOCKFILE || '').trim();
-        if (lockfile) {
-          if (path.isAbsolute(lockfile)) lockfile = path.relative(workspace, lockfile);
-          lockfile = lockfile.replace(/\\/g, '/');
-        } else {
-          const candidates = [
-            path.join(workingDirAbs, 'package-lock.json'),
-            path.join(workingDirAbs, 'npm-shrinkwrap.json'),
-          ];
+         
+         const workingDirAbs = path.resolve(workspace, workingDirectory);
+         
+         let lockfile = (process.env.INPUT_LOCKFILE || '').trim();
+         if (lockfile) {
+           if (path.isAbsolute(lockfile)) lockfile = path.relative(workspace, lockfile);
+           lockfile = lockfile.replace(/\\/g, '/');
+         } else if (resolvedLockfile) {
+           lockfile = resolvedLockfile;
+           if (path.isAbsolute(lockfile)) lockfile = path.relative(workspace, lockfile);
+           lockfile = lockfile.replace(/\\/g, '/');
+         } else {
+           const candidates = [
+             path.join(workingDirAbs, 'package-lock.json'),
+             path.join(workingDirAbs, 'npm-shrinkwrap.json'),
+           ];
           for (const candidate of candidates) {
             if (fs.existsSync(candidate)) {
               lockfile = path.relative(workspace, candidate).replace(/\\/g, '/');
