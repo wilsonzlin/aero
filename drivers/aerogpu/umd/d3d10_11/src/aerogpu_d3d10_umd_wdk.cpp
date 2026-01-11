@@ -1140,6 +1140,17 @@ struct NotImpl<HRESULT(APIENTRY*)(Args...)> {
   }
 };
 
+template <typename... Args>
+struct NotImpl<SIZE_T(APIENTRY*)(Args...)> {
+  static SIZE_T APIENTRY Fn(Args...) {
+    // Returning 0 from a CalcPrivate*Size hook often causes the runtime to pass a
+    // NULL pDrvPrivate, which can crash if the runtime still tries to call the
+    // matching Create/Destroy DDI. Use a small non-zero placeholder so stubs are
+    // always safe to call.
+    return sizeof(uint64_t);
+  }
+};
+
 template <typename Ret, typename... Args>
 struct NotImpl<Ret(APIENTRY*)(Args...)> {
   static Ret APIENTRY Fn(Args...) {
