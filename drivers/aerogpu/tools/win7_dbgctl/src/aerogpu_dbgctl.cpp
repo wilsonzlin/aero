@@ -677,12 +677,16 @@ static int DoDumpRing(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t ri
     if (count > AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS) {
       count = AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS;
     }
+    uint32_t window_start = 0;
+    if (q2.ring_format == AEROGPU_DBGCTL_RING_FORMAT_AGPU && count != 0) {
+      window_start = q2.tail - count;
+    }
 
     for (uint32_t i = 0; i < count; ++i) {
       const aerogpu_dbgctl_ring_desc_v2 *d = &q2.desc[i];
       if (q2.ring_format == AEROGPU_DBGCTL_RING_FORMAT_AGPU) {
-        wprintf(L"    [%lu] signalFence=0x%I64x cmdGpa=0x%I64x cmdBytes=%lu flags=0x%08lx allocTableGpa=0x%I64x allocTableBytes=%lu\n",
-                (unsigned long)i, (unsigned long long)d->fence, (unsigned long long)d->cmd_gpa,
+        wprintf(L"    [%lu] ringIndex=%lu signalFence=0x%I64x cmdGpa=0x%I64x cmdBytes=%lu flags=0x%08lx allocTableGpa=0x%I64x allocTableBytes=%lu\n",
+                (unsigned long)i, (unsigned long)(window_start + i), (unsigned long long)d->fence, (unsigned long long)d->cmd_gpa,
                 (unsigned long)d->cmd_size_bytes, (unsigned long)d->flags,
                 (unsigned long long)d->alloc_table_gpa, (unsigned long)d->alloc_table_size_bytes);
       } else {

@@ -49,6 +49,10 @@ Minimum supported commands:
   - `cmd_gpa` / `cmd_size_bytes`
   - `flags`
   - (AGPU only) `alloc_table_gpa` / `alloc_table_size_bytes`
+  
+  Note: for the AGPU (versioned) ring format, the v2 dump returns a **recent tail window** of descriptors ending at `tail-1`
+  (newest is `desc[desc_count-1]`). This is intentionally not limited to the pending `[head, tail)` region so very fast
+  devices/emulators still expose the most recent submission(s) to tooling/tests.
 
 - `aerogpu_dbgctl --dump-createalloc` *(aliases: `--dump-createallocation`, `--dump-allocations`)*  
   Dumps a small KMD-maintained ring buffer of recent `DxgkDdiCreateAllocation` events, including:

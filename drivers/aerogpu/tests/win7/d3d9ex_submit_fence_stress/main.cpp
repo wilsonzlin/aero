@@ -25,15 +25,21 @@ static const char* RingFormatToString(uint32_t fmt) {
 }
 
 static void DumpRingDumpV2(const char* test_name, const aerogpu_escape_dump_ring_v2_inout& dump) {
+  unsigned long window_start = 0;
+  if (dump.ring_format == AEROGPU_DBGCTL_RING_FORMAT_AGPU && dump.desc_count != 0) {
+    window_start = (unsigned long)(dump.tail - dump.desc_count);
+  }
+
   aerogpu_test::PrintfStdout(
-      "INFO: %s: ring dump v2: ring_id=%lu format=%s size_bytes=%lu head=0x%08lX tail=0x%08lX desc_count=%lu",
+      "INFO: %s: ring dump v2: ring_id=%lu format=%s size_bytes=%lu head=0x%08lX tail=0x%08lX desc_count=%lu window_start=0x%08lX",
       test_name,
       (unsigned long)dump.ring_id,
       RingFormatToString((uint32_t)dump.ring_format),
       (unsigned long)dump.ring_size_bytes,
       (unsigned long)dump.head,
       (unsigned long)dump.tail,
-      (unsigned long)dump.desc_count);
+      (unsigned long)dump.desc_count,
+      window_start);
 
   uint32_t count = dump.desc_count;
   if (count > AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS) {
@@ -41,10 +47,13 @@ static void DumpRingDumpV2(const char* test_name, const aerogpu_escape_dump_ring
   }
   for (uint32_t i = 0; i < count; ++i) {
     const aerogpu_dbgctl_ring_desc_v2& d = dump.desc[i];
+    const unsigned long ring_index =
+        (dump.ring_format == AEROGPU_DBGCTL_RING_FORMAT_AGPU) ? (window_start + (unsigned long)i) : (unsigned long)i;
     aerogpu_test::PrintfStdout(
-        "INFO: %s:   desc[%lu]: fence=%I64u flags=0x%08lX cmd_gpa=0x%I64X cmd_size=%lu alloc_table_gpa=0x%I64X alloc_table_size=%lu",
+        "INFO: %s:   desc[%lu] ring_index=%lu: fence=%I64u flags=0x%08lX cmd_gpa=0x%I64X cmd_size=%lu alloc_table_gpa=0x%I64X alloc_table_size=%lu",
         test_name,
         (unsigned long)i,
+        ring_index,
         (unsigned long long)d.fence,
         (unsigned long)d.flags,
         (unsigned long long)d.cmd_gpa,
