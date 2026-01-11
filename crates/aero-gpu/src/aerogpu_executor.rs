@@ -1852,8 +1852,8 @@ mod tests {
 
     fn build_alloc_table(entries: &[(u32, u64, u64)]) -> Vec<u8> {
         let entry_stride = ring::AerogpuAllocEntry::SIZE_BYTES as u32;
-        let size_bytes = ring::AerogpuAllocTableHeader::SIZE_BYTES as u32
-            + entries.len() as u32 * entry_stride;
+        let size_bytes =
+            ring::AerogpuAllocTableHeader::SIZE_BYTES as u32 + entries.len() as u32 * entry_stride;
         let mut bytes = vec![0u8; size_bytes as usize];
 
         bytes[0..4].copy_from_slice(&ring::AEROGPU_ALLOC_TABLE_MAGIC.to_le_bytes());
@@ -1912,9 +1912,8 @@ mod tests {
         let table_gpa = 0x200u64;
         guest.write(table_gpa, &table_bytes).unwrap();
 
-        let err =
-            AllocTable::decode_from_guest_memory(&guest, table_gpa, table_bytes.len() as u32)
-                .unwrap_err();
+        let err = AllocTable::decode_from_guest_memory(&guest, table_gpa, table_bytes.len() as u32)
+            .unwrap_err();
         match err {
             ExecutorError::Validation(message) => {
                 assert!(message.contains("alloc_id must be non-zero"), "{message}");
@@ -1930,9 +1929,8 @@ mod tests {
         let table_gpa = 0x300u64;
         guest.write(table_gpa, &table_bytes).unwrap();
 
-        let err =
-            AllocTable::decode_from_guest_memory(&guest, table_gpa, table_bytes.len() as u32)
-                .unwrap_err();
+        let err = AllocTable::decode_from_guest_memory(&guest, table_gpa, table_bytes.len() as u32)
+            .unwrap_err();
         match err {
             ExecutorError::Validation(message) => {
                 assert!(message.contains("duplicate"), "{message}");
@@ -1946,13 +1944,13 @@ mod tests {
         let guest = crate::guest_memory::VecGuestMemory::new(4096);
         let mut table_bytes = build_alloc_table(&[(1, 0x1000, 0x2000)]);
         // Corrupt the header size_bytes field so the prefix validation fails.
-        table_bytes[8..12].copy_from_slice(&(ring::AerogpuAllocTableHeader::SIZE_BYTES as u32).to_le_bytes());
+        table_bytes[8..12]
+            .copy_from_slice(&(ring::AerogpuAllocTableHeader::SIZE_BYTES as u32).to_le_bytes());
         let table_gpa = 0x400u64;
         guest.write(table_gpa, &table_bytes).unwrap();
 
-        let err =
-            AllocTable::decode_from_guest_memory(&guest, table_gpa, table_bytes.len() as u32)
-                .unwrap_err();
+        let err = AllocTable::decode_from_guest_memory(&guest, table_gpa, table_bytes.len() as u32)
+            .unwrap_err();
         match err {
             ExecutorError::Validation(message) => {
                 assert!(message.contains("BadSizeField"), "{message}");
