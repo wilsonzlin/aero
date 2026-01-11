@@ -8,6 +8,9 @@ use aero_x86::Register;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StepExit {
     Continue,
+    /// The instruction completed normally, and maskable interrupts should be
+    /// inhibited for exactly one subsequent instruction (MOV SS / POP SS shadow).
+    ContinueInhibitInterrupts,
     Branch,
     Halted,
     BiosInterrupt(u8),
@@ -72,6 +75,10 @@ pub fn step_with_config<B: CpuBus>(
         ExecOutcome::Continue => {
             state.set_rip(next_ip);
             Ok(StepExit::Continue)
+        }
+        ExecOutcome::ContinueInhibitInterrupts => {
+            state.set_rip(next_ip);
+            Ok(StepExit::ContinueInhibitInterrupts)
         }
         ExecOutcome::Halt => {
             state.set_rip(next_ip);
@@ -166,6 +173,7 @@ pub fn run_batch_with_config<B: CpuBus>(
     while executed < max_insts {
         match step_with_config(cfg, state, bus) {
             Ok(StepExit::Continue) => executed += 1,
+            Ok(StepExit::ContinueInhibitInterrupts) => executed += 1,
             Ok(StepExit::Branch) => {
                 executed += 1;
                 return BatchResult {
@@ -296,6 +304,10 @@ pub fn run_batch_with_assists_with_config<B: CpuBus>(
 
         match outcome {
             ExecOutcome::Continue => {
+                state.set_rip(next_ip);
+                executed += 1;
+            }
+            ExecOutcome::ContinueInhibitInterrupts => {
                 state.set_rip(next_ip);
                 executed += 1;
             }

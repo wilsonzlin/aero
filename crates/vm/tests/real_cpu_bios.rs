@@ -1296,7 +1296,10 @@ fn aero_cpu_core_runs_int_sanity_boot_sector_fixture() {
             panic!("int_sanity boot sector did not halt (steps={steps})");
         }
         match vm.step() {
-            StepExit::Continue | StepExit::Branch | StepExit::BiosInterrupt(_) => continue,
+            StepExit::Continue
+            | StepExit::ContinueInhibitInterrupts
+            | StepExit::Branch
+            | StepExit::BiosInterrupt(_) => continue,
             StepExit::Halted => break,
             StepExit::Assist(r) => panic!("unexpected assist while running boot sector: {r:?}"),
         }
@@ -1388,7 +1391,10 @@ fn aero_cpu_core_real_mode_payload_enables_a20_and_stops_aliasing() {
             panic!("A20 payload did not halt (steps={steps})");
         }
         match vm.step() {
-            StepExit::Continue | StepExit::Branch | StepExit::BiosInterrupt(_) => continue,
+            StepExit::Continue
+            | StepExit::ContinueInhibitInterrupts
+            | StepExit::Branch
+            | StepExit::BiosInterrupt(_) => continue,
             StepExit::Halted => break,
             StepExit::Assist(r) => panic!("unexpected assist while running A20 payload: {r:?}"),
         }

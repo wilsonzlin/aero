@@ -48,7 +48,12 @@ pub fn exec<B: CpuBus>(
             }
             let v = read_op(state, bus, instr, 1, next_ip)?;
             write_op(state, bus, instr, 0, v, next_ip)?;
-            Ok(ExecOutcome::Continue)
+            // `MOV SS` creates an interrupt shadow for the following instruction.
+            if instr.op_kind(0) == OpKind::Register && instr.op0_register() == Register::SS {
+                Ok(ExecOutcome::ContinueInhibitInterrupts)
+            } else {
+                Ok(ExecOutcome::Continue)
+            }
         }
         Mnemonic::Lea => {
             if instr.has_lock_prefix() {

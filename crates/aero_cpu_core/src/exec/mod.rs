@@ -220,6 +220,12 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
                     executed += 1;
                     continue;
                 }
+                StepExit::ContinueInhibitInterrupts => {
+                    cpu.cpu.pending.retire_instruction();
+                    cpu.cpu.pending.inhibit_interrupts_for_one_instruction();
+                    executed += 1;
+                    continue;
+                }
                 StepExit::Branch => {
                     cpu.cpu.pending.retire_instruction();
                     break;
@@ -319,19 +325,20 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
                     let bytes = cpu.bus.fetch(fetch_addr, 15).expect("fetch");
                     let decoded = aero_x86::decode(&bytes, ip, cpu.cpu.state.bitness())
                         .expect("decode tier0 assist");
-                    let inhibits_interrupt = match decoded.instr.mnemonic() {
-                        Mnemonic::Mov | Mnemonic::Pop => {
-                            decoded.instr.op_count() > 0
-                                && decoded.instr.op_kind(0) == OpKind::Register
-                                && decoded.instr.op0_register() == Register::SS
-                        }
-                        _ => false,
-                    };
+                    let inhibits_interrupt = matches!(decoded.instr.mnemonic(), Mnemonic::Mov | Mnemonic::Pop)
+                        && decoded.instr.op_count() > 0
+                        && decoded.instr.op_kind(0) == OpKind::Register
+                        && decoded.instr.op0_register() == Register::SS;
 
                     // `handle_assist_decoded` does not implicitly sync paging state (unlike
                     // `handle_assist`), so keep the bus coherent before and after.
                     cpu.bus.sync(&cpu.cpu.state);
-                    handle_assist_decoded(&mut self.assist, &mut cpu.cpu.state, &mut cpu.bus, &decoded)
+                    handle_assist_decoded(
+                        &mut self.assist,
+                        &mut cpu.cpu.state,
+                        &mut cpu.bus,
+                        &decoded,
+                    )
                         .expect("handle tier0 assist");
                     cpu.bus.sync(&cpu.cpu.state);
                     cpu.cpu.pending.retire_instruction();

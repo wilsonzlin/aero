@@ -15,7 +15,7 @@ fn exec_once(state: &mut CpuState, bus: &mut FlatTestBus, bytes: &[u8]) -> Resul
     bus.load(CODE_ADDR, bytes);
     state.set_rip(CODE_ADDR);
     match step(state, bus)? {
-        StepExit::Continue | StepExit::Branch => Ok(()),
+        StepExit::Continue | StepExit::ContinueInhibitInterrupts | StepExit::Branch => Ok(()),
         StepExit::Halted => panic!("unexpected HLT"),
         StepExit::BiosInterrupt(vector) => panic!("unexpected BIOS interrupt: {vector:#x}"),
         StepExit::Assist(r) => panic!("unexpected assist: {r:?}"),

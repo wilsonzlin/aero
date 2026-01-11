@@ -160,7 +160,7 @@ fn run_until_rip_single_step(state: &mut CpuState, bus: &mut FlatTestBus, stop_r
         let exit = step(state, bus).expect("step");
         executed += 1;
         match exit {
-            StepExit::Continue | StepExit::Branch => continue,
+            StepExit::Continue | StepExit::ContinueInhibitInterrupts | StepExit::Branch => continue,
             StepExit::Halted => panic!("unexpected HLT at rip=0x{:X}", state.rip()),
             StepExit::BiosInterrupt(vector) => {
                 panic!(

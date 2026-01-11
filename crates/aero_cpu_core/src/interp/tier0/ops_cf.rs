@@ -129,7 +129,12 @@ pub fn exec<B: CpuBus>(
             let bits = op_bits(state, instr, 0)?;
             let v = pop(state, bus, (bits / 8) as u32)?;
             super::ops_data::write_op_sized(state, bus, instr, 0, v, bits, next_ip)?;
-            Ok(ExecOutcome::Continue)
+            // `POP SS` creates an interrupt shadow for the following instruction.
+            if instr.op_kind(0) == OpKind::Register && instr.op0_register() == Register::SS {
+                Ok(ExecOutcome::ContinueInhibitInterrupts)
+            } else {
+                Ok(ExecOutcome::Continue)
+            }
         }
         Mnemonic::Pusha => {
             let bits = state.bitness();

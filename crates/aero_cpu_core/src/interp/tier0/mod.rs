@@ -46,6 +46,10 @@ impl Default for Tier0Config {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ExecOutcome {
     Continue,
+    /// Like [`ExecOutcome::Continue`], but requests that the execution engine
+    /// inhibit maskable interrupts for exactly one instruction (MOV SS / POP SS
+    /// interrupt shadow semantics).
+    ContinueInhibitInterrupts,
     Branch,
     Halt,
     Assist(AssistReason),

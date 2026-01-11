@@ -15,7 +15,10 @@ fn exec_one<B: LoadableBus>(state: &mut CpuState, bus: &mut B, code_addr: u64, b
     bus.load(code_addr, bytes);
     let exit = step(state, bus).expect("step");
     assert!(
-        matches!(exit, StepExit::Continue | StepExit::Branch),
+        matches!(
+            exit,
+            StepExit::Continue | StepExit::ContinueInhibitInterrupts | StepExit::Branch
+        ),
         "unexpected step exit: {exit:?}"
     );
 }

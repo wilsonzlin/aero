@@ -108,7 +108,9 @@ impl Machine {
             ports: &mut self.ports,
         };
         match tier0_step(&mut self.cpu, &mut bus)? {
-            StepExit::Continue | StepExit::Branch => Ok(StepOutcome::Continue),
+            StepExit::Continue | StepExit::ContinueInhibitInterrupts | StepExit::Branch => {
+                Ok(StepOutcome::Continue)
+            }
             StepExit::Halted => Ok(StepOutcome::Halted),
             StepExit::BiosInterrupt(vector) => {
                 self.handle_bios_interrupt(vector)?;

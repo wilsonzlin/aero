@@ -1,4 +1,4 @@
-use aero_cpu_core::exec::{Interpreter, Tier0Interpreter, Vcpu};
+use aero_cpu_core::exec::{ExecCpu, Interpreter, Tier0Interpreter, Vcpu};
 use aero_cpu_core::mem::{CpuBus, FlatTestBus};
 use aero_cpu_core::state::{gpr, CpuMode, RFLAGS_IF, SEG_ACCESS_PRESENT};
 use aero_x86::Register;
@@ -233,6 +233,109 @@ fn tier0_preserves_bios_interrupt_vector_for_hlt_hypercall() {
     // the tier-0 exec glue should restore it so the embedding can observe it.
     assert!(cpu.cpu.state.pending_bios_int_valid);
     assert_eq!(cpu.cpu.state.pending_bios_int, vector);
+}
+
+#[test]
+fn tier0_mov_ss_sets_interrupt_shadow_in_real_mode() {
+    let mut bus = FlatTestBus::new(0x20000);
+
+    let code_base = 0x0100u64;
+    // mov ss, ax; nop
+    bus.load(code_base, &[0x8E, 0xD0, 0x90]);
+
+    // IVT[0x20] -> 0000:0500
+    let vector = 0x20u8;
+    let handler_off = 0x0500u16;
+    let ivt_addr = (vector as u64) * 4;
+    bus.write_u16(ivt_addr, handler_off).unwrap();
+    bus.write_u16(ivt_addr + 2, 0).unwrap();
+    bus.load(handler_off as u64, &[0xF4]); // handler: HLT
+
+    let mut cpu = Vcpu::new_with_mode(CpuMode::Real, bus);
+    cpu.cpu.state.write_reg(Register::CS, 0);
+    cpu.cpu.state.write_reg(Register::SS, 0);
+    cpu.cpu.state.write_reg(Register::SP, 0x8000);
+    cpu.cpu.state.write_reg(Register::AX, 0x1000);
+    cpu.cpu.state.set_rflags(0x0202); // IF=1
+    cpu.cpu.state.set_rip(code_base);
+
+    let mut interp = Tier0Interpreter::new(1);
+
+    // Execute MOV SS, AX. The exec glue should apply the MOV SS interrupt shadow.
+    interp.exec_block(&mut cpu);
+    assert_eq!(cpu.cpu.state.rip(), code_base + 2);
+    assert_eq!(cpu.cpu.state.read_reg(Register::SS), 0x1000);
+
+    cpu.cpu.pending.inject_external_interrupt(vector);
+    assert!(
+        !cpu.maybe_deliver_interrupt(),
+        "external interrupt should be blocked by MOV SS shadow"
+    );
+    assert_eq!(cpu.cpu.pending.external_interrupts.len(), 1);
+
+    // Execute the following instruction; the interrupt should still be blocked.
+    interp.exec_block(&mut cpu);
+    assert_eq!(cpu.cpu.state.rip(), code_base + 3);
+    assert_eq!(cpu.cpu.pending.external_interrupts.len(), 1);
+
+    // Shadow should now be aged out; the external interrupt should be deliverable.
+    assert!(cpu.maybe_deliver_interrupt());
+    assert_eq!(cpu.cpu.pending.external_interrupts.len(), 0);
+    assert_eq!(cpu.cpu.state.rip(), handler_off as u64);
+    assert_eq!(cpu.cpu.state.read_reg(Register::SP) as u16, 0x7FFA);
+}
+
+#[test]
+fn tier0_pop_ss_sets_interrupt_shadow_in_real_mode() {
+    let mut bus = FlatTestBus::new(0x20000);
+
+    let code_base = 0x0100u64;
+    // pop ss; nop
+    bus.load(code_base, &[0x17, 0x90]);
+
+    // IVT[0x20] -> 0000:0500
+    let vector = 0x20u8;
+    let handler_off = 0x0500u16;
+    let ivt_addr = (vector as u64) * 4;
+    bus.write_u16(ivt_addr, handler_off).unwrap();
+    bus.write_u16(ivt_addr + 2, 0).unwrap();
+    bus.load(handler_off as u64, &[0xF4]); // handler: HLT
+
+    let mut cpu = Vcpu::new_with_mode(CpuMode::Real, bus);
+    cpu.cpu.state.write_reg(Register::CS, 0);
+    cpu.cpu.state.write_reg(Register::SS, 0);
+    cpu.cpu.state.write_reg(Register::SP, 0x8000);
+    cpu.cpu.state.set_rflags(0x0202); // IF=1
+    cpu.cpu.state.set_rip(code_base);
+
+    // Stack top contains the new SS selector.
+    cpu.bus.write_u16(0x8000, 0x1000).unwrap();
+
+    let mut interp = Tier0Interpreter::new(1);
+
+    // Execute POP SS. The exec glue should apply the POP SS interrupt shadow.
+    interp.exec_block(&mut cpu);
+    assert_eq!(cpu.cpu.state.rip(), code_base + 1);
+    assert_eq!(cpu.cpu.state.read_reg(Register::SS), 0x1000);
+    assert_eq!(cpu.cpu.state.read_reg(Register::SP) as u16, 0x8002);
+
+    cpu.cpu.pending.inject_external_interrupt(vector);
+    assert!(
+        !cpu.maybe_deliver_interrupt(),
+        "external interrupt should be blocked by POP SS shadow"
+    );
+    assert_eq!(cpu.cpu.pending.external_interrupts.len(), 1);
+
+    // Execute the following instruction; the interrupt should still be blocked.
+    interp.exec_block(&mut cpu);
+    assert_eq!(cpu.cpu.state.rip(), code_base + 2);
+    assert_eq!(cpu.cpu.pending.external_interrupts.len(), 1);
+
+    // Shadow should now be aged out; the external interrupt should be deliverable.
+    assert!(cpu.maybe_deliver_interrupt());
+    assert_eq!(cpu.cpu.pending.external_interrupts.len(), 0);
+    assert_eq!(cpu.cpu.state.rip(), handler_off as u64);
+    assert_eq!(cpu.cpu.state.read_reg(Register::SP) as u16, 0x7FFC);
 }
 
 #[test]

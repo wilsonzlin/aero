@@ -19,7 +19,10 @@ fn exec_steps(
     for _ in 0..steps {
         let exit = step(state, bus)?;
         assert!(
-            matches!(exit, StepExit::Continue | StepExit::Branch),
+            matches!(
+                exit,
+                StepExit::Continue | StepExit::ContinueInhibitInterrupts | StepExit::Branch
+            ),
             "unexpected tier0 exit: {exit:?}"
         );
     }
@@ -577,7 +580,10 @@ fn xchg_memory_operand_is_implicitly_atomic_and_swaps() {
     bus.load(CODE_BASE, &[0x87, 0x06]);
     state.set_rip(CODE_BASE);
     let exit = step(&mut state, &mut bus).unwrap();
-    assert!(matches!(exit, StepExit::Continue | StepExit::Branch));
+    assert!(matches!(
+        exit,
+        StepExit::Continue | StepExit::ContinueInhibitInterrupts | StepExit::Branch
+    ));
 
     assert_eq!(bus.atomic_rmw_calls, 1);
     assert_eq!(bus.read_u32(addr).unwrap(), 0x1234_5678);
