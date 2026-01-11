@@ -29,8 +29,11 @@ enum {
 	PCI_DEVICE_OFF = 0x02,
 	PCI_STATUS_OFF = 0x06,
 	PCI_REVISION_OFF = 0x08,
+	PCI_SUBSYSTEM_VENDOR_OFF = 0x2C,
+	PCI_SUBSYSTEM_DEVICE_OFF = 0x2E,
 	PCI_BAR0_OFF = 0x10,
 	PCI_CAP_PTR_OFF = 0x34,
+	PCI_INTERRUPT_PIN_OFF = 0x3D,
 
 	PCI_STATUS_CAP_LIST = 1u << 4,
 
@@ -103,6 +106,9 @@ static void FakeDevInitValid(FAKE_DEV *dev)
 	WriteLe16(&dev->Cfg[PCI_DEVICE_OFF], 0x1052);
 	WriteLe16(&dev->Cfg[PCI_STATUS_OFF], PCI_STATUS_CAP_LIST);
 	dev->Cfg[PCI_REVISION_OFF] = 0x01;
+	WriteLe16(&dev->Cfg[PCI_SUBSYSTEM_VENDOR_OFF], 0x1AF4);
+	WriteLe16(&dev->Cfg[PCI_SUBSYSTEM_DEVICE_OFF], 0x0010);
+	dev->Cfg[PCI_INTERRUPT_PIN_OFF] = 0x01;
 	/* BAR0: memory, 64-bit indicator (bits 2:1 = 2) */
 	WriteLe32(&dev->Cfg[PCI_BAR0_OFF], 0x10000000u | 0x4u);
 
@@ -326,6 +332,9 @@ static void TestInitOk(void)
 	assert(t.PciVendorId == 0x1AF4);
 	assert(t.PciDeviceId == 0x1052);
 	assert(t.PciRevisionId == 0x01);
+	assert(t.PciSubsystemVendorId == 0x1AF4);
+	assert(t.PciSubsystemDeviceId == 0x0010);
+	assert(t.PciInterruptPin == 0x01);
 
 	VirtioPciModernTransportUninit(&t);
 }
@@ -358,6 +367,26 @@ static void TestRejectBadRevision(void)
 	dev.Cfg[PCI_REVISION_OFF] = 0x02;
 
 	ExpectInitFail("bad_revision", &dev, VIRTIO_PCI_MODERN_INIT_ERR_UNSUPPORTED_REVISION);
+}
+
+static void TestRejectBadSubsystemVendor(void)
+{
+	FAKE_DEV dev;
+
+	FakeDevInitValid(&dev);
+	WriteLe16(&dev.Cfg[PCI_SUBSYSTEM_VENDOR_OFF], 0x1234);
+
+	ExpectInitFail("bad_subsystem_vendor", &dev, VIRTIO_PCI_MODERN_INIT_ERR_SUBSYSTEM_VENDOR_MISMATCH);
+}
+
+static void TestRejectBadInterruptPin(void)
+{
+	FAKE_DEV dev;
+
+	FakeDevInitValid(&dev);
+	dev.Cfg[PCI_INTERRUPT_PIN_OFF] = 0;
+
+	ExpectInitFail("bad_interrupt_pin", &dev, VIRTIO_PCI_MODERN_INIT_ERR_INTERRUPT_PIN_MISMATCH);
 }
 
 static void TestRejectBar0IoSpace(void)
@@ -812,6 +841,8 @@ int main(void)
 	TestRejectBadVendor();
 	TestRejectNonModernDeviceId();
 	TestRejectBadRevision();
+	TestRejectBadSubsystemVendor();
+	TestRejectBadInterruptPin();
 	TestRejectBar0IoSpace();
 	TestRejectBar0Not64BitMmio();
 	TestRejectMissingStatusCapList();

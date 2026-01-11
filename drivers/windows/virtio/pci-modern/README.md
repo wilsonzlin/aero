@@ -32,6 +32,8 @@ It is designed to be linked into:
 - PCI Vendor ID **MUST** be `0x1AF4`
 - PCI Device ID **MUST** be in the modern-only virtio-pci ID space (`>= 0x1040`)
 - PCI Revision ID **MUST** be `0x01`
+- PCI Subsystem Vendor ID **MUST** be `0x1AF4`
+- PCI Interrupt Pin **MUST** be `1` (INTA#)
 - BAR0 **MUST** be a 64-bit memory BAR (MMIO), not I/O space
 - PCI capability list **MUST** be present (Status bit 4 set)
 - Capability list pointers **MUST** be 4-byte aligned and acyclic

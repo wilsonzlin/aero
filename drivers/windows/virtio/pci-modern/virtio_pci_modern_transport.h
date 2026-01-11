@@ -11,6 +11,8 @@
  *   - PCI Vendor ID == 0x1AF4 (virtio vendor)
  *   - PCI Device ID in the modern-only ID space (>= 0x1040)
  *   - PCI Revision ID == 0x01
+ *   - PCI Subsystem Vendor ID == 0x1AF4
+ *   - PCI Interrupt Pin == 1 (INTA#)
  *   - BAR0 is 64-bit MMIO (no legacy I/O port BAR0)
  *   - COMMON/NOTIFY/ISR/DEVICE vendor caps present and reference BAR0
  *   - Fixed BAR0 offsets: 0x0000 / 0x1000 / 0x2000 / 0x3000
@@ -76,6 +78,8 @@ typedef enum _VIRTIO_PCI_MODERN_TRANSPORT_INIT_ERROR {
 	VIRTIO_PCI_MODERN_INIT_ERR_VENDOR_MISMATCH,
 	VIRTIO_PCI_MODERN_INIT_ERR_DEVICE_ID_NOT_MODERN,
 	VIRTIO_PCI_MODERN_INIT_ERR_UNSUPPORTED_REVISION,
+	VIRTIO_PCI_MODERN_INIT_ERR_SUBSYSTEM_VENDOR_MISMATCH,
+	VIRTIO_PCI_MODERN_INIT_ERR_INTERRUPT_PIN_MISMATCH,
 	VIRTIO_PCI_MODERN_INIT_ERR_BAR0_NOT_MMIO,
 	VIRTIO_PCI_MODERN_INIT_ERR_BAR0_NOT_64BIT_MMIO,
 	VIRTIO_PCI_MODERN_INIT_ERR_BAR0_TOO_SMALL,
@@ -105,6 +109,9 @@ typedef struct _VIRTIO_PCI_MODERN_TRANSPORT {
 	UINT16 PciVendorId;
 	UINT16 PciDeviceId;
 	UINT8 PciRevisionId;
+	UINT16 PciSubsystemVendorId;
+	UINT16 PciSubsystemDeviceId;
+	UINT8 PciInterruptPin;
 
 	UINT64 Bar0Pa;
 	UINT32 Bar0Length;

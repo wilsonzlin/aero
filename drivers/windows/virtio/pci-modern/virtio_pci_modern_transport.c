@@ -36,8 +36,11 @@ enum {
 	PCI_CFG_DEVICE_OFF = 0x02,
 	PCI_CFG_STATUS_OFF = 0x06,
 	PCI_CFG_REVISION_OFF = 0x08,
+	PCI_CFG_SUBSYSTEM_VENDOR_OFF = 0x2C,
+	PCI_CFG_SUBSYSTEM_DEVICE_OFF = 0x2E,
 	PCI_CFG_BAR0_OFF = 0x10,
 	PCI_CFG_CAP_PTR_OFF = 0x34,
+	PCI_CFG_INTERRUPT_PIN_OFF = 0x3D,
 };
 
 static __inline VOID VirtioPciModernLog(VIRTIO_PCI_MODERN_TRANSPORT *t, const char *msg)
@@ -269,6 +272,10 @@ const char *VirtioPciModernTransportInitErrorStr(VIRTIO_PCI_MODERN_TRANSPORT_INI
 			return "DEVICE_ID_NOT_MODERN";
 		case VIRTIO_PCI_MODERN_INIT_ERR_UNSUPPORTED_REVISION:
 			return "UNSUPPORTED_REVISION";
+		case VIRTIO_PCI_MODERN_INIT_ERR_SUBSYSTEM_VENDOR_MISMATCH:
+			return "SUBSYSTEM_VENDOR_MISMATCH";
+		case VIRTIO_PCI_MODERN_INIT_ERR_INTERRUPT_PIN_MISMATCH:
+			return "INTERRUPT_PIN_MISMATCH";
 		case VIRTIO_PCI_MODERN_INIT_ERR_BAR0_NOT_MMIO:
 			return "BAR0_NOT_MMIO";
 		case VIRTIO_PCI_MODERN_INIT_ERR_BAR0_NOT_64BIT_MMIO:
@@ -308,6 +315,9 @@ NTSTATUS VirtioPciModernTransportInit(VIRTIO_PCI_MODERN_TRANSPORT *t, const VIRT
 	UINT16 vendor;
 	UINT16 device;
 	UINT8 revision;
+	UINT16 subsystem_vendor;
+	UINT16 subsystem_device;
+	UINT8 interrupt_pin;
 	UINT16 status;
 	UINT32 bar0_low;
 	virtio_pci_parsed_caps_t caps;
@@ -350,10 +360,16 @@ NTSTATUS VirtioPciModernTransportInit(VIRTIO_PCI_MODERN_TRANSPORT *t, const VIRT
 	vendor = os->PciRead16(t->OsContext, PCI_CFG_VENDOR_OFF);
 	device = os->PciRead16(t->OsContext, PCI_CFG_DEVICE_OFF);
 	revision = os->PciRead8(t->OsContext, PCI_CFG_REVISION_OFF);
+	subsystem_vendor = os->PciRead16(t->OsContext, PCI_CFG_SUBSYSTEM_VENDOR_OFF);
+	subsystem_device = os->PciRead16(t->OsContext, PCI_CFG_SUBSYSTEM_DEVICE_OFF);
+	interrupt_pin = os->PciRead8(t->OsContext, PCI_CFG_INTERRUPT_PIN_OFF);
 
 	t->PciVendorId = vendor;
 	t->PciDeviceId = device;
 	t->PciRevisionId = revision;
+	t->PciSubsystemVendorId = subsystem_vendor;
+	t->PciSubsystemDeviceId = subsystem_device;
+	t->PciInterruptPin = interrupt_pin;
 
 	if (vendor != (UINT16)AERO_W7_VIRTIO_PCI_VENDOR_ID) {
 		t->InitError = VIRTIO_PCI_MODERN_INIT_ERR_VENDOR_MISMATCH;
@@ -370,6 +386,18 @@ NTSTATUS VirtioPciModernTransportInit(VIRTIO_PCI_MODERN_TRANSPORT *t, const VIRT
 	/* Enforce AERO-W7-VIRTIO v1 revision ID. */
 	if (revision != AERO_W7_VIRTIO_PCI_REVISION) {
 		t->InitError = VIRTIO_PCI_MODERN_INIT_ERR_UNSUPPORTED_REVISION;
+		return STATUS_NOT_SUPPORTED;
+	}
+
+	/* Subsystem vendor ID is fixed by contract v1. */
+	if (mode == VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT && subsystem_vendor != (UINT16)AERO_W7_VIRTIO_PCI_VENDOR_ID) {
+		t->InitError = VIRTIO_PCI_MODERN_INIT_ERR_SUBSYSTEM_VENDOR_MISMATCH;
+		return STATUS_NOT_SUPPORTED;
+	}
+
+	/* Interrupt pin is fixed by contract v1 (INTA#). */
+	if (mode == VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT && interrupt_pin != 0x01) {
+		t->InitError = VIRTIO_PCI_MODERN_INIT_ERR_INTERRUPT_PIN_MISMATCH;
 		return STATUS_NOT_SUPPORTED;
 	}
 
