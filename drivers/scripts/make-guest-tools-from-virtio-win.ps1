@@ -312,11 +312,11 @@ Copy-Item -Path (Join-Path $guestToolsDir "*") -Destination $guestToolsStageDir 
 
 $driverPackLicenses = Join-Path $driverPackRoot "licenses"
 $stageLicenses = Join-Path $guestToolsStageDir "licenses"
-if (Test-Path -LiteralPath $stageLicenses) {
-  Remove-Item -LiteralPath $stageLicenses -Recurse -Force -ErrorAction SilentlyContinue
-}
 if (Test-Path -LiteralPath $driverPackLicenses -PathType Container) {
-  Copy-Item -LiteralPath $driverPackLicenses -Destination $guestToolsStageDir -Recurse -Force
+  # Merge upstream license/notice texts into the staged Guest Tools tree without discarding any
+  # existing repo-provided license files.
+  Ensure-Directory -Path $stageLicenses
+  Copy-Item -Path (Join-Path $driverPackLicenses "*") -Destination $stageLicenses -Recurse -Force
 }
 
 $driverPackManifest = Join-Path $driverPackRoot "manifest.json"
