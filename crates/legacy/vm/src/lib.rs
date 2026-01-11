@@ -11,10 +11,11 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use aero_cpu_core::assist::AssistContext;
-use aero_cpu_core::interp::tier0::exec::{run_batch_with_assists, BatchExit};
+use aero_cpu_core::interp::tier0::exec::{run_batch_cpu_core_with_assists, BatchExit};
+use aero_cpu_core::interp::tier0::Tier0Config;
 use aero_cpu_core::mem::CpuBus;
-use aero_cpu_core::state::{CpuMode, CpuState};
-use aero_cpu_core::Exception;
+use aero_cpu_core::state::CpuMode;
+use aero_cpu_core::{CpuCore, Exception};
 use firmware::bios::{A20Gate, Bios, BiosBus, BlockDevice, FirmwareMemory};
 use memory::{GuestMemory, GuestMemoryError, GuestMemoryResult, MapError, MemoryBus as _, PhysicalMemoryBus};
 
@@ -425,7 +426,7 @@ pub enum CpuExit {
     note = "This toy VM was used for early firmware tests; use `aero_machine::Machine` (crates/aero-machine) instead"
 )]
 pub struct Vm<D: BlockDevice> {
-    pub cpu: CpuState,
+    pub cpu: CpuCore,
     pub mem: VmMemory,
     pub bios: Bios,
     pub disk: D,
@@ -437,7 +438,7 @@ pub struct Vm<D: BlockDevice> {
 impl<D: BlockDevice> Vm<D> {
     pub fn new(mem_size: usize, bios: Bios, disk: D) -> Self {
         Self {
-            cpu: CpuState::new(CpuMode::Real),
+            cpu: CpuCore::new(CpuMode::Real),
             mem: VmMemory::new(mem_size),
             bios,
             disk,
@@ -449,7 +450,7 @@ impl<D: BlockDevice> Vm<D> {
 
     pub fn reset(&mut self) {
         self.assist = AssistContext::default();
-        self.cpu = CpuState::new(CpuMode::Real);
+        self.cpu = CpuCore::new(CpuMode::Real);
         self.cpu.a20_enabled = self.mem.a20_enabled();
 
         let bus: &mut dyn BiosBus = &mut self.mem;
@@ -468,7 +469,8 @@ impl<D: BlockDevice> Vm<D> {
         self.cpu.a20_enabled = self.mem.a20_enabled();
 
         let mut bus = VmCpuBus { mem: &mut self.mem };
-        let res = run_batch_with_assists(&mut self.assist, &mut self.cpu, &mut bus, 1);
+        let cfg = Tier0Config::from_cpuid(&self.assist.features);
+        let res = run_batch_cpu_core_with_assists(&cfg, &mut self.assist, &mut self.cpu, &mut bus, 1);
 
         match res.exit {
             BatchExit::Completed | BatchExit::Branch => CpuExit::Continue,
