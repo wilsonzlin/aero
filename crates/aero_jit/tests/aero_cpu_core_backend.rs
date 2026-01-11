@@ -74,6 +74,7 @@ fn wasmtime_backend_executes_blocks_via_exec_dispatcher() {
     let entry1 = 0x1000u64;
     let entry2 = 0x2000u64;
     let entry3 = 0x3000u64;
+    let entry4 = 0x5000u64;
 
     let mut b1 = IrBuilder::new(entry1);
     let rax = b1.read_reg(GuestReg::Gpr {
@@ -106,10 +107,25 @@ fn wasmtime_backend_executes_blocks_via_exec_dispatcher() {
     );
     let wasm2 = compile_tier1_block(b2, IrTerminator::ExitToInterpreter { next_rip: entry3 });
 
+    // Block 3: would run at entry3, but block 2 requests an interpreter step so this must not
+    // execute.
+    let mut b3 = IrBuilder::new(entry3);
+    let v = b3.const_int(Width::W64, 0xdead);
+    b3.write_reg(
+        GuestReg::Gpr {
+            reg: Gpr::Rcx,
+            width: Width::W64,
+            high8: false,
+        },
+        v,
+    );
+    let wasm3 = compile_tier1_block(b3, IrTerminator::Jump { target: entry4 });
+
     // Build backend + runtime.
     let mut backend: WasmtimeBackend<TestCpu> = WasmtimeBackend::new();
     let idx1 = backend.add_compiled_block(&wasm1);
     let idx2 = backend.add_compiled_block(&wasm2);
+    let idx3 = backend.add_compiled_block(&wasm3);
 
     let config = JitConfig {
         enabled: true,
@@ -135,6 +151,11 @@ fn wasmtime_backend_executes_blocks_via_exec_dispatcher() {
             entry_rip: entry2,
             table_index: idx2,
             meta,
+        });
+        jit.install_handle(CompiledBlockHandle {
+            entry_rip: entry3,
+            table_index: idx3,
+            meta: jit.make_meta(0, 0),
         });
     }
 
