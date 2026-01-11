@@ -653,7 +653,7 @@ fn instr_in_out<B: CpuBus>(
     }
 }
 
-fn has_addr_size_override(bytes: &[u8; 15], bitness: u32) -> bool {
+pub(crate) fn has_addr_size_override(bytes: &[u8; 15], bitness: u32) -> bool {
     let mut i = 0usize;
     let mut seen = false;
     while i < bytes.len() {

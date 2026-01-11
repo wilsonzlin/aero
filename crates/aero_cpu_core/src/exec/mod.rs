@@ -1,4 +1,4 @@
-use crate::assist::{handle_assist_decoded, AssistContext};
+use crate::assist::{handle_assist_decoded, has_addr_size_override, AssistContext};
 use crate::jit::runtime::{CompileRequestSink, JitBackend, JitBlockExit, JitRuntime};
 
 pub trait ExecCpu {
