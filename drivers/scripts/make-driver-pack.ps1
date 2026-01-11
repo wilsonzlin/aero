@@ -104,14 +104,31 @@ function Copy-VirtioWinNotices {
     "README*"
   )
 
-  New-Item -ItemType Directory -Path $DestDir -Force | Out-Null
+  $copied = New-Object "System.Collections.Generic.List[string]"
+  $seen = New-Object "System.Collections.Generic.HashSet[string]"
+
+  $rootFiles = @()
+  try {
+    $rootFiles = Get-ChildItem -LiteralPath $VirtioRoot -File -ErrorAction Stop
+  } catch {
+    return @()
+  }
 
   foreach ($pat in $patterns) {
-    $hits = Get-ChildItem -LiteralPath $VirtioRoot -File -Filter $pat -ErrorAction SilentlyContinue
-    foreach ($h in $hits) {
+    foreach ($h in ($rootFiles | Where-Object { $_.Name -like $pat })) {
+      $key = $h.Name.ToLowerInvariant()
+      if (-not $seen.Add($key)) {
+        continue
+      }
+      if (-not (Test-Path -LiteralPath $DestDir -PathType Container)) {
+        New-Item -ItemType Directory -Path $DestDir -Force | Out-Null
+      }
       Copy-Item -LiteralPath $h.FullName -Destination (Join-Path $DestDir $h.Name) -Force
+      $copied.Add($h.Name) | Out-Null
     }
   }
+
+  return @($copied | Sort-Object)
 }
 
 function Find-ChildDir {
@@ -286,14 +303,21 @@ try {
     Copy-Item -LiteralPath $virtioReadmeSrc -Destination (Join-Path $packRoot "README.md") -Force
   }
 
+  $warnings = New-Object "System.Collections.Generic.List[string]"
+
   # Upstream virtio-win license/notice texts (best-effort). Stored under
   # licenses/virtio-win/ to avoid colliding with Aero's own README files.
-  Copy-VirtioWinNotices -VirtioRoot $VirtioWinRoot -DestDir (Join-Path (Join-Path $packRoot "licenses") "virtio-win")
+  $virtioWinNoticeFiles = Copy-VirtioWinNotices -VirtioRoot $VirtioWinRoot -DestDir (Join-Path (Join-Path $packRoot "licenses") "virtio-win")
+  if ($virtioWinNoticeFiles.Count -eq 0) {
+    $msg = "No upstream virtio-win license/notice files were found at the virtio-win root ('$VirtioWinRoot'). " +
+      "The pack will include THIRD_PARTY_NOTICES.md, but you must ensure the correct upstream license texts are included for redistribution."
+    $warnings.Add($msg) | Out-Null
+    Write-Warning $msg
+  }
 
   $driverResults = @()
   $includedDrivers = New-Object "System.Collections.Generic.HashSet[string]"
   $optionalMissing = New-Object "System.Collections.Generic.List[object]"
-  $warnings = New-Object "System.Collections.Generic.List[string]"
 
   foreach ($name in $requestedDrivers) {
     $drv = $driverDefs[$name]
@@ -394,6 +418,7 @@ try {
       hash = $sourceHash
       volume_label = $isoVolumeLabel
       derived_version = $derivedVersion
+      license_notice_files_copied = @($virtioWinNoticeFiles)
       timestamp_utc = $createdUtc
     }
     drivers_requested = @($requestedDrivers)
