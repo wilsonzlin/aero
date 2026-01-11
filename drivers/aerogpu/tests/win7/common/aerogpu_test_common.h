@@ -288,6 +288,32 @@ static inline const char* GetProcessBitnessString() {
   return Is64BitProcess() ? "x64" : "x86";
 }
 
+static inline bool IsRunningUnderWow64() {
+#if defined(_WIN64) || defined(_M_X64)
+  return false;
+#else
+  // Avoid relying on _WIN32_WINNT definitions by resolving IsWow64Process dynamically.
+  typedef BOOL(WINAPI* IsWow64ProcessFn)(HANDLE, PBOOL);
+  HMODULE kernel32 = GetModuleHandleW(L"kernel32.dll");
+  if (!kernel32) {
+    return false;
+  }
+  IsWow64ProcessFn fn = (IsWow64ProcessFn)GetProcAddress(kernel32, "IsWow64Process");
+  if (!fn) {
+    return false;
+  }
+  BOOL wow64 = FALSE;
+  if (!fn(GetCurrentProcess(), &wow64)) {
+    return false;
+  }
+  return wow64 ? true : false;
+#endif
+}
+
+static inline const char* GetWow64SuffixString() {
+  return IsRunningUnderWow64() ? " (WOW64)" : "";
+}
+
 static inline const wchar_t* ExpectedAeroGpuD3D9UmdModuleBaseName() {
   return Is64BitProcess() ? L"aerogpu_d3d9_x64.dll" : L"aerogpu_d3d9.dll";
 }
@@ -405,18 +431,27 @@ static inline int RequireAeroGpuUmdLoaded(const char* test_name,
   std::string err;
   if (GetLoadedModulePathByBaseName(expected_module_base_name, &path, &err)) {
     if (!path.empty()) {
-      PrintfStdout("INFO: %s: loaded AeroGPU %s UMD: %ls", test_name, api_label, path.c_str());
+      PrintfStdout("INFO: %s: loaded AeroGPU %s UMD (%s%s): %ls",
+                   test_name,
+                   api_label,
+                   GetProcessBitnessString(),
+                   GetWow64SuffixString(),
+                   path.c_str());
     } else if (!err.empty()) {
-      PrintfStdout("INFO: %s: loaded AeroGPU %s UMD module %ls (path unavailable: %s)",
+      PrintfStdout("INFO: %s: loaded AeroGPU %s UMD module %ls (%s%s; path unavailable: %s)",
                    test_name,
                    api_label,
                    expected_module_base_name,
+                   GetProcessBitnessString(),
+                   GetWow64SuffixString(),
                    err.c_str());
     } else {
-      PrintfStdout("INFO: %s: loaded AeroGPU %s UMD module %ls (path unavailable)",
+      PrintfStdout("INFO: %s: loaded AeroGPU %s UMD module %ls (%s%s; path unavailable)",
                    test_name,
                    api_label,
-                   expected_module_base_name);
+                   expected_module_base_name,
+                   GetProcessBitnessString(),
+                   GetWow64SuffixString());
     }
     return 0;
   }
@@ -424,12 +459,13 @@ static inline int RequireAeroGpuUmdLoaded(const char* test_name,
   DumpLoadedAeroGpuUmdModules(test_name);
   return Fail(
       test_name,
-      "expected AeroGPU %s UMD DLL %ls to be loaded in-process (process=%s), but it was not. "
+      "expected AeroGPU %s UMD DLL %ls to be loaded in-process (process=%s%s), but it was not. "
       "Likely causes: incorrect INF registry keys (%s), incorrect UMD exports/decoration (stdcall), "
       "or missing DLL in System32/SysWOW64.",
       api_label,
       expected_module_base_name,
       GetProcessBitnessString(),
+      GetWow64SuffixString(),
       reg_key_hint);
 }
 
