@@ -1934,9 +1934,20 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
                                         const D3D10DDIARG_CREATERESOURCE* pDesc,
                                         D3D10DDI_HRESOURCE hResource,
                                         D3D10DDI_HRTRESOURCE) {
+  const void* init_ptr = nullptr;
+  if (pDesc) {
+    __if_exists(D3D10DDIARG_CREATERESOURCE::pInitialDataUP) {
+      init_ptr = pDesc->pInitialDataUP;
+    }
+    __if_not_exists(D3D10DDIARG_CREATERESOURCE::pInitialDataUP) {
+      __if_exists(D3D10DDIARG_CREATERESOURCE::pInitialData) {
+        init_ptr = pDesc->pInitialData;
+      }
+    }
+  }
   AEROGPU_D3D10_TRACEF(
       "CreateResource hDevice=%p hResource=%p dim=%u bind=0x%x misc=0x%x byteWidth=%u w=%u h=%u mips=%u array=%u fmt=%u "
-      "initUP=%p",
+      "init=%p",
       hDevice.pDrvPrivate,
       hResource.pDrvPrivate,
       pDesc ? static_cast<unsigned>(pDesc->ResourceDimension) : 0u,
@@ -1948,7 +1959,7 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
        pDesc ? static_cast<unsigned>(pDesc->MipLevels) : 0u,
        pDesc ? static_cast<unsigned>(pDesc->ArraySize) : 0u,
        pDesc ? static_cast<unsigned>(pDesc->Format) : 0u,
-       pDesc ? pDesc->pInitialDataUP : nullptr);
+       init_ptr);
 
 #if defined(AEROGPU_UMD_TRACE_RESOURCES)
   uint32_t usage = 0;
@@ -1986,7 +1997,7 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
 
   AEROGPU_D3D10_11_LOG(
       "trace_resources: D3D10.1 CreateResource dim=%u bind=0x%08X usage=%u cpu=0x%08X misc=0x%08X fmt=%u "
-      "byteWidth=%u w=%u h=%u mips=%u array=%u sample=(%u,%u) rflags=0x%llX rflags_size=%u mipInfoList=%p initUP=%p",
+      "byteWidth=%u w=%u h=%u mips=%u array=%u sample=(%u,%u) rflags=0x%llX rflags_size=%u mipInfoList=%p init=%p",
       pDesc ? static_cast<unsigned>(pDesc->ResourceDimension) : 0u,
       pDesc ? static_cast<unsigned>(pDesc->BindFlags) : 0u,
       static_cast<unsigned>(usage),
@@ -2003,7 +2014,7 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       static_cast<unsigned long long>(resource_flags_bits),
       static_cast<unsigned>(resource_flags_size),
       pDesc ? pDesc->pMipInfoList : nullptr,
-      pDesc ? pDesc->pInitialDataUP : nullptr);
+      init_ptr);
 #endif
   if (!hDevice.pDrvPrivate || !pDesc || !hResource.pDrvPrivate) {
     AEROGPU_D3D10_RET_HR(E_INVALIDARG);
@@ -2032,19 +2043,35 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
                          static_cast<unsigned long long>(res->size_bytes));
 #endif
 
-    if (pDesc->pInitialDataUP) {
-      const auto& init = pDesc->pInitialDataUP[0];
+    auto copy_initial_data = [&](auto init_data) -> HRESULT {
+      if (!init_data) {
+        return S_OK;
+      }
+      const auto& init = init_data[0];
       if (!init.pSysMem) {
-        res->~AeroGpuResource();
         return E_INVALIDARG;
       }
       try {
         res->storage.resize(static_cast<size_t>(res->size_bytes));
       } catch (...) {
-        res->~AeroGpuResource();
-        AEROGPU_D3D10_RET_HR(E_OUTOFMEMORY);
+        return E_OUTOFMEMORY;
       }
       std::memcpy(res->storage.data(), init.pSysMem, static_cast<size_t>(res->size_bytes));
+      return S_OK;
+    };
+
+    HRESULT init_hr = S_OK;
+    __if_exists(D3D10DDIARG_CREATERESOURCE::pInitialDataUP) {
+      init_hr = copy_initial_data(pDesc->pInitialDataUP);
+    }
+    __if_not_exists(D3D10DDIARG_CREATERESOURCE::pInitialDataUP) {
+      __if_exists(D3D10DDIARG_CREATERESOURCE::pInitialData) {
+        init_hr = copy_initial_data(pDesc->pInitialData);
+      }
+    }
+    if (FAILED(init_hr)) {
+      res->~AeroGpuResource();
+      AEROGPU_D3D10_RET_HR(init_hr);
     }
 
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_buffer>(AEROGPU_CMD_CREATE_BUFFER);
@@ -2095,28 +2122,27 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
                          static_cast<unsigned>(res->row_pitch_bytes));
 #endif
 
-    if (pDesc->pInitialDataUP) {
+    auto copy_initial_data = [&](auto init_data) -> HRESULT {
+      if (!init_data) {
+        return S_OK;
+      }
       if (res->mip_levels != 1 || res->array_size != 1) {
-        res->~AeroGpuResource();
         return E_NOTIMPL;
       }
 
-      const auto& init = pDesc->pInitialDataUP[0];
+      const auto& init = init_data[0];
       if (!init.pSysMem) {
-        res->~AeroGpuResource();
         return E_INVALIDARG;
       }
 
       const uint64_t total_bytes = static_cast<uint64_t>(res->row_pitch_bytes) * static_cast<uint64_t>(res->height);
       if (total_bytes > static_cast<uint64_t>(SIZE_MAX)) {
-        res->~AeroGpuResource();
         return E_OUTOFMEMORY;
       }
 
       try {
         res->storage.resize(static_cast<size_t>(total_bytes));
       } catch (...) {
-        res->~AeroGpuResource();
         return E_OUTOFMEMORY;
       }
 
@@ -2128,6 +2154,21 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
                     src + static_cast<size_t>(y) * src_pitch,
                     res->row_pitch_bytes);
       }
+      return S_OK;
+    };
+
+    HRESULT init_hr = S_OK;
+    __if_exists(D3D10DDIARG_CREATERESOURCE::pInitialDataUP) {
+      init_hr = copy_initial_data(pDesc->pInitialDataUP);
+    }
+    __if_not_exists(D3D10DDIARG_CREATERESOURCE::pInitialDataUP) {
+      __if_exists(D3D10DDIARG_CREATERESOURCE::pInitialData) {
+        init_hr = copy_initial_data(pDesc->pInitialData);
+      }
+    }
+    if (FAILED(init_hr)) {
+      res->~AeroGpuResource();
+      AEROGPU_D3D10_RET_HR(init_hr);
     }
 
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_texture2d>(AEROGPU_CMD_CREATE_TEXTURE2D);
