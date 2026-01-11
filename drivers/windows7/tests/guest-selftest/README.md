@@ -25,7 +25,7 @@ virtio driver health via **COM1 serial** (host-captured), stdout, and a log file
     - at least one **keyboard-only** HID device exists
     - at least one **mouse-only** HID device exists
     - no matched HID device advertises both keyboard and mouse application collections (contract v1 expects two separate PCI functions).
-- **virtio-snd** (optional; enable with `--test-snd` / `--require-snd`)
+- **virtio-snd** (optional; playback runs automatically when a supported virtio-snd device is detected)
   - Detect the virtio-snd PCI function via SetupAPI hardware IDs:
     - `PCI\VEN_1AF4&DEV_1059` (modern; Aero contract v1 expects `REV_01` and the shipped INF matches `...&REV_01`)
       - If the VM/device does not report `REV_01`, the Aero contract driver will not bind and the selftest will treat the device as missing.
@@ -42,8 +42,10 @@ virtio driver health via **COM1 serial** (host-captured), stdout, and a log file
   - Enumerate audio render endpoints via MMDevice API and start a shared-mode WASAPI render stream.
   - Render a short deterministic tone (440Hz) at 48kHz/16-bit/stereo.
   - If WASAPI fails, a WinMM `waveOut` fallback is attempted.
-  - By default, this test is reported as **SKIP**; enable it with `--test-snd` (alias: `--require-snd`).
-    When enabled, missing virtio-snd or playback failure causes the overall selftest to **FAIL**.
+  - By default, if a supported virtio-snd PCI function is detected, the selftest exercises playback automatically.
+    - If no supported device is detected, virtio-snd is reported as **SKIP**.
+    - Use `--require-snd` (alias: `--test-snd`) to make missing virtio-snd fail the overall selftest.
+  - Playback failures cause the overall selftest to **FAIL**.
   - Also emits a separate `virtio-snd-capture` marker by attempting to detect a virtio-snd **capture** endpoint
     (MMDevice `eCapture`).
     - Missing capture is reported as **SKIP** by default; use `--require-snd-capture` to make it **FAIL**.
@@ -66,24 +68,24 @@ AERO_VIRTIO_SELFTEST|START|...
 AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS
 AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS|...
 # (either, depending on flags/device):
-AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|flag_not_set
+AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP
 # (capture is reported separately):
 AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set
  # or:
  AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS
   AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|PASS|...
  # or:
- AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|device_missing
+ AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL
   AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|device_missing
   AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS
   AERO_VIRTIO_SELFTEST|RESULT|PASS
 ```
 
 Notes:
-- If virtio-snd playback is not enabled via `--test-snd` / `--require-snd` (and no capture flags are set), the tool emits
-  `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|flag_not_set` and `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set`.
-- If virtio-snd playback is enabled via `--test-snd` / `--require-snd` and the PCI device is missing, the tool emits
-  `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|device_missing`.
+- If no supported virtio-snd PCI function is detected (and no capture flags are set), the tool emits
+  `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP` and `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set`.
+- If `--require-snd` / `--test-snd` is set and the PCI device is missing, the tool emits
+  `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL`.
   (In this case, the capture marker uses `...|device_missing` and is `SKIP` by default unless `--require-snd-capture` is set.)
 - If the virtio-snd PCI device is present but not bound to the expected driver, the tool emits a reason code:
   - `wrong_service` (bound to an unexpected service)
@@ -96,7 +98,7 @@ Notes:
   extra diagnostics such as `method=...`, `frames=...`, and whether any non-silence was observed. If `--require-non-silence`
   is set and only silence is captured, the tool emits `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL|silence`.
 - If the virtio-snd test is disabled via `--disable-snd`, the tool emits
-  `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|disabled` and `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|disabled`.
+  `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP` and `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|disabled`.
 
 ## Building
 

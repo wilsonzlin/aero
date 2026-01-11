@@ -30,8 +30,8 @@ drivers/windows7/tests/
 - Runs a virtio-blk file I/O test (write/readback, sequential read, flush) on a **virtio-backed volume**.
 - Runs a virtio-net test (wait for DHCP, DNS resolve, HTTP GET).
 - Runs a virtio-input HID sanity test (detect virtio-input HID devices + validate separate keyboard-only + mouse-only HID devices).
-- Optionally runs a virtio-snd test (PCI detection + endpoint enumeration + short playback) when enabled with `--test-snd`
-  (or `--require-snd`).
+- Optionally runs a virtio-snd test (PCI detection + endpoint enumeration + short playback) when a supported virtio-snd
+  device is detected (or when `--require-snd` / `--test-snd` is set).
   - Detects the virtio-snd PCI function by hardware ID:
     - `PCI\VEN_1AF4&DEV_1059` (modern; Aero contract v1 expects `REV_01`)
     - If the device enumerates as a transitional virtio-snd PCI ID (stock QEMU defaults), the selftest only accepts it
@@ -49,7 +49,7 @@ The selftest emits machine-parseable markers:
  AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS
  AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS|...
  # (virtio-snd is emitted as PASS/FAIL/SKIP depending on device/config):
-  AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|flag_not_set
+  AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP
   AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set
  # or:
  AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS
@@ -62,11 +62,11 @@ The host harness waits for the final `AERO_VIRTIO_SELFTEST|RESULT|...` line and 
 (virtio-blk + virtio-input + virtio-snd + virtio-net) were emitted so older selftest binaries can’t accidentally pass.
 
 Note:
-- virtio-snd playback is **skipped by default**; enable it with `--test-snd` / `--require-snd`.
-  When enabled, missing virtio-snd or playback failure causes the overall selftest to FAIL.
-  Use `--disable-snd` to force `SKIP` for both playback and capture.
-  - For stock QEMU transitional virtio-snd, also pass `--allow-virtio-snd-transitional` and install the legacy
-    virtio-snd package (`aero-virtio-snd-legacy.inf` + `virtiosnd_legacy.sys`).
+- virtio-snd is optional. When a supported virtio-snd PCI function is detected, the selftest exercises playback
+  automatically (even without `--test-snd`). Use `--require-snd` / `--test-snd` to make missing virtio-snd fail the
+  overall selftest, and `--disable-snd` to force skipping playback + capture.
+  - For stock QEMU transitional virtio-snd (`DEV_1018`), also pass `--allow-virtio-snd-transitional` and install the
+    legacy virtio-snd package (`aero-virtio-snd-legacy.inf` + `virtiosnd_legacy.sys`).
 - Capture is reported separately via the `virtio-snd-capture` marker. Missing capture is `SKIP` by default unless
   `--require-snd-capture` is set. Use `--test-snd-capture` to run the capture smoke test (otherwise only endpoint
   detection is performed).
@@ -132,7 +132,8 @@ The guest tool is structured so adding more tests is straightforward:
 - Enumerate audio render endpoints via MMDevice API and log them (friendly name + device ID).
 - Select the virtio-snd endpoint by friendly name substring and/or hardware ID.
 - Start a shared-mode WASAPI render stream and play a short deterministic tone (440Hz), with a waveOut fallback.
-- Enabled via `--test-snd` / `--require-snd` (otherwise `SKIP`).
+- Runs when a supported virtio-snd device is detected. Use `--require-snd` / `--test-snd` to fail if missing, or
+  `--disable-snd` to force `SKIP`.
 
 ### virtio-input
 - Enumerate HID devices via SetupAPI/HIDClass.
