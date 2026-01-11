@@ -481,6 +481,20 @@ Canonical JWT (HS256) test vectors live in
 under the `aero-udp-relay-jwt-hs256` key and are consumed by both the gateway token minting logic
 and the relay verifier to prevent cross-language drift.
 
+##### JWT claims
+
+The relay currently accepts only **HS256** JWTs and enforces the following claims:
+
+- Required:
+  - `sid` (string): Aero session ID. Must be non-empty.
+  - `iat` (number): issued-at timestamp in **Unix seconds**.
+  - `exp` (number): expiry timestamp in **Unix seconds**. The relay rejects tokens where `now >= exp`.
+- Optional:
+  - `nbf` (number): not-before timestamp in **Unix seconds**. If present, the relay rejects tokens where `now < nbf`.
+  - `origin` (string): browser Origin that minted the token (used by some deployments for policy/debugging).
+  - `aud` (string): audience.
+  - `iss` (string): issuer.
+
 WebSocket credentials can be provided via either:
 
 1. **URL query string** (works for all clients):
