@@ -1803,8 +1803,11 @@ async fn auth_rejection_metrics_increment_for_invalid_cookie() {
         .text()
         .await
         .unwrap();
-    let start =
-        parse_metric(&baseline, r#"l2_auth_reject_total{reason="invalid_cookie"}"#).unwrap_or(0);
+    let start = parse_metric(
+        &baseline,
+        r#"l2_auth_reject_total{reason="invalid_cookie"}"#,
+    )
+    .unwrap_or(0);
 
     let mut req = base_ws_request(addr);
     req.headers_mut().insert(
@@ -1855,7 +1858,8 @@ async fn auth_rejection_metrics_increment_for_invalid_jwt() {
         .text()
         .await
         .unwrap();
-    let start = parse_metric(&baseline, r#"l2_auth_reject_total{reason="invalid_jwt"}"#).unwrap_or(0);
+    let start =
+        parse_metric(&baseline, r#"l2_auth_reject_total{reason="invalid_jwt"}"#).unwrap_or(0);
 
     let ws_url = format!("ws://{addr}/l2?token=not-a-jwt");
     let mut req = ws_url.into_client_request().unwrap();
