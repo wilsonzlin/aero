@@ -20,11 +20,28 @@ test("AudioWorklet output runs and does not underrun with HDA DMA demo", async (
     return out?.enabled === true && out?.context?.state === "running";
   });
 
-  const initialWrite = await page.evaluate(() => {
+  const initialIndices = await page.evaluate(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const out = (globalThis as any).__aeroAudioOutputHdaDemo;
-    return Atomics.load(out.ringBuffer.header, 1) >>> 0;
+    return {
+      read: Atomics.load(out.ringBuffer.header, 0) >>> 0,
+      write: Atomics.load(out.ringBuffer.header, 1) >>> 0,
+    };
   });
+  const initialRead = initialIndices.read;
+  const initialWrite = initialIndices.write;
+
+  // Sanity check: ensure the AudioWorklet is actually consuming from the ring.
+  await page.waitForFunction(
+    (initialRead) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const out = (globalThis as any).__aeroAudioOutputHdaDemo;
+      const read = Atomics.load(out.ringBuffer.header, 0) >>> 0;
+      return ((read - (initialRead as number)) >>> 0) > 0;
+    },
+    initialRead,
+    { timeout: 10_000 },
+  );
 
   await page.waitForFunction(
     (initialWrite) => {
