@@ -130,3 +130,19 @@ add_header Referrer-Policy "{{ .Values.ingress.securityHeaders.referrerPolicy }}
 add_header Permissions-Policy "{{ .Values.ingress.securityHeaders.permissionsPolicy }}" always;
 add_header Content-Security-Policy "{{ .Values.ingress.securityHeaders.contentSecurityPolicy }}" always;
 {{- end -}}
+
+{{- define "aero-gateway.nginxIngressSnippet" -}}
+{{- if .Values.ingress.coopCoep.enabled -}}
+{{ include "aero-gateway.coopCoepSnippet" . }}
+{{- end -}}
+{{- if (default false .Values.ingress.securityHeaders.enabled) -}}
+{{ include "aero-gateway.securityHeadersSnippet" . }}
+{{- end -}}
+{{- end -}}
+
+{{- define "aero-gateway.securityHeadersSnippet" -}}
+add_header X-Content-Type-Options "{{ .Values.ingress.securityHeaders.xContentTypeOptions }}" always;
+add_header Referrer-Policy "{{ .Values.ingress.securityHeaders.referrerPolicy }}" always;
+add_header Permissions-Policy "{{ .Values.ingress.securityHeaders.permissionsPolicy }}" always;
+add_header Content-Security-Policy "{{ .Values.ingress.securityHeaders.contentSecurityPolicy }}" always;
+{{- end -}}
