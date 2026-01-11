@@ -63,6 +63,11 @@ aerogpu_add_win7_test(d3d9ex_submit_fence_stress
 )
 target_link_libraries(d3d9ex_submit_fence_stress PRIVATE user32 gdi32 d3d9)
 
+aerogpu_add_win7_test(fence_state_sanity
+  fence_state_sanity/main.cpp
+)
+target_link_libraries(fence_state_sanity PRIVATE user32 gdi32)
+
 aerogpu_add_win7_test(vblank_wait_sanity
   vblank_wait_sanity/main.cpp
 )

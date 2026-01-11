@@ -213,13 +213,13 @@ echo   --require-vid/--require-did helps avoid false PASS when AeroGPU isn't act
 echo   Rendering tests expect adapter description to contain "AeroGPU" unless --allow-non-aerogpu is provided.
 echo   Rendering tests validate that the expected AeroGPU UMD DLL is loaded unless --allow-microsoft/--allow-non-aerogpu is set; use --require-umd to force the UMD check.
 echo   --require-agpu forces AGPU-only validation paths (e.g. ring descriptor PRESENT/alloc table checks) to fail instead of skipping on legacy device/ring formats.
-echo   --samples affects pacing/sampling tests ^(dwm_flush_pacing, vblank_wait, wait_vblank_pacing, vblank_wait_pacing, vblank_wait_sanity, vblank_state_sanity, get_scanline_sanity, d3d9_raster_status_sanity, d3d9_raster_status_pacing^).
-echo   --interval-ms affects vblank_state_sanity: delay between escape samples.
+echo   --samples affects pacing/sampling tests ^(dwm_flush_pacing, vblank_wait, wait_vblank_pacing, vblank_wait_pacing, vblank_wait_sanity, vblank_state_sanity, fence_state_sanity, get_scanline_sanity, d3d9_raster_status_sanity, d3d9_raster_status_pacing^).
+echo   --interval-ms affects vblank_state_sanity and fence_state_sanity: delay between escape samples.
 echo   --iterations affects d3d9ex_event_query and d3d9ex_submit_fence_stress: number of iterations/submissions to run.
 echo   --producers affects d3d9ex_shared_surface_many_producers: number of producer processes (default 8).
 echo   --wait-timeout-ms affects wait_vblank_pacing and vblank_wait_sanity: per-wait timeout for D3DKMTWaitForVerticalBlankEvent.
 echo   --display affects vblank_wait ^(defaults to primary display: \\.\DISPLAY1^).
-echo   --allow-remote skips tests that are not meaningful in RDP sessions ^(SM_REMOTESESSION=1^): d3d9ex_dwm_probe, d3d9ex_submit_fence_stress, dwm_flush_pacing, vblank_wait, wait_vblank_pacing, vblank_wait_pacing, vblank_wait_sanity, vblank_state_sanity, get_scanline_sanity, scanout_state_sanity, dump_createalloc_sanity, umd_private_sanity, d3d9_raster_status_sanity, d3d9_raster_status_pacing.
+echo   --allow-remote skips tests that are not meaningful in RDP sessions ^(SM_REMOTESESSION=1^): d3d9ex_dwm_probe, d3d9ex_submit_fence_stress, fence_state_sanity, dwm_flush_pacing, vblank_wait, wait_vblank_pacing, vblank_wait_pacing, vblank_wait_sanity, vblank_state_sanity, get_scanline_sanity, scanout_state_sanity, dump_createalloc_sanity, umd_private_sanity, d3d9_raster_status_sanity, d3d9_raster_status_pacing.
 echo   --show affects d3d9ex_event_query, d3d9ex_submit_fence_stress, d3d9ex_shared_surface, d3d9ex_shared_surface_ipc, d3d9ex_shared_surface_wow64, and d3d9ex_shared_surface_many_producers: show their windows (overrides --hidden).
 echo   d3d9ex_shared_surface validates cross-process pixel sharing by default; use --no-validate-sharing to skip readback validation ^(--dump always validates^).
 echo   --json emits machine-readable JSON (forwarded to each test). To get an aggregated suite report, run bin\\aerogpu_test_runner.exe directly.
