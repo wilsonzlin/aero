@@ -70,7 +70,10 @@ describe("net/connectL2Tunnel", () => {
       expect(fetchMock).toHaveBeenCalledTimes(1);
       const [url, init] = (fetchMock as unknown as { mock: { calls: any[][] } }).mock.calls[0]!;
       expect(url).toBe("https://gateway.example.com/base/session");
+      expect(init?.method).toBe("POST");
       expect(init?.credentials).toBe("include");
+      expect(init?.headers).toEqual({ "content-type": "application/json" });
+      expect(init?.body).toBe("{}");
     } finally {
       tunnel.close();
       globalThis.fetch = originalFetch;
@@ -99,8 +102,9 @@ describe("net/connectL2Tunnel", () => {
 
     try {
       expect(fetchMock).toHaveBeenCalledTimes(1);
-      const [url] = (fetchMock as unknown as { mock: { calls: any[][] } }).mock.calls[0]!;
+      const [url, init] = (fetchMock as unknown as { mock: { calls: any[][] } }).mock.calls[0]!;
       expect(url).toBe("https://gateway.example.com/session");
+      expect(init?.credentials).toBe("include");
 
       expect(FakeWebSocket.last?.url).toBe("wss://gateway.example.com/l2");
       expect(FakeWebSocket.last?.protocols).toBe(L2_TUNNEL_SUBPROTOCOL);
