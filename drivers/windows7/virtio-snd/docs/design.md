@@ -16,16 +16,16 @@ design note ever disagrees with the contract, the contract wins.
 
 There are currently two **build/packaging variants** supported:
 
-1. **Aero contract v1 (default CI artifact):** strict PCI identity enforcement (`DEV_1059` + `REV_01`)
+1. **Aero contract v1 (default CI artifact):** strict PCI identity enforcement (`PCI\VEN_1AF4&DEV_1059&REV_01`)
    as encoded by `inf/aero-virtio-snd.inf`.
 2. **QEMU compatibility (optional):** opt-in package for stock QEMU defaults as encoded by
-   `inf/aero-virtio-snd-legacy.inf`.
+    `inf/aero-virtio-snd-legacy.inf`.
 
 The two INFs intentionally have **no overlapping hardware IDs** so they do not compete for the same PCI function.
 
 Both variants use the same **virtio-pci modern** transport path (PCI vendor-specific capabilities + BAR0 MMIO) with
 split-ring virtqueues. The optional QEMU package exists so QEMU bring-up can be done without weakening the default
-contract-v1 INF; it binds to the transitional virtio-snd PCI ID (`DEV_1018`).
+contract-v1 INF; it binds to the transitional virtio-snd PCI HWID (`PCI\VEN_1AF4&DEV_1018`).
 
 Note: the repository also contains older legacy/transitional virtio-pci **I/O-port** bring-up code (for example
 `src/backend_virtio_legacy.c`) for historical bring-up and ad-hoc compatibility testing only. It is not
@@ -70,7 +70,7 @@ CI guardrail: PRs must keep `virtio-snd.vcxproj` on the modern-only backend. See
 
 The optional `aero-virtio-snd-legacy.inf` package uses the same virtio-pci modern
 transport stack but is packaged to bind to QEMU's transitional virtio-snd PCI ID
-(`DEV_1018`).
+(`PCI\VEN_1AF4&DEV_1018`).
 
 ## High-level architecture
 
@@ -227,8 +227,8 @@ Implementation note:
 
 - `AERO-W7-VIRTIO` v1 requires virtio-pci **modern** feature negotiation
   (`VIRTIO_F_VERSION_1` is bit 32). The shipped driver package and INFs assume a
-  modern-only device (`DEV_1059` + `REV_01`).
-- The adapter validates the contract PCI identity (requires `DEV_1059` + `REV_01`)
+  contract-v1 device (`PCI\VEN_1AF4&DEV_1059&REV_01`).
+- The adapter validates the contract PCI identity (requires `PCI\VEN_1AF4&DEV_1059&REV_01`)
   at `START_DEVICE` by reading PCI config space (`src/adapter.c`). The transport
   layer also enforces the contract PCI identity and BAR0 layout during
   `VirtioPciModernTransportInit`.

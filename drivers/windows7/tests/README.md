@@ -67,8 +67,8 @@ Note:
 - virtio-snd is optional. When a supported virtio-snd PCI function is detected, the selftest exercises playback
   automatically (even without `--test-snd`). Use `--require-snd` / `--test-snd` to make missing virtio-snd fail the
   overall selftest, and `--disable-snd` to force skipping playback + capture.
-  - For stock QEMU transitional virtio-snd (`DEV_1018`), also pass `--allow-virtio-snd-transitional` and install the
-    legacy virtio-snd package (`aero-virtio-snd-legacy.inf` + `virtiosnd_legacy.sys`).
+  - For stock QEMU transitional virtio-snd (`PCI\VEN_1AF4&DEV_1018`), also pass `--allow-virtio-snd-transitional` and
+    install the legacy virtio-snd package (`aero-virtio-snd-legacy.inf` + `virtiosnd_legacy.sys`).
 - Capture is reported separately via the `virtio-snd-capture` marker. Missing capture is `SKIP` by default unless
   `--require-snd-capture` is set. Use `--test-snd-capture` to run the capture smoke test (otherwise only endpoint
   detection is performed).

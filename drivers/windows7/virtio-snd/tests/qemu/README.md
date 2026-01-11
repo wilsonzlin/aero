@@ -110,7 +110,7 @@ These examples validate the strict Aero contract v1 identity under QEMU (modern 
 
 If your QEMU build cannot expose **both** `disable-legacy=on` and `x-pci-revision=0x01`, the strict INF will not
 bind. In that case, run virtio-snd in **transitional** mode (do not set `disable-legacy=on`, so the device
-enumerates as `DEV_1018`) and install the QEMU compatibility package instead (`aero-virtio-snd-legacy.inf`).
+enumerates as `PCI\VEN_1AF4&DEV_1018`) and install the QEMU compatibility package instead (`aero-virtio-snd-legacy.inf`).
 
 ### Audio backend alternatives
 
