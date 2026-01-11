@@ -4552,31 +4552,43 @@ void AEROGPU_APIENTRY ClearState11(D3D11DDI_HDEVICECONTEXT hCtx) {
   }
 
   // Unbind constant buffers and samplers using the range commands.
-  std::vector<aerogpu_constant_buffer_binding> null_cbs(kMaxConstantBufferSlots);
-  auto emit_null_cbs = [&](uint32_t stage) {
+  std::array<aerogpu_constant_buffer_binding, kMaxConstantBufferSlots> null_cbs{};
+  auto emit_null_cbs = [&](uint32_t stage) -> bool {
     auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_constant_buffers>(
         AEROGPU_CMD_SET_CONSTANT_BUFFERS, null_cbs.data(), null_cbs.size() * sizeof(null_cbs[0]));
+    if (!cmd) {
+      SetError(dev, E_OUTOFMEMORY);
+      return false;
+    }
     cmd->shader_stage = stage;
     cmd->start_slot = 0;
     cmd->buffer_count = kMaxConstantBufferSlots;
     cmd->reserved0 = 0;
+    return true;
   };
-  emit_null_cbs(AEROGPU_SHADER_STAGE_VERTEX);
-  emit_null_cbs(AEROGPU_SHADER_STAGE_PIXEL);
+  if (!emit_null_cbs(AEROGPU_SHADER_STAGE_VERTEX) || !emit_null_cbs(AEROGPU_SHADER_STAGE_PIXEL)) {
+    return;
+  }
   std::memset(dev->vs_constant_buffers, 0, sizeof(dev->vs_constant_buffers));
   std::memset(dev->ps_constant_buffers, 0, sizeof(dev->ps_constant_buffers));
 
-  std::vector<aerogpu_handle_t> null_samplers(kMaxSamplerSlots);
-  auto emit_null_samplers = [&](uint32_t stage) {
+  std::array<aerogpu_handle_t, kMaxSamplerSlots> null_samplers{};
+  auto emit_null_samplers = [&](uint32_t stage) -> bool {
     auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_samplers>(
         AEROGPU_CMD_SET_SAMPLERS, null_samplers.data(), null_samplers.size() * sizeof(null_samplers[0]));
+    if (!cmd) {
+      SetError(dev, E_OUTOFMEMORY);
+      return false;
+    }
     cmd->shader_stage = stage;
     cmd->start_slot = 0;
     cmd->sampler_count = kMaxSamplerSlots;
     cmd->reserved0 = 0;
+    return true;
   };
-  emit_null_samplers(AEROGPU_SHADER_STAGE_VERTEX);
-  emit_null_samplers(AEROGPU_SHADER_STAGE_PIXEL);
+  if (!emit_null_samplers(AEROGPU_SHADER_STAGE_VERTEX) || !emit_null_samplers(AEROGPU_SHADER_STAGE_PIXEL)) {
+    return;
+  }
   std::memset(dev->vs_samplers, 0, sizeof(dev->vs_samplers));
   std::memset(dev->ps_samplers, 0, sizeof(dev->ps_samplers));
 
@@ -4624,12 +4636,7 @@ void AEROGPU_APIENTRY ClearState11(D3D11DDI_HDEVICECONTEXT hCtx) {
   dev->viewport_min_depth = 0.0f;
   dev->viewport_max_depth = 1.0f;
 
-  auto* rt_cmd = dev->cmd.append_fixed<aerogpu_cmd_set_render_targets>(AEROGPU_CMD_SET_RENDER_TARGETS);
-  rt_cmd->color_count = 0;
-  rt_cmd->depth_stencil = 0;
-  for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; i++) {
-    rt_cmd->colors[i] = 0;
-  }
+  EmitSetRenderTargetsLocked(dev);
 
   EmitBlendStateLocked(dev, nullptr);
   EmitDepthStencilStateLocked(dev, nullptr);
