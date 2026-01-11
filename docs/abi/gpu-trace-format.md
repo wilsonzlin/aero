@@ -272,19 +272,3 @@ For canonical WDDM AeroGPU A3A0 traces, the trace header’s `command_abi_versio
 ```
 (AEROGPU_ABI_MAJOR << 16) | AEROGPU_ABI_MINOR
 ```
-
----
-
-## Appendix C: Experimental `aero-gpu-device` test ABI (AGRN/AGPC)
-
-`crates/aero-gpu-device` implements a **separate**, standalone ring/opcode ABI (FourCC
-`"AGRN"`/`"AGPC"`) used for deterministic host-side tests and for validating gpu-trace plumbing.
-It is not the WDDM AeroGPU ABI used by the Windows drivers.
-
-See [`docs/graphics/aerogpu-protocols.md`](../../docs/graphics/aerogpu-protocols.md) for an overview
-of similarly named in-tree protocols.
-
-When recording traces from this test ABI, implementations may need to serialize any resource data
-that lives in guest memory into `BlobKind::{BufferData,TextureData}` records and rewrite the
-recorded packet bytes to refer to `blob_id` values instead of guest addresses/pointers. The exact
-patching rules are specific to that ABI and are not part of the canonical A3A0 protocol.
