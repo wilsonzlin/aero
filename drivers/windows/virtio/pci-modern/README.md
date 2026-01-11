@@ -47,6 +47,7 @@ It is designed to be linked into:
 Feature negotiation additionally enforces:
 
 - `VIRTIO_F_VERSION_1` is required
+- STRICT mode requires the device to offer `VIRTIO_F_RING_INDIRECT_DESC` (bit 28)
 - `VIRTIO_F_RING_EVENT_IDX` is **never** negotiated (and STRICT mode rejects devices that offer it)
 - `VIRTIO_F_RING_PACKED` is **never** negotiated (and STRICT mode rejects devices that offer it)
 

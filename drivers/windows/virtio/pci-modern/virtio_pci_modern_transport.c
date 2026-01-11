@@ -647,9 +647,11 @@ NTSTATUS VirtioPciModernTransportNegotiateFeatures(VIRTIO_PCI_MODERN_TRANSPORT *
 	UINT64 negotiated;
 	UINT64 forbidden;
 	enum {
+		VIRTIO_F_RING_INDIRECT_DESC_BIT = 28,
 		VIRTIO_F_RING_EVENT_IDX_BIT = 29,
 		VIRTIO_F_RING_PACKED_BIT = 34,
 	};
+	UINT64 indirect_desc;
 
 	if (t == NULL || t->CommonCfg == NULL || negotiated_out == NULL) {
 		return STATUS_INVALID_PARAMETER;
@@ -663,12 +665,17 @@ NTSTATUS VirtioPciModernTransportNegotiateFeatures(VIRTIO_PCI_MODERN_TRANSPORT *
 	forbidden |= (UINT64)1u << VIRTIO_F_RING_PACKED_BIT;
 	wanted &= ~forbidden;
 	required &= ~forbidden;
+	indirect_desc = (UINT64)1u << VIRTIO_F_RING_INDIRECT_DESC_BIT;
 
 	VirtioPciModernTransportResetDevice(t);
 	VirtioPciModernTransportAddStatus(t, VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER);
 
 	device_features = VirtioPciModernTransportReadDeviceFeatures(t);
 	if ((device_features & VIRTIO_F_VERSION_1) == 0) {
+		return STATUS_NOT_SUPPORTED;
+	}
+	if (t->Mode == VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT && (device_features & indirect_desc) == 0) {
+		/* Contract v1 devices must offer INDIRECT_DESC. */
 		return STATUS_NOT_SUPPORTED;
 	}
 	if (t->Mode == VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT && (device_features & forbidden) != 0) {

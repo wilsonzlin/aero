@@ -19,6 +19,9 @@
  *   - notify_off_multiplier == 4
  *   - Feature negotiation always requires VIRTIO_F_VERSION_1 and never
  *     negotiates VIRTIO_F_RING_EVENT_IDX.
+ *
+ * Additional STRICT-mode feature contract enforcement:
+ *   - devices MUST offer VIRTIO_F_RING_INDIRECT_DESC
  */
 
 #include "../common/virtio_osdep.h"

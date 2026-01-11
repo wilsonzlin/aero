@@ -96,7 +96,7 @@ static void FakeDevInitValid(FAKE_DEV *dev)
 	volatile virtio_pci_common_cfg *common;
 
 	memset(dev, 0, sizeof(*dev));
-	dev->DeviceFeatures = VIRTIO_F_VERSION_1;
+	dev->DeviceFeatures = VIRTIO_F_VERSION_1 | ((UINT64)1u << 28); /* INDIRECT_DESC */
 	dev->DriverFeatures = 0;
 	dev->QueueSize[0] = 8;
 	dev->QueueNotifyOff[0] = 0;
@@ -496,6 +496,7 @@ static void TestNegotiateFeaturesOk(void)
 	VIRTIO_PCI_MODERN_TRANSPORT t;
 	UINT64 negotiated;
 	NTSTATUS st;
+	UINT64 wanted;
 
 	FakeDevInitValid(&dev);
 	os = GetOs(&dev);
@@ -503,10 +504,12 @@ static void TestNegotiateFeaturesOk(void)
 	st = VirtioPciModernTransportInit(&t, &os, VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT, 0x10000000u, sizeof(dev.Bar0));
 	assert(st == STATUS_SUCCESS);
 
+	wanted = (UINT64)1u << 28; /* INDIRECT_DESC */
 	negotiated = 0;
-	st = VirtioPciModernTransportNegotiateFeatures(&t, 0, 0, &negotiated);
+	st = VirtioPciModernTransportNegotiateFeatures(&t, 0, wanted, &negotiated);
 	assert(st == STATUS_SUCCESS);
 	assert((negotiated & VIRTIO_F_VERSION_1) != 0);
+	assert((negotiated & wanted) == wanted);
 	assert((negotiated & ((UINT64)1u << 29)) == 0);
 	assert((negotiated & ((UINT64)1u << 34)) == 0);
 	assert(dev.DriverFeatures == negotiated);
@@ -539,6 +542,28 @@ static void TestNegotiateFeaturesRejectNoVersion1(void)
 	VirtioPciModernTransportUninit(&t);
 }
 
+static void TestNegotiateFeaturesStrictRejectNoIndirectDesc(void)
+{
+	FAKE_DEV dev;
+	VIRTIO_PCI_MODERN_OS_INTERFACE os;
+	VIRTIO_PCI_MODERN_TRANSPORT t;
+	UINT64 negotiated;
+	NTSTATUS st;
+
+	FakeDevInitValid(&dev);
+	dev.DeviceFeatures &= ~((UINT64)1u << 28);
+
+	os = GetOs(&dev);
+	st = VirtioPciModernTransportInit(&t, &os, VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT, 0x10000000u, sizeof(dev.Bar0));
+	assert(st == STATUS_SUCCESS);
+
+	negotiated = 0;
+	st = VirtioPciModernTransportNegotiateFeatures(&t, 0, 0, &negotiated);
+	assert(st == STATUS_NOT_SUPPORTED);
+
+	VirtioPciModernTransportUninit(&t);
+}
+
 static void TestNegotiateFeaturesStrictRejectEventIdxOffered(void)
 {
 	FAKE_DEV dev;
@@ -549,7 +574,7 @@ static void TestNegotiateFeaturesStrictRejectEventIdxOffered(void)
 
 	FakeDevInitValid(&dev);
 	/* Contract v1 devices must not offer EVENT_IDX; STRICT rejects it. */
-	dev.DeviceFeatures = VIRTIO_F_VERSION_1 | ((UINT64)1u << 29);
+	dev.DeviceFeatures = VIRTIO_F_VERSION_1 | ((UINT64)1u << 28) | ((UINT64)1u << 29);
 
 	os = GetOs(&dev);
 	st = VirtioPciModernTransportInit(&t, &os, VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT, 0x10000000u, sizeof(dev.Bar0));
@@ -572,7 +597,7 @@ static void TestNegotiateFeaturesCompatDoesNotNegotiateEventIdx(void)
 
 	FakeDevInitValid(&dev);
 	/* Device offers EVENT_IDX. COMPAT mode allows init + negotiation but must not accept it. */
-	dev.DeviceFeatures = VIRTIO_F_VERSION_1 | ((UINT64)1u << 29);
+	dev.DeviceFeatures = VIRTIO_F_VERSION_1 | ((UINT64)1u << 28) | ((UINT64)1u << 29);
 
 	os = GetOs(&dev);
 	st = VirtioPciModernTransportInit(&t, &os, VIRTIO_PCI_MODERN_TRANSPORT_MODE_COMPAT, 0x10000000u, sizeof(dev.Bar0));
@@ -599,7 +624,7 @@ static void TestNegotiateFeaturesStrictRejectPackedRingOffered(void)
 
 	FakeDevInitValid(&dev);
 	/* Contract v1 devices must not offer PACKED ring; STRICT rejects it. */
-	dev.DeviceFeatures = VIRTIO_F_VERSION_1 | ((UINT64)1u << 34);
+	dev.DeviceFeatures = VIRTIO_F_VERSION_1 | ((UINT64)1u << 28) | ((UINT64)1u << 34);
 
 	os = GetOs(&dev);
 	st = VirtioPciModernTransportInit(&t, &os, VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT, 0x10000000u, sizeof(dev.Bar0));
@@ -622,7 +647,7 @@ static void TestNegotiateFeaturesCompatDoesNotNegotiatePackedRing(void)
 
 	FakeDevInitValid(&dev);
 	/* Device offers PACKED ring. COMPAT mode allows init + negotiation but must not accept it. */
-	dev.DeviceFeatures = VIRTIO_F_VERSION_1 | ((UINT64)1u << 34);
+	dev.DeviceFeatures = VIRTIO_F_VERSION_1 | ((UINT64)1u << 28) | ((UINT64)1u << 34);
 
 	os = GetOs(&dev);
 	st = VirtioPciModernTransportInit(&t, &os, VIRTIO_PCI_MODERN_TRANSPORT_MODE_COMPAT, 0x10000000u, sizeof(dev.Bar0));
@@ -854,6 +879,7 @@ int main(void)
 	TestRejectMissingDeviceCfgCap();
 	TestNegotiateFeaturesOk();
 	TestNegotiateFeaturesRejectNoVersion1();
+	TestNegotiateFeaturesStrictRejectNoIndirectDesc();
 	TestNegotiateFeaturesStrictRejectEventIdxOffered();
 	TestNegotiateFeaturesCompatDoesNotNegotiateEventIdx();
 	TestNegotiateFeaturesStrictRejectPackedRingOffered();
