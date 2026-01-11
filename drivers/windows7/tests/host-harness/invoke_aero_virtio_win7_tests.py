@@ -499,7 +499,10 @@ def main() -> int:
                         wav_path.unlink()
                     except FileNotFoundError:
                         pass
-                    audiodev_arg = f"wav,id=snd0,path={wav_path}"
+                    # Quote the path inside the audiodev keyval string so QEMU builds on Windows
+                    # (or any environment where the output path contains spaces) do not misparse it.
+                    escaped = str(wav_path).replace('"', '\\"')
+                    audiodev_arg = f'wav,id=snd0,path="{escaped}"'
                 else:
                     raise AssertionError(f"Unhandled backend: {backend}")
 
@@ -565,7 +568,8 @@ def main() -> int:
                         wav_path.unlink()
                     except FileNotFoundError:
                         pass
-                    audiodev_arg = f"wav,id=snd0,path={wav_path}"
+                    escaped = str(wav_path).replace('"', '\\"')
+                    audiodev_arg = f'wav,id=snd0,path="{escaped}"'
                 else:
                     raise AssertionError(f"Unhandled backend: {backend}")
 
