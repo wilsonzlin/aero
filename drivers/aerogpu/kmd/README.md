@@ -12,36 +12,28 @@ drivers/aerogpu/kmd/
 
 ## ABI status (legacy vs versioned)
 
-The Win7 KMD in this directory currently speaks the **legacy bring-up ABI** defined in:
+The KMD supports two AeroGPU device ABIs:
 
-- `drivers/aerogpu/protocol/aerogpu_protocol.h` (legacy BAR0 MMIO layout + ring entry format)
+* **Versioned ABI (primary, new device)**:
+  * `drivers/aerogpu/protocol/aerogpu_pci.h` (PCI IDs + MMIO register map)
+  * `drivers/aerogpu/protocol/aerogpu_ring.h` (ring + submit descriptors + fence page + optional allocation table)
+  * `drivers/aerogpu/protocol/aerogpu_cmd.h` (command stream packets)
+  * Emulator device model: `crates/emulator/src/devices/pci/aerogpu.rs`
+* **Legacy bring-up ABI (compatibility)**:
+  * Historical reference: `drivers/aerogpu/protocol/aerogpu_protocol.h`
+  * The KMD does **not** include `aerogpu_protocol.h` directly; it uses a minimal internal shim:
+    `include/aerogpu_legacy_abi.h`
+  * Emulator device model: `crates/emulator/src/devices/pci/aerogpu_legacy.rs`
 
-This matches the emulator’s legacy device model implementation (see `crates/emulator/src/devices/pci/aerogpu_legacy.rs`).
-The versioned ABI is implemented by the emulator’s non-legacy AeroGPU device model (see `crates/emulator/src/devices/pci/aerogpu.rs`).
+The KMD detects which ABI is active by reading BAR0[0] (MMIO magic):
+* New ABI: `"AGPU"` (`AEROGPU_MMIO_MAGIC`)
+* Legacy ABI: `"ARGP"` (`AEROGPU_LEGACY_MMIO_MAGIC`)
 
-Note that the legacy and versioned ABIs currently use **different PCI IDs**:
+Note that the legacy and versioned ABIs use **different PCI IDs**:
+* Legacy (`aerogpu_protocol.h`): `VID=0x1AED`, `DID=0x0001`
+* Versioned (`aerogpu_pci.h`): `VID=0xA3A0`, `DID=0x0001`
 
-- Legacy (`aerogpu_protocol.h`): `AEROGPU_PCI_VENDOR_ID=0x1AED`, `AEROGPU_PCI_DEVICE_ID=0x0001`
-- Versioned (`aerogpu_pci.h`): `AEROGPU_PCI_VENDOR_ID=0xA3A0`, `AEROGPU_PCI_DEVICE_ID=0x0001`
-
-Make sure your Win7 INF and your emulator device model agree on which VID/DID to expose.
-
-The repository also contains a newer **versioned ABI** (the long-term target) split across:
-
-- `drivers/aerogpu/protocol/aerogpu_pci.h`
-- `drivers/aerogpu/protocol/aerogpu_ring.h`
-- `drivers/aerogpu/protocol/aerogpu_cmd.h`
-
-See `drivers/aerogpu/protocol/README.md` for the versioned ABI specification and context on migrating away from the legacy header.
-
-> Note: `aerogpu_protocol.h` is the **legacy** “all-in-one” header used by the current bring-up KMD implementation.
-> The current protocol is split across:
->
-> - `drivers/aerogpu/protocol/aerogpu_pci.h` (PCI/MMIO + versioning)
-> - `drivers/aerogpu/protocol/aerogpu_ring.h` (ring + submissions + optional allocation table)
-> - `drivers/aerogpu/protocol/aerogpu_cmd.h` (command stream packets, `resource_handle`/`backing_alloc_id`, shared surface export/import)
->
-> New/updated UMDs should target the split headers. The KMD will be migrated as the ring/MMIO ABI is updated.
+See `drivers/aerogpu/protocol/README.md` for ABI details.
 
 ## Building (WDK 10 / MSBuild)
 
@@ -117,8 +109,9 @@ The driver uses `DbgPrintEx` in checked builds (`DBG=1`). Typical workflow:
 
 `DxgkDdiEscape` supports a bring-up query:
 
-- `AEROGPU_ESCAPE_OP_QUERY_DEVICE` (see `aerogpu_protocol.h`)
-  - returns the device MMIO version (`AEROGPU_REG_VERSION`)
+- `AEROGPU_ESCAPE_OP_QUERY_DEVICE` (see `drivers/aerogpu/protocol/aerogpu_dbgctl_escape.h`)
+  - returns the device's reported ABI version (`AEROGPU_MMIO_REG_ABI_VERSION` for new devices,
+    or the legacy `AEROGPU_LEGACY_REG_VERSION`)
 
 Additional debug/control escapes used by `drivers/aerogpu/tools/win7_dbgctl`:
 

@@ -81,5 +81,4 @@ AEROGPU_WDDM_ALLOC_STATIC_ASSERT(offsetof(aerogpu_wddm_alloc_priv, reserved0) ==
 #ifdef __cplusplus
 } /* extern "C" */
 #endif
-
 #endif /* AEROGPU_PROTOCOL_AEROGPU_WDDM_ALLOC_H_ */

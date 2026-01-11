@@ -4,21 +4,12 @@
 #include <d3dkmddi.h>
 
 #include "aerogpu_log.h"
-
-/*
- * NOTE: The AeroGPU project has two MMIO ABIs:
- * - Legacy: `aerogpu_protocol.h` (used by the current bring-up KMD).
- * - New:    `aerogpu_pci.h` (versioned, feature-gated; required for vblank).
- *
- * Both headers define a small set of overlapping macros (PCI IDs, MMIO magic),
- * so we capture the new ABI's magic value before including the legacy header.
- */
 #include "aerogpu_pci.h"
+#include "aerogpu_ring.h"
+#include "aerogpu_legacy_abi.h"
+
+/* Compatibility alias used by some KMD code paths. */
 #define AEROGPU_PCI_MMIO_MAGIC AEROGPU_MMIO_MAGIC /* "AGPU" */
-#undef AEROGPU_PCI_VENDOR_ID
-#undef AEROGPU_PCI_DEVICE_ID
-#undef AEROGPU_MMIO_MAGIC
-#include "aerogpu_protocol.h"
 
 /* Driver pool tag: 'A','G','P','U' */
 #define AEROGPU_POOL_TAG 'UPGA'
@@ -34,6 +25,22 @@
 #define AEROGPU_RING_ENTRY_COUNT_DEFAULT 256u
 
 #define AEROGPU_SUBMISSION_LOG_SIZE 64u
+
+/*
+ * Driver-private submission types.
+ *
+ * Legacy ABI: encoded into `aerogpu_legacy_submission_desc_header::type`.
+ * New ABI: used to derive `AEROGPU_SUBMIT_FLAG_PRESENT` via DMA private data.
+ */
+#define AEROGPU_SUBMIT_RENDER 1u
+#define AEROGPU_SUBMIT_PRESENT 2u
+#define AEROGPU_SUBMIT_PAGING 3u
+
+typedef enum _AEROGPU_ABI_KIND {
+    AEROGPU_ABI_KIND_UNKNOWN = 0,
+    AEROGPU_ABI_KIND_LEGACY = 1,
+    AEROGPU_ABI_KIND_V1 = 2,
+} AEROGPU_ABI_KIND;
 
 typedef struct _AEROGPU_SUBMISSION_LOG_ENTRY {
     ULONG Fence;
@@ -51,11 +58,14 @@ typedef struct _AEROGPU_SUBMISSION_META {
     PVOID AllocTableVa;
     PHYSICAL_ADDRESS AllocTablePa;
     UINT AllocTableSizeBytes;
+
+    UINT AllocationCount;
+    aerogpu_legacy_submission_desc_allocation Allocations[1]; /* variable length */
 } AEROGPU_SUBMISSION_META;
 
 typedef struct _AEROGPU_SUBMISSION {
     LIST_ENTRY ListEntry;
-    ULONG Fence;
+    ULONGLONG Fence;
 
     PVOID DmaCopyVa;
     SIZE_T DmaCopySize;
@@ -98,24 +108,30 @@ typedef struct _AEROGPU_ADAPTER {
 
     PVOID RingVa;
     PHYSICAL_ADDRESS RingPa;
+    ULONG RingSizeBytes;
     ULONG RingEntryCount;
     ULONG RingTail;
+    struct aerogpu_ring_header* RingHeader; /* Only when AbiKind == AEROGPU_ABI_KIND_V1 */
+    struct aerogpu_fence_page* FencePageVa; /* Only when AbiKind == AEROGPU_ABI_KIND_V1 */
+    PHYSICAL_ADDRESS FencePagePa;
     KSPIN_LOCK RingLock;
 
     LIST_ENTRY PendingSubmissions;
     KSPIN_LOCK PendingLock;
-    ULONG LastSubmittedFence;
-    ULONG LastCompletedFence;
+    ULONGLONG LastSubmittedFence;
+    ULONGLONG LastCompletedFence;
 
     LIST_ENTRY Allocations;
     KSPIN_LOCK AllocationsLock;
     volatile LONG NextAllocationId;
 
+    AEROGPU_ABI_KIND AbiKind;
+
     /* Current mode (programmed via CommitVidPn / SetVidPnSourceAddress). */
     ULONG CurrentWidth;
     ULONG CurrentHeight;
     ULONG CurrentPitch;
-    ULONG CurrentFormat; /* aerogpu_scanout_format */
+    ULONG CurrentFormat; /* enum aerogpu_format */
     BOOLEAN SourceVisible;
     BOOLEAN UsingNewAbi;
 

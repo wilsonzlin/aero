@@ -32,7 +32,7 @@ Binaries are staged under:
 * Win7 packaging/signing/install: `drivers/aerogpu/packaging/win7/README.md`
 * Guest-side validation tests: `drivers/aerogpu/tests/win7/README.md`
 * Protocol / device ABI: `drivers/aerogpu/protocol/README.md` (see `aerogpu_pci.h`, `aerogpu_ring.h`, `aerogpu_cmd.h`)
-* Legacy bring-up ABI header (legacy MMIO + ring; still used by the legacy KMD path): `drivers/aerogpu/protocol/aerogpu_protocol.h`
+* Legacy bring-up ABI header (deprecated; still used by the legacy KMD path): `drivers/aerogpu/protocol/aerogpu_protocol.h`
 * Debug control tool (bring-up): `drivers/aerogpu/tools/win7_dbgctl/README.md`
 
 ## Direct MSBuild (optional)
