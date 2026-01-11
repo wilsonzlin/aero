@@ -27,6 +27,7 @@
 #include <new>
 #include <tuple>
 #include <type_traits>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -779,6 +780,7 @@ struct AeroGpuRenderTargetView {
 
 struct AeroGpuDepthStencilView {
   aerogpu_handle_t texture = 0;
+  AeroGpuResource* resource = nullptr;
 };
 
 struct AeroGpuShaderResourceView {
@@ -918,6 +920,7 @@ struct AeroGpuDevice {
 
   // Minimal state required for CPU-side readback tests (`d3d10_triangle`).
   AeroGpuResource* current_rtv_res = nullptr;
+  AeroGpuResource* current_dsv_res = nullptr;
   AeroGpuResource* current_vb_res = nullptr;
   uint32_t current_vb_stride = 0;
   uint32_t current_vb_offset = 0;
@@ -1524,6 +1527,7 @@ static void UnbindResourceFromOutputsLocked(AeroGpuDevice* dev, aerogpu_handle_t
   }
   if (dev->current_dsv == resource) {
     dev->current_dsv = 0;
+    dev->current_dsv_res = nullptr;
     changed = true;
   }
   if (changed) {
@@ -3315,6 +3319,7 @@ HRESULT APIENTRY CreateDepthStencilView(D3D10DDI_HDEVICE hDevice,
   auto* res = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(hRes);
   auto* dsv = new (hView.pDrvPrivate) AeroGpuDepthStencilView();
   dsv->texture = res ? res->handle : 0;
+  dsv->resource = res;
   return S_OK;
 }
 
@@ -4296,18 +4301,22 @@ void APIENTRY SetRenderTargets(D3D10DDI_HDEVICE hDevice,
   aerogpu_handle_t rtv_handle = 0;
   AeroGpuResource* rtv_res = nullptr;
   aerogpu_handle_t dsv_handle = 0;
+  AeroGpuResource* dsv_res = nullptr;
   if (numViews && phViews && phViews[0].pDrvPrivate) {
     auto* view = FromHandle<D3D10DDI_HRENDERTARGETVIEW, AeroGpuRenderTargetView>(phViews[0]);
     rtv_res = view ? view->resource : nullptr;
     rtv_handle = rtv_res ? rtv_res->handle : (view ? view->texture : 0);
   }
   if (hDsv.pDrvPrivate) {
-    dsv_handle = FromHandle<D3D10DDI_HDEPTHSTENCILVIEW, AeroGpuDepthStencilView>(hDsv)->texture;
+    auto* view = FromHandle<D3D10DDI_HDEPTHSTENCILVIEW, AeroGpuDepthStencilView>(hDsv);
+    dsv_res = view ? view->resource : nullptr;
+    dsv_handle = dsv_res ? dsv_res->handle : (view ? view->texture : 0);
   }
 
   dev->current_rtv = rtv_handle;
   dev->current_rtv_res = rtv_res;
   dev->current_dsv = dsv_handle;
+  dev->current_dsv_res = dsv_res;
 
   UnbindResourceFromSrvsLocked(dev, dev->current_rtv);
   UnbindResourceFromSrvsLocked(dev, dev->current_dsv);

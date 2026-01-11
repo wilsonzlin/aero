@@ -16,6 +16,7 @@ namespace aerogpu::d3d10_11 {
 // This module is compiled only in WDK builds (`AEROGPU_UMD_USE_WDK_HEADERS=1`).
 // Repository builds do not have access to the WDK DDI headers, so the class is
 // intentionally a stub when those headers are unavailable.
+
 #if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS
 
 class WddmSubmit {
@@ -125,12 +126,12 @@ class WddmSubmit {
   uint32_t hContext() const {
     return 0;
   }
-   uint32_t hSyncObject() const {
-     return 0;
-   }
-   HRESULT SubmitAeroCmdStream(const uint8_t*, size_t, bool, const uint32_t*, uint32_t, uint64_t*) {
-     return E_NOTIMPL;
-   }
+  uint32_t hSyncObject() const {
+    return 0;
+  }
+  HRESULT SubmitAeroCmdStream(const uint8_t*, size_t, bool, const uint32_t*, uint32_t, uint64_t*) {
+    return E_NOTIMPL;
+  }
   HRESULT WaitForFenceWithTimeout(uint64_t, uint32_t) {
     return E_NOTIMPL;
   }

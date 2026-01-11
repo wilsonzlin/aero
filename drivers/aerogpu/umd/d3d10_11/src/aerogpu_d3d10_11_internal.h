@@ -8,6 +8,7 @@
 // defined in `drivers/aerogpu/protocol/aerogpu_cmd.h`.
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <condition_variable>
@@ -16,6 +17,7 @@
 #include <cstring>
 #include <mutex>
 #include <new>
+#include <unordered_map>
 #include <vector>
 
 #include "aerogpu_cmd_writer.h"

@@ -3,6 +3,7 @@
 #if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS
 
 #include <algorithm>
+#include <atomic>
 #include <cassert>
 #include <cstring>
 #include <limits>
@@ -43,6 +44,19 @@ constexpr bool NtSuccess(NTSTATUS st) {
 #ifndef STATUS_INVALID_PARAMETER
   #define STATUS_INVALID_PARAMETER ((NTSTATUS)0xC000000DL)
 #endif
+
+// -----------------------------------------------------------------------------
+// WDDM allocation-list tracking (Win7 / WDDM 1.1)
+// -----------------------------------------------------------------------------
+//
+// AeroGPU uses a "no patch list" submission strategy:
+// - Commands reference allocations via stable 32-bit `alloc_id` values.
+// - `alloc_id` is carried in the per-allocation private driver data blob and
+//   copied by the KMD into `DXGK_ALLOCATION::AllocationId`.
+// - The KMD builds a per-submit allocation table from the WDDM allocation list,
+//   keyed by `AllocationId`, so the host can resolve `alloc_id -> GPA/size`.
+// - Since we do not use patch relocations, the allocation-list slot id can be a
+//   dense 0..N-1 sequence and does not need to match `alloc_id`.
 
 template <typename Fn>
 struct fn_first_param;
@@ -720,6 +734,11 @@ template <typename T>
 struct has_member_AllocationListSize<T, std::void_t<decltype(std::declval<T>().AllocationListSize)>> : std::true_type {};
 
 template <typename T, typename = void>
+struct has_member_NumAllocations : std::false_type {};
+template <typename T>
+struct has_member_NumAllocations<T, std::void_t<decltype(std::declval<T>().NumAllocations)>> : std::true_type {};
+
+template <typename T, typename = void>
 struct has_member_pPatchLocationList : std::false_type {};
 template <typename T>
 struct has_member_pPatchLocationList<T, std::void_t<decltype(std::declval<T>().pPatchLocationList)>> : std::true_type {};
@@ -728,6 +747,11 @@ template <typename T, typename = void>
 struct has_member_PatchLocationListSize : std::false_type {};
 template <typename T>
 struct has_member_PatchLocationListSize<T, std::void_t<decltype(std::declval<T>().PatchLocationListSize)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_NumPatchLocations : std::false_type {};
+template <typename T>
+struct has_member_NumPatchLocations<T, std::void_t<decltype(std::declval<T>().NumPatchLocations)>> : std::true_type {};
 
 template <typename SubmitArgsT>
 void update_buffers_from_submit_args(SubmissionBuffers* buf, const SubmitArgsT& args) {
@@ -773,7 +797,9 @@ void update_buffers_from_submit_args(SubmissionBuffers* buf, const SubmitArgsT& 
         buf->allocation_list = args.pAllocationList;
       }
     }
-    if constexpr (has_member_AllocationListSize<SubmitArgsT>::value) {
+    // Only update the cached allocation-list *capacity* when the submit args
+    // struct explicitly splits "capacity" vs "entries used" via `NumAllocations`.
+    if constexpr (has_member_AllocationListSize<SubmitArgsT>::value && has_member_NumAllocations<SubmitArgsT>::value) {
       if (args.AllocationListSize) {
         buf->allocation_list_entries = args.AllocationListSize;
       }
@@ -794,7 +820,9 @@ void update_buffers_from_submit_args(SubmissionBuffers* buf, const SubmitArgsT& 
         buf->patch_location_list = args.pPatchLocationList;
       }
     }
-    if constexpr (has_member_PatchLocationListSize<SubmitArgsT>::value) {
+    // Same semantics as the allocation list: only treat PatchLocationListSize as
+    // a capacity field when `NumPatchLocations` exists alongside it.
+    if constexpr (has_member_PatchLocationListSize<SubmitArgsT>::value && has_member_NumPatchLocations<SubmitArgsT>::value) {
       if (args.PatchLocationListSize) {
         buf->patch_location_list_entries = args.PatchLocationListSize;
       }
@@ -1203,10 +1231,56 @@ HRESULT submit_chunk(const D3DDDI_DEVICECALLBACKS* callbacks,
   if (!callbacks || !runtime_device_private || !buf || !buf->command_buffer || chunk_size == 0) {
     return E_INVALIDARG;
   }
+  if (allocation_list_size != 0 && (!buf->allocation_list || buf->allocation_list_entries < allocation_list_size)) {
+    AEROGPU_D3D10_11_LOG("wddm_submit: allocation list missing/too small (ptr=%p cap=%u used=%u)",
+                         buf->allocation_list,
+                         static_cast<unsigned>(buf->allocation_list_entries),
+                         static_cast<unsigned>(allocation_list_size));
+    return E_OUTOFMEMORY;
+  }
+  const UINT allocations_used = allocation_list_size;
+
+  const UINT patch_locations_used = 0;
 
   HRESULT submit_hr = E_NOTIMPL;
   uint64_t fence = 0;
   const HRESULT status_invalid_parameter = static_cast<HRESULT>(STATUS_INVALID_PARAMETER);
+
+  const auto fill_submit_lists = [&](auto& args) {
+    using ArgsT = std::remove_reference_t<decltype(args)>;
+
+    if constexpr (has_member_pAllocationList<ArgsT>::value) {
+      args.pAllocationList = buf->allocation_list;
+    }
+    if constexpr (has_member_AllocationListSize<ArgsT>::value) {
+      if constexpr (has_member_NumAllocations<ArgsT>::value) {
+        // Capacity field.
+        args.AllocationListSize = buf->allocation_list_entries;
+      } else {
+        // Legacy structs: AllocationListSize is the used count.
+        args.AllocationListSize = allocations_used;
+      }
+    }
+    if constexpr (has_member_NumAllocations<ArgsT>::value) {
+      args.NumAllocations = allocations_used;
+    }
+
+    if constexpr (has_member_pPatchLocationList<ArgsT>::value) {
+      args.pPatchLocationList = buf->patch_location_list_entries ? buf->patch_location_list : nullptr;
+    }
+    if constexpr (has_member_PatchLocationListSize<ArgsT>::value) {
+      if constexpr (has_member_NumPatchLocations<ArgsT>::value) {
+        // Capacity field.
+        args.PatchLocationListSize = buf->patch_location_list_entries;
+      } else {
+        // Used count.
+        args.PatchLocationListSize = patch_locations_used;
+      }
+    }
+    if constexpr (has_member_NumPatchLocations<ArgsT>::value) {
+      args.NumPatchLocations = patch_locations_used;
+    }
+  };
 
   if (do_present) {
     if constexpr (!has_pfnPresentCb<D3DDDI_DEVICECALLBACKS>::value) {
@@ -1236,18 +1310,7 @@ HRESULT submit_chunk(const D3DDDI_DEVICECALLBACKS* callbacks,
       __if_exists(D3DDDICB_PRESENT::CommandBufferSize) {
         present.CommandBufferSize = buf->command_buffer_bytes;
       }
-      __if_exists(D3DDDICB_PRESENT::pAllocationList) {
-        present.pAllocationList = buf->allocation_list;
-      }
-      __if_exists(D3DDDICB_PRESENT::AllocationListSize) {
-        present.AllocationListSize = allocation_list_size;
-      }
-      __if_exists(D3DDDICB_PRESENT::pPatchLocationList) {
-        present.pPatchLocationList = buf->patch_location_list;
-      }
-      __if_exists(D3DDDICB_PRESENT::PatchLocationListSize) {
-        present.PatchLocationListSize = 0;
-      }
+      fill_submit_lists(present);
       __if_exists(D3DDDICB_PRESENT::pDmaBufferPrivateData) {
         present.pDmaBufferPrivateData = buf->dma_private_data;
       }
@@ -1268,6 +1331,18 @@ HRESULT submit_chunk(const D3DDDI_DEVICECALLBACKS* callbacks,
       if (SUCCEEDED(submit_hr)) {
         fence = extract_submit_fence(present);
         update_buffers_from_submit_args(buf, present);
+        if (allocations_used != 0 && buf->dma_private_data &&
+            buf->dma_private_data_bytes >= static_cast<UINT>(AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES)) {
+          AEROGPU_DMA_PRIV priv{};
+          std::memcpy(&priv, buf->dma_private_data, sizeof(priv));
+          if (priv.MetaHandle == 0) {
+            static std::atomic<uint32_t> g_missing_meta_logs{0};
+            const uint32_t n = g_missing_meta_logs.fetch_add(1, std::memory_order_relaxed);
+            if ((n < 8) || ((n & 1023u) == 0)) {
+              AEROGPU_D3D10_11_LOG("wddm_submit: present missing MetaHandle (allocs=%u)", static_cast<unsigned>(allocations_used));
+            }
+          }
+        }
       } else if (submit_hr == E_INVALIDARG || submit_hr == status_invalid_parameter) {
         AEROGPU_D3D10_11_LOG("wddm_submit: PresentCb invalid parameter hr=0x%08x dma_priv=%p bytes=%u",
                              static_cast<unsigned>(submit_hr),
@@ -1303,18 +1378,7 @@ HRESULT submit_chunk(const D3DDDI_DEVICECALLBACKS* callbacks,
       __if_exists(D3DDDICB_RENDER::CommandBufferSize) {
         render.CommandBufferSize = buf->command_buffer_bytes;
       }
-      __if_exists(D3DDDICB_RENDER::pAllocationList) {
-        render.pAllocationList = buf->allocation_list;
-      }
-      __if_exists(D3DDDICB_RENDER::AllocationListSize) {
-        render.AllocationListSize = allocation_list_size;
-      }
-      __if_exists(D3DDDICB_RENDER::pPatchLocationList) {
-        render.pPatchLocationList = buf->patch_location_list;
-      }
-      __if_exists(D3DDDICB_RENDER::PatchLocationListSize) {
-        render.PatchLocationListSize = 0;
-      }
+      fill_submit_lists(render);
       __if_exists(D3DDDICB_RENDER::pDmaBufferPrivateData) {
         render.pDmaBufferPrivateData = buf->dma_private_data;
       }
@@ -1333,6 +1397,18 @@ HRESULT submit_chunk(const D3DDDI_DEVICECALLBACKS* callbacks,
       if (SUCCEEDED(submit_hr)) {
         fence = extract_submit_fence(render);
         update_buffers_from_submit_args(buf, render);
+        if (allocations_used != 0 && buf->dma_private_data &&
+            buf->dma_private_data_bytes >= static_cast<UINT>(AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES)) {
+          AEROGPU_DMA_PRIV priv{};
+          std::memcpy(&priv, buf->dma_private_data, sizeof(priv));
+          if (priv.MetaHandle == 0) {
+            static std::atomic<uint32_t> g_missing_meta_logs{0};
+            const uint32_t n = g_missing_meta_logs.fetch_add(1, std::memory_order_relaxed);
+            if ((n < 8) || ((n & 1023u) == 0)) {
+              AEROGPU_D3D10_11_LOG("wddm_submit: render missing MetaHandle (allocs=%u)", static_cast<unsigned>(allocations_used));
+            }
+          }
+        }
       } else if (submit_hr == E_INVALIDARG || submit_hr == status_invalid_parameter) {
         AEROGPU_D3D10_11_LOG("wddm_submit: RenderCb invalid parameter hr=0x%08x dma_priv=%p bytes=%u",
                              static_cast<unsigned>(submit_hr),
@@ -1351,11 +1427,11 @@ HRESULT submit_chunk(const D3DDDI_DEVICECALLBACKS* callbacks,
 } // namespace
 
 HRESULT WddmSubmit::SubmitAeroCmdStream(const uint8_t* stream_bytes,
-                                        size_t stream_size,
-                                        bool want_present,
-                                        const uint32_t* allocation_handles,
-                                        uint32_t allocation_handle_count,
-                                        uint64_t* out_fence) {
+                                         size_t stream_size,
+                                         bool want_present,
+                                         const uint32_t* allocation_handles,
+                                         uint32_t allocation_handle_count,
+                                         uint64_t* out_fence) {
   if (out_fence) {
     *out_fence = 0;
   }

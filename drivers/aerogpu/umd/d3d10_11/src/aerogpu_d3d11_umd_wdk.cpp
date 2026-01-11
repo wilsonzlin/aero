@@ -2769,7 +2769,6 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
             dev->wddm_submit_allocation_handles.end()) {
       dev->wddm_submit_allocation_handles.push_back(res->wddm_allocation_handle);
     }
-
     return S_OK;
   }
 
@@ -2867,7 +2866,6 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
             dev->wddm_submit_allocation_handles.end()) {
       dev->wddm_submit_allocation_handles.push_back(res->wddm_allocation_handle);
     }
-
     return S_OK;
   }
 

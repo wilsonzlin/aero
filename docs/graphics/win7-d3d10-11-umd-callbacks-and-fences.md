@@ -338,8 +338,16 @@ Important fields:
   - `VOID* pDmaBuffer` (often the same pointer as `pCommandBuffer`)
   - `UINT DmaBufferSize` (bytes; often the same value as `CommandLength`)
 - `UINT CommandBufferSize` (bytes; some WDKs include this as an in/out field)
-- `UINT AllocationListSize` (count) + `D3DDDI_ALLOCATIONLIST* pAllocationList`
-- `UINT PatchLocationListSize` (count) + `D3DDDI_PATCHLOCATIONLIST* pPatchLocationList`
+- Allocation list fields (**header drift warning**):
+  - Legacy structs use `UINT AllocationListSize` as the **used count** (entries).
+  - Some Win7-era structs instead split **capacity vs. used** across:
+    - `UINT AllocationListSize` (**capacity**) and
+    - `UINT NumAllocations` (**used count**)
+- Patch list fields (AeroGPU typically uses an empty patch list, but fields must be consistent):
+  - Legacy structs use `UINT PatchLocationListSize` as the **used count**.
+  - Some structs split **capacity vs. used** across:
+    - `UINT PatchLocationListSize` (**capacity**) and
+    - `UINT NumPatchLocations` (**used count**)
 - `VOID* pDmaBufferPrivateData`
 
 Fence output (Win7 pattern):
@@ -397,16 +405,22 @@ At a “flush boundary” (e.g. `D3D10DDI_DEVICEFUNCS::pfnFlush` or `D3D11DDI_DE
    - Write patch entries into `pPatchLocationList[0..M)` (for AeroGPU, typically `M=0`).
    - If `pDmaBufferPrivateData != NULL`, write per-submit metadata into it (fixed-size).
 4. **Submit**:
-     - Fill `D3DDDICB_RENDER`:
+      - Fill `D3DDDICB_RENDER`:
        - `hContext = ...`
        - `CommandLength = <bytes actually written>`
        - `pCommandBuffer = pCommandBuffer`
        - if your header uses `pDmaBuffer`/`DmaBufferSize`, set them consistently:
          - `pDmaBuffer = pCommandBuffer`
          - `DmaBufferSize = CommandLength`
-       - `AllocationListSize = N`, `pAllocationList = pAllocationList`
-       - `PatchLocationListSize = M`, `pPatchLocationList = pPatchLocationList`
-       - `pDmaBufferPrivateData = pDmaBufferPrivateData` (or `NULL` if not used / size is 0)
+        - Allocation list:
+          - If `NumAllocations` exists: `AllocationListSize = <capacity>`, `NumAllocations = N`
+          - Else: `AllocationListSize = N`
+          - Always set `pAllocationList = pAllocationList`
+        - Patch list (AeroGPU uses `M=0`, but match struct layout):
+          - If `NumPatchLocations` exists: `PatchLocationListSize = <capacity>`, `NumPatchLocations = M`
+          - Else: `PatchLocationListSize = M`
+          - Always set `pPatchLocationList` consistently (either `NULL` with size 0, or a valid pointer with size 0)
+        - `pDmaBufferPrivateData = pDmaBufferPrivateData` (or `NULL` if not used / size is 0)
      - Call `pfnRenderCb(&render)`.
      - On success:
        - read back `render.NewFenceValue` (or `render.SubmissionFenceId`) and treat it as the fence value for this submission (store it as “last submitted”, and use it to update per-resource “last write fence” tracking)

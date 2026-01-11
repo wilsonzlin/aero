@@ -33,6 +33,7 @@
 #include <mutex>
 #include <new>
 #include <type_traits>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -506,6 +507,7 @@ struct AeroGpuDevice {
 
   // Minimal state required for CPU-side readback tests (`d3d10_triangle`, `d3d10_1_triangle`).
   AeroGpuResource* current_rtv_res = nullptr;
+  AeroGpuResource* current_dsv_res = nullptr;
   AeroGpuResource* current_vb_res = nullptr;
   uint32_t current_vb_stride = 0;
   uint32_t current_vb_offset = 0;
@@ -2432,6 +2434,18 @@ void AEROGPU_APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOUR
     UntrackSubmitAllocationHandleLocked(dev, res->wddm_allocation_handle);
   }
 
+  if (dev->current_dsv_res == res) {
+    dev->current_dsv_res = nullptr;
+    dev->current_dsv = 0;
+    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_render_targets>(AEROGPU_CMD_SET_RENDER_TARGETS);
+    cmd->color_count = dev->current_rtv ? 1 : 0;
+    cmd->depth_stencil = 0;
+    for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; i++) {
+      cmd->colors[i] = 0;
+    }
+    cmd->colors[0] = dev->current_rtv;
+  }
+
   if (dev->current_rtv_res == res) {
     dev->current_rtv_res = nullptr;
     dev->current_rtv = 0;
@@ -4249,13 +4263,17 @@ void AEROGPU_APIENTRY SetRenderTargets(D3D10DDI_HDEVICE hDevice,
   }
 
   aerogpu_handle_t dsv_handle = 0;
+  AeroGpuResource* dsv_res = nullptr;
   if (hDsv.pDrvPrivate) {
-    dsv_handle = FromHandle<D3D10DDI_HDEPTHSTENCILVIEW, AeroGpuDepthStencilView>(hDsv)->texture;
+    auto* view = FromHandle<D3D10DDI_HDEPTHSTENCILVIEW, AeroGpuDepthStencilView>(hDsv);
+    dsv_res = view ? view->resource : nullptr;
+    dsv_handle = dsv_res ? dsv_res->handle : (view ? view->texture : 0);
   }
 
   dev->current_rtv = rtv_handle;
   dev->current_rtv_res = rtv_res;
   dev->current_dsv = dsv_handle;
+  dev->current_dsv_res = dsv_res;
 
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_render_targets>(AEROGPU_CMD_SET_RENDER_TARGETS);
   cmd->color_count = (pRTVs && num_rtvs > 0) ? 1 : 0;
