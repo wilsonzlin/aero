@@ -5201,13 +5201,31 @@ mod tests {
     use super::*;
     use aero_protocol::aerogpu::aerogpu_cmd::AerogpuCmdOpcode;
 
+    fn require_webgpu() -> bool {
+        let Ok(raw) = std::env::var("AERO_REQUIRE_WEBGPU") else {
+            return false;
+        };
+        let v = raw.trim();
+        v == "1"
+            || v.eq_ignore_ascii_case("true")
+            || v.eq_ignore_ascii_case("yes")
+            || v.eq_ignore_ascii_case("on")
+    }
+
+    fn skip_or_panic(test_name: &str, reason: &str) {
+        if require_webgpu() {
+            panic!("AERO_REQUIRE_WEBGPU is enabled but {test_name} cannot run: {reason}");
+        }
+        eprintln!("skipping {test_name}: {reason}");
+    }
+
     #[test]
     fn set_shader_constants_f_marks_encoder_has_commands() {
         pollster::block_on(async {
             let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
                 Ok(exec) => exec,
                 Err(e) => {
-                    eprintln!("wgpu unavailable ({e:#}); skipping encoder_has_commands test");
+                    skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
                     return;
                 }
             };
