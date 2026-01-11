@@ -12,7 +12,6 @@ Goals:
 Important:
 
 - The `sample/` subtree contains **non-functional placeholder files** used for tooling/CI.
-- Real driver artifacts (`.inf` / `.sys` / `.cat`) should be placed under `prebuilt/`.
+- Real driver artifacts (`.inf` / `.sys` / `.cat`, plus any INF-referenced payload files such as `WdfCoInstaller*.dll`) should be placed under `prebuilt/`.
 
 See `docs/virtio-windows-drivers.md` for installation steps and signing notes.
-

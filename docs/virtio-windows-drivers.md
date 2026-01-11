@@ -17,7 +17,7 @@ See also:
 This document defines:
 
 - The chosen driver approach (and licensing rationale)
-- The required on-disk packaging layout (`.inf` + `.sys` + `.cat`)
+- The required on-disk packaging layout (`.inf` + `.sys` + `.cat`, plus any INF-referenced payload files such as `WdfCoInstaller*.dll`)
 - A reproducible “drivers ISO” build flow for the emulator UX
 - Windows 7 installation steps (Device Manager + `pnputil`)
 - Win7 x64 test-signing mode flow + test certificate tooling

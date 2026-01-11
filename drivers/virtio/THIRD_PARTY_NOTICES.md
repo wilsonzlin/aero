@@ -2,7 +2,7 @@
 
 This directory is intended to contain (or be populated from) the **virtio-win** driver project.
 
-When Aero starts redistributing real `.inf`/`.sys`/`.cat` artifacts under `drivers/virtio/prebuilt/`, add:
+When Aero starts redistributing real driver artifacts under `drivers/virtio/prebuilt/` (at minimum `.inf`/`.sys`/`.cat`, plus any INF-referenced payloads such as `*.dll`), add:
 
 - the pinned upstream version (tag/commit + download URL)
 - the upstream license texts copied verbatim

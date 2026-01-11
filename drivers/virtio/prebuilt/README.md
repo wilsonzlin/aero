@@ -25,3 +25,6 @@ python3 tools/driver-iso/build.py \
 Tip: the script `drivers/scripts/make-driver-pack.ps1` already produces a compatible staging directory
 at `drivers/out/aero-win7-driver-pack/`. You can point the ISO builder at that directory directly
 instead of copying into `drivers/virtio/prebuilt/`.
+
+Note: driver directories may also contain additional payload files referenced by the INF, such as
+KMDF coinstallers (`WdfCoInstaller*.dll`) or other helper DLLs.
