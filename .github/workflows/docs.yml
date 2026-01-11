@@ -9,6 +9,7 @@ on:
       - ".markdownlint-cli2.jsonc"
       - "scripts/ci/check-windows7-virtio-contract-consistency.py"
       - "scripts/ci/check-aerogpu-share-token-contract.py"
+      - "scripts/ci/check-usb-doc-paths.py"
       - "scripts/ci/gen-guest-tools-devices-cmd.py"
       - "scripts/generate-guest-tools-devices-cmd.py"
       - "guest-tools/config/devices.cmd"
@@ -42,6 +43,7 @@ on:
       - ".markdownlint-cli2.jsonc"
       - "scripts/ci/check-windows7-virtio-contract-consistency.py"
       - "scripts/ci/check-aerogpu-share-token-contract.py"
+      - "scripts/ci/check-usb-doc-paths.py"
       - "scripts/ci/gen-guest-tools-devices-cmd.py"
       - "scripts/generate-guest-tools-devices-cmd.py"
       - "guest-tools/config/devices.cmd"
@@ -96,6 +98,9 @@ jobs:
             AGENTS.md
             README*.md
             docs/**/*.md
+
+      - name: Check docs for emulator-only USB path pointers
+        run: python3 scripts/ci/check-usb-doc-paths.py
 
       - name: Check Windows 7 virtio contract consistency
         run: python3 scripts/ci/check-windows7-virtio-contract-consistency.py
