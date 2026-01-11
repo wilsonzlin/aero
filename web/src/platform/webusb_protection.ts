@@ -7,7 +7,7 @@ export type WebUsbInterfaceDescriptor = {
   protocolCode: number;
 };
 
-export type WebUsbDeviceClassification = {
+export type WebUsbProtectionClassification = {
   hasAnyInterfaces: boolean;
   hasUnprotectedInterfaces: boolean;
   protected: WebUsbInterfaceDescriptor[];
@@ -76,7 +76,7 @@ export function describeUsbClassCode(classCode: number): string {
   return `0x${normalized.toString(16).toUpperCase().padStart(2, "0")}`;
 }
 
-export function classifyWebUsbDevice(device: USBDevice): WebUsbDeviceClassification {
+export function classifyWebUsbDevice(device: USBDevice): WebUsbProtectionClassification {
   const protectedInterfaces: WebUsbInterfaceDescriptor[] = [];
   const unprotectedInterfaces: WebUsbInterfaceDescriptor[] = [];
 
