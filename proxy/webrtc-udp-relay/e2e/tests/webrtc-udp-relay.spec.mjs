@@ -1161,3 +1161,181 @@ test("forwards client Origin + auth credential when bridging an L2 tunnel (query
     await Promise.all([web.close(), relay.kill(), backend.kill()]);
   }
 });
+
+test("forwards client Origin + auth credential when bridging an L2 tunnel (subprotocol)", async ({ page }) => {
+  const apiKey = "e2e-credential";
+  const web = await startWebServer();
+  const expectedOrigin = new URL(web.url).origin;
+  const backend = await spawnL2BackendServer({
+    REQUIRE_ORIGIN: expectedOrigin,
+    REQUIRE_TOKEN: apiKey,
+  });
+  const relay = await spawnRelayServer({
+    AUTH_MODE: "api_key",
+    API_KEY: apiKey,
+    L2_BACKEND_WS_URL: `ws://127.0.0.1:${backend.port}/l2`,
+    L2_BACKEND_AUTH_FORWARD_MODE: "subprotocol",
+    // Forward the browser Origin by default; set explicitly to keep the test deterministic.
+    L2_BACKEND_FORWARD_ORIGIN: "1",
+    // Ensure we test the per-session forwarded credential, not a fixed backend token.
+    L2_BACKEND_WS_TOKEN: "",
+    L2_BACKEND_WS_ORIGIN: "",
+    L2_BACKEND_ORIGIN_OVERRIDE: "",
+  });
+
+  try {
+    await page.goto(web.url);
+
+    const pong = await page.evaluate(
+      async ({ relayPort, apiKey }) => {
+        const iceResp = await fetch(`http://127.0.0.1:${relayPort}/webrtc/ice`, {
+          headers: {
+            "X-API-Key": apiKey,
+          },
+        }).then((r) => r.json());
+        if (!iceResp?.iceServers || !Array.isArray(iceResp.iceServers)) {
+          throw new Error("invalid ice server response");
+        }
+        const iceServers = iceResp.iceServers;
+
+        const ws = new WebSocket(`ws://127.0.0.1:${relayPort}/webrtc/signal`);
+        await new Promise((resolve, reject) => {
+          ws.addEventListener("open", () => resolve(), { once: true });
+          ws.addEventListener("error", () => reject(new Error("ws error")), { once: true });
+        });
+
+        // WebSocket upgrade requests cannot include arbitrary headers, so we
+        // authenticate using the first control-plane message.
+        ws.send(JSON.stringify({ type: "auth", apiKey }));
+
+        const pc = new RTCPeerConnection({ iceServers });
+        const pendingCandidates = [];
+        let remoteDescriptionSet = false;
+        // L2 tunnel MUST be reliable (no partial reliability). Do not set maxRetransmits/maxPacketLifeTime.
+        const dc = pc.createDataChannel("l2", { ordered: false });
+        dc.binaryType = "arraybuffer";
+
+        const answerPromise = new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => reject(new Error("timed out waiting for answer")), 10_000);
+          let answered = false;
+          const onMessage = (event) => {
+            let msg;
+            try {
+              msg = JSON.parse(event.data);
+            } catch {
+              clearTimeout(timeout);
+              ws.removeEventListener("message", onMessage);
+              reject(new Error("invalid signaling message (not JSON)"));
+              return;
+            }
+
+            if (msg?.type === "error") {
+              clearTimeout(timeout);
+              ws.removeEventListener("message", onMessage);
+              reject(new Error(`signaling error: ${msg.code ?? "unknown"}: ${msg.message ?? ""}`));
+              return;
+            }
+
+            if (msg?.type === "candidate") {
+              if (!msg.candidate?.candidate) return;
+              if (remoteDescriptionSet) {
+                pc.addIceCandidate(msg.candidate).catch(() => {});
+              } else {
+                pendingCandidates.push(msg.candidate);
+              }
+              return;
+            }
+
+            if (msg?.type !== "answer") return;
+            if (answered) return;
+            answered = true;
+            clearTimeout(timeout);
+            resolve(msg);
+          };
+          ws.addEventListener("message", onMessage);
+        });
+
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+
+        await new Promise((resolve) => {
+          if (pc.iceGatheringState === "complete") return resolve();
+          const onState = () => {
+            if (pc.iceGatheringState !== "complete") return;
+            pc.removeEventListener("icegatheringstatechange", onState);
+            resolve();
+          };
+          pc.addEventListener("icegatheringstatechange", onState);
+        });
+
+        if (!pc.localDescription?.sdp) {
+          throw new Error("missing local description");
+        }
+
+        ws.send(JSON.stringify({ type: "offer", sdp: { type: "offer", sdp: pc.localDescription.sdp } }));
+
+        const answerMsg = await answerPromise;
+        if (answerMsg?.type !== "answer" || !answerMsg.sdp?.sdp) {
+          throw new Error("invalid answer message shape");
+        }
+
+        await pc.setRemoteDescription(answerMsg.sdp);
+        remoteDescriptionSet = true;
+        for (const candidate of pendingCandidates) {
+          await pc.addIceCandidate(candidate);
+        }
+
+        await new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => reject(new Error("timed out waiting for datachannel open")), 10_000);
+          dc.addEventListener(
+            "open",
+            () => {
+              clearTimeout(timeout);
+              resolve();
+            },
+            { once: true },
+          );
+          dc.addEventListener(
+            "error",
+            () => {
+              clearTimeout(timeout);
+              reject(new Error("datachannel error"));
+            },
+            { once: true },
+          );
+        });
+
+        // PING per docs/l2-tunnel-protocol.md: magic (0xA2) + ver (0x03) + type (0x01) + flags (0).
+        dc.send(new Uint8Array([0xa2, 0x03, 0x01, 0x00]));
+
+        const res = await new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => reject(new Error("timed out waiting for PONG")), 10_000);
+          dc.addEventListener(
+            "message",
+            (event) => {
+              clearTimeout(timeout);
+              resolve(new Uint8Array(event.data));
+            },
+            { once: true },
+          );
+        });
+
+        ws.close();
+        pc.close();
+        return Array.from(res);
+      },
+      { relayPort: relay.port, apiKey },
+    );
+
+    expect(pong).toEqual([0xa2, 0x03, 0x02, 0x00]); // PONG
+
+    const debug = await page.request.get(`http://127.0.0.1:${backend.port}/debug`);
+    expect(debug.ok()).toBeTruthy();
+    const debugJSON = await debug.json();
+    expect(debugJSON.origin).toBe(expectedOrigin);
+    expect(debugJSON.token).toBe(apiKey);
+    expect(debugJSON.tokenSource).toBe("subprotocol");
+  } finally {
+    await Promise.all([web.close(), relay.kill(), backend.kill()]);
+  }
+});
