@@ -3651,8 +3651,10 @@ bool TestDrawIndexedPrimitiveUpEmitsIndexBufferCommands() {
   const uint8_t* buf = dev->cmd.data();
   const size_t len = dev->cmd.bytes_used();
 
-  bool saw_vb_upload = false;
-  bool saw_ib_upload = false;
+  size_t vb_uploaded_bytes = 0;
+  size_t ib_uploaded_bytes = 0;
+  const size_t expected_ib_bytes = AlignUp(sizeof(indices), 4);
+  std::vector<uint8_t> ib_upload(expected_ib_bytes, 0);
   bool saw_set_ib = false;
 
   size_t offset = sizeof(aerogpu_cmd_stream_header);
@@ -3661,17 +3663,20 @@ bool TestDrawIndexedPrimitiveUpEmitsIndexBufferCommands() {
     if (hdr->opcode == AEROGPU_CMD_UPLOAD_RESOURCE) {
       const auto* upload = reinterpret_cast<const aerogpu_cmd_upload_resource*>(hdr);
       if (upload->resource_handle == vb_handle) {
-        saw_vb_upload = true;
-        if (!Check(upload->size_bytes == sizeof(verts), "upload_resource(VB) size")) {
-          return false;
-        }
+        vb_uploaded_bytes += upload->size_bytes;
       }
       if (upload->resource_handle == ib_handle) {
-        saw_ib_upload = true;
-        const uint64_t expected_size = static_cast<uint64_t>(AlignUp(sizeof(indices), 4));
-        if (!Check(upload->size_bytes == expected_size, "upload_resource(IB) size")) {
+        ib_uploaded_bytes += upload->size_bytes;
+        const size_t payload_bytes = upload->size_bytes;
+        if (!Check(upload->offset_bytes + payload_bytes <= expected_ib_bytes, "upload_resource(IB) bounds")) {
           return false;
         }
+        if (!Check(sizeof(*upload) + payload_bytes <= hdr->size_bytes, "upload_resource(IB) payload bounds")) {
+          return false;
+        }
+
+        const uint8_t* payload = reinterpret_cast<const uint8_t*>(upload) + sizeof(*upload);
+        std::memcpy(ib_upload.data() + upload->offset_bytes, payload, payload_bytes);
       }
     } else if (hdr->opcode == AEROGPU_CMD_SET_INDEX_BUFFER) {
       const auto* set_ib = reinterpret_cast<const aerogpu_cmd_set_index_buffer*>(hdr);
@@ -3692,14 +3697,23 @@ bool TestDrawIndexedPrimitiveUpEmitsIndexBufferCommands() {
     offset += hdr->size_bytes;
   }
 
-  if (!Check(saw_vb_upload, "VB upload emitted")) {
+  if (!Check(vb_uploaded_bytes == sizeof(verts), "VB upload emitted")) {
     return false;
   }
-  if (!Check(saw_ib_upload, "IB upload emitted")) {
+  if (!Check(ib_uploaded_bytes == expected_ib_bytes, "IB upload emitted (aligned)")) {
     return false;
   }
   if (!Check(saw_set_ib, "SET_INDEX_BUFFER emitted for UP IB")) {
     return false;
+  }
+
+  if (!Check(std::memcmp(ib_upload.data(), indices, sizeof(indices)) == 0, "IB upload payload matches indices")) {
+    return false;
+  }
+  for (size_t i = sizeof(indices); i < expected_ib_bytes; ++i) {
+    if (!Check(ib_upload[i] == 0, "IB upload padding is zero")) {
+      return false;
+    }
   }
 
   const CmdLoc draw_loc = FindLastOpcode(buf, len, AEROGPU_CMD_DRAW_INDEXED);
@@ -5601,14 +5615,7 @@ bool TestGuestBackedUpdateSurfaceEmitsDirtyRangeNotUpload() {
     return false;
   }
 
-  // Enable allocation-list tracking in a portable build.
   D3DDDI_ALLOCATIONLIST alloc_list[8] = {};
-  {
-    std::lock_guard<std::mutex> lock(dev->mutex);
-    dev->wddm_context.hContext = 1;
-    dev->alloc_list_tracker.rebind(alloc_list, 8, 0xFFFFu);
-    dev->alloc_list_tracker.reset();
-  }
 
   // Create a CPU-only system-memory source surface.
   D3D9DDIARG_CREATERESOURCE create_src{};
@@ -5635,6 +5642,17 @@ bool TestGuestBackedUpdateSurfaceEmitsDirtyRangeNotUpload() {
     return false;
   }
   cleanup.resources.push_back(create_src.hResource);
+
+  // Enable allocation-list tracking after creating the systemmem resource. The
+  // portable build does not emulate WDDM allocation mapping for systemmem
+  // surfaces, but we still want to validate allocation tracking for the
+  // guest-backed destination below.
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    dev->wddm_context.hContext = 1;
+    dev->alloc_list_tracker.rebind(alloc_list, 8, 0xFFFFu);
+    dev->alloc_list_tracker.reset();
+  }
 
   // Fill the source surface with some bytes.
   auto* src_res = reinterpret_cast<Resource*>(create_src.hResource.pDrvPrivate);
@@ -5825,14 +5843,7 @@ bool TestGuestBackedUpdateTextureEmitsDirtyRangeNotUpload() {
     return false;
   }
 
-  // Enable allocation-list tracking in a portable build.
   D3DDDI_ALLOCATIONLIST alloc_list[8] = {};
-  {
-    std::lock_guard<std::mutex> lock(dev->mutex);
-    dev->wddm_context.hContext = 1;
-    dev->alloc_list_tracker.rebind(alloc_list, 8, 0xFFFFu);
-    dev->alloc_list_tracker.reset();
-  }
 
   // Source: system-memory pool texture-like surface.
   D3D9DDIARG_CREATERESOURCE create_src{};
@@ -5856,6 +5867,17 @@ bool TestGuestBackedUpdateTextureEmitsDirtyRangeNotUpload() {
     return false;
   }
   cleanup.resources.push_back(create_src.hResource);
+
+  // Enable allocation-list tracking after creating the systemmem resource. The
+  // portable build does not emulate WDDM allocation mapping for systemmem
+  // surfaces, but we still want to validate allocation tracking for the
+  // guest-backed destination below.
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    dev->wddm_context.hContext = 1;
+    dev->alloc_list_tracker.rebind(alloc_list, 8, 0xFFFFu);
+    dev->alloc_list_tracker.reset();
+  }
 
   auto* src_res = reinterpret_cast<Resource*>(create_src.hResource.pDrvPrivate);
   if (!Check(src_res != nullptr && src_res->size_bytes != 0, "src size")) {
