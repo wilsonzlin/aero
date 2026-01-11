@@ -503,6 +503,25 @@ fn decode_samples(data: &[u8], format: &StreamFormat) -> Vec<f32> {
 
 ## Web Audio API Integration
 
+### SharedArrayBuffer output ring buffer semantics
+
+Audio output is bridged from the emulator thread to the `AudioWorkletProcessor`
+via a `SharedArrayBuffer` SPSC ring buffer (producer = emulator, consumer =
+AudioWorklet).
+
+Overrun/backpressure policy for **output/playback** rings is **drop-new**:
+
+- The producer never advances the consumer-owned read index to "make room".
+- Writes are truncated to the available free space.
+- Telemetry counts overruns as the number of frames dropped because the buffer
+  was full (new frames not written).
+
+This matches the semantics in:
+
+- `crates/platform/src/audio/worklet_bridge.rs` (wasm producer)
+- `web/src/platform/audio.ts` (JS producer)
+- `crates/aero-audio/src/ring.rs` (native test ring)
+
 ### AudioWorklet Processor
 
 ```javascript

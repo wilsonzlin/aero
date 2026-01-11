@@ -8,7 +8,12 @@
 /// - Consumer reads a fixed number of frames per render quantum.
 /// - On underrun, the consumer receives silence and an underrun counter
 ///   increments.
-/// - On overrun, the oldest audio is dropped to keep latency bounded.
+/// - On overrun (buffer full), the producer drops *new* frames (writes are
+///   truncated) and an overrun counter increments.
+///
+/// This "drop-new" policy matches the `SharedArrayBuffer` output ring buffer
+/// used by the AudioWorklet bridge: the consumer owns the read index, so the
+/// producer must not advance it to make room.
 #[derive(Debug, Clone)]
 pub struct AudioRingBuffer {
     channels: usize,
@@ -26,6 +31,8 @@ pub struct RingBufferTelemetry {
     pub capacity_frames: usize,
     pub available_frames: usize,
     pub underrun_frames: u64,
+    /// Frames dropped because the producer attempted to write into a full
+    /// buffer.
     pub overrun_frames: u64,
 }
 
@@ -80,12 +87,13 @@ impl AudioRingBuffer {
         }
 
         let free_frames = self.capacity_frames - self.len_frames;
-        if frames > free_frames {
-            let drop = frames - free_frames;
-            self.drop_oldest_frames(drop);
+        let frames_to_write = frames.min(free_frames);
+        let dropped = frames - frames_to_write;
+        if dropped > 0 {
+            self.overrun_frames += dropped as u64;
         }
 
-        for frame_idx in 0..frames {
+        for frame_idx in 0..frames_to_write {
             let src = frame_idx * self.channels;
             let dst_frame = self.write_frame;
             let dst = dst_frame * self.channels;
@@ -93,17 +101,7 @@ impl AudioRingBuffer {
                 .copy_from_slice(&samples[src..src + self.channels]);
             self.write_frame = (self.write_frame + 1) % self.capacity_frames;
         }
-        self.len_frames = (self.len_frames + frames).min(self.capacity_frames);
-    }
-
-    fn drop_oldest_frames(&mut self, frames: usize) {
-        if frames == 0 {
-            return;
-        }
-        let drop = frames.min(self.len_frames);
-        self.read_frame = (self.read_frame + drop) % self.capacity_frames;
-        self.len_frames -= drop;
-        self.overrun_frames += drop as u64;
+        self.len_frames += frames_to_write;
     }
 
     /// Pop `frames` frames as interleaved stereo.
