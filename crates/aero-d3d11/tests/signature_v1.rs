@@ -197,6 +197,31 @@ fn rejects_v1_stream_out_of_range() {
 }
 
 #[test]
+fn parses_v0_layout_even_when_fourcc_is_isg1() {
+    // Conversely, accept the legacy 24-byte entry layout even if the chunk ID ends with `1`.
+    let params = vec![sig_param("POSITION", 0, 0, 0b1111, 2)];
+    let chunk_bytes = build_signature_chunk_v0(&params);
+
+    let sig = parse_signature_chunk(FOURCC_ISG1, &chunk_bytes).expect("parse ISG1 signature");
+    assert_eq!(sig.parameters.len(), 1);
+    assert_eq!(sig.parameters[0].semantic_name, "POSITION");
+    assert_eq!(sig.parameters[0].stream, 2);
+}
+
+#[test]
+fn parses_v1_layout_when_fourcc_is_unknown() {
+    // When the FourCC suffix doesn't indicate a specific signature entry layout, the
+    // aero-dxbc parser uses heuristics to choose between v0 and v1 encodings.
+    let params = vec![sig_param("POSITION", 0, 0, 0b1111, 2)];
+    let chunk_bytes = build_signature_chunk_v1(&params);
+
+    let sig = parse_signature_chunk(FourCC(*b"XXXX"), &chunk_bytes).expect("parse signature");
+    assert_eq!(sig.parameters.len(), 1);
+    assert_eq!(sig.parameters[0].semantic_name, "POSITION");
+    assert_eq!(sig.parameters[0].stream, 2);
+}
+
+#[test]
 fn prefers_v1_variant_when_both_present() {
     let v0_params = vec![sig_param("OLD", 0, 7, 0b1111, 0)];
     let v1_params = vec![
