@@ -227,9 +227,9 @@ def _strip_iso9660_version_suffix(name: str) -> str:
 
     # ISO-9660 encoders often represent "no extension" as a trailing dot, e.g.:
     #   VERSION.;1
-    # Strip that dot when we also stripped a version suffix so downstream tooling sees
-    # the expected filename ("VERSION").
-    if stripped_version and base.endswith("."):
+    # Some tooling may also strip the `;1` but keep the trailing dot (`VERSION.`).
+    # Strip it so downstream tooling sees the expected filename ("VERSION").
+    if base.endswith(".") and base not in (".", "..") and len(base) > 1:
         base = base[:-1]
 
     return base
