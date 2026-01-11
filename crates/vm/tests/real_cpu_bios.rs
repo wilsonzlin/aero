@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 use aero_cpu_core::assist::AssistContext;
 use aero_cpu_core::interp::tier0::exec::{run_batch_with_assists, BatchExit, StepExit};
 use aero_cpu_core::mem::CpuBus as CoreCpuBus;

@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 use firmware::bios::{
     Bios, BiosConfig, BDA_MIDNIGHT_FLAG_ADDR, BDA_TICK_COUNT_ADDR, TICKS_PER_DAY,
 };

@@ -1,5 +1,7 @@
 //! Minimal VM wiring for the BIOS firmware tests.
 
+#![allow(deprecated)]
+
 mod snapshot;
 
 use firmware::bios::{Bios, BiosBus};

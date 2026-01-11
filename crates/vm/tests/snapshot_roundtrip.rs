@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 use aero_snapshot::RamMode;
 use firmware::bios::{Bios, BiosConfig};
 use machine::{CpuExit, InMemoryDisk, MemoryAccess, FLAG_CF, FLAG_ZF, FLAG_ALWAYS_ON};

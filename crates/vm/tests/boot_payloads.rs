@@ -1,3 +1,5 @@
+#![allow(deprecated)]
+
 use firmware::bios::{Bios, BiosConfig};
 use machine::{CpuExit, InMemoryDisk, MemoryAccess};
 use vm::Vm;
