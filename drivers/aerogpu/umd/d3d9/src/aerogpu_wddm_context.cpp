@@ -74,6 +74,12 @@ template <typename T>
 struct has_member_pDmaBuffer<T, std::void_t<decltype(std::declval<T>().pDmaBuffer)>> : std::true_type {};
 
 template <typename T, typename = void>
+struct has_member_DmaBufferSize : std::false_type {};
+
+template <typename T>
+struct has_member_DmaBufferSize<T, std::void_t<decltype(std::declval<T>().DmaBufferSize)>> : std::true_type {};
+
+template <typename T, typename = void>
 struct has_member_DmaBufferPrivateDataSize : std::false_type {};
 
 template <typename T>
@@ -193,8 +199,16 @@ HRESULT create_context_common(const CallbacksT& callbacks, FnT fn, WddmHandle hD
   if constexpr (has_member_pDmaBuffer<Arg>::value) {
     ctxOut->pDmaBuffer = static_cast<uint8_t*>(data.pDmaBuffer);
   }
+  if constexpr (has_member_DmaBufferSize<Arg>::value) {
+    if (ctxOut->CommandBufferSize == 0 && data.DmaBufferSize) {
+      ctxOut->CommandBufferSize = data.DmaBufferSize;
+    }
+  }
   if (!ctxOut->pDmaBuffer) {
     ctxOut->pDmaBuffer = ctxOut->pCommandBuffer;
+  }
+  if (!ctxOut->pCommandBuffer && ctxOut->pDmaBuffer) {
+    ctxOut->pCommandBuffer = ctxOut->pDmaBuffer;
   }
   if constexpr (has_member_pDmaBufferPrivateData<Arg>::value) {
     ctxOut->pDmaBufferPrivateData = data.pDmaBufferPrivateData;
