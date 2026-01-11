@@ -1,6 +1,6 @@
 use std::{net::SocketAddr, path::PathBuf, str::FromStr, time::Duration};
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 
 use crate::{overrides::TestOverrides, policy::EgressPolicy};
 
@@ -11,8 +11,15 @@ pub struct SecurityConfig {
     /// Comma-separated allowlist of exact Origin strings. `"*"` allows any Origin value (but still
     /// requires the header unless `open=1`).
     pub allowed_origins: AllowedOrigins,
-    /// Optional pre-shared token required at upgrade time.
-    pub token: Option<String>,
+    /// Authentication mode for `/l2` WebSocket upgrades.
+    pub auth_mode: AuthMode,
+    /// Static API key value (only used for `auth_mode=api_key`).
+    pub api_key: Option<String>,
+    /// HMAC secret for verifying JWTs (only used for `auth_mode=jwt` / `cookie_or_jwt`).
+    pub jwt_secret: Option<Vec<u8>>,
+    /// HMAC secret shared with `backend/aero-gateway` for verifying the `aero_session` cookie.
+    /// (Only used for `auth_mode=cookie` / `cookie_or_jwt`.)
+    pub session_secret: Option<Vec<u8>>,
     /// Process-wide concurrent tunnel cap (`0` disables).
     pub max_connections: usize,
     /// Total bytes per connection (rx + tx, `0` disables).
@@ -38,7 +45,10 @@ impl Default for SecurityConfig {
         Self {
             open: false,
             allowed_origins: AllowedOrigins::default(),
-            token: None,
+            auth_mode: AuthMode::None,
+            api_key: None,
+            jwt_secret: None,
+            session_secret: None,
             max_connections: 64,
             max_bytes_per_connection: 0,
             max_frames_per_second: 0,
@@ -47,7 +57,7 @@ impl Default for SecurityConfig {
 }
 
 impl SecurityConfig {
-    pub fn from_env() -> Self {
+    pub fn from_env() -> Result<Self> {
         // `AERO_L2_OPEN` is a security escape hatch; keep parsing strict so deployments don't
         // accidentally enable it via loose truthy values.
         let open = std::env::var("AERO_L2_OPEN")
@@ -79,9 +89,70 @@ impl SecurityConfig {
             None => AllowedOrigins::List(Vec::new()),
         };
 
-        let token = std::env::var("AERO_L2_TOKEN")
+        let legacy_token = std::env::var("AERO_L2_TOKEN")
             .ok()
             .and_then(|v| (!v.trim().is_empty()).then_some(v));
+
+        let auth_mode_raw = std::env::var("AERO_L2_AUTH_MODE")
+            .ok()
+            .map(|v| v.trim().to_ascii_lowercase())
+            .filter(|v| !v.is_empty());
+
+        let auth_mode = match auth_mode_raw.as_deref() {
+            None => legacy_token
+                .as_ref()
+                .map(|_| AuthMode::ApiKey)
+                .unwrap_or(AuthMode::None),
+            Some("none") => AuthMode::None,
+            Some("cookie") => AuthMode::Cookie,
+            Some("api_key") => AuthMode::ApiKey,
+            Some("jwt") => AuthMode::Jwt,
+            Some("cookie_or_jwt") => AuthMode::CookieOrJwt,
+            Some(other) => return Err(anyhow!("invalid AERO_L2_AUTH_MODE {other:?}")),
+        };
+
+        let api_key = if auth_mode == AuthMode::ApiKey {
+            let key = std::env::var("AERO_L2_API_KEY")
+                .ok()
+                .and_then(|v| (!v.trim().is_empty()).then(|| v))
+                .or(legacy_token);
+            if key.is_none() {
+                return Err(anyhow!(
+                    "AERO_L2_API_KEY (or legacy AERO_L2_TOKEN) is required for AERO_L2_AUTH_MODE=api_key"
+                ));
+            }
+            key
+        } else {
+            None
+        };
+
+        let jwt_secret = if matches!(auth_mode, AuthMode::Jwt | AuthMode::CookieOrJwt) {
+            let secret = std::env::var("AERO_L2_JWT_SECRET")
+                .ok()
+                .and_then(|v| (!v.trim().is_empty()).then(|| v.into_bytes()));
+            if secret.is_none() {
+                return Err(anyhow!(
+                    "AERO_L2_JWT_SECRET is required for AERO_L2_AUTH_MODE=jwt/cookie_or_jwt"
+                ));
+            }
+            secret
+        } else {
+            None
+        };
+
+        let session_secret = if matches!(auth_mode, AuthMode::Cookie | AuthMode::CookieOrJwt) {
+            let secret = std::env::var("AERO_L2_SESSION_SECRET")
+                .ok()
+                .and_then(|v| (!v.trim().is_empty()).then(|| v.into_bytes()));
+            if secret.is_none() {
+                return Err(anyhow!(
+                    "AERO_L2_SESSION_SECRET is required for AERO_L2_AUTH_MODE=cookie/cookie_or_jwt"
+                ));
+            }
+            secret
+        } else {
+            None
+        };
 
         let max_connections = std::env::var("AERO_L2_MAX_CONNECTIONS")
             .ok()
@@ -98,15 +169,27 @@ impl SecurityConfig {
             .and_then(|v| v.parse::<u64>().ok())
             .unwrap_or(0);
 
-        Self {
+        Ok(Self {
             open,
             allowed_origins,
-            token,
+            auth_mode,
+            api_key,
+            jwt_secret,
+            session_secret,
             max_connections,
             max_bytes_per_connection,
             max_frames_per_second,
-        }
+        })
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuthMode {
+    None,
+    Cookie,
+    ApiKey,
+    Jwt,
+    CookieOrJwt,
 }
 
 #[derive(Debug, Clone)]
@@ -190,7 +273,7 @@ impl ProxyConfig {
             .ok()
             .and_then(|v| (!v.trim().is_empty()).then(|| PathBuf::from(v)));
 
-        let security = SecurityConfig::from_env();
+        let security = SecurityConfig::from_env().context("parse security config")?;
 
         let policy = EgressPolicy::from_env().context("parse egress policy")?;
         let test_overrides = TestOverrides::from_env().context("parse test-mode overrides")?;

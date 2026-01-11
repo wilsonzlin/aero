@@ -1,4 +1,8 @@
-use std::{net::SocketAddr, sync::Arc};
+use std::{
+    net::SocketAddr,
+    sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use axum::{
     extract::{
@@ -13,10 +17,23 @@ use axum::{
 use tokio::sync::Semaphore;
 use tokio::{sync::oneshot, task::JoinHandle};
 
+use base64::Engine;
+use ring::hmac;
+use serde::Deserialize;
+
 use crate::{
     capture::CaptureManager, dns::DnsService, metrics::Metrics, session, ProxyConfig,
     TUNNEL_SUBPROTOCOL,
 };
+
+const SESSION_COOKIE_NAME: &str = "aero_session";
+
+#[derive(Debug, Deserialize)]
+struct SessionTokenPayload {
+    v: u8,
+    sid: String,
+    exp: u64,
+}
 
 #[derive(Clone)]
 pub(crate) struct AppState {
@@ -231,18 +248,6 @@ fn enforce_security(
     headers: &HeaderMap,
     uri: &axum::http::Uri,
 ) -> Result<(), Box<axum::response::Response>> {
-    if let Some(expected) = state.cfg.security.token.as_deref() {
-        let query_token = token_from_query(uri);
-        let protocol_token = token_from_subprotocol(headers);
-        let token_ok =
-            query_token.as_deref() == Some(expected) || protocol_token.as_deref() == Some(expected);
-        if !token_ok {
-            return Err(Box::new(
-                (StatusCode::UNAUTHORIZED, "invalid token".to_string()).into_response(),
-            ));
-        }
-    }
-
     if !state.cfg.security.open {
         let origin = headers
             .get(axum::http::header::ORIGIN)
@@ -272,18 +277,192 @@ fn enforce_security(
         }
     }
 
+    match state.cfg.security.auth_mode {
+        crate::config::AuthMode::None => {}
+        crate::config::AuthMode::ApiKey => {
+            let expected = state.cfg.security.api_key.as_deref().unwrap_or_default();
+            let provided = query_param(uri, "apiKey")
+                .or_else(|| query_param(uri, "token"))
+                .or_else(|| token_from_subprotocol(headers));
+            if provided.as_deref() != Some(expected) {
+                return Err(Box::new(
+                    (StatusCode::UNAUTHORIZED, "invalid api key".to_string()).into_response(),
+                ));
+            }
+        }
+        crate::config::AuthMode::Cookie => {
+            let secret = state.cfg.security.session_secret.as_deref().unwrap_or_default();
+            let cookie = headers
+                .get(axum::http::header::COOKIE)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("");
+            let ok = cookie_value(cookie, SESSION_COOKIE_NAME)
+                .and_then(|token| verify_session_token(&token, secret))
+                .is_some();
+            if !ok {
+                return Err(Box::new(
+                    (
+                        StatusCode::UNAUTHORIZED,
+                        "missing or expired session".to_string(),
+                    )
+                        .into_response(),
+                ));
+            }
+        }
+        crate::config::AuthMode::Jwt => {
+            let secret = state.cfg.security.jwt_secret.as_deref().unwrap_or_default();
+            let token = query_param(uri, "token").or_else(|| token_from_subprotocol(headers));
+            let ok = token
+                .as_deref()
+                .is_some_and(|token| verify_jwt(token, secret));
+            if !ok {
+                return Err(Box::new(
+                    (StatusCode::UNAUTHORIZED, "invalid jwt".to_string()).into_response(),
+                ));
+            }
+        }
+        crate::config::AuthMode::CookieOrJwt => {
+            let cookie_secret = state.cfg.security.session_secret.as_deref().unwrap_or_default();
+            let jwt_secret = state.cfg.security.jwt_secret.as_deref().unwrap_or_default();
+
+            let cookie = headers
+                .get(axum::http::header::COOKIE)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("");
+            let cookie_ok = cookie_value(cookie, SESSION_COOKIE_NAME)
+                .and_then(|token| verify_session_token(&token, cookie_secret))
+                .is_some();
+            if cookie_ok {
+                return Ok(());
+            }
+
+            let token = query_param(uri, "token").or_else(|| token_from_subprotocol(headers));
+            let jwt_ok = token
+                .as_deref()
+                .is_some_and(|token| verify_jwt(token, jwt_secret));
+            if !jwt_ok {
+                return Err(Box::new(
+                    (
+                        StatusCode::UNAUTHORIZED,
+                        "missing or invalid auth".to_string(),
+                    )
+                        .into_response(),
+                ));
+            }
+        }
+    }
+
     Ok(())
 }
 
-fn token_from_query(uri: &axum::http::Uri) -> Option<String> {
+fn query_param(uri: &axum::http::Uri, key: &str) -> Option<String> {
     let query = uri.query()?;
     for part in query.split('&') {
         let (k, v) = part.split_once('=').unwrap_or((part, ""));
-        if k == "token" {
+        if k == key {
             return (!v.is_empty()).then(|| percent_decode(v));
         }
     }
     None
+}
+
+fn cookie_value(cookie_header: &str, key: &str) -> Option<String> {
+    for part in cookie_header.split(';') {
+        let trimmed = part.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let (k, v) = trimmed.split_once('=')?;
+        if k.trim() != key {
+            continue;
+        }
+        let v = v.trim();
+        return (!v.is_empty()).then(|| percent_decode(v));
+    }
+    None
+}
+
+fn verify_session_token(token: &str, secret: &[u8]) -> Option<String> {
+    let (payload_b64, sig_b64) = token.split_once('.')?;
+
+    let sig = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(sig_b64.as_bytes())
+        .ok()?;
+
+    let key = hmac::Key::new(hmac::HMAC_SHA256, secret);
+    hmac::verify(&key, payload_b64.as_bytes(), &sig).ok()?;
+
+    let payload_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(payload_b64.as_bytes())
+        .ok()?;
+
+    let payload: SessionTokenPayload = serde_json::from_slice(&payload_bytes).ok()?;
+    if payload.v != 1 || payload.sid.trim().is_empty() {
+        return None;
+    }
+
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .map(|dur| dur.as_millis().min(u128::from(u64::MAX)) as u64)
+        .unwrap_or(0);
+    let expires_at_ms = payload.exp.saturating_mul(1000);
+    if expires_at_ms <= now_ms {
+        return None;
+    }
+
+    Some(payload.sid)
+}
+
+fn verify_jwt(token: &str, secret: &[u8]) -> bool {
+    let mut parts = token.split('.');
+    let Some(header_b64) = parts.next() else {
+        return false;
+    };
+    let Some(payload_b64) = parts.next() else {
+        return false;
+    };
+    let Some(sig_b64) = parts.next() else {
+        return false;
+    };
+    if parts.next().is_some() {
+        return false;
+    }
+
+    let sig = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(sig_b64.as_bytes())
+        .ok();
+    let Some(sig) = sig else {
+        return false;
+    };
+
+    let signing_input = format!("{header_b64}.{payload_b64}");
+    let key = hmac::Key::new(hmac::HMAC_SHA256, secret);
+    if hmac::verify(&key, signing_input.as_bytes(), &sig).is_err() {
+        return false;
+    }
+
+    // Best-effort `exp` check when present.
+    let payload_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(payload_b64.as_bytes())
+        .ok();
+    let Some(payload_bytes) = payload_bytes else {
+        return true;
+    };
+    let payload: serde_json::Value = match serde_json::from_slice(&payload_bytes) {
+        Ok(v) => v,
+        Err(_) => return true,
+    };
+    let Some(exp) = payload.get("exp").and_then(|v| v.as_u64()) else {
+        return true;
+    };
+
+    let now_secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .map(|dur| dur.as_secs())
+        .unwrap_or(0);
+    exp > now_secs
 }
 
 fn percent_decode(input: &str) -> String {

@@ -9,7 +9,11 @@ aero-l2-protocol = { path = "../aero-l2-protocol" }
 aero-net-stack = { path = "../aero-net-stack" }
 anyhow = "1"
 axum = { version = "0.7.9", features = ["ws"] }
+base64 = "0.22"
 futures-util = "0.3"
+ring = "0.17"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
