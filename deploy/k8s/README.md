@@ -33,21 +33,31 @@ To reproduce locally (requires `helm` + `kubeconform`):
 ```bash
 CHART=deploy/k8s/chart/aero-gateway
 
-helm lint "$CHART" -f "$CHART/values-dev.yaml"
-helm lint "$CHART" -f "$CHART/values-prod.yaml"
+for values in \
+  values-dev.yaml \
+  values-prod.yaml \
+  values-traefik.yaml \
+  values-prod-certmanager.yaml \
+  values-prod-certmanager-issuer.yaml \
+  values-prod-appheaders.yaml; do
+  helm lint "$CHART" -f "$CHART/$values"
+done
 
-helm template aero-gateway "$CHART" -n aero -f "$CHART/values-dev.yaml" > /tmp/aero-dev.yaml
-helm template aero-gateway "$CHART" -n aero -f "$CHART/values-prod.yaml" > /tmp/aero-prod.yaml
+for values in \
+  values-dev.yaml \
+  values-prod.yaml \
+  values-traefik.yaml \
+  values-prod-certmanager.yaml \
+  values-prod-certmanager-issuer.yaml \
+  values-prod-appheaders.yaml; do
+  out="/tmp/aero-${values%.yaml}.yaml"
+  helm template aero-gateway "$CHART" -n aero -f "$CHART/$values" > "$out"
 
-kubeconform -strict -ignore-missing-schemas \
-  -schema-location default \
-  -schema-location "https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json" \
-  -kubernetes-version 1.28.0 -summary /tmp/aero-dev.yaml
-
-kubeconform -strict -ignore-missing-schemas \
-  -schema-location default \
-  -schema-location "https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json" \
-  -kubernetes-version 1.28.0 -summary /tmp/aero-prod.yaml
+  kubeconform -strict -ignore-missing-schemas \
+    -schema-location default \
+    -schema-location "https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json" \
+    -kubernetes-version 1.28.0 -summary "$out"
+done
 
 # Validate the non-Helm manifests in this repo too:
 kubeconform -strict -ignore-missing-schemas \
