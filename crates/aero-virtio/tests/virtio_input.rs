@@ -6,12 +6,15 @@ use aero_virtio::memory::{
     read_u16_le, read_u32_le, write_u16_le, write_u32_le, write_u64_le, GuestMemory, GuestRam,
 };
 use aero_virtio::pci::{
-    InterruptLog, VirtioPciDevice, PCI_VENDOR_ID_VIRTIO, VIRTIO_PCI_CAP_COMMON_CFG,
-    VIRTIO_PCI_CAP_DEVICE_CFG, VIRTIO_PCI_CAP_ISR_CFG, VIRTIO_PCI_CAP_NOTIFY_CFG,
-    VIRTIO_STATUS_ACKNOWLEDGE, VIRTIO_STATUS_DRIVER, VIRTIO_STATUS_DRIVER_OK,
-    VIRTIO_STATUS_FEATURES_OK,
+    InterruptLog, InterruptSink, VirtioPciDevice, PCI_VENDOR_ID_VIRTIO, VIRTIO_F_VERSION_1,
+    VIRTIO_PCI_CAP_COMMON_CFG, VIRTIO_PCI_CAP_DEVICE_CFG, VIRTIO_PCI_CAP_ISR_CFG,
+    VIRTIO_PCI_CAP_NOTIFY_CFG, VIRTIO_STATUS_ACKNOWLEDGE, VIRTIO_STATUS_DRIVER,
+    VIRTIO_STATUS_DRIVER_OK, VIRTIO_STATUS_FEATURES_OK,
 };
 use aero_virtio::queue::{VIRTQ_DESC_F_NEXT, VIRTQ_DESC_F_WRITE};
+
+use std::cell::RefCell;
+use std::rc::Rc;
 
 #[derive(Default)]
 struct Caps {
@@ -517,4 +520,178 @@ fn virtio_pci_clears_features_ok_when_driver_sets_unsupported_bits() {
     );
     let status = bar_read_u8(&mut dev, caps.common + 0x14);
     assert_eq!(status & VIRTIO_STATUS_FEATURES_OK, 0);
+}
+
+#[test]
+fn virtio_pci_clears_features_ok_when_driver_omits_version_1_in_modern_mode() {
+    let input = VirtioInput::new(VirtioInputDeviceKind::Keyboard);
+    let mut dev = VirtioPciDevice::new(Box::new(input), Box::new(InterruptLog::default()));
+    let caps = parse_caps(&dev);
+    let mut mem = GuestRam::new(0x10000);
+
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
+    );
+
+    // Read offered features.
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 0);
+    let f0 = bar_read_u32(&mut dev, caps.common + 0x04);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 1);
+    let f1 = bar_read_u32(&mut dev, caps.common + 0x04);
+
+    // Negotiate all the offered features except VERSION_1. The device must reject
+    // this in modern mode (contract v1 requires VERSION_1).
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 0);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f0);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 1);
+    let version_1_hi = (VIRTIO_F_VERSION_1 >> 32) as u32;
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f1 & !version_1_hi);
+
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK,
+    );
+    let status = bar_read_u8(&mut dev, caps.common + 0x14);
+    assert_eq!(status & VIRTIO_STATUS_FEATURES_OK, 0);
+}
+
+#[derive(Default)]
+struct LegacyIrqState {
+    raised: u32,
+    lowered: u32,
+    asserted: bool,
+}
+
+#[derive(Clone)]
+struct SharedLegacyIrq {
+    state: Rc<RefCell<LegacyIrqState>>,
+}
+
+impl SharedLegacyIrq {
+    fn new() -> (Self, Rc<RefCell<LegacyIrqState>>) {
+        let state = Rc::new(RefCell::new(LegacyIrqState::default()));
+        (
+            Self {
+                state: state.clone(),
+            },
+            state,
+        )
+    }
+}
+
+impl InterruptSink for SharedLegacyIrq {
+    fn raise_legacy_irq(&mut self) {
+        let mut state = self.state.borrow_mut();
+        state.raised = state.raised.saturating_add(1);
+        state.asserted = true;
+    }
+
+    fn lower_legacy_irq(&mut self) {
+        let mut state = self.state.borrow_mut();
+        state.lowered = state.lowered.saturating_add(1);
+        state.asserted = false;
+    }
+
+    fn signal_msix(&mut self, _vector: u16) {}
+}
+
+#[test]
+fn virtio_pci_reset_deasserts_intx_and_clears_isr() {
+    let input = VirtioInput::new(VirtioInputDeviceKind::Keyboard);
+    let (irq, irq_state) = SharedLegacyIrq::new();
+    let mut dev = VirtioPciDevice::new(Box::new(input), Box::new(irq));
+    let caps = parse_caps(&dev);
+    let mut mem = GuestRam::new(0x10000);
+
+    // Standard init and feature negotiation.
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE,
+    );
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
+    );
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 0);
+    let f0 = bar_read_u32(&mut dev, caps.common + 0x04);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 0);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f0);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 1);
+    let f1 = bar_read_u32(&mut dev, caps.common + 0x04);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 1);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f1);
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK,
+    );
+
+    // Configure event queue 0.
+    let desc = 0x1000;
+    let avail = 0x2000;
+    let used = 0x3000;
+    bar_write_u16(&mut dev, &mut mem, caps.common + 0x16, 0);
+    bar_write_u64(&mut dev, &mut mem, caps.common + 0x20, desc);
+    bar_write_u64(&mut dev, &mut mem, caps.common + 0x28, avail);
+    bar_write_u64(&mut dev, &mut mem, caps.common + 0x30, used);
+    bar_write_u16(&mut dev, &mut mem, caps.common + 0x1c, 1);
+
+    // Post one event buffer.
+    let event_buf = 0x4000;
+    mem.write(event_buf, &[0u8; 8]).unwrap();
+    write_desc(&mut mem, desc, 0, event_buf, 8, VIRTQ_DESC_F_WRITE, 0);
+
+    write_u16_le(&mut mem, avail, 0).unwrap();
+    write_u16_le(&mut mem, avail + 2, 1).unwrap();
+    write_u16_le(&mut mem, avail + 4, 0).unwrap();
+    write_u16_le(&mut mem, used, 0).unwrap();
+    write_u16_le(&mut mem, used + 2, 0).unwrap();
+
+    // Queue kick only makes the buffer available; it should not raise an interrupt.
+    dev.bar0_write(
+        caps.notify + 0 * u64::from(caps.notify_mult),
+        &0u16.to_le_bytes(),
+        &mut mem,
+    );
+    {
+        let state = irq_state.borrow();
+        assert_eq!(state.raised, 0);
+        assert!(!state.asserted);
+    }
+
+    // Host injects an input event and the device should raise an interrupt.
+    dev.device_mut::<VirtioInput>()
+        .unwrap()
+        .push_event(VirtioInputEvent {
+            type_: 1,
+            code: 30,
+            value: 1,
+        });
+    dev.poll(&mut mem);
+    {
+        let state = irq_state.borrow();
+        assert_eq!(state.raised, 1);
+        assert_eq!(state.lowered, 0);
+        assert!(state.asserted);
+    }
+
+    // Reset must clear ISR state and deassert INTx even if the guest never read ISR.
+    bar_write_u8(&mut dev, &mut mem, caps.common + 0x14, 0);
+    {
+        let state = irq_state.borrow();
+        assert_eq!(state.raised, 1);
+        assert_eq!(state.lowered, 1);
+        assert!(!state.asserted);
+    }
+    assert_eq!(bar_read_u8(&mut dev, caps.isr), 0);
 }

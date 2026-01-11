@@ -494,6 +494,9 @@ impl VirtioPciDevice {
         self.config_generation = 0;
         self.queue_select = 0;
         self.isr_status = 0;
+        if self.legacy_irq_asserted {
+            self.interrupts.lower_legacy_irq();
+        }
         self.legacy_irq_asserted = false;
         self.transport_mode = TransportMode::Unknown;
         self.features_negotiated = false;
