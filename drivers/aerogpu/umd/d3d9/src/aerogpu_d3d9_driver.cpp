@@ -3653,6 +3653,8 @@ HRESULT AEROGPU_D3D9_CALL device_present_ex(
   }
 
   dev->present_count++;
+  dev->present_refresh_count = dev->present_count;
+  dev->sync_refresh_count = dev->present_count;
   dev->last_present_qpc = qpc_now();
   SwapChain* sc = dev->current_swapchain;
   if (!sc && !dev->swapchains.empty()) {
@@ -3724,6 +3726,8 @@ HRESULT AEROGPU_D3D9_CALL device_present(
   }
 
   dev->present_count++;
+  dev->present_refresh_count = dev->present_count;
+  dev->sync_refresh_count = dev->present_count;
   dev->last_present_qpc = qpc_now();
   SwapChain* sc = as_swapchain(pPresent->hSwapChain);
   if (sc) {
@@ -3823,8 +3827,8 @@ HRESULT AEROGPU_D3D9_CALL device_get_present_stats(
 
   std::memset(pStats, 0, sizeof(*pStats));
   pStats->PresentCount = dev->present_count;
-  pStats->PresentRefreshCount = dev->present_count;
-  pStats->SyncRefreshCount = dev->present_count;
+  pStats->PresentRefreshCount = dev->present_refresh_count;
+  pStats->SyncRefreshCount = dev->sync_refresh_count;
   pStats->SyncQPCTime = static_cast<int64_t>(dev->last_present_qpc);
   pStats->SyncGPUTime = 0;
   return S_OK;

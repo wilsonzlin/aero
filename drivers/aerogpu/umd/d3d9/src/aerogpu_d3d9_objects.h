@@ -268,6 +268,8 @@ struct Device {
   uint32_t max_frame_latency = 3;
   std::deque<uint64_t> inflight_present_fences;
   uint32_t present_count = 0;
+  uint32_t present_refresh_count = 0;
+  uint32_t sync_refresh_count = 0;
   uint64_t last_present_qpc = 0;
   std::vector<SwapChain*> swapchains;
   SwapChain* current_swapchain = nullptr;
