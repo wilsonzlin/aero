@@ -19,6 +19,9 @@ const USB_REQUEST_GET_DESCRIPTOR: u8 = 0x06;
 const USB_REQUEST_GET_CONFIGURATION: u8 = 0x08;
 const USB_REQUEST_SET_CONFIGURATION: u8 = 0x09;
 
+const USB_FEATURE_ENDPOINT_HALT: u16 = 0;
+
+const HUB_PORT_FEATURE_ENABLE: u16 = 1;
 const HUB_PORT_FEATURE_RESET: u16 = 4;
 const HUB_PORT_FEATURE_POWER: u16 = 8;
 const HUB_PORT_FEATURE_C_PORT_CONNECTION: u16 = 16;
@@ -95,8 +98,23 @@ impl HubPort {
             return;
         }
         self.powered = powered;
-        if !self.powered && self.enabled {
-            self.enabled = false;
+        if !self.powered {
+            self.set_enabled(false);
+        }
+    }
+
+    fn set_enabled(&mut self, enabled: bool) {
+        if enabled {
+            if !(self.powered && self.connected) {
+                return;
+            }
+            if self.reset {
+                return;
+            }
+        }
+
+        if enabled != self.enabled {
+            self.enabled = enabled;
             self.enable_change = true;
         }
     }
@@ -114,8 +132,7 @@ impl HubPort {
         }
 
         if self.enabled {
-            self.enabled = false;
-            self.enable_change = true;
+            self.set_enabled(false);
         }
     }
 
@@ -128,8 +145,7 @@ impl HubPort {
 
                 let should_enable = self.powered && self.connected;
                 if should_enable && !self.enabled {
-                    self.enabled = true;
-                    self.enable_change = true;
+                    self.set_enabled(true);
                 }
             }
         }
@@ -179,6 +195,7 @@ impl HubPort {
 pub struct UsbHubDevice {
     configuration: u8,
     ports: [HubPort; HUB_NUM_PORTS],
+    interrupt_ep_halted: bool,
 }
 
 impl UsbHubDevice {
@@ -186,6 +203,7 @@ impl UsbHubDevice {
         Self {
             configuration: 0,
             ports: std::array::from_fn(|_| HubPort::new()),
+            interrupt_ep_halted: false,
         }
     }
 
@@ -251,6 +269,7 @@ impl UsbDeviceModel for UsbHubDevice {
 
     fn reset(&mut self) {
         self.configuration = 0;
+        self.interrupt_ep_halted = false;
 
         for port in &mut self.ports {
             port.enabled = false;
@@ -325,6 +344,53 @@ impl UsbDeviceModel for UsbHubDevice {
                 }
                 _ => ControlResponse::Stall,
             },
+            (RequestType::Standard, RequestRecipient::Interface) => match setup.b_request {
+                USB_REQUEST_GET_STATUS => {
+                    if setup.request_direction() != RequestDirection::DeviceToHost
+                        || setup.w_value != 0
+                        || setup.w_length != 2
+                    {
+                        return ControlResponse::Stall;
+                    }
+                    // Hub has a single interface (0). Interface GET_STATUS has no defined flags.
+                    if setup.w_index != 0 {
+                        return ControlResponse::Stall;
+                    }
+                    ControlResponse::Data(clamp_response(vec![0, 0], setup.w_length))
+                }
+                _ => ControlResponse::Stall,
+            },
+            (RequestType::Standard, RequestRecipient::Endpoint) => match setup.b_request {
+                USB_REQUEST_GET_STATUS => {
+                    if setup.request_direction() != RequestDirection::DeviceToHost
+                        || setup.w_value != 0
+                        || setup.w_length != 2
+                    {
+                        return ControlResponse::Stall;
+                    }
+                    let ep = (setup.w_index & 0x00ff) as u8;
+                    if ep != HUB_INTERRUPT_IN_EP {
+                        return ControlResponse::Stall;
+                    }
+                    let halted = u8::from(self.interrupt_ep_halted);
+                    ControlResponse::Data(clamp_response(vec![halted, 0], setup.w_length))
+                }
+                USB_REQUEST_CLEAR_FEATURE | USB_REQUEST_SET_FEATURE => {
+                    if setup.request_direction() != RequestDirection::HostToDevice || setup.w_length != 0 {
+                        return ControlResponse::Stall;
+                    }
+                    if setup.w_value != USB_FEATURE_ENDPOINT_HALT {
+                        return ControlResponse::Stall;
+                    }
+                    let ep = (setup.w_index & 0x00ff) as u8;
+                    if ep != HUB_INTERRUPT_IN_EP {
+                        return ControlResponse::Stall;
+                    }
+                    self.interrupt_ep_halted = setup.b_request == USB_REQUEST_SET_FEATURE;
+                    ControlResponse::Ack
+                }
+                _ => ControlResponse::Stall,
+            },
             (RequestType::Class, RequestRecipient::Device) => match setup.b_request {
                 USB_REQUEST_GET_DESCRIPTOR => {
                     if setup.request_direction() != RequestDirection::DeviceToHost
@@ -374,6 +440,10 @@ impl UsbDeviceModel for UsbHubDevice {
                         return ControlResponse::Stall;
                     };
                     match setup.w_value {
+                        HUB_PORT_FEATURE_ENABLE => {
+                            port.set_enabled(true);
+                            ControlResponse::Ack
+                        }
                         HUB_PORT_FEATURE_POWER => {
                             port.set_powered(true);
                             ControlResponse::Ack
@@ -393,6 +463,14 @@ impl UsbDeviceModel for UsbHubDevice {
                         return ControlResponse::Stall;
                     };
                     match setup.w_value {
+                        HUB_PORT_FEATURE_ENABLE => {
+                            port.set_enabled(false);
+                            ControlResponse::Ack
+                        }
+                        HUB_PORT_FEATURE_POWER => {
+                            port.set_powered(false);
+                            ControlResponse::Ack
+                        }
                         HUB_PORT_FEATURE_C_PORT_CONNECTION => {
                             port.connect_change = false;
                             ControlResponse::Ack
@@ -415,7 +493,7 @@ impl UsbDeviceModel for UsbHubDevice {
     }
 
     fn poll_interrupt_in(&mut self, ep: u8) -> Option<Vec<u8>> {
-        if ep != HUB_INTERRUPT_IN_EP || self.configuration == 0 {
+        if ep != HUB_INTERRUPT_IN_EP || self.configuration == 0 || self.interrupt_ep_halted {
             return None;
         }
 
@@ -538,7 +616,7 @@ static HUB_CONFIG_DESCRIPTOR: [u8; 25] = [
     0x01, // bConfigurationValue
     0x00, // iConfiguration
     0x80, // bmAttributes (bus powered)
-    0x00, // bMaxPower (0mA self-powered not modelled)
+    50,   // bMaxPower (100mA)
     // Interface descriptor
     0x09, // bLength
     USB_DESCRIPTOR_TYPE_INTERFACE,
@@ -559,15 +637,20 @@ static HUB_CONFIG_DESCRIPTOR: [u8; 25] = [
     0x0c, // bInterval
 ];
 
+// Hub descriptor wHubCharacteristics (USB 2.0 spec 11.23.2.1):
+// - Per-port power switching (bits 0-1 = 01b).
+// - No over-current protection (bits 3-4 = 10b); not modelled.
+const HUB_W_HUB_CHARACTERISTICS: u16 = 0x0011;
+const HUB_PORT_PWR_CTRL_MASK: u8 = ((1u32 << (HUB_NUM_PORTS + 1)) - 2) as u8;
+
 static HUB_DESCRIPTOR: [u8; 9] = [
     0x09, // bLength
     USB_DESCRIPTOR_TYPE_HUB,
     HUB_NUM_PORTS as u8, // bNbrPorts
-    0x00,
-    0x00, // wHubCharacteristics
+    (HUB_W_HUB_CHARACTERISTICS & 0x00ff) as u8,
+    (HUB_W_HUB_CHARACTERISTICS >> 8) as u8, // wHubCharacteristics
     0x01, // bPwrOn2PwrGood (2ms)
     0x00, // bHubContrCurrent
     0x00, // DeviceRemovable
-    0xff, // PortPwrCtrlMask
+    HUB_PORT_PWR_CTRL_MASK, // PortPwrCtrlMask
 ];
-

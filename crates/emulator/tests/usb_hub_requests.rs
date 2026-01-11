@@ -1,0 +1,333 @@
+use emulator::io::usb::hub::UsbHubDevice;
+use emulator::io::usb::{ControlResponse, SetupPacket, UsbDeviceModel};
+
+const USB_REQUEST_GET_STATUS: u8 = 0x00;
+const USB_REQUEST_CLEAR_FEATURE: u8 = 0x01;
+const USB_REQUEST_SET_FEATURE: u8 = 0x03;
+const USB_REQUEST_GET_DESCRIPTOR: u8 = 0x06;
+const USB_REQUEST_SET_CONFIGURATION: u8 = 0x09;
+
+const USB_FEATURE_ENDPOINT_HALT: u16 = 0;
+
+const HUB_PORT_FEATURE_ENABLE: u16 = 1;
+const HUB_PORT_FEATURE_RESET: u16 = 4;
+const HUB_PORT_FEATURE_POWER: u16 = 8;
+const HUB_PORT_FEATURE_C_PORT_CONNECTION: u16 = 16;
+const HUB_PORT_FEATURE_C_PORT_ENABLE: u16 = 17;
+const HUB_PORT_FEATURE_C_PORT_RESET: u16 = 20;
+
+const HUB_PORT_STATUS_ENABLE: u16 = 1 << 1;
+const HUB_PORT_STATUS_POWER: u16 = 1 << 8;
+
+const HUB_PORT_CHANGE_ENABLE: u16 = 1 << 1;
+
+const HUB_INTERRUPT_IN_EP: u8 = 0x81;
+
+#[derive(Default)]
+struct DummyUsbDevice;
+
+impl UsbDeviceModel for DummyUsbDevice {
+    fn get_device_descriptor(&self) -> &'static [u8] {
+        // Minimal full-speed device descriptor (not enumerated by these tests).
+        &[
+            0x12, 0x01, 0x10, 0x01, 0x00, 0x00, 0x00, 0x40, 0x34, 0x12, 0x01, 0x00, 0x00, 0x01,
+            0x01, 0x02, 0x00, 0x01,
+        ]
+    }
+
+    fn get_config_descriptor(&self) -> &'static [u8] {
+        // Config(9) + Interface(9) = 18 bytes.
+        &[
+            0x09, 0x02, 18, 0x00, 0x01, 0x01, 0x00, 0x80, 50, 0x09, 0x04, 0x00, 0x00, 0x00, 0xff,
+            0x00, 0x00, 0x00,
+        ]
+    }
+
+    fn get_hid_report_descriptor(&self) -> &'static [u8] {
+        &[]
+    }
+
+    fn handle_control_request(&mut self, _setup: SetupPacket, _data_stage: Option<&[u8]>) -> ControlResponse {
+        ControlResponse::Stall
+    }
+
+    fn poll_interrupt_in(&mut self, _ep: u8) -> Option<Vec<u8>> {
+        None
+    }
+}
+
+fn setup(
+    bm_request_type: u8,
+    b_request: u8,
+    w_value: u16,
+    w_index: u16,
+    w_length: u16,
+) -> SetupPacket {
+    SetupPacket {
+        bm_request_type,
+        b_request,
+        w_value,
+        w_index,
+        w_length,
+    }
+}
+
+fn set_configuration(config: u8) -> SetupPacket {
+    setup(0x00, USB_REQUEST_SET_CONFIGURATION, config as u16, 0, 0)
+}
+
+fn standard_get_status_interface(interface: u16) -> SetupPacket {
+    setup(0x81, USB_REQUEST_GET_STATUS, 0, interface, 2)
+}
+
+fn standard_get_status_endpoint(ep: u8) -> SetupPacket {
+    setup(0x82, USB_REQUEST_GET_STATUS, 0, ep as u16, 2)
+}
+
+fn standard_set_feature_endpoint_halt(ep: u8) -> SetupPacket {
+    setup(0x02, USB_REQUEST_SET_FEATURE, USB_FEATURE_ENDPOINT_HALT, ep as u16, 0)
+}
+
+fn standard_clear_feature_endpoint_halt(ep: u8) -> SetupPacket {
+    setup(0x02, USB_REQUEST_CLEAR_FEATURE, USB_FEATURE_ENDPOINT_HALT, ep as u16, 0)
+}
+
+fn hub_get_status_port(port: u16) -> SetupPacket {
+    setup(0xa3, USB_REQUEST_GET_STATUS, 0, port, 4)
+}
+
+fn hub_set_feature_port(port: u16, feature: u16) -> SetupPacket {
+    setup(0x23, USB_REQUEST_SET_FEATURE, feature, port, 0)
+}
+
+fn hub_clear_feature_port(port: u16, feature: u16) -> SetupPacket {
+    setup(0x23, USB_REQUEST_CLEAR_FEATURE, feature, port, 0)
+}
+
+fn get_port_status_and_change(hub: &mut UsbHubDevice, port: u16) -> (u16, u16) {
+    let ControlResponse::Data(data) = hub.handle_control_request(hub_get_status_port(port), None) else {
+        panic!("expected Data for hub port GET_STATUS");
+    };
+    assert_eq!(data.len(), 4);
+    let status = u16::from_le_bytes([data[0], data[1]]);
+    let change = u16::from_le_bytes([data[2], data[3]]);
+    (status, change)
+}
+
+#[test]
+fn usb_hub_standard_get_status_interface_returns_zeroes() {
+    let mut hub = UsbHubDevice::new();
+    let ControlResponse::Data(data) =
+        hub.handle_control_request(standard_get_status_interface(0), None)
+    else {
+        panic!("expected Data response");
+    };
+    assert_eq!(data, [0, 0]);
+}
+
+#[test]
+fn usb_hub_standard_endpoint_halt_controls_interrupt_polling() {
+    let mut hub = UsbHubDevice::new();
+    hub.attach(1, Box::new(DummyUsbDevice::default()));
+
+    assert_eq!(
+        hub.handle_control_request(set_configuration(1), None),
+        ControlResponse::Ack
+    );
+
+    let bitmap = hub
+        .poll_interrupt_in(HUB_INTERRUPT_IN_EP)
+        .expect("expected port-change bitmap");
+    assert_eq!(bitmap.len(), 1);
+    assert_ne!(bitmap[0] & 0x02, 0); // bit1 = port1 change
+
+    assert_eq!(
+        hub.handle_control_request(standard_set_feature_endpoint_halt(HUB_INTERRUPT_IN_EP), None),
+        ControlResponse::Ack
+    );
+
+    let ControlResponse::Data(st) =
+        hub.handle_control_request(standard_get_status_endpoint(HUB_INTERRUPT_IN_EP), None)
+    else {
+        panic!("expected Data response");
+    };
+    assert_eq!(st, [1, 0]);
+
+    assert_eq!(hub.poll_interrupt_in(HUB_INTERRUPT_IN_EP), None);
+
+    assert_eq!(
+        hub.handle_control_request(standard_clear_feature_endpoint_halt(HUB_INTERRUPT_IN_EP), None),
+        ControlResponse::Ack
+    );
+
+    let ControlResponse::Data(st) =
+        hub.handle_control_request(standard_get_status_endpoint(HUB_INTERRUPT_IN_EP), None)
+    else {
+        panic!("expected Data response");
+    };
+    assert_eq!(st, [0, 0]);
+
+    let bitmap = hub
+        .poll_interrupt_in(HUB_INTERRUPT_IN_EP)
+        .expect("expected port-change bitmap after clearing halt");
+    assert_ne!(bitmap[0] & 0x02, 0); // bit1 = port1 change
+}
+
+#[test]
+fn usb_hub_standard_endpoint_requests_stall_for_unknown_endpoint() {
+    let mut hub = UsbHubDevice::new();
+
+    assert_eq!(
+        hub.handle_control_request(standard_get_status_endpoint(0x82), None),
+        ControlResponse::Stall
+    );
+    assert_eq!(
+        hub.handle_control_request(standard_set_feature_endpoint_halt(0x82), None),
+        ControlResponse::Stall
+    );
+    assert_eq!(
+        hub.handle_control_request(standard_clear_feature_endpoint_halt(0x82), None),
+        ControlResponse::Stall
+    );
+}
+
+#[test]
+fn usb_hub_clear_port_power_disables_routing_and_sets_enable_change() {
+    let mut hub = UsbHubDevice::new();
+    hub.attach(1, Box::new(DummyUsbDevice::default()));
+    assert_eq!(
+        hub.handle_control_request(set_configuration(1), None),
+        ControlResponse::Ack
+    );
+
+    assert_eq!(
+        hub.handle_control_request(hub_set_feature_port(1, HUB_PORT_FEATURE_POWER), None),
+        ControlResponse::Ack
+    );
+    assert_eq!(
+        hub.handle_control_request(hub_set_feature_port(1, HUB_PORT_FEATURE_RESET), None),
+        ControlResponse::Ack
+    );
+    for _ in 0..50 {
+        hub.tick_1ms();
+    }
+
+    // Clear any change bits from attach/reset so the power-off change is observable.
+    for feature in [
+        HUB_PORT_FEATURE_C_PORT_CONNECTION,
+        HUB_PORT_FEATURE_C_PORT_ENABLE,
+        HUB_PORT_FEATURE_C_PORT_RESET,
+    ] {
+        assert_eq!(
+            hub.handle_control_request(hub_clear_feature_port(1, feature), None),
+            ControlResponse::Ack
+        );
+    }
+
+    assert!(hub.child_device_mut_for_address(0).is_some());
+
+    assert_eq!(
+        hub.handle_control_request(hub_clear_feature_port(1, HUB_PORT_FEATURE_POWER), None),
+        ControlResponse::Ack
+    );
+
+    let (status, change) = get_port_status_and_change(&mut hub, 1);
+    assert_eq!(status & HUB_PORT_STATUS_POWER, 0);
+    assert_eq!(status & HUB_PORT_STATUS_ENABLE, 0);
+    assert_ne!(change & HUB_PORT_CHANGE_ENABLE, 0);
+
+    assert!(hub.child_device_mut_for_address(0).is_none());
+}
+
+#[test]
+fn usb_hub_port_enable_set_and_clear_feature() {
+    let mut hub = UsbHubDevice::new();
+    hub.attach(1, Box::new(DummyUsbDevice::default()));
+    assert_eq!(
+        hub.handle_control_request(set_configuration(1), None),
+        ControlResponse::Ack
+    );
+
+    // Clear initial connect-change so only enable-change is observed.
+    assert_eq!(
+        hub.handle_control_request(
+            hub_clear_feature_port(1, HUB_PORT_FEATURE_C_PORT_CONNECTION),
+            None
+        ),
+        ControlResponse::Ack
+    );
+
+    assert_eq!(
+        hub.handle_control_request(hub_set_feature_port(1, HUB_PORT_FEATURE_POWER), None),
+        ControlResponse::Ack
+    );
+
+    // Enable port (optional hub behavior, but Windows probes may issue this).
+    assert_eq!(
+        hub.handle_control_request(hub_set_feature_port(1, HUB_PORT_FEATURE_ENABLE), None),
+        ControlResponse::Ack
+    );
+    let (status, change) = get_port_status_and_change(&mut hub, 1);
+    assert_ne!(status & HUB_PORT_STATUS_ENABLE, 0);
+    assert_ne!(change & HUB_PORT_CHANGE_ENABLE, 0);
+
+    // Clear enable-change and then disable.
+    assert_eq!(
+        hub.handle_control_request(hub_clear_feature_port(1, HUB_PORT_FEATURE_C_PORT_ENABLE), None),
+        ControlResponse::Ack
+    );
+    assert_eq!(
+        hub.handle_control_request(hub_clear_feature_port(1, HUB_PORT_FEATURE_ENABLE), None),
+        ControlResponse::Ack
+    );
+    let (status, change) = get_port_status_and_change(&mut hub, 1);
+    assert_eq!(status & HUB_PORT_STATUS_ENABLE, 0);
+    assert_ne!(change & HUB_PORT_CHANGE_ENABLE, 0);
+
+    // Clear enable-change and then re-enable.
+    assert_eq!(
+        hub.handle_control_request(hub_clear_feature_port(1, HUB_PORT_FEATURE_C_PORT_ENABLE), None),
+        ControlResponse::Ack
+    );
+    assert_eq!(
+        hub.handle_control_request(hub_set_feature_port(1, HUB_PORT_FEATURE_ENABLE), None),
+        ControlResponse::Ack
+    );
+    let (status, change) = get_port_status_and_change(&mut hub, 1);
+    assert_ne!(status & HUB_PORT_STATUS_ENABLE, 0);
+    assert_ne!(change & HUB_PORT_CHANGE_ENABLE, 0);
+}
+
+#[test]
+fn usb_hub_hub_descriptor_fields_are_stable_and_correct_length() {
+    const HUB_DESCRIPTOR_TYPE: u16 = 0x29;
+    const HUB_NUM_PORTS: usize = 4;
+    const HUB_W_HUB_CHARACTERISTICS: u16 = 0x0011;
+    const HUB_PORT_PWR_CTRL_MASK: u8 = ((1u32 << (HUB_NUM_PORTS + 1)) - 2) as u8;
+
+    let mut hub = UsbHubDevice::new();
+
+    let ControlResponse::Data(desc) = hub.handle_control_request(
+        setup(0xa0, USB_REQUEST_GET_DESCRIPTOR, HUB_DESCRIPTOR_TYPE << 8, 0, 64),
+        None,
+    ) else {
+        panic!("expected Data response");
+    };
+
+    assert_eq!(desc.len(), 9);
+    assert_eq!(desc[0], 9);
+    assert_eq!(desc[1], HUB_DESCRIPTOR_TYPE as u8);
+    assert_eq!(desc[2], HUB_NUM_PORTS as u8);
+    assert_eq!(
+        u16::from_le_bytes([desc[3], desc[4]]),
+        HUB_W_HUB_CHARACTERISTICS
+    );
+
+    // DeviceRemovable + PortPwrCtrlMask bitmaps for 4 ports are 1 byte each.
+    assert_eq!(desc[7], 0x00);
+    assert_eq!(desc[8], HUB_PORT_PWR_CTRL_MASK);
+
+    // Configuration descriptor should expose a non-zero bMaxPower.
+    assert_eq!(hub.get_config_descriptor()[8], 50);
+}
+
