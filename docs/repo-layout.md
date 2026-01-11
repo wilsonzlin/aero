@@ -61,6 +61,19 @@ contract.
 
 See `docs/graphics/aerogpu-protocols.md` for the full mapping.
 
+#### USB note (browser runtime)
+
+The repo contains multiple generations of USB/UHCI work. The **canonical browser runtime** USB
+stack is defined by [ADR 0015](./adr/0015-canonical-usb-stack.md):
+
+- Rust USB device models + UHCI: `crates/aero-usb`
+- Host integration + passthrough broker/executor: `web/src/usb/*`
+
+Legacy/non-canonical USB implementations (do not extend for new browser runtime work):
+
+- Native/legacy USB stack: `crates/emulator/src/io/usb/*`
+- Repo-root WebUSB demo RPC (direct `navigator.usb` operations): `src/platform/webusb_*`
+
 ### Backend services (production)
 
 Most maintained backend work lives under:
