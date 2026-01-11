@@ -360,6 +360,11 @@ pub trait DisplayAdapter {
 | [06-audio-subsystem.md](./docs/06-audio-subsystem.md)                   | HD Audio, Web Audio API                | I/O               |
 | [07-networking.md](./docs/07-networking.md)                             | Network stack emulation                | I/O               |
 | [08-input-devices.md](./docs/08-input-devices.md)                       | Keyboard, mouse, USB HID               | I/O               |
+| [usb-hid.md](./docs/usb-hid.md)                                         | USB HID usages and report formats      | I/O               |
+| [webhid-webusb-passthrough.md](./docs/webhid-webusb-passthrough.md)     | WebHID/WebUSB physical device passthrough architecture + security model | I/O / Infra |
+| [webhid-hid-report-descriptor-synthesis.md](./docs/webhid-hid-report-descriptor-synthesis.md) | WebHID → HID report descriptor synthesis (Windows 7 contract) | I/O |
+| [webusb.md](./docs/webusb.md)                                           | WebUSB constraints and troubleshooting | I/O / Infra       |
+| [webusb-passthrough.md](./docs/webusb-passthrough.md)                   | WebUSB passthrough architecture (UHCI ↔ host actions/completions) | I/O / Infra |
 | [09-bios-firmware.md](./docs/09-bios-firmware.md)                       | BIOS, ACPI, device models              | Firmware          |
 | [10-performance-optimization.md](./docs/10-performance-optimization.md) | JIT, caching, profiling                | Performance       |
 | [11-browser-apis.md](./docs/11-browser-apis.md)                         | Web platform integration               | Infrastructure    |
