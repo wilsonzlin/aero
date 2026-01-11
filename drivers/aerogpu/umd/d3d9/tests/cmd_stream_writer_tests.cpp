@@ -1276,6 +1276,225 @@ bool TestRotateResourceIdentitiesRebindsChangedHandles() {
   return true;
 }
 
+bool TestPresentBackbufferRotationUndoOnSmallCmdBuffer() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3D9DDI_HADAPTER hAdapter{};
+    D3D9DDI_HDEVICE hDevice{};
+    AEROGPU_D3D9DDI_HSWAPCHAIN hSwapChain{};
+    bool has_adapter = false;
+    bool has_device = false;
+    bool has_swapchain = false;
+
+    ~Cleanup() {
+      if (has_swapchain && device_funcs.pfnDestroySwapChain) {
+        device_funcs.pfnDestroySwapChain(hDevice, hSwapChain);
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  AEROGPU_D3D9DDIARG_CREATESWAPCHAIN create_sc{};
+  create_sc.present_params.backbuffer_width = 64;
+  create_sc.present_params.backbuffer_height = 64;
+  create_sc.present_params.backbuffer_format = 22u; // D3DFMT_X8R8G8B8
+  create_sc.present_params.backbuffer_count = 2;
+  create_sc.present_params.swap_effect = 1;
+  create_sc.present_params.flags = 0;
+  create_sc.present_params.hDeviceWindow = nullptr;
+  create_sc.present_params.windowed = TRUE;
+  create_sc.present_params.presentation_interval = 0;
+
+  hr = cleanup.device_funcs.pfnCreateSwapChain(create_dev.hDevice, &create_sc);
+  if (!Check(hr == S_OK, "CreateSwapChain")) {
+    return false;
+  }
+  if (!Check(create_sc.hSwapChain.pDrvPrivate != nullptr, "CreateSwapChain returned swapchain handle")) {
+    return false;
+  }
+  cleanup.hSwapChain = create_sc.hSwapChain;
+  cleanup.has_swapchain = true;
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  auto* sc = reinterpret_cast<SwapChain*>(create_sc.hSwapChain.pDrvPrivate);
+  if (!Check(sc->backbuffers.size() == 2, "swapchain has 2 backbuffers")) {
+    return false;
+  }
+
+  const aerogpu_handle_t h0 = sc->backbuffers[0]->handle;
+  const aerogpu_handle_t h1 = sc->backbuffers[1]->handle;
+
+  AEROGPU_D3D9DDIARG_PRESENTEX present{};
+  present.hSrc.pDrvPrivate = nullptr;
+  present.hWnd = nullptr;
+  present.sync_interval = 0;
+  present.d3d9_present_flags = 0;
+
+  // Small span-backed DMA buffer: PresentEx fits, but the post-submit render-target
+  // rebind used by flip-style backbuffer rotation does not.
+  uint8_t small_dma[sizeof(aerogpu_cmd_stream_header) + 32] = {};
+  dev->cmd.set_span(small_dma, sizeof(small_dma));
+
+  hr = cleanup.device_funcs.pfnPresentEx(create_dev.hDevice, &present);
+  if (!Check(hr == S_OK, "PresentEx (small cmd buffer)")) {
+    return false;
+  }
+  if (!Check(sc->backbuffers[0]->handle == h0 && sc->backbuffers[1]->handle == h1,
+             "present rotation undone when RT rebind cannot be emitted")) {
+    return false;
+  }
+
+  // Vector-backed buffer: rotation should succeed and swap handles.
+  dev->cmd.set_vector();
+  hr = cleanup.device_funcs.pfnPresentEx(create_dev.hDevice, &present);
+  if (!Check(hr == S_OK, "PresentEx (vector cmd buffer)")) {
+    return false;
+  }
+  return Check(sc->backbuffers[0]->handle == h1 && sc->backbuffers[1]->handle == h0,
+               "present rotation occurs when RT rebind succeeds");
+}
+
+bool TestRotateResourceIdentitiesUndoOnSmallCmdBuffer() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3D9DDI_HADAPTER hAdapter{};
+    D3D9DDI_HDEVICE hDevice{};
+    AEROGPU_D3D9DDI_HRESOURCE resources[2]{};
+    bool has_adapter = false;
+    bool has_device = false;
+    bool has_resources = false;
+
+    ~Cleanup() {
+      if (has_resources && device_funcs.pfnDestroyResource) {
+        device_funcs.pfnDestroyResource(hDevice, resources[0]);
+        device_funcs.pfnDestroyResource(hDevice, resources[1]);
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  AEROGPU_D3D9DDIARG_CREATERESOURCE create_res{};
+  create_res.type = 0;
+  create_res.format = 22u; // D3DFMT_X8R8G8B8
+  create_res.width = 16;
+  create_res.height = 16;
+  create_res.depth = 1;
+  create_res.mip_levels = 1;
+  create_res.usage = 0;
+  create_res.pool = 0;
+  create_res.size = 0;
+  create_res.hResource.pDrvPrivate = nullptr;
+  create_res.pSharedHandle = nullptr;
+  create_res.pPrivateDriverData = nullptr;
+  create_res.PrivateDriverDataSize = 0;
+  create_res.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_res);
+  if (!Check(hr == S_OK, "CreateResource(0)")) {
+    return false;
+  }
+  cleanup.resources[0] = create_res.hResource;
+
+  hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_res);
+  if (!Check(hr == S_OK, "CreateResource(1)")) {
+    return false;
+  }
+  cleanup.resources[1] = create_res.hResource;
+  cleanup.has_resources = true;
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  auto* res0 = reinterpret_cast<Resource*>(cleanup.resources[0].pDrvPrivate);
+  auto* res1 = reinterpret_cast<Resource*>(cleanup.resources[1].pDrvPrivate);
+
+  const aerogpu_handle_t h0 = res0->handle;
+  const aerogpu_handle_t h1 = res1->handle;
+
+  // Too small for SET_RENDER_TARGETS (48 bytes), so rotate should fail and restore.
+  uint8_t small_dma[sizeof(aerogpu_cmd_stream_header) + 32] = {};
+  dev->cmd.set_span(small_dma, sizeof(small_dma));
+
+  hr = cleanup.device_funcs.pfnRotateResourceIdentities(create_dev.hDevice, cleanup.resources, 2);
+  if (!Check(hr == E_OUTOFMEMORY, "RotateResourceIdentities returns E_OUTOFMEMORY on small cmd buffer")) {
+    return false;
+  }
+  if (!Check(res0->handle == h0 && res1->handle == h1, "rotate identities restored handles on failure")) {
+    return false;
+  }
+
+  dev->cmd.set_vector();
+  hr = cleanup.device_funcs.pfnRotateResourceIdentities(create_dev.hDevice, cleanup.resources, 2);
+  if (!Check(hr == S_OK, "RotateResourceIdentities succeeds with vector cmd buffer")) {
+    return false;
+  }
+  return Check(res0->handle == h1 && res1->handle == h0, "rotate identities swaps handles on success");
+}
+
 } // namespace
 } // namespace aerogpu
 
@@ -1295,5 +1514,7 @@ int main() {
   failures += !aerogpu::TestDestroyBoundVertexDeclUnbinds();
   failures += !aerogpu::TestResetShrinkUnbindsBackbuffer();
   failures += !aerogpu::TestRotateResourceIdentitiesRebindsChangedHandles();
+  failures += !aerogpu::TestPresentBackbufferRotationUndoOnSmallCmdBuffer();
+  failures += !aerogpu::TestRotateResourceIdentitiesUndoOnSmallCmdBuffer();
   return failures ? 1 : 0;
 }

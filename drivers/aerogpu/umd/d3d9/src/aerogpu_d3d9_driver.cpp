@@ -3321,15 +3321,12 @@ HRESULT AEROGPU_D3D9_CALL device_rotate_resource_identities(
 
   std::vector<Resource*> resources;
   resources.reserve(resource_count);
-  std::vector<aerogpu_handle_t> saved_handles;
-  saved_handles.reserve(resource_count);
   for (uint32_t i = 0; i < resource_count; ++i) {
     auto* res = as_resource(pResources[i]);
     if (!res) {
       return trace.ret(E_INVALIDARG);
     }
     resources.push_back(res);
-    saved_handles.push_back(res->handle);
   }
   const aerogpu_handle_t saved = resources[0]->handle;
 
@@ -3340,9 +3337,12 @@ HRESULT AEROGPU_D3D9_CALL device_rotate_resource_identities(
   resources[resource_count - 1]->handle = saved;
 
   if (!emit_set_render_targets_locked(dev)) {
-    for (uint32_t i = 0; i < resource_count; ++i) {
-      resources[i]->handle = saved_handles[i];
+    // Undo the rotation (rotate right by one).
+    const aerogpu_handle_t undo_saved = resources[resource_count - 1]->handle;
+    for (uint32_t i = resource_count - 1; i > 0; --i) {
+      resources[i]->handle = resources[i - 1]->handle;
     }
+    resources[0]->handle = undo_saved;
     return trace.ret(E_OUTOFMEMORY);
   }
 
@@ -4751,12 +4751,6 @@ HRESULT AEROGPU_D3D9_CALL device_present_ex(
       sc->present_count++;
       sc->last_present_fence = present_fence;
       if (sc->backbuffers.size() > 1 && sc->swap_effect != 0u) {
-        std::vector<aerogpu_handle_t> saved_handles;
-        saved_handles.reserve(sc->backbuffers.size());
-        for (Resource* bb : sc->backbuffers) {
-          saved_handles.push_back(bb ? bb->handle : 0);
-        }
-
         const aerogpu_handle_t saved = sc->backbuffers[0]->handle;
         for (size_t i = 0; i + 1 < sc->backbuffers.size(); ++i) {
           sc->backbuffers[i]->handle = sc->backbuffers[i + 1]->handle;
@@ -4766,12 +4760,11 @@ HRESULT AEROGPU_D3D9_CALL device_present_ex(
           // Preserve device/host state consistency: if we cannot re-emit the render
           // target bindings (command buffer too small), undo the rotation so future
           // draws still target the host's current bindings.
-          for (size_t i = 0; i < sc->backbuffers.size(); ++i) {
-            if (!sc->backbuffers[i]) {
-              continue;
-            }
-            sc->backbuffers[i]->handle = saved_handles[i];
+          const aerogpu_handle_t undo_saved = sc->backbuffers.back()->handle;
+          for (size_t i = sc->backbuffers.size() - 1; i > 0; --i) {
+            sc->backbuffers[i]->handle = sc->backbuffers[i - 1]->handle;
           }
+          sc->backbuffers[0]->handle = undo_saved;
         }
       }
     }
@@ -4861,24 +4854,17 @@ HRESULT AEROGPU_D3D9_CALL device_present(
       sc->present_count++;
       sc->last_present_fence = present_fence;
       if (sc->backbuffers.size() > 1 && sc->swap_effect != 0u) {
-        std::vector<aerogpu_handle_t> saved_handles;
-        saved_handles.reserve(sc->backbuffers.size());
-        for (Resource* bb : sc->backbuffers) {
-          saved_handles.push_back(bb ? bb->handle : 0);
-        }
-
         const aerogpu_handle_t saved = sc->backbuffers[0]->handle;
         for (size_t i = 0; i + 1 < sc->backbuffers.size(); ++i) {
           sc->backbuffers[i]->handle = sc->backbuffers[i + 1]->handle;
         }
         sc->backbuffers.back()->handle = saved;
         if (!emit_set_render_targets_locked(dev)) {
-          for (size_t i = 0; i < sc->backbuffers.size(); ++i) {
-            if (!sc->backbuffers[i]) {
-              continue;
-            }
-            sc->backbuffers[i]->handle = saved_handles[i];
+          const aerogpu_handle_t undo_saved = sc->backbuffers.back()->handle;
+          for (size_t i = sc->backbuffers.size() - 1; i > 0; --i) {
+            sc->backbuffers[i]->handle = sc->backbuffers[i - 1]->handle;
           }
+          sc->backbuffers[0]->handle = undo_saved;
         }
       }
     }
