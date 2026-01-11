@@ -19,6 +19,25 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function signalProcessTree(child, signal) {
+  if (!child || !child.pid) return;
+  // `detached: true` makes the child process leader of a new process group (POSIX).
+  // Kill the entire group so `cargo run` doesn't leak the spawned binary process.
+  if (process.platform !== 'win32') {
+    try {
+      process.kill(-child.pid, signal);
+      return;
+    } catch {
+      // Fall back to killing the main pid.
+    }
+  }
+  try {
+    child.kill(signal);
+  } catch {
+    // ignore
+  }
+}
+
 function isSccacheWrapper(value) {
   if (!value) return false;
   const v = String(value).toLowerCase();
@@ -82,11 +101,11 @@ async function waitForHttpOk(url, { timeoutMs, shouldAbort }) {
 async function killChildProcess(child) {
   if (!child || child.killed || child.exitCode !== null) return;
 
-  child.kill('SIGTERM');
+  signalProcessTree(child, 'SIGTERM');
   const exited = new Promise((resolve) => child.once('exit', resolve));
   await Promise.race([exited, sleep(2000)]);
   if (child.exitCode === null) {
-    child.kill('SIGKILL');
+    signalProcessTree(child, 'SIGKILL');
     await exited;
   }
 }
@@ -345,6 +364,7 @@ async function startDiskGatewayServer({ appOrigin, publicFixturePath, privateFix
   const child = spawn('cargo', ['run', '--locked', '--bin', 'disk-gateway'], {
     cwd: diskGatewaySourceDir,
     env,
+    detached: process.platform !== 'win32',
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
