@@ -66,32 +66,46 @@ jobs:
             echo "  follow_serial: '${{ inputs.follow_serial }}'"
             echo
 
-            if [[ -z "${{ inputs.disk_image_path }}" ]]; then
+            disk_image_path="${{ inputs.disk_image_path }}"
+            qemu_system="${{ inputs.qemu_system }}"
+            timeout_seconds="${{ inputs.timeout_seconds }}"
+
+            if [[ -z "${disk_image_path}" ]]; then
               echo "ERROR: workflow input 'disk_image_path' is empty."
               echo "Provide a path on the self-hosted runner to a prepared Windows 7 image (qcow2/vhdx)."
               exit 1
             fi
 
-            if [[ ! -e "${{ inputs.disk_image_path }}" ]]; then
-              echo "ERROR: disk image path does not exist on the runner: ${{ inputs.disk_image_path }}"
+            if [[ ! -e "${disk_image_path}" ]]; then
+              echo "ERROR: disk image path does not exist on the runner: ${disk_image_path}"
               exit 1
             fi
 
-            if ! command -v "${{ inputs.qemu_system }}" >/dev/null 2>&1; then
-              echo "ERROR: qemu system binary not found/executable: ${{ inputs.qemu_system }}"
+            if ! command -v "${qemu_system}" >/dev/null 2>&1; then
+              echo "ERROR: qemu system binary not found/executable: ${qemu_system}"
+              exit 1
+            fi
+
+            if ! command -v python3 >/dev/null 2>&1; then
+              echo "ERROR: python3 not found in PATH"
+              exit 1
+            fi
+
+            if [[ -z "${timeout_seconds}" || ! "${timeout_seconds}" =~ ^[0-9]+$ ]]; then
+              echo "ERROR: workflow input 'timeout_seconds' must be an integer number of seconds, got: '${timeout_seconds}'"
               exit 1
             fi
 
             echo "python3: $(python3 --version 2>&1 || true)"
-            echo "qemu: $("${{ inputs.qemu_system }}" --version 2>&1 | head -n 1 || true)"
+            echo "qemu: $(\"${qemu_system}\" --version 2>&1 | head -n 1 || true)"
             echo
 
             args=(
               python3 -u drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py
-              --qemu-system "${{ inputs.qemu_system }}"
-              --disk-image "${{ inputs.disk_image_path }}"
+              --qemu-system "${qemu_system}"
+              --disk-image "${disk_image_path}"
               --serial-log "${serial_log}"
-              --timeout-seconds "${{ inputs.timeout_seconds }}"
+              --timeout-seconds "${timeout_seconds}"
             )
             if [[ "${{ inputs.snapshot }}" == "true" ]]; then
               args+=(--snapshot)
