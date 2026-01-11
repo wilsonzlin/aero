@@ -77,14 +77,6 @@ esac
 export CARGO_BUILD_JOBS=4
 export CARGO_INCREMENTAL=1
 
-# Cargo wrappers (e.g. sccache) are sometimes configured globally on shared hosts. In sandboxed
-# agent environments the wrapper daemon/socket is not always available, which can cause Cargo to
-# fail before compiling anything. Prefer a plain rustc invocation for reliability.
-export RUSTC_WRAPPER=
-export RUSTC_WORKSPACE_WRAPPER=
-export CARGO_BUILD_RUSTC_WRAPPER=
-export CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER=
-
 # Reduce codegen parallelism per crate to limit memory spikes.
 # Keep any existing RUSTFLAGS, but don't re-add codegen-units when sourced twice.
 if [[ "${RUSTFLAGS:-}" != *"codegen-units="* ]]; then
