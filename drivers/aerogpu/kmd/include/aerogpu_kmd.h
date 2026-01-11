@@ -107,7 +107,7 @@ typedef struct _AEROGPU_ADAPTER {
     PUCHAR Bar0;
     ULONG Bar0Length;
 
-    /* Device feature bits (AEROGPU_MMIO_REG_FEATURES_* from aerogpu_pci.h). */
+    /* Device feature bits (AEROGPU_FEATURE_* from aerogpu_pci.h). */
     ULONGLONG DeviceFeatures;
     BOOLEAN SupportsVblank;
     DXGK_INTERRUPT_TYPE VblankInterruptType;
@@ -122,6 +122,9 @@ typedef struct _AEROGPU_ADAPTER {
     struct aerogpu_fence_page* FencePageVa; /* Only when AbiKind == AEROGPU_ABI_KIND_V1 */
     PHYSICAL_ADDRESS FencePagePa;
     KSPIN_LOCK RingLock;
+
+    KSPIN_LOCK IrqEnableLock;
+    ULONG IrqEnableMask; /* Cached AEROGPU_MMIO_REG_IRQ_ENABLE value (AbiKind == AEROGPU_ABI_KIND_V1). */
 
     LIST_ENTRY PendingSubmissions;
     KSPIN_LOCK PendingLock;
