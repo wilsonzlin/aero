@@ -10,6 +10,7 @@ Common flags:
 
 * `--dump` – write a `*.bmp` next to the executable.
 * `--hidden` – for the windowed triangle tests: create the window but do not show it (useful for automation).
+* `--validate-sharing` – for `d3d9ex_shared_surface`: also validate cross-process pixel sharing via readback (implied by `--dump`).
 * `--require-vid=0x####` / `--require-did=0x####` – fail the test if the active adapter VID/DID does not match.
 * `--allow-microsoft` – allow running on the Microsoft Basic Render Driver (normally treated as a failure to avoid false PASS when AeroGPU isn’t active).
 * `--allow-non-aerogpu` – allow running on adapters whose description does not contain `AeroGPU` (by default, rendering tests expect to be running on an AeroGPU adapter).

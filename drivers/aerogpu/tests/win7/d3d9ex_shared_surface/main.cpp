@@ -632,6 +632,9 @@ static int RunChild(int argc,
     }
   }
 
+  if (open_handle && open_handle != shared_handle) {
+    CloseHandle(open_handle);
+  }
   CloseHandle(shared_handle);
 
   aerogpu_test::PrintfStdout("PASS: %s", kTestName);
@@ -899,7 +902,7 @@ static int RunSharedSurfaceTest(int argc, char** argv) {
   const char* kTestName = "d3d9ex_shared_surface";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
-        "Usage: %s.exe [--dump] [--hidden] [--validate-sharing] [--require-vid=0x####] "
+        "Usage: %s.exe [--dump] [--show] [--validate-sharing] [--require-vid=0x####] "
         "[--require-did=0x####] [--allow-microsoft] [--allow-non-aerogpu]",
         kTestName);
     aerogpu_test::PrintfStdout("Note: --dump implies --validate-sharing.");
@@ -913,7 +916,9 @@ static int RunSharedSurfaceTest(int argc, char** argv) {
       aerogpu_test::HasArg(argc, argv, "--validate-sharing") || dump;
   const bool allow_microsoft = aerogpu_test::HasArg(argc, argv, "--allow-microsoft");
   const bool allow_non_aerogpu = aerogpu_test::HasArg(argc, argv, "--allow-non-aerogpu");
-  const bool hidden = aerogpu_test::HasArg(argc, argv, "--hidden");
+  // Default to hidden for this test since it spawns a child process and is intended for automation.
+  const bool show = aerogpu_test::HasArg(argc, argv, "--show");
+  const bool hidden = !show;
 
   AdapterRequirements req;
   ZeroMemory(&req, sizeof(req));
