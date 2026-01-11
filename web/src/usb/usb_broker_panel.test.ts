@@ -144,9 +144,10 @@ describe("usb broker panel UI", () => {
     const panel = renderWebUsbBrokerPanel(broker);
     await new Promise((r) => setTimeout(r, 0));
     expect(attachedPort).not.toBeNull();
+    const port = attachedPort as unknown as MessagePort;
 
     // Simulate broker selection notification.
-    attachedPort?.postMessage({
+    port.postMessage({
       type: "usb.selected",
       ok: true,
       info: { vendorId: device.vendorId, productId: device.productId, productName: device.productName },
