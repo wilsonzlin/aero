@@ -252,13 +252,16 @@ export interface WasmApi {
         webhid_push_input_report(deviceId: number, reportId: number, data: Uint8Array): void;
         webhid_drain_output_reports(): Array<{ deviceId: number; reportType: "output" | "feature"; reportId: number; data: Uint8Array }>;
 
-        webusb_attach(preferredPort?: number): number;
-        webusb_detach(): void;
-        webusb_drain_actions(): UsbHostAction[];
-        webusb_push_completion(completion: UsbHostCompletion): void;
+         webusb_attach(preferredPort?: number): number;
+         webusb_detach(): void;
+         webusb_drain_actions(): UsbHostAction[];
+         webusb_push_completion(completion: UsbHostCompletion): void;
 
-        free(): void;
-    };
+         save_state?(): Uint8Array;
+         load_state?(bytes: Uint8Array): void;
+
+         free(): void;
+     };
 
     /**
      * WebUSB UHCI passthrough enumeration harness (drives UHCI TDs and emits `UsbHostAction`s).

@@ -5,13 +5,15 @@ use std::rc::Rc;
 use js_sys::{Array, Object, Reflect, Uint8Array};
 use wasm_bindgen::prelude::*;
 
-use aero_usb::GuestMemory;
+use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
+use aero_io_snapshot::io::state::{IoSnapshot, SnapshotReader, SnapshotVersion, SnapshotWriter};
 use aero_usb::hid::passthrough::{UsbHidPassthrough, UsbHidPassthroughOutputReport};
 use aero_usb::hid::webhid;
 use aero_usb::hub::UsbHubDevice;
 use aero_usb::passthrough::{UsbHostAction, UsbHostCompletion};
 use aero_usb::uhci::{InterruptController, UhciController};
 use aero_usb::usb::{UsbDevice, UsbSpeed};
+use aero_usb::GuestMemory;
 
 const DEFAULT_IO_BASE: u16 = 0x5000;
 const DEFAULT_IRQ_LINE: u8 = 11;
@@ -19,6 +21,9 @@ const PORT_COUNT: usize = 2;
 const EXTERNAL_HUB_ROOT_PORT: usize = 0;
 const DEFAULT_EXTERNAL_HUB_PORT_COUNT: u8 = 16;
 const WEBUSB_ROOT_PORT: usize = 1;
+
+const UHCI_RUNTIME_DEVICE_ID: [u8; 4] = *b"UHRT";
+const UHCI_RUNTIME_DEVICE_VERSION: SnapshotVersion = SnapshotVersion::new(1, 0);
 
 fn js_error(message: &str) -> JsValue {
     js_sys::Error::new(message).into()
@@ -208,6 +213,11 @@ impl UsbDevice for RcWebUsbDevice {
 struct WebHidDeviceState {
     location: WebHidDeviceLocation,
     dev: Rc<RefCell<UsbHidPassthrough>>,
+    vendor_id: u16,
+    product_id: u16,
+    product: String,
+    report_descriptor: Vec<u8>,
+    has_interrupt_out: bool,
 }
 
 struct WebUsbDeviceState {
@@ -321,14 +331,15 @@ impl UhciRuntime {
             })?;
 
         let has_interrupt_out = collections_have_output_reports(&collections);
+        let product = product_name.unwrap_or_else(|| "WebHID HID Device".to_string());
 
         let device = UsbHidPassthrough::new(
             vendor_id,
             product_id,
             "WebHID".to_string(),
-            product_name.unwrap_or_else(|| "WebHID HID Device".to_string()),
+            product.clone(),
             None,
-            report_descriptor,
+            report_descriptor.clone(),
             has_interrupt_out,
             None,
             None,
@@ -345,6 +356,11 @@ impl UhciRuntime {
             WebHidDeviceState {
                 location: WebHidDeviceLocation::RootPort(port),
                 dev,
+                vendor_id,
+                product_id,
+                product,
+                report_descriptor,
+                has_interrupt_out,
             },
         );
 
@@ -391,14 +407,15 @@ impl UhciRuntime {
             })?;
 
         let has_interrupt_out = collections_have_output_reports(&collections);
+        let product = product_name.unwrap_or_else(|| "WebHID HID Device".to_string());
 
         let device = UsbHidPassthrough::new(
             vendor_id,
             product_id,
             "WebHID".to_string(),
-            product_name.unwrap_or_else(|| "WebHID HID Device".to_string()),
+            product.clone(),
             None,
-            report_descriptor,
+            report_descriptor.clone(),
             has_interrupt_out,
             None,
             None,
@@ -419,6 +436,11 @@ impl UhciRuntime {
             WebHidDeviceState {
                 location: WebHidDeviceLocation::ExternalHubPort(hub_port),
                 dev,
+                vendor_id,
+                product_id,
+                product,
+                report_descriptor,
+                has_interrupt_out,
             },
         );
 
@@ -555,6 +577,422 @@ impl UhciRuntime {
         state.dev.borrow_mut().push_completion(completion);
         Ok(())
     }
+
+    /// Serialize the current runtime state into a deterministic snapshot blob.
+    ///
+    /// Format: top-level `aero-io-snapshot` TLV with:
+    /// - tag 1: `aero_usb::uhci::UhciController` snapshot bytes
+    /// - tag 2: IRQ latch level (`irq_level`)
+    /// - tag 3: external hub port count (if present)
+    /// - tag 4: external hub snapshot bytes (if present)
+    /// - tag 5: external hub port-count hint (optional)
+    /// - tag 6: WebHID passthrough devices (sorted list)
+    /// - tag 7: WebUSB passthrough device snapshot bytes (if present)
+    pub fn save_state(&self) -> Vec<u8> {
+        const TAG_CONTROLLER: u16 = 1;
+        const TAG_IRQ_LEVEL: u16 = 2;
+        const TAG_EXTERNAL_HUB_PORT_COUNT: u16 = 3;
+        const TAG_EXTERNAL_HUB_STATE: u16 = 4;
+        const TAG_EXTERNAL_HUB_PORT_COUNT_HINT: u16 = 5;
+        const TAG_WEBHID_DEVICES: u16 = 6;
+        const TAG_WEBUSB_STATE: u16 = 7;
+
+        let mut w = SnapshotWriter::new(UHCI_RUNTIME_DEVICE_ID, UHCI_RUNTIME_DEVICE_VERSION);
+        w.field_bytes(TAG_CONTROLLER, self.ctrl.save_state());
+        w.field_bool(TAG_IRQ_LEVEL, self.irq.level);
+
+        if let Some(state) = self.external_hub.as_ref() {
+            w.field_u8(TAG_EXTERNAL_HUB_PORT_COUNT, state.port_count);
+            if let Some(hub) = self.external_hub_ref() {
+                w.field_bytes(TAG_EXTERNAL_HUB_STATE, hub.save_state());
+            }
+        }
+        if let Some(hint) = self.external_hub_port_count_hint {
+            w.field_u8(TAG_EXTERNAL_HUB_PORT_COUNT_HINT, hint);
+        }
+
+        let mut webhid_records: Vec<(u32, u8, u8, Vec<u8>)> = self
+            .webhid_devices
+            .iter()
+            .map(|(&device_id, state)| {
+                let (loc_kind, loc_port) = match state.location {
+                    WebHidDeviceLocation::RootPort(port) => (0u8, port as u8),
+                    WebHidDeviceLocation::ExternalHubPort(port) => (1u8, port),
+                };
+                let dev_state = state.dev.borrow().save_state();
+                let record = Encoder::new()
+                    .u32(device_id)
+                    .u8(loc_kind)
+                    .u8(loc_port)
+                    .u16(state.vendor_id)
+                    .u16(state.product_id)
+                    .vec_u8(state.product.as_bytes())
+                    .vec_u8(&state.report_descriptor)
+                    .bool(state.has_interrupt_out)
+                    .vec_u8(&dev_state)
+                    .finish();
+                (device_id, loc_kind, loc_port, record)
+            })
+            .collect();
+        webhid_records
+            .sort_by_key(|(device_id, loc_kind, loc_port, _)| (*device_id, *loc_kind, *loc_port));
+        let webhid_bytes: Vec<Vec<u8>> = webhid_records
+            .into_iter()
+            .map(|(_, _, _, record)| record)
+            .collect();
+        w.field_bytes(
+            TAG_WEBHID_DEVICES,
+            Encoder::new().vec_bytes(&webhid_bytes).finish(),
+        );
+
+        if let Some(webusb) = self.webusb.as_ref() {
+            w.field_bytes(TAG_WEBUSB_STATE, webusb.dev.borrow().save_state());
+        }
+
+        w.finish()
+    }
+
+    /// Restore runtime state from a snapshot blob produced by [`save_state`].
+    ///
+    /// This drops any in-flight host actions/completions for passthrough devices (WebUSB/WebHID)
+    /// as per their `aero-io-snapshot` semantics.
+    pub fn load_state(&mut self, bytes: &[u8]) -> Result<(), JsValue> {
+        const TAG_CONTROLLER: u16 = 1;
+        const TAG_IRQ_LEVEL: u16 = 2;
+        const TAG_EXTERNAL_HUB_PORT_COUNT: u16 = 3;
+        const TAG_EXTERNAL_HUB_STATE: u16 = 4;
+        const TAG_EXTERNAL_HUB_PORT_COUNT_HINT: u16 = 5;
+        const TAG_WEBHID_DEVICES: u16 = 6;
+        const TAG_WEBUSB_STATE: u16 = 7;
+
+        #[derive(Debug)]
+        struct WebHidSnapshotEntry {
+            device_id: u32,
+            location: WebHidDeviceLocation,
+            vendor_id: u16,
+            product_id: u16,
+            product: String,
+            report_descriptor: Vec<u8>,
+            has_interrupt_out: bool,
+            state: Vec<u8>,
+        }
+
+        let r = SnapshotReader::parse(bytes, UHCI_RUNTIME_DEVICE_ID)
+            .map_err(|e| js_error(&format!("Invalid UHCI runtime snapshot: {e}")))?;
+        r.ensure_device_major(UHCI_RUNTIME_DEVICE_VERSION.major)
+            .map_err(|e| js_error(&format!("Invalid UHCI runtime snapshot: {e}")))?;
+
+        let ctrl_bytes = r
+            .bytes(TAG_CONTROLLER)
+            .ok_or_else(|| js_error("UHCI runtime snapshot missing controller state"))?;
+        let irq_level = r
+            .bool(TAG_IRQ_LEVEL)
+            .map_err(|e| js_error(&format!("Invalid UHCI runtime snapshot IRQ latch: {e}")))?
+            .unwrap_or(false);
+
+        let hub_port_count = r.u8(TAG_EXTERNAL_HUB_PORT_COUNT).map_err(|e| {
+            js_error(&format!(
+                "Invalid UHCI runtime snapshot hub port count: {e}"
+            ))
+        })?;
+        let hub_state_bytes = r.bytes(TAG_EXTERNAL_HUB_STATE);
+        if hub_port_count.is_some() ^ hub_state_bytes.is_some() {
+            return Err(js_error(
+                "UHCI runtime snapshot has inconsistent external hub fields (expected both portCount + state)",
+            ));
+        }
+        if let Some(count) = hub_port_count {
+            if count == 0 {
+                return Err(js_error(
+                    "UHCI runtime snapshot has invalid external hub port count 0",
+                ));
+            }
+        }
+
+        let hub_port_count_hint = r
+            .u8(TAG_EXTERNAL_HUB_PORT_COUNT_HINT)
+            .map_err(|e| js_error(&format!("Invalid UHCI runtime snapshot hub port hint: {e}")))?
+            .and_then(|v| (v != 0).then_some(v));
+
+        let webusb_state_bytes = r.bytes(TAG_WEBUSB_STATE);
+
+        let webhid_entries: Vec<WebHidSnapshotEntry> =
+            if let Some(buf) = r.bytes(TAG_WEBHID_DEVICES) {
+                let mut d = Decoder::new(buf);
+                let records = d.vec_bytes().map_err(|e| {
+                    js_error(&format!("Invalid UHCI runtime snapshot WebHID list: {e}"))
+                })?;
+                d.finish().map_err(|e| {
+                    js_error(&format!("Invalid UHCI runtime snapshot WebHID list: {e}"))
+                })?;
+
+                let mut out = Vec::with_capacity(records.len());
+                for (idx, rec) in records.into_iter().enumerate() {
+                    let mut rd = Decoder::new(&rec);
+                    let device_id = rd
+                        .u32()
+                        .map_err(|e| js_error(&format!("Invalid WebHID record #{idx}: {e}")))?;
+                    let loc_kind = rd.u8().map_err(|e| {
+                        js_error(&format!("Invalid WebHID record {device_id} location: {e}"))
+                    })?;
+                    let loc_port = rd.u8().map_err(|e| {
+                        js_error(&format!("Invalid WebHID record {device_id} location: {e}"))
+                    })?;
+                    let vendor_id = rd.u16().map_err(|e| {
+                        js_error(&format!("Invalid WebHID record {device_id} vendorId: {e}"))
+                    })?;
+                    let product_id = rd.u16().map_err(|e| {
+                        js_error(&format!("Invalid WebHID record {device_id} productId: {e}"))
+                    })?;
+                    let product_bytes = rd.vec_u8().map_err(|e| {
+                        js_error(&format!("Invalid WebHID record {device_id} product: {e}"))
+                    })?;
+                    let product = String::from_utf8(product_bytes).map_err(|_| {
+                        js_error(&format!(
+                            "Invalid WebHID record {device_id} product: expected UTF-8 string"
+                        ))
+                    })?;
+                    let report_descriptor = rd.vec_u8().map_err(|e| {
+                        js_error(&format!(
+                            "Invalid WebHID record {device_id} report descriptor: {e}"
+                        ))
+                    })?;
+                    let has_interrupt_out = rd.bool().map_err(|e| {
+                        js_error(&format!(
+                            "Invalid WebHID record {device_id} hasInterruptOut: {e}"
+                        ))
+                    })?;
+                    let state = rd.vec_u8().map_err(|e| {
+                        js_error(&format!("Invalid WebHID record {device_id} state: {e}"))
+                    })?;
+                    rd.finish().map_err(|e| {
+                        js_error(&format!("Invalid WebHID record {device_id} encoding: {e}"))
+                    })?;
+
+                    let location = match loc_kind {
+                        0 => WebHidDeviceLocation::RootPort(loc_port as usize),
+                        1 => {
+                            if loc_port == 0 {
+                                return Err(js_error(&format!(
+                                    "Invalid WebHID record {device_id}: hub port 0 is not valid"
+                                )));
+                            }
+                            WebHidDeviceLocation::ExternalHubPort(loc_port)
+                        }
+                        _ => {
+                            return Err(js_error(&format!(
+                            "Invalid WebHID record {device_id}: unknown location kind {loc_kind}"
+                        )));
+                        }
+                    };
+
+                    out.push(WebHidSnapshotEntry {
+                        device_id,
+                        location,
+                        vendor_id,
+                        product_id,
+                        product,
+                        report_descriptor,
+                        has_interrupt_out,
+                        state,
+                    });
+                }
+                out
+            } else {
+                Vec::new()
+            };
+
+        // Validate WebHID entries against hub/webusb presence so we can fail before mutating state.
+        {
+            let mut ids = std::collections::HashMap::new();
+            let mut root_ports = std::collections::HashMap::new();
+            let mut hub_ports = std::collections::HashMap::new();
+
+            for entry in &webhid_entries {
+                if let Some(prev) = ids.insert(entry.device_id, ()) {
+                    let _ = prev;
+                    return Err(js_error(&format!(
+                        "UHCI runtime snapshot has duplicate WebHID deviceId {}",
+                        entry.device_id
+                    )));
+                }
+                match entry.location {
+                    WebHidDeviceLocation::RootPort(port) => {
+                        if port >= PORT_COUNT {
+                            return Err(js_error(&format!(
+                                "UHCI runtime snapshot has invalid WebHID root port {port} (expected 0..{})",
+                                PORT_COUNT - 1
+                            )));
+                        }
+                        if webusb_state_bytes.is_some() && port == WEBUSB_ROOT_PORT {
+                            return Err(js_error(&format!(
+                                "UHCI runtime snapshot attaches WebHID deviceId {} to root port {} reserved for WebUSB",
+                                entry.device_id, WEBUSB_ROOT_PORT
+                            )));
+                        }
+                        if hub_port_count.is_some() && port == EXTERNAL_HUB_ROOT_PORT {
+                            return Err(js_error(&format!(
+                                "UHCI runtime snapshot attaches WebHID deviceId {} to root port {} reserved for the external hub",
+                                entry.device_id, EXTERNAL_HUB_ROOT_PORT
+                            )));
+                        }
+                        if let Some(prev) = root_ports.insert(port, entry.device_id) {
+                            return Err(js_error(&format!(
+                                "UHCI runtime snapshot attaches multiple WebHID devices to root port {port} (deviceId {prev} and {})",
+                                entry.device_id
+                            )));
+                        }
+                    }
+                    WebHidDeviceLocation::ExternalHubPort(port) => {
+                        let Some(hub_count) = hub_port_count else {
+                            return Err(js_error(&format!(
+                                "UHCI runtime snapshot attaches WebHID deviceId {} behind external hub port {port}, but no external hub snapshot is present",
+                                entry.device_id
+                            )));
+                        };
+                        if port == 0 || port > hub_count {
+                            return Err(js_error(&format!(
+                                "UHCI runtime snapshot attaches WebHID deviceId {} to invalid external hub port {port} (hub has {hub_count} ports)",
+                                entry.device_id
+                            )));
+                        }
+                        if let Some(prev) = hub_ports.insert(port, entry.device_id) {
+                            return Err(js_error(&format!(
+                                "UHCI runtime snapshot attaches multiple WebHID devices to external hub port {port} (deviceId {prev} and {})",
+                                entry.device_id
+                            )));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Snapshot header validated and decoded successfully. Clear any existing runtime state before
+        // applying the restored snapshot.
+        self.reset_for_snapshot_restore();
+
+        self.external_hub_port_count_hint = hub_port_count_hint;
+
+        // Recreate the external hub (if present) and attach all downstream devices before applying
+        // the hub/controller snapshots.
+        if let Some(port_count) = hub_port_count {
+            let hub = UsbHubDevice::new_with_ports(port_count as usize);
+            self.ctrl
+                .connect_device(EXTERNAL_HUB_ROOT_PORT, Box::new(hub));
+            self.external_hub = Some(ExternalHubState { port_count });
+        }
+
+        // Restore WebUSB passthrough device first so root-port occupancy is correct.
+        if let Some(buf) = webusb_state_bytes {
+            let port = WEBUSB_ROOT_PORT;
+            let dev = Rc::new(RefCell::new(aero_usb::UsbWebUsbPassthroughDevice::new()));
+            self.ctrl
+                .connect_device(port, Box::new(RcWebUsbDevice(dev.clone())));
+            self.webusb = Some(WebUsbDeviceState {
+                port,
+                dev: dev.clone(),
+            });
+            if let Err(err) = dev.borrow_mut().load_state(buf) {
+                self.reset_for_snapshot_restore();
+                return Err(js_error(&format!(
+                    "Invalid UHCI runtime snapshot WebUSB device state: {err}"
+                )));
+            }
+        }
+
+        // Recreate WebHID devices (using stored static config), then apply their dynamic snapshots.
+        for entry in webhid_entries {
+            let device = UsbHidPassthrough::new(
+                entry.vendor_id,
+                entry.product_id,
+                "WebHID".to_string(),
+                entry.product.clone(),
+                None,
+                entry.report_descriptor.clone(),
+                entry.has_interrupt_out,
+                None,
+                None,
+                None,
+            );
+            let dev = Rc::new(RefCell::new(device));
+
+            match entry.location {
+                WebHidDeviceLocation::RootPort(port) => {
+                    if !self.port_is_free(port) {
+                        self.reset_for_snapshot_restore();
+                        return Err(js_error(&format!(
+                            "UHCI runtime snapshot WebHID deviceId {} cannot attach to root port {port}: port is not available",
+                            entry.device_id
+                        )));
+                    }
+                    self.ctrl
+                        .connect_device(port, Box::new(RcWebHidDevice(dev.clone())));
+                    self.webhid_ports[port] = Some(entry.device_id);
+                }
+                WebHidDeviceLocation::ExternalHubPort(hub_port) => {
+                    self.webhid_hub_ports.insert(hub_port, entry.device_id);
+                    let Some(hub) = self.external_hub_mut() else {
+                        self.reset_for_snapshot_restore();
+                        return Err(js_error(&format!(
+                            "UHCI runtime snapshot WebHID deviceId {} expects external hub, but hub is missing",
+                            entry.device_id
+                        )));
+                    };
+                    hub.attach(hub_port, Box::new(RcWebHidDevice(dev.clone())));
+                }
+            }
+
+            self.webhid_devices.insert(
+                entry.device_id,
+                WebHidDeviceState {
+                    location: entry.location,
+                    dev: dev.clone(),
+                    vendor_id: entry.vendor_id,
+                    product_id: entry.product_id,
+                    product: entry.product,
+                    report_descriptor: entry.report_descriptor,
+                    has_interrupt_out: entry.has_interrupt_out,
+                },
+            );
+
+            if let Err(err) = dev.borrow_mut().load_state(&entry.state) {
+                self.reset_for_snapshot_restore();
+                return Err(js_error(&format!(
+                    "Invalid UHCI runtime snapshot WebHID deviceId {} state: {err}",
+                    entry.device_id
+                )));
+            }
+        }
+
+        // Restore hub dynamic state after attaching downstream devices.
+        if let Some(hub_state) = hub_state_bytes {
+            let Some(hub) = self.external_hub_mut() else {
+                self.reset_for_snapshot_restore();
+                return Err(js_error(
+                    "UHCI runtime snapshot includes external hub state but hub is missing",
+                ));
+            };
+            if let Err(err) = hub.load_state(hub_state) {
+                self.reset_for_snapshot_restore();
+                return Err(js_error(&format!(
+                    "Invalid UHCI runtime snapshot external hub state: {err}"
+                )));
+            }
+        }
+
+        // Load controller state last so port connected/enabled flags and timers match the snapshot
+        // after all devices are attached.
+        if let Err(err) = self.ctrl.load_state(ctrl_bytes) {
+            self.reset_for_snapshot_restore();
+            return Err(js_error(&format!(
+                "Invalid UHCI runtime snapshot controller state: {err}"
+            )));
+        }
+
+        self.irq.level = irq_level;
+
+        Ok(())
+    }
 }
 
 impl UhciRuntime {
@@ -603,6 +1041,26 @@ impl UhciRuntime {
         let port = self.ctrl.bus_mut().port_mut(EXTERNAL_HUB_ROOT_PORT)?;
         let dev = port.device.as_mut()?;
         dev.as_any_mut().downcast_mut::<UsbHubDevice>()
+    }
+
+    fn external_hub_ref(&self) -> Option<&UsbHubDevice> {
+        let port = self.ctrl.bus().port(EXTERNAL_HUB_ROOT_PORT)?;
+        let dev = port.device.as_ref()?;
+        dev.as_any().downcast_ref::<UsbHubDevice>()
+    }
+
+    fn reset_for_snapshot_restore(&mut self) {
+        self.ctrl = UhciController::new(DEFAULT_IO_BASE, DEFAULT_IRQ_LINE);
+        self.irq = RuntimeIrq::default();
+
+        self.webhid_devices.clear();
+        self.webhid_ports = [None; PORT_COUNT];
+        self.webhid_hub_ports.clear();
+
+        self.external_hub = None;
+        self.external_hub_port_count_hint = None;
+
+        self.webusb = None;
     }
 
     fn ensure_external_hub(&mut self, min_hub_port: u8) -> Result<(), JsValue> {
