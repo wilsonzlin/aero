@@ -1802,6 +1802,9 @@ impl D3D9Runtime {
         #[cfg(not(target_arch = "wasm32"))]
         self.device.poll(wgpu::Maintain::Wait);
 
+        #[cfg(target_arch = "wasm32")]
+        self.device.poll(wgpu::Maintain::Poll);
+
         let mapped = receiver
             .receive()
             .await
@@ -1890,6 +1893,9 @@ impl D3D9Runtime {
 
         #[cfg(not(target_arch = "wasm32"))]
         self.device.poll(wgpu::Maintain::Wait);
+
+        #[cfg(target_arch = "wasm32")]
+        self.device.poll(wgpu::Maintain::Poll);
 
         let mapped = receiver
             .receive()
@@ -2479,6 +2485,10 @@ async fn wait_for_queue(device: &wgpu::Device, queue: &wgpu::Queue) {
     });
     // wgpu only dispatches `on_submitted_work_done` callbacks while polling the device.
     // Without an explicit poll this future can deadlock on native backends.
+    #[cfg(not(target_arch = "wasm32"))]
     device.poll(wgpu::Maintain::Wait);
+
+    #[cfg(target_arch = "wasm32")]
+    device.poll(wgpu::Maintain::Poll);
     let _ = receiver.receive().await;
 }

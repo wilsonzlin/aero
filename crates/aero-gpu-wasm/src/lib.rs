@@ -1153,8 +1153,7 @@ mod wasm {
                 sender.send(res).ok();
             });
 
-            // `poll(Maintain::Wait)` is a no-op on WebGPU, but required on native. Calling it is fine.
-            self.device.poll(wgpu::Maintain::Wait);
+            self.device.poll(wgpu::Maintain::Poll);
 
             match receiver.receive().await {
                 Some(Ok(())) => {}

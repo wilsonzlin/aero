@@ -141,8 +141,7 @@ pub async fn read_texture_rgba8(
         let _ = tx.send(res);
     });
 
-    // `poll(Maintain::Wait)` is a no-op on WebGPU, but required on native. Calling it is fine.
-    device.poll(wgpu::Maintain::Wait);
+    device.poll(wgpu::Maintain::Poll);
     rx.await.expect("map callback").expect("map_async");
 
     let mapped = slice.get_mapped_range();
