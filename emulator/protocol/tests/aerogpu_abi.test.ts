@@ -325,6 +325,17 @@ test("TypeScript layout matches C headers", () => {
   assert.equal(size("aerogpu_ring_header"), AEROGPU_RING_HEADER_SIZE);
   assert.equal(size("aerogpu_fence_page"), AEROGPU_FENCE_PAGE_SIZE);
   assert.equal(size("aerogpu_umd_private_v1"), AEROGPU_UMD_PRIVATE_V1_SIZE);
+  assert.equal(size("aerogpu_wddm_alloc_priv"), 40);
+
+  // Escape ABI (driver-private; stable across x86/x64).
+  assert.equal(size("aerogpu_escape_header"), 16);
+  assert.equal(size("aerogpu_escape_query_device_out"), 24);
+  assert.equal(size("aerogpu_escape_query_device_v2_out"), 48);
+  assert.equal(size("aerogpu_escape_query_fence_out"), 32);
+  assert.equal(size("aerogpu_escape_dump_ring_inout"), 40 + 32 * 24);
+  assert.equal(size("aerogpu_escape_dump_ring_v2_inout"), 52 + 32 * 40);
+  assert.equal(size("aerogpu_escape_selftest_inout"), 32);
+  assert.equal(size("aerogpu_escape_query_vblank_out"), 56);
 
   // Key offsets.
   assert.equal(off("aerogpu_cmd_stream_header", "magic"), AEROGPU_CMD_STREAM_HEADER_OFF_MAGIC);
@@ -423,6 +434,31 @@ test("TypeScript layout matches C headers", () => {
   assert.equal(off("aerogpu_cmd_set_vertex_buffers", "buffer_count"), 12);
   assert.equal(off("aerogpu_cmd_upload_resource", "offset_bytes"), 16);
   assert.equal(off("aerogpu_cmd_upload_resource", "size_bytes"), 24);
+
+  assert.equal(off("aerogpu_wddm_alloc_priv", "magic"), 0);
+  assert.equal(off("aerogpu_wddm_alloc_priv", "version"), 4);
+  assert.equal(off("aerogpu_wddm_alloc_priv", "alloc_id"), 8);
+  assert.equal(off("aerogpu_wddm_alloc_priv", "flags"), 12);
+  assert.equal(off("aerogpu_wddm_alloc_priv", "share_token"), 16);
+  assert.equal(off("aerogpu_wddm_alloc_priv", "size_bytes"), 24);
+  assert.equal(off("aerogpu_wddm_alloc_priv", "reserved0"), 32);
+
+  assert.equal(off("aerogpu_escape_header", "version"), 0);
+  assert.equal(off("aerogpu_escape_header", "op"), 4);
+  assert.equal(off("aerogpu_escape_header", "size"), 8);
+  assert.equal(off("aerogpu_escape_header", "reserved0"), 12);
+
+  assert.equal(off("aerogpu_escape_query_device_v2_out", "detected_mmio_magic"), 16);
+  assert.equal(off("aerogpu_escape_query_device_v2_out", "abi_version_u32"), 20);
+  assert.equal(off("aerogpu_escape_query_device_v2_out", "features_lo"), 24);
+
+  assert.equal(off("aerogpu_escape_query_vblank_out", "vidpn_source_id"), 16);
+  assert.equal(off("aerogpu_escape_query_vblank_out", "irq_enable"), 20);
+  assert.equal(off("aerogpu_escape_query_vblank_out", "irq_status"), 24);
+  assert.equal(off("aerogpu_escape_query_vblank_out", "flags"), 28);
+  assert.equal(off("aerogpu_escape_query_vblank_out", "vblank_seq"), 32);
+  assert.equal(off("aerogpu_escape_query_vblank_out", "last_vblank_time_ns"), 40);
+  assert.equal(off("aerogpu_escape_query_vblank_out", "vblank_period_ns"), 48);
 
   // Constants.
   assert.equal(konst("AEROGPU_ABI_MAJOR"), BigInt(AEROGPU_ABI_MAJOR));
@@ -525,6 +561,29 @@ test("TypeScript layout matches C headers", () => {
     konst("AEROGPU_UMDPRIV_FLAG_HAS_FENCE_PAGE"),
     BigInt(AEROGPU_UMDPRIV_FLAG_HAS_FENCE_PAGE),
   );
+
+  assert.equal(konst("AEROGPU_WDDM_ALLOC_PRIV_MAGIC"), 0x414c4c4fn);
+  assert.equal(konst("AEROGPU_WDDM_ALLOC_PRIV_VERSION"), 1n);
+  assert.equal(konst("AEROGPU_WDDM_ALLOC_ID_UMD_MAX"), 0x7fffffffn);
+  assert.equal(konst("AEROGPU_WDDM_ALLOC_ID_KMD_MIN"), 0x80000000n);
+  assert.equal(konst("AEROGPU_WDDM_ALLOC_PRIV_FLAG_IS_SHARED"), 1n);
+
+  assert.equal(konst("AEROGPU_ESCAPE_VERSION"), 1n);
+  assert.equal(konst("AEROGPU_ESCAPE_OP_QUERY_DEVICE"), 1n);
+  assert.equal(konst("AEROGPU_ESCAPE_OP_QUERY_DEVICE_V2"), 7n);
+
+  assert.equal(konst("AEROGPU_ESCAPE_OP_QUERY_FENCE"), 2n);
+  assert.equal(konst("AEROGPU_ESCAPE_OP_DUMP_RING"), 3n);
+  assert.equal(konst("AEROGPU_ESCAPE_OP_SELFTEST"), 4n);
+  assert.equal(konst("AEROGPU_ESCAPE_OP_QUERY_VBLANK"), 5n);
+  assert.equal(konst("AEROGPU_ESCAPE_OP_DUMP_RING_V2"), 6n);
+
+  assert.equal(konst("AEROGPU_DBGCTL_RING_FORMAT_UNKNOWN"), 0n);
+  assert.equal(konst("AEROGPU_DBGCTL_RING_FORMAT_LEGACY"), 1n);
+  assert.equal(konst("AEROGPU_DBGCTL_RING_FORMAT_AGPU"), 2n);
+
+  assert.equal(konst("AEROGPU_DBGCTL_QUERY_VBLANK_FLAGS_VALID"), 1n << 31n);
+  assert.equal(konst("AEROGPU_DBGCTL_QUERY_VBLANK_FLAG_VBLANK_SUPPORTED"), 1n);
 });
 
 test("decodeAllocTableHeader accepts unknown minor versions and extended strides", () => {
