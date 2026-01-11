@@ -14,7 +14,7 @@ Common flags:
 * `--require-vid=0x####` / `--require-did=0x####` – fail the test if the active adapter VID/DID does not match.
 * `--allow-microsoft` – allow running on the Microsoft Basic Render Driver (normally treated as a failure to avoid false PASS when AeroGPU isn’t active).
 * `--allow-non-aerogpu` – allow running on adapters whose description does not contain `AeroGPU` (by default, rendering tests expect to be running on an AeroGPU adapter).
-* `--allow-remote` – skip tests that are expected to fail under RDP (`SM_REMOTESESSION=1`): `d3d9ex_dwm_probe`, `dwm_flush_pacing`, `wait_vblank_pacing`, `vblank_wait_pacing`, `vblank_wait_sanity`, `d3d9_raster_status_sanity`, `d3d9_raster_status_pacing`.
+* `--allow-remote` – skip tests that are not meaningful under RDP (`SM_REMOTESESSION=1`): `d3d9ex_dwm_probe`, `dwm_flush_pacing`, `wait_vblank_pacing`, `vblank_wait_pacing`, `vblank_wait_sanity`, `get_scanline_sanity`, `d3d9_raster_status_sanity`, `d3d9_raster_status_pacing`.
 * `--help` / `/?` – print per-test usage.
 
 ## Layout
@@ -30,10 +30,11 @@ drivers/aerogpu/tests/win7/
   d3d9ex_dwm_probe/
   wait_vblank_pacing/
   vblank_wait_sanity/
-  dwm_flush_pacing/
+  vblank_wait_pacing/
+  get_scanline_sanity/
   d3d9_raster_status_sanity/
   d3d9_raster_status_pacing/
-  vblank_wait_pacing/
+  dwm_flush_pacing/
   d3d11_triangle/
   readback_sanity/
   timeout_runner/
@@ -135,6 +136,7 @@ In a Win7 VM with AeroGPU installed and working correctly:
 * `wait_vblank_pacing` directly measures `D3DKMTWaitForVerticalBlankEvent()` pacing on VidPn source 0 (AeroGPU MVP) and fails on immediate returns (avg < 2ms) or stalls (max > 250ms). On a 60 Hz display it typically reports ~16.6ms.
 * `dwm_flush_pacing` measures `DwmFlush()` pacing and fails on extremely fast returns (not vsync paced) or very large gaps (`--samples=N` controls sample count; default 120)
 * `vblank_wait_pacing` directly measures `D3DKMTWaitForVerticalBlankEvent()` pacing and fails on immediate returns (avg ≤ 2ms) or stalls (avg ≥ 50ms / max ≥ 250ms). On a 60 Hz display it typically reports ~16.6ms.
+* `get_scanline_sanity` calls `D3DKMTGetScanLine()` repeatedly and validates that scanline values vary and stay within the visible screen height (`--samples=N` controls sample count; default 200)
 * `d3d9_raster_status_sanity` samples `IDirect3DDevice9::GetRasterStatus` and fails if vblank state never toggles or `ScanLine` is stuck (validates `D3DKMTGetScanLine` → `DxgkDdiGetScanLine` basic correctness)
 * `d3d9_raster_status_pacing` samples `IDirect3DDevice9::GetRasterStatus` and fails if `InVBlank` never becomes true or scanline is stuck (useful for `DxgkDdiGetScanLine` bring-up)
 * `d3d9ex_triangle` renders a green triangle over a red clear and confirms **corner red + center green** via readback
