@@ -757,6 +757,76 @@ mod tests {
     }
 
     #[test]
+    fn poll_queues_backend_frames_until_buffers_arrive() {
+        let mut mem = DenseMemory::new(0x8000).unwrap();
+
+        let desc_table = 0x1000;
+        let avail = 0x2000;
+        let used = 0x3000;
+
+        mem.write_u16_le(avail, 0).unwrap();
+        mem.write_u16_le(avail + 2, 0).unwrap();
+
+        let rx_vq = VirtQueue::new(8, desc_table, avail, used);
+        let tx_vq = VirtQueue::new(8, 0, 0, 0);
+        let config = VirtioNetConfig {
+            mac: [0; 6],
+            status: 1,
+            max_queue_pairs: 1,
+        };
+        let mut dev = VirtioNetDevice::new(config, rx_vq, tx_vq);
+
+        mem.write_u16_le(used, 0).unwrap();
+        mem.write_u16_le(used + 2, 0).unwrap();
+
+        let frame = vec![0xabu8; MIN_FRAME_LEN];
+        let mut backend = TestBackend::default();
+        backend.rx_frames.push_back(frame.clone());
+
+        let irq = dev.poll(&mut mem, &mut backend).unwrap();
+        assert!(!irq);
+        assert_eq!(dev.take_isr(), 0x0);
+        assert!(backend.rx_frames.is_empty());
+        assert_eq!(mem.read_u16_le(used + 2).unwrap(), 0);
+
+        let header_addr = 0x400;
+        let payload_addr = 0x500;
+
+        write_desc(
+            &mut mem,
+            desc_table,
+            0,
+            Descriptor {
+                addr: header_addr,
+                len: VirtioNetHeader::SIZE as u32,
+                flags: VRING_DESC_F_WRITE | VRING_DESC_F_NEXT,
+                next: 1,
+            },
+        );
+        write_desc(
+            &mut mem,
+            desc_table,
+            1,
+            Descriptor {
+                addr: payload_addr,
+                len: 64,
+                flags: VRING_DESC_F_WRITE,
+                next: 0,
+            },
+        );
+
+        init_avail(&mut mem, avail, 0, 0);
+
+        let irq = dev.notify_rx(&mut mem).unwrap();
+        assert!(irq);
+        assert_eq!(dev.take_isr(), 0x1);
+
+        let mut payload = vec![0u8; frame.len()];
+        mem.read_into(payload_addr, &mut payload).unwrap();
+        assert_eq!(payload, frame);
+    }
+
+    #[test]
     fn poll_drains_backend_receive_and_delivers_into_rx_buffers() {
         let mut mem = DenseMemory::new(0x8000).unwrap();
 
