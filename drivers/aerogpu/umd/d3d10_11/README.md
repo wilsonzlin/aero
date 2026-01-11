@@ -117,6 +117,11 @@ Optional: `drivers\aerogpu\build\build_all.cmd` is a convenience wrapper around 
 
 The project expects the Windows SDK/WDK to provide D3D10/11 DDI headers (e.g. `d3d10umddi.h`, `d3d11umddi.h`) when building the real UMD.  
 
+When building via MSBuild, WDK header usage can be toggled with:
+
+* `/p:AeroGpuUseWdkHeaders=1`
+* `/p:AeroGpuWdkRoot="C:\WinDDK\7600.16385.1"` (or `%WINDDK%`)
+
 ## Install / Register (INF)
 
 On Windows 7, the D3D10/D3D11 runtimes load the driver’s UMD based on registry values written by the display driver INF:

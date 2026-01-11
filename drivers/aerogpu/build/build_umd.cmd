@@ -13,6 +13,7 @@ rem   %3 SLN    (path to .sln or .vcxproj)
 rem   %4 OUTDIR (where *.dll/*.pdb are written)
 rem   %5 OBJDIR (optional; per-project intermediates)
 rem   %6 EXPECTED_OUTPUT (optional; asserts the expected output exists after build)
+rem   %7... (optional; extra MSBuild arguments, e.g. /p:Foo=Bar)
 rem -----------------------------------------------------------------------------
 
 set "VARIANT=%~1"
@@ -21,11 +22,23 @@ set "SLN=%~3"
 set "OUTDIR=%~4"
 set "OBJDIR=%~5"
 set "EXPECTED_OUTPUT=%~6"
+set "EXTRA_MSBUILD_ARGS="
 
 if "%VARIANT%"=="" exit /b 2
 if "%ARCH%"=="" exit /b 2
 if "%SLN%"=="" exit /b 2
 if "%OUTDIR%"=="" exit /b 2
+
+rem Capture any remaining args as extra MSBuild arguments.
+if "%~7"=="" goto :args_parsed
+shift
+shift
+shift
+shift
+shift
+shift
+set "EXTRA_MSBUILD_ARGS=%*"
+:args_parsed
 
 if not exist "%SLN%" (
   echo ERROR: Build input not found: "%SLN%"
@@ -67,12 +80,14 @@ if not "%EXPECTED_OUTPUT%"=="" (
 
 echo [MSBUILD] MSBuild: "%MSBUILD%"
 echo [MSBUILD] Config:  %CONFIG%  Platform: %PLATFORM%
+if not "%EXTRA_MSBUILD_ARGS%"=="" echo [MSBUILD] Extra:   %EXTRA_MSBUILD_ARGS%
 
 "%MSBUILD%" "%SLN%" /m /t:Build ^
   /p:Configuration=%CONFIG% ^
   /p:Platform=%PLATFORM% ^
   /p:OutDir="%OUTDIR_MSBUILD%" ^
   /p:IntDir="%INTDIR_MSBUILD%" ^
+  %EXTRA_MSBUILD_ARGS% ^
   /nologo
 if errorlevel 1 (
   echo ERROR: MSBuild failed (%CONFIG% %PLATFORM%).

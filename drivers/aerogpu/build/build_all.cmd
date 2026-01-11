@@ -28,6 +28,21 @@ set "UMD_D3D10_11_SLN=%UMD_D3D10_11_DIR%\aerogpu_d3d10_11.sln"
 
 set "OUT_ROOT=%SCRIPT_DIR%\out"
 
+rem Optional WDK 7.1 root (used only for D3D10/11 UMD DDI headers).
+rem If not found, the D3D10/11 UMD builds in the repo-local/stub header mode.
+set "WDKROOT="
+if defined WINDDK set "WDKROOT=%WINDDK%"
+if not defined WDKROOT if defined WDK_ROOT set "WDKROOT=%WDK_ROOT%"
+if not defined WDKROOT (
+  if exist "C:\WinDDK\7600.16385.1\inc\ddk\d3d10umddi.h" set "WDKROOT=C:\WinDDK\7600.16385.1"
+  if exist "C:\WinDDK\7600.16385.1\inc\api\d3d10umddi.h" set "WDKROOT=C:\WinDDK\7600.16385.1"
+)
+
+set "D3D10_11_WDK_MSBUILD_ARGS="
+if defined WDKROOT (
+  set "D3D10_11_WDK_MSBUILD_ARGS=/p:AeroGpuUseWdkHeaders=1 /p:AeroGpuWdkRoot=""%WDKROOT%"""
+)
+
 set "VARIANTS=fre chk"
 set "ARCHES=x86 x64"
 
@@ -181,16 +196,16 @@ if errorlevel 1 (
   endlocal & exit /b 1
 )
 
-if "%HAVE_D3D10_11%"=="1" (
-  set "D3D10_DLL="
-  if /i "%ARCH%"=="x86" set "D3D10_DLL=aerogpu_d3d10.dll"
-  if /i "%ARCH%"=="x64" set "D3D10_DLL=aerogpu_d3d10_x64.dll"
+  if "%HAVE_D3D10_11%"=="1" (
+    set "D3D10_DLL="
+    if /i "%ARCH%"=="x86" set "D3D10_DLL=aerogpu_d3d10.dll"
+    if /i "%ARCH%"=="x64" set "D3D10_DLL=aerogpu_d3d10_x64.dll"
 
-  call "%SCRIPT_DIR%\build_umd.cmd" "%VARIANT%" "%ARCH%" "%UMD_D3D10_11_SLN%" "!UMD_OUT_DIR!" "!UMD_OUT_DIR!\obj\d3d10_11" "!D3D10_DLL!"
-  if errorlevel 1 (
-    endlocal & exit /b 1
+    call "%SCRIPT_DIR%\build_umd.cmd" "%VARIANT%" "%ARCH%" "%UMD_D3D10_11_SLN%" "!UMD_OUT_DIR!" "!UMD_OUT_DIR!\obj\d3d10_11" "!D3D10_DLL!" !D3D10_11_WDK_MSBUILD_ARGS!
+    if errorlevel 1 (
+      endlocal & exit /b 1
+    )
   )
-)
 
 endlocal & exit /b 0
 

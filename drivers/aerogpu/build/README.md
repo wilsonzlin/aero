@@ -47,3 +47,23 @@ This directory still contains convenience wrappers for local, repo-relative outp
 For the recommended CI-style flow (packages staged under `out/packages/` and signed under `out/`), see:
 
 - `drivers/aerogpu/packaging/win7/README.md` (host-signed install flow via `trust_test_cert.cmd` + `pnputil`)
+
+### WDK 7.1 DDI header mode (D3D10/11 UMD)
+
+The D3D10/11 UMD can optionally be built against the **WDK 7.1** D3D10/11 DDI headers
+(`d3d10umddi.h`, `d3d10_1umddi.h`, `d3d11umddi.h`).
+
+The legacy `drivers\\aerogpu\\build\\build_all.cmd` wrapper detects a WDK 7.1 root via
+`WINDDK` (or `WDK_ROOT`) and, when present, passes these MSBuild properties for the
+D3D10/11 UMD build:
+
+* `/p:AeroGpuUseWdkHeaders=1`
+* `/p:AeroGpuWdkRoot="%WINDDK%"`
+
+The project expects the DDI headers under:
+
+* `%WINDDK%\\inc\\api`
+* `%WINDDK%\\inc\\ddk`
+
+To disable WDK headers (portable/stub mode), omit the properties or pass
+`/p:AeroGpuUseWdkHeaders=0`.

@@ -63,6 +63,7 @@
 #if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS
   // The canonical build should use the official headers.
   #include <d3d10umddi.h>
+  #include <d3d10_1umddi.h>
   #include <d3d11umddi.h>
 #else
 
