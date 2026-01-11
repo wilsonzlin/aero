@@ -340,6 +340,12 @@ export class PerfSession implements PerfApi {
     const shouldRun = this.shouldRun();
 
     Atomics.store(this.frameHeader, PERF_FRAME_HEADER_ENABLED_INDEX, shouldRun ? 1 : 0);
+    if (!shouldRun) {
+      // When the HUD/capture is inactive, clear the shared frame header so workers
+      // can treat perf sampling as fully disabled.
+      Atomics.store(this.frameHeader, PERF_FRAME_HEADER_FRAME_ID_INDEX, 0);
+      Atomics.store(this.frameHeader, PERF_FRAME_HEADER_T_US_INDEX, 0);
+    }
     this.responsiveness.setActive(shouldRun);
     if (shouldRun) {
       this.memoryTelemetry.start();

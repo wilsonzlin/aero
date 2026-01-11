@@ -52,6 +52,7 @@ describe("PerfSession", () => {
 
       session.setHudActive(false);
       expect(Atomics.load(header, PERF_FRAME_HEADER_ENABLED_INDEX)).toBe(0);
+      expect(Atomics.load(header, PERF_FRAME_HEADER_FRAME_ID_INDEX)).toBe(0);
       expect(rafQueue.length).toBe(0);
     } finally {
       if (originalWindow === undefined) {
