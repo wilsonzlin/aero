@@ -108,6 +108,9 @@ export type NormalizedHidReportInfo = Omit<HidReportInfo, "items"> & {
 
 export const MAX_RANGE_CONTIGUITY_CHECK_LEN = 4096;
 const MAX_COLLECTION_DEPTH = 32;
+const MAX_REPORT_SIZE_BITS = 255;
+const MAX_REPORT_COUNT = 65_535;
+const MAX_U32 = 0xffff_ffffn;
 
 type Path = string[];
 
@@ -373,8 +376,67 @@ function validateCollections(collections: readonly NormalizedHidCollectionInfo[]
 
         for (let itemIdx = 0; itemIdx < report.items.length; itemIdx++) {
           const item = report.items[itemIdx];
-          if (!item.isRange) continue;
           const itemPath = [...reportPath, `items[${itemIdx}]`];
+
+          if (
+            !Number.isSafeInteger(item.reportSize) ||
+            item.reportSize < 1 ||
+            item.reportSize > MAX_REPORT_SIZE_BITS
+          ) {
+            throw err(
+              itemPath,
+              `reportSize must be in 1..=${MAX_REPORT_SIZE_BITS} (got ${String(item.reportSize)})`,
+            );
+          }
+
+          if (!Number.isSafeInteger(item.reportCount) || item.reportCount < 0) {
+            throw err(
+              itemPath,
+              `reportCount must be in 0..=${MAX_REPORT_COUNT} (got ${String(item.reportCount)})`,
+            );
+          }
+
+          const bits = BigInt(item.reportSize) * BigInt(item.reportCount);
+          if (bits > MAX_U32) {
+            throw err(
+              itemPath,
+              `reportSize*reportCount overflows u32 (${item.reportSize}*${item.reportCount})`,
+            );
+          }
+
+          if (item.reportCount > MAX_REPORT_COUNT) {
+            throw err(
+              itemPath,
+              `reportCount must be in 0..=${MAX_REPORT_COUNT} (got ${String(item.reportCount)})`,
+            );
+          }
+
+          if (
+            !Number.isSafeInteger(item.unitExponent) ||
+            item.unitExponent < -8 ||
+            item.unitExponent > 7
+          ) {
+            throw err(
+              itemPath,
+              `unitExponent must be in -8..=7 (got ${String(item.unitExponent)})`,
+            );
+          }
+
+          if (item.logicalMinimum > item.logicalMaximum) {
+            throw err(
+              itemPath,
+              `logicalMinimum must be <= logicalMaximum (got ${item.logicalMinimum} > ${item.logicalMaximum})`,
+            );
+          }
+
+          if (item.physicalMinimum > item.physicalMaximum) {
+            throw err(
+              itemPath,
+              `physicalMinimum must be <= physicalMaximum (got ${item.physicalMinimum} > ${item.physicalMaximum})`,
+            );
+          }
+
+          if (!item.isRange) continue;
           const usagesLen = Array.isArray(item.usages) ? item.usages.length : 0;
           if (usagesLen < 2) {
             throw err(itemPath, `isRange=true requires usages.length >= 2 (got ${usagesLen})`);

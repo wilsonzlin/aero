@@ -83,6 +83,32 @@ test("normalizeCollections(validate): rejects isRange items with usages out of o
   });
 });
 
+test("normalizeCollections(validate): rejects reportSize 0 with an item path", () => {
+  const collections: HidCollectionInfo[] = [
+    {
+      ...baseCollection(),
+      inputReports: [{ reportId: 0, items: [{ ...BASE_ITEM, reportSize: 0 }] }],
+    },
+  ];
+
+  assert.throws(() => normalizeCollections(collections, { validate: true }), {
+    message: /reportSize.*collections\[0\]\.inputReports\[0\]\.items\[0\]/,
+  });
+});
+
+test("normalizeCollections(validate): rejects unitExponent out of range with an item path", () => {
+  const collections: HidCollectionInfo[] = [
+    {
+      ...baseCollection(),
+      inputReports: [{ reportId: 0, items: [{ ...BASE_ITEM, unitExponent: 8 }] }],
+    },
+  ];
+
+  assert.throws(() => normalizeCollections(collections, { validate: true }), {
+    message: /unitExponent.*collections\[0\]\.inputReports\[0\]\.items\[0\]/,
+  });
+});
+
 test("normalizeCollections: rejects excessive collection depth with a path", () => {
   const root = baseCollection() as unknown as { children: any[] };
   let current: { children: any[] } = root;
