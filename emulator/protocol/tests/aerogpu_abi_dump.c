@@ -1,7 +1,6 @@
 #include <stddef.h>
 #include <stdio.h>
 
-#include "drivers/aerogpu/protocol/aerogpu_alloc_privdata.h"
 #include "drivers/aerogpu/protocol/aerogpu_cmd.h"
 #include "drivers/aerogpu/protocol/aerogpu_dbgctl_escape.h"
 #include "drivers/aerogpu/protocol/aerogpu_escape.h"
