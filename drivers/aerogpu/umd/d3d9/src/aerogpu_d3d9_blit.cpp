@@ -20,6 +20,10 @@ constexpr uint32_t kD3d9FmtA8R8G8B8 = 21u;
 constexpr uint32_t kD3d9FmtX8R8G8B8 = 22u;
 constexpr uint32_t kD3d9FmtA8B8G8R8 = 32u;
 
+// D3DLOCK_* flags (numeric values from d3d9.h). Only the bits we care about are
+// defined here to keep the blit helper self-contained.
+constexpr uint32_t kD3DLOCK_READONLY = 0x00000010u;
+
 // D3D9 sampler state IDs (numeric values from d3d9types.h).
 constexpr uint32_t kD3d9SampAddressU = 1;
 constexpr uint32_t kD3d9SampAddressV = 2;
@@ -1479,6 +1483,7 @@ HRESULT update_surface_locked(Device* dev,
                                                        src->wddm_hAllocation,
                                                        0,
                                                        src_bytes,
+                                                       kD3DLOCK_READONLY,
                                                        &src_ptr,
                                                        dev->wddm_context.hContext);
       if (FAILED(src_lock_hr) || !src_ptr) {
@@ -1712,6 +1717,7 @@ HRESULT update_texture_locked(Device* dev, Resource* src, Resource* dst) {
                                                        src->wddm_hAllocation,
                                                        0,
                                                        dst->size_bytes,
+                                                       kD3DLOCK_READONLY,
                                                        &src_ptr,
                                                        dev->wddm_context.hContext);
       if (FAILED(src_lock_hr) || !src_ptr) {

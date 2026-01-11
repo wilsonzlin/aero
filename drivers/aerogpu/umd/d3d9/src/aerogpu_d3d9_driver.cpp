@@ -4923,6 +4923,7 @@ HRESULT copy_surface_bytes(Device* dev, const Resource* src, Resource* dst) {
                                               src->wddm_hAllocation,
                                               0,
                                               bytes_needed,
+                                              kD3DLOCK_READONLY,
                                               &src_map.ptr,
                                               dev->wddm_context.hContext);
       if (FAILED(hr) || !src_map.ptr) {
@@ -6526,6 +6527,7 @@ HRESULT copy_surface_rects(Device* dev, const Resource* src, Resource* dst, cons
                                               src->wddm_hAllocation,
                                               0,
                                               src_bytes,
+                                              kD3DLOCK_READONLY,
                                               &src_map.ptr,
                                               dev->wddm_context.hContext);
       if (FAILED(hr) || !src_map.ptr) {
@@ -8743,17 +8745,18 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive(
       src_vertices = ss.vb->storage.data() + static_cast<size_t>(src_offset_u64);
     } else {
 #if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
-      if (ss.vb->wddm_hAllocation != 0 && dev->wddm_device != 0) {
-        const HRESULT lock_hr = wddm_lock_allocation(dev->wddm_callbacks,
-                                                     dev->wddm_device,
-                                                     ss.vb->wddm_hAllocation,
-                                                     src_offset_u64,
-                                                     size_u64,
-                                                     &vb_ptr,
-                                                     dev->wddm_context.hContext);
-        if (FAILED(lock_hr) || !vb_ptr) {
-          return FAILED(lock_hr) ? lock_hr : E_FAIL;
-        }
+        if (ss.vb->wddm_hAllocation != 0 && dev->wddm_device != 0) {
+          const HRESULT lock_hr = wddm_lock_allocation(dev->wddm_callbacks,
+                                                       dev->wddm_device,
+                                                       ss.vb->wddm_hAllocation,
+                                                       src_offset_u64,
+                                                       size_u64,
+                                                       kD3DLOCK_READONLY,
+                                                       &vb_ptr,
+                                                       dev->wddm_context.hContext);
+          if (FAILED(lock_hr) || !vb_ptr) {
+            return FAILED(lock_hr) ? lock_hr : E_FAIL;
+          }
         vb_locked = true;
         src_vertices = static_cast<const uint8_t*>(vb_ptr);
       } else
@@ -9399,11 +9402,12 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
                                                         dev->index_buffer->wddm_hAllocation,
                                                         index_offset_u64,
                                                         index_bytes_u64,
+                                                        kD3DLOCK_READONLY,
                                                         &ib_ptr,
                                                         dev->wddm_context.hContext);
-          if (FAILED(lock_hr) || !ib_ptr) {
-            return FAILED(lock_hr) ? lock_hr : E_FAIL;
-          }
+           if (FAILED(lock_hr) || !ib_ptr) {
+             return FAILED(lock_hr) ? lock_hr : E_FAIL;
+           }
           ib_lock.locked = true;
           index_data = static_cast<const uint8_t*>(ib_ptr);
         } else
@@ -9468,11 +9472,12 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
                                                         ss.vb->wddm_hAllocation,
                                                         vb_range_offset,
                                                         vb_range_size,
+                                                        kD3DLOCK_READONLY,
                                                         &vb_ptr,
                                                         dev->wddm_context.hContext);
-          if (FAILED(lock_hr) || !vb_ptr) {
-            return FAILED(lock_hr) ? lock_hr : E_FAIL;
-          }
+           if (FAILED(lock_hr) || !vb_ptr) {
+             return FAILED(lock_hr) ? lock_hr : E_FAIL;
+           }
           vb_lock.locked = true;
           vb_base = static_cast<const uint8_t*>(vb_ptr);
         } else
