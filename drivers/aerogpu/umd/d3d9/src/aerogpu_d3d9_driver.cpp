@@ -3427,10 +3427,14 @@ uint64_t submit(Device* dev, bool is_present) {
           AEROGPU_DMA_PRIV priv{};
           std::memcpy(&priv, submit_priv_ptr, sizeof(priv));
           if (priv.MetaHandle == 0) {
-            logf("aerogpu-d3d9: submit missing MetaHandle (allocs=%u present=%u type=%u)\n",
-                 static_cast<unsigned>(allocs_used),
-                 is_present ? 1u : 0u,
-                 static_cast<unsigned>(priv.Type));
+            static std::atomic<uint32_t> g_missing_meta_logs{0};
+            const uint32_t n = g_missing_meta_logs.fetch_add(1, std::memory_order_relaxed);
+            if ((n < 8) || ((n & 1023u) == 0)) {
+              logf("aerogpu-d3d9: submit missing MetaHandle (allocs=%u present=%u type=%u)\n",
+                   static_cast<unsigned>(allocs_used),
+                   is_present ? 1u : 0u,
+                   static_cast<unsigned>(priv.Type));
+            }
           }
         }
         submitted_to_kmd = true;
@@ -4521,6 +4525,20 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
     res->backing_offset_bytes = 0;
     if (!res->is_shared) {
       res->backing_alloc_id = 0;
+    }
+
+    // Portable builds do not have a Win7 KMD to generate a stable share_token for
+    // shared allocations. Generate one in user mode and persist it into the
+    // allocation private data blob so simulated cross-process opens observe the
+    // same token.
+    if (res->is_shared && res->share_token == 0 && dev->adapter) {
+      res->share_token = dev->adapter->share_token_allocator.allocate_share_token();
+      if (pCreateResource->pPrivateDriverData && pCreateResource->PrivateDriverDataSize >= sizeof(aerogpu_wddm_alloc_priv)) {
+        auto* priv = reinterpret_cast<aerogpu_wddm_alloc_priv*>(pCreateResource->pPrivateDriverData);
+        if (priv->magic == AEROGPU_WDDM_ALLOC_PRIV_MAGIC && priv->version == AEROGPU_WDDM_ALLOC_PRIV_VERSION) {
+          priv->share_token = res->share_token;
+        }
+      }
     }
   }
 

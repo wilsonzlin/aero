@@ -3298,6 +3298,34 @@ static NTSTATUS APIENTRY AeroGpuDdiSubmitCommand(_In_ const HANDLE hAdapter,
         }
     }
 
+    /*
+     * Some WDDM submission paths can bypass DxgkDdiRender/DxgkDdiPresent and call
+     * DxgkDdiSubmitCommand directly (e.g. when the D3D9 runtime routes through
+     * SubmitCommandCb). In that case, AEROGPU_DMA_PRIV.MetaHandle may be 0, but
+     * an allocation list is still available in the submit args.
+     *
+     * Build the per-submit allocation table on-demand so guest-backed resources
+     * remain resolvable by alloc_id.
+     */
+    if (!meta && pSubmitCommand->AllocationListSize && pSubmitCommand->pAllocationList) {
+        NTSTATUS st = AeroGpuBuildAndAttachMeta(pSubmitCommand->AllocationListSize, pSubmitCommand->pAllocationList, &meta);
+        if (!NT_SUCCESS(st)) {
+            return st;
+        }
+    }
+
+    /*
+     * When MetaHandle is missing, the per-context ID may not have been stamped
+     * into AEROGPU_DMA_PRIV. Recover it directly from the submit args so the
+     * emulator can still isolate per-context state.
+     */
+    if (contextId == 0 && pSubmitCommand->hContext) {
+        AEROGPU_CONTEXT* ctx = (AEROGPU_CONTEXT*)pSubmitCommand->hContext;
+        if (ctx) {
+            contextId = ctx->ContextId;
+        }
+    }
+
     PHYSICAL_ADDRESS dmaPa;
     dmaPa.QuadPart = 0;
     PVOID dmaVa = NULL;
