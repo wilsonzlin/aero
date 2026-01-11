@@ -154,73 +154,73 @@ static NTSTATUS VirtIoSndStartDevice(PDEVICE_OBJECT DeviceObject, PIRP Irp, PRES
 
     status = PcGetAdapterCommon(DeviceObject, &unknownAdapter);
     if (!NT_SUCCESS(status)) {
-        VIRTIOSND_TRACE_ERROR("PcGetAdapterCommon failed: 0x%08X\n", status);
+        VIRTIOSND_TRACE_ERROR("PcGetAdapterCommon failed: 0x%08X\n", (UINT)status);
         return status;
     }
 
     status = PcRegisterAdapterPowerManagement(unknownAdapter, DeviceObject);
     if (!NT_SUCCESS(status)) {
-        VIRTIOSND_TRACE_ERROR("PcRegisterAdapterPowerManagement failed: 0x%08X\n", status);
+        VIRTIOSND_TRACE_ERROR("PcRegisterAdapterPowerManagement failed: 0x%08X\n", (UINT)status);
         goto Exit;
     }
 
     status = VirtIoSndMiniportTopology_Create(&unknownTopo);
     if (!NT_SUCCESS(status)) {
-        VIRTIOSND_TRACE_ERROR("Create topology miniport failed: 0x%08X\n", status);
+        VIRTIOSND_TRACE_ERROR("Create topology miniport failed: 0x%08X\n", (UINT)status);
         goto Exit;
     }
 
     status = PcNewPort(&unknownTopoPort, CLSID_PortTopology);
     if (!NT_SUCCESS(status)) {
-        VIRTIOSND_TRACE_ERROR("PcNewPort(Topology) failed: 0x%08X\n", status);
+        VIRTIOSND_TRACE_ERROR("PcNewPort(Topology) failed: 0x%08X\n", (UINT)status);
         goto Exit;
     }
 
     status = IUnknown_QueryInterface(unknownTopoPort, &IID_IPortTopology, (PVOID *)&portTopology);
     if (!NT_SUCCESS(status)) {
-        VIRTIOSND_TRACE_ERROR("QueryInterface(IPortTopology) failed: 0x%08X\n", status);
+        VIRTIOSND_TRACE_ERROR("QueryInterface(IPortTopology) failed: 0x%08X\n", (UINT)status);
         goto Exit;
     }
 
     status = IPortTopology_Init(portTopology, DeviceObject, Irp, unknownTopo, unknownAdapter, ResourceList);
     if (!NT_SUCCESS(status)) {
-        VIRTIOSND_TRACE_ERROR("IPortTopology::Init failed: 0x%08X\n", status);
+        VIRTIOSND_TRACE_ERROR("IPortTopology::Init failed: 0x%08X\n", (UINT)status);
         goto Exit;
     }
 
     status = PcRegisterSubdevice(DeviceObject, VIRTIOSND_SUBDEVICE_TOPOLOGY, unknownTopoPort, unknownTopo);
     if (!NT_SUCCESS(status)) {
-        VIRTIOSND_TRACE_ERROR("PcRegisterSubdevice(topology) failed: 0x%08X\n", status);
+        VIRTIOSND_TRACE_ERROR("PcRegisterSubdevice(topology) failed: 0x%08X\n", (UINT)status);
         goto Exit;
     }
 
     status = VirtIoSndMiniportWaveRT_Create(dx, &unknownWave);
     if (!NT_SUCCESS(status)) {
-        VIRTIOSND_TRACE_ERROR("Create waveRT miniport failed: 0x%08X\n", status);
+        VIRTIOSND_TRACE_ERROR("Create waveRT miniport failed: 0x%08X\n", (UINT)status);
         goto Exit;
     }
 
     status = PcNewPort(&unknownWavePort, CLSID_PortWaveRT);
     if (!NT_SUCCESS(status)) {
-        VIRTIOSND_TRACE_ERROR("PcNewPort(WaveRT) failed: 0x%08X\n", status);
+        VIRTIOSND_TRACE_ERROR("PcNewPort(WaveRT) failed: 0x%08X\n", (UINT)status);
         goto Exit;
     }
 
     status = IUnknown_QueryInterface(unknownWavePort, &IID_IPortWaveRT, (PVOID *)&portWaveRt);
     if (!NT_SUCCESS(status)) {
-        VIRTIOSND_TRACE_ERROR("QueryInterface(IPortWaveRT) failed: 0x%08X\n", status);
+        VIRTIOSND_TRACE_ERROR("QueryInterface(IPortWaveRT) failed: 0x%08X\n", (UINT)status);
         goto Exit;
     }
 
     status = IPortWaveRT_Init(portWaveRt, DeviceObject, Irp, unknownWave, unknownAdapter, ResourceList);
     if (!NT_SUCCESS(status)) {
-        VIRTIOSND_TRACE_ERROR("IPortWaveRT::Init failed: 0x%08X\n", status);
+        VIRTIOSND_TRACE_ERROR("IPortWaveRT::Init failed: 0x%08X\n", (UINT)status);
         goto Exit;
     }
 
     status = PcRegisterSubdevice(DeviceObject, VIRTIOSND_SUBDEVICE_WAVE, unknownWavePort, unknownWave);
     if (!NT_SUCCESS(status)) {
-        VIRTIOSND_TRACE_ERROR("PcRegisterSubdevice(wave) failed: 0x%08X\n", status);
+        VIRTIOSND_TRACE_ERROR("PcRegisterSubdevice(wave) failed: 0x%08X\n", (UINT)status);
         goto Exit;
     }
 
@@ -231,7 +231,7 @@ static NTSTATUS VirtIoSndStartDevice(PDEVICE_OBJECT DeviceObject, PIRP Irp, PRES
         VIRTIOSND_SUBDEVICE_WAVE,
         VIRTIOSND_WAVE_PIN_BRIDGE);
     if (!NT_SUCCESS(status)) {
-        VIRTIOSND_TRACE_ERROR("PcRegisterPhysicalConnection failed: 0x%08X\n", status);
+        VIRTIOSND_TRACE_ERROR("PcRegisterPhysicalConnection failed: 0x%08X\n", (UINT)status);
         goto Exit;
     }
 
