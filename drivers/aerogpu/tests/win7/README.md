@@ -18,7 +18,7 @@ Common flags:
 
 * `--dump` – write test-specific dump artifacts next to the executable (usually `*.bmp`; some tests write raw `*.bin`).
 * `--hidden` – hide windows for tests that create windows (useful for automation).
-* `--show` – show the window for tests that support it (e.g. `d3d9ex_event_query`, `d3d9ex_shared_surface`, `d3d9ex_shared_surface_ipc`, `d3d9ex_shared_surface_many_producers`; overrides `--hidden`).
+* `--show` – show the window for tests that support it (e.g. `d3d9ex_event_query`, `d3d9ex_shared_surface`, `d3d9ex_shared_surface_ipc`, `d3d9ex_shared_surface_wow64`, `d3d9ex_shared_surface_many_producers`; overrides `--hidden`).
 * `--json[=PATH]` – emit a machine-readable JSON report (includes a stable `schema_version`).
 * `--validate-sharing` – for `d3d9ex_shared_surface`: kept for backwards compatibility (pixel sharing is validated by default; `--dump` always validates).
 * `--no-validate-sharing` – for `d3d9ex_shared_surface`: skip cross-process pixel sharing readback.
@@ -64,6 +64,7 @@ drivers/aerogpu/tests/win7/
   d3d9ex_query_latency/
   d3d9ex_shared_surface/
   d3d9ex_shared_surface_ipc/
+  d3d9ex_shared_surface_wow64/
   d3d9ex_shared_surface_many_producers/
   d3d9ex_shared_allocations/
   d3d10_triangle/
@@ -239,6 +240,7 @@ In a Win7 VM with AeroGPU installed and working correctly:
 * `d3d9ex_shared_surface_ipc` creates a shared D3D9Ex render-target texture in one process, opens it in a second process, and validates the consumer can read back the producer’s clear color.
   * If the shared handle is a real NT handle, the producer duplicates it into the consumer and (when supported) confirms `AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE` maps both process-local handles to the same stable token.
   * If the shared handle is not a real NT handle, it falls back to passing the raw handle value (token-style shared handles).
+* `d3d9ex_shared_surface_wow64` validates **cross-bitness** D3D9Ex shared-surface interop on Win7 x64: an **x86 (WOW64) producer** duplicates a shared render-target texture handle into an **x64 consumer** and the consumer validates pixel data via readback (skipped on 32-bit OS). This mirrors the Win7 desktop scenario where DWM is 64-bit but many apps are 32-bit.
 * `d3d9ex_shared_surface_many_producers` mimics the DWM “many producers → one compositor” workload:
   * spawns N producer processes, each creating its own shared render-target texture (distinct allocation)
   * duplicates/forwards each shared handle to the compositor process via a named mapping + event
