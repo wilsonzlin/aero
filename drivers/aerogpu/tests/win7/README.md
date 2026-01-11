@@ -127,6 +127,10 @@ Outputs are placed in:
 drivers\aerogpu\tests\win7\bin\
 ```
 
+Note: `d3d9ex_shared_surface_wow64` requires **two** binaries: an x86 producer plus an x64 consumer (`d3d9ex_shared_surface_wow64_consumer_x64.exe`).
+When building with the Visual Studio CMake generator (`-G "Visual Studio ..."`) in a Win32 build, the suite can build the consumer binary via a nested x64
+build (`AEROGPU_WIN7_BUILD_WOW64_CONSUMER`, enabled by default on 64-bit MSVC hosts; requires the x64 MSVC toolchain to be installed).
+
 ## Adding a new test
 
 1. Add a new directory containing `main.cpp` and a `build_vs2010.cmd` that outputs `bin\<test_name>.exe`.
