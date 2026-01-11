@@ -67,6 +67,7 @@ prefix, e.g.:
 - Transition logs (`l2: connecting/open/closed/error`) are emitted immediately.
 - When drop deltas are non-zero, the periodic stats log is emitted at `WARN` so it also appears in
   the coordinator's nonfatal event stream.
+- Tunnel transport errors are emitted at `ERROR` (`l2: error: ...`).
 
 See:
 - `web/src/net/l2TunnelForwarder.ts` (counters + log formatting helper)

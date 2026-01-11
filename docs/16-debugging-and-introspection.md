@@ -39,6 +39,8 @@ Example (L2 tunnel forwarder telemetry from the network worker):
 [net] l2: open tx=... rx=... drop+{...} pending=...
 ```
 
+Tunnel transport failures are surfaced as `ERROR` logs (e.g. `l2: error: ...`).
+
 ---
 
 ## Breakpoints / Stepping

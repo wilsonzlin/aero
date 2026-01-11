@@ -124,6 +124,7 @@ on the runtime event ring to help debug L2 tunnel bring-up/backpressure:
 - Connection transitions (`l2: connecting/open/closed/error`) are logged immediately.
 - When drop deltas are non-zero, the periodic stats log is emitted at `WARN` so it also appears in
   the coordinator's nonfatal stream.
+- Tunnel transport errors are emitted at `ERROR` (`l2: error: ...`).
 
 
 ### 2) (Optional) Start the WebRTC relay (DataChannel transport)
