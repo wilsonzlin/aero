@@ -139,6 +139,7 @@
     <ClCompile Include="src\aerogpu_kmd_query.cpp" />
     <ClCompile Include="src\aerogpu_log.cpp" />
     <ClCompile Include="src\aerogpu_trace.cpp" />
+    <ClCompile Include="src\aerogpu_wddm_alloc.cpp" />
     <ClCompile Include="src\aerogpu_wddm_alloc_list.cpp" />
     <ClCompile Include="src\aerogpu_wddm_context.cpp" />
     <ClCompile Include="src\dllmain.cpp" />
@@ -157,6 +158,7 @@
     <ClInclude Include="src\aerogpu_kmd_query.h" />
     <ClInclude Include="src\aerogpu_log.h" />
     <ClInclude Include="src\aerogpu_trace.h" />
+    <ClInclude Include="src\aerogpu_wddm_alloc.h" />
     <ClInclude Include="src\aerogpu_wddm_alloc_list.h" />
     <ClInclude Include="src\aerogpu_wddm_context.h" />
     <ClInclude Include="..\..\protocol\aerogpu_wddm_alloc.h" />

@@ -1,0 +1,414 @@
+#include "aerogpu_wddm_alloc.h"
+
+#include <cstring>
+#include <type_traits>
+#include <utility>
+
+namespace aerogpu {
+
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+
+namespace {
+
+template <typename Fn>
+struct fn_first_param;
+
+template <typename Ret, typename Arg0, typename... Rest>
+struct fn_first_param<Ret(__stdcall*)(Arg0, Rest...)> {
+  using type = Arg0;
+};
+
+template <typename Ret, typename Arg0, typename... Rest>
+struct fn_first_param<Ret(*)(Arg0, Rest...)> {
+  using type = Arg0;
+};
+
+template <typename T, typename = void>
+struct has_pfnCreateAllocationCb : std::false_type {};
+
+template <typename T>
+struct has_pfnCreateAllocationCb<T, std::void_t<decltype(std::declval<T>().pfnCreateAllocationCb)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_pfnDestroyAllocationCb : std::false_type {};
+
+template <typename T>
+struct has_pfnDestroyAllocationCb<T, std::void_t<decltype(std::declval<T>().pfnDestroyAllocationCb)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_pfnLockCb : std::false_type {};
+
+template <typename T>
+struct has_pfnLockCb<T, std::void_t<decltype(std::declval<T>().pfnLockCb)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_pfnUnlockCb : std::false_type {};
+
+template <typename T>
+struct has_pfnUnlockCb<T, std::void_t<decltype(std::declval<T>().pfnUnlockCb)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_hDevice : std::false_type {};
+
+template <typename T>
+struct has_member_hDevice<T, std::void_t<decltype(std::declval<T&>().hDevice)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_NumAllocations : std::false_type {};
+
+template <typename T>
+struct has_member_NumAllocations<T, std::void_t<decltype(std::declval<T&>().NumAllocations)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_pAllocationInfo : std::false_type {};
+
+template <typename T>
+struct has_member_pAllocationInfo<T, std::void_t<decltype(std::declval<T&>().pAllocationInfo)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_hResource : std::false_type {};
+
+template <typename T>
+struct has_member_hResource<T, std::void_t<decltype(std::declval<T&>().hResource)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_hKMResource : std::false_type {};
+
+template <typename T>
+struct has_member_hKMResource<T, std::void_t<decltype(std::declval<T&>().hKMResource)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_Size : std::false_type {};
+
+template <typename T>
+struct has_member_Size<T, std::void_t<decltype(std::declval<T&>().Size)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_SizeInBytes : std::false_type {};
+
+template <typename T>
+struct has_member_SizeInBytes<T, std::void_t<decltype(std::declval<T&>().SizeInBytes)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_pPrivateDriverData : std::false_type {};
+
+template <typename T>
+struct has_member_pPrivateDriverData<T, std::void_t<decltype(std::declval<T&>().pPrivateDriverData)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_PrivateDriverDataSize : std::false_type {};
+
+template <typename T>
+struct has_member_PrivateDriverDataSize<T, std::void_t<decltype(std::declval<T&>().PrivateDriverDataSize)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_hAllocation : std::false_type {};
+
+template <typename T>
+struct has_member_hAllocation<T, std::void_t<decltype(std::declval<T&>().hAllocation)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_phAllocationList : std::false_type {};
+
+template <typename T>
+struct has_member_phAllocationList<T, std::void_t<decltype(std::declval<T&>().phAllocationList)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_pAllocationList : std::false_type {};
+
+template <typename T>
+struct has_member_pAllocationList<T, std::void_t<decltype(std::declval<T&>().pAllocationList)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_AllocationCount : std::false_type {};
+
+template <typename T>
+struct has_member_AllocationCount<T, std::void_t<decltype(std::declval<T&>().AllocationCount)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_Offset : std::false_type {};
+
+template <typename T>
+struct has_member_Offset<T, std::void_t<decltype(std::declval<T&>().Offset)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_OffsetToLock : std::false_type {};
+
+template <typename T>
+struct has_member_OffsetToLock<T, std::void_t<decltype(std::declval<T&>().OffsetToLock)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_SizeToLock : std::false_type {};
+
+template <typename T>
+struct has_member_SizeToLock<T, std::void_t<decltype(std::declval<T&>().SizeToLock)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_pData : std::false_type {};
+
+template <typename T>
+struct has_member_pData<T, std::void_t<decltype(std::declval<T&>().pData)>> : std::true_type {};
+
+} // namespace
+
+HRESULT wddm_create_allocation(const WddmDeviceCallbacks& callbacks,
+                               WddmHandle hDevice,
+                               uint64_t size_bytes,
+                               const aerogpu_wddm_alloc_priv* priv,
+                               uint32_t priv_size,
+                               WddmAllocationHandle* hAllocationOut) {
+  if (!hAllocationOut) {
+    return E_INVALIDARG;
+  }
+  *hAllocationOut = 0;
+  if (!hDevice || size_bytes == 0 || !priv || priv_size == 0) {
+    return E_INVALIDARG;
+  }
+
+  if constexpr (!has_pfnCreateAllocationCb<WddmDeviceCallbacks>::value) {
+    return E_NOTIMPL;
+  } else {
+    if (!callbacks.pfnCreateAllocationCb) {
+      return E_FAIL;
+    }
+
+    using Fn = decltype(callbacks.pfnCreateAllocationCb);
+    using ArgPtr = typename fn_first_param<Fn>::type;
+    using Args = std::remove_pointer_t<ArgPtr>;
+    Args data{};
+
+    if constexpr (has_member_hDevice<Args>::value) {
+      data.hDevice = hDevice;
+    }
+    if constexpr (has_member_hResource<Args>::value) {
+      data.hResource = 0;
+    }
+    if constexpr (has_member_hKMResource<Args>::value) {
+      data.hKMResource = 0;
+    }
+
+    if constexpr (!has_member_pAllocationInfo<Args>::value) {
+      return E_NOTIMPL;
+    } else {
+      using InfoPtr = decltype(std::declval<Args&>().pAllocationInfo);
+      using Info = std::remove_pointer_t<InfoPtr>;
+      Info info{};
+      std::memset(&info, 0, sizeof(info));
+
+      if constexpr (has_member_Size<Info>::value) {
+        info.Size = static_cast<decltype(info.Size)>(size_bytes);
+      } else if constexpr (has_member_SizeInBytes<Info>::value) {
+        info.SizeInBytes = static_cast<decltype(info.SizeInBytes)>(size_bytes);
+      } else {
+        return E_NOTIMPL;
+      }
+
+      if constexpr (has_member_pPrivateDriverData<Info>::value) {
+        info.pPrivateDriverData = const_cast<void*>(reinterpret_cast<const void*>(priv));
+      } else {
+        return E_NOTIMPL;
+      }
+      if constexpr (has_member_PrivateDriverDataSize<Info>::value) {
+        info.PrivateDriverDataSize = priv_size;
+      } else {
+        return E_NOTIMPL;
+      }
+
+      if constexpr (has_member_NumAllocations<Args>::value) {
+        data.NumAllocations = 1;
+      } else {
+        return E_NOTIMPL;
+      }
+      data.pAllocationInfo = &info;
+
+      const HRESULT hr = callbacks.pfnCreateAllocationCb(&data);
+      if (FAILED(hr)) {
+        return hr;
+      }
+
+      if constexpr (has_member_hAllocation<Info>::value) {
+        *hAllocationOut = info.hAllocation;
+      } else {
+        return E_NOTIMPL;
+      }
+
+      return (*hAllocationOut != 0) ? S_OK : E_FAIL;
+    }
+  }
+}
+
+HRESULT wddm_destroy_allocation(const WddmDeviceCallbacks& callbacks,
+                                WddmHandle hDevice,
+                                WddmAllocationHandle hAllocation) {
+  if (!hDevice || !hAllocation) {
+    return E_INVALIDARG;
+  }
+
+  if constexpr (!has_pfnDestroyAllocationCb<WddmDeviceCallbacks>::value) {
+    return E_NOTIMPL;
+  } else {
+    if (!callbacks.pfnDestroyAllocationCb) {
+      return E_FAIL;
+    }
+
+    using Fn = decltype(callbacks.pfnDestroyAllocationCb);
+    using ArgPtr = typename fn_first_param<Fn>::type;
+    using Args = std::remove_pointer_t<ArgPtr>;
+    Args data{};
+    std::memset(&data, 0, sizeof(data));
+
+    if constexpr (has_member_hDevice<Args>::value) {
+      data.hDevice = hDevice;
+    }
+    if constexpr (has_member_hResource<Args>::value) {
+      data.hResource = 0;
+    }
+    if constexpr (has_member_hKMResource<Args>::value) {
+      data.hKMResource = 0;
+    }
+
+    WddmAllocationHandle allocs[1] = {hAllocation};
+
+    if constexpr (has_member_NumAllocations<Args>::value) {
+      data.NumAllocations = 1;
+    } else if constexpr (has_member_AllocationCount<Args>::value) {
+      data.AllocationCount = 1;
+    } else {
+      return E_NOTIMPL;
+    }
+
+    if constexpr (has_member_phAllocationList<Args>::value) {
+      data.phAllocationList = allocs;
+    } else if constexpr (has_member_pAllocationList<Args>::value) {
+      data.pAllocationList = allocs;
+    } else {
+      return E_NOTIMPL;
+    }
+
+    return callbacks.pfnDestroyAllocationCb(&data);
+  }
+}
+
+HRESULT wddm_lock_allocation(const WddmDeviceCallbacks& callbacks,
+                             WddmHandle hDevice,
+                             WddmAllocationHandle hAllocation,
+                             uint64_t offset_bytes,
+                             uint64_t size_bytes,
+                             void** out_ptr) {
+  if (!out_ptr) {
+    return E_INVALIDARG;
+  }
+  *out_ptr = nullptr;
+  if (!hDevice || !hAllocation) {
+    return E_INVALIDARG;
+  }
+
+  if constexpr (!has_pfnLockCb<WddmDeviceCallbacks>::value) {
+    return E_NOTIMPL;
+  } else {
+    if (!callbacks.pfnLockCb) {
+      return E_FAIL;
+    }
+
+    using Fn = decltype(callbacks.pfnLockCb);
+    using ArgPtr = typename fn_first_param<Fn>::type;
+    using Args = std::remove_pointer_t<ArgPtr>;
+    Args data{};
+    std::memset(&data, 0, sizeof(data));
+
+    if constexpr (has_member_hDevice<Args>::value) {
+      data.hDevice = hDevice;
+    }
+    if constexpr (has_member_hAllocation<Args>::value) {
+      data.hAllocation = hAllocation;
+    }
+
+    if constexpr (has_member_Offset<Args>::value) {
+      data.Offset = offset_bytes;
+    } else if constexpr (has_member_OffsetToLock<Args>::value) {
+      data.OffsetToLock = offset_bytes;
+    }
+
+    if constexpr (has_member_Size<Args>::value) {
+      data.Size = static_cast<decltype(data.Size)>(size_bytes);
+    } else if constexpr (has_member_SizeToLock<Args>::value) {
+      data.SizeToLock = static_cast<decltype(data.SizeToLock)>(size_bytes);
+    }
+
+    const HRESULT hr = callbacks.pfnLockCb(&data);
+    if (FAILED(hr)) {
+      return hr;
+    }
+
+    if constexpr (has_member_pData<Args>::value) {
+      *out_ptr = data.pData;
+      return (*out_ptr != nullptr) ? S_OK : E_FAIL;
+    } else {
+      return E_NOTIMPL;
+    }
+  }
+}
+
+HRESULT wddm_unlock_allocation(const WddmDeviceCallbacks& callbacks,
+                               WddmHandle hDevice,
+                               WddmAllocationHandle hAllocation) {
+  if (!hDevice || !hAllocation) {
+    return E_INVALIDARG;
+  }
+
+  if constexpr (!has_pfnUnlockCb<WddmDeviceCallbacks>::value) {
+    return E_NOTIMPL;
+  } else {
+    if (!callbacks.pfnUnlockCb) {
+      return E_FAIL;
+    }
+
+    using Fn = decltype(callbacks.pfnUnlockCb);
+    using ArgPtr = typename fn_first_param<Fn>::type;
+    using Args = std::remove_pointer_t<ArgPtr>;
+    Args data{};
+    std::memset(&data, 0, sizeof(data));
+
+    if constexpr (has_member_hDevice<Args>::value) {
+      data.hDevice = hDevice;
+    }
+    if constexpr (has_member_hAllocation<Args>::value) {
+      data.hAllocation = hAllocation;
+    }
+
+    return callbacks.pfnUnlockCb(&data);
+  }
+}
+
+#else
+
+HRESULT wddm_create_allocation(const WddmDeviceCallbacks&,
+                               WddmHandle,
+                               uint64_t,
+                               const aerogpu_wddm_alloc_priv*,
+                               uint32_t,
+                               WddmAllocationHandle*) {
+  return E_NOTIMPL;
+}
+
+HRESULT wddm_destroy_allocation(const WddmDeviceCallbacks&, WddmHandle, WddmAllocationHandle) {
+  return E_NOTIMPL;
+}
+
+HRESULT wddm_lock_allocation(const WddmDeviceCallbacks&,
+                             WddmHandle,
+                             WddmAllocationHandle,
+                             uint64_t,
+                             uint64_t,
+                             void**) {
+  return E_NOTIMPL;
+}
+
+HRESULT wddm_unlock_allocation(const WddmDeviceCallbacks&, WddmHandle, WddmAllocationHandle) {
+  return E_NOTIMPL;
+}
+
+#endif
+
+} // namespace aerogpu
+

@@ -80,6 +80,7 @@ struct Resource {
   uint32_t locked_offset = 0;
   uint32_t locked_size = 0;
   uint32_t locked_flags = 0;
+  void* locked_ptr = nullptr;
 
   // WDDM allocation handle for this resource's backing store (per-process).
   // The stable ID referenced in command buffers is `backing_alloc_id`.
