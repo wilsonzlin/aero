@@ -513,14 +513,20 @@ void fill_wait_for_sync_object_args(WaitArgsT* args,
 
   // Handle-array field name drift: prefer the array form when present.
   if constexpr (has_member_ObjectHandleArray<WaitArgsT>::value) {
-    if constexpr (std::is_pointer_v<decltype(args->ObjectHandleArray)>) {
+    using FieldT = std::remove_reference_t<decltype(args->ObjectHandleArray)>;
+    if constexpr (std::is_pointer_v<FieldT>) {
       args->ObjectHandleArray = handles;
+    } else if constexpr (std::is_array_v<FieldT>) {
+      args->ObjectHandleArray[0] = handles ? handles[0] : 0;
     } else {
       args->ObjectHandleArray = handles ? handles[0] : 0;
     }
   } else if constexpr (has_member_hSyncObjects<WaitArgsT>::value) {
-    if constexpr (std::is_pointer_v<decltype(args->hSyncObjects)>) {
+    using FieldT = std::remove_reference_t<decltype(args->hSyncObjects)>;
+    if constexpr (std::is_pointer_v<FieldT>) {
       args->hSyncObjects = handles;
+    } else if constexpr (std::is_array_v<FieldT>) {
+      args->hSyncObjects[0] = handles ? handles[0] : 0;
     } else {
       args->hSyncObjects = handles ? handles[0] : 0;
     }
@@ -528,14 +534,20 @@ void fill_wait_for_sync_object_args(WaitArgsT* args,
 
   // Fence-value field name drift: prefer the array form when present.
   if constexpr (has_member_FenceValueArray<WaitArgsT>::value) {
-    if constexpr (std::is_pointer_v<decltype(args->FenceValueArray)>) {
+    using FieldT = std::remove_reference_t<decltype(args->FenceValueArray)>;
+    if constexpr (std::is_pointer_v<FieldT>) {
       args->FenceValueArray = fence_values;
+    } else if constexpr (std::is_array_v<FieldT>) {
+      args->FenceValueArray[0] = fence_value;
     } else {
       args->FenceValueArray = fence_value;
     }
   } else if constexpr (has_member_FenceValue<WaitArgsT>::value) {
-    if constexpr (std::is_pointer_v<decltype(args->FenceValue)>) {
+    using FieldT = std::remove_reference_t<decltype(args->FenceValue)>;
+    if constexpr (std::is_pointer_v<FieldT>) {
       args->FenceValue = fence_values;
+    } else if constexpr (std::is_array_v<FieldT>) {
+      args->FenceValue[0] = fence_value;
     } else {
       args->FenceValue = fence_value;
     }
