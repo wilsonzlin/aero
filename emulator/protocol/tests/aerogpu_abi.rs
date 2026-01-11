@@ -12,10 +12,14 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdSetDepthStencilState, AerogpuCmdSetIndexBuffer, AerogpuCmdSetInputLayout, AerogpuCmdSetPrimitiveTopology,
     AerogpuCmdSetRasterizerState, AerogpuCmdSetRenderState, AerogpuCmdSetRenderTargets, AerogpuCmdSetSamplerState,
     AerogpuCmdSetScissor, AerogpuCmdSetShaderConstantsF, AerogpuCmdSetTexture, AerogpuCmdSetVertexBuffers,
-    AerogpuCmdSetViewport, AerogpuCmdStreamHeader, AerogpuCmdUploadResource, AerogpuDepthStencilState,
-    AerogpuInputLayoutBlobHeader, AerogpuInputLayoutElementDxgi, AerogpuPrimitiveTopology, AerogpuRasterizerState,
-    AerogpuVertexBufferBinding, AEROGPU_CMD_STREAM_MAGIC, AEROGPU_INPUT_LAYOUT_BLOB_MAGIC,
-    AEROGPU_INPUT_LAYOUT_BLOB_VERSION,
+    AerogpuCmdSetViewport, AerogpuCmdStreamFlags, AerogpuCmdStreamHeader, AerogpuCmdUploadResource,
+    AerogpuDepthStencilState, AerogpuInputLayoutBlobHeader, AerogpuInputLayoutElementDxgi, AerogpuPrimitiveTopology,
+    AerogpuRasterizerState, AerogpuVertexBufferBinding, AEROGPU_CLEAR_COLOR, AEROGPU_CLEAR_DEPTH,
+    AEROGPU_CLEAR_STENCIL, AEROGPU_CMD_STREAM_MAGIC, AEROGPU_INPUT_LAYOUT_BLOB_MAGIC, AEROGPU_INPUT_LAYOUT_BLOB_VERSION,
+    AEROGPU_MAX_RENDER_TARGETS, AEROGPU_PRESENT_FLAG_NONE, AEROGPU_PRESENT_FLAG_VSYNC, AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER,
+    AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL, AEROGPU_RESOURCE_USAGE_INDEX_BUFFER, AEROGPU_RESOURCE_USAGE_NONE,
+    AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_SCANOUT, AEROGPU_RESOURCE_USAGE_TEXTURE,
+    AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
 };
 use aero_protocol::aerogpu::aerogpu_pci::{
     parse_and_validate_abi_version_u32, AerogpuAbiError, AerogpuFormat, AEROGPU_ABI_MAJOR, AEROGPU_ABI_MINOR,
@@ -393,9 +397,45 @@ fn rust_layout_matches_c_headers() {
     );
 
     assert_eq!(abi.konst("AEROGPU_CMD_STREAM_MAGIC"), AEROGPU_CMD_STREAM_MAGIC as u64);
+    assert_eq!(
+        abi.konst("AEROGPU_CMD_STREAM_FLAG_NONE"),
+        AerogpuCmdStreamFlags::None as u64
+    );
     assert_eq!(abi.konst("AEROGPU_ALLOC_TABLE_MAGIC"), AEROGPU_ALLOC_TABLE_MAGIC as u64);
     assert_eq!(abi.konst("AEROGPU_RING_MAGIC"), AEROGPU_RING_MAGIC as u64);
     assert_eq!(abi.konst("AEROGPU_FENCE_PAGE_MAGIC"), AEROGPU_FENCE_PAGE_MAGIC as u64);
+
+    assert_eq!(abi.konst("AEROGPU_RESOURCE_USAGE_NONE"), AEROGPU_RESOURCE_USAGE_NONE as u64);
+    assert_eq!(
+        abi.konst("AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER"),
+        AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER as u64
+    );
+    assert_eq!(
+        abi.konst("AEROGPU_RESOURCE_USAGE_INDEX_BUFFER"),
+        AEROGPU_RESOURCE_USAGE_INDEX_BUFFER as u64
+    );
+    assert_eq!(
+        abi.konst("AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER"),
+        AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER as u64
+    );
+    assert_eq!(
+        abi.konst("AEROGPU_RESOURCE_USAGE_TEXTURE"),
+        AEROGPU_RESOURCE_USAGE_TEXTURE as u64
+    );
+    assert_eq!(
+        abi.konst("AEROGPU_RESOURCE_USAGE_RENDER_TARGET"),
+        AEROGPU_RESOURCE_USAGE_RENDER_TARGET as u64
+    );
+    assert_eq!(
+        abi.konst("AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL"),
+        AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL as u64
+    );
+    assert_eq!(
+        abi.konst("AEROGPU_RESOURCE_USAGE_SCANOUT"),
+        AEROGPU_RESOURCE_USAGE_SCANOUT as u64
+    );
+
+    assert_eq!(abi.konst("AEROGPU_MAX_RENDER_TARGETS"), AEROGPU_MAX_RENDER_TARGETS as u64);
 
     assert_eq!(abi.konst("AEROGPU_CMD_NOP"), AerogpuCmdOpcode::Nop as u64);
     assert_eq!(abi.konst("AEROGPU_CMD_DEBUG_MARKER"), AerogpuCmdOpcode::DebugMarker as u64);
@@ -476,6 +516,16 @@ fn rust_layout_matches_c_headers() {
         AerogpuCmdOpcode::ImportSharedSurface as u64
     );
     assert_eq!(abi.konst("AEROGPU_CMD_FLUSH"), AerogpuCmdOpcode::Flush as u64);
+
+    assert_eq!(abi.konst("AEROGPU_CLEAR_COLOR"), AEROGPU_CLEAR_COLOR as u64);
+    assert_eq!(abi.konst("AEROGPU_CLEAR_DEPTH"), AEROGPU_CLEAR_DEPTH as u64);
+    assert_eq!(abi.konst("AEROGPU_CLEAR_STENCIL"), AEROGPU_CLEAR_STENCIL as u64);
+
+    assert_eq!(abi.konst("AEROGPU_PRESENT_FLAG_NONE"), AEROGPU_PRESENT_FLAG_NONE as u64);
+    assert_eq!(
+        abi.konst("AEROGPU_PRESENT_FLAG_VSYNC"),
+        AEROGPU_PRESENT_FLAG_VSYNC as u64
+    );
 
     assert_eq!(abi.konst("AEROGPU_INPUT_LAYOUT_BLOB_MAGIC"), AEROGPU_INPUT_LAYOUT_BLOB_MAGIC as u64);
     assert_eq!(

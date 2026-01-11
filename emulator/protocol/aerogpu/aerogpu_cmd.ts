@@ -7,6 +7,7 @@ import { parseAndValidateAbiVersionU32 } from "./aerogpu_pci.ts";
 export type AerogpuHandle = number;
 
 export const AEROGPU_CMD_STREAM_MAGIC = 0x444d4341; // "ACMD" LE
+export const AEROGPU_CMD_STREAM_FLAG_NONE = 0;
 
 export const AEROGPU_CMD_STREAM_HEADER_SIZE = 24;
 export const AEROGPU_CMD_STREAM_HEADER_OFF_MAGIC = 0;
@@ -122,6 +123,17 @@ export const AerogpuPrimitiveTopology = {
 
 export type AerogpuPrimitiveTopology =
   (typeof AerogpuPrimitiveTopology)[keyof typeof AerogpuPrimitiveTopology];
+
+export const AEROGPU_RESOURCE_USAGE_NONE = 0;
+export const AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER = 1 << 0;
+export const AEROGPU_RESOURCE_USAGE_INDEX_BUFFER = 1 << 1;
+export const AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER = 1 << 2;
+export const AEROGPU_RESOURCE_USAGE_TEXTURE = 1 << 3;
+export const AEROGPU_RESOURCE_USAGE_RENDER_TARGET = 1 << 4;
+export const AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL = 1 << 5;
+export const AEROGPU_RESOURCE_USAGE_SCANOUT = 1 << 6;
+
+export const AEROGPU_MAX_RENDER_TARGETS = 8;
 
 export const AEROGPU_INPUT_LAYOUT_BLOB_MAGIC = 0x59414c49; // "ILAY" LE
 export const AEROGPU_INPUT_LAYOUT_BLOB_VERSION = 1;
