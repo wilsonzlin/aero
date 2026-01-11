@@ -530,9 +530,11 @@ Resource/CB/sampler binding for FL10_0 pipeline:
 | `pfnVsSetConstantBuffers` | REQUIRED | Used by `d3d11_dynamic_constant_buffer_sanity` (binds the CB to both VS and PS). Runtime may call with NULL to clear; handle that without error. |
 | `pfnGsSetConstantBuffers` | REQUIRED-BUT-STUBBABLE | Keep non-null; implement as stages gain coverage. |
 | `pfnPsSetShaderResources` | REQUIRED | Used by `d3d11_texture_sampling_sanity`; handle NULL to unbind. |
-| `pfnVsSetShaderResources` / `pfnGsSetShaderResources` | REQUIRED-BUT-STUBBABLE | Keep non-null; implement as stages gain coverage. |
+| `pfnVsSetShaderResources` | REQUIRED | Used by `d3d11_texture_sampling_sanity` (binds SRV to both VS and PS); handle NULL to unbind. |
+| `pfnGsSetShaderResources` | REQUIRED-BUT-STUBBABLE | Keep non-null; implement as stages gain coverage. |
 | `pfnPsSetSamplers` | REQUIRED | Used by `d3d11_texture_sampling_sanity`; handle NULL to unbind. |
-| `pfnVsSetSamplers` / `pfnGsSetSamplers` | REQUIRED-BUT-STUBBABLE | Keep non-null; implement as stages gain coverage. |
+| `pfnVsSetSamplers` | REQUIRED | Used by `d3d11_texture_sampling_sanity` (binds samplers to both VS and PS); handle NULL to unbind. |
+| `pfnGsSetSamplers` | REQUIRED-BUT-STUBBABLE | Keep non-null; implement as stages gain coverage. |
 
 #### 5.2.1 HS/DS/CS stages (optional for FL10_0 bring-up)
 
@@ -673,6 +675,7 @@ Same as above except:
 | `CreateShaderResourceView` | device `pfnCalcPrivateShaderResourceViewSize` → `pfnCreateShaderResourceView`. |
 | `CreateSamplerState` | device `pfnCalcPrivateSamplerSize` → `pfnCreateSampler`. |
 | `IASetIndexBuffer` | context `pfnIaSetIndexBuffer`. |
+| `VSSetShaderResources` / `VSSetSamplers` | context `pfnVsSetShaderResources` / `pfnVsSetSamplers`. |
 | `PSSetShaderResources` / `PSSetSamplers` | context `pfnPsSetShaderResources` / `pfnPsSetSamplers`. |
 | `DrawIndexed` | context `pfnDrawIndexed`. |
 | `CopyResource` + staging `Map(READ)` | context `pfnCopyResource` + `pfnMap` / `pfnUnmap`. |
