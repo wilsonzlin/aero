@@ -2236,6 +2236,42 @@ static void TryEnsureEndpointSessionAudible(Logger& log, IMMDevice* endpoint, co
   }
 }
 
+static void TryEnsureAudioClientSessionAudible(Logger& log, IAudioClient* client, const char* tag) {
+  if (!client || !tag) return;
+
+  ComPtr<ISimpleAudioVolume> vol;
+  HRESULT hr = client->GetService(__uuidof(ISimpleAudioVolume), reinterpret_cast<void**>(vol.Put()));
+  if (FAILED(hr) || !vol) {
+    log.Logf("virtio-snd: %s audio client ISimpleAudioVolume unavailable hr=0x%08lx", tag,
+             static_cast<unsigned long>(hr));
+    return;
+  }
+
+  BOOL mute = FALSE;
+  hr = vol->GetMute(&mute);
+  if (SUCCEEDED(hr)) {
+    log.Logf("virtio-snd: %s audio client session mute=%d", tag, mute ? 1 : 0);
+  }
+
+  if (mute) {
+    hr = vol->SetMute(FALSE, nullptr);
+    log.Logf("virtio-snd: %s audio client session SetMute(FALSE) hr=0x%08lx", tag,
+             static_cast<unsigned long>(hr));
+  }
+
+  float before = 0.0f;
+  hr = vol->GetMasterVolume(&before);
+  if (SUCCEEDED(hr)) {
+    log.Logf("virtio-snd: %s audio client session volume=%.3f", tag, before);
+  }
+
+  hr = vol->SetMasterVolume(1.0f, nullptr);
+  if (FAILED(hr)) {
+    log.Logf("virtio-snd: %s audio client session SetMasterVolume(1.0) failed hr=0x%08lx", tag,
+             static_cast<unsigned long>(hr));
+  }
+}
+
 static void TryEnsureDefaultRenderEndpointAudible(Logger& log) {
   ScopedCoInitialize com(COINIT_MULTITHREADED);
   if (FAILED(com.hr())) {
@@ -2658,6 +2694,7 @@ static TestResult VirtioSndTest(Logger& log, const std::vector<std::wstring>& ma
   const auto* fmt = reinterpret_cast<const WAVEFORMATEX*>(fmt_bytes.data());
   log.Logf("virtio-snd: stream format=%s used_desired=%d", WaveFormatToString(fmt).c_str(),
            used_desired_format ? 1 : 0);
+  TryEnsureAudioClientSessionAudible(log, client.Get(), "render");
 
   UINT32 buffer_frames = 0;
   hr = client->GetBufferSize(&buffer_frames);
