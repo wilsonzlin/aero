@@ -1112,7 +1112,7 @@ static HRESULT WaitForFence(Device* dev, uint64_t fence_value, UINT64 timeout) {
       FillWaitForSyncObjectArgs(
           &args,
           static_cast<D3DKMT_HANDLE>(dev->kmt_context),
-          kmt_adapter,
+          /*hAdapter=*/0,
           handles,
           fence_values,
           fence_value,
