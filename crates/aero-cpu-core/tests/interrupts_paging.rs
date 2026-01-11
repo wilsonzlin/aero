@@ -1,7 +1,7 @@
 use aero_cpu_core::interrupts::{CpuCore, CpuExit};
 use aero_cpu_core::mem::CpuBus as _;
 use aero_cpu_core::state::{gpr, CpuMode, CR0_PE, CR0_PG, CR4_PAE, EFER_LME, SEG_ACCESS_PRESENT};
-use aero_cpu_core::PagingBus;
+use aero_cpu_core::{Exception, PagingBus};
 use aero_mmu::MemoryBus;
 use core::convert::TryInto;
 
@@ -521,6 +521,15 @@ fn protected_mode_iret_syncs_bus_before_popping_supervisor_stack() -> Result<(),
     assert_eq!(cpu.state.segments.ss.selector, 0x23);
     assert_eq!(cpu.state.rip(), return_rip);
     assert_eq!(cpu.state.read_gpr32(gpr::RSP), user_stack_top);
+
+    // The bus should now also be synced to CPL3 so supervisor-only pages still fault.
+    assert_eq!(
+        bus.read_u8(idt_base),
+        Err(Exception::PageFault {
+            addr: idt_base,
+            error_code: 0b00101, // P=1, W/R=0, U/S=1
+        })
+    );
 
     Ok(())
 }

@@ -357,13 +357,18 @@ pub fn iret<B: CpuBus>(
         );
     };
 
-    match frame {
+    let res = match frame {
         InterruptFrame::Real16 => iret_real(state, bus),
         InterruptFrame::Protected32 { stack_switched } => {
             iret_protected(state, bus, pending, stack_switched)
         }
         InterruptFrame::Long64 { stack_switched } => iret_long(state, bus, pending, stack_switched),
+    };
+
+    if res.is_ok() {
+        bus.sync(state);
     }
+    res
 }
 
 fn deliver_event<B: CpuBus>(
