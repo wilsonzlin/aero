@@ -87,6 +87,7 @@ WebUSB (`navigator.usb`) enables direct access to USB peripherals from the brows
 - **Secure context:** requires `https://` (or `http://localhost`).
 - **User activation:** `navigator.usb.requestDevice()` requires **transient user activation** and must be called directly from a user gesture handler on the **main thread**.
 - **Workers:** user activation does **not** propagate across `postMessage()` to workers, so a “click → postMessage → worker calls `requestDevice()`” flow will fail.
+- **UHCI passthrough mapping:** for the guest UHCI TD ↔ WebUSB transfer mapping (including “TD-level NAK while pending”), see [`docs/webusb-passthrough.md`](./webusb-passthrough.md).
 - **Troubleshooting:** for `requestDevice()` / `open()` / `claimInterface()` failures (protected interface classes, WinUSB/udev permissions, etc.), see [`docs/webusb.md`](./webusb.md).
 
 ### Architecture options for Aero
@@ -1166,15 +1167,6 @@ function setupKeyboard(canvas) {
     });
 }
 ```
-
----
-
-## WebUSB
-
-WebUSB is used for **optional USB device passthrough** (real browser-attached device → guest USB controller).
-The full architecture (UHCI TD mapping, worker constraints, descriptor/speed handling) is documented in:
-
-- [`docs/webusb-passthrough.md`](./webusb-passthrough.md)
 
 ---
 
