@@ -1015,7 +1015,7 @@ function runEmulationLoop() {
 > - `readFrameIndex` (bytes 0..4)
 > - `writeFrameIndex` (bytes 4..8)
 > - `underrunCount` (bytes 8..12, total missing output frames rendered as silence due to underruns; wraps at 2^32)
-> - `overrunCount` (bytes 12..16, incremented by the producer when frames are dropped due to buffer full)
+> - `overrunCount` (bytes 12..16, total frames dropped by the producer due to buffer full; wraps at 2^32)
 >
 > followed by interleaved `f32` samples at byte 16. See:
 > `web/src/platform/audio.ts` and `web/src/platform/audio-worklet-processor.js`.
