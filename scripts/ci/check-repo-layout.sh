@@ -70,6 +70,10 @@ done
 
 # AeroGPU shared-surface contract: `share_token` is persisted via WDDM allocation
 # private driver data (dxgkrnl preserves the blob across OpenResource).
+#
+# `aerogpu_alloc.h` is a stable include path; `aerogpu_wddm_alloc.h` is the
+# canonical definition.
+need_file "drivers/aerogpu/protocol/aerogpu_alloc.h"
 need_file "drivers/aerogpu/protocol/aerogpu_wddm_alloc.h"
 
 # Guardrail: prevent regressions back to the deleted `aerogpu_alloc_privdata.h`
