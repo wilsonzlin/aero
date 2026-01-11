@@ -47,7 +47,7 @@ jobs:
           else
             # For non-tag builds (main + workflow_dispatch), keep the image self-describing by
             # using the same tag format we publish to GHCR (sha-<short>).
-            echo "AERO_GATEWAY_VERSION=sha-${GITHUB_SHA::12}" >> "$GITHUB_ENV"
+            echo "AERO_GATEWAY_VERSION=sha-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
           fi
 
       - name: Set up Docker Buildx
