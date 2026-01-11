@@ -1,4 +1,4 @@
-# Win7 shared surfaces: ShareToken vs user-mode HANDLE (AeroGPU)
+# Win7 shared surfaces: `share_token` vs user-mode HANDLE (AeroGPU)
 
 This note documents the **Win7 D3D9Ex shared-surface strategy** used by AeroGPU so future work does not accidentally rely on **process-local handle numeric values**.
 
