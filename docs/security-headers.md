@@ -106,10 +106,16 @@ Recommended baseline:
 
 - `Referrer-Policy: no-referrer` (privacy-first; alternatively `strict-origin-when-cross-origin`)
 - `X-Content-Type-Options: nosniff`
-- `Permissions-Policy: camera=(), geolocation=(), microphone=(self)`
+- `Permissions-Policy: camera=(), geolocation=(), microphone=(self), usb=(self)`
 
 Notes:
 
+- WebUSB is controlled by the Permissions-Policy **`usb`** directive. If WebUSB is disabled via policy, calls like `navigator.usb.requestDevice()` will throw `SecurityError` even if `navigator.usb` exists.
+  - Allow WebUSB on the top-level (same-origin) only:
+    - `Permissions-Policy: camera=(), microphone=(), geolocation=(), usb=(self)`
+  - Disable WebUSB entirely:
+    - `Permissions-Policy: camera=(), microphone=(), geolocation=(), usb=()`
+  - Iframe delegation: to use WebUSB in an iframe, the embedding page must include `allow="usb"` on the `<iframe>`, and the iframe's origin must be permitted by the embedding document's Permissions-Policy.
 - If you do not need microphone capture, you can disable it with `microphone=()`. Aero’s web UI uses the microphone only when the user explicitly enables it.
 
 ---

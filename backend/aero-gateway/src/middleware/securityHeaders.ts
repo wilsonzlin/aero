@@ -8,7 +8,7 @@ export function setupSecurityHeaders(app: FastifyInstance): void {
     // Baseline: allow only explicitly listed powerful features.
     // Note that Permissions-Policy does not grant permission on its own; it only
     // controls whether the origin is allowed to request it.
-    reply.header('permissions-policy', 'camera=(), geolocation=(), microphone=(self)');
+    reply.header('permissions-policy', 'camera=(), geolocation=(), microphone=(self), usb=(self)');
     return payload;
   });
 }

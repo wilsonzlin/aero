@@ -58,6 +58,20 @@ function getUsbApi(): USB | null {
   return maybe && typeof maybe === "object" ? (maybe as USB) : null;
 }
 
+function permissionsPolicyAllowsUsb(): boolean | null {
+  const doc = document as unknown as {
+    permissionsPolicy?: { allowsFeature?: (feature: string) => boolean };
+    featurePolicy?: { allowsFeature?: (feature: string) => boolean };
+  };
+  const policy = doc.permissionsPolicy ?? doc.featurePolicy;
+  if (!policy || typeof policy.allowsFeature !== "function") return null;
+  try {
+    return policy.allowsFeature("usb");
+  } catch {
+    return null;
+  }
+}
+
 async function requestUsbDevice(usb: USB): Promise<{ device: USBDevice; filterNote: string }> {
   const attempts: Array<{ note: string; options: USBDeviceRequestOptions }> = [
     // Chromium currently requires a non-empty filter list; `{}` matches any device
@@ -255,7 +269,10 @@ async function tryOpenAndClaim(device: USBDevice, classification: WebUsbDeviceCl
   return `Success: opened + claimed interface ${candidate.interfaceNumber} (configuration ${candidate.configValue}).`;
 }
 
-function renderWhyDevicesDontShow(): HTMLElement {
+function renderWhyDevicesDontShow(ppUsb: boolean | null): HTMLElement {
+  const ppText = ppUsb === null ? "unknown" : ppUsb ? "yes" : "no";
+  const ppClass = ppUsb === null ? "muted" : ppUsb ? "ok" : "bad";
+
   return el(
     "div",
     { class: "panel" },
@@ -263,6 +280,13 @@ function renderWhyDevicesDontShow(): HTMLElement {
     el(
       "ul",
       {},
+      el(
+        "li",
+        {},
+        "Permissions-Policy allows usb: ",
+        el("span", { class: ppClass, text: ppText }),
+        ppUsb === false ? " (check response header policy + iframe allow=\"usb\")" : null,
+      ),
       el("li", {}, "This page must be served from a secure context (HTTPS or http://localhost)."),
       el("li", {}, "WebUSB is Chromium-only in practice; Firefox/Safari typically do not expose navigator.usb."),
       el(
@@ -337,6 +361,7 @@ function main(): void {
     return;
   }
 
+  const ppUsb = permissionsPolicyAllowsUsb();
   const usb = getUsbApi();
   if (!usb) {
     app.append(
@@ -532,7 +557,7 @@ function main(): void {
   void refreshKnownDevices();
 
   app.append(
-    renderWhyDevicesDontShow(),
+    renderWhyDevicesDontShow(ppUsb),
     el(
       "div",
       { class: "panel" },

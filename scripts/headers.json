@@ -8,7 +8,7 @@
   "baseline": {
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "no-referrer",
-    "Permissions-Policy": "camera=(), geolocation=(), microphone=(self)"
+    "Permissions-Policy": "camera=(), geolocation=(), microphone=(self), usb=(self)"
   },
   "contentSecurityPolicy": {
     "Content-Security-Policy": "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://aero-gateway.invalid wss://aero-gateway.invalid; img-src 'self' data: blob:; style-src 'self'; font-src 'self'"
