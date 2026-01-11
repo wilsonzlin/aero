@@ -73,6 +73,12 @@ fn uhci_portsc_port_reset_is_bit9_and_resets_device_state() {
     assert_eq!(portsc & PORTSC_LSDA, 0);
     assert_eq!(portsc & PORTSC_LS_MASK, 0);
 
+    // Attempts to re-enable the port while PR is still set should be ignored.
+    hub.write_portsc(0, PORTSC_PED);
+    let portsc = hub.read_portsc(0);
+    assert_ne!(portsc & PORTSC_PR, 0);
+    assert_eq!(portsc & PORTSC_PED, 0);
+
     for _ in 0..49 {
         hub.tick_1ms();
         let portsc = hub.read_portsc(0);

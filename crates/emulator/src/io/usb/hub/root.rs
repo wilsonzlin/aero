@@ -71,13 +71,6 @@ impl Port {
             self.enable_change = false;
         }
 
-        // Port enable (read/write).
-        let new_enabled = value & PED != 0;
-        if new_enabled != self.enabled {
-            self.enabled = new_enabled;
-            self.enable_change = true;
-        }
-
         // Port reset: model a 50ms reset and reset attached device state.
         if value & PR != 0 && !self.reset {
             self.reset = true;
@@ -87,6 +80,18 @@ impl Port {
             }
             if self.enabled {
                 self.enabled = false;
+                self.enable_change = true;
+            }
+        }
+
+        // Port enable (read/write).
+        //
+        // While in reset, the port enable bit reads as 0 and writes are ignored until
+        // the reset sequence completes.
+        if !self.reset {
+            let new_enabled = value & PED != 0;
+            if new_enabled != self.enabled {
+                self.enabled = new_enabled;
                 self.enable_change = true;
             }
         }
