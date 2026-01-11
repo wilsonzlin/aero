@@ -1,4 +1,6 @@
-use aero_dxbc::{parse_signature_chunk, DxbcError, DxbcFile, FourCC};
+use aero_dxbc::{
+    parse_signature_chunk, parse_signature_chunk_with_fourcc, DxbcError, DxbcFile, FourCC,
+};
 
 const VS_2_0_SIMPLE_DXBC: &[u8] =
     include_bytes!("../../aero-d3d9/tests/fixtures/dxbc/vs_2_0_simple.dxbc");
@@ -346,6 +348,16 @@ fn parse_signature_chunk_two_entries_v1_layout() {
     assert_eq!(sig.entries[1].read_write_mask, 0x3);
     assert_eq!(sig.entries[1].system_value_type, 0);
     assert_eq!(sig.entries[1].component_type, 3);
+}
+
+#[test]
+fn parse_signature_chunk_with_fourcc_prefers_v1_layout() {
+    let bytes = build_signature_chunk_v1_one_entry(2);
+    let sig = parse_signature_chunk_with_fourcc(FourCC(*b"ISG1"), &bytes)
+        .expect("signature parse should succeed");
+    assert_eq!(sig.entries.len(), 1);
+    assert_eq!(sig.entries[0].semantic_name, "POSITION");
+    assert_eq!(sig.entries[0].stream, Some(2));
 }
 
 #[test]
