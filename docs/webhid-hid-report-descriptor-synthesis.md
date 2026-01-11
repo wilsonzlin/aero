@@ -126,7 +126,7 @@ The synthesis treats these flags as a single `u16` and emits either a 1-byte or 
 - if `flags <= 0xFF`: emit 1 byte
 - otherwise: emit 2 bytes (little-endian)
 
-Implementation note: the current Rust synthesizer (`crates/emulator/src/io/usb/hid/webhid.rs`) packs main-item flags into a single `u16` and reuses the same encoding for `Input`, `Output`, and `Feature` (see note below about buffered-bytes input fields).
+Implementation note: the current Rust synthesizer (`crates/emulator/src/io/usb/hid/webhid.rs`) packs main-item flags into a single `u16` and reuses the same encoding for `Input`, `Output`, and `Feature`. This mostly matches common HID descriptors, but it is not a perfect reconstruction in the rare case where an **Input** item uses the “Buffered Bytes” form (see below).
 
 ### Bit layout (LSB = bit 0)
 
@@ -147,25 +147,21 @@ Bits are defined by the HID specification as:
 
 ### Derivation from WebHID booleans
 
-We compute the flags as (WebHID property → HID bit):
+The current synthesis output uses the following mapping (matching `webhid.rs`):
 
-- `isConstant` → bit 0 (1 if constant)
-- `isArray` → bit 1 (0 if array, 1 if variable)
-- `isAbsolute` / `isRelative` → bit 2 (1 if relative)
-- `isWrapped` → bit 3 (1 if wrap)
-- `isLinear` → bit 4 (1 if non-linear)
-- `hasPreferredState` → bit 5 (1 if *no* preferred state)
-- `hasNull` → bit 6 (1 if null state)
+| WebHID property | HID bit |
+| --- | ---: |
+| `isConstant` | 0 |
+| `isArray` (inverted: `!isArray` means Variable) | 1 |
+| `isRelative` (or equivalently `!isAbsolute`) | 2 |
+| `isWrapped` | 3 |
+| `isLinear` (inverted: `!isLinear` means Non Linear) | 4 |
+| `hasPreferredState` (inverted: `!hasPreferredState` means No Preferred) | 5 |
+| `hasNull` | 6 |
+| `isVolatile` | 7 |
+| `isBufferedBytes` | 8 |
 
-Then:
-
-- for `Output`/`Feature`:
-  - `isVolatile` → bit 7 (1 if volatile)
-  - `isBufferedBytes` → bit 8 (1 if buffered bytes; forces a 2-byte payload)
-- for `Input`:
-  - `isBufferedBytes` → bit 7 (buffered bytes)
-
-Implementation note: the current Rust synthesizer (`crates/emulator/src/io/usb/hid/webhid.rs`) uses a single `u16` flag packer and maps `isBufferedBytes` to bit **8** for all report kinds. Since buffered-bytes input fields are rare, this is usually fine in practice, but it is not a perfect reconstruction for the `Input` main item when buffered bytes are used.
+This corresponds to the standard Output/Feature flag layout. For `Input` items, the HID specification uses **bit 7** for “Buffered Bytes” instead of volatility, so an Input item with `isBufferedBytes === true` is not reconstructed in the spec-canonical way (we will emit a 2-byte payload with bit 8 set).
 
 ---
 
