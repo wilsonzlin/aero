@@ -155,3 +155,22 @@ fn accepts_zero_padded_numbers_longer_than_20_digits() {
         ]
     );
 }
+
+#[test]
+fn accepts_leading_zeros() {
+    let header = "bytes=0000-0001,0002-0003,-0004";
+    let specs = parse_range_header(header).expect("leading zeros should be tolerated");
+    assert_eq!(
+        specs,
+        vec![
+            ByteRangeSpec::FromTo { start: 0, end: 1 },
+            ByteRangeSpec::FromTo { start: 2, end: 3 },
+            ByteRangeSpec::Suffix { len: 4 },
+        ]
+    );
+
+    let resolved = resolve_ranges(&specs, 100, true).unwrap();
+    assert_eq!(resolved[0].start, 0);
+    assert_eq!(resolved[0].end, 3);
+    assert_eq!(resolved[1].len(), 4);
+}
