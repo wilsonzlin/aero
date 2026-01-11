@@ -846,7 +846,12 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
             usbUhciHarnessRuntime = new WebUsbUhciHarnessRuntime({
               createHarness: () => new ctor(),
               port: ctx,
-              initiallyBlocked: true,
+              // If a WebUSB device was selected before WASM finished initializing, the broker's
+              // earlier `usb.selected ok:true` broadcast has already been delivered to our
+              // `onmessage` handler. Seed the harness runtime's blocked state from that cached
+              // flag so the harness doesn't wedge waiting for a selection message it will never
+              // see.
+              initiallyBlocked: !usbAvailable,
               onUpdate: (snapshot) => {
                 ctx.postMessage({ type: "usb.harness.status", snapshot } satisfies UsbUhciHarnessStatusMessage);
               },
