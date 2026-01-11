@@ -1047,6 +1047,13 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
 
   async function loadTrace(bytesLike, canvas, opts) {
     const trace = parseTrace(bytesLike);
+    if (trace.commandAbiVersion !== 1) {
+      fail(
+        "unsupported command_abi_version=" +
+          trace.commandAbiVersion +
+          " (this replayer only supports the minimal command ABI v1)",
+      );
+    }
     const backendName = (opts && opts.backend) || "webgl2";
     const backend =
       backendName === "webgpu"
