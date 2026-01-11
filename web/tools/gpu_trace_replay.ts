@@ -68,6 +68,10 @@
   let AEROGPU_CMD_SET_VIEWPORT = 0x0401;
   let AEROGPU_CMD_SET_VERTEX_BUFFERS = 0x0500;
   let AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY = 0x0502;
+  let AEROGPU_CMD_CREATE_SAMPLER = 0x0520;
+  let AEROGPU_CMD_DESTROY_SAMPLER = 0x0521;
+  let AEROGPU_CMD_SET_SAMPLERS = 0x0522;
+  let AEROGPU_CMD_SET_CONSTANT_BUFFERS = 0x0523;
   let AEROGPU_CMD_CLEAR = 0x0600;
   let AEROGPU_CMD_DRAW = 0x0601;
   let AEROGPU_CMD_PRESENT = 0x0700;
@@ -80,6 +84,11 @@
   let AEROGPU_CMD_SET_VIEWPORT_SIZE_BYTES = 32;
   let AEROGPU_CMD_SET_VERTEX_BUFFERS_SIZE_BYTES = 16;
   let AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY_SIZE_BYTES = 16;
+  let AEROGPU_CMD_CREATE_SAMPLER_SIZE_BYTES = 28;
+  let AEROGPU_CMD_DESTROY_SAMPLER_SIZE_BYTES = 16;
+  let AEROGPU_CMD_SET_SAMPLERS_SIZE_BYTES = 24;
+  let AEROGPU_CMD_SET_CONSTANT_BUFFERS_SIZE_BYTES = 24;
+  let AEROGPU_CONSTANT_BUFFER_BINDING_SIZE_BYTES = 16;
   let AEROGPU_CMD_CLEAR_SIZE_BYTES = 36;
   let AEROGPU_CMD_DRAW_SIZE_BYTES = 24;
   let AEROGPU_CMD_PRESENT_SIZE_BYTES = 16;
@@ -127,6 +136,10 @@
           if (typeof cmd.AerogpuCmdOpcode.SetViewport === "number") AEROGPU_CMD_SET_VIEWPORT = cmd.AerogpuCmdOpcode.SetViewport >>> 0;
           if (typeof cmd.AerogpuCmdOpcode.SetVertexBuffers === "number") AEROGPU_CMD_SET_VERTEX_BUFFERS = cmd.AerogpuCmdOpcode.SetVertexBuffers >>> 0;
           if (typeof cmd.AerogpuCmdOpcode.SetPrimitiveTopology === "number") AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY = cmd.AerogpuCmdOpcode.SetPrimitiveTopology >>> 0;
+          if (typeof cmd.AerogpuCmdOpcode.CreateSampler === "number") AEROGPU_CMD_CREATE_SAMPLER = cmd.AerogpuCmdOpcode.CreateSampler >>> 0;
+          if (typeof cmd.AerogpuCmdOpcode.DestroySampler === "number") AEROGPU_CMD_DESTROY_SAMPLER = cmd.AerogpuCmdOpcode.DestroySampler >>> 0;
+          if (typeof cmd.AerogpuCmdOpcode.SetSamplers === "number") AEROGPU_CMD_SET_SAMPLERS = cmd.AerogpuCmdOpcode.SetSamplers >>> 0;
+          if (typeof cmd.AerogpuCmdOpcode.SetConstantBuffers === "number") AEROGPU_CMD_SET_CONSTANT_BUFFERS = cmd.AerogpuCmdOpcode.SetConstantBuffers >>> 0;
           if (typeof cmd.AerogpuCmdOpcode.Clear === "number") AEROGPU_CMD_CLEAR = cmd.AerogpuCmdOpcode.Clear >>> 0;
           if (typeof cmd.AerogpuCmdOpcode.Draw === "number") AEROGPU_CMD_DRAW = cmd.AerogpuCmdOpcode.Draw >>> 0;
           if (typeof cmd.AerogpuCmdOpcode.Present === "number") AEROGPU_CMD_PRESENT = cmd.AerogpuCmdOpcode.Present >>> 0;
@@ -139,6 +152,11 @@
         if (typeof cmd.AEROGPU_CMD_SET_VIEWPORT_SIZE === "number") AEROGPU_CMD_SET_VIEWPORT_SIZE_BYTES = cmd.AEROGPU_CMD_SET_VIEWPORT_SIZE >>> 0;
         if (typeof cmd.AEROGPU_CMD_SET_VERTEX_BUFFERS_SIZE === "number") AEROGPU_CMD_SET_VERTEX_BUFFERS_SIZE_BYTES = cmd.AEROGPU_CMD_SET_VERTEX_BUFFERS_SIZE >>> 0;
         if (typeof cmd.AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY_SIZE === "number") AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY_SIZE_BYTES = cmd.AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY_SIZE >>> 0;
+        if (typeof cmd.AEROGPU_CMD_CREATE_SAMPLER_SIZE === "number") AEROGPU_CMD_CREATE_SAMPLER_SIZE_BYTES = cmd.AEROGPU_CMD_CREATE_SAMPLER_SIZE >>> 0;
+        if (typeof cmd.AEROGPU_CMD_DESTROY_SAMPLER_SIZE === "number") AEROGPU_CMD_DESTROY_SAMPLER_SIZE_BYTES = cmd.AEROGPU_CMD_DESTROY_SAMPLER_SIZE >>> 0;
+        if (typeof cmd.AEROGPU_CMD_SET_SAMPLERS_SIZE === "number") AEROGPU_CMD_SET_SAMPLERS_SIZE_BYTES = cmd.AEROGPU_CMD_SET_SAMPLERS_SIZE >>> 0;
+        if (typeof cmd.AEROGPU_CMD_SET_CONSTANT_BUFFERS_SIZE === "number") AEROGPU_CMD_SET_CONSTANT_BUFFERS_SIZE_BYTES = cmd.AEROGPU_CMD_SET_CONSTANT_BUFFERS_SIZE >>> 0;
+        if (typeof cmd.AEROGPU_CONSTANT_BUFFER_BINDING_SIZE === "number") AEROGPU_CONSTANT_BUFFER_BINDING_SIZE_BYTES = cmd.AEROGPU_CONSTANT_BUFFER_BINDING_SIZE >>> 0;
         if (typeof cmd.AEROGPU_CMD_CLEAR_SIZE === "number") AEROGPU_CMD_CLEAR_SIZE_BYTES = cmd.AEROGPU_CMD_CLEAR_SIZE >>> 0;
         if (typeof cmd.AEROGPU_CMD_DRAW_SIZE === "number") AEROGPU_CMD_DRAW_SIZE_BYTES = cmd.AEROGPU_CMD_DRAW_SIZE >>> 0;
         if (typeof cmd.AEROGPU_CMD_PRESENT_SIZE === "number") AEROGPU_CMD_PRESENT_SIZE_BYTES = cmd.AEROGPU_CMD_PRESENT_SIZE >>> 0;
@@ -1185,6 +1203,32 @@ void main() {
             acmdPrimitiveMode = getGlPrimitiveMode(topology);
             break;
           }
+          case AEROGPU_CMD_CREATE_SAMPLER: {
+            // struct aerogpu_cmd_create_sampler (28 bytes)
+            if (cmdSize < AEROGPU_CMD_CREATE_SAMPLER_SIZE_BYTES) fail("ACMD CREATE_SAMPLER size_bytes too small: " + cmdSize);
+            break;
+          }
+          case AEROGPU_CMD_DESTROY_SAMPLER: {
+            // struct aerogpu_cmd_destroy_sampler (16 bytes)
+            if (cmdSize < AEROGPU_CMD_DESTROY_SAMPLER_SIZE_BYTES) fail("ACMD DESTROY_SAMPLER size_bytes too small: " + cmdSize);
+            break;
+          }
+          case AEROGPU_CMD_SET_SAMPLERS: {
+            // struct aerogpu_cmd_set_samplers (24 bytes) + handles
+            if (cmdSize < AEROGPU_CMD_SET_SAMPLERS_SIZE_BYTES) fail("ACMD SET_SAMPLERS size_bytes too small: " + cmdSize);
+            const samplerCount = readU32(pv, off + 16);
+            const requiredLen = AEROGPU_CMD_SET_SAMPLERS_SIZE_BYTES + samplerCount * 4;
+            if (cmdSize < requiredLen) fail("ACMD SET_SAMPLERS packet too small for sampler_count=" + samplerCount);
+            break;
+          }
+          case AEROGPU_CMD_SET_CONSTANT_BUFFERS: {
+            // struct aerogpu_cmd_set_constant_buffers (24 bytes) + bindings
+            if (cmdSize < AEROGPU_CMD_SET_CONSTANT_BUFFERS_SIZE_BYTES) fail("ACMD SET_CONSTANT_BUFFERS size_bytes too small: " + cmdSize);
+            const bufferCount = readU32(pv, off + 16);
+            const requiredLen = AEROGPU_CMD_SET_CONSTANT_BUFFERS_SIZE_BYTES + bufferCount * AEROGPU_CONSTANT_BUFFER_BINDING_SIZE_BYTES;
+            if (cmdSize < requiredLen) fail("ACMD SET_CONSTANT_BUFFERS packet too small for buffer_count=" + bufferCount);
+            break;
+          }
           case AEROGPU_CMD_CLEAR: {
             // struct aerogpu_cmd_clear
             if (cmdSize < AEROGPU_CMD_CLEAR_SIZE_BYTES) fail("ACMD CLEAR size_bytes too small: " + cmdSize);
@@ -1788,6 +1832,32 @@ void main() {
               fail("unsupported primitive topology " + topology);
             }
             currentTopology = gl.TRIANGLES;
+            break;
+          }
+
+          case AEROGPU_CMD_CREATE_SAMPLER: {
+            if (cmdSizeBytes < AEROGPU_CMD_CREATE_SAMPLER_SIZE_BYTES) fail("CREATE_SAMPLER packet too small");
+            break;
+          }
+
+          case AEROGPU_CMD_DESTROY_SAMPLER: {
+            if (cmdSizeBytes < AEROGPU_CMD_DESTROY_SAMPLER_SIZE_BYTES) fail("DESTROY_SAMPLER packet too small");
+            break;
+          }
+
+          case AEROGPU_CMD_SET_SAMPLERS: {
+            if (cmdSizeBytes < AEROGPU_CMD_SET_SAMPLERS_SIZE_BYTES) fail("SET_SAMPLERS packet too small");
+            const samplerCount = dv.getUint32(off + 16, true);
+            const neededBytes = AEROGPU_CMD_SET_SAMPLERS_SIZE_BYTES + samplerCount * 4;
+            if (cmdSizeBytes < neededBytes) fail("SET_SAMPLERS packet too small for sampler_count=" + samplerCount);
+            break;
+          }
+
+          case AEROGPU_CMD_SET_CONSTANT_BUFFERS: {
+            if (cmdSizeBytes < AEROGPU_CMD_SET_CONSTANT_BUFFERS_SIZE_BYTES) fail("SET_CONSTANT_BUFFERS packet too small");
+            const bufferCount = dv.getUint32(off + 16, true);
+            const neededBytes = AEROGPU_CMD_SET_CONSTANT_BUFFERS_SIZE_BYTES + bufferCount * AEROGPU_CONSTANT_BUFFER_BINDING_SIZE_BYTES;
+            if (cmdSizeBytes < neededBytes) fail("SET_CONSTANT_BUFFERS packet too small for buffer_count=" + bufferCount);
             break;
           }
 
