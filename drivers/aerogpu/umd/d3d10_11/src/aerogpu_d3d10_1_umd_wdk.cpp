@@ -1015,6 +1015,26 @@ struct DdiStub<Ret(AEROGPU_APIENTRY*)(Args...)> {
 };
 
 template <typename T, typename = void>
+struct HasGenMips : std::false_type {};
+template <typename T>
+struct HasGenMips<T, std::void_t<decltype(((T*)nullptr)->pfnGenMips)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct HasCalcPrivatePredicateSize : std::false_type {};
+template <typename T>
+struct HasCalcPrivatePredicateSize<T, std::void_t<decltype(((T*)nullptr)->pfnCalcPrivatePredicateSize)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct HasCreatePredicate : std::false_type {};
+template <typename T>
+struct HasCreatePredicate<T, std::void_t<decltype(((T*)nullptr)->pfnCreatePredicate)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct HasDestroyPredicate : std::false_type {};
+template <typename T>
+struct HasDestroyPredicate<T, std::void_t<decltype(((T*)nullptr)->pfnDestroyPredicate)>> : std::true_type {};
+
+template <typename T, typename = void>
 struct HasStagingResourceMap : std::false_type {};
 template <typename T>
 struct HasStagingResourceMap<T, std::void_t<decltype(((T*)nullptr)->pfnStagingResourceMap)>> : std::true_type {};
@@ -1275,6 +1295,18 @@ void InitDeviceFuncsWithStubs(FuncsT* funcs) {
 
   // Specialized map helpers (if present in the function table for this interface version).
   using DeviceFuncs = std::remove_pointer_t<decltype(funcs)>;
+  if constexpr (HasGenMips<DeviceFuncs>::value) {
+    funcs->pfnGenMips = &DdiErrorStub<decltype(funcs->pfnGenMips)>::Call;
+  }
+  if constexpr (HasCalcPrivatePredicateSize<DeviceFuncs>::value) {
+    funcs->pfnCalcPrivatePredicateSize = &DdiStub<decltype(funcs->pfnCalcPrivatePredicateSize)>::Call;
+  }
+  if constexpr (HasCreatePredicate<DeviceFuncs>::value) {
+    funcs->pfnCreatePredicate = &DdiStub<decltype(funcs->pfnCreatePredicate)>::Call;
+  }
+  if constexpr (HasDestroyPredicate<DeviceFuncs>::value) {
+    funcs->pfnDestroyPredicate = &DdiNoopStub<decltype(funcs->pfnDestroyPredicate)>::Call;
+  }
   if constexpr (HasStagingResourceMap<DeviceFuncs>::value) {
     funcs->pfnStagingResourceMap = &DdiStub<decltype(funcs->pfnStagingResourceMap)>::Call;
     funcs->pfnStagingResourceUnmap = &DdiNoopStub<decltype(funcs->pfnStagingResourceUnmap)>::Call;
