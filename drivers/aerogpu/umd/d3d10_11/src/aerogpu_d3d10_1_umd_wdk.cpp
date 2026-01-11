@@ -452,6 +452,26 @@ struct HasMemberTimeout : std::false_type {};
 template <typename T>
 struct HasMemberTimeout<T, std::void_t<decltype(std::declval<T>().Timeout)>> : std::true_type {};
 
+template <typename T, typename = void>
+struct HasMemberNewFenceValue : std::false_type {};
+template <typename T>
+struct HasMemberNewFenceValue<T, std::void_t<decltype(std::declval<T>().NewFenceValue)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct HasMemberSubmissionFenceId : std::false_type {};
+template <typename T>
+struct HasMemberSubmissionFenceId<T, std::void_t<decltype(std::declval<T>().SubmissionFenceId)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct HasMemberPFenceValue : std::false_type {};
+template <typename T>
+struct HasMemberPFenceValue<T, std::void_t<decltype(std::declval<T>().pFenceValue)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct HasMemberPSubmissionFenceId : std::false_type {};
+template <typename T>
+struct HasMemberPSubmissionFenceId<T, std::void_t<decltype(std::declval<T>().pSubmissionFenceId)>> : std::true_type {};
+
 template <typename WaitArgsT>
 void FillWaitForSyncObjectArgs(WaitArgsT* args,
                                D3DKMT_HANDLE hContext,
@@ -521,6 +541,35 @@ void FillWaitForSyncObjectArgs(WaitArgsT* args,
   if constexpr (HasMemberTimeout<WaitArgsT>::value) {
     args->Timeout = timeout;
   }
+}
+
+template <typename SubmitArgsT>
+uint64_t ExtractSubmitFence(const SubmitArgsT& args) {
+  uint64_t fence = 0;
+  if constexpr (HasMemberNewFenceValue<SubmitArgsT>::value) {
+    fence = static_cast<uint64_t>(args.NewFenceValue);
+  }
+  if constexpr (HasMemberFenceValue<SubmitArgsT>::value) {
+    if (fence == 0) {
+      fence = static_cast<uint64_t>(args.FenceValue);
+    }
+  }
+  if constexpr (HasMemberPFenceValue<SubmitArgsT>::value) {
+    if (fence == 0 && args.pFenceValue) {
+      fence = static_cast<uint64_t>(*args.pFenceValue);
+    }
+  }
+  if constexpr (HasMemberSubmissionFenceId<SubmitArgsT>::value) {
+    if (fence == 0) {
+      fence = static_cast<uint64_t>(args.SubmissionFenceId);
+    }
+  }
+  if constexpr (HasMemberPSubmissionFenceId<SubmitArgsT>::value) {
+    if (fence == 0 && args.pSubmissionFenceId) {
+      fence = static_cast<uint64_t>(*args.pSubmissionFenceId);
+    }
+  }
+  return fence;
 }
 
 struct AeroGpuD3dkmtProcs {
@@ -1356,6 +1405,8 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
     uint64_t submission_fence = 0;
     if (do_present) {
       D3DDDICB_PRESENT present = {};
+      uint64_t fence_value_tmp = 0;
+      uint64_t fence_id_tmp = 0;
       __if_exists(D3DDDICB_PRESENT::hContext) {
         present.hContext = UintPtrToD3dHandle<decltype(present.hContext)>(wddm_context);
         if (!wddm_context) {
@@ -1392,18 +1443,19 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
       __if_exists(D3DDDICB_PRESENT::DmaBufferPrivateDataSize) {
         present.DmaBufferPrivateDataSize = static_cast<UINT>(dma_priv_size);
       }
+      __if_exists(D3DDDICB_PRESENT::pFenceValue) {
+        present.pFenceValue = reinterpret_cast<decltype(present.pFenceValue)>(&fence_value_tmp);
+      }
+      __if_exists(D3DDDICB_PRESENT::pSubmissionFenceId) {
+        present.pSubmissionFenceId = reinterpret_cast<decltype(present.pSubmissionFenceId)>(&fence_id_tmp);
+      }
 
       submit_hr = CallCbMaybeHandle(cb->pfnPresentCb, dev->hrt_device, &present);
-      __if_exists(D3DDDICB_PRESENT::NewFenceValue) {
-        submission_fence = static_cast<uint64_t>(present.NewFenceValue);
-      }
-      __if_exists(D3DDDICB_PRESENT::SubmissionFenceId) {
-        if (submission_fence == 0) {
-          submission_fence = static_cast<uint64_t>(present.SubmissionFenceId);
-        }
-      }
+      submission_fence = ExtractSubmitFence(present);
     } else {
       D3DDDICB_RENDER render = {};
+      uint64_t fence_value_tmp = 0;
+      uint64_t fence_id_tmp = 0;
       __if_exists(D3DDDICB_RENDER::hContext) {
         render.hContext = UintPtrToD3dHandle<decltype(render.hContext)>(wddm_context);
         if (!wddm_context) {
@@ -1440,16 +1492,15 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
       __if_exists(D3DDDICB_RENDER::DmaBufferPrivateDataSize) {
         render.DmaBufferPrivateDataSize = static_cast<UINT>(dma_priv_size);
       }
+      __if_exists(D3DDDICB_RENDER::pFenceValue) {
+        render.pFenceValue = reinterpret_cast<decltype(render.pFenceValue)>(&fence_value_tmp);
+      }
+      __if_exists(D3DDDICB_RENDER::pSubmissionFenceId) {
+        render.pSubmissionFenceId = reinterpret_cast<decltype(render.pSubmissionFenceId)>(&fence_id_tmp);
+      }
 
       submit_hr = CallCbMaybeHandle(cb->pfnRenderCb, dev->hrt_device, &render);
-      __if_exists(D3DDDICB_RENDER::NewFenceValue) {
-        submission_fence = static_cast<uint64_t>(render.NewFenceValue);
-      }
-      __if_exists(D3DDDICB_RENDER::SubmissionFenceId) {
-        if (submission_fence == 0) {
-          submission_fence = static_cast<uint64_t>(render.SubmissionFenceId);
-        }
-      }
+      submission_fence = ExtractSubmitFence(render);
     }
 
     // Always return submission buffers to the runtime.
