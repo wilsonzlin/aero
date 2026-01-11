@@ -221,7 +221,11 @@ export class WebHidPassthroughManager {
       const numericDeviceId = this.#numericDeviceIdFor(deviceId);
 
       try {
-        await device.open();
+        // Devices should already be opened by `attachKnownDevice`, but keep this
+        // best-effort in case a browser unexpectedly closed them while the worker
+        // was down.
+        const res = device.open();
+        void res.catch(() => undefined);
       } catch {
         // Best-effort; proceed anyway.
       }

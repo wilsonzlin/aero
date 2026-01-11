@@ -3188,8 +3188,8 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
         if (ioWorker) {
           usbBroker.attachWorkerPort(ioWorker);
           wireIoWorkerForWebHid(ioWorker, webHidManager);
-          syncWebHidInputReportRing(ioWorker);
           void webHidManager.resyncAttachedDevices();
+          syncWebHidInputReportRing(ioWorker);
           attachedIoWorker = ioWorker;
           ioWorker.postMessage({
             type: "setBootDisks",
