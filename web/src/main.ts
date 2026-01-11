@@ -44,10 +44,12 @@ import { mountSettingsPanel } from "./ui/settings_panel";
 import { mountStatusPanel } from "./ui/status_panel";
 import { renderWebUsbPanel } from "./usb/webusb_panel";
 import { renderWebUsbUhciHarnessPanel } from "./usb/webusb_uhci_harness_panel";
+import { isUsbUhciHarnessStatusMessage, type WebUsbUhciHarnessRuntimeSnapshot } from "./usb/webusb_harness_runtime";
 import { UsbBroker } from "./usb/usb_broker";
 import { WebHidBroker } from "./hid/webhid_broker";
 import { WebHidPassthroughRuntime } from "./usb/webhid_passthrough_runtime";
 import { renderWebUsbBrokerPanel as renderWebUsbBrokerPanelUi } from "./usb/usb_broker_panel";
+import type { UsbHostAction, UsbHostCompletion } from "./usb/usb_proxy_protocol";
 
 const configManager = new AeroConfigManager({ staticConfigUrl: "/aero.config.json" });
 const configInitPromise = configManager.init();
@@ -310,6 +312,7 @@ function render(): void {
     renderWebHidPassthroughPanel(),
     renderInputPanel(),
     renderWebUsbBrokerPanel(),
+    renderWebUsbUhciHarnessWorkerPanel(),
     renderWorkersPanel(report),
     renderIpcDemoPanel(),
     renderMicrobenchPanel(),
@@ -2922,6 +2925,153 @@ function renderInputPanel(): HTMLElement {
 
 function renderWebUsbBrokerPanel(): HTMLElement {
   return renderWebUsbBrokerPanelUi(usbBroker);
+}
+
+function renderWebUsbUhciHarnessWorkerPanel(): HTMLElement {
+  const status = el("pre", { class: "mono", text: "" });
+  const deviceDesc = el("pre", { class: "mono", text: "(none yet)" });
+  const configDesc = el("pre", { class: "mono", text: "(none yet)" });
+
+  const lastActionLine = el("pre", { class: "mono", text: "Last action: (none)" });
+  const lastCompletionLine = el("pre", { class: "mono", text: "Last completion: (none)" });
+  const errorLine = el("div", { class: "bad", text: "" });
+
+  function formatHexBytes(bytes: Uint8Array): string {
+    return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join(" ");
+  }
+
+  function describeAction(action: UsbHostAction): string {
+    switch (action.kind) {
+      case "controlIn":
+        return `controlIn id=${action.id} bmRequestType=0x${action.setup.bmRequestType.toString(16)} bRequest=0x${action.setup.bRequest.toString(
+          16,
+        )} wValue=0x${action.setup.wValue.toString(16)} wIndex=0x${action.setup.wIndex.toString(16)} wLength=${action.setup.wLength}`;
+      case "controlOut":
+        return `controlOut id=${action.id} bytes=${action.data.byteLength}`;
+      case "bulkIn":
+        return `bulkIn id=${action.id} ep=${action.endpoint} len=${action.length}`;
+      case "bulkOut":
+        return `bulkOut id=${action.id} ep=${action.endpoint} bytes=${action.data.byteLength}`;
+      default: {
+        const neverAction: never = action;
+        return `unknown action ${(neverAction as unknown as { kind?: unknown }).kind ?? "?"}`;
+      }
+    }
+  }
+
+  function describeCompletion(completion: UsbHostCompletion): string {
+    if (completion.status === "stall") return `${completion.kind} id=${completion.id} status=stall`;
+    if (completion.status === "error") return `${completion.kind} id=${completion.id} status=error message=${completion.message}`;
+    if (completion.kind === "controlIn" || completion.kind === "bulkIn") {
+      return `${completion.kind} id=${completion.id} status=success bytes=${completion.data.byteLength}`;
+    }
+    return `${completion.kind} id=${completion.id} status=success bytesWritten=${completion.bytesWritten}`;
+  }
+
+  let attachedIoWorker: Worker | null = null;
+  let snapshot: WebUsbUhciHarnessRuntimeSnapshot | null = null;
+
+  const refreshUi = (): void => {
+    const workerReady = !!attachedIoWorker;
+    const enabled = snapshot?.enabled ?? false;
+    const blocked = snapshot?.blocked ?? true;
+    const available = snapshot?.available ?? false;
+
+    status.textContent =
+      `ioWorker=${workerReady ? "ready" : "stopped"}\n` +
+      `harnessAvailable=${available}\n` +
+      `status=${enabled ? "running" : "stopped"}\n` +
+      `blocked=${blocked}\n` +
+      `ticks=${snapshot?.tickCount ?? 0}\n` +
+      `actions=${snapshot?.actionsForwarded ?? 0}\n` +
+      `completions=${snapshot?.completionsApplied ?? 0}\n` +
+      `pending=${snapshot?.pendingCompletions ?? 0}\n`;
+
+    if (snapshot?.lastAction) {
+      lastActionLine.textContent = `Last action: ${describeAction(snapshot.lastAction)}`;
+    } else {
+      lastActionLine.textContent = "Last action: (none)";
+    }
+
+    if (snapshot?.lastCompletion) {
+      lastCompletionLine.textContent = `Last completion: ${describeCompletion(snapshot.lastCompletion)}`;
+    } else {
+      lastCompletionLine.textContent = "Last completion: (none)";
+    }
+
+    deviceDesc.textContent = snapshot?.deviceDescriptor ? formatHexBytes(snapshot.deviceDescriptor) : "(none yet)";
+    configDesc.textContent = snapshot?.configDescriptor ? formatHexBytes(snapshot.configDescriptor) : "(none yet)";
+
+    errorLine.textContent = snapshot?.lastError ? snapshot.lastError : "";
+
+    startButton.disabled = !workerReady || enabled;
+    stopButton.disabled = !workerReady || (!enabled && !snapshot);
+  };
+
+  const startButton = el("button", {
+    text: "Start harness (IO worker)",
+    onclick: () => {
+      const worker = workerCoordinator.getIoWorker();
+      worker?.postMessage({ type: "usb.harness.start" });
+    },
+  }) as HTMLButtonElement;
+
+  const stopButton = el("button", {
+    text: "Stop/Reset",
+    onclick: () => {
+      const worker = workerCoordinator.getIoWorker();
+      worker?.postMessage({ type: "usb.harness.stop" });
+    },
+  }) as HTMLButtonElement;
+
+  const onMessage = (ev: MessageEvent<unknown>): void => {
+    if (!isUsbUhciHarnessStatusMessage(ev.data)) return;
+    snapshot = ev.data.snapshot;
+    refreshUi();
+  };
+
+  const ensureAttached = (): void => {
+    const ioWorker = workerCoordinator.getIoWorker();
+    if (ioWorker === attachedIoWorker) return;
+
+    if (attachedIoWorker) {
+      attachedIoWorker.removeEventListener("message", onMessage);
+    }
+    attachedIoWorker = ioWorker;
+    snapshot = null;
+    if (attachedIoWorker) {
+      attachedIoWorker.addEventListener("message", onMessage);
+    }
+    refreshUi();
+  };
+
+  ensureAttached();
+  globalThis.setInterval(ensureAttached, 250);
+
+  refreshUi();
+
+  const hint = el("div", {
+    class: "hint",
+    text:
+      "Dev-only smoke test: start workers, select a WebUSB device via the broker panel, then start the UHCI harness. " +
+      "The harness runs in the I/O worker, emits usb.action messages, and receives usb.completion replies from the main thread UsbBroker.",
+  });
+
+  return el(
+    "div",
+    { class: "panel" },
+    el("h2", { text: "UHCI passthrough harness (IO worker + UsbBroker)" }),
+    hint,
+    el("div", { class: "row" }, startButton, stopButton),
+    status,
+    lastActionLine,
+    lastCompletionLine,
+    el("div", { class: "mono", text: "Device descriptor (latest):" }),
+    deviceDesc,
+    el("div", { class: "mono", text: "Configuration descriptor (latest):" }),
+    configDesc,
+    errorLine,
+  );
 }
 
 function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {

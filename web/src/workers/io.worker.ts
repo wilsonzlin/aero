@@ -43,6 +43,8 @@ import {
   type L2TunnelForwarderStats,
 } from "../net/l2TunnelForwarder";
 import type { UsbActionMessage, UsbCompletionMessage, UsbHostAction, UsbSelectedMessage } from "../usb/usb_proxy_protocol";
+import type { UsbUhciHarnessStartMessage, UsbUhciHarnessStatusMessage, UsbUhciHarnessStopMessage, WebUsbUhciHarnessRuntimeSnapshot } from "../usb/webusb_harness_runtime";
+import { WebUsbUhciHarnessRuntime } from "../usb/webusb_harness_runtime";
 import { WebUsbPassthroughRuntime } from "../usb/webusb_passthrough_runtime";
 import {
   isHidAttachMessage,
@@ -102,6 +104,7 @@ type UsbHidBridge = InstanceType<WasmApi["UsbHidBridge"]>;
 let usbHid: UsbHidBridge | null = null;
 let usbPassthroughRuntime: WebUsbPassthroughRuntime | null = null;
 let usbPassthroughDebugTimer: number | undefined;
+let usbUhciHarnessRuntime: WebUsbUhciHarnessRuntime | null = null;
 
 type HidHostSink = {
   sendReport: (msg: Omit<HidSendReportMessage, "type">) => void;
@@ -627,6 +630,23 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
             console.warn("[io.worker] Failed to initialize WebUSB passthrough runtime", err);
           }
         }
+
+        if (import.meta.env.DEV && api.WebUsbUhciPassthroughHarness && !usbUhciHarnessRuntime) {
+          const ctor = api.WebUsbUhciPassthroughHarness;
+          try {
+            usbUhciHarnessRuntime = new WebUsbUhciHarnessRuntime({
+              createHarness: () => new ctor(),
+              port: ctx,
+              initiallyBlocked: true,
+              onUpdate: (snapshot) => {
+                ctx.postMessage({ type: "usb.harness.status", snapshot } satisfies UsbUhciHarnessStatusMessage);
+              },
+            });
+          } catch (err) {
+            console.warn("[io.worker] Failed to initialize WebUSB UHCI harness runtime", err);
+            usbUhciHarnessRuntime = null;
+          }
+        }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         console.error(`[io.worker] wasm:init failed: ${message}`);
@@ -758,6 +778,8 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       | Partial<HidPassthroughMessage>
       | Partial<UsbSelectedMessage>
       | Partial<UsbCompletionMessage>
+      | Partial<UsbUhciHarnessStartMessage>
+      | Partial<UsbUhciHarnessStopMessage>
       | Partial<HidAttachMessage>
       | Partial<HidInputReportMessage>
       | undefined;
@@ -798,6 +820,52 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
     if ((data as Partial<SetMicrophoneRingBufferMessage>).type === "setMicrophoneRingBuffer") {
       const msg = data as Partial<SetMicrophoneRingBufferMessage>;
       attachMicRingBuffer((msg.ringBuffer as SharedArrayBuffer | null) ?? null, msg.sampleRate);
+      return;
+    }
+
+    if ((data as Partial<UsbUhciHarnessStartMessage>).type === "usb.harness.start") {
+      if (usbUhciHarnessRuntime) {
+        usbUhciHarnessRuntime.start();
+      } else {
+        const snapshot: WebUsbUhciHarnessRuntimeSnapshot = {
+          available: false,
+          enabled: false,
+          blocked: !usbAvailable,
+          tickCount: 0,
+          actionsForwarded: 0,
+          completionsApplied: 0,
+          pendingCompletions: 0,
+          lastAction: null,
+          lastCompletion: null,
+          deviceDescriptor: null,
+          configDescriptor: null,
+          lastError: "WebUsbUhciPassthroughHarness export unavailable (or dev-only harness disabled).",
+        };
+        ctx.postMessage({ type: "usb.harness.status", snapshot } satisfies UsbUhciHarnessStatusMessage);
+      }
+      return;
+    }
+
+    if ((data as Partial<UsbUhciHarnessStopMessage>).type === "usb.harness.stop") {
+      if (usbUhciHarnessRuntime) {
+        usbUhciHarnessRuntime.stop();
+      } else {
+        const snapshot: WebUsbUhciHarnessRuntimeSnapshot = {
+          available: false,
+          enabled: false,
+          blocked: !usbAvailable,
+          tickCount: 0,
+          actionsForwarded: 0,
+          completionsApplied: 0,
+          pendingCompletions: 0,
+          lastAction: null,
+          lastCompletion: null,
+          deviceDescriptor: null,
+          configDescriptor: null,
+          lastError: null,
+        };
+        ctx.postMessage({ type: "usb.harness.status", snapshot } satisfies UsbUhciHarnessStatusMessage);
+      }
       return;
     }
 
@@ -977,6 +1045,7 @@ function startIoIpcServer(): void {
       hidGuest.poll?.();
       void usbPassthroughRuntime?.pollOnce();
       l2TunnelForwarder?.tick();
+      usbUhciHarnessRuntime?.pollOnce();
 
       if (perfActive) perfIoMs += performance.now() - t0;
       maybeEmitPerfSample();
@@ -1287,6 +1356,8 @@ function shutdown(): void {
       usbHid = null;
       usbPassthroughRuntime?.destroy();
       usbPassthroughRuntime = null;
+      usbUhciHarnessRuntime?.destroy();
+      usbUhciHarnessRuntime = null;
       deviceManager = null;
       i8042 = null;
       pushEvent({ kind: "log", level: "info", message: "worker shutdown" });

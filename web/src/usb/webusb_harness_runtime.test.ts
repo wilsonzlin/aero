@@ -1,0 +1,182 @@
+import { describe, expect, it, vi } from "vitest";
+
+import { WebUsbUhciHarnessRuntime } from "./webusb_harness_runtime";
+import type { UsbHostAction, UsbHostCompletion } from "./usb_proxy_protocol";
+
+type Listener = (ev: MessageEvent<unknown>) => void;
+
+class FakePort {
+  readonly posted: unknown[] = [];
+  private readonly listeners = new Set<Listener>();
+
+  addEventListener(type: string, listener: Listener): void {
+    if (type !== "message") return;
+    this.listeners.add(listener);
+  }
+
+  removeEventListener(type: string, listener: Listener): void {
+    if (type !== "message") return;
+    this.listeners.delete(listener);
+  }
+
+  start(): void {
+    // no-op
+  }
+
+  postMessage(msg: unknown): void {
+    this.posted.push(msg);
+  }
+
+  emit(msg: unknown): void {
+    const ev = { data: msg } as MessageEvent<unknown>;
+    for (const listener of this.listeners) listener(ev);
+  }
+}
+
+describe("usb/WebUsbUhciHarnessRuntime", () => {
+  it("ticks the harness, forwards actions to the broker, and pushes completions back into the harness", () => {
+    const port = new FakePort();
+
+    const actions: UsbHostAction[] = [
+      {
+        kind: "controlIn",
+        id: 1,
+        setup: { bmRequestType: 0x80, bRequest: 6, wValue: 0x0100, wIndex: 0, wLength: 18 },
+      },
+      { kind: "bulkOut", id: 2, endpoint: 1, data: Uint8Array.of(1, 2, 3) },
+    ];
+
+    const harness = {
+      tick: vi.fn(),
+      drain_actions: vi.fn(() => actions),
+      push_completion: vi.fn(),
+      free: vi.fn(),
+    };
+
+    const runtime = new WebUsbUhciHarnessRuntime({
+      createHarness: () => harness,
+      port: port as unknown as MessagePort,
+      initiallyBlocked: true,
+    });
+
+    runtime.start();
+
+    // Harness should be blocked until `usb.selected ok:true`.
+    runtime.pollOnce();
+    expect(port.posted).toEqual([]);
+
+    port.emit({ type: "usb.selected", ok: true, info: { vendorId: 0x1234, productId: 0x5678 } });
+
+    runtime.pollOnce();
+    expect(harness.tick).toHaveBeenCalledTimes(1);
+    expect(port.posted).toHaveLength(2);
+    const posted = port.posted as Array<{ type: string; action: UsbHostAction }>;
+    expect(posted[0]?.type).toBe("usb.action");
+    expect(posted[1]?.type).toBe("usb.action");
+    expect(posted[0]?.action.kind).toBe(actions[0].kind);
+    expect(posted[1]?.action.kind).toBe(actions[1].kind);
+
+    const brokerId1 = posted[0]!.action.id;
+    const brokerId2 = posted[1]!.action.id;
+
+    const c1Broker: UsbHostCompletion = { kind: "controlIn", id: brokerId1, status: "success", data: Uint8Array.of(9) };
+    const c2Broker: UsbHostCompletion = { kind: "bulkOut", id: brokerId2, status: "success", bytesWritten: 3 };
+    port.emit({ type: "usb.completion", completion: c2Broker });
+    port.emit({ type: "usb.completion", completion: c1Broker });
+
+    expect(harness.push_completion).toHaveBeenCalledTimes(2);
+    expect(harness.push_completion.mock.calls[0]?.[0]).toMatchObject({ kind: "bulkOut", id: 2, status: "success", bytesWritten: 3 });
+    expect(harness.push_completion.mock.calls[1]?.[0]).toMatchObject({ kind: "controlIn", id: 1, status: "success" });
+
+    const snapshot = runtime.getSnapshot();
+    expect(snapshot.actionsForwarded).toBe(2);
+    expect(snapshot.completionsApplied).toBe(2);
+    expect(snapshot.pendingCompletions).toBe(0);
+    expect(snapshot.lastAction?.id).toBe(2);
+    expect(snapshot.lastCompletion?.id).toBe(1);
+  });
+
+  it("captures device + config descriptor bytes from GET_DESCRIPTOR(ControlIn) pairs", () => {
+    const port = new FakePort();
+
+    const deviceAction: UsbHostAction = {
+      kind: "controlIn",
+      id: 1,
+      setup: { bmRequestType: 0x80, bRequest: 0x06, wValue: 0x0100, wIndex: 0, wLength: 18 },
+    };
+    const configAction: UsbHostAction = {
+      kind: "controlIn",
+      id: 2,
+      setup: { bmRequestType: 0x80, bRequest: 0x06, wValue: 0x0200, wIndex: 0, wLength: 9 },
+    };
+
+    const harness = {
+      tick: vi.fn(),
+      drain_actions: vi.fn(() => [deviceAction, configAction]),
+      push_completion: vi.fn(),
+      free: vi.fn(),
+    };
+
+    const runtime = new WebUsbUhciHarnessRuntime({
+      createHarness: () => harness,
+      port: port as unknown as MessagePort,
+      initiallyBlocked: false,
+    });
+    runtime.start();
+    runtime.pollOnce();
+
+    const posted = port.posted as Array<{ type: string; action: UsbHostAction }>;
+    expect(posted).toHaveLength(2);
+    const brokerId1 = posted[0]!.action.id;
+    const brokerId2 = posted[1]!.action.id;
+
+    port.emit({
+      type: "usb.completion",
+      completion: {
+        kind: "controlIn",
+        id: brokerId1,
+        status: "success",
+        data: Uint8Array.of(1, 2, 3),
+      } satisfies UsbHostCompletion,
+    });
+    port.emit({
+      type: "usb.completion",
+      completion: { kind: "controlIn", id: brokerId2, status: "success", data: Uint8Array.of(9, 9) } satisfies UsbHostCompletion,
+    });
+
+    const snapshot = runtime.getSnapshot();
+    expect(snapshot.deviceDescriptor).toEqual(Uint8Array.of(1, 2, 3));
+    expect(snapshot.configDescriptor).toEqual(Uint8Array.of(9, 9));
+  });
+
+  it("stops + resets on usb.selected ok:false", () => {
+    const port = new FakePort();
+
+    const action: UsbHostAction = { kind: "bulkIn", id: 1, endpoint: 1, length: 8 };
+    const harness = {
+      tick: vi.fn(),
+      drain_actions: vi.fn(() => [action]),
+      push_completion: vi.fn(),
+      free: vi.fn(),
+    };
+
+    const runtime = new WebUsbUhciHarnessRuntime({
+      createHarness: () => harness,
+      port: port as unknown as MessagePort,
+      initiallyBlocked: false,
+    });
+    runtime.start();
+    runtime.pollOnce();
+    expect(port.posted).toHaveLength(1);
+    const posted = port.posted[0] as { type: string; action: UsbHostAction };
+    expect(posted.type).toBe("usb.action");
+    expect(posted.action.kind).toBe("bulkIn");
+
+    port.emit({ type: "usb.selected", ok: false, error: "revoked" });
+
+    const snapshot = runtime.getSnapshot();
+    expect(snapshot.enabled).toBe(false);
+    expect(snapshot.blocked).toBe(true);
+    expect(snapshot.pendingCompletions).toBe(0);
+  });
+});
