@@ -4391,16 +4391,18 @@ bool wddm_ensure_recording_buffers(Device* dev, size_t bytes_needed) {
 
   const uint32_t request_bytes = min_buffer_bytes;
 
+  // Prefer GetCommandBufferCb when available; fall back to AllocateCb for older
+  // runtimes that require explicit per-submit allocation + DeallocateCb.
   HRESULT hr = E_NOTIMPL;
-  if constexpr (has_pfnAllocateCb<WddmDeviceCallbacks>::value && has_pfnDeallocateCb<WddmDeviceCallbacks>::value) {
-    if (dev->wddm_callbacks.pfnAllocateCb && dev->wddm_callbacks.pfnDeallocateCb) {
-      hr = wddm_acquire_submit_buffers_allocate_impl(dev, dev->wddm_callbacks.pfnAllocateCb, request_bytes);
+  if constexpr (has_pfnGetCommandBufferCb<WddmDeviceCallbacks>::value) {
+    if (dev->wddm_callbacks.pfnGetCommandBufferCb) {
+      hr = wddm_acquire_submit_buffers_get_command_buffer_impl(dev, dev->wddm_callbacks.pfnGetCommandBufferCb);
     }
   }
-  if (hr == E_NOTIMPL) {
-    if constexpr (has_pfnGetCommandBufferCb<WddmDeviceCallbacks>::value) {
-      if (dev->wddm_callbacks.pfnGetCommandBufferCb) {
-        hr = wddm_acquire_submit_buffers_get_command_buffer_impl(dev, dev->wddm_callbacks.pfnGetCommandBufferCb);
+  if (FAILED(hr)) {
+    if constexpr (has_pfnAllocateCb<WddmDeviceCallbacks>::value && has_pfnDeallocateCb<WddmDeviceCallbacks>::value) {
+      if (dev->wddm_callbacks.pfnAllocateCb && dev->wddm_callbacks.pfnDeallocateCb) {
+        hr = wddm_acquire_submit_buffers_allocate_impl(dev, dev->wddm_callbacks.pfnAllocateCb, request_bytes);
       }
     }
   }
@@ -5154,6 +5156,12 @@ HRESULT AEROGPU_D3D9_CALL device_destroy(D3DDDI_HDEVICE hDevice) {
   }
 
 #if defined(_WIN32)
+  // Ensure we return any AllocateCb-owned per-submit buffers before destroying
+  // the context/device. Some runtimes allocate these even if we never end up
+  // submitting (e.g. device teardown during initialization failures).
+  if (dev->wddm_context.buffers_need_deallocate) {
+    wddm_deallocate_active_buffers(dev);
+  }
   dev->wddm_context.destroy(dev->wddm_callbacks);
   wddm_destroy_device(dev->wddm_callbacks, dev->wddm_device);
   dev->wddm_device = 0;
