@@ -370,10 +370,7 @@ Even if you can’t run GPUView in the VM, a saved ETL is still valuable for off
 
 ### 5.1 Typical workflow
 
-1. **Turn on verbose logs**
-   ```bat
-   aerogpu_dbgctl log level trace
-   ```
+1. **Turn on verbose logs** (checked build via WinDbg / `DbgPrintEx` filtering; dbgctl log-level control is optional/driver-specific)
 2. **Reproduce the issue quickly** (Aero enable, dxdiag test, your sample).
 3. **Snapshot state immediately after**
    ```bat
