@@ -98,7 +98,7 @@ This path is **approximate** (good enough for most D3D9-era `GetRasterStatus` ca
 To support D3D9Ex + DWM redirected surfaces and other cross-process shared allocations, AeroGPU relies on stable identifiers:
 
 - `alloc_id` (32-bit, nonzero): UMD-owned allocation ID used by the per-submit allocation table (`alloc_id → {gpa, size_bytes, flags}`).
-- `share_token` (64-bit): KMD-owned ShareToken used by the AeroGPU command stream shared-surface ops (`EXPORT_SHARED_SURFACE` / `IMPORT_SHARED_SURFACE`).
+- `share_token` (64-bit): stable cross-process token used by the AeroGPU command stream shared-surface ops (`EXPORT_SHARED_SURFACE` / `IMPORT_SHARED_SURFACE`).
 
 ### `alloc_id` (UMD → KMD input; preserved across `OpenResource`)
 
@@ -114,11 +114,13 @@ The preserved private-data layout is defined in:
 
 - `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`
 
-### `share_token` (KMD → UMD output; stable cross-process)
+### `share_token` (UMD → KMD input; preserved across `OpenResource`)
 
-For shared surfaces, the `share_token` used by the AeroGPU protocol is the **KMD-generated per-allocation `ShareToken`** returned to the UMD via allocation private driver data:
+`share_token` is carried in **WDDM allocation private driver data** (`aerogpu_wddm_alloc_priv.share_token`):
 
-- `drivers/aerogpu/protocol/aerogpu_alloc_privdata.h`
+- The blob is treated as **UMD → KMD input**: the UMD generates `share_token` at shared-resource creation time and attaches it to each shared allocation.
+- For **shared allocations**, dxgkrnl preserves the blob and returns the exact same bytes on `OpenResource`/`DxgkDdiOpenAllocation` in another process, ensuring both processes observe the same `share_token`.
+- The KMD validates and stores `share_token` in its allocation bookkeeping.
 
 Do **not** derive `share_token` from the numeric value of the D3D shared `HANDLE`: handle values are process-local and not stable cross-process.
 
