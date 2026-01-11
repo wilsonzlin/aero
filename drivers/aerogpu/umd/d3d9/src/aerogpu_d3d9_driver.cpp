@@ -112,6 +112,9 @@ namespace {
   } while (0)
 
 template <typename FuncTable>
+const char* d3d9_vtable_member_name(size_t index);
+
+template <typename FuncTable>
 bool d3d9_validate_nonnull_vtable(const FuncTable* table, const char* table_name) {
   if (!table || !table_name) {
     return false;
@@ -126,10 +129,19 @@ bool d3d9_validate_nonnull_vtable(const FuncTable* table, const char* table_name
   for (size_t i = 0; i < count; ++i) {
     const uint8_t* slot = bytes + i * kPtrBytes;
     if (std::memcmp(slot, zero.data(), kPtrBytes) == 0) {
-      aerogpu::logf("aerogpu-d3d9: %s missing entry index=%llu (bytes=%llu)\n",
-                    table_name,
-                    static_cast<unsigned long long>(i),
-                    static_cast<unsigned long long>(i * sizeof(void*)));
+      const char* member_name = d3d9_vtable_member_name<FuncTable>(i);
+      if (member_name) {
+        aerogpu::logf("aerogpu-d3d9: %s missing entry index=%llu (bytes=%llu) member=%s\n",
+                      table_name,
+                      static_cast<unsigned long long>(i),
+                      static_cast<unsigned long long>(i * sizeof(void*)),
+                      member_name);
+      } else {
+        aerogpu::logf("aerogpu-d3d9: %s missing entry index=%llu (bytes=%llu)\n",
+                      table_name,
+                      static_cast<unsigned long long>(i),
+                      static_cast<unsigned long long>(i * sizeof(void*)));
+      }
       return false;
     }
   }
@@ -229,7 +241,6 @@ bool submit_log_enabled() {
   return g_submit_log_enabled;
 }
 
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
 // Some D3D9 UMD DDI members vary across WDK header vintages. Use compile-time
 // detection (SFINAE) so the UMD can populate as many entrypoints as possible
 // without hard-failing compilation when a member is absent.
@@ -334,7 +345,590 @@ AEROGPU_DEFINE_HAS_MEMBER(pOpenAllocationInfo);
 AEROGPU_DEFINE_HAS_MEMBER(NumAllocations);
 
 #undef AEROGPU_DEFINE_HAS_MEMBER
-#endif
+
+template <typename FuncTable>
+const char* d3d9_vtable_member_name(size_t index) {
+  constexpr size_t kPtrBytes = sizeof(void*);
+  if constexpr (std::is_same_v<FuncTable, D3D9DDI_ADAPTERFUNCS>) {
+    if (index == offsetof(FuncTable, pfnCloseAdapter) / kPtrBytes) {
+      return "pfnCloseAdapter";
+    }
+    if (index == offsetof(FuncTable, pfnGetCaps) / kPtrBytes) {
+      return "pfnGetCaps";
+    }
+    if (index == offsetof(FuncTable, pfnCreateDevice) / kPtrBytes) {
+      return "pfnCreateDevice";
+    }
+    if (index == offsetof(FuncTable, pfnQueryAdapterInfo) / kPtrBytes) {
+      return "pfnQueryAdapterInfo";
+    }
+    return nullptr;
+  }
+
+  if constexpr (std::is_same_v<FuncTable, D3D9DDI_DEVICEFUNCS>) {
+    if (index == offsetof(FuncTable, pfnDestroyDevice) / kPtrBytes) {
+      return "pfnDestroyDevice";
+    }
+    if (index == offsetof(FuncTable, pfnCreateResource) / kPtrBytes) {
+      return "pfnCreateResource";
+    }
+    if constexpr (aerogpu_has_member_pfnOpenResource<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnOpenResource) / kPtrBytes) {
+        return "pfnOpenResource";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnOpenResource2<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnOpenResource2) / kPtrBytes) {
+        return "pfnOpenResource2";
+      }
+    }
+    if (index == offsetof(FuncTable, pfnDestroyResource) / kPtrBytes) {
+      return "pfnDestroyResource";
+    }
+    if (index == offsetof(FuncTable, pfnLock) / kPtrBytes) {
+      return "pfnLock";
+    }
+    if (index == offsetof(FuncTable, pfnUnlock) / kPtrBytes) {
+      return "pfnUnlock";
+    }
+    if (index == offsetof(FuncTable, pfnSetRenderTarget) / kPtrBytes) {
+      return "pfnSetRenderTarget";
+    }
+    if (index == offsetof(FuncTable, pfnSetDepthStencil) / kPtrBytes) {
+      return "pfnSetDepthStencil";
+    }
+    if (index == offsetof(FuncTable, pfnSetViewport) / kPtrBytes) {
+      return "pfnSetViewport";
+    }
+    if (index == offsetof(FuncTable, pfnSetScissorRect) / kPtrBytes) {
+      return "pfnSetScissorRect";
+    }
+    if (index == offsetof(FuncTable, pfnSetTexture) / kPtrBytes) {
+      return "pfnSetTexture";
+    }
+    if constexpr (aerogpu_has_member_pfnSetTextureStageState<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnSetTextureStageState) / kPtrBytes) {
+        return "pfnSetTextureStageState";
+      }
+    }
+    if (index == offsetof(FuncTable, pfnSetSamplerState) / kPtrBytes) {
+      return "pfnSetSamplerState";
+    }
+    if (index == offsetof(FuncTable, pfnSetRenderState) / kPtrBytes) {
+      return "pfnSetRenderState";
+    }
+    if constexpr (aerogpu_has_member_pfnSetMaterial<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnSetMaterial) / kPtrBytes) {
+        return "pfnSetMaterial";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnSetLight<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnSetLight) / kPtrBytes) {
+        return "pfnSetLight";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnLightEnable<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnLightEnable) / kPtrBytes) {
+        return "pfnLightEnable";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnSetNPatchMode<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnSetNPatchMode) / kPtrBytes) {
+        return "pfnSetNPatchMode";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnSetGammaRamp<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnSetGammaRamp) / kPtrBytes) {
+        return "pfnSetGammaRamp";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnSetTransform<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnSetTransform) / kPtrBytes) {
+        return "pfnSetTransform";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnMultiplyTransform<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnMultiplyTransform) / kPtrBytes) {
+        return "pfnMultiplyTransform";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnSetClipPlane<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnSetClipPlane) / kPtrBytes) {
+        return "pfnSetClipPlane";
+      }
+    }
+    if (index == offsetof(FuncTable, pfnCreateVertexDecl) / kPtrBytes) {
+      return "pfnCreateVertexDecl";
+    }
+    if (index == offsetof(FuncTable, pfnSetVertexDecl) / kPtrBytes) {
+      return "pfnSetVertexDecl";
+    }
+    if (index == offsetof(FuncTable, pfnDestroyVertexDecl) / kPtrBytes) {
+      return "pfnDestroyVertexDecl";
+    }
+    if constexpr (aerogpu_has_member_pfnSetFVF<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnSetFVF) / kPtrBytes) {
+        return "pfnSetFVF";
+      }
+    }
+    if (index == offsetof(FuncTable, pfnCreateShader) / kPtrBytes) {
+      return "pfnCreateShader";
+    }
+    if (index == offsetof(FuncTable, pfnSetShader) / kPtrBytes) {
+      return "pfnSetShader";
+    }
+    if (index == offsetof(FuncTable, pfnDestroyShader) / kPtrBytes) {
+      return "pfnDestroyShader";
+    }
+    if (index == offsetof(FuncTable, pfnSetShaderConstF) / kPtrBytes) {
+      return "pfnSetShaderConstF";
+    }
+    if constexpr (aerogpu_has_member_pfnSetShaderConstI<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnSetShaderConstI) / kPtrBytes) {
+        return "pfnSetShaderConstI";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnSetShaderConstB<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnSetShaderConstB) / kPtrBytes) {
+        return "pfnSetShaderConstB";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnCreateStateBlock<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnCreateStateBlock) / kPtrBytes) {
+        return "pfnCreateStateBlock";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnDeleteStateBlock<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnDeleteStateBlock) / kPtrBytes) {
+        return "pfnDeleteStateBlock";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnCaptureStateBlock<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnCaptureStateBlock) / kPtrBytes) {
+        return "pfnCaptureStateBlock";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnApplyStateBlock<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnApplyStateBlock) / kPtrBytes) {
+        return "pfnApplyStateBlock";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnValidateDevice<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnValidateDevice) / kPtrBytes) {
+        return "pfnValidateDevice";
+      }
+    }
+    if (index == offsetof(FuncTable, pfnSetStreamSource) / kPtrBytes) {
+      return "pfnSetStreamSource";
+    }
+    if constexpr (aerogpu_has_member_pfnSetStreamSourceFreq<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnSetStreamSourceFreq) / kPtrBytes) {
+        return "pfnSetStreamSourceFreq";
+      }
+    }
+    if (index == offsetof(FuncTable, pfnSetIndices) / kPtrBytes) {
+      return "pfnSetIndices";
+    }
+    if constexpr (aerogpu_has_member_pfnSetSoftwareVertexProcessing<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnSetSoftwareVertexProcessing) / kPtrBytes) {
+        return "pfnSetSoftwareVertexProcessing";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnSetCursorProperties<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnSetCursorProperties) / kPtrBytes) {
+        return "pfnSetCursorProperties";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnSetCursorPosition<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnSetCursorPosition) / kPtrBytes) {
+        return "pfnSetCursorPosition";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnShowCursor<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnShowCursor) / kPtrBytes) {
+        return "pfnShowCursor";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnSetPaletteEntries<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnSetPaletteEntries) / kPtrBytes) {
+        return "pfnSetPaletteEntries";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnSetCurrentTexturePalette<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnSetCurrentTexturePalette) / kPtrBytes) {
+        return "pfnSetCurrentTexturePalette";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnSetClipStatus<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnSetClipStatus) / kPtrBytes) {
+        return "pfnSetClipStatus";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnGetClipStatus<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnGetClipStatus) / kPtrBytes) {
+        return "pfnGetClipStatus";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnGetGammaRamp<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnGetGammaRamp) / kPtrBytes) {
+        return "pfnGetGammaRamp";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnBeginScene<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnBeginScene) / kPtrBytes) {
+        return "pfnBeginScene";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnEndScene<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnEndScene) / kPtrBytes) {
+        return "pfnEndScene";
+      }
+    }
+    if (index == offsetof(FuncTable, pfnClear) / kPtrBytes) {
+      return "pfnClear";
+    }
+    if (index == offsetof(FuncTable, pfnDrawPrimitive) / kPtrBytes) {
+      return "pfnDrawPrimitive";
+    }
+    if constexpr (aerogpu_has_member_pfnDrawPrimitiveUP<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnDrawPrimitiveUP) / kPtrBytes) {
+        return "pfnDrawPrimitiveUP";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnDrawIndexedPrimitiveUP<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnDrawIndexedPrimitiveUP) / kPtrBytes) {
+        return "pfnDrawIndexedPrimitiveUP";
+      }
+    }
+    if (index == offsetof(FuncTable, pfnDrawIndexedPrimitive) / kPtrBytes) {
+      return "pfnDrawIndexedPrimitive";
+    }
+    if constexpr (aerogpu_has_member_pfnDrawRectPatch<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnDrawRectPatch) / kPtrBytes) {
+        return "pfnDrawRectPatch";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnDrawTriPatch<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnDrawTriPatch) / kPtrBytes) {
+        return "pfnDrawTriPatch";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnDeletePatch<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnDeletePatch) / kPtrBytes) {
+        return "pfnDeletePatch";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnProcessVertices<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnProcessVertices) / kPtrBytes) {
+        return "pfnProcessVertices";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnGetRasterStatus<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnGetRasterStatus) / kPtrBytes) {
+        return "pfnGetRasterStatus";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnSetDialogBoxMode<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnSetDialogBoxMode) / kPtrBytes) {
+        return "pfnSetDialogBoxMode";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnDrawPrimitive2<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnDrawPrimitive2) / kPtrBytes) {
+        return "pfnDrawPrimitive2";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnDrawIndexedPrimitive2<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnDrawIndexedPrimitive2) / kPtrBytes) {
+        return "pfnDrawIndexedPrimitive2";
+      }
+    }
+    if (index == offsetof(FuncTable, pfnCreateSwapChain) / kPtrBytes) {
+      return "pfnCreateSwapChain";
+    }
+    if (index == offsetof(FuncTable, pfnDestroySwapChain) / kPtrBytes) {
+      return "pfnDestroySwapChain";
+    }
+    if (index == offsetof(FuncTable, pfnGetSwapChain) / kPtrBytes) {
+      return "pfnGetSwapChain";
+    }
+    if (index == offsetof(FuncTable, pfnSetSwapChain) / kPtrBytes) {
+      return "pfnSetSwapChain";
+    }
+    if (index == offsetof(FuncTable, pfnReset) / kPtrBytes) {
+      return "pfnReset";
+    }
+    if (index == offsetof(FuncTable, pfnResetEx) / kPtrBytes) {
+      return "pfnResetEx";
+    }
+    if (index == offsetof(FuncTable, pfnCheckDeviceState) / kPtrBytes) {
+      return "pfnCheckDeviceState";
+    }
+    if constexpr (aerogpu_has_member_pfnWaitForVBlank<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnWaitForVBlank) / kPtrBytes) {
+        return "pfnWaitForVBlank";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnSetGPUThreadPriority<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnSetGPUThreadPriority) / kPtrBytes) {
+        return "pfnSetGPUThreadPriority";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnGetGPUThreadPriority<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnGetGPUThreadPriority) / kPtrBytes) {
+        return "pfnGetGPUThreadPriority";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnCheckResourceResidency<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnCheckResourceResidency) / kPtrBytes) {
+        return "pfnCheckResourceResidency";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnQueryResourceResidency<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnQueryResourceResidency) / kPtrBytes) {
+        return "pfnQueryResourceResidency";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnSetPriority<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnSetPriority) / kPtrBytes) {
+        return "pfnSetPriority";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnGetPriority<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnGetPriority) / kPtrBytes) {
+        return "pfnGetPriority";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnGetDisplayModeEx<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnGetDisplayModeEx) / kPtrBytes) {
+        return "pfnGetDisplayModeEx";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnComposeRects<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnComposeRects) / kPtrBytes) {
+        return "pfnComposeRects";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnSetConvolutionMonoKernel<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnSetConvolutionMonoKernel) / kPtrBytes) {
+        return "pfnSetConvolutionMonoKernel";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnSetAutoGenFilterType<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnSetAutoGenFilterType) / kPtrBytes) {
+        return "pfnSetAutoGenFilterType";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnGetAutoGenFilterType<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnGetAutoGenFilterType) / kPtrBytes) {
+        return "pfnGetAutoGenFilterType";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnGenerateMipSubLevels<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnGenerateMipSubLevels) / kPtrBytes) {
+        return "pfnGenerateMipSubLevels";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnGetSoftwareVertexProcessing<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnGetSoftwareVertexProcessing) / kPtrBytes) {
+        return "pfnGetSoftwareVertexProcessing";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnGetTransform<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnGetTransform) / kPtrBytes) {
+        return "pfnGetTransform";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnGetClipPlane<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnGetClipPlane) / kPtrBytes) {
+        return "pfnGetClipPlane";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnGetViewport<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnGetViewport) / kPtrBytes) {
+        return "pfnGetViewport";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnGetScissorRect<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnGetScissorRect) / kPtrBytes) {
+        return "pfnGetScissorRect";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnBeginStateBlock<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnBeginStateBlock) / kPtrBytes) {
+        return "pfnBeginStateBlock";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnEndStateBlock<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnEndStateBlock) / kPtrBytes) {
+        return "pfnEndStateBlock";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnGetMaterial<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnGetMaterial) / kPtrBytes) {
+        return "pfnGetMaterial";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnGetLight<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnGetLight) / kPtrBytes) {
+        return "pfnGetLight";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnGetLightEnable<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnGetLightEnable) / kPtrBytes) {
+        return "pfnGetLightEnable";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnGetRenderTarget<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnGetRenderTarget) / kPtrBytes) {
+        return "pfnGetRenderTarget";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnGetDepthStencil<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnGetDepthStencil) / kPtrBytes) {
+        return "pfnGetDepthStencil";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnGetTexture<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnGetTexture) / kPtrBytes) {
+        return "pfnGetTexture";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnGetTextureStageState<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnGetTextureStageState) / kPtrBytes) {
+        return "pfnGetTextureStageState";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnGetSamplerState<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnGetSamplerState) / kPtrBytes) {
+        return "pfnGetSamplerState";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnGetRenderState<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnGetRenderState) / kPtrBytes) {
+        return "pfnGetRenderState";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnGetPaletteEntries<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnGetPaletteEntries) / kPtrBytes) {
+        return "pfnGetPaletteEntries";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnGetCurrentTexturePalette<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnGetCurrentTexturePalette) / kPtrBytes) {
+        return "pfnGetCurrentTexturePalette";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnGetNPatchMode<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnGetNPatchMode) / kPtrBytes) {
+        return "pfnGetNPatchMode";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnGetFVF<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnGetFVF) / kPtrBytes) {
+        return "pfnGetFVF";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnGetVertexDecl<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnGetVertexDecl) / kPtrBytes) {
+        return "pfnGetVertexDecl";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnGetStreamSource<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnGetStreamSource) / kPtrBytes) {
+        return "pfnGetStreamSource";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnGetStreamSourceFreq<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnGetStreamSourceFreq) / kPtrBytes) {
+        return "pfnGetStreamSourceFreq";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnGetIndices<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnGetIndices) / kPtrBytes) {
+        return "pfnGetIndices";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnGetShader<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnGetShader) / kPtrBytes) {
+        return "pfnGetShader";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnGetShaderConstF<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnGetShaderConstF) / kPtrBytes) {
+        return "pfnGetShaderConstF";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnGetShaderConstI<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnGetShaderConstI) / kPtrBytes) {
+        return "pfnGetShaderConstI";
+      }
+    }
+    if constexpr (aerogpu_has_member_pfnGetShaderConstB<FuncTable>::value) {
+      if (index == offsetof(FuncTable, pfnGetShaderConstB) / kPtrBytes) {
+        return "pfnGetShaderConstB";
+      }
+    }
+    if (index == offsetof(FuncTable, pfnRotateResourceIdentities) / kPtrBytes) {
+      return "pfnRotateResourceIdentities";
+    }
+    if (index == offsetof(FuncTable, pfnPresent) / kPtrBytes) {
+      return "pfnPresent";
+    }
+    if (index == offsetof(FuncTable, pfnPresentEx) / kPtrBytes) {
+      return "pfnPresentEx";
+    }
+    if (index == offsetof(FuncTable, pfnFlush) / kPtrBytes) {
+      return "pfnFlush";
+    }
+    if (index == offsetof(FuncTable, pfnSetMaximumFrameLatency) / kPtrBytes) {
+      return "pfnSetMaximumFrameLatency";
+    }
+    if (index == offsetof(FuncTable, pfnGetMaximumFrameLatency) / kPtrBytes) {
+      return "pfnGetMaximumFrameLatency";
+    }
+    if (index == offsetof(FuncTable, pfnGetPresentStats) / kPtrBytes) {
+      return "pfnGetPresentStats";
+    }
+    if (index == offsetof(FuncTable, pfnGetLastPresentCount) / kPtrBytes) {
+      return "pfnGetLastPresentCount";
+    }
+    if (index == offsetof(FuncTable, pfnCreateQuery) / kPtrBytes) {
+      return "pfnCreateQuery";
+    }
+    if (index == offsetof(FuncTable, pfnDestroyQuery) / kPtrBytes) {
+      return "pfnDestroyQuery";
+    }
+    if (index == offsetof(FuncTable, pfnIssueQuery) / kPtrBytes) {
+      return "pfnIssueQuery";
+    }
+    if (index == offsetof(FuncTable, pfnGetQueryData) / kPtrBytes) {
+      return "pfnGetQueryData";
+    }
+    if (index == offsetof(FuncTable, pfnGetRenderTargetData) / kPtrBytes) {
+      return "pfnGetRenderTargetData";
+    }
+    if (index == offsetof(FuncTable, pfnCopyRects) / kPtrBytes) {
+      return "pfnCopyRects";
+    }
+    if (index == offsetof(FuncTable, pfnWaitForIdle) / kPtrBytes) {
+      return "pfnWaitForIdle";
+    }
+    if (index == offsetof(FuncTable, pfnBlt) / kPtrBytes) {
+      return "pfnBlt";
+    }
+    if (index == offsetof(FuncTable, pfnColorFill) / kPtrBytes) {
+      return "pfnColorFill";
+    }
+    if (index == offsetof(FuncTable, pfnUpdateSurface) / kPtrBytes) {
+      return "pfnUpdateSurface";
+    }
+    if (index == offsetof(FuncTable, pfnUpdateTexture) / kPtrBytes) {
+      return "pfnUpdateTexture";
+    }
+  }
+  return nullptr;
+}
 
 #if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
 template <typename T, typename = void>
