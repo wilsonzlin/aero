@@ -1,20 +1,12 @@
-#[cfg(feature = "legacy-interp")]
-use aero_cpu_core::{Bus, Cpu, CpuMode, RamBus};
-#[cfg(feature = "legacy-interp")]
+use aero_cpu_core::interp::tier0::exec::{run_batch, BatchExit};
+use aero_cpu_core::mem::{CpuBus, FlatTestBus};
+use aero_cpu_core::state::{CpuMode, CpuState};
 use aero_perf::{PerfCounters, PerfWorker};
-#[cfg(feature = "legacy-interp")]
+use aero_x86::Register;
 use std::hint::black_box;
-#[cfg(feature = "legacy-interp")]
 use std::sync::Arc;
-#[cfg(feature = "legacy-interp")]
 use std::time::Instant;
 
-#[cfg(not(feature = "legacy-interp"))]
-fn main() {
-    eprintln!("This example requires `aero_cpu_core`'s `legacy-interp` feature.");
-}
-
-#[cfg(feature = "legacy-interp")]
 fn main() {
     let iterations: usize = std::env::args()
         .nth(1)
@@ -23,32 +15,45 @@ fn main() {
         .parse()
         .expect("iterations must be an integer");
 
-    // Use 16-bit mode so SI/DI wrap naturally, avoiding bounds checks even for
-    // very large iteration counts.
-    let mut cpu_base = Cpu::new(CpuMode::Real16);
-    cpu_base.segs.ds.base = 0x0000;
-    cpu_base.segs.es.base = 0x8000;
-    cpu_base.regs.set_si(0);
-    cpu_base.regs.set_di(0);
+    const CS_BASE: u64 = 0x20_000;
 
-    let mut bus_base = RamBus::new(0x20_000);
+    // Use 16-bit mode so SI/DI/IP wrap naturally, avoiding bounds checks even for
+    // very large iteration counts.
+    let mut cpu_base = CpuState::new(CpuMode::Bit16);
+    cpu_base.segments.cs.base = CS_BASE;
+    cpu_base.segments.ds.base = 0x0000;
+    cpu_base.segments.es.base = 0x8000;
+    cpu_base.write_reg(Register::SI, 0);
+    cpu_base.write_reg(Register::DI, 0);
+    cpu_base.set_rip(0);
+
+    let mut bus_base = FlatTestBus::new(0x30_000);
+    // Initialize DS memory with a simple repeating pattern.
     for i in 0..0x10_000u64 {
-        bus_base.write_u8(i, (i & 0xFF) as u8);
+        bus_base.write_u8(i, (i & 0xFF) as u8).unwrap();
+    }
+    // Place a MOVSB instruction stream at CS:0.. so IP can wrap without needing
+    // to reset RIP in the hot loop.
+    for i in 0..0x10_000u64 {
+        bus_base.write_u8(CS_BASE + i, 0xA4).unwrap(); // MOVSB
     }
 
     let start = Instant::now();
     for _ in 0..iterations {
-        cpu_base.execute_bytes(&mut bus_base, &[0xA4]).unwrap(); // MOVSB
+        let res = run_batch(&mut cpu_base, &mut bus_base, 1);
+        assert_eq!(res.exit, BatchExit::Completed);
     }
     let dt_base = start.elapsed();
     black_box(&cpu_base);
     black_box(&bus_base);
 
-    let mut cpu_count = Cpu::new(CpuMode::Real16);
-    cpu_count.segs.ds.base = 0x0000;
-    cpu_count.segs.es.base = 0x8000;
-    cpu_count.regs.set_si(0);
-    cpu_count.regs.set_di(0);
+    let mut cpu_count = CpuState::new(CpuMode::Bit16);
+    cpu_count.segments.cs.base = CS_BASE;
+    cpu_count.segments.ds.base = 0x0000;
+    cpu_count.segments.es.base = 0x8000;
+    cpu_count.write_reg(Register::SI, 0);
+    cpu_count.write_reg(Register::DI, 0);
+    cpu_count.set_rip(0);
     let mut bus_count = bus_base.clone();
 
     let shared = Arc::new(PerfCounters::new());
@@ -56,9 +61,9 @@ fn main() {
 
     let start = Instant::now();
     for _ in 0..iterations {
-        cpu_count
-            .execute_bytes_counted(&mut bus_count, &[0xA4], &mut perf)
-            .unwrap();
+        let res = run_batch(&mut cpu_count, &mut bus_count, 1);
+        assert_eq!(res.exit, BatchExit::Completed);
+        perf.retire_instructions(1);
     }
     let dt_count = start.elapsed();
 
