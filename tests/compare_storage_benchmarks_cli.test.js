@@ -219,7 +219,6 @@ test("compare_storage_benchmarks CLI exits non-zero on regression and still writ
   assert.equal(res.status, 1, `expected exit=1, got ${res.status}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
   assert.ok(fs.existsSync(path.join(outDir, "compare.md")));
 });
-
 test("compare_storage_benchmarks CLI exits 2 (unstable) when a required metric is missing", () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "aero-storage-compare-"));
   const baselinePath = path.join(tmpDir, "baseline.json");
@@ -252,4 +251,19 @@ test("compare_storage_benchmarks CLI exits 2 (unstable) when a required metric i
   assert.ok(fs.existsSync(path.join(outDir, "compare.md")));
   const summary = JSON.parse(fs.readFileSync(path.join(outDir, "summary.json"), "utf8"));
   assert.equal(summary.status, "unstable");
+});
+
+test("compare_storage_benchmarks CLI supports --help", () => {
+  const res = spawnSync(
+    process.execPath,
+    ["--experimental-strip-types", "scripts/compare_storage_benchmarks.ts", "--help"],
+    {
+      cwd: path.resolve("."),
+      encoding: "utf8",
+    },
+  );
+
+  assert.equal(res.status, 0, `expected exit=0, got ${res.status}`);
+  assert.match(res.stdout, /Usage:/);
+  assert.match(res.stdout, /--baseline/);
 });

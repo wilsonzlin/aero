@@ -48,6 +48,7 @@ Options:
   --out-dir <dir>            Alias for --outDir
   --thresholds-file <path>   Threshold policy (default: bench/perf_thresholds.json)
   --profile <name>           Threshold profile (default: pr-smoke)
+  --help, -h                 Show this help
 
 Legacy override flags (optional):
   --thresholdPct <n>         Override maxRegressionPct for all storage metrics (percent)
@@ -77,8 +78,11 @@ async function copyFileIfPresent(src: string, dest: string) {
 }
 
 async function main() {
-  const args = parseArgs(process.argv.slice(2));
-  if (args.help === "true" || args["help"] === "true") usage(0);
+  const rawArgs = process.argv.slice(2);
+  if (rawArgs.includes("-h")) usage(0);
+
+  const args = parseArgs(rawArgs);
+  if (args.help !== undefined) usage(0);
 
   const baselinePath = args.baseline;
   const candidatePath = args.current ?? args.candidate;
