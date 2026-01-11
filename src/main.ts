@@ -429,6 +429,8 @@ function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
   function updateInfo(): void {
     const userActivation = (navigator as unknown as { userActivation?: { isActive?: boolean; hasBeenActive?: boolean } })
       .userActivation;
+    const mainUsb = (navigator as Navigator & { usb?: USB }).usb;
+    const mainHasRequestDevice = typeof mainUsb?.requestDevice === 'function';
     const liveSummary = selectedDevice ? summarizeUsbDevice(selectedDevice) : selectedSummary;
     if (selectedDevice) selectedSummary = liveSummary;
 
@@ -461,6 +463,7 @@ function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
     info.textContent =
       `isSecureContext=${(globalThis as typeof globalThis & { isSecureContext?: boolean }).isSecureContext === true}\n` +
       `navigator.usb=${report.webusb ? 'present' : 'missing'}\n` +
+      `main requestDevice=${mainHasRequestDevice ? 'function' : 'missing'}\n` +
       `worker navigator.usb=${workerHasUsb === null ? '(probe pending)' : workerHasUsb ? 'present' : 'missing'}\n` +
       `worker requestDevice=${workerHasRequestDevice === null ? '(probe pending)' : workerHasRequestDevice ? 'function' : 'missing'} (${workerRequestDeviceText})\n` +
       `workerProbeError=${workerProbeError ? `${workerProbeError.name}: ${workerProbeError.message}` : 'none'}\n` +
