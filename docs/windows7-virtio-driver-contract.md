@@ -772,7 +772,7 @@ The guest MAY send output/LED events via `statusq`.
 | 0 | `controlq` | driver → device | **64** |
 | 1 | `eventq` | device → driver | **64** |
 | 2 | `txq` | driver → device (PCM playback) | **256** |
-| 3 | `rxq` | device → driver (PCM capture) | **64** (unused in v1) |
+| 3 | `rxq` | device → driver (PCM capture) | **256** |
 
 #### 3.4.3 Feature bits
 
@@ -783,9 +783,17 @@ The device MUST offer:
 
 #### 3.4.4 Minimal PCM capability
 
-One playback-only stream (ID 0):
+The device exposes two fixed-format PCM streams:
+
+Stream 0 (playback/output):
 
 - Channels: 2
+- Format: S16_LE
+- Rate: 48,000 Hz
+
+Stream 1 (capture/input):
+
+- Channels: 1 (mono)
 - Format: S16_LE
 - Rate: 48,000 Hz
 
@@ -796,7 +804,7 @@ virtio-snd config (little-endian):
 | Offset | Size | Field | Value (contract v1) |
 |--------|------|-------|---------------------|
 | `0x00` | 4 | `jacks` | `0` |
-| `0x04` | 4 | `streams` | `1` |
+| `0x04` | 4 | `streams` | `2` |
 | `0x08` | 4 | `chmaps` | `0` |
 
 #### 3.4.6 Minimal control flow
@@ -805,9 +813,9 @@ Drivers and devices MUST follow the virtio-snd specification for message formats
 
 Contract v1 requires at minimum the ability to:
 
-- query stream info (for stream 0)
+- query stream info (streams 0 and 1)
 - set params (only the fixed params in §3.4.4)
-- prepare/start/stop/release playback
+- prepare/start/stop/release playback and capture
 
 All unsupported commands MUST return `NOT_SUPP`.
 
@@ -816,6 +824,17 @@ Playback data path (`txq`):
 - After start, the driver submits PCM buffers on `txq`.
 - The device MUST play buffers in order and complete each buffer with OK status when consumed.
 - On underrun, the device MUST output silence and continue.
+
+Capture data path (`rxq`):
+
+- After start, the driver submits capture buffers on `rxq`.
+- Each buffer consists of:
+  - an OUT header (`stream_id: u32`, `reserved: u32`) selecting stream 1
+  - one or more IN descriptors for PCM payload bytes (S16_LE mono)
+  - a final IN descriptor with a `virtio_snd_pcm_status` response (8 bytes)
+- The device MUST fill payload bytes with captured PCM samples when stream 1 is running.
+- If not enough captured samples are available, the device MUST fill the missing part with silence and complete the buffer with OK status.
+- If stream 1 is not running, the device MUST complete the buffer with `IO_ERR`.
 
 ## 4. Versioning and compatibility
 
