@@ -110,7 +110,10 @@ For each entry:
 
 On Win7, the KMD builds the per-submit allocation table from the submission’s WDDM allocation list (`DXGK_ALLOCATIONLIST`), and only allocations that appear in that list can contribute `alloc_id → gpa` entries.
 
-Therefore, any UMD packet that references `backing_alloc_id != 0` must ensure the corresponding WDDM allocation handle is included in the submit allocation list for that submission (even if the resource is not currently bound; `RESOURCE_DIRTY_RANGE` is a common case).
+Therefore, any UMD submission that includes packets which require `alloc_id` resolution must ensure the corresponding WDDM allocation handle is included in the submit allocation list for that submission. This includes:
+
+- Packets that carry `backing_alloc_id` fields directly (`CREATE_BUFFER`, `CREATE_TEXTURE2D`).
+- Packets that operate on a *resource that is guest-backed* (its `backing_alloc_id != 0`) and require the host to read/write guest memory, such as `RESOURCE_DIRTY_RANGE` (common Map/Unmap upload case).
 
 ## Backing interpretation (`aerogpu_cmd.h`)
 
