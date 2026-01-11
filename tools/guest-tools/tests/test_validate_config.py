@@ -161,6 +161,53 @@ class ValidateConfigTests(unittest.TestCase):
         )
         self.assertIsNotNone(match)
 
+    def test_aerogpu_driver_name_alias_is_normalized(self) -> None:
+        # Guest Tools historically used `aero-gpu` as the AeroGPU driver directory name.
+        # Validate that the spec validator normalizes the legacy dashed form to the
+        # canonical `aerogpu` name.
+        with tempfile.TemporaryDirectory(prefix="aero-guest-tools-validate-config-") as tmp:
+            tmp_path = Path(tmp)
+            devices_cmd = tmp_path / "devices.cmd"
+            virtio_blk = _contract_device("virtio-blk")
+            virtio_net = _contract_device("virtio-net")
+            aerogpu = _contract_device("aero-gpu")
+            devices_cmd.write_text(
+                "\n".join(
+                    [
+                        f'set "AERO_VIRTIO_BLK_SERVICE={virtio_blk.driver_service_name}"',
+                        f"set AERO_VIRTIO_BLK_HWIDS={_quote_items(virtio_blk.hardware_id_patterns)}",
+                        f"set AERO_VIRTIO_NET_HWIDS={_quote_items(virtio_net.hardware_id_patterns)}",
+                        f"set AERO_GPU_HWIDS={_quote_items(aerogpu.hardware_id_patterns)}",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            spec_path = tmp_path / "spec.json"
+            spec_path.write_text(
+                json.dumps(
+                    {
+                        "drivers": [
+                            {
+                                "name": "aero-gpu",
+                                "required": True,
+                                "expected_hardware_ids": [],
+                                "expected_hardware_ids_from_devices_cmd_var": "AERO_GPU_HWIDS",
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            devices = validate_config.load_devices_cmd(devices_cmd)
+            expected = validate_config.load_packaging_spec(spec_path)
+            self.assertIn("aerogpu", expected)
+            self.assertNotIn("aero-gpu", expected)
+
+            with redirect_stdout(io.StringIO()):
+                validate_config.validate(devices, spec_path, expected)
+
     def test_win7_signed_spec_allows_empty_expected_hwid_patterns(self) -> None:
         # `win7-signed.json` intentionally does not pin HWIDs. The validator should
         # still accept it (after enforcing required driver entries and the
