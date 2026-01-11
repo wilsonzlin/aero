@@ -88,7 +88,14 @@ if [[ -d "$legacy_guest_windows_dir" ]]; then
     "guest/""windows/docs/driver_install.md"
   )
 
-  mapfile -t guest_windows_files < <(git ls-files "$legacy_guest_windows_dir/**" || true)
+  # Use a simple prefix scan instead of relying on pathspec glob support (`**`).
+  legacy_guest_windows_prefix="$legacy_guest_windows_dir/"
+  guest_windows_files=()
+  while IFS= read -r f; do
+    if [[ "$f" == "$legacy_guest_windows_prefix"* ]]; then
+      guest_windows_files+=("$f")
+    fi
+  done < <(git ls-files || true)
   for f in "${guest_windows_files[@]}"; do
     allowed=0
     for allow in "${allowed_guest_windows_files[@]}"; do
