@@ -1938,6 +1938,18 @@ static VOID AerovNetMiniportSendNetBufferLists(_In_ NDIS_HANDLE MiniportAdapterC
         continue;
       }
 
+      // Contract v1 frame size rules: drop undersized/oversized frames.
+      // Complete the send successfully (Ethernet has no delivery guarantee).
+      {
+        ULONG FrameLen = NET_BUFFER_DATA_LENGTH(Nb);
+        if (FrameLen < 14 || FrameLen > 1514) {
+        Adapter->StatTxErrors++;
+        AerovNetTxNblCompleteOneNetBufferLocked(Adapter, Nbl, NDIS_STATUS_SUCCESS, &CompleteHead, &CompleteTail);
+        NdisReleaseSpinLock(&Adapter->Lock);
+        continue;
+      }
+      }
+
       if (IsListEmpty(&Adapter->TxFreeList)) {
         AerovNetTxNblCompleteOneNetBufferLocked(Adapter, Nbl, NDIS_STATUS_RESOURCES, &CompleteHead, &CompleteTail);
         NdisReleaseSpinLock(&Adapter->Lock);
