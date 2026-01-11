@@ -1079,11 +1079,13 @@ fn reject_jwt_origin_mismatch(
 fn auth_mode(state: &AppState) -> &'static str {
     match state.cfg.security.auth_mode {
         crate::config::AuthMode::None => "none",
-        crate::config::AuthMode::Cookie => "cookie",
-        crate::config::AuthMode::ApiKey => "api_key",
+        // Prefer the canonical auth mode spellings used in docs/config.
+        // (The config parser still accepts legacy aliases like `cookie`/`api_key`.)
+        crate::config::AuthMode::Cookie => "session",
+        crate::config::AuthMode::ApiKey => "token",
         crate::config::AuthMode::Jwt => "jwt",
         crate::config::AuthMode::CookieOrJwt => "cookie_or_jwt",
-        crate::config::AuthMode::CookieOrApiKey => "cookie_or_api_key",
+        crate::config::AuthMode::CookieOrApiKey => "session_or_token",
         crate::config::AuthMode::CookieAndApiKey => "session_and_token",
     }
 }

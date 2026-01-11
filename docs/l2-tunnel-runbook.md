@@ -41,7 +41,7 @@ cargo run --locked -p aero-l2-proxy
 #     (Legacy alias: `AERO_L2_AUTH_MODE=cookie`.)
 #   - Token (simple cross-origin / server-to-server; dev-only if long-lived):
 #     AERO_L2_AUTH_MODE=token AERO_L2_API_KEY=sekrit cargo run --locked -p aero-l2-proxy
-#     (Deprecated compatibility: legacy `AERO_L2_TOKEN=sekrit` is treated as an API key when
+#     (Deprecated compatibility: legacy `AERO_L2_TOKEN=sekrit` is treated as a token when
 #     `AERO_L2_AUTH_MODE` is unset, and is also accepted as a fallback value for `AERO_L2_API_KEY`.)
 #     (Legacy alias: `AERO_L2_AUTH_MODE=api_key`.)
 #   - JWT (recommended for cross-origin / short-lived tokens):
@@ -57,7 +57,7 @@ cargo run --locked -p aero-l2-proxy
 #     - Session cookie + token (require both):
 #       AERO_L2_AUTH_MODE=session_and_token AERO_L2_SESSION_SECRET=sekrit AERO_L2_API_KEY=sekrit cargo run --locked -p aero-l2-proxy
 #   - Credential delivery:
-#     - query params: `?token=...` (or `?apiKey=...` for API-key auth)
+#     - query params: `?token=...` (or `?apiKey=...` for compatibility)
 #     - subprotocol token: additional `Sec-WebSocket-Protocol` entry `aero-l2-token.<credential>`
 #       (offered alongside `aero-l2-tunnel-v1`)
 #     - JWTs can also be provided via `Authorization: Bearer <token>` when using a non-browser client.
@@ -277,7 +277,7 @@ Credentials offered via `Sec-WebSocket-Protocol` must be valid WebSocket subprot
 Prefer subprotocol delivery when possible to avoid putting secrets in URLs/logs; use query-string delivery when the credential
 cannot be expressed as a subprotocol token.
 
-- Query string: `wss://proxy.example.com/l2?token=<value>` (or `?apiKey=<value>` for API-key auth)
+- Query string: `wss://proxy.example.com/l2?token=<value>` (or `?apiKey=<value>` for compatibility)
 - Header: `Authorization: Bearer <token>` (JWT only)
 - WebSocket subprotocol: offer an additional `Sec-WebSocket-Protocol` entry `aero-l2-token.<value>`
   alongside `aero-l2-tunnel-v1`.

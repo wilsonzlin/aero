@@ -185,7 +185,7 @@ supports multiple auth modes via `AERO_L2_AUTH_MODE`:
   `AERO_GATEWAY_SESSION_SECRET` (preferred), or `SESSION_SECRET`, or `AERO_L2_SESSION_SECRET` (legacy), so it can verify the cookie.
 - `token` / `jwt` / `cookie_or_jwt` / `session_or_token` / `session_and_token`: useful for cross-origin deployments and non-browser/internal
   clients. Credentials can be delivered via:
-  - query param: `?token=...` (or `?apiKey=...` for API-key auth),
+  - query param: `?token=...` (or `?apiKey=...` for compatibility),
   - `Authorization: Bearer <token>` (JWT), or
   - an additional `Sec-WebSocket-Protocol` entry `aero-l2-token.<credential>` (offered alongside
     `aero-l2-tunnel-v1`; requires the credential be valid for the WebSocket subprotocol token grammar;
@@ -193,7 +193,7 @@ supports multiple auth modes via `AERO_L2_AUTH_MODE`:
   - Optional JWT validation: set `AERO_L2_JWT_AUDIENCE` and/or `AERO_L2_JWT_ISSUER` (when set, claims must match).
 - Compatibility aliases: `cookie`→`session`, `api_key`→`token`, `cookie_or_api_key`→`session_or_token`,
   `cookie_and_api_key`→`session_and_token`.
-- `AERO_L2_TOKEN` is a legacy alias for API-key auth (used when `AERO_L2_AUTH_MODE` is unset and also
+- `AERO_L2_TOKEN` is a legacy alias for token auth (used when `AERO_L2_AUTH_MODE` is unset and also
   accepted as a fallback value for `AERO_L2_API_KEY` in `token` mode; legacy alias `api_key`).
 
 When using the gateway session bootstrap, prefer `endpoints.l2` from `POST /session` instead of

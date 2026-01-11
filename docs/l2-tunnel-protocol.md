@@ -323,7 +323,7 @@ Notes:
     default to `session_or_token` (so browser cookie auth works, and internal bridge tokens can be added without breaking it).
   - Else if a token is configured (`AERO_L2_API_KEY` / `AERO_L2_TOKEN`), default to `token`.
   - Else refuse to start unless `AERO_L2_OPEN=1` and `AERO_L2_INSECURE_ALLOW_NO_AUTH=1`.
-- `AERO_L2_TOKEN` is a legacy alias for API-key auth when `AERO_L2_AUTH_MODE` is unset (and is also
+- `AERO_L2_TOKEN` is a legacy alias for token auth when `AERO_L2_AUTH_MODE` is unset (and is also
   accepted as a fallback value for `AERO_L2_API_KEY`).
 
 Credential sources supported by `aero-l2-proxy` (WebSocket upgrade time):
@@ -349,7 +349,7 @@ To bound abuse and accidental infinite loops, the proxy applies coarse, best-eff
 - `AERO_L2_MAX_CONNECTIONS_PER_SESSION` (default: `0` = disabled): concurrent tunnel cap per
   authenticated session (`aero_session` cookie `sid` or JWT `sid`).
   - Legacy alias: `AERO_L2_MAX_TUNNELS_PER_SESSION`.
-  - Token-only (API key) connections rely on `AERO_L2_MAX_CONNECTIONS`.
+  - Token-only connections rely on `AERO_L2_MAX_CONNECTIONS`.
   - When exceeded, upgrades are rejected with **HTTP 429**.
 - `AERO_L2_MAX_BYTES_PER_CONNECTION` (default: `0` = unlimited): total bytes per connection (rx + tx).
 - `AERO_L2_MAX_FRAMES_PER_SECOND` (default: `0` = unlimited): inbound messages per second per connection.
