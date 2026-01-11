@@ -1,14 +1,14 @@
-import type { AsyncSectorDisk } from "../storage/disk";
-import { IdbRemoteChunkCache } from "../storage/idb_remote_chunk_cache";
-import { pickDefaultBackend, type DiskBackend } from "../storage/metadata";
-import { OpfsLruChunkCache } from "../storage/remote/opfs_lru_chunk_cache";
-import { RemoteCacheManager, type RemoteCacheKeyParts } from "../storage/remote_cache_manager";
+import type { AsyncSectorDisk } from "../storage/disk.ts";
+import { IdbRemoteChunkCache } from "../storage/idb_remote_chunk_cache.ts";
+import { pickDefaultBackend, type DiskBackend } from "../storage/metadata.ts";
+import { OpfsLruChunkCache } from "../storage/remote/opfs_lru_chunk_cache.ts";
+import { RemoteCacheManager, type RemoteCacheKeyParts } from "../storage/remote_cache_manager.ts";
 import {
   DEFAULT_LEASE_REFRESH_MARGIN_MS,
   DiskAccessLeaseRefresher,
   fetchWithDiskAccessLease,
   type DiskAccessLease,
-} from "../storage/disk_access_lease";
+} from "../storage/disk_access_lease.ts";
 
 export type ByteRange = { start: number; end: number };
 

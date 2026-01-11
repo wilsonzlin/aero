@@ -1,4 +1,4 @@
-import { idbReq, idbTxDone, openDiskManagerDb } from "./metadata";
+import { idbReq, idbTxDone, openDiskManagerDb } from "./metadata.ts";
 
 export type RemoteChunkCacheSignature = {
   imageId: string;
@@ -138,12 +138,22 @@ async function enforceCacheLimitInTx(opts: {
  * - Store: `remote_chunk_meta` (keyPath: "cacheKey")
  */
 export class IdbRemoteChunkCache {
+  private readonly db: IDBDatabase;
+  private readonly cacheKey: string;
+  private readonly signature: RemoteChunkCacheSignature;
+  private readonly cacheLimitBytes: number | null;
+
   private constructor(
-    private readonly db: IDBDatabase,
-    private readonly cacheKey: string,
-    private readonly signature: RemoteChunkCacheSignature,
-    private readonly cacheLimitBytes: number | null,
-  ) {}
+    db: IDBDatabase,
+    cacheKey: string,
+    signature: RemoteChunkCacheSignature,
+    cacheLimitBytes: number | null,
+  ) {
+    this.db = db;
+    this.cacheKey = cacheKey;
+    this.signature = signature;
+    this.cacheLimitBytes = cacheLimitBytes;
+  }
 
   static async open(opts: {
     cacheKey: string;

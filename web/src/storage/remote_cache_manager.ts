@@ -218,11 +218,10 @@ function validatorsMatch(a: RemoteCacheMetaV1["validators"], b: RemoteCacheMetaV
 
 export class RemoteCacheManager {
   private readonly now: () => number;
+  private readonly rootDir: RemoteCacheDirectoryHandle;
 
-  constructor(
-    private readonly rootDir: RemoteCacheDirectoryHandle,
-    opts: { now?: () => number } = {},
-  ) {
+  constructor(rootDir: RemoteCacheDirectoryHandle, opts: { now?: () => number } = {}) {
+    this.rootDir = rootDir;
     this.now = opts.now ?? (() => Date.now());
   }
 
