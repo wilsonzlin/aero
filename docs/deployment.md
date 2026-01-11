@@ -66,6 +66,7 @@ Currently validated files:
 - `deploy/vercel.json`
 - `deploy/caddy/Caddyfile`
 - `deploy/nginx/nginx.conf`
+- `deploy/k8s/chart/aero-gateway/values.yaml`
 
 ```bash
 npm ci

@@ -5,9 +5,10 @@ export function setupSecurityHeaders(app: FastifyInstance): void {
     reply.header('x-content-type-options', 'nosniff');
     reply.header('referrer-policy', 'no-referrer');
     reply.header('x-frame-options', 'DENY');
-    // Baseline: explicitly disable high-risk powerful features unless/when the
-    // frontend opts in (e.g. microphone for audio input).
-    reply.header('permissions-policy', 'camera=(), microphone=(), geolocation=()');
+    // Baseline: allow only explicitly listed powerful features.
+    // Note that Permissions-Policy does not grant permission on its own; it only
+    // controls whether the origin is allowed to request it.
+    reply.header('permissions-policy', 'camera=(), geolocation=(), microphone=(self)');
     return payload;
   });
 }

@@ -138,6 +138,8 @@ CI validates that the following stay in sync with the canonical values:
   - Vercel (`vercel.json`):
     - `vercel.json` (repo root)
     - `deploy/vercel.json` (headers-only template)
+  - Kubernetes (Helm chart defaults):
+    - `deploy/k8s/chart/aero-gateway/values.yaml`
   - `deploy/caddy/Caddyfile`
   - `deploy/nginx/nginx.conf`
 
