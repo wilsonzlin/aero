@@ -403,16 +403,13 @@ static const void* GetDeviceCallbacks(const D3D11DDIARG_CREATEDEVICE* cd) {
     return nullptr;
   }
   if constexpr (has_member_pCallbacks<D3D11DDIARG_CREATEDEVICE>::value) {
-    return cd->pCallbacks;
+    if (cd->pCallbacks) {
+      return cd->pCallbacks;
+    }
   }
   if constexpr (has_member_pDeviceCallbacks<D3D11DDIARG_CREATEDEVICE>::value) {
     if (cd->pDeviceCallbacks) {
       return cd->pDeviceCallbacks;
-    }
-  }
-  if constexpr (has_member_pCallbacks<D3D11DDIARG_CREATEDEVICE>::value) {
-    if (cd->pCallbacks) {
-      return cd->pCallbacks;
     }
   }
   if constexpr (has_member_pUMCallbacks<D3D11DDIARG_CREATEDEVICE>::value) {
@@ -5205,6 +5202,10 @@ HRESULT AEROGPU_APIENTRY Present11(D3D11DDI_HDEVICECONTEXT hCtx, const D3D10DDIA
 #endif
 
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_present>(AEROGPU_CMD_PRESENT);
+  if (!cmd) {
+    dev->cmd.reset();
+    return E_OUTOFMEMORY;
+  }
   cmd->scanout_id = 0;
   bool vsync = (pPresent->SyncInterval != 0);
   if (vsync && dev->adapter && dev->adapter->umd_private_valid) {
