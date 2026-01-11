@@ -258,6 +258,67 @@ describe("tcp-mux browser client integration", () => {
     }
   });
 
+  it("drops queued DATA when a stream is locally RST before the queue flushes", async () => {
+    const server = http.createServer();
+
+    const wss = new WebSocketServer({
+      server,
+      path: "/tcp-mux",
+      handleProtocols: (protocols) => (protocols.has(TCP_MUX_SUBPROTOCOL) ? TCP_MUX_SUBPROTOCOL : false),
+    });
+
+    let client: WebSocketTcpMuxProxyClient | null = null;
+    try {
+      const port = await listen(server, "127.0.0.1");
+      client = new WebSocketTcpMuxProxyClient(`http://127.0.0.1:${port}`);
+
+      const serverWs = await withTimeout(
+        new Promise<any>((resolve) => wss.once("connection", (ws) => resolve(ws))),
+        2_000,
+        "expected WebSocket connection",
+      );
+
+      const parser = new TcpMuxFrameParser();
+
+      const rstObserved = new Promise<void>((resolve, reject) => {
+        const onMessage = (data: unknown) => {
+          const chunk =
+            typeof data === "string"
+              ? Buffer.from(data, "utf8")
+              : Array.isArray(data)
+                ? Buffer.concat(data as Buffer[])
+                : Buffer.from(data as ArrayBuffer);
+
+          for (const frame of parser.push(chunk)) {
+            if (frame.msgType === TcpMuxMsgType.CLOSE && frame.streamId === 1) {
+              serverWs.off("message", onMessage);
+              resolve();
+              return;
+            }
+            reject(new Error(`unexpected frame before RST: msgType=${frame.msgType} streamId=${frame.streamId}`));
+            return;
+          }
+        };
+
+        serverWs.on("message", onMessage);
+        serverWs.once("error", reject);
+      });
+
+      // Queue OPEN + DATA then immediately RST the stream before the internal
+      // microtask flush runs. The client should purge the queued DATA/OPEN and
+      // only send CLOSE(RST).
+      client.open(1, "example.com", 80);
+      client.send(1, new TextEncoder().encode("hello"));
+      client.close(1, { rst: true });
+
+      await withTimeout(rstObserved, 2_000, "expected CLOSE frame after RST");
+    } finally {
+      await client?.shutdown().catch(() => {});
+      await new Promise<void>((resolve) => wss.close(() => resolve()));
+      await closeServer(server);
+    }
+  });
+
   it("OPEN encoding matches the gateway's expectations", () => {
     // Lightweight invariant test: ensure OPEN payload encoder can be decoded by
     // the gateway-side codec. This catches accidental endianness regressions.
