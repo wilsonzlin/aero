@@ -2,7 +2,7 @@
 //
 // Source of truth: `drivers/aerogpu/protocol/aerogpu_cmd.h`.
 
-import { parseAndValidateAbiVersionU32 } from "./aerogpu_pci.ts";
+import { AEROGPU_ABI_VERSION_U32, parseAndValidateAbiVersionU32 } from "./aerogpu_pci.ts";
 
 export type AerogpuHandle = number;
 
@@ -79,7 +79,6 @@ export const AerogpuCmdOpcode = {
   SetVertexBuffers: 0x500,
   SetIndexBuffer: 0x501,
   SetPrimitiveTopology: 0x502,
-
   SetTexture: 0x510,
   SetSamplerState: 0x511,
   SetRenderState: 0x512,
@@ -214,4 +213,267 @@ export function decodeCmdHdr(view: DataView, byteOffset = 0): AerogpuCmdHdr {
   }
 
   return { opcode, sizeBytes };
+}
+
+export const AEROGPU_MAX_RENDER_TARGETS = 8;
+
+export interface AerogpuVertexBufferBinding {
+  buffer: AerogpuHandle;
+  strideBytes: number;
+  offsetBytes: number;
+}
+
+function alignUp(v: number, a: number): number {
+  return (v + (a - 1)) & ~(a - 1);
+}
+
+/**
+ * Safe command stream builder for `aerogpu_cmd.h`.
+ *
+ * Primarily intended for tests/fixtures and host-side tooling.
+ */
+export class AerogpuCmdWriter {
+  private buf: ArrayBuffer = new ArrayBuffer(0);
+  private view: DataView = new DataView(this.buf);
+  private len = 0;
+
+  constructor() {
+    this.reset();
+  }
+
+  reset(): void {
+    this.buf = new ArrayBuffer(AEROGPU_CMD_STREAM_HEADER_SIZE);
+    this.view = new DataView(this.buf);
+    this.len = AEROGPU_CMD_STREAM_HEADER_SIZE;
+
+    this.view.setUint32(AEROGPU_CMD_STREAM_HEADER_OFF_MAGIC, AEROGPU_CMD_STREAM_MAGIC, true);
+    this.view.setUint32(AEROGPU_CMD_STREAM_HEADER_OFF_ABI_VERSION, AEROGPU_ABI_VERSION_U32, true);
+    this.view.setUint32(AEROGPU_CMD_STREAM_HEADER_OFF_SIZE_BYTES, this.len, true);
+    this.view.setUint32(AEROGPU_CMD_STREAM_HEADER_OFF_FLAGS, 0, true);
+  }
+
+  finish(): Uint8Array {
+    this.view.setUint32(AEROGPU_CMD_STREAM_HEADER_OFF_SIZE_BYTES, this.len, true);
+    return new Uint8Array(this.buf, 0, this.len).slice();
+  }
+
+  private ensureCapacity(capacity: number): void {
+    if (this.buf.byteLength >= capacity) return;
+    let newCap = this.buf.byteLength;
+    while (newCap < capacity) newCap = Math.max(64, newCap * 2);
+    const next = new ArrayBuffer(newCap);
+    new Uint8Array(next).set(new Uint8Array(this.buf, 0, this.len));
+    this.buf = next;
+    this.view = new DataView(this.buf);
+  }
+
+  private appendRaw(opcode: AerogpuCmdOpcode, cmdSize: number): number {
+    const alignedSize = alignUp(cmdSize, 4);
+    const offset = this.len;
+    this.ensureCapacity(offset + alignedSize);
+    new Uint8Array(this.buf, offset, alignedSize).fill(0);
+    this.view.setUint32(offset + AEROGPU_CMD_HDR_OFF_OPCODE, opcode, true);
+    this.view.setUint32(offset + AEROGPU_CMD_HDR_OFF_SIZE_BYTES, alignedSize, true);
+    this.len += alignedSize;
+    return offset;
+  }
+
+  createBuffer(
+    bufferHandle: AerogpuHandle,
+    usageFlags: number,
+    sizeBytes: bigint,
+    backingAllocId: number,
+    backingOffsetBytes: number,
+  ): void {
+    const base = this.appendRaw(AerogpuCmdOpcode.CreateBuffer, AEROGPU_CMD_CREATE_BUFFER_SIZE);
+    this.view.setUint32(base + 8, bufferHandle, true);
+    this.view.setUint32(base + 12, usageFlags, true);
+    this.view.setBigUint64(base + 16, sizeBytes, true);
+    this.view.setUint32(base + 24, backingAllocId, true);
+    this.view.setUint32(base + 28, backingOffsetBytes, true);
+  }
+
+  createTexture2d(
+    textureHandle: AerogpuHandle,
+    usageFlags: number,
+    format: number,
+    width: number,
+    height: number,
+    mipLevels: number,
+    arrayLayers: number,
+    rowPitchBytes: number,
+    backingAllocId: number,
+    backingOffsetBytes: number,
+  ): void {
+    const base = this.appendRaw(AerogpuCmdOpcode.CreateTexture2d, AEROGPU_CMD_CREATE_TEXTURE2D_SIZE);
+    this.view.setUint32(base + 8, textureHandle, true);
+    this.view.setUint32(base + 12, usageFlags, true);
+    this.view.setUint32(base + 16, format, true);
+    this.view.setUint32(base + 20, width, true);
+    this.view.setUint32(base + 24, height, true);
+    this.view.setUint32(base + 28, mipLevels, true);
+    this.view.setUint32(base + 32, arrayLayers, true);
+    this.view.setUint32(base + 36, rowPitchBytes, true);
+    this.view.setUint32(base + 40, backingAllocId, true);
+    this.view.setUint32(base + 44, backingOffsetBytes, true);
+  }
+
+  destroyResource(resourceHandle: AerogpuHandle): void {
+    const base = this.appendRaw(AerogpuCmdOpcode.DestroyResource, AEROGPU_CMD_DESTROY_RESOURCE_SIZE);
+    this.view.setUint32(base + 8, resourceHandle, true);
+  }
+
+  resourceDirtyRange(resourceHandle: AerogpuHandle, offsetBytes: bigint, sizeBytes: bigint): void {
+    const base = this.appendRaw(AerogpuCmdOpcode.ResourceDirtyRange, AEROGPU_CMD_RESOURCE_DIRTY_RANGE_SIZE);
+    this.view.setUint32(base + 8, resourceHandle, true);
+    this.view.setBigUint64(base + 16, offsetBytes, true);
+    this.view.setBigUint64(base + 24, sizeBytes, true);
+  }
+
+  uploadResource(resourceHandle: AerogpuHandle, offsetBytes: bigint, data: Uint8Array): void {
+    const unpadded = AEROGPU_CMD_UPLOAD_RESOURCE_SIZE + data.byteLength;
+    const base = this.appendRaw(AerogpuCmdOpcode.UploadResource, unpadded);
+    this.view.setUint32(base + 8, resourceHandle, true);
+    this.view.setBigUint64(base + 16, offsetBytes, true);
+    this.view.setBigUint64(base + 24, BigInt(data.byteLength), true);
+    new Uint8Array(this.buf, base + AEROGPU_CMD_UPLOAD_RESOURCE_SIZE, data.byteLength).set(data);
+  }
+
+  createShaderDxbc(shaderHandle: AerogpuHandle, stage: AerogpuShaderStage, dxbcBytes: Uint8Array): void {
+    const unpadded = AEROGPU_CMD_CREATE_SHADER_DXBC_SIZE + dxbcBytes.byteLength;
+    const base = this.appendRaw(AerogpuCmdOpcode.CreateShaderDxbc, unpadded);
+    this.view.setUint32(base + 8, shaderHandle, true);
+    this.view.setUint32(base + 12, stage, true);
+    this.view.setUint32(base + 16, dxbcBytes.byteLength, true);
+    new Uint8Array(this.buf, base + AEROGPU_CMD_CREATE_SHADER_DXBC_SIZE, dxbcBytes.byteLength).set(dxbcBytes);
+  }
+
+  destroyShader(shaderHandle: AerogpuHandle): void {
+    const base = this.appendRaw(AerogpuCmdOpcode.DestroyShader, AEROGPU_CMD_DESTROY_SHADER_SIZE);
+    this.view.setUint32(base + 8, shaderHandle, true);
+  }
+
+  bindShaders(vs: AerogpuHandle, ps: AerogpuHandle, cs: AerogpuHandle): void {
+    const base = this.appendRaw(AerogpuCmdOpcode.BindShaders, AEROGPU_CMD_BIND_SHADERS_SIZE);
+    this.view.setUint32(base + 8, vs, true);
+    this.view.setUint32(base + 12, ps, true);
+    this.view.setUint32(base + 16, cs, true);
+  }
+
+  createInputLayout(inputLayoutHandle: AerogpuHandle, blob: Uint8Array): void {
+    const unpadded = AEROGPU_CMD_CREATE_INPUT_LAYOUT_SIZE + blob.byteLength;
+    const base = this.appendRaw(AerogpuCmdOpcode.CreateInputLayout, unpadded);
+    this.view.setUint32(base + 8, inputLayoutHandle, true);
+    this.view.setUint32(base + 12, blob.byteLength, true);
+    new Uint8Array(this.buf, base + AEROGPU_CMD_CREATE_INPUT_LAYOUT_SIZE, blob.byteLength).set(blob);
+  }
+
+  destroyInputLayout(inputLayoutHandle: AerogpuHandle): void {
+    const base = this.appendRaw(AerogpuCmdOpcode.DestroyInputLayout, AEROGPU_CMD_DESTROY_INPUT_LAYOUT_SIZE);
+    this.view.setUint32(base + 8, inputLayoutHandle, true);
+  }
+
+  setInputLayout(inputLayoutHandle: AerogpuHandle): void {
+    const base = this.appendRaw(AerogpuCmdOpcode.SetInputLayout, AEROGPU_CMD_SET_INPUT_LAYOUT_SIZE);
+    this.view.setUint32(base + 8, inputLayoutHandle, true);
+  }
+
+  setRenderTargets(colors: readonly AerogpuHandle[], depthStencil: AerogpuHandle): void {
+    if (colors.length > AEROGPU_MAX_RENDER_TARGETS) {
+      throw new Error(`too many render targets: ${colors.length}`);
+    }
+    const base = this.appendRaw(AerogpuCmdOpcode.SetRenderTargets, AEROGPU_CMD_SET_RENDER_TARGETS_SIZE);
+    this.view.setUint32(base + 8, colors.length, true);
+    this.view.setUint32(base + 12, depthStencil, true);
+    for (let i = 0; i < colors.length; i++) {
+      this.view.setUint32(base + 16 + i * 4, colors[i], true);
+    }
+  }
+
+  setViewport(x: number, y: number, width: number, height: number, minDepth: number, maxDepth: number): void {
+    const base = this.appendRaw(AerogpuCmdOpcode.SetViewport, AEROGPU_CMD_SET_VIEWPORT_SIZE);
+    this.view.setFloat32(base + 8, x, true);
+    this.view.setFloat32(base + 12, y, true);
+    this.view.setFloat32(base + 16, width, true);
+    this.view.setFloat32(base + 20, height, true);
+    this.view.setFloat32(base + 24, minDepth, true);
+    this.view.setFloat32(base + 28, maxDepth, true);
+  }
+
+  setScissor(x: number, y: number, width: number, height: number): void {
+    const base = this.appendRaw(AerogpuCmdOpcode.SetScissor, AEROGPU_CMD_SET_SCISSOR_SIZE);
+    this.view.setInt32(base + 8, x, true);
+    this.view.setInt32(base + 12, y, true);
+    this.view.setInt32(base + 16, width, true);
+    this.view.setInt32(base + 20, height, true);
+  }
+
+  setVertexBuffers(startSlot: number, bindings: readonly AerogpuVertexBufferBinding[]): void {
+    const unpadded = AEROGPU_CMD_SET_VERTEX_BUFFERS_SIZE + bindings.length * 16;
+    const base = this.appendRaw(AerogpuCmdOpcode.SetVertexBuffers, unpadded);
+    this.view.setUint32(base + 8, startSlot, true);
+    this.view.setUint32(base + 12, bindings.length, true);
+    for (let i = 0; i < bindings.length; i++) {
+      const b = bindings[i];
+      const off = base + AEROGPU_CMD_SET_VERTEX_BUFFERS_SIZE + i * 16;
+      this.view.setUint32(off + 0, b.buffer, true);
+      this.view.setUint32(off + 4, b.strideBytes, true);
+      this.view.setUint32(off + 8, b.offsetBytes, true);
+    }
+  }
+
+  setIndexBuffer(buffer: AerogpuHandle, format: AerogpuIndexFormat, offsetBytes: number): void {
+    const base = this.appendRaw(AerogpuCmdOpcode.SetIndexBuffer, AEROGPU_CMD_SET_INDEX_BUFFER_SIZE);
+    this.view.setUint32(base + 8, buffer, true);
+    this.view.setUint32(base + 12, format, true);
+    this.view.setUint32(base + 16, offsetBytes, true);
+  }
+
+  setPrimitiveTopology(topology: AerogpuPrimitiveTopology): void {
+    const base = this.appendRaw(AerogpuCmdOpcode.SetPrimitiveTopology, AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY_SIZE);
+    this.view.setUint32(base + 8, topology, true);
+  }
+
+  clear(flags: number, colorRgba: [number, number, number, number], depth: number, stencil: number): void {
+    const base = this.appendRaw(AerogpuCmdOpcode.Clear, AEROGPU_CMD_CLEAR_SIZE);
+    this.view.setUint32(base + 8, flags, true);
+    for (let i = 0; i < 4; i++) {
+      this.view.setFloat32(base + 12 + i * 4, colorRgba[i], true);
+    }
+    this.view.setFloat32(base + 28, depth, true);
+    this.view.setUint32(base + 32, stencil, true);
+  }
+
+  draw(vertexCount: number, instanceCount: number, firstVertex: number, firstInstance: number): void {
+    const base = this.appendRaw(AerogpuCmdOpcode.Draw, AEROGPU_CMD_DRAW_SIZE);
+    this.view.setUint32(base + 8, vertexCount, true);
+    this.view.setUint32(base + 12, instanceCount, true);
+    this.view.setUint32(base + 16, firstVertex, true);
+    this.view.setUint32(base + 20, firstInstance, true);
+  }
+
+  drawIndexed(
+    indexCount: number,
+    instanceCount: number,
+    firstIndex: number,
+    baseVertex: number,
+    firstInstance: number,
+  ): void {
+    const base = this.appendRaw(AerogpuCmdOpcode.DrawIndexed, AEROGPU_CMD_DRAW_INDEXED_SIZE);
+    this.view.setUint32(base + 8, indexCount, true);
+    this.view.setUint32(base + 12, instanceCount, true);
+    this.view.setUint32(base + 16, firstIndex, true);
+    this.view.setInt32(base + 20, baseVertex, true);
+    this.view.setUint32(base + 24, firstInstance, true);
+  }
+
+  present(scanoutId: number, flags: number): void {
+    const base = this.appendRaw(AerogpuCmdOpcode.Present, AEROGPU_CMD_PRESENT_SIZE);
+    this.view.setUint32(base + 8, scanoutId, true);
+    this.view.setUint32(base + 12, flags, true);
+  }
+
+  flush(): void {
+    this.appendRaw(AerogpuCmdOpcode.Flush, AEROGPU_CMD_FLUSH_SIZE);
+  }
 }
