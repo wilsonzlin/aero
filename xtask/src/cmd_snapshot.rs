@@ -114,8 +114,8 @@ fn cmd_inspect(args: Vec<String>) -> Result<()> {
     println!("Sections:");
     for section in &index.sections {
         println!(
-            "  - {} v{} len={} @0x{:x}",
-            section.id, section.version, section.len, section.offset
+            "  - {} v{} flags={} len={} @0x{:x}",
+            section.id, section.version, section.flags, section.len, section.offset
         );
     }
 
@@ -386,8 +386,14 @@ fn validate_vcpu_entry(entry_reader: &mut impl Read, version: u16) -> Result<()>
         ));
     }
 
-    std::io::copy(&mut entry_reader.take(internal_len), &mut std::io::sink())
+    let mut internal_reader = entry_reader.take(internal_len);
+    std::io::copy(&mut internal_reader, &mut std::io::sink())
         .map_err(|e| XtaskError::Message(format!("read vCPU internal state: {e}")))?;
+    if internal_reader.limit() != 0 {
+        return Err(XtaskError::Message(
+            "truncated vCPU internal state".to_string(),
+        ));
+    }
 
     Ok(())
 }
