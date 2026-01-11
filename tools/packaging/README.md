@@ -30,7 +30,7 @@ cd tools/packaging/aero_packager
 #     README.md
 #     THIRD_PARTY_NOTICES.md
 #     config/devices.cmd
-#     certs/*.{cer,crt,p7b}
+#     certs/*.{cer,crt,p7b}   (optional when --signing-policy none)
 #     licenses/** (optional; third-party license texts / attribution files)
 #
 # spec.json declares which drivers to include (required + optional) and expected HWID regexes.
@@ -41,8 +41,12 @@ cargo run --release -- \
   --spec /path/to/spec.json \
   --out-dir /path/to/out \
   --version 1.2.3 \
-  --build-id ci-123
+  --build-id ci-123 \
+  --signing-policy testsigning
 ```
+
+Use `--signing-policy none` (or `AERO_GUEST_TOOLS_SIGNING_POLICY=none`) to build Guest Tools
+media for WHQL/production-signed drivers without requiring any certificate files.
 
 ## Building Guest Tools from `virtio-win.iso` (Win7 virtio drivers)
 

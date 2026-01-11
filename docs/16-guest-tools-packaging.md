@@ -59,8 +59,8 @@ guest-tools/
   licenses/ (optional)
   config/
     devices.cmd
-  certs/
-    *.{cer,crt,p7b}
+  certs/ (optional when signing_policy=none)
+    *.{cer,crt,p7b}   (optional)
 ```
 
 ## Outputs
@@ -86,8 +86,8 @@ The ISO/zip root layout matches what `guest-tools/setup.cmd` expects:
   manifest.json
   config/
     devices.cmd
-  certs/
-    *.{cer,crt,p7b}
+  certs/ (optional)
+    *.{cer,crt,p7b}   (optional)
   licenses/ (optional)
   drivers/
     x86/
@@ -143,8 +143,15 @@ SOURCE_DATE_EPOCH=0 cargo run --release -- \
   --spec /path/to/spec.json \
   --out-dir /path/to/out \
   --version 1.2.3 \
-  --build-id local
+  --build-id local \
+  --signing-policy testsigning
 ```
+
+Signing policy notes:
+
+- `--signing-policy testsigning` (default): media is intended for test-signed/custom-signed drivers; `setup.cmd` may prompt to enable Test Signing on Win7 x64 and the packager requires at least one public cert under `certs/`.
+- `--signing-policy nointegritychecks`: media may prompt to enable `nointegritychecks` on Win7 x64; also requires at least one public cert under `certs/`.
+- `--signing-policy none`: media is intended for WHQL/production-signed drivers; `setup.cmd` does **not** prompt to enable Test Mode / `nointegritychecks` by default and the packager allows packaging with **zero** cert files.
 
 ### Building Guest Tools from an upstream virtio-win ISO (Win7 virtio drivers)
 

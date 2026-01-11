@@ -809,6 +809,8 @@ try {
         parse_ok = $false
         schema_version = $null
         package = $null
+        signing_policy = $null
+        certs_required = $null
         files_listed = 0
         files_checked = 0
         missing_files = @()
@@ -857,6 +859,13 @@ try {
                 version = $version
                 build_id = $buildId
                 source_date_epoch = $sde
+            }
+
+            if ($parsed.ContainsKey("signing_policy")) {
+                $mediaIntegrity.signing_policy = "" + $parsed["signing_policy"]
+            }
+            if ($parsed.ContainsKey("certs_required")) {
+                $mediaIntegrity.certs_required = $parsed["certs_required"]
             }
 
             $files = $null
@@ -1289,6 +1298,21 @@ try {
 
 # --- Certificate store (driver signing trust) ---
 try {
+    $certsRequired = $null
+    $signingPolicy = $null
+    if ($report.media_integrity -and ($report.media_integrity -is [hashtable]) -and $report.media_integrity.ContainsKey("parse_ok") -and ($report.media_integrity.parse_ok -eq $true)) {
+        if ($report.media_integrity.ContainsKey("signing_policy") -and $report.media_integrity.signing_policy) {
+            $signingPolicy = "" + $report.media_integrity.signing_policy
+        }
+        if ($report.media_integrity.ContainsKey("certs_required") -and ($report.media_integrity.certs_required -ne $null)) {
+            # manifest.json uses a JSON boolean; Parse-JsonCompat returns a native boolean.
+            $certsRequired = [bool]$report.media_integrity.certs_required
+        }
+        if (($certsRequired -eq $null) -and $signingPolicy -and ($signingPolicy.ToLower() -eq "none")) {
+            $certsRequired = $false
+        }
+    }
+
     $certSearchDirs = @($scriptDir)
     $certDir = Join-Path $scriptDir "certs"
     if (Test-Path $certDir) { $certSearchDirs += $certDir }
@@ -1358,9 +1382,15 @@ try {
     $missingSetupThumbprints = @($setupCertChecks | Where-Object { (-not $_.local_machine_root) -or (-not $_.local_machine_trusted_publisher) })
 
     if ((-not $certFiles -or $certFiles.Count -eq 0) -and $setupCertChecks.Count -eq 0) {
-        $certStatus = "WARN"
-        $certSummary = "No certificate files found under Guest Tools root/certs and no installed cert list found; unable to verify certificate store."
-        $certDetails += "Run verify.cmd from the Guest Tools media (or copy the full ISO contents) so certs\\ is present."
+        if ($certsRequired -eq $false) {
+            $certStatus = "PASS"
+            $certSummary = "No certificate files found under Guest Tools root/certs, and none are required by signing_policy=none."
+            $certDetails += "If you are using custom-signed/test-signed drivers, rebuild Guest Tools with a cert under certs\\ and signing_policy=testsigning."
+        } else {
+            $certStatus = "WARN"
+            $certSummary = "No certificate files found under Guest Tools root/certs and no installed cert list found; unable to verify certificate store."
+            $certDetails += "Run verify.cmd from the Guest Tools media (or copy the full ISO contents) so certs\\ is present."
+        }
     } elseif (-not $certFiles -or $certFiles.Count -eq 0) {
         $certSummary = "No certificate files found under Guest Tools root/certs; verifying only certificates recorded by setup.cmd."
         if ($missingSetupThumbprints.Count -gt 0) {
@@ -1394,6 +1424,8 @@ try {
         script_dir = $scriptDir
         search_dirs = $certSearchDirs
         cert_files = @($certFiles | ForEach-Object { $_.FullName })
+        signing_policy = $signingPolicy
+        certs_required = $certsRequired
         certificates = $certResults
         installed_certs_from_setup = $setupCertChecks
     }

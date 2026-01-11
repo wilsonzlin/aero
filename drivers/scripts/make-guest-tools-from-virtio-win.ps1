@@ -12,6 +12,9 @@ param(
 
   [string]$BuildId = "local",
 
+  [ValidateSet("none", "testsigning", "nointegritychecks")]
+  [string]$SigningPolicy = "none",
+
   # Optional: override which driver packages are extracted from virtio-win.
   [string[]]$Drivers,
 
@@ -180,6 +183,17 @@ if (-not (Test-Path -LiteralPath $guestToolsNoticesStage -PathType Leaf)) {
 Write-Host "Guest Tools input staged:"
 Write-Host "  $guestToolsStageDir"
 
+# For WHQL/production-signed driver bundles (virtio-win), do not ship/install any
+# custom root certificates by default.
+if ($SigningPolicy -eq "none") {
+  $certsDir = Join-Path $guestToolsStageDir "certs"
+  if (Test-Path -LiteralPath $certsDir -PathType Container) {
+    Get-ChildItem -LiteralPath $certsDir -File -ErrorAction SilentlyContinue |
+      Where-Object { $_.Extension -in @(".cer", ".crt", ".p7b") } |
+      Remove-Item -Force -ErrorAction SilentlyContinue
+  }
+}
+
 # 4) Build the actual Guest Tools ISO/zip using the in-repo packager.
 Require-Command -Name "cargo" | Out-Null
 
@@ -200,7 +214,8 @@ Write-Host "  out  : $OutDir"
   --spec $SpecPath `
   --out-dir $OutDir `
   --version $Version `
-  --build-id $BuildId
+  --build-id $BuildId `
+  --signing-policy $SigningPolicy
 if ($LASTEXITCODE -ne 0) {
   throw "aero_packager failed (exit $LASTEXITCODE)."
 }
