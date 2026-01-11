@@ -1,10 +1,13 @@
 /* SPDX-License-Identifier: MIT OR Apache-2.0 */
 /*
- * Legacy split virtqueue implementation (vring) for virtio-pci
- * legacy/transitional devices.
+ * Split virtqueue ("vring") implementation for virtio 1.0 split rings.
  *
- * Aero contract v1 (modern-only) drivers must use the shared split virtqueue
- * engine under `drivers/windows/virtio/common/virtqueue_split.{c,h}` instead.
+ * Despite the `_legacy` filename, this code is transport-agnostic and is used by
+ * Aero's Windows 7 virtio drivers (virtio-pci modern BAR0 MMIO) as the shared
+ * descriptor/ring management layer.
+ *
+ * The `_legacy` suffix exists solely to avoid a repository-wide filename clash
+ * with `drivers/windows/virtio/common/virtqueue_split.h`.
  *
  * This implements the in-memory ring layout and descriptor management. It does
  * not perform transport-specific operations (like kicking via PCI notify).

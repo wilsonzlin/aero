@@ -12,8 +12,8 @@ At a high level, Aero drivers use two virtio-pci transport styles:
 
 This directory contains implementations and helpers for both. For modern virtio-pci on Windows there are two main consumer models:
 
-- **Miniport-style (NDIS / StorPort):** `virtio_pci_modern_miniport.*` (legacy; new drivers should use
-  `drivers/windows/virtio/pci-modern/` / `virtio_pci_modern_transport.*`)
+- **Miniport-style (NDIS / StorPort):** `virtio_pci_modern_miniport.*`
+  - WDF-free helper used by Aero's Windows 7 miniport drivers (NDIS / StorPort).
   - caller provides a BAR0 MMIO mapping and a PCI config snapshot
   - parses virtio vendor-specific capabilities (COMMON/NOTIFY/ISR/DEVICE) and provides helpers
     for `common_cfg` / notify / ISR / device config
@@ -31,7 +31,7 @@ And additional shared helpers:
 
 - **INTx helper (WDM):** `virtio_pci_intx_wdm.*` (ISR read-to-ack + DPC dispatch)
 - **Contract identity validation:** `virtio_pci_contract.*` (AERO-W7-VIRTIO v1 PCI identity)
-- **Split virtqueues (legacy):** `virtqueue_split_legacy.*` (portable split ring implementation retained for transitional/QEMU testing)
+- **Split virtqueues (vring):** `virtqueue_split_legacy.*` (shared split-ring descriptor/ring management; name avoids `virtqueue_split.h` collisions)
 - **Legacy queue helper:** `virtio_queue.*` (alloc + PFN queue programming + notify)
 
 For a WDM-focused modern transport bring-up guide (caps + BAR mapping + queues + INTx), see:
@@ -197,8 +197,9 @@ must link **exactly one** of them.
 ### Virtqueues
 
 - `include/virtqueue_split_legacy.h` + `src/virtqueue_split_legacy.c`
-  - Legacy portable split ring (`vring`) implementation (descriptor table + avail ring + used ring).
-  - Aero contract v1 drivers should use `drivers/windows/virtio/common/virtqueue_split.{c,h}` instead.
+  - Portable split ring (`vring`) implementation (descriptor table + avail ring + used ring).
+  - Used by Aero's Windows 7 virtio drivers for split-virtqueue descriptor management. The `_legacy`
+    suffix avoids a repository-wide filename clash with `virtqueue_split.h`.
 
 - `include/virtio_sg.h`
   - Shared scatter/gather entry type (`virtio_sg_entry_t`) used by legacy virtqueues and driver helpers.

@@ -4,20 +4,22 @@ Guardrail: prevent "virtqueue_split.h" include-path ambiguity in Windows 7 drive
 
 Background
 ----------
-Historically the repo had *two* different headers named "virtqueue_split.h":
-  - drivers/windows7/virtio/common/include/virtqueue_split.h  (legacy/transitional)
-  - drivers/windows/virtio/common/virtqueue_split.h           (modern shared engine)
+Historically the repo had *two* different headers named `virtqueue_split.h`:
+  - `drivers/windows7/virtio/common/include/virtqueue_split.h`
+  - `drivers/windows/virtio/common/virtqueue_split.h`
 
 That made header resolution depend on include path ordering, which is a footgun:
 drivers could silently compile against the wrong API.
 
 Policy
 ------
-Windows 7 drivers must use the canonical modern split virtqueue engine:
-  - drivers/windows/virtio/common/virtqueue_split.{c,h}
+To keep includes unambiguous:
+  - `drivers/windows/virtio/common/virtqueue_split.h` is the *only* header with that
+    name in-tree, and
+  - the Win7 common split-ring header is named `virtqueue_split_legacy.h`.
 
-The legacy split-ring implementation is kept for transitional/QEMU testing but its
-header must not be named "virtqueue_split.h".
+Drivers may include either header depending on which implementation they are using,
+but they must not rely on include path ordering to "pick the right one".
 """
 
 from __future__ import annotations
@@ -100,4 +102,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
