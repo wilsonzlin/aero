@@ -2114,6 +2114,9 @@ HRESULT AeroGpuWaitForFence(AeroGpuDevice* dev, uint64_t fence, uint32_t timeout
     return E_FAIL;
   }
 
+  // Waiting succeeded => the fence is at least complete even if we cannot query a monitored value.
+  atomic_max_u64(&dev->last_completed_fence, fence);
+
   (void)AeroGpuQueryCompletedFence(dev);
   return S_OK;
 #else
