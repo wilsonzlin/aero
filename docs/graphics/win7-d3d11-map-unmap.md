@@ -33,6 +33,21 @@ The concrete contract is:
 * fences must advance correctly, and
 * KMD lock/unlock must behave consistently (details in §6).
 
+### Bring-up fallback: host-owned Map/Unmap without LockCb
+
+During early bring-up it is possible for the AeroGPU Win7 KMD to *not* expose `DxgkDdiLock` / `DxgkDdiUnlock` yet. In that case the runtime’s `pfnLockCb` / `pfnUnlockCb` path may be absent or fail, which would normally make `Map` unusable for dynamic updates.
+
+AeroGPU supports a **host-owned** update path for resources where the command stream sets:
+
+* `backing_alloc_id = 0` (host-allocated resource; no guest allocation table indirection)
+
+For these resources, the UMD may implement write-style maps (`WRITE`, `WRITE_DISCARD`, `WRITE_NO_OVERWRITE`) by returning a pointer into an in-UMD shadow buffer (`Resource::storage`) and then emitting `AEROGPU_CMD_UPLOAD_RESOURCE` on `Unmap` to push the updated bytes to the host.
+
+Implications:
+
+* This fallback is intentionally **not** used for staging readback (`Map(READ)` / `READ_WRITE` on `D3D11_USAGE_STAGING`) because returning stale shadow bytes would violate readback correctness.
+* For host-owned write maps, the UMD can succeed without waiting even if the runtime lock path reports “still drawing”, because the CPU pointer is not a direct mapping of the WDDM allocation.
+
 ---
 
 ## 1) DDI entrypoints involved (UMD entrypoints + runtime callbacks)
