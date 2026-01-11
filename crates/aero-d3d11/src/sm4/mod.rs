@@ -9,6 +9,11 @@ pub const FOURCC_ISGN: FourCC = FourCC(*b"ISGN");
 pub const FOURCC_OSGN: FourCC = FourCC(*b"OSGN");
 pub const FOURCC_PSGN: FourCC = FourCC(*b"PSGN");
 
+pub mod decode;
+pub mod opcode;
+
+pub use decode::{decode_program, Sm4DecodeError};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShaderStage {
     Vertex,
@@ -82,6 +87,10 @@ impl Sm4Program {
             model,
             tokens,
         })
+    }
+
+    pub fn decode(&self) -> Result<crate::sm4_ir::Sm4Module, Sm4DecodeError> {
+        decode_program(self)
     }
 }
 

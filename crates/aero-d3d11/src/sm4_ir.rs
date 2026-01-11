@@ -7,7 +7,7 @@
 use crate::sm4::ShaderStage;
 
 /// A decoded SM4/SM5 module.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Sm4Module {
     /// Shader stage declared by the DXBC version token.
     pub stage: ShaderStage,
@@ -16,7 +16,7 @@ pub struct Sm4Module {
 }
 
 /// A single SM4/SM5 instruction.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Sm4Inst {
     Mov {
         dst: DstOperand,
@@ -48,6 +48,18 @@ pub enum Sm4Inst {
         a: SrcOperand,
         b: SrcOperand,
     },
+    Min {
+        dst: DstOperand,
+        a: SrcOperand,
+        b: SrcOperand,
+    },
+    Max {
+        dst: DstOperand,
+        a: SrcOperand,
+        b: SrcOperand,
+    },
+    Rcp { dst: DstOperand, src: SrcOperand },
+    Rsq { dst: DstOperand, src: SrcOperand },
     /// `sample dest, coord, t#, s#`
     Sample {
         dst: DstOperand,
@@ -128,20 +140,21 @@ pub enum OperandModifier {
     AbsNeg,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DstOperand {
     pub reg: RegisterRef,
     pub mask: WriteMask,
+    pub saturate: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SrcOperand {
     pub kind: SrcKind,
     pub swizzle: Swizzle,
     pub modifier: OperandModifier,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SrcKind {
     Register(RegisterRef),
     ConstantBuffer {

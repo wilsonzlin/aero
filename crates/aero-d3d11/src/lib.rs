@@ -23,7 +23,7 @@ pub use signature::{
     parse_signature_chunk, parse_signatures, DxbcSignature, DxbcSignatureParameter,
     ShaderSignatures, SignatureError,
 };
-pub use sm4::{ShaderModel, ShaderStage, Sm4Error, Sm4Program};
+pub use sm4::{ShaderModel, ShaderStage, Sm4DecodeError, Sm4Error, Sm4Program};
 pub use sm4_ir::{
     DstOperand, OperandModifier, RegFile, RegisterRef, SamplerRef, Sm4Inst, Sm4Module, SrcKind,
     SrcOperand, Swizzle, TextureRef, WriteMask,

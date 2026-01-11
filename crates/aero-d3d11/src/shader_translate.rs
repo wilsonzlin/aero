@@ -689,7 +689,9 @@ fn scan_resources(module: &Sm4Module) -> ResourceUsage {
             Sm4Inst::Add { dst: _, a, b }
             | Sm4Inst::Mul { dst: _, a, b }
             | Sm4Inst::Dp3 { dst: _, a, b }
-            | Sm4Inst::Dp4 { dst: _, a, b } => {
+            | Sm4Inst::Dp4 { dst: _, a, b }
+            | Sm4Inst::Min { dst: _, a, b }
+            | Sm4Inst::Max { dst: _, a, b } => {
                 scan_src(a);
                 scan_src(b);
             }
@@ -698,6 +700,7 @@ fn scan_resources(module: &Sm4Module) -> ResourceUsage {
                 scan_src(b);
                 scan_src(c);
             }
+            Sm4Inst::Rcp { dst: _, src } | Sm4Inst::Rsq { dst: _, src } => scan_src(src),
             Sm4Inst::Sample {
                 dst: _,
                 coord,
@@ -759,7 +762,9 @@ fn emit_temp_and_output_decls(
             Sm4Inst::Add { dst, a, b }
             | Sm4Inst::Mul { dst, a, b }
             | Sm4Inst::Dp3 { dst, a, b }
-            | Sm4Inst::Dp4 { dst, a, b } => {
+            | Sm4Inst::Dp4 { dst, a, b }
+            | Sm4Inst::Min { dst, a, b }
+            | Sm4Inst::Max { dst, a, b } => {
                 scan_reg(dst.reg);
                 scan_src_regs(a, &mut scan_reg);
                 scan_src_regs(b, &mut scan_reg);
@@ -769,6 +774,10 @@ fn emit_temp_and_output_decls(
                 scan_src_regs(a, &mut scan_reg);
                 scan_src_regs(b, &mut scan_reg);
                 scan_src_regs(c, &mut scan_reg);
+            }
+            Sm4Inst::Rcp { dst, src } | Sm4Inst::Rsq { dst, src } => {
+                scan_reg(dst.reg);
+                scan_src_regs(src, &mut scan_reg);
             }
             Sm4Inst::Sample { dst, coord, .. } => {
                 scan_reg(dst.reg);
@@ -834,62 +843,76 @@ fn emit_instructions(
     ctx: &EmitCtx<'_>,
 ) -> Result<(), ShaderTranslateError> {
     for (inst_index, inst) in module.instructions.iter().enumerate() {
+        let maybe_saturate = |dst: &crate::sm4_ir::DstOperand, expr: String| {
+            if dst.saturate {
+                format!(
+                    "clamp(({expr}), vec4<f32>(0.0), vec4<f32>(1.0))"
+                )
+            } else {
+                expr
+            }
+        };
+
         match inst {
             Sm4Inst::Mov { dst, src } => {
                 let rhs = emit_src_vec4(src, inst_index, "mov", ctx)?;
+                let rhs = maybe_saturate(dst, rhs);
                 emit_write_masked(w, dst.reg, dst.mask, rhs, inst_index, "mov", ctx)?;
             }
             Sm4Inst::Add { dst, a, b } => {
                 let a = emit_src_vec4(a, inst_index, "add", ctx)?;
                 let b = emit_src_vec4(b, inst_index, "add", ctx)?;
-                emit_write_masked(
-                    w,
-                    dst.reg,
-                    dst.mask,
-                    format!("({a}) + ({b})"),
-                    inst_index,
-                    "add",
-                    ctx,
-                )?;
+                let rhs = maybe_saturate(dst, format!("({a}) + ({b})"));
+                emit_write_masked(w, dst.reg, dst.mask, rhs, inst_index, "add", ctx)?;
             }
             Sm4Inst::Mul { dst, a, b } => {
                 let a = emit_src_vec4(a, inst_index, "mul", ctx)?;
                 let b = emit_src_vec4(b, inst_index, "mul", ctx)?;
-                emit_write_masked(
-                    w,
-                    dst.reg,
-                    dst.mask,
-                    format!("({a}) * ({b})"),
-                    inst_index,
-                    "mul",
-                    ctx,
-                )?;
+                let rhs = maybe_saturate(dst, format!("({a}) * ({b})"));
+                emit_write_masked(w, dst.reg, dst.mask, rhs, inst_index, "mul", ctx)?;
             }
             Sm4Inst::Mad { dst, a, b, c } => {
                 let a = emit_src_vec4(a, inst_index, "mad", ctx)?;
                 let b = emit_src_vec4(b, inst_index, "mad", ctx)?;
                 let c = emit_src_vec4(c, inst_index, "mad", ctx)?;
-                emit_write_masked(
-                    w,
-                    dst.reg,
-                    dst.mask,
-                    format!("({a}) * ({b}) + ({c})"),
-                    inst_index,
-                    "mad",
-                    ctx,
-                )?;
+                let rhs = maybe_saturate(dst, format!("({a}) * ({b}) + ({c})"));
+                emit_write_masked(w, dst.reg, dst.mask, rhs, inst_index, "mad", ctx)?;
             }
             Sm4Inst::Dp3 { dst, a, b } => {
                 let a = emit_src_vec4(a, inst_index, "dp3", ctx)?;
                 let b = emit_src_vec4(b, inst_index, "dp3", ctx)?;
                 let expr = format!("vec4<f32>(dot(({a}).xyz, ({b}).xyz))");
+                let expr = maybe_saturate(dst, expr);
                 emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "dp3", ctx)?;
             }
             Sm4Inst::Dp4 { dst, a, b } => {
                 let a = emit_src_vec4(a, inst_index, "dp4", ctx)?;
                 let b = emit_src_vec4(b, inst_index, "dp4", ctx)?;
                 let expr = format!("vec4<f32>(dot(({a}), ({b})))");
+                let expr = maybe_saturate(dst, expr);
                 emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "dp4", ctx)?;
+            }
+            Sm4Inst::Min { dst, a, b } => {
+                let a = emit_src_vec4(a, inst_index, "min", ctx)?;
+                let b = emit_src_vec4(b, inst_index, "min", ctx)?;
+                let expr = maybe_saturate(dst, format!("min(({a}), ({b}))"));
+                emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "min", ctx)?;
+            }
+            Sm4Inst::Max { dst, a, b } => {
+                let a = emit_src_vec4(a, inst_index, "max", ctx)?;
+                let b = emit_src_vec4(b, inst_index, "max", ctx)?;
+                let expr = maybe_saturate(dst, format!("max(({a}), ({b}))"));
+                emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "max", ctx)?;
+            }
+            Sm4Inst::Rcp { dst, src } => {
+                let src = emit_src_vec4(src, inst_index, "rcp", ctx)?;
+                let expr = maybe_saturate(dst, format!("1.0 / ({src})"));
+                emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "rcp", ctx)?;
+            }
+            Sm4Inst::Rsq { dst, src } => {
+                let src = emit_src_vec4(src, inst_index, "rsq", ctx)?;
+                let expr = maybe_saturate(dst, format!("inverseSqrt({src})"));
+                emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "rsq", ctx)?;
             }
             Sm4Inst::Sample {
                 dst,
@@ -902,6 +925,7 @@ fn emit_instructions(
                     "textureSample(t{}, s{}, ({coord}).xy)",
                     texture.slot, sampler.slot
                 );
+                let expr = maybe_saturate(dst, expr);
                 emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "sample", ctx)?;
             }
             Sm4Inst::SampleL {
@@ -917,6 +941,7 @@ fn emit_instructions(
                     "textureSampleLevel(t{}, s{}, ({coord}).xy, ({lod_vec}).x)",
                     texture.slot, sampler.slot
                 );
+                let expr = maybe_saturate(dst, expr);
                 emit_write_masked(w, dst.reg, dst.mask, expr, inst_index, "sample_l", ctx)?;
             }
             Sm4Inst::Unknown { opcode } => {

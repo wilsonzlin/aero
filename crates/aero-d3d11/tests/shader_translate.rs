@@ -91,6 +91,7 @@ fn dst(file: RegFile, index: u32, mask: WriteMask) -> aero_d3d11::DstOperand {
     aero_d3d11::DstOperand {
         reg: RegisterRef { file, index },
         mask,
+        saturate: false,
     }
 }
 
