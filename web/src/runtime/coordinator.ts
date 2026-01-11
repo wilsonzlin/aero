@@ -180,7 +180,7 @@ class RestartBackoff {
     const delay = Math.min(this.maxDelayMs, unclamped);
     const jitter = delay * this.jitterFraction;
     const randomized = delay + (Math.random() * 2 - 1) * jitter;
-  return Math.max(0, Math.round(randomized));
+    return Math.max(0, Math.round(randomized));
   }
 
   getAttemptCount(): number {
@@ -1022,6 +1022,38 @@ export class WorkerCoordinator {
       }
     }
 
+    const maybeSerial = data as Partial<SerialOutputMessage>;
+    if (
+      maybeSerial?.kind === "serial.output" &&
+      typeof maybeSerial.port === "number" &&
+      maybeSerial.data instanceof Uint8Array
+    ) {
+      this.serialOutputBytes += maybeSerial.data.byteLength;
+      const text = this.serialDecoder.decode(maybeSerial.data);
+      this.serialOutputText += text;
+      const maxChars = 16 * 1024;
+      if (this.serialOutputText.length > maxChars) {
+        this.serialOutputText = this.serialOutputText.slice(this.serialOutputText.length - maxChars);
+      }
+
+      // Mirror to console for quick visibility during bring-up.
+      const portStr = `0x${(maybeSerial.port >>> 0).toString(16)}`;
+      // eslint-disable-next-line no-console
+      console.log(`[serial ${portStr}] ${text}`);
+      return;
+    }
+
+    const maybeReset = data as Partial<ResetRequestMessage>;
+    if (maybeReset?.kind === "reset.request") {
+      this.resetRequestCount += 1;
+      this.lastResetRequestAtMs = typeof performance !== "undefined" ? performance.now() : Date.now();
+      // eslint-disable-next-line no-console
+      console.warn("[vm] reset requested");
+      return;
+    }
+
+    // Workers use structured `postMessage` for low-rate control/status messages
+    // (READY/ERROR/WASM_READY plus bus-side events like serial output).
     const msg = data as Partial<ProtocolMessage>;
     if (msg?.type === MessageType.READY) {
       info.status = { state: "ready" };
