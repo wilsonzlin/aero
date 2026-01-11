@@ -97,6 +97,52 @@ fn build_signature_chunk_with_registers(pos_reg: u32, tex_reg: u32) -> Vec<u8> {
     bytes
 }
 
+fn build_signature_chunk_v1_with_registers(pos_reg: u32, tex_reg: u32) -> Vec<u8> {
+    // Same payload as `build_signature_chunk_with_registers`, but uses the 32-byte
+    // (v1) entry layout where stream/min-precision are stored as DWORDs.
+    let mut bytes = Vec::new();
+
+    let param_count = 2u32;
+    let param_offset = 8u32;
+
+    bytes.extend_from_slice(&param_count.to_le_bytes());
+    bytes.extend_from_slice(&param_offset.to_le_bytes());
+
+    let table_start = bytes.len();
+    assert_eq!(table_start, 8);
+
+    let entry_size = 32usize;
+    let string_table_offset = (table_start + (entry_size * param_count as usize)) as u32;
+
+    let pos_name_offset = string_table_offset;
+    let tex_name_offset = string_table_offset + ("POSITION\0".len() as u32);
+
+    // POSITION
+    bytes.extend_from_slice(&pos_name_offset.to_le_bytes());
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // semantic_index
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // system_value_type
+    bytes.extend_from_slice(&3u32.to_le_bytes()); // component_type
+    bytes.extend_from_slice(&pos_reg.to_le_bytes());
+    bytes.extend_from_slice(&u32::from_le_bytes([0xF, 0xF, 0, 0]).to_le_bytes()); // mask/rw/pad
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // stream
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // min_precision
+
+    // TEXCOORD0
+    bytes.extend_from_slice(&tex_name_offset.to_le_bytes());
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // semantic_index
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // system_value_type
+    bytes.extend_from_slice(&3u32.to_le_bytes()); // component_type
+    bytes.extend_from_slice(&tex_reg.to_le_bytes());
+    bytes.extend_from_slice(&u32::from_le_bytes([0x3, 0x3, 0, 0]).to_le_bytes()); // mask/rw/pad
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // stream
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // min_precision
+
+    bytes.extend_from_slice(b"POSITION\0");
+    bytes.extend_from_slice(b"TEXCOORD\0");
+
+    bytes
+}
+
 fn build_signature_chunk_v1() -> Vec<u8> {
     // Same payload as `build_signature_chunk`, but uses a 32-byte entry layout
     // where stream/min-precision are stored as DWORDs at the end of each entry.
@@ -373,7 +419,7 @@ fn dxbc_get_signature_missing_chunk_returns_none() {
 #[test]
 fn dxbc_get_signature_prefers_exact_fourcc_over_variant() {
     let isgn_bytes = build_signature_chunk_with_registers(0, 1);
-    let isg1_bytes = build_signature_chunk_with_registers(10, 11);
+    let isg1_bytes = build_signature_chunk_v1_with_registers(10, 11);
 
     let dxbc_bytes = build_dxbc(&[
         (FourCC(*b"ISGN"), &isgn_bytes),
@@ -392,6 +438,29 @@ fn dxbc_get_signature_prefers_exact_fourcc_over_variant() {
         .expect("missing signature chunk")
         .expect("signature parse should succeed");
     assert_eq!(isg1.entries[0].register, 10);
+}
+
+#[test]
+fn dxbc_get_signature_skips_malformed_duplicate_chunks() {
+    let mut bad_bytes = Vec::new();
+    bad_bytes.extend_from_slice(&1u32.to_le_bytes()); // param_count
+    bad_bytes.extend_from_slice(&4u32.to_le_bytes()); // param_offset into header (invalid)
+
+    let good_bytes = build_signature_chunk();
+
+    let dxbc_bytes = build_dxbc(&[
+        (FourCC(*b"ISGN"), &bad_bytes),
+        (FourCC(*b"ISGN"), &good_bytes),
+    ]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse should succeed");
+
+    let sig = dxbc
+        .get_signature(FourCC(*b"ISGN"))
+        .expect("expected a signature chunk")
+        .expect("signature parse should succeed");
+
+    assert_eq!(sig.entries.len(), 2);
+    assert_eq!(sig.entries[0].semantic_name, "POSITION");
 }
 
 #[test]
