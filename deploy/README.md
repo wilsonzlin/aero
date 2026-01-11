@@ -491,9 +491,11 @@ It sets the `aero_session` cookie and returns a JSON payload that includes (when
 - `udpRelay.endpoints`:
   - `/webrtc/ice` (ICE server discovery)
   - `/webrtc/signal` (WebSocket signaling)
-  - `/webrtc/offer` and `/offer` (HTTP offer/answer flows)
+  - `/webrtc/offer` (HTTP offer/answer flow)
   - `/udp` (WebSocket UDP fallback)
 - `udpRelay.token` / `udpRelay.expiresAt` when `AUTH_MODE` is enabled
+
+The relay also exposes `POST /offer` as a legacy HTTP offer/answer endpoint; new clients should prefer `POST /webrtc/offer` (which is what the gateway advertises via `udpRelay.endpoints.webrtcOffer`).
 
 In this deploy stack, the gateway is configured to advertise the relay at the same origin
 (`https://$AERO_DOMAIN`) so the browser can stay single-origin and avoid CORS/cookie issues.
