@@ -3710,6 +3710,68 @@ impl AerogpuD3d9Executor {
             return Err(AerogpuD3d9Error::MissingInputLayout);
         }
 
+        let (rt_w, rt_h) = self.render_target_extent()?;
+
+        // wgpu requires viewport/scissor rectangles to be within the render target bounds.
+        // Clamp dynamic state to match D3D9 behavior (and keep the executor resilient to
+        // out-of-bounds values such as "disabled scissor" sent as a huge rect).
+        let viewport = self.state.viewport.and_then(|vp| {
+            if !vp.x.is_finite()
+                || !vp.y.is_finite()
+                || !vp.width.is_finite()
+                || !vp.height.is_finite()
+                || !vp.min_depth.is_finite()
+                || !vp.max_depth.is_finite()
+            {
+                return None;
+            }
+
+            let max_w = rt_w as f32;
+            let max_h = rt_h as f32;
+
+            let left = vp.x.max(0.0);
+            let top = vp.y.max(0.0);
+            let right = (vp.x + vp.width).max(0.0).min(max_w);
+            let bottom = (vp.y + vp.height).max(0.0).min(max_h);
+            let width = (right - left).max(0.0);
+            let height = (bottom - top).max(0.0);
+
+            if width <= 0.0 || height <= 0.0 {
+                return None;
+            }
+
+            let mut min_depth = vp.min_depth.clamp(0.0, 1.0);
+            let mut max_depth = vp.max_depth.clamp(0.0, 1.0);
+            if min_depth > max_depth {
+                std::mem::swap(&mut min_depth, &mut max_depth);
+            }
+
+            Some(ViewportState {
+                x: left,
+                y: top,
+                width,
+                height,
+                min_depth,
+                max_depth,
+            })
+        });
+        if self.state.viewport.is_some() && viewport.is_none() {
+            // Viewport is empty after clamping, so the draw would have no effect.
+            return Ok(());
+        }
+
+        let scissor = if self.state.rasterizer_state.scissor_enable {
+            let raw = self.state.scissor;
+            let clamped = raw.and_then(|(x, y, w, h)| clamp_scissor_rect(x, y, w, h, rt_w, rt_h));
+            if raw.is_some() && clamped.is_none() {
+                // Scissor test enabled but empty after clamping, so the draw would have no effect.
+                return Ok(());
+            }
+            clamped
+        } else {
+            None
+        };
+
         // Flush guest-backed resources touched by this draw before we bind them.
         let rt = self.state.render_targets;
         let index_binding = self.state.index_buffer;
@@ -3975,7 +4037,7 @@ impl AerogpuD3d9Executor {
             occlusion_query_set: None,
         });
 
-        if let Some(viewport) = self.state.viewport.as_ref() {
+        if let Some(viewport) = viewport.as_ref() {
             pass.set_viewport(
                 viewport.x,
                 viewport.y,
@@ -3986,10 +4048,8 @@ impl AerogpuD3d9Executor {
             );
         }
 
-        if self.state.rasterizer_state.scissor_enable {
-            if let Some((x, y, w, h)) = self.state.scissor {
-                pass.set_scissor_rect(x, y, w, h);
-            }
+        if let Some((x, y, w, h)) = scissor {
+            pass.set_scissor_rect(x, y, w, h);
         }
 
         if depth_has_stencil && self.state.depth_stencil_state.stencil_enable {
