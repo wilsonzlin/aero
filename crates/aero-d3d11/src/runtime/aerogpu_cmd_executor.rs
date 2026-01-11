@@ -1221,11 +1221,12 @@ impl AerogpuD3d11Executor {
             bail!("CREATE_SHADER_DXBC: stage mismatch (cmd={stage:?}, dxbc={parsed_stage:?})");
         }
 
-        let wgsl = match try_translate_sm4_signature_driven(&dxbc, &program, &signatures) {
-            Ok(wgsl) => wgsl,
-            Err(_) => translate_sm4_to_wgsl_bootstrap(&program)
+        let wgsl = if signatures.isgn.is_some() && signatures.osgn.is_some() {
+            try_translate_sm4_signature_driven(&dxbc, &program, &signatures)?
+        } else {
+            translate_sm4_to_wgsl_bootstrap(&program)
                 .context("DXBC->WGSL translation failed")?
-                .wgsl,
+                .wgsl
         };
 
         let (hash, _module) = self.pipeline_cache.get_or_create_shader_module(

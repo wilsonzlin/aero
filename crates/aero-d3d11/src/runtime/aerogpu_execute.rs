@@ -237,11 +237,12 @@ impl AerogpuCmdRuntime {
             Vec::new()
         };
 
-        let wgsl = match try_translate_sm4_signature_driven(&dxbc, &program, &signatures) {
-            Ok(wgsl) => wgsl,
-            Err(_) => translate_sm4_to_wgsl_bootstrap(&program)
+        let wgsl = if signatures.isgn.is_some() && signatures.osgn.is_some() {
+            try_translate_sm4_signature_driven(&dxbc, &program, &signatures)?
+        } else {
+            translate_sm4_to_wgsl_bootstrap(&program)
                 .context("translate SM4/5 to WGSL")?
-                .wgsl,
+                .wgsl
         };
 
         // Register into the shared PipelineCache shader-module cache.
@@ -725,8 +726,16 @@ fn build_vertex_state(
         }
     }
 
+    let fallback_signature;
+    let sig = if vs_signature.is_empty() {
+        fallback_signature = build_fallback_vs_signature(&layout.layout);
+        fallback_signature.as_slice()
+    } else {
+        vs_signature
+    };
+
     let binding = InputLayoutBinding::new(&layout.layout, &slot_strides);
-    let mapped = map_layout_to_shader_locations_compact(&binding, vs_signature)
+    let mapped = map_layout_to_shader_locations_compact(&binding, sig)
         .map_err(|e| anyhow!("failed to map input layout to shader locations: {e}"))?;
 
     let keys = mapped
@@ -907,10 +916,9 @@ fn map_topology(topology: PrimitiveTopology) -> Result<wgpu::PrimitiveTopology> 
 fn extract_vs_input_signature(
     signatures: &crate::ShaderSignatures,
 ) -> Result<Vec<VsInputSignatureElement>> {
-    let isgn = signatures
-        .isgn
-        .as_ref()
-        .ok_or_else(|| anyhow!("vertex shader missing ISGN signature chunk"))?;
+    let Some(isgn) = signatures.isgn.as_ref() else {
+        return Ok(Vec::new());
+    };
 
     Ok(isgn
         .parameters
@@ -921,6 +929,27 @@ fn extract_vs_input_signature(
             input_register: p.register,
         })
         .collect())
+}
+
+fn build_fallback_vs_signature(layout: &InputLayoutDesc) -> Vec<VsInputSignatureElement> {
+    let mut seen: HashMap<(u32, u32), u32> = HashMap::new();
+    let mut out: Vec<VsInputSignatureElement> = Vec::new();
+
+    for elem in &layout.elements {
+        let key = (elem.semantic_name_hash, elem.semantic_index);
+        if seen.contains_key(&key) {
+            continue;
+        }
+        let reg = out.len() as u32;
+        seen.insert(key, reg);
+        out.push(VsInputSignatureElement {
+            semantic_name_hash: key.0,
+            semantic_index: key.1,
+            input_register: reg,
+        });
+    }
+
+    out
 }
 
 fn try_translate_sm4_signature_driven(

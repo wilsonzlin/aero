@@ -272,11 +272,12 @@ impl AerogpuResourceManager {
         if parsed_stage != stage {
             bail!("CreateShaderDxbc: stage mismatch (cmd={stage:?}, dxbc={parsed_stage:?})");
         }
-        let wgsl = match try_translate_sm4_signature_driven(&dxbc, &program, &signatures) {
-            Ok(wgsl) => wgsl,
-            Err(_) => translate_sm4_to_wgsl_bootstrap(&program)
+        let wgsl = if signatures.isgn.is_some() && signatures.osgn.is_some() {
+            try_translate_sm4_signature_driven(&dxbc, &program, &signatures)?
+        } else {
+            translate_sm4_to_wgsl_bootstrap(&program)
                 .map_err(|e| anyhow!("DXBC->WGSL translation failed: {e}"))?
-                .wgsl,
+                .wgsl
         };
 
         let module = self
