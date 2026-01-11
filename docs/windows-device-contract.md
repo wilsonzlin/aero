@@ -55,6 +55,8 @@ Keep in sync:
 4. The Guest Tools installer must consume `windows-device-contract.json` rather than hardcoding IDs in scripts.
    - In this repo, `guest-tools/config/devices.cmd` is generated from the manifest (see `scripts/generate-guest-tools-devices-cmd.py`).
    - Drift check (no rewrite): `python3 scripts/ci/gen-guest-tools-devices-cmd.py --check`
+   - Full contract drift check (contract + Guest Tools + packaging specs + INFs + emulator IDs):
+     `cargo run -p device_contract_validator --locked`
 5. Emulator device models must emit the IDs exactly as specified by the relevant contract, or Windows driver binding may fail.
 
 ## PCI ID allocations
