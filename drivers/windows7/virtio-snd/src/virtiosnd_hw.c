@@ -84,8 +84,8 @@ static NTSTATUS VirtIoSndSetupQueues(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
         if (numQueues < (USHORT)VIRTIOSND_QUEUE_COUNT) {
             VIRTIOSND_TRACE_ERROR(
                 "device exposes %u queues (< %u required by contract v1)\n",
-                (ULONG)numQueues,
-                (ULONG)VIRTIOSND_QUEUE_COUNT);
+                (UINT)numQueues,
+                (UINT)VIRTIOSND_QUEUE_COUNT);
             return STATUS_DEVICE_CONFIGURATION_ERROR;
         }
     }
