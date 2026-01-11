@@ -288,4 +288,114 @@ mod tests {
             other => panic!("expected UnitExponentOutOfRange error, got {other:?}"),
         }
     }
+
+    #[test]
+    fn deserialize_accepts_wrap_alias() {
+        let collection: HidCollectionInfo = serde_json::from_str(
+            r#"{
+              "usagePage": 1,
+              "usage": 0,
+              "collectionType": 1,
+              "children": [],
+              "inputReports": [
+                {
+                  "reportId": 0,
+                  "items": [
+                    {
+                      "usagePage": 1,
+                      "usages": [48],
+                      "usageMinimum": 0,
+                      "usageMaximum": 0,
+                      "reportSize": 8,
+                      "reportCount": 1,
+                      "unitExponent": 0,
+                      "unit": 0,
+                      "logicalMinimum": 0,
+                      "logicalMaximum": 1,
+                      "physicalMinimum": 0,
+                      "physicalMaximum": 0,
+                      "strings": [],
+                      "stringMinimum": 0,
+                      "stringMaximum": 0,
+                      "designators": [],
+                      "designatorMinimum": 0,
+                      "designatorMaximum": 0,
+                      "isAbsolute": true,
+                      "isArray": true,
+                      "isBufferedBytes": false,
+                      "isConstant": false,
+                      "isLinear": true,
+                      "isRange": false,
+                      "isRelative": false,
+                      "isVolatile": false,
+                      "hasNull": false,
+                      "hasPreferredState": true,
+                      "wrap": true
+                    }
+                  ]
+                }
+              ],
+              "outputReports": [],
+              "featureReports": []
+            }"#,
+        )
+        .expect("deserialize wrap alias form");
+
+        assert!(collection.input_reports[0].items[0].is_wrapped);
+    }
+
+    #[test]
+    fn deserialize_allows_missing_is_relative_field() {
+        // Some WebHID typings omit `isRelative` (it can be derived from `isAbsolute`).
+        let collection: HidCollectionInfo = serde_json::from_str(
+            r#"{
+              "usagePage": 1,
+              "usage": 0,
+              "collectionType": 1,
+              "children": [],
+              "inputReports": [
+                {
+                  "reportId": 0,
+                  "items": [
+                    {
+                      "usagePage": 1,
+                      "usages": [48],
+                      "usageMinimum": 0,
+                      "usageMaximum": 0,
+                      "reportSize": 8,
+                      "reportCount": 1,
+                      "unitExponent": 0,
+                      "unit": 0,
+                      "logicalMinimum": 0,
+                      "logicalMaximum": 1,
+                      "physicalMinimum": 0,
+                      "physicalMaximum": 0,
+                      "strings": [],
+                      "stringMinimum": 0,
+                      "stringMaximum": 0,
+                      "designators": [],
+                      "designatorMinimum": 0,
+                      "designatorMaximum": 0,
+                      "isAbsolute": false,
+                      "isArray": true,
+                      "isBufferedBytes": false,
+                      "isConstant": false,
+                      "isLinear": true,
+                      "isRange": false,
+                      "isVolatile": false,
+                      "hasNull": false,
+                      "hasPreferredState": true,
+                      "isWrapped": false
+                    }
+                  ]
+                }
+              ],
+              "outputReports": [],
+              "featureReports": []
+            }"#,
+        )
+        .expect("deserialize without isRelative field");
+
+        assert!(!collection.input_reports[0].items[0].is_absolute);
+    }
 }

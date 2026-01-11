@@ -172,6 +172,30 @@ describe("normalizeCollections(WebHID)", () => {
     expect(normalized[0]?.inputReports[0]?.items[0]?.usages).toEqual([5]);
   });
 
+  it("derives isRelative when omitted and accepts wrap alias for isWrapped", () => {
+    const root = mockCollection({
+      inputReports: [
+        mockReport({
+          reportId: 1,
+          items: [
+            mockItem({
+              isAbsolute: false,
+              isRelative: undefined,
+              isWrapped: undefined,
+              wrap: true,
+            }),
+          ],
+        }),
+      ] as unknown as HidReportInfo[],
+    });
+
+    const normalized = normalizeCollections([root]);
+    const item = normalized[0]?.inputReports[0]?.items[0] as any;
+    expect(item.isRelative).toBe(true);
+    expect(item.isWrapped).toBe(true);
+    expect("wrap" in item).toBe(false);
+  });
+
   it("normalizes a small keyboard-like collection tree", () => {
     const modifierBits = mockItem({
       isArray: false,
