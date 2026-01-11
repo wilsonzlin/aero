@@ -38,14 +38,14 @@ static VOID VirtIoSndIntxQueueUsed(
         VirtioSndCtrlOnUsed(&dx->Control, Cookie, UsedLen);
         break;
     case VIRTIOSND_QUEUE_TX:
-        if (InterlockedCompareExchange(&dx->TxEngineInitialized, 0, 0) != 0 && dx->Tx.Queue != NULL && dx->Tx.Buffers != NULL) {
+        if (dx->Tx.Queue != NULL && dx->Tx.Buffers != NULL) {
             VirtioSndTxOnUsed(&dx->Tx, Cookie, UsedLen);
         } else {
             VIRTIOSND_TRACE_ERROR("txq unexpected completion: cookie=%p len=%lu\n", Cookie, (ULONG)UsedLen);
         }
         break;
     case VIRTIOSND_QUEUE_RX:
-        if (InterlockedCompareExchange(&dx->RxEngineInitialized, 0, 0) != 0 && dx->Rx.Queue != NULL && dx->Rx.Requests != NULL) {
+        if (dx->Rx.Queue != NULL && dx->Rx.Requests != NULL) {
             VirtIoSndRxOnUsed(&dx->Rx, Cookie, UsedLen);
         } else {
             VIRTIOSND_TRACE_ERROR("rxq unexpected completion: cookie=%p len=%lu\n", Cookie, (ULONG)UsedLen);
