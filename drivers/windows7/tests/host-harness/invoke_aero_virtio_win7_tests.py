@@ -153,7 +153,10 @@ def _qemu_quote_keyval_value(value: str) -> str:
     QEMU keyval parsing supports `"..."` quoting and backslash-escaped quotes.
     """
 
-    return '"' + value.replace('"', '\\"') + '"'
+    # QEMU treats `\` as the escape character inside quoted values, so ensure we always escape it
+    # (Windows paths use backslashes).
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    return '"' + escaped + '"'
 
 
 def _virtio_snd_skip_failure_message(tail: bytes) -> str:

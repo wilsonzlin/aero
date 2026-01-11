@@ -82,7 +82,9 @@ function Quote-AeroWin7QemuKeyvalValue {
   # into a single string (and doesn't consistently quote/escape individual elements).
   #
   # QEMU keyval parsing supports `"..."` quoting and backslash-escaped quotes inside the string.
-  $escaped = $Value.Replace('"', '\"')
+  # Also escape backslashes: QEMU treats `\` as the escape character inside quoted values,
+  # and Windows paths commonly contain backslashes.
+  $escaped = $Value.Replace('\', '\\').Replace('"', '\"')
   return '"' + $escaped + '"'
 }
 
