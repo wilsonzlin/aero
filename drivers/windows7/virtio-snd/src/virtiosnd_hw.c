@@ -378,6 +378,10 @@ NTSTATUS VirtIoSndHwSendControl(
         return STATUS_INVALID_PARAMETER;
     }
 
+    if (Dx->Removed) {
+        return STATUS_DEVICE_REMOVED;
+    }
+
     if (!Dx->Started) {
         return STATUS_INVALID_DEVICE_STATE;
     }
@@ -396,6 +400,10 @@ NTSTATUS VirtIoSndHwSubmitTx(
 {
     if (Dx == NULL) {
         return STATUS_INVALID_PARAMETER;
+    }
+
+    if (Dx->Removed) {
+        return STATUS_DEVICE_REMOVED;
     }
 
     if (!Dx->Started) {
@@ -422,6 +430,10 @@ VirtIoSndHwSubmitTxSg(PVIRTIOSND_DEVICE_EXTENSION Dx, const VIRTIOSND_TX_SEGMENT
         return STATUS_INVALID_PARAMETER;
     }
 
+    if (Dx->Removed) {
+        return STATUS_DEVICE_REMOVED;
+    }
+
     if (!Dx->Started) {
         return STATUS_INVALID_DEVICE_STATE;
     }
@@ -438,6 +450,10 @@ ULONG
 VirtIoSndHwDrainTxCompletions(PVIRTIOSND_DEVICE_EXTENSION Dx)
 {
     if (Dx == NULL) {
+        return 0;
+    }
+
+    if (Dx->Removed) {
         return 0;
     }
 
@@ -462,6 +478,9 @@ NTSTATUS VirtIoSndInitTxEngine(PVIRTIOSND_DEVICE_EXTENSION Dx, ULONG MaxPeriodBy
     }
     if (KeGetCurrentIrql() != PASSIVE_LEVEL) {
         return STATUS_INVALID_DEVICE_STATE;
+    }
+    if (Dx->Removed) {
+        return STATUS_DEVICE_REMOVED;
     }
     if (!Dx->Started) {
         return STATUS_INVALID_DEVICE_STATE;
