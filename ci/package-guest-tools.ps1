@@ -296,7 +296,7 @@ function Stage-DriversFromBundleLayout {
     if (Test-Path -LiteralPath $srcX86 -PathType Container) {
       $dst = Join-Path $destX86 $d.Name
       New-Item -ItemType Directory -Force -Path $dst | Out-Null
-      Copy-Item -LiteralPath (Join-Path $srcX86 "*") -Destination $dst -Recurse -Force
+      Copy-Item -Path (Join-Path $srcX86 "*") -Destination $dst -Recurse -Force
     }
 
     $srcX64 = $null
@@ -310,7 +310,7 @@ function Stage-DriversFromBundleLayout {
     if ($srcX64) {
       $dst = Join-Path $destAmd64 $d.Name
       New-Item -ItemType Directory -Force -Path $dst | Out-Null
-      Copy-Item -LiteralPath (Join-Path $srcX64 "*") -Destination $dst -Recurse -Force
+      Copy-Item -Path (Join-Path $srcX64 "*") -Destination $dst -Recurse -Force
     }
   }
 }
@@ -413,7 +413,7 @@ function Stage-DriversFromPackagesLayout {
     $destArchDir = if ($r.ArchOut -eq "x86") { $destX86 } else { $destAmd64 }
     $destDir = Join-Path $destArchDir $r.DriverName
     New-Item -ItemType Directory -Force -Path $destDir | Out-Null
-    Copy-Item -LiteralPath (Join-Path $r.SrcDir "*") -Destination $destDir -Recurse -Force
+    Copy-Item -Path (Join-Path $r.SrcDir "*") -Destination $destDir -Recurse -Force
   }
 }
 
