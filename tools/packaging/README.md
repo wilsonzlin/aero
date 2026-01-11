@@ -65,7 +65,7 @@ By default this wrapper uses `-Profile minimal` (storage + network only).
 To include best-effort Win7 audio/input drivers when present in your virtio-win version, use `-Profile full`.
 
 On Linux/macOS you can run the same wrapper under PowerShell 7 (`pwsh`). When `Mount-DiskImage`
-is unavailable, it automatically falls back to the cross-platform extractor:
+is unavailable (or fails to mount), it automatically falls back to the cross-platform extractor:
 
 ```bash
 pwsh drivers/scripts/make-guest-tools-from-virtio-win.ps1 \
