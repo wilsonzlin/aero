@@ -23,6 +23,9 @@
     <ClCompile Include="src\aerogpu_d3d10_umd_wdk.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="src\aerogpu_d3d10_11_wddm_submit.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\aerogpu_d3d10_11_umd.h">
@@ -32,6 +35,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="src\aerogpu_d3d10_11_internal.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="src\aerogpu_d3d10_11_wddm_submit.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\common\aerogpu_cmd_stream_writer.h">
