@@ -15,6 +15,8 @@ use emulator::devices::aerogpu_ring::{
 };
 use emulator::devices::aerogpu_scanout::AeroGpuFormat;
 use emulator::devices::pci::aerogpu::{AeroGpuDeviceConfig, AeroGpuPciDevice};
+use emulator::gpu_worker::aerogpu_backend::ImmediateAeroGpuBackend;
+use emulator::gpu_worker::aerogpu_executor::{AeroGpuExecutorConfig, AeroGpuFenceCompletionMode};
 use emulator::io::pci::MmioDevice;
 use memory::MemoryBus;
 
@@ -455,6 +457,109 @@ fn vsynced_present_fence_completes_on_vblank() {
 
     dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
 
+    assert_eq!(dev.regs.completed_fence, 0);
+    assert_eq!(dev.regs.irq_status & irq_bits::FENCE, 0);
+    assert!(!dev.irq_level());
+
+    let head_after = mem.read_u32(ring_gpa + RING_HEAD_OFFSET);
+    assert_eq!(head_after, 1);
+
+    let t0 = Instant::now();
+    dev.tick(&mut mem, t0);
+    assert_eq!(dev.regs.completed_fence, 0);
+
+    dev.tick(&mut mem, t0 + Duration::from_millis(100));
+
+    assert_eq!(dev.regs.completed_fence, 42);
+    assert_ne!(dev.regs.irq_status & irq_bits::FENCE, 0);
+    assert!(dev.irq_level());
+
+    assert_eq!(
+        mem.read_u32(fence_gpa + FENCE_PAGE_MAGIC_OFFSET),
+        AEROGPU_FENCE_PAGE_MAGIC
+    );
+    assert_eq!(
+        mem.read_u64(fence_gpa + FENCE_PAGE_COMPLETED_FENCE_OFFSET),
+        42
+    );
+}
+
+#[test]
+fn vsynced_present_fence_completes_on_vblank_with_deferred_backend() {
+    let mut cfg = AeroGpuDeviceConfig::default();
+    cfg.vblank_hz = Some(10);
+    cfg.executor = AeroGpuExecutorConfig {
+        verbose: false,
+        keep_last_submissions: 0,
+        fence_completion: AeroGpuFenceCompletionMode::Deferred,
+    };
+
+    let mut mem = VecMemory::new(0x40_000);
+    let mut dev = AeroGpuPciDevice::new(cfg, 0);
+    dev.set_backend(Box::new(ImmediateAeroGpuBackend::new()));
+
+    // Enable scanout so vblank ticks run.
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_ENABLE, 4, 1);
+
+    // Ring layout in guest memory.
+    let ring_gpa = 0x1000u64;
+    let ring_size = 0x1000u32;
+    let entry_count = 8u32;
+    let entry_stride = AeroGpuSubmitDesc::SIZE_BYTES;
+
+    mem.write_u32(ring_gpa + 0, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa + 4, dev.regs.abi_version);
+    mem.write_u32(ring_gpa + 8, ring_size);
+    mem.write_u32(ring_gpa + 12, entry_count);
+    mem.write_u32(ring_gpa + 16, entry_stride);
+    mem.write_u32(ring_gpa + 20, 0);
+    mem.write_u32(ring_gpa + RING_HEAD_OFFSET, 0); // head
+    mem.write_u32(ring_gpa + RING_TAIL_OFFSET, 1); // tail
+
+    // Command buffer: ACMD header + PRESENT(vsync).
+    let cmd_gpa = 0x4000u64;
+    let cmd_size_bytes = 40u32;
+
+    mem.write_u32(cmd_gpa + 0, AEROGPU_CMD_STREAM_MAGIC);
+    mem.write_u32(cmd_gpa + 4, dev.regs.abi_version);
+    mem.write_u32(cmd_gpa + 8, cmd_size_bytes);
+    mem.write_u32(cmd_gpa + 12, 0); // flags
+    mem.write_u32(cmd_gpa + 16, 0);
+    mem.write_u32(cmd_gpa + 20, 0);
+
+    // aerogpu_cmd_present
+    mem.write_u32(cmd_gpa + 24, AerogpuCmdOpcode::Present as u32);
+    mem.write_u32(cmd_gpa + 28, 16); // size_bytes
+    mem.write_u32(cmd_gpa + 32, 0); // scanout_id
+    mem.write_u32(cmd_gpa + 36, AEROGPU_PRESENT_FLAG_VSYNC);
+
+    // Submit descriptor at slot 0.
+    let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+    mem.write_u32(desc_gpa + 0, AeroGpuSubmitDesc::SIZE_BYTES); // desc_size_bytes
+    mem.write_u32(desc_gpa + 4, AeroGpuSubmitDesc::FLAG_PRESENT); // flags
+    mem.write_u32(desc_gpa + 8, 0); // context_id
+    mem.write_u32(desc_gpa + 12, 0); // engine_id
+    mem.write_u64(desc_gpa + 16, cmd_gpa); // cmd_gpa
+    mem.write_u32(desc_gpa + 24, cmd_size_bytes); // cmd_size_bytes
+    mem.write_u64(desc_gpa + 32, 0); // alloc_table_gpa
+    mem.write_u32(desc_gpa + 40, 0); // alloc_table_size_bytes
+    mem.write_u64(desc_gpa + 48, 42); // signal_fence
+
+    // Fence page.
+    let fence_gpa = 0x3000u64;
+    dev.mmio_write(&mut mem, mmio::FENCE_GPA_LO, 4, fence_gpa as u32);
+    dev.mmio_write(&mut mem, mmio::FENCE_GPA_HI, 4, (fence_gpa >> 32) as u32);
+
+    dev.mmio_write(&mut mem, mmio::RING_GPA_LO, 4, ring_gpa as u32);
+    dev.mmio_write(&mut mem, mmio::RING_GPA_HI, 4, (ring_gpa >> 32) as u32);
+    dev.mmio_write(&mut mem, mmio::RING_SIZE_BYTES, 4, ring_size);
+    dev.mmio_write(&mut mem, mmio::RING_CONTROL, 4, ring_control::ENABLE);
+
+    dev.mmio_write(&mut mem, mmio::IRQ_ENABLE, 4, irq_bits::FENCE);
+
+    dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
+
+    // Backend completes immediately, but vsynced presents should still wait until vblank.
     assert_eq!(dev.regs.completed_fence, 0);
     assert_eq!(dev.regs.irq_status & irq_bits::FENCE, 0);
     assert!(!dev.irq_level());
