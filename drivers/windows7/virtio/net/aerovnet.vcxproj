@@ -46,7 +46,7 @@
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <PreprocessorDefinitions>_KERNEL_MODE;NDIS_MINIPORT_DRIVER;NDIS620_MINIPORT;NDIS_SUPPORT_NDIS6;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>$(ProjectDir)include;$(ProjectDir)..\..\..\windows\virtio\common;$(ProjectDir)..\..\virtio-modern\common\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)include;$(ProjectDir)..\..\..\windows\virtio\common;$(ProjectDir)..\..\virtio-modern\common\include;$(ProjectDir)..\..\..\win7\virtio\virtio-core\portable;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <SpectreMitigation>false</SpectreMitigation>
     </ClCompile>
     <Link>
@@ -59,7 +59,7 @@
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <PreprocessorDefinitions>_KERNEL_MODE;NDIS_MINIPORT_DRIVER;NDIS620_MINIPORT;NDIS_SUPPORT_NDIS6;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>$(ProjectDir)include;$(ProjectDir)..\..\..\windows\virtio\common;$(ProjectDir)..\..\virtio-modern\common\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)include;$(ProjectDir)..\..\..\windows\virtio\common;$(ProjectDir)..\..\virtio-modern\common\include;$(ProjectDir)..\..\..\win7\virtio\virtio-core\portable;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <SpectreMitigation>false</SpectreMitigation>
     </ClCompile>
     <Link>
@@ -72,6 +72,7 @@
     <ClCompile Include="src\aerovnet.c" />
     <ClCompile Include="..\..\..\windows\virtio\common\virtqueue_split.c" />
     <ClCompile Include="..\..\virtio-modern\common\src\aero_virtio_pci_modern.c" />
+    <ClCompile Include="..\..\..\win7\virtio\virtio-core\portable\virtio_pci_cap_parser.c" />
     <ClInclude Include="include\aerovnet.h" />
     <None Include="aerovnet.inf" />
   </ItemGroup>

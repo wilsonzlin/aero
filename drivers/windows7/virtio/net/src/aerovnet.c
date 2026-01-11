@@ -2,6 +2,9 @@
 
 #define AEROVNET_TAG 'tNvA'
 
+// Optional transport validation against the contract v1 virtio-pci capability layout.
+#include "virtio_pci_cap_parser.h"
+
 static NDIS_HANDLE g_NdisDriverHandle = NULL;
 
 static const NDIS_OID g_SupportedOids[] = {
@@ -52,6 +55,112 @@ static __forceinline ULONG AerovNetSendCompleteFlagsForCurrentIrql(VOID) {
 
 static __forceinline ULONG AerovNetReceiveIndicationFlagsForCurrentIrql(VOID) {
   return (KeGetCurrentIrql() == DISPATCH_LEVEL) ? NDIS_RECEIVE_FLAGS_DISPATCH_LEVEL : 0;
+}
+
+static ULONG AerovNetReadLe32FromPciCfg(_In_reads_bytes_(256) const UCHAR* Cfg, _In_ ULONG Offset) {
+  ULONG V;
+
+  V = 0;
+  if (Offset + sizeof(V) > 256u) {
+    return 0;
+  }
+
+  RtlCopyMemory(&V, Cfg + Offset, sizeof(V));
+  return V;
+}
+
+static NDIS_STATUS AerovNetValidateVirtioPciCaps(_Inout_ AEROVNET_ADAPTER* Adapter) {
+  UCHAR Cfg[256];
+  uint64_t BarAddrs[VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT];
+  virtio_pci_parsed_caps_t Caps;
+  virtio_pci_cap_parse_result_t Res;
+  ULONG BytesRead;
+  ULONG I;
+
+  if (!Adapter) {
+    return NDIS_STATUS_FAILURE;
+  }
+
+  RtlZeroMemory(Cfg, sizeof(Cfg));
+  for (I = 0; I < VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT; I++) {
+    BarAddrs[I] = 0;
+  }
+
+  // Read full PCI config space.
+  BytesRead = NdisReadPciSlotInformation(Adapter->MiniportAdapterHandle, 0, 0, Cfg, sizeof(Cfg));
+  if (BytesRead != sizeof(Cfg)) {
+    return NDIS_STATUS_FAILURE;
+  }
+
+  // Parse BARs (type 0 header).
+  for (I = 0; I < VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT; I++) {
+    ULONG Val;
+
+    Val = AerovNetReadLe32FromPciCfg(Cfg, 0x10u + (I * 4u));
+    if (Val == 0) {
+      continue;
+    }
+
+    if ((Val & 0x1u) != 0) {
+      // I/O BAR (not supported for Aero virtio-pci modern contract v1).
+      return NDIS_STATUS_NOT_SUPPORTED;
+    }
+
+    // Memory BAR.
+    {
+      ULONG MemType;
+      uint64_t Base;
+
+      MemType = (Val >> 1) & 0x3u;
+      Base = (uint64_t)(Val & ~0xFu);
+
+      if (MemType == 0x2u) {
+        ULONG High;
+
+        if (I == (VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT - 1u)) {
+          return NDIS_STATUS_NOT_SUPPORTED;
+        }
+
+        High = AerovNetReadLe32FromPciCfg(Cfg, 0x10u + ((I + 1u) * 4u));
+        Base = ((uint64_t)High << 32) | Base;
+
+        BarAddrs[I] = Base;
+        BarAddrs[I + 1u] = 0;
+
+        I++; // Skip upper-half slot.
+      } else {
+        BarAddrs[I] = Base;
+      }
+    }
+  }
+
+  Res = virtio_pci_cap_parse(Cfg, sizeof(Cfg), BarAddrs, &Caps);
+  if (Res != VIRTIO_PCI_CAP_PARSE_OK) {
+    return NDIS_STATUS_NOT_SUPPORTED;
+  }
+
+  if (Caps.common_cfg.bar != 0 || Caps.notify_cfg.bar != 0 || Caps.isr_cfg.bar != 0 || Caps.device_cfg.bar != 0) {
+    return NDIS_STATUS_NOT_SUPPORTED;
+  }
+
+  if (Caps.notify_off_multiplier != AERO_VIRTIO_PCI_MODERN_NOTIFY_OFF_MULTIPLIER) {
+    return NDIS_STATUS_NOT_SUPPORTED;
+  }
+
+  if (Caps.common_cfg.offset != AERO_VIRTIO_PCI_MODERN_COMMON_CFG_OFFSET || Caps.common_cfg.length < AERO_VIRTIO_PCI_MODERN_COMMON_CFG_SIZE) {
+    return NDIS_STATUS_NOT_SUPPORTED;
+  }
+  if (Caps.notify_cfg.offset != AERO_VIRTIO_PCI_MODERN_NOTIFY_OFFSET || Caps.notify_cfg.length < AERO_VIRTIO_PCI_MODERN_NOTIFY_SIZE) {
+    return NDIS_STATUS_NOT_SUPPORTED;
+  }
+  if (Caps.isr_cfg.offset != AERO_VIRTIO_PCI_MODERN_ISR_OFFSET || Caps.isr_cfg.length < AERO_VIRTIO_PCI_MODERN_ISR_SIZE) {
+    return NDIS_STATUS_NOT_SUPPORTED;
+  }
+  if (Caps.device_cfg.offset != AERO_VIRTIO_PCI_MODERN_DEVICE_CFG_OFFSET || Caps.device_cfg.length < AERO_VIRTIO_PCI_MODERN_DEVICE_CFG_SIZE) {
+    return NDIS_STATUS_NOT_SUPPORTED;
+  }
+
+  return NDIS_STATUS_SUCCESS;
 }
 
 static VOID AerovNetFreeTxRequestNoLock(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ AEROVNET_TX_REQUEST* TxReq) {
@@ -749,6 +858,11 @@ static NDIS_STATUS AerovNetVirtioStart(_Inout_ AEROVNET_ADAPTER* Adapter) {
   BytesRead = NdisReadPciSlotInformation(Adapter->MiniportAdapterHandle, 0, 0x08, &RevisionId, sizeof(RevisionId));
   if (BytesRead != sizeof(RevisionId) || RevisionId != AEROVNET_PCI_REVISION_ID) {
     return NDIS_STATUS_NOT_SUPPORTED;
+  }
+
+  Status = AerovNetValidateVirtioPciCaps(Adapter);
+  if (Status != NDIS_STATUS_SUCCESS) {
+    return Status;
   }
 
   RequiredFeatures = VIRTIO_F_RING_INDIRECT_DESC | VIRTIO_NET_F_MAC | VIRTIO_NET_F_STATUS;
