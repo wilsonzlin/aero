@@ -459,9 +459,9 @@ Common causes / fixes:
   * If you place `autounattend.xml` on **CD1** and Setup behaves as if it never saw it, verify in `X:\Windows\Panther\setupact.log` / `UnattendGC\setupact.log` whether Setup enumerated that drive for answer files.
   * If CD1 is not scanned in your environment, the practical fixes are:
     - Put `autounattend.xml` on a **USB** device image instead (often treated as removable media), or
-    - Rebuild the Windows install ISO so `autounattend.xml` is on **CD0** (customized install media), or
-    - Ensure your workflow does not depend on “CD1 answer file discovery” and instead uses a slipstream/patcher approach:
-      - [`docs/16-win7-offline-media-patcher.md`](./16-win7-offline-media-patcher.md) (`patch-win7-media.ps1`, Windows-first)
+      - Rebuild the Windows install ISO so `autounattend.xml` is on **CD0** (customized install media), or
+      - Ensure your workflow does not depend on “CD1 answer file discovery” and instead uses a slipstream/patcher approach:
+      - [`docs/16-win7-offline-media-patcher.md`](./16-win7-offline-media-patcher.md) (`tools/windows/patch-win7-media.ps1`, Windows-first)
       - [`docs/16-windows7-install-media-prep.md`](./16-windows7-install-media-prep.md) (manual, auditable slipstreaming)
       - [`tools/win7-slipstream/README.md`](../tools/win7-slipstream/README.md) (automated slipstreaming tool)
 * The hypervisor attaches CD1 too late (attach before boot).
