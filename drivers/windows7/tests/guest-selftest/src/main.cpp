@@ -55,6 +55,41 @@ static std::wstring ToLower(std::wstring s) {
   return s;
 }
 
+static std::optional<std::wstring> GetEnvVarW(const wchar_t* name) {
+  if (!name || !*name) return std::nullopt;
+
+  // First call with nSize=0 to get required size (including NUL).
+  SetLastError(ERROR_SUCCESS);
+  const DWORD required = GetEnvironmentVariableW(name, nullptr, 0);
+  if (required == 0) {
+    if (GetLastError() == ERROR_ENVVAR_NOT_FOUND) return std::nullopt;
+    // Present but empty.
+    return std::wstring();
+  }
+
+  std::wstring buf(required, L'\0');
+  SetLastError(ERROR_SUCCESS);
+  const DWORD written = GetEnvironmentVariableW(name, buf.data(), required);
+  if (written == 0) {
+    if (GetLastError() == ERROR_ENVVAR_NOT_FOUND) return std::nullopt;
+    // Present but empty.
+    return std::wstring();
+  }
+  buf.resize(written);
+  return buf;
+}
+
+static bool EnvVarTruthy(const wchar_t* name) {
+  const auto v = GetEnvVarW(name);
+  if (!v.has_value()) return false;
+
+  std::wstring s = ToLower(*v);
+  s.erase(std::remove_if(s.begin(), s.end(), [](wchar_t c) { return iswspace(c) != 0; }), s.end());
+  if (s.empty()) return true;
+  if (s == L"0" || s == L"false" || s == L"no" || s == L"off") return false;
+  return true;
+}
+
 static bool ContainsInsensitive(const std::wstring& haystack, const std::wstring& needle) {
   return ToLower(haystack).find(ToLower(needle)) != std::wstring::npos;
 }
@@ -1298,6 +1333,7 @@ static void PrintUsage() {
       "  --dns-host <hostname>     Hostname for DNS resolution test\n"
       "  --log-file <path>         Log file path (default C:\\\\aero-virtio-selftest.log)\n"
       "  --require-snd             Fail if virtio-snd is missing (default: SKIP)\n"
+      "                           (or set env AERO_VIRTIO_SELFTEST_REQUIRE_SND=1)\n"
       "  --net-timeout-sec <sec>   Wait time for DHCP/link\n"
       "  --io-size-mib <mib>       virtio-blk test file size\n"
       "  --io-chunk-kib <kib>      virtio-blk chunk size\n"
@@ -1319,6 +1355,7 @@ int wmain(int argc, wchar_t** argv) {
   SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
 
   Options opt;
+  opt.require_snd = EnvVarTruthy(L"AERO_VIRTIO_SELFTEST_REQUIRE_SND");
 
   for (int i = 1; i < argc; i++) {
     const std::wstring arg = argv[i];
@@ -1394,9 +1431,9 @@ int wmain(int argc, wchar_t** argv) {
   Logger log(opt.log_file);
 
   log.LogLine("AERO_VIRTIO_SELFTEST|START|version=1");
-  log.Logf("AERO_VIRTIO_SELFTEST|CONFIG|http_url=%s|dns_host=%s|blk_root=%s",
+  log.Logf("AERO_VIRTIO_SELFTEST|CONFIG|http_url=%s|dns_host=%s|blk_root=%s|require_snd=%d",
            WideToUtf8(opt.http_url).c_str(), WideToUtf8(opt.dns_host).c_str(),
-           WideToUtf8(opt.blk_root).c_str());
+           WideToUtf8(opt.blk_root).c_str(), opt.require_snd ? 1 : 0);
 
   bool all_ok = true;
 
