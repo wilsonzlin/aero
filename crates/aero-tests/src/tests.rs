@@ -109,13 +109,49 @@ impl Machine {
             StepExit::Continue | StepExit::Branch => Ok(StepOutcome::Continue),
             StepExit::Halted => Ok(StepOutcome::Halted),
             StepExit::BiosInterrupt(vector) => {
-                panic!("unexpected BIOS interrupt exit: {vector:#x}")
+                self.handle_bios_interrupt(vector)?;
+                Ok(StepOutcome::Continue)
             }
             StepExit::Assist(reason) => {
                 self.handle_assist(reason)?;
                 Ok(StepOutcome::Continue)
             }
         }
+    }
+
+    fn handle_bios_interrupt(&mut self, vector: u8) -> Result<(), Exception> {
+        // Tier-0 can surface certain real-mode `INT n` calls as a BIOS hypercall:
+        // after the guest transfers control to a ROM stub, the stub executes `HLT`
+        // and Tier-0 exits with `StepExit::BiosInterrupt(n)`.
+        //
+        // For the `aero-tests` harness we model a tiny subset of BIOS services
+        // needed by tests. In particular, we treat `INT 10h / AH=0Eh` as a
+        // "debugcon" write to port 0xE9.
+        match vector {
+            0x10 => {
+                let ah = self.cpu.read_reg(Register::AH) as u8;
+                if ah != 0x0E {
+                    return Err(Exception::Unimplemented("BIOS INT10h function"));
+                }
+                let al = self.cpu.read_reg(Register::AL) as u8;
+                self.ports.out_u8(0xE9, al);
+            }
+            _ => return Err(Exception::Unimplemented("BIOS interrupt vector")),
+        }
+
+        // Return to the interrupted context (IRET).
+        let mut bus = Bus {
+            mem: &mut self.mem,
+            ports: &mut self.ports,
+        };
+        let ip = pop(&mut self.cpu, &mut bus, 2)? & 0xFFFF;
+        let cs = pop(&mut self.cpu, &mut bus, 2)? as u16;
+        let flags = pop(&mut self.cpu, &mut bus, 2)? as u16;
+        self.cpu.write_reg(Register::CS, cs as u64);
+        self.cpu.set_rip(ip);
+        self.cpu.set_rflags(flags as u64);
+
+        Ok(())
     }
 
     fn handle_assist(&mut self, _reason: AssistReason) -> Result<(), Exception> {
@@ -719,6 +755,62 @@ fn boot_sector_hello_via_int10() {
     let mut machine = Machine::new(cpu, mem, ports);
     machine.run(10_000).unwrap();
 
+    assert_eq!(machine.step().unwrap(), StepOutcome::Halted);
+    assert_eq!(
+        std::str::from_utf8(&machine.ports.debugcon).unwrap(),
+        "Hello"
+    );
+}
+
+#[test]
+fn boot_sector_hello_via_bios_hypercall_int10() {
+    // Same "Hello" boot sector as `boot_sector_hello_via_int10`, but routes INT 10h
+    // through the Tier-0 BIOS hypercall mechanism:
+    // - IVT[0x10] points at a ROM stub that executes `HLT`
+    // - Tier-0 exits with `StepExit::BiosInterrupt(0x10)`
+    // - The harness emulates the BIOS service (AH=0Eh teletype) and IRET's
+    let mut mem = TestMem::new(1024 * 1024);
+ 
+    let boot_addr = 0x7C00u64;
+    let msg_off = 0x7C00u16 + 0x1B; // after code below
+    let boot = [
+        0x31, 0xC0, // xor ax,ax
+        0x8E, 0xD8, // mov ds,ax
+        0x8E, 0xC0, // mov es,ax
+        0x8E, 0xD0, // mov ss,ax
+        0xBC, 0x00, 0x7C, // mov sp,0x7c00
+        0xBE, (msg_off & 0xFF) as u8, (msg_off >> 8) as u8, // mov si,msg
+        0xFC, // cld
+        0xAC, // lodsb
+        0x0A, 0xC0, // or al,al
+        0x74, 0x06, // jz done
+        0xB4, 0x0E, // mov ah,0x0e
+        0xCD, 0x10, // int 0x10
+        0xEB, 0xF5, // jmp loop (back 11 bytes)
+        0xF4, // done: hlt
+        b'H', b'e', b'l', b'l', b'o', 0,
+    ];
+    mem.load(boot_addr, &boot);
+ 
+    // BIOS ROM stub at F000:0100 that just halts.
+    let bios_seg = 0xF000u16;
+    let bios_off = 0x0100u16;
+    let bios_addr = ((bios_seg as u64) << 4) + bios_off as u64;
+    mem.load(bios_addr, &[0xF4]); // hlt
+ 
+    // IVT[0x10] = bios stub.
+    let ivt = 0x10u64 * 4;
+    mem.write_u16(ivt, bios_off).unwrap();
+    mem.write_u16(ivt + 2, bios_seg).unwrap();
+ 
+    let mut cpu = CpuState::new(CpuMode::Real);
+    cpu.write_reg(Register::CS, 0);
+    cpu.set_rip(boot_addr);
+ 
+    let ports = TestPorts::default();
+    let mut machine = Machine::new(cpu, mem, ports);
+    machine.run(20_000).unwrap();
+ 
     assert_eq!(machine.step().unwrap(), StepOutcome::Halted);
     assert_eq!(
         std::str::from_utf8(&machine.ports.debugcon).unwrap(),
