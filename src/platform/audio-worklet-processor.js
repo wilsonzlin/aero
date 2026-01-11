@@ -113,3 +113,8 @@ export class AeroAudioProcessor extends WorkletProcessorBase {
 if (typeof registerProcessor === 'function') {
   registerProcessor('aero-audio-processor', AeroAudioProcessor);
 }
+
+// When this module is imported directly (e.g. by Node-based tests), provide a
+// default export so `import ... from "./audio-worklet-processor.js?worker&url"`
+// can resolve without Vite's `?worker&url` transform.
+export default import.meta.url;

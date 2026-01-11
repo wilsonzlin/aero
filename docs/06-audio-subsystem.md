@@ -718,8 +718,8 @@ contains `channelCount` interleaved `f32` samples.
 |--------|------|---------|
 | 0      | u32  | `readFrameIndex` (monotonic frame counter, consumer-owned) |
 | 4      | u32  | `writeFrameIndex` (monotonic frame counter, producer-owned) |
-| 8      | u32  | `underrunCount` (incremented by the worklet when it must output silence) |
-| 12     | u32  | `overrunCount` (frames dropped by the producer due to buffer full) |
+| 8      | u32  | `underrunCount` (total missing output frames rendered as silence due to underruns; wraps at 2^32) |
+| 12     | u32  | `overrunCount` (frames dropped by the producer due to buffer full; wraps at 2^32) |
 | 16..   | f32[]| Interleaved PCM samples (`L0, R0, L1, R1, ...`) |
 
 Canonical implementation:
