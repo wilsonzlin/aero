@@ -84,6 +84,7 @@ jobs:
         shell: bash
         env:
           TAG_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || '' }}
+          REF_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || '' }}
         run: |
           set -euo pipefail
 
@@ -91,12 +92,29 @@ jobs:
           # Always derive the SHA from the checked-out ref (workflow_dispatch may override ref).
           echo "GIT_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
 
+          ref_label="${REF_INPUT}"
+          if [[ -n "${ref_label}" ]]; then
+            if [[ "${ref_label}" == refs/tags/* ]]; then
+              ref_label="${ref_label#refs/tags/}"
+            elif [[ "${ref_label}" == refs/heads/* ]]; then
+              ref_label="${ref_label#refs/heads/}"
+            fi
+            # Keep artifact names filesystem-friendly.
+            ref_label="${ref_label//\//-}"
+            if [[ "${ref_label}" =~ ^[0-9a-fA-F]{40}$ ]]; then
+              ref_label="${ref_label:0:12}"
+            fi
+          fi
+
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
             version="${GITHUB_REF_NAME}"
             release_tag="${GITHUB_REF_NAME}"
           elif [[ -n "${TAG_INPUT}" ]]; then
             version="${TAG_INPUT}"
             release_tag="${TAG_INPUT}"
+          elif [[ -n "${ref_label}" ]]; then
+            version="${ref_label}"
+            release_tag=""
           else
             version="${GITHUB_REF_NAME}"
             release_tag=""
