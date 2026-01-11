@@ -32,6 +32,10 @@ This avoids “driver installs but won’t start” confusion: the driver enforc
 contract major version at runtime, so binding to a non-contract `REV_00` device
 would otherwise install successfully but fail to start (Code 10).
 
+If you need to support a transitional virtio-input PCI function (`DEV_1011`) or a
+different revision, ship a separate INF/package rather than weakening the contract
+v1 binding.
+
 Contract v1 also encodes the major version in the PCI **Revision ID** (`REV_01`).
 Some QEMU virtio devices report `REV_00` by default; for contract-v1 testing under
 QEMU, pass `x-pci-revision=0x01` (and preferably `disable-legacy=on`) on the
