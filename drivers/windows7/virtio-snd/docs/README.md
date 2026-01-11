@@ -626,23 +626,28 @@ Note: the default Guest Tools tree does not include the QEMU compatibility varia
 ## Installing (development/testing)
 
 1. Ensure the package directory contains the files for the variant you want to install:
-   
-   - Contract v1 (default):
-     - `aero_virtio_snd.inf`
-     - `aero_virtio_snd.sys`
-     - `aero_virtio_snd.cat` (signed)
-   - Transitional/QEMU (optional):
-     - `aero-virtio-snd-legacy.inf`
-     - `virtiosnd_legacy.sys`
-     - `aero-virtio-snd-legacy.cat` (signed)
-   - Optional legacy filename alias:
-     - `virtio-snd.inf` (rename `virtio-snd.inf.disabled` to enable)
+    
+    - Contract v1 (default):
+      - `aero_virtio_snd.inf`
+      - `aero_virtio_snd.sys`
+      - `aero_virtio_snd.cat` (signed)
+    - Transitional/QEMU (optional):
+      - `aero-virtio-snd-legacy.inf`
+      - `virtiosnd_legacy.sys`
+      - `aero-virtio-snd-legacy.cat` (signed)
+    - Legacy I/O-port transport (optional bring-up; not part of `AERO-W7-VIRTIO` v1):
+      - `aero-virtio-snd-ioport.inf`
+      - `virtiosnd_ioport.sys`
+      - `aero-virtio-snd-ioport.cat` (signed)
+    - Optional legacy filename alias:
+      - `virtio-snd.inf` (rename `virtio-snd.inf.disabled` to enable)
 2. Use Device Manager → Update Driver → "Have Disk..." and point to `inf\\` (or `release\\<arch>\\virtio-snd\\` once packaged). Pick the desired INF when prompted.
 
 INF selection note:
 
 - `aero_virtio_snd.inf` is the **canonical** Aero contract v1 package (matches `PCI\VEN_1AF4&DEV_1059&REV_01` and installs service `aero_virtio_snd`).
 - `aero-virtio-snd-legacy.inf` is an opt-in QEMU compatibility package (binds the transitional virtio-snd PCI ID `PCI\VEN_1AF4&DEV_1018` with no revision gate and installs service `aeroviosnd_legacy`).
+- `aero-virtio-snd-ioport.inf` is an opt-in legacy I/O-port transport package (binds `PCI\VEN_1AF4&DEV_1018&REV_00` and installs service `aeroviosnd_ioport`).
 - `virtio-snd.inf` is a legacy filename alias kept for compatibility with older tooling/workflows.
   It installs the same driver/service and matches the same Aero contract v1 HWIDs as `aero_virtio_snd.inf`,
   but is disabled by default to avoid accidentally installing **two** INFs that match the same HWIDs.
