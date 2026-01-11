@@ -25,7 +25,7 @@ Designed for the standard flow:
 ### What it does
 
 1. Creates a state directory at `C:\AeroGuestTools\`.
-2. Installs Aero signing certificate(s) from `certs\` (`*.cer`, `*.crt`, `*.p7b`) **if any are present** into:
+2. Installs Aero signing certificate(s) from `certs\` (`*.cer`, `*.crt`, `*.p7b`) into:
    - `Root` (Trusted Root Certification Authorities)
    - `TrustedPublisher` (Trusted Publishers)
 3. On **Windows 7 x64**, may enable a driver-signing boot policy depending on `manifest.json`:
@@ -103,6 +103,7 @@ Exit codes (for automation):
 - `0`: success
 - `10`: Administrator privileges required
 - `11`: driver directory missing (`drivers\\<arch>\\`)
+- `12`: required certificate file(s) missing under `certs\\` (when `signing_policy != none`)
 - `13`: `AERO_VIRTIO_BLK_SERVICE` does not match any `AddService` name in the packaged driver INFs (`drivers\\<arch>\\...`)
 
 ## Building Guest Tools media for WHQL / production-signed drivers

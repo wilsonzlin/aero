@@ -423,8 +423,12 @@ call :log ""
 call :log "Installing Aero certificate(s) from %CERT_DIR% ..."
 
 if not exist "%CERT_DIR%" (
-  call :log "WARNING: Certificate directory not found; skipping certificate installation."
-  exit /b 0
+  if /i "%SIGNING_POLICY%"=="none" (
+    call :log "Certificate directory not found; signing_policy=none; skipping certificate installation."
+    exit /b 0
+  )
+  call :log "ERROR: Certificate directory not found: %CERT_DIR% (expected *.cer/*.crt and/or *.p7b)."
+  exit /b %EC_CERTS_MISSING%
 )
 
 set "FOUND_CERT=0"
@@ -451,8 +455,12 @@ for %%F in ("%CERT_DIR%\*.p7b") do (
 )
 
 if "%FOUND_CERT%"=="0" (
-  call :log "WARNING: No certificates found under %CERT_DIR% (expected *.cer/*.crt and/or *.p7b). Skipping certificate installation."
-  exit /b 0
+  if /i "%SIGNING_POLICY%"=="none" (
+    call :log "No certificates found under %CERT_DIR%; signing_policy=none; skipping certificate installation."
+    exit /b 0
+  )
+  call :log "ERROR: No certificates found under %CERT_DIR% (expected *.cer/*.crt and/or *.p7b)."
+  exit /b %EC_CERTS_MISSING%
 )
 
 exit /b 0
