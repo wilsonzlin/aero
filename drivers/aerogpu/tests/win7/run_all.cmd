@@ -120,6 +120,25 @@ if "!TIMEOUT_MS:0=!"=="" (
   echo ERROR: --timeout-ms must be ^> 0
   exit /b 1
 )
+
+rem Must fit in uint32 (timeout_runner parses the timeout as a DWORD).
+set "T=!TIMEOUT_MS!"
+:validate_timeout_strip_leading_zeros
+if not "!T!"=="" if "!T:~0,1!"=="0" (
+  set "T=!T:~1!"
+  goto validate_timeout_strip_leading_zeros
+)
+if "!T!"=="" set "T=0"
+if not "!T:~10,1!"=="" (
+  echo ERROR: invalid --timeout-ms value: !TIMEOUT_MS! ^(must be ^<= 4294967295^)
+  exit /b 1
+)
+if not "!T:~9,1!"=="" (
+  if "!T!" gtr "4294967295" (
+    echo ERROR: invalid --timeout-ms value: !TIMEOUT_MS! ^(must be ^<= 4294967295^)
+    exit /b 1
+  )
+)
 exit /b 0
 
 :run_manifest_line
