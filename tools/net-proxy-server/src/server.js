@@ -1,14 +1,19 @@
 import http from "node:http";
+import { lookup } from "node:dns/promises";
 import net from "node:net";
 import WebSocket, { WebSocketServer } from "ws";
 import {
-  decodeFrame,
-  encodeClose,
-  encodeData,
-  encodeError,
-  encodeOpenAck,
-  ErrorCode,
-  FrameType,
+  TCP_MUX_HEADER_BYTES,
+  TCP_MUX_SUBPROTOCOL,
+  TcpMuxCloseFlags,
+  TcpMuxErrorCode,
+  TcpMuxFrameParser,
+  TcpMuxMsgType,
+  decodeTcpMuxClosePayload,
+  decodeTcpMuxOpenPayload,
+  encodeTcpMuxClosePayload,
+  encodeTcpMuxErrorPayload,
+  encodeTcpMuxFrame,
 } from "./protocol.js";
 
 function normalizeRemoteAddress(remoteAddress) {
@@ -16,10 +21,6 @@ function normalizeRemoteAddress(remoteAddress) {
   // "::ffff:127.0.0.1" -> "127.0.0.1"
   if (remoteAddress.startsWith("::ffff:")) return remoteAddress.slice("::ffff:".length);
   return remoteAddress;
-}
-
-function ipv4BytesToString(ip) {
-  return `${ip[0]}.${ip[1]}.${ip[2]}.${ip[3]}`;
 }
 
 function u32FromIpv4Bytes(ip) {
@@ -45,10 +46,18 @@ function ipv4InCidr(ipBytes, cidrObj) {
   return (u32FromIpv4Bytes(ipBytes) & cidrObj.mask) === cidrObj.network;
 }
 
-function isPrivateIpv4(ip) {
-  const a = ip[0];
-  const b = ip[1];
-  const c = ip[2];
+function ipv4StringToBytes(ip) {
+  const parts = ip.split(".").map((p) => Number(p));
+  if (parts.length !== 4 || parts.some((p) => !Number.isInteger(p) || p < 0 || p > 255)) {
+    throw new Error(`Invalid IPv4 address: ${ip}`);
+  }
+  return new Uint8Array(parts);
+}
+
+function isPrivateIpv4(ipBytes) {
+  const a = ipBytes[0];
+  const b = ipBytes[1];
+  const c = ipBytes[2];
 
   // 0.0.0.0/8 (this host on this network)
   if (a === 0) return true;
@@ -70,6 +79,141 @@ function isPrivateIpv4(ip) {
   if (a === 192 && b === 0 && c === 0) return true; // 192.0.0.0/24 (IETF protocol assignments)
 
   return false;
+}
+
+function parseIpv6ToBytes(address) {
+  let ip = address;
+  const zoneIdx = ip.indexOf("%");
+  if (zoneIdx !== -1) ip = ip.slice(0, zoneIdx);
+  if (ip.startsWith("[") && ip.endsWith("]")) ip = ip.slice(1, -1);
+  ip = ip.toLowerCase();
+
+  const pieces = ip.split("::");
+  if (pieces.length > 2) {
+    throw new Error(`Invalid IPv6 address: ${address}`);
+  }
+
+  const left = pieces[0];
+  const right = pieces.length === 2 ? pieces[1] : null;
+
+  const leftParts = left.length > 0 ? left.split(":") : [];
+  const rightParts = right && right.length > 0 ? right.split(":") : [];
+
+  const parseParts = (parts) => {
+    /** @type {number[]} */
+    const out = [];
+    for (const part of parts) {
+      if (part === "") continue;
+      if (part.includes(".")) {
+        const v4 = ipv4StringToBytes(part);
+        // eslint-disable-next-line no-bitwise
+        out.push(((v4[0] << 8) | v4[1]) >>> 0);
+        // eslint-disable-next-line no-bitwise
+        out.push(((v4[2] << 8) | v4[3]) >>> 0);
+        continue;
+      }
+      const n = Number.parseInt(part, 16);
+      if (!Number.isFinite(n) || n < 0 || n > 0xffff) {
+        throw new Error(`Invalid IPv6 hextet: ${part}`);
+      }
+      out.push(n);
+    }
+    return out;
+  };
+
+  const leftHextets = parseParts(leftParts);
+  const rightHextets = parseParts(rightParts);
+
+  /** @type {number[]} */
+  let hextets;
+  if (right !== null) {
+    const missing = 8 - (leftHextets.length + rightHextets.length);
+    if (missing < 0) {
+      throw new Error(`Invalid IPv6 address: ${address}`);
+    }
+    hextets = [...leftHextets, ...Array(missing).fill(0), ...rightHextets];
+  } else {
+    if (leftHextets.length !== 8) {
+      throw new Error(`Invalid IPv6 address: ${address}`);
+    }
+    hextets = leftHextets;
+  }
+
+  if (hextets.length !== 8) {
+    throw new Error(`Invalid IPv6 address: ${address}`);
+  }
+
+  const bytes = new Uint8Array(16);
+  for (let i = 0; i < 8; i++) {
+    const v = hextets[i];
+    // eslint-disable-next-line no-bitwise
+    bytes[i * 2] = (v >> 8) & 0xff;
+    // eslint-disable-next-line no-bitwise
+    bytes[i * 2 + 1] = v & 0xff;
+  }
+  return bytes;
+}
+
+function ipv6IsIpv4Mapped(bytes) {
+  for (let i = 0; i < 10; i++) {
+    if (bytes[i] !== 0) return false;
+  }
+  return bytes[10] === 0xff && bytes[11] === 0xff;
+}
+
+function isPrivateIpv6(bytes) {
+  // ::/128 (unspecified)
+  if (bytes.every((b) => b === 0)) return true;
+
+  // ::1/128 (loopback)
+  let loopback = true;
+  for (let i = 0; i < 15; i++) loopback = loopback && bytes[i] === 0;
+  if (loopback && bytes[15] === 1) return true;
+
+  // ff00::/8 (multicast)
+  if (bytes[0] === 0xff) return true;
+
+  // fc00::/7 (unique local)
+  // eslint-disable-next-line no-bitwise
+  if ((bytes[0] & 0xfe) === 0xfc) return true;
+
+  // fe80::/10 (link-local)
+  // eslint-disable-next-line no-bitwise
+  if (bytes[0] === 0xfe && (bytes[1] & 0xc0) === 0x80) return true;
+
+  return false;
+}
+
+function isAllowedIpAddress(ipStr, allowCidrs, allowPrivateIps) {
+  const family = net.isIP(ipStr);
+  if (family === 4) {
+    const bytes = ipv4StringToBytes(ipStr);
+    const explicitlyAllowed = allowCidrs.some((cidr) => ipv4InCidr(bytes, cidr));
+    if (allowPrivateIps) return true;
+    if (!isPrivateIpv4(bytes)) return true;
+    return explicitlyAllowed;
+  }
+
+  if (family === 6) {
+    if (allowPrivateIps) return true;
+    const bytes = parseIpv6ToBytes(ipStr);
+    if (ipv6IsIpv4Mapped(bytes)) {
+      const v4 = new Uint8Array(bytes.subarray(12, 16));
+      const explicitlyAllowed = allowCidrs.some((cidr) => ipv4InCidr(v4, cidr));
+      if (!isPrivateIpv4(v4)) return true;
+      return explicitlyAllowed;
+    }
+    return !isPrivateIpv6(bytes);
+  }
+
+  return false;
+}
+
+class TcpMuxIpPolicyDeniedError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "TcpMuxIpPolicyDeniedError";
+  }
 }
 
 class TokenBucket {
@@ -96,6 +240,19 @@ function defaultLogger(obj) {
   console.log(JSON.stringify({ time: new Date().toISOString(), ...obj }));
 }
 
+function normalizeOpenHost(host) {
+  let out = String(host ?? "").trim();
+  if (out.startsWith("[") && out.endsWith("]")) out = out.slice(1, -1);
+  return out;
+}
+
+function asBuffer(data) {
+  if (Buffer.isBuffer(data)) return data;
+  if (data instanceof ArrayBuffer) return Buffer.from(data);
+  if (ArrayBuffer.isView(data)) return Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+  throw new TypeError(`Unsupported WebSocket message payload: ${Object.prototype.toString.call(data)}`);
+}
+
 export async function createProxyServer(userConfig) {
   const config = {
     host: "127.0.0.1",
@@ -103,8 +260,11 @@ export async function createProxyServer(userConfig) {
     path: "/tcp-mux",
     authToken: undefined,
     allowPrivateIps: false,
+    // IPv4-only allowlist for local development. If an IP is in this list, it is
+    // allowed even if it is in a private/reserved range.
     allowCidrs: [],
     maxOpenConnectionsPerSession: 256,
+    maxStreamBufferedBytes: 1024 * 1024,
     maxFramePayloadBytes: 1024 * 1024,
     // Outbound TCP -> WS backpressure thresholds.
     wsBackpressureHighWatermarkBytes: 8 * 1024 * 1024,
@@ -135,8 +295,6 @@ export async function createProxyServer(userConfig) {
     authFailed: 0,
     wsBackpressurePauses: 0,
     wsBackpressureResumes: 0,
-    tcpBackpressurePauses: 0,
-    tcpBackpressureResumes: 0,
   };
 
   const log = config.logger ?? defaultLogger;
@@ -148,7 +306,11 @@ export async function createProxyServer(userConfig) {
 
   const wss = new WebSocketServer({
     noServer: true,
-    maxPayload: config.maxFramePayloadBytes + 64, // header overhead
+    // `ws` only enforces this per WebSocket *message*; `aero-tcp-mux-v1` frames
+    // may be split across messages, so we separately cap the pending parser
+    // buffer size below.
+    maxPayload: config.maxFramePayloadBytes + TCP_MUX_HEADER_BYTES + 64,
+    handleProtocols: (protocols) => (protocols.has(TCP_MUX_SUBPROTOCOL) ? TCP_MUX_SUBPROTOCOL : false),
   });
 
   function rejectUpgrade(socket, statusCode, message) {
@@ -161,6 +323,17 @@ export async function createProxyServer(userConfig) {
       const url = new URL(req.url ?? "/", "http://localhost");
       if (url.pathname !== config.path) {
         rejectUpgrade(socket, 404, "Not Found");
+        return;
+      }
+
+      const protocolHeader = req.headers["sec-websocket-protocol"];
+      const offered = typeof protocolHeader === "string" ? protocolHeader : "";
+      const protocols = offered
+        .split(",")
+        .map((p) => p.trim())
+        .filter((p) => p.length > 0);
+      if (!protocols.includes(TCP_MUX_SUBPROTOCOL)) {
+        rejectUpgrade(socket, 400, `Missing required subprotocol: ${TCP_MUX_SUBPROTOCOL}`);
         return;
       }
 
@@ -195,7 +368,7 @@ export async function createProxyServer(userConfig) {
     const remoteIp = normalizeRemoteAddress(req.socket.remoteAddress);
     const sessionId = `${remoteIp}-${Math.random().toString(16).slice(2, 10)}`;
 
-    log({ level: "info", event: "ws_connected", sessionId, remoteIp });
+    log({ level: "info", event: "ws_connected", sessionId, remoteIp, protocol: ws.protocol });
 
     const openBucket = new TokenBucket({
       refillPerSecond: config.maxOpenRequestsPerMinute / 60,
@@ -207,15 +380,16 @@ export async function createProxyServer(userConfig) {
       burst: config.maxClientBytesPerSecond * 2,
     });
 
-    /** @type {Map<number, { socket: net.Socket, open: boolean, pausedForWsBackpressure: boolean, closeSent: boolean }>} */
-    const conns = new Map();
+    /** @type {Map<number, { socket: net.Socket, connected: boolean, clientFin: boolean, serverFin: boolean, pendingWrites: Buffer[], pendingWriteBytes: number, writePaused: boolean, pausedForWsBackpressure: boolean }>} */
+    const streams = new Map();
 
-    /** @type {Uint8Array[]} */
+    const muxParser = new TcpMuxFrameParser();
+
+    /** @type {Buffer[]} */
     const wsSendQueue = [];
     let wsSendQueueBytes = 0;
     let wsSendFlushScheduled = false;
     let wsBackpressureActive = false;
-    let wsPauseRefCount = 0;
 
     function backlogBytes() {
       // We track the queue we control (wsSendQueueBytes) and also include the
@@ -229,11 +403,10 @@ export async function createProxyServer(userConfig) {
       if (backlogBytes() <= config.wsBackpressureHighWatermarkBytes) return;
 
       let didPauseAny = false;
-      for (const [, conn] of conns) {
-        if (!conn.open) continue;
-        if (conn.pausedForWsBackpressure) continue;
-        conn.socket.pause();
-        conn.pausedForWsBackpressure = true;
+      for (const stream of streams.values()) {
+        if (stream.pausedForWsBackpressure) continue;
+        stream.socket.pause();
+        stream.pausedForWsBackpressure = true;
         didPauseAny = true;
       }
 
@@ -248,10 +421,10 @@ export async function createProxyServer(userConfig) {
       if (backlogBytes() > config.wsBackpressureLowWatermarkBytes) return;
 
       let didResumeAny = false;
-      for (const [, conn] of conns) {
-        if (!conn.pausedForWsBackpressure) continue;
-        conn.socket.resume();
-        conn.pausedForWsBackpressure = false;
+      for (const stream of streams.values()) {
+        if (!stream.pausedForWsBackpressure) continue;
+        stream.socket.resume();
+        stream.pausedForWsBackpressure = false;
         didResumeAny = true;
       }
 
@@ -287,26 +460,6 @@ export async function createProxyServer(userConfig) {
       else setImmediate(run);
     }
 
-    function pauseWsIncoming() {
-      const s = ws._socket;
-      if (!s) return;
-      if (wsPauseRefCount === 0) {
-        stats.tcpBackpressurePauses += 1;
-        s.pause();
-      }
-      wsPauseRefCount += 1;
-    }
-
-    function resumeWsIncoming() {
-      const s = ws._socket;
-      if (!s) return;
-      wsPauseRefCount = Math.max(0, wsPauseRefCount - 1);
-      if (wsPauseRefCount === 0) {
-        stats.tcpBackpressureResumes += 1;
-        s.resume();
-      }
-    }
-
     function sendFrame(frame) {
       if (ws.readyState !== WebSocket.OPEN) return;
       stats.framesToClient += 1;
@@ -317,154 +470,328 @@ export async function createProxyServer(userConfig) {
       scheduleWsFlush();
     }
 
-    function closeConnection(connectionId) {
-      const conn = conns.get(connectionId);
-      if (!conn) return;
+    function sendMuxFrame(msgType, streamId, payload) {
+      sendFrame(encodeTcpMuxFrame(msgType, streamId, payload));
+    }
 
-      conns.delete(connectionId);
+    function sendStreamError(streamId, code, message) {
+      sendMuxFrame(TcpMuxMsgType.ERROR, streamId, encodeTcpMuxErrorPayload(code, message));
+    }
+
+    function removeStream(streamId) {
+      const stream = streams.get(streamId);
+      if (!stream) return null;
+      streams.delete(streamId);
       stats.tcpConnectionsActive = Math.max(0, stats.tcpConnectionsActive - 1);
+      return stream;
+    }
 
+    function destroyStream(streamId) {
+      const stream = removeStream(streamId);
+      if (!stream) return;
       try {
-        conn.socket.destroy();
+        stream.socket.removeAllListeners();
+        stream.socket.destroy();
       } catch {
         // ignore
       }
-
-      if (!conn.closeSent) {
-        conn.closeSent = true;
-        sendFrame(encodeClose(connectionId));
-      }
     }
 
-    function failConnection(connectionId, code, message) {
-      sendFrame(encodeError(connectionId, code, message));
-      closeConnection(connectionId);
+    function enqueueStreamWrite(streamId, stream, data) {
+      stream.pendingWrites.push(data);
+      stream.pendingWriteBytes += data.length;
+      if (stream.pendingWriteBytes <= config.maxStreamBufferedBytes) return;
+
+      sendStreamError(streamId, TcpMuxErrorCode.STREAM_BUFFER_OVERFLOW, "stream buffered too much data");
+      destroyStream(streamId);
     }
 
-    ws.on("message", (data) => {
-      stats.framesFromClient += 1;
-      stats.bytesFromClient += data.byteLength ?? data.length ?? 0;
+    function flushStreamWrites(streamId, stream) {
+      if (ws.readyState !== WebSocket.OPEN) return;
+      if (!stream.connected) return;
+      if (stream.writePaused) return;
 
-      let frame;
-      try {
-        frame = decodeFrame(data);
-      } catch (e) {
-        sendFrame(encodeError(0, ErrorCode.INVALID_FRAME, String(e?.message ?? e)));
-        ws.close();
-        return;
-      }
-
-      if (frame.type === FrameType.OPEN) {
-        if (frame.kind !== "request") {
-          sendFrame(encodeError(frame.connectionId, ErrorCode.INVALID_FRAME, "OPEN ack from client"));
-          return;
-        }
-
-        if (!openBucket.tryConsume(1)) {
-          stats.rateLimited += 1;
-          failConnection(frame.connectionId, ErrorCode.RATE_LIMITED, "OPEN rate limit");
-          return;
-        }
-
-        if (conns.size >= config.maxOpenConnectionsPerSession) {
-          failConnection(frame.connectionId, ErrorCode.RATE_LIMITED, "Too many open connections");
-          return;
-        }
-        if (conns.has(frame.connectionId)) {
-          failConnection(frame.connectionId, ErrorCode.INVALID_FRAME, "Duplicate connection_id");
-          return;
-        }
-
-        const dstIp = frame.dstIp;
-        const dstPort = frame.dstPort;
-        const dstIpStr = ipv4BytesToString(dstIp);
-
-        const isPrivate = isPrivateIpv4(dstIp);
-        const explicitlyAllowed = allowCidrs.some((cidr) => ipv4InCidr(dstIp, cidr));
-        if (isPrivate && !config.allowPrivateIps && !explicitlyAllowed) {
-          stats.deniedDestinations += 1;
-          log({ level: "warn", event: "policy_denied", sessionId, dstIp: dstIpStr, dstPort });
-          failConnection(frame.connectionId, ErrorCode.POLICY_DENIED, "Destination is in a private/reserved IPv4 range");
-          return;
-        }
-
-        stats.tcpConnectionsTotal += 1;
-        stats.tcpConnectionsActive += 1;
-
-        log({ level: "info", event: "tcp_connect_start", sessionId, connectionId: frame.connectionId, dstIp: dstIpStr, dstPort });
-
-        const socket = net.createConnection({ host: dstIpStr, port: dstPort });
-        socket.setNoDelay(true);
-
-        const connState = { socket, open: false, pausedForWsBackpressure: false, closeSent: false };
-        conns.set(frame.connectionId, connState);
-
-        socket.on("connect", () => {
-          connState.open = true;
-          log({ level: "info", event: "tcp_connected", sessionId, connectionId: frame.connectionId, dstIp: dstIpStr, dstPort });
-          sendFrame(encodeOpenAck(frame.connectionId));
-        });
-
-        socket.on("data", (chunk) => {
-          sendFrame(encodeData(frame.connectionId, chunk));
-        });
-
-        socket.on("error", (err) => {
-          log({
-            level: "warn",
-            event: "tcp_error",
-            sessionId,
-            connectionId: frame.connectionId,
-            message: String(err?.message ?? err),
-          });
-          failConnection(frame.connectionId, ErrorCode.SOCKET_ERROR, "TCP socket error");
-        });
-
-        socket.on("close", () => {
-          log({ level: "info", event: "tcp_closed", sessionId, connectionId: frame.connectionId });
-          closeConnection(frame.connectionId);
-        });
-
-        return;
-      }
-
-      if (frame.type === FrameType.DATA) {
-        const conn = conns.get(frame.connectionId);
-        if (!conn || !conn.open) {
-          sendFrame(encodeError(frame.connectionId, ErrorCode.INVALID_FRAME, "DATA for unknown connection"));
-          return;
-        }
-
-        const byteLen = frame.data.byteLength ?? frame.data.length ?? 0;
-        if (!bytesBucket.tryConsume(byteLen)) {
-          stats.rateLimited += 1;
-          failConnection(frame.connectionId, ErrorCode.RATE_LIMITED, "DATA rate limit");
-          return;
-        }
-
-        const ok = conn.socket.write(frame.data);
+      while (stream.pendingWrites.length > 0) {
+        const chunk = stream.pendingWrites.shift();
+        stream.pendingWriteBytes -= chunk.length;
+        const ok = stream.socket.write(chunk);
         if (!ok) {
-          pauseWsIncoming();
-          conn.socket.once("drain", () => {
-            resumeWsIncoming();
-          });
+          stream.writePaused = true;
+          return;
         }
+      }
+
+      if (stream.clientFin && stream.serverFin) {
+        // Both halves have finished; release resources early.
+        destroyStream(streamId);
+      }
+    }
+
+    function handleOpen(frame) {
+      if (frame.streamId === 0) {
+        sendStreamError(frame.streamId, TcpMuxErrorCode.PROTOCOL_ERROR, "stream_id=0 is reserved");
+        return;
+      }
+      if (streams.has(frame.streamId)) {
+        sendStreamError(frame.streamId, TcpMuxErrorCode.PROTOCOL_ERROR, "stream_id already exists");
+        return;
+      }
+      if (!openBucket.tryConsume(1)) {
+        stats.rateLimited += 1;
+        sendStreamError(frame.streamId, TcpMuxErrorCode.STREAM_LIMIT_EXCEEDED, "OPEN rate limit");
+        return;
+      }
+      if (streams.size >= config.maxOpenConnectionsPerSession) {
+        sendStreamError(frame.streamId, TcpMuxErrorCode.STREAM_LIMIT_EXCEEDED, "Too many open streams");
         return;
       }
 
-      if (frame.type === FrameType.CLOSE) {
-        closeConnection(frame.connectionId);
+      let open;
+      try {
+        open = decodeTcpMuxOpenPayload(frame.payload);
+      } catch (err) {
+        sendStreamError(frame.streamId, TcpMuxErrorCode.PROTOCOL_ERROR, String(err?.message ?? err));
         return;
       }
 
-      // Client should never send ERROR frames.
-      sendFrame(encodeError(frame.connectionId, ErrorCode.INVALID_FRAME, "Unexpected frame type from client"));
+      const host = normalizeOpenHost(open.host);
+      const port = open.port;
+      if (host.length === 0) {
+        sendStreamError(frame.streamId, TcpMuxErrorCode.PROTOCOL_ERROR, "host is required");
+        return;
+      }
+      if (!Number.isInteger(port) || port < 1 || port > 65535) {
+        sendStreamError(frame.streamId, TcpMuxErrorCode.PROTOCOL_ERROR, "invalid port");
+        return;
+      }
+
+      const hostFamily = net.isIP(host);
+
+      if (hostFamily !== 0) {
+        const allowed = isAllowedIpAddress(host, allowCidrs, config.allowPrivateIps);
+        if (!allowed) {
+          stats.deniedDestinations += 1;
+          log({ level: "warn", event: "policy_denied", sessionId, streamId: frame.streamId, host, port });
+          sendStreamError(frame.streamId, TcpMuxErrorCode.POLICY_DENIED, "Target IP is blocked by IP egress policy");
+          return;
+        }
+      }
+
+      let dialHost = host;
+      /** @type {undefined | ((hostname: string, options: any, cb: (err: Error | null, address: string, family: number) => void) => void)} */
+      let dialLookup;
+
+      if (hostFamily === 0) {
+        dialLookup = (_hostname, _options, cb) => {
+          void (async () => {
+            let addresses;
+            try {
+              addresses = await lookup(dialHost, { all: true, verbatim: true });
+            } catch (err) {
+              cb(err, "", 4);
+              return;
+            }
+
+            for (const { address, family } of addresses) {
+              if (isAllowedIpAddress(address, allowCidrs, config.allowPrivateIps)) {
+                cb(null, address, family);
+                return;
+              }
+            }
+
+            cb(new TcpMuxIpPolicyDeniedError("All resolved IPs are blocked by IP egress policy"), "", 4);
+          })();
+        };
+      }
+
+      stats.tcpConnectionsTotal += 1;
+      stats.tcpConnectionsActive += 1;
+
+      log({ level: "info", event: "tcp_connect_start", sessionId, streamId: frame.streamId, host, port });
+
+      const socket = net.createConnection({ host: dialHost, port, allowHalfOpen: true, lookup: dialLookup });
+      socket.setNoDelay(true);
+
+      const stream = {
+        socket,
+        connected: false,
+        clientFin: false,
+        serverFin: false,
+        pendingWrites: [],
+        pendingWriteBytes: 0,
+        writePaused: false,
+        pausedForWsBackpressure: false,
+      };
+      streams.set(frame.streamId, stream);
+
+      if (wsBackpressureActive) {
+        stream.pausedForWsBackpressure = true;
+        socket.pause();
+      }
+
+      socket.on("connect", () => {
+        stream.connected = true;
+        log({ level: "info", event: "tcp_connected", sessionId, streamId: frame.streamId, host, port });
+        flushStreamWrites(frame.streamId, stream);
+      });
+
+      socket.on("data", (chunk) => {
+        sendMuxFrame(TcpMuxMsgType.DATA, frame.streamId, chunk);
+      });
+
+      socket.on("drain", () => {
+        stream.writePaused = false;
+        flushStreamWrites(frame.streamId, stream);
+      });
+
+      socket.on("end", () => {
+        if (stream.serverFin) return;
+        stream.serverFin = true;
+        sendMuxFrame(TcpMuxMsgType.CLOSE, frame.streamId, encodeTcpMuxClosePayload(TcpMuxCloseFlags.FIN));
+        flushStreamWrites(frame.streamId, stream);
+      });
+
+      socket.on("error", (err) => {
+        log({
+          level: "warn",
+          event: "tcp_error",
+          sessionId,
+          streamId: frame.streamId,
+          host,
+          port,
+          message: String(err?.message ?? err),
+        });
+
+        if (err instanceof TcpMuxIpPolicyDeniedError) {
+          stats.deniedDestinations += 1;
+          sendStreamError(frame.streamId, TcpMuxErrorCode.POLICY_DENIED, err.message);
+        } else {
+          sendStreamError(frame.streamId, TcpMuxErrorCode.DIAL_FAILED, String(err?.message ?? err));
+        }
+        destroyStream(frame.streamId);
+      });
+
+      socket.on("close", () => {
+        removeStream(frame.streamId);
+        log({ level: "info", event: "tcp_closed", sessionId, streamId: frame.streamId });
+      });
+    }
+
+    function handleData(frame) {
+      const stream = streams.get(frame.streamId);
+      if (!stream) {
+        sendStreamError(frame.streamId, TcpMuxErrorCode.UNKNOWN_STREAM, "unknown stream");
+        return;
+      }
+      if (stream.clientFin) {
+        sendStreamError(frame.streamId, TcpMuxErrorCode.PROTOCOL_ERROR, "stream is half-closed (client FIN)");
+        return;
+      }
+
+      const payloadLen = frame.payload.length;
+      if (!bytesBucket.tryConsume(payloadLen)) {
+        stats.rateLimited += 1;
+        sendStreamError(frame.streamId, TcpMuxErrorCode.STREAM_BUFFER_OVERFLOW, "DATA rate limit");
+        destroyStream(frame.streamId);
+        return;
+      }
+
+      if (!stream.connected || stream.writePaused) {
+        enqueueStreamWrite(frame.streamId, stream, frame.payload);
+        return;
+      }
+
+      const ok = stream.socket.write(frame.payload);
+      if (!ok) {
+        stream.writePaused = true;
+      }
+    }
+
+    function handleClose(frame) {
+      const stream = streams.get(frame.streamId);
+      if (!stream) return;
+
+      let flags;
+      try {
+        flags = decodeTcpMuxClosePayload(frame.payload).flags;
+      } catch (err) {
+        sendStreamError(frame.streamId, TcpMuxErrorCode.PROTOCOL_ERROR, String(err?.message ?? err));
+        return;
+      }
+
+      if ((flags & TcpMuxCloseFlags.RST) !== 0) {
+        destroyStream(frame.streamId);
+        return;
+      }
+
+      if ((flags & TcpMuxCloseFlags.FIN) !== 0) {
+        stream.clientFin = true;
+        stream.socket.end();
+        flushStreamWrites(frame.streamId, stream);
+      }
+    }
+
+    function handleMuxFrame(frame) {
+      if (frame.payload.length > config.maxFramePayloadBytes) {
+        ws.close(1002, "Frame payload too large");
+        return;
+      }
+
+      switch (frame.msgType) {
+        case TcpMuxMsgType.OPEN:
+          handleOpen(frame);
+          return;
+        case TcpMuxMsgType.DATA:
+          handleData(frame);
+          return;
+        case TcpMuxMsgType.CLOSE:
+          handleClose(frame);
+          return;
+        case TcpMuxMsgType.ERROR:
+          // Clients should not send ERROR frames (v1); ignore.
+          return;
+        case TcpMuxMsgType.PING:
+          sendMuxFrame(TcpMuxMsgType.PONG, frame.streamId, frame.payload);
+          return;
+        case TcpMuxMsgType.PONG:
+          return;
+        default:
+          sendStreamError(frame.streamId, TcpMuxErrorCode.PROTOCOL_ERROR, `Unknown msg_type ${frame.msgType}`);
+      }
+    }
+
+    ws.on("message", (data, isBinary) => {
+      if (!isBinary) {
+        // /tcp-mux is a binary protocol; close with "unsupported data".
+        ws.close(1003, "Binary messages only");
+        return;
+      }
+
+      let chunk;
+      try {
+        chunk = asBuffer(data);
+      } catch (err) {
+        ws.close(1002, String(err?.message ?? err));
+        return;
+      }
+
+      stats.bytesFromClient += chunk.length;
+
+      const frames = muxParser.push(chunk);
+      stats.framesFromClient += frames.length;
+      for (const frame of frames) {
+        handleMuxFrame(frame);
+      }
+
+      if (muxParser.pendingBytes() > TCP_MUX_HEADER_BYTES + config.maxFramePayloadBytes) {
+        ws.close(1002, "Framing buffer overflow");
+      }
     });
 
     ws.on("close", () => {
       stats.wsConnectionsActive = Math.max(0, stats.wsConnectionsActive - 1);
       log({ level: "info", event: "ws_closed", sessionId });
-      for (const [id] of conns) closeConnection(id);
+      for (const id of streams.keys()) destroyStream(id);
     });
 
     ws.on("error", (err) => {
@@ -493,3 +820,4 @@ export async function createProxyServer(userConfig) {
     },
   };
 }
+

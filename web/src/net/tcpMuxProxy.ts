@@ -1,3 +1,9 @@
+// Browser-side multiplexed TCP proxy client for `/tcp-mux`.
+//
+// Speaks the canonical `aero-tcp-mux-v1` framing used by:
+// - `backend/aero-gateway` (production)
+// - `tools/net-proxy-server` (dev relay)
+
 export const TCP_MUX_SUBPROTOCOL = "aero-tcp-mux-v1";
 
 export const TCP_MUX_HEADER_BYTES = 9;
@@ -170,6 +176,14 @@ export function decodeTcpMuxErrorPayload(payload: Uint8Array): TcpMuxError {
 
 export type TcpMuxProxyOptions = Readonly<{
   /**
+   * Optional `?token=` query parameter for the dev relay (`tools/net-proxy-server`).
+   *
+   * NOTE: This is **not** the same as the production Aero Gateway's cookie-backed
+   * sessions (`POST /session`, `aero_session` cookie).
+   */
+  authToken?: string;
+
+  /**
    * Maximum number of bytes allowed to be queued in JS before we start rejecting
    * writes.
    */
@@ -243,6 +257,9 @@ export class WebSocketTcpMuxProxyClient {
     if (url.protocol === "http:") url.protocol = "ws:";
     if (url.protocol === "https:") url.protocol = "wss:";
     url.pathname = `${url.pathname.replace(/\/$/, "")}/tcp-mux`;
+    if (opts.authToken) {
+      url.searchParams.set("token", opts.authToken);
+    }
 
     this.ws = new WebSocket(url.toString(), TCP_MUX_SUBPROTOCOL);
     this.ws.binaryType = "arraybuffer";
@@ -453,3 +470,4 @@ export class WebSocketTcpMuxProxyClient {
     this.streams.delete(streamId);
   }
 }
+

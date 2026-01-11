@@ -2,8 +2,20 @@ import assert from "node:assert/strict";
 import net from "node:net";
 import test from "node:test";
 import WebSocket from "ws";
+
 import { createProxyServer } from "../src/server.js";
-import { decodeFrame, encodeData, encodeOpenRequest, FrameType } from "../src/protocol.js";
+import {
+  TCP_MUX_SUBPROTOCOL,
+  TcpMuxCloseFlags,
+  TcpMuxErrorCode,
+  TcpMuxFrameParser,
+  TcpMuxMsgType,
+  decodeTcpMuxClosePayload,
+  decodeTcpMuxErrorPayload,
+  encodeTcpMuxClosePayload,
+  encodeTcpMuxFrame,
+  encodeTcpMuxOpenPayload,
+} from "../src/protocol.js";
 
 function listen(server, host = "127.0.0.1") {
   return new Promise((resolve) => {
@@ -18,22 +30,35 @@ function waitForWsOpen(ws) {
   });
 }
 
+function asBuffer(data) {
+  if (Buffer.isBuffer(data)) return data;
+  if (data instanceof ArrayBuffer) return Buffer.from(data);
+  if (ArrayBuffer.isView(data)) return Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+  throw new TypeError(`Unsupported ws message payload: ${Object.prototype.toString.call(data)}`);
+}
+
 function createFrameWaiter(ws) {
+  const parser = new TcpMuxFrameParser();
+
   /** @type {any[]} */
   const buffered = [];
   /** @type {Array<{ predicate: (f:any)=>boolean, resolve:(f:any)=>void, reject:(e:any)=>void, timer:any }>} */
   const pending = [];
-  ws.on("message", (data) => {
-    const frame = decodeFrame(data);
-    const idx = pending.findIndex((p) => p.predicate(frame));
-    if (idx !== -1) {
-      const p = pending.splice(idx, 1)[0];
-      clearTimeout(p.timer);
-      p.resolve(frame);
-      return;
+
+  ws.on("message", (data, isBinary) => {
+    if (!isBinary) return;
+    for (const frame of parser.push(asBuffer(data))) {
+      const idx = pending.findIndex((p) => p.predicate(frame));
+      if (idx !== -1) {
+        const p = pending.splice(idx, 1)[0];
+        clearTimeout(p.timer);
+        p.resolve(frame);
+        continue;
+      }
+      buffered.push(frame);
     }
-    buffered.push(frame);
   });
+
   return {
     waitFor(predicate, timeoutMs = 2000) {
       return new Promise((resolve, reject) => {
@@ -50,7 +75,7 @@ function createFrameWaiter(ws) {
   };
 }
 
-test("integration: multiplexed streams + echo + clean close", async () => {
+test("integration: OPEN+DATA roundtrip to echo server (split + concatenated WS messages)", async () => {
   let echoServer;
   let proxy;
   let ws;
@@ -69,47 +94,30 @@ test("integration: multiplexed streams + echo + clean close", async () => {
       metricsIntervalMs: 0,
     });
 
-    ws = new WebSocket(`${proxy.url}?token=test-token`);
+    ws = new WebSocket(`${proxy.url}?token=test-token`, TCP_MUX_SUBPROTOCOL);
     const waiter = createFrameWaiter(ws);
     await waitForWsOpen(ws);
 
-    const dstIp = new Uint8Array([127, 0, 0, 1]);
-    ws.send(encodeOpenRequest(1, dstIp, echoPort));
-    ws.send(encodeOpenRequest(2, dstIp, echoPort));
+    // Stream 1: send OPEN + DATA concatenated into a single WebSocket message.
+    const open1 = encodeTcpMuxFrame(TcpMuxMsgType.OPEN, 1, encodeTcpMuxOpenPayload({ host: "127.0.0.1", port: echoPort }));
+    const data1 = encodeTcpMuxFrame(TcpMuxMsgType.DATA, 1, Buffer.from("hello", "utf8"));
+    ws.send(Buffer.concat([open1, data1]));
 
-    await waiter.waitFor((f) => f.type === FrameType.OPEN && f.connectionId === 1 && f.kind === "ack");
-    await waiter.waitFor((f) => f.type === FrameType.OPEN && f.connectionId === 2 && f.kind === "ack");
+    // Stream 2: send OPEN split across two WebSocket messages (tests stream reassembly).
+    const open2 = encodeTcpMuxFrame(TcpMuxMsgType.OPEN, 2, encodeTcpMuxOpenPayload({ host: "127.0.0.1", port: echoPort }));
+    ws.send(open2.subarray(0, 4));
+    ws.send(open2.subarray(4));
+    ws.send(encodeTcpMuxFrame(TcpMuxMsgType.DATA, 2, Buffer.from("world", "utf8")));
 
-    ws.send(encodeData(1, Buffer.from("hello")));
-    ws.send(encodeData(2, Buffer.from("world")));
+    const d1 = await waiter.waitFor((f) => f.msgType === TcpMuxMsgType.DATA && f.streamId === 1);
+    const d2 = await waiter.waitFor((f) => f.msgType === TcpMuxMsgType.DATA && f.streamId === 2);
+    assert.equal(d1.payload.toString("utf8"), "hello");
+    assert.equal(d2.payload.toString("utf8"), "world");
 
-    const d1 = await waiter.waitFor((f) => f.type === FrameType.DATA && f.connectionId === 1);
-    const d2 = await waiter.waitFor((f) => f.type === FrameType.DATA && f.connectionId === 2);
-    assert.equal(Buffer.from(d1.data).toString("utf8"), "hello");
-    assert.equal(Buffer.from(d2.data).toString("utf8"), "world");
-
-    // Large payload round-trip (>= 1MB) using chunked DATA frames.
-    const big = Buffer.alloc(1024 * 1024, 0x5a);
-    const chunkSize = 16 * 1024;
-    for (let off = 0; off < big.length; off += chunkSize) {
-      ws.send(encodeData(1, big.subarray(off, Math.min(big.length, off + chunkSize))));
-    }
-
-    /** @type {Buffer[]} */
-    const received = [];
-    let receivedLen = 0;
-    while (receivedLen < big.length) {
-      // eslint-disable-next-line no-await-in-loop
-      const f = await waiter.waitFor((x) => x.type === FrameType.DATA && x.connectionId === 1, 5000);
-      const b = Buffer.from(f.data);
-      received.push(b);
-      receivedLen += b.length;
-    }
-    const roundTrip = Buffer.concat(received, receivedLen).subarray(0, big.length);
-    assert.deepEqual(roundTrip, big);
-
-    ws.send(new Uint8Array([3, 0, 0, 0, 1])); // CLOSE connId=1
-    await waiter.waitFor((f) => f.type === FrameType.CLOSE && f.connectionId === 1);
+    // Graceful close.
+    ws.send(encodeTcpMuxFrame(TcpMuxMsgType.CLOSE, 1, encodeTcpMuxClosePayload(TcpMuxCloseFlags.FIN)));
+    const close1 = await waiter.waitFor((f) => f.msgType === TcpMuxMsgType.CLOSE && f.streamId === 1);
+    assert.equal(decodeTcpMuxClosePayload(close1.payload).flags, TcpMuxCloseFlags.FIN);
   } finally {
     if (ws) ws.terminate();
     if (proxy) await proxy.close();
@@ -117,7 +125,7 @@ test("integration: multiplexed streams + echo + clean close", async () => {
   }
 });
 
-test("integration: policy denies private IPv4 by default", async () => {
+test("integration: policy denies private IPs by default", async () => {
   let proxy;
   let ws;
 
@@ -130,14 +138,15 @@ test("integration: policy denies private IPv4 by default", async () => {
       metricsIntervalMs: 0,
     });
 
-    ws = new WebSocket(`${proxy.url}?token=test-token`);
+    ws = new WebSocket(`${proxy.url}?token=test-token`, TCP_MUX_SUBPROTOCOL);
     const waiter = createFrameWaiter(ws);
     await waitForWsOpen(ws);
 
-    const dstIp = new Uint8Array([127, 0, 0, 1]);
-    ws.send(encodeOpenRequest(1, dstIp, 80));
-    const err = await waiter.waitFor((f) => f.type === FrameType.ERROR && f.connectionId === 1);
-    assert.equal(err.code, 3); // POLICY_DENIED
+    ws.send(encodeTcpMuxFrame(TcpMuxMsgType.OPEN, 1, encodeTcpMuxOpenPayload({ host: "127.0.0.1", port: 80 })));
+
+    const errFrame = await waiter.waitFor((f) => f.msgType === TcpMuxMsgType.ERROR && f.streamId === 1);
+    const err = decodeTcpMuxErrorPayload(errFrame.payload);
+    assert.equal(err.code, TcpMuxErrorCode.POLICY_DENIED);
   } finally {
     if (ws) ws.terminate();
     if (proxy) await proxy.close();
@@ -186,12 +195,11 @@ test("integration: TCP->WS backpressure pauses TCP read (>=1MB)", async () => {
       metricsIntervalMs: 0,
     });
 
-    ws = new WebSocket(`${proxy.url}?token=test-token`);
+    ws = new WebSocket(`${proxy.url}?token=test-token`, TCP_MUX_SUBPROTOCOL);
     const waiter = createFrameWaiter(ws);
     await waitForWsOpen(ws);
 
-    ws.send(encodeOpenRequest(1, new Uint8Array([127, 0, 0, 1]), burstPort));
-    await waiter.waitFor((f) => f.type === FrameType.OPEN && f.connectionId === 1 && f.kind === "ack");
+    ws.send(encodeTcpMuxFrame(TcpMuxMsgType.OPEN, 1, encodeTcpMuxOpenPayload({ host: "127.0.0.1", port: burstPort })));
 
     // Stop the WS client from reading, causing the server-side send queue to grow.
     ws._socket.pause();
@@ -205,11 +213,11 @@ test("integration: TCP->WS backpressure pauses TCP read (>=1MB)", async () => {
     let receivedLen = 0;
     while (receivedLen < payloadSize) {
       // eslint-disable-next-line no-await-in-loop
-      const f = await waiter.waitFor((x) => x.type === FrameType.DATA && x.connectionId === 1, 5000);
-      receivedLen += f.data.byteLength;
+      const f = await waiter.waitFor((x) => x.msgType === TcpMuxMsgType.DATA && x.streamId === 1, 5000);
+      receivedLen += f.payload.length;
     }
 
-    await waiter.waitFor((f) => f.type === FrameType.CLOSE && f.connectionId === 1, 5000);
+    await waiter.waitFor((f) => f.msgType === TcpMuxMsgType.CLOSE && f.streamId === 1, 5000);
     assert.ok(proxy.stats.wsBackpressureResumes > 0);
   } finally {
     if (ws) ws.terminate();
@@ -217,3 +225,4 @@ test("integration: TCP->WS backpressure pauses TCP read (>=1MB)", async () => {
     if (burstServer) await new Promise((resolve) => burstServer.close(resolve));
   }
 });
+

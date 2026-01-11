@@ -1,132 +1,197 @@
 /**
- * Aero TCP proxy framing (v1).
+ * Canonical Aero TCP multiplexing framing: `aero-tcp-mux-v1`.
  *
- * Each WebSocket message is exactly one frame. This intentionally avoids
- * streaming/partial framing complexity and keeps browser code simple.
+ * This matches the gateway implementation in `backend/aero-gateway` and the
+ * public contract in `docs/backend/01-aero-gateway-api.md`.
+ *
+ * Transport model: all WebSocket *binary* messages are treated as an arbitrary
+ * byte stream that carries one or more protocol frames. Frames may be split
+ * across WebSocket messages or concatenated within a message.
  *
  * All multi-byte integers are big-endian (network byte order).
  */
 
-export const FrameType = Object.freeze({
+export const TCP_MUX_SUBPROTOCOL = "aero-tcp-mux-v1";
+
+export const TCP_MUX_HEADER_BYTES = 9;
+
+export const TcpMuxMsgType = Object.freeze({
   OPEN: 1,
   DATA: 2,
   CLOSE: 3,
   ERROR: 4,
+  PING: 5,
+  PONG: 6,
 });
 
-export const ErrorCode = Object.freeze({
-  AUTH_REQUIRED: 1,
-  AUTH_INVALID: 2,
-  POLICY_DENIED: 3,
-  RATE_LIMITED: 4,
-  INVALID_FRAME: 5,
-  CONNECT_FAILED: 6,
-  SOCKET_ERROR: 7,
-  BACKPRESSURE: 8,
-  INTERNAL_ERROR: 9,
+export const TcpMuxCloseFlags = Object.freeze({
+  FIN: 0x01,
+  RST: 0x02,
 });
 
-const textEncoder = new TextEncoder();
-const textDecoder = new TextDecoder();
+// Matches `backend/aero-gateway/src/protocol/tcpMux.ts`.
+export const TcpMuxErrorCode = Object.freeze({
+  POLICY_DENIED: 1,
+  DIAL_FAILED: 2,
+  PROTOCOL_ERROR: 3,
+  UNKNOWN_STREAM: 4,
+  STREAM_LIMIT_EXCEEDED: 5,
+  STREAM_BUFFER_OVERFLOW: 6,
+});
 
-function asU8(data) {
-  if (data instanceof Uint8Array) return data;
-  if (data instanceof ArrayBuffer) return new Uint8Array(data);
-  // ws library delivers Buffer (which is a Uint8Array subclass), so this covers it.
-  if (ArrayBuffer.isView(data)) return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
-  throw new TypeError(`Unsupported frame data type: ${Object.prototype.toString.call(data)}`);
-}
+/**
+ * @typedef {{ msgType: number, streamId: number, payload: Buffer }} TcpMuxFrame
+ */
 
-function writeHeader(buf, type, connectionId) {
-  const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
-  dv.setUint8(0, type);
-  dv.setUint32(1, connectionId >>> 0, false);
-}
-
-export function encodeOpenRequest(connectionId, dstIpV4, dstPort) {
-  if (!(dstIpV4 instanceof Uint8Array) || dstIpV4.length !== 4) {
-    throw new TypeError("dstIpV4 must be Uint8Array(4)");
-  }
-  if (!Number.isInteger(dstPort) || dstPort < 0 || dstPort > 65535) {
-    throw new RangeError("dstPort must be u16");
-  }
-  const buf = new Uint8Array(5 + 1 + 4 + 2);
-  writeHeader(buf, FrameType.OPEN, connectionId);
-  buf[5] = 4; // ip_version
-  buf.set(dstIpV4, 6);
-  new DataView(buf.buffer, buf.byteOffset, buf.byteLength).setUint16(10, dstPort, false);
+export function encodeTcpMuxFrame(msgType, streamId, payload) {
+  const payloadBuf = payload ?? Buffer.alloc(0);
+  const buf = Buffer.allocUnsafe(TCP_MUX_HEADER_BYTES + payloadBuf.length);
+  buf.writeUInt8(msgType, 0);
+  buf.writeUInt32BE(streamId >>> 0, 1);
+  buf.writeUInt32BE(payloadBuf.length >>> 0, 5);
+  payloadBuf.copy(buf, TCP_MUX_HEADER_BYTES);
   return buf;
 }
 
-export function encodeOpenAck(connectionId) {
-  const buf = new Uint8Array(5);
-  writeHeader(buf, FrameType.OPEN, connectionId);
-  return buf;
-}
+export class TcpMuxFrameParser {
+  /** @type {Buffer} */
+  buffer = Buffer.alloc(0);
 
-export function encodeData(connectionId, payload) {
-  const p = asU8(payload);
-  const buf = new Uint8Array(5 + p.byteLength);
-  writeHeader(buf, FrameType.DATA, connectionId);
-  buf.set(p, 5);
-  return buf;
-}
+  /**
+   * @param {Buffer} chunk
+   * @returns {TcpMuxFrame[]}
+   */
+  push(chunk) {
+    if (chunk.length === 0) return [];
+    this.buffer = this.buffer.length === 0 ? chunk : Buffer.concat([this.buffer, chunk]);
 
-export function encodeClose(connectionId) {
-  const buf = new Uint8Array(5);
-  writeHeader(buf, FrameType.CLOSE, connectionId);
-  return buf;
-}
+    /** @type {TcpMuxFrame[]} */
+    const frames = [];
 
-export function encodeError(connectionId, code, message) {
-  if (!Number.isInteger(code) || code < 0 || code > 65535) throw new RangeError("code must be u16");
-  const msgBytes = textEncoder.encode(String(message ?? ""));
-  if (msgBytes.byteLength > 65535) throw new RangeError("message too long");
-  const buf = new Uint8Array(5 + 2 + 2 + msgBytes.byteLength);
-  writeHeader(buf, FrameType.ERROR, connectionId);
-  const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
-  dv.setUint16(5, code, false);
-  dv.setUint16(7, msgBytes.byteLength, false);
-  buf.set(msgBytes, 9);
-  return buf;
-}
+    while (this.buffer.length >= TCP_MUX_HEADER_BYTES) {
+      const msgType = this.buffer.readUInt8(0);
+      const streamId = this.buffer.readUInt32BE(1);
+      const length = this.buffer.readUInt32BE(5);
 
-export function decodeFrame(data) {
-  const u8 = asU8(data);
-  if (u8.byteLength < 5) throw new Error("Frame too short");
-  const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
-  const type = dv.getUint8(0);
-  const connectionId = dv.getUint32(1, false);
-  const payload = u8.subarray(5);
+      const frameTotalBytes = TCP_MUX_HEADER_BYTES + length;
+      if (this.buffer.length < frameTotalBytes) break;
 
-  switch (type) {
-    case FrameType.OPEN: {
-      // OPEN ack has empty payload; OPEN request has ip_version+ip+port.
-      if (payload.byteLength === 0) return { type, connectionId, kind: "ack" };
-      if (payload.byteLength < 1) throw new Error("OPEN frame missing ip_version");
-      const ipVersion = payload[0];
-      if (ipVersion !== 4) throw new Error(`Unsupported ip_version ${ipVersion}`);
-      if (payload.byteLength !== 1 + 4 + 2) throw new Error("Invalid OPEN frame length");
-      const dstIp = payload.subarray(1, 5);
-      const dstPort = new DataView(payload.buffer, payload.byteOffset, payload.byteLength).getUint16(5, false);
-      return { type, connectionId, kind: "request", ipVersion, dstIp, dstPort };
+      const payload = this.buffer.subarray(TCP_MUX_HEADER_BYTES, frameTotalBytes);
+      frames.push({ msgType, streamId, payload });
+      this.buffer = this.buffer.subarray(frameTotalBytes);
     }
-    case FrameType.DATA:
-      return { type, connectionId, data: payload };
-    case FrameType.CLOSE:
-      if (payload.byteLength !== 0) throw new Error("Invalid CLOSE frame length");
-      return { type, connectionId };
-    case FrameType.ERROR: {
-      if (payload.byteLength < 4) throw new Error("Invalid ERROR frame length");
-      const code = new DataView(payload.buffer, payload.byteOffset, payload.byteLength).getUint16(0, false);
-      const msgLen = new DataView(payload.buffer, payload.byteOffset, payload.byteLength).getUint16(2, false);
-      if (payload.byteLength !== 4 + msgLen) throw new Error("Invalid ERROR msg_len");
-      const msgBytes = payload.subarray(4, 4 + msgLen);
-      const message = textDecoder.decode(msgBytes);
-      return { type, connectionId, code, message };
-    }
-    default:
-      throw new Error(`Unknown frame type ${type}`);
+
+    return frames;
   }
+
+  pendingBytes() {
+    return this.buffer.length;
+  }
+}
+
+/**
+ * @typedef {{ host: string, port: number, metadata?: string }} TcpMuxOpenPayload
+ */
+
+/**
+ * @param {TcpMuxOpenPayload} payload
+ * @returns {Buffer}
+ */
+export function encodeTcpMuxOpenPayload(payload) {
+  const hostBytes = Buffer.from(payload.host, "utf8");
+  const metadataBytes = payload.metadata ? Buffer.from(payload.metadata, "utf8") : Buffer.alloc(0);
+
+  if (hostBytes.length > 0xffff) {
+    throw new Error("host too long");
+  }
+  if (metadataBytes.length > 0xffff) {
+    throw new Error("metadata too long");
+  }
+  if (!Number.isInteger(payload.port) || payload.port < 1 || payload.port > 65535) {
+    throw new Error("invalid port");
+  }
+
+  const buf = Buffer.allocUnsafe(2 + hostBytes.length + 2 + 2 + metadataBytes.length);
+  let offset = 0;
+  buf.writeUInt16BE(hostBytes.length, offset);
+  offset += 2;
+  hostBytes.copy(buf, offset);
+  offset += hostBytes.length;
+  buf.writeUInt16BE(payload.port, offset);
+  offset += 2;
+  buf.writeUInt16BE(metadataBytes.length, offset);
+  offset += 2;
+  metadataBytes.copy(buf, offset);
+  return buf;
+}
+
+/**
+ * @param {Buffer} buf
+ * @returns {TcpMuxOpenPayload}
+ */
+export function decodeTcpMuxOpenPayload(buf) {
+  if (buf.length < 2 + 2 + 2) {
+    throw new Error("OPEN payload too short");
+  }
+
+  let offset = 0;
+  const hostLen = buf.readUInt16BE(offset);
+  offset += 2;
+  if (buf.length < offset + hostLen + 2 + 2) {
+    throw new Error("OPEN payload truncated (host)");
+  }
+  const host = buf.subarray(offset, offset + hostLen).toString("utf8");
+  offset += hostLen;
+  const port = buf.readUInt16BE(offset);
+  offset += 2;
+  const metadataLen = buf.readUInt16BE(offset);
+  offset += 2;
+  if (buf.length < offset + metadataLen) {
+    throw new Error("OPEN payload truncated (metadata)");
+  }
+  const metadata = metadataLen > 0 ? buf.subarray(offset, offset + metadataLen).toString("utf8") : undefined;
+  offset += metadataLen;
+  if (offset !== buf.length) {
+    throw new Error("OPEN payload has trailing bytes");
+  }
+  return { host, port, metadata };
+}
+
+export function encodeTcpMuxClosePayload(flags) {
+  const buf = Buffer.allocUnsafe(1);
+  buf.writeUInt8(flags & 0xff, 0);
+  return buf;
+}
+
+export function decodeTcpMuxClosePayload(buf) {
+  if (buf.length !== 1) {
+    throw new Error("CLOSE payload must be exactly 1 byte");
+  }
+  return { flags: buf.readUInt8(0) };
+}
+
+export function encodeTcpMuxErrorPayload(code, message) {
+  const messageBytes = Buffer.from(String(message ?? ""), "utf8");
+  if (messageBytes.length > 0xffff) {
+    throw new Error("error message too long");
+  }
+  const buf = Buffer.allocUnsafe(2 + 2 + messageBytes.length);
+  buf.writeUInt16BE(code & 0xffff, 0);
+  buf.writeUInt16BE(messageBytes.length, 2);
+  messageBytes.copy(buf, 4);
+  return buf;
+}
+
+export function decodeTcpMuxErrorPayload(buf) {
+  if (buf.length < 4) {
+    throw new Error("ERROR payload too short");
+  }
+  const code = buf.readUInt16BE(0);
+  const messageLen = buf.readUInt16BE(2);
+  if (buf.length !== 4 + messageLen) {
+    throw new Error("ERROR payload length mismatch");
+  }
+  const message = buf.subarray(4).toString("utf8");
+  return { code, message };
 }
 

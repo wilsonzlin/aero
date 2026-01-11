@@ -1,57 +1,66 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+
 import {
-  decodeFrame,
-  encodeClose,
-  encodeData,
-  encodeError,
-  encodeOpenAck,
-  encodeOpenRequest,
-  ErrorCode,
-  FrameType,
+  TCP_MUX_HEADER_BYTES,
+  TcpMuxCloseFlags,
+  TcpMuxErrorCode,
+  TcpMuxFrameParser,
+  TcpMuxMsgType,
+  decodeTcpMuxClosePayload,
+  decodeTcpMuxErrorPayload,
+  decodeTcpMuxOpenPayload,
+  encodeTcpMuxClosePayload,
+  encodeTcpMuxErrorPayload,
+  encodeTcpMuxFrame,
+  encodeTcpMuxOpenPayload,
 } from "../src/protocol.js";
 
-test("protocol: OPEN request encode/decode", () => {
-  const frame = encodeOpenRequest(123, new Uint8Array([1, 2, 3, 4]), 8080);
-  const decoded = decodeFrame(frame);
-  assert.equal(decoded.type, FrameType.OPEN);
-  assert.equal(decoded.connectionId, 123);
-  assert.equal(decoded.kind, "request");
-  assert.equal(decoded.ipVersion, 4);
-  assert.deepEqual(Array.from(decoded.dstIp), [1, 2, 3, 4]);
-  assert.equal(decoded.dstPort, 8080);
+test("tcp-mux: OPEN payload encode/decode (host + port + metadata)", () => {
+  const payload = encodeTcpMuxOpenPayload({ host: "example.com", port: 443, metadata: '{"k":"v"}' });
+  const decoded = decodeTcpMuxOpenPayload(payload);
+  assert.deepEqual(decoded, { host: "example.com", port: 443, metadata: '{"k":"v"}' });
 });
 
-test("protocol: OPEN ack encode/decode", () => {
-  const frame = encodeOpenAck(7);
-  const decoded = decodeFrame(frame);
-  assert.equal(decoded.type, FrameType.OPEN);
-  assert.equal(decoded.connectionId, 7);
-  assert.equal(decoded.kind, "ack");
+test("tcp-mux: CLOSE payload encode/decode", () => {
+  const payload = encodeTcpMuxClosePayload(TcpMuxCloseFlags.FIN);
+  const decoded = decodeTcpMuxClosePayload(payload);
+  assert.deepEqual(decoded, { flags: TcpMuxCloseFlags.FIN });
 });
 
-test("protocol: DATA encode/decode", () => {
-  const payload = new Uint8Array([9, 8, 7]);
-  const frame = encodeData(42, payload);
-  const decoded = decodeFrame(frame);
-  assert.equal(decoded.type, FrameType.DATA);
-  assert.equal(decoded.connectionId, 42);
-  assert.deepEqual(Array.from(decoded.data), [9, 8, 7]);
+test("tcp-mux: ERROR payload encode/decode", () => {
+  const payload = encodeTcpMuxErrorPayload(TcpMuxErrorCode.POLICY_DENIED, "nope");
+  const decoded = decodeTcpMuxErrorPayload(payload);
+  assert.deepEqual(decoded, { code: TcpMuxErrorCode.POLICY_DENIED, message: "nope" });
 });
 
-test("protocol: CLOSE encode/decode", () => {
-  const frame = encodeClose(9);
-  const decoded = decodeFrame(frame);
-  assert.equal(decoded.type, FrameType.CLOSE);
-  assert.equal(decoded.connectionId, 9);
-});
+test("tcp-mux: frame parser supports split + concatenated chunks", () => {
+  const openFrame = encodeTcpMuxFrame(
+    TcpMuxMsgType.OPEN,
+    1,
+    encodeTcpMuxOpenPayload({ host: "127.0.0.1", port: 7 }),
+  );
+  const dataFrame = encodeTcpMuxFrame(TcpMuxMsgType.DATA, 1, Buffer.from("hi", "utf8"));
 
-test("protocol: ERROR encode/decode", () => {
-  const frame = encodeError(9, ErrorCode.POLICY_DENIED, "nope");
-  const decoded = decodeFrame(frame);
-  assert.equal(decoded.type, FrameType.ERROR);
-  assert.equal(decoded.connectionId, 9);
-  assert.equal(decoded.code, ErrorCode.POLICY_DENIED);
-  assert.equal(decoded.message, "nope");
+  // Concatenate frames into one byte stream and then split into odd chunks.
+  const combined = Buffer.concat([openFrame, dataFrame]);
+  const parser = new TcpMuxFrameParser();
+
+  const f0 = parser.push(combined.subarray(0, 3));
+  assert.equal(f0.length, 0);
+  assert.equal(parser.pendingBytes(), 3);
+
+  const f1 = parser.push(combined.subarray(3, openFrame.length + 1));
+  assert.equal(f1.length, 1);
+  assert.equal(f1[0].msgType, TcpMuxMsgType.OPEN);
+  assert.equal(f1[0].streamId, 1);
+  assert.equal(f1[0].payload.length, openFrame.length - TCP_MUX_HEADER_BYTES);
+
+  const f2 = parser.push(combined.subarray(openFrame.length + 1));
+  assert.equal(f2.length, 1);
+  assert.equal(f2[0].msgType, TcpMuxMsgType.DATA);
+  assert.equal(f2[0].streamId, 1);
+  assert.equal(f2[0].payload.toString("utf8"), "hi");
+  assert.equal(parser.pendingBytes(), 0);
 });
 

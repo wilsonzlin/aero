@@ -5,11 +5,12 @@ Browsers cannot open raw TCP sockets. The only browser‑legal option is a WebSo
 
 ## Features
 - Single **multiplexed** WebSocket session carries many logical TCP streams
-- Binary framing protocol: `OPEN`, `DATA`, `CLOSE`, `ERROR`
+- Speaks the canonical **`aero-tcp-mux-v1`** framing used by `backend/aero-gateway`
+  - `OPEN`, `DATA`, `CLOSE`, `ERROR`, `PING`, `PONG`
 - **Backpressure**: pauses TCP reads when the WebSocket send buffer grows too large
 - Security:
-  - Auth token required
-  - Deny private IPv4 ranges by default (SSRF mitigation)
+  - Auth token required (dev-only, see below)
+  - Deny private/special IP ranges by default (SSRF mitigation)
   - Simple rate limits per WebSocket session
 - Structured JSON logs + in‑memory counters (basic metrics)
 
@@ -34,48 +35,77 @@ Connect from the browser to:
 ws://127.0.0.1:8080/tcp-mux?token=dev-token
 ```
 
+Clients MUST negotiate the WebSocket subprotocol:
+
+```ts
+const ws = new WebSocket("ws://127.0.0.1:8080/tcp-mux?token=dev-token", "aero-tcp-mux-v1");
+ws.binaryType = "arraybuffer";
+```
+
 ## Security model
 This server is **powerful**: it can connect to any TCP endpoint that the host machine can reach.
 
 Default protections:
 - Requires an auth token (`AERO_PROXY_AUTH_TOKEN`)
-- Blocks private / link-local / loopback IPv4 ranges unless explicitly enabled (`AERO_PROXY_ALLOW_PRIVATE_IPS=1`)
+- Blocks private / special-purpose IP ranges unless explicitly enabled (`AERO_PROXY_ALLOW_PRIVATE_IPS=1`)
+
+> Note: This tool intentionally does **NOT** implement the Aero Gateway's cookie-backed
+> sessions (`POST /session`, `aero_session` cookie). The `?token=` parameter is a
+> dev-only mechanism for local testing and should not be confused with production
+> gateway auth.
 
 If you run this on a shared machine or expose it to the internet, treat it like a credentialed proxy and deploy accordingly.
 
-## Protocol (v1)
-Each WebSocket message is a single binary frame:
+## Protocol: `aero-tcp-mux-v1`
 
-### Common header
-| Field | Type | Notes |
-|------|------|------|
-| `type` | `u8` | `1=OPEN`, `2=DATA`, `3=CLOSE`, `4=ERROR` |
-| `connection_id` | `u32be` | `0` is reserved for session-level errors |
+This tool implements the same `/tcp-mux` framing as the production gateway.
 
-### `OPEN` (client → server)
-Payload:
+For the authoritative contract, see:
+
+- [`docs/backend/01-aero-gateway-api.md`](../../docs/backend/01-aero-gateway-api.md)
+- [`backend/aero-gateway/src/protocol/tcpMux.ts`](../../backend/aero-gateway/src/protocol/tcpMux.ts)
+
+### Transport model
+
+All WebSocket **binary** messages are treated as a byte stream carrying one or more mux frames.
+Frames may be split across WebSocket messages or concatenated within a message.
+
+### Frame header (fixed 9 bytes)
+
+| Field | Type | Description |
+|---|---:|---|
+| `msg_type` | `u8` | Message type (`OPEN=1`, `DATA=2`, `CLOSE=3`, `ERROR=4`, `PING=5`, `PONG=6`) |
+| `stream_id` | `u32be` | Client-assigned stream identifier (`0` is reserved for PING/PONG) |
+| `length` | `u32be` | Payload length |
+| `payload` | `bytes[length]` | Payload bytes |
+
+### `OPEN` payload (client → server)
+
 | Field | Type |
-|------|------|
-| `ip_version` | `u8` (only `4` supported) |
-| `dst_ip` | `u8[4]` |
-| `dst_port` | `u16be` |
+|---|---:|
+| `host_len` | `u16be` |
+| `host` | `bytes[host_len]` (UTF-8 hostname or IP literal) |
+| `port` | `u16be` |
+| `metadata_len` | `u16be` |
+| `metadata` | `bytes[metadata_len]` (optional) |
 
-### `OPEN` (server → client)
-Ack payload is empty.
+### `DATA` payload
 
-### `DATA`
-Payload is raw bytes.
+Raw TCP bytes for the stream.
 
-### `CLOSE`
-Payload is empty.
+### `CLOSE` payload
 
-### `ERROR`
-Payload:
 | Field | Type |
-|------|------|
+|---|---:|
+| `flags` | `u8` (`0x01=FIN`, `0x02=RST`) |
+
+### `ERROR` payload
+
+| Field | Type |
+|---|---:|
 | `code` | `u16be` |
-| `msg_len` | `u16be` |
-| `message` | `utf8[msg_len]` |
+| `message_len` | `u16be` |
+| `message` | `utf8[message_len]` |
 
 ## Testing
 ```bash

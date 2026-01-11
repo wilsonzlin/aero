@@ -602,10 +602,11 @@ Notes:
   resolves to multiple IPs, the proxy connects only to the **first** allowed
   public IP.
 
-For local development/testing of the `/tcp-mux` framing protocol:
+For local development/testing of the `/tcp-mux` framing protocol (`aero-tcp-mux-v1`):
 
-- **Production (Aero Gateway):** canonical `aero-tcp-mux-v1` framing implemented by `backend/aero-gateway` and the browser client in `web/src/net/tcpMuxProxy.ts`.
-- **Legacy (tools/net-proxy-server):** older mux framing used by `tools/net-proxy-server/` and the browser client in `web/src/net/tcp_proxy.ts`.
+- **Production (Aero Gateway):** canonical framing implemented by `backend/aero-gateway`.
+- **Dev relay (standalone):** `tools/net-proxy-server/` speaks the same framing, but uses `?token=` auth (not gateway cookie sessions).
+- **Browser client:** `web/src/net/tcpMuxProxy.ts`.
 
 ---
 
