@@ -95,7 +95,10 @@ async function main() {
     const guestSab = guestMemory.buffer as unknown as SharedArrayBuffer;
     const header = new Int32Array(guestSab, demoLinearBaseOffsetBytes, SHARED_FRAMEBUFFER_HEADER_U32_LEN);
 
-    const deadlineMs = performance.now() + 5000;
+    // Allow time for the threaded WASM module to initialize in the CPU worker
+    // (and for it to start publishing frames). In CI this can take longer than a
+    // few frames, even with a precompiled WebAssembly.Module.
+    const deadlineMs = performance.now() + 10_000;
     while (performance.now() < deadlineMs) {
       const magic = Atomics.load(header, SharedFramebufferHeaderIndex.MAGIC);
       const version = Atomics.load(header, SharedFramebufferHeaderIndex.VERSION);
@@ -158,16 +161,24 @@ async function main() {
 
     await waitForSeqAtLeast(1);
     const first = capture();
-    await waitForSeqAtLeast(first.seq + 4);
-    const second = capture();
+    let second = first;
 
-    const pass =
-      first.hash !== second.hash &&
-      // Ensure the pattern is not the JS fallback (which only changes the top-left tile).
-      first.pixelAway.join(",") !== second.pixelAway.join(",");
+    // Wait until we observe an update outside the top-left tile. This
+    // distinguishes the WASM demo's moving gradient from the JS fallback which
+    // only toggles the top-left tile.
+    while (performance.now() < deadlineMs) {
+      await waitForSeqAtLeast(second.seq + 2);
+      second = capture();
+      if (first.hash !== second.hash && first.pixelAway.join(",") !== second.pixelAway.join(",")) {
+        break;
+      }
+      await sleep(5);
+    }
+
+    const pass = first.hash !== second.hash && first.pixelAway.join(",") !== second.pixelAway.join(",");
     log(`first: seq=${first.seq} hash=${first.hash} pixel00=${first.pixel00.join(",")} pixelAway=${first.pixelAway.join(",")}`);
     log(`second: seq=${second.seq} hash=${second.hash} pixel00=${second.pixel00.join(",")} pixelAway=${second.pixelAway.join(",")}`);
-    log(pass ? "PASS" : "FAIL (expected pixelAway to change; wasm demo may be unavailable)");
+    log(pass ? "PASS" : "FAIL (did not observe pixels changing outside top-left tile; wasm demo may be unavailable)");
 
     coordinator.stop();
 
