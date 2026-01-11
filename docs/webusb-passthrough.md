@@ -239,10 +239,9 @@ Aero mapping (current code):
     - If a new SETUP arrives before the `SET_ADDRESS` status stage completes, the pending address is
       discarded (matching USB semantics: a new SETUP aborts the previous control transfer).
 
-Note: for Control-IN, `ControlResponse::Nak` currently NAKs the **SETUP TD** while the host-side
-transfer is pending. If we observe guest driver compatibility issues, we may need to restructure
-the control pipe to always ACK SETUP and express “pending” via NAK on the first DATA/STATUS TD
-instead.
+Note: on real USB, devices must **ACK SETUP** transactions; NAK is not a valid handshake for the
+SETUP stage. Aero’s control pipe therefore always ACKs the SETUP TD and expresses “pending” via
+NAK on the DATA/STATUS TDs until the asynchronous host completion arrives.
 
 - **DATA TD(s)**
   - **Control-IN:** IN DATA TDs read from the already-buffered `Data(bytes)` returned by
