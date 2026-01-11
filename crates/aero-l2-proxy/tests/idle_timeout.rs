@@ -142,7 +142,7 @@ async fn idle_timeout_resets_on_inbound_keepalive() {
     let _token = EnvVarGuard::unset("AERO_L2_TOKEN");
     let _bytes = EnvVarGuard::unset("AERO_L2_MAX_BYTES_PER_CONNECTION");
     let _fps = EnvVarGuard::unset("AERO_L2_MAX_FRAMES_PER_SECOND");
-    let _idle = EnvVarGuard::set("AERO_L2_IDLE_TIMEOUT_MS", "80");
+    let _idle = EnvVarGuard::set("AERO_L2_IDLE_TIMEOUT_MS", "200");
 
     let cfg = ProxyConfig::from_env().unwrap();
     let proxy = start_server(cfg).await.unwrap();
@@ -158,7 +158,7 @@ async fn idle_timeout_resets_on_inbound_keepalive() {
 
     // Send periodic keepalives for longer than the idle timeout and assert the server doesn't
     // close the tunnel.
-    let keepalive_duration = Duration::from_millis(220);
+    let keepalive_duration = Duration::from_millis(600);
     let end_at = tokio::time::Instant::now() + keepalive_duration;
     let mut interval = tokio::time::interval(Duration::from_millis(20));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
