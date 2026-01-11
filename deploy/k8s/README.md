@@ -47,6 +47,48 @@ paths:
           number: 80
 ```
 
+## UDP relay service (`proxy/webrtc-udp-relay`)
+
+This chart deploys **only** `aero-gateway`. To support guest UDP, deploy the relay service under
+[`proxy/webrtc-udp-relay`](../../proxy/webrtc-udp-relay/) separately and configure the gateway with
+`UDP_RELAY_BASE_URL` so `POST /session` can return `udpRelay` connection metadata.
+
+If you want a **single-origin** deployment (recommended), configure your Ingress to route the relay's HTTP/WebSocket endpoints to the relay Service:
+
+```yaml
+paths:
+  - path: /webrtc
+    pathType: Prefix
+    backend:
+      service:
+        name: aero-webrtc-udp-relay
+        port:
+          number: 8080
+  - path: /udp
+    pathType: Prefix
+    backend:
+      service:
+        name: aero-webrtc-udp-relay
+        port:
+          number: 8080
+  - path: /offer
+    pathType: Prefix
+    backend:
+      service:
+        name: aero-webrtc-udp-relay
+        port:
+          number: 8080
+  - path: /
+    pathType: Prefix
+    backend:
+      service:
+        name: aero-gateway
+        port:
+          number: 80
+```
+
+Important: WebRTC uses a **UDP port range** for ICE candidates and relay traffic; this cannot be reverse-proxied by an HTTP Ingress. You must publish/open the relay's UDP port range separately (e.g. a `LoadBalancer`/`NodePort` `Service` with UDP ports, or host networking) and configure the relay to match (see the relay README).
+
 ## Prerequisites
 
 - Kubernetes v1.22+ (Ingress v1)
