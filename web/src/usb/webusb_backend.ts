@@ -146,6 +146,68 @@ function setupPacketToWebUsbParameters(setup: SetupPacket): USBControlTransferPa
   };
 }
 
+const GET_DESCRIPTOR = 0x06;
+const DESCRIPTOR_TYPE_CONFIGURATION = 0x02;
+const DESCRIPTOR_TYPE_OTHER_SPEED_CONFIGURATION = 0x07;
+const BM_REQUEST_TYPE_DEVICE_TO_HOST_STANDARD_DEVICE = 0x80;
+
+function shouldTranslateConfigurationDescriptor(setup: SetupPacket): boolean {
+  return (
+    setup.bRequest === GET_DESCRIPTOR &&
+    (setup.bmRequestType & 0xff) === BM_REQUEST_TYPE_DEVICE_TO_HOST_STANDARD_DEVICE &&
+    ((setup.wValue >> 8) & 0xff) === DESCRIPTOR_TYPE_CONFIGURATION
+  );
+}
+
+function rewriteOtherSpeedConfigAsConfig(bytes: Uint8Array): void {
+  // OTHER_SPEED_CONFIGURATION and CONFIGURATION share the same layout; only the top-level
+  // bDescriptorType differs. Rewriting just that byte is enough for a full-speed guest.
+  if (bytes.length >= 2) {
+    bytes[1] = DESCRIPTOR_TYPE_CONFIGURATION;
+  }
+}
+
+export type WebUsbControlInResult =
+  | { status: "ok"; data: Uint8Array }
+  | { status: "stall" }
+  | { status: "babble" };
+
+export async function executeWebUsbControlIn(
+  device: Pick<USBDevice, "controlTransferIn">,
+  setup: SetupPacket,
+): Promise<WebUsbControlInResult> {
+  const length = setup.wLength & 0xffff;
+
+  if (shouldTranslateConfigurationDescriptor(setup)) {
+    const descriptorIndex = setup.wValue & 0x00ff;
+    const otherSpeedSetup: SetupPacket = {
+      ...setup,
+      wValue: (DESCRIPTOR_TYPE_OTHER_SPEED_CONFIGURATION << 8) | descriptorIndex,
+    };
+
+    try {
+      const otherSpeedParams = setupPacketToWebUsbParameters(otherSpeedSetup);
+      const otherSpeedResult = await device.controlTransferIn(otherSpeedParams, length);
+      if (otherSpeedResult.status === "ok" && otherSpeedResult.data) {
+        const data = dataViewToUint8Array(otherSpeedResult.data);
+        rewriteOtherSpeedConfigAsConfig(data);
+        return { status: "ok", data };
+      }
+    } catch {
+      // Fall back to CONFIGURATION (0x02) if OTHER_SPEED_CONFIGURATION is rejected/unsupported.
+    }
+  }
+
+  const params = setupPacketToWebUsbParameters(setup);
+  const result = await device.controlTransferIn(params, length);
+  if (result.status === "ok") {
+    const data = result.data ? dataViewToUint8Array(result.data) : new Uint8Array();
+    return { status: "ok", data };
+  }
+
+  return { status: result.status };
+}
+
 function endpointAddressToEndpointNumber(endpoint: number): number {
   // WebUSB wants the endpoint number (1-15). Rust-side code tends to use the USB
   // endpoint address, where bit 7 is direction and bits 0-3 are the endpoint number.
@@ -237,11 +299,9 @@ export class WebUsbBackend {
             return { kind: "controlIn", id: action.id, status: "error", message: directionCheck.message };
           }
 
-          const params = setupPacketToWebUsbParameters(action.setup);
-          const result = await this.device.controlTransferIn(params, action.setup.wLength & 0xffff);
+          const result = await executeWebUsbControlIn(this.device, action.setup);
           if (result.status === "ok") {
-            const data = result.data ? dataViewToUint8Array(result.data) : new Uint8Array();
-            return { kind: "controlIn", id: action.id, status: "success", data };
+            return { kind: "controlIn", id: action.id, status: "success", data: result.data };
           }
           if (result.status === "stall") {
             return { kind: "controlIn", id: action.id, status: "stall" };

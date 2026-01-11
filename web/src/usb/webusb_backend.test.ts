@@ -1,6 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { dataViewToUint8Array, parseBmRequestType, validateControlTransferDirection } from "./webusb_backend";
+import { dataViewToUint8Array, executeWebUsbControlIn, parseBmRequestType, validateControlTransferDirection } from "./webusb_backend";
+
+function dataViewFromBytes(bytes: number[]): DataView {
+  return new DataView(Uint8Array.from(bytes).buffer);
+}
 
 describe("webusb_backend helpers", () => {
   it("maps bmRequestType to WebUSB {requestType, recipient}", () => {
@@ -33,3 +37,59 @@ describe("webusb_backend helpers", () => {
   });
 });
 
+describe("executeWebUsbControlIn", () => {
+  it("translates OTHER_SPEED_CONFIGURATION to CONFIGURATION for full-speed guests", async () => {
+    const controlTransferIn = vi.fn<[USBControlTransferParameters, number], Promise<USBInTransferResult>>();
+    controlTransferIn.mockResolvedValueOnce({
+      status: "ok",
+      data: dataViewFromBytes([0x09, 0x07, 0x20, 0x00, 0x01, 0x01, 0x00, 0x80, 50]),
+    });
+
+    const res = await executeWebUsbControlIn(
+      { controlTransferIn },
+      {
+        bmRequestType: 0x80,
+        bRequest: 0x06,
+        wValue: 0x0200,
+        wIndex: 0x0000,
+        wLength: 9,
+      },
+    );
+
+    expect(res.status).toBe("ok");
+    if (res.status !== "ok") throw new Error("unreachable");
+    expect(Array.from(res.data)).toEqual([0x09, 0x02, 0x20, 0x00, 0x01, 0x01, 0x00, 0x80, 50]);
+
+    expect(controlTransferIn).toHaveBeenCalledTimes(1);
+    expect(controlTransferIn.mock.calls[0]?.[0].value).toBe(0x0700);
+    expect(controlTransferIn.mock.calls[0]?.[1]).toBe(9);
+  });
+
+  it("falls back to CONFIGURATION when OTHER_SPEED_CONFIGURATION stalls", async () => {
+    const controlTransferIn = vi.fn<[USBControlTransferParameters, number], Promise<USBInTransferResult>>();
+    controlTransferIn.mockResolvedValueOnce({ status: "stall" });
+    controlTransferIn.mockResolvedValueOnce({
+      status: "ok",
+      data: dataViewFromBytes([0x09, 0x02, 0x20, 0x00, 0x01, 0x01, 0x00, 0x80, 50]),
+    });
+
+    const res = await executeWebUsbControlIn(
+      { controlTransferIn },
+      {
+        bmRequestType: 0x80,
+        bRequest: 0x06,
+        wValue: 0x0200,
+        wIndex: 0x0000,
+        wLength: 9,
+      },
+    );
+
+    expect(res.status).toBe("ok");
+    if (res.status !== "ok") throw new Error("unreachable");
+    expect(Array.from(res.data)).toEqual([0x09, 0x02, 0x20, 0x00, 0x01, 0x01, 0x00, 0x80, 50]);
+
+    expect(controlTransferIn).toHaveBeenCalledTimes(2);
+    expect(controlTransferIn.mock.calls[0]?.[0].value).toBe(0x0700);
+    expect(controlTransferIn.mock.calls[1]?.[0].value).toBe(0x0200);
+  });
+});
