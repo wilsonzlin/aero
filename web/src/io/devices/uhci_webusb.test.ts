@@ -6,15 +6,52 @@ describe("UhciWebUsbPciDevice", () => {
   it("forwards BAR4 I/O reads/writes to the WASM bridge with the same offset/size", () => {
     const io_read = vi.fn(() => 0x1234_5678);
     const io_write = vi.fn();
+    const step_frames = vi.fn();
+    const irq_level = vi.fn(() => false);
+    const free = vi.fn();
 
-    const dev = new UhciWebUsbPciDevice({ io_read, io_write });
+    const dev = new UhciWebUsbPciDevice({
+      bridge: { io_read, io_write, step_frames, irq_level, free },
+      irqSink: { raiseIrq: vi.fn(), lowerIrq: vi.fn() },
+    });
 
     const v = dev.ioRead?.(4, 0x10, 2);
-    expect(v).toBe(0x1234_5678);
+    expect(v).toBe(0x5678);
     expect(io_read).toHaveBeenCalledWith(0x10, 2);
 
     dev.ioWrite?.(4, 0x08, 4, 0xdead_beef);
     expect(io_write).toHaveBeenCalledWith(0x08, 4, 0xdead_beef);
+  });
+
+  it("ticks the UHCI controller and raises/lowers IRQ level", () => {
+    let level = false;
+    const irq_level = vi.fn(() => level);
+    const step_frames = vi.fn(() => {
+      level = true;
+    });
+
+    const raiseIrq = vi.fn();
+    const lowerIrq = vi.fn();
+
+    const dev = new UhciWebUsbPciDevice({
+      bridge: {
+        io_read: vi.fn(() => 0),
+        io_write: vi.fn(),
+        step_frames,
+        irq_level,
+        free: vi.fn(),
+      },
+      irqSink: { raiseIrq, lowerIrq },
+    });
+
+    dev.tick(1000);
+    expect(step_frames).not.toHaveBeenCalled();
+    expect(raiseIrq).not.toHaveBeenCalled();
+
+    dev.tick(1008);
+    expect(step_frames).toHaveBeenCalledWith(8);
+    expect(raiseIrq).toHaveBeenCalledWith(dev.irqLine);
+    expect(lowerIrq).not.toHaveBeenCalled();
   });
 });
 

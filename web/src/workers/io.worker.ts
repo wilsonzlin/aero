@@ -133,11 +133,9 @@ let uhciControllerBridge: UhciControllerBridge | null = null;
 
 type WebUsbUhciBridge = InstanceType<NonNullable<WasmApi["WebUsbUhciBridge"]>>;
 let webUsbUhciBridge: WebUsbUhciBridge | null = null;
-let webUsbUhciIrqAsserted = false;
+let webUsbUhciDevice: UhciWebUsbPciDevice | null = null;
 let lastUsbSelected: UsbSelectedMessage | null = null;
 
-const WEBUSB_UHCI_IRQ_LINE = 0x0b;
-const WEBUSB_UHCI_FRAMES_PER_TICK = 8;
 const WEBUSB_GUEST_ROOT_PORT = 0;
 
 let webUsbGuestAttached = false;
@@ -224,25 +222,10 @@ function maybeInitUhciDevice(): void {
       try {
         webUsbUhciBridge = new WebBridge(guestBase >>> 0);
 
-        mgr.registerPciDevice(new UhciWebUsbPciDevice(webUsbUhciBridge));
-
-        // Tick UHCI at 1kHz-equivalent cadence (approximate: 8 frames per 8ms IO tick).
-        mgr.addTickable({
-          tick: () => {
-            const bridge = webUsbUhciBridge;
-            if (!bridge) return;
-            bridge.step_frames(WEBUSB_UHCI_FRAMES_PER_TICK);
-
-            const level = bridge.irq_level();
-            if (level && !webUsbUhciIrqAsserted) {
-              mgr.irqSink.raiseIrq(WEBUSB_UHCI_IRQ_LINE);
-              webUsbUhciIrqAsserted = true;
-            } else if (!level && webUsbUhciIrqAsserted) {
-              mgr.irqSink.lowerIrq(WEBUSB_UHCI_IRQ_LINE);
-              webUsbUhciIrqAsserted = false;
-            }
-          },
-        });
+        const dev = new UhciWebUsbPciDevice({ bridge: webUsbUhciBridge, irqSink: mgr.irqSink });
+        webUsbUhciDevice = dev;
+        mgr.registerPciDevice(dev);
+        mgr.addTickable(dev);
 
         if (!usbPassthroughRuntime) {
           usbPassthroughRuntime = new WebUsbPassthroughRuntime({
@@ -275,8 +258,18 @@ function maybeInitUhciDevice(): void {
         }
       } catch (err) {
         console.warn("[io.worker] Failed to initialize WebUSB UHCI bridge", err);
+        try {
+          webUsbUhciDevice?.destroy();
+        } catch {
+          // ignore
+        }
+        webUsbUhciDevice = null;
+        try {
+          webUsbUhciBridge?.free();
+        } catch {
+          // ignore
+        }
         webUsbUhciBridge = null;
-        webUsbUhciIrqAsserted = false;
         webUsbGuestAttached = false;
         webUsbGuestLastError = `Failed to initialize WebUsbUhciBridge: ${formatWebUsbGuestError(err)}`;
       }
@@ -1849,9 +1842,10 @@ function shutdown(): void {
       usbHid = null;
 
       // Ensure the tickable UHCI pump stops before the wasm bridge is freed.
+      webUsbUhciDevice?.destroy();
+      webUsbUhciDevice = null;
       const uhciBridge = webUsbUhciBridge;
       webUsbUhciBridge = null;
-      webUsbUhciIrqAsserted = false;
 
       if (usbPassthroughRuntime) {
         usbPassthroughRuntime.destroy();

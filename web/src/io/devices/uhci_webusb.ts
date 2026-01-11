@@ -1,44 +1,133 @@
 import { defaultReadValue } from "../ipc/io_protocol.ts";
 import type { PciBar, PciDevice } from "../bus/pci.ts";
+import type { IrqSink, TickableDevice } from "../device_manager.ts";
 
 export type WebUsbUhciBridgeLike = {
   io_read(offset: number, size: number): number;
   io_write(offset: number, size: number, value: number): void;
+  step_frames(frames: number): void;
+  irq_level(): boolean;
+  free(): void;
 };
+
+const UHCI_IO_BAR_SIZE = 0x20;
+// UHCI expects 1ms frames.
+const UHCI_FRAME_MS = 1;
+const UHCI_MAX_FRAMES_PER_TICK = 32;
+
+function maskToSize(value: number, size: number): number {
+  if (size === 1) return value & 0xff;
+  if (size === 2) return value & 0xffff;
+  return value >>> 0;
+}
 
 /**
  * Intel PIIX3 UHCI controller (PCI function) that forwards register accesses into WASM.
  *
- * This is intentionally "thin": BAR4 is an I/O range with the UHCI register block
- * (0x20 bytes). The actual controller logic (TD/QH traversal, guest RAM reads/writes,
- * passthrough device) lives in Rust (`WebUsbUhciBridge`).
+ * BAR4 is an I/O range with the UHCI register block (0x20 bytes). The actual controller
+ * logic (TD/QH traversal, guest RAM reads/writes, passthrough device) lives in Rust
+ * (`WebUsbUhciBridge`).
  */
-export class UhciWebUsbPciDevice implements PciDevice {
+export class UhciWebUsbPciDevice implements PciDevice, TickableDevice {
   readonly name = "uhci_webusb";
   readonly vendorId = 0x8086;
   readonly deviceId = 0x7020;
   readonly classCode = 0x0c_03_00; // USB controller (UHCI)
   readonly irqLine = 0x0b;
 
-  readonly bars: ReadonlyArray<PciBar | null> = [null, null, null, null, { kind: "io", size: 0x20 }, null];
+  readonly bars: ReadonlyArray<PciBar | null> = [null, null, null, null, { kind: "io", size: UHCI_IO_BAR_SIZE }, null];
 
-  constructor(private readonly bridge: WebUsbUhciBridgeLike) {}
+  readonly #bridge: WebUsbUhciBridgeLike;
+  readonly #irqSink: IrqSink;
+
+  #lastTickMs: number | null = null;
+  #accumulatedMs = 0;
+  #irqLevel = false;
+  #destroyed = false;
+
+  constructor(opts: { bridge: WebUsbUhciBridgeLike; irqSink: IrqSink }) {
+    this.#bridge = opts.bridge;
+    this.#irqSink = opts.irqSink;
+  }
 
   ioRead(barIndex: number, offset: number, size: number): number {
+    if (this.#destroyed) return defaultReadValue(size);
     if (barIndex !== 4) return defaultReadValue(size);
+    if (size !== 1 && size !== 2 && size !== 4) return defaultReadValue(size);
     try {
-      return this.bridge.io_read(offset >>> 0, size >>> 0) >>> 0;
+      const value = this.#bridge.io_read(offset >>> 0, size >>> 0) >>> 0;
+      return maskToSize(value, size);
     } catch {
       return defaultReadValue(size);
     }
   }
 
   ioWrite(barIndex: number, offset: number, size: number, value: number): void {
+    if (this.#destroyed) return;
     if (barIndex !== 4) return;
+    if (size !== 1 && size !== 2 && size !== 4) return;
     try {
-      this.bridge.io_write(offset >>> 0, size >>> 0, value >>> 0);
+      this.#bridge.io_write(offset >>> 0, size >>> 0, maskToSize(value, size));
     } catch {
       // ignore
     }
+    this.#syncIrq();
+  }
+
+  tick(nowMs: number): void {
+    if (this.#destroyed) return;
+
+    if (this.#lastTickMs === null) {
+      this.#lastTickMs = nowMs;
+      this.#syncIrq();
+      return;
+    }
+
+    let deltaMs = nowMs - this.#lastTickMs;
+    this.#lastTickMs = nowMs;
+
+    if (!Number.isFinite(deltaMs) || deltaMs <= 0) {
+      this.#syncIrq();
+      return;
+    }
+
+    // Clamp catch-up work so long pauses (e.g. tab backgrounded) do not stall the worker.
+    deltaMs = Math.min(deltaMs, UHCI_MAX_FRAMES_PER_TICK * UHCI_FRAME_MS);
+    this.#accumulatedMs += deltaMs;
+
+    let frames = Math.floor(this.#accumulatedMs / UHCI_FRAME_MS);
+    frames = Math.min(frames, UHCI_MAX_FRAMES_PER_TICK);
+    if (frames > 0) {
+      try {
+        this.#bridge.step_frames(frames);
+      } catch {
+        // ignore device errors during tick
+      }
+      this.#accumulatedMs -= frames * UHCI_FRAME_MS;
+    }
+
+    this.#syncIrq();
+  }
+
+  destroy(): void {
+    if (this.#destroyed) return;
+    this.#destroyed = true;
+    if (this.#irqLevel) {
+      this.#irqSink.lowerIrq(this.irqLine);
+      this.#irqLevel = false;
+    }
+  }
+
+  #syncIrq(): void {
+    let asserted = false;
+    try {
+      asserted = Boolean(this.#bridge.irq_level());
+    } catch {
+      asserted = false;
+    }
+    if (asserted === this.#irqLevel) return;
+    this.#irqLevel = asserted;
+    if (asserted) this.#irqSink.raiseIrq(this.irqLine);
+    else this.#irqSink.lowerIrq(this.irqLine);
   }
 }
