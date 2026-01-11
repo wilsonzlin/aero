@@ -1364,8 +1364,18 @@ static uint64_t SubmitWddmLocked(Device* dev, bool want_present, HRESULT* out_hr
     dma_priv_ptr_dealloc = dma_priv_ptr;
     dma_priv_size_dealloc = dma_priv_size;
     dma_priv_size_submit = dma_priv_size;
+    const UINT expected_dma_priv_bytes = static_cast<UINT>(AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES);
+    if (dma_priv_ptr_dealloc && dma_priv_size_dealloc == 0) {
+      dma_priv_size_dealloc = expected_dma_priv_bytes;
+    }
 
     if (FAILED(alloc_hr)) {
+      // Only call DeallocateCb if AllocateCb produced any submission buffers.
+      // Some Win7-era runtimes return a failure HRESULT without populating out
+      // pointers, and calling DeallocateCb in that case is undefined.
+      if (command_buf || dma_buf || allocation_list_ptr || patch_location_list_ptr || dma_priv_ptr_dealloc) {
+        deallocate(alloc, dma_priv_ptr_dealloc, dma_priv_size_dealloc);
+      }
       if (out_hr) {
         *out_hr = alloc_hr;
       }
@@ -1401,11 +1411,6 @@ static uint64_t SubmitWddmLocked(Device* dev, bool want_present, HRESULT* out_hr
       dma_priv_size_submit = dma_priv_size;
     }
 
-    const UINT expected_dma_priv_bytes = static_cast<UINT>(AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES);
-    if (dma_priv_ptr_dealloc && dma_priv_size_dealloc == 0) {
-      dma_priv_size_dealloc = expected_dma_priv_bytes;
-    }
-
     bool require_dma_priv = false;
     __if_exists(D3DDDICB_RENDER::pDmaBufferPrivateData) {
       require_dma_priv = true;
@@ -1424,7 +1429,6 @@ static uint64_t SubmitWddmLocked(Device* dev, bool want_present, HRESULT* out_hr
       dev->pending_staging_writes.clear();
       return 0;
     }
-
     if (dma_priv_ptr_present) {
       if (dma_priv_ptr == nullptr) {
         deallocate(alloc, dma_priv_ptr_dealloc, dma_priv_size_dealloc);
