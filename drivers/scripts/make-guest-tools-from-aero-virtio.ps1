@@ -136,7 +136,7 @@ Write-Host "Packaging Guest Tools..."
 Write-Host "  spec : $specPath"
 Write-Host "  out  : $OutDir"
 
-& cargo run --manifest-path $packagerManifest --release -- `
+& cargo run --manifest-path $packagerManifest --release --locked -- `
   --drivers-dir $driversRoot `
   --guest-tools-dir $GuestToolsDir `
   --spec $specPath `

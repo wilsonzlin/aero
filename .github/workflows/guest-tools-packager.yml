@@ -9,6 +9,7 @@ on:
       - "tools/guest-tools/**"
       - "guest-tools/**"
       - "drivers/scripts/make-guest-tools-from-virtio-win.ps1"
+      - "drivers/scripts/make-guest-tools-from-aero-virtio.ps1"
       - "ci/package-guest-tools.ps1"
       - "docs/windows-device-contract.json"
       - ".github/workflows/guest-tools-packager.yml"
@@ -19,6 +20,7 @@ on:
       - "tools/guest-tools/**"
       - "guest-tools/**"
       - "drivers/scripts/make-guest-tools-from-virtio-win.ps1"
+      - "drivers/scripts/make-guest-tools-from-aero-virtio.ps1"
       - "ci/package-guest-tools.ps1"
       - "docs/windows-device-contract.json"
       - ".github/workflows/guest-tools-packager.yml"
@@ -29,6 +31,7 @@ on:
       - "tools/guest-tools/**"
       - "guest-tools/**"
       - "drivers/scripts/make-guest-tools-from-virtio-win.ps1"
+      - "drivers/scripts/make-guest-tools-from-aero-virtio.ps1"
       - "ci/package-guest-tools.ps1"
       - "docs/windows-device-contract.json"
       - ".github/workflows/guest-tools-packager.yml"
@@ -142,6 +145,30 @@ jobs:
           )) {
             if (!(Test-Path -LiteralPath $p)) {
               throw "Missing expected wrapper output: $p"
+            }
+          }
+
+      - name: Smoke-test aero-virtio Guest Tools wrapper (drivers/scripts/make-guest-tools-from-aero-virtio.ps1)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path 'out/guest-tools-packager/aero-virtio-script' | Out-Null
+ 
+          pwsh -NoProfile -ExecutionPolicy Bypass -File 'drivers/scripts/make-guest-tools-from-aero-virtio.ps1' `
+            -DriverOutDir 'tools/packaging/aero_packager/testdata/drivers-aero-virtio' `
+            -GuestToolsDir 'guest-tools' `
+            -OutDir 'out/guest-tools-packager/aero-virtio-script' `
+            -Version '0.0.0' `
+            -BuildId 'ci'
+ 
+          foreach ($p in @(
+            'out/guest-tools-packager/aero-virtio-script/aero-guest-tools.iso',
+            'out/guest-tools-packager/aero-virtio-script/aero-guest-tools.zip',
+            'out/guest-tools-packager/aero-virtio-script/manifest.json'
+          )) {
+            if (!(Test-Path -LiteralPath $p)) {
+              throw "Missing expected aero-virtio wrapper output: $p"
             }
           }
 
