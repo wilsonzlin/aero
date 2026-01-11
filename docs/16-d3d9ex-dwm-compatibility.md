@@ -184,31 +184,35 @@ Define a guest/host handle model that does **not** attempt to expose host OS han
   across guest processes for the lifetime of the shared resource.
 
 - On “export” (resource creation with `pSharedHandle != nullptr`):
-  1. The UMD requests a normal WDDM shared handle (the value written to
-     `*pSharedHandle` is still the OS handle).
-  2. The UMD chooses a stable `alloc_id` / `share_token` pair and writes it into
-     the WDDM **allocation private driver data** blob (`aerogpu_wddm_alloc_priv`).
-     The KMD treats this blob as **UMD → KMD input** and validates it.
+  1. The UMD generates a non-zero `alloc_id` (`<= 0x7fffffff`) and a stable
+     non-zero `share_token` and writes them into the WDDM **allocation private
+     driver data** blob (`aerogpu_wddm_alloc_priv`) passed to dxgkrnl/KMD during
+     allocation creation (see `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`).
      For shared allocations, dxgkrnl preserves the blob and returns the exact
-     same bytes on `OpenResource`/`OpenAllocation` in another process, ensuring
-     both processes observe identical IDs (see
-     `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`).
-  3. The UMD informs the host: `(share_token → host_resource_id)` mapping is created.
+     same bytes on `OpenResource`/`DxgkDdiOpenAllocation` in another process.
+  2. The UMD requests a normal WDDM shared handle (the value written to
+     `*pSharedHandle` is still the OS handle).
+  3. The KMD treats the private-data blob as **UMD → KMD input**: validates it
+     (magic/version/flags/size), records the IDs, and uses `alloc_id` when
+     building per-submit `aerogpu_alloc_table` entries for the host.
+  4. The UMD informs the host: `(share_token → host_resource_id)` mapping is created.
 
 - On “import” (open from a shared handle):
-  1. The UMD performs the normal WDDM open. dxgkrnl returns the preserved
-     allocation private driver data, which contains `alloc_id` / `share_token`.
+  1. The UMD performs the normal WDDM open. For shared allocations, dxgkrnl
+     preserves the allocation private driver data and returns the exact same
+     bytes on `OpenResource`/`DxgkDdiOpenAllocation` in other processes, so the
+     opening process recovers the exporting process’s `alloc_id` / `share_token`.
   2. The UMD passes `share_token` to the host.
   3. Host returns an existing host-side resource ID or errors if unknown.
 
 **Key invariant:** `share_token` must be stable across processes inside the guest VM.
 In real Windows, the shared resource identity is represented by a kernel object
 referenced by per-process `HANDLE` values; in Aero, stability is provided by the
-UMD-provided `share_token` stored in preserved WDDM allocation private data and
-the host mapping table keyed by that token.
+UMD-provided `share_token` stored in preserved WDDM allocation private data (and
+validated/consumed by the KMD) and the host mapping table keyed by that token.
 
 **Implementation note (AeroGPU/WDDM):**
-prefer deriving `share_token` from the preserved per-allocation ID (`alloc_id`, returned via allocation private driver data on Create/Open),
+prefer deriving `share_token` from the preserved per-allocation ID (`alloc_id`, carried via allocation private driver data on Create/Open),
 instead of using raw Win32/D3DKMT handle values (which are process-local).
 The recommended scheme is:
 
@@ -222,7 +226,11 @@ shared allocations. DWM may open and compose many redirected surfaces from
 different processes in a single submission, and the KMD’s per-submit allocation
 table is keyed by `alloc_id`.
 
-See `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h` for the concrete private-data structure used to persist `alloc_id`/`share_token` across `CreateAllocation`/`OpenAllocation`.
+**Note:** AeroGPU splits the `alloc_id` namespace to avoid collisions:
+UMD-generated IDs must keep the high bit clear (`1..0x7fffffff`), while the KMD
+reserves `0x80000000..0xffffffff` for internal/synthesized allocations where the
+runtime does not provide an AeroGPU private-data blob. See
+`drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`.
 
 Timing-wise: **export** the mapping from the creating process (the one that created the shared handle), and **import** from the opening process (the one that opens that handle) before the resource is used.
 
