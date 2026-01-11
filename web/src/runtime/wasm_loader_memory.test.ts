@@ -30,7 +30,9 @@ describe("runtime/wasm_loader (memory injection)", () => {
       // probing inside the guest RAM region.
       const desiredGuestBytes = 1 * 1024 * 1024;
       const layout = computeGuestRamLayout(desiredGuestBytes);
-      const memory = new WebAssembly.Memory({ initial: layout.wasm_pages, maximum: 65536, shared: true });
+      // Keep the memory fixed-size: growing a shared WebAssembly.Memory can
+      // replace the underlying SharedArrayBuffer, invalidating existing views.
+      const memory = new WebAssembly.Memory({ initial: layout.wasm_pages, maximum: layout.wasm_pages, shared: true });
 
       try {
         const { api } = await initWasm({ variant: "threaded", memory });
