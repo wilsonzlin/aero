@@ -192,6 +192,40 @@ The current Rust `UsbHostAction` surface does not yet include “select configur
 interface” actions; today these operations are expected to be performed by the host-side broker
 when attaching a physical device.
 
+### Encoding `SetupPacket` for WebUSB
+
+Rust-side USB control requests use a USB 1.1-style `SetupPacket`:
+
+```text
+bmRequestType, bRequest, wValue, wIndex, wLength
+```
+
+WebUSB represents the same information as:
+
+- operation choice: `controlTransferIn(...)` vs `controlTransferOut(...)` (direction)
+- `USBControlTransferParameters`:
+  - `requestType: 'standard' | 'class' | 'vendor'`
+  - `recipient: 'device' | 'interface' | 'endpoint' | 'other'`
+  - `request` / `value` / `index`
+- and an explicit `length` argument for IN transfers
+
+Important rules:
+
+- The **direction bit** (`bmRequestType & 0x80`) must match the WebUSB call you make.
+  - For `controlTransferIn`, require Device→Host.
+  - For `controlTransferOut`, require Host→Device.
+- For OUT transfers, pass a payload buffer only when `wLength > 0`. For a zero-length OUT request,
+  omit the data argument.
+
+In this repo:
+
+- The production WebUSB executor has helpers for this conversion and direction checking:
+  `web/src/usb/webusb_backend.ts` (`parseBmRequestType`, `validateControlTransferDirection`,
+  `setupPacketToWebUsbParameters`).
+- The broker RPC layer (`src/platform/webusb_broker.ts`) serializes `USBInTransferResult.data`
+  (a `DataView`) into `{ data: ArrayBuffer, dataOffset, dataLength }` so the worker can avoid
+  copying unless needed.
+
 ### Physical disconnect / guest hot-unplug
 
 When the physical device is unplugged, the browser fires a `navigator.usb` `"disconnect"` event.
