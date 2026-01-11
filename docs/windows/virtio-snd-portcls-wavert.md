@@ -656,9 +656,20 @@ Match at least:
 
 * `PCI\VEN_1AF4&DEV_1059` (virtio-snd)
 
+For the Aero Windows 7 virtio contract (`AERO-W7-VIRTIO` v1), the in-tree Win7 `virtio-snd`
+package is intentionally **revision-gated** and matches only:
+
+* `PCI\VEN_1AF4&DEV_1059&REV_01`
+
 Optionally add more specific matches for your emulator’s subsystem ids if used:
 
 * `PCI\VEN_1AF4&DEV_1059&SUBSYS_XXXXXXXXYYYYYYYY`
+* (Aero contract v1 example) `PCI\VEN_1AF4&DEV_1059&SUBSYS_00191AF4&REV_01`
+
+When testing under QEMU, note that virtio devices are often transitional and may default to
+`REV_00`. For strict Aero contract-v1 binding you typically need:
+
+* `-device virtio-sound-pci,disable-legacy=on,x-pci-revision=0x01`
 
 ### 7.3 Worked INF example (AddReg excerpt)
 
