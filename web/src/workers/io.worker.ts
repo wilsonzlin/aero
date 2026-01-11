@@ -121,6 +121,7 @@ interface HidGuestBridge {
 }
 
 const MAX_BUFFERED_HID_INPUT_REPORTS_PER_DEVICE = 256;
+const MAX_HID_OUTPUT_REPORTS_PER_TICK = 64;
 
 class InMemoryHidGuestBridge implements HidGuestBridge {
   readonly devices = new Map<number, HidAttachMessage>();
@@ -243,7 +244,9 @@ class WasmHidGuestBridge implements HidGuestBridge {
   }
 
   poll(): void {
+    let remainingReports = MAX_HID_OUTPUT_REPORTS_PER_TICK;
     for (const [deviceId, bridge] of this.#bridges) {
+      if (remainingReports <= 0) return;
       let configured = false;
       try {
         configured = bridge.configured();
@@ -252,7 +255,7 @@ class WasmHidGuestBridge implements HidGuestBridge {
       }
       if (!configured) continue;
 
-      while (true) {
+      while (remainingReports > 0) {
         let report: { reportType: "output" | "feature"; reportId: number; data: Uint8Array } | null = null;
         try {
           report = bridge.drain_next_output_report();
@@ -263,6 +266,7 @@ class WasmHidGuestBridge implements HidGuestBridge {
         }
         if (!report) break;
 
+        remainingReports -= 1;
         this.host.sendReport({
           deviceId,
           reportType: report.reportType,
