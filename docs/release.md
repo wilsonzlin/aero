@@ -54,6 +54,7 @@ GitHub Actions produces these artifacts via:
 
 - For tag releases: `aero-web-v0.1.0.zip`
 - For manual runs: `aero-web-<ref>.zip` (unless you also provide the optional `tag` input)
+  - Note: `/` characters in branch names are replaced with `-` so the artifact name is a single file (e.g. `feature/foo` → `aero-web-feature-foo.zip`).
 
 #### Gateway image tags
 
