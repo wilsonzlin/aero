@@ -418,7 +418,7 @@ impl UsbDevice for UsbWebUsbPassthroughDevice {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::passthrough::UsbHostCompletionOut;
+    use crate::passthrough::{UsbHostCompletionIn, UsbHostCompletionOut};
 
     #[test]
     fn vendor_brequest_0x05_is_not_treated_as_set_address() {
@@ -459,5 +459,78 @@ mod tests {
         });
         assert_eq!(dev.handle_in(0, &mut buf), UsbHandshake::Ack { bytes: 0 });
         assert_eq!(dev.address(), 0);
+    }
+
+    #[test]
+    fn new_setup_cancels_inflight_control_and_drops_queued_action() {
+        let mut dev = UsbWebUsbPassthroughDevice::new();
+
+        let setup1 = UsbSetupPacket {
+            request_type: 0x80,
+            request: 0x06,
+            value: 0x0100,
+            index: 0,
+            length: 4,
+        };
+        let setup2 = UsbSetupPacket {
+            request_type: 0x80,
+            request: 0x06,
+            value: 0x0200,
+            index: 0,
+            length: 4,
+        };
+
+        dev.handle_setup(setup1);
+        let summary = dev.pending_summary();
+        assert_eq!(summary.queued_actions, 1);
+        let id1 = summary.inflight_control.expect("expected inflight control id");
+
+        // Issuing a new SETUP must cancel the previous in-flight control transfer and drop its
+        // queued host action (if it hasn't been drained yet).
+        dev.handle_setup(setup2);
+        let summary = dev.pending_summary();
+        assert_eq!(summary.queued_actions, 1);
+        let id2 = summary.inflight_control.expect("expected inflight control id");
+        assert_ne!(id1, id2);
+
+        let actions = dev.drain_actions();
+        assert_eq!(actions.len(), 1, "stale action should be dropped");
+        match &actions[0] {
+            UsbHostAction::ControlIn { id, setup } => {
+                assert_eq!(*id, id2);
+                assert_eq!(
+                    *setup,
+                    HostSetupPacket {
+                        bm_request_type: setup2.request_type,
+                        b_request: setup2.request,
+                        w_value: setup2.value,
+                        w_index: setup2.index,
+                        w_length: setup2.length,
+                    }
+                );
+            }
+            other => panic!("unexpected action: {other:?}"),
+        }
+
+        // Stale completion for the canceled id must be ignored.
+        dev.push_completion(UsbHostCompletion::ControlIn {
+            id: id1,
+            result: UsbHostCompletionIn::Success { data: vec![1, 2, 3, 4] },
+        });
+        assert_eq!(dev.pending_summary().queued_completions, 0);
+
+        // Completion for the active request should deliver data and complete the control transfer.
+        dev.push_completion(UsbHostCompletion::ControlIn {
+            id: id2,
+            result: UsbHostCompletionIn::Success { data: vec![9, 8, 7, 6] },
+        });
+
+        let mut buf = [0u8; 4];
+        assert_eq!(dev.handle_in(0, &mut buf), UsbHandshake::Ack { bytes: 4 });
+        assert_eq!(buf, [9, 8, 7, 6]);
+
+        // Status stage for control-IN is an OUT ZLP.
+        assert_eq!(dev.handle_out(0, &[]), UsbHandshake::Ack { bytes: 0 });
+        assert!(dev.drain_actions().is_empty());
     }
 }
