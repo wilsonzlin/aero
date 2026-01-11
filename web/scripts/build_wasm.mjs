@@ -222,8 +222,16 @@ if (targetFeatures.length !== 0) {
 
 if (isRelease) {
     // Release builds are tuned for runtime performance.
-    // Note: `-C lto=thin` requires `-C embed-bitcode=yes` (Cargo defaults to `no`).
-    requiredRustflags.push("-C opt-level=3", "-C lto=thin", "-C codegen-units=1", "-C embed-bitcode=yes");
+    //
+    // Important: do NOT pass `-C lto` via `RUSTFLAGS`.
+    //
+    // wasm-bindgen crates commonly emit both `cdylib` (for the final .wasm) and `rlib`
+    // (so the crate can be used as a Rust dependency / in tests). Rust rejects `-C lto`
+    // for those multi-output builds with:
+    //   "lto can only be run for executables, cdylibs and static library outputs"
+    //
+    // We rely on `wasm-opt -O4` for post-link optimization instead.
+    requiredRustflags.push("-C opt-level=3", "-C codegen-units=1");
 }
 
 // Both variants are built with imported+exported memory so the web runtime can
