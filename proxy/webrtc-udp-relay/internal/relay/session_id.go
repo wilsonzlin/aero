@@ -12,4 +12,3 @@ func newSessionID() (string, error) {
 	}
 	return hex.EncodeToString(buf[:]), nil
 }
-
