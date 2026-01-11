@@ -126,4 +126,98 @@ done
 assert_header_exact "Cache-Control" "public, max-age=31536000, immutable" "$wasm_headers"
 assert_header_exact "Content-Type" "application/wasm" "$wasm_headers"
 
+# /l2 WebSocket upgrade check (L2 tunnel).
+#
+# We validate the TLS + Upgrade path and subprotocol negotiation without relying
+# on external tools like `wscat`/`websocat`.
+#
+# If `node` is unavailable, skip this check (local dev convenience script).
+if command -v node >/dev/null 2>&1; then
+  echo "deploy smoke: verifying wss://localhost/l2 upgrade (aero-l2-tunnel-v1)" >&2
+  for _ in $(seq 1 30); do
+    if node --input-type=commonjs - <<'NODE'
+const tls = require("node:tls");
+const crypto = require("node:crypto");
+
+const host = "localhost";
+const port = 443;
+const path = "/l2";
+const expectedProtocol = "aero-l2-tunnel-v1";
+
+const key = crypto.randomBytes(16).toString("base64");
+const req = [
+  `GET ${path} HTTP/1.1`,
+  `Host: ${host}`,
+  "Connection: Upgrade",
+  "Upgrade: websocket",
+  "Sec-WebSocket-Version: 13",
+  `Sec-WebSocket-Key: ${key}`,
+  `Sec-WebSocket-Protocol: ${expectedProtocol}`,
+  `Origin: https://${host}`,
+  "",
+  "",
+].join("\r\n");
+
+const socket = tls.connect({
+  host,
+  port,
+  servername: host,
+  rejectUnauthorized: false,
+});
+
+const timeout = setTimeout(() => {
+  console.error("timeout waiting for /l2 upgrade response");
+  process.exit(1);
+}, 2_000);
+
+let buf = "";
+socket.on("secureConnect", () => {
+  socket.write(req);
+});
+
+socket.on("data", (chunk) => {
+  buf += chunk.toString("utf8");
+  const idx = buf.indexOf("\r\n\r\n");
+  if (idx === -1) return;
+
+  clearTimeout(timeout);
+  socket.end();
+
+  const headerBlock = buf.slice(0, idx);
+  const lines = headerBlock.split("\r\n");
+  const statusLine = lines[0] ?? "";
+  if (!statusLine.includes(" 101 ")) {
+    console.error(`unexpected status line from /l2: ${statusLine}`);
+    process.exit(1);
+  }
+
+  const protoLine = lines.find((line) => /^sec-websocket-protocol:/i.test(line));
+  if (!protoLine) {
+    console.error("missing Sec-WebSocket-Protocol in /l2 upgrade response");
+    process.exit(1);
+  }
+  const proto = protoLine.split(":", 2)[1]?.trim() ?? "";
+  if (proto !== expectedProtocol) {
+    console.error(`unexpected subprotocol for /l2 (expected ${expectedProtocol}, got ${proto})`);
+    process.exit(1);
+  }
+
+  process.exit(0);
+});
+
+socket.on("error", (err) => {
+  clearTimeout(timeout);
+  console.error("error waiting for /l2 upgrade response:", err);
+  process.exit(1);
+});
+NODE
+    then
+      break
+    fi
+    sleep 1
+  done
+else
+  echo "deploy smoke: node not found; skipping /l2 WebSocket validation" >&2
+fi
+
 echo "deploy smoke: OK" >&2
