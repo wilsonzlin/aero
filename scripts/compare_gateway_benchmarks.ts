@@ -87,6 +87,83 @@ function metricStatsFromHistoryMetric(metric: any): { value: number; cv: number 
   return { value, cv, n };
 }
 
+export function compareGatewayBenchmarks({
+  baselineRaw,
+  candidateRaw,
+  suiteThresholds,
+  thresholdsFile,
+  profileName,
+  overrideMaxRegressionPct = null,
+  overrideExtremeCv = null,
+}: {
+  baselineRaw: any;
+  candidateRaw: any;
+  suiteThresholds: any;
+  thresholdsFile: string;
+  profileName: string;
+  overrideMaxRegressionPct?: number | null;
+  overrideExtremeCv?: number | null;
+}) {
+  const baseline = normaliseBenchResult(baselineRaw);
+  const candidate = normaliseBenchResult(candidateRaw);
+
+  const baseGateway = baseline.scenarios?.gateway?.metrics ?? {};
+  const candGateway = candidate.scenarios?.gateway?.metrics ?? {};
+
+  const cases: any[] = [];
+  for (const [metricName, threshold] of Object.entries(suiteThresholds.metrics ?? {})) {
+    const better = (threshold as any)?.better;
+    if (better !== "lower" && better !== "higher") {
+      throw new Error(`thresholds: gateway.metrics.${metricName}.better must be "lower" or "higher"`);
+    }
+
+    const b = (baseGateway as any)[metricName];
+    const c = (candGateway as any)[metricName];
+    const unit = (b?.unit ?? c?.unit ?? "").toString();
+
+    let effectiveThreshold: any = threshold;
+    if (overrideMaxRegressionPct != null) {
+      effectiveThreshold = { ...effectiveThreshold, maxRegressionPct: overrideMaxRegressionPct };
+    }
+    if (overrideExtremeCv != null) {
+      effectiveThreshold = { ...effectiveThreshold, extremeCvThreshold: overrideExtremeCv };
+    }
+
+    cases.push({
+      scenario: "gateway",
+      metric: metricName,
+      unit,
+      better,
+      threshold: effectiveThreshold,
+      baseline: metricStatsFromHistoryMetric(b),
+      candidate: metricStatsFromHistoryMetric(c),
+    });
+  }
+
+  const result: any = buildCompareResult({
+    suite: "gateway",
+    profile: profileName,
+    thresholdsFile,
+    baselineMeta: baseline.environment ?? null,
+    candidateMeta: candidate.environment ?? null,
+    cases,
+  });
+
+  // Treat missing candidate metrics as unstable. This avoids silently passing
+  // when a benchmark run fails or a metric stops being reported.
+  //
+  // Note: missing baseline metrics are allowed so we can add new metrics without
+  // breaking comparisons against older baselines.
+  const missingCandidateRequired = (result.comparisons ?? []).some(
+    (c: any) => c?.status === "missing_candidate" && !c?.informational,
+  );
+  if (missingCandidateRequired) {
+    result.status = "unstable";
+  }
+
+  return result;
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.help === "true") usage(0);
@@ -105,37 +182,10 @@ async function main() {
   await fs.mkdir(outDir, { recursive: true });
 
   const [baselineRaw, candidateRaw] = await Promise.all([readJson(baselinePath), readJson(candidatePath)]);
-  const baseline = normaliseBenchResult(baselineRaw);
-  const candidate = normaliseBenchResult(candidateRaw);
-
-  const baseGateway = baseline.scenarios?.gateway?.metrics ?? {};
-  const candGateway = candidate.scenarios?.gateway?.metrics ?? {};
 
   const thresholdsPolicy = await loadThresholdPolicy(thresholdsFile);
   const { name: profileName, profile } = pickThresholdProfile(thresholdsPolicy, profileArg);
   const suiteThresholds = getSuiteThresholds(profile, "gateway");
-
-  const cases: any[] = [];
-  for (const [metricName, threshold] of Object.entries(suiteThresholds.metrics ?? {})) {
-    const better = (threshold as any)?.better;
-    if (better !== "lower" && better !== "higher") {
-      throw new Error(`thresholds: gateway.metrics.${metricName}.better must be "lower" or "higher"`);
-    }
-
-    const b = baseGateway[metricName];
-    const c = candGateway[metricName];
-    const unit = (b?.unit ?? c?.unit ?? "").toString();
-
-    cases.push({
-      scenario: "gateway",
-      metric: metricName,
-      unit,
-      better,
-      threshold,
-      baseline: metricStatsFromHistoryMetric(b),
-      candidate: metricStatsFromHistoryMetric(c),
-    });
-  }
 
   // Optional overrides (useful for debugging / emergency CI tuning).
   const cliThresholdPct = args.thresholdPct ? Number(args.thresholdPct) / 100 : null;
@@ -156,33 +206,15 @@ async function main() {
     (isFiniteNumber(envExtremeCv) && envExtremeCv > 0 && envExtremeCv) ||
     null;
 
-  if (overrideMaxRegressionPct != null || overrideExtremeCv != null) {
-    for (const c of cases) {
-      if (overrideMaxRegressionPct != null) c.threshold = { ...c.threshold, maxRegressionPct: overrideMaxRegressionPct };
-      if (overrideExtremeCv != null) c.threshold = { ...c.threshold, extremeCvThreshold: overrideExtremeCv };
-    }
-  }
-
-  const result = buildCompareResult({
-    suite: "gateway",
-    profile: profileName,
+  const result = compareGatewayBenchmarks({
+    baselineRaw,
+    candidateRaw,
+    suiteThresholds,
     thresholdsFile,
-    baselineMeta: baseline.environment ?? null,
-    candidateMeta: candidate.environment ?? null,
-    cases,
+    profileName,
+    overrideMaxRegressionPct,
+    overrideExtremeCv,
   });
-
-  // Treat missing candidate metrics as unstable. This avoids silently passing
-  // when a benchmark run fails or a metric stops being reported.
-  //
-  // Note: missing baseline metrics are allowed so we can add new metrics without
-  // breaking comparisons against older baselines.
-  const missingCandidateRequired = (result.comparisons ?? []).some(
-    (c: any) => c?.status === "missing_candidate" && !c?.informational,
-  );
-  if (missingCandidateRequired) {
-    result.status = "unstable";
-  }
 
   const markdown = renderCompareMarkdown(result, { title: "Gateway perf comparison" });
   await Promise.all([
