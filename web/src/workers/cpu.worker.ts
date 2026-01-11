@@ -789,6 +789,11 @@ function pumpMicLoopback(maxWriteFrames: number): number {
     return totalWritten;
   }
 
+  // We aren't resampling this call; reset any prior resampler state so we don't
+  // replay stale queued samples if we later re-enter the resampling path with
+  // the same rate pair.
+  micResampler?.reset();
+
   while (remaining > 0) {
     const frames = Math.min(remaining, maxChunkFrames);
     if (micScratch.length < frames) micScratch = new Float32Array(frames);
