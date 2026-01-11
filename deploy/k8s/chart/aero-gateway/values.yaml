@@ -113,14 +113,22 @@ l2Proxy:
   open: false
 
   auth:
-    # Optional: set `AERO_L2_AUTH_MODE` for the proxy (e.g. "session-cookie" or "token").
-    # Leave empty to let the proxy default.
+    # Optional: set `AERO_L2_AUTH_MODE` for the proxy.
+    #
+    # Supported values:
+    #   - "none"
+    #   - "cookie" (recommended for same-origin browser clients in production)
+    #   - "api_key"
+    #   - "jwt"
+    #   - "cookie_or_jwt"
+    #
+    # Leave empty to let the proxy default (currently "none").
     mode: ""
 
   # Session cookie auth wiring.
   #
-  # When using a session-cookie auth mode, the L2 proxy must be able to verify the gateway-issued
-  # session cookie. This typically requires sharing the same signing secret used by the gateway
+  # When using `auth.mode: "cookie"` (or `"cookie_or_jwt"`), the L2 proxy must be able to verify the
+  # gateway-issued session cookie. This requires sharing the signing secret used by the gateway
   # (`SESSION_SECRET`).
   #
   # By default, this chart reuses the gateway secret (secrets.*). To use a separate Secret:

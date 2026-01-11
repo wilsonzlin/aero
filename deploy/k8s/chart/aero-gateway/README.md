@@ -62,10 +62,33 @@ l2Proxy:
     - "https://another-frontend.example.com"
 ```
 
-### Session secret sharing (session-cookie auth)
+### Auth mode (`AERO_L2_AUTH_MODE`)
 
-If your `aero-l2-proxy` auth mode verifies gateway-issued session cookies, it must use the same
-signing secret as the gateway (`SESSION_SECRET`).
+`aero-l2-proxy` can authenticate `/l2` WebSocket upgrades via `AERO_L2_AUTH_MODE`.
+
+Supported values:
+
+- `none`
+- `cookie` (recommended for same-origin browser clients)
+- `api_key`
+- `jwt`
+- `cookie_or_jwt`
+
+Example:
+
+```yaml
+l2Proxy:
+  auth:
+    mode: "cookie"
+```
+
+If you use `cookie` / `cookie_or_jwt`, the proxy must share the gateway session signing secret
+(`SESSION_SECRET`) to verify gateway-issued cookies (see below).
+
+### Session secret sharing (`cookie` / `cookie_or_jwt` auth)
+
+If your `aero-l2-proxy` auth mode verifies gateway-issued session cookies (`AERO_L2_AUTH_MODE=cookie`
+or `cookie_or_jwt`), it must use the same signing secret as the gateway (`SESSION_SECRET`).
 
 By default, this chart reuses the gateway secret configured under `secrets.*` (so both pods see the
 same `SESSION_SECRET` value). If you need to source `SESSION_SECRET` from a different Secret:

@@ -27,10 +27,11 @@ l2Proxy:
   # The chart will automatically set AERO_L2_ALLOWED_ORIGINS to the derived ingress origin
   # (https://<ingress.host> when TLS is enabled) and route `/l2` to the proxy.
   #
-  # Optional: configure the proxy auth mode when using session-cookie auth.
-  # (Exact supported values depend on the proxy implementation.)
+  # Recommended: use cookie auth for same-origin browser clients.
+  # This requires the proxy to share the gateway `SESSION_SECRET`; the chart mounts it as both
+  # `SESSION_SECRET` and `AERO_L2_SESSION_SECRET`.
   auth:
-    mode: "session-cookie"
+    mode: "cookie"
 
 podDisruptionBudget:
   enabled: true
