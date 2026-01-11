@@ -1,3 +1,9 @@
+//! Shared helpers for `aero-gpu` integration tests.
+//!
+//! Note: D3D9 defaults to back-face culling with clockwise front faces
+//! (`D3DCULL_CCW`). Tests that render triangles without explicitly setting cull
+//! state should use clockwise vertex winding to avoid having geometry culled.
+
 pub fn require_webgpu() -> bool {
     let Ok(raw) = std::env::var("AERO_REQUIRE_WEBGPU") else {
         return false;
