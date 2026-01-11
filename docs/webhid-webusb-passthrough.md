@@ -117,6 +117,10 @@ For performance, move to a fixed-size shared-memory ring buffer:
 This keeps the device model deterministic and avoids per-report allocations on
 hot paths (gamepads can be high-frequency).
 
+Note: `SharedArrayBuffer` requires cross-origin isolation (COOP/COEP) in modern
+browsers. If the app is not `crossOriginIsolated`, fall back to `postMessage`-
+based forwarding. See [`docs/11-browser-apis.md`](./11-browser-apis.md).
+
 ## Guest-side model (UHCI + generic HID passthrough device)
 
 ### Emulated topology
@@ -244,8 +248,9 @@ Recommended guardrails:
 ## Current limitations (MVP constraints)
 
 - **UHCI root hub: 2 ports**
-  - Only two passthrough devices can be attached at once.
-  - No downstream hub emulation yet.
+  - Only two devices can be attached *directly* to the root hub.
+  - Supporting more simultaneous passthrough devices likely requires attaching a
+    virtual USB hub to a root port and mapping physical devices behind it.
 - **No low-speed modeling**
   - Low-speed (1.5 Mbps) USB devices are not modeled correctly yet.
   - Expect some HID peripherals to fail enumeration or behave incorrectly.
