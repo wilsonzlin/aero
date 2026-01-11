@@ -203,6 +203,9 @@ static void APIENTRY Stub_Destroy_VOID(...) {
 }
 
 // Context-state setters and draws are usually void and take HDEVICECONTEXT first.
+//
+// For bring-up, consider special-casing “unbind” calls as a no-op (do not set
+// an error) since the runtime will frequently reset state by binding NULLs.
 static void APIENTRY Stub_Ctx_VOID(D3D11DDI_HDEVICECONTEXT hCtx, ...) {
   g_DeviceCallbacks.pfnSetErrorCb(RtDeviceFromContext(hCtx), E_NOTIMPL);
 }
@@ -554,7 +557,7 @@ Recommended stub behavior:
 
 | Field | Status | Notes / stub guidance |
 |---|---|---|
-| `pfnClearState` | REQUIRED-BUT-STUBBABLE | Many apps call `ID3D11DeviceContext::ClearState`. If stubbed, call `SetErrorCb(E_NOTIMPL)`; better is to reset all cached bindings to defaults. |
+| `pfnClearState` | REQUIRED-BUT-STUBBABLE | Many apps (and sometimes runtimes) call `ID3D11DeviceContext::ClearState`. A safe bring-up implementation is “reset tracked bindings to defaults” (or even a no-op). Avoid calling `SetErrorCb` here: `ClearState` is commonly used as a non-failing reset path. |
 
 ### 5.4 Clears and draws
 
