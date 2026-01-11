@@ -151,12 +151,12 @@ npm run bench:storage -- --out-dir storage-perf-results/head
 ### Comparing two runs
 
 ```bash
-node --experimental-strip-types bench/compare.ts \
+node --experimental-strip-types scripts/compare_storage_benchmarks.ts \
   --baseline storage-perf-results/base/storage_bench.json \
-  --candidate storage-perf-results/head/storage_bench.json \
-  --out-dir storage-perf-results \
-  --thresholds-file bench/perf_thresholds.json \
-  --profile pr-smoke
+  --current storage-perf-results/head/storage_bench.json \
+  --thresholdPct 15 \
+  --outDir storage-perf-results \
+  --json
 
 cat storage-perf-results/compare.md
 ```
@@ -167,6 +167,7 @@ The compare script also gates on:
 - benchmark config mismatches between baseline/current runs (to avoid apples-to-oranges comparisons)
 
 It also includes any `warnings[]` from the benchmark output in the Markdown report.
+When invoked with `--json`, it also writes `compare.json` for machine-readable CI consumers.
 
 ## Scenario runner (PF-008 macrobench framework)
 
