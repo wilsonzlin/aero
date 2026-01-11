@@ -956,6 +956,17 @@ function runEmulationLoop() {
 
 ## Audio Worklet
 
+> Note: The snippets below are illustrative. The canonical Aero implementation uses a
+> `SharedArrayBuffer` ring buffer with a 16-byte `u32[4]` header:
+>
+> - `readFrameIndex` (bytes 0..4)
+> - `writeFrameIndex` (bytes 4..8)
+> - `underrunCount` (bytes 8..12, incremented by the worklet when it must output silence)
+> - `overrunCount` (bytes 12..16, incremented by the producer when frames are dropped due to buffer full)
+>
+> followed by interleaved `f32` samples at byte 16. See:
+> `web/src/platform/audio.ts` and `web/src/platform/audio-worklet-processor.js`.
+
 ### Processor Registration
 
 > Note: The code below is illustrative. The canonical implementation lives in:
