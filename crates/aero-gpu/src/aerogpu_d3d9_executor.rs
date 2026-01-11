@@ -1513,6 +1513,14 @@ impl AerogpuD3d9Executor {
             } => {
                 let start = start_slot as usize;
                 let count = buffer_count as usize;
+                let end = start
+                    .checked_add(count)
+                    .ok_or_else(|| AerogpuD3d9Error::Validation("SET_VERTEX_BUFFERS: slot range overflow".into()))?;
+                if end > self.state.vertex_buffers.len() {
+                    return Err(AerogpuD3d9Error::Validation(
+                        "SET_VERTEX_BUFFERS: slot range out of bounds".into(),
+                    ));
+                }
                 for i in 0..count {
                     let base = i * 16;
                     let binding = VertexBufferBinding {
@@ -1526,9 +1534,11 @@ impl AerogpuD3d9Executor {
                             bindings_bytes[base + 8..base + 12].try_into().unwrap(),
                         ),
                     };
-                    if start + i < self.state.vertex_buffers.len() {
-                        self.state.vertex_buffers[start + i] = Some(binding);
-                    }
+                    self.state.vertex_buffers[start + i] = if binding.buffer == 0 {
+                        None
+                    } else {
+                        Some(binding)
+                    };
                 }
                 Ok(())
             }
@@ -1537,10 +1547,18 @@ impl AerogpuD3d9Executor {
                 format,
                 offset_bytes,
             } => {
+                if buffer == 0 {
+                    self.state.index_buffer = None;
+                    return Ok(());
+                }
                 let format = match format {
                     0 => wgpu::IndexFormat::Uint16,
                     1 => wgpu::IndexFormat::Uint32,
-                    _ => wgpu::IndexFormat::Uint16,
+                    _ => {
+                        return Err(AerogpuD3d9Error::Validation(format!(
+                            "SET_INDEX_BUFFER: unknown index format {format}"
+                        )))
+                    }
                 };
                 self.state.index_buffer = Some(IndexBufferBinding {
                     buffer,
