@@ -739,19 +739,6 @@ HRESULT AEROGPU_APIENTRY GetCaps11(D3D10DDI_HADAPTER, const D3D11DDIARG_GETCAPS*
       zero_out();
       static const D3D_FEATURE_LEVEL kLevels[] = {D3D_FEATURE_LEVEL_10_0};
 
-      struct FeatureLevelsCapsPtr {
-        UINT NumFeatureLevels;
-        const D3D_FEATURE_LEVEL* pFeatureLevels;
-      };
-
-      // Common layout: {UINT NumFeatureLevels; const D3D_FEATURE_LEVEL* pFeatureLevels;}
-      if (size == sizeof(FeatureLevelsCapsPtr)) {
-        auto* out = reinterpret_cast<FeatureLevelsCapsPtr*>(data);
-        out->NumFeatureLevels = 1;
-        out->pFeatureLevels = kLevels;
-        return S_OK;
-      }
-
       // Win7 D3D11 runtime expects a "count + inline list" in practice, but be
       // permissive to alternate layouts.
       if (size >= sizeof(UINT) + sizeof(D3D_FEATURE_LEVEL)) {
