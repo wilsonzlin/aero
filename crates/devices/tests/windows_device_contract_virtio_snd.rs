@@ -33,6 +33,16 @@ fn require_array<'a>(value: &'a serde_json::Value, field: &str) -> &'a [serde_js
         .unwrap_or_else(|| panic!("{field} must be an array"))
 }
 
+fn assert_file_contains_case_insensitive(path: &std::path::Path, needle: &str) {
+    let content = fs::read_to_string(path)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()));
+    assert!(
+        content.to_ascii_uppercase().contains(&needle.to_ascii_uppercase()),
+        "{} is out of sync: expected to contain {needle:?}",
+        path.display()
+    );
+}
+
 #[test]
 fn virtio_snd_pci_ids_match_windows_device_contract() {
     let contract_path = repo_root().join("docs/windows-device-contract.json");
@@ -99,5 +109,22 @@ fn virtio_snd_pci_ids_match_windows_device_contract() {
         "{}: virtio-snd hardware_id_patterns missing {expected_hwid_subsys:?}. Found: {patterns:?}",
         contract_path.display()
     );
-}
 
+    // Cross-check a few other repo-owned “consumers” so driver binding / tooling doesn't drift.
+    let root = repo_root();
+    assert_file_contains_case_insensitive(
+        &root.join("guest-tools/config/devices.cmd"),
+        &expected_hwid_short,
+    );
+
+    // Contract JSON specifies the canonical INF filename; it must exist in-tree and match the same HWID.
+    let inf_name = require_str(virtio_snd, "inf_name");
+    let inf_path = root.join("drivers/windows7/virtio-snd/inf").join(inf_name);
+    assert!(
+        inf_path.is_file(),
+        "{}: virtio-snd INF referenced by windows-device-contract.json is missing: {}",
+        contract_path.display(),
+        inf_path.display()
+    );
+    assert_file_contains_case_insensitive(&inf_path, &expected_hwid_short);
+}
