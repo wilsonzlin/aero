@@ -144,7 +144,7 @@ ingress:
     enabled: true
     xContentTypeOptions: nosniff
     referrerPolicy: no-referrer
-    permissionsPolicy: "camera=(), microphone=(), geolocation=()"
+    permissionsPolicy: "camera=(), geolocation=(), microphone=(self)"
     # Keep this aligned with `scripts/headers.json` / `docs/security-headers.md`.
     #
     # Note: `connect-src 'self'` is sufficient for single-origin deployments;

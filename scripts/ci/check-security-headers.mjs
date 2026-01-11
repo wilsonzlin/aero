@@ -146,6 +146,86 @@ function parseNginxConf(filePath) {
   return [{ matcher: 'nginx', headers }];
 }
 
+function parseSimpleYamlValues(filePath) {
+  const out = {};
+  const stack = [];
+  const lines = readText(filePath).split(/\r?\n/);
+  for (const rawLine of lines) {
+    if (!rawLine.trim()) continue;
+    if (rawLine.trim().startsWith('#')) continue;
+    // Ignore list items; we only care about the chart's map-based defaults.
+    if (rawLine.trim().startsWith('-')) continue;
+
+    const match = rawLine.match(/^(\s*)([A-Za-z0-9_.-]+)\s*:\s*(.*)$/);
+    if (!match) continue;
+    const [, indentPrefix, key, rawValue] = match;
+    const indent = indentPrefix.length;
+
+    while (stack.length > 0 && indent <= stack.at(-1).indent) {
+      stack.pop();
+    }
+    stack.push({ indent, key });
+
+    const value = rawValue.trim();
+    if (!value) continue;
+    // Ignore YAML block scalars (not used in the values files we validate here).
+    if (value === '|' || value === '>') continue;
+
+    let normalized = value;
+    if (
+      (normalized.startsWith('"') && normalized.endsWith('"')) ||
+      (normalized.startsWith("'") && normalized.endsWith("'"))
+    ) {
+      normalized = normalized.slice(1, -1);
+    }
+
+    const path = stack.map((entry) => entry.key).join('.');
+    out[path] = normalized;
+  }
+  return out;
+}
+
+function checkHelmValues(fileLabel, filePath) {
+  const values = parseSimpleYamlValues(filePath);
+  const errors = [];
+
+  const required = [
+    // Chart values map to the canonical header keys.
+    { path: 'ingress.coopCoep.coop', headerKey: 'Cross-Origin-Opener-Policy' },
+    { path: 'ingress.coopCoep.coep', headerKey: 'Cross-Origin-Embedder-Policy' },
+    { path: 'ingress.coopCoep.corp', headerKey: 'Cross-Origin-Resource-Policy' },
+    { path: 'ingress.coopCoep.originAgentCluster', headerKey: 'Origin-Agent-Cluster' },
+    { path: 'ingress.securityHeaders.xContentTypeOptions', headerKey: 'X-Content-Type-Options' },
+    { path: 'ingress.securityHeaders.referrerPolicy', headerKey: 'Referrer-Policy' },
+    { path: 'ingress.securityHeaders.permissionsPolicy', headerKey: 'Permissions-Policy' },
+    { path: 'ingress.securityHeaders.contentSecurityPolicy', headerKey: 'Content-Security-Policy' },
+  ];
+
+  for (const item of required) {
+    const expected = canonicalSecurityHeaders[item.headerKey];
+    const actual = values[item.path];
+    if (actual === undefined) {
+      errors.push(`${fileLabel}: missing ${item.path} (expected canonical ${item.headerKey}=${expected})`);
+      continue;
+    }
+    if (normalizeHeaderValue(item.headerKey, actual) !== normalizeHeaderValue(item.headerKey, expected)) {
+      errors.push(`${fileLabel}: ${item.path} does not match canonical ${item.headerKey}`);
+      errors.push(`  - expected: ${normalizeHeaderValue(item.headerKey, expected)}`);
+      errors.push(`  + actual:   ${normalizeHeaderValue(item.headerKey, actual)}`);
+    }
+  }
+
+  // Ensure the chart defaults enable the ingress-level header strategy.
+  for (const path of ['ingress.coopCoep.enabled', 'ingress.securityHeaders.enabled']) {
+    const actual = values[path];
+    if (actual !== 'true') {
+      errors.push(`${fileLabel}: expected ${path}=true (got ${actual ?? '<missing>'})`);
+    }
+  }
+
+  return errors;
+}
+
 function checkRules(fileLabel, rules) {
   const expected = canonicalSecurityHeaders;
   const errors = [];
@@ -193,6 +273,8 @@ const targets = [
   { type: 'vite', path: 'vite.harness.config.ts' },
   { type: 'vite', path: 'web/vite.config.ts' },
   // Deployment templates that must stay in sync with the canonical headers.
+  // Helm chart defaults (ingress header injection) should also match canonical headers.
+  { type: 'helm-values', path: 'deploy/k8s/chart/aero-gateway/values.yaml' },
   { type: 'headers', path: 'web/public/_headers' },
   { type: 'headers', path: 'deploy/cloudflare-pages/_headers' },
   { type: 'netlify', path: 'netlify.toml' },
@@ -219,6 +301,14 @@ for (const target of targets) {
       allErrors.push(...checkViteConfig(target.path, filePath));
     } catch (err) {
       allErrors.push(`${target.path}: failed to read file: ${err?.message ?? String(err)}`);
+    }
+    continue;
+  }
+  if (target.type === 'helm-values') {
+    try {
+      allErrors.push(...checkHelmValues(target.path, filePath));
+    } catch (err) {
+      allErrors.push(`${target.path}: failed to validate Helm values: ${err?.message ?? String(err)}`);
     }
     continue;
   }

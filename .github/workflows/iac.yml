@@ -112,6 +112,14 @@ jobs:
           sudo mv /tmp/kubeconform /usr/local/bin/kubeconform
           kubeconform -v
 
+      - name: Cache kubeconform schemas
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/kubeconform
+          key: ${{ runner.os }}-kubeconform-${{ env.K8S_VERSION }}
+          restore-keys: |
+            ${{ runner.os }}-kubeconform-
+
       - name: helm lint (example values)
         shell: bash
         run: |
@@ -129,6 +137,8 @@ jobs:
         run: |
           set -euo pipefail
           CHART="deploy/k8s/chart/aero-gateway"
+          KUBECONFORM_CACHE_DIR="$HOME/.cache/kubeconform"
+          mkdir -p "$KUBECONFORM_CACHE_DIR"
 
           for values in \
             values-dev.yaml \
@@ -141,6 +151,7 @@ jobs:
             helm template aero-gateway "$CHART" -n aero -f "$CHART/$values" > "$out"
 
             kubeconform \
+              -cache "$KUBECONFORM_CACHE_DIR" \
               -strict \
               -ignore-missing-schemas \
               -kubernetes-version "$K8S_VERSION" \
@@ -163,8 +174,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          kubeconform -strict -ignore-missing-schemas -kubernetes-version "$K8S_VERSION" -summary deploy/k8s/aero-storage-server
-          kubeconform -strict -ignore-missing-schemas -kubernetes-version "$K8S_VERSION" -summary deploy/k8s/examples/cert-manager
+          KUBECONFORM_CACHE_DIR="$HOME/.cache/kubeconform"
+          mkdir -p "$KUBECONFORM_CACHE_DIR"
+          kubeconform -cache "$KUBECONFORM_CACHE_DIR" -strict -ignore-missing-schemas -kubernetes-version "$K8S_VERSION" -summary deploy/k8s/aero-storage-server
+          kubeconform -cache "$KUBECONFORM_CACHE_DIR" -strict -ignore-missing-schemas -kubernetes-version "$K8S_VERSION" -summary deploy/k8s/examples/cert-manager
 
   deploy-hygiene:
     name: Deploy manifest hygiene
