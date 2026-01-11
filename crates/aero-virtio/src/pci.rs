@@ -528,8 +528,8 @@ impl VirtioPciDevice {
             2 => (0x01, 0x00),
             // Display controller / other (virtio-gpu).
             16 => (0x03, 0x80),
-            // Input device controller.
-            18 => (0x09, 0x00),
+            // Input device controller / other.
+            18 => (0x09, 0x80),
             // Multimedia / audio device.
             25 => (0x04, 0x01),
             _ => (0x00, 0x00),
@@ -539,9 +539,14 @@ impl VirtioPciDevice {
         self.config_space[0x0b] = class;
         self.config_space[0x0e] = 0x00; // header type
 
-        // Subsystem vendor/device (mirror primary IDs by default).
+        // Subsystem vendor/device.
+        //
+        // For virtio-pci, the subsystem device ID encodes the virtio device type
+        // (e.g. 0x0002 for virtio-blk, 0x0019 for virtio-snd). This matches the
+        // conventional virtio ecosystem and Aero's Windows device contracts.
+        let subsystem_id = self.device.device_type();
         self.config_space[0x2c..0x2e].copy_from_slice(&PCI_VENDOR_ID_VIRTIO.to_le_bytes());
-        self.config_space[0x2e..0x30].copy_from_slice(&device_id.to_le_bytes());
+        self.config_space[0x2e..0x30].copy_from_slice(&subsystem_id.to_le_bytes());
 
         // INTA#
         self.config_space[0x3d] = 0x01;
