@@ -22,6 +22,7 @@ export type Config = Readonly<{
   TLS_KEY_PATH: string;
 
   // TCP proxy / WebSocket upgrade endpoints.
+  TCP_ALLOW_PRIVATE_IPS: boolean;
   TCP_ALLOWED_HOSTS: string[];
   TCP_ALLOWED_PORTS: number[];
   TCP_BLOCKED_CLIENT_IPS: string[];
@@ -111,6 +112,7 @@ const envSchema = z.object({
   TLS_ENABLED: z.enum(['0', '1']).optional().default('0'),
   TLS_CERT_PATH: z.string().optional().default(''),
   TLS_KEY_PATH: z.string().optional().default(''),
+  TCP_ALLOW_PRIVATE_IPS: z.enum(['0', '1']).optional().default('0'),
   TCP_ALLOWED_HOSTS: z.string().optional().default(''),
   TCP_ALLOWED_PORTS: z.string().optional().default(''),
   TCP_BLOCKED_CLIENT_IPS: z.string().optional().default(''),
@@ -200,6 +202,7 @@ export function loadConfig(env: Env = process.env): Config {
     TLS_ENABLED: tlsEnabled,
     TLS_CERT_PATH: tlsCertPath,
     TLS_KEY_PATH: tlsKeyPath,
+    TCP_ALLOW_PRIVATE_IPS: raw.TCP_ALLOW_PRIVATE_IPS === '1',
     TCP_ALLOWED_HOSTS: splitCommaList(raw.TCP_ALLOWED_HOSTS),
     TCP_ALLOWED_PORTS: tcpAllowedPorts,
     TCP_BLOCKED_CLIENT_IPS: splitCommaList(raw.TCP_BLOCKED_CLIENT_IPS),

@@ -41,7 +41,11 @@ export function handleTcpProxyUpgrade(
   req: http.IncomingMessage,
   socket: Duplex,
   head: Buffer,
-  opts: TcpProxyUpgradePolicy & { createConnection?: typeof net.createConnection; metrics?: TcpProxyEgressMetricSink } = {},
+  opts: TcpProxyUpgradePolicy & {
+    allowPrivateIps?: boolean;
+    createConnection?: typeof net.createConnection;
+    metrics?: TcpProxyEgressMetricSink;
+  } = {},
 ): void {
   const upgradeDecision = validateWsUpgradePolicy(req, opts);
   if (!upgradeDecision.ok) {
@@ -78,7 +82,10 @@ export function handleTcpProxyUpgrade(
   void (async () => {
     let resolved: { ip: string; port: number; hostname?: string };
     try {
-      resolved = await resolveTcpProxyTarget(target.host, target.port, process.env, opts.metrics);
+      resolved = await resolveTcpProxyTarget(target.host, target.port, {
+        allowPrivateIps: opts.allowPrivateIps,
+        metrics: opts.metrics,
+      });
     } catch (err) {
       if (err instanceof TcpProxyTargetError) {
         respondHttp(socket, err.statusCode, err.message);
@@ -383,21 +390,25 @@ function encodeFrame(opcode: number, payload: Buffer): Buffer {
 export async function resolveTcpProxyTarget(
   rawHost: string,
   port: number,
-  env: Record<string, string | undefined> = process.env,
-  metrics?: TcpProxyEgressMetricSink,
+  opts: Readonly<{
+    allowPrivateIps?: boolean;
+    env?: Record<string, string | undefined>;
+    metrics?: TcpProxyEgressMetricSink;
+  }> = {},
 ): Promise<{ ip: string; port: number; hostname?: string }> {
+  const env = opts.env ?? process.env;
   // By default we block private/reserved IPs to prevent SSRF / local-network
   // probing via the browser-facing TCP proxy.
   //
   // For local development + E2E testing we allow opting out so the proxy can
   // reach loopback test servers (e.g. Playwright).
-  const allowPrivateIps = env.TCP_ALLOW_PRIVATE_IPS === "1";
+  const allowPrivateIps = opts.allowPrivateIps ?? false;
 
   const hostPolicy = parseTcpHostnameEgressPolicyFromEnv(env);
   const decision = evaluateTcpHostPolicy(rawHost, hostPolicy);
   if (!decision.allowed) {
     tcpProxyMetrics.blockedByHostPolicy++;
-    metrics?.blockedByHostPolicyTotal?.inc();
+    opts.metrics?.blockedByHostPolicyTotal?.inc();
     const statusCode = decision.reason === "invalid-hostname" ? 400 : 403;
     throw new TcpProxyTargetError("host-policy", formatHostPolicyRejection(decision), statusCode);
   }
@@ -405,7 +416,7 @@ export async function resolveTcpProxyTarget(
   if (decision.target.kind === "ip") {
     if (!allowPrivateIps && !isPublicIpAddress(decision.target.ip)) {
       tcpProxyMetrics.blockedByIpPolicy++;
-      metrics?.blockedByIpPolicyTotal?.inc();
+      opts.metrics?.blockedByIpPolicyTotal?.inc();
       throw new TcpProxyTargetError("ip-policy", "Target IP is not allowed by IP egress policy", 403);
     }
     return { ip: decision.target.ip, port };
@@ -427,7 +438,7 @@ export async function resolveTcpProxyTarget(
   }
 
   tcpProxyMetrics.blockedByIpPolicy++;
-  metrics?.blockedByIpPolicyTotal?.inc();
+  opts.metrics?.blockedByIpPolicyTotal?.inc();
   throw new TcpProxyTargetError("ip-policy", "All resolved IPs are blocked by IP egress policy", 403);
 }
 

@@ -122,6 +122,9 @@ TCP proxy (`/tcp`, `/tcp-mux`):
   - Always enforced; deny overrides allow.
 - `TCP_REQUIRE_DNS_NAME=1|0` (default: `0`)
   - When enabled, disallow IP-literal targets entirely (force DNS names).
+- `TCP_ALLOW_PRIVATE_IPS=1|0` (default: `0`)
+  - When enabled, allow dialing loopback/RFC1918/link-local/etc IP ranges.
+  - **Security note:** this disables the default DNS-rebinding/SSRF mitigation (public-IP-only filtering) and should only be enabled in trusted/local-dev environments.
 - `TCP_ALLOWED_PORTS` (comma-separated; default: allow all)
 - `TCP_BLOCKED_CLIENT_IPS` (comma-separated; default: none)
 - `TCP_MUX_MAX_STREAMS` (default: `1024`)

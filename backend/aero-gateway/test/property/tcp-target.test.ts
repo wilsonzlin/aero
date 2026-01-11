@@ -147,7 +147,7 @@ describe('tcp target parsing + policy (property)', () => {
       await fc.assert(
         fc.asyncProperty(privateIpv4Arb, async (ip) => {
           await assert.rejects(
-            resolveTcpProxyTarget(ip, 443, RESOLVE_ENV),
+            resolveTcpProxyTarget(ip, 443, { env: RESOLVE_ENV }),
             (err: unknown) =>
               err instanceof TcpProxyTargetError && err.kind === 'ip-policy' && err.statusCode === 403,
           );
@@ -164,7 +164,7 @@ describe('tcp target parsing + policy (property)', () => {
       await fc.assert(
         fc.asyncProperty(privateIpv6Arb, async (ip) => {
           await assert.rejects(
-            resolveTcpProxyTarget(ip, 443, RESOLVE_ENV),
+            resolveTcpProxyTarget(ip, 443, { env: RESOLVE_ENV }),
             (err: unknown) =>
               err instanceof TcpProxyTargetError && err.kind === 'ip-policy' && err.statusCode === 403,
           );
@@ -176,7 +176,7 @@ describe('tcp target parsing + policy (property)', () => {
 
   it('resolveTcpProxyTarget rejects hostnames that only resolve to private IPs', async () => {
     await assert.rejects(
-      resolveTcpProxyTarget('localhost', 443, RESOLVE_ENV),
+      resolveTcpProxyTarget('localhost', 443, { env: RESOLVE_ENV }),
       (err: unknown) =>
         err instanceof TcpProxyTargetError && err.kind === 'ip-policy' && err.statusCode === 403,
     );

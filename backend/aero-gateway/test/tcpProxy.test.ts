@@ -135,4 +135,49 @@ describe("tcpProxy route", () => {
       await closeServer(proxyServer);
     }
   });
+
+  it("allows dialing loopback targets when allowPrivateIps is enabled", async () => {
+    const echoServer = net.createServer((socket) => socket.on("data", (data) => socket.write(data)));
+    const echoPort = await listen(echoServer, "127.0.0.1");
+
+    const proxyServer = http.createServer();
+    proxyServer.on("upgrade", (req, socket, head) => {
+      handleTcpProxyUpgrade(req, socket, head, { allowPrivateIps: true });
+    });
+    const proxyPort = await listen(proxyServer, "127.0.0.1");
+
+    const ws = await openWebSocket(`ws://127.0.0.1:${proxyPort}/tcp?v=1&host=127.0.0.1&port=${echoPort}`);
+
+    try {
+      const payload = Buffer.from("ping");
+      ws.send(payload);
+      const message = await nextMessage(ws);
+      assert.deepEqual(Buffer.from(message), payload);
+    } finally {
+      await closeWebSocket(ws);
+      await closeServer(proxyServer);
+      await closeServer(echoServer);
+    }
+  });
+
+  it("rejects dialing loopback targets when allowPrivateIps is disabled", async () => {
+    const echoServer = net.createServer((socket) => socket.on("data", (data) => socket.write(data)));
+    const echoPort = await listen(echoServer, "127.0.0.1");
+
+    const proxyServer = http.createServer();
+    proxyServer.on("upgrade", (req, socket, head) => {
+      handleTcpProxyUpgrade(req, socket, head, { allowPrivateIps: false });
+    });
+    const proxyPort = await listen(proxyServer, "127.0.0.1");
+
+    try {
+      await assert.rejects(
+        () => openWebSocket(`ws://127.0.0.1:${proxyPort}/tcp?v=1&host=127.0.0.1&port=${echoPort}`),
+        /WebSocket connection failed/,
+      );
+    } finally {
+      await closeServer(proxyServer);
+      await closeServer(echoServer);
+    }
+  });
 });

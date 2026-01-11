@@ -160,6 +160,7 @@ export function buildServer(config: Config): ServerBundle {
         blockedClientIps: config.TCP_BLOCKED_CLIENT_IPS,
         allowedTargetHosts: config.TCP_ALLOWED_HOSTS,
         allowedTargetPorts: config.TCP_ALLOWED_PORTS,
+        allowPrivateIps: config.TCP_ALLOW_PRIVATE_IPS,
         metrics: metrics.tcpProxy,
       });
       return;
@@ -171,6 +172,7 @@ export function buildServer(config: Config): ServerBundle {
         blockedClientIps: config.TCP_BLOCKED_CLIENT_IPS,
         allowedTargetHosts: config.TCP_ALLOWED_HOSTS,
         allowedTargetPorts: config.TCP_ALLOWED_PORTS,
+        allowPrivateIps: config.TCP_ALLOW_PRIVATE_IPS,
         maxStreams: config.TCP_MUX_MAX_STREAMS,
         maxStreamBufferedBytes: config.TCP_MUX_MAX_STREAM_BUFFER_BYTES,
         maxFramePayloadBytes: config.TCP_MUX_MAX_FRAME_PAYLOAD_BYTES,

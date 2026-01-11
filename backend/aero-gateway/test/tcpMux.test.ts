@@ -229,4 +229,115 @@ describe("tcpMux route", () => {
       await closeServer(echoServer);
     }
   });
+
+  it("allows dialing loopback targets when allowPrivateIps is enabled", async () => {
+    const echoServer = net.createServer((socket) => socket.on("data", (data) => socket.write(data)));
+    const echoPort = await listen(echoServer, "127.0.0.1");
+
+    const proxyServer = http.createServer();
+    proxyServer.on("upgrade", (req, socket, head) => {
+      handleTcpMuxUpgrade(req, socket, head, {
+        allowPrivateIps: true,
+        allowedTargetHosts: ["127.0.0.1"],
+        allowedTargetPorts: [echoPort],
+        maxStreams: 4,
+      });
+    });
+    const proxyPort = await listen(proxyServer, "127.0.0.1");
+
+    const ws = await openWebSocket(`ws://127.0.0.1:${proxyPort}/tcp-mux`, TCP_MUX_SUBPROTOCOL);
+    assert.equal(ws.protocol, TCP_MUX_SUBPROTOCOL);
+
+    const parser = new TcpMuxFrameParser();
+    const received: Buffer[] = [];
+    const errors: Array<{ streamId: number; code: number; message: string }> = [];
+
+    ws.addEventListener("message", (event) => {
+      if (!(event.data instanceof ArrayBuffer)) return;
+      const chunk = Buffer.from(event.data);
+      for (const frame of parser.push(chunk)) {
+        if (frame.msgType === TcpMuxMsgType.DATA) {
+          received.push(frame.payload);
+        } else if (frame.msgType === TcpMuxMsgType.ERROR) {
+          const { code, message } = decodeTcpMuxErrorPayload(frame.payload);
+          errors.push({ streamId: frame.streamId, code, message });
+        }
+      }
+    });
+
+    try {
+      const streamId = 1;
+      ws.send(encodeTcpMuxFrame(TcpMuxMsgType.OPEN, streamId, encodeTcpMuxOpenPayload({ host: "127.0.0.1", port: echoPort })));
+      ws.send(encodeTcpMuxFrame(TcpMuxMsgType.DATA, streamId, Buffer.from("ping", "utf8")));
+
+      const deadline = Date.now() + 2_000;
+      while (Date.now() < deadline) {
+        if (errors.length > 0) break;
+        if (Buffer.concat(received).toString("utf8").includes("ping")) break;
+        await new Promise((r) => setTimeout(r, 10));
+      }
+
+      assert.deepEqual(errors, []);
+      assert.ok(Buffer.concat(received).toString("utf8").includes("ping"));
+
+      ws.send(encodeTcpMuxFrame(TcpMuxMsgType.CLOSE, streamId, encodeTcpMuxClosePayload(TcpMuxCloseFlags.FIN)));
+    } finally {
+      await closeWebSocket(ws);
+      await closeServer(proxyServer);
+      await closeServer(echoServer);
+    }
+  });
+
+  it("returns ERROR when dialing loopback targets when allowPrivateIps is disabled", async () => {
+    const echoServer = net.createServer((socket) => socket.on("data", (data) => socket.write(data)));
+    const echoPort = await listen(echoServer, "127.0.0.1");
+
+    const proxyServer = http.createServer();
+    proxyServer.on("upgrade", (req, socket, head) => {
+      handleTcpMuxUpgrade(req, socket, head, {
+        allowPrivateIps: false,
+        allowedTargetHosts: ["127.0.0.1"],
+        allowedTargetPorts: [echoPort],
+        maxStreams: 4,
+      });
+    });
+    const proxyPort = await listen(proxyServer, "127.0.0.1");
+
+    const ws = await openWebSocket(`ws://127.0.0.1:${proxyPort}/tcp-mux`, TCP_MUX_SUBPROTOCOL);
+    assert.equal(ws.protocol, TCP_MUX_SUBPROTOCOL);
+
+    const parser = new TcpMuxFrameParser();
+    const errors: Array<{ streamId: number; code: number; message: string }> = [];
+
+    ws.addEventListener("message", (event) => {
+      if (!(event.data instanceof ArrayBuffer)) return;
+      const chunk = Buffer.from(event.data);
+      for (const frame of parser.push(chunk)) {
+        if (frame.msgType === TcpMuxMsgType.ERROR) {
+          const { code, message } = decodeTcpMuxErrorPayload(frame.payload);
+          errors.push({ streamId: frame.streamId, code, message });
+        }
+      }
+    });
+
+    try {
+      const streamId = 1;
+      ws.send(encodeTcpMuxFrame(TcpMuxMsgType.OPEN, streamId, encodeTcpMuxOpenPayload({ host: "127.0.0.1", port: echoPort })));
+
+      const deadline = Date.now() + 2_000;
+      while (Date.now() < deadline) {
+        if (errors.some((e) => e.streamId === streamId)) break;
+        await new Promise((r) => setTimeout(r, 10));
+      }
+
+      const err = errors.find((e) => e.streamId === streamId);
+      assert.ok(err, "expected ERROR for loopback stream");
+      assert.equal(err.code, TcpMuxErrorCode.POLICY_DENIED);
+      assert.equal(ws.readyState, WebSocket.OPEN);
+    } finally {
+      await closeWebSocket(ws);
+      await closeServer(proxyServer);
+      await closeServer(echoServer);
+    }
+  });
 });

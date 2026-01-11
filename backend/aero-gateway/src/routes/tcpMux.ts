@@ -35,6 +35,7 @@ class TcpMuxIpPolicyDeniedError extends Error {
 
 export type TcpMuxUpgradeOptions = TcpProxyUpgradePolicy &
   Readonly<{
+    allowPrivateIps?: boolean;
     maxStreams?: number;
     maxStreamBufferedBytes?: number;
     maxFramePayloadBytes?: number;
@@ -360,13 +361,15 @@ class WebSocketTcpMuxBridge {
       return;
     }
 
+    const allowPrivateIps = this.opts.allowPrivateIps ?? false;
+
     let dialHost = "";
     let dialLookup:
       | ((hostname: string, options: unknown, cb: (err: Error | null, address: string, family: number) => void) => void)
       | undefined;
 
     if (hostDecision.target.kind === "ip") {
-      if (!isPublicIpAddress(hostDecision.target.ip)) {
+      if (!allowPrivateIps && !isPublicIpAddress(hostDecision.target.ip)) {
         this.opts.metrics?.blockedByIpPolicyTotal?.inc();
         this.sendStreamError(frame.streamId, TcpMuxErrorCode.POLICY_DENIED, "Target IP is not allowed by IP egress policy");
         return;
@@ -381,6 +384,17 @@ class WebSocketTcpMuxBridge {
             addresses = await lookup(dialHost, { all: true, verbatim: true });
           } catch (err) {
             cb(err as Error, "", 4);
+            return;
+          }
+
+          if (addresses.length === 0) {
+            cb(new Error("DNS lookup returned no addresses"), "", 4);
+            return;
+          }
+
+          if (allowPrivateIps) {
+            const { address, family } = addresses[0]!;
+            cb(null, address, family);
             return;
           }
 
