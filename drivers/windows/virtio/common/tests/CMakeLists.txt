@@ -40,3 +40,6 @@ set_target_properties(virtio_sg_pfn_test PROPERTIES
 )
 
 add_test(NAME virtio_sg_pfn_test COMMAND virtio_sg_pfn_test)
+set_tests_properties(virtio_sg_pfn_test PROPERTIES
+    TIMEOUT 30
+)
