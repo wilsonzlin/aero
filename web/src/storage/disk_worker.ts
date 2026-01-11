@@ -138,6 +138,26 @@ function assertValidLeaseEndpoint(endpoint: string | undefined): void {
   }
 }
 
+function bytesToHex(bytes: Uint8Array): string {
+  let out = "";
+  for (let i = 0; i < bytes.length; i++) {
+    out += bytes[i]!.toString(16).padStart(2, "0");
+  }
+  return out;
+}
+
+async function stableCacheId(key: string): Promise<string> {
+  try {
+    const subtle = (globalThis as typeof globalThis & { crypto?: Crypto }).crypto?.subtle;
+    if (!subtle) throw new Error("missing crypto.subtle");
+    const data = new TextEncoder().encode(key);
+    const digest = await subtle.digest("SHA-256", data);
+    return bytesToHex(new Uint8Array(digest));
+  } catch {
+    return encodeURIComponent(key).replaceAll("%", "_").slice(0, 128);
+  }
+}
+
 async function idbDeleteRemoteChunkCache(db: IDBDatabase, cacheKey: string): Promise<void> {
   const tx = db.transaction(["remote_chunks", "remote_chunk_meta"], "readwrite");
   const chunksStore = tx.objectStore("remote_chunks");
@@ -639,6 +659,13 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
           // Snapshot/restore uses a small binding file to associate the OPFS cache file with the
           // immutable remote base identity. Best-effort cleanup when the disk is deleted.
           await opfsDeleteDisk(`${meta.cache.fileName}.binding.json`);
+          // RemoteRangeDisk persists its own small metadata file keyed by the remote base identity.
+          // Best-effort cleanup when deleting the disk.
+          if (meta.remote.delivery === "range") {
+            const imageKey = `${meta.remote.imageId}:${meta.remote.version}:${meta.remote.delivery}`;
+            const cacheId = await stableCacheId(imageKey);
+            await opfsDeleteDisk(`remote-range-meta-${cacheId}.json`);
+          }
           await opfsDeleteDisk(meta.cache.overlayFileName);
         } else {
           const db = await openDiskManagerDb();
