@@ -173,7 +173,7 @@ impl<'a> FramebufferPresenter<'a> {
                     canvas,
                     size,
                     BackendKind::WebGl2,
-                    wgpu::Backends::BROWSER_WEBGL,
+                    wgpu::Backends::GL,
                     options,
                 )
                 .await
@@ -193,7 +193,7 @@ impl<'a> FramebufferPresenter<'a> {
                         canvas,
                         size,
                         BackendKind::WebGl2,
-                        wgpu::Backends::BROWSER_WEBGL,
+                        wgpu::Backends::GL,
                         options,
                     )
                     .await
@@ -240,7 +240,7 @@ impl<'a> FramebufferPresenter<'a> {
                     canvas,
                     size,
                     BackendKind::WebGl2,
-                    wgpu::Backends::BROWSER_WEBGL,
+                    wgpu::Backends::GL,
                     options,
                 )
                 .await
@@ -260,7 +260,7 @@ impl<'a> FramebufferPresenter<'a> {
                         canvas,
                         size,
                         BackendKind::WebGl2,
-                        wgpu::Backends::BROWSER_WEBGL,
+                        wgpu::Backends::GL,
                         options,
                     )
                     .await
@@ -706,7 +706,11 @@ impl<'a> WebGpuFramebufferPresenter<'a> {
         slice.map_async(wgpu::MapMode::Read, move |res| {
             sender.send(res).ok();
         });
+        #[cfg(not(target_arch = "wasm32"))]
         device.poll(wgpu::Maintain::Wait);
+
+        #[cfg(target_arch = "wasm32")]
+        device.poll(wgpu::Maintain::Poll);
 
         match receiver.receive().await {
             Some(Ok(())) => {}
