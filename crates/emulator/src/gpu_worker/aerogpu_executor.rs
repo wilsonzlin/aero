@@ -637,6 +637,25 @@ impl AeroGpuExecutor {
                             },
                         );
 
+                        // If the backend completed this fence before the executor processed the
+                        // submission descriptor, still honor PRESENT writeback so host callers that
+                        // render from guest scanout memory observe the update.
+                        if already_completed
+                            && (desc.flags & AeroGpuSubmitDesc::FLAG_PRESENT) != 0
+                            && self.cfg.fence_completion == AeroGpuFenceCompletionMode::Deferred
+                        {
+                            if let Some(scanout) = self.backend.read_scanout_rgba8(0) {
+                                if let Err(err) = write_scanout0_rgba8(regs, mem, &scanout) {
+                                    if self.cfg.verbose {
+                                        eprintln!("aerogpu: scanout writeback failed: {err}");
+                                    }
+                                    regs.stats.gpu_exec_errors =
+                                        regs.stats.gpu_exec_errors.saturating_add(1);
+                                    regs.irq_status |= irq_bits::ERROR;
+                                }
+                            }
+                        }
+
                         if already_completed && kind == PendingFenceKind::Immediate {
                             self.advance_completed_fence(regs, mem);
                         }
@@ -1531,6 +1550,116 @@ mod tests {
             mem.read_u64(fence_gpa + FENCE_PAGE_COMPLETED_FENCE_OFFSET),
             7
         );
+    }
+
+    #[derive(Debug)]
+    struct EarlyCompletionBackend {
+        completions: std::collections::VecDeque<AeroGpuBackendCompletion>,
+        scanout: Option<AeroGpuBackendScanout>,
+    }
+
+    impl AeroGpuCommandBackend for EarlyCompletionBackend {
+        fn reset(&mut self) {
+            self.completions.clear();
+        }
+
+        fn submit(
+            &mut self,
+            _mem: &mut dyn MemoryBus,
+            _submission: AeroGpuBackendSubmission,
+        ) -> Result<(), String> {
+            // In this test, the completion is delivered before the executor processes the ring
+            // entry, so `submit` should not emit another completion.
+            Ok(())
+        }
+
+        fn poll_completions(&mut self) -> Vec<AeroGpuBackendCompletion> {
+            self.completions.drain(..).collect()
+        }
+
+        fn read_scanout_rgba8(&mut self, _scanout_id: u32) -> Option<AeroGpuBackendScanout> {
+            self.scanout.clone()
+        }
+    }
+
+    #[test]
+    fn present_writeback_handles_completion_before_submission() {
+        let mut mem = Bus::new(0x9000);
+        let ring_gpa = 0x1000u64;
+        let fence_gpa = 0x2000u64;
+        let cmd_gpa = 0x3000u64;
+        let fb_gpa = 0x4000u64;
+
+        let cmd_size_bytes = ProtocolCmdStreamHeader::SIZE_BYTES as u32;
+        mem.write_u32(cmd_gpa + 0, AEROGPU_CMD_STREAM_MAGIC);
+        mem.write_u32(cmd_gpa + 4, AeroGpuRegs::default().abi_version);
+        mem.write_u32(cmd_gpa + 8, cmd_size_bytes);
+        mem.write_u32(cmd_gpa + 12, 0);
+        mem.write_u32(cmd_gpa + 16, 0);
+        mem.write_u32(cmd_gpa + 20, 0);
+
+        write_ring_header(&mut mem, ring_gpa, 1, 0, 1);
+        let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+        mem.write_u32(desc_gpa + 0, AeroGpuSubmitDesc::SIZE_BYTES);
+        mem.write_u32(desc_gpa + 4, AeroGpuSubmitDesc::FLAG_PRESENT);
+        mem.write_u32(desc_gpa + 8, 0);
+        mem.write_u32(desc_gpa + 12, 0);
+        mem.write_u64(desc_gpa + 16, cmd_gpa);
+        mem.write_u32(desc_gpa + 24, cmd_size_bytes);
+        mem.write_u64(desc_gpa + 32, 0);
+        mem.write_u32(desc_gpa + 40, 0);
+        mem.write_u64(desc_gpa + 48, 7);
+
+        let ring_size_bytes =
+            u32::try_from(AEROGPU_RING_HEADER_SIZE_BYTES + AeroGpuSubmitDesc::SIZE_BYTES as u64)
+                .unwrap();
+
+        let mut regs = AeroGpuRegs::default();
+        regs.ring_gpa = ring_gpa;
+        regs.ring_size_bytes = ring_size_bytes;
+        regs.ring_control = ring_control::ENABLE;
+        regs.fence_gpa = fence_gpa;
+        regs.irq_enable = irq_bits::FENCE;
+
+        regs.scanout0.enable = true;
+        regs.scanout0.width = 1;
+        regs.scanout0.height = 1;
+        regs.scanout0.fb_gpa = fb_gpa;
+        regs.scanout0.pitch_bytes = 4;
+        regs.scanout0.format = AeroGpuFormat::B8G8R8X8Unorm;
+
+        let scanout = AeroGpuBackendScanout {
+            width: 1,
+            height: 1,
+            rgba8: vec![255, 0, 0, 255],
+        };
+
+        let backend = EarlyCompletionBackend {
+            completions: std::collections::VecDeque::from([AeroGpuBackendCompletion {
+                fence: 7,
+                error: None,
+            }]),
+            scanout: Some(scanout),
+        };
+
+        let mut exec = AeroGpuExecutor::new(AeroGpuExecutorConfig {
+            verbose: false,
+            keep_last_submissions: 0,
+            fence_completion: AeroGpuFenceCompletionMode::Deferred,
+        });
+        exec.set_backend(Box::new(backend));
+
+        // Drain the completion before the executor sees the submission descriptor.
+        exec.poll_backend_completions(&mut regs, &mut mem);
+        assert_eq!(regs.completed_fence, 0);
+
+        exec.process_doorbell(&mut regs, &mut mem);
+
+        assert_eq!(regs.completed_fence, 7);
+
+        let mut fb = [0u8; 4];
+        mem.read_physical(fb_gpa, &mut fb);
+        assert_eq!(fb, [0, 0, 255, 255]);
     }
 }
 
