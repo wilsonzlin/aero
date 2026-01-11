@@ -1,4 +1,6 @@
 use aero_cpu_core::interp::tier0::exec::{run_batch, BatchExit};
+use aero_cpu_core::interrupts;
+use aero_cpu_core::interrupts::PendingEventState;
 use aero_cpu_core::mem::{CpuBus, FlatTestBus};
 use aero_cpu_core::state::CpuState;
 use aero_cpu_core::{AssistReason, Exception};
@@ -6,10 +8,9 @@ use aero_x86::{Mnemonic, OpKind, Register};
 
 /// Simple test bus backed by [`FlatTestBus`] with a "debugcon" port at `0xE9`.
 ///
-/// Tier-0 uses [`CpuBus`] for memory accesses, while the interrupt delivery code
-/// in `aero_cpu_core::interrupts` is implemented on top of the older `Bus`
-/// trait. This bus implements *both* so Tier-0 tests can reuse the production
-/// interrupt/IRET logic.
+/// Tier-0 uses [`CpuBus`] for memory accesses and shares the same bus surface
+/// with the Tier-0 interrupt/exception delivery helpers in
+/// [`aero_cpu_core::interrupts`].
 #[derive(Debug, Clone)]
 pub struct TestBus {
     mem: FlatTestBus,
@@ -96,28 +97,23 @@ impl CpuBus for TestBus {
     }
 }
 
-impl aero_cpu_core::Bus for TestBus {
-    fn read_u8(&mut self, addr: u64) -> u8 {
-        CpuBus::read_u8(&mut self.mem, addr).expect("bus read")
-    }
-
-    fn write_u8(&mut self, addr: u64, value: u8) {
-        CpuBus::write_u8(&mut self.mem, addr, value).expect("bus write")
-    }
-}
-
 /// A tiny Tier-0 execution harness that can run real-mode snippets which use:
 /// - INT/IRET (via the `aero_cpu_core::interrupts` delivery implementation)
 /// - IN/OUT (via [`CpuBus::io_read`] / [`CpuBus::io_write`])
 #[derive(Debug)]
 pub struct Tier0Machine {
     pub cpu: CpuState,
+    pending: PendingEventState,
     pub bus: TestBus,
 }
 
 impl Tier0Machine {
     pub fn new(cpu: CpuState, bus: TestBus) -> Self {
-        Self { cpu, bus }
+        Self {
+            cpu,
+            pending: PendingEventState::default(),
+            bus,
+        }
     }
 
     pub fn run(&mut self, max_instructions: u64) {
@@ -185,7 +181,16 @@ impl Tier0Machine {
                 let vector = instr.immediate8();
                 self.deliver_software_interrupt(vector, next_ip);
             }
+            Mnemonic::Int1 => self.deliver_software_interrupt(1, next_ip),
             Mnemonic::Int3 => self.deliver_software_interrupt(3, next_ip),
+            Mnemonic::Into => {
+                // INTO triggers INT 4 when OF=1, otherwise it is a no-op.
+                if self.cpu.get_flag(aero_cpu_core::state::RFLAGS_OF) {
+                    self.deliver_software_interrupt(4, next_ip);
+                } else {
+                    self.cpu.set_rip(next_ip);
+                }
+            }
             Mnemonic::Iret | Mnemonic::Iretd | Mnemonic::Iretq => self.exec_iret(),
             Mnemonic::Cli => {
                 // Tier-0 uses an assist for CLI/STI because privileged checks depend
@@ -195,6 +200,7 @@ impl Tier0Machine {
             }
             Mnemonic::Sti => {
                 self.cpu.set_flag(aero_cpu_core::state::RFLAGS_IF, true);
+                self.pending.inhibit_interrupts_for_one_instruction();
                 self.cpu.set_rip(next_ip);
             }
             other => panic!("unhandled interrupt assist mnemonic: {other:?}"),
@@ -202,50 +208,13 @@ impl Tier0Machine {
     }
 
     fn deliver_software_interrupt(&mut self, vector: u8, return_rip: u64) {
-        let mut sys = self.to_system_cpu();
-        sys.raise_software_interrupt(vector, return_rip);
-        sys.deliver_pending_event(&mut self.bus)
+        self.pending.raise_software_interrupt(vector, return_rip);
+        interrupts::deliver_pending_event(&mut self.cpu, &mut self.bus, &mut self.pending)
             .expect("interrupt delivery");
-        self.apply_system_cpu(&sys);
     }
 
     fn exec_iret(&mut self) {
-        let mut sys = self.to_system_cpu();
-        sys.iret(&mut self.bus).expect("iret");
-        self.apply_system_cpu(&sys);
-    }
-
-    fn to_system_cpu(&self) -> aero_cpu_core::system::Cpu {
-        let mut sys = aero_cpu_core::system::Cpu::default();
-        sys.mode = aero_cpu_core::system::CpuMode::Real;
-
-        sys.rip = self.cpu.rip();
-        sys.rflags = self.cpu.rflags();
-        sys.rsp = self.cpu.stack_ptr();
-        sys.halted = self.cpu.halted;
-
-        sys.cs = self.cpu.read_reg(Register::CS) as u16;
-        sys.ss = self.cpu.read_reg(Register::SS) as u16;
-        sys.ds = self.cpu.read_reg(Register::DS) as u16;
-        sys.es = self.cpu.read_reg(Register::ES) as u16;
-        sys.fs = self.cpu.read_reg(Register::FS) as u16;
-        sys.gs = self.cpu.read_reg(Register::GS) as u16;
-
-        sys
-    }
-
-    fn apply_system_cpu(&mut self, sys: &aero_cpu_core::system::Cpu) {
-        self.cpu.set_rflags(sys.rflags);
-        self.cpu.set_rip(sys.rip);
-        self.cpu.set_stack_ptr(sys.rsp);
-        self.cpu.halted = sys.halted;
-
-        self.cpu.write_reg(Register::CS, sys.cs as u64);
-        self.cpu.write_reg(Register::SS, sys.ss as u64);
-        self.cpu.write_reg(Register::DS, sys.ds as u64);
-        self.cpu.write_reg(Register::ES, sys.es as u64);
-        self.cpu.write_reg(Register::FS, sys.fs as u64);
-        self.cpu.write_reg(Register::GS, sys.gs as u64);
+        interrupts::iret(&mut self.cpu, &mut self.bus, &mut self.pending).expect("iret");
     }
 }
 
