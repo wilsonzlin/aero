@@ -22,7 +22,7 @@ We assume a single PCI bus (`bus 0`) with stable device numbers. Not all devices
 | 00:08.0  | vNIC   | 1AF4:1041     | 02/00/00                 | INTA     | virtio-net (modern ID; transitional = 1AF4:1000) |
 | 00:09.0  | vBlk   | 1AF4:1042     | 01/00/00                 | INTA     | virtio-blk (modern ID; transitional = 1AF4:1001) |
 | 00:0A.0  | vInput | 1AF4:1052     | 09/80/00                 | INTA     | virtio-input (modern ID; transitional = 1AF4:1011) |
-| 00:0B.0  | vSnd   | 1AF4:1059     | 04/01/00                 | INTA     | virtio-snd (modern ID; transitional = 1AF4:1018; generic PCI audio class) |
+| 00:0B.0  | vSnd   | 1AF4:1059     | 04/01/00                 | INTA     | virtio-snd (modern ID; transitional = 1AF4:1018; Aero Win7 contract v1 expects `REV_01`) |
 
 ### Notes on virtio IDs (transitional vs modern)
 

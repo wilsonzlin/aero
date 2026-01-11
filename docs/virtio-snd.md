@@ -28,10 +28,13 @@ Aero exposes virtio-snd as a virtio-pci device using the standard virtio vendor 
 - Device ID (canonical / default): `0x1059` (modern ID space: `0x1040 + VIRTIO_ID_SND (25)`)
 - Subsystem Vendor ID: `0x1AF4`
 - Subsystem Device ID: `0x0019` (`VIRTIO_ID_SND`)
+- Revision ID: `0x01` (Aero Windows 7 virtio contract v1; see `docs/windows7-virtio-driver-contract.md`)
 
-For compatibility with stacks that expect transitional virtio-pci IDs, drivers MAY also match:
+The virtio specification also defines a **transitional** virtio-snd PCI device ID:
 
 - Transitional Device ID: `0x1018` (`0x1000 + (25 - 1)`)
+
+However, Aero’s Windows 7 virtio contract v1 is **modern-only** and does not rely on transitional IDs for driver binding.
 
 The authoritative Windows driver-binding values are tracked in
 [`docs/windows-device-contract.md`](./windows-device-contract.md).
