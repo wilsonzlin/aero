@@ -480,7 +480,7 @@ static int DoMapSharedHandle(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint
     return 2;
   }
 
-  wprintf(L"share_token: %lu (0x%08lx)\n", (unsigned long)q.share_token, (unsigned long)q.share_token);
+  wprintf(L"share_token: 0x%08lx (%lu)\n", (unsigned long)q.share_token, (unsigned long)q.share_token);
   return 0;
 }
 
@@ -1109,6 +1109,7 @@ static int DoDumpVblank(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t 
   uint64_t perVblankUsSamples = 0;
 
   uint32_t effectiveVidpnSourceId = vidpnSourceId;
+  bool scanlineFallbackToSource0 = false;
   for (uint32_t i = 0; i < samples; ++i) {
     if (!QueryVblank(f, hAdapter, effectiveVidpnSourceId, &q, &supported)) {
       return 2;
@@ -1123,8 +1124,15 @@ static int DoDumpVblank(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t 
       D3DKMT_GETSCANLINE s;
       ZeroMemory(&s, sizeof(s));
       s.hAdapter = hAdapter;
-      s.VidPnSourceId = effectiveVidpnSourceId;
+      s.VidPnSourceId = scanlineFallbackToSource0 ? 0 : effectiveVidpnSourceId;
       NTSTATUS st = f->GetScanLine(&s);
+      if (!NT_SUCCESS(st) && st == STATUS_INVALID_PARAMETER && s.VidPnSourceId != 0) {
+        wprintf(L"  GetScanLine: VidPnSourceId=%lu not supported; retrying with source 0\n",
+                (unsigned long)s.VidPnSourceId);
+        scanlineFallbackToSource0 = true;
+        s.VidPnSourceId = 0;
+        st = f->GetScanLine(&s);
+      }
       if (NT_SUCCESS(st)) {
         wprintf(L"  scanline: %lu%s\n", (unsigned long)s.ScanLine, s.InVerticalBlank ? L" (vblank)" : L"");
       } else if (st == STATUS_NOT_SUPPORTED) {
@@ -1216,27 +1224,6 @@ static int DoSelftest(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t ti
     wprintf(L"Error code: %lu (%s)\n", (unsigned long)q.error_code, SelftestErrorToString(q.error_code));
   }
   return q.passed ? 0 : 3;
-}
-
-static int DoMapSharedHandle(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint64_t sharedHandle) {
-  aerogpu_escape_map_shared_handle_inout q;
-  ZeroMemory(&q, sizeof(q));
-  q.hdr.version = AEROGPU_ESCAPE_VERSION;
-  q.hdr.op = AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE;
-  q.hdr.size = sizeof(q);
-  q.hdr.reserved0 = 0;
-  q.shared_handle = sharedHandle;
-  q.share_token = 0;
-  q.reserved0 = 0;
-
-  NTSTATUS st = SendAerogpuEscape(f, hAdapter, &q, sizeof(q));
-  if (!NT_SUCCESS(st)) {
-    PrintNtStatus(L"D3DKMTEscape(map-shared-handle) failed", f, st);
-    return 2;
-  }
-
-  wprintf(L"share_token: 0x%08lx (%lu)\n", (unsigned long)q.share_token, (unsigned long)q.share_token);
-  return 0;
 }
 
 int wmain(int argc, wchar_t **argv) {
