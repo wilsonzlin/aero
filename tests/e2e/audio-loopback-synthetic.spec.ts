@@ -19,6 +19,12 @@ test("AudioWorklet loopback runs with synthetic microphone source (no underruns)
   const result = await page.evaluate(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const out = (globalThis as any).__aeroAudioOutputLoopback;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const mic = (globalThis as any).__aeroSyntheticMic as { ringBuffer?: SharedArrayBuffer } | undefined;
+    const header = mic?.ringBuffer ? new Uint32Array(mic.ringBuffer, 0, 4) : null;
+    const micWritePos = header ? Atomics.load(header, 0) >>> 0 : null;
+    const micReadPos = header ? Atomics.load(header, 1) >>> 0 : null;
+    const micDropped = header ? Atomics.load(header, 2) >>> 0 : null;
     return {
       enabled: out?.enabled,
       state: out?.context?.state,
@@ -26,6 +32,9 @@ test("AudioWorklet loopback runs with synthetic microphone source (no underruns)
       underruns: typeof out?.getUnderrunCount === "function" ? out.getUnderrunCount() : null,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       backend: (globalThis as any).__aeroAudioLoopbackBackend ?? null,
+      micWritePos,
+      micReadPos,
+      micDropped,
     };
   });
 
@@ -35,5 +44,10 @@ test("AudioWorklet loopback runs with synthetic microphone source (no underruns)
   // Underruns are counted as missing frames (a single render quantum is 128 frames).
   expect(result.underruns).toBeLessThanOrEqual(128);
   expect(result.bufferLevelFrames).toBeGreaterThan(0);
-  expect(result.backend === "worker" || result.backend === "main").toBe(true);
+  // This demo is intended to validate worker plumbing end-to-end.
+  expect(result.backend).toBe("worker");
+  // Verify that something is actually consuming the mic ring; otherwise the CPU
+  // worker could be playing its fallback tone and still keep audio running.
+  expect(result.micWritePos).toBeGreaterThan(0);
+  expect(result.micReadPos).toBeGreaterThan(0);
 });
