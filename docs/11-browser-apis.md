@@ -1035,6 +1035,8 @@ class AeroAudioProcessor extends AudioWorkletProcessor {
         this.ringBuffer = options.processorOptions.ringBuffer;
         this.readIndex = new Uint32Array(this.ringBuffer, 0, 1);
         this.writeIndex = new Uint32Array(this.ringBuffer, 4, 1);
+        this.underrunCount = new Uint32Array(this.ringBuffer, 8, 1);
+        this.overrunCount = new Uint32Array(this.ringBuffer, 12, 1);
         this.audioData = new Float32Array(this.ringBuffer, 16);
         
         this.port.onmessage = this.handleMessage.bind(this);
@@ -1065,7 +1067,8 @@ class AeroAudioProcessor extends AudioWorkletProcessor {
             for (let channel = 0; channel < output.length; channel++) {
                 output[channel].fill(0);
             }
-            this.port.postMessage({ type: 'underrun' });
+            const newCount = Atomics.add(this.underrunCount, 0, 1) + 1;
+            this.port.postMessage({ type: 'underrun', underrunCount: newCount });
         }
         
         return true;
