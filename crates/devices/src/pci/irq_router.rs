@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::collections::BTreeSet;
 
 use aero_io_snapshot::io::state::codec::{Decoder, Encoder};
 use aero_io_snapshot::io::state::{
@@ -224,7 +225,11 @@ impl PciIntxRouter {
     /// Callers should invoke this after restoring both the router and the platform interrupt
     /// controller to ensure routed GSIs reflect the restored state.
     pub fn sync_levels_to_sink(&self, sink: &mut dyn GsiLevelSink) {
+        let mut seen = BTreeSet::new();
         for gsi in self.cfg.pirq_to_gsi {
+            if !seen.insert(gsi) {
+                continue;
+            }
             let asserted = self.gsi_assert_count.get(&gsi).copied().unwrap_or(0) > 0;
             sink.set_gsi_level(gsi, asserted);
         }
@@ -313,7 +318,15 @@ impl IoSnapshot for PciIntxRouter {
                     continue;
                 };
                 if level {
-                    self.source_level.insert(IntxSource { bdf, pin }, true);
+                    if self
+                        .source_level
+                        .insert(IntxSource { bdf, pin }, true)
+                        .is_some()
+                    {
+                        return Err(SnapshotError::InvalidFieldEncoding(
+                            "duplicate INTx source entry",
+                        ));
+                    }
                 }
             }
             d.finish()?;
