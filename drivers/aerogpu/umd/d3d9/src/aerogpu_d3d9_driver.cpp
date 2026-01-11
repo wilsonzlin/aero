@@ -1756,6 +1756,8 @@ HRESULT emit_upload_buffer_locked(Device* dev, Resource* res, const void* data, 
   if (!dev || !res || !data || size_bytes == 0) {
     return E_INVALIDARG;
   }
+  const bool is_buffer = (res->kind == ResourceKind::Buffer);
+
   if (res->backing_alloc_id != 0) {
     // Host-side validation rejects UPLOAD_RESOURCE for guest-backed resources.
     // Callers must update guest-backed buffers via Lock/Unlock + RESOURCE_DIRTY_RANGE.
@@ -1764,28 +1766,50 @@ HRESULT emit_upload_buffer_locked(Device* dev, Resource* res, const void* data, 
          static_cast<unsigned>(res->backing_alloc_id));
     return E_INVALIDARG;
   }
-  if (size_bytes > res->size_bytes) {
+
+  // WebGPU buffer copies require 4-byte alignment. Pad uploads for buffer resources so
+  // callers can upload D3D9-sized data (e.g. 3x u16 indices = 6 bytes) without
+  // tripping host validation.
+  const uint32_t aligned_size_bytes =
+      is_buffer ? static_cast<uint32_t>(align_up(static_cast<size_t>(size_bytes), 4)) : size_bytes;
+
+  if (aligned_size_bytes > res->size_bytes) {
     return E_INVALIDARG;
+  }
+
+  const uint8_t* upload_src = reinterpret_cast<const uint8_t*>(data);
+  std::vector<uint8_t> padded;
+  if (aligned_size_bytes != size_bytes) {
+    try {
+      padded.resize(aligned_size_bytes, 0);
+    } catch (...) {
+      return E_OUTOFMEMORY;
+    }
+    std::memcpy(padded.data(), data, size_bytes);
+    upload_src = padded.data();
   }
 
   // Keep a CPU copy for debug/validation and for fixed-function emulation that
   // reads from buffers.
-  if (res->storage.size() < size_bytes) {
+  if (res->storage.size() < aligned_size_bytes) {
     try {
-      res->storage.resize(size_bytes);
+      res->storage.resize(aligned_size_bytes);
     } catch (...) {
       return E_OUTOFMEMORY;
     }
   }
-  std::memcpy(res->storage.data(), data, size_bytes);
+  // Use memmove because some call sites may upload from memory already backed by
+  // `res->storage` (overlapping ranges).
+  std::memmove(res->storage.data(), upload_src, aligned_size_bytes);
 
-  const uint8_t* src = reinterpret_cast<const uint8_t*>(data);
-  uint32_t remaining = size_bytes;
+  const uint8_t* src = upload_src;
+  uint32_t remaining = aligned_size_bytes;
   uint32_t cur_offset = 0;
 
   while (remaining) {
-    // Ensure we can fit at least a minimal upload packet (header + 1 byte).
-    const size_t min_needed = align_up(sizeof(aerogpu_cmd_upload_resource) + 1, 4);
+    // Ensure we can fit at least a minimal upload packet (header + N bytes).
+    const size_t min_payload = is_buffer ? 4 : 1;
+    const size_t min_needed = align_up(sizeof(aerogpu_cmd_upload_resource) + min_payload, 4);
     if (!ensure_cmd_space(dev, min_needed)) {
       return E_OUTOFMEMORY;
     }
@@ -1810,8 +1834,17 @@ HRESULT emit_upload_buffer_locked(Device* dev, Resource* res, const void* data, 
     if (avail > sizeof(aerogpu_cmd_upload_resource)) {
       chunk = std::min<size_t>(remaining, avail - sizeof(aerogpu_cmd_upload_resource));
     }
-    while (chunk && align_up(sizeof(aerogpu_cmd_upload_resource) + chunk, 4) > avail) {
-      chunk--;
+    if (is_buffer) {
+      chunk &= ~static_cast<size_t>(3);
+      // If we can't fit a 4-byte-aligned chunk, force a split and retry.
+      if (chunk == 0) {
+        submit(dev);
+        continue;
+      }
+    } else {
+      while (chunk && align_up(sizeof(aerogpu_cmd_upload_resource) + chunk, 4) > avail) {
+        chunk--;
+      }
     }
     if (!chunk) {
       // Should only happen if the command buffer is extremely small; try a forced
@@ -3363,7 +3396,12 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
   // Heuristic: if size is provided, treat as buffer; otherwise treat as a 2D image.
   if (pCreateResource->size) {
     res->kind = ResourceKind::Buffer;
-    res->size_bytes = pCreateResource->size;
+    const uint64_t requested = static_cast<uint64_t>(pCreateResource->size);
+    const uint64_t aligned = (requested + 3ull) & ~3ull;
+    if (aligned == 0 || aligned > 0x7FFFFFFFu) {
+      return trace.ret(E_OUTOFMEMORY);
+    }
+    res->size_bytes = static_cast<uint32_t>(aligned);
     res->row_pitch = 0;
     res->slice_pitch = 0;
   } else if (res->width && res->height) {
@@ -4960,12 +4998,28 @@ HRESULT AEROGPU_D3D9_CALL device_unlock(
   // Fallback: host-allocated resources are updated by embedding raw bytes in the
   // command stream.
   if (res->handle != 0 && (locked_flags & kD3DLOCK_READONLY) == 0 && size) {
-    const uint8_t* src = res->storage.data() + offset;
-    uint32_t remaining = size;
-    uint32_t cur_offset = offset;
+    const bool is_buffer = (res->kind == ResourceKind::Buffer);
+
+    uint32_t upload_offset = offset;
+    uint32_t upload_size = size;
+    if (is_buffer) {
+      const uint32_t start = upload_offset & ~3u;
+      const uint64_t end_u64 = static_cast<uint64_t>(upload_offset) + static_cast<uint64_t>(upload_size);
+      const uint32_t end = static_cast<uint32_t>((end_u64 + 3ull) & ~3ull);
+      if (end > res->size_bytes || end < start) {
+        return trace.ret(E_INVALIDARG);
+      }
+      upload_offset = start;
+      upload_size = end - start;
+    }
+
+    const uint8_t* src = res->storage.data() + upload_offset;
+    uint32_t remaining = upload_size;
+    uint32_t cur_offset = upload_offset;
 
     while (remaining) {
-      const size_t min_needed = align_up(sizeof(aerogpu_cmd_upload_resource) + 1, 4);
+      const size_t min_payload = is_buffer ? 4 : 1;
+      const size_t min_needed = align_up(sizeof(aerogpu_cmd_upload_resource) + min_payload, 4);
       if (!ensure_cmd_space(dev, min_needed)) {
         return trace.ret(E_OUTOFMEMORY);
       }
@@ -4991,8 +5045,12 @@ HRESULT AEROGPU_D3D9_CALL device_unlock(
         chunk = std::min<size_t>(remaining, avail - sizeof(aerogpu_cmd_upload_resource));
       }
 
-      while (chunk && align_up(sizeof(aerogpu_cmd_upload_resource) + chunk, 4) > avail) {
-        chunk--;
+      if (is_buffer) {
+        chunk &= ~static_cast<size_t>(3);
+      } else {
+        while (chunk && align_up(sizeof(aerogpu_cmd_upload_resource) + chunk, 4) > avail) {
+          chunk--;
+        }
       }
       if (!chunk) {
         submit(dev);
