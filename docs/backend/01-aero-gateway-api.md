@@ -42,12 +42,12 @@ Generic form:
 - `ws://localhost:PORT/tcp-mux` (subprotocol: `aero-tcp-mux-v1`)
 - `http://localhost:PORT/dns-query?...`
 
-Concrete example (assuming the gateway is running on port `8787`):
+Concrete example (assuming the gateway is running on port `8080`):
 
-- `POST http://localhost:8787/session`
-- `ws://localhost:8787/tcp?v=1&host=example.com&port=443`
-- `ws://localhost:8787/tcp-mux` (subprotocol: `aero-tcp-mux-v1`)
-- `http://localhost:8787/dns-query?...`
+- `POST http://localhost:8080/session`
+- `ws://localhost:8080/tcp?v=1&host=example.com&port=443`
+- `ws://localhost:8080/tcp-mux` (subprotocol: `aero-tcp-mux-v1`)
+- `http://localhost:8080/dns-query?...`
 
 ---
 
@@ -198,7 +198,7 @@ Protocol version for the `/tcp` WebSocket connection.
 
 Examples (canonical form):
 
- - `ws://localhost:8787/tcp?v=1&host=example.com&port=443`
+ - `ws://localhost:8080/tcp?v=1&host=example.com&port=443`
  - `wss://gateway.example.com/tcp?v=1&host=93.184.216.34&port=80`
  - `wss://gateway.example.com/tcp?v=1&host=2606:4700:4700::1111&port=443`
 

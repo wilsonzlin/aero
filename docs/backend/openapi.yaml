@@ -10,7 +10,7 @@ info:
       `docs/backend/01-aero-gateway-api.md` and is intentionally not modeled
       as an OpenAPI operation.
 servers:
-  - url: http://localhost:8787
+  - url: http://localhost:8080
     description: Local development (example)
   - url: https://example.com
     description: Production (example)
