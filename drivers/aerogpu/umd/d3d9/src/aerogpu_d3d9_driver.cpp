@@ -2567,6 +2567,61 @@ HRESULT track_draw_state_locked(Device* dev) {
     return S_OK;
   }
 
+#if defined(_WIN32)
+  const size_t min_packet = align_up(sizeof(aerogpu_cmd_hdr), 4);
+  if (!wddm_ensure_recording_buffers(dev, min_packet)) {
+    return E_FAIL;
+  }
+#endif
+
+  std::array<WddmAllocationHandle, 4 + 1 + 16 + 16 + 1> unique_allocs{};
+  size_t unique_alloc_len = 0;
+  auto add_alloc = [&unique_allocs, &unique_alloc_len](const Resource* res) {
+    if (!res) {
+      return;
+    }
+    if (res->backing_alloc_id == 0) {
+      return;
+    }
+    if (res->wddm_hAllocation == 0) {
+      return;
+    }
+    const WddmAllocationHandle h = res->wddm_hAllocation;
+    for (size_t i = 0; i < unique_alloc_len; ++i) {
+      if (unique_allocs[i] == h) {
+        return;
+      }
+    }
+    unique_allocs[unique_alloc_len++] = h;
+  };
+
+  for (uint32_t i = 0; i < 4; i++) {
+    add_alloc(dev->render_targets[i]);
+  }
+  add_alloc(dev->depth_stencil);
+  for (uint32_t i = 0; i < 16; i++) {
+    add_alloc(dev->textures[i]);
+  }
+  for (uint32_t i = 0; i < 16; i++) {
+    add_alloc(dev->streams[i].vb);
+  }
+  add_alloc(dev->index_buffer);
+
+  const UINT needed = static_cast<UINT>(unique_alloc_len);
+  if (needed != 0) {
+    const UINT cap = dev->alloc_list_tracker.list_capacity();
+    if (needed > cap) {
+      logf("aerogpu-d3d9: draw requires %u allocations but allocation list capacity is %u\n",
+           static_cast<unsigned>(needed),
+           static_cast<unsigned>(cap));
+      return E_FAIL;
+    }
+
+    if (dev->alloc_list_tracker.list_len() + needed > cap) {
+      (void)submit(dev);
+    }
+  }
+
   for (uint32_t i = 0; i < 4; i++) {
     if (dev->render_targets[i]) {
       HRESULT hr = track_resource_allocation_locked(dev, dev->render_targets[i], /*write=*/true);
@@ -8903,9 +8958,6 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive(
   if (!ensure_cmd_space(dev, draw_bytes)) {
     return E_OUTOFMEMORY;
   }
-  if (!track_draw_state_locked(dev)) {
-    return E_FAIL;
-  }
 
   const uint32_t topology = d3d9_prim_to_topology(type);
   if (!emit_set_topology_locked(dev, topology)) {
@@ -9656,9 +9708,6 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
                             align_up(sizeof(aerogpu_cmd_draw_indexed), 4);
   if (!ensure_cmd_space(dev, draw_bytes)) {
     return E_OUTOFMEMORY;
-  }
-  if (!track_draw_state_locked(dev)) {
-    return E_FAIL;
   }
 
   const uint32_t topology = d3d9_prim_to_topology(type);
