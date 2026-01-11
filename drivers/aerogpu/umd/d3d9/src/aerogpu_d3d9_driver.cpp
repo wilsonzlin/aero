@@ -737,10 +737,13 @@ FenceWaitResult wait_for_fence(Device* dev, uint64_t fence_value, uint32_t timeo
     if (sync_object != 0) {
       auto* wait_fn = load_d3dkmt_wait_for_sync_object();
       if (wait_fn) {
+        const WddmHandle handles[1] = {sync_object};
+        const uint64_t fences[1] = {fence_value};
+
         AerogpuD3DKMTWaitForSynchronizationObject args{};
         args.ObjectCount = 1;
-        args.hSyncObjects = sync_object;
-        args.FenceValue = fence_value;
+        args.ObjectHandleArray = handles;
+        args.FenceValueArray = fences;
         args.Timeout = timeout_ms;
 
         const AerogpuNtStatus st = wait_fn(&args);
@@ -777,10 +780,13 @@ FenceWaitResult wait_for_fence(Device* dev, uint64_t fence_value, uint32_t timeo
       if (sync_object != 0) {
         auto* wait_fn = load_d3dkmt_wait_for_sync_object();
         if (wait_fn) {
+          const WddmHandle handles[1] = {sync_object};
+          const uint64_t fences[1] = {fence_value};
+
           AerogpuD3DKMTWaitForSynchronizationObject args{};
           args.ObjectCount = 1;
-          args.hSyncObjects = sync_object;
-          args.FenceValue = fence_value;
+          args.ObjectHandleArray = handles;
+          args.FenceValueArray = fences;
           args.Timeout = 0; // poll
 
           const AerogpuNtStatus st = wait_fn(&args);
