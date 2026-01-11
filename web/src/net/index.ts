@@ -12,3 +12,4 @@ export {
   createL2TunnelDataChannel,
 } from "./l2Tunnel";
 export { connectL2Relay, connectL2RelaySignaling } from "./l2RelaySignalingClient";
+export { connectL2Tunnel } from "./connectL2Tunnel";
