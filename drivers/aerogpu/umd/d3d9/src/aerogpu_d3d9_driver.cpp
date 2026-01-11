@@ -3447,7 +3447,12 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
     }
     // In non-WDDM/portable builds there is no allocation-table plumbing, so keep
     // systemmem resources CPU-only (no host object).
-    if (dev->wddm_context.hContext == 0) {
+    //
+    // NOTE: Some portable tests set `wddm_context.hContext` to a non-zero value to
+    // exercise allocation-list tracking logic without a real WDDM runtime. Use
+    // `wddm_device` (created only in real WDDM builds) as the gate so tests can
+    // still create CPU-only systemmem surfaces.
+    if (dev->wddm_device == 0) {
       try {
         res->storage.resize(res->size_bytes);
       } catch (...) {

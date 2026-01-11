@@ -1451,7 +1451,53 @@ HRESULT update_surface_locked(Device* dev,
 
 #if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
   if (dst->wddm_hAllocation != 0 && dev->wddm_device != 0) {
+    const uint64_t src_bytes = static_cast<uint64_t>(src->row_pitch) * src->height;
+    if (src_bytes == 0 || src_bytes > src->size_bytes) {
+      return E_FAIL;
+    }
+
+    const uint8_t* src_base = nullptr;
+    void* src_ptr = nullptr;
+    bool src_locked = false;
+
+    bool use_src_storage = src->storage.size() >= src_bytes;
+    // Guest-backed resources may still allocate CPU shadow storage (e.g. shared
+    // resources opened via OpenResource). In WDDM builds the authoritative bytes
+    // are in the allocation mapping, so prefer LockCb.
+    if (src->backing_alloc_id != 0) {
+      use_src_storage = false;
+    }
+
+    if (use_src_storage) {
+      src_base = src->storage.data();
+    } else {
+      if (src->wddm_hAllocation == 0) {
+        return E_FAIL;
+      }
+      const HRESULT src_lock_hr = wddm_lock_allocation(dev->wddm_callbacks,
+                                                       dev->wddm_device,
+                                                       src->wddm_hAllocation,
+                                                       0,
+                                                       src_bytes,
+                                                       &src_ptr);
+      if (FAILED(src_lock_hr) || !src_ptr) {
+        return FAILED(src_lock_hr) ? src_lock_hr : E_FAIL;
+      }
+      src_locked = true;
+      src_base = static_cast<const uint8_t*>(src_ptr);
+    }
+
     void* dst_ptr = nullptr;
+    bool dst_locked = false;
+    auto unlock = make_scope_exit([&]() {
+      if (dst_locked) {
+        (void)wddm_unlock_allocation(dev->wddm_callbacks, dev->wddm_device, dst->wddm_hAllocation);
+      }
+      if (src_locked) {
+        (void)wddm_unlock_allocation(dev->wddm_callbacks, dev->wddm_device, src->wddm_hAllocation);
+      }
+    });
+
     const HRESULT lock_hr = wddm_lock_allocation(dev->wddm_callbacks,
                                                  dev->wddm_device,
                                                  dst->wddm_hAllocation,
@@ -1461,6 +1507,7 @@ HRESULT update_surface_locked(Device* dev,
     if (FAILED(lock_hr) || !dst_ptr) {
       return FAILED(lock_hr) ? lock_hr : E_FAIL;
     }
+    dst_locked = true;
 
     auto* dst_base = static_cast<uint8_t*>(dst_ptr);
     for (uint32_t y = 0; y < copy_h; ++y) {
@@ -1468,12 +1515,11 @@ HRESULT update_surface_locked(Device* dev,
                                static_cast<uint64_t>(src_left) * bpp;
       const uint64_t dst_off = (static_cast<uint64_t>(dst_top) + y) * dst->row_pitch +
                                static_cast<uint64_t>(dst_left) * bpp;
-      if (src_off + row_bytes > src->storage.size() || dst_off + row_bytes > dst_bytes) {
-        (void)wddm_unlock_allocation(dev->wddm_callbacks, dev->wddm_device, dst->wddm_hAllocation);
+      if (src_off + row_bytes > src_bytes || dst_off + row_bytes > dst_bytes) {
         return E_INVALIDARG;
       }
 
-      const uint8_t* src_row = src->storage.data() + static_cast<size_t>(src_off);
+      const uint8_t* src_row = src_base + static_cast<size_t>(src_off);
       uint8_t* dst_row = dst_base + dst_off;
       if (can_fast_copy) {
         std::memcpy(dst_row, src_row, row_bytes);
@@ -1482,14 +1528,20 @@ HRESULT update_surface_locked(Device* dev,
           const uint8_t* s = src_row + static_cast<size_t>(x) * 4;
           uint8_t* d = dst_row + static_cast<size_t>(x) * 4;
           if (!convert_pixel_4bpp(src->format, dst->format, s, d)) {
-            (void)wddm_unlock_allocation(dev->wddm_callbacks, dev->wddm_device, dst->wddm_hAllocation);
             return D3DERR_INVALIDCALL;
           }
         }
       }
     }
 
+    // Unlock allocations before any call that can trigger a command-buffer split
+    // (ensure_cmd_space / allocation tracking).
     (void)wddm_unlock_allocation(dev->wddm_callbacks, dev->wddm_device, dst->wddm_hAllocation);
+    dst_locked = false;
+    if (src_locked) {
+      (void)wddm_unlock_allocation(dev->wddm_callbacks, dev->wddm_device, src->wddm_hAllocation);
+      src_locked = false;
+    }
 
     if (dst->handle != 0 && dst->backing_alloc_id != 0) {
       const uint64_t dirty_offset = static_cast<uint64_t>(dst_top) * dst->row_pitch +
@@ -1536,9 +1588,11 @@ HRESULT update_texture_locked(Device* dev, Resource* src, Resource* dst) {
     return E_INVALIDARG;
   }
 
+#if !(defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI))
   if (src->storage.size() < dst->size_bytes) {
     return E_INVALIDARG;
   }
+#endif
 
   const bool can_fast_copy = (src->format == dst->format);
   const bool can_convert_4bpp =
@@ -1553,7 +1607,7 @@ HRESULT update_texture_locked(Device* dev, Resource* src, Resource* dst) {
   // embedding raw bytes via UPLOAD_RESOURCE. Guest-backed resources must use
   // RESOURCE_DIRTY_RANGE so the host re-uploads from guest memory.
 #if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
-  if (dst->backing_alloc_id == 0 && dst->storage.size() >= dst->size_bytes) {
+  if (dst->backing_alloc_id == 0 && dst->storage.size() >= dst->size_bytes && src->storage.size() >= dst->size_bytes) {
 #else
   if (dst->storage.size() >= dst->size_bytes) {
 #endif
@@ -1604,7 +1658,48 @@ HRESULT update_texture_locked(Device* dev, Resource* src, Resource* dst) {
 
 #if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
   if (dst->wddm_hAllocation != 0 && dev->wddm_device != 0 && dst->size_bytes) {
+    const uint8_t* src_bytes = nullptr;
+    void* src_ptr = nullptr;
+    bool src_locked = false;
+
     void* dst_ptr = nullptr;
+    bool dst_locked = false;
+
+    auto unlock = make_scope_exit([&]() {
+      if (dst_locked) {
+        (void)wddm_unlock_allocation(dev->wddm_callbacks, dev->wddm_device, dst->wddm_hAllocation);
+      }
+      if (src_locked) {
+        (void)wddm_unlock_allocation(dev->wddm_callbacks, dev->wddm_device, src->wddm_hAllocation);
+      }
+    });
+
+    bool use_src_storage = src->storage.size() >= dst->size_bytes;
+    // Guest-backed resources may still allocate CPU shadow storage; prefer
+    // mapping the authoritative allocation.
+    if (src->backing_alloc_id != 0) {
+      use_src_storage = false;
+    }
+
+    if (use_src_storage) {
+      src_bytes = src->storage.data();
+    } else {
+      if (src->wddm_hAllocation == 0) {
+        return E_FAIL;
+      }
+      const HRESULT src_lock_hr = wddm_lock_allocation(dev->wddm_callbacks,
+                                                       dev->wddm_device,
+                                                       src->wddm_hAllocation,
+                                                       0,
+                                                       dst->size_bytes,
+                                                       &src_ptr);
+      if (FAILED(src_lock_hr) || !src_ptr) {
+        return FAILED(src_lock_hr) ? src_lock_hr : E_FAIL;
+      }
+      src_locked = true;
+      src_bytes = static_cast<const uint8_t*>(src_ptr);
+    }
+
     const HRESULT lock_hr = wddm_lock_allocation(dev->wddm_callbacks,
                                                  dev->wddm_device,
                                                  dst->wddm_hAllocation,
@@ -1614,24 +1709,30 @@ HRESULT update_texture_locked(Device* dev, Resource* src, Resource* dst) {
     if (FAILED(lock_hr) || !dst_ptr) {
       return FAILED(lock_hr) ? lock_hr : E_FAIL;
     }
+    dst_locked = true;
 
     if (can_fast_copy) {
-      std::memcpy(dst_ptr, src->storage.data(), dst->size_bytes);
+      std::memcpy(dst_ptr, src_bytes, dst->size_bytes);
     } else {
       if ((dst->size_bytes & 3u) != 0) {
-        (void)wddm_unlock_allocation(dev->wddm_callbacks, dev->wddm_device, dst->wddm_hAllocation);
         return D3DERR_INVALIDCALL;
       }
       auto* dst_bytes = static_cast<uint8_t*>(dst_ptr);
       for (size_t i = 0; i + 3 < static_cast<size_t>(dst->size_bytes); i += 4) {
-        if (!convert_pixel_4bpp(src->format, dst->format, &src->storage[i], &dst_bytes[i])) {
-          (void)wddm_unlock_allocation(dev->wddm_callbacks, dev->wddm_device, dst->wddm_hAllocation);
+        if (!convert_pixel_4bpp(src->format, dst->format, src_bytes + i, &dst_bytes[i])) {
           return D3DERR_INVALIDCALL;
         }
       }
     }
 
+    // Unlock allocations before any call that can trigger a command-buffer split
+    // (ensure_cmd_space / allocation tracking).
     (void)wddm_unlock_allocation(dev->wddm_callbacks, dev->wddm_device, dst->wddm_hAllocation);
+    dst_locked = false;
+    if (src_locked) {
+      (void)wddm_unlock_allocation(dev->wddm_callbacks, dev->wddm_device, src->wddm_hAllocation);
+      src_locked = false;
+    }
 
     if (dst->backing_alloc_id != 0) {
       if (!ensure_cmd_space(dev, align_up(sizeof(aerogpu_cmd_resource_dirty_range), 4))) {
