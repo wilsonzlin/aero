@@ -25,6 +25,12 @@ To update device HWIDs / service names, edit the JSON manifest and regenerate:
 python3 scripts/generate-guest-tools-devices-cmd.py
 ```
 
+To check for drift without modifying files (CI-style):
+
+```bash
+python3 scripts/ci/gen-guest-tools-devices-cmd.py --check
+```
+
 CI fails if `devices.cmd` is out of sync with the manifest.
 
 ## `setup.cmd`

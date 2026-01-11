@@ -16,6 +16,12 @@ Regenerate it with:
 python3 scripts/generate-guest-tools-devices-cmd.py
 ```
 
+Check for drift without rewriting (CI-style):
+
+```bash
+python3 scripts/ci/gen-guest-tools-devices-cmd.py --check
+```
+
 The `*_HWIDS` values are stored as a list of individually quoted hardware IDs to safely include
 `&` characters (e.g. `"PCI\VEN_1AF4&DEV_1042&REV_01"`).
 
