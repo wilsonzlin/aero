@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    fmt,
     fs,
     io::{Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
@@ -137,7 +138,7 @@ impl Default for StreamingCacheBackend {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct StreamingDiskConfig {
     pub url: Url,
     pub cache_dir: PathBuf,
@@ -153,6 +154,27 @@ pub struct StreamingDiskConfig {
     pub validator: Option<String>,
     pub cache_backend: StreamingCacheBackend,
     pub options: StreamingDiskOptions,
+}
+
+impl fmt::Debug for StreamingDiskConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // `url` and `request_headers` may contain sensitive auth material (e.g. signed URLs,
+        // `Authorization` headers). Redact by default to avoid accidental leakage in logs.
+        let mut url = self.url.clone();
+        url.set_query(None);
+        url.set_fragment(None);
+
+        let header_names: Vec<&str> = self.request_headers.iter().map(|(k, _)| k.as_str()).collect();
+
+        f.debug_struct("StreamingDiskConfig")
+            .field("url", &url)
+            .field("cache_dir", &self.cache_dir)
+            .field("request_headers", &header_names)
+            .field("validator", &self.validator)
+            .field("cache_backend", &self.cache_backend)
+            .field("options", &self.options)
+            .finish()
+    }
 }
 
 impl StreamingDiskConfig {
