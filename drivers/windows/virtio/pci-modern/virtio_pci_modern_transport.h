@@ -86,6 +86,7 @@ typedef enum _VIRTIO_PCI_MODERN_TRANSPORT_INIT_ERROR {
 } VIRTIO_PCI_MODERN_TRANSPORT_INIT_ERROR;
 
 const char *VirtioPciModernTransportInitErrorStr(VIRTIO_PCI_MODERN_TRANSPORT_INIT_ERROR Error);
+const char *VirtioPciModernTransportCapParseResultStr(UINT32 CapParseResult);
 
 typedef struct _VIRTIO_PCI_MODERN_TRANSPORT {
 	const VIRTIO_PCI_MODERN_OS_INTERFACE *Os;

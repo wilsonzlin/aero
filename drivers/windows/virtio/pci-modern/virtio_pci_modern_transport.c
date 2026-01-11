@@ -287,6 +287,11 @@ const char *VirtioPciModernTransportInitErrorStr(VIRTIO_PCI_MODERN_TRANSPORT_INI
 	}
 }
 
+const char *VirtioPciModernTransportCapParseResultStr(UINT32 cap_parse_result)
+{
+	return virtio_pci_cap_parse_result_str((virtio_pci_cap_parse_result_t)cap_parse_result);
+}
+
 NTSTATUS VirtioPciModernTransportInit(VIRTIO_PCI_MODERN_TRANSPORT *t, const VIRTIO_PCI_MODERN_OS_INTERFACE *os,
 				     VIRTIO_PCI_MODERN_TRANSPORT_MODE mode, UINT64 bar0_pa, UINT32 bar0_len)
 {
