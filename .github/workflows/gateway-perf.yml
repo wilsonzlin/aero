@@ -20,6 +20,7 @@ jobs:
     timeout-minutes: 20
     env:
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+      AERO_NODE_DIR: ${{ vars.AERO_NODE_DIR }}
     steps:
       - name: Checkout (candidate)
         uses: actions/checkout@v4
@@ -47,7 +48,7 @@ jobs:
           working-directory: base
 
       - name: Run gateway bench (baseline)
-        working-directory: ${{ steps.node-workspace-base.outputs.dir }}
+        working-directory: base
         run: |
           set -euo pipefail
           mkdir -p "$GITHUB_WORKSPACE/head/gateway-perf-results/base"
@@ -57,7 +58,7 @@ jobs:
             --json "$GITHUB_WORKSPACE/head/gateway-perf-results/base/raw.json"
 
       - name: Run gateway bench (candidate)
-        working-directory: ${{ steps.node-workspace-head.outputs.dir }}
+        working-directory: head
         run: |
           set -euo pipefail
           mkdir -p gateway-perf-results/head gateway-perf-results/compare

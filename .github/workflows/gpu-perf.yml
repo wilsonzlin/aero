@@ -21,6 +21,7 @@ jobs:
     env:
       GPU_PERF_ITERATIONS: "3"
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+      AERO_NODE_DIR: ${{ vars.AERO_NODE_DIR }}
     steps:
       - name: Checkout (candidate)
         uses: actions/checkout@v4
@@ -51,18 +52,18 @@ jobs:
         uses: ./base/.github/actions/setup-playwright
         with:
           browsers: chromium
-          working-directory: ${{ steps.node-workspace-head.outputs.dir }}
+          working-directory: head
           lockfile: ${{ steps.node-workspace-head.outputs.lockfile }}
 
       - name: Setup Playwright (cached, baseline)
         uses: ./base/.github/actions/setup-playwright
         with:
           browsers: chromium
-          working-directory: ${{ steps.node-workspace-base.outputs.dir }}
+          working-directory: base
           lockfile: ${{ steps.node-workspace-base.outputs.lockfile }}
 
       - name: Write scenario params
-        working-directory: ${{ steps.node-workspace-head.outputs.dir }}
+        working-directory: head
         run: |
           mkdir -p gpu-perf-results/{base,head,compare}
           cat > gpu-perf-results/scenario_params.json <<'JSON'
@@ -73,17 +74,17 @@ jobs:
           JSON
 
       - name: Run GPU perf (baseline)
-        working-directory: ${{ steps.node-workspace-base.outputs.dir }}
+        working-directory: base
         run: |
           node --experimental-strip-types bench/gpu_bench.ts \
             --scenarios vga_text_scroll,vbe_lfb_blit \
-            --scenario-params "$GITHUB_WORKSPACE/${{ steps.node-workspace-head.outputs.dir }}/gpu-perf-results/scenario_params.json" \
+            --scenario-params "$GITHUB_WORKSPACE/head/gpu-perf-results/scenario_params.json" \
             --swiftshader true \
             --iterations ${{ env.GPU_PERF_ITERATIONS }} \
-            --output "$GITHUB_WORKSPACE/${{ steps.node-workspace-head.outputs.dir }}/gpu-perf-results/base/gpu_bench.json"
+            --output "$GITHUB_WORKSPACE/head/gpu-perf-results/base/gpu_bench.json"
 
       - name: Run GPU perf (candidate)
-        working-directory: ${{ steps.node-workspace-head.outputs.dir }}
+        working-directory: head
         run: |
           node --experimental-strip-types bench/gpu_bench.ts \
             --scenarios vga_text_scroll,vbe_lfb_blit \
@@ -93,7 +94,7 @@ jobs:
             --output gpu-perf-results/head/gpu_bench.json
 
       - name: Compare GPU perf (job summary)
-        working-directory: ${{ steps.node-workspace-head.outputs.dir }}
+        working-directory: head
         run: |
           set +e
           node --experimental-strip-types scripts/compare_gpu_benchmarks.ts \
@@ -115,7 +116,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: gpu-perf-smoke-${{ github.run_id }}
-          path: ${{ steps.node-workspace-head.outputs.dir }}/gpu-perf-results
+          path: head/gpu-perf-results
           if-no-files-found: error
 
   gpu-perf-comment:
