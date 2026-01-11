@@ -6,8 +6,8 @@ use aero_devices::clock::ManualClock;
 use aero_devices::i8042::{register_i8042, I8042Ports, SharedI8042Controller};
 use aero_devices::irq::PlatformIrqLine;
 use aero_devices::pci::{
-    register_pci_config_ports, PciConfigPorts, PciIntxRouter, PciIntxRouterConfig,
-    SharedPciConfigPorts,
+    register_pci_config_ports, PciConfigPorts, PciEcamConfig, PciEcamMmio, PciIntxRouter,
+    PciIntxRouterConfig, SharedPciConfigPorts,
 };
 use aero_devices::pic8259::register_pic8259_on_platform_interrupts;
 use aero_devices::pit8254::{register_pit8254, Pit8254, SharedPit8254};
@@ -23,6 +23,17 @@ use aero_platform::memory::MemoryBus;
 use memory::MmioHandler;
 use std::cell::RefCell;
 use std::rc::Rc;
+
+/// Base physical address of the PCIe ECAM ("MMCONFIG") window.
+///
+/// This follows the QEMU Q35 convention (256MiB window at 0xB000_0000 covering buses 0..=255).
+pub const PCIE_ECAM_BASE: u64 = 0xB000_0000;
+
+pub const PCIE_ECAM_CONFIG: PciEcamConfig = PciEcamConfig {
+    segment: 0,
+    start_bus: 0,
+    end_bus: 0xFF,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResetEvent {
@@ -206,6 +217,14 @@ impl PcPlatform {
 
         let pci_cfg = Rc::new(RefCell::new(PciConfigPorts::new()));
         register_pci_config_ports(&mut io, pci_cfg.clone());
+
+        memory
+            .map_mmio(
+                PCIE_ECAM_BASE,
+                PCIE_ECAM_CONFIG.window_size_bytes(),
+                Box::new(PciEcamMmio::new(pci_cfg.clone(), PCIE_ECAM_CONFIG)),
+            )
+            .unwrap();
 
         // Register Reset Control Register after PCI config ports so it can own port 0xCF9.
         io.register(

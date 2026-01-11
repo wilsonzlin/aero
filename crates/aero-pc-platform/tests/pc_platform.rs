@@ -2,7 +2,7 @@ use aero_devices::acpi_pm::PM1_CNT_SCI_EN;
 use aero_devices::hpet::HPET_MMIO_BASE;
 use aero_devices::pci::PCI_CFG_DATA_PORT;
 use aero_devices::reset_ctrl::RESET_CTRL_RESET_VALUE;
-use aero_pc_platform::{PcPlatform, ResetEvent};
+use aero_pc_platform::{PcPlatform, ResetEvent, PCIE_ECAM_BASE};
 use memory::MemoryBus as _;
 
 #[test]
@@ -28,6 +28,10 @@ fn pc_platform_wires_canonical_ports_mmio_and_reset_a20() {
     pc.io.write(0xCF8, 4, 0x8000_0000);
     let id = pc.io.read(PCI_CFG_DATA_PORT, 4);
     assert_eq!(id & 0xFFFF, 0x8086);
+
+    // PCIe ECAM window should expose the same config space as 0xCF8/0xCFC.
+    let id_ecam = pc.memory.read_u32(PCIE_ECAM_BASE);
+    assert_eq!(id_ecam & 0xFFFF, 0x8086);
 
     // MMIO smoke: LAPIC ID, IOAPIC select, HPET capabilities.
     let _lapic_id = pc.memory.read_u32(0xFEE0_0020);
