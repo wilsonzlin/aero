@@ -307,8 +307,12 @@ ctx.onmessage = (ev) => {
           // Simulate a hung CPU worker that never yields back to the event loop.
           //
           // Prefer an `Atomics.wait`-based block when SharedArrayBuffer is available so we don't
-          // peg a CPU core (which can make local debugging and automated tests noisy). Fall back
-          // to a busy loop when SharedArrayBuffer is unavailable (e.g. crossOriginIsolated=false).
+          // peg a CPU core (which can make local debugging and automated tests noisy).
+          //
+          // When SharedArrayBuffer is unavailable (e.g. crossOriginIsolated=false), we can't
+          // truly block the worker thread without burning CPU. In that case, simulate a hang by
+          // never starting the execution loop (no heartbeats), which is sufficient to trip the
+          // watchdog in the coordinator.
           const Sab = globalThis.SharedArrayBuffer;
           if (
             typeof Sab !== "undefined" &&
@@ -322,12 +326,10 @@ ctx.onmessage = (ev) => {
               // eslint-disable-next-line no-constant-condition
               while (true) Atomics.wait(int32, 0, 0, 60_000);
             } catch {
-              // Fall back to a busy loop below.
+              // Fall through to the no-heartbeats simulation below.
             }
           }
-
-          // eslint-disable-next-line no-constant-condition
-          while (true) {}
+          break;
         }
 
         if (mode === "crash") {
