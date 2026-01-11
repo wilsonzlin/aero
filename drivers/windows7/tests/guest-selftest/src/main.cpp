@@ -994,14 +994,25 @@ static bool HasDeviceInterfaceForInstance(Logger& log, const GUID& iface_guid,
 }
 
 static bool VirtioSndHasTopologyInterface(Logger& log, const std::vector<VirtioSndPciDevice>& devices) {
-  bool found_any = false;
-  for (const auto& dev : devices) {
-    if (dev.instance_id.empty()) continue;
-    if (HasDeviceInterfaceForInstance(log, kKsCategoryTopology, dev.instance_id, "KSCATEGORY_TOPOLOGY")) {
-      found_any = true;
+  constexpr DWORD kWaitMs = 5000;
+  const DWORD deadline_ms = GetTickCount() + kWaitMs;
+  int attempt = 0;
+
+  while (static_cast<int32_t>(GetTickCount() - deadline_ms) < 0) {
+    attempt++;
+    bool found_any = false;
+    for (const auto& dev : devices) {
+      if (dev.instance_id.empty()) continue;
+      if (HasDeviceInterfaceForInstance(log, kKsCategoryTopology, dev.instance_id, "KSCATEGORY_TOPOLOGY")) {
+        found_any = true;
+      }
     }
+    if (found_any) return true;
+    Sleep(250);
   }
-  return found_any;
+
+  log.Logf("virtio-snd: topology interface not found after %lu ms", static_cast<unsigned long>(kWaitMs));
+  return false;
 }
 
 struct VirtioSndBindingCheckResult {
