@@ -97,6 +97,25 @@ test("check-node-workflows: rejects Dockerfile node base images without an exact
   }
 });
 
+test("check-node-workflows: rejects Dockerfiles with a Node tag out of sync with .nvmrc", () => {
+  const temp = setupTempRepo();
+  try {
+    const workflowsDir = path.join(temp.repoRoot, ".github/workflows");
+    fs.mkdirSync(workflowsDir, { recursive: true });
+    fs.writeFileSync(path.join(workflowsDir, "ok.yml"), "name: ok\non: [push]\njobs: {}\n");
+
+    fs.mkdirSync(path.join(temp.repoRoot, "server"), { recursive: true });
+    fs.writeFileSync(path.join(temp.repoRoot, "server/Dockerfile"), "FROM node:0.0.0-slim\n");
+
+    const res = runCheck(temp);
+    assert.notEqual(res.status, 0);
+    assert.match(res.stderr, /Dockerfile Node version is out of sync with \.nvmrc/);
+    assert.ok(res.stderr.includes(`- expected: ${pinnedNode}`), res.stderr);
+  } finally {
+    fs.rmSync(temp.repoRoot, { recursive: true, force: true });
+  }
+});
+
 test("check-node-workflows: accepts Dockerfile node base images pinned to the .nvmrc version", () => {
   const temp = setupTempRepo();
   try {
@@ -106,6 +125,26 @@ test("check-node-workflows: accepts Dockerfile node base images pinned to the .n
 
     fs.mkdirSync(path.join(temp.repoRoot, "server"), { recursive: true });
     fs.writeFileSync(path.join(temp.repoRoot, "server/Dockerfile"), `FROM node:${pinnedNode}-alpine\n`);
+
+    const res = runCheck(temp);
+    assert.equal(res.status, 0, `expected exit 0, got ${res.status}\n\nstderr:\n${res.stderr}`);
+  } finally {
+    fs.rmSync(temp.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test("check-node-workflows: accepts Dockerfiles that use an ARG NODE_VERSION default matching .nvmrc", () => {
+  const temp = setupTempRepo();
+  try {
+    const workflowsDir = path.join(temp.repoRoot, ".github/workflows");
+    fs.mkdirSync(workflowsDir, { recursive: true });
+    fs.writeFileSync(path.join(workflowsDir, "ok.yml"), "name: ok\non: [push]\njobs: {}\n");
+
+    fs.mkdirSync(path.join(temp.repoRoot, "server"), { recursive: true });
+    fs.writeFileSync(
+      path.join(temp.repoRoot, "server/Dockerfile"),
+      `ARG NODE_VERSION=${pinnedNode}\nFROM node:\${NODE_VERSION}-slim\n`,
+    );
 
     const res = runCheck(temp);
     assert.equal(res.status, 0, `expected exit 0, got ${res.status}\n\nstderr:\n${res.stderr}`);
