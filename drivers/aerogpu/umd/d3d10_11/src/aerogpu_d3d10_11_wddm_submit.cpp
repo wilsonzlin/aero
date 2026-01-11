@@ -523,7 +523,10 @@ void extract_alloc_outputs(SubmissionBuffers* out, const D3DDDICB_ALLOCATE& allo
   }
 }
 
-void deallocate_buffers(const D3DDDI_DEVICECALLBACKS* callbacks, void* runtime_device_private, const D3DDDICB_ALLOCATE& alloc) {
+void deallocate_buffers(const D3DDDI_DEVICECALLBACKS* callbacks,
+                        void* runtime_device_private,
+                        D3DKMT_HANDLE hContext,
+                        const D3DDDICB_ALLOCATE& alloc) {
   if (!callbacks || !runtime_device_private) {
     return;
   }
@@ -534,6 +537,9 @@ void deallocate_buffers(const D3DDDI_DEVICECALLBACKS* callbacks, void* runtime_d
       return;
     }
     D3DDDICB_DEALLOCATE dealloc = {};
+    __if_exists(D3DDDICB_DEALLOCATE::hContext) {
+      dealloc.hContext = hContext;
+    }
     __if_exists(D3DDDICB_DEALLOCATE::pDmaBuffer) {
       dealloc.pDmaBuffer = alloc.pDmaBuffer;
     }
@@ -582,7 +588,7 @@ HRESULT acquire_submit_buffers_allocate(const D3DDDI_DEVICECALLBACKS* callbacks,
       // return a failure HRESULT without populating out pointers, and calling
       // DeallocateCb in that case is undefined.
       if (out->command_buffer || out->dma_buffer || out->allocation_list || out->patch_location_list || out->dma_private_data) {
-        deallocate_buffers(callbacks, runtime_device_private, out->alloc);
+        deallocate_buffers(callbacks, runtime_device_private, hContext, out->alloc);
       }
       *out = SubmissionBuffers{};
       return FAILED(hr) ? hr : E_OUTOFMEMORY;
@@ -859,7 +865,7 @@ HRESULT WddmSubmit::SubmitAeroCmdStream(const uint8_t* stream_bytes,
 
     const auto release = [&] {
       if (buf.needs_deallocate) {
-        deallocate_buffers(callbacks_, runtime_device_private_, buf.alloc);
+        deallocate_buffers(callbacks_, runtime_device_private_, hContext_, buf.alloc);
       }
     };
 
