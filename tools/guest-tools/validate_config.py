@@ -9,7 +9,8 @@ Why this exists:
   Tools media (ISO/zip) from upstream virtio-win drivers.
 
 If these drift (e.g. emulator PCI IDs change but only one side is updated), we can
-produce Guest Tools media that fails to install the correct storage/network drivers.
+produce Guest Tools media that fails to install the correct drivers (storage/network
+and any optional devices that the selected packaging spec declares, e.g. input/audio).
 """
 
 from __future__ import annotations
