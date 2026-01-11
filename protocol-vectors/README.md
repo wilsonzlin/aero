@@ -3,9 +3,11 @@
 This directory contains **canonical, shared golden vectors** for Aero’s bytes-on-the-wire
 protocols.
 
-These JSON files are the single source of truth used by conformance tests across
-independent implementations (Go, TypeScript, JavaScript). Any protocol drift should
-break CI by failing a vector test.
+These JSON files are used by conformance tests across independent implementations
+(Go, TypeScript, JavaScript) for a subset of protocols.
+
+Newer unified, versioned vectors (including auth tokens) live in
+`crates/conformance/test-vectors/`.
 
 ## Conventions
 
