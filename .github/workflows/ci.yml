@@ -342,31 +342,17 @@ jobs:
         run: cargo test ${{ steps.cargo-locked.outputs.locked }} -p emulator --test boot_sector --test freedos_boot
 
   wasm:
-    name: WASM (${{ matrix.variant }})
+    name: WASM (wasm-pack build + test)
     needs: policy
     if: needs.policy.result == 'success' && needs.policy.outputs.code_changed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        variant:
-          - single
-          - threaded
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust toolchain (stable)
-        if: matrix.variant == 'single'
+      - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: wasm32-unknown-unknown
-
-      - name: Install Rust toolchain (nightly + rust-src)
-        if: matrix.variant == 'threaded'
-        uses: dtolnay/rust-toolchain@nightly
-        with:
-          components: rust-src
           targets: wasm32-unknown-unknown
 
       - name: Rust cache
@@ -383,30 +369,19 @@ jobs:
         with:
           install-wasm-pack: "true"
 
-      - name: Use --locked when Cargo.lock exists
-        id: cargo-locked
-        run: |
-          set -euo pipefail
-          if [[ -f Cargo.lock ]]; then
-            echo "locked=--locked" >> "$GITHUB_OUTPUT"
-          else
-            echo "locked=" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: wasm-pack build (${{ matrix.variant }})
-        run: node web/scripts/build_wasm.mjs "${{ matrix.variant }}" release
+      - name: wasm-pack build (single, release)
+        run: node web/scripts/build_wasm.mjs single release
 
       - name: wasm-pack test (node)
-        if: matrix.variant == 'single'
         run: cargo xtask test-all --skip-rust --skip-ts --skip-e2e --wasm-crate-dir "${{ steps.wasm-crate.outputs.dir }}"
 
       - name: Upload wasm-pack output (on failure)
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: wasm-pack-pkg-${{ matrix.variant }}
+          name: wasm-pack-pkg
           path: |
-            web/src/wasm/pkg-${{ matrix.variant }}/
+            web/src/wasm/pkg-single/
             ${{ steps.wasm-crate.outputs.dir }}/pkg/
           if-no-files-found: ignore
           retention-days: 7
