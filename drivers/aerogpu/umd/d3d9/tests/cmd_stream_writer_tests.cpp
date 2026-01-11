@@ -602,6 +602,30 @@ bool TestEventQueryGetDataSemantics() {
     return false;
   }
 
+  // Validate argument checking for the D3D9 GetData contract: pData must be NULL
+  // iff data_size is 0.
+  AEROGPU_D3D9DDIARG_GETQUERYDATA invalid_args = get_data;
+  invalid_args.pData = &done;
+  invalid_args.data_size = 0;
+  hr = cleanup.device_funcs.pfnGetQueryData(create_dev.hDevice, &invalid_args);
+  if (!Check(hr == D3DERR_INVALIDCALL, "GetQueryData pData!=NULL but size==0 returns INVALIDCALL")) {
+    return false;
+  }
+
+  invalid_args.pData = nullptr;
+  invalid_args.data_size = sizeof(done);
+  hr = cleanup.device_funcs.pfnGetQueryData(create_dev.hDevice, &invalid_args);
+  if (!Check(hr == D3DERR_INVALIDCALL, "GetQueryData pData==NULL but size!=0 returns INVALIDCALL")) {
+    return false;
+  }
+
+  invalid_args.pData = nullptr;
+  invalid_args.data_size = 0;
+  hr = cleanup.device_funcs.pfnGetQueryData(create_dev.hDevice, &invalid_args);
+  if (!Check(hr == S_OK, "GetQueryData pData==NULL and size==0 returns S_OK when ready")) {
+    return false;
+  }
+
   return true;
 }
 

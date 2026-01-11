@@ -4031,8 +4031,16 @@ HRESULT AEROGPU_D3D9_CALL device_get_query_data(
     return kD3DErrInvalidCall;
   }
 
+  const bool has_data_ptr = (pGetQueryData->pData != nullptr);
+  const bool has_data_size = (pGetQueryData->data_size != 0);
+  // Mirror IDirect3DQuery9::GetData validation: pData must be NULL iff data_size
+  // is 0. Treat mismatched pointer/size as D3DERR_INVALIDCALL.
+  if (has_data_ptr != has_data_size) {
+    return kD3DErrInvalidCall;
+  }
+
   // If no output buffer provided, just report readiness via HRESULT.
-  const bool need_data = (pGetQueryData->pData != nullptr) && (pGetQueryData->data_size != 0);
+  const bool need_data = has_data_ptr;
 
   const uint64_t fence_value = q->fence_value.load(std::memory_order_acquire);
 
