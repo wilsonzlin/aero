@@ -4,7 +4,7 @@ setlocal EnableExtensions EnableDelayedExpansion
 rem -----------------------------------------------------------------------------
 rem build_umd.cmd
 rem
-rem Builds the AeroGPU D3D10/11 UMD using MSBuild and places artifacts in OUTDIR.
+rem Builds an MSBuild project/solution and places artifacts in OUTDIR.
 rem
 rem Args:
 rem   %1 VAR    (fre|chk)              -> fre maps to Release, chk maps to Debug
@@ -12,7 +12,7 @@ rem   %2 ARCH   (x86|x64)              -> x86 maps to Win32, x64 maps to x64
 rem   %3 SLN    (path to .sln or .vcxproj)
 rem   %4 OUTDIR (where *.dll/*.pdb are written)
 rem   %5 OBJDIR (optional; per-project intermediates)
-rem   %6 EXPECTED_DLL (optional; asserts the expected output exists after build)
+rem   %6 EXPECTED_OUTPUT (optional; asserts the expected output exists after build)
 rem -----------------------------------------------------------------------------
 
 set "VARIANT=%~1"
@@ -20,7 +20,7 @@ set "ARCH=%~2"
 set "SLN=%~3"
 set "OUTDIR=%~4"
 set "OBJDIR=%~5"
-set "EXPECTED_DLL=%~6"
+set "EXPECTED_OUTPUT=%~6"
 
 if "%VARIANT%"=="" exit /b 2
 if "%ARCH%"=="" exit /b 2
@@ -28,7 +28,7 @@ if "%SLN%"=="" exit /b 2
 if "%OUTDIR%"=="" exit /b 2
 
 if not exist "%SLN%" (
-  echo ERROR: UMD build input not found: "%SLN%"
+  echo ERROR: Build input not found: "%SLN%"
   exit /b 1
 )
 
@@ -61,12 +61,12 @@ mkdir "%OBJDIR%" >nul 2>nul
 set "OUTDIR_MSBUILD=%OUTDIR%\"
 set "INTDIR_MSBUILD=%OBJDIR%\"
 
-if not "%EXPECTED_DLL%"=="" (
-  if exist "%OUTDIR%\%EXPECTED_DLL%" del /f /q "%OUTDIR%\%EXPECTED_DLL%" >nul 2>nul
+if not "%EXPECTED_OUTPUT%"=="" (
+  if exist "%OUTDIR%\%EXPECTED_OUTPUT%" del /f /q "%OUTDIR%\%EXPECTED_OUTPUT%" >nul 2>nul
 )
 
-echo [UMD] MSBuild: "%MSBUILD%"
-echo [UMD] Config:  %CONFIG%  Platform: %PLATFORM%
+echo [MSBUILD] MSBuild: "%MSBUILD%"
+echo [MSBUILD] Config:  %CONFIG%  Platform: %PLATFORM%
 
 "%MSBUILD%" "%SLN%" /m /t:Build ^
   /p:Configuration=%CONFIG% ^
@@ -75,14 +75,14 @@ echo [UMD] Config:  %CONFIG%  Platform: %PLATFORM%
   /p:IntDir="%INTDIR_MSBUILD%" ^
   /nologo
 if errorlevel 1 (
-  echo ERROR: MSBuild failed for UMD (%CONFIG% %PLATFORM%).
+  echo ERROR: MSBuild failed (%CONFIG% %PLATFORM%).
   exit /b 1
 )
 
-if not "%EXPECTED_DLL%"=="" (
-  if not exist "%OUTDIR%\%EXPECTED_DLL%" (
-    echo ERROR: UMD build completed but expected output was not produced:
-    echo        "%OUTDIR%\%EXPECTED_DLL%"
+if not "%EXPECTED_OUTPUT%"=="" (
+  if not exist "%OUTDIR%\%EXPECTED_OUTPUT%" (
+    echo ERROR: Build completed but expected output was not produced:
+    echo        "%OUTDIR%\%EXPECTED_OUTPUT%"
     exit /b 1
   )
   exit /b 0
@@ -90,7 +90,7 @@ if not "%EXPECTED_DLL%"=="" (
 
 dir /b "%OUTDIR%\*.dll" >nul 2>nul
 if errorlevel 1 (
-  echo ERROR: UMD build completed but no *.dll was produced in:
+  echo ERROR: Build completed but no *.dll was produced in:
   echo        "%OUTDIR%"
   exit /b 1
 )

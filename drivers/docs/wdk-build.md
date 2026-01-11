@@ -34,9 +34,9 @@ Windows 7 is WDDM 1.1 and uses older kernel/driver ABI expectations. When buildi
 
 The in-tree AeroGPU Windows 7 WDDM driver stack lives under `drivers/aerogpu/` (start at `drivers/aerogpu/README.md`).
 
-It is built with **WDK10 + MSBuild** (no WDK 7.1 `build.exe` flow). The primary entrypoint is:
+It uses **MSBuild + WDK 10** (MSBuild driver toolset) for the KMD and **MSBuild** for the UMDs — no WDK 7.1 `build.exe` flow. The primary entrypoint is:
 
-- `drivers\aerogpu\aerogpu.sln`
+- `drivers/aerogpu/aerogpu.sln`
 
 From a WDK/VS developer prompt (or an EWDK `LaunchBuildEnv.cmd` shell):
 
@@ -45,7 +45,7 @@ msbuild .\drivers\aerogpu\aerogpu.sln /m /t:Build /p:Configuration=Release /p:Pl
 msbuild .\drivers\aerogpu\aerogpu.sln /m /t:Build /p:Configuration=Release /p:Platform=Win32
 ```
 
-For a fully scripted/reproducible build (matching CI), use the pipeline documented in `docs/16-windows7-driver-build-and-signing.md`:
+For a fully scripted/reproducible build (matching CI), see `drivers/aerogpu/build/README.md` and `docs/16-windows7-driver-build-and-signing.md`:
 
 ```powershell
 .\ci\install-wdk.ps1

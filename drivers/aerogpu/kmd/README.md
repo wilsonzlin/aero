@@ -8,7 +8,6 @@ This directory contains a **minimal** WDDM 1.1 display miniport driver for Windo
 drivers/aerogpu/kmd/
   include/                 Internal headers
   src/                     Miniport implementation (.c)
-  makefile / sources       WDK 7.1 BUILD project
 ```
 
 ## ABI status (legacy vs versioned)
@@ -63,29 +62,25 @@ Configuration mapping:
 * `Debug` ~= `chk` (defines `DBG=1`, enabling `DbgPrintEx` logging)
 * `Release` ~= `fre`
 
-## Building (WDK 7.1)
+The MSBuild entrypoint for the KMD is `drivers/aerogpu/aerogpu_kmd.vcxproj` (it builds the sources in this directory).
 
-Recommended (build everything via scripts):
+## Building
 
-```bat
-cd \path\to\repo
-drivers\aerogpu\build\build_all.cmd fre
+Recommended (CI-like, builds and stages packages under `out/`):
+
+```powershell
+pwsh ci/install-wdk.ps1
+pwsh ci/build-drivers.ps1 -ToolchainJson out/toolchain.json -Drivers aerogpu
 ```
 
-Manual (single config from a WDK build environment shell):
+Manual (single configuration via MSBuild):
 
-1. Install **WDK 7.1** (Windows 7 SP1 WDK).
-2. Open the appropriate WDK build environment:
-   - `x86 Checked Build Environment` for 32-bit
-   - `x64 Checked Build Environment` for 64-bit
-3. From the build shell:
-
-```bat
-cd \path\to\repo\drivers\aerogpu\kmd
-build -cZ
+```cmd
+msbuild drivers\aerogpu\aerogpu_kmd.vcxproj /m /p:Configuration=Release /p:Platform=x64
+msbuild drivers\aerogpu\aerogpu_kmd.vcxproj /m /p:Configuration=Release /p:Platform=Win32
 ```
 
-The output `.sys` will be placed under the WDK `obj*` directory.
+The output `.sys` will be placed under the MSBuild output directory (or whatever `OutDir` you provide).
 
 ## Installing (Windows 7 VM)
 

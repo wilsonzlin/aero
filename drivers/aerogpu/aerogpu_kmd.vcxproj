@@ -111,7 +111,7 @@
     <MSBuild
       Projects="@(Wow64UmdProjects)"
       Targets="Build"
-      Properties="Configuration=$(Configuration);Platform=Win32;OutDir=$(OutDir);BaseIntermediateOutputPath=$(BaseIntermediateOutputPath)wow64\"
+      Properties="Configuration=$(Configuration);Platform=Win32;OutDir=$(OutDir);BaseIntermediateOutputPath=$(IntDir)wow64\"
       BuildInParallel="true" />
   </Target>
 

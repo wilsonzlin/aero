@@ -6,35 +6,25 @@ This directory contains the in-tree **AeroGPU WDDM 1.1** driver stack for **Wind
   * **Required:** D3D9Ex UMD (`aerogpu_d3d9.dll` + `aerogpu_d3d9_x64.dll`)
   * **Optional:** D3D10/11 UMD (`aerogpu_d3d10.dll` + `aerogpu_d3d10_x64.dll`)
 
-## Quickstart (build + install on a Win7 VM)
+## Build (recommended / CI-like)
 
-Build host: **Windows 10/11 x64** (WDK 7.1 + VS2022/MSBuild).
+Build host: **Windows 10/11 x64** (WDK 10 + MSBuild).
 
-1. Build the drivers (from repo root):
+From repo root:
 
-```cmd
-drivers\aerogpu\build\build_all.cmd fre
+```powershell
+pwsh ci/install-wdk.ps1
+pwsh ci/build-drivers.ps1 -ToolchainJson out/toolchain.json -Drivers aerogpu
+pwsh ci/make-catalogs.ps1 -ToolchainJson out/toolchain.json
+pwsh ci/sign-drivers.ps1 -ToolchainJson out/toolchain.json
+pwsh ci/package-drivers.ps1
 ```
 
-2. Stage the Win7 packaging folder (copies binaries next to the `.inf` files):
+Binaries are staged under:
 
-```cmd
-drivers\aerogpu\build\stage_packaging_win7.cmd fre x64
-```
-
-3. In the Win7 VM, run as Administrator:
-
-```cmd
-cd drivers\aerogpu\packaging\win7
-sign_test.cmd
-install.cmd
-```
-
-If you built and staged the optional D3D10/11 UMDs, install via:
-
-```cmd
-install.cmd aerogpu_dx11.inf
-```
+- `out/drivers/aerogpu/x86/` and `out/drivers/aerogpu/x64/` (raw build outputs)
+- `out/packages/aerogpu/x86/` and `out/packages/aerogpu/x64/` (INF+CAT staged packages)
+- `out/artifacts/` (ZIP/ISO bundles)
 
 ## Key docs / entrypoints
 
@@ -44,3 +34,12 @@ install.cmd aerogpu_dx11.inf
 * Protocol / device ABI: `drivers/aerogpu/protocol/README.md` (see `aerogpu_pci.h`, `aerogpu_ring.h`, `aerogpu_cmd.h`)
 * Legacy bring-up ABI header (legacy MMIO + ring; still used by the legacy KMD path): `drivers/aerogpu/protocol/aerogpu_protocol.h`
 * Debug control tool (bring-up): `drivers/aerogpu/tools/win7_dbgctl/README.md`
+
+## Direct MSBuild (optional)
+
+If you already have a working WDK/MSBuild environment, you can build the solution directly:
+
+```cmd
+msbuild drivers\aerogpu\aerogpu.sln /m /p:Configuration=Release /p:Platform=x64
+msbuild drivers\aerogpu\aerogpu.sln /m /p:Configuration=Release /p:Platform=Win32
+```
