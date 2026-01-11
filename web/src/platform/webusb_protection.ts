@@ -24,11 +24,19 @@ export type WebUsbDeviceClassification = {
 export const PROTECTED_USB_INTERFACE_CLASSES: ReadonlySet<number> = new Set([
   0x01, // Audio
   0x03, // HID
+  0x05, // Physical
+  0x06, // Image
+  0x07, // Printer
   0x08, // Mass Storage
   0x09, // Hub
   0x0b, // Smart Card
+  0x0d, // Content Security
   0x0e, // Video
+  0x0f, // Personal Healthcare
   0x10, // Audio/Video
+  0x11, // Billboard
+  0x12, // USB Type-C Bridge
+  0xdc, // Diagnostic Device
   0xe0, // Wireless Controller (e.g. Bluetooth)
 ]);
 
@@ -37,9 +45,9 @@ export function isProtectedInterfaceClass(classCode: number): boolean {
 }
 
 const USB_CLASS_CODE_NAMES = new Map<number, string>([
-  [0x00, "Device"],
+  [0x00, "Per-interface / composite"],
   [0x01, "Audio"],
-  [0x02, "Communications"],
+  [0x02, "Communications / CDC Control"],
   [0x03, "HID"],
   [0x05, "Physical"],
   [0x06, "Image"],
@@ -53,6 +61,7 @@ const USB_CLASS_CODE_NAMES = new Map<number, string>([
   [0x0f, "Personal Healthcare"],
   [0x10, "Audio/Video"],
   [0x11, "Billboard"],
+  [0x12, "USB Type-C Bridge"],
   [0xdc, "Diagnostic Device"],
   [0xe0, "Wireless Controller"],
   [0xef, "Miscellaneous"],
@@ -101,4 +110,3 @@ export function classifyWebUsbDevice(device: USBDevice): WebUsbDeviceClassificat
     unprotected: unprotectedInterfaces,
   };
 }
-
