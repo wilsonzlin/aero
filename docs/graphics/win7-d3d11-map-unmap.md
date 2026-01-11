@@ -8,7 +8,7 @@ It exists to stop future implementers from reverse‑engineering Win7 runtime be
 * `drivers/aerogpu/tests/win7/readback_sanity/`
 
 > Header references: symbol/type names in this doc are from **WDK 7.1** user-mode DDI headers:
-> `d3d11umddi.h` (D3D11 UMD DDI) and `d3dumddi.h` (common runtime callback types like `D3DDDICB_LOCK`).
+> `d3d11umddi.h` (D3D11 UMD DDI), `d3d10umddi.h` (some D3D10-era shared DDI enums/types still used by D3D11 on Win7), and `d3dumddi.h` (common runtime callback types like `D3DDDICB_LOCK`).
 >
 > For overall D3D10/11 bring-up context, see [`win7-d3d10-11-umd-minimal.md`](./win7-d3d10-11-umd-minimal.md).
 
@@ -42,17 +42,21 @@ The D3D11 runtime calls these UMD entrypoints through the immediate-context func
 * `D3D11DDI_DEVICECONTEXTFUNCS::pfnMap`
 * `D3D11DDI_DEVICECONTEXTFUNCS::pfnUnmap`
 
-The WDK 7.1 `d3d11umddi.h` prototypes are conceptually:
+The Win7-era `d3d11umddi.h` prototypes are conceptually:
 
 ```c
 HRESULT APIENTRY pfnMap(
     D3D11DDI_HDEVICECONTEXT hContext,
-    const D3D11DDIARG_MAP* pMap,
+    D3D11DDI_HRESOURCE hResource,
+    UINT Subresource,
+    /* Win7 WDK uses D3D10-era DDI types here; values match D3D11_MAP. */ D3D10_DDI_MAP MapType,
+    UINT MapFlags,
     D3D11DDI_MAPPED_SUBRESOURCE* pMapped);
 
 void APIENTRY pfnUnmap(
     D3D11DDI_HDEVICECONTEXT hContext,
-    const D3D11DDIARG_UNMAP* pUnmap);
+    D3D11DDI_HRESOURCE hResource,
+    UINT Subresource);
 ```
 
 Notes:
@@ -62,7 +66,15 @@ Notes:
 
 ### 1.2 Runtime callback table entries used by Map/Unmap
 
-The runtime exposes a “device callbacks” table to the UMD during device creation (for D3D11 on Win7 this is still commonly surfaced as `D3D10DDI_DEVICECALLBACKS` in `D3D11DDIARG_CREATEDEVICE`).
+The runtime exposes callback tables to the UMD during device creation (`D3D11DDIARG_CREATEDEVICE`):
+
+* `D3D11DDIARG_CREATEDEVICE::pCallbacks` / `pDeviceCallbacks` → `D3D11DDI_DEVICECALLBACKS` (D3D11 wrapper callbacks)
+* Some header revisions also expose `D3D11DDIARG_CREATEDEVICE::pUMCallbacks` → `D3DDDI_DEVICECALLBACKS` (shared WDDM submission callbacks from `d3dumddi.h`)
+
+For exact field names across Win7 WDK revisions (and a probe tool you can build against your installed headers), see:
+
+* [`win7-d3d10-11-umd-callbacks-and-fences.md`](./win7-d3d10-11-umd-callbacks-and-fences.md)
+* `drivers/aerogpu/tools/win7_wdk_probe/`
 
 Map/Unmap uses at least:
 
@@ -70,7 +82,7 @@ Map/Unmap uses at least:
 * `pfnUnlockCb` with `D3DDDICB_UNLOCK`
 * `pfnSetErrorCb` (required for `pfnUnmap` error reporting and other void DDIs)
 
-For synchronization/fence-based implementations, the same callbacks table may also provide (names vary slightly by interface version, but the Win7-era concept is consistent):
+For synchronization/fence-based implementations, the shared callback table (or an embedded equivalent) also provides (names vary slightly by interface version, but the Win7-era concept is consistent):
 
 * `pfnWaitForSynchronizationObjectCb` / `D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT`
 * `pfnSignalSynchronizationObjectCb` / `D3DDDICB_SIGNALSYNCHRONIZATIONOBJECT`
@@ -83,13 +95,13 @@ For synchronization/fence-based implementations, the same callbacks table may al
 
 ---
 
-## 2) `D3D11DDIARG_MAP` / `D3D11DDIARG_UNMAP` field breakdown
+## 2) `pfnMap` / `pfnUnmap` argument breakdown (Win7 WDK 7.1)
 
-### 2.1 `D3D11DDIARG_MAP`
+Windows 7’s D3D11 UMD DDI passes Map/Unmap as **flat arguments** (rather than a single `*ARG_MAP` struct). This section breaks down the logical fields that make up a Map/Unmap request.
 
-`D3D11DDIARG_MAP` describes *which* subresource to map and *how* the caller wants to access it.
+### 2.1 `pfnMap` arguments
 
-Fields (WDK names):
+`pfnMap` describes *which* subresource to map and *how* the caller wants to access it.
 
 * `hResource` (`D3D11DDI_HRESOURCE`)
   * The runtime-provided handle for the resource being mapped.
@@ -97,20 +109,20 @@ Fields (WDK names):
 * `Subresource` (`UINT`)
   * `D3D11CalcSubresource(MipSlice, ArraySlice, MipLevels)` encoding.
   * For buffers, this is typically `0`.
-* `MapType` (DDI enum mirroring `D3D11_MAP`)
+* `MapType` (DDI enum; typically `D3D10_DDI_MAP` on Win7, values mirroring `D3D11_MAP`)
   * One of:
     * `D3D11_MAP_READ`
     * `D3D11_MAP_WRITE`
     * `D3D11_MAP_READ_WRITE`
     * `D3D11_MAP_WRITE_DISCARD`
     * `D3D11_MAP_WRITE_NO_OVERWRITE`
-* `Flags` (`UINT`)
+* `MapFlags` (`UINT`)
   * D3D11 only defines one public map flag on Win7: `D3D11_MAP_FLAG_DO_NOT_WAIT`.
   * The DDI receives the same semantic flag (see §3.2).
 
-### 2.2 `D3D11DDIARG_UNMAP`
+### 2.2 `pfnUnmap` arguments
 
-`D3D11DDIARG_UNMAP` identifies the mapping to end:
+`pfnUnmap` identifies the mapping to end:
 
 * `hResource` (`D3D11DDI_HRESOURCE`)
 * `Subresource` (`UINT`)
@@ -251,7 +263,7 @@ Other validation:
   * `E_INVALIDARG` for illegal MapType/Flags/usage/subresource combinations.
   * `DXGI_ERROR_WAS_STILL_DRAWING` for DO_NOT_WAIT contention.
 * `pfnUnmap` is `void`:
-  * if `pUnmap` is invalid (unknown resource, bad subresource, unmap without a prior successful map), report via the runtime callback `pfnSetErrorCb(hDevice, E_INVALIDARG)` and return.
+  * if the Unmap arguments are invalid (unknown resource, bad subresource, Unmap without a prior successful Map), report via the runtime callback `pfnSetErrorCb(hRTDevice, E_INVALIDARG)` and return.
 
 Do **not** silently ignore invalid Unmap in AeroGPU; hiding these errors makes runtime/device-state bugs extremely difficult to diagnose.
 
@@ -299,17 +311,17 @@ This pseudocode is intentionally explicit about where flushing, locking, and err
 ### 7.1 `pfnMap`
 
 ```c
-HRESULT APIENTRY Map(hContext, pMap, pOut) {
-  if (!pMap || !pOut) return E_INVALIDARG;
+HRESULT APIENTRY Map(hContext, hResource, Subresource, MapType, MapFlags, pOut) {
+  if (!pOut) return E_INVALIDARG;
 
-  Resource* res = lookup_resource(pMap->hResource);
+  Resource* res = lookup_resource(hResource);
   if (!res) return E_INVALIDARG;
 
-  if (!validate_subresource(res, pMap->Subresource)) return E_INVALIDARG;
-  if (!validate_usage_and_map_type(res, pMap->MapType, pMap->Flags)) return E_INVALIDARG;
+  if (!validate_subresource(res, Subresource)) return E_INVALIDARG;
+  if (!validate_usage_and_map_type(res, MapType, MapFlags)) return E_INVALIDARG;
 
-  bool do_not_wait = (pMap->Flags & D3D11_MAP_FLAG_DO_NOT_WAIT) != 0;
-  bool needs_gpu_sync = map_requires_sync(res, pMap->MapType);
+  bool do_not_wait = (MapFlags & D3D11_MAP_FLAG_DO_NOT_WAIT) != 0;
+  bool needs_gpu_sync = map_requires_sync(res, MapType);
 
   if (needs_gpu_sync) {
     // Important: submit any pending GPU work that may produce the readback bytes.
@@ -319,11 +331,11 @@ HRESULT APIENTRY Map(hContext, pMap, pOut) {
   // Translate to runtime lock.
   D3DDDICB_LOCK lock = {};
   lock.hAllocation = res->allocation_handle;
-  lock.SubresourceIndex = pMap->Subresource;
-  lock.Flags = translate_map_to_lockflags(pMap->MapType);
+  lock.SubresourceIndex = Subresource;
+  lock.Flags = translate_map_to_lockflags(MapType);
   lock.Flags.DonotWait = do_not_wait ? 1 : 0;
 
-  HRESULT hr = callbacks->pfnLockCb(hDevice, &lock);
+  HRESULT hr = callbacks->pfnLockCb(/* see header: typically hRTDevice */, &lock);
   if (hr == DXGI_ERROR_WAS_STILL_DRAWING) {
     // Only legal if DO_NOT_WAIT was requested; otherwise treat as an error.
     return do_not_wait ? DXGI_ERROR_WAS_STILL_DRAWING : hr;
@@ -335,7 +347,7 @@ HRESULT APIENTRY Map(hContext, pMap, pOut) {
   pOut->RowPitch = lock.Pitch;
   pOut->DepthPitch = lock.SlicePitch;
 
-  mark_mapped(res, pMap->Subresource, pMap->MapType);
+  mark_mapped(res, Subresource, MapType);
   return S_OK;
 }
 ```
@@ -343,35 +355,30 @@ HRESULT APIENTRY Map(hContext, pMap, pOut) {
 ### 7.2 `pfnUnmap`
 
 ```c
-void APIENTRY Unmap(hContext, pUnmap) {
-  if (!pUnmap) {
-    callbacks->pfnSetErrorCb(hDevice, E_INVALIDARG);
-    return;
-  }
-
-  Resource* res = lookup_resource(pUnmap->hResource);
-  if (!res || !is_mapped(res, pUnmap->Subresource)) {
-    callbacks->pfnSetErrorCb(hDevice, E_INVALIDARG);
+void APIENTRY Unmap(hContext, hResource, Subresource) {
+  Resource* res = lookup_resource(hResource);
+  if (!res || !is_mapped(res, Subresource)) {
+    callbacks->pfnSetErrorCb(hRTDevice, E_INVALIDARG);
     return;
   }
 
   // If this was a write map, ensure subsequent GPU use sees the data.
   // (In AeroGPU, this may mean emitting an upload command or marking the
   // allocation as dirty so the host reads from guest memory on next use.)
-  if (last_map_was_write(res, pUnmap->Subresource)) {
-    commit_cpu_writes(res, pUnmap->Subresource);
+  if (last_map_was_write(res, Subresource)) {
+    commit_cpu_writes(res, Subresource);
   }
 
   D3DDDICB_UNLOCK unlock = {};
   unlock.hAllocation = res->allocation_handle;
-  unlock.SubresourceIndex = pUnmap->Subresource;
+  unlock.SubresourceIndex = Subresource;
 
-  HRESULT hr = callbacks->pfnUnlockCb(hDevice, &unlock);
+  HRESULT hr = callbacks->pfnUnlockCb(/* see header: typically hRTDevice */, &unlock);
   if (FAILED(hr)) {
-    callbacks->pfnSetErrorCb(hDevice, hr);
+    callbacks->pfnSetErrorCb(hRTDevice, hr);
   }
 
-  clear_mapped(res, pUnmap->Subresource);
+  clear_mapped(res, Subresource);
 }
 ```
 

@@ -365,7 +365,7 @@ Clears and draws
 * `pfnDraw`, `pfnDrawIndexed`
 
 Resource updates
-* `pfnMap` + `pfnUnmap` — `D3D11DDIARG_MAP` (see [`win7-d3d11-map-unmap.md`](./win7-d3d11-map-unmap.md) for the definitive Win7 Map/Unmap + `LockCb`/`UnlockCb` contract)
+* `pfnMap` + `pfnUnmap` (see [`win7-d3d11-map-unmap.md`](./win7-d3d11-map-unmap.md) for the definitive Win7 Map/Unmap + `LockCb`/`UnlockCb` contract)
   * must cover both:
     * dynamic update patterns (`D3D11_MAP_WRITE_DISCARD` / `D3D11_MAP_WRITE_NO_OVERWRITE`) for buffers/constant buffers, and
     * staging readback (`D3D11_MAP_READ` on `D3D11_USAGE_STAGING` resources) for tests and debugging
