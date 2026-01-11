@@ -1,5 +1,5 @@
 use aero_l2_protocol::{
-    decode_message, encode_with_limits, DecodeError, Limits, L2_TUNNEL_VERSION,
+    decode_message, encode_with_limits, DecodeError, Limits, L2_TUNNEL_MAGIC, L2_TUNNEL_VERSION,
 };
 use serde::Deserialize;
 
@@ -19,6 +19,12 @@ struct L2Vectors {
 }
 
 #[derive(Debug, Deserialize)]
+struct StructuredErrorVector {
+    code: u16,
+    message: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct L2ValidVector {
     name: String,
     #[serde(rename = "msgType")]
@@ -26,6 +32,8 @@ struct L2ValidVector {
     flags: u8,
     #[serde(rename = "payloadHex")]
     payload_hex: String,
+    #[serde(default)]
+    structured: Option<StructuredErrorVector>,
     #[serde(rename = "wireHex")]
     wire_hex: String,
 }
@@ -83,6 +91,31 @@ fn l2_tunnel_vectors_roundtrip() {
     for vector in vectors.l2.valid {
         let payload = decode_hex(&vector.payload_hex);
         let wire = decode_hex(&vector.wire_hex);
+
+        assert!(
+            wire.len() >= aero_l2_protocol::L2_TUNNEL_HEADER_LEN,
+            "{}: wire too short",
+            vector.name
+        );
+        assert_eq!(wire[0], L2_TUNNEL_MAGIC, "{}", vector.name);
+        assert_eq!(wire[1], L2_TUNNEL_VERSION, "{}", vector.name);
+        assert_eq!(wire[2], vector.msg_type, "{}", vector.name);
+        assert_eq!(wire[3], vector.flags, "{}", vector.name);
+        assert_eq!(
+            wire[aero_l2_protocol::L2_TUNNEL_HEADER_LEN..],
+            payload,
+            "{}",
+            vector.name
+        );
+
+        if let Some(structured) = &vector.structured {
+            let mut expected_payload = Vec::new();
+            expected_payload.extend_from_slice(&structured.code.to_be_bytes());
+            expected_payload
+                .extend_from_slice(&(structured.message.as_bytes().len() as u16).to_be_bytes());
+            expected_payload.extend_from_slice(structured.message.as_bytes());
+            assert_eq!(expected_payload, payload, "{}", vector.name);
+        }
 
         let decoded = decode_message(&wire).unwrap_or_else(|err| {
             panic!("decode failed for {}: {err:?}", vector.name);

@@ -3,138 +3,117 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
-  L2_TUNNEL_MAGIC,
+  L2_TUNNEL_TYPE_ERROR,
+  L2_TUNNEL_TYPE_FRAME,
+  L2_TUNNEL_TYPE_PING,
+  L2_TUNNEL_TYPE_PONG,
   L2_TUNNEL_VERSION,
+  L2TunnelDecodeError,
   decodeL2Message,
+  encodeError,
   encodeL2Frame,
   encodePing,
   encodePong,
 } from "../src/shared/l2TunnelProtocol.ts";
 
-type L2TunnelVector = {
+type L2ValidVector = {
   name: string;
-  type: number;
+  msgType: number;
   flags: number;
-  payload_b64: string;
-  frame_b64: string;
-  code?: number;
-  message?: string;
+  payloadHex: string;
+  wireHex: string;
+  structured?: {
+    code: number;
+    message: string;
+  };
 };
 
-type L2TunnelVectorsFile = {
-  schema: number;
-  magic: number;
+type L2InvalidVector = {
+  name: string;
+  wireHex: string;
+  errorCode: L2TunnelDecodeError["code"];
+};
+
+type VectorsFile = {
   version: number;
-  flags: number;
-  vectors: L2TunnelVector[];
+  "aero-l2-tunnel-v1": {
+    valid: L2ValidVector[];
+    invalid: L2InvalidVector[];
+  };
 };
 
-function loadVectors(): L2TunnelVectorsFile {
-  const path = new URL("../../protocol-vectors/l2-tunnel-v1.json", import.meta.url);
-  return JSON.parse(readFileSync(path, "utf8")) as L2TunnelVectorsFile;
+function loadVectors(): VectorsFile {
+  const path = new URL("../../crates/conformance/test-vectors/aero-vectors-v1.json", import.meta.url);
+  return JSON.parse(readFileSync(path, "utf8")) as VectorsFile;
 }
 
-function b64ToBytes(b64: string): Uint8Array {
-  return Buffer.from(b64, "base64");
+function hexToBytes(hex: string): Uint8Array {
+  if (hex.length % 2 !== 0) throw new Error(`hex length must be even, got ${hex.length}`);
+  const out = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < out.length; i += 1) {
+    const byte = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+    if (!Number.isFinite(byte)) throw new Error(`invalid hex at byte ${i}`);
+    out[i] = byte;
+  }
+  return out;
 }
 
 const vectors = loadVectors();
 
-test("l2 tunnel matches golden protocol vectors", () => {
-  assert.equal(vectors.schema, 1);
-  assert.equal(vectors.magic, L2_TUNNEL_MAGIC);
-  assert.equal(vectors.version, L2_TUNNEL_VERSION);
-  assert.equal(vectors.flags, 0);
+test("l2 tunnel matches canonical conformance vectors", () => {
+  assert.equal(vectors.version, 1);
 
-  function getVector(type: number): L2TunnelVector {
-    const v = vectors.vectors.find((x) => x.type === type);
-    assert.ok(v, `missing l2 tunnel vector for type=0x${type.toString(16)}`);
-    return v;
+  for (const v of vectors["aero-l2-tunnel-v1"].valid) {
+    const payload = hexToBytes(v.payloadHex);
+    const wire = hexToBytes(v.wireHex);
+
+    let encoded: Uint8Array;
+    switch (v.msgType) {
+      case L2_TUNNEL_TYPE_FRAME:
+        encoded = encodeL2Frame(payload);
+        break;
+      case L2_TUNNEL_TYPE_PING:
+        encoded = encodePing(payload);
+        break;
+      case L2_TUNNEL_TYPE_PONG:
+        encoded = encodePong(payload);
+        break;
+      case L2_TUNNEL_TYPE_ERROR:
+        encoded = encodeError(payload);
+        break;
+      default:
+        throw new Error(`unsupported msgType in vectors: ${v.msgType}`);
+    }
+
+    assert.deepEqual(Buffer.from(encoded), Buffer.from(wire), `encode ${v.name}`);
+
+    const decoded = decodeL2Message(wire);
+    assert.equal(decoded.version, L2_TUNNEL_VERSION, `decode ${v.name}`);
+    assert.equal(decoded.type, v.msgType, `decode ${v.name}`);
+    assert.equal(decoded.flags, v.flags, `decode ${v.name}`);
+    assert.deepEqual(Buffer.from(decoded.payload), Buffer.from(payload), `decode ${v.name}`);
+
+    if (v.structured) {
+      const msg = Buffer.from(v.structured.message, "utf8");
+      const header = Buffer.from([
+        (v.structured.code >>> 8) & 0xff,
+        v.structured.code & 0xff,
+        (msg.length >>> 8) & 0xff,
+        msg.length & 0xff,
+      ]);
+      const expected = Buffer.concat([header, msg]);
+      assert.deepEqual(Buffer.from(payload), expected, `structured ERROR ${v.name}`);
+    }
   }
 
-  // FRAME (0x00)
-  {
-    const v = getVector(0x00);
-    const payload = b64ToBytes(v.payload_b64);
-    const frame = b64ToBytes(v.frame_b64);
-
-    const encoded = encodeL2Frame(payload);
-    assert.deepEqual(Buffer.from(encoded), Buffer.from(frame));
-
-    const decoded = decodeL2Message(frame);
-    assert.equal(decoded.version, vectors.version);
-    assert.equal(decoded.type, v.type);
-    assert.equal(decoded.flags, v.flags);
-    assert.deepEqual(Buffer.from(decoded.payload), Buffer.from(payload));
-
-    // Roundtrip: decode -> encode should preserve bytes exactly.
-    const reencoded = encodeL2Frame(decoded.payload);
-    assert.deepEqual(Buffer.from(reencoded), Buffer.from(frame));
-  }
-
-  // PING (0x01)
-  {
-    const v = getVector(0x01);
-    const payload = b64ToBytes(v.payload_b64);
-    const frame = b64ToBytes(v.frame_b64);
-
-    const encoded = encodePing(payload);
-    assert.deepEqual(Buffer.from(encoded), Buffer.from(frame));
-
-    const decoded = decodeL2Message(frame);
-    assert.equal(decoded.version, vectors.version);
-    assert.equal(decoded.type, v.type);
-    assert.equal(decoded.flags, v.flags);
-    assert.deepEqual(Buffer.from(decoded.payload), Buffer.from(payload));
-
-    // Roundtrip: decode -> encode should preserve bytes exactly.
-    const reencoded = encodePing(decoded.payload);
-    assert.deepEqual(Buffer.from(reencoded), Buffer.from(frame));
-  }
-
-  // PONG (0x02)
-  {
-    const v = getVector(0x02);
-    const payload = b64ToBytes(v.payload_b64);
-    const frame = b64ToBytes(v.frame_b64);
-
-    const encoded = encodePong(payload);
-    assert.deepEqual(Buffer.from(encoded), Buffer.from(frame));
-
-    const decoded = decodeL2Message(frame);
-    assert.equal(decoded.version, vectors.version);
-    assert.equal(decoded.type, v.type);
-    assert.equal(decoded.flags, v.flags);
-    assert.deepEqual(Buffer.from(decoded.payload), Buffer.from(payload));
-
-    // Roundtrip: decode -> encode should preserve bytes exactly.
-    const reencoded = encodePong(decoded.payload);
-    assert.deepEqual(Buffer.from(reencoded), Buffer.from(frame));
-  }
-
-  // ERROR (0x7F) - structured payload
-  {
-    const v = getVector(0x7f);
-    const payload = b64ToBytes(v.payload_b64);
-    const frame = b64ToBytes(v.frame_b64);
-
-    const decoded = decodeL2Message(frame);
-    assert.equal(decoded.version, vectors.version);
-    assert.equal(decoded.type, v.type);
-    assert.equal(decoded.flags, v.flags);
-    assert.deepEqual(Buffer.from(decoded.payload), Buffer.from(payload));
-
-    // Verify the structured encoding: code (u16 BE) | msg_len (u16 BE) | msg (UTF-8)
-    assert.equal(typeof v.code, "number");
-    assert.equal(typeof v.message, "string");
-    const msg = Buffer.from(v.message!, "utf8");
-    const header = Buffer.from([
-      (v.code! >>> 8) & 0xff,
-      v.code! & 0xff,
-      (msg.length >>> 8) & 0xff,
-      msg.length & 0xff,
-    ]);
-    const expected = Buffer.concat([header, msg]);
-    assert.deepEqual(Buffer.from(payload), expected);
+  for (const v of vectors["aero-l2-tunnel-v1"].invalid) {
+    const wire = hexToBytes(v.wireHex);
+    try {
+      decodeL2Message(wire);
+      throw new Error(`expected decode to throw (${v.name})`);
+    } catch (err) {
+      assert.ok(err instanceof L2TunnelDecodeError, `expected L2TunnelDecodeError (${v.name})`);
+      assert.equal(err.code, v.errorCode, `decode errorCode (${v.name})`);
+    }
   }
 });
