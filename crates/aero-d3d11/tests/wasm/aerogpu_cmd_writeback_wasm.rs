@@ -1,7 +1,7 @@
 #![cfg(target_arch = "wasm32")]
 
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
-use aero_gpu::{GuestMemory, VecGuestMemory};
+use aero_gpu::guest_memory::{GuestMemory, VecGuestMemory};
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode,
     AerogpuCmdStreamHeader as ProtocolCmdStreamHeader, AEROGPU_CMD_STREAM_MAGIC,
@@ -243,4 +243,3 @@ async fn aerogpu_cmd_writeback_dst_updates_guest_memory_on_wasm() {
     }
     assert_eq!(out_tex, expected);
 }
-

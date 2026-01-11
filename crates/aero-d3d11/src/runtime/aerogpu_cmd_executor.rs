@@ -893,7 +893,7 @@ impl AerogpuD3d11Executor {
         &mut self,
         stream_bytes: &[u8],
         allocs: Option<&[AerogpuAllocEntry]>,
-        guest_mem: &dyn aero_gpu::GuestMemory,
+        guest_mem: &dyn GuestMemory,
     ) -> Result<ExecuteReport> {
         self.encoder_has_commands = false;
         let iter = AerogpuCmdStreamIter::new(stream_bytes)
