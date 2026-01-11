@@ -25,6 +25,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from pathlib import PurePosixPath
 from typing import Any, Iterable, Optional
 
 
@@ -220,6 +221,34 @@ def _strip_iso9660_version_suffix(name: str) -> str:
     return name
 
 
+def _safe_out_path(out_root: Path, dest_rel_posix: str) -> Path:
+    """
+    Turn an ISO-relative path (using `/` separators) into a safe on-disk output path.
+
+    Reject paths containing `.` / `..` components to avoid accidental traversal if
+    a malformed ISO is provided.
+    """
+
+    rel = PurePosixPath(dest_rel_posix)
+    if rel.is_absolute():
+        raise SystemExit(f"refusing to extract absolute ISO path: {dest_rel_posix}")
+
+    parts = list(rel.parts)
+    if not parts:
+        raise SystemExit("refusing to extract empty ISO path")
+    if any(p in (".", "..") for p in parts):
+        raise SystemExit(f"refusing to extract unsafe ISO path: {dest_rel_posix}")
+
+    out_root_resolved = out_root.resolve()
+    dest = out_root_resolved.joinpath(*parts)
+    try:
+        dest.resolve().relative_to(out_root_resolved)
+    except ValueError as e:
+        raise SystemExit(f"refusing to extract path outside out-root: {dest_rel_posix}") from e
+
+    return dest
+
+
 def _select_extract_targets(tree: _IsoNode) -> tuple[list[_ExtractTarget], list[dict[str, Any]]]:
     """
     Returns (targets, missing_optional).
@@ -412,7 +441,7 @@ def _extract_with_pycdlib(
             files.append((p, dest_rel))
 
         for p, dest_rel in files:
-            dest = out_root / dest_rel
+            dest = _safe_out_path(out_root, dest_rel)
             dest.parent.mkdir(parents=True, exist_ok=True)
             with dest.open("wb") as fp:
                 if path_mode == "joliet":
