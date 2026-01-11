@@ -6193,7 +6193,11 @@ void AEROGPU_APIENTRY CopySubresourceRegion11(D3D11DDI_HDEVICECONTEXT hCtx,
     cmd->dst_offset_bytes = dst_off;
     cmd->src_offset_bytes = src_left;
     cmd->size_bytes = bytes;
-    cmd->flags = AEROGPU_COPY_FLAG_NONE;
+    uint32_t copy_flags = AEROGPU_COPY_FLAG_NONE;
+    if (dst->usage == kD3D11UsageStaging && (dst->cpu_access_flags & kD3D11CpuAccessRead) != 0 && dst->backing_alloc_id != 0) {
+      copy_flags |= AEROGPU_COPY_FLAG_WRITEBACK_DST;
+    }
+    cmd->flags = copy_flags;
     cmd->reserved0 = 0;
     TrackStagingWriteLocked(dev, dst);
     return;
@@ -6265,7 +6269,11 @@ void AEROGPU_APIENTRY CopySubresourceRegion11(D3D11DDI_HDEVICECONTEXT hCtx,
     cmd->src_y = src_top;
     cmd->width = copy_width;
     cmd->height = copy_height;
-    cmd->flags = AEROGPU_COPY_FLAG_NONE;
+    uint32_t copy_flags = AEROGPU_COPY_FLAG_NONE;
+    if (dst->usage == kD3D11UsageStaging && (dst->cpu_access_flags & kD3D11CpuAccessRead) != 0 && dst->backing_alloc_id != 0) {
+      copy_flags |= AEROGPU_COPY_FLAG_WRITEBACK_DST;
+    }
+    cmd->flags = copy_flags;
     cmd->reserved0 = 0;
     TrackStagingWriteLocked(dev, dst);
     return;

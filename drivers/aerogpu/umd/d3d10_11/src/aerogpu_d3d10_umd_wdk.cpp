@@ -719,6 +719,8 @@ struct AeroGpuResource {
 
   uint32_t bind_flags = 0;
   uint32_t misc_flags = 0;
+  uint32_t usage = 0;
+  uint32_t cpu_access_flags = 0;
 
   // WDDM identity (kernel-mode handles / allocation identities). DXGI swapchains
   // on Win7 rotate backbuffers by calling pfnRotateResourceIdentities; when
@@ -1548,6 +1550,15 @@ HRESULT APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
   res->handle = allocate_global_handle(dev->adapter);
   res->bind_flags = pDesc->BindFlags;
   res->misc_flags = pDesc->MiscFlags;
+  if constexpr (has_Usage<D3D10DDIARG_CREATERESOURCE>::value) {
+    res->usage = static_cast<uint32_t>(pDesc->Usage);
+  }
+  if constexpr (has_CPUAccessFlags<D3D10DDIARG_CREATERESOURCE>::value) {
+    res->cpu_access_flags |= static_cast<uint32_t>(pDesc->CPUAccessFlags);
+  }
+  if constexpr (has_CpuAccessFlags<D3D10DDIARG_CREATERESOURCE>::value) {
+    res->cpu_access_flags |= static_cast<uint32_t>(pDesc->CpuAccessFlags);
+  }
 
   bool is_primary = false;
   __if_exists(D3D10DDIARG_CREATERESOURCE::pPrimaryDesc) {
@@ -3027,7 +3038,13 @@ void APIENTRY CopySubresourceRegion(D3D10DDI_HDEVICE hDevice,
     cmd->dst_offset_bytes = dst_off;
     cmd->src_offset_bytes = src_left;
     cmd->size_bytes = bytes;
-    cmd->flags = AEROGPU_COPY_FLAG_NONE;
+    uint32_t copy_flags = AEROGPU_COPY_FLAG_NONE;
+    if (dst->backing_alloc_id != 0 &&
+        dst->usage == static_cast<uint32_t>(D3D10_USAGE_STAGING) &&
+        (dst->cpu_access_flags & static_cast<uint32_t>(D3D10_CPU_ACCESS_READ)) != 0) {
+      copy_flags |= AEROGPU_COPY_FLAG_WRITEBACK_DST;
+    }
+    cmd->flags = copy_flags;
     cmd->reserved0 = 0;
     return;
   }
@@ -3140,7 +3157,13 @@ void APIENTRY CopySubresourceRegion(D3D10DDI_HDEVICE hDevice,
     cmd->src_y = src_top;
     cmd->width = copy_width;
     cmd->height = copy_height;
-    cmd->flags = AEROGPU_COPY_FLAG_NONE;
+    uint32_t copy_flags = AEROGPU_COPY_FLAG_NONE;
+    if (dst->backing_alloc_id != 0 &&
+        dst->usage == static_cast<uint32_t>(D3D10_USAGE_STAGING) &&
+        (dst->cpu_access_flags & static_cast<uint32_t>(D3D10_CPU_ACCESS_READ)) != 0) {
+      copy_flags |= AEROGPU_COPY_FLAG_WRITEBACK_DST;
+    }
+    cmd->flags = copy_flags;
     cmd->reserved0 = 0;
     return;
   }

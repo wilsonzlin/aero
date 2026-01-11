@@ -3975,6 +3975,11 @@ HRESULT CopyResourceImpl(AeroGpuImmediateContext* ctx, AeroGpuResource* dst, Aer
     return E_INVALIDARG;
   }
 
+  const uint32_t copy_flags =
+      (dst->usage == kD3D11UsageStaging && (dst->cpu_access_flags & kD3D11CpuAccessRead) != 0 && dst->backing_alloc_id != 0)
+          ? AEROGPU_COPY_FLAG_WRITEBACK_DST
+          : AEROGPU_COPY_FLAG_NONE;
+
   if (dst->kind == ResourceKind::Buffer) {
     auto* cmd = ctx->cmd.append_fixed<aerogpu_cmd_copy_buffer>(AEROGPU_CMD_COPY_BUFFER);
     if (!cmd) {
@@ -3985,7 +3990,7 @@ HRESULT CopyResourceImpl(AeroGpuImmediateContext* ctx, AeroGpuResource* dst, Aer
     cmd->dst_offset_bytes = 0;
     cmd->src_offset_bytes = 0;
     cmd->size_bytes = std::min(dst->size_bytes, src->size_bytes);
-    cmd->flags = AEROGPU_COPY_FLAG_NONE;
+    cmd->flags = copy_flags;
     cmd->reserved0 = 0;
 
     const size_t copy_bytes = static_cast<size_t>(cmd->size_bytes);
@@ -4019,7 +4024,7 @@ HRESULT CopyResourceImpl(AeroGpuImmediateContext* ctx, AeroGpuResource* dst, Aer
     cmd->src_y = 0;
     cmd->width = std::min(dst->width, src->width);
     cmd->height = std::min(dst->height, src->height);
-    cmd->flags = AEROGPU_COPY_FLAG_NONE;
+    cmd->flags = copy_flags;
     cmd->reserved0 = 0;
 
     const uint32_t aerogpu_format = dxgi_format_to_aerogpu(src->dxgi_format);
@@ -8433,7 +8438,10 @@ void AEROGPU_APIENTRY CopyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE 
     cmd->dst_offset_bytes = 0;
     cmd->src_offset_bytes = 0;
     cmd->size_bytes = std::min(dst->size_bytes, src->size_bytes);
-    cmd->flags = AEROGPU_COPY_FLAG_NONE;
+    cmd->flags =
+        (dst->usage == kD3D11UsageStaging && (dst->cpu_access_flags & kD3D11CpuAccessRead) != 0 && dst->backing_alloc_id != 0)
+            ? AEROGPU_COPY_FLAG_WRITEBACK_DST
+            : AEROGPU_COPY_FLAG_NONE;
     cmd->reserved0 = 0;
 
     const size_t copy_bytes = static_cast<size_t>(cmd->size_bytes);
@@ -8465,7 +8473,10 @@ void AEROGPU_APIENTRY CopyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE 
     cmd->src_y = 0;
     cmd->width = std::min(dst->width, src->width);
     cmd->height = std::min(dst->height, src->height);
-    cmd->flags = AEROGPU_COPY_FLAG_NONE;
+    cmd->flags =
+        (dst->usage == kD3D11UsageStaging && (dst->cpu_access_flags & kD3D11CpuAccessRead) != 0 && dst->backing_alloc_id != 0)
+            ? AEROGPU_COPY_FLAG_WRITEBACK_DST
+            : AEROGPU_COPY_FLAG_NONE;
     cmd->reserved0 = 0;
 
     const uint32_t aerogpu_format = dxgi_format_to_aerogpu(src->dxgi_format);
@@ -8539,7 +8550,10 @@ HRESULT AEROGPU_APIENTRY CopySubresourceRegion(D3D10DDI_HDEVICE hDevice,
     cmd->dst_offset_bytes = 0;
     cmd->src_offset_bytes = 0;
     cmd->size_bytes = std::min(dst->size_bytes, src->size_bytes);
-    cmd->flags = AEROGPU_COPY_FLAG_NONE;
+    cmd->flags =
+        (dst->usage == kD3D11UsageStaging && (dst->cpu_access_flags & kD3D11CpuAccessRead) != 0 && dst->backing_alloc_id != 0)
+            ? AEROGPU_COPY_FLAG_WRITEBACK_DST
+            : AEROGPU_COPY_FLAG_NONE;
     cmd->reserved0 = 0;
 
     const size_t copy_bytes = static_cast<size_t>(cmd->size_bytes);
@@ -8570,7 +8584,10 @@ HRESULT AEROGPU_APIENTRY CopySubresourceRegion(D3D10DDI_HDEVICE hDevice,
     cmd->src_y = 0;
     cmd->width = std::min(dst->width, src->width);
     cmd->height = std::min(dst->height, src->height);
-    cmd->flags = AEROGPU_COPY_FLAG_NONE;
+    cmd->flags =
+        (dst->usage == kD3D11UsageStaging && (dst->cpu_access_flags & kD3D11CpuAccessRead) != 0 && dst->backing_alloc_id != 0)
+            ? AEROGPU_COPY_FLAG_WRITEBACK_DST
+            : AEROGPU_COPY_FLAG_NONE;
     cmd->reserved0 = 0;
 
     const uint32_t aerogpu_format = dxgi_format_to_aerogpu(src->dxgi_format);
