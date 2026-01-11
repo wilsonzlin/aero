@@ -231,6 +231,10 @@ struct Device {
   // for callbacks that require a `*HRTDEVICE` (e.g. `pfnSetErrorCb`) without
   // including WDK-specific handle types in this shared header.
   void* runtime_device = nullptr;
+  // Driver-private pointer backing the immediate context handle. Stored so we
+  // can adapt DDIs that sometimes move between device vs context tables across
+  // D3D11 DDI interface versions (e.g. Present/RotateResourceIdentities).
+  void* immediate_context = nullptr;
   std::mutex mutex;
 
   aerogpu::CmdWriter cmd;

@@ -179,7 +179,7 @@ static void SetError(Device* dev, HRESULT hr) {
     return;
   }
   auto* callbacks = reinterpret_cast<const D3D11DDI_DEVICECALLBACKS*>(dev->runtime_callbacks);
-  if (callbacks && callbacks->pfnSetErrorCb) {
+  if (callbacks && callbacks->pfnSetErrorCb && dev->runtime_device) {
     callbacks->pfnSetErrorCb(MakeRtDeviceHandle(dev), hr);
   }
 }
@@ -240,6 +240,71 @@ struct DdiStub<Ret(AEROGPU_APIENTRY*)(Args...)> {
     }
   }
 };
+
+// Some DDIs (notably Present/RotateResourceIdentities) historically move between
+// the device and context tables across D3D11 DDI interface versions. Bind them
+// opportunistically based on whether the field exists and the pointer type
+// matches.
+template <typename T, typename = void>
+struct HasPresent : std::false_type {};
+
+template <typename T>
+struct HasPresent<T, std::void_t<decltype(std::declval<T>().pfnPresent)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct HasRotateResourceIdentities : std::false_type {};
+
+template <typename T>
+struct HasRotateResourceIdentities<T, std::void_t<decltype(std::declval<T>().pfnRotateResourceIdentities)>> : std::true_type {};
+
+HRESULT AEROGPU_APIENTRY Present11(D3D11DDI_HDEVICECONTEXT hCtx, const D3D10DDIARG_PRESENT* pPresent);
+void AEROGPU_APIENTRY RotateResourceIdentities11(D3D11DDI_HDEVICECONTEXT hCtx, D3D11DDI_HRESOURCE* pResources, UINT numResources);
+
+HRESULT AEROGPU_APIENTRY Present11Device(D3D11DDI_HDEVICE hDevice, const D3D10DDIARG_PRESENT* pPresent);
+void AEROGPU_APIENTRY RotateResourceIdentities11Device(D3D11DDI_HDEVICE hDevice, D3D11DDI_HRESOURCE* pResources, UINT numResources);
+
+template <typename TFuncs>
+static void StubPresentAndRotate(TFuncs* funcs) {
+  if (!funcs) {
+    return;
+  }
+
+  if constexpr (HasPresent<TFuncs>::value) {
+    funcs->pfnPresent = &DdiStub<decltype(funcs->pfnPresent)>::Call;
+  }
+  if constexpr (HasRotateResourceIdentities<TFuncs>::value) {
+    funcs->pfnRotateResourceIdentities = &DdiStub<decltype(funcs->pfnRotateResourceIdentities)>::Call;
+  }
+}
+
+template <typename TFuncs>
+static void BindPresentAndRotate(TFuncs* funcs) {
+  if (!funcs) {
+    return;
+  }
+
+  if constexpr (HasPresent<TFuncs>::value) {
+    using Fn = decltype(funcs->pfnPresent);
+    if constexpr (std::is_convertible_v<decltype(&Present11), Fn>) {
+      funcs->pfnPresent = &Present11;
+    } else if constexpr (std::is_convertible_v<decltype(&Present11Device), Fn>) {
+      funcs->pfnPresent = &Present11Device;
+    } else {
+      funcs->pfnPresent = &DdiStub<Fn>::Call;
+    }
+  }
+
+  if constexpr (HasRotateResourceIdentities<TFuncs>::value) {
+    using Fn = decltype(funcs->pfnRotateResourceIdentities);
+    if constexpr (std::is_convertible_v<decltype(&RotateResourceIdentities11), Fn>) {
+      funcs->pfnRotateResourceIdentities = &RotateResourceIdentities11;
+    } else if constexpr (std::is_convertible_v<decltype(&RotateResourceIdentities11Device), Fn>) {
+      funcs->pfnRotateResourceIdentities = &RotateResourceIdentities11Device;
+    } else {
+      funcs->pfnRotateResourceIdentities = &DdiStub<Fn>::Call;
+    }
+  }
+}
 
 static D3D11DDI_DEVICEFUNCS MakeStubDeviceFuncs11() {
   D3D11DDI_DEVICEFUNCS funcs = {};
@@ -345,6 +410,7 @@ static D3D11DDI_DEVICEFUNCS MakeStubDeviceFuncs11() {
   STUB_FIELD(pfnDestroyClassInstance);
 #undef STUB_FIELD
 
+  StubPresentAndRotate(&funcs);
   return funcs;
 }
 
@@ -433,11 +499,9 @@ static D3D11DDI_DEVICECONTEXTFUNCS MakeStubContextFuncs11() {
   STUB_FIELD(pfnMap);
   STUB_FIELD(pfnUnmap);
   STUB_FIELD(pfnFlush);
-
-  STUB_FIELD(pfnPresent);
-  STUB_FIELD(pfnRotateResourceIdentities);
 #undef STUB_FIELD
 
+  StubPresentAndRotate(&funcs);
   return funcs;
 }
 
@@ -1806,6 +1870,34 @@ void AEROGPU_APIENTRY RotateResourceIdentities11(D3D11DDI_HDEVICECONTEXT hCtx, D
   }
 }
 
+HRESULT AEROGPU_APIENTRY Present11Device(D3D11DDI_HDEVICE hDevice, const D3D10DDIARG_PRESENT* pPresent) {
+  if (!hDevice.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+  auto* dev = FromHandle<D3D11DDI_HDEVICE, Device>(hDevice);
+  if (!dev || !dev->immediate_context) {
+    return E_FAIL;
+  }
+  D3D11DDI_HDEVICECONTEXT hCtx = {};
+  hCtx.pDrvPrivate = dev->immediate_context;
+  return Present11(hCtx, pPresent);
+}
+
+void AEROGPU_APIENTRY RotateResourceIdentities11Device(D3D11DDI_HDEVICE hDevice,
+                                                      D3D11DDI_HRESOURCE* pResources,
+                                                      UINT numResources) {
+  if (!hDevice.pDrvPrivate) {
+    return;
+  }
+  auto* dev = FromHandle<D3D11DDI_HDEVICE, Device>(hDevice);
+  if (!dev || !dev->immediate_context) {
+    return;
+  }
+  D3D11DDI_HDEVICECONTEXT hCtx = {};
+  hCtx.pDrvPrivate = dev->immediate_context;
+  RotateResourceIdentities11(hCtx, pResources, numResources);
+}
+
 // -------------------------------------------------------------------------------------------------
 // Device creation
 // -------------------------------------------------------------------------------------------------
@@ -1840,6 +1932,7 @@ HRESULT AEROGPU_APIENTRY CreateDevice11(D3D10DDI_HADAPTER hAdapter, D3D11DDIARG_
 
   auto* ctx = new (ctx_mem) AeroGpuDeviceContext();
   ctx->dev = dev;
+  dev->immediate_context = ctx;
 
   // Win7 runtimes are known to call a surprisingly large chunk of the D3D11 DDI
   // surface (even for simple triangle samples). Start from fully-stubbed
@@ -1898,6 +1991,8 @@ HRESULT AEROGPU_APIENTRY CreateDevice11(D3D10DDI_HADAPTER hAdapter, D3D11DDIARG_
   pCreateDevice->pDeviceFuncs->pfnCreateDepthStencilState = &CreateDepthStencilState11;
   pCreateDevice->pDeviceFuncs->pfnDestroyDepthStencilState = &DestroyDepthStencilState11;
 
+  BindPresentAndRotate(pCreateDevice->pDeviceFuncs);
+
   // Immediate context funcs.
   ctx_funcs->pfnIaSetInputLayout = &IaSetInputLayout11;
   ctx_funcs->pfnIaSetVertexBuffers = &IaSetVertexBuffers11;
@@ -1944,8 +2039,7 @@ HRESULT AEROGPU_APIENTRY CreateDevice11(D3D10DDI_HADAPTER hAdapter, D3D11DDIARG_
   ctx_funcs->pfnUpdateSubresourceUP = &UpdateSubresourceUP11;
 
   ctx_funcs->pfnFlush = &Flush11;
-  ctx_funcs->pfnPresent = &Present11;
-  ctx_funcs->pfnRotateResourceIdentities = &RotateResourceIdentities11;
+  BindPresentAndRotate(ctx_funcs);
 
   return S_OK;
 }
