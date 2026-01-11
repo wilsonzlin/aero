@@ -2221,6 +2221,16 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
       runtimeOptions = null;
       runtimeReadySent = false;
       resetAerogpuCpuExecutorState(aerogpuState);
+      aerogpuWasmD3d9InitPromise = null;
+      aerogpuWasmD3d9Backend = null;
+      aerogpuWasmD3d9InternalCanvas = null;
+      if (aerogpuWasm) {
+        try {
+          aerogpuWasm.destroy_gpu();
+        } catch {
+          // Ignore.
+        }
+      }
       aerogpuPendingSubmitComplete.length = 0;
       ctx.close();
       break;
