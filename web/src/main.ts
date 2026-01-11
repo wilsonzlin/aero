@@ -1675,6 +1675,9 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
   const jitDemoLine = el("div", { class: "mono", text: "jit: (idle)" });
   const jitDemoError = el("pre", { text: "" });
 
+  const forceJitCspBlock = el("input", { type: "checkbox" }) as HTMLInputElement;
+  const forceJitCspLabel = el("label", { class: "mono", text: "force jit_dynamic_wasm=false" });
+
   const JIT_DEMO_WASM_BYTES = new Uint8Array([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]);
   let nextJitDemoRequestId = 1;
   let jitDemoInFlight = false;
@@ -1773,7 +1776,8 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
       error.textContent = "";
       const config = configManager.getState().effective;
       try {
-        workerCoordinator.start(config);
+        const platformFeatures = forceJitCspBlock.checked ? { ...report, jit_dynamic_wasm: false } : report;
+        workerCoordinator.start(config, { platformFeatures });
         const gpuWorker = workerCoordinator.getWorker("gpu");
         const frameStateSab = workerCoordinator.getFrameStateSab();
         if (gpuWorker && frameStateSab) {
@@ -1857,6 +1861,7 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
     startButton.disabled = !support.ok || !report.wasmThreads || !config.enableWorkers || anyActive;
     stopButton.disabled = !anyActive;
     jitDemoButton.disabled = statuses.jit.state !== "ready" || jitDemoInFlight;
+    forceJitCspBlock.disabled = anyActive;
 
     statusList.replaceChildren(
       ...Object.entries(statuses).map(([role, status]) => {
@@ -1919,6 +1924,8 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
       startButton,
       stopButton,
       jitDemoButton,
+      forceJitCspBlock,
+      forceJitCspLabel,
     ),
     el("div", { class: "row" }, vgaCanvas),
     vgaInfoLine,

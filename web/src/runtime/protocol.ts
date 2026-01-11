@@ -1,4 +1,5 @@
 import type { AeroConfig } from "../config/aero_config";
+import type { PlatformFeatureReport } from "../platform/features";
 import type { WasmVariant } from "./wasm_context";
 import type { WorkerRole } from "./shared_layout";
 
@@ -101,6 +102,13 @@ export type WorkerInitMessage = {
   guestMemory: WebAssembly.Memory;
   vgaFramebuffer: SharedArrayBuffer;
   /**
+   * Optional platform feature report captured by the main thread.
+   *
+   * Workers may use this to avoid redundant capability probing and to gate
+   * features that are sensitive to CSP (e.g. dynamic WASM compilation).
+   */
+  platformFeatures?: PlatformFeatureReport;
+  /**
    * Optional SharedArrayBuffer used for main-thread ↔ GPU-worker frame pacing state.
    *
    * Layout is defined in `src/shared/frameProtocol.ts`.
@@ -118,6 +126,13 @@ export type ConfigUpdateMessage = {
   kind: "config.update";
   version: number;
   config: AeroConfig;
+  /**
+   * Optional platform feature report captured by the main thread.
+   *
+   * This is included so workers can react to feature changes without needing
+   * to be restarted (rare, but useful for dev/testing overrides).
+   */
+  platformFeatures?: PlatformFeatureReport;
 };
 
 export type ConfigAckMessage = {

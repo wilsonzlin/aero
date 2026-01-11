@@ -1,7 +1,6 @@
 /// <reference lib="webworker" />
 
 import type { AeroConfig } from "../config/aero_config";
-import { platformFeatures, type PlatformFeatureReport } from "../platform/features";
 import { perf } from "../perf/perf";
 import { installWorkerPerfHandlers } from "../perf/worker";
 import { RingBuffer } from "../runtime/ring_buffer";
@@ -28,7 +27,31 @@ let commandRing!: RingBuffer;
 let currentConfig: AeroConfig | null = null;
 let currentConfigVersion = 0;
 
-let currentPlatformFeatures: PlatformFeatureReport = platformFeatures;
+// Empty (but valid) WASM module: just the header.
+const WASM_EMPTY_MODULE_BYTES = new Uint8Array([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]);
+
+function detectDynamicWasmCompilation(): boolean {
+  if (typeof WebAssembly === "undefined" || typeof WebAssembly.Module !== "function") {
+    return false;
+  }
+  try {
+    new WebAssembly.Module(WASM_EMPTY_MODULE_BYTES);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+type JitPlatformFeatures = {
+  /**
+   * Whether dynamic WebAssembly compilation is allowed in this worker context.
+   *
+   * Primarily gated by CSP (`script-src 'wasm-unsafe-eval'`).
+   */
+  jit_dynamic_wasm: boolean;
+};
+
+let currentPlatformFeatures: JitPlatformFeatures = { jit_dynamic_wasm: detectDynamicWasmCompilation() };
 let jitEnabled = false;
 
 const JIT_CACHE_MAX_ENTRIES = 64;
@@ -44,11 +67,7 @@ function maybeUpdatePlatformFeatures(msg: unknown): void {
   if (!isRecord(provided)) return;
   if (typeof (provided as { jit_dynamic_wasm?: unknown }).jit_dynamic_wasm !== "boolean") return;
 
-  // Merge into our last-known report; we only require the one field today.
-  currentPlatformFeatures = {
-    ...currentPlatformFeatures,
-    ...(provided as Partial<PlatformFeatureReport>),
-  };
+  currentPlatformFeatures.jit_dynamic_wasm = (provided as { jit_dynamic_wasm: boolean }).jit_dynamic_wasm;
 }
 
 function recomputeJitEnabled(): void {

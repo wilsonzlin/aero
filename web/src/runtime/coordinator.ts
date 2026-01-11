@@ -1,6 +1,7 @@
 import type { AeroConfig } from "../config/aero_config";
 import { RingBuffer } from "./ring_buffer";
 import { perf } from "../perf/perf";
+import type { PlatformFeatureReport } from "../platform/features";
 import {
   WORKER_ROLES,
   type WorkerRole,
@@ -49,6 +50,7 @@ export class WorkerCoordinator {
   private workers: Partial<Record<WorkerRole, WorkerInfo>> = {};
   private runId = 0;
   private frameStateSab?: SharedArrayBuffer;
+  private platformFeatures: PlatformFeatureReport | null = null;
 
   private lastHeartbeatFromRing = 0;
   private wasmStatus: Partial<Record<WorkerRole, WorkerWasmStatus>> = {};
@@ -65,10 +67,13 @@ export class WorkerCoordinator {
     return checkSharedMemorySupport();
   }
 
-  start(config: AeroConfig): void {
+  start(config: AeroConfig, opts?: { platformFeatures?: PlatformFeatureReport }): void {
     if (this.shared) return;
 
     this.activeConfig = config;
+    if (opts?.platformFeatures) {
+      this.platformFeatures = opts.platformFeatures;
+    }
     if (!config.enableWorkers) {
       throw new Error("Workers are disabled by configuration.");
     }
@@ -146,6 +151,7 @@ export class WorkerCoordinator {
         guestMemory: segments.guestMemory,
         vgaFramebuffer: segments.vgaFramebuffer,
         frameStateSab: this.frameStateSab,
+        platformFeatures: this.platformFeatures ?? undefined,
       };
       worker.postMessage(initMessage);
     }
@@ -307,7 +313,7 @@ export class WorkerCoordinator {
     for (const role of WORKER_ROLES) {
       const info = this.workers[role];
       if (!info) continue;
-      const msg: ConfigUpdateMessage = { kind: "config.update", version, config };
+      const msg: ConfigUpdateMessage = { kind: "config.update", version, config, platformFeatures: this.platformFeatures ?? undefined };
       info.worker.postMessage(msg);
     }
   }
