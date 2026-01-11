@@ -2461,7 +2461,7 @@ HRESULT UpdateSubresourceUPImpl(AeroGpuImmediateContext* ctx,
   if (!ctx || !ctx->device || !res || !pSysMem) {
     return E_INVALIDARG;
   }
-  if (dst_subresource != 0 || pDstBox) {
+  if (dst_subresource != 0) {
     return E_NOTIMPL;
   }
 
@@ -2469,39 +2469,158 @@ HRESULT UpdateSubresourceUPImpl(AeroGpuImmediateContext* ctx,
     return E_FAIL;
   }
 
-  if (res->kind == ResourceKind::Buffer) {
-    if (res->storage.size() != static_cast<size_t>(res->size_bytes)) {
-      return E_FAIL;
+  struct Box {
+    uint32_t left;
+    uint32_t top;
+    uint32_t front;
+    uint32_t right;
+    uint32_t bottom;
+    uint32_t back;
+  };
+
+  if (!pDstBox) {
+    if (res->kind == ResourceKind::Buffer) {
+      HRESULT hr = ensure_resource_storage(res, res->size_bytes);
+      if (FAILED(hr)) {
+        return hr;
+      }
+      if (res->storage.size() < static_cast<size_t>(res->size_bytes)) {
+        return E_FAIL;
+      }
+      std::memcpy(res->storage.data(), pSysMem, static_cast<size_t>(res->size_bytes));
+    } else if (res->kind == ResourceKind::Texture2D) {
+      const uint64_t total = resource_total_bytes(res);
+      if (!total) {
+        return E_FAIL;
+      }
+      HRESULT hr = ensure_resource_storage(res, total);
+      if (FAILED(hr)) {
+        return hr;
+      }
+
+      const size_t src_pitch = SysMemPitch ? static_cast<size_t>(SysMemPitch) : static_cast<size_t>(res->row_pitch_bytes);
+      const uint8_t* src = static_cast<const uint8_t*>(pSysMem);
+      for (uint32_t y = 0; y < res->height; y++) {
+        std::memcpy(res->storage.data() + static_cast<size_t>(y) * res->row_pitch_bytes,
+                    src + static_cast<size_t>(y) * src_pitch,
+                    res->row_pitch_bytes);
+      }
+    } else {
+      return E_NOTIMPL;
     }
-    std::memcpy(res->storage.data(), pSysMem, static_cast<size_t>(res->size_bytes));
-  } else if (res->kind == ResourceKind::Texture2D) {
-    if (res->storage.empty()) {
-      return E_FAIL;
-    }
-    const size_t src_pitch = SysMemPitch ? static_cast<size_t>(SysMemPitch) : static_cast<size_t>(res->row_pitch_bytes);
-    const uint8_t* src = static_cast<const uint8_t*>(pSysMem);
-    for (uint32_t y = 0; y < res->height; y++) {
-      std::memcpy(res->storage.data() + static_cast<size_t>(y) * res->row_pitch_bytes,
-                  src + static_cast<size_t>(y) * src_pitch,
-                  res->row_pitch_bytes);
-    }
-  } else {
-    return E_NOTIMPL;
+
+    auto* upload = ctx->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
+        AEROGPU_CMD_UPLOAD_RESOURCE, res->storage.data(), res->storage.size());
+    upload->resource_handle = res->handle;
+    upload->reserved0 = 0;
+    upload->offset_bytes = 0;
+    upload->size_bytes = res->storage.size();
+
+    auto* dirty = ctx->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+    dirty->resource_handle = res->handle;
+    dirty->reserved0 = 0;
+    dirty->offset_bytes = 0;
+    dirty->size_bytes = res->storage.size();
+    return S_OK;
   }
 
-  auto* upload = ctx->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
-      AEROGPU_CMD_UPLOAD_RESOURCE, res->storage.data(), res->storage.size());
-  upload->resource_handle = res->handle;
-  upload->reserved0 = 0;
-  upload->offset_bytes = 0;
-  upload->size_bytes = res->storage.size();
+  const auto* box = reinterpret_cast<const Box*>(pDstBox);
+  if (!box) {
+    return E_INVALIDARG;
+  }
 
-  auto* dirty = ctx->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
-  dirty->resource_handle = res->handle;
-  dirty->reserved0 = 0;
-  dirty->offset_bytes = 0;
-  dirty->size_bytes = res->storage.size();
-  return S_OK;
+  if (res->kind == ResourceKind::Buffer) {
+    if (box->top != 0 || box->bottom != 1 || box->front != 0 || box->back != 1) {
+      return E_INVALIDARG;
+    }
+    if (box->left >= box->right) {
+      return E_INVALIDARG;
+    }
+    const uint64_t offset = box->left;
+    const uint64_t size = static_cast<uint64_t>(box->right) - static_cast<uint64_t>(box->left);
+    if (offset + size > res->size_bytes) {
+      return E_INVALIDARG;
+    }
+
+    HRESULT hr = ensure_resource_storage(res, res->size_bytes);
+    if (FAILED(hr)) {
+      return hr;
+    }
+    if (res->storage.size() < static_cast<size_t>(res->size_bytes)) {
+      return E_FAIL;
+    }
+    std::memcpy(res->storage.data() + static_cast<size_t>(offset), pSysMem, static_cast<size_t>(size));
+
+    auto* upload = ctx->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
+        AEROGPU_CMD_UPLOAD_RESOURCE, pSysMem, static_cast<size_t>(size));
+    upload->resource_handle = res->handle;
+    upload->reserved0 = 0;
+    upload->offset_bytes = offset;
+    upload->size_bytes = size;
+
+    auto* dirty = ctx->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+    dirty->resource_handle = res->handle;
+    dirty->reserved0 = 0;
+    dirty->offset_bytes = offset;
+    dirty->size_bytes = size;
+    return S_OK;
+  }
+
+  if (res->kind == ResourceKind::Texture2D) {
+    if (box->front != 0 || box->back != 1) {
+      return E_INVALIDARG;
+    }
+    if (box->left >= box->right || box->top >= box->bottom) {
+      return E_INVALIDARG;
+    }
+    if (box->right > res->width || box->bottom > res->height) {
+      return E_INVALIDARG;
+    }
+
+    const uint32_t aerogpu_format = dxgi_format_to_aerogpu(res->dxgi_format);
+    const uint32_t bpp = bytes_per_pixel_aerogpu(aerogpu_format);
+    const size_t row_bytes = static_cast<size_t>(box->right - box->left) * static_cast<size_t>(bpp);
+    const size_t src_pitch = SysMemPitch ? static_cast<size_t>(SysMemPitch) : row_bytes;
+    if (row_bytes == 0 || row_bytes > src_pitch) {
+      return E_INVALIDARG;
+    }
+    if (row_bytes > res->row_pitch_bytes) {
+      return E_INVALIDARG;
+    }
+
+    const uint64_t total = resource_total_bytes(res);
+    if (!total) {
+      return E_FAIL;
+    }
+    HRESULT hr = ensure_resource_storage(res, total);
+    if (FAILED(hr)) {
+      return hr;
+    }
+
+    const uint8_t* src = static_cast<const uint8_t*>(pSysMem);
+    const size_t dst_pitch = static_cast<size_t>(res->row_pitch_bytes);
+    const size_t dst_x_bytes = static_cast<size_t>(box->left) * static_cast<size_t>(bpp);
+    for (uint32_t y = 0; y < (box->bottom - box->top); ++y) {
+      const size_t dst_offset = (static_cast<size_t>(box->top) + y) * dst_pitch + dst_x_bytes;
+      std::memcpy(res->storage.data() + dst_offset, src + y * src_pitch, row_bytes);
+
+      auto* upload = ctx->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
+          AEROGPU_CMD_UPLOAD_RESOURCE, src + y * src_pitch, row_bytes);
+      upload->resource_handle = res->handle;
+      upload->reserved0 = 0;
+      upload->offset_bytes = dst_offset;
+      upload->size_bytes = row_bytes;
+
+      auto* dirty = ctx->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+      dirty->resource_handle = res->handle;
+      dirty->reserved0 = 0;
+      dirty->offset_bytes = dst_offset;
+      dirty->size_bytes = row_bytes;
+    }
+    return S_OK;
+  }
+
+  return E_NOTIMPL;
 }
 
 HRESULT CopyResourceImpl(AeroGpuImmediateContext* ctx, AeroGpuResource* dst, AeroGpuResource* src) {
@@ -4592,7 +4711,7 @@ void AEROGPU_APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice,
     return;
   }
 
-  if (dst_subresource != 0 || pDstBox) {
+  if (dst_subresource != 0) {
     return;
   }
 
@@ -4602,38 +4721,134 @@ void AEROGPU_APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice,
     return;
   }
 
-  if (res->kind == ResourceKind::Buffer) {
-    if (res->storage.size() != static_cast<size_t>(res->size_bytes)) {
+  if (!pDstBox) {
+    if (res->kind == ResourceKind::Buffer) {
+      HRESULT hr = ensure_resource_storage(res, res->size_bytes);
+      if (FAILED(hr) || res->storage.size() < static_cast<size_t>(res->size_bytes)) {
+        return;
+      }
+      std::memcpy(res->storage.data(), pSysMem, static_cast<size_t>(res->size_bytes));
+    } else if (res->kind == ResourceKind::Texture2D) {
+      const uint64_t total = resource_total_bytes(res);
+      if (!total) {
+        return;
+      }
+      HRESULT hr = ensure_resource_storage(res, total);
+      if (FAILED(hr) || res->storage.size() < static_cast<size_t>(total)) {
+        return;
+      }
+
+      const size_t src_pitch = SysMemPitch ? static_cast<size_t>(SysMemPitch) : static_cast<size_t>(res->row_pitch_bytes);
+      const uint8_t* src = static_cast<const uint8_t*>(pSysMem);
+      for (uint32_t y = 0; y < res->height; y++) {
+        std::memcpy(res->storage.data() + static_cast<size_t>(y) * res->row_pitch_bytes,
+                    src + static_cast<size_t>(y) * src_pitch,
+                    res->row_pitch_bytes);
+      }
+    } else {
       return;
     }
-    std::memcpy(res->storage.data(), pSysMem, static_cast<size_t>(res->size_bytes));
-  } else if (res->kind == ResourceKind::Texture2D) {
-    if (res->storage.empty()) {
-      return;
-    }
-    const size_t src_pitch = SysMemPitch ? static_cast<size_t>(SysMemPitch) : static_cast<size_t>(res->row_pitch_bytes);
-    const uint8_t* src = static_cast<const uint8_t*>(pSysMem);
-    for (uint32_t y = 0; y < res->height; y++) {
-      std::memcpy(res->storage.data() + static_cast<size_t>(y) * res->row_pitch_bytes,
-                  src + static_cast<size_t>(y) * src_pitch,
-                  res->row_pitch_bytes);
-    }
-  } else {
+
+    auto* upload = dev->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
+        AEROGPU_CMD_UPLOAD_RESOURCE, res->storage.data(), res->storage.size());
+    upload->resource_handle = res->handle;
+    upload->reserved0 = 0;
+    upload->offset_bytes = 0;
+    upload->size_bytes = res->storage.size();
+
+    auto* dirty = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+    dirty->resource_handle = res->handle;
+    dirty->reserved0 = 0;
+    dirty->offset_bytes = 0;
+    dirty->size_bytes = res->storage.size();
     return;
   }
 
-  auto* upload = dev->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
-      AEROGPU_CMD_UPLOAD_RESOURCE, res->storage.data(), res->storage.size());
-  upload->resource_handle = res->handle;
-  upload->reserved0 = 0;
-  upload->offset_bytes = 0;
-  upload->size_bytes = res->storage.size();
+  if (res->kind == ResourceKind::Buffer) {
+    if (pDstBox->top != 0 || pDstBox->bottom != 1 || pDstBox->front != 0 || pDstBox->back != 1) {
+      return;
+    }
+    if (pDstBox->left >= pDstBox->right) {
+      return;
+    }
+    const uint64_t offset = pDstBox->left;
+    const uint64_t size = static_cast<uint64_t>(pDstBox->right) - static_cast<uint64_t>(pDstBox->left);
+    if (offset + size > res->size_bytes) {
+      return;
+    }
 
-  auto* dirty = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
-  dirty->resource_handle = res->handle;
-  dirty->reserved0 = 0;
-  dirty->offset_bytes = 0;
-  dirty->size_bytes = res->storage.size();
+    HRESULT hr = ensure_resource_storage(res, res->size_bytes);
+    if (FAILED(hr) || res->storage.size() < static_cast<size_t>(res->size_bytes)) {
+      return;
+    }
+    std::memcpy(res->storage.data() + static_cast<size_t>(offset), pSysMem, static_cast<size_t>(size));
+
+    auto* upload = dev->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
+        AEROGPU_CMD_UPLOAD_RESOURCE, pSysMem, static_cast<size_t>(size));
+    upload->resource_handle = res->handle;
+    upload->reserved0 = 0;
+    upload->offset_bytes = offset;
+    upload->size_bytes = size;
+
+    auto* dirty = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+    dirty->resource_handle = res->handle;
+    dirty->reserved0 = 0;
+    dirty->offset_bytes = offset;
+    dirty->size_bytes = size;
+    return;
+  }
+
+  if (res->kind == ResourceKind::Texture2D) {
+    if (pDstBox->front != 0 || pDstBox->back != 1) {
+      return;
+    }
+    if (pDstBox->left >= pDstBox->right || pDstBox->top >= pDstBox->bottom) {
+      return;
+    }
+    if (pDstBox->right > res->width || pDstBox->bottom > res->height) {
+      return;
+    }
+
+    const uint32_t aerogpu_format = dxgi_format_to_aerogpu(res->dxgi_format);
+    const uint32_t bpp = bytes_per_pixel_aerogpu(aerogpu_format);
+    const size_t row_bytes =
+        static_cast<size_t>(pDstBox->right - pDstBox->left) * static_cast<size_t>(bpp);
+    const size_t src_pitch = SysMemPitch ? static_cast<size_t>(SysMemPitch) : row_bytes;
+    if (!row_bytes || row_bytes > src_pitch || row_bytes > res->row_pitch_bytes) {
+      return;
+    }
+
+    const uint64_t total = resource_total_bytes(res);
+    if (!total) {
+      return;
+    }
+    HRESULT hr = ensure_resource_storage(res, total);
+    if (FAILED(hr) || res->storage.size() < static_cast<size_t>(total)) {
+      return;
+    }
+
+    const uint8_t* src = static_cast<const uint8_t*>(pSysMem);
+    const size_t dst_pitch = static_cast<size_t>(res->row_pitch_bytes);
+    const size_t dst_x_bytes = static_cast<size_t>(pDstBox->left) * static_cast<size_t>(bpp);
+    for (uint32_t y = 0; y < (pDstBox->bottom - pDstBox->top); ++y) {
+      const size_t dst_offset = (static_cast<size_t>(pDstBox->top) + y) * dst_pitch + dst_x_bytes;
+      std::memcpy(res->storage.data() + dst_offset, src + y * src_pitch, row_bytes);
+
+      auto* upload = dev->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
+          AEROGPU_CMD_UPLOAD_RESOURCE, src + y * src_pitch, row_bytes);
+      upload->resource_handle = res->handle;
+      upload->reserved0 = 0;
+      upload->offset_bytes = dst_offset;
+      upload->size_bytes = row_bytes;
+
+      auto* dirty = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+      dirty->resource_handle = res->handle;
+      dirty->reserved0 = 0;
+      dirty->offset_bytes = dst_offset;
+      dirty->size_bytes = row_bytes;
+    }
+    return;
+  }
 }
 
 void AEROGPU_APIENTRY CopyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hDst, D3D10DDI_HRESOURCE hSrc) {
