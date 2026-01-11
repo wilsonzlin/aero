@@ -1,5 +1,6 @@
 import {
   isUsbCompletionMessage,
+  isUsbRingAttachMessage,
   isUsbSelectedMessage,
   isUsbSetupPacket,
   usbErrorCompletion,
@@ -8,8 +9,10 @@ import {
   type UsbHostAction,
   type UsbHostCompletion,
   type UsbQuerySelectedMessage,
+  type UsbRingAttachMessage,
   type UsbSelectedMessage,
 } from "./usb_proxy_protocol";
+import { UsbProxyRing } from "./usb_proxy_ring";
 
 export type UsbUhciHarnessStartMessage = { type: "usb.harness.start" };
 export type UsbUhciHarnessStopMessage = { type: "usb.harness.stop" };
@@ -266,6 +269,10 @@ export class WebUsbUhciHarnessRuntime {
 
   readonly #capture: DescriptorCapture = { deviceDescriptor: null, configDescriptor: null };
 
+  #actionRing: UsbProxyRing | null = null;
+  #completionRing: UsbProxyRing | null = null;
+  #completionDrainTimer: ReturnType<typeof setInterval> | null = null;
+
   #tickCount = 0;
   #actionsForwarded = 0;
   #completionsApplied = 0;
@@ -297,6 +304,11 @@ export class WebUsbUhciHarnessRuntime {
 
     this.#onMessage = (ev) => {
       const data = (ev as MessageEvent<unknown>).data;
+
+      if (isUsbRingAttachMessage(data)) {
+        this.attachRings(data);
+        return;
+      }
 
       if (isUsbCompletionMessage(data)) {
         this.handleCompletion(data.completion);
@@ -343,6 +355,7 @@ export class WebUsbUhciHarnessRuntime {
 
   destroy(): void {
     this.stop();
+    this.detachRings();
     this.#port.removeEventListener("message", this.#onMessage);
   }
 
@@ -404,6 +417,23 @@ export class WebUsbUhciHarnessRuntime {
       const brokerId = this.#nextBrokerId;
       this.#nextBrokerId += 1;
       const brokerAction = rewriteActionId(action, brokerId);
+
+      const actionRing = this.#actionRing;
+      if (actionRing) {
+        try {
+          if (actionRing.pushAction(brokerAction)) {
+            this.#pending.set(brokerId, { action });
+            this.#pendingHarnessIds.add(id);
+            this.#actionsForwarded += 1;
+            this.#lastAction = action;
+            changed = true;
+            continue;
+          }
+        } catch (err) {
+          this.#lastError = `USB action ring push failed: ${formatError(err)}`;
+        }
+      }
+
       const msg: UsbActionMessage = { type: "usb.action", action: brokerAction };
       try {
         this.#port.postMessage(msg);
@@ -518,5 +548,47 @@ export class WebUsbUhciHarnessRuntime {
 
     safeFree(this.#harness);
     this.#harness = null;
+  }
+
+  private attachRings(msg: UsbRingAttachMessage): void {
+    if (this.#actionRing && this.#completionRing) return;
+    try {
+      this.#actionRing = new UsbProxyRing(msg.actionRing);
+      this.#completionRing = new UsbProxyRing(msg.completionRing);
+    } catch (err) {
+      this.#lastError = `Failed to attach USB proxy rings: ${formatError(err)}`;
+      this.detachRings();
+      return;
+    }
+
+    if (!this.#completionDrainTimer) {
+      this.#completionDrainTimer = setInterval(() => this.drainCompletionRing(), 4);
+      (this.#completionDrainTimer as unknown as { unref?: () => void }).unref?.();
+    }
+  }
+
+  private detachRings(): void {
+    if (this.#completionDrainTimer) {
+      clearInterval(this.#completionDrainTimer);
+      this.#completionDrainTimer = null;
+    }
+    this.#actionRing = null;
+    this.#completionRing = null;
+  }
+
+  private drainCompletionRing(): void {
+    const ring = this.#completionRing;
+    if (!ring) return;
+    while (true) {
+      let completion: UsbHostCompletion | null = null;
+      try {
+        completion = ring.popCompletion();
+      } catch (err) {
+        this.#lastError = `USB completion ring pop failed: ${formatError(err)}`;
+        return;
+      }
+      if (!completion) break;
+      this.handleCompletion(completion);
+    }
   }
 }

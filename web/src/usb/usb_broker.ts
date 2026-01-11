@@ -8,11 +8,13 @@ import {
   type UsbCompletionMessage,
   type UsbHostAction,
   type UsbHostCompletion,
+  type UsbRingAttachMessage,
   type UsbSelectDeviceMessage,
   type UsbSelectedMessage,
 } from "./usb_proxy_protocol";
 import { WebUsbBackend } from "./webusb_backend";
 import { formatWebUsbError } from "../platform/webusb_troubleshooting";
+import { createUsbProxyRingBuffer, UsbProxyRing } from "./usb_proxy_ring";
 
 type UsbDeviceInfo = { vendorId: number; productId: number; productName?: string };
 
@@ -89,10 +91,22 @@ export class UsbBroker {
   private readonly portListeners = new Map<MessagePort | Worker, EventListener>();
   private readonly deviceChangeListeners = new Set<() => void>();
 
+  private readonly ringDrainTimers = new Map<MessagePort | Worker, ReturnType<typeof setInterval>>();
+  private readonly actionRings = new Map<MessagePort | Worker, UsbProxyRing>();
+  private readonly completionRings = new Map<MessagePort | Worker, UsbProxyRing>();
+
+  private readonly ringActionCapacityBytes: number;
+  private readonly ringCompletionCapacityBytes: number;
+  private readonly ringDrainIntervalMs: number;
+
   private readonly queue: QueueItem[] = [];
   private processing = false;
 
-  constructor() {
+  constructor(options: { ringActionCapacityBytes?: number; ringCompletionCapacityBytes?: number; ringDrainIntervalMs?: number } = {}) {
+    this.ringActionCapacityBytes = options.ringActionCapacityBytes ?? 256 * 1024;
+    this.ringCompletionCapacityBytes = options.ringCompletionCapacityBytes ?? 256 * 1024;
+    this.ringDrainIntervalMs = options.ringDrainIntervalMs ?? 8;
+
     const usb = getNavigatorUsb();
     usb?.addEventListener?.("disconnect", (ev: Event) => {
       const device = (ev as unknown as { device?: USBDevice }).device;
@@ -331,6 +345,8 @@ export class UsbBroker {
       // When using addEventListener() MessagePorts need start() to begin dispatch.
       (port as unknown as { start?: () => void }).start?.();
 
+      this.attachRings(port);
+
       // Newly attached ports should learn the current selection/disconnect state.
       if (this.selectedInfo && !this.disconnectError) {
         this.postToPort(port, { type: "usb.selected", ok: true, info: this.selectedInfo } satisfies UsbSelectedMessage);
@@ -341,12 +357,68 @@ export class UsbBroker {
   }
 
   detachWorkerPort(port: MessagePort | Worker): void {
+    const timer = this.ringDrainTimers.get(port);
+    if (timer) {
+      clearInterval(timer);
+      this.ringDrainTimers.delete(port);
+    }
+    this.actionRings.delete(port);
+    this.completionRings.delete(port);
+
     const listener = this.portListeners.get(port);
     if (listener) {
       this.portListeners.delete(port);
       port.removeEventListener("message", listener);
     }
     this.ports.delete(port);
+  }
+
+  private canUseSharedMemory(): boolean {
+    // SharedArrayBuffer requires cross-origin isolation in browsers. Node/Vitest may still provide it,
+    // but keep the check aligned with the browser contract so behaviour matches production.
+    if ((globalThis as any).crossOriginIsolated !== true) return false;
+    if (typeof SharedArrayBuffer === "undefined") return false;
+    if (typeof Atomics === "undefined") return false;
+    return true;
+  }
+
+  private attachRings(port: MessagePort | Worker): void {
+    if (this.actionRings.has(port) || this.completionRings.has(port)) return;
+    if (!this.canUseSharedMemory()) return;
+
+    const actionSab = createUsbProxyRingBuffer(this.ringActionCapacityBytes);
+    const completionSab = createUsbProxyRingBuffer(this.ringCompletionCapacityBytes);
+    const actionRing = new UsbProxyRing(actionSab);
+    const completionRing = new UsbProxyRing(completionSab);
+    this.actionRings.set(port, actionRing);
+    this.completionRings.set(port, completionRing);
+
+    const timer = setInterval(() => this.drainActionRing(port), this.ringDrainIntervalMs);
+    (timer as unknown as { unref?: () => void }).unref?.();
+    this.ringDrainTimers.set(port, timer);
+
+    const msg: UsbRingAttachMessage = { type: "usb.ringAttach", actionRing: actionSab, completionRing: completionSab };
+    this.postToPort(port, msg);
+  }
+
+  private drainActionRing(port: MessagePort | Worker): void {
+    const actionRing = this.actionRings.get(port);
+    const completionRing = this.completionRings.get(port);
+    if (!actionRing || !completionRing) return;
+
+    while (true) {
+      const action = actionRing.popAction();
+      if (!action) break;
+
+      void this.execute(action).then((completion) => {
+        // The port may have been detached while the completion was in-flight.
+        const activeCompletionRing = this.completionRings.get(port);
+        if (!activeCompletionRing) return;
+        if (activeCompletionRing.pushCompletion(completion)) return;
+        const msg: UsbCompletionMessage = { type: "usb.completion", completion };
+        this.postToPort(port, msg);
+      });
+    }
   }
 
   private async handleSelectDevice(port: MessagePort | Worker, msg: UsbSelectDeviceMessage): Promise<void> {
@@ -482,7 +554,7 @@ export class UsbBroker {
     this.broadcast({ type: "usb.selected", ok: false, error: reason } satisfies UsbSelectedMessage);
   }
 
-  private postToPort(port: MessagePort | Worker, msg: UsbCompletionMessage | UsbSelectedMessage): void {
+  private postToPort(port: MessagePort | Worker, msg: UsbCompletionMessage | UsbSelectedMessage | UsbRingAttachMessage): void {
     const transfer = msg.type === "usb.completion" ? getTransferablesForUsbCompletionMessage(msg) : undefined;
     if (transfer) {
       try {

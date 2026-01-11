@@ -8,6 +8,7 @@ import {
   isUsbHostAction,
   isUsbHostCompletion,
   isUsbProxyMessage,
+  isUsbRingAttachMessage,
   usbErrorCompletion,
   type UsbActionMessage,
   type UsbCompletionMessage,
@@ -107,6 +108,10 @@ describe("usb/usb_proxy_protocol", () => {
     expect(isUsbProxyMessage(completionMsg)).toBe(true);
 
     expect(isUsbProxyMessage({ type: "usb.querySelected" })).toBe(true);
+
+    const ringAttach = { type: "usb.ringAttach", actionRing: new SharedArrayBuffer(16), completionRing: new SharedArrayBuffer(16) };
+    expect(isUsbRingAttachMessage(ringAttach)).toBe(true);
+    expect(isUsbProxyMessage(ringAttach)).toBe(true);
 
     expect(isUsbProxyMessage({ type: "usb.action", action: { kind: "bulkIn", id: 1 } })).toBe(false);
     expect(isUsbProxyMessage({ type: "unknown" })).toBe(false);

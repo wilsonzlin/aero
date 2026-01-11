@@ -1,5 +1,6 @@
 import {
   isUsbCompletionMessage,
+  isUsbRingAttachMessage,
   isUsbSelectedMessage,
   isUsbSetupPacket,
   getTransferablesForUsbActionMessage,
@@ -8,8 +9,10 @@ import {
   type UsbHostAction,
   type UsbHostCompletion,
   type UsbQuerySelectedMessage,
+  type UsbRingAttachMessage,
   type UsbSelectedMessage,
 } from "./usb_proxy_protocol";
+import { UsbProxyRing } from "./usb_proxy_ring";
 
 export type UsbPassthroughBridgeLike = {
   drain_actions(): unknown;
@@ -193,6 +196,10 @@ export class WebUsbPassthroughRuntime {
 
   readonly #pending = new Map<number, PendingItem>();
 
+  #actionRing: UsbProxyRing | null = null;
+  #completionRing: UsbProxyRing | null = null;
+  #completionDrainTimer: ReturnType<typeof setInterval> | null = null;
+
   #actionsForwarded = 0;
   #completionsApplied = 0;
   #lastError: string | null = null;
@@ -220,6 +227,11 @@ export class WebUsbPassthroughRuntime {
 
     this.#onMessage = (ev) => {
       const data = (ev as MessageEvent<unknown>).data;
+
+      if (isUsbRingAttachMessage(data)) {
+        this.attachRings(data);
+        return;
+      }
 
       if (isUsbCompletionMessage(data)) {
         this.handleCompletion(data.completion);
@@ -288,6 +300,7 @@ export class WebUsbPassthroughRuntime {
 
   destroy(): void {
     this.stop();
+    this.detachRings();
     this.#port.removeEventListener("message", this.#onMessage);
     try {
       this.#bridge.free();
@@ -320,6 +333,8 @@ export class WebUsbPassthroughRuntime {
 
     this.#pollInFlight = true;
     try {
+      this.drainCompletionRing();
+
       let drained: unknown;
       try {
         drained = this.#bridge.drain_actions();
@@ -415,6 +430,19 @@ export class WebUsbPassthroughRuntime {
 
         const deferred = createDeferred<UsbHostCompletion>();
         this.#pending.set(actionId, { resolve: deferred.resolve, reject: deferred.reject });
+
+        const actionRing = this.#actionRing;
+        if (actionRing) {
+          try {
+            if (actionRing.pushAction(action)) {
+              this.#actionsForwarded++;
+              awaiters.push(deferred.promise);
+              continue;
+            }
+          } catch (err) {
+            this.#lastError = `USB action ring push failed: ${formatError(err)}`;
+          }
+        }
 
         const msg: UsbActionMessage = { type: "usb.action", action };
         try {
@@ -524,5 +552,47 @@ export class WebUsbPassthroughRuntime {
     if (this.#pollTimer === undefined) return;
     clearInterval(this.#pollTimer);
     this.#pollTimer = undefined;
+  }
+
+  private attachRings(msg: UsbRingAttachMessage): void {
+    if (this.#actionRing && this.#completionRing) return;
+    try {
+      this.#actionRing = new UsbProxyRing(msg.actionRing);
+      this.#completionRing = new UsbProxyRing(msg.completionRing);
+    } catch (err) {
+      this.#lastError = `Failed to attach USB proxy rings: ${formatError(err)}`;
+      this.detachRings();
+      return;
+    }
+
+    if (!this.#completionDrainTimer) {
+      this.#completionDrainTimer = setInterval(() => this.drainCompletionRing(), 4);
+      (this.#completionDrainTimer as unknown as { unref?: () => void }).unref?.();
+    }
+  }
+
+  private detachRings(): void {
+    if (this.#completionDrainTimer) {
+      clearInterval(this.#completionDrainTimer);
+      this.#completionDrainTimer = null;
+    }
+    this.#actionRing = null;
+    this.#completionRing = null;
+  }
+
+  private drainCompletionRing(): void {
+    const ring = this.#completionRing;
+    if (!ring) return;
+    while (true) {
+      let completion: UsbHostCompletion | null = null;
+      try {
+        completion = ring.popCompletion();
+      } catch (err) {
+        this.#lastError = `USB completion ring pop failed: ${formatError(err)}`;
+        return;
+      }
+      if (!completion) break;
+      this.handleCompletion(completion);
+    }
   }
 }

@@ -4,6 +4,11 @@ export type { SetupPacket, UsbHostAction, UsbHostCompletion } from "./usb_passth
 
 export type UsbActionMessage = { type: "usb.action"; action: UsbHostAction };
 export type UsbCompletionMessage = { type: "usb.completion"; completion: UsbHostCompletion };
+export type UsbRingAttachMessage = {
+  type: "usb.ringAttach";
+  actionRing: SharedArrayBuffer;
+  completionRing: SharedArrayBuffer;
+};
 export type UsbSelectDeviceMessage = { type: "usb.selectDevice"; filters?: USBDeviceFilter[] };
 /**
  * Request the current `usb.selected` state from the broker.
@@ -23,6 +28,7 @@ export type UsbSelectedMessage = {
 export type UsbProxyMessage =
   | UsbActionMessage
   | UsbCompletionMessage
+  | UsbRingAttachMessage
   | UsbSelectDeviceMessage
   | UsbQuerySelectedMessage
   | UsbSelectedMessage;
@@ -167,6 +173,14 @@ export function isUsbCompletionMessage(value: unknown): value is UsbCompletionMe
   return isUsbHostCompletion(value.completion);
 }
 
+export function isUsbRingAttachMessage(value: unknown): value is UsbRingAttachMessage {
+  if (!isRecord(value) || value.type !== "usb.ringAttach") return false;
+  if (typeof SharedArrayBuffer === "undefined") return false;
+  if (!(value.actionRing instanceof SharedArrayBuffer)) return false;
+  if (!(value.completionRing instanceof SharedArrayBuffer)) return false;
+  return true;
+}
+
 export function isUsbSelectDeviceMessage(value: unknown): value is UsbSelectDeviceMessage {
   if (!isRecord(value) || value.type !== "usb.selectDevice") return false;
   if (value.filters === undefined) return true;
@@ -193,6 +207,7 @@ export function isUsbProxyMessage(value: unknown): value is UsbProxyMessage {
   return (
     isUsbActionMessage(value) ||
     isUsbCompletionMessage(value) ||
+    isUsbRingAttachMessage(value) ||
     isUsbSelectDeviceMessage(value) ||
     isUsbQuerySelectedMessage(value) ||
     isUsbSelectedMessage(value)
