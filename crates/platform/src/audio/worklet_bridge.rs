@@ -24,6 +24,13 @@ pub const OVERRUN_COUNT_INDEX: usize = 3;
 /// Total bytes reserved for the header.
 pub const HEADER_BYTES: usize = HEADER_U32_LEN * 4;
 
+/// Maximum ring capacity accepted when restoring snapshot state.
+///
+/// Snapshot files may come from untrusted sources; clamping avoids allocating an
+/// arbitrarily large backing buffer when restoring into the pure-Rust
+/// [`InterleavedRingBuffer`] test helper.
+const MAX_RESTORED_CAPACITY_FRAMES: u32 = 1_048_576; // 2^20 frames (~21s at 48kHz)
+
 #[inline]
 pub fn frames_available(read_idx: u32, write_idx: u32) -> u32 {
     write_idx.wrapping_sub(read_idx)
@@ -95,13 +102,19 @@ impl InterleavedRingBuffer {
     ///
     /// The ring's sample contents are not restored; storage is cleared to silence.
     pub fn restore_state(&mut self, state: &AudioWorkletRingState) {
-        if state.capacity_frames != 0 && state.capacity_frames != self.capacity_frames {
-            self.capacity_frames = state.capacity_frames;
-            let samples = self
+        if state.capacity_frames != 0 {
+            let restored_capacity = state
                 .capacity_frames
-                .saturating_mul(self.channel_count)
-                .min(u32::MAX) as usize;
-            self.storage.resize(samples, 0.0);
+                .min(MAX_RESTORED_CAPACITY_FRAMES)
+                .max(1);
+            if restored_capacity != self.capacity_frames {
+                self.capacity_frames = restored_capacity;
+                let samples = self
+                    .capacity_frames
+                    .saturating_mul(self.channel_count)
+                    .min(u32::MAX) as usize;
+                self.storage.resize(samples, 0.0);
+            }
         }
         self.storage.fill(0.0);
 
@@ -259,6 +272,18 @@ mod tests {
         rb.restore_state(&state);
         assert_eq!(rb.buffer_level_frames(), 5);
         assert_eq!(rb.snapshot_state(), state);
+    }
+
+    #[test]
+    fn test_snapshot_restore_clamps_excessive_capacity() {
+        let state = AudioWorkletRingState {
+            capacity_frames: u32::MAX,
+            read_pos: 0,
+            write_pos: 0,
+        };
+        let mut rb = InterleavedRingBuffer::new(8, 2);
+        rb.restore_state(&state);
+        assert_eq!(rb.snapshot_state().capacity_frames, MAX_RESTORED_CAPACITY_FRAMES);
     }
 }
 
