@@ -232,3 +232,44 @@ fn wasmtime_backend_executes_inline_tlb_load_store() {
     ];
     assert_eq!(u32::from_le_bytes(bytes), 0x1122_3344);
 }
+
+#[test]
+fn wasmtime_backend_inline_tlb_mmio_exit_sets_next_rip() {
+    let entry = 0x1000u64;
+
+    // Load from an address outside the guest RAM window (0..cpu_ptr). The reference backend
+    // classifies this as MMIO and should request an interpreter step via the sentinel ABI.
+    let mmio_addr =
+        (WasmtimeBackend::<CpuState>::DEFAULT_CPU_PTR as u64).saturating_add(0x1000);
+
+    let mut builder = IrBuilder::new(entry);
+    let addr = builder.const_int(Width::W64, mmio_addr);
+    let loaded = builder.load(Width::W8, addr);
+    builder.write_reg(
+        GuestReg::Gpr {
+            reg: Gpr::Rax,
+            width: Width::W8,
+            high8: false,
+        },
+        loaded,
+    );
+    let block = builder.finish(IrTerminator::Jump { target: 0x2000 });
+
+    let wasm = Tier1WasmCodegen::new().compile_block_with_options(
+        &block,
+        Tier1WasmOptions {
+            inline_tlb: true,
+        },
+    );
+
+    let mut backend: WasmtimeBackend<CpuState> = WasmtimeBackend::new();
+    let idx = backend.add_compiled_block(&wasm);
+
+    let mut cpu = CpuState::default();
+    cpu.rip = entry;
+
+    let exit = backend.execute(idx, &mut cpu);
+    assert!(exit.exit_to_interpreter);
+    assert_eq!(exit.next_rip, entry);
+    assert_eq!(cpu.rip, entry);
+}

@@ -393,8 +393,12 @@ fn define_stub_helpers(linker: &mut Linker<()>, memory: Memory) {
              _size: i32,
              _is_write: i32,
              _value: i64,
-             _rip: i64|
-             -> i64 { JIT_EXIT_SENTINEL_I64 },
+             rip: i64|
+             -> i64 {
+                 // Return the RIP the block should resume at after the runtime has handled the
+                 // MMIO access. The Tier-1 code generator returns the sentinel separately.
+                 rip
+             },
         )
         .expect("define jit_exit_mmio");
 
@@ -402,7 +406,11 @@ fn define_stub_helpers(linker: &mut Linker<()>, memory: Memory) {
         .func_wrap(
             IMPORT_MODULE,
             IMPORT_JIT_EXIT,
-            |_caller: Caller<'_, ()>, _kind: i32, _rip: i64| -> i64 { JIT_EXIT_SENTINEL_I64 },
+            |_caller: Caller<'_, ()>, _kind: i32, rip: i64| -> i64 {
+                // Like `jit_exit_mmio`, return the RIP to resume at while the caller uses the
+                // sentinel return value to request an interpreter step.
+                rip
+            },
         )
         .expect("define jit_exit");
 }
