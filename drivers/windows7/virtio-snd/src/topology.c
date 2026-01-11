@@ -263,8 +263,14 @@ static const PCPIN_DESCRIPTOR g_VirtIoSndTopoPins[] = {
     {1, 1, 0, &g_VirtIoSndTopoAutomation, g_VirtIoSndTopoPinDescriptors[VIRTIOSND_TOPO_PIN_SPEAKER]},
 };
 
+static const PCNODE_DESCRIPTOR g_VirtIoSndTopoNodes[] = {
+    // Node 0: speaker endpoint.
+    {0, &g_VirtIoSndTopoAutomation, &KSNODETYPE_SPEAKER, NULL},
+};
+
 static const PCCONNECTION_DESCRIPTOR g_VirtIoSndTopoConnections[] = {
-    {KSFILTER_NODE, VIRTIOSND_TOPO_PIN_BRIDGE, KSFILTER_NODE, VIRTIOSND_TOPO_PIN_SPEAKER},
+    {KSFILTER_NODE, VIRTIOSND_TOPO_PIN_BRIDGE, 0, 0},
+    {0, 0, KSFILTER_NODE, VIRTIOSND_TOPO_PIN_SPEAKER},
 };
 
 static const PCFILTER_DESCRIPTOR g_VirtIoSndTopoFilterDescriptor = {
@@ -273,9 +279,9 @@ static const PCFILTER_DESCRIPTOR g_VirtIoSndTopoFilterDescriptor = {
     sizeof(PCPIN_DESCRIPTOR),
     RTL_NUMBER_OF(g_VirtIoSndTopoPins),
     g_VirtIoSndTopoPins,
-    0,
-    0,
-    NULL,
+    sizeof(PCNODE_DESCRIPTOR),
+    RTL_NUMBER_OF(g_VirtIoSndTopoNodes),
+    g_VirtIoSndTopoNodes,
     sizeof(PCCONNECTION_DESCRIPTOR),
     RTL_NUMBER_OF(g_VirtIoSndTopoConnections),
     g_VirtIoSndTopoConnections,
