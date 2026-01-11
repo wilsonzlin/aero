@@ -4,6 +4,8 @@ This directory contains the **Direct3D 10 / Direct3D 11 Windows 7 SP1 user-mode 
 
 The UMD is responsible for translating the D3D10DDI/D3D11DDI calls made by the D3D runtime into the **AeroGPU command stream** defined in `drivers/aerogpu/protocol/`.
 
+This UMD targets only the **command stream** ABI (`drivers/aerogpu/protocol/aerogpu_cmd.h`). The kernel-mode driver (KMD) owns the submission transport and supports both the versioned (`aerogpu_pci.h` + `aerogpu_ring.h`) and legacy (`aerogpu_protocol.h`) device ABIs, auto-detected via MMIO magic; see `drivers/aerogpu/kmd/README.md`.
+
 ## Status / scope (initial)
 
 This implementation is intentionally conservative and targets **the minimum functionality needed for a basic D3D11 triangle**:
