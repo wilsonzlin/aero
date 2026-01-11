@@ -2,6 +2,12 @@ import type { PlatformFeatureReport } from "../platform/features";
 import { explainWebUsbError, formatWebUsbError } from "../platform/webusb_troubleshooting";
 import { WebUsbBackend, type SetupPacket } from "./webusb_backend";
 
+type ForgettableUsbDevice = USBDevice & { forget: () => Promise<void> };
+
+function canForgetUsbDevice(device: USBDevice): device is ForgettableUsbDevice {
+  return typeof (device as unknown as { forget?: unknown }).forget === "function";
+}
+
 type ParsedDeviceDescriptor = {
   bLength?: number;
   bDescriptorType?: number;
@@ -360,8 +366,7 @@ export function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
     cloneButton.disabled = false;
 
     // `USBDevice.forget()` is currently Chromium-specific; hide the action when absent.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const canForget = typeof (selected as any).forget === "function";
+    const canForget = canForgetUsbDevice(selected);
     forgetButton.hidden = !canForget;
     forgetButton.disabled = !canForget;
   };
@@ -379,9 +384,7 @@ export function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
       return;
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const forget = (device as any).forget as unknown;
-    if (typeof forget !== "function") {
+    if (!canForgetUsbDevice(device)) {
       showMessage("USBDevice.forget() is unavailable in this browser.");
       refreshStatus();
       return;
@@ -403,7 +406,7 @@ export function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
         }
       }
 
-      await (forget as () => Promise<void>).call(device);
+      await device.forget();
       selected = null;
       status.textContent = "Device permission revoked.";
     } catch (err) {
@@ -458,7 +461,7 @@ export function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
     }
   };
 
-  listButton.onclick = async () => {
+  const refreshPermittedDevices = async (): Promise<void> => {
     clearError();
     output.textContent = "";
     permittedTitle.hidden = true;
@@ -506,7 +509,54 @@ export function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
                 refreshStatus();
               };
 
-              li.append(label, select);
+              if (canForgetUsbDevice(device)) {
+                const forget = document.createElement("button");
+                forget.type = "button";
+                forget.textContent = "Forget";
+                forget.onclick = async () => {
+                  clearError();
+                  output.textContent = "";
+
+                  requestButton.disabled = true;
+                  openButton.disabled = true;
+                  listButton.disabled = true;
+                  cloneButton.disabled = true;
+                  forgetButton.disabled = true;
+                  status.textContent = "Forgetting device permission…";
+
+                  let ok = false;
+                  try {
+                    if (device.opened) {
+                      try {
+                        await device.close();
+                      } catch (err) {
+                        console.warn("WebUSB device.close() before forget() failed", err);
+                      }
+                    }
+
+                    await device.forget();
+                    ok = true;
+
+                    if (selected === device) {
+                      selected = null;
+                    }
+                    status.textContent = "Device permission revoked.";
+                  } catch (err) {
+                    showError(err);
+                    console.error(err);
+                  } finally {
+                    requestButton.disabled = false;
+                    refreshStatus();
+                    if (ok) {
+                      await refreshPermittedDevices();
+                    }
+                  }
+                };
+
+                li.append(label, select, forget);
+              } else {
+                li.append(label, select);
+              }
               return li;
             })
           : [
@@ -522,6 +572,7 @@ export function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
       refreshStatus();
     }
   };
+  listButton.onclick = refreshPermittedDevices;
 
   workerProbeButton.onclick = async () => {
     clearError();

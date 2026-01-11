@@ -119,6 +119,115 @@ function findAll(root: FakeElement, predicate: (el: FakeElement) => boolean): Fa
 }
 
 describe("renderWebUsbPanel UI (mocked WebUSB)", () => {
+  it("shows per-device Forget only when USBDevice.forget() exists", async () => {
+    const forgettable = {
+      vendorId: 0x1234,
+      productId: 0x5678,
+      opened: false,
+      close: vi.fn(async () => {}),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      forget: vi.fn(async () => {}),
+    } as unknown as USBDevice;
+    const normal = {
+      vendorId: 0x1111,
+      productId: 0x2222,
+      opened: false,
+      close: vi.fn(async () => {}),
+    } as unknown as USBDevice;
+
+    const usb = {
+      getDevices: vi.fn(async () => [forgettable, normal]),
+    } satisfies Partial<USB>;
+
+    stubIsSecureContext(true);
+    stubNavigator({ usb } as any);
+    stubDocument(new FakeDocument());
+
+    const report: PlatformFeatureReport = {
+      crossOriginIsolated: false,
+      sharedArrayBuffer: false,
+      wasmSimd: false,
+      wasmThreads: false,
+      jit_dynamic_wasm: false,
+      webgpu: false,
+      webusb: true,
+      webhid: false,
+      webgl2: false,
+      opfs: false,
+      opfsSyncAccessHandle: false,
+      audioWorklet: false,
+      offscreenCanvas: false,
+    };
+
+    const panel = renderWebUsbPanel(report) as unknown as FakeElement;
+
+    const listButton = findAll(panel, (el) => el.tagName === "BUTTON" && el.textContent === "List permitted devices (getDevices)")[0];
+    await (listButton.onclick as () => Promise<void>)();
+
+    const forgetButtons = findAll(panel, (el) => el.tagName === "BUTTON" && el.textContent === "Forget");
+    expect(forgetButtons).toHaveLength(1);
+  });
+
+  it("closes the device before forgetting from the permitted-device list", async () => {
+    const callOrder: string[] = [];
+    let opened = true;
+    const close = vi.fn(async () => {
+      callOrder.push("close");
+      opened = false;
+    });
+    const forget = vi.fn(async () => {
+      callOrder.push("forget");
+    });
+    const device = {
+      vendorId: 0x1234,
+      productId: 0x5678,
+      get opened() {
+        return opened;
+      },
+      close,
+      forget,
+    } as unknown as USBDevice;
+    const getDevices = vi.fn(async () => [device]);
+
+    const usb = { getDevices } satisfies Partial<USB>;
+
+    stubIsSecureContext(true);
+    stubNavigator({ usb } as any);
+    stubDocument(new FakeDocument());
+
+    const report: PlatformFeatureReport = {
+      crossOriginIsolated: false,
+      sharedArrayBuffer: false,
+      wasmSimd: false,
+      wasmThreads: false,
+      jit_dynamic_wasm: false,
+      webgpu: false,
+      webusb: true,
+      webhid: false,
+      webgl2: false,
+      opfs: false,
+      opfsSyncAccessHandle: false,
+      audioWorklet: false,
+      offscreenCanvas: false,
+    };
+
+    const panel = renderWebUsbPanel(report) as unknown as FakeElement;
+
+    const listButton = findAll(panel, (el) => el.tagName === "BUTTON" && el.textContent === "List permitted devices (getDevices)")[0];
+    await (listButton.onclick as () => Promise<void>)();
+    expect(getDevices).toHaveBeenCalledTimes(1);
+
+    const rowForget = findAll(panel, (el) => el.tagName === "BUTTON" && el.textContent === "Forget")[0];
+    expect(rowForget).toBeTruthy();
+    await (rowForget.onclick as () => Promise<void>)();
+
+    expect(callOrder).toEqual(["close", "forget"]);
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(forget).toHaveBeenCalledTimes(1);
+    // Successful forget triggers a list refresh (getDevices called again).
+    expect(getDevices).toHaveBeenCalledTimes(2);
+  });
+
   it("forgets the selected device permission when USBDevice.forget() is available", async () => {
     const device = {
       vendorId: 0x1234,
