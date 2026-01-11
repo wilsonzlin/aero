@@ -1,7 +1,12 @@
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <mutex>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -120,15 +125,19 @@ struct Harness {
   std::vector<AEROGPU_WDDM_ALLOCATION_HANDLE> last_allocs;
   std::vector<HRESULT> errors;
 
-  // Simple fence model used by tests that need to validate DO_NOT_WAIT behavior.
-  uint64_t next_fence = 1;
-  uint64_t completed_fence = 0;
-  uint64_t last_submitted_fence = 0;
-  uint32_t wait_call_count = 0;
-  uint32_t last_wait_timeout_ms = 0;
-
   std::vector<Allocation> allocations;
   AEROGPU_WDDM_ALLOCATION_HANDLE next_handle = 1;
+
+  // Optional async fence model used by tests that need to validate DO_NOT_WAIT
+  // behavior without a real Win7/WDDM stack.
+  bool async_fences = false;
+  std::atomic<uint64_t> next_fence{1};
+  std::atomic<uint64_t> last_submitted_fence{0};
+  std::atomic<uint64_t> completed_fence{0};
+  uint32_t wait_call_count = 0;
+  uint32_t last_wait_timeout_ms = 0;
+  std::mutex fence_mutex;
+  std::condition_variable fence_cv;
 
   Allocation* FindAlloc(AEROGPU_WDDM_ALLOCATION_HANDLE handle) {
     for (auto& a : allocations) {
@@ -202,11 +211,11 @@ struct Harness {
   }
 
   static HRESULT AEROGPU_APIENTRY SubmitCmdStream(void* user,
-                                                  const void* cmd_stream,
-                                                  uint32_t cmd_stream_size_bytes,
-                                                  const AEROGPU_WDDM_ALLOCATION_HANDLE* alloc_handles,
-                                                  uint32_t alloc_count,
-                                                  uint64_t* out_fence) {
+                                                   const void* cmd_stream,
+                                                   uint32_t cmd_stream_size_bytes,
+                                                   const AEROGPU_WDDM_ALLOCATION_HANDLE* alloc_handles,
+                                                   uint32_t alloc_count,
+                                                   uint64_t* out_fence) {
     if (!user || !cmd_stream || cmd_stream_size_bytes < sizeof(aerogpu_cmd_stream_header)) {
       return E_INVALIDARG;
     }
@@ -219,11 +228,23 @@ struct Harness {
       h->last_allocs.assign(alloc_handles, alloc_handles + alloc_count);
     }
     if (out_fence) {
-      const uint64_t fence = h->next_fence++;
-      h->last_submitted_fence = fence;
-      *out_fence = fence;
+      if (h->async_fences) {
+        const uint64_t fence = h->next_fence.fetch_add(1, std::memory_order_relaxed);
+        h->last_submitted_fence.store(fence, std::memory_order_relaxed);
+        *out_fence = fence;
+      } else {
+        *out_fence = 0;
+      }
     }
     return S_OK;
+  }
+
+  static uint64_t AEROGPU_APIENTRY QueryCompletedFence(void* user) {
+    if (!user) {
+      return 0;
+    }
+    auto* h = reinterpret_cast<Harness*>(user);
+    return h->completed_fence.load(std::memory_order_relaxed);
   }
 
   static HRESULT AEROGPU_APIENTRY WaitForFence(void* user, uint64_t fence, uint32_t timeout_ms) {
@@ -233,12 +254,30 @@ struct Harness {
     auto* h = reinterpret_cast<Harness*>(user);
     h->wait_call_count++;
     h->last_wait_timeout_ms = timeout_ms;
-    if (fence == 0 || h->completed_fence >= fence) {
+    if (fence == 0) {
       return S_OK;
     }
-    // `HRESULT_FROM_NT(STATUS_TIMEOUT)` is a SUCCEEDED() HRESULT on Win7-era
-    // stacks; the UMD should still treat it as "not ready yet" for DO_NOT_WAIT.
-    return static_cast<HRESULT>(0x10000102L);
+
+    auto ready = [&]() { return h->completed_fence.load(std::memory_order_relaxed) >= fence; };
+    if (ready()) {
+      return S_OK;
+    }
+    if (timeout_ms == 0) {
+      // `HRESULT_FROM_NT(STATUS_TIMEOUT)` is a SUCCEEDED() HRESULT on Win7-era
+      // stacks; the UMD should still treat it as "not ready yet" for DO_NOT_WAIT.
+      return static_cast<HRESULT>(0x10000102L);
+    }
+
+    std::unique_lock<std::mutex> lock(h->fence_mutex);
+    if (timeout_ms == ~0u) {
+      h->fence_cv.wait(lock, ready);
+      return S_OK;
+    }
+    if (!h->fence_cv.wait_for(lock, std::chrono::milliseconds(timeout_ms), ready)) {
+      // Match Win7-era status semantics used by the UMD poll path.
+      return static_cast<HRESULT>(0x10000102L);
+    }
+    return S_OK;
   }
 
   static void AEROGPU_APIENTRY SetError(void* user, HRESULT hr) {
@@ -263,14 +302,19 @@ struct TestDevice {
   AEROGPU_D3D10_11_DEVICECALLBACKS callbacks = {};
 };
 
-bool InitTestDevice(TestDevice* out, bool want_backing_allocations) {
+bool InitTestDevice(TestDevice* out, bool want_backing_allocations, bool async_fences) {
   if (!out) {
     return false;
   }
 
+  out->harness.async_fences = async_fences;
+
   out->callbacks.pUserContext = &out->harness;
   out->callbacks.pfnSubmitCmdStream = &Harness::SubmitCmdStream;
   out->callbacks.pfnSetError = &Harness::SetError;
+  if (async_fences) {
+    out->callbacks.pfnWaitForFence = &Harness::WaitForFence;
+  }
   if (want_backing_allocations) {
     out->callbacks.pfnAllocateBacking = &Harness::AllocateBacking;
     out->callbacks.pfnMapAllocation = &Harness::MapAllocation;
@@ -531,7 +575,7 @@ bool CreateTexture2DWithInitialData(TestDevice* dev,
 
 bool TestHostOwnedBufferUnmapUploads() {
   TestDevice dev{};
-  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false), "InitTestDevice(host-owned)")) {
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false, /*async_fences=*/false), "InitTestDevice(host-owned)")) {
     return false;
   }
 
@@ -623,7 +667,7 @@ bool TestHostOwnedBufferUnmapUploads() {
 
 bool TestHostOwnedTextureUnmapUploads() {
   TestDevice dev{};
-  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false), "InitTestDevice(host-owned tex2d)")) {
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false, /*async_fences=*/false), "InitTestDevice(host-owned tex2d)")) {
     return false;
   }
 
@@ -735,7 +779,7 @@ bool TestHostOwnedTextureUnmapUploads() {
 
 bool TestGuestBackedBufferUnmapDirtyRange() {
   TestDevice dev{};
-  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/true), "InitTestDevice(guest-backed)")) {
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/true, /*async_fences=*/false), "InitTestDevice(guest-backed)")) {
     return false;
   }
 
@@ -834,7 +878,7 @@ bool TestGuestBackedBufferUnmapDirtyRange() {
 
 bool TestGuestBackedTextureUnmapDirtyRange() {
   TestDevice dev{};
-  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/true), "InitTestDevice(guest-backed tex2d)")) {
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/true, /*async_fences=*/false), "InitTestDevice(guest-backed tex2d)")) {
     return false;
   }
 
@@ -958,7 +1002,7 @@ bool TestGuestBackedTextureUnmapDirtyRange() {
 
 bool TestMapUsageValidation() {
   TestDevice dev{};
-  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false), "InitTestDevice(validation)")) {
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false, /*async_fences=*/false), "InitTestDevice(validation)")) {
     return false;
   }
 
@@ -986,7 +1030,7 @@ bool TestMapUsageValidation() {
 
 bool TestMapFlagsValidation() {
   TestDevice dev{};
-  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false), "InitTestDevice(map flags)")) {
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false, /*async_fences=*/false), "InitTestDevice(map flags)")) {
     return false;
   }
 
@@ -1014,22 +1058,22 @@ bool TestMapFlagsValidation() {
 
 bool TestMapDoNotWaitReportsStillDrawing() {
   TestDevice dev{};
-  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/true), "InitTestDevice(map DO_NOT_WAIT)")) {
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/true, /*async_fences=*/true),
+             "InitTestDevice(map DO_NOT_WAIT)")) {
     return false;
   }
-  dev.callbacks.pfnWaitForFence = &Harness::WaitForFence;
 
   TestResource buf{};
   if (!Check(CreateStagingBuffer(&dev, /*byte_width=*/16, AEROGPU_D3D11_CPU_ACCESS_READ, &buf), "CreateStagingBuffer")) {
     return false;
   }
 
-  dev.harness.completed_fence = 0;
+  dev.harness.completed_fence.store(0, std::memory_order_relaxed);
   const HRESULT flush_hr = dev.device_funcs.pfnFlush(dev.hDevice);
   if (!Check(flush_hr == S_OK, "Flush to create pending fence")) {
     return false;
   }
-  const uint64_t pending_fence = dev.harness.last_submitted_fence;
+  const uint64_t pending_fence = dev.harness.last_submitted_fence.load(std::memory_order_relaxed);
   if (!Check(pending_fence != 0, "Flush returned a non-zero fence")) {
     return false;
   }
@@ -1054,7 +1098,8 @@ bool TestMapDoNotWaitReportsStillDrawing() {
   }
 
   // Mark the fence complete and retry; DO_NOT_WAIT should now succeed.
-  dev.harness.completed_fence = pending_fence;
+  dev.harness.completed_fence.store(pending_fence, std::memory_order_relaxed);
+  dev.harness.fence_cv.notify_all();
 
   mapped = {};
   dev.harness.wait_call_count = 0;
@@ -1087,7 +1132,8 @@ bool TestMapDoNotWaitReportsStillDrawing() {
 
 bool TestInvalidUnmapReportsError() {
   TestDevice dev{};
-  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false), "InitTestDevice(invalid unmap)")) {
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false, /*async_fences=*/false),
+             "InitTestDevice(invalid unmap)")) {
     return false;
   }
 
@@ -1139,7 +1185,7 @@ bool TestInvalidUnmapReportsError() {
 
 bool TestDynamicMapFlagsValidation() {
   TestDevice dev{};
-  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false), "InitTestDevice(dynamic map flags)")) {
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false, /*async_fences=*/false), "InitTestDevice(dynamic map flags)")) {
     return false;
   }
 
@@ -1173,7 +1219,7 @@ bool TestDynamicMapFlagsValidation() {
 
 bool TestHostOwnedDynamicIABufferUploads() {
   TestDevice dev{};
-  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false), "InitTestDevice(dynamic ia host-owned)")) {
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false, /*async_fences=*/false), "InitTestDevice(dynamic ia host-owned)")) {
     return false;
   }
 
@@ -1267,7 +1313,7 @@ bool TestHostOwnedDynamicIABufferUploads() {
 
 bool TestGuestBackedDynamicIABufferDirtyRange() {
   TestDevice dev{};
-  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/true), "InitTestDevice(dynamic ia guest-backed)")) {
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/true, /*async_fences=*/false), "InitTestDevice(dynamic ia guest-backed)")) {
     return false;
   }
 
@@ -1369,7 +1415,7 @@ bool TestGuestBackedDynamicIABufferDirtyRange() {
 
 bool TestDynamicBufferUsageValidation() {
   TestDevice dev{};
-  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false), "InitTestDevice(dynamic validation)")) {
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false, /*async_fences=*/false), "InitTestDevice(dynamic validation)")) {
     return false;
   }
 
@@ -1398,7 +1444,7 @@ bool TestDynamicBufferUsageValidation() {
 
 bool TestHostOwnedDynamicConstantBufferUploads() {
   TestDevice dev{};
-  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false), "InitTestDevice(dynamic cb host-owned)")) {
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false, /*async_fences=*/false), "InitTestDevice(dynamic cb host-owned)")) {
     return false;
   }
 
@@ -1492,7 +1538,7 @@ bool TestHostOwnedDynamicConstantBufferUploads() {
 
 bool TestGuestBackedDynamicConstantBufferDirtyRange() {
   TestDevice dev{};
-  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/true), "InitTestDevice(dynamic cb guest-backed)")) {
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/true, /*async_fences=*/false), "InitTestDevice(dynamic cb guest-backed)")) {
     return false;
   }
 
@@ -1594,7 +1640,7 @@ bool TestGuestBackedDynamicConstantBufferDirtyRange() {
 
 bool TestHostOwnedCopyResourceBufferReadback() {
   TestDevice dev{};
-  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false), "InitTestDevice(copy buffer host-owned)")) {
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false, /*async_fences=*/false), "InitTestDevice(copy buffer host-owned)")) {
     return false;
   }
 
@@ -1674,7 +1720,7 @@ bool TestHostOwnedCopyResourceBufferReadback() {
 
 bool TestSubmitAllocListTracksBoundConstantBuffer() {
   TestDevice dev{};
-  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/true), "InitTestDevice(track CB alloc)")) {
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/true, /*async_fences=*/false), "InitTestDevice(track CB alloc)")) {
     return false;
   }
 
@@ -1734,7 +1780,7 @@ bool TestSubmitAllocListTracksBoundConstantBuffer() {
 
 bool TestHostOwnedCopyResourceTextureReadback() {
   TestDevice dev{};
-  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false), "InitTestDevice(copy tex2d host-owned)")) {
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false, /*async_fences=*/false), "InitTestDevice(copy tex2d host-owned)")) {
     return false;
   }
 
@@ -1836,7 +1882,7 @@ bool TestHostOwnedCopyResourceTextureReadback() {
 
 bool TestSubmitAllocListTracksBoundShaderResource() {
   TestDevice dev{};
-  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/true), "InitTestDevice(track SRV alloc)")) {
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/true, /*async_fences=*/false), "InitTestDevice(track SRV alloc)")) {
     return false;
   }
 
@@ -1896,7 +1942,7 @@ bool TestSubmitAllocListTracksBoundShaderResource() {
 
 bool TestGuestBackedCopyResourceBufferReadback() {
   TestDevice dev{};
-  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/true), "InitTestDevice(copy buffer)")) {
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/true, /*async_fences=*/false), "InitTestDevice(copy buffer)")) {
     return false;
   }
 
@@ -2003,7 +2049,7 @@ bool TestGuestBackedCopyResourceBufferReadback() {
 
 bool TestGuestBackedCopyResourceTextureReadback() {
   TestDevice dev{};
-  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/true), "InitTestDevice(copy tex2d)")) {
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/true, /*async_fences=*/false), "InitTestDevice(copy tex2d)")) {
     return false;
   }
 
@@ -2104,7 +2150,7 @@ bool TestGuestBackedCopyResourceTextureReadback() {
 
 bool TestHostOwnedUpdateSubresourceUPBufferUploads() {
   TestDevice dev{};
-  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false), "InitTestDevice(UpdateSubresourceUP buffer host-owned)")) {
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false, /*async_fences=*/false), "InitTestDevice(UpdateSubresourceUP buffer host-owned)")) {
     return false;
   }
 
@@ -2183,7 +2229,7 @@ bool TestHostOwnedUpdateSubresourceUPBufferUploads() {
 
 bool TestGuestBackedUpdateSubresourceUPBufferDirtyRange() {
   TestDevice dev{};
-  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/true), "InitTestDevice(UpdateSubresourceUP buffer guest-backed)")) {
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/true, /*async_fences=*/false), "InitTestDevice(UpdateSubresourceUP buffer guest-backed)")) {
     return false;
   }
 
@@ -2272,7 +2318,7 @@ bool TestGuestBackedUpdateSubresourceUPBufferDirtyRange() {
 
 bool TestHostOwnedUpdateSubresourceUPTextureUploads() {
   TestDevice dev{};
-  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false), "InitTestDevice(UpdateSubresourceUP tex2d host-owned)")) {
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false, /*async_fences=*/false), "InitTestDevice(UpdateSubresourceUP tex2d host-owned)")) {
     return false;
   }
 
@@ -2361,7 +2407,7 @@ bool TestHostOwnedUpdateSubresourceUPTextureUploads() {
 
 bool TestGuestBackedUpdateSubresourceUPTextureDirtyRange() {
   TestDevice dev{};
-  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/true), "InitTestDevice(UpdateSubresourceUP tex2d guest-backed)")) {
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/true, /*async_fences=*/false), "InitTestDevice(UpdateSubresourceUP tex2d guest-backed)")) {
     return false;
   }
 
@@ -2469,7 +2515,7 @@ bool TestGuestBackedUpdateSubresourceUPTextureDirtyRange() {
 
 bool TestHostOwnedUpdateSubresourceUPBufferBoxUploads() {
   TestDevice dev{};
-  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false), "InitTestDevice(UpdateSubresourceUP box buffer host-owned)")) {
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false, /*async_fences=*/false), "InitTestDevice(UpdateSubresourceUP box buffer host-owned)")) {
     return false;
   }
 
@@ -2547,7 +2593,7 @@ bool TestHostOwnedUpdateSubresourceUPBufferBoxUploads() {
 
 bool TestHostOwnedUpdateSubresourceUPTextureBoxUploads() {
   TestDevice dev{};
-  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false), "InitTestDevice(UpdateSubresourceUP box tex2d host-owned)")) {
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false, /*async_fences=*/false), "InitTestDevice(UpdateSubresourceUP box tex2d host-owned)")) {
     return false;
   }
 
@@ -2634,7 +2680,7 @@ bool TestHostOwnedUpdateSubresourceUPTextureBoxUploads() {
 
 bool TestGuestBackedUpdateSubresourceUPBufferBoxDirtyRange() {
   TestDevice dev{};
-  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/true), "InitTestDevice(UpdateSubresourceUP box buffer guest-backed)")) {
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/true, /*async_fences=*/false), "InitTestDevice(UpdateSubresourceUP box buffer guest-backed)")) {
     return false;
   }
 
@@ -2723,7 +2769,7 @@ bool TestGuestBackedUpdateSubresourceUPBufferBoxDirtyRange() {
 
 bool TestGuestBackedUpdateSubresourceUPTextureBoxDirtyRange() {
   TestDevice dev{};
-  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/true), "InitTestDevice(UpdateSubresourceUP box tex2d guest-backed)")) {
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/true, /*async_fences=*/false), "InitTestDevice(UpdateSubresourceUP box tex2d guest-backed)")) {
     return false;
   }
 
@@ -2819,7 +2865,7 @@ bool TestGuestBackedUpdateSubresourceUPTextureBoxDirtyRange() {
 
 bool TestHostOwnedCreateBufferInitialDataUploads() {
   TestDevice dev{};
-  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false), "InitTestDevice(CreateResource initial buffer host-owned)")) {
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false, /*async_fences=*/false), "InitTestDevice(CreateResource initial buffer host-owned)")) {
     return false;
   }
 
@@ -2899,7 +2945,7 @@ bool TestHostOwnedCreateBufferInitialDataUploads() {
 
 bool TestGuestBackedCreateBufferInitialDataDirtyRange() {
   TestDevice dev{};
-  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/true), "InitTestDevice(CreateResource initial buffer guest-backed)")) {
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/true, /*async_fences=*/false), "InitTestDevice(CreateResource initial buffer guest-backed)")) {
     return false;
   }
 
@@ -2989,7 +3035,7 @@ bool TestGuestBackedCreateBufferInitialDataDirtyRange() {
 
 bool TestHostOwnedCreateTextureInitialDataUploads() {
   TestDevice dev{};
-  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false), "InitTestDevice(CreateResource initial tex2d host-owned)")) {
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false, /*async_fences=*/false), "InitTestDevice(CreateResource initial tex2d host-owned)")) {
     return false;
   }
 
@@ -3079,7 +3125,7 @@ bool TestHostOwnedCreateTextureInitialDataUploads() {
 
 bool TestGuestBackedCreateTextureInitialDataDirtyRange() {
   TestDevice dev{};
-  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/true), "InitTestDevice(CreateResource initial tex2d guest-backed)")) {
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/true, /*async_fences=*/false), "InitTestDevice(CreateResource initial tex2d guest-backed)")) {
     return false;
   }
 
@@ -3187,6 +3233,111 @@ bool TestGuestBackedCreateTextureInitialDataDirtyRange() {
   return true;
 }
 
+bool TestMapDoNotWaitRespectsFenceCompletion() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false, /*async_fences=*/true),
+             "InitTestDevice(map do_not_wait async fences)")) {
+    return false;
+  }
+  dev.callbacks.pfnWaitForFence = nullptr;
+  dev.callbacks.pfnQueryCompletedFence = &Harness::QueryCompletedFence;
+
+  TestResource src{};
+  TestResource dst{};
+  if (!Check(CreateStagingTexture2D(&dev, /*width=*/3, /*height=*/2, AEROGPU_D3D11_CPU_ACCESS_WRITE, &src),
+             "CreateStagingTexture2D(src)")) {
+    return false;
+  }
+  if (!Check(CreateStagingTexture2D(&dev, /*width=*/3, /*height=*/2, AEROGPU_D3D11_CPU_ACCESS_READ, &dst),
+             "CreateStagingTexture2D(dst)")) {
+    return false;
+  }
+
+  AEROGPU_DDI_MAPPED_SUBRESOURCE mapped_src = {};
+  HRESULT hr = dev.device_funcs.pfnStagingResourceMap(dev.hDevice,
+                                                      src.hResource,
+                                                      /*subresource=*/0,
+                                                      AEROGPU_DDI_MAP_WRITE,
+                                                      /*map_flags=*/0,
+                                                      &mapped_src);
+  if (!Check(hr == S_OK, "StagingResourceMap(WRITE) src tex2d")) {
+    return false;
+  }
+  if (!Check(mapped_src.pData != nullptr, "Map src returned non-null pData")) {
+    return false;
+  }
+  if (!Check(mapped_src.RowPitch != 0, "Map src returned RowPitch")) {
+    return false;
+  }
+
+  const uint32_t width = 3;
+  const uint32_t height = 2;
+  const uint32_t bytes_per_row = width * 4u;
+  const uint32_t src_pitch = mapped_src.RowPitch;
+  auto* src_bytes = static_cast<uint8_t*>(mapped_src.pData);
+  for (uint32_t y = 0; y < height; y++) {
+    for (uint32_t x = 0; x < bytes_per_row; x++) {
+      src_bytes[static_cast<size_t>(y) * src_pitch + x] = static_cast<uint8_t>((y + 1) * 0x10u + x);
+    }
+  }
+  dev.device_funcs.pfnStagingResourceUnmap(dev.hDevice, src.hResource, /*subresource=*/0);
+
+  dev.device_funcs.pfnCopyResource(dev.hDevice, dst.hResource, src.hResource);
+
+  AEROGPU_DDI_MAPPED_SUBRESOURCE mapped_dst = {};
+  hr = dev.device_funcs.pfnStagingResourceMap(dev.hDevice,
+                                              dst.hResource,
+                                              /*subresource=*/0,
+                                              AEROGPU_DDI_MAP_READ,
+                                              AEROGPU_D3D11_MAP_FLAG_DO_NOT_WAIT,
+                                              &mapped_dst);
+  if (!Check(hr == DXGI_ERROR_WAS_STILL_DRAWING, "Map(READ, DO_NOT_WAIT) returns still drawing")) {
+    return false;
+  }
+
+  const uint64_t fence = dev.harness.last_submitted_fence.load(std::memory_order_relaxed);
+  if (!Check(fence != 0, "async submit produced a non-zero fence")) {
+    return false;
+  }
+
+  dev.harness.completed_fence.store(fence, std::memory_order_relaxed);
+  dev.harness.fence_cv.notify_all();
+
+  hr = dev.device_funcs.pfnStagingResourceMap(dev.hDevice,
+                                              dst.hResource,
+                                              /*subresource=*/0,
+                                              AEROGPU_DDI_MAP_READ,
+                                              /*map_flags=*/0,
+                                              &mapped_dst);
+  if (!Check(hr == S_OK, "Map(READ) succeeds after fence completion")) {
+    return false;
+  }
+  if (!Check(mapped_dst.pData != nullptr, "Map dst returned non-null pData")) {
+    return false;
+  }
+  if (!Check(mapped_dst.RowPitch == src_pitch, "Map dst RowPitch matches src")) {
+    return false;
+  }
+
+  const auto* dst_bytes = static_cast<const uint8_t*>(mapped_dst.pData);
+  const uint32_t dst_pitch = mapped_dst.RowPitch;
+  for (uint32_t y = 0; y < height; y++) {
+    for (uint32_t x = 0; x < bytes_per_row; x++) {
+      const uint8_t expected = static_cast<uint8_t>((y + 1) * 0x10u + x);
+      if (!Check(dst_bytes[static_cast<size_t>(y) * dst_pitch + x] == expected, "Map dst bytes match")) {
+        return false;
+      }
+    }
+  }
+  dev.device_funcs.pfnStagingResourceUnmap(dev.hDevice, dst.hResource, /*subresource=*/0);
+
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, dst.hResource);
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, src.hResource);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
 } // namespace
 
 int main() {
@@ -3223,6 +3374,7 @@ int main() {
   ok &= TestGuestBackedCreateBufferInitialDataDirtyRange();
   ok &= TestHostOwnedCreateTextureInitialDataUploads();
   ok &= TestGuestBackedCreateTextureInitialDataDirtyRange();
+  ok &= TestMapDoNotWaitRespectsFenceCompletion();
 
   if (!ok) {
     return 1;

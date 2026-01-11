@@ -871,8 +871,23 @@ uint64_t AeroGpuQueryCompletedFence(AeroGpuDevice* dev) {
     return dev->last_completed_fence.load(std::memory_order_relaxed);
   }
 
-  std::lock_guard<std::mutex> lock(dev->adapter->fence_mutex);
-  const uint64_t completed = dev->adapter->completed_fence;
+  const AEROGPU_D3D10_11_DEVICECALLBACKS* cb = dev->device_callbacks;
+  const uint64_t observed = (cb && cb->pfnQueryCompletedFence) ? cb->pfnQueryCompletedFence(cb->pUserContext) : 0;
+
+  uint64_t completed = 0;
+  bool notify = false;
+  {
+    std::lock_guard<std::mutex> lock(dev->adapter->fence_mutex);
+    if (observed > dev->adapter->completed_fence) {
+      dev->adapter->completed_fence = observed;
+      notify = true;
+    }
+    completed = dev->adapter->completed_fence;
+  }
+
+  if (notify) {
+    dev->adapter->fence_cv.notify_all();
+  }
   atomic_max_u64(&dev->last_completed_fence, completed);
   return completed;
 }
@@ -926,6 +941,54 @@ HRESULT AeroGpuWaitForFence(AeroGpuDevice* dev, uint64_t fence, uint32_t timeout
 
   if (!dev->adapter) {
     return E_FAIL;
+  }
+
+  const AEROGPU_D3D10_11_DEVICECALLBACKS* cb = dev->device_callbacks;
+  if (cb && cb->pfnWaitForFence) {
+    const HRESULT hr = cb->pfnWaitForFence(cb->pUserContext, fence, timeout_ms);
+    if (!FAILED(hr)) {
+      bool notify = false;
+      {
+        std::lock_guard<std::mutex> lock(dev->adapter->fence_mutex);
+        if (fence > dev->adapter->completed_fence) {
+          dev->adapter->completed_fence = fence;
+          notify = true;
+        }
+      }
+      if (notify) {
+        dev->adapter->fence_cv.notify_all();
+      }
+      atomic_max_u64(&dev->last_completed_fence, fence);
+    }
+    return hr;
+  }
+
+  // If the harness supplies an explicit completed-fence query callback, poll it
+  // while waiting so portable (non-WDK) builds can model asynchronous
+  // completions.
+  if (cb && cb->pfnQueryCompletedFence) {
+    if (timeout_ms == 0) {
+      return kDxgiErrorWasStillDrawing;
+    }
+
+    const auto start = std::chrono::steady_clock::now();
+    AeroGpuAdapter* adapter = dev->adapter;
+    for (;;) {
+      if (AeroGpuQueryCompletedFence(dev) >= fence) {
+        return S_OK;
+      }
+
+      if (timeout_ms != kAeroGpuTimeoutMsInfinite) {
+        const auto elapsed =
+            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
+        if (elapsed >= static_cast<int64_t>(timeout_ms)) {
+          return kDxgiErrorWasStillDrawing;
+        }
+      }
+
+      std::unique_lock<std::mutex> lock(adapter->fence_mutex);
+      adapter->fence_cv.wait_for(lock, std::chrono::milliseconds(1));
+    }
   }
 
   AeroGpuAdapter* adapter = dev->adapter;
@@ -1084,28 +1147,35 @@ uint64_t submit_locked(AeroGpuDevice* dev, HRESULT* out_hr) {
       return 0;
     }
 
-    // Repository build: treat submissions as synchronous unless the harness
-    // integrates a real fence completion path.
-    if (fence == 0) {
+    const bool fence_provided = (fence != 0);
+
+    // Repository build: default to a synchronous in-process fence unless the
+    // harness provides a real fence value (and completion is tracked separately
+    // via `pfnQueryCompletedFence`).
+    if (!fence_provided) {
       std::lock_guard<std::mutex> lock(adapter->fence_mutex);
       fence = adapter->next_fence++;
     }
 
+    const bool external_completion = (cb->pfnWaitForFence != nullptr) || (cb->pfnQueryCompletedFence != nullptr);
+    const bool mark_complete = !external_completion || !fence_provided;
+
     {
       std::lock_guard<std::mutex> lock(adapter->fence_mutex);
       adapter->next_fence = std::max(adapter->next_fence, fence + 1);
-      if (!cb->pfnWaitForFence) {
+      if (mark_complete && fence > adapter->completed_fence) {
         adapter->completed_fence = fence;
       }
     }
-    if (!cb->pfnWaitForFence) {
+    if (mark_complete) {
       adapter->fence_cv.notify_all();
+      atomic_max_u64(&dev->last_completed_fence, fence);
+    } else if (cb->pfnQueryCompletedFence) {
+      // Refresh cached completion so DO_NOT_WAIT polls observe the harness state.
+      (void)AeroGpuQueryCompletedFence(dev);
     }
 
     atomic_max_u64(&dev->last_submitted_fence, fence);
-    if (!cb->pfnWaitForFence) {
-      atomic_max_u64(&dev->last_completed_fence, fence);
-    }
 
     dev->cmd.reset();
     return fence;

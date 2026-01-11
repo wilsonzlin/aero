@@ -435,7 +435,7 @@ typedef HRESULT(AEROGPU_APIENTRY *PFNAEROGPU_DDI_MAP_ALLOCATION)(void *pUserCont
                                                                  AEROGPU_WDDM_ALLOCATION_HANDLE alloc_handle,
                                                                  void **out_cpu_ptr);
 typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_UNMAP_ALLOCATION)(void *pUserContext,
-                                                                AEROGPU_WDDM_ALLOCATION_HANDLE alloc_handle);
+                                                                 AEROGPU_WDDM_ALLOCATION_HANDLE alloc_handle);
 
 // Submit a command buffer and its referenced allocations.
 // The real Win7/WDDM implementation will ensure the allocation handles are
@@ -467,6 +467,11 @@ typedef HRESULT(AEROGPU_APIENTRY *PFNAEROGPU_DDI_WAIT_FOR_FENCE)(void *pUserCont
 // runtime `pfnSetErrorCb` behavior for void-returning DDIs (e.g. Unmap).
 typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_SET_ERROR)(void *pUserContext, HRESULT hr);
 
+// Optional completed-fence query callback.
+// Used by repository tests to observe asynchronous fence progress without
+// requiring a real Win7/WDDM stack.
+typedef uint64_t(AEROGPU_APIENTRY *PFNAEROGPU_DDI_QUERY_COMPLETED_FENCE)(void *pUserContext);
+
 struct AEROGPU_D3D10_11_DEVICECALLBACKS {
   void *pUserContext;
   PFNAEROGPU_DDI_ALLOCATE_BACKING pfnAllocateBacking;
@@ -475,6 +480,7 @@ struct AEROGPU_D3D10_11_DEVICECALLBACKS {
   PFNAEROGPU_DDI_SUBMIT_CMD_STREAM pfnSubmitCmdStream;
   PFNAEROGPU_DDI_WAIT_FOR_FENCE pfnWaitForFence;
   PFNAEROGPU_DDI_SET_ERROR pfnSetError;
+  PFNAEROGPU_DDI_QUERY_COMPLETED_FENCE pfnQueryCompletedFence;
 };
 
 // Resource update/copy DDI structs (minimal).
