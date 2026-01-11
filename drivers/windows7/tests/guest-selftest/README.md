@@ -21,6 +21,9 @@ virtio driver health via **COM1 serial** (host-captured), stdout, and a log file
   - Detect virtio-input devices by matching virtio-input PCI/HID IDs:
     - `VEN_1AF4&DEV_1052` (modern) and `VEN_1AF4&DEV_1011` (transitional)
     - or HID-style `VID_1AF4&PID_1052` / `VID_1AF4&PID_1011`
+  - Aero contract note:
+    - `AERO-W7-VIRTIO` v1 expects the modern virtio-input PCI ID (`DEV_1052`) with `REV_01`.
+    - The in-tree Aero Win7 virtio-input INF is revision-gated, so QEMU-style `REV_00` virtio-input devices will not bind unless you override the revision (for example `x-pci-revision=0x01`).
   - Read the HID report descriptor (`IOCTL_HID_GET_REPORT_DESCRIPTOR`) and sanity-check that:
     - at least one **keyboard-only** HID device exists
     - at least one **mouse-only** HID device exists
