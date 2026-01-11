@@ -59,6 +59,8 @@ describe("l2 tunnel protocol vectors", () => {
       const wire = decodeB64(wireB64!);
 
       if ("expectError" in v && v.expectError) {
+        if (v.frame_b64) expect(v.wire_b64).toBe(v.frame_b64);
+
         let err: unknown;
         try {
           l2.decodeL2Message(wire);
@@ -101,4 +103,3 @@ describe("l2 tunnel protocol vectors", () => {
     });
   }
 });
-

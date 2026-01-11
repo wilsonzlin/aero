@@ -148,6 +148,14 @@ fn l2_tunnel_vectors_match_golden_bytes() {
 
             let wire_b64 = json_str(json_get(v, "wire_b64", &ctx), &format!("{ctx}.wire_b64"));
             let wire = b64_to_bytes(wire_b64);
+            if let Some(frame_b64) = v
+                .as_object()
+                .and_then(|obj| obj.get("frame_b64"))
+                .and_then(Value::as_str)
+            {
+                let frame = b64_to_bytes(frame_b64);
+                assert_eq!(wire, frame, "{name}: wire_b64 must equal frame_b64");
+            }
 
             let error_contains = json_str(
                 json_get(v, "errorContains", &ctx),
