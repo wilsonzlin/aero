@@ -1,13 +1,18 @@
 /*
- * AeroGPU WDDM allocation private driver data (KMD → UMD).
+ * AeroGPU allocation private driver data (legacy/experimental KMD → UMD).
  *
- * This header defines the stable, pointer-free payload returned by the AeroGPU
- * Windows 7 KMD in the allocation private driver data for shareable allocations
- * (DxgkDdiCreateAllocation / DxgkDdiOpenAllocation).
+ * Historically this header documented a potential KMD→UMD private-data payload
+ * carrying a per-allocation share token.
  *
- * Primary use: expose the KMD-generated per-allocation ShareToken to the UMD so
- * the UMD can drive cross-process shared surface interop via the AeroGPU command
- * stream (`EXPORT_SHARED_SURFACE` / `IMPORT_SHARED_SURFACE`).
+ * NOTE (Win7 WDDM 1.1): The current AeroGPU driver stack does NOT rely on
+ * KMD→UMD writeback semantics through WDDM allocation private-data buffers.
+ * Allocation private data is treated as UMD→KMD input, and stable cross-process
+ * IDs (`alloc_id` + `share_token`) are persisted via `aerogpu_wddm_alloc_priv`
+ * (`drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`), which dxgkrnl preserves
+ * and returns verbatim on OpenResource/OpenAllocation.
+ *
+ * This struct is kept for reference/bring-up tooling; new work should use
+ * `aerogpu_wddm_alloc_priv`.
  */
 #ifndef AEROGPU_PROTOCOL_AEROGPU_ALLOC_PRIVDATA_H_
 #define AEROGPU_PROTOCOL_AEROGPU_ALLOC_PRIVDATA_H_

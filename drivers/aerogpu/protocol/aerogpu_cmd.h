@@ -817,12 +817,17 @@ AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_present_ex) == 24);
  * EXPORT_SHARED_SURFACE:
  * - Associates an existing `resource_handle` with a driver-chosen `share_token`.
  * - `share_token` is an opaque 64-bit value that must be stable across guest
- *   processes.
- * - Recommended source of `share_token`: the AeroGPU KMD's per-allocation
- *   `ShareToken` returned to the UMD via allocation private driver data
- *   (`struct aerogpu_alloc_privdata` in `aerogpu_alloc_privdata.h`).
- *   (Do NOT use the numeric value of the D3D shared `HANDLE`, which is
- *   process-local and not stable cross-process.)
+ *   processes and collision-resistant across the entire guest (multi-process).
+ * - On Win7 WDDM 1.1, stability across processes is achieved by having the UMD
+ *   generate the token at CreateResource time and store it in the WDDM
+ *   allocation private driver data blob that dxgkrnl preserves and returns on
+ *   OpenResource/OpenAllocation (see `aerogpu_wddm_alloc.h`).
+ * - Recommended scheme: generate a random non-zero 64-bit token via a
+ *   cryptographically strong RNG (e.g. `RtlGenRandom`/`BCryptGenRandom`).
+ *   Deterministic schemes based solely on per-process counters are not
+ *   sufficient.
+ * - Do NOT use the numeric value of the D3D shared `HANDLE` (process-local and
+ *   not stable cross-process).
  * - The host stores a mapping of (share_token -> resource).
  * - MVP limitation: the shared resource must be backed by a single guest
  *   allocation (i.e. one contiguous guest memory range).
@@ -842,8 +847,8 @@ AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_export_shared_surface) == 24);
  * IMPORT_SHARED_SURFACE:
  * - Creates an alias handle `out_resource_handle` which refers to the same
  *   underlying resource previously exported under `share_token`.
- * - `share_token` should match the KMD allocation `ShareToken` used during
- *   export, not the user-mode shared `HANDLE` value.
+ * - `share_token` must match the value used during export, not the user-mode
+ *   shared `HANDLE` value.
  * - If the `share_token` is unknown, the host should treat the command as a
  *   validation error (implementation-defined error reporting).
  */
