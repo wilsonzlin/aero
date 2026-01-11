@@ -435,7 +435,7 @@ impl AeroGpuExecutor {
                         let scan_result = if cmd_stream.is_empty() {
                             cmd_stream_has_vsync_present(mem, desc.cmd_gpa, desc.cmd_size_bytes)
                         } else {
-                            cmd_stream_bytes_has_vsync_present(&cmd_stream)
+                            cmd_stream_has_vsync_present_bytes(&cmd_stream)
                         };
 
                         match scan_result {
@@ -1015,60 +1015,6 @@ fn cmd_stream_has_vsync_present(
             }
             let flags_gpa = cmd_hdr_gpa.checked_add(12).ok_or(())?;
             let flags = mem.read_u32(flags_gpa);
-            if (flags & AEROGPU_PRESENT_FLAG_VSYNC) != 0 {
-                return Ok(true);
-            }
-        }
-
-        offset += cmd_size;
-    }
-
-    Ok(false)
-}
-
-fn cmd_stream_bytes_has_vsync_present(cmd_stream: &[u8]) -> Result<bool, ()> {
-    if cmd_stream.len() < ProtocolCmdStreamHeader::SIZE_BYTES {
-        return Err(());
-    }
-
-    let stream_hdr = decode_cmd_stream_header_le(cmd_stream).map_err(|_| ())?;
-    let declared_size = stream_hdr.size_bytes as usize;
-    if declared_size > cmd_stream.len() {
-        return Err(());
-    }
-
-    let mut offset = ProtocolCmdStreamHeader::SIZE_BYTES;
-    while offset < declared_size {
-        let rem = declared_size - offset;
-        if rem < AerogpuCmdHdr::SIZE_BYTES {
-            return Err(());
-        }
-
-        let cmd_hdr = decode_cmd_hdr_le(&cmd_stream[offset..offset + AerogpuCmdHdr::SIZE_BYTES])
-            .map_err(|_| ())?;
-        let cmd_size = cmd_hdr.size_bytes as usize;
-        let end = offset.checked_add(cmd_size).ok_or(())?;
-        if end > declared_size {
-            return Err(());
-        }
-
-        if cmd_hdr.opcode == AerogpuCmdOpcode::Present as u32
-            || cmd_hdr.opcode == AerogpuCmdOpcode::PresentEx as u32
-        {
-            // flags is always at offset 12 (hdr + scanout_id).
-            if cmd_size < 16 {
-                return Err(());
-            }
-            let flags_offset = offset.checked_add(12).ok_or(())?;
-            let flags_end = flags_offset.checked_add(4).ok_or(())?;
-            if flags_end > end {
-                return Err(());
-            }
-            let flags = u32::from_le_bytes(
-                cmd_stream[flags_offset..flags_end]
-                    .try_into()
-                    .expect("flags slice length validated"),
-            );
             if (flags & AEROGPU_PRESENT_FLAG_VSYNC) != 0 {
                 return Ok(true);
             }
