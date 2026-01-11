@@ -204,6 +204,8 @@ For suite usage:
 run_all.cmd --help
 ```
 
+When running `run_all.cmd --json`, tests write per-test JSON reports next to the binaries by default. If `aerogpu_timeout_runner.exe` is present, it also cleans up stale JSON outputs and writes a fallback JSON report for timeouts/crashes/missing binaries so automation can still consume a report for every attempted test.
+
 To increase the per-test timeout (default: 30000 ms):
 
 ```cmd
