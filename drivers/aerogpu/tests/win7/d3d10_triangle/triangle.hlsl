@@ -18,4 +18,3 @@ VSOut vs_main(VSIn input) {
 float4 ps_main(VSOut input) : SV_Target {
   return input.color;
 }
-

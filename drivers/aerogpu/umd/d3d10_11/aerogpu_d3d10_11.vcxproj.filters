@@ -23,6 +23,9 @@
     <ClCompile Include="src\aerogpu_d3d11_umd_wdk.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="src\aerogpu_d3d10_umd_wdk.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\aerogpu_d3d10_11_umd.h">

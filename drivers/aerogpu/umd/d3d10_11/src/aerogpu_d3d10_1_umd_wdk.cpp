@@ -43,6 +43,9 @@
   #define STATUS_TIMEOUT ((NTSTATUS)0x00000102L)
 #endif
 
+// Implemented in `aerogpu_d3d10_umd_wdk.cpp` (D3D10.0 DDI).
+HRESULT AEROGPU_APIENTRY AeroGpuOpenAdapter10Wdk(D3D10DDIARG_OPENADAPTER* pOpenData);
+
 namespace {
 
 constexpr aerogpu_handle_t kInvalidHandle = 0;
@@ -2625,29 +2628,7 @@ HRESULT OpenAdapter_WDK(D3D10DDIARG_OPENADAPTER* pOpenData) {
   }
 
   if (pOpenData->Interface == D3D10DDI_INTERFACE_VERSION) {
-    // `Version` is treated as an in/out negotiation field by some runtimes. If
-    // the runtime doesn't initialize it, accept 0 and return the supported
-    // D3D10 DDI version.
-    if (pOpenData->Version == 0) {
-      pOpenData->Version = D3D10DDI_SUPPORTED;
-    } else if (pOpenData->Version < D3D10DDI_SUPPORTED) {
-      return E_INVALIDARG;
-    } else if (pOpenData->Version > D3D10DDI_SUPPORTED) {
-      pOpenData->Version = D3D10DDI_SUPPORTED;
-    }
-
-    auto* adapter = new AeroGpuAdapter();
-    InitKmtAdapterHandle(adapter);
-    InitUmdPrivate(adapter);
-    pOpenData->hAdapter.pDrvPrivate = adapter;
-
-    auto* funcs = reinterpret_cast<D3D10DDI_ADAPTERFUNCS*>(pOpenData->pAdapterFuncs);
-    std::memset(funcs, 0, sizeof(*funcs));
-    funcs->pfnGetCaps = &GetCaps10;
-    funcs->pfnCalcPrivateDeviceSize = &CalcPrivateDeviceSize10;
-    funcs->pfnCreateDevice = &CreateDevice10;
-    funcs->pfnCloseAdapter = &CloseAdapter;
-    AEROGPU_D3D10_RET_HR(S_OK);
+    AEROGPU_D3D10_RET_HR(AeroGpuOpenAdapter10Wdk(pOpenData));
   }
 
   if (pOpenData->Interface == D3D10_1DDI_INTERFACE_VERSION) {

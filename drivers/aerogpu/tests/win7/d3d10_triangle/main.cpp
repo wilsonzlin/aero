@@ -34,6 +34,7 @@ static int RunD3D10Triangle(int argc, char** argv) {
         kTestName);
     return 0;
   }
+
   const bool dump = aerogpu_test::HasArg(argc, argv, "--dump");
   const bool allow_microsoft = aerogpu_test::HasArg(argc, argv, "--allow-microsoft");
   const bool allow_non_aerogpu = aerogpu_test::HasArg(argc, argv, "--allow-non-aerogpu");
@@ -161,9 +162,8 @@ static int RunD3D10Triangle(int argc, char** argv) {
       }
     }
   } else if (has_require_vid || has_require_did) {
-    return aerogpu_test::FailHresult(kTestName,
-                                     "QueryInterface(IDXGIDevice) (required for --require-vid/--require-did)",
-                                     hr);
+    return aerogpu_test::FailHresult(
+        kTestName, "QueryInterface(IDXGIDevice) (required for --require-vid/--require-did)", hr);
   }
 
   if (require_umd || (!allow_microsoft && !allow_non_aerogpu)) {
@@ -357,3 +357,4 @@ int main(int argc, char** argv) {
   Sleep(30);
   return rc;
 }
+

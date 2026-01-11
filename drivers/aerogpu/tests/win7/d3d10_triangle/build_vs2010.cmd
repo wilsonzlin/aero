@@ -25,4 +25,3 @@ if errorlevel 1 exit /b 1
 
 echo [d3d10_triangle] OK: %OUTDIR%\\d3d10_triangle.exe
 exit /b 0
-
