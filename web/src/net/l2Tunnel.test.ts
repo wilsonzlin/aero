@@ -127,12 +127,6 @@ describe("net/l2Tunnel", () => {
     expect(() => new WebRtcL2TunnelClient(channel as unknown as RTCDataChannel, () => {})).toThrow(/maxRetransmits/);
   });
 
-  it("rejects unreliable RTCDataChannels", () => {
-    const channel = new FakeRtcDataChannel();
-    channel.maxRetransmits = 0;
-    expect(() => new WebRtcL2TunnelClient(channel as unknown as RTCDataChannel, () => {})).toThrow(/maxRetransmits/);
-  });
-
   it("forwards FRAME messages and responds to PING", async () => {
     const channel = new FakeRtcDataChannel();
     const events: L2TunnelEvent[] = [];
