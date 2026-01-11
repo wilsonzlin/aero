@@ -23,6 +23,10 @@
 #define PAGE_SIZE ((size_t)1u << PAGE_SHIFT)
 #endif
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /*
  * Build a VIRTQ_SG list from a PFN array describing a physically-backed buffer.
  *
@@ -76,5 +80,9 @@ NTSTATUS VirtioSgBuildFromMdl(PMDL Mdl, size_t ByteOffset, size_t ByteLength, BO
 			     UINT16 out_cap, UINT16 *out_count);
 
 #endif /* VIRTIO_OSDEP_KERNEL_MODE */
+
+#ifdef __cplusplus
+} /* extern "C" */
+#endif
 
 #endif /* VIRTIO_SG_PFN_H_ */
