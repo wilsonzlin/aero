@@ -78,7 +78,7 @@ HKR,,DevLoader,,*ntkern
 HKR,,NTMPDriver,,virtiosnd.sys
 HKR,,AssociatedFilters,0x00010000,%KSNAME_Wave%,%KSNAME_Topology%
 HKR,Drivers,SubClasses,,"wave,topology"
-HKR,Drivers,Driver,,virtiosnd.sys
+HKR,Drivers,Driver,,wdmaudio.sys
 HKR,Drivers\wave,Driver,,virtiosnd.sys
 HKR,Drivers\wave,Description,,%VirtioSnd.WaveDesc%
 HKR,Drivers\topology,Driver,,virtiosnd.sys
