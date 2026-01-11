@@ -993,6 +993,140 @@ mod tests {
         assert_eq!(payload1, frame1);
     }
 
+    #[derive(Debug)]
+    struct TxResponseBackend {
+        tx_frames: Vec<Vec<u8>>,
+        rx_frames: std::collections::VecDeque<Vec<u8>>,
+        response: Vec<u8>,
+    }
+
+    impl TxResponseBackend {
+        fn new(response: Vec<u8>) -> Self {
+            Self {
+                tx_frames: Vec::new(),
+                rx_frames: std::collections::VecDeque::new(),
+                response,
+            }
+        }
+    }
+
+    impl NetworkBackend for TxResponseBackend {
+        fn transmit(&mut self, frame: Vec<u8>) {
+            self.tx_frames.push(frame);
+            self.rx_frames.push_back(self.response.clone());
+        }
+
+        fn poll_receive(&mut self) -> Option<Vec<u8>> {
+            self.rx_frames.pop_front()
+        }
+    }
+
+    #[test]
+    fn poll_processes_tx_then_delivers_backend_response_in_same_tick() {
+        let mut mem = DenseMemory::new(0x10_000).unwrap();
+
+        let tx_desc_table = 0x1000;
+        let tx_avail = 0x2000;
+        let tx_used = 0x3000;
+
+        let rx_desc_table = 0x4000;
+        let rx_avail = 0x5000;
+        let rx_used = 0x6000;
+
+        let tx_header_addr = 0x110;
+        let tx_payload_addr = 0x200;
+
+        let tx_header = VirtioNetHeader::default().to_bytes();
+        mem.write_from(tx_header_addr, &tx_header).unwrap();
+        let tx_payload = [0x99u8; MIN_FRAME_LEN];
+        mem.write_from(tx_payload_addr, &tx_payload).unwrap();
+
+        write_desc(
+            &mut mem,
+            tx_desc_table,
+            0,
+            Descriptor {
+                addr: tx_header_addr,
+                len: tx_header.len() as u32,
+                flags: VRING_DESC_F_NEXT,
+                next: 1,
+            },
+        );
+        write_desc(
+            &mut mem,
+            tx_desc_table,
+            1,
+            Descriptor {
+                addr: tx_payload_addr,
+                len: tx_payload.len() as u32,
+                flags: 0,
+                next: 0,
+            },
+        );
+
+        init_avail(&mut mem, tx_avail, 0, 0);
+        mem.write_u16_le(tx_used, 0).unwrap();
+        mem.write_u16_le(tx_used + 2, 0).unwrap();
+
+        let rx_header_addr = 0x700;
+        let rx_payload_addr = 0x800;
+
+        write_desc(
+            &mut mem,
+            rx_desc_table,
+            0,
+            Descriptor {
+                addr: rx_header_addr,
+                len: VirtioNetHeader::SIZE as u32,
+                flags: VRING_DESC_F_WRITE | VRING_DESC_F_NEXT,
+                next: 1,
+            },
+        );
+        write_desc(
+            &mut mem,
+            rx_desc_table,
+            1,
+            Descriptor {
+                addr: rx_payload_addr,
+                len: 64,
+                flags: VRING_DESC_F_WRITE,
+                next: 0,
+            },
+        );
+
+        init_avail(&mut mem, rx_avail, 0, 0);
+        mem.write_u16_le(rx_used, 0).unwrap();
+        mem.write_u16_le(rx_used + 2, 0).unwrap();
+
+        let rx_vq = VirtQueue::new(8, rx_desc_table, rx_avail, rx_used);
+        let tx_vq = VirtQueue::new(8, tx_desc_table, tx_avail, tx_used);
+        let config = VirtioNetConfig {
+            mac: [0; 6],
+            status: 1,
+            max_queue_pairs: 1,
+        };
+        let mut dev = VirtioNetDevice::new(config, rx_vq, tx_vq);
+
+        let response = vec![0xabu8; MIN_FRAME_LEN];
+        let mut backend = TxResponseBackend::new(response.clone());
+
+        let irq = dev.poll(&mut mem, &mut backend).unwrap();
+        assert!(irq);
+        assert_eq!(dev.take_isr(), 0x1);
+
+        assert_eq!(backend.tx_frames, vec![tx_payload.to_vec()]);
+        assert_eq!(mem.read_u16_le(tx_used + 2).unwrap(), 1);
+        assert_eq!(mem.read_u16_le(rx_used + 2).unwrap(), 1);
+
+        let mut rx_hdr_bytes = [0u8; VirtioNetHeader::SIZE];
+        mem.read_into(rx_header_addr, &mut rx_hdr_bytes).unwrap();
+        assert_eq!(rx_hdr_bytes, VirtioNetHeader::default().to_bytes());
+
+        let mut rx_payload = vec![0u8; response.len()];
+        mem.read_into(rx_payload_addr, &mut rx_payload).unwrap();
+        assert_eq!(rx_payload, response);
+    }
+
     #[test]
     fn tx_drops_undersized_frames_but_completes_used_ring() {
         let mut mem = DenseMemory::new(0x4000).unwrap();
