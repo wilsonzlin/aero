@@ -1137,7 +1137,7 @@ function setupPointerLock(canvas) {
 ```
 
 ### Keyboard Handling
-
+ 
 ```javascript
 function setupKeyboard(canvas) {
     // Make canvas focusable
@@ -1162,6 +1162,15 @@ function setupKeyboard(canvas) {
     });
 }
 ```
+
+---
+
+## WebUSB
+
+WebUSB is used for **optional USB device passthrough** (real browser-attached device → guest USB controller).
+The full architecture (UHCI TD mapping, worker constraints, descriptor/speed handling) is documented in:
+
+- [`docs/webusb-passthrough.md`](./webusb-passthrough.md)
 
 ---
 
