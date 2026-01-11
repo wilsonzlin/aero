@@ -176,6 +176,14 @@ function joinOpfsPath(prefix: string, name: string): string {
   return `${prefix}/${name}`;
 }
 
+function rangesEqual(a: ByteRange[], b: ByteRange[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i]!.start !== b[i]!.start || a[i]!.end !== b[i]!.end) return false;
+  }
+  return true;
+}
+
 class StoreFile implements RemoteCacheFile {
   constructor(private readonly data: Uint8Array) {}
 
@@ -551,6 +559,7 @@ class RemoteChunkCache implements ChunkCache {
   private rangeSet = new RangeSet();
   private metaWriteChain: Promise<void> = Promise.resolve();
   private cachedBytes = 0;
+  private initOnce: Promise<void> | null = null;
 
   constructor(
     private readonly store: BinaryStore,
@@ -593,7 +602,88 @@ class RemoteChunkCache implements ChunkCache {
     this.meta.lastAccessedAtMs = Date.now();
   }
 
+  private cachedChunkIndices(): Set<number> {
+    const out = new Set<number>();
+    const chunkSize = this.manifest.chunkSize;
+    for (const r of this.rangeSet.getRanges()) {
+      if (r.start >= r.end) continue;
+      const startChunk = Math.floor(r.start / chunkSize);
+      const endChunk = Math.floor((r.end - 1) / chunkSize);
+      for (let idx = startChunk; idx <= endChunk; idx += 1) {
+        if (!Number.isSafeInteger(idx) || idx < 0 || idx >= this.manifest.chunkSizes.length) continue;
+        out.add(idx);
+      }
+    }
+    return out;
+  }
+
+  private reconcileLruMeta(): boolean {
+    let dirty = false;
+
+    this.meta.accessCounter ??= 0;
+    this.meta.chunkLastAccess ??= {};
+
+    const cached = this.cachedChunkIndices();
+    const lastAccess = this.meta.chunkLastAccess ?? {};
+
+    for (const [chunkStr, counterRaw] of Object.entries(lastAccess)) {
+      const idx = Number(chunkStr);
+      if (!Number.isSafeInteger(idx) || idx < 0 || !cached.has(idx)) {
+        delete lastAccess[chunkStr];
+        dirty = true;
+        continue;
+      }
+      if (typeof counterRaw !== "number" || !Number.isFinite(counterRaw) || counterRaw < 0) {
+        lastAccess[chunkStr] = 0;
+        dirty = true;
+      }
+    }
+
+    for (const idx of cached) {
+      const key = String(idx);
+      if (lastAccess[key] === undefined) {
+        // Orphan cached ranges without LRU metadata (e.g. legacy meta.json): treat as the oldest.
+        lastAccess[key] = 0;
+        dirty = true;
+      }
+    }
+
+    // Ensure `accessCounter` monotonically increases beyond all last-access values.
+    let maxCounter = this.meta.accessCounter ?? 0;
+    for (const counter of Object.values(lastAccess)) {
+      if (typeof counter === "number" && Number.isFinite(counter) && counter > maxCounter) {
+        maxCounter = counter;
+      }
+    }
+    if (this.meta.accessCounter !== maxCounter) {
+      this.meta.accessCounter = maxCounter;
+      dirty = true;
+    }
+
+    // Persist the compacted view of ranges (RangeSet merges adjacent ones).
+    const compacted = this.rangeSet.getRanges();
+    if (!rangesEqual(compacted, this.meta.cachedRanges)) {
+      this.meta.cachedRanges = compacted;
+      dirty = true;
+    }
+
+    return dirty;
+  }
+
+  async initialize(): Promise<void> {
+    if (!this.initOnce) {
+      this.initOnce = (async () => {
+        const dirty = this.reconcileLruMeta();
+        if (dirty) await this.persistMeta();
+        // Enforce cache size limit on open so we don't keep exceeding quota until the next download.
+        await this.enforceCacheLimit(-1);
+      })();
+    }
+    await this.initOnce;
+  }
+
   async getChunk(chunkIndex: number): Promise<Uint8Array<ArrayBuffer> | null> {
+    await this.initialize();
     const r = this.chunkRange(chunkIndex);
     if (!this.rangeSet.containsRange(r.start, r.end)) return null;
 
@@ -616,6 +706,15 @@ class RemoteChunkCache implements ChunkCache {
   }
 
   async putChunk(chunkIndex: number, bytes: Uint8Array<ArrayBuffer>): Promise<void> {
+    await this.initialize();
+    if (this.cacheLimitBytes !== null) {
+      if (this.cacheLimitBytes === 0) return;
+      if (bytes.length > this.cacheLimitBytes) {
+        // Chunk can never fit; skip caching entirely.
+        return;
+      }
+    }
+
     const r = this.chunkRange(chunkIndex);
     const expectedLen = r.end - r.start;
     if (bytes.length !== expectedLen) {
@@ -871,6 +970,10 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
         resolved.cacheLimitBytes,
         opened.meta,
       );
+    }
+
+    if (cache instanceof RemoteChunkCache) {
+      await cache.initialize();
     }
 
     const disk = new RemoteChunkedDisk(cacheImageId, params.lease, manifest, cache, {

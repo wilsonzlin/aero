@@ -4,6 +4,8 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import type { AddressInfo } from "node:net";
 
 import { RemoteChunkedDisk, type BinaryStore } from "./remote_chunked_disk";
+import { OPFS_AERO_DIR, OPFS_DISKS_DIR, OPFS_REMOTE_CACHE_DIR } from "./metadata";
+import { RemoteCacheManager } from "./remote_cache_manager";
 
 class TestMemoryStore implements BinaryStore {
   readonly files = new Map<string, Uint8Array<ArrayBuffer>>();
@@ -208,6 +210,258 @@ describe("RemoteChunkedDisk", () => {
     expect(t3.requests).toBe(1);
     expect(t3.bytesDownloaded).toBe(512);
 
+    await disk2.close();
+  });
+
+  it("evicts least-recently-used cached chunks when the cache limit is exceeded", async () => {
+    const chunkSize = 1024; // multiple of 512
+    const totalSize = chunkSize * 3;
+    const chunkCount = 3;
+
+    const img = buildTestImageBytes(totalSize);
+    const chunks = [img.slice(0, chunkSize), img.slice(chunkSize, chunkSize * 2), img.slice(chunkSize * 2)];
+
+    const manifest = {
+      schema: "aero.chunked-disk-image.v1",
+      imageId: "test",
+      version: "v1",
+      mimeType: "application/octet-stream",
+      totalSize,
+      chunkSize,
+      chunkCount,
+      chunkIndexWidth: 8,
+      chunks: [
+        { size: chunkSize, sha256: await sha256Hex(chunks[0]!) },
+        { size: chunkSize, sha256: await sha256Hex(chunks[1]!) },
+        { size: chunkSize, sha256: await sha256Hex(chunks[2]!) },
+      ],
+    };
+
+    const { baseUrl, hits, close } = await withServer((_req, res) => {
+      const url = new URL(_req.url ?? "/", "http://localhost");
+      if (url.pathname === "/manifest.json") {
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify(manifest));
+        return;
+      }
+
+      const m = url.pathname.match(/^\/chunks\/(\d+)\.bin$/);
+      if (m) {
+        const idx = Number(m[1]);
+        const data = chunks[idx];
+        if (!data) {
+          res.statusCode = 404;
+          res.end("missing");
+          return;
+        }
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/octet-stream");
+        res.end(data);
+        return;
+      }
+
+      res.statusCode = 404;
+      res.end("not found");
+    });
+    closeServer = close;
+
+    const store = new TestMemoryStore();
+    const disk = await RemoteChunkedDisk.open(`${baseUrl}/manifest.json`, {
+      store,
+      cacheLimitBytes: chunkSize * 2,
+      prefetchSequentialChunks: 0,
+      retryBaseDelayMs: 0,
+      maxConcurrentFetches: 1,
+    });
+
+    // Populate cache with chunks 0 and 1.
+    await disk.readSectors(0, new Uint8Array(512));
+    await disk.readSectors(2, new Uint8Array(512));
+    expect(hits.get("/chunks/00000000.bin")).toBe(1);
+    expect(hits.get("/chunks/00000001.bin")).toBe(1);
+
+    // Touch chunk 0 so chunk 1 becomes LRU.
+    await disk.readSectors(0, new Uint8Array(512));
+    expect(hits.get("/chunks/00000000.bin")).toBe(1);
+
+    // Fetching chunk 2 should evict chunk 1 to stay within limit.
+    await disk.readSectors(4, new Uint8Array(512));
+    expect(hits.get("/chunks/00000002.bin")).toBe(1);
+
+    // Chunk 0 should still be cached (no extra fetch).
+    await disk.readSectors(0, new Uint8Array(512));
+    expect(hits.get("/chunks/00000000.bin")).toBe(1);
+
+    // Chunk 1 should have been evicted (re-fetch).
+    await disk.readSectors(2, new Uint8Array(512));
+    expect(hits.get("/chunks/00000001.bin")).toBe(2);
+
+    await disk.close();
+  });
+
+  it("heals cache metadata when a chunk file is missing", async () => {
+    const chunkSize = 1024;
+    const totalSize = chunkSize * 2;
+    const chunkCount = 2;
+
+    const img = buildTestImageBytes(totalSize);
+    const chunks = [img.slice(0, chunkSize), img.slice(chunkSize)];
+
+    const manifest = {
+      schema: "aero.chunked-disk-image.v1",
+      imageId: "test",
+      version: "v1",
+      mimeType: "application/octet-stream",
+      totalSize,
+      chunkSize,
+      chunkCount,
+      chunkIndexWidth: 8,
+      chunks: [
+        { size: chunkSize, sha256: await sha256Hex(chunks[0]!) },
+        { size: chunkSize, sha256: await sha256Hex(chunks[1]!) },
+      ],
+    };
+
+    const { baseUrl, hits, close } = await withServer((_req, res) => {
+      const url = new URL(_req.url ?? "/", "http://localhost");
+      if (url.pathname === "/manifest.json") {
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify(manifest));
+        return;
+      }
+
+      const m = url.pathname.match(/^\/chunks\/(\d+)\.bin$/);
+      if (m) {
+        const idx = Number(m[1]);
+        const data = chunks[idx];
+        if (!data) {
+          res.statusCode = 404;
+          res.end("missing");
+          return;
+        }
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/octet-stream");
+        res.end(data);
+        return;
+      }
+
+      res.statusCode = 404;
+      res.end("not found");
+    });
+    closeServer = close;
+
+    const store = new TestMemoryStore();
+    const common = {
+      store,
+      cacheImageId: "img-1",
+      cacheVersion: "v1",
+      prefetchSequentialChunks: 0,
+      retryBaseDelayMs: 0,
+      maxConcurrentFetches: 1,
+      cacheLimitBytes: null as const,
+    };
+
+    const disk1 = await RemoteChunkedDisk.open(`${baseUrl}/manifest.json`, common);
+    await disk1.readSectors(0, new Uint8Array(512));
+    expect(hits.get("/chunks/00000000.bin")).toBe(1);
+    await disk1.close();
+
+    const cacheKey = await RemoteCacheManager.deriveCacheKey({
+      imageId: common.cacheImageId,
+      version: common.cacheVersion,
+      deliveryType: "chunked",
+    });
+    const cacheRoot = `${OPFS_AERO_DIR}/${OPFS_DISKS_DIR}/${OPFS_REMOTE_CACHE_DIR}`;
+    await store.remove(`${cacheRoot}/${cacheKey}/chunks/0.bin`);
+
+    const disk2 = await RemoteChunkedDisk.open(`${baseUrl}/manifest.json`, common);
+    await disk2.readSectors(0, new Uint8Array(512));
+    // Missing file should trigger a cache miss (refetch).
+    expect(hits.get("/chunks/00000000.bin")).toBe(2);
+    await disk2.close();
+  });
+
+  it("enforces cacheLimitBytes on open by evicting older chunks", async () => {
+    const chunkSize = 1024;
+    const totalSize = chunkSize * 3;
+    const chunkCount = 3;
+
+    const img = buildTestImageBytes(totalSize);
+    const chunks = [img.slice(0, chunkSize), img.slice(chunkSize, chunkSize * 2), img.slice(chunkSize * 2)];
+
+    const manifest = {
+      schema: "aero.chunked-disk-image.v1",
+      imageId: "test",
+      version: "v1",
+      mimeType: "application/octet-stream",
+      totalSize,
+      chunkSize,
+      chunkCount,
+      chunkIndexWidth: 8,
+      chunks: [
+        { size: chunkSize, sha256: await sha256Hex(chunks[0]!) },
+        { size: chunkSize, sha256: await sha256Hex(chunks[1]!) },
+        { size: chunkSize, sha256: await sha256Hex(chunks[2]!) },
+      ],
+    };
+
+    const { baseUrl, hits, close } = await withServer((_req, res) => {
+      const url = new URL(_req.url ?? "/", "http://localhost");
+      if (url.pathname === "/manifest.json") {
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify(manifest));
+        return;
+      }
+
+      const m = url.pathname.match(/^\/chunks\/(\d+)\.bin$/);
+      if (m) {
+        const idx = Number(m[1]);
+        const data = chunks[idx];
+        if (!data) {
+          res.statusCode = 404;
+          res.end("missing");
+          return;
+        }
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/octet-stream");
+        res.end(data);
+        return;
+      }
+
+      res.statusCode = 404;
+      res.end("not found");
+    });
+    closeServer = close;
+
+    const store = new TestMemoryStore();
+    const stable = {
+      store,
+      cacheImageId: "img-1",
+      cacheVersion: "v1",
+      prefetchSequentialChunks: 0,
+      retryBaseDelayMs: 0,
+      maxConcurrentFetches: 1,
+    };
+
+    // First run: cache chunks 0,1,2 in order (2 is MRU).
+    const disk1 = await RemoteChunkedDisk.open(`${baseUrl}/manifest.json`, { ...stable, cacheLimitBytes: null });
+    await disk1.readSectors(0, new Uint8Array(512));
+    await disk1.readSectors(2, new Uint8Array(512));
+    await disk1.readSectors(4, new Uint8Array(512));
+    expect(hits.get("/chunks/00000000.bin")).toBe(1);
+    expect(hits.get("/chunks/00000001.bin")).toBe(1);
+    expect(hits.get("/chunks/00000002.bin")).toBe(1);
+    await disk1.close();
+
+    // Re-open with a strict limit: should evict older chunks on open and keep chunk 2.
+    const disk2 = await RemoteChunkedDisk.open(`${baseUrl}/manifest.json`, { ...stable, cacheLimitBytes: chunkSize });
+    await disk2.readSectors(4, new Uint8Array(512));
+    expect(hits.get("/chunks/00000002.bin")).toBe(1); // cache hit
+    await disk2.readSectors(0, new Uint8Array(512));
+    expect(hits.get("/chunks/00000000.bin")).toBe(2); // evicted => refetch
     await disk2.close();
   });
 
