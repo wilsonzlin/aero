@@ -161,9 +161,12 @@ node --experimental-strip-types bench/compare.ts \
 cat storage-perf-results/compare.md
 ```
 
-The compare script also gates on capability regressions (e.g. OPFS → IndexedDB fallback, or OPFS
-`sync_access_handle` → `async`) and includes any `warnings[]` from the benchmark output in the
-Markdown report.
+The compare script also gates on:
+
+- capability regressions (e.g. OPFS → IndexedDB fallback, or OPFS `sync_access_handle` → `async`)
+- benchmark config mismatches between baseline/current runs (to avoid apples-to-oranges comparisons)
+
+It also includes any `warnings[]` from the benchmark output in the Markdown report.
 
 ## Scenario runner (PF-008 macrobench framework)
 
