@@ -141,6 +141,8 @@ NTSTATUS VirtIoSndIntxConnect(PVIRTIOSND_DEVICE_EXTENSION Dx) {
 
 _Use_decl_annotations_
 VOID VirtIoSndIntxDisconnect(PVIRTIOSND_DEVICE_EXTENSION Dx) {
+    BOOLEAN removed;
+
     if (Dx == NULL) {
         return;
     }
@@ -154,7 +156,12 @@ VOID VirtIoSndIntxDisconnect(PVIRTIOSND_DEVICE_EXTENSION Dx) {
     }
 
     // Cancel any DPC that is queued but not yet running.
-    (VOID)KeRemoveQueueDpc(&Dx->InterruptDpc);
+    removed = KeRemoveQueueDpc(&Dx->InterruptDpc);
+    if (removed) {
+        if (InterlockedDecrement(&Dx->DpcInFlight) == 0) {
+            KeSetEvent(&Dx->DpcIdleEvent, IO_NO_INCREMENT, FALSE);
+        }
+    }
 
     // Wait for any in-flight DPC to finish before callers unmap MMIO/free queues.
     if (KeGetCurrentIrql() == PASSIVE_LEVEL) {
@@ -171,6 +178,7 @@ BOOLEAN VirtIoSndIntxIsr(PKINTERRUPT Interrupt, PVOID ServiceContext) {
     PVIRTIOSND_DEVICE_EXTENSION dx = (PVIRTIOSND_DEVICE_EXTENSION)ServiceContext;
     BOOLEAN stopping;
     UCHAR isr;
+    BOOLEAN inserted;
 
     UNREFERENCED_PARAMETER(Interrupt);
 
@@ -192,14 +200,23 @@ BOOLEAN VirtIoSndIntxIsr(PKINTERRUPT Interrupt, PVOID ServiceContext) {
     }
 
     InterlockedOr(&dx->PendingIsrStatus, (LONG)isr);
-    (VOID)KeInsertQueueDpc(&dx->InterruptDpc, NULL, NULL);
+    inserted = KeInsertQueueDpc(&dx->InterruptDpc, NULL, NULL);
+    if (inserted) {
+        /*
+         * DpcInFlight tracks both queued and running DPC instances so teardown can
+         * safely wait even if the DPC has been dequeued for execution but has not
+         * started running yet (KeRemoveQueueDpc would return FALSE in that state).
+         */
+        if (InterlockedIncrement(&dx->DpcInFlight) == 1) {
+            KeClearEvent(&dx->DpcIdleEvent);
+        }
+    }
     return TRUE;
 }
 
 _Use_decl_annotations_
 VOID VirtIoSndIntxDpc(PKDPC Dpc, PVOID DeferredContext, PVOID SystemArgument1, PVOID SystemArgument2) {
     PVIRTIOSND_DEVICE_EXTENSION dx = (PVIRTIOSND_DEVICE_EXTENSION)DeferredContext;
-    LONG active;
     LONG isr;
 
     UNREFERENCED_PARAMETER(Dpc);
@@ -208,11 +225,6 @@ VOID VirtIoSndIntxDpc(PKDPC Dpc, PVOID DeferredContext, PVOID SystemArgument1, P
 
     if (dx == NULL) {
         return;
-    }
-
-    active = InterlockedIncrement(&dx->DpcInFlight);
-    if (active == 1) {
-        KeClearEvent(&dx->DpcIdleEvent);
     }
 
     isr = InterlockedExchange(&dx->PendingIsrStatus, 0);
