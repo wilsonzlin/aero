@@ -254,7 +254,6 @@ pub fn run_batch_with_assists_with_config<B: CpuBus>(
                 let next_ip_raw = ip.wrapping_add(decoded.len as u64);
 
                 if let Err(e) = handle_assist(ctx, state, bus, r) {
-                    state.apply_exception_side_effects(&e);
                     return BatchResult {
                         executed,
                         exit: BatchExit::Exception(e),
