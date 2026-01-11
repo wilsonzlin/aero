@@ -418,10 +418,11 @@ describe("usb/UsbBroker", () => {
     const selected = port.posted.filter((m) => (m as { type?: unknown }).type === "usb.selected");
     expect(selected).toEqual([{ type: "usb.selected", ok: false, error: "device detached" }]);
 
-    await expect(broker.execute({ kind: "bulkIn", id: 1, ep: 1, length: 8 })).resolves.toEqual({
-      kind: "error",
+    await expect(broker.execute({ kind: "bulkIn", id: 1, endpoint: 1, length: 8 })).resolves.toEqual({
+      kind: "bulkIn",
       id: 1,
-      error: "device detached",
+      status: "error",
+      message: "device detached",
     });
   });
 
@@ -466,10 +467,11 @@ describe("usb/UsbBroker", () => {
     const selected = port.posted.filter((m) => (m as { type?: unknown }).type === "usb.selected");
     expect(selected).toEqual([{ type: "usb.selected", ok: false }]);
 
-    await expect(broker.execute({ kind: "bulkIn", id: 123, ep: 1, length: 8 })).resolves.toEqual({
-      kind: "error",
+    await expect(broker.execute({ kind: "bulkIn", id: 123, endpoint: 1, length: 8 })).resolves.toEqual({
+      kind: "bulkIn",
       id: 123,
-      error: "WebUSB device not selected.",
+      status: "error",
+      message: "WebUSB device not selected.",
     });
   });
 
