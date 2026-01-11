@@ -4576,7 +4576,6 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive(
       (void)emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes);
       return E_OUTOFMEMORY;
     }
-
     hr = track_draw_state_locked(dev);
     if (FAILED(hr)) {
       (void)emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes);
@@ -4698,7 +4697,6 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive_up(
     (void)emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes);
     return E_OUTOFMEMORY;
   }
-
   hr = track_draw_state_locked(dev);
   if (FAILED(hr)) {
     (void)emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes);
@@ -4851,15 +4849,12 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
     // may force a submission split, and command-buffer splits must not occur
     // after tracking or the allocation list would be out of sync.
     if (!ensure_cmd_space(dev, align_up(sizeof(aerogpu_cmd_draw), 4))) {
-      (void)emit_set_stream_source_locked(
-          dev, 0, saved_stream.vb, saved_stream.offset_bytes, saved_stream.stride_bytes);
+      (void)emit_set_stream_source_locked(dev, 0, saved_stream.vb, saved_stream.offset_bytes, saved_stream.stride_bytes);
       return E_OUTOFMEMORY;
     }
-
     hr = track_draw_state_locked(dev);
     if (FAILED(hr)) {
-      (void)emit_set_stream_source_locked(
-          dev, 0, saved_stream.vb, saved_stream.offset_bytes, saved_stream.stride_bytes);
+      (void)emit_set_stream_source_locked(dev, 0, saved_stream.vb, saved_stream.offset_bytes, saved_stream.stride_bytes);
       return hr;
     }
 
