@@ -31,9 +31,6 @@
     <ClInclude Include="protocol\aerogpu_pci.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="protocol\aerogpu_protocol.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="protocol\aerogpu_ring.h">
       <Filter>Header Files</Filter>
     </ClInclude>

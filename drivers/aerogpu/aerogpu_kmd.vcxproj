@@ -100,7 +100,6 @@
     <ClInclude Include="protocol\aerogpu_cmd.h" />
     <ClInclude Include="protocol\aerogpu_dbgctl_escape.h" />
     <ClInclude Include="protocol\aerogpu_pci.h" />
-    <ClInclude Include="protocol\aerogpu_protocol.h" />
     <ClInclude Include="protocol\aerogpu_ring.h" />
     <ClInclude Include="protocol\aerogpu_wddm_alloc.h" />
   </ItemGroup>
