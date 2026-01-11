@@ -3845,10 +3845,18 @@ fn build_render_pass_attachments<'a>(
         }));
     }
 
-    let depth_stencil_attachment = state.depth_stencil.and_then(|ds_id| {
-        resources.textures.get(&ds_id).map(|tex| {
+    let depth_stencil_attachment = match state.depth_stencil {
+        None => None,
+        Some(ds_id) => {
+            let tex = resources
+                .textures
+                .get(&ds_id)
+                .ok_or_else(|| anyhow!("unknown depth-stencil texture {ds_id}"))?;
             let format = tex.desc.format;
-            wgpu::RenderPassDepthStencilAttachment {
+            if !texture_format_has_depth(format) && !texture_format_has_stencil(format) {
+                bail!("render pass depth-stencil texture {ds_id} has non-depth format {format:?}");
+            }
+            Some(wgpu::RenderPassDepthStencilAttachment {
                 view: &tex.view,
                 depth_ops: texture_format_has_depth(format).then_some(wgpu::Operations {
                     load: wgpu::LoadOp::Load,
@@ -3858,9 +3866,9 @@ fn build_render_pass_attachments<'a>(
                     load: wgpu::LoadOp::Load,
                     store: wgpu::StoreOp::Store,
                 }),
-            }
-        })
-    });
+            })
+        }
+    };
 
     Ok((color_attachments, depth_stencil_attachment))
 }

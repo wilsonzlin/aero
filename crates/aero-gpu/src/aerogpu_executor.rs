@@ -1721,6 +1721,12 @@ fn fs_main() -> @location(0) vec4<f32> {
                 ));
             }
 
+            let table = alloc_table.ok_or_else(|| {
+                ExecutorError::Validation(
+                    "COPY_TEXTURE2D: WRITEBACK_DST requires alloc_table".into(),
+                )
+            })?;
+
             for row in 0..height {
                 let src_off = row as usize * bytes_per_row_usize;
                 let src_end = src_off + row_bytes_usize;
