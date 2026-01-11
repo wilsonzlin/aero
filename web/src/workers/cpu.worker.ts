@@ -1211,8 +1211,12 @@ async function runLoopInner(): Promise<void> {
       }
 
       if (now >= nextFrameMs) {
+        const header = perfFrameHeader;
         const perfActive =
-          !!perfWriter && !!perfFrameHeader && Atomics.load(perfFrameHeader, PERF_FRAME_HEADER_ENABLED_INDEX) !== 0;
+          !!perfWriter &&
+          !!header &&
+          Atomics.load(header, PERF_FRAME_HEADER_ENABLED_INDEX) !== 0 &&
+          (Atomics.load(header, PERF_FRAME_HEADER_FRAME_ID_INDEX) >>> 0) !== 0;
         const t0 = perfActive ? performance.now() : 0;
 
         if (vgaFramebuffer) {

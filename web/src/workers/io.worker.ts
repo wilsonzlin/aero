@@ -655,8 +655,12 @@ function startPolling(): void {
   // This worker must remain responsive to `postMessage` input batches. Avoid blocking loops / Atomics.wait
   // here; instead poll the command ring at a low rate.
   pollTimer = setInterval(() => {
+    const header = perfFrameHeader;
     const perfActive =
-      !!perfWriter && !!perfFrameHeader && Atomics.load(perfFrameHeader, PERF_FRAME_HEADER_ENABLED_INDEX) !== 0;
+      !!perfWriter &&
+      !!header &&
+      Atomics.load(header, PERF_FRAME_HEADER_ENABLED_INDEX) !== 0 &&
+      (Atomics.load(header, PERF_FRAME_HEADER_FRAME_ID_INDEX) >>> 0) !== 0;
     const t0 = perfActive ? performance.now() : 0;
     drainRuntimeCommands();
     drainIoIpcCommands();
