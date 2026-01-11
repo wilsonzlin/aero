@@ -157,6 +157,32 @@ test("AERO_L2_OPEN disables Origin enforcement (but not token auth)", async () =
   }
 });
 
+test("l2 proxy token errors take precedence over origin errors", async () => {
+  const proxy = await startL2ProxyServer({
+    listenHost: "127.0.0.1",
+    listenPort: 0,
+    open: false,
+    allowedOrigins: ["https://app.example.com"],
+    token: "sekrit",
+    maxConnections: 0,
+  });
+  const port = getServerPort(proxy.server);
+
+  try {
+    // Missing token should return 401 even if Origin is missing.
+    const denied = await connectOrReject(`ws://127.0.0.1:${port}/l2`);
+    assert.equal(denied.ok, false);
+    assert.equal(denied.status, 401);
+
+    // Valid token but missing Origin should return 403.
+    const deniedOrigin = await connectOrReject(`ws://127.0.0.1:${port}/l2?token=sekrit`);
+    assert.equal(deniedOrigin.ok, false);
+    assert.equal(deniedOrigin.status, 403);
+  } finally {
+    await proxy.close();
+  }
+});
+
 test("l2 proxy enforces max connection quota at upgrade time", async () => {
   const proxy = await startL2ProxyServer({
     listenHost: "127.0.0.1",
