@@ -645,7 +645,8 @@ export function startAudioPerfSampling(
           : null;
     if (total === null) return;
     const next = total >>> 0;
-    workletUnderrunFrames = workletUnderrunFrames === null ? next : Math.max(workletUnderrunFrames, next);
+    // Treat the counter as a wrapping u32 value (wraps at 2^32).
+    workletUnderrunFrames = next;
   };
 
   output.node.port.addEventListener("message", onWorkletMessage);
