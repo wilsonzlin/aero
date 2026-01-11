@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
   [string]$OutRoot = (Join-Path $PSScriptRoot "..\out\virtio-win-packaging-smoke"),
-  [switch]$OmitOptionalDrivers
+  [switch]$OmitOptionalDrivers,
+  [string]$GuestToolsSpecPath
 )
 
 Set-StrictMode -Version Latest
@@ -85,6 +86,17 @@ function New-SyntheticDriverFiles {
 
 $repoRoot = Resolve-RepoRoot
 
+if (-not $GuestToolsSpecPath) {
+  $GuestToolsSpecPath = Join-Path $repoRoot "tools\packaging\specs\win7-virtio-win.json"
+} elseif (-not [System.IO.Path]::IsPathRooted($GuestToolsSpecPath)) {
+  $GuestToolsSpecPath = Join-Path $repoRoot $GuestToolsSpecPath
+}
+$GuestToolsSpecPath = [System.IO.Path]::GetFullPath($GuestToolsSpecPath)
+
+if (-not (Test-Path -LiteralPath $GuestToolsSpecPath -PathType Leaf)) {
+  throw "Guest Tools packaging spec not found: $GuestToolsSpecPath"
+}
+
 if (-not [System.IO.Path]::IsPathRooted($OutRoot)) {
   $OutRoot = Join-Path $repoRoot $OutRoot
 }
@@ -107,10 +119,10 @@ New-SyntheticDriverFiles -VirtioRoot $syntheticRoot -UpstreamDirName "NetKVM" -I
 New-SyntheticDriverFiles -VirtioRoot $syntheticRoot -UpstreamDirName "NetKVM" -InfBaseName "netkvm" -OsDirName $osDir -ArchDirName "amd64" -HardwareId "PCI\VEN_1AF4&DEV_1041"
 
 if (-not $OmitOptionalDrivers) {
-  New-SyntheticDriverFiles -VirtioRoot $syntheticRoot -UpstreamDirName "viosnd" -InfBaseName "viosnd" -OsDirName $osDir -ArchDirName "x86"
-  New-SyntheticDriverFiles -VirtioRoot $syntheticRoot -UpstreamDirName "viosnd" -InfBaseName "viosnd" -OsDirName $osDir -ArchDirName "amd64"
-  New-SyntheticDriverFiles -VirtioRoot $syntheticRoot -UpstreamDirName "vioinput" -InfBaseName "vioinput" -OsDirName $osDir -ArchDirName "x86"
-  New-SyntheticDriverFiles -VirtioRoot $syntheticRoot -UpstreamDirName "vioinput" -InfBaseName "vioinput" -OsDirName $osDir -ArchDirName "amd64"
+  New-SyntheticDriverFiles -VirtioRoot $syntheticRoot -UpstreamDirName "viosnd" -InfBaseName "viosnd" -OsDirName $osDir -ArchDirName "x86" -HardwareId "PCI\VEN_1AF4&DEV_1059"
+  New-SyntheticDriverFiles -VirtioRoot $syntheticRoot -UpstreamDirName "viosnd" -InfBaseName "viosnd" -OsDirName $osDir -ArchDirName "amd64" -HardwareId "PCI\VEN_1AF4&DEV_1059"
+  New-SyntheticDriverFiles -VirtioRoot $syntheticRoot -UpstreamDirName "vioinput" -InfBaseName "vioinput" -OsDirName $osDir -ArchDirName "x86" -HardwareId "PCI\VEN_1AF4&DEV_1052"
+  New-SyntheticDriverFiles -VirtioRoot $syntheticRoot -UpstreamDirName "vioinput" -InfBaseName "vioinput" -OsDirName $osDir -ArchDirName "amd64" -HardwareId "PCI\VEN_1AF4&DEV_1052"
 }
 
 $driverPackOutDir = Join-Path $OutRoot "driver-pack-out"
@@ -177,6 +189,7 @@ Write-Host "Running make-guest-tools-from-virtio-win.ps1..."
 & pwsh -NoProfile -ExecutionPolicy Bypass -File $guestToolsScript `
   -VirtioWinRoot $syntheticRoot `
   -OutDir $guestToolsOutDir `
+  -SpecPath $GuestToolsSpecPath `
   -Version "0.0.0" `
   -BuildId "ci" `
   -CleanStage *>&1 | Tee-Object -FilePath $guestToolsLog
@@ -206,6 +219,30 @@ $manifestPaths = @($manifestObj.files | ForEach-Object { $_.path })
 foreach ($want in @("drivers/x86/viostor/viostor.inf", "drivers/x86/netkvm/netkvm.inf")) {
   if (-not ($manifestPaths -contains $want)) {
     throw "Guest Tools manifest missing expected packaged file path: $want"
+  }
+}
+
+# When optional drivers are both present in the synthetic virtio-win tree and declared in the
+# Guest Tools packaging spec, they should be included in the packaged output.
+if (-not $OmitOptionalDrivers) {
+  $specObj = Get-Content -LiteralPath $GuestToolsSpecPath -Raw | ConvertFrom-Json
+  $specDriverNames = @()
+  if ($null -ne $specObj.drivers) {
+    $specDriverNames += @($specObj.drivers | ForEach-Object { $_.name })
+  }
+  if ($null -ne $specObj.required_drivers) {
+    $specDriverNames += @($specObj.required_drivers | ForEach-Object { $_.name })
+  }
+  $specDriverNames = @($specDriverNames | Where-Object { $_ } | ForEach-Object { $_.ToString().ToLowerInvariant() } | Sort-Object -Unique)
+
+  $optionalChecks = @()
+  if ($specDriverNames -contains "viosnd") { $optionalChecks += "drivers/x86/viosnd/viosnd.inf"; $optionalChecks += "drivers/amd64/viosnd/viosnd.inf" }
+  if ($specDriverNames -contains "vioinput") { $optionalChecks += "drivers/x86/vioinput/vioinput.inf"; $optionalChecks += "drivers/amd64/vioinput/vioinput.inf" }
+
+  foreach ($want in $optionalChecks) {
+    if (-not ($manifestPaths -contains $want)) {
+      throw "Guest Tools manifest missing expected optional driver file path: $want"
+    }
   }
 }
 
