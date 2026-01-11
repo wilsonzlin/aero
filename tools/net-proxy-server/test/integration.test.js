@@ -216,6 +216,12 @@ test("integration: policy denies private IPs by default", async () => {
     const errFrame3 = await waiter.waitFor((f) => f.msgType === TcpMuxMsgType.ERROR && f.streamId === 3);
     const err3 = decodeTcpMuxErrorPayload(errFrame3.payload);
     assert.equal(err3.code, TcpMuxErrorCode.POLICY_DENIED);
+
+    // IPv4-mapped IPv6 should not bypass the IPv4 policy.
+    ws.send(encodeTcpMuxFrame(TcpMuxMsgType.OPEN, 4, encodeTcpMuxOpenPayload({ host: "::ffff:127.0.0.1", port: 80 })));
+    const errFrame4 = await waiter.waitFor((f) => f.msgType === TcpMuxMsgType.ERROR && f.streamId === 4);
+    const err4 = decodeTcpMuxErrorPayload(errFrame4.payload);
+    assert.equal(err4.code, TcpMuxErrorCode.POLICY_DENIED);
   } finally {
     if (ws) ws.terminate();
     if (proxy) await proxy.close();
