@@ -201,6 +201,86 @@ fn long_mode_interrupt_delivery_can_access_supervisor_idt_tss_and_stack() -> Res
 }
 
 #[test]
+fn long_mode_interrupt_delivery_can_use_ist_stack_under_paging() -> Result<(), CpuExit> {
+    // Same setup as `long_mode_interrupt_delivery_can_access_supervisor_idt_tss_and_stack`, but
+    // use IST1 and ensure it overrides RSP0.
+    let mut phys = TestMemory::new(0x20000);
+
+    let pml4_base = 0x10000u64;
+    let pdpt_base = 0x11000u64;
+    let pd_base = 0x12000u64;
+    let pt_base = 0x13000u64;
+
+    phys.write_u64(pml4_base, pdpt_base | PTE_P | PTE_RW | PTE_US);
+    phys.write_u64(pdpt_base, pd_base | PTE_P | PTE_RW | PTE_US);
+    phys.write_u64(pd_base, pt_base | PTE_P | PTE_RW | PTE_US);
+
+    set_pte(&mut phys, pt_base, 0x0, PTE_P | PTE_RW | PTE_US); // user code
+    set_pte(&mut phys, pt_base, 0x1, PTE_P | PTE_RW); // IDT supervisor-only
+    set_pte(&mut phys, pt_base, 0x2, PTE_P | PTE_RW); // handler supervisor-only
+    set_pte(&mut phys, pt_base, 0x4, PTE_P | PTE_RW); // TSS supervisor-only
+    set_pte(&mut phys, pt_base, 0x7, PTE_P | PTE_RW | PTE_US); // user stack
+    set_pte(&mut phys, pt_base, 0x9, PTE_P | PTE_RW); // IST stack supervisor-only
+    set_pte(&mut phys, pt_base, 0xB, PTE_P | PTE_RW); // RSP0 stack supervisor-only
+
+    let mut bus = PagingBus::new(phys);
+
+    let idt_base = 0x1000u64;
+    let handler = 0x2000u64;
+    let tss_base = 0x4000u64;
+    let user_stack_top = 0x8000u64;
+    let ist_stack_top = 0xA000u64;
+    let rsp0_stack_top = 0xC000u64;
+
+    write_idt_gate64(bus.inner_mut(), idt_base, 0x80, 0x08, handler, 1, 0xEE);
+    write_idt_gate64(bus.inner_mut(), idt_base, 13, 0x08, handler, 0, 0x8E);
+
+    bus.inner_mut().write_u64(tss_base + 4, rsp0_stack_top);
+    // 64-bit TSS: IST1 at +0x24.
+    bus.inner_mut().write_u64(tss_base + 0x24, ist_stack_top);
+
+    let mut cpu = CpuCore::new(CpuMode::Long);
+    cpu.state.control.cr0 = CR0_PE | CR0_PG;
+    cpu.state.control.cr3 = pml4_base;
+    cpu.state.control.cr4 = CR4_PAE;
+    cpu.state.msr.efer = EFER_LME;
+    cpu.state.update_mode();
+
+    cpu.state.tables.idtr.base = idt_base;
+    cpu.state.tables.idtr.limit = 0x0FFF;
+    cpu.state.tables.tr.selector = 0x40;
+    cpu.state.tables.tr.base = tss_base;
+    cpu.state.tables.tr.limit = 0x67;
+    cpu.state.tables.tr.access = SEG_ACCESS_PRESENT | 0x9;
+
+    cpu.state.segments.cs.selector = 0x33; // CPL3
+    cpu.state.segments.ss.selector = 0x2B;
+    cpu.state.write_gpr64(gpr::RSP, user_stack_top);
+    cpu.state.set_rflags(0x202);
+
+    bus.sync(&cpu.state);
+
+    let return_rip = 0x5555u64;
+    cpu.pending.raise_software_interrupt(0x80, return_rip);
+    cpu.deliver_pending_event(&mut bus)?;
+
+    assert_eq!(cpu.state.segments.cs.selector, 0x08);
+    assert_eq!(cpu.state.segments.ss.selector, 0);
+    assert_eq!(cpu.state.rip(), handler);
+    assert_eq!(cpu.state.read_gpr64(gpr::RSP), ist_stack_top - 40);
+    assert_ne!(cpu.state.read_gpr64(gpr::RSP), rsp0_stack_top - 40);
+
+    let frame_base = cpu.state.read_gpr64(gpr::RSP);
+    assert_eq!(bus.read_u64(frame_base).unwrap(), return_rip);
+    assert_eq!(bus.read_u64(frame_base + 8).unwrap(), 0x33);
+    assert_ne!(bus.read_u64(frame_base + 16).unwrap() & 0x200, 0);
+    assert_eq!(bus.read_u64(frame_base + 24).unwrap(), user_stack_top);
+    assert_eq!(bus.read_u64(frame_base + 32).unwrap(), 0x2B);
+
+    Ok(())
+}
+
+#[test]
 fn protected_mode_interrupt_delivery_can_access_supervisor_idt_tss_and_stack() -> Result<(), CpuExit> {
     // Physical memory layout (identity-mapped for low pages):
     // - Guest pages:
