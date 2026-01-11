@@ -846,15 +846,29 @@ function renderAudioPanel(): HTMLElement {
     const channelCount = output.ringBuffer.channelCount;
     const sr = output.context.sampleRate;
 
+    // Generate the initial prefill in smaller chunks so the main thread can
+    // start feeding the ring buffer before the AudioWorklet drains the small
+    // `createAudioOutput()` startup padding. This keeps the Playwright smoke
+    // test underrun-free even on slower CI runners.
+    const writeChunkFrames = 512;
+    const writeChunk = new Float32Array(writeChunkFrames * channelCount);
+
     function writeTone(frames: number) {
-      const buf = new Float32Array(frames * channelCount);
-      for (let i = 0; i < frames; i++) {
-        const s = Math.sin(tonePhase * 2 * Math.PI) * gain;
-        for (let c = 0; c < channelCount; c++) buf[i * channelCount + c] = s;
-        tonePhase += freqHz / sr;
-        if (tonePhase >= 1) tonePhase -= 1;
+      let remaining = frames;
+      while (remaining > 0) {
+        const chunkFrames = Math.min(writeChunkFrames, remaining);
+        const buf =
+          chunkFrames === writeChunkFrames ? writeChunk : writeChunk.subarray(0, chunkFrames * channelCount);
+
+        for (let i = 0; i < chunkFrames; i++) {
+          const s = Math.sin(tonePhase * 2 * Math.PI) * gain;
+          for (let c = 0; c < channelCount; c++) buf[i * channelCount + c] = s;
+          tonePhase += freqHz / sr;
+          if (tonePhase >= 1) tonePhase -= 1;
+        }
+        output.writeInterleaved(buf, sr);
+        remaining -= chunkFrames;
       }
-      output.writeInterleaved(buf, sr);
     }
 
     // Prefill ~100ms to avoid startup underruns.
@@ -871,7 +885,7 @@ function renderAudioPanel(): HTMLElement {
         `sampleRate: ${sr}\n` +
         `bufferLevelFrames: ${output.getBufferLevelFrames()}\n` +
         `underrunFrames: ${output.getUnderrunCount()}`;
-    }, 50);
+    }, 20);
   }
 
   const button = el("button", {
