@@ -664,7 +664,7 @@ controller drains this buffer into guest BDL entries when the capture stream is
 running.
 
 ### Ring buffer layout
-
+ 
 The microphone ring buffer is a mono `Float32Array` backed by a `SharedArrayBuffer`:
 
 | Offset | Type | Meaning |
@@ -674,6 +674,25 @@ The microphone ring buffer is a mono `Float32Array` backed by a `SharedArrayBuff
 | 8      | u32  | `dropped` (samples dropped due to buffer full) |
 | 12     | u32  | `capacity` (samples in the data section) |
 | 16..   | f32[]| PCM samples, index = `(write_pos % capacity)` |
+
+### Playback ring buffer layout (AudioWorklet output)
+
+Audio output uses a separate `SharedArrayBuffer` ring buffer consumed by an `AudioWorkletProcessor`.
+Unlike the microphone ring, this ring buffer uses **frame indices** (not sample indices); each frame
+contains `channelCount` interleaved `f32` samples.
+
+| Offset | Type | Meaning |
+|--------|------|---------|
+| 0      | u32  | `readFrameIndex` (monotonic frame counter, consumer-owned) |
+| 4      | u32  | `writeFrameIndex` (monotonic frame counter, producer-owned) |
+| 8      | u32  | `underrunCount` (incremented by the worklet when it must output silence) |
+| 12     | u32  | `overrunCount` (frames dropped by the producer due to buffer full) |
+| 16..   | f32[]| Interleaved PCM samples (`L0, R0, L1, R1, ...`) |
+
+Canonical implementation:
+
+- `web/src/platform/audio.ts` (producer)
+- `web/src/platform/audio-worklet-processor.js` (consumer)
 
 ### Capture constraints (echo/noise)
 

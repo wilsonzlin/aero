@@ -100,6 +100,14 @@ The AudioWorklet ring buffer used by the AU-WORKLET path uses **frame indices** 
 See `web/src/platform/audio.ts` and `web/src/platform/audio-worklet-processor.js` for the canonical
 layout and wrap-around behavior.
 
+Layout (little-endian):
+
+- u32 `readFrameIndex` (bytes 0..4)
+- u32 `writeFrameIndex` (bytes 4..8)
+- u32 `underrunCount` (bytes 8..12)
+- u32 `overrunCount` (dropped frames, bytes 12..16)
+- f32 `samples[]` (bytes 16..), interleaved by channel: `L0, R0, L1, R1, ...`
+
 ## Audio Output Path
 
 TX PCM samples are written into the same **AudioWorklet ring buffer** abstraction used by the AU-WORKLET layer (`web/src/platform/audio.ts`). The current implementation converts interleaved S16_LE samples into interleaved `f32` samples and writes them into the Float32 ring buffer consumed by `web/src/platform/audio-worklet-processor.js`.
