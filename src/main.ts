@@ -1059,7 +1059,7 @@ function renderAudioPanel(): HTMLElement {
     // Prefill ~100ms to avoid startup underruns.
     writeTone(Math.floor(sr / 10));
 
-    toneTimer = window.setInterval(() => {
+    const timer = window.setInterval(() => {
       const target = Math.floor(sr / 5); // ~200ms buffered
       const level = output.getBufferLevelFrames();
       const need = Math.max(0, target - level);
@@ -1072,6 +1072,8 @@ function renderAudioPanel(): HTMLElement {
         `underrunFrames: ${output.getUnderrunCount()}\n` +
         `overrunFrames: ${output.getOverrunCount()}`;
     }, 20);
+    (timer as unknown as { unref?: () => void }).unref?.();
+    toneTimer = timer as unknown as number;
   }
 
   const button = el("button", {
@@ -1293,7 +1295,7 @@ function renderAudioPanel(): HTMLElement {
         return;
       }
       status.textContent = "Audio initialized and HDA playback demo started in CPU worker.";
-      toneTimer = window.setInterval(() => {
+      const timer = window.setInterval(() => {
         const metrics = output.getMetrics();
         const header = output.ringBuffer.header;
         const read = Atomics.load(header, 0) >>> 0;
@@ -1321,6 +1323,8 @@ function renderAudioPanel(): HTMLElement {
           `ring.writeFrameIndex: ${write}` +
           (demoLines.length ? `\n${demoLines.join("\n")}` : "");
       }, 50);
+      (timer as unknown as { unref?: () => void }).unref?.();
+      toneTimer = timer as unknown as number;
     },
   });
 
@@ -1418,7 +1422,7 @@ function renderAudioPanel(): HTMLElement {
         let tmpMono = new Float32Array(256);
         let tmpInterleaved = new Float32Array(256 * output.ringBuffer.channelCount);
 
-        loopbackTimer = window.setInterval(() => {
+        const timer = window.setInterval(() => {
           const target = Math.floor(output.context.sampleRate / 5);
           const level = output.getBufferLevelFrames();
           let need = Math.max(0, target - level);
@@ -1444,6 +1448,8 @@ function renderAudioPanel(): HTMLElement {
             need -= written;
           }
         }, 25);
+        (timer as unknown as { unref?: () => void }).unref?.();
+        loopbackTimer = timer as unknown as number;
       }
 
       globals.__aeroAudioLoopbackBackend = backend;
@@ -1802,7 +1808,8 @@ function renderRemoteDiskPanel(): HTMLElement {
     }
   }
 
-  window.setInterval(() => void refreshStats(), 250);
+  const statsTimer = window.setInterval(() => void refreshStats(), 250);
+  (statsTimer as unknown as { unref?: () => void }).unref?.();
 
   probeButton.onclick = async () => {
     output.textContent = '';
@@ -2208,9 +2215,10 @@ function renderPerfPanel(report: PlatformFeatureReport): HTMLElement {
 
 function renderEmulatorSafetyPanel(): HTMLElement {
   window.__aeroUiTicks ??= 0;
-  globalThis.setInterval(() => {
+  const uiTickTimer = globalThis.setInterval(() => {
     window.__aeroUiTicks = (window.__aeroUiTicks ?? 0) + 1;
   }, 25);
+  (uiTickTimer as unknown as { unref?: () => void }).unref?.();
 
   const stateLine = el('div', { class: 'mono', id: 'vm-state', text: 'state=stopped' });
   const heartbeatLine = el('div', { class: 'mono', id: 'vm-heartbeat', text: 'heartbeat=0' });
@@ -2490,7 +2498,8 @@ function renderEmulatorSafetyPanel(): HTMLElement {
     },
   }) as HTMLButtonElement;
 
-  globalThis.setInterval(update, 250);
+  const updateTimer = globalThis.setInterval(update, 250);
+  (updateTimer as unknown as { unref?: () => void }).unref?.();
 
   return el(
     'div',

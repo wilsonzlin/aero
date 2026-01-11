@@ -612,6 +612,7 @@ function renderMachinePanel(): HTMLElement {
           window.clearInterval(timer);
         }
       }, 50);
+      (timer as unknown as { unref?: () => void }).unref?.();
     })
     .catch((err) => {
       const message = err instanceof Error ? err.message : String(err);
@@ -748,7 +749,7 @@ function renderSnapshotPanel(report: PlatformFeatureReport): HTMLElement {
     if (!vm) return;
     const STEPS_PER_TICK = 5_000;
     const TICK_MS = 250;
-    mainStepTimer = window.setInterval(() => {
+    const timer = window.setInterval(() => {
       try {
         const current = vm;
         if (!current) return;
@@ -767,6 +768,8 @@ function renderSnapshotPanel(report: PlatformFeatureReport): HTMLElement {
         stopMainStepLoop();
       }
     }, TICK_MS);
+    (timer as unknown as { unref?: () => void }).unref?.();
+    mainStepTimer = timer as unknown as number;
   }
 
   function handleWorkerFatal(err: Error): void {
@@ -880,7 +883,7 @@ function renderSnapshotPanel(report: PlatformFeatureReport): HTMLElement {
       status.textContent = "Auto-save disabled.";
       return;
     }
-    autosaveTimer = window.setInterval(() => {
+    const timer = window.setInterval(() => {
       if (autosaveInFlight) return;
       autosaveInFlight = true;
       saveSnapshot()
@@ -889,6 +892,8 @@ function renderSnapshotPanel(report: PlatformFeatureReport): HTMLElement {
           autosaveInFlight = false;
         });
     }, seconds * 1000);
+    (timer as unknown as { unref?: () => void }).unref?.();
+    autosaveTimer = timer as unknown as number;
     status.textContent = `Auto-save every ${seconds}s.`;
   }
 
@@ -2092,7 +2097,7 @@ function renderAudioPanel(): HTMLElement {
     // the adaptive target to converge downward.
     writeTone(Math.min(output.ringBuffer.capacityFrames, Math.floor(sr / 10)));
 
-    toneTimer = window.setInterval(() => {
+    const timer = window.setInterval(() => {
       const underrunFrames = output.getUnderrunCount();
       const level = output.getBufferLevelFrames();
       const target = buffering.update(level, underrunFrames);
@@ -2111,6 +2116,8 @@ function renderAudioPanel(): HTMLElement {
         `underrunFrames: ${metrics.underrunCount}\n` +
         `overrunFrames: ${metrics.overrunCount}`;
     }, 20);
+    (timer as unknown as { unref?: () => void }).unref?.();
+    toneTimer = timer as unknown as number;
   }
 
   const button = el("button", {
@@ -2211,7 +2218,7 @@ function renderAudioPanel(): HTMLElement {
         return;
       }
 
-      toneTimer = window.setInterval(() => {
+      const timer = window.setInterval(() => {
         const metrics = output.getMetrics();
         status.textContent =
           `AudioContext: ${metrics.state}\n` +
@@ -2224,6 +2231,8 @@ function renderAudioPanel(): HTMLElement {
           `producer.underrunFrames: ${workerCoordinator.getAudioProducerUnderrunCount()}\n` +
           `producer.overrunFrames: ${workerCoordinator.getAudioProducerOverrunCount()}`;
       }, 50);
+      (timer as unknown as { unref?: () => void }).unref?.();
+      toneTimer = timer as unknown as number;
 
       status.textContent = "Audio initialized (worker tone backend).";
     },
@@ -2354,7 +2363,7 @@ function renderAudioPanel(): HTMLElement {
 
       await output.resume();
       status.textContent = "Audio initialized and HDA playback demo started in CPU worker.";
-      toneTimer = window.setInterval(() => {
+      const timer = window.setInterval(() => {
         const metrics = output.getMetrics();
         const header = output.ringBuffer.header;
         const read = Atomics.load(header, 0) >>> 0;
@@ -2382,6 +2391,8 @@ function renderAudioPanel(): HTMLElement {
           `ring.writeFrameIndex: ${write}` +
           (demoLines.length ? `\n${demoLines.join("\n")}` : "");
       }, 50);
+      (timer as unknown as { unref?: () => void }).unref?.();
+      toneTimer = timer as unknown as number;
     },
   });
 
@@ -2467,7 +2478,7 @@ function renderAudioPanel(): HTMLElement {
         let tmpMono = new Float32Array(256);
         let tmpInterleaved = new Float32Array(256 * output.ringBuffer.channelCount);
 
-        loopbackTimer = window.setInterval(() => {
+        const timer = window.setInterval(() => {
           const target = Math.floor(output.context.sampleRate / 5);
           const level = output.getBufferLevelFrames();
           let need = Math.max(0, target - level);
@@ -2493,6 +2504,8 @@ function renderAudioPanel(): HTMLElement {
             need -= written;
           }
         }, 25);
+        (timer as unknown as { unref?: () => void }).unref?.();
+        loopbackTimer = timer as unknown as number;
       }
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -2807,7 +2820,8 @@ function renderInputPanel(): HTMLElement {
       `ioEvents=${workerCoordinator.getIoInputEventCounter()}`;
   };
   updateStatus();
-  globalThis.setInterval(updateStatus, 250);
+  const statusTimer = globalThis.setInterval(updateStatus, 250);
+  (statusTimer as unknown as { unref?: () => void }).unref?.();
 
   return el(
     "div",
@@ -3036,7 +3050,8 @@ function renderWebUsbPassthroughDemoWorkerPanel(): HTMLElement {
   }) as HTMLButtonElement;
 
   ensureAttached();
-  globalThis.setInterval(ensureAttached, 250);
+  const attachTimer = globalThis.setInterval(ensureAttached, 250);
+  (attachTimer as unknown as { unref?: () => void }).unref?.();
   refreshUi();
 
   const hint = el("div", {
@@ -3173,7 +3188,8 @@ function renderWebUsbUhciHarnessWorkerPanel(): HTMLElement {
   };
 
   ensureAttached();
-  globalThis.setInterval(ensureAttached, 250);
+  const attachTimer = globalThis.setInterval(ensureAttached, 250);
+  (attachTimer as unknown as { unref?: () => void }).unref?.();
 
   refreshUi();
 
@@ -3765,7 +3781,8 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
   }
 
   update();
-  globalThis.setInterval(update, 250);
+  const updateTimer = globalThis.setInterval(update, 250);
+  (updateTimer as unknown as { unref?: () => void }).unref?.();
 
   return el(
     "div",
