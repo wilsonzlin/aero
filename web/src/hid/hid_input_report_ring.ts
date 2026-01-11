@@ -15,6 +15,30 @@ function toU32(value: number): number {
   return Math.max(0, Math.floor(value)) >>> 0;
 }
 
+export function writeHidInputReportRingRecord(
+  dest: Uint8Array,
+  opts: {
+    deviceId: number;
+    reportId: number;
+    tsMs?: number;
+    data: Uint8Array;
+  },
+): void {
+  const headerBytes = HID_INPUT_REPORT_RECORD_HEADER_BYTES;
+  const dataLen = opts.data.byteLength >>> 0;
+  if (dest.byteLength !== headerBytes + dataLen) {
+    throw new Error(`dest length mismatch (expected ${headerBytes + dataLen}, got ${dest.byteLength})`);
+  }
+  const view = new DataView(dest.buffer, dest.byteOffset, dest.byteLength);
+  view.setUint32(0, HID_INPUT_REPORT_RECORD_MAGIC, true);
+  view.setUint32(4, HID_INPUT_REPORT_RECORD_VERSION, true);
+  view.setUint32(8, opts.deviceId >>> 0, true);
+  view.setUint32(12, opts.reportId >>> 0, true);
+  view.setUint32(16, toU32(opts.tsMs ?? 0), true);
+  view.setUint32(20, dataLen, true);
+  dest.set(opts.data, headerBytes);
+}
+
 export function encodeHidInputReportRingRecord(opts: {
   deviceId: number;
   reportId: number;
@@ -24,14 +48,7 @@ export function encodeHidInputReportRingRecord(opts: {
   const headerBytes = HID_INPUT_REPORT_RECORD_HEADER_BYTES;
   const dataLen = opts.data.byteLength >>> 0;
   const out = new Uint8Array(headerBytes + dataLen);
-  const view = new DataView(out.buffer, out.byteOffset, out.byteLength);
-  view.setUint32(0, HID_INPUT_REPORT_RECORD_MAGIC, true);
-  view.setUint32(4, HID_INPUT_REPORT_RECORD_VERSION, true);
-  view.setUint32(8, opts.deviceId >>> 0, true);
-  view.setUint32(12, opts.reportId >>> 0, true);
-  view.setUint32(16, toU32(opts.tsMs ?? 0), true);
-  view.setUint32(20, dataLen, true);
-  out.set(opts.data, headerBytes);
+  writeHidInputReportRingRecord(out, opts);
   return out;
 }
 

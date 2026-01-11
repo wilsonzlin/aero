@@ -1,7 +1,6 @@
 import {
   HID_INPUT_REPORT_RECORD_HEADER_BYTES,
-  HID_INPUT_REPORT_RECORD_MAGIC,
-  HID_INPUT_REPORT_RECORD_VERSION,
+  writeHidInputReportRingRecord,
 } from "../hid/hid_input_report_ring";
 import { normalizeCollections, type HidCollectionInfo } from "../hid/webhid_normalize";
 import { RingBuffer } from "../ipc/ring_buffer";
@@ -376,14 +375,12 @@ export class WebHidPassthroughManager {
             const ts = (event as unknown as { timeStamp?: unknown }).timeStamp;
             const tsMs = typeof ts === "number" ? (Math.max(0, Math.floor(ts)) >>> 0) : 0;
             const ok = ring.tryPushWithWriter(HID_INPUT_REPORT_RECORD_HEADER_BYTES + src.byteLength, (dest) => {
-              const view = new DataView(dest.buffer, dest.byteOffset, dest.byteLength);
-              view.setUint32(0, HID_INPUT_REPORT_RECORD_MAGIC, true);
-              view.setUint32(4, HID_INPUT_REPORT_RECORD_VERSION, true);
-              view.setUint32(8, numericDeviceId >>> 0, true);
-              view.setUint32(12, event.reportId >>> 0, true);
-              view.setUint32(16, tsMs, true);
-              view.setUint32(20, src.byteLength >>> 0, true);
-              dest.set(src, HID_INPUT_REPORT_RECORD_HEADER_BYTES);
+              writeHidInputReportRingRecord(dest, {
+                deviceId: numericDeviceId >>> 0,
+                reportId: event.reportId >>> 0,
+                tsMs,
+                data: src,
+              });
             });
             if (ok) return;
             const status = this.#status;

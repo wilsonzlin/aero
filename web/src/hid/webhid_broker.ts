@@ -19,8 +19,7 @@ import type { GuestUsbPath } from "../platform/hid_passthrough_protocol";
 import { createHidReportRingBuffer, HidReportRing, HidReportType as HidRingReportType } from "../usb/hid_report_ring";
 import {
   HID_INPUT_REPORT_RECORD_HEADER_BYTES,
-  HID_INPUT_REPORT_RECORD_MAGIC,
-  HID_INPUT_REPORT_RECORD_VERSION,
+  writeHidInputReportRingRecord,
 } from "./hid_input_report_ring";
 
 export type WebHidBrokerState = {
@@ -392,16 +391,13 @@ export class WebHidBroker {
 
       const ring = this.#inputReportRing;
       if (ring && this.#canUseSharedMemory()) {
-        const tsU32 = tsMs === undefined ? 0 : (Math.max(0, Math.floor(tsMs)) >>> 0);
         const ok = ring.tryPushWithWriter(HID_INPUT_REPORT_RECORD_HEADER_BYTES + src.byteLength, (dest) => {
-          const view = new DataView(dest.buffer, dest.byteOffset, dest.byteLength);
-          view.setUint32(0, HID_INPUT_REPORT_RECORD_MAGIC, true);
-          view.setUint32(4, HID_INPUT_REPORT_RECORD_VERSION, true);
-          view.setUint32(8, deviceId >>> 0, true);
-          view.setUint32(12, event.reportId >>> 0, true);
-          view.setUint32(16, tsU32, true);
-          view.setUint32(20, src.byteLength >>> 0, true);
-          dest.set(src, HID_INPUT_REPORT_RECORD_HEADER_BYTES);
+          writeHidInputReportRingRecord(dest, {
+            deviceId,
+            reportId: event.reportId,
+            tsMs,
+            data: src,
+          });
         });
         if (ok) {
           this.#inputReportRingPushed += 1;
