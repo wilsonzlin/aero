@@ -79,8 +79,8 @@ Recommended build entrypoint (MSBuild/WDK10):
 
 ```cmd
 cd \path\to\repo
-msbuild drivers\aerogpu\aerogpu.sln /m /p:Configuration=Release /p:Platform=Win32
-msbuild drivers\aerogpu\aerogpu.sln /m /p:Configuration=Release /p:Platform=x64
+msbuild drivers\aerogpu\aerogpu.sln /m /p:Configuration=Release /p:Platform=Win32 /p:AeroGpuUseWdkHeaders=1
+msbuild drivers\aerogpu\aerogpu.sln /m /p:Configuration=Release /p:Platform=x64 /p:AeroGpuUseWdkHeaders=1
 ```
 
 CI builds the same solution (and stages outputs under `out/drivers/aerogpu/`) via `ci/build-drivers.ps1`.
@@ -109,14 +109,16 @@ To make ABI drift obvious *before* you debug a Win7 loader crash, the repo inclu
      - `aerogpu_d3d9_x86.def`
    - The `@N` stack byte counts must match.
 
-3. **Freeze ABI expectations in the WDK build (optional but recommended)**:
-   - Take the `sizeof(...)` / `offsetof(...)` values printed by the probe and define the matching
-     `AEROGPU_D3D9_WDK_ABI_EXPECT_*` macros in your WDK build (for example via `AdditionalOptions` / `/D...`
-     in `aerogpu_d3d9_umd.vcxproj`).
-   - Macro names live in: `src/aerogpu_d3d9_wdk_abi_asserts.h`
+3. **Freeze ABI expectations (checked-in; recommended)**:
+   - The repo pins ABI-critical values in:
+     - `src/aerogpu_d3d9_wdk_abi_expected.h`
+   - If you update the WDK/toolchain and ABI asserts start failing, regenerate the expected header from probe output:
+     - `tools/wdk_abi_probe/gen_expected_header.py` (see `tools/wdk_abi_probe/README.md`)
+   - In the MSBuild project, strict ABI enforcement is enabled automatically for WDK-header builds via:
+     - `AEROGPU_D3D9_WDK_ABI_ENFORCE_EXPECTED` (set when `/p:AeroGpuUseWdkHeaders=1`).
 
 4. **Rebuild the UMD**:
-   - With the expected macros defined, the build will fail if:
+   - In WDK mode (`/p:AeroGpuUseWdkHeaders=1`), the build will fail if:
      - the WDK headers/toolchain no longer match the expected Win7 ABI, or
      - AeroGPU’s portable `AEROGPU_D3D9DDIARG_*` structs are no longer prefix-compatible with the WDK structs
        for the fields the UMD consumes.

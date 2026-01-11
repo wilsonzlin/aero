@@ -41,10 +41,6 @@
 #include "aerogpu_trace.h"
 #include "aerogpu_wddm_alloc.h"
 
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
-#include "aerogpu_d3d9_wdk_abi_asserts.h"
-#endif
-
 namespace {
 
 template <typename T, typename = void>
