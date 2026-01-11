@@ -23,6 +23,10 @@ static int RunConsumer(int argc, char** argv) {
   const bool show = aerogpu_test::HasArg(argc, argv, "--show");
   const std::wstring dump_bmp_path =
       aerogpu_test::JoinPath(aerogpu_test::GetModuleDir(), L"d3d9ex_shared_surface_wow64.bmp");
+  if (dump) {
+    // Avoid consuming stale output from a previous run if this process fails to write a dump this time.
+    DeleteFileW(dump_bmp_path.c_str());
+  }
 
   AdapterRequirements req;
   int rc = ParseAdapterRequirements(argc, argv, kTestName, &req, &reporter);
@@ -194,16 +198,15 @@ static int RunConsumer(int argc, char** argv) {
 
   if (dump) {
     std::string err;
-    if (aerogpu_test::WriteBmp32BGRA(
-            dump_bmp_path,
-            kWidth,
-            kHeight,
-            lr.pBits,
-            (int)lr.Pitch,
-            &err)) {
-      reporter.AddArtifactPathW(dump_bmp_path);
-    } else if (!err.empty()) {
+    if (!aerogpu_test::WriteBmp32BGRA(dump_bmp_path,
+                                     kWidth,
+                                     kHeight,
+                                     lr.pBits,
+                                     (int)lr.Pitch,
+                                     &err)) {
       aerogpu_test::PrintfStdout("INFO: %s: BMP dump failed: %s", kTestName, err.c_str());
+    } else {
+      reporter.AddArtifactPathW(dump_bmp_path);
     }
   }
 
