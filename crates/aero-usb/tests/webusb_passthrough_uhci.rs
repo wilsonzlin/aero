@@ -715,3 +715,114 @@ fn bulk_in_pending_queues_once_and_naks_until_completion() {
     );
     assert_eq!(mem.read_u32(qh_addr + 4), LINK_PTR_T);
 }
+
+#[test]
+fn bulk_out_pending_queues_once_and_naks_until_completion() {
+    let io_base = 0x5410;
+    let (mut ctrl, mut mem, mut irq, mut alloc, fl_base) = setup_controller(io_base);
+
+    // First, set device address to 1 (virtualized).
+    {
+        let setup = SetupPacket {
+            request_type: 0x00,
+            request: 0x05,
+            value: 1,
+            index: 0,
+            length: 0,
+        };
+
+        let qh_addr = alloc.alloc(0x20, 0x10);
+        let setup_buf = alloc.alloc(8, 0x10);
+        let setup_td = alloc.alloc(0x20, 0x10);
+        let status_td = alloc.alloc(0x20, 0x10);
+
+        mem.write(setup_buf, &setup_packet_bytes(setup));
+        write_td(
+            &mut mem,
+            setup_td,
+            status_td,
+            td_ctrl(true, false),
+            td_token(0x2D, 0, 0, false, 8),
+            setup_buf,
+        );
+        write_td(
+            &mut mem,
+            status_td,
+            LINK_PTR_T,
+            td_ctrl(true, true),
+            td_token(0x69, 0, 0, true, 0),
+            0,
+        );
+        write_qh(&mut mem, qh_addr, LINK_PTR_T, setup_td);
+        install_frame_list(&mut mem, fl_base, qh_addr);
+
+        ctrl.step_frame(&mut mem, &mut irq);
+        assert_eq!(passthrough_device_mut(&mut ctrl).address(), 1);
+        assert!(passthrough_device_mut(&mut ctrl).drain_actions().is_empty());
+    }
+
+    // Schedule a bulk OUT TD to endpoint 2 (ep addr 0x02), length 4.
+    let payload = [0xDEu8, 0xAD, 0xBE, 0xEF];
+
+    let qh_addr = alloc.alloc(0x20, 0x10);
+    let td_addr = alloc.alloc(0x20, 0x10);
+    let buf_addr = alloc.alloc(payload.len() as u32, 0x10);
+
+    mem.write(buf_addr, &payload);
+    write_td(
+        &mut mem,
+        td_addr,
+        LINK_PTR_T,
+        td_ctrl(true, true),
+        td_token(0xE1, 1, 2, false, payload.len()),
+        buf_addr,
+    );
+    write_qh(&mut mem, qh_addr, LINK_PTR_T, td_addr);
+    install_frame_list(&mut mem, fl_base, qh_addr);
+
+    // Frame #1: TD should NAK and emit one BulkOut host action.
+    ctrl.step_frame(&mut mem, &mut irq);
+    let ctrl_sts = mem.read_u32(td_addr + 4);
+    assert_ne!(ctrl_sts & TD_CTRL_ACTIVE, 0);
+    assert_ne!(ctrl_sts & TD_CTRL_NAK, 0);
+
+    let mut actions = passthrough_device_mut(&mut ctrl).drain_actions();
+    assert_eq!(actions.len(), 1, "expected exactly one BulkOut action");
+    let action = actions.pop().unwrap();
+    let id = match action {
+        UsbHostAction::BulkOut { id, endpoint, data } => {
+            assert_eq!(endpoint, 0x02);
+            assert_eq!(data, payload);
+            id
+        }
+        other => panic!("unexpected action: {other:?}"),
+    };
+
+    // Frame #2 without completion: still NAK, and no duplicate action should be queued.
+    ctrl.step_frame(&mut mem, &mut irq);
+    let ctrl_sts = mem.read_u32(td_addr + 4);
+    assert_ne!(ctrl_sts & TD_CTRL_ACTIVE, 0);
+    assert_ne!(ctrl_sts & TD_CTRL_NAK, 0);
+    assert!(
+        passthrough_device_mut(&mut ctrl).drain_actions().is_empty(),
+        "expected no duplicate BulkOut actions while in-flight"
+    );
+
+    passthrough_device_mut(&mut ctrl).push_completion(UsbHostCompletion::BulkOut {
+        id,
+        result: UsbHostCompletionOut::Success {
+            bytes_written: payload.len() as u32,
+        },
+    });
+
+    // Frame #3: TD completes.
+    ctrl.step_frame(&mut mem, &mut irq);
+    let ctrl_sts = mem.read_u32(td_addr + 4);
+    assert_eq!(ctrl_sts & TD_CTRL_ACTIVE, 0);
+    assert_eq!(actlen(ctrl_sts), payload.len());
+    assert_eq!(mem.read_u32(qh_addr + 4), LINK_PTR_T);
+    assert!(
+        passthrough_device_mut(&mut ctrl).drain_actions().is_empty(),
+        "expected no extra actions after completion"
+    );
+}
