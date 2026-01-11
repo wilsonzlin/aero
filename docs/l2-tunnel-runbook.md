@@ -55,12 +55,9 @@ WebSocket (e.g. reduced head-of-line blocking).
 
 If you carry the **L2 tunnel** over WebRTC, the DataChannel must be configured as:
 
-- **reliable** (no frame loss / no partial reliability).
-
-Recommended:
-
-- `ordered = false` (reduces head-of-line blocking)
-- leave `maxRetransmits` unset (default reliable)
+- **reliable** (no frame loss / no partial reliability)
+- **ordered** (`ordered = true`)
+- leave `maxRetransmits` / `maxPacketLifeTime` unset (default reliable)
 
 See ADR 0005 for the rationale.
 

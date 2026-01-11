@@ -1070,9 +1070,11 @@ impl NetworkStack {
             conn.on_guest_ack(tcp.ack_number());
         }
 
-         // Payload.
-         if !payload.is_empty() {
-             // We intentionally do not implement full TCP reassembly: accept only in-order payload.
+        // Payload.
+        if !payload.is_empty() {
+            // We intentionally do not implement full TCP reassembly: accept only in-order payload.
+            // This relies on the guest->stack transport preserving frame ordering (e.g. WebSocket,
+            // or an ordered WebRTC DataChannel for the L2 tunnel).
             let seg_seq = tcp.seq_number();
             let seg_end = seg_seq.wrapping_add(payload.len() as u32);
             if seg_seq == conn.guest_next_seq {
@@ -1126,7 +1128,7 @@ impl NetworkStack {
                 // Out-of-order: ACK what we have and drop.
                 out.extend(self.emit_tcp_ack(&conn));
             }
-         }
+        }
 
         // FIN.
         if flags.contains(TcpFlags::FIN) {

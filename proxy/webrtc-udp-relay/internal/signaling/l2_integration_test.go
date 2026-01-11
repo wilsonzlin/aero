@@ -193,7 +193,7 @@ func TestWebRTCUDPRelay_L2TunnelRejectsPartialReliability(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = pc.Close() })
 
-	ordered := false
+	ordered := true
 	maxRetransmits := uint16(0)
 	dc, err := pc.CreateDataChannel("l2", &webrtc.DataChannelInit{
 		Ordered:        &ordered,
@@ -233,7 +233,7 @@ func TestWebRTCUDPRelay_L2TunnelPingPongRoundTrip(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = pc.Close() })
 
-	ordered := false
+	ordered := true
 	dc, err := pc.CreateDataChannel("l2", &webrtc.DataChannelInit{
 		Ordered: &ordered,
 	})

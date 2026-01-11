@@ -38,9 +38,8 @@ DataChannel.
   - `maxRetransmits` MUST be unset
   - `maxPacketLifeTime` MUST be unset
   - The relay will close `l2` DataChannels that request partial reliability.
-- **Ordering:** optional.
-  - Recommended: `ordered = false` (reduces head-of-line blocking).
-  - `ordered = true` is allowed if a deployment prefers in-order delivery.
+- **Ordering:** **MUST be ordered.**
+  - `ordered = true`
 
 Unlike `udp`, the relay does **not** parse or frame messages on `l2`. Instead,
 it acts as a transport bridge:
@@ -63,7 +62,8 @@ browser DataChannel "l2"  <->  webrtc-udp-relay  <->  backend WebSocket /l2
 Rationale: the L2 tunnel carries guest Ethernet frames to a proxy that may run a
 user-space NAT/TCP stack (slirp-style). That stack can acknowledge upstream TCP
 data before the guest has received it, so allowing tunnel message loss (partial
-reliability) can break TCP correctness.
+reliability) can break TCP correctness. Ordered delivery is required because the
+current proxy-side stack does not implement full TCP segment reassembly.
 
 ---
 

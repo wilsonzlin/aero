@@ -82,7 +82,7 @@ func TestL2DataChannelSemantics_Reliable(t *testing.T) {
 		}
 	})
 
-	ordered := false
+	ordered := true
 	if _, err := clientPC.CreateDataChannel(DataChannelLabelL2, &webrtc.DataChannelInit{Ordered: &ordered}); err != nil {
 		t.Fatalf("CreateDataChannel(%q): %v", DataChannelLabelL2, err)
 	}
@@ -131,7 +131,7 @@ func TestL2DataChannelSemantics_RejectsPartialReliability(t *testing.T) {
 		gotCh <- validateL2DataChannel(dc)
 	})
 
-	ordered := false
+	ordered := true
 	maxRetransmits := uint16(0)
 	if _, err := clientPC.CreateDataChannel(DataChannelLabelL2, &webrtc.DataChannelInit{
 		Ordered:        &ordered,
@@ -146,6 +146,46 @@ func TestL2DataChannelSemantics_RejectsPartialReliability(t *testing.T) {
 	case err := <-gotCh:
 		if err == nil {
 			t.Fatalf("expected validateL2DataChannel to reject partial-reliability l2 datachannel")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timed out waiting for server-side l2 datachannel")
+	}
+}
+
+func TestL2DataChannelSemantics_RejectsUnordered(t *testing.T) {
+	api := webrtc.NewAPI()
+
+	serverPC, err := api.NewPeerConnection(webrtc.Configuration{})
+	if err != nil {
+		t.Fatalf("NewPeerConnection(server): %v", err)
+	}
+	t.Cleanup(func() { _ = serverPC.Close() })
+
+	clientPC, err := api.NewPeerConnection(webrtc.Configuration{})
+	if err != nil {
+		t.Fatalf("NewPeerConnection(client): %v", err)
+	}
+	t.Cleanup(func() { _ = clientPC.Close() })
+
+	gotCh := make(chan error, 1)
+	serverPC.OnDataChannel(func(dc *webrtc.DataChannel) {
+		if dc.Label() != DataChannelLabelL2 {
+			return
+		}
+		gotCh <- validateL2DataChannel(dc)
+	})
+
+	ordered := false
+	if _, err := clientPC.CreateDataChannel(DataChannelLabelL2, &webrtc.DataChannelInit{Ordered: &ordered}); err != nil {
+		t.Fatalf("CreateDataChannel(%q): %v", DataChannelLabelL2, err)
+	}
+
+	connectPeerConnections(t, clientPC, serverPC)
+
+	select {
+	case err := <-gotCh:
+		if err == nil {
+			t.Fatalf("expected validateL2DataChannel to reject unordered l2 datachannel")
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatalf("timed out waiting for server-side l2 datachannel")

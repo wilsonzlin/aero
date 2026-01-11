@@ -16,9 +16,9 @@ export function assertL2TunnelDataChannelSemantics(channel: RTCDataChannel): voi
   if (channel.label !== L2_TUNNEL_DATA_CHANNEL_LABEL) {
     throw new Error(`expected DataChannel label=${L2_TUNNEL_DATA_CHANNEL_LABEL} (got ${channel.label})`);
   }
-  // Ordering is optional. For L2 tunneling over WebRTC, reliable delivery is the
-  // key requirement; we generally recommend `ordered=false` to reduce
-  // head-of-line blocking.
+  if (!channel.ordered) {
+    throw new Error(`l2 DataChannel must be ordered (ordered=false is not supported)`);
+  }
   if (channel.maxRetransmits != null) {
     throw new Error(`l2 DataChannel must be fully reliable (maxRetransmits must be unset)`);
   }
@@ -28,10 +28,9 @@ export function assertL2TunnelDataChannelSemantics(channel: RTCDataChannel): voi
 }
 
 export function createL2TunnelDataChannel(pc: RTCPeerConnection): RTCDataChannel {
-  // L2 tunnel MUST be reliable. `ordered=false` is recommended to reduce
-  // head-of-line blocking; the server-side tunnel/stack must tolerate
-  // out-of-order delivery.
-  const channel = pc.createDataChannel(L2_TUNNEL_DATA_CHANNEL_LABEL, { ordered: false });
+  // L2 tunnel MUST be reliable + ordered. This matches the proxy-side stack
+  // (aero-net-stack) which does not implement full TCP segment reassembly.
+  const channel = pc.createDataChannel(L2_TUNNEL_DATA_CHANNEL_LABEL, { ordered: true });
   assertL2TunnelDataChannelSemantics(channel);
   return channel;
 }
@@ -578,7 +577,7 @@ export class WebSocketL2TunnelClient extends BaseL2TunnelClient {
  * already-created data channel.
  *
  * Recommended channel options for low-latency forwarding:
- * - `ordered: false` (reduces head-of-line blocking)
+ * - `ordered: true`
  * - do NOT set `maxRetransmits` or `maxPacketLifeTime` (fully reliable)
  *
  * See `docs/adr/0005-networking-l2-tunnel.md` and `docs/l2-tunnel-protocol.md`.
