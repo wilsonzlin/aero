@@ -99,6 +99,55 @@
           }
         }
       },
+      "gateway": {
+        "metrics": {
+          "tcp_rtt_p50_ms": {
+            "better": "lower",
+            "maxRegressionPct": 0.15,
+            "extremeCvThreshold": 0.5
+          },
+          "tcp_rtt_p90_ms": {
+            "better": "lower",
+            "maxRegressionPct": 0.15,
+            "extremeCvThreshold": 0.5
+          },
+          "tcp_rtt_p99_ms": {
+            "better": "lower",
+            "maxRegressionPct": 0.15,
+            "extremeCvThreshold": 0.5
+          },
+          "tcp_throughput_mib_s": {
+            "better": "higher",
+            "maxRegressionPct": 0.15,
+            "extremeCvThreshold": 0.5
+          },
+          "doh_qps": {
+            "better": "higher",
+            "maxRegressionPct": 0.15,
+            "extremeCvThreshold": 0.5
+          },
+          "doh_latency_p50_ms": {
+            "better": "lower",
+            "maxRegressionPct": 0.15,
+            "extremeCvThreshold": 0.5
+          },
+          "doh_latency_p90_ms": {
+            "better": "lower",
+            "maxRegressionPct": 0.15,
+            "extremeCvThreshold": 0.5
+          },
+          "doh_latency_p99_ms": {
+            "better": "lower",
+            "maxRegressionPct": 0.15,
+            "extremeCvThreshold": 0.5
+          },
+          "doh_cache_hit_ratio_pct": {
+            "better": "higher",
+            "maxRegressionPct": 0.15,
+            "informational": true
+          }
+        }
+      },
       "storage": {
         "metrics": {
           "sequential_write_mb_per_s": {
@@ -239,6 +288,55 @@
             "informational": true
           },
           "pipelineCacheHitRate": {
+            "better": "higher",
+            "maxRegressionPct": 0.05,
+            "informational": true
+          }
+        }
+      },
+      "gateway": {
+        "metrics": {
+          "tcp_rtt_p50_ms": {
+            "better": "lower",
+            "maxRegressionPct": 0.05,
+            "extremeCvThreshold": 0.5
+          },
+          "tcp_rtt_p90_ms": {
+            "better": "lower",
+            "maxRegressionPct": 0.05,
+            "extremeCvThreshold": 0.5
+          },
+          "tcp_rtt_p99_ms": {
+            "better": "lower",
+            "maxRegressionPct": 0.05,
+            "extremeCvThreshold": 0.5
+          },
+          "tcp_throughput_mib_s": {
+            "better": "higher",
+            "maxRegressionPct": 0.05,
+            "extremeCvThreshold": 0.5
+          },
+          "doh_qps": {
+            "better": "higher",
+            "maxRegressionPct": 0.05,
+            "extremeCvThreshold": 0.5
+          },
+          "doh_latency_p50_ms": {
+            "better": "lower",
+            "maxRegressionPct": 0.05,
+            "extremeCvThreshold": 0.5
+          },
+          "doh_latency_p90_ms": {
+            "better": "lower",
+            "maxRegressionPct": 0.05,
+            "extremeCvThreshold": 0.5
+          },
+          "doh_latency_p99_ms": {
+            "better": "lower",
+            "maxRegressionPct": 0.05,
+            "extremeCvThreshold": 0.5
+          },
+          "doh_cache_hit_ratio_pct": {
             "better": "higher",
             "maxRegressionPct": 0.05,
             "informational": true

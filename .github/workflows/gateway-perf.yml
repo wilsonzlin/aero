@@ -20,7 +20,6 @@ jobs:
     timeout-minutes: 20
     env:
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
-      GATEWAY_PERF_REGRESSION_THRESHOLD_PCT: "15"
     steps:
       - name: Checkout (candidate)
         uses: actions/checkout@v4
@@ -76,8 +75,7 @@ jobs:
             --candidate gateway-perf-results/head/raw.json \
             --out-dir gateway-perf-results/compare \
             --thresholds-file bench/perf_thresholds.json \
-            --profile pr-smoke \
-            --thresholdPct ${{ env.GATEWAY_PERF_REGRESSION_THRESHOLD_PCT }}
+            --profile pr-smoke
           status=$?
           if [[ -f gateway-perf-results/compare/compare.md ]]; then
             cat gateway-perf-results/compare/compare.md >> "$GITHUB_STEP_SUMMARY"

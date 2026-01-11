@@ -415,7 +415,7 @@ Baselines are used to detect regressions in CI. Update them when:
 In CI:
 
 - The **browser CI perf** workflow (`tools/perf`) compares **PR vs base commit** (no committed “golden baseline” file).
-- Thresholds live in [`bench/perf_thresholds.json`](../bench/perf_thresholds.json) (versioned, shared across browser/GPU/storage/Node microbench perf tooling).
+- Thresholds live in [`bench/perf_thresholds.json`](../bench/perf_thresholds.json) (versioned, shared across CI perf tooling: browser/GPU/storage/gateway/Node microbench/Criterion).
   - PR gating uses profile `pr-smoke`
   - Nightly runs should use profile `nightly`
 
