@@ -4,7 +4,7 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use aero_gpu::bindings::layout_cache::{BindGroupLayoutCache, CachedBindGroupLayout};
-use aero_gpu::{GuestMemory, GuestMemoryError};
+use aero_gpu::guest_memory::{GuestMemory, GuestMemoryError};
 use aero_gpu::pipeline_cache::{PipelineCache, PipelineCacheConfig};
 use aero_gpu::pipeline_key::{ColorTargetKey, PipelineLayoutKey, RenderPipelineKey, ShaderHash};
 use aero_gpu::GpuCapabilities;
@@ -618,7 +618,7 @@ impl AerogpuD3d11Executor {
         &mut self,
         stream_bytes: &[u8],
         allocs: Option<&[AerogpuAllocEntry]>,
-        guest_mem: &dyn aero_gpu::GuestMemory,
+        guest_mem: &dyn GuestMemory,
     ) -> Result<ExecuteReport> {
         let iter = AerogpuCmdStreamIter::new(stream_bytes)
             .map_err(|e| anyhow!("aerogpu_cmd: invalid cmd stream: {e:?}"))?;
