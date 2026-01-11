@@ -3,6 +3,10 @@ use super::{ExecOutcome, Tier0Config};
 use crate::cpuid::bits as cpuid_bits;
 use crate::exception::Exception;
 use crate::interp::{crypto, sse3, sse41, sse42, ssse3};
+use crate::linear_mem::{
+    read_bytes_wrapped, read_u128_wrapped, read_u32_wrapped, read_u64_wrapped, write_u128_wrapped,
+    write_u32_wrapped, write_u64_wrapped,
+};
 use crate::mem::CpuBus;
 use crate::state::{
     mask_bits, CpuState, CR0_EM, CR0_TS, CR4_OSFXSR, CR4_OSXMMEXCPT, FLAG_CF, FLAG_OF, FLAG_SF,
@@ -604,7 +608,7 @@ fn read_xmm_operand_u128<B: CpuBus>(
             if let Some(align) = align {
                 check_alignment(addr, align)?;
             }
-            bus.read_u128(addr)
+            read_u128_wrapped(state, bus, addr)
         }
         _ => Err(Exception::InvalidOpcode),
     }
@@ -621,7 +625,7 @@ fn read_xmm_operand_u32<B: CpuBus>(
         OpKind::Register => Ok(read_xmm_reg(state, instr.op_register(op as u32))? as u32),
         OpKind::Memory => {
             let addr = calc_ea(state, instr, next_ip, true)?;
-            Ok(bus.read_u32(addr)?)
+            Ok(read_u32_wrapped(state, bus, addr)?)
         }
         _ => Err(Exception::InvalidOpcode),
     }
@@ -638,7 +642,7 @@ fn read_xmm_operand_u64<B: CpuBus>(
         OpKind::Register => Ok(read_xmm_reg(state, instr.op_register(op as u32))? as u64),
         OpKind::Memory => {
             let addr = calc_ea(state, instr, next_ip, true)?;
-            Ok(bus.read_u64(addr)?)
+            Ok(read_u64_wrapped(state, bus, addr)?)
         }
         _ => Err(Exception::InvalidOpcode),
     }
@@ -674,7 +678,7 @@ fn exec_mov128<B: CpuBus>(
                 check_alignment(addr, align)?;
             }
             let src = read_xmm_reg(state, instr.op1_register())?;
-            bus.write_u128(addr, src)?;
+            write_u128_wrapped(state, bus, addr, src)?;
             Ok(())
         }
         _ => Err(Exception::InvalidOpcode),
@@ -699,7 +703,7 @@ fn exec_movss<B: CpuBus>(
             let addr = calc_ea(state, instr, next_ip, true)?;
             let src_reg = instr.op1_register();
             let v = read_xmm_reg(state, src_reg)? as u32;
-            bus.write_u32(addr, v)?;
+            write_u32_wrapped(state, bus, addr, v)?;
             Ok(())
         }
         _ => Err(Exception::InvalidOpcode),
@@ -724,7 +728,7 @@ fn exec_movsd<B: CpuBus>(
             let addr = calc_ea(state, instr, next_ip, true)?;
             let src_reg = instr.op1_register();
             let v = read_xmm_reg(state, src_reg)? as u64;
-            bus.write_u64(addr, v)?;
+            write_u64_wrapped(state, bus, addr, v)?;
             Ok(())
         }
         _ => Err(Exception::InvalidOpcode),
@@ -744,7 +748,7 @@ fn exec_movd<B: CpuBus>(
                 OpKind::Register => (state.read_reg(instr.op1_register()) & 0xFFFF_FFFF) as u32,
                 OpKind::Memory => {
                     let addr = calc_ea(state, instr, next_ip, true)?;
-                    bus.read_u32(addr)?
+                    read_u32_wrapped(state, bus, addr)?
                 }
                 _ => return Err(Exception::InvalidOpcode),
             };
@@ -760,7 +764,7 @@ fn exec_movd<B: CpuBus>(
                 }
                 OpKind::Memory => {
                     let addr = calc_ea(state, instr, next_ip, true)?;
-                    bus.write_u32(addr, src)
+                    write_u32_wrapped(state, bus, addr, src)
                 }
                 _ => Err(Exception::InvalidOpcode),
             }
@@ -787,7 +791,7 @@ fn read_op_u64_allow_xmm<B: CpuBus>(
         }
         OpKind::Memory => {
             let addr = calc_ea(state, instr, next_ip, true)?;
-            Ok(bus.read_u64(addr)?)
+            Ok(read_u64_wrapped(state, bus, addr)?)
         }
         _ => Err(Exception::InvalidOpcode),
     }
@@ -815,7 +819,7 @@ fn exec_movq<B: CpuBus>(
                 }
                 OpKind::Memory => {
                     let addr = calc_ea(state, instr, next_ip, true)?;
-                    bus.write_u64(addr, src)
+                    write_u64_wrapped(state, bus, addr, src)
                 }
                 _ => Err(Exception::InvalidOpcode),
             }
@@ -1842,7 +1846,7 @@ fn exec_lddqu<B: CpuBus>(
     }
     let dst = instr.op0_register();
     let addr = calc_ea(state, instr, next_ip, true)?;
-    let val = bus.read_u128(addr)?;
+    let val = read_u128_wrapped(state, bus, addr)?;
     write_xmm_reg(state, dst, val)?;
     Ok(())
 }
@@ -1902,7 +1906,7 @@ fn exec_movddup<B: CpuBus>(
         OpKind::Register => read_xmm_reg(state, instr.op1_register())?,
         OpKind::Memory => {
             let addr = calc_ea(state, instr, next_ip, true)?;
-            bus.read_u64(addr)? as u128
+            read_u64_wrapped(state, bus, addr)? as u128
         }
         _ => return Err(Exception::InvalidOpcode),
     };
@@ -2071,7 +2075,7 @@ fn read_pmov_src<B: CpuBus>(
         }
         OpKind::Memory => {
             let addr = calc_ea(state, instr, next_ip, true)?;
-            bus.read_bytes(addr, dst)
+            read_bytes_wrapped(state, bus, addr, dst)
         }
         _ => Err(Exception::InvalidOpcode),
     }
@@ -2089,7 +2093,7 @@ fn exec_insertps<B: CpuBus>(
         OpKind::Register => read_xmm_reg(state, instr.op1_register())?,
         OpKind::Memory => {
             let addr = calc_ea(state, instr, next_ip, true)?;
-            bus.read_u32(addr)? as u128
+            read_u32_wrapped(state, bus, addr)? as u128
         }
         _ => return Err(Exception::InvalidOpcode),
     };

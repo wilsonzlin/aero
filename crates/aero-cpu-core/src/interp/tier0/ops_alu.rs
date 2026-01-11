@@ -100,7 +100,7 @@ pub fn exec<B: CpuBus>(
                 }
 
                 let addr = calc_ea(state, instr, next_ip, true)?;
-                let old = super::atomic_rmw_sized(bus, addr, bits, |old| {
+                let old = super::atomic_rmw_sized(state, bus, addr, bits, |old| {
                     let rhs = src.wrapping_add(carry_in);
                     let res = match instr.mnemonic() {
                         Mnemonic::Add | Mnemonic::Adc => old.wrapping_add(rhs),
@@ -144,7 +144,7 @@ pub fn exec<B: CpuBus>(
                     return Err(Exception::InvalidOpcode);
                 }
                 let addr = calc_ea(state, instr, next_ip, true)?;
-                let old = super::atomic_rmw_sized(bus, addr, bits, |old| {
+                let old = super::atomic_rmw_sized(state, bus, addr, bits, |old| {
                     let mask = mask_bits(bits);
                     let new = match instr.mnemonic() {
                         Mnemonic::Inc => old.wrapping_add(1) & mask,
@@ -181,7 +181,7 @@ pub fn exec<B: CpuBus>(
                     return Err(Exception::InvalidOpcode);
                 }
                 let addr = calc_ea(state, instr, next_ip, true)?;
-                let old = super::atomic_rmw_sized(bus, addr, bits, |old| {
+                let old = super::atomic_rmw_sized(state, bus, addr, bits, |old| {
                     let res = (!old).wrapping_add(1) & mask_bits(bits);
                     (res, old)
                 })?;
@@ -204,7 +204,7 @@ pub fn exec<B: CpuBus>(
                     return Err(Exception::InvalidOpcode);
                 }
                 let addr = calc_ea(state, instr, next_ip, true)?;
-                let old = super::atomic_rmw_sized(bus, addr, bits, |old| {
+                let old = super::atomic_rmw_sized(state, bus, addr, bits, |old| {
                     let res = match instr.mnemonic() {
                         Mnemonic::And => old & src,
                         Mnemonic::Or => old | src,
@@ -245,7 +245,7 @@ pub fn exec<B: CpuBus>(
                     return Err(Exception::InvalidOpcode);
                 }
                 let addr = calc_ea(state, instr, next_ip, true)?;
-                super::atomic_rmw_sized(bus, addr, bits, |old| {
+                super::atomic_rmw_sized(state, bus, addr, bits, |old| {
                     let res = (!old) & mask_bits(bits);
                     (res, ())
                 })?;
@@ -974,7 +974,7 @@ fn exec_bit_test<B: CpuBus>(
                     Mnemonic::Bts | Mnemonic::Btr | Mnemonic::Btc => {}
                     _ => return Err(Exception::InvalidOpcode),
                 }
-                let old_bit = super::atomic_rmw_sized(bus, addr, bits, |val| {
+                let old_bit = super::atomic_rmw_sized(state, bus, addr, bits, |val| {
                     let old = ((val >> bit) & 1) != 0;
                     let res = match instr.mnemonic() {
                         Mnemonic::Bts => val | (1u64 << bit),

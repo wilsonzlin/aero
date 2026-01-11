@@ -489,7 +489,7 @@ fn deliver_real_mode<B: CpuBus>(
     saved_rip: u64,
 ) -> Result<(), CpuExit> {
     let ivt_addr = (vector as u64) * 4;
-    let offset = match bus.read_u16(ivt_addr) {
+    let offset = match read_u16_wrapped(state, bus, ivt_addr) {
         Ok(v) => v as u64,
         Err(_) => {
             return deliver_exception(
@@ -502,7 +502,7 @@ fn deliver_real_mode<B: CpuBus>(
             )
         }
     };
-    let segment = match bus.read_u16(ivt_addr + 2) {
+    let segment = match read_u16_wrapped(state, bus, ivt_addr.wrapping_add(2)) {
         Ok(v) => v,
         Err(_) => {
             return deliver_exception(
@@ -1048,10 +1048,12 @@ fn read_idt_gate32<B: CpuBus>(
     }
 
     let addr = state.tables.idtr.base + offset;
-    let offset_low = bus.read_u16(addr).map_err(|_| ())? as u32;
-    let selector = bus.read_u16(addr + 2).map_err(|_| ())?;
-    let type_attr = bus.read_u8(addr + 5).map_err(|_| ())?;
-    let offset_high = bus.read_u16(addr + 6).map_err(|_| ())? as u32;
+    let offset_low = read_u16_wrapped(state, bus, addr).map_err(|_| ())? as u32;
+    let selector = read_u16_wrapped(state, bus, addr.wrapping_add(2)).map_err(|_| ())?;
+    let type_attr = bus
+        .read_u8(state.apply_a20(addr.wrapping_add(5)))
+        .map_err(|_| ())?;
+    let offset_high = read_u16_wrapped(state, bus, addr.wrapping_add(6)).map_err(|_| ())? as u32;
     let offset = offset_low | (offset_high << 16);
 
     let present = (type_attr & 0x80) != 0;
@@ -1084,12 +1086,17 @@ fn read_idt_gate64<B: CpuBus>(
     }
 
     let addr = state.tables.idtr.base + offset;
-    let offset_low = bus.read_u16(addr).map_err(|_| ())? as u64;
-    let selector = bus.read_u16(addr + 2).map_err(|_| ())?;
-    let ist = bus.read_u8(addr + 4).map_err(|_| ())? & 0x7;
-    let type_attr = bus.read_u8(addr + 5).map_err(|_| ())?;
-    let offset_mid = bus.read_u16(addr + 6).map_err(|_| ())? as u64;
-    let offset_high = bus.read_u32(addr + 8).map_err(|_| ())? as u64;
+    let offset_low = read_u16_wrapped(state, bus, addr).map_err(|_| ())? as u64;
+    let selector = read_u16_wrapped(state, bus, addr.wrapping_add(2)).map_err(|_| ())?;
+    let ist = bus
+        .read_u8(state.apply_a20(addr.wrapping_add(4)))
+        .map_err(|_| ())?
+        & 0x7;
+    let type_attr = bus
+        .read_u8(state.apply_a20(addr.wrapping_add(5)))
+        .map_err(|_| ())?;
+    let offset_mid = read_u16_wrapped(state, bus, addr.wrapping_add(6)).map_err(|_| ())? as u64;
+    let offset_high = read_u32_wrapped(state, bus, addr.wrapping_add(8)).map_err(|_| ())? as u64;
     let offset = offset_low | (offset_mid << 16) | (offset_high << 32);
 
     let present = (type_attr & 0x80) != 0;
@@ -1286,8 +1293,8 @@ fn tss32_stack_for_cpl<B: CpuBus>(
     }
     let esp_addr = base.checked_add(esp_off).ok_or(())?;
     let ss_addr = base.checked_add(ss_off).ok_or(())?;
-    let esp = bus.read_u32(esp_addr).map_err(|_| ())?;
-    let ss = bus.read_u16(ss_addr).map_err(|_| ())?;
+    let esp = read_u32_wrapped(state, bus, esp_addr).map_err(|_| ())?;
+    let ss = read_u16_wrapped(state, bus, ss_addr).map_err(|_| ())?;
     if (ss >> 3) == 0 {
         return Err(());
     }
@@ -1313,7 +1320,7 @@ fn tss64_rsp_for_cpl<B: CpuBus>(bus: &mut B, state: &state::CpuState, cpl: u8) -
         return Err(());
     }
     let addr = base.checked_add(off).ok_or(())?;
-    bus.read_u64(addr).map_err(|_| ())
+    read_u64_wrapped(state, bus, addr).map_err(|_| ())
 }
 
 fn tss64_ist_stack<B: CpuBus>(bus: &mut B, state: &state::CpuState, ist: u8) -> Result<u64, ()> {
@@ -1335,5 +1342,5 @@ fn tss64_ist_stack<B: CpuBus>(bus: &mut B, state: &state::CpuState, ist: u8) -> 
         return Err(());
     }
     let addr = base.checked_add(off).ok_or(())?;
-    bus.read_u64(addr).map_err(|_| ())
+    read_u64_wrapped(state, bus, addr).map_err(|_| ())
 }

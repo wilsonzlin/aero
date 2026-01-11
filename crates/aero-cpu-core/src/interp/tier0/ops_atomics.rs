@@ -1,6 +1,10 @@
 use super::ops_data::{calc_ea, op_bits, read_mem, read_op_sized, write_mem};
 use super::ExecOutcome;
 use crate::exception::Exception;
+use crate::linear_mem::{
+    contiguous_masked_start, read_u128_wrapped, read_u64_wrapped, write_u128_wrapped,
+    write_u64_wrapped,
+};
 use crate::mem::CpuBus;
 use crate::state::{mask_bits, CpuState, FLAG_ZF};
 use aero_x86::{DecodedInst, Instruction, Mnemonic, OpKind, Register};
@@ -26,30 +30,6 @@ pub fn exec<B: CpuBus>(
         _ => return Err(Exception::InvalidOpcode),
     }
     Ok(ExecOutcome::Continue)
-}
-
-pub(crate) fn atomic_rmw_sized<B: CpuBus, R>(
-    bus: &mut B,
-    addr: u64,
-    bits: u32,
-    f: impl FnOnce(u64) -> (u64, R),
-) -> Result<R, Exception> {
-    match bits {
-        8 => bus.atomic_rmw::<u8, _>(addr, |old| {
-            let (new, ret) = f(old as u64);
-            (new as u8, ret)
-        }),
-        16 => bus.atomic_rmw::<u16, _>(addr, |old| {
-            let (new, ret) = f(old as u64);
-            (new as u16, ret)
-        }),
-        32 => bus.atomic_rmw::<u32, _>(addr, |old| {
-            let (new, ret) = f(old as u64);
-            (new as u32, ret)
-        }),
-        64 => bus.atomic_rmw::<u64, _>(addr, f),
-        _ => Err(Exception::InvalidOpcode),
-    }
 }
 
 fn exec_cmpxchg<B: CpuBus>(
@@ -85,7 +65,7 @@ fn exec_cmpxchg<B: CpuBus>(
             let addr = calc_ea(state, instr, next_ip, true)?;
             let locked = instr.has_lock_prefix();
             let (old, swapped) = if locked {
-                atomic_rmw_sized(bus, addr, bits, |old| {
+                super::atomic_rmw_sized(state, bus, addr, bits, |old| {
                     if old == expected {
                         (src, (old, true))
                     } else {
@@ -131,17 +111,27 @@ fn exec_cmpxchg8b<B: CpuBus>(
         ((state.read_reg(Register::ECX) as u64) << 32) | (state.read_reg(Register::EBX) as u64);
 
     let (old, swapped) = if instr.has_lock_prefix() {
-        bus.atomic_rmw::<u64, _>(addr, |old| {
+        if let Some(start) = contiguous_masked_start(state, addr, 8) {
+            bus.atomic_rmw::<u64, _>(start, |old| {
+                if old == expected {
+                    (replacement, (old, true))
+                } else {
+                    (old, (old, false))
+                }
+            })?
+        } else {
+            let old = read_u64_wrapped(state, bus, addr)?;
             if old == expected {
-                (replacement, (old, true))
+                write_u64_wrapped(state, bus, addr, replacement)?;
+                (old, true)
             } else {
-                (old, (old, false))
+                (old, false)
             }
-        })?
+        }
     } else {
-        let old = bus.read_u64(addr)?;
+        let old = read_u64_wrapped(state, bus, addr)?;
         if old == expected {
-            bus.write_u64(addr, replacement)?;
+            write_u64_wrapped(state, bus, addr, replacement)?;
             (old, true)
         } else {
             (old, false)
@@ -176,17 +166,27 @@ fn exec_cmpxchg16b<B: CpuBus>(
         ((state.read_reg(Register::RCX) as u128) << 64) | (state.read_reg(Register::RBX) as u128);
 
     let (old, swapped) = if instr.has_lock_prefix() {
-        bus.atomic_rmw::<u128, _>(addr, |old| {
+        if let Some(start) = contiguous_masked_start(state, addr, 16) {
+            bus.atomic_rmw::<u128, _>(start, |old| {
+                if old == expected {
+                    (replacement, (old, true))
+                } else {
+                    (old, (old, false))
+                }
+            })?
+        } else {
+            let old = read_u128_wrapped(state, bus, addr)?;
             if old == expected {
-                (replacement, (old, true))
+                write_u128_wrapped(state, bus, addr, replacement)?;
+                (old, true)
             } else {
-                (old, (old, false))
+                (old, false)
             }
-        })?
+        }
     } else {
-        let old = bus.read_u128(addr)?;
+        let old = read_u128_wrapped(state, bus, addr)?;
         if old == expected {
-            bus.write_u128(addr, replacement)?;
+            write_u128_wrapped(state, bus, addr, replacement)?;
             (old, true)
         } else {
             (old, false)

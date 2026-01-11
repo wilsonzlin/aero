@@ -93,7 +93,7 @@ pub fn exec<B: CpuBus>(
                 let reg_val = state.read_reg(reg) & mask_bits(bits);
                 let addr = calc_ea(state, instr, next_ip, true)?;
 
-                let old = super::atomic_rmw_sized(bus, addr, bits, |old| (reg_val, old))?;
+                let old = super::atomic_rmw_sized(state, bus, addr, bits, |old| (reg_val, old))?;
                 state.write_reg(reg, old);
 
                 // `mem_op` is unused because iced-x86 stores the memory operand separately
@@ -158,7 +158,7 @@ pub fn exec<B: CpuBus>(
             let src = read_op_sized(state, bus, instr, 1, bits, next_ip)?;
             let (dst, flags) = if instr.has_lock_prefix() {
                 let addr = calc_ea(state, instr, next_ip, true)?;
-                let dst = super::atomic_rmw_sized(bus, addr, bits, |old| {
+                let dst = super::atomic_rmw_sized(state, bus, addr, bits, |old| {
                     let new = old.wrapping_add(src) & mask_bits(bits);
                     (new, old)
                 })?;

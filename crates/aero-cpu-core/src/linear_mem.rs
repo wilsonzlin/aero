@@ -17,7 +17,7 @@ use crate::mem::CpuBus;
 use crate::state::{CpuMode, CpuState};
 
 #[inline]
-fn contiguous_masked_start(state: &CpuState, addr: u64, len: usize) -> Option<u64> {
+pub(crate) fn contiguous_masked_start(state: &CpuState, addr: u64, len: usize) -> Option<u64> {
     if len <= 1 {
         return Some(state.apply_a20(addr));
     }

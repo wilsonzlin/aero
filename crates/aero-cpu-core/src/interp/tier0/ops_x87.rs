@@ -1,6 +1,10 @@
 use crate::exception::Exception;
 use crate::fpu::FpKind;
 use crate::interp::x87::{Fault as X87Fault, X87};
+use crate::linear_mem::{
+    read_u16_wrapped, read_u32_wrapped, read_u64_wrapped, write_u16_wrapped, write_u32_wrapped,
+    write_u64_wrapped,
+};
 use crate::mem::CpuBus;
 use crate::state::{CpuState, CR0_NE, FLAG_AF, FLAG_CF, FLAG_OF, FLAG_PF, FLAG_SF, FLAG_ZF};
 use aero_x86::{DecodedInst, Instruction, MemorySize, Mnemonic, OpKind, Register};
@@ -173,14 +177,14 @@ pub fn exec<B: CpuBus>(
         }
         Mnemonic::Fldcw => {
             let addr = memory_addr(state, instr, next_ip)?;
-            let cw = bus.read_u16(addr)?;
+            let cw = read_u16_wrapped(state, bus, addr)?;
             x87.fldcw(cw);
             Ok(ExecOutcome::Continue)
         }
         Mnemonic::Fnstcw | Mnemonic::Fstcw => {
             let addr = memory_addr(state, instr, next_ip)?;
             let cw = x87.fnstcw();
-            bus.write_u16(addr, cw)?;
+            write_u16_wrapped(state, bus, addr, cw)?;
             Ok(ExecOutcome::Continue)
         }
         Mnemonic::Fnstsw | Mnemonic::Fstsw => {
@@ -227,12 +231,12 @@ fn memory_addr(state: &CpuState, instr: &Instruction, next_ip: u64) -> Result<u6
     calc_ea(state, instr, next_ip, true)
 }
 
-fn read_mem_f32<B: CpuBus>(bus: &mut B, addr: u64) -> Result<f32, Exception> {
-    Ok(f32::from_bits(bus.read_u32(addr)?))
+fn read_mem_f32<B: CpuBus>(state: &CpuState, bus: &mut B, addr: u64) -> Result<f32, Exception> {
+    Ok(f32::from_bits(read_u32_wrapped(state, bus, addr)?))
 }
 
-fn read_mem_f64<B: CpuBus>(bus: &mut B, addr: u64) -> Result<f64, Exception> {
-    Ok(f64::from_bits(bus.read_u64(addr)?))
+fn read_mem_f64<B: CpuBus>(state: &CpuState, bus: &mut B, addr: u64) -> Result<f64, Exception> {
+    Ok(f64::from_bits(read_u64_wrapped(state, bus, addr)?))
 }
 
 fn exec_fld<B: CpuBus>(
@@ -247,11 +251,11 @@ fn exec_fld<B: CpuBus>(
             let addr = memory_addr(state, instr, next_ip)?;
             match instr.memory_size() {
                 MemorySize::Float32 => {
-                    let v = read_mem_f32(bus, addr)?;
+                    let v = read_mem_f32(state, bus, addr)?;
                     x87.fld_f32(v).map_err(map_x87_fault)?;
                 }
                 MemorySize::Float64 => {
-                    let v = read_mem_f64(bus, addr)?;
+                    let v = read_mem_f64(state, bus, addr)?;
                     x87.fld_f64(v).map_err(map_x87_fault)?;
                 }
                 _ => return Err(Exception::InvalidOpcode),
@@ -285,7 +289,7 @@ fn exec_fst<B: CpuBus>(
                     } else {
                         x87.fst_f32().map_err(map_x87_fault)?
                     };
-                    bus.write_u32(addr, v.to_bits())?;
+                    write_u32_wrapped(state, bus, addr, v.to_bits())?;
                 }
                 MemorySize::Float64 => {
                     let v = if pop {
@@ -293,7 +297,7 @@ fn exec_fst<B: CpuBus>(
                     } else {
                         x87.fst_f64().map_err(map_x87_fault)?
                     };
-                    bus.write_u64(addr, v.to_bits())?;
+                    write_u64_wrapped(state, bus, addr, v.to_bits())?;
                 }
                 _ => return Err(Exception::InvalidOpcode),
             }
@@ -322,15 +326,15 @@ fn exec_fild<B: CpuBus>(
     let addr = memory_addr(state, instr, next_ip)?;
     match instr.memory_size() {
         MemorySize::Int16 => {
-            let v = bus.read_u16(addr)? as i16;
+            let v = read_u16_wrapped(state, bus, addr)? as i16;
             x87.fild_i16(v).map_err(map_x87_fault)?;
         }
         MemorySize::Int32 => {
-            let v = bus.read_u32(addr)? as i32;
+            let v = read_u32_wrapped(state, bus, addr)? as i32;
             x87.fild_i32(v).map_err(map_x87_fault)?;
         }
         MemorySize::Int64 => {
-            let v = bus.read_u64(addr)? as i64;
+            let v = read_u64_wrapped(state, bus, addr)? as i64;
             x87.fild_i64(v).map_err(map_x87_fault)?;
         }
         _ => return Err(Exception::InvalidOpcode),
@@ -349,15 +353,15 @@ fn exec_fistp<B: CpuBus>(
     match instr.memory_size() {
         MemorySize::Int16 => {
             let v = x87.fistp_i16().map_err(map_x87_fault)?;
-            bus.write_u16(addr, v as u16)?;
+            write_u16_wrapped(state, bus, addr, v as u16)?;
         }
         MemorySize::Int32 => {
             let v = x87.fistp_i32().map_err(map_x87_fault)?;
-            bus.write_u32(addr, v as u32)?;
+            write_u32_wrapped(state, bus, addr, v as u32)?;
         }
         MemorySize::Int64 => {
             let v = x87.fistp_i64().map_err(map_x87_fault)?;
-            bus.write_u64(addr, v as u64)?;
+            write_u64_wrapped(state, bus, addr, v as u64)?;
         }
         _ => return Err(Exception::InvalidOpcode),
     }
@@ -388,7 +392,7 @@ fn exec_binop_mem<B: CpuBus>(
     let addr = memory_addr(state, instr, next_ip)?;
     match instr.memory_size() {
         MemorySize::Float32 => {
-            let v = read_mem_f32(bus, addr)?;
+            let v = read_mem_f32(state, bus, addr)?;
             match instr.mnemonic() {
                 Mnemonic::Fadd => x87.fadd_m32(v),
                 Mnemonic::Fsub => x87.fsub_m32(v),
@@ -401,7 +405,7 @@ fn exec_binop_mem<B: CpuBus>(
             .map_err(map_x87_fault)?;
         }
         MemorySize::Float64 => {
-            let v = read_mem_f64(bus, addr)?;
+            let v = read_mem_f64(state, bus, addr)?;
             match instr.mnemonic() {
                 Mnemonic::Fadd => x87.fadd_m64(v),
                 Mnemonic::Fsub => x87.fsub_m64(v),
@@ -529,7 +533,7 @@ fn exec_compare<B: CpuBus>(
             let addr = memory_addr(state, instr, next_ip)?;
             match instr.memory_size() {
                 MemorySize::Float32 => {
-                    let v = read_mem_f32(bus, addr)?;
+                    let v = read_mem_f32(state, bus, addr)?;
                     if instr.mnemonic() == Mnemonic::Fcom {
                         x87.fcom_m32(v).map_err(map_x87_fault)?;
                     } else {
@@ -537,7 +541,7 @@ fn exec_compare<B: CpuBus>(
                     }
                 }
                 MemorySize::Float64 => {
-                    let v = read_mem_f64(bus, addr)?;
+                    let v = read_mem_f64(state, bus, addr)?;
                     if instr.mnemonic() == Mnemonic::Fcom {
                         x87.fcom_m64(v).map_err(map_x87_fault)?;
                     } else {
@@ -618,7 +622,7 @@ fn exec_fnstsw<B: CpuBus>(
         }
         OpKind::Memory => {
             let addr = memory_addr(state, instr, next_ip)?;
-            bus.write_u16(addr, sw)?;
+            write_u16_wrapped(state, bus, addr, sw)?;
             Ok(())
         }
         _ => Err(Exception::InvalidOpcode),

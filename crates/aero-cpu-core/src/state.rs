@@ -15,7 +15,12 @@ use aero_x86::Register;
 use core::fmt;
 
 use crate::{
-    exception::Exception, fpu::FpuState, mem::CpuBus, sse_state::SseState, FxStateError,
+    exception::Exception,
+    fpu::FpuState,
+    linear_mem::{read_bytes_wrapped, read_u32_wrapped, write_bytes_wrapped, write_u32_wrapped},
+    mem::CpuBus,
+    sse_state::SseState,
+    FxStateError,
     FXSAVE_AREA_SIZE,
 };
 
@@ -1165,7 +1170,7 @@ impl CpuState {
         if addr & 0b11 != 0 {
             return Err(Exception::gp0());
         }
-        bus.write_u32(addr, self.sse.mxcsr)
+        write_u32_wrapped(self, bus, addr, self.sse.mxcsr)
     }
 
     /// `LDMXCSR` convenience wrapper that loads MXCSR via [`crate::mem::CpuBus`].
@@ -1173,7 +1178,7 @@ impl CpuState {
         if addr & 0b11 != 0 {
             return Err(Exception::gp0());
         }
-        let mut value = bus.read_u32(addr)?;
+        let mut value = read_u32_wrapped(self, bus, addr)?;
         if (self.control.cr4 & CR4_OSXMMEXCPT) == 0 {
             // Match the legacy system instruction surface: if the guest OS hasn't
             // enabled SIMD FP exception delivery, keep all exception masks set so
@@ -1222,7 +1227,7 @@ impl CpuState {
         }
         let mut image = [0u8; FXSAVE_AREA_SIZE];
         self.fxsave32(&mut image);
-        bus.write_bytes(addr, &image)?;
+        write_bytes_wrapped(self, bus, addr, &image)?;
         Ok(())
     }
 
@@ -1234,7 +1239,7 @@ impl CpuState {
         }
         let mut image = [0u8; FXSAVE_AREA_SIZE];
         self.fxsave64(&mut image);
-        bus.write_bytes(addr, &image)?;
+        write_bytes_wrapped(self, bus, addr, &image)?;
         Ok(())
     }
 
@@ -1245,7 +1250,7 @@ impl CpuState {
             return Err(Exception::gp0());
         }
         let mut image = [0u8; FXSAVE_AREA_SIZE];
-        bus.read_bytes(addr, &mut image)?;
+        read_bytes_wrapped(self, bus, addr, &mut image)?;
 
         if (self.control.cr4 & CR4_OSXMMEXCPT) == 0 {
             let mxcsr =
@@ -1269,7 +1274,7 @@ impl CpuState {
             return Err(Exception::gp0());
         }
         let mut image = [0u8; FXSAVE_AREA_SIZE];
-        bus.read_bytes(addr, &mut image)?;
+        read_bytes_wrapped(self, bus, addr, &mut image)?;
 
         if (self.control.cr4 & CR4_OSXMMEXCPT) == 0 {
             let mxcsr =

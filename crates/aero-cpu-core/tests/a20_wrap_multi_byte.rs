@@ -280,3 +280,44 @@ fn tier0_fetch_wraps_across_32bit_linear_boundary() {
     run_to_halt(&mut state, &mut bus, 16);
     assert_eq!(state.read_reg(Register::AL), 0xA5);
 }
+
+#[test]
+fn cmpxchg8b_wraps_across_32bit_linear_boundary() {
+    // cmpxchg8b qword ptr [0xFFFF_FFFC]; hlt
+    let code = [
+        0x0F, 0xC7, 0x0D, 0xFC, 0xFF, 0xFF, 0xFF, // 0F C7 /1 with disp32=-4
+        0xF4, // hlt
+    ];
+    let code_addr = 0x1000u64;
+
+    let mut bus = SparseBus::default();
+    bus.reserve_range(code_addr, 32);
+    bus.load(code_addr, &code);
+
+    // Backing bytes for the wrapped 8-byte memory operand:
+    // 0xFFFF_FFFC..=0xFFFF_FFFF then 0x0..=0x3.
+    bus.reserve_range(0, 16);
+    bus.reserve_range(0xFFFF_FFFC, 4);
+
+    let expected: u64 = 0x1122_3344_5566_7788;
+    for (i, b) in expected.to_le_bytes().into_iter().enumerate() {
+        let addr = 0xFFFF_FFFC_u64.wrapping_add(i as u64) & 0xFFFF_FFFF;
+        bus.write_u8(addr, b).unwrap();
+    }
+
+    let replacement: u64 = 0xAABB_CCDD_EEFF_0011;
+
+    let mut state = CpuState::new(CpuMode::Bit32);
+    state.set_rip(code_addr);
+    state.write_reg(Register::EAX, expected as u32 as u64);
+    state.write_reg(Register::EDX, (expected >> 32) as u32 as u64);
+    state.write_reg(Register::EBX, replacement as u32 as u64);
+    state.write_reg(Register::ECX, (replacement >> 32) as u32 as u64);
+
+    run_to_halt(&mut state, &mut bus, 16);
+
+    for (i, b) in replacement.to_le_bytes().into_iter().enumerate() {
+        let addr = 0xFFFF_FFFC_u64.wrapping_add(i as u64) & 0xFFFF_FFFF;
+        assert_eq!(bus.byte(addr), b);
+    }
+}
