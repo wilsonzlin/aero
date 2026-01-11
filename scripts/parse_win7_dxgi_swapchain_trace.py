@@ -184,6 +184,18 @@ def _expected_alloc_size(d: CreateResourceDesc) -> Optional[int]:
     return None
 
 
+def _expected_pitch_bytes(d: CreateResourceDesc) -> Optional[int]:
+    if d.created_kind != "tex2d":
+        return None
+    if d.created_row_pitch:
+        return d.created_row_pitch
+    width = d.width or d.created_width
+    bpp = _bytes_per_pixel_dxgi(d.fmt)
+    if bpp and width:
+        return _align_up(width * bpp, 256)
+    return None
+
+
 def _parse_int(line: str, key: str) -> Optional[int]:
     # Use a word boundary so short keys like `h=` do not accidentally match substrings
     # inside other keys like `byteWidth=...`.
@@ -565,7 +577,11 @@ def main(argv: List[str]) -> int:
             expected = _expected_alloc_size(d)
             if expected is None:
                 continue
-            matched = [_createalloc_entry_dict(e, wdk_masks) for e in createalloc.entries if e.size_bytes == expected]
+            expected_pitch = _expected_pitch_bytes(d)
+            candidates = [e for e in createalloc.entries if e.size_bytes == expected]
+            if expected_pitch is not None:
+                candidates = [e for e in candidates if e.pitch_bytes in (0, expected_pitch)]
+            matched = [_createalloc_entry_dict(e, wdk_masks) for e in candidates]
             if matched:
                 matches[str(h)] = matched
         output["swapchain_createalloc_matches"] = matches
@@ -623,9 +639,15 @@ def main(argv: List[str]) -> int:
         if createalloc is not None:
             expected = _expected_alloc_size(d)
             if expected is not None:
+                expected_pitch = _expected_pitch_bytes(d)
                 matched = [e for e in createalloc.entries if e.size_bytes == expected]
+                if expected_pitch is not None:
+                    matched = [e for e in matched if e.pitch_bytes in (0, expected_pitch)]
                 if matched:
-                    print(f"  createalloc candidates (size_bytes={expected}):")
+                    if expected_pitch is not None:
+                        print(f"  createalloc candidates (size_bytes={expected}, pitch={expected_pitch}):")
+                    else:
+                        print(f"  createalloc candidates (size_bytes={expected}):")
                     for e in matched:
                         line = (
                             f"    call={e.call_seq} alloc_id={e.alloc_id} size={e.size_bytes} pitch={e.pitch_bytes} "
