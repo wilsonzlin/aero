@@ -18,6 +18,7 @@ export type ConnectRelaySignalingOptions = {
 const DEFAULT_ICE_GATHER_TIMEOUT_MS = 10_000;
 const DEFAULT_DATA_CHANNEL_OPEN_TIMEOUT_MS = 30_000;
 const DEFAULT_WEBSOCKET_CONNECT_TIMEOUT_MS = 10_000;
+const DEFAULT_HTTP_TIMEOUT_MS = 20_000;
 
 export async function connectRelaySignaling(
   opts: ConnectRelaySignalingOptions,
@@ -54,6 +55,18 @@ export async function connectRelaySignaling(
   }
 }
 
+const isAbortError = (err: unknown): boolean => err instanceof Error && err.name === "AbortError";
+
+async function fetchWithTimeout(input: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function fetchIceServers(baseUrl: string, authToken?: string): Promise<RTCIceServer[]> {
   const url = new URL(baseUrl);
   url.pathname = `${url.pathname.replace(/\/$/, "")}/webrtc/ice`;
@@ -61,7 +74,15 @@ async function fetchIceServers(baseUrl: string, authToken?: string): Promise<RTC
   const headers = new Headers();
   addAuthHeader(headers, authToken);
 
-  const res = await fetch(url.toString(), { method: "GET", mode: "cors", headers });
+  let res: Response;
+  try {
+    res = await fetchWithTimeout(url.toString(), { method: "GET", mode: "cors", headers }, DEFAULT_HTTP_TIMEOUT_MS);
+  } catch (err) {
+    if (isAbortError(err)) {
+      throw new Error("failed to fetch ICE servers (timeout)");
+    }
+    throw err;
+  }
   if (!res.ok) {
     throw new Error(`failed to fetch ICE servers (${res.status})`);
   }
@@ -202,12 +223,24 @@ async function negotiateHttpOffer(pc: RTCPeerConnection, baseUrl: string, authTo
   const headers = new Headers({ "Content-Type": "application/json" });
   addAuthHeader(headers, authToken);
 
-  const res = await fetch(url.toString(), {
-    method: "POST",
-    mode: "cors",
-    headers,
-    body: JSON.stringify({ sdp: { type: "offer", sdp: local.sdp } satisfies SessionDescription }),
-  });
+  let res: Response;
+  try {
+    res = await fetchWithTimeout(
+      url.toString(),
+      {
+        method: "POST",
+        mode: "cors",
+        headers,
+        body: JSON.stringify({ sdp: { type: "offer", sdp: local.sdp } satisfies SessionDescription }),
+      },
+      DEFAULT_HTTP_TIMEOUT_MS,
+    );
+  } catch (err) {
+    if (isAbortError(err)) {
+      throw new Error("webrtc offer failed (timeout)");
+    }
+    throw err;
+  }
   const text = await res.text();
   if (!res.ok) {
     throw new Error(`webrtc offer failed (${res.status}): ${text}`);
@@ -238,15 +271,27 @@ async function negotiateLegacyOffer(pc: RTCPeerConnection, baseUrl: string, auth
   const headers = new Headers({ "Content-Type": "application/json" });
   addAuthHeader(headers, authToken);
 
-  const res = await fetch(url.toString(), {
-    method: "POST",
-    mode: "cors",
-    headers,
-    body: JSON.stringify({
-      version: UDP_RELAY_SIGNALING_VERSION,
-      offer: { type: "offer", sdp: local.sdp } satisfies SessionDescription,
-    }),
-  });
+  let res: Response;
+  try {
+    res = await fetchWithTimeout(
+      url.toString(),
+      {
+        method: "POST",
+        mode: "cors",
+        headers,
+        body: JSON.stringify({
+          version: UDP_RELAY_SIGNALING_VERSION,
+          offer: { type: "offer", sdp: local.sdp } satisfies SessionDescription,
+        }),
+      },
+      DEFAULT_HTTP_TIMEOUT_MS,
+    );
+  } catch (err) {
+    if (isAbortError(err)) {
+      throw new Error("legacy offer failed (timeout)");
+    }
+    throw err;
+  }
   const text = await res.text();
   if (!res.ok) {
     throw new Error(`legacy offer failed (${res.status}): ${text}`);
