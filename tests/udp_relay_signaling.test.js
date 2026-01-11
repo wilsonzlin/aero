@@ -76,6 +76,13 @@ test("udp relay signaling typed: parses auth message (token/apiKey)", () => {
   assert.deepEqual(parseSignalMessageJSON(JSON.stringify({ type: "auth", apiKey: "k" })), { type: "auth", token: "k" });
 });
 
+test("udp relay signaling typed: rejects auth message with mismatched token/apiKey", () => {
+  assert.throws(
+    () => parseSignalMessageJSON(JSON.stringify({ type: "auth", token: "t", apiKey: "k" })),
+    (err) => err instanceof UdpRelaySignalingDecodeError && err.code === "mismatched_token",
+  );
+});
+
 test("udp relay signaling typed: rejects unknown message types", () => {
   assert.throws(
     () => parseSignalMessageJSON(JSON.stringify({ type: "wat" })),

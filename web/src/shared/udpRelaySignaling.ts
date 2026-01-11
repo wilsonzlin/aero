@@ -59,7 +59,8 @@ export class UdpRelaySignalingDecodeError extends Error {
     | 'missing_candidate'
     | 'missing_error_code'
     | 'missing_error_message'
-    | 'missing_token';
+    | 'missing_token'
+    | 'mismatched_token';
 
   constructor(code: UdpRelaySignalingDecodeError['code'], message: string) {
     super(message);
@@ -198,6 +199,15 @@ export const parseSignalMessage = (v: unknown): SignalMessage => {
       assertNoExtraKeys(v, ['type', 'token', 'apiKey']);
       const token = v.token;
       const apiKey = v.apiKey;
+      if (
+        typeof token === 'string' &&
+        token.length > 0 &&
+        typeof apiKey === 'string' &&
+        apiKey.length > 0 &&
+        token !== apiKey
+      ) {
+        throw new UdpRelaySignalingDecodeError('mismatched_token', 'token and apiKey must match when both are provided');
+      }
       const cred =
         typeof token === 'string' && token.length > 0
           ? token
