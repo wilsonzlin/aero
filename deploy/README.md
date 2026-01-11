@@ -394,15 +394,21 @@ docker compose -f deploy/docker-compose.yml up --build
 
 ### Validate the upgrade (WSS)
 
+> Note: `aero-l2-proxy` enforces an Origin allowlist by default. CLI clients must
+> send an `Origin` header that matches the allowlist (in this deploy stack:
+> `https://localhost` unless you changed `AERO_DOMAIN`).
+
 Using `wscat`:
 
 ```bash
-NODE_TLS_REJECT_UNAUTHORIZED=0 npx wscat -c "wss://localhost/l2" -s aero-l2-tunnel-v1
+NODE_TLS_REJECT_UNAUTHORIZED=0 npx wscat -c "wss://localhost/l2" -s aero-l2-tunnel-v1 -o https://localhost
 ```
 
 Using `websocat`:
 
 ```bash
+# `websocat` does not always send an Origin header by default. If you get a 403,
+# add an Origin header (see `websocat --help` for the flag in your version).
 websocat --insecure --protocol aero-l2-tunnel-v1 wss://localhost/l2
 ```
 
