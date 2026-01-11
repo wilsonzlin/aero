@@ -1,8 +1,8 @@
-use std::cell::RefCell;
-use std::rc::Rc;
-
+use aero_devices::i8042::{I8042Ports, PlatformSystemControlSink};
 use aero_devices::reset_ctrl::{ResetCtrl, ResetKind, RESET_CTRL_PORT, RESET_CTRL_RESET_VALUE};
+use aero_platform::ChipsetState;
 use aero_platform::io::IoPortBus;
+use aero_platform::reset::ResetLatch;
 
 const RESET_CS: u16 = 0xF000;
 const RESET_IP: u16 = 0xFFF0;
@@ -104,7 +104,8 @@ struct TestVm {
     mem: Vec<u8>,
     mem_initial: Vec<u8>,
     io: IoPortBus,
-    reset_request: Rc<RefCell<Option<ResetKind>>>,
+    reset_latch: ResetLatch,
+    chipset: ChipsetState,
 }
 
 impl TestVm {
@@ -113,28 +114,38 @@ impl TestVm {
         mem_initial[RESET_VECTOR_PHYS as usize..RESET_VECTOR_PHYS as usize + boot_rom.len()]
             .copy_from_slice(boot_rom);
 
-        let reset_request = Rc::new(RefCell::new(None));
-        let reset_request_handle = reset_request.clone();
+        let reset_latch = ResetLatch::new();
+        let reset_sink = reset_latch.clone();
+
+        let chipset = ChipsetState::new(false);
 
         let mut io = IoPortBus::new();
         io.register(
             RESET_CTRL_PORT,
-            Box::new(ResetCtrl::new(move |kind| {
-                *reset_request_handle.borrow_mut() = Some(kind);
-            })),
+            Box::new(ResetCtrl::new(reset_sink)),
         );
+
+        let i8042 = I8042Ports::new();
+        let controller = i8042.controller();
+        controller.borrow_mut().set_system_control_sink(Box::new(
+            PlatformSystemControlSink::with_reset_sink(chipset.a20(), reset_latch.clone()),
+        ));
+        io.register(0x60, Box::new(i8042.port60()));
+        io.register(0x64, Box::new(i8042.port64()));
 
         Self {
             cpu: TestCpu::new(),
             mem: mem_initial.clone(),
             mem_initial,
             io,
-            reset_request,
+            reset_latch,
+            chipset,
         }
     }
 
     fn reset_system(&mut self) {
         self.cpu.reset();
+        self.chipset.a20().set_enabled(false);
         self.io.reset();
         self.mem.clone_from_slice(&self.mem_initial);
     }
@@ -146,7 +157,7 @@ impl TestVm {
 
         self.cpu.step(&self.mem, &mut self.io);
 
-        let pending_reset = self.reset_request.borrow_mut().take();
+        let pending_reset = self.reset_latch.take();
         if let Some(kind) = pending_reset {
             match kind {
                 ResetKind::Cpu => self.cpu.reset(),
@@ -179,6 +190,13 @@ fn guest_out_cf9_restarts_at_reset_vector() {
 
     let mut vm = TestVm::new(&payload);
 
+    // Dirty some device state so we can verify the platform reset clears it.
+    // Change the i8042 command byte away from its power-on value (0x45).
+    vm.io.write_u8(0x64, 0x60);
+    vm.io.write_u8(0x60, 0x00);
+    vm.io.write_u8(0x64, 0x20);
+    assert_eq!(vm.io.read_u8(0x60), 0x00);
+
     assert_eq!(vm.cpu.physical_ip(), RESET_VECTOR_PHYS);
 
     // Step until we observe the reset being requested.
@@ -188,6 +206,11 @@ fn guest_out_cf9_restarts_at_reset_vector() {
             StepResult::Reset(kind) => {
                 assert_eq!(kind, ResetKind::System);
                 assert_eq!(vm.cpu.physical_ip(), RESET_VECTOR_PHYS);
+
+                // Platform reset should have restored device power-on state.
+                vm.io.write_u8(0x64, 0x20);
+                assert_eq!(vm.io.read_u8(0x60), 0x45);
+                assert_eq!(vm.io.read_u8(RESET_CTRL_PORT), 0x00);
                 saw_reset = true;
                 break;
             }
@@ -203,4 +226,47 @@ fn guest_out_cf9_restarts_at_reset_vector() {
     assert_eq!(vm.cpu.al, 0);
     vm.step();
     assert_eq!(vm.cpu.al, RESET_CTRL_RESET_VALUE);
+}
+
+#[test]
+fn guest_i8042_reset_pulse_restarts_at_reset_vector_and_resets_devices() {
+    // Real-mode sequence:
+    //   mov al, 0xFE
+    //   mov dx, 0x0064
+    //   out dx, al
+    //   jmp $
+    let payload: [u8; 8] = [0xB0, 0xFE, 0xBA, 0x64, 0x00, 0xEE, 0xEB, 0xFE];
+
+    let mut vm = TestVm::new(&payload);
+
+    // Dirty device state before issuing the reset.
+    vm.io.write_u8(RESET_CTRL_PORT, 0x04);
+    vm.io.write_u8(0x64, 0x60);
+    vm.io.write_u8(0x60, 0x00);
+
+    vm.io.write_u8(0x64, 0x20);
+    assert_eq!(vm.io.read_u8(0x60), 0x00);
+    assert_eq!(vm.io.read_u8(RESET_CTRL_PORT), 0x04);
+
+    let mut saw_reset = false;
+    for _ in 0..16 {
+        match vm.step() {
+            StepResult::Reset(kind) => {
+                assert_eq!(kind, ResetKind::System);
+                assert_eq!(vm.cpu.physical_ip(), RESET_VECTOR_PHYS);
+
+                // Device state should be restored to power-on defaults.
+                vm.io.write_u8(0x64, 0x20);
+                assert_eq!(vm.io.read_u8(0x60), 0x45);
+                assert_eq!(vm.io.read_u8(RESET_CTRL_PORT), 0x00);
+
+                saw_reset = true;
+                break;
+            }
+            StepResult::Halted => panic!("guest halted before triggering i8042 reset"),
+            StepResult::Continue => {}
+        }
+    }
+
+    assert!(saw_reset, "guest did not trigger a reset via i8042");
 }

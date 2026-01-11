@@ -102,6 +102,11 @@ impl PlatformInterrupts {
         }
     }
 
+    /// Reset the interrupt controller complex back to its power-on state.
+    pub fn reset(&mut self) {
+        *self = Self::new();
+    }
+
     pub fn mode(&self) -> PlatformInterruptMode {
         self.mode
     }

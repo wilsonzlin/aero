@@ -9,6 +9,7 @@
 //! requests a reset.
 
 use aero_platform::io::PortIoDevice;
+use aero_platform::reset::PlatformResetSink;
 
 pub const RESET_CTRL_PORT: u16 = 0xCF9;
 pub const RESET_CTRL_RESET_VALUE: u8 = 0x06;
@@ -17,13 +18,7 @@ const BIT_CPU_RESET: u8 = 1 << 0;
 const BIT_SYSTEM_RESET: u8 = 1 << 1;
 const BIT_RESET_ENABLE: u8 = 1 << 2;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ResetKind {
-    /// Reset the CPU core(s) while leaving device state intact (warm reset).
-    Cpu,
-    /// Full system reset (CPU + devices). This is what ACPI uses via FADT.
-    System,
-}
+pub use aero_platform::reset::ResetKind;
 
 /// Emulates the chipset reset control register at port `0xCF9`.
 ///
@@ -36,14 +31,14 @@ pub enum ResetKind {
 /// callback once per write. If both bit 1 and bit 0 are set, `System` wins.
 pub struct ResetCtrl {
     value: u8,
-    on_reset: Box<dyn FnMut(ResetKind)>,
+    reset_sink: Box<dyn PlatformResetSink>,
 }
 
 impl ResetCtrl {
-    pub fn new(on_reset: impl FnMut(ResetKind) + 'static) -> Self {
+    pub fn new(reset_sink: impl PlatformResetSink + 'static) -> Self {
         Self {
             value: 0,
-            on_reset: Box::new(on_reset),
+            reset_sink: Box::new(reset_sink),
         }
     }
 
@@ -53,12 +48,12 @@ impl ResetCtrl {
         }
 
         if (value & BIT_SYSTEM_RESET) != 0 {
-            (self.on_reset)(ResetKind::System);
+            self.reset_sink.request_reset(ResetKind::System);
             return;
         }
 
         if (value & BIT_CPU_RESET) != 0 {
-            (self.on_reset)(ResetKind::Cpu);
+            self.reset_sink.request_reset(ResetKind::Cpu);
         }
     }
 }

@@ -1,7 +1,6 @@
 use aero_devices::a20_gate::A20Gate;
 use aero_platform::Platform;
-use std::cell::Cell;
-use std::rc::Rc;
+use aero_platform::reset::{ResetKind, ResetLatch};
 
 #[test]
 fn a20_disabled_wraps_at_1mib() {
@@ -53,19 +52,16 @@ fn port_92h_toggles_a20_state() {
 fn port_92h_reset_bit_invokes_callback_and_self_clears() {
     let mut platform = Platform::new(2 * 1024 * 1024);
 
-    let reset_count = Rc::new(Cell::new(0u32));
-    let reset_count_handle = reset_count.clone();
+    let reset_latch = ResetLatch::new();
+    let reset_sink = reset_latch.clone();
 
     platform.io.register(
         0x92,
-        Box::new(A20Gate::with_reset_callback(
-            platform.chipset.a20(),
-            Box::new(move || reset_count_handle.set(reset_count_handle.get() + 1)),
-        )),
+        Box::new(A20Gate::with_reset_sink(platform.chipset.a20(), reset_sink)),
     );
 
     platform.io.write_u8(0x92, 0x03);
-    assert_eq!(reset_count.get(), 1);
+    assert_eq!(reset_latch.take(), Some(ResetKind::System));
 
     let value = platform.io.read_u8(0x92);
     assert_eq!(value & 0x01, 0);

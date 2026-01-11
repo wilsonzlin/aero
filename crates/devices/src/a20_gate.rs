@@ -1,9 +1,10 @@
 use aero_platform::chipset::A20GateHandle;
 use aero_platform::io::PortIoDevice;
+use aero_platform::reset::{PlatformResetSink, ResetKind};
 
 pub struct A20Gate {
     a20: A20GateHandle,
-    reset: Option<Box<dyn FnMut()>>,
+    reset: Option<Box<dyn PlatformResetSink>>,
     value: u8,
 }
 
@@ -17,9 +18,9 @@ impl A20Gate {
         }
     }
 
-    pub fn with_reset_callback(a20: A20GateHandle, reset: Box<dyn FnMut()>) -> Self {
+    pub fn with_reset_sink(a20: A20GateHandle, reset: impl PlatformResetSink + 'static) -> Self {
         let mut dev = Self::new(a20);
-        dev.reset = Some(reset);
+        dev.reset = Some(Box::new(reset));
         dev
     }
 
@@ -38,7 +39,7 @@ impl PortIoDevice for A20Gate {
         let value = value as u8;
         if (value & 0x01) != 0 {
             if let Some(reset) = self.reset.as_mut() {
-                reset();
+                reset.request_reset(ResetKind::System);
             }
         }
 
@@ -46,5 +47,10 @@ impl PortIoDevice for A20Gate {
 
         // Preserve other bits, but treat bit0 as a pulse (self-clearing).
         self.value = value & !0x01;
+    }
+
+    fn reset(&mut self) {
+        // Power-on value: A20 gate follows the chipset state; reset bit is cleared.
+        self.value = if self.a20.enabled() { 0x02 } else { 0x00 };
     }
 }

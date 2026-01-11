@@ -12,6 +12,7 @@ use aero_devices_input::{I8042Controller, IrqSink, SystemControlSink};
 use aero_platform::chipset::A20GateHandle;
 use aero_platform::interrupts::{InterruptInput, PlatformInterrupts};
 use aero_platform::io::{IoPortBus, PortIoDevice};
+use aero_platform::reset::{PlatformResetSink, ResetKind};
 
 pub const I8042_DATA_PORT: u16 = 0x60;
 pub const I8042_STATUS_PORT: u16 = 0x64;
@@ -105,6 +106,12 @@ impl PortIoDevice for I8042Port {
             .borrow_mut()
             .write_port(self.port, (value & 0xFF) as u8);
     }
+
+    fn reset(&mut self) {
+        // Reset the shared controller back to its power-on state. This is safe to call multiple
+        // times (once per port mapping) as the operation is idempotent.
+        self.inner.borrow_mut().reset();
+    }
 }
 
 /// Convenience helper to register the i8042 controller ports on an [`IoPortBus`].
@@ -145,7 +152,7 @@ impl IrqSink for PlatformIrqSink {
 /// Bridges i8042 output-port side effects (A20 + reset) into the platform chipset.
 pub struct PlatformSystemControlSink {
     a20: A20GateHandle,
-    reset: Option<Box<dyn FnMut() + 'static>>,
+    reset: Option<Box<dyn PlatformResetSink>>,
 }
 
 impl PlatformSystemControlSink {
@@ -153,10 +160,10 @@ impl PlatformSystemControlSink {
         Self { a20, reset: None }
     }
 
-    pub fn with_reset_callback(a20: A20GateHandle, reset: Box<dyn FnMut() + 'static>) -> Self {
+    pub fn with_reset_sink(a20: A20GateHandle, reset: impl PlatformResetSink + 'static) -> Self {
         Self {
             a20,
-            reset: Some(reset),
+            reset: Some(Box::new(reset)),
         }
     }
 }
@@ -168,7 +175,7 @@ impl SystemControlSink for PlatformSystemControlSink {
 
     fn request_reset(&mut self) {
         if let Some(reset) = self.reset.as_mut() {
-            reset();
+            reset.request_reset(ResetKind::System);
         }
     }
 }

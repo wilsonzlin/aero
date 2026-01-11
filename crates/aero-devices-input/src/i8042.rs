@@ -272,6 +272,30 @@ impl I8042Controller {
         self.sys_ctrl = Some(sink);
     }
 
+    /// Reset the controller back to its power-on state.
+    ///
+    /// This keeps host-side integration points (`irq_sink` and `sys_ctrl`) attached so the
+    /// platform wiring does not need to be rebuilt after a guest-initiated reboot.
+    pub fn reset(&mut self) {
+        let prev_output_port = self.output_port;
+        let irq_sink = self.irq_sink.take();
+        let sys_ctrl = self.sys_ctrl.take();
+
+        *self = Self::new();
+
+        self.irq_sink = irq_sink;
+
+        if let Some(mut sink) = sys_ctrl {
+            // `Self::new()` resets `output_port` to OUTPUT_PORT_RESET (A20 disabled). If the
+            // previous state had A20 enabled, explicitly deassert it so the platform A20 gate
+            // handle stays consistent across resets.
+            if (prev_output_port & OUTPUT_PORT_A20) != 0 {
+                sink.set_a20(false);
+            }
+            self.sys_ctrl = Some(sink);
+        }
+    }
+
     pub fn keyboard_mut(&mut self) -> &mut Ps2Keyboard {
         &mut self.keyboard
     }

@@ -1,23 +1,17 @@
-use std::cell::Cell;
-use std::rc::Rc;
-
 use aero_devices::i8042::{I8042Ports, PlatformSystemControlSink};
 use aero_platform::Platform;
+use aero_platform::reset::ResetLatch;
 
 #[test]
 fn i8042_output_port_toggles_a20_gate_in_platform_memory() {
     let mut platform = Platform::new(2 * 1024 * 1024);
 
-    let reset_count = Rc::new(Cell::new(0u32));
+    let reset_latch = ResetLatch::new();
     let i8042 = I8042Ports::new();
     let controller = i8042.controller();
 
-    let reset_handle = reset_count.clone();
     controller.borrow_mut().set_system_control_sink(Box::new(
-        PlatformSystemControlSink::with_reset_callback(
-            platform.chipset.a20(),
-            Box::new(move || reset_handle.set(reset_handle.get() + 1)),
-        ),
+        PlatformSystemControlSink::with_reset_sink(platform.chipset.a20(), reset_latch.clone()),
     ));
 
     platform.io.register(0x60, Box::new(i8042.port60()));
@@ -36,5 +30,5 @@ fn i8042_output_port_toggles_a20_gate_in_platform_memory() {
     assert_eq!(platform.memory.read_u8(0x0), 0xAA);
     assert_eq!(platform.memory.read_u8(0x1_00000), 0xBB);
 
-    assert_eq!(reset_count.get(), 0);
+    assert!(reset_latch.take().is_none());
 }
