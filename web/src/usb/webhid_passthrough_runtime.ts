@@ -4,7 +4,7 @@ import type { WebHidPassthroughManager, WebHidPassthroughState } from "../platfo
 export type WebHidPassthroughOutputReport = {
   reportType: "output" | "feature";
   reportId: number;
-  data: Uint8Array;
+  data: Uint8Array<ArrayBuffer>;
 };
 
 export type WebHidPassthroughBridgeLike = {
@@ -129,7 +129,7 @@ export class WebHidPassthroughRuntime {
 
     if (options.manager) {
       this.#unsubscribe = options.manager.subscribe((state: WebHidPassthroughState) => {
-        void this.syncAttachedDevices(state.attachedDevices.map((a) => a.device));
+        void this.syncAttachedDevices(state.attachedDevices.map((attachment) => attachment.device));
       });
     }
   }
@@ -166,18 +166,18 @@ export class WebHidPassthroughRuntime {
       return;
     }
 
-      let bridge: WebHidPassthroughBridgeLike | null = null;
-      try {
-        // The community WebHID typings (`@types/w3c-web-hid`) model `HIDDevice.collections`
-        // as a loose dictionary shape with lots of optional fields. Chromium's runtime
-        // objects are stricter (and match the shape expected by our normalizer), so
-        // cast through `unknown` here to avoid infecting downstream code with `| undefined`.
-        const normalizedCollections = normalizeCollections(device.collections as unknown as readonly HidCollectionInfo[]);
-        bridge = this.#createBridge({ device, normalizedCollections });
+    let bridge: WebHidPassthroughBridgeLike | null = null;
+    try {
+      // The community WebHID typings (`@types/w3c-web-hid`) model `HIDDevice.collections`
+      // as a loose dictionary shape with lots of optional fields. Chromium's runtime
+      // objects are stricter (and match the shape expected by our normalizer), so
+      // cast through `unknown` here to avoid infecting downstream code with `| undefined`.
+      const normalizedCollections = normalizeCollections(device.collections as unknown as readonly HidCollectionInfo[]);
+      bridge = this.#createBridge({ device, normalizedCollections });
 
-        const onInputReport = (event: HIDInputReportEvent): void => {
-          try {
-            bridge?.push_input_report(event.reportId, copyDataView(event.data));
+      const onInputReport = (event: HIDInputReportEvent): void => {
+        try {
+          bridge?.push_input_report(event.reportId, copyDataView(event.data));
         } catch (err) {
           this.#log("warn", "WebHID inputreport forwarding failed", err);
         }

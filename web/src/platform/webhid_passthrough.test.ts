@@ -126,9 +126,12 @@ describe("WebHidPassthroughManager UI (mocked WebHID)", () => {
       productName: "Example Gamepad",
       vendorId: 0x1234,
       productId: 0xabcd,
+      collections: [] as unknown as HIDCollectionInfo[],
       opened: false,
       open: vi.fn(async () => {}),
       close: vi.fn(async () => {}),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
     } as unknown as HIDDevice;
 
     const hid = new FakeHid({
@@ -190,6 +193,7 @@ describe("WebHidPassthroughManager UI (mocked WebHID)", () => {
       productName: "Granted Device",
       vendorId: 0x0001,
       productId: 0x0002,
+      collections: [] as unknown as HIDCollectionInfo[],
       get opened() {
         return opened;
       },
@@ -199,6 +203,8 @@ describe("WebHidPassthroughManager UI (mocked WebHID)", () => {
       close: vi.fn(async () => {
         opened = false;
       }),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
     } as unknown as HIDDevice;
 
     const hid = new FakeHid({
@@ -234,6 +240,9 @@ describe("WebHidPassthroughManager UI (mocked WebHID)", () => {
       productName: "Detach+Forget",
       vendorId: 0x0001,
       productId: 0x0002,
+      collections: [] as unknown as HIDCollectionInfo[],
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
       opened: false,
       open: vi.fn(async () => {}),
       close: vi.fn(async () => {}),
@@ -322,6 +331,19 @@ class TestTarget {
   }
 }
 
+function makeDevice(vendorId: number, productId: number, productName: string): HIDDevice {
+  return {
+    vendorId,
+    productId,
+    productName,
+    collections: [] as unknown as HIDCollectionInfo[],
+    open: vi.fn(async () => {}),
+    close: vi.fn(async () => {}),
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+  } as unknown as HIDDevice;
+}
+
 describe("Guest USB path validator", () => {
   it("accepts non-empty paths with root ports 0/1 and hub ports 1..=255", () => {
     expect(isGuestUsbPath([0])).toBe(true);
@@ -341,9 +363,9 @@ describe("WebHID guest path allocation (external hub on root port 0)", () => {
     const target = new TestTarget();
     const manager = new WebHidPassthroughManager({ hid: null, target, externalHubPortCount: 3 });
 
-    const devA = { vendorId: 1, productId: 1, productName: "A", open: vi.fn(async () => {}), close: vi.fn(async () => {}) } as unknown as HIDDevice;
-    const devB = { vendorId: 2, productId: 2, productName: "B", open: vi.fn(async () => {}), close: vi.fn(async () => {}) } as unknown as HIDDevice;
-    const devC = { vendorId: 3, productId: 3, productName: "C", open: vi.fn(async () => {}), close: vi.fn(async () => {}) } as unknown as HIDDevice;
+    const devA = makeDevice(1, 1, "A");
+    const devB = makeDevice(2, 2, "B");
+    const devC = makeDevice(3, 3, "C");
 
     await manager.attachKnownDevice(devA);
     await manager.attachKnownDevice(devB);
@@ -365,10 +387,10 @@ describe("WebHID guest path allocation (external hub on root port 0)", () => {
     const target = new TestTarget();
     const manager = new WebHidPassthroughManager({ hid: null, target, externalHubPortCount: 3 });
 
-    const devA = { vendorId: 1, productId: 1, productName: "A", open: vi.fn(async () => {}), close: vi.fn(async () => {}) } as unknown as HIDDevice;
-    const devB = { vendorId: 2, productId: 2, productName: "B", open: vi.fn(async () => {}), close: vi.fn(async () => {}) } as unknown as HIDDevice;
-    const devC = { vendorId: 3, productId: 3, productName: "C", open: vi.fn(async () => {}), close: vi.fn(async () => {}) } as unknown as HIDDevice;
-    const devD = { vendorId: 4, productId: 4, productName: "D", open: vi.fn(async () => {}), close: vi.fn(async () => {}) } as unknown as HIDDevice;
+    const devA = makeDevice(1, 1, "A");
+    const devB = makeDevice(2, 2, "B");
+    const devC = makeDevice(3, 3, "C");
+    const devD = makeDevice(4, 4, "D");
 
     await manager.attachKnownDevice(devA);
     await manager.attachKnownDevice(devB);
@@ -385,10 +407,10 @@ describe("WebHID guest path allocation (external hub on root port 0)", () => {
     const target = new TestTarget();
     const manager = new WebHidPassthroughManager({ hid: null, target, externalHubPortCount: 2 });
 
-    const devA = { vendorId: 1, productId: 1, productName: "A", open: vi.fn(async () => {}), close: vi.fn(async () => {}) } as unknown as HIDDevice;
-    const devB = { vendorId: 2, productId: 2, productName: "B", open: vi.fn(async () => {}), close: vi.fn(async () => {}) } as unknown as HIDDevice;
-    const devC = { vendorId: 3, productId: 3, productName: "C", open: vi.fn(async () => {}), close: vi.fn(async () => {}) } as unknown as HIDDevice;
-    const devD = { vendorId: 4, productId: 4, productName: "D", open: vi.fn(async () => {}), close: vi.fn(async () => {}) } as unknown as HIDDevice;
+    const devA = makeDevice(1, 1, "A");
+    const devB = makeDevice(2, 2, "B");
+    const devC = makeDevice(3, 3, "C");
+    const devD = makeDevice(4, 4, "D");
 
     await manager.attachKnownDevice(devA);
     await manager.attachKnownDevice(devB);
@@ -445,6 +467,9 @@ describe("WebHID guest path allocation (external hub on root port 0)", () => {
       productName: "Forgettable Attached Device",
       vendorId: 0x0010,
       productId: 0x0020,
+      collections: [] as unknown as HIDCollectionInfo[],
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
       get opened() {
         return opened;
       },

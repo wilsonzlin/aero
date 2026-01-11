@@ -1,8 +1,14 @@
+import { normalizeCollections, type HidCollectionInfo } from "../hid/webhid_normalize";
 import { fnv1a32Hex } from "../utils/fnv1a";
-import type { GuestUsbPath, GuestUsbRootPort, HidPassthroughMessage } from "./hid_passthrough_protocol";
+import {
+  isHidSendReportMessage,
+  type GuestUsbPath,
+  type GuestUsbRootPort,
+  type HidPassthroughMessage,
+} from "./hid_passthrough_protocol";
 
 export interface HidPassthroughTarget {
-  postMessage(message: HidPassthroughMessage): void;
+  postMessage(message: HidPassthroughMessage, transfer?: Transferable[]): void;
 }
 
 export const UHCI_ROOT_PORTS: readonly GuestUsbRootPort[] = [0, 1];
@@ -80,6 +86,7 @@ export class WebHidPassthroughManager {
   readonly #devicePaths = new Map<string, GuestUsbPath>();
   readonly #usedExternalHubPorts = new Set<number>();
   #directAttachUsed = false;
+  readonly #inputReportListeners = new Map<string, (event: HIDInputReportEvent) => void>();
 
   readonly #deviceIds = new WeakMap<HIDDevice, string>();
   #nextDeviceOrdinal = 1;
@@ -122,7 +129,42 @@ export class WebHidPassthroughManager {
       this.#hid.removeEventListener("connect", this.#onConnect);
       this.#hid.removeEventListener("disconnect", this.#onDisconnect);
     }
+    for (const attachment of this.#attachedDevices) {
+      const listener = this.#inputReportListeners.get(attachment.deviceId);
+      if (!listener) continue;
+      try {
+        attachment.device.removeEventListener("inputreport", listener);
+      } catch {
+        // Best-effort cleanup only.
+      }
+    }
+    this.#inputReportListeners.clear();
     this.#listeners.clear();
+  }
+
+  /**
+   * Handle I/O worker messages destined for the WebHID broker.
+   *
+   * This is intentionally best-effort: it must never throw synchronously because
+   * it's often wired directly to a `Worker#message` event.
+   */
+  handleWorkerMessage(msg: unknown): void {
+    if (!isHidSendReportMessage(msg)) return;
+    const attachment = this.#attachedDevices.find((d) => d.deviceId === msg.deviceId);
+    if (!attachment) return;
+
+    try {
+      const bytes = new Uint8Array(msg.data);
+      const res =
+        msg.reportType === "feature"
+          ? attachment.device.sendFeatureReport(msg.reportId, bytes)
+          : attachment.device.sendReport(msg.reportId, bytes);
+      void res.catch((err) => {
+        console.warn(`WebHID ${msg.reportType === "feature" ? "sendFeatureReport" : "sendReport"}() failed`, err);
+      });
+    } catch (err) {
+      console.warn("WebHID output report forwarding failed", err);
+    }
   }
 
   getState(): WebHidPassthroughState {
@@ -196,20 +238,57 @@ export class WebHidPassthroughManager {
 
     await device.open();
 
-    try {
-      this.#target.postMessage({
-        type: "hid:attach",
-        deviceId,
-        guestPath,
-        ...(guestPath.length === 1 ? { guestPort: guestPath[0] as GuestUsbRootPort } : {}),
-      });
-    } catch (err) {
+    if (this.#target !== NOOP_TARGET) {
+      let normalizedCollections: ReturnType<typeof normalizeCollections>;
       try {
-        await device.close();
-      } catch {
-        // Ignore close failures when attach fails.
+        const rawCollections = (device as unknown as { collections?: unknown }).collections;
+        normalizedCollections = normalizeCollections((rawCollections ?? []) as unknown as readonly HidCollectionInfo[]);
+      } catch (err) {
+        try {
+          await device.close();
+        } catch {
+          // Ignore close failures when attach fails.
+        }
+        throw err;
       }
-      throw err;
+
+      try {
+        this.#target.postMessage({
+          type: "hid:attach",
+          deviceId,
+          guestPort: guestPath[0] as GuestUsbRootPort,
+          guestPath,
+          vendorId: device.vendorId,
+          productId: device.productId,
+          ...(device.productName ? { productName: device.productName } : {}),
+          collections: normalizedCollections,
+        });
+      } catch (err) {
+        try {
+          await device.close();
+        } catch {
+          // Ignore close failures when attach fails.
+        }
+        throw err;
+      }
+
+      const onInputReport = (event: HIDInputReportEvent): void => {
+        try {
+          const src = new Uint8Array(event.data.buffer, event.data.byteOffset, event.data.byteLength);
+          const out = new Uint8Array(src.byteLength);
+          out.set(src);
+          const data = out.buffer;
+          this.#target.postMessage({ type: "hid:inputReport", deviceId, reportId: event.reportId, data }, [data]);
+        } catch (err) {
+          console.warn("WebHID inputreport forwarding failed", err);
+        }
+      };
+      try {
+        device.addEventListener("inputreport", onInputReport);
+        this.#inputReportListeners.set(deviceId, onInputReport);
+      } catch (err) {
+        console.warn("WebHID addEventListener(inputreport) failed", err);
+      }
     }
 
     this.#devicePaths.set(deviceId, guestPath);
@@ -224,19 +303,31 @@ export class WebHidPassthroughManager {
     const deviceId = this.#deviceIds.get(device);
     if (!deviceId) return;
 
+    const listener = this.#inputReportListeners.get(deviceId);
+    if (listener) {
+      try {
+        device.removeEventListener("inputreport", listener);
+      } catch (err) {
+        console.warn("WebHID removeEventListener(inputreport) failed", err);
+      }
+      this.#inputReportListeners.delete(deviceId);
+    }
+
     const guestPath = this.#devicePaths.get(deviceId);
     if (!guestPath) return;
 
     let detachError: unknown | null = null;
-    try {
-      this.#target.postMessage({
-        type: "hid:detach",
-        deviceId,
-        guestPath,
-        ...(guestPath.length === 1 ? { guestPort: guestPath[0] as GuestUsbRootPort } : {}),
-      });
-    } catch (err) {
-      detachError = err;
+    if (this.#target !== NOOP_TARGET) {
+      try {
+        this.#target.postMessage({
+          type: "hid:detach",
+          deviceId,
+          guestPort: guestPath[0] as GuestUsbRootPort,
+          guestPath,
+        });
+      } catch (err) {
+        detachError = err;
+      }
     }
 
     this.#devicePaths.delete(deviceId);

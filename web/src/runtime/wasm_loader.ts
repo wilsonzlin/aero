@@ -60,7 +60,7 @@ export interface WasmApi {
         collections: unknown,
     ) => {
         push_input_report(reportId: number, data: Uint8Array): void;
-        drain_next_output_report(): { reportType: "output" | "feature"; reportId: number; data: Uint8Array } | null;
+        drain_next_output_report(): { reportType: "output" | "feature"; reportId: number; data: Uint8Array<ArrayBuffer> } | null;
         configured(): boolean;
         free(): void;
     };
