@@ -98,8 +98,10 @@ fn translate_vs(program: &Sm4Program) -> Result<WgslBootstrapTranslation, WgslBo
     s.push_str("struct VsOut {\n");
     s.push_str("  @builtin(position) pos: vec4<f32>,\n");
     for idx in 1..=max_out {
-        let loc = idx - 1;
-        s.push_str(&format!("  @location({loc}) o{idx}: vec4<f32>,\n"));
+        // Use the D3D output register index as the WGSL location. This matches the
+        // signature-driven translator and avoids mismatches when mixing bootstrap and
+        // signature-driven shaders in the same pipeline.
+        s.push_str(&format!("  @location({idx}) o{idx}: vec4<f32>,\n"));
     }
     s.push_str("};\n\n");
 
@@ -154,8 +156,8 @@ fn translate_ps(program: &Sm4Program) -> Result<WgslBootstrapTranslation, WgslBo
     s.push_str("struct PsIn {\n");
     s.push_str("  @builtin(position) pos: vec4<f32>,\n");
     for idx in 1..=max_in {
-        let loc = idx - 1;
-        s.push_str(&format!("  @location({loc}) v{idx}: vec4<f32>,\n"));
+        // Mirror the vertex stage: interpolants are at `@location(v#)` (not shifted down).
+        s.push_str(&format!("  @location({idx}) v{idx}: vec4<f32>,\n"));
     }
     s.push_str("};\n\n");
 
