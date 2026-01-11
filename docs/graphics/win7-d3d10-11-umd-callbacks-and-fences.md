@@ -458,6 +458,10 @@ For `D3D11_MAP_READ` on a staging resource, the UMD must ensure:
 - the GPU copy into the staging resource has completed, and
 - the CPU mapping observes the completed data.
 
+Note: the *CPU pointer itself* is returned through the runtime lock callbacks (`pfnLockCb` / `pfnUnlockCb` using `D3DDDICB_LOCK` / `D3DDDICB_UNLOCK`). The full Win7 Map/Unmap + lock-flag translation contract is documented in:
+
+- `docs/graphics/win7-d3d11-map-unmap.md`
+
 In the repo’s Win7 tests (`drivers/aerogpu/tests/win7/readback_sanity`), the pattern is:
 
 1. `CopyResource(staging, renderTarget)`

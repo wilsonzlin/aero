@@ -15,6 +15,7 @@ printing `sizeof`/`offsetof` for the key structs involved in Win7 (WDDM 1.1) D3D
 - DMA buffer acquisition: `D3DDDICB_GETCOMMANDINFO`
 - submission: `D3DDDICB_RENDER`, `D3DDDICB_PRESENT`
 - resource mapping (Map/Unmap callback structs): `D3DDDICB_LOCK`, `D3DDDICB_UNLOCK`
+  - also probes the presence/layout of `D3DDDICB_LOCKFLAGS` and callback-table entries like `pfnLockCb`/`pfnUnlockCb`
 - fence waits: `D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT`, `D3DKMT_WAITFORSYNCHRONIZATIONOBJECT`
 
 Related reference doc (symbol-name contract): `docs/graphics/win7-d3d10-11-umd-callbacks-and-fences.md`
