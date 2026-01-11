@@ -157,3 +157,23 @@ export function destroy_gpu(): void {
   const mod = requireLoaded();
   mod.destroy_gpu();
 }
+
+export function set_guest_memory(guestU8: Uint8Array): void {
+  const mod = requireLoaded();
+  mod.set_guest_memory(guestU8);
+}
+
+export function clear_guest_memory(): void {
+  const mod = requireLoaded();
+  mod.clear_guest_memory();
+}
+
+export function has_guest_memory(): boolean {
+  const mod = requireLoaded();
+  return !!mod.has_guest_memory?.();
+}
+
+export function read_guest_memory(gpa: bigint, len: number): Uint8Array {
+  const mod = requireLoaded();
+  return mod.read_guest_memory(gpa, len) as Uint8Array;
+}

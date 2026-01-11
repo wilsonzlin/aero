@@ -11,7 +11,8 @@ mod wasm {
 
     use aero_gpu::shader_lib::{BuiltinShader, wgsl as builtin_wgsl};
     use aero_gpu::{
-        AeroGpuCommandProcessor, AeroGpuEvent, FrameTimingsReport, GpuBackendKind, GpuProfiler,
+        AeroGpuCommandProcessor, AeroGpuEvent, FrameTimingsReport, GuestMemory, GuestMemoryError,
+        GpuBackendKind, GpuProfiler,
     };
     use futures_intrusive::channel::shared::oneshot_channel;
     use js_sys::{Array, BigInt, Object, Reflect, Uint8Array};
@@ -38,6 +39,74 @@ mod wasm {
     thread_local! {
         static PROCESSOR: RefCell<AeroGpuCommandProcessor> =
             RefCell::new(AeroGpuCommandProcessor::new());
+    }
+
+    struct JsGuestMemory {
+        view: Uint8Array,
+    }
+
+    impl GuestMemory for JsGuestMemory {
+        fn read(&self, gpa: u64, dst: &mut [u8]) -> Result<(), GuestMemoryError> {
+            let len = dst.len();
+            let start = usize::try_from(gpa).map_err(|_| GuestMemoryError { gpa, len })?;
+            let end = start.checked_add(len).ok_or(GuestMemoryError { gpa, len })?;
+
+            let max = self.view.length() as usize;
+            if end > max {
+                return Err(GuestMemoryError { gpa, len });
+            }
+
+            let start_u32 = u32::try_from(start).map_err(|_| GuestMemoryError { gpa, len })?;
+            let end_u32 = u32::try_from(end).map_err(|_| GuestMemoryError { gpa, len })?;
+            self.view.subarray(start_u32, end_u32).copy_to(dst);
+            Ok(())
+        }
+    }
+
+    thread_local! {
+        static GUEST_MEMORY: RefCell<Option<JsGuestMemory>> = RefCell::new(None);
+    }
+
+    /// Register a view of guest RAM for AeroGPU submissions.
+    ///
+    /// Contract: guest physical addresses (GPAs) are byte offsets into this `Uint8Array`
+    /// (i.e. gpa=0 refers to `guest_u8[0]`).
+    #[wasm_bindgen]
+    pub fn set_guest_memory(guest_u8: Uint8Array) {
+        GUEST_MEMORY.with(|slot| {
+            *slot.borrow_mut() = Some(JsGuestMemory { view: guest_u8 });
+        });
+    }
+
+    #[wasm_bindgen]
+    pub fn clear_guest_memory() {
+        GUEST_MEMORY.with(|slot| {
+            *slot.borrow_mut() = None;
+        });
+    }
+
+    #[wasm_bindgen]
+    pub fn has_guest_memory() -> bool {
+        GUEST_MEMORY.with(|slot| slot.borrow().is_some())
+    }
+
+    /// Debug helper: copy bytes out of the registered guest RAM view.
+    ///
+    /// Note: this necessarily copies into wasm memory; it is intended for debugging/tests.
+    #[wasm_bindgen]
+    pub fn read_guest_memory(gpa: u64, len: u32) -> Result<Uint8Array, JsValue> {
+        let len = len as usize;
+        let mut out = vec![0u8; len];
+        GUEST_MEMORY.with(|slot| {
+            let slot = slot.borrow();
+            let mem = slot.as_ref().ok_or_else(|| {
+                JsValue::from_str("guest memory is not configured; call set_guest_memory(Uint8Array)")
+            })?;
+            mem.read(gpa, &mut out)
+                .map_err(|err| JsValue::from_str(&err.to_string()))?;
+            Ok::<(), JsValue>(())
+        })?;
+        Ok(Uint8Array::from(out.as_slice()))
     }
 
     #[wasm_bindgen]

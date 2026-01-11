@@ -98,7 +98,7 @@ import {
   decodeCmdHdr,
   decodeCmdStreamHeader,
 } from "../../../emulator/protocol/aerogpu/aerogpu_cmd.ts";
-import { AerogpuFormat } from "../../../emulator/protocol/aerogpu/aerogpu_pci.ts";
+import { AerogpuFormat, parseAndValidateAbiVersionU32 } from "../../../emulator/protocol/aerogpu/aerogpu_pci.ts";
 import {
   AEROGPU_ALLOC_ENTRY_SIZE as AEROGPU_ALLOC_ENTRY_BYTES,
   AEROGPU_ALLOC_TABLE_HEADER_SIZE as AEROGPU_ALLOC_TABLE_HEADER_BYTES,
@@ -1222,6 +1222,14 @@ const decodeAerogpuAllocTable = (buf: ArrayBuffer): AeroGpuAllocTable => {
     );
   }
 
+  const abiVersion = dv.getUint32(4, true);
+  try {
+    parseAndValidateAbiVersionU32(abiVersion);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`aerogpu: unsupported alloc table abi_version=0x${abiVersion.toString(16)} (${message})`);
+  }
+
   const sizeBytes = dv.getUint32(8, true);
   if (sizeBytes < AEROGPU_ALLOC_TABLE_HEADER_BYTES || sizeBytes > bufLen) {
     throw new Error(`aerogpu: invalid alloc table size_bytes=${sizeBytes} (buffer_len=${bufLen})`);
@@ -1246,6 +1254,9 @@ const decodeAerogpuAllocTable = (buf: ArrayBuffer): AeroGpuAllocTable => {
     }
 
     const allocId = dv.getUint32(base + 0, true);
+    if (allocId === 0) {
+      throw new Error(`aerogpu: alloc table entry ${i} has alloc_id=0`);
+    }
     const gpa = checkedU64ToNumber(dv.getBigUint64(base + 8, true), `allocs[${i}].gpa`);
     const allocSizeBytes = checkedU64ToNumber(dv.getBigUint64(base + 16, true), `allocs[${i}].size_bytes`);
     if (out.has(allocId)) {
