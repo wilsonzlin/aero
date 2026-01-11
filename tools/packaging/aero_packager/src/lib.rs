@@ -468,17 +468,85 @@ fn validate_drivers(
         amd64: Vec::new(),
     };
 
+    fn legacy_driver_dir_aliases(name: &str) -> &'static [&'static str] {
+        if name.eq_ignore_ascii_case("aerogpu") {
+            // Guest Tools historically used `aero-gpu` as the AeroGPU driver directory name.
+            // Accept the legacy dashed form as an input alias for one release cycle so old
+            // driver bundles can still be repackaged without renaming.
+            &["aero-gpu"]
+        } else {
+            &[]
+        }
+    }
+
+    fn resolve_driver_dir(arch: &str, arch_dir: &Path, name: &str) -> Result<Option<PathBuf>> {
+        let mut matches: Vec<(&'static str, PathBuf)> = Vec::new();
+        let primary = arch_dir.join(name);
+        if primary.is_dir() {
+            matches.push(("", primary));
+        }
+        for alias in legacy_driver_dir_aliases(name) {
+            let p = arch_dir.join(alias);
+            if p.is_dir() {
+                matches.push((alias, p));
+            }
+        }
+
+        if matches.is_empty() {
+            return Ok(None);
+        }
+        if matches.len() > 1 {
+            let paths = matches
+                .iter()
+                .map(|(alias, p)| {
+                    if alias.is_empty() {
+                        p.display().to_string()
+                    } else {
+                        format!("{} (legacy alias)", p.display())
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            bail!(
+                "multiple driver directories found for {} ({}); remove/rename one of: {}",
+                name,
+                arch,
+                paths
+            );
+        }
+
+        let (alias, path) = matches.pop().expect("non-empty");
+        if !alias.is_empty() {
+            eprintln!(
+                "warning: using legacy driver directory name '{}' for '{}' ({})",
+                alias, name, arch
+            );
+        }
+
+        Ok(Some(path))
+    }
+
     for drv in &spec.drivers {
         for (arch, arch_dir, out) in [
             ("x86", &drivers_x86_dir, &mut plan.x86),
             ("amd64", &drivers_amd64_dir, &mut plan.amd64),
         ] {
-            let driver_dir = arch_dir.join(&drv.name);
-            if !driver_dir.is_dir() {
+            let Some(driver_dir) = resolve_driver_dir(arch, arch_dir, &drv.name)? else {
                 if drv.required {
+                    let mut tried = vec![arch_dir.join(&drv.name)];
+                    for alias in legacy_driver_dir_aliases(&drv.name) {
+                        tried.push(arch_dir.join(alias));
+                    }
+                    let tried = tried
+                        .iter()
+                        .map(|p| p.display().to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ");
                     bail!(
-                        "required driver directory missing: {}",
-                        driver_dir.to_string_lossy()
+                        "required driver directory missing: {} ({}); tried: {}",
+                        drv.name,
+                        arch,
+                        tried
                     );
                 }
                 eprintln!(
@@ -486,7 +554,7 @@ fn validate_drivers(
                     drv.name, arch
                 );
                 continue;
-            }
+            };
 
             validate_driver_dir(drv, arch, &driver_dir, devices_cmd_vars)?;
             out.push(DriverToInclude {
