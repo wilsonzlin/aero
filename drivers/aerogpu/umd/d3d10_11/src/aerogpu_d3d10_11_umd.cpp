@@ -4186,8 +4186,11 @@ HRESULT AEROGPU_APIENTRY GetCaps11(D3D10DDI_HADAPTER, const D3D11DDIARG_GETCAPS*
       if (data_size < sizeof(FormatSupport)) {
         return E_INVALIDARG;
       }
+      const UINT format = reinterpret_cast<FormatSupport*>(data)->InFormat;
+      std::memset(data, 0, data_size);
       auto* fs = reinterpret_cast<FormatSupport*>(data);
-      fs->OutFormatSupport = d3d11_format_support_flags(static_cast<uint32_t>(fs->InFormat));
+      fs->InFormat = format;
+      fs->OutFormatSupport = d3d11_format_support_flags(static_cast<uint32_t>(format));
       return S_OK;
     }
 
@@ -4199,7 +4202,10 @@ HRESULT AEROGPU_APIENTRY GetCaps11(D3D10DDI_HADAPTER, const D3D11DDIARG_GETCAPS*
       if (data_size < sizeof(FormatSupport2)) {
         return E_INVALIDARG;
       }
+      const UINT format = reinterpret_cast<FormatSupport2*>(data)->InFormat;
+      std::memset(data, 0, data_size);
       auto* fs = reinterpret_cast<FormatSupport2*>(data);
+      fs->InFormat = format;
       fs->OutFormatSupport2 = 0;
       return S_OK;
     }
@@ -4214,9 +4220,15 @@ HRESULT AEROGPU_APIENTRY GetCaps11(D3D10DDI_HADAPTER, const D3D11DDIARG_GETCAPS*
       if (data_size < sizeof(MsaaQualityLevels)) {
         return E_INVALIDARG;
       }
+      auto* in = reinterpret_cast<MsaaQualityLevels*>(data);
+      const UINT format = in->Format;
+      const UINT sample_count = in->SampleCount;
+      std::memset(data, 0, data_size);
       auto* ms = reinterpret_cast<MsaaQualityLevels*>(data);
+      ms->Format = format;
+      ms->SampleCount = sample_count;
       ms->Flags = 0;
-      ms->NumQualityLevels = (ms->SampleCount == 1) ? 1u : 0u;
+      ms->NumQualityLevels = (sample_count == 1) ? 1u : 0u;
       return S_OK;
     }
 
