@@ -396,56 +396,31 @@ VirtioSndQueueSplitDrainUsed(VIRTIOSND_QUEUE_SPLIT* qs,
                              EVT_VIRTIOSND_QUEUE_SPLIT_USED* Callback,
                              void* Context)
 {
-    typedef struct _USED_ENTRY {
-        void* Cookie;
-        UINT32 Len;
-    } USED_ENTRY;
-
-    USED_ENTRY used[VIRTIOSND_QUEUE_SIZE_TXQ];
-    ULONG count;
-    VIRTIOSND_QUEUE_SPLIT_LOCK_STATE lock_state;
-
     if (qs == NULL || qs->Vq == NULL || Callback == NULL) {
         return;
     }
-
-    count = 0;
-
-    VirtioSndQueueSplitLock(qs, &lock_state);
 
     for (;;) {
         void* cookie;
         UINT32 len;
         NTSTATUS status;
+        VIRTIOSND_QUEUE_SPLIT_LOCK_STATE lock_state;
 
         cookie = NULL;
         len = 0;
 
+        VirtioSndQueueSplitLock(qs, &lock_state);
         status = VirtqSplitGetUsed(qs->Vq, &cookie, &len);
+        VirtioSndQueueSplitUnlock(qs, &lock_state);
+
         if (status == STATUS_NOT_FOUND) {
-            break;
+            return;
         }
         if (!NT_SUCCESS(status)) {
             VIRTIOSND_TRACE_ERROR("queue[%u] VirtqSplitGetUsed failed: 0x%08X\n", (UINT)qs->QueueIndex, (UINT)status);
-            break;
+            return;
         }
 
-        if (count >= RTL_NUMBER_OF(used)) {
-            VIRTIOSND_TRACE_ERROR("queue[%u] used drain overflow\n", (UINT)qs->QueueIndex);
-            break;
-        }
-
-        used[count].Cookie = cookie;
-        used[count].Len = len;
-        count++;
-    }
-
-    VirtioSndQueueSplitUnlock(qs, &lock_state);
-
-    {
-        ULONG i;
-        for (i = 0; i < count; i++) {
-            Callback(qs->QueueIndex, used[i].Cookie, used[i].Len, Context);
-        }
+        Callback(qs->QueueIndex, cookie, len, Context);
     }
 }

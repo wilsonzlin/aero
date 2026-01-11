@@ -69,6 +69,12 @@ jobs:
           $ErrorActionPreference = 'Stop'
           pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci/check-virtio-driver-uniqueness.ps1'
 
+      - name: Check virtio-snd default build is modern virtio-pci
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci/check-win7-virtio-snd-modern-build.ps1'
+
       - name: Run virtio host tests (CMake)
         shell: bash
         env:
@@ -175,6 +181,12 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci/check-virtio-driver-uniqueness.ps1'
+
+      - name: Check virtio-snd default build is modern virtio-pci
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci/check-win7-virtio-snd-modern-build.ps1'
 
       - name: Run virtio host tests (CMake)
         shell: pwsh

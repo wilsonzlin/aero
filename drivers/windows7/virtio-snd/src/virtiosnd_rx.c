@@ -74,8 +74,18 @@ VirtIoSndRxInit(VIRTIOSND_RX_ENGINE* Rx, PVIRTIOSND_DMA_CONTEXT DmaCtx, const VI
     if (count == 0) {
         count = 16u;
     }
-    if (count > VIRTIOSND_QUEUE_SIZE_RXQ) {
-        count = VIRTIOSND_QUEUE_SIZE_RXQ;
+    /*
+     * Clamp request contexts to the backing virtqueue size when available so we
+     * never preallocate more request state than the device can have in flight.
+     *
+     * Note: the RX engine is generic over the queue implementation, so this is a
+     * best-effort optimization based on the current split-virtqueue context.
+     */
+    if (Queue->Ctx != NULL) {
+        const VIRTIOSND_QUEUE_SPLIT* qs = (const VIRTIOSND_QUEUE_SPLIT*)Queue->Ctx;
+        if (qs->Vq != NULL && qs->QueueSize != 0 && count > (ULONG)qs->QueueSize) {
+            count = (ULONG)qs->QueueSize;
+        }
     }
 
     RtlZeroMemory(Rx, sizeof(*Rx));
@@ -293,12 +303,8 @@ VirtIoSndRxDrainCompletions(VIRTIOSND_RX_ENGINE* Rx, EVT_VIRTIOSND_RX_COMPLETION
 {
     KIRQL oldIrql;
     ULONG drained;
-    VOID* ctx;
-    UINT32 usedLen;
     EVT_VIRTIOSND_RX_COMPLETION* cb;
     void* cbCtx;
-    VIRTIOSND_RX_COMPLETION_ENTRY completions[VIRTIOSND_QUEUE_SIZE_RXQ];
-    ULONG completionCount;
 
     NT_ASSERT(KeGetCurrentIrql() <= DISPATCH_LEVEL);
 
@@ -307,37 +313,41 @@ VirtIoSndRxDrainCompletions(VIRTIOSND_RX_ENGINE* Rx, EVT_VIRTIOSND_RX_COMPLETION
     }
 
     drained = 0;
-    completionCount = 0;
+    cb = Callback;
+    cbCtx = Context;
 
-    KeAcquireSpinLock(&Rx->Lock, &oldIrql);
-
-    if (Callback != NULL) {
-        cb = Callback;
-        cbCtx = Context;
-    } else {
+    if (cb == NULL) {
+        KeAcquireSpinLock(&Rx->Lock, &oldIrql);
         cb = Rx->CompletionCallback;
         cbCtx = Rx->CompletionCallbackContext;
+        KeReleaseSpinLock(&Rx->Lock, oldIrql);
     }
 
-    while (VirtioSndQueuePopUsed(Rx->Queue, &ctx, &usedLen)) {
-        if (ctx != NULL && completionCount < RTL_NUMBER_OF(completions)) {
-            VirtIoSndRxHandleUsedLocked(Rx, (VIRTIOSND_RX_REQUEST*)ctx, usedLen, &completions[completionCount]);
-            completionCount++;
+    for (;;) {
+        VOID* ctx;
+        UINT32 usedLen;
+        VIRTIOSND_RX_COMPLETION_ENTRY completion;
+
+        if (!VirtioSndQueuePopUsed(Rx->Queue, &ctx, &usedLen)) {
+            break;
         }
         drained++;
-    }
 
-    KeReleaseSpinLock(&Rx->Lock, oldIrql);
+        if (ctx == NULL) {
+            continue;
+        }
 
-    if (cb != NULL) {
-        ULONG i;
-        for (i = 0; i < completionCount; i++) {
-            cb(completions[i].UserCookie,
-               completions[i].CompletionStatus,
-               completions[i].VirtioStatus,
-               completions[i].LatencyBytes,
-               completions[i].PayloadBytes,
-               completions[i].UsedLen,
+        KeAcquireSpinLock(&Rx->Lock, &oldIrql);
+        VirtIoSndRxHandleUsedLocked(Rx, (VIRTIOSND_RX_REQUEST*)ctx, usedLen, &completion);
+        KeReleaseSpinLock(&Rx->Lock, oldIrql);
+
+        if (cb != NULL) {
+            cb(completion.UserCookie,
+               completion.CompletionStatus,
+               completion.VirtioStatus,
+               completion.LatencyBytes,
+               completion.PayloadBytes,
+               completion.UsedLen,
                cbCtx);
         }
     }
