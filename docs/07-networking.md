@@ -231,8 +231,8 @@ See: [`docs/l2-tunnel-protocol.md`](./l2-tunnel-protocol.md)
   - `crates/aero-l2-proxy` (Option C user-space stack / NAT)
   - `crates/aero-storage-server` (storage service; part of the backend split)
 - Guest network stack implementations exist in multiple places:
-  - `crates/emulator/src/io/net/stack` is an older in-emulator NAT stack.
-  - The Phase 0 in-browser stack is `crates/aero-net-stack`.
+  - `crates/aero-net-stack` is the canonical Phase 0 in-browser stack.
+  - `crates/emulator/src/io/net/stack` is a thin wrapper around `crates/aero-net-stack` for the native emulator runtime.
   - The recommended production path is Option C (L2 tunnel) as described above.
 - Dev/prototype UDP behavior:
   - `net-proxy/` supports a legacy per-target UDP mode (`/udp?host=...&port=...`) that forwards raw
