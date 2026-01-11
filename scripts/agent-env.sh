@@ -13,8 +13,13 @@ if [[ "${RUSTFLAGS:-}" != *"codegen-units="* ]]; then
   export RUSTFLAGS="${RUSTFLAGS# }"
 fi
 
-# Node.js - cap V8 heap to avoid runaway memory
-export NODE_OPTIONS="--max-old-space-size=4096"
+# Node.js - cap V8 heap to avoid runaway memory.
+# Keep any existing NODE_OPTIONS (e.g. --import hooks) while ensuring we have a
+# sane max-old-space-size set.
+if [[ "${NODE_OPTIONS:-}" != *"--max-old-space-size="* ]]; then
+  export NODE_OPTIONS="${NODE_OPTIONS:-} --max-old-space-size=4096"
+  export NODE_OPTIONS="${NODE_OPTIONS# }"
+fi
 
 # Node.js version guard:
 # Some agent environments can't easily install the repo's pinned `.nvmrc` Node version.
