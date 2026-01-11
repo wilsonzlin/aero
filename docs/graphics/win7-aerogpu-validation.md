@@ -262,8 +262,10 @@ If vblank delivery is broken, common symptoms:
 For the concrete “minimal contract” and a recommended device/emulator model, see:
 * `docs/graphics/win7-vblank-present-requirements.md`
 
-For a quick guest-side sanity check that DWM is actually pacing (not spinning and not stalling), run:
-* `drivers/aerogpu/tests/win7/dwm_flush_pacing`
+For quick guest-side sanity checks:
+
+* DWM pacing (end-to-end compositor path): `drivers/aerogpu/tests/win7/dwm_flush_pacing`
+* Direct vblank interrupt/wait path (independent of DWM): `drivers/aerogpu/tests/win7/wait_vblank_pacing` (targets VidPn source 0)
 
 ### 3.1 Recommended options (ranked by bring-up stability)
 

@@ -272,6 +272,18 @@ build_all_vs2010.cmd
 run_all.cmd
 ```
 
+### Direct vblank wait pacing (independent of DWM)
+
+To validate the **kernel vblank interrupt/wait path** without involving DWM composition, use the direct vblank wait tests:
+
+* `drivers/aerogpu/tests/win7/wait_vblank_pacing` – calls `D3DKMTWaitForVerticalBlankEvent` targeting **VidPn source 0** (the AeroGPU MVP contract) and reports avg/min/max wait deltas.
+* `drivers/aerogpu/tests/win7/vblank_wait_sanity` / `vblank_wait_pacing` – additional variants that exercise the same thunk with different harness behavior (e.g. fail-fast timeouts).
+
+These tests fail on “totally broken” pacing patterns such as:
+
+* **immediate returns** (avg < ~2 ms), suggesting the wait is not actually blocking on vblank, or
+* **multi-hundred-ms gaps/timeouts**, suggesting missing vblank interrupts or a stalled interrupt/DPC path.
+
 ### ETW/GPUView (deeper, for root-cause)
 
 If you need to distinguish “vblank not firing” vs “presents not completing” vs “scheduler stalls”, collect a GPUView-compatible ETW trace with at least:
