@@ -190,6 +190,7 @@ const aerogpuWasmExecutorContexts = new Set<number>();
 type AerogpuLastPresentedFrame = NonNullable<AerogpuCpuExecutorState["lastPresentedFrame"]>;
 let aerogpuLastPresentedFrame: AerogpuLastPresentedFrame | null = null;
 let aerogpuPresentCount = 0n;
+let aerogpuWasmPresentCount = 0n;
 let aerogpuLastOutputSource: "framebuffer" | "aerogpu" = "framebuffer";
 
 const getAerogpuContextState = (contextId: number): AerogpuCpuExecutorState => {
@@ -209,6 +210,7 @@ const resetAerogpuContexts = (): void => {
   aerogpuWasmExecutorContexts.clear();
   aerogpuLastPresentedFrame = null;
   aerogpuPresentCount = 0n;
+  aerogpuWasmPresentCount = 0n;
 };
 
 type AeroGpuWasmApi = typeof import("../wasm/aero-gpu.ts");
@@ -1524,8 +1526,10 @@ const handleSubmitAerogpu = async (req: GpuRuntimeSubmitAerogpuMessage): Promise
         aerogpuWasmExecutorContexts.add(contextId);
 
         if (typeof wasmSubmitResult.presentCount === "bigint") {
-          const presentDelta = cmdAnalysis.presentCount > 0n ? cmdAnalysis.presentCount : 1n;
-          aerogpuPresentCount += presentDelta;
+          const nextWasmPresentCount = wasmSubmitResult.presentCount;
+          const wasmDelta = nextWasmPresentCount >= aerogpuWasmPresentCount ? nextWasmPresentCount - aerogpuWasmPresentCount : nextWasmPresentCount;
+          aerogpuWasmPresentCount = nextWasmPresentCount;
+          aerogpuPresentCount += wasmDelta;
           presentCount = aerogpuPresentCount;
           const shot = await wasm.request_screenshot_info();
           const requiredShotBytes = shot.width * shot.height * BYTES_PER_PIXEL_RGBA8;
