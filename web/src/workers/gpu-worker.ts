@@ -2271,6 +2271,25 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
           const last = aerogpuLastPresentedFrame;
           if (last) {
             const out = last.rgba8.slice(0);
+            if (includeCursor) {
+              try {
+                compositeCursorOverRgba8(
+                  new Uint8Array(out),
+                  last.width,
+                  last.height,
+                  cursorEnabled,
+                  cursorImage,
+                  cursorWidth,
+                  cursorHeight,
+                  cursorX,
+                  cursorY,
+                  cursorHotX,
+                  cursorHotY,
+                );
+              } catch {
+                // Ignore; screenshot cursor compositing is best-effort.
+              }
+            }
             postToMain(
               {
                 type: "screenshot",
