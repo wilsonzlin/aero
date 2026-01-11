@@ -347,7 +347,8 @@ For advanced/custom validation, you can override the profile’s spec selection 
 Signing policy:
 
 - The wrapper defaults to `-SigningPolicy none` (appropriate for WHQL/production-signed virtio-win drivers).
-- If you are packaging test-signed/custom-signed drivers, override it (e.g. `-SigningPolicy testsigning`).
+- If you are packaging test-signed/custom-signed drivers, override it (e.g. `-SigningPolicy test`).
+  - Legacy alias accepted: `testsigning` (maps to `test`).
 
 Notes:
 

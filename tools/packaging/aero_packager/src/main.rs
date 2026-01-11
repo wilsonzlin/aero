@@ -50,8 +50,16 @@ struct Cli {
     /// - production: drivers are production/WHQL-signed; no custom certificate is expected.
     /// - none: no signing expectations (development use).
     ///
-    /// Legacy aliases accepted: `testsigning`, `test-signing`.
-    #[arg(long, value_enum, env = "AERO_GUEST_TOOLS_SIGNING_POLICY", default_value = "test")]
+    /// Legacy aliases accepted:
+    /// - `testsigning`, `test-signing` -> `test`
+    /// - `prod`, `whql` -> `production`
+    /// - `nointegritychecks`, `no-integrity-checks` -> `none`
+    #[arg(
+        long,
+        value_enum,
+        env = "AERO_GUEST_TOOLS_SIGNING_POLICY",
+        default_value = "test"
+    )]
     signing_policy: aero_packager::SigningPolicy,
 
     /// Override SOURCE_DATE_EPOCH (seconds since Unix epoch) for deterministic timestamps.

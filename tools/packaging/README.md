@@ -31,7 +31,7 @@ cd tools/packaging/aero_packager
 #     README.md
 #     THIRD_PARTY_NOTICES.md
 #     config/devices.cmd
-#     certs/*.{cer,crt,p7b}   (optional when --signing-policy none)
+#     certs/*.{cer,crt,p7b}   (required for --signing-policy test; optional for production/none)
 #     licenses/** (optional; third-party license texts / attribution files)
 #
 # spec.json declares which drivers to include (required + optional) and expected HWID regexes.
@@ -43,11 +43,11 @@ cargo run --release --locked -- \
   --out-dir /path/to/out \
   --version 1.2.3 \
   --build-id ci-123 \
-  --signing-policy testsigning
+  --signing-policy test
 ```
 
-Use `--signing-policy none` (or `AERO_GUEST_TOOLS_SIGNING_POLICY=none`) to build Guest Tools
-media for WHQL/production-signed drivers without requiring any certificate files.
+Use `--signing-policy production` (or `none`) to build Guest Tools media for
+WHQL/production-signed drivers without requiring any certificate files.
 
 ## Building Guest Tools from `virtio-win.iso` (Win7 virtio drivers)
 
@@ -88,7 +88,8 @@ For advanced/custom validation, you can override the profile’s spec selection 
 Signing policy notes:
 
 - By default, the wrapper uses `-SigningPolicy none` (for WHQL/production-signed virtio-win drivers), so it does not require or inject any custom certs.
-- You can override this via `-SigningPolicy testsigning|nointegritychecks` when producing media for test-signed/custom-signed drivers.
+- You can override this via `-SigningPolicy test` when producing media for test-signed/custom-signed drivers.
+  - Legacy alias accepted: `testsigning` (maps to `test`).
 
 When built from a virtio-win ISO/root, the wrapper script also attempts to
 propagate upstream license/notice files into the packaged outputs under:

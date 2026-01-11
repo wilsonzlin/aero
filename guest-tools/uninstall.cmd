@@ -184,6 +184,8 @@ if exist "%MANIFEST_FILE%" (
     if /i "!FOUND_POLICY!"=="test-signing" set "SIGNING_POLICY=test"
     if /i "!FOUND_POLICY!"=="nointegritychecks" set "SIGNING_POLICY=none"
     if /i "!FOUND_POLICY!"=="no-integrity-checks" set "SIGNING_POLICY=none"
+    if /i "!FOUND_POLICY!"=="prod" set "SIGNING_POLICY=production"
+    if /i "!FOUND_POLICY!"=="whql" set "SIGNING_POLICY=production"
 
     if not defined SIGNING_POLICY (
       call :log "WARNING: manifest.json has unknown signing_policy: !FOUND_POLICY! (defaulting to test)."

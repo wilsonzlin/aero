@@ -153,14 +153,14 @@ contains both:
 - standalone driver bundles (`AeroVirtIO-Win7-*.zip` / `.iso` / optional `.vhd`)
 - Guest Tools media (`aero-guest-tools.iso` / `aero-guest-tools.zip`)
 
-By default (`-SigningPolicy testsigning`), it injects the public signing certificate
+By default (`-SigningPolicy test`), it injects the public signing certificate
 (`out/certs/aero-test.cer`) into the staged Guest Tools tree so the packaged installer media
 trusts the exact certificate used to sign the driver catalogs.
 
 Additionally, when staging from the CI packages layout (`out/packages/<driver>/<arch>`), the script
 refuses to include any driver package that does not have a corresponding `drivers/<driver>/ci-package.json`.
 
-For WHQL/production-signed drivers, pass `-SigningPolicy none` to build Guest Tools media
+For WHQL/production-signed drivers, pass `-SigningPolicy production` (or `none`) to build Guest Tools media
 without injecting (or requiring) any custom certificate files.
 
 Additionally, `aero_packager` generates `guest-tools/config/devices.cmd` from the canonical

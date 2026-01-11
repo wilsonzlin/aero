@@ -395,7 +395,7 @@ powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-guest-tools-from
   -OutDir .\dist\guest-tools `
   -Version 0.0.0 `
   -BuildId local `
-  -SigningPolicy testsigning
+  -SigningPolicy test
 ```
 
 On Linux/macOS, you can either extract first and pass `-VirtioWinRoot`, pass `-VirtioWinIso` directly under `pwsh`

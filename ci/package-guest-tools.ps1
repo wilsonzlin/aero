@@ -5,7 +5,7 @@
 # Inputs:
 #   - Signed driver packages (typically `out/packages/**/<arch>/...`)
 #   - Optional signing certificate used for the driver catalogs (typically `out/certs/aero-test.cer`;
-#     required when `-SigningPolicy` is `testsigning`/`nointegritychecks`)
+#     required when `-SigningPolicy` resolves to `test`)
 #   - Guest Tools scripts/config (`guest-tools/`)
 #
 # Outputs (in -OutDir):
@@ -24,13 +24,18 @@ param(
 
   # Driver signing / boot policy embedded in Guest Tools manifest.json.
   #
-  # - testsigning: media is intended for test-signed/custom-signed drivers (default)
-  # - nointegritychecks: media may prompt to disable signature enforcement (not recommended)
-  # - none: media is intended for WHQL/production-signed drivers (no cert injection)
-  [ValidateSet("none", "testsigning", "nointegritychecks")]
-  [string] $SigningPolicy = "testsigning",
+  # - test: media is intended for test-signed/custom-signed drivers (default)
+  # - production: media is intended for WHQL/production-signed drivers (no cert injection)
+  # - none: same as production (development use)
+  #
+  # Legacy aliases accepted:
+  # - testsigning / test-signing -> test
+  # - nointegritychecks / no-integrity-checks -> none
+  # - prod / whql -> production
+  [ValidateSet("test", "production", "none", "testsigning", "test-signing", "nointegritychecks", "no-integrity-checks", "prod", "whql")]
+  [string] $SigningPolicy = "test",
 
-  # Public certificate used to sign the driver catalogs (required unless SigningPolicy=none).
+  # Public certificate used to sign the driver catalogs (required when SigningPolicy=test).
   [string] $CertPath = "out/certs/aero-test.cer",
 
   [string] $SpecPath = "tools/packaging/specs/win7-aero-guest-tools.json",
@@ -78,6 +83,21 @@ function Require-Command {
     throw "Required tool not found on PATH: $Name"
   }
   return $cmd.Source
+}
+
+function Normalize-SigningPolicy {
+  param([Parameter(Mandatory = $true)][string] $Policy)
+
+  $p = $Policy.Trim().ToLowerInvariant()
+  switch ($p) {
+    "testsigning" { return "test" }
+    "test-signing" { return "test" }
+    "nointegritychecks" { return "none" }
+    "no-integrity-checks" { return "none" }
+    "prod" { return "production" }
+    "whql" { return "production" }
+    default { return $p }
+  }
 }
 
 function Try-GetGitValue {
@@ -657,13 +677,16 @@ $certPathResolved = Resolve-RepoPath -Path $CertPath
 $specPathResolved = Resolve-RepoPath -Path $SpecPath
 $outDirResolved = Resolve-RepoPath -Path $OutDir
 
+$SigningPolicy = Normalize-SigningPolicy -Policy $SigningPolicy
+
 if (-not (Test-Path -LiteralPath $inputRootResolved)) {
   throw "InputRoot does not exist: '$inputRootResolved'."
 }
 if (-not (Test-Path -LiteralPath $guestToolsResolved -PathType Container)) {
   throw "GuestToolsDir does not exist: '$guestToolsResolved'."
 }
-if ($SigningPolicy -ine "none") {
+$includeCerts = $SigningPolicy -eq "test"
+if ($includeCerts) {
   if (-not (Test-Path -LiteralPath $certPathResolved -PathType Leaf)) {
     throw "CertPath does not exist: '$certPathResolved'."
   }
@@ -717,7 +740,6 @@ try {
   Ensure-EmptyDirectory -Path $stageInputExtract
 
   Write-Host "Staging Guest Tools..."
-  $includeCerts = $SigningPolicy -ine "none"
   Stage-GuestTools -SourceDir $guestToolsResolved -DestDir $stageGuestTools -CertSourcePath $certPathResolved -IncludeCerts:$includeCerts
 
   Write-Host "Staging signed drivers..."

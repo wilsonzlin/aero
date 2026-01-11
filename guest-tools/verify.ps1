@@ -1502,7 +1502,7 @@ try {
     if ((-not $certFiles -or $certFiles.Count -eq 0) -and $setupCertChecks.Count -eq 0) {
         if ($certsRequired -eq $false) {
             $certStatus = "PASS"
-            $certSummary = "No certificate files found under Guest Tools root/certs, and none are required by signing_policy=none."
+            $certSummary = ("No certificate files found under Guest Tools root/certs, and none are required by signing_policy=" + $signingPolicy + ".")
             $certDetails += "If you are using custom-signed/test-signed drivers, rebuild Guest Tools with a cert under certs\\ and signing_policy=test."
         } else {
             $certStatus = "WARN"

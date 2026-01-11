@@ -1,5 +1,5 @@
-mod iso9660;
 mod guest_tools_config;
+mod iso9660;
 mod manifest;
 mod spec;
 mod windows_device_contract;
@@ -11,12 +11,12 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-pub use iso9660::read_joliet_file_entries;
-pub use iso9660::read_joliet_tree;
-pub use iso9660::{IsoFileEntry, IsoFileTree};
 pub use guest_tools_config::generate_guest_tools_devices_cmd_bytes;
 pub use guest_tools_config::generate_guest_tools_devices_cmd_bytes_with_overrides;
 pub use guest_tools_config::GuestToolsDevicesCmdServiceOverrides;
+pub use iso9660::read_joliet_file_entries;
+pub use iso9660::read_joliet_tree;
+pub use iso9660::{IsoFileEntry, IsoFileTree};
 pub use manifest::{Manifest, ManifestFileEntry, SigningPolicy};
 pub use spec::{DriverSpec, PackagingSpec};
 
@@ -58,8 +58,8 @@ pub fn package_guest_tools(config: &PackageConfig) -> Result<PackageOutputs> {
     let spec = PackagingSpec::load(&config.spec_path).with_context(|| "load packaging spec")?;
 
     let devices_cmd_path = config.guest_tools_dir.join("config").join("devices.cmd");
-    let devices_cmd_vars =
-        read_devices_cmd_vars(&devices_cmd_path).with_context(|| "read guest-tools/config/devices.cmd")?;
+    let devices_cmd_vars = read_devices_cmd_vars(&devices_cmd_path)
+        .with_context(|| "read guest-tools/config/devices.cmd")?;
 
     let driver_plan = validate_drivers(&spec, &config.drivers_dir, &devices_cmd_vars)
         .with_context(|| "validate driver artifacts")?;
@@ -575,7 +575,11 @@ fn validate_driver_dir(
         })?;
         let hwids = parse_devices_cmd_token_list(raw);
         if hwids.is_empty() {
-            bail!("driver {} devices.cmd variable {} is empty", driver.name, var);
+            bail!(
+                "driver {} devices.cmd variable {} is empty",
+                driver.name,
+                var
+            );
         }
         // devices.cmd tends to list the full set of enumerated HWIDs (including SUBSYS/REV
         // qualifiers) because setup.cmd uses them for CriticalDeviceDatabase seeding.
@@ -881,7 +885,9 @@ fn collect_inf_references(inf_text: &str) -> (BTreeSet<String>, bool) {
                 // Best-effort: `CopyINF` can be used to pull additional INF files into the driver
                 // package; `pnputil -a` expects these to exist relative to the staging directory.
                 for token in value.split(',') {
-                    let token = normalize_inf_path_token(token).trim_start_matches('@').to_string();
+                    let token = normalize_inf_path_token(token)
+                        .trim_start_matches('@')
+                        .to_string();
                     if token.is_empty() || token.contains('%') {
                         continue;
                     }

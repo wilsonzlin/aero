@@ -11,9 +11,7 @@ fn guest_tools_devices_cmd_is_generated_from_device_contract() -> anyhow::Result
     let packager_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let repo_root = packager_root.join("..").join("..").join("..");
 
-    let contract_path = repo_root
-        .join("docs")
-        .join("windows-device-contract.json");
+    let contract_path = repo_root.join("docs").join("windows-device-contract.json");
     let devices_cmd_path = repo_root
         .join("guest-tools")
         .join("config")

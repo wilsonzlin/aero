@@ -29,4 +29,3 @@ pub fn load_windows_device_contract(path: &Path) -> Result<WindowsDeviceContract
         serde_json::from_slice(&bytes).with_context(|| format!("parse {}", path.display()))?;
     Ok(contract)
 }
-

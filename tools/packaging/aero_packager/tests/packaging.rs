@@ -601,10 +601,7 @@ fn package_rejects_private_key_materials() -> anyhow::Result<()> {
         if let Some(parent) = dst.parent() {
             fs::create_dir_all(parent)?;
         }
-        fs::write(
-            &dst,
-            b"dummy secret",
-        )?;
+        fs::write(&dst, b"dummy secret")?;
 
         let out_dir = tempfile::tempdir()?;
         let config = aero_packager::PackageConfig {
@@ -789,7 +786,10 @@ fn debug_symbols_are_excluded_from_packaged_driver_dirs() -> anyhow::Result<()> 
             ("test.tlog", b"dummy tlog".as_slice()),
             ("test.log", b"dummy log".as_slice()),
         ] {
-            fs::write(drivers_tmp.path().join(format!("{arch}/testdrv/{name}")), contents)?;
+            fs::write(
+                drivers_tmp.path().join(format!("{arch}/testdrv/{name}")),
+                contents,
+            )?;
         }
     }
 
@@ -815,7 +815,10 @@ fn debug_symbols_are_excluded_from_packaged_driver_dirs() -> anyhow::Result<()> 
         "drivers/x86/testdrv/test.log",
         "drivers/amd64/testdrv/test.log",
     ] {
-        assert!(!tree.contains(unexpected), "unexpected file packaged: {unexpected}");
+        assert!(
+            !tree.contains(unexpected),
+            "unexpected file packaged: {unexpected}"
+        );
     }
 
     // Excluded debug symbols should not affect deterministic outputs.
@@ -885,7 +888,8 @@ fn copyinf_directives_are_validated() -> anyhow::Result<()> {
     let mut out_lines = Vec::new();
     for line in original.lines() {
         out_lines.push(line.to_string());
-        if line.trim()
+        if line
+            .trim()
             .eq_ignore_ascii_case("CopyFiles=DriverCopyFiles,CoInstaller_CopyFiles")
         {
             out_lines.push("CopyINF=missing.inf".to_string());
@@ -1039,10 +1043,17 @@ fn wdfcoinstaller_mentioned_only_in_comment_does_not_require_payload() -> anyhow
             }
             lines.push(line.to_string());
         }
-        lines.insert(1, "; WdfCoInstaller is not required on this platform".to_string());
+        lines.insert(
+            1,
+            "; WdfCoInstaller is not required on this platform".to_string(),
+        );
         fs::write(inf_path, lines.join("\n") + "\n")?;
 
-        fs::remove_file(drivers_tmp.path().join(format!("{arch}/testdrv/WdfCoInstaller01009.dll")))?;
+        fs::remove_file(
+            drivers_tmp
+                .path()
+                .join(format!("{arch}/testdrv/WdfCoInstaller01009.dll")),
+        )?;
     }
 
     let out = tempfile::tempdir()?;
@@ -1085,7 +1096,8 @@ fn copyfiles_section_names_with_dots_are_treated_as_sections() -> anyhow::Result
         let original = fs::read_to_string(&inf_path)?;
         let mut out = Vec::new();
         for line in original.lines() {
-            if line.trim()
+            if line
+                .trim()
                 .eq_ignore_ascii_case("CopyFiles=DriverCopyFiles,CoInstaller_CopyFiles")
             {
                 out.push("CopyFiles=DriverCopyFiles.NT,CoInstaller_CopyFiles".to_string());
@@ -1150,9 +1162,7 @@ fn windows_shell_metadata_files_are_excluded_from_driver_dirs() -> anyhow::Resul
     copy_dir_all(&drivers_dir, drivers_tmp.path())?;
     for arch in ["x86", "amd64"] {
         fs::write(
-            drivers_tmp
-                .path()
-                .join(format!("{arch}/testdrv/Thumbs.db")),
+            drivers_tmp.path().join(format!("{arch}/testdrv/Thumbs.db")),
             b"dummy thumbs",
         )?;
         fs::write(
@@ -1179,7 +1189,10 @@ fn windows_shell_metadata_files_are_excluded_from_driver_dirs() -> anyhow::Resul
         "drivers/x86/testdrv/desktop.ini",
         "drivers/amd64/testdrv/desktop.ini",
     ] {
-        assert!(!tree.contains(unexpected), "unexpected file packaged: {unexpected}");
+        assert!(
+            !tree.contains(unexpected),
+            "unexpected file packaged: {unexpected}"
+        );
     }
 
     // Excluding metadata files should keep outputs stable.

@@ -48,7 +48,12 @@ fn device_by_name<'a>(
     devices
         .iter()
         .find(|d| d.device.eq_ignore_ascii_case(name))
-        .ok_or_else(|| anyhow::anyhow!("{} is missing required device entry: {name}", contract_path.display()))
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "{} is missing required device entry: {name}",
+                contract_path.display()
+            )
+        })
 }
 
 pub fn generate_guest_tools_devices_cmd_bytes(contract_path: &Path) -> Result<Vec<u8>> {

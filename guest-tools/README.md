@@ -42,10 +42,10 @@ Designed for the standard flow:
 2. Installs Aero signing certificate(s) from `certs\` (`*.cer`, `*.crt`, `*.p7b`) into:
    - `Root` (Trusted Root Certification Authorities)
    - `TrustedPublisher` (Trusted Publishers)
-3. On **Windows 7 x64**, may enable a driver-signing boot policy depending on `manifest.json`:
-   - `testsigning` (`bcdedit /set testsigning on`)
-   - `nointegritychecks` (`bcdedit /set nointegritychecks on`) (**not recommended**)
-   - `none` (do not prompt or change boot policy; for WHQL/production-signed drivers)
+3. On **Windows 7 x64**, may prompt to enable **Test Signing** depending on `manifest.json` `signing_policy`:
+   - `test`: test-signed/custom-signed drivers are expected; `setup.cmd` may prompt to enable Test Signing.
+   - `production` / `none`: production/WHQL-signed drivers are expected; `setup.cmd` does **not** prompt by default.
+   - `nointegritychecks` is supported as an **explicit** override flag (`setup.cmd /nointegritychecks`) but is not enabled automatically by policy (not recommended).
 4. Stages all driver packages found under:
    - `drivers\x86\` (on Win7 x86)
    - `drivers\amd64\` (on Win7 x64)
@@ -79,14 +79,15 @@ Guest Tools media built by `tools/packaging/aero_packager` includes a `manifest.
 
 `setup.cmd` uses this policy to decide whether to prompt for enabling Test Mode / signature bypass on **Windows 7 x64**:
 
-- `none`: do not prompt or change `bcdedit` settings (for WHQL/production-signed drivers).
-- `production`: same behavior as `none`, but indicates WHQL/production-signed driver catalogs.
 - `test`: prompt to enable Test Signing (default for dev/test builds).
+- `production`: do not prompt or change `bcdedit` settings (for WHQL/production-signed drivers).
+- `none`: same as `production` for certificate/Test Signing behavior (development use).
 
 Legacy values in older `manifest.json` are supported and normalized:
 
 - `testsigning` / `test-signing` → `test`
 - `nointegritychecks` / `no-integrity-checks` → `none`
+- `prod` / `whql` → `production`
 
 Explicit command-line flags override the manifest.
 
@@ -95,8 +96,7 @@ Optional flags:
 - `setup.cmd /force` (or `setup.cmd /quiet`)  
   Fully non-interactive/unattended mode:
    - implies `/noreboot` (never prompts reboot/shutdown)
-   - on x64, applies the effective `signing_policy` without prompting (e.g. enables Test Signing or `nointegritychecks`)
-     - use `/forcesigningpolicy:none` to keep boot policy unchanged
+   - on x64, implies `/testsigning` only when `signing_policy=test` (unless `/notestsigning` is provided)
 - `setup.cmd /stageonly`  
   Only adds driver packages to the Driver Store (does not attempt immediate installs).
 - `setup.cmd /testsigning`  
@@ -110,7 +110,8 @@ Optional flags:
 - `setup.cmd /forcenointegritychecks`  
   Alias of `/nointegritychecks` (overrides `manifest.json`).
 - `setup.cmd /forcesigningpolicy:none|test|production`  
-  Override the `signing_policy` read from `manifest.json` (if present; legacy aliases: `testsigning`→`test`, `nointegritychecks`→`none`).
+  Override the `signing_policy` read from `manifest.json` (if present).
+  - legacy aliases accepted: `testsigning`→`test`, `nointegritychecks`→`none`
 - `setup.cmd /noreboot`  
   Do not prompt for shutdown/reboot at the end.
 - `setup.cmd /skipstorage` (alias: `/skip-storage`)  
@@ -122,7 +123,7 @@ Exit codes (for automation):
 - `0`: success
 - `10`: Administrator privileges required
 - `11`: driver directory missing (`drivers\\<arch>\\`)
-- `12`: required certificate file(s) missing under `certs\\` (when `signing_policy != none`)
+- `12`: required certificate file(s) missing under `certs\\` (when `signing_policy=test`)
 - `13`: `AERO_VIRTIO_BLK_SERVICE` does not match any `AddService` name in the packaged driver INFs (`drivers\\<arch>\\...`)
 
 ## Building Guest Tools media for WHQL / production-signed drivers
@@ -134,7 +135,7 @@ If you are shipping only WHQL/production-signed drivers (for example from `virti
 
 When building artifacts with `tools/packaging/aero_packager`, set:
 
-- `--signing-policy none` (or `AERO_GUEST_TOOLS_SIGNING_POLICY=none`)
+- `--signing-policy production` (or `none`)
 
 and ensure the input Guest Tools `certs\` directory contains **zero** certificate files.
 
@@ -157,7 +158,7 @@ Optional flags:
 - `uninstall.cmd /noreboot`  
   Do not prompt for shutdown/reboot at the end.
 
-`uninstall.cmd` only prompts about Test Signing / `nointegritychecks` if `setup.cmd` previously enabled them (marker files under `C:\AeroGuestTools\`). For `signing_policy=none` media, these markers are not created by default.
+`uninstall.cmd` only prompts about Test Signing / `nointegritychecks` if `setup.cmd` previously enabled them (marker files under `C:\AeroGuestTools\`). For `signing_policy=production|none` media, these markers are not created by default.
 
 Output:
 

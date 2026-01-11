@@ -13,7 +13,7 @@ param(
   # Skip the second Guest Tools packaging run that validates wrapper defaults.
   # Useful for reducing CI time when the defaults check is already covered by another job.
   [switch]$SkipGuestToolsDefaultsCheck,
-  # Also validate the Guest Tools packaging path with a non-default signing policy (testsigning),
+  # Also validate the Guest Tools packaging path with a non-default signing policy (`test`),
   # ensuring certificate inclusion/requirements are enforced correctly.
   [switch]$TestSigningPolicies
 )
@@ -554,12 +554,12 @@ if ($TestSigningPolicies) {
   Ensure-EmptyDirectory -Path $guestToolsTestSigningOutDir
   $guestToolsTestSigningLog = Join-Path $logsDir "make-guest-tools-from-virtio-win-testsigning.log"
 
-  Write-Host "Running make-guest-tools-from-virtio-win.ps1 (signing-policy testsigning)..."
+  Write-Host "Running make-guest-tools-from-virtio-win.ps1 (signing-policy test)..."
   $guestToolsTestSigningArgs = @(
     "-OutDir", $guestToolsTestSigningOutDir,
     "-Profile", $resolvedGuestToolsProfile,
     "-SpecPath", $GuestToolsSpecPath,
-    "-SigningPolicy", "testsigning",
+    "-SigningPolicy", "test",
     "-Version", "0.0.0",
     "-BuildId", "ci-testsigning",
     "-CleanStage"
@@ -571,29 +571,29 @@ if ($TestSigningPolicies) {
   }
   & pwsh -NoProfile -ExecutionPolicy Bypass -File $guestToolsScript @guestToolsTestSigningArgs *>&1 | Tee-Object -FilePath $guestToolsTestSigningLog
   if ($LASTEXITCODE -ne 0) {
-    throw "make-guest-tools-from-virtio-win.ps1 (testsigning) failed (exit $LASTEXITCODE). See $guestToolsTestSigningLog"
+    throw "make-guest-tools-from-virtio-win.ps1 (signing_policy=test) failed (exit $LASTEXITCODE). See $guestToolsTestSigningLog"
   }
 
   $testSigningManifestPath = Join-Path $guestToolsTestSigningOutDir "manifest.json"
   if (-not (Test-Path -LiteralPath $testSigningManifestPath -PathType Leaf)) {
-    throw "Expected Guest Tools testsigning manifest not found: $testSigningManifestPath"
+    throw "Expected Guest Tools test-signing manifest not found: $testSigningManifestPath"
   }
   $testSigningManifest = Get-Content -LiteralPath $testSigningManifestPath -Raw | ConvertFrom-Json
   if ($testSigningManifest.package.build_id -ne "ci-testsigning") {
-    throw "Guest Tools testsigning manifest build_id mismatch: expected ci-testsigning, got $($testSigningManifest.package.build_id)"
+    throw "Guest Tools test-signing manifest build_id mismatch: expected ci-testsigning, got $($testSigningManifest.package.build_id)"
   }
   $testSigningPolicy = ("" + $testSigningManifest.signing_policy).ToLowerInvariant()
   if (($testSigningPolicy -eq "testsigning") -or ($testSigningPolicy -eq "test-signing")) { $testSigningPolicy = "test" }
   if ($testSigningPolicy -ne "test") {
-    throw "Guest Tools testsigning manifest signing_policy mismatch: expected test, got $($testSigningManifest.signing_policy)"
+    throw "Guest Tools test-signing manifest signing_policy mismatch: expected test, got $($testSigningManifest.signing_policy)"
   }
   if ($testSigningManifest.certs_required -ne $true) {
-    throw "Guest Tools testsigning manifest certs_required mismatch: expected true, got $($testSigningManifest.certs_required)"
+    throw "Guest Tools test-signing manifest certs_required mismatch: expected true, got $($testSigningManifest.certs_required)"
   }
   $testSigningPaths = @($testSigningManifest.files | ForEach-Object { $_.path })
   $testSigningCerts = @($testSigningPaths | Where-Object { $_ -match '^certs/.*\.(cer|crt|p7b)$' })
   if ($testSigningCerts.Count -eq 0) {
-    throw "Guest Tools testsigning output contained no certificate artifacts under certs/*.cer|*.crt|*.p7b"
+    throw "Guest Tools test-signing output contained no certificate artifacts under certs/*.cer|*.crt|*.p7b"
   }
 }
 

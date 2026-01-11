@@ -103,7 +103,10 @@ impl From<PackagingSpecRaw> for PackagingSpec {
                         existing.expected_hardware_ids.push(hwid);
                     }
                 }
-                if existing.expected_hardware_ids_from_devices_cmd_var.is_none() {
+                if existing
+                    .expected_hardware_ids_from_devices_cmd_var
+                    .is_none()
+                {
                     existing.expected_hardware_ids_from_devices_cmd_var =
                         legacy.expected_hardware_ids_from_devices_cmd_var;
                 }
@@ -115,7 +118,8 @@ impl From<PackagingSpecRaw> for PackagingSpec {
                 name: legacy.name,
                 required: true,
                 expected_hardware_ids: legacy.expected_hardware_ids,
-                expected_hardware_ids_from_devices_cmd_var: legacy.expected_hardware_ids_from_devices_cmd_var,
+                expected_hardware_ids_from_devices_cmd_var: legacy
+                    .expected_hardware_ids_from_devices_cmd_var,
                 allow_extensions: Vec::new(),
                 allow_path_regexes: Vec::new(),
             });

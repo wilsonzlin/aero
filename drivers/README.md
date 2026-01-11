@@ -141,7 +141,8 @@ Profiles:
 Signing policy:
 
 - Default is `-SigningPolicy none` (for WHQL/production-signed virtio-win drivers; no cert injection).
-- Override with `-SigningPolicy testsigning|nointegritychecks` for test-signed/custom-signed driver bundles.
+- Override with `-SigningPolicy test` for test-signed/custom-signed driver bundles.
+  - Legacy alias accepted: `testsigning` (maps to `test`).
 
 This emits `aero-guest-tools.iso` and `aero-guest-tools.zip` under `dist/guest-tools/`.
 

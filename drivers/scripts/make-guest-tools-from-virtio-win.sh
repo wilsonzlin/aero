@@ -17,7 +17,8 @@ Options:
   --version <ver>              Package version (default: 0.0.0)
   --build-id <id>              Build ID (default: local)
   --profile <minimal|full>     Packaging profile (default: minimal)
-  --signing-policy <policy>    Signing policy (none|testsigning|nointegritychecks) (default: none)
+  --signing-policy <policy>    Signing policy (test|production|none) (default: none)
+                               (legacy aliases: testsigning/test-signing -> test; nointegritychecks -> none; whql/prod -> production)
   --keep-extracted             Do not delete the temporary extracted virtio-win root
   -h, --help                   Show this help
 

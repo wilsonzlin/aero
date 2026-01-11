@@ -48,13 +48,18 @@ param(
 
   # Driver signing / boot policy embedded in Guest Tools manifest.json.
   #
-  # - testsigning: prompt to enable Test Signing on Win7 x64
-  # - nointegritychecks: prompt to disable signature enforcement on Win7 x64
-  # - none: do not prompt or change boot policy (for WHQL/production-signed drivers; default)
-  [ValidateSet("none", "testsigning", "nointegritychecks")]
+  # - test: media is intended for test-signed/custom-signed drivers
+  # - production: media is intended for WHQL/production-signed drivers (default behavior: no cert injection, no Test Signing prompt)
+  # - none: same as production (development use)
+  #
+  # Legacy aliases accepted:
+  # - testsigning / test-signing -> test
+  # - nointegritychecks / no-integrity-checks -> none
+  # - prod / whql -> production
+  [ValidateSet("none", "production", "test", "testsigning", "test-signing", "nointegritychecks", "no-integrity-checks", "prod", "whql")]
   [string]$SigningPolicy = "none",
 
-  # Public certificate to embed under Guest Tools `certs/` when SigningPolicy != none.
+  # Public certificate to embed under Guest Tools `certs/` when SigningPolicy=test.
   # For virtio-win this is typically unnecessary (WHQL/production-signed), but it is
   # required when packaging test-signed/custom-signed driver bundles.
   [string]$CertPath,
@@ -106,6 +111,22 @@ function Require-Command {
   }
   return $cmd.Source
 }
+
+function Normalize-SigningPolicy {
+  param([Parameter(Mandatory = $true)][string]$Policy)
+  $p = $Policy.Trim().ToLowerInvariant()
+  switch ($p) {
+    "testsigning" { return "test" }
+    "test-signing" { return "test" }
+    "nointegritychecks" { return "none" }
+    "no-integrity-checks" { return "none" }
+    "prod" { return "production" }
+    "whql" { return "production" }
+    default { return $p }
+  }
+}
+
+$SigningPolicy = Normalize-SigningPolicy -Policy $SigningPolicy
 
 $repoRoot = Resolve-RepoRoot
 
@@ -288,7 +309,7 @@ Write-Host "  $guestToolsStageDir"
 
 # For WHQL/production-signed driver bundles (virtio-win), do not ship/install any
 # custom root certificates by default.
-if ($SigningPolicy -eq "none") {
+if ($SigningPolicy -ne "test") {
   $certsDir = Join-Path $guestToolsStageDir "certs"
   if (Test-Path -LiteralPath $certsDir -PathType Container) {
     Get-ChildItem -LiteralPath $certsDir -File -ErrorAction SilentlyContinue |
