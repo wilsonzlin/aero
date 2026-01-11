@@ -18,6 +18,10 @@ x-relay-env-base: &relay-env-base
   # Optional: bridge a WebRTC DataChannel labeled `l2` to a backend WebSocket
   # endpoint (typically `aero-l2-proxy`).
   #
+  # The `l2` DataChannel MUST be fully reliable and ordered:
+  # - ordered=true
+  # - do NOT set maxRetransmits/maxPacketLifeTime (partial reliability)
+  #
   # Example:
   #   L2_BACKEND_WS_URL=ws://host.docker.internal:8090/l2
   #   L2_BACKEND_AUTH_FORWARD_MODE=query
