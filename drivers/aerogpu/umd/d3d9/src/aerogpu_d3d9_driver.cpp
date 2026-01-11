@@ -5936,6 +5936,58 @@ HRESULT AEROGPU_D3D9_CALL device_get_render_target_data(
     return trace.ret(kD3DErrInvalidCall);
   }
 
+  const bool transfer_supported =
+      dev->adapter && dev->adapter->umd_private_valid &&
+      (dev->adapter->umd_private.device_features & AEROGPU_UMDPRIV_FEATURE_TRANSFER) != 0;
+
+  if (!transfer_supported) {
+    // Fallback: when the device does not advertise transfer/copy support, avoid
+    // emitting COPY_TEXTURE2D. Instead, submit any pending GPU work and copy via
+    // CPU-visible storage/allocation mappings.
+    uint64_t fence = 0;
+    {
+      std::lock_guard<std::mutex> lock(dev->mutex);
+      fence = submit(dev);
+    }
+
+    const FenceWaitResult wait_res = wait_for_fence(dev, fence, /*timeout_ms=*/2000);
+    if (wait_res == FenceWaitResult::Failed) {
+      return trace.ret(E_FAIL);
+    }
+    if (wait_res == FenceWaitResult::NotReady) {
+      return trace.ret(kD3dErrWasStillDrawing);
+    }
+
+    const HRESULT hr = copy_surface_rects(dev, src, dst, /*rects=*/nullptr, /*rect_count=*/0);
+    if (FAILED(hr)) {
+      return trace.ret(hr);
+    }
+
+    // If the destination is allocation-backed, the host only observes CPU writes
+    // when we mark the allocation dirty.
+    if (dst->handle != 0 && dst->backing_alloc_id != 0 && dst->size_bytes) {
+      std::lock_guard<std::mutex> lock(dev->mutex);
+
+      if (!ensure_cmd_space(dev, align_up(sizeof(aerogpu_cmd_resource_dirty_range), 4))) {
+        return trace.ret(E_OUTOFMEMORY);
+      }
+      const HRESULT track_hr = track_resource_allocation_locked(dev, dst, /*write=*/false);
+      if (FAILED(track_hr)) {
+        return trace.ret(track_hr);
+      }
+      auto* cmd = append_fixed_locked<aerogpu_cmd_resource_dirty_range>(dev, AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+      if (!cmd) {
+        return trace.ret(E_OUTOFMEMORY);
+      }
+      cmd->resource_handle = dst->handle;
+      cmd->reserved0 = 0;
+      cmd->offset_bytes = 0;
+      cmd->size_bytes = dst->size_bytes;
+    }
+
+    return trace.ret(S_OK);
+  }
+
   uint64_t fence = 0;
   {
     std::lock_guard<std::mutex> lock(dev->mutex);
@@ -6019,6 +6071,8 @@ HRESULT AEROGPU_D3D9_CALL device_copy_rects(
   // WRITEBACK_DST so the bytes land in guest memory for CPU LockRect.
   if (dst->pool == kD3DPOOL_SYSTEMMEM &&
       dst->backing_alloc_id != 0 &&
+      dev->adapter && dev->adapter->umd_private_valid &&
+      (dev->adapter->umd_private.device_features & AEROGPU_UMDPRIV_FEATURE_TRANSFER) != 0 &&
       src->handle != 0 &&
       dst->handle != 0 &&
       src->format == dst->format &&
