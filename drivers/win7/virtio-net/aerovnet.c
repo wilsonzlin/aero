@@ -1,6 +1,8 @@
 #include "aerovnet.h"
 
+#include <initguid.h>
 #include <wdmguid.h>
+#undef INITGUID
 
 static NDIS_HANDLE g_NdisDriverHandle = NULL;
 
