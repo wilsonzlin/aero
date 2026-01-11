@@ -709,6 +709,7 @@ void DestroyKernelDeviceContext(AeroGpuDevice* dev) {
 
   dev->dma_buffer_private_data = nullptr;
   dev->dma_buffer_private_data_size = 0;
+  dev->monitored_fence_value = nullptr;
 }
 
 HRESULT InitKernelDeviceContext(AeroGpuDevice* dev, D3D10DDI_HADAPTER hAdapter) {
@@ -802,6 +803,15 @@ HRESULT InitKernelDeviceContext(AeroGpuDevice* dev, D3D10DDI_HADAPTER hAdapter) 
 
     dev->kmt_context = static_cast<D3DKMT_HANDLE>(D3dHandleToUintPtr(create_ctx.hContext));
     dev->kmt_fence_syncobj = static_cast<D3DKMT_HANDLE>(D3dHandleToUintPtr(create_ctx.hSyncObject));
+    dev->monitored_fence_value = nullptr;
+    __if_exists(D3DDDICB_CREATECONTEXT::pMonitoredFenceValue) {
+      dev->monitored_fence_value = reinterpret_cast<volatile uint64_t*>(create_ctx.pMonitoredFenceValue);
+    }
+    __if_exists(D3DDDICB_CREATECONTEXT::pFenceValue) {
+      if (!dev->monitored_fence_value) {
+        dev->monitored_fence_value = reinterpret_cast<volatile uint64_t*>(create_ctx.pFenceValue);
+      }
+    }
     __if_exists(D3DDDICB_CREATECONTEXT::pDmaBufferPrivateData) {
       dev->dma_buffer_private_data = create_ctx.pDmaBufferPrivateData;
     }
