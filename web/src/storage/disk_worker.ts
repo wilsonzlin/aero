@@ -33,6 +33,7 @@ import {
 } from "./import_export";
 import { CHUNKED_DISK_CHUNK_SIZE, RANGE_STREAM_CHUNK_SIZE } from "./chunk_sizes.ts";
 import { RemoteCacheManager, remoteChunkedDeliveryType, remoteRangeDeliveryType } from "./remote_cache_manager";
+import { OpfsLruChunkCache } from "./remote/opfs_lru_chunk_cache.ts";
 
 type DiskWorkerError = { message: string; name?: string; stack?: string };
 
@@ -617,21 +618,75 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
 
     case "stat_disk": {
       const meta = await requireDisk(backend, msg.payload.id);
-      let actualSize = meta.sizeBytes;
+      let actualSizeBytes = meta.sizeBytes;
+
       if (meta.source === "local") {
         if (meta.backend === "opfs") {
-          actualSize = await opfsGetDiskSizeBytes(meta.fileName);
+          actualSizeBytes = await opfsGetDiskSizeBytes(meta.fileName);
         }
-      } else {
-        if (meta.cache.backend === "opfs") {
+        postOk(requestId, { meta, actualSizeBytes });
+        return;
+      }
+
+      // Remote disks: report local storage usage best-effort.
+      if (meta.cache.backend !== "opfs") {
+        postOk(requestId, { meta, actualSizeBytes });
+        return;
+      }
+
+      let totalBytes = 0;
+
+      // Always include the overlay size when present; this is user state.
+      try {
+        totalBytes += await opfsGetDiskSizeBytes(meta.cache.overlayFileName);
+      } catch {
+        // ignore (overlay may not exist yet)
+      }
+
+      try {
+        const cacheKey = await RemoteCacheManager.deriveCacheKey({
+          imageId: meta.remote.imageId,
+          version: meta.remote.version,
+          deliveryType: meta.remote.delivery,
+        });
+
+        if (meta.remote.delivery === "range") {
+          // Range delivery caches via `OpfsLruChunkCache` (`RemoteStreamingDisk`). Prefer its accounting
+          // so we don't rely on the legacy `meta.cachedRanges` tracking.
           try {
-            actualSize = await opfsGetDiskSizeBytes(meta.cache.fileName);
+            const cache = await OpfsLruChunkCache.open({
+              cacheKey,
+              chunkSize: meta.cache.chunkSizeBytes,
+              // No eviction on a pure stats probe; do not mutate cache contents.
+              maxBytes: null,
+            });
+            totalBytes += (await cache.getStats()).totalBytes;
           } catch {
-            actualSize = meta.sizeBytes;
+            // Fall back to best-effort meta.json ranges if the chunk cache is unavailable.
+            const manager = await RemoteCacheManager.openOpfs();
+            const status = await manager.getCacheStatus(cacheKey);
+            if (status) totalBytes += status.cachedBytes;
           }
+        } else {
+          const manager = await RemoteCacheManager.openOpfs();
+          const status = await manager.getCacheStatus(cacheKey);
+          if (status) totalBytes += status.cachedBytes;
+        }
+      } catch {
+        // ignore cache probing failures
+      }
+
+      // Backwards compatibility: some older remote images stored cached bytes in a single sparse file.
+      if (totalBytes === 0) {
+        try {
+          totalBytes = await opfsGetDiskSizeBytes(meta.cache.fileName);
+        } catch {
+          // ignore
         }
       }
-      postOk(requestId, { meta, actualSizeBytes: actualSize });
+
+      actualSizeBytes = totalBytes;
+      postOk(requestId, { meta, actualSizeBytes });
       return;
     }
 
