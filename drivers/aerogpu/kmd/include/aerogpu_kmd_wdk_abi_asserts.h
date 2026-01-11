@@ -80,4 +80,51 @@ AEROGPU_ABI_STATIC_ASSERT((ULONG)DXGK_INTERRUPT_TYPE_CRTC_VSYNC == AEROGPU_KMD_W
                           "DXGK_INTERRUPT_TYPE_CRTC_VSYNC does not match expected value");
 #endif
 
+/* ---- CommitVidPn / VidPN mode structs ----------------------------------- */
+
+/*
+ * Capture ABI values used by AeroGpuDdiCommitVidPn mode caching.
+ */
+#if defined(AEROGPU_KMD_WDK_ABI_EXPECT_SIZEOF_DXGKARG_COMMITVIDPN)
+AEROGPU_ABI_STATIC_ASSERT(sizeof(DXGKARG_COMMITVIDPN) == AEROGPU_KMD_WDK_ABI_EXPECT_SIZEOF_DXGKARG_COMMITVIDPN,
+                          "sizeof(DXGKARG_COMMITVIDPN) does not match expected value");
+#endif
+
+#if defined(AEROGPU_KMD_WDK_ABI_EXPECT_OFFSETOF_DXGKARG_COMMITVIDPN_hFunctionalVidPn)
+AEROGPU_ABI_STATIC_ASSERT(offsetof(DXGKARG_COMMITVIDPN, hFunctionalVidPn) ==
+                              AEROGPU_KMD_WDK_ABI_EXPECT_OFFSETOF_DXGKARG_COMMITVIDPN_hFunctionalVidPn,
+                          "offsetof(DXGKARG_COMMITVIDPN, hFunctionalVidPn) does not match expected value");
+#endif
+
+#if defined(AEROGPU_KMD_WDK_ABI_EXPECT_SIZEOF_D3DKMDT_VIDPN_SOURCE_MODE)
+AEROGPU_ABI_STATIC_ASSERT(sizeof(D3DKMDT_VIDPN_SOURCE_MODE) == AEROGPU_KMD_WDK_ABI_EXPECT_SIZEOF_D3DKMDT_VIDPN_SOURCE_MODE,
+                          "sizeof(D3DKMDT_VIDPN_SOURCE_MODE) does not match expected value");
+#endif
+
+#if defined(AEROGPU_KMD_WDK_ABI_EXPECT_OFFSETOF_D3DKMDT_VIDPN_SOURCE_MODE_Type)
+AEROGPU_ABI_STATIC_ASSERT(offsetof(D3DKMDT_VIDPN_SOURCE_MODE, Type) ==
+                              AEROGPU_KMD_WDK_ABI_EXPECT_OFFSETOF_D3DKMDT_VIDPN_SOURCE_MODE_Type,
+                          "offsetof(D3DKMDT_VIDPN_SOURCE_MODE, Type) does not match expected value");
+#endif
+
+#if defined(AEROGPU_KMD_WDK_ABI_EXPECT_OFFSETOF_D3DKMDT_VIDPN_SOURCE_MODE_Format)
+AEROGPU_ABI_STATIC_ASSERT(offsetof(D3DKMDT_VIDPN_SOURCE_MODE, Format) ==
+                              AEROGPU_KMD_WDK_ABI_EXPECT_OFFSETOF_D3DKMDT_VIDPN_SOURCE_MODE_Format,
+                          "offsetof(D3DKMDT_VIDPN_SOURCE_MODE, Format) does not match expected value");
+#endif
+
+#if defined(AEROGPU_KMD_WDK_ABI_EXPECT_OFFSETOF_D3DKMDT_VIDPN_SOURCE_MODE_Format_Graphics_PrimSurfSize_cx)
+AEROGPU_ABI_STATIC_ASSERT(
+    offsetof(D3DKMDT_VIDPN_SOURCE_MODE, Format.Graphics.PrimSurfSize.cx) ==
+        AEROGPU_KMD_WDK_ABI_EXPECT_OFFSETOF_D3DKMDT_VIDPN_SOURCE_MODE_Format_Graphics_PrimSurfSize_cx,
+    "offsetof(D3DKMDT_VIDPN_SOURCE_MODE, Format.Graphics.PrimSurfSize.cx) does not match expected value");
+#endif
+
+#if defined(AEROGPU_KMD_WDK_ABI_EXPECT_OFFSETOF_D3DKMDT_VIDPN_SOURCE_MODE_Format_Graphics_PrimSurfSize_cy)
+AEROGPU_ABI_STATIC_ASSERT(
+    offsetof(D3DKMDT_VIDPN_SOURCE_MODE, Format.Graphics.PrimSurfSize.cy) ==
+        AEROGPU_KMD_WDK_ABI_EXPECT_OFFSETOF_D3DKMDT_VIDPN_SOURCE_MODE_Format_Graphics_PrimSurfSize_cy,
+    "offsetof(D3DKMDT_VIDPN_SOURCE_MODE, Format.Graphics.PrimSurfSize.cy) does not match expected value");
+#endif
+
 #endif /* AEROGPU_KMD_USE_WDK_DDI */
