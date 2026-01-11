@@ -31,7 +31,7 @@ And additional shared helpers:
 - **INTx helper (WDM):** `virtio_pci_intx_wdm.*` (ISR read-to-ack + DPC dispatch)
 - **Contract identity validation:** `virtio_pci_contract.*` (AERO-W7-VIRTIO v1 PCI identity)
 - **Split virtqueues:** `virtqueue_split.*` (portable split ring implementation)
-- **Legacy queue helper:** `virtio_queue.*` (alloc + legacy PFN queue programming)
+- **Legacy queue helper:** `virtio_queue.*` (alloc + PFN queue programming + notify)
 
 For a WDM-focused modern transport bring-up guide (caps + BAR mapping + queues + INTx), see:
 [`docs/windows/virtio-pci-modern-wdm.md`](../../../../docs/windows/virtio-pci-modern-wdm.md).
@@ -151,7 +151,7 @@ must link **exactly one** of them.
     - device config reads with `config_generation` retry logic (`VirtioPciReadDeviceConfig`)
     - queue programming via `queue_desc/queue_avail/queue_used` + `queue_enable`
     - notify doorbells + ISR read-to-ack
-  - Designed to be used with `virtqueue_split.*` (and driver-specific queue wrappers).
+  - Designed to be used with `virtqueue_split.*` (or a driver-specific split-ring wrapper).
 
 - `include/virtio_pci_modern_wdm.h` + `src/virtio_pci_modern_wdm.c`
   - Parses PCI capability list and discovers the required virtio vendor caps
@@ -196,8 +196,8 @@ must link **exactly one** of them.
 - `include/virtio_queue.h` + `src/virtio_queue.c`
   - Windows kernel convenience wrapper around **legacy/transitional** split rings:
     - allocates descriptor/avail/used in a single physically-contiguous block and maintains a descriptor free list
-    - programs queues via the legacy PFN register (`QUEUE_PFN = ring_pa >> 12`)
-    - kicks via the legacy `QUEUE_NOTIFY` I/O port register
+    - shares the ring with the device via `QUEUE_PFN = (ring_pa >> 12)` programming
+    - kicks the device via the legacy `QUEUE_NOTIFY` register
 
 - `include/virtio_os.h` + `os_shim/`
   - OS abstraction used by the portable code and host-side unit tests.
@@ -221,8 +221,11 @@ At a high level, drivers using Aero contract v1 devices should:
 5. **Read device-specific config** (optional; e.g. MAC address / capacity):
    - `VirtioPciReadDeviceConfig(&Dev, ...)`
 6. **Program queues** and cache notify addresses:
-   - Call `VirtioPciSetupQueue(...)` / `VirtioPciGetQueueNotifyAddress(...)`.
+   - Allocate split-ring memory (descriptor table + avail ring + used ring), then:
+     - `VirtioPciSetupQueue(&Dev, QueueIndex, DescPa, AvailPa, UsedPa)`
+     - optionally cache notify address with `VirtioPciGetQueueNotifyAddress(...)`
    - Use `virtqueue_split.*` (or your own queue wrapper) to manage split-ring state.
+   - `virtio_queue.*` is **legacy-only** and is not compatible with the modern miniport transport.
 7. **Handle INTx**:
    - Read the ISR status byte in the ISR to ACK/deassert (read-to-ack), then do
      queue work in a DPC.
