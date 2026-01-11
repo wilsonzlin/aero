@@ -120,3 +120,68 @@ fn set_report_enqueues_output_report() {
         }
     );
 }
+
+#[test]
+fn invalid_set_address_stalls() {
+    let mut dev = UsbHidPassthrough::default();
+
+    dev.handle_setup(SetupPacket {
+        request_type: 0x00,
+        request: 0x05,
+        value: 12,
+        index: 1,
+        length: 0,
+    });
+
+    let mut buf = [0u8; 0];
+    assert!(matches!(
+        dev.handle_in(0, &mut buf),
+        aero_usb::usb::UsbHandshake::Stall
+    ));
+    assert_eq!(dev.address(), 0);
+}
+
+#[test]
+fn aborted_set_address_does_not_apply_on_later_status_stage() {
+    let mut dev = UsbHidPassthrough::default();
+
+    dev.handle_setup(SetupPacket {
+        request_type: 0x00,
+        request: 0x05,
+        value: 12,
+        index: 0,
+        length: 0,
+    });
+
+    control_no_data(
+        &mut dev,
+        SetupPacket {
+            request_type: 0x00,
+            request: 0x09,
+            value: 1,
+            index: 0,
+            length: 0,
+        },
+    );
+
+    assert_eq!(dev.address(), 0);
+    assert!(dev.configured());
+}
+
+#[test]
+fn set_address_applies_on_status_stage() {
+    let mut dev = UsbHidPassthrough::default();
+
+    control_no_data(
+        &mut dev,
+        SetupPacket {
+            request_type: 0x00,
+            request: 0x05,
+            value: 12,
+            index: 0,
+            length: 0,
+        },
+    );
+
+    assert_eq!(dev.address(), 12);
+}
