@@ -1,4 +1,5 @@
 import type { PlatformFeatureReport } from "../platform/features";
+import { explainWebUsbError, formatWebUsbError } from "../platform/webusb_troubleshooting";
 import { WebUsbBackend, type SetupPacket } from "./webusb_backend";
 
 type ParsedDeviceDescriptor = {
@@ -29,30 +30,63 @@ function parseDeviceDescriptor(bytes: Uint8Array): ParsedDeviceDescriptor {
   return out;
 }
 
-function formatUsbError(err: unknown): string {
-  if (err instanceof DOMException) {
-    // `message` is sometimes empty; surface the name regardless.
-    return err.message ? `${err.name}: ${err.message}` : err.name;
-  }
-  if (err instanceof Error) return err.message;
-  return String(err);
+function summarizeUsbDevice(device: USBDevice): Record<string, unknown> {
+  return {
+    vendorId: hex16(device.vendorId),
+    productId: hex16(device.productId),
+    opened: device.opened,
+    productName: device.productName ?? null,
+    manufacturerName: device.manufacturerName ?? null,
+    serialNumber: device.serialNumber ?? null,
+  };
 }
 
-function appendHintForError(message: string, err: unknown): string {
-  if (!(err instanceof DOMException)) return message;
+function formatErrorWithHints(err: unknown): string {
+  const formatted = formatWebUsbError(err);
+  const explained = explainWebUsbError(err);
+  const parts: string[] = [explained.title];
+  if (explained.details) parts.push(explained.details);
+  if (formatted) parts.push(formatted);
+  if (explained.hints.length) {
+    parts.push(`Hints:\n${explained.hints.map((h) => `- ${h}`).join("\n")}`);
+  }
+  return parts.join("\n\n");
+}
 
-  // Map common WebUSB errors into more actionable hints.
-  if (err.name === "NotFoundError") {
-    return `${message}\n\nHint: The permission prompt was likely dismissed, or the device exposes only protected interfaces (e.g. HID) which WebUSB refuses to grant.`;
-  }
-  if (err.name === "SecurityError") {
-    return `${message}\n\nHint: WebUSB requires a secure context (HTTPS) and is only supported by some browsers (typically Chromium-based).`;
-  }
-  if (err.name === "NetworkError") {
-    return `${message}\n\nHint: The device may be disconnected or already in use by another application/driver.`;
-  }
+async function runWebUsbProbeWorker(msg: unknown, timeoutMs = 10_000): Promise<unknown> {
+  const worker = new Worker(new URL("./webusb_probe_worker.ts", import.meta.url), { type: "module" });
 
-  return message;
+  return await new Promise((resolve, reject) => {
+    const timeout = window.setTimeout(() => {
+      worker.terminate();
+      reject(new Error(`WebUSB probe worker timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    const cleanup = () => {
+      window.clearTimeout(timeout);
+      worker.terminate();
+    };
+
+    worker.addEventListener("message", (ev) => {
+      cleanup();
+      resolve(ev.data);
+    });
+    worker.addEventListener("messageerror", () => {
+      cleanup();
+      reject(new Error("WebUSB probe worker message deserialization failed"));
+    });
+    worker.addEventListener("error", (ev) => {
+      cleanup();
+      reject(new Error(ev instanceof ErrorEvent ? ev.message : String(ev)));
+    });
+
+    try {
+      worker.postMessage(msg);
+    } catch (err) {
+      cleanup();
+      reject(err);
+    }
+  });
 }
 
 export function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
@@ -67,9 +101,6 @@ export function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
   note.textContent =
     "WebUSB device permission requires a user gesture (button click) and may fail on unsupported browsers or for devices with protected interfaces.";
 
-  const actions = document.createElement("div");
-  actions.className = "row";
-
   const requestButton = document.createElement("button");
   requestButton.type = "button";
   requestButton.textContent = "Request USB device";
@@ -79,7 +110,25 @@ export function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
   openButton.textContent = "Open + read device descriptor";
   openButton.disabled = true;
 
-  actions.append(requestButton, openButton);
+  const listButton = document.createElement("button");
+  listButton.type = "button";
+  listButton.textContent = "List permitted devices (getDevices)";
+
+  const workerProbeButton = document.createElement("button");
+  workerProbeButton.type = "button";
+  workerProbeButton.textContent = "Probe worker WebUSB";
+
+  const cloneButton = document.createElement("button");
+  cloneButton.type = "button";
+  cloneButton.textContent = "Send selected device to worker";
+
+  const actions = document.createElement("div");
+  actions.className = "row";
+  actions.append(requestButton, openButton, listButton);
+
+  const workerActions = document.createElement("div");
+  workerActions.className = "row";
+  workerActions.append(workerProbeButton, cloneButton);
 
   const status = document.createElement("pre");
   status.className = "mono";
@@ -90,7 +139,7 @@ export function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
   const error = document.createElement("pre");
   error.className = "mono error";
 
-  panel.append(title, note, actions, status, output, error);
+  panel.append(title, note, actions, workerActions, status, output, error);
 
   let selected: USBDevice | null = null;
   let nextRequestId = 1;
@@ -103,15 +152,21 @@ export function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
       return;
     }
 
+    const userActivation = navigator.userActivation;
+    const secure = (globalThis as typeof globalThis & { isSecureContext?: boolean }).isSecureContext === true;
+    const envInfo =
+      `isSecureContext=${secure}\n` +
+      `crossOriginIsolated=${report.crossOriginIsolated}\n` +
+      `userActivation.isActive=${userActivation?.isActive ?? "n/a"}\n` +
+      `userActivation.hasBeenActive=${userActivation?.hasBeenActive ?? "n/a"}\n`;
+
     if (!selected) {
-      status.textContent = "WebUSB: supported. No device selected.";
+      status.textContent = `WebUSB: supported. No device selected.\n\n${envInfo}`;
       openButton.disabled = true;
       return;
     }
 
-    status.textContent = `Selected device: vendorId=${hex16(selected.vendorId)} productId=${hex16(selected.productId)} opened=${
-      selected.opened ? "true" : "false"
-    }`;
+    status.textContent = `Selected device: ${JSON.stringify(summarizeUsbDevice(selected))}\n\n${envInfo}`;
     openButton.disabled = false;
   };
 
@@ -138,14 +193,77 @@ export function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
       // Minimal filter list: `{}` matches any device (subject to browser restrictions).
       selected = await usb.requestDevice({ filters: [{}] });
       status.textContent = "Device selected.";
+      output.textContent = JSON.stringify({ selected: summarizeUsbDevice(selected) }, null, 2);
     } catch (err) {
-      const msg = appendHintForError(formatUsbError(err), err);
-      error.textContent = msg;
+      error.textContent = formatErrorWithHints(err);
       console.error(err);
       selected = null;
     } finally {
       requestButton.disabled = false;
       refreshStatus();
+    }
+  };
+
+  listButton.onclick = async () => {
+    error.textContent = "";
+    output.textContent = "";
+
+    if (!report.webusb) {
+      error.textContent = "WebUSB is not supported in this browser/context.";
+      return;
+    }
+
+    try {
+      const usb = navigator.usb;
+      if (!usb) throw new Error("navigator.usb is unavailable");
+      if (typeof usb.getDevices !== "function") throw new Error("navigator.usb.getDevices() is unavailable");
+
+      const devices = await usb.getDevices();
+      output.textContent = JSON.stringify(
+        {
+          count: devices.length,
+          devices: devices.map((d) => summarizeUsbDevice(d)),
+        },
+        null,
+        2,
+      );
+    } catch (err) {
+      error.textContent = formatErrorWithHints(err);
+      console.error(err);
+    } finally {
+      refreshStatus();
+    }
+  };
+
+  workerProbeButton.onclick = async () => {
+    error.textContent = "";
+    output.textContent = "";
+
+    try {
+      const resp = await runWebUsbProbeWorker({ type: "probe" });
+      output.textContent = JSON.stringify(resp, null, 2);
+    } catch (err) {
+      error.textContent = formatErrorWithHints(err);
+      console.error(err);
+    }
+  };
+
+  cloneButton.onclick = async () => {
+    error.textContent = "";
+    output.textContent = "";
+
+    if (!selected) {
+      error.textContent = "No device selected. Click “Request USB device” first.";
+      refreshStatus();
+      return;
+    }
+
+    try {
+      const resp = await runWebUsbProbeWorker({ type: "clone-test", device: selected });
+      output.textContent = JSON.stringify(resp, null, 2);
+    } catch (err) {
+      error.textContent = formatErrorWithHints(err);
+      console.error(err);
     }
   };
 
@@ -209,8 +327,7 @@ export function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
       output.textContent = `${header}\n\nDescriptor bytes:\n${formatHexBytes(completion.data)}\n\n${parsedLines}`;
       status.textContent = "OK.";
     } catch (err) {
-      const msg = appendHintForError(formatUsbError(err), err);
-      error.textContent = msg;
+      error.textContent = formatErrorWithHints(err);
       status.textContent = "Failed.";
       console.error(err);
     } finally {
