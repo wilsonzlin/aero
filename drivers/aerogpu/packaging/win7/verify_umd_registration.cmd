@@ -87,11 +87,11 @@ call :find_class_key "AeroGPU Display Adapter"
 if not defined AEROGPU_CLASS_KEY (
   rem Fallback: match by canonical HWID (helpful on localized OSes or when the
   rem adapter description string differs).
-  call :find_class_key "PCI\\VEN_A3A0&DEV_0001"
+  call :find_class_key "PCI\VEN_A3A0&DEV_0001"
 )
 if not defined AEROGPU_CLASS_KEY (
   rem Optional legacy bring-up identity.
-  call :find_class_key "PCI\\VEN_1AED&DEV_0001"
+  call :find_class_key "PCI\VEN_1AED&DEV_0001"
 )
 
 :found_key
