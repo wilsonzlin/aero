@@ -610,9 +610,11 @@ export class WebUsbPassthroughRuntime {
     if (this.#pollIntervalMs <= 0) return;
     if (this.#pollTimer !== undefined) return;
 
-    this.#pollTimer = setInterval(() => {
+    const timer = setInterval(() => {
       void this.pollOnce();
     }, this.#pollIntervalMs) as unknown as number;
+    (timer as unknown as { unref?: () => void }).unref?.();
+    this.#pollTimer = timer;
   }
 
   private stopPolling(): void {
