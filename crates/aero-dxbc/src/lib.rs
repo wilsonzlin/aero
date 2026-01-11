@@ -13,7 +13,8 @@
 mod dxbc;
 mod error;
 mod fourcc;
-mod signature;
+/// Parsers for DXBC signature chunks (`ISGN`, `OSGN`, `PSGN`, ...).
+pub mod signature;
 
 pub use crate::dxbc::{DxbcChunk, DxbcFile, DxbcHeader};
 pub use crate::error::DxbcError;

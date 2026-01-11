@@ -128,10 +128,13 @@ fn build_signature_chunk_v1(params: &[DxbcSignatureParameter]) -> Vec<u8> {
 
 #[test]
 fn parses_v1_signature_chunk_entries() {
-    let params = vec![
+    let mut params = vec![
         sig_param("POSITION", 0, 0, 0b0011, 0),
         sig_param("COLOR", 0, 1, 0b1111, 2),
     ];
+    // v1 layout stores min-precision as a full DWORD (ignored by aero-dxbc).
+    params[0].min_precision = 7;
+
     let chunk_bytes = build_signature_chunk_v1(&params);
     let sig = parse_signature_chunk(FOURCC_ISG1, &chunk_bytes).expect("parse ISG1 signature");
 
@@ -141,6 +144,7 @@ fn parses_v1_signature_chunk_entries() {
     assert_eq!(sig.parameters[0].register, 0);
     assert_eq!(sig.parameters[0].mask, 0b0011);
     assert_eq!(sig.parameters[0].stream, 0);
+    assert_eq!(sig.parameters[0].min_precision, 0);
 
     assert_eq!(sig.parameters[1].semantic_name, "COLOR");
     assert_eq!(sig.parameters[1].register, 1);
