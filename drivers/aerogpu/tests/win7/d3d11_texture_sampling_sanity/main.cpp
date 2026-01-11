@@ -472,6 +472,8 @@ static int RunD3D11TextureSamplingSanity(int argc, char** argv) {
   context->IASetInputLayout(NULL);
   context->VSSetShader(NULL, NULL, 0);
   context->PSSetShader(NULL, NULL, 0);
+  // Avoid any ambiguity around copying from a still-bound render target.
+  context->OMSetRenderTargets(0, NULL, NULL);
 
   // Read back the result via a staging texture.
   D3D11_TEXTURE2D_DESC st_desc = tex_desc;
