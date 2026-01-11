@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { UsbSelectedMessage, UsbHostCompletion } from "./usb_proxy_protocol";
-import { UsbPassthroughDemoRuntime } from "./usb_passthrough_demo_runtime";
+import { UsbPassthroughDemoRuntime, isUsbPassthroughDemoResultMessage } from "./usb_passthrough_demo_runtime";
 
 class FakeDemo {
   actions: unknown[] = [];
@@ -51,6 +51,19 @@ class FakeDemo {
 }
 
 describe("UsbPassthroughDemoRuntime", () => {
+  it("validates usb.demoResult messages with a strict type guard", () => {
+    expect(isUsbPassthroughDemoResultMessage({ type: "usb.demoResult", result: { status: "stall" } })).toBe(true);
+    expect(isUsbPassthroughDemoResultMessage({ type: "usb.demoResult", result: { status: "error", message: "x" } })).toBe(true);
+    expect(isUsbPassthroughDemoResultMessage({ type: "usb.demoResult", result: { status: "success", data: Uint8Array.of(1, 2) } })).toBe(
+      true,
+    );
+
+    // Reject malformed shapes.
+    expect(isUsbPassthroughDemoResultMessage({ type: "usb.demoResult", result: { status: "success", data: [1, 2] } })).toBe(false);
+    expect(isUsbPassthroughDemoResultMessage({ type: "usb.demoResult", result: { status: "error" } })).toBe(false);
+    expect(isUsbPassthroughDemoResultMessage({ type: "usb.demoResult" })).toBe(false);
+  });
+
   it("queues a control-in action when usb.selected arrives", () => {
     const demo = new FakeDemo();
     const posted: unknown[] = [];

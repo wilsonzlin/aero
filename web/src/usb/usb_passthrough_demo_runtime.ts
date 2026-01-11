@@ -33,8 +33,17 @@ export function isUsbPassthroughDemoResultMessage(value: unknown): value is UsbP
   const msg = value as { type?: unknown; result?: unknown };
   if (msg.type !== "usb.demoResult") return false;
   if (!msg.result || typeof msg.result !== "object") return false;
-  const result = msg.result as { status?: unknown };
-  return result.status === "success" || result.status === "stall" || result.status === "error";
+  const result = msg.result as { status?: unknown; data?: unknown; message?: unknown };
+  switch (result.status) {
+    case "success":
+      return result.data instanceof Uint8Array;
+    case "stall":
+      return true;
+    case "error":
+      return typeof result.message === "string";
+    default:
+      return false;
+  }
 }
 
 export interface UsbPassthroughDemoApi {
