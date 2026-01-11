@@ -131,9 +131,7 @@ impl AerogpuResourceManager {
         }
         let alignment = wgpu::COPY_BUFFER_ALIGNMENT;
         if size_bytes % alignment != 0 {
-            bail!(
-                "CreateBuffer: size_bytes must be a multiple of {alignment} (got {size_bytes})"
-            );
+            bail!("CreateBuffer: size_bytes must be a multiple of {alignment} (got {size_bytes})");
         }
 
         let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {

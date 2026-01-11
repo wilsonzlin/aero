@@ -9,14 +9,15 @@ use aero_gpu::pipeline_cache::{PipelineCache, PipelineCacheConfig};
 use aero_gpu::pipeline_key::{ColorTargetKey, PipelineLayoutKey, RenderPipelineKey, ShaderHash};
 use aero_gpu::GpuCapabilities;
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    decode_cmd_copy_buffer_le, decode_cmd_copy_texture2d_le, decode_cmd_create_input_layout_blob_le,
-    decode_cmd_create_shader_dxbc_payload_le, decode_cmd_set_vertex_buffers_bindings_le,
-    decode_cmd_upload_resource_payload_le, AerogpuCmdOpcode, AerogpuCmdStreamHeader,
-    AerogpuCmdStreamIter, AEROGPU_CLEAR_COLOR, AEROGPU_CLEAR_DEPTH, AEROGPU_CLEAR_STENCIL,
-    AEROGPU_COPY_FLAG_WRITEBACK_DST, AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER,
-    AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL, AEROGPU_RESOURCE_USAGE_INDEX_BUFFER,
-    AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_SCANOUT,
-    AEROGPU_RESOURCE_USAGE_TEXTURE, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
+    decode_cmd_copy_buffer_le, decode_cmd_copy_texture2d_le,
+    decode_cmd_create_input_layout_blob_le, decode_cmd_create_shader_dxbc_payload_le,
+    decode_cmd_set_vertex_buffers_bindings_le, decode_cmd_upload_resource_payload_le,
+    AerogpuCmdOpcode, AerogpuCmdStreamHeader, AerogpuCmdStreamIter, AEROGPU_CLEAR_COLOR,
+    AEROGPU_CLEAR_DEPTH, AEROGPU_CLEAR_STENCIL, AEROGPU_COPY_FLAG_WRITEBACK_DST,
+    AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER, AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL,
+    AEROGPU_RESOURCE_USAGE_INDEX_BUFFER, AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+    AEROGPU_RESOURCE_USAGE_SCANOUT, AEROGPU_RESOURCE_USAGE_TEXTURE,
+    AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
 };
 use aero_protocol::aerogpu::aerogpu_ring::AerogpuAllocEntry;
 use anyhow::{anyhow, bail, Context, Result};
