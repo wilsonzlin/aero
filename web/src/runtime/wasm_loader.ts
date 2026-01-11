@@ -60,30 +60,43 @@ export interface WasmApi {
     };
 
     /**
-     * Reusable UHCI controller bridge (port I/O + 1ms frame stepping + USB topology management).
+     * Guest-visible UHCI controller bridge.
+     *
+     * Optional and has multiple constructor signatures depending on the deployed WASM build:
+     * - `new (guestBase)` for legacy builds (PIO + 1ms tick).
+     * - `new (guestBase, guestSize)` for newer builds (PIO + frame stepping + USB topology management).
      */
-    UhciControllerBridge: new (guestBase: number, guestSize: number) => {
-        readonly guest_base: number;
-        readonly guest_size: number;
+    UhciControllerBridge?: {
+        new (guestBase: number): {
+            io_read(offset: number, size: number): number;
+            io_write(offset: number, size: number, value: number): void;
+            tick_1ms(): void;
+            irq_asserted(): boolean;
+            free(): void;
+        };
+        new (guestBase: number, guestSize: number): {
+            readonly guest_base: number;
+            readonly guest_size: number;
 
-        io_read(offset: number, size: number): number;
-        io_write(offset: number, size: number, value: number): void;
+            io_read(offset: number, size: number): number;
+            io_write(offset: number, size: number, value: number): void;
 
-        step_frames(frames: number): void;
-        step_frame(): void;
+            step_frames(frames: number): void;
+            step_frame(): void;
 
-        irq_asserted(): boolean;
+            irq_asserted(): boolean;
 
-        attach_hub(rootPort: number, portCount: number): void;
-        detach_at_path(path: number[]): void;
+            attach_hub(rootPort: number, portCount: number): void;
+            detach_at_path(path: number[]): void;
 
-        attach_webhid_device(path: number[], device: InstanceType<WasmApi["WebHidPassthroughBridge"]>): void;
-        attach_usb_hid_passthrough_device(
-            path: number[],
-            device: InstanceType<NonNullable<WasmApi["UsbHidPassthroughBridge"]>>,
-        ): void;
+            attach_webhid_device(path: number[], device: InstanceType<WasmApi["WebHidPassthroughBridge"]>): void;
+            attach_usb_hid_passthrough_device(
+                path: number[],
+                device: InstanceType<NonNullable<WasmApi["UsbHidPassthroughBridge"]>>,
+            ): void;
 
-        free(): void;
+            free(): void;
+        };
     };
 
     UsbHidBridge: new () => {
@@ -176,19 +189,6 @@ export interface WasmApi {
         reset(): void;
         drain_actions(): UsbHostAction[] | null;
         push_completion(completion: UsbHostCompletion): void;
-        free(): void;
-    };
-
-    /**
-     * Guest-visible UHCI controller bridge (PCI IO BAR + 1ms frame stepping).
-     *
-     * Optional until all deployed WASM builds include it.
-     */
-    UhciControllerBridge?: new (guestBase: number) => {
-        io_read(offset: number, size: number): number;
-        io_write(offset: number, size: number, value: number): void;
-        tick_1ms(): void;
-        irq_asserted(): boolean;
         free(): void;
     };
 
@@ -479,7 +479,7 @@ function toApi(mod: RawWasmModule): WasmApi {
         UsbHidPassthroughBridge: mod.UsbHidPassthroughBridge,
         UsbPassthroughBridge: mod.UsbPassthroughBridge,
         WebUsbUhciPassthroughHarness: mod.WebUsbUhciPassthroughHarness,
-        UhciControllerBridge: mod.UhciControllerBridge,
+        WebUsbUhciBridge: mod.WebUsbUhciBridge,
         synthesize_webhid_report_descriptor: mod.synthesize_webhid_report_descriptor,
         CpuWorkerDemo: mod.CpuWorkerDemo,
         AeroApi: mod.AeroApi,
