@@ -518,6 +518,11 @@ async function openDiskFromMetadata(
     }
   }
 
+  if (meta.source !== "local") {
+    throw new Error("expected local disk metadata");
+  }
+  const localMeta = meta;
+
   const readOnly = meta.kind === "cd" || meta.format === "iso";
 
   if (meta.backend === "opfs") {
@@ -525,7 +530,7 @@ async function openDiskFromMetadata(
     const sizeBytes = meta.sizeBytes;
 
     async function openBase(): Promise<AsyncSectorDisk> {
-      switch (meta.format) {
+      switch (localMeta.format) {
         case "aerospar": {
           const disk = await OpfsAeroSparseDisk.open(fileName);
           if (disk.capacityBytes !== sizeBytes) {
@@ -540,7 +545,7 @@ async function openDiskFromMetadata(
           return await OpfsRawDisk.open(fileName, { create: false, sizeBytes });
         case "qcow2":
         case "vhd":
-          throw new Error(`unsupported OPFS disk format ${meta.format} (convert to aerospar first)`);
+          throw new Error(`unsupported OPFS disk format ${localMeta.format} (convert to aerospar first)`);
       }
     }
 

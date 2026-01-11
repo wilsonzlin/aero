@@ -194,7 +194,7 @@ export class WebHidBroker {
 
     await this.manager.attachKnownDevice(device);
 
-    const guestPort = this.manager.getState().attachedDevices.find((entry) => entry.device === device)?.guestPort;
+    const guestPortHint = this.manager.getState().attachedDevices.find((entry) => entry.device === device)?.guestPath[0];
 
     // The WebHID `@types/w3c-web-hid` definitions mark many collection fields as optional,
     // but real Chromium devices always populate them. `normalizeCollections` expects a
@@ -209,7 +209,7 @@ export class WebHidBroker {
       vendorId: device.vendorId,
       productId: device.productId,
       ...(device.productName ? { productName: device.productName } : {}),
-      ...(guestPort !== undefined ? { guestPort } : {}),
+      ...(guestPortHint === 0 || guestPortHint === 1 ? { guestPort: guestPortHint } : {}),
       collections,
       hasInterruptOut,
     };

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { HidPassthroughMessage } from "./hid_passthrough_protocol";
+import { isGuestUsbPath, type HidPassthroughMessage } from "./hid_passthrough_protocol";
 import { getNoFreeGuestUsbPortsMessage, mountWebHidPassthroughPanel, WebHidPassthroughManager } from "./webhid_passthrough";
 
 const originalNavigatorDescriptor = Object.getOwnPropertyDescriptor(globalThis, "navigator");
@@ -189,7 +189,7 @@ describe("WebHidPassthroughManager UI (mocked WebHID)", () => {
     const attached = manager.getState().attachedDevices;
     expect(attached).toHaveLength(1);
     expect(attached[0]?.device).toBe(device);
-    expect(attached[0]?.guestPort).toBe(0);
+    expect(attached[0]?.guestPath).toEqual([0, 1]);
   });
 });
 
@@ -201,27 +201,24 @@ class TestTarget {
   }
 }
 
-describe("WebHID guest port allocation (UHCI 2-port root)", () => {
-  it("assigns ports 0 and 1 when attaching two devices", async () => {
-    const target = new TestTarget();
-    const manager = new WebHidPassthroughManager({ hid: null, target });
-
-    const devA = { vendorId: 1, productId: 1, productName: "A", open: vi.fn(async () => {}), close: vi.fn(async () => {}) } as unknown as HIDDevice;
-    const devB = { vendorId: 2, productId: 2, productName: "B", open: vi.fn(async () => {}), close: vi.fn(async () => {}) } as unknown as HIDDevice;
-
-    await manager.attachKnownDevice(devA);
-    await manager.attachKnownDevice(devB);
-
-    expect(target.messages).toHaveLength(2);
-    expect(target.messages[0]).toMatchObject({ type: "hid:attach", guestPort: 0 });
-    expect(target.messages[1]).toMatchObject({ type: "hid:attach", guestPort: 1 });
-
-    expect(manager.getState().attachedDevices.map((d) => d.guestPort)).toEqual([0, 1]);
+describe("Guest USB path validator", () => {
+  it("accepts non-empty paths with root ports 0/1 and hub ports 1..=255", () => {
+    expect(isGuestUsbPath([0])).toBe(true);
+    expect(isGuestUsbPath([1])).toBe(true);
+    expect(isGuestUsbPath([0, 1])).toBe(true);
+    expect(isGuestUsbPath([0, 255])).toBe(true);
+    expect(isGuestUsbPath([])).toBe(false);
+    expect(isGuestUsbPath([2])).toBe(false);
+    expect(isGuestUsbPath([0, 0])).toBe(false);
+    expect(isGuestUsbPath([0, 256])).toBe(false);
+    expect(isGuestUsbPath([0, 1.5])).toBe(false);
   });
+});
 
-  it("rejects a third attach and does not post a worker message", async () => {
+describe("WebHID guest path allocation (external hub on root port 0)", () => {
+  it("assigns hub-backed paths when attaching three devices", async () => {
     const target = new TestTarget();
-    const manager = new WebHidPassthroughManager({ hid: null, target });
+    const manager = new WebHidPassthroughManager({ hid: null, target, externalHubPortCount: 3 });
 
     const devA = { vendorId: 1, productId: 1, productName: "A", open: vi.fn(async () => {}), close: vi.fn(async () => {}) } as unknown as HIDDevice;
     const devB = { vendorId: 2, productId: 2, productName: "B", open: vi.fn(async () => {}), close: vi.fn(async () => {}) } as unknown as HIDDevice;
@@ -229,29 +226,60 @@ describe("WebHID guest port allocation (UHCI 2-port root)", () => {
 
     await manager.attachKnownDevice(devA);
     await manager.attachKnownDevice(devB);
-    await expect(manager.attachKnownDevice(devC)).rejects.toThrow(getNoFreeGuestUsbPortsMessage());
-
-    expect(target.messages).toHaveLength(2);
-    expect(manager.getState().attachedDevices).toHaveLength(2);
-  });
-
-  it("frees ports on detach and reuses the lowest free port", async () => {
-    const target = new TestTarget();
-    const manager = new WebHidPassthroughManager({ hid: null, target });
-
-    const devA = { vendorId: 1, productId: 1, productName: "A", open: vi.fn(async () => {}), close: vi.fn(async () => {}) } as unknown as HIDDevice;
-    const devB = { vendorId: 2, productId: 2, productName: "B", open: vi.fn(async () => {}), close: vi.fn(async () => {}) } as unknown as HIDDevice;
-    const devC = { vendorId: 3, productId: 3, productName: "C", open: vi.fn(async () => {}), close: vi.fn(async () => {}) } as unknown as HIDDevice;
-
-    await manager.attachKnownDevice(devA);
-    await manager.attachKnownDevice(devB);
-    await manager.detachDevice(devA);
-
     await manager.attachKnownDevice(devC);
 
-    expect(target.messages).toHaveLength(4);
-    expect(target.messages[2]).toMatchObject({ type: "hid:detach", guestPort: 0 });
-    expect(target.messages[3]).toMatchObject({ type: "hid:attach", guestPort: 0 });
+    expect(target.messages).toHaveLength(3);
+    expect(target.messages[0]).toMatchObject({ type: "hid:attach", guestPath: [0, 1] });
+    expect(target.messages[1]).toMatchObject({ type: "hid:attach", guestPath: [0, 2] });
+    expect(target.messages[2]).toMatchObject({ type: "hid:attach", guestPath: [0, 3] });
+
+    expect(manager.getState().attachedDevices.map((d) => d.guestPath)).toEqual([
+      [0, 1],
+      [0, 2],
+      [0, 3],
+    ]);
+  });
+
+  it("frees hub ports on detach and reuses the lowest free hub port", async () => {
+    const target = new TestTarget();
+    const manager = new WebHidPassthroughManager({ hid: null, target, externalHubPortCount: 3 });
+
+    const devA = { vendorId: 1, productId: 1, productName: "A", open: vi.fn(async () => {}), close: vi.fn(async () => {}) } as unknown as HIDDevice;
+    const devB = { vendorId: 2, productId: 2, productName: "B", open: vi.fn(async () => {}), close: vi.fn(async () => {}) } as unknown as HIDDevice;
+    const devC = { vendorId: 3, productId: 3, productName: "C", open: vi.fn(async () => {}), close: vi.fn(async () => {}) } as unknown as HIDDevice;
+    const devD = { vendorId: 4, productId: 4, productName: "D", open: vi.fn(async () => {}), close: vi.fn(async () => {}) } as unknown as HIDDevice;
+
+    await manager.attachKnownDevice(devA);
+    await manager.attachKnownDevice(devB);
+    await manager.attachKnownDevice(devC);
+    await manager.detachDevice(devB);
+    await manager.attachKnownDevice(devD);
+
+    expect(target.messages).toHaveLength(5);
+    expect(target.messages[3]).toMatchObject({ type: "hid:detach", guestPath: [0, 2] });
+    expect(target.messages[4]).toMatchObject({ type: "hid:attach", guestPath: [0, 2] });
+  });
+
+  it("falls back to root port 1 when the hub is full and only errors once all paths are exhausted", async () => {
+    const target = new TestTarget();
+    const manager = new WebHidPassthroughManager({ hid: null, target, externalHubPortCount: 2 });
+
+    const devA = { vendorId: 1, productId: 1, productName: "A", open: vi.fn(async () => {}), close: vi.fn(async () => {}) } as unknown as HIDDevice;
+    const devB = { vendorId: 2, productId: 2, productName: "B", open: vi.fn(async () => {}), close: vi.fn(async () => {}) } as unknown as HIDDevice;
+    const devC = { vendorId: 3, productId: 3, productName: "C", open: vi.fn(async () => {}), close: vi.fn(async () => {}) } as unknown as HIDDevice;
+    const devD = { vendorId: 4, productId: 4, productName: "D", open: vi.fn(async () => {}), close: vi.fn(async () => {}) } as unknown as HIDDevice;
+
+    await manager.attachKnownDevice(devA);
+    await manager.attachKnownDevice(devB);
+    await manager.attachKnownDevice(devC);
+    await expect(manager.attachKnownDevice(devD)).rejects.toThrow(getNoFreeGuestUsbPortsMessage({ externalHubPortCount: 2 }));
+
+    expect(target.messages).toHaveLength(3);
+    expect(target.messages[0]).toMatchObject({ type: "hid:attach", guestPath: [0, 1] });
+    expect(target.messages[1]).toMatchObject({ type: "hid:attach", guestPath: [0, 2] });
+    expect(target.messages[2]).toMatchObject({ type: "hid:attach", guestPath: [1] });
+
+    expect(manager.getState().attachedDevices).toHaveLength(3);
   });
 
   it("forgets known devices without calling requestDevice()", async () => {

@@ -74,6 +74,10 @@ describe("runtime disk worker protocol", () => {
       },
     } satisfies DiskOpenSpec;
 
+    if (spec.kind !== "remote" || spec.remote.delivery !== "range") {
+      throw new Error("expected a range remote disk spec");
+    }
+
     const w = new StubWorker();
     const client = new RuntimeDiskClient(w as unknown as Worker);
 

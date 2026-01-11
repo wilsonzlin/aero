@@ -1,4 +1,4 @@
-import { normalizeCollections, type NormalizedHidCollectionInfo } from "../hid/webhid_normalize";
+import { normalizeCollections, type HidCollectionInfo, type NormalizedHidCollectionInfo } from "../hid/webhid_normalize";
 import type { WebHidPassthroughManager, WebHidPassthroughState } from "../platform/webhid_passthrough";
 
 export type WebHidPassthroughOutputReport = {
@@ -166,18 +166,18 @@ export class WebHidPassthroughRuntime {
       return;
     }
 
-    let bridge: WebHidPassthroughBridgeLike | null = null;
-    try {
-      // The community WebHID typings (`@types/w3c-web-hid`) model `HIDDevice.collections`
-      // as a loose dictionary shape with lots of optional fields. Chromium's runtime
-      // objects are stricter (and match the shape expected by our normalizer), so
-      // cast through `unknown` here to avoid infecting downstream code with `| undefined`.
-      const normalizedCollections = normalizeCollections(device.collections);
-      bridge = this.#createBridge({ device, normalizedCollections });
+      let bridge: WebHidPassthroughBridgeLike | null = null;
+      try {
+        // The community WebHID typings (`@types/w3c-web-hid`) model `HIDDevice.collections`
+        // as a loose dictionary shape with lots of optional fields. Chromium's runtime
+        // objects are stricter (and match the shape expected by our normalizer), so
+        // cast through `unknown` here to avoid infecting downstream code with `| undefined`.
+        const normalizedCollections = normalizeCollections(device.collections as unknown as readonly HidCollectionInfo[]);
+        bridge = this.#createBridge({ device, normalizedCollections });
 
-      const onInputReport = (event: HIDInputReportEvent): void => {
-        try {
-          bridge?.push_input_report(event.reportId, copyDataView(event.data));
+        const onInputReport = (event: HIDInputReportEvent): void => {
+          try {
+            bridge?.push_input_report(event.reportId, copyDataView(event.data));
         } catch (err) {
           this.#log("warn", "WebHID inputreport forwarding failed", err);
         }
@@ -266,12 +266,16 @@ export class WebHidPassthroughRuntime {
         if (!report) break;
 
         try {
+          // wasm-bindgen views may be backed by SharedArrayBuffer (threaded WASM);
+          // WebHID expects an ArrayBuffer-backed BufferSource.
+          const data = ensureArrayBufferBacked(new Uint8Array(report.data));
+
           if (report.reportType === "feature") {
-            void session.device.sendFeatureReport(report.reportId, ensureArrayBufferBacked(report.data)).catch((err) => {
+            void session.device.sendFeatureReport(report.reportId, data).catch((err) => {
               this.#log("warn", "WebHID sendFeatureReport() failed", err);
             });
           } else {
-            void session.device.sendReport(report.reportId, ensureArrayBufferBacked(report.data)).catch((err) => {
+            void session.device.sendReport(report.reportId, data).catch((err) => {
               this.#log("warn", "WebHID sendReport() failed", err);
             });
           }

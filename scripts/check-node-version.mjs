@@ -60,13 +60,15 @@ if (!current) {
   process.exit(1);
 }
 
-const upperBoundMajor = expected.major + 1;
-const supportedRange = `>=${formatVersion(expected)} <${upperBoundMajor}.0.0`;
-
 const versionCmp = compareVersions(current, expected);
-const majorMismatch = current.major !== expected.major;
-const tooOld = majorMismatch || versionCmp < 0;
 const allowUnsupported = envFlag("AERO_ALLOW_UNSUPPORTED_NODE");
+const tooOld = versionCmp < 0;
+
+// CI pins an exact Node.js version in .nvmrc. We enforce this as a minimum, but allow newer
+// Node versions so contributors (and CI-like sandbox environments) can still run the repo.
+const recommendedUpperBoundMajor = expected.major + 1;
+const recommendedRange = `>=${formatVersion(expected)} <${recommendedUpperBoundMajor}.0.0`;
+const supportedRange = `>=${formatVersion(expected)}`;
 
 if (tooOld) {
   const log = allowUnsupported ? console.warn : console.error;
@@ -89,6 +91,7 @@ if (tooOld) {
   console.warn("note: Node.js version differs from CI baseline.");
   console.warn(`- Detected: v${current.raw}`);
   console.warn(`- CI uses:  v${expected.raw} (from .nvmrc)`);
+  console.warn(`- Recommended: ${recommendedRange}`);
   console.warn("If you see odd toolchain issues, align your local version:");
   console.warn("  nvm install && nvm use");
 }

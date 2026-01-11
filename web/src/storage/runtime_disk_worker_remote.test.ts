@@ -42,6 +42,7 @@ function createRangeFetch(data: Uint8Array): { fetch: typeof fetch; calls: Array
     }
 
     return new Response(toArrayBuffer(data), { status: 200, headers: { "Content-Length": String(data.byteLength) } });
+    return new Response(toArrayBuffer(data), { status: 200, headers: { "Content-Length": String(data.byteLength) } });
   };
 
   return { fetch: fetcher, calls };

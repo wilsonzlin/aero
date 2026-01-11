@@ -2456,9 +2456,13 @@ function renderWebHidPassthroughPanel(): HTMLElement {
 
   const workerState = el("div", { class: "mono", text: "" });
   const error = el("pre", { text: "" });
+  const hubPortCount = webHidManager.getExternalHubPortCount();
   const portHint = el("div", {
     class: "mono",
-    text: "Guest UHCI root hub currently exposes only 2 ports (0 and 1). Detach an existing device first.",
+    text:
+      `Guest UHCI root port 0 hosts an emulated external USB hub (${hubPortCount} ports). ` +
+      "Passthrough devices attach behind it using paths like 0.3; " +
+      "if the hub fills up, one extra device can attach directly at path=1.",
   });
 
   const requestButton = el("button", {
@@ -2560,7 +2564,7 @@ function renderWebHidPassthroughPanel(): HTMLElement {
             return el(
               "li",
               {},
-              el("span", { class: "mono", text: `port=${attachment.guestPort}` }),
+              el("span", { class: "mono", text: `path=${attachment.guestPath.join(".")}` }),
               el("span", { text: ` ${describeDevice(attachment.device)}` }),
               el("span", { class: "mono", text: attached ? " (attached)" : " (not attached)" }),
               attached

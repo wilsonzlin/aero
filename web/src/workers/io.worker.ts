@@ -46,10 +46,13 @@ import {
   type HidProxyMessage,
   type HidSendReportMessage,
 } from "../hid/hid_proxy_protocol";
+import { isGuestUsbPath, type GuestUsbPath, type GuestUsbPort, type HidPassthroughMessage } from "../platform/hid_passthrough_protocol";
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 
 void installWorkerPerfHandlers();
+
+type DistributivePartial<T> = T extends any ? Partial<T> : never;
 
 type InputBatchMessage = { type: "in:input-batch"; buffer: ArrayBuffer };
 type InputBatchRecycleMessage = { type: "in:input-batch-recycle"; buffer: ArrayBuffer };
@@ -289,6 +292,7 @@ const hidHostSink: HidHostSink = {
 
 const hidGuestInMemory = new InMemoryHidGuestBridge(hidHostSink);
 let hidGuest: HidGuestBridge = hidGuestInMemory;
+const hidPassthroughPathsByDeviceId = new Map<string, GuestUsbPath>();
 
 let currentConfig: AeroConfig | null = null;
 let currentConfigVersion = 0;
@@ -635,6 +639,7 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       | Partial<SetBootDisksMessage>
       | Partial<SetMicrophoneRingBufferMessage>
       | Partial<HidProxyMessage>
+      | Partial<HidPassthroughMessage>
       | Partial<UsbSelectedMessage>
       | Partial<UsbCompletionMessage>
       | Partial<HidAttachMessage>
@@ -686,6 +691,31 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
 
     if (isHidInputReportMessage(data)) {
       hidGuest.inputReport(data);
+      return;
+    }
+
+    if ((data as Partial<HidPassthroughMessage>).type === "hid:attach") {
+      const msg = data as DistributivePartial<Extract<HidPassthroughMessage, { type: "hid:attach" }>>;
+      const deviceId = typeof msg.deviceId === "string" ? msg.deviceId : null;
+      if (!deviceId) return;
+
+      let guestPath: GuestUsbPath | null = null;
+      if (isGuestUsbPath(msg.guestPath)) {
+        guestPath = msg.guestPath;
+      } else if (msg.guestPort === 0 || msg.guestPort === 1) {
+        guestPath = [msg.guestPort as GuestUsbPort];
+      }
+
+      if (!guestPath) return;
+      hidPassthroughPathsByDeviceId.set(deviceId, guestPath);
+      return;
+    }
+
+    if ((data as Partial<HidPassthroughMessage>).type === "hid:detach") {
+      const msg = data as DistributivePartial<Extract<HidPassthroughMessage, { type: "hid:detach" }>>;
+      const deviceId = typeof msg.deviceId === "string" ? msg.deviceId : null;
+      if (!deviceId) return;
+      hidPassthroughPathsByDeviceId.delete(deviceId);
       return;
     }
 
