@@ -108,6 +108,50 @@ describe("hid/WebHidBroker", () => {
     expect(input!.transfer?.[0]).toBe(input!.msg.data.buffer);
   });
 
+  it("computes hasInterruptOut based on output reports (feature-only does not require interrupt OUT)", async () => {
+    const manager = new WebHidPassthroughManager({ hid: null });
+    const broker = new WebHidBroker({ manager });
+    const port = new FakePort();
+    broker.attachWorkerPort(port as unknown as MessagePort);
+
+    const outputDevice = new FakeHidDevice();
+    outputDevice.collections = [
+      {
+        usagePage: 1,
+        usage: 2,
+        type: "application",
+        children: [],
+        inputReports: [],
+        outputReports: [{ reportId: 1, items: [] }],
+        featureReports: [],
+      },
+    ] as unknown as HIDCollectionInfo[];
+    await broker.attachDevice(outputDevice as unknown as HIDDevice);
+    const outputAttach = port.posted.find((p) => (p.msg as { type?: unknown }).type === "hid.attach")?.msg as HidAttachMessage;
+    expect(outputAttach.hasInterruptOut).toBe(true);
+
+    await broker.detachDevice(outputDevice as unknown as HIDDevice);
+
+    const featureDevice = new FakeHidDevice();
+    featureDevice.collections = [
+      {
+        usagePage: 1,
+        usage: 2,
+        type: "application",
+        children: [],
+        inputReports: [],
+        outputReports: [],
+        featureReports: [{ reportId: 1, items: [] }],
+      },
+    ] as unknown as HIDCollectionInfo[];
+    await broker.attachDevice(featureDevice as unknown as HIDDevice);
+    const featureAttach = port.posted
+      .slice()
+      .reverse()
+      .find((p) => (p.msg as { type?: unknown }).type === "hid.attach")?.msg as HidAttachMessage;
+    expect(featureAttach.hasInterruptOut).toBe(false);
+  });
+
   it("bridges manager-initiated detaches (e.g. physical disconnect) to the worker", async () => {
     const manager = new WebHidPassthroughManager({ hid: null });
     const broker = new WebHidBroker({ manager });
