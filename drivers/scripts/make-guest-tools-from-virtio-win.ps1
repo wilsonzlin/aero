@@ -308,7 +308,7 @@ Write-Host "  $packagerDriversRoot"
 # 3) Stage the Guest Tools directory so we can inject upstream attribution files
 # (without modifying the in-repo guest-tools/ directory).
 Ensure-EmptyDirectory -Path $guestToolsStageDir
-Copy-Item -LiteralPath (Join-Path $guestToolsDir "*") -Destination $guestToolsStageDir -Recurse -Force
+Copy-Item -Path (Join-Path $guestToolsDir "*") -Destination $guestToolsStageDir -Recurse -Force
 
 $driverPackLicenses = Join-Path $driverPackRoot "licenses"
 $stageLicenses = Join-Path $guestToolsStageDir "licenses"
