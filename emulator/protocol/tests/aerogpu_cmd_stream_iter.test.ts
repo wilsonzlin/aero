@@ -234,3 +234,16 @@ test("variable-payload decoders accept AerogpuCmdPacket from iterCmdStream", () 
   assert.deepEqual(decodeCmdUploadResourcePayloadFromPacket(packets[4]!).dataBytes, uploadBytes);
   assert.equal(decodeCmdDebugMarkerPayloadFromPacket(packets[5]!).marker, "hello");
 });
+
+test("packet-based decoders validate cmd.size_bytes invariants", () => {
+  assert.throws(
+    () =>
+      decodeCmdDebugMarkerPayloadFromPacket({
+        opcode: AerogpuCmdOpcode.DebugMarker,
+        // Not 4-byte aligned.
+        sizeBytes: 10,
+        payload: new Uint8Array([0x61, 0x62]), // "ab"
+      }),
+    /not 4-byte aligned/,
+  );
+});

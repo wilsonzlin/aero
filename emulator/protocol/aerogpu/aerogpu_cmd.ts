@@ -455,6 +455,12 @@ function validatePacketPayloadLen(packet: AerogpuCmdPacket): void {
   if (!Number.isSafeInteger(packet.sizeBytes) || packet.sizeBytes < AEROGPU_CMD_HDR_SIZE) {
     throw new Error(`cmd.size_bytes too small: ${packet.sizeBytes}`);
   }
+  if (packet.sizeBytes > 0xffff_ffff) {
+    throw new Error(`cmd.size_bytes too large for u32: ${packet.sizeBytes}`);
+  }
+  if (packet.sizeBytes % 4 !== 0) {
+    throw new Error(`cmd.size_bytes is not 4-byte aligned: ${packet.sizeBytes}`);
+  }
   const expectedPayloadLen = packet.sizeBytes - AEROGPU_CMD_HDR_SIZE;
   if (packet.payload.byteLength !== expectedPayloadLen) {
     throw new Error(
