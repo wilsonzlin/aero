@@ -43,11 +43,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Check virtio-snd.vcxproj source list
+      - name: Check virtio-snd.vcxproj sources (modern vs legacy)
         shell: bash
         run: |
           set -euo pipefail
-          python3 scripts/ci/check-virtio-snd-vcxproj.py
+          python3 scripts/ci/check-virtio-snd-vcxproj-sources.py
 
   virtio-host-tests-linux:
     name: Virtio host tests (Linux, ${{ matrix.cc }})
