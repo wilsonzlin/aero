@@ -39,11 +39,7 @@
         "PCI\\VEN_1AF4&DEV_1059&SUBSYS_00191AF4&REV_01",
         "PCI\\VEN_1AF4&DEV_1059&REV_01",
         "PCI\\VEN_1AF4&DEV_1059&SUBSYS_00191AF4",
-        "PCI\\VEN_1AF4&DEV_1059",
-        "PCI\\VEN_1AF4&DEV_1018&SUBSYS_00191AF4&REV_01",
-        "PCI\\VEN_1AF4&DEV_1018&REV_01",
-        "PCI\\VEN_1AF4&DEV_1018&SUBSYS_00191AF4",
-        "PCI\\VEN_1AF4&DEV_1018"
+        "PCI\\VEN_1AF4&DEV_1059"
       ],
       "driver_service_name": "aeroviosnd",
       "inf_name": "aero-virtio-snd.inf",
