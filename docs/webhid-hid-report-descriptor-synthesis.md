@@ -125,18 +125,19 @@ WebHID also exposes less-common HID locals (`strings`, `designators`) and relate
 
 Because we are regenerating bytes from metadata (not replaying the original descriptor), we emit a canonical sequence of items for each `HIDReportItem` (matching `crates/emulator/src/io/usb/hid/webhid.rs`):
 
-1. `Usage Page` (global): `item.usagePage`
-2. Usage locals:
-   - if `item.isRange`: `Usage Minimum` + `Usage Maximum` (`item.usageMinimum`/`item.usageMaximum`)
-   - else: one `Usage` item per entry in `item.usages`
-3. Other globals (in this order):
+1. Globals (in this order):
+   - `Usage Page` (`item.usagePage`)
    - `Logical Minimum` / `Logical Maximum`
    - `Physical Minimum` / `Physical Maximum`
    - `Unit Exponent`
    - `Unit`
    - `Report Size`
    - `Report Count`
-4. Main item: `Input` / `Output` / `Feature`
+2. Usage locals:
+   - if `item.isRange`: emit `Usage Minimum` + `Usage Maximum` (for WebHID-sourced items, this comes from `item.usageMinimum`/`item.usageMaximum`)
+     - the internal encoder may choose to fall back to an explicit `Usage` list if the range cannot be represented as a single contiguous span
+   - else: emit one `Usage` item per entry in `item.usages`
+3. Main item: `Input` / `Output` / `Feature`
 
 ---
 
