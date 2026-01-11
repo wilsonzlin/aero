@@ -26,6 +26,7 @@ virtio driver health via **COM1 serial** (host-captured), stdout, and a log file
   - Detect the virtio-snd PCI function via SetupAPI hardware IDs (`PCI\VEN_1AF4&DEV_1059`).
   - Enumerate audio render endpoints via MMDevice API and start a shared-mode WASAPI render stream.
   - Render a short deterministic tone (440Hz) at 48kHz/16-bit/stereo.
+  - If WASAPI fails, a WinMM `waveOut` fallback is attempted.
   - If the device is missing, the test is reported as **SKIP** by default; use `--require-snd` to make it **FAIL**.
 
 Note: For deterministic DNS testing under QEMU slirp, the default `--dns-host` is `host.lan`
@@ -59,7 +60,8 @@ Notes:
 Notes on Win7 compatibility:
 - The provided CMake config builds with the **static MSVC runtime** (`/MT`) and sets the subsystem version to **6.01**,
   so the resulting `aero-virtio-selftest.exe` can run on a clean Windows 7 SP1 install without an additional VC++ runtime step.
-- The virtio-snd test uses WASAPI/MMDevice and requires linking `mmdevapi`, `ole32`, and `uuid` (handled by the CMake config).
+- The virtio-snd test uses WASAPI/MMDevice (and a WinMM fallback) and requires linking `mmdevapi`, `ole32`, `uuid`, and `winmm`
+  (handled by the CMake config).
 
 ### Build with CMake (recommended)
 

@@ -38,6 +38,7 @@ target_link_libraries(aero-virtio-selftest PRIVATE
   mmdevapi
   ole32
   uuid
+  winmm
   winhttp
   ws2_32
 )

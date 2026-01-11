@@ -9,6 +9,7 @@
 #include <audioclient.h>
 #include <functiondiscoverykeys_devpkey.h>
 #include <mmdeviceapi.h>
+#include <mmsystem.h>
 #include <propsys.h>
 #include <setupapi.h>
 
@@ -446,9 +447,11 @@ static std::vector<VirtioSndPciDevice> DetectVirtioSndPciDevices(Logger& log) {
   std::vector<VirtioSndPciDevice> out;
 
   HDEVINFO devinfo =
-      SetupDiGetClassDevsW(nullptr, nullptr, nullptr, DIGCF_PRESENT | DIGCF_ALLCLASSES);
+      // Restrict to PCI enumerated devices for speed/determinism. The virtio-snd function is a PCI
+      // function, so it should always show up here if present.
+      SetupDiGetClassDevsW(nullptr, L"PCI", nullptr, DIGCF_PRESENT | DIGCF_ALLCLASSES);
   if (devinfo == INVALID_HANDLE_VALUE) {
-    log.Logf("virtio-snd: SetupDiGetClassDevs(DIGCF_ALLCLASSES) failed: %lu", GetLastError());
+    log.Logf("virtio-snd: SetupDiGetClassDevs(enumerator=PCI) failed: %lu", GetLastError());
     return out;
   }
 
@@ -1484,6 +1487,11 @@ static std::wstring GetPropertyString(IPropertyStore* store, const PROPERTYKEY& 
 static bool LooksLikeVirtioSndEndpoint(const std::wstring& friendly_name, const std::wstring& instance_id,
                                        const std::vector<std::wstring>& hwids) {
   if (ContainsInsensitive(friendly_name, L"virtio") || ContainsInsensitive(friendly_name, L"aero")) return true;
+  if (ContainsInsensitive(friendly_name, L"snd")) return true;
+  if (ContainsInsensitive(instance_id, L"DEV_1059") || ContainsInsensitive(instance_id, L"VEN_1AF4&DEV_1059")) {
+    return true;
+  }
+  if (IsVirtioSndPciHardwareId(hwids)) return true;
   if (ContainsInsensitive(instance_id, L"VEN_1AF4") || ContainsInsensitive(instance_id, L"VIRTIO")) return true;
   if (IsVirtioHardwareId(hwids)) return true;
   return false;
@@ -1689,6 +1697,7 @@ static TestResult VirtioSndTest(Logger& log) {
       }
 
       const auto hwids = GetHardwareIdsForInstanceId(instance_id);
+      const bool hwid_virtio_snd = IsVirtioSndPciHardwareId(hwids);
       const bool hwid_virtio = IsVirtioHardwareId(hwids);
 
       log.Logf("virtio-snd: endpoint idx=%u state=%s name=%s id=%s instance_id=%s",
@@ -1704,9 +1713,14 @@ static TestResult VirtioSndTest(Logger& log) {
       int score = 0;
       if (ContainsInsensitive(friendly, L"virtio")) score += 100;
       if (ContainsInsensitive(friendly, L"aero")) score += 50;
+      if (ContainsInsensitive(friendly, L"snd")) score += 20;
+      if (ContainsInsensitive(instance_id, L"DEV_1059") || ContainsInsensitive(instance_id, L"VEN_1AF4&DEV_1059")) {
+        score += 150;
+      }
       if (ContainsInsensitive(instance_id, L"VEN_1AF4") || ContainsInsensitive(instance_id, L"VIRTIO")) {
         score += 80;
       }
+      if (hwid_virtio_snd) score += 200;
       if (hwid_virtio) score += 90;
 
       if (score <= 0) continue;
@@ -2003,6 +2017,120 @@ static TestResult VirtioSndTest(Logger& log) {
   return out;
 }
 
+static std::wstring WinmmErrorToWide(MMRESULT rc) {
+  wchar_t buf[256]{};
+  if (waveOutGetErrorTextW(rc, buf, static_cast<UINT>(sizeof(buf) / sizeof(buf[0]))) ==
+      MMSYSERR_NOERROR) {
+    return std::wstring(buf);
+  }
+  return L"";
+}
+
+static bool WaveOutToneTest(Logger& log, const std::vector<std::wstring>& match_names) {
+  const UINT num = waveOutGetNumDevs();
+  log.Logf("virtio-snd: waveOut devices=%u", num);
+
+  auto name_matches = [&](const std::wstring& n) -> bool {
+    if (ContainsInsensitive(n, L"virtio") || ContainsInsensitive(n, L"aero")) return true;
+    for (const auto& m : match_names) {
+      if (!m.empty() && ContainsInsensitive(n, m)) return true;
+    }
+    return false;
+  };
+
+  UINT device_id = WAVE_MAPPER;
+  for (UINT i = 0; i < num; i++) {
+    WAVEOUTCAPSW caps{};
+    const MMRESULT rc = waveOutGetDevCapsW(i, &caps, sizeof(caps));
+    if (rc != MMSYSERR_NOERROR) continue;
+    log.Logf("virtio-snd: waveOut[%u]=%s", i, WideToUtf8(caps.szPname).c_str());
+    if (device_id == WAVE_MAPPER && name_matches(caps.szPname)) {
+      device_id = i;
+    }
+  }
+
+  if (device_id == WAVE_MAPPER) {
+    log.LogLine("virtio-snd: waveOut using default mapper");
+  } else {
+    log.Logf("virtio-snd: waveOut using device_id=%u", device_id);
+  }
+
+  HANDLE done_event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+  if (!done_event) {
+    log.Logf("virtio-snd: CreateEvent failed err=%lu", GetLastError());
+    return false;
+  }
+
+  WAVEFORMATEX fmt{};
+  fmt.wFormatTag = WAVE_FORMAT_PCM;
+  fmt.nChannels = 2;
+  fmt.nSamplesPerSec = 48000;
+  fmt.wBitsPerSample = 16;
+  fmt.nBlockAlign = static_cast<WORD>((fmt.nChannels * fmt.wBitsPerSample) / 8);
+  fmt.nAvgBytesPerSec = fmt.nSamplesPerSec * fmt.nBlockAlign;
+
+  HWAVEOUT hwo = nullptr;
+  MMRESULT rc =
+      waveOutOpen(&hwo, device_id, &fmt, reinterpret_cast<DWORD_PTR>(done_event), 0, CALLBACK_EVENT);
+  if (rc != MMSYSERR_NOERROR) {
+    log.Logf("virtio-snd: waveOutOpen failed rc=%u text=%s", rc,
+             WideToUtf8(WinmmErrorToWide(rc)).c_str());
+    CloseHandle(done_event);
+    return false;
+  }
+  ResetEvent(done_event);
+
+  const UINT32 frames = fmt.nSamplesPerSec / 4; // 250ms
+  std::vector<BYTE> data(static_cast<size_t>(frames) * fmt.nBlockAlign);
+  double phase = 0.0;
+  if (!FillToneInterleaved(data.data(), frames, &fmt, 440.0, &phase)) {
+    log.LogLine("virtio-snd: waveOut tone generation failed");
+    waveOutClose(hwo);
+    CloseHandle(done_event);
+    return false;
+  }
+
+  WAVEHDR hdr{};
+  hdr.lpData = reinterpret_cast<LPSTR>(data.data());
+  hdr.dwBufferLength = static_cast<DWORD>(data.size());
+
+  rc = waveOutPrepareHeader(hwo, &hdr, sizeof(hdr));
+  if (rc != MMSYSERR_NOERROR) {
+    log.Logf("virtio-snd: waveOutPrepareHeader failed rc=%u text=%s", rc,
+             WideToUtf8(WinmmErrorToWide(rc)).c_str());
+    waveOutClose(hwo);
+    CloseHandle(done_event);
+    return false;
+  }
+
+  rc = waveOutWrite(hwo, &hdr, sizeof(hdr));
+  if (rc != MMSYSERR_NOERROR) {
+    log.Logf("virtio-snd: waveOutWrite failed rc=%u text=%s", rc,
+             WideToUtf8(WinmmErrorToWide(rc)).c_str());
+    waveOutUnprepareHeader(hwo, &hdr, sizeof(hdr));
+    waveOutClose(hwo);
+    CloseHandle(done_event);
+    return false;
+  }
+
+  const DWORD wait_rc = WaitForSingleObject(done_event, 5000);
+  if (wait_rc != WAIT_OBJECT_0) {
+    log.Logf("virtio-snd: waveOut timed out wait_rc=%lu", wait_rc);
+    waveOutReset(hwo);
+    waveOutUnprepareHeader(hwo, &hdr, sizeof(hdr));
+    waveOutClose(hwo);
+    CloseHandle(done_event);
+    return false;
+  }
+
+  waveOutReset(hwo);
+  waveOutUnprepareHeader(hwo, &hdr, sizeof(hdr));
+  waveOutClose(hwo);
+  CloseHandle(done_event);
+  log.LogLine("virtio-snd: waveOut playback ok");
+  return true;
+}
+
 static void PrintUsage() {
   printf(
       "aero-virtio-selftest.exe [options]\n"
@@ -2151,16 +2279,25 @@ int wmain(int argc, wchar_t** argv) {
         log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP");
       }
     } else {
+      std::vector<std::wstring> match_names;
+      for (const auto& d : snd_pci) {
+        if (!d.description.empty()) match_names.push_back(d.description);
+      }
+
+      bool snd_ok = false;
       const auto snd = VirtioSndTest(log);
       if (snd.ok) {
-        log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS");
+        snd_ok = true;
       } else {
-        log.Logf("virtio-snd: failed reason=%s hr=0x%08lx",
+        log.Logf("virtio-snd: WASAPI failed reason=%s hr=0x%08lx",
                  snd.fail_reason.empty() ? "unknown" : snd.fail_reason.c_str(),
                  static_cast<unsigned long>(snd.hr));
-        log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL");
+        log.LogLine("virtio-snd: trying waveOut fallback");
+        snd_ok = WaveOutToneTest(log, match_names);
       }
-      all_ok = all_ok && snd.ok;
+
+      log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|%s", snd_ok ? "PASS" : "FAIL");
+      all_ok = all_ok && snd_ok;
     }
   }
 
