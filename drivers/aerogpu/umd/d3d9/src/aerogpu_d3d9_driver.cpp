@@ -564,30 +564,27 @@ WddmAllocationHandle extract_primary_wddm_allocation_handle(const ArgsT& args) {
 }
 #endif
 
-WddmAllocationHandle get_wddm_allocation_from_create_resource(const AEROGPU_D3D9DDIARG_CREATERESOURCE* args) {
+WddmAllocationHandle get_wddm_allocation_from_create_resource(const D3D9DDIARG_CREATERESOURCE* args) {
   if (!args) {
     return 0;
   }
 
 #if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
-  // In WDK builds, the runtime provides a real `D3D9DDIARG_CREATERESOURCE`.
-  // Our portable struct is only a subset, so query allocation handles from the
-  // official type when available.
-  const auto& wdk = *reinterpret_cast<const D3D9DDIARG_CREATERESOURCE*>(args);
-  return extract_primary_wddm_allocation_handle(wdk);
+  // In WDK builds, the runtime provides a real `D3D9DDIARG_CREATERESOURCE`. Pull
+  // allocation handles from the official struct.
+  return extract_primary_wddm_allocation_handle(*args);
 #else
   return static_cast<WddmAllocationHandle>(args->wddm_hAllocation);
 #endif
 }
 
-WddmAllocationHandle get_wddm_allocation_from_open_resource(const AEROGPU_D3D9DDIARG_OPENRESOURCE* args) {
+WddmAllocationHandle get_wddm_allocation_from_open_resource(const D3D9DDIARG_OPENRESOURCE* args) {
   if (!args) {
     return 0;
   }
 
 #if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
-  const auto& wdk = *reinterpret_cast<const D3D9DDIARG_OPENRESOURCE*>(args);
-  return extract_primary_wddm_allocation_handle(wdk);
+  return extract_primary_wddm_allocation_handle(*args);
 #else
   return static_cast<WddmAllocationHandle>(args->wddm_hAllocation);
 #endif
@@ -949,12 +946,18 @@ constexpr uint32_t kD3DLOCK_READONLY = 0x00000010u;
 constexpr uint32_t kD3DPOOL_DEFAULT = 0u;
 constexpr uint32_t kD3DPOOL_SYSTEMMEM = 2u;
 
-uint32_t d3d9_stage_to_aerogpu_stage(AEROGPU_D3D9DDI_SHADER_STAGE stage) {
-  return (stage == AEROGPU_D3D9DDI_SHADER_STAGE_VS) ? AEROGPU_SHADER_STAGE_VERTEX : AEROGPU_SHADER_STAGE_PIXEL;
+constexpr uint32_t kD3d9ShaderStageVs = 0u;
+constexpr uint32_t kD3d9ShaderStagePs = 1u;
+
+constexpr D3DDDIFORMAT kD3dFmtIndex16 = static_cast<D3DDDIFORMAT>(101); // D3DFMT_INDEX16
+constexpr D3DDDIFORMAT kD3dFmtIndex32 = static_cast<D3DDDIFORMAT>(102); // D3DFMT_INDEX32
+
+uint32_t d3d9_stage_to_aerogpu_stage(uint32_t stage) {
+  return (stage == kD3d9ShaderStageVs) ? AEROGPU_SHADER_STAGE_VERTEX : AEROGPU_SHADER_STAGE_PIXEL;
 }
 
-uint32_t d3d9_index_format_to_aerogpu(AEROGPU_D3D9DDI_INDEX_FORMAT fmt) {
-  return (fmt == AEROGPU_D3D9DDI_INDEX_FORMAT_U32) ? AEROGPU_INDEX_FORMAT_UINT32 : AEROGPU_INDEX_FORMAT_UINT16;
+uint32_t d3d9_index_format_to_aerogpu(D3DDDIFORMAT fmt) {
+  return (fmt == kD3dFmtIndex32) ? AEROGPU_INDEX_FORMAT_UINT32 : AEROGPU_INDEX_FORMAT_UINT16;
 }
 
 // D3DUSAGE_* subset (numeric values from d3d9types.h).
@@ -972,43 +975,43 @@ uint32_t d3d9_usage_to_aerogpu_usage_flags(uint32_t usage) {
   return flags;
 }
 
-uint32_t d3d9_prim_to_topology(AEROGPU_D3D9DDI_PRIMITIVE_TYPE prim) {
+uint32_t d3d9_prim_to_topology(D3DDDIPRIMITIVETYPE prim) {
   switch (prim) {
-    case AEROGPU_D3D9DDI_PRIM_POINTLIST:
+    case D3DDDIPT_POINTLIST:
       return AEROGPU_TOPOLOGY_POINTLIST;
-    case AEROGPU_D3D9DDI_PRIM_LINELIST:
+    case D3DDDIPT_LINELIST:
       return AEROGPU_TOPOLOGY_LINELIST;
-    case AEROGPU_D3D9DDI_PRIM_LINESTRIP:
+    case D3DDDIPT_LINESTRIP:
       return AEROGPU_TOPOLOGY_LINESTRIP;
-    case AEROGPU_D3D9DDI_PRIM_TRIANGLESTRIP:
+    case D3DDDIPT_TRIANGLESTRIP:
       return AEROGPU_TOPOLOGY_TRIANGLESTRIP;
-    case AEROGPU_D3D9DDI_PRIM_TRIANGLEFAN:
+    case D3DDDIPT_TRIANGLEFAN:
       return AEROGPU_TOPOLOGY_TRIANGLEFAN;
-    case AEROGPU_D3D9DDI_PRIM_TRIANGLELIST:
+    case D3DDDIPT_TRIANGLELIST:
     default:
       return AEROGPU_TOPOLOGY_TRIANGLELIST;
   }
 }
 
-uint32_t vertex_count_from_primitive(AEROGPU_D3D9DDI_PRIMITIVE_TYPE prim, uint32_t primitive_count) {
+uint32_t vertex_count_from_primitive(D3DDDIPRIMITIVETYPE prim, uint32_t primitive_count) {
   switch (prim) {
-    case AEROGPU_D3D9DDI_PRIM_POINTLIST:
+    case D3DDDIPT_POINTLIST:
       return primitive_count;
-    case AEROGPU_D3D9DDI_PRIM_LINELIST:
+    case D3DDDIPT_LINELIST:
       return primitive_count * 2;
-    case AEROGPU_D3D9DDI_PRIM_LINESTRIP:
+    case D3DDDIPT_LINESTRIP:
       return primitive_count + 1;
-    case AEROGPU_D3D9DDI_PRIM_TRIANGLELIST:
+    case D3DDDIPT_TRIANGLELIST:
       return primitive_count * 3;
-    case AEROGPU_D3D9DDI_PRIM_TRIANGLESTRIP:
-    case AEROGPU_D3D9DDI_PRIM_TRIANGLEFAN:
+    case D3DDDIPT_TRIANGLESTRIP:
+    case D3DDDIPT_TRIANGLEFAN:
       return primitive_count + 2;
     default:
       return primitive_count * 3;
   }
 }
 
-uint32_t index_count_from_primitive(AEROGPU_D3D9DDI_PRIMITIVE_TYPE prim, uint32_t primitive_count) {
+uint32_t index_count_from_primitive(D3DDDIPRIMITIVETYPE prim, uint32_t primitive_count) {
   // Indexed draws follow the same primitive->index expansion rules.
   return vertex_count_from_primitive(prim, primitive_count);
 }
@@ -1049,31 +1052,31 @@ constexpr uint8_t kD3dDeclUsageColor = 10;
 // Handle helpers
 // -----------------------------------------------------------------------------
 
-Adapter* as_adapter(AEROGPU_D3D9DDI_HADAPTER hAdapter) {
+Adapter* as_adapter(D3DDDI_HADAPTER hAdapter) {
   return reinterpret_cast<Adapter*>(hAdapter.pDrvPrivate);
 }
 
-Device* as_device(AEROGPU_D3D9DDI_HDEVICE hDevice) {
+Device* as_device(D3DDDI_HDEVICE hDevice) {
   return reinterpret_cast<Device*>(hDevice.pDrvPrivate);
 }
 
-Resource* as_resource(AEROGPU_D3D9DDI_HRESOURCE hRes) {
+Resource* as_resource(D3DDDI_HRESOURCE hRes) {
   return reinterpret_cast<Resource*>(hRes.pDrvPrivate);
 }
 
-SwapChain* as_swapchain(AEROGPU_D3D9DDI_HSWAPCHAIN hSwapChain) {
+SwapChain* as_swapchain(D3D9DDI_HSWAPCHAIN hSwapChain) {
   return reinterpret_cast<SwapChain*>(hSwapChain.pDrvPrivate);
 }
 
-Shader* as_shader(AEROGPU_D3D9DDI_HSHADER hShader) {
+Shader* as_shader(D3D9DDI_HSHADER hShader) {
   return reinterpret_cast<Shader*>(hShader.pDrvPrivate);
 }
 
-VertexDecl* as_vertex_decl(AEROGPU_D3D9DDI_HVERTEXDECL hDecl) {
+VertexDecl* as_vertex_decl(D3D9DDI_HVERTEXDECL hDecl) {
   return reinterpret_cast<VertexDecl*>(hDecl.pDrvPrivate);
 }
 
-Query* as_query(AEROGPU_D3D9DDI_HQUERY hQuery) {
+Query* as_query(D3D9DDI_HQUERY hQuery) {
   return reinterpret_cast<Query*>(hQuery.pDrvPrivate);
 }
 
@@ -1536,7 +1539,7 @@ bool emit_set_stream_source_locked(
 
 Shader* create_internal_shader_locked(
     Device* dev,
-    AEROGPU_D3D9DDI_SHADER_STAGE stage,
+    uint32_t stage,
     const void* bytecode,
     uint32_t bytecode_size) {
   if (!dev || !dev->adapter || !bytecode || bytecode_size == 0) {
@@ -1591,7 +1594,7 @@ HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
   if (!dev->fixedfunc_vs) {
     const void* vs_bytes = fixedfunc::kVsPassthroughPosColor;
     const uint32_t vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsPassthroughPosColor));
-    dev->fixedfunc_vs = create_internal_shader_locked(dev, AEROGPU_D3D9DDI_SHADER_STAGE_VS, vs_bytes, vs_size);
+    dev->fixedfunc_vs = create_internal_shader_locked(dev, kD3d9ShaderStageVs, vs_bytes, vs_size);
     if (!dev->fixedfunc_vs) {
       return E_OUTOFMEMORY;
     }
@@ -1599,7 +1602,7 @@ HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
   if (!dev->fixedfunc_ps) {
     const void* ps_bytes = fixedfunc::kPsPassthroughColor;
     const uint32_t ps_size = static_cast<uint32_t>(sizeof(fixedfunc::kPsPassthroughColor));
-    dev->fixedfunc_ps = create_internal_shader_locked(dev, AEROGPU_D3D9DDI_SHADER_STAGE_PS, ps_bytes, ps_size);
+    dev->fixedfunc_ps = create_internal_shader_locked(dev, kD3d9ShaderStagePs, ps_bytes, ps_size);
     if (!dev->fixedfunc_ps) {
       return E_OUTOFMEMORY;
     }
@@ -1802,10 +1805,10 @@ void write_f32_unaligned(uint8_t* p, float v) {
 }
 
 void get_viewport_dims_locked(Device* dev, float* out_x, float* out_y, float* out_w, float* out_h) {
-  float x = dev->viewport.x;
-  float y = dev->viewport.y;
-  float w = dev->viewport.w;
-  float h = dev->viewport.h;
+  float x = dev->viewport.X;
+  float y = dev->viewport.Y;
+  float w = dev->viewport.Width;
+  float h = dev->viewport.Height;
 
   if (w <= 0.0f || h <= 0.0f) {
     // Some apps rely on the default viewport. Use the current render target as a
@@ -2954,14 +2957,14 @@ void release_adapter(Adapter* adapter) {
   delete adapter;
 }
 
-HRESULT AEROGPU_D3D9_CALL adapter_close(D3D9DDI_HADAPTER hAdapter) {
+HRESULT AEROGPU_D3D9_CALL adapter_close(D3DDDI_HADAPTER hAdapter) {
   D3d9TraceCall trace(D3d9TraceFunc::AdapterClose, d3d9_trace_arg_ptr(hAdapter.pDrvPrivate), 0, 0, 0);
   release_adapter(as_adapter(hAdapter));
   return trace.ret(S_OK);
 }
 
 HRESULT AEROGPU_D3D9_CALL adapter_get_caps(
-    D3D9DDI_HADAPTER hAdapter,
+    D3DDDI_HADAPTER hAdapter,
     const D3D9DDIARG_GETCAPS* pGetCaps) {
   D3d9TraceCall trace(D3d9TraceFunc::AdapterGetCaps,
                       d3d9_trace_arg_ptr(hAdapter.pDrvPrivate),
@@ -2972,27 +2975,17 @@ HRESULT AEROGPU_D3D9_CALL adapter_get_caps(
   if (!adapter || !pGetCaps) {
     return trace.ret(E_INVALIDARG);
   }
-
-  AEROGPU_D3D9DDIARG_GETCAPS args{};
-  args.type = static_cast<uint32_t>(pGetCaps->Type);
-  args.pData = pGetCaps->pData;
-  args.data_size = pGetCaps->DataSize;
-  return trace.ret(aerogpu::get_caps(adapter, &args));
+  return trace.ret(aerogpu::get_caps(adapter, pGetCaps));
 }
 
 HRESULT AEROGPU_D3D9_CALL adapter_query_adapter_info(
-    D3D9DDI_HADAPTER hAdapter,
+    D3DDDI_HADAPTER hAdapter,
     const D3D9DDIARG_QUERYADAPTERINFO* pQueryAdapterInfo) {
   uint64_t data_ptr = 0;
   uint32_t size = 0;
   if (pQueryAdapterInfo) {
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
     data_ptr = d3d9_trace_arg_ptr(pQueryAdapterInfo->pPrivateDriverData);
     size = pQueryAdapterInfo->PrivateDriverDataSize;
-#else
-    data_ptr = d3d9_trace_arg_ptr(pQueryAdapterInfo->pData);
-    size = pQueryAdapterInfo->DataSize;
-#endif
   }
 
   D3d9TraceCall trace(D3d9TraceFunc::AdapterQueryAdapterInfo,
@@ -3005,22 +2998,10 @@ HRESULT AEROGPU_D3D9_CALL adapter_query_adapter_info(
   if (!adapter || !pQueryAdapterInfo) {
     return trace.ret(E_INVALIDARG);
   }
-
-  void* data = nullptr;
-
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
-  data = pQueryAdapterInfo->pPrivateDriverData;
+  void* data = pQueryAdapterInfo->pPrivateDriverData;
   size = pQueryAdapterInfo->PrivateDriverDataSize;
-#else
-  data = pQueryAdapterInfo->pData;
-  size = pQueryAdapterInfo->DataSize;
-#endif
 
-  AEROGPU_D3D9DDIARG_QUERYADAPTERINFO args{};
-  args.type = static_cast<uint32_t>(pQueryAdapterInfo->Type);
-  args.pPrivateDriverData = data;
-  args.private_driver_data_size = size;
-  return trace.ret(aerogpu::query_adapter_info(adapter, &args));
+  return trace.ret(aerogpu::query_adapter_info(adapter, pQueryAdapterInfo));
 }
 
 HRESULT AEROGPU_D3D9_CALL adapter_create_device(
@@ -3031,7 +3012,7 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
 // Device DDIs
 // -----------------------------------------------------------------------------
 
-HRESULT AEROGPU_D3D9_CALL device_destroy(AEROGPU_D3D9DDI_HDEVICE hDevice) {
+HRESULT AEROGPU_D3D9_CALL device_destroy(D3DDDI_HDEVICE hDevice) {
   D3d9TraceCall trace(D3d9TraceFunc::DeviceDestroy, d3d9_trace_arg_ptr(hDevice.pDrvPrivate), 0, 0, 0);
   auto* dev = as_device(hDevice);
   if (!dev) {
@@ -3235,8 +3216,8 @@ HRESULT create_backbuffer_locked(Device* dev, Resource* res, uint32_t format, ui
 }
 
 HRESULT AEROGPU_D3D9_CALL device_create_resource(
-    AEROGPU_D3D9DDI_HDEVICE hDevice,
-    AEROGPU_D3D9DDIARG_CREATERESOURCE* pCreateResource) {
+    D3DDDI_HDEVICE hDevice,
+    D3D9DDIARG_CREATERESOURCE* pCreateResource) {
   const uint64_t type_format =
       pCreateResource ? d3d9_trace_pack_u32_u32(pCreateResource->type, pCreateResource->format) : 0;
   const uint64_t wh = pCreateResource ? d3d9_trace_pack_u32_u32(pCreateResource->width, pCreateResource->height) : 0;
@@ -3587,8 +3568,8 @@ WddmAllocationHandle get_wddm_allocation_from_openresource(const OpenResourceT* 
 #endif
 
 static HRESULT device_open_resource_impl(
-    AEROGPU_D3D9DDI_HDEVICE hDevice,
-    AEROGPU_D3D9DDIARG_OPENRESOURCE* pOpenResource) {
+    D3DDDI_HDEVICE hDevice,
+    D3D9DDIARG_OPENRESOURCE* pOpenResource) {
   if (!hDevice.pDrvPrivate || !pOpenResource) {
     return E_INVALIDARG;
   }
@@ -3709,8 +3690,8 @@ static HRESULT device_open_resource_impl(
 }
 
 HRESULT AEROGPU_D3D9_CALL device_open_resource(
-    AEROGPU_D3D9DDI_HDEVICE hDevice,
-    AEROGPU_D3D9DDIARG_OPENRESOURCE* pOpenResource) {
+    D3DDDI_HDEVICE hDevice,
+    D3D9DDIARG_OPENRESOURCE* pOpenResource) {
   const uint64_t type_format = pOpenResource ? d3d9_trace_pack_u32_u32(pOpenResource->type, pOpenResource->format) : 0;
   const uint64_t wh = pOpenResource ? d3d9_trace_pack_u32_u32(pOpenResource->width, pOpenResource->height) : 0;
   const uint64_t usage_priv =
@@ -3720,8 +3701,8 @@ HRESULT AEROGPU_D3D9_CALL device_open_resource(
 }
 
 HRESULT AEROGPU_D3D9_CALL device_open_resource2(
-    AEROGPU_D3D9DDI_HDEVICE hDevice,
-    AEROGPU_D3D9DDIARG_OPENRESOURCE* pOpenResource) {
+    D3DDDI_HDEVICE hDevice,
+    D3D9DDIARG_OPENRESOURCE* pOpenResource) {
   const uint64_t type_format = pOpenResource ? d3d9_trace_pack_u32_u32(pOpenResource->type, pOpenResource->format) : 0;
   const uint64_t wh = pOpenResource ? d3d9_trace_pack_u32_u32(pOpenResource->width, pOpenResource->height) : 0;
   const uint64_t usage_priv =
@@ -3732,8 +3713,8 @@ HRESULT AEROGPU_D3D9_CALL device_open_resource2(
 }
 
 HRESULT AEROGPU_D3D9_CALL device_destroy_resource(
-    AEROGPU_D3D9DDI_HDEVICE hDevice,
-    AEROGPU_D3D9DDI_HRESOURCE hResource) {
+    D3DDDI_HDEVICE hDevice,
+    D3DDDI_HRESOURCE hResource) {
   D3d9TraceCall trace(D3d9TraceFunc::DeviceDestroyResource,
                       d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
                       d3d9_trace_arg_ptr(hResource.pDrvPrivate),
@@ -3806,7 +3787,7 @@ HRESULT AEROGPU_D3D9_CALL device_destroy_resource(
   if (dev->index_buffer == res) {
     dev->index_buffer = nullptr;
     dev->index_offset_bytes = 0;
-    dev->index_format = AEROGPU_D3D9DDI_INDEX_FORMAT_U16;
+    dev->index_format = kD3dFmtIndex16;
 
     if (auto* cmd = append_fixed_locked<aerogpu_cmd_set_index_buffer>(dev, AEROGPU_CMD_SET_INDEX_BUFFER)) {
       cmd->buffer = 0;
@@ -3844,8 +3825,8 @@ HRESULT AEROGPU_D3D9_CALL device_destroy_resource(
 }
 
 HRESULT AEROGPU_D3D9_CALL device_create_swap_chain(
-    AEROGPU_D3D9DDI_HDEVICE hDevice,
-    AEROGPU_D3D9DDIARG_CREATESWAPCHAIN* pCreateSwapChain) {
+    D3DDDI_HDEVICE hDevice,
+    D3D9DDIARG_CREATESWAPCHAIN* pCreateSwapChain) {
   const uint64_t bb_wh =
       pCreateSwapChain ? d3d9_trace_pack_u32_u32(pCreateSwapChain->present_params.backbuffer_width,
                                                  pCreateSwapChain->present_params.backbuffer_height)
@@ -4085,8 +4066,8 @@ HRESULT copy_surface_rects(Device* dev, const Resource* src, Resource* dst, cons
 }
 
 HRESULT AEROGPU_D3D9_CALL device_destroy_swap_chain(
-    AEROGPU_D3D9DDI_HDEVICE hDevice,
-    AEROGPU_D3D9DDI_HSWAPCHAIN hSwapChain) {
+    D3DDDI_HDEVICE hDevice,
+    D3D9DDI_HSWAPCHAIN hSwapChain) {
   D3d9TraceCall trace(D3d9TraceFunc::DeviceDestroySwapChain,
                       d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
                       d3d9_trace_arg_ptr(hSwapChain.pDrvPrivate),
@@ -4164,7 +4145,7 @@ HRESULT AEROGPU_D3D9_CALL device_destroy_swap_chain(
     if (dev->index_buffer == bb) {
       dev->index_buffer = nullptr;
       dev->index_offset_bytes = 0;
-      dev->index_format = AEROGPU_D3D9DDI_INDEX_FORMAT_U16;
+      dev->index_format = kD3dFmtIndex16;
 
       if (auto* cmd = append_fixed_locked<aerogpu_cmd_set_index_buffer>(dev, AEROGPU_CMD_SET_INDEX_BUFFER)) {
         cmd->buffer = 0;
@@ -4198,9 +4179,9 @@ HRESULT AEROGPU_D3D9_CALL device_destroy_swap_chain(
 }
 
 HRESULT AEROGPU_D3D9_CALL device_get_swap_chain(
-    AEROGPU_D3D9DDI_HDEVICE hDevice,
+    D3DDDI_HDEVICE hDevice,
     uint32_t index,
-    AEROGPU_D3D9DDI_HSWAPCHAIN* phSwapChain) {
+    D3D9DDI_HSWAPCHAIN* phSwapChain) {
   D3d9TraceCall trace(D3d9TraceFunc::DeviceGetSwapChain,
                       d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
                       static_cast<uint64_t>(index),
@@ -4224,8 +4205,8 @@ HRESULT AEROGPU_D3D9_CALL device_get_swap_chain(
 }
 
 HRESULT AEROGPU_D3D9_CALL device_set_swap_chain(
-    AEROGPU_D3D9DDI_HDEVICE hDevice,
-    AEROGPU_D3D9DDI_HSWAPCHAIN hSwapChain) {
+    D3DDDI_HDEVICE hDevice,
+    D3D9DDI_HSWAPCHAIN hSwapChain) {
   D3d9TraceCall trace(D3d9TraceFunc::DeviceSetSwapChain,
                       d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
                       d3d9_trace_arg_ptr(hSwapChain.pDrvPrivate),
@@ -4251,7 +4232,7 @@ HRESULT AEROGPU_D3D9_CALL device_set_swap_chain(
   return trace.ret(S_OK);
 }
 
-HRESULT reset_swap_chain_locked(Device* dev, SwapChain* sc, const AEROGPU_D3D9DDI_PRESENT_PARAMETERS& pp) {
+HRESULT reset_swap_chain_locked(Device* dev, SwapChain* sc, const D3D9DDI_PRESENT_PARAMETERS& pp) {
   if (!dev || !dev->adapter || !sc) {
     return E_INVALIDARG;
   }
@@ -4338,7 +4319,7 @@ HRESULT reset_swap_chain_locked(Device* dev, SwapChain* sc, const AEROGPU_D3D9DD
     if (dev->index_buffer == bb) {
       dev->index_buffer = nullptr;
       dev->index_offset_bytes = 0;
-      dev->index_format = AEROGPU_D3D9DDI_INDEX_FORMAT_U16;
+      dev->index_format = kD3dFmtIndex16;
 
       if (auto* cmd = append_fixed_locked<aerogpu_cmd_set_index_buffer>(dev, AEROGPU_CMD_SET_INDEX_BUFFER)) {
         cmd->buffer = 0;
@@ -4452,8 +4433,8 @@ HRESULT reset_swap_chain_locked(Device* dev, SwapChain* sc, const AEROGPU_D3D9DD
 }
 
 HRESULT AEROGPU_D3D9_CALL device_reset(
-    AEROGPU_D3D9DDI_HDEVICE hDevice,
-    const AEROGPU_D3D9DDIARG_RESET* pReset) {
+    D3DDDI_HDEVICE hDevice,
+    const D3D9DDIARG_RESET* pReset) {
   const uint64_t bb_wh =
       pReset ? d3d9_trace_pack_u32_u32(pReset->present_params.backbuffer_width, pReset->present_params.backbuffer_height) : 0;
   const uint64_t fmt_count =
@@ -4485,8 +4466,8 @@ HRESULT AEROGPU_D3D9_CALL device_reset(
 }
 
 HRESULT AEROGPU_D3D9_CALL device_reset_ex(
-    AEROGPU_D3D9DDI_HDEVICE hDevice,
-    const AEROGPU_D3D9DDIARG_RESET* pReset) {
+    D3DDDI_HDEVICE hDevice,
+    const D3D9DDIARG_RESET* pReset) {
   const uint64_t bb_wh =
       pReset ? d3d9_trace_pack_u32_u32(pReset->present_params.backbuffer_width, pReset->present_params.backbuffer_height) : 0;
   const uint64_t fmt_count =
@@ -4498,7 +4479,7 @@ HRESULT AEROGPU_D3D9_CALL device_reset_ex(
 }
 
 HRESULT AEROGPU_D3D9_CALL device_check_device_state(
-    AEROGPU_D3D9DDI_HDEVICE hDevice,
+    D3DDDI_HDEVICE hDevice,
     HWND hWnd) {
   D3d9TraceCall trace(D3d9TraceFunc::DeviceCheckDeviceState,
                       d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
@@ -4519,8 +4500,8 @@ HRESULT AEROGPU_D3D9_CALL device_check_device_state(
 }
 
 HRESULT AEROGPU_D3D9_CALL device_rotate_resource_identities(
-    AEROGPU_D3D9DDI_HDEVICE hDevice,
-    AEROGPU_D3D9DDI_HRESOURCE* pResources,
+    D3DDDI_HDEVICE hDevice,
+    D3DDDI_HRESOURCE* pResources,
     uint32_t resource_count) {
   D3d9TraceCall trace(D3d9TraceFunc::DeviceRotateResourceIdentities,
                       d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
@@ -4700,9 +4681,9 @@ HRESULT AEROGPU_D3D9_CALL device_rotate_resource_identities(
 }
 
 HRESULT AEROGPU_D3D9_CALL device_lock(
-    AEROGPU_D3D9DDI_HDEVICE hDevice,
-    const AEROGPU_D3D9DDIARG_LOCK* pLock,
-    AEROGPU_D3D9DDI_LOCKED_BOX* pLockedBox) {
+    D3DDDI_HDEVICE hDevice,
+    const D3D9DDIARG_LOCK* pLock,
+    D3DDDI_LOCKEDBOX* pLockedBox) {
   D3d9TraceCall trace(D3d9TraceFunc::DeviceLock,
                       d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
                       pLock ? d3d9_trace_arg_ptr(pLock->hResource.pDrvPrivate) : 0,
@@ -4762,14 +4743,14 @@ HRESULT AEROGPU_D3D9_CALL device_lock(
     res->locked_ptr = res->storage.data() + offset;
     pLockedBox->pData = res->locked_ptr;
   }
-  pLockedBox->rowPitch = res->row_pitch;
-  pLockedBox->slicePitch = res->slice_pitch;
+  pLockedBox->RowPitch = res->row_pitch;
+  pLockedBox->SlicePitch = res->slice_pitch;
   return trace.ret(S_OK);
 }
 
 HRESULT AEROGPU_D3D9_CALL device_unlock(
-    AEROGPU_D3D9DDI_HDEVICE hDevice,
-    const AEROGPU_D3D9DDIARG_UNLOCK* pUnlock) {
+    D3DDDI_HDEVICE hDevice,
+    const D3D9DDIARG_UNLOCK* pUnlock) {
   D3d9TraceCall trace(D3d9TraceFunc::DeviceUnlock,
                       d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
                       pUnlock ? d3d9_trace_arg_ptr(pUnlock->hResource.pDrvPrivate) : 0,
@@ -4901,8 +4882,8 @@ HRESULT AEROGPU_D3D9_CALL device_unlock(
 }
 
 HRESULT AEROGPU_D3D9_CALL device_get_render_target_data(
-    AEROGPU_D3D9DDI_HDEVICE hDevice,
-    const AEROGPU_D3D9DDIARG_GETRENDERTARGETDATA* pGetRenderTargetData) {
+    D3DDDI_HDEVICE hDevice,
+    const D3D9DDIARG_GETRENDERTARGETDATA* pGetRenderTargetData) {
   D3d9TraceCall trace(D3d9TraceFunc::DeviceGetRenderTargetData,
                       d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
                       pGetRenderTargetData ? d3d9_trace_arg_ptr(pGetRenderTargetData->hSrcResource.pDrvPrivate) : 0,
@@ -4946,8 +4927,8 @@ HRESULT AEROGPU_D3D9_CALL device_get_render_target_data(
 }
 
 HRESULT AEROGPU_D3D9_CALL device_copy_rects(
-    AEROGPU_D3D9DDI_HDEVICE hDevice,
-    const AEROGPU_D3D9DDIARG_COPYRECTS* pCopyRects) {
+    D3DDDI_HDEVICE hDevice,
+    const D3D9DDIARG_COPYRECTS* pCopyRects) {
   const uint64_t src_ptr = pCopyRects ? d3d9_trace_arg_ptr(pCopyRects->hSrcResource.pDrvPrivate) : 0;
   const uint64_t dst_ptr = pCopyRects ? d3d9_trace_arg_ptr(pCopyRects->hDstResource.pDrvPrivate) : 0;
   const uint64_t rects =
@@ -5007,9 +4988,9 @@ HRESULT AEROGPU_D3D9_CALL device_copy_rects(
 }
 
 HRESULT AEROGPU_D3D9_CALL device_set_render_target(
-    AEROGPU_D3D9DDI_HDEVICE hDevice,
+    D3DDDI_HDEVICE hDevice,
     uint32_t slot,
-    AEROGPU_D3D9DDI_HRESOURCE hSurface) {
+    D3DDDI_HRESOURCE hSurface) {
   D3d9TraceCall trace(D3d9TraceFunc::DeviceSetRenderTarget,
                       d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
                       static_cast<uint64_t>(slot),
@@ -5067,8 +5048,8 @@ HRESULT AEROGPU_D3D9_CALL device_set_render_target(
 }
 
 HRESULT AEROGPU_D3D9_CALL device_set_depth_stencil(
-    AEROGPU_D3D9DDI_HDEVICE hDevice,
-    AEROGPU_D3D9DDI_HRESOURCE hSurface) {
+    D3DDDI_HDEVICE hDevice,
+    D3DDDI_HRESOURCE hSurface) {
   D3d9TraceCall trace(D3d9TraceFunc::DeviceSetDepthStencil,
                       d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
                       d3d9_trace_arg_ptr(hSurface.pDrvPrivate),
@@ -5093,11 +5074,11 @@ HRESULT AEROGPU_D3D9_CALL device_set_depth_stencil(
 }
 
 HRESULT AEROGPU_D3D9_CALL device_set_viewport(
-    AEROGPU_D3D9DDI_HDEVICE hDevice,
-    const AEROGPU_D3D9DDI_VIEWPORT* pViewport) {
-  const uint64_t xy = pViewport ? d3d9_trace_pack_u32_u32(f32_bits(pViewport->x), f32_bits(pViewport->y)) : 0;
-  const uint64_t wh = pViewport ? d3d9_trace_pack_u32_u32(f32_bits(pViewport->w), f32_bits(pViewport->h)) : 0;
-  const uint64_t zz = pViewport ? d3d9_trace_pack_u32_u32(f32_bits(pViewport->min_z), f32_bits(pViewport->max_z)) : 0;
+    D3DDDI_HDEVICE hDevice,
+    const D3DDDIVIEWPORTINFO* pViewport) {
+  const uint64_t xy = pViewport ? d3d9_trace_pack_u32_u32(f32_bits(pViewport->X), f32_bits(pViewport->Y)) : 0;
+  const uint64_t wh = pViewport ? d3d9_trace_pack_u32_u32(f32_bits(pViewport->Width), f32_bits(pViewport->Height)) : 0;
+  const uint64_t zz = pViewport ? d3d9_trace_pack_u32_u32(f32_bits(pViewport->MinZ), f32_bits(pViewport->MaxZ)) : 0;
   D3d9TraceCall trace(D3d9TraceFunc::DeviceSetViewport, d3d9_trace_arg_ptr(hDevice.pDrvPrivate), xy, wh, zz);
   if (!hDevice.pDrvPrivate || !pViewport) {
     return trace.ret(E_INVALIDARG);
@@ -5111,17 +5092,17 @@ HRESULT AEROGPU_D3D9_CALL device_set_viewport(
   if (!cmd) {
     return trace.ret(E_OUTOFMEMORY);
   }
-  cmd->x_f32 = f32_bits(pViewport->x);
-  cmd->y_f32 = f32_bits(pViewport->y);
-  cmd->width_f32 = f32_bits(pViewport->w);
-  cmd->height_f32 = f32_bits(pViewport->h);
-  cmd->min_depth_f32 = f32_bits(pViewport->min_z);
-  cmd->max_depth_f32 = f32_bits(pViewport->max_z);
+  cmd->x_f32 = f32_bits(pViewport->X);
+  cmd->y_f32 = f32_bits(pViewport->Y);
+  cmd->width_f32 = f32_bits(pViewport->Width);
+  cmd->height_f32 = f32_bits(pViewport->Height);
+  cmd->min_depth_f32 = f32_bits(pViewport->MinZ);
+  cmd->max_depth_f32 = f32_bits(pViewport->MaxZ);
   return trace.ret(S_OK);
 }
 
 HRESULT AEROGPU_D3D9_CALL device_set_scissor(
-    AEROGPU_D3D9DDI_HDEVICE hDevice,
+    D3DDDI_HDEVICE hDevice,
     const RECT* pRect,
     BOOL enabled) {
   const uint64_t lt = pRect ? d3d9_trace_pack_u32_u32(static_cast<uint32_t>(pRect->left), static_cast<uint32_t>(pRect->top)) : 0;
@@ -5164,9 +5145,9 @@ HRESULT AEROGPU_D3D9_CALL device_set_scissor(
 }
 
 HRESULT AEROGPU_D3D9_CALL device_set_texture(
-    AEROGPU_D3D9DDI_HDEVICE hDevice,
+    D3DDDI_HDEVICE hDevice,
     uint32_t stage,
-    AEROGPU_D3D9DDI_HRESOURCE hTexture) {
+    D3DDDI_HRESOURCE hTexture) {
   D3d9TraceCall trace(D3d9TraceFunc::DeviceSetTexture,
                       d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
                       static_cast<uint64_t>(stage),
@@ -5201,7 +5182,7 @@ HRESULT AEROGPU_D3D9_CALL device_set_texture(
 }
 
 HRESULT AEROGPU_D3D9_CALL device_set_sampler_state(
-    AEROGPU_D3D9DDI_HDEVICE hDevice,
+    D3DDDI_HDEVICE hDevice,
     uint32_t stage,
     uint32_t state,
     uint32_t value) {
@@ -5236,7 +5217,7 @@ HRESULT AEROGPU_D3D9_CALL device_set_sampler_state(
 }
 
 HRESULT AEROGPU_D3D9_CALL device_set_render_state(
-    AEROGPU_D3D9DDI_HDEVICE hDevice,
+    D3DDDI_HDEVICE hDevice,
     uint32_t state,
     uint32_t value) {
   D3d9TraceCall trace(D3d9TraceFunc::DeviceSetRenderState,
@@ -5265,10 +5246,10 @@ HRESULT AEROGPU_D3D9_CALL device_set_render_state(
 }
 
 HRESULT AEROGPU_D3D9_CALL device_create_vertex_decl(
-    AEROGPU_D3D9DDI_HDEVICE hDevice,
+    D3DDDI_HDEVICE hDevice,
     const void* pDecl,
     uint32_t decl_size,
-    AEROGPU_D3D9DDI_HVERTEXDECL* phDecl) {
+    D3D9DDI_HVERTEXDECL* phDecl) {
   D3d9TraceCall trace(D3d9TraceFunc::DeviceCreateVertexDecl,
                       d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
                       static_cast<uint64_t>(decl_size),
@@ -5299,8 +5280,8 @@ HRESULT AEROGPU_D3D9_CALL device_create_vertex_decl(
 }
 
 HRESULT AEROGPU_D3D9_CALL device_set_vertex_decl(
-    AEROGPU_D3D9DDI_HDEVICE hDevice,
-    AEROGPU_D3D9DDI_HVERTEXDECL hDecl) {
+    D3DDDI_HDEVICE hDevice,
+    D3D9DDI_HVERTEXDECL hDecl) {
   D3d9TraceCall trace(D3d9TraceFunc::DeviceSetVertexDecl,
                       d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
                       d3d9_trace_arg_ptr(hDecl.pDrvPrivate),
@@ -5342,8 +5323,8 @@ HRESULT AEROGPU_D3D9_CALL device_set_vertex_decl(
 }
 
 HRESULT AEROGPU_D3D9_CALL device_destroy_vertex_decl(
-    AEROGPU_D3D9DDI_HDEVICE hDevice,
-    AEROGPU_D3D9DDI_HVERTEXDECL hDecl) {
+    D3DDDI_HDEVICE hDevice,
+    D3D9DDI_HVERTEXDECL hDecl) {
   D3d9TraceCall trace(D3d9TraceFunc::DeviceDestroyVertexDecl,
                       d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
                       d3d9_trace_arg_ptr(hDecl.pDrvPrivate),
@@ -5369,7 +5350,7 @@ HRESULT AEROGPU_D3D9_CALL device_destroy_vertex_decl(
   return trace.ret(S_OK);
 }
 
-HRESULT AEROGPU_D3D9_CALL device_set_fvf(AEROGPU_D3D9DDI_HDEVICE hDevice, uint32_t fvf) {
+HRESULT AEROGPU_D3D9_CALL device_set_fvf(D3DDDI_HDEVICE hDevice, uint32_t fvf) {
   D3d9TraceCall trace(D3d9TraceFunc::DeviceSetFVF,
                       d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
                       static_cast<uint64_t>(fvf),
@@ -5422,11 +5403,11 @@ HRESULT AEROGPU_D3D9_CALL device_set_fvf(AEROGPU_D3D9DDI_HDEVICE hDevice, uint32
 }
 
 HRESULT AEROGPU_D3D9_CALL device_create_shader(
-    AEROGPU_D3D9DDI_HDEVICE hDevice,
-    AEROGPU_D3D9DDI_SHADER_STAGE stage,
+    D3DDDI_HDEVICE hDevice,
+    uint32_t stage,
     const void* pBytecode,
     uint32_t bytecode_size,
-    AEROGPU_D3D9DDI_HSHADER* phShader) {
+    D3D9DDI_HSHADER* phShader) {
   D3d9TraceCall trace(D3d9TraceFunc::DeviceCreateShader,
                       d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
                       static_cast<uint64_t>(stage),
@@ -5458,9 +5439,9 @@ HRESULT AEROGPU_D3D9_CALL device_create_shader(
 }
 
 HRESULT AEROGPU_D3D9_CALL device_set_shader(
-    AEROGPU_D3D9DDI_HDEVICE hDevice,
-    AEROGPU_D3D9DDI_SHADER_STAGE stage,
-    AEROGPU_D3D9DDI_HSHADER hShader) {
+    D3DDDI_HDEVICE hDevice,
+    uint32_t stage,
+    D3D9DDI_HSHADER hShader) {
   D3d9TraceCall trace(D3d9TraceFunc::DeviceSetShader,
                       d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
                       static_cast<uint64_t>(stage),
@@ -5475,7 +5456,7 @@ HRESULT AEROGPU_D3D9_CALL device_set_shader(
 
   std::lock_guard<std::mutex> lock(dev->mutex);
 
-  Shader** user_slot = (stage == AEROGPU_D3D9DDI_SHADER_STAGE_VS) ? &dev->user_vs : &dev->user_ps;
+  Shader** user_slot = (stage == kD3d9ShaderStageVs) ? &dev->user_vs : &dev->user_ps;
   if (*user_slot == sh) {
     return trace.ret(S_OK);
   }
@@ -5494,8 +5475,8 @@ HRESULT AEROGPU_D3D9_CALL device_set_shader(
 }
 
 HRESULT AEROGPU_D3D9_CALL device_destroy_shader(
-    AEROGPU_D3D9DDI_HDEVICE hDevice,
-    AEROGPU_D3D9DDI_HSHADER hShader) {
+    D3DDDI_HDEVICE hDevice,
+    D3D9DDI_HSHADER hShader) {
   D3d9TraceCall trace(D3d9TraceFunc::DeviceDestroyShader,
                       d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
                       d3d9_trace_arg_ptr(hShader.pDrvPrivate),
@@ -5540,8 +5521,8 @@ HRESULT AEROGPU_D3D9_CALL device_destroy_shader(
 }
 
 HRESULT AEROGPU_D3D9_CALL device_set_shader_const_f(
-    AEROGPU_D3D9DDI_HDEVICE hDevice,
-    AEROGPU_D3D9DDI_SHADER_STAGE stage,
+    D3DDDI_HDEVICE hDevice,
+    uint32_t stage,
     uint32_t start_reg,
     const float* pData,
     uint32_t vec4_count) {
@@ -5557,7 +5538,7 @@ HRESULT AEROGPU_D3D9_CALL device_set_shader_const_f(
   auto* dev = as_device(hDevice);
   std::lock_guard<std::mutex> lock(dev->mutex);
 
-  float* dst = (stage == AEROGPU_D3D9DDI_SHADER_STAGE_VS) ? dev->vs_consts_f : dev->ps_consts_f;
+  float* dst = (stage == kD3d9ShaderStageVs) ? dev->vs_consts_f : dev->ps_consts_f;
   if (start_reg < 256) {
     const uint32_t write_regs = std::min(vec4_count, 256u - start_reg);
     std::memcpy(dst + start_reg * 4, pData, static_cast<size_t>(write_regs) * 4 * sizeof(float));
@@ -5577,7 +5558,7 @@ HRESULT AEROGPU_D3D9_CALL device_set_shader_const_f(
   return trace.ret(S_OK);
 }
 
-HRESULT AEROGPU_D3D9_CALL device_blt(AEROGPU_D3D9DDI_HDEVICE hDevice, const AEROGPU_D3D9DDIARG_BLT* pBlt) {
+HRESULT AEROGPU_D3D9_CALL device_blt(D3DDDI_HDEVICE hDevice, const D3D9DDIARG_BLT* pBlt) {
   D3d9TraceCall trace(D3d9TraceFunc::DeviceBlt,
                       d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
                       pBlt ? d3d9_trace_arg_ptr(pBlt->hSrc.pDrvPrivate) : 0,
@@ -5600,8 +5581,8 @@ HRESULT AEROGPU_D3D9_CALL device_blt(AEROGPU_D3D9DDI_HDEVICE hDevice, const AERO
   return trace.ret(blit_locked(dev, dst, pBlt->pDstRect, src, pBlt->pSrcRect, pBlt->filter));
 }
 
-HRESULT AEROGPU_D3D9_CALL device_color_fill(AEROGPU_D3D9DDI_HDEVICE hDevice,
-                                             const AEROGPU_D3D9DDIARG_COLORFILL* pColorFill) {
+HRESULT AEROGPU_D3D9_CALL device_color_fill(D3DDDI_HDEVICE hDevice,
+                                             const D3D9DDIARG_COLORFILL* pColorFill) {
   D3d9TraceCall trace(D3d9TraceFunc::DeviceColorFill,
                       d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
                       pColorFill ? d3d9_trace_arg_ptr(pColorFill->hDst.pDrvPrivate) : 0,
@@ -5620,8 +5601,8 @@ HRESULT AEROGPU_D3D9_CALL device_color_fill(AEROGPU_D3D9DDI_HDEVICE hDevice,
   return trace.ret(color_fill_locked(dev, dst, pColorFill->pRect, pColorFill->color_argb));
 }
 
-HRESULT AEROGPU_D3D9_CALL device_update_surface(AEROGPU_D3D9DDI_HDEVICE hDevice,
-                                                  const AEROGPU_D3D9DDIARG_UPDATESURFACE* pUpdateSurface) {
+HRESULT AEROGPU_D3D9_CALL device_update_surface(D3DDDI_HDEVICE hDevice,
+                                                  const D3D9DDIARG_UPDATESURFACE* pUpdateSurface) {
   const uint64_t rect_flags = pUpdateSurface ? d3d9_trace_pack_u32_u32(pUpdateSurface->pSrcRect != nullptr ? 1u : 0u,
                                                                        pUpdateSurface->pDstRect != nullptr ? 1u : 0u)
                                              : 0;
@@ -5645,8 +5626,8 @@ HRESULT AEROGPU_D3D9_CALL device_update_surface(AEROGPU_D3D9DDI_HDEVICE hDevice,
   return trace.ret(update_surface_locked(dev, src, pUpdateSurface->pSrcRect, dst, pUpdateSurface->pDstPoint));
 }
 
-HRESULT AEROGPU_D3D9_CALL device_update_texture(AEROGPU_D3D9DDI_HDEVICE hDevice,
-                                                  const AEROGPU_D3D9DDIARG_UPDATETEXTURE* pUpdateTexture) {
+HRESULT AEROGPU_D3D9_CALL device_update_texture(D3DDDI_HDEVICE hDevice,
+                                                  const D3D9DDIARG_UPDATETEXTURE* pUpdateTexture) {
   D3d9TraceCall trace(D3d9TraceFunc::DeviceUpdateTexture,
                       d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
                       pUpdateTexture ? d3d9_trace_arg_ptr(pUpdateTexture->hSrc.pDrvPrivate) : 0,
@@ -5668,9 +5649,9 @@ HRESULT AEROGPU_D3D9_CALL device_update_texture(AEROGPU_D3D9DDI_HDEVICE hDevice,
 }
 
 HRESULT AEROGPU_D3D9_CALL device_set_stream_source(
-    AEROGPU_D3D9DDI_HDEVICE hDevice,
+    D3DDDI_HDEVICE hDevice,
     uint32_t stream,
-    AEROGPU_D3D9DDI_HRESOURCE hVb,
+    D3DDDI_HRESOURCE hVb,
     uint32_t offset_bytes,
     uint32_t stride_bytes) {
   D3d9TraceCall trace(D3d9TraceFunc::DeviceSetStreamSource,
@@ -5696,9 +5677,9 @@ HRESULT AEROGPU_D3D9_CALL device_set_stream_source(
 }
 
 HRESULT AEROGPU_D3D9_CALL device_set_indices(
-    AEROGPU_D3D9DDI_HDEVICE hDevice,
-    AEROGPU_D3D9DDI_HRESOURCE hIb,
-    AEROGPU_D3D9DDI_INDEX_FORMAT fmt,
+    D3DDDI_HDEVICE hDevice,
+    D3DDDI_HRESOURCE hIb,
+    D3DDDIFORMAT fmt,
     uint32_t offset_bytes) {
   D3d9TraceCall trace(D3d9TraceFunc::DeviceSetIndices,
                       d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
@@ -5729,7 +5710,7 @@ HRESULT AEROGPU_D3D9_CALL device_set_indices(
   return trace.ret(S_OK);
 }
 
-HRESULT AEROGPU_D3D9_CALL device_begin_scene(AEROGPU_D3D9DDI_HDEVICE hDevice) {
+HRESULT AEROGPU_D3D9_CALL device_begin_scene(D3DDDI_HDEVICE hDevice) {
   if (!hDevice.pDrvPrivate) {
     return E_INVALIDARG;
   }
@@ -5744,7 +5725,7 @@ HRESULT AEROGPU_D3D9_CALL device_begin_scene(AEROGPU_D3D9DDI_HDEVICE hDevice) {
   return S_OK;
 }
 
-HRESULT AEROGPU_D3D9_CALL device_end_scene(AEROGPU_D3D9DDI_HDEVICE hDevice) {
+HRESULT AEROGPU_D3D9_CALL device_end_scene(D3DDDI_HDEVICE hDevice) {
   if (!hDevice.pDrvPrivate) {
     return E_INVALIDARG;
   }
@@ -5762,7 +5743,7 @@ HRESULT AEROGPU_D3D9_CALL device_end_scene(AEROGPU_D3D9DDI_HDEVICE hDevice) {
 }
 
 HRESULT AEROGPU_D3D9_CALL device_clear(
-    AEROGPU_D3D9DDI_HDEVICE hDevice,
+    D3DDDI_HDEVICE hDevice,
     uint32_t flags,
     uint32_t color_rgba8,
     float depth,
@@ -5811,8 +5792,8 @@ HRESULT AEROGPU_D3D9_CALL device_clear(
 }
 
 HRESULT AEROGPU_D3D9_CALL device_draw_primitive(
-    AEROGPU_D3D9DDI_HDEVICE hDevice,
-    AEROGPU_D3D9DDI_PRIMITIVE_TYPE type,
+    D3DDDI_HDEVICE hDevice,
+    D3DDDIPRIMITIVETYPE type,
     uint32_t start_vertex,
     uint32_t primitive_count) {
   D3d9TraceCall trace(D3d9TraceFunc::DeviceDrawPrimitive,
@@ -5939,8 +5920,8 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive(
 }
 
 HRESULT AEROGPU_D3D9_CALL device_draw_primitive_up(
-    AEROGPU_D3D9DDI_HDEVICE hDevice,
-    AEROGPU_D3D9DDI_PRIMITIVE_TYPE type,
+    D3DDDI_HDEVICE hDevice,
+    D3DDDIPRIMITIVETYPE type,
     uint32_t primitive_count,
     const void* pVertexData,
     uint32_t stride_bytes) {
@@ -6038,12 +6019,12 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive_up(
 }
 
 HRESULT AEROGPU_D3D9_CALL device_draw_primitive2(
-    AEROGPU_D3D9DDI_HDEVICE hDevice,
-    const AEROGPU_D3D9DDIARG_DRAWPRIMITIVE2* pDraw) {
+    D3DDDI_HDEVICE hDevice,
+    const D3DDDIARG_DRAWPRIMITIVE2* pDraw) {
   if (!hDevice.pDrvPrivate || !pDraw) {
     return E_INVALIDARG;
   }
-  if (!pDraw->pVertexStreamZeroData || pDraw->vertex_stream_zero_stride == 0) {
+  if (!pDraw->pVertexStreamZeroData || pDraw->VertexStreamZeroStride == 0) {
     return E_INVALIDARG;
   }
 
@@ -6053,8 +6034,8 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive2(
   }
   std::lock_guard<std::mutex> lock(dev->mutex);
 
-  const uint32_t vertex_count = vertex_count_from_primitive(pDraw->type, pDraw->primitive_count);
-  const uint64_t size_u64 = static_cast<uint64_t>(vertex_count) * pDraw->vertex_stream_zero_stride;
+  const uint32_t vertex_count = vertex_count_from_primitive(pDraw->PrimitiveType, pDraw->PrimitiveCount);
+  const uint64_t size_u64 = static_cast<uint64_t>(vertex_count) * pDraw->VertexStreamZeroStride;
   if (size_u64 == 0 || size_u64 > 0x7FFFFFFFu) {
     return E_INVALIDARG;
   }
@@ -6067,7 +6048,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive2(
 
   if (dev->fvf == kSupportedFvfXyzrhwDiffuse && !dev->user_vs && !dev->user_ps) {
     HRESULT hr = convert_xyzrhw_to_clipspace_locked(
-        dev, pDraw->pVertexStreamZeroData, pDraw->vertex_stream_zero_stride, vertex_count, &converted);
+        dev, pDraw->pVertexStreamZeroData, pDraw->VertexStreamZeroStride, vertex_count, &converted);
     if (FAILED(hr)) {
       return hr;
     }
@@ -6084,7 +6065,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive2(
     return hr;
   }
 
-  if (!emit_set_stream_source_locked(dev, 0, dev->up_vertex_buffer, 0, pDraw->vertex_stream_zero_stride)) {
+  if (!emit_set_stream_source_locked(dev, 0, dev->up_vertex_buffer, 0, pDraw->VertexStreamZeroStride)) {
     return E_OUTOFMEMORY;
   }
 
@@ -6096,7 +6077,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive2(
     }
   }
 
-  const uint32_t topology = d3d9_prim_to_topology(pDraw->type);
+  const uint32_t topology = d3d9_prim_to_topology(pDraw->PrimitiveType);
   if (!emit_set_topology_locked(dev, topology)) {
     (void)emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes);
     return E_OUTOFMEMORY;
@@ -6133,12 +6114,12 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive2(
 }
 
 HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive2(
-    AEROGPU_D3D9DDI_HDEVICE hDevice,
-    const AEROGPU_D3D9DDIARG_DRAWINDEXEDPRIMITIVE2* pDraw) {
+    D3DDDI_HDEVICE hDevice,
+    const D3DDDIARG_DRAWINDEXEDPRIMITIVE2* pDraw) {
   if (!hDevice.pDrvPrivate || !pDraw) {
     return E_INVALIDARG;
   }
-  if (!pDraw->pVertexStreamZeroData || pDraw->vertex_stream_zero_stride == 0 || !pDraw->pIndexData) {
+  if (!pDraw->pVertexStreamZeroData || pDraw->VertexStreamZeroStride == 0 || !pDraw->pIndexData) {
     return E_INVALIDARG;
   }
 
@@ -6148,23 +6129,23 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive2(
   }
   std::lock_guard<std::mutex> lock(dev->mutex);
 
-  const uint32_t index_count = index_count_from_primitive(pDraw->type, pDraw->primitive_count);
-  const uint32_t index_size = (pDraw->index_format == AEROGPU_D3D9DDI_INDEX_FORMAT_U32) ? 4u : 2u;
+  const uint32_t index_count = index_count_from_primitive(pDraw->PrimitiveType, pDraw->PrimitiveCount);
+  const uint32_t index_size = (pDraw->IndexDataFormat == kD3dFmtIndex32) ? 4u : 2u;
   const uint64_t ib_size_u64 = static_cast<uint64_t>(index_count) * index_size;
   if (ib_size_u64 == 0 || ib_size_u64 > 0x7FFFFFFFu) {
     return E_INVALIDARG;
   }
   const uint32_t ib_size = static_cast<uint32_t>(ib_size_u64);
 
-  const uint64_t vertex_count_u64 = static_cast<uint64_t>(pDraw->min_index) + static_cast<uint64_t>(pDraw->num_vertices);
-  const uint64_t vb_size_u64 = vertex_count_u64 * static_cast<uint64_t>(pDraw->vertex_stream_zero_stride);
+  const uint64_t vertex_count_u64 = static_cast<uint64_t>(pDraw->MinIndex) + static_cast<uint64_t>(pDraw->NumVertices);
+  const uint64_t vb_size_u64 = vertex_count_u64 * static_cast<uint64_t>(pDraw->VertexStreamZeroStride);
   if (vertex_count_u64 == 0 || vb_size_u64 == 0 || vb_size_u64 > 0x7FFFFFFFu) {
     return E_INVALIDARG;
   }
 
   DeviceStateStream saved_stream = dev->streams[0];
   Resource* saved_ib = dev->index_buffer;
-  const AEROGPU_D3D9DDI_INDEX_FORMAT saved_fmt = dev->index_format;
+  const D3DDDIFORMAT saved_fmt = dev->index_format;
   const uint32_t saved_offset = dev->index_offset_bytes;
 
   std::vector<uint8_t> converted;
@@ -6173,7 +6154,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive2(
 
   if (dev->fvf == kSupportedFvfXyzrhwDiffuse && !dev->user_vs && !dev->user_ps) {
     HRESULT hr = convert_xyzrhw_to_clipspace_locked(
-        dev, pDraw->pVertexStreamZeroData, pDraw->vertex_stream_zero_stride, static_cast<uint32_t>(vertex_count_u64), &converted);
+        dev, pDraw->pVertexStreamZeroData, pDraw->VertexStreamZeroStride, static_cast<uint32_t>(vertex_count_u64), &converted);
     if (FAILED(hr)) {
       return hr;
     }
@@ -6199,12 +6180,12 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive2(
     return hr;
   }
 
-  if (!emit_set_stream_source_locked(dev, 0, dev->up_vertex_buffer, 0, pDraw->vertex_stream_zero_stride)) {
+  if (!emit_set_stream_source_locked(dev, 0, dev->up_vertex_buffer, 0, pDraw->VertexStreamZeroStride)) {
     return E_OUTOFMEMORY;
   }
 
   dev->index_buffer = dev->up_index_buffer;
-  dev->index_format = pDraw->index_format;
+  dev->index_format = pDraw->IndexDataFormat;
   dev->index_offset_bytes = 0;
 
   auto* ib_cmd = append_fixed_locked<aerogpu_cmd_set_index_buffer>(dev, AEROGPU_CMD_SET_INDEX_BUFFER);
@@ -6216,7 +6197,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive2(
     return E_OUTOFMEMORY;
   }
   ib_cmd->buffer = dev->up_index_buffer ? dev->up_index_buffer->handle : 0;
-  ib_cmd->format = d3d9_index_format_to_aerogpu(pDraw->index_format);
+  ib_cmd->format = d3d9_index_format_to_aerogpu(pDraw->IndexDataFormat);
   ib_cmd->offset_bytes = 0;
   ib_cmd->reserved0 = 0;
 
@@ -6239,7 +6220,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive2(
     }
   }
 
-  const uint32_t topology = d3d9_prim_to_topology(pDraw->type);
+  const uint32_t topology = d3d9_prim_to_topology(pDraw->PrimitiveType);
   if (!emit_set_topology_locked(dev, topology)) {
     (void)emit_set_stream_source_locked(dev, 0, saved_stream.vb, saved_stream.offset_bytes, saved_stream.stride_bytes);
     // Restore IB state.
@@ -6336,8 +6317,8 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive2(
 }
 
 HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
-    AEROGPU_D3D9DDI_HDEVICE hDevice,
-    AEROGPU_D3D9DDI_PRIMITIVE_TYPE type,
+    D3DDDI_HDEVICE hDevice,
+    D3DDDIPRIMITIVETYPE type,
     int32_t base_vertex,
     uint32_t /*min_index*/,
     uint32_t /*num_vertices*/,
@@ -6370,7 +6351,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
     }
 
     const uint32_t index_count = index_count_from_primitive(type, primitive_count);
-    const uint32_t index_size = (dev->index_format == AEROGPU_D3D9DDI_INDEX_FORMAT_U32) ? 4u : 2u;
+    const uint32_t index_size = (dev->index_format == kD3dFmtIndex32) ? 4u : 2u;
     const uint64_t index_bytes_u64 = static_cast<uint64_t>(index_count) * index_size;
     const uint64_t index_offset_u64 =
         static_cast<uint64_t>(dev->index_offset_bytes) + static_cast<uint64_t>(start_index) * index_size;
@@ -6523,8 +6504,8 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
 }
 
 HRESULT AEROGPU_D3D9_CALL device_present_ex(
-    AEROGPU_D3D9DDI_HDEVICE hDevice,
-    const AEROGPU_D3D9DDIARG_PRESENTEX* pPresentEx) {
+    D3DDDI_HDEVICE hDevice,
+    const D3D9DDIARG_PRESENTEX* pPresentEx) {
   const uint64_t wnd = pPresentEx ? d3d9_trace_arg_ptr(pPresentEx->hWnd) : 0;
   const uint64_t sync_flags =
       pPresentEx ? d3d9_trace_pack_u32_u32(pPresentEx->sync_interval, pPresentEx->d3d9_present_flags) : 0;
@@ -6775,8 +6756,8 @@ HRESULT AEROGPU_D3D9_CALL device_present_ex(
 }
 
 HRESULT AEROGPU_D3D9_CALL device_present(
-    AEROGPU_D3D9DDI_HDEVICE hDevice,
-    const AEROGPU_D3D9DDIARG_PRESENT* pPresent) {
+    D3DDDI_HDEVICE hDevice,
+    const D3D9DDIARG_PRESENT* pPresent) {
   const uint64_t sc_ptr = pPresent ? d3d9_trace_arg_ptr(pPresent->hSwapChain.pDrvPrivate) : 0;
   const uint64_t src_ptr = pPresent ? d3d9_trace_arg_ptr(pPresent->hSrc.pDrvPrivate) : 0;
   const uint64_t sync_flags = pPresent ? d3d9_trace_pack_u32_u32(pPresent->sync_interval, pPresent->flags) : 0;
@@ -7051,7 +7032,7 @@ HRESULT AEROGPU_D3D9_CALL device_present(
 }
 
 HRESULT AEROGPU_D3D9_CALL device_set_maximum_frame_latency(
-    AEROGPU_D3D9DDI_HDEVICE hDevice,
+    D3DDDI_HDEVICE hDevice,
     uint32_t max_frame_latency) {
   D3d9TraceCall trace(D3d9TraceFunc::DeviceSetMaximumFrameLatency,
                       d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
@@ -7072,7 +7053,7 @@ HRESULT AEROGPU_D3D9_CALL device_set_maximum_frame_latency(
 }
 
 HRESULT AEROGPU_D3D9_CALL device_get_maximum_frame_latency(
-    AEROGPU_D3D9DDI_HDEVICE hDevice,
+    D3DDDI_HDEVICE hDevice,
     uint32_t* pMaxFrameLatency) {
   D3d9TraceCall trace(D3d9TraceFunc::DeviceGetMaximumFrameLatency,
                       d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
@@ -7089,8 +7070,8 @@ HRESULT AEROGPU_D3D9_CALL device_get_maximum_frame_latency(
 }
 
 HRESULT AEROGPU_D3D9_CALL device_get_present_stats(
-    AEROGPU_D3D9DDI_HDEVICE hDevice,
-    AEROGPU_D3D9DDI_PRESENTSTATS* pStats) {
+    D3DDDI_HDEVICE hDevice,
+    D3D9DDI_PRESENTSTATS* pStats) {
   D3d9TraceCall trace(D3d9TraceFunc::DeviceGetPresentStats,
                       d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
                       d3d9_trace_arg_ptr(pStats),
@@ -7112,7 +7093,7 @@ HRESULT AEROGPU_D3D9_CALL device_get_present_stats(
 }
 
 HRESULT AEROGPU_D3D9_CALL device_get_last_present_count(
-    AEROGPU_D3D9DDI_HDEVICE hDevice,
+    D3DDDI_HDEVICE hDevice,
     uint32_t* pLastPresentCount) {
   D3d9TraceCall trace(D3d9TraceFunc::DeviceGetLastPresentCount,
                       d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
@@ -7128,7 +7109,7 @@ HRESULT AEROGPU_D3D9_CALL device_get_last_present_count(
   return trace.ret(S_OK);
 }
 
-HRESULT AEROGPU_D3D9_CALL device_set_gpu_thread_priority(AEROGPU_D3D9DDI_HDEVICE hDevice, int32_t priority) {
+HRESULT AEROGPU_D3D9_CALL device_set_gpu_thread_priority(D3DDDI_HDEVICE hDevice, int32_t priority) {
   D3d9TraceCall trace(D3d9TraceFunc::DeviceSetGPUThreadPriority,
                       d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
                       static_cast<uint64_t>(static_cast<uint32_t>(priority)),
@@ -7143,7 +7124,7 @@ HRESULT AEROGPU_D3D9_CALL device_set_gpu_thread_priority(AEROGPU_D3D9DDI_HDEVICE
   return trace.ret(S_OK);
 }
 
-HRESULT AEROGPU_D3D9_CALL device_get_gpu_thread_priority(AEROGPU_D3D9DDI_HDEVICE hDevice, int32_t* pPriority) {
+HRESULT AEROGPU_D3D9_CALL device_get_gpu_thread_priority(D3DDDI_HDEVICE hDevice, int32_t* pPriority) {
   D3d9TraceCall trace(D3d9TraceFunc::DeviceGetGPUThreadPriority,
                       d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
                       d3d9_trace_arg_ptr(pPriority),
@@ -7159,8 +7140,8 @@ HRESULT AEROGPU_D3D9_CALL device_get_gpu_thread_priority(AEROGPU_D3D9DDI_HDEVICE
 }
 
 HRESULT AEROGPU_D3D9_CALL device_query_resource_residency(
-    AEROGPU_D3D9DDI_HDEVICE hDevice,
-    const AEROGPU_D3D9DDIARG_QUERYRESOURCERESIDENCY* pArgs) {
+    D3DDDI_HDEVICE hDevice,
+    const D3D9DDIARG_QUERYRESOURCERESIDENCY* pArgs) {
   D3d9TraceCall trace(D3d9TraceFunc::DeviceQueryResourceResidency,
                       d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
                       pArgs ? static_cast<uint64_t>(pArgs->resource_count) : 0,
@@ -7183,8 +7164,8 @@ HRESULT AEROGPU_D3D9_CALL device_query_resource_residency(
 }
 
 HRESULT AEROGPU_D3D9_CALL device_get_display_mode_ex(
-    AEROGPU_D3D9DDI_HDEVICE hDevice,
-    AEROGPU_D3D9DDIARG_GETDISPLAYMODEEX* pGetModeEx) {
+    D3DDDI_HDEVICE hDevice,
+    D3D9DDIARG_GETDISPLAYMODEEX* pGetModeEx) {
   const uint64_t mode_ptr = pGetModeEx ? d3d9_trace_arg_ptr(pGetModeEx->pMode) : 0;
   const uint64_t rotation_ptr = pGetModeEx ? d3d9_trace_arg_ptr(pGetModeEx->pRotation) : 0;
   D3d9TraceCall trace(D3d9TraceFunc::DeviceGetDisplayModeEx,
@@ -7205,26 +7186,27 @@ HRESULT AEROGPU_D3D9_CALL device_get_display_mode_ex(
   }
 
   if (pGetModeEx->pMode) {
-    AEROGPU_D3D9DDI_DISPLAYMODEEX mode{};
-    mode.size = sizeof(AEROGPU_D3D9DDI_DISPLAYMODEEX);
-    mode.width = adapter->primary_width;
-    mode.height = adapter->primary_height;
-    mode.refresh_rate_hz = adapter->primary_refresh_hz;
-    mode.format = adapter->primary_format;
-    mode.scanline_ordering = AEROGPU_D3D9DDI_SCANLINEORDERING_PROGRESSIVE;
+    D3DDDI_DISPLAYMODEEX mode{};
+    mode.Size = sizeof(D3DDDI_DISPLAYMODEEX);
+    mode.Width = adapter->primary_width;
+    mode.Height = adapter->primary_height;
+    mode.RefreshRate = adapter->primary_refresh_hz;
+    mode.Format = adapter->primary_format;
+    // D3DDDI_SCANLINEORDERING_PROGRESSIVE (Win7) - numeric value.
+    mode.ScanLineOrdering = 1;
     *pGetModeEx->pMode = mode;
   }
 
   if (pGetModeEx->pRotation) {
-    *pGetModeEx->pRotation = static_cast<AEROGPU_D3D9DDI_DISPLAYROTATION>(adapter->primary_rotation);
+    *pGetModeEx->pRotation = static_cast<D3DDDI_ROTATION>(adapter->primary_rotation);
   }
 
   return trace.ret(S_OK);
 }
 
 HRESULT AEROGPU_D3D9_CALL device_compose_rects(
-    AEROGPU_D3D9DDI_HDEVICE hDevice,
-    const AEROGPU_D3D9DDIARG_COMPOSERECTS* pComposeRects) {
+    D3DDDI_HDEVICE hDevice,
+    const D3D9DDIARG_COMPOSERECTS* pComposeRects) {
   D3d9TraceCall trace(D3d9TraceFunc::DeviceComposeRects,
                       d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
                       d3d9_trace_arg_ptr(pComposeRects),
@@ -7240,7 +7222,7 @@ HRESULT AEROGPU_D3D9_CALL device_compose_rects(
   return trace.ret(S_OK);
 }
 
-HRESULT AEROGPU_D3D9_CALL device_flush(AEROGPU_D3D9DDI_HDEVICE hDevice) {
+HRESULT AEROGPU_D3D9_CALL device_flush(D3DDDI_HDEVICE hDevice) {
   D3d9TraceCall trace(D3d9TraceFunc::DeviceFlush, d3d9_trace_arg_ptr(hDevice.pDrvPrivate), 0, 0, 0);
   if (!hDevice.pDrvPrivate) {
     return trace.ret(E_INVALIDARG);
@@ -7250,7 +7232,7 @@ HRESULT AEROGPU_D3D9_CALL device_flush(AEROGPU_D3D9DDI_HDEVICE hDevice) {
   return trace.ret(flush_locked(dev));
 }
 
-HRESULT AEROGPU_D3D9_CALL device_wait_for_vblank(AEROGPU_D3D9DDI_HDEVICE hDevice, uint32_t swap_chain_index) {
+HRESULT AEROGPU_D3D9_CALL device_wait_for_vblank(D3DDDI_HDEVICE hDevice, uint32_t swap_chain_index) {
   D3d9TraceCall trace(D3d9TraceFunc::DeviceWaitForVBlank,
                       d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
                       static_cast<uint64_t>(swap_chain_index),
@@ -7295,8 +7277,8 @@ HRESULT AEROGPU_D3D9_CALL device_wait_for_vblank(AEROGPU_D3D9DDI_HDEVICE hDevice
 }
 
 HRESULT AEROGPU_D3D9_CALL device_check_resource_residency(
-    AEROGPU_D3D9DDI_HDEVICE hDevice,
-    AEROGPU_D3D9DDI_HRESOURCE* pResources,
+    D3DDDI_HDEVICE hDevice,
+    D3DDDI_HRESOURCE* pResources,
     uint32_t count) {
   D3d9TraceCall trace(D3d9TraceFunc::DeviceCheckResourceResidency,
                       d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
@@ -7312,8 +7294,8 @@ HRESULT AEROGPU_D3D9_CALL device_check_resource_residency(
 }
 
 HRESULT AEROGPU_D3D9_CALL device_create_query(
-    AEROGPU_D3D9DDI_HDEVICE hDevice,
-    AEROGPU_D3D9DDIARG_CREATEQUERY* pCreateQuery) {
+    D3DDDI_HDEVICE hDevice,
+    D3D9DDIARG_CREATEQUERY* pCreateQuery) {
   D3d9TraceCall trace(D3d9TraceFunc::DeviceCreateQuery,
                       d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
                       pCreateQuery ? static_cast<uint64_t>(pCreateQuery->type) : 0,
@@ -7357,8 +7339,8 @@ HRESULT AEROGPU_D3D9_CALL device_create_query(
 }
 
 HRESULT AEROGPU_D3D9_CALL device_destroy_query(
-    AEROGPU_D3D9DDI_HDEVICE hDevice,
-    AEROGPU_D3D9DDI_HQUERY hQuery) {
+    D3DDDI_HDEVICE hDevice,
+    D3D9DDI_HQUERY hQuery) {
   D3d9TraceCall trace(D3d9TraceFunc::DeviceDestroyQuery,
                       d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
                       d3d9_trace_arg_ptr(hQuery.pDrvPrivate),
@@ -7369,8 +7351,8 @@ HRESULT AEROGPU_D3D9_CALL device_destroy_query(
 }
 
 HRESULT AEROGPU_D3D9_CALL device_issue_query(
-    AEROGPU_D3D9DDI_HDEVICE hDevice,
-    const AEROGPU_D3D9DDIARG_ISSUEQUERY* pIssueQuery) {
+    D3DDDI_HDEVICE hDevice,
+    const D3D9DDIARG_ISSUEQUERY* pIssueQuery) {
   D3d9TraceCall trace(D3d9TraceFunc::DeviceIssueQuery,
                       d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
                       pIssueQuery ? d3d9_trace_arg_ptr(pIssueQuery->hQuery.pDrvPrivate) : 0,
@@ -7423,8 +7405,8 @@ HRESULT AEROGPU_D3D9_CALL device_issue_query(
 }
 
 HRESULT AEROGPU_D3D9_CALL device_get_query_data(
-    AEROGPU_D3D9DDI_HDEVICE hDevice,
-    const AEROGPU_D3D9DDIARG_GETQUERYDATA* pGetQueryData) {
+    D3DDDI_HDEVICE hDevice,
+    const D3D9DDIARG_GETQUERYDATA* pGetQueryData) {
   const uint64_t data_flags = pGetQueryData ? d3d9_trace_pack_u32_u32(pGetQueryData->data_size, pGetQueryData->flags) : 0;
   D3d9TraceCall trace(D3d9TraceFunc::DeviceGetQueryData,
                       d3d9_trace_arg_ptr(hDevice.pDrvPrivate),
@@ -7511,7 +7493,7 @@ HRESULT AEROGPU_D3D9_CALL device_get_query_data(
   return trace.ret(S_FALSE);
 }
 
-HRESULT AEROGPU_D3D9_CALL device_wait_for_idle(AEROGPU_D3D9DDI_HDEVICE hDevice) {
+HRESULT AEROGPU_D3D9_CALL device_wait_for_idle(D3DDDI_HDEVICE hDevice) {
   D3d9TraceCall trace(D3d9TraceFunc::DeviceWaitForIdle, d3d9_trace_arg_ptr(hDevice.pDrvPrivate), 0, 0, 0);
   if (!hDevice.pDrvPrivate) {
     return trace.ret(E_INVALIDARG);
@@ -7735,7 +7717,7 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   std::memset(pDeviceFuncs, 0, sizeof(*pDeviceFuncs));
 
   // The translation layer uses a reduced set of DDI argument structs (prefixed
-  // with AEROGPU_D3D9DDIARG_*). In WDK builds, cast the entrypoints to the
+  // with D3D9DDIARG_*). In WDK builds, cast the entrypoints to the
   // runtime's expected function pointer types.
 #define AEROGPU_SET_D3D9DDI_FN(member, fn)                                                            \
   do {                                                                                                \
@@ -8241,7 +8223,7 @@ HRESULT OpenAdapterCommon(const char* entrypoint,
                           D3DDDI_ADAPTERCALLBACKS* callbacks,
                           D3DDDI_ADAPTERCALLBACKS2* callbacks2,
                           const LUID& luid,
-                          D3D9DDI_HADAPTER* phAdapter,
+                          D3DDDI_HADAPTER* phAdapter,
                           D3D9DDI_ADAPTERFUNCS* pAdapterFuncs) {
   if (!entrypoint || !phAdapter || !pAdapterFuncs) {
     return E_INVALIDARG;

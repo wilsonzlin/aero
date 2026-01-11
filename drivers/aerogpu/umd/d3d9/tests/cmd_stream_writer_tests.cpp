@@ -22,6 +22,8 @@ namespace {
 
 // D3DERR_INVALIDCALL from d3d9.h.
 constexpr HRESULT kD3DErrInvalidCall = 0x8876086CUL;
+constexpr uint32_t kD3d9ShaderStageVs = 0u;
+constexpr D3DDDIFORMAT kD3dFmtIndex16 = static_cast<D3DDDIFORMAT>(101); // D3DFMT_INDEX16
 
 bool Check(bool cond, const char* msg) {
   if (!cond) {
@@ -440,9 +442,9 @@ bool TestEventQueryGetDataSemantics() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
     D3D9DDI_DEVICEFUNCS device_funcs{};
-    D3D9DDI_HADAPTER hAdapter{};
-    D3D9DDI_HDEVICE hDevice{};
-    AEROGPU_D3D9DDI_HQUERY hQuery{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    D3D9DDI_HQUERY hQuery{};
     bool has_adapter = false;
     bool has_device = false;
     bool has_query = false;
@@ -503,7 +505,7 @@ bool TestEventQueryGetDataSemantics() {
   }
 
   // D3DQUERYTYPE_EVENT = 8 (public D3D9 encoding). The UMD also accepts 0.
-  AEROGPU_D3D9DDIARG_CREATEQUERY create_query{};
+  D3D9DDIARG_CREATEQUERY create_query{};
   create_query.type = 8u;
   hr = cleanup.device_funcs.pfnCreateQuery(create_dev.hDevice, &create_query);
   if (!Check(hr == S_OK, "CreateQuery(EVENT)")) {
@@ -520,7 +522,7 @@ bool TestEventQueryGetDataSemantics() {
 
   // Some D3D9Ex callers have been observed to pass 0 for END, so cover both the
   // explicit D3DISSUE_END bit and the 0-valued encoding.
-  AEROGPU_D3D9DDIARG_ISSUEQUERY issue{};
+  D3D9DDIARG_ISSUEQUERY issue{};
   issue.hQuery = create_query.hQuery;
   issue.flags = 0; // END (0 encoding)
   hr = cleanup.device_funcs.pfnIssueQuery(create_dev.hDevice, &issue);
@@ -582,7 +584,7 @@ bool TestEventQueryGetDataSemantics() {
   }
 
   uint32_t done = 0;
-  AEROGPU_D3D9DDIARG_GETQUERYDATA get_data{};
+  D3D9DDIARG_GETQUERYDATA get_data{};
   get_data.hQuery = create_query.hQuery;
   get_data.pData = &done;
   get_data.data_size = sizeof(done);
@@ -617,7 +619,7 @@ bool TestEventQueryGetDataSemantics() {
       state_cv.notify_one();
 
       uint32_t thread_done = 0;
-      AEROGPU_D3D9DDIARG_GETQUERYDATA gd = get_data;
+      D3D9DDIARG_GETQUERYDATA gd = get_data;
       gd.pData = &thread_done;
       gd.flags = 0x1u; // D3DGETDATA_FLUSH
       thread_hr = cleanup.device_funcs.pfnGetQueryData(create_dev.hDevice, &gd);
@@ -654,7 +656,7 @@ bool TestEventQueryGetDataSemantics() {
   }
 
   // D3D9 allows polling readiness without providing an output buffer.
-  AEROGPU_D3D9DDIARG_GETQUERYDATA get_no_data = get_data;
+  D3D9DDIARG_GETQUERYDATA get_no_data = get_data;
   get_no_data.pData = nullptr;
   get_no_data.data_size = 0;
   hr = cleanup.device_funcs.pfnGetQueryData(create_dev.hDevice, &get_no_data);
@@ -663,7 +665,7 @@ bool TestEventQueryGetDataSemantics() {
   }
 
   // Invalid pointer/size combinations should fail even if the query is not ready.
-  AEROGPU_D3D9DDIARG_GETQUERYDATA get_bad = get_data;
+  D3D9DDIARG_GETQUERYDATA get_bad = get_data;
   get_bad.pData = nullptr;
   get_bad.data_size = sizeof(done);
   hr = cleanup.device_funcs.pfnGetQueryData(create_dev.hDevice, &get_bad);
@@ -708,7 +710,7 @@ bool TestEventQueryGetDataSemantics() {
 
   // Validate argument checking for the D3D9 GetData contract: pData must be NULL
   // iff data_size is 0.
-  AEROGPU_D3D9DDIARG_GETQUERYDATA invalid_args = get_data;
+  D3D9DDIARG_GETQUERYDATA invalid_args = get_data;
   invalid_args.pData = &done;
   invalid_args.data_size = 0;
   hr = cleanup.device_funcs.pfnGetQueryData(create_dev.hDevice, &invalid_args);
@@ -736,7 +738,7 @@ bool TestEventQueryGetDataSemantics() {
 bool TestAdapterCapsAndQueryAdapterInfo() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
-    D3D9DDI_HADAPTER hAdapter{};
+    D3DDDI_HADAPTER hAdapter{};
     bool has_adapter = false;
     ~Cleanup() {
       if (has_adapter && adapter_funcs.pfnCloseAdapter) {
@@ -848,8 +850,8 @@ bool TestAdapterCapsAndQueryAdapterInfo() {
   D3DADAPTER_IDENTIFIER9 ident{};
   D3D9DDIARG_QUERYADAPTERINFO query_ident{};
   query_ident.Type = D3DDDIQUERYADAPTERINFO_GETADAPTERIDENTIFIER;
-  query_ident.pData = &ident;
-  query_ident.DataSize = sizeof(ident);
+  query_ident.pPrivateDriverData = &ident;
+  query_ident.PrivateDriverDataSize = sizeof(ident);
   hr = cleanup.adapter_funcs.pfnQueryAdapterInfo(open.hAdapter, &query_ident);
   if (!Check(hr == S_OK, "QueryAdapterInfo(GETADAPTERIDENTIFIER)")) {
     return false;
@@ -867,8 +869,8 @@ bool TestAdapterCapsAndQueryAdapterInfo() {
   LUID luid{};
   D3D9DDIARG_QUERYADAPTERINFO query_luid{};
   query_luid.Type = D3DDDIQUERYADAPTERINFO_GETADAPTERLUID;
-  query_luid.pData = &luid;
-  query_luid.DataSize = sizeof(luid);
+  query_luid.pPrivateDriverData = &luid;
+  query_luid.PrivateDriverDataSize = sizeof(luid);
   hr = cleanup.adapter_funcs.pfnQueryAdapterInfo(open.hAdapter, &query_luid);
   if (!Check(hr == S_OK, "QueryAdapterInfo(GETADAPTERLUID)")) {
     return false;
@@ -879,7 +881,7 @@ bool TestAdapterCapsAndQueryAdapterInfo() {
 bool TestAdapterMultisampleQualityLevels() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
-    D3D9DDI_HADAPTER hAdapter{};
+    D3DDDI_HADAPTER hAdapter{};
     bool has_adapter = false;
     ~Cleanup() {
       if (has_adapter && adapter_funcs.pfnCloseAdapter) {
@@ -976,7 +978,7 @@ bool TestAdapterMultisampleQualityLevels() {
 bool TestAdapterCachingUpdatesCallbacks() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
-    D3D9DDI_HADAPTER hAdapter{};
+    D3DDDI_HADAPTER hAdapter{};
     bool has_adapter = false;
     ~Cleanup() {
       if (has_adapter && adapter_funcs.pfnCloseAdapter) {
@@ -1063,8 +1065,8 @@ bool TestCreateResourceRejectsUnsupportedGpuFormat() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
     D3D9DDI_DEVICEFUNCS device_funcs{};
-    D3D9DDI_HADAPTER hAdapter{};
-    D3D9DDI_HDEVICE hDevice{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
     bool has_adapter = false;
     bool has_device = false;
 
@@ -1113,7 +1115,7 @@ bool TestCreateResourceRejectsUnsupportedGpuFormat() {
 
   // Use an obviously invalid D3D9 format value to ensure the UMD rejects unknown
   // GPU formats in the default pool (rather than emitting invalid host commands).
-  AEROGPU_D3D9DDIARG_CREATERESOURCE create_res{};
+  D3D9DDIARG_CREATERESOURCE create_res{};
   create_res.type = 0;
   create_res.format = 0xFFFFFFFFu;
   create_res.width = 4;
@@ -1266,10 +1268,10 @@ bool TestSharedResourceCreateAndOpenEmitsExportImport() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
     D3D9DDI_DEVICEFUNCS device_funcs{};
-    D3D9DDI_HADAPTER hAdapter{};
-    D3D9DDI_HDEVICE hDevice{};
-    AEROGPU_D3D9DDI_HRESOURCE hResource{};
-    AEROGPU_D3D9DDI_HRESOURCE hAlias{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    D3DDDI_HRESOURCE hResource{};
+    D3DDDI_HRESOURCE hAlias{};
     bool has_adapter = false;
     bool has_device = false;
     bool has_resource = false;
@@ -1340,7 +1342,7 @@ bool TestSharedResourceCreateAndOpenEmitsExportImport() {
   std::memset(&priv, 0, sizeof(priv));
   HANDLE shared_handle = nullptr;
 
-  AEROGPU_D3D9DDIARG_CREATERESOURCE create_shared{};
+  D3D9DDIARG_CREATERESOURCE create_shared{};
   create_shared.type = 0;
   create_shared.format = 22u; // D3DFMT_X8R8G8B8
   create_shared.width = 32;
@@ -1426,7 +1428,7 @@ bool TestSharedResourceCreateAndOpenEmitsExportImport() {
   aerogpu_wddm_alloc_priv priv_open = priv;
   HANDLE open_handle = reinterpret_cast<HANDLE>(static_cast<uintptr_t>(0x1));
 
-  AEROGPU_D3D9DDIARG_CREATERESOURCE open_shared{};
+  D3D9DDIARG_CREATERESOURCE open_shared{};
   open_shared.type = create_shared.type;
   open_shared.format = create_shared.format;
   open_shared.width = create_shared.width;
@@ -1499,8 +1501,8 @@ bool TestPresentStatsAndFrameLatency() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
     D3D9DDI_DEVICEFUNCS device_funcs{};
-    D3D9DDI_HADAPTER hAdapter{};
-    D3D9DDI_HDEVICE hDevice{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
     bool has_adapter = false;
     bool has_device = false;
 
@@ -1559,7 +1561,7 @@ bool TestPresentStatsAndFrameLatency() {
     return false;
   }
 
-  AEROGPU_D3D9DDI_PRESENTSTATS stats{};
+  D3D9DDI_PRESENTSTATS stats{};
   hr = cleanup.device_funcs.pfnGetPresentStats(create_dev.hDevice, &stats);
   if (!Check(hr == S_OK, "GetPresentStats initial")) {
     return false;
@@ -1596,7 +1598,7 @@ bool TestPresentStatsAndFrameLatency() {
     return false;
   }
 
-  AEROGPU_D3D9DDIARG_PRESENTEX present{};
+  D3D9DDIARG_PRESENTEX present{};
   present.hSrc.pDrvPrivate = nullptr;
   present.hWnd = nullptr;
   present.sync_interval = 1;
@@ -1696,8 +1698,8 @@ bool TestGetDisplayModeExReturnsPrimaryMode() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
     D3D9DDI_DEVICEFUNCS device_funcs{};
-    D3D9DDI_HADAPTER hAdapter{};
-    D3D9DDI_HDEVICE hDevice{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
     bool has_adapter = false;
     bool has_device = false;
 
@@ -1744,9 +1746,9 @@ bool TestGetDisplayModeExReturnsPrimaryMode() {
     return false;
   }
 
-  AEROGPU_D3D9DDI_DISPLAYMODEEX mode{};
-  AEROGPU_D3D9DDI_DISPLAYROTATION rotation = AEROGPU_D3D9DDI_ROTATION_IDENTITY;
-  AEROGPU_D3D9DDIARG_GETDISPLAYMODEEX args{};
+  D3DDDI_DISPLAYMODEEX mode{};
+  D3DDDI_ROTATION rotation = D3DDDI_ROTATION_IDENTITY;
+  D3D9DDIARG_GETDISPLAYMODEEX args{};
   args.swapchain = 0;
   args.pMode = &mode;
   args.pRotation = &rotation;
@@ -1755,30 +1757,30 @@ bool TestGetDisplayModeExReturnsPrimaryMode() {
   if (!Check(hr == S_OK, "GetDisplayModeEx")) {
     return false;
   }
-  if (!Check(mode.size == sizeof(AEROGPU_D3D9DDI_DISPLAYMODEEX), "display mode size field")) {
+  if (!Check(mode.Size == sizeof(D3DDDI_DISPLAYMODEEX), "display mode size field")) {
     return false;
   }
-  if (!Check(mode.width != 0 && mode.height != 0, "display mode dimensions non-zero")) {
+  if (!Check(mode.Width != 0 && mode.Height != 0, "display mode dimensions non-zero")) {
     return false;
   }
-  if (!Check(mode.refresh_rate_hz != 0, "display mode refresh non-zero")) {
+  if (!Check(mode.RefreshRate != 0, "display mode refresh non-zero")) {
     return false;
   }
-  if (!Check(mode.format == 22u, "display mode format is X8R8G8B8")) {
+  if (!Check(mode.Format == 22u, "display mode format is X8R8G8B8")) {
     return false;
   }
-  if (!Check(mode.scanline_ordering == AEROGPU_D3D9DDI_SCANLINEORDERING_PROGRESSIVE, "display mode scanline progressive")) {
+  if (!Check(mode.ScanLineOrdering == 1u, "display mode scanline progressive")) {
     return false;
   }
-  return Check(rotation == AEROGPU_D3D9DDI_ROTATION_IDENTITY, "display rotation identity");
+  return Check(rotation == D3DDDI_ROTATION_IDENTITY, "display rotation identity");
 }
 
 bool TestDeviceMiscExApisSucceed() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
     D3D9DDI_DEVICEFUNCS device_funcs{};
-    D3D9DDI_HADAPTER hAdapter{};
-    D3D9DDI_HDEVICE hDevice{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
     bool has_adapter = false;
     bool has_device = false;
 
@@ -1878,7 +1880,7 @@ bool TestDeviceMiscExApisSucceed() {
   // Residency queries should succeed and report resident in the system-memory
   // model.
   uint32_t residency[2] = {0, 0};
-  AEROGPU_D3D9DDIARG_QUERYRESOURCERESIDENCY query{};
+  D3D9DDIARG_QUERYRESOURCERESIDENCY query{};
   query.pResources = nullptr;
   query.resource_count = 2;
   query.pResidencyStatus = residency;
@@ -1897,7 +1899,7 @@ bool TestDeviceMiscExApisSucceed() {
 
   // ComposeRects is a D3D9Ex compositor helper; our bring-up path treats it as a
   // no-op but must still succeed.
-  AEROGPU_D3D9DDIARG_COMPOSERECTS compose{};
+  D3D9DDIARG_COMPOSERECTS compose{};
   compose.reserved0 = 0;
   compose.reserved1 = 0;
   hr = cleanup.device_funcs.pfnComposeRects(create_dev.hDevice, &compose);
@@ -1964,9 +1966,9 @@ bool TestOpenResourceCapturesWddmAllocationForTracking() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
     D3D9DDI_DEVICEFUNCS device_funcs{};
-    D3D9DDI_HADAPTER hAdapter{};
-    D3D9DDI_HDEVICE hDevice{};
-    AEROGPU_D3D9DDI_HRESOURCE hResource{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    D3DDDI_HRESOURCE hResource{};
     bool has_adapter = false;
     bool has_device = false;
     bool has_resource = false;
@@ -2030,7 +2032,7 @@ bool TestOpenResourceCapturesWddmAllocationForTracking() {
   priv.size_bytes = 16ull * 16ull * 4ull;
   priv.reserved0 = 0;
 
-  AEROGPU_D3D9DDIARG_OPENRESOURCE open_res{};
+  D3D9DDIARG_OPENRESOURCE open_res{};
   open_res.pPrivateDriverData = &priv;
   open_res.private_driver_data_size = sizeof(priv);
   open_res.type = 0;
@@ -2145,9 +2147,9 @@ bool TestDestroyBoundShaderUnbinds() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
     D3D9DDI_DEVICEFUNCS device_funcs{};
-    D3D9DDI_HADAPTER hAdapter{};
-    D3D9DDI_HDEVICE hDevice{};
-    AEROGPU_D3D9DDI_HSHADER hShader{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    D3D9DDI_HSHADER hShader{};
     bool has_adapter = false;
     bool has_device = false;
     bool has_shader = false;
@@ -2199,9 +2201,9 @@ bool TestDestroyBoundShaderUnbinds() {
   cleanup.has_device = true;
 
   const uint8_t dxbc[] = {0x44, 0x58, 0x42, 0x43, 0x00, 0x01, 0x02, 0x03};
-  AEROGPU_D3D9DDI_HSHADER hShader{};
+  D3D9DDI_HSHADER hShader{};
   hr = cleanup.device_funcs.pfnCreateShader(create_dev.hDevice,
-                                            AEROGPU_D3D9DDI_SHADER_STAGE_VS,
+                                            kD3d9ShaderStageVs,
                                             dxbc,
                                             static_cast<uint32_t>(sizeof(dxbc)),
                                             &hShader);
@@ -2217,7 +2219,7 @@ bool TestDestroyBoundShaderUnbinds() {
   auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
   auto* sh = reinterpret_cast<Shader*>(hShader.pDrvPrivate);
 
-  hr = cleanup.device_funcs.pfnSetShader(create_dev.hDevice, AEROGPU_D3D9DDI_SHADER_STAGE_VS, hShader);
+  hr = cleanup.device_funcs.pfnSetShader(create_dev.hDevice, kD3d9ShaderStageVs, hShader);
   if (!Check(hr == S_OK, "SetShader(VS)")) {
     return false;
   }
@@ -2260,9 +2262,9 @@ bool TestDestroyBoundVertexDeclUnbinds() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
     D3D9DDI_DEVICEFUNCS device_funcs{};
-    D3D9DDI_HADAPTER hAdapter{};
-    D3D9DDI_HDEVICE hDevice{};
-    AEROGPU_D3D9DDI_HVERTEXDECL hDecl{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    D3D9DDI_HVERTEXDECL hDecl{};
     bool has_adapter = false;
     bool has_device = false;
     bool has_decl = false;
@@ -2314,7 +2316,7 @@ bool TestDestroyBoundVertexDeclUnbinds() {
   cleanup.has_device = true;
 
   const uint8_t blob[] = {0x01, 0x02, 0x03, 0x04};
-  AEROGPU_D3D9DDI_HVERTEXDECL hDecl{};
+  D3D9DDI_HVERTEXDECL hDecl{};
   hr = cleanup.device_funcs.pfnCreateVertexDecl(create_dev.hDevice,
                                                 blob,
                                                 static_cast<uint32_t>(sizeof(blob)),
@@ -2373,8 +2375,8 @@ bool TestFvfXyzrhwDiffuseDrawPrimitiveUpEmitsFixedfuncCommands() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
     D3D9DDI_DEVICEFUNCS device_funcs{};
-    D3D9DDI_HADAPTER hAdapter{};
-    D3D9DDI_HDEVICE hDevice{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
     bool has_adapter = false;
     bool has_device = false;
 
@@ -2422,13 +2424,13 @@ bool TestFvfXyzrhwDiffuseDrawPrimitiveUpEmitsFixedfuncCommands() {
     return false;
   }
 
-  AEROGPU_D3D9DDI_VIEWPORT vp{};
-  vp.x = 0.0f;
-  vp.y = 0.0f;
-  vp.w = 256.0f;
-  vp.h = 256.0f;
-  vp.min_z = 0.0f;
-  vp.max_z = 1.0f;
+  D3DDDIVIEWPORTINFO vp{};
+  vp.X = 0.0f;
+  vp.Y = 0.0f;
+  vp.Width = 256.0f;
+  vp.Height = 256.0f;
+  vp.MinZ = 0.0f;
+  vp.MaxZ = 1.0f;
   hr = cleanup.device_funcs.pfnSetViewport(create_dev.hDevice, &vp);
   if (!Check(hr == S_OK, "SetViewport")) {
     return false;
@@ -2455,7 +2457,7 @@ bool TestFvfXyzrhwDiffuseDrawPrimitiveUpEmitsFixedfuncCommands() {
   verts[2] = {256.0f * 0.50f, 256.0f * 0.75f, 0.5f, 1.0f, kGreen};
 
   hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
-      create_dev.hDevice, AEROGPU_D3D9DDI_PRIM_TRIANGLELIST, 1, verts, sizeof(Vertex));
+      create_dev.hDevice, D3DDDIPT_TRIANGLELIST, 1, verts, sizeof(Vertex));
   if (!Check(hr == S_OK, "DrawPrimitiveUP")) {
     return false;
   }
@@ -2503,8 +2505,8 @@ bool TestFvfXyzrhwDiffuseDrawPrimitiveUpEmitsFixedfuncCommands() {
   std::memcpy(&w0, payload + 12, sizeof(float));
   std::memcpy(&c0, payload + 16, sizeof(uint32_t));
 
-  const float expected_x0 = ((verts[0].x + 0.5f - vp.x) / vp.w) * 2.0f - 1.0f;
-  const float expected_y0 = 1.0f - ((verts[0].y + 0.5f - vp.y) / vp.h) * 2.0f;
+  const float expected_x0 = ((verts[0].x + 0.5f - vp.X) / vp.Width) * 2.0f - 1.0f;
+  const float expected_y0 = 1.0f - ((verts[0].y + 0.5f - vp.Y) / vp.Height) * 2.0f;
   if (!Check(std::fabs(x0 - expected_x0) < 1e-6f, "XYZRHW->clip: x0 matches half-pixel convention")) {
     return false;
   }
@@ -2524,9 +2526,9 @@ bool TestFvfXyzrhwDiffuseDrawPrimitiveEmulationConvertsVertices() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
     D3D9DDI_DEVICEFUNCS device_funcs{};
-    D3D9DDI_HADAPTER hAdapter{};
-    D3D9DDI_HDEVICE hDevice{};
-    AEROGPU_D3D9DDI_HRESOURCE hVb{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    D3DDDI_HRESOURCE hVb{};
     bool has_adapter = false;
     bool has_device = false;
     bool has_vb = false;
@@ -2584,13 +2586,13 @@ bool TestFvfXyzrhwDiffuseDrawPrimitiveEmulationConvertsVertices() {
     return false;
   }
 
-  AEROGPU_D3D9DDI_VIEWPORT vp{};
-  vp.x = 0.0f;
-  vp.y = 0.0f;
-  vp.w = 256.0f;
-  vp.h = 256.0f;
-  vp.min_z = 0.0f;
-  vp.max_z = 1.0f;
+  D3DDDIVIEWPORTINFO vp{};
+  vp.X = 0.0f;
+  vp.Y = 0.0f;
+  vp.Width = 256.0f;
+  vp.Height = 256.0f;
+  vp.MinZ = 0.0f;
+  vp.MaxZ = 1.0f;
   hr = cleanup.device_funcs.pfnSetViewport(create_dev.hDevice, &vp);
   if (!Check(hr == S_OK, "SetViewport")) {
     return false;
@@ -2616,7 +2618,7 @@ bool TestFvfXyzrhwDiffuseDrawPrimitiveEmulationConvertsVertices() {
   verts[1] = {256.0f * 0.75f, 256.0f * 0.25f, 0.5f, 1.0f, kGreen};
   verts[2] = {256.0f * 0.50f, 256.0f * 0.75f, 0.5f, 1.0f, kGreen};
 
-  AEROGPU_D3D9DDIARG_CREATERESOURCE create_res{};
+  D3D9DDIARG_CREATERESOURCE create_res{};
   create_res.type = 0;
   create_res.format = 0;
   create_res.width = 0;
@@ -2639,12 +2641,12 @@ bool TestFvfXyzrhwDiffuseDrawPrimitiveEmulationConvertsVertices() {
   cleanup.hVb = create_res.hResource;
   cleanup.has_vb = true;
 
-  AEROGPU_D3D9DDIARG_LOCK lock{};
+  D3D9DDIARG_LOCK lock{};
   lock.hResource = create_res.hResource;
   lock.offset_bytes = 0;
   lock.size_bytes = 0;
   lock.flags = 0;
-  AEROGPU_D3D9DDI_LOCKED_BOX box{};
+  D3DDDI_LOCKEDBOX box{};
   hr = cleanup.device_funcs.pfnLock(create_dev.hDevice, &lock, &box);
   if (!Check(hr == S_OK, "Lock(vertex buffer)")) {
     return false;
@@ -2654,7 +2656,7 @@ bool TestFvfXyzrhwDiffuseDrawPrimitiveEmulationConvertsVertices() {
   }
   std::memcpy(box.pData, verts, sizeof(verts));
 
-  AEROGPU_D3D9DDIARG_UNLOCK unlock{};
+  D3D9DDIARG_UNLOCK unlock{};
   unlock.hResource = create_res.hResource;
   unlock.offset_bytes = 0;
   unlock.size_bytes = 0;
@@ -2668,7 +2670,7 @@ bool TestFvfXyzrhwDiffuseDrawPrimitiveEmulationConvertsVertices() {
     return false;
   }
 
-  hr = cleanup.device_funcs.pfnDrawPrimitive(create_dev.hDevice, AEROGPU_D3D9DDI_PRIM_TRIANGLELIST, 0, 1);
+  hr = cleanup.device_funcs.pfnDrawPrimitive(create_dev.hDevice, D3DDDIPT_TRIANGLELIST, 0, 1);
   if (!Check(hr == S_OK, "DrawPrimitive")) {
     return false;
   }
@@ -2704,8 +2706,8 @@ bool TestFvfXyzrhwDiffuseDrawPrimitiveEmulationConvertsVertices() {
   std::memcpy(&w0, payload + 12, sizeof(float));
   std::memcpy(&c0, payload + 16, sizeof(uint32_t));
 
-  const float expected_x0 = ((verts[0].x + 0.5f - vp.x) / vp.w) * 2.0f - 1.0f;
-  const float expected_y0 = 1.0f - ((verts[0].y + 0.5f - vp.y) / vp.h) * 2.0f;
+  const float expected_x0 = ((verts[0].x + 0.5f - vp.X) / vp.Width) * 2.0f - 1.0f;
+  const float expected_y0 = 1.0f - ((verts[0].y + 0.5f - vp.Y) / vp.Height) * 2.0f;
   if (!Check(std::fabs(x0 - expected_x0) < 1e-6f, "DrawPrimitive: x0 matches half-pixel convention")) {
     return false;
   }
@@ -2725,8 +2727,8 @@ bool TestDrawIndexedPrimitiveUpEmitsIndexBufferCommands() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
     D3D9DDI_DEVICEFUNCS device_funcs{};
-    D3D9DDI_HADAPTER hAdapter{};
-    D3D9DDI_HDEVICE hDevice{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
     bool has_adapter = false;
     bool has_device = false;
 
@@ -2777,13 +2779,13 @@ bool TestDrawIndexedPrimitiveUpEmitsIndexBufferCommands() {
     return false;
   }
 
-  AEROGPU_D3D9DDI_VIEWPORT vp{};
-  vp.x = 0.0f;
-  vp.y = 0.0f;
-  vp.w = 256.0f;
-  vp.h = 256.0f;
-  vp.min_z = 0.0f;
-  vp.max_z = 1.0f;
+  D3DDDIVIEWPORTINFO vp{};
+  vp.X = 0.0f;
+  vp.Y = 0.0f;
+  vp.Width = 256.0f;
+  vp.Height = 256.0f;
+  vp.MinZ = 0.0f;
+  vp.MaxZ = 1.0f;
   hr = cleanup.device_funcs.pfnSetViewport(create_dev.hDevice, &vp);
   if (!Check(hr == S_OK, "SetViewport")) {
     return false;
@@ -2811,15 +2813,15 @@ bool TestDrawIndexedPrimitiveUpEmitsIndexBufferCommands() {
 
   const uint16_t indices[3] = {0, 1, 2};
 
-  AEROGPU_D3D9DDIARG_DRAWINDEXEDPRIMITIVE2 draw{};
-  draw.type = AEROGPU_D3D9DDI_PRIM_TRIANGLELIST;
-  draw.primitive_count = 1;
-  draw.min_index = 0;
-  draw.num_vertices = 3;
+  D3DDDIARG_DRAWINDEXEDPRIMITIVE2 draw{};
+  draw.PrimitiveType = D3DDDIPT_TRIANGLELIST;
+  draw.PrimitiveCount = 1;
+  draw.MinIndex = 0;
+  draw.NumVertices = 3;
   draw.pIndexData = indices;
-  draw.index_format = AEROGPU_D3D9DDI_INDEX_FORMAT_U16;
+  draw.IndexDataFormat = kD3dFmtIndex16;
   draw.pVertexStreamZeroData = verts;
-  draw.vertex_stream_zero_stride = sizeof(Vertex);
+  draw.VertexStreamZeroStride = sizeof(Vertex);
 
   hr = cleanup.device_funcs.pfnDrawIndexedPrimitive2(create_dev.hDevice, &draw);
   if (!Check(hr == S_OK, "DrawIndexedPrimitive2")) {
@@ -2917,10 +2919,10 @@ bool TestFvfXyzrhwDiffuseDrawIndexedPrimitiveEmulationConvertsVertices() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
     D3D9DDI_DEVICEFUNCS device_funcs{};
-    D3D9DDI_HADAPTER hAdapter{};
-    D3D9DDI_HDEVICE hDevice{};
-    AEROGPU_D3D9DDI_HRESOURCE hVb{};
-    AEROGPU_D3D9DDI_HRESOURCE hIb{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    D3DDDI_HRESOURCE hVb{};
+    D3DDDI_HRESOURCE hIb{};
     bool has_adapter = false;
     bool has_device = false;
     bool has_vb = false;
@@ -2988,13 +2990,13 @@ bool TestFvfXyzrhwDiffuseDrawIndexedPrimitiveEmulationConvertsVertices() {
     return false;
   }
 
-  AEROGPU_D3D9DDI_VIEWPORT vp{};
-  vp.x = 0.0f;
-  vp.y = 0.0f;
-  vp.w = 256.0f;
-  vp.h = 256.0f;
-  vp.min_z = 0.0f;
-  vp.max_z = 1.0f;
+  D3DDDIVIEWPORTINFO vp{};
+  vp.X = 0.0f;
+  vp.Y = 0.0f;
+  vp.Width = 256.0f;
+  vp.Height = 256.0f;
+  vp.MinZ = 0.0f;
+  vp.MaxZ = 1.0f;
   hr = cleanup.device_funcs.pfnSetViewport(create_dev.hDevice, &vp);
   if (!Check(hr == S_OK, "SetViewport")) {
     return false;
@@ -3023,7 +3025,7 @@ bool TestFvfXyzrhwDiffuseDrawIndexedPrimitiveEmulationConvertsVertices() {
   const uint16_t indices[3] = {0, 1, 2};
 
   // Create and fill VB.
-  AEROGPU_D3D9DDIARG_CREATERESOURCE create_vb{};
+  D3D9DDIARG_CREATERESOURCE create_vb{};
   create_vb.type = 0;
   create_vb.format = 0;
   create_vb.width = 0;
@@ -3046,12 +3048,12 @@ bool TestFvfXyzrhwDiffuseDrawIndexedPrimitiveEmulationConvertsVertices() {
   cleanup.hVb = create_vb.hResource;
   cleanup.has_vb = true;
 
-  AEROGPU_D3D9DDIARG_LOCK lock{};
+  D3D9DDIARG_LOCK lock{};
   lock.hResource = create_vb.hResource;
   lock.offset_bytes = 0;
   lock.size_bytes = 0;
   lock.flags = 0;
-  AEROGPU_D3D9DDI_LOCKED_BOX box{};
+  D3DDDI_LOCKEDBOX box{};
   hr = cleanup.device_funcs.pfnLock(create_dev.hDevice, &lock, &box);
   if (!Check(hr == S_OK, "Lock(vertex buffer)")) {
     return false;
@@ -3061,7 +3063,7 @@ bool TestFvfXyzrhwDiffuseDrawIndexedPrimitiveEmulationConvertsVertices() {
   }
   std::memcpy(box.pData, verts, sizeof(verts));
 
-  AEROGPU_D3D9DDIARG_UNLOCK unlock{};
+  D3D9DDIARG_UNLOCK unlock{};
   unlock.hResource = create_vb.hResource;
   unlock.offset_bytes = 0;
   unlock.size_bytes = 0;
@@ -3071,7 +3073,7 @@ bool TestFvfXyzrhwDiffuseDrawIndexedPrimitiveEmulationConvertsVertices() {
   }
 
   // Create and fill IB.
-  AEROGPU_D3D9DDIARG_CREATERESOURCE create_ib{};
+  D3D9DDIARG_CREATERESOURCE create_ib{};
   create_ib.type = 0;
   create_ib.format = 0;
   create_ib.width = 0;
@@ -3121,13 +3123,13 @@ bool TestFvfXyzrhwDiffuseDrawIndexedPrimitiveEmulationConvertsVertices() {
     return false;
   }
 
-  hr = cleanup.device_funcs.pfnSetIndices(create_dev.hDevice, create_ib.hResource, AEROGPU_D3D9DDI_INDEX_FORMAT_U16, 0);
+  hr = cleanup.device_funcs.pfnSetIndices(create_dev.hDevice, create_ib.hResource, kD3dFmtIndex16, 0);
   if (!Check(hr == S_OK, "SetIndices")) {
     return false;
   }
 
   hr = cleanup.device_funcs.pfnDrawIndexedPrimitive(create_dev.hDevice,
-                                                    AEROGPU_D3D9DDI_PRIM_TRIANGLELIST,
+                                                    D3DDDIPT_TRIANGLELIST,
                                                     /*base_vertex=*/0,
                                                     /*min_index=*/0,
                                                     /*num_vertices=*/3,
@@ -3173,8 +3175,8 @@ bool TestFvfXyzrhwDiffuseDrawIndexedPrimitiveEmulationConvertsVertices() {
   std::memcpy(&w0, payload + 12, sizeof(float));
   std::memcpy(&c0, payload + 16, sizeof(uint32_t));
 
-  const float expected_x0 = ((verts[0].x + 0.5f - vp.x) / vp.w) * 2.0f - 1.0f;
-  const float expected_y0 = 1.0f - ((verts[0].y + 0.5f - vp.y) / vp.h) * 2.0f;
+  const float expected_x0 = ((verts[0].x + 0.5f - vp.X) / vp.Width) * 2.0f - 1.0f;
+  const float expected_y0 = 1.0f - ((verts[0].y + 0.5f - vp.Y) / vp.Height) * 2.0f;
   if (!Check(std::fabs(x0 - expected_x0) < 1e-6f, "DrawIndexedPrimitive: x0 matches half-pixel convention")) {
     return false;
   }
@@ -3194,9 +3196,9 @@ bool TestResetShrinkUnbindsBackbuffer() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
     D3D9DDI_DEVICEFUNCS device_funcs{};
-    D3D9DDI_HADAPTER hAdapter{};
-    D3D9DDI_HDEVICE hDevice{};
-    AEROGPU_D3D9DDI_HSWAPCHAIN hSwapChain{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    D3D9DDI_HSWAPCHAIN hSwapChain{};
     bool has_adapter = false;
     bool has_device = false;
     bool has_swapchain = false;
@@ -3241,7 +3243,7 @@ bool TestResetShrinkUnbindsBackbuffer() {
   cleanup.hDevice = create_dev.hDevice;
   cleanup.has_device = true;
 
-  AEROGPU_D3D9DDIARG_CREATESWAPCHAIN create_sc{};
+  D3D9DDIARG_CREATESWAPCHAIN create_sc{};
   create_sc.present_params.backbuffer_width = 64;
   create_sc.present_params.backbuffer_height = 64;
   create_sc.present_params.backbuffer_format = 22u; // D3DFMT_X8R8G8B8
@@ -3271,7 +3273,7 @@ bool TestResetShrinkUnbindsBackbuffer() {
   Resource* bb0 = sc->backbuffers[0];
   Resource* bb1 = sc->backbuffers[1];
 
-  AEROGPU_D3D9DDI_HRESOURCE hRt{};
+  D3DDDI_HRESOURCE hRt{};
   hRt.pDrvPrivate = bb1;
   hr = cleanup.device_funcs.pfnSetRenderTarget(create_dev.hDevice, 0, hRt);
   if (!Check(hr == S_OK, "SetRenderTarget(backbuffer1)")) {
@@ -3281,7 +3283,7 @@ bool TestResetShrinkUnbindsBackbuffer() {
     return false;
   }
 
-  AEROGPU_D3D9DDIARG_RESET reset{};
+  D3D9DDIARG_RESET reset{};
   reset.present_params = create_sc.present_params;
   reset.present_params.backbuffer_count = 1;
 
@@ -3303,9 +3305,9 @@ bool TestRotateResourceIdentitiesRebindsChangedHandles() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
     D3D9DDI_DEVICEFUNCS device_funcs{};
-    D3D9DDI_HADAPTER hAdapter{};
-    D3D9DDI_HDEVICE hDevice{};
-    std::vector<AEROGPU_D3D9DDI_HRESOURCE> resources;
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    std::vector<D3DDDI_HRESOURCE> resources;
     bool has_adapter = false;
     bool has_device = false;
 
@@ -3358,8 +3360,8 @@ bool TestRotateResourceIdentitiesRebindsChangedHandles() {
     return false;
   }
 
-  auto create_buffer = [&](uint32_t size_bytes) -> AEROGPU_D3D9DDI_HRESOURCE {
-    AEROGPU_D3D9DDIARG_CREATERESOURCE args{};
+  auto create_buffer = [&](uint32_t size_bytes) -> D3DDDI_HRESOURCE {
+    D3D9DDIARG_CREATERESOURCE args{};
     args.type = 0;
     args.format = 0;
     args.width = 0;
@@ -3383,8 +3385,8 @@ bool TestRotateResourceIdentitiesRebindsChangedHandles() {
     return args.hResource;
   };
 
-  auto create_surface = [&](uint32_t w, uint32_t h) -> AEROGPU_D3D9DDI_HRESOURCE {
-    AEROGPU_D3D9DDIARG_CREATERESOURCE args{};
+  auto create_surface = [&](uint32_t w, uint32_t h) -> D3DDDI_HRESOURCE {
+    D3D9DDIARG_CREATERESOURCE args{};
     args.type = 0;
     args.format = 22u; // D3DFMT_X8R8G8B8
     args.width = w;
@@ -3408,8 +3410,8 @@ bool TestRotateResourceIdentitiesRebindsChangedHandles() {
     return args.hResource;
   };
 
-  AEROGPU_D3D9DDI_HRESOURCE hVb0 = create_buffer(256);
-  AEROGPU_D3D9DDI_HRESOURCE hVb1 = create_buffer(256);
+  D3DDDI_HRESOURCE hVb0 = create_buffer(256);
+  D3DDDI_HRESOURCE hVb1 = create_buffer(256);
   if (!Check(hVb0.pDrvPrivate != nullptr && hVb1.pDrvPrivate != nullptr, "vertex buffers created")) {
     return false;
   }
@@ -3419,8 +3421,8 @@ bool TestRotateResourceIdentitiesRebindsChangedHandles() {
     return false;
   }
 
-  AEROGPU_D3D9DDI_HRESOURCE hTex0 = create_surface(32, 32);
-  AEROGPU_D3D9DDI_HRESOURCE hTex1 = create_surface(32, 32);
+  D3DDDI_HRESOURCE hTex0 = create_surface(32, 32);
+  D3DDDI_HRESOURCE hTex1 = create_surface(32, 32);
   if (!Check(hTex0.pDrvPrivate != nullptr && hTex1.pDrvPrivate != nullptr, "textures created")) {
     return false;
   }
@@ -3430,13 +3432,13 @@ bool TestRotateResourceIdentitiesRebindsChangedHandles() {
     return false;
   }
 
-  AEROGPU_D3D9DDI_HRESOURCE hIb0 = create_buffer(128);
-  AEROGPU_D3D9DDI_HRESOURCE hIb1 = create_buffer(128);
+  D3DDDI_HRESOURCE hIb0 = create_buffer(128);
+  D3DDDI_HRESOURCE hIb1 = create_buffer(128);
   if (!Check(hIb0.pDrvPrivate != nullptr && hIb1.pDrvPrivate != nullptr, "index buffers created")) {
     return false;
   }
 
-  hr = cleanup.device_funcs.pfnSetIndices(create_dev.hDevice, hIb0, AEROGPU_D3D9DDI_INDEX_FORMAT_U16, 4);
+  hr = cleanup.device_funcs.pfnSetIndices(create_dev.hDevice, hIb0, kD3dFmtIndex16, 4);
   if (!Check(hr == S_OK, "SetIndices")) {
     return false;
   }
@@ -3461,7 +3463,7 @@ bool TestRotateResourceIdentitiesRebindsChangedHandles() {
   vb1->storage[0] = 0xB0;
   const aerogpu_handle_t vb0_before = vb0->handle;
   const aerogpu_handle_t vb1_before = vb1->handle;
-  AEROGPU_D3D9DDI_HRESOURCE vb_rotate[2] = {hVb0, hVb1};
+  D3DDDI_HRESOURCE vb_rotate[2] = {hVb0, hVb1};
   hr = cleanup.device_funcs.pfnRotateResourceIdentities(create_dev.hDevice, vb_rotate, 2);
   if (!Check(hr == S_OK, "RotateResourceIdentities(vb)")) {
     return false;
@@ -3513,7 +3515,7 @@ bool TestRotateResourceIdentitiesRebindsChangedHandles() {
   tex1->storage[0] = 0xD0;
   const aerogpu_handle_t tex0_before = tex0->handle;
   const aerogpu_handle_t tex1_before = tex1->handle;
-  AEROGPU_D3D9DDI_HRESOURCE tex_rotate[2] = {hTex0, hTex1};
+  D3DDDI_HRESOURCE tex_rotate[2] = {hTex0, hTex1};
   hr = cleanup.device_funcs.pfnRotateResourceIdentities(create_dev.hDevice, tex_rotate, 2);
   if (!Check(hr == S_OK, "RotateResourceIdentities(tex)")) {
     return false;
@@ -3560,7 +3562,7 @@ bool TestRotateResourceIdentitiesRebindsChangedHandles() {
   ib1->storage[0] = 0xF0;
   const aerogpu_handle_t ib0_before = ib0->handle;
   const aerogpu_handle_t ib1_before = ib1->handle;
-  AEROGPU_D3D9DDI_HRESOURCE ib_rotate[2] = {hIb0, hIb1};
+  D3DDDI_HRESOURCE ib_rotate[2] = {hIb0, hIb1};
   hr = cleanup.device_funcs.pfnRotateResourceIdentities(create_dev.hDevice, ib_rotate, 2);
   if (!Check(hr == S_OK, "RotateResourceIdentities(ib)")) {
     return false;
@@ -3603,9 +3605,9 @@ bool TestPresentBackbufferRotationUndoOnSmallCmdBuffer() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
     D3D9DDI_DEVICEFUNCS device_funcs{};
-    D3D9DDI_HADAPTER hAdapter{};
-    D3D9DDI_HDEVICE hDevice{};
-    AEROGPU_D3D9DDI_HSWAPCHAIN hSwapChain{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    D3D9DDI_HSWAPCHAIN hSwapChain{};
     bool has_adapter = false;
     bool has_device = false;
     bool has_swapchain = false;
@@ -3650,7 +3652,7 @@ bool TestPresentBackbufferRotationUndoOnSmallCmdBuffer() {
   cleanup.hDevice = create_dev.hDevice;
   cleanup.has_device = true;
 
-  AEROGPU_D3D9DDIARG_CREATESWAPCHAIN create_sc{};
+  D3D9DDIARG_CREATESWAPCHAIN create_sc{};
   create_sc.present_params.backbuffer_width = 64;
   create_sc.present_params.backbuffer_height = 64;
   create_sc.present_params.backbuffer_format = 22u; // D3DFMT_X8R8G8B8
@@ -3680,7 +3682,7 @@ bool TestPresentBackbufferRotationUndoOnSmallCmdBuffer() {
   const aerogpu_handle_t h0 = sc->backbuffers[0]->handle;
   const aerogpu_handle_t h1 = sc->backbuffers[1]->handle;
 
-  AEROGPU_D3D9DDIARG_PRESENTEX present{};
+  D3D9DDIARG_PRESENTEX present{};
   present.hSrc.pDrvPrivate = nullptr;
   present.hWnd = nullptr;
   present.sync_interval = 0;
@@ -3714,9 +3716,9 @@ bool TestPresentBackbufferRotationRebindsBackbufferTexture() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
     D3D9DDI_DEVICEFUNCS device_funcs{};
-    D3D9DDI_HADAPTER hAdapter{};
-    D3D9DDI_HDEVICE hDevice{};
-    AEROGPU_D3D9DDI_HSWAPCHAIN hSwapChain{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    D3D9DDI_HSWAPCHAIN hSwapChain{};
     bool has_adapter = false;
     bool has_device = false;
     bool has_swapchain = false;
@@ -3761,7 +3763,7 @@ bool TestPresentBackbufferRotationRebindsBackbufferTexture() {
   cleanup.hDevice = create_dev.hDevice;
   cleanup.has_device = true;
 
-  AEROGPU_D3D9DDIARG_CREATESWAPCHAIN create_sc{};
+  D3D9DDIARG_CREATESWAPCHAIN create_sc{};
   create_sc.present_params.backbuffer_width = 64;
   create_sc.present_params.backbuffer_height = 64;
   create_sc.present_params.backbuffer_format = 22u; // D3DFMT_X8R8G8B8
@@ -3791,10 +3793,10 @@ bool TestPresentBackbufferRotationRebindsBackbufferTexture() {
   const aerogpu_handle_t h0 = sc->backbuffers[0]->handle;
   const aerogpu_handle_t h1 = sc->backbuffers[1]->handle;
 
-  AEROGPU_D3D9DDI_HRESOURCE hTex{};
+  D3DDDI_HRESOURCE hTex{};
   hTex.pDrvPrivate = sc->backbuffers[0];
 
-  AEROGPU_D3D9DDIARG_PRESENTEX present{};
+  D3D9DDIARG_PRESENTEX present{};
   present.hSrc.pDrvPrivate = nullptr;
   present.hWnd = nullptr;
   present.sync_interval = 0;
@@ -3854,10 +3856,10 @@ bool TestSetRenderTargetRejectsGaps() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
     D3D9DDI_DEVICEFUNCS device_funcs{};
-    D3D9DDI_HADAPTER hAdapter{};
-    D3D9DDI_HDEVICE hDevice{};
-    AEROGPU_D3D9DDI_HSWAPCHAIN hSwapChain{};
-    AEROGPU_D3D9DDI_HRESOURCE hResource{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    D3D9DDI_HSWAPCHAIN hSwapChain{};
+    D3DDDI_HRESOURCE hResource{};
     bool has_adapter = false;
     bool has_device = false;
     bool has_swapchain = false;
@@ -3906,7 +3908,7 @@ bool TestSetRenderTargetRejectsGaps() {
   cleanup.hDevice = create_dev.hDevice;
   cleanup.has_device = true;
 
-  AEROGPU_D3D9DDIARG_CREATESWAPCHAIN create_sc{};
+  D3D9DDIARG_CREATESWAPCHAIN create_sc{};
   create_sc.present_params.backbuffer_width = 64;
   create_sc.present_params.backbuffer_height = 64;
   create_sc.present_params.backbuffer_format = 22u; // D3DFMT_X8R8G8B8
@@ -3924,7 +3926,7 @@ bool TestSetRenderTargetRejectsGaps() {
   cleanup.hSwapChain = create_sc.hSwapChain;
   cleanup.has_swapchain = true;
 
-  AEROGPU_D3D9DDIARG_CREATERESOURCE create_rt{};
+  D3D9DDIARG_CREATERESOURCE create_rt{};
   create_rt.type = 0;
   create_rt.format = 22u; // D3DFMT_X8R8G8B8
   create_rt.width = 16;
@@ -3989,9 +3991,9 @@ bool TestRotateResourceIdentitiesUndoOnSmallCmdBuffer() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
     D3D9DDI_DEVICEFUNCS device_funcs{};
-    D3D9DDI_HADAPTER hAdapter{};
-    D3D9DDI_HDEVICE hDevice{};
-    AEROGPU_D3D9DDI_HRESOURCE resources[2]{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    D3DDDI_HRESOURCE resources[2]{};
     bool has_adapter = false;
     bool has_device = false;
     bool has_resources = false;
@@ -4037,7 +4039,7 @@ bool TestRotateResourceIdentitiesUndoOnSmallCmdBuffer() {
   cleanup.hDevice = create_dev.hDevice;
   cleanup.has_device = true;
 
-  AEROGPU_D3D9DDIARG_CREATERESOURCE create_res{};
+  D3D9DDIARG_CREATERESOURCE create_res{};
   create_res.type = 0;
   create_res.format = 22u; // D3DFMT_X8R8G8B8
   create_res.width = 16;
@@ -4159,9 +4161,9 @@ bool TestResetRebindsBackbufferTexture() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
     D3D9DDI_DEVICEFUNCS device_funcs{};
-    D3D9DDI_HADAPTER hAdapter{};
-    D3D9DDI_HDEVICE hDevice{};
-    AEROGPU_D3D9DDI_HSWAPCHAIN hSwapChain{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    D3D9DDI_HSWAPCHAIN hSwapChain{};
     bool has_adapter = false;
     bool has_device = false;
     bool has_swapchain = false;
@@ -4206,7 +4208,7 @@ bool TestResetRebindsBackbufferTexture() {
   cleanup.hDevice = create_dev.hDevice;
   cleanup.has_device = true;
 
-  AEROGPU_D3D9DDIARG_CREATESWAPCHAIN create_sc{};
+  D3D9DDIARG_CREATESWAPCHAIN create_sc{};
   create_sc.present_params.backbuffer_width = 64;
   create_sc.present_params.backbuffer_height = 64;
   create_sc.present_params.backbuffer_format = 22u; // D3DFMT_X8R8G8B8
@@ -4236,14 +4238,14 @@ bool TestResetRebindsBackbufferTexture() {
 
   const aerogpu_handle_t old_handle = bb->handle;
 
-  AEROGPU_D3D9DDI_HRESOURCE hTex{};
+  D3DDDI_HRESOURCE hTex{};
   hTex.pDrvPrivate = bb;
   hr = cleanup.device_funcs.pfnSetTexture(create_dev.hDevice, 0, hTex);
   if (!Check(hr == S_OK, "SetTexture(backbuffer)")) {
     return false;
   }
 
-  AEROGPU_D3D9DDIARG_RESET reset{};
+  D3D9DDIARG_RESET reset{};
   reset.present_params = create_sc.present_params;
   hr = cleanup.device_funcs.pfnReset(create_dev.hDevice, &reset);
   if (!Check(hr == S_OK, "Reset")) {
@@ -4271,9 +4273,9 @@ bool TestOpenResourceTracksWddmAllocationHandle() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
     D3D9DDI_DEVICEFUNCS device_funcs{};
-    D3D9DDI_HADAPTER hAdapter{};
-    D3D9DDI_HDEVICE hDevice{};
-    AEROGPU_D3D9DDI_HRESOURCE hResource{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    D3DDDI_HRESOURCE hResource{};
     bool has_adapter = false;
     bool has_device = false;
     bool has_resource = false;
@@ -4344,7 +4346,7 @@ bool TestOpenResourceTracksWddmAllocationHandle() {
   priv.size_bytes = 64ull * 64ull * 4ull;
   priv.reserved0 = 0;
 
-  AEROGPU_D3D9DDIARG_OPENRESOURCE open_res{};
+  D3D9DDIARG_OPENRESOURCE open_res{};
   open_res.pPrivateDriverData = &priv;
   open_res.private_driver_data_size = sizeof(priv);
   open_res.type = 0;

@@ -210,22 +210,22 @@ void fill_adapter_identifier(D3DADAPTER_IDENTIFIER9* out) {
 
 } // namespace
 
-HRESULT get_caps(Adapter*, const AEROGPU_D3D9DDIARG_GETCAPS* pGetCaps) {
+HRESULT get_caps(Adapter*, const D3D9DDIARG_GETCAPS* pGetCaps) {
   if (!pGetCaps) {
     return E_INVALIDARG;
   }
 
   const uint32_t format_count = static_cast<uint32_t>(sizeof(kSupportedFormats) / sizeof(kSupportedFormats[0]));
 
-  logf("aerogpu-d3d9: GetCaps type=%u data_size=%u\n", pGetCaps->type, pGetCaps->data_size);
+  logf("aerogpu-d3d9: GetCaps type=%u data_size=%u\n", pGetCaps->Type, pGetCaps->DataSize);
 
-  if (!pGetCaps->pData || pGetCaps->data_size == 0) {
+  if (!pGetCaps->pData || pGetCaps->DataSize == 0) {
     return E_INVALIDARG;
   }
 
-  switch (static_cast<D3DDDICAPS_TYPE>(pGetCaps->type)) {
+  switch (static_cast<D3DDDICAPS_TYPE>(pGetCaps->Type)) {
     case D3DDDICAPS_GETD3D9CAPS: {
-      if (pGetCaps->data_size < sizeof(D3DCAPS9)) {
+      if (pGetCaps->DataSize < sizeof(D3DCAPS9)) {
         return E_INVALIDARG;
       }
 #if defined(_WIN32)
@@ -260,14 +260,14 @@ HRESULT get_caps(Adapter*, const AEROGPU_D3D9DDIARG_GETCAPS* pGetCaps) {
 #endif
     }
     case D3DDDICAPS_GETFORMATCOUNT: {
-      if (pGetCaps->data_size < sizeof(uint32_t)) {
+      if (pGetCaps->DataSize < sizeof(uint32_t)) {
         return E_INVALIDARG;
       }
       *reinterpret_cast<uint32_t*>(pGetCaps->pData) = format_count;
       return S_OK;
     }
     case D3DDDICAPS_GETFORMAT: {
-      if (pGetCaps->data_size < sizeof(GetFormatPayload)) {
+      if (pGetCaps->DataSize < sizeof(GetFormatPayload)) {
         return E_INVALIDARG;
       }
       auto* payload = reinterpret_cast<GetFormatPayload*>(pGetCaps->pData);
@@ -280,20 +280,20 @@ HRESULT get_caps(Adapter*, const AEROGPU_D3D9DDIARG_GETCAPS* pGetCaps) {
       // Best-effort: if the payload has room for a third uint32_t field, fill it
       // with a conservative ops/usage mask so the runtime can distinguish render
       // targets from depth/stencil formats.
-      if (pGetCaps->data_size >= 3u * sizeof(uint32_t)) {
+      if (pGetCaps->DataSize >= 3u * sizeof(uint32_t)) {
         auto* fields = reinterpret_cast<uint32_t*>(pGetCaps->pData);
         fields[2] = format_ops_for_d3d9_format(format);
       }
       return S_OK;
     }
     case D3DDDICAPS_GETMULTISAMPLEQUALITYLEVELS: {
-      if (pGetCaps->data_size >= sizeof(GetMultisampleQualityLevelsPayload)) {
+      if (pGetCaps->DataSize >= sizeof(GetMultisampleQualityLevelsPayload)) {
         auto* payload = reinterpret_cast<GetMultisampleQualityLevelsPayload*>(pGetCaps->pData);
         const bool supported = is_supported_format(payload->format);
         payload->quality_levels = (supported && payload->multisample_type == 0u) ? 1u : 0u;
         return S_OK;
       }
-      if (pGetCaps->data_size >= sizeof(GetMultisampleQualityLevelsPayloadV1)) {
+      if (pGetCaps->DataSize >= sizeof(GetMultisampleQualityLevelsPayloadV1)) {
         auto* payload = reinterpret_cast<GetMultisampleQualityLevelsPayloadV1*>(pGetCaps->pData);
         const bool supported = is_supported_format(payload->format);
         payload->quality_levels = (supported && payload->multisample_type == 0u) ? 1u : 0u;
@@ -302,12 +302,12 @@ HRESULT get_caps(Adapter*, const AEROGPU_D3D9DDIARG_GETCAPS* pGetCaps) {
       return E_INVALIDARG;
     }
     default:
-      logf("aerogpu-d3d9: GetCaps unknown type=%u size=%u\n", pGetCaps->type, pGetCaps->data_size);
+      logf("aerogpu-d3d9: GetCaps unknown type=%u size=%u\n", pGetCaps->Type, pGetCaps->DataSize);
       return E_INVALIDARG;
   }
 }
 
-HRESULT query_adapter_info(Adapter* adapter, const AEROGPU_D3D9DDIARG_QUERYADAPTERINFO* pQueryAdapterInfo) {
+HRESULT query_adapter_info(Adapter* adapter, const D3D9DDIARG_QUERYADAPTERINFO* pQueryAdapterInfo) {
   if (!adapter) {
     return E_INVALIDARG;
   }
@@ -316,16 +316,16 @@ HRESULT query_adapter_info(Adapter* adapter, const AEROGPU_D3D9DDIARG_QUERYADAPT
   }
 
   logf("aerogpu-d3d9: QueryAdapterInfo type=%u size=%u\n",
-       pQueryAdapterInfo->type,
-       pQueryAdapterInfo->private_driver_data_size);
+       pQueryAdapterInfo->Type,
+       pQueryAdapterInfo->PrivateDriverDataSize);
 
-  if (!pQueryAdapterInfo->pPrivateDriverData || pQueryAdapterInfo->private_driver_data_size == 0) {
+  if (!pQueryAdapterInfo->pPrivateDriverData || pQueryAdapterInfo->PrivateDriverDataSize == 0) {
     return E_INVALIDARG;
   }
 
-  switch (static_cast<D3DDDI_QUERYADAPTERINFO_TYPE>(pQueryAdapterInfo->type)) {
+  switch (static_cast<D3DDDI_QUERYADAPTERINFO_TYPE>(pQueryAdapterInfo->Type)) {
     case D3DDDIQUERYADAPTERINFO_GETADAPTERIDENTIFIER: {
-      if (pQueryAdapterInfo->private_driver_data_size < sizeof(D3DADAPTER_IDENTIFIER9)) {
+      if (pQueryAdapterInfo->PrivateDriverDataSize < sizeof(D3DADAPTER_IDENTIFIER9)) {
         return E_INVALIDARG;
       }
 #if defined(_WIN32)
@@ -344,7 +344,7 @@ HRESULT query_adapter_info(Adapter* adapter, const AEROGPU_D3D9DDIARG_QUERYADAPT
 #endif
     }
     case D3DDDIQUERYADAPTERINFO_GETADAPTERLUID: {
-      if (pQueryAdapterInfo->private_driver_data_size < sizeof(LUID)) {
+      if (pQueryAdapterInfo->PrivateDriverDataSize < sizeof(LUID)) {
         return E_INVALIDARG;
       }
       *reinterpret_cast<LUID*>(pQueryAdapterInfo->pPrivateDriverData) = adapter->luid;
@@ -352,14 +352,14 @@ HRESULT query_adapter_info(Adapter* adapter, const AEROGPU_D3D9DDIARG_QUERYADAPT
     }
     default:
 #if defined(_WIN32)
-      if (pQueryAdapterInfo->private_driver_data_size == sizeof(GUID)) {
+      if (pQueryAdapterInfo->PrivateDriverDataSize == sizeof(GUID)) {
         *reinterpret_cast<GUID*>(pQueryAdapterInfo->pPrivateDriverData) = make_aerogpu_adapter_guid();
         return S_OK;
       }
 #endif
       logf("aerogpu-d3d9: QueryAdapterInfo unknown type=%u size=%u\n",
-           pQueryAdapterInfo->type,
-           pQueryAdapterInfo->private_driver_data_size);
+           pQueryAdapterInfo->Type,
+           pQueryAdapterInfo->PrivateDriverDataSize);
       return E_INVALIDARG;
   }
 }

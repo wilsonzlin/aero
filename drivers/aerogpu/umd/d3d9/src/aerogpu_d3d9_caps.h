@@ -6,8 +6,7 @@ namespace aerogpu {
 
 struct Adapter;
 
-HRESULT get_caps(Adapter* adapter, const AEROGPU_D3D9DDIARG_GETCAPS* pGetCaps);
-HRESULT query_adapter_info(Adapter* adapter, const AEROGPU_D3D9DDIARG_QUERYADAPTERINFO* pQueryAdapterInfo);
+HRESULT get_caps(Adapter* adapter, const D3D9DDIARG_GETCAPS* pGetCaps);
+HRESULT query_adapter_info(Adapter* adapter, const D3D9DDIARG_QUERYADAPTERINFO* pQueryAdapterInfo);
 
 } // namespace aerogpu
-

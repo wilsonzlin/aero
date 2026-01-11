@@ -24,7 +24,7 @@ enum class ResourceKind : uint32_t {
   Texture2D = 3,
 };
 
-inline uint32_t bytes_per_pixel(uint32_t d3d9_format) {
+inline uint32_t bytes_per_pixel(D3DDDIFORMAT d3d9_format) {
   // Conservative: handle the formats DWM/typical D3D9 samples use.
   // For unknown formats we assume 4 bytes to avoid undersizing.
   switch (d3d9_format) {
@@ -48,7 +48,7 @@ struct Resource {
   aerogpu_handle_t handle = 0;
   ResourceKind kind = ResourceKind::Unknown;
   uint32_t type = 0;
-  uint32_t format = 0;
+  D3DDDIFORMAT format = static_cast<D3DDDIFORMAT>(0);
   uint32_t width = 0;
   uint32_t height = 0;
   uint32_t depth = 0;
@@ -109,7 +109,7 @@ struct SwapChain {
 
 struct Shader {
   aerogpu_handle_t handle = 0;
-  AEROGPU_D3D9DDI_SHADER_STAGE stage = AEROGPU_D3D9DDI_SHADER_STAGE_VS;
+  uint32_t stage = AEROGPU_SHADER_STAGE_VERTEX;
   std::vector<uint8_t> bytecode;
 };
 
@@ -213,7 +213,7 @@ struct Adapter {
   uint32_t primary_height = 768;
   uint32_t primary_refresh_hz = 60;
   uint32_t primary_format = 22u; // D3DFMT_X8R8G8B8
-  uint32_t primary_rotation = AEROGPU_D3D9DDI_ROTATION_IDENTITY;
+  uint32_t primary_rotation = D3DDDI_ROTATION_IDENTITY;
 };
 
 struct DeviceStateStream {
@@ -300,7 +300,7 @@ struct Device {
   Resource* textures[16] = {};
   DeviceStateStream streams[16] = {};
   Resource* index_buffer = nullptr;
-  AEROGPU_D3D9DDI_INDEX_FORMAT index_format = AEROGPU_D3D9DDI_INDEX_FORMAT_U16;
+  D3DDDIFORMAT index_format = static_cast<D3DDDIFORMAT>(101); // D3DFMT_INDEX16
   uint32_t index_offset_bytes = 0;
   uint32_t topology = AEROGPU_TOPOLOGY_TRIANGLELIST;
 
@@ -332,7 +332,7 @@ struct Device {
   // tracking nesting.
   uint32_t scene_depth = 0;
 
-  AEROGPU_D3D9DDI_VIEWPORT viewport = {0, 0, 0, 0, 0.0f, 1.0f};
+  D3DDDIVIEWPORTINFO viewport = {0, 0, 0, 0, 0.0f, 1.0f};
   RECT scissor_rect = {0, 0, 0, 0};
   BOOL scissor_enabled = FALSE;
 

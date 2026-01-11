@@ -64,6 +64,10 @@ ScopeExit<F> make_scope_exit(F f) {
   return ScopeExit<F>{f};
 }
 
+// D3D9 shader stage values at the DDI boundary.
+constexpr uint32_t kD3d9ShaderStageVs = 0u;
+constexpr uint32_t kD3d9ShaderStagePs = 1u;
+
 uint32_t f32_bits(float v) {
   uint32_t bits = 0;
   static_assert(sizeof(bits) == sizeof(v), "float must be 32-bit");
@@ -440,12 +444,12 @@ bool emit_set_viewport_locked(Device* dev) {
   if (!cmd) {
     return false;
   }
-  cmd->x_f32 = f32_bits(vp.x);
-  cmd->y_f32 = f32_bits(vp.y);
-  cmd->width_f32 = f32_bits(vp.w);
-  cmd->height_f32 = f32_bits(vp.h);
-  cmd->min_depth_f32 = f32_bits(vp.min_z);
-  cmd->max_depth_f32 = f32_bits(vp.max_z);
+  cmd->x_f32 = f32_bits(vp.X);
+  cmd->y_f32 = f32_bits(vp.Y);
+  cmd->width_f32 = f32_bits(vp.Width);
+  cmd->height_f32 = f32_bits(vp.Height);
+  cmd->min_depth_f32 = f32_bits(vp.MinZ);
+  cmd->max_depth_f32 = f32_bits(vp.MaxZ);
   return true;
 }
 
@@ -554,7 +558,7 @@ bool set_sampler_state_locked(Device* dev, uint32_t stage, uint32_t state, uint3
 }
 
 bool set_shader_const_f_locked(Device* dev,
-                               AEROGPU_D3D9DDI_SHADER_STAGE stage,
+                               uint32_t stage,
                                uint32_t start_reg,
                                const float* data,
                                uint32_t vec4_count) {
@@ -568,12 +572,12 @@ bool set_shader_const_f_locked(Device* dev,
   if (!cmd) {
     return false;
   }
-  cmd->stage = (stage == AEROGPU_D3D9DDI_SHADER_STAGE_VS) ? AEROGPU_SHADER_STAGE_VERTEX : AEROGPU_SHADER_STAGE_PIXEL;
+  cmd->stage = (stage == kD3d9ShaderStageVs) ? AEROGPU_SHADER_STAGE_VERTEX : AEROGPU_SHADER_STAGE_PIXEL;
   cmd->start_register = start_reg;
   cmd->vec4_count = vec4_count;
   cmd->reserved0 = 0;
 
-  float* dst = (stage == AEROGPU_D3D9DDI_SHADER_STAGE_VS) ? dev->vs_consts_f : dev->ps_consts_f;
+  float* dst = (stage == kD3d9ShaderStageVs) ? dev->vs_consts_f : dev->ps_consts_f;
   const uint32_t max_regs = 256;
   if (start_reg < max_regs) {
     const uint32_t write_regs = std::min(vec4_count, max_regs - start_reg);
@@ -593,7 +597,7 @@ HRESULT ensure_blit_objects_locked(Device* dev) {
       return E_OUTOFMEMORY;
     }
     sh->handle = allocate_global_handle(dev->adapter);
-    sh->stage = AEROGPU_D3D9DDI_SHADER_STAGE_VS;
+    sh->stage = kD3d9ShaderStageVs;
     try {
       sh->bytecode.assign(builtin_d3d9_shaders::kCopyVsDxbc,
                           builtin_d3d9_shaders::kCopyVsDxbc + builtin_d3d9_shaders::kCopyVsDxbcSize);
@@ -622,7 +626,7 @@ HRESULT ensure_blit_objects_locked(Device* dev) {
       return E_OUTOFMEMORY;
     }
     sh->handle = allocate_global_handle(dev->adapter);
-    sh->stage = AEROGPU_D3D9DDI_SHADER_STAGE_PS;
+    sh->stage = kD3d9ShaderStagePs;
     try {
       sh->bytecode.assign(builtin_d3d9_shaders::kCopyPsDxbc,
                           builtin_d3d9_shaders::kCopyPsDxbc + builtin_d3d9_shaders::kCopyPsDxbcSize);
@@ -748,7 +752,7 @@ HRESULT blit_locked(Device* dev,
   Resource* saved_tex0 = dev->textures[0];
   DeviceStateStream saved_stream0 = dev->streams[0];
   const uint32_t saved_topology = dev->topology;
-  const AEROGPU_D3D9DDI_VIEWPORT saved_vp = dev->viewport;
+  const D3DDDIVIEWPORTINFO saved_vp = dev->viewport;
   const RECT saved_scissor = dev->scissor_rect;
   const BOOL saved_scissor_enabled = dev->scissor_enabled;
 
@@ -804,8 +808,8 @@ HRESULT blit_locked(Device* dev,
 
     (void)emit_set_topology_locked(dev, saved_topology);
 
-    (void)set_shader_const_f_locked(dev, AEROGPU_D3D9DDI_SHADER_STAGE_VS, 0, saved_vs_c0_3, 4);
-    (void)set_shader_const_f_locked(dev, AEROGPU_D3D9DDI_SHADER_STAGE_PS, 0, saved_ps_c0, 1);
+    (void)set_shader_const_f_locked(dev, kD3d9ShaderStageVs, 0, saved_vs_c0_3, 4);
+    (void)set_shader_const_f_locked(dev, kD3d9ShaderStagePs, 0, saved_ps_c0, 1);
 
     (void)set_sampler_state_locked(dev, 0, kD3d9SampAddressU, saved_samp_u);
     (void)set_sampler_state_locked(dev, 0, kD3d9SampAddressV, saved_samp_v);
@@ -887,13 +891,13 @@ HRESULT blit_locked(Device* dev,
       0.0f, 0.0f, 1.0f, 0.0f,
       0.0f, 0.0f, 0.0f, 1.0f,
   };
-  if (!set_shader_const_f_locked(dev, AEROGPU_D3D9DDI_SHADER_STAGE_VS, 0, ident, 4)) {
+  if (!set_shader_const_f_locked(dev, kD3d9ShaderStageVs, 0, ident, 4)) {
     return E_OUTOFMEMORY;
   }
 
   // Pixel shader multiplier: 1.0 (pass through sampled texel).
   const float one[4] = {1.0f, 1.0f, 1.0f, 1.0f};
-  if (!set_shader_const_f_locked(dev, AEROGPU_D3D9DDI_SHADER_STAGE_PS, 0, one, 1)) {
+  if (!set_shader_const_f_locked(dev, kD3d9ShaderStagePs, 0, one, 1)) {
     return E_OUTOFMEMORY;
   }
 
@@ -997,7 +1001,7 @@ HRESULT color_fill_locked(Device* dev, Resource* dst, const RECT* dst_rect_in, u
   Resource* saved_tex0 = dev->textures[0];
   DeviceStateStream saved_stream0 = dev->streams[0];
   const uint32_t saved_topology = dev->topology;
-  const AEROGPU_D3D9DDI_VIEWPORT saved_vp = dev->viewport;
+  const D3DDDIVIEWPORTINFO saved_vp = dev->viewport;
   const RECT saved_scissor = dev->scissor_rect;
   const BOOL saved_scissor_enabled = dev->scissor_enabled;
   const uint32_t saved_rs_scissor = dev->render_states[kD3d9RsScissorTestEnable];
@@ -1050,7 +1054,7 @@ HRESULT color_fill_locked(Device* dev, Resource* dst, const RECT* dst_rect_in, u
 
     (void)emit_set_topology_locked(dev, saved_topology);
 
-    (void)set_shader_const_f_locked(dev, AEROGPU_D3D9DDI_SHADER_STAGE_PS, 0, saved_ps_c0, 1);
+    (void)set_shader_const_f_locked(dev, kD3d9ShaderStagePs, 0, saved_ps_c0, 1);
 
     (void)set_sampler_state_locked(dev, 0, kD3d9SampAddressU, saved_samp_u);
     (void)set_sampler_state_locked(dev, 0, kD3d9SampAddressV, saved_samp_v);
@@ -1125,7 +1129,7 @@ HRESULT color_fill_locked(Device* dev, Resource* dst, const RECT* dst_rect_in, u
   }
 
   const float color[4] = {r, g, b, a};
-  if (!set_shader_const_f_locked(dev, AEROGPU_D3D9DDI_SHADER_STAGE_PS, 0, color, 1)) {
+  if (!set_shader_const_f_locked(dev, kD3d9ShaderStagePs, 0, color, 1)) {
     return E_OUTOFMEMORY;
   }
 

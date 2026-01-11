@@ -75,8 +75,8 @@ Build files:
 
 - Visual Studio project: `aerogpu_d3d9_umd.vcxproj`
 - Exports:
-  - `aerogpu_d3d9_x86.def` (exports `OpenAdapter*` entrypoints from stdcall-decorated x86 symbols)
-  - `aerogpu_d3d9_x64.def` (exports `OpenAdapter*` entrypoints)
+  - `aerogpu_d3d9_x86.def` (exports `OpenAdapter`, `OpenAdapter2`, `OpenAdapterFromHdc`, `OpenAdapterFromLuid` from stdcall-decorated x86 symbols)
+  - `aerogpu_d3d9_x64.def` (exports `OpenAdapter`, `OpenAdapter2`, `OpenAdapterFromHdc`, `OpenAdapterFromLuid`)
 
 Recommended build entrypoint (MSBuild/WDK10):
 
@@ -92,7 +92,7 @@ Optional: `drivers\aerogpu\build\build_all.cmd` is a convenience wrapper around 
 
 ### Notes
 
-- The code in `include/aerogpu_d3d9_umd.h` includes a tiny “compat” subset of the D3D9 DDI types so the core translation code is self-contained in this repository. When integrating into a real Win7 WDK build, wire the entrypoints to the real WDK D3D9 DDI headers and structures (the exported names are the key ABI contract).
+- The code in `include/aerogpu_d3d9_umd.h` includes a tiny “compat” subset of the Win7 D3D9 UMD DDI types so the core translation code is self-contained in this repository. When building in a real Win7 WDK environment, define `AEROGPU_UMD_USE_WDK_HEADERS=1` (or set `/p:AeroGpuUseWdkHeaders=1` in the VS project) to compile against the canonical WDK headers (`d3dumddi.h`, `d3d9umddi.h`).
 - For ABI verification against the real Win7 D3D9 UMD headers (struct sizes/offsets + x86 stdcall export decoration), see `tools/wdk_abi_probe/`.
 - Logging is done via `OutputDebugStringA` (view with DebugView/WinDbg) and is intentionally lightweight.
   - Set `AEROGPU_D3D9_LOG_SUBMITS=1` before loading the UMD to enable per-submission fence logs (useful for `drivers/aerogpu/tests/win7/d3d9ex_submit_fence_stress` and debugging submit ordering).
