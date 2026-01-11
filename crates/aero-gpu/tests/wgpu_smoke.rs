@@ -22,6 +22,14 @@ fn wgpu_backend_create_destroy_smoke() {
         })
         .unwrap();
     backend.write_buffer(buffer, 0, &[1, 2, 3, 4]).unwrap();
+    assert!(matches!(
+        backend.write_buffer(buffer, 2, &[1, 2, 3, 4]),
+        Err(GpuError::Backend(_))
+    ));
+    assert!(matches!(
+        backend.write_buffer(buffer, 0, &[1, 2, 3]),
+        Err(GpuError::Backend(_))
+    ));
     backend.destroy_buffer(buffer).unwrap();
     assert!(matches!(
         backend.destroy_buffer(buffer),

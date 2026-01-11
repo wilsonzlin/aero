@@ -254,6 +254,14 @@ impl GpuBackend for WgpuBackend {
 
     fn write_buffer(&mut self, buffer: BufferId, offset: u64, data: &[u8]) -> Result<(), GpuError> {
         let buffer = self.buffers.get(buffer)?;
+        let size_bytes = u64::try_from(data.len())
+            .map_err(|_| GpuError::Backend("write_buffer payload too large".into()))?;
+        let alignment = wgpu::COPY_BUFFER_ALIGNMENT;
+        if offset % alignment != 0 || size_bytes % alignment != 0 {
+            return Err(GpuError::Backend(format!(
+                "write_buffer offset/size must be {alignment}-byte aligned (offset={offset}, size_bytes={size_bytes})"
+            )));
+        }
         self.queue.write_buffer(buffer, offset, data);
         Ok(())
     }

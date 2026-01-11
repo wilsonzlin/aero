@@ -117,6 +117,23 @@ struct BufferResource {
 
 impl BufferResource {
     fn mark_dirty(&mut self, range: Range<u64>) {
+        let alignment = wgpu::COPY_BUFFER_ALIGNMENT;
+        debug_assert!(alignment.is_power_of_two());
+
+        let start = range.start.min(self.size);
+        let end = range.end.min(self.size);
+        if start >= end {
+            return;
+        }
+
+        let start = start & !(alignment - 1);
+        let end = end.saturating_add(alignment - 1) & !(alignment - 1);
+        let end = end.min(self.size);
+        if start >= end {
+            return;
+        }
+
+        let range = start..end;
         self.dirty = Some(match self.dirty.take() {
             Some(existing) => existing.start.min(range.start)..existing.end.max(range.end),
             None => range,
@@ -843,6 +860,16 @@ impl AerogpuD3d11Executor {
         let backing_alloc_id = read_u32_le(cmd_bytes, 24)?;
         let backing_offset_bytes = read_u32_le(cmd_bytes, 28)?;
 
+        if size_bytes == 0 {
+            bail!("CREATE_BUFFER: size_bytes must be > 0");
+        }
+        let alignment = wgpu::COPY_BUFFER_ALIGNMENT;
+        if size_bytes % alignment != 0 {
+            bail!(
+                "CREATE_BUFFER: size_bytes must be a multiple of {alignment} (got {size_bytes})"
+            );
+        }
+
         let usage = map_buffer_usage_flags(usage_flags);
         let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("aerogpu buffer"),
@@ -1040,6 +1067,12 @@ impl AerogpuD3d11Executor {
         let size = cmd.size_bytes;
 
         if let Some(buf) = self.resources.buffers.get(&handle) {
+            let alignment = wgpu::COPY_BUFFER_ALIGNMENT;
+            if offset % alignment != 0 || size % alignment != 0 {
+                bail!(
+                    "UPLOAD_RESOURCE: buffer offset_bytes and size_bytes must be multiples of {alignment} (offset_bytes={offset} size_bytes={size})"
+                );
+            }
             if offset.saturating_add(size) > buf.size {
                 bail!("UPLOAD_RESOURCE: buffer upload out of bounds");
             }
@@ -1144,6 +1177,13 @@ impl AerogpuD3d11Executor {
         }
         if dst_buffer == src_buffer {
             bail!("COPY_BUFFER: src==dst is not supported");
+        }
+
+        let alignment = wgpu::COPY_BUFFER_ALIGNMENT;
+        if dst_offset_bytes % alignment != 0 || src_offset_bytes % alignment != 0 || size_bytes % alignment != 0 {
+            bail!(
+                "COPY_BUFFER: offsets and size must be multiples of {alignment} (dst_offset_bytes={dst_offset_bytes} src_offset_bytes={src_offset_bytes} size_bytes={size_bytes})"
+            );
         }
 
         // Ensure the source buffer reflects any CPU writes from guest memory before copying.
