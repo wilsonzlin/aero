@@ -12,6 +12,14 @@
         "nowMs": 1700000000000
       },
       {
+        "name": "valid.floatVersion",
+        "secret": "test-session-secret",
+        "token": "eyJ2IjoxLjAsInNpZCI6InNpZC1mbG9hdC12IiwiZXhwIjoxNzAwMDAwMDYwfQ.FoAjA6-ET9qETAvoyUBNVrOXYWjAQaWB6UZyqvOC1VU",
+        "sid": "sid-float-v",
+        "exp": 1700000060,
+        "nowMs": 1700000000000
+      },
+      {
         "name": "invalidBase64url.signature",
         "secret": "test-session-secret",
         "token": "eyJ2IjoxLCJzaWQiOiJzaWQtMTIzNDU2Nzg5MCIsImV4cCI6MTcwMDAwMDA2MH0.!",
