@@ -254,6 +254,16 @@ void WddmContext::destroy(const WddmDeviceCallbacks& callbacks) {
   command_buffer_bytes_used = 0;
   allocation_list_entries_used = 0;
   patch_location_entries_used = 0;
+#if defined(_WIN32)
+  buffers_need_deallocate = false;
+  dma_priv_from_allocate = false;
+  allocated_pDmaBuffer = nullptr;
+  allocated_pCommandBuffer = nullptr;
+  allocated_pAllocationList = nullptr;
+  allocated_pPatchLocationList = nullptr;
+  allocated_pDmaBufferPrivateData = nullptr;
+  allocated_DmaBufferPrivateDataSize = 0;
+#endif
 }
 
 #if defined(_WIN32)

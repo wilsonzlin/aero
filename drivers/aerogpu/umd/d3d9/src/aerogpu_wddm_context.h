@@ -50,6 +50,27 @@ struct WddmContext {
   uint32_t allocation_list_entries_used = 0;
   uint32_t patch_location_entries_used = 0;
 
+#if defined(_WIN32)
+  // Some D3D9 runtime configurations do not return a persistent DMA buffer /
+  // allocation list from CreateContext. In those cases the UMD must acquire
+  // per-submit buffers via AllocateCb/GetCommandBufferCb, and return them via
+  // DeallocateCb after submission.
+  //
+  // Keep the original pointers returned by AllocateCb so DeallocateCb can be
+  // issued even if the submit callback rotates command-buffer pointers in its
+  // out-params.
+  bool buffers_need_deallocate = false;
+  // True iff `pDmaBufferPrivateData` currently points to memory provided by
+  // AllocateCb and therefore must not be used after DeallocateCb.
+  bool dma_priv_from_allocate = false;
+  void* allocated_pDmaBuffer = nullptr;
+  void* allocated_pCommandBuffer = nullptr;
+  WddmAllocationList* allocated_pAllocationList = nullptr;
+  WddmPatchLocationList* allocated_pPatchLocationList = nullptr;
+  void* allocated_pDmaBufferPrivateData = nullptr;
+  uint32_t allocated_DmaBufferPrivateDataSize = 0;
+#endif
+
   void reset_submission_buffers();
   void destroy(const WddmDeviceCallbacks& callbacks);
 };
