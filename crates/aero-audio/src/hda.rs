@@ -188,6 +188,28 @@ struct CodecPinWidget {
     config_default: u32,
 }
 
+impl CodecOutputWidget {
+    /// Compute output amplifier gains as per-channel scalars in `[0.0, 1.0]`.
+    ///
+    /// Pragmatic mapping:
+    /// - `0x00` => silence
+    /// - `0x7f` => unity gain
+    fn gain_scalars(&self) -> [f32; 2] {
+        fn scalar(gain: u8, mute: bool) -> f32 {
+            if mute {
+                0.0
+            } else {
+                gain as f32 / 0x7f as f32
+            }
+        }
+
+        [
+            scalar(self.amp_gain_left, self.amp_mute_left),
+            scalar(self.amp_gain_right, self.amp_mute_right),
+        ]
+    }
+}
+
 impl HdaCodec {
     pub fn new() -> Self {
         // Pick a plausible, but not particularly meaningful, codec identity.
@@ -208,7 +230,10 @@ impl HdaCodec {
             },
             pin: CodecPinWidget {
                 conn_select: 0,
-                pin_ctl: 0x00,
+                // Pin Widget Control (PWCTL). Real codecs typically default to having the
+                // line-out pin enabled; keep the model usable without requiring the guest
+                // to explicitly unmute the pin.
+                pin_ctl: 0x40,
                 // Default config: line out, rear, green, 1/8" jack, association 1, sequence 0.
                 config_default: 0x0101_0000,
             },
@@ -218,6 +243,18 @@ impl HdaCodec {
 
     pub fn output_stream_id(&self) -> u8 {
         self.output.stream_id
+    }
+
+    fn output_gain_scalars(&self) -> [f32; 2] {
+        // Treat anything other than D0 as powered down.
+        if self.afg_power_state != 0 {
+            return [0.0, 0.0];
+        }
+        // For the minimal model, treat pin_ctl==0 as disabled and non-zero as enabled.
+        if self.pin.pin_ctl == 0 {
+            return [0.0, 0.0];
+        }
+        self.output.gain_scalars()
     }
 
     pub fn execute_verb(&mut self, nid: u8, verb_20: u32) -> u32 {
@@ -966,9 +1003,38 @@ impl HdaController {
                 .push_source_frames(&decoded);
         }
 
-        self.stream_rt[stream]
+        let mut out = self.stream_rt[stream]
             .resampler
-            .produce_interleaved_stereo(output_frames)
+            .produce_interleaved_stereo(output_frames);
+        self.apply_codec_output_controls(&mut out);
+        out
+    }
+
+    fn apply_codec_output_controls(&self, samples: &mut [f32]) {
+        if samples.is_empty() {
+            return;
+        }
+        let [gain_l, gain_r] = self.codec.output_gain_scalars();
+        if gain_l == 1.0 && gain_r == 1.0 {
+            return;
+        }
+
+        for frame in samples.chunks_exact_mut(2) {
+            frame[0] = apply_gain(frame[0], gain_l);
+            frame[1] = apply_gain(frame[1], gain_r);
+        }
+
+        fn apply_gain(sample: f32, gain: f32) -> f32 {
+            let mut sample = if sample.is_finite() { sample } else { 0.0 };
+            sample *= gain;
+            if sample > 1.0 {
+                1.0
+            } else if sample < -1.0 {
+                -1.0
+            } else {
+                sample
+            }
+        }
     }
 
     fn dma_read_stream_bytes(
