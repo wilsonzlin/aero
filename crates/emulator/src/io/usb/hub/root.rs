@@ -11,6 +11,7 @@ struct Port {
     enable_change: bool,
     reset: bool,
     reset_countdown_ms: u8,
+    resume_detect: bool,
     suspended: bool,
     resuming: bool,
 }
@@ -25,6 +26,7 @@ impl Port {
             enable_change: false,
             reset: false,
             reset_countdown_ms: 0,
+            resume_detect: false,
             suspended: false,
             resuming: false,
         }
@@ -36,6 +38,7 @@ impl Port {
         const PED: u16 = 1 << 2;
         const PEDC: u16 = 1 << 3;
         const LS_J_FS: u16 = 0b01 << 4;
+        const RD: u16 = 1 << 6;
         const LSDA: u16 = 1 << 8;
         const PR: u16 = 1 << 9;
         const SUSP: u16 = 1 << 12;
@@ -57,6 +60,9 @@ impl Port {
         if self.enable_change {
             v |= PEDC;
         }
+        if self.resume_detect {
+            v |= RD;
+        }
         // Low-speed not modelled yet; current HID models are full-speed.
         let _ = LSDA;
         if self.reset {
@@ -75,6 +81,7 @@ impl Port {
         const CSC: u16 = 1 << 1;
         const PED: u16 = 1 << 2;
         const PEDC: u16 = 1 << 3;
+        const RD: u16 = 1 << 6;
         const PR: u16 = 1 << 9;
         const SUSP: u16 = 1 << 12;
         const RESUME: u16 = 1 << 13;
@@ -86,11 +93,15 @@ impl Port {
         if value & PEDC != 0 {
             self.enable_change = false;
         }
+        if value & RD != 0 {
+            self.resume_detect = false;
+        }
 
         // Port reset: model a 50ms reset and reset attached device state.
         if value & PR != 0 && !self.reset {
             self.reset = true;
             self.reset_countdown_ms = 50;
+            self.resume_detect = false;
             self.suspended = false;
             self.resuming = false;
             if let Some(dev) = self.device.as_mut() {
@@ -152,6 +163,7 @@ impl RootHub {
 
     pub fn bus_reset(&mut self) {
         for p in &mut self.ports {
+            p.resume_detect = false;
             p.suspended = false;
             p.resuming = false;
             if let Some(dev) = p.device.as_mut() {
@@ -163,6 +175,7 @@ impl RootHub {
     pub fn attach(&mut self, port: usize, model: Box<dyn UsbDeviceModel>) {
         let p = &mut self.ports[port];
         p.device = Some(AttachedUsbDevice::new(model));
+        p.resume_detect = false;
         p.suspended = false;
         p.resuming = false;
         if !p.connected {
@@ -180,6 +193,7 @@ impl RootHub {
     pub fn detach(&mut self, port: usize) {
         let p = &mut self.ports[port];
         p.device = None;
+        p.resume_detect = false;
         p.suspended = false;
         p.resuming = false;
         if p.connected {
@@ -331,6 +345,11 @@ impl RootHub {
         let p = &mut self.ports[port];
         p.enabled = true;
         p.enable_change = true;
+    }
+
+    pub fn force_resume_detect_for_tests(&mut self, port: usize) {
+        let p = &mut self.ports[port];
+        p.resume_detect = true;
     }
 
     pub fn device_mut_for_address(&mut self, address: u8) -> Option<&mut AttachedUsbDevice> {

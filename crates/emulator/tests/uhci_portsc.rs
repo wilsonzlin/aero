@@ -341,3 +341,42 @@ fn uhci_portsc_port_reset_propagates_to_external_hub_and_downstream_devices() {
     assert!(root.device_mut_for_address(0).is_some());
     assert!(root.device_mut_for_address(5).is_none());
 }
+
+#[test]
+fn uhci_portsc_suspend_and_resume_detect_bits_roundtrip() {
+    const PORTSC_PED: u16 = 1 << 2;
+    const PORTSC_RD: u16 = 1 << 6;
+    const PORTSC_SUSP: u16 = 1 << 12;
+
+    let mut hub = RootHub::new();
+    hub.attach(0, Box::new(TestUsbDevice));
+
+    // Enable the port so we can ensure suspend/resume-detect writes don't disturb it.
+    hub.write_portsc(0, PORTSC_PED);
+
+    // Suspend should latch (R/W).
+    hub.write_portsc(0, PORTSC_PED | PORTSC_SUSP);
+    let st = hub.read_portsc(0);
+    assert_ne!(st & PORTSC_PED, 0);
+    assert_ne!(st & PORTSC_SUSP, 0);
+
+    // Clearing the suspend bit should also latch.
+    hub.write_portsc(0, PORTSC_PED);
+    let st = hub.read_portsc(0);
+    assert_ne!(st & PORTSC_PED, 0);
+    assert_eq!(st & PORTSC_SUSP, 0);
+
+    // Resume Detect is write-1-to-clear.
+    hub.force_resume_detect_for_tests(0);
+    assert_ne!(hub.read_portsc(0) & PORTSC_RD, 0);
+
+    // Writing 0 should not clear it.
+    hub.write_portsc(0, PORTSC_PED);
+    assert_ne!(hub.read_portsc(0) & PORTSC_RD, 0);
+
+    // Writing 1 should clear it.
+    hub.write_portsc(0, PORTSC_PED | PORTSC_RD);
+    let st = hub.read_portsc(0);
+    assert_ne!(st & PORTSC_PED, 0);
+    assert_eq!(st & PORTSC_RD, 0);
+}
