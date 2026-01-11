@@ -61,7 +61,7 @@ sources/$OEM$/$1/Aero/...
 Windows Setup copies `$OEM$\\$1` into `%SystemDrive%` (usually `C:\`). Example resulting path:
 
 ```
-C:\Aero\certs\aero-test-root.cer
+C:\Aero\certs\aero-test.cer
 C:\Aero\drivers\...
 ```
 
@@ -76,7 +76,7 @@ Common placeholders used across templates:
 - `{{ARCH}}`
   - `x86` or `amd64` (used in unattend `processorArchitecture`).
 - `{{AERO_CERT_FILENAME}}`
-  - e.g., `aero-test-root.cer`
+  - e.g., `aero-test.cer`
 - `{{AERO_SIGNING_MODE}}`
   - `testsigning` (preferred) or `nointegritychecks` (fallback / emulator-only)
 - `{{AERO_WINPE_DRIVER_PATH}}`

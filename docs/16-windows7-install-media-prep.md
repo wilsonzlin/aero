@@ -164,7 +164,7 @@ Keep Aero additions under a single directory in the ISO root (example):
 ```
 aero/
   certs/
-    aero-test-root.cer
+    aero-test.cer
   drivers/
     winpe/        # storage drivers needed during Setup
     system/       # drivers to be present in installed OS
@@ -211,7 +211,7 @@ See `windows/win7-sp1/unattend/README.md` for the full expected structure and pa
   ```powershell
   pwsh .\tools\windows\patch-win7-media.ps1 `
     -MediaRoot C:\win7-slipstream\iso `
-    -CertPath  C:\certs\aero-test-root.cer `
+    -CertPath  C:\certs\aero-test.cer `
     -DriversPath C:\aero\drivers\win7 `
     -InstallWimIndices all
   ```
@@ -220,7 +220,8 @@ See `windows/win7-sp1/unattend/README.md` for the full expected structure and pa
   - DISM (`dism.exe`) available (built-in).
   - Optional: Windows ADK `oscdimg.exe` for ISO rebuild.
 - Your Aero driver `.inf` directories for the correct architecture.
-- Aero test root certificate file: `aero-test-root.cer` (DER or Base64 is fine).
+- Aero test root certificate file (DER or Base64 is fine).
+  - CI output: `out/certs/aero-test.cer`
 
 ### 1) Copy ISO contents to a working directory
 
@@ -306,7 +307,7 @@ Recommended tooling (preferred over manual registry editing):
 cd tools\win-offline-cert-injector
 cargo build --release --locked
 
-$Cert = "C:\\aero\\certs\\aero-test-root.cer"
+$Cert = "C:\\aero\\certs\\aero-test.cer"
 
 # After mounting a WIM index to $Mount:
 .\target\release\win-offline-cert-injector.exe --windows-dir "$Mount" --store ROOT --store TrustedPublisher "$Cert"
@@ -409,7 +410,7 @@ mkdir -p iso-root
 
 ```sh
 mkdir -p iso-root/aero/{certs,drivers/winpe,drivers/system,scripts}
-cp /path/to/aero-test-root.cer iso-root/aero/certs/
+cp /path/to/aero-test.cer iso-root/aero/certs/
 cp -R /path/to/winpe-driver-inf-dirs/* iso-root/aero/drivers/winpe/
 cp -R /path/to/system-driver-inf-dirs/* iso-root/aero/drivers/system/
 ```
@@ -465,7 +466,7 @@ Prerequisites:
 Note: `cert-to-reg.py` writes the certificate’s raw DER bytes into the `Blob` registry value. This often works, but the CryptoAPI registry-backed cert store format is **not guaranteed** to be raw DER across all environments. For the most portable patch, generate the `.reg` on Windows using `tools/win-certstore-regblob-export` (or inject directly using `tools/win-offline-cert-injector`), then apply it cross-platform with `hivexregedit`. See `tools/win7-slipstream/patches/README.md`.
 
 ```sh
-CERT_PATH="iso-root/aero/certs/aero-test-root.cer"
+CERT_PATH="iso-root/aero/certs/aero-test.cer"
 
 # Generate `aero-cert.reg` on a Windows machine (once) using CryptoAPI, then copy it here:
 #   win-certstore-regblob-export --store ROOT --store TrustedPublisher --format reg --reg-hklm-subkey SOFTWARE "$CERT_PATH" > aero-cert.reg

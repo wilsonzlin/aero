@@ -179,7 +179,7 @@ Run from an elevated PowerShell prompt:
 
 ```powershell
 $MountDir = "C:\mount\boot2"  # change per image
-$CertPath = "C:\certs\AeroTestRoot.cer"
+$CertPath = "C:\certs\aero-test.cer"  # CI output: out/certs/aero-test.cer
 
 # Build once (or use a prebuilt binary)
 cd tools\win-offline-cert-injector
