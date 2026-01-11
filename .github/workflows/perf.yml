@@ -22,6 +22,11 @@ jobs:
     timeout-minutes: 30
     env:
       PERF_ITERATIONS: "3"
+      PERF_REGRESSION_THRESHOLD_PCT: ${{ vars.PERF_REGRESSION_THRESHOLD_PCT }}
+      PERF_EXTREME_CV_THRESHOLD: ${{ vars.PERF_EXTREME_CV_THRESHOLD }}
+      PERF_TRACE: ${{ vars.PERF_TRACE }}
+      PERF_TRACE_DURATION_MS: ${{ vars.PERF_TRACE_DURATION_MS }}
+      PERF_INCLUDE_AERO_BENCH: ${{ vars.PERF_INCLUDE_AERO_BENCH }}
       AERO_NODE_DIR: ${{ vars.AERO_NODE_DIR }}
       AERO_REQUIRE_WEBGPU: "0"
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
@@ -91,6 +96,24 @@ jobs:
               echo '```' >> "$GITHUB_STEP_SUMMARY"
             else
               echo "_No compare summary produced._" >> "$GITHUB_STEP_SUMMARY"
+            fi
+
+            if [[ -f perf-results/base/summary.json ]]; then
+              echo "" >> "$GITHUB_STEP_SUMMARY"
+              echo "baseline summary.json:" >> "$GITHUB_STEP_SUMMARY"
+              echo "" >> "$GITHUB_STEP_SUMMARY"
+              echo '```json' >> "$GITHUB_STEP_SUMMARY"
+              cat perf-results/base/summary.json >> "$GITHUB_STEP_SUMMARY"
+              echo '```' >> "$GITHUB_STEP_SUMMARY"
+            fi
+
+            if [[ -f perf-results/head/summary.json ]]; then
+              echo "" >> "$GITHUB_STEP_SUMMARY"
+              echo "candidate summary.json:" >> "$GITHUB_STEP_SUMMARY"
+              echo "" >> "$GITHUB_STEP_SUMMARY"
+              echo '```json' >> "$GITHUB_STEP_SUMMARY"
+              cat perf-results/head/summary.json >> "$GITHUB_STEP_SUMMARY"
+              echo '```' >> "$GITHUB_STEP_SUMMARY"
             fi
           fi
 

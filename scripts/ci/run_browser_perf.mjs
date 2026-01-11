@@ -142,8 +142,6 @@ function parseArgs(argv) {
   };
 
   const envTrace = parseBool(process.env.PERF_TRACE);
-  const trace = opts.trace ?? envTrace ?? false;
-
   const envTraceDuration = Number.parseInt(process.env.PERF_TRACE_DURATION_MS ?? "", 10);
   const traceDurationMs =
     opts.traceDurationMs ?? (Number.isFinite(envTraceDuration) && envTraceDuration > 0 ? envTraceDuration : null);
@@ -152,6 +150,11 @@ function parseArgs(argv) {
     console.error("--trace-duration-ms must be a positive integer (or set PERF_TRACE_DURATION_MS)");
     usage(1);
   }
+
+  // PERF_TRACE_DURATION_MS implies trace capture unless PERF_TRACE is explicitly set to "0"/false.
+  let trace = opts.trace ?? envTrace;
+  if (trace === null) trace = traceDurationMs !== null;
+  trace = Boolean(trace);
 
   const envIncludeAeroBench = parseBool(process.env.PERF_INCLUDE_AERO_BENCH);
   const includeAeroBench = opts.includeAeroBench ?? envIncludeAeroBench ?? false;

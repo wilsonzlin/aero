@@ -23,6 +23,9 @@ jobs:
     timeout-minutes: 60
     env:
       PERF_ITERATIONS: ${{ github.event.inputs.iterations || '7' }}
+      PERF_TRACE: ${{ vars.PERF_TRACE }}
+      PERF_TRACE_DURATION_MS: ${{ vars.PERF_TRACE_DURATION_MS }}
+      PERF_INCLUDE_AERO_BENCH: ${{ vars.PERF_INCLUDE_AERO_BENCH }}
       AERO_NODE_DIR: ${{ vars.AERO_NODE_DIR }}
       AERO_REQUIRE_WEBGPU: "0"
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
