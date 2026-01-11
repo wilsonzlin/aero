@@ -52,6 +52,24 @@ constexpr bool NtSuccess(NTSTATUS st) {
 
 constexpr HRESULT kDxgiErrorWasStillDrawing = static_cast<HRESULT>(0x887A000Au); // DXGI_ERROR_WAS_STILL_DRAWING
 
+static uint64_t AllocateShareToken() {
+  uint64_t token = 0;
+  for (int attempt = 0; attempt < 8; ++attempt) {
+    if (detail::fill_random_bytes(&token, sizeof(token)) && token != 0) {
+      return token;
+    }
+  }
+
+  static std::atomic<uint64_t> counter{1};
+  for (;;) {
+    const uint64_t ctr = counter.fetch_add(1, std::memory_order_relaxed);
+    token = detail::splitmix64(detail::fallback_entropy(ctr));
+    if (token != 0) {
+      return token;
+    }
+  }
+}
+
 #ifndef STATUS_TIMEOUT
   #define STATUS_TIMEOUT ((NTSTATUS)0x00000102L)
 #endif
@@ -2385,11 +2403,11 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
 
     aerogpu_wddm_alloc_priv priv = {};
     if (is_shared) {
-      const uint32_t alloc_id = AllocateGlobalHandle(dev->adapter) & 0x7FFFFFFFu;
+      const uint32_t alloc_id = AllocateGlobalHandle(dev->adapter) & AEROGPU_WDDM_ALLOC_ID_UMD_MAX;
       if (!alloc_id) {
         return E_FAIL;
       }
-      const uint64_t share_token = (static_cast<uint64_t>(GetCurrentProcessId()) << 32) | static_cast<uint64_t>(alloc_id);
+      const uint64_t share_token = AllocateShareToken();
 
       priv.magic = AEROGPU_WDDM_ALLOC_PRIV_MAGIC;
       priv.version = AEROGPU_WDDM_ALLOC_PRIV_VERSION;
