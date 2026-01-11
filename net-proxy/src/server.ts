@@ -1135,11 +1135,26 @@ async function handleUdpRelayMultiplexed(ws: WebSocket, connId: number, config: 
         return;
       }
 
-      const decision = await resolveAndAuthorizeTarget(remoteAddress, remotePort, {
-        open: config.open,
-        allowlist: config.allow,
-        dnsTimeoutMs: config.dnsTimeoutMs
-      });
+      let decision;
+      try {
+        decision = await resolveAndAuthorizeTarget(remoteAddress, remotePort, {
+          open: config.open,
+          allowlist: config.allow,
+          dnsTimeoutMs: config.dnsTimeoutMs
+        });
+      } catch (err) {
+        log("error", "connect_error", {
+          connId,
+          proto: "udp",
+          mode: "multiplexed",
+          err: formatError(err),
+          remoteAddress,
+          remotePort,
+          guestPort
+        });
+        closeAll("policy_error", 1011, "Proxy error");
+        return;
+      }
       if (closed) return;
       if (!decision.allowed) return;
 
