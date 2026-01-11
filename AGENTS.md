@@ -371,7 +371,7 @@ pub trait DisplayAdapter {
 | [07-networking.md](./docs/07-networking.md)                             | Network stack emulation                | I/O               |
 | [08-input-devices.md](./docs/08-input-devices.md)                       | Keyboard, mouse, USB HID               | I/O               |
 | [usb-hid.md](./docs/usb-hid.md)                                         | USB HID usages and report formats      | I/O               |
-| [webhid-webusb-passthrough.md](./docs/webhid-webusb-passthrough.md)     | WebHID/WebUSB physical device passthrough architecture + security model (aero-usb/aero-wasm bridges) | I/O / Infra |
+| [webhid-webusb-passthrough.md](./docs/webhid-webusb-passthrough.md)     | WebHID/WebUSB physical device passthrough architecture + security model (aero-usb/aero-wasm bridges + TS broker wiring) | I/O / Infra |
 | [webhid-hid-report-descriptor-synthesis.md](./docs/webhid-hid-report-descriptor-synthesis.md) | WebHID → HID report descriptor synthesis (Windows 7 contract) | I/O |
 | [webusb.md](./docs/webusb.md)                                           | WebUSB constraints and troubleshooting | I/O / Infra       |
 | [webusb-passthrough.md](./docs/webusb-passthrough.md)                   | WebUSB passthrough architecture (UHCI ↔ host actions/completions) | I/O / Infra |

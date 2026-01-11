@@ -640,7 +640,7 @@ impl InputCapture {
 // Outputs:
 //   - src/input/scancodes.ts
 //   - web/src/input/scancodes.ts
-//   - crates/emulator/src/io/input/scancodes.rs
+//   - crates/emulator/src/io/input/scancodes.rs (legacy native emulator harness)
 //   - crates/aero-devices-input/src/scancodes_generated.rs
 //
 // This keeps the JS capture side and Rust/WASM side in sync, including extended

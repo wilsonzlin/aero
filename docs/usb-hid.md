@@ -6,7 +6,8 @@ This document is **separate** from PS/2 scancodes (see `docs/08-input-devices.md
 
 The Rust-side mapping helpers for the browser/WASM USB stack live in `aero_usb::web`
 (`crates/aero-usb/src/web.rs`) (e.g. `keyboard_code_to_hid_usage`, `mouse_button_to_hid_mask`).
-(The native emulator stack has equivalent helpers under `crates/emulator`.)
+(A legacy native emulator harness keeps older equivalents under `crates/emulator`, but the web
+runtime uses `crates/aero-usb`.)
 The browser-side `KeyboardEvent.code -> HID usage` mapping lives in `web/src/input/hid_usage.ts`.
 
 For USB HID **gamepad** details (composite device layout, Windows 7 driver binding expectations, and the exact gamepad report descriptor/report bytes), see

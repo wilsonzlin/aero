@@ -31,7 +31,7 @@ Implementation references:
   - TS contract test: `web/test/webhid_normalize_fixture.test.ts`
   - Rust contract test (descriptor bytes): `crates/aero-wasm/tests/webhid_report_descriptor_synthesis.rs`
 
-(The same synthesis stack is also implemented in the native emulator (`crates/emulator`), but
+(A legacy native emulator harness also has an older copy under `crates/emulator`, but
 `crates/aero-usb` is the primary reference for the browser/WASM path.)
 
 TypeScript/WebHID types:
