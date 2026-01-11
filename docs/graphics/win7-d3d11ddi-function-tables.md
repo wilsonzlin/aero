@@ -19,6 +19,67 @@ This doc is intentionally biased toward a **safe skeleton**:
 
 ---
 
+## TL;DR: minimal non-null + must-work set (FL10_0 + repo Win7 tests)
+
+If your goal is “the Win7 runtime creates a D3D11 device at **FL10_0** and the repo tests don’t crash”,
+this is the smallest practical set to treat as **must be non-null and must succeed**.
+
+> Tests referenced:
+> * `drivers/aerogpu/tests/win7/d3d11_triangle`
+> * `drivers/aerogpu/tests/win7/readback_sanity`
+
+### Adapter (`D3D11DDI_ADAPTERFUNCS`)
+
+Must be non-null and must succeed:
+
+* `pfnGetCaps`
+* `pfnCalcPrivateDeviceSize`
+* `pfnCreateDevice` (must fill both device + immediate context tables)
+* `pfnCloseAdapter`
+
+### Device funcs (`D3D11DDI_DEVICEFUNCS`)
+
+Must be non-null and must succeed for the tests:
+
+* Device lifetime:
+  * `pfnDestroyDevice`
+* Resources:
+  * `pfnCalcPrivateResourceSize`, `pfnCreateResource`, `pfnDestroyResource`
+* RTV:
+  * `pfnCalcPrivateRenderTargetViewSize`, `pfnCreateRenderTargetView`, `pfnDestroyRenderTargetView`
+* Shaders:
+  * `pfnCalcPrivateVertexShaderSize`, `pfnCreateVertexShader`, `pfnDestroyVertexShader`
+  * `pfnCalcPrivatePixelShaderSize`, `pfnCreatePixelShader`, `pfnDestroyPixelShader`
+* Input layout:
+  * `pfnCalcPrivateElementLayoutSize`, `pfnCreateElementLayout`, `pfnDestroyElementLayout`
+* Win7 DXGI present integration:
+  * `pfnPresent` (DXGI uses `D3D10DDIARG_PRESENT` even for D3D11 devices on Win7)
+  * `pfnRotateResourceIdentities`
+
+Everything else should still be **non-null** (stubbed), but may return `E_NOTIMPL`.
+
+### Immediate context (`D3D11DDI_DEVICECONTEXTFUNCS`)
+
+Must be non-null and must succeed for the tests:
+
+* Binding/state:
+  * `pfnSetRenderTargets`
+  * `pfnSetViewports`
+  * `pfnIaSetInputLayout`, `pfnIaSetTopology`, `pfnIaSetVertexBuffers`
+  * `pfnVsSetShader`, `pfnPsSetShader`
+* Clears/draws:
+  * `pfnClearRenderTargetView`
+  * `pfnDraw`
+* Readback path:
+  * `pfnCopyResource`
+  * `pfnFlush`
+  * `pfnMap`, `pfnUnmap`
+
+Everything else should still be **non-null** (stubbed, usually via `SetErrorCb(E_NOTIMPL)` for `void` DDIs),
+because the runtime may call “reset to default” entrypoints like `ClearState` during initialization.
+
+---
+
 ## 0) Terminology and rules used in this checklist
 
 ### Status tags
