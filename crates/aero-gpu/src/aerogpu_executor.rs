@@ -8,62 +8,10 @@
 use std::collections::HashMap;
 use std::ops::Range;
 
-use aero_protocol::aerogpu::aerogpu_cmd::{
-    decode_cmd_stream_header_le, AerogpuCmdDecodeError, AerogpuCmdOpcode,
-    AerogpuCmdStreamHeader as ProtocolCmdStreamHeader, AerogpuCmdStreamIter, AEROGPU_CLEAR_COLOR as CLEAR_COLOR,
-    AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER as USAGE_CONSTANT_BUFFER,
-    AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL as USAGE_DEPTH_STENCIL,
-    AEROGPU_RESOURCE_USAGE_INDEX_BUFFER as USAGE_INDEX_BUFFER,
-    AEROGPU_RESOURCE_USAGE_RENDER_TARGET as USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_TEXTURE as USAGE_TEXTURE,
-    AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER as USAGE_VERTEX_BUFFER,
-};
-use aero_protocol::aerogpu::aerogpu_pci::{parse_and_validate_abi_version_u32, AerogpuAbiError, AerogpuFormat};
-use aero_protocol::aerogpu::aerogpu_ring::{
-    AerogpuAllocEntry as ProtocolAllocEntry, AerogpuAllocTableHeader as ProtocolAllocTableHeader,
-    AEROGPU_ALLOC_TABLE_MAGIC,
-};
-
 use crate::guest_memory::{GuestMemory, GuestMemoryError};
 
-// Selected opcodes from `drivers/aerogpu/protocol/aerogpu_cmd.h`.
-const OP_CREATE_BUFFER: u32 = AerogpuCmdOpcode::CreateBuffer as u32;
-const OP_CREATE_TEXTURE2D: u32 = AerogpuCmdOpcode::CreateTexture2d as u32;
-const OP_DESTROY_RESOURCE: u32 = AerogpuCmdOpcode::DestroyResource as u32;
-const OP_RESOURCE_DIRTY_RANGE: u32 = AerogpuCmdOpcode::ResourceDirtyRange as u32;
-const OP_UPLOAD_RESOURCE: u32 = AerogpuCmdOpcode::UploadResource as u32;
-
-const OP_SET_RENDER_TARGETS: u32 = AerogpuCmdOpcode::SetRenderTargets as u32;
-const OP_SET_VERTEX_BUFFERS: u32 = AerogpuCmdOpcode::SetVertexBuffers as u32;
-const OP_SET_INDEX_BUFFER: u32 = AerogpuCmdOpcode::SetIndexBuffer as u32;
-const OP_SET_TEXTURE: u32 = AerogpuCmdOpcode::SetTexture as u32;
-
-const OP_CLEAR: u32 = AerogpuCmdOpcode::Clear as u32;
-const OP_DRAW: u32 = AerogpuCmdOpcode::Draw as u32;
-const OP_DRAW_INDEXED: u32 = AerogpuCmdOpcode::DrawIndexed as u32;
-
-// `enum aerogpu_format` from `aerogpu_pci.h`.
-const FMT_B8G8R8A8_UNORM: u32 = AerogpuFormat::B8G8R8A8Unorm as u32;
-const FMT_B8G8R8X8_UNORM: u32 = AerogpuFormat::B8G8R8X8Unorm as u32;
-const FMT_R8G8B8A8_UNORM: u32 = AerogpuFormat::R8G8B8A8Unorm as u32;
-const FMT_R8G8B8X8_UNORM: u32 = AerogpuFormat::R8G8B8X8Unorm as u32;
-
-const STREAM_HEADER_SIZE: usize = ProtocolCmdStreamHeader::SIZE_BYTES;
-const ALLOC_TABLE_HEADER_SIZE: usize = ProtocolAllocTableHeader::SIZE_BYTES;
-const ALLOC_ENTRY_SIZE: usize = ProtocolAllocEntry::SIZE_BYTES;
-
-const ALLOC_TABLE_MAGIC_OFFSET: usize = core::mem::offset_of!(ProtocolAllocTableHeader, magic);
-const ALLOC_TABLE_ABI_VERSION_OFFSET: usize =
-    core::mem::offset_of!(ProtocolAllocTableHeader, abi_version);
-const ALLOC_TABLE_SIZE_BYTES_OFFSET: usize =
-    core::mem::offset_of!(ProtocolAllocTableHeader, size_bytes);
-const ALLOC_TABLE_ENTRY_COUNT_OFFSET: usize =
-    core::mem::offset_of!(ProtocolAllocTableHeader, entry_count);
-const ALLOC_TABLE_ENTRY_STRIDE_BYTES_OFFSET: usize =
-    core::mem::offset_of!(ProtocolAllocTableHeader, entry_stride_bytes);
-
-const ALLOC_ENTRY_ALLOC_ID_OFFSET: usize = core::mem::offset_of!(ProtocolAllocEntry, alloc_id);
-const ALLOC_ENTRY_GPA_OFFSET: usize = core::mem::offset_of!(ProtocolAllocEntry, gpa);
-const ALLOC_ENTRY_SIZE_BYTES_OFFSET: usize = core::mem::offset_of!(ProtocolAllocEntry, size_bytes);
+use crate::protocol::{parse_cmd_stream, AeroGpuCmd, AeroGpuCmdStreamParseError};
+use aero_protocol::aerogpu::{aerogpu_cmd as cmd, aerogpu_pci as pci, aerogpu_ring as ring};
 
 fn read_u32_le(bytes: &[u8], offset: usize) -> Result<u32, ExecutorError> {
     let slice = bytes
@@ -72,23 +20,30 @@ fn read_u32_le(bytes: &[u8], offset: usize) -> Result<u32, ExecutorError> {
     Ok(u32::from_le_bytes(slice.try_into().unwrap()))
 }
 
-fn read_u64_le(bytes: &[u8], offset: usize) -> Result<u64, ExecutorError> {
-    let slice = bytes
-        .get(offset..offset + 8)
-        .ok_or(ExecutorError::TruncatedPacket)?;
-    Ok(u64::from_le_bytes(slice.try_into().unwrap()))
-}
-
-fn read_i32_le(bytes: &[u8], offset: usize) -> Result<i32, ExecutorError> {
-    let slice = bytes
-        .get(offset..offset + 4)
-        .ok_or(ExecutorError::TruncatedPacket)?;
-    Ok(i32::from_le_bytes(slice.try_into().unwrap()))
-}
-
 fn align_to(value: u32, alignment: u32) -> u32 {
     debug_assert!(alignment.is_power_of_two());
     (value + alignment - 1) & !(alignment - 1)
+}
+
+fn map_cmd_stream_parse_error(err: AeroGpuCmdStreamParseError) -> ExecutorError {
+    match err {
+        AeroGpuCmdStreamParseError::BufferTooSmall => ExecutorError::TruncatedStream,
+        AeroGpuCmdStreamParseError::InvalidMagic(found) => ExecutorError::BadStreamMagic(found),
+        AeroGpuCmdStreamParseError::UnsupportedAbiMajor { found } => {
+            ExecutorError::Validation(format!("unsupported ABI major version {found}"))
+        }
+        AeroGpuCmdStreamParseError::InvalidSizeBytes {
+            size_bytes,
+            buffer_len,
+        } => ExecutorError::BadStreamSize {
+            size_bytes,
+            buffer_len,
+        },
+        AeroGpuCmdStreamParseError::InvalidCmdSizeBytes(found) => ExecutorError::InvalidPacketSize(found),
+        AeroGpuCmdStreamParseError::MisalignedCmdSizeBytes(found) => {
+            ExecutorError::MisalignedPacketSize(found)
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -167,65 +122,43 @@ impl AllocTable {
         }
 
         let table_size = table_size_bytes as usize;
-        if table_size < ALLOC_TABLE_HEADER_SIZE {
+        if table_size < ring::AerogpuAllocTableHeader::SIZE_BYTES {
             return Err(ExecutorError::Validation(format!(
-                "alloc table size_bytes too small (got {table_size_bytes}, need {ALLOC_TABLE_HEADER_SIZE})"
+                "alloc table size_bytes too small (got {table_size_bytes}, need {})",
+                ring::AerogpuAllocTableHeader::SIZE_BYTES
             )));
         }
 
-        let mut header = [0u8; ALLOC_TABLE_HEADER_SIZE];
-        guest_memory.read(table_gpa, &mut header)?;
+        let mut header_bytes = [0u8; ring::AerogpuAllocTableHeader::SIZE_BYTES];
+        guest_memory.read(table_gpa, &mut header_bytes)?;
+        let header = ring::AerogpuAllocTableHeader::decode_from_le_bytes(&header_bytes)
+            .map_err(|err| ExecutorError::Validation(format!("failed to decode alloc table header: {err:?}")))?;
+        header
+            .validate_prefix()
+            .map_err(|err| ExecutorError::Validation(format!("invalid alloc table header: {err:?}")))?;
 
-        let magic = read_u32_le(&header, ALLOC_TABLE_MAGIC_OFFSET)?;
-        if magic != AEROGPU_ALLOC_TABLE_MAGIC {
-            return Err(ExecutorError::Validation(format!(
-                "invalid alloc table magic 0x{magic:08x}"
-            )));
-        }
-
-        let abi_version = read_u32_le(&header, ALLOC_TABLE_ABI_VERSION_OFFSET)?;
-        match parse_and_validate_abi_version_u32(abi_version) {
-            Ok(_) => {}
-            Err(AerogpuAbiError::UnsupportedMajor { found }) => {
-                return Err(ExecutorError::Validation(format!(
-                    "unsupported alloc table ABI major version {found}"
-                )));
-            }
-        }
-
-        let size_bytes = read_u32_le(&header, ALLOC_TABLE_SIZE_BYTES_OFFSET)?;
+        let size_bytes = header.size_bytes;
         let size_usize = size_bytes as usize;
-        if size_usize < ALLOC_TABLE_HEADER_SIZE || size_usize > table_size {
+        if size_usize < ring::AerogpuAllocTableHeader::SIZE_BYTES || size_usize > table_size {
             return Err(ExecutorError::Validation(format!(
                 "invalid alloc table header size_bytes={size_bytes} (provided buffer size={table_size_bytes})"
             )));
         }
 
-        let entry_count = read_u32_le(&header, ALLOC_TABLE_ENTRY_COUNT_OFFSET)?;
-        let entry_stride_bytes = read_u32_le(&header, ALLOC_TABLE_ENTRY_STRIDE_BYTES_OFFSET)?;
-        if entry_stride_bytes < ALLOC_ENTRY_SIZE as u32 {
-            return Err(ExecutorError::Validation(format!(
-                "alloc table entry_stride_bytes={entry_stride_bytes} too small (min {ALLOC_ENTRY_SIZE})"
-            )));
-        }
-
-        let required = ALLOC_TABLE_HEADER_SIZE as u64
-            + (entry_count as u64).saturating_mul(entry_stride_bytes as u64);
-        if required > size_bytes as u64 {
-            return Err(ExecutorError::Validation(format!(
-                "alloc table requires {required} bytes but header size_bytes={size_bytes}"
-            )));
-        }
+        let entry_count = header.entry_count;
+        let entry_stride_bytes = header.entry_stride_bytes;
 
         let mut table = AllocTable::default();
         for i in 0..entry_count {
             let entry_gpa = table_gpa
-                + ALLOC_TABLE_HEADER_SIZE as u64
+                + ring::AerogpuAllocTableHeader::SIZE_BYTES as u64
                 + (i as u64) * (entry_stride_bytes as u64);
-            let mut entry_bytes = [0u8; ALLOC_ENTRY_SIZE];
+            let mut entry_bytes = [0u8; ring::AerogpuAllocEntry::SIZE_BYTES];
             guest_memory.read(entry_gpa, &mut entry_bytes)?;
 
-            let alloc_id = read_u32_le(&entry_bytes, ALLOC_ENTRY_ALLOC_ID_OFFSET)?;
+            let entry = ring::AerogpuAllocEntry::decode_from_le_bytes(&entry_bytes)
+                .map_err(|err| ExecutorError::Validation(format!("failed to decode alloc table entry {i}: {err:?}")))?;
+            let alloc_id = entry.alloc_id;
             if alloc_id == 0 {
                 return Err(ExecutorError::Validation(
                     "alloc table entry alloc_id must be non-zero".into(),
@@ -237,8 +170,8 @@ impl AllocTable {
                 )));
             }
 
-            let gpa = read_u64_le(&entry_bytes, ALLOC_ENTRY_GPA_OFFSET)?;
-            let size_bytes = read_u64_le(&entry_bytes, ALLOC_ENTRY_SIZE_BYTES_OFFSET)?;
+            let gpa = entry.gpa;
+            let size_bytes = entry.size_bytes;
 
             table
                 .entries
@@ -542,138 +475,136 @@ fn fs_main() -> @location(0) vec4<f32> {
         guest_memory: &dyn GuestMemory,
         alloc_table: Option<&AllocTable>,
     ) -> Result<u32, (usize, ExecutorError, u32)> {
+        let stream = parse_cmd_stream(bytes).map_err(|err| (0, map_cmd_stream_parse_error(err), 0))?;
+
         let mut packets_processed = 0u32;
-
-        let header = match decode_cmd_stream_header_le(bytes) {
-            Ok(header) => header,
-            Err(err) => {
-                let mapped = match err {
-                    AerogpuCmdDecodeError::BufferTooSmall => ExecutorError::TruncatedStream,
-                    AerogpuCmdDecodeError::BadMagic { found } => ExecutorError::BadStreamMagic(found),
-                    AerogpuCmdDecodeError::Abi(AerogpuAbiError::UnsupportedMajor { found }) => {
-                        ExecutorError::Validation(format!("unsupported ABI major version {found}"))
-                    }
-                    AerogpuCmdDecodeError::BadSizeBytes { found } => ExecutorError::BadStreamSize {
-                        size_bytes: found,
-                        buffer_len: bytes.len(),
-                    },
-                    other => ExecutorError::Validation(format!("command stream header decode error: {other:?}")),
-                };
-                return Err((0, mapped, packets_processed));
-            }
-        };
-
-        let size_bytes_usize = header.size_bytes as usize;
-        if size_bytes_usize < STREAM_HEADER_SIZE || size_bytes_usize > bytes.len() {
-            return Err((
-                0,
-                ExecutorError::BadStreamSize {
-                    size_bytes: header.size_bytes,
-                    buffer_len: bytes.len(),
-                },
-                packets_processed,
-            ));
-        }
-
-        let stream_bytes = &bytes[..size_bytes_usize];
-        let iter = match AerogpuCmdStreamIter::new(stream_bytes) {
-            Ok(iter) => iter,
-            Err(err) => {
-                return Err((
-                    0,
-                    ExecutorError::Validation(format!(
-                        "failed to create command stream iterator: {err:?}"
-                    )),
-                    packets_processed,
-                ))
-            }
-        };
-
-        let mut offset = STREAM_HEADER_SIZE;
-        for packet in iter {
-            let packet = match packet {
-                Ok(packet) => packet,
-                Err(err) => {
-                    let mapped = match err {
-                        AerogpuCmdDecodeError::BufferTooSmall
-                        | AerogpuCmdDecodeError::PacketOverrunsStream { .. } => ExecutorError::TruncatedStream,
-                        AerogpuCmdDecodeError::BadSizeBytes { found } => ExecutorError::InvalidPacketSize(found),
-                        AerogpuCmdDecodeError::SizeNotAligned { found } => ExecutorError::MisalignedPacketSize(found),
-                        other => ExecutorError::Validation(format!("packet decode error: {other:?}")),
-                    };
-                    return Err((offset, mapped, packets_processed));
+        for cmd in stream.cmds {
+            let result = match cmd {
+                AeroGpuCmd::CreateBuffer {
+                    buffer_handle,
+                    usage_flags,
+                    size_bytes,
+                    backing_alloc_id,
+                    backing_offset_bytes,
+                } => self.exec_create_buffer(
+                    buffer_handle,
+                    usage_flags,
+                    size_bytes,
+                    backing_alloc_id,
+                    backing_offset_bytes,
+                    alloc_table,
+                ),
+                AeroGpuCmd::CreateTexture2d {
+                    texture_handle,
+                    usage_flags,
+                    format,
+                    width,
+                    height,
+                    mip_levels,
+                    array_layers,
+                    row_pitch_bytes,
+                    backing_alloc_id,
+                    backing_offset_bytes,
+                } => self.exec_create_texture2d(
+                    texture_handle,
+                    usage_flags,
+                    format,
+                    width,
+                    height,
+                    mip_levels,
+                    array_layers,
+                    row_pitch_bytes,
+                    backing_alloc_id,
+                    backing_offset_bytes,
+                    alloc_table,
+                ),
+                AeroGpuCmd::DestroyResource { resource_handle } => {
+                    self.exec_destroy_resource(resource_handle)
                 }
+                AeroGpuCmd::ResourceDirtyRange {
+                    resource_handle,
+                    offset_bytes,
+                    size_bytes,
+                } => self.exec_resource_dirty_range(resource_handle, offset_bytes, size_bytes),
+                AeroGpuCmd::UploadResource {
+                    resource_handle,
+                    offset_bytes,
+                    size_bytes,
+                    data,
+                } => self.exec_upload_resource(resource_handle, offset_bytes, size_bytes, data),
+                AeroGpuCmd::SetRenderTargets {
+                    color_count,
+                    depth_stencil,
+                    colors,
+                } => self.exec_set_render_targets(color_count, depth_stencil, colors),
+                AeroGpuCmd::SetVertexBuffers {
+                    start_slot,
+                    buffer_count,
+                    bindings_bytes,
+                } => self.exec_set_vertex_buffers(start_slot, buffer_count, bindings_bytes),
+                AeroGpuCmd::SetIndexBuffer {
+                    buffer,
+                    format,
+                    offset_bytes,
+                } => self.exec_set_index_buffer(buffer, format, offset_bytes),
+                AeroGpuCmd::SetTexture {
+                    shader_stage,
+                    slot,
+                    texture,
+                } => self.exec_set_texture(shader_stage, slot, texture),
+                AeroGpuCmd::Clear {
+                    flags,
+                    color_rgba_f32,
+                    depth_f32,
+                    stencil,
+                } => self.exec_clear(flags, color_rgba_f32, depth_f32, stencil),
+                AeroGpuCmd::Draw {
+                    vertex_count,
+                    instance_count,
+                    first_vertex,
+                    first_instance,
+                } => self.exec_draw(
+                    vertex_count,
+                    instance_count,
+                    first_vertex,
+                    first_instance,
+                    guest_memory,
+                ),
+                AeroGpuCmd::DrawIndexed {
+                    index_count,
+                    instance_count,
+                    first_index,
+                    base_vertex,
+                    first_instance,
+                } => self.exec_draw_indexed(
+                    index_count,
+                    instance_count,
+                    first_index,
+                    base_vertex,
+                    first_instance,
+                    guest_memory,
+                ),
+                _ => Ok(()),
             };
 
-            let cmd_size = packet.hdr.size_bytes as usize;
-            let end = match offset.checked_add(cmd_size) {
-                Some(end) => end,
-                None => {
-                    return Err((
-                        offset,
-                        ExecutorError::Validation("packet size overflow".into()),
-                        packets_processed,
-                    ))
-                }
-            };
-
-            let cmd_bytes = match stream_bytes.get(offset..end) {
-                Some(cmd_bytes) => cmd_bytes,
-                None => return Err((offset, ExecutorError::TruncatedStream, packets_processed)),
-            };
-
-            self.exec_packet(packet.hdr.opcode, cmd_bytes, guest_memory, alloc_table)
-                .map_err(|e| (offset, e, packets_processed))?;
-
-            packets_processed += 1;
-            offset = end;
+            match result {
+                Ok(()) => packets_processed += 1,
+                Err(err) => return Err((0, err, packets_processed)),
+            }
         }
 
         Ok(packets_processed)
     }
 
-    fn exec_packet(
-        &mut self,
-        opcode: u32,
-        cmd_bytes: &[u8],
-        guest_memory: &dyn GuestMemory,
-        alloc_table: Option<&AllocTable>,
-    ) -> Result<(), ExecutorError> {
-        match opcode {
-            OP_CREATE_BUFFER => self.exec_create_buffer(cmd_bytes, alloc_table),
-            OP_CREATE_TEXTURE2D => self.exec_create_texture2d(cmd_bytes, alloc_table),
-            OP_DESTROY_RESOURCE => self.exec_destroy_resource(cmd_bytes),
-            OP_RESOURCE_DIRTY_RANGE => self.exec_resource_dirty_range(cmd_bytes),
-            OP_UPLOAD_RESOURCE => self.exec_upload_resource(cmd_bytes),
-
-            OP_SET_RENDER_TARGETS => self.exec_set_render_targets(cmd_bytes),
-            OP_SET_VERTEX_BUFFERS => self.exec_set_vertex_buffers(cmd_bytes),
-            OP_SET_INDEX_BUFFER => self.exec_set_index_buffer(cmd_bytes),
-            OP_SET_TEXTURE => self.exec_set_texture(cmd_bytes),
-
-            OP_CLEAR => self.exec_clear(cmd_bytes),
-            OP_DRAW => self.exec_draw(cmd_bytes, guest_memory),
-            OP_DRAW_INDEXED => self.exec_draw_indexed(cmd_bytes, guest_memory),
-
-            _ => Ok(()), // unknown/unsupported opcode
-        }
-    }
-
     fn exec_create_buffer(
         &mut self,
-        cmd: &[u8],
+        buffer_handle: u32,
+        usage_flags: u32,
+        size_bytes: u64,
+        backing_alloc_id: u32,
+        backing_offset_bytes: u32,
         alloc_table: Option<&AllocTable>,
     ) -> Result<(), ExecutorError> {
-        if cmd.len() < 40 {
-            return Err(ExecutorError::TruncatedPacket);
-        }
-
-        let buffer_handle = read_u32_le(cmd, 8)?;
-        let usage_flags = read_u32_le(cmd, 12)?;
-        let size_bytes = read_u64_le(cmd, 16)?;
-        let backing_alloc_id = read_u32_le(cmd, 24)?;
-        let backing_offset_bytes = read_u32_le(cmd, 28)?;
-
         if self.buffers.contains_key(&buffer_handle) || self.textures.contains_key(&buffer_handle) {
             return Err(ExecutorError::Validation(format!(
                 "resource handle {buffer_handle} already exists"
@@ -711,13 +642,13 @@ fn fs_main() -> @location(0) vec4<f32> {
         };
 
         let mut wgpu_usage = wgpu::BufferUsages::COPY_DST;
-        if (usage_flags & USAGE_VERTEX_BUFFER) != 0 {
+        if (usage_flags & cmd::AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER) != 0 {
             wgpu_usage |= wgpu::BufferUsages::VERTEX;
         }
-        if (usage_flags & USAGE_INDEX_BUFFER) != 0 {
+        if (usage_flags & cmd::AEROGPU_RESOURCE_USAGE_INDEX_BUFFER) != 0 {
             wgpu_usage |= wgpu::BufferUsages::INDEX;
         }
-        if (usage_flags & USAGE_CONSTANT_BUFFER) != 0 {
+        if (usage_flags & cmd::AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER) != 0 {
             wgpu_usage |= wgpu::BufferUsages::UNIFORM;
         }
 
@@ -742,8 +673,16 @@ fn fs_main() -> @location(0) vec4<f32> {
 
     fn map_format(format: u32) -> Result<(wgpu::TextureFormat, u32), ExecutorError> {
         let (fmt, bpp) = match format {
-            FMT_B8G8R8A8_UNORM | FMT_B8G8R8X8_UNORM => (wgpu::TextureFormat::Bgra8Unorm, 4),
-            FMT_R8G8B8A8_UNORM | FMT_R8G8B8X8_UNORM => (wgpu::TextureFormat::Rgba8Unorm, 4),
+            v if v == pci::AerogpuFormat::B8G8R8A8Unorm as u32
+                || v == pci::AerogpuFormat::B8G8R8X8Unorm as u32 =>
+            {
+                (wgpu::TextureFormat::Bgra8Unorm, 4)
+            }
+            v if v == pci::AerogpuFormat::R8G8B8A8Unorm as u32
+                || v == pci::AerogpuFormat::R8G8B8X8Unorm as u32 =>
+            {
+                (wgpu::TextureFormat::Rgba8Unorm, 4)
+            }
             _ => {
                 return Err(ExecutorError::Validation(format!(
                     "unsupported aerogpu_format={format}"
@@ -755,24 +694,18 @@ fn fs_main() -> @location(0) vec4<f32> {
 
     fn exec_create_texture2d(
         &mut self,
-        cmd: &[u8],
+        texture_handle: u32,
+        usage_flags: u32,
+        format: u32,
+        width: u32,
+        height: u32,
+        mip_levels: u32,
+        array_layers: u32,
+        row_pitch_bytes: u32,
+        backing_alloc_id: u32,
+        backing_offset_bytes: u32,
         alloc_table: Option<&AllocTable>,
     ) -> Result<(), ExecutorError> {
-        if cmd.len() < 56 {
-            return Err(ExecutorError::TruncatedPacket);
-        }
-
-        let texture_handle = read_u32_le(cmd, 8)?;
-        let usage_flags = read_u32_le(cmd, 12)?;
-        let format = read_u32_le(cmd, 16)?;
-        let width = read_u32_le(cmd, 20)?;
-        let height = read_u32_le(cmd, 24)?;
-        let mip_levels = read_u32_le(cmd, 28)?;
-        let array_layers = read_u32_le(cmd, 32)?;
-        let row_pitch_bytes = read_u32_le(cmd, 36)?;
-        let backing_alloc_id = read_u32_le(cmd, 40)?;
-        let backing_offset_bytes = read_u32_le(cmd, 44)?;
-
         if self.buffers.contains_key(&texture_handle) || self.textures.contains_key(&texture_handle)
         {
             return Err(ExecutorError::Validation(format!(
@@ -845,10 +778,13 @@ fn fs_main() -> @location(0) vec4<f32> {
         };
 
         let mut usage = wgpu::TextureUsages::empty();
-        if (usage_flags & USAGE_TEXTURE) != 0 {
+        if (usage_flags & cmd::AEROGPU_RESOURCE_USAGE_TEXTURE) != 0 {
             usage |= wgpu::TextureUsages::TEXTURE_BINDING;
         }
-        if (usage_flags & (USAGE_RENDER_TARGET | USAGE_DEPTH_STENCIL)) != 0 {
+        if (usage_flags
+            & (cmd::AEROGPU_RESOURCE_USAGE_RENDER_TARGET | cmd::AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL))
+            != 0
+        {
             usage |= wgpu::TextureUsages::RENDER_ATTACHMENT;
         }
         // Conservative: allow queue.write_texture and readback in tests.
@@ -888,11 +824,7 @@ fn fs_main() -> @location(0) vec4<f32> {
         Ok(())
     }
 
-    fn exec_destroy_resource(&mut self, cmd: &[u8]) -> Result<(), ExecutorError> {
-        if cmd.len() < 16 {
-            return Err(ExecutorError::TruncatedPacket);
-        }
-        let handle = read_u32_le(cmd, 8)?;
+    fn exec_destroy_resource(&mut self, handle: u32) -> Result<(), ExecutorError> {
         self.buffers.remove(&handle);
         self.textures.remove(&handle);
         if self.state.render_target == Some(handle) {
@@ -910,13 +842,12 @@ fn fs_main() -> @location(0) vec4<f32> {
         Ok(())
     }
 
-    fn exec_resource_dirty_range(&mut self, cmd: &[u8]) -> Result<(), ExecutorError> {
-        if cmd.len() < 32 {
-            return Err(ExecutorError::TruncatedPacket);
-        }
-        let handle = read_u32_le(cmd, 8)?;
-        let offset_bytes = read_u64_le(cmd, 16)?;
-        let size_bytes = read_u64_le(cmd, 24)?;
+    fn exec_resource_dirty_range(
+        &mut self,
+        handle: u32,
+        offset_bytes: u64,
+        size_bytes: u64,
+    ) -> Result<(), ExecutorError> {
         if size_bytes == 0 {
             return Ok(());
         }
@@ -966,28 +897,25 @@ fn fs_main() -> @location(0) vec4<f32> {
         )))
     }
 
-    fn exec_upload_resource(&mut self, cmd: &[u8]) -> Result<(), ExecutorError> {
-        if cmd.len() < 32 {
-            return Err(ExecutorError::TruncatedPacket);
-        }
-
-        let handle = read_u32_le(cmd, 8)?;
-        let offset_bytes = read_u64_le(cmd, 16)?;
-        let size_bytes = read_u64_le(cmd, 24)?;
+    fn exec_upload_resource(
+        &mut self,
+        handle: u32,
+        offset_bytes: u64,
+        size_bytes: u64,
+        data: &[u8],
+    ) -> Result<(), ExecutorError> {
         if size_bytes == 0 {
             return Ok(());
         }
 
-        let data_len = usize::try_from(size_bytes).map_err(|_| {
-            ExecutorError::Validation("UPLOAD_RESOURCE size_bytes too large".into())
-        })?;
-        let data_end = 32usize
-            .checked_add(data_len)
-            .ok_or_else(|| ExecutorError::Validation("UPLOAD_RESOURCE size overflow".into()))?;
-        if cmd.len() < data_end {
-            return Err(ExecutorError::TruncatedPacket);
+        let data_len = usize::try_from(size_bytes)
+            .map_err(|_| ExecutorError::Validation("UPLOAD_RESOURCE size_bytes too large".into()))?;
+        if data.len() != data_len {
+            return Err(ExecutorError::Validation(format!(
+                "UPLOAD_RESOURCE payload size mismatch (expected {data_len}, found {})",
+                data.len()
+            )));
         }
-        let data = &cmd[32..data_end];
 
         if let Some(buffer) = self.buffers.get_mut(&handle) {
             if buffer.backing.is_some() {
@@ -1107,17 +1035,18 @@ fn fs_main() -> @location(0) vec4<f32> {
         )))
     }
 
-    fn exec_set_render_targets(&mut self, cmd: &[u8]) -> Result<(), ExecutorError> {
-        if cmd.len() < 48 {
-            return Err(ExecutorError::TruncatedPacket);
-        }
-        let color_count = read_u32_le(cmd, 8)?;
+    fn exec_set_render_targets(
+        &mut self,
+        color_count: u32,
+        _depth_stencil: u32,
+        colors: [u32; cmd::AEROGPU_MAX_RENDER_TARGETS],
+    ) -> Result<(), ExecutorError> {
         if color_count > 1 {
             return Err(ExecutorError::Validation(
                 "only color_count<=1 is supported".into(),
             ));
         }
-        let color0 = read_u32_le(cmd, 16)?;
+        let color0 = colors[0];
         if color_count == 0 || color0 == 0 {
             self.state.render_target = None;
             return Ok(());
@@ -1135,12 +1064,12 @@ fn fs_main() -> @location(0) vec4<f32> {
         Ok(())
     }
 
-    fn exec_set_vertex_buffers(&mut self, cmd: &[u8]) -> Result<(), ExecutorError> {
-        if cmd.len() < 16 {
-            return Err(ExecutorError::TruncatedPacket);
-        }
-        let start_slot = read_u32_le(cmd, 8)?;
-        let buffer_count = read_u32_le(cmd, 12)?;
+    fn exec_set_vertex_buffers(
+        &mut self,
+        start_slot: u32,
+        buffer_count: u32,
+        bindings_bytes: &[u8],
+    ) -> Result<(), ExecutorError> {
         if start_slot != 0 {
             return Err(ExecutorError::Validation(
                 "only start_slot=0 is supported".into(),
@@ -1151,20 +1080,19 @@ fn fs_main() -> @location(0) vec4<f32> {
             return Ok(());
         }
 
-        let expected_size = 16usize
-            .checked_add(buffer_count as usize * 16)
+        let expected_size = (buffer_count as usize)
+            .checked_mul(cmd::AerogpuVertexBufferBinding::SIZE_BYTES)
             .ok_or_else(|| {
                 ExecutorError::Validation("vertex buffer binding size overflow".into())
             })?;
-        if cmd.len() < expected_size {
+        if bindings_bytes.len() < expected_size {
             return Err(ExecutorError::TruncatedPacket);
         }
 
         // Only track slot 0 for now.
-        let binding_off = 16;
-        let buffer = read_u32_le(cmd, binding_off + 0)?;
-        let stride_bytes = read_u32_le(cmd, binding_off + 4)?;
-        let offset_bytes = read_u32_le(cmd, binding_off + 8)?;
+        let buffer = read_u32_le(bindings_bytes, 0)?;
+        let stride_bytes = read_u32_le(bindings_bytes, 4)?;
+        let offset_bytes = read_u32_le(bindings_bytes, 8)?;
 
         if buffer == 0 {
             self.state.vertex_buffer = None;
@@ -1184,13 +1112,12 @@ fn fs_main() -> @location(0) vec4<f32> {
         Ok(())
     }
 
-    fn exec_set_index_buffer(&mut self, cmd: &[u8]) -> Result<(), ExecutorError> {
-        if cmd.len() < 24 {
-            return Err(ExecutorError::TruncatedPacket);
-        }
-        let buffer = read_u32_le(cmd, 8)?;
-        let format_raw = read_u32_le(cmd, 12)?;
-        let offset_bytes = read_u32_le(cmd, 16)?;
+    fn exec_set_index_buffer(
+        &mut self,
+        buffer: u32,
+        format_raw: u32,
+        offset_bytes: u32,
+    ) -> Result<(), ExecutorError> {
 
         if buffer == 0 {
             self.state.index_buffer = None;
@@ -1204,8 +1131,8 @@ fn fs_main() -> @location(0) vec4<f32> {
         }
 
         let format = match format_raw {
-            0 => wgpu::IndexFormat::Uint16,
-            1 => wgpu::IndexFormat::Uint32,
+            v if v == cmd::AerogpuIndexFormat::Uint16 as u32 => wgpu::IndexFormat::Uint16,
+            v if v == cmd::AerogpuIndexFormat::Uint32 as u32 => wgpu::IndexFormat::Uint32,
             _ => {
                 return Err(ExecutorError::Validation(format!(
                     "SET_INDEX_BUFFER unknown index format {format_raw}"
@@ -1238,17 +1165,12 @@ fn fs_main() -> @location(0) vec4<f32> {
         Ok(())
     }
 
-    fn exec_set_texture(&mut self, cmd: &[u8]) -> Result<(), ExecutorError> {
-        if cmd.len() < 24 {
-            return Err(ExecutorError::TruncatedPacket);
-        }
-        let slot = read_u32_le(cmd, 12)?;
+    fn exec_set_texture(&mut self, _shader_stage: u32, slot: u32, texture: u32) -> Result<(), ExecutorError> {
         if slot != 0 {
             return Err(ExecutorError::Validation(
                 "only texture slot 0 is supported".into(),
             ));
         }
-        let texture = read_u32_le(cmd, 16)?;
         if texture == 0 {
             self.state.pixel_texture0 = None;
             return Ok(());
@@ -1262,12 +1184,14 @@ fn fs_main() -> @location(0) vec4<f32> {
         Ok(())
     }
 
-    fn exec_clear(&mut self, cmd: &[u8]) -> Result<(), ExecutorError> {
-        if cmd.len() < 36 {
-            return Err(ExecutorError::TruncatedPacket);
-        }
-        let flags = read_u32_le(cmd, 8)?;
-        if flags & CLEAR_COLOR == 0 {
+    fn exec_clear(
+        &mut self,
+        flags: u32,
+        color_rgba_f32: [u32; 4],
+        _depth_f32: u32,
+        _stencil: u32,
+    ) -> Result<(), ExecutorError> {
+        if flags & cmd::AEROGPU_CLEAR_COLOR == 0 {
             return Ok(());
         }
 
@@ -1280,10 +1204,10 @@ fn fs_main() -> @location(0) vec4<f32> {
             ExecutorError::Validation(format!("CLEAR render target {rt} missing"))
         })?;
 
-        let r = f32::from_bits(read_u32_le(cmd, 12)?);
-        let g = f32::from_bits(read_u32_le(cmd, 16)?);
-        let b = f32::from_bits(read_u32_le(cmd, 20)?);
-        let a = f32::from_bits(read_u32_le(cmd, 24)?);
+        let r = f32::from_bits(color_rgba_f32[0]);
+        let g = f32::from_bits(color_rgba_f32[1]);
+        let b = f32::from_bits(color_rgba_f32[2]);
+        let a = f32::from_bits(color_rgba_f32[3]);
 
         let mut encoder = self
             .device
@@ -1319,12 +1243,12 @@ fn fs_main() -> @location(0) vec4<f32> {
 
     fn exec_draw(
         &mut self,
-        cmd: &[u8],
+        vertex_count: u32,
+        instance_count: u32,
+        first_vertex: u32,
+        first_instance: u32,
         guest_memory: &dyn GuestMemory,
     ) -> Result<(), ExecutorError> {
-        if cmd.len() < 24 {
-            return Err(ExecutorError::TruncatedPacket);
-        }
 
         let Some(rt) = self.state.render_target else {
             return Err(ExecutorError::Validation(
@@ -1372,11 +1296,6 @@ fn fs_main() -> @location(0) vec4<f32> {
                 },
             ],
         });
-
-        let vertex_count = read_u32_le(cmd, 8)?;
-        let instance_count = read_u32_le(cmd, 12)?;
-        let first_vertex = read_u32_le(cmd, 16)?;
-        let first_instance = read_u32_le(cmd, 20)?;
 
         let mut encoder = self
             .device
@@ -1433,12 +1352,13 @@ fn fs_main() -> @location(0) vec4<f32> {
 
     fn exec_draw_indexed(
         &mut self,
-        cmd: &[u8],
+        index_count: u32,
+        instance_count: u32,
+        first_index: u32,
+        base_vertex: i32,
+        first_instance: u32,
         guest_memory: &dyn GuestMemory,
     ) -> Result<(), ExecutorError> {
-        if cmd.len() < 28 {
-            return Err(ExecutorError::TruncatedPacket);
-        }
 
         let Some(rt) = self.state.render_target else {
             return Err(ExecutorError::Validation(
@@ -1493,12 +1413,6 @@ fn fs_main() -> @location(0) vec4<f32> {
                 },
             ],
         });
-
-        let index_count = read_u32_le(cmd, 8)?;
-        let instance_count = read_u32_le(cmd, 12)?;
-        let first_index = read_u32_le(cmd, 16)?;
-        let base_vertex = read_i32_le(cmd, 20)?;
-        let first_instance = read_u32_le(cmd, 24)?;
 
         let mut encoder = self
             .device
