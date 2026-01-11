@@ -82,7 +82,7 @@ Key properties:
 
 Canonical wire shapes (locked down by `docs/fixtures/webusb_passthrough_wire.json` and shared
 between Rust and TypeScript; see `crates/aero-usb/src/passthrough.rs` and
-`web/src/usb/webusb_backend.ts`):
+`web/src/usb/usb_passthrough_types.ts` (re-exported from `web/src/usb/webusb_backend.ts`):
 
 ```ts
 type SetupPacket = {

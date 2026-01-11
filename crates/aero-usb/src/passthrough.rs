@@ -35,7 +35,7 @@ impl SetupPacket {
 /// Host-side action emitted by a [`UsbPassthroughDevice`].
 ///
 /// This is the canonical wire representation shared with TypeScript:
-/// `web/src/usb/webusb_backend.ts`.
+/// `web/src/usb/usb_passthrough_types.ts` (re-exported from `web/src/usb/webusb_backend.ts`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum UsbHostAction {
