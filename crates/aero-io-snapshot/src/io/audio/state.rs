@@ -310,6 +310,12 @@ impl IoSnapshot for HdaControllerState {
     }
 
     fn load_state(&mut self, bytes: &[u8]) -> SnapshotResult<()> {
+        // Snapshot files may come from untrusted sources; keep bounded allocations when
+        // restoring variable-length arrays.
+        const MAX_STREAMS: usize = 64;
+        const STREAM_STATE_BYTES: usize = 4 + 4 + 4 + 2 + 2 + 2 + 4 + 4;
+        const STREAM_RUNTIME_BYTES: usize = 2 + 4 + 2 + 8 + 4;
+
         const TAG_GCTL: u16 = 1;
         const TAG_STATESTS: u16 = 2;
         const TAG_INTCTL: u16 = 3;
@@ -425,8 +431,14 @@ impl IoSnapshot for HdaControllerState {
         if let Some(buf) = r.bytes(TAG_STREAMS) {
             let mut d = Decoder::new(buf);
             let count = d.u32()? as usize;
-            self.streams.reserve(count);
-            for _ in 0..count {
+            let max_by_len = buf
+                .len()
+                .saturating_sub(4)
+                .saturating_div(STREAM_STATE_BYTES);
+            let count = count.min(max_by_len);
+            let keep = count.min(MAX_STREAMS);
+            self.streams.reserve(keep);
+            for _ in 0..keep {
                 self.streams.push(HdaStreamState {
                     ctl: d.u32()?,
                     lpib: d.u32()?,
@@ -439,17 +451,24 @@ impl IoSnapshot for HdaControllerState {
                     bdpu: d.u32()?,
                 });
             }
+            if count > keep {
+                let skip = (count - keep).saturating_mul(STREAM_STATE_BYTES);
+                d.bytes(skip)?;
+            }
             d.finish()?;
         }
 
         if let Some(buf) = r.bytes(TAG_STREAM_FIFOW) {
             let mut d = Decoder::new(buf);
             let count = d.u32()? as usize;
-            for i in 0..count {
-                let v = d.u16()?;
-                if let Some(s) = self.streams.get_mut(i) {
-                    s.fifow = v;
-                }
+            let max_by_len = buf.len().saturating_sub(4).saturating_div(2);
+            let count = count.min(max_by_len);
+            let apply = count.min(self.streams.len());
+            for i in 0..apply {
+                self.streams[i].fifow = d.u16()?;
+            }
+            if count > apply {
+                d.bytes((count - apply).saturating_mul(2))?;
             }
             d.finish()?;
         }
@@ -458,8 +477,14 @@ impl IoSnapshot for HdaControllerState {
         if let Some(buf) = r.bytes(TAG_STREAM_RUNTIME) {
             let mut d = Decoder::new(buf);
             let count = d.u32()? as usize;
-            self.stream_runtime.reserve(count);
-            for _ in 0..count {
+            let max_by_len = buf
+                .len()
+                .saturating_sub(4)
+                .saturating_div(STREAM_RUNTIME_BYTES);
+            let count = count.min(max_by_len);
+            let keep = count.min(MAX_STREAMS);
+            self.stream_runtime.reserve(keep);
+            for _ in 0..keep {
                 self.stream_runtime.push(HdaStreamRuntimeState {
                     bdl_index: d.u16()?,
                     bdl_offset: d.u32()?,
@@ -468,6 +493,9 @@ impl IoSnapshot for HdaControllerState {
                     resampler_queued_frames: d.u32()?,
                 });
             }
+            if count > keep {
+                d.bytes((count - keep).saturating_mul(STREAM_RUNTIME_BYTES))?;
+            }
             d.finish()?;
         }
 
@@ -475,9 +503,15 @@ impl IoSnapshot for HdaControllerState {
         if let Some(buf) = r.bytes(TAG_STREAM_CAPTURE_FRAME_ACCUM) {
             let mut d = Decoder::new(buf);
             let count = d.u32()? as usize;
-            self.stream_capture_frame_accum.reserve(count);
-            for _ in 0..count {
+            let max_by_len = buf.len().saturating_sub(4).saturating_div(8);
+            let count = count.min(max_by_len);
+            let keep = count.min(MAX_STREAMS);
+            self.stream_capture_frame_accum.reserve(keep);
+            for _ in 0..keep {
                 self.stream_capture_frame_accum.push(d.u64()?);
+            }
+            if count > keep {
+                d.bytes((count - keep).saturating_mul(8))?;
             }
             d.finish()?;
         }
