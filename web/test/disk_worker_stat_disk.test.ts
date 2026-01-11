@@ -209,7 +209,7 @@ test("disk_worker stat_disk", async (t) => {
       fileName: "unused.img",
       sizeBytes: 4096,
       createdAtMs: Date.now(),
-      remote: { url: "https://example.com/disk.img" },
+      remote: { url: "https://example.com/disk.img", blockSizeBytes: 2048 },
     };
     await store.putDisk(meta as any);
 
@@ -217,7 +217,7 @@ test("disk_worker stat_disk", async (t) => {
     await writeOpfsFile(`${diskId}.overlay.aerospar`, 12);
 
     // RemoteStreamingDisk OPFS cache.
-    const cacheKey = await stableCacheKey(meta.remote.url);
+    const cacheKey = await stableCacheKey(meta.remote.url, { blockSize: meta.remote.blockSizeBytes });
     const remoteCacheDir = await opfsGetRemoteCacheDir();
     const cacheDir = await remoteCacheDir.getDirectoryHandle(cacheKey, { create: true });
     const indexHandle = await cacheDir.getFileHandle("index.json", { create: true });

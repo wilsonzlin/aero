@@ -1119,14 +1119,18 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
           }
         }
 
-        // Best-effort cleanup for RemoteRangeDisk / RemoteChunkedDisk cache directories (if used).
+        // Best-effort cleanup for RemoteStreamingDisk / RemoteRangeDisk / RemoteChunkedDisk cache directories
+        // keyed by URL (legacy / openRemote-style paths), if present.
         const url = meta.remote.urls.url;
-        if (url) {
-          try {
-            const cacheKey = await stableCacheKey(url, { blockSize: meta.cache.chunkSizeBytes });
-            await removeOpfsEntry(`${OPFS_DISKS_PATH}/${OPFS_REMOTE_CACHE_DIR}/${cacheKey}`, { recursive: true });
-          } catch {
-            // ignore
+        if (url && meta.remote.delivery === "range") {
+          const blockSizes = new Set([meta.cache.chunkSizeBytes, RANGE_STREAM_CHUNK_SIZE]);
+          for (const blockSize of blockSizes) {
+            try {
+              const cacheKey = await stableCacheKey(url, { blockSize });
+              await removeOpfsEntry(`${OPFS_DISKS_PATH}/${OPFS_REMOTE_CACHE_DIR}/${cacheKey}`, { recursive: true });
+            } catch {
+              // ignore
+            }
           }
         }
       }
