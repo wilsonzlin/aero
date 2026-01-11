@@ -5,4 +5,3 @@
 //! a dedicated export location for the `UsbDevice` adapter.
 
 pub use crate::passthrough::UsbWebUsbPassthroughDevice;
-

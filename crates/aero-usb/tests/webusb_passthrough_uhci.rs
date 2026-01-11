@@ -417,4 +417,3 @@ fn bulk_in_pending_queues_once_and_naks_until_completion() {
     );
     assert_eq!(mem.read_u32(qh_addr + 4), LINK_PTR_T);
 }
-
