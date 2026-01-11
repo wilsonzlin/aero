@@ -8,6 +8,7 @@ SOURCES=src\aerovblk.c \
         ..\..\virtio-modern\common\src\aero_virtio_pci_modern.c \
         ..\..\..\windows\virtio\common\virtqueue_split.c \
         ..\common\src\virtio_pci_contract.c \
-        ..\..\..\win7\virtio\virtio-core\portable\virtio_pci_identity.c
+        ..\..\..\win7\virtio\virtio-core\portable\virtio_pci_identity.c \
+        ..\..\..\win7\virtio\virtio-core\portable\virtio_pci_cap_parser.c
 
 TARGETLIBS=$(DDK_LIB_PATH)\storport.lib

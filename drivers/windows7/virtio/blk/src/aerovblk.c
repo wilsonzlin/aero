@@ -1,5 +1,8 @@
 #include "../include/aerovblk.h"
 
+// Optional transport validation against the contract v1 virtio-pci capability layout.
+#include "virtio_pci_cap_parser.h"
+
 static VOID AerovblkCompleteSrb(_In_ PVOID deviceExtension, _Inout_ PSCSI_REQUEST_BLOCK srb, _In_ UCHAR srbStatus);
 
 static VOID AerovblkSetSense(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, _Inout_ PSCSI_REQUEST_BLOCK srb, _In_ UCHAR senseKey, _In_ UCHAR asc,
@@ -60,6 +63,100 @@ static VOID AerovblkWriteBe64(_Out_writes_bytes_(8) UCHAR* p, _In_ ULONGLONG v) 
   p[5] = (UCHAR)(v >> 16);
   p[6] = (UCHAR)(v >> 8);
   p[7] = (UCHAR)v;
+}
+
+static ULONG AerovblkReadLe32FromPciCfg(_In_reads_bytes_(256) const UCHAR* cfg, _In_ ULONG offset) {
+  ULONG v;
+
+  v = 0;
+  if (offset + sizeof(v) > 256u) {
+    return 0;
+  }
+
+  RtlCopyMemory(&v, cfg + offset, sizeof(v));
+  return v;
+}
+
+static BOOLEAN AerovblkValidateVirtioPciCaps(_In_reads_bytes_(256) const UCHAR* cfg) {
+  uint64_t barAddrs[VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT];
+  virtio_pci_parsed_caps_t caps;
+  virtio_pci_cap_parse_result_t res;
+  ULONG i;
+
+  if (cfg == NULL) {
+    return FALSE;
+  }
+
+  RtlZeroMemory(&caps, sizeof(caps));
+  for (i = 0; i < VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT; ++i) {
+    barAddrs[i] = 0;
+  }
+
+  // Parse BARs (type 0 header).
+  for (i = 0; i < VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT; ++i) {
+    ULONG val;
+    ULONG memType;
+    uint64_t base;
+
+    val = AerovblkReadLe32FromPciCfg(cfg, 0x10u + (i * 4u));
+    if (val == 0) {
+      continue;
+    }
+
+    if ((val & 0x1u) != 0) {
+      // I/O BAR (not supported for Aero virtio-pci modern contract v1).
+      return FALSE;
+    }
+
+    memType = (val >> 1) & 0x3u;
+    base = (uint64_t)(val & ~0xFu);
+
+    if (memType == 0x2u) {
+      ULONG high;
+
+      if (i == (VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT - 1u)) {
+        return FALSE;
+      }
+
+      high = AerovblkReadLe32FromPciCfg(cfg, 0x10u + ((i + 1u) * 4u));
+      base = ((uint64_t)high << 32) | base;
+
+      barAddrs[i] = base;
+      barAddrs[i + 1u] = 0;
+      i++; // Skip upper-half slot.
+    } else {
+      barAddrs[i] = base;
+    }
+  }
+
+  res = virtio_pci_cap_parse(cfg, 256u, barAddrs, &caps);
+  if (res != VIRTIO_PCI_CAP_PARSE_OK) {
+    AEROVBLK_LOG("virtio_pci_cap_parse failed: %s", virtio_pci_cap_parse_result_str(res));
+    return FALSE;
+  }
+
+  if (caps.common_cfg.bar != 0 || caps.notify_cfg.bar != 0 || caps.isr_cfg.bar != 0 || caps.device_cfg.bar != 0) {
+    return FALSE;
+  }
+
+  if (caps.notify_off_multiplier != AERO_VIRTIO_PCI_MODERN_NOTIFY_OFF_MULTIPLIER) {
+    return FALSE;
+  }
+
+  if (caps.common_cfg.offset != AERO_VIRTIO_PCI_MODERN_COMMON_CFG_OFFSET || caps.common_cfg.length < AERO_VIRTIO_PCI_MODERN_COMMON_CFG_SIZE) {
+    return FALSE;
+  }
+  if (caps.notify_cfg.offset != AERO_VIRTIO_PCI_MODERN_NOTIFY_OFFSET || caps.notify_cfg.length < AERO_VIRTIO_PCI_MODERN_NOTIFY_SIZE) {
+    return FALSE;
+  }
+  if (caps.isr_cfg.offset != AERO_VIRTIO_PCI_MODERN_ISR_OFFSET || caps.isr_cfg.length < AERO_VIRTIO_PCI_MODERN_ISR_SIZE) {
+    return FALSE;
+  }
+  if (caps.device_cfg.offset != AERO_VIRTIO_PCI_MODERN_DEVICE_CFG_OFFSET || caps.device_cfg.length < AERO_VIRTIO_PCI_MODERN_DEVICE_CFG_SIZE) {
+    return FALSE;
+  }
+
+  return TRUE;
 }
 
 static __forceinline ULONG AerovblkSectorsPerLogicalBlock(_In_ PAEROVBLK_DEVICE_EXTENSION devExt) {
@@ -850,7 +947,7 @@ ULONG AerovblkHwFindAdapter(_In_ PVOID deviceExtension, _In_ PVOID hwContext, _I
   PAEROVBLK_DEVICE_EXTENSION devExt;
   PACCESS_RANGE range;
   PVOID base;
-  UCHAR pciCfg[0x40];
+  UCHAR pciCfg[256];
   ULONG bytesRead;
   USHORT vendorId;
   USHORT deviceId;
@@ -891,13 +988,17 @@ ULONG AerovblkHwFindAdapter(_In_ PVOID deviceExtension, _In_ PVOID hwContext, _I
    */
   RtlZeroMemory(pciCfg, sizeof(pciCfg));
   bytesRead = StorPortGetBusData(devExt, PCIConfiguration, configInfo->SystemIoBusNumber, configInfo->SlotNumber, pciCfg, sizeof(pciCfg));
-  if (bytesRead < 0x09) {
+  if (bytesRead != sizeof(pciCfg)) {
     return SP_RETURN_NOT_FOUND;
   }
   RtlCopyMemory(&vendorId, pciCfg + 0x00, sizeof(vendorId));
   RtlCopyMemory(&deviceId, pciCfg + 0x02, sizeof(deviceId));
   if (vendorId != (USHORT)AEROVBLK_PCI_VENDOR_ID || deviceId != (USHORT)AEROVBLK_PCI_DEVICE_ID ||
       pciCfg[0x08] != (UCHAR)AEROVBLK_VIRTIO_PCI_REVISION_ID) {
+    return SP_RETURN_NOT_FOUND;
+  }
+
+  if (!AerovblkValidateVirtioPciCaps(pciCfg)) {
     return SP_RETURN_NOT_FOUND;
   }
 
