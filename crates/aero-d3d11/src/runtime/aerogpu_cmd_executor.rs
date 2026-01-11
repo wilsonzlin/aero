@@ -1448,11 +1448,11 @@ impl AerogpuD3d11Executor {
                     size_bytes,
                 )?;
 
-                let new_encoder = self
-                    .device
-                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                        label: Some("aerogpu_cmd encoder after COPY_BUFFER writeback"),
-                    });
+                let new_encoder =
+                    self.device
+                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            label: Some("aerogpu_cmd encoder after COPY_BUFFER writeback"),
+                        });
                 let finished = std::mem::replace(encoder, new_encoder).finish();
                 self.queue.submit([finished]);
 
@@ -1485,7 +1485,9 @@ impl AerogpuD3d11Executor {
                     .checked_add(dst_backing.offset_bytes)
                     .and_then(|v| v.checked_add(dst_offset_bytes))
                     .ok_or_else(|| anyhow!("COPY_BUFFER: dst GPA overflow"))?;
-                guest_mem.write(dst_gpa, &mapped).map_err(anyhow_guest_mem)?;
+                guest_mem
+                    .write(dst_gpa, &mapped)
+                    .map_err(anyhow_guest_mem)?;
                 drop(mapped);
                 staging.unmap();
             }
@@ -1764,11 +1766,11 @@ impl AerogpuD3d11Executor {
                     .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst backing size overflow"))?;
                 allocs.validate_range(dst_backing.alloc_id, dst_backing.offset_bytes, required)?;
 
-                let new_encoder = self
-                    .device
-                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                        label: Some("aerogpu_cmd encoder after COPY_TEXTURE2D writeback"),
-                    });
+                let new_encoder =
+                    self.device
+                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            label: Some("aerogpu_cmd encoder after COPY_TEXTURE2D writeback"),
+                        });
                 let finished = std::mem::replace(encoder, new_encoder).finish();
                 self.queue.submit([finished]);
 
@@ -1808,7 +1810,9 @@ impl AerogpuD3d11Executor {
                         .checked_add(row.checked_mul(row_pitch).ok_or_else(|| {
                             anyhow!("COPY_TEXTURE2D: dst GPA overflow (row pitch mul)")
                         })?)
-                        .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst GPA overflow (row pitch add)"))?;
+                        .ok_or_else(|| {
+                            anyhow!("COPY_TEXTURE2D: dst GPA overflow (row pitch add)")
+                        })?;
                     guest_mem
                         .write(dst_gpa, &mapped[src_start..src_end])
                         .map_err(anyhow_guest_mem)?;
