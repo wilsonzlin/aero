@@ -420,6 +420,9 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
       if (typeof sizeBytes !== "number" || !Number.isFinite(sizeBytes) || sizeBytes <= 0) {
         throw new Error("sizeBytes must be a positive number");
       }
+      if (sizeBytes % 512 !== 0) {
+        throw new Error("sizeBytes must be a multiple of 512");
+      }
 
       const id = newDiskId();
       const cacheBackendRaw = payload.cacheBackend ?? backend;
@@ -505,7 +508,16 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
       if (payload.name !== undefined) meta.name = String(payload.name);
       if (payload.kind !== undefined) meta.kind = payload.kind as DiskKind;
       if (payload.format !== undefined) meta.format = payload.format as DiskFormat;
-      if (payload.sizeBytes !== undefined) meta.sizeBytes = Number(payload.sizeBytes);
+      if (payload.sizeBytes !== undefined) {
+        const next = Number(payload.sizeBytes);
+        if (!Number.isFinite(next) || next <= 0) {
+          throw new Error("sizeBytes must be a positive number");
+        }
+        if (next % 512 !== 0) {
+          throw new Error("sizeBytes must be a multiple of 512");
+        }
+        meta.sizeBytes = next;
+      }
 
       if (payload.imageId !== undefined) meta.remote.imageId = String(payload.imageId);
       if (payload.version !== undefined) meta.remote.version = String(payload.version);
