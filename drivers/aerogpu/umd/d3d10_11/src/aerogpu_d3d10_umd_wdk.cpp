@@ -49,6 +49,7 @@ constexpr bool NtSuccess(NTSTATUS st) {
 constexpr NTSTATUS kStatusTimeout = static_cast<NTSTATUS>(0x00000102L); // STATUS_TIMEOUT
 constexpr HRESULT kDxgiErrorWasStillDrawing = static_cast<HRESULT>(0x887A000Au); // DXGI_ERROR_WAS_STILL_DRAWING
 constexpr uint32_t kD3DMapFlagDoNotWait = 0x100000;
+constexpr uint32_t kAeroGpuTimeoutMsInfinite = ~0u;
 
 // -----------------------------------------------------------------------------
 // Logging (opt-in)
@@ -991,6 +992,13 @@ HRESULT InitKernelDeviceContext(AeroGpuDevice* dev, D3D10DDI_HADAPTER hAdapter) 
   return S_OK;
 }
 
+// Waits for `fence` to be completed.
+//
+// `timeout_ms` semantics match D3D11 / DXGI Map expectations:
+// - 0: non-blocking poll
+// - kAeroGpuTimeoutMsInfinite: infinite wait
+//
+// On timeout/poll miss, returns `DXGI_ERROR_WAS_STILL_DRAWING`.
 HRESULT AeroGpuWaitForFence(AeroGpuDevice* dev, uint64_t fence, uint32_t timeout_ms) {
   if (!dev) {
     return E_INVALIDARG;
@@ -1008,6 +1016,7 @@ HRESULT AeroGpuWaitForFence(AeroGpuDevice* dev, uint64_t fence, uint32_t timeout
 
   const D3DKMT_HANDLE handles[1] = {dev->hSyncObject};
   const UINT64 fence_values[1] = {fence};
+  const UINT64 timeout = (timeout_ms == kAeroGpuTimeoutMsInfinite) ? ~0ull : static_cast<UINT64>(timeout_ms);
 
   const D3DDDI_DEVICECALLBACKS* cb = dev->um_callbacks;
   bool have_wait_cb = false;
@@ -1037,7 +1046,7 @@ HRESULT AeroGpuWaitForFence(AeroGpuDevice* dev, uint64_t fence, uint32_t timeout
       }
     }
     __if_exists(D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT::Timeout) {
-      args.Timeout = timeout_ms ? static_cast<UINT64>(timeout_ms) : ~0ull;
+      args.Timeout = timeout;
     }
 
     const HRESULT hr = CallCbMaybeHandle(cb->pfnWaitForSynchronizationObjectCb, dev->hrt_device, &args);
@@ -1076,106 +1085,7 @@ HRESULT AeroGpuWaitForFence(AeroGpuDevice* dev, uint64_t fence, uint32_t timeout
       args.FenceValue = fence;
     }
   }
-  args.Timeout = timeout_ms ? static_cast<UINT64>(timeout_ms) : ~0ull;
-
-  const NTSTATUS st = procs.pfn_wait_for_syncobj(&args);
-  if (st == kStatusTimeout) {
-    return kDxgiErrorWasStillDrawing;
-  }
-  if (!NtSuccess(st)) {
-    return E_FAIL;
-  }
-
-  dev->last_completed_fence = fence;
-  return S_OK;
-}
-
-HRESULT AeroGpuPollFence(AeroGpuDevice* dev, uint64_t fence) {
-  if (!dev) {
-    return E_INVALIDARG;
-  }
-  if (fence == 0) {
-    return S_OK;
-  }
-  if (dev->last_completed_fence >= fence) {
-    return S_OK;
-  }
-
-  if (!dev->hSyncObject) {
-    return E_FAIL;
-  }
-
-  const D3DKMT_HANDLE handles[1] = {dev->hSyncObject};
-  const UINT64 fence_values[1] = {fence};
-
-  const D3DDDI_DEVICECALLBACKS* cb = dev->um_callbacks;
-  bool have_wait_cb = false;
-  __if_exists(D3DDDI_DEVICECALLBACKS::pfnWaitForSynchronizationObjectCb) {
-    have_wait_cb = (cb && cb->pfnWaitForSynchronizationObjectCb);
-  }
-  if (have_wait_cb) {
-    D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT args{};
-    __if_exists(D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT::hContext) {
-      args.hContext = UintPtrToD3dHandle<decltype(args.hContext)>(static_cast<std::uintptr_t>(dev->hContext));
-    }
-    __if_exists(D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT::ObjectCount) {
-      args.ObjectCount = 1;
-    }
-    __if_exists(D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT::ObjectHandleArray) {
-      args.ObjectHandleArray = handles;
-    }
-    __if_exists(D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT::hSyncObjects) {
-      args.hSyncObjects = handles;
-    }
-    __if_exists(D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT::FenceValueArray) {
-      args.FenceValueArray = fence_values;
-    }
-    __if_not_exists(D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT::FenceValueArray) {
-      __if_exists(D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT::FenceValue) {
-        args.FenceValue = fence;
-      }
-    }
-    __if_exists(D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT::Timeout) {
-      args.Timeout = 0; // poll
-    }
-
-    const HRESULT hr = CallCbMaybeHandle(cb->pfnWaitForSynchronizationObjectCb, dev->hrt_device, &args);
-    if (hr == kDxgiErrorWasStillDrawing || hr == HRESULT_FROM_WIN32(WAIT_TIMEOUT) || hr == HRESULT_FROM_WIN32(ERROR_TIMEOUT)) {
-      return kDxgiErrorWasStillDrawing;
-    }
-    if (FAILED(hr)) {
-      return E_FAIL;
-    }
-
-    dev->last_completed_fence = fence;
-    return S_OK;
-  }
-
-  const AeroGpuD3dkmtProcs& procs = GetAeroGpuD3dkmtProcs();
-  if (!procs.pfn_wait_for_syncobj) {
-    return E_FAIL;
-  }
-
-  D3DKMT_WAITFORSYNCHRONIZATIONOBJECT args{};
-  __if_exists(D3DKMT_WAITFORSYNCHRONIZATIONOBJECT::hContext) {
-    args.hContext = dev->hContext;
-  }
-  args.ObjectCount = 1;
-  __if_exists(D3DKMT_WAITFORSYNCHRONIZATIONOBJECT::ObjectHandleArray) {
-    args.ObjectHandleArray = handles;
-  }
-  __if_exists(D3DKMT_WAITFORSYNCHRONIZATIONOBJECT::hSyncObjects) {
-    args.hSyncObjects = handles;
-  }
-  __if_exists(D3DKMT_WAITFORSYNCHRONIZATIONOBJECT::FenceValueArray) {
-    args.FenceValueArray = fence_values;
-  }
-  __if_not_exists(D3DKMT_WAITFORSYNCHRONIZATIONOBJECT::FenceValueArray) {
-    __if_exists(D3DKMT_WAITFORSYNCHRONIZATIONOBJECT::FenceValue) {
-      args.FenceValue = fence;
-    }
-  }
-  args.Timeout = 0; // poll
+  args.Timeout = timeout;
 
   const NTSTATUS st = procs.pfn_wait_for_syncobj(&args);
   if (st == kStatusTimeout) {
@@ -2296,7 +2206,8 @@ HRESULT APIENTRY Map(D3D10DDI_HDEVICE hDevice, D3D10DDIARG_MAP* pMap) {
       }
     }
     const uint64_t fence = dev->last_submitted_fence;
-    const HRESULT wait = (map_flags_u & kD3DMapFlagDoNotWait) ? AeroGpuPollFence(dev, fence) : AeroGpuWaitForFence(dev, fence, 0);
+    const uint32_t timeout_ms = (map_flags_u & kD3DMapFlagDoNotWait) ? 0u : kAeroGpuTimeoutMsInfinite;
+    const HRESULT wait = AeroGpuWaitForFence(dev, fence, timeout_ms);
     if (FAILED(wait)) {
       return wait;
     }

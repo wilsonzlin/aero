@@ -285,6 +285,21 @@ static int RunMapDoNotWait(int argc, char** argv) {
       aerogpu_test::PrintfStdout("INFO: %s: Map(DO_NOT_WAIT) => DXGI_ERROR_WAS_STILL_DRAWING", kTestName);
     } else if (SUCCEEDED(args.hr)) {
       aerogpu_test::PrintfStdout("INFO: %s: Map(DO_NOT_WAIT) succeeded immediately", kTestName);
+      if (!args.has_pixel) {
+        return reporter.Fail("Map(DO_NOT_WAIT) returned NULL pData");
+      }
+      const UINT min_row_pitch = (UINT)(kWidth * 4);
+      if (args.row_pitch < min_row_pitch) {
+        return reporter.Fail("Map(DO_NOT_WAIT) returned too-small RowPitch=%u (min=%u)",
+                             (unsigned)args.row_pitch,
+                             (unsigned)min_row_pitch);
+      }
+      const uint32_t expected = 0xFF00FF00u;  // green
+      if ((args.pixel & 0x00FFFFFFu) != (expected & 0x00FFFFFFu)) {
+        return reporter.Fail("Map(DO_NOT_WAIT) pixel mismatch at (0,0): got 0x%08lX expected ~0x%08lX",
+                             (unsigned long)args.pixel,
+                             (unsigned long)expected);
+      }
     } else {
       return FailD3D10WithRemovedReason(&reporter, kTestName, "Map(DO_NOT_WAIT)", args.hr, device.get());
     }
