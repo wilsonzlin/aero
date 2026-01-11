@@ -930,6 +930,15 @@ impl AerogpuD3d9Executor {
             return;
         };
 
+        // Texture bindings (and therefore bind groups) may reference the destroyed handle. Drop
+        // cached bind groups so subsequent draws re-resolve handles against the updated table.
+        self.bind_group = None;
+        self.bind_group_dirty = true;
+        for ctx in self.contexts.values_mut() {
+            ctx.bind_group = None;
+            ctx.bind_group_dirty = true;
+        }
+
         let Some(count) = self.resource_refcounts.get_mut(&underlying) else {
             return;
         };
