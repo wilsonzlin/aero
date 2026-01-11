@@ -6,7 +6,10 @@
 use std::collections::HashMap;
 
 use crate::{
-    shader::{Dst, Op, RegisterFile, ShaderIr, Src, Swizzle, WriteMask},
+    shader::{
+        Dst, Op, RegisterFile, ResultModifier, ResultShift, ShaderIr, Src, SrcModifier, Swizzle,
+        WriteMask,
+    },
     state::{
         AddressMode, BlendFactor, BlendOp, BlendState, FilterMode, SamplerState, VertexDecl,
         VertexElementType,
@@ -68,6 +71,18 @@ impl Vec4 {
         Self::new(self.x * rhs, self.y * rhs, self.z * rhs, self.w * rhs)
     }
 
+    pub fn div_scalar(self, rhs: f32) -> Self {
+        Self::new(self.x / rhs, self.y / rhs, self.z / rhs, self.w / rhs)
+    }
+
+    pub fn neg(self) -> Self {
+        Self::new(-self.x, -self.y, -self.z, -self.w)
+    }
+
+    pub fn abs(self) -> Self {
+        Self::new(self.x.abs(), self.y.abs(), self.z.abs(), self.w.abs())
+    }
+
     pub fn clamp01(self) -> Self {
         Self::new(
             self.x.clamp(0.0, 1.0),
@@ -100,6 +115,49 @@ fn swizzle(v: Vec4, swz: Swizzle) -> Vec4 {
     let a = [v.x, v.y, v.z, v.w];
     let idx = |i: u8| a[i as usize];
     Vec4::new(idx(swz.0[0]), idx(swz.0[1]), idx(swz.0[2]), idx(swz.0[3]))
+}
+
+fn apply_src_modifier(v: Vec4, modifier: SrcModifier) -> Vec4 {
+    match modifier {
+        SrcModifier::None => v,
+        SrcModifier::Negate => v.neg(),
+        SrcModifier::Bias => v.sub(Vec4::splat(0.5)),
+        SrcModifier::BiasNegate => v.sub(Vec4::splat(0.5)).neg(),
+        SrcModifier::Sign => v.mul_scalar(2.0).sub(Vec4::splat(1.0)),
+        SrcModifier::SignNegate => v.mul_scalar(2.0).sub(Vec4::splat(1.0)).neg(),
+        SrcModifier::Comp => Vec4::splat(1.0).sub(v),
+        SrcModifier::X2 => v.mul_scalar(2.0),
+        SrcModifier::X2Negate => v.mul_scalar(2.0).neg(),
+        SrcModifier::Dz => {
+            let z = v.z.max(f32::EPSILON);
+            v.div_scalar(z)
+        }
+        SrcModifier::Dw => {
+            let w = v.w.max(f32::EPSILON);
+            v.div_scalar(w)
+        }
+        SrcModifier::Abs => v.abs(),
+        SrcModifier::AbsNegate => v.abs().neg(),
+        SrcModifier::Not => Vec4::splat(1.0).sub(v),
+    }
+}
+
+fn apply_result_modifier(v: Vec4, modifier: ResultModifier) -> Vec4 {
+    let v = match modifier.shift {
+        ResultShift::None => v,
+        ResultShift::Mul2 => v.mul_scalar(2.0),
+        ResultShift::Mul4 => v.mul_scalar(4.0),
+        ResultShift::Mul8 => v.mul_scalar(8.0),
+        ResultShift::Div2 => v.mul_scalar(0.5),
+        ResultShift::Div4 => v.mul_scalar(0.25),
+        ResultShift::Div8 => v.mul_scalar(0.125),
+        ResultShift::Unknown(_) => v,
+    };
+    if modifier.saturate {
+        v.clamp01()
+    } else {
+        v
+    }
 }
 
 fn apply_write_mask(dst: &mut Vec4, mask: WriteMask, value: Vec4) {
@@ -325,7 +383,8 @@ fn exec_src(
         RegisterFile::Const => constants[src.reg.index as usize],
         _ => Vec4::ZERO,
     };
-    swizzle(v, src.swizzle)
+    let v = swizzle(v, src.swizzle);
+    apply_src_modifier(v, src.modifier)
 }
 
 fn exec_dst(
@@ -447,6 +506,7 @@ fn run_vertex_shader(
                     Op::Mov => {
                         let dst = inst.dst.unwrap();
                         let v = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants);
+                        let v = apply_result_modifier(v, inst.result_modifier);
                         exec_dst(
                             dst,
                             &mut temps,
@@ -461,6 +521,7 @@ fn run_vertex_shader(
                         let dst = inst.dst.unwrap();
                         let a = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants);
                         let b = exec_src(inst.src[1], &temps, inputs, &empty_t, &constants);
+                        let v = apply_result_modifier(a.add(b), inst.result_modifier);
                         exec_dst(
                             dst,
                             &mut temps,
@@ -468,13 +529,14 @@ fn run_vertex_shader(
                             &mut o_attr,
                             &mut o_tex,
                             &mut dummy_color,
-                            a.add(b),
+                            v,
                         );
                     }
                     Op::Sub => {
                         let dst = inst.dst.unwrap();
                         let a = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants);
                         let b = exec_src(inst.src[1], &temps, inputs, &empty_t, &constants);
+                        let v = apply_result_modifier(a.sub(b), inst.result_modifier);
                         exec_dst(
                             dst,
                             &mut temps,
@@ -482,13 +544,14 @@ fn run_vertex_shader(
                             &mut o_attr,
                             &mut o_tex,
                             &mut dummy_color,
-                            a.sub(b),
+                            v,
                         );
                     }
                     Op::Mul => {
                         let dst = inst.dst.unwrap();
                         let a = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants);
                         let b = exec_src(inst.src[1], &temps, inputs, &empty_t, &constants);
+                        let v = apply_result_modifier(a.mul(b), inst.result_modifier);
                         exec_dst(
                             dst,
                             &mut temps,
@@ -496,7 +559,7 @@ fn run_vertex_shader(
                             &mut o_attr,
                             &mut o_tex,
                             &mut dummy_color,
-                            a.mul(b),
+                            v,
                         );
                     }
                     Op::Min => {
@@ -504,6 +567,7 @@ fn run_vertex_shader(
                         let a = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants);
                         let b = exec_src(inst.src[1], &temps, inputs, &empty_t, &constants);
                         let v = Vec4::new(a.x.min(b.x), a.y.min(b.y), a.z.min(b.z), a.w.min(b.w));
+                        let v = apply_result_modifier(v, inst.result_modifier);
                         exec_dst(
                             dst,
                             &mut temps,
@@ -519,6 +583,7 @@ fn run_vertex_shader(
                         let a = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants);
                         let b = exec_src(inst.src[1], &temps, inputs, &empty_t, &constants);
                         let v = Vec4::new(a.x.max(b.x), a.y.max(b.y), a.z.max(b.z), a.w.max(b.w));
+                        let v = apply_result_modifier(v, inst.result_modifier);
                         exec_dst(
                             dst,
                             &mut temps,
@@ -534,6 +599,7 @@ fn run_vertex_shader(
                         let a = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants);
                         let b = exec_src(inst.src[1], &temps, inputs, &empty_t, &constants);
                         let c = exec_src(inst.src[2], &temps, inputs, &empty_t, &constants);
+                        let v = apply_result_modifier(a.mul(b).add(c), inst.result_modifier);
                         exec_dst(
                             dst,
                             &mut temps,
@@ -541,7 +607,7 @@ fn run_vertex_shader(
                             &mut o_attr,
                             &mut o_tex,
                             &mut dummy_color,
-                            a.mul(b).add(c),
+                            v,
                         );
                     }
                     Op::Dp3 => {
@@ -549,6 +615,7 @@ fn run_vertex_shader(
                         let a = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants);
                         let b = exec_src(inst.src[1], &temps, inputs, &empty_t, &constants);
                         let d = Vec4::splat(a.dot3(b));
+                        let d = apply_result_modifier(d, inst.result_modifier);
                         exec_dst(
                             dst,
                             &mut temps,
@@ -564,6 +631,7 @@ fn run_vertex_shader(
                         let a = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants);
                         let b = exec_src(inst.src[1], &temps, inputs, &empty_t, &constants);
                         let d = Vec4::splat(a.dot4(b));
+                        let d = apply_result_modifier(d, inst.result_modifier);
                         exec_dst(
                             dst,
                             &mut temps,
@@ -578,6 +646,7 @@ fn run_vertex_shader(
                         let dst = inst.dst.unwrap();
                         let a = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants);
                         let v = Vec4::new(1.0 / a.x, 1.0 / a.y, 1.0 / a.z, 1.0 / a.w);
+                        let v = apply_result_modifier(v, inst.result_modifier);
                         exec_dst(
                             dst,
                             &mut temps,
@@ -594,6 +663,7 @@ fn run_vertex_shader(
                         let inv_sqrt = |v: f32| 1.0 / v.sqrt();
                         let v =
                             Vec4::new(inv_sqrt(a.x), inv_sqrt(a.y), inv_sqrt(a.z), inv_sqrt(a.w));
+                        let v = apply_result_modifier(v, inst.result_modifier);
                         exec_dst(
                             dst,
                             &mut temps,
@@ -609,6 +679,7 @@ fn run_vertex_shader(
                         let a = exec_src(inst.src[0], &temps, inputs, &empty_t, &constants);
                         let fract = |v: f32| v - v.floor();
                         let v = Vec4::new(fract(a.x), fract(a.y), fract(a.z), fract(a.w));
+                        let v = apply_result_modifier(v, inst.result_modifier);
                         exec_dst(
                             dst,
                             &mut temps,
@@ -631,6 +702,7 @@ fn run_vertex_shader(
                             pick(cond.z, a.z, b.z),
                             pick(cond.w, a.w, b.w),
                         );
+                        let v = apply_result_modifier(v, inst.result_modifier);
                         exec_dst(
                             dst,
                             &mut temps,
@@ -657,6 +729,7 @@ fn run_vertex_shader(
                         };
                         let v =
                             Vec4::new(cmp(a.x, b.x), cmp(a.y, b.y), cmp(a.z, b.z), cmp(a.w, b.w));
+                        let v = apply_result_modifier(v, inst.result_modifier);
                         exec_dst(
                             dst,
                             &mut temps,
@@ -754,6 +827,7 @@ fn run_pixel_shader(
                     Op::Mov => {
                         let dst = inst.dst.unwrap();
                         let v = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants);
+                        let v = apply_result_modifier(v, inst.result_modifier);
                         exec_dst(
                             dst,
                             &mut temps,
@@ -768,6 +842,7 @@ fn run_pixel_shader(
                         let dst = inst.dst.unwrap();
                         let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants);
                         let b = exec_src(inst.src[1], &temps, inputs_v, inputs_t, &constants);
+                        let v = apply_result_modifier(a.add(b), inst.result_modifier);
                         exec_dst(
                             dst,
                             &mut temps,
@@ -775,13 +850,14 @@ fn run_pixel_shader(
                             &mut dummy_attr,
                             &mut dummy_tex,
                             &mut o_color,
-                            a.add(b),
+                            v,
                         );
                     }
                     Op::Sub => {
                         let dst = inst.dst.unwrap();
                         let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants);
                         let b = exec_src(inst.src[1], &temps, inputs_v, inputs_t, &constants);
+                        let v = apply_result_modifier(a.sub(b), inst.result_modifier);
                         exec_dst(
                             dst,
                             &mut temps,
@@ -789,13 +865,14 @@ fn run_pixel_shader(
                             &mut dummy_attr,
                             &mut dummy_tex,
                             &mut o_color,
-                            a.sub(b),
+                            v,
                         );
                     }
                     Op::Mul => {
                         let dst = inst.dst.unwrap();
                         let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants);
                         let b = exec_src(inst.src[1], &temps, inputs_v, inputs_t, &constants);
+                        let v = apply_result_modifier(a.mul(b), inst.result_modifier);
                         exec_dst(
                             dst,
                             &mut temps,
@@ -803,7 +880,7 @@ fn run_pixel_shader(
                             &mut dummy_attr,
                             &mut dummy_tex,
                             &mut o_color,
-                            a.mul(b),
+                            v,
                         );
                     }
                     Op::Min => {
@@ -811,6 +888,7 @@ fn run_pixel_shader(
                         let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants);
                         let b = exec_src(inst.src[1], &temps, inputs_v, inputs_t, &constants);
                         let v = Vec4::new(a.x.min(b.x), a.y.min(b.y), a.z.min(b.z), a.w.min(b.w));
+                        let v = apply_result_modifier(v, inst.result_modifier);
                         exec_dst(
                             dst,
                             &mut temps,
@@ -826,6 +904,7 @@ fn run_pixel_shader(
                         let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants);
                         let b = exec_src(inst.src[1], &temps, inputs_v, inputs_t, &constants);
                         let v = Vec4::new(a.x.max(b.x), a.y.max(b.y), a.z.max(b.z), a.w.max(b.w));
+                        let v = apply_result_modifier(v, inst.result_modifier);
                         exec_dst(
                             dst,
                             &mut temps,
@@ -841,6 +920,7 @@ fn run_pixel_shader(
                         let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants);
                         let b = exec_src(inst.src[1], &temps, inputs_v, inputs_t, &constants);
                         let c = exec_src(inst.src[2], &temps, inputs_v, inputs_t, &constants);
+                        let v = apply_result_modifier(a.mul(b).add(c), inst.result_modifier);
                         exec_dst(
                             dst,
                             &mut temps,
@@ -848,7 +928,7 @@ fn run_pixel_shader(
                             &mut dummy_attr,
                             &mut dummy_tex,
                             &mut o_color,
-                            a.mul(b).add(c),
+                            v,
                         );
                     }
                     Op::Dp3 => {
@@ -856,6 +936,7 @@ fn run_pixel_shader(
                         let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants);
                         let b = exec_src(inst.src[1], &temps, inputs_v, inputs_t, &constants);
                         let d = Vec4::splat(a.dot3(b));
+                        let d = apply_result_modifier(d, inst.result_modifier);
                         exec_dst(
                             dst,
                             &mut temps,
@@ -871,6 +952,7 @@ fn run_pixel_shader(
                         let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants);
                         let b = exec_src(inst.src[1], &temps, inputs_v, inputs_t, &constants);
                         let d = Vec4::splat(a.dot4(b));
+                        let d = apply_result_modifier(d, inst.result_modifier);
                         exec_dst(
                             dst,
                             &mut temps,
@@ -885,6 +967,7 @@ fn run_pixel_shader(
                         let dst = inst.dst.unwrap();
                         let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants);
                         let v = Vec4::new(1.0 / a.x, 1.0 / a.y, 1.0 / a.z, 1.0 / a.w);
+                        let v = apply_result_modifier(v, inst.result_modifier);
                         exec_dst(
                             dst,
                             &mut temps,
@@ -901,6 +984,7 @@ fn run_pixel_shader(
                         let inv_sqrt = |v: f32| 1.0 / v.sqrt();
                         let v =
                             Vec4::new(inv_sqrt(a.x), inv_sqrt(a.y), inv_sqrt(a.z), inv_sqrt(a.w));
+                        let v = apply_result_modifier(v, inst.result_modifier);
                         exec_dst(
                             dst,
                             &mut temps,
@@ -916,6 +1000,7 @@ fn run_pixel_shader(
                         let a = exec_src(inst.src[0], &temps, inputs_v, inputs_t, &constants);
                         let fract = |v: f32| v - v.floor();
                         let v = Vec4::new(fract(a.x), fract(a.y), fract(a.z), fract(a.w));
+                        let v = apply_result_modifier(v, inst.result_modifier);
                         exec_dst(
                             dst,
                             &mut temps,
@@ -938,6 +1023,7 @@ fn run_pixel_shader(
                             pick(cond.z, a.z, b.z),
                             pick(cond.w, a.w, b.w),
                         );
+                        let v = apply_result_modifier(v, inst.result_modifier);
                         exec_dst(
                             dst,
                             &mut temps,
@@ -964,6 +1050,7 @@ fn run_pixel_shader(
                         };
                         let v =
                             Vec4::new(cmp(a.x, b.x), cmp(a.y, b.y), cmp(a.z, b.z), cmp(a.w, b.w));
+                        let v = apply_result_modifier(v, inst.result_modifier);
                         exec_dst(
                             dst,
                             &mut temps,
@@ -980,7 +1067,15 @@ fn run_pixel_shader(
                         let s = inst.sampler.expect("texld requires sampler index");
                         let tex = textures.get(&s).expect("missing bound texture");
                         let samp = sampler_states.get(&s).copied().unwrap_or_default();
-                        let sampled = tex.sample(samp, (coord.x, coord.y));
+                        let project = inst.imm.unwrap_or(0) != 0;
+                        let (u, v) = if project {
+                            let w = coord.w.max(f32::EPSILON);
+                            (coord.x / w, coord.y / w)
+                        } else {
+                            (coord.x, coord.y)
+                        };
+                        let sampled = tex.sample(samp, (u, v));
+                        let sampled = apply_result_modifier(sampled, inst.result_modifier);
                         exec_dst(
                             dst,
                             &mut temps,

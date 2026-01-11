@@ -14,6 +14,10 @@ fn enc_src(reg_type: u8, reg_num: u16, swizzle: u8) -> u32 {
     enc_reg_type(reg_type) | (reg_num as u32) | ((swizzle as u32) << 16)
 }
 
+fn enc_src_mod(reg_type: u8, reg_num: u16, swizzle: u8, modifier: u8) -> u32 {
+    enc_reg_type(reg_type) | (reg_num as u32) | ((swizzle as u32) << 16) | ((modifier as u32) << 24)
+}
+
 fn enc_dst(reg_type: u8, reg_num: u16, mask: u8) -> u32 {
     enc_reg_type(reg_type) | (reg_num as u32) | ((mask as u32) << 16)
 }
@@ -127,6 +131,22 @@ fn assemble_ps_math_ops() -> Vec<u32> {
     // mov oC0, r0
     out.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)]));
 
+    out.push(0x0000FFFF);
+    out
+}
+
+fn assemble_ps_mov_sat_neg_c0() -> Vec<u32> {
+    // ps_2_0
+    let mut out = vec![0xFFFF0200];
+    // mov_sat oC0, -c0
+    out.extend(enc_inst_with_extra(
+        0x0001,
+        1u32 << 20, // saturate
+        &[
+            enc_dst(8, 0, 0xF),
+            enc_src_mod(2, 0, 0xE4, 1), // -c0
+        ],
+    ));
     out.push(0x0000FFFF);
     out
 }
@@ -597,6 +617,68 @@ fn micro_alpha_blending_pixel_compare() {
     assert_eq!(
         hash.to_hex().as_str(),
         "22e5d8454f12677044ceb24de7c5da02e285d7a6b347c7ed4bfb7b2209dadb0a"
+    );
+}
+
+#[test]
+fn translates_src_and_result_modifiers_to_wgsl() {
+    let ps_bytes = to_bytes(&assemble_ps_mov_sat_neg_c0());
+    let program = shader::parse(&ps_bytes).unwrap();
+    let ir = shader::to_ir(&program);
+    let wgsl = shader::generate_wgsl(&ir);
+
+    let module = naga::front::wgsl::parse_str(&wgsl.wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+
+    assert!(wgsl.wgsl.contains("clamp("));
+    assert!(wgsl.wgsl.contains("constants.c[0u]"));
+}
+
+#[test]
+fn micro_ps2_src_and_result_modifiers_pixel_compare() {
+    let vs = shader::to_ir(&shader::parse(&to_bytes(&assemble_vs_passthrough())).unwrap());
+    let ps = shader::to_ir(&shader::parse(&to_bytes(&assemble_ps_mov_sat_neg_c0())).unwrap());
+
+    let decl = build_vertex_decl_pos_tex_color();
+
+    let mut vb = Vec::new();
+    let white = software::Vec4::new(1.0, 1.0, 1.0, 1.0);
+
+    for (pos_x, pos_y) in [(-0.5, -0.5), (0.5, -0.5), (0.0, 0.5)] {
+        push_vec4(&mut vb, software::Vec4::new(pos_x, pos_y, 0.0, 1.0));
+        push_vec2(&mut vb, 0.0, 0.0);
+        push_vec4(&mut vb, white);
+    }
+
+    let mut constants = zero_constants();
+    constants[0] = software::Vec4::new(-0.5, 0.5, -2.0, -1.0);
+
+    let mut rt = software::RenderTarget::new(16, 16, software::Vec4::ZERO);
+    software::draw(
+        &mut rt,
+        &vs,
+        &ps,
+        &decl,
+        &vb,
+        None,
+        &constants,
+        &HashMap::new(),
+        &HashMap::new(),
+        state::BlendState::default(),
+    );
+
+    // `oC0 = clamp(-c0, 0..1)`, with c0 = (-0.5, 0.5, -2.0, -1.0).
+    assert_eq!(rt.get(8, 8).to_rgba8(), [128, 0, 255, 255]);
+
+    let hash = blake3::hash(&rt.to_rgba8());
+    assert_eq!(
+        hash.to_hex().as_str(),
+        "ab477a03b69b374481c3b6cba362a9b6e9cfb0dd038252a06a610b4c058e3f26"
     );
 }
 

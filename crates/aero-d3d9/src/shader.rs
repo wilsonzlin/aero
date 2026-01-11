@@ -79,9 +79,28 @@ impl WriteMask {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SrcModifier {
+    None,
+    Negate,
+    Bias,
+    BiasNegate,
+    Sign,
+    SignNegate,
+    Comp,
+    X2,
+    X2Negate,
+    Dz,
+    Dw,
+    Abs,
+    AbsNegate,
+    Not,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Src {
     pub reg: Register,
     pub swizzle: Swizzle,
+    pub modifier: SrcModifier,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -118,6 +137,33 @@ pub enum Op {
     End,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ResultShift {
+    None,
+    Mul2,
+    Mul4,
+    Mul8,
+    Div2,
+    Div4,
+    Div8,
+    Unknown(u8),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ResultModifier {
+    pub saturate: bool,
+    pub shift: ResultShift,
+}
+
+impl Default for ResultModifier {
+    fn default() -> Self {
+        Self {
+            saturate: false,
+            shift: ResultShift::None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Instruction {
     pub op: Op,
@@ -127,6 +173,7 @@ pub struct Instruction {
     pub sampler: Option<u16>,
     /// Extra immediate payload for opcodes that need it (e.g. `ifc` compare op code).
     pub imm: Option<u32>,
+    pub result_modifier: ResultModifier,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -156,6 +203,8 @@ pub enum ShaderError {
     UnsupportedOpcode(u16),
     #[error("unsupported register type {0}")]
     UnsupportedRegisterType(u8),
+    #[error("unsupported source modifier {0}")]
+    UnsupportedSrcModifier(u8),
     #[error("unsupported ifc comparison op {0}")]
     UnsupportedCompareOp(u8),
     #[error("invalid control flow: {0}")]
@@ -184,10 +233,33 @@ fn decode_reg_num(token: u32) -> u16 {
     (token & 0x7FF) as u16
 }
 
+fn decode_src_modifier(modifier: u8) -> Result<SrcModifier, ShaderError> {
+    // Matches `D3DSHADER_PARAM_SRCMOD_TYPE` / `D3DSHADER_SRCMOD` encoding.
+    Ok(match modifier {
+        0 => SrcModifier::None,
+        1 => SrcModifier::Negate,
+        2 => SrcModifier::Bias,
+        3 => SrcModifier::BiasNegate,
+        4 => SrcModifier::Sign,
+        5 => SrcModifier::SignNegate,
+        6 => SrcModifier::Comp,
+        7 => SrcModifier::X2,
+        8 => SrcModifier::X2Negate,
+        9 => SrcModifier::Dz,
+        10 => SrcModifier::Dw,
+        11 => SrcModifier::Abs,
+        12 => SrcModifier::AbsNegate,
+        13 => SrcModifier::Not,
+        other => return Err(ShaderError::UnsupportedSrcModifier(other)),
+    })
+}
+
 fn decode_src(token: u32) -> Result<Src, ShaderError> {
     let reg_type = decode_reg_type(token);
     let reg_num = decode_reg_num(token);
     let swizzle_byte = ((token >> 16) & 0xFF) as u8;
+    let modifier_raw = ((token >> 24) & 0xF) as u8;
+    let modifier = decode_src_modifier(modifier_raw)?;
 
     let file = match reg_type {
         0 => RegisterFile::Temp,
@@ -204,6 +276,7 @@ fn decode_src(token: u32) -> Result<Src, ShaderError> {
             index: reg_num,
         },
         swizzle: Swizzle::from_d3d_byte(swizzle_byte),
+        modifier,
     })
 }
 
@@ -228,6 +301,23 @@ fn decode_dst(token: u32) -> Result<Dst, ShaderError> {
         },
         mask: WriteMask(mask),
     })
+}
+
+fn decode_result_modifier(opcode_token: u32) -> ResultModifier {
+    let mod_bits = ((opcode_token >> 20) & 0xF) as u8;
+    let saturate = (mod_bits & 0x1) != 0;
+    let shift_bits = (mod_bits >> 1) & 0x7;
+    let shift = match shift_bits {
+        0 => ResultShift::None,
+        1 => ResultShift::Mul2,
+        2 => ResultShift::Mul4,
+        3 => ResultShift::Mul8,
+        4 => ResultShift::Div2,
+        5 => ResultShift::Div4,
+        6 => ResultShift::Div8,
+        other => ResultShift::Unknown(other),
+    };
+    ResultModifier { saturate, shift }
 }
 
 fn opcode_to_op(opcode: u16) -> Option<Op> {
@@ -306,6 +396,7 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
         // D3D9 instruction length is encoded in bits 24..27 (4 bits). Higher bits in the same
         // byte are flags (predication/co-issue) and must not affect operand count.
         let param_count = ((token >> 24) & 0x0F) as usize;
+        let result_modifier = decode_result_modifier(token);
 
         // Comments are variable-length data blocks that should be skipped.
         // Layout: opcode=0xFFFE, length in DWORDs in bits 16..30.
@@ -366,6 +457,7 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
                 src: Vec::new(),
                 sampler: None,
                 imm: None,
+                result_modifier,
             });
             break;
         }
@@ -377,6 +469,7 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
                 src: Vec::new(),
                 sampler: None,
                 imm: None,
+                result_modifier,
             },
             Op::If => {
                 if params.len() != 1 {
@@ -389,6 +482,7 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
                     src: vec![decode_src(params[0])?],
                     sampler: None,
                     imm: None,
+                    result_modifier,
                 }
             }
             Op::Ifc => {
@@ -406,6 +500,7 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
                     src: vec![decode_src(params[0])?, decode_src(params[1])?],
                     sampler: None,
                     imm: Some(u32::from(cmp_code)),
+                    result_modifier,
                 }
             }
             Op::Else => {
@@ -431,6 +526,7 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
                     src: Vec::new(),
                     sampler: None,
                     imm: None,
+                    result_modifier,
                 }
             }
             Op::EndIf => {
@@ -446,6 +542,7 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
                     src: Vec::new(),
                     sampler: None,
                     imm: None,
+                    result_modifier,
                 }
             }
             Op::Mov
@@ -479,6 +576,7 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
                     src,
                     sampler: None,
                     imm: None,
+                    result_modifier,
                 }
             }
             Op::Texld => {
@@ -500,7 +598,8 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
                     dst: Some(dst),
                     src: vec![coord],
                     sampler: Some(sampler_index),
-                    imm: None,
+                    imm: Some((token >> 16) & 0x1),
+                    result_modifier,
                 }
             }
             Op::End => unreachable!(),
@@ -883,13 +982,14 @@ fn emit_inst(
             let dst = inst.dst.unwrap();
             let src0 = inst.src[0];
             let dst_name = reg_var_name(dst.reg);
-            let src_expr = src_expr(&src0, const_defs_f32);
+            let mut expr = src_expr(&src0, const_defs_f32);
+            expr = apply_result_modifier(expr, inst.result_modifier);
             if let Some(mask) = mask_suffix(dst.mask) {
                 push_indent(wgsl, *indent);
-                wgsl.push_str(&format!("{}{} = {}{};\n", dst_name, mask, src_expr, mask));
+                wgsl.push_str(&format!("{}{} = {}{};\n", dst_name, mask, expr, mask));
             } else {
                 push_indent(wgsl, *indent);
-                wgsl.push_str(&format!("{} = {};\n", dst_name, src_expr));
+                wgsl.push_str(&format!("{} = {};\n", dst_name, expr));
             }
         }
         Op::Add | Op::Sub | Op::Mul => {
@@ -903,12 +1003,13 @@ fn emit_inst(
                 Op::Mul => "*",
                 _ => unreachable!(),
             };
-            let expr = format!(
+            let mut expr = format!(
                 "({} {} {})",
                 src_expr(&src0, const_defs_f32),
                 op,
                 src_expr(&src1, const_defs_f32)
             );
+            expr = apply_result_modifier(expr, inst.result_modifier);
             if let Some(mask) = mask_suffix(dst.mask) {
                 push_indent(wgsl, *indent);
                 wgsl.push_str(&format!("{}{} = {}{};\n", dst_name, mask, expr, mask));
@@ -923,12 +1024,13 @@ fn emit_inst(
             let src1 = inst.src[1];
             let func = if inst.op == Op::Min { "min" } else { "max" };
             let dst_name = reg_var_name(dst.reg);
-            let expr = format!(
+            let mut expr = format!(
                 "{}({}, {})",
                 func,
                 src_expr(&src0, const_defs_f32),
                 src_expr(&src1, const_defs_f32)
             );
+            expr = apply_result_modifier(expr, inst.result_modifier);
             if let Some(mask) = mask_suffix(dst.mask) {
                 push_indent(wgsl, *indent);
                 wgsl.push_str(&format!("{}{} = {}{};\n", dst_name, mask, expr, mask));
@@ -942,7 +1044,8 @@ fn emit_inst(
             let a = src_expr(&inst.src[0], const_defs_f32);
             let b = src_expr(&inst.src[1], const_defs_f32);
             let c = src_expr(&inst.src[2], const_defs_f32);
-            let expr = format!("fma({}, {}, {})", a, b, c);
+            let mut expr = format!("fma({}, {}, {})", a, b, c);
+            expr = apply_result_modifier(expr, inst.result_modifier);
             let dst_name = reg_var_name(dst.reg);
             if let Some(mask) = mask_suffix(dst.mask) {
                 push_indent(wgsl, *indent);
@@ -958,7 +1061,8 @@ fn emit_inst(
             let a = src_expr(&inst.src[1], const_defs_f32);
             let b = src_expr(&inst.src[2], const_defs_f32);
             // Per-component compare: if cond >= 0 then a else b.
-            let expr = format!("select({}, {}, ({} >= vec4<f32>(0.0)))", b, a, cond);
+            let mut expr = format!("select({}, {}, ({} >= vec4<f32>(0.0)))", b, a, cond);
+            expr = apply_result_modifier(expr, inst.result_modifier);
             let dst_name = reg_var_name(dst.reg);
             if let Some(mask) = mask_suffix(dst.mask) {
                 push_indent(wgsl, *indent);
@@ -979,10 +1083,11 @@ fn emit_inst(
                 Op::Sne => "!=",
                 _ => unreachable!(),
             };
-            let expr = format!(
+            let mut expr = format!(
                 "select(vec4<f32>(0.0), vec4<f32>(1.0), ({} {} {}))",
                 a, op, b
             );
+            expr = apply_result_modifier(expr, inst.result_modifier);
             let dst_name = reg_var_name(dst.reg);
             if let Some(mask) = mask_suffix(dst.mask) {
                 push_indent(wgsl, *indent);
@@ -996,11 +1101,12 @@ fn emit_inst(
             let dst = inst.dst.unwrap();
             let a = src_expr(&inst.src[0], const_defs_f32);
             let b = src_expr(&inst.src[1], const_defs_f32);
-            let expr = if inst.op == Op::Dp3 {
+            let mut expr = if inst.op == Op::Dp3 {
                 format!("vec4<f32>(dot(({}).xyz, ({}).xyz))", a, b)
             } else {
                 format!("vec4<f32>(dot({}, {}))", a, b)
             };
+            expr = apply_result_modifier(expr, inst.result_modifier);
             let dst_name = reg_var_name(dst.reg);
             if let Some(mask) = mask_suffix(dst.mask) {
                 push_indent(wgsl, *indent);
@@ -1016,7 +1122,14 @@ fn emit_inst(
             let s = inst.sampler.unwrap();
             let dst_name = reg_var_name(dst.reg);
             let coord_expr = src_expr(&coord, const_defs_f32);
-            let sample = format!("textureSample(tex{}, samp{}, ({}).xy)", s, s, coord_expr);
+            let project = inst.imm.unwrap_or(0) != 0;
+            let uv = if project {
+                format!("(({}).xy / ({}).w)", coord_expr, coord_expr)
+            } else {
+                format!("({}).xy", coord_expr)
+            };
+            let mut sample = format!("textureSample(tex{}, samp{}, {})", s, s, uv);
+            sample = apply_result_modifier(sample, inst.result_modifier);
             if let Some(mask) = mask_suffix(dst.mask) {
                 push_indent(wgsl, *indent);
                 wgsl.push_str(&format!("{}{} = {}{};\n", dst_name, mask, sample, mask));
@@ -1028,7 +1141,8 @@ fn emit_inst(
         Op::Rcp => {
             let dst = inst.dst.unwrap();
             let src0 = src_expr(&inst.src[0], const_defs_f32);
-            let expr = format!("(vec4<f32>(1.0) / {})", src0);
+            let mut expr = format!("(vec4<f32>(1.0) / {})", src0);
+            expr = apply_result_modifier(expr, inst.result_modifier);
             let dst_name = reg_var_name(dst.reg);
             if let Some(mask) = mask_suffix(dst.mask) {
                 push_indent(wgsl, *indent);
@@ -1041,7 +1155,8 @@ fn emit_inst(
         Op::Rsq => {
             let dst = inst.dst.unwrap();
             let src0 = src_expr(&inst.src[0], const_defs_f32);
-            let expr = format!("inverseSqrt({})", src0);
+            let mut expr = format!("inverseSqrt({})", src0);
+            expr = apply_result_modifier(expr, inst.result_modifier);
             let dst_name = reg_var_name(dst.reg);
             if let Some(mask) = mask_suffix(dst.mask) {
                 push_indent(wgsl, *indent);
@@ -1054,7 +1169,8 @@ fn emit_inst(
         Op::Frc => {
             let dst = inst.dst.unwrap();
             let src0 = src_expr(&inst.src[0], const_defs_f32);
-            let expr = format!("fract({})", src0);
+            let mut expr = format!("fract({})", src0);
+            expr = apply_result_modifier(expr, inst.result_modifier);
             let dst_name = reg_var_name(dst.reg);
             if let Some(mask) = mask_suffix(dst.mask) {
                 push_indent(wgsl, *indent);
@@ -1100,8 +1216,26 @@ fn emit_inst(
     }
 }
 
+fn apply_result_modifier(expr: String, modifier: ResultModifier) -> String {
+    let mut out = expr;
+    out = match modifier.shift {
+        ResultShift::None => out,
+        ResultShift::Mul2 => format!("({}) * 2.0", out),
+        ResultShift::Mul4 => format!("({}) * 4.0", out),
+        ResultShift::Mul8 => format!("({}) * 8.0", out),
+        ResultShift::Div2 => format!("({}) / 2.0", out),
+        ResultShift::Div4 => format!("({}) / 4.0", out),
+        ResultShift::Div8 => format!("({}) / 8.0", out),
+        ResultShift::Unknown(_) => out,
+    };
+    if modifier.saturate {
+        out = format!("clamp({}, vec4<f32>(0.0), vec4<f32>(1.0))", out);
+    }
+    out
+}
+
 fn src_expr(src: &Src, const_defs_f32: &BTreeMap<u16, [f32; 4]>) -> String {
-    match src.reg.file {
+    let base = match src.reg.file {
         RegisterFile::Const => {
             if const_defs_f32.contains_key(&src.reg.index) {
                 format!("c{}{}", src.reg.index, swizzle_suffix(src.swizzle))
@@ -1114,6 +1248,23 @@ fn src_expr(src: &Src, const_defs_f32: &BTreeMap<u16, [f32; 4]>) -> String {
             }
         }
         _ => format!("{}{}", reg_var_name(src.reg), swizzle_suffix(src.swizzle)),
+    };
+
+    match src.modifier {
+        SrcModifier::None => base,
+        SrcModifier::Negate => format!("-({})", base),
+        SrcModifier::Bias => format!("(({}) - vec4<f32>(0.5))", base),
+        SrcModifier::BiasNegate => format!("-(({}) - vec4<f32>(0.5))", base),
+        SrcModifier::Sign => format!("(({}) * 2.0 - vec4<f32>(1.0))", base),
+        SrcModifier::SignNegate => format!("-(({}) * 2.0 - vec4<f32>(1.0))", base),
+        SrcModifier::Comp => format!("(vec4<f32>(1.0) - ({}))", base),
+        SrcModifier::X2 => format!("(({}) * 2.0)", base),
+        SrcModifier::X2Negate => format!("-(({}) * 2.0)", base),
+        SrcModifier::Dz => format!("(({}) / ({}).z)", base, base),
+        SrcModifier::Dw => format!("(({}) / ({}).w)", base, base),
+        SrcModifier::Abs => format!("abs({})", base),
+        SrcModifier::AbsNegate => format!("-abs({})", base),
+        SrcModifier::Not => format!("(vec4<f32>(1.0) - ({}))", base),
     }
 }
 
