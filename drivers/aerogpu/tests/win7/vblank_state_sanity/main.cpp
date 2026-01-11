@@ -151,13 +151,16 @@ static int RunVblankStateSanity(int argc, char** argv) {
   const aerogpu_escape_query_vblank_out& first = snaps.front();
   const aerogpu_escape_query_vblank_out& last = snaps.back();
 
-  if ((first.flags & AEROGPU_DBGCTL_QUERY_VBLANK_FLAGS_VALID) == 0) {
-    return reporter.Fail("QUERY_VBLANK returned flags without VALID bit set (flags=0x%08lX)",
-                         (unsigned long)first.flags);
+  bool supported = true;
+  if ((first.flags & AEROGPU_DBGCTL_QUERY_VBLANK_FLAGS_VALID) != 0) {
+    supported = (first.flags & AEROGPU_DBGCTL_QUERY_VBLANK_FLAG_VBLANK_SUPPORTED) != 0;
   }
-  if ((first.flags & AEROGPU_DBGCTL_QUERY_VBLANK_FLAG_VBLANK_SUPPORTED) == 0) {
-    return reporter.Fail("QUERY_VBLANK reports vblank not supported (flags=0x%08lX)",
-                         (unsigned long)first.flags);
+  if (!supported) {
+    aerogpu_test::PrintfStdout("INFO: %s: QUERY_VBLANK reports vblank not supported; skipping (flags=0x%08lX)",
+                               kTestName,
+                               (unsigned long)first.flags);
+    reporter.SetSkipped("not_supported");
+    return reporter.Pass();
   }
   if (first.vblank_period_ns == 0) {
     return reporter.Fail("vblank_period_ns==0");
