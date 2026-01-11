@@ -204,7 +204,10 @@ function statsFromScenario(scenario: any, metricName: string): { value: number; 
   const legacy = extractPrimaryMetricsLegacy(scenario);
   const value = legacy[metricName];
   if (!isFiniteNumber(value)) return null;
-  return { value, cv: cvForMetricLegacy(scenario, metricName), n: nForMetricLegacy(scenario, metricName) };
+  // Legacy aero-gpu-bench reports (schema v1) only provide a single derived value
+  // per scenario. We treat these as a single-sample measurement (n=1, cv=0),
+  // matching how other perf tooling treats one-iteration runs.
+  return { value, cv: 0, n: 1 };
 }
 
 export function compareGpuBenchmarks({
