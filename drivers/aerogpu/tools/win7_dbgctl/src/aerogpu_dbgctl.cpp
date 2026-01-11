@@ -328,8 +328,6 @@ static bool QueryVblank(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t 
     // Some KMD/device combos return STATUS_NOT_SUPPORTED when
     // AEROGPU_FEATURE_VBLANK isn't advertised; treat as a successful query of
     // "unsupported".
-    ZeroMemory(out, sizeof(*out));
-    out->vidpn_source_id = vidpnSourceId;
     return true;
   }
   if (!NT_SUCCESS(st)) {
@@ -338,7 +336,11 @@ static bool QueryVblank(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t 
   }
 
   if (supportedOut) {
-    *supportedOut = true;
+    bool supported = true;
+    if ((out->flags & AEROGPU_DBGCTL_QUERY_VBLANK_FLAGS_VALID) != 0) {
+      supported = (out->flags & AEROGPU_DBGCTL_QUERY_VBLANK_FLAG_VBLANK_SUPPORTED) != 0;
+    }
+    *supportedOut = supported;
   }
   return true;
 }

@@ -2333,24 +2333,10 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
             return STATUS_DEVICE_NOT_READY;
         }
 
-        if (!adapter->UsingNewAbi) {
-            return STATUS_NOT_SUPPORTED;
-        }
-
         aerogpu_escape_query_vblank_out* out = (aerogpu_escape_query_vblank_out*)pEscape->pPrivateDriverData;
 
         /* Only VidPn source 0 is currently implemented. */
         if (out->vidpn_source_id != AEROGPU_VIDPN_SOURCE_ID) {
-            return STATUS_NOT_SUPPORTED;
-        }
-
-        if (adapter->AbiKind != AEROGPU_ABI_KIND_V1) {
-            return STATUS_NOT_SUPPORTED;
-        }
-
-        const ULONGLONG features = (ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FEATURES_LO) |
-                                  ((ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FEATURES_HI) << 32);
-        if ((features & AEROGPU_FEATURE_VBLANK) == 0) {
             return STATUS_NOT_SUPPORTED;
         }
 
@@ -2359,17 +2345,46 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         out->hdr.size = sizeof(*out);
         out->hdr.reserved0 = 0;
 
-        out->irq_enable = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE);
-        out->irq_status = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_IRQ_STATUS);
-        out->reserved0 = 0;
+        const BOOLEAN haveIrqRegs = adapter->Bar0Length >= (AEROGPU_MMIO_REG_IRQ_ENABLE + sizeof(ULONG));
+        if (haveIrqRegs) {
+            out->irq_enable = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE);
+            out->irq_status = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_IRQ_STATUS);
+        } else {
+            out->irq_enable = 0;
+            out->irq_status = 0;
+        }
 
-        out->vblank_seq = AeroGpuReadRegU64HiLoHi(adapter,
-                                                  AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO,
-                                                  AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_HI);
-        out->last_vblank_time_ns = AeroGpuReadRegU64HiLoHi(adapter,
-                                                           AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_LO,
-                                                           AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_HI);
-        out->vblank_period_ns = (uint32_t)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS);
+        out->flags = AEROGPU_DBGCTL_QUERY_VBLANK_FLAGS_VALID;
+
+        const BOOLEAN haveVblankRegs = adapter->Bar0Length >= (AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS + sizeof(ULONG));
+
+        const ULONGLONG features = (adapter->Bar0Length >= (AEROGPU_MMIO_REG_FEATURES_HI + sizeof(ULONG)))
+                                      ? ((ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FEATURES_LO) |
+                                         ((ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FEATURES_HI) << 32))
+                                      : 0;
+
+        BOOLEAN featuresPlausible = TRUE;
+        if (adapter->AbiKind != AEROGPU_ABI_KIND_V1) {
+            const ULONGLONG knownFeatures = AEROGPU_FEATURE_FENCE_PAGE | AEROGPU_FEATURE_CURSOR | AEROGPU_FEATURE_SCANOUT |
+                                            AEROGPU_FEATURE_VBLANK;
+            featuresPlausible = (features & ~knownFeatures) == 0;
+        }
+
+        const BOOLEAN supported = haveVblankRegs && featuresPlausible && ((features & AEROGPU_FEATURE_VBLANK) != 0);
+        if (supported) {
+            out->flags |= AEROGPU_DBGCTL_QUERY_VBLANK_FLAG_VBLANK_SUPPORTED;
+            out->vblank_seq = AeroGpuReadRegU64HiLoHi(adapter,
+                                                      AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO,
+                                                      AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_HI);
+            out->last_vblank_time_ns = AeroGpuReadRegU64HiLoHi(adapter,
+                                                               AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_LO,
+                                                               AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_HI);
+            out->vblank_period_ns = (uint32_t)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS);
+        } else {
+            out->vblank_seq = 0;
+            out->last_vblank_time_ns = 0;
+            out->vblank_period_ns = 0;
+        }
         out->reserved1 = 0;
         return STATUS_SUCCESS;
     }

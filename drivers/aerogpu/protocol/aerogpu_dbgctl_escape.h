@@ -116,19 +116,29 @@ typedef struct aerogpu_escape_query_vblank_out {
   uint32_t vidpn_source_id; /* input (0 for MVP), echoed back */
   uint32_t irq_enable;
   uint32_t irq_status;
-  uint32_t reserved0;
+  /*
+   * Flags:
+   * - Bit 31: flags are valid (newer KMDs). If clear, tooling should assume
+   *   vblank is supported because older KMDs only returned success when
+   *   `AEROGPU_FEATURE_VBLANK` was present.
+   * - Bit 0: vblank registers are supported/valid.
+   */
+  uint32_t flags;
   uint64_t vblank_seq;
   uint64_t last_vblank_time_ns;
   uint32_t vblank_period_ns;
   uint32_t reserved1;
 } aerogpu_escape_query_vblank_out;
 
+#define AEROGPU_DBGCTL_QUERY_VBLANK_FLAGS_VALID (1u << 31)
+#define AEROGPU_DBGCTL_QUERY_VBLANK_FLAG_VBLANK_SUPPORTED (1u << 0)
+
 /* Must remain stable across x86/x64. */
 AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_query_vblank_out) == 56);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_vblank_out, vidpn_source_id) == 16);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_vblank_out, irq_enable) == 20);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_vblank_out, irq_status) == 24);
-AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_vblank_out, reserved0) == 28);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_vblank_out, flags) == 28);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_vblank_out, vblank_seq) == 32);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_vblank_out, last_vblank_time_ns) == 40);
 AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_query_vblank_out, vblank_period_ns) == 48);
