@@ -85,6 +85,7 @@ impl UhciController {
         // the bit resets controller state.
         if cmd & USBCMD_GRESET != 0 && prev & USBCMD_GRESET == 0 {
             self.reset();
+            self.hub.bus_reset();
         }
 
         // Force Global Resume latches in USBCMD; raising it latches RESUMEDETECT in USBSTS.
@@ -150,7 +151,7 @@ impl UhciController {
             REG_PORTSC1_HI => (self.hub.read_portsc(0) >> 8) as u8,
             REG_PORTSC2 => (self.hub.read_portsc(1) & 0x00ff) as u8,
             REG_PORTSC2_HI => (self.hub.read_portsc(1) >> 8) as u8,
-            _ => 0,
+            _ => 0xff,
         }
     }
 
@@ -173,12 +174,10 @@ impl UhciController {
                 self.write_usbcmd(v);
             }
             REG_USBSTS => {
-                let v = (self.regs.usbsts & 0xff00) | (value as u16);
-                self.write_usbsts(v);
+                self.write_usbsts(value as u16);
             }
             REG_USBSTS_HI => {
-                let v = (self.regs.usbsts & 0x00ff) | ((value as u16) << 8);
-                self.write_usbsts(v);
+                self.write_usbsts((value as u16) << 8);
             }
             REG_USBINTR => {
                 let v = (self.regs.usbintr & 0xff00) | (value as u16);

@@ -1,8 +1,11 @@
 use emulator::io::pci::PciDevice;
+use emulator::io::usb::{ControlResponse, SetupPacket, UsbDeviceModel};
 use emulator::io::usb::uhci::regs::*;
 use emulator::io::usb::uhci::{UhciController, UhciPciDevice};
 use emulator::io::PortIO;
 use memory::{Bus, MemoryBus};
+use std::cell::RefCell;
+use std::rc::Rc;
 
 const FRAME_LIST_BASE: u32 = 0x1000;
 const QH_ADDR: u32 = 0x2000;
@@ -263,4 +266,46 @@ fn uhci_fgr_latches_resume_detect_and_can_irq() {
         0
     );
     assert!(!uhci.irq_level());
+}
+
+#[test]
+fn uhci_greset_resets_attached_devices() {
+    #[derive(Clone)]
+    struct ResetCountingDevice {
+        resets: Rc<RefCell<u32>>,
+    }
+
+    impl UsbDeviceModel for ResetCountingDevice {
+        fn reset(&mut self) {
+            *self.resets.borrow_mut() += 1;
+        }
+
+        fn handle_control_request(
+            &mut self,
+            _setup: SetupPacket,
+            _data_stage: Option<&[u8]>,
+        ) -> ControlResponse {
+            ControlResponse::Stall
+        }
+    }
+
+    let resets = Rc::new(RefCell::new(0));
+
+    let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
+    uhci.controller
+        .hub_mut()
+        .attach(0, Box::new(ResetCountingDevice { resets: resets.clone() }));
+
+    // Assert global reset; model should see a bus reset.
+    uhci.port_write(REG_USBCMD, 2, (USBCMD_GRESET | USBCMD_MAXP) as u32);
+    assert_eq!(*resets.borrow(), 1);
+
+    // Re-writing GRESET while still asserted should not retrigger the reset.
+    uhci.port_write(REG_USBCMD, 2, (USBCMD_GRESET | USBCMD_MAXP) as u32);
+    assert_eq!(*resets.borrow(), 1);
+
+    // Clear GRESET, then re-assert: should retrigger.
+    uhci.port_write(REG_USBCMD, 2, USBCMD_MAXP as u32);
+    uhci.port_write(REG_USBCMD, 2, (USBCMD_GRESET | USBCMD_MAXP) as u32);
+    assert_eq!(*resets.borrow(), 2);
 }

@@ -129,6 +129,14 @@ impl RootHub {
         }
     }
 
+    pub fn bus_reset(&mut self) {
+        for p in &mut self.ports {
+            if let Some(dev) = p.device.as_mut() {
+                dev.reset();
+            }
+        }
+    }
+
     pub fn attach(&mut self, port: usize, model: Box<dyn UsbDeviceModel>) {
         let p = &mut self.ports[port];
         p.device = Some(AttachedUsbDevice::new(model));
