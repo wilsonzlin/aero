@@ -77,7 +77,7 @@ The allocation private data blob is treated as **UMD → KMD input**: the UMD ch
 
 For shared allocations, `alloc_id` must avoid collisions across guest processes and must stay in the UMD-owned range (`alloc_id <= 0x7fffffff`, non-zero). When DXGI/D3D10/11 sharing is implemented, follow the D3D9 UMD approach:
 
-- allocate `alloc_id` from a cross-process monotonic counter (see `allocate_share_token()` in `drivers/aerogpu/umd/d3d9/src/aerogpu_d3d9_driver.cpp`), and
+- allocate `alloc_id` from a cross-process monotonic counter (see `allocate_shared_alloc_id_token()` in `drivers/aerogpu/umd/d3d9/src/aerogpu_d3d9_driver.cpp`), and
 - generate `share_token` independently as a collision-resistant 64-bit value (crypto RNG preferred; see `ShareTokenAllocator` in `drivers/aerogpu/umd/d3d9/src/aerogpu_d3d9_shared_resource.h`), and
 - store both in `aerogpu_wddm_alloc_priv` so dxgkrnl can return them verbatim on `OpenResource`/`OpenAllocation`.
 

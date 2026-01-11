@@ -1055,8 +1055,17 @@ bool emit_destroy_input_layout_locked(Device* dev, aerogpu_handle_t handle) {
 // -----------------------------------------------------------------------------
 // Submission
 // -----------------------------------------------------------------------------
-
-uint64_t allocate_share_token(Adapter* adapter) {
+//
+// Shared allocations must use stable `alloc_id` values that are extremely
+// unlikely to collide across guest processes: DWM can reference many redirected
+// surfaces from different processes in a single submission, and the KMD's
+// per-submit allocation table is keyed by `alloc_id`.
+//
+// The D3D9 UMD uses a best-effort cross-process monotonic counter (implemented
+// via a named file mapping) to derive 31-bit alloc_id values for shared
+// allocations. The mapping name retains the historical "ShareToken" prefix to
+// avoid collisions when different in-guest UMD versions coexist briefly.
+uint64_t allocate_shared_alloc_id_token(Adapter* adapter) {
   if (!adapter) {
     return 0;
   }
@@ -1982,11 +1991,11 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
     // global (share_token -> resource) table.
     uint32_t alloc_id = 0;
     {
-      // `allocate_share_token()` provides a monotonic 64-bit counter shared
+      // `allocate_shared_alloc_id_token()` provides a monotonic 64-bit counter shared
       // across guest processes (best effort). Derive a 31-bit alloc_id from it.
       uint64_t alloc_token = 0;
       do {
-        alloc_token = allocate_share_token(dev->adapter);
+        alloc_token = allocate_shared_alloc_id_token(dev->adapter);
         alloc_id = static_cast<uint32_t>(alloc_token & AEROGPU_WDDM_ALLOC_ID_UMD_MAX);
       } while (alloc_token != 0 && alloc_id == 0);
 

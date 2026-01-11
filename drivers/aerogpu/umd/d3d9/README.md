@@ -46,7 +46,7 @@ Cross-process shared resources are expressed explicitly in the command stream:
 
 For shared allocations, `alloc_id` must avoid collisions across guest processes and must stay in the UMD-owned range (`alloc_id <= 0x7fffffff`). In the current AeroGPU D3D9 UMD:
 
-- `alloc_id` is derived from a cross-process monotonic counter (`allocate_share_token()` in `src/aerogpu_d3d9_driver.cpp`, backed by a named file mapping + `InterlockedIncrement64`, masked to 31 bits with 0 skipped).
+- `alloc_id` is derived from a cross-process monotonic counter (`allocate_shared_alloc_id_token()` in `src/aerogpu_d3d9_driver.cpp`, backed by a named file mapping + `InterlockedIncrement64`, masked to 31 bits with 0 skipped).
 - `share_token` is generated independently via `ShareTokenAllocator::allocate_share_token()` (`src/aerogpu_d3d9_shared_resource.h`, crypto RNG preferred with a fallback entropy + SplitMix64 path).
 
 `share_token` is **not** the process-local shared `HANDLE` value (do not use the numeric handle as a host mapping key).
