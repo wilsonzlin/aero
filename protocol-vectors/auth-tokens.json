@@ -78,6 +78,15 @@
         "iss": "aero-gateway"
       },
       {
+        "name": "valid.minimal",
+        "secret": "test-jwt-secret",
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MTcwMDAwMDA2MCwic2lkIjoic2lkLW1pbmltYWwifQ.7cLPuTJ61jDN05BWt4JdO-9gmILn-giASAfesTfhMsI",
+        "nowSec": 1700000000,
+        "sid": "sid-minimal",
+        "exp": 1700000060,
+        "iat": 1700000000
+      },
+      {
         "name": "badSignature",
         "secret": "test-jwt-secret",
         "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MTcwMDAwMDA2MCwic2lkIjoic2lkLTEyMzQ1Njc4OTAiLCJvcmlnaW4iOiJodHRwczovL2FwcC5leGFtcGxlLnRlc3QiLCJhdWQiOiJhZXJvLXVkcC1yZWxheSIsImlzcyI6ImFlcm8tZ2F0ZXdheSJ9.tVuxJptb-YWFqluNxv89qG0sd_jFcDIzVGn2ojD9wGA",
