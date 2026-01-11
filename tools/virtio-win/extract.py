@@ -29,7 +29,9 @@ from pathlib import PurePosixPath
 from typing import Any, Iterable, Optional
 
 
-OS_FOLDER_CANDIDATES = ["w7", "w7.1", "w7_1", "win7"]
+# Prefer the most specific Win7 dir when multiple are present.
+# (Some virtio-win releases include both "w7" and "w7.1"; we target Win7 SP1.)
+OS_FOLDER_CANDIDATES = ["w7.1", "w7_1", "w7", "win7"]
 ARCH_CANDIDATES_AMD64 = ["amd64", "x64"]
 ARCH_CANDIDATES_X86 = ["x86", "i386"]
 

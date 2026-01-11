@@ -41,7 +41,8 @@ param(
 
   [string]$OutDir = (Join-Path (Join-Path $PSScriptRoot "..") "out"),
 
-  [string[]]$OsFolderCandidates = @("w7", "w7.1", "w7_1", "win7"),
+  # Prefer the most specific Win7 dir when multiple are present (Win7 SP1 is the target).
+  [string[]]$OsFolderCandidates = @("w7.1", "w7_1", "w7", "win7"),
 
   [string[]]$ArchCandidatesAmd64 = @("amd64", "x64"),
   [string[]]$ArchCandidatesX86 = @("x86", "i386"),
