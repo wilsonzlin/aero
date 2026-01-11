@@ -1,0 +1,81 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+
+import { AeroAudioProcessor, addUnderrunFrames } from "../src/platform/audio-worklet-processor.js";
+
+function makeRingBuffer(capacityFrames: number, channelCount: number): {
+  sab: SharedArrayBuffer;
+  header: Uint32Array;
+  samples: Float32Array;
+} {
+  const headerBytes = 4 * Uint32Array.BYTES_PER_ELEMENT;
+  const sampleCapacity = capacityFrames * channelCount;
+  const sab = new SharedArrayBuffer(headerBytes + sampleCapacity * Float32Array.BYTES_PER_ELEMENT);
+  return {
+    sab,
+    header: new Uint32Array(sab, 0, 4),
+    samples: new Float32Array(sab, headerBytes, sampleCapacity),
+  };
+}
+
+test("AudioWorklet processor underrun counter increments by missing frames", () => {
+  const capacityFrames = 4;
+  const channelCount = 2;
+  const { sab, header, samples } = makeRingBuffer(capacityFrames, channelCount);
+
+  // Two frames available.
+  Atomics.store(header, 0, 0); // readFrameIndex
+  Atomics.store(header, 1, 2); // writeFrameIndex
+  Atomics.store(header, 2, 0); // underrunCount (missing frames)
+
+  // Interleaved samples: [L0, R0, L1, R1, ...]
+  samples.set([0.1, 0.2, 1.1, 1.2]);
+
+  const proc = new AeroAudioProcessor({
+    processorOptions: { ringBuffer: sab, channelCount, capacityFrames },
+  });
+
+  let lastMessage: unknown = null;
+  proc.port.postMessage = (msg: unknown) => {
+    lastMessage = msg;
+  };
+
+  const framesNeeded = 4;
+  const outputs: Float32Array[][] = [[new Float32Array(framesNeeded), new Float32Array(framesNeeded)]];
+  proc.process([], outputs);
+
+  assert.deepEqual(Array.from(outputs[0][0]), [0.1, 1.1, 0, 0]);
+  assert.deepEqual(Array.from(outputs[0][1]), [0.2, 1.2, 0, 0]);
+  assert.equal(Atomics.load(header, 0) >>> 0, 2);
+  assert.equal(Atomics.load(header, 2) >>> 0, 2);
+  assert.deepEqual(lastMessage, {
+    type: "underrun",
+    underrunFramesAdded: 2,
+    underrunFramesTotal: 2,
+    underrunCount: 2,
+  });
+
+  // Next quantum: buffer empty, so we should add 4 more missing frames.
+  lastMessage = null;
+  const outputs2: Float32Array[][] = [[new Float32Array(framesNeeded), new Float32Array(framesNeeded)]];
+  proc.process([], outputs2);
+
+  assert.deepEqual(Array.from(outputs2[0][0]), [0, 0, 0, 0]);
+  assert.deepEqual(Array.from(outputs2[0][1]), [0, 0, 0, 0]);
+  assert.equal(Atomics.load(header, 2) >>> 0, 6);
+  assert.deepEqual(lastMessage, {
+    type: "underrun",
+    underrunFramesAdded: 4,
+    underrunFramesTotal: 6,
+    underrunCount: 6,
+  });
+});
+
+test("addUnderrunFrames wraps as u32", () => {
+  const { header } = makeRingBuffer(1, 1);
+  Atomics.store(header, 2, 0xffff_fffe);
+  const total = addUnderrunFrames(header, 4);
+  assert.equal(total, 2);
+  assert.equal(Atomics.load(header, 2) >>> 0, 2);
+});
+
