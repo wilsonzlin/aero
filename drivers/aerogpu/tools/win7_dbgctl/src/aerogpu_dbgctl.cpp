@@ -1318,7 +1318,7 @@ int wmain(int argc, wchar_t **argv) {
       }
       const wchar_t *arg = argv[++i];
       wchar_t *end = NULL;
-      mapSharedHandle = wcstoull(arg, &end, 0);
+      mapSharedHandle = (uint64_t)_wcstoui64(arg, &end, 0);
       if (!end || end == arg || *end != 0) {
         fwprintf(stderr, L"Invalid --map-shared-handle value: %s\n", arg);
         return 1;
@@ -1343,19 +1343,6 @@ int wmain(int argc, wchar_t **argv) {
         return 1;
       }
       vblankIntervalMs = (uint32_t)wcstoul(argv[++i], NULL, 0);
-      continue;
-    }
-
-    if (wcscmp(a, L"--map-shared-handle") == 0) {
-      if (i + 1 >= argc) {
-        fwprintf(stderr, L"--map-shared-handle requires an argument\n");
-        PrintUsage();
-        return 1;
-      }
-      if (!SetCommand(CMD_MAP_SHARED_HANDLE)) {
-        return 1;
-      }
-      mapSharedHandle = (uint64_t)_wcstoui64(argv[++i], NULL, 0);
       continue;
     }
 
@@ -1498,9 +1485,6 @@ int wmain(int argc, wchar_t **argv) {
     break;
   case CMD_SELFTEST:
     rc = DoSelftest(&f, open.hAdapter, timeoutMs);
-    break;
-  case CMD_MAP_SHARED_HANDLE:
-    rc = DoMapSharedHandle(&f, open.hAdapter, mapSharedHandle);
     break;
   default:
     rc = 1;
