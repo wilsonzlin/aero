@@ -2,14 +2,14 @@
 
 #include <ntddk.h>
 
-#include "virtio_pci_modern_miniport.h"
+#include "virtio_pci_legacy.h"
 
 /*
  * Split virtqueue implementation ("vring") per virtio specification.
  *
  * The queue memory is allocated as a single physically-contiguous region and
- * shared with the device via the virtio-pci modern common_cfg queue address
- * registers (queue_desc/queue_avail/queue_used).
+ * shared with the device via the legacy virtio-pci `QUEUE_PFN = (ring_pa >> 12)`
+ * register programming model.
  *
  * This implementation does not negotiate or require:
  *  - VIRTIO_RING_F_INDIRECT_DESC
@@ -18,7 +18,8 @@
 
 /* Split ring alignment requirements (virtio 1.0). */
 #define VIRTIO_VRING_DESC_ALIGN 16u
-#define VIRTIO_VRING_USED_ALIGN 4u
+/* Legacy virtio-pci requires the used ring to be aligned to vring_align (4096). */
+#define VIRTIO_VRING_USED_ALIGN VIRTIO_PCI_VRING_ALIGN
 
 #define VRING_DESC_F_NEXT  0x0001
 #define VRING_DESC_F_WRITE 0x0002

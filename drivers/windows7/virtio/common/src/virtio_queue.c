@@ -64,18 +64,14 @@ NTSTATUS VirtioQueueCreate(_Inout_ VIRTIO_PCI_DEVICE* Device, _Out_ VIRTIO_QUEUE
   PHYSICAL_ADDRESS Low = {0};
   PHYSICAL_ADDRESS High;
   PHYSICAL_ADDRESS Skip = {0};
-  ULONG DescBytes;
-  UINT64 DescPa;
-  UINT64 AvailPa;
-  UINT64 UsedPa;
-  NTSTATUS Status;
 
   RtlZeroMemory(Queue, sizeof(*Queue));
   Queue->QueueIndex = QueueIndex;
 
   High.QuadPart = ~0ull;
 
-  Queue->QueueSize = VirtioPciGetQueueSize(Device, QueueIndex);
+  VirtioPciSelectQueue(Device, QueueIndex);
+  Queue->QueueSize = VirtioPciReadQueueSize(Device);
   if (Queue->QueueSize == 0) {
     return STATUS_NOT_SUPPORTED;
   }
@@ -87,7 +83,12 @@ NTSTATUS VirtioQueueCreate(_Inout_ VIRTIO_PCI_DEVICE* Device, _Out_ VIRTIO_QUEUE
   }
 
   Queue->RingPa = MmGetPhysicalAddress(Queue->RingVa);
-  if ((Queue->RingPa.QuadPart & (VIRTIO_VRING_DESC_ALIGN - 1)) != 0) {
+  /*
+   * Legacy virtio-pci uses a PFN register (ring_pa >> 12), so the ring base must
+   * be page-aligned (4096). This also implies the virtio 1.0 16-byte descriptor
+   * alignment.
+   */
+  if ((Queue->RingPa.QuadPart & (VIRTIO_PCI_VRING_ALIGN - 1)) != 0) {
     MmFreeContiguousMemory(Queue->RingVa);
     Queue->RingVa = NULL;
     return STATUS_DATATYPE_MISALIGNMENT;
@@ -104,30 +105,28 @@ NTSTATUS VirtioQueueCreate(_Inout_ VIRTIO_PCI_DEVICE* Device, _Out_ VIRTIO_QUEUE
   VirtioQueueInitLayout(Queue);
   VirtioQueueResetState(Queue);
 
-  DescBytes = sizeof(VRING_DESC) * (ULONG)Queue->QueueSize;
+  /*
+   * Program the ring base PFN for the selected queue.
+   * The device observes the ring contents (including avail/used indices) after
+   * QUEUE_PFN is written.
+   */
+  VirtioPciSelectQueue(Device, QueueIndex);
+  VirtioPciWriteQueuePfn(Device, (ULONG)(Queue->RingPa.QuadPart >> 12));
 
-  DescPa = (UINT64)Queue->RingPa.QuadPart;
-  AvailPa = DescPa + (UINT64)DescBytes;
-  UsedPa = DescPa + (UINT64)Queue->UsedOffset;
-
-  Status = VirtioPciSetupQueue(Device, QueueIndex, DescPa, AvailPa, UsedPa);
-  if (!NT_SUCCESS(Status)) {
-    VirtioQueueDelete(Device, Queue);
-    return Status;
-  }
-
-  Status = VirtioPciGetQueueNotifyAddress(Device, QueueIndex, &Queue->NotifyAddr);
-  if (!NT_SUCCESS(Status)) {
-    VirtioQueueDelete(Device, Queue);
-    return Status;
-  }
+  /*
+   * Legacy virtio-pci uses the fixed QUEUE_NOTIFY port register; no per-queue
+   * notify address exists.
+   */
+  Queue->NotifyAddr = NULL;
 
   return STATUS_SUCCESS;
 }
 
 VOID VirtioQueueDelete(_Inout_ VIRTIO_PCI_DEVICE* Device, _Inout_ VIRTIO_QUEUE* Queue) {
   if (Queue->RingVa) {
-    VirtioPciDisableQueue(Device, Queue->QueueIndex);
+    /* Detach the ring from the device before freeing its memory. */
+    VirtioPciSelectQueue(Device, Queue->QueueIndex);
+    VirtioPciWriteQueuePfn(Device, 0);
 
     MmFreeContiguousMemory(Queue->RingVa);
     Queue->RingVa = NULL;
