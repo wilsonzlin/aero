@@ -6,26 +6,19 @@ export const CAPACITY_SAMPLES_INDEX = 3;
 export const HEADER_U32_LEN = 4;
 export const HEADER_BYTES = HEADER_U32_LEN * 4;
 
-export interface MicRingBuffer {
-  sab: SharedArrayBuffer;
-  header: Uint32Array;
-  data: Float32Array;
-  capacity: number;
-}
-
-export function samplesAvailable(readPos: number, writePos: number): number {
+export function samplesAvailable(readPos, writePos) {
   return (writePos - readPos) >>> 0;
 }
 
-export function samplesAvailableClamped(readPos: number, writePos: number, capacity: number): number {
+export function samplesAvailableClamped(readPos, writePos, capacity) {
   return Math.min(samplesAvailable(readPos, writePos), capacity >>> 0);
 }
 
-export function samplesFree(readPos: number, writePos: number, capacity: number): number {
+export function samplesFree(readPos, writePos, capacity) {
   return (capacity - samplesAvailableClamped(readPos, writePos, capacity)) >>> 0;
 }
 
-export function createMicRingBuffer(capacitySamples: number): MicRingBuffer {
+export function createMicRingBuffer(capacitySamples) {
   if (!Number.isFinite(capacitySamples) || capacitySamples <= 0) {
     throw new Error(`invalid mic ring buffer capacity: ${capacitySamples}`);
   }
@@ -44,7 +37,7 @@ export function createMicRingBuffer(capacitySamples: number): MicRingBuffer {
   return { sab, header, data, capacity: cap };
 }
 
-export function micRingBufferReadInto(rb: Pick<MicRingBuffer, "header" | "data" | "capacity">, out: Float32Array): number {
+export function micRingBufferReadInto(rb, out) {
   const readPos = Atomics.load(rb.header, READ_POS_INDEX) >>> 0;
   const writePos = Atomics.load(rb.header, WRITE_POS_INDEX) >>> 0;
   const available = samplesAvailableClamped(readPos, writePos, rb.capacity);
@@ -63,7 +56,7 @@ export function micRingBufferReadInto(rb: Pick<MicRingBuffer, "header" | "data" 
   return toRead;
 }
 
-export function micRingBufferWrite(rb: Pick<MicRingBuffer, "header" | "data" | "capacity">, samples: Float32Array): number {
+export function micRingBufferWrite(rb, samples) {
   if (samples.length === 0) return 0;
 
   let writePos = Atomics.load(rb.header, WRITE_POS_INDEX) >>> 0;

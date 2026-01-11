@@ -5,9 +5,9 @@ import {
   READ_POS_INDEX,
   type MicRingBuffer,
   WRITE_POS_INDEX,
-} from "./mic_ring";
+} from "./mic_ring.js";
 
-export { createMicRingBuffer, micRingBufferReadInto, type MicRingBuffer } from "./mic_ring";
+export { createMicRingBuffer, micRingBufferReadInto, type MicRingBuffer } from "./mic_ring.js";
 
 export type MicCaptureState =
   | "inactive"

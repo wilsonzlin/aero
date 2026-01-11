@@ -6,7 +6,7 @@ import {
   micRingBufferWrite,
   READ_POS_INDEX,
   WRITE_POS_INDEX,
-} from "./mic_ring";
+} from "./mic_ring.js";
 
 describe("micRingBufferReadInto", () => {
   it("reads across wrap-around and updates read index", () => {

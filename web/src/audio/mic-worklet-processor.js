@@ -23,7 +23,7 @@ import {
   READ_POS_INDEX,
   samplesAvailable,
   WRITE_POS_INDEX,
-} from "./mic_ring";
+} from "./mic_ring.js";
 
 class AeroMicCaptureProcessor extends AudioWorkletProcessor {
   constructor(options) {
