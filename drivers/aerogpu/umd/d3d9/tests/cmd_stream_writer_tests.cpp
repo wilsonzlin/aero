@@ -50,20 +50,37 @@ struct CmdLoc {
   size_t offset = 0;
 };
 
-CmdLoc FindLastOpcode(const uint8_t* buf, size_t size, uint32_t opcode) {
+size_t StreamBytesUsed(const uint8_t* buf, size_t capacity) {
+  if (!buf || capacity < sizeof(aerogpu_cmd_stream_header)) {
+    return 0;
+  }
+
+  // Forward-compat: `aerogpu_cmd_stream_header.size_bytes` is bytes-used. Callers may provide a
+  // backing buffer (capacity) larger than `size_bytes` (page rounding / reuse). Helpers must only
+  // walk the declared prefix and ignore trailing bytes.
+  const auto* stream = reinterpret_cast<const aerogpu_cmd_stream_header*>(buf);
+  const size_t used = stream->size_bytes;
+  if (used < sizeof(aerogpu_cmd_stream_header) || used > capacity) {
+    return 0;
+  }
+  return used;
+}
+
+CmdLoc FindLastOpcode(const uint8_t* buf, size_t capacity, uint32_t opcode) {
   CmdLoc loc{};
-  if (!buf || size < sizeof(aerogpu_cmd_stream_header)) {
+  const size_t stream_len = StreamBytesUsed(buf, capacity);
+  if (stream_len == 0) {
     return loc;
   }
 
   size_t offset = sizeof(aerogpu_cmd_stream_header);
-  while (offset + sizeof(aerogpu_cmd_hdr) <= size) {
+  while (offset + sizeof(aerogpu_cmd_hdr) <= stream_len) {
     const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + offset);
     if (hdr->opcode == opcode) {
       loc.hdr = hdr;
       loc.offset = offset;
     }
-    if (hdr->size_bytes == 0 || hdr->size_bytes > size - offset) {
+    if (hdr->size_bytes == 0 || hdr->size_bytes > stream_len - offset) {
       break;
     }
     offset += hdr->size_bytes;
@@ -71,19 +88,20 @@ CmdLoc FindLastOpcode(const uint8_t* buf, size_t size, uint32_t opcode) {
   return loc;
 }
 
-size_t CountOpcode(const uint8_t* buf, size_t size, uint32_t opcode) {
-  if (!buf || size < sizeof(aerogpu_cmd_stream_header)) {
+size_t CountOpcode(const uint8_t* buf, size_t capacity, uint32_t opcode) {
+  const size_t stream_len = StreamBytesUsed(buf, capacity);
+  if (stream_len == 0) {
     return 0;
   }
 
   size_t count = 0;
   size_t offset = sizeof(aerogpu_cmd_stream_header);
-  while (offset + sizeof(aerogpu_cmd_hdr) <= size) {
+  while (offset + sizeof(aerogpu_cmd_hdr) <= stream_len) {
     const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + offset);
     if (hdr->opcode == opcode) {
       count++;
     }
-    if (hdr->size_bytes == 0 || hdr->size_bytes > size - offset) {
+    if (hdr->size_bytes == 0 || hdr->size_bytes > stream_len - offset) {
       break;
     }
     offset += hdr->size_bytes;
