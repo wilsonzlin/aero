@@ -540,7 +540,7 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
               // Serial output is emitted by the device model; forward it over
               // ioIpc so the CPU worker can decide how to surface it (console/UI,
               // log capture, etc).
-              enqueueIoEvent(encodeEvent({ kind: "serialOutput", port: port & 0xffff, data }));
+              enqueueIoEvent(encodeEvent({ kind: "serialOutput", port: port & 0xffff, data }), { bestEffort: true });
             },
           };
 
@@ -692,10 +692,11 @@ function flushPendingIoEvents(): void {
   }
 }
 
-function enqueueIoEvent(bytes: Uint8Array): void {
+function enqueueIoEvent(bytes: Uint8Array, opts?: { bestEffort?: boolean }): void {
   const evtRing = ioEvtRing;
   if (!evtRing) return;
   if (evtRing.tryPush(bytes)) return;
+  if (opts?.bestEffort) return;
   pendingIoEvents.push(bytes);
 }
 
