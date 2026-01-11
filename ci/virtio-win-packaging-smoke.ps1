@@ -2,7 +2,11 @@
 param(
   [string]$OutRoot = (Join-Path $PSScriptRoot "..\out\virtio-win-packaging-smoke"),
   [switch]$OmitOptionalDrivers,
-  [string]$GuestToolsSpecPath
+  [string]$GuestToolsSpecPath,
+  # Controls the wrapper's extraction defaults (-Profile). When set to "auto" (default),
+  # pick a profile that matches the well-known in-repo spec filenames.
+  [ValidateSet("auto", "minimal", "full")]
+  [string]$GuestToolsProfile = "auto"
 )
 
 Set-StrictMode -Version Latest
@@ -132,6 +136,20 @@ $GuestToolsSpecPath = [System.IO.Path]::GetFullPath($GuestToolsSpecPath)
 
 if (-not (Test-Path -LiteralPath $GuestToolsSpecPath -PathType Leaf)) {
   throw "Guest Tools packaging spec not found: $GuestToolsSpecPath"
+}
+
+$resolvedGuestToolsProfile = $GuestToolsProfile
+if ($resolvedGuestToolsProfile -eq "auto") {
+  $specBaseName = [System.IO.Path]::GetFileName($GuestToolsSpecPath).ToLowerInvariant()
+  if ($specBaseName -eq "win7-virtio-win.json") {
+    $resolvedGuestToolsProfile = "minimal"
+  } elseif ($specBaseName -eq "win7-virtio-full.json") {
+    $resolvedGuestToolsProfile = "full"
+  } else {
+    # Best-effort fallback: default to full so the wrapper attempts to extract optional
+    # virtio drivers unless explicitly constrained by -Drivers.
+    $resolvedGuestToolsProfile = "full"
+  }
 }
 
 if (-not [System.IO.Path]::IsPathRooted($OutRoot)) {
@@ -297,6 +315,7 @@ Write-Host "Running make-guest-tools-from-virtio-win.ps1..."
 & pwsh -NoProfile -ExecutionPolicy Bypass -File $guestToolsScript `
   -VirtioWinRoot $syntheticRoot `
   -OutDir $guestToolsOutDir `
+  -Profile $resolvedGuestToolsProfile `
   -SpecPath $GuestToolsSpecPath `
   -Version "0.0.0" `
   -BuildId "ci" `
