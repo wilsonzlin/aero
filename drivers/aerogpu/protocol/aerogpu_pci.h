@@ -94,7 +94,7 @@ extern "C" {
 /* Ring setup */
 #define AEROGPU_MMIO_REG_RING_GPA_LO 0x0100u /* RW: GPA of aerogpu_ring_header */
 #define AEROGPU_MMIO_REG_RING_GPA_HI 0x0104u /* RW */
-#define AEROGPU_MMIO_REG_RING_SIZE_BYTES 0x0108u /* RW: bytes mapped at RING_GPA */
+#define AEROGPU_MMIO_REG_RING_SIZE_BYTES 0x0108u /* RW: bytes mapped at RING_GPA (>= ring_header.size_bytes) */
 #define AEROGPU_MMIO_REG_RING_CONTROL 0x010Cu /* RW */
 
 /* Ring control bits */

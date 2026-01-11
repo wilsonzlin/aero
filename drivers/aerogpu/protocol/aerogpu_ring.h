@@ -189,7 +189,14 @@ AEROGPU_STATIC_ASSERT(offsetof(struct aerogpu_submit_desc, signal_fence) == 48);
 struct aerogpu_ring_header {
   uint32_t magic; /* AEROGPU_RING_MAGIC */
   uint32_t abi_version; /* AEROGPU_ABI_VERSION_U32 */
-  uint32_t size_bytes; /* Total bytes of the ring mapping */
+  /*
+   * Total bytes used by the ring layout.
+   *
+   * Forward-compat: treat as a minimum so the MMIO-programmed ring mapping
+   * (`AEROGPU_MMIO_REG_RING_SIZE_BYTES`) may be larger (page rounding, future
+   * extension space). The device validates `size_bytes <= RING_SIZE_BYTES`.
+   */
+  uint32_t size_bytes;
   uint32_t entry_count; /* Number of slots; must be power-of-two */
   uint32_t entry_stride_bytes; /* >= sizeof(struct aerogpu_submit_desc) */
   uint32_t flags;

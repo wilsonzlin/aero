@@ -189,7 +189,7 @@ ring_gpa:
 |---:|---|---|---|
 | `0x00` | `u32` | `magic` | Must be `AEROGPU_RING_MAGIC` (`0x474E5241`, `"ARNG"` LE) |
 | `0x04` | `u32` | `abi_version` | Must be `AEROGPU_ABI_VERSION_U32` |
-| `0x08` | `u32` | `size_bytes` | Total bytes of the ring mapping |
+| `0x08` | `u32` | `size_bytes` | Declared ring size in bytes (must be `<= AEROGPU_MMIO_REG_RING_SIZE_BYTES`) |
 | `0x0C` | `u32` | `entry_count` | Number of slots; must be power-of-two |
 | `0x10` | `u32` | `entry_stride_bytes` | Must be `>= sizeof(struct aerogpu_submit_desc)` (forward-compatible extension space) |
 | `0x14` | `u32` | `flags` | Reserved (0) |
