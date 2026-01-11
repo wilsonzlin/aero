@@ -88,6 +88,11 @@ call :log "Script dir: %SCRIPT_DIR%"
 call :log "System tools: %SYS32%"
 call :log "Logs: %LOG%"
 call :log_manifest
+if "%ARG_SKIP_STORAGE%"=="0" (
+  rem Clear any stale marker from a previous /skipstorage run as early as possible so
+  rem diagnostics reflect the current invocation even if setup fails before the storage step.
+  call :clear_storage_skip_marker
+)
 
 call :require_admin || goto :fail
 call :detect_arch || goto :fail
