@@ -8,7 +8,22 @@ fn package_outputs_are_reproducible_and_contain_expected_files() -> anyhow::Resu
     let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let testdata = repo_root.join("testdata");
 
-    let drivers_dir = testdata.join("drivers");
+    // The repo intentionally avoids tracking real driver binaries. For packager tests, create a
+    // private copy of `testdata/drivers` and inject a dummy DLL so we can verify that optional
+    // user-mode payloads are preserved in the output ISO/zip.
+    let drivers_src = testdata.join("drivers");
+    let drivers_tmp = tempfile::tempdir()?;
+    copy_dir_all(&drivers_src, drivers_tmp.path())?;
+    fs::write(
+        drivers_tmp.path().join("x86/testdrv/test.dll"),
+        b"dummy dll (x86)\n",
+    )?;
+    fs::write(
+        drivers_tmp.path().join("amd64/testdrv/test.dll"),
+        b"dummy dll (amd64)\n",
+    )?;
+
+    let drivers_dir = drivers_tmp.path().to_path_buf();
     let guest_tools_dir = testdata.join("guest-tools");
     let spec_path = testdata.join("spec.json");
     let windows_device_contract_path = device_contract_path();

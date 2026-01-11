@@ -26,6 +26,14 @@ pub struct DriverSpec {
     /// file for this driver (per-architecture).
     #[serde(default)]
     pub expected_hardware_ids: Vec<String>,
+    /// Optional `guest-tools/config/devices.cmd` variable name to source expected HWIDs from.
+    ///
+    /// The variable's value is parsed as a list of space-separated tokens, where each token may be
+    /// quoted. Each resulting HWID is normalized to the base `PCI\VEN_....&DEV_....` form (to avoid
+    /// requiring SUBSYS/REV-qualified IDs to appear in INFs), then regex-escaped and appended to
+    /// `expected_hardware_ids`.
+    #[serde(default)]
+    pub expected_hardware_ids_from_devices_cmd_var: Option<String>,
     /// By default, the packager skips common non-distributable build artifacts
     /// (PDBs, objs, source files, etc). If a driver needs one of these files to
     /// be present in the packaged directory, extensions can be explicitly
@@ -57,6 +65,8 @@ struct LegacyRequiredDriver {
     name: String,
     #[serde(default)]
     expected_hardware_ids: Vec<String>,
+    #[serde(default)]
+    expected_hardware_ids_from_devices_cmd_var: Option<String>,
 }
 
 impl From<PackagingSpecRaw> for PackagingSpec {
@@ -93,6 +103,10 @@ impl From<PackagingSpecRaw> for PackagingSpec {
                         existing.expected_hardware_ids.push(hwid);
                     }
                 }
+                if existing.expected_hardware_ids_from_devices_cmd_var.is_none() {
+                    existing.expected_hardware_ids_from_devices_cmd_var =
+                        legacy.expected_hardware_ids_from_devices_cmd_var;
+                }
                 continue;
             }
 
@@ -101,6 +115,7 @@ impl From<PackagingSpecRaw> for PackagingSpec {
                 name: legacy.name,
                 required: true,
                 expected_hardware_ids: legacy.expected_hardware_ids,
+                expected_hardware_ids_from_devices_cmd_var: legacy.expected_hardware_ids_from_devices_cmd_var,
                 allow_extensions: Vec::new(),
                 allow_path_regexes: Vec::new(),
             });

@@ -3,9 +3,7 @@
     {
       "name": "testdrv",
       "required": true,
-      "expected_hardware_ids": [
-        "PCI\\\\VEN_1234&DEV_5678"
-      ]
+      "expected_hardware_ids_from_devices_cmd_var": "AERO_TESTDRV_HWIDS"
     }
   ]
 }

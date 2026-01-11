@@ -34,6 +34,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 @dataclass(frozen=True)
 class DevicesConfig:
+    # Uppercased `set` variable name -> raw RHS value (unparsed).
+    vars_map: Mapping[str, str]
     virtio_blk_service: str
     virtio_blk_hwids: Tuple[str, ...]
     virtio_net_hwids: Tuple[str, ...]
@@ -46,6 +48,7 @@ class DevicesConfig:
 class SpecDriver:
     required: bool
     expected_hardware_ids: Tuple[str, ...]
+    expected_hardware_ids_from_devices_cmd_var: str | None
 
 
 @dataclass(frozen=True)
@@ -152,7 +155,28 @@ def _parse_quoted_list(value: str) -> Tuple[str, ...]:
     value = value.strip()
     if not value:
         return ()
-    return (value,)
+    # Fallback: split on whitespace to mimic the packager's tokenization rules
+    # for devices.cmd variables.
+    return tuple(value.split())
+
+
+_PCI_VEN_DEV_RE = re.compile(r"(?i)PCI\\VEN_[0-9A-F]{4}&DEV_[0-9A-F]{4}")
+
+
+def _pci_hwid_base_ven_dev(hwid: str) -> str:
+    """
+    Extract the base `PCI\\VEN_....&DEV_....` prefix from a PCI hardware ID string.
+
+    `devices.cmd` often lists the full set of enumerated HWIDs (including SUBSYS/REV qualifiers)
+    because setup.cmd uses them for CriticalDeviceDatabase seeding. Driver INFs usually match the
+    base VEN/DEV pair (Windows also enumerates a less-specific `PCI\\VEN_....&DEV_....` ID), so
+    the packaging spec validator normalizes to that prefix.
+    """
+
+    m = _PCI_VEN_DEV_RE.search(hwid)
+    if m:
+        return m.group(0)
+    return hwid
 
 
 def load_devices_cmd(path: Path) -> DevicesConfig:
@@ -174,7 +198,7 @@ def load_devices_cmd(path: Path) -> DevicesConfig:
             continue
 
         key, value = parsed
-        vars_map[key] = value
+        vars_map[key.upper()] = value
 
     missing: List[str] = []
     for key in ("AERO_VIRTIO_BLK_SERVICE", "AERO_VIRTIO_BLK_HWIDS", "AERO_VIRTIO_NET_HWIDS"):
@@ -196,6 +220,7 @@ def load_devices_cmd(path: Path) -> DevicesConfig:
         )
 
     return DevicesConfig(
+        vars_map=vars_map,
         virtio_blk_service=virtio_blk_service,
         virtio_blk_hwids=_parse_quoted_list(vars_map.get("AERO_VIRTIO_BLK_HWIDS", "")),
         virtio_net_hwids=_parse_quoted_list(vars_map.get("AERO_VIRTIO_NET_HWIDS", "")),
@@ -221,14 +246,26 @@ def load_packaging_spec(path: Path) -> Mapping[str, SpecDriver]:
     # We merge both if present, matching aero_packager behavior.
     out: Dict[str, Dict[str, object]] = {}
 
-    def merge_driver(*, name: str, required: bool, patterns: Sequence[str]) -> None:
-        entry = out.setdefault(name, {"required": False, "patterns": []})
+    def merge_driver(
+        *, name: str, required: bool, patterns: Sequence[str], devices_cmd_var: str | None
+    ) -> None:
+        entry = out.setdefault(name, {"required": False, "patterns": [], "devices_cmd_var": None})
         entry["required"] = bool(entry["required"]) or required
         existing_patterns = entry["patterns"]
         assert isinstance(existing_patterns, list)
         for pattern in patterns:
             if pattern not in existing_patterns:
                 existing_patterns.append(pattern)
+
+        if devices_cmd_var:
+            existing_var = entry.get("devices_cmd_var")
+            if existing_var is None:
+                entry["devices_cmd_var"] = devices_cmd_var
+            elif isinstance(existing_var, str) and existing_var.lower() != devices_cmd_var.lower():
+                raise ValidationError(
+                    f"Spec {path} driver {name!r} has conflicting expected_hardware_ids_from_devices_cmd_var values: "
+                    f"{existing_var!r} vs {devices_cmd_var!r}"
+                )
 
     def add_entries(field: str) -> None:
         entries = spec.get(field)
@@ -241,6 +278,7 @@ def load_packaging_spec(path: Path) -> Mapping[str, SpecDriver]:
                 raise ValidationError(f"Spec {path} contains a non-object entry in {field}: {entry!r}")
             name = entry.get("name")
             hwids = entry.get("expected_hardware_ids")
+            devices_cmd_var = entry.get("expected_hardware_ids_from_devices_cmd_var")
             if not isinstance(name, str) or not name:
                 raise ValidationError(f"Spec {path} driver entry missing valid 'name': {entry!r}")
 
@@ -255,6 +293,15 @@ def load_packaging_spec(path: Path) -> Mapping[str, SpecDriver]:
             elif field == "required_drivers":
                 required = True
 
+            if devices_cmd_var is None:
+                devices_cmd_var_val = None
+            elif isinstance(devices_cmd_var, str) and devices_cmd_var.strip():
+                devices_cmd_var_val = devices_cmd_var.strip()
+            else:
+                raise ValidationError(
+                    f"Spec {path} driver {name!r} has invalid 'expected_hardware_ids_from_devices_cmd_var' (expected non-empty string)."
+                )
+
             if hwids is None:
                 hwids = []
             if not isinstance(hwids, list) or not all(isinstance(x, str) for x in hwids):
@@ -262,7 +309,12 @@ def load_packaging_spec(path: Path) -> Mapping[str, SpecDriver]:
                     f"Spec {path} driver {name!r} has invalid 'expected_hardware_ids' (expected list[str])."
                 )
 
-            merge_driver(name=name, required=required, patterns=hwids)
+            merge_driver(
+                name=name,
+                required=required,
+                patterns=hwids,
+                devices_cmd_var=devices_cmd_var_val,
+            )
 
     add_entries("drivers")
     add_entries("required_drivers")
@@ -274,13 +326,22 @@ def load_packaging_spec(path: Path) -> Mapping[str, SpecDriver]:
     for name, entry in out.items():
         required_val = entry.get("required", False)
         patterns_val = entry.get("patterns", [])
+        devices_cmd_var_val = entry.get("devices_cmd_var")
         if not isinstance(required_val, bool) or not isinstance(patterns_val, list):
             raise ValidationError(f"Spec {path} contains an invalid driver entry for {name!r}.")
         if not all(isinstance(p, str) for p in patterns_val):
             raise ValidationError(
                 f"Spec {path} driver {name!r} has invalid expected_hardware_ids (expected list[str])."
             )
-        parsed[name] = SpecDriver(required=required_val, expected_hardware_ids=tuple(patterns_val))
+        if devices_cmd_var_val is not None and not isinstance(devices_cmd_var_val, str):
+            raise ValidationError(
+                f"Spec {path} driver {name!r} has invalid expected_hardware_ids_from_devices_cmd_var (expected string)."
+            )
+        parsed[name] = SpecDriver(
+            required=required_val,
+            expected_hardware_ids=tuple(patterns_val),
+            expected_hardware_ids_from_devices_cmd_var=devices_cmd_var_val,
+        )
 
     return parsed
 
@@ -367,8 +428,11 @@ def _validate_hwid_contract(
 
     if not patterns:
         raise ValidationError(
-            f"Spec {spec_path} driver {driver_name!r} has an empty expected_hardware_ids list.\n"
-            f"Remediation: add the {driver_kind} PCI HWID regex(es) under {driver_name}.expected_hardware_ids."
+            f"Spec {spec_path} driver {driver_name!r} has no expected HWID patterns.\n"
+            "Remediation: set either:\n"
+            f"- {driver_name}.expected_hardware_ids (regex list), or\n"
+            f"- {driver_name}.expected_hardware_ids_from_devices_cmd_var (devices.cmd variable name)\n"
+            f"to cover the {driver_kind} PCI HWIDs."
         )
 
     match = _find_first_match(patterns, hwids)
@@ -541,10 +605,32 @@ def validate(devices: DevicesConfig, spec_path: Path, spec_expected: Mapping[str
         drv = spec_expected.get(driver_name)
         if drv is None:
             return
+        # Optional drivers may not be configured in devices.cmd; only validate
+        # them when HWIDs are present.
+        if not drv.required and not hwids:
+            return
+        patterns = list(drv.expected_hardware_ids)
+        if drv.expected_hardware_ids_from_devices_cmd_var:
+            var = drv.expected_hardware_ids_from_devices_cmd_var
+            raw = devices.vars_map.get(var.upper())
+            if raw is None:
+                raise ValidationError(
+                    f"Spec {spec_path} driver {driver_name!r} references missing devices.cmd variable: {var}"
+                )
+            derived = _parse_quoted_list(raw)
+            if not derived:
+                raise ValidationError(
+                    f"devices.cmd variable {var} referenced by spec {spec_path} driver {driver_name!r} is empty."
+                )
+            for hwid in derived:
+                base = _pci_hwid_base_ven_dev(hwid)
+                pat = re.escape(base)
+                if pat not in patterns:
+                    patterns.append(pat)
         match = _validate_hwid_contract(
             spec_path=spec_path,
             driver_name=driver_name,
-            patterns=drv.expected_hardware_ids,
+            patterns=patterns,
             hwids=hwids,
             devices_var=devices_var,
             driver_kind=driver_kind,

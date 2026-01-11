@@ -34,9 +34,10 @@ This spec is the default used by `ci/package-guest-tools.ps1` and aims to match 
 Notes:
 
 - `aerogpu` is the canonical Guest Tools-facing directory name for the AeroGPU driver (source: `drivers/aerogpu/`).
-- The `aerogpu.expected_hardware_ids` list pins the canonical AeroGPU HWID family (`PCI\\VEN_A3A0&DEV_0001`).
-  The legacy bring-up HWID (`PCI\\VEN_1AED&DEV_0001`) is supported by the KMD but is intentionally not
-  bound by the shipped INFs.
+- The AeroGPU HWID validation is primarily sourced from `guest-tools/config/devices.cmd` (via
+  `expected_hardware_ids_from_devices_cmd_var`) so the packager stays in sync with the in-guest
+  installer configuration. Any additional `expected_hardware_ids` regexes in the spec are also
+  enforced.
 
 ## `win7-signed.json`
 

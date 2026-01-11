@@ -3,9 +3,7 @@
     {
       "name": "aerogpu",
       "required": true,
-      "expected_hardware_ids": [
-        "PCI\\\\VEN_A3A0&DEV_0001"
-      ]
+      "expected_hardware_ids_from_devices_cmd_var": "AERO_GPU_HWIDS"
     },
     {
       "name": "virtio-blk",

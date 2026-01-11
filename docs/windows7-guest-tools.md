@@ -50,8 +50,8 @@ If you are building from source / working on a PR, the GitHub Actions workflow
   - Avoid “pre-activated”, “all-in-one”, or heavily modified ISOs (they frequently break servicing, signing, or boot).
 - A Windows 7 product key/license that matches your ISO edition.
 - `aero-guest-tools.iso` (or `aero-guest-tools.zip`) shipped with Aero builds/releases.
-  - These artifacts are produced by CI from **signed driver packages** and include a `manifest.json`
-    for integrity/version reporting.
+  - These artifacts are produced by CI from **signed driver packages** and include a `manifest.json` for integrity/version reporting.
+  - If you're building from source/CI, see [`docs/16-guest-tools-packaging.md`](./16-guest-tools-packaging.md) for how the ISO/zip is produced from signed driver packages.
 - Enough resources for the guest:
   - Disk: **30–40 GB** recommended for a comfortable Win7 install.
   - Memory: **2 GB** minimum (x86), **3–4 GB** recommended (x64).

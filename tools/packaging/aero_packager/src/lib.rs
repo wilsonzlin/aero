@@ -55,7 +55,11 @@ pub fn package_guest_tools(config: &PackageConfig) -> Result<PackageOutputs> {
 
     let spec = PackagingSpec::load(&config.spec_path).with_context(|| "load packaging spec")?;
 
-    let driver_plan = validate_drivers(&spec, &config.drivers_dir)
+    let devices_cmd_path = config.guest_tools_dir.join("config").join("devices.cmd");
+    let devices_cmd_vars =
+        read_devices_cmd_vars(&devices_cmd_path).with_context(|| "read guest-tools/config/devices.cmd")?;
+
+    let driver_plan = validate_drivers(&spec, &config.drivers_dir, &devices_cmd_vars)
         .with_context(|| "validate driver artifacts")?;
 
     let mut files = collect_files(config, &driver_plan)?;
@@ -376,7 +380,11 @@ fn collect_files(config: &PackageConfig, driver_plan: &DriverPlan) -> Result<Vec
     Ok(out)
 }
 
-fn validate_drivers(spec: &PackagingSpec, drivers_dir: &Path) -> Result<DriverPlan> {
+fn validate_drivers(
+    spec: &PackagingSpec,
+    drivers_dir: &Path,
+    devices_cmd_vars: &HashMap<String, String>,
+) -> Result<DriverPlan> {
     if spec.drivers.is_empty() {
         bail!("packaging spec contains no drivers");
     }
@@ -446,7 +454,7 @@ fn validate_drivers(spec: &PackagingSpec, drivers_dir: &Path) -> Result<DriverPl
                 continue;
             }
 
-            validate_driver_dir(drv, arch, &driver_dir)?;
+            validate_driver_dir(drv, arch, &driver_dir, devices_cmd_vars)?;
             out.push(DriverToInclude {
                 spec: drv.clone(),
                 dir: driver_dir,
@@ -457,7 +465,12 @@ fn validate_drivers(spec: &PackagingSpec, drivers_dir: &Path) -> Result<DriverPl
     Ok(plan)
 }
 
-fn validate_driver_dir(driver: &DriverSpec, arch: &str, driver_dir: &Path) -> Result<()> {
+fn validate_driver_dir(
+    driver: &DriverSpec,
+    arch: &str,
+    driver_dir: &Path,
+    devices_cmd_vars: &HashMap<String, String>,
+) -> Result<()> {
     let allowlist = DriverFileAllowlist::from_driver_spec(driver)
         .with_context(|| format!("load file allowlist overrides for driver {}", driver.name))?;
 
@@ -516,7 +529,44 @@ fn validate_driver_dir(driver: &DriverSpec, arch: &str, driver_dir: &Path) -> Re
         );
     }
 
-    for hwid_re in &driver.expected_hardware_ids {
+    let mut expected_hardware_ids = driver.expected_hardware_ids.clone();
+    if let Some(var) = &driver.expected_hardware_ids_from_devices_cmd_var {
+        let key = var.to_ascii_uppercase();
+        let raw = devices_cmd_vars.get(&key).ok_or_else(|| {
+            anyhow::anyhow!(
+                "driver {} references missing devices.cmd variable: {}",
+                driver.name,
+                var
+            )
+        })?;
+        let hwids = parse_devices_cmd_token_list(raw);
+        if hwids.is_empty() {
+            bail!("driver {} devices.cmd variable {} is empty", driver.name, var);
+        }
+        // devices.cmd tends to list the full set of enumerated HWIDs (including SUBSYS/REV
+        // qualifiers) because setup.cmd uses them for CriticalDeviceDatabase seeding.
+        //
+        // However, INFs typically only match the base vendor/device pair (Windows will also
+        // enumerate a less-specific `PCI\VEN_....&DEV_....` HWID even when SUBSYS/REV are
+        // present). To keep the packager's INF validation aligned with real-world INF matching,
+        // normalize each devices.cmd HWID token down to the base `PCI\VEN_....&DEV_....` form
+        // before requiring it to appear in the INF.
+        let base_re = regex::RegexBuilder::new(r"(?i)PCI\\VEN_[0-9A-F]{4}&DEV_[0-9A-F]{4}")
+            .build()
+            .expect("valid PCI HWID regex");
+        for hwid in hwids {
+            let base = base_re
+                .find(&hwid)
+                .map(|m| m.as_str())
+                .unwrap_or(hwid.as_str());
+            let pat = regex::escape(base);
+            if !expected_hardware_ids.contains(&pat) {
+                expected_hardware_ids.push(pat);
+            }
+        }
+    }
+
+    for hwid_re in &expected_hardware_ids {
         let re = regex::RegexBuilder::new(hwid_re)
             .case_insensitive(true)
             .build()
@@ -906,6 +956,106 @@ fn normalize_inf_path_token(token: &str) -> String {
     }
     s = s.replace('\\', "/");
     s.trim().to_string()
+}
+
+fn read_devices_cmd_vars(path: &Path) -> Result<HashMap<String, String>> {
+    let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
+    let text = String::from_utf8_lossy(&bytes);
+
+    let mut vars = HashMap::new();
+
+    for line in text.lines() {
+        let l = line.trim();
+        if l.is_empty() {
+            continue;
+        }
+
+        let lower = l.to_ascii_lowercase();
+        if lower == "rem"
+            || lower.starts_with("rem ")
+            || lower.starts_with("::")
+            || lower.starts_with("@echo")
+        {
+            continue;
+        }
+
+        // Support the common forms:
+        //   set VAR=value
+        //   set "VAR=value"
+        if !(lower.starts_with("set ") || lower.starts_with("set\t") || lower == "set") {
+            continue;
+        }
+
+        let rest = l.get(3..).unwrap_or("").trim_start();
+        if rest.is_empty() {
+            continue;
+        }
+
+        let (name, value) = if rest.starts_with('"') {
+            let inner = rest
+                .strip_prefix('"')
+                .and_then(|s| s.split_once('"'))
+                .map(|(inner, _after)| inner)
+                .unwrap_or("");
+            if let Some((k, v)) = inner.split_once('=') {
+                (k.trim().to_string(), v.to_string())
+            } else {
+                continue;
+            }
+        } else if let Some((k, v)) = rest.split_once('=') {
+            (k.trim().to_string(), v.trim().to_string())
+        } else {
+            continue;
+        };
+
+        if name.is_empty() {
+            continue;
+        }
+        vars.insert(name.to_ascii_uppercase(), value);
+    }
+
+    Ok(vars)
+}
+
+fn parse_devices_cmd_token_list(raw: &str) -> Vec<String> {
+    let bytes = raw.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0;
+
+    while i < bytes.len() {
+        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if i >= bytes.len() {
+            break;
+        }
+
+        if bytes[i] == b'"' {
+            i += 1;
+            let start = i;
+            while i < bytes.len() && bytes[i] != b'"' {
+                i += 1;
+            }
+            let token = raw.get(start..i).unwrap_or("").to_string();
+            if !token.is_empty() {
+                out.push(token);
+            }
+            if i < bytes.len() && bytes[i] == b'"' {
+                i += 1;
+            }
+        } else {
+            let start = i;
+            while i < bytes.len() && !bytes[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            let token = raw.get(start..i).unwrap_or("").to_string();
+            if !token.is_empty() {
+                out.push(token);
+            }
+        }
+    }
+
+    out
 }
 
 fn resolve_input_arch_dir(drivers_dir: &Path, arch_out: &str) -> Result<PathBuf> {
