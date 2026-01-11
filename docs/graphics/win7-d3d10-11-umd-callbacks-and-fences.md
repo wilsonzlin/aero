@@ -351,7 +351,14 @@ If you are not using the runtime’s wait callback (e.g., in standalone tooling)
 - Function: `NTSTATUS APIENTRY D3DKMTWaitForSynchronizationObject(D3DKMT_WAITFORSYNCHRONIZATIONOBJECT* pData)`
 - Struct: `D3DKMT_WAITFORSYNCHRONIZATIONOBJECT` (in `d3dkmthk.h`)
 
-The “target fence value” is specified the same way: via the `FenceValue` array field inside the wait struct.
+Important fields (Win7/WDDM 1.1):
+
+- `UINT ObjectCount`
+- `const D3DKMT_HANDLE* ObjectHandleArray`
+- `const UINT64* FenceValueArray`
+- `UINT64 Timeout` (**milliseconds**; `0` is a poll)
+
+The “target fence value” is specified the same way: via the `FenceValueArray` field inside the wait struct.
 
 **Recommendation:** in a real UMD, prefer the runtime callback if available; it keeps the driver insulated from some OS-version quirks and ensures WOW64 thunking is correct.
 
