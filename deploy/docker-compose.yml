@@ -138,9 +138,27 @@ services:
       #   AERO_L2_ALLOWED_ORIGINS_EXTRA=",https://localhost:5173"
       AERO_L2_ALLOWED_ORIGINS: https://${AERO_DOMAIN:-localhost}${AERO_L2_ALLOWED_ORIGINS_EXTRA:-}
 
-      # Optional token authentication (recommended for internet-exposed deployments).
+      # L2 tunnel auth (Option C).
       #
-      # If set, upgrades must include the token via:
+      # Prefer cookie session auth for single-origin deployments (recommended). This
+      # validates the `aero_session` cookie minted by `backend/aero-gateway` at
+      # `POST /session`.
+      #
+      # IMPORTANT: cookie auth requires the L2 proxy and gateway to share the same
+      # session signing secret. This deploy stack wires `SESSION_SECRET` into both.
+      AERO_L2_AUTH_MODE: ${AERO_L2_AUTH_MODE:-cookie}
+      SESSION_SECRET: ${SESSION_SECRET:-}
+
+      # Optional token authentication (recommended for cross-origin deployments).
+      #
+      # When using AERO_L2_AUTH_MODE=api_key or jwt, set the corresponding secret
+      # (or use the legacy AERO_L2_TOKEN escape hatch).
+      AERO_L2_API_KEY: ${AERO_L2_API_KEY:-}
+      AERO_L2_JWT_SECRET: ${AERO_L2_JWT_SECRET:-}
+
+      # Legacy static token authentication.
+      #
+      # If set, upgrades must include the token via (in addition to cookie/jwt as configured):
       # - `?token=<value>` query param, OR
       # - `Sec-WebSocket-Protocol: aero-l2-token.<value>` (in addition to `aero-l2-tunnel-v1`)
       AERO_L2_TOKEN: ${AERO_L2_TOKEN:-}
