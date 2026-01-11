@@ -149,7 +149,9 @@ static void TestLenClampedToU32(void)
 	const UINT32 pfn_count = (UINT32)((len + (PAGE_SIZE - 1)) / PAGE_SIZE);
 	UINT64 *pfns;
 	VIRTQ_SG sg[3];
+	VIRTQ_SG sg_small[1];
 	UINT16 count = 0;
+	UINT16 count_small = 0;
 	NTSTATUS status;
 	UINT32 i;
 
@@ -168,6 +170,13 @@ static void TestLenClampedToU32(void)
 
 	ASSERT_EQ_U64(sg[1].addr, sg[0].addr + (UINT64)sg[0].len);
 	ASSERT_EQ_U32(sg[1].len, 1u);
+
+	status = VirtioSgBuildFromPfns(pfns, pfn_count, 0, len, TRUE, sg_small, 1, &count_small);
+	ASSERT_EQ_STATUS(status, STATUS_BUFFER_TOO_SMALL);
+	ASSERT_EQ_U16(count_small, 2);
+	ASSERT_EQ_U64(sg_small[0].addr, sg[0].addr);
+	ASSERT_EQ_U32(sg_small[0].len, 0xFFFFFFFFu);
+	ASSERT_TRUE(sg_small[0].write != FALSE);
 
 	free(pfns);
 #endif
