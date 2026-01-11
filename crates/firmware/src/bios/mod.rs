@@ -305,7 +305,7 @@ fn disk_err_to_int13_status(err: DiskError) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use machine::{InMemoryDisk, MemoryAccess, PhysicalMemory, FLAG_IF};
+    use machine::{A20Gate, InMemoryDisk, MemoryAccess, PhysicalMemory, FLAG_IF};
 
     fn boot_sector(pattern: u8) -> [u8; 512] {
         let mut sector = [pattern; 512];
@@ -398,6 +398,26 @@ mod tests {
         assert_eq!(cpu.rsp, 0x7C00);
         assert_eq!(cpu.rdx as u8, 0x80);
         assert_ne!(cpu.rflags & FLAG_IF, 0);
+    }
+
+    #[test]
+    fn post_maps_bios_rom_at_the_reset_vector_alias() {
+        let mut bios = Bios::new(BiosConfig::default());
+        let mut cpu = CpuState::default();
+        let mut mem = PhysicalMemory::new(16 * 1024 * 1024);
+        let mut disk = InMemoryDisk::from_boot_sector(boot_sector(0));
+
+        bios.post(&mut cpu, &mut mem, &mut disk);
+
+        // BIOS POST enables A20 before handing control to the boot sector.
+        assert!(A20Gate::a20_enabled(&mem));
+
+        // The ROM is mirrored at the architectural reset-vector alias (0xFFFF_FFF0).
+        assert_eq!(MemoryAccess::read_u8(&mem, RESET_VECTOR_ALIAS_PHYS), 0xEA);
+        assert_eq!(
+            mem.read_bytes(RESET_VECTOR_ALIAS_PHYS, 5),
+            vec![0xEA, 0x00, 0xE0, 0x00, 0xF0]
+        );
     }
 
     #[test]
