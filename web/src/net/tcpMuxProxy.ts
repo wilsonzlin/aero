@@ -282,6 +282,7 @@ export class WebSocketTcpMuxProxyClient {
   readonly closed: Promise<void>;
 
   private readonly streams = new Map<number, StreamState>();
+  private readonly usedStreamIds = new Set<number>();
 
   private queued: QueuedFrame[] = [];
   private queuedBytes = 0;
@@ -343,6 +344,10 @@ export class WebSocketTcpMuxProxyClient {
       return;
     }
     if (this.streams.has(streamId)) return;
+    if (this.usedStreamIds.has(streamId)) {
+      this.onError?.(streamId, { code: TcpMuxErrorCode.PROTOCOL_ERROR, message: "stream_id was already used" });
+      return;
+    }
 
     this.streams.set(streamId, {
       openedNotified: false,
@@ -362,6 +367,9 @@ export class WebSocketTcpMuxProxyClient {
       this.closeStream(streamId);
       return;
     }
+
+    if (!this.streams.has(streamId)) return;
+    this.usedStreamIds.add(streamId);
 
     // There is no explicit OPEN-OK in the v1 protocol; success is implicit.
     // Callers may send DATA immediately; the gateway buffers until the TCP dial
