@@ -13,6 +13,8 @@
 /* Internal-only bits stored in AEROGPU_ALLOCATION::Flags (not exposed to UMD). */
 #define AEROGPU_KMD_ALLOC_FLAG_OPENED 0x80000000u
 
+#define AEROGPU_CMD_OPCODE_RELEASE_SHARED_SURFACE 0x712u
+
 /*
  * Optional CreateAllocation tracing.
  *
@@ -162,6 +164,13 @@ typedef struct _AEROGPU_SHARED_HANDLE_TOKEN_ENTRY {
     PVOID Object;
     ULONG Token;
 } AEROGPU_SHARED_HANDLE_TOKEN_ENTRY;
+
+typedef struct _AEROGPU_PENDING_INTERNAL_SUBMISSION {
+    LIST_ENTRY ListEntry;
+    ULONG RingTailAfter;
+    ULONGLONG ShareToken;
+    PVOID CmdVa;
+} AEROGPU_PENDING_INTERNAL_SUBMISSION;
 
 static VOID AeroGpuFreeSharedHandleTokens(_Inout_ AEROGPU_ADAPTER* Adapter)
 {
@@ -717,12 +726,13 @@ static NTSTATUS AeroGpuLegacyRingPushSubmit(_Inout_ AEROGPU_ADAPTER* Adapter,
 }
 
 static NTSTATUS AeroGpuV1RingPushSubmit(_Inout_ AEROGPU_ADAPTER* Adapter,
-                                        _In_ uint32_t Flags,
-                                        _In_ PHYSICAL_ADDRESS CmdPa,
-                                        _In_ ULONG CmdSizeBytes,
-                                        _In_ uint64_t AllocTableGpa,
-                                        _In_ uint32_t AllocTableSizeBytes,
-                                        _In_ ULONGLONG SignalFence)
+                                         _In_ uint32_t Flags,
+                                         _In_ PHYSICAL_ADDRESS CmdPa,
+                                         _In_ ULONG CmdSizeBytes,
+                                         _In_ uint64_t AllocTableGpa,
+                                         _In_ uint32_t AllocTableSizeBytes,
+                                         _In_ ULONGLONG SignalFence,
+                                         _Out_opt_ ULONG* RingTailAfterOut)
 {
     if (!Adapter->RingVa || !Adapter->RingHeader || !Adapter->Bar0 || Adapter->RingEntryCount == 0) {
         return STATUS_DEVICE_NOT_READY;
@@ -762,8 +772,66 @@ static NTSTATUS AeroGpuV1RingPushSubmit(_Inout_ AEROGPU_ADAPTER* Adapter,
 
     AeroGpuWriteRegU32(Adapter, AEROGPU_MMIO_REG_DOORBELL, 1);
 
+    if (RingTailAfterOut) {
+        *RingTailAfterOut = Adapter->RingTail;
+    }
+
     KeReleaseSpinLock(&Adapter->RingLock, oldIrql);
     return STATUS_SUCCESS;
+}
+
+static VOID AeroGpuFreeAllInternalSubmissions(_Inout_ AEROGPU_ADAPTER* Adapter)
+{
+    for (;;) {
+        AEROGPU_PENDING_INTERNAL_SUBMISSION* sub = NULL;
+
+        KIRQL oldIrql;
+        KeAcquireSpinLock(&Adapter->PendingLock, &oldIrql);
+        if (!IsListEmpty(&Adapter->PendingInternalSubmissions)) {
+            PLIST_ENTRY entry = RemoveHeadList(&Adapter->PendingInternalSubmissions);
+            sub = CONTAINING_RECORD(entry, AEROGPU_PENDING_INTERNAL_SUBMISSION, ListEntry);
+        }
+        KeReleaseSpinLock(&Adapter->PendingLock, oldIrql);
+
+        if (!sub) {
+            return;
+        }
+
+        AeroGpuFreeContiguous(sub->CmdVa);
+        ExFreePoolWithTag(sub, AEROGPU_POOL_TAG);
+    }
+}
+
+static VOID AeroGpuCleanupInternalSubmissions(_Inout_ AEROGPU_ADAPTER* Adapter)
+{
+    if (!Adapter || Adapter->AbiKind != AEROGPU_ABI_KIND_V1 || !Adapter->RingHeader) {
+        return;
+    }
+
+    for (;;) {
+        const ULONG head = Adapter->RingHeader->head;
+        AEROGPU_PENDING_INTERNAL_SUBMISSION* sub = NULL;
+
+        KIRQL oldIrql;
+        KeAcquireSpinLock(&Adapter->PendingLock, &oldIrql);
+        if (!IsListEmpty(&Adapter->PendingInternalSubmissions)) {
+            PLIST_ENTRY entry = Adapter->PendingInternalSubmissions.Flink;
+            AEROGPU_PENDING_INTERNAL_SUBMISSION* candidate =
+                CONTAINING_RECORD(entry, AEROGPU_PENDING_INTERNAL_SUBMISSION, ListEntry);
+            if ((LONG)(head - candidate->RingTailAfter) >= 0) {
+                RemoveEntryList(&candidate->ListEntry);
+                sub = candidate;
+            }
+        }
+        KeReleaseSpinLock(&Adapter->PendingLock, oldIrql);
+
+        if (!sub) {
+            return;
+        }
+
+        AeroGpuFreeContiguous(sub->CmdVa);
+        ExFreePoolWithTag(sub, AEROGPU_POOL_TAG);
+    }
 }
 
 static VOID AeroGpuFreeAllPendingSubmissions(_Inout_ AEROGPU_ADAPTER* Adapter)
@@ -843,12 +911,245 @@ static VOID AeroGpuAllocationUnmapCpu(_Inout_ AEROGPU_ALLOCATION* Alloc)
     Alloc->CpuMapWritePending = FALSE;
 }
 
+static VOID AeroGpuShareTokenRefIncrement(_Inout_ AEROGPU_ADAPTER* Adapter, _In_ ULONGLONG ShareToken)
+{
+    if (!Adapter || ShareToken == 0) {
+        return;
+    }
+
+    AEROGPU_SHARE_TOKEN_REF* newNode = NULL;
+
+    for (;;) {
+        ULONG newCount = 0;
+        BOOLEAN inserted = FALSE;
+
+        KIRQL oldIrql;
+        KeAcquireSpinLock(&Adapter->AllocationsLock, &oldIrql);
+
+        for (PLIST_ENTRY it = Adapter->ShareTokenRefs.Flink; it != &Adapter->ShareTokenRefs; it = it->Flink) {
+            AEROGPU_SHARE_TOKEN_REF* node = CONTAINING_RECORD(it, AEROGPU_SHARE_TOKEN_REF, ListEntry);
+            if (node->ShareToken == ShareToken) {
+                node->OpenCount += 1;
+                newCount = node->OpenCount;
+                KeReleaseSpinLock(&Adapter->AllocationsLock, oldIrql);
+
+                if (newNode) {
+                    ExFreePoolWithTag(newNode, AEROGPU_POOL_TAG);
+                }
+
+                AEROGPU_LOG("ShareTokenRef++ token=0x%I64x open_count=%lu", ShareToken, newCount);
+                return;
+            }
+        }
+
+        if (newNode) {
+            InsertTailList(&Adapter->ShareTokenRefs, &newNode->ListEntry);
+            inserted = TRUE;
+            newCount = newNode->OpenCount;
+        }
+
+        KeReleaseSpinLock(&Adapter->AllocationsLock, oldIrql);
+
+        if (inserted) {
+            AEROGPU_LOG("ShareTokenRef++ token=0x%I64x open_count=%lu", ShareToken, newCount);
+            return;
+        }
+
+        newNode = (AEROGPU_SHARE_TOKEN_REF*)ExAllocatePoolWithTag(NonPagedPool, sizeof(*newNode), AEROGPU_POOL_TAG);
+        if (!newNode) {
+            AEROGPU_LOG("ShareTokenRef++ token=0x%I64x failed (out of memory)", ShareToken);
+            return;
+        }
+        RtlZeroMemory(newNode, sizeof(*newNode));
+        newNode->ShareToken = ShareToken;
+        newNode->OpenCount = 1;
+    }
+}
+
+static BOOLEAN AeroGpuShareTokenRefDecrement(_Inout_ AEROGPU_ADAPTER* Adapter, _In_ ULONGLONG ShareToken, _Out_ BOOLEAN* ShouldReleaseOut)
+{
+    if (ShouldReleaseOut) {
+        *ShouldReleaseOut = FALSE;
+    }
+
+    if (!Adapter || ShareToken == 0) {
+        return TRUE;
+    }
+
+    AEROGPU_SHARE_TOKEN_REF* toFree = NULL;
+    ULONG newCount = 0;
+    BOOLEAN found = FALSE;
+    BOOLEAN shouldRelease = FALSE;
+
+    KIRQL oldIrql;
+    KeAcquireSpinLock(&Adapter->AllocationsLock, &oldIrql);
+
+    for (PLIST_ENTRY it = Adapter->ShareTokenRefs.Flink; it != &Adapter->ShareTokenRefs; it = it->Flink) {
+        AEROGPU_SHARE_TOKEN_REF* node = CONTAINING_RECORD(it, AEROGPU_SHARE_TOKEN_REF, ListEntry);
+        if (node->ShareToken == ShareToken) {
+            found = TRUE;
+            if (node->OpenCount == 0) {
+                newCount = 0;
+            } else {
+                node->OpenCount -= 1;
+                newCount = node->OpenCount;
+                if (node->OpenCount == 0) {
+                    RemoveEntryList(&node->ListEntry);
+                    toFree = node;
+                    shouldRelease = TRUE;
+                }
+            }
+            break;
+        }
+    }
+
+    KeReleaseSpinLock(&Adapter->AllocationsLock, oldIrql);
+
+    if (!found) {
+        AEROGPU_LOG("ShareTokenRef-- token=0x%I64x missing (already released?)", ShareToken);
+        return FALSE;
+    }
+
+    if (shouldRelease) {
+        AEROGPU_LOG("ShareTokenRef-- token=0x%I64x open_count=0 (final close)", ShareToken);
+    } else {
+        if (newCount == 0) {
+            AEROGPU_LOG("ShareTokenRef-- token=0x%I64x underflow", ShareToken);
+        } else {
+            AEROGPU_LOG("ShareTokenRef-- token=0x%I64x open_count=%lu", ShareToken, newCount);
+        }
+    }
+
+    if (toFree) {
+        ExFreePoolWithTag(toFree, AEROGPU_POOL_TAG);
+    }
+
+    if (ShouldReleaseOut) {
+        *ShouldReleaseOut = shouldRelease;
+    }
+    return TRUE;
+}
+
+static VOID AeroGpuFreeAllShareTokenRefs(_Inout_ AEROGPU_ADAPTER* Adapter)
+{
+    for (;;) {
+        AEROGPU_SHARE_TOKEN_REF* node = NULL;
+
+        KIRQL oldIrql;
+        KeAcquireSpinLock(&Adapter->AllocationsLock, &oldIrql);
+        if (!IsListEmpty(&Adapter->ShareTokenRefs)) {
+            PLIST_ENTRY entry = RemoveHeadList(&Adapter->ShareTokenRefs);
+            node = CONTAINING_RECORD(entry, AEROGPU_SHARE_TOKEN_REF, ListEntry);
+        }
+        KeReleaseSpinLock(&Adapter->AllocationsLock, oldIrql);
+
+        if (!node) {
+            return;
+        }
+
+        ExFreePoolWithTag(node, AEROGPU_POOL_TAG);
+    }
+}
+
+static VOID AeroGpuEmitReleaseSharedSurface(_Inout_ AEROGPU_ADAPTER* Adapter, _In_ ULONGLONG ShareToken)
+{
+    if (!Adapter || ShareToken == 0) {
+        return;
+    }
+
+    if (Adapter->AbiKind != AEROGPU_ABI_KIND_V1) {
+        return;
+    }
+
+    if (!Adapter->Bar0 || !Adapter->RingVa || !Adapter->RingHeader || Adapter->RingEntryCount == 0) {
+        return;
+    }
+
+    #pragma pack(push, 1)
+    typedef struct _AEROGPU_CMD_RELEASE_SHARED_SURFACE_PACKET {
+        struct aerogpu_cmd_hdr hdr;
+        uint64_t share_token;
+        uint64_t reserved0;
+    } AEROGPU_CMD_RELEASE_SHARED_SURFACE_PACKET;
+    #pragma pack(pop)
+
+    const ULONG cmdSizeBytes = (ULONG)(sizeof(struct aerogpu_cmd_stream_header) + sizeof(AEROGPU_CMD_RELEASE_SHARED_SURFACE_PACKET));
+    PHYSICAL_ADDRESS cmdPa;
+    cmdPa.QuadPart = 0;
+    PVOID cmdVa = AeroGpuAllocContiguous(cmdSizeBytes, &cmdPa);
+    if (!cmdVa) {
+        return;
+    }
+
+    struct aerogpu_cmd_stream_header stream;
+    RtlZeroMemory(&stream, sizeof(stream));
+    stream.magic = AEROGPU_CMD_STREAM_MAGIC;
+    stream.abi_version = AEROGPU_ABI_VERSION_U32;
+    stream.size_bytes = (uint32_t)cmdSizeBytes;
+    stream.flags = AEROGPU_CMD_STREAM_FLAG_NONE;
+    stream.reserved0 = 0;
+    stream.reserved1 = 0;
+
+    AEROGPU_CMD_RELEASE_SHARED_SURFACE_PACKET pkt;
+    RtlZeroMemory(&pkt, sizeof(pkt));
+    pkt.hdr.opcode = AEROGPU_CMD_OPCODE_RELEASE_SHARED_SURFACE;
+    pkt.hdr.size_bytes = (uint32_t)sizeof(pkt);
+    pkt.share_token = (uint64_t)ShareToken;
+    pkt.reserved0 = 0;
+
+    RtlCopyMemory(cmdVa, &stream, sizeof(stream));
+    RtlCopyMemory((PUCHAR)cmdVa + sizeof(stream), &pkt, sizeof(pkt));
+
+    ULONG ringTailAfter = 0;
+    NTSTATUS st = STATUS_SUCCESS;
+    {
+        KIRQL pendingIrql;
+        KeAcquireSpinLock(&Adapter->PendingLock, &pendingIrql);
+        const ULONGLONG signalFence = Adapter->LastSubmittedFence;
+        st = AeroGpuV1RingPushSubmit(Adapter,
+                                     AEROGPU_SUBMIT_FLAG_NO_IRQ,
+                                     cmdPa,
+                                     cmdSizeBytes,
+                                     0,
+                                     0,
+                                     signalFence,
+                                     &ringTailAfter);
+        KeReleaseSpinLock(&Adapter->PendingLock, pendingIrql);
+    }
+    if (!NT_SUCCESS(st)) {
+        AeroGpuFreeContiguous(cmdVa);
+        return;
+    }
+
+    AEROGPU_PENDING_INTERNAL_SUBMISSION* internal =
+        (AEROGPU_PENDING_INTERNAL_SUBMISSION*)ExAllocatePoolWithTag(NonPagedPool, sizeof(*internal), AEROGPU_POOL_TAG);
+    if (!internal) {
+        AEROGPU_LOG("ReleaseSharedSurface: submitted token=0x%I64x but failed to allocate tracking node; leaking DMA buffer",
+                    ShareToken);
+        return;
+    }
+
+    RtlZeroMemory(internal, sizeof(*internal));
+    internal->RingTailAfter = ringTailAfter;
+    internal->ShareToken = ShareToken;
+    internal->CmdVa = cmdVa;
+
+    {
+        KIRQL pendingIrql;
+        KeAcquireSpinLock(&Adapter->PendingLock, &pendingIrql);
+        InsertTailList(&Adapter->PendingInternalSubmissions, &internal->ListEntry);
+        KeReleaseSpinLock(&Adapter->PendingLock, pendingIrql);
+    }
+}
+
 static VOID AeroGpuTrackAllocation(_Inout_ AEROGPU_ADAPTER* Adapter, _Inout_ AEROGPU_ALLOCATION* Allocation)
 {
     KIRQL oldIrql;
     KeAcquireSpinLock(&Adapter->AllocationsLock, &oldIrql);
     InsertTailList(&Adapter->Allocations, &Allocation->ListEntry);
     KeReleaseSpinLock(&Adapter->AllocationsLock, oldIrql);
+
+    AeroGpuShareTokenRefIncrement(Adapter, Allocation->ShareToken);
 }
 
 static BOOLEAN AeroGpuTryUntrackAllocation(_Inout_ AEROGPU_ADAPTER* Adapter, _In_ const AEROGPU_ALLOCATION* Allocation)
@@ -871,10 +1172,10 @@ static BOOLEAN AeroGpuTryUntrackAllocation(_Inout_ AEROGPU_ADAPTER* Adapter, _In
     return found;
 }
 
-static VOID AeroGpuUntrackAndFreeAllocation(_Inout_ AEROGPU_ADAPTER* Adapter, _In_opt_ HANDLE hAllocation)
+static BOOLEAN AeroGpuUntrackAndFreeAllocation(_Inout_ AEROGPU_ADAPTER* Adapter, _In_opt_ HANDLE hAllocation)
 {
     if (!hAllocation) {
-        return;
+        return FALSE;
     }
 
     AEROGPU_ALLOCATION* alloc = (AEROGPU_ALLOCATION*)hAllocation;
@@ -888,16 +1189,23 @@ static VOID AeroGpuUntrackAndFreeAllocation(_Inout_ AEROGPU_ADAPTER* Adapter, _I
         if (InterlockedExchange(&g_UntrackedAllocFreeWarned, 1) == 0) {
             AEROGPU_LOG("Allocation free: untracked handle=%p", hAllocation);
         }
-        return;
+        return FALSE;
     }
 
+    const ULONGLONG shareToken = alloc->ShareToken;
     if (KeGetCurrentIrql() == PASSIVE_LEVEL) {
         ExAcquireFastMutex(&alloc->CpuMapMutex);
         AeroGpuAllocationUnmapCpu(alloc);
         ExReleaseFastMutex(&alloc->CpuMapMutex);
     }
-
     ExFreePoolWithTag(alloc, AEROGPU_POOL_TAG);
+
+    BOOLEAN shouldRelease = FALSE;
+    if (shareToken != 0 && AeroGpuShareTokenRefDecrement(Adapter, shareToken, &shouldRelease) && shouldRelease) {
+        AeroGpuEmitReleaseSharedSurface(Adapter, shareToken);
+    }
+
+    return TRUE;
 }
 
 static VOID AeroGpuFreeAllAllocations(_Inout_ AEROGPU_ADAPTER* Adapter)
@@ -1059,11 +1367,13 @@ static NTSTATUS APIENTRY AeroGpuDdiAddDevice(_In_ PDEVICE_OBJECT PhysicalDeviceO
     KeInitializeSpinLock(&adapter->IrqEnableLock);
     KeInitializeSpinLock(&adapter->PendingLock);
     InitializeListHead(&adapter->PendingSubmissions);
+    InitializeListHead(&adapter->PendingInternalSubmissions);
     KeInitializeSpinLock(&adapter->MetaHandleLock);
     InitializeListHead(&adapter->PendingMetaHandles);
     adapter->NextMetaHandle = 0;
     KeInitializeSpinLock(&adapter->AllocationsLock);
     InitializeListHead(&adapter->Allocations);
+    InitializeListHead(&adapter->ShareTokenRefs);
 
     KeInitializeSpinLock(&adapter->SharedHandleTokenLock);
     InitializeListHead(&adapter->SharedHandleTokens);
@@ -1456,6 +1766,7 @@ static NTSTATUS APIENTRY AeroGpuDdiStopDevice(_In_ const PVOID MiniportDeviceCon
 
     AeroGpuMetaHandleFreeAll(adapter);
     AeroGpuFreeAllPendingSubmissions(adapter);
+    AeroGpuFreeAllInternalSubmissions(adapter);
     AeroGpuRingCleanup(adapter);
 
     if (adapter->Bar0) {
@@ -1477,6 +1788,8 @@ static NTSTATUS APIENTRY AeroGpuDdiRemoveDevice(_In_ const PVOID MiniportDeviceC
     AEROGPU_LOG0("RemoveDevice");
     AeroGpuMetaHandleFreeAll(adapter);
     AeroGpuFreeAllAllocations(adapter);
+    AeroGpuFreeAllShareTokenRefs(adapter);
+    AeroGpuFreeAllInternalSubmissions(adapter);
     AeroGpuFreeSharedHandleTokens(adapter);
     ExFreePoolWithTag(adapter, AEROGPU_POOL_TAG);
     return STATUS_SUCCESS;
@@ -2903,7 +3216,8 @@ static NTSTATUS APIENTRY AeroGpuDdiSubmitCommand(_In_ const HANDLE hAdapter,
                                          dmaSizeBytes,
                                          allocTableGpa,
                                          (uint32_t)allocTableSizeBytes,
-                                         fence);
+                                         fence,
+                                         NULL);
     } else {
         ringSt = AeroGpuLegacyRingPushSubmit(adapter, (ULONG)fence, (ULONG)descSize, descPa);
     }
@@ -3224,6 +3538,7 @@ static VOID APIENTRY AeroGpuDdiDpcRoutine(_In_ const PVOID MiniportDeviceContext
     }
 
     AeroGpuRetireSubmissionsUpToFence(adapter, adapter->LastCompletedFence);
+    AeroGpuCleanupInternalSubmissions(adapter);
 }
 
 static __forceinline BOOLEAN AeroGpuIsVblankControlInterruptType(_In_ DXGK_INTERRUPT_TYPE InterruptType)
@@ -3399,6 +3714,8 @@ static NTSTATUS APIENTRY AeroGpuDdiResetFromTimeout(_In_ const HANDLE hAdapter)
      */
     LIST_ENTRY pendingToFree;
     InitializeListHead(&pendingToFree);
+    LIST_ENTRY internalToFree;
+    InitializeListHead(&internalToFree);
 
     ULONGLONG completedFence = 0;
     {
@@ -3436,6 +3753,9 @@ static NTSTATUS APIENTRY AeroGpuDdiResetFromTimeout(_In_ const HANDLE hAdapter)
         while (!IsListEmpty(&adapter->PendingSubmissions)) {
             InsertTailList(&pendingToFree, RemoveHeadList(&adapter->PendingSubmissions));
         }
+        while (!IsListEmpty(&adapter->PendingInternalSubmissions)) {
+            InsertTailList(&internalToFree, RemoveHeadList(&adapter->PendingInternalSubmissions));
+        }
 
         KeReleaseSpinLock(&adapter->PendingLock, pendingIrql);
     }
@@ -3468,6 +3788,13 @@ static NTSTATUS APIENTRY AeroGpuDdiResetFromTimeout(_In_ const HANDLE hAdapter)
         AeroGpuFreeContiguous(sub->AllocTableVa);
         AeroGpuFreeContiguous(sub->DmaCopyVa);
         AeroGpuFreeContiguous(sub->DescVa);
+        ExFreePoolWithTag(sub, AEROGPU_POOL_TAG);
+    }
+    while (!IsListEmpty(&internalToFree)) {
+        PLIST_ENTRY entry = RemoveHeadList(&internalToFree);
+        AEROGPU_PENDING_INTERNAL_SUBMISSION* sub =
+            CONTAINING_RECORD(entry, AEROGPU_PENDING_INTERNAL_SUBMISSION, ListEntry);
+        AeroGpuFreeContiguous(sub->CmdVa);
         ExFreePoolWithTag(sub, AEROGPU_POOL_TAG);
     }
     return STATUS_SUCCESS;

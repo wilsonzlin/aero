@@ -117,6 +117,12 @@ typedef struct _AEROGPU_ALLOCATION {
     BOOLEAN CpuMapWritePending;
 } AEROGPU_ALLOCATION;
 
+typedef struct _AEROGPU_SHARE_TOKEN_REF {
+    LIST_ENTRY ListEntry;
+    ULONGLONG ShareToken;
+    ULONG OpenCount;
+} AEROGPU_SHARE_TOKEN_REF;
+
 typedef struct _AEROGPU_DEVICE {
     struct _AEROGPU_ADAPTER* Adapter;
 } AEROGPU_DEVICE;
@@ -160,6 +166,7 @@ typedef struct _AEROGPU_ADAPTER {
 
     LIST_ENTRY PendingSubmissions;
     KSPIN_LOCK PendingLock;
+    LIST_ENTRY PendingInternalSubmissions;
     ULONGLONG LastSubmittedFence;
     ULONGLONG LastCompletedFence;
 
@@ -169,6 +176,7 @@ typedef struct _AEROGPU_ADAPTER {
 
     LIST_ENTRY Allocations;
     KSPIN_LOCK AllocationsLock;
+    LIST_ENTRY ShareTokenRefs;
     /*
      * Atomic alloc_id generator for non-AeroGPU (kernel/runtime) allocations
      * that do not carry an AeroGPU private-data blob.
