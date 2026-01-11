@@ -1,9 +1,12 @@
 use std::collections::HashMap;
+use std::ops::Range;
 
 use aero_d3d9::shader;
 use aero_d3d9::vertex::VertexDeclaration;
 use thiserror::Error;
 
+use crate::aerogpu_executor::AllocTable;
+use crate::guest_memory::{GuestMemory, GuestMemoryError};
 use crate::protocol::{parse_cmd_stream, AeroGpuCmd, AeroGpuCmdStreamParseError};
 use crate::readback_rgba8;
 use crate::texture_manager::TextureRegion;
@@ -32,6 +35,12 @@ pub struct AerogpuD3d9Executor {
 
     state: State,
     encoder: Option<wgpu::CommandEncoder>,
+}
+
+#[derive(Clone, Copy)]
+struct SubmissionCtx<'a> {
+    guest_memory: Option<&'a dyn GuestMemory>,
+    alloc_table: Option<&'a AllocTable>,
 }
 
 #[derive(Debug, Error)]
@@ -78,6 +87,26 @@ pub enum AerogpuD3d9Error {
     UploadOutOfBounds(u32),
     #[error("readback only supported for RGBA8/BGRA8 textures (handle {0})")]
     ReadbackUnsupported(u32),
+    #[error("missing alloc table entry for alloc_id={0}")]
+    MissingAllocTable(u32),
+    #[error("missing guest memory for dirty guest-backed resource {0}")]
+    MissingGuestMemory(u32),
+    #[error("validation error: {0}")]
+    Validation(String),
+    #[error(transparent)]
+    GuestMemory(#[from] GuestMemoryError),
+}
+
+#[derive(Debug, Clone, Copy)]
+struct GuestBufferBacking {
+    base_gpa: u64,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct GuestTextureBacking {
+    base_gpa: u64,
+    row_pitch_bytes: u32,
+    size_bytes: u64,
 }
 
 #[derive(Debug)]
@@ -85,6 +114,8 @@ enum Resource {
     Buffer {
         buffer: wgpu::Buffer,
         size: u64,
+        backing: Option<GuestBufferBacking>,
+        dirty_ranges: Vec<Range<u64>>,
     },
     Texture2d {
         texture: wgpu::Texture,
@@ -93,6 +124,8 @@ enum Resource {
         width: u32,
         height: u32,
         row_pitch_bytes: u32,
+        backing: Option<GuestTextureBacking>,
+        dirty_ranges: Vec<Range<u64>>,
     },
 }
 
@@ -377,9 +410,38 @@ impl AerogpuD3d9Executor {
     }
 
     pub fn execute_cmd_stream(&mut self, bytes: &[u8]) -> Result<(), AerogpuD3d9Error> {
+        self.execute_cmd_stream_with_ctx(
+            bytes,
+            SubmissionCtx {
+                guest_memory: None,
+                alloc_table: None,
+            },
+        )
+    }
+
+    pub fn execute_cmd_stream_with_guest_memory(
+        &mut self,
+        bytes: &[u8],
+        guest_memory: &dyn GuestMemory,
+        alloc_table: Option<&AllocTable>,
+    ) -> Result<(), AerogpuD3d9Error> {
+        self.execute_cmd_stream_with_ctx(
+            bytes,
+            SubmissionCtx {
+                guest_memory: Some(guest_memory),
+                alloc_table,
+            },
+        )
+    }
+
+    fn execute_cmd_stream_with_ctx(
+        &mut self,
+        bytes: &[u8],
+        ctx: SubmissionCtx<'_>,
+    ) -> Result<(), AerogpuD3d9Error> {
         let stream = parse_cmd_stream(bytes)?;
         for cmd in stream.cmds {
-            self.execute_cmd(cmd)?;
+            self.execute_cmd(cmd, ctx)?;
         }
         // Make sure we don't keep uploads queued indefinitely if the guest forgets to present.
         self.flush()
@@ -446,14 +508,41 @@ impl AerogpuD3d9Executor {
         Ok((width, height, out))
     }
 
-    fn execute_cmd(&mut self, cmd: AeroGpuCmd<'_>) -> Result<(), AerogpuD3d9Error> {
+    fn execute_cmd(
+        &mut self,
+        cmd: AeroGpuCmd<'_>,
+        ctx: SubmissionCtx<'_>,
+    ) -> Result<(), AerogpuD3d9Error> {
         match cmd {
             AeroGpuCmd::Nop | AeroGpuCmd::DebugMarker { .. } | AeroGpuCmd::Unknown { .. } => Ok(()),
             AeroGpuCmd::CreateBuffer {
                 buffer_handle,
                 size_bytes,
+                backing_alloc_id,
+                backing_offset_bytes,
                 ..
             } => {
+                let backing = if backing_alloc_id == 0 {
+                    None
+                } else {
+                    let entry = ctx
+                        .alloc_table
+                        .and_then(|t| t.get(backing_alloc_id))
+                        .ok_or(AerogpuD3d9Error::MissingAllocTable(backing_alloc_id))?;
+                    let backing_offset = backing_offset_bytes as u64;
+                    let required = backing_offset.checked_add(size_bytes).ok_or_else(|| {
+                        AerogpuD3d9Error::Validation("buffer backing overflow".into())
+                    })?;
+                    if required > entry.size_bytes {
+                        return Err(AerogpuD3d9Error::Validation(format!(
+                            "buffer backing out of bounds (alloc_id={backing_alloc_id} offset={backing_offset_bytes} size={size_bytes} alloc_size={})",
+                            entry.size_bytes
+                        )));
+                    }
+                    Some(GuestBufferBacking {
+                        base_gpa: entry.gpa + backing_offset,
+                    })
+                };
                 let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("aerogpu-d3d9.buffer"),
                     size: size_bytes,
@@ -468,6 +557,8 @@ impl AerogpuD3d9Executor {
                     Resource::Buffer {
                         buffer,
                         size: size_bytes,
+                        backing,
+                        dirty_ranges: Vec::new(),
                     },
                 );
                 Ok(())
@@ -480,9 +571,54 @@ impl AerogpuD3d9Executor {
                 mip_levels,
                 array_layers,
                 row_pitch_bytes,
+                backing_alloc_id,
+                backing_offset_bytes,
                 ..
             } => {
                 let format = map_aerogpu_format(format)?;
+                let backing = if backing_alloc_id == 0 {
+                    None
+                } else {
+                    if mip_levels > 1 || array_layers > 1 {
+                        return Err(AerogpuD3d9Error::Validation(
+                            "guest-backed textures with mip_levels/array_layers > 1 are not supported".into(),
+                        ));
+                    }
+                    let entry = ctx
+                        .alloc_table
+                        .and_then(|t| t.get(backing_alloc_id))
+                        .ok_or(AerogpuD3d9Error::MissingAllocTable(backing_alloc_id))?;
+                    let bpp = bytes_per_pixel(format);
+                    let expected_row_pitch = width.checked_mul(bpp).ok_or_else(|| {
+                        AerogpuD3d9Error::Validation("texture row pitch overflow".into())
+                    })?;
+                    let row_pitch = if row_pitch_bytes != 0 {
+                        row_pitch_bytes.max(expected_row_pitch)
+                    } else {
+                        expected_row_pitch
+                    };
+                    let required =
+                        (row_pitch as u64)
+                            .checked_mul(height as u64)
+                            .ok_or_else(|| {
+                                AerogpuD3d9Error::Validation("texture backing overflow".into())
+                            })?;
+                    let backing_offset = backing_offset_bytes as u64;
+                    let required_end = backing_offset.checked_add(required).ok_or_else(|| {
+                        AerogpuD3d9Error::Validation("texture backing overflow".into())
+                    })?;
+                    if required_end > entry.size_bytes {
+                        return Err(AerogpuD3d9Error::Validation(format!(
+                            "texture backing out of bounds (alloc_id={backing_alloc_id} offset={backing_offset_bytes} required={required} alloc_size={})",
+                            entry.size_bytes
+                        )));
+                    }
+                    Some(GuestTextureBacking {
+                        base_gpa: entry.gpa + backing_offset,
+                        row_pitch_bytes: row_pitch,
+                        size_bytes: required,
+                    })
+                };
                 let texture = self.device.create_texture(&wgpu::TextureDescriptor {
                     label: Some("aerogpu-d3d9.texture2d"),
                     size: wgpu::Extent3d {
@@ -510,6 +646,8 @@ impl AerogpuD3d9Executor {
                         width,
                         height,
                         row_pitch_bytes,
+                        backing,
+                        dirty_ranges: Vec::new(),
                     },
                 );
                 Ok(())
@@ -528,7 +666,7 @@ impl AerogpuD3d9Executor {
                     return Err(AerogpuD3d9Error::UnknownResource(resource_handle));
                 };
                 match res {
-                    Resource::Buffer { buffer, size } => {
+                    Resource::Buffer { buffer, size, .. } => {
                         let end = offset_bytes.saturating_add(size_bytes);
                         if end > *size {
                             return Err(AerogpuD3d9Error::UploadOutOfBounds(resource_handle));
@@ -828,7 +966,8 @@ impl AerogpuD3d9Executor {
                 let color_rgba = color_rgba_f32.map(f32::from_bits);
                 let depth = f32::from_bits(depth_f32);
                 let mut encoder = self.encoder.take().unwrap();
-                let result = self.encode_clear(&mut encoder, flags, color_rgba, depth, stencil);
+                let result =
+                    self.encode_clear(&mut encoder, ctx, flags, color_rgba, depth, stencil);
                 self.encoder = Some(encoder);
                 result
             }
@@ -842,6 +981,7 @@ impl AerogpuD3d9Executor {
                 let mut encoder = self.encoder.take().unwrap();
                 let result = self.encode_draw(
                     &mut encoder,
+                    ctx,
                     DrawParams::NonIndexed {
                         vertex_count,
                         instance_count,
@@ -863,6 +1003,7 @@ impl AerogpuD3d9Executor {
                 let mut encoder = self.encoder.take().unwrap();
                 let result = self.encode_draw(
                     &mut encoder,
+                    ctx,
                     DrawParams::Indexed {
                         index_count,
                         instance_count,
@@ -887,7 +1028,11 @@ impl AerogpuD3d9Executor {
                 // Sharing handled at higher layers for now.
                 Ok(())
             }
-            AeroGpuCmd::ResourceDirtyRange { .. } => Ok(()),
+            AeroGpuCmd::ResourceDirtyRange {
+                resource_handle,
+                offset_bytes,
+                size_bytes,
+            } => self.resource_dirty_range(resource_handle, offset_bytes, size_bytes),
         }
     }
 
@@ -927,14 +1072,278 @@ impl AerogpuD3d9Executor {
         Ok(())
     }
 
+    fn resource_dirty_range(
+        &mut self,
+        resource_handle: u32,
+        offset_bytes: u64,
+        size_bytes: u64,
+    ) -> Result<(), AerogpuD3d9Error> {
+        if size_bytes == 0 {
+            return Ok(());
+        }
+        let end = offset_bytes.checked_add(size_bytes).ok_or_else(|| {
+            AerogpuD3d9Error::Validation("dirty range offset/size overflow".into())
+        })?;
+
+        let Some(res) = self.resources.get_mut(&resource_handle) else {
+            return Err(AerogpuD3d9Error::UnknownResource(resource_handle));
+        };
+        match res {
+            Resource::Buffer {
+                size,
+                backing,
+                dirty_ranges,
+                ..
+            } => {
+                if backing.is_none() {
+                    return Ok(());
+                }
+                if end > *size {
+                    return Err(AerogpuD3d9Error::Validation(format!(
+                        "buffer dirty range out of bounds (handle={resource_handle} end={end} size={size})"
+                    )));
+                }
+                dirty_ranges.push(offset_bytes..end);
+                coalesce_ranges(dirty_ranges);
+                Ok(())
+            }
+            Resource::Texture2d {
+                backing,
+                dirty_ranges,
+                ..
+            } => {
+                let Some(backing) = backing.as_ref() else {
+                    return Ok(());
+                };
+                if end > backing.size_bytes {
+                    return Err(AerogpuD3d9Error::Validation(format!(
+                        "texture dirty range out of bounds (handle={resource_handle} end={end} size={})",
+                        backing.size_bytes
+                    )));
+                }
+                dirty_ranges.push(offset_bytes..end);
+                coalesce_ranges(dirty_ranges);
+                Ok(())
+            }
+        }
+    }
+
+    fn flush_buffer_if_dirty(
+        &mut self,
+        handle: u32,
+        guest_memory: Option<&dyn GuestMemory>,
+    ) -> Result<(), AerogpuD3d9Error> {
+        let Some(res) = self.resources.get_mut(&handle) else {
+            return Err(AerogpuD3d9Error::UnknownResource(handle));
+        };
+        let Resource::Buffer {
+            buffer,
+            backing,
+            dirty_ranges,
+            ..
+        } = res
+        else {
+            return Err(AerogpuD3d9Error::UnknownResource(handle));
+        };
+
+        let Some(backing) = backing.as_ref() else {
+            return Ok(());
+        };
+        if dirty_ranges.is_empty() {
+            return Ok(());
+        }
+        let Some(guest_memory) = guest_memory else {
+            return Err(AerogpuD3d9Error::MissingGuestMemory(handle));
+        };
+
+        let ranges = dirty_ranges.clone();
+        for range in &ranges {
+            let len_u64 = range.end.saturating_sub(range.start);
+            let len = usize::try_from(len_u64)
+                .map_err(|_| AerogpuD3d9Error::Validation("buffer dirty range too large".into()))?;
+            let mut data = vec![0u8; len];
+            let src_gpa = backing.base_gpa.checked_add(range.start).ok_or_else(|| {
+                AerogpuD3d9Error::Validation("buffer backing gpa overflow".into())
+            })?;
+            guest_memory.read(src_gpa, &mut data)?;
+            self.queue.write_buffer(buffer, range.start, &data);
+        }
+
+        dirty_ranges.clear();
+        Ok(())
+    }
+
+    fn flush_texture_if_dirty(
+        &mut self,
+        handle: u32,
+        guest_memory: Option<&dyn GuestMemory>,
+        strict: bool,
+    ) -> Result<(), AerogpuD3d9Error> {
+        let Some(res) = self.resources.get_mut(&handle) else {
+            return if strict {
+                Err(AerogpuD3d9Error::UnknownResource(handle))
+            } else {
+                Ok(())
+            };
+        };
+        let Resource::Texture2d {
+            texture,
+            format,
+            width,
+            height,
+            backing,
+            dirty_ranges,
+            ..
+        } = res
+        else {
+            return if strict {
+                Err(AerogpuD3d9Error::UnknownResource(handle))
+            } else {
+                Ok(())
+            };
+        };
+
+        let Some(backing) = backing.as_ref() else {
+            return Ok(());
+        };
+        if dirty_ranges.is_empty() {
+            return Ok(());
+        }
+        let Some(guest_memory) = guest_memory else {
+            return Err(AerogpuD3d9Error::MissingGuestMemory(handle));
+        };
+
+        let ranges = dirty_ranges.clone();
+        let row_pitch = backing.row_pitch_bytes as u64;
+        if row_pitch == 0 {
+            return Err(AerogpuD3d9Error::Validation(
+                "texture row_pitch_bytes is 0".into(),
+            ));
+        }
+
+        let mut row_ranges = Vec::<Range<u32>>::new();
+        for r in &ranges {
+            let start_row = (r.start / row_pitch) as u32;
+            let end_row = ((r.end + row_pitch - 1) / row_pitch) as u32;
+            row_ranges.push(start_row..end_row);
+        }
+        coalesce_ranges_u32(&mut row_ranges);
+        for rows in &row_ranges {
+            if rows.end > *height {
+                return Err(AerogpuD3d9Error::Validation(format!(
+                    "computed dirty row range {rows:?} exceeds texture height {height}"
+                )));
+            }
+        }
+
+        let bpp = bytes_per_pixel(*format);
+        let unpadded_bpr = width
+            .checked_mul(bpp)
+            .ok_or_else(|| AerogpuD3d9Error::Validation("texture bytes_per_row overflow".into()))?;
+        let upload_bpr = if backing.row_pitch_bytes % wgpu::COPY_BYTES_PER_ROW_ALIGNMENT == 0 {
+            backing.row_pitch_bytes
+        } else {
+            align_to(unpadded_bpr, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
+        };
+
+        for rows in row_ranges {
+            let upload_h = rows.end.saturating_sub(rows.start);
+            if upload_h == 0 {
+                continue;
+            }
+
+            let upload_h_usize = upload_h as usize;
+            let upload_bpr_usize = upload_bpr as usize;
+            let mut staging = vec![0u8; upload_bpr_usize * upload_h_usize];
+            for i in 0..upload_h {
+                let row = rows.start + i;
+                let row_off = (row as u64).checked_mul(row_pitch).ok_or_else(|| {
+                    AerogpuD3d9Error::Validation("texture backing overflow".into())
+                })?;
+                let src_gpa = backing.base_gpa.checked_add(row_off).ok_or_else(|| {
+                    AerogpuD3d9Error::Validation("texture backing overflow".into())
+                })?;
+                let dst_off = i as usize * upload_bpr_usize;
+                guest_memory.read(
+                    src_gpa,
+                    &mut staging[dst_off..dst_off + unpadded_bpr as usize],
+                )?;
+            }
+
+            self.queue.write_texture(
+                wgpu::ImageCopyTexture {
+                    texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d {
+                        x: 0,
+                        y: rows.start,
+                        z: 0,
+                    },
+                    aspect: wgpu::TextureAspect::All,
+                },
+                &staging,
+                wgpu::ImageDataLayout {
+                    offset: 0,
+                    bytes_per_row: Some(upload_bpr),
+                    rows_per_image: Some(upload_h),
+                },
+                wgpu::Extent3d {
+                    width: *width,
+                    height: upload_h,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
+
+        dirty_ranges.clear();
+        Ok(())
+    }
+
+    fn flush_texture_if_dirty_strict(
+        &mut self,
+        handle: u32,
+        guest_memory: Option<&dyn GuestMemory>,
+    ) -> Result<(), AerogpuD3d9Error> {
+        self.flush_texture_if_dirty(handle, guest_memory, true)
+    }
+
+    fn flush_texture_binding_if_dirty(
+        &mut self,
+        handle: u32,
+        guest_memory: Option<&dyn GuestMemory>,
+    ) -> Result<(), AerogpuD3d9Error> {
+        self.flush_texture_if_dirty(handle, guest_memory, false)
+    }
+
     fn encode_clear(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
+        ctx: SubmissionCtx<'_>,
         flags: u32,
         color_rgba: [f32; 4],
         depth: f32,
         stencil: u32,
     ) -> Result<(), AerogpuD3d9Error> {
+        let clear_color_enabled = (flags & 0x1) != 0;
+        let clear_depth_enabled = (flags & 0x2) != 0;
+        let clear_stencil_enabled = (flags & 0x4) != 0;
+
+        if !clear_color_enabled || !clear_depth_enabled || !clear_stencil_enabled {
+            let rt = self.state.render_targets;
+            if !clear_color_enabled {
+                for slot in 0..rt.color_count.min(8) as usize {
+                    let handle = rt.colors[slot];
+                    if handle == 0 {
+                        continue;
+                    }
+                    self.flush_texture_if_dirty_strict(handle, ctx.guest_memory)?;
+                }
+            }
+            if (!clear_depth_enabled || !clear_stencil_enabled) && rt.depth_stencil != 0 {
+                self.flush_texture_if_dirty_strict(rt.depth_stencil, ctx.guest_memory)?;
+            }
+        }
+
         let (color_attachments, depth_stencil) = self.render_target_attachments()?;
         let (_, depth_format) = self.render_target_formats()?;
         let depth_has_stencil =
@@ -946,10 +1355,6 @@ impl AerogpuD3d9Executor {
             b: color_rgba[2] as f64,
             a: color_rgba[3] as f64,
         };
-
-        let clear_color_enabled = (flags & 0x1) != 0;
-        let clear_depth_enabled = (flags & 0x2) != 0;
-        let clear_stencil_enabled = (flags & 0x4) != 0;
 
         let mut color_attachments_out = Vec::with_capacity(color_attachments.len());
         for attachment in color_attachments {
@@ -1004,6 +1409,7 @@ impl AerogpuD3d9Executor {
     fn encode_draw(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
+        ctx: SubmissionCtx<'_>,
         draw: DrawParams,
     ) -> Result<(), AerogpuD3d9Error> {
         let vs_handle = self.state.vs;
@@ -1011,6 +1417,84 @@ impl AerogpuD3d9Executor {
         if vs_handle == 0 || ps_handle == 0 {
             return Err(AerogpuD3d9Error::MissingShaders);
         }
+        let used_samplers = {
+            let vs = self
+                .shaders
+                .get(&vs_handle)
+                .ok_or(AerogpuD3d9Error::UnknownShader(vs_handle))?;
+            let ps = self
+                .shaders
+                .get(&ps_handle)
+                .ok_or(AerogpuD3d9Error::UnknownShader(ps_handle))?;
+            if vs.stage != shader::ShaderStage::Vertex {
+                return Err(AerogpuD3d9Error::ShaderStageMismatch {
+                    shader_handle: vs_handle,
+                    expected: shader::ShaderStage::Vertex,
+                    actual: vs.stage,
+                });
+            }
+            if ps.stage != shader::ShaderStage::Pixel {
+                return Err(AerogpuD3d9Error::ShaderStageMismatch {
+                    shader_handle: ps_handle,
+                    expected: shader::ShaderStage::Pixel,
+                    actual: ps.stage,
+                });
+            }
+
+            let mut used_samplers: Vec<u16> = vs
+                .used_samplers
+                .iter()
+                .copied()
+                .chain(ps.used_samplers.iter().copied())
+                .collect();
+            used_samplers.sort_unstable();
+            used_samplers.dedup();
+            used_samplers
+        };
+
+        let layout_handle = self.state.input_layout;
+        if layout_handle == 0 {
+            return Err(AerogpuD3d9Error::MissingInputLayout);
+        }
+
+        // Flush guest-backed resources touched by this draw before we bind them.
+        let rt = self.state.render_targets;
+        let vertex_bindings = self.state.vertex_buffers;
+        let index_binding = self.state.index_buffer;
+        let textures_ps = self.state.textures_ps;
+        for slot in 0..rt.color_count.min(8) as usize {
+            let handle = rt.colors[slot];
+            if handle == 0 {
+                continue;
+            }
+            self.flush_texture_if_dirty_strict(handle, ctx.guest_memory)?;
+        }
+        if rt.depth_stencil != 0 {
+            self.flush_texture_if_dirty_strict(rt.depth_stencil, ctx.guest_memory)?;
+        }
+
+        for binding in vertex_bindings.into_iter().flatten() {
+            if binding.buffer == 0 {
+                continue;
+            }
+            self.flush_buffer_if_dirty(binding.buffer, ctx.guest_memory)?;
+        }
+
+        if let DrawParams::Indexed { .. } = draw {
+            let index_binding = index_binding.ok_or(AerogpuD3d9Error::MissingIndexBuffer)?;
+            if index_binding.buffer != 0 {
+                self.flush_buffer_if_dirty(index_binding.buffer, ctx.guest_memory)?;
+            }
+        }
+
+        for sampler in &used_samplers {
+            let tex_handle = textures_ps.get(*sampler as usize).copied().unwrap_or(0);
+            if tex_handle == 0 {
+                continue;
+            }
+            self.flush_texture_binding_if_dirty(tex_handle, ctx.guest_memory)?;
+        }
+
         let vs = self
             .shaders
             .get(&vs_handle)
@@ -1019,37 +1503,18 @@ impl AerogpuD3d9Executor {
             .shaders
             .get(&ps_handle)
             .ok_or(AerogpuD3d9Error::UnknownShader(ps_handle))?;
-        if vs.stage != shader::ShaderStage::Vertex {
-            return Err(AerogpuD3d9Error::ShaderStageMismatch {
-                shader_handle: vs_handle,
-                expected: shader::ShaderStage::Vertex,
-                actual: vs.stage,
-            });
-        }
-        if ps.stage != shader::ShaderStage::Pixel {
-            return Err(AerogpuD3d9Error::ShaderStageMismatch {
-                shader_handle: ps_handle,
-                expected: shader::ShaderStage::Pixel,
-                actual: ps.stage,
-            });
-        }
-
-        let layout_handle = self.state.input_layout;
-        if layout_handle == 0 {
-            return Err(AerogpuD3d9Error::MissingInputLayout);
-        }
         let layout = self
             .input_layouts
             .get(&layout_handle)
             .ok_or(AerogpuD3d9Error::UnknownInputLayout(layout_handle))?;
+
+        let vertex_buffers = self.vertex_buffer_layouts(layout, vs)?;
 
         let (color_views, depth_view) = self.render_target_attachments()?;
         let (color_formats, depth_format) = self.render_target_formats()?;
         let depth_has_stencil =
             matches!(depth_format, Some(wgpu::TextureFormat::Depth24PlusStencil8));
 
-        // Bind group layout: binding(0)=constants, then (texture,sampler) pairs.
-        // For now we only support pixel-stage samplers (D3D9Ex/DWM).
         let mut bgl_entries = Vec::new();
         bgl_entries.push(wgpu::BindGroupLayoutEntry {
             binding: 0,
@@ -1061,16 +1526,6 @@ impl AerogpuD3d9Executor {
             },
             count: None,
         });
-
-        let used_samplers: Vec<u16> = vs
-            .used_samplers
-            .iter()
-            .copied()
-            .chain(ps.used_samplers.iter().copied())
-            .collect();
-        let mut used_samplers = used_samplers;
-        used_samplers.sort_unstable();
-        used_samplers.dedup();
 
         // Match `aero-d3d9` shader generation: bindings are derived from the D3D9 sampler register
         // index to keep them stable across shader stages.
@@ -1114,7 +1569,6 @@ impl AerogpuD3d9Executor {
 
         let bind_group = self.create_bind_group(&bind_group_layout, &used_samplers)?;
 
-        let vertex_buffers = self.vertex_buffer_layouts(layout, vs)?;
         let vertex_buffers_ref = vertex_buffers
             .buffers
             .iter()
@@ -1551,6 +2005,42 @@ enum DrawParams {
 fn align_to(value: u32, alignment: u32) -> u32 {
     debug_assert!(alignment.is_power_of_two());
     (value + alignment - 1) & !(alignment - 1)
+}
+
+fn coalesce_ranges(ranges: &mut Vec<Range<u64>>) {
+    ranges.sort_by_key(|r| r.start);
+    let mut out: Vec<Range<u64>> = Vec::with_capacity(ranges.len());
+    for r in ranges.drain(..) {
+        if r.start >= r.end {
+            continue;
+        }
+        if let Some(last) = out.last_mut() {
+            if r.start <= last.end {
+                last.end = last.end.max(r.end);
+                continue;
+            }
+        }
+        out.push(r);
+    }
+    *ranges = out;
+}
+
+fn coalesce_ranges_u32(ranges: &mut Vec<Range<u32>>) {
+    ranges.sort_by_key(|r| r.start);
+    let mut out: Vec<Range<u32>> = Vec::with_capacity(ranges.len());
+    for r in ranges.drain(..) {
+        if r.start >= r.end {
+            continue;
+        }
+        if let Some(last) = out.last_mut() {
+            if r.start <= last.end {
+                last.end = last.end.max(r.end);
+                continue;
+            }
+        }
+        out.push(r);
+    }
+    *ranges = out;
 }
 
 fn map_aerogpu_format(format: u32) -> Result<wgpu::TextureFormat, AerogpuD3d9Error> {

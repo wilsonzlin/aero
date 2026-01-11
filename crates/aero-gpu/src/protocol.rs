@@ -760,6 +760,10 @@ pub fn parse_cmd_stream(
                 AeroGpuCmd::Flush
             }
 
+            Some(_) => AeroGpuCmd::Unknown {
+                opcode: cmd_hdr.opcode,
+                payload,
+            },
             None => AeroGpuCmd::Unknown {
                 opcode: cmd_hdr.opcode,
                 payload,
