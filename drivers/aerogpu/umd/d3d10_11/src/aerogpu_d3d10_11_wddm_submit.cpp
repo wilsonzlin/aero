@@ -1537,21 +1537,31 @@ HRESULT WddmSubmit::SubmitAeroCmdStream(const uint8_t* stream_bytes,
     auto* hdr = reinterpret_cast<aerogpu_cmd_stream_header*>(dst);
     hdr->size_bytes = static_cast<uint32_t>(chunk_size);
 
-    // Security: avoid leaking uninitialized user-mode bytes into the kernel-mode
-    // copy of the per-DMA-buffer private data. The AeroGPU KMD will overwrite
-    // AEROGPU_DMA_PRIV anyway.
-    const size_t zero_bytes =
-        std::min<size_t>(static_cast<size_t>(buf.dma_private_data_bytes), static_cast<size_t>(expected_dma_priv_bytes));
-    if (zero_bytes) {
-      std::memset(buf.dma_private_data, 0, zero_bytes);
-    }
-
     const bool is_last_chunk = (chunk_end == src_size);
     bool do_present = false;
     if (want_present && is_last_chunk) {
       if constexpr (has_pfnPresentCb<D3DDDI_DEVICECALLBACKS>::value) {
         do_present = callbacks_->pfnPresentCb != nullptr;
       }
+    }
+
+    // Security: avoid leaking uninitialized user-mode bytes into the kernel-mode
+    // copy of the per-DMA-buffer private data.
+    //
+    // The AeroGPU KMD overwrites AEROGPU_DMA_PRIV in DxgkDdiRender/DxgkDdiPresent,
+    // but some submission paths may bypass those hooks and jump straight to
+    // DxgkDdiSubmitCommand. Stamp a deterministic AEROGPU_DMA_PRIV header so the
+    // KMD can still distinguish PRESENT vs RENDER submissions in that case.
+    const size_t zero_bytes =
+        std::min<size_t>(static_cast<size_t>(buf.dma_private_data_bytes), static_cast<size_t>(expected_dma_priv_bytes));
+    if (zero_bytes) {
+      std::memset(buf.dma_private_data, 0, zero_bytes);
+    }
+    if (buf.dma_private_data && buf.dma_private_data_bytes >= sizeof(AEROGPU_DMA_PRIV)) {
+      auto* priv = reinterpret_cast<AEROGPU_DMA_PRIV*>(buf.dma_private_data);
+      priv->Type = do_present ? AEROGPU_SUBMIT_PRESENT : AEROGPU_SUBMIT_RENDER;
+      priv->Reserved0 = 0;
+      priv->MetaHandle = 0;
     }
 
     uint64_t fence = 0;
