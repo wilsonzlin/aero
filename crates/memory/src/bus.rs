@@ -888,6 +888,24 @@ mod tests {
             &[0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11]
         );
     }
+
+    #[test]
+    fn small_bus_avoids_unaligned_multi_byte_mmio_operations() {
+        // The lightweight `Bus` router provides an 8-byte fast path for MMIO reads/writes. Ensure
+        // it doesn't invoke unaligned multi-byte operations when the access is unaligned.
+        let mut bus = Bus::new(0);
+
+        let (mmio, mmio_state) = StrictMmio::new((0u8..16).collect());
+        bus.map_mmio(0x1000, 16, Box::new(mmio));
+
+        let got = bus.read(0x1001, 8);
+        assert_eq!(got, u64::from_le_bytes([1, 2, 3, 4, 5, 6, 7, 8]));
+
+        bus.write(0x1001, 8, 0x1122_3344_5566_7788);
+
+        let state = mmio_state.lock().unwrap();
+        assert_eq!(&state.mem[1..9], &[0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11]);
+    }
 }
 
 /// Simple MMIO handler interface for [`Bus`].
@@ -1007,6 +1025,12 @@ impl Bus {
                 if self.regions[region_idx].contains(last) {
                     let region = &mut self.regions[region_idx];
                     let offset = addr - region.start;
+                    // Only issue multi-byte MMIO/ROM accesses when naturally aligned. Unaligned
+                    // reads fall back to byte-granular operations to avoid sending unaligned
+                    // 64-bit operations to device models that require alignment.
+                    if (offset % size as u64) != 0 {
+                        // Fall through to byte-wise reads below.
+                    } else {
                     return match &mut region.kind {
                         RegionKind::Mmio(handler) => {
                             handler.read(offset, size) & mask_for_size(size)
@@ -1021,6 +1045,7 @@ impl Bus {
                             out
                         }
                     };
+                    }
                 }
             }
         }
@@ -1048,6 +1073,9 @@ impl Bus {
                 if self.regions[region_idx].contains(last) {
                     let region = &mut self.regions[region_idx];
                     let offset = addr - region.start;
+                    if (offset % size as u64) != 0 {
+                        // Fall through to byte-wise writes below.
+                    } else {
                     match &mut region.kind {
                         RegionKind::Rom(_) => {}
                         RegionKind::Mmio(handler) => {
@@ -1055,6 +1083,7 @@ impl Bus {
                         }
                     }
                     return;
+                    }
                 }
             }
         }

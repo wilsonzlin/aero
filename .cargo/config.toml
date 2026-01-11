@@ -15,6 +15,13 @@
 # or by overriding the corresponding `build.*wrapper` keys in a higher-precedence Cargo config.
 CARGO_BUILD_RUSTC_WRAPPER = ""
 CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER = ""
+#
+# Some sandbox environments ship with a broken `sccache` wrapper via environment
+# variables. Keep these in addition to the `[build]` overrides below so `cargo`
+# invocations from within the repo are resilient even when wrappers are exported
+# globally.
+RUSTC_WRAPPER = ""
+RUSTC_WORKSPACE_WRAPPER = ""
 
 [alias]
 # `cargo xtask <subcommand>` is shorthand for running the `xtask` helper binary.
