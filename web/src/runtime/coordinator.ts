@@ -36,6 +36,9 @@ import {
 import type { WasmVariant } from "./wasm_context";
 import { precompileWasm } from "./wasm_preload";
 
+type SerialOutputMessage = { kind: "serial.output"; port: number; data: Uint8Array };
+type ResetRequestMessage = { kind: "reset.request" };
+
 export type WorkerState = "starting" | "ready" | "failed" | "stopped";
 
 export interface WorkerStatus {

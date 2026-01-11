@@ -23,9 +23,9 @@ type QueueItem = {
   resolve: (completion: UsbHostCompletion) => void;
 };
 
-function createDeferred(): { promise: Promise<void>; resolve: () => void } {
-  let resolve!: () => void;
-  const promise = new Promise<void>((r) => {
+function createDeferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((r) => {
     resolve = r;
   });
   return { promise, resolve };
@@ -86,11 +86,7 @@ export class UsbBroker {
   private selectedInfo: UsbDeviceInfo | null = null;
 
   private disconnectError: string | null = null;
-  private disconnectSignal = (() => {
-    const signal = createDeferred();
-    signal.resolve();
-    return signal;
-  })();
+  private disconnectSignal = createDeferred<string>();
 
   private readonly ports = new Set<MessagePort | Worker>();
   private readonly portListeners = new Map<MessagePort | Worker, EventListener>();
@@ -256,18 +252,20 @@ export class UsbBroker {
     while (this.queue.length) {
       const item = this.queue.shift()!;
 
+      if (this.disconnectError) {
+        item.resolve(usbErrorCompletion(item.action.id, this.disconnectError));
+        continue;
+      }
+
       const backend = this.backend;
       if (!backend || !this.device) {
         item.resolve(usbErrorCompletion(item.action.id, "WebUSB device not selected."));
         continue;
       }
 
-      if (this.disconnectError) {
-        item.resolve(usbErrorCompletion(item.action.id, this.disconnectError));
-        continue;
-      }
-
-      const backendPromise = backend.execute(proxyActionToBackendAction(item.action)).then(backendCompletionToProxyCompletion);
+      const backendPromise = backend
+        .execute(proxyActionToBackendAction(item.action))
+        .then(backendCompletionToProxyCompletion);
       // If the device disconnects, the race below resolves and we drop the backend promise.
       // Avoid unhandled rejections if the backend rejects after disconnect.
       backendPromise.catch(() => undefined);
@@ -276,12 +274,7 @@ export class UsbBroker {
       try {
         completion = await Promise.race([
           backendPromise,
-          this.disconnectSignal.promise.then(() =>
-            usbErrorCompletion(
-              item.action.id,
-              this.disconnectError ? this.disconnectError : "WebUSB device disconnected.",
-            ),
-          ),
+          this.disconnectSignal.promise.then((reason) => usbErrorCompletion(item.action.id, reason)),
         ]);
       } catch (err) {
         completion = usbErrorCompletion(item.action.id, formatWebUsbError(err));
@@ -303,7 +296,7 @@ export class UsbBroker {
     if (this.backend || this.device) {
       // Resolve in-flight actions (if any) via the disconnect signal.
       this.disconnectError = reason;
-      this.disconnectSignal.resolve();
+      this.disconnectSignal.resolve(reason);
     }
 
     this.backend = null;

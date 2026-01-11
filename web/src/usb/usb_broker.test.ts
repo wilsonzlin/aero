@@ -38,6 +38,20 @@ class FakeUsb extends EventTarget {
   }
 }
 
+class FakeUsbSequence extends EventTarget {
+  private nextIndex = 0;
+  constructor(private readonly devices: USBDevice[]) {
+    super();
+  }
+
+  async requestDevice(): Promise<USBDevice> {
+    const dev = this.devices[this.nextIndex];
+    if (!dev) throw new Error("FakeUsbSequence exhausted");
+    this.nextIndex += 1;
+    return dev;
+  }
+}
+
 class FakePort {
   readonly posted: unknown[] = [];
   private readonly listeners: Array<(ev: MessageEvent<unknown>) => void> = [];
@@ -256,5 +270,37 @@ describe("usb/UsbBroker", () => {
     expect(calls[0]?.filters).toEqual([]);
     expect(Array.isArray(calls[1]?.filters)).toBe(true);
     expect(calls[1]?.filters?.length).toBe(1);
+  });
+
+  it("cancels in-flight actions with WebUSB device replaced. when selecting a new device", async () => {
+    const resolvers: Array<(c: BackendUsbHostCompletion) => void> = [];
+
+    vi.doMock("./webusb_backend", () => ({
+      WebUsbBackend: class {
+        async ensureOpenAndClaimed(): Promise<void> {}
+
+        execute(_action: unknown): Promise<BackendUsbHostCompletion> {
+          return new Promise((resolve) => resolvers.push(resolve));
+        }
+      },
+    }));
+
+    const device1 = { vendorId: 0x0001, productId: 0x0002, close: async () => {} } as unknown as USBDevice;
+    const device2 = { vendorId: 0x0003, productId: 0x0004, close: async () => {} } as unknown as USBDevice;
+    const usb = new FakeUsbSequence([device1, device2]);
+    stubNavigatorUsb(usb);
+
+    const { UsbBroker } = await import("./usb_broker");
+
+    const broker = new UsbBroker();
+    await broker.requestDevice([{ vendorId: 1 }]);
+
+    const p1 = broker.execute({ kind: "bulkIn", id: 1, ep: 1, length: 8 });
+    await Promise.resolve();
+    expect(resolvers).toHaveLength(1);
+
+    await broker.requestDevice([{ vendorId: 2 }]);
+
+    await expect(p1).resolves.toEqual({ kind: "error", id: 1, error: "WebUSB device replaced." });
   });
 });
