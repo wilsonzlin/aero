@@ -133,7 +133,9 @@ It is reachable from the **device callbacks** you receive during `CreateDevice`:
 
 **Signature (Win7 header variations):**
 
-- D3D10: `pfnSetErrorCb(D3D10DDI_HRTDEVICE, HRESULT)`
+- D3D10 (and D3D10.1): commonly either:
+  - `pfnSetErrorCb(D3D10DDI_HRTDEVICE, HRESULT)`, or
+  - `pfnSetErrorCb(D3D10DDI_HDEVICE, HRESULT)`
 - D3D11: commonly either:
   - `pfnSetErrorCb(D3D11DDI_HRTDEVICE, HRESULT)`, or
   - `pfnSetErrorCb(D3D11DDI_HDEVICE, HRESULT)`
