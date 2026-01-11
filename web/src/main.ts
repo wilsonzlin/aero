@@ -2881,10 +2881,15 @@ function renderWebUsbPassthroughDemoWorkerPanel(): HTMLElement {
   function formatHexBytes(bytes: Uint8Array, maxBytes = 256): string {
     const limit = Math.max(0, maxBytes | 0);
     const head = bytes.subarray(0, Math.min(bytes.byteLength, limit));
-    const hex = Array.from(head, (b) => b.toString(16).padStart(2, "0")).join(" ");
+    const parts = Array.from(head, (b) => b.toString(16).padStart(2, "0"));
+    let hex = "";
+    for (let i = 0; i < parts.length; i += 1) {
+      if (i !== 0) hex += i % 16 === 0 ? "\n" : " ";
+      hex += parts[i]!;
+    }
     if (bytes.byteLength <= limit) return hex;
     const remaining = bytes.byteLength - limit;
-    return `${hex} … (+${remaining} bytes)`;
+    return `${hex}\n… (+${remaining} bytes)`;
   }
 
   const refreshUi = (): void => {
