@@ -3747,8 +3747,8 @@ static void SetConstantBuffers11Locked(Device* dev,
     return;
   }
 
-  std::vector<aerogpu_constant_buffer_binding> bindings;
-  bindings.resize(buffer_count);
+  std::array<aerogpu_constant_buffer_binding, kMaxConstantBufferSlots> bindings{};
+  bool changed = false;
   for (UINT i = 0; i < buffer_count; i++) {
     aerogpu_constant_buffer_binding b{};
     b.buffer = 0;
@@ -3780,12 +3780,20 @@ static void SetConstantBuffers11Locked(Device* dev,
       b.size_bytes = size_bytes > 0xFFFFFFFFull ? 0xFFFFFFFFu : static_cast<uint32_t>(size_bytes);
     }
 
-    table[start_slot + i] = b;
     bindings[i] = b;
+    if (!changed) {
+      const aerogpu_constant_buffer_binding& current = table[start_slot + i];
+      changed = current.buffer != b.buffer || current.offset_bytes != b.offset_bytes || current.size_bytes != b.size_bytes ||
+                current.reserved0 != b.reserved0;
+    }
+  }
+
+  if (!changed) {
+    return;
   }
 
   auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_constant_buffers>(
-      AEROGPU_CMD_SET_CONSTANT_BUFFERS, bindings.data(), bindings.size() * sizeof(bindings[0]));
+      AEROGPU_CMD_SET_CONSTANT_BUFFERS, bindings.data(), buffer_count * sizeof(bindings[0]));
   if (!cmd) {
     SetError(dev, E_OUTOFMEMORY);
     return;
@@ -3794,6 +3802,10 @@ static void SetConstantBuffers11Locked(Device* dev,
   cmd->start_slot = start_slot;
   cmd->buffer_count = static_cast<uint32_t>(buffer_count);
   cmd->reserved0 = 0;
+
+  for (UINT i = 0; i < buffer_count; i++) {
+    table[start_slot + i] = bindings[i];
+  }
 }
 
 void AEROGPU_APIENTRY VsSetConstantBuffers11(D3D11DDI_HDEVICECONTEXT hCtx,
@@ -4145,19 +4157,25 @@ static void SetSamplers11Locked(Device* dev,
     return;
   }
 
-  std::vector<aerogpu_handle_t> handles;
-  handles.resize(sampler_count);
+  std::array<aerogpu_handle_t, kMaxSamplerSlots> handles{};
+  bool changed = false;
   for (UINT i = 0; i < sampler_count; i++) {
     aerogpu_handle_t handle = 0;
     if (phSamplers && phSamplers[i].pDrvPrivate) {
       handle = FromHandle<D3D11DDI_HSAMPLER, Sampler>(phSamplers[i])->handle;
     }
-    table[start_slot + i] = handle;
     handles[i] = handle;
+    if (!changed) {
+      changed = table[start_slot + i] != handle;
+    }
+  }
+
+  if (!changed) {
+    return;
   }
 
   auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_set_samplers>(
-      AEROGPU_CMD_SET_SAMPLERS, handles.data(), handles.size() * sizeof(handles[0]));
+      AEROGPU_CMD_SET_SAMPLERS, handles.data(), sampler_count * sizeof(handles[0]));
   if (!cmd) {
     SetError(dev, E_OUTOFMEMORY);
     return;
@@ -4166,6 +4184,10 @@ static void SetSamplers11Locked(Device* dev,
   cmd->start_slot = start_slot;
   cmd->sampler_count = sampler_count;
   cmd->reserved0 = 0;
+
+  for (UINT i = 0; i < sampler_count; i++) {
+    table[start_slot + i] = handles[i];
+  }
 }
 
 void AEROGPU_APIENTRY VsSetSamplers11(D3D11DDI_HDEVICECONTEXT hCtx,
