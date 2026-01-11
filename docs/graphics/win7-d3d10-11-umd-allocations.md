@@ -67,24 +67,29 @@ At adapter `pfnCreateDevice(...)` time, the runtime passes a `*_ARG_CREATEDEVICE
 
 * an “RT device” handle (`D3D10DDI_HRTDEVICE` / `D3D11DDI_HRTDEVICE`) that must be passed back when invoking runtime callbacks
 * pointers to runtime callback tables:
-  * D3D10/11 “device callbacks” (for error reporting, and sometimes lock/unlock):
+  * D3D10/11 “device callbacks” (wrapper table):
     * D3D10: `D3D10DDI_DEVICECALLBACKS`
     * D3D11: `D3D11DDI_DEVICECALLBACKS`
+    * Always contains `pfnSetErrorCb` (error reporting from `void` DDIs).
+    * Some header revisions also include `pfnAllocateCb`/`pfnDeallocateCb` and/or `pfnLockCb`/`pfnUnlockCb` here.
   * the shared `d3dumddi.h` callback table:
     * `D3DDDI_DEVICECALLBACKS`
+    * This is the canonical “WDDM callback” layer (submission, allocation, lock/unlock, fence waits).
 
-**Win7-era header wiring (field names):**
+**Win7-era header wiring (field names; header-dependent):**
 
-* `pCallbacks` → `D3D10DDI_DEVICECALLBACKS` / `D3D11DDI_DEVICECALLBACKS`
-* `pUMCallbacks` → `D3DDDI_DEVICECALLBACKS`
+* `pCallbacks` / `pDeviceCallbacks` → `D3D10DDI_DEVICECALLBACKS` / `D3D11DDI_DEVICECALLBACKS`
+* `pUMCallbacks` (if present) → `D3DDDI_DEVICECALLBACKS`
 
-On Win7, `pUMCallbacks` is the table that contains the allocation callbacks used by `CreateResource`:
+On Win7, the **allocation + mapping** callbacks are part of the shared `d3dumddi.h` contract. In **WDK 7.1** they are provided via `pUMCallbacks`, but some Win7-capable header sets either omit `pUMCallbacks` or embed these callbacks in the D3D10/11 wrapper table.
+
+The required callbacks for resource backing allocations and mapping are:
 
 * `pfnAllocateCb`
 * `pfnDeallocateCb`
 * (for CPU staging/mapping) `pfnLockCb`, `pfnUnlockCb`
 
-**Rule:** Store both callback table pointer(s) and the RT-device handle in your per-device object. Every `CreateResource`/`DestroyResource` uses them.
+**Rule:** Store both callback table pointer(s) and the RT-device handle in your per-device object. Every `CreateResource`/`DestroyResource` uses them. Use `drivers/aerogpu/tools/win7_wdk_probe` to confirm which table and member names your chosen headers expose.
 
 #### `*_ARG_CREATEDEVICE` fields that matter for allocations
 
@@ -92,10 +97,10 @@ Both D3D10 and D3D11 create-device structs contain:
 
 * `hRTDevice`
   * Runtime device handle you must pass as the first argument to `pfnAllocateCb` / `pfnDeallocateCb` / `pfnLockCb` / `pfnUnlockCb`.
-* `pUMCallbacks`
+* `pUMCallbacks` (if present)
   * Pointer to the shared callback table (`D3DDDI_DEVICECALLBACKS`) that contains `pfnAllocateCb` / `pfnDeallocateCb` (and also `pfnLockCb` / `pfnUnlockCb`).
-* `pCallbacks`
-  * Pointer to the D3D10/11 “device callbacks” table (used for error reporting via `pfnSetErrorCb`, and in some headers also provides `pfnLockCb` / `pfnUnlockCb`).
+* `pCallbacks` / `pDeviceCallbacks`
+  * Pointer to the D3D10/11 wrapper callback table (always contains `pfnSetErrorCb`, and in some header revisions also provides `pfnAllocateCb` / `pfnDeallocateCb` / `pfnLockCb` / `pfnUnlockCb`).
 
 D3D11 additionally wires both the device and immediate-context vtables during `CreateDevice`:
 
@@ -131,11 +136,13 @@ UMD CreateResource
   |      - Size, Alignment, Flags, (optional) per-allocation private data
   |
   | 5) Call the runtime allocation callback to create WDDM allocations:
+  |      // Callback table location is header-dependent (pUMCallbacks vs pCallbacks/pDeviceCallbacks)
+  |      const auto* cb = /* callback table that exposes pfnAllocateCb */;
   |      D3DDDICB_ALLOCATE alloc = {...};
   |      alloc.hResource = hRTResource;
   |      alloc.NumAllocations = pCreateResource->NumAllocations;
   |      alloc.pAllocationInfo = pCreateResource->pAllocationInfo;
-  |      hr = pUMCallbacks->pfnAllocateCb(hRTDevice, &alloc);
+  |      hr = cb->pfnAllocateCb(hRTDevice, &alloc);
   |
   |    Runtime returns:
   |      - alloc.hKMResource
@@ -173,7 +180,12 @@ These callbacks are provided by the runtime (via the device callback table(s) ha
 
 ### 3.1 Resource backing allocation callbacks: `pfnAllocateCb` / `pfnDeallocateCb`
 
-The D3D10/D3D11 runtime expects the UMD to create and destroy WDDM allocations for resources via the shared `D3DDDI_DEVICECALLBACKS` table (`*_ARG_CREATEDEVICE::pUMCallbacks`):
+The D3D10/D3D11 resource allocation contract is declared in `d3dumddi.h` as part of the shared **WDDM callback layer** (`D3DDDI_DEVICECALLBACKS`).
+
+* In **WDK 7.1**, the runtime passes this table explicitly as `*_ARG_CREATEDEVICE::pUMCallbacks`.
+* Some Win7-capable header sets either rename/omit `pUMCallbacks` or expose `pfnAllocateCb` / `pfnDeallocateCb` on the D3D10/11 wrapper callback table (`pCallbacks` / `pDeviceCallbacks`).
+
+In all cases, the runtime expects the UMD to create and destroy WDDM allocations for resources via:
 
 * `pfnAllocateCb` (create allocation(s) backing a resource)
 * `pfnDeallocateCb` (destroy allocation(s) backing a resource)
@@ -219,6 +231,7 @@ typedef HRESULT (APIENTRY *PFND3DDDICB_UNLOCK)(D3D10DDI_HRTDEVICE hDevice, const
 Notes:
 
 * The first parameter is the runtime “RT device” handle passed at create-device time (commonly stored as `hRTDevice` in UMD code).
+* Header revisions disagree on the *type* of that first parameter (`D3D10DDI_HRTDEVICE` vs `D3D11DDI_HRTDEVICE`, and some older sets use `HANDLE`). Use the exact prototype your installed headers define.
 * `pfnAllocateCb` and `pfnLockCb` are in-out: they write handles/pointers back into the provided structs.
 
 ---
