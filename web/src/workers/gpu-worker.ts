@@ -2319,10 +2319,31 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
 
           const tryPostPresenterScreenshot = async (forceUpload: boolean): Promise<boolean> => {
             if (!presenter || isDeviceLost) return false;
-            const frame = forceUpload ? getCurrentFrameInfo() : null;
-            if (frame && presenter) {
-              presenter.present(frame.pixels, frame.strideBytes);
-              aerogpuLastOutputSource = "framebuffer";
+            if (forceUpload) {
+              if (aerogpuLastOutputSource === "aerogpu") {
+                const last = aerogpuLastPresentedFrame;
+                if (last) {
+                  if (last.width !== presenterSrcWidth || last.height !== presenterSrcHeight) {
+                    presenterSrcWidth = last.width;
+                    presenterSrcHeight = last.height;
+                    if (presenter.backend === "webgpu") surfaceReconfigures += 1;
+                    presenter.resize(last.width, last.height, outputDpr);
+                  }
+                  presenter.present(last.rgba8, last.width * BYTES_PER_PIXEL_RGBA8);
+                }
+              } else {
+                const frame = getCurrentFrameInfo();
+                if (frame) {
+                  if (frame.width !== presenterSrcWidth || frame.height !== presenterSrcHeight) {
+                    presenterSrcWidth = frame.width;
+                    presenterSrcHeight = frame.height;
+                    if (presenter.backend === "webgpu") surfaceReconfigures += 1;
+                    presenter.resize(frame.width, frame.height, outputDpr);
+                  }
+                  presenter.present(frame.pixels, frame.strideBytes);
+                  aerogpuLastOutputSource = "framebuffer";
+                }
+              }
             }
 
             const prevCursorRenderEnabled = cursorRenderEnabled;
