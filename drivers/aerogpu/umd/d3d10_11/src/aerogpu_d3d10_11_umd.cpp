@@ -6085,7 +6085,10 @@ HRESULT OpenAdapterCommon(D3D10DDIARG_OPENADAPTER* pOpenData) {
     AEROGPU_D3D10_RET_HR(E_INVALIDARG);
   }
 
-  auto* adapter = new AeroGpuAdapter();
+  auto* adapter = new (std::nothrow) AeroGpuAdapter();
+  if (!adapter) {
+    AEROGPU_D3D10_RET_HR(E_OUTOFMEMORY);
+  }
   pOpenData->hAdapter.pDrvPrivate = adapter;
 
 #if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS)

@@ -3661,7 +3661,10 @@ HRESULT OpenAdapter_WDK(D3D10DDIARG_OPENADAPTER* pOpenData) {
       pOpenData->Version = D3D10_1DDI_SUPPORTED;
     }
 
-    auto* adapter = new AeroGpuAdapter();
+    auto* adapter = new (std::nothrow) AeroGpuAdapter();
+    if (!adapter) {
+      AEROGPU_D3D10_RET_HR(E_OUTOFMEMORY);
+    }
     InitKmtAdapterHandle(adapter);
     InitUmdPrivate(adapter);
     pOpenData->hAdapter.pDrvPrivate = adapter;
