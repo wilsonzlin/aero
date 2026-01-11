@@ -19,7 +19,7 @@ type ValidVector = {
 
 type InvalidVector = {
   name: string;
-  frame_b64: string;
+  frame_b64?: string;
   wire_b64: string;
   expectError: true;
   errorContains: string;
@@ -53,7 +53,10 @@ describe("l2 tunnel protocol vectors", () => {
 
   for (const v of vectors.vectors) {
     it(v.name, () => {
-      const wire = decodeB64(v.wire_b64);
+      // Keep compatibility with older/alternate naming: prefer wire_b64, fall back to frame_b64.
+      const wireB64 = ("wire_b64" in v ? v.wire_b64 : undefined) ?? ("frame_b64" in v ? v.frame_b64 : undefined);
+      expect(wireB64).toBeDefined();
+      const wire = decodeB64(wireB64!);
 
       if ("expectError" in v && v.expectError) {
         let err: unknown;
@@ -67,15 +70,17 @@ describe("l2 tunnel protocol vectors", () => {
         return;
       }
 
-      const payload = decodeB64(v.payload_b64);
+      // Valid vectors should include both fields and they must match byte-for-byte.
+      expect(v.wire_b64).toBe(v.frame_b64);
 
+      const payload = decodeB64(v.payload_b64);
       const decoded = l2.decodeL2Message(wire);
       expect(decoded.version).toBe(vectors.version);
       expect(decoded.type).toBe(v.type);
       expect(decoded.flags).toBe(v.flags);
       expect(Buffer.from(decoded.payload)).toEqual(Buffer.from(payload));
 
-      let encoded: Uint8Array | undefined;
+      let encoded: Uint8Array;
       switch (v.type) {
         case l2.L2_TUNNEL_TYPE_FRAME:
           encoded = l2.encodeL2Frame(payload);
@@ -86,19 +91,14 @@ describe("l2 tunnel protocol vectors", () => {
         case l2.L2_TUNNEL_TYPE_PONG:
           encoded = l2.encodePong(payload);
           break;
-        case l2.L2_TUNNEL_TYPE_ERROR: {
-          // No dedicated ERROR encoder today; if one is added, it must match the vectors.
-          const maybeEncodeError =
-            (l2 as any).encodeL2Error ?? (l2 as any).encodeError ?? (l2 as any).encodeL2TunnelError;
-          if (typeof maybeEncodeError !== "function") return;
-          encoded = maybeEncodeError(payload);
+        case l2.L2_TUNNEL_TYPE_ERROR:
+          encoded = l2.encodeError(payload);
           break;
-        }
         default:
           throw new Error(`unsupported type in vectors: ${v.type}`);
       }
-
       expect(Buffer.from(encoded)).toEqual(Buffer.from(wire));
     });
   }
 });
+
