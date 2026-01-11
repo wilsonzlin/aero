@@ -66,6 +66,8 @@ ULONG VirtIoSndSgMaxElemsForMdlRegion(_In_ PMDL Mdl,
     ULONG mdl_byte_offset;
     ULONG mdl_byte_count;
 
+    ASSERT(KeGetCurrentIrql() <= DISPATCH_LEVEL);
+
     if (Mdl == NULL) {
         return 0;
     }
@@ -98,6 +100,8 @@ NTSTATUS VirtIoSndSgBuildFromMdlRegion(_In_ PMDL Mdl,
     uint32_t pfn_count;
     const PFN_NUMBER *pfns;
     int rc;
+
+    ASSERT(KeGetCurrentIrql() <= DISPATCH_LEVEL);
 
     if (OutCount != NULL) {
         *OutCount = 0;
