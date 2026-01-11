@@ -172,3 +172,69 @@ fn invlpg_flushes_pagingbus_translation() {
     assert_eq!(state.read_reg(Register::EAX) as u32, 0x2222_2222);
 }
 
+#[test]
+fn invlpg_flushes_translation_for_wrapped_linear_address() {
+    // Same setup as `invlpg_flushes_pagingbus_translation`, but exercises the
+    // non-long mode linear-address wraparound: (segment_base + offset) is
+    // truncated to 32 bits.
+    let pd_base = 0x1000u64;
+    let pt_base = 0x2000u64;
+    let code_page = 0x3000u64;
+    let page_a = 0x4000u64;
+    let page_b = 0x5000u64;
+
+    let mut phys = TestMemory::new(0x10000);
+    let flags = PTE_P | PTE_RW;
+
+    phys.write_u32_raw(pd_base + 0 * 4, (pt_base as u32) | flags);
+    phys.write_u32_raw(pt_base + 0 * 4, (code_page as u32) | flags);
+    phys.write_u32_raw(pt_base + 1 * 4, (page_a as u32) | flags);
+
+    phys.write_u32_raw(page_a, 0x1111_1111);
+    phys.write_u32_raw(page_b, 0x2222_2222);
+
+    // We will access linear address 0x1000, but do so via DS.base + disp32 where
+    // the sum overflows 32 bits:
+    //   DS.base = 0xFFFF_F000
+    //   disp32  = 0x0000_2000
+    //   linear  = 0x1_0000_1000 -> 0x0000_1000 (32-bit wrap)
+    //
+    // mov eax, dword ptr [0x00002000]
+    // invlpg [0x00002000]
+    // mov eax, dword ptr [0x00002000]
+    let code: Vec<u8> = vec![
+        0xA1, 0x00, 0x20, 0x00, 0x00, // mov eax, [0x2000]
+        0x0F, 0x01, 0x3D, 0x00, 0x20, 0x00, 0x00, // invlpg [0x2000]
+        0xA1, 0x00, 0x20, 0x00, 0x00, // mov eax, [0x2000]
+    ];
+    for (i, b) in code.iter().copied().enumerate() {
+        phys.write_u8_raw(code_page + i as u64, b);
+    }
+
+    let mut bus = PagingBus::new(phys);
+    let mut state = CpuState::new(CpuMode::Protected);
+    state.control.cr3 = pd_base;
+    state.control.cr0 = CR0_PE | CR0_PG;
+    state.control.cr4 = 0;
+    state.update_mode();
+    state.set_rip(0);
+    state.segments.ds.base = 0xFFFF_F000;
+
+    let mut ctx = AssistContext::default();
+
+    // First load: should observe page A and populate the TLB for linear 0x1000.
+    let res = run_batch_with_assists(&mut ctx, &mut state, &mut bus, 1);
+    assert_eq!(res.exit, BatchExit::Completed);
+    assert_eq!(state.read_reg(Register::EAX) as u32, 0x1111_1111);
+
+    // Patch the PTE for linear 0x1000 to point to page B without changing CR3.
+    bus.inner_mut()
+        .write_u32_raw(pt_base + 1 * 4, (page_b as u32) | flags);
+
+    // INVLPG must invalidate based on the architecturally correct linear address
+    // (32-bit wrap), so the second load sees page B.
+    let res = run_batch_with_assists(&mut ctx, &mut state, &mut bus, 2);
+    assert_eq!(res.exit, BatchExit::Completed);
+    assert_eq!(ctx.invlpg_log, vec![0x1000]);
+    assert_eq!(state.read_reg(Register::EAX) as u32, 0x2222_2222);
+}

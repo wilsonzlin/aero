@@ -1627,7 +1627,12 @@ fn instr_invlpg(
     if instr.op_kind(0) != OpKind::Memory {
         return Err(Exception::InvalidOpcode);
     }
-    let addr = calc_ea(state, instr, next_ip, true)?;
+    // INVLPG takes a linear address operand. In non-long modes, linear addresses
+    // are 32-bit and wrap around on overflow of `segment_base + offset`.
+    let mut addr = calc_ea(state, instr, next_ip, true)?;
+    if state.mode != CpuMode::Long {
+        addr &= 0xffff_ffff;
+    }
     bus.invlpg(addr);
     ctx.invlpg_log.push(addr);
     Ok(())
