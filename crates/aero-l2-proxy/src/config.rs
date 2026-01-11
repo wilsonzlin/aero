@@ -48,14 +48,11 @@ impl Default for SecurityConfig {
 
 impl SecurityConfig {
     pub fn from_env() -> Self {
+        // `AERO_L2_OPEN` is a security escape hatch; keep parsing strict so deployments don't
+        // accidentally enable it via loose truthy values.
         let open = std::env::var("AERO_L2_OPEN")
             .ok()
-            .map(|v| {
-                matches!(
-                    v.trim(),
-                    "1" | "true" | "TRUE" | "yes" | "YES" | "on" | "ON"
-                )
-            })
+            .map(|v| v.trim() == "1")
             .unwrap_or(false);
 
         let allowed_origins_raw = std::env::var("AERO_L2_ALLOWED_ORIGINS").ok();
