@@ -195,7 +195,7 @@ impl SecurityConfig {
                     AuthMode::None
                 } else {
                     bail!(
-                        "no L2 auth configured; set AERO_L2_AUTH_MODE or configure AERO_GATEWAY_SESSION_SECRET/SESSION_SECRET/AERO_L2_SESSION_SECRET or AERO_L2_TOKEN (or set AERO_L2_OPEN=1 and AERO_L2_INSECURE_ALLOW_NO_AUTH=1 to explicitly allow unauthenticated access)"
+                        "no L2 auth configured; set AERO_L2_AUTH_MODE or configure AERO_GATEWAY_SESSION_SECRET/SESSION_SECRET/AERO_L2_SESSION_SECRET or AERO_L2_API_KEY (legacy: AERO_L2_TOKEN) (or set AERO_L2_OPEN=1 and AERO_L2_INSECURE_ALLOW_NO_AUTH=1 to explicitly allow unauthenticated access)"
                     );
                 }
             }
@@ -205,7 +205,7 @@ impl SecurityConfig {
             AuthMode::ApiKey | AuthMode::CookieAndApiKey => {
                 if token.is_none() {
                     return Err(anyhow!(
-                        "AERO_L2_TOKEN (or AERO_L2_API_KEY) is required for AERO_L2_AUTH_MODE=token/session_and_token"
+                        "AERO_L2_API_KEY (legacy: AERO_L2_TOKEN) is required for AERO_L2_AUTH_MODE=token/session_and_token"
                     ));
                 }
                 token
