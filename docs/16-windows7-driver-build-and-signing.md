@@ -18,7 +18,7 @@ The repo provides PowerShell entrypoints that CI and local builds can share:
 - `ci/validate-toolchain.ps1` → smoke-test that `Inf2Cat /os:7_X86,7_X64` works (catches runner/toolchain regressions early)
 - `ci/build-drivers.ps1` → build binaries into `out/drivers/`
 - `ci/make-catalogs.ps1` → stage packages + run `Inf2Cat` into `out/packages/`
-- `ci/sign-drivers.ps1` → create a test cert + sign `.sys`/`.cat` under `out/packages/`
+- `ci/sign-drivers.ps1` → create a test cert + sign `.sys`/`.cat` under `out/packages/` (catalogs cover INF-referenced payload files like user-mode DLLs)
 - `ci/package-drivers.ps1` → create `.zip` bundles and an optional `.iso` for “Load driver” installs
 
 These scripts are orchestrated in CI by:
@@ -167,6 +167,7 @@ Dual signing (SHA-1 first, then append SHA-256):
 Outputs:
 
 - Signed `*.sys` and `*.cat` under `out/packages/**` (configurable via `-InputRoot`)
+  - Note: `Inf2Cat` catalogs hash all INF-referenced files in the package (INF, SYS, DLL, etc), so signing the catalog protects user-mode DLL integrity without signing each DLL individually.
 - Public cert (artifact-safe): `out/certs/aero-test.cer`
 - Signing PFX (private key): `out/aero-test.pfx` (kept under `out/`, not `out/certs/`)
 

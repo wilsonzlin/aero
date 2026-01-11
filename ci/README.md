@@ -104,6 +104,8 @@ CI signs:
 - `*.sys` (kernel-mode drivers)
 - `*.cat` (catalogs)
 
+Note: `Inf2Cat` catalogs include hashes for all INF-referenced files in the package (INF, SYS, DLL, etc). Signing the catalog covers user-mode DLL integrity, so CI does not Authenticode-sign `*.dll` files individually.
+
 And verifies:
 
 - `.sys`: `signtool verify /kp /v`
