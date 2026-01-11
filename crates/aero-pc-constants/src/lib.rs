@@ -28,3 +28,17 @@ pub const PCIE_ECAM_BUS_STRIDE: u64 = 1 << 20;
 pub const PCIE_ECAM_SIZE: u64 =
     (PCIE_ECAM_END_BUS as u64 - PCIE_ECAM_START_BUS as u64 + 1) * PCIE_ECAM_BUS_STRIDE;
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ecam_defaults_follow_q35_convention() {
+        assert_eq!(PCIE_ECAM_BASE, 0xB000_0000);
+        assert_eq!(PCIE_ECAM_SEGMENT, 0);
+        assert_eq!(PCIE_ECAM_START_BUS, 0);
+        assert_eq!(PCIE_ECAM_END_BUS, 0xFF);
+        assert_eq!(PCIE_ECAM_BUS_STRIDE, 1 << 20);
+        assert_eq!(PCIE_ECAM_SIZE, 0x1000_0000);
+    }
+}
