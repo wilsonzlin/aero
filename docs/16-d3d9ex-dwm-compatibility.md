@@ -123,6 +123,7 @@ In practice, DWM and other Ex clients frequently touch a wider surface area than
 **AeroGPU Win7 UMD DDI coverage (DWM-critical Ex calls):**
 
 - `pfnCheckDeviceState` returns `S_OK` for visible windows and `S_PRESENT_OCCLUDED` when the destination window is minimized/hidden (best-effort).
+- `pfnPresent`/`pfnPresentEx` implement max-frame-latency throttling with bounded waits; `D3DPRESENT_DONOTWAIT` returns `D3DERR_WASSTILLDRAWING`.
 - `pfnWaitForVBlank` prefers a real KMD vblank wait (scanline polling) when available, but is always bounded (no multi-second sleeps).
 - `pfnSetGPUThreadPriority` / `pfnGetGPUThreadPriority` always succeed and clamp the stored priority to `[-7, 7]`.
 - `pfnCheckResourceResidency` / `pfnQueryResourceResidency` never fail for valid devices and conservatively report resources as resident.
@@ -414,6 +415,7 @@ At minimum, validate that:
 This test exists specifically to catch “DWM hang” failure modes caused by Ex-only device probes. It calls:
 
 - `IDirect3DDevice9Ex::CheckDeviceState`
+- `::SetMaximumFrameLatency` + `::PresentEx` (without `D3DPRESENT_DONOTWAIT`) to validate throttling is bounded
 - `::WaitForVBlank`
 - `::SetGPUThreadPriority` / `::GetGPUThreadPriority`
 - `::CheckResourceResidency` / `::QueryResourceResidency`

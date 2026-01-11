@@ -203,6 +203,36 @@ static int RunD3D9ExDwmDdiSanity(int argc, char** argv) {
     }
   }
 
+  // --- PresentEx throttling (max frame latency) ---
+  // DWM typically presents without D3DPRESENT_DONOTWAIT; the UMD must throttle by
+  // waiting/polling internally, but never hang.
+  hr = dev->SetMaximumFrameLatency(1);
+  if (FAILED(hr)) {
+    return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::SetMaximumFrameLatency(1)", hr);
+  }
+
+  const int kPresentThrottleIters = 60;
+  for (int i = 0; i < kPresentThrottleIters; ++i) {
+    hr = dev->Clear(0, NULL, D3DCLEAR_TARGET, D3DCOLOR_XRGB(i & 1 ? 0 : 255, 0, 0), 1.0f, 0);
+    if (FAILED(hr)) {
+      return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::Clear(present throttle)", hr);
+    }
+
+    LARGE_INTEGER before;
+    QueryPerformanceCounter(&before);
+    hr = dev->PresentEx(NULL, NULL, NULL, NULL, 0);
+    LARGE_INTEGER after;
+    QueryPerformanceCounter(&after);
+
+    const double call_ms = QpcToMs(after.QuadPart - before.QuadPart, qpc_freq);
+    if (call_ms > kMaxSingleCallMs) {
+      return aerogpu_test::Fail(kTestName, "PresentEx appears to block (%.3f ms)", call_ms);
+    }
+    if (FAILED(hr)) {
+      return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::PresentEx(throttle)", hr);
+    }
+  }
+
   // --- WaitForVBlank: must always be bounded (and not hang in remote/non-vblank setups) ---
   const int kWaitForVBlankIters = 10;
   for (int i = 0; i < kWaitForVBlankIters; ++i) {
@@ -324,4 +354,3 @@ int main(int argc, char** argv) {
   Sleep(30);
   return rc;
 }
-
