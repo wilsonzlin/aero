@@ -43,6 +43,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Check legacy virtio INFs (no modern-only HWIDs)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci/check-legacy-virtio-inf-hwids.ps1'
+
       - name: Run virtio host tests (CMake)
         shell: bash
         env:
@@ -99,6 +105,12 @@ jobs:
           # `git describe` and commit-distance calculations are accurate.
           fetch-depth: 0
           fetch-tags: true
+
+      - name: Check legacy virtio INFs (no modern-only HWIDs)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci/check-legacy-virtio-inf-hwids.ps1'
 
       - name: Run virtio host tests (CMake)
         shell: pwsh
