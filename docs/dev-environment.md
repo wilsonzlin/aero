@@ -1,6 +1,6 @@
 # Reproducible development environment
 
-Aero’s canonical workflows assume a small set of native tooling (Rust stable + nightly, Node, QEMU, etc.). To make “clone → build → test” reliable, this repo ships a **VS Code / GitHub Codespaces dev container** definition.
+Aero’s canonical workflows assume a small set of native tooling (pinned Rust toolchains, Node, QEMU, etc.). To make “clone → build → test” reliable, this repo ships a **VS Code / GitHub Codespaces dev container** definition.
 
 ## Option A: Dev Container (recommended)
 
