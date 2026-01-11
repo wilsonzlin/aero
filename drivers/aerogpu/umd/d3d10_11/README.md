@@ -79,9 +79,18 @@ All append helpers return `nullptr` (and set `CmdStreamError`) on failure (for e
 
 DXGI/D3D10/11 shared resource interop is not implemented in this UMD yet. The protocol supports it (primarily for D3D9Ex/DWM) via `AEROGPU_CMD_EXPORT_SHARED_SURFACE` / `AEROGPU_CMD_IMPORT_SHARED_SURFACE` and a stable cross-process `share_token`.
 
-For AeroGPU, `share_token` is defined as the **KMD-generated allocation `ShareToken`** returned to the UMD via allocation private driver data (`drivers/aerogpu/protocol/aerogpu_alloc_privdata.h`). Do **not** use the numeric value of the D3D shared `HANDLE` as `share_token` (it is process-local and not stable cross-process).
+On Win7/WDDM 1.1, the token is persisted in WDDM allocation private driver data
+(`aerogpu_wddm_alloc_priv.share_token` in `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`):
+the UMD chooses it at creation time and dxgkrnl preserves the bytes for shared
+allocations and returns them verbatim on `OpenResource` so other processes can
+observe the same token. Do **not** use the numeric value of the D3D shared `HANDLE`
+as `share_token` (it is process-local and not stable cross-process).
 
-Separately, the WDDM allocation private-data blob (`drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`) is treated as **UMD → KMD input** and should be used to persist a stable `alloc_id` across CreateAllocation/OpenAllocation so the KMD can build the per-submit allocation table for guest-backed resources.
+The WDDM allocation private-data blob (`drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`) is
+treated as **UMD → KMD input** and should be used to persist stable `alloc_id` /
+`share_token` values across CreateAllocation/OpenAllocation so the KMD can build the
+per-submit allocation table for guest-backed resources (and so shared opens can reuse
+the same `share_token`).
 
 For shared allocations, `alloc_id` must avoid collisions across guest processes and must stay in the UMD-owned range (`alloc_id <= 0x7fffffff`, non-zero).
 
