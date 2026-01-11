@@ -5879,8 +5879,11 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
       const float rhw = read_f32_unaligned(src + 12);
 
       const float w = (rhw != 0.0f) ? (1.0f / rhw) : 1.0f;
-      const float ndc_x = ((x - vp_x) / vp_w) * 2.0f - 1.0f;
-      const float ndc_y = 1.0f - ((y - vp_y) / vp_h) * 2.0f;
+      // D3D9's viewport transform uses a -0.5 pixel center convention. Invert it
+      // so typical D3D9 pre-transformed vertex coordinates line up with pixel
+      // centers.
+      const float ndc_x = ((x + 0.5f - vp_x) / vp_w) * 2.0f - 1.0f;
+      const float ndc_y = 1.0f - ((y + 0.5f - vp_y) / vp_h) * 2.0f;
       const float ndc_z = z;
 
       write_f32_unaligned(dst + 0, ndc_x * w);
