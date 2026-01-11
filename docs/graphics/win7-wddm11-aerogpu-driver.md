@@ -231,19 +231,19 @@ For each entrypoint:
 - **Can be deferred:** Nothing major. Keep minimal allocations; don’t start hardware here.
  
 #### `DxgkDdiStartDevice`
- 
+  
 - **Purpose:** Map BARs/interrupts; publish adapter caps; ready to service Dxgk callbacks.
 - **AeroGPU MVP behavior:**
-  - Map AeroGPU MMIO BAR (register block).
+  - Map AeroGPU BAR0 MMIO register block (≥ 64 KiB) and validate discovery regs (`AEROGPU_MMIO_REG_MAGIC`, `AEROGPU_MMIO_REG_ABI_VERSION`, `AEROGPU_MMIO_REG_FEATURES_LO/HI`).
   - Configure interrupt vector.
-  - Initialize submission rings (allocate shared pages; write ring base to MMIO).
+  - Initialize submission rings (allocate shared pages; program `AEROGPU_MMIO_REG_RING_GPA_*`, `AEROGPU_MMIO_REG_RING_SIZE_BYTES`, set `AEROGPU_RING_CONTROL_ENABLE`).
   - Initialize default mode set state (single output).
 - **Can be deferred:** Advanced power states, multiple nodes/engines, MSI/MSI-X (use line-based if simplest).
  
 #### `DxgkDdiStopDevice`
- 
+  
 - **Purpose:** Stop hardware access during PnP stop/remove.
-- **AeroGPU MVP behavior:** Disable interrupts, stop vblank timer (in emulator), free ring allocations, unmap MMIO.
+- **AeroGPU MVP behavior:** Disable interrupts (clear `AEROGPU_MMIO_REG_IRQ_ENABLE`), stop vblank timer (in emulator), free ring allocations, unmap MMIO.
 - **Can be deferred:** Sophisticated draining; MVP may force-reset the virtual GPU.
  
 #### `DxgkDdiRemoveDevice`
@@ -272,7 +272,7 @@ For each entrypoint:
 - **Purpose:** Handle device power transitions (Dx, Sx).
 - **AeroGPU MVP behavior:** Support the minimal path required for boot/shutdown:
   - Treat `D0` as “on”, everything else as “off”
-  - On power-down: stop interrupts, stop vsync generation
+  - On power-down: stop interrupts, stop vblank generation
   - On power-up: re-init MMIO/rings (or full virtual reset)
 - **Can be deferred:** Fine-grained Dx states, fast resume, power budgeting.
 
@@ -524,11 +524,11 @@ of either callback being used to release a handle.
 - **Can be deferred:** Multiple interrupt sources beyond vsync + fence.
  
 #### `DxgkDdiDpcRoutine`
- 
+  
 - **Purpose:** Complete interrupt handling at DISPATCH_LEVEL.
 - **AeroGPU MVP behavior:**
   - For completed fences: report progress to dxgkrnl (so waiting UMD threads wake).
-  - For vsync: notify dxgkrnl of vblank (DWM scheduling).
+  - For vblank: notify dxgkrnl of vblank (DWM scheduling).
 - **Can be deferred:** Fine-grained telemetry.
  
 #### `DxgkDdiResetFromTimeout` (TDR)
