@@ -10,7 +10,7 @@ import {
   encodeL2Frame,
   encodePing,
 } from "../shared/l2TunnelProtocol.ts";
-import { WebRtcL2TunnelClient } from "./l2Tunnel.ts";
+import { L2_TUNNEL_SUBPROTOCOL, WebRtcL2TunnelClient, WebSocketL2TunnelClient } from "./l2Tunnel.ts";
 
 function microtask(): Promise<void> {
   return new Promise((resolve) => queueMicrotask(resolve));
@@ -46,6 +46,57 @@ class FakeRtcDataChannel {
   emitMessage(payload: Uint8Array): void {
     const buf = payload.buffer.slice(payload.byteOffset, payload.byteOffset + payload.byteLength);
     this.onmessage?.({ data: buf } as MessageEvent);
+  }
+}
+
+class FakeWebSocket {
+  static CONNECTING = 0;
+  static OPEN = 1;
+  static CLOSING = 2;
+  static CLOSED = 3;
+
+  static nextProtocol = L2_TUNNEL_SUBPROTOCOL;
+  static last: FakeWebSocket | null = null;
+
+  readonly url: string;
+  readonly protocols?: string | string[];
+
+  binaryType: BinaryType = "arraybuffer";
+  bufferedAmount = 0;
+  readyState = FakeWebSocket.CONNECTING;
+  protocol = "";
+
+  onopen: (() => void) | null = null;
+  onmessage: ((ev: MessageEvent) => void) | null = null;
+  onerror: ((ev: Event) => void) | null = null;
+  onclose: ((ev: CloseEvent) => void) | null = null;
+
+  readonly sent: Uint8Array[] = [];
+  lastClose?: { code?: number; reason?: string };
+
+  constructor(url: string, protocols?: string | string[]) {
+    this.url = url;
+    this.protocols = protocols;
+    this.protocol = FakeWebSocket.nextProtocol;
+    FakeWebSocket.last = this;
+  }
+
+  open(): void {
+    this.readyState = FakeWebSocket.OPEN;
+    this.onopen?.();
+  }
+
+  send(data: string | ArrayBuffer | ArrayBufferView | Blob): void {
+    if (typeof data === "string" || data instanceof Blob) throw new Error("unexpected ws send type");
+    const view =
+      data instanceof ArrayBuffer ? new Uint8Array(data) : new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+    this.sent.push(view.slice());
+  }
+
+  close(code?: number, reason?: string): void {
+    this.lastClose = { code, reason };
+    this.readyState = FakeWebSocket.CLOSED;
+    this.onclose?.({ code: code ?? 1000, reason: reason ?? "", wasClean: true } as CloseEvent);
   }
 }
 
@@ -129,6 +180,72 @@ describe("net/l2Tunnel", () => {
       expect(message).toContain(msg);
     } finally {
       client.close();
+    }
+  });
+
+  it("WebSocket client appends /l2 and requires aero-l2-tunnel-v1 subprotocol", async () => {
+    const g = globalThis as unknown as Record<string, unknown>;
+    const original = g.WebSocket;
+
+    // Ensure a deterministic negotiated protocol for this test.
+    FakeWebSocket.nextProtocol = L2_TUNNEL_SUBPROTOCOL;
+    FakeWebSocket.last = null;
+
+    g.WebSocket = FakeWebSocket as unknown as WebSocketConstructor;
+
+    const events: unknown[] = [];
+    const client = new WebSocketL2TunnelClient("https://gateway.example.com/base", (ev) => events.push(ev), {
+      keepaliveMinMs: 60_000,
+      keepaliveMaxMs: 60_000,
+    });
+
+    try {
+      client.connect();
+      expect(FakeWebSocket.last?.url).toBe("wss://gateway.example.com/base/l2");
+      expect(FakeWebSocket.last?.protocols).toBe(L2_TUNNEL_SUBPROTOCOL);
+
+      FakeWebSocket.last?.open();
+      expect(events[0]?.type).toBe("open");
+    } finally {
+      client.close();
+      if (original === undefined) {
+        delete (g as { WebSocket?: unknown }).WebSocket;
+      } else {
+        g.WebSocket = original;
+      }
+    }
+  });
+
+  it("WebSocket client closes when subprotocol is not negotiated", async () => {
+    const g = globalThis as unknown as Record<string, unknown>;
+    const original = g.WebSocket;
+
+    FakeWebSocket.nextProtocol = "";
+    FakeWebSocket.last = null;
+
+    g.WebSocket = FakeWebSocket as unknown as WebSocketConstructor;
+
+    const events: unknown[] = [];
+    const client = new WebSocketL2TunnelClient("wss://gateway.example.com/l2", (ev) => events.push(ev), {
+      keepaliveMinMs: 60_000,
+      keepaliveMaxMs: 60_000,
+    });
+
+    try {
+      client.connect();
+      FakeWebSocket.last?.open();
+
+      const errEv = events.find((e) => (e as { type?: string }).type === "error") as { error?: unknown } | undefined;
+      expect(errEv?.error).toBeInstanceOf(Error);
+
+      const closeEv = events.find((e) => (e as { type?: string }).type === "close") as { code?: number } | undefined;
+      expect(closeEv?.code).toBe(1002);
+    } finally {
+      if (original === undefined) {
+        delete (g as { WebSocket?: unknown }).WebSocket;
+      } else {
+        g.WebSocket = original;
+      }
     }
   });
 });
