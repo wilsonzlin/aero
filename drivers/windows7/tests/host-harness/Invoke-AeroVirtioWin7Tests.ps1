@@ -63,6 +63,8 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+. (Join-Path $PSScriptRoot "AeroVirtioWin7QemuArgs.ps1")
+
 function Start-AeroSelftestHttpServer {
   param(
     [Parameter(Mandatory = $true)] [int]$Port,
@@ -265,11 +267,11 @@ $httpListener = Start-AeroSelftestHttpServer -Port $HttpPort -Path $HttpPath
 try {
   $serialChardev = "file,id=charserial0,path=$SerialLogPath"
   $netdev = "user,id=net0"
-  $nic = "virtio-net-pci,netdev=net0"
-  $drive = "file=$DiskImagePath,if=virtio,cache=writeback"
-  if ($Snapshot) {
-    $drive += ",snapshot=on"
-  }
+  # Force modern-only virtio-pci IDs (DEV_1041/DEV_1042) per AERO-W7-VIRTIO v1.
+  $nic = New-AeroWin7VirtioNetDeviceArg -NetdevId "net0"
+  $driveId = "drive0"
+  $drive = New-AeroWin7VirtioBlkDriveArg -DiskImagePath $DiskImagePath -DriveId $driveId -Snapshot:$Snapshot
+  $blk = New-AeroWin7VirtioBlkDeviceArg -DriveId $driveId
 
   $virtioSndArgs = @()
   if ($WithVirtioSnd) {
@@ -322,7 +324,8 @@ try {
     "-device", $nic,
     "-device", "virtio-keyboard-pci",
     "-device", "virtio-mouse-pci",
-    "-drive", $drive
+    "-drive", $drive,
+    "-device", $blk
   ) + $virtioSndArgs + $QemuExtraArgs
 
   Write-Host "Launching QEMU:"

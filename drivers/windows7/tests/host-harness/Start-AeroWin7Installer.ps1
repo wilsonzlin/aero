@@ -45,6 +45,8 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+. (Join-Path $PSScriptRoot "AeroVirtioWin7QemuArgs.ps1")
+
 $Win7IsoPath = (Resolve-Path -LiteralPath $Win7IsoPath).Path
 
 if (-not (Test-Path -LiteralPath $DiskImagePath)) {
@@ -76,7 +78,10 @@ Write-Host "4) After first boot, run: <CD>:\\AERO\\provision\\provision.cmd (as 
 Write-Host "5) Reboot. Then run Invoke-AeroVirtioWin7Tests.ps1 on the host to get deterministic PASS/FAIL via COM1 serial."
 Write-Host ""
 
-$diskDrive = "file=$DiskImagePath,if=virtio,cache=writeback"
+# Force modern-only virtio-pci IDs (DEV_1041/DEV_1042) per AERO-W7-VIRTIO v1.
+$diskDriveId = "drive0"
+$diskDrive = New-AeroWin7VirtioBlkDriveArg -DiskImagePath $DiskImagePath -DriveId $diskDriveId
+$diskDevice = New-AeroWin7VirtioBlkDeviceArg -DriveId $diskDriveId
 $osIsoDrive = "file=$Win7IsoPath,media=cdrom,readonly=on"
 
 $qemuArgs = @(
@@ -84,9 +89,10 @@ $qemuArgs = @(
   "-smp", "$Smp",
   "-boot", "d",
   "-drive", $diskDrive,
+  "-device", $diskDevice,
   "-drive", $osIsoDrive,
   "-netdev", "user,id=net0",
-  "-device", "virtio-net-pci,netdev=net0"
+  "-device", (New-AeroWin7VirtioNetDeviceArg -NetdevId "net0")
 )
 
 if (-not [string]::IsNullOrEmpty($ProvisioningIsoPath)) {
