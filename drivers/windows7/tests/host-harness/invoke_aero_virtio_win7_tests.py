@@ -619,17 +619,17 @@ def main() -> int:
                                 result_code = 1
                                 break
 
-                                if args.enable_virtio_snd:
-                                    # When we explicitly attach virtio-snd, the guest test must actually run and PASS
-                                    # (it must not be skipped via --disable-snd).
-                                    if not saw_virtio_snd_pass:
-                                        msg = "FAIL: virtio-snd test did not PASS while --with-virtio-snd was enabled"
-                                        if saw_virtio_snd_skip:
-                                            msg = _virtio_snd_skip_failure_message(tail)
-                                        print(msg, file=sys.stderr)
-                                        _print_tail(serial_log)
-                                        result_code = 1
-                                        break
+                            if args.enable_virtio_snd:
+                                # When we explicitly attach virtio-snd, the guest test must actually run and PASS
+                                # (it must not be skipped via --disable-snd).
+                                if not saw_virtio_snd_pass:
+                                    msg = "FAIL: virtio-snd test did not PASS while --with-virtio-snd was enabled"
+                                    if saw_virtio_snd_skip:
+                                        msg = _virtio_snd_skip_failure_message(tail)
+                                    print(msg, file=sys.stderr)
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
                             else:
                                 # Even when virtio-snd isn't attached, require the marker so older selftest binaries
                                 # (that predate virtio-snd testing) cannot accidentally pass.
