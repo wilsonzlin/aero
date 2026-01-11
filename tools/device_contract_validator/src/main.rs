@@ -852,6 +852,104 @@ fn find_contract_device_for_spec_driver<'a>(
     }
 }
 
+fn parse_inf_active_pci_hwids(inf_text: &str) -> BTreeSet<String> {
+    // Extract the active PCI hardware IDs referenced by an INF (typically from the
+    // Models sections). We intentionally keep parsing lightweight and line-based:
+    //
+    // - ignore full-line comments (`; ...`)
+    // - strip inline comments (`... ; ...`)
+    // - take the last comma-separated field as the candidate HWID
+    //
+    // This avoids false positives from header comments describing the HWIDs without
+    // actually matching them.
+    let mut out = BTreeSet::new();
+    for raw in inf_text.lines() {
+        let mut line = raw.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with(';') {
+            continue;
+        }
+        if let Some((before, _)) = line.split_once(';') {
+            line = before.trim_end();
+        }
+        if line.is_empty() {
+            continue;
+        }
+        let candidate = line
+            .split(',')
+            .map(|p| p.trim())
+            .last()
+            .unwrap_or_default();
+        if candidate.to_ascii_uppercase().starts_with("PCI\\VEN_") {
+            out.insert(candidate.to_string());
+        }
+    }
+    out
+}
+
+fn parse_pci_vendor_device_from_hwid(hwid: &str) -> Option<(u16, u16)> {
+    let upper = hwid.to_ascii_uppercase();
+    const PREFIX: &str = "PCI\\VEN_";
+    if !upper.starts_with(PREFIX) {
+        return None;
+    }
+    let mut idx = PREFIX.len();
+    if upper.len() < idx + 4 {
+        return None;
+    }
+    let ven_hex = &upper[idx..idx + 4];
+    idx += 4;
+    if !upper[idx..].starts_with("&DEV_") {
+        return None;
+    }
+    idx += "&DEV_".len();
+    if upper.len() < idx + 4 {
+        return None;
+    }
+    let dev_hex = &upper[idx..idx + 4];
+    let ven = u16::from_str_radix(ven_hex, 16).ok()?;
+    let dev = u16::from_str_radix(dev_hex, 16).ok()?;
+    Some((ven, dev))
+}
+
+fn parse_pci_revision_from_hwid(hwid: &str) -> Option<u8> {
+    let upper = hwid.to_ascii_uppercase();
+    let idx = upper.rfind("&REV_")?;
+    let start = idx + "&REV_".len();
+    if upper.len() < start + 2 {
+        return None;
+    }
+    let hex = &upper[start..start + 2];
+    u8::from_str_radix(hex, 16).ok()
+}
+
+fn parse_contract_pci_revision_for_device(dev: &DeviceEntry, base_hwid: &str) -> Result<u8> {
+    let base_upper = base_hwid.to_ascii_uppercase();
+    let mut revisions = BTreeSet::new();
+    for hwid in &dev.hardware_id_patterns {
+        if !hwid.to_ascii_uppercase().starts_with(&base_upper) {
+            continue;
+        }
+        if let Some(rev) = parse_pci_revision_from_hwid(hwid) {
+            revisions.insert(rev);
+        }
+    }
+    match revisions.len() {
+        0 => bail!(
+            "contract device '{}' is missing a REV_XX-qualified HWID in hardware_id_patterns for {base_hwid}",
+            dev.device
+        ),
+        1 => Ok(*revisions.iter().next().unwrap()),
+        _ => bail!(
+            "contract device '{}' has multiple REV_XX values in hardware_id_patterns for {base_hwid}: {:?}",
+            dev.device,
+            revisions
+        ),
+    }
+}
+
 fn validate_in_tree_infs(repo_root: &Path, devices: &BTreeMap<String, DeviceEntry>) -> Result<()> {
     for (name, dev) in devices {
         // The repo contains multiple Windows driver trees (Win7, newer Windows, templates).
@@ -904,30 +1002,38 @@ fn validate_in_tree_infs(repo_root: &Path, devices: &BTreeMap<String, DeviceEntr
         for inf_path in &inf_paths {
             let inf_text = read_inf_text(inf_path).with_context(|| format!("{name}: read INF"))?;
 
-            // Ensure the INF matches at least one contract HWID literal. We intentionally
-            // don't require every enumerated Windows HWID form (SUBSYS/REV variants) to
-            // appear in the INF; a driver may match only the vendor/device pair or may
-            // revision-gate more strictly.
-            let any_hwid_match = dev.hardware_id_patterns.iter().any(|hwid| {
-                let re = regex::RegexBuilder::new(&regex::escape(hwid))
-                    .case_insensitive(true)
-                    .build()
-                    .expect("regex escape produces valid regex");
-                re.is_match(&inf_text)
+            let active_hwids = parse_inf_active_pci_hwids(&inf_text);
+            if active_hwids.is_empty() {
+                bail!(
+                    "{name}: INF {} does not contain any active PCI HWID matches (expected PCI\\\\VEN_... entries)",
+                    inf_path.display()
+                );
+            }
+
+            // Ensure the INF matches at least one contract HWID literal in its Models sections.
+            // We intentionally don't require every enumerated Windows HWID form (SUBSYS/REV
+            // variants) to appear in the INF.
+            let any_hwid_match = active_hwids.iter().any(|hwid| {
+                dev.hardware_id_patterns
+                    .iter()
+                    .any(|pattern| hwid.eq_ignore_ascii_case(pattern))
             });
             if !any_hwid_match {
                 bail!(
-                    "{name}: INF {} does not contain any of the expected contract hardware_id_patterns for {}: {:?}",
+                    "{name}: INF {} does not match any of the expected contract hardware_id_patterns for {}.\nExpected one of:\n{}\nActive HWIDs found in INF:\n{}",
                     inf_path.display(),
                     dev.device,
-                    dev.hardware_id_patterns
+                    format_bullets(&dev.hardware_id_patterns.iter().cloned().collect()),
+                    format_bullets(&active_hwids)
                 );
             }
 
             // Additional safety checks for known drift hotspots.
             if dev.device == "aero-gpu" {
-                let upper = inf_text.to_ascii_uppercase();
-                if !upper.contains("PCI\\VEN_A3A0&DEV_0001") {
+                if !active_hwids
+                    .iter()
+                    .any(|h| h.to_ascii_uppercase().starts_with("PCI\\VEN_A3A0&DEV_0001"))
+                {
                     bail!(
                         "{name}: INF {} missing required AeroGPU HWID family: PCI\\\\VEN_A3A0&DEV_0001",
                         inf_path.display()
@@ -937,26 +1043,89 @@ fn validate_in_tree_infs(repo_root: &Path, devices: &BTreeMap<String, DeviceEntr
                 // drift checks can stay focused on legacy/archived locations.
                 let legacy_vendor_id = "1AED";
                 let legacy_hwid = format!("PCI\\VEN_{legacy_vendor_id}&DEV_0001");
-                if upper.contains(&legacy_hwid) {
+                if active_hwids
+                    .iter()
+                    .any(|h| h.to_ascii_uppercase().starts_with(&legacy_hwid))
+                {
                     bail!(
                         "{name}: INF {} must not match legacy AeroGPU HWID family (vendor {legacy_vendor_id})",
                         inf_path.display()
                     );
                 }
             } else if dev.virtio_device_type.is_some() {
-                // In-tree virtio drivers are expected to bind to the modern (AERO-W7-VIRTIO) ID space.
+                // In-tree virtio drivers are expected to bind to the modern (AERO-W7-VIRTIO) ID space,
+                // and to revision-gate binding (contract major version is encoded in PCI Revision ID).
                 let modern = parse_hex_u16(&dev.pci_device_id)
                     .with_context(|| format!("{name}: parse pci_device_id"))?;
-                let expected = format!("PCI\\VEN_{:04X}&DEV_{:04X}", 0x1AF4u16, modern);
-                let re = regex::RegexBuilder::new(&regex::escape(&expected))
-                    .case_insensitive(true)
-                    .build()
-                    .expect("regex escape produces valid regex");
-                if !re.is_match(&inf_text) {
+                let base = format!("PCI\\VEN_{:04X}&DEV_{:04X}", 0x1AF4u16, modern);
+                let base_upper = base.to_ascii_uppercase();
+
+                if !active_hwids
+                    .iter()
+                    .any(|h| h.to_ascii_uppercase().starts_with(&base_upper))
+                {
                     bail!(
-                        "{name}: INF {} missing modern virtio HWID {}",
+                        "{name}: INF {} missing modern virtio HWID family {base} (no active HWIDs start with it)",
                         inf_path.display(),
-                        expected
+                    );
+                }
+
+                // Guard against accidental transitional virtio-pci IDs (0x1000..0x103F) in in-tree INFs.
+                let mut transitional = BTreeSet::new();
+                for hwid in &active_hwids {
+                    let Some((ven, dev_id)) = parse_pci_vendor_device_from_hwid(hwid) else {
+                        continue;
+                    };
+                    if ven == 0x1AF4 && (0x1000..=0x103F).contains(&dev_id) {
+                        transitional.insert(hwid.clone());
+                    }
+                }
+                if !transitional.is_empty() {
+                    bail!(
+                        "{name}: INF {} must not reference transitional virtio-pci device IDs (0x1000..0x103F):\n{}",
+                        inf_path.display(),
+                        format_bullets(&transitional)
+                    );
+                }
+
+                let expected_rev = parse_contract_pci_revision_for_device(dev, &base)
+                    .with_context(|| format!("{name}: parse contract PCI revision for {base}"))?;
+                let strict = format!("{base}&REV_{expected_rev:02X}");
+
+                if !active_hwids.iter().any(|h| h.eq_ignore_ascii_case(&strict)) {
+                    bail!(
+                        "{name}: INF {} missing strict revision-gated HWID {strict}.\nActive HWIDs found in INF:\n{}",
+                        inf_path.display(),
+                        format_bullets(&active_hwids)
+                    );
+                }
+
+                let mut missing_rev = BTreeSet::new();
+                let mut wrong_rev = BTreeSet::new();
+                for hwid in active_hwids
+                    .iter()
+                    .filter(|h| h.to_ascii_uppercase().starts_with(&base_upper))
+                {
+                    let Some(rev) = parse_pci_revision_from_hwid(hwid) else {
+                        missing_rev.insert(hwid.clone());
+                        continue;
+                    };
+                    if rev != expected_rev {
+                        wrong_rev.insert(hwid.clone());
+                    }
+                }
+                if !missing_rev.is_empty() {
+                    bail!(
+                        "{name}: INF {} matches {base} without revision gating (must require REV_{expected_rev:02X}):\n{}",
+                        inf_path.display(),
+                        format_bullets(&missing_rev)
+                    );
+                }
+                if !wrong_rev.is_empty() {
+                    bail!(
+                        "{name}: INF {} has REV_ qualifier(s) that do not match the contract revision (expected REV_{expected_rev:02X}):\n{}",
+                        inf_path.display(),
+                        format_bullets(&wrong_rev)
                     );
                 }
             }
