@@ -23,7 +23,7 @@ type jwtVectorsFile struct {
 }
 
 type jwtTokenVector struct {
-	Token  string        `json:"token"`
+	Token  string         `json:"token"`
 	Claims jwtTokenClaims `json:"claims"`
 }
 
@@ -37,7 +37,7 @@ type jwtTokenClaims struct {
 }
 
 type authTokenVectorsFile struct {
-	Schema   int `json:"schema"`
+	Schema    int `json:"schema"`
 	JWTTokens struct {
 		Vectors []jwtVector `json:"vectors"`
 	} `json:"jwtTokens"`
