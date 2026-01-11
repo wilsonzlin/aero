@@ -791,11 +791,10 @@ static NDIS_STATUS AerovNetVirtioStart(_Inout_ AEROVNET_ADAPTER* Adapter) {
     return NDIS_STATUS_FAILURE;
   }
 
-  // Contract v1 features:
-  // - required: MAC + STATUS
-  // - accepted: INDIRECT_DESC
-  RequiredFeatures = VIRTIO_NET_F_MAC | VIRTIO_NET_F_STATUS;
-  WantedFeatures = RequiredFeatures | AEROVNET_FEATURE_RING_INDIRECT_DESC;
+  // Contract v1 features (docs/windows7-virtio-driver-contract.md §3.2.3):
+  // - required: VERSION_1 + INDIRECT_DESC + MAC + STATUS
+  RequiredFeatures = VIRTIO_NET_F_MAC | VIRTIO_NET_F_STATUS | AEROVNET_FEATURE_RING_INDIRECT_DESC;
+  WantedFeatures = 0;
   NegotiatedFeatures = 0;
 
   NtStatus = VirtioPciNegotiateFeatures(&Adapter->Vdev, RequiredFeatures, WantedFeatures, &NegotiatedFeatures);

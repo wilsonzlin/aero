@@ -22,8 +22,7 @@ This directory contains a clean-room, spec-based **virtio-net** driver for **Win
 
 - Virtio handshake: `RESET → ACK → DRIVER → FEATURES_OK → DRIVER_OK`
 - Feature negotiation (minimal):
-  - Required: `VIRTIO_F_VERSION_1`, `VIRTIO_NET_F_MAC`, `VIRTIO_NET_F_STATUS`
-  - Also negotiates: `VIRTIO_F_RING_INDIRECT_DESC`
+  - Required: `VIRTIO_F_VERSION_1`, `VIRTIO_F_RING_INDIRECT_DESC`, `VIRTIO_NET_F_MAC`, `VIRTIO_NET_F_STATUS`
 - 1 RX/TX queue pair (queue 0 RX, queue 1 TX)
 - INTx interrupt path (via virtio ISR register; read-to-ack). MSI-X is intentionally disabled; INTx is required.
 - No checksum offloads / TSO / LRO
