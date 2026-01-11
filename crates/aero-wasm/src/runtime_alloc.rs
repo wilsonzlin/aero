@@ -67,6 +67,27 @@ impl RuntimeAllocator {
         // memory address (wasm-ld provides it as a global).
         let heap_base = unsafe { &__heap_base as *const u8 as usize };
 
+        // wasm-bindgen tests (and other non-worker contexts) may instantiate the module with a
+        // small default linear memory. The runtime/guest layout contract assumes at least
+        // `RUNTIME_RESERVED_BYTES` is available for the Rust runtime region, so attempt to grow
+        // memory up to that floor before initializing the heap.
+        //
+        // If memory cannot be grown (e.g. imported with a fixed max), we fall back to the current
+        // size and keep the allocator bounded to avoid out-of-bounds access.
+        let page_bytes = WASM_PAGE_BYTES as usize;
+        let reserved_bytes = RUNTIME_RESERVED_BYTES as usize;
+        let cur_pages = core::arch::wasm32::memory_size(0) as usize;
+        let cur_bytes = cur_pages.saturating_mul(page_bytes);
+        if cur_bytes < reserved_bytes {
+            let desired_pages = reserved_bytes.div_ceil(page_bytes);
+            let delta_pages = desired_pages.saturating_sub(cur_pages);
+            if delta_pages > 0 {
+                // `memory_grow` returns the previous page count, or `usize::MAX` on failure.
+                // Ignore failures: we will clamp below based on the actual resulting size.
+                let _ = core::arch::wasm32::memory_grow(0, delta_pages);
+            }
+        }
+
         // Clamp the heap end to the *actual* current memory size so the allocator
         // remains safe even in non-worker contexts where the module is
         // instantiated with a small default memory.
@@ -75,8 +96,8 @@ impl RuntimeAllocator {
         // allocated as `runtime_reserved + guest_size`, so this effectively caps
         // runtime allocations to `[heap_base, runtime_reserved)`.
         let pages = core::arch::wasm32::memory_size(0) as usize;
-        let mem_bytes = pages * WASM_PAGE_BYTES as usize;
-        let heap_end = min(mem_bytes, RUNTIME_RESERVED_BYTES as usize);
+        let mem_bytes = pages.saturating_mul(page_bytes);
+        let heap_end = min(mem_bytes, reserved_bytes);
 
         if heap_end <= heap_base {
             // No heap available; leave uninitialized. Allocation will fail and

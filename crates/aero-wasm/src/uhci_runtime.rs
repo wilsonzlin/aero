@@ -908,8 +908,9 @@ impl UhciRuntime {
                     "Invalid UHCI runtime snapshot WebUSB device state: {err}"
                 )));
             }
-            // WebUSB host actions are backed by JS Promises that cannot be resumed after a VM
-            // snapshot restore. Drop any in-flight host state so UHCI TD retries re-emit actions.
+            // WebUSB host actions are backed by JS Promises and cannot be resumed after a VM
+            // snapshot restore. Drop any inflight/queued host bookkeeping so UHCI TD retries
+            // re-emit fresh actions.
             dev.borrow_mut().reset_host_state_for_restore();
         }
 

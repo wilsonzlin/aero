@@ -1,5 +1,6 @@
 #![cfg(target_arch = "wasm32")]
 
+use aero_io_snapshot::io::state::SnapshotReader;
 use aero_usb::hid::webhid::HidCollectionInfo;
 use aero_usb::passthrough::{UsbHostAction, UsbHostCompletion, UsbHostCompletionIn};
 use aero_wasm::UhciRuntime;
@@ -222,7 +223,8 @@ fn uhci_runtime_snapshot_is_deterministic() {
 
     let a = rt.save_state();
     let b = rt.save_state();
-    assert_eq!(a, b, "save_state must be deterministic");
+    assert_eq!(a.len(), b.len(), "save_state length must be deterministic");
+    assert!(a == b, "save_state bytes must be deterministic");
 }
 
 #[wasm_bindgen_test]
@@ -375,6 +377,11 @@ fn uhci_runtime_snapshot_restores_external_hub_and_allows_webhid_attach_at_path(
 
     let mut rt2 = UhciRuntime::new(guest_base, guest_size).expect("new UhciRuntime #2");
     rt2.load_state(&snapshot).expect("load_state ok");
+
+    // Sanity: restored runtime snapshot should still include external hub state.
+    let after = rt2.save_state();
+    let r = SnapshotReader::parse(&after, *b"UHRT").expect("parse restored runtime snapshot");
+    assert!(r.bytes(4).is_some(), "expected hub state tag to be present");
 
     // Root port 0 should still report "connected" because the external hub is restored.
     let portsc1 = rt2.port_read(REG_PORTSC1, 2) as u16;

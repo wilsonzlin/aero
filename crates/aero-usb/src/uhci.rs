@@ -809,7 +809,16 @@ impl IoSnapshot for UhciController {
 
         let has_bus = r.bytes(TAG_BUS).is_some();
         if let Some(buf) = r.bytes(TAG_BUS) {
+            // Full bus/device snapshot is present; overwrite the bus.
             self.bus.load_state(buf)?;
+        } else if self.bus.num_ports() != self.ports.len() {
+            // No bus snapshot: preserve any existing bus/device attachments so higher-level code
+            // can restore devices externally (e.g. via `TAG_DEVICES` in newer snapshots or wasm
+            // glue wiring passthrough devices via shared `Rc` handles).
+            //
+            // If the controller was constructed with an unexpected port count, fall back to a
+            // fresh bus so port records can still be restored.
+            self.bus = UsbBus::new(self.ports.len());
         }
 
         if self.bus.num_ports() != self.ports.len() {
@@ -860,6 +869,11 @@ impl IoSnapshot for UhciController {
                     };
                     bus_port.connected = connected;
                     bus_port.enabled = enabled;
+                    if !connected {
+                        // The snapshot indicates the port is physically disconnected; clear any
+                        // existing device attachment to keep runtime state consistent.
+                        bus_port.device = None;
+                    }
                 }
             }
             d.finish()?;
