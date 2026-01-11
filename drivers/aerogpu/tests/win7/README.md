@@ -26,25 +26,25 @@ Common flags:
 drivers/aerogpu/tests/win7/
   build_all_vs2010.cmd
   run_all.cmd
+  common/
+  timeout_runner/
   d3d9ex_dwm_probe/
   d3d9ex_event_query/
-  vblank_wait_sanity/
-  wait_vblank_pacing/
-  vblank_wait_pacing/
-  get_scanline_sanity/
-  d3d9_raster_status_sanity/
-  d3d9_raster_status_pacing/
-  dwm_flush_pacing/
-  d3d9ex_triangle/
   d3d9ex_query_latency/
   d3d9ex_shared_surface/
   d3d9ex_shared_allocations/
+  d3d9ex_triangle/
+  get_scanline_sanity/
+  d3d9_raster_status_sanity/
+  d3d9_raster_status_pacing/
+  wait_vblank_pacing/
+  vblank_wait_sanity/
+  vblank_wait_pacing/
+  dwm_flush_pacing/
   d3d10_triangle/
   d3d10_1_triangle/
   d3d11_triangle/
   readback_sanity/
-  timeout_runner/
-  common/
 ```
 
 ## Prerequisites (Windows 7 guest)
