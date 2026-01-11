@@ -24,7 +24,8 @@ Windows 7 note: the output is intentionally “boring HID 1.11” to maximize co
 Implementation references:
 
 - Browser normalization: `web/src/hid/webhid_normalize.ts`
-- Rust synthesis: `crates/emulator/src/io/usb/hid/webhid.rs`
+- Rust synthesis: `crates/emulator/src/io/usb/hid/report_descriptor.rs`
+  - WebHID JSON schema + conversion layer: `crates/emulator/src/io/usb/hid/webhid.rs`
 
 For the end-to-end “real device” passthrough architecture (main thread owns the
 `HIDDevice`, worker models UHCI + a generic HID device), see
@@ -136,7 +137,7 @@ The synthesis treats these flags as a single `u16` and emits either a 1-byte or 
 - if `flags <= 0xFF`: emit 1 byte
 - otherwise: emit 2 bytes (little-endian)
 
-Implementation note: the current Rust synthesizer (`crates/emulator/src/io/usb/hid/webhid.rs`) packs main-item flags into a single `u16` and reuses the same encoding for `Input`, `Output`, and `Feature`. This mostly matches common HID descriptors, but it is not a perfect reconstruction in the rare case where an **Input** item uses the “Buffered Bytes” form (see below).
+Implementation note: we reuse the canonical synthesizer in `crates/emulator/src/io/usb/hid/report_descriptor.rs`, which encodes a minimal subset of main-item flags (see below). This is sufficient for the keyboard/mouse descriptors we ship today and for the devices covered by our WebHID fixtures, but it is not a perfect reconstruction of all possible HID main-item flag combinations.
 
 ### Bit layout (LSB = bit 0)
 
@@ -157,21 +158,18 @@ Bits are defined by the HID specification as:
 
 ### Derivation from WebHID booleans
 
-The current synthesis output uses the following mapping (matching `webhid.rs`):
+The current synthesis encodes only the subset supported by `report_descriptor.rs`:
 
 | WebHID property | HID bit |
 | --- | ---: |
 | `isConstant` | 0 |
 | `isArray` (inverted: `!isArray` means Variable) | 1 |
-| `isRelative` (or equivalently `!isAbsolute`) | 2 |
-| `isWrapped` | 3 |
-| `isLinear` (inverted: `!isLinear` means Non Linear) | 4 |
-| `hasPreferredState` (inverted: `!hasPreferredState` means No Preferred) | 5 |
-| `hasNull` | 6 |
-| `isVolatile` | 7 |
+| `isAbsolute` (inverted: `!isAbsolute` means Relative) | 2 |
 | `isBufferedBytes` | 8 |
 
-This corresponds to the standard Output/Feature flag layout. For `Input` items, the HID specification uses **bit 7** for “Buffered Bytes” instead of volatility, so an Input item with `isBufferedBytes === true` is not reconstructed in the spec-canonical way (we will emit a 2-byte payload with bit 8 set).
+The remaining WebHID booleans (`isWrapped`, `isLinear`, `hasPreferredState`, `hasNull`, `isVolatile`, …) are currently ignored during synthesis.
+
+This corresponds to a common subset of the Output/Feature flag layout. For `Input` items, the HID specification uses **bit 7** for “Buffered Bytes” instead of volatility, so an Input item with `isBufferedBytes === true` is not reconstructed in the spec-canonical way (we emit a 2-byte payload with bit 8 set).
 
 ---
 
