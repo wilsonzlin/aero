@@ -140,7 +140,7 @@ if command -v node >/dev/null 2>&1; then
   l2_last_error=""
   for _ in $(seq 1 30); do
     if l2_last_error="$(
-      node --input-type=commonjs - <<'NODE'
+      node --input-type=commonjs - 2>&1 <<'NODE'
 const tls = require("node:tls");
 const crypto = require("node:crypto");
 
