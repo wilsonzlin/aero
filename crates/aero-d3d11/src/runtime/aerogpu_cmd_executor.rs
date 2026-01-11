@@ -1587,6 +1587,12 @@ impl AerogpuD3d11Executor {
             }
         }
 
+        // Tracks whether any previous draw in this render pass actually used the legacy constants
+        // uniform buffer for a given stage. If it has, we cannot safely apply
+        // `SET_SHADER_CONSTANTS_F` via `queue.write_buffer` without reordering it ahead of the
+        // earlier draw commands.
+        let mut legacy_constants_used = [false; 3];
+
         loop {
             let Some(next) = iter.peek() else {
                 break;
@@ -1605,6 +1611,7 @@ impl AerogpuD3d11Executor {
                 OPCODE_DRAW
                 | OPCODE_DRAW_INDEXED
                 | OPCODE_BIND_SHADERS
+                | OPCODE_SET_SHADER_CONSTANTS_F
                 | OPCODE_SET_INPUT_LAYOUT
                 | OPCODE_SET_RENDER_TARGETS
                 | OPCODE_SET_BLEND_STATE
@@ -1724,6 +1731,21 @@ impl AerogpuD3d11Executor {
                 }
                 let flags = read_u32_le(cmd_bytes, 8)?;
                 if flags != 0 {
+                    break;
+                }
+            }
+
+            if opcode == OPCODE_SET_SHADER_CONSTANTS_F {
+                // `struct aerogpu_cmd_set_shader_constants_f` (24 bytes) + vec4 data.
+                if cmd_bytes.len() < 24 {
+                    break;
+                }
+                let stage_raw = read_u32_le(cmd_bytes, 8)?;
+                let Some(stage) = ShaderStage::from_aerogpu_u32(stage_raw) else {
+                    break;
+                };
+                let stage_index = stage.as_bind_group_index() as usize;
+                if stage_index < legacy_constants_used.len() && legacy_constants_used[stage_index] {
                     break;
                 }
             }
@@ -2149,6 +2171,33 @@ impl AerogpuD3d11Executor {
                             }
                         }
                         exec_draw(&mut pass, cmd_bytes)?;
+
+                        if used_cb_vs.get(0).is_some_and(|v| *v) {
+                            if self
+                                .bindings
+                                .stage(ShaderStage::Vertex)
+                                .constant_buffer(0)
+                                .is_some_and(|cb| {
+                                    cb.buffer == legacy_constants_buffer_id(ShaderStage::Vertex)
+                                })
+                            {
+                                legacy_constants_used
+                                    [ShaderStage::Vertex.as_bind_group_index() as usize] = true;
+                            }
+                        }
+                        if used_cb_ps.get(0).is_some_and(|v| *v) {
+                            if self
+                                .bindings
+                                .stage(ShaderStage::Pixel)
+                                .constant_buffer(0)
+                                .is_some_and(|cb| {
+                                    cb.buffer == legacy_constants_buffer_id(ShaderStage::Pixel)
+                                })
+                            {
+                                legacy_constants_used
+                                    [ShaderStage::Pixel.as_bind_group_index() as usize] = true;
+                            }
+                        }
                     }
                 }
                 OPCODE_DRAW_INDEXED => {
@@ -2205,6 +2254,33 @@ impl AerogpuD3d11Executor {
                             }
                         }
                         exec_draw_indexed(&mut pass, cmd_bytes)?;
+
+                        if used_cb_vs.get(0).is_some_and(|v| *v) {
+                            if self
+                                .bindings
+                                .stage(ShaderStage::Vertex)
+                                .constant_buffer(0)
+                                .is_some_and(|cb| {
+                                    cb.buffer == legacy_constants_buffer_id(ShaderStage::Vertex)
+                                })
+                            {
+                                legacy_constants_used
+                                    [ShaderStage::Vertex.as_bind_group_index() as usize] = true;
+                            }
+                        }
+                        if used_cb_ps.get(0).is_some_and(|v| *v) {
+                            if self
+                                .bindings
+                                .stage(ShaderStage::Pixel)
+                                .constant_buffer(0)
+                                .is_some_and(|cb| {
+                                    cb.buffer == legacy_constants_buffer_id(ShaderStage::Pixel)
+                                })
+                            {
+                                legacy_constants_used
+                                    [ShaderStage::Pixel.as_bind_group_index() as usize] = true;
+                            }
+                        }
                     }
                 }
                 OPCODE_SET_VIEWPORT => {
@@ -2275,6 +2351,52 @@ impl AerogpuD3d11Executor {
                         b: self.state.blend_constant[2] as f64,
                         a: self.state.blend_constant[3] as f64,
                     });
+                }
+                OPCODE_SET_SHADER_CONSTANTS_F => {
+                    // This is only reachable when `legacy_constants_used` is false, meaning the
+                    // legacy constants buffer is not referenced by any previously recorded draw.
+                    // In that case, we can apply the update via `queue.write_buffer` without
+                    // restarting the render pass.
+                    if cmd_bytes.len() < 24 {
+                        bail!(
+                            "SET_SHADER_CONSTANTS_F: expected at least 24 bytes, got {}",
+                            cmd_bytes.len()
+                        );
+                    }
+                    let stage_raw = read_u32_le(cmd_bytes, 8)?;
+                    let start_register = read_u32_le(cmd_bytes, 12)?;
+                    let vec4_count = read_u32_le(cmd_bytes, 16)? as usize;
+                    let byte_len = vec4_count
+                        .checked_mul(16)
+                        .ok_or_else(|| anyhow!("SET_SHADER_CONSTANTS_F: byte_len overflow"))?;
+                    let expected = 24 + align4(byte_len);
+                    // Forward-compat: allow this packet to grow by appending new fields after the
+                    // data.
+                    if cmd_bytes.len() < expected {
+                        bail!(
+                            "SET_SHADER_CONSTANTS_F: expected at least {expected} bytes, got {}",
+                            cmd_bytes.len()
+                        );
+                    }
+                    let data = &cmd_bytes[24..24 + byte_len];
+
+                    let stage = ShaderStage::from_aerogpu_u32(stage_raw).ok_or_else(|| {
+                        anyhow!("SET_SHADER_CONSTANTS_F: unknown shader stage {stage_raw}")
+                    })?;
+                    let dst = self
+                        .legacy_constants
+                        .get(&stage)
+                        .expect("legacy constants buffer exists for every stage");
+
+                    let offset_bytes = start_register as u64 * 16;
+                    let end = offset_bytes + byte_len as u64;
+                    if end > LEGACY_CONSTANTS_SIZE_BYTES {
+                        bail!(
+                            "SET_SHADER_CONSTANTS_F: write out of bounds (end={end}, buffer_size={LEGACY_CONSTANTS_SIZE_BYTES})"
+                        );
+                    }
+
+                    self.queue.write_buffer(dst, offset_bytes, data);
                 }
                 OPCODE_SET_DEPTH_STENCIL_STATE => self.exec_set_depth_stencil_state(cmd_bytes)?,
                 OPCODE_SET_RASTERIZER_STATE => {
