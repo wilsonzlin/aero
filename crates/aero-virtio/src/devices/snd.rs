@@ -171,6 +171,10 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
         }
     }
 
+    pub fn host_sample_rate_hz(&self) -> u32 {
+        self.host_sample_rate_hz
+    }
+
     pub fn set_host_sample_rate_hz(&mut self, host_sample_rate_hz: u32) {
         assert!(
             host_sample_rate_hz > 0,
@@ -197,6 +201,10 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
             self.capture_interleaved_scratch.clear();
             self.capture_samples_scratch.clear();
         }
+    }
+
+    pub fn capture_sample_rate_hz(&self) -> u32 {
+        self.capture_sample_rate_hz
     }
 
     pub fn set_capture_sample_rate_hz(&mut self, capture_sample_rate_hz: u32) {
