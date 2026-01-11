@@ -482,6 +482,10 @@ export async function createAudioOutput(options: CreateAudioOutputOptions = {}):
 
   // Call resume() immediately (before any await) to satisfy autoplay policies.
   const resumePromise = context.resume();
+  // Always attach a rejection handler so we don't surface unhandled rejections if
+  // callers forget to await `output.resume()` or if we early-return due to a
+  // subsequent initialization failure.
+  void resumePromise.catch(() => {});
 
   const ringBufferFrames =
     options.ringBufferFrames ??
