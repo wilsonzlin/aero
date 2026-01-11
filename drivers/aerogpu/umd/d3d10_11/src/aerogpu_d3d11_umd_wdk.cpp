@@ -1121,38 +1121,6 @@ static bool SupportsTransfer(const Device* dev) {
   return (dev->adapter->umd_private.device_features & AEROGPU_UMDPRIV_FEATURE_TRANSFER) != 0;
 }
 
-static uint64_t SubmitWddmLocked(Device* dev, bool want_present, HRESULT* out_hr) {
-  if (out_hr) {
-    *out_hr = S_OK;
-  }
-  if (!dev || dev->cmd.empty()) {
-    return 0;
-  }
-
-  dev->cmd.finalize();
-  uint64_t fence = 0;
-  const HRESULT hr = dev->wddm_submit.SubmitAeroCmdStream(dev->cmd.data(), dev->cmd.size(), want_present, &fence);
-  dev->cmd.reset();
-  if (FAILED(hr)) {
-    if (out_hr) {
-      *out_hr = hr;
-    }
-    dev->pending_staging_writes.clear();
-    return 0;
-  }
-
-  if (fence != 0) {
-    atomic_max_u64(&dev->last_submitted_fence, fence);
-    for (Resource* res : dev->pending_staging_writes) {
-      if (res) {
-        res->last_gpu_write_fence = fence;
-      }
-    }
-  }
-  dev->pending_staging_writes.clear();
-  return fence;
-}
-
 static Device* DeviceFromContext(D3D11DDI_HDEVICECONTEXT hCtx) {
   auto* ctx = FromHandle<D3D11DDI_HDEVICECONTEXT, AeroGpuDeviceContext>(hCtx);
   return ctx ? ctx->dev : nullptr;
@@ -5950,7 +5918,7 @@ static HRESULT MapLocked11(Device* dev,
     // wait on.
     if (!dev->cmd.empty()) {
       HRESULT submit_hr = S_OK;
-      SubmitWddmLocked(dev, false, &submit_hr);
+      submit_locked(dev, /*want_present=*/false, &submit_hr);
       if (FAILED(submit_hr)) {
         SetError(dev, submit_hr);
         return submit_hr;
@@ -6859,7 +6827,7 @@ void AEROGPU_APIENTRY Flush11(D3D11DDI_HDEVICECONTEXT hCtx) {
     cmd->reserved1 = 0;
   }
   HRESULT hr = S_OK;
-  SubmitWddmLocked(dev, false, &hr);
+  submit_locked(dev, /*want_present=*/false, &hr);
   if (FAILED(hr)) {
     SetError(dev, hr);
   }
@@ -6909,7 +6877,7 @@ HRESULT AEROGPU_APIENTRY Present11(D3D11DDI_HDEVICECONTEXT hCtx, const D3D10DDIA
   }
   cmd->flags = vsync ? AEROGPU_PRESENT_FLAG_VSYNC : AEROGPU_PRESENT_FLAG_NONE;
   HRESULT hr = S_OK;
-  SubmitWddmLocked(dev, true, &hr);
+  submit_locked(dev, /*want_present=*/true, &hr);
   return FAILED(hr) ? hr : S_OK;
 }
 
