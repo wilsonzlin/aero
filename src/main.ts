@@ -150,8 +150,7 @@ function el<K extends keyof HTMLElementTagNameMap>(
     } else if (key === "text") {
       node.textContent = String(value);
     } else if (key.startsWith("on") && typeof value === "function") {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (node as any)[key.toLowerCase()] = value;
+      (node as unknown as Record<string, unknown>)[key.toLowerCase()] = value;
     } else {
       node.setAttribute(key, String(value));
     }

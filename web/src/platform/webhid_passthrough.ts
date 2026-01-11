@@ -47,8 +47,7 @@ type HidForgettableDevice = HIDDevice & { forget: () => Promise<void> };
 function canForgetDevice(device: HIDDevice): device is HidForgettableDevice {
   // `HIDDevice.forget()` is currently Chromium-specific. Keep the check tolerant so
   // this UI continues to work on browsers that don't yet implement it.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return typeof (device as any).forget === "function";
+  return typeof (device as unknown as { forget?: unknown }).forget === "function";
 }
 
 export class WebHidPassthroughManager {
