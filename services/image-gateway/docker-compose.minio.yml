@@ -1,7 +1,5 @@
 # EXAMPLE: Local MinIO stack for testing `services/image-gateway` against an S3-compatible backend.
 
-version: "3.8"
-
 services:
   minio:
     image: minio/minio:latest

@@ -70,7 +70,7 @@ CI validates the deployment artifacts under:
 Reproduce locally:
 
 ```bash
-# Deploy manifest labelling/hygiene
+# Deploy manifest labelling/hygiene (requires docker compose)
 node scripts/ci/check-deploy-manifests.mjs
 
 # Terraform (requires `terraform`; CI also runs `tflint`)

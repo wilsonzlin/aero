@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = resolve(fileURLToPath(new URL('.', import.meta.url)), '../..');
@@ -74,6 +74,33 @@ function gitTrackedFiles() {
     .filter(Boolean);
 }
 
+function dockerComposeAvailable() {
+  try {
+    const res = spawnSync('docker', ['compose', 'version'], { cwd: repoRoot, encoding: 'utf8' });
+    return res.status === 0;
+  } catch {
+    return false;
+  }
+}
+
+function validateComposeConfig(relPath) {
+  const projectDir = dirname(relPath);
+  const args = ['compose', '-f', relPath];
+  if (projectDir && projectDir !== '.') {
+    args.push('--project-directory', projectDir);
+  }
+  args.push('config', '-q');
+
+  const res = spawnSync('docker', args, { cwd: repoRoot, encoding: 'utf8' });
+  if (res.status === 0) return;
+
+  const output = [res.stdout, res.stderr].filter(Boolean).join('\n').trim();
+  return {
+    relPath,
+    message: `docker compose config failed for ${relPath}${output ? `:\n${output}` : ''}`,
+  };
+}
+
 const errors = [];
 
 // Canonical deployment entry points should say so explicitly.
@@ -115,6 +142,23 @@ for (const relPath of composeManifests) {
       forbidden: ['CANONICAL'],
     }),
   );
+}
+
+// Parse-level validation for all compose manifests. This catches accidental YAML
+// syntax errors and unset variable interpolation issues early.
+if (!dockerComposeAvailable()) {
+  if (process.env.CI === 'true' || process.env.GITHUB_ACTIONS === 'true') {
+    errors.push({
+      relPath: '<docker>',
+      message: 'docker compose is required for CI deploy manifest validation but was not found.',
+    });
+  } else {
+    console.warn('warning: docker compose not found; skipping docker compose config validation.');
+  }
+} else {
+  for (const relPath of composeManifests) {
+    errors.push(validateComposeConfig(relPath));
+  }
 }
 
 const filtered = errors.filter(Boolean);
