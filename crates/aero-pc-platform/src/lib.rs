@@ -494,8 +494,23 @@ impl PcPlatform {
             return;
         };
 
-        let level = hda.borrow().irq_level();
         let bdf = aero_devices::pci::profile::HDA_ICH6.bdf;
+        let mut level = hda.borrow().irq_level();
+
+        // Respect PCI command register Interrupt Disable bit (bit 10). When set, the device must
+        // not assert INTx.
+        //
+        // This is important for guests that switch to MSI/MSI-X and disable legacy INTx.
+        let intx_disabled = {
+            let mut pci_cfg = self.pci_cfg.borrow_mut();
+            pci_cfg
+                .bus_mut()
+                .device_config(bdf)
+                .is_some_and(|cfg| (cfg.command() & (1 << 10)) != 0)
+        };
+        if intx_disabled {
+            level = false;
+        }
 
         self.pci_intx.set_intx_level(
             bdf,

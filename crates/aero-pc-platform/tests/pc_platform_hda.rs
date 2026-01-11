@@ -133,6 +133,77 @@ fn pc_platform_routes_hda_mmio_after_bar0_reprogramming() {
 }
 
 #[test]
+fn pc_platform_respects_pci_interrupt_disable_bit_for_intx() {
+    let mut pc = PcPlatform::new_with_hda(2 * 1024 * 1024);
+    let bdf = HDA_ICH6.bdf;
+    let bar0_base = read_hda_bar0_base(&mut pc);
+
+    // Unmask IRQ2 (cascade) and IRQ10 so we can observe INTx via the legacy PIC.
+    {
+        let mut interrupts = pc.interrupts.borrow_mut();
+        interrupts.pic_mut().set_offsets(0x20, 0x28);
+        interrupts.pic_mut().set_masked(2, false);
+        interrupts.pic_mut().set_masked(10, false);
+    }
+
+    // Bring controller out of reset.
+    pc.memory.write_u32(bar0_base + 0x08, 1);
+
+    // Set up CORB/RIRB to raise a CIS interrupt.
+    let corb_base = 0x1000u64;
+    let rirb_base = 0x2000u64;
+    pc.memory.write_u32(corb_base, 0x000f_0000);
+
+    pc.memory.write_u32(bar0_base + 0x40, corb_base as u32); // CORBLBASE
+    pc.memory.write_u32(bar0_base + 0x50, rirb_base as u32); // RIRBLBASE
+    pc.memory.write_u16(bar0_base + 0x4a, 0x00ff); // CORBRP
+    pc.memory.write_u16(bar0_base + 0x58, 0x00ff); // RIRBWP
+
+    pc.memory.write_u32(bar0_base + 0x20, 0x8000_0000 | (1 << 30)); // INTCTL
+    pc.memory.write_u8(bar0_base + 0x5c, 0x03); // RIRBCTL
+    pc.memory.write_u8(bar0_base + 0x4c, 0x02); // CORBCTL
+    pc.memory.write_u16(bar0_base + 0x48, 0x0000); // CORBWP
+
+    pc.process_hda(0);
+    assert_eq!(pc.memory.read_u32(rirb_base), 0x1af4_1620);
+
+    // Disable INTx in PCI command register (bit 10), while keeping memory decoding enabled.
+    write_cfg_u16(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        0x04,
+        0x0002 | (1 << 10),
+    );
+
+    pc.poll_pci_intx_lines();
+    assert_eq!(
+        pc.interrupts.borrow().pic().get_pending_vector(),
+        None,
+        "INTx should not be delivered when COMMAND.INTX_DISABLE is set"
+    );
+
+    // Re-enable INTx; since the HDA interrupt is still pending, it should now be delivered.
+    write_cfg_u16(&mut pc, bdf.bus, bdf.device, bdf.function, 0x04, 0x0002);
+    pc.poll_pci_intx_lines();
+
+    let pending = pc
+        .interrupts
+        .borrow()
+        .pic()
+        .get_pending_vector()
+        .expect("IRQ10 should be pending after re-enabling INTx");
+    let irq = pc
+        .interrupts
+        .borrow()
+        .pic()
+        .vector_to_irq(pending)
+        .expect("pending vector should decode to an IRQ number");
+    assert_eq!(irq, 10);
+}
+
+#[test]
 fn pc_platform_routes_hda_intx_via_pci_intx_router() {
     let mut pc = PcPlatform::new_with_hda(2 * 1024 * 1024);
     let bdf = HDA_ICH6.bdf;
