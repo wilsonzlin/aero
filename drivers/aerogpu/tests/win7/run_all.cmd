@@ -19,13 +19,29 @@ for %%A in (%*) do (
     set "TIMEOUT_MS=!TIMEOUT_VALUE!"
     set "EXPECT_TIMEOUT_VALUE="
   ) else (
-    if /I "%%~A"=="--help" set "SHOW_HELP=1"
-    if /I "%%~A"=="-h" set "SHOW_HELP=1"
-    if "%%~A"=="/?" set "SHOW_HELP=1"
-    if /I "%%~A"=="--no-timeout" set "NO_TIMEOUT=1"
-    if /I "%%~A"=="--timeout-ms" set "EXPECT_TIMEOUT_VALUE=1"
-    for /f "tokens=1,2 delims==" %%a in ("%%~A") do (
-      if /I "%%a"=="--timeout-ms" if not "%%b"=="" set "TIMEOUT_MS=%%b"
+    set "ARG=%%~A"
+    set "HAS_EQ="
+    if not "!ARG:==!"=="!ARG!" set "HAS_EQ=1"
+    if /I "!ARG!"=="--help" set "SHOW_HELP=1"
+    if /I "!ARG!"=="-h" set "SHOW_HELP=1"
+    if "!ARG!"=="/?" set "SHOW_HELP=1"
+    if /I "!ARG!"=="--no-timeout" set "NO_TIMEOUT=1"
+    if /I "!ARG!"=="--timeout-ms" set "EXPECT_TIMEOUT_VALUE=1"
+    for /f "tokens=1,2 delims==" %%a in ("!ARG!") do (
+      if /I "%%a"=="--timeout-ms" (
+        set "TIMEOUT_VALUE=%%b"
+        if defined HAS_EQ (
+          if "!TIMEOUT_VALUE!"=="" (
+            echo ERROR: --timeout-ms requires a value
+            exit /b 1
+          )
+          if "!TIMEOUT_VALUE:~0,1!"=="-" (
+            echo ERROR: --timeout-ms requires a value
+            exit /b 1
+          )
+        )
+        if not "!TIMEOUT_VALUE!"=="" set "TIMEOUT_MS=!TIMEOUT_VALUE!"
+      )
     )
   )
 )
