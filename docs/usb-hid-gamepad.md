@@ -73,3 +73,30 @@ Notes:
 - The canonical report struct is `crates/emulator/src/io/usb/hid/gamepad.rs::GamepadReport`.
 - The browser-side pack/unpack helpers live in `web/src/input/gamepad.ts`.
 
+### Button bitfield mapping (browser host)
+
+When capturing a controller via the browser **Gamepad API** using the **standard mapping**
+(`Gamepad.mapping === "standard"`), the host maps Gamepad button indices into the 16-bit
+button bitfield as follows:
+
+| Bit | Gamepad button index | Meaning |
+| --- | --- | --- |
+| 0 | 0 | A / Cross |
+| 1 | 1 | B / Circle |
+| 2 | 2 | X / Square |
+| 3 | 3 | Y / Triangle |
+| 4 | 4 | LB / L1 |
+| 5 | 5 | RB / R1 |
+| 6 | 6 | LT / L2 (digital `pressed`) |
+| 7 | 7 | RT / R2 (digital `pressed`) |
+| 8 | 8 | Back / Select |
+| 9 | 9 | Start |
+| 10 | 10 | Left stick press |
+| 11 | 11 | Right stick press |
+| 12 | 16 | Guide / Home |
+| 13 | 17 | Extra (if present) |
+| 14 | 18 | Extra (if present) |
+| 15 | 19 | Extra (if present) |
+
+The d-pad quartet (`buttons[12..15]`) is converted into the hat value and is not included
+in the bitfield.

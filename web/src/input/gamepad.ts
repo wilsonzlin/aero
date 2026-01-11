@@ -72,6 +72,8 @@ export function computeGamepadHat(up: boolean, right: boolean, down: boolean, le
 // Standard Gamepad mapping (https://w3c.github.io/gamepad/#remapping) button indices:
 //   0=A, 1=B, 2=X, 3=Y, 4=LB, 5=RB, 6=LT, 7=RT, 8=Back, 9=Start,
 //   10=LStick, 11=RStick, 12..15=D-pad, 16=Guide.
+// Bit positions are chosen to preserve this ordering (bit0=A, bit1=B, ...),
+// with the d-pad excluded (encoded as hat) and `Guide` mapped to bit12.
 //
 // We exclude d-pad (12..15) from the button bitfield because it is encoded as a
 // hat switch.
