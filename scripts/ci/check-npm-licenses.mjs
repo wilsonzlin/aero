@@ -115,6 +115,8 @@ mkdirSync(outDirAbs, { recursive: true });
 const ALLOWED_LICENSES = new Set([
     "Apache-2.0",
     "MIT",
+    // "MIT No Attribution" (permissive; common in modern JS deps).
+    "MIT-0",
     "BSD-2-Clause",
     "BSD-3-Clause",
     "ISC",
@@ -200,7 +202,10 @@ function evaluateLicenseExpression(expr) {
                 break;
             }
             consume();
-            value = value || parseAnd();
+            // Always parse the RHS even if `value` is already true (avoid JS
+            // short-circuit semantics breaking the parser state).
+            const rhs = parseAnd();
+            value = value || rhs;
         }
         return value;
     }
@@ -213,7 +218,10 @@ function evaluateLicenseExpression(expr) {
                 break;
             }
             consume();
-            value = value && parsePrimary();
+            // Always parse the RHS even if `value` is already false (avoid JS
+            // short-circuit semantics breaking the parser state).
+            const rhs = parsePrimary();
+            value = value && rhs;
         }
         return value;
     }
