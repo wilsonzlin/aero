@@ -162,25 +162,20 @@ npm run bench:storage -- --out-dir storage-perf-results/head
 ### Comparing two runs
 
 ```bash
-node --experimental-strip-types scripts/compare_storage_benchmarks.ts \
+node --experimental-strip-types bench/compare.ts \
   --baseline storage-perf-results/base/storage_bench.json \
-  --current storage-perf-results/head/storage_bench.json \
-  --thresholdPct 15 \
-  --outDir storage-perf-results \
-  --json
+  --candidate storage-perf-results/head/storage_bench.json \
+  --out-dir storage-perf-results \
+  --thresholds-file bench/perf_thresholds.json \
+  --profile pr-smoke
 
 cat storage-perf-results/compare.md
 ```
 
-The compare script also gates on:
-
-- capability regressions (e.g. OPFS → IndexedDB fallback, or OPFS `sync_access_handle` → `async`)
-- benchmark config mismatches between baseline/current runs (to avoid apples-to-oranges comparisons)
-
-It also includes any `warnings[]` from the benchmark output in the Markdown report.
-When invoked with `--json`, it also writes `compare.json` for machine-readable CI consumers.
+The compare script writes `compare.md` + `summary.json` to `--out-dir` and exits non-zero if any metric
+regresses by more than the configured threshold (exit code 2 indicates extreme variance / missing data).
 The per-metric table includes the baseline/current coefficient-of-variation (CV) computed from the
-benchmark's per-run stdev/mean for quick noise inspection.
+per-run samples for quick noise inspection.
 
 ## Scenario runner (PF-008 macrobench framework)
 

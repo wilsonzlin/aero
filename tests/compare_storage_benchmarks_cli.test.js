@@ -23,7 +23,47 @@ function runCompare(args, opts = {}) {
 }
 
 function makeStorageBench(overrides = {}) {
+  const throughputSummary = (mbPerS) => ({
+    runs: [
+      { bytes: 1024 * 1024, duration_ms: 10, mb_per_s: mbPerS },
+      { bytes: 1024 * 1024, duration_ms: 10, mb_per_s: mbPerS },
+    ],
+    mean_mb_per_s: mbPerS,
+    stdev_mb_per_s: 0,
+  });
+
+  const latencySummary = (p95Ms) => ({
+    runs: [
+      {
+        ops: 1,
+        block_bytes: 4096,
+        min_ms: p95Ms,
+        max_ms: p95Ms,
+        mean_ms: p95Ms,
+        stdev_ms: 0,
+        p50_ms: p95Ms,
+        p95_ms: p95Ms,
+      },
+      {
+        ops: 1,
+        block_bytes: 4096,
+        min_ms: p95Ms,
+        max_ms: p95Ms,
+        mean_ms: p95Ms,
+        stdev_ms: 0,
+        p50_ms: p95Ms,
+        p95_ms: p95Ms,
+      },
+    ],
+    mean_p50_ms: p95Ms,
+    mean_p95_ms: p95Ms,
+    stdev_p50_ms: 0,
+    stdev_p95_ms: 0,
+  });
+
   return {
+    version: 1,
+    run_id: "test-run",
     backend: "opfs",
     api_mode: "async",
     config: {
@@ -37,9 +77,28 @@ function makeStorageBench(overrides = {}) {
       random_seed: 1337,
       include_random_write: false,
     },
-    sequential_write: { mean_mb_per_s: 100 },
-    sequential_read: { mean_mb_per_s: 150 },
-    random_read_4k: { mean_p50_ms: 5, mean_p95_ms: 10 },
+    sequential_write: throughputSummary(100),
+    sequential_read: throughputSummary(150),
+    random_read_4k: latencySummary(10),
+    ...overrides,
+  };
+}
+
+function makeThresholdPolicy(overrides = {}) {
+  return {
+    schemaVersion: 1,
+    profiles: {
+      "pr-smoke": {
+        storage: {
+          metrics: {
+            sequential_write_mb_per_s: { better: "higher", maxRegressionPct: 0.15, extremeCvThreshold: 0.5 },
+            sequential_read_mb_per_s: { better: "higher", maxRegressionPct: 0.15, extremeCvThreshold: 0.5 },
+            random_read_4k_p95_ms: { better: "lower", maxRegressionPct: 0.15, extremeCvThreshold: 0.5 },
+            random_write_4k_p95_ms: { better: "lower", maxRegressionPct: 0.15, informational: true },
+          },
+        },
+      },
+    },
     ...overrides,
   };
 }
@@ -48,10 +107,22 @@ test("compare_storage_benchmarks CLI supports --candidate + --out-dir and writes
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "aero-storage-compare-"));
   const baselinePath = path.join(tmpDir, "baseline.json");
   const candidatePath = path.join(tmpDir, "candidate.json");
+  const thresholdsPath = path.join(tmpDir, "thresholds.json");
   const outDir = path.join(tmpDir, "out");
 
   writeJson(baselinePath, makeStorageBench());
-  writeJson(candidatePath, makeStorageBench({ sequential_write: { mean_mb_per_s: 101 } }));
+
+  const candidate = makeStorageBench();
+  candidate.sequential_write = {
+    ...candidate.sequential_write,
+    mean_mb_per_s: 101,
+    runs: [
+      { bytes: 1, duration_ms: 1, mb_per_s: 101 },
+      { bytes: 1, duration_ms: 1, mb_per_s: 101 },
+    ],
+  };
+  writeJson(candidatePath, candidate);
+  writeJson(thresholdsPath, makeThresholdPolicy());
 
   const res = runCompare([
     "--baseline",
@@ -60,33 +131,59 @@ test("compare_storage_benchmarks CLI supports --candidate + --out-dir and writes
     candidatePath,
     "--out-dir",
     outDir,
-    "--thresholdPct",
-    "15",
+    "--thresholds-file",
+    thresholdsPath,
+    "--profile",
+    "pr-smoke",
     "--json",
   ]);
 
   assert.equal(res.status, 0, `expected exit=0, got ${res.status}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
   assert.ok(fs.existsSync(path.join(outDir, "compare.md")));
-  assert.ok(fs.existsSync(path.join(outDir, "compare.json")));
+  assert.ok(fs.existsSync(path.join(outDir, "summary.json")));
+  assert.ok(fs.existsSync(path.join(outDir, "compare.json")), "expected legacy compare.json copy when --json is set");
+
+  const summary = JSON.parse(fs.readFileSync(path.join(outDir, "summary.json"), "utf8"));
+  assert.equal(summary.status, "pass");
 });
 
 test("compare_storage_benchmarks CLI respects STORAGE_PERF_REGRESSION_THRESHOLD_PCT override", () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "aero-storage-compare-"));
   const baselinePath = path.join(tmpDir, "baseline.json");
   const candidatePath = path.join(tmpDir, "candidate.json");
+  const thresholdsPath = path.join(tmpDir, "thresholds.json");
   const outDir = path.join(tmpDir, "out");
 
   // 18% drop would fail the default 15% threshold, but should pass when env sets 20.
-  writeJson(baselinePath, makeStorageBench({ sequential_write: { mean_mb_per_s: 100 } }));
-  writeJson(candidatePath, makeStorageBench({ sequential_write: { mean_mb_per_s: 82 } }));
+  const base = makeStorageBench();
+  base.sequential_write = { ...base.sequential_write, mean_mb_per_s: 100, runs: [{ bytes: 1, duration_ms: 1, mb_per_s: 100 }, { bytes: 1, duration_ms: 1, mb_per_s: 100 }] };
+  writeJson(baselinePath, base);
+
+  const cand = makeStorageBench();
+  cand.sequential_write = { ...cand.sequential_write, mean_mb_per_s: 82, runs: [{ bytes: 1, duration_ms: 1, mb_per_s: 82 }, { bytes: 1, duration_ms: 1, mb_per_s: 82 }] };
+  writeJson(candidatePath, cand);
+  writeJson(thresholdsPath, makeThresholdPolicy());
 
   const res = runCompare(
-    ["--baseline", baselinePath, "--current", candidatePath, "--outDir", outDir, "--json"],
+    [
+      "--baseline",
+      baselinePath,
+      "--current",
+      candidatePath,
+      "--outDir",
+      outDir,
+      "--thresholds-file",
+      thresholdsPath,
+      "--profile",
+      "pr-smoke",
+      "--json",
+    ],
     { env: { STORAGE_PERF_REGRESSION_THRESHOLD_PCT: "20" } },
   );
 
   assert.equal(res.status, 0, `expected exit=0, got ${res.status}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
   assert.ok(fs.existsSync(path.join(outDir, "compare.md")));
+  assert.ok(fs.existsSync(path.join(outDir, "summary.json")));
   assert.ok(fs.existsSync(path.join(outDir, "compare.json")));
 });
 
@@ -94,10 +191,17 @@ test("compare_storage_benchmarks CLI exits non-zero on regression and still writ
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "aero-storage-compare-"));
   const baselinePath = path.join(tmpDir, "baseline.json");
   const candidatePath = path.join(tmpDir, "candidate.json");
+  const thresholdsPath = path.join(tmpDir, "thresholds.json");
   const outDir = path.join(tmpDir, "out");
 
-  writeJson(baselinePath, makeStorageBench({ sequential_write: { mean_mb_per_s: 100 } }));
-  writeJson(candidatePath, makeStorageBench({ sequential_write: { mean_mb_per_s: 60 } }));
+  const base = makeStorageBench();
+  base.sequential_write = { ...base.sequential_write, mean_mb_per_s: 100, runs: [{ bytes: 1, duration_ms: 1, mb_per_s: 100 }, { bytes: 1, duration_ms: 1, mb_per_s: 100 }] };
+  writeJson(baselinePath, base);
+
+  const cand = makeStorageBench();
+  cand.sequential_write = { ...cand.sequential_write, mean_mb_per_s: 60, runs: [{ bytes: 1, duration_ms: 1, mb_per_s: 60 }, { bytes: 1, duration_ms: 1, mb_per_s: 60 }] };
+  writeJson(candidatePath, cand);
+  writeJson(thresholdsPath, makeThresholdPolicy());
 
   const res = runCompare([
     "--baseline",
@@ -106,11 +210,46 @@ test("compare_storage_benchmarks CLI exits non-zero on regression and still writ
     candidatePath,
     "--outDir",
     outDir,
-    "--thresholdPct",
-    "15",
+    "--thresholds-file",
+    thresholdsPath,
+    "--profile",
+    "pr-smoke",
   ]);
 
   assert.equal(res.status, 1, `expected exit=1, got ${res.status}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
   assert.ok(fs.existsSync(path.join(outDir, "compare.md")));
 });
 
+test("compare_storage_benchmarks CLI exits 2 (unstable) when a required metric is missing", () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "aero-storage-compare-"));
+  const baselinePath = path.join(tmpDir, "baseline.json");
+  const candidatePath = path.join(tmpDir, "candidate.json");
+  const thresholdsPath = path.join(tmpDir, "thresholds.json");
+  const outDir = path.join(tmpDir, "out");
+
+  writeJson(baselinePath, makeStorageBench());
+
+  const cand = makeStorageBench();
+  delete cand.sequential_read;
+  writeJson(candidatePath, cand);
+
+  writeJson(thresholdsPath, makeThresholdPolicy());
+
+  const res = runCompare([
+    "--baseline",
+    baselinePath,
+    "--candidate",
+    candidatePath,
+    "--out-dir",
+    outDir,
+    "--thresholds-file",
+    thresholdsPath,
+    "--profile",
+    "pr-smoke",
+  ]);
+
+  assert.equal(res.status, 2, `expected exit=2, got ${res.status}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+  assert.ok(fs.existsSync(path.join(outDir, "compare.md")));
+  const summary = JSON.parse(fs.readFileSync(path.join(outDir, "summary.json"), "utf8"));
+  assert.equal(summary.status, "unstable");
+});
