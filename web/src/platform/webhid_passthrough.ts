@@ -602,8 +602,8 @@ export function mountWebHidPassthroughPanel(host: HTMLElement, manager: WebHidPa
     class: "mono",
     text:
       `Guest UHCI root port 0 hosts an emulated external USB hub (${hubPortCount} ports). ` +
-      "Passthrough devices attach behind it using paths like 0.3; " +
-      "if the hub fills up, one extra device can attach directly at path=1.",
+      "Passthrough devices attach behind it using paths like 0.3. " +
+      "UHCI root port 1 is reserved for the guest-visible WebUSB passthrough device.",
   });
 
   const permissionHint = el("div", { class: "mono" });
