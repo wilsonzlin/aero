@@ -396,6 +396,8 @@ dependencies = [
 name = "aero-snapshot"
 version = "0.1.0"
 dependencies = [
+ "aero-devices-input",
+ "aero-io-snapshot",
  "lz4_flex",
  "proptest",
  "rand 0.8.5",

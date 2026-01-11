@@ -4,6 +4,9 @@ mod io;
 mod ram;
 mod types;
 
+#[cfg(feature = "io-snapshot")]
+pub mod io_snapshot_bridge;
+
 pub use crate::error::{Result, SnapshotError};
 pub use crate::format::{
     DeviceId, SectionId, SNAPSHOT_ENDIANNESS_LITTLE, SNAPSHOT_MAGIC, SNAPSHOT_VERSION_V1,

@@ -4,11 +4,15 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 
+[features]
+io-snapshot = ["dep:aero-io-snapshot"]
+
 [dependencies]
+aero-io-snapshot = { path = "../aero-io-snapshot", optional = true }
 lz4_flex = "0.11"
 thiserror = "1"
 
 [dev-dependencies]
+aero-devices-input = { path = "../aero-devices-input" }
 proptest = "1.5"
 rand = "0.8"
-

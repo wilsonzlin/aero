@@ -50,6 +50,16 @@ This framing enables **backward-compatible schema evolution**:
 | `DISKS` | References to disk base images + overlay images |
 | `RAM` | Guest RAM contents (either full snapshot or dirty-page diff) |
 
+### Recommended device payload convention (DEVICES)
+
+`aero-snapshot` stores device entries as opaque `DeviceState { id, version, flags, data }`. For new device models, the recommended convention is:
+
+- `DeviceState.id`: the *outer* Aero `DeviceId` (assigned by the coordinator)
+- `DeviceState.data`: the raw `aero-io-snapshot` TLV blob returned by `IoSnapshot::save_state()` (including the inner header)
+- `DeviceState.version` / `DeviceState.flags`: mirror the inner `SnapshotVersion` `(major, minor)` from the `aero-io-snapshot` header
+
+This standardizes device payloads on a deterministic, forward-compatible TLV encoding. `aero-snapshot` provides opt-in helpers behind the `io-snapshot` feature: `aero_snapshot::io_snapshot_bridge::{device_state_from_io_snapshot, apply_io_snapshot_to_device}`.
+
 ---
 
 ## Guest RAM encoding
@@ -104,4 +114,3 @@ The reference VM (`crates/aero-vm/`) contains deterministic tests:
 - Chain `full snapshot -> dirty diff snapshot` to validate incremental restore.
 
 `crates/aero-snapshot/` additionally includes a `proptest`-based decoder robustness test that feeds random byte strings into the decoder and asserts it does not panic.
-
