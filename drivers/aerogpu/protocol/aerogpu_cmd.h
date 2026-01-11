@@ -492,7 +492,7 @@ AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_input_layout_blob_header) == 16);
  */
 #pragma pack(push, 1)
 struct aerogpu_input_layout_element_dxgi {
-  uint32_t semantic_name_hash; /* FNV-1a hash of ASCII semantic name */
+  uint32_t semantic_name_hash; /* FNV-1a hash of ASCII uppercase semantic name */
   uint32_t semantic_index;
   uint32_t dxgi_format; /* DXGI_FORMAT numeric */
   uint32_t input_slot;

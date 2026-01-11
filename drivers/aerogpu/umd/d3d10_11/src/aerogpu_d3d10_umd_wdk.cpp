@@ -267,13 +267,20 @@ uint32_t f32_bits(float v) {
 }
 
 // FNV-1a 32-bit hash for stable semantic name IDs.
+//
+// D3D semantic matching is case-insensitive. The AeroGPU ILAY protocol only stores a 32-bit hash
+// (not the original string), so we canonicalize to ASCII uppercase before hashing.
 uint32_t HashSemanticName(const char* s) {
   if (!s) {
     return 0;
   }
   uint32_t hash = 2166136261u;
   for (const unsigned char* p = reinterpret_cast<const unsigned char*>(s); *p; ++p) {
-    hash ^= *p;
+    unsigned char c = *p;
+    if (c >= 'a' && c <= 'z') {
+      c = static_cast<unsigned char>(c - 'a' + 'A');
+    }
+    hash ^= c;
     hash *= 16777619u;
   }
   return hash;
