@@ -708,7 +708,11 @@ struct DdiStub<Ret(AEROGPU_APIENTRY*)(Args...)> {
     if constexpr (std::is_same_v<Ret, HRESULT>) {
       return E_NOTIMPL;
     } else if constexpr (std::is_same_v<Ret, SIZE_T>) {
-      return 0;
+      // Returning zero from a CalcPrivate*Size stub often causes the runtime to
+      // pass a null pDrvPrivate, which in turn tends to crash when the runtime
+      // tries to create/destroy the object. Return a small non-zero size so the
+      // handle always has valid storage, even when Create* returns E_NOTIMPL.
+      return sizeof(uint64_t);
     } else if constexpr (std::is_same_v<Ret, void>) {
       return;
     } else {
@@ -795,6 +799,197 @@ struct DdiTraceStub<Ret(AEROGPU_APIENTRY*)(Args...), Id> {
   }
 };
 #endif // AEROGPU_D3D10_TRACE
+template <typename TFnPtr>
+struct DdiErrorStub;
+
+template <typename... Args>
+struct DdiErrorStub<void(AEROGPU_APIENTRY*)(D3D10DDI_HDEVICE, Args...)> {
+  static void AEROGPU_APIENTRY Call(D3D10DDI_HDEVICE hDevice, Args...) {
+    auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+    set_error(dev, E_NOTIMPL);
+  }
+};
+
+template <typename TFnPtr>
+struct DdiNoopStub;
+
+template <typename Ret, typename... Args>
+struct DdiNoopStub<Ret(AEROGPU_APIENTRY*)(Args...)> {
+  static Ret AEROGPU_APIENTRY Call(Args...) {
+    if constexpr (std::is_same_v<Ret, HRESULT>) {
+      return S_OK;
+    } else if constexpr (std::is_same_v<Ret, SIZE_T>) {
+      return sizeof(uint64_t);
+    } else if constexpr (std::is_same_v<Ret, void>) {
+      return;
+    } else {
+      return Ret{};
+    }
+  }
+};
+
+template <typename FuncsT>
+void InitDeviceFuncsWithStubs(FuncsT* funcs) {
+  if (!funcs) {
+    return;
+  }
+
+  std::memset(funcs, 0, sizeof(*funcs));
+
+  // The Win7 D3D10.1 runtime can call a surprising set of entrypoints during
+  // device initialization (state reset, default binds, etc). A null pointer
+  // here is a process crash, so stub-fill first, then override implemented
+  // entrypoints in CreateDevice.
+  //
+  // For state setters we prefer a no-op stub so the runtime can reset bindings
+  // without tripping `pfnSetErrorCb`.
+  funcs->pfnDestroyDevice = &DdiNoopStub<decltype(funcs->pfnDestroyDevice)>::Call;
+
+  // Resource and object creation/destruction.
+  funcs->pfnCalcPrivateResourceSize = &DdiStub<decltype(funcs->pfnCalcPrivateResourceSize)>::Call;
+  funcs->pfnCreateResource = &DdiStub<decltype(funcs->pfnCreateResource)>::Call;
+  funcs->pfnDestroyResource = &DdiNoopStub<decltype(funcs->pfnDestroyResource)>::Call;
+
+  funcs->pfnCalcPrivateShaderResourceViewSize = &DdiStub<decltype(funcs->pfnCalcPrivateShaderResourceViewSize)>::Call;
+  funcs->pfnCreateShaderResourceView = &DdiStub<decltype(funcs->pfnCreateShaderResourceView)>::Call;
+  funcs->pfnDestroyShaderResourceView = &DdiNoopStub<decltype(funcs->pfnDestroyShaderResourceView)>::Call;
+
+  funcs->pfnCalcPrivateRenderTargetViewSize = &DdiStub<decltype(funcs->pfnCalcPrivateRenderTargetViewSize)>::Call;
+  funcs->pfnCreateRenderTargetView = &DdiStub<decltype(funcs->pfnCreateRenderTargetView)>::Call;
+  funcs->pfnDestroyRenderTargetView = &DdiNoopStub<decltype(funcs->pfnDestroyRenderTargetView)>::Call;
+
+  funcs->pfnCalcPrivateDepthStencilViewSize = &DdiStub<decltype(funcs->pfnCalcPrivateDepthStencilViewSize)>::Call;
+  funcs->pfnCreateDepthStencilView = &DdiStub<decltype(funcs->pfnCreateDepthStencilView)>::Call;
+  funcs->pfnDestroyDepthStencilView = &DdiNoopStub<decltype(funcs->pfnDestroyDepthStencilView)>::Call;
+
+  funcs->pfnCalcPrivateElementLayoutSize = &DdiStub<decltype(funcs->pfnCalcPrivateElementLayoutSize)>::Call;
+  funcs->pfnCreateElementLayout = &DdiStub<decltype(funcs->pfnCreateElementLayout)>::Call;
+  funcs->pfnDestroyElementLayout = &DdiNoopStub<decltype(funcs->pfnDestroyElementLayout)>::Call;
+
+  funcs->pfnCalcPrivateSamplerSize = &DdiStub<decltype(funcs->pfnCalcPrivateSamplerSize)>::Call;
+  funcs->pfnCreateSampler = &DdiStub<decltype(funcs->pfnCreateSampler)>::Call;
+  funcs->pfnDestroySampler = &DdiNoopStub<decltype(funcs->pfnDestroySampler)>::Call;
+
+  funcs->pfnCalcPrivateBlendStateSize = &DdiStub<decltype(funcs->pfnCalcPrivateBlendStateSize)>::Call;
+  funcs->pfnCreateBlendState = &DdiStub<decltype(funcs->pfnCreateBlendState)>::Call;
+  funcs->pfnDestroyBlendState = &DdiNoopStub<decltype(funcs->pfnDestroyBlendState)>::Call;
+
+  funcs->pfnCalcPrivateRasterizerStateSize = &DdiStub<decltype(funcs->pfnCalcPrivateRasterizerStateSize)>::Call;
+  funcs->pfnCreateRasterizerState = &DdiStub<decltype(funcs->pfnCreateRasterizerState)>::Call;
+  funcs->pfnDestroyRasterizerState = &DdiNoopStub<decltype(funcs->pfnDestroyRasterizerState)>::Call;
+
+  funcs->pfnCalcPrivateDepthStencilStateSize = &DdiStub<decltype(funcs->pfnCalcPrivateDepthStencilStateSize)>::Call;
+  funcs->pfnCreateDepthStencilState = &DdiStub<decltype(funcs->pfnCreateDepthStencilState)>::Call;
+  funcs->pfnDestroyDepthStencilState = &DdiNoopStub<decltype(funcs->pfnDestroyDepthStencilState)>::Call;
+
+  funcs->pfnCalcPrivateVertexShaderSize = &DdiStub<decltype(funcs->pfnCalcPrivateVertexShaderSize)>::Call;
+  funcs->pfnCreateVertexShader = &DdiStub<decltype(funcs->pfnCreateVertexShader)>::Call;
+  funcs->pfnDestroyVertexShader = &DdiNoopStub<decltype(funcs->pfnDestroyVertexShader)>::Call;
+
+  funcs->pfnCalcPrivateGeometryShaderSize = &DdiStub<decltype(funcs->pfnCalcPrivateGeometryShaderSize)>::Call;
+  funcs->pfnCreateGeometryShader = &DdiStub<decltype(funcs->pfnCreateGeometryShader)>::Call;
+  funcs->pfnDestroyGeometryShader = &DdiNoopStub<decltype(funcs->pfnDestroyGeometryShader)>::Call;
+
+  // Optional stream output variant.
+  funcs->pfnCalcPrivateGeometryShaderWithStreamOutputSize =
+      &DdiStub<decltype(funcs->pfnCalcPrivateGeometryShaderWithStreamOutputSize)>::Call;
+  funcs->pfnCreateGeometryShaderWithStreamOutput =
+      &DdiStub<decltype(funcs->pfnCreateGeometryShaderWithStreamOutput)>::Call;
+
+  funcs->pfnCalcPrivatePixelShaderSize = &DdiStub<decltype(funcs->pfnCalcPrivatePixelShaderSize)>::Call;
+  funcs->pfnCreatePixelShader = &DdiStub<decltype(funcs->pfnCreatePixelShader)>::Call;
+  funcs->pfnDestroyPixelShader = &DdiNoopStub<decltype(funcs->pfnDestroyPixelShader)>::Call;
+
+  funcs->pfnCalcPrivateQuerySize = &DdiStub<decltype(funcs->pfnCalcPrivateQuerySize)>::Call;
+  funcs->pfnCreateQuery = &DdiStub<decltype(funcs->pfnCreateQuery)>::Call;
+  funcs->pfnDestroyQuery = &DdiNoopStub<decltype(funcs->pfnDestroyQuery)>::Call;
+
+  // Pipeline binding/state (no-op stubs).
+  funcs->pfnIaSetInputLayout = &DdiNoopStub<decltype(funcs->pfnIaSetInputLayout)>::Call;
+  funcs->pfnIaSetVertexBuffers = &DdiNoopStub<decltype(funcs->pfnIaSetVertexBuffers)>::Call;
+  funcs->pfnIaSetIndexBuffer = &DdiNoopStub<decltype(funcs->pfnIaSetIndexBuffer)>::Call;
+  funcs->pfnIaSetTopology = &DdiNoopStub<decltype(funcs->pfnIaSetTopology)>::Call;
+
+  funcs->pfnVsSetShader = &DdiNoopStub<decltype(funcs->pfnVsSetShader)>::Call;
+  funcs->pfnVsSetConstantBuffers = &DdiNoopStub<decltype(funcs->pfnVsSetConstantBuffers)>::Call;
+  funcs->pfnVsSetShaderResources = &DdiNoopStub<decltype(funcs->pfnVsSetShaderResources)>::Call;
+  funcs->pfnVsSetSamplers = &DdiNoopStub<decltype(funcs->pfnVsSetSamplers)>::Call;
+
+  funcs->pfnGsSetShader = &DdiNoopStub<decltype(funcs->pfnGsSetShader)>::Call;
+  funcs->pfnGsSetConstantBuffers = &DdiNoopStub<decltype(funcs->pfnGsSetConstantBuffers)>::Call;
+  funcs->pfnGsSetShaderResources = &DdiNoopStub<decltype(funcs->pfnGsSetShaderResources)>::Call;
+  funcs->pfnGsSetSamplers = &DdiNoopStub<decltype(funcs->pfnGsSetSamplers)>::Call;
+
+  funcs->pfnSoSetTargets = &DdiNoopStub<decltype(funcs->pfnSoSetTargets)>::Call;
+
+  funcs->pfnPsSetShader = &DdiNoopStub<decltype(funcs->pfnPsSetShader)>::Call;
+  funcs->pfnPsSetConstantBuffers = &DdiNoopStub<decltype(funcs->pfnPsSetConstantBuffers)>::Call;
+  funcs->pfnPsSetShaderResources = &DdiNoopStub<decltype(funcs->pfnPsSetShaderResources)>::Call;
+  funcs->pfnPsSetSamplers = &DdiNoopStub<decltype(funcs->pfnPsSetSamplers)>::Call;
+
+  funcs->pfnSetViewports = &DdiNoopStub<decltype(funcs->pfnSetViewports)>::Call;
+  funcs->pfnSetScissorRects = &DdiNoopStub<decltype(funcs->pfnSetScissorRects)>::Call;
+  funcs->pfnSetRasterizerState = &DdiNoopStub<decltype(funcs->pfnSetRasterizerState)>::Call;
+  funcs->pfnSetBlendState = &DdiNoopStub<decltype(funcs->pfnSetBlendState)>::Call;
+  funcs->pfnSetDepthStencilState = &DdiNoopStub<decltype(funcs->pfnSetDepthStencilState)>::Call;
+  funcs->pfnSetRenderTargets = &DdiNoopStub<decltype(funcs->pfnSetRenderTargets)>::Call;
+
+  // Clears/draws/present. Use error stubs for operations that should not
+  // silently succeed.
+  funcs->pfnClearRenderTargetView = &DdiNoopStub<decltype(funcs->pfnClearRenderTargetView)>::Call;
+  funcs->pfnClearDepthStencilView = &DdiNoopStub<decltype(funcs->pfnClearDepthStencilView)>::Call;
+
+  funcs->pfnDraw = &DdiNoopStub<decltype(funcs->pfnDraw)>::Call;
+  funcs->pfnDrawIndexed = &DdiNoopStub<decltype(funcs->pfnDrawIndexed)>::Call;
+  funcs->pfnDrawInstanced = &DdiNoopStub<decltype(funcs->pfnDrawInstanced)>::Call;
+  funcs->pfnDrawIndexedInstanced = &DdiNoopStub<decltype(funcs->pfnDrawIndexedInstanced)>::Call;
+  funcs->pfnDrawAuto = &DdiNoopStub<decltype(funcs->pfnDrawAuto)>::Call;
+
+  funcs->pfnPresent = &DdiStub<decltype(funcs->pfnPresent)>::Call;
+  funcs->pfnFlush = &DdiNoopStub<decltype(funcs->pfnFlush)>::Call;
+  funcs->pfnRotateResourceIdentities = &DdiNoopStub<decltype(funcs->pfnRotateResourceIdentities)>::Call;
+
+  // Resource update/copy.
+  funcs->pfnMap = &DdiStub<decltype(funcs->pfnMap)>::Call;
+  funcs->pfnUnmap = &DdiNoopStub<decltype(funcs->pfnUnmap)>::Call;
+  funcs->pfnUpdateSubresourceUP = &DdiErrorStub<decltype(funcs->pfnUpdateSubresourceUP)>::Call;
+  funcs->pfnCopyResource = &DdiErrorStub<decltype(funcs->pfnCopyResource)>::Call;
+  funcs->pfnCopySubresourceRegion = &DdiErrorStub<decltype(funcs->pfnCopySubresourceRegion)>::Call;
+
+  // Misc helpers (optional in many apps, but keep non-null).
+  funcs->pfnGenerateMips = &DdiErrorStub<decltype(funcs->pfnGenerateMips)>::Call;
+  funcs->pfnResolveSubresource = &DdiErrorStub<decltype(funcs->pfnResolveSubresource)>::Call;
+
+  funcs->pfnBegin = &DdiErrorStub<decltype(funcs->pfnBegin)>::Call;
+  funcs->pfnEnd = &DdiErrorStub<decltype(funcs->pfnEnd)>::Call;
+
+  funcs->pfnSetPredication = &DdiNoopStub<decltype(funcs->pfnSetPredication)>::Call;
+  funcs->pfnClearState = &DdiNoopStub<decltype(funcs->pfnClearState)>::Call;
+
+  funcs->pfnSetTextFilterSize = &DdiNoopStub<decltype(funcs->pfnSetTextFilterSize)>::Call;
+  funcs->pfnReadFromSubresource = &DdiErrorStub<decltype(funcs->pfnReadFromSubresource)>::Call;
+  funcs->pfnWriteToSubresource = &DdiErrorStub<decltype(funcs->pfnWriteToSubresource)>::Call;
+
+  funcs->pfnCalcPrivateCounterSize = &DdiStub<decltype(funcs->pfnCalcPrivateCounterSize)>::Call;
+  funcs->pfnCreateCounter = &DdiStub<decltype(funcs->pfnCreateCounter)>::Call;
+  funcs->pfnDestroyCounter = &DdiNoopStub<decltype(funcs->pfnDestroyCounter)>::Call;
+
+  // Specialized map helpers (if present in the function table for this interface version).
+  using DeviceFuncs = std::remove_pointer_t<decltype(funcs)>;
+  if constexpr (HasStagingResourceMap<DeviceFuncs>::value) {
+    funcs->pfnStagingResourceMap = &DdiStub<decltype(funcs->pfnStagingResourceMap)>::Call;
+    funcs->pfnStagingResourceUnmap = &DdiNoopStub<decltype(funcs->pfnStagingResourceUnmap)>::Call;
+  }
+  if constexpr (HasDynamicIABufferMap<DeviceFuncs>::value) {
+    funcs->pfnDynamicIABufferMapDiscard = &DdiStub<decltype(funcs->pfnDynamicIABufferMapDiscard)>::Call;
+    funcs->pfnDynamicIABufferMapNoOverwrite = &DdiStub<decltype(funcs->pfnDynamicIABufferMapNoOverwrite)>::Call;
+    funcs->pfnDynamicIABufferUnmap = &DdiNoopStub<decltype(funcs->pfnDynamicIABufferUnmap)>::Call;
+  }
+  if constexpr (HasDynamicConstantBufferMap<DeviceFuncs>::value) {
+    funcs->pfnDynamicConstantBufferMapDiscard = &DdiStub<decltype(funcs->pfnDynamicConstantBufferMapDiscard)>::Call;
+    funcs->pfnDynamicConstantBufferUnmap = &DdiNoopStub<decltype(funcs->pfnDynamicConstantBufferUnmap)>::Call;
+  }
+}
 
 // -------------------------------------------------------------------------------------------------
 // D3D10.1 Device DDI (minimal subset + conservative stubs)
@@ -2258,7 +2453,7 @@ HRESULT AEROGPU_APIENTRY CreateDevice(D3D10DDI_HADAPTER hAdapter, D3D10_1DDIARG_
   device->hrt_device = pCreateDevice->hRTDevice;
   device->pfn_set_error = pCreateDevice->pCallbacks ? pCreateDevice->pCallbacks->pfnSetErrorCb : nullptr;
 
-  std::memset(pCreateDevice->pDeviceFuncs, 0, sizeof(*pCreateDevice->pDeviceFuncs));
+  InitDeviceFuncsWithStubs(pCreateDevice->pDeviceFuncs);
 
   pCreateDevice->pDeviceFuncs->pfnDestroyDevice = &DestroyDevice;
   pCreateDevice->pDeviceFuncs->pfnCalcPrivateResourceSize = &CalcPrivateResourceSize;
@@ -2401,7 +2596,7 @@ HRESULT AEROGPU_APIENTRY CreateDevice10(D3D10DDI_HADAPTER hAdapter, D3D10DDIARG_
   device->hrt_device = pCreateDevice->hRTDevice;
   device->pfn_set_error = pCreateDevice->pCallbacks ? pCreateDevice->pCallbacks->pfnSetErrorCb : nullptr;
 
-  std::memset(pCreateDevice->pDeviceFuncs, 0, sizeof(*pCreateDevice->pDeviceFuncs));
+  InitDeviceFuncsWithStubs(pCreateDevice->pDeviceFuncs);
 
   pCreateDevice->pDeviceFuncs->pfnDestroyDevice = &DestroyDevice;
   pCreateDevice->pDeviceFuncs->pfnCalcPrivateResourceSize = &CalcPrivateResourceSize;
@@ -2433,19 +2628,19 @@ HRESULT AEROGPU_APIENTRY CreateDevice10(D3D10DDI_HADAPTER hAdapter, D3D10DDIARG_
   pCreateDevice->pDeviceFuncs->pfnCreateBlendState = &CreateBlendState;
   pCreateDevice->pDeviceFuncs->pfnDestroyBlendState = &DestroyBlendState;
   pCreateDevice->pDeviceFuncs->pfnSetBlendState =
-      &DdiStub<decltype(pCreateDevice->pDeviceFuncs->pfnSetBlendState)>::Call;
+      &DdiNoopStub<decltype(pCreateDevice->pDeviceFuncs->pfnSetBlendState)>::Call;
 
   pCreateDevice->pDeviceFuncs->pfnCalcPrivateRasterizerStateSize = &CalcPrivateRasterizerStateSize;
   pCreateDevice->pDeviceFuncs->pfnCreateRasterizerState = &CreateRasterizerState;
   pCreateDevice->pDeviceFuncs->pfnDestroyRasterizerState = &DestroyRasterizerState;
   pCreateDevice->pDeviceFuncs->pfnSetRasterizerState =
-      &DdiStub<decltype(pCreateDevice->pDeviceFuncs->pfnSetRasterizerState)>::Call;
+      &DdiNoopStub<decltype(pCreateDevice->pDeviceFuncs->pfnSetRasterizerState)>::Call;
 
   pCreateDevice->pDeviceFuncs->pfnCalcPrivateDepthStencilStateSize = &CalcPrivateDepthStencilStateSize;
   pCreateDevice->pDeviceFuncs->pfnCreateDepthStencilState = &CreateDepthStencilState;
   pCreateDevice->pDeviceFuncs->pfnDestroyDepthStencilState = &DestroyDepthStencilState;
   pCreateDevice->pDeviceFuncs->pfnSetDepthStencilState =
-      &DdiStub<decltype(pCreateDevice->pDeviceFuncs->pfnSetDepthStencilState)>::Call;
+      &DdiNoopStub<decltype(pCreateDevice->pDeviceFuncs->pfnSetDepthStencilState)>::Call;
 
   pCreateDevice->pDeviceFuncs->pfnIaSetInputLayout = &IaSetInputLayout;
   pCreateDevice->pDeviceFuncs->pfnIaSetVertexBuffers = &IaSetVertexBuffers;
@@ -2456,38 +2651,37 @@ HRESULT AEROGPU_APIENTRY CreateDevice10(D3D10DDI_HADAPTER hAdapter, D3D10DDIARG_
   pCreateDevice->pDeviceFuncs->pfnPsSetShader = &PsSetShader;
 
   pCreateDevice->pDeviceFuncs->pfnVsSetConstantBuffers =
-      &DdiStub<decltype(pCreateDevice->pDeviceFuncs->pfnVsSetConstantBuffers)>::Call;
+      &DdiNoopStub<decltype(pCreateDevice->pDeviceFuncs->pfnVsSetConstantBuffers)>::Call;
   pCreateDevice->pDeviceFuncs->pfnPsSetConstantBuffers =
-      &DdiStub<decltype(pCreateDevice->pDeviceFuncs->pfnPsSetConstantBuffers)>::Call;
+      &DdiNoopStub<decltype(pCreateDevice->pDeviceFuncs->pfnPsSetConstantBuffers)>::Call;
   pCreateDevice->pDeviceFuncs->pfnVsSetShaderResources =
-      &DdiStub<decltype(pCreateDevice->pDeviceFuncs->pfnVsSetShaderResources)>::Call;
+      &DdiNoopStub<decltype(pCreateDevice->pDeviceFuncs->pfnVsSetShaderResources)>::Call;
   pCreateDevice->pDeviceFuncs->pfnPsSetShaderResources =
-      &DdiStub<decltype(pCreateDevice->pDeviceFuncs->pfnPsSetShaderResources)>::Call;
+      &DdiNoopStub<decltype(pCreateDevice->pDeviceFuncs->pfnPsSetShaderResources)>::Call;
   pCreateDevice->pDeviceFuncs->pfnVsSetSamplers =
-      &DdiStub<decltype(pCreateDevice->pDeviceFuncs->pfnVsSetSamplers)>::Call;
+      &DdiNoopStub<decltype(pCreateDevice->pDeviceFuncs->pfnVsSetSamplers)>::Call;
   pCreateDevice->pDeviceFuncs->pfnPsSetSamplers =
-      &DdiStub<decltype(pCreateDevice->pDeviceFuncs->pfnPsSetSamplers)>::Call;
+      &DdiNoopStub<decltype(pCreateDevice->pDeviceFuncs->pfnPsSetSamplers)>::Call;
 
-  pCreateDevice->pDeviceFuncs->pfnGsSetShader =
-      &DdiStub<decltype(pCreateDevice->pDeviceFuncs->pfnGsSetShader)>::Call;
+  pCreateDevice->pDeviceFuncs->pfnGsSetShader = &DdiNoopStub<decltype(pCreateDevice->pDeviceFuncs->pfnGsSetShader)>::Call;
   pCreateDevice->pDeviceFuncs->pfnGsSetConstantBuffers =
-      &DdiStub<decltype(pCreateDevice->pDeviceFuncs->pfnGsSetConstantBuffers)>::Call;
+      &DdiNoopStub<decltype(pCreateDevice->pDeviceFuncs->pfnGsSetConstantBuffers)>::Call;
   pCreateDevice->pDeviceFuncs->pfnGsSetShaderResources =
-      &DdiStub<decltype(pCreateDevice->pDeviceFuncs->pfnGsSetShaderResources)>::Call;
+      &DdiNoopStub<decltype(pCreateDevice->pDeviceFuncs->pfnGsSetShaderResources)>::Call;
   pCreateDevice->pDeviceFuncs->pfnGsSetSamplers =
-      &DdiStub<decltype(pCreateDevice->pDeviceFuncs->pfnGsSetSamplers)>::Call;
+      &DdiNoopStub<decltype(pCreateDevice->pDeviceFuncs->pfnGsSetSamplers)>::Call;
 
   pCreateDevice->pDeviceFuncs->pfnSetViewports = &SetViewports;
   pCreateDevice->pDeviceFuncs->pfnSetScissorRects =
-      &DdiStub<decltype(pCreateDevice->pDeviceFuncs->pfnSetScissorRects)>::Call;
+      &DdiNoopStub<decltype(pCreateDevice->pDeviceFuncs->pfnSetScissorRects)>::Call;
   pCreateDevice->pDeviceFuncs->pfnSetRenderTargets = &SetRenderTargets;
 
   pCreateDevice->pDeviceFuncs->pfnDraw = &Draw;
   pCreateDevice->pDeviceFuncs->pfnDrawIndexed = &DrawIndexed;
-  pCreateDevice->pDeviceFuncs->pfnDrawInstanced = &DdiStub<decltype(pCreateDevice->pDeviceFuncs->pfnDrawInstanced)>::Call;
+  pCreateDevice->pDeviceFuncs->pfnDrawInstanced = &DdiNoopStub<decltype(pCreateDevice->pDeviceFuncs->pfnDrawInstanced)>::Call;
   pCreateDevice->pDeviceFuncs->pfnDrawIndexedInstanced =
-      &DdiStub<decltype(pCreateDevice->pDeviceFuncs->pfnDrawIndexedInstanced)>::Call;
-  pCreateDevice->pDeviceFuncs->pfnDrawAuto = &DdiStub<decltype(pCreateDevice->pDeviceFuncs->pfnDrawAuto)>::Call;
+      &DdiNoopStub<decltype(pCreateDevice->pDeviceFuncs->pfnDrawIndexedInstanced)>::Call;
+  pCreateDevice->pDeviceFuncs->pfnDrawAuto = &DdiNoopStub<decltype(pCreateDevice->pDeviceFuncs->pfnDrawAuto)>::Call;
   pCreateDevice->pDeviceFuncs->pfnPresent = &Present;
   pCreateDevice->pDeviceFuncs->pfnFlush = &Flush;
   pCreateDevice->pDeviceFuncs->pfnRotateResourceIdentities = &RotateResourceIdentities;
@@ -2495,9 +2689,9 @@ HRESULT AEROGPU_APIENTRY CreateDevice10(D3D10DDI_HADAPTER hAdapter, D3D10DDIARG_
   pCreateDevice->pDeviceFuncs->pfnMap = &Map;
   pCreateDevice->pDeviceFuncs->pfnUnmap = &Unmap;
   pCreateDevice->pDeviceFuncs->pfnUpdateSubresourceUP = &UpdateSubresourceUP;
-  pCreateDevice->pDeviceFuncs->pfnCopyResource = &DdiStub<decltype(pCreateDevice->pDeviceFuncs->pfnCopyResource)>::Call;
+  pCreateDevice->pDeviceFuncs->pfnCopyResource = &DdiErrorStub<decltype(pCreateDevice->pDeviceFuncs->pfnCopyResource)>::Call;
   pCreateDevice->pDeviceFuncs->pfnCopySubresourceRegion =
-      &DdiStub<decltype(pCreateDevice->pDeviceFuncs->pfnCopySubresourceRegion)>::Call;
+      &DdiErrorStub<decltype(pCreateDevice->pDeviceFuncs->pfnCopySubresourceRegion)>::Call;
 
   return S_OK;
 }
