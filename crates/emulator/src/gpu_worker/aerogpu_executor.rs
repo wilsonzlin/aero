@@ -2,7 +2,8 @@ use std::collections::{BTreeMap, HashSet, VecDeque};
 
 use aero_protocol::aerogpu::aerogpu_cmd::{
     decode_cmd_hdr_le, decode_cmd_stream_header_le, AerogpuCmdHdr, AerogpuCmdOpcode,
-    AerogpuCmdStreamHeader as ProtocolCmdStreamHeader, AEROGPU_PRESENT_FLAG_VSYNC,
+    AerogpuCmdStreamHeader as ProtocolCmdStreamHeader, AerogpuCmdStreamIter,
+    AEROGPU_PRESENT_FLAG_VSYNC,
 };
 use memory::MemoryBus;
 
@@ -12,8 +13,8 @@ use crate::devices::aerogpu_ring::{
     AEROGPU_ALLOC_TABLE_MAGIC, AEROGPU_RING_HEADER_SIZE_BYTES,
 };
 use crate::gpu_worker::aerogpu_backend::{
-    AeroGpuBackendCompletion, AeroGpuBackendScanout, AeroGpuBackendSubmission, AeroGpuCommandBackend,
-    NullAeroGpuBackend,
+    AeroGpuBackendCompletion, AeroGpuBackendScanout, AeroGpuBackendSubmission,
+    AeroGpuCommandBackend, NullAeroGpuBackend,
 };
 use crate::gpu_worker::aerogpu_software::AeroGpuSoftwareExecutor;
 
@@ -395,7 +396,8 @@ impl AeroGpuExecutor {
 
             regs.stats.submissions = regs.stats.submissions.saturating_add(1);
             if desc.validate_prefix().is_err() || desc.desc_size_bytes > ring.entry_stride_bytes {
-                regs.stats.malformed_submissions = regs.stats.malformed_submissions.saturating_add(1);
+                regs.stats.malformed_submissions =
+                    regs.stats.malformed_submissions.saturating_add(1);
             }
 
             let mut decode_errors = Vec::new();
@@ -403,8 +405,13 @@ impl AeroGpuExecutor {
                 decode_alloc_table(mem, regs.abi_version, &desc, &mut decode_errors);
             let capture_cmd_stream = self.cfg.keep_last_submissions > 0
                 || self.cfg.fence_completion == AeroGpuFenceCompletionMode::Deferred;
-            let (cmd_stream_header, cmd_stream) =
-                decode_cmd_stream(mem, regs.abi_version, &desc, &mut decode_errors, capture_cmd_stream);
+            let (cmd_stream_header, cmd_stream) = decode_cmd_stream(
+                mem,
+                regs.abi_version,
+                &desc,
+                &mut decode_errors,
+                capture_cmd_stream,
+            );
 
             if !decode_errors.is_empty() {
                 regs.stats.malformed_submissions =
@@ -906,49 +913,22 @@ fn decode_cmd_stream(
 }
 
 fn cmd_stream_has_vsync_present_bytes(bytes: &[u8]) -> Result<bool, ()> {
-    if bytes.len() < ProtocolCmdStreamHeader::SIZE_BYTES {
-        return Err(());
-    }
-
-    let stream_hdr = decode_cmd_stream_header_le(&bytes[..ProtocolCmdStreamHeader::SIZE_BYTES])
-        .map_err(|_| ())?;
-    let declared_size = stream_hdr.size_bytes as usize;
-    if declared_size > bytes.len() {
-        return Err(());
-    }
-
-    let mut offset = ProtocolCmdStreamHeader::SIZE_BYTES;
-    while offset < declared_size {
-        let rem = declared_size - offset;
-        if rem < AerogpuCmdHdr::SIZE_BYTES {
-            return Err(());
-        }
-
-        let cmd_hdr = decode_cmd_hdr_le(&bytes[offset..offset + AerogpuCmdHdr::SIZE_BYTES])
-            .map_err(|_| ())?;
-
-        let cmd_size = cmd_hdr.size_bytes as usize;
-        let end = offset.checked_add(cmd_size).ok_or(())?;
-        if end > declared_size {
-            return Err(());
-        }
-
-        if cmd_hdr.opcode == AerogpuCmdOpcode::Present as u32
-            || cmd_hdr.opcode == AerogpuCmdOpcode::PresentEx as u32
-        {
-            // flags is always at offset 12 (hdr + scanout_id).
-            if cmd_size < 16 {
+    let iter = AerogpuCmdStreamIter::new(bytes).map_err(|_| ())?;
+    for packet in iter {
+        let packet = packet.map_err(|_| ())?;
+        if matches!(
+            packet.opcode,
+            Some(AerogpuCmdOpcode::Present) | Some(AerogpuCmdOpcode::PresentEx)
+        ) {
+            // flags is always after the scanout_id field.
+            if packet.payload.len() < 8 {
                 return Err(());
             }
-            let flags_offset = offset + 12;
-            let flags =
-                u32::from_le_bytes(bytes[flags_offset..flags_offset + 4].try_into().unwrap());
+            let flags = u32::from_le_bytes(packet.payload[4..8].try_into().unwrap());
             if (flags & AEROGPU_PRESENT_FLAG_VSYNC) != 0 {
                 return Ok(true);
             }
         }
-
-        offset = end;
     }
 
     Ok(false)
