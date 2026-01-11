@@ -968,6 +968,7 @@ function renderAudioPanel(): HTMLElement {
   let tonePhase = 0;
   const workerCoordinator = new WorkerCoordinator();
   let hdaDemoWorker: Worker | null = null;
+  let hdaDemoStats: { [k: string]: unknown } | null = null;
   let syntheticMic: SyntheticMicSource | null = null;
 
   function stopTone() {
@@ -982,6 +983,7 @@ function renderAudioPanel(): HTMLElement {
     hdaDemoWorker.postMessage({ type: "audioOutputHdaDemo.stop" });
     hdaDemoWorker.terminate();
     hdaDemoWorker = null;
+    hdaDemoStats = null;
   }
 
   function stopLoopback(): void {
@@ -1184,6 +1186,12 @@ function renderAudioPanel(): HTMLElement {
 
       // Start the CPU worker in a standalone "audio demo" mode.
       hdaDemoWorker = new Worker(new URL("../web/src/workers/cpu.worker.ts", import.meta.url), { type: "module" });
+      hdaDemoWorker.addEventListener("message", (ev: MessageEvent<unknown>) => {
+        const msg = ev.data as { type?: unknown } | null;
+        if (!msg || msg.type !== "audioOutputHdaDemo.stats") return;
+        hdaDemoStats = msg as { [k: string]: unknown };
+        (globalThis as typeof globalThis & { __aeroAudioHdaDemoStats?: unknown }).__aeroAudioHdaDemoStats = hdaDemoStats;
+      });
       hdaDemoWorker.postMessage({
         type: "audioOutputHdaDemo.start",
         ringBuffer: output.ringBuffer.buffer,
@@ -1201,6 +1209,18 @@ function renderAudioPanel(): HTMLElement {
         const header = output.ringBuffer.header;
         const read = Atomics.load(header, 0) >>> 0;
         const write = Atomics.load(header, 1) >>> 0;
+        const demoStats = hdaDemoStats;
+        const demoLines: string[] = [];
+        if (demoStats) {
+          const t = demoStats["targetFrames"];
+          const lvl = demoStats["bufferLevelFrames"];
+          if (typeof t === "number") demoLines.push(`worker.targetFrames: ${t}`);
+          if (typeof lvl === "number") demoLines.push(`worker.bufferLevelFrames: ${lvl}`);
+          const totalWritten = demoStats["totalFramesWritten"];
+          if (typeof totalWritten === "number") demoLines.push(`hda.totalFramesWritten: ${totalWritten}`);
+          const totalDropped = demoStats["totalFramesDropped"];
+          if (typeof totalDropped === "number") demoLines.push(`hda.totalFramesDropped: ${totalDropped}`);
+        }
         status.textContent =
           `AudioContext: ${metrics.state}\n` +
           `sampleRate: ${metrics.sampleRate}\n` +
@@ -1209,7 +1229,8 @@ function renderAudioPanel(): HTMLElement {
           `underrunFrames: ${metrics.underrunCount}\n` +
           `overrunFrames: ${metrics.overrunCount}\n` +
           `ring.readFrameIndex: ${read}\n` +
-          `ring.writeFrameIndex: ${write}`;
+          `ring.writeFrameIndex: ${write}` +
+          (demoLines.length ? `\n${demoLines.join("\n")}` : "");
       }, 50);
     },
   });

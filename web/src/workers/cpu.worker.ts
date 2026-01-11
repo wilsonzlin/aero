@@ -79,6 +79,19 @@ type AudioOutputHdaDemoStopMessage = {
   type: "audioOutputHdaDemo.stop";
 };
 
+type AudioOutputHdaDemoStatsMessage = {
+  type: "audioOutputHdaDemo.stats";
+  bufferLevelFrames: number;
+  targetFrames: number;
+  totalFramesProduced?: number;
+  totalFramesWritten?: number;
+  totalFramesDropped?: number;
+  lastTickRequestedFrames?: number;
+  lastTickProducedFrames?: number;
+  lastTickWrittenFrames?: number;
+  lastTickDroppedFrames?: number;
+};
+
 let role: "cpu" | "gpu" | "io" | "jit" = "cpu";
 let status!: Int32Array;
 let commandRing!: RingBuffer;
@@ -116,6 +129,58 @@ let hdaDemoInstance: any | null = null;
 let hdaDemoHeader: Uint32Array | null = null;
 let hdaDemoCapacityFrames = 0;
 let hdaDemoSampleRate = 0;
+let hdaDemoNextStatsMs = 0;
+
+function readDemoNumber(demo: unknown, key: string): number | undefined {
+  if (!demo || typeof demo !== "object") return undefined;
+  const record = demo as Record<string, unknown>;
+  const value = record[key];
+  if (typeof value === "number") return value;
+  if (typeof value === "function") {
+    try {
+      // wasm-bindgen getters may appear as methods in some builds.
+      const out = (value as (...args: unknown[]) => unknown).call(demo);
+      return typeof out === "number" ? out : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+function maybePostHdaDemoStats(): void {
+  if (!hdaDemoInstance || !hdaDemoHeader) return;
+  const now = typeof performance?.now === "function" ? performance.now() : Date.now();
+  if (now < hdaDemoNextStatsMs) return;
+  hdaDemoNextStatsMs = now + 250;
+
+  const capacity = hdaDemoCapacityFrames;
+  const sampleRate = hdaDemoSampleRate;
+  const targetFrames = Math.min(capacity, Math.floor(sampleRate / 5));
+  const msg: AudioOutputHdaDemoStatsMessage = {
+    type: "audioOutputHdaDemo.stats",
+    bufferLevelFrames: ringBufferLevelFrames(hdaDemoHeader, capacity),
+    targetFrames,
+  };
+
+  const totalFramesProduced = readDemoNumber(hdaDemoInstance, "total_frames_produced");
+  const totalFramesWritten = readDemoNumber(hdaDemoInstance, "total_frames_written");
+  const totalFramesDropped = readDemoNumber(hdaDemoInstance, "total_frames_dropped");
+  const lastTickRequestedFrames = readDemoNumber(hdaDemoInstance, "last_tick_requested_frames");
+  const lastTickProducedFrames = readDemoNumber(hdaDemoInstance, "last_tick_produced_frames");
+  const lastTickWrittenFrames = readDemoNumber(hdaDemoInstance, "last_tick_written_frames");
+  const lastTickDroppedFrames = readDemoNumber(hdaDemoInstance, "last_tick_dropped_frames");
+
+  if (typeof totalFramesProduced === "number") msg.totalFramesProduced = totalFramesProduced;
+  if (typeof totalFramesWritten === "number") msg.totalFramesWritten = totalFramesWritten;
+  if (typeof totalFramesDropped === "number") msg.totalFramesDropped = totalFramesDropped;
+  if (typeof lastTickRequestedFrames === "number") msg.lastTickRequestedFrames = lastTickRequestedFrames;
+  if (typeof lastTickProducedFrames === "number") msg.lastTickProducedFrames = lastTickProducedFrames;
+  if (typeof lastTickWrittenFrames === "number") msg.lastTickWrittenFrames = lastTickWrittenFrames;
+  if (typeof lastTickDroppedFrames === "number") msg.lastTickDroppedFrames = lastTickDroppedFrames;
+
+  ctx.postMessage(msg);
+}
 
 function ringBufferLevelFrames(header: Uint32Array, capacityFrames: number): number {
   const read = Atomics.load(header, 0) >>> 0;
@@ -136,6 +201,7 @@ function stopHdaDemo(): void {
   hdaDemoHeader = null;
   hdaDemoCapacityFrames = 0;
   hdaDemoSampleRate = 0;
+  hdaDemoNextStatsMs = 0;
 }
 
 async function startHdaDemo(msg: AudioOutputHdaDemoStartMessage): Promise<void> {
@@ -198,6 +264,7 @@ async function startHdaDemo(msg: AudioOutputHdaDemoStartMessage): Promise<void> 
     // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
     demo.tick(prime);
   }
+  maybePostHdaDemoStats();
 
   hdaDemoTimer = ctx.setInterval(() => {
     if (!hdaDemoInstance || !hdaDemoHeader) return;
@@ -208,6 +275,7 @@ async function startHdaDemo(msg: AudioOutputHdaDemoStartMessage): Promise<void> 
       // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
       hdaDemoInstance.tick(need);
     }
+    maybePostHdaDemoStats();
   }, 20);
 }
 
