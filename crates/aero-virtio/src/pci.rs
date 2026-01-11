@@ -862,10 +862,24 @@ impl VirtioPciDevice {
             };
 
             while let Ok(Some(chain)) = queue.pop_descriptor_chain(mem) {
-                need_irq |= self
+                let head_index = chain.head_index();
+                need_irq |= match self
                     .device
                     .process_queue(queue_index, chain, queue, mem)
-                    .unwrap_or(false);
+                {
+                    Ok(irq) => irq,
+                    Err(_) => {
+                        // VirtioDevice implementations are expected to add a used entry for every
+                        // descriptor chain they pop. Historically, some devices returned an error
+                        // for malformed chains without completing them; because the transport
+                        // ignores device errors, that behaviour wedges the virtqueue (the driver
+                        // waits forever for used->idx to advance).
+                        //
+                        // As a safety net, complete the chain with `used.len = 0` on any device
+                        // error so the guest can recover and continue issuing requests.
+                        queue.add_used(mem, head_index, 0).unwrap_or(false)
+                    }
+                };
             }
             need_irq |= self
                 .device
