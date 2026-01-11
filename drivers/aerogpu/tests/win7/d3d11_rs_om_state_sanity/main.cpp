@@ -310,6 +310,8 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     }
     return 0;
   };
+  const uint8_t kExpectedAlphaHalf = 0x80u;
+  const uint8_t kAlphaTol = 2u;
 
   ID3D11RenderTargetView* rtvs[] = {rtv.get()};
   context->OMSetRenderTargets(1, rtvs, NULL);
@@ -544,17 +546,27 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
 
     const uint32_t expected_green = 0xFF00FF00u;
     const uint32_t expected_red = 0xFFFF0000u;
-    if ((inside & 0x00FFFFFFu) != (expected_green & 0x00FFFFFFu) ||
-        (outside & 0x00FFFFFFu) != (expected_red & 0x00FFFFFFu)) {
+    const uint32_t expected_green_rgb = expected_green & 0x00FFFFFFu;
+    const uint32_t expected_red_rgb = expected_red & 0x00FFFFFFu;
+    const uint8_t inside_a = (uint8_t)((inside >> 24) & 0xFFu);
+    const uint8_t outside_a = (uint8_t)((outside >> 24) & 0xFFu);
+    if ((inside & 0x00FFFFFFu) != expected_green_rgb ||
+        (inside_a < kExpectedAlphaHalf - kAlphaTol || inside_a > kExpectedAlphaHalf + kAlphaTol) ||
+        (outside & 0x00FFFFFFu) != expected_red_rgb || outside_a != 0xFFu) {
       return reporter.Fail(
-          "scissor failed: inside(5,%d)=0x%08lX expected ~0x%08lX, outside(%d,%d)=0x%08lX expected ~0x%08lX",
+          "scissor failed: inside(5,%d)=0x%08lX (a=%u) expected ~(rgb=0x%06lX a~%u), "
+          "outside(%d,%d)=0x%08lX (a=%u) expected ~(rgb=0x%06lX a=%u)",
           kHeight / 2,
           (unsigned long)inside,
-          (unsigned long)expected_green,
+          (unsigned)inside_a,
+          (unsigned long)expected_green_rgb,
+          (unsigned)kExpectedAlphaHalf,
           kWidth - 5,
           kHeight / 2,
           (unsigned long)outside,
-          (unsigned long)expected_red);
+          (unsigned)outside_a,
+          (unsigned long)expected_red_rgb,
+          0xFFu);
     }
 
     // Verify that RSSetState(NULL) restores the default rasterizer state, which has scissor disabled.
@@ -602,17 +614,28 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
 
     context->Unmap(staging.get(), 0);
 
-    if ((inside_null & 0x00FFFFFFu) != (expected_green & 0x00FFFFFFu) ||
-        (outside_null & 0x00FFFFFFu) != (expected_green & 0x00FFFFFFu)) {
+    const uint8_t inside_null_a = (uint8_t)((inside_null >> 24) & 0xFFu);
+    const uint8_t outside_null_a = (uint8_t)((outside_null >> 24) & 0xFFu);
+    if ((inside_null & 0x00FFFFFFu) != expected_green_rgb ||
+        (inside_null_a < kExpectedAlphaHalf - kAlphaTol ||
+         inside_null_a > kExpectedAlphaHalf + kAlphaTol) ||
+        (outside_null & 0x00FFFFFFu) != expected_green_rgb ||
+        (outside_null_a < kExpectedAlphaHalf - kAlphaTol ||
+         outside_null_a > kExpectedAlphaHalf + kAlphaTol)) {
       return reporter.Fail(
-          "scissor NULL state failed: inside(5,%d)=0x%08lX expected ~0x%08lX, outside(%d,%d)=0x%08lX expected ~0x%08lX",
+          "scissor NULL state failed: inside(5,%d)=0x%08lX (a=%u) expected ~(rgb=0x%06lX a~%u), "
+          "outside(%d,%d)=0x%08lX (a=%u) expected ~(rgb=0x%06lX a~%u)",
           kHeight / 2,
           (unsigned long)inside_null,
-          (unsigned long)expected_green,
+          (unsigned)inside_null_a,
+          (unsigned long)expected_green_rgb,
+          (unsigned)kExpectedAlphaHalf,
           kWidth - 5,
           kHeight / 2,
           (unsigned long)outside_null,
-          (unsigned long)expected_green);
+          (unsigned)outside_null_a,
+          (unsigned long)expected_green_rgb,
+          (unsigned)kExpectedAlphaHalf);
     }
 
     // Verify that the scissor rect is ignored when ScissorEnable is FALSE (explicit rasterizer state).
@@ -658,17 +681,28 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
 
     context->Unmap(staging.get(), 0);
 
-    if ((inside_disabled & 0x00FFFFFFu) != (expected_green & 0x00FFFFFFu) ||
-        (outside_disabled & 0x00FFFFFFu) != (expected_green & 0x00FFFFFFu)) {
+    const uint8_t inside_disabled_a = (uint8_t)((inside_disabled >> 24) & 0xFFu);
+    const uint8_t outside_disabled_a = (uint8_t)((outside_disabled >> 24) & 0xFFu);
+    if ((inside_disabled & 0x00FFFFFFu) != expected_green_rgb ||
+        (inside_disabled_a < kExpectedAlphaHalf - kAlphaTol ||
+         inside_disabled_a > kExpectedAlphaHalf + kAlphaTol) ||
+        (outside_disabled & 0x00FFFFFFu) != expected_green_rgb ||
+        (outside_disabled_a < kExpectedAlphaHalf - kAlphaTol ||
+         outside_disabled_a > kExpectedAlphaHalf + kAlphaTol)) {
       return reporter.Fail(
-          "scissor disable failed: inside(5,%d)=0x%08lX expected ~0x%08lX, outside(%d,%d)=0x%08lX expected ~0x%08lX",
+          "scissor disable failed: inside(5,%d)=0x%08lX (a=%u) expected ~(rgb=0x%06lX a~%u), "
+          "outside(%d,%d)=0x%08lX (a=%u) expected ~(rgb=0x%06lX a~%u)",
           kHeight / 2,
           (unsigned long)inside_disabled,
-          (unsigned long)expected_green,
+          (unsigned)inside_disabled_a,
+          (unsigned long)expected_green_rgb,
+          (unsigned)kExpectedAlphaHalf,
           kWidth - 5,
           kHeight / 2,
           (unsigned long)outside_disabled,
-          (unsigned long)expected_green);
+          (unsigned)outside_disabled_a,
+          (unsigned long)expected_green_rgb,
+          (unsigned)kExpectedAlphaHalf);
     }
   }
 
@@ -724,12 +758,19 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     context->Unmap(staging.get(), 0);
 
     const uint32_t expected_red = 0xFFFF0000u;
+    const uint8_t center_culled_a = (uint8_t)((center_culled >> 24) & 0xFFu);
     if ((center_culled & 0x00FFFFFFu) != (expected_red & 0x00FFFFFFu)) {
       return reporter.Fail("cull failed (expected culled): center(%d,%d)=0x%08lX expected ~0x%08lX",
                            cx,
                            cy,
                            (unsigned long)center_culled,
                            (unsigned long)expected_red);
+    }
+    if (center_culled_a != 0xFFu) {
+      return reporter.Fail("cull failed (expected culled): center(%d,%d) alpha mismatch: got %u expected 255",
+                           cx,
+                           cy,
+                           (unsigned)center_culled_a);
     }
 
     // Next: CullMode = NONE should draw regardless of winding/front-face config.
@@ -769,6 +810,7 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     context->Unmap(staging.get(), 0);
 
     const uint32_t expected_green = 0xFF00FF00u;
+    const uint8_t center_no_cull_a = (uint8_t)((center_no_cull >> 24) & 0xFFu);
     if ((center_no_cull & 0x00FFFFFFu) != (expected_green & 0x00FFFFFFu)) {
       return reporter.Fail(
           "cull failed (expected visible with CullMode=NONE): center(%d,%d)=0x%08lX expected ~0x%08lX",
@@ -776,6 +818,14 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
           cy,
           (unsigned long)center_no_cull,
           (unsigned long)expected_green);
+    }
+    if (center_no_cull_a < kExpectedAlphaHalf - kAlphaTol || center_no_cull_a > kExpectedAlphaHalf + kAlphaTol) {
+      return reporter.Fail(
+          "cull failed (expected visible with CullMode=NONE): center(%d,%d) alpha mismatch: got %u expected ~%u",
+          cx,
+          cy,
+          (unsigned)center_no_cull_a,
+          (unsigned)kExpectedAlphaHalf);
     }
 
     // Second: FrontCounterClockwise=TRUE, same CCW triangle should render (center becomes green).
@@ -824,6 +874,14 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
                            (unsigned long)center_drawn,
                            (unsigned long)expected_green);
     }
+    const uint8_t center_drawn_a = (uint8_t)((center_drawn >> 24) & 0xFFu);
+    if (center_drawn_a < kExpectedAlphaHalf - kAlphaTol || center_drawn_a > kExpectedAlphaHalf + kAlphaTol) {
+      return reporter.Fail("cull failed (expected visible): center(%d,%d) alpha mismatch: got %u expected ~%u",
+                           cx,
+                           cy,
+                           (unsigned)center_drawn_a,
+                           (unsigned)kExpectedAlphaHalf);
+    }
 
     // Finally: RSSetState(NULL) should restore the default rasterizer state, which culls backfaces with
     // FrontCounterClockwise=FALSE (CW is front). Our CCW triangle should be culled (center remains red).
@@ -869,6 +927,13 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
                            cy,
                            (unsigned long)center_null,
                            (unsigned long)expected_red);
+    }
+    const uint8_t center_null_a = (uint8_t)((center_null >> 24) & 0xFFu);
+    if (center_null_a != 0xFFu) {
+      return reporter.Fail("cull NULL state failed: center(%d,%d) alpha mismatch: got %u expected 255",
+                           cx,
+                           cy,
+                           (unsigned)center_null_a);
     }
   }
 
@@ -921,6 +986,7 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     context->Unmap(staging.get(), 0);
 
     const uint32_t expected_red = 0xFFFF0000u;
+    const uint8_t center_clipped_a = (uint8_t)((center_clipped >> 24) & 0xFFu);
     if ((center_clipped & 0x00FFFFFFu) != (expected_red & 0x00FFFFFFu)) {
       return reporter.Fail(
           "depth clip failed (expected clipped): center(%d,%d)=0x%08lX expected ~0x%08lX",
@@ -928,6 +994,13 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
           cy,
           (unsigned long)center_clipped,
           (unsigned long)expected_red);
+    }
+    if (center_clipped_a != 0xFFu) {
+      return reporter.Fail(
+          "depth clip failed (expected clipped): center(%d,%d) alpha mismatch: got %u expected 255",
+          cx,
+          cy,
+          (unsigned)center_clipped_a);
     }
 
     // With depth clipping disabled, the primitive should rasterize even though z is out of range.
@@ -965,6 +1038,7 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     context->Unmap(staging.get(), 0);
 
     const uint32_t expected_green = 0xFF00FF00u;
+    const uint8_t center_unclipped_a = (uint8_t)((center_unclipped >> 24) & 0xFFu);
     if ((center_unclipped & 0x00FFFFFFu) != (expected_green & 0x00FFFFFFu)) {
       return reporter.Fail(
           "depth clip failed (expected visible when disabled): center(%d,%d)=0x%08lX expected ~0x%08lX",
@@ -972,6 +1046,15 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
           cy,
           (unsigned long)center_unclipped,
           (unsigned long)expected_green);
+    }
+    if (center_unclipped_a < kExpectedAlphaHalf - kAlphaTol ||
+        center_unclipped_a > kExpectedAlphaHalf + kAlphaTol) {
+      return reporter.Fail(
+          "depth clip failed (expected visible when disabled): center(%d,%d) alpha mismatch: got %u expected ~%u",
+          cx,
+          cy,
+          (unsigned)center_unclipped_a,
+          (unsigned)kExpectedAlphaHalf);
     }
 
     // RSSetState(NULL) should restore the default rasterizer state, where DepthClipEnable is TRUE.
@@ -1014,6 +1097,14 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
           cy,
           (unsigned long)center_null,
           (unsigned long)expected_red);
+    }
+    const uint8_t depth_null_a = (uint8_t)((center_null >> 24) & 0xFFu);
+    if (depth_null_a != 0xFFu) {
+      return reporter.Fail(
+          "depth clip NULL state failed (expected clipped): center(%d,%d) alpha mismatch: got %u expected 255",
+          cx,
+          cy,
+          (unsigned)depth_null_a);
     }
 
     context->VSSetShader(vs.get(), NULL, 0);
