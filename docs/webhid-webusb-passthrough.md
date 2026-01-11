@@ -83,8 +83,9 @@ So the design is split:
 
 - **Main thread (Window):** selects the physical device, opens it, and forwards
   reports/transfer requests across a host ↔ worker boundary.
-- **Worker (I/O / device-model):** emulates UHCI + a USB HID device and exposes
-  it to the guest OS like any other USB peripheral.
+- **Worker (I/O / device-model):** emulates UHCI + guest-visible USB device models
+  (WebHID-backed HID devices and/or the WebUSB passthrough device wrapper) and exposes
+  them to the guest OS like any other USB peripherals.
 
 Data flow (WebHID):
 
