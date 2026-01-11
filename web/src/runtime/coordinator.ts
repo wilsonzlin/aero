@@ -1339,8 +1339,6 @@ export class WorkerCoordinator {
     const gpu = this.workers.gpu?.worker;
     if (!gpu) return;
 
-    const GPU_MESSAGE_BASE = { protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION } as const;
-
     const img = this.cursorImage;
     if (img) {
       const msg: GpuRuntimeCursorSetImageMessage = {

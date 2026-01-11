@@ -13,9 +13,11 @@
   },
   "include": [
     "src",
-    "web/src/global.d.ts",
     "tests",
+    "web/src/global.d.ts",
     "web/src/hid",
+    "web/src/**/*.d.ts",
+    "vite.config.ts",
     "vite.harness.config.ts",
     "playwright.config.ts",
     "playwright.gpu.config.ts"

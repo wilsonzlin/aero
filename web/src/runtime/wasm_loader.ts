@@ -410,15 +410,17 @@ async function withPatchedMemoryImport<T>(
     // Keep the runtime behavior correct while sidestepping TypeScript overload
     // assignability issues across TS versions.
     const instantiatePatched = (module: any, imports?: any) => {
-        patchWasmImportsWithMemory(imports, memory);
-        return originalInstantiate(module as any, imports as any);
+        const patchedImports = imports ?? {};
+        patchWasmImportsWithMemory(patchedImports, memory);
+        return originalInstantiate(module as any, patchedImports as any);
     };
 
     (WebAssembly as any).instantiate = instantiatePatched;
     if (hasInstantiateStreaming) {
         const instantiateStreamingPatched = (source: any, imports?: any) => {
-            patchWasmImportsWithMemory(imports, memory);
-            return originalInstantiateStreaming!(source as any, imports as any);
+            const patchedImports = imports ?? {};
+            patchWasmImportsWithMemory(patchedImports, memory);
+            return originalInstantiateStreaming!(source as any, patchedImports as any);
         };
         (WebAssembly as any).instantiateStreaming = instantiateStreamingPatched;
     }

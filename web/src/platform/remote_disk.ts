@@ -952,7 +952,7 @@ function staticDiskLease(url: string, credentialsMode: RequestCredentials): Disk
 }
 
 export async function stableCacheKey(url: string): Promise<string> {
-  return await RemoteCacheManager.deriveCacheKey(cacheKeyPartsFromUrl(url));
+  return await RemoteCacheManager.deriveCacheKey(cacheKeyPartsFromUrl(url, {}, RANGE_STREAM_CHUNK_SIZE));
 }
 
 // Backwards-compatible alias: this disk implementation uses HTTP Range requests.

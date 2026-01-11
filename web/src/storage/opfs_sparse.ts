@@ -1,5 +1,6 @@
 import { assertSectorAligned, checkedOffset, SECTOR_SIZE, type AsyncSectorDisk } from "./disk";
 import { OPFS_DISKS_PATH, opfsGetDir } from "./metadata.ts";
+import type { SparseBlockDisk } from "./sparse_block_disk";
 
 type SyncAccessHandle = {
   read(buffer: ArrayBufferView, options?: { at: number }): number;
@@ -115,7 +116,7 @@ function decodeHeader(bytes: Uint8Array): SparseHeader {
 
 type CacheEntry = { data: Uint8Array; dirty: boolean };
 
-export class OpfsAeroSparseDisk implements AsyncSectorDisk {
+export class OpfsAeroSparseDisk implements SparseBlockDisk {
   readonly sectorSize = SECTOR_SIZE;
   readonly capacityBytes: number;
   readonly blockSizeBytes: number;

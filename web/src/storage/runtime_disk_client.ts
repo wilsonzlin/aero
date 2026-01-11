@@ -1,55 +1,18 @@
 import type { BenchResult } from "./bench";
 import type { DiskImageMetadata } from "./metadata";
-export type { DiskImageMetadata } from "./metadata";
 import type { RemoteDiskOptions, RemoteDiskTelemetrySnapshot } from "../platform/remote_disk";
 import type { RemoteChunkedDiskOpenOptions } from "./remote_chunked_disk";
+import type {
+  DiskOpenSpec,
+  OpenMode,
+  OpenResult,
+  RuntimeDiskRequestMessage,
+  RuntimeDiskResponseMessage,
+} from "./runtime_disk_protocol";
+import { normalizeDiskOpenSpec } from "./runtime_disk_protocol";
 
-type OpenMode = "direct" | "cow";
-
-type RequestMessage =
-  | {
-      type: "request";
-      requestId: number;
-      op: "open";
-      payload: { meta: DiskImageMetadata; mode?: OpenMode; overlayBlockSizeBytes?: number };
-    }
-  | {
-      type: "request";
-      requestId: number;
-      op: "openRemote";
-      payload: { url: string; options?: RemoteDiskOptions };
-    }
-  | {
-      type: "request";
-      requestId: number;
-      op: "openChunked";
-      payload: { manifestUrl: string; options?: RemoteChunkedDiskOpenOptions };
-    }
-  | { type: "request"; requestId: number; op: "close"; payload: { handle: number } }
-  | { type: "request"; requestId: number; op: "flush"; payload: { handle: number } }
-  | { type: "request"; requestId: number; op: "clearCache"; payload: { handle: number } }
-  | { type: "request"; requestId: number; op: "read"; payload: { handle: number; lba: number; byteLength: number } }
-  | { type: "request"; requestId: number; op: "write"; payload: { handle: number; lba: number; data: Uint8Array } }
-  | { type: "request"; requestId: number; op: "stats"; payload: { handle: number } }
-  | { type: "request"; requestId: number; op: "prepareSnapshot"; payload: Record<string, never> }
-  | { type: "request"; requestId: number; op: "restoreFromSnapshot"; payload: { state: Uint8Array } }
-  | {
-      type: "request";
-      requestId: number;
-      op: "bench";
-      payload: { handle: number; totalBytes: number; chunkBytes?: number; mode?: "read" | "write" | "rw" };
-    };
-
-type ResponseMessage =
-  | { type: "response"; requestId: number; ok: true; result: any }
-  | { type: "response"; requestId: number; ok: false; error: { message: string; name?: string; stack?: string } };
-
-export type OpenResult = {
-  handle: number;
-  sectorSize: number;
-  capacityBytes: number;
-  readOnly: boolean;
-};
+export type { DiskImageMetadata } from "./metadata";
+export type { DiskOpenSpec, OpenMode, OpenResult, RemoteDiskOpenSpec, RemoteDiskIntegritySpec } from "./runtime_disk_protocol";
 
 export type DiskIoTelemetry = {
   reads: number;
@@ -87,7 +50,7 @@ export class RuntimeDiskClient {
       });
 
     this.worker.onmessage = (event) => {
-      const msg = event.data as Partial<ResponseMessage>;
+      const msg = event.data as Partial<RuntimeDiskResponseMessage>;
       if (!msg || msg.type !== "response" || typeof msg.requestId !== "number") return;
       const entry = this.pending.get(msg.requestId);
       if (!entry) return;
@@ -107,17 +70,21 @@ export class RuntimeDiskClient {
     this.pending.clear();
   }
 
-  private request<T>(op: RequestMessage["op"], payload: any, transfer?: Transferable[]): Promise<T> {
+  private request<T>(op: RuntimeDiskRequestMessage["op"], payload: any, transfer?: Transferable[]): Promise<T> {
     const requestId = this.nextRequestId++;
     return new Promise((resolve, reject) => {
       this.pending.set(requestId, { resolve, reject });
-      const msg: RequestMessage = { type: "request", requestId, op, payload } as any;
+      const msg: RuntimeDiskRequestMessage = { type: "request", requestId, op, payload } as any;
       this.worker.postMessage(msg, transfer ?? []);
     });
   }
 
-  open(meta: DiskImageMetadata, opts: { mode?: OpenMode; overlayBlockSizeBytes?: number } = {}): Promise<OpenResult> {
-    return this.request("open", { meta, ...opts });
+  open(
+    specOrMeta: DiskOpenSpec | DiskImageMetadata,
+    opts: { mode?: OpenMode; overlayBlockSizeBytes?: number } = {},
+  ): Promise<OpenResult> {
+    const spec = normalizeDiskOpenSpec(specOrMeta);
+    return this.request("open", { spec, ...opts });
   }
 
   openRemote(url: string, options?: RemoteDiskOptions): Promise<OpenResult> {

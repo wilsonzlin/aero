@@ -1,5 +1,5 @@
 import { assertSectorAligned, checkedOffset, type AsyncSectorDisk } from "./disk";
-import { OpfsAeroSparseDisk } from "./opfs_sparse";
+import type { SparseBlockDisk } from "./sparse_block_disk";
 
 /**
  * Copy-on-write disk composed of:
@@ -14,7 +14,7 @@ export class OpfsCowDisk implements AsyncSectorDisk {
 
   constructor(
     private readonly base: AsyncSectorDisk,
-    private readonly overlay: OpfsAeroSparseDisk,
+    private readonly overlay: SparseBlockDisk,
   ) {
     if (base.capacityBytes !== overlay.capacityBytes) {
       throw new Error("base/overlay capacity mismatch");
