@@ -52,9 +52,9 @@ The core emission happens in `src/aerogpu_d3d10_11_umd.cpp` by building a linear
 
 ### Command stream writer
 
-Command serialization uses the shared D3D9 implementation:
+Command serialization uses the shared UMD implementation:
 
-- `../d3d9/src/aerogpu_cmd_stream_writer.h`
+- `../common/aerogpu_cmd_stream_writer.h`
 
 This provides both a `std::vector`-backed stream (portable bring-up/tests) and a span/DMA-backed stream (`{uint8_t* buf, size_t capacity}`) suitable for writing directly into a WDDM runtime-provided command buffer.
 
