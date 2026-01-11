@@ -682,7 +682,16 @@ pub const E820_UNUSABLE: u32 = 5;
 
 impl Bios {
     fn build_e820_map(&self, total_memory: u64) -> Vec<E820Entry> {
-        vec![
+        // Reserve a 256MiB PCIe ECAM ("MMCONFIG") window for PCI config space access.
+        const PCIE_ECAM_BASE: u64 = 0xB000_0000;
+        const PCIE_ECAM_SIZE: u64 = 0x1000_0000;
+        // PCI/MMIO window below 4GiB (BAR allocations + APIC/HPET MMIO, etc).
+        const PCI_HOLE_START: u64 = 0xC000_0000;
+        const PCI_HOLE_END: u64 = 0x1_0000_0000;
+
+        let low_ram_end = total_memory.min(PCIE_ECAM_BASE);
+
+        let mut map = vec![
             // Conventional memory (0 - 640KB)
             E820Entry {
                 base: 0x0000_0000,
@@ -707,7 +716,7 @@ impl Bios {
             // Extended memory (1MB - below 4GB hole)
             E820Entry {
                 base: 0x0010_0000,
-                length: total_memory.min(0xBFF0_0000) - 0x0010_0000,
+                length: low_ram_end.saturating_sub(0x0010_0000),
                 region_type: E820_RAM,
                 extended_attributes: 1,
             },
@@ -725,16 +734,35 @@ impl Bios {
                 region_type: E820_NVS,
                 extended_attributes: 1,
             },
-            // PCI MMIO hole (typically 3GB - 4GB)
-            E820Entry {
-                base: 0xC000_0000,
-                length: 0x4000_0000,
+        ];
+
+        if total_memory > PCIE_ECAM_BASE {
+            // PCIe ECAM / MMCONFIG window.
+            map.push(E820Entry {
+                base: PCIE_ECAM_BASE,
+                length: PCIE_ECAM_SIZE,
                 region_type: E820_RESERVED,
                 extended_attributes: 1,
-            },
-            // High memory (above 4GB) if applicable
-            // E820Entry { ... }
-        ]
+            });
+
+            // Remaining PCI/MMIO window below 4GiB.
+            map.push(E820Entry {
+                base: PCI_HOLE_START,
+                length: PCI_HOLE_END - PCI_HOLE_START,
+                region_type: E820_RESERVED,
+                extended_attributes: 1,
+            });
+
+            // Remap RAM above 4GiB so the guest doesn't lose memory due to the ECAM hole.
+            map.push(E820Entry {
+                base: PCI_HOLE_END,
+                length: total_memory.saturating_sub(PCIE_ECAM_BASE),
+                region_type: E820_RAM,
+                extended_attributes: 1,
+            });
+        }
+
+        map
     }
 }
 ```
