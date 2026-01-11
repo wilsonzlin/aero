@@ -387,12 +387,20 @@ bool emit_set_render_targets_locked(Device* dev) {
   if (!cmd) {
     return false;
   }
-  cmd->color_count = 4;
+  uint32_t color_count = 0;
+  while (color_count < 4 && dev->render_targets[color_count]) {
+    color_count++;
+  }
+  for (uint32_t i = color_count; i < 4; ++i) {
+    dev->render_targets[i] = nullptr;
+  }
+
+  cmd->color_count = color_count;
   cmd->depth_stencil = dev->depth_stencil ? dev->depth_stencil->handle : 0;
   for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; ++i) {
     cmd->colors[i] = 0;
   }
-  for (uint32_t i = 0; i < 4; ++i) {
+  for (uint32_t i = 0; i < color_count; ++i) {
     cmd->colors[i] = dev->render_targets[i] ? dev->render_targets[i]->handle : 0;
   }
   return true;

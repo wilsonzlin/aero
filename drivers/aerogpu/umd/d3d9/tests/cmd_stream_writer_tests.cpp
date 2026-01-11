@@ -19,6 +19,9 @@ namespace aerogpu {
 
 namespace {
 
+// D3DERR_INVALIDCALL from d3d9.h.
+constexpr HRESULT kD3DErrInvalidCall = 0x8876086CUL;
+
 bool Check(bool cond, const char* msg) {
   if (!cond) {
     std::fprintf(stderr, "FAIL: %s\n", msg);
@@ -2105,6 +2108,141 @@ bool TestPresentBackbufferRotationRebindsBackbufferTexture() {
   return Check(cmd->texture == sc->backbuffers[0]->handle, "SET_TEXTURE uses rotated backbuffer handle");
 }
 
+bool TestSetRenderTargetRejectsGaps() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3D9DDI_HADAPTER hAdapter{};
+    D3D9DDI_HDEVICE hDevice{};
+    AEROGPU_D3D9DDI_HSWAPCHAIN hSwapChain{};
+    AEROGPU_D3D9DDI_HRESOURCE hResource{};
+    bool has_adapter = false;
+    bool has_device = false;
+    bool has_swapchain = false;
+    bool has_resource = false;
+
+    ~Cleanup() {
+      if (has_resource && device_funcs.pfnDestroyResource) {
+        device_funcs.pfnDestroyResource(hDevice, hResource);
+      }
+      if (has_swapchain && device_funcs.pfnDestroySwapChain) {
+        device_funcs.pfnDestroySwapChain(hDevice, hSwapChain);
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  AEROGPU_D3D9DDIARG_CREATESWAPCHAIN create_sc{};
+  create_sc.present_params.backbuffer_width = 64;
+  create_sc.present_params.backbuffer_height = 64;
+  create_sc.present_params.backbuffer_format = 22u; // D3DFMT_X8R8G8B8
+  create_sc.present_params.backbuffer_count = 1;
+  create_sc.present_params.swap_effect = 1;
+  create_sc.present_params.flags = 0;
+  create_sc.present_params.hDeviceWindow = nullptr;
+  create_sc.present_params.windowed = TRUE;
+  create_sc.present_params.presentation_interval = 1;
+
+  hr = cleanup.device_funcs.pfnCreateSwapChain(create_dev.hDevice, &create_sc);
+  if (!Check(hr == S_OK, "CreateSwapChain")) {
+    return false;
+  }
+  cleanup.hSwapChain = create_sc.hSwapChain;
+  cleanup.has_swapchain = true;
+
+  AEROGPU_D3D9DDIARG_CREATERESOURCE create_rt{};
+  create_rt.type = 0;
+  create_rt.format = 22u; // D3DFMT_X8R8G8B8
+  create_rt.width = 16;
+  create_rt.height = 16;
+  create_rt.depth = 1;
+  create_rt.mip_levels = 1;
+  create_rt.usage = 1u; // D3DUSAGE_RENDERTARGET
+  create_rt.pool = 0;
+  create_rt.size = 0;
+  create_rt.hResource.pDrvPrivate = nullptr;
+  create_rt.pSharedHandle = nullptr;
+  create_rt.pKmdAllocPrivateData = nullptr;
+  create_rt.KmdAllocPrivateDataSize = 0;
+  create_rt.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_rt);
+  if (!Check(hr == S_OK, "CreateResource(render target)")) {
+    return false;
+  }
+  cleanup.hResource = create_rt.hResource;
+  cleanup.has_resource = true;
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->render_targets[0] != nullptr, "render target 0 bound by swapchain")) {
+      return false;
+    }
+    if (!Check(dev->render_targets[1] == nullptr, "render target 1 initially null")) {
+      return false;
+    }
+    if (!Check(dev->render_targets[2] == nullptr, "render target 2 initially null")) {
+      return false;
+    }
+    dev->cmd.reset();
+  }
+
+  // Binding slot 2 while slot 1 is null creates a gap. The host rejects gapped
+  // SET_RENDER_TARGETS commands, so the UMD should reject this call.
+  hr = cleanup.device_funcs.pfnSetRenderTarget(create_dev.hDevice, 2, create_rt.hResource);
+  if (!Check(hr == kD3DErrInvalidCall, "SetRenderTarget rejects gaps")) {
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    if (!Check(dev->render_targets[2] == nullptr, "render target 2 not cached on invalid call")) {
+      return false;
+    }
+  }
+
+  dev->cmd.finalize();
+  const CmdLoc loc = FindLastOpcode(dev->cmd.data(), dev->cmd.bytes_used(), AEROGPU_CMD_SET_RENDER_TARGETS);
+  return Check(loc.hdr == nullptr, "no SET_RENDER_TARGETS emitted for invalid gap binding");
+}
+
 bool TestRotateResourceIdentitiesUndoOnSmallCmdBuffer() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
@@ -2349,6 +2487,7 @@ int main() {
   failures += !aerogpu::TestRotateResourceIdentitiesRebindsChangedHandles();
   failures += !aerogpu::TestPresentBackbufferRotationUndoOnSmallCmdBuffer();
   failures += !aerogpu::TestPresentBackbufferRotationRebindsBackbufferTexture();
+  failures += !aerogpu::TestSetRenderTargetRejectsGaps();
   failures += !aerogpu::TestRotateResourceIdentitiesUndoOnSmallCmdBuffer();
   failures += !aerogpu::TestResetRebindsBackbufferTexture();
   return failures ? 1 : 0;

@@ -936,13 +936,25 @@ bool emit_set_render_targets_locked(Device* dev) {
   if (!cmd) {
     return false;
   }
-  cmd->color_count = 4;
+
+  // The host executor rejects gapped render-target bindings (a null RT followed
+  // by a non-null RT). Clamp to the contiguous prefix to avoid emitting a packet
+  // that would abort command-stream execution.
+  uint32_t color_count = 0;
+  while (color_count < 4 && dev->render_targets[color_count]) {
+    color_count++;
+  }
+  for (uint32_t i = color_count; i < 4; ++i) {
+    dev->render_targets[i] = nullptr;
+  }
+
+  cmd->color_count = color_count;
   cmd->depth_stencil = dev->depth_stencil ? dev->depth_stencil->handle : 0;
 
   for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; i++) {
     cmd->colors[i] = 0;
   }
-  for (uint32_t i = 0; i < 4; i++) {
+  for (uint32_t i = 0; i < color_count; i++) {
     cmd->colors[i] = dev->render_targets[i] ? dev->render_targets[i]->handle : 0;
   }
   return true;
@@ -3885,11 +3897,40 @@ HRESULT AEROGPU_D3D9_CALL device_set_render_target(
 
   std::lock_guard<std::mutex> lock(dev->mutex);
 
-  if (dev->render_targets[slot] == surf) {
+  Resource* saved_rts[4] = {dev->render_targets[0], dev->render_targets[1], dev->render_targets[2], dev->render_targets[3]};
+
+  if (surf && slot > 0) {
+    for (uint32_t i = 0; i < slot; ++i) {
+      if (!dev->render_targets[i]) {
+        return trace.ret(kD3DErrInvalidCall);
+      }
+    }
+  }
+
+  dev->render_targets[slot] = surf;
+  if (!surf) {
+    // Maintain contiguity: clearing an earlier slot implicitly clears any later
+    // render targets so the host never sees a gapped binding.
+    for (uint32_t i = slot + 1; i < 4; ++i) {
+      dev->render_targets[i] = nullptr;
+    }
+  }
+
+  bool changed = false;
+  for (uint32_t i = 0; i < 4; ++i) {
+    if (dev->render_targets[i] != saved_rts[i]) {
+      changed = true;
+      break;
+    }
+  }
+  if (!changed) {
     return trace.ret(S_OK);
   }
-  dev->render_targets[slot] = surf;
+
   if (!emit_set_render_targets_locked(dev)) {
+    for (uint32_t i = 0; i < 4; ++i) {
+      dev->render_targets[i] = saved_rts[i];
+    }
     return trace.ret(E_OUTOFMEMORY);
   }
   return trace.ret(S_OK);
