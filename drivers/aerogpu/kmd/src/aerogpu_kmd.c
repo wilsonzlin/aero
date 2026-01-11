@@ -1415,7 +1415,11 @@ static NTSTATUS APIENTRY AeroGpuDdiCreateAllocation(_In_ const HANDLE hAdapter,
                 if (!privShared && priv->share_token != 0) {
                     return STATUS_INVALID_PARAMETER;
                 }
-                if (priv->size_bytes != (aerogpu_wddm_u64)info->Size) {
+                /*
+                 * UMDs may not know the exact allocation size after runtime/KMD
+                 * alignment. Accept any non-zero value <= the actual WDDM size.
+                 */
+                if (priv->size_bytes == 0 || priv->size_bytes > (aerogpu_wddm_u64)info->Size) {
                     return STATUS_INVALID_PARAMETER;
                 }
 
@@ -1572,8 +1576,8 @@ static NTSTATUS APIENTRY AeroGpuDdiOpenAllocation(_In_ const HANDLE hAdapter,
             goto Cleanup;
         }
 
-        if (priv->size_bytes > (aerogpu_wddm_u64)(SIZE_T)(~(SIZE_T)0)) {
-            AEROGPU_LOG("OpenAllocation: size overflow (alloc_id=%lu size_bytes=%I64u)",
+        if (priv->size_bytes == 0 || priv->size_bytes > (aerogpu_wddm_u64)(SIZE_T)(~(SIZE_T)0)) {
+            AEROGPU_LOG("OpenAllocation: invalid size_bytes (alloc_id=%lu size_bytes=%I64u)",
                        (ULONG)priv->alloc_id,
                        (ULONGLONG)priv->size_bytes);
             st = STATUS_INVALID_PARAMETER;
