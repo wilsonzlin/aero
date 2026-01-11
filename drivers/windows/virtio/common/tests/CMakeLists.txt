@@ -1,3 +1,8 @@
+cmake_minimum_required(VERSION 3.15)
+project(virtio_windows_common_tests C)
+
+enable_testing()
+
 add_executable(virtqueue_split_test
     virtqueue_split_test.c
     ${CMAKE_CURRENT_LIST_DIR}/../virtqueue_split.c

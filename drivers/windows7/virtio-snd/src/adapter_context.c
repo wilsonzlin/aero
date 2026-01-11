@@ -33,6 +33,19 @@ VirtIoSndAdapterContext_FindLocked(_In_ PUNKNOWN UnknownAdapter)
 }
 
 _Use_decl_annotations_
+VOID
+VirtIoSndAdapterContext_Initialize(VOID)
+{
+    /*
+     * NOTE: KSPIN_LOCK is semantically initialized by KeInitializeSpinLock.
+     * While the loader zeros BSS (and 0 is the unlocked state today), calling
+     * KeInitializeSpinLock keeps the intent explicit and avoids relying on
+     * undocumented initialization behavior.
+     */
+    KeInitializeSpinLock(&g_VirtIoSndAdapterContextLock);
+}
+
+_Use_decl_annotations_
 NTSTATUS VirtIoSndAdapterContext_Register(PUNKNOWN UnknownAdapter, PVIRTIOSND_DEVICE_EXTENSION Dx)
 {
     NTSTATUS status;
@@ -189,4 +202,3 @@ VOID VirtIoSndAdapterContext_UnregisterAndStop(PUNKNOWN UnknownAdapter, BOOLEAN 
     IUnknown_Release(entry->UnknownAdapter);
     ExFreePoolWithTag(entry, VIRTIOSND_POOL_TAG);
 }
-

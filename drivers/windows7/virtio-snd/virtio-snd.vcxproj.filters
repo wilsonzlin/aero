@@ -90,6 +90,9 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="include\adapter_context.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="include\aeroviosnd.h">
       <Filter>Header Files</Filter>
     </ClInclude>

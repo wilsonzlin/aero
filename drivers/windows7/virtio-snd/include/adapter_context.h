@@ -19,6 +19,13 @@ extern "C" {
  * stable bridge for accessing virtio-snd transport state.
  */
 
+/*
+ * Initializes global adapter-context state. Must be called before any
+ * Register/Lookup/Unregister calls (DriverEntry does this).
+ */
+VOID
+VirtIoSndAdapterContext_Initialize(VOID);
+
 _Must_inspect_result_ NTSTATUS
 VirtIoSndAdapterContext_Register(_In_ PUNKNOWN UnknownAdapter, _In_ PVIRTIOSND_DEVICE_EXTENSION Dx);
 
@@ -42,4 +49,3 @@ VirtIoSndAdapterContext_UnregisterAndStop(_In_ PUNKNOWN UnknownAdapter, _In_ BOO
 #ifdef __cplusplus
 } /* extern "C" */
 #endif
-
