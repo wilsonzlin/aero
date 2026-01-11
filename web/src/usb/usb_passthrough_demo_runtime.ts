@@ -73,6 +73,10 @@ export interface UsbPassthroughDemoApi {
 
 function coerceBytes(value: unknown): Uint8Array | null {
   if (value instanceof Uint8Array) return value;
+  if (value instanceof ArrayBuffer) return new Uint8Array(value);
+  if (typeof SharedArrayBuffer !== "undefined" && value instanceof SharedArrayBuffer) {
+    return new Uint8Array(value);
+  }
   if (Array.isArray(value)) {
     const out = new Uint8Array(value.length);
     for (let i = 0; i < value.length; i += 1) {

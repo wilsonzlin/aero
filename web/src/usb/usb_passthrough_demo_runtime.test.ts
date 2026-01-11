@@ -312,6 +312,26 @@ describe("UsbPassthroughDemoRuntime", () => {
     expect(() => runtime.tick()).toThrow(/invalid actions payload/i);
   });
 
+  it("accepts ArrayBuffer demo result payloads (serde_wasm_bindgen can produce them)", () => {
+    const demo = new FakeDemo();
+    demo.nextResult = { status: "success", data: Uint8Array.of(1, 2).buffer };
+
+    const posted: any[] = [];
+    const runtime = new UsbPassthroughDemoRuntime({
+      demo,
+      postMessage: (msg) => posted.push(msg),
+    });
+
+    runtime.pollResults();
+
+    expect(posted).toHaveLength(1);
+    const msg = posted[0];
+    expect(msg.type).toBe("usb.demoResult");
+    expect(msg.result.status).toBe("success");
+    expect(msg.result.data).toBeInstanceOf(Uint8Array);
+    expect(Array.from(msg.result.data)).toEqual([1, 2]);
+  });
+
   it("throws when the demo emits an invalid result payload", () => {
     const demo = new FakeDemo();
     demo.nextResult = { status: "success", data: ["oops"] };
