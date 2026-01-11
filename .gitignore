@@ -70,6 +70,10 @@ pkg/
 *.proptest-regressions
 *.wasm
 *.wat
+
+# NPM workspaces use a single repo-root lockfile; do not commit per-package lockfiles.
+**/package-lock.json
+!/package-lock.json
 web/dist/
 web/src/wasm/pkg-*/
 bench/output/
