@@ -62,6 +62,21 @@ typedef struct _RECT {
   #ifndef E_NOTIMPL
     #define E_NOTIMPL ((HRESULT)0x80004001L)
   #endif
+
+  // Common D3D9 HRESULTs used by D3D9Ex GetData/CreateQuery paths.
+  #ifndef D3DERR_NOTAVAILABLE
+    #define D3DERR_NOTAVAILABLE ((HRESULT)0x8876086AL)
+  #endif
+  #ifndef D3DERR_WASSTILLDRAWING
+    #define D3DERR_WASSTILLDRAWING ((HRESULT)0x8876021CL)
+  #endif
+#endif
+
+#ifndef D3DERR_NOTAVAILABLE
+  #define D3DERR_NOTAVAILABLE ((HRESULT)0x8876086AL)
+#endif
+#ifndef D3DERR_WASSTILLDRAWING
+  #define D3DERR_WASSTILLDRAWING ((HRESULT)0x8876021CL)
 #endif
 
 #if defined(_WIN32)

@@ -56,6 +56,11 @@ constexpr uint32_t D3DPS_VERSION(uint32_t major, uint32_t minor) {
   return 0xFFFF0000u | (major << 8) | minor;
 }
 
+// D3D9 API/UMD query constants (numeric values from d3d9types.h).
+constexpr uint32_t kD3DQueryTypeEvent = 8u;
+constexpr uint32_t kD3DIssueEnd = 0x1u;
+constexpr uint32_t kD3DGetDataFlush = 0x1u;
+
 uint32_t f32_bits(float v) {
   uint32_t bits = 0;
   static_assert(sizeof(bits) == sizeof(v), "float must be 32-bit");
@@ -1386,11 +1391,36 @@ HRESULT AEROGPU_D3D9_CALL device_flush(AEROGPU_D3D9DDI_HDEVICE hDevice) {
 }
 
 HRESULT AEROGPU_D3D9_CALL device_create_query(
-    AEROGPU_D3D9DDI_HDEVICE,
+    AEROGPU_D3D9DDI_HDEVICE hDevice,
     AEROGPU_D3D9DDIARG_CREATEQUERY* pCreateQuery) {
-  if (!pCreateQuery) {
+  if (!hDevice || !pCreateQuery) {
     return E_INVALIDARG;
   }
+  auto* dev = as_device(hDevice);
+  if (!dev || !dev->adapter) {
+    return E_FAIL;
+  }
+
+  Adapter* adapter = dev->adapter;
+  bool is_event = false;
+  {
+    std::lock_guard<std::mutex> lock(adapter->fence_mutex);
+    if (!adapter->event_query_type_known) {
+      // Accept both the public D3DQUERYTYPE_EVENT (8) encoding and the DDI-style
+      // encoding where EVENT is the first enum entry (0). Once observed, lock
+      // in the value so we don't accidentally treat other query types as EVENT.
+      if (pCreateQuery->type == 0u || pCreateQuery->type == kD3DQueryTypeEvent) {
+        adapter->event_query_type_known = true;
+        adapter->event_query_type = pCreateQuery->type;
+      }
+    }
+    is_event = adapter->event_query_type_known && (pCreateQuery->type == adapter->event_query_type);
+  }
+
+  if (!is_event) {
+    return D3DERR_NOTAVAILABLE;
+  }
+
   auto q = std::make_unique<Query>();
   q->type = pCreateQuery->type;
   pCreateQuery->hQuery = q.release();
@@ -1415,12 +1445,39 @@ HRESULT AEROGPU_D3D9_CALL device_issue_query(
   if (!q) {
     return E_INVALIDARG;
   }
+  if (!dev || !dev->adapter) {
+    return E_FAIL;
+  }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
 
-  // Event queries are satisfied once all prior GPU work completes. We model this
-  // by flushing and capturing the returned fence.
-  q->fence_value = submit(dev);
+  Adapter* adapter = dev->adapter;
+  const bool is_event = adapter->event_query_type_known ? (q->type == adapter->event_query_type)
+                                                        : (q->type == 0u || q->type == kD3DQueryTypeEvent);
+  if (!is_event) {
+    return D3DERR_NOTAVAILABLE;
+  }
+
+  // Event queries only care about END. BEGIN is ignored.
+  if ((pIssueQuery->flags & kD3DIssueEnd) == 0) {
+    return S_OK;
+  }
+
+  // Ensure all prior GPU work is submitted and capture the submission fence.
+  uint64_t fence = submit(dev);
+  if (fence != 0) {
+    std::lock_guard<std::mutex> fence_lock(adapter->fence_mutex);
+    adapter->last_submitted_fence = std::max(adapter->last_submitted_fence, fence);
+  }
+
+  // Preferred: use the fence returned by submit(). Fallback: query the KMD's
+  // last_submitted_fence (useful when END happens with no pending cmd buffer).
+  uint64_t fence_value = fence;
+  if (fence_value == 0) {
+    fence_value = refresh_fence_snapshot(adapter).last_submitted;
+  }
+
+  q->fence_value = fence_value;
   q->issued = true;
   return S_OK;
 }
@@ -1436,31 +1493,56 @@ HRESULT AEROGPU_D3D9_CALL device_get_query_data(
   if (!q) {
     return E_INVALIDARG;
   }
-  if (!q->issued) {
+
+  if (!dev || !dev->adapter) {
     return E_FAIL;
   }
-
   Adapter* adapter = dev->adapter;
-  if (!adapter) {
-    return E_FAIL;
+
+  const bool is_event = adapter->event_query_type_known ? (q->type == adapter->event_query_type)
+                                                        : (q->type == 0u || q->type == kD3DQueryTypeEvent);
+  if (!is_event) {
+    return D3DERR_NOTAVAILABLE;
   }
-
-  // If no output buffer provided, just report readiness via HRESULT.
-  const bool need_data = pGetQueryData->pData && pGetQueryData->data_size;
-
-  const uint64_t completed = refresh_fence_snapshot(adapter).last_completed;
-  if (completed < q->fence_value) {
-    // Never block indefinitely in a DDI call. The D3D9 runtime will poll again.
+  if (!q->issued) {
     return S_FALSE;
   }
 
-  if (need_data) {
-    // D3DQUERYTYPE_EVENT expects a BOOL-like result.
-    if (pGetQueryData->data_size >= sizeof(uint32_t)) {
+  // If no output buffer provided, just report readiness via HRESULT.
+  const bool need_data = (pGetQueryData->pData != nullptr) && (pGetQueryData->data_size != 0);
+
+  FenceSnapshot snap = refresh_fence_snapshot(adapter);
+  if (snap.last_completed >= q->fence_value) {
+    if (need_data) {
+      // D3DQUERYTYPE_EVENT expects a BOOL-like result.
+      if (pGetQueryData->data_size < sizeof(uint32_t)) {
+        return kD3DErrInvalidCall;
+      }
       *reinterpret_cast<uint32_t*>(pGetQueryData->pData) = TRUE;
     }
+    return S_OK;
   }
-  return S_OK;
+
+  // If requested, flush once to help the query make forward progress, then
+  // return non-ready if the fence is still outstanding.
+  if (pGetQueryData->flags & kD3DGetDataFlush) {
+    {
+      std::lock_guard<std::mutex> lock(dev->mutex);
+      flush_locked(dev);
+    }
+    snap = refresh_fence_snapshot(adapter);
+    if (snap.last_completed >= q->fence_value) {
+      if (need_data) {
+        if (pGetQueryData->data_size < sizeof(uint32_t)) {
+          return kD3DErrInvalidCall;
+        }
+        *reinterpret_cast<uint32_t*>(pGetQueryData->pData) = TRUE;
+      }
+      return S_OK;
+    }
+  }
+
+  return S_FALSE;
 }
 
 HRESULT AEROGPU_D3D9_CALL adapter_create_device(
