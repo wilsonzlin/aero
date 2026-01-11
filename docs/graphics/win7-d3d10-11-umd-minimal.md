@@ -249,7 +249,7 @@ Resource update/copy (minimum)
 
 See also:
 
-* `docs/windows/win7-wddm11-d3d10-11-umd-alloc-map.md` — Win7/WDDM 1.1 alloc + Map/Unmap reference (`D3DDDICB_ALLOCATE`, `D3DDDICB_LOCK`/`D3DDDICB_UNLOCK`).
+* `docs/windows/win7-wddm11-d3d10-11-umd-alloc-map.md` — deprecated redirect (kept for link compatibility; points at the focused docs below).
 * `docs/graphics/win7-d3d10-11-umd-allocations.md` — Win7/WDDM 1.1 resource allocation (`CreateResource` → `pfnAllocateCb`) contract.
 * `docs/graphics/win7-d3d11-map-unmap.md` — Win7 `Map`/`Unmap` semantics (`LockCb`/`UnlockCb`) for dynamic uploads + staging readback.
 
@@ -265,7 +265,7 @@ For AeroGPU’s command stream, D3D10/11 resources (buffers, textures) are expec
 
 **Key decision:** the AeroGPU allocation table `alloc_id` is the **WDDM allocation handle**:
 
-* `alloc_id == (u32)D3DKMT_HANDLE` (aka `DXGK_ALLOCATIONINFO.hAllocation`, returned by `pfnAllocateCb`).
+* `alloc_id == (u32)D3DKMT_HANDLE` (the allocation handle returned by `pfnAllocateCb` in `D3DDDI_ALLOCATIONINFO::{hKMAllocation|hAllocation}`; member name is header-dependent).
 * The UMD sets:
   * `AEROGPU_CMD_CREATE_BUFFER.backing_alloc_id = alloc_handle`
   * `AEROGPU_CMD_CREATE_TEXTURE2D.backing_alloc_id = alloc_handle`
