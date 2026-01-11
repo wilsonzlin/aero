@@ -138,7 +138,10 @@ static BOOLEAN AerovblkAllocateRequestContexts(_Inout_ PAEROVBLK_DEVICE_EXTENSIO
   STOR_PHYSICAL_ADDRESS pagePa;
   PAEROVBLK_REQUEST_CONTEXT ctx;
 
-  ctxCount = (ULONG)devExt->Vq.QueueSize;
+  ctxCount = (devExt->Vq != NULL) ? (ULONG)devExt->Vq->qsz : 0;
+  if (ctxCount == 0) {
+    return FALSE;
+  }
   devExt->RequestContextCount = ctxCount;
 
   devExt->RequestContexts = (PAEROVBLK_REQUEST_CONTEXT)StorPortAllocatePool(devExt, sizeof(AEROVBLK_REQUEST_CONTEXT) * ctxCount, 'bVrA');
@@ -152,7 +155,7 @@ static BOOLEAN AerovblkAllocateRequestContexts(_Inout_ PAEROVBLK_DEVICE_EXTENSIO
   devExt->FreeRequestCount = 0;
 
   low.QuadPart = 0;
-  high.QuadPart = 0xFFFFFFFFull;
+  high.QuadPart = (LONGLONG)-1;
   boundary.QuadPart = 0;
 
   for (i = 0; i < ctxCount; ++i) {
@@ -175,9 +178,6 @@ static BOOLEAN AerovblkAllocateRequestContexts(_Inout_ PAEROVBLK_DEVICE_EXTENSIO
     ctx->SharedPagePa.QuadPart = pagePa.QuadPart;
     ctx->ReqHdr = (volatile VIRTIO_BLK_REQ_HDR*)((PUCHAR)pageVa + AEROVBLK_CTX_HDR_OFFSET);
     ctx->StatusByte = (volatile UCHAR*)((PUCHAR)pageVa + AEROVBLK_CTX_STATUS_OFFSET);
-    ctx->TableDesc = (volatile VRING_DESC*)((PUCHAR)pageVa + AEROVBLK_CTX_TABLE_OFFSET);
-    ctx->TableDescPa.QuadPart = ctx->SharedPagePa.QuadPart + AEROVBLK_CTX_TABLE_OFFSET;
-    ctx->Sg = (volatile VIRTIO_SG_ENTRY*)((PUCHAR)pageVa + AEROVBLK_CTX_TABLE_OFFSET);
 
     ctx->Srb = NULL;
     ctx->IsWrite = FALSE;
@@ -189,98 +189,346 @@ static BOOLEAN AerovblkAllocateRequestContexts(_Inout_ PAEROVBLK_DEVICE_EXTENSIO
   return TRUE;
 }
 
-static BOOLEAN AerovblkDeviceBringUp(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, _In_ BOOLEAN allocateResources) {
-  ULONG hostFeatures;
-  ULONG wanted;
-  UCHAR status;
-  NTSTATUS st;
-  VIRTIO_BLK_CONFIG cfg;
-  STOR_LOCK_HANDLE lock;
+/* -------------------------------------------------------------------------- */
+/* Virtio PCI modern MMIO helpers (BAR0 fixed layout, contract v1)             */
+/* -------------------------------------------------------------------------- */
 
-  VirtioPciReset(&devExt->Vdev);
+#define AEROVBLK_MMIO_READ8(p) READ_REGISTER_UCHAR((volatile UCHAR*)(p))
+#define AEROVBLK_MMIO_READ16(p) READ_REGISTER_USHORT((volatile USHORT*)(p))
+#define AEROVBLK_MMIO_READ32(p) READ_REGISTER_ULONG((volatile ULONG*)(p))
+
+#define AEROVBLK_MMIO_WRITE8(p, v) WRITE_REGISTER_UCHAR((volatile UCHAR*)(p), (UCHAR)(v))
+#define AEROVBLK_MMIO_WRITE16(p, v) WRITE_REGISTER_USHORT((volatile USHORT*)(p), (USHORT)(v))
+#define AEROVBLK_MMIO_WRITE32(p, v) WRITE_REGISTER_ULONG((volatile ULONG*)(p), (ULONG)(v))
+
+static __forceinline ULONGLONG AerovblkMmioRead64(_In_ volatile UCHAR* p) {
+  ULONG lo;
+  ULONG hi;
+
+  lo = AEROVBLK_MMIO_READ32(p);
+  hi = AEROVBLK_MMIO_READ32(p + 4);
+  return (ULONGLONG)lo | ((ULONGLONG)hi << 32);
+}
+
+static __forceinline VOID AerovblkMmioWrite64(_In_ volatile UCHAR* p, _In_ ULONGLONG v) {
+  AEROVBLK_MMIO_WRITE32(p, (ULONG)v);
+  AEROVBLK_MMIO_WRITE32(p + 4, (ULONG)(v >> 32));
+}
+
+/* Offsets within the common configuration block (BAR0 + 0x0000). */
+#define VIRTIO_PCI_COMMON_DFSELECT 0x00u
+#define VIRTIO_PCI_COMMON_DFEATURE 0x04u
+#define VIRTIO_PCI_COMMON_GFSELECT 0x08u
+#define VIRTIO_PCI_COMMON_GFEATURE 0x0Cu
+#define VIRTIO_PCI_COMMON_MSIX_CONFIG 0x10u
+#define VIRTIO_PCI_COMMON_NUM_QUEUES 0x12u
+#define VIRTIO_PCI_COMMON_DEVICE_STATUS 0x14u
+#define VIRTIO_PCI_COMMON_QUEUE_SELECT 0x16u
+#define VIRTIO_PCI_COMMON_QUEUE_SIZE 0x18u
+#define VIRTIO_PCI_COMMON_QUEUE_MSIX_VECTOR 0x1Au
+#define VIRTIO_PCI_COMMON_QUEUE_ENABLE 0x1Cu
+#define VIRTIO_PCI_COMMON_QUEUE_NOTIFY_OFF 0x1Eu
+#define VIRTIO_PCI_COMMON_QUEUE_DESC 0x20u
+#define VIRTIO_PCI_COMMON_QUEUE_AVAIL 0x28u
+#define VIRTIO_PCI_COMMON_QUEUE_USED 0x30u
+
+static __forceinline UCHAR AerovblkVirtioGetStatus(_In_ PAEROVBLK_DEVICE_EXTENSION devExt) {
+  return AEROVBLK_MMIO_READ8(devExt->CommonCfg + VIRTIO_PCI_COMMON_DEVICE_STATUS);
+}
+
+static __forceinline VOID AerovblkVirtioSetStatus(_In_ PAEROVBLK_DEVICE_EXTENSION devExt, _In_ UCHAR status) {
+  AEROVBLK_MMIO_WRITE8(devExt->CommonCfg + VIRTIO_PCI_COMMON_DEVICE_STATUS, status);
+}
+
+static __forceinline VOID AerovblkVirtioAddStatus(_In_ PAEROVBLK_DEVICE_EXTENSION devExt, _In_ UCHAR bits) {
+  UCHAR status;
+
+  status = AerovblkVirtioGetStatus(devExt);
+  AerovblkVirtioSetStatus(devExt, (UCHAR)(status | bits));
+}
+
+static BOOLEAN AerovblkVirtioResetDevice(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt) {
+  ULONG i;
+
+  /* Writing 0 resets the device. */
+  AerovblkVirtioSetStatus(devExt, 0);
+
+  /* Poll until the device acknowledges the reset (bounded). */
+  for (i = 0; i < 1000; ++i) {
+    if (AerovblkVirtioGetStatus(devExt) == 0) {
+      return TRUE;
+    }
+    StorPortStallExecution(devExt, 1000); /* 1ms */
+  }
+
+  return FALSE;
+}
+
+static ULONGLONG AerovblkVirtioReadDeviceFeatures(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt) {
+  ULONG lo;
+  ULONG hi;
+
+  AEROVBLK_MMIO_WRITE32(devExt->CommonCfg + VIRTIO_PCI_COMMON_DFSELECT, 0);
+  lo = AEROVBLK_MMIO_READ32(devExt->CommonCfg + VIRTIO_PCI_COMMON_DFEATURE);
+
+  AEROVBLK_MMIO_WRITE32(devExt->CommonCfg + VIRTIO_PCI_COMMON_DFSELECT, 1);
+  hi = AEROVBLK_MMIO_READ32(devExt->CommonCfg + VIRTIO_PCI_COMMON_DFEATURE);
+
+  return (ULONGLONG)lo | ((ULONGLONG)hi << 32);
+}
+
+static VOID AerovblkVirtioWriteDriverFeatures(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, _In_ ULONGLONG features) {
+  AEROVBLK_MMIO_WRITE32(devExt->CommonCfg + VIRTIO_PCI_COMMON_GFSELECT, 0);
+  AEROVBLK_MMIO_WRITE32(devExt->CommonCfg + VIRTIO_PCI_COMMON_GFEATURE, (ULONG)features);
+
+  AEROVBLK_MMIO_WRITE32(devExt->CommonCfg + VIRTIO_PCI_COMMON_GFSELECT, 1);
+  AEROVBLK_MMIO_WRITE32(devExt->CommonCfg + VIRTIO_PCI_COMMON_GFEATURE, (ULONG)(features >> 32));
+}
+
+static VOID AerovblkVirtioReadBlkConfig(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, _Out_ PVIRTIO_BLK_CONFIG cfg) {
+  RtlZeroMemory(cfg, sizeof(*cfg));
+
+  cfg->Capacity = AerovblkMmioRead64(devExt->DeviceCfg + 0x00u);
+  cfg->SegMax = AEROVBLK_MMIO_READ32(devExt->DeviceCfg + 0x0Cu);
+  cfg->BlkSize = AEROVBLK_MMIO_READ32(devExt->DeviceCfg + 0x14u);
+}
+
+static VOID AerovblkVirtioNotifyQueue0(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt) {
+  volatile UCHAR* notifyAddr;
+
+  notifyAddr = devExt->NotifyBase + ((ULONG)devExt->QueueNotifyOff * devExt->NotifyOffMultiplier);
+
+  /* Contract v1: accept 16-bit or 32-bit writes; use 16-bit. */
+  AEROVBLK_MMIO_WRITE16(notifyAddr, (USHORT)AEROVBLK_QUEUE_INDEX);
+}
+
+static BOOLEAN AerovblkVirtioSetupQueue0(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt) {
+  USHORT qsz;
+
+  AEROVBLK_MMIO_WRITE16(devExt->CommonCfg + VIRTIO_PCI_COMMON_QUEUE_SELECT, (USHORT)AEROVBLK_QUEUE_INDEX);
+  qsz = AEROVBLK_MMIO_READ16(devExt->CommonCfg + VIRTIO_PCI_COMMON_QUEUE_SIZE);
+  if (qsz != (USHORT)AEROVBLK_QUEUE_SIZE) {
+    return FALSE;
+  }
+
+  devExt->QueueNotifyOff = AEROVBLK_MMIO_READ16(devExt->CommonCfg + VIRTIO_PCI_COMMON_QUEUE_NOTIFY_OFF);
+
+  /* Disable MSI-X vectors (INTx required by contract v1). */
+  AEROVBLK_MMIO_WRITE16(devExt->CommonCfg + VIRTIO_PCI_COMMON_QUEUE_MSIX_VECTOR, 0xFFFFu);
+
+  /* Program split ring addresses and enable the queue. */
+  AerovblkMmioWrite64(devExt->CommonCfg + VIRTIO_PCI_COMMON_QUEUE_DESC, devExt->Vq->desc_pa);
+  AerovblkMmioWrite64(devExt->CommonCfg + VIRTIO_PCI_COMMON_QUEUE_AVAIL, devExt->Vq->avail_pa);
+  AerovblkMmioWrite64(devExt->CommonCfg + VIRTIO_PCI_COMMON_QUEUE_USED, devExt->Vq->used_pa);
+  AEROVBLK_MMIO_WRITE16(devExt->CommonCfg + VIRTIO_PCI_COMMON_QUEUE_ENABLE, 1);
+
+  return TRUE;
+}
+
+static BOOLEAN AerovblkAllocateVirtqueue(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt) {
+  PHYSICAL_ADDRESS low;
+  PHYSICAL_ADDRESS high;
+  PHYSICAL_ADDRESS boundary;
+  size_t ringBytes;
+  ULONG ringLen;
+  STOR_PHYSICAL_ADDRESS ringPa;
+  PVOID ringVa;
+  size_t indirectBytes;
+  ULONG indirectLen;
+  STOR_PHYSICAL_ADDRESS indirectPa;
+  PVOID indirectVa;
+  size_t vqBytes;
+  NTSTATUS st;
+
+  if (devExt->Vq != NULL) {
+    return TRUE;
+  }
+
+  low.QuadPart = 0;
+  high.QuadPart = (LONGLONG)-1;
+  boundary.QuadPart = 0;
+
+  ringBytes = VirtqSplitRingMemSize((UINT16)AEROVBLK_QUEUE_SIZE, 4, FALSE);
+  if (ringBytes == 0 || ringBytes > 0xFFFFFFFFu) {
+    return FALSE;
+  }
+
+  ringVa = StorPortAllocateContiguousMemorySpecifyCache(devExt, (ULONG)ringBytes, low, high, boundary, MmNonCached);
+  if (ringVa == NULL) {
+    return FALSE;
+  }
+
+  ringLen = (ULONG)ringBytes;
+  ringPa = StorPortGetPhysicalAddress(devExt, NULL, ringVa, &ringLen);
+  if (ringLen < ringBytes) {
+    return FALSE;
+  }
+
+  RtlZeroMemory(ringVa, ringBytes);
+
+  devExt->RingVa = ringVa;
+  devExt->RingPa.QuadPart = ringPa.QuadPart;
+  devExt->RingBytes = (ULONG)ringBytes;
+
+  devExt->IndirectTableCount = (USHORT)AEROVBLK_QUEUE_SIZE;
+  devExt->IndirectMaxDesc = (USHORT)(devExt->SegMax + 2u);
+  if (devExt->IndirectMaxDesc < 2) {
+    devExt->IndirectMaxDesc = 2;
+  }
+
+  indirectBytes = (size_t)devExt->IndirectTableCount * (size_t)devExt->IndirectMaxDesc * sizeof(VIRTQ_DESC);
+  if (indirectBytes == 0 || indirectBytes > 0xFFFFFFFFu) {
+    return FALSE;
+  }
+
+  indirectVa = StorPortAllocateContiguousMemorySpecifyCache(devExt, (ULONG)indirectBytes, low, high, boundary, MmNonCached);
+  if (indirectVa == NULL) {
+    return FALSE;
+  }
+
+  indirectLen = (ULONG)indirectBytes;
+  indirectPa = StorPortGetPhysicalAddress(devExt, NULL, indirectVa, &indirectLen);
+  if (indirectLen < indirectBytes) {
+    return FALSE;
+  }
+
+  RtlZeroMemory(indirectVa, indirectBytes);
+
+  devExt->IndirectVa = indirectVa;
+  devExt->IndirectPa.QuadPart = indirectPa.QuadPart;
+  devExt->IndirectBytes = (ULONG)indirectBytes;
+
+  vqBytes = VirtqSplitStateSize((UINT16)AEROVBLK_QUEUE_SIZE);
+  if (vqBytes == 0 || vqBytes > 0xFFFFFFFFu) {
+    return FALSE;
+  }
+
+  devExt->Vq = (VIRTQ_SPLIT*)StorPortAllocatePool(devExt, (ULONG)vqBytes, 'qVrA');
+  if (devExt->Vq == NULL) {
+    return FALSE;
+  }
+
+  st = VirtqSplitInit(devExt->Vq,
+                      (UINT16)AEROVBLK_QUEUE_SIZE,
+                      FALSE,
+                      TRUE,
+                      ringVa,
+                      (UINT64)ringPa.QuadPart,
+                      4,
+                      indirectVa,
+                      (UINT64)indirectPa.QuadPart,
+                      devExt->IndirectTableCount,
+                      devExt->IndirectMaxDesc);
+  if (!NT_SUCCESS(st)) {
+    return FALSE;
+  }
+
+  /* Prefer indirect for all requests (contract v1 requires indirect support). */
+  devExt->Vq->indirect_threshold = 0;
+
+  return TRUE;
+}
+
+static BOOLEAN AerovblkDeviceBringUp(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, _In_ BOOLEAN allocateResources) {
+  STOR_LOCK_HANDLE lock;
+  ULONGLONG hostFeatures;
+  ULONGLONG required;
+  ULONGLONG negotiated;
+  VIRTIO_BLK_CONFIG cfg;
+  USHORT numQueues;
+  UCHAR status;
+
+  if (devExt->CommonCfg == NULL || devExt->DeviceCfg == NULL) {
+    return FALSE;
+  }
+
+  devExt->NotifyOffMultiplier = AEROVBLK_VIRTIO_PCI_NOTIFY_OFF_MULTIPLIER;
+
+  if (!AerovblkVirtioResetDevice(devExt)) {
+    return FALSE;
+  }
 
   if (!allocateResources) {
     StorPortAcquireSpinLock(devExt, InterruptLock, &lock);
     AerovblkAbortOutstandingRequestsLocked(devExt);
-    VirtioQueueResetState(&devExt->Vq);
+    if (devExt->Vq != NULL) {
+      VirtqSplitReset(devExt->Vq);
+    }
     StorPortReleaseSpinLock(devExt, &lock);
   }
 
-  VirtioPciSetStatus(&devExt->Vdev, VIRTIO_STATUS_ACKNOWLEDGE);
-  VirtioPciAddStatus(&devExt->Vdev, VIRTIO_STATUS_DRIVER);
+  /* ACKNOWLEDGE | DRIVER */
+  AerovblkVirtioSetStatus(devExt, (UCHAR)(VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER));
 
-  hostFeatures = VirtioPciReadHostFeatures(&devExt->Vdev);
-  AEROVBLK_LOG("found io_base=%p io_len=%lu queue_size=%hu host_features=0x%08lx", base, range->RangeLength, hwQueueSize, hostFeatures);
-  wanted = VIRTIO_RING_F_INDIRECT_DESC | VIRTIO_BLK_F_FLUSH | VIRTIO_BLK_F_BLK_SIZE | VIRTIO_BLK_F_SEG_MAX | VIRTIO_BLK_F_SIZE_MAX;
+  /* Disable MSI-X config vector (INTx required). */
+  AEROVBLK_MMIO_WRITE16(devExt->CommonCfg + VIRTIO_PCI_COMMON_MSIX_CONFIG, 0xFFFFu);
 
-  devExt->NegotiatedFeatures = hostFeatures & wanted;
-  devExt->SupportsIndirect = (devExt->NegotiatedFeatures & VIRTIO_RING_F_INDIRECT_DESC) ? TRUE : FALSE;
-  devExt->SupportsFlush = (devExt->NegotiatedFeatures & VIRTIO_BLK_F_FLUSH) ? TRUE : FALSE;
-  AEROVBLK_LOG("host_features=0x%08lx negotiated=0x%08lx", hostFeatures, devExt->NegotiatedFeatures);
-
-  VirtioPciWriteGuestFeatures(&devExt->Vdev, devExt->NegotiatedFeatures);
-
-  VirtioPciAddStatus(&devExt->Vdev, VIRTIO_STATUS_FEATURES_OK);
-  status = VirtioPciGetStatus(&devExt->Vdev);
-  if ((status & VIRTIO_STATUS_FEATURES_OK) == 0) {
-    AEROVBLK_LOG("device rejected FEATURES_OK (status=0x%02x)", status);
-    VirtioPciAddStatus(&devExt->Vdev, VIRTIO_STATUS_FAILED);
+  numQueues = AEROVBLK_MMIO_READ16(devExt->CommonCfg + VIRTIO_PCI_COMMON_NUM_QUEUES);
+  if (numQueues == 0) {
+    AerovblkVirtioAddStatus(devExt, VIRTIO_STATUS_FAILED);
     return FALSE;
   }
 
+  hostFeatures = AerovblkVirtioReadDeviceFeatures(devExt);
+  required = AEROVBLK_FEATURE_VERSION_1 | AEROVBLK_FEATURE_RING_INDIRECT_DESC | AEROVBLK_FEATURE_BLK_SEG_MAX | AEROVBLK_FEATURE_BLK_BLK_SIZE |
+             AEROVBLK_FEATURE_BLK_FLUSH;
+
+  if ((hostFeatures & required) != required) {
+    AerovblkVirtioAddStatus(devExt, VIRTIO_STATUS_FAILED);
+    return FALSE;
+  }
+
+  negotiated = required;
+  AerovblkVirtioWriteDriverFeatures(devExt, negotiated);
+
+  AerovblkVirtioAddStatus(devExt, VIRTIO_STATUS_FEATURES_OK);
+  status = AerovblkVirtioGetStatus(devExt);
+  if ((status & VIRTIO_STATUS_FEATURES_OK) == 0) {
+    AerovblkVirtioAddStatus(devExt, VIRTIO_STATUS_FAILED);
+    return FALSE;
+  }
+
+  devExt->NegotiatedFeatures = negotiated;
+  devExt->SupportsIndirect = TRUE;
+  devExt->SupportsFlush = TRUE;
+
+  AerovblkVirtioReadBlkConfig(devExt, &cfg);
+
+  devExt->CapacitySectors = cfg.Capacity;
+  devExt->LogicalSectorSize = AEROVBLK_LOGICAL_SECTOR_SIZE;
+  if (cfg.BlkSize >= AEROVBLK_LOGICAL_SECTOR_SIZE && (cfg.BlkSize % AEROVBLK_LOGICAL_SECTOR_SIZE) == 0) {
+    devExt->LogicalSectorSize = cfg.BlkSize;
+  }
+
+  devExt->SegMax = (cfg.SegMax != 0) ? cfg.SegMax : (ULONG)AEROVBLK_MAX_SG_ELEMENTS;
+  if (devExt->SegMax > (ULONG)AEROVBLK_MAX_SG_ELEMENTS) {
+    devExt->SegMax = (ULONG)AEROVBLK_MAX_SG_ELEMENTS;
+  }
+
   if (allocateResources) {
-    st = VirtioQueueCreate(&devExt->Vdev, &devExt->Vq, 0);
-    if (!NT_SUCCESS(st)) {
-      AEROVBLK_LOG("VirtioQueueCreate failed: 0x%08lx", st);
-      VirtioPciAddStatus(&devExt->Vdev, VIRTIO_STATUS_FAILED);
+    if (!AerovblkAllocateVirtqueue(devExt)) {
+      AerovblkVirtioAddStatus(devExt, VIRTIO_STATUS_FAILED);
       return FALSE;
     }
 
     if (!AerovblkAllocateRequestContexts(devExt)) {
-      AEROVBLK_LOG("failed to allocate request contexts");
-      VirtioPciAddStatus(&devExt->Vdev, VIRTIO_STATUS_FAILED);
+      AerovblkVirtioAddStatus(devExt, VIRTIO_STATUS_FAILED);
       return FALSE;
     }
   } else {
-    VirtioPciSelectQueue(&devExt->Vdev, devExt->Vq.QueueIndex);
-    VirtioPciWriteQueuePfn(&devExt->Vdev, (ULONG)(devExt->Vq.RingPa.QuadPart >> PAGE_SHIFT));
-  }
-
-  RtlZeroMemory(&cfg, sizeof(cfg));
-  st = VirtioPciReadDeviceConfig(&devExt->Vdev, 0, &cfg, sizeof(cfg));
-  if (!NT_SUCCESS(st)) {
-    AEROVBLK_LOG("VirtioPciReadDeviceConfig failed: 0x%08lx", st);
-    cfg.Capacity = 0;
-    cfg.BlkSize = 0;
-    cfg.SegMax = 0;
-    cfg.SizeMax = 0;
-  }
-
-  devExt->CapacitySectors = cfg.Capacity;
-  devExt->LogicalSectorSize = AEROVBLK_LOGICAL_SECTOR_SIZE;
-  devExt->SegMax = 0;
-  devExt->SizeMax = 0;
-
-  if ((devExt->NegotiatedFeatures & VIRTIO_BLK_F_BLK_SIZE) && cfg.BlkSize >= AEROVBLK_LOGICAL_SECTOR_SIZE &&
-      (cfg.BlkSize % AEROVBLK_LOGICAL_SECTOR_SIZE) == 0) {
-    devExt->LogicalSectorSize = cfg.BlkSize;
-  }
-
-  if (devExt->NegotiatedFeatures & VIRTIO_BLK_F_SEG_MAX) {
-    devExt->SegMax = cfg.SegMax;
-    if (devExt->SegMax > (ULONG)AEROVBLK_MAX_SG_ELEMENTS) {
-      devExt->SegMax = (ULONG)AEROVBLK_MAX_SG_ELEMENTS;
+    if (devExt->Vq == NULL || devExt->RequestContexts == NULL) {
+      AerovblkVirtioAddStatus(devExt, VIRTIO_STATUS_FAILED);
+      return FALSE;
     }
   }
 
-  if (devExt->NegotiatedFeatures & VIRTIO_BLK_F_SIZE_MAX) {
-    devExt->SizeMax = cfg.SizeMax;
+  if (!AerovblkVirtioSetupQueue0(devExt)) {
+    AerovblkVirtioAddStatus(devExt, VIRTIO_STATUS_FAILED);
+    return FALSE;
   }
 
-  AEROVBLK_LOG("capacity_sectors=%I64u blk_size=%lu seg_max=%lu size_max=%lu", devExt->CapacitySectors, devExt->LogicalSectorSize, devExt->SegMax,
-               devExt->SizeMax);
+  AerovblkVirtioAddStatus(devExt, VIRTIO_STATUS_DRIVER_OK);
 
-  VirtioPciAddStatus(&devExt->Vdev, VIRTIO_STATUS_DRIVER_OK);
   StorPortNotification(NextRequest, devExt, NULL);
   return TRUE;
 }
@@ -291,11 +539,12 @@ static BOOLEAN AerovblkQueueRequest(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, _
   LIST_ENTRY* entry;
   PAEROVBLK_REQUEST_CONTEXT ctx;
   ULONG sgCount;
-  USHORT totalDesc;
-  USHORT statusIdx;
+  UINT16 totalDesc;
   NTSTATUS st;
-  USHORT headId;
+  UINT16 headId;
   ULONG i;
+  VIRTQ_SG segs[AEROVBLK_MAX_SG_ELEMENTS + 2];
+  BOOLEAN needKick;
 
   StorPortAcquireSpinLock(devExt, InterruptLock, &lock);
 
@@ -303,6 +552,12 @@ static BOOLEAN AerovblkQueueRequest(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, _
     StorPortReleaseSpinLock(devExt, &lock);
     AerovblkSetSense(devExt, srb, SCSI_SENSE_NOT_READY, 0x04, 0x00);
     AerovblkCompleteSrb(devExt, srb, SRB_STATUS_ERROR | SRB_STATUS_AUTOSENSE_VALID);
+    return TRUE;
+  }
+
+  if (devExt->Vq == NULL) {
+    StorPortReleaseSpinLock(devExt, &lock);
+    AerovblkCompleteSrb(devExt, srb, SRB_STATUS_ERROR);
     return TRUE;
   }
 
@@ -322,24 +577,6 @@ static BOOLEAN AerovblkQueueRequest(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, _
     return TRUE;
   }
 
-  if (devExt->SizeMax != 0 && sg != NULL) {
-    for (i = 0; i < sgCount; ++i) {
-      if (sg->Elements[i].Length > devExt->SizeMax) {
-        StorPortReleaseSpinLock(devExt, &lock);
-        AerovblkSetSense(devExt, srb, SCSI_SENSE_ILLEGAL_REQUEST, 0x55, 0x00);
-        AerovblkCompleteSrb(devExt, srb, SRB_STATUS_INVALID_REQUEST | SRB_STATUS_AUTOSENSE_VALID);
-        return TRUE;
-      }
-    }
-  }
-
-  if (!devExt->SupportsIndirect && (sgCount + 2) > (ULONG)devExt->Vq.QueueSize) {
-    StorPortReleaseSpinLock(devExt, &lock);
-    AerovblkSetSense(devExt, srb, SCSI_SENSE_ILLEGAL_REQUEST, 0x55, 0x00);
-    AerovblkCompleteSrb(devExt, srb, SRB_STATUS_INVALID_REQUEST | SRB_STATUS_AUTOSENSE_VALID);
-    return TRUE;
-  }
-
   if (devExt->FreeRequestCount == 0 || IsListEmpty(&devExt->FreeRequestList)) {
     StorPortReleaseSpinLock(devExt, &lock);
     return FALSE;
@@ -353,70 +590,27 @@ static BOOLEAN AerovblkQueueRequest(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, _
   ctx->IsWrite = isWrite;
 
   ctx->ReqHdr->Type = reqType;
-  ctx->ReqHdr->Reserved = 0;
+  ctx->ReqHdr->Ioprio = 0;
   ctx->ReqHdr->Sector = startSector;
   *ctx->StatusByte = 0xFF;
 
-  if (devExt->SupportsIndirect) {
-    totalDesc = (USHORT)(sgCount + 2);
-    if (totalDesc > AEROVBLK_MAX_TABLE_DESCS) {
-      ctx->Srb = NULL;
-      InsertTailList(&devExt->FreeRequestList, &ctx->Link);
-      devExt->FreeRequestCount++;
-      StorPortReleaseSpinLock(devExt, &lock);
+  totalDesc = (UINT16)(sgCount + 2u);
 
-      AerovblkSetSense(devExt, srb, SCSI_SENSE_ILLEGAL_REQUEST, 0x55, 0x00);
-      AerovblkCompleteSrb(devExt, srb, SRB_STATUS_INVALID_REQUEST | SRB_STATUS_AUTOSENSE_VALID);
-      return TRUE;
-    }
+  segs[0].addr = (UINT64)(ctx->SharedPagePa.QuadPart + AEROVBLK_CTX_HDR_OFFSET);
+  segs[0].len = (UINT32)sizeof(VIRTIO_BLK_REQ_HDR);
+  segs[0].write = FALSE;
 
-    statusIdx = (USHORT)(1 + sgCount);
-
-    ctx->TableDesc[0].Addr = (ULONGLONG)(ctx->SharedPagePa.QuadPart + AEROVBLK_CTX_HDR_OFFSET);
-    ctx->TableDesc[0].Len = sizeof(VIRTIO_BLK_REQ_HDR);
-    ctx->TableDesc[0].Flags = VRING_DESC_F_NEXT;
-    ctx->TableDesc[0].Next = statusIdx ? 1 : 0;
-
-    for (i = 0; i < sgCount; ++i) {
-      USHORT idx;
-      idx = (USHORT)(1 + i);
-      ctx->TableDesc[idx].Addr = (ULONGLONG)sg->Elements[i].PhysicalAddress.QuadPart;
-      ctx->TableDesc[idx].Len = sg->Elements[i].Length;
-      ctx->TableDesc[idx].Flags = (USHORT)(isWrite ? 0 : VRING_DESC_F_WRITE);
-      ctx->TableDesc[idx].Flags |= VRING_DESC_F_NEXT;
-      ctx->TableDesc[idx].Next = (USHORT)(idx + 1);
-    }
-
-    ctx->TableDesc[statusIdx].Addr = (ULONGLONG)(ctx->SharedPagePa.QuadPart + AEROVBLK_CTX_STATUS_OFFSET);
-    ctx->TableDesc[statusIdx].Len = 1;
-    ctx->TableDesc[statusIdx].Flags = VRING_DESC_F_WRITE;
-    ctx->TableDesc[statusIdx].Next = 0;
-
-    if (sgCount == 0) {
-      ctx->TableDesc[0].Next = statusIdx;
-    }
-
-    st = VirtioQueueAddIndirectTable(&devExt->Vq, ctx->TableDescPa, totalDesc, ctx, &headId);
-  } else {
-    totalDesc = (USHORT)(sgCount + 2);
-
-    ctx->Sg[0].Address.QuadPart = ctx->SharedPagePa.QuadPart + AEROVBLK_CTX_HDR_OFFSET;
-    ctx->Sg[0].Length = sizeof(VIRTIO_BLK_REQ_HDR);
-    ctx->Sg[0].Write = FALSE;
-
-    for (i = 0; i < sgCount; ++i) {
-      ctx->Sg[1 + i].Address = sg->Elements[i].PhysicalAddress;
-      ctx->Sg[1 + i].Length = sg->Elements[i].Length;
-      ctx->Sg[1 + i].Write = isWrite ? FALSE : TRUE;
-    }
-
-    ctx->Sg[1 + sgCount].Address.QuadPart = ctx->SharedPagePa.QuadPart + AEROVBLK_CTX_STATUS_OFFSET;
-    ctx->Sg[1 + sgCount].Length = 1;
-    ctx->Sg[1 + sgCount].Write = TRUE;
-
-    st = VirtioQueueAddBuffer(&devExt->Vq, (const VIRTIO_SG_ENTRY*)ctx->Sg, totalDesc, ctx, &headId);
+  for (i = 0; i < sgCount; ++i) {
+    segs[1 + i].addr = (UINT64)sg->Elements[i].PhysicalAddress.QuadPart;
+    segs[1 + i].len = (UINT32)sg->Elements[i].Length;
+    segs[1 + i].write = isWrite ? FALSE : TRUE;
   }
 
+  segs[1 + sgCount].addr = (UINT64)(ctx->SharedPagePa.QuadPart + AEROVBLK_CTX_STATUS_OFFSET);
+  segs[1 + sgCount].len = 1;
+  segs[1 + sgCount].write = TRUE;
+
+  st = VirtqSplitAddBuffer(devExt->Vq, segs, totalDesc, ctx, &headId);
   if (!NT_SUCCESS(st)) {
     ctx->Srb = NULL;
     InsertTailList(&devExt->FreeRequestList, &ctx->Link);
@@ -431,7 +625,12 @@ static BOOLEAN AerovblkQueueRequest(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, _
     return TRUE;
   }
 
-  VirtioQueueNotify(&devExt->Vdev, &devExt->Vq);
+  VirtqSplitPublish(devExt->Vq, headId);
+  needKick = VirtqSplitKickPrepare(devExt->Vq);
+  if (needKick) {
+    AerovblkVirtioNotifyQueue0(devExt);
+  }
+  VirtqSplitKickCommit(devExt->Vq);
 
   StorPortReleaseSpinLock(devExt, &lock);
   StorPortNotification(NextRequest, devExt, NULL);
@@ -709,10 +908,17 @@ static VOID AerovblkHandleIoControl(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, _
 
   info = (PAEROVBLK_QUERY_INFO)((PUCHAR)srb->DataBuffer + sizeof(SRB_IO_CONTROL));
   info->NegotiatedFeatures = devExt->NegotiatedFeatures;
-  info->QueueSize = devExt->Vq.QueueSize;
-  info->FreeCount = devExt->Vq.NumFree;
-  info->AvailIdx = devExt->Vq.Avail->Idx;
-  info->UsedIdx = devExt->Vq.Used->Idx;
+  if (devExt->Vq != NULL) {
+    info->QueueSize = devExt->Vq->qsz;
+    info->NumFree = devExt->Vq->num_free;
+    info->AvailIdx = devExt->Vq->avail_idx;
+    info->UsedIdx = VirtioReadU16((volatile UINT16*)&devExt->Vq->used->idx);
+  } else {
+    info->QueueSize = 0;
+    info->NumFree = 0;
+    info->AvailIdx = 0;
+    info->UsedIdx = 0;
+  }
 
   ctrl->ReturnCode = 0;
   ctrl->Length = sizeof(AEROVBLK_QUERY_INFO);
@@ -753,11 +959,13 @@ ULONG AerovblkHwFindAdapter(_In_ PVOID deviceExtension, _In_ PVOID hwContext, _I
   PAEROVBLK_DEVICE_EXTENSION devExt;
   PACCESS_RANGE range;
   PVOID base;
+  UCHAR pciCfg[0x40];
+  ULONG bytesRead;
   USHORT hwQueueSize;
-  ULONG hostFeatures;
+  ULONGLONG hostFeatures;
+  ULONGLONG required;
   ULONG maxPhysBreaks;
   VIRTIO_BLK_CONFIG blkCfg;
-  NTSTATUS st;
   ULONG alignment;
   ULONG maxTransfer;
 
@@ -772,38 +980,61 @@ ULONG AerovblkHwFindAdapter(_In_ PVOID deviceExtension, _In_ PVOID hwContext, _I
   }
 
   range = &configInfo->AccessRanges[0];
-  if (range->RangeInMemory) {
+  if (!range->RangeInMemory) {
+    return SP_RETURN_NOT_FOUND;
+  }
+  if (range->RangeLength < AEROVBLK_VIRTIO_PCI_BAR0_MIN_LEN) {
     return SP_RETURN_NOT_FOUND;
   }
 
   devExt = (PAEROVBLK_DEVICE_EXTENSION)deviceExtension;
   RtlZeroMemory(devExt, sizeof(*devExt));
 
-  base = StorPortGetDeviceBase(devExt, configInfo->AdapterInterfaceType, configInfo->SystemIoBusNumber, range->RangeStart, range->RangeLength, TRUE);
+  /*
+   * Contract v1 binds to PCI Revision ID 0x01.
+   * Read directly from PCI config space via StorPort bus data access.
+   */
+  RtlZeroMemory(pciCfg, sizeof(pciCfg));
+  bytesRead = StorPortGetBusData(devExt, PCIConfiguration, configInfo->SystemIoBusNumber, configInfo->SlotNumber, pciCfg, sizeof(pciCfg));
+  if (bytesRead < 0x09 || pciCfg[0x08] != (UCHAR)AEROVBLK_VIRTIO_PCI_REVISION_ID) {
+    return SP_RETURN_NOT_FOUND;
+  }
+
+  base = StorPortGetDeviceBase(devExt, configInfo->AdapterInterfaceType, configInfo->SystemIoBusNumber, range->RangeStart, range->RangeLength, FALSE);
   if (base == NULL) {
     return SP_RETURN_NOT_FOUND;
   }
 
-  VirtioPciInitialize(&devExt->Vdev, (PUCHAR)base, range->RangeLength, FALSE);
+  devExt->Bar0 = (PUCHAR)base;
+  devExt->Bar0Length = range->RangeLength;
 
-  VirtioPciSelectQueue(&devExt->Vdev, 0);
-  hwQueueSize = VirtioPciReadQueueSize(&devExt->Vdev);
-  if (hwQueueSize == 0) {
+  devExt->CommonCfg = devExt->Bar0 + AEROVBLK_VIRTIO_PCI_COMMON_CFG_OFFSET;
+  devExt->NotifyBase = devExt->Bar0 + AEROVBLK_VIRTIO_PCI_NOTIFY_CFG_OFFSET;
+  devExt->IsrStatus = devExt->Bar0 + AEROVBLK_VIRTIO_PCI_ISR_CFG_OFFSET;
+  devExt->DeviceCfg = devExt->Bar0 + AEROVBLK_VIRTIO_PCI_DEVICE_CFG_OFFSET;
+  devExt->NotifyOffMultiplier = AEROVBLK_VIRTIO_PCI_NOTIFY_OFF_MULTIPLIER;
+  devExt->QueueNotifyOff = 0;
+
+  /* Validate queue 0 size (contract v1: 128). */
+  AEROVBLK_MMIO_WRITE16(devExt->CommonCfg + VIRTIO_PCI_COMMON_QUEUE_SELECT, (USHORT)AEROVBLK_QUEUE_INDEX);
+  hwQueueSize = AEROVBLK_MMIO_READ16(devExt->CommonCfg + VIRTIO_PCI_COMMON_QUEUE_SIZE);
+  if (hwQueueSize != (USHORT)AEROVBLK_QUEUE_SIZE) {
     return SP_RETURN_NOT_FOUND;
   }
 
-  hostFeatures = VirtioPciReadHostFeatures(&devExt->Vdev);
-
-  maxPhysBreaks = 17;
-  if (hostFeatures & VIRTIO_RING_F_INDIRECT_DESC) {
-    maxPhysBreaks = (ULONG)AEROVBLK_MAX_SG_ELEMENTS;
-  } else if (hwQueueSize > 2) {
-    maxPhysBreaks = (ULONG)(hwQueueSize - 2);
+  /* Validate required features are offered (contract v1). */
+  hostFeatures = AerovblkVirtioReadDeviceFeatures(devExt);
+  required = AEROVBLK_FEATURE_VERSION_1 | AEROVBLK_FEATURE_RING_INDIRECT_DESC | AEROVBLK_FEATURE_BLK_SEG_MAX | AEROVBLK_FEATURE_BLK_BLK_SIZE |
+             AEROVBLK_FEATURE_BLK_FLUSH;
+  if ((hostFeatures & required) != required) {
+    return SP_RETURN_NOT_FOUND;
   }
 
   RtlZeroMemory(&blkCfg, sizeof(blkCfg));
-  st = VirtioPciReadDeviceConfig(&devExt->Vdev, 0, &blkCfg, sizeof(blkCfg));
-  if (NT_SUCCESS(st) && (hostFeatures & VIRTIO_BLK_F_SEG_MAX) && blkCfg.SegMax != 0 && blkCfg.SegMax < maxPhysBreaks) {
+  AerovblkVirtioReadBlkConfig(devExt, &blkCfg);
+
+  maxPhysBreaks = (ULONG)AEROVBLK_MAX_SG_ELEMENTS;
+  if (blkCfg.SegMax != 0 && blkCfg.SegMax < maxPhysBreaks) {
     maxPhysBreaks = blkCfg.SegMax;
   }
 
@@ -812,7 +1043,11 @@ ULONG AerovblkHwFindAdapter(_In_ PVOID deviceExtension, _In_ PVOID hwContext, _I
   }
 
   devExt->LogicalSectorSize = AEROVBLK_LOGICAL_SECTOR_SIZE;
-  devExt->CapacitySectors = 0;
+  devExt->CapacitySectors = blkCfg.Capacity;
+  if (blkCfg.BlkSize >= AEROVBLK_LOGICAL_SECTOR_SIZE && (blkCfg.BlkSize % AEROVBLK_LOGICAL_SECTOR_SIZE) == 0) {
+    devExt->LogicalSectorSize = blkCfg.BlkSize;
+  }
+  devExt->SegMax = maxPhysBreaks;
   devExt->Removed = FALSE;
   RtlZeroMemory(&devExt->LastSense, sizeof(devExt->LastSense));
 
@@ -823,16 +1058,12 @@ ULONG AerovblkHwFindAdapter(_In_ PVOID deviceExtension, _In_ PVOID hwContext, _I
   configInfo->Master = TRUE;
   configInfo->CachesData = FALSE;
   alignment = AEROVBLK_LOGICAL_SECTOR_SIZE;
-  if (NT_SUCCESS(st) && (hostFeatures & VIRTIO_BLK_F_BLK_SIZE) && blkCfg.BlkSize >= AEROVBLK_LOGICAL_SECTOR_SIZE &&
-      (blkCfg.BlkSize % AEROVBLK_LOGICAL_SECTOR_SIZE) == 0 && ((blkCfg.BlkSize & (blkCfg.BlkSize - 1)) == 0)) {
+  if (blkCfg.BlkSize >= AEROVBLK_LOGICAL_SECTOR_SIZE && (blkCfg.BlkSize % AEROVBLK_LOGICAL_SECTOR_SIZE) == 0 &&
+      ((blkCfg.BlkSize & (blkCfg.BlkSize - 1)) == 0)) {
     alignment = blkCfg.BlkSize;
   }
 
   maxTransfer = 1024 * 1024;
-  if (NT_SUCCESS(st) && (hostFeatures & VIRTIO_BLK_F_SIZE_MAX) && blkCfg.SizeMax != 0 && blkCfg.SizeMax < maxTransfer &&
-      blkCfg.SizeMax >= AEROVBLK_LOGICAL_SECTOR_SIZE) {
-    maxTransfer = blkCfg.SizeMax;
-  }
   maxTransfer -= maxTransfer % AEROVBLK_LOGICAL_SECTOR_SIZE;
   if (maxTransfer == 0) {
     maxTransfer = AEROVBLK_LOGICAL_SECTOR_SIZE;
@@ -892,10 +1123,14 @@ SCSI_ADAPTER_CONTROL_STATUS AerovblkHwAdapterControl(_In_ PVOID deviceExtension,
 
     StorPortAcquireSpinLock(devExt, InterruptLock, &lock);
     AerovblkAbortOutstandingRequestsLocked(devExt);
-    VirtioQueueResetState(&devExt->Vq);
+    if (devExt->Vq != NULL) {
+      VirtqSplitReset(devExt->Vq);
+    }
     StorPortReleaseSpinLock(devExt, &lock);
 
-    VirtioPciReset(&devExt->Vdev);
+    if (devExt->CommonCfg != NULL) {
+      (void)AerovblkVirtioResetDevice(devExt);
+    }
     return ScsiAdapterControlSuccess;
   }
 
@@ -912,54 +1147,71 @@ BOOLEAN AerovblkHwInterrupt(_In_ PVOID deviceExtension) {
   PAEROVBLK_DEVICE_EXTENSION devExt;
   UCHAR isr;
   STOR_LOCK_HANDLE lock;
-  USHORT headId;
-  ULONG usedLen;
   PVOID ctxPtr;
+  UINT32 usedLen;
+  NTSTATUS st;
   PAEROVBLK_REQUEST_CONTEXT ctx;
   PSCSI_REQUEST_BLOCK srb;
   UCHAR statusByte;
 
   devExt = (PAEROVBLK_DEVICE_EXTENSION)deviceExtension;
 
-  isr = VirtioPciReadIsr(&devExt->Vdev);
+  if (devExt->IsrStatus == NULL) {
+    return FALSE;
+  }
+
+  /*
+   * Modern virtio-pci ISR byte (BAR0 + 0x2000). Read-to-ack.
+   * Return FALSE if 0 for shared interrupt line safety.
+   */
+  isr = AEROVBLK_MMIO_READ8(devExt->IsrStatus);
   if (isr == 0) {
     return FALSE;
   }
 
   StorPortAcquireSpinLock(devExt, InterruptLock, &lock);
 
-  while (VirtioQueuePopUsed(&devExt->Vq, &headId, &usedLen, &ctxPtr)) {
-    UNREFERENCED_PARAMETER(headId);
-    UNREFERENCED_PARAMETER(usedLen);
+  if (devExt->Vq != NULL) {
+    for (;;) {
+      st = VirtqSplitGetUsed(devExt->Vq, &ctxPtr, &usedLen);
+      if (st == STATUS_NOT_FOUND) {
+        break;
+      }
+      if (!NT_SUCCESS(st)) {
+        break;
+      }
 
-    ctx = (PAEROVBLK_REQUEST_CONTEXT)ctxPtr;
-    if (ctx == NULL) {
-      continue;
+      UNREFERENCED_PARAMETER(usedLen);
+
+      ctx = (PAEROVBLK_REQUEST_CONTEXT)ctxPtr;
+      if (ctx == NULL) {
+        continue;
+      }
+
+      srb = ctx->Srb;
+      ctx->Srb = NULL;
+
+      InsertTailList(&devExt->FreeRequestList, &ctx->Link);
+      devExt->FreeRequestCount++;
+
+      if (srb == NULL) {
+        continue;
+      }
+
+      statusByte = *ctx->StatusByte;
+      if (statusByte == VIRTIO_BLK_S_OK) {
+        AerovblkCompleteSrb(devExt, srb, SRB_STATUS_SUCCESS);
+        continue;
+      }
+
+      if (statusByte == VIRTIO_BLK_S_UNSUPP) {
+        AerovblkSetSense(devExt, srb, SCSI_SENSE_ILLEGAL_REQUEST, 0x20, 0x00);
+      } else {
+        AerovblkSetSense(devExt, srb, SCSI_SENSE_MEDIUM_ERROR, ctx->IsWrite ? 0x0C : 0x11, 0x00);
+      }
+
+      AerovblkCompleteSrb(devExt, srb, SRB_STATUS_ERROR | SRB_STATUS_AUTOSENSE_VALID);
     }
-
-    srb = ctx->Srb;
-    ctx->Srb = NULL;
-
-    InsertTailList(&devExt->FreeRequestList, &ctx->Link);
-    devExt->FreeRequestCount++;
-
-    if (srb == NULL) {
-      continue;
-    }
-
-    statusByte = *ctx->StatusByte;
-    if (statusByte == VIRTIO_BLK_S_OK) {
-      AerovblkCompleteSrb(devExt, srb, SRB_STATUS_SUCCESS);
-      continue;
-    }
-
-    if (statusByte == VIRTIO_BLK_S_UNSUPP) {
-      AerovblkSetSense(devExt, srb, SCSI_SENSE_ILLEGAL_REQUEST, 0x20, 0x00);
-    } else {
-      AerovblkSetSense(devExt, srb, SCSI_SENSE_MEDIUM_ERROR, ctx->IsWrite ? 0x0C : 0x11, 0x00);
-    }
-
-    AerovblkCompleteSrb(devExt, srb, SRB_STATUS_ERROR | SRB_STATUS_AUTOSENSE_VALID);
   }
 
   StorPortReleaseSpinLock(devExt, &lock);
@@ -1075,13 +1327,14 @@ BOOLEAN AerovblkHwStartIo(_In_ PVOID deviceExtension, _Inout_ PSCSI_REQUEST_BLOC
       return TRUE;
     }
 
-    if (bytes64 == 0 || bytes64 > 0xFFFFFFFFull || srb->DataTransferLength < (ULONG)bytes64) {
+    if (bytes64 == 0 || bytes64 > 0xFFFFFFFFull || (bytes64 % AEROVBLK_LOGICAL_SECTOR_SIZE) != 0 ||
+        srb->DataTransferLength != (ULONG)bytes64) {
       AerovblkSetSense(devExt, srb, SCSI_SENSE_ILLEGAL_REQUEST, 0x24, 0x00);
       AerovblkCompleteSrb(devExt, srb, SRB_STATUS_INVALID_REQUEST | SRB_STATUS_AUTOSENSE_VALID);
       return TRUE;
     }
 
-    if (devExt->CapacitySectors != 0 && virtioSector + sectorsLen > devExt->CapacitySectors) {
+    if (virtioSector + sectorsLen > devExt->CapacitySectors) {
       AerovblkSetSense(devExt, srb, SCSI_SENSE_ILLEGAL_REQUEST, 0x21, 0x00);
       AerovblkCompleteSrb(devExt, srb, SRB_STATUS_ERROR | SRB_STATUS_AUTOSENSE_VALID);
       return TRUE;
@@ -1129,13 +1382,13 @@ BOOLEAN AerovblkHwStartIo(_In_ PVOID deviceExtension, _Inout_ PSCSI_REQUEST_BLOC
       return TRUE;
     }
 
-    if (bytes64 > 0xFFFFFFFFull || srb->DataTransferLength < (ULONG)bytes64) {
+    if (bytes64 > 0xFFFFFFFFull || (bytes64 % AEROVBLK_LOGICAL_SECTOR_SIZE) != 0 || srb->DataTransferLength != (ULONG)bytes64) {
       AerovblkSetSense(devExt, srb, SCSI_SENSE_ILLEGAL_REQUEST, 0x24, 0x00);
       AerovblkCompleteSrb(devExt, srb, SRB_STATUS_INVALID_REQUEST | SRB_STATUS_AUTOSENSE_VALID);
       return TRUE;
     }
 
-    if (devExt->CapacitySectors != 0 && virtioSector + sectorsLen > devExt->CapacitySectors) {
+    if (virtioSector + sectorsLen > devExt->CapacitySectors) {
       AerovblkSetSense(devExt, srb, SCSI_SENSE_ILLEGAL_REQUEST, 0x21, 0x00);
       AerovblkCompleteSrb(devExt, srb, SRB_STATUS_ERROR | SRB_STATUS_AUTOSENSE_VALID);
       return TRUE;
