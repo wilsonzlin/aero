@@ -611,7 +611,7 @@ WddmAllocationHandle get_wddm_allocation_from_create_resource(const D3D9DDIARG_C
     return 0;
   }
 
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
   return extract_primary_wddm_allocation_handle(*args);
 #else
   return static_cast<WddmAllocationHandle>(args->wddm_hAllocation);
@@ -4429,7 +4429,7 @@ static HRESULT device_open_resource_impl(
 
   const void* priv_data = pOpenResource->pPrivateDriverData;
   const uint32_t priv_data_size =
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
       pOpenResource->PrivateDriverDataSize;
 #else
       pOpenResource->private_driver_data_size;
@@ -4459,7 +4459,7 @@ static HRESULT device_open_resource_impl(
   res->backing_alloc_id = priv.alloc_id;
   res->backing_offset_bytes = 0;
 
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
   res->wddm_hAllocation = get_wddm_allocation_from_openresource(pOpenResource);
 #else
   res->wddm_hAllocation = static_cast<WddmAllocationHandle>(pOpenResource->wddm_hAllocation);
