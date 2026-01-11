@@ -72,6 +72,7 @@ pkg/
 *.proptest-regressions
 *.wasm
 *.wat
+.cargo-home/
 
 # NPM workspaces use a single repo-root lockfile; do not commit per-package lockfiles.
 **/package-lock.json

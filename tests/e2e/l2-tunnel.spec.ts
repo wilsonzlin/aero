@@ -6,6 +6,7 @@ import { once } from 'node:events';
 import net from 'node:net';
 
 import { L2_TUNNEL_SUBPROTOCOL } from '../../web/src/shared/l2TunnelProtocol.ts';
+import { startRustL2Proxy } from '../../tools/rust_l2_proxy.js';
 
 type UdpEchoServer = {
   port: number;
@@ -158,19 +159,13 @@ async function startL2Proxy(opts: {
   sessionSecret: string;
   udpEchoPort: number;
 }): Promise<ServerProcess> {
-  const env: NodeJS.ProcessEnv = {
-    ...process.env,
-    RUST_LOG: process.env.RUST_LOG ?? 'error',
+  const proxy = await startRustL2Proxy({
     AERO_L2_PROXY_LISTEN_ADDR: `127.0.0.1:${opts.port}`,
-    // Prefer the shared `ALLOWED_ORIGINS` env var name (also used by the gateway and WebRTC relay).
-    // Explicitly clear `AERO_L2_ALLOWED_ORIGINS` to avoid inheriting developer overrides while still
-    // exercising the fallback behavior.
     AERO_L2_ALLOWED_ORIGINS: '',
     ALLOWED_ORIGINS: opts.allowedOrigin,
     AERO_L2_ALLOWED_ORIGINS_EXTRA: '',
     AERO_L2_ALLOWED_HOSTS: '',
     AERO_L2_TRUST_PROXY_HOST: '',
-    // Ensure this test doesn't inherit developer auth-mode overrides.
     AERO_L2_AUTH_MODE: 'cookie',
     AERO_L2_API_KEY: '',
     AERO_L2_JWT_SECRET: '',
@@ -178,48 +173,30 @@ async function startL2Proxy(opts: {
     SESSION_SECRET: '',
     AERO_GATEWAY_SESSION_SECRET: '',
     AERO_L2_TOKEN: '',
-    // Ensure this test doesn't inherit local developer quotas/keepalive settings.
     AERO_L2_OPEN: '0',
     AERO_L2_MAX_CONNECTIONS: '0',
     AERO_L2_MAX_BYTES_PER_CONNECTION: '0',
     AERO_L2_MAX_FRAMES_PER_SECOND: '0',
     AERO_L2_PING_INTERVAL_MS: '0',
-    // Deterministic forward maps so the test never depends on external DNS or network.
     AERO_L2_ALLOWED_UDP_PORTS: String(opts.udpEchoPort),
     AERO_L2_UDP_FORWARD: `203.0.113.11:${opts.udpEchoPort}=127.0.0.1:${opts.udpEchoPort}`,
-  };
-
-  // Some environments configure a rustc wrapper (e.g. `sccache`) via global Cargo config.
-  // That can make local/agent runs flaky when the wrapper isn't available. Disable it by
-  // default unless explicitly opted into via env vars.
-  if (env.RUSTC_WRAPPER === undefined && env.CARGO_BUILD_RUSTC_WRAPPER === undefined) {
-    env.RUSTC_WRAPPER = '';
-  }
-
-  const proc = spawn('cargo', ['run', '--locked', '--quiet', '-p', 'aero-l2-proxy'], {
-    detached: true,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    env,
   });
-  proc.stdout.resume();
-  proc.stderr.resume();
 
-  const origin = `http://127.0.0.1:${opts.port}`;
+  const origin = `http://127.0.0.1:${proxy.port}`;
   await waitForHttpOk(`${origin}/readyz`, 300_000);
 
   return {
     origin,
-    proc,
+    proc: proxy.proc as ChildProcessWithoutNullStreams,
     close: async () => {
-      await killProcess(proc, { killGroup: true });
+      await proxy.close();
     },
   };
 }
 
 test.describe.serial('l2 tunnel (cookie auth)', () => {
   test.skip(({ browserName }) => browserName !== 'chromium', 'l2 tunnel regression test runs on Chromium only');
-  // This spec spawns `cargo run --locked -p aero-l2-proxy`, which may need to compile the
-  // Rust crate on first run. Give it ample time so CI isn't flaky on cold caches.
+  // This spec may need to compile `aero-l2-proxy` on first run. Give it ample time so CI isn't flaky on cold caches.
   test.describe.configure({ timeout: 600_000 });
 
   test('cookie-authenticated WebSocket /l2 negotiates subprotocol and relays frames', async ({ page }) => {

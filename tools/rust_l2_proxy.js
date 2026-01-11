@@ -169,6 +169,12 @@ async function ensureProxyBuilt() {
       await access(binPath);
     });
   })();
+  try {
+    await buildPromise;
+  } catch (err) {
+    buildPromise = null;
+    throw err;
+  }
   return buildPromise;
 }
 
@@ -409,8 +415,11 @@ export async function startRustL2Proxy(env = {}) {
   });
 
   const listen = await waitForListeningAddr(child);
+  child.stdout?.resume();
+  child.stderr?.resume();
 
   return {
+    proc: child,
     port: listen.port,
     async close() {
       await stopProcess(child);
