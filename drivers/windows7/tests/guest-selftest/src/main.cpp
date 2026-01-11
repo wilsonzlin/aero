@@ -155,6 +155,15 @@ static size_t BoundedStrLen(const char* s, size_t max_len) {
   return i;
 }
 
+static size_t BoundedWcsLen(const wchar_t* s, size_t max_len) {
+  if (!s) return 0;
+  size_t i = 0;
+  for (; i < max_len; i++) {
+    if (s[i] == L'\0') break;
+  }
+  return i;
+}
+
 template <typename T>
 class ComPtr {
  public:
@@ -391,12 +400,20 @@ static std::vector<std::wstring> GetDevicePropertyMultiSz(HDEVINFO devinfo, SP_D
 
   const wchar_t* p = reinterpret_cast<const wchar_t*>(buf.data());
   const size_t total_wchars = required / sizeof(wchar_t);
-  (void)total_wchars;
+  const wchar_t* end = p + total_wchars;
+
+  if (reg_type == REG_SZ) {
+    const size_t len = BoundedWcsLen(p, total_wchars);
+    if (len == 0) return {};
+    return {std::wstring(p, p + len)};
+  }
 
   std::vector<std::wstring> out;
-  while (*p) {
-    out.emplace_back(p);
-    p += wcslen(p) + 1;
+  while (p < end && *p) {
+    const size_t len = BoundedWcsLen(p, static_cast<size_t>(end - p));
+    if (len == 0 || p + len >= end) break;
+    out.emplace_back(p, p + len);
+    p += len + 1;
   }
   return out;
 }
