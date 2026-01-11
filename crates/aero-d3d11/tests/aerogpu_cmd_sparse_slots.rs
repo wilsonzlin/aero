@@ -71,23 +71,26 @@ fn patch_semantic_case_insensitive(mut dxbc: Vec<u8>) -> Vec<u8> {
     // ensure the hashing canonicalizes appropriately.
     //
     // Keep lengths identical so the DXBC container remains structurally valid.
-    for (from, to) in [
+    for (upper, lower) in [
         (b"POSITION\0".as_slice(), b"position\0".as_slice()),
         (b"COLOR\0".as_slice(), b"color\0".as_slice()),
     ] {
-        assert_eq!(from.len(), to.len());
+        assert_eq!(upper.len(), lower.len());
         let mut replaced = 0usize;
-        for off in 0..=dxbc.len().saturating_sub(from.len()) {
-            if &dxbc[off..off + from.len()] == from {
-                dxbc[off..off + from.len()].copy_from_slice(to);
+        for off in 0..=dxbc.len().saturating_sub(upper.len()) {
+            if &dxbc[off..off + upper.len()] == upper {
+                dxbc[off..off + upper.len()].copy_from_slice(lower);
                 replaced += 1;
             }
         }
-        assert!(
-            replaced > 0,
-            "expected to find semantic string {:?} in DXBC fixture",
-            std::str::from_utf8(from).unwrap_or("<non-utf8>")
-        );
+        if replaced == 0 {
+            // If the fixture was already authored with lowercase semantics, keep it as-is.
+            assert!(
+                dxbc.windows(lower.len()).any(|w| w == lower),
+                "expected to find semantic string {:?} in DXBC fixture",
+                std::str::from_utf8(upper).unwrap_or("<non-utf8>")
+            );
+        }
     }
 
     dxbc
