@@ -116,6 +116,56 @@ for (const dir of workspaceDirs) {
   }
 }
 
+function checkDockerfileNodeFrom(fileRel) {
+  const filePath = path.join(repoRoot, fileRel);
+  if (!fs.existsSync(filePath)) return;
+
+  const lines = fs.readFileSync(filePath, "utf8").split(/\r?\n/);
+  for (let i = 0; i < lines.length; i += 1) {
+    const match = lines[i].match(/^\s*FROM\s+node:(\d+\.\d+\.\d+)\b/);
+    if (!match) continue;
+    const version = match[1];
+    if (version !== pinnedNode) {
+      console.error(`error: Dockerfile Node version is out of sync with .nvmrc`);
+      console.error(`- file: ${rel(filePath)}:${i + 1}`);
+      console.error(`- found: ${version}`);
+      console.error(`- expected: ${pinnedNode}`);
+      process.exit(1);
+    }
+  }
+}
+
+function checkDockerfileArgNodeVersion(fileRel) {
+  const filePath = path.join(repoRoot, fileRel);
+  if (!fs.existsSync(filePath)) return;
+
+  const lines = fs.readFileSync(filePath, "utf8").split(/\r?\n/);
+  for (let i = 0; i < lines.length; i += 1) {
+    const match = lines[i].match(/^\s*ARG\s+NODE_VERSION\s*=\s*(\d+\.\d+\.\d+)\s*$/);
+    if (!match) continue;
+    const version = match[1];
+    if (version !== pinnedNode) {
+      console.error(`error: Dockerfile NODE_VERSION arg is out of sync with .nvmrc`);
+      console.error(`- file: ${rel(filePath)}:${i + 1}`);
+      console.error(`- found: ${version}`);
+      console.error(`- expected: ${pinnedNode}`);
+      process.exit(1);
+    }
+    return;
+  }
+
+  console.error(`error: Dockerfile is missing a default ARG NODE_VERSION=<pinned> declaration`);
+  console.error(`- file: ${rel(filePath)}`);
+  console.error(`- expected: ARG NODE_VERSION=${pinnedNode}`);
+  process.exit(1);
+}
+
+// Dockerfiles that embed a Node version should stay in sync with `.nvmrc`, otherwise
+// local builds and CI may run subtly different toolchains.
+checkDockerfileArgNodeVersion("backend/aero-gateway/Dockerfile");
+checkDockerfileNodeFrom("server/Dockerfile");
+checkDockerfileNodeFrom("tools/net-proxy-server/Dockerfile");
+
 if (!fs.existsSync(workflowsDir)) {
   console.error(`error: workflows directory not found: ${rel(workflowsDir)}`);
   process.exit(1);
