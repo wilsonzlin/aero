@@ -58,9 +58,12 @@ The supported AeroGPU Windows driver stack binds to the canonical versioned ABI:
 
 - `PCI\VEN_A3A0&DEV_0001`
 
-The deprecated legacy bring-up ABI uses a different HWID and is intentionally not part of the
-default Guest Tools config. If you need legacy bring-up, use the legacy AeroGPU INFs under
-`drivers/aerogpu/packaging/win7/legacy/`, build the emulator with the legacy device model enabled
-(feature `emulator/aerogpu-legacy`), and supply a custom `devices.cmd`.
+The deprecated legacy bring-up ABI uses a different HWID (see
+`drivers/aerogpu/protocol/legacy/aerogpu_protocol_legacy.h`).
+
+Guest Tools includes **both** the canonical and legacy AeroGPU HWIDs in `devices.cmd` because the
+emulator/device model may expose either (for example when the legacy AeroGPU device model is enabled
+via the `emulator/aerogpu-legacy` feature). If you need legacy bring-up, you must still use the
+legacy AeroGPU INFs under `drivers/aerogpu/packaging/win7/legacy/`.
 
 The older 1AE0-family vendor ID is deprecated/stale and should not be used.

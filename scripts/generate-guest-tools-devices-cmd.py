@@ -155,11 +155,9 @@ def _render_devices_cmd(contract: dict[str, Any], devices: dict[str, dict[str, A
     lines.append('set "AERO_VIRTIO_SND_SYS="')
     lines.append(f"set AERO_VIRTIO_SND_HWIDS={' '.join(_cmd_quote(h) for h in snd_hwids)}")
     lines.append("rem")
-    lines.append("rem AeroGPU HWIDs (canonical):")
-    lines.append(r"rem   - PCI\VEN_A3A0&DEV_0001")
-    lines.append(
-        r"rem Legacy AeroGPU device models are intentionally out of scope for Guest Tools; use drivers/aerogpu/packaging/win7/legacy with emulator/aerogpu-legacy if needed."
-    )
+    lines.append("rem AeroGPU HWIDs:")
+    lines.append(r"rem   - Canonical: PCI\VEN_A3A0&DEV_0001")
+    lines.append(r"rem   - Legacy (deprecated): PCI\VEN_1AED&DEV_0001")
     lines.append(f'set "AERO_GPU_SERVICE={gpu_service}"')
     lines.append(f"set AERO_GPU_HWIDS={' '.join(_cmd_quote(h) for h in gpu_hwids)}")
     lines.append("")
