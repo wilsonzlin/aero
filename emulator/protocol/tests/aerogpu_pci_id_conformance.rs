@@ -128,6 +128,10 @@ fn aerogpu_pci_ids_match_repo_contracts() {
         parse_c_define_u16(&legacy_header, &legacy_header_path, "AEROGPU_PCI_DEVICE_ID");
     let legacy_hwid = format!("PCI\\VEN_{legacy_vendor_id:04X}&DEV_{legacy_device_id:04X}");
 
+    // The shipped driver package + guest-tools target the canonical, versioned ABI (A3A0:0001).
+    // The legacy bring-up device model still exists for debugging, but requires enabling the
+    // legacy emulator device model feature (`emulator/aerogpu-legacy`) and using the legacy INFs
+    // under `drivers/aerogpu/packaging/win7/legacy/` (or an equivalent custom INF).
     for relative_path in [
         "drivers/aerogpu/packaging/win7/aerogpu.inf",
         "drivers/aerogpu/packaging/win7/aerogpu_dx11.inf",
