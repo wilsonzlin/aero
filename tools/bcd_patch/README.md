@@ -13,7 +13,8 @@ REGF hives without any Windows-only dependencies.
 ## Usage
 
 ```bash
-# Run directly if `bcd_patch` is on PATH (e.g. installed via `cargo install --locked`):
+# Run directly if `bcd_patch` is on PATH (e.g. installed from this repo):
+# `cargo install --locked --path tools/bcd_patch`
 bcd_patch --store boot/BCD
 
 # Explicitly disable one of the flags:
