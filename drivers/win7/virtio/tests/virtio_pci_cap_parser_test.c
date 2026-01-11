@@ -144,6 +144,21 @@ static void expect_str_not_unknown(const char *name, const char *got) {
     fprintf(stderr, "FAIL %s: got=%s\n", name, (got != NULL) ? got : "(null)");
 }
 
+static void test_aero_layout_policy_from_build(void) {
+    virtio_pci_layout_policy_t got;
+    virtio_pci_layout_policy_t want;
+
+    got = virtio_pci_aero_layout_policy_from_build();
+
+#if VIRTIO_CORE_ENFORCE_AERO_MMIO_LAYOUT
+    want = VIRTIO_PCI_LAYOUT_POLICY_AERO_STRICT;
+#else
+    want = VIRTIO_PCI_LAYOUT_POLICY_PERMISSIVE;
+#endif
+
+    expect_u32("aero_layout_policy_from_build", (uint32_t)got, (uint32_t)want);
+}
+
 static void test_valid_all_caps(void) {
     uint8_t cfg[256];
     uint64_t bars[VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT];
@@ -2059,6 +2074,7 @@ static void test_result_str_coverage(void) {
 }
 
 int main(void) {
+    test_aero_layout_policy_from_build();
     test_valid_all_caps();
     test_contract_v1_parse_fixed_layout_ok();
     test_contract_v1_parse_notify_cap_len_larger_ok();

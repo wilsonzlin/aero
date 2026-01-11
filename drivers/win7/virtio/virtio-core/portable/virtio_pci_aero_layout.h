@@ -30,6 +30,17 @@ typedef enum virtio_pci_layout_policy {
     VIRTIO_PCI_LAYOUT_POLICY_AERO_STRICT = 1,
 } virtio_pci_layout_policy_t;
 
+/*
+ * Returns the layout policy selected by the build.
+ *
+ * This is a convenience helper for transports that want a single compile-time
+ * toggle controlling permissive vs strict Aero layout enforcement.
+ *
+ * - Default: permissive
+ * - Define VIRTIO_CORE_ENFORCE_AERO_MMIO_LAYOUT=1 to enable strict mode
+ */
+virtio_pci_layout_policy_t virtio_pci_aero_layout_policy_from_build(void);
+
 typedef struct virtio_pci_bar_info {
     /*
      * Whether the BAR exists and has a known length (e.g. a matched resource).
@@ -70,4 +81,3 @@ const char *virtio_pci_aero_layout_validate_result_str(virtio_pci_aero_layout_va
 #endif
 
 #endif /* VIRTIO_PCI_AERO_LAYOUT_H_ */
-

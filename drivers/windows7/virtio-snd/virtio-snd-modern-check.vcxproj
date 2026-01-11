@@ -57,6 +57,7 @@
   <ItemGroup>
     <ClCompile Include="..\virtio\common\src\virtio_pci_modern_wdm.c" />
     <ClCompile Include="..\virtio\common\src\virtio_pci_intx_wdm.c" />
+    <ClCompile Include="..\..\win7\virtio\virtio-core\portable\virtio_pci_aero_layout.c" />
     <ClCompile Include="..\..\win7\virtio\virtio-core\portable\virtio_pci_cap_parser.c" />
   </ItemGroup>
 

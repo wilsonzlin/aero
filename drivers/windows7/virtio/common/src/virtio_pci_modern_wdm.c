@@ -3,6 +3,7 @@
 #include "virtio_pci_modern_wdm.h"
 
 #include "../../../../win7/virtio/virtio-core/portable/virtio_pci_cap_parser.h"
+#include "../../../../win7/virtio/virtio-core/portable/virtio_pci_aero_layout.h"
 
 #ifndef PCI_WHICHSPACE_CONFIG
 #define PCI_WHICHSPACE_CONFIG 0
@@ -444,21 +445,6 @@ VirtioPciModernWdmInit(_In_ PDEVICE_OBJECT LowerDeviceObject, _Out_ PVIRTIO_PCI_
         return status;
     }
 
-    /*
-     * Aero contract v1 fixes all capabilities to BAR0. Keep the mapping logic
-     * generic, but reject non-conforming devices up front.
-     */
-    if (Dev->Caps.CommonCfg.Bar != 0 || Dev->Caps.NotifyCfg.Bar != 0 || Dev->Caps.IsrCfg.Bar != 0 || Dev->Caps.DeviceCfg.Bar != 0) {
-        VIRTIO_PCI_MODERN_WDM_PRINT(
-            "Device does not conform to Aero contract: expected all virtio caps in BAR0 (common=%u notify=%u isr=%u dev=%u)\n",
-            (UINT)Dev->Caps.CommonCfg.Bar,
-            (UINT)Dev->Caps.NotifyCfg.Bar,
-            (UINT)Dev->Caps.IsrCfg.Bar,
-            (UINT)Dev->Caps.DeviceCfg.Bar);
-        VirtioPciModernWdmUninit(Dev);
-        return STATUS_NOT_SUPPORTED;
-    }
-
     return STATUS_SUCCESS;
 }
 
@@ -691,6 +677,59 @@ VirtioPciModernWdmMapBars(_Inout_ PVIRTIO_PCI_MODERN_WDM_DEVICE Dev,
     Dev->IsrStatus = (volatile UCHAR *)((PUCHAR)Dev->Bars[Dev->Caps.IsrCfg.Bar].Va + Dev->Caps.IsrCfg.Offset);
 
     Dev->DeviceCfg = (volatile UCHAR *)((PUCHAR)Dev->Bars[Dev->Caps.DeviceCfg.Bar].Va + Dev->Caps.DeviceCfg.Offset);
+
+    /*
+     * Optional strict Aero MMIO layout enforcement (docs/windows7-virtio-driver-contract.md §1.4).
+     *
+     * By default (permissive policy), accept any valid virtio-pci modern capability placement
+     * (e.g. QEMU's multi-BAR layout). When strict mode is enabled at build time
+     * (VIRTIO_CORE_ENFORCE_AERO_MMIO_LAYOUT=1), validate BAR0 placement/offsets and
+     * notify_off_multiplier.
+     */
+    {
+        virtio_pci_parsed_caps_t caps;
+        virtio_pci_bar_info_t bars[VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT];
+        virtio_pci_aero_layout_validate_result_t layoutRes;
+        virtio_pci_layout_policy_t policy;
+        ULONG i;
+
+        RtlZeroMemory(&caps, sizeof(caps));
+        RtlZeroMemory(bars, sizeof(bars));
+
+        caps.common_cfg.bar = (uint8_t)Dev->Caps.CommonCfg.Bar;
+        caps.common_cfg.offset = (uint32_t)Dev->Caps.CommonCfg.Offset;
+        caps.common_cfg.length = (uint32_t)Dev->Caps.CommonCfg.Length;
+
+        caps.notify_cfg.bar = (uint8_t)Dev->Caps.NotifyCfg.Bar;
+        caps.notify_cfg.offset = (uint32_t)Dev->Caps.NotifyCfg.Offset;
+        caps.notify_cfg.length = (uint32_t)Dev->Caps.NotifyCfg.Length;
+
+        caps.isr_cfg.bar = (uint8_t)Dev->Caps.IsrCfg.Bar;
+        caps.isr_cfg.offset = (uint32_t)Dev->Caps.IsrCfg.Offset;
+        caps.isr_cfg.length = (uint32_t)Dev->Caps.IsrCfg.Length;
+
+        caps.device_cfg.bar = (uint8_t)Dev->Caps.DeviceCfg.Bar;
+        caps.device_cfg.offset = (uint32_t)Dev->Caps.DeviceCfg.Offset;
+        caps.device_cfg.length = (uint32_t)Dev->Caps.DeviceCfg.Length;
+
+        caps.notify_off_multiplier = (uint32_t)Dev->Caps.NotifyOffMultiplier;
+
+        for (i = 0; i < VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT && i < VIRTIO_PCI_MAX_BARS; i++) {
+            bars[i].present = (uint8_t)((Dev->Bars[i].Present && Dev->Bars[i].Length != 0) ? 1 : 0);
+            bars[i].is_memory = (uint8_t)(Dev->Bars[i].IsMemory ? 1 : 0);
+            bars[i].length = (uint64_t)Dev->Bars[i].Length;
+        }
+
+        policy = virtio_pci_aero_layout_policy_from_build();
+        layoutRes = virtio_pci_validate_aero_pci_layout(&caps, bars, policy);
+        if (layoutRes != VIRTIO_PCI_AERO_LAYOUT_VALIDATE_OK) {
+            VIRTIO_PCI_MODERN_WDM_PRINT("Aero MMIO layout validation failed: %s (%d)\n",
+                                        virtio_pci_aero_layout_validate_result_str(layoutRes),
+                                        (int)layoutRes);
+            VirtioPciModernWdmUnmapBars(Dev);
+            return STATUS_NOT_SUPPORTED;
+        }
+    }
 
     return STATUS_SUCCESS;
 }

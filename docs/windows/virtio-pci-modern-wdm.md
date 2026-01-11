@@ -246,13 +246,16 @@ The helpers are thin wrappers over the standard WDM patterns, which is useful to
   - reads PCI Revision ID and enforces contract v1 (`0x01`)
   - reads PCI BAR programming and parses the virtio vendor capability list using
     `drivers/win7/virtio/virtio-core/portable/virtio_pci_cap_parser.c`
-  - enforces contract v1 placement (all required virtio caps in BAR0)
+  - records the required capability regions (COMMON/NOTIFY/ISR/DEVICE) so BARs can be mapped later
+    (by default, capability placement is permissive and QEMU’s multi-BAR layout is accepted)
 
 - `VirtioPciModernWdmMapBars`:
   - matches BAR memory resources from `IRP_MN_START_DEVICE`’s `CM_RESOURCE_LIST`
   - maps MMIO with `MmMapIoSpace(MmNonCached)`
   - populates `Dev->CommonCfg`, `Dev->NotifyBase`, `Dev->IsrStatus`, `Dev->DeviceCfg`,
     plus `Dev->NotifyOffMultiplier`
+  - (optional) if `VIRTIO_CORE_ENFORCE_AERO_MMIO_LAYOUT=1` is set, validates the Aero contract v1
+    fixed BAR0 layout (docs/windows7-virtio-driver-contract.md §1.4) and fails init if it does not match
 
 - `VirtioIntxConnect`:
   - connects an INTx ISR via `IoConnectInterrupt` using the *translated* interrupt resource

@@ -26,7 +26,8 @@ SOURCES= \
     topology.c \
     wavert.c \
     pci_interface.c \
-    virtio_pci_modern_wdm.c \
+    ..\..\virtio\common\src\virtio_pci_modern_wdm.c \
+    ..\..\virtio\common\src\virtio_pci_intx_wdm.c \
     virtio_snd_proto.c \
     virtiosnd_control.c \
     virtiosnd_dma.c \
@@ -40,4 +41,5 @@ SOURCES= \
     virtiosnd_sg_tx.c \
     ..\..\virtio\common\src\virtio_pci_intx_wdm.c \
     ..\..\..\windows\virtio\common\virtqueue_split.c \
+    ..\..\..\win7\virtio\virtio-core\portable\virtio_pci_aero_layout.c \
     ..\..\..\win7\virtio\virtio-core\portable\virtio_pci_cap_parser.c

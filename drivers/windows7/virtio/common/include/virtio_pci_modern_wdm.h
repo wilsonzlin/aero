@@ -36,6 +36,18 @@
 #define VIRTIO_PCI_MODERN_WDM_ENABLE_DIAGNOSTICS 0
 #endif
 
+/*
+ * Aero virtio-pci modern fixed MMIO layout enforcement.
+ *
+ * By default, the transport is permissive and accepts any valid virtio-pci modern
+ * capability placement (e.g. QEMU's multi-BAR layout). Define
+ * VIRTIO_CORE_ENFORCE_AERO_MMIO_LAYOUT=1 to require the Aero contract v1 fixed
+ * BAR0 layout (docs/windows7-virtio-driver-contract.md §1.4).
+ */
+#ifndef VIRTIO_CORE_ENFORCE_AERO_MMIO_LAYOUT
+#define VIRTIO_CORE_ENFORCE_AERO_MMIO_LAYOUT 0
+#endif
+
 #if VIRTIO_PCI_MODERN_WDM_ENABLE_DIAGNOSTICS
 #define VIRTIO_PCI_MODERN_WDM_PRINT(...) \
     DbgPrintEx(DPFLTR_IHVDRIVER_ID, DPFLTR_INFO_LEVEL, "[virtio-pci-modern-wdm] " __VA_ARGS__)

@@ -39,14 +39,15 @@ LEGACY_ALIAS_INF_DISABLED = (
     REPO_ROOT / "drivers/windows7/virtio-snd/inf/virtio-snd.inf.disabled"
 )
 
-# These are project-relative paths (relative to drivers/windows7/virtio-snd/).
-REQUIRED_SOURCES = {
-    "src/virtiosnd_hw.c",
-    "src/virtio_pci_modern_wdm.c",
-    "src/virtiosnd_intx.c",
-    "src/virtiosnd_control.c",
-    "src/virtiosnd_tx.c",
-    "src/backend_virtio.c",
+# These are repo-root-relative paths.
+REQUIRED_REPO_SOURCES = {
+    "drivers/windows7/virtio-snd/src/virtiosnd_hw.c",
+    "drivers/windows7/virtio/common/src/virtio_pci_modern_wdm.c",
+    "drivers/windows7/virtio/common/src/virtio_pci_intx_wdm.c",
+    "drivers/windows7/virtio-snd/src/virtiosnd_intx.c",
+    "drivers/windows7/virtio-snd/src/virtiosnd_control.c",
+    "drivers/windows7/virtio-snd/src/virtiosnd_tx.c",
+    "drivers/windows7/virtio-snd/src/backend_virtio.c",
 }
 
 # These are project-relative paths (relative to drivers/windows7/virtio-snd/).
@@ -251,7 +252,7 @@ def extract_inf_ntmpdriver_optional(inf_path: Path) -> str | None:
 def main() -> None:
     project_rel, repo_rel, compiled_paths = parse_vcxproj_compiled_sources(VCXPROJ)
 
-    missing = sorted(p for p in REQUIRED_SOURCES if p not in project_rel)
+    missing = sorted(p for p in REQUIRED_REPO_SOURCES if p not in repo_rel)
     if missing:
         fail(
             "virtio-snd.vcxproj is missing required modern sources:\n"

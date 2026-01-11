@@ -4,7 +4,6 @@
 
 #include "trace.h"
 #include "virtiosnd.h"
-#include "virtio_pci_modern_wdm.h"
 #include "virtiosnd_queue_split.h"
 
 /*
@@ -150,16 +149,6 @@ VirtioSndQueueSplitKick(_In_ void* ctx)
         KeMemoryBarrier();
 
         addr = qs->NotifyAddr;
-        if (addr == NULL && qs->NotifyBase != NULL && qs->NotifyOffMultiplier != 0) {
-            ULONGLONG offset64;
-            ULONG_PTR offset;
-
-            offset64 = (ULONGLONG)qs->QueueNotifyOff * (ULONGLONG)qs->NotifyOffMultiplier;
-            if (qs->NotifyLength != 0 && offset64 + sizeof(UINT16) <= (ULONGLONG)qs->NotifyLength) {
-                offset = (ULONG_PTR)offset64;
-                addr = (volatile UINT16*)(qs->NotifyBase + offset);
-            }
-        }
         if (addr != NULL) {
             WRITE_REGISTER_USHORT((volatile USHORT*)addr, qs->QueueIndex);
         }
@@ -222,10 +211,7 @@ VirtioSndQueueSplitCreate(
     USHORT queue_size,
     BOOLEAN event_idx,
     BOOLEAN indirect,
-    volatile UCHAR* notify_base,
-    ULONG notify_off_multiplier,
-    SIZE_T notify_length,
-    USHORT queue_notify_off,
+    volatile UINT16* notify_addr,
     VIRTIOSND_QUEUE* out_queue,
     UINT64* out_desc_pa,
     UINT64* out_avail_pa,
@@ -265,10 +251,7 @@ VirtioSndQueueSplitCreate(
 
     qs->QueueIndex = queue_index;
     qs->QueueSize = queue_size;
-    qs->NotifyBase = notify_base;
-    qs->NotifyOffMultiplier = notify_off_multiplier;
-    qs->NotifyLength = notify_length;
-    qs->QueueNotifyOff = queue_notify_off;
+    qs->NotifyAddr = notify_addr;
 
     if (event_idx) {
         /* Aero contract v1 does not negotiate EVENT_IDX. */
@@ -281,19 +264,7 @@ VirtioSndQueueSplitCreate(
         goto Fail;
     }
 
-    if (notify_base != NULL && notify_off_multiplier != 0) {
-        ULONGLONG offset64;
-        ULONG_PTR offset;
-
-        offset64 = (ULONGLONG)queue_notify_off * (ULONGLONG)notify_off_multiplier;
-        if (notify_length == 0 || offset64 + sizeof(UINT16) > (ULONGLONG)notify_length) {
-            status = STATUS_DEVICE_CONFIGURATION_ERROR;
-            goto Fail;
-        }
-
-        offset = (ULONG_PTR)offset64;
-        qs->NotifyAddr = (volatile UINT16*)(notify_base + offset);
-    } else {
+    if (notify_addr == NULL) {
         status = STATUS_INVALID_DEVICE_STATE;
         goto Fail;
     }

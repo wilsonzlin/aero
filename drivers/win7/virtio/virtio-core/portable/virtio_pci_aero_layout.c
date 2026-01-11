@@ -1,5 +1,9 @@
 #include "virtio_pci_aero_layout.h"
 
+#ifndef VIRTIO_CORE_ENFORCE_AERO_MMIO_LAYOUT
+#define VIRTIO_CORE_ENFORCE_AERO_MMIO_LAYOUT 0
+#endif
+
 enum {
     VIRTIO_PCI_AERO_BAR0_MIN_LEN = 0x4000u,
 
@@ -16,6 +20,14 @@ enum {
     VIRTIO_PCI_AERO_DEVICE_OFF = 0x3000u,
     VIRTIO_PCI_AERO_DEVICE_MIN_LEN = 0x0100u,
 };
+
+virtio_pci_layout_policy_t virtio_pci_aero_layout_policy_from_build(void) {
+#if VIRTIO_CORE_ENFORCE_AERO_MMIO_LAYOUT
+    return VIRTIO_PCI_LAYOUT_POLICY_AERO_STRICT;
+#else
+    return VIRTIO_PCI_LAYOUT_POLICY_PERMISSIVE;
+#endif
+}
 
 static int virtio_pci_aero_cap_matches(
     const virtio_pci_cap_region_t *cap,
@@ -119,4 +131,3 @@ const char *virtio_pci_aero_layout_validate_result_str(virtio_pci_aero_layout_va
             return "UNKNOWN";
     }
 }
-

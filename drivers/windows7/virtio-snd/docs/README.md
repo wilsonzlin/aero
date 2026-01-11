@@ -110,14 +110,19 @@ Virtio backend (AERO-W7-VIRTIO v1 modern transport):
 * `include/backend.h` — WaveRT “backend” interface used by `wavert.c`
 * `src/backend_virtio.c` — virtio-snd backend implementation (PortCls ↔ virtio glue)
 * `src/virtiosnd_hw.c` — virtio-snd WDM bring-up + queue ownership
-* `src/virtio_pci_modern_wdm.c` / `src/pci_interface.c` — virtio-pci modern transport (PCI caps, BAR0 mapping, feature negotiation, INTx)
+* Shared virtio-pci modern transport:
+  - `drivers/windows7/virtio/common/src/virtio_pci_modern_wdm.c`
+* INTx integration:
+  - `drivers/windows7/virtio/common/src/virtio_pci_intx_wdm.c`
+  - `src/virtiosnd_intx.c`
 * `src/virtiosnd_queue_split.c` — split-ring virtqueue wrapper used by the virtio-snd engines
 * `src/virtiosnd_control.c` / `src/virtiosnd_tx.c` / `src/virtiosnd_rx.c` — control/TX/RX protocol engines
 * `drivers/windows7/virtio/common/src/virtio_pci_contract.c` — `AERO-W7-VIRTIO` v1 contract identity validation used at `START_DEVICE` (requires `DEV_1059` + `REV_01`)
-* Shared virtqueue implementation:
+* Shared virtqueue / PCI support code:
   - `drivers/windows/virtio/common/virtqueue_split.c`
   - `drivers/win7/virtio/virtio-core/portable/virtio_pci_cap_parser.c`
   - `drivers/win7/virtio/virtio-core/portable/virtio_pci_identity.c`
+  - `drivers/win7/virtio/virtio-core/portable/virtio_pci_aero_layout.c`
 
 Scatter/gather helpers (WaveRT cyclic buffer → virtio descriptors):
 

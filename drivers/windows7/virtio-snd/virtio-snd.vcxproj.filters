@@ -28,7 +28,7 @@
     <ClCompile Include="src\topology.c">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="src\virtio_pci_modern_wdm.c">
+    <ClCompile Include="..\virtio\common\src\virtio_pci_modern_wdm.c">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="src\virtio_snd_proto.c">
@@ -73,6 +73,9 @@
     <ClCompile Include="..\..\windows\virtio\common\virtqueue_split.c">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\win7\virtio\virtio-core\portable\virtio_pci_aero_layout.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\win7\virtio\virtio-core\portable\virtio_pci_cap_parser.c">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -106,9 +109,6 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="include\trace.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="include\virtio_pci_modern_wdm.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="include\virtio_snd_proto.h">

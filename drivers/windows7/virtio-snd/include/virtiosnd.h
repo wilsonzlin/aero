@@ -77,7 +77,7 @@ typedef struct _VIRTIOSND_DEVICE_EXTENSION {
     PDEVICE_OBJECT Pdo;
     PDEVICE_OBJECT LowerDeviceObject;
 
-    VIRTIOSND_TRANSPORT Transport;
+    VIRTIO_PCI_MODERN_WDM_DEVICE Transport;
     UINT64 NegotiatedFeatures;
 
     /*

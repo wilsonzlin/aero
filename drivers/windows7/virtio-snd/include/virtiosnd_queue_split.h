@@ -40,13 +40,7 @@ typedef struct _VIRTIOSND_QUEUE_SPLIT {
      */
     KSPIN_LOCK Lock;
 
-    /* Transport-supplied virtio-pci modern notify information. */
-    volatile UCHAR* NotifyBase;
-    ULONG NotifyOffMultiplier;
-    SIZE_T NotifyLength;
-    USHORT QueueNotifyOff;
-
-    /* Optional precomputed notify register address (notify_base + off * mult). */
+    /* Transport-supplied virtio-pci modern notify doorbell address. */
     volatile UINT16* NotifyAddr;
 
     /* Split ring (desc + avail + used) memory (DMA-safe). */
@@ -70,10 +64,7 @@ VirtioSndQueueSplitCreate(
     _In_ USHORT queue_size,
     _In_ BOOLEAN event_idx,
     _In_ BOOLEAN indirect,
-    _In_ volatile UCHAR* notify_base,
-    _In_ ULONG notify_off_multiplier,
-    _In_ SIZE_T notify_length,
-    _In_ USHORT queue_notify_off,
+    _In_ volatile UINT16* notify_addr,
     /*out*/ _Out_ VIRTIOSND_QUEUE* out_queue,
     /*out*/ _Out_ UINT64* out_desc_pa,
     /*out*/ _Out_ UINT64* out_avail_pa,

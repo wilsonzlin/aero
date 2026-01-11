@@ -6,51 +6,22 @@
 #include "virtiosnd.h"
 #include "virtiosnd_intx.h"
 
-/* Bounded reset poll (virtio status reset handshake). */
-#define VIRTIOSND_RESET_TIMEOUT_US 1000000u
-#define VIRTIOSND_RESET_POLL_DELAY_US 1000u
-
-static __forceinline UCHAR VirtIoSndReadDeviceStatus(_In_ const VIRTIOSND_TRANSPORT *Transport)
-{
-    return READ_REGISTER_UCHAR((volatile UCHAR *)&Transport->CommonCfg->device_status);
-}
-
-static __forceinline VOID VirtIoSndWriteDeviceStatus(_In_ const VIRTIOSND_TRANSPORT *Transport, _In_ UCHAR Status)
-{
-    WRITE_REGISTER_UCHAR((volatile UCHAR *)&Transport->CommonCfg->device_status, Status);
-}
-
 static VOID VirtIoSndResetDeviceBestEffort(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
 {
-    ULONG waitedUs;
-    LARGE_INTEGER delay;
-
-    if (Dx->Transport.CommonCfg == NULL) {
+    if (Dx == NULL) {
         return;
     }
 
-    KeMemoryBarrier();
-    VirtIoSndWriteDeviceStatus(&Dx->Transport, 0);
-    KeMemoryBarrier();
-
-    for (waitedUs = 0; waitedUs < VIRTIOSND_RESET_TIMEOUT_US; waitedUs += VIRTIOSND_RESET_POLL_DELAY_US) {
-        if (VirtIoSndReadDeviceStatus(&Dx->Transport) == 0) {
-            KeMemoryBarrier();
-            return;
-        }
-
-        if (KeGetCurrentIrql() == PASSIVE_LEVEL) {
-            delay.QuadPart = -(LONGLONG)VIRTIOSND_RESET_POLL_DELAY_US * 10; /* microseconds -> 100ns */
-            KeDelayExecutionThread(KernelMode, FALSE, &delay);
-        } else {
-            KeStallExecutionProcessor(VIRTIOSND_RESET_POLL_DELAY_US);
-        }
-    }
+    VirtioPciResetDevice(&Dx->Transport);
 }
 
 static VOID VirtIoSndFailDeviceBestEffort(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
 {
-    VirtIoSndTransportAddStatus(&Dx->Transport, VIRTIO_STATUS_FAILED);
+    if (Dx == NULL) {
+        return;
+    }
+
+    VirtioPciFailDevice(&Dx->Transport);
 }
 
 static VOID VirtIoSndDestroyQueues(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
@@ -89,13 +60,12 @@ static NTSTATUS VirtIoSndSetupQueues(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
     for (q = 0; q < VIRTIOSND_QUEUE_COUNT; ++q) {
         USHORT size;
         USHORT expectedSize;
-        USHORT notifyOff;
+        volatile UINT16* notifyAddr;
         UINT64 descPa, availPa, usedPa;
-        USHORT notifyOffReadback;
 
         size = 0;
         expectedSize = 0;
-        notifyOff = 0;
+        notifyAddr = NULL;
         descPa = 0;
         availPa = 0;
         usedPa = 0;
@@ -118,7 +88,7 @@ static NTSTATUS VirtIoSndSetupQueues(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
             break;
         }
 
-        status = VirtIoSndTransportReadQueueSize(&Dx->Transport, (USHORT)q, &size);
+        status = VirtioPciGetQueueSize(&Dx->Transport, (USHORT)q, &size);
         if (!NT_SUCCESS(status)) {
             return status;
         }
@@ -132,18 +102,9 @@ static NTSTATUS VirtIoSndSetupQueues(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
             return STATUS_DEVICE_CONFIGURATION_ERROR;
         }
 
-        status = VirtIoSndTransportReadQueueNotifyOff(&Dx->Transport, (USHORT)q, &notifyOff);
+        status = VirtioPciGetQueueNotifyAddress(&Dx->Transport, (USHORT)q, &notifyAddr);
         if (!NT_SUCCESS(status)) {
             return status;
-        }
-
-        if (notifyOff != (USHORT)q) {
-            VIRTIOSND_TRACE_ERROR(
-                "queue %lu notify_off mismatch: device=%u expected=%lu\n",
-                q,
-                (UINT)notifyOff,
-                q);
-            return STATUS_DEVICE_CONFIGURATION_ERROR;
         }
 
         status = VirtioSndQueueSplitCreate(
@@ -153,10 +114,7 @@ static NTSTATUS VirtIoSndSetupQueues(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
             size,
             eventIdx,
             indirect,
-            Dx->Transport.NotifyBase,
-            Dx->Transport.NotifyOffMultiplier,
-            Dx->Transport.NotifyLength,
-            notifyOff,
+            notifyAddr,
             &Dx->Queues[q],
             &descPa,
             &availPa,
@@ -176,19 +134,9 @@ static NTSTATUS VirtIoSndSetupQueues(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
             }
         }
 
-        notifyOffReadback = 0;
-        status = VirtIoSndTransportSetupQueue(&Dx->Transport, (USHORT)q, descPa, availPa, usedPa, &notifyOffReadback);
+        status = VirtioPciSetupQueue(&Dx->Transport, (USHORT)q, descPa, availPa, usedPa);
         if (!NT_SUCCESS(status)) {
             return status;
-        }
-
-        if (notifyOffReadback != notifyOff) {
-            VIRTIOSND_TRACE_ERROR(
-                "queue %lu notify_off readback mismatch: init=%u readback=%u\n",
-                q,
-                (UINT)notifyOff,
-                (UINT)notifyOffReadback);
-            return STATUS_DEVICE_CONFIGURATION_ERROR;
         }
 
         VIRTIOSND_TRACE("queue %lu enabled (size=%u)\n", q, (UINT)size);
@@ -275,7 +223,7 @@ VOID VirtIoSndStopHardware(PVIRTIOSND_DEVICE_EXTENSION Dx)
 
     VirtIoSndDmaUninit(&Dx->DmaCtx);
 
-    VirtIoSndTransportUninit(&Dx->Transport);
+    VirtioPciModernWdmUninit(&Dx->Transport);
 
     Dx->NegotiatedFeatures = 0;
 }
@@ -294,20 +242,33 @@ NTSTATUS VirtIoSndStartHardware(
 
     VirtIoSndStopHardware(Dx);
 
-    status = VirtIoSndTransportInit(&Dx->Transport, Dx->LowerDeviceObject, RawResources, TranslatedResources);
+    status = VirtioPciModernWdmInit(Dx->LowerDeviceObject, &Dx->Transport);
     if (!NT_SUCCESS(status)) {
         VIRTIOSND_TRACE_ERROR("transport init failed: 0x%08X\n", (UINT)status);
+        goto fail;
+    }
+
+    status = VirtioPciModernWdmMapBars(&Dx->Transport, RawResources, TranslatedResources);
+    if (!NT_SUCCESS(status)) {
+        VIRTIOSND_TRACE_ERROR("transport BAR mapping failed: 0x%08X\n", (UINT)status);
         goto fail;
     }
 
     VIRTIOSND_TRACE(
         "transport: rev=0x%02X bar0=0x%I64x len=0x%I64x notify_mult=%lu\n",
         (UINT)Dx->Transport.PciRevisionId,
-        Dx->Transport.Bar0Base,
-        (ULONGLONG)Dx->Transport.Bar0Length,
+        Dx->Transport.Bars[0].Base,
+        (ULONGLONG)Dx->Transport.Bars[0].Length,
         Dx->Transport.NotifyOffMultiplier);
 
-    status = VirtIoSndTransportNegotiateFeatures(&Dx->Transport, &Dx->NegotiatedFeatures);
+    /*
+     * Contract v1 requires VIRTIO_F_RING_INDIRECT_DESC and uses split virtqueues.
+     * EVENT_IDX/PACKED are tolerated but are not negotiated by this driver.
+     */
+    status = VirtioPciNegotiateFeatures(&Dx->Transport,
+                                        /*Required=*/(1ui64 << VIRTIO_F_RING_INDIRECT_DESC),
+                                        /*Wanted=*/0,
+                                        &Dx->NegotiatedFeatures);
     if (!NT_SUCCESS(status)) {
         VIRTIOSND_TRACE_ERROR("feature negotiation failed: 0x%08X\n", (UINT)status);
         goto fail;
@@ -347,9 +308,9 @@ NTSTATUS VirtIoSndStartHardware(
     }
 
     /* The device is now ready for normal operation. */
-    VirtIoSndTransportSetDriverOk(&Dx->Transport);
+    VirtioPciAddStatus(&Dx->Transport, VIRTIO_STATUS_DRIVER_OK);
 
-    VIRTIOSND_TRACE("device_status=0x%02X\n", (UINT)VirtIoSndReadDeviceStatus(&Dx->Transport));
+    VIRTIOSND_TRACE("device_status=0x%02X\n", (UINT)VirtioPciGetStatus(&Dx->Transport));
 
     Dx->Started = TRUE;
     return STATUS_SUCCESS;
