@@ -15,7 +15,9 @@ function tokenFromQuery(url: URL): string | null {
   if (!query) return null;
 
   for (const part of query.split("&")) {
-    const [k, v = ""] = part.split("=", 2);
+    const eq = part.indexOf("=");
+    const k = eq === -1 ? part : part.slice(0, eq);
+    const v = eq === -1 ? "" : part.slice(eq + 1);
     if (k !== "token") continue;
     if (!v) return null;
     return percentDecode(v);

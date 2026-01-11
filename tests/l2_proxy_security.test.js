@@ -132,6 +132,29 @@ test("l2 proxy enforces token auth when configured", async () => {
   }
 });
 
+test("l2 proxy parses query tokens literally (no '+' => space, preserves '=')", async () => {
+  const proxy = await startL2ProxyServer({
+    listenHost: "127.0.0.1",
+    listenPort: 0,
+    open: false,
+    allowedOrigins: ["https://app.example.com"],
+    token: "a+b==",
+    maxConnections: 0,
+  });
+  const port = getServerPort(proxy.server);
+
+  try {
+    const ok = await connectOrReject(`ws://127.0.0.1:${port}/l2?token=a+b==`, {
+      headers: { origin: "https://app.example.com" },
+    });
+    assert.equal(ok.ok, true);
+    ok.ws.close(1000, "done");
+    await waitForClose(ok.ws);
+  } finally {
+    await proxy.close();
+  }
+});
+
 test("AERO_L2_OPEN disables Origin enforcement (but not token auth)", async () => {
   const proxy = await startL2ProxyServer({
     listenHost: "127.0.0.1",
