@@ -60,7 +60,10 @@ describe("runtime/shared_layout", () => {
     expect(COMMAND_RING_CAPACITY_BYTES % RECORD_ALIGN).toBe(0);
     expect(EVENT_RING_CAPACITY_BYTES % RECORD_ALIGN).toBe(0);
 
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
+    // Shared-memory layout includes a demo shared framebuffer region embedded in
+    // the guest `WebAssembly.Memory`. Allocate enough guest RAM to fit that region
+    // (1 MiB is too small once the runtime reserved bytes are accounted for).
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 5 });
     for (const role of WORKER_ROLES) {
       const regions = ringRegionsForWorker(role);
 
@@ -73,7 +76,7 @@ describe("runtime/shared_layout", () => {
   });
 
   it("transfers messages across threads using a shared_layout ring", async () => {
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 5 });
     const regions = ringRegionsForWorker("cpu");
     const ring = new RingBuffer(segments.control, regions.command.byteOffset);
 
@@ -108,13 +111,13 @@ describe("runtime/shared_layout", () => {
   });
 
   it("creates shared views for control + guest memory", () => {
-    const segments = allocateSharedMemorySegments({ guestRamMiB: 1 });
+    const segments = allocateSharedMemorySegments({ guestRamMiB: 5 });
     const views = createSharedMemoryViews(segments);
 
     expect(views.status.byteOffset).toBe(0);
     expect(views.status.byteLength).toBe(STATUS_BYTES);
     expect(views.guestLayout.guest_base).toBe(RUNTIME_RESERVED_BYTES);
-    expect(views.guestLayout.guest_size).toBe(1 * 1024 * 1024);
+    expect(views.guestLayout.guest_size).toBe(5 * 1024 * 1024);
     expect(views.guestU8.byteOffset).toBe(views.guestLayout.guest_base);
     expect(views.guestU8.byteLength).toBe(views.guestLayout.guest_size);
     expect(views.guestU8.buffer).toBe(segments.guestMemory.buffer);
