@@ -3202,7 +3202,8 @@ static NTSTATUS APIENTRY AeroGpuDdiRender(_In_ const HANDLE hContext, _Inout_ DX
 {
     AEROGPU_CONTEXT* ctx = (AEROGPU_CONTEXT*)hContext;
     AEROGPU_ADAPTER* adapter = (ctx && ctx->Device) ? ctx->Device->Adapter : NULL;
-    if (!adapter || !pRender || !pRender->pDmaBufferPrivateData) {
+    if (!adapter || !pRender || !pRender->pDmaBufferPrivateData ||
+        pRender->DmaBufferPrivateDataSize < sizeof(AEROGPU_DMA_PRIV)) {
         return STATUS_INVALID_PARAMETER;
     }
 
@@ -3232,7 +3233,8 @@ static NTSTATUS APIENTRY AeroGpuDdiPresent(_In_ const HANDLE hContext, _Inout_ D
 {
     AEROGPU_CONTEXT* ctx = (AEROGPU_CONTEXT*)hContext;
     AEROGPU_ADAPTER* adapter = (ctx && ctx->Device) ? ctx->Device->Adapter : NULL;
-    if (!adapter || !pPresent || !pPresent->pDmaBufferPrivateData) {
+    if (!adapter || !pPresent || !pPresent->pDmaBufferPrivateData ||
+        pPresent->DmaBufferPrivateDataSize < sizeof(AEROGPU_DMA_PRIV)) {
         return STATUS_INVALID_PARAMETER;
     }
 
@@ -3259,10 +3261,11 @@ static NTSTATUS APIENTRY AeroGpuDdiPresent(_In_ const HANDLE hContext, _Inout_ D
 }
 
 static NTSTATUS APIENTRY AeroGpuDdiBuildPagingBuffer(_In_ const HANDLE hAdapter,
-                                                    _Inout_ DXGKARG_BUILDPAGINGBUFFER* pBuildPagingBuffer)
+                                                     _Inout_ DXGKARG_BUILDPAGINGBUFFER* pBuildPagingBuffer)
 {
     UNREFERENCED_PARAMETER(hAdapter);
-    if (!pBuildPagingBuffer || !pBuildPagingBuffer->pDmaBufferPrivateData) {
+    if (!pBuildPagingBuffer || !pBuildPagingBuffer->pDmaBufferPrivateData ||
+        pBuildPagingBuffer->DmaBufferPrivateDataSize < sizeof(AEROGPU_DMA_PRIV)) {
         return STATUS_INVALID_PARAMETER;
     }
 
@@ -3288,7 +3291,8 @@ static NTSTATUS APIENTRY AeroGpuDdiSubmitCommand(_In_ const HANDLE hAdapter,
     ULONG type = AEROGPU_SUBMIT_PAGING;
     ULONG contextId = 0;
     AEROGPU_SUBMISSION_META* meta = NULL;
-    if (pSubmitCommand->pDmaBufferPrivateData) {
+    if (pSubmitCommand->pDmaBufferPrivateData &&
+        pSubmitCommand->DmaBufferPrivateDataSize >= sizeof(AEROGPU_DMA_PRIV)) {
         const AEROGPU_DMA_PRIV* priv = (const AEROGPU_DMA_PRIV*)pSubmitCommand->pDmaBufferPrivateData;
         type = priv->Type;
         contextId = priv->Reserved0;
