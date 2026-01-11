@@ -13,6 +13,8 @@
  */
 #pragma once
 
+#include <stddef.h>
+
 #include "aerogpu_protocol.h"
 
 #ifdef __cplusplus
@@ -24,6 +26,7 @@ extern "C" {
 #define AEROGPU_ESCAPE_OP_DUMP_RING 3u
 #define AEROGPU_ESCAPE_OP_SELFTEST 4u
 #define AEROGPU_ESCAPE_OP_DUMP_VBLANK 5u
+#define AEROGPU_ESCAPE_OP_QUERY_VBLANK AEROGPU_ESCAPE_OP_DUMP_VBLANK
 
 #define AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS 32u
 
@@ -103,6 +106,14 @@ typedef struct aerogpu_escape_dump_vblank_inout {
 
 /* Must remain stable across x86/x64. */
 AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_dump_vblank_inout) == 56);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_dump_vblank_inout, vidpn_source_id) == 16);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_dump_vblank_inout, irq_status) == 20);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_dump_vblank_inout, irq_enable) == 24);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_dump_vblank_inout, flags) == 28);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_dump_vblank_inout, vblank_seq) == 32);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_dump_vblank_inout, last_vblank_time_ns) == 40);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_dump_vblank_inout, vblank_period_ns) == 48);
+AEROGPU_DBGCTL_STATIC_ASSERT(offsetof(aerogpu_escape_dump_vblank_inout, reserved0) == 52);
 
 #pragma pack(pop)
 

@@ -320,15 +320,10 @@ static int DoDumpVblank(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t 
   wprintf(L"  IRQ_STATUS: 0x%08lx\n", (unsigned long)q.irq_status);
   wprintf(L"  IRQ_ENABLE: 0x%08lx\n", (unsigned long)q.irq_enable);
 
-  if ((q.flags & AEROGPU_DBGCTL_VBLANK_SUPPORTED) == 0) {
-    wprintf(L"  vblank: not supported (AEROGPU_FEATURE_VBLANK not set)\n");
-    return 0;
-  }
-
   wprintf(L"  vblank_seq: 0x%I64x (%I64u)\n", (unsigned long long)q.vblank_seq, (unsigned long long)q.vblank_seq);
   wprintf(L"  last_vblank_time_ns: 0x%I64x (%I64u ns)\n",
-          (unsigned long long)q.last_vblank_time_ns,
-          (unsigned long long)q.last_vblank_time_ns);
+           (unsigned long long)q.last_vblank_time_ns,
+           (unsigned long long)q.last_vblank_time_ns);
 
   if (q.vblank_period_ns != 0) {
     const double hz = 1000000000.0 / (double)q.vblank_period_ns;

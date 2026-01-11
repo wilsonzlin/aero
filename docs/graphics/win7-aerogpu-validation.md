@@ -371,9 +371,9 @@ Even if you can’t run GPUView in the VM, a saved ETL is still valuable for off
 3. **Snapshot state immediately after**
    ```bat
    aerogpu_dbgctl status
-   aerogpu_dbgctl dump fences
-   aerogpu_dbgctl dump ring
-   aerogpu_dbgctl dump vblank
+   aerogpu_dbgctl --query-fence
+   aerogpu_dbgctl --dump-ring --ring-id 0
+   aerogpu_dbgctl --dump-vblank
    ```
 4. **If the desktop is frozen but the VM is alive**, dump again (to see if anything advances).
 
@@ -382,9 +382,9 @@ Even if you can’t run GPUView in the VM, a saved ETL is still valuable for off
 | Command | What it should report/do | When to use |
 |---|---|---|
 | `status` | device present, mode, engine state, last reset reason | first command in any bug report |
-| `dump ring` | ring head/tail, queued packet types, last N submissions | hangs/TDR triage |
-| `dump fences` | last submitted, last completed, per-context fences | “fence stuck” diagnosis |
-| `dump vblank` | last vblank timestamp, interval stats, missed count | DWM stutter / Basic fallback |
+| `--dump-ring` | ring head/tail, queued packet types, last N submissions | hangs/TDR triage |
+| `--query-fence` | last submitted, last completed, per-context fences | “fence stuck” diagnosis |
+| `--dump-vblank` | last vblank timestamp, interval stats, missed count | DWM stutter / Basic fallback |
 | `log level <err|warn|info|trace>` | sets runtime verbosity | enable before repro |
 | `perf start <file>` / `perf stop` | lightweight counters (present rate, bytes/sec, latency histograms) | baseline collection |
 | `inject hang <ms>` *(dev)* | intentionally stall completions to validate TDR handling | validates reset path |

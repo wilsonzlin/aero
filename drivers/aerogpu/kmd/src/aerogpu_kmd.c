@@ -1591,10 +1591,21 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
             return STATUS_BUFFER_TOO_SMALL;
         }
 
+        if (!adapter->Bar0) {
+            return STATUS_DEVICE_NOT_READY;
+        }
+
         aerogpu_escape_dump_vblank_inout* io = (aerogpu_escape_dump_vblank_inout*)pEscape->pPrivateDriverData;
 
         /* Only VidPn source 0 is currently implemented. */
         if (io->vidpn_source_id != AEROGPU_VIDPN_SOURCE_ID) {
+            return STATUS_NOT_SUPPORTED;
+        }
+
+        const aerogpu_u32 featuresLo = (aerogpu_u32)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FEATURES_LO);
+        const aerogpu_u32 featuresHi = (aerogpu_u32)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FEATURES_HI);
+        const aerogpu_u64 features = ((aerogpu_u64)featuresHi << 32) | (aerogpu_u64)featuresLo;
+        if ((features & (aerogpu_u64)AEROGPU_FEATURE_VBLANK) == 0) {
             return STATUS_NOT_SUPPORTED;
         }
 
@@ -1603,33 +1614,18 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
         io->hdr.size = sizeof(*io);
         io->hdr.reserved0 = 0;
 
-        io->irq_status = adapter->Bar0 ? AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_IRQ_STATUS) : 0;
-        io->irq_enable = adapter->Bar0 ? AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE) : 0;
-        io->flags = 0;
+        io->irq_status = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_IRQ_STATUS);
+        io->irq_enable = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE);
+        io->flags = AEROGPU_DBGCTL_VBLANK_SUPPORTED;
 
-        aerogpu_u64 features = 0;
-        if (adapter->Bar0) {
-            const aerogpu_u32 featuresLo = (aerogpu_u32)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FEATURES_LO);
-            const aerogpu_u32 featuresHi = (aerogpu_u32)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FEATURES_HI);
-            features = ((aerogpu_u64)featuresHi << 32) | (aerogpu_u64)featuresLo;
-        }
-
-        io->vblank_seq = 0;
-        io->last_vblank_time_ns = 0;
-        io->vblank_period_ns = 0;
+        io->vblank_seq = AeroGpuReadRegU64HiLoHi(adapter,
+                                                 AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO,
+                                                 AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_HI);
+        io->last_vblank_time_ns = AeroGpuReadRegU64HiLoHi(adapter,
+                                                          AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_LO,
+                                                          AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_HI);
+        io->vblank_period_ns = (aerogpu_u32)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS);
         io->reserved0 = 0;
-
-        if (adapter->Bar0 && (features & (aerogpu_u64)AEROGPU_FEATURE_VBLANK)) {
-            io->flags |= AEROGPU_DBGCTL_VBLANK_SUPPORTED;
-            io->vblank_seq = AeroGpuReadRegU64HiLoHi(adapter,
-                                                     AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO,
-                                                     AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_HI);
-            io->last_vblank_time_ns = AeroGpuReadRegU64HiLoHi(adapter,
-                                                              AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_LO,
-                                                              AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_HI);
-            io->vblank_period_ns = (aerogpu_u32)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS);
-        }
-
         return STATUS_SUCCESS;
     }
 
