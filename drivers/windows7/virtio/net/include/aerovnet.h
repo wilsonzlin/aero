@@ -18,6 +18,8 @@
 
 // Virtio feature bits (as masks).
 #define AEROVNET_FEATURE_RING_INDIRECT_DESC ((UINT64)VIRTIO_RING_F_INDIRECT_DESC)
+#define AEROVNET_FEATURE_RING_EVENT_IDX ((UINT64)VIRTIO_RING_F_EVENT_IDX)
+#define AEROVNET_FEATURE_RING_PACKED ((UINT64)1ull << 34)
 
 // Virtio-net feature bits (lower 32 bits).
 #define VIRTIO_NET_F_CSUM      (1u << 0)

@@ -791,6 +791,19 @@ static NDIS_STATUS AerovNetVirtioStart(_Inout_ AEROVNET_ADAPTER* Adapter) {
     return NDIS_STATUS_FAILURE;
   }
 
+  /*
+   * Contract v1 ring invariants (docs/windows7-virtio-driver-contract.md §2.3):
+   * - MUST offer INDIRECT_DESC
+   * - MUST NOT offer EVENT_IDX or PACKED
+   *
+   * (We validate these bits against the host-offered feature set.)
+   */
+  Adapter->HostFeatures = VirtioPciReadDeviceFeatures(&Adapter->Vdev);
+  if ((Adapter->HostFeatures & (AEROVNET_FEATURE_RING_EVENT_IDX | AEROVNET_FEATURE_RING_PACKED)) != 0) {
+    VirtioPciResetDevice(&Adapter->Vdev);
+    return NDIS_STATUS_NOT_SUPPORTED;
+  }
+
   // Contract v1 features (docs/windows7-virtio-driver-contract.md §3.2.3):
   // - required: VERSION_1 + INDIRECT_DESC + MAC + STATUS
   RequiredFeatures = VIRTIO_NET_F_MAC | VIRTIO_NET_F_STATUS | AEROVNET_FEATURE_RING_INDIRECT_DESC;
@@ -802,7 +815,6 @@ static NDIS_STATUS AerovNetVirtioStart(_Inout_ AEROVNET_ADAPTER* Adapter) {
     return NDIS_STATUS_NOT_SUPPORTED;
   }
 
-  Adapter->HostFeatures = VirtioPciReadDeviceFeatures(&Adapter->Vdev);
   Adapter->GuestFeatures = (UINT64)NegotiatedFeatures;
 
   // Disable MSI-X config interrupt vector; INTx/ISR is required by contract v1.

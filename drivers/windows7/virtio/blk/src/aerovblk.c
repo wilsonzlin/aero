@@ -953,6 +953,9 @@ ULONG AerovblkHwFindAdapter(_In_ PVOID deviceExtension, _In_ PVOID hwContext, _I
 
   /* Validate required features are offered (contract v1). */
   hostFeatures = VirtioPciReadDeviceFeatures(&devExt->Vdev);
+  if ((hostFeatures & (AEROVBLK_FEATURE_RING_EVENT_IDX | AEROVBLK_FEATURE_RING_PACKED)) != 0) {
+    return SP_RETURN_NOT_FOUND;
+  }
   required = VIRTIO_F_VERSION_1 | AEROVBLK_FEATURE_RING_INDIRECT_DESC | AEROVBLK_FEATURE_BLK_SEG_MAX | AEROVBLK_FEATURE_BLK_BLK_SIZE |
              AEROVBLK_FEATURE_BLK_FLUSH;
   if ((hostFeatures & required) != required) {
