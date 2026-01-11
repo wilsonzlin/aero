@@ -53,6 +53,7 @@ pub const TLB_FLAG_IS_RAM: u64 = 1 << 3;
 
 pub use tier1::{
     discover_block, translate_block, BasicBlock, BlockEndKind, BlockLimits, Tier1WasmCodegen,
+    Tier1WasmOptions,
 };
 pub use tier2::{optimize_trace, Tier2WasmCodegen, Tier2WasmOptions, TraceBuilder};
 
