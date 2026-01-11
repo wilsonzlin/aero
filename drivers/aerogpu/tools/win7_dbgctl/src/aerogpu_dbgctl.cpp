@@ -352,6 +352,115 @@ static NTSTATUS SendAerogpuEscape(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter,
   return (w == WAIT_TIMEOUT) ? STATUS_TIMEOUT : STATUS_INVALID_PARAMETER;
 }
 
+typedef struct QueryAdapterInfoThreadCtx {
+  const D3DKMT_FUNCS *f;
+  D3DKMT_HANDLE hAdapter;
+  UINT type;
+  void *buf;
+  UINT bufSize;
+  NTSTATUS status;
+  HANDLE done_event;
+} QueryAdapterInfoThreadCtx;
+
+static DWORD WINAPI QueryAdapterInfoThreadProc(LPVOID param) {
+  QueryAdapterInfoThreadCtx *ctx = (QueryAdapterInfoThreadCtx *)param;
+  if (!ctx || !ctx->f || !ctx->f->QueryAdapterInfo || !ctx->buf || ctx->bufSize == 0) {
+    if (ctx) {
+      ctx->status = STATUS_INVALID_PARAMETER;
+      if (ctx->done_event) {
+        SetEvent(ctx->done_event);
+      }
+    }
+    return 0;
+  }
+
+  D3DKMT_QUERYADAPTERINFO q;
+  ZeroMemory(&q, sizeof(q));
+  q.hAdapter = ctx->hAdapter;
+  q.Type = ctx->type;
+  q.pPrivateDriverData = ctx->buf;
+  q.PrivateDriverDataSize = ctx->bufSize;
+
+  ctx->status = ctx->f->QueryAdapterInfo(&q);
+
+  if (ctx->done_event) {
+    SetEvent(ctx->done_event);
+  }
+  return 0;
+}
+
+static NTSTATUS QueryAdapterInfoWithTimeout(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, UINT type, void *buf,
+                                            UINT bufSize) {
+  if (!f || !f->QueryAdapterInfo || !hAdapter || !buf || bufSize == 0) {
+    return STATUS_INVALID_PARAMETER;
+  }
+
+  D3DKMT_QUERYADAPTERINFO q;
+  ZeroMemory(&q, sizeof(q));
+  q.hAdapter = hAdapter;
+  q.Type = type;
+  q.pPrivateDriverData = buf;
+  q.PrivateDriverDataSize = bufSize;
+
+  if (g_escape_timeout_ms == 0) {
+    return f->QueryAdapterInfo(&q);
+  }
+
+  // Run QueryAdapterInfo on a worker thread so a buggy kernel driver cannot hang dbgctl forever. If the call times out,
+  // leak the context (the thread may be blocked inside the kernel thunk) and set a global so we avoid calling
+  // D3DKMTCloseAdapter.
+  QueryAdapterInfoThreadCtx *ctx =
+      (QueryAdapterInfoThreadCtx *)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*ctx));
+  if (!ctx) {
+    return STATUS_INSUFFICIENT_RESOURCES;
+  }
+
+  void *bufCopy = HeapAlloc(GetProcessHeap(), 0, bufSize);
+  if (!bufCopy) {
+    HeapFree(GetProcessHeap(), 0, ctx);
+    return STATUS_INSUFFICIENT_RESOURCES;
+  }
+  memcpy(bufCopy, buf, bufSize);
+
+  ctx->f = f;
+  ctx->hAdapter = hAdapter;
+  ctx->type = type;
+  ctx->buf = bufCopy;
+  ctx->bufSize = bufSize;
+  ctx->status = 0;
+  ctx->done_event = CreateEventW(NULL, TRUE, FALSE, NULL);
+  if (!ctx->done_event) {
+    HeapFree(GetProcessHeap(), 0, bufCopy);
+    HeapFree(GetProcessHeap(), 0, ctx);
+    return STATUS_INSUFFICIENT_RESOURCES;
+  }
+
+  HANDLE thread = CreateThread(NULL, 0, QueryAdapterInfoThreadProc, ctx, 0, NULL);
+  if (!thread) {
+    CloseHandle(ctx->done_event);
+    HeapFree(GetProcessHeap(), 0, bufCopy);
+    HeapFree(GetProcessHeap(), 0, ctx);
+    return STATUS_INSUFFICIENT_RESOURCES;
+  }
+
+  DWORD w = WaitForSingleObject(ctx->done_event, g_escape_timeout_ms);
+  if (w == WAIT_OBJECT_0) {
+    const NTSTATUS st = ctx->status;
+    if (NT_SUCCESS(st)) {
+      memcpy(buf, ctx->buf, bufSize);
+    }
+    CloseHandle(thread);
+    CloseHandle(ctx->done_event);
+    HeapFree(GetProcessHeap(), 0, ctx->buf);
+    HeapFree(GetProcessHeap(), 0, ctx);
+    return st;
+  }
+
+  CloseHandle(thread);
+  InterlockedExchange(&g_skip_close_adapter, 1);
+  return (w == WAIT_TIMEOUT) ? STATUS_TIMEOUT : STATUS_INVALID_PARAMETER;
+}
+
 static const wchar_t *SelftestErrorToString(uint32_t code) {
   switch (code) {
   case AEROGPU_DBGCTL_SELFTEST_OK:
@@ -820,12 +929,6 @@ static int DoQueryUmdPrivate(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
   aerogpu_umd_private_v1 blob;
   ZeroMemory(&blob, sizeof(blob));
 
-  D3DKMT_QUERYADAPTERINFO q;
-  ZeroMemory(&q, sizeof(q));
-  q.hAdapter = hAdapter;
-  q.pPrivateDriverData = &blob;
-  q.PrivateDriverDataSize = sizeof(blob);
-
   // We intentionally avoid depending on WDK headers for the numeric
   // KMTQAITYPE_UMDRIVERPRIVATE constant. Instead, probe a small range of values
   // and look for a valid AeroGPU UMDRIVERPRIVATE v1 blob.
@@ -833,11 +936,12 @@ static int DoQueryUmdPrivate(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
   NTSTATUS lastStatus = 0;
   for (UINT type = 0; type < 256; ++type) {
     ZeroMemory(&blob, sizeof(blob));
-    q.Type = type;
-
-    NTSTATUS st = f->QueryAdapterInfo(&q);
+    NTSTATUS st = QueryAdapterInfoWithTimeout(f, hAdapter, type, &blob, sizeof(blob));
     lastStatus = st;
     if (!NT_SUCCESS(st)) {
+      if (st == STATUS_TIMEOUT) {
+        break;
+      }
       continue;
     }
 
@@ -855,8 +959,13 @@ static int DoQueryUmdPrivate(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
   }
 
   if (foundType == 0xFFFFFFFFu) {
-    PrintNtStatus(L"D3DKMTQueryAdapterInfo(UMDRIVERPRIVATE) failed", f, lastStatus);
-    fwprintf(stderr, L"(note: UMDRIVERPRIVATE type probing range exhausted)\n");
+    if (lastStatus == STATUS_TIMEOUT) {
+      PrintNtStatus(L"D3DKMTQueryAdapterInfo(UMDRIVERPRIVATE) timed out", f, lastStatus);
+      fwprintf(stderr, L"(note: timed out probing UMDRIVERPRIVATE; KMD may be wedged)\n");
+    } else {
+      PrintNtStatus(L"D3DKMTQueryAdapterInfo(UMDRIVERPRIVATE) failed", f, lastStatus);
+      fwprintf(stderr, L"(note: UMDRIVERPRIVATE type probing range exhausted)\n");
+    }
     return 2;
   }
 
