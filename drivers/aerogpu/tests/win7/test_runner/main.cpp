@@ -381,6 +381,23 @@ static std::string ReadJsonFileOrEmpty(const std::wstring& path) {
   return TrimAsciiWhitespace(std::string(bytes.begin(), bytes.end()));
 }
 
+static std::string BuildAdapterJsonObject(const aerogpu_test::TestReportAdapterInfo& info) {
+  if (!info.present) {
+    return std::string("null");
+  }
+  std::string out;
+  out.reserve(256);
+  out.push_back('{');
+  out.append("\"description\":");
+  aerogpu_test::JsonAppendEscaped(&out, info.description_utf8);
+  out.append(",\"vid\":");
+  aerogpu_test::JsonAppendEscaped(&out, aerogpu_test::FormatHexU16(info.vendor_id));
+  out.append(",\"did\":");
+  aerogpu_test::JsonAppendEscaped(&out, aerogpu_test::FormatHexU16(info.device_id));
+  out.push_back('}');
+  return out;
+}
+
 static bool EqualsIgnoreCaseAscii(const std::string& a, const char* b) {
   if (!b) {
     return false;
@@ -655,6 +672,17 @@ int main(int argc, char** argv) {
     if (emit_json) {
       std::string obj = ReadJsonFileOrEmpty(per_test_json_path);
       if (!obj.empty()) {
+        // Most tests include adapter info, but some low-level tests intentionally avoid instantiating
+        // D3D/DXGI and therefore leave the adapter field null. Keep the suite report useful by
+        // populating the adapter from the suite-level D3D9Ex query when available.
+        if (suite_adapter.present) {
+          const char* const kNeedle = "\"adapter\":null";
+          size_t pos = obj.find(kNeedle);
+          if (pos != std::string::npos) {
+            const std::string replacement = std::string("\"adapter\":") + BuildAdapterJsonObject(suite_adapter);
+            obj.replace(pos, strlen(kNeedle), replacement);
+          }
+        }
         test_json_objects.push_back(obj);
       } else {
         // Best-effort fallback if the child couldn't write its report.

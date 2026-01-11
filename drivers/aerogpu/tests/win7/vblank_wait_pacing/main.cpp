@@ -1,4 +1,5 @@
 #include "..\\common\\aerogpu_test_common.h"
+#include "..\\common\\aerogpu_test_report.h"
 
 // This test directly exercises the WDDM kernel vblank wait path by calling
 // D3DKMTWaitForVerticalBlankEvent in a tight loop and measuring the pacing.
@@ -132,12 +133,14 @@ static double QpcToMs(LONGLONG qpc_delta, LONGLONG qpc_freq) {
 static int RunVblankWaitPacing(int argc, char **argv) {
   const char *kTestName = "vblank_wait_pacing";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
-    aerogpu_test::PrintfStdout("Usage: %s.exe [--samples=N] [--allow-remote]", kTestName);
+    aerogpu_test::PrintfStdout("Usage: %s.exe [--samples=N] [--json[=PATH]] [--allow-remote]", kTestName);
     aerogpu_test::PrintfStdout("Default: --samples=120");
     aerogpu_test::PrintfStdout(
         "Measures kernel vblank pacing by timing successive D3DKMTWaitForVerticalBlankEvent() calls.");
     return 0;
   }
+
+  aerogpu_test::TestReporter reporter(kTestName, argc, argv);
 
   const bool allow_remote = aerogpu_test::HasArg(argc, argv, "--allow-remote");
   uint32_t samples = 120;
@@ -145,24 +148,23 @@ static int RunVblankWaitPacing(int argc, char **argv) {
   if (aerogpu_test::GetArgValue(argc, argv, "--samples", &samples_str)) {
     std::string err;
     if (!aerogpu_test::ParseUint32(samples_str, &samples, &err)) {
-      return aerogpu_test::Fail(kTestName, "invalid --samples: %s", err.c_str());
+      return reporter.Fail("invalid --samples: %s", err.c_str());
     }
   }
 
   if (GetSystemMetrics(SM_REMOTESESSION)) {
     if (allow_remote) {
       aerogpu_test::PrintfStdout("INFO: %s: remote session detected; skipping", kTestName);
-      aerogpu_test::PrintfStdout("PASS: %s", kTestName);
-      return 0;
+      reporter.SetSkipped("remote_session");
+      return reporter.Pass();
     }
-    return aerogpu_test::Fail(
-        kTestName,
+    return reporter.Fail(
         "running in a remote session (SM_REMOTESESSION=1). Re-run with --allow-remote to skip.");
   }
 
   LARGE_INTEGER qpc_freq_li;
   if (!QueryPerformanceFrequency(&qpc_freq_li) || qpc_freq_li.QuadPart <= 0) {
-    return aerogpu_test::Fail(kTestName, "QueryPerformanceFrequency failed");
+    return reporter.Fail("QueryPerformanceFrequency failed");
   }
   const LONGLONG qpc_freq = qpc_freq_li.QuadPart;
 
@@ -172,15 +174,16 @@ static int RunVblankWaitPacing(int argc, char **argv) {
 
   D3DKMT_FUNCS f;
   if (!LoadD3DKMT(&f)) {
-    return aerogpu_test::Fail(kTestName, "failed to load required D3DKMT* exports from gdi32.dll");
+    return reporter.Fail("failed to load required D3DKMT* exports from gdi32.dll");
   }
 
   wchar_t display_name[CCHDEVICENAME];
   GetPrimaryDisplayName(display_name);
   HDC hdc = CreateDCW(L"DISPLAY", display_name, NULL, NULL);
   if (!hdc) {
-    return aerogpu_test::Fail(kTestName, "CreateDCW failed for display %ls: %s", display_name,
-                              aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
+    return reporter.Fail("CreateDCW failed for display %ls: %s",
+                         display_name,
+                         aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
   }
 
   D3DKMT_OPENADAPTERFROMHDC open;
@@ -189,13 +192,13 @@ static int RunVblankWaitPacing(int argc, char **argv) {
   LONG st = f.OpenAdapterFromHdc(&open);
   DeleteDC(hdc);
   if (!NtSuccess(st)) {
-    return aerogpu_test::Fail(kTestName, "D3DKMTOpenAdapterFromHdc failed with %s", NtStatusToString(&f, st).c_str());
+    return reporter.Fail("D3DKMTOpenAdapterFromHdc failed with %s", NtStatusToString(&f, st).c_str());
   }
 
   std::vector<double> deltas_ms;
   deltas_ms.reserve(samples);
 
-  int rc = 0;
+  std::string fail_msg;
   LARGE_INTEGER last;
   QueryPerformanceCounter(&last);
   for (uint32_t i = 0; i < samples; ++i) {
@@ -206,7 +209,7 @@ static int RunVblankWaitPacing(int argc, char **argv) {
     wait.VidPnSourceId = open.VidPnSourceId;
     st = f.WaitForVerticalBlankEvent(&wait);
     if (!NtSuccess(st)) {
-      rc = aerogpu_test::Fail(kTestName, "D3DKMTWaitForVerticalBlankEvent failed with %s", NtStatusToString(&f, st).c_str());
+      fail_msg = "D3DKMTWaitForVerticalBlankEvent failed with " + NtStatusToString(&f, st);
       break;
     }
 
@@ -217,7 +220,9 @@ static int RunVblankWaitPacing(int argc, char **argv) {
     last = now;
   }
 
-  if (rc == 0) {
+  reporter.SetTimingSamplesMs(deltas_ms);
+
+  if (fail_msg.empty()) {
     double sum = 0.0;
     double min_ms = 1e9;
     double max_ms = 0.0;
@@ -234,14 +239,11 @@ static int RunVblankWaitPacing(int argc, char **argv) {
         kTestName, (unsigned)samples, avg_ms, min_ms, max_ms);
 
     if (avg_ms <= 2.0) {
-      rc = aerogpu_test::Fail(kTestName, "unexpectedly fast vblank pacing (avg=%.3fms)", avg_ms);
+      fail_msg = aerogpu_test::FormatString("unexpectedly fast vblank pacing (avg=%.3fms)", avg_ms);
     } else if (avg_ms >= 50.0) {
-      rc = aerogpu_test::Fail(kTestName, "unexpectedly slow vblank pacing (avg=%.3fms)", avg_ms);
+      fail_msg = aerogpu_test::FormatString("unexpectedly slow vblank pacing (avg=%.3fms)", avg_ms);
     } else if (max_ms >= 250.0) {
-      rc = aerogpu_test::Fail(kTestName, "unexpectedly large vblank gap (max=%.3fms)", max_ms);
-    } else {
-      aerogpu_test::PrintfStdout("PASS: %s", kTestName);
-      rc = 0;
+      fail_msg = aerogpu_test::FormatString("unexpectedly large vblank gap (max=%.3fms)", max_ms);
     }
   }
 
@@ -249,10 +251,19 @@ static int RunVblankWaitPacing(int argc, char **argv) {
   ZeroMemory(&close, sizeof(close));
   close.hAdapter = open.hAdapter;
   st = f.CloseAdapter(&close);
-  if (!NtSuccess(st) && rc == 0) {
-    rc = aerogpu_test::Fail(kTestName, "D3DKMTCloseAdapter failed with %s", NtStatusToString(&f, st).c_str());
+  if (!NtSuccess(st)) {
+    const std::string close_msg = "D3DKMTCloseAdapter failed with " + NtStatusToString(&f, st);
+    if (fail_msg.empty()) {
+      fail_msg = close_msg;
+    } else {
+      fail_msg += " (and " + close_msg + ")";
+    }
   }
-  return rc;
+
+  if (!fail_msg.empty()) {
+    return reporter.Fail("%s", fail_msg.c_str());
+  }
+  return reporter.Pass();
 }
 
 int main(int argc, char **argv) {

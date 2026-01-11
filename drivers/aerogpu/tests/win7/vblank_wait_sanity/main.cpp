@@ -1,4 +1,5 @@
 #include "..\\common\\aerogpu_test_common.h"
+#include "..\\common\\aerogpu_test_report.h"
 
 #include <d3d9.h>
 
@@ -218,7 +219,7 @@ static int RunVblankWaitSanity(int argc, char** argv) {
 
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
-        "Usage: %s.exe [--samples=N] [--wait-timeout-ms=N] [--timeout-ms=N] [--allow-remote] "
+        "Usage: %s.exe [--samples=N] [--wait-timeout-ms=N] [--timeout-ms=N] [--json[=PATH]] [--allow-remote] "
         "[--require-vid=0x####] [--require-did=0x####]",
         kTestName);
     aerogpu_test::PrintfStdout("Default: --samples=120 --wait-timeout-ms=2000");
@@ -230,6 +231,8 @@ static int RunVblankWaitSanity(int argc, char** argv) {
     return 0;
   }
 
+  aerogpu_test::TestReporter reporter(kTestName, argc, argv);
+
   const bool allow_remote = aerogpu_test::HasArg(argc, argv, "--allow-remote");
 
   uint32_t samples = 120;
@@ -239,7 +242,7 @@ static int RunVblankWaitSanity(int argc, char** argv) {
   if (aerogpu_test::GetArgValue(argc, argv, "--samples", &samples_str)) {
     std::string err;
     if (!aerogpu_test::ParseUint32(samples_str, &samples, &err)) {
-      return aerogpu_test::Fail(kTestName, "invalid --samples: %s", err.c_str());
+      return reporter.Fail("invalid --samples: %s", err.c_str());
     }
   }
 
@@ -247,14 +250,14 @@ static int RunVblankWaitSanity(int argc, char** argv) {
   if (aerogpu_test::GetArgValue(argc, argv, "--timeout-ms", &timeout_str)) {
     std::string err;
     if (!aerogpu_test::ParseUint32(timeout_str, &timeout_ms, &err)) {
-      return aerogpu_test::Fail(kTestName, "invalid --timeout-ms: %s", err.c_str());
+      return reporter.Fail("invalid --timeout-ms: %s", err.c_str());
     }
   }
   std::string wait_timeout_str;
   if (aerogpu_test::GetArgValue(argc, argv, "--wait-timeout-ms", &wait_timeout_str)) {
     std::string err;
     if (!aerogpu_test::ParseUint32(wait_timeout_str, &timeout_ms, &err)) {
-      return aerogpu_test::Fail(kTestName, "invalid --wait-timeout-ms: %s", err.c_str());
+      return reporter.Fail("invalid --wait-timeout-ms: %s", err.c_str());
     }
   }
 
@@ -267,14 +270,14 @@ static int RunVblankWaitSanity(int argc, char** argv) {
   if (aerogpu_test::GetArgValue(argc, argv, "--require-vid", &require_vid_str)) {
     std::string err;
     if (!aerogpu_test::ParseUint32(require_vid_str, &require_vid, &err)) {
-      return aerogpu_test::Fail(kTestName, "invalid --require-vid: %s", err.c_str());
+      return reporter.Fail("invalid --require-vid: %s", err.c_str());
     }
     has_require_vid = true;
   }
   if (aerogpu_test::GetArgValue(argc, argv, "--require-did", &require_did_str)) {
     std::string err;
     if (!aerogpu_test::ParseUint32(require_did_str, &require_did, &err)) {
-      return aerogpu_test::Fail(kTestName, "invalid --require-did: %s", err.c_str());
+      return reporter.Fail("invalid --require-did: %s", err.c_str());
     }
     has_require_did = true;
   }
@@ -290,11 +293,10 @@ static int RunVblankWaitSanity(int argc, char** argv) {
   if (GetSystemMetrics(SM_REMOTESESSION)) {
     if (allow_remote) {
       aerogpu_test::PrintfStdout("INFO: %s: remote session detected; skipping", kTestName);
-      aerogpu_test::PrintfStdout("PASS: %s", kTestName);
-      return 0;
+      reporter.SetSkipped("remote_session");
+      return reporter.Pass();
     }
-    return aerogpu_test::Fail(
-        kTestName,
+    return reporter.Fail(
         "running in a remote session (SM_REMOTESESSION=1). Re-run with --allow-remote to skip.");
   }
 
@@ -312,41 +314,34 @@ static int RunVblankWaitSanity(int argc, char** argv) {
                                    ident.Description,
                                    (unsigned)ident.VendorId,
                                    (unsigned)ident.DeviceId);
+        reporter.SetAdapterInfoA(ident.Description, ident.VendorId, ident.DeviceId);
         if (has_require_vid && ident.VendorId != require_vid) {
-          return aerogpu_test::Fail(kTestName,
-                                    "adapter VID mismatch: got 0x%04X expected 0x%04X",
-                                    (unsigned)ident.VendorId,
-                                    (unsigned)require_vid);
+          return reporter.Fail("adapter VID mismatch: got 0x%04X expected 0x%04X",
+                               (unsigned)ident.VendorId,
+                               (unsigned)require_vid);
         }
         if (has_require_did && ident.DeviceId != require_did) {
-          return aerogpu_test::Fail(kTestName,
-                                    "adapter DID mismatch: got 0x%04X expected 0x%04X",
-                                    (unsigned)ident.DeviceId,
-                                    (unsigned)require_did);
+          return reporter.Fail("adapter DID mismatch: got 0x%04X expected 0x%04X",
+                               (unsigned)ident.DeviceId,
+                               (unsigned)require_did);
         }
       } else if (has_require_vid || has_require_did) {
-        return aerogpu_test::FailHresult(
-            kTestName,
-            "GetAdapterIdentifier (required for --require-vid/--require-did)",
-            hr);
+        return reporter.FailHresult("GetAdapterIdentifier (required for --require-vid/--require-did)", hr);
       }
     } else if (has_require_vid || has_require_did) {
-      return aerogpu_test::FailHresult(
-          kTestName,
-          "Direct3DCreate9Ex (required for --require-vid/--require-did)",
-          hr);
+      return reporter.FailHresult("Direct3DCreate9Ex (required for --require-vid/--require-did)", hr);
     }
   }
 
   D3DKMT_FUNCS f;
   std::string load_err;
   if (!LoadD3DKMT(&f, &load_err)) {
-    return aerogpu_test::Fail(kTestName, "%s", load_err.c_str());
+    return reporter.Fail("%s", load_err.c_str());
   }
 
   HDC hdc = GetDC(NULL);
   if (!hdc) {
-    return aerogpu_test::Fail(kTestName, "GetDC(NULL) failed");
+    return reporter.Fail("GetDC(NULL) failed");
   }
 
   D3DKMT_OPENADAPTERFROMHDC open;
@@ -355,9 +350,7 @@ static int RunVblankWaitSanity(int argc, char** argv) {
   NTSTATUS st = f.OpenAdapterFromHdc(&open);
   ReleaseDC(NULL, hdc);
   if (!NT_SUCCESS(st)) {
-    return aerogpu_test::Fail(kTestName,
-                              "D3DKMTOpenAdapterFromHdc failed with %s",
-                              NtStatusToString(&f, st).c_str());
+    return reporter.Fail("D3DKMTOpenAdapterFromHdc failed with %s", NtStatusToString(&f, st).c_str());
   }
 
   aerogpu_test::PrintfStdout("INFO: %s: D3DKMT: hAdapter=0x%08X VidPnSourceId=%u LUID=0x%08lX%08lX",
@@ -369,14 +362,14 @@ static int RunVblankWaitSanity(int argc, char** argv) {
 
   LARGE_INTEGER qpc_freq_li;
   if (!QueryPerformanceFrequency(&qpc_freq_li) || qpc_freq_li.QuadPart <= 0) {
-    return aerogpu_test::Fail(kTestName, "QueryPerformanceFrequency failed");
+    return reporter.Fail("QueryPerformanceFrequency failed");
   }
   const LONGLONG qpc_freq = qpc_freq_li.QuadPart;
 
   WaitThreadCtx waiter;
   std::string waiter_err;
   if (!StartWaitThread(&waiter, &f, open.hAdapter, open.VidPnSourceId, &waiter_err)) {
-    return aerogpu_test::Fail(kTestName, "failed to start wait thread: %s", waiter_err.c_str());
+    return reporter.Fail("failed to start wait thread: %s", waiter_err.c_str());
   }
 
   std::vector<double> deltas_ms;
@@ -391,25 +384,20 @@ static int RunVblankWaitSanity(int argc, char** argv) {
     if (w == WAIT_TIMEOUT) {
       // Avoid trying to clean up the wait thread: it may be blocked in the kernel thunk. Exiting
       // the process is sufficient for test automation, and avoids deadlock-prone teardown paths.
-      return aerogpu_test::Fail(kTestName,
-                                "vblank wait timed out after %lu ms (sample %lu/%lu)",
-                                (unsigned long)timeout_ms,
-                                (unsigned long)(i + 1),
-                                (unsigned long)samples);
+      return reporter.Fail("vblank wait timed out after %lu ms (sample %lu/%lu)",
+                           (unsigned long)timeout_ms,
+                           (unsigned long)(i + 1),
+                           (unsigned long)samples);
     }
     if (w != WAIT_OBJECT_0) {
       StopWaitThread(&waiter);
-      return aerogpu_test::Fail(kTestName,
-                                "WaitForSingleObject failed (rc=%lu)",
-                                (unsigned long)w);
+      return reporter.Fail("WaitForSingleObject failed (rc=%lu)", (unsigned long)w);
     }
 
     st = (NTSTATUS)InterlockedCompareExchange(&waiter.last_status, 0, 0);
     if (!NT_SUCCESS(st)) {
       StopWaitThread(&waiter);
-      return aerogpu_test::Fail(kTestName,
-                                "D3DKMTWaitForVerticalBlankEvent failed with %s",
-                                NtStatusToString(&f, st).c_str());
+      return reporter.Fail("D3DKMTWaitForVerticalBlankEvent failed with %s", NtStatusToString(&f, st).c_str());
     }
 
     LARGE_INTEGER now;
@@ -426,9 +414,7 @@ static int RunVblankWaitSanity(int argc, char** argv) {
   close.hAdapter = open.hAdapter;
   st = f.CloseAdapter(&close);
   if (!NT_SUCCESS(st)) {
-    return aerogpu_test::Fail(kTestName,
-                              "D3DKMTCloseAdapter failed with %s",
-                              NtStatusToString(&f, st).c_str());
+    return reporter.Fail("D3DKMTCloseAdapter failed with %s", NtStatusToString(&f, st).c_str());
   }
 
   double sum = 0.0;
@@ -455,6 +441,8 @@ static int RunVblankWaitSanity(int argc, char** argv) {
       max_ms,
       (unsigned long)timeout_ms);
 
+  reporter.SetTimingSamplesMs(deltas_ms);
+
   // Heuristic pass/fail:
   //
   // - If the wait returns almost immediately, we are not actually waiting for vblank.
@@ -463,17 +451,16 @@ static int RunVblankWaitSanity(int argc, char** argv) {
   // Keep these thresholds generous: this test is intended to detect "completely broken" vblank
   // wiring, not to enforce perfect refresh accuracy.
   if (avg_ms < 2.0) {
-    return aerogpu_test::Fail(kTestName, "unexpectedly fast vblank pacing (avg=%.3fms)", avg_ms);
+    return reporter.Fail("unexpectedly fast vblank pacing (avg=%.3fms)", avg_ms);
   }
   if (max_ms > 250.0) {
-    return aerogpu_test::Fail(kTestName, "unexpectedly large vblank gap (max=%.3fms)", max_ms);
+    return reporter.Fail("unexpectedly large vblank gap (max=%.3fms)", max_ms);
   }
   if (avg_ms < 5.0 || avg_ms > 40.0) {
     aerogpu_test::PrintfStdout("INFO: %s: WARNING: unusual vblank average (avg=%.3fms)", kTestName, avg_ms);
   }
 
-  aerogpu_test::PrintfStdout("PASS: %s", kTestName);
-  return 0;
+  return reporter.Pass();
 }
 
 int main(int argc, char** argv) {

@@ -1,4 +1,5 @@
 #include "..\\common\\aerogpu_test_common.h"
+#include "..\\common\\aerogpu_test_report.h"
 
 // This test validates the WDDM vblank wait path directly via D3DKMTWaitForVerticalBlankEvent.
 //
@@ -161,21 +162,22 @@ static int RunVblankWait(int argc, char** argv) {
   const char* kTestName = "vblank_wait";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
-        "Usage: %s.exe [--display \\\\.\\DISPLAYn] [--samples=N] [--allow-remote]", kTestName);
+        "Usage: %s.exe [--display \\\\.\\DISPLAYn] [--samples=N] [--json[=PATH]] [--allow-remote]", kTestName);
     aerogpu_test::PrintfStdout("Default: --display=primary --samples=120");
     aerogpu_test::PrintfStdout("Measures vblank pacing by timing successive D3DKMTWaitForVerticalBlankEvent calls.");
     return 0;
   }
 
+  aerogpu_test::TestReporter reporter(kTestName, argc, argv);
+
   const bool allow_remote = aerogpu_test::HasArg(argc, argv, "--allow-remote");
   if (GetSystemMetrics(SM_REMOTESESSION)) {
     if (allow_remote) {
       aerogpu_test::PrintfStdout("INFO: %s: remote session detected; skipping", kTestName);
-      aerogpu_test::PrintfStdout("PASS: %s", kTestName);
-      return 0;
+      reporter.SetSkipped("remote_session");
+      return reporter.Pass();
     }
-    return aerogpu_test::Fail(
-        kTestName,
+    return reporter.Fail(
         "running in a remote session (SM_REMOTESESSION=1). Re-run with --allow-remote to skip.");
   }
 
@@ -184,7 +186,7 @@ static int RunVblankWait(int argc, char** argv) {
   if (aerogpu_test::GetArgValue(argc, argv, "--samples", &samples_str)) {
     std::string err;
     if (!aerogpu_test::ParseUint32(samples_str, &samples, &err)) {
-      return aerogpu_test::Fail(kTestName, "invalid --samples: %s", err.c_str());
+      return reporter.Fail("invalid --samples: %s", err.c_str());
     }
   }
 
@@ -192,11 +194,11 @@ static int RunVblankWait(int argc, char** argv) {
   std::string display_str;
   if (aerogpu_test::GetArgValue(argc, argv, "--display", &display_str)) {
     if (display_str.empty()) {
-      return aerogpu_test::Fail(kTestName, "invalid --display: missing value");
+      return reporter.Fail("invalid --display: missing value");
     }
     display = AcpToWide(display_str);
     if (display.empty()) {
-      return aerogpu_test::Fail(kTestName, "invalid --display: could not convert to wide string");
+      return reporter.Fail("invalid --display: could not convert to wide string");
     }
   }
 
@@ -207,7 +209,7 @@ static int RunVblankWait(int argc, char** argv) {
   std::string fail_msg;
   D3DKMT_FUNCS f;
   if (!LoadD3DKMT(&f, &fail_msg)) {
-    return aerogpu_test::Fail(kTestName, "%s", fail_msg.c_str());
+    return reporter.Fail("%s", fail_msg.c_str());
   }
 
   DEVMODEW dm;
@@ -237,10 +239,9 @@ static int RunVblankWait(int argc, char** argv) {
 
   HDC hdc = CreateDCW(L"DISPLAY", display.c_str(), NULL, NULL);
   if (!hdc) {
-    return aerogpu_test::Fail(kTestName,
-                              "CreateDCW failed for %ls: %s",
-                              display.c_str(),
-                              aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
+    return reporter.Fail("CreateDCW failed for %ls: %s",
+                         display.c_str(),
+                         aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
   }
 
   D3DKMT_OPENADAPTERFROMHDC open;
@@ -250,9 +251,7 @@ static int RunVblankWait(int argc, char** argv) {
   DeleteDC(hdc);
   hdc = NULL;
   if (!NT_SUCCESS(st)) {
-    return aerogpu_test::Fail(kTestName,
-                              "D3DKMTOpenAdapterFromHdc failed with %s",
-                              NtStatusToString(&f, st).c_str());
+    return reporter.Fail("D3DKMTOpenAdapterFromHdc failed with %s", NtStatusToString(&f, st).c_str());
   }
 
   aerogpu_test::PrintfStdout("INFO: %s: VidPnSourceId=%lu AdapterLuid=0x%08lX:0x%08lX",
@@ -286,7 +285,7 @@ static int RunVblankWait(int argc, char** argv) {
     ZeroMemory(&close, sizeof(close));
     close.hAdapter = open.hAdapter;
     f.CloseAdapter(&close);
-    return aerogpu_test::Fail(kTestName, "QueryPerformanceFrequency failed");
+    return reporter.Fail("QueryPerformanceFrequency failed");
   }
   const LONGLONG qpc_freq = qpc_freq_li.QuadPart;
 
@@ -303,9 +302,8 @@ static int RunVblankWait(int argc, char** argv) {
     ZeroMemory(&close, sizeof(close));
     close.hAdapter = open.hAdapter;
     f.CloseAdapter(&close);
-    return aerogpu_test::Fail(kTestName,
-                              "D3DKMTWaitForVerticalBlankEvent(warmup) failed with %s",
-                              NtStatusToString(&f, st).c_str());
+    return reporter.Fail("D3DKMTWaitForVerticalBlankEvent(warmup) failed with %s",
+                         NtStatusToString(&f, st).c_str());
   }
 
   std::vector<double> deltas_ms;
@@ -373,6 +371,8 @@ static int RunVblankWait(int argc, char** argv) {
     }
   }
 
+  reporter.SetTimingSamplesMs(deltas_ms);
+
   D3DKMT_CLOSEADAPTER close;
   ZeroMemory(&close, sizeof(close));
   close.hAdapter = open.hAdapter;
@@ -386,15 +386,13 @@ static int RunVblankWait(int argc, char** argv) {
   }
 
   if (!fail_msg.empty()) {
-    return aerogpu_test::Fail(kTestName, "%s", fail_msg.c_str());
+    return reporter.Fail("%s", fail_msg.c_str());
   }
 
-  aerogpu_test::PrintfStdout("PASS: %s", kTestName);
-  return 0;
+  return reporter.Pass();
 }
 
 int main(int argc, char** argv) {
   aerogpu_test::ConfigureProcessForAutomation();
   return RunVblankWait(argc, argv);
 }
-
