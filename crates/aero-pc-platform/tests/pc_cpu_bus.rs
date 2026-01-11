@@ -66,10 +66,22 @@ fn pc_cpu_bus_does_not_panic_on_wrapping_linear_addresses() {
     // PML4E[511] -> PDPT[511] -> PD[511] -> PT[511] -> high_page
     let idx = 0x1ffu64;
     let flags = PTE_P | PTE_RW | PTE_US;
-    write_u64(&mut bus.platform.memory, pml4_base + idx * 8, pdpt_base | flags);
-    write_u64(&mut bus.platform.memory, pdpt_base + idx * 8, pd_base | flags);
+    write_u64(
+        &mut bus.platform.memory,
+        pml4_base + idx * 8,
+        pdpt_base | flags,
+    );
+    write_u64(
+        &mut bus.platform.memory,
+        pdpt_base + idx * 8,
+        pd_base | flags,
+    );
     write_u64(&mut bus.platform.memory, pd_base + idx * 8, pt_base | flags);
-    write_u64(&mut bus.platform.memory, pt_base + idx * 8, high_page | flags);
+    write_u64(
+        &mut bus.platform.memory,
+        pt_base + idx * 8,
+        high_page | flags,
+    );
 
     // Place a distinguishable byte at the final address.
     bus.platform.memory.write_u8(high_page + 0xfff, 0x90);
