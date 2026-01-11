@@ -17,6 +17,7 @@
 #include "../../../protocol/aerogpu_dbgctl_escape.h"
 #include "../../../protocol/aerogpu_win7_abi.h"
 
+#include "../../common/aerogpu_wddm_submit_buffer_utils.h"
 #include "aerogpu_d3d10_11_log.h"
 #include "aerogpu_d3d10_11_wddm_alloc_list.h"
 
@@ -1003,6 +1004,7 @@ void extract_alloc_outputs(SubmissionBuffers* out, const D3DDDICB_ALLOCATE& allo
   void* cmd_ptr = nullptr;
   void* dma_ptr = nullptr;
   UINT cap = 0;
+  bool cap_from_dma_size = false;
 
   __if_exists(D3DDDICB_ALLOCATE::pDmaBuffer) {
     dma_ptr = alloc.pDmaBuffer;
@@ -1011,18 +1013,23 @@ void extract_alloc_outputs(SubmissionBuffers* out, const D3DDDICB_ALLOCATE& allo
   __if_exists(D3DDDICB_ALLOCATE::pCommandBuffer) {
     cmd_ptr = alloc.pCommandBuffer;
   }
-  __if_exists(D3DDDICB_ALLOCATE::DmaBufferSize) {
-    cap = alloc.DmaBufferSize;
-  }
   __if_exists(D3DDDICB_ALLOCATE::CommandBufferSize) {
-    if (cap == 0) {
+    if (alloc.CommandBufferSize) {
       cap = alloc.CommandBufferSize;
+    }
+  }
+  __if_exists(D3DDDICB_ALLOCATE::DmaBufferSize) {
+    if (cap == 0) {
+      cap = alloc.DmaBufferSize;
+      cap_from_dma_size = true;
     }
   }
 
   out->command_buffer = cmd_ptr;
   out->dma_buffer = dma_ptr ? dma_ptr : cmd_ptr;
-  out->command_buffer_bytes = cap;
+  out->command_buffer_bytes = cap_from_dma_size
+                                  ? AdjustCommandBufferSizeFromDmaBuffer(out->dma_buffer, out->command_buffer, cap)
+                                  : cap;
 
   __if_exists(D3DDDICB_ALLOCATE::pAllocationList) {
     out->allocation_list = alloc.pAllocationList;
@@ -1196,13 +1203,19 @@ HRESULT acquire_submit_buffers_get_command_buffer(const D3DDDI_DEVICECALLBACKS* 
       }
       out->dma_buffer = info.pDmaBuffer;
     }
+    bool cap_from_dma_size = false;
     __if_exists(D3DDDICB_GETCOMMANDINFO::CommandBufferSize) {
       out->command_buffer_bytes = info.CommandBufferSize;
     }
     __if_exists(D3DDDICB_GETCOMMANDINFO::DmaBufferSize) {
       if (!out->command_buffer_bytes) {
         out->command_buffer_bytes = info.DmaBufferSize;
+        cap_from_dma_size = true;
       }
+    }
+    if (cap_from_dma_size) {
+      out->command_buffer_bytes =
+          AdjustCommandBufferSizeFromDmaBuffer(out->dma_buffer, out->command_buffer, out->command_buffer_bytes);
     }
 
     __if_exists(D3DDDICB_GETCOMMANDINFO::pAllocationList) {
