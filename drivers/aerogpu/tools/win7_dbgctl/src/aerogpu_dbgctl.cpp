@@ -399,6 +399,41 @@ static int DoQueryVersion(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
             (unsigned long long)qf.last_completed_fence);
   };
 
+  const auto DumpScanoutSnapshot = [&]() {
+    aerogpu_escape_query_scanout_out qs;
+    ZeroMemory(&qs, sizeof(qs));
+    qs.hdr.version = AEROGPU_ESCAPE_VERSION;
+    qs.hdr.op = AEROGPU_ESCAPE_OP_QUERY_SCANOUT;
+    qs.hdr.size = sizeof(qs);
+    qs.hdr.reserved0 = 0;
+    qs.vidpn_source_id = 0;
+
+    NTSTATUS stScanout = SendAerogpuEscape(f, hAdapter, &qs, sizeof(qs));
+    if (!NT_SUCCESS(stScanout)) {
+      if (stScanout == STATUS_NOT_SUPPORTED) {
+        wprintf(L"Scanout0: (not supported)\n");
+      } else {
+        PrintNtStatus(L"D3DKMTEscape(query-scanout) failed", f, stScanout);
+      }
+      return;
+    }
+
+    wprintf(L"Scanout0:\n");
+    wprintf(L"  cached: enable=%lu width=%lu height=%lu format=%lu pitch=%lu\n",
+            (unsigned long)qs.cached_enable,
+            (unsigned long)qs.cached_width,
+            (unsigned long)qs.cached_height,
+            (unsigned long)qs.cached_format,
+            (unsigned long)qs.cached_pitch_bytes);
+    wprintf(L"  mmio:   enable=%lu width=%lu height=%lu format=%lu pitch=%lu fb_gpa=0x%I64x\n",
+            (unsigned long)qs.mmio_enable,
+            (unsigned long)qs.mmio_width,
+            (unsigned long)qs.mmio_height,
+            (unsigned long)qs.mmio_format,
+            (unsigned long)qs.mmio_pitch_bytes,
+            (unsigned long long)qs.mmio_fb_gpa);
+  };
+
   const auto DumpVblankSnapshot = [&]() {
     aerogpu_escape_query_vblank_out qv;
     ZeroMemory(&qv, sizeof(qv));
@@ -536,10 +571,11 @@ static int DoQueryVersion(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
     if (!any) {
       wprintf(L" (none)");
     }
-    wprintf(L"\n");
+  wprintf(L"\n");
   }
 
   DumpFenceSnapshot();
+  DumpScanoutSnapshot();
   DumpVblankSnapshot();
 
   return 0;

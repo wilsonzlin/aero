@@ -32,7 +32,7 @@ Minimum supported commands:
 
 - `aerogpu_dbgctl --query-version` (alias: `--query-device`)  
   Prints the detected AeroGPU device ABI (**legacy ARGP** vs **new AGPU**), ABI version, and (when exposed) device feature bits.
-  Also prints a fence snapshot and (when available) a scanout0 vblank timing snapshot.
+  Also prints a fence snapshot, a scanout0 snapshot (cached vs MMIO), and (when available) a scanout0 vblank timing snapshot.
 
 - `aerogpu_dbgctl --status` *(alias for `--query-version`)*  
   Prints a short combined snapshot (device/ABI + fences + scanout0 vblank).
