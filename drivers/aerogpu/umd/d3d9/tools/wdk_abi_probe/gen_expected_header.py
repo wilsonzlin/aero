@@ -179,6 +179,12 @@ def _emit_header(x86: ProbeData, x64: ProbeData, *, emit_all: bool) -> str:
         ("D3D9DDI_DEVICEFUNCS", "pfnColorFill"),
         ("D3D9DDI_DEVICEFUNCS", "pfnUpdateSurface"),
         ("D3D9DDI_DEVICEFUNCS", "pfnUpdateTexture"),
+        ("D3D9DDI_DEVICEFUNCS", "pfnClear"),
+        ("D3D9DDI_DEVICEFUNCS", "pfnDrawPrimitive"),
+        ("D3D9DDI_DEVICEFUNCS", "pfnDrawPrimitiveUP"),
+        ("D3D9DDI_DEVICEFUNCS", "pfnDrawIndexedPrimitive"),
+        ("D3D9DDI_DEVICEFUNCS", "pfnDrawPrimitive2"),
+        ("D3D9DDI_DEVICEFUNCS", "pfnDrawIndexedPrimitive2"),
     ]
     callbacks_fields = [
         ("D3DDDI_DEVICECALLBACKS", "pfnAllocateCb"),
