@@ -1,6 +1,6 @@
-// AeroGPU KMD - Win7 WDK 7.1 ABI probe (DXGK vblank interrupt ABI)
+// AeroGPU KMD - Win7 WDK ABI probe (DXGK vblank interrupt ABI)
 //
-// This program is intended to be built inside a Windows 7 WDK 7.1 environment
+// This program is intended to be built inside a Win7-era WDK environment
 // to capture ABI-critical structure layouts and enum values used by the Win7
 // WDDM 1.1 display miniport interface.
 //
@@ -81,4 +81,3 @@ int main() {
 
   return 0;
 }
-

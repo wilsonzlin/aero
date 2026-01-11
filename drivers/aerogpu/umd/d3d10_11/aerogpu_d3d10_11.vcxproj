@@ -68,9 +68,10 @@
       These headers are provided by the Windows Driver Kit (WDK) / Windows Kits.
       If they are missing, the compiler error will instruct you to install the kit.
 
-      Optional: /p:AeroGpuWdkRoot may be set to a WinDDK-style root (WDK 7.1 layout)
-      so the headers resolve via $(AeroGpuWdkRoot)\inc\{api,ddk}. If unset, the build
-      falls back to the toolchain's standard include paths (common for WDK10+ installs).
+      Optional: /p:AeroGpuWdkRoot may be set to a WinDDK-style root (Win7-era `inc\{api,ddk}` layout;
+      typically %WINDDK% / C:\WinDDK\7600.16385.1) so the headers resolve via
+      $(AeroGpuWdkRoot)\inc\{api,ddk}. If unset, the build falls back to the toolchain's standard
+      include paths (common for WDK10+ installs).
     -->
     <AeroGpuUseWdkHeaders Condition="'$(AeroGpuUseWdkHeaders)'==''">1</AeroGpuUseWdkHeaders>
     <!-- Only treat these env vars as WinDDK-style roots when they contain the expected inc\{api,ddk} layout. -->

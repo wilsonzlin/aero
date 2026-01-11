@@ -59,7 +59,7 @@ header mode for the D3D10/11 UMD build by passing:
 
 * `/p:AeroGpuUseWdkHeaders=1`
 
-If a WinDDK-style root is detected (WDK 7.1 layout; `inc\\{api,ddk}`), it also passes:
+If a WinDDK-style root is detected (Win7-era `inc\\{api,ddk}` layout), it also passes:
 
 * `/p:AeroGpuWdkRoot="<root>"`
 

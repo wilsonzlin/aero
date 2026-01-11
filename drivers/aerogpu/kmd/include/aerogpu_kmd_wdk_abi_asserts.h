@@ -5,7 +5,7 @@
  *
  * The AeroGPU miniport is built with the WDK 10 toolchain, but it targets the
  * Win7 (WDDM 1.1) dxgkrnl ABI. This header provides a place to "freeze" ABI-
- * critical sizes/offsets/enums (captured from the real WDK 7.1 headers via the
+ * critical sizes/offsets/enums (captured from a Win7-era header set via the
  * probe tool) so future header/toolchain drift is caught at compile time.
  *
  * This file is intentionally inert unless AEROGPU_KMD_USE_WDK_DDI is defined.
@@ -20,7 +20,7 @@
 #include <d3dkmddi.h>
 
 /*
- * WDK 7.1 toolchains may not support C11 static_assert; use the traditional
+ * Some Win7-era WDK toolchains may not support C11 static_assert; use the traditional
  * typedef trick. Prefer C_ASSERT if the WDK provides it.
  */
 #ifndef C_ASSERT
@@ -80,4 +80,3 @@ AEROGPU_ABI_STATIC_ASSERT((ULONG)DXGK_INTERRUPT_TYPE_CRTC_VSYNC == AEROGPU_KMD_W
 #endif
 
 #endif /* AEROGPU_KMD_USE_WDK_DDI */
-

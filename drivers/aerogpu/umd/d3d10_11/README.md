@@ -202,7 +202,7 @@ The Visual Studio project enables WDK headers by defining
 the UMD project, and what `drivers\aerogpu\build\build_all.cmd` passes when
 staging Win7 binaries).
 
-Optional: if you have a WinDDK-style root (WDK 7.1 layout), set
+Optional: if you have a WinDDK-style root (Win7-era `inc\\{api,ddk}` layout), set
 `/p:AeroGpuWdkRoot="C:\WinDDK\7600.16385.1"` (or `%WINDDK%`/`%WDK_ROOT%`/`%WDKROOT%`)
 to add `$(AeroGpuWdkRoot)\inc\{api,ddk}` to the include path and validate the
 expected headers exist. If `AeroGpuWdkRoot` is unset, the build falls back to

@@ -1,4 +1,4 @@
-# Win7 (WDK 7.1 / WDDM 1.1) D3D11 Map/Unmap semantics (UMD `pfnMap`/`pfnUnmap` + runtime `LockCb`/`UnlockCb`)
+# Win7 (WDDM 1.1) D3D11 Map/Unmap semantics (UMD `pfnMap`/`pfnUnmap` + runtime `LockCb`/`UnlockCb`)
 
 This document defines the **behavioral contract** AeroGPU must implement for **`Map`/`Unmap` on Windows 7** (WDDM 1.1) when implementing the **D3D11 user-mode display driver (UMD)**.
 
@@ -8,7 +8,7 @@ It exists to stop future implementers from reverse‑engineering Win7 runtime be
 * `drivers/aerogpu/tests/win7/readback_sanity/`
 * `drivers/aerogpu/tests/win7/d3d11_map_roundtrip/`
 
-> Header references: symbol/type names in this doc are from **WDK 7.1** user-mode DDI headers:
+> Header references: symbol/type names in this doc are from Win7-era user-mode DDI headers:
 > `d3d11umddi.h` (D3D11 UMD DDI), `d3d10umddi.h` (some D3D10-era shared DDI enums/types still used by D3D11 on Win7), and `d3dumddi.h` (common runtime callback types like `D3DDDICB_LOCK`).
 >
 > For overall D3D10/11 bring-up context, see [`win7-d3d10-11-umd-minimal.md`](./win7-d3d10-11-umd-minimal.md).
@@ -100,7 +100,7 @@ Map/Unmap uses at least:
 * `pfnUnlockCb` with `D3DDDICB_UNLOCK`
 * `pfnSetErrorCb` (required for `pfnUnmap` error reporting and other void DDIs)
 
-In WDK 7.1, these callbacks are typically declared as `HRESULT`-returning functions that take the runtime device handle first:
+In Win7-era header sets, these callbacks are typically declared as `HRESULT`-returning functions that take the runtime device handle first:
 
 ```c
 HRESULT APIENTRY pfnLockCb(D3D10DDI_HRTDEVICE hRTDevice, D3DDDICB_LOCK* pLock);
@@ -125,7 +125,7 @@ For synchronization/fence-based implementations, the shared callback table (or a
 
 ---
 
-## 2) `D3D11DDIARG_MAP` / `D3D11DDIARG_UNMAP` field breakdown (Win7 WDK 7.1)
+## 2) `D3D11DDIARG_MAP` / `D3D11DDIARG_UNMAP` field breakdown (Win7-era headers)
 
 Some Win7 D3D11 documentation refers to the Map/Unmap argument bundle as `D3D11DDIARG_MAP` / `D3D11DDIARG_UNMAP`.
 In practice, the Win7-era D3D11 UMD DDI passes Map/Unmap as **flat arguments** (rather than a single `*ARG_*` struct), but the logical field breakdown is the same.

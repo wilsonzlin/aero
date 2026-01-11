@@ -14,7 +14,7 @@ The goal is to make header/version drift and calling-convention mismatches obvio
 
 ## Build (WDK environment)
 
-1. Install a WDK that provides the D3D10/11 UMD DDI headers (WDK 7.1 / WinDDK layout is known to work).
+1. Install a WDK that provides the D3D10/11 UMD DDI headers (WinDDK 7600-era layout is known to work).
 2. Open the appropriate build environment command prompt (so headers/libs are on `INCLUDE`/`LIB`):
    - “Windows 7 x86 Free Build Environment” (x86)
    - “Windows 7 x64 Free Build Environment” (x64)
@@ -60,4 +60,3 @@ And on x86, also contains the raw decorated forms:
 - `_OpenAdapter10@N`
 - `_OpenAdapter10_2@N`
 - `_OpenAdapter11@N`
-

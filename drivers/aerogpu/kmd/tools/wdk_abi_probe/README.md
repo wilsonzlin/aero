@@ -1,7 +1,7 @@
-# Win7 WDK 7.1 KMD ABI Probe (DXGK vblank interrupt ABI)
+# Win7 KMD ABI Probe (DXGK vblank interrupt ABI)
 
 This directory contains a **standalone console program** intended to be built
-against the **real Windows 7 WDK 7.1** display miniport headers (`d3dkmddi.h`).
+against the **real Win7-era** display miniport headers (`d3dkmddi.h`).
 
 It prints ABI-critical details for Win7 WDDM 1.1 vblank interrupt delivery:
 
@@ -11,9 +11,10 @@ It prints ABI-critical details for Win7 WDDM 1.1 vblank interrupt delivery:
 
 This makes header/version drift obvious before debugging a Win7 VM.
 
-## Build (WDK 7.1 environment)
+## Build (Win7-era WDK environment)
 
-1. Install **Windows 7 WDK 7.1**.
+1. Install a WDK that provides the Win7 WDDM 1.1 display miniport headers (`d3dkmddi.h`).
+   A WinDDK 7600-era kit is known to work.
 2. Open the appropriate WDK build environment command prompt:
    - “Windows 7 x86 Free Build Environment”
    - “Windows 7 x64 Free Build Environment”
@@ -51,5 +52,4 @@ macros (using values printed by this probe), e.g.:
 ```
 
 These checks are intentionally optional so repo-local builds can keep working
-even if they are not built against the WDK 7.1 headers.
-
+even if they are not built against the Win7-era headers.

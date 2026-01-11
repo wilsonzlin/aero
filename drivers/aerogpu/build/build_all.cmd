@@ -28,8 +28,8 @@ set "UMD_D3D10_11_SLN=%UMD_D3D10_11_DIR%\aerogpu_d3d10_11.sln"
 
 set "OUT_ROOT=%SCRIPT_DIR%\out"
 
-rem Optional WDK 7.1 root (WinDDK layout; used for D3D9 + D3D10/11 UMD DDI headers).
-rem If not found, the UMD builds rely on the toolchain's default include paths (WDK10+).
+rem Optional Win7-era WinDDK root (7600-era layout; used for D3D9 + D3D10/11 UMD DDI headers).
+rem If not found, the UMD builds rely on the toolchain's default include paths (typically Windows Kits 10+).
 rem
 rem Note: do not clobber the standard WDKROOT environment variable; it may be set by modern
 rem Windows Kits installations.

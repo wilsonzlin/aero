@@ -1,4 +1,4 @@
-# Win7 (WDDM 1.1) D3D10/D3D11 UMD allocation contract (WDK 7.1)
+# Win7 (WDDM 1.1) D3D10/D3D11 UMD allocation contract (Win7-era WDK reference)
 
 This document is the **single authoritative, implementation-oriented spec** for how a **Windows 7** (**WDDM 1.1**) **D3D10/D3D11 user-mode display driver (UMD)** allocates and frees memory through the Win7-era D3D UMD contracts.
 
@@ -9,14 +9,14 @@ This document is the **single authoritative, implementation-oriented spec** for 
 >
 > This doc focuses on (1) for `CreateResource`, but also lists (2) because the callback names (`AllocateCb`/`DeallocateCb`) are otherwise confusing.
 
-It is written against **WDK 7.1** headers:
+It is written against Win7-era user-mode DDI headers:
 
 * `d3d10umddi.h`
 * `d3d11umddi.h`
 * `d3dumddi.h`
 * `dxgiddi.h`
 
-The goal is that a developer with WDK 7.1 can implement a correct `CreateResource` allocation flow without chasing definitions across multiple headers.
+The goal is that a developer with the Win7-era DDI headers can implement a correct `CreateResource` allocation flow without chasing definitions across multiple headers.
 
 For the **combined** reference that also covers Win7 `Map`/`Unmap` (`D3DDDICB_LOCK`/`D3DDDICB_UNLOCK`), pitch return rules, and staging readback synchronization, see:
 
@@ -34,7 +34,7 @@ For the **combined** reference that also covers Win7 `Map`/`Unmap` (`D3DDDICB_LO
 
 ### 1.1 `OpenAdapter10` / `OpenAdapter11` (Win7 quirk)
 
-Exports (names matter; signatures from WDK 7.1):
+Exports (names matter; signatures from Win7-era headers):
 
 * D3D10: `HRESULT APIENTRY OpenAdapter10(D3D10DDIARG_OPENADAPTER* pOpenData)`
 * D3D11: `HRESULT APIENTRY OpenAdapter11(D3D10DDIARG_OPENADAPTER* pOpenData)`
@@ -150,7 +150,7 @@ Everything else is driver-owned bookkeeping.
 
 ---
 
-## 3) Runtime callback prototypes (WDK 7.1)
+## 3) Runtime callback prototypes (Win7-era headers)
 
 These callbacks are provided by the runtime (via the device callback table(s) handed to the UMD at `CreateDevice` time).
 
@@ -194,7 +194,7 @@ Notes:
 
 ## 4) Allocation data structures (field lists)
 
-> Naming: fields below are **verbatim WDK 7.1 identifiers**; descriptions are the meaning in the UMD allocation contract.
+> Naming: fields below are **verbatim Win7-era header identifiers**; descriptions are the meaning in the UMD allocation contract.
 
 ### 4.1 `D3DDDICB_ALLOCATE` (from `d3dumddi.h`) — DMA buffer allocation
 
@@ -274,7 +274,7 @@ The Win7 bring-up set of flags you should expect to set in practice:
 
 ### 4.4 `D3D11DDI_ALLOCATIONINFO` vs `D3DDDI_ALLOCATIONINFO`
 
-In WDK 7.1, the D3D10/11 UMD DDIs reuse the `d3dumddi.h` allocation info layout:
+In the Win7-era D3D10/11 UMD DDI, the DDIs reuse the `d3dumddi.h` allocation info layout:
 
 * `D3D10DDI_ALLOCATIONINFO`
 * `D3D11DDI_ALLOCATIONINFO`

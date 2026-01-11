@@ -77,7 +77,7 @@
       The canonical build (including CI) uses a modern Windows Kits toolchain, which typically
       provides the D3D9 UMD DDI headers (d3dumddi.h / d3d9umddi.h) via the default include paths.
 
-      For Win7-era WDK 7.1 (WinDDK) layouts, set /p:AeroGpuWdkRoot=... (or rely on WINDDK / WDK_ROOT / WDKROOT
+      For Win7-era WinDDK (7600-era) layouts, set /p:AeroGpuWdkRoot=... (or rely on WINDDK / WDK_ROOT / WDKROOT
       env vars) so the build can locate headers under:
         - $(AeroGpuWdkRoot)\inc\api
         - $(AeroGpuWdkRoot)\inc\ddk
