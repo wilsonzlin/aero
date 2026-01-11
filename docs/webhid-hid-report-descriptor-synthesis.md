@@ -134,8 +134,16 @@ WebHID surfaces both:
 
 Synthesis interpretation:
 
-- If `item.isRange == true`, we emit `Usage Minimum` + `Usage Maximum` and ignore `item.usages`.
-- If `item.isRange == false`, we emit one `Usage` per entry in `item.usages` and ignore `item.usageMinimum` / `item.usageMaximum`.
+- If `item.isRange == true`, we treat `item.usages` as the set of usages covered by the range.
+  - In WebHID, `item.usages` is expected to be the *expanded list* (inclusive), e.g. keyboard
+    modifiers are `E0..E7` → `[0xE0, 0xE1, …, 0xE7]` (not `[0xE0, 0xE7]`).
+  - We emit `Usage Minimum` + `Usage Maximum` only if the usages can be represented as a single
+    contiguous span. Otherwise we fall back to emitting explicit `Usage` tags.
+  - For robustness, if `item.usages` is empty we fall back to `item.usageMinimum` /
+    `item.usageMaximum` (and may store the compact `[min, max]` representation internally to avoid
+    allocating huge arrays).
+- If `item.isRange == false`, we emit one `Usage` per entry in `item.usages` (in order) and ignore
+  `item.usageMinimum` / `item.usageMaximum`.
 - Empty `item.usages` is allowed (common for constant/padding fields); in that case no usage locals are emitted for the item.
 
 ### Deterministic per-item emission order
@@ -151,8 +159,9 @@ Because we are regenerating bytes from metadata (not replaying the original desc
    - `Report Size`
    - `Report Count`
 2. Usage locals:
-   - if `item.isRange`: emit `Usage Minimum` + `Usage Maximum` (for WebHID-sourced items, this comes from `item.usageMinimum`/`item.usageMaximum`)
-     - the internal encoder may choose to fall back to an explicit `Usage` list if the range cannot be represented as a single contiguous span
+   - if `item.isRange`: prefer emitting `Usage Minimum` + `Usage Maximum` using the contiguous span
+     described by `item.usages` (or, if `usages` is empty, by `item.usageMinimum`/`item.usageMaximum`)
+     - the internal encoder may choose to fall back to an explicit `Usage` list if the usages are not contiguous
    - else: emit one `Usage` item per entry in `item.usages`
 3. Main item: `Input` / `Output` / `Feature`
 
