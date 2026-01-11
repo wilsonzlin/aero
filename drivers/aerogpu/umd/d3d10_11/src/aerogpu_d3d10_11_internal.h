@@ -158,6 +158,10 @@ struct Adapter {
   // Opaque pointer to the runtime's adapter callback table (WDK type depends on
   // D3D10 vs D3D11 and the negotiated interface version).
   const void* runtime_callbacks = nullptr;
+  // Negotiated `D3D10DDIARG_OPENADAPTER::Version` value for the D3D11 DDI.
+  // Stored so device creation can validate that it is filling function tables
+  // matching the negotiated struct layout.
+  uint32_t d3d11_ddi_version = 0;
 
   aerogpu_umd_private_v1 umd_private = {};
   bool umd_private_valid = false;

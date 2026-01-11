@@ -2985,6 +2985,16 @@ HRESULT AEROGPU_APIENTRY CreateDevice11(D3D10DDI_HADAPTER hAdapter, D3D11DDIARG_
   if (!adapter) {
     return E_FAIL;
   }
+  // Make sure the adapter open negotiated a DDI version that matches the table
+  // layouts this binary was compiled against.
+#if defined(D3D11DDI_SUPPORTED)
+  constexpr UINT supported_version = D3D11DDI_SUPPORTED;
+#else
+  constexpr UINT supported_version = D3D11DDI_INTERFACE_VERSION;
+#endif
+  if (adapter->d3d11_ddi_version != supported_version) {
+    return E_NOINTERFACE;
+  }
 
   auto* ctx_funcs = GetContextFuncTable(pCreateDevice);
   if (!ctx_funcs) {
@@ -3210,6 +3220,7 @@ HRESULT OpenAdapter11Impl(D3D10DDIARG_OPENADAPTER* pOpenData) {
   if (!adapter) {
     return E_OUTOFMEMORY;
   }
+  adapter->d3d11_ddi_version = pOpenData->Version;
   adapter->runtime_callbacks = GetAdapterCallbacks(pOpenData);
   InitUmdPrivate(adapter);
   pOpenData->hAdapter.pDrvPrivate = adapter;
