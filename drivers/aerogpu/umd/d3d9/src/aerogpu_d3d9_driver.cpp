@@ -4780,7 +4780,6 @@ HRESULT AEROGPU_D3D9_CALL device_blt(AEROGPU_D3D9DDI_HDEVICE hDevice, const AERO
   auto* dst = as_resource(pBlt->hDst);
 
   std::lock_guard<std::mutex> lock(dev->mutex);
-  logf("aerogpu-d3d9: Blt src=%p dst=%p filter=%u\n", src, dst, pBlt->filter);
 
   return trace.ret(blit_locked(dev, dst, pBlt->pDstRect, src, pBlt->pSrcRect, pBlt->filter));
 }
@@ -4802,7 +4801,6 @@ HRESULT AEROGPU_D3D9_CALL device_color_fill(AEROGPU_D3D9DDI_HDEVICE hDevice,
 
   auto* dst = as_resource(pColorFill->hDst);
   std::lock_guard<std::mutex> lock(dev->mutex);
-  logf("aerogpu-d3d9: ColorFill dst=%p color=0x%08x\n", dst, pColorFill->color_argb);
   return trace.ret(color_fill_locked(dev, dst, pColorFill->pRect, pColorFill->color_argb));
 }
 
@@ -4828,7 +4826,6 @@ HRESULT AEROGPU_D3D9_CALL device_update_surface(AEROGPU_D3D9DDI_HDEVICE hDevice,
   auto* dst = as_resource(pUpdateSurface->hDst);
 
   std::lock_guard<std::mutex> lock(dev->mutex);
-  logf("aerogpu-d3d9: UpdateSurface src=%p dst=%p\n", src, dst);
   return trace.ret(update_surface_locked(dev, src, pUpdateSurface->pSrcRect, dst, pUpdateSurface->pDstPoint));
 }
 
@@ -4851,7 +4848,6 @@ HRESULT AEROGPU_D3D9_CALL device_update_texture(AEROGPU_D3D9DDI_HDEVICE hDevice,
   auto* dst = as_resource(pUpdateTexture->hDst);
 
   std::lock_guard<std::mutex> lock(dev->mutex);
-  logf("aerogpu-d3d9: UpdateTexture src=%p dst=%p\n", src, dst);
   return trace.ret(update_texture_locked(dev, src, dst));
 }
 
@@ -6687,16 +6683,7 @@ HRESULT AEROGPU_D3D9_CALL device_get_query_data(
       }
       *reinterpret_cast<uint32_t*>(pGetQueryData->pData) = TRUE;
     }
-    if (!q->completion_logged.exchange(true, std::memory_order_relaxed)) {
-      uint64_t completed = 0;
-      {
-        std::lock_guard<std::mutex> lock(adapter->fence_mutex);
-        completed = adapter->completed_fence;
-      }
-      logf("aerogpu-d3d9: event_query ready fence=%llu completed=%llu\n",
-           static_cast<unsigned long long>(fence_value),
-           static_cast<unsigned long long>(completed));
-    }
+    (void)q->completion_logged.exchange(true, std::memory_order_relaxed);
     return trace.ret(S_OK);
   }
   if (wait_res == FenceWaitResult::Failed) {
