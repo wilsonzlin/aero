@@ -735,6 +735,51 @@ static void TestIndirectDescriptors(void)
 	free(vq);
 }
 
+static void TestGetUsedClearsOutputsOnNotFound(void)
+{
+	const UINT16 qsz = 8;
+	const UINT32 align = 16;
+	const size_t dma_align = 16;
+
+	size_t vq_bytes = VirtqSplitStateSize(qsz);
+	size_t ring_bytes = VirtqSplitRingMemSize(qsz, align, FALSE);
+
+	VIRTQ_SPLIT *vq = (VIRTQ_SPLIT *)calloc(1, vq_bytes);
+	void *ring = AllocAlignedZero(dma_align, ring_bytes);
+	void *cookie_out = (void *)0xDEADBEEF;
+	UINT32 len_out = 0xCAFECAFE;
+	NTSTATUS st;
+
+	ASSERT_TRUE(vq != NULL);
+	ASSERT_TRUE(ring != NULL);
+
+	ASSERT_TRUE(NT_SUCCESS(VirtqSplitInit(vq, qsz, FALSE, FALSE, ring, (UINT64)(uintptr_t)ring, align, NULL, 0, 0, 0)));
+
+	st = VirtqSplitGetUsed(vq, &cookie_out, &len_out);
+	ASSERT_TRUE(st == STATUS_NOT_FOUND);
+	ASSERT_TRUE(cookie_out == NULL);
+	ASSERT_EQ_U32(len_out, 0);
+
+	/* Also ensure outputs are cleared on error paths. */
+	{
+		VIRTQ_USED_ELEM *used_ring = VirtqUsedRing(vq->used);
+		VirtioWriteU32((volatile UINT32 *)&used_ring[0].id, qsz); /* invalid id */
+		VirtioWriteU32((volatile UINT32 *)&used_ring[0].len, 0x1234);
+		VIRTIO_WMB();
+		VirtioWriteU16((volatile UINT16 *)&vq->used->idx, 1);
+	}
+
+	cookie_out = (void *)0x1;
+	len_out = 0x2;
+	st = VirtqSplitGetUsed(vq, &cookie_out, &len_out);
+	ASSERT_TRUE(st == STATUS_INVALID_PARAMETER);
+	ASSERT_TRUE(cookie_out == NULL);
+	ASSERT_EQ_U32(len_out, 0);
+
+	FreeAligned(ring);
+	free(vq);
+}
+
 int main(void)
 {
 	TestDirectChainAddFree();
@@ -749,6 +794,7 @@ int main(void)
 	TestInterruptSuppressionEventIdx();
 	TestIndirectDescriptors();
 	TestIndirectPoolExhaustionFallsBackToDirect();
+	TestGetUsedClearsOutputsOnNotFound();
 
 	printf("virtqueue_split_test: all tests passed\n");
 	return 0;

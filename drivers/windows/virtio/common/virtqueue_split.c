@@ -449,6 +449,15 @@ NTSTATUS VirtqSplitGetUsed(VIRTQ_SPLIT *vq, void **cookie_out, UINT32 *len_out)
 		return STATUS_INVALID_PARAMETER;
 	}
 
+	/*
+	 * Always clear outputs on entry so callers don't have to special-case
+	 * STATUS_NOT_FOUND / error returns.
+	 */
+	*cookie_out = NULL;
+	if (len_out != NULL) {
+		*len_out = 0;
+	}
+
 	used_idx = VirtioReadU16((volatile UINT16 *)&vq->used->idx);
 	if (used_idx == vq->last_used_idx) {
 		return STATUS_NOT_FOUND;
