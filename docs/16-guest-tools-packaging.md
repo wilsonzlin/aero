@@ -449,7 +449,7 @@ Separately, CI also runs the `Windows device contract` workflow (`.github/workfl
 which runs the Rust validator:
 
 ```bash
-cargo run -p device_contract_validator --locked
+cargo run -p device-contract-validator --locked
 ```
 
 This provides an additional guardrail that the **Windows device contract manifests** remain consistent with:

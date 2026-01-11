@@ -544,6 +544,7 @@ fn validate_packaging_specs(
     let spec_paths = [
         repo_root.join("tools/packaging/specs/win7-virtio-win.json"),
         repo_root.join("tools/packaging/specs/win7-virtio-full.json"),
+        repo_root.join("tools/packaging/specs/win7-signed.json"),
         repo_root.join("tools/packaging/specs/win7-aero-guest-tools.json"),
         repo_root.join("tools/packaging/specs/win7-aero-virtio.json"),
     ];
@@ -650,7 +651,7 @@ fn validate_packaging_specs(
 
         let contract_devices = match spec_path.file_name().and_then(|s| s.to_str()).unwrap_or("") {
             "win7-virtio-win.json" | "win7-virtio-full.json" => virtio_win_devices,
-            "win7-aero-guest-tools.json" | "win7-aero-virtio.json" => devices,
+            "win7-signed.json" | "win7-aero-guest-tools.json" | "win7-aero-virtio.json" => devices,
             other => bail!("unexpected spec file name (validator bug): {other}"),
         };
 
