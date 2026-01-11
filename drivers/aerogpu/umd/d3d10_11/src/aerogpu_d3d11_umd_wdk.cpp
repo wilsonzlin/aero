@@ -414,30 +414,25 @@ static void SetError(Device* dev, HRESULT hr) {
   }
 }
 
-static Device* DeviceFromHandle(D3D11DDI_HDEVICE hDevice) {
-  return hDevice.pDrvPrivate ? FromHandle<D3D11DDI_HDEVICE, Device>(hDevice) : nullptr;
-}
-
 static Device* DeviceFromContext(D3D11DDI_HDEVICECONTEXT hCtx) {
   auto* ctx = FromHandle<D3D11DDI_HDEVICECONTEXT, AeroGpuDeviceContext>(hCtx);
   return ctx ? ctx->dev : nullptr;
 }
 
-static Device* DeviceFromHandle(D3D11DDI_HDEVICECONTEXT hCtx) {
-  return DeviceFromContext(hCtx);
-}
-
-template <typename T>
-static Device* DeviceFromHandle(T) {
-  return nullptr;
-}
-
 static void ReportNotImpl() {}
 
-template <typename Handle0, typename... Rest>
-static void ReportNotImpl(Handle0 handle0, Rest...) {
-  SetError(DeviceFromHandle(handle0), E_NOTIMPL);
+static void ReportNotImpl(D3D11DDI_HDEVICE) {
+  // Most device-level void DDIs are object destruction. Avoid reporting an error
+  // from stubs so teardown paths remain robust even when the runtime probes
+  // unimplemented features.
 }
+
+static void ReportNotImpl(D3D11DDI_HDEVICECONTEXT hCtx) {
+  SetError(DeviceFromContext(hCtx), E_NOTIMPL);
+}
+
+template <typename Handle0, typename... Rest>
+static void ReportNotImpl(Handle0, Rest...) {}
 
 static void EmitBindShadersLocked(Device* dev) {
   if (!dev) {
@@ -486,6 +481,25 @@ struct DdiStub<Ret(AEROGPU_APIENTRY*)(Args...)> {
     } else if constexpr (std::is_same_v<Ret, SIZE_T>) {
       // Size queries must not return 0 to avoid runtimes treating the object as
       // unsupported and then dereferencing null private memory.
+      return sizeof(void*);
+    } else {
+      return Ret{};
+    }
+  }
+};
+
+template <typename TFnPtr>
+struct DdiNoop;
+
+template <typename Ret, typename... Args>
+struct DdiNoop<Ret(AEROGPU_APIENTRY*)(Args...)> {
+  static Ret AEROGPU_APIENTRY Call(Args... args) {
+    ((void)args, ...);
+    if constexpr (std::is_same_v<Ret, void>) {
+      return;
+    } else if constexpr (std::is_same_v<Ret, HRESULT>) {
+      return E_NOTIMPL;
+    } else if constexpr (std::is_same_v<Ret, SIZE_T>) {
       return sizeof(void*);
     } else {
       return Ret{};
@@ -714,12 +728,13 @@ static D3D11DDI_DEVICECONTEXTFUNCS MakeStubContextFuncs11() {
   D3D11DDI_DEVICECONTEXTFUNCS funcs = {};
 
 #define STUB_FIELD(field) funcs.field = &DdiStub<decltype(funcs.field)>::Call
+#define NOOP_FIELD(field) funcs.field = &DdiNoop<decltype(funcs.field)>::Call
   STUB_FIELD(pfnIaSetInputLayout);
   STUB_FIELD(pfnIaSetVertexBuffers);
   STUB_FIELD(pfnIaSetIndexBuffer);
   STUB_FIELD(pfnIaSetTopology);
   __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnSoSetTargets) {
-    STUB_FIELD(pfnSoSetTargets);
+    NOOP_FIELD(pfnSoSetTargets);
   }
 
   STUB_FIELD(pfnVsSetShader);
@@ -738,25 +753,25 @@ static D3D11DDI_DEVICECONTEXTFUNCS MakeStubContextFuncs11() {
   STUB_FIELD(pfnGsSetSamplers);
 
   __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnHsSetShader) {
-    STUB_FIELD(pfnHsSetShader);
-    STUB_FIELD(pfnHsSetConstantBuffers);
-    STUB_FIELD(pfnHsSetShaderResources);
-    STUB_FIELD(pfnHsSetSamplers);
+    NOOP_FIELD(pfnHsSetShader);
+    NOOP_FIELD(pfnHsSetConstantBuffers);
+    NOOP_FIELD(pfnHsSetShaderResources);
+    NOOP_FIELD(pfnHsSetSamplers);
   }
   __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnDsSetShader) {
-    STUB_FIELD(pfnDsSetShader);
-    STUB_FIELD(pfnDsSetConstantBuffers);
-    STUB_FIELD(pfnDsSetShaderResources);
-    STUB_FIELD(pfnDsSetSamplers);
+    NOOP_FIELD(pfnDsSetShader);
+    NOOP_FIELD(pfnDsSetConstantBuffers);
+    NOOP_FIELD(pfnDsSetShaderResources);
+    NOOP_FIELD(pfnDsSetSamplers);
   }
   __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnCsSetShader) {
-    STUB_FIELD(pfnCsSetShader);
-    STUB_FIELD(pfnCsSetConstantBuffers);
-    STUB_FIELD(pfnCsSetShaderResources);
-    STUB_FIELD(pfnCsSetSamplers);
+    NOOP_FIELD(pfnCsSetShader);
+    NOOP_FIELD(pfnCsSetConstantBuffers);
+    NOOP_FIELD(pfnCsSetShaderResources);
+    NOOP_FIELD(pfnCsSetSamplers);
   }
   __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnCsSetUnorderedAccessViews) {
-    STUB_FIELD(pfnCsSetUnorderedAccessViews);
+    NOOP_FIELD(pfnCsSetUnorderedAccessViews);
   }
 
   STUB_FIELD(pfnSetViewports);
@@ -847,6 +862,7 @@ static D3D11DDI_DEVICECONTEXTFUNCS MakeStubContextFuncs11() {
   STUB_FIELD(pfnMap);
   STUB_FIELD(pfnUnmap);
   STUB_FIELD(pfnFlush);
+#undef NOOP_FIELD
 #undef STUB_FIELD
 
   StubPresentAndRotate(&funcs);
