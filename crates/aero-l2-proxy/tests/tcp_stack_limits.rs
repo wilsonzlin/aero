@@ -529,19 +529,16 @@ async fn stack_max_tcp_connections_env_rejects_new_syn_when_at_capacity() {
     let _legacy_token = EnvVarGuard::unset("AERO_L2_TOKEN");
     let _ping_interval = EnvVarGuard::set("AERO_L2_PING_INTERVAL_MS", "0");
     let _max_connections = EnvVarGuard::set("AERO_L2_MAX_CONNECTIONS", "0");
-    let _max_connections_per_session =
-        EnvVarGuard::set("AERO_L2_MAX_CONNECTIONS_PER_SESSION", "0");
+    let _max_connections_per_session = EnvVarGuard::set("AERO_L2_MAX_CONNECTIONS_PER_SESSION", "0");
     let _max_bytes = EnvVarGuard::set("AERO_L2_MAX_BYTES_PER_CONNECTION", "0");
     let _max_fps = EnvVarGuard::set("AERO_L2_MAX_FRAMES_PER_SECOND", "0");
     let _allow_private_ips = EnvVarGuard::unset("AERO_L2_ALLOW_PRIVATE_IPS");
     let _allowed_tcp_ports = EnvVarGuard::set("AERO_L2_ALLOWED_TCP_PORTS", "80");
     let _stack_max_tcp = EnvVarGuard::set("AERO_L2_STACK_MAX_TCP_CONNECTIONS", "1");
-    let _stack_max_buffered =
-        EnvVarGuard::unset("AERO_L2_STACK_MAX_BUFFERED_TCP_BYTES_PER_CONN");
+    let _stack_max_buffered = EnvVarGuard::unset("AERO_L2_STACK_MAX_BUFFERED_TCP_BYTES_PER_CONN");
 
     // Ensure the proxy-side connection will not complete quickly.
-    let _tcp_forward =
-        EnvVarGuard::set("AERO_L2_TCP_FORWARD", "203.0.113.10:80=10.255.255.1:80");
+    let _tcp_forward = EnvVarGuard::set("AERO_L2_TCP_FORWARD", "203.0.113.10:80=10.255.255.1:80");
 
     let cfg = ProxyConfig::from_env().unwrap();
     let proxy = start_server(cfg).await.unwrap();
@@ -571,8 +568,10 @@ async fn stack_max_tcp_connections_env_rejects_new_syn_when_at_capacity() {
         .send(Message::Binary(encode_l2_frame(&dhcp_frame).into()))
         .await
         .unwrap();
-    let _ = wait_for_udp_datagram(&mut ws_rx, |udp| udp.src_port() == 67 && udp.dst_port() == 68)
-        .await;
+    let _ = wait_for_udp_datagram(&mut ws_rx, |udp| {
+        udp.src_port() == 67 && udp.dst_port() == 68
+    })
+    .await;
 
     let remote_ip = Ipv4Addr::new(203, 0, 113, 10);
     let remote_port = 80;
