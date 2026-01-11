@@ -121,7 +121,7 @@ static NTSTATUS VirtIoSndStartDevice(PDEVICE_OBJECT DeviceObject, PIRP Irp, PRES
 
     status = VirtIoSndHwStart(dx, Irp);
     if (!NT_SUCCESS(status)) {
-        VIRTIOSND_TRACE_ERROR("VirtIoSndHwStart failed: 0x%08X\n", status);
+        VIRTIOSND_TRACE_ERROR("VirtIoSndHwStart failed: 0x%08X\n", (UINT)status);
         VirtIoSndHwStop(dx); // best-effort cleanup of partial allocations
         goto Exit;
     }
