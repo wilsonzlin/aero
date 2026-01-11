@@ -180,6 +180,8 @@ export class WebUsbPassthroughRuntime {
             } catch (err) {
               this.#lastError = formatError(err);
             }
+          } else if (id !== null) {
+            this.#lastError = "Invalid UsbHostAction received from WASM (missing kind).";
           } else {
             this.#lastError = "Invalid UsbHostAction received from WASM (missing id).";
           }

@@ -96,6 +96,8 @@ interface HidGuestBridge {
   attach(msg: HidAttachMessage): void;
   detach(msg: HidDetachMessage): void;
   inputReport(msg: HidInputReportMessage): void;
+  poll?(): void;
+  destroy?(): void;
 }
 
 class InMemoryHidGuestBridge implements HidGuestBridge {
@@ -138,6 +140,117 @@ class InMemoryHidGuestBridge implements HidGuestBridge {
   }
 }
 
+type WebHidPassthroughBridge = InstanceType<WasmApi["WebHidPassthroughBridge"]>;
+
+class WasmHidGuestBridge implements HidGuestBridge {
+  readonly #bridges = new Map<number, WebHidPassthroughBridge>();
+
+  constructor(
+    private readonly api: WasmApi,
+    private readonly host: HidHostSink,
+  ) {}
+
+  attach(msg: HidAttachMessage): void {
+    this.detach({ type: "hid.detach", deviceId: msg.deviceId });
+
+    let bridge: WebHidPassthroughBridge;
+    try {
+      bridge = new this.api.WebHidPassthroughBridge(
+        msg.vendorId,
+        msg.productId,
+        undefined,
+        msg.productName,
+        undefined,
+        msg.collections,
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.host.error(`Failed to construct WebHidPassthroughBridge: ${message}`, msg.deviceId);
+      return;
+    }
+
+    this.#bridges.set(msg.deviceId, bridge);
+  }
+
+  detach(msg: HidDetachMessage): void {
+    const existing = this.#bridges.get(msg.deviceId);
+    if (!existing) return;
+    this.#bridges.delete(msg.deviceId);
+    try {
+      existing.free();
+    } catch {
+      // ignore
+    }
+  }
+
+  inputReport(msg: HidInputReportMessage): void {
+    const bridge = this.#bridges.get(msg.deviceId);
+    if (!bridge) return;
+    try {
+      bridge.push_input_report(msg.reportId, msg.data);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.host.error(`WebHID push_input_report failed: ${message}`, msg.deviceId);
+    }
+  }
+
+  poll(): void {
+    for (const [deviceId, bridge] of this.#bridges) {
+      let configured = false;
+      try {
+        configured = bridge.configured();
+      } catch {
+        configured = false;
+      }
+      if (!configured) continue;
+
+      while (true) {
+        let report: { reportType: "output" | "feature"; reportId: number; data: Uint8Array } | null = null;
+        try {
+          report = bridge.drain_next_output_report();
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          this.host.error(`drain_next_output_report failed: ${message}`, deviceId);
+          break;
+        }
+        if (!report) break;
+
+        this.host.sendReport({ deviceId, reportType: report.reportType, reportId: report.reportId, data: report.data });
+      }
+    }
+  }
+
+  destroy(): void {
+    for (const deviceId of Array.from(this.#bridges.keys())) {
+      this.detach({ type: "hid.detach", deviceId });
+    }
+  }
+}
+
+class CompositeHidGuestBridge implements HidGuestBridge {
+  constructor(private readonly sinks: HidGuestBridge[]) {}
+
+  attach(msg: HidAttachMessage): void {
+    for (const sink of this.sinks) sink.attach(msg);
+  }
+
+  detach(msg: HidDetachMessage): void {
+    for (const sink of this.sinks) sink.detach(msg);
+  }
+
+  inputReport(msg: HidInputReportMessage): void {
+    for (const sink of this.sinks) sink.inputReport(msg);
+  }
+
+  poll(): void {
+    for (const sink of this.sinks) sink.poll?.();
+  }
+
+  destroy(): void {
+    for (const sink of this.sinks) sink.destroy?.();
+  }
+}
+
 const hidHostSink: HidHostSink = {
   sendReport: (payload) => {
     const msg: HidSendReportMessage = { type: "hid.sendReport", ...payload };
@@ -153,7 +266,8 @@ const hidHostSink: HidHostSink = {
   },
 };
 
-let hidGuest: HidGuestBridge = new InMemoryHidGuestBridge(hidHostSink);
+const hidGuestInMemory = new InMemoryHidGuestBridge(hidHostSink);
+let hidGuest: HidGuestBridge = hidGuestInMemory;
 
 let currentConfig: AeroConfig | null = null;
 let currentConfigVersion = 0;
@@ -653,6 +767,23 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
             });
             usbHid = new api.UsbHidBridge();
 
+            try {
+              const wasmHidGuest = new WasmHidGuestBridge(api, hidHostSink);
+              // Replay any HID messages that arrived before WASM finished initializing so the
+              // guest bridge sees a consistent device + input report stream.
+              for (const attach of hidGuestInMemory.devices.values()) {
+                wasmHidGuest.attach(attach);
+                const reports = hidGuestInMemory.inputReports.get(attach.deviceId) ?? [];
+                for (const report of reports) {
+                  wasmHidGuest.inputReport(report);
+                }
+              }
+
+              hidGuest = new CompositeHidGuestBridge([hidGuestInMemory, wasmHidGuest]);
+            } catch (err) {
+              console.warn("[io.worker] Failed to initialize WebHID passthrough WASM bridge", err);
+            }
+
             if (import.meta.env.DEV && api.UsbPassthroughBridge && !usbPassthroughRuntime) {
               try {
                 const bridge = new api.UsbPassthroughBridge();
@@ -790,6 +921,7 @@ function startPolling(): void {
     drainRuntimeCommands();
     drainIoIpcCommands();
     deviceManager?.tick(performance.now());
+    hidGuest.poll?.();
     if (perfActive) perfIoMs += performance.now() - t0;
     maybeEmitPerfSample();
     if (Atomics.load(status, StatusIndex.StopRequested) === 1) {
@@ -1162,6 +1294,8 @@ function shutdown(): void {
     clearInterval(usbPassthroughDebugTimer);
     usbPassthroughDebugTimer = undefined;
   }
+
+  hidGuest.destroy?.();
 
   activeAccessHandle?.close();
   activeDiskCapacityBytes = null;
