@@ -219,6 +219,8 @@ type WasmMicBridgeHandle = {
 let micRingBuffer: MicRingBufferView | null = null;
 let micScratch = new Float32Array();
 let loopbackScratch = new Float32Array();
+let micResampleScratch = new Float32Array();
+let micResampler: JsStreamingLinearResamplerMono | null = null;
 let wasmMicBridge: WasmMicBridgeHandle | null = null;
 
 let wasmApi: WasmApi | null = null;
@@ -299,6 +301,7 @@ function attachMicrophoneRingBuffer(msg: SetMicrophoneRingBufferMessage): void {
 
   if ((micRingBuffer?.sab ?? null) !== ringBuffer) {
     detachMicBridge();
+    micResampler = null;
   }
 
   micRingBuffer = null;
@@ -438,6 +441,136 @@ class JsSineTone {
   }
 }
 
+class JsStreamingLinearResamplerMono {
+  private srcRate = 0;
+  private dstRate = 0;
+  private stepSrcPerDst = 1;
+  private srcPos = 0;
+
+  private buf = new Float32Array(0);
+  private start = 0;
+  private end = 0;
+
+  configure(srcRate: number, dstRate: number): void {
+    const s = Number.isFinite(srcRate) ? Math.floor(srcRate) : 0;
+    const d = Number.isFinite(dstRate) ? Math.floor(dstRate) : 0;
+    if (s <= 0 || d <= 0) {
+      this.reset();
+      this.srcRate = 0;
+      this.dstRate = 0;
+      this.stepSrcPerDst = 1;
+      return;
+    }
+    if (this.srcRate === s && this.dstRate === d) return;
+    this.srcRate = s;
+    this.dstRate = d;
+    this.stepSrcPerDst = s / d;
+    this.reset();
+  }
+
+  reset(): void {
+    this.srcPos = 0;
+    this.start = 0;
+    this.end = 0;
+  }
+
+  queuedSourceFrames(): number {
+    return Math.max(0, this.end - this.start);
+  }
+
+  requiredSourceFrames(dstFrames: number): number {
+    const frames = Math.max(0, dstFrames | 0);
+    if (frames === 0) return 0;
+
+    // Need idx and idx+1 for the final output frame.
+    const lastPos = this.srcPos + (frames - 1) * this.stepSrcPerDst;
+    const idx = Math.floor(lastPos);
+    const frac = lastPos - idx;
+    if (Math.abs(frac) <= 1e-12) return idx + 1;
+    return idx + 2;
+  }
+
+  pushSource(samples: Float32Array, count?: number): void {
+    const len = Math.max(0, Math.min(samples.length, count ?? samples.length) | 0);
+    if (len === 0) return;
+
+    this.ensureCapacity(len);
+    this.buf.set(samples.subarray(0, len), this.end);
+    this.end += len;
+  }
+
+  produceInto(dstFrames: number, out: Float32Array): number {
+    const frames = Math.max(0, dstFrames | 0);
+    if (frames === 0) return 0;
+    if (out.length < frames) return 0;
+
+    let produced = 0;
+    for (; produced < frames; produced++) {
+      const idx = Math.floor(this.srcPos);
+      const frac = this.srcPos - idx;
+      const base = this.start + idx;
+      if (base >= this.end) break;
+
+      const a = this.buf[base];
+      let sample = a;
+      if (Math.abs(frac) > 1e-12) {
+        if (base + 1 >= this.end) break;
+        const b = this.buf[base + 1];
+        sample = a + (b - a) * frac;
+      }
+
+      out[produced] = sample;
+
+      this.srcPos += this.stepSrcPerDst;
+      const drop = Math.floor(this.srcPos);
+      if (drop > 0) {
+        this.start += drop;
+        this.srcPos -= drop;
+
+        // Compact the queue once it grows a bit to avoid unbounded growth.
+        if (this.start > 4096 && this.start > (this.buf.length >> 1)) {
+          const remaining = this.end - this.start;
+          this.buf.copyWithin(0, this.start, this.end);
+          this.start = 0;
+          this.end = remaining;
+        }
+      }
+    }
+
+    return produced;
+  }
+
+  private ensureCapacity(extra: number): void {
+    const queued = this.end - this.start;
+    if (queued < 0) {
+      this.reset();
+      return;
+    }
+
+    // First attempt to compact in-place if we have headroom at the front.
+    if (this.start > 0 && this.buf.length - queued >= extra) {
+      this.buf.copyWithin(0, this.start, this.end);
+      this.start = 0;
+      this.end = queued;
+      return;
+    }
+
+    const needed = queued + extra;
+    if (this.buf.length >= needed && this.start === 0) {
+      return;
+    }
+
+    const nextCap = Math.max(needed, this.buf.length > 0 ? this.buf.length * 2 : 1024);
+    const next = new Float32Array(nextCap);
+    if (queued > 0) {
+      next.set(this.buf.subarray(this.start, this.end), 0);
+    }
+    this.buf = next;
+    this.start = 0;
+    this.end = queued;
+  }
+}
+
 function detachAudioOutput(): void {
   if (sineTone?.free) {
     sineTone.free();
@@ -520,9 +653,73 @@ function pumpMicLoopback(maxWriteFrames: number): number {
 
   const gain = 1.0;
   const maxChunkFrames = 256;
+  const srcRate = mic.sampleRate;
+  const dstRate = audioDstSampleRate;
 
   let remaining = Math.max(0, maxWriteFrames | 0);
   let totalWritten = 0;
+
+  if (srcRate > 0 && dstRate > 0 && srcRate !== dstRate) {
+    const resampler = micResampler ?? (micResampler = new JsStreamingLinearResamplerMono());
+    resampler.configure(srcRate, dstRate);
+
+    while (remaining > 0) {
+      const frames = Math.min(remaining, maxChunkFrames);
+      if (frames <= 0) break;
+
+      const requiredSrc = resampler.requiredSourceFrames(frames);
+      const queuedSrc = resampler.queuedSourceFrames();
+      const needSrc = Math.max(0, requiredSrc - queuedSrc);
+
+      if (needSrc > 0) {
+        if (micScratch.length < needSrc) micScratch = new Float32Array(needSrc);
+        const micSlice = micScratch.subarray(0, needSrc);
+        let read = 0;
+        if (wasmMicBridge) {
+          try {
+            read = wasmMicBridge.read_f32_into(micSlice) | 0;
+          } catch (err) {
+            console.warn("WASM mic bridge read failed; falling back to JS ring reader:", err);
+            detachMicBridge();
+          }
+        }
+        if (!wasmMicBridge) {
+          read = micRingBufferReadInto(mic, micSlice);
+        }
+
+        if (read > 0) {
+          resampler.pushSource(micSlice, read);
+        } else if (queuedSrc === 0) {
+          break;
+        }
+      }
+
+      if (micResampleScratch.length < frames) micResampleScratch = new Float32Array(frames);
+      const monoOut = micResampleScratch.subarray(0, frames);
+      const produced = resampler.produceInto(frames, monoOut);
+      if (produced === 0) break;
+
+      const outSamples = produced * cc;
+      if (loopbackScratch.length < outSamples) loopbackScratch = new Float32Array(outSamples);
+
+      if (cc === 1) {
+        for (let i = 0; i < produced; i++) loopbackScratch[i] = monoOut[i] * gain;
+      } else {
+        for (let i = 0; i < produced; i++) {
+          const s = monoOut[i] * gain;
+          const base = i * cc;
+          for (let c = 0; c < cc; c++) loopbackScratch[base + c] = s;
+        }
+      }
+
+      const written = bridge.write_f32_interleaved(loopbackScratch.subarray(0, outSamples)) | 0;
+      if (written === 0) break;
+      totalWritten += written;
+      remaining -= written;
+    }
+
+    return totalWritten;
+  }
 
   while (remaining > 0) {
     const frames = Math.min(remaining, maxChunkFrames);
