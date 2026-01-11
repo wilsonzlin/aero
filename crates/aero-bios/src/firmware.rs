@@ -99,6 +99,35 @@ pub trait Memory {
     }
 }
 
+/// Chipset A20 gate controller.
+///
+/// Real x86 systems expose the A20 line through multiple mechanisms:
+/// - i8042 controller output port
+/// - "Fast A20" latch at I/O port `0x92`
+/// - BIOS INT 15h services (`AX=2400h..2403h`)
+///
+/// Aero's BIOS INT 15h implementation uses this trait so the emulator can wire
+/// the firmware-visible A20 services to the same underlying A20 line used by
+/// the platform memory bus for address masking.
+pub trait A20Gate {
+    fn a20_enabled(&self) -> bool;
+    fn set_a20_enabled(&mut self, enabled: bool);
+}
+
+struct LocalA20Gate {
+    enabled: bool,
+}
+
+impl A20Gate for LocalA20Gate {
+    fn a20_enabled(&self) -> bool {
+        self.enabled
+    }
+
+    fn set_a20_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
+    }
+}
+
 pub trait BlockDevice {
     fn read_sector(&mut self, lba: u64, buf512: &mut [u8; 512]) -> Result<(), DiskError>;
 
@@ -186,7 +215,7 @@ pub struct Bios {
     e820: Vec<E820Entry>,
     pci_devices: Vec<PciDevice>,
     acpi: Option<AcpiTables>,
-    a20_enabled: bool,
+    a20_gate: Box<dyn A20Gate>,
     last_disk_status: u8,
 
     // Legacy VGA BIOS-visible state.
@@ -252,7 +281,7 @@ impl Bios {
             e820,
             pci_devices: Vec::new(),
             acpi,
-            a20_enabled: true,
+            a20_gate: Box::new(LocalA20Gate { enabled: true }),
             last_disk_status: 0,
             video_mode: 0x03,
             active_page: 0,
@@ -269,6 +298,16 @@ impl Bios {
 
     pub fn set_vbe_handler(&mut self, handler: Box<dyn VbeServices>) {
         self.vbe = handler;
+    }
+
+    /// Override the BIOS-visible A20 gate controller.
+    ///
+    /// When unset, the BIOS maintains its own internal A20 latch that only
+    /// affects INT 15h query results. Emulators should provide a real
+    /// implementation so INT 15h A20 services toggle the same A20 line that the
+    /// physical address bus uses for masking.
+    pub fn set_a20_gate(&mut self, gate: Box<dyn A20Gate>) {
+        self.a20_gate = gate;
     }
 
     /// Perform a simplified POST and transfer control to the boot sector.
@@ -1155,22 +1194,22 @@ impl Bios {
 
         match cpu.ax() {
             0x2400 => {
-                // Disable A20 line (best-effort; we model the state but may not toggle hardware).
-                self.a20_enabled = false;
+                // Disable A20 line.
+                self.a20_gate.set_a20_enabled(false);
                 cpu.set_cf(false);
                 cpu.set_ah(0);
                 return;
             }
             0x2401 => {
                 // Enable A20 line.
-                self.a20_enabled = true;
+                self.a20_gate.set_a20_enabled(true);
                 cpu.set_cf(false);
                 cpu.set_ah(0);
                 return;
             }
             0x2402 => {
                 // Query A20 state: AL=0 disabled, 1 enabled.
-                cpu.set_al(if self.a20_enabled { 1 } else { 0 });
+                cpu.set_al(if self.a20_gate.a20_enabled() { 1 } else { 0 });
                 cpu.set_ah(0);
                 cpu.set_cf(false);
                 return;
