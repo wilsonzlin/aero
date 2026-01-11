@@ -22,7 +22,7 @@ typedef struct _VIRTIOSND_BACKEND {
     PVOID Context;
 } VIRTIOSND_BACKEND, *PVIRTIOSND_BACKEND;
 
-_IRQL_requires_max_(DISPATCH_LEVEL)
+_IRQL_requires_max_(PASSIVE_LEVEL)
 static __inline NTSTATUS
 VirtIoSndBackend_SetParams(
     _In_ PVIRTIOSND_BACKEND Backend,
@@ -36,7 +36,7 @@ VirtIoSndBackend_SetParams(
     return Backend->Ops->SetParams(Backend->Context, BufferBytes, PeriodBytes);
 }
 
-_IRQL_requires_max_(DISPATCH_LEVEL)
+_IRQL_requires_max_(PASSIVE_LEVEL)
 static __inline NTSTATUS
 VirtIoSndBackend_Prepare(_In_ PVIRTIOSND_BACKEND Backend)
 {
@@ -46,7 +46,7 @@ VirtIoSndBackend_Prepare(_In_ PVIRTIOSND_BACKEND Backend)
     return Backend->Ops->Prepare(Backend->Context);
 }
 
-_IRQL_requires_max_(DISPATCH_LEVEL)
+_IRQL_requires_max_(PASSIVE_LEVEL)
 static __inline NTSTATUS
 VirtIoSndBackend_Start(_In_ PVIRTIOSND_BACKEND Backend)
 {
@@ -56,7 +56,7 @@ VirtIoSndBackend_Start(_In_ PVIRTIOSND_BACKEND Backend)
     return Backend->Ops->Start(Backend->Context);
 }
 
-_IRQL_requires_max_(DISPATCH_LEVEL)
+_IRQL_requires_max_(PASSIVE_LEVEL)
 static __inline NTSTATUS
 VirtIoSndBackend_Stop(_In_ PVIRTIOSND_BACKEND Backend)
 {
@@ -66,7 +66,7 @@ VirtIoSndBackend_Stop(_In_ PVIRTIOSND_BACKEND Backend)
     return Backend->Ops->Stop(Backend->Context);
 }
 
-_IRQL_requires_max_(DISPATCH_LEVEL)
+_IRQL_requires_max_(PASSIVE_LEVEL)
 static __inline NTSTATUS
 VirtIoSndBackend_Release(_In_ PVIRTIOSND_BACKEND Backend)
 {
