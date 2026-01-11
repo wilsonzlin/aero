@@ -3075,13 +3075,20 @@ HRESULT AEROGPU_APIENTRY GetCaps10(D3D10DDI_HADAPTER, const D3D10DDIARG_GETCAPS*
     AEROGPU_D3D10_RET_HR(E_INVALIDARG);
   }
 
+  DXGI_FORMAT in_format = DXGI_FORMAT_UNKNOWN;
+  if (pCaps->Type == D3D10DDICAPS_TYPE_FORMAT_SUPPORT &&
+      pCaps->DataSize >= sizeof(D3D10DDIARG_FORMAT_SUPPORT)) {
+    in_format = reinterpret_cast<const D3D10DDIARG_FORMAT_SUPPORT*>(pCaps->pData)->Format;
+  }
+
   std::memset(pCaps->pData, 0, pCaps->DataSize);
 
   switch (pCaps->Type) {
     case D3D10DDICAPS_TYPE_FORMAT_SUPPORT:
       if (pCaps->DataSize >= sizeof(D3D10DDIARG_FORMAT_SUPPORT)) {
         auto* fmt = reinterpret_cast<D3D10DDIARG_FORMAT_SUPPORT*>(pCaps->pData);
-        const uint32_t format = static_cast<uint32_t>(fmt->Format);
+        fmt->Format = in_format;
+        const uint32_t format = static_cast<uint32_t>(in_format);
 
         UINT support = 0;
         switch (format) {
@@ -3133,6 +3140,12 @@ HRESULT AEROGPU_APIENTRY GetCaps(D3D10DDI_HADAPTER, const D3D10_1DDIARG_GETCAPS*
     AEROGPU_D3D10_RET_HR(E_INVALIDARG);
   }
 
+  DXGI_FORMAT in_format = DXGI_FORMAT_UNKNOWN;
+  if (pCaps->Type == D3D10_1DDICAPS_TYPE_FORMAT_SUPPORT &&
+      pCaps->DataSize >= sizeof(D3D10_1DDIARG_FORMAT_SUPPORT)) {
+    in_format = reinterpret_cast<const D3D10_1DDIARG_FORMAT_SUPPORT*>(pCaps->pData)->Format;
+  }
+
   // Default: return zeroed caps (conservative). Specific required queries are
   // handled below.
   std::memset(pCaps->pData, 0, pCaps->DataSize);
@@ -3147,7 +3160,8 @@ HRESULT AEROGPU_APIENTRY GetCaps(D3D10DDI_HADAPTER, const D3D10_1DDIARG_GETCAPS*
     case D3D10_1DDICAPS_TYPE_FORMAT_SUPPORT:
       if (pCaps->DataSize >= sizeof(D3D10_1DDIARG_FORMAT_SUPPORT)) {
         auto* fmt = reinterpret_cast<D3D10_1DDIARG_FORMAT_SUPPORT*>(pCaps->pData);
-        const uint32_t format = static_cast<uint32_t>(fmt->Format);
+        fmt->Format = in_format;
+        const uint32_t format = static_cast<uint32_t>(in_format);
 
         UINT support = 0;
         switch (format) {
