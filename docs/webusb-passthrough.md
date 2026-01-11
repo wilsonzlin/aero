@@ -129,6 +129,10 @@ The worker-side runtime (`web/src/usb/webusb_passthrough_runtime.ts`) defensivel
 `bigint` ids into JS numbers (and will reset the bridge if an id exceeds
 `Number.MAX_SAFE_INTEGER`) before forwarding actions to the main-thread broker.
 
+⚠️ **WASM note:** the wasm-bindgen export `UsbPassthroughBridge.drain_actions()` returns `null`
+when there are no queued actions (to keep the poll path allocation-free). Treat `null`/`undefined`
+as “no work”.
+
 Cancellation behavior:
 
 - A new control SETUP can legally abort a previous control transfer. `UsbPassthroughDevice` treats
