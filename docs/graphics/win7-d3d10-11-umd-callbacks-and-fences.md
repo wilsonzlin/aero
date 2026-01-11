@@ -467,14 +467,14 @@ In the runtime’s **Present DDI** (Win7 DXGI 1.1; uses `D3D10DDIARG_PRESENT` ev
 
 1. Flush/submit any outstanding render work that must precede present.
 2. Acquire a DMA buffer (either via `pfnAllocateCb`, `pfnGetCommandBufferCb`, or by using the current runtime-provided buffer pointers).
-3. Encode your present command(s) into the DMA buffer (e.g. an `AEROGPU_CMD_PRESENT` packet referencing the backbuffer allocation index).
+3. Encode your present command(s) into the DMA buffer (e.g. an `AEROGPU_CMD_PRESENT` / `AEROGPU_CMD_PRESENT_EX` packet; scanout selection is done via MMIO `SCANOUT0_*` registers, not by referencing a backbuffer in the packet).
 4. Submit via `pfnPresentCb(&present)`.
 5. On success, read back `present.NewFenceValue` (or `present.SubmissionFenceId`) and treat it as the fence value for the present submission (useful for throttling and for “present implies completion” queries).
 6. If you used `pfnAllocateCb`, return the DMA buffer via `pfnDeallocateCb`.
 
 ### 3.5 Patch lists: “empty is valid” if you design for it
 
-If your DMA stream never embeds GPU virtual addresses (AeroGPU uses allocation indices), you can submit with:
+If your DMA stream never embeds GPU virtual addresses/relocations (AeroGPU command streams use protocol object handles and `alloc_id` lookups, not GPU virtual addresses), you can submit with:
 
 - `PatchLocationListSize = 0`
 - `pPatchLocationList = NULL` (or a valid pointer with 0 size)
