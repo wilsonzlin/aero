@@ -288,12 +288,22 @@ export const AerogpuBlendFactor = {
 
 export type AerogpuBlendFactor = (typeof AerogpuBlendFactor)[keyof typeof AerogpuBlendFactor];
 
+// `SET_BLEND_STATE` grew over time. Older guests may still send the legacy 28-byte packet:
+//   hdr (8) + enable/src/dst/op (16) + color_write_mask+padding (4).
+// Decoders should accept both layouts and default missing fields.
+export const AEROGPU_CMD_SET_BLEND_STATE_SIZE_MIN = 28;
+
 export interface AerogpuCmdSetBlendStateDecoded {
   enable: boolean;
   srcFactor: number;
   dstFactor: number;
   blendOp: number;
   colorWriteMask: number;
+  srcFactorAlpha: number;
+  dstFactorAlpha: number;
+  blendOpAlpha: number;
+  blendConstantRgba: [number, number, number, number];
+  sampleMask: number;
 }
 
 export function decodeCmdSetBlendState(view: DataView, cmdByteOffset = 0): AerogpuCmdSetBlendStateDecoded {
@@ -302,16 +312,39 @@ export function decodeCmdSetBlendState(view: DataView, cmdByteOffset = 0): Aerog
   if (end > view.byteLength) {
     throw new Error(`SET_BLEND_STATE packet overruns buffer (end=${end}, buffer_len=${view.byteLength})`);
   }
-  if (hdr.sizeBytes < AEROGPU_CMD_SET_BLEND_STATE_SIZE) {
+  if (hdr.sizeBytes < AEROGPU_CMD_SET_BLEND_STATE_SIZE_MIN) {
     throw new Error(`SET_BLEND_STATE packet too small (size_bytes=${hdr.sizeBytes})`);
   }
 
+  const srcFactor = view.getUint32(cmdByteOffset + 12, true);
+  const dstFactor = view.getUint32(cmdByteOffset + 16, true);
+  const blendOp = view.getUint32(cmdByteOffset + 20, true);
+
+  const srcFactorAlpha = hdr.sizeBytes >= 32 ? view.getUint32(cmdByteOffset + 28, true) : srcFactor;
+  const dstFactorAlpha = hdr.sizeBytes >= 36 ? view.getUint32(cmdByteOffset + 32, true) : dstFactor;
+  const blendOpAlpha = hdr.sizeBytes >= 40 ? view.getUint32(cmdByteOffset + 36, true) : blendOp;
+
+  const blendConstantRgba: [number, number, number, number] = [0, 0, 0, 0];
+  for (let i = 0; i < 4; i++) {
+    const off = cmdByteOffset + 40 + i * 4;
+    const needed = off + 4 - cmdByteOffset;
+    if (hdr.sizeBytes >= needed) {
+      blendConstantRgba[i] = view.getFloat32(off, true);
+    }
+  }
+  const sampleMask = hdr.sizeBytes >= AEROGPU_CMD_SET_BLEND_STATE_SIZE ? view.getUint32(cmdByteOffset + 56, true) : 0xffffffff;
+
   return {
     enable: view.getUint32(cmdByteOffset + 8, true) !== 0,
-    srcFactor: view.getUint32(cmdByteOffset + 12, true),
-    dstFactor: view.getUint32(cmdByteOffset + 16, true),
-    blendOp: view.getUint32(cmdByteOffset + 20, true),
+    srcFactor,
+    dstFactor,
+    blendOp,
     colorWriteMask: view.getUint8(cmdByteOffset + 24),
+    srcFactorAlpha,
+    dstFactorAlpha,
+    blendOpAlpha,
+    blendConstantRgba,
+    sampleMask,
   };
 }
 

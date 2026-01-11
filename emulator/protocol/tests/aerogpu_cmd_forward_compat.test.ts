@@ -5,6 +5,7 @@ import {
   AEROGPU_CMD_HDR_OFF_SIZE_BYTES,
   AEROGPU_CMD_CREATE_SHADER_DXBC_SIZE,
   AEROGPU_CMD_SET_BLEND_STATE_SIZE,
+  AEROGPU_CMD_SET_BLEND_STATE_SIZE_MIN,
   AEROGPU_CMD_STREAM_HEADER_OFF_SIZE_BYTES,
   AEROGPU_CMD_STREAM_HEADER_SIZE,
   AEROGPU_CMD_STREAM_MAGIC,
@@ -140,4 +141,45 @@ test("variable-payload decoders accept trailing bytes in cmd.size_bytes", () => 
   assert.equal(decoded.stage, 0);
   assert.equal(decoded.dxbcSizeBytes, 8);
   assert.deepEqual(Array.from(decoded.dxbcBytes), [1, 2, 3, 4, 5, 6, 7, 8]);
+});
+
+test("SET_BLEND_STATE decoder accepts legacy 28-byte packets", () => {
+  const bytes: number[] = [];
+  pushU32(bytes, AEROGPU_CMD_STREAM_MAGIC);
+  pushU32(bytes, AEROGPU_ABI_VERSION_U32);
+  pushU32(bytes, 0); // size_bytes (patched later)
+  pushU32(bytes, 0); // flags
+  pushU32(bytes, 0); // reserved0
+  pushU32(bytes, 0); // reserved1
+
+  const cmdOffset = bytes.length;
+  pushU32(bytes, AerogpuCmdOpcode.SetBlendState);
+  pushU32(bytes, 0); // size_bytes (patched later)
+  pushU32(bytes, 1); // enable
+  pushU32(bytes, AerogpuBlendFactor.One);
+  pushU32(bytes, AerogpuBlendFactor.Zero);
+  pushU32(bytes, AerogpuBlendOp.Add);
+  bytes.push(0xf, 0, 0, 0); // write mask + padding
+
+  const out = new Uint8Array(bytes);
+  const dv = new DataView(out.buffer, out.byteOffset, out.byteLength);
+  dv.setUint32(cmdOffset + AEROGPU_CMD_HDR_OFF_SIZE_BYTES, AEROGPU_CMD_SET_BLEND_STATE_SIZE_MIN, true);
+  dv.setUint32(AEROGPU_CMD_STREAM_HEADER_OFF_SIZE_BYTES, out.byteLength, true);
+  assert.equal(out.byteLength % 4, 0);
+
+  const packets = decodeCmdStreamView(out).packets;
+  assert.equal(packets.length, 1);
+
+  const decoded = decodeCmdSetBlendState(new DataView(out.buffer, out.byteOffset, out.byteLength), packets[0]!.offsetBytes);
+  assert.equal(decoded.enable, true);
+  assert.equal(decoded.srcFactor, AerogpuBlendFactor.One);
+  assert.equal(decoded.dstFactor, AerogpuBlendFactor.Zero);
+  assert.equal(decoded.blendOp, AerogpuBlendOp.Add);
+  assert.equal(decoded.colorWriteMask, 0xf);
+
+  assert.equal(decoded.srcFactorAlpha, decoded.srcFactor);
+  assert.equal(decoded.dstFactorAlpha, decoded.dstFactor);
+  assert.equal(decoded.blendOpAlpha, decoded.blendOp);
+  assert.deepEqual(decoded.blendConstantRgba, [0, 0, 0, 0]);
+  assert.equal(decoded.sampleMask >>> 0, 0xffff_ffff);
 });
