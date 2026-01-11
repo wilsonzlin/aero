@@ -15,7 +15,7 @@ pub struct ShaderTranslation {
     pub reflection: ShaderReflection,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ShaderReflection {
     pub inputs: Vec<IoParam>,
     pub outputs: Vec<IoParam>,
@@ -162,7 +162,7 @@ fn translate_vs(
     io.emit_vs_structs(&mut w)?;
 
     w.line("@vertex");
-    w.line("fn vs_main(input: VsIn) -> VsOut {");
+    w.line("fn main(input: VsIn) -> VsOut {");
     w.indent();
     w.line("var out: VsOut;");
     w.line("");
@@ -207,7 +207,7 @@ fn translate_ps(
     io.emit_ps_structs(&mut w)?;
 
     w.line("@fragment");
-    w.line("fn fs_main(input: PsIn) -> @location(0) vec4<f32> {");
+    w.line("fn main(input: PsIn) -> @location(0) vec4<f32> {");
     w.indent();
     w.line("");
     emit_temp_and_output_decls(&mut w, module, &io)?;

@@ -10,7 +10,10 @@ use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
 use aero_protocol::aerogpu::aerogpu_ring::AerogpuAllocEntry;
 use anyhow::{anyhow, bail, Context, Result};
 
-use crate::{parse_signatures, translate_sm4_to_wgsl, DxbcFile, ShaderStage, Sm4Program};
+use crate::{
+    parse_signatures, translate_sm4_module_to_wgsl, translate_sm4_to_wgsl, DxbcFile, ShaderStage,
+    Sm4Program,
+};
 use crate::input_layout::{
     fnv1a_32, map_layout_to_shader_locations, InputLayoutBinding, InputLayoutDesc,
     VsInputSignatureElement,
@@ -267,6 +270,7 @@ impl AerogpuResourceManager {
         let dxbc_hash_fnv1a64 = fnv1a64(dxbc_bytes);
 
         let dxbc = DxbcFile::parse(dxbc_bytes).context("parse DXBC container")?;
+        let signatures = parse_signatures(&dxbc).context("parse DXBC signatures")?;
         let program = Sm4Program::parse_from_dxbc(&dxbc).context("parse SM4/SM5 program")?;
         let parsed_stage = match program.stage {
             ShaderStage::Vertex => AerogpuShaderStage::Vertex,
@@ -277,9 +281,12 @@ impl AerogpuResourceManager {
         if parsed_stage != stage {
             bail!("CreateShaderDxbc: stage mismatch (cmd={stage:?}, dxbc={parsed_stage:?})");
         }
-        let wgsl = translate_sm4_to_wgsl(&program)
-            .map_err(|e| anyhow!("DXBC->WGSL translation failed: {e}"))?
-            .wgsl;
+        let wgsl = match try_translate_sm4_signature_driven(&dxbc, &program, &signatures) {
+            Ok(wgsl) => wgsl,
+            Err(_) => translate_sm4_to_wgsl(&program)
+                .map_err(|e| anyhow!("DXBC->WGSL translation failed: {e}"))?
+                .wgsl,
+        };
 
         let module = self
             .device
@@ -288,7 +295,7 @@ impl AerogpuResourceManager {
                 source: wgpu::ShaderSource::Wgsl(wgsl.clone().into()),
             });
 
-        let reflection = build_shader_reflection(stage, &dxbc)?;
+        let reflection = build_shader_reflection(stage, &signatures);
 
         self.shaders.insert(
             handle,
@@ -595,11 +602,24 @@ impl AerogpuResourceManager {
     }
 }
 
-fn build_shader_reflection(stage: AerogpuShaderStage, dxbc: &DxbcFile<'_>) -> Result<ShaderReflection> {
+fn try_translate_sm4_signature_driven(
+    dxbc: &DxbcFile<'_>,
+    program: &Sm4Program,
+    signatures: &crate::ShaderSignatures,
+) -> Result<String> {
+    let module = program.decode().context("decode SM4/5 token stream")?;
+    let translated = translate_sm4_module_to_wgsl(dxbc, &module, signatures)
+        .context("signature-driven SM4/5 translation")?;
+    Ok(translated.wgsl)
+}
+
+fn build_shader_reflection(
+    stage: AerogpuShaderStage,
+    signatures: &crate::ShaderSignatures,
+) -> ShaderReflection {
     let mut reflection = ShaderReflection::default();
 
     if stage == AerogpuShaderStage::Vertex {
-        let signatures = parse_signatures(dxbc).context("parse DXBC signatures")?;
         if let Some(isgn) = signatures.isgn.as_ref() {
             reflection.vs_input_signature = isgn
                 .parameters
@@ -613,7 +633,7 @@ fn build_shader_reflection(stage: AerogpuShaderStage, dxbc: &DxbcFile<'_>) -> Re
         }
     }
 
-    Ok(reflection)
+    reflection
 }
 
 fn build_fallback_vs_signature(desc: &InputLayoutDesc) -> Vec<VsInputSignatureElement> {

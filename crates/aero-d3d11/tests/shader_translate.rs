@@ -163,7 +163,7 @@ fn translates_vertex_passthrough_signature_io() {
     let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
     assert_wgsl_parses(&translated.wgsl);
     assert!(translated.wgsl.contains("@vertex"));
-    assert!(translated.wgsl.contains("fn vs_main"));
+    assert!(translated.wgsl.contains("fn main"));
     assert!(translated.wgsl.contains("@location(0) v0: vec2<f32>"));
     assert!(translated
         .wgsl

@@ -19,7 +19,9 @@ use crate::input_layout::{
     fnv1a_32, map_layout_to_shader_locations_compact, InputLayoutBinding, InputLayoutDesc,
     VertexBufferLayoutOwned, VsInputSignatureElement, MAX_INPUT_SLOTS,
 };
-use crate::{parse_signatures, translate_sm4_to_wgsl, DxbcFile, Sm4Program};
+use crate::{
+    parse_signatures, translate_sm4_module_to_wgsl, translate_sm4_to_wgsl, DxbcFile, Sm4Program,
+};
 
 const DEFAULT_MAX_VERTEX_SLOTS: usize = MAX_INPUT_SLOTS as usize;
 
@@ -1012,18 +1014,35 @@ impl AerogpuD3d11Executor {
             _ => bail!("CREATE_SHADER_DXBC: unknown shader stage {stage_u32}"),
         };
 
-        let program = Sm4Program::parse_from_dxbc_bytes(dxbc).context("DXBC decode failed")?;
-        let wgsl = translate_sm4_to_wgsl(&program).context("DXBC->WGSL translation failed")?;
+        let dxbc = DxbcFile::parse(dxbc).context("DXBC parse failed")?;
+        let signatures = parse_signatures(&dxbc).context("parse DXBC signatures")?;
+        let program = Sm4Program::parse_from_dxbc(&dxbc).context("DXBC decode failed")?;
+        let parsed_stage = match program.stage {
+            crate::ShaderStage::Vertex => ShaderStage::Vertex,
+            crate::ShaderStage::Pixel => ShaderStage::Pixel,
+            crate::ShaderStage::Compute => ShaderStage::Compute,
+            other => bail!("CREATE_SHADER_DXBC: unsupported DXBC shader stage {other:?}"),
+        };
+        if parsed_stage != stage {
+            bail!("CREATE_SHADER_DXBC: stage mismatch (cmd={stage:?}, dxbc={parsed_stage:?})");
+        }
+
+        let wgsl = match try_translate_sm4_signature_driven(&dxbc, &program, &signatures) {
+            Ok(wgsl) => wgsl,
+            Err(_) => translate_sm4_to_wgsl(&program)
+                .context("DXBC->WGSL translation failed")?
+                .wgsl,
+        };
 
         let (hash, _module) = self.pipeline_cache.get_or_create_shader_module(
             &self.device,
             map_pipeline_cache_stage(stage),
-            &wgsl.wgsl,
+            &wgsl,
             Some("aerogpu_cmd shader"),
         );
 
         let vs_input_signature = if stage == ShaderStage::Vertex {
-            extract_vs_input_signature(dxbc).context("extract VS input signature")?
+            extract_vs_input_signature(&signatures).context("extract VS input signature")?
         } else {
             Vec::new()
         };
@@ -1842,9 +1861,9 @@ fn map_pipeline_cache_stage(stage: ShaderStage) -> aero_gpu::pipeline_key::Shade
     }
 }
 
-fn extract_vs_input_signature(dxbc_bytes: &[u8]) -> Result<Vec<VsInputSignatureElement>> {
-    let dxbc = DxbcFile::parse(dxbc_bytes).context("parse DXBC container")?;
-    let signatures = parse_signatures(&dxbc).context("parse DXBC signatures")?;
+fn extract_vs_input_signature(
+    signatures: &crate::ShaderSignatures,
+) -> Result<Vec<VsInputSignatureElement>> {
     let Some(isgn) = signatures.isgn.as_ref() else {
         return Ok(Vec::new());
     };
@@ -2010,6 +2029,24 @@ fn write_texture_linear(
     }
 
     Ok(())
+}
+
+fn try_translate_sm4_signature_driven(
+    dxbc: &DxbcFile<'_>,
+    program: &Sm4Program,
+    signatures: &crate::ShaderSignatures,
+) -> Result<String> {
+    let module = program.decode().context("decode SM4/5 token stream")?;
+    let translated = translate_sm4_module_to_wgsl(dxbc, &module, signatures)
+        .context("signature-driven SM4/5 translation")?;
+
+    // NOTE: `AerogpuD3d11Executor` does not yet build bind groups for translated resources. Only
+    // accept the signature-driven path when the shader has no declared bindings.
+    if !translated.reflection.bindings.is_empty() {
+        bail!("shader requires resource bindings (not supported yet)");
+    }
+
+    Ok(translated.wgsl)
 }
 
 fn read_u32_le(buf: &[u8], offset: usize) -> Result<u32> {
