@@ -99,8 +99,24 @@ for headers in "$root_headers" "$health_headers" "$wasm_headers"; do
   assert_header_exact "Cross-Origin-Resource-Policy" "same-origin" "$headers"
   assert_header_exact "Origin-Agent-Cluster" "?1" "$headers"
 
+  assert_header_exact "X-Content-Type-Options" "nosniff" "$headers"
+  assert_header_exact "Referrer-Policy" "no-referrer" "$headers"
+  assert_header_exact "Permissions-Policy" "camera=(), geolocation=(), microphone=(self)" "$headers"
+
   if ! echo "$headers" | grep -Eiq "^Content-Security-Policy: .*connect-src 'self'"; then
     echo "deploy smoke: missing/invalid Content-Security-Policy connect-src" >&2
+    echo "--- headers ---" >&2
+    echo "$headers" >&2
+    exit 1
+  fi
+  if ! echo "$headers" | grep -Eiq "^Content-Security-Policy: .*script-src 'self' 'wasm-unsafe-eval'"; then
+    echo "deploy smoke: missing/invalid Content-Security-Policy script-src wasm-unsafe-eval" >&2
+    echo "--- headers ---" >&2
+    echo "$headers" >&2
+    exit 1
+  fi
+  if ! echo "$headers" | grep -Eiq "^Content-Security-Policy: .*worker-src 'self' blob:"; then
+    echo "deploy smoke: missing/invalid Content-Security-Policy worker-src" >&2
     echo "--- headers ---" >&2
     echo "$headers" >&2
     exit 1
