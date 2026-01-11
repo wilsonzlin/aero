@@ -186,6 +186,70 @@ func TestUDPWebSocketServer_RelaysV2IPv4WhenNegotiated(t *testing.T) {
 	}
 }
 
+func TestUDPWebSocketServer_RelaysV2IPv6(t *testing.T) {
+	echo, echoPort := startUDPEchoServer(t, "udp6", net.IPv6loopback)
+	defer echo.Close()
+
+	cfg := config.Config{
+		AuthMode:                 config.AuthModeNone,
+		SignalingAuthTimeout:     50 * time.Millisecond,
+		MaxSignalingMessageBytes: 64 * 1024,
+	}
+	m := metrics.New()
+	sm := NewSessionManager(cfg, m, nil)
+	relayCfg := DefaultConfig()
+
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy())
+	if err != nil {
+		t.Fatalf("NewUDPWebSocketServer: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle("GET /udp", srv)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	c := dialWS(t, ts.URL, "/udp")
+
+	inFrame := udpproto.Frame{
+		GuestPort:  1234,
+		RemoteIP:   netip.MustParseAddr("::1"),
+		RemotePort: echoPort,
+		Payload:    []byte("hello ipv6"),
+	}
+	inPkt, err := udpproto.EncodeV2(inFrame)
+	if err != nil {
+		t.Fatalf("EncodeV2: %v", err)
+	}
+
+	if err := c.WriteMessage(websocket.BinaryMessage, inPkt); err != nil {
+		t.Fatalf("WriteMessage: %v", err)
+	}
+
+	_ = c.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, outPkt, err := c.ReadMessage()
+	if err != nil {
+		t.Fatalf("ReadMessage: %v", err)
+	}
+
+	outFrame, err := udpproto.Decode(outPkt)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if outFrame.Version != 2 {
+		t.Fatalf("outFrame.Version=%d, want 2", outFrame.Version)
+	}
+	if outFrame.GuestPort != inFrame.GuestPort {
+		t.Fatalf("outFrame.GuestPort=%d, want %d", outFrame.GuestPort, inFrame.GuestPort)
+	}
+	if outFrame.RemoteIP != inFrame.RemoteIP || outFrame.RemotePort != inFrame.RemotePort {
+		t.Fatalf("remote mismatch: got %s:%d, want %s:%d", outFrame.RemoteIP, outFrame.RemotePort, inFrame.RemoteIP, inFrame.RemotePort)
+	}
+	if string(outFrame.Payload) != "hello ipv6" {
+		t.Fatalf("payload=%q, want %q", outFrame.Payload, "hello ipv6")
+	}
+}
+
 func TestUDPWebSocketServer_AuthMessageRequired(t *testing.T) {
 	cfg := config.Config{
 		AuthMode:                 config.AuthModeAPIKey,
