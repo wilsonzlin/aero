@@ -275,6 +275,18 @@ fn parse_signature_chunk_v0_layout_single_entry_stream_is_preserved() {
 }
 
 #[test]
+fn parse_signature_chunk_detects_padded_v0_layout() {
+    // This chunk doesn't carry a FourCC, so `parse_signature_chunk` must infer
+    // the entry layout from the payload. Ensure that a padded v0 layout isn't
+    // mis-detected as the 32-byte v1 layout.
+    let bytes = build_signature_chunk_v0_one_entry_padded(2);
+    let sig = parse_signature_chunk(&bytes).expect("signature parse should succeed");
+    assert_eq!(sig.entries.len(), 1);
+    assert_eq!(sig.entries[0].semantic_name, "POSITION");
+    assert_eq!(sig.entries[0].stream, Some(2));
+}
+
+#[test]
 fn parse_signature_chunk_empty_is_ok() {
     // Some shaders may legitimately have empty signatures (e.g. no patch
     // constants); accept count==0 with any in-bounds offset.

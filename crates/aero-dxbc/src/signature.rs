@@ -298,6 +298,20 @@ fn detect_v1_layout(bytes: &[u8], param_offset: usize) -> bool {
     // `min_precision` as DWORDs. These values are typically small, whereas in the
     // 24-byte layout the same offsets usually point into the semantic name string
     // table, which starts with ASCII bytes (large u32 values).
+    //
+    // As a fast-path, prefer the v0 layout when the v0 packed-byte stream or
+    // min-precision fields are non-zero. This avoids mis-detecting padded v0
+    // signature tables as v1.
+    let Some(stream_byte) = bytes.get(param_offset + 22).copied() else {
+        return false;
+    };
+    let Some(min_precision_byte) = bytes.get(param_offset + 23).copied() else {
+        return false;
+    };
+    if stream_byte != 0 || min_precision_byte != 0 {
+        return false;
+    }
+
     let Some(stream) = read_u32_le_opt(bytes, param_offset + 24) else {
         return false;
     };
