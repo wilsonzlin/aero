@@ -34,7 +34,7 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
-          cache-dependency-path: web/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Setup Rust (pinned stable)
         uses: ./.github/actions/setup-rust
@@ -99,11 +99,11 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
-        working-directory: web
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
 
       - name: Build (WASM + web)
-        run: npm run build
-        working-directory: web
+        run: npm -w web run build
 
       - name: Validate build output
         shell: bash
