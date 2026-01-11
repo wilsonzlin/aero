@@ -1,6 +1,6 @@
 use std::{net::SocketAddr, path::PathBuf, time::Duration};
 
-use aero_l2_proxy::{start_server, EgressPolicy, ProxyConfig, TUNNEL_SUBPROTOCOL};
+use aero_l2_proxy::{start_server, EgressPolicy, ProxyConfig, SecurityConfig, TUNNEL_SUBPROTOCOL};
 use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
@@ -22,6 +22,10 @@ impl TestServer {
             dns_default_ttl_secs: 60,
             dns_max_ttl_secs: 300,
             capture_dir,
+            security: SecurityConfig {
+                open: true,
+                ..Default::default()
+            },
             policy: EgressPolicy::default(),
             test_overrides: Default::default(),
         };

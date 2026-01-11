@@ -204,6 +204,10 @@ It MUST be treated as a high-risk surface (SSRF / open proxy).
 
 The L2 tunnel is an egress-capable primitive; deploy it like you would deploy `/tcp`.
 
+These environment variables are enforced by the **production Rust implementation**
+(`crates/aero-l2-proxy`). The Node "upgrade policy harness" under `proxy/aero-l2-proxy` is
+dev/test-only and must not be treated as a security boundary for production deployments.
+
 ### Origin allowlist
 
 By default, `aero-l2-proxy` requires an `Origin` header on the WebSocket upgrade request and validates it against an allowlist:

@@ -31,6 +31,7 @@ async fn dhcp_arp_dns_tcp_echo_over_l2_tunnel() {
     };
 
     std::env::set_var("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
+    std::env::set_var("AERO_L2_ALLOWED_ORIGINS", "*");
     std::env::set_var("AERO_L2_DNS_A", "echo.local=203.0.113.10");
     std::env::set_var("AERO_L2_ALLOWED_TCP_PORTS", tcp_allowed_port.to_string());
     std::env::set_var("AERO_L2_ALLOWED_UDP_PORTS", udp_allowed_port.to_string());
@@ -57,6 +58,8 @@ async fn dhcp_arp_dns_tcp_echo_over_l2_tunnel() {
         "Sec-WebSocket-Protocol",
         HeaderValue::from_static(TUNNEL_SUBPROTOCOL),
     );
+    req.headers_mut()
+        .insert("Origin", HeaderValue::from_static("https://example.test"));
     let (ws, _resp) = tokio_tungstenite::connect_async(req).await.unwrap();
     let (mut ws_tx, mut ws_rx) = ws.split();
 

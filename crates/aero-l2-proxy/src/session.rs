@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     collections::{HashMap, VecDeque},
     net::{IpAddr, Ipv4Addr, SocketAddr},
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -7,7 +8,7 @@ use std::{
 use aero_net_stack::{
     Action, DnsResolved, IpCidr, Millis, NetworkStack, StackConfig, TcpProxyEvent, UdpProxyEvent,
 };
-use axum::extract::ws::{Message, WebSocket};
+use axum::extract::ws::{CloseFrame, Message, WebSocket};
 use futures_util::{SinkExt, StreamExt};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -71,6 +72,114 @@ enum SessionEvent {
     Dns(DnsResolved),
 }
 
+#[derive(Debug, Clone, Copy)]
+enum QuotaExceeded {
+    Bytes,
+    FramesPerSecond,
+}
+
+impl QuotaExceeded {
+    fn reason(self) -> &'static str {
+        match self {
+            QuotaExceeded::Bytes => "byte quota exceeded",
+            QuotaExceeded::FramesPerSecond => "frame rate quota exceeded",
+        }
+    }
+}
+
+#[derive(Debug)]
+struct SessionQuotas {
+    max_bytes: u64,
+    bytes_total: u64,
+    max_fps: u64,
+    fps_window_start: tokio::time::Instant,
+    fps_window_count: u64,
+}
+
+impl SessionQuotas {
+    fn new(max_bytes: u64, max_fps: u64) -> Self {
+        Self {
+            max_bytes,
+            bytes_total: 0,
+            max_fps,
+            fps_window_start: tokio::time::Instant::now(),
+            fps_window_count: 0,
+        }
+    }
+
+    fn on_inbound_message(&mut self, msg: &Message) -> Option<QuotaExceeded> {
+        if let Some(exceeded) = self.add_bytes(ws_message_len(msg)) {
+            return Some(exceeded);
+        }
+
+        if self.max_fps != 0 {
+            let now = tokio::time::Instant::now();
+            if now.duration_since(self.fps_window_start) >= std::time::Duration::from_secs(1) {
+                self.fps_window_start = now;
+                self.fps_window_count = 0;
+            }
+            self.fps_window_count = self.fps_window_count.saturating_add(1);
+            if self.fps_window_count > self.max_fps {
+                return Some(QuotaExceeded::FramesPerSecond);
+            }
+        }
+
+        None
+    }
+
+    fn on_outbound_message(&mut self, msg: &Message) -> Option<QuotaExceeded> {
+        self.add_bytes(ws_message_len(msg))
+    }
+
+    fn add_bytes(&mut self, bytes: u64) -> Option<QuotaExceeded> {
+        if self.max_bytes == 0 {
+            return None;
+        }
+        self.bytes_total = self.bytes_total.saturating_add(bytes);
+        (self.bytes_total > self.max_bytes).then_some(QuotaExceeded::Bytes)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SessionControl {
+    Continue,
+    Close,
+}
+
+fn ws_message_len(msg: &Message) -> u64 {
+    match msg {
+        Message::Binary(data) => data.len() as u64,
+        Message::Text(data) => data.len() as u64,
+        Message::Ping(data) | Message::Pong(data) => data.len() as u64,
+        Message::Close(frame) => frame
+            .as_ref()
+            .map(|f| 2u64.saturating_add(f.reason.len() as u64))
+            .unwrap_or(0),
+    }
+}
+
+async fn close_policy_violation(ws_out_tx: &mpsc::Sender<Message>, reason: &'static str) {
+    const CLOSE_CODE_POLICY_VIOLATION: u16 = 1008;
+    let _ = ws_out_tx
+        .send(Message::Close(Some(CloseFrame {
+            code: CLOSE_CODE_POLICY_VIOLATION,
+            reason: Cow::Borrowed(reason),
+        })))
+        .await;
+}
+
+async fn send_ws_message(
+    ws_out_tx: &mpsc::Sender<Message>,
+    msg: Message,
+    quotas: &mut SessionQuotas,
+) -> Result<(), QuotaExceeded> {
+    if let Some(exceeded) = quotas.on_outbound_message(&msg) {
+        return Err(exceeded);
+    }
+    ws_out_tx.send(msg).await.map_err(|_| QuotaExceeded::Bytes)?;
+    Ok(())
+}
+
 pub(crate) async fn run_session(
     socket: WebSocket,
     state: AppState,
@@ -112,6 +221,11 @@ async fn run_session_inner(
     });
 
     let (event_tx, mut event_rx) = mpsc::channel::<SessionEvent>(128);
+
+    let mut quotas = SessionQuotas::new(
+        state.cfg.security.max_bytes_per_connection,
+        state.cfg.security.max_frames_per_second,
+    );
 
     let mut cfg = StackConfig::default();
     cfg.host_policy.enabled = true;
@@ -182,6 +296,11 @@ async fn run_session_inner(
                     break;
                 };
 
+                if let Some(exceeded) = quotas.on_inbound_message(&msg) {
+                    close_policy_violation(&ws_out_tx, exceeded.reason()).await;
+                    break;
+                }
+
                 match msg {
                     Message::Binary(data) => {
                         let now_ms = elapsed_ms(start);
@@ -199,7 +318,7 @@ async fn run_session_inner(
                                         }
 
                                         let actions = stack.process_outbound_ethernet(frame, now_ms);
-                                        if let Err(err) = process_actions(
+                                        match process_actions(
                                             &mut stack,
                                             actions,
                                             now_ms,
@@ -209,11 +328,16 @@ async fn run_session_inner(
                                             &mut udp_flows,
                                             &mut capture,
                                             &state,
+                                            &mut quotas,
                                         )
                                         .await
                                         {
-                                            fatal_err = Some(err);
-                                            break;
+                                            Ok(SessionControl::Continue) => {}
+                                            Ok(SessionControl::Close) => break,
+                                            Err(err) => {
+                                                fatal_err = Some(err);
+                                                break;
+                                            }
                                         }
                                     }
                                     aero_l2_protocol::L2_TUNNEL_TYPE_PING => {
@@ -223,7 +347,12 @@ async fn run_session_inner(
                                             decoded.payload,
                                             &state.l2_limits,
                                         ) {
-                                            let _ = ws_out_tx.send(Message::Binary(pong)).await;
+                                            if let Err(exceeded) =
+                                                send_ws_message(&ws_out_tx, Message::Binary(pong), &mut quotas).await
+                                            {
+                                                close_policy_violation(&ws_out_tx, exceeded.reason()).await;
+                                                break;
+                                            }
                                         }
                                     }
                                     aero_l2_protocol::L2_TUNNEL_TYPE_PONG => {
@@ -268,7 +397,11 @@ async fn run_session_inner(
                                     payload,
                                     &state.l2_limits,
                                 ) {
-                                    let _ = ws_out_tx.send(Message::Binary(wire)).await;
+                                    if let Err(exceeded) =
+                                        send_ws_message(&ws_out_tx, Message::Binary(wire), &mut quotas).await
+                                    {
+                                        close_policy_violation(&ws_out_tx, exceeded.reason()).await;
+                                    }
                                 }
 
                                 consecutive_protocol_errors = consecutive_protocol_errors.saturating_add(1);
@@ -280,7 +413,12 @@ async fn run_session_inner(
                         }
                     }
                     Message::Ping(payload) => {
-                        let _ = ws_out_tx.send(Message::Pong(payload)).await;
+                        if let Err(exceeded) =
+                            send_ws_message(&ws_out_tx, Message::Pong(payload), &mut quotas).await
+                        {
+                            close_policy_violation(&ws_out_tx, exceeded.reason()).await;
+                            break;
+                        }
                     }
                     Message::Close(_) => break,
                     _ => {}
@@ -308,7 +446,7 @@ async fn run_session_inner(
                     SessionEvent::Dns(ev) => stack.handle_dns_resolved(ev, now_ms),
                 };
 
-                if let Err(err) = process_actions(
+                match process_actions(
                     &mut stack,
                     actions,
                     now_ms,
@@ -318,11 +456,16 @@ async fn run_session_inner(
                     &mut udp_flows,
                     &mut capture,
                     &state,
+                    &mut quotas,
                 )
                 .await
                 {
-                    fatal_err = Some(err);
-                    break;
+                    Ok(SessionControl::Continue) => {}
+                    Ok(SessionControl::Close) => break,
+                    Err(err) => {
+                        fatal_err = Some(err);
+                        break;
+                    }
                 }
             }
         }
@@ -338,7 +481,13 @@ async fn run_session_inner(
     }
 
     drop(ws_out_tx);
-    ws_writer.abort();
+    let mut ws_writer = ws_writer;
+    if tokio::time::timeout(std::time::Duration::from_secs(1), &mut ws_writer)
+        .await
+        .is_err()
+    {
+        ws_writer.abort();
+    }
 
     if let Some(capture) = capture {
         let path = capture.path().to_path_buf();
@@ -400,7 +549,8 @@ async fn process_actions(
     udp_flows: &mut HashMap<UdpKey, UdpFlowHandle>,
     capture: &mut Option<crate::capture::SessionCapture>,
     state: &AppState,
-) -> anyhow::Result<()> {
+    quotas: &mut SessionQuotas,
+) -> anyhow::Result<SessionControl> {
     let mut queue: VecDeque<Action> = actions.into();
     while let Some(action) = queue.pop_front() {
         match action {
@@ -419,8 +569,11 @@ async fn process_actions(
                 if let Some(capture) = capture.as_mut() {
                     let _ = capture.record_proxy_to_guest(ts_out, &frame).await;
                 }
-                if ws_out_tx.send(Message::Binary(wire)).await.is_err() {
-                    return Ok(());
+                if let Err(exceeded) =
+                    send_ws_message(ws_out_tx, Message::Binary(wire), quotas).await
+                {
+                    close_policy_violation(ws_out_tx, exceeded.reason()).await;
+                    return Ok(SessionControl::Close);
                 }
                 state.metrics.frame_tx(frame.len());
             }
@@ -605,7 +758,7 @@ async fn process_actions(
         }
     }
 
-    Ok(())
+    Ok(SessionControl::Continue)
 }
 
 async fn tcp_task(

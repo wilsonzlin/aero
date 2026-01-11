@@ -11,7 +11,7 @@ mod policy;
 mod server;
 mod session;
 
-pub use config::ProxyConfig;
+pub use config::{AllowedOrigins, ProxyConfig, SecurityConfig};
 pub use policy::EgressPolicy;
 pub use server::{start_server, ServerHandle};
 

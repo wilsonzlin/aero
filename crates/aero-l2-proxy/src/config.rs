@@ -5,6 +5,109 @@ use anyhow::{Context, Result};
 use crate::{overrides::TestOverrides, policy::EgressPolicy};
 
 #[derive(Debug, Clone)]
+pub struct SecurityConfig {
+    /// Disable Origin enforcement (trusted local development only).
+    pub open: bool,
+    /// Comma-separated allowlist of exact Origin strings. `"*"` allows any Origin value (but still
+    /// requires the header unless `open=1`).
+    pub allowed_origins: AllowedOrigins,
+    /// Optional pre-shared token required at upgrade time.
+    pub token: Option<String>,
+    /// Process-wide concurrent tunnel cap (`0` disables).
+    pub max_connections: usize,
+    /// Total bytes per connection (rx + tx, `0` disables).
+    pub max_bytes_per_connection: u64,
+    /// Inbound messages per second per connection (`0` disables).
+    pub max_frames_per_second: u64,
+}
+
+#[derive(Debug, Clone)]
+pub enum AllowedOrigins {
+    List(Vec<String>),
+    Any,
+}
+
+impl Default for AllowedOrigins {
+    fn default() -> Self {
+        Self::List(Vec::new())
+    }
+}
+
+impl Default for SecurityConfig {
+    fn default() -> Self {
+        Self {
+            open: false,
+            allowed_origins: AllowedOrigins::default(),
+            token: None,
+            max_connections: 64,
+            max_bytes_per_connection: 0,
+            max_frames_per_second: 0,
+        }
+    }
+}
+
+impl SecurityConfig {
+    pub fn from_env() -> Self {
+        let open = std::env::var("AERO_L2_OPEN")
+            .ok()
+            .map(|v| matches!(v.trim(), "1" | "true" | "TRUE" | "yes" | "YES" | "on" | "ON"))
+            .unwrap_or(false);
+
+        let allowed_origins_raw = std::env::var("AERO_L2_ALLOWED_ORIGINS").ok();
+        let allowed_origins = match allowed_origins_raw {
+            Some(raw) => {
+                let mut out = Vec::new();
+                let mut any = false;
+                for entry in raw.split(',').map(str::trim) {
+                    if entry.is_empty() {
+                        continue;
+                    }
+                    if entry == "*" {
+                        any = true;
+                        break;
+                    }
+                    out.push(entry.to_string());
+                }
+                if any {
+                    AllowedOrigins::Any
+                } else {
+                    AllowedOrigins::List(out)
+                }
+            }
+            None => AllowedOrigins::List(Vec::new()),
+        };
+
+        let token = std::env::var("AERO_L2_TOKEN")
+            .ok()
+            .and_then(|v| (!v.trim().is_empty()).then(|| v));
+
+        let max_connections = std::env::var("AERO_L2_MAX_CONNECTIONS")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(Self::default().max_connections);
+
+        let max_bytes_per_connection = std::env::var("AERO_L2_MAX_BYTES_PER_CONNECTION")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(0);
+
+        let max_frames_per_second = std::env::var("AERO_L2_MAX_FRAMES_PER_SECOND")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(0);
+
+        Self {
+            open,
+            allowed_origins,
+            token,
+            max_connections,
+            max_bytes_per_connection,
+            max_frames_per_second,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct ProxyConfig {
     pub bind_addr: SocketAddr,
 
@@ -23,6 +126,8 @@ pub struct ProxyConfig {
     pub dns_max_ttl_secs: u32,
 
     pub capture_dir: Option<PathBuf>,
+
+    pub security: SecurityConfig,
 
     pub policy: EgressPolicy,
     pub test_overrides: TestOverrides,
@@ -83,6 +188,8 @@ impl ProxyConfig {
             .ok()
             .and_then(|v| (!v.trim().is_empty()).then(|| PathBuf::from(v)));
 
+        let security = SecurityConfig::from_env();
+
         let policy = EgressPolicy::from_env().context("parse egress policy")?;
         let test_overrides = TestOverrides::from_env().context("parse test-mode overrides")?;
 
@@ -97,6 +204,7 @@ impl ProxyConfig {
             dns_default_ttl_secs,
             dns_max_ttl_secs,
             capture_dir,
+            security,
             policy,
             test_overrides,
         })

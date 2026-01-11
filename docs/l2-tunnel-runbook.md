@@ -26,9 +26,17 @@ cargo run --locked -p aero-l2-proxy
 
 # Optional: override listen address (default: 0.0.0.0:8090)
 # AERO_L2_PROXY_LISTEN_ADDR=127.0.0.1:8090 cargo run --locked -p aero-l2-proxy
+
+# Security knobs (Rust `crates/aero-l2-proxy`):
+# - Origin is enforced by default; configure an allowlist for your dev origin:
+#   AERO_L2_ALLOWED_ORIGINS=http://localhost:5173 cargo run --locked -p aero-l2-proxy
+# - Trusted local dev escape hatch (disables Origin enforcement):
+#   AERO_L2_OPEN=1 cargo run --locked -p aero-l2-proxy
+# - Optional token auth (recommended for any internet-exposed deployment):
+#   AERO_L2_TOKEN=sekrit cargo run --locked -p aero-l2-proxy
 ```
 
-- Node (WebSocket upgrade policy / quota harness; **does not implement the L2 data plane**; used by `tests/l2_proxy_security.test.js`):
+- Node (WebSocket upgrade policy / quota harness; **dev/test-only** and **does not implement the L2 data plane**; used by `tests/l2_proxy_security.test.js`):
 
 ```bash
 node --experimental-strip-types proxy/aero-l2-proxy/src/index.ts
