@@ -298,8 +298,10 @@ fn validate_contract_entries(devices: &BTreeMap<String, DeviceEntry>) -> Result<
                     "{name}: hardware_id_patterns missing PCI\\\\VEN_A3A0&DEV_0001&SUBSYS_0001A3A0"
                 );
             }
-            // Ensure we do not accidentally re-add the legacy AeroGPU ID to the canonical contract.
-            //
+            if hwids.iter().any(|p| !p.contains("VEN_A3A0&DEV_0001")) {
+                bail!("{name}: hardware_id_patterns must all be in the PCI\\\\VEN_A3A0&DEV_0001 family");
+            }
+
             // Avoid embedding the full legacy vendor token (`VEN_` + `1AED`) in the source (there
             // is a repo-wide guard test that tracks where legacy IDs are allowed to appear).
             let legacy_vendor = format!("VEN_{}", "1AED");
@@ -1480,6 +1482,16 @@ fn eq_case_insensitive(a: &str, b: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn validator_passes_on_repo_contracts() -> Result<()> {
+        let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let args = Args {
+            repo_root,
+            contract: PathBuf::from("docs/windows-device-contract.json"),
+        };
+        run(&args)
+    }
 
     #[test]
     fn parse_cmd_list_extracts_quoted_items() {
