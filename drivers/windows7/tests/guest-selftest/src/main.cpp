@@ -607,6 +607,12 @@ static const char* CmProblemCodeToName(DWORD code) {
       return "DRIVER_BLOCKED";
     case 49:
       return "REGISTRY_TOO_LARGE";
+    case 50:
+      return "SETPROPERTIES_FAILED";
+    case 51:
+      return "WAITING_ON_DEPENDENCY";
+    case 52:
+      return "UNSIGNED_DRIVER";
     default:
       return "UNKNOWN";
   }
@@ -716,6 +722,12 @@ static const char* CmProblemCodeToMeaning(DWORD code) {
       return "driver blocked";
     case 49:
       return "registry too large";
+    case 50:
+      return "failed to set device properties";
+    case 51:
+      return "waiting on a dependency";
+    case 52:
+      return "driver is unsigned (enable test signing / install a signed driver)";
     default:
       return "";
   }
