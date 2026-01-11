@@ -25,7 +25,7 @@ The contract is expressed as C/C++ headers suitable for **Windows 7-targeted WDK
 - `aerogpu_pci.h` – PCI IDs, BAR layout, MMIO register map, shared enums.
 - `aerogpu_ring.h` – ring header layout, submission descriptor, allocation table, fence page.
 - `aerogpu_cmd.h` – command stream packet formats and opcodes (“AeroGPU IR”).
-- `aerogpu_alloc_privdata.h` – legacy/experimental allocation private driver data (KMD → UMD). The current Win7 driver stack does not rely on KMD→UMD writeback through WDDM private-data buffers; stable `alloc_id`/`share_token` are instead persisted via the UMD-owned `aerogpu_wddm_alloc_priv` blob (`aerogpu_wddm_alloc.h`).
+- `aerogpu_alloc_privdata.h` – allocation private driver data (KMD → UMD), including the KMD `ShareToken` used for shared surfaces.
 - `aerogpu_umd_private.h` – `DXGKQAITYPE_UMDRIVERPRIVATE` blob used by UMDs/tools to discover active ABI + feature bits.
 - `aerogpu_wddm_alloc.h` – WDDM allocation private-data contract (UMD→KMD input blob) for stable per-allocation metadata across CreateAllocation/OpenAllocation.
 - `aerogpu_win7_abi.h` – driver-private WOW64-stable user↔kernel ABI blobs (no pointers; fixed layout across x86/x64).
