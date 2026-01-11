@@ -1076,7 +1076,7 @@ fi
 #
 # If `node` is unavailable, skip this check (local dev convenience script).
 if command -v node >/dev/null 2>&1; then
-  echo "deploy smoke: verifying wss://localhost/l2 upgrade (aero-l2-tunnel-v1)" >&2
+  echo "deploy smoke: verifying L2 WebSocket upgrade (endpoints.l2, aero-l2-tunnel-v1)" >&2
   l2_ok=0
   l2_last_error=""
   for _ in $(seq 1 30); do
