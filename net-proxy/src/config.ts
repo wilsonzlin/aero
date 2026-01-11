@@ -11,6 +11,9 @@ export interface ProxyConfig {
   tcpMuxMaxStreams: number;
   tcpMuxMaxStreamBufferedBytes: number;
   tcpMuxMaxFramePayloadBytes: number;
+  udpRelayMaxPayloadBytes: number;
+  udpRelayMaxBindingsPerConnection: number;
+  udpRelayBindingIdleTimeoutMs: number;
 }
 
 function readEnvInt(name: string, fallback: number): number {
@@ -41,6 +44,9 @@ export function loadConfigFromEnv(): ProxyConfig {
     udpWsBufferedAmountLimitBytes: readEnvInt("AERO_PROXY_UDP_WS_BUFFER_LIMIT_BYTES", 1 * 1024 * 1024),
     tcpMuxMaxStreams,
     tcpMuxMaxStreamBufferedBytes: readEnvInt("AERO_PROXY_TCP_MUX_MAX_STREAM_BUFFER_BYTES", 1024 * 1024),
-    tcpMuxMaxFramePayloadBytes: readEnvInt("AERO_PROXY_TCP_MUX_MAX_FRAME_PAYLOAD_BYTES", 16 * 1024 * 1024)
+    tcpMuxMaxFramePayloadBytes: readEnvInt("AERO_PROXY_TCP_MUX_MAX_FRAME_PAYLOAD_BYTES", 16 * 1024 * 1024),
+    udpRelayMaxPayloadBytes: readEnvInt("AERO_PROXY_UDP_RELAY_MAX_PAYLOAD_BYTES", 1200),
+    udpRelayMaxBindingsPerConnection: readEnvInt("AERO_PROXY_UDP_RELAY_MAX_BINDINGS", 128),
+    udpRelayBindingIdleTimeoutMs: readEnvInt("AERO_PROXY_UDP_RELAY_BINDING_IDLE_TIMEOUT_MS", 60_000)
   };
 }

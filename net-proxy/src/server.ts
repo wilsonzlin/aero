@@ -3,6 +3,7 @@ import net from "node:net";
 import dgram from "node:dgram";
 import { PassThrough } from "node:stream";
 import { createWebSocketStream, WebSocketServer, type WebSocket } from "ws";
+import ipaddr from "ipaddr.js";
 import { loadConfigFromEnv, type ProxyConfig } from "./config";
 import { formatError, log } from "./logger";
 import { resolveAndAuthorizeTarget } from "./security";
@@ -19,6 +20,7 @@ import {
   encodeTcpMuxFrame,
   type TcpMuxFrame
 } from "./tcpMuxProtocol";
+import { decodeUdpRelayFrame, encodeUdpRelayV1Datagram, encodeUdpRelayV2Datagram } from "./udpRelayProtocol";
 
 export interface RunningProxyServer {
   server: http.Server;
@@ -143,9 +145,22 @@ export async function startProxyServer(overrides: Partial<ProxyConfig> = {}): Pr
     const url = new URL(req.url ?? "/", "http://localhost");
     const proto = url.pathname === "/udp" ? "udp" : "tcp";
 
-    const parsedTarget = parseTargetQuery(url);
     const clientAddress = req.socket.remoteAddress ?? null;
 
+    // `/udp` can operate in one of two modes:
+    // 1) Per-target (legacy): `/udp?host=...&port=...` (or `target=...`) where WS messages are raw datagrams.
+    // 2) Multiplexed (new): `/udp` with no target params, using v1/v2 framing (see proxy/webrtc-udp-relay/PROTOCOL.md).
+    const hasHost = url.searchParams.has("host");
+    const hasPort = url.searchParams.has("port");
+    const hasTarget = url.searchParams.has("target");
+    if (proto === "udp" && !hasHost && !hasPort && !hasTarget) {
+      log("info", "connect_requested", { connId, proto, mode: "multiplexed", clientAddress });
+      log("info", "connect_accepted", { connId, proto, mode: "multiplexed", clientAddress });
+      void handleUdpRelayMultiplexed(ws, connId, config);
+      return;
+    }
+
+    const parsedTarget = parseTargetQuery(url);
     if ("error" in parsedTarget) {
       log("warn", "connect_denied", {
         connId,
@@ -846,5 +861,275 @@ async function handleUdpRelay(
     const buf = Buffer.isBuffer(data) ? data : Buffer.from(data as ArrayBuffer);
     bytesIn += buf.length;
     socket.send(buf);
+  });
+}
+
+function stripIpv6ZoneIndex(address: string): string {
+  const idx = address.indexOf("%");
+  if (idx === -1) return address;
+  return address.slice(0, idx);
+}
+
+type UdpRelayBindingKey = `${4 | 6}:${number}`;
+
+interface UdpRelayBinding {
+  key: UdpRelayBindingKey;
+  guestPort: number;
+  addressFamily: 4 | 6;
+  socket: dgram.Socket;
+  lastActiveMs: number;
+}
+
+function makeUdpRelayBindingKey(guestPort: number, addressFamily: 4 | 6): UdpRelayBindingKey {
+  return `${addressFamily}:${guestPort}`;
+}
+
+async function handleUdpRelayMultiplexed(ws: WebSocket, connId: number, config: ProxyConfig): Promise<void> {
+  const bindings = new Map<UdpRelayBindingKey, UdpRelayBinding>();
+  let bytesIn = 0;
+  let bytesOut = 0;
+  let closed = false;
+  let gcTimer: NodeJS.Timeout | null = null;
+
+  const closeAll = (why: string, wsCode: number, wsReason: string) => {
+    if (closed) return;
+    closed = true;
+
+    if (gcTimer) {
+      clearInterval(gcTimer);
+      gcTimer = null;
+    }
+
+    for (const binding of bindings.values()) {
+      try {
+        binding.socket.close();
+      } catch {
+        // ignore
+      }
+    }
+    bindings.clear();
+
+    if (ws.readyState === ws.OPEN) {
+      wsCloseSafe(ws, wsCode, wsReason);
+    }
+
+    log("info", "conn_close", {
+      connId,
+      proto: "udp",
+      mode: "multiplexed",
+      why,
+      bytesIn,
+      bytesOut,
+      wsCode,
+      wsReason
+    });
+  };
+
+  ws.once("close", (code, reason) => {
+    if (closed) return;
+    closed = true;
+
+    if (gcTimer) {
+      clearInterval(gcTimer);
+      gcTimer = null;
+    }
+
+    for (const binding of bindings.values()) {
+      try {
+        binding.socket.close();
+      } catch {
+        // ignore
+      }
+    }
+    bindings.clear();
+
+    log("info", "conn_close", {
+      connId,
+      proto: "udp",
+      mode: "multiplexed",
+      why: "ws_close",
+      bytesIn,
+      bytesOut,
+      wsCode: code,
+      wsReason: reason.toString()
+    });
+  });
+
+  ws.once("error", (err) => {
+    closeAll("ws_error", 1011, "WebSocket error");
+    log("error", "connect_error", { connId, proto: "udp", mode: "multiplexed", err: formatError(err) });
+  });
+
+  if (config.udpRelayBindingIdleTimeoutMs > 0) {
+    const gcIntervalMs = Math.max(1_000, Math.min(10_000, Math.floor(config.udpRelayBindingIdleTimeoutMs / 2)));
+    gcTimer = setInterval(() => {
+      if (closed) return;
+      const now = Date.now();
+      for (const [key, binding] of bindings) {
+        if (now - binding.lastActiveMs <= config.udpRelayBindingIdleTimeoutMs) continue;
+        bindings.delete(key);
+        try {
+          binding.socket.close();
+        } catch {
+          // ignore
+        }
+      }
+    }, gcIntervalMs);
+    gcTimer.unref();
+  }
+
+  const getOrCreateBinding = (guestPort: number, addressFamily: 4 | 6): UdpRelayBinding | null => {
+    if (closed) return null;
+    const key = makeUdpRelayBindingKey(guestPort, addressFamily);
+    const existing = bindings.get(key);
+    if (existing) return existing;
+
+    if (bindings.size >= config.udpRelayMaxBindingsPerConnection) {
+      closeAll("udp_max_bindings", 1008, "Too many UDP bindings");
+      return null;
+    }
+
+    const socket = dgram.createSocket(addressFamily === 6 ? "udp6" : "udp4");
+    const binding: UdpRelayBinding = {
+      key,
+      guestPort,
+      addressFamily,
+      socket,
+      lastActiveMs: Date.now()
+    };
+
+    socket.on("error", (err) => {
+      log("error", "connect_error", { connId, proto: "udp", mode: "multiplexed", err: formatError(err), guestPort, addressFamily });
+      bindings.delete(key);
+      try {
+        socket.close();
+      } catch {
+        // ignore
+      }
+    });
+
+    socket.on("message", (msg, rinfo) => {
+      binding.lastActiveMs = Date.now();
+
+      if (msg.length > config.udpRelayMaxPayloadBytes) return;
+      if (ws.readyState !== ws.OPEN) return;
+
+      let frame: Uint8Array;
+      try {
+        const addr = stripIpv6ZoneIndex(rinfo.address);
+        const parsed = ipaddr.parse(addr);
+        const ipBytes = new Uint8Array(parsed.toByteArray());
+
+        if (addressFamily === 4) {
+          if (ipBytes.length !== 4) return;
+          frame = encodeUdpRelayV1Datagram(
+            {
+              guestPort,
+              remoteIpv4: [ipBytes[0]!, ipBytes[1]!, ipBytes[2]!, ipBytes[3]!],
+              remotePort: rinfo.port,
+              payload: msg
+            },
+            { maxPayload: config.udpRelayMaxPayloadBytes }
+          );
+        } else {
+          if (ipBytes.length !== 16) return;
+          frame = encodeUdpRelayV2Datagram(
+            {
+              guestPort,
+              remoteIp: ipBytes,
+              remotePort: rinfo.port,
+              payload: msg
+            },
+            { maxPayload: config.udpRelayMaxPayloadBytes }
+          );
+        }
+      } catch {
+        return;
+      }
+
+      bytesOut += frame.length;
+
+      if (ws.bufferedAmount > config.udpWsBufferedAmountLimitBytes) {
+        log("warn", "udp_drop_backpressure", {
+          connId,
+          bufferedAmount: ws.bufferedAmount,
+          limit: config.udpWsBufferedAmountLimitBytes,
+          droppedBytes: frame.length
+        });
+        return;
+      }
+
+      ws.send(frame);
+    });
+
+    bindings.set(key, binding);
+    return binding;
+  };
+
+  ws.on("message", (data, isBinary) => {
+    if (!isBinary) return;
+    const buf = Buffer.isBuffer(data) ? data : Buffer.from(data as ArrayBuffer);
+    bytesIn += buf.length;
+
+    void (async () => {
+      if (closed) return;
+      let guestPort: number;
+      let remotePort: number;
+      let addressFamily: 4 | 6;
+      let remoteIpBytes: Uint8Array;
+      let payload: Uint8Array;
+
+      try {
+        const decoded = decodeUdpRelayFrame(buf, { maxPayload: config.udpRelayMaxPayloadBytes });
+        if (decoded.version === 1) {
+          guestPort = decoded.guestPort;
+          remotePort = decoded.remotePort;
+          addressFamily = 4;
+          remoteIpBytes = Uint8Array.from(decoded.remoteIpv4);
+          payload = decoded.payload;
+        } else {
+          guestPort = decoded.guestPort;
+          remotePort = decoded.remotePort;
+          addressFamily = decoded.addressFamily;
+          remoteIpBytes = decoded.remoteIp;
+          payload = decoded.payload;
+        }
+      } catch {
+        return;
+      }
+
+      if (closed) return;
+      if (remotePort < 1 || remotePort > 65535) return;
+      if (payload.length > config.udpRelayMaxPayloadBytes) return;
+
+      let remoteAddress: string;
+      try {
+        remoteAddress = ipaddr.fromByteArray(Array.from(remoteIpBytes)).toString();
+      } catch {
+        return;
+      }
+
+      const decision = await resolveAndAuthorizeTarget(remoteAddress, remotePort, {
+        open: config.open,
+        allowlist: config.allow,
+        dnsTimeoutMs: config.dnsTimeoutMs
+      });
+      if (closed) return;
+      if (!decision.allowed) return;
+
+      if (addressFamily === 4 && decision.target.family !== 4) return;
+      if (addressFamily === 6 && decision.target.family !== 6) return;
+
+      const binding = getOrCreateBinding(guestPort, addressFamily);
+      if (!binding) return;
+      binding.lastActiveMs = Date.now();
+
+      // Send the raw UDP payload to the decoded destination.
+      try {
+        binding.socket.send(payload, remotePort, remoteAddress);
+      } catch {
+        // ignore
+      }
+    })();
   });
 }

@@ -40,9 +40,15 @@ Environment variables:
 | `AERO_PROXY_ALLOW` | (empty) | Comma-separated allowlist rules, e.g. `example.com:80,example.com:443,10.0.0.0/8:53` |
 | `AERO_PROXY_CONNECT_TIMEOUT_MS` | `10000` | TCP connect timeout |
 | `AERO_PROXY_DNS_TIMEOUT_MS` | `5000` | DNS lookup timeout |
+| `AERO_PROXY_WS_MAX_PAYLOAD_BYTES` | `1048576` | Maximum incoming WebSocket message size |
+| `AERO_PROXY_WS_STREAM_HWM_BYTES` | `65536` | Backpressure tuning for the TCP WebSocket stream bridge |
+| `AERO_PROXY_UDP_WS_BUFFER_LIMIT_BYTES` | `1048576` | Drop inbound UDP packets when WebSocket bufferedAmount exceeds this limit |
 | `AERO_PROXY_TCP_MUX_MAX_STREAMS` | `1024` | Max concurrent multiplexed TCP streams per WebSocket (`/tcp-mux`) |
 | `AERO_PROXY_TCP_MUX_MAX_STREAM_BUFFER_BYTES` | `1048576` | Max buffered client→TCP bytes per mux stream before the stream is closed |
 | `AERO_PROXY_TCP_MUX_MAX_FRAME_PAYLOAD_BYTES` | `16777216` | Max `aero-tcp-mux-v1` frame payload size |
+| `AERO_PROXY_UDP_RELAY_MAX_PAYLOAD_BYTES` | `1200` | Max UDP payload bytes per framed datagram in multiplexed `/udp` mode (v1/v2 framing) |
+| `AERO_PROXY_UDP_RELAY_MAX_BINDINGS` | `128` | Max UDP bindings per WebSocket connection in multiplexed `/udp` mode |
+| `AERO_PROXY_UDP_RELAY_BINDING_IDLE_TIMEOUT_MS` | `60000` | Idle timeout for UDP bindings in multiplexed `/udp` mode |
 
 Allowlist rules are `hostOrCidr:port` (port can be `*` or a range like `8000-9000`). Domains can use `*.example.com`.
 
@@ -111,7 +117,9 @@ For the canonical spec (including `OPEN`/`DATA`/`CLOSE` payload schemas and erro
 
 ### UDP
 
-WebSocket URL:
+#### Per-target UDP (legacy/raw datagrams)
+
+WebSocket URL (connects to a single target):
 
 ```
 ws://<proxy-host>:<proxy-port>/udp?v=1&host=<target-host>&port=<target-port>
@@ -127,3 +135,22 @@ ws://<proxy-host>:<proxy-port>/udp?v=1&target=<target-host>:<target-port>
 compatibility with the production `aero-gateway` URL format.
 
 Each WebSocket binary message is sent as a single UDP datagram; each received datagram is forwarded as a single WebSocket binary message.
+
+#### Multiplexed UDP relay framing (v1/v2 datagrams over WebSocket)
+
+For local development/testing without WebRTC, `net-proxy` also supports a **multiplexed** UDP mode:
+
+```
+ws://<proxy-host>:<proxy-port>/udp
+```
+
+When no `host`/`port` (or `target`) query parameters are present, each WebSocket binary message is interpreted as a **UDP relay datagram frame** using the same v1/v2 framing as the production relay:
+
+- `proxy/webrtc-udp-relay/PROTOCOL.md`
+
+This is the mode used by the browser `WebSocketUdpProxyClient`.
+
+Security caveat:
+
+- In multiplexed mode, allowlist checks are applied **per datagram** based on the decoded destination **IP:port**.
+- Domain allowlist rules like `example.com:53` cannot be applied because frames contain IP addresses (use IP/CIDR rules like `127.0.0.1:*` / `10.0.0.0/8:*`, or run with `AERO_PROXY_OPEN=1`).
