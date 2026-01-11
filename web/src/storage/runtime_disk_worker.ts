@@ -6,12 +6,28 @@ import type { AsyncSectorDisk } from "./disk";
 import { IdbChunkDisk } from "./idb_chunk_disk";
 import { benchSequentialRead, benchSequentialWrite } from "./bench";
 import type { DiskImageMetadata } from "./metadata";
+import { RemoteStreamingDisk, type RemoteDiskOptions, type RemoteDiskTelemetrySnapshot } from "../platform/remote_disk";
 
 type OpenMode = "direct" | "cow";
+
+type DiskIoTelemetry = {
+  reads: number;
+  bytesRead: number;
+  writes: number;
+  bytesWritten: number;
+  flushes: number;
+  inflightReads: number;
+  inflightWrites: number;
+  inflightFlushes: number;
+  lastReadMs: number | null;
+  lastWriteMs: number | null;
+  lastFlushMs: number | null;
+};
 
 type DiskEntry = {
   disk: AsyncSectorDisk;
   readOnly: boolean;
+  io: DiskIoTelemetry;
 };
 
 type RequestMessage =
@@ -21,10 +37,18 @@ type RequestMessage =
       op: "open";
       payload: { meta: DiskImageMetadata; mode?: OpenMode; overlayBlockSizeBytes?: number };
     }
+  | {
+      type: "request";
+      requestId: number;
+      op: "openRemote";
+      payload: { url: string; options?: RemoteDiskOptions };
+    }
   | { type: "request"; requestId: number; op: "close"; payload: { handle: number } }
   | { type: "request"; requestId: number; op: "flush"; payload: { handle: number } }
+  | { type: "request"; requestId: number; op: "clearCache"; payload: { handle: number } }
   | { type: "request"; requestId: number; op: "read"; payload: { handle: number; lba: number; byteLength: number } }
   | { type: "request"; requestId: number; op: "write"; payload: { handle: number; lba: number; data: Uint8Array } }
+  | { type: "request"; requestId: number; op: "stats"; payload: { handle: number } }
   | {
       type: "request";
       requestId: number;
@@ -57,6 +81,22 @@ function postOk(requestId: number, result: unknown, transfer?: Transferable[]): 
 function postErr(requestId: number, err: unknown): void {
   const msg: ResponseMessage = { type: "response", requestId, ok: false, error: serializeError(err) };
   (globalThis as DedicatedWorkerGlobalScope).postMessage(msg);
+}
+
+function emptyIoTelemetry(): DiskIoTelemetry {
+  return {
+    reads: 0,
+    bytesRead: 0,
+    writes: 0,
+    bytesWritten: 0,
+    flushes: 0,
+    inflightReads: 0,
+    inflightWrites: 0,
+    inflightFlushes: 0,
+    lastReadMs: null,
+    lastWriteMs: null,
+    lastFlushMs: null,
+  };
 }
 
 async function openDisk(meta: DiskImageMetadata, mode: OpenMode, overlayBlockSizeBytes?: number): Promise<DiskEntry> {
@@ -99,7 +139,7 @@ async function openDisk(meta: DiskImageMetadata, mode: OpenMode, overlayBlockSiz
           });
         }
 
-        return { disk: new OpfsCowDisk(base, overlay), readOnly: false };
+        return { disk: new OpfsCowDisk(base, overlay), readOnly: false, io: emptyIoTelemetry() };
       } catch (err) {
         // If SyncAccessHandle isn't available, sparse overlays can't work efficiently.
         // Fall back to direct raw writes (still in a worker, but slower).
@@ -108,12 +148,17 @@ async function openDisk(meta: DiskImageMetadata, mode: OpenMode, overlayBlockSiz
     }
 
     const disk = await openBase();
-    return { disk, readOnly };
+    return { disk, readOnly, io: emptyIoTelemetry() };
   }
 
   // IndexedDB backend: disk data is stored in the `chunks` store (sparse).
   const disk = await IdbChunkDisk.open(meta.id, meta.sizeBytes);
-  return { disk, readOnly };
+  return { disk, readOnly, io: emptyIoTelemetry() };
+}
+
+async function openRemoteDisk(url: string, options?: RemoteDiskOptions): Promise<DiskEntry> {
+  const disk = await RemoteStreamingDisk.open(url, options);
+  return { disk, readOnly: true, io: emptyIoTelemetry() };
 }
 
 async function requireDisk(handle: number): Promise<DiskEntry> {
@@ -144,6 +189,20 @@ async function handleRequest(msg: RequestMessage): Promise<void> {
       return;
     }
 
+    case "openRemote": {
+      const { url, options } = msg.payload;
+      const entry = await openRemoteDisk(url, options);
+      const handle = nextHandle++;
+      disks.set(handle, entry);
+      postOk(msg.requestId, {
+        handle,
+        sectorSize: entry.disk.sectorSize,
+        capacityBytes: entry.disk.capacityBytes,
+        readOnly: entry.readOnly,
+      });
+      return;
+    }
+
     case "close": {
       const { handle } = msg.payload;
       const entry = await requireDisk(handle);
@@ -156,11 +215,28 @@ async function handleRequest(msg: RequestMessage): Promise<void> {
     case "flush": {
       const { handle } = msg.payload;
       const entry = await requireDisk(handle);
-      if (entry.readOnly) {
-        postOk(msg.requestId, { ok: true });
-        return;
+      const start = performance.now();
+      entry.io.flushes++;
+      entry.io.inflightFlushes++;
+      try {
+        await entry.disk.flush();
+      } finally {
+        entry.io.inflightFlushes--;
+        entry.io.lastFlushMs = performance.now() - start;
       }
-      await entry.disk.flush();
+      postOk(msg.requestId, { ok: true });
+      return;
+    }
+
+    case "clearCache": {
+      const { handle } = msg.payload;
+      const entry = await requireDisk(handle);
+      const diskAny = entry.disk as unknown as { clearCache?: () => Promise<void> };
+      if (typeof diskAny.clearCache !== "function") {
+        throw new Error("disk does not support cache clearing");
+      }
+      await diskAny.clearCache();
+      entry.io = emptyIoTelemetry();
       postOk(msg.requestId, { ok: true });
       return;
     }
@@ -169,7 +245,16 @@ async function handleRequest(msg: RequestMessage): Promise<void> {
       const { handle, lba, byteLength } = msg.payload;
       const entry = await requireDisk(handle);
       const buf = new Uint8Array(byteLength);
-      await entry.disk.readSectors(lba, buf);
+      const start = performance.now();
+      entry.io.reads++;
+      entry.io.bytesRead += byteLength;
+      entry.io.inflightReads++;
+      try {
+        await entry.disk.readSectors(lba, buf);
+      } finally {
+        entry.io.inflightReads--;
+        entry.io.lastReadMs = performance.now() - start;
+      }
       // Transfer the ArrayBuffer to avoid copying on postMessage.
       postOk(msg.requestId, { data: buf }, [buf.buffer]);
       return;
@@ -179,8 +264,33 @@ async function handleRequest(msg: RequestMessage): Promise<void> {
       const { handle, lba, data } = msg.payload;
       const entry = await requireDisk(handle);
       if (entry.readOnly) throw new Error("disk is read-only");
-      await entry.disk.writeSectors(lba, data);
+      const start = performance.now();
+      entry.io.writes++;
+      entry.io.bytesWritten += data.byteLength;
+      entry.io.inflightWrites++;
+      try {
+        await entry.disk.writeSectors(lba, data);
+      } finally {
+        entry.io.inflightWrites--;
+        entry.io.lastWriteMs = performance.now() - start;
+      }
       postOk(msg.requestId, { ok: true });
+      return;
+    }
+
+    case "stats": {
+      const { handle } = msg.payload;
+      const entry = await requireDisk(handle);
+      const diskAny = entry.disk as unknown as { getTelemetrySnapshot?: () => RemoteDiskTelemetrySnapshot };
+      const remote = typeof diskAny.getTelemetrySnapshot === "function" ? diskAny.getTelemetrySnapshot() : null;
+      postOk(msg.requestId, {
+        handle,
+        sectorSize: entry.disk.sectorSize,
+        capacityBytes: entry.disk.capacityBytes,
+        readOnly: entry.readOnly,
+        io: entry.io,
+        remote,
+      });
       return;
     }
 

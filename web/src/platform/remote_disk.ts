@@ -1,4 +1,5 @@
 import { openFileHandle, removeOpfsEntry } from "./opfs";
+import type { AsyncSectorDisk } from "../storage/disk";
 
 export type ByteRange = { start: number; end: number };
 
@@ -204,7 +205,48 @@ export type RemoteDiskOptions = {
   prefetchSequentialBlocks?: number;
 };
 
-export class RemoteStreamingDisk {
+export type RemoteDiskTelemetrySnapshot = {
+  url: string;
+  totalSize: number;
+  blockSize: number;
+  cacheLimitBytes: number | null;
+  cachedBytes: number;
+
+  blockRequests: number;
+  cacheHits: number;
+  cacheMisses: number;
+  inflightJoins: number;
+
+  requests: number;
+  bytesDownloaded: number;
+
+  inflightFetches: number;
+
+  /**
+   * Duration of the most recently completed fetch+persist path.
+   *
+   * This is intended as a lightweight tuning signal (not a high-resolution profiler).
+   */
+  lastFetchMs: number | null;
+  lastFetchAtMs: number | null;
+  lastFetchRange: ByteRange | null;
+};
+
+type RemoteDiskTelemetry = {
+  blockRequests: number;
+  cacheHits: number;
+  cacheMisses: number;
+  inflightJoins: number;
+  requests: number;
+  bytesDownloaded: number;
+  lastFetchMs: number | null;
+  lastFetchAtMs: number | null;
+  lastFetchRange: ByteRange | null;
+};
+
+export class RemoteStreamingDisk implements AsyncSectorDisk {
+  readonly sectorSize = REMOTE_DISK_SECTOR_SIZE;
+  readonly capacityBytes: number;
   private readonly url: string;
   private readonly totalSize: number;
   private readonly blockSize: number;
@@ -214,13 +256,27 @@ export class RemoteStreamingDisk {
 
   private meta: CacheMeta;
   private rangeSet: RangeSet;
+  private cachedBytes = 0;
   private lastReadEnd: number | null = null;
   private readonly inflight = new Map<number, Promise<Uint8Array>>();
   private metaLoaded = false;
 
+  private telemetry: RemoteDiskTelemetry = {
+    blockRequests: 0,
+    cacheHits: 0,
+    cacheMisses: 0,
+    inflightJoins: 0,
+    requests: 0,
+    bytesDownloaded: 0,
+    lastFetchMs: null,
+    lastFetchAtMs: null,
+    lastFetchRange: null,
+  };
+
   private constructor(url: string, totalSize: number, cacheKey: string, options: Required<RemoteDiskOptions>) {
     this.url = url;
     this.totalSize = totalSize;
+    this.capacityBytes = totalSize;
     this.blockSize = options.blockSize;
     this.cacheLimitBytes = options.cacheLimitBytes;
     this.prefetchSequentialBlocks = options.prefetchSequentialBlocks;
@@ -278,10 +334,39 @@ export class RemoteStreamingDisk {
     await this.loadMeta();
     return {
       totalSize: this.totalSize,
-      cachedBytes: this.rangeSet.totalLen(),
+      cachedBytes: this.cachedBytes,
       cachedRanges: this.rangeSet.getRanges(),
       cacheLimitBytes: this.cacheLimitBytes,
     };
+  }
+
+  getTelemetrySnapshot(): RemoteDiskTelemetrySnapshot {
+    return {
+      url: this.url,
+      totalSize: this.totalSize,
+      blockSize: this.blockSize,
+      cacheLimitBytes: this.cacheLimitBytes,
+      cachedBytes: this.cachedBytes,
+
+      blockRequests: this.telemetry.blockRequests,
+      cacheHits: this.telemetry.cacheHits,
+      cacheMisses: this.telemetry.cacheMisses,
+      inflightJoins: this.telemetry.inflightJoins,
+
+      requests: this.telemetry.requests,
+      bytesDownloaded: this.telemetry.bytesDownloaded,
+
+      inflightFetches: this.inflight.size,
+
+      lastFetchMs: this.telemetry.lastFetchMs,
+      lastFetchAtMs: this.telemetry.lastFetchAtMs,
+      lastFetchRange: this.telemetry.lastFetchRange ? { ...this.telemetry.lastFetchRange } : null,
+    };
+  }
+
+  async flushCache(): Promise<void> {
+    await this.loadMeta();
+    await this.persistMeta();
   }
 
   async readInto(offset: number, dest: Uint8Array, onLog?: (msg: string) => void): Promise<void> {
@@ -327,6 +412,14 @@ export class RemoteStreamingDisk {
     await this.readInto(offset, buffer, onLog);
   }
 
+  async writeSectors(_lba: number, _data: Uint8Array): Promise<void> {
+    throw new Error("remote disk is read-only");
+  }
+
+  async flush(): Promise<void> {
+    await this.flushCache();
+  }
+
   async clearCache(): Promise<void> {
     await removeOpfsEntry(`state/remote-cache/${this.cacheKey}`, { recursive: true });
     this.meta = {
@@ -339,9 +432,21 @@ export class RemoteStreamingDisk {
       blockLastAccess: {},
     };
     this.rangeSet = new RangeSet();
+    this.cachedBytes = 0;
     this.lastReadEnd = null;
     this.inflight.clear();
     this.metaLoaded = true;
+    this.telemetry = {
+      blockRequests: 0,
+      cacheHits: 0,
+      cacheMisses: 0,
+      inflightJoins: 0,
+      requests: 0,
+      bytesDownloaded: 0,
+      lastFetchMs: null,
+      lastFetchAtMs: null,
+      lastFetchRange: null,
+    };
   }
 
   private async maybePrefetch(offset: number, length: number, onLog?: (msg: string) => void): Promise<void> {
@@ -383,6 +488,7 @@ export class RemoteStreamingDisk {
 
   private async getBlock(blockIndex: number, onLog?: (msg: string) => void): Promise<Uint8Array> {
     await this.loadMeta();
+    this.telemetry.blockRequests++;
     const r = this.blockRange(blockIndex);
     if (this.rangeSet.containsRange(r.start, r.end)) {
       try {
@@ -390,6 +496,7 @@ export class RemoteStreamingDisk {
         const file = await handle.getFile();
         const bytes = new Uint8Array(await file.arrayBuffer());
         if (bytes.length === r.end - r.start) {
+          this.telemetry.cacheHits++;
           this.noteAccess(blockIndex);
           await this.persistMeta();
           return bytes;
@@ -402,15 +509,21 @@ export class RemoteStreamingDisk {
       this.rangeSet.remove(r.start, r.end);
       delete this.meta.blockLastAccess[String(blockIndex)];
       this.meta.downloaded = this.rangeSet.getRanges();
+      this.cachedBytes = this.rangeSet.totalLen();
       await this.persistMeta();
     }
 
     const existing = this.inflight.get(blockIndex);
     if (existing) {
+      this.telemetry.inflightJoins++;
       return await existing;
     }
 
     const task = (async () => {
+      const start = performance.now();
+      this.telemetry.cacheMisses++;
+      this.telemetry.requests++;
+      this.telemetry.lastFetchRange = { ...r };
       onLog?.(`cache miss: fetching bytes=${r.start}-${r.end - 1}`);
       const resp = await fetch(this.url, { headers: { Range: `bytes=${r.start}-${r.end - 1}` } });
       if (resp.status !== 206) {
@@ -420,6 +533,7 @@ export class RemoteStreamingDisk {
       if (buf.length !== r.end - r.start) {
         throw new Error(`Unexpected range length: expected ${r.end - r.start}, got ${buf.length}`);
       }
+      this.telemetry.bytesDownloaded += buf.byteLength;
 
       const handle = await openFileHandle(this.blockPath(blockIndex), { create: true });
       const writable = await handle.createWritable();
@@ -427,10 +541,13 @@ export class RemoteStreamingDisk {
       await writable.close();
 
       this.rangeSet.insert(r.start, r.end);
+      this.cachedBytes = this.rangeSet.totalLen();
       this.noteAccess(blockIndex);
       this.meta.downloaded = this.rangeSet.getRanges();
       await this.persistMeta();
       await this.enforceCacheLimit(blockIndex);
+      this.telemetry.lastFetchMs = performance.now() - start;
+      this.telemetry.lastFetchAtMs = Date.now();
       return buf;
     })();
 
@@ -445,7 +562,7 @@ export class RemoteStreamingDisk {
   private async enforceCacheLimit(protectedBlock: number): Promise<void> {
     if (this.cacheLimitBytes === null) return;
 
-    while (this.rangeSet.totalLen() > this.cacheLimitBytes) {
+    while (this.cachedBytes > this.cacheLimitBytes) {
       let lruBlock: number | null = null;
       let lruCounter = Number.POSITIVE_INFINITY;
       for (const [blockStr, counter] of Object.entries(this.meta.blockLastAccess)) {
@@ -464,6 +581,7 @@ export class RemoteStreamingDisk {
       this.rangeSet.remove(r.start, r.end);
       delete this.meta.blockLastAccess[String(lruBlock)];
       this.meta.downloaded = this.rangeSet.getRanges();
+      this.cachedBytes = this.rangeSet.totalLen();
       await this.persistMeta();
     }
   }
@@ -490,6 +608,7 @@ export class RemoteStreamingDisk {
       this.meta = parsed;
       this.rangeSet = new RangeSet();
       for (const r of parsed.downloaded) this.rangeSet.insert(r.start, r.end);
+      this.cachedBytes = this.rangeSet.totalLen();
     } catch {
       // ignore missing / unreadable meta
     }
@@ -516,3 +635,6 @@ async function stableCacheKey(url: string): Promise<string> {
     return encodeURIComponent(url).replaceAll("%", "_").slice(0, 128);
   }
 }
+
+// Backwards-compatible alias: this disk implementation uses HTTP Range requests.
+export { RemoteStreamingDisk as RemoteRangeDisk };

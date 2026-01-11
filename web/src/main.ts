@@ -9,7 +9,6 @@ import { createAdaptiveRingBufferTarget, createAudioOutput, startAudioPerfSampli
 import { MicCapture } from "./audio/mic_capture";
 import { detectPlatformFeatures, explainMissingRequirements, type PlatformFeatureReport } from "./platform/features";
 import { importFileToOpfs, openFileHandle, removeOpfsEntry } from "./platform/opfs";
-import { RemoteStreamingDisk } from "./platform/remote_disk";
 import { ensurePersistentStorage, getPersistentStorageInfo, getStorageEstimate } from "./platform/storage_quota";
 import { initAeroStatusApi } from "./api/status";
 import { AeroConfigManager } from "./config/manager";
@@ -26,6 +25,7 @@ import type { WorkerRole } from "./runtime/shared_layout";
 import { createDefaultDiskImageStore } from "./storage/default_disk_image_store";
 import type { DiskImageInfo, WorkerOpenToken } from "./storage/disk_image_store";
 import { formatByteSize } from "./storage/disk_image_store";
+import { RuntimeDiskClient } from "./storage/runtime_disk_client";
 import { IoWorkerClient } from "./workers/io_worker_client";
 import { type JitCompileRequest, type JitWorkerResponse, isJitWorkerResponse } from "./workers/jit_protocol";
 import { FRAME_SEQ_INDEX, FRAME_STATUS_INDEX } from "./shared/frameProtocol";
@@ -1131,47 +1131,114 @@ function renderRemoteDiskPanel(): HTMLElement {
   const urlInput = el("input", { type: "url", placeholder: "http://localhost:9000/disk-images/large.bin" }) as HTMLInputElement;
   const blockSizeInput = el("input", { type: "number", value: String(1024), min: "4" }) as HTMLInputElement;
   const cacheLimitInput = el("input", { type: "number", value: String(512), min: "0" }) as HTMLInputElement;
+  const stats = el("pre", { text: "" });
   const output = el("pre", { text: "" });
 
   const probeButton = el("button", { text: "Probe Range support" }) as HTMLButtonElement;
   const readButton = el("button", { text: "Read sample bytes" }) as HTMLButtonElement;
+  const flushButton = el("button", { text: "Flush cache" }) as HTMLButtonElement;
   const clearButton = el("button", { text: "Clear cache" }) as HTMLButtonElement;
+  const closeButton = el("button", { text: "Close" }) as HTMLButtonElement;
   const progress = el("progress", { value: "0", max: "1", style: "width: 320px" }) as HTMLProgressElement;
 
-  let disk: RemoteStreamingDisk | null = null;
+  const client = new RuntimeDiskClient();
+  let handle: number | null = null;
+  let statsPollPending = false;
 
   function updateButtons(): void {
     const enabled = enabledInput.checked;
     probeButton.disabled = !enabled;
     readButton.disabled = !enabled;
-    clearButton.disabled = !enabled || !disk;
+    flushButton.disabled = !enabled || handle === null;
+    clearButton.disabled = !enabled || handle === null;
+    closeButton.disabled = !enabled || handle === null;
   }
 
-  enabledInput.addEventListener("change", updateButtons);
+  enabledInput.addEventListener("change", () => {
+    if (!enabledInput.checked) {
+      void closeHandle();
+    }
+    updateButtons();
+  });
   updateButtons();
+
+  async function closeHandle(): Promise<void> {
+    if (handle === null) return;
+    const cur = handle;
+    handle = null;
+    try {
+      await client.closeDisk(cur);
+    } catch (err) {
+      output.textContent = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  async function ensureOpen(): Promise<number> {
+    if (handle !== null) return handle;
+    const url = urlInput.value.trim();
+    if (!url) throw new Error("Enter a URL first.");
+
+    const blockSize = Number(blockSizeInput.value) * 1024;
+    const cacheLimitMiB = Number(cacheLimitInput.value);
+    const cacheLimitBytes = cacheLimitMiB <= 0 ? null : cacheLimitMiB * 1024 * 1024;
+
+    const opened = await client.openRemote(url, { blockSize, cacheLimitBytes, prefetchSequentialBlocks: 2 });
+    handle = opened.handle;
+    updateButtons();
+    return opened.handle;
+  }
+
+  async function refreshStats(): Promise<void> {
+    if (!enabledInput.checked || handle === null) {
+      stats.textContent = "";
+      return;
+    }
+    if (statsPollPending) return;
+    statsPollPending = true;
+    const cur = handle;
+    try {
+      const res = await client.stats(cur);
+      if (handle !== cur) return;
+
+      const remote = res.remote;
+      if (!remote) {
+        stats.textContent = `diskSize=${formatBytes(res.capacityBytes)} reads=${res.io.reads} writes=${res.io.writes}`;
+        return;
+      }
+
+      const hitRate = remote.blockRequests > 0 ? remote.cacheHits / remote.blockRequests : 0;
+      const cacheCoverage = remote.totalSize > 0 ? remote.cachedBytes / remote.totalSize : 0;
+      const cacheLimitText = remote.cacheLimitBytes === null ? "off" : formatBytes(remote.cacheLimitBytes);
+      const downloadAmplification = res.io.bytesRead > 0 ? remote.bytesDownloaded / res.io.bytesRead : 0;
+
+      stats.textContent =
+        `imageSize=${formatBytes(remote.totalSize)}\n` +
+        `cache=${formatBytes(remote.cachedBytes)} (${(cacheCoverage * 100).toFixed(2)}%) limit=${cacheLimitText}\n` +
+        `blockSize=${formatBytes(remote.blockSize)}\n` +
+        `ioReads=${res.io.reads} ioBytesRead=${formatBytes(res.io.bytesRead)} downloadAmp=${downloadAmplification.toFixed(2)}x\n` +
+        `requests=${remote.requests} bytesDownloaded=${formatBytes(remote.bytesDownloaded)}\n` +
+        `blockRequests=${remote.blockRequests} hits=${remote.cacheHits} misses=${remote.cacheMisses} inflightJoins=${remote.inflightJoins} hitRate=${(hitRate * 100).toFixed(1)}%\n` +
+        `inflightFetches=${remote.inflightFetches} lastFetchMs=${remote.lastFetchMs === null ? "—" : remote.lastFetchMs.toFixed(1)}`;
+    } catch (err) {
+      stats.textContent = err instanceof Error ? err.message : String(err);
+    } finally {
+      statsPollPending = false;
+    }
+  }
+
+  window.setInterval(() => void refreshStats(), 250);
 
   probeButton.onclick = async () => {
     output.textContent = "";
     progress.value = 0;
-    const url = urlInput.value.trim();
-    if (!url) {
-      output.textContent = "Enter a URL first.";
-      return;
-    }
 
     try {
-      const blockSize = Number(blockSizeInput.value) * 1024;
-      const cacheLimitMiB = Number(cacheLimitInput.value);
-      const cacheLimitBytes = cacheLimitMiB <= 0 ? null : cacheLimitMiB * 1024 * 1024;
+      await closeHandle();
 
       output.textContent = "Probing… (this will make HTTP requests)\n";
-      disk = await RemoteStreamingDisk.open(url, {
-        blockSize,
-        cacheLimitBytes,
-        prefetchSequentialBlocks: 2,
-      });
-      const status = await disk.getCacheStatus();
-      output.textContent = JSON.stringify(status, null, 2);
+      const openedHandle = await ensureOpen();
+      const res = await client.stats(openedHandle);
+      output.textContent = JSON.stringify(res.remote, null, 2);
       updateButtons();
     } catch (err) {
       output.textContent = err instanceof Error ? err.message : String(err);
@@ -1181,30 +1248,14 @@ function renderRemoteDiskPanel(): HTMLElement {
   readButton.onclick = async () => {
     output.textContent = "";
     progress.value = 0;
-    const url = urlInput.value.trim();
-    if (!url) {
-      output.textContent = "Enter a URL first.";
-      return;
-    }
 
     try {
-      if (!disk) {
-        const blockSize = Number(blockSizeInput.value) * 1024;
-        const cacheLimitMiB = Number(cacheLimitInput.value);
-        const cacheLimitBytes = cacheLimitMiB <= 0 ? null : cacheLimitMiB * 1024 * 1024;
-        disk = await RemoteStreamingDisk.open(url, { blockSize, cacheLimitBytes, prefetchSequentialBlocks: 2 });
-      }
-      updateButtons();
+      const openedHandle = await ensureOpen();
 
-      const logLines: string[] = [];
-      const bytes = await disk.read(1024, 16, (msg) => {
-        logLines.push(msg);
-        output.textContent = logLines.join("\n");
-      });
-
-      const status = await disk.getCacheStatus();
+      const bytes = await client.read(openedHandle, 2, 512);
+      const res = await client.stats(openedHandle);
       output.textContent = JSON.stringify(
-        { read: { offset: 1024, length: 16, bytes: Array.from(bytes) }, cache: status, log: logLines },
+        { read: { lba: 2, byteLength: 512, first16: Array.from(bytes.slice(0, 16)) }, stats: res.remote },
         null,
         2,
       );
@@ -1214,21 +1265,45 @@ function renderRemoteDiskPanel(): HTMLElement {
     }
   };
 
+  flushButton.onclick = async () => {
+    output.textContent = "";
+    progress.value = 0;
+    try {
+      if (handle === null) {
+        output.textContent = "Nothing to flush (probe/open first).";
+        return;
+      }
+      await client.flush(handle);
+      progress.value = 1;
+      void refreshStats();
+    } catch (err) {
+      output.textContent = err instanceof Error ? err.message : String(err);
+    }
+  };
+
   clearButton.onclick = async () => {
     output.textContent = "";
     progress.value = 0;
     try {
-      if (!disk) {
+      if (handle === null) {
         output.textContent = "Nothing to clear (probe/open first).";
         return;
       }
-      await disk.clearCache();
-      const status = await disk.getCacheStatus();
-      output.textContent = JSON.stringify({ cleared: true, cache: status }, null, 2);
+      await client.clearCache(handle);
+      progress.value = 1;
+      output.textContent = "Cache cleared.";
+      void refreshStats();
       updateButtons();
     } catch (err) {
       output.textContent = err instanceof Error ? err.message : String(err);
     }
+  };
+
+  closeButton.onclick = async () => {
+    output.textContent = "";
+    progress.value = 0;
+    await closeHandle();
+    updateButtons();
   };
 
   return el(
@@ -1253,9 +1328,12 @@ function renderRemoteDiskPanel(): HTMLElement {
       cacheLimitInput,
       probeButton,
       readButton,
+      flushButton,
       clearButton,
+      closeButton,
       progress,
     ),
+    stats,
     output,
   );
 }
