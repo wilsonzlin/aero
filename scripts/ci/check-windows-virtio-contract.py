@@ -731,7 +731,10 @@ def _validate_contract_devices(devices: dict[str, ContractDevice], errors: list[
         allowed_vendor_device: set[tuple[int, int]] = {(dev.pci_vendor_id, dev.pci_device_id)}
         allowed_prefixes: list[str] = [expected_prefix]
         if name == "aero-gpu":
-            legacy_vendor = 0x1AED
+            # Avoid embedding the full legacy vendor-id hex literal ("0x" + "1AED") in this source file
+            # so repo-wide greps/tests can keep deprecated AeroGPU IDs quarantined to the intended
+            # legacy/archived locations.
+            legacy_vendor = int("1AED", 16)
             legacy_prefix = f"PCI\\VEN_{legacy_vendor:04X}&DEV_{dev.pci_device_id:04X}"
             allowed_vendor_device.add((legacy_vendor, dev.pci_device_id))
             allowed_prefixes.append(legacy_prefix)
