@@ -216,6 +216,8 @@ static NTSTATUS AeroGpuBuildAllocTable(_In_reads_opt_(Count) const DXGK_ALLOCATI
 
     struct aerogpu_alloc_entry* tmpEntries = NULL;
     uint32_t* seen = NULL;
+    uint64_t* seenGpa = NULL;
+    uint64_t* seenSize = NULL;
     UINT entryCount = 0;
 
     if (Count && List) {
@@ -240,6 +242,25 @@ static NTSTATUS AeroGpuBuildAllocTable(_In_reads_opt_(Count) const DXGK_ALLOCATI
         }
         RtlZeroMemory(seen, seenBytes);
 
+        const SIZE_T seenGpaBytes = (SIZE_T)cap * sizeof(*seenGpa);
+        seenGpa = (uint64_t*)ExAllocatePoolWithTag(NonPagedPool, seenGpaBytes, AEROGPU_POOL_TAG);
+        if (!seenGpa) {
+            ExFreePoolWithTag(seen, AEROGPU_POOL_TAG);
+            ExFreePoolWithTag(tmpEntries, AEROGPU_POOL_TAG);
+            return STATUS_INSUFFICIENT_RESOURCES;
+        }
+        RtlZeroMemory(seenGpa, seenGpaBytes);
+
+        const SIZE_T seenSizeBytes = (SIZE_T)cap * sizeof(*seenSize);
+        seenSize = (uint64_t*)ExAllocatePoolWithTag(NonPagedPool, seenSizeBytes, AEROGPU_POOL_TAG);
+        if (!seenSize) {
+            ExFreePoolWithTag(seenGpa, AEROGPU_POOL_TAG);
+            ExFreePoolWithTag(seen, AEROGPU_POOL_TAG);
+            ExFreePoolWithTag(tmpEntries, AEROGPU_POOL_TAG);
+            return STATUS_INSUFFICIENT_RESOURCES;
+        }
+        RtlZeroMemory(seenSize, seenSizeBytes);
+
         const UINT mask = cap - 1;
 
         for (UINT i = 0; i < Count; ++i) {
@@ -262,6 +283,8 @@ static NTSTATUS AeroGpuBuildAllocTable(_In_reads_opt_(Count) const DXGK_ALLOCATI
                 const uint32_t existing = seen[slot];
                 if (existing == 0) {
                     seen[slot] = allocId;
+                    seenGpa[slot] = (uint64_t)List[i].PhysicalAddress.QuadPart;
+                    seenSize[slot] = (uint64_t)alloc->SizeBytes;
 
                     tmpEntries[entryCount].alloc_id = allocId;
                     tmpEntries[entryCount].flags = 0;
@@ -274,7 +297,30 @@ static NTSTATUS AeroGpuBuildAllocTable(_In_reads_opt_(Count) const DXGK_ALLOCATI
                 }
 
                 if (existing == allocId) {
-                    /* Duplicate alloc_id; keep the first GPA observed. */
+                    const uint64_t gpa = (uint64_t)List[i].PhysicalAddress.QuadPart;
+                    const uint64_t sizeBytes = (uint64_t)alloc->SizeBytes;
+                    if (seenGpa[slot] != gpa || seenSize[slot] != sizeBytes) {
+                        AEROGPU_LOG("BuildAllocTable: alloc_id collision: alloc_id=%lu gpa0=0x%I64x size0=%I64u gpa1=0x%I64x size1=%I64u",
+                                   (ULONG)allocId,
+                                   (ULONGLONG)seenGpa[slot],
+                                   (ULONGLONG)seenSize[slot],
+                                   (ULONGLONG)gpa,
+                                   (ULONGLONG)sizeBytes);
+                        if (seenSize) {
+                            ExFreePoolWithTag(seenSize, AEROGPU_POOL_TAG);
+                        }
+                        if (seenGpa) {
+                            ExFreePoolWithTag(seenGpa, AEROGPU_POOL_TAG);
+                        }
+                        if (seen) {
+                            ExFreePoolWithTag(seen, AEROGPU_POOL_TAG);
+                        }
+                        if (tmpEntries) {
+                            ExFreePoolWithTag(tmpEntries, AEROGPU_POOL_TAG);
+                        }
+                        return STATUS_INVALID_PARAMETER;
+                    }
+                    /* Duplicate alloc_id for identical backing range; keep the first entry. */
                     break;
                 }
 
@@ -288,6 +334,12 @@ static NTSTATUS AeroGpuBuildAllocTable(_In_reads_opt_(Count) const DXGK_ALLOCATI
         if (seen) {
             ExFreePoolWithTag(seen, AEROGPU_POOL_TAG);
         }
+        if (seenGpa) {
+            ExFreePoolWithTag(seenGpa, AEROGPU_POOL_TAG);
+        }
+        if (seenSize) {
+            ExFreePoolWithTag(seenSize, AEROGPU_POOL_TAG);
+        }
         if (tmpEntries) {
             ExFreePoolWithTag(tmpEntries, AEROGPU_POOL_TAG);
         }
@@ -299,6 +351,12 @@ static NTSTATUS AeroGpuBuildAllocTable(_In_reads_opt_(Count) const DXGK_ALLOCATI
     if (!va) {
         if (seen) {
             ExFreePoolWithTag(seen, AEROGPU_POOL_TAG);
+        }
+        if (seenGpa) {
+            ExFreePoolWithTag(seenGpa, AEROGPU_POOL_TAG);
+        }
+        if (seenSize) {
+            ExFreePoolWithTag(seenSize, AEROGPU_POOL_TAG);
         }
         if (tmpEntries) {
             ExFreePoolWithTag(tmpEntries, AEROGPU_POOL_TAG);
@@ -321,6 +379,12 @@ static NTSTATUS AeroGpuBuildAllocTable(_In_reads_opt_(Count) const DXGK_ALLOCATI
 
     if (seen) {
         ExFreePoolWithTag(seen, AEROGPU_POOL_TAG);
+    }
+    if (seenGpa) {
+        ExFreePoolWithTag(seenGpa, AEROGPU_POOL_TAG);
+    }
+    if (seenSize) {
+        ExFreePoolWithTag(seenSize, AEROGPU_POOL_TAG);
     }
     if (tmpEntries) {
         ExFreePoolWithTag(tmpEntries, AEROGPU_POOL_TAG);
