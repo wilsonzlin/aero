@@ -170,12 +170,12 @@ static NTSTATUS VirtIoSndSetupQueues(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
         }
 
         /*
-         * Contract v1 requires VIRTIO_F_RING_INDIRECT_DESC. For controlq + txq,
-         * always prefer indirect descriptors (threshold=0) as long as an indirect
+         * Contract v1 requires VIRTIO_F_RING_INDIRECT_DESC. Prefer indirect
+         * descriptors (threshold=0) for controlq/txq/rxq as long as an indirect
          * table pool is available.
          */
         if (Dx->QueueSplit[q].Vq != NULL && Dx->QueueSplit[q].Vq->indirect_pool_va != NULL) {
-            if (q == VIRTIOSND_QUEUE_CONTROL || q == VIRTIOSND_QUEUE_TX) {
+            if (q == VIRTIOSND_QUEUE_CONTROL || q == VIRTIOSND_QUEUE_TX || q == VIRTIOSND_QUEUE_RX) {
                 Dx->QueueSplit[q].Vq->indirect_threshold = 0;
             }
         }
@@ -271,6 +271,8 @@ VOID VirtIoSndStopHardware(PVIRTIOSND_DEVICE_EXTENSION Dx)
 
     VirtioSndTxUninit(&Dx->Tx);
     (VOID)InterlockedExchange(&Dx->TxEngineInitialized, 0);
+
+    VirtIoSndRxUninit(&Dx->Rx);
 
     VirtIoSndDestroyQueues(Dx);
 

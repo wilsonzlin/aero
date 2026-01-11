@@ -192,7 +192,8 @@ VirtioSndCtrlInit(_Out_ VIRTIOSND_CONTROL* Ctrl, _In_ PVIRTIOSND_DMA_CONTEXT Dma
     KeInitializeEvent(&Ctrl->ReqIdleEvent, NotificationEvent, TRUE);
     Ctrl->Stopping = 0;
 
-    Ctrl->StreamState = VirtioSndStreamStateIdle;
+    Ctrl->StreamState[VIRTIO_SND_PLAYBACK_STREAM_ID] = VirtioSndStreamStateIdle;
+    Ctrl->StreamState[VIRTIO_SND_CAPTURE_STREAM_ID] = VirtioSndStreamStateIdle;
     RtlZeroMemory(&Ctrl->Params, sizeof(Ctrl->Params));
 }
 
@@ -247,8 +248,19 @@ VirtioSndCtrlUninit(VIRTIOSND_CONTROL* Ctrl)
     Ctrl->DmaCtx = NULL;
     Ctrl->ControlQ = NULL;
     Ctrl->Stopping = 0;
-    Ctrl->StreamState = VirtioSndStreamStateIdle;
+    Ctrl->StreamState[VIRTIO_SND_PLAYBACK_STREAM_ID] = VirtioSndStreamStateIdle;
+    Ctrl->StreamState[VIRTIO_SND_CAPTURE_STREAM_ID] = VirtioSndStreamStateIdle;
     RtlZeroMemory(&Ctrl->Params, sizeof(Ctrl->Params));
+}
+
+static BOOLEAN VirtioSndCtrlIsValidStreamId(_In_ ULONG StreamId)
+{
+    return (StreamId == VIRTIO_SND_PLAYBACK_STREAM_ID || StreamId == VIRTIO_SND_CAPTURE_STREAM_ID) ? TRUE : FALSE;
+}
+
+static UCHAR VirtioSndCtrlFixedChannelsForStream(_In_ ULONG StreamId)
+{
+    return (StreamId == VIRTIO_SND_CAPTURE_STREAM_ID) ? 1 : 2;
 }
 
 VOID
@@ -566,15 +578,13 @@ VirtioSndCtrlSendSync(
     return status;
 }
 
+static NTSTATUS
+VirtioSndCtrlPcmInfoQuery(_Inout_ VIRTIOSND_CONTROL* Ctrl, _Out_ VIRTIO_SND_PCM_INFO* PlaybackInfo, _Out_ VIRTIO_SND_PCM_INFO* CaptureInfo);
+
 NTSTATUS
 VirtioSndCtrlPcmInfo(_Inout_ VIRTIOSND_CONTROL* Ctrl, _Out_ VIRTIO_SND_PCM_INFO* Info)
 {
-    NTSTATUS status;
-    VIRTIO_SND_PCM_INFO_REQ req;
-    UCHAR resp[sizeof(ULONG) + sizeof(VIRTIO_SND_PCM_INFO)];
-    ULONG respLen;
-    ULONG virtioStatus;
-    VIRTIO_SND_PCM_INFO info;
+    VIRTIO_SND_PCM_INFO captureInfo;
 
     if (Ctrl == NULL || Info == NULL) {
         return STATUS_INVALID_PARAMETER;
@@ -583,10 +593,28 @@ VirtioSndCtrlPcmInfo(_Inout_ VIRTIOSND_CONTROL* Ctrl, _Out_ VIRTIO_SND_PCM_INFO*
         return STATUS_INVALID_DEVICE_STATE;
     }
 
+    return VirtioSndCtrlPcmInfoQuery(Ctrl, Info, &captureInfo);
+}
+
+static NTSTATUS
+VirtioSndCtrlPcmInfoQuery(_Inout_ VIRTIOSND_CONTROL* Ctrl, _Out_ VIRTIO_SND_PCM_INFO* PlaybackInfo, _Out_ VIRTIO_SND_PCM_INFO* CaptureInfo)
+{
+    NTSTATUS status;
+    VIRTIO_SND_PCM_INFO_REQ req;
+    UCHAR resp[sizeof(ULONG) + (sizeof(VIRTIO_SND_PCM_INFO) * 2)];
+    ULONG respLen;
+    ULONG virtioStatus;
+    VIRTIO_SND_PCM_INFO info0;
+    VIRTIO_SND_PCM_INFO info1;
+
+    if (Ctrl == NULL || PlaybackInfo == NULL || CaptureInfo == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
     RtlZeroMemory(&req, sizeof(req));
     req.code = VIRTIO_SND_R_PCM_INFO;
     req.start_id = 0;
-    req.count = 1;
+    req.count = 2;
 
     ExAcquireFastMutex(&Ctrl->Mutex);
     status = VirtioSndCtrlSendSyncLocked(
@@ -616,7 +644,7 @@ VirtioSndCtrlPcmInfo(_Inout_ VIRTIOSND_CONTROL* Ctrl, _Out_ VIRTIO_SND_PCM_INFO*
         return VirtioSndStatusToNtStatus(virtioStatus);
     }
 
-    if (respLen < sizeof(ULONG) + sizeof(VIRTIO_SND_PCM_INFO)) {
+    if (respLen < sizeof(ULONG) + (sizeof(VIRTIO_SND_PCM_INFO) * 2)) {
 #ifdef STATUS_DEVICE_PROTOCOL_ERROR
         return STATUS_DEVICE_PROTOCOL_ERROR;
 #else
@@ -624,16 +652,17 @@ VirtioSndCtrlPcmInfo(_Inout_ VIRTIOSND_CONTROL* Ctrl, _Out_ VIRTIO_SND_PCM_INFO*
 #endif
     }
 
-    RtlCopyMemory(&info, resp + sizeof(ULONG), sizeof(info));
+    RtlCopyMemory(&info0, resp + sizeof(ULONG), sizeof(info0));
+    RtlCopyMemory(&info1, resp + sizeof(ULONG) + sizeof(VIRTIO_SND_PCM_INFO), sizeof(info1));
 
-    if (info.stream_id != VIRTIO_SND_PLAYBACK_STREAM_ID) {
+    if (info0.stream_id != VIRTIO_SND_PLAYBACK_STREAM_ID || info1.stream_id != VIRTIO_SND_CAPTURE_STREAM_ID) {
 #ifdef STATUS_DEVICE_PROTOCOL_ERROR
         return STATUS_DEVICE_PROTOCOL_ERROR;
 #else
         return STATUS_UNSUCCESSFUL;
 #endif
     }
-    if (info.direction != VIRTIO_SND_D_OUTPUT) {
+    if (info0.direction != VIRTIO_SND_D_OUTPUT || info1.direction != VIRTIO_SND_D_INPUT) {
 #ifdef STATUS_DEVICE_PROTOCOL_ERROR
         return STATUS_DEVICE_PROTOCOL_ERROR;
 #else
@@ -641,49 +670,84 @@ VirtioSndCtrlPcmInfo(_Inout_ VIRTIOSND_CONTROL* Ctrl, _Out_ VIRTIO_SND_PCM_INFO*
 #endif
     }
 
-    if ((info.formats & VIRTIO_SND_PCM_FMT_MASK_S16) == 0 || (info.rates & VIRTIO_SND_PCM_RATE_MASK_48000) == 0) {
+    if ((info0.formats & VIRTIO_SND_PCM_FMT_MASK_S16) == 0 || (info0.rates & VIRTIO_SND_PCM_RATE_MASK_48000) == 0 ||
+        (info1.formats & VIRTIO_SND_PCM_FMT_MASK_S16) == 0 || (info1.rates & VIRTIO_SND_PCM_RATE_MASK_48000) == 0) {
         return STATUS_NOT_SUPPORTED;
     }
 
-    if (info.channels_min > 2 || info.channels_max < 2) {
+    if (info0.channels_min > 2 || info0.channels_max < 2) {
+        return STATUS_NOT_SUPPORTED;
+    }
+    if (info1.channels_min > 1 || info1.channels_max < 1) {
         return STATUS_NOT_SUPPORTED;
     }
 
-    *Info = info;
+    *PlaybackInfo = info0;
+    *CaptureInfo = info1;
     return STATUS_SUCCESS;
 }
 
 NTSTATUS
+VirtioSndCtrlPcmInfo1(_Inout_ VIRTIOSND_CONTROL* Ctrl, _Out_ VIRTIO_SND_PCM_INFO* Info)
+{
+    VIRTIO_SND_PCM_INFO playbackInfo;
+
+    if (Ctrl == NULL || Info == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    return VirtioSndCtrlPcmInfoQuery(Ctrl, &playbackInfo, Info);
+}
+
+static NTSTATUS
+VirtioSndCtrlSetParamsLocked(_Inout_ VIRTIOSND_CONTROL* Ctrl, _In_ ULONG StreamId, _In_ ULONG BufferBytes, _In_ ULONG PeriodBytes);
+
+NTSTATUS
 VirtioSndCtrlSetParams(_Inout_ VIRTIOSND_CONTROL* Ctrl, _In_ ULONG BufferBytes, _In_ ULONG PeriodBytes)
+{
+    NTSTATUS status;
+
+    if (Ctrl == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    ExAcquireFastMutex(&Ctrl->Mutex);
+    status = VirtioSndCtrlSetParamsLocked(Ctrl, VIRTIO_SND_PLAYBACK_STREAM_ID, BufferBytes, PeriodBytes);
+    ExReleaseFastMutex(&Ctrl->Mutex);
+    return status;
+}
+
+static NTSTATUS
+VirtioSndCtrlSetParamsLocked(_Inout_ VIRTIOSND_CONTROL* Ctrl, _In_ ULONG StreamId, _In_ ULONG BufferBytes, _In_ ULONG PeriodBytes)
 {
     NTSTATUS status;
     VIRTIO_SND_PCM_SET_PARAMS_REQ req;
     ULONG respStatus;
     ULONG respLen;
     ULONG virtioStatus;
+    UCHAR channels;
 
-    if (Ctrl == NULL) {
+    if (!VirtioSndCtrlIsValidStreamId(StreamId)) {
         return STATUS_INVALID_PARAMETER;
     }
     if (KeGetCurrentIrql() != PASSIVE_LEVEL) {
         return STATUS_INVALID_DEVICE_STATE;
     }
 
+    channels = VirtioSndCtrlFixedChannelsForStream(StreamId);
+
     RtlZeroMemory(&req, sizeof(req));
     req.code = VIRTIO_SND_R_PCM_SET_PARAMS;
-    req.stream_id = VIRTIO_SND_PLAYBACK_STREAM_ID;
+    req.stream_id = StreamId;
     req.buffer_bytes = BufferBytes;
     req.period_bytes = PeriodBytes;
     req.features = 0;
-    req.channels = 2;
+    req.channels = channels;
     req.format = (UCHAR)VIRTIO_SND_PCM_FMT_S16;
     req.rate = (UCHAR)VIRTIO_SND_PCM_RATE_48000;
     req.padding = 0;
 
-    ExAcquireFastMutex(&Ctrl->Mutex);
-
-    if (Ctrl->StreamState != VirtioSndStreamStateIdle && Ctrl->StreamState != VirtioSndStreamStateParamsSet) {
-        ExReleaseFastMutex(&Ctrl->Mutex);
+    if (Ctrl->StreamState[StreamId] != VirtioSndStreamStateIdle && Ctrl->StreamState[StreamId] != VirtioSndStreamStateParamsSet) {
         return STATUS_INVALID_DEVICE_STATE;
     }
 
@@ -698,29 +762,47 @@ VirtioSndCtrlSetParams(_Inout_ VIRTIOSND_CONTROL* Ctrl, _In_ ULONG BufferBytes, 
         &respLen);
 
     if (NT_SUCCESS(status)) {
-        Ctrl->StreamState = VirtioSndStreamStateParamsSet;
-        Ctrl->Params.BufferBytes = BufferBytes;
-        Ctrl->Params.PeriodBytes = PeriodBytes;
-        Ctrl->Params.Channels = 2;
-        Ctrl->Params.Format = (UCHAR)VIRTIO_SND_PCM_FMT_S16;
-        Ctrl->Params.Rate = (UCHAR)VIRTIO_SND_PCM_RATE_48000;
+        Ctrl->StreamState[StreamId] = VirtioSndStreamStateParamsSet;
+        Ctrl->Params[StreamId].BufferBytes = BufferBytes;
+        Ctrl->Params[StreamId].PeriodBytes = PeriodBytes;
+        Ctrl->Params[StreamId].Channels = channels;
+        Ctrl->Params[StreamId].Format = (UCHAR)VIRTIO_SND_PCM_FMT_S16;
+        Ctrl->Params[StreamId].Rate = (UCHAR)VIRTIO_SND_PCM_RATE_48000;
     }
 
+    return status;
+}
+
+NTSTATUS
+VirtioSndCtrlSetParams1(_Inout_ VIRTIOSND_CONTROL* Ctrl, _In_ ULONG BufferBytes, _In_ ULONG PeriodBytes)
+{
+    NTSTATUS status;
+
+    if (Ctrl == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    ExAcquireFastMutex(&Ctrl->Mutex);
+    status = VirtioSndCtrlSetParamsLocked(Ctrl, VIRTIO_SND_CAPTURE_STREAM_ID, BufferBytes, PeriodBytes);
     ExReleaseFastMutex(&Ctrl->Mutex);
     return status;
 }
 
 static NTSTATUS
-VirtioSndCtrlSimpleStreamCmdLocked(_Inout_ VIRTIOSND_CONTROL* Ctrl, _In_ ULONG Code)
+VirtioSndCtrlSimpleStreamCmdLocked(_Inout_ VIRTIOSND_CONTROL* Ctrl, _In_ ULONG StreamId, _In_ ULONG Code)
 {
     VIRTIO_SND_PCM_SIMPLE_REQ req;
     ULONG respStatus;
     ULONG respLen;
     ULONG virtioStatus;
 
+    if (!VirtioSndCtrlIsValidStreamId(StreamId)) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
     RtlZeroMemory(&req, sizeof(req));
     req.code = Code;
-    req.stream_id = VIRTIO_SND_PLAYBACK_STREAM_ID;
+    req.stream_id = StreamId;
 
     return VirtioSndCtrlSendSyncLocked(
         Ctrl,
@@ -747,14 +829,41 @@ VirtioSndCtrlPrepare(_Inout_ VIRTIOSND_CONTROL* Ctrl)
 
     ExAcquireFastMutex(&Ctrl->Mutex);
 
-    if (Ctrl->StreamState != VirtioSndStreamStateParamsSet && Ctrl->StreamState != VirtioSndStreamStatePrepared) {
+    if (Ctrl->StreamState[VIRTIO_SND_PLAYBACK_STREAM_ID] != VirtioSndStreamStateParamsSet &&
+        Ctrl->StreamState[VIRTIO_SND_PLAYBACK_STREAM_ID] != VirtioSndStreamStatePrepared) {
         ExReleaseFastMutex(&Ctrl->Mutex);
         return STATUS_INVALID_DEVICE_STATE;
     }
 
-    status = VirtioSndCtrlSimpleStreamCmdLocked(Ctrl, VIRTIO_SND_R_PCM_PREPARE);
+    status = VirtioSndCtrlSimpleStreamCmdLocked(Ctrl, VIRTIO_SND_PLAYBACK_STREAM_ID, VIRTIO_SND_R_PCM_PREPARE);
     if (NT_SUCCESS(status)) {
-        Ctrl->StreamState = VirtioSndStreamStatePrepared;
+        Ctrl->StreamState[VIRTIO_SND_PLAYBACK_STREAM_ID] = VirtioSndStreamStatePrepared;
+    }
+
+    ExReleaseFastMutex(&Ctrl->Mutex);
+    return status;
+}
+
+NTSTATUS
+VirtioSndCtrlPrepare1(_Inout_ VIRTIOSND_CONTROL* Ctrl)
+{
+    NTSTATUS status;
+
+    if (Ctrl == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    ExAcquireFastMutex(&Ctrl->Mutex);
+
+    if (Ctrl->StreamState[VIRTIO_SND_CAPTURE_STREAM_ID] != VirtioSndStreamStateParamsSet &&
+        Ctrl->StreamState[VIRTIO_SND_CAPTURE_STREAM_ID] != VirtioSndStreamStatePrepared) {
+        ExReleaseFastMutex(&Ctrl->Mutex);
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+
+    status = VirtioSndCtrlSimpleStreamCmdLocked(Ctrl, VIRTIO_SND_CAPTURE_STREAM_ID, VIRTIO_SND_R_PCM_PREPARE);
+    if (NT_SUCCESS(status)) {
+        Ctrl->StreamState[VIRTIO_SND_CAPTURE_STREAM_ID] = VirtioSndStreamStatePrepared;
     }
 
     ExReleaseFastMutex(&Ctrl->Mutex);
@@ -775,14 +884,41 @@ VirtioSndCtrlStart(_Inout_ VIRTIOSND_CONTROL* Ctrl)
 
     ExAcquireFastMutex(&Ctrl->Mutex);
 
-    if (Ctrl->StreamState != VirtioSndStreamStatePrepared && Ctrl->StreamState != VirtioSndStreamStateRunning) {
+    if (Ctrl->StreamState[VIRTIO_SND_PLAYBACK_STREAM_ID] != VirtioSndStreamStatePrepared &&
+        Ctrl->StreamState[VIRTIO_SND_PLAYBACK_STREAM_ID] != VirtioSndStreamStateRunning) {
         ExReleaseFastMutex(&Ctrl->Mutex);
         return STATUS_INVALID_DEVICE_STATE;
     }
 
-    status = VirtioSndCtrlSimpleStreamCmdLocked(Ctrl, VIRTIO_SND_R_PCM_START);
+    status = VirtioSndCtrlSimpleStreamCmdLocked(Ctrl, VIRTIO_SND_PLAYBACK_STREAM_ID, VIRTIO_SND_R_PCM_START);
     if (NT_SUCCESS(status)) {
-        Ctrl->StreamState = VirtioSndStreamStateRunning;
+        Ctrl->StreamState[VIRTIO_SND_PLAYBACK_STREAM_ID] = VirtioSndStreamStateRunning;
+    }
+
+    ExReleaseFastMutex(&Ctrl->Mutex);
+    return status;
+}
+
+NTSTATUS
+VirtioSndCtrlStart1(_Inout_ VIRTIOSND_CONTROL* Ctrl)
+{
+    NTSTATUS status;
+
+    if (Ctrl == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    ExAcquireFastMutex(&Ctrl->Mutex);
+
+    if (Ctrl->StreamState[VIRTIO_SND_CAPTURE_STREAM_ID] != VirtioSndStreamStatePrepared &&
+        Ctrl->StreamState[VIRTIO_SND_CAPTURE_STREAM_ID] != VirtioSndStreamStateRunning) {
+        ExReleaseFastMutex(&Ctrl->Mutex);
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+
+    status = VirtioSndCtrlSimpleStreamCmdLocked(Ctrl, VIRTIO_SND_CAPTURE_STREAM_ID, VIRTIO_SND_R_PCM_START);
+    if (NT_SUCCESS(status)) {
+        Ctrl->StreamState[VIRTIO_SND_CAPTURE_STREAM_ID] = VirtioSndStreamStateRunning;
     }
 
     ExReleaseFastMutex(&Ctrl->Mutex);
@@ -803,14 +939,39 @@ VirtioSndCtrlStop(_Inout_ VIRTIOSND_CONTROL* Ctrl)
 
     ExAcquireFastMutex(&Ctrl->Mutex);
 
-    if (Ctrl->StreamState != VirtioSndStreamStateRunning) {
+    if (Ctrl->StreamState[VIRTIO_SND_PLAYBACK_STREAM_ID] != VirtioSndStreamStateRunning) {
         ExReleaseFastMutex(&Ctrl->Mutex);
         return STATUS_INVALID_DEVICE_STATE;
     }
 
-    status = VirtioSndCtrlSimpleStreamCmdLocked(Ctrl, VIRTIO_SND_R_PCM_STOP);
+    status = VirtioSndCtrlSimpleStreamCmdLocked(Ctrl, VIRTIO_SND_PLAYBACK_STREAM_ID, VIRTIO_SND_R_PCM_STOP);
     if (NT_SUCCESS(status)) {
-        Ctrl->StreamState = VirtioSndStreamStatePrepared;
+        Ctrl->StreamState[VIRTIO_SND_PLAYBACK_STREAM_ID] = VirtioSndStreamStatePrepared;
+    }
+
+    ExReleaseFastMutex(&Ctrl->Mutex);
+    return status;
+}
+
+NTSTATUS
+VirtioSndCtrlStop1(_Inout_ VIRTIOSND_CONTROL* Ctrl)
+{
+    NTSTATUS status;
+
+    if (Ctrl == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    ExAcquireFastMutex(&Ctrl->Mutex);
+
+    if (Ctrl->StreamState[VIRTIO_SND_CAPTURE_STREAM_ID] != VirtioSndStreamStateRunning) {
+        ExReleaseFastMutex(&Ctrl->Mutex);
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+
+    status = VirtioSndCtrlSimpleStreamCmdLocked(Ctrl, VIRTIO_SND_CAPTURE_STREAM_ID, VIRTIO_SND_R_PCM_STOP);
+    if (NT_SUCCESS(status)) {
+        Ctrl->StreamState[VIRTIO_SND_CAPTURE_STREAM_ID] = VirtioSndStreamStatePrepared;
     }
 
     ExReleaseFastMutex(&Ctrl->Mutex);
@@ -830,10 +991,29 @@ VirtioSndCtrlRelease(_Inout_ VIRTIOSND_CONTROL* Ctrl)
     }
 
     ExAcquireFastMutex(&Ctrl->Mutex);
-    status = VirtioSndCtrlSimpleStreamCmdLocked(Ctrl, VIRTIO_SND_R_PCM_RELEASE);
+    status = VirtioSndCtrlSimpleStreamCmdLocked(Ctrl, VIRTIO_SND_PLAYBACK_STREAM_ID, VIRTIO_SND_R_PCM_RELEASE);
 
-    Ctrl->StreamState = VirtioSndStreamStateIdle;
-    RtlZeroMemory(&Ctrl->Params, sizeof(Ctrl->Params));
+    Ctrl->StreamState[VIRTIO_SND_PLAYBACK_STREAM_ID] = VirtioSndStreamStateIdle;
+    RtlZeroMemory(&Ctrl->Params[VIRTIO_SND_PLAYBACK_STREAM_ID], sizeof(Ctrl->Params[VIRTIO_SND_PLAYBACK_STREAM_ID]));
+
+    ExReleaseFastMutex(&Ctrl->Mutex);
+    return status;
+}
+
+NTSTATUS
+VirtioSndCtrlRelease1(_Inout_ VIRTIOSND_CONTROL* Ctrl)
+{
+    NTSTATUS status;
+
+    if (Ctrl == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    ExAcquireFastMutex(&Ctrl->Mutex);
+    status = VirtioSndCtrlSimpleStreamCmdLocked(Ctrl, VIRTIO_SND_CAPTURE_STREAM_ID, VIRTIO_SND_R_PCM_RELEASE);
+
+    Ctrl->StreamState[VIRTIO_SND_CAPTURE_STREAM_ID] = VirtioSndStreamStateIdle;
+    RtlZeroMemory(&Ctrl->Params[VIRTIO_SND_CAPTURE_STREAM_ID], sizeof(Ctrl->Params[VIRTIO_SND_CAPTURE_STREAM_ID]));
 
     ExReleaseFastMutex(&Ctrl->Mutex);
     return status;

@@ -11,10 +11,11 @@
 /*
  * virtio-snd control queue protocol engine.
  *
- * This module builds/parses virtio-snd control messages and tracks the playback
- * PCM stream state machine for stream_id=VIRTIO_SND_PLAYBACK_STREAM_ID:
+ * This module builds/parses virtio-snd control messages and tracks two
+ * independent PCM stream state machines per the Aero contract v1:
  *
- *   Idle → ParamsSet → Prepared → Running → Prepared → Idle
+ *   Stream 0 (playback/output): Idle → ParamsSet → Prepared → Running → Prepared → Idle
+ *   Stream 1 (capture/input):   Idle → ParamsSet → Prepared → Running → Prepared → Idle
  *
  * Queue integration uses the internal VIRTIOSND_QUEUE abstraction (see
  * virtiosnd_queue.h). The driver is responsible for wiring the queue ops (e.g.
@@ -68,8 +69,12 @@ typedef struct _VIRTIOSND_CONTROL {
     KEVENT ReqIdleEvent;
     volatile LONG Stopping;
 
-    VIRTIOSND_STREAM_STATE StreamState;
-    VIRTIOSND_PCM_PARAMS Params;
+    /*
+     * Indexed by stream_id (0 = playback, 1 = capture). Only the two streams in
+     * the Aero contract v1 are supported by this driver.
+     */
+    VIRTIOSND_STREAM_STATE StreamState[2];
+    VIRTIOSND_PCM_PARAMS Params[2];
 
     VIRTIOSND_CONTROL_STATS Stats;
 } VIRTIOSND_CONTROL, *PVIRTIOSND_CONTROL;
@@ -162,6 +167,49 @@ _Must_inspect_result_ NTSTATUS VirtioSndCtrlStop(_Inout_ VIRTIOSND_CONTROL* Ctrl
 /* IRQL: PASSIVE_LEVEL only. */
 _IRQL_requires_(PASSIVE_LEVEL)
 _Must_inspect_result_ NTSTATUS VirtioSndCtrlRelease(_Inout_ VIRTIOSND_CONTROL* Ctrl);
+
+/* IRQL: PASSIVE_LEVEL only. */
+_IRQL_requires_(PASSIVE_LEVEL)
+_Must_inspect_result_ NTSTATUS VirtioSndCtrlPcmInfo1(_Inout_ VIRTIOSND_CONTROL* Ctrl, _Out_ VIRTIO_SND_PCM_INFO* Info);
+
+/* IRQL: PASSIVE_LEVEL only. */
+_IRQL_requires_(PASSIVE_LEVEL)
+_Must_inspect_result_ NTSTATUS VirtioSndCtrlSetParams1(_Inout_ VIRTIOSND_CONTROL* Ctrl, _In_ ULONG BufferBytes, _In_ ULONG PeriodBytes);
+
+/* IRQL: PASSIVE_LEVEL only. */
+_IRQL_requires_(PASSIVE_LEVEL)
+_Must_inspect_result_ NTSTATUS VirtioSndCtrlPrepare1(_Inout_ VIRTIOSND_CONTROL* Ctrl);
+
+/* IRQL: PASSIVE_LEVEL only. */
+_IRQL_requires_(PASSIVE_LEVEL)
+_Must_inspect_result_ NTSTATUS VirtioSndCtrlStart1(_Inout_ VIRTIOSND_CONTROL* Ctrl);
+
+/* IRQL: PASSIVE_LEVEL only. */
+_IRQL_requires_(PASSIVE_LEVEL)
+_Must_inspect_result_ NTSTATUS VirtioSndCtrlStop1(_Inout_ VIRTIOSND_CONTROL* Ctrl);
+
+/* IRQL: PASSIVE_LEVEL only. */
+_IRQL_requires_(PASSIVE_LEVEL)
+_Must_inspect_result_ NTSTATUS VirtioSndCtrlRelease1(_Inout_ VIRTIOSND_CONTROL* Ctrl);
+
+/*
+ * Contract v1 capture convenience aliases matching the "stream 1" naming used
+ * by the contract documentation.
+ */
+static __inline NTSTATUS VirtIoSndPcmQueryInfo1(_Inout_ VIRTIOSND_CONTROL* Ctrl, _Out_ VIRTIO_SND_PCM_INFO* Info)
+{
+    return VirtioSndCtrlPcmInfo1(Ctrl, Info);
+}
+
+static __inline NTSTATUS VirtIoSndPcmSetParams1(_Inout_ VIRTIOSND_CONTROL* Ctrl, _In_ ULONG BufferBytes, _In_ ULONG PeriodBytes)
+{
+    return VirtioSndCtrlSetParams1(Ctrl, BufferBytes, PeriodBytes);
+}
+
+static __inline NTSTATUS VirtIoSndPcmPrepare1(_Inout_ VIRTIOSND_CONTROL* Ctrl) { return VirtioSndCtrlPrepare1(Ctrl); }
+static __inline NTSTATUS VirtIoSndPcmStart1(_Inout_ VIRTIOSND_CONTROL* Ctrl) { return VirtioSndCtrlStart1(Ctrl); }
+static __inline NTSTATUS VirtIoSndPcmStop1(_Inout_ VIRTIOSND_CONTROL* Ctrl) { return VirtioSndCtrlStop1(Ctrl); }
+static __inline NTSTATUS VirtIoSndPcmRelease1(_Inout_ VIRTIOSND_CONTROL* Ctrl) { return VirtioSndCtrlRelease1(Ctrl); }
 
 #ifdef __cplusplus
 } /* extern "C" */

@@ -9,6 +9,7 @@
 #include "virtiosnd_control.h"
 #include "virtiosnd_queue_split.h"
 #include "virtiosnd_tx.h"
+#include "virtiosnd_rx.h"
 
 #define VIRTIOSND_POOL_TAG 'dnSV' // 'VSnd' (endianness depends on debugger display)
 #define VIRTIOSND_DX_SIGNATURE 'xdSV'
@@ -47,9 +48,14 @@
 /*
  * The Aero contract defines four virtqueues (control/event/tx/rx).
  *
- * This driver currently implements controlq + txq for playback. eventq and rxq
- * are brought up for transport bring-up but do not have protocol engines yet
- * (rxq capture buffers are not submitted yet).
+ * The virtio-snd WDM driver brings up all four queues. Protocol engines are
+ * implemented for:
+ *  - controlq: control plane (stream 0 playback + stream 1 capture)
+ *  - txq: playback streaming (stream 0)
+ *  - rxq: capture streaming (stream 1)
+ *
+ * PortCls/WaveRT miniports are expected to call into these engines; endpoint
+ * plumbing lives elsewhere.
  */
 #define VIRTIOSND_QUEUE_CONTROL VIRTIO_SND_QUEUE_CONTROL
 #define VIRTIOSND_QUEUE_EVENT VIRTIO_SND_QUEUE_EVENT
@@ -76,10 +82,11 @@ typedef struct _VIRTIOSND_DEVICE_EXTENSION {
     VIRTIOSND_QUEUE_SPLIT QueueSplit[VIRTIOSND_QUEUE_COUNT];
     VIRTIOSND_QUEUE Queues[VIRTIOSND_QUEUE_COUNT];
 
-    /* Protocol engines (controlq + txq) */
+    /* Protocol engines (controlq + txq + rxq) */
     VIRTIOSND_CONTROL Control;
     VIRTIOSND_TX_ENGINE Tx;
     volatile LONG TxEngineInitialized;
+    VIRTIOSND_RX_ENGINE Rx;
 
     /* INTx plumbing */
     PKINTERRUPT InterruptObject;

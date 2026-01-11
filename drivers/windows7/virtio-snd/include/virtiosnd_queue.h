@@ -15,8 +15,7 @@
  *  - 0: controlq (64)
  *  - 1: eventq   (64)
  *  - 2: txq     (256)
- *  - 3: rxq      (64) exists for PCM capture. The current driver wires it up
- *    for transport bring-up but does not submit capture buffers yet.
+ *  - 3: rxq      (64) for PCM capture.
  */
 
 #define VIRTIOSND_QUEUE_INDEX_CONTROLQ ((USHORT)0u)

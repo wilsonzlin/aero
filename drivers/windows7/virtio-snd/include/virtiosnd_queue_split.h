@@ -16,13 +16,13 @@
  * virtio-snd requests are submitted as:
  *   header + payload SG elements + response/status
  *
- * 16 descriptors covers the expected maximum shape:
- *   1 header + up to 14 payload SG elements + 1 response/status.
+ * 32 descriptors covers the expected maximum shape:
+ *   1 header + up to 30 payload SG elements + 1 response/status.
  *
  * The driver allocates one indirect table per ring entry so the maximum number
  * of in-flight requests equals the ring size.
  */
-#define VIRTIOSND_QUEUE_SPLIT_INDIRECT_MAX_DESC 16u
+#define VIRTIOSND_QUEUE_SPLIT_INDIRECT_MAX_DESC 32u
 #define VIRTIOSND_QUEUE_SPLIT_INDIRECT_TABLE_COUNT(_qsz) (_qsz)
 
 typedef struct _VIRTIOSND_QUEUE_SPLIT {
@@ -52,7 +52,7 @@ typedef struct _VIRTIOSND_QUEUE_SPLIT {
     /* Split ring (desc + avail + used) memory (DMA-safe). */
     VIRTIOSND_DMA_BUFFER Ring;
 
-    /* Optional indirect descriptor table pool (DMA-safe). */
+    /* Indirect descriptor table pool (DMA-safe, required by the Aero contract v1). */
     VIRTIOSND_DMA_BUFFER IndirectPool;
     USHORT IndirectTableCount;
     USHORT IndirectMaxDesc;

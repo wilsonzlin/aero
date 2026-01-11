@@ -336,6 +336,11 @@ VirtioSndQueueSplitCreate(
         indirect_max_desc = (USHORT)VIRTIOSND_QUEUE_SPLIT_INDIRECT_MAX_DESC;
         indirect_bytes = sizeof(VIRTQ_DESC) * (SIZE_T)indirect_table_count * (SIZE_T)indirect_max_desc;
 
+        if (indirect_table_count == 0 || indirect_max_desc == 0 || indirect_bytes == 0) {
+            status = STATUS_INVALID_PARAMETER;
+            goto Fail;
+        }
+
         status = VirtIoSndAllocCommonBuffer(DmaCtx, indirect_bytes, FALSE, &qs->IndirectPool);
         if (!NT_SUCCESS(status)) {
             goto Fail;
@@ -369,6 +374,11 @@ VirtioSndQueueSplitCreate(
         indirect_max_desc);
     if (!NT_SUCCESS(status)) {
         goto Fail;
+    }
+
+    /* Aero contract v1 requires indirect descriptors to be used; always prefer them. */
+    if (indirect && qs->Vq != NULL) {
+        qs->Vq->indirect_threshold = 0;
     }
 
     out_queue->Ops = &g_VirtioSndQueueSplitOps;
