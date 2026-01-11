@@ -390,6 +390,7 @@ export function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
       return;
     }
 
+    const shouldRefreshPermittedList = !permittedTitle.hidden;
     requestButton.disabled = true;
     openButton.disabled = true;
     listButton.disabled = true;
@@ -397,6 +398,7 @@ export function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
     forgetButton.disabled = true;
     status.textContent = "Forgetting device permission…";
 
+    let forgot = false;
     try {
       if (device.opened) {
         try {
@@ -409,12 +411,14 @@ export function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
       await device.forget();
       selected = null;
       status.textContent = "Device permission revoked.";
+      forgot = true;
     } catch (err) {
       showError(err);
       console.error(err);
     } finally {
       requestButton.disabled = false;
       refreshStatus();
+      if (forgot && shouldRefreshPermittedList) await refreshPermittedDevices();
     }
   };
 

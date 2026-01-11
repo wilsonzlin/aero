@@ -229,6 +229,7 @@ describe("renderWebUsbPanel UI (mocked WebUSB)", () => {
   });
 
   it("forgets the selected device permission when USBDevice.forget() is available", async () => {
+    let permittedDevices: USBDevice[] = [];
     const device = {
       vendorId: 0x1234,
       productId: 0x5678,
@@ -238,11 +239,15 @@ describe("renderWebUsbPanel UI (mocked WebUSB)", () => {
       serialNumber: "sn-1",
       close: vi.fn(async () => {}),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      forget: vi.fn(async () => {}),
+      forget: vi.fn(async () => {
+        permittedDevices = [];
+      }),
     } as unknown as USBDevice;
+    permittedDevices = [device];
+    const getDevices = vi.fn(async () => permittedDevices);
 
     const usb = {
-      getDevices: vi.fn(async () => [device]),
+      getDevices,
     } satisfies Partial<USB>;
 
     stubIsSecureContext(true);
@@ -270,6 +275,7 @@ describe("renderWebUsbPanel UI (mocked WebUSB)", () => {
     const listButton = findAll(panel, (el) => el.tagName === "BUTTON" && el.textContent === "List permitted devices (getDevices)")[0];
     expect(listButton).toBeTruthy();
     await (listButton.onclick as () => Promise<void>)();
+    expect(getDevices).toHaveBeenCalledTimes(1);
 
     const selectButtons = findAll(panel, (el) => el.tagName === "BUTTON" && el.textContent === "Select");
     expect(selectButtons.length).toBe(1);
@@ -286,8 +292,12 @@ describe("renderWebUsbPanel UI (mocked WebUSB)", () => {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     expect((device as any).forget).toHaveBeenCalledTimes(1);
+    expect(getDevices).toHaveBeenCalledTimes(2);
     expect(status.textContent).toContain("No device selected");
     expect(forgetButton.hidden).toBe(true);
+
+    const remainingSelectButtons = findAll(panel, (el) => el.tagName === "BUTTON" && el.textContent === "Select");
+    expect(remainingSelectButtons).toHaveLength(0);
   });
 
   it("surfaces forget() errors without breaking the panel", async () => {
