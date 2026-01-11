@@ -523,12 +523,17 @@ function Invoke-MSBuild {
     [Parameter(Mandatory = $true)][string]$OutDir,
     [Parameter(Mandatory = $true)][string]$ObjDir,
     [Parameter(Mandatory = $true)][string]$LogFile,
-    [Parameter(Mandatory = $true)][string]$BinLogFile
+    [Parameter(Mandatory = $true)][string]$BinLogFile,
+    [Parameter()][string]$SolutionDir
   )
 
   $sep = [IO.Path]::DirectorySeparatorChar
   $outDirNormalized = $OutDir.TrimEnd($sep) + $sep
   $objDirNormalized = $ObjDir.TrimEnd($sep) + $sep
+  $solutionDirNormalized = $null
+  if ($SolutionDir) {
+    $solutionDirNormalized = $SolutionDir.TrimEnd($sep) + $sep
+  }
 
   $args = @(
     $ProjectOrSolutionPath,
@@ -545,6 +550,9 @@ function Invoke-MSBuild {
     "/flp:logfile=$LogFile;verbosity=normal",
     '/clp:Summary;NoItemAndPropertyList'
   )
+  if ($solutionDirNormalized) {
+    $args += "/p:SolutionDir=$solutionDirNormalized"
+  }
 
   Write-Host (Format-CommandLine -Exe $MSBuildPath -Arguments $args)
 
@@ -732,7 +740,9 @@ foreach ($target in $targets) {
   # in the same solution to build.
   $solutionBuildProjects = $null
   $solutionSkippedMakefileProjects = $null
+  $solutionDirForProjects = $null
   if (-not $IncludeMakefileProjects -and $target.Kind -eq 'sln') {
+    $solutionDirForProjects = Split-Path -LiteralPath $target.BuildPath -Parent
     $vcxprojs = @(Get-SlnReferencedVcxprojPaths -SolutionPath $target.BuildPath)
     if ($vcxprojs -and $vcxprojs.Count -gt 0) {
       $buildable = New-Object System.Collections.Generic.List[string]
@@ -797,7 +807,8 @@ foreach ($target in $targets) {
           -OutDir $driverOutDir `
           -ObjDir $driverObjDir `
           -LogFile $logFile `
-          -BinLogFile $binLogFile
+          -BinLogFile $binLogFile `
+          -SolutionDir $solutionDirForProjects
 
         $succeeded = ($exitCode -eq 0)
         if (-not $succeeded) {
