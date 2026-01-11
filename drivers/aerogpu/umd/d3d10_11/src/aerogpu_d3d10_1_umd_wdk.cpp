@@ -475,6 +475,7 @@ struct AeroGpuDevice {
   aerogpu::d3d10_11::WddmSubmit wddm_submit;
 
   aerogpu::CmdWriter cmd;
+
   // WDDM allocation handles (D3DKMT_HANDLE values) to include in each submission's
   // allocation list. This allows the KMD to attach an allocation table so the
   // host can resolve `backing_alloc_id` values in the AeroGPU command stream.
@@ -534,6 +535,24 @@ void atomic_max_u64(std::atomic<uint64_t>* target, uint64_t value) {
   uint64_t cur = target->load(std::memory_order_relaxed);
   while (cur < value && !target->compare_exchange_weak(cur, value, std::memory_order_relaxed)) {
   }
+}
+
+void TrackSubmitAllocationHandleLocked(AeroGpuDevice* dev, uint32_t handle) {
+  if (!dev || handle == 0) {
+    return;
+  }
+  auto& handles = dev->wddm_submit_allocation_handles;
+  if (std::find(handles.begin(), handles.end(), handle) == handles.end()) {
+    handles.push_back(handle);
+  }
+}
+
+void UntrackSubmitAllocationHandleLocked(AeroGpuDevice* dev, uint32_t handle) {
+  if (!dev || handle == 0) {
+    return;
+  }
+  auto& handles = dev->wddm_submit_allocation_handles;
+  handles.erase(std::remove(handles.begin(), handles.end(), handle), handles.end());
 }
 
 template <typename Fn, typename Handle, typename... Args>
@@ -2194,6 +2213,8 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       AEROGPU_D3D10_RET_HR(init_hr);
     }
 
+    TrackSubmitAllocationHandleLocked(dev, res->wddm_allocation_handle);
+
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_buffer>(AEROGPU_CMD_CREATE_BUFFER);
     cmd->buffer_handle = res->handle;
     cmd->usage_flags = bind_flags_to_usage_flags(res->bind_flags);
@@ -2362,6 +2383,8 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       AEROGPU_D3D10_RET_HR(init_hr);
     }
 
+    TrackSubmitAllocationHandleLocked(dev, res->wddm_allocation_handle);
+
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_texture2d>(AEROGPU_CMD_CREATE_TEXTURE2D);
     cmd->texture_handle = res->handle;
     cmd->usage_flags = bind_flags_to_usage_flags(res->bind_flags) | AEROGPU_RESOURCE_USAGE_TEXTURE;
@@ -2401,13 +2424,7 @@ void AEROGPU_APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOUR
   if (res->mapped) {
     unmap_resource_locked(dev, res, res->mapped_subresource);
   }
-  if (res->wddm_allocation_handle != 0) {
-    dev->wddm_submit_allocation_handles.erase(
-        std::remove(dev->wddm_submit_allocation_handles.begin(),
-                    dev->wddm_submit_allocation_handles.end(),
-                    res->wddm_allocation_handle),
-        dev->wddm_submit_allocation_handles.end());
-  }
+  UntrackSubmitAllocationHandleLocked(dev, res->wddm_allocation_handle);
 
   if (dev->current_rtv_res == res) {
     dev->current_rtv_res = nullptr;
