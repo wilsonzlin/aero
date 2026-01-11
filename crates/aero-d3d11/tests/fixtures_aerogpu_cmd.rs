@@ -275,7 +275,10 @@ fn parses_aerogpu_cmd_triangle_sm4_fixture() {
             assert_eq!(prog.stage, ShaderStage::Pixel);
             let module = prog.decode().expect("ps_add should decode");
             assert!(
-                module.instructions.iter().any(|i| matches!(i, Sm4Inst::Add { .. })),
+                module
+                    .instructions
+                    .iter()
+                    .any(|i| matches!(i, Sm4Inst::Add { .. })),
                 "ps_add should include an add instruction"
             );
         }
