@@ -579,6 +579,64 @@ fn snapshot_major_version_mismatch_returns_error() {
 }
 
 #[test]
+fn snapshot_minor_version_mismatch_is_accepted() {
+    let dev = UsbHidPassthrough::default();
+    let snapshot = dev.save_state();
+    let mut corrupted = snapshot.clone();
+    corrupted[14..16].copy_from_slice(&42u16.to_le_bytes());
+
+    let mut restored = UsbHidPassthrough::default();
+    restored
+        .load_state(&corrupted)
+        .expect("minor version mismatch should be accepted");
+}
+
+#[test]
+fn snapshot_unknown_fields_are_ignored() {
+    let mut dev = UsbHidPassthrough::default();
+
+    control_no_data(
+        &mut dev,
+        SetupPacket {
+            request_type: 0x00,
+            request: 0x09, // SET_CONFIGURATION
+            value: 1,
+            index: 0,
+            length: 0,
+        },
+    );
+    dev.push_input_report(0, &[0x11, 0x22]);
+    dev.push_input_report(0, &[0x33, 0x44]);
+
+    let snapshot = dev.save_state();
+    let mut extended = snapshot.clone();
+
+    let tag = 999u16;
+    let payload = [1u8, 2, 3, 4];
+    extended.extend_from_slice(&tag.to_le_bytes());
+    extended.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+    extended.extend_from_slice(&payload);
+
+    let mut restored = UsbHidPassthrough::default();
+    restored
+        .load_state(&extended)
+        .expect("unknown TLV tags should be ignored");
+    assert!(restored.configured());
+
+    let mut buf = [0u8; 8];
+    assert!(matches!(
+        restored.handle_in(1, &mut buf),
+        UsbHandshake::Ack { bytes: 2 }
+    ));
+    assert_eq!(&buf[..2], [0x11, 0x22]);
+    assert!(matches!(
+        restored.handle_in(1, &mut buf),
+        UsbHandshake::Ack { bytes: 2 }
+    ));
+    assert_eq!(&buf[..2], [0x33, 0x44]);
+}
+
+#[test]
 fn usb_passthrough_device_snapshot_preserves_next_id_and_drops_pending_io() {
     let mut dev = UsbPassthroughDevice::new();
 
