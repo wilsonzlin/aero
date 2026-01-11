@@ -138,6 +138,40 @@ async fn dhcp_arp_dns_tcp_echo_over_l2_tunnel() {
     let arp = ArpPacket::parse(eth.payload).unwrap();
     let gateway_mac = arp.sender_hw;
 
+    // --- Policy sanity check: private IPs are denied by default ---
+    let denied_ip = Ipv4Addr::new(10, 0, 0, 1);
+    let denied_guest_port = 40000;
+    let denied_isn = 1234;
+    let denied_syn = wrap_tcp_ipv4_eth(
+        guest_mac,
+        gateway_mac,
+        guest_ip,
+        denied_ip,
+        denied_guest_port,
+        80,
+        denied_isn,
+        0,
+        TcpFlags::SYN,
+        &[],
+    );
+    ws_tx
+        .send(Message::Binary(encode_l2_frame(&denied_syn).into()))
+        .await
+        .unwrap();
+    let rst = wait_for_eth_frame(&mut ws_rx, |f| {
+        let Ok(seg) = parse_tcp_from_frame(f) else {
+            return false;
+        };
+        seg.src_port == 80
+            && seg.dst_port == denied_guest_port
+            && (seg.flags & (TcpFlags::RST | TcpFlags::ACK)) == (TcpFlags::RST | TcpFlags::ACK)
+            && seg.ack == denied_isn + 1
+    })
+    .await
+    .unwrap();
+    let rst_seg = parse_tcp_from_frame(&rst).unwrap();
+    assert_eq!(rst_seg.ack, denied_isn + 1);
+
     // --- UDP echo probe ---
     let udp_remote_ip = Ipv4Addr::new(203, 0, 113, 11);
     let udp_remote_port = udp_echo.addr.port();
