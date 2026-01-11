@@ -89,8 +89,8 @@ Legacy bring-up ABI note:
 > the default device model, and the shipped Win7 AeroGPU INFs do **not** match it (by design). If you need it, use the legacy
 > INFs under `drivers/aerogpu/packaging/win7/legacy/` and enable the legacy device model feature (`emulator/aerogpu-legacy`).
 >
-> Older prototypes used PCI vendor ID `1AE0`; those stacks are deprecated and must not be treated as the
-> Windows driver binding contract.
+> Older prototypes used a different (now deprecated) AeroGPU PCI identity; those stacks are archived and
+> must not be treated as the Windows driver binding contract.
 
 ## Device table (normative)
 
