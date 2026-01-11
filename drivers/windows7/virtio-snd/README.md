@@ -88,6 +88,8 @@ To build a signed `release/` package in one step (stages SYS → Inf2Cat → sig
 powershell -ExecutionPolicy Bypass -File .\scripts\build-release.ps1 -Arch both -InputDir <build-output-root>
 ```
 
+Add `-Zip` to also create deterministic `release/out/*.zip` bundles.
+
 ## Windows 7 test-signing enablement (test VM / machine)
 
 On the Windows 7 test machine, enable test-signing mode from an elevated cmd prompt:

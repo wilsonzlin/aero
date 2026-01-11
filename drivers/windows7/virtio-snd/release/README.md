@@ -69,6 +69,8 @@ The same sequence can be run by a wrapper script:
 powershell -ExecutionPolicy Bypass -File drivers/windows7/virtio-snd/scripts/build-release.ps1 -Arch both -InputDir <build-output-root>
 ```
 
+Add `-Zip` to also create deterministic `release/out/*.zip` bundles.
+
 ### Optional: deterministic zip bundle
 
 To also emit a deterministic zip into `release/out/`:

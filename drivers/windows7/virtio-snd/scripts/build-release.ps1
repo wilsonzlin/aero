@@ -50,8 +50,16 @@ $pfxPath = Join-Path $driverRoot 'cert\\aero-virtio-snd-test.pfx'
 function Invoke-CheckedCommand([string]$Name, [scriptblock]$Action) {
   Write-Host ""
   Write-Host ("== {0} ==" -f $Name)
-  & $Action
-  if ($LASTEXITCODE -ne $null -and $LASTEXITCODE -ne 0) {
+  # Avoid reporting stale exit codes from previous native commands (PowerShell
+  # scripts do not reliably clear $LASTEXITCODE).
+  $global:LASTEXITCODE = 0
+  try {
+    & $Action
+  }
+  catch {
+    throw ("{0} failed: {1}" -f $Name, $_.Exception.Message)
+  }
+  if ($LASTEXITCODE -ne 0) {
     throw ("{0} failed (exit code {1})." -f $Name, $LASTEXITCODE)
   }
 }
@@ -99,8 +107,12 @@ finally {
 
 Write-Host ""
 Write-Host "Done. Output staged under:"
-Write-Host "  release\\x86\\virtio-snd\\"
-Write-Host "  release\\amd64\\virtio-snd\\"
+foreach ($a in $archList) {
+  Write-Host ("  release\\{0}\\virtio-snd\\" -f $a)
+}
+if ($Zip) {
+  Write-Host "  release\\out\\"
+}
 Write-Host ""
 Write-Host "Next (inside the guest): enable test signing and install the .cer into Root + TrustedPublisher."
 

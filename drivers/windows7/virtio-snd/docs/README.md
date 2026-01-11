@@ -411,6 +411,8 @@ To build a signed `release/` package in one step (stages SYS → Inf2Cat → sig
 powershell -ExecutionPolicy Bypass -File .\scripts\build-release.ps1 -Arch both -InputDir <build-output-root>
 ```
 
+Add `-Zip` to also create deterministic `release/out/*.zip` bundles.
+
 ## Prerequisites (host build/sign machine)
 
 Run the signing tooling from a WDK Developer Command Prompt (so the tools are in `PATH`):
