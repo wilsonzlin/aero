@@ -1,3 +1,5 @@
+# EXAMPLE: Local MinIO + optional edge proxy for validating Range/CORS behaviour without AWS.
+
 services:
   minio:
     image: minio/minio:latest

@@ -55,7 +55,7 @@ errors.push(
 
 // Root-level compose files exist for service-specific development and should be
 // clearly marked to avoid conflicting with production manifests.
-for (const relPath of ['docker-compose.yml', 'compose.yaml']) {
+for (const relPath of ['docker-compose.yml', 'compose.yaml', 'infra/local-object-store/docker-compose.yml']) {
   errors.push(
     requireLabel({
       relPath,
@@ -77,4 +77,3 @@ if (filtered.length !== 0) {
 }
 
 console.log('Deployment manifest hygiene check passed.');
-
