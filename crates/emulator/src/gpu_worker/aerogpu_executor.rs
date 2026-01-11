@@ -954,7 +954,9 @@ fn decode_alloc_table(
         ));
         return (Some(header), Vec::new());
     }
-    if header.entry_stride_bytes != AeroGpuAllocEntry::SIZE_BYTES {
+    // Forward-compat: newer guests may extend `aerogpu_alloc_entry` by increasing the declared
+    // stride. We only require the entry prefix we understand.
+    if header.entry_stride_bytes < AeroGpuAllocEntry::SIZE_BYTES {
         decode_errors.push(AeroGpuSubmissionDecodeError::AllocTable(
             AeroGpuAllocTableDecodeError::BadEntryStride,
         ));
@@ -1387,6 +1389,57 @@ mod tests {
         write_scanout0_rgba8(&regs, &mut mem, &scanout).unwrap();
         assert_eq!(mem.read_u16(fb_gpa), 0xFC00);
     }
+
+    #[test]
+    fn alloc_table_decode_accepts_extended_entry_stride() {
+        let mut mem = Bus::new(0x4000);
+        let alloc_table_gpa = 0x1000u64;
+        let abi_version = AeroGpuRegs::default().abi_version;
+
+        let entry_count = 2u32;
+        let entry_stride_bytes = AeroGpuAllocEntry::SIZE_BYTES + 16;
+        let size_bytes = AeroGpuAllocTableHeader::SIZE_BYTES + entry_count * entry_stride_bytes;
+
+        // Write the allocation table header.
+        mem.write_u32(alloc_table_gpa + 0, AEROGPU_ALLOC_TABLE_MAGIC);
+        mem.write_u32(alloc_table_gpa + 4, abi_version);
+        mem.write_u32(alloc_table_gpa + 8, size_bytes);
+        mem.write_u32(alloc_table_gpa + 12, entry_count);
+        mem.write_u32(alloc_table_gpa + 16, entry_stride_bytes);
+        mem.write_u32(alloc_table_gpa + 20, 0);
+
+        // Write entries at the declared stride, leaving the extra bytes as zero padding.
+        let header_size = u64::from(AeroGpuAllocTableHeader::SIZE_BYTES);
+        for i in 0..entry_count {
+            let entry_gpa =
+                alloc_table_gpa + header_size + u64::from(i) * u64::from(entry_stride_bytes);
+            let alloc_id = i + 1;
+            mem.write_u32(entry_gpa + 0, alloc_id);
+            mem.write_u32(entry_gpa + 4, 0);
+            mem.write_u64(entry_gpa + 8, 0x2000u64 + u64::from(alloc_id) * 0x1000);
+            mem.write_u64(entry_gpa + 16, 0x100);
+            mem.write_u64(entry_gpa + 24, 0);
+        }
+
+        let desc = AeroGpuSubmitDesc {
+            desc_size_bytes: AeroGpuSubmitDesc::SIZE_BYTES,
+            flags: 0,
+            context_id: 0,
+            engine_id: 0,
+            cmd_gpa: 0,
+            cmd_size_bytes: 0,
+            alloc_table_gpa,
+            alloc_table_size_bytes: size_bytes,
+            signal_fence: 0,
+        };
+
+        let mut decode_errors = Vec::new();
+        let (_hdr, allocs) = decode_alloc_table(&mut mem, abi_version, &desc, &mut decode_errors);
+        assert!(decode_errors.is_empty());
+        assert_eq!(allocs.len(), entry_count as usize);
+        assert_eq!(allocs[0].alloc_id, 1);
+        assert_eq!(allocs[1].alloc_id, 2);
+    }
 }
 
 #[cfg(feature = "aerogpu-trace")]
@@ -1486,9 +1539,10 @@ impl AerogpuSubmissionTrace {
 
                 if magic == AEROGPU_ALLOC_TABLE_MAGIC
                     && size_bytes as usize <= table.len()
-                    && entry_stride == AeroGpuAllocEntry::SIZE_BYTES
+                    && entry_stride >= AeroGpuAllocEntry::SIZE_BYTES
                 {
                     let count = entry_count as usize;
+                    let entry_stride = entry_stride as usize;
                     let mut off = AeroGpuAllocTableHeader::SIZE_BYTES as usize;
                     for _ in 0..count {
                         if off + AeroGpuAllocEntry::SIZE_BYTES as usize > table.len() {
@@ -1515,7 +1569,10 @@ impl AerogpuSubmissionTrace {
                             }
                         }
 
-                        off += AeroGpuAllocEntry::SIZE_BYTES as usize;
+                        let Some(next) = off.checked_add(entry_stride) else {
+                            break;
+                        };
+                        off = next;
                     }
                 }
             }
