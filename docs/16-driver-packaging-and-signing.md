@@ -34,6 +34,7 @@ Supported fields:
   - Entries must be file names only (no path separators).
   - Requires x86 build outputs to be present (even if you are only generating/staging x64 packages).
 - `additionalFiles` (optional): extra *non-binary* files to include (README/license text, install scripts, etc). Paths are relative to the driver directory (`drivers/<driver>/`) and must not escape it (no absolute paths / `..` traversal).
+  - CI refuses to include common binary extensions via `additionalFiles` (currently: `.sys`, `.dll`, `.exe`, `.cat`, `.msi`, `.cab`).
 - `wdfCoInstaller` (optional): declare that this driver needs the WDF coinstaller and which KMDF version/DLL name.
   - If `dllName` is omitted, CI derives it from `kmdfVersion` (e.g. `1.11` → `WdfCoInstaller01011.dll`).
   - If provided, `dllName` must be a simple filename like `WdfCoInstaller01011.dll` (not a path).

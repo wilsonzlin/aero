@@ -32,7 +32,7 @@
     },
     "additionalFiles": {
       "type": "array",
-      "description": "Additional files (relative to the driver directory) to include in the staged driver package. Intended for non-binary files such as README/license text or install scripts.",
+      "description": "Additional files (relative to the driver directory) to include in the staged driver package. Intended for non-binary files such as README/license text or install scripts. CI refuses to include common binary extensions via this mechanism (currently: .sys, .dll, .exe, .cat, .msi, .cab).",
       "items": {
         "type": "string",
         "minLength": 1
