@@ -863,33 +863,35 @@ mod tests {
     fn int15_e801_returns_expected_values() {
         struct Case {
             mem: u64,
-            ax: u16,
-            bx: u16,
         }
 
         let cases = [
             Case {
                 mem: 512 * 1024 * 1024,
-                ax: 0x3C00,
-                bx: 0x1F00,
             },
             Case {
                 mem: 2 * 1024 * 1024 * 1024,
-                ax: 0x3C00,
-                bx: 0x7F00,
             },
             Case {
                 mem: 4 * 1024 * 1024 * 1024,
-                ax: 0x3C00,
                 // With a 256MiB PCIe ECAM window at 0xB0000000 and a 3GiB PCI/MMIO
                 // hole (0xC0000000..4GiB), only 0xB0000000 bytes of RAM exist below
                 // 4GiB. The remainder is remapped above 4GiB and does not count
                 // toward INT 15h E801's BX value.
-                bx: 0xAF00,
             },
         ];
 
         for case in cases {
+            // E801 AX reports KB in the 1MiB..16MiB window (capped at 15MiB = 0x3C00 KB).
+            let expected_ax: u16 = 0x3C00;
+            // E801 BX reports 64KiB blocks in the 16MiB..4GiB window.
+            let expected_bx: u16 = if case.mem <= PCIE_ECAM_BASE {
+                // No ECAM hole in low RAM yet.
+                ((case.mem - 0x0100_0000) / 65536) as u16
+            } else {
+                // Low RAM stops at the ECAM base; anything above is remapped above 4GiB.
+                ((PCIE_ECAM_BASE - 0x0100_0000) / 65536) as u16
+            };
             let mut bios = Bios::new(BiosConfig {
                 memory_size_bytes: case.mem,
                 boot_drive: 0x80,
@@ -901,10 +903,10 @@ mod tests {
             handle_int15(&mut bios, &mut cpu, &mut bus);
 
             assert_eq!(cpu.rflags & FLAG_CF, 0);
-            assert_eq!(cpu.rax as u16, case.ax);
-            assert_eq!(cpu.rbx as u16, case.bx);
-            assert_eq!(cpu.rcx as u16, case.ax);
-            assert_eq!(cpu.rdx as u16, case.bx);
+            assert_eq!(cpu.rax as u16, expected_ax);
+            assert_eq!(cpu.rbx as u16, expected_bx);
+            assert_eq!(cpu.rcx as u16, expected_ax);
+            assert_eq!(cpu.rdx as u16, expected_bx);
         }
     }
 
