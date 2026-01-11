@@ -42,11 +42,14 @@ Only needed if you install using `aerogpu_dx11.inf`:
 
 ## 2) Set the correct PCI Hardware ID (required)
 
-By default, both `aerogpu.inf` and `aerogpu_dx11.inf` bind to the AeroGPU PCI IDs defined in `drivers/aerogpu/protocol/aerogpu_pci.h`:
+By default, both `aerogpu.inf` and `aerogpu_dx11.inf` bind to the canonical AeroGPU PCI IDs:
 
 ```
 PCI\VEN_A3A0&DEV_0001
+PCI\VEN_1AED&DEV_0001
 ```
+
+These correspond to the new (versioned) and legacy (bring-up) ABIs; see `docs/abi/aerogpu-pci-identity.md` for the full context and the matching emulator device models.
 
 Before installing, confirm your VM's device model reports the same Hardware ID:
 
