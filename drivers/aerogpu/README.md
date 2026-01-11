@@ -26,9 +26,14 @@ Binaries are staged under:
 - `out/packages/aerogpu/x86/` and `out/packages/aerogpu/x64/` (INF+CAT staged packages)
 - `out/artifacts/` (ZIP/ISO bundles)
 
-CI artifacts stage `aerogpu.inf` (**D3D9-only**) by default. A legacy binding INF is also shipped under
-`legacy/aerogpu.inf` for emulator builds that intentionally expose the deprecated legacy device model. The optional DX11-capable
-variant uses `aerogpu_dx11.inf` (adds D3D10/11 UMDs) and is manual/opt-in (see below and
+CI artifacts stage `aerogpu.inf` (**D3D9-only**) by default.
+
+Legacy binding INFs are shipped under `legacy/` for emulator builds that intentionally expose the deprecated legacy device model:
+
+- `legacy/aerogpu.inf` (D3D9-only; shipped by default)
+- `legacy/aerogpu_dx11.inf` (D3D9 + D3D10/11; optional/opt-in)
+
+The canonical DX11-capable variant uses `aerogpu_dx11.inf` (adds D3D10/11 UMDs) and is manual/opt-in (see below and
 `drivers/aerogpu/packaging/win7/README.md`).
 
 ## CI (GitHub Actions)
@@ -51,11 +56,13 @@ Catalog generation (`ci/make-catalogs.ps1`) is driven by `drivers/aerogpu/ci-pac
   - `packaging/win7/aerogpu.inf` (D3D9-only package; canonical binding)
   To stage the DX11-capable package in CI, add:
   - `packaging/win7/aerogpu_dx11.inf`
-  A legacy binding INF is shipped separately under `legacy/aerogpu.inf` (see `drivers/aerogpu/legacy/`).
+  Legacy binding INFs are shipped separately under `legacy/` (see `drivers/aerogpu/legacy/`):
+  - `legacy/aerogpu.inf` (D3D9-only; staged by default)
+  - `legacy/aerogpu_dx11.inf` (D3D9 + D3D10/11; add to `additionalFiles` if you stage DX11 payloads)
 - `wow64Files` lists x86 UMD DLLs that must be present in the x64 package during `Inf2Cat`.
   AeroGPU includes `aerogpu_d3d9.dll` by default (required for Win7 x64 WOW64).
-  If you stage `aerogpu_dx11.inf` in CI, also add `aerogpu_d3d10.dll` so it can be hashed into
-  the x64 catalog.
+  If you stage any DX11-capable INF (`aerogpu_dx11.inf` and/or `legacy/aerogpu_dx11.inf`), also add
+  `aerogpu_d3d10.dll` so it can be hashed into the x64 catalog.
 
 Details: `docs/16-driver-packaging-and-signing.md`.
 

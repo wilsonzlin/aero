@@ -147,6 +147,7 @@ fn aerogpu_pci_ids_match_repo_contracts() {
         "drivers/aerogpu/packaging/win7/legacy/aerogpu.inf",
         "drivers/aerogpu/packaging/win7/legacy/aerogpu_dx11.inf",
         "drivers/aerogpu/legacy/aerogpu.inf",
+        "drivers/aerogpu/legacy/aerogpu_dx11.inf",
     ] {
         let path = repo_root.join(relative_path);
         assert_file_contains_noncomment_line(&path, &legacy_hwid);
@@ -261,28 +262,64 @@ fn aerogpu_ci_package_manifest_includes_wow64_umds_for_dx11_inf() {
     let manifest_json: serde_json::Value = serde_json::from_str(&manifest_text)
         .unwrap_or_else(|err| panic!("{}: failed to parse JSON: {err}", manifest_path.display()));
 
-    let stages_dx11_inf = match manifest_json.get("infFiles") {
-        Some(value) => value
-            .as_array()
-            .unwrap_or_else(|| panic!("{}: expected `infFiles` array", manifest_path.display()))
-            .iter()
-            .map(|value| {
-                value.as_str().unwrap_or_else(|| {
+    let stages_dx11_inf = {
+        let mut staged = false;
+
+        // `infFiles` is the canonical mechanism for staging a DX11-capable INF at the package
+        // root (see drivers/aerogpu/ci-package.json and packaging/win7/README.md).
+        staged |= match manifest_json.get("infFiles") {
+            Some(value) => value
+                .as_array()
+                .unwrap_or_else(|| panic!("{}: expected `infFiles` array", manifest_path.display()))
+                .iter()
+                .map(|value| {
+                    value.as_str().unwrap_or_else(|| {
+                        panic!(
+                            "{}: infFiles entries must be strings; found {value:?}",
+                            manifest_path.display()
+                        )
+                    })
+                })
+                .any(|path| path.ends_with("aerogpu_dx11.inf")),
+            None => {
+                // If `infFiles` is omitted, CI will attempt to stage all .inf files under the
+                // driver directory. Treat the existence of any DX11-capable INFs as a signal that
+                // WOW64 payloads are required.
+                repo_root
+                    .join("drivers/aerogpu/packaging/win7/aerogpu_dx11.inf")
+                    .is_file()
+                    || repo_root
+                        .join("drivers/aerogpu/packaging/win7/legacy/aerogpu_dx11.inf")
+                        .is_file()
+                    || repo_root
+                        .join("drivers/aerogpu/legacy/aerogpu_dx11.inf")
+                        .is_file()
+            }
+        };
+
+        // The legacy DX11 INF lives under legacy/ and is staged via `additionalFiles`.
+        if let Some(value) = manifest_json.get("additionalFiles") {
+            staged |= value
+                .as_array()
+                .unwrap_or_else(|| {
                     panic!(
-                        "{}: infFiles entries must be strings; found {value:?}",
+                        "{}: expected `additionalFiles` array",
                         manifest_path.display()
                     )
                 })
-            })
-            .any(|path| path.ends_with("aerogpu_dx11.inf")),
-        None => {
-            repo_root
-                .join("drivers/aerogpu/packaging/win7/aerogpu_dx11.inf")
-                .is_file()
-                || repo_root
-                    .join("drivers/aerogpu/packaging/win7/legacy/aerogpu_dx11.inf")
-                    .is_file()
+                .iter()
+                .map(|value| {
+                    value.as_str().unwrap_or_else(|| {
+                        panic!(
+                            "{}: additionalFiles entries must be strings; found {value:?}",
+                            manifest_path.display()
+                        )
+                    })
+                })
+                .any(|path| path.ends_with("aerogpu_dx11.inf"));
         }
+
+        staged
     };
 
     if !stages_dx11_inf {
@@ -304,12 +341,13 @@ fn aerogpu_ci_package_manifest_includes_wow64_umds_for_dx11_inf() {
         })
         .collect();
 
-    // `aerogpu_dx11.inf` references both 32-bit UMDs in its amd64 file lists; CI must stage them
-    // into the x64 package directory via `wow64Files` so `Inf2Cat` and Win7 x64 installs succeed.
+    // DX11-capable AeroGPU INFs reference both 32-bit UMDs in their amd64 file lists; CI must
+    // stage them into the x64 package directory via `wow64Files` so `Inf2Cat` and Win7 x64
+    // installs succeed.
     for required in ["aerogpu_d3d9.dll", "aerogpu_d3d10.dll"] {
         assert!(
             wow64_files.contains(&required),
-            "{}: wow64Files missing `{required}` required by aerogpu_dx11.inf. Found: {wow64_files:?}",
+            "{}: wow64Files missing `{required}` required by DX11-capable AeroGPU INFs. Found: {wow64_files:?}",
             manifest_path.display()
         );
     }

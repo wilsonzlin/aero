@@ -43,6 +43,8 @@ To get/install the optional D3D10/11 UMD variant:
 
   - Add `packaging/win7/aerogpu_dx11.inf` to `infFiles`.
   - Add `aerogpu_d3d10.dll` to `wow64Files`.
+  - Optional: if you also want the **legacy** bring-up INF to include the D3D10/11 UMDs, add
+    `legacy/aerogpu_dx11.inf` to `additionalFiles`.
 
   Example (keep any existing `additionalFiles` entries):
 

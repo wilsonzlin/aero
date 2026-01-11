@@ -12,6 +12,9 @@ This directory provides two legacy-binding INF variants:
 - `legacy/aerogpu.inf` (D3D9-only; included in CI driver packages)
 - `legacy/aerogpu_dx11.inf` (D3D9 + optional D3D10/11 UMDs; not included in CI packages by default)
 
+To stage the legacy DX11-capable INF in CI, add `legacy/aerogpu_dx11.inf` to `drivers/aerogpu/ci-package.json`
+(`additionalFiles`) and ensure the D3D10/11 UMDs are staged (see `drivers/aerogpu/packaging/win7/README.md`).
+
 This folder is intended to be shipped alongside the canonical driver package so Guest Tools can
 install against either device model:
 

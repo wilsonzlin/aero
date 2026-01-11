@@ -43,11 +43,13 @@ WDDM stack.
 
 It is retained for optional compatibility/bring-up and regression testing:
 
-- The canonical Win7 AeroGPU INFs (`drivers/aerogpu/packaging/win7/aerogpu.inf`, `aerogpu_dx11.inf`) bind only to the
+- The canonical Win7 AeroGPU INFs (`drivers/aerogpu/packaging/win7/{aerogpu.inf,aerogpu_dx11.inf}`) bind only to the
   versioned ABI identity (`PCI\VEN_A3A0&DEV_0001`).
   - For the legacy bring-up identity (`PCI\VEN_1AED&DEV_0001`), use the legacy INFs under
     `drivers/aerogpu/packaging/win7/legacy/`.
-    - CI packages / Guest Tools also include a staged copy at `legacy/aerogpu.inf` (sourced from `drivers/aerogpu/legacy/`).
+    - CI packages / Guest Tools stage legacy binding INFs under `legacy/` (sourced from `drivers/aerogpu/legacy/`):
+      - `legacy/aerogpu.inf` (D3D9-only)
+      - `legacy/aerogpu_dx11.inf` (DX11-capable; optional/opt-in)
 - The emulator's legacy device model is feature-gated behind `emulator/aerogpu-legacy`.
 
 `drivers/aerogpu/protocol/aerogpu_pci.h` is the newer, versioned ABI intended
