@@ -268,6 +268,10 @@ npm run build
 npm run preview
 ```
 
+Note: the default preview server (`web/index.html` → `web/src/main.ts`) installs the Perf HUD and exposes
+`window.aero.perf.captureStart/captureStop/export()` (and trace APIs). CI's Playwright perf runner
+(`tools/perf/run.mjs`) relies on this API to write `perf_export.json`.
+
 For perf-sensitive work (SharedArrayBuffer / threads / COOP+COEP), prefer the COI preview helper:
 
 ```bash

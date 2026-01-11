@@ -4,13 +4,15 @@
 // browser host lives under `web/` (ADR 0001).
 import './style.css';
 
-import { PerfAggregator, PerfWriter, WorkerKind, createPerfChannel } from '../web/src/perf/index.js';
+import { installPerfHud } from '../web/src/perf/hud_entry';
+import { perf } from '../web/src/perf/perf';
 import { installAeroGlobal } from '../web/src/runtime/aero_global';
 import { installNetTraceUI, type NetTraceBackend } from '../web/src/net/trace_ui';
 import { RuntimeDiskClient } from '../web/src/storage/runtime_disk_client';
 import { formatByteSize } from '../web/src/storage/disk_image_store';
 
 import { createHotspotsPanel } from './ui/hud_hotspots.js';
+import type { HotspotEntry, PerfExport as HotspotPerfExport } from './perf/aero_perf.js';
 
 import { createAudioOutput } from './platform/audio';
 import { detectPlatformFeatures, explainMissingRequirements, type PlatformFeatureReport } from './platform/features';
@@ -29,7 +31,14 @@ declare global {
   }
 }
 
-// Install optional `window.aero.bench` helpers early so automation can invoke
+// Install the Perf HUD overlay + global perf API for automation.
+// CI relies on `window.aero.perf.captureStart/captureStop/export()` to produce
+// `perf_export.json` via `tools/perf/run.mjs` against `npm run preview`.
+installPerfHud();
+perf.installGlobalApi();
+if (new URLSearchParams(location.search).has('trace')) perf.traceStart();
+
+// Install optional `window.aero.bench` helpers so automation can invoke
 // microbenchmarks without requiring the emulator/guest OS.
 installAeroGlobal();
 
@@ -834,8 +843,6 @@ function renderAudioPanel(): HTMLElement {
 }
 
 function renderHotspotsPanel(report: PlatformFeatureReport): HTMLElement {
-  // `window.aero.perf.export()` is installed by `startPerfTelemetry`.
-  // Until then (or when disabled), render an empty panel.
   if (!report.wasmThreads) {
     return el(
       'div',
@@ -845,8 +852,28 @@ function renderHotspotsPanel(report: PlatformFeatureReport): HTMLElement {
     );
   }
 
+  const isHotspotEntry = (value: unknown): value is HotspotEntry => {
+    if (!value || typeof value !== 'object') return false;
+    const maybe = value as Record<string, unknown>;
+    return (
+      typeof maybe.pc === 'string' &&
+      typeof maybe.hits === 'number' &&
+      typeof maybe.instructions === 'number' &&
+      typeof maybe.percent_of_total === 'number'
+    );
+  };
+
   const perfFacade = {
-    export: () => globalThis.aero?.perf?.export?.() ?? { hotspots: [] },
+    export: (): HotspotPerfExport => {
+      const exported = globalThis.aero?.perf?.export?.();
+      if (exported && typeof exported === 'object' && !Array.isArray(exported)) {
+        const hotspots = (exported as { hotspots?: unknown }).hotspots;
+        if (Array.isArray(hotspots)) {
+          return { hotspots: hotspots.filter(isHotspotEntry) };
+        }
+      }
+      return { hotspots: [] };
+    },
   };
 
   const panel = createHotspotsPanel({ perf: perfFacade, topN: 10, refreshMs: 500 });
@@ -1328,108 +1355,55 @@ function renderMicrophonePanel(): HTMLElement {
   );
 }
 
-let perfHud: HTMLElement | null = null;
-let perfStarted = false;
-
 function renderPerfPanel(report: PlatformFeatureReport): HTMLElement {
   const supported = report.sharedArrayBuffer && typeof Atomics !== 'undefined';
-  const hud = el('pre', { text: supported ? 'Initializing…' : 'Perf telemetry unavailable (SharedArrayBuffer/Atomics missing).' });
-  perfHud = hud;
- 
+
+  const perfApi = (globalThis as typeof globalThis & { aero?: { perf?: unknown } }).aero?.perf;
+  const perfObj = perfApi && typeof perfApi === 'object' ? (perfApi as Record<string, unknown>) : null;
+
+  const hasCaptureApi =
+    !!perfObj &&
+    typeof (perfObj as typeof perfObj & { captureStart?: unknown }).captureStart === 'function' &&
+    typeof (perfObj as typeof perfObj & { captureStop?: unknown }).captureStop === 'function' &&
+    typeof (perfObj as typeof perfObj & { export?: unknown }).export === 'function';
+
+  const hasTraceApi =
+    !!perfObj &&
+    typeof (perfObj as typeof perfObj & { traceStart?: unknown }).traceStart === 'function' &&
+    typeof (perfObj as typeof perfObj & { traceStop?: unknown }).traceStop === 'function' &&
+    typeof (perfObj as typeof perfObj & { exportTrace?: unknown }).exportTrace === 'function';
+
+  const hud = el('pre', {
+    text:
+      'The Perf HUD overlay is installed.\n' +
+      'Toggle via the "Perf HUD" button (top-left) or press F2 / Ctrl+Shift+P.\n' +
+      '\n' +
+      `SharedArrayBuffer/Atomics: ${supported ? 'supported' : 'missing'}\n` +
+      `capture API: ${hasCaptureApi ? 'available' : 'missing'}\n` +
+      `trace API: ${hasTraceApi ? 'available' : 'missing'}\n` +
+      '\n' +
+      'Console:\n' +
+      '  window.aero.perf.captureStart();\n' +
+      '  window.aero.perf.captureStop();\n' +
+      '  window.aero.perf.export();\n' +
+      '  window.aero.perf.traceStart();\n' +
+      '  window.aero.perf.traceStop();\n' +
+      '  await window.aero.perf.exportTrace();\n',
+  });
+
   return el(
     'div',
     { class: 'panel' },
-    el('h2', { text: 'Perf telemetry' }),
+    el('h2', { text: 'Perf HUD + exports' }),
     el(
       'div',
       {
         text:
-          'Exports window.aero.perf.export() for automation. ' +
-          'Main thread records frame times; a synthetic worker emits instruction counts.',
+          'The perf API is installed at startup and used by CI tooling (tools/perf/run.mjs) to capture perf exports.',
       },
     ),
     hud,
   );
-}
-
-function startPerfTelemetry(report: PlatformFeatureReport): void {
-  if (perfStarted) return;
-  perfStarted = true;
-
-  if (!perfHud) return;
-  if (!report.wasmThreads) {
-    perfHud.textContent = 'Perf telemetry unavailable: requires cross-origin isolation + SharedArrayBuffer + Atomics.';
-    return;
-  }
-
-  const channel = createPerfChannel({
-    capacity: 1024,
-    workerKinds: [WorkerKind.Main, WorkerKind.CPU],
-  });
-
-  const mainWriter = new PerfWriter(channel.buffers[WorkerKind.Main], {
-    workerKind: WorkerKind.Main,
-    runStartEpochMs: channel.runStartEpochMs,
-  });
-
-  const aggregator = new PerfAggregator(channel, { windowSize: 120, captureSize: 2000 });
-
-  const worker = new Worker(new URL('./perf_worker.ts', import.meta.url), { type: 'module' });
-  worker.postMessage({ type: 'init', channel, workerKind: WorkerKind.CPU });
-  worker.addEventListener('message', (ev: MessageEvent) => {
-    const msg = ev.data as { type?: string; hotspots?: unknown } | null;
-    if (msg?.type === 'hotspots' && Array.isArray(msg.hotspots)) {
-      aggregator.setHotspots(msg.hotspots);
-    }
-  });
-
-  let enabled = true;
-  function setEnabled(next: boolean): void {
-    enabled = Boolean(next);
-    mainWriter.setEnabled(enabled);
-    worker.postMessage({ type: 'setEnabled', enabled });
-  }
-
-  const aero = (globalThis.aero ??= {});
-  aero.perf = {
-    export: () => aggregator.export(),
-    getStats: () => aggregator.getStats(),
-    setEnabled,
-  };
-
-  // Ensure optional perf benchmarks (e.g. WebGPU microbench) are installed and
-  // wired into the export payload without clobbering `aero.perf`.
-  installAeroGlobal();
-
-  let frameId = 0;
-  let lastNow = performance.now();
-
-  function tick(now: number): void {
-    const dt = now - lastNow;
-    lastNow = now;
-    frameId = (frameId + 1) >>> 0;
-
-    const usedHeap = (performance as unknown as { memory?: { usedJSHeapSize?: number } }).memory?.usedJSHeapSize ?? 0;
-    mainWriter.frameSample(frameId, {
-      durations: { frame_ms: dt },
-      counters: { memory_bytes: BigInt(usedHeap) },
-    });
-
-    worker.postMessage({ type: 'frame', frameId, dt });
-
-    aggregator.drain();
-    const stats = aggregator.getStats();
-    perfHud!.textContent =
-      `window=${stats.frames}/${stats.windowSize} frames\n` +
-      `avg frame=${stats.avgFrameMs.toFixed(2)}ms p95=${stats.p95FrameMs.toFixed(2)}ms\n` +
-      `avg fps=${stats.avgFps.toFixed(1)} 1% low=${stats.fps1pLow.toFixed(1)}\n` +
-      `avg MIPS=${stats.avgMips.toFixed(1)}\n` +
-      `enabled=${enabled}\n`;
-
-    requestAnimationFrame(tick);
-  }
-
-  requestAnimationFrame(tick);
 }
 
 function renderEmulatorSafetyPanel(): HTMLElement {
@@ -1823,8 +1797,6 @@ function render(): void {
     renderEmulatorSafetyPanel(),
     renderNetTracePanel(),
   );
-
-  startPerfTelemetry(report);
 }
 
 render();
