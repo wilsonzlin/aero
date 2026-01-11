@@ -82,6 +82,7 @@ let frameScheduler: FrameSchedulerHandle | null = null;
 
 // Updated by the microphone UI and read by the worker coordinator so that
 // newly-started workers inherit the current mic attachment (if any).
+// `sampleRate` is the actual capture sample rate (AudioContext.sampleRate).
 let micAttachment: { ringBuffer: SharedArrayBuffer; sampleRate: number } | null = null;
 
 function el<K extends keyof HTMLElementTagNameMap>(
@@ -1717,7 +1718,7 @@ function renderMicrophonePanel(): HTMLElement {
         await mic.start();
         mic.setMuted(mutedInput.checked);
 
-        micAttachment = { ringBuffer: mic.ringBuffer.sab, sampleRate: mic.options.sampleRate };
+        micAttachment = { ringBuffer: mic.ringBuffer.sab, sampleRate: mic.actualSampleRate };
         attachToWorkers();
         update();
       } catch (err) {

@@ -47,7 +47,9 @@ function isAudioWorkletSupported(): boolean {
 
 export class MicCapture extends EventTarget {
   readonly options: ResolvedMicCaptureOptions;
-  readonly ringBuffer: MicRingBuffer;
+  ringBuffer: MicRingBuffer;
+  /** Actual sample rate of the capture graph (AudioContext.sampleRate). */
+  actualSampleRate: number;
 
   state: MicCaptureState = "inactive";
 
@@ -73,7 +75,11 @@ export class MicCapture extends EventTarget {
       autoGainControl: opts.autoGainControl ?? true,
     };
 
-    const capacitySamples = Math.max(1, Math.floor((this.options.sampleRate * this.options.bufferMs) / 1000));
+    // The browser may ignore our requested sample rate when constructing the
+    // AudioContext. We'll resize the ring buffer during `start()` once we know
+    // the actual capture rate.
+    this.actualSampleRate = this.options.sampleRate;
+    const capacitySamples = Math.max(1, Math.floor((this.actualSampleRate * this.options.bufferMs) / 1000));
     this.ringBuffer = createMicRingBuffer(capacitySamples);
   }
 
@@ -81,11 +87,6 @@ export class MicCapture extends EventTarget {
     if (this.state === "starting" || this.state === "active" || this.state === "muted") return;
 
     this.setState("starting");
-
-    // Clear indices/counters from any previous run.
-    Atomics.store(this.ringBuffer.header, WRITE_POS_INDEX, 0);
-    Atomics.store(this.ringBuffer.header, READ_POS_INDEX, 0);
-    Atomics.store(this.ringBuffer.header, DROPPED_SAMPLES_INDEX, 0);
 
     try {
       await this.attachPermissionListener();
@@ -111,6 +112,18 @@ export class MicCapture extends EventTarget {
         latencyHint: "interactive",
       });
       this.audioContext = audioContext;
+      this.actualSampleRate = audioContext.sampleRate;
+
+      // Ensure the ring buffer duration matches the actual capture rate.
+      const capacitySamples = Math.max(1, Math.floor((this.actualSampleRate * this.options.bufferMs) / 1000));
+      if (this.ringBuffer.capacity !== capacitySamples) {
+        this.ringBuffer = createMicRingBuffer(capacitySamples);
+      }
+
+      // Clear indices/counters from any previous run.
+      Atomics.store(this.ringBuffer.header, WRITE_POS_INDEX, 0);
+      Atomics.store(this.ringBuffer.header, READ_POS_INDEX, 0);
+      Atomics.store(this.ringBuffer.header, DROPPED_SAMPLES_INDEX, 0);
 
       // Ensure the graph runs (required by some browsers) and that we never
       // leak mic audio to speakers.

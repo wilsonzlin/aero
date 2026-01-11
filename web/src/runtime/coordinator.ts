@@ -88,6 +88,8 @@ export class WorkerCoordinator {
 
   // Optional SharedArrayBuffer-backed microphone ring buffer attachment. This
   // is set by the UI and forwarded to the I/O worker when available.
+  // IMPORTANT: `micSampleRate` is the *actual* capture sample rate
+  // (AudioContext.sampleRate), not the requested rate.
   private micRingBuffer: SharedArrayBuffer | null = null;
   private micSampleRate = 0;
   // Optional SharedArrayBuffer-backed audio output ring buffer attachment. This

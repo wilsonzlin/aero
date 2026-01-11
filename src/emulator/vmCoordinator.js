@@ -83,6 +83,8 @@ export class VmCoordinator extends EventTarget {
     // Optional SharedArrayBuffer-backed microphone ring buffer, set by the UI.
     // This is forwarded to the worker so it can consume mic samples (or in the
     // real emulator, feed them into the guest's capture device model).
+    // IMPORTANT: `_micSampleRate` is the *actual* capture sample rate
+    // (AudioContext.sampleRate), not the requested rate.
     this._micRingBuffer = null;
     this._micSampleRate = 0;
   }

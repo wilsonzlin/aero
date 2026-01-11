@@ -34,6 +34,7 @@ installAeroGlobal();
 
 // Updated by the microphone UI and read by the VM UI so that new VM instances
 // automatically inherit the current mic attachment (if any).
+// `sampleRate` is the actual capture sample rate (AudioContext.sampleRate).
 let micAttachment: { ringBuffer: SharedArrayBuffer; sampleRate: number } | null = null;
 
 type CpuWorkerToMainMessage =
@@ -1049,7 +1050,7 @@ function renderMicrophonePanel(): HTMLElement {
         await mic.start();
         mic.setMuted(mutedInput.checked);
 
-        micAttachment = { ringBuffer: mic.ringBuffer.sab, sampleRate: mic.options.sampleRate };
+        micAttachment = { ringBuffer: mic.ringBuffer.sab, sampleRate: mic.actualSampleRate };
         attachToVm();
 
         update();

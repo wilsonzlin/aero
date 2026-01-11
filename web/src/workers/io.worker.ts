@@ -62,6 +62,7 @@ type OpenActiveDiskRequest = { id: number; type: "openActiveDisk"; token: Worker
 type SetMicrophoneRingBufferMessage = {
   type: "setMicrophoneRingBuffer";
   ringBuffer: SharedArrayBuffer | null;
+  /** Actual capture sample rate (AudioContext.sampleRate). */
   sampleRate?: number;
 };
 
