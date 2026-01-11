@@ -335,7 +335,7 @@ static int RunD3D11DynamicConstantBufferSanity(int argc, char** argv) {
   }
   if (!cb_map.pData) {
     context->Unmap(cb.get(), 0);
-    return aerogpu_test::Fail(kTestName, "Map(constant buffer, WRITE_DISCARD) returned NULL pData");
+    return reporter.Fail("Map(constant buffer, WRITE_DISCARD) returned NULL pData");
   }
 
   ConstantBufferData* cb_data = (ConstantBufferData*)cb_map.pData;
@@ -378,7 +378,7 @@ static int RunD3D11DynamicConstantBufferSanity(int argc, char** argv) {
   }
   if (!cb_map.pData) {
     context->Unmap(cb.get(), 0);
-    return aerogpu_test::Fail(kTestName, "Map(constant buffer, WRITE_DISCARD #2) returned NULL pData");
+    return reporter.Fail("Map(constant buffer, WRITE_DISCARD #2) returned NULL pData");
   }
   cb_data = (ConstantBufferData*)cb_map.pData;
   cb_data->color[0] = 0.0f;
@@ -426,14 +426,13 @@ static int RunD3D11DynamicConstantBufferSanity(int argc, char** argv) {
   }
   if (!map.pData) {
     context->Unmap(staging.get(), 0);
-    return aerogpu_test::Fail(kTestName, "Map(staging) returned NULL pData");
+    return reporter.Fail("Map(staging) returned NULL pData");
   }
   if ((int)map.RowPitch < kWidth * 4) {
     context->Unmap(staging.get(), 0);
-    return aerogpu_test::Fail(kTestName,
-                              "Map(staging) returned unexpected RowPitch=%ld (expected >= %d)",
-                              (long)map.RowPitch,
-                              kWidth * 4);
+    return reporter.Fail("Map(staging) returned unexpected RowPitch=%ld (expected >= %d)",
+                         (long)map.RowPitch,
+                         kWidth * 4);
   }
 
   const uint32_t corner = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, 5, 5);

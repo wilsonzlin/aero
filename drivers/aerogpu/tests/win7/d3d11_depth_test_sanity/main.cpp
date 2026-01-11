@@ -440,14 +440,13 @@ static int RunD3D11DepthTestSanity(int argc, char** argv) {
   }
   if (!map.pData) {
     context->Unmap(staging.get(), 0);
-    return aerogpu_test::Fail(kTestName, "Map(staging) returned NULL pData");
+    return reporter.Fail("Map(staging) returned NULL pData");
   }
   if ((int)map.RowPitch < kWidth * 4) {
     context->Unmap(staging.get(), 0);
-    return aerogpu_test::Fail(kTestName,
-                              "Map(staging) returned unexpected RowPitch=%ld (expected >= %d)",
-                              (long)map.RowPitch,
-                              kWidth * 4);
+    return reporter.Fail("Map(staging) returned unexpected RowPitch=%ld (expected >= %d)",
+                         (long)map.RowPitch,
+                         kWidth * 4);
   }
 
   const uint32_t corner = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, 0, 0);
