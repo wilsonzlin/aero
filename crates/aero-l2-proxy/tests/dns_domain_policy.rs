@@ -252,8 +252,7 @@ async fn run_dns_case(
         .await
         .unwrap();
     let policy_denied_start = parse_metric(&baseline, "l2_policy_denied_total").unwrap_or(0);
-    let expected_denied =
-        u64::from(!expect_allowed_ok) + u64::from(!expect_blocked_ok);
+    let expected_denied = u64::from(!expect_allowed_ok) + u64::from(!expect_blocked_ok);
 
     let req = ws_request(addr);
     let (ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
