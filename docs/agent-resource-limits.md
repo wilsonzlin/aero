@@ -200,22 +200,6 @@ Mitigations:
   Note: this intentionally overrides any existing `CARGO_HOME` so the isolation
   actually takes effect.
 
-### Cargo fails with `sccache` / rustc-wrapper errors
-
-If `cargo` fails immediately with an error mentioning `sccache` (or another rustc wrapper), your
-environment is forcing a rustc wrapper via global Cargo config or environment variables.
-
-Mitigations:
-
-- Source `scripts/agent-env.sh` (it clears common wrapper env vars).
-- Or manually clear the wrapper env vars for the current shell:
-
-  ```bash
-  export RUSTC_WRAPPER=
-  export RUSTC_WORKSPACE_WRAPPER=
-  export CARGO_BUILD_RUSTC_WRAPPER=
-  export CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER=
-  ```
 ### Cargo says "Blocking waiting for file lock on build directory"
 
 If `cargo` prints:
@@ -245,16 +229,18 @@ Mitigations:
 
   (This uses more disk space, but avoids the lock contention.)
 
-### sccache errors ("failed to execute compile")
+### rustc wrapper errors (`sccache`, etc)
 
-Some environments configure a global Cargo rustc wrapper (commonly `sccache`) via `~/.cargo/config.toml`:
+Some environments configure a rustc wrapper (most commonly `sccache`) either via `~/.cargo/config.toml`:
 
 ```toml
 [build]
 rustc-wrapper = "sccache"
 ```
 
-If the `sccache` daemon/socket is unhealthy, Cargo can fail with errors like:
+or via environment variables (`RUSTC_WRAPPER=sccache`, `RUSTC_WORKSPACE_WRAPPER=sccache`, etc).
+
+If the wrapper daemon/socket is unhealthy, Cargo can fail with errors like:
 
 ```
 sccache: error: failed to execute compile
@@ -264,13 +250,21 @@ Mitigations:
 
 - **Disable wrappers for the command**:
   ```bash
-  RUSTC_WRAPPER= cargo test --locked
+  RUSTC_WRAPPER= RUSTC_WORKSPACE_WRAPPER= \
+    CARGO_BUILD_RUSTC_WRAPPER= CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER= \
+    cargo test --locked
   ```
 - Or, when using the agent env helper:
   ```bash
   export AERO_DISABLE_RUSTC_WRAPPER=1
   source ./scripts/agent-env.sh
   ```
+
+Notes:
+
+- By default, `scripts/agent-env.sh` clears *only* `sccache` wrappers it sees in the environment
+  and preserves non-sccache wrappers (e.g. `ccache`). Use `AERO_DISABLE_RUSTC_WRAPPER=1` to
+  force-disable all wrappers.
 
 ### Build is very slow
 
