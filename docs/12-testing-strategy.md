@@ -1075,7 +1075,7 @@ Local usage:
 npm install
 npm run generate:goldens
 
-# Run golden tests (requires Playwright browsers; CI runs `npx playwright install --with-deps`)
+# Run golden tests (requires Playwright browsers; CI installs/caches them via `.github/actions/setup-playwright`)
 npm run test:gpu
 ```
 
@@ -1179,11 +1179,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      - name: Install dependencies
-        run: npm ci
+      - name: Setup Node workspace
+        uses: ./.github/actions/setup-node-workspace
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
       
-      - name: Install Playwright browsers
-        run: npx playwright install
+      - name: Setup Playwright (cached)
+        uses: ./.github/actions/setup-playwright
+        with:
+          browsers: chromium
       
       - name: Run browser tests
         run: npx playwright test
