@@ -45,6 +45,7 @@ extern "C" {
  *  - STATUS_BUFFER_TOO_SMALL:
  *      *out_count is set to the number of SG elements required.
  *      `out` (if non-NULL) contains the first out_cap elements.
+ *      This allows a "sizing call" by passing out==NULL and out_cap==0.
  *
  * Notes:
  *  - No allocations; suitable for DISPATCH_LEVEL.
