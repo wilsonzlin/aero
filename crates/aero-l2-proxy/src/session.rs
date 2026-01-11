@@ -283,6 +283,7 @@ async fn run_session_inner(
 
     let start = tokio::time::Instant::now();
     let mut fatal_err: Option<anyhow::Error> = None;
+    let mut close_handshake = false;
     let mut consecutive_protocol_errors: u32 = 0;
     const MAX_CONSECUTIVE_PROTOCOL_ERRORS: u32 = 3;
 
@@ -348,6 +349,7 @@ async fn run_session_inner(
                         if let Err(exceeded) =
                             send_ws_message(&ws_out_tx, Message::Binary(wire), &mut quotas).await
                         {
+                            close_handshake = true;
                             close_policy_violation(&ws_out_tx, exceeded.reason());
                             break;
                         }
@@ -364,6 +366,7 @@ async fn run_session_inner(
                 };
 
                 if let Some(exceeded) = quotas.on_inbound_message(&msg) {
+                    close_handshake = true;
                     close_policy_violation(&ws_out_tx, exceeded.reason());
                     break;
                 }
@@ -402,7 +405,10 @@ async fn run_session_inner(
                                         .await
                                         {
                                             Ok(SessionControl::Continue) => {}
-                                            Ok(SessionControl::Close) => break,
+                                            Ok(SessionControl::Close) => {
+                                                close_handshake = true;
+                                                break;
+                                            }
                                             Err(err) => {
                                                 fatal_err = Some(err);
                                                 break;
@@ -419,6 +425,7 @@ async fn run_session_inner(
                                             if let Err(exceeded) =
                                                 send_ws_message(&ws_out_tx, Message::Binary(pong), &mut quotas).await
                                             {
+                                                close_handshake = true;
                                                 close_policy_violation(&ws_out_tx, exceeded.reason());
                                                 break;
                                             }
@@ -485,6 +492,7 @@ async fn run_session_inner(
                         if let Err(exceeded) =
                             send_ws_message(&ws_out_tx, Message::Pong(payload), &mut quotas).await
                         {
+                            close_handshake = true;
                             close_policy_violation(&ws_out_tx, exceeded.reason());
                             break;
                         }
@@ -538,7 +546,10 @@ async fn run_session_inner(
                 .await
                 {
                     Ok(SessionControl::Continue) => {}
-                    Ok(SessionControl::Close) => break,
+                    Ok(SessionControl::Close) => {
+                        close_handshake = true;
+                        break;
+                    }
                     Err(err) => {
                         fatal_err = Some(err);
                         break;
@@ -546,6 +557,19 @@ async fn run_session_inner(
                 }
             }
         }
+    }
+
+    if close_handshake {
+        let _ = timeout(Duration::from_secs(1), async {
+            while let Some(msg) = ws_receiver.next().await {
+                match msg {
+                    Ok(Message::Close(_)) => break,
+                    Ok(_) => continue,
+                    Err(_) => break,
+                }
+            }
+        })
+        .await;
     }
 
     for (_, conn) in tcp_conns {
