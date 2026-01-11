@@ -477,6 +477,7 @@ Depending on your Guest Tools version, the report may include:
   - virtio-snd audio
   - virtio-input
   - Aero GPU / virtio-gpu graphics
+- AeroGPU D3D9 UMD DLL placement (on Win7 x64 this includes the WOW64 UMD under `C:\Windows\SysWOW64\`, required for 32-bit D3D9 apps)
 
 #### Note: how `verify.cmd` detects virtio-snd audio binding
 
