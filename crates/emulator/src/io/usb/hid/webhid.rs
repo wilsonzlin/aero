@@ -173,6 +173,7 @@ pub struct HidReportItem {
     #[serde(default = "default_true")]
     pub is_linear: bool,
     pub is_range: bool,
+    #[serde(default)]
     pub is_relative: bool,
     #[serde(default)]
     pub is_volatile: bool,
