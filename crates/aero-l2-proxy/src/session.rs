@@ -905,12 +905,19 @@ async fn process_actions(
                     state.metrics.udp_flow_opened();
                 }
 
-                if let Some(flow) = udp_flows.get(&key) {
-                    if let Some(activity_tx) = flow.activity_tx.as_ref() {
-                        let _ = activity_tx.try_send(());
-                    }
-                    if flow.socket.send(&data).await.is_err() {
-                        state.metrics.udp_send_failed();
+                let Some(flow) = udp_flows.get(&key) else {
+                    continue;
+                };
+                if let Some(activity_tx) = flow.activity_tx.as_ref() {
+                    let _ = activity_tx.try_send(());
+                }
+                let socket = flow.socket.clone();
+                let send_failed = socket.send(&data).await.is_err();
+                if send_failed {
+                    state.metrics.udp_send_failed();
+                    if let Some(flow) = udp_flows.remove(&key) {
+                        flow.task.abort();
+                        state.metrics.udp_flow_closed();
                     }
                 }
             }
@@ -1092,6 +1099,7 @@ async fn udp_task(
                 break;
             }
         }
+        let _ = event_tx.send(SessionEvent::UdpFlowClosed(key)).await;
         return;
     };
 

@@ -288,3 +288,157 @@ async fn udp_send_fail_metric_increments_on_icmp_unreachable() {
     ws_tx.send(Message::Close(None)).await.unwrap();
     proxy.shutdown().await;
 }
+
+#[tokio::test]
+async fn udp_flows_active_decrements_after_send_error() {
+    let _lock = ENV_LOCK.lock().await;
+
+    let remote_ip = Ipv4Addr::new(203, 0, 113, 11);
+    let remote_port = 9998;
+
+    let udp_forward = format!("{remote_ip}:{remote_port}=127.0.0.1:1");
+
+    let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
+    let _open = EnvVarGuard::set("AERO_L2_OPEN", "1");
+    let _allowed_origins = EnvVarGuard::unset("AERO_L2_ALLOWED_ORIGINS");
+    let _allowed_origins_extra = EnvVarGuard::unset("AERO_L2_ALLOWED_ORIGINS_EXTRA");
+    let _fallback_allowed = EnvVarGuard::unset("ALLOWED_ORIGINS");
+    let _allowed_hosts = EnvVarGuard::unset("AERO_L2_ALLOWED_HOSTS");
+    let _trust_proxy_host = EnvVarGuard::unset("AERO_L2_TRUST_PROXY_HOST");
+    let _auth_mode = EnvVarGuard::set("AERO_L2_AUTH_MODE", "none");
+    let _api_key = EnvVarGuard::unset("AERO_L2_API_KEY");
+    let _jwt_secret = EnvVarGuard::unset("AERO_L2_JWT_SECRET");
+    let _session_secret = EnvVarGuard::unset("AERO_L2_SESSION_SECRET");
+    let _session_secret_alias = EnvVarGuard::unset("SESSION_SECRET");
+    let _gateway_session_secret = EnvVarGuard::unset("AERO_GATEWAY_SESSION_SECRET");
+    let _legacy_token = EnvVarGuard::unset("AERO_L2_TOKEN");
+    let _allowed_udp = EnvVarGuard::set("AERO_L2_ALLOWED_UDP_PORTS", &remote_port.to_string());
+    let _udp_forward = EnvVarGuard::set("AERO_L2_UDP_FORWARD", &udp_forward);
+    let _idle = EnvVarGuard::set("AERO_L2_UDP_FLOW_IDLE_TIMEOUT_MS", "0");
+    let _ping_interval = EnvVarGuard::set("AERO_L2_PING_INTERVAL_MS", "0");
+
+    let cfg = ProxyConfig::from_env().unwrap();
+    let proxy = start_server(cfg).await.unwrap();
+    let addr = proxy.local_addr();
+
+    let baseline = reqwest::get(format!("http://{addr}/metrics"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    let send_fail_start = parse_metric(&baseline, "l2_udp_send_fail_total").unwrap_or(0);
+    assert_eq!(
+        parse_metric(&baseline, "l2_udp_flows_active").unwrap(),
+        0,
+        "expected no UDP flows at startup"
+    );
+
+    let req = ws_request(addr);
+    let (ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+    let (mut ws_tx, mut ws_rx) = ws.split();
+
+    let guest_mac = MacAddr([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0xee]);
+    let guest_ip = Ipv4Addr::new(10, 0, 2, 15);
+    let gateway_ip = Ipv4Addr::new(10, 0, 2, 2);
+    let stack_mac = MacAddr([0x02, 0x00, 0x00, 0x00, 0x00, 0x01]);
+
+    let dhcp_request = build_dhcp_request(0x1020_3040, guest_mac, guest_ip, gateway_ip);
+    let dhcp_frame = wrap_udp_ipv4_eth(
+        guest_mac,
+        MacAddr::BROADCAST,
+        Ipv4Addr::UNSPECIFIED,
+        Ipv4Addr::BROADCAST,
+        68,
+        67,
+        &dhcp_request,
+    );
+    ws_tx
+        .send(Message::Binary(encode_l2_frame(&dhcp_frame).into()))
+        .await
+        .unwrap();
+    let _ = wait_for_udp_datagram(&mut ws_rx, |udp| {
+        udp.src_port() == 67 && udp.dst_port() == 68
+    })
+    .await;
+
+    let payload = b"hi".to_vec();
+    let frame = wrap_udp_ipv4_eth(
+        guest_mac,
+        stack_mac,
+        guest_ip,
+        remote_ip,
+        50_000,
+        remote_port,
+        &payload,
+    );
+    ws_tx
+        .send(Message::Binary(encode_l2_frame(&frame).into()))
+        .await
+        .unwrap();
+
+    // First wait for the flow to be opened.
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let body = reqwest::get(format!("http://{addr}/metrics"))
+                .await
+                .unwrap()
+                .text()
+                .await
+                .unwrap();
+            let flows = parse_metric(&body, "l2_udp_flows_active").unwrap();
+            if flows >= 1 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+
+    // The connected UDP socket should eventually report `ECONNREFUSED` on a subsequent send. When
+    // that happens, the proxy should tear down the flow even when idle timeouts are disabled.
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            ws_tx
+                .send(Message::Binary(encode_l2_frame(&frame).into()))
+                .await
+                .unwrap();
+            tokio::time::sleep(Duration::from_millis(50)).await;
+
+            let body = reqwest::get(format!("http://{addr}/metrics"))
+                .await
+                .unwrap()
+                .text()
+                .await
+                .unwrap();
+            let send_fails = parse_metric(&body, "l2_udp_send_fail_total").unwrap_or(0);
+            if send_fails >= send_fail_start.saturating_add(1) {
+                break;
+            }
+        }
+    })
+    .await
+    .unwrap();
+
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let body = reqwest::get(format!("http://{addr}/metrics"))
+                .await
+                .unwrap()
+                .text()
+                .await
+                .unwrap();
+            let flows = parse_metric(&body, "l2_udp_flows_active").unwrap();
+            if flows == 0 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+
+    ws_tx.send(Message::Close(None)).await.unwrap();
+    proxy.shutdown().await;
+}
