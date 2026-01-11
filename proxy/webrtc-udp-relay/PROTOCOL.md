@@ -475,6 +475,11 @@ Supported auth modes:
 - `AUTH_MODE=api_key`: API key authentication.
 - `AUTH_MODE=jwt`: JWT (HS256) authentication.
 
+Canonical JWT (HS256) test vectors live in
+[`crates/conformance/test-vectors/aero-vectors-v1.json`](../../crates/conformance/test-vectors/aero-vectors-v1.json)
+under the `aero-udp-relay-jwt-hs256` key and are consumed by both the gateway token minting logic
+and the relay verifier to prevent cross-language drift.
+
 WebSocket credentials can be provided via either:
 
 1. **URL query string** (works for all clients):

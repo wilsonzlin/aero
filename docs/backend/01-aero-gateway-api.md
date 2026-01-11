@@ -88,6 +88,11 @@ Create or refresh a session. The gateway responds with a `Set-Cookie` header.
     - `Path=/`
 - Body: JSON with session metadata and limits (see `docs/backend/openapi.yaml`).
 
+Canonical `aero_session` token test vectors (HMAC signing + expiry semantics) live in
+[`crates/conformance/test-vectors/aero-vectors-v1.json`](../../crates/conformance/test-vectors/aero-vectors-v1.json)
+under the `aero_session` key. These vectors are consumed by the Node gateway, Rust L2 proxy, and
+other implementations to prevent cross-language drift.
+
 #### Endpoint discovery (`endpoints`)
 
 The JSON response includes an `endpoints` object with **relative paths** to the gateway’s networking surfaces:
