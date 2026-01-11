@@ -238,10 +238,7 @@ async fn version() -> impl IntoResponse {
     );
 
     (
-        [(
-            axum::http::header::CONTENT_TYPE,
-            "application/json",
-        )],
+        [(axum::http::header::CONTENT_TYPE, "application/json")],
         body,
     )
 }
