@@ -21,8 +21,10 @@ Options:
   --out-dir <dir>                    Output directory (required)
   --thresholds-file <path>           Threshold policy file (default: ${DEFAULT_THRESHOLDS_FILE})
   --profile <pr-smoke|nightly>       Threshold profile (default: ${DEFAULT_PROFILE})
+  --regression-threshold-pct <n>     Override maxRegressionPct for all browser metrics (percent)
+  --extreme-cv-threshold <n>         Override extremeCvThreshold for all browser metrics
   --help                             Show this help
-`;
+ `;
   console.log(msg.trim());
   process.exit(exitCode);
 }
@@ -34,6 +36,8 @@ function parseArgs(argv) {
     outDir: undefined,
     thresholdsFile: DEFAULT_THRESHOLDS_FILE,
     profile: DEFAULT_PROFILE,
+    regressionThresholdPct: undefined,
+    extremeCvThreshold: undefined,
   };
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -53,6 +57,12 @@ function parseArgs(argv) {
         break;
       case "--profile":
         out.profile = argv[++i];
+        break;
+      case "--regression-threshold-pct":
+        out.regressionThresholdPct = argv[++i];
+        break;
+      case "--extreme-cv-threshold":
+        out.extremeCvThreshold = argv[++i];
         break;
       case "--help":
         usage(0);
@@ -191,10 +201,21 @@ async function main() {
     : null;
   const envExtremeCv = process.env.PERF_EXTREME_CV_THRESHOLD ? Number(process.env.PERF_EXTREME_CV_THRESHOLD) : null;
 
-  if (isFiniteNumber(envMaxRegressionPct) || isFiniteNumber(envExtremeCv)) {
+  const cliMaxRegressionPct =
+    typeof opts.regressionThresholdPct === "string" ? Number(opts.regressionThresholdPct) / 100 : null;
+  const cliExtremeCv = typeof opts.extremeCvThreshold === "string" ? Number(opts.extremeCvThreshold) : null;
+
+  const overrideMaxRegressionPct = isFiniteNumber(cliMaxRegressionPct) ? cliMaxRegressionPct : envMaxRegressionPct;
+  const overrideExtremeCv = isFiniteNumber(cliExtremeCv) ? cliExtremeCv : envExtremeCv;
+
+  if (isFiniteNumber(overrideMaxRegressionPct) || isFiniteNumber(overrideExtremeCv)) {
     for (const c of cases) {
-      if (isFiniteNumber(envMaxRegressionPct)) c.threshold = { ...c.threshold, maxRegressionPct: envMaxRegressionPct };
-      if (isFiniteNumber(envExtremeCv)) c.threshold = { ...c.threshold, extremeCvThreshold: envExtremeCv };
+      if (isFiniteNumber(overrideMaxRegressionPct)) {
+        c.threshold = { ...c.threshold, maxRegressionPct: overrideMaxRegressionPct };
+      }
+      if (isFiniteNumber(overrideExtremeCv)) {
+        c.threshold = { ...c.threshold, extremeCvThreshold: overrideExtremeCv };
+      }
     }
   }
 

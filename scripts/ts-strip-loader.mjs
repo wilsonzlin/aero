@@ -24,3 +24,26 @@ export async function resolve(specifier, context, nextResolve) {
   return nextResolve(specifier, context);
 }
 
+export async function load(url, context, nextLoad) {
+  // Vite uses query-string imports like `?worker&url` / `?url` to turn an asset
+  // path into a URL string default export. When running the TypeScript sources
+  // directly under Node (with `--experimental-strip-types`), those query strings
+  // reach the native loader, which will load the underlying file as an ES module
+  // (and therefore not have a default export).
+  //
+  // For unit tests, we only need a stable string (the URL isn't actually fetched),
+  // so synthesize a minimal module that default-exports the resolved file URL.
+  const u = new URL(url);
+  if (u.protocol === "file:" && u.searchParams.has("url")) {
+    const base = new URL(url);
+    base.search = "";
+    base.hash = "";
+    return {
+      format: "module",
+      source: `export default ${JSON.stringify(base.href)};\n`,
+      shortCircuit: true,
+    };
+  }
+
+  return nextLoad(url, context);
+}
