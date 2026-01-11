@@ -455,6 +455,35 @@ function Get-InfAddServiceNames {
   return ,($names.Values | Sort-Object)
 }
 
+function Test-InfTextContainsAnyHardwareId {
+  param(
+    [Parameter(Mandatory = $true)][string] $InfText,
+    [Parameter(Mandatory = $true)][string[]] $HardwareIds
+  )
+
+  # INF files are line-oriented and use `;` for comments. We only want to treat a hardware ID
+  # as "present" if it appears in a non-comment portion of the file; otherwise we can pick up
+  # stale commented-out HWIDs and patch the device contract based on the wrong driver.
+  foreach ($rawLine in ($InfText -split "`r?`n")) {
+    $line = $rawLine
+    $semi = $line.IndexOf(';')
+    if ($semi -ge 0) {
+      $line = $line.Substring(0, $semi)
+    }
+    $line = $line.Trim()
+    if (-not $line) { continue }
+
+    foreach ($hwid in $HardwareIds) {
+      if (-not $hwid) { continue }
+      if ($line.IndexOf($hwid, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
+        return $true
+      }
+    }
+  }
+
+  return $false
+}
+
 function Update-WindowsDeviceContractStorageServiceFromDrivers {
   param(
     [Parameter(Mandatory = $true)][string] $ContractPath,
@@ -509,16 +538,7 @@ function Update-WindowsDeviceContractStorageServiceFromDrivers {
     } catch {
       continue
     }
-    $lower = $text.ToLowerInvariant()
-
-    $matchesHwid = $false
-    foreach ($hwid in $hwids) {
-      if ($lower.Contains($hwid.ToLowerInvariant())) {
-        $matchesHwid = $true
-        break
-      }
-    }
-    if (-not $matchesHwid) { continue }
+    if (-not (Test-InfTextContainsAnyHardwareId -InfText $text -HardwareIds $hwids)) { continue }
 
     foreach ($svc in (Get-InfAddServiceNames -InfPath $inf.FullName)) {
       $k = $svc.ToLowerInvariant()
