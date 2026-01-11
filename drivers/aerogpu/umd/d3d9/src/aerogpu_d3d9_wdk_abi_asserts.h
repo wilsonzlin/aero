@@ -6,7 +6,7 @@
 //
 // Usage (WDK build only)
 // ----------------------
-// 1) Define `AEROGPU_D3D9_USE_WDK_DDI` in your WDK build.
+// 1) Define `AEROGPU_D3D9_USE_WDK_DDI=1` in your WDK build.
 // 2) Include this header in a translation unit after the WDK headers are
 //    available on the include path.
 // 3) Optionally define one or more `AEROGPU_D3D9_WDK_ABI_EXPECT_*` macros (see

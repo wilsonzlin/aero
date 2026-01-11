@@ -184,7 +184,7 @@ Unsupported states are handled defensively; unknown state enums are accepted and
 
 The Win7 D3D9 runtime (and `dwm.exe`) can call a wider set of DDIs than the initial AeroGPU bring-up implementation provides. The UMD **must never** return a partially-populated `D3D9DDI_DEVICEFUNCS` / `D3D9DDI_ADAPTERFUNCS` table where the runtime can call a **NULL** function pointer (that would crash the process before we can even trace the call).
 
-In WDK builds (`AEROGPU_D3D9_USE_WDK_DDI`), the UMD populates every *known* function-table member with either a real implementation or a safe stub:
+In WDK builds (`AEROGPU_D3D9_USE_WDK_DDI=1`), the UMD populates every *known* function-table member with either a real implementation or a safe stub:
 
 - Stubs log once (`aerogpu-d3d9: stub <name>`)
 - Stubs emit a `D3d9TraceCall` record so trace dumps show which missing DDI was exercised

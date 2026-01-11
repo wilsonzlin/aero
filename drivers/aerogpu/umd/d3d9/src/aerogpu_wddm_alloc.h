@@ -20,7 +20,7 @@ namespace aerogpu {
 // These helpers wrap the runtime-provided D3DDDI device callbacks that create
 // allocations and map/unmap them for CPU access. Repository builds do not ship
 // with the Win7 WDK headers, so the real implementations are only compiled when
-// `AEROGPU_D3D9_USE_WDK_DDI` is defined.
+// `AEROGPU_D3D9_USE_WDK_DDI` is defined and truthy (set to 1).
 
 HRESULT wddm_create_allocation(const WddmDeviceCallbacks& callbacks,
                                WddmHandle hDevice,
@@ -45,4 +45,3 @@ HRESULT wddm_unlock_allocation(const WddmDeviceCallbacks& callbacks,
                                WddmAllocationHandle hAllocation);
 
 } // namespace aerogpu
-
