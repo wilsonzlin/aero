@@ -4,7 +4,7 @@
 name: aero
 
 services:
-  # Shared gateway session secret (cookie signing).
+  # Shared gateway session secret (session-cookie signing).
   #
   # `backend/aero-gateway` uses a signed `aero_session` cookie for privileged endpoints (e.g. `/tcp`).
   # `crates/aero-l2-proxy` can optionally validate the same cookie when `AERO_L2_AUTH_MODE` includes
