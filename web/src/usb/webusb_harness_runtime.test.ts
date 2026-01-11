@@ -180,4 +180,33 @@ describe("usb/WebUsbUhciHarnessRuntime", () => {
     expect(snapshot.blocked).toBe(true);
     expect(snapshot.pendingCompletions).toBe(0);
   });
+
+  it("stops when the harness emits an out-of-range action id (non-u32)", () => {
+    const port = new FakePort();
+
+    const action: unknown = {
+      kind: "controlIn",
+      id: 0x1_0000_0000n,
+      setup: { bmRequestType: 0x80, bRequest: 0x06, wValue: 0x0100, wIndex: 0, wLength: 18 },
+    };
+
+    const harness = {
+      tick: vi.fn(),
+      drain_actions: vi.fn(() => [action]),
+      push_completion: vi.fn(),
+      free: vi.fn(),
+    };
+
+    const runtime = new WebUsbUhciHarnessRuntime({
+      createHarness: () => harness,
+      port: port as unknown as MessagePort,
+      initiallyBlocked: false,
+    });
+    runtime.start();
+    runtime.pollOnce();
+
+    const snapshot = runtime.getSnapshot();
+    expect(snapshot.enabled).toBe(false);
+    expect(snapshot.lastError).toMatch(/uint32/i);
+  });
 });

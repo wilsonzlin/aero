@@ -104,14 +104,17 @@ function rewriteCompletionId(completion: UsbHostCompletion, id: number): UsbHost
 }
 
 function normalizeActionId(value: unknown): number {
+  const maxU32 = 0xffff_ffff;
   if (typeof value === "number") {
-    if (!Number.isSafeInteger(value) || value < 0) throw new Error(`USB action id must be a non-negative safe integer, got ${value}`);
+    if (!Number.isSafeInteger(value) || value < 0 || value > maxU32) {
+      throw new Error(`USB action id must fit in uint32, got ${String(value)}`);
+    }
     return value;
   }
   if (typeof value === "bigint") {
     if (value < 0n) throw new Error(`USB action id must be non-negative, got ${value.toString()}`);
-    if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
-      throw new Error(`USB action id is too large for JS number: ${value.toString()}`);
+    if (value > BigInt(maxU32)) {
+      throw new Error(`USB action id must fit in uint32, got ${value.toString()}`);
     }
     return Number(value);
   }
