@@ -207,12 +207,11 @@ export class GamepadCapture {
   }
 
   poll(queue: InputEventQueue, timestampUs: number, { active }: { active: boolean }): void {
-    // Always probe `getGamepads()` so we track connections even when inactive.
-    const pad = this.getActiveGamepad();
     if (!active) {
       return;
     }
 
+    const pad = this.getActiveGamepad();
     if (!pad) {
       this.emitNeutral(queue, timestampUs);
       return;
