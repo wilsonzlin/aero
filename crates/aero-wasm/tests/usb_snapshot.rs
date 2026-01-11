@@ -109,3 +109,46 @@ fn uhci_runtime_snapshot_is_deterministic_and_roundtrips() {
     let snap3 = runtime.snapshot_state().to_vec();
     assert_eq!(snap1, snap3, "snapshot should roundtrip");
 }
+
+#[wasm_bindgen_test]
+fn usb_snapshot_restore_rejects_device_id_mismatch() {
+    // UhciControllerBridge.
+    {
+        let mut guest = vec![0u8; 0x8000];
+        let guest_base = guest.as_mut_ptr() as u32;
+        let mut bridge = UhciControllerBridge::new(guest_base, guest.len() as u32)
+            .expect("new UhciControllerBridge");
+
+        let mut snap = bridge.snapshot_state().to_vec();
+        snap[8..12].copy_from_slice(b"NOPE");
+        assert!(
+            bridge.restore_state(&snap).is_err(),
+            "expected restore_state to reject device id mismatch"
+        );
+    }
+
+    // WebUsbUhciBridge.
+    {
+        let mut bridge = WebUsbUhciBridge::new(0);
+        let mut snap = bridge.snapshot_state().to_vec();
+        snap[8..12].copy_from_slice(b"NOPE");
+        assert!(
+            bridge.restore_state(&snap).is_err(),
+            "expected restore_state to reject device id mismatch"
+        );
+    }
+
+    // UhciRuntime.
+    {
+        let mut guest = vec![0u8; 0x8000];
+        let guest_base = guest.as_mut_ptr() as u32;
+        let mut runtime = UhciRuntime::new(guest_base, guest.len() as u32).expect("new UhciRuntime");
+
+        let mut snap = runtime.snapshot_state().to_vec();
+        snap[8..12].copy_from_slice(b"NOPE");
+        assert!(
+            runtime.restore_state(&snap).is_err(),
+            "expected restore_state to reject device id mismatch"
+        );
+    }
+}
