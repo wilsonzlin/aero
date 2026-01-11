@@ -1123,19 +1123,20 @@ static NTSTATUS APIENTRY AeroGpuDdiGetScanLine(_In_ const HANDLE hAdapter, _Inou
              * avoiding "stuck at scanline 0" behavior.
              */
             ULONGLONG newLastVblank100ns = now100ns;
-            ULONGLONG period100ns = periodNs / 100ull;
-            if (period100ns == 0) {
-                period100ns = 1;
-            }
 
             if (lastVblank100ns != 0 && cachedSeq != 0) {
                 const ULONGLONG deltaSeq = seq - cachedSeq;
                 ULONGLONG advance100ns = 0;
                 if (deltaSeq != 0) {
-                    if (deltaSeq > (~0ull / period100ns)) {
+                    /*
+                     * Compute (deltaSeq * periodNs) / 100 in 100ns units. Do the multiply first
+                     * to preserve sub-100ns remainder across multiple vblank intervals.
+                     */
+                    if (periodNs == 0 || deltaSeq > (~0ull / periodNs)) {
                         advance100ns = ~0ull;
                     } else {
-                        advance100ns = deltaSeq * period100ns;
+                        const ULONGLONG advanceNs = deltaSeq * periodNs;
+                        advance100ns = advanceNs / 100ull;
                     }
                 }
 
