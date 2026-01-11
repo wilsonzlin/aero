@@ -182,7 +182,8 @@ Where:
 
 - Each driver INF must match at least one hardware ID that includes the vendor/device pair: `PCI\VEN_xxxx&DEV_yyyy`
   (potentially with additional qualifiers like `&REV_..` and/or `&SUBSYS_...`).
-- For contract version safety, matching SHOULD be revision-gated (`&REV_01`) and/or the driver should validate the PCI Revision ID at runtime.
+- For contract version safety, **virtio** driver INFs MUST be revision-gated (`&REV_01`) to avoid binding to non-contract devices.
+  Virtio drivers SHOULD also validate the PCI Revision ID at runtime (defense in depth).
 - Matching MAY additionally be subsystem-qualified (`&SUBSYS_SSSSVVVV`) for safety, but then the emulator **must** keep those values stable.
 
 Examples (illustrative) INF model entries:
