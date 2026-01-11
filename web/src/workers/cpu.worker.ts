@@ -31,7 +31,6 @@ import {
 } from "../display/framebuffer_protocol";
 import {
   CPU_WORKER_DEMO_FRAMEBUFFER_HEIGHT,
-  CPU_WORKER_DEMO_FRAMEBUFFER_OFFSET_BYTES,
   CPU_WORKER_DEMO_FRAMEBUFFER_TILE_SIZE,
   CPU_WORKER_DEMO_FRAMEBUFFER_WIDTH,
   CPU_WORKER_DEMO_GUEST_COUNTER_INDEX,
@@ -684,7 +683,6 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
           pushEventBlocking({ kind: "resetRequest" }, 250);
         },
       });
-
       setReadyFlag(status, role, true);
       ctx.postMessage({ type: MessageType.READY, role } satisfies ProtocolMessage);
       if (perf.traceEnabled) perf.instant("boot:worker:ready", "p", { role });
@@ -694,7 +692,7 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
       //
       // Kick off WASM init in the background so the worker can enter its main loop
       // immediately (JS fallbacks will be used until WASM is ready).
-      void initWasmInBackground(init, segments.guestMemory);
+      void initWasmInBackground(init, segments.guestMemory, segments.sharedFramebufferOffsetBytes);
     } finally {
       perf.spanEnd("worker:init");
     }
@@ -705,7 +703,11 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
   void runLoop();
 }
 
-async function initWasmInBackground(init: WorkerInitMessage, guestMemory: WebAssembly.Memory): Promise<void> {
+async function initWasmInBackground(
+  init: WorkerInitMessage,
+  guestMemory: WebAssembly.Memory,
+  sharedFramebufferOffsetBytes: number,
+): Promise<void> {
   try {
     const { api, variant } = await perf.spanAsync("wasm:init", () =>
       initWasmForContext({
@@ -751,7 +753,10 @@ async function initWasmInBackground(init: WorkerInitMessage, guestMemory: WebAss
     if (CpuWorkerDemo) {
       try {
         const ramSizeBytes = guestMemory.buffer.byteLength >>> 0;
-        const framebufferLinearOffset = (guestU8.byteOffset + CPU_WORKER_DEMO_FRAMEBUFFER_OFFSET_BYTES) >>> 0;
+        const framebufferLinearOffset = (sharedFramebufferOffsetBytes ?? 0) >>> 0;
+        if (framebufferLinearOffset === 0) {
+          throw new Error("shared framebuffer is not embedded in guest memory; CpuWorkerDemo requires an in-wasm framebuffer.");
+        }
         const guestCounterLinearOffset = (guestU8.byteOffset + CPU_WORKER_DEMO_GUEST_COUNTER_OFFSET_BYTES) >>> 0;
         cpuDemo = new CpuWorkerDemo(
           ramSizeBytes,

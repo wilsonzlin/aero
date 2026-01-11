@@ -347,10 +347,10 @@ export function allocateSharedMemorySegments(options?: {
 
   // Shared CPU→GPU framebuffer demo region.
   //
-  // This is embedded directly in the shared guest `WebAssembly.Memory` so the
-  // CPU worker's WASM code can write/publish frames without any JS-side copies.
-  const sharedFramebuffer = guestBuffer;
-  const sharedFramebufferOffsetBytes = layout.guest_base + CPU_WORKER_DEMO_FRAMEBUFFER_OFFSET_BYTES;
+  // Prefer embedding directly in the shared guest `WebAssembly.Memory` so the
+  // CPU worker's WASM code can write/publish frames without JS-side copies. When
+  // the configured guest RAM is too small (e.g. unit tests using ~1MiB guest
+  // memory), fall back to a standalone SharedArrayBuffer.
   const sharedFramebufferLayout = computeSharedFramebufferLayout(
     CPU_WORKER_DEMO_FRAMEBUFFER_WIDTH,
     CPU_WORKER_DEMO_FRAMEBUFFER_HEIGHT,
@@ -358,12 +358,14 @@ export function allocateSharedMemorySegments(options?: {
     FramebufferFormat.RGBA8,
     CPU_WORKER_DEMO_FRAMEBUFFER_TILE_SIZE,
   );
-  const requiredBytes = sharedFramebufferOffsetBytes + sharedFramebufferLayout.totalBytes;
-  if (requiredBytes > guestBuffer.byteLength) {
-    throw new Error(
-      `Guest memory too small for shared framebuffer: need >= ${requiredBytes} bytes, got ${guestBuffer.byteLength} bytes`,
-    );
-  }
+
+  const embeddedOffsetBytes = layout.guest_base + CPU_WORKER_DEMO_FRAMEBUFFER_OFFSET_BYTES;
+  const embeddedRequiredBytes = embeddedOffsetBytes + sharedFramebufferLayout.totalBytes;
+
+  const sharedFramebufferEmbedded = embeddedRequiredBytes <= guestBuffer.byteLength;
+
+  const sharedFramebuffer = sharedFramebufferEmbedded ? guestBuffer : new SharedArrayBuffer(sharedFramebufferLayout.totalBytes);
+  const sharedFramebufferOffsetBytes = sharedFramebufferEmbedded ? embeddedOffsetBytes : 0;
   const sharedHeader = new Int32Array(sharedFramebuffer, sharedFramebufferOffsetBytes, SHARED_FRAMEBUFFER_HEADER_U32_LEN);
   Atomics.store(sharedHeader, SharedFramebufferHeaderIndex.MAGIC, SHARED_FRAMEBUFFER_MAGIC);
   Atomics.store(sharedHeader, SharedFramebufferHeaderIndex.VERSION, SHARED_FRAMEBUFFER_VERSION);
