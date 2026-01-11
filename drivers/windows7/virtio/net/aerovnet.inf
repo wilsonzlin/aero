@@ -25,6 +25,12 @@ CatalogFile = aerovnet.cat
 [DestinationDirs]
 AeroVNet.CopyFiles = 12  ; DIRID_DRIVERS
 
+[SourceDisksNames]
+1 = %DiskName%,,,
+
+[SourceDisksFiles]
+aerovnet.sys = 1
+
 [AeroVNet_Install.NT]
 Characteristics = 0x84 ; NCF_PHYSICAL | NCF_HAS_UI
 BusType         = 5    ; PCI
@@ -61,5 +67,6 @@ HKR, Ndi\Interfaces, LowerRange, 0, "ethernet"
 
 [Strings]
 Aero = "Aero"
+DiskName = "Aero virtio-net Driver"
 AeroVNet.DeviceDesc = "Aero Virtio Ethernet Adapter"
 AeroVNet.ServiceDesc = "Aero Virtio Ethernet Adapter"
