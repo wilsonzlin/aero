@@ -93,6 +93,10 @@ if ($VerifyVirtioSndWav) {
   }
 }
 
+if ($VirtioTransitional -and $WithVirtioSnd) {
+  throw "-VirtioTransitional is incompatible with -WithVirtioSnd (virtio-snd testing requires modern-only virtio-pci + contract revision overrides)."
+}
+
 function Start-AeroSelftestHttpServer {
   param(
     [Parameter(Mandatory = $true)] [int]$Port,
@@ -316,10 +320,13 @@ function Get-AeroVirtioSoundDeviceArg {
     [Parameter(Mandatory = $true)] [string]$QemuSystem
   )
 
-  # Determine which QEMU virtio-snd PCI device name is available and probe for optional
-  # virtio-pci properties. The current Aero Win7 virtio-snd driver uses the legacy
-  # virtio-pci I/O-port transport, so we must keep legacy mode enabled (do not set
-  # disable-legacy=on).
+  # Determine which QEMU virtio-snd PCI device name is available and validate it supports
+  # the Aero contract v1 configuration we need.
+  #
+  # The strict Aero INF (`aero-virtio-snd.inf`) matches only the modern virtio-snd PCI ID
+  # (`PCI\VEN_1AF4&DEV_1059`) and requires `REV_01`, so we must:
+  #   - force modern-only virtio-pci enumeration (`disable-legacy=on` => `DEV_1059`)
+  #   - force PCI Revision ID 0x01 (`x-pci-revision=0x01` => `REV_01`)
   $deviceName = Resolve-AeroVirtioSndPciDeviceName -QemuSystem $QemuSystem
   $help = & $QemuSystem -device "$deviceName,help" 2>&1
   $exitCode = $LASTEXITCODE
@@ -330,12 +337,13 @@ function Get-AeroVirtioSoundDeviceArg {
 
   $helpText = $help -join "`n"
   $device = "$deviceName,audiodev=snd0"
-  if ($helpText -match "disable-legacy") {
-    $device += ",disable-legacy=off"
+  if ($helpText -notmatch "(?m)^\s*disable-legacy\b") {
+    throw "virtio-snd device '$deviceName' does not expose 'disable-legacy' (required to force DEV_1059). Upgrade QEMU."
   }
-  if ($helpText -match "x-pci-revision") {
-    $device += ",x-pci-revision=0x01"
+  if ($helpText -notmatch "(?m)^\s*x-pci-revision\b") {
+    throw "virtio-snd device '$deviceName' does not expose 'x-pci-revision' (required for REV_01). Upgrade QEMU."
   }
+  $device += ",disable-legacy=on,x-pci-revision=0x01"
   return $device
 }
 

@@ -215,7 +215,7 @@ only if you explicitly want the base image to be mutated.
   - `virtio-net-pci,disable-legacy=on,x-pci-revision=0x01` with `-netdev user` (modern-only; enumerates as `PCI\VEN_1AF4&DEV_1041`)
   - `virtio-keyboard-pci,disable-legacy=on,x-pci-revision=0x01` + `virtio-mouse-pci,disable-legacy=on,x-pci-revision=0x01` (virtio-input; modern-only; enumerates as `PCI\VEN_1AF4&DEV_1052`)
   - `-drive if=none,id=drive0` + `virtio-blk-pci,drive=drive0,disable-legacy=on,x-pci-revision=0x01` (modern-only; enumerates as `PCI\VEN_1AF4&DEV_1042`)
-  - (optional) `virtio-snd` PCI device when `-WithVirtioSnd` / `--with-virtio-snd` is set (keeps legacy transport enabled; adds `x-pci-revision=0x01` when supported)
+  - (optional) `virtio-snd` PCI device when `-WithVirtioSnd` / `--with-virtio-snd` is set (`disable-legacy=on,x-pci-revision=0x01`; enumerates as `PCI\VEN_1AF4&DEV_1059`)
 - Watches the serial log for:
   - `AERO_VIRTIO_SELFTEST|RESULT|PASS` / `AERO_VIRTIO_SELFTEST|RESULT|FAIL`
   - When `RESULT|PASS` is seen, the harness also requires that the guest emitted per-test markers for:
@@ -235,8 +235,9 @@ the legacy I/O-port transport (transitional devices enumerate with the older `0x
 [`docs/windows7-virtio-driver-contract.md`](../../../../docs/windows7-virtio-driver-contract.md) (`AERO-W7-VIRTIO` v1),
 which is modern-only.
 
-Note: `drivers/windows7/virtio-snd` currently builds a legacy virtio-pci I/O-port audio driver, so the harness intentionally does **not** set
-`disable-legacy=on` for virtio-snd (the device may enumerate as the transitional ID `DEV_1018`).
+When `-WithVirtioSnd` / `--with-virtio-snd` is enabled, the harness also forces `disable-legacy=on` and
+`x-pci-revision=0x01` on the virtio-snd device so it matches the Aero contract v1 ID (`DEV_1059&REV_01`)
+and the strict `aero-virtio-snd.inf` binds under QEMU.
 
 #### Verifying what your QEMU build reports (no guest required)
 
@@ -253,6 +254,9 @@ If your QEMU build does not support `disable-legacy=on` (or you need transitiona
 
 - PowerShell: add `-VirtioTransitional`
 - Python: add `--virtio-transitional`
+
+Note: transitional mode is incompatible with virtio-snd testing (`-WithVirtioSnd` / `--with-virtio-snd`), since virtio-snd
+testing requires the contract-v1 overrides (`disable-legacy=on,x-pci-revision=0x01`).
 
 ## Provisioning an image (recommended approach)
 
@@ -276,10 +280,11 @@ For safety and determinism, the provisioning script installs **only an allowlist
 (virtio blk/net/input/snd). This avoids accidentally installing experimental/test INFs (for example
 `virtio-transport-test.inf`) that can match the same HWIDs and steal device binding.
 
-Note: the harness uses **modern-only** virtio device IDs for virtio-net/virtio-blk/virtio-input (`DEV_1041`/`DEV_1042`/`DEV_1052`).
-For virtio-snd, the current Win7 driver build is legacy-only, so the harness keeps legacy transport enabled and the
-device may enumerate as `DEV_1018`. The Aero virtio-snd INF (`aero-virtio-snd.inf`) matches both `DEV_1059` and
-`DEV_1018` for compatibility.
+Note: the harness uses **modern-only** virtio device IDs for virtio-net/virtio-blk/virtio-input
+(`DEV_1041`/`DEV_1042`/`DEV_1052`).
+
+When `-WithVirtioSnd` / `--with-virtio-snd` is enabled, it also uses the **modern** virtio-snd ID (`DEV_1059`)
+and forces `REV_01` so the strict Aero INF (`aero-virtio-snd.inf`) binds.
 
 For virtio-net, use a contract-v1 driver that binds `DEV_1041` (for example `drivers/windows7/virtio/net/`).
 Avoid installing multiple INFs that bind the same HWID, or disambiguate by passing a relative INF path via

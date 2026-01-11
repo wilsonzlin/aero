@@ -10,9 +10,10 @@ Note: This harness intentionally uses *modern-only* virtio-pci devices (`disable
 virtio-blk/virtio-net/virtio-input so the Win7 drivers bind to the Aero contract v1 IDs
 (DEV_1041/DEV_1042/DEV_1052).
 
-The current Aero Win7 virtio-snd driver build uses the **legacy** virtio-pci I/O-port transport.
-When `--with-virtio-snd` is enabled, the harness keeps legacy mode enabled for virtio-snd (it does
-not set `disable-legacy=on`), so virtio-snd may enumerate as the transitional ID `DEV_1018`.
+When `--with-virtio-snd` is enabled, the harness also forces contract-v1 virtio-snd identity:
+
+- `disable-legacy=on` so the device enumerates as the modern virtio-snd ID (`DEV_1059`)
+- `x-pci-revision=0x01` so strict Aero `REV_01` INFs bind under QEMU
 
 Use `--virtio-transitional` to opt back into QEMU's default transitional devices (legacy + modern)
 for older QEMU builds (or when intentionally testing legacy driver packages).
@@ -808,8 +809,10 @@ def _get_qemu_virtio_sound_device_arg(qemu_system: str) -> str:
     """
     Return the virtio-snd PCI device arg string.
 
-    The current Aero Win7 virtio-snd driver uses the legacy virtio-pci I/O-port transport, so we
-    keep legacy mode enabled (do not set disable-legacy=on).
+    The Aero Win7 virtio-snd contract v1 expects the modern virtio-pci ID space (`DEV_1059`) and
+    PCI Revision ID 0x01, so we force:
+      - disable-legacy=on
+      - x-pci-revision=0x01
     """
     device_name = _detect_virtio_snd_device(qemu_system)
     proc = subprocess.run(
@@ -826,12 +829,17 @@ def _get_qemu_virtio_sound_device_arg(qemu_system: str) -> str:
         )
 
     out = proc.stdout or ""
-    device = f"{device_name},audiodev=snd0"
-    if "disable-legacy" in out:
-        device += ",disable-legacy=off"
-    if "x-pci-revision" in out:
-        device += ",x-pci-revision=0x01"
-    return device
+    if "disable-legacy" not in out:
+        raise RuntimeError(
+            f"virtio-snd device '{device_name}' does not expose 'disable-legacy' "
+            "(required to force DEV_1059). Upgrade QEMU."
+        )
+    if "x-pci-revision" not in out:
+        raise RuntimeError(
+            f"virtio-snd device '{device_name}' does not expose 'x-pci-revision' "
+            "(required for REV_01). Upgrade QEMU."
+        )
+    return f"{device_name},audiodev=snd0,disable-legacy=on,x-pci-revision=0x01"
 
 
 def _looks_like_chunk_id(chunk_id: bytes) -> bool:
