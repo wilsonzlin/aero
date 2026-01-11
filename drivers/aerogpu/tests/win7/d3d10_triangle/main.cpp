@@ -106,6 +106,12 @@ static int RunD3D10Triangle(int argc, char** argv) {
     return aerogpu_test::FailHresult(kTestName, "D3D10CreateDeviceAndSwapChain(HARDWARE)", hr);
   }
 
+  // This test is specifically intended to exercise the D3D10 runtime path (d3d10.dll), which
+  // should in turn use the UMD's OpenAdapter10 entrypoint.
+  if (!GetModuleHandleW(L"d3d10.dll")) {
+    return aerogpu_test::Fail(kTestName, "d3d10.dll is not loaded");
+  }
+
   ComPtr<IDXGIDevice> dxgi_device;
   hr = device->QueryInterface(__uuidof(IDXGIDevice), (void**)dxgi_device.put());
   if (SUCCEEDED(hr)) {
@@ -170,6 +176,20 @@ static int RunD3D10Triangle(int argc, char** argv) {
     int umd_rc = aerogpu_test::RequireAeroGpuD3D10UmdLoaded(kTestName);
     if (umd_rc != 0) {
       return umd_rc;
+    }
+
+    HMODULE umd = GetModuleHandleW(aerogpu_test::ExpectedAeroGpuD3D10UmdModuleBaseName());
+    if (!umd) {
+      return aerogpu_test::Fail(kTestName, "failed to locate loaded AeroGPU D3D10/11 UMD module");
+    }
+    FARPROC open_adapter_10 = GetProcAddress(umd, "OpenAdapter10");
+    if (!open_adapter_10) {
+      // On x86, stdcall decoration may be present depending on how the DLL was linked.
+      open_adapter_10 = GetProcAddress(umd, "_OpenAdapter10@4");
+    }
+    if (!open_adapter_10) {
+      return aerogpu_test::Fail(kTestName,
+                                "expected AeroGPU D3D10/11 UMD to export OpenAdapter10 (D3D10 entrypoint)");
     }
   }
 
