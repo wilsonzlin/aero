@@ -576,9 +576,10 @@ UDP relay modes:
 - `WS /udp?v=1&host=<host>&port=<port>` (or `target=<host>:<port>`): legacy per-target UDP relay (raw UDP payload bytes).
 
 The simplest approach is one WebSocket per TCP connection (`/tcp`). For high
-connection counts (thousands of concurrent guest sockets), the gateway should
-support multiplexing many TCP streams over a single WebSocket connection
-(`GET /tcp-mux`, subprotocol `aero-tcp-mux-v1`). See
+connection counts (thousands of concurrent guest sockets), use multiplexing
+many TCP streams over a single WebSocket connection (`GET /tcp-mux`,
+subprotocol `aero-tcp-mux-v1`). Both the production gateway (`backend/aero-gateway`)
+and the local dev relay (`net-proxy/`) expose `/tcp-mux`. See
 [`docs/backend/01-aero-gateway-api.md`](./backend/01-aero-gateway-api.md) for the
 wire protocol.
 
@@ -695,6 +696,7 @@ Notes:
 For local development/testing of the `/tcp-mux` framing protocol (`aero-tcp-mux-v1`):
 
 - **Production (Aero Gateway):** canonical framing implemented by `backend/aero-gateway`.
+- **Local development relay (recommended):** `net-proxy/` exposes `/tcp-mux` and uses `AERO_PROXY_OPEN` / `AERO_PROXY_ALLOW` for per-stream policy.
 - **Dev relay (standalone):** `tools/net-proxy-server/` speaks the same framing, but uses `?token=` auth (not gateway cookie sessions).
 - **Browser client:** `web/src/net/tcpMuxProxy.ts`.
 - **TcpProxyEvent adapter:** `web/src/net/tcpProxy.ts` (`WebSocketTcpProxyMuxClient`) exposes the mux client behind the same event-sink interface as the legacy one-WebSocket-per-connection `WebSocketTcpProxyClient`.

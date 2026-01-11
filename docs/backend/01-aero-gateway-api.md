@@ -39,12 +39,14 @@ Generic form:
 
 - `POST http://localhost:PORT/session`
 - `ws://localhost:PORT/tcp?v=1&host=example.com&port=443`
+- `ws://localhost:PORT/tcp-mux` (subprotocol: `aero-tcp-mux-v1`)
 - `http://localhost:PORT/dns-query?...`
 
 Concrete example (assuming the gateway is running on port `8787`):
 
 - `POST http://localhost:8787/session`
 - `ws://localhost:8787/tcp?v=1&host=example.com&port=443`
+- `ws://localhost:8787/tcp-mux` (subprotocol: `aero-tcp-mux-v1`)
 - `http://localhost:8787/dns-query?...`
 
 ---
@@ -359,8 +361,9 @@ If you want a concrete implementation to compare against:
   - `backend/aero-gateway/src/routes/tcpMux.ts`
 - Browser client (TypeScript):
   - `web/src/net/tcpMuxProxy.ts`
-- Dev relay (Node):
-  - `tools/net-proxy-server/src/protocol.js`
+- Dev relays (Node):
+  - `net-proxy/` (local development relay; `/tcp-mux` endpoint)
+  - `tools/net-proxy-server/` (standalone dev relay; `/tcp-mux` with `?token=` auth)
 
 ## 4) `/dns-query` DNS-over-HTTPS (DoH)
 
