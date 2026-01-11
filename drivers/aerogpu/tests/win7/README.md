@@ -53,6 +53,8 @@ drivers/aerogpu/tests/win7/
   d3d10_triangle/
   d3d10_1_triangle/
   d3d11_triangle/
+  d3d11_geometry_shader_smoke/
+  d3d11_swapchain_rotate_sanity/
   d3d11_map_dynamic_buffer_sanity/
   d3d11_update_subresource_texture_sanity/
   readback_sanity/
@@ -169,6 +171,8 @@ In a Win7 VM with AeroGPU installed and working correctly:
 * `d3d10_triangle` renders a green triangle over a red clear and confirms **corner red + center green** via readback
 * `d3d10_1_triangle` uses `D3D10CreateDeviceAndSwapChain1` (hardware), verifies the D3D10.1 runtime path (`d3d10_1.dll`) and the AeroGPU `OpenAdapter10_2` export, and confirms **corner red + center green** via readback
 * `d3d11_triangle` renders a green triangle over a red clear and confirms **corner red + center green** via readback
+* `d3d11_geometry_shader_smoke` renders a triangle through the Geometry Shader stage (requires feature level >= 10_0) and confirms **corner red + center green** via readback
+* `d3d11_swapchain_rotate_sanity` creates a 2-buffer swapchain, clears buffer0 red + buffer1 green, presents, then validates that DXGI rotated buffer identities (expects **buffer0 green + buffer1 red**)
 * `d3d11_map_dynamic_buffer_sanity` writes a dynamic buffer via `Map(WRITE_DISCARD)` + `Map(WRITE_NO_OVERWRITE)` and verifies the bytes via `CopyResource` + staging readback
 * `d3d11_update_subresource_texture_sanity` uploads a deterministic `B8G8R8A8` pattern via `UpdateSubresource` and verifies it via staging readback
 * `readback_sanity` renders to an offscreen render target and validates readback pixels (corner red, center green)
