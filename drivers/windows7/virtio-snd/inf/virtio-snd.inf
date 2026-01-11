@@ -1,10 +1,12 @@
 ; SPDX-License-Identifier: MIT OR Apache-2.0
 
-; virtio-snd (Windows 7) - clean-room PortCls/WaveRT render-only driver INF.
-
-; NOTE: `aero-virtio-snd.inf` is the canonical INF used by Aero Guest Tools.
-; This legacy-named INF is kept for compatibility with workflows/tools that
-; still reference `virtio-snd.inf`. Keep it functionally equivalent.
+; virtio-snd.inf (Windows 7) - legacy filename alias for the Aero virtio-snd
+; driver INF (`aero-virtio-snd.inf`).
+;
+; This INF is kept for compatibility with workflows/tools that still reference
+; the legacy filename. It intentionally matches only Aero virtio contract v1
+; devices (modern virtio-pci, REV_01) and MUST NOT bind transitional/legacy
+; virtio-snd device IDs.
 
 [Version]
 Signature   = "$WINDOWS NT$"
@@ -18,9 +20,13 @@ CatalogFile = virtio-snd.cat
 %ProviderName% = VirtioSndModels,NTx86,NTamd64
 
 [VirtioSndModels.NTx86]
-; Aero Windows 7 Virtio contract v1 defines virtio-snd as a **virtio-pci modern**
-; device (MMIO BAR0 + vendor-specific capabilities), Vendor ID 0x1AF4, Device ID
-; 0x1059, Revision ID 0x01 (see `docs/windows7-virtio-driver-contract.md`).
+; Aero Windows 7 virtio device contract:
+;   - Modern virtio-pci only (PCI vendor-specific capabilities + MMIO)
+;   - PCI Revision ID encodes the contract major version (v1 == REV_01)
+; See: docs/windows7-virtio-driver-contract.md
+;
+; Aero virtio-snd (virtio device id 25) uses the modern virtio-pci ID space:
+;   DEV = 0x1040 + 25 = 0x1059
 ;
 ; This driver uses the virtio-pci **modern** transport (MMIO + vendor-specific
 ; capabilities) and binds to the modern/non-transitional virtio-snd ID
@@ -30,8 +36,12 @@ CatalogFile = virtio-snd.cat
 ; contract v1 is intentionally **modern-only**; configure the hypervisor for
 ; modern enumeration (e.g. QEMU `disable-legacy=on`) so Windows sees `DEV_1059`.
 ;
-; Match `REV_01` in the INF to avoid binding to unsupported contract versions.
+; Contract v1 devices MUST expose PCI Revision ID 0x01. Match REV_01 in the INF
+; to avoid binding to unsupported contract versions.
 %VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1059&REV_01
+;
+; Optional: Further restrict binding to Aero’s virtio-snd subsystem ID.
+; (Subsystem Device ID 0x0019, Subsystem Vendor ID 0x1AF4 => SUBSYS_00191AF4)
 ; %VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1059&SUBSYS_00191AF4&REV_01
 
 [VirtioSndModels.NTamd64]
