@@ -1264,6 +1264,189 @@ bool TestCreateResourceIgnoresStaleAllocPrivDataForNonShared() {
   return true;
 }
 
+bool TestAllocBackedUnlockEmitsDirtyRange() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3D9DDI_HADAPTER hAdapter{};
+    D3D9DDI_HDEVICE hDevice{};
+    AEROGPU_D3D9DDI_HRESOURCE hResource{};
+    bool has_adapter = false;
+    bool has_device = false;
+    bool has_resource = false;
+
+    ~Cleanup() {
+      if (has_resource && device_funcs.pfnDestroyResource) {
+        device_funcs.pfnDestroyResource(hDevice, hResource);
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  if (!Check(open.hAdapter.pDrvPrivate != nullptr, "OpenAdapter2 returned adapter handle")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnCreateResource != nullptr, "CreateResource must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnLock != nullptr && cleanup.device_funcs.pfnUnlock != nullptr, "Lock/Unlock must be available")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Simulate a WDDM-enabled device so allocation-list tracking and alloc-backed
+  // dirty-range updates are enabled in portable builds.
+  dev->wddm_context.hContext = 1;
+  D3DDDI_ALLOCATIONLIST list[4] = {};
+  dev->alloc_list_tracker.rebind(list, 4, 0xFFFFu);
+
+  aerogpu_wddm_alloc_priv priv{};
+  std::memset(&priv, 0, sizeof(priv));
+
+  AEROGPU_D3D9DDIARG_CREATERESOURCE create_res{};
+  create_res.type = 6u; // D3DRTYPE_VERTEXBUFFER
+  create_res.format = 0;
+  create_res.width = 0;
+  create_res.height = 0;
+  create_res.depth = 1;
+  create_res.mip_levels = 1;
+  create_res.usage = 0;
+  create_res.pool = 0;
+  create_res.size = 64;
+  create_res.hResource.pDrvPrivate = nullptr;
+  create_res.pSharedHandle = nullptr;
+  create_res.pKmdAllocPrivateData = &priv;
+  create_res.KmdAllocPrivateDataSize = sizeof(priv);
+  create_res.wddm_hAllocation = 0xABCDu;
+
+  hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_res);
+  if (!Check(hr == S_OK, "CreateResource(alloc-backed VB)")) {
+    return false;
+  }
+  if (!Check(create_res.hResource.pDrvPrivate != nullptr, "CreateResource returned resource handle")) {
+    return false;
+  }
+  cleanup.hResource = create_res.hResource;
+  cleanup.has_resource = true;
+
+  auto* res = reinterpret_cast<Resource*>(create_res.hResource.pDrvPrivate);
+  if (!Check(res != nullptr, "resource pointer")) {
+    return false;
+  }
+  if (!Check(res->backing_alloc_id != 0, "alloc-backed resource backing_alloc_id non-zero")) {
+    return false;
+  }
+  if (!Check(res->wddm_hAllocation == create_res.wddm_hAllocation, "resource preserves WDDM hAllocation")) {
+    return false;
+  }
+
+  // Portable builds don't have a WDDM lock callback; resize CPU shadow storage
+  // so Lock/Unlock can proceed while still exercising the alloc-backed update path.
+  if (res->storage.size() < res->size_bytes) {
+    res->storage.resize(res->size_bytes);
+  }
+
+  constexpr uint32_t kOffset = 4;
+  constexpr uint32_t kSize = 16;
+
+  AEROGPU_D3D9DDIARG_LOCK lock{};
+  lock.hResource = create_res.hResource;
+  lock.offset_bytes = kOffset;
+  lock.size_bytes = kSize;
+  lock.flags = 0;
+  AEROGPU_D3D9DDI_LOCKED_BOX box{};
+  hr = cleanup.device_funcs.pfnLock(create_dev.hDevice, &lock, &box);
+  if (!Check(hr == S_OK, "Lock(alloc-backed VB)")) {
+    return false;
+  }
+  if (!Check(box.pData != nullptr, "Lock returns pData")) {
+    return false;
+  }
+  std::memset(box.pData, 0xCD, kSize);
+
+  AEROGPU_D3D9DDIARG_UNLOCK unlock{};
+  unlock.hResource = create_res.hResource;
+  unlock.offset_bytes = 0;
+  unlock.size_bytes = 0;
+  hr = cleanup.device_funcs.pfnUnlock(create_dev.hDevice, &unlock);
+  if (!Check(hr == S_OK, "Unlock(alloc-backed VB)")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+
+  if (!Check(FindLastOpcode(buf, len, AEROGPU_CMD_CREATE_BUFFER).hdr != nullptr, "CREATE_BUFFER emitted")) {
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_UPLOAD_RESOURCE) == 0,
+             "alloc-backed Unlock does not emit UPLOAD_RESOURCE")) {
+    return false;
+  }
+
+  const CmdLoc dirty = FindLastOpcode(buf, len, AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+  if (!Check(dirty.hdr != nullptr, "RESOURCE_DIRTY_RANGE emitted")) {
+    return false;
+  }
+  const auto* dirty_cmd = reinterpret_cast<const aerogpu_cmd_resource_dirty_range*>(dirty.hdr);
+  if (!Check(dirty_cmd->resource_handle == res->handle, "RESOURCE_DIRTY_RANGE resource_handle")) {
+    return false;
+  }
+  if (!Check(dirty_cmd->offset_bytes == kOffset, "RESOURCE_DIRTY_RANGE offset")) {
+    return false;
+  }
+  if (!Check(dirty_cmd->size_bytes == kSize, "RESOURCE_DIRTY_RANGE size")) {
+    return false;
+  }
+
+  if (!Check(dev->alloc_list_tracker.list_len() == 1, "allocation list has 1 entry")) {
+    return false;
+  }
+  if (!Check(list[0].hAllocation == create_res.wddm_hAllocation, "allocation list carries hAllocation")) {
+    return false;
+  }
+  if (!Check(list[0].WriteOperation == 0, "allocation list entry remains read-only for buffer CPU write")) {
+    return false;
+  }
+  return Check(list[0].AllocationListSlotId == 0, "allocation list slot id == 0");
+}
+
 bool TestSharedResourceCreateAndOpenEmitsExportImport() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
@@ -5720,6 +5903,7 @@ int main() {
   failures += !aerogpu::TestAdapterCachingUpdatesCallbacks();
   failures += !aerogpu::TestCreateResourceRejectsUnsupportedGpuFormat();
   failures += !aerogpu::TestCreateResourceIgnoresStaleAllocPrivDataForNonShared();
+  failures += !aerogpu::TestAllocBackedUnlockEmitsDirtyRange();
   failures += !aerogpu::TestSharedResourceCreateAndOpenEmitsExportImport();
   failures += !aerogpu::TestPresentStatsAndFrameLatency();
   failures += !aerogpu::TestPresentExSubmitsOnceWhenNoPendingRenderWork();
