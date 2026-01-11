@@ -51,16 +51,34 @@ NTSTATUS VirtIoSndAllocCommonBuffer(PVIRTIOSND_DMA_CONTEXT Ctx, SIZE_T Size, BOO
 _Use_decl_annotations_
 VOID VirtIoSndFreeCommonBuffer(PVIRTIOSND_DMA_CONTEXT Ctx, PVIRTIOSND_DMA_BUFFER Buf)
 {
-    UNREFERENCED_PARAMETER(Ctx);
+    VIRTIOSND_DMA_BUFFER tmp;
+    BOOLEAN bufInAllocation;
 
-    if (Buf == NULL) {
+    if (Buf == NULL || Buf->Va == NULL || Buf->Size == 0) {
         return;
     }
 
-    if (Buf->Va != NULL) {
-        free(Buf->Va);
+    /* Keep behavior aligned with the real driver implementation. */
+    NT_ASSERT(Ctx != NULL);
+
+    /*
+     * The virtio-snd control engine stores its VIRTIOSND_DMA_BUFFER metadata inside
+     * the allocation being freed. Avoid writing to *Buf after freeing Buf->Va.
+     */
+    tmp = *Buf;
+    bufInAllocation = FALSE;
+    {
+        ULONGLONG start = (ULONGLONG)(UINT64)(uintptr_t)tmp.Va;
+        ULONGLONG end = start + (ULONGLONG)tmp.Size;
+        ULONGLONG addr = (ULONGLONG)(UINT64)(uintptr_t)Buf;
+        if (end >= start && addr >= start && addr < end) {
+            bufInAllocation = TRUE;
+        }
     }
 
-    RtlZeroMemory(Buf, sizeof(*Buf));
-}
+    free(tmp.Va);
 
+    if (!bufInAllocation) {
+        RtlZeroMemory(Buf, sizeof(*Buf));
+    }
+}
