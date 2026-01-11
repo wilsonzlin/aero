@@ -4,9 +4,10 @@
 ; driver INF (`aero-virtio-snd.inf`).
 ;
 ; This INF is kept for compatibility with workflows/tools that still reference
-; the legacy filename. It intentionally matches only Aero virtio contract v1
-; devices (modern virtio-pci, REV_01) and MUST NOT bind transitional/legacy
-; virtio-snd device IDs.
+; the legacy filename. It prefers the Aero virtio contract v1 HWID
+; (`PCI\VEN_1AF4&DEV_1059&REV_01`) but also matches the less specific modern
+; ID and the transitional virtio-snd PCI ID for compatibility with hypervisors
+; that expose legacy+modern virtio frontends by default.
 
 [Version]
 Signature   = "$WINDOWS NT$"
@@ -34,6 +35,8 @@ CatalogFile = virtio-snd.cat
 ; Contract v1 devices MUST expose PCI Revision ID 0x01. Match REV_01 in the INF
 ; to avoid binding to unsupported contract versions.
 %VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1059&REV_01
+%VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1059
+%VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1018
 ;
 ; Optional: Further restrict binding to Aero’s virtio-snd subsystem ID.
 ; (Subsystem Device ID 0x0019, Subsystem Vendor ID 0x1AF4 => SUBSYS_00191AF4)
@@ -41,6 +44,8 @@ CatalogFile = virtio-snd.cat
 
 [VirtioSndModels.NTamd64]
 %VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1059&REV_01
+%VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1059
+%VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1018
 ; %VirtioSnd.DeviceDesc% = VirtioSnd_Install, PCI\VEN_1AF4&DEV_1059&SUBSYS_00191AF4&REV_01
 
 [DestinationDirs]
