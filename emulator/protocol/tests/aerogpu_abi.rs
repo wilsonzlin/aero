@@ -58,9 +58,13 @@ use aero_protocol::aerogpu::aerogpu_umd_private::{
     AEROGPU_UMDPRIV_STRUCT_VERSION_V1,
 };
 use aero_protocol::aerogpu::aerogpu_wddm_alloc::{
-    AerogpuWddmAllocPriv, AEROGPU_WDDM_ALLOC_ID_KMD_MIN, AEROGPU_WDDM_ALLOC_ID_UMD_MAX,
-    AEROGPU_WDDM_ALLOC_PRIV_FLAG_IS_SHARED, AEROGPU_WDDM_ALLOC_PRIV_MAGIC,
-    AEROGPU_WDDM_ALLOC_PRIV_VERSION,
+    AerogpuWddmAllocKind, AerogpuWddmAllocPriv, AerogpuWddmAllocPrivV2,
+    AEROGPU_WDDM_ALLOC_ID_KMD_MIN, AEROGPU_WDDM_ALLOC_ID_UMD_MAX,
+    AEROGPU_WDDM_ALLOC_PRIV_DESC_MARKER, AEROGPU_WDDM_ALLOC_PRIV_DESC_MAX_HEIGHT,
+    AEROGPU_WDDM_ALLOC_PRIV_DESC_MAX_WIDTH, AEROGPU_WDDM_ALLOC_PRIV_FLAG_CPU_VISIBLE,
+    AEROGPU_WDDM_ALLOC_PRIV_FLAG_IS_SHARED, AEROGPU_WDDM_ALLOC_PRIV_FLAG_NONE,
+    AEROGPU_WDDM_ALLOC_PRIV_FLAG_STAGING, AEROGPU_WDDM_ALLOC_PRIV_MAGIC,
+    AEROGPU_WDDM_ALLOC_PRIV_VERSION, AEROGPU_WDDM_ALLOC_PRIV_VERSION_2,
 };
 use aero_protocol::aerogpu::{aerogpu_pci as pci, aerogpu_ring as ring};
 
@@ -2291,6 +2295,86 @@ fn rust_layout_matches_c_headers() {
         "reserved0"
     );
 
+    assert_size!(AerogpuWddmAllocPrivV2, "aerogpu_wddm_alloc_priv_v2");
+    assert_off!(
+        AerogpuWddmAllocPrivV2,
+        magic,
+        "aerogpu_wddm_alloc_priv_v2",
+        "magic"
+    );
+    assert_off!(
+        AerogpuWddmAllocPrivV2,
+        version,
+        "aerogpu_wddm_alloc_priv_v2",
+        "version"
+    );
+    assert_off!(
+        AerogpuWddmAllocPrivV2,
+        alloc_id,
+        "aerogpu_wddm_alloc_priv_v2",
+        "alloc_id"
+    );
+    assert_off!(
+        AerogpuWddmAllocPrivV2,
+        flags,
+        "aerogpu_wddm_alloc_priv_v2",
+        "flags"
+    );
+    assert_off!(
+        AerogpuWddmAllocPrivV2,
+        share_token,
+        "aerogpu_wddm_alloc_priv_v2",
+        "share_token"
+    );
+    assert_off!(
+        AerogpuWddmAllocPrivV2,
+        size_bytes,
+        "aerogpu_wddm_alloc_priv_v2",
+        "size_bytes"
+    );
+    assert_off!(
+        AerogpuWddmAllocPrivV2,
+        reserved0,
+        "aerogpu_wddm_alloc_priv_v2",
+        "reserved0"
+    );
+    assert_off!(
+        AerogpuWddmAllocPrivV2,
+        kind,
+        "aerogpu_wddm_alloc_priv_v2",
+        "kind"
+    );
+    assert_off!(
+        AerogpuWddmAllocPrivV2,
+        width,
+        "aerogpu_wddm_alloc_priv_v2",
+        "width"
+    );
+    assert_off!(
+        AerogpuWddmAllocPrivV2,
+        height,
+        "aerogpu_wddm_alloc_priv_v2",
+        "height"
+    );
+    assert_off!(
+        AerogpuWddmAllocPrivV2,
+        format,
+        "aerogpu_wddm_alloc_priv_v2",
+        "format"
+    );
+    assert_off!(
+        AerogpuWddmAllocPrivV2,
+        row_pitch_bytes,
+        "aerogpu_wddm_alloc_priv_v2",
+        "row_pitch_bytes"
+    );
+    assert_off!(
+        AerogpuWddmAllocPrivV2,
+        reserved1,
+        "aerogpu_wddm_alloc_priv_v2",
+        "reserved1"
+    );
+
     // Escape ABI (driver-private; should remain stable across x86/x64).
     assert_eq!(abi.size("aerogpu_escape_header"), 16);
     assert_eq!(abi.size("aerogpu_escape_query_device_out"), 24);
@@ -2368,6 +2452,10 @@ fn rust_layout_matches_c_headers() {
     assert_eq!(
         abi.offset("aerogpu_escape_map_shared_handle_inout", "shared_handle"),
         16
+    );
+    assert_eq!(
+        abi.offset("aerogpu_escape_map_shared_handle_inout", "debug_token"),
+        24
     );
     assert_eq!(
         abi.offset("aerogpu_escape_map_shared_handle_inout", "share_token"),
@@ -3387,6 +3475,10 @@ fn rust_layout_matches_c_headers() {
         AEROGPU_WDDM_ALLOC_PRIV_VERSION as u64
     );
     assert_eq!(
+        abi.konst("AEROGPU_WDDM_ALLOC_PRIV_VERSION_2"),
+        AEROGPU_WDDM_ALLOC_PRIV_VERSION_2 as u64
+    );
+    assert_eq!(
         abi.konst("AEROGPU_WDDM_ALLOC_ID_UMD_MAX"),
         AEROGPU_WDDM_ALLOC_ID_UMD_MAX as u64
     );
@@ -3395,8 +3487,44 @@ fn rust_layout_matches_c_headers() {
         AEROGPU_WDDM_ALLOC_ID_KMD_MIN as u64
     );
     assert_eq!(
+        abi.konst("AEROGPU_WDDM_ALLOC_PRIV_FLAG_NONE"),
+        AEROGPU_WDDM_ALLOC_PRIV_FLAG_NONE as u64
+    );
+    assert_eq!(
         abi.konst("AEROGPU_WDDM_ALLOC_PRIV_FLAG_IS_SHARED"),
         AEROGPU_WDDM_ALLOC_PRIV_FLAG_IS_SHARED as u64
+    );
+    assert_eq!(
+        abi.konst("AEROGPU_WDDM_ALLOC_PRIV_FLAG_CPU_VISIBLE"),
+        AEROGPU_WDDM_ALLOC_PRIV_FLAG_CPU_VISIBLE as u64
+    );
+    assert_eq!(
+        abi.konst("AEROGPU_WDDM_ALLOC_PRIV_FLAG_STAGING"),
+        AEROGPU_WDDM_ALLOC_PRIV_FLAG_STAGING as u64
+    );
+    assert_eq!(
+        abi.konst("AEROGPU_WDDM_ALLOC_PRIV_DESC_MARKER"),
+        AEROGPU_WDDM_ALLOC_PRIV_DESC_MARKER
+    );
+    assert_eq!(
+        abi.konst("AEROGPU_WDDM_ALLOC_PRIV_DESC_MAX_WIDTH"),
+        AEROGPU_WDDM_ALLOC_PRIV_DESC_MAX_WIDTH as u64
+    );
+    assert_eq!(
+        abi.konst("AEROGPU_WDDM_ALLOC_PRIV_DESC_MAX_HEIGHT"),
+        AEROGPU_WDDM_ALLOC_PRIV_DESC_MAX_HEIGHT as u64
+    );
+    assert_eq!(
+        abi.konst("AEROGPU_WDDM_ALLOC_KIND_UNKNOWN"),
+        AerogpuWddmAllocKind::Unknown as u64
+    );
+    assert_eq!(
+        abi.konst("AEROGPU_WDDM_ALLOC_KIND_BUFFER"),
+        AerogpuWddmAllocKind::Buffer as u64
+    );
+    assert_eq!(
+        abi.konst("AEROGPU_WDDM_ALLOC_KIND_TEXTURE2D"),
+        AerogpuWddmAllocKind::Texture2d as u64
     );
 
     assert_eq!(abi.konst("AEROGPU_ESCAPE_VERSION"), 1);

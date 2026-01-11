@@ -70,10 +70,11 @@ int main(void) {
   PRINT_SIZE("aerogpu_submit_desc", struct aerogpu_submit_desc);
   PRINT_SIZE("aerogpu_ring_header", struct aerogpu_ring_header);
   PRINT_SIZE("aerogpu_fence_page", struct aerogpu_fence_page);
-
+ 
   PRINT_SIZE("aerogpu_umd_private_v1", aerogpu_umd_private_v1);
   PRINT_SIZE("aerogpu_wddm_alloc_priv", aerogpu_wddm_alloc_priv);
-
+  PRINT_SIZE("aerogpu_wddm_alloc_priv_v2", aerogpu_wddm_alloc_priv_v2);
+ 
   PRINT_SIZE("aerogpu_escape_header", aerogpu_escape_header);
   PRINT_SIZE("aerogpu_escape_query_device_out", aerogpu_escape_query_device_out);
   PRINT_SIZE("aerogpu_escape_query_device_v2_out", aerogpu_escape_query_device_v2_out);
@@ -459,7 +460,21 @@ int main(void) {
   PRINT_OFF("aerogpu_wddm_alloc_priv", aerogpu_wddm_alloc_priv, share_token);
   PRINT_OFF("aerogpu_wddm_alloc_priv", aerogpu_wddm_alloc_priv, size_bytes);
   PRINT_OFF("aerogpu_wddm_alloc_priv", aerogpu_wddm_alloc_priv, reserved0);
-
+ 
+  PRINT_OFF("aerogpu_wddm_alloc_priv_v2", aerogpu_wddm_alloc_priv_v2, magic);
+  PRINT_OFF("aerogpu_wddm_alloc_priv_v2", aerogpu_wddm_alloc_priv_v2, version);
+  PRINT_OFF("aerogpu_wddm_alloc_priv_v2", aerogpu_wddm_alloc_priv_v2, alloc_id);
+  PRINT_OFF("aerogpu_wddm_alloc_priv_v2", aerogpu_wddm_alloc_priv_v2, flags);
+  PRINT_OFF("aerogpu_wddm_alloc_priv_v2", aerogpu_wddm_alloc_priv_v2, share_token);
+  PRINT_OFF("aerogpu_wddm_alloc_priv_v2", aerogpu_wddm_alloc_priv_v2, size_bytes);
+  PRINT_OFF("aerogpu_wddm_alloc_priv_v2", aerogpu_wddm_alloc_priv_v2, reserved0);
+  PRINT_OFF("aerogpu_wddm_alloc_priv_v2", aerogpu_wddm_alloc_priv_v2, kind);
+  PRINT_OFF("aerogpu_wddm_alloc_priv_v2", aerogpu_wddm_alloc_priv_v2, width);
+  PRINT_OFF("aerogpu_wddm_alloc_priv_v2", aerogpu_wddm_alloc_priv_v2, height);
+  PRINT_OFF("aerogpu_wddm_alloc_priv_v2", aerogpu_wddm_alloc_priv_v2, format);
+  PRINT_OFF("aerogpu_wddm_alloc_priv_v2", aerogpu_wddm_alloc_priv_v2, row_pitch_bytes);
+  PRINT_OFF("aerogpu_wddm_alloc_priv_v2", aerogpu_wddm_alloc_priv_v2, reserved1);
+ 
   PRINT_OFF("aerogpu_escape_header", aerogpu_escape_header, version);
   PRINT_OFF("aerogpu_escape_header", aerogpu_escape_header, op);
   PRINT_OFF("aerogpu_escape_header", aerogpu_escape_header, size);
@@ -480,6 +495,7 @@ int main(void) {
   PRINT_OFF("aerogpu_escape_query_vblank_out", aerogpu_escape_query_vblank_out, vblank_period_ns);
   PRINT_OFF("aerogpu_escape_query_vblank_out", aerogpu_escape_query_vblank_out, vblank_interrupt_type);
   PRINT_OFF("aerogpu_escape_map_shared_handle_inout", aerogpu_escape_map_shared_handle_inout, shared_handle);
+  PRINT_OFF("aerogpu_escape_map_shared_handle_inout", aerogpu_escape_map_shared_handle_inout, debug_token);
   PRINT_OFF("aerogpu_escape_map_shared_handle_inout", aerogpu_escape_map_shared_handle_inout, share_token);
   PRINT_OFF("aerogpu_escape_map_shared_handle_inout", aerogpu_escape_map_shared_handle_inout, reserved0);
 
@@ -710,10 +726,20 @@ int main(void) {
 
   PRINT_CONST(AEROGPU_WDDM_ALLOC_PRIV_MAGIC);
   PRINT_CONST(AEROGPU_WDDM_ALLOC_PRIV_VERSION);
+  PRINT_CONST(AEROGPU_WDDM_ALLOC_PRIV_VERSION_2);
   PRINT_CONST(AEROGPU_WDDM_ALLOC_ID_UMD_MAX);
   PRINT_CONST(AEROGPU_WDDM_ALLOC_ID_KMD_MIN);
+  PRINT_CONST(AEROGPU_WDDM_ALLOC_PRIV_FLAG_NONE);
   PRINT_CONST(AEROGPU_WDDM_ALLOC_PRIV_FLAG_IS_SHARED);
-
+  PRINT_CONST(AEROGPU_WDDM_ALLOC_PRIV_FLAG_CPU_VISIBLE);
+  PRINT_CONST(AEROGPU_WDDM_ALLOC_PRIV_FLAG_STAGING);
+  PRINT_CONST(AEROGPU_WDDM_ALLOC_PRIV_DESC_MARKER);
+  PRINT_CONST(AEROGPU_WDDM_ALLOC_PRIV_DESC_MAX_WIDTH);
+  PRINT_CONST(AEROGPU_WDDM_ALLOC_PRIV_DESC_MAX_HEIGHT);
+  PRINT_CONST(AEROGPU_WDDM_ALLOC_KIND_UNKNOWN);
+  PRINT_CONST(AEROGPU_WDDM_ALLOC_KIND_BUFFER);
+  PRINT_CONST(AEROGPU_WDDM_ALLOC_KIND_TEXTURE2D);
+ 
   PRINT_CONST(AEROGPU_ESCAPE_VERSION);
   PRINT_CONST(AEROGPU_ESCAPE_OP_QUERY_DEVICE);
   PRINT_CONST(AEROGPU_ESCAPE_OP_QUERY_DEVICE_V2);
