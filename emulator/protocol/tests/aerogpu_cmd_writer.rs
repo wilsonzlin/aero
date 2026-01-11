@@ -207,11 +207,16 @@ fn cmd_writer_emits_pipeline_and_binding_packets() {
     w.set_texture(AerogpuShaderStage::Pixel, 0, 99);
     w.set_sampler_state(AerogpuShaderStage::Pixel, 0, 7, 42);
     w.set_render_state(10, 20);
-    w.set_blend_state(
+    w.set_blend_state_ext(
         true,
         AerogpuBlendFactor::One,
         AerogpuBlendFactor::Zero,
         AerogpuBlendOp::Add,
+        AerogpuBlendFactor::SrcAlpha,
+        AerogpuBlendFactor::InvSrcAlpha,
+        AerogpuBlendOp::Subtract,
+        [0.25, 0.5, 0.75, 1.0],
+        0x00FF_FF00,
         0xF,
     );
     w.set_depth_stencil_state(true, true, AerogpuCompareFunc::LessEqual, false, 0xAA, 0xBB);
@@ -322,6 +327,59 @@ fn cmd_writer_emits_pipeline_and_binding_packets() {
     let color_write_mask_off = offset_of!(AerogpuCmdSetBlendState, state)
         + offset_of!(AerogpuBlendState, color_write_mask);
     assert_eq!(buf[blend_base + color_write_mask_off], 0xF);
+    let src_factor_alpha_off = offset_of!(AerogpuCmdSetBlendState, state)
+        + offset_of!(AerogpuBlendState, src_factor_alpha);
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[blend_base + src_factor_alpha_off..blend_base + src_factor_alpha_off + 4]
+                .try_into()
+                .unwrap()
+        ),
+        AerogpuBlendFactor::SrcAlpha as u32
+    );
+    let dst_factor_alpha_off = offset_of!(AerogpuCmdSetBlendState, state)
+        + offset_of!(AerogpuBlendState, dst_factor_alpha);
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[blend_base + dst_factor_alpha_off..blend_base + dst_factor_alpha_off + 4]
+                .try_into()
+                .unwrap()
+        ),
+        AerogpuBlendFactor::InvSrcAlpha as u32
+    );
+    let blend_op_alpha_off =
+        offset_of!(AerogpuCmdSetBlendState, state) + offset_of!(AerogpuBlendState, blend_op_alpha);
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[blend_base + blend_op_alpha_off..blend_base + blend_op_alpha_off + 4]
+                .try_into()
+                .unwrap()
+        ),
+        AerogpuBlendOp::Subtract as u32
+    );
+    let constant_base = offset_of!(AerogpuCmdSetBlendState, state)
+        + offset_of!(AerogpuBlendState, blend_constant_rgba_f32);
+    let expected_constant = [0.25f32, 0.5, 0.75, 1.0];
+    for (i, &c) in expected_constant.iter().enumerate() {
+        assert_eq!(
+            u32::from_le_bytes(
+                buf[blend_base + constant_base + i * 4..blend_base + constant_base + i * 4 + 4]
+                    .try_into()
+                    .unwrap()
+            ),
+            c.to_bits()
+        );
+    }
+    let sample_mask_off =
+        offset_of!(AerogpuCmdSetBlendState, state) + offset_of!(AerogpuBlendState, sample_mask);
+    assert_eq!(
+        u32::from_le_bytes(
+            buf[blend_base + sample_mask_off..blend_base + sample_mask_off + 4]
+                .try_into()
+                .unwrap()
+        ),
+        0x00FF_FF00
+    );
 
     let depth_base = blend_base + expected_sizes[4].1;
     let stencil_read_mask_off = offset_of!(AerogpuCmdSetDepthStencilState, state)
