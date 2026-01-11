@@ -668,6 +668,7 @@ fn fs_main() -> @location(0) vec4<f32> {
                     height,
                     flags,
                     guest_memory,
+                    alloc_table,
                 ),
                 AeroGpuCmd::SetRenderTargets {
                     color_count,
@@ -1347,7 +1348,10 @@ fn fs_main() -> @location(0) vec4<f32> {
                     ))
                 })?
             } else {
-                GuestBufferBacking { base_gpa: 0 }
+                GuestBufferBacking {
+                    alloc_id: 0,
+                    alloc_offset_bytes: 0,
+                }
             };
             (src.size_bytes, dst.size_bytes, dst_backing)
         };
@@ -1408,12 +1412,14 @@ fn fs_main() -> @location(0) vec4<f32> {
                     "COPY_BUFFER: missing staging buffer for writeback".into(),
                 ));
             };
-            let dst_gpa = dst_backing
-                .base_gpa
+            let table = alloc_table.ok_or_else(|| {
+                ExecutorError::Validation("COPY_BUFFER: WRITEBACK_DST requires alloc_table".into())
+            })?;
+            let alloc_offset = dst_backing
+                .alloc_offset_bytes
                 .checked_add(dst_offset_bytes)
-                .ok_or_else(|| {
-                    ExecutorError::Validation("COPY_BUFFER: dst backing GPA overflow".into())
-                })?;
+                .ok_or_else(|| ExecutorError::Validation("COPY_BUFFER: dst alloc offset overflow".into()))?;
+            let dst_gpa = table.resolve_gpa(dst_backing.alloc_id, alloc_offset, size_bytes)?;
             let data = self.read_buffer_to_vec_blocking(&staging, size_bytes, "COPY_BUFFER")?;
             if data.len() != size_usize {
                 return Err(ExecutorError::Validation(
@@ -1441,6 +1447,7 @@ fn fs_main() -> @location(0) vec4<f32> {
         height: u32,
         flags: u32,
         guest_memory: &dyn GuestMemory,
+        alloc_table: Option<&AllocTable>,
     ) -> Result<(), ExecutorError> {
         if width == 0 || height == 0 {
             return Ok(());
@@ -1490,7 +1497,8 @@ fn fs_main() -> @location(0) vec4<f32> {
                 })?
             } else {
                 GuestTextureBacking {
-                    base_gpa: 0,
+                    alloc_id: 0,
+                    alloc_offset_bytes: 0,
                     row_pitch_bytes: 0,
                     size_bytes: 0,
                 }
@@ -1537,8 +1545,8 @@ fn fs_main() -> @location(0) vec4<f32> {
         }
 
         // Flush any pending CPU writes before the copy reads/writes the textures.
-        self.flush_texture_if_dirty(src_texture, guest_memory)?;
-        self.flush_texture_if_dirty(dst_texture, guest_memory)?;
+        self.flush_texture_if_dirty(src_texture, guest_memory, alloc_table)?;
+        self.flush_texture_if_dirty(dst_texture, guest_memory, alloc_table)?;
 
         let (src, dst) = {
             let src = self.textures.get(&src_texture).ok_or_else(|| {
@@ -1700,12 +1708,19 @@ fn fs_main() -> @location(0) vec4<f32> {
                         "COPY_TEXTURE2D: writeback out of bounds".into(),
                     ));
                 }
-                let dst_gpa = dst_backing
-                    .base_gpa
+                let table = alloc_table.ok_or_else(|| {
+                    ExecutorError::Validation(
+                        "COPY_TEXTURE2D: WRITEBACK_DST requires alloc_table".into(),
+                    )
+                })?;
+                let alloc_offset = dst_backing
+                    .alloc_offset_bytes
                     .checked_add(write_offset)
                     .ok_or_else(|| {
-                        ExecutorError::Validation("COPY_TEXTURE2D: dst GPA overflow".into())
+                        ExecutorError::Validation("COPY_TEXTURE2D: dst alloc offset overflow".into())
                     })?;
+                let dst_gpa =
+                    table.resolve_gpa(dst_backing.alloc_id, alloc_offset, u64::from(row_bytes))?;
 
                 guest_memory.write(dst_gpa, row_bytes_slice)?;
             }

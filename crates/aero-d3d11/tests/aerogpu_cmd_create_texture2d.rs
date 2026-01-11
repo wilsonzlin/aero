@@ -42,7 +42,7 @@ fn create_texture2d_requires_row_pitch_for_backed_textures() {
         let allocs = [AerogpuAllocEntry {
             alloc_id: 1,
             flags: 0,
-            gpa: 0,
+            gpa: 0x100,
             size_bytes: 0x1000,
             reserved0: 0,
         }];
@@ -101,7 +101,7 @@ fn create_texture2d_validates_all_mips_against_allocation_size() {
         let allocs = [AerogpuAllocEntry {
             alloc_id: 1,
             flags: 0,
-            gpa: 0,
+            gpa: 0x100,
             size_bytes: 16 * 4, // row_pitch_bytes * height (mip0 only)
             reserved0: 0,
         }];
