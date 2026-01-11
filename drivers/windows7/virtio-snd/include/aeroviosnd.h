@@ -4,9 +4,9 @@
 
 #include <ntddk.h>
 
-#include "../../virtio/common/include/virtio_bits.h"
-#include "../../virtio/common/include/virtio_pci_legacy.h"
-#include "../../virtio/common/include/virtio_queue.h"
+#include "virtio_bits.h"
+#include "virtio_pci_legacy.h"
+#include "virtio_queue.h"
 
 /*
  * PortCls/WaveRT miniport implementation for Aero virtio-snd (Windows 7).

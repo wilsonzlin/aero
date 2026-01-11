@@ -12,10 +12,10 @@
 #error "virtiosnd_backend_virtio.c requires VIRTIO_CORE_USE_WDF=0 (WDM)"
 #endif
 
-#include "../../../win7/virtio/virtio-core/include/virtio_pci_modern.h"
+#include "virtio_pci_modern.h"
 
-#include "../../virtio/common/include/virtqueue_split_legacy.h"
-#include "../../virtio/common/include/virtio_pci_intx_wdm.h"
+#include "virtqueue_split_legacy.h"
+#include "virtio_pci_intx_wdm.h"
 
 #define VIRTIOSND_BACKEND_POOL_TAG 'BkSV'
 
