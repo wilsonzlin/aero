@@ -218,7 +218,8 @@ static void StopWaitThread(WaitThreadCtx* ctx) {
 static int RunWaitVblankPacing(int argc, char** argv) {
   const char* kTestName = "wait_vblank_pacing";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
-    aerogpu_test::PrintfStdout("Usage: %s.exe [--samples=N] [--allow-remote]", kTestName);
+    aerogpu_test::PrintfStdout(
+        "Usage: %s.exe [--samples=N] [--wait-timeout-ms=N] [--allow-remote]", kTestName);
     aerogpu_test::PrintfStdout("Default: --samples=120");
     aerogpu_test::PrintfStdout("Measures KMD vblank pacing by timing D3DKMTWaitForVerticalBlankEvent().");
     return 0;
@@ -226,6 +227,7 @@ static int RunWaitVblankPacing(int argc, char** argv) {
 
   const bool allow_remote = aerogpu_test::HasArg(argc, argv, "--allow-remote");
   uint32_t samples = 120;
+  uint32_t wait_timeout_ms = 2000;
   std::string samples_str;
   if (aerogpu_test::GetArgValue(argc, argv, "--samples", &samples_str)) {
     std::string err;
@@ -233,9 +235,19 @@ static int RunWaitVblankPacing(int argc, char** argv) {
       return aerogpu_test::Fail(kTestName, "invalid --samples: %s", err.c_str());
     }
   }
+  std::string wait_timeout_str;
+  if (aerogpu_test::GetArgValue(argc, argv, "--wait-timeout-ms", &wait_timeout_str)) {
+    std::string err;
+    if (!aerogpu_test::ParseUint32(wait_timeout_str, &wait_timeout_ms, &err)) {
+      return aerogpu_test::Fail(kTestName, "invalid --wait-timeout-ms: %s", err.c_str());
+    }
+  }
 
   if (samples < 5) {
     samples = 5;
+  }
+  if (wait_timeout_ms < 1) {
+    wait_timeout_ms = 1;
   }
 
   // Some remote display paths do not deliver vblank semantics in a meaningful way.
@@ -294,7 +306,6 @@ static int RunWaitVblankPacing(int argc, char** argv) {
 
   // Run the vblank wait on a dedicated thread so we can bound the wall time of each wait.
   // If vblank interrupts are missing/broken, D3DKMTWaitForVerticalBlankEvent can block indefinitely.
-  const DWORD wait_timeout_ms = 2000;
   WaitThreadCtx waiter;
   std::string waiter_err;
   if (!StartWaitThread(&waiter, &f, h_adapter, 0 /* VidPnSourceId */, &waiter_err)) {
@@ -308,7 +319,7 @@ static int RunWaitVblankPacing(int argc, char** argv) {
 
   // Warm up once to avoid counting first-time initialization.
   SetEvent(waiter.request_event);
-  DWORD w = WaitForSingleObject(waiter.done_event, wait_timeout_ms);
+  DWORD w = WaitForSingleObject(waiter.done_event, (DWORD)wait_timeout_ms);
   if (w == WAIT_TIMEOUT) {
     // Avoid trying to clean up the wait thread: it may be blocked in the kernel thunk. Exiting the
     // process is sufficient for test automation, and avoids deadlock-prone teardown paths.
@@ -351,7 +362,7 @@ static int RunWaitVblankPacing(int argc, char** argv) {
   int rc = 0;
   for (uint32_t i = 0; i < samples; ++i) {
     SetEvent(waiter.request_event);
-    w = WaitForSingleObject(waiter.done_event, wait_timeout_ms);
+    w = WaitForSingleObject(waiter.done_event, (DWORD)wait_timeout_ms);
     if (w == WAIT_TIMEOUT) {
       // Avoid trying to clean up the wait thread: it may be blocked in the kernel thunk.
       return aerogpu_test::Fail(kTestName,
