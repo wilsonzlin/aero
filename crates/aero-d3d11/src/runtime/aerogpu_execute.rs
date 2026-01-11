@@ -237,7 +237,9 @@ impl AerogpuCmdRuntime {
             // Geometry/hull/domain stages are not supported by the AeroGPU/WebGPU pipeline. Accept
             // the create call (so guests can compile/pass these shaders around) but ignore the
             // resulting shader since there is no way to bind it.
-            crate::ShaderStage::Geometry | crate::ShaderStage::Hull | crate::ShaderStage::Domain => {
+            crate::ShaderStage::Geometry
+            | crate::ShaderStage::Hull
+            | crate::ShaderStage::Domain => {
                 return Ok(());
             }
             other => bail!("unsupported shader stage for aerogpu_cmd executor: {other:?}"),
