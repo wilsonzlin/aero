@@ -1,4 +1,4 @@
-import { RECORD_ALIGN, ringCtrl } from "../ipc/layout";
+import { RECORD_ALIGN, queueKind, ringCtrl } from "../ipc/layout";
 import { requiredFramebufferBytes } from "../display/framebuffer_protocol";
 import { createIpcBuffer } from "../ipc/ipc";
 import {
@@ -77,16 +77,16 @@ export const EVENT_RING_CAPACITY_BYTES = 32 * 1024;
 //
 // These queues use the AIPC layout/protocol defined in `web/src/ipc` /
 // `crates/aero-ipc` and are separate from the runtime START/STOP rings.
-export const IO_IPC_CMD_QUEUE_KIND = 0;
-export const IO_IPC_EVT_QUEUE_KIND = 1;
+export const IO_IPC_CMD_QUEUE_KIND = queueKind.CMD;
+export const IO_IPC_EVT_QUEUE_KIND = queueKind.EVT;
 export const IO_IPC_RING_CAPACITY_BYTES = 32 * 1024;
 
 // Raw Ethernet frame transport (guest <-> host) for the Option C L2 tunnel.
 //
 // These are separate from the command/event queues so bulk frame traffic does not
 // starve low-latency device operations.
-export const IO_IPC_NET_TX_QUEUE_KIND = 2;
-export const IO_IPC_NET_RX_QUEUE_KIND = 3;
+export const IO_IPC_NET_TX_QUEUE_KIND = queueKind.NET_TX;
+export const IO_IPC_NET_RX_QUEUE_KIND = queueKind.NET_RX;
 export const IO_IPC_NET_RING_CAPACITY_BYTES = 512 * 1024;
 
 // WebHID input report forwarding (main thread -> I/O worker).
