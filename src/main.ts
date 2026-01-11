@@ -934,7 +934,8 @@ function renderAudioPanel(): HTMLElement {
         `AudioContext: ${output.context.state}\n` +
         `sampleRate: ${sr}\n` +
         `bufferLevelFrames: ${output.getBufferLevelFrames()}\n` +
-        `underrunFrames: ${output.getUnderrunCount()}`;
+        `underrunFrames: ${output.getUnderrunCount()}\n` +
+        `overrunFrames: ${output.getOverrunCount()}`;
     }, 20);
   }
 
