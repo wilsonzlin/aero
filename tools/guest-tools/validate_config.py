@@ -31,6 +31,16 @@ class ValidationError(RuntimeError):
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
+# Canonical Guest Tools / packager naming for the AeroGPU driver directory.
+# Keep this in sync with:
+# - guest-tools/drivers/<arch>/aerogpu/
+# - tools/packaging/specs/* (drivers[].name)
+#
+# Support the legacy dashed form for one release cycle.
+_DRIVER_NAME_ALIASES = {
+    "aero-gpu": "aerogpu",
+}
+
 
 @dataclass(frozen=True)
 class DevicesConfig:
@@ -249,6 +259,8 @@ def load_packaging_spec(path: Path) -> Mapping[str, SpecDriver]:
     def merge_driver(
         *, name: str, required: bool, patterns: Sequence[str], devices_cmd_var: str | None
     ) -> None:
+        name = name.strip()
+        name = _DRIVER_NAME_ALIASES.get(name.lower(), name)
         entry = out.setdefault(name, {"required": False, "patterns": [], "devices_cmd_var": None})
         entry["required"] = bool(entry["required"]) or required
         existing_patterns = entry["patterns"]
@@ -582,12 +594,7 @@ def validate(devices: DevicesConfig, spec_path: Path, spec_expected: Mapping[str
     elif spec_path.name == "win7-aero-virtio.json":
         required_groups = (("aerovblk",), ("aerovnet",))
     elif spec_path.name == "win7-aero-guest-tools.json":
-        # The in-repo driver folder name for AeroGPU is `aerogpu`, but keep
-        # backwards-compatible aliases to avoid renames breaking CI history.
-        required_groups = (("aerogpu", "aero-gpu"), ("virtio-blk",), ("virtio-net",), ("virtio-input",))
-    elif spec_path.name == "win7-aero-virtio.json":
-        # Aero's clean-room Win7 virtio driver directory names.
-        required_groups = (("aerovblk",), ("aerovnet",))
+        required_groups = (("aerogpu",), ("virtio-blk",), ("virtio-net",), ("virtio-input",))
     else:
         required_groups = ()
 
@@ -700,28 +707,10 @@ def validate(devices: DevicesConfig, spec_path: Path, spec_expected: Mapping[str
         driver_kind="virtio-snd",
     )
     maybe_validate(
-        "aerovblk",
-        devices_var="AERO_VIRTIO_BLK_HWIDS",
-        hwids=devices.virtio_blk_hwids,
-        driver_kind="virtio-blk",
-    )
-    maybe_validate(
-        "aerovnet",
-        devices_var="AERO_VIRTIO_NET_HWIDS",
-        hwids=devices.virtio_net_hwids,
-        driver_kind="virtio-net",
-    )
-    maybe_validate(
-        "aero-gpu",
-        devices_var="AERO_GPU_HWIDS",
-        hwids=devices.aero_gpu_hwids,
-        driver_kind="aero-gpu",
-    )
-    maybe_validate(
         "aerogpu",
         devices_var="AERO_GPU_HWIDS",
         hwids=devices.aero_gpu_hwids,
-        driver_kind="aero-gpu",
+        driver_kind="AeroGPU",
     )
 
     if not matches:
@@ -736,9 +725,6 @@ def validate(devices: DevicesConfig, spec_path: Path, spec_expected: Mapping[str
             "virtio-net",
             "virtio-input",
             "virtio-snd",
-            "aerovblk",
-            "aerovnet",
-            "aero-gpu",
             "aerogpu",
         ]
         raise ValidationError(
