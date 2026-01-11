@@ -777,6 +777,10 @@ call :log "ERROR: Configured AERO_VIRTIO_BLK_SERVICE=%TARGET_SVC% does not match
 call :log "Expected to find an INF line (case-insensitive) like:"
 call :log "  AddService = %TARGET_SVC%, ..."
 call :log "  AddService = ^"%TARGET_SVC%^", ..."
+call :log ""
+call :log "If you are intentionally using Guest Tools media that does not include the virtio-blk storage driver (e.g. AeroGPU-only),"
+call :log "re-run setup.cmd with /skipstorage to continue WITHOUT boot-critical storage pre-seeding."
+call :log "WARNING: When /skipstorage is used, do NOT switch the boot disk from AHCI -> virtio-blk (0x7B risk)."
 call :log "Scanned INF files:"
 for /f "usebackq delims=" %%I in ("%SCAN_LIST%") do call :log "  - %%I"
 del /q "%SCAN_LIST%" >nul 2>&1
@@ -846,6 +850,10 @@ if exist "%STOR_TARGET%" (
   ) else (
     call :log "ERROR: Could not locate %STOR_SYS% under %DRIVER_DIR%, and it is not present in %STOR_TARGET%."
     call :log "       Refusing to continue because switching the boot disk to virtio-blk will likely BSOD (0x7B)."
+    call :log ""
+    call :log "If you are intentionally using Guest Tools media that does not include the virtio-blk storage driver (e.g. AeroGPU-only),"
+    call :log "re-run setup.cmd with /skipstorage to continue WITHOUT boot-critical storage pre-seeding."
+    call :log "WARNING: When /skipstorage is used, do NOT switch the boot disk from AHCI -> virtio-blk (0x7B risk)."
     exit /b 1
   )
 )
