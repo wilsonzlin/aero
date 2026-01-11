@@ -1158,10 +1158,14 @@ function renderAudioPanel(): HTMLElement {
 
       // Prefill the entire ring with silence so the worker has time to attach and
       // start producing audio without incurring startup underruns.
-      output.writeInterleaved(
-        new Float32Array(output.ringBuffer.capacityFrames * output.ringBuffer.channelCount),
-        output.context.sampleRate,
-      );
+      const level = output.getBufferLevelFrames();
+      const prefillFrames = Math.max(0, output.ringBuffer.capacityFrames - level);
+      if (prefillFrames > 0) {
+        output.writeInterleaved(
+          new Float32Array(prefillFrames * output.ringBuffer.channelCount),
+          output.context.sampleRate,
+        );
+      }
 
       // Start the CPU worker in a standalone "audio demo" mode.
       hdaDemoWorker = new Worker(new URL("../web/src/workers/cpu.worker.ts", import.meta.url), { type: "module" });
@@ -1177,6 +1181,21 @@ function renderAudioPanel(): HTMLElement {
 
       await output.resume();
       status.textContent = "Audio initialized and HDA playback demo started in CPU worker.";
+      toneTimer = window.setInterval(() => {
+        const metrics = output.getMetrics();
+        const header = output.ringBuffer.header;
+        const read = Atomics.load(header, 0) >>> 0;
+        const write = Atomics.load(header, 1) >>> 0;
+        status.textContent =
+          `AudioContext: ${metrics.state}\n` +
+          `sampleRate: ${metrics.sampleRate}\n` +
+          `capacityFrames: ${metrics.capacityFrames}\n` +
+          `bufferLevelFrames: ${metrics.bufferLevelFrames}\n` +
+          `underrunFrames: ${metrics.underrunCount}\n` +
+          `overrunFrames: ${metrics.overrunCount}\n` +
+          `ring.readFrameIndex: ${read}\n` +
+          `ring.writeFrameIndex: ${write}`;
+      }, 50);
     },
   });
 
