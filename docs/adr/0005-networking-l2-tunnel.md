@@ -42,7 +42,7 @@ Outbound connectivity is performed via normal host sockets (connect/sendto) with
 
 The L2 proxy is a distinct *data-plane* service, separate from the HTTP/control-plane gateway:
 
-- **In-repo target location:** `proxy/aero-l2-proxy/` (Rust service).
+- **In-repo target location:** `crates/aero-l2-proxy/` (Rust service).
   - It will reuse the existing Rust packet/stack crates (e.g. `crates/aero-net-stack`, `crates/nt-packetlib`) rather than re-implementing packet parsing/state machines in Node.
 - **Deployment topology:** deploy `aero-l2-proxy` alongside `backend/aero-gateway` and route both behind the same edge proxy/Ingress.
   - The edge proxy provides TLS/WSS termination, COOP/COEP headers, and path-based routing (e.g. `/tcp`, `/dns-query` → `aero-gateway`; `/l2` → `aero-l2-proxy`).

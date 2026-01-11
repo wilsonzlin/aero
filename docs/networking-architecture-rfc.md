@@ -213,7 +213,7 @@ The Option C implementation is split into a small set of concrete components:
 - `crates/emulator/src/io/net/tunnel_backend.rs`
   - Emulator-side abstraction (`TunnelBackend` / `L2TunnelBackend`) that the NIC device model calls
     into, instead of running a full TCP/IP stack in WASM.
-- `proxy/aero-l2-proxy`
+- `crates/aero-l2-proxy`
   - Unprivileged proxy service implementing a user-space Ethernet/IP stack + NAT + policy.
   - Terminates the L2 tunnel and returns frames (ARP/DHCP/DNS/etc.) back to the browser.
 - `proxy/webrtc-udp-relay`
