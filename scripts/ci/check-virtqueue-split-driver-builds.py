@@ -24,6 +24,7 @@ wiring and fails on drift.
 
 from __future__ import annotations
 
+import subprocess
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -222,6 +223,11 @@ def main() -> None:
         needle="virtqueue_split_legacy.c",
         context="drivers/windows7/virtio/common/tests (CMake)",
     )
+
+    virtio_net_pci_cfg_check = REPO_ROOT / "scripts/ci/check-win7-virtio-net-pci-config-access.py"
+    proc = subprocess.run([sys.executable, str(virtio_net_pci_cfg_check)])
+    if proc.returncode != 0:
+        raise SystemExit(proc.returncode)
 
     print("ok: Windows driver build files reference the expected split-virtqueue implementation")
 

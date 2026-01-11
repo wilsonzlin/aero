@@ -27,7 +27,7 @@ This module already handles:
 
 Miniports integrate it by implementing `VIRTIO_PCI_MODERN_OS_INTERFACE`:
 
-- PCI config reads (`PciRead8/16/32`) using `NdisReadPciSlotInformation` or `StorPortGetBusData`
+- PCI config reads (`PciRead8/16/32`) from a cached 256-byte PCI config snapshot (`NdisMGetBusData` for NDIS, `StorPortGetBusData` for StorPort)
 - BAR0 map/unmap (`MapMmio/UnmapMmio`) using `NdisMMapIoSpace` or `StorPortGetDeviceBase`
 - a microsecond stall (`StallUs`) for bounded reset polling
 - a selector-serialization lock (`Spinlock*`) for `common_cfg` selector registers

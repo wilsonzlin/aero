@@ -139,6 +139,8 @@ typedef struct _AEROVNET_ADAPTER {
   volatile LONG OutstandingSgMappings;
   KEVENT OutstandingSgEvent;
 
+  UCHAR PciCfgSpace[256];
+
   // PCI BAR0 MMIO resources
   PHYSICAL_ADDRESS Bar0Pa;
   ULONG Bar0Length;

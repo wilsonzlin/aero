@@ -2,6 +2,10 @@
 
 #define AEROVNET_TAG 'tNvA'
 
+#ifndef PCI_WHICHSPACE_CONFIG
+#define PCI_WHICHSPACE_CONFIG 0
+#endif
+
 static NDIS_HANDLE g_NdisDriverHandle = NULL;
 
 static const NDIS_OID g_SupportedOids[] = {
@@ -56,41 +60,33 @@ static __forceinline ULONG AerovNetReceiveIndicationFlagsForCurrentIrql(VOID) {
 
 static UINT8 AerovNetOsPciRead8(void* Context, UINT16 Offset) {
   AEROVNET_ADAPTER* Adapter = (AEROVNET_ADAPTER*)Context;
-  UINT8 v = 0;
-  ULONG read;
 
-  if (!Adapter) {
+  if (!Adapter || Offset >= (UINT16)sizeof(Adapter->PciCfgSpace)) {
     return 0;
   }
 
-  read = NdisReadPciSlotInformation(Adapter->MiniportAdapterHandle, 0, (ULONG)Offset, &v, sizeof(v));
-  return (read == sizeof(v)) ? v : 0;
+  return (UINT8)Adapter->PciCfgSpace[Offset];
 }
 
 static UINT16 AerovNetOsPciRead16(void* Context, UINT16 Offset) {
   AEROVNET_ADAPTER* Adapter = (AEROVNET_ADAPTER*)Context;
-  UINT16 v = 0;
-  ULONG read;
 
-  if (!Adapter) {
+  if (!Adapter || (UINT32)Offset + sizeof(UINT16) > sizeof(Adapter->PciCfgSpace)) {
     return 0;
   }
 
-  read = NdisReadPciSlotInformation(Adapter->MiniportAdapterHandle, 0, (ULONG)Offset, &v, sizeof(v));
-  return (read == sizeof(v)) ? v : 0;
+  return (UINT16)Adapter->PciCfgSpace[Offset] | ((UINT16)Adapter->PciCfgSpace[Offset + 1] << 8);
 }
 
 static UINT32 AerovNetOsPciRead32(void* Context, UINT16 Offset) {
   AEROVNET_ADAPTER* Adapter = (AEROVNET_ADAPTER*)Context;
-  UINT32 v = 0;
-  ULONG read;
 
-  if (!Adapter) {
+  if (!Adapter || (UINT32)Offset + sizeof(UINT32) > sizeof(Adapter->PciCfgSpace)) {
     return 0;
   }
 
-  read = NdisReadPciSlotInformation(Adapter->MiniportAdapterHandle, 0, (ULONG)Offset, &v, sizeof(v));
-  return (read == sizeof(v)) ? v : 0;
+  return (UINT32)Adapter->PciCfgSpace[Offset] | ((UINT32)Adapter->PciCfgSpace[Offset + 1] << 8) |
+         ((UINT32)Adapter->PciCfgSpace[Offset + 2] << 16) | ((UINT32)Adapter->PciCfgSpace[Offset + 3] << 24);
 }
 
 static NTSTATUS AerovNetOsMapMmio(void* Context, UINT64 PhysicalAddress, UINT32 Length, volatile void** MappedVaOut) {
@@ -317,19 +313,24 @@ static NDIS_STATUS AerovNetParseResources(_Inout_ AEROVNET_ADAPTER* Adapter, _In
 
   // Prefer matching the assigned CmResourceTypeMemory range against BAR0 from
   // PCI config space (BAR0 is required by the AERO-W7-VIRTIO contract).
+  RtlZeroMemory(Adapter->PciCfgSpace, sizeof(Adapter->PciCfgSpace));
+  BytesRead =
+      NdisMGetBusData(Adapter->MiniportAdapterHandle, PCI_WHICHSPACE_CONFIG, Adapter->PciCfgSpace, 0, sizeof(Adapter->PciCfgSpace));
+  if (BytesRead != sizeof(Adapter->PciCfgSpace)) {
+    return NDIS_STATUS_FAILURE;
+  }
+
   Bar0Low = 0;
   Bar0High = 0;
   Bar0Base = 0;
-  BytesRead = NdisReadPciSlotInformation(Adapter->MiniportAdapterHandle, 0, 0x10, &Bar0Low, sizeof(Bar0Low));
-  if (BytesRead == sizeof(Bar0Low) && (Bar0Low & 0x1u) == 0) {
+  Bar0Low = AerovNetOsPciRead32(Adapter, 0x10);
+  if ((Bar0Low & 0x1u) == 0) {
     Bar0Base = (UINT64)(Bar0Low & ~0xFu);
 
     // 64-bit memory BAR uses BAR0/BAR1.
     if (((Bar0Low >> 1) & 0x3u) == 0x2u) {
-      BytesRead = NdisReadPciSlotInformation(Adapter->MiniportAdapterHandle, 0, 0x14, &Bar0High, sizeof(Bar0High));
-      if (BytesRead == sizeof(Bar0High)) {
-        Bar0Base |= ((UINT64)Bar0High << 32);
-      }
+      Bar0High = AerovNetOsPciRead32(Adapter, 0x14);
+      Bar0Base |= ((UINT64)Bar0High << 32);
     }
   }
 
