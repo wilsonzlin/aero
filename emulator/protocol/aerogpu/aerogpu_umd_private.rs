@@ -6,6 +6,9 @@
 pub const AEROGPU_UMDPRIV_STRUCT_VERSION_V1: u32 = 1;
 
 /// Raw BAR0[0] magic for the legacy AeroGPU MMIO ABI ("ARGP").
+///
+/// This is only observed when running against the emulator legacy device model
+/// (feature `emulator/aerogpu-legacy`).
 pub const AEROGPU_UMDPRIV_MMIO_MAGIC_LEGACY_ARGP: u32 = 0x4152_4750; // "ARGP" LE
 /// Raw BAR0[0] magic for the new AeroGPU MMIO ABI ("AGPU").
 pub const AEROGPU_UMDPRIV_MMIO_MAGIC_NEW_AGPU: u32 = 0x5550_4741; // "AGPU" LE

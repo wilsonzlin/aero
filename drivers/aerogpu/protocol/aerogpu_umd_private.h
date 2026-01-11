@@ -7,7 +7,8 @@
  *
  * The goal is to provide a stable, versioned, pointer-free blob so UMDs and
  * tooling can discover:
- *  - which AeroGPU MMIO ABI is active (legacy "ARGP" vs new "AGPU"),
+ *  - which AeroGPU MMIO ABI is active (legacy "ARGP" vs new "AGPU"; legacy is optional and
+ *    corresponds to the emulator legacy device model feature `emulator/aerogpu-legacy`),
  *  - the device-reported ABI version, and
  *  - device feature bits (vblank, fence page, etc.)
  *
