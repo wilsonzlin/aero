@@ -6011,7 +6011,9 @@ static HRESULT MapLocked11(Device* dev,
       lock.Flags.WriteOnly = is_write_only ? 1u : 0u;
     }
     __if_exists(D3DDDICB_LOCKFLAGS::Write) {
-      lock.Flags.Write = want_write ? 1u : 0u;
+      // READ_WRITE is encoded as ReadOnly=0 and WriteOnly/Write=0 (see
+      // docs/graphics/win7-d3d11-map-unmap.md §3).
+      lock.Flags.Write = is_write_only ? 1u : 0u;
     }
     __if_exists(D3DDDICB_LOCKFLAGS::Discard) {
       lock.Flags.Discard = discard ? 1u : 0u;
