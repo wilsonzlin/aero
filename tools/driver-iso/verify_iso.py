@@ -52,7 +52,7 @@ def _list_iso_files_with_powershell_mount(iso_path: Path) -> set[str]:
     }
     $root = "$($vol.DriveLetter):\"
     Get-ChildItem -LiteralPath $root -Recurse -File | ForEach-Object {
-      $rel = $_.FullName.Substring($root.Length) -replace '\\\\','/'
+      $rel = $_.FullName.Substring($root.Length) -replace '\\','/'
       '/' + $rel
     }
   } finally {
