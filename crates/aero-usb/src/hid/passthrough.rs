@@ -370,16 +370,24 @@ impl UsbHidPassthrough {
                 let index = (setup.value & 0xFF) as u8;
                 self.get_descriptor(desc_type, index)
             }
-            (0x80, REQ_GET_CONFIGURATION) => Some(vec![self.configuration]),
+            (0x80, REQ_GET_CONFIGURATION) => {
+                (setup.value == 0 && setup.index == 0).then_some(vec![self.configuration])
+            }
             (0x80, REQ_GET_STATUS) => {
+                if setup.value != 0 || setup.index != 0 {
+                    return None;
+                }
                 let mut status = 0u16;
                 if self.remote_wakeup_enabled {
                     status |= 1 << 1;
                 }
                 Some(status.to_le_bytes().to_vec())
             }
-            (0x81, REQ_GET_STATUS) => Some(vec![0, 0]),
+            (0x81, REQ_GET_STATUS) => (setup.value == 0 && setup.index == 0).then_some(vec![0, 0]),
             (0x82, REQ_GET_STATUS) => {
+                if setup.value != 0 {
+                    return None;
+                }
                 let halted = if setup.index == u16::from(INTERRUPT_IN_EP_ADDR) {
                     Some(self.interrupt_in_halted)
                 } else if setup.index == u16::from(INTERRUPT_OUT_EP_ADDR) && self.has_interrupt_out
@@ -392,7 +400,9 @@ impl UsbHidPassthrough {
                 let status: u16 = if halted { 1 } else { 0 };
                 Some(status.to_le_bytes().to_vec())
             }
-            (0x81, REQ_GET_INTERFACE) => ((setup.index & 0xFF) == 0).then_some(vec![0u8]),
+            (0x81, REQ_GET_INTERFACE) => {
+                (setup.value == 0 && setup.index == 0).then_some(vec![0u8])
+            }
             (0xA1, REQ_HID_GET_REPORT) => {
                 let report_type = (setup.value >> 8) as u8;
                 let report_id = (setup.value & 0xFF) as u8;
@@ -449,7 +459,7 @@ impl UsbHidPassthrough {
                 true
             }
             (0x00, REQ_CLEAR_FEATURE) => {
-                if setup.value == FEATURE_DEVICE_REMOTE_WAKEUP {
+                if setup.index == 0 && setup.value == FEATURE_DEVICE_REMOTE_WAKEUP {
                     self.remote_wakeup_enabled = false;
                     true
                 } else {
@@ -457,14 +467,14 @@ impl UsbHidPassthrough {
                 }
             }
             (0x00, REQ_SET_FEATURE) => {
-                if setup.value == FEATURE_DEVICE_REMOTE_WAKEUP {
+                if setup.index == 0 && setup.value == FEATURE_DEVICE_REMOTE_WAKEUP {
                     self.remote_wakeup_enabled = true;
                     true
                 } else {
                     false
                 }
             }
-            (0x01, REQ_SET_INTERFACE) => setup.value == 0 && (setup.index & 0xFF) == 0,
+            (0x01, REQ_SET_INTERFACE) => setup.value == 0 && setup.index == 0,
             (0x02, REQ_CLEAR_FEATURE) => {
                 if setup.value != FEATURE_ENDPOINT_HALT {
                     return false;

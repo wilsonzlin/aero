@@ -401,16 +401,24 @@ impl UsbHidKeyboard {
                 let index = (setup.value & 0xFF) as u8;
                 self.get_descriptor(desc_type, index)
             }
-            (0x80, REQ_GET_CONFIGURATION) => Some(vec![self.configuration]),
+            (0x80, REQ_GET_CONFIGURATION) => {
+                (setup.value == 0 && setup.index == 0).then_some(vec![self.configuration])
+            }
             (0x80, REQ_GET_STATUS) => {
+                if setup.value != 0 || setup.index != 0 {
+                    return None;
+                }
                 let mut status = 0u16;
                 if self.remote_wakeup_enabled {
                     status |= 1 << 1;
                 }
                 Some(status.to_le_bytes().to_vec())
             }
-            (0x81, REQ_GET_STATUS) => Some(vec![0, 0]),
+            (0x81, REQ_GET_STATUS) => (setup.value == 0 && setup.index == 0).then_some(vec![0, 0]),
             (0x82, REQ_GET_STATUS) => {
+                if setup.value != 0 {
+                    return None;
+                }
                 if setup.index == 0x81 {
                     let status: u16 = if self.interrupt_in_halted { 1 } else { 0 };
                     Some(status.to_le_bytes().to_vec())
@@ -418,7 +426,9 @@ impl UsbHidKeyboard {
                     None
                 }
             }
-            (0x81, REQ_GET_INTERFACE) => ((setup.index & 0xFF) == 0).then_some(vec![0u8]),
+            (0x81, REQ_GET_INTERFACE) => {
+                (setup.value == 0 && setup.index == 0).then_some(vec![0u8])
+            }
             (0xA1, REQ_HID_GET_REPORT) => {
                 let report_type = (setup.value >> 8) as u8;
                 match report_type {
@@ -458,7 +468,7 @@ impl UsbHidKeyboard {
                 true
             }
             (0x00, REQ_CLEAR_FEATURE) => {
-                if setup.value == FEATURE_DEVICE_REMOTE_WAKEUP {
+                if setup.index == 0 && setup.value == FEATURE_DEVICE_REMOTE_WAKEUP {
                     self.remote_wakeup_enabled = false;
                     true
                 } else {
@@ -466,14 +476,14 @@ impl UsbHidKeyboard {
                 }
             }
             (0x00, REQ_SET_FEATURE) => {
-                if setup.value == FEATURE_DEVICE_REMOTE_WAKEUP {
+                if setup.index == 0 && setup.value == FEATURE_DEVICE_REMOTE_WAKEUP {
                     self.remote_wakeup_enabled = true;
                     true
                 } else {
                     false
                 }
             }
-            (0x01, REQ_SET_INTERFACE) => setup.value == 0 && (setup.index & 0xFF) == 0,
+            (0x01, REQ_SET_INTERFACE) => setup.value == 0 && setup.index == 0,
             (0x02, REQ_CLEAR_FEATURE) => {
                 if setup.value == FEATURE_ENDPOINT_HALT && setup.index == 0x81 {
                     self.interrupt_in_halted = false;
@@ -886,16 +896,24 @@ impl UsbHidMouse {
                 let index = (setup.value & 0xFF) as u8;
                 self.get_descriptor(desc_type, index)
             }
-            (0x80, REQ_GET_CONFIGURATION) => Some(vec![self.configuration]),
+            (0x80, REQ_GET_CONFIGURATION) => {
+                (setup.value == 0 && setup.index == 0).then_some(vec![self.configuration])
+            }
             (0x80, REQ_GET_STATUS) => {
+                if setup.value != 0 || setup.index != 0 {
+                    return None;
+                }
                 let mut status = 0u16;
                 if self.remote_wakeup_enabled {
                     status |= 1 << 1;
                 }
                 Some(status.to_le_bytes().to_vec())
             }
-            (0x81, REQ_GET_STATUS) => Some(vec![0, 0]),
+            (0x81, REQ_GET_STATUS) => (setup.value == 0 && setup.index == 0).then_some(vec![0, 0]),
             (0x82, REQ_GET_STATUS) => {
+                if setup.value != 0 {
+                    return None;
+                }
                 if setup.index == 0x81 {
                     let status: u16 = if self.interrupt_in_halted { 1 } else { 0 };
                     Some(status.to_le_bytes().to_vec())
@@ -903,7 +921,9 @@ impl UsbHidMouse {
                     None
                 }
             }
-            (0x81, REQ_GET_INTERFACE) => ((setup.index & 0xFF) == 0).then_some(vec![0u8]),
+            (0x81, REQ_GET_INTERFACE) => {
+                (setup.value == 0 && setup.index == 0).then_some(vec![0u8])
+            }
             (0xA1, REQ_HID_GET_REPORT) => {
                 let report_type = (setup.value >> 8) as u8;
                 match report_type {
@@ -938,7 +958,7 @@ impl UsbHidMouse {
                 true
             }
             (0x00, REQ_CLEAR_FEATURE) => {
-                if setup.value == FEATURE_DEVICE_REMOTE_WAKEUP {
+                if setup.index == 0 && setup.value == FEATURE_DEVICE_REMOTE_WAKEUP {
                     self.remote_wakeup_enabled = false;
                     true
                 } else {
@@ -946,14 +966,14 @@ impl UsbHidMouse {
                 }
             }
             (0x00, REQ_SET_FEATURE) => {
-                if setup.value == FEATURE_DEVICE_REMOTE_WAKEUP {
+                if setup.index == 0 && setup.value == FEATURE_DEVICE_REMOTE_WAKEUP {
                     self.remote_wakeup_enabled = true;
                     true
                 } else {
                     false
                 }
             }
-            (0x01, REQ_SET_INTERFACE) => setup.value == 0 && (setup.index & 0xFF) == 0,
+            (0x01, REQ_SET_INTERFACE) => setup.value == 0 && setup.index == 0,
             (0x02, REQ_CLEAR_FEATURE) => {
                 if setup.value == FEATURE_ENDPOINT_HALT && setup.index == 0x81 {
                     self.interrupt_in_halted = false;
@@ -1422,16 +1442,24 @@ impl UsbHidGamepad {
                 let index = (setup.value & 0xFF) as u8;
                 self.get_descriptor(desc_type, index)
             }
-            (0x80, REQ_GET_CONFIGURATION) => Some(vec![self.configuration]),
+            (0x80, REQ_GET_CONFIGURATION) => {
+                (setup.value == 0 && setup.index == 0).then_some(vec![self.configuration])
+            }
             (0x80, REQ_GET_STATUS) => {
+                if setup.value != 0 || setup.index != 0 {
+                    return None;
+                }
                 let mut status = 0u16;
                 if self.remote_wakeup_enabled {
                     status |= 1 << 1;
                 }
                 Some(status.to_le_bytes().to_vec())
             }
-            (0x81, REQ_GET_STATUS) => Some(vec![0, 0]),
+            (0x81, REQ_GET_STATUS) => (setup.value == 0 && setup.index == 0).then_some(vec![0, 0]),
             (0x82, REQ_GET_STATUS) => {
+                if setup.value != 0 {
+                    return None;
+                }
                 if setup.index == 0x81 {
                     let status: u16 = if self.interrupt_in_halted { 1 } else { 0 };
                     Some(status.to_le_bytes().to_vec())
@@ -1439,7 +1467,9 @@ impl UsbHidGamepad {
                     None
                 }
             }
-            (0x81, REQ_GET_INTERFACE) => ((setup.index & 0xFF) == 0).then_some(vec![0u8]),
+            (0x81, REQ_GET_INTERFACE) => {
+                (setup.value == 0 && setup.index == 0).then_some(vec![0u8])
+            }
             (0xA1, REQ_HID_GET_REPORT) => {
                 let report_type = (setup.value >> 8) as u8;
                 match report_type {
@@ -1474,7 +1504,7 @@ impl UsbHidGamepad {
                 true
             }
             (0x00, REQ_CLEAR_FEATURE) => {
-                if setup.value == FEATURE_DEVICE_REMOTE_WAKEUP {
+                if setup.index == 0 && setup.value == FEATURE_DEVICE_REMOTE_WAKEUP {
                     self.remote_wakeup_enabled = false;
                     true
                 } else {
@@ -1482,14 +1512,14 @@ impl UsbHidGamepad {
                 }
             }
             (0x00, REQ_SET_FEATURE) => {
-                if setup.value == FEATURE_DEVICE_REMOTE_WAKEUP {
+                if setup.index == 0 && setup.value == FEATURE_DEVICE_REMOTE_WAKEUP {
                     self.remote_wakeup_enabled = true;
                     true
                 } else {
                     false
                 }
             }
-            (0x01, REQ_SET_INTERFACE) => setup.value == 0 && (setup.index & 0xFF) == 0,
+            (0x01, REQ_SET_INTERFACE) => setup.value == 0 && setup.index == 0,
             (0x02, REQ_CLEAR_FEATURE) => {
                 if setup.value == FEATURE_ENDPOINT_HALT && setup.index == 0x81 {
                     self.interrupt_in_halted = false;
@@ -2013,17 +2043,27 @@ impl UsbHidCompositeInput {
                 let index = (setup.value & 0xFF) as u8;
                 self.get_descriptor(desc_type, index, interface)
             }
-            (0x80, REQ_GET_CONFIGURATION) => Some(vec![self.configuration]),
+            (0x80, REQ_GET_CONFIGURATION) => {
+                (setup.value == 0 && setup.index == 0).then_some(vec![self.configuration])
+            }
             (0x80, REQ_GET_STATUS) => {
+                if setup.value != 0 || setup.index != 0 {
+                    return None;
+                }
                 let mut status = 0u16;
                 if self.remote_wakeup_enabled {
                     status |= 1 << 1;
                 }
                 Some(status.to_le_bytes().to_vec())
             }
-            (0x81, REQ_GET_STATUS) => ((setup.index & 0xFF) <= 2).then_some(vec![0, 0]),
+            (0x81, REQ_GET_STATUS) => {
+                (setup.value == 0 && setup.index <= 2).then_some(vec![0, 0])
+            }
             (0x82, REQ_GET_STATUS) => {
-                let halted = match (setup.index & 0xFF) as u8 {
+                if setup.value != 0 {
+                    return None;
+                }
+                let halted = match setup.index {
                     0x81 => self.interrupt_in_halted[0],
                     0x82 => self.interrupt_in_halted[1],
                     0x83 => self.interrupt_in_halted[2],
@@ -2032,7 +2072,9 @@ impl UsbHidCompositeInput {
                 let status: u16 = if halted { 1 } else { 0 };
                 Some(status.to_le_bytes().to_vec())
             }
-            (0x81, REQ_GET_INTERFACE) => ((setup.index & 0xFF) <= 2).then_some(vec![0u8]),
+            (0x81, REQ_GET_INTERFACE) => {
+                (setup.value == 0 && setup.index <= 2).then_some(vec![0u8])
+            }
             (0xA1, REQ_HID_GET_REPORT) => {
                 let report_type = (setup.value >> 8) as u8;
                 match (interface, report_type) {
@@ -2089,7 +2131,7 @@ impl UsbHidCompositeInput {
                 true
             }
             (0x00, REQ_CLEAR_FEATURE) => {
-                if setup.value == FEATURE_DEVICE_REMOTE_WAKEUP {
+                if setup.index == 0 && setup.value == FEATURE_DEVICE_REMOTE_WAKEUP {
                     self.remote_wakeup_enabled = false;
                     true
                 } else {
@@ -2097,14 +2139,14 @@ impl UsbHidCompositeInput {
                 }
             }
             (0x00, REQ_SET_FEATURE) => {
-                if setup.value == FEATURE_DEVICE_REMOTE_WAKEUP {
+                if setup.index == 0 && setup.value == FEATURE_DEVICE_REMOTE_WAKEUP {
                     self.remote_wakeup_enabled = true;
                     true
                 } else {
                     false
                 }
             }
-            (0x01, REQ_SET_INTERFACE) => setup.value == 0 && (setup.index & 0xFF) <= 2,
+            (0x01, REQ_SET_INTERFACE) => setup.value == 0 && setup.index <= 2,
             (0x02, REQ_CLEAR_FEATURE) => {
                 if setup.value != FEATURE_ENDPOINT_HALT {
                     return false;
