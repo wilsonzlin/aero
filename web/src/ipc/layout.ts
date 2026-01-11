@@ -47,6 +47,7 @@ export const queueKind = {
 } as const;
 
 export function alignUp(value: number, align: number): number {
-  if ((align & (align - 1)) !== 0) throw new Error("align must be power of two");
-  return (value + (align - 1)) & ~(align - 1);
+  if (align <= 0 || (align & (align - 1)) !== 0) throw new Error("align must be a positive power of two");
+  const rem = value % align;
+  return rem === 0 ? value : value + (align - rem);
 }
