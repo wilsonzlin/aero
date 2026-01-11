@@ -627,6 +627,64 @@ func TestUDPWebSocketServer_IgnoresRedundantAuthMessage(t *testing.T) {
 	}
 }
 
+func TestUDPWebSocketServer_QueryTokenAlias(t *testing.T) {
+	echo, echoPort := startUDPEchoServer(t, "udp4", net.IPv4(127, 0, 0, 1))
+	defer echo.Close()
+
+	cfg := config.Config{
+		AuthMode:                 config.AuthModeAPIKey,
+		APIKey:                   "secret",
+		SignalingAuthTimeout:     2 * time.Second,
+		MaxSignalingMessageBytes: 64 * 1024,
+	}
+	m := metrics.New()
+	sm := NewSessionManager(cfg, m, nil)
+	relayCfg := DefaultConfig()
+	relayCfg.PreferV2 = true
+
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy())
+	if err != nil {
+		t.Fatalf("NewUDPWebSocketServer: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle("GET /udp", srv)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	// Query-string auth with token works in api_key mode for compatibility.
+	c := dialWS(t, ts.URL, "/udp?token=secret")
+
+	in := udpproto.Frame{
+		GuestPort:  1234,
+		RemoteIP:   netip.MustParseAddr("127.0.0.1"),
+		RemotePort: echoPort,
+		Payload:    []byte("hello via token alias"),
+	}
+	pkt, err := udpproto.EncodeV1(in)
+	if err != nil {
+		t.Fatalf("EncodeV1: %v", err)
+	}
+
+	if err := c.WriteMessage(websocket.BinaryMessage, pkt); err != nil {
+		t.Fatalf("WriteMessage datagram: %v", err)
+	}
+
+	_ = c.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, outPkt, err := c.ReadMessage()
+	if err != nil {
+		t.Fatalf("ReadMessage: %v", err)
+	}
+
+	outFrame, err := udpproto.Decode(outPkt)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if string(outFrame.Payload) != "hello via token alias" {
+		t.Fatalf("payload=%q, want %q", outFrame.Payload, "hello via token alias")
+	}
+}
+
 func TestUDPWebSocketServer_RecordsBackpressureDrops(t *testing.T) {
 	echo, echoPort := startUDPEchoServer(t, "udp4", net.IPv4(127, 0, 0, 1))
 	defer echo.Close()

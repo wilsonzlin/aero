@@ -157,6 +157,24 @@ func TestAuth_APIKey_WebRTCOffer(t *testing.T) {
 		t.Fatalf("good api key status=%d, want %d", resp.StatusCode, http.StatusOK)
 	}
 	_ = resp.Body.Close()
+
+	t.Run("valid query token alias", func(t *testing.T) {
+		req, err := http.NewRequest(http.MethodPost, ts.URL+"/webrtc/offer?token=secret", bytes.NewReader(body))
+		if err != nil {
+			t.Fatalf("NewRequest: %v", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("Do: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("query token alias status=%d, want %d", resp.StatusCode, http.StatusOK)
+		}
+	})
 }
 
 func TestAuth_JWT_WebRTCOffer(t *testing.T) {
@@ -201,11 +219,30 @@ func TestAuth_JWT_WebRTCOffer(t *testing.T) {
 	}
 	_ = resp.Body.Close()
 
-	resp = do(makeJWT(cfg.JWTSecret))
+	token := makeJWT(cfg.JWTSecret)
+	resp = do(token)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("good token status=%d, want %d", resp.StatusCode, http.StatusOK)
 	}
 	_ = resp.Body.Close()
+
+	t.Run("valid query apiKey alias", func(t *testing.T) {
+		req, err := http.NewRequest(http.MethodPost, ts.URL+"/webrtc/offer?apiKey="+token, bytes.NewReader(body))
+		if err != nil {
+			t.Fatalf("NewRequest: %v", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("Do: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("query apiKey alias status=%d, want %d", resp.StatusCode, http.StatusOK)
+		}
+	})
 }
 
 func TestAuth_APIKey_WebSocketSignal_FirstMessageAuth(t *testing.T) {
@@ -264,6 +301,83 @@ func TestAuth_JWT_WebSocketSignal_QueryParamFallback(t *testing.T) {
 
 	token := makeJWT(cfg.JWTSecret)
 	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/webrtc/signal?token=" + token
+	c, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+
+	if err := c.WriteJSON(signaling.SignalMessage{Type: signaling.MessageTypeOffer, SDP: &offerSDP}); err != nil {
+		t.Fatalf("write offer: %v", err)
+	}
+
+	_ = c.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_, msg, err := c.ReadMessage()
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	got, err := signaling.ParseSignalMessage(msg)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if got.Type != signaling.MessageTypeAnswer {
+		t.Fatalf("unexpected message: %#v", got)
+	}
+}
+
+func TestAuth_APIKey_WebSocketSignal_QueryTokenAlias(t *testing.T) {
+	cfg := config.Config{
+		AuthMode:                      config.AuthModeAPIKey,
+		APIKey:                        "secret",
+		SignalingAuthTimeout:          2 * time.Second,
+		MaxSignalingMessageBytes:      64 * 1024,
+		MaxSignalingMessagesPerSecond: 50,
+	}
+	ts, _ := startSignalingServer(t, cfg)
+
+	api := newTestWebRTCAPI(t)
+	offerSDP := newOfferSDP(t, api)
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/webrtc/signal?token=secret"
+	c, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+
+	if err := c.WriteJSON(signaling.SignalMessage{Type: signaling.MessageTypeOffer, SDP: &offerSDP}); err != nil {
+		t.Fatalf("write offer: %v", err)
+	}
+
+	_ = c.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_, msg, err := c.ReadMessage()
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	got, err := signaling.ParseSignalMessage(msg)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if got.Type != signaling.MessageTypeAnswer {
+		t.Fatalf("unexpected message: %#v", got)
+	}
+}
+
+func TestAuth_JWT_WebSocketSignal_QueryAPIKeyAlias(t *testing.T) {
+	cfg := config.Config{
+		AuthMode:                      config.AuthModeJWT,
+		JWTSecret:                     "supersecret",
+		SignalingAuthTimeout:          2 * time.Second,
+		MaxSignalingMessageBytes:      64 * 1024,
+		MaxSignalingMessagesPerSecond: 50,
+	}
+	ts, _ := startSignalingServer(t, cfg)
+
+	api := newTestWebRTCAPI(t)
+	offerSDP := newOfferSDP(t, api)
+
+	token := makeJWT(cfg.JWTSecret)
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/webrtc/signal?apiKey=" + token
 	c, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
