@@ -134,12 +134,12 @@ static int RunD3D9ExDwmDdiSanity(int argc, char** argv) {
   ZeroMemory(&ident, sizeof(ident));
   hr = d3d->GetAdapterIdentifier(D3DADAPTER_DEFAULT, 0, &ident);
   if (SUCCEEDED(hr)) {
-    reporter.SetAdapterInfoA(ident.Description, (uint32_t)ident.VendorId, (uint32_t)ident.DeviceId);
     aerogpu_test::PrintfStdout("INFO: %s: adapter: %s (VID=0x%04X DID=0x%04X)",
                                kTestName,
                                ident.Description,
                                (unsigned)ident.VendorId,
                                (unsigned)ident.DeviceId);
+    reporter.SetAdapterInfoA(ident.Description, ident.VendorId, ident.DeviceId);
     if (!allow_microsoft && ident.VendorId == 0x1414) {
       return reporter.Fail(
           "refusing to run on Microsoft adapter (VID=0x%04X DID=0x%04X). "

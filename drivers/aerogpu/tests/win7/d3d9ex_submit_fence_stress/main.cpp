@@ -537,7 +537,7 @@ static int RunSubmitFenceStress(int argc, char** argv) {
 
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
-        "Usage: %s.exe [--iterations=N] [--show] [--allow-remote] [--json[=PATH]] [--allow-microsoft] "
+        "Usage: %s.exe [--iterations=N] [--show] [--json[=PATH]] [--allow-remote] [--allow-microsoft] "
         "[--allow-non-aerogpu] [--require-umd]",
         kTestName);
     aerogpu_test::PrintfStdout("Stresses D3D9Ex submits and validates per-submission fences via AeroGPU debug output.");
@@ -626,17 +626,18 @@ static int RunSubmitFenceStress(int argc, char** argv) {
   ZeroMemory(&ident, sizeof(ident));
   hr = d3d->GetAdapterIdentifier(D3DADAPTER_DEFAULT, 0, &ident);
   if (SUCCEEDED(hr)) {
-    reporter.SetAdapterInfoA(ident.Description, (uint32_t)ident.VendorId, (uint32_t)ident.DeviceId);
     aerogpu_test::PrintfStdout("INFO: %s: adapter: %s (VID=0x%04X DID=0x%04X)",
                                kTestName,
                                ident.Description,
                                (unsigned)ident.VendorId,
                                (unsigned)ident.DeviceId);
+    reporter.SetAdapterInfoA(ident.Description, ident.VendorId, ident.DeviceId);
     if (!allow_microsoft && ident.VendorId == 0x1414) {
-      return reporter.Fail("refusing to run on Microsoft adapter (VID=0x%04X DID=0x%04X). "
-                           "Install AeroGPU driver or pass --allow-microsoft.",
-                           (unsigned)ident.VendorId,
-                           (unsigned)ident.DeviceId);
+      return reporter.Fail(
+          "refusing to run on Microsoft adapter (VID=0x%04X DID=0x%04X). "
+          "Install AeroGPU driver or pass --allow-microsoft.",
+          (unsigned)ident.VendorId,
+          (unsigned)ident.DeviceId);
     }
     if (!allow_non_aerogpu && !(ident.VendorId == 0x1414 && allow_microsoft) &&
         !aerogpu_test::StrIContainsA(ident.Description, "AeroGPU")) {

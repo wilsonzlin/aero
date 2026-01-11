@@ -21,10 +21,8 @@ static int RunConsumer(int argc, char** argv) {
 
   const bool dump = aerogpu_test::HasArg(argc, argv, "--dump");
   const bool show = aerogpu_test::HasArg(argc, argv, "--show");
-  if (dump) {
-    reporter.AddArtifactPathW(
-        aerogpu_test::JoinPath(aerogpu_test::GetModuleDir(), L"d3d9ex_shared_surface_wow64.bmp"));
-  }
+  const std::wstring dump_bmp_path =
+      aerogpu_test::JoinPath(aerogpu_test::GetModuleDir(), L"d3d9ex_shared_surface_wow64.bmp");
 
   AdapterRequirements req;
   int rc = ParseAdapterRequirements(argc, argv, kTestName, &req, &reporter);
@@ -113,9 +111,9 @@ static int RunConsumer(int argc, char** argv) {
 
   HWND hwnd = aerogpu_test::CreateBasicWindow(L"AeroGPU_D3D9ExSharedSurfaceWOW64_Consumer",
                                               L"AeroGPU D3D9Ex Shared Surface WOW64 (Consumer x64)",
-                                               kWidth,
-                                               kHeight,
-                                               show);
+                                              kWidth,
+                                              kHeight,
+                                              show);
   if (!hwnd) {
     exit_code = reporter.Fail("CreateBasicWindow failed");
     goto Exit;
@@ -196,13 +194,15 @@ static int RunConsumer(int argc, char** argv) {
 
   if (dump) {
     std::string err;
-    if (!aerogpu_test::WriteBmp32BGRA(
-            aerogpu_test::JoinPath(aerogpu_test::GetModuleDir(), L"d3d9ex_shared_surface_wow64.bmp"),
+    if (aerogpu_test::WriteBmp32BGRA(
+            dump_bmp_path,
             kWidth,
             kHeight,
             lr.pBits,
             (int)lr.Pitch,
             &err)) {
+      reporter.AddArtifactPathW(dump_bmp_path);
+    } else if (!err.empty()) {
       aerogpu_test::PrintfStdout("INFO: %s: BMP dump failed: %s", kTestName, err.c_str());
     }
   }

@@ -74,20 +74,21 @@ static int CheckD3D9Adapter(aerogpu_test::TestReporter* reporter,
   ZeroMemory(&ident, sizeof(ident));
   HRESULT hr = d3d->GetAdapterIdentifier(D3DADAPTER_DEFAULT, 0, &ident);
   if (SUCCEEDED(hr)) {
-    if (reporter) {
-      reporter->SetAdapterInfoA(ident.Description, (uint32_t)ident.VendorId, (uint32_t)ident.DeviceId);
-    }
     aerogpu_test::PrintfStdout("INFO: %s: adapter: %s (VID=0x%04X DID=0x%04X)",
                                test_name,
                                ident.Description,
                                (unsigned)ident.VendorId,
                                (unsigned)ident.DeviceId);
+    if (reporter) {
+      reporter->SetAdapterInfoA(ident.Description, ident.VendorId, ident.DeviceId);
+    }
     if (!req.allow_microsoft && ident.VendorId == 0x1414) {
       if (reporter) {
-        return reporter->Fail("refusing to run on Microsoft adapter (VID=0x%04X DID=0x%04X). "
-                              "Install AeroGPU driver or pass --allow-microsoft.",
-                              (unsigned)ident.VendorId,
-                              (unsigned)ident.DeviceId);
+        return reporter->Fail(
+            "refusing to run on Microsoft adapter (VID=0x%04X DID=0x%04X). "
+            "Install AeroGPU driver or pass --allow-microsoft.",
+            (unsigned)ident.VendorId,
+            (unsigned)ident.DeviceId);
       }
       return aerogpu_test::Fail(test_name,
                                 "refusing to run on Microsoft adapter (VID=0x%04X DID=0x%04X). "
@@ -121,9 +122,10 @@ static int CheckD3D9Adapter(aerogpu_test::TestReporter* reporter,
         !(ident.VendorId == 0x1414 && req.allow_microsoft) &&
         !aerogpu_test::StrIContainsA(ident.Description, "AeroGPU")) {
       if (reporter) {
-        return reporter->Fail("adapter does not look like AeroGPU: %s (pass --allow-non-aerogpu "
-                              "or use --require-vid/--require-did)",
-                              ident.Description);
+        return reporter->Fail(
+            "adapter does not look like AeroGPU: %s (pass --allow-non-aerogpu "
+            "or use --require-vid/--require-did)",
+            ident.Description);
       }
       return aerogpu_test::Fail(test_name,
                                 "adapter does not look like AeroGPU: %s (pass --allow-non-aerogpu "
@@ -134,9 +136,8 @@ static int CheckD3D9Adapter(aerogpu_test::TestReporter* reporter,
     if (reporter) {
       return reporter->FailHresult("GetAdapterIdentifier (required for --require-vid/--require-did)", hr);
     }
-    return aerogpu_test::FailHresult(test_name,
-                                     "GetAdapterIdentifier (required for --require-vid/--require-did)",
-                                     hr);
+    return aerogpu_test::FailHresult(
+        test_name, "GetAdapterIdentifier (required for --require-vid/--require-did)", hr);
   }
 
   return 0;
@@ -335,24 +336,26 @@ static std::wstring MakeIpcBaseName(DWORD parent_pid, DWORD tick, uint32_t index
 static int RunProducer(int argc, char** argv) {
   const char* kTestName = "d3d9ex_shared_surface_many_producers_producer";
 
+  aerogpu_test::TestReporter reporter(kTestName, argc, argv);
+
   AdapterRequirements req;
-  if (!ParseAdapterRequirements(NULL, kTestName, argc, argv, &req)) {
+  if (!ParseAdapterRequirements(&reporter, kTestName, argc, argv, &req)) {
     return 1;
   }
 
   std::string parent_pid_str;
   if (!aerogpu_test::GetArgValue(argc, argv, "--parent-pid", &parent_pid_str)) {
-    return aerogpu_test::Fail(kTestName, "missing --parent-pid");
+    return reporter.Fail("missing --parent-pid");
   }
   uint32_t parent_pid = 0;
   std::string parse_err;
   if (!aerogpu_test::ParseUint32(parent_pid_str, &parent_pid, &parse_err) || parent_pid == 0) {
-    return aerogpu_test::Fail(kTestName, "invalid --parent-pid: %s", parse_err.c_str());
+    return reporter.Fail("invalid --parent-pid: %s", parse_err.c_str());
   }
 
   std::string ipc_name_str;
   if (!aerogpu_test::GetArgValue(argc, argv, "--ipc-name", &ipc_name_str) || ipc_name_str.empty()) {
-    return aerogpu_test::Fail(kTestName, "missing --ipc-name");
+    return reporter.Fail("missing --ipc-name");
   }
   const std::wstring ipc_base = WidenAscii(ipc_name_str);
 
@@ -360,7 +363,7 @@ static int RunProducer(int argc, char** argv) {
   uint32_t index = 0;
   if (aerogpu_test::GetArgValue(argc, argv, "--index", &index_str) && !index_str.empty()) {
     if (!aerogpu_test::ParseUint32(index_str, &index, &parse_err)) {
-      return aerogpu_test::Fail(kTestName, "invalid --index: %s", parse_err.c_str());
+      return reporter.Fail("invalid --index: %s", parse_err.c_str());
     }
   }
 
@@ -371,16 +374,15 @@ static int RunProducer(int argc, char** argv) {
 
   HANDLE mapping = OpenFileMappingW(FILE_MAP_WRITE | FILE_MAP_READ, FALSE, mapping_name.c_str());
   if (!mapping) {
-    return aerogpu_test::Fail(
-        kTestName, "OpenFileMappingW failed: %s", aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
+    return reporter.Fail("OpenFileMappingW failed: %s",
+                         aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
   }
   IpcPayload* payload =
       (IpcPayload*)MapViewOfFile(mapping, FILE_MAP_WRITE | FILE_MAP_READ, 0, 0, kPayloadSize);
   if (!payload) {
     DWORD err = GetLastError();
     CloseHandle(mapping);
-    return aerogpu_test::Fail(
-        kTestName, "MapViewOfFile failed: %s", aerogpu_test::Win32ErrorToString(err).c_str());
+    return reporter.Fail("MapViewOfFile failed: %s", aerogpu_test::Win32ErrorToString(err).c_str());
   }
 
   HANDLE ready_event = OpenEventW(EVENT_MODIFY_STATE, FALSE, ready_name.c_str());
@@ -388,8 +390,7 @@ static int RunProducer(int argc, char** argv) {
     DWORD err = GetLastError();
     UnmapViewOfFile(payload);
     CloseHandle(mapping);
-    return aerogpu_test::Fail(
-        kTestName, "OpenEventW(ready) failed: %s", aerogpu_test::Win32ErrorToString(err).c_str());
+    return reporter.Fail("OpenEventW(ready) failed: %s", aerogpu_test::Win32ErrorToString(err).c_str());
   }
 
   ZeroMemory(payload, sizeof(*payload));
@@ -409,12 +410,12 @@ static int RunProducer(int argc, char** argv) {
     CloseHandle(ready_event);
     UnmapViewOfFile(payload);
     CloseHandle(mapping);
-    return aerogpu_test::Fail(kTestName, "CreateBasicWindow failed");
+    return reporter.Fail("CreateBasicWindow failed");
   }
 
   ComPtr<IDirect3D9Ex> d3d;
   ComPtr<IDirect3DDevice9Ex> dev;
-  int rc = CreateD3D9ExDevice(NULL, kTestName, hwnd, kWidth, kHeight, req, &d3d, &dev);
+  int rc = CreateD3D9ExDevice(&reporter, kTestName, hwnd, kWidth, kHeight, req, &d3d, &dev);
   if (rc != 0) {
     payload->ok = 0;
     payload->hr = 0x80004005u;
@@ -442,7 +443,7 @@ static int RunProducer(int argc, char** argv) {
     CloseHandle(ready_event);
     UnmapViewOfFile(payload);
     CloseHandle(mapping);
-    return aerogpu_test::FailHresult(kTestName, "CreateTexture(shared)", hr);
+    return reporter.FailHresult("CreateTexture(shared)", hr);
   }
 
   // Ensure the producer-side allocation is realized before handing the surface to the compositor.
@@ -455,7 +456,7 @@ static int RunProducer(int argc, char** argv) {
     CloseHandle(ready_event);
     UnmapViewOfFile(payload);
     CloseHandle(mapping);
-    return aerogpu_test::FailHresult(kTestName, "IDirect3DTexture9::GetSurfaceLevel", hr);
+    return reporter.FailHresult("IDirect3DTexture9::GetSurfaceLevel", hr);
   }
   const D3DCOLOR init_color = UniqueColorForIndex(index);
   hr = dev->ColorFill(surf.get(), NULL, init_color);
@@ -466,7 +467,7 @@ static int RunProducer(int argc, char** argv) {
     CloseHandle(ready_event);
     UnmapViewOfFile(payload);
     CloseHandle(mapping);
-    return aerogpu_test::FailHresult(kTestName, "ColorFill(producer init)", hr);
+    return reporter.FailHresult("ColorFill(producer init)", hr);
   }
   hr = dev->Flush();
   if (FAILED(hr)) {
@@ -476,9 +477,9 @@ static int RunProducer(int argc, char** argv) {
     CloseHandle(ready_event);
     UnmapViewOfFile(payload);
     CloseHandle(mapping);
-    return aerogpu_test::FailHresult(kTestName, "Flush(producer init)", hr);
+    return reporter.FailHresult("Flush(producer init)", hr);
   }
-  rc = WaitForGpuEvent(NULL, kTestName, dev.get(), 5000);
+  rc = WaitForGpuEvent(&reporter, kTestName, dev.get(), 5000);
   if (rc != 0) {
     payload->ok = 0;
     SetEvent(ready_event);
@@ -500,8 +501,8 @@ static int RunProducer(int argc, char** argv) {
       CloseHandle(ready_event);
       UnmapViewOfFile(payload);
       CloseHandle(mapping);
-      return aerogpu_test::Fail(
-          kTestName, "OpenProcess(PROCESS_DUP_HANDLE) failed: %s", aerogpu_test::Win32ErrorToString(payload->win32_error).c_str());
+      return reporter.Fail("OpenProcess(PROCESS_DUP_HANDLE) failed: %s",
+                           aerogpu_test::Win32ErrorToString(payload->win32_error).c_str());
     }
     HANDLE dup = NULL;
     if (!DuplicateHandle(GetCurrentProcess(),
@@ -520,8 +521,8 @@ static int RunProducer(int argc, char** argv) {
       CloseHandle(ready_event);
       UnmapViewOfFile(payload);
       CloseHandle(mapping);
-      return aerogpu_test::Fail(
-          kTestName, "DuplicateHandle(into parent) failed: %s", aerogpu_test::Win32ErrorToString(dup_err).c_str());
+      return reporter.Fail("DuplicateHandle(into parent) failed: %s",
+                           aerogpu_test::Win32ErrorToString(dup_err).c_str());
     }
     CloseHandle(parent_proc);
     shared_in_parent = dup;
@@ -541,8 +542,7 @@ static int RunProducer(int argc, char** argv) {
   CloseHandle(mapping);
 
   // The compositor holds the shared handle; this process can exit immediately.
-  aerogpu_test::PrintfStdout("PASS: %s", kTestName);
-  return 0;
+  return reporter.Pass();
 }
 
 static int ValidateSurfaceColor(aerogpu_test::TestReporter* reporter,
@@ -727,8 +727,7 @@ static int RunCompositor(int argc, char** argv) {
       if (job) {
         CloseHandle(job);
       }
-      return reporter.Fail("CreateFileMappingW failed: %s",
-                           aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
+      return reporter.Fail("CreateFileMappingW failed: %s", aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
     }
     p.payload = (IpcPayload*)MapViewOfFile(p.mapping, FILE_MAP_WRITE | FILE_MAP_READ, 0, 0, kPayloadSize);
     if (!p.payload) {

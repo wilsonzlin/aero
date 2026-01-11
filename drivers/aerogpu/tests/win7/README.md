@@ -125,6 +125,21 @@ cmake -S . -B build -G "Visual Studio 17 2022" -A Win32
 cmake --build build --config Release
 ```
 
+### Building the WOW64 cross-bitness test (Win7 x64)
+
+`d3d9ex_shared_surface_wow64` requires both an **x86 producer** (`d3d9ex_shared_surface_wow64.exe`) and an **x64 consumer**
+(`d3d9ex_shared_surface_wow64_consumer_x64.exe`) in `win7\bin\`. Build two CMake trees (Win32 + x64) to produce both:
+
+```cmd
+cmake -S . -B build-win32 -G "Visual Studio 17 2022" -A Win32
+cmake --build build-win32 --config Release
+
+cmake -S . -B build-x64 -G "Visual Studio 17 2022" -A x64
+cmake --build build-x64 --config Release --target d3d9ex_shared_surface_wow64_consumer_x64
+```
+
+Note: the x64 generator can build x64 variants of the entire suite. Use the explicit `--target` above to avoid overwriting the Win32 binaries in `win7\\bin\\`.
+
 Outputs are placed in:
 
 ```

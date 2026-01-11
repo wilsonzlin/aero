@@ -128,21 +128,22 @@ static inline int ValidateAdapter(const char* test_name,
     return 0;
   }
 
-  if (reporter) {
-    reporter->SetAdapterInfoA(ident.Description, (uint32_t)ident.VendorId, (uint32_t)ident.DeviceId);
-  }
   aerogpu_test::PrintfStdout("INFO: %s: adapter: %s (VID=0x%04X DID=0x%04X)",
                              test_name,
                              ident.Description,
                              (unsigned)ident.VendorId,
                              (unsigned)ident.DeviceId);
+  if (reporter) {
+    reporter->SetAdapterInfoA(ident.Description, ident.VendorId, ident.DeviceId);
+  }
 
   if (!req.allow_microsoft && ident.VendorId == 0x1414) {
     if (reporter) {
-      return reporter->Fail("refusing to run on Microsoft adapter (VID=0x%04X DID=0x%04X). "
-                            "Install AeroGPU driver or pass --allow-microsoft.",
-                            (unsigned)ident.VendorId,
-                            (unsigned)ident.DeviceId);
+      return reporter->Fail(
+          "refusing to run on Microsoft adapter (VID=0x%04X DID=0x%04X). "
+          "Install AeroGPU driver or pass --allow-microsoft.",
+          (unsigned)ident.VendorId,
+          (unsigned)ident.DeviceId);
     }
     return aerogpu_test::Fail(test_name,
                               "refusing to run on Microsoft adapter (VID=0x%04X DID=0x%04X). "
@@ -176,9 +177,10 @@ static inline int ValidateAdapter(const char* test_name,
       !(ident.VendorId == 0x1414 && req.allow_microsoft) &&
       !aerogpu_test::StrIContainsA(ident.Description, "AeroGPU")) {
     if (reporter) {
-      return reporter->Fail("adapter does not look like AeroGPU: %s (pass --allow-non-aerogpu "
-                            "or use --require-vid/--require-did)",
-                            ident.Description);
+      return reporter->Fail(
+          "adapter does not look like AeroGPU: %s (pass --allow-non-aerogpu "
+          "or use --require-vid/--require-did)",
+          ident.Description);
     }
     return aerogpu_test::Fail(test_name,
                               "adapter does not look like AeroGPU: %s (pass --allow-non-aerogpu "

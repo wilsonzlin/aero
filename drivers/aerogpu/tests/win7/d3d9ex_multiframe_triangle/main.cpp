@@ -25,7 +25,7 @@ static int RunD3D9ExMultiframeTriangle(int argc, char** argv) {
   const char* kTestName = "d3d9ex_multiframe_triangle";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
-        "Usage: %s.exe [--dump] [--hidden] [--frames=N] [--json[=PATH]] [--require-vid=0x####] "
+        "Usage: %s.exe [--dump] [--hidden] [--json[=PATH]] [--frames=N] [--require-vid=0x####] "
         "[--require-did=0x####] [--allow-microsoft] [--allow-non-aerogpu] [--require-umd]",
         kTestName);
     return 0;
@@ -122,17 +122,18 @@ static int RunD3D9ExMultiframeTriangle(int argc, char** argv) {
   ZeroMemory(&ident, sizeof(ident));
   hr = d3d->GetAdapterIdentifier(D3DADAPTER_DEFAULT, 0, &ident);
   if (SUCCEEDED(hr)) {
-    reporter.SetAdapterInfoA(ident.Description, (uint32_t)ident.VendorId, (uint32_t)ident.DeviceId);
     aerogpu_test::PrintfStdout("INFO: %s: adapter: %s (VID=0x%04X DID=0x%04X)",
                                kTestName,
                                ident.Description,
                                (unsigned)ident.VendorId,
                                (unsigned)ident.DeviceId);
+    reporter.SetAdapterInfoA(ident.Description, ident.VendorId, ident.DeviceId);
     if (!allow_microsoft && ident.VendorId == 0x1414) {
-      return reporter.Fail("refusing to run on Microsoft adapter (VID=0x%04X DID=0x%04X). "
-                           "Install AeroGPU driver or pass --allow-microsoft.",
-                           (unsigned)ident.VendorId,
-                           (unsigned)ident.DeviceId);
+      return reporter.Fail(
+          "refusing to run on Microsoft adapter (VID=0x%04X DID=0x%04X). "
+          "Install AeroGPU driver or pass --allow-microsoft.",
+          (unsigned)ident.VendorId,
+          (unsigned)ident.DeviceId);
     }
     if (has_require_vid && ident.VendorId != require_vid) {
       return reporter.Fail("adapter VID mismatch: got 0x%04X expected 0x%04X",
@@ -335,6 +336,8 @@ static int RunD3D9ExMultiframeTriangle(int argc, char** argv) {
                                           (int)lr.Pitch,
                                           &err)) {
             reporter.AddArtifactPathW(dump_bmp_path);
+          } else if (!err.empty()) {
+            aerogpu_test::PrintfStdout("INFO: %s: BMP dump failed: %s", kTestName, err.c_str());
           }
           sysmem->UnlockRect();
         }

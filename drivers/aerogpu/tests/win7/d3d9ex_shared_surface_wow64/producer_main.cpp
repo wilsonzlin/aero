@@ -95,16 +95,18 @@ static int RunProducer(int argc, char** argv) {
 
   // This test only makes sense on a 64-bit OS: the producer is x86 and the consumer is x64.
   if (!aerogpu_test::IsRunningUnderWow64()) {
-    aerogpu_test::PrintfStdout("SKIP: %s: requires a 64-bit OS (WOW64)", kTestName);
+    aerogpu_test::PrintfStdout("INFO: %s: requires a 64-bit OS (WOW64); skipping", kTestName);
     reporter.SetSkipped("requires a 64-bit OS (WOW64)");
     return reporter.Pass();
   }
 
   const bool dump = aerogpu_test::HasArg(argc, argv, "--dump");
   const bool show = aerogpu_test::HasArg(argc, argv, "--show");
+  const std::wstring dump_bmp_path =
+      aerogpu_test::JoinPath(aerogpu_test::GetModuleDir(), L"d3d9ex_shared_surface_wow64.bmp");
   if (dump) {
-    reporter.AddArtifactPathW(
-        aerogpu_test::JoinPath(aerogpu_test::GetModuleDir(), L"d3d9ex_shared_surface_wow64.bmp"));
+    // Ensure we don't report a stale BMP from a previous run if the consumer fails before dumping.
+    DeleteFileW(dump_bmp_path.c_str());
   }
 
   AdapterRequirements req;
@@ -147,8 +149,8 @@ static int RunProducer(int argc, char** argv) {
                                   D3DUSAGE_RENDERTARGET,
                                   D3DFMT_A8R8G8B8,
                                   D3DPOOL_DEFAULT,
-                                   tex.put(),
-                                   &shared);
+                                  tex.put(),
+                                  &shared);
   if (FAILED(hr)) {
     return reporter.FailHresult("CreateTexture(shared)", hr);
   }
@@ -486,6 +488,13 @@ static int RunProducer(int argc, char** argv) {
   UnmapViewOfFile(ipc);
   CloseHandle(mapping);
   CloseHandle(shared);
+
+  if (dump) {
+    DWORD bmp_attr = GetFileAttributesW(dump_bmp_path.c_str());
+    if (bmp_attr != INVALID_FILE_ATTRIBUTES && (bmp_attr & FILE_ATTRIBUTE_DIRECTORY) == 0) {
+      reporter.AddArtifactPathW(dump_bmp_path);
+    }
+  }
 
   if (exit_code != 0) {
     return reporter.Fail("consumer failed with exit code %lu", (unsigned long)exit_code);
