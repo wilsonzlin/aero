@@ -735,18 +735,6 @@ impl UsbDeviceModel for UsbHubDevice {
         }
     }
 
-    fn handle_in_transfer(&mut self, ep_addr: u8, max_len: usize) -> UsbInResult {
-        match self.handle_interrupt_in(ep_addr) {
-            UsbInResult::Data(mut data) => {
-                if data.len() > max_len {
-                    data.truncate(max_len);
-                }
-                UsbInResult::Data(data)
-            }
-            other => other,
-        }
-    }
-
     fn handle_interrupt_in(&mut self, ep_addr: u8) -> UsbInResult {
         if ep_addr != HUB_INTERRUPT_IN_EP {
             return UsbInResult::Stall;

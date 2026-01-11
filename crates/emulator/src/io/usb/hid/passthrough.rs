@@ -143,10 +143,6 @@ impl UsbDeviceModel for UsbHidPassthroughHandle {
             .handle_control_request(setup, data_stage)
     }
 
-    fn handle_in_transfer(&mut self, ep_addr: u8, max_len: usize) -> UsbInResult {
-        self.inner.borrow_mut().handle_in_transfer(ep_addr, max_len)
-    }
-
     fn handle_interrupt_in(&mut self, ep_addr: u8) -> UsbInResult {
         self.inner.borrow_mut().handle_interrupt_in(ep_addr)
     }
@@ -678,18 +674,6 @@ impl UsbDeviceModel for UsbHidPassthrough {
                 _ => ControlResponse::Stall,
             },
             _ => ControlResponse::Stall,
-        }
-    }
-
-    fn handle_in_transfer(&mut self, ep_addr: u8, max_len: usize) -> UsbInResult {
-        match self.handle_interrupt_in(ep_addr) {
-            UsbInResult::Data(mut data) => {
-                if data.len() > max_len {
-                    data.truncate(max_len);
-                }
-                UsbInResult::Data(data)
-            }
-            other => other,
         }
     }
 
