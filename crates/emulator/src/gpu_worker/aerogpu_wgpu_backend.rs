@@ -6,7 +6,7 @@ use std::collections::{HashMap, VecDeque};
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
 use aero_gpu::{GuestMemory, GuestMemoryError};
 use aero_protocol::aerogpu::aerogpu_ring::{
-    decode_alloc_table_le, AerogpuAllocEntry, AerogpuAllocTableDecodeError,
+    decode_alloc_table_le, AerogpuAllocEntry, AerogpuAllocTableDecodeError, AerogpuAllocTableHeader,
 };
 use anyhow::{anyhow, Result};
 use memory::MemoryBus;
@@ -69,23 +69,73 @@ impl GuestMemory for MemoryBusGuestMemory<'_> {
 fn decode_alloc_table_bytes(bytes: &[u8]) -> Result<Vec<AerogpuAllocEntry>> {
     match decode_alloc_table_le(bytes) {
         Ok(view) => Ok(view.entries.to_vec()),
-        Err(AerogpuAllocTableDecodeError::Misaligned) => {
-            // `decode_alloc_table_le` requires the entry array to be aligned. The guest allocation
-            // itself is naturally aligned, but a `Vec<u8>` copy is not required to preserve that
-            // alignment. Retry using an 8-byte aligned buffer.
-            let words = (bytes.len() + 7) / 8;
-            let mut aligned = vec![0u64; words];
-            let aligned_bytes = unsafe {
-                core::slice::from_raw_parts_mut(aligned.as_mut_ptr() as *mut u8, aligned.len() * 8)
-            };
-            aligned_bytes[..bytes.len()].copy_from_slice(bytes);
-
-            decode_alloc_table_le(&aligned_bytes[..bytes.len()])
-                .map(|view| view.entries.to_vec())
-                .map_err(|e| anyhow!("alloc table decode failed: {e:?}"))
-        }
+        Err(AerogpuAllocTableDecodeError::Misaligned) => decode_alloc_table_bytes_unaligned(bytes),
         Err(err) => Err(anyhow!("alloc table decode failed: {err:?}")),
     }
+}
+
+fn decode_alloc_table_bytes_unaligned(bytes: &[u8]) -> Result<Vec<AerogpuAllocEntry>> {
+    // `decode_alloc_table_le` requires the entry array to be aligned so it can cast the entry
+    // array directly. When the allocation table bytes originate from an unaligned `Vec<u8>` copy,
+    // fall back to decoding entries individually.
+    let header = AerogpuAllocTableHeader::decode_from_le_bytes(bytes)
+        .map_err(|e| anyhow!("alloc table header decode failed: {e:?}"))?;
+    header
+        .validate_prefix()
+        .map_err(|e| anyhow!("alloc table header validation failed: {e:?}"))?;
+
+    let size_bytes = usize::try_from(header.size_bytes)
+        .map_err(|_| anyhow!("alloc table header size_bytes does not fit in usize"))?;
+    if size_bytes > bytes.len() {
+        return Err(anyhow!(
+            "alloc table size_bytes={} exceeds buffer length={}",
+            size_bytes,
+            bytes.len()
+        ));
+    }
+
+    let expected_stride = AerogpuAllocEntry::SIZE_BYTES as u32;
+    if header.entry_stride_bytes != expected_stride {
+        return Err(anyhow!(
+            "alloc table entry_stride_bytes={} does not match expected_stride={expected_stride}",
+            header.entry_stride_bytes,
+        ));
+    }
+
+    let entry_count = usize::try_from(header.entry_count)
+        .map_err(|_| anyhow!("alloc table header entry_count does not fit in usize"))?;
+    let entries_size_bytes = entry_count
+        .checked_mul(AerogpuAllocEntry::SIZE_BYTES)
+        .ok_or_else(|| anyhow!("alloc table entry_count overflows"))?;
+
+    let header_size_bytes = AerogpuAllocTableHeader::SIZE_BYTES;
+    let required_bytes = header_size_bytes
+        .checked_add(entries_size_bytes)
+        .ok_or_else(|| anyhow!("alloc table size computation overflows"))?;
+    if required_bytes > size_bytes {
+        return Err(anyhow!(
+            "alloc table entries out of bounds: required_bytes={required_bytes} size_bytes={size_bytes}"
+        ));
+    }
+
+    let mut entries = Vec::with_capacity(entry_count);
+    for idx in 0..entry_count {
+        let off = header_size_bytes
+            .checked_add(
+                idx.checked_mul(AerogpuAllocEntry::SIZE_BYTES)
+                    .ok_or_else(|| anyhow!("alloc table entry offset overflow"))?,
+            )
+            .ok_or_else(|| anyhow!("alloc table entry offset overflow"))?;
+        let end = off
+            .checked_add(AerogpuAllocEntry::SIZE_BYTES)
+            .ok_or_else(|| anyhow!("alloc table entry offset overflow"))?;
+        entries.push(
+            AerogpuAllocEntry::decode_from_le_bytes(&bytes[off..end])
+                .map_err(|e| anyhow!("alloc table entry {idx} decode failed: {e:?}"))?,
+        );
+    }
+
+    Ok(entries)
 }
 
 impl AeroGpuCommandBackend for AerogpuWgpuBackend {
