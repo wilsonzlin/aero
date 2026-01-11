@@ -13,6 +13,13 @@ type UdpEchoServer = {
   close: () => Promise<void>;
 };
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timeout = setTimeout(resolve, ms);
+    timeout.unref?.();
+  });
+}
+
 async function startUdpEchoServer(): Promise<UdpEchoServer> {
   const sock = dgram.createSocket('udp4');
   sock.on('message', (msg, rinfo) => {
@@ -57,7 +64,7 @@ async function waitForHttpOk(url: string, timeoutMs: number): Promise<void> {
     } catch (err) {
       lastErr = err;
     }
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    await sleep(200);
   }
 
   throw lastErr instanceof Error ? lastErr : new Error(`server failed to become ready: ${url}`);
@@ -82,9 +89,9 @@ async function killProcess(
   }
   await Promise.race([
     once(proc, 'close'),
-    new Promise<void>((_, reject) =>
-      setTimeout(() => reject(new Error(`timeout waiting for process ${proc.pid ?? 'unknown'} to exit`)), 5_000),
-    ),
+    sleep(5_000).then(() => {
+      throw new Error(`timeout waiting for process ${proc.pid ?? 'unknown'} to exit`);
+    }),
   ]).catch(() => {
     // Best-effort: ensure the process is gone so Playwright doesn't hang.
     if (proc.exitCode === null) {
@@ -98,7 +105,7 @@ async function killProcess(
         proc.kill('SIGKILL');
       }
     }
-    return once(proc, 'close');
+    return Promise.race([once(proc, 'close'), sleep(5_000)]);
   });
 }
 
