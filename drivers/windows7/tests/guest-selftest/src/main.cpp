@@ -739,13 +739,44 @@ static std::string CmStatusFlagsToString(ULONG status) {
     if (!out.empty()) out.push_back('|');
     out.append(s);
   };
-  if (status & DN_STARTED) add("STARTED");
-  if (status & DN_DRIVER_LOADED) add("DRIVER_LOADED");
-  if (status & DN_HAS_PROBLEM) add("HAS_PROBLEM");
-  if (status & DN_DISABLED) add("DISABLED");
-  if (status & DN_REMOVABLE) add("REMOVABLE");
-  if (status & DN_PRIVATE_PROBLEM) add("PRIVATE_PROBLEM");
-  if (status & DN_MF_PARENT) add("MF_PARENT");
+  auto add_flag = [&](ULONG flag, const char* name) {
+    if (status & flag) add(name);
+  };
+
+  add_flag(DN_STARTED, "STARTED");
+  add_flag(DN_DRIVER_LOADED, "DRIVER_LOADED");
+  add_flag(DN_HAS_PROBLEM, "HAS_PROBLEM");
+  add_flag(DN_DISABLED, "DISABLED");
+  add_flag(DN_REMOVABLE, "REMOVABLE");
+  add_flag(DN_PRIVATE_PROBLEM, "PRIVATE_PROBLEM");
+  add_flag(DN_MF_PARENT, "MF_PARENT");
+#ifdef DN_MF_CHILD
+  add_flag(DN_MF_CHILD, "MF_CHILD");
+#endif
+#ifdef DN_DISABLEABLE
+  add_flag(DN_DISABLEABLE, "DISABLEABLE");
+#endif
+#ifdef DN_WILL_BE_REMOVED
+  add_flag(DN_WILL_BE_REMOVED, "WILL_BE_REMOVED");
+#endif
+#ifdef DN_NO_SHOW_IN_DM
+  add_flag(DN_NO_SHOW_IN_DM, "NO_SHOW_IN_DM");
+#endif
+#ifdef DN_DRIVER_BLOCKED
+  add_flag(DN_DRIVER_BLOCKED, "DRIVER_BLOCKED");
+#endif
+#ifdef DN_NEED_TO_ENUM
+  add_flag(DN_NEED_TO_ENUM, "NEED_TO_ENUM");
+#endif
+#ifdef DN_NOT_FIRST_TIME
+  add_flag(DN_NOT_FIRST_TIME, "NOT_FIRST_TIME");
+#endif
+#ifdef DN_HARDWARE_ENUM
+  add_flag(DN_HARDWARE_ENUM, "HARDWARE_ENUM");
+#endif
+#ifdef DN_ROOT_ENUMERATED
+  add_flag(DN_ROOT_ENUMERATED, "ROOT_ENUMERATED");
+#endif
   if (out.empty()) out = "0";
   return out;
 }
