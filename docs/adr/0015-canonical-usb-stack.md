@@ -70,16 +70,23 @@ The legacy USB stack in `crates/emulator` (`emulator::io::usb`) is considered **
 ### 4) Where UHCI lives long-term, and how it connects to `aero_machine::Machine`
 
 - **UHCI emulation lives in Rust** (`crates/aero-usb`) and runs inside the WASM worker that owns
-  the VM state. This keeps device behavior deterministic and testable, and avoids re-implementing
-  low-level scheduling/state machines in TypeScript.
+   the VM state. This keeps device behavior deterministic and testable, and avoids re-implementing
+   low-level scheduling/state machines in TypeScript.
 - **TypeScript does not emulate UHCI.** It is responsible for host-only concerns:
   - WebUSB/WebHID handles and permission UX (user gesture requirement)
   - async execution of host transfers
-  - main thread ↔ worker proxying (default: `postMessage` with transferred `ArrayBuffer`s; WebHID
-    fast path uses `SharedArrayBuffer` + `Atomics` report rings when `crossOriginIsolated`)
-    - Implementation: `web/src/usb/hid_report_ring.ts`,
-      `web/src/hid/hid_proxy_protocol.ts` (`hid.ringAttach`),
-      `web/src/hid/webhid_broker.ts`
+  - main thread ↔ worker proxying (default: `postMessage` with transferred `ArrayBuffer`s).
+    When `globalThis.crossOriginIsolated === true` and `SharedArrayBuffer`/`Atomics` are available,
+    the WebHID passthrough stack uses SAB ring buffers to avoid per-report messaging overhead:
+    - **Input reports (main → worker):** IPC `RingBuffer` initialized via `hid.ring.init` and filled
+      with compact, versioned `"HIDR"` input report records.
+    - **Output/feature reports (worker → main):** SPSC `HidReportRing` wired via `hid.ringAttach`.
+    - Implementation:
+      - `web/src/ipc/ring_buffer.ts` (`RingBuffer`)
+      - `web/src/hid/hid_input_report_ring.ts` (record codec + writer)
+      - `web/src/hid/hid_proxy_protocol.ts` (`hid.ring.init`, `hid.ringAttach`)
+      - `web/src/hid/webhid_broker.ts` (runtime selection + producers)
+      - `web/src/workers/io_hid_input_ring.ts` (worker drain helper)
 - Long-term, the UHCI controller should be integrated into the canonical VM wiring described by
   [ADR 0014](./0014-canonical-machine-stack.md):
   - `aero_machine::Machine` (in the I/O worker) owns the UHCI controller device model.
