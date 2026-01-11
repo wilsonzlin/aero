@@ -22,6 +22,7 @@ members = [
     "crates/aero-http-range",
     "crates/aero-ipc",
     "crates/aero-wasm",
+    "crates/aero-gpu-wasm",
     "crates/aero_jit",
     "crates/aero-microbench",
     "crates/aero-net-e1000",

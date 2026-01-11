@@ -72,6 +72,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const repoRoot = path.resolve(__dirname, "../..");
+const wasmRoot = path.join(repoRoot, "web/src/wasm");
+
 const toolchainsPath = path.join(repoRoot, "scripts/toolchains.json");
 
 function loadPinnedNightlyToolchain() {
@@ -159,9 +161,8 @@ if (!detected.dir) {
 }
 
 const cratePath = path.isAbsolute(detected.dir) ? detected.dir : path.join(repoRoot, detected.dir);
-const outDir = path.join(
-    repoRoot,
-    "web/src/wasm",
+const outDirAero = path.join(
+    wasmRoot,
     variant === "threaded"
         ? isRelease
             ? "pkg-threaded"
@@ -171,8 +172,29 @@ const outDir = path.join(
             : "pkg-single-dev",
 );
 
-rmSync(outDir, { recursive: true, force: true });
-mkdirSync(outDir, { recursive: true });
+const outDirAeroGpu = path.join(
+    wasmRoot,
+    variant === "threaded"
+        ? isRelease
+            ? "pkg-threaded-gpu"
+            : "pkg-threaded-gpu-dev"
+        : isRelease
+            ? "pkg-single-gpu"
+            : "pkg-single-gpu-dev",
+);
+
+const packages = [
+    {
+        cratePath,
+        outDir: outDirAero,
+        outName: "aero_wasm",
+    },
+    {
+        cratePath: path.join(repoRoot, "crates/aero-gpu-wasm"),
+        outDir: outDirAeroGpu,
+        outName: "aero_gpu_wasm",
+    },
+];
 
 const targetFeatures = ["+bulk-memory"];
 const simdSetting = (process.env.AERO_WASM_SIMD ?? "1").toLowerCase();
@@ -249,63 +271,70 @@ if (isThreaded) {
     delete env.RUSTUP_TOOLCHAIN;
 }
 
-// Note: wasm-pack treats args *after* the PATH as cargo args, so all wasm-pack
-// options must appear before `cratePath` (especially `--no-opt`).
-const args = [
-    "build",
-    "--target",
-    "web",
-    isRelease ? "--release" : "--dev",
-    "--out-dir",
-    outDir,
-    "--out-name",
-    "aero_wasm",
-    "--no-opt",
-    cratePath,
-];
-
- if (isThreaded) {
-     args.push("-Z", "build-std=std,panic_abort", "--features", "wasm-threaded");
- }
-
 // Prefer reproducible builds when a workspace lockfile is present, but allow
 // building without `Cargo.lock` (e.g. minimal checkouts or downstream forks).
 const lockFile = path.join(repoRoot, "Cargo.lock");
-if (existsSync(lockFile)) {
-    args.push("--locked");
-}
+const useLocked = existsSync(lockFile);
 
-const result = spawnSync("wasm-pack", args, { env, stdio: "inherit" });
-if ((result.status ?? 1) !== 0) {
-    process.exit(result.status ?? 1);
-}
+for (const pkg of packages) {
+    rmSync(pkg.outDir, { recursive: true, force: true });
+    mkdirSync(pkg.outDir, { recursive: true });
 
-if (isRelease) {
-    const wasmFile = path.join(outDir, "aero_wasm_bg.wasm");
-    if (existsSync(wasmFile)) {
-        const wasmOptCheck = spawnSync("wasm-opt", ["--version"], { stdio: "ignore" });
-        if (wasmOptCheck.status === 0) {
-            const wasmOptArgs = [
-                "-O4",
-                "--enable-simd",
-                "--enable-bulk-memory",
-                "--enable-reference-types",
-                "--enable-mutable-globals",
-                ...(isThreaded ? ["--enable-threads"] : []),
-                "-o",
-                `${wasmFile}.opt`,
-                wasmFile,
-            ];
-            const wasmOpt = spawnSync("wasm-opt", wasmOptArgs, { stdio: "inherit" });
-            if ((wasmOpt.status ?? 1) !== 0) {
-                process.exit(wasmOpt.status ?? 1);
+    // Note: wasm-pack treats args *after* the PATH as cargo args, so all wasm-pack
+    // options must appear before `cratePath` (especially `--no-opt`).
+    const args = [
+        "build",
+        "--target",
+        "web",
+        isRelease ? "--release" : "--dev",
+        "--out-dir",
+        pkg.outDir,
+        "--out-name",
+        pkg.outName,
+        "--no-opt",
+        pkg.cratePath,
+    ];
+
+    if (isThreaded) {
+        args.push("-Z", "build-std=std,panic_abort", "--features", "wasm-threaded");
+    }
+
+    if (useLocked) {
+        args.push("--locked");
+    }
+
+    const result = spawnSync("wasm-pack", args, { env, stdio: "inherit" });
+    if ((result.status ?? 1) !== 0) {
+        process.exit(result.status ?? 1);
+    }
+
+    if (isRelease) {
+        const wasmFile = path.join(pkg.outDir, `${pkg.outName}_bg.wasm`);
+        if (existsSync(wasmFile)) {
+            const wasmOptCheck = spawnSync("wasm-opt", ["--version"], { stdio: "ignore" });
+            if (wasmOptCheck.status === 0) {
+                const wasmOptArgs = [
+                    "-O4",
+                    "--enable-simd",
+                    "--enable-bulk-memory",
+                    "--enable-reference-types",
+                    "--enable-mutable-globals",
+                    ...(isThreaded ? ["--enable-threads"] : []),
+                    "-o",
+                    `${wasmFile}.opt`,
+                    wasmFile,
+                ];
+                const wasmOpt = spawnSync("wasm-opt", wasmOptArgs, { stdio: "inherit" });
+                if ((wasmOpt.status ?? 1) !== 0) {
+                    process.exit(wasmOpt.status ?? 1);
+                }
+                renameSync(`${wasmFile}.opt`, wasmFile);
+            } else {
+                console.warn(
+                    "[wasm] Warning: wasm-opt not found; skipping Binaryen optimizations. " +
+                        "Install `wasm-opt` (Binaryen) for smaller/faster release builds.",
+                );
             }
-            renameSync(`${wasmFile}.opt`, wasmFile);
-        } else {
-            console.warn(
-                "[wasm] Warning: wasm-opt not found; skipping Binaryen optimizations. " +
-                    "Install `wasm-opt` (Binaryen) for smaller/faster release builds.",
-            );
         }
     }
 }

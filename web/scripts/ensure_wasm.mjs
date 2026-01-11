@@ -9,11 +9,21 @@ const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, "../..");
 
 function ensureVariant(variant) {
-    const outDir = path.join(repoRoot, "web/src/wasm", variant === "threaded" ? "pkg-threaded" : "pkg-single");
-    const jsEntry = path.join(outDir, "aero_wasm.js");
-    const wasmBinary = path.join(outDir, "aero_wasm_bg.wasm");
+    const outDirAero = path.join(repoRoot, "web/src/wasm", variant === "threaded" ? "pkg-threaded" : "pkg-single");
+    const outDirAeroGpu = path.join(
+        repoRoot,
+        "web/src/wasm",
+        variant === "threaded" ? "pkg-threaded-gpu" : "pkg-single-gpu",
+    );
 
-    if (existsSync(jsEntry) && existsSync(wasmBinary)) {
+    const expectedFiles = [
+        path.join(outDirAero, "aero_wasm.js"),
+        path.join(outDirAero, "aero_wasm_bg.wasm"),
+        path.join(outDirAeroGpu, "aero_gpu_wasm.js"),
+        path.join(outDirAeroGpu, "aero_gpu_wasm_bg.wasm"),
+    ];
+
+    if (expectedFiles.every((file) => existsSync(file))) {
         return;
     }
 
