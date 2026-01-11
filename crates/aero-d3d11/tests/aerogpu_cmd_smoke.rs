@@ -2,32 +2,32 @@ use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
 use aero_d3d11::input_layout::fnv1a_32;
 use aero_d3d11::FourCC;
 use aero_gpu::VecGuestMemory;
-use aero_protocol::aerogpu::aerogpu_cmd::AEROGPU_CMD_STREAM_MAGIC;
+use aero_protocol::aerogpu::aerogpu_cmd::{AerogpuCmdOpcode, AEROGPU_CMD_STREAM_MAGIC};
 use aero_protocol::aerogpu::aerogpu_pci::AEROGPU_ABI_VERSION_U32;
 use aero_protocol::aerogpu::aerogpu_ring::AerogpuAllocEntry;
 
 const FOURCC_SHEX: FourCC = FourCC(*b"SHEX");
 const FOURCC_ISGN: FourCC = FourCC(*b"ISGN");
 
-const OPCODE_CREATE_BUFFER: u32 = 0x0100;
-const OPCODE_CREATE_TEXTURE2D: u32 = 0x0101;
-const OPCODE_RESOURCE_DIRTY_RANGE: u32 = 0x0103;
+const OPCODE_CREATE_BUFFER: u32 = AerogpuCmdOpcode::CreateBuffer as u32;
+const OPCODE_CREATE_TEXTURE2D: u32 = AerogpuCmdOpcode::CreateTexture2d as u32;
+const OPCODE_RESOURCE_DIRTY_RANGE: u32 = AerogpuCmdOpcode::ResourceDirtyRange as u32;
 
-const OPCODE_CREATE_SHADER_DXBC: u32 = 0x0200;
-const OPCODE_BIND_SHADERS: u32 = 0x0202;
-const OPCODE_CREATE_INPUT_LAYOUT: u32 = 0x0204;
-const OPCODE_SET_INPUT_LAYOUT: u32 = 0x0206;
+const OPCODE_CREATE_SHADER_DXBC: u32 = AerogpuCmdOpcode::CreateShaderDxbc as u32;
+const OPCODE_BIND_SHADERS: u32 = AerogpuCmdOpcode::BindShaders as u32;
+const OPCODE_CREATE_INPUT_LAYOUT: u32 = AerogpuCmdOpcode::CreateInputLayout as u32;
+const OPCODE_SET_INPUT_LAYOUT: u32 = AerogpuCmdOpcode::SetInputLayout as u32;
 
-const OPCODE_SET_RENDER_TARGETS: u32 = 0x0400;
-const OPCODE_SET_VIEWPORT: u32 = 0x0401;
-const OPCODE_SET_SCISSOR: u32 = 0x0402;
+const OPCODE_SET_RENDER_TARGETS: u32 = AerogpuCmdOpcode::SetRenderTargets as u32;
+const OPCODE_SET_VIEWPORT: u32 = AerogpuCmdOpcode::SetViewport as u32;
+const OPCODE_SET_SCISSOR: u32 = AerogpuCmdOpcode::SetScissor as u32;
 
-const OPCODE_SET_VERTEX_BUFFERS: u32 = 0x0500;
-const OPCODE_SET_PRIMITIVE_TOPOLOGY: u32 = 0x0502;
+const OPCODE_SET_VERTEX_BUFFERS: u32 = AerogpuCmdOpcode::SetVertexBuffers as u32;
+const OPCODE_SET_PRIMITIVE_TOPOLOGY: u32 = AerogpuCmdOpcode::SetPrimitiveTopology as u32;
 
-const OPCODE_CLEAR: u32 = 0x0600;
-const OPCODE_DRAW: u32 = 0x0601;
-const OPCODE_PRESENT: u32 = 0x0700;
+const OPCODE_CLEAR: u32 = AerogpuCmdOpcode::Clear as u32;
+const OPCODE_DRAW: u32 = AerogpuCmdOpcode::Draw as u32;
+const OPCODE_PRESENT: u32 = AerogpuCmdOpcode::Present as u32;
 
 const AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER: u32 = 1u32 << 0;
 const AEROGPU_RESOURCE_USAGE_RENDER_TARGET: u32 = 1u32 << 4;

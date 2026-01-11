@@ -6,11 +6,11 @@ use aero_gpu::pipeline_key::{ColorTargetKey, PipelineLayoutKey, RenderPipelineKe
 use aero_gpu::GpuCapabilities;
 use aero_gpu::{GuestMemory, GuestMemoryError};
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    decode_cmd_hdr_le, decode_cmd_stream_header_le, AerogpuCmdStreamHeader, AEROGPU_CLEAR_COLOR,
-    AEROGPU_CLEAR_DEPTH, AEROGPU_CLEAR_STENCIL, AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER,
-    AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL, AEROGPU_RESOURCE_USAGE_INDEX_BUFFER,
-    AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_SCANOUT,
-    AEROGPU_RESOURCE_USAGE_TEXTURE, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
+    decode_cmd_hdr_le, decode_cmd_stream_header_le, AerogpuCmdOpcode, AerogpuCmdStreamHeader,
+    AEROGPU_CLEAR_COLOR, AEROGPU_CLEAR_DEPTH, AEROGPU_CLEAR_STENCIL,
+    AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER, AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL,
+    AEROGPU_RESOURCE_USAGE_INDEX_BUFFER, AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+    AEROGPU_RESOURCE_USAGE_SCANOUT, AEROGPU_RESOURCE_USAGE_TEXTURE, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
 };
 use aero_protocol::aerogpu::aerogpu_ring::AerogpuAllocEntry;
 use anyhow::{anyhow, bail, Context, Result};
@@ -23,46 +23,44 @@ use crate::{parse_signatures, translate_sm4_to_wgsl, DxbcFile, Sm4Program};
 
 const DEFAULT_MAX_VERTEX_SLOTS: usize = MAX_INPUT_SLOTS as usize;
 
-// NOTE: `emulator/protocol`'s `AerogpuCmdOpcode` enum currently lags behind the C
-// header, so this executor matches numeric opcode values from
-// `drivers/aerogpu/protocol/aerogpu_cmd.h` directly.
-const OPCODE_NOP: u32 = 0x0000;
-const OPCODE_DEBUG_MARKER: u32 = 0x0001;
+// Opcode constants from `aerogpu_cmd.h` (via the canonical `aero-protocol` enum).
+const OPCODE_NOP: u32 = AerogpuCmdOpcode::Nop as u32;
+const OPCODE_DEBUG_MARKER: u32 = AerogpuCmdOpcode::DebugMarker as u32;
 
-const OPCODE_CREATE_BUFFER: u32 = 0x0100;
-const OPCODE_CREATE_TEXTURE2D: u32 = 0x0101;
-const OPCODE_DESTROY_RESOURCE: u32 = 0x0102;
-const OPCODE_RESOURCE_DIRTY_RANGE: u32 = 0x0103;
-const OPCODE_UPLOAD_RESOURCE: u32 = 0x0104;
+const OPCODE_CREATE_BUFFER: u32 = AerogpuCmdOpcode::CreateBuffer as u32;
+const OPCODE_CREATE_TEXTURE2D: u32 = AerogpuCmdOpcode::CreateTexture2d as u32;
+const OPCODE_DESTROY_RESOURCE: u32 = AerogpuCmdOpcode::DestroyResource as u32;
+const OPCODE_RESOURCE_DIRTY_RANGE: u32 = AerogpuCmdOpcode::ResourceDirtyRange as u32;
+const OPCODE_UPLOAD_RESOURCE: u32 = AerogpuCmdOpcode::UploadResource as u32;
 
-const OPCODE_CREATE_SHADER_DXBC: u32 = 0x0200;
-const OPCODE_DESTROY_SHADER: u32 = 0x0201;
-const OPCODE_BIND_SHADERS: u32 = 0x0202;
+const OPCODE_CREATE_SHADER_DXBC: u32 = AerogpuCmdOpcode::CreateShaderDxbc as u32;
+const OPCODE_DESTROY_SHADER: u32 = AerogpuCmdOpcode::DestroyShader as u32;
+const OPCODE_BIND_SHADERS: u32 = AerogpuCmdOpcode::BindShaders as u32;
 
-const OPCODE_CREATE_INPUT_LAYOUT: u32 = 0x0204;
-const OPCODE_DESTROY_INPUT_LAYOUT: u32 = 0x0205;
-const OPCODE_SET_INPUT_LAYOUT: u32 = 0x0206;
+const OPCODE_CREATE_INPUT_LAYOUT: u32 = AerogpuCmdOpcode::CreateInputLayout as u32;
+const OPCODE_DESTROY_INPUT_LAYOUT: u32 = AerogpuCmdOpcode::DestroyInputLayout as u32;
+const OPCODE_SET_INPUT_LAYOUT: u32 = AerogpuCmdOpcode::SetInputLayout as u32;
 
-const OPCODE_SET_BLEND_STATE: u32 = 0x0300;
-const OPCODE_SET_DEPTH_STENCIL_STATE: u32 = 0x0301;
-const OPCODE_SET_RASTERIZER_STATE: u32 = 0x0302;
+const OPCODE_SET_BLEND_STATE: u32 = AerogpuCmdOpcode::SetBlendState as u32;
+const OPCODE_SET_DEPTH_STENCIL_STATE: u32 = AerogpuCmdOpcode::SetDepthStencilState as u32;
+const OPCODE_SET_RASTERIZER_STATE: u32 = AerogpuCmdOpcode::SetRasterizerState as u32;
 
-const OPCODE_SET_RENDER_TARGETS: u32 = 0x0400;
-const OPCODE_SET_VIEWPORT: u32 = 0x0401;
-const OPCODE_SET_SCISSOR: u32 = 0x0402;
+const OPCODE_SET_RENDER_TARGETS: u32 = AerogpuCmdOpcode::SetRenderTargets as u32;
+const OPCODE_SET_VIEWPORT: u32 = AerogpuCmdOpcode::SetViewport as u32;
+const OPCODE_SET_SCISSOR: u32 = AerogpuCmdOpcode::SetScissor as u32;
 
-const OPCODE_SET_VERTEX_BUFFERS: u32 = 0x0500;
-const OPCODE_SET_INDEX_BUFFER: u32 = 0x0501;
-const OPCODE_SET_PRIMITIVE_TOPOLOGY: u32 = 0x0502;
+const OPCODE_SET_VERTEX_BUFFERS: u32 = AerogpuCmdOpcode::SetVertexBuffers as u32;
+const OPCODE_SET_INDEX_BUFFER: u32 = AerogpuCmdOpcode::SetIndexBuffer as u32;
+const OPCODE_SET_PRIMITIVE_TOPOLOGY: u32 = AerogpuCmdOpcode::SetPrimitiveTopology as u32;
 
-const OPCODE_CLEAR: u32 = 0x0600;
-const OPCODE_DRAW: u32 = 0x0601;
-const OPCODE_DRAW_INDEXED: u32 = 0x0602;
+const OPCODE_CLEAR: u32 = AerogpuCmdOpcode::Clear as u32;
+const OPCODE_DRAW: u32 = AerogpuCmdOpcode::Draw as u32;
+const OPCODE_DRAW_INDEXED: u32 = AerogpuCmdOpcode::DrawIndexed as u32;
 
-const OPCODE_PRESENT: u32 = 0x0700;
-const OPCODE_PRESENT_EX: u32 = 0x0701;
+const OPCODE_PRESENT: u32 = AerogpuCmdOpcode::Present as u32;
+const OPCODE_PRESENT_EX: u32 = AerogpuCmdOpcode::PresentEx as u32;
 
-const OPCODE_FLUSH: u32 = 0x0720;
+const OPCODE_FLUSH: u32 = AerogpuCmdOpcode::Flush as u32;
 
 #[derive(Debug, Clone, Default)]
 pub struct ExecuteReport {
