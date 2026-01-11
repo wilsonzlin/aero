@@ -2200,10 +2200,10 @@ fn cmd_descriptor_requires_gpa_and_size_bytes_to_match() {
             }
         };
         let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
-        let guest = VecGuestMemory::new(0x10_000);
+        let mut guest = VecGuestMemory::new(0x10_000);
 
         // cmd_gpa set but cmd_size_bytes=0 must be rejected.
-        let report = exec.process_submission_from_guest_memory(&guest, 0x1000, 0, 0, 0);
+        let report = exec.process_submission_from_guest_memory(&mut guest, 0x1000, 0, 0, 0);
         assert!(
             !report.is_ok(),
             "expected error for inconsistent cmd_gpa/size, got ok"
@@ -2215,7 +2215,7 @@ fn cmd_descriptor_requires_gpa_and_size_bytes_to_match() {
         );
 
         // cmd_size_bytes set but cmd_gpa=0 must also be rejected.
-        let report = exec.process_submission_from_guest_memory(&guest, 0, 24, 0, 0);
+        let report = exec.process_submission_from_guest_memory(&mut guest, 0, 24, 0, 0);
         assert!(
             !report.is_ok(),
             "expected error for inconsistent cmd_gpa/size, got ok"
@@ -2227,7 +2227,7 @@ fn cmd_descriptor_requires_gpa_and_size_bytes_to_match() {
         );
 
         // Empty submissions (cmd_gpa=0, cmd_size_bytes=0) are treated as no-ops.
-        let report = exec.process_submission_from_guest_memory(&guest, 0, 0, 0, 0);
+        let report = exec.process_submission_from_guest_memory(&mut guest, 0, 0, 0, 0);
         assert!(
             report.is_ok(),
             "expected ok for empty submission, got: {:#?}",
