@@ -11,9 +11,9 @@ struct Port {
     enable_change: bool,
     reset: bool,
     reset_countdown_ms: u8,
-    resume_detect: bool,
     suspended: bool,
     resuming: bool,
+    resume_countdown_ms: u8,
 }
 
 impl Port {
@@ -26,9 +26,9 @@ impl Port {
             enable_change: false,
             reset: false,
             reset_countdown_ms: 0,
-            resume_detect: false,
             suspended: false,
             resuming: false,
+            resume_countdown_ms: 0,
         }
     }
 
@@ -65,9 +65,8 @@ impl Port {
         if self.enable_change {
             v |= PEDC;
         }
-        if self.resume_detect {
-            v |= RD;
-        }
+        // Resume detect (remote wake) not modelled yet.
+        let _ = RD;
         // Low-speed not modelled yet; current HID models are full-speed.
         let _ = LSDA;
         if self.reset {
@@ -82,33 +81,29 @@ impl Port {
         v
     }
 
-    fn write_portsc(&mut self, value: u16) {
+    fn write_portsc(&mut self, value: u16, write_mask: u16) {
         const CSC: u16 = 1 << 1;
         const PED: u16 = 1 << 2;
         const PEDC: u16 = 1 << 3;
-        const RD: u16 = 1 << 6;
         const PR: u16 = 1 << 9;
         const SUSP: u16 = 1 << 12;
         const RESUME: u16 = 1 << 13;
 
         // Write-1-to-clear status change bits.
-        if value & CSC != 0 {
+        if write_mask & CSC != 0 && value & CSC != 0 {
             self.connect_change = false;
         }
-        if value & PEDC != 0 {
+        if write_mask & PEDC != 0 && value & PEDC != 0 {
             self.enable_change = false;
-        }
-        if value & RD != 0 {
-            self.resume_detect = false;
         }
 
         // Port reset: model a 50ms reset and reset attached device state.
-        if value & PR != 0 && !self.reset {
+        if write_mask & PR != 0 && value & PR != 0 && !self.reset {
             self.reset = true;
             self.reset_countdown_ms = 50;
-            self.resume_detect = false;
             self.suspended = false;
             self.resuming = false;
+            self.resume_countdown_ms = 0;
             if let Some(dev) = self.device.as_mut() {
                 dev.reset();
             }
@@ -118,11 +113,13 @@ impl Port {
             }
         }
 
+        if self.reset {
+            // While the port reset signal is active, suspend/resume/enable writes are ignored.
+            return;
+        }
+
         // Port enable (read/write).
-        //
-        // While in reset, the port enable bit reads as 0 and writes are ignored until
-        // the reset sequence completes.
-        if !self.reset {
+        if write_mask & PED != 0 {
             let want_enabled = value & PED != 0;
             // Hardware only allows enabling a port when a device is actually present.
             if want_enabled {
@@ -133,14 +130,40 @@ impl Port {
             } else if self.enabled {
                 self.enabled = false;
                 self.enable_change = true;
-            }
-
-            if self.connected {
-                self.suspended = value & SUSP != 0;
-                self.resuming = value & RESUME != 0;
-            } else {
                 self.suspended = false;
                 self.resuming = false;
+                self.resume_countdown_ms = 0;
+            }
+        }
+
+        if !self.connected {
+            self.suspended = false;
+            self.resuming = false;
+            self.resume_countdown_ms = 0;
+            return;
+        }
+
+        if write_mask & SUSP != 0 {
+            let want_suspended = value & SUSP != 0;
+            // Latch the suspend bit. While a port is enabled, we treat this as "suspended" for
+            // reachability and ticking purposes.
+            if want_suspended {
+                if !self.resuming {
+                    self.suspended = true;
+                }
+            } else {
+                self.suspended = false;
+            }
+        }
+
+        if write_mask & RESUME != 0 {
+            let want_resuming = value & RESUME != 0;
+            if want_resuming {
+                self.resuming = true;
+                self.resume_countdown_ms = 20;
+            } else {
+                self.resuming = false;
+                self.resume_countdown_ms = 0;
             }
         }
     }
@@ -154,6 +177,14 @@ impl Port {
                     self.enabled = true;
                     self.enable_change = true;
                 }
+            }
+        }
+
+        if self.resuming {
+            self.resume_countdown_ms = self.resume_countdown_ms.saturating_sub(1);
+            if self.resume_countdown_ms == 0 {
+                self.resuming = false;
+                self.suspended = false;
             }
         }
     }
@@ -173,9 +204,9 @@ impl RootHub {
 
     pub fn bus_reset(&mut self) {
         for p in &mut self.ports {
-            p.resume_detect = false;
             p.suspended = false;
             p.resuming = false;
+            p.resume_countdown_ms = 0;
             if let Some(dev) = p.device.as_mut() {
                 dev.reset();
             }
@@ -185,9 +216,9 @@ impl RootHub {
     pub fn attach(&mut self, port: usize, model: Box<dyn UsbDeviceModel>) {
         let p = &mut self.ports[port];
         p.device = Some(AttachedUsbDevice::new(model));
-        p.resume_detect = false;
         p.suspended = false;
         p.resuming = false;
+        p.resume_countdown_ms = 0;
         if !p.connected {
             p.connected = true;
         }
@@ -203,9 +234,9 @@ impl RootHub {
     pub fn detach(&mut self, port: usize) {
         let p = &mut self.ports[port];
         p.device = None;
-        p.resume_detect = false;
         p.suspended = false;
         p.resuming = false;
+        p.resume_countdown_ms = 0;
         if p.connected {
             p.connected = false;
             p.connect_change = true;
@@ -336,13 +367,17 @@ impl RootHub {
     }
 
     pub fn write_portsc(&mut self, port: usize, value: u16) {
-        self.ports[port].write_portsc(value);
+        self.write_portsc_masked(port, value, 0xffff);
+    }
+
+    pub(crate) fn write_portsc_masked(&mut self, port: usize, value: u16, write_mask: u16) {
+        self.ports[port].write_portsc(value, write_mask);
     }
 
     pub fn tick_1ms(&mut self) {
         for p in &mut self.ports {
             p.tick_1ms();
-            if !p.enabled {
+            if !p.enabled || p.suspended || p.resuming {
                 continue;
             }
             if let Some(dev) = p.device.as_mut() {
@@ -355,16 +390,14 @@ impl RootHub {
         let p = &mut self.ports[port];
         p.enabled = true;
         p.enable_change = true;
-    }
-
-    pub fn force_resume_detect_for_tests(&mut self, port: usize) {
-        let p = &mut self.ports[port];
-        p.resume_detect = true;
+        p.suspended = false;
+        p.resuming = false;
+        p.resume_countdown_ms = 0;
     }
 
     pub fn device_mut_for_address(&mut self, address: u8) -> Option<&mut AttachedUsbDevice> {
         for p in &mut self.ports {
-            if !p.enabled {
+            if !p.enabled || p.suspended || p.resuming {
                 continue;
             }
             if let Some(dev) = p.device.as_mut() {

@@ -343,45 +343,6 @@ fn uhci_portsc_port_reset_propagates_to_external_hub_and_downstream_devices() {
 }
 
 #[test]
-fn uhci_portsc_suspend_and_resume_detect_bits_roundtrip() {
-    const PORTSC_PED: u16 = 1 << 2;
-    const PORTSC_RD: u16 = 1 << 6;
-    const PORTSC_SUSP: u16 = 1 << 12;
-
-    let mut hub = RootHub::new();
-    hub.attach(0, Box::new(TestUsbDevice));
-
-    // Enable the port so we can ensure suspend/resume-detect writes don't disturb it.
-    hub.write_portsc(0, PORTSC_PED);
-
-    // Suspend should latch (R/W).
-    hub.write_portsc(0, PORTSC_PED | PORTSC_SUSP);
-    let st = hub.read_portsc(0);
-    assert_ne!(st & PORTSC_PED, 0);
-    assert_ne!(st & PORTSC_SUSP, 0);
-
-    // Clearing the suspend bit should also latch.
-    hub.write_portsc(0, PORTSC_PED);
-    let st = hub.read_portsc(0);
-    assert_ne!(st & PORTSC_PED, 0);
-    assert_eq!(st & PORTSC_SUSP, 0);
-
-    // Resume Detect is write-1-to-clear.
-    hub.force_resume_detect_for_tests(0);
-    assert_ne!(hub.read_portsc(0) & PORTSC_RD, 0);
-
-    // Writing 0 should not clear it.
-    hub.write_portsc(0, PORTSC_PED);
-    assert_ne!(hub.read_portsc(0) & PORTSC_RD, 0);
-
-    // Writing 1 should clear it.
-    hub.write_portsc(0, PORTSC_PED | PORTSC_RD);
-    let st = hub.read_portsc(0);
-    assert_ne!(st & PORTSC_PED, 0);
-    assert_eq!(st & PORTSC_RD, 0);
-}
-
-#[test]
 fn uhci_portsc_suspend_ignored_when_disconnected() {
     const PORTSC_SUSP: u16 = 1 << 12;
 
@@ -410,4 +371,66 @@ fn uhci_portsc_line_status_shows_k_while_resuming() {
 
     hub.write_portsc(0, 0);
     assert_eq!(hub.read_portsc(0) & PORTSC_LS_MASK, PORTSC_LS_J_FS);
+}
+
+#[test]
+fn uhci_portsc_suspend_blocks_routing_until_resumed() {
+    const PORTSC_PED: u16 = 1 << 2;
+    const PORTSC_SUSP: u16 = 1 << 12;
+    const PORTSC_RESUME: u16 = 1 << 13;
+
+    let mut hub = RootHub::new();
+    hub.attach(0, Box::new(TestUsbDevice));
+    hub.force_enable_for_tests(0);
+
+    // Assign a non-default address so we can validate that suspend blocks routing
+    // without resetting device state.
+    {
+        let dev = hub
+            .device_mut_for_address(0)
+            .expect("device should be visible at address 0");
+        set_address(dev, 5);
+    }
+    assert!(hub.device_mut_for_address(5).is_some());
+
+    // Enter suspend. Preserve PED in the write (typical UHCI read-modify-write pattern).
+    hub.write_portsc(0, PORTSC_PED | PORTSC_SUSP);
+    assert!(hub.device_mut_for_address(5).is_none());
+
+    // Start resume. Hold RESUME asserted for ~20ms; the model clears RESUME/SUSP at the end.
+    hub.write_portsc(0, PORTSC_PED | PORTSC_SUSP | PORTSC_RESUME);
+    for _ in 0..20 {
+        hub.tick_1ms();
+    }
+
+    let st = hub.read_portsc(0);
+    assert_eq!(st & PORTSC_RESUME, 0);
+    assert_eq!(st & PORTSC_SUSP, 0);
+    assert!(hub.device_mut_for_address(5).is_some());
+}
+
+#[test]
+fn uhci_portsc_resume_detect_is_read_only_and_default_zero() {
+    const PORTSC_CSC: u16 = 1 << 1;
+    const PORTSC_PED: u16 = 1 << 2;
+    const PORTSC_PEDC: u16 = 1 << 3;
+    const PORTSC_RD: u16 = 1 << 6;
+
+    let mut hub = RootHub::new();
+    hub.attach(0, Box::new(TestUsbDevice));
+
+    // Clear any pending change bits so we can round-trip the register without
+    // W1C semantics affecting the comparison below.
+    hub.write_portsc(0, PORTSC_CSC);
+    hub.write_portsc(0, PORTSC_PED);
+    hub.write_portsc(0, PORTSC_PED | PORTSC_PEDC);
+
+    let before = hub.read_portsc(0);
+    assert_eq!(before & PORTSC_RD, 0);
+
+    hub.write_portsc(0, before | PORTSC_RD);
+
+    let after = hub.read_portsc(0);
+    assert_eq!(after & PORTSC_RD, 0);
+    assert_eq!(after, before);
 }

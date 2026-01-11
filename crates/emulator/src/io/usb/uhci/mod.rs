@@ -236,32 +236,20 @@ impl UhciController {
             }
             REG_SOFMOD => self.regs.sofmod = value,
             REG_PORTSC1 => {
-                let cur = self.hub.read_portsc(0);
-                let v = (cur & 0xff00) | (value as u16);
-                self.hub.write_portsc(0, v);
+                self.hub.write_portsc_masked(0, value as u16, 0x00ff);
             }
             REG_PORTSC1_HI => {
-                let cur = self.hub.read_portsc(0);
-                // PORTSC contains write-1-to-clear change bits in the low byte (CSC/PEDC/RD). When
-                // the guest performs an 8-bit write to the high byte, we must not feed the
-                // currently-latched change bits back into the 16-bit write handler or they would
-                // be spuriously cleared.
-                const PORTSC_W1C_LOW_MASK: u16 = (1 << 1) | (1 << 3) | (1 << 6);
-                let low = (cur & 0x00ff) & !PORTSC_W1C_LOW_MASK;
-                let v = low | ((value as u16) << 8);
-                self.hub.write_portsc(0, v);
+                // Use a masked write so high-byte stores don't inadvertently clear W1C bits in
+                // the low byte (CSC/PEDC).
+                self.hub
+                    .write_portsc_masked(0, (value as u16) << 8, 0xff00);
             }
             REG_PORTSC2 => {
-                let cur = self.hub.read_portsc(1);
-                let v = (cur & 0xff00) | (value as u16);
-                self.hub.write_portsc(1, v);
+                self.hub.write_portsc_masked(1, value as u16, 0x00ff);
             }
             REG_PORTSC2_HI => {
-                let cur = self.hub.read_portsc(1);
-                const PORTSC_W1C_LOW_MASK: u16 = (1 << 1) | (1 << 3) | (1 << 6);
-                let low = (cur & 0x00ff) & !PORTSC_W1C_LOW_MASK;
-                let v = low | ((value as u16) << 8);
-                self.hub.write_portsc(1, v);
+                self.hub
+                    .write_portsc_masked(1, (value as u16) << 8, 0xff00);
             }
             _ => {}
         }
