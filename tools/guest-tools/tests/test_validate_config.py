@@ -210,6 +210,76 @@ class ValidateConfigTests(unittest.TestCase):
             with redirect_stdout(io.StringIO()):
                 validate_config.validate(devices, spec_path, expected)
 
+    def test_aero_spec_rejects_transitional_virtio_ids(self) -> None:
+        # Aero virtio contract v1 is modern-only, so we intentionally reject transitional
+        # virtio-pci IDs in the Aero packaging spec.
+        with tempfile.TemporaryDirectory(prefix="aero-guest-tools-validate-config-") as tmp:
+            tmp_path = Path(tmp)
+            devices_cmd = tmp_path / "devices.cmd"
+            virtio_blk = _contract_device("virtio-blk")
+            virtio_net = _contract_device("virtio-net")
+            virtio_input = _contract_device("virtio-input")
+            aerogpu = _contract_device("aero-gpu")
+
+            devices_cmd.write_text(
+                "\n".join(
+                    [
+                        f'set "AERO_VIRTIO_BLK_SERVICE={virtio_blk.driver_service_name}"',
+                        f"set AERO_VIRTIO_BLK_HWIDS={_quote_items(virtio_blk.hardware_id_patterns)}",
+                        f"set AERO_VIRTIO_NET_HWIDS={_quote_items(virtio_net.hardware_id_patterns)}",
+                        f"set AERO_VIRTIO_INPUT_HWIDS={_quote_items(virtio_input.hardware_id_patterns)}",
+                        f"set AERO_GPU_HWIDS={_quote_items(aerogpu.hardware_id_patterns)}",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            spec_path = tmp_path / "win7-aero-guest-tools.json"
+            spec_path.write_text(
+                json.dumps(
+                    {
+                        "drivers": [
+                            {
+                                "name": "aerogpu",
+                                "required": True,
+                                "expected_hardware_ids": [],
+                                "expected_hardware_ids_from_devices_cmd_var": "AERO_GPU_HWIDS",
+                            },
+                            {
+                                "name": "virtio-blk",
+                                "required": True,
+                                "expected_hardware_ids": [
+                                    _ven_dev_regex_from_hwid(virtio_blk.hardware_id_patterns[0])
+                                ],
+                            },
+                            {
+                                "name": "virtio-net",
+                                "required": True,
+                                "expected_hardware_ids": [r"PCI\\VEN_1AF4&DEV_(1000|1041)"],
+                            },
+                            {
+                                "name": "virtio-input",
+                                "required": True,
+                                "expected_hardware_ids": [
+                                    _ven_dev_regex_from_hwid(virtio_input.hardware_id_patterns[0])
+                                ],
+                            },
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            devices = validate_config.load_devices_cmd(devices_cmd)
+            expected = validate_config.load_packaging_spec(spec_path)
+
+            with self.assertRaises(validate_config.ValidationError) as ctx:
+                with redirect_stdout(io.StringIO()):
+                    validate_config.validate(devices, spec_path, expected)
+
+            self.assertIn("transitional virtio pci ids", str(ctx.exception).lower())
+            self.assertIn("DEV_1000", str(ctx.exception))
+
 
 if __name__ == "__main__":
     unittest.main()
