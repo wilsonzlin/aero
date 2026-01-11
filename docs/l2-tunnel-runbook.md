@@ -41,6 +41,12 @@ cargo run --locked -p aero-l2-proxy
 #     AERO_L2_AUTH_MODE=jwt AERO_L2_JWT_SECRET=sekrit cargo run --locked -p aero-l2-proxy
 #   - Mixed mode (cookie browser clients + JWT for WebRTC relay bridging):
 #     AERO_L2_AUTH_MODE=cookie_or_jwt AERO_L2_SESSION_SECRET=sekrit AERO_L2_JWT_SECRET=sekrit cargo run --locked -p aero-l2-proxy
+#
+# Observability knobs:
+# - Optional: per-session PCAPNG capture (writes one file per tunnel session):
+#   AERO_L2_CAPTURE_DIR=/tmp/aero-l2-captures cargo run --locked -p aero-l2-proxy
+# - Optional: have the proxy send protocol-level PINGs (RTT is recorded in Prometheus metrics):
+#   AERO_L2_PING_INTERVAL_MS=1000 cargo run --locked -p aero-l2-proxy
 ```
 
 - Node (WebSocket upgrade policy / quota harness; **dev/test-only** and **does not implement the L2 data plane**; used by `tests/l2_proxy_security.test.js`):
@@ -52,7 +58,10 @@ node --experimental-strip-types proxy/aero-l2-proxy/src/index.ts
 Expected behavior:
 
 - Proxy listens on `AERO_L2_PROXY_LISTEN_ADDR` (default: `0.0.0.0:8090`).
-- Proxy serves a liveness endpoint (typically `GET /healthz`) for basic checks.
+- Proxy serves operational endpoints:
+  - `GET /healthz` – liveness
+  - `GET /readyz` – readiness (Rust proxy only)
+  - `GET /metrics` – Prometheus metrics
 - Proxy is configured with a strict egress policy in production; local dev may enable “open” mode.
 
 ### 2) (Optional) Start the WebRTC relay (DataChannel transport)
