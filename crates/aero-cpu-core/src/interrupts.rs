@@ -115,6 +115,12 @@ enum InterruptFrame {
     Long64 { stack_switched: bool },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PushOutcome {
+    Pushed,
+    NestedExceptionDelivered,
+}
+
 /// Extra CPU-core state that is intentionally *not* part of the JIT ABI.
 #[derive(Debug, Default)]
 pub struct PendingEventState {
@@ -483,9 +489,15 @@ fn deliver_real_mode<B: CpuBus>(
     let cs = state.segments.cs.selector;
     let ip = saved_rip as u16;
 
-    push16(bus, state, pending, flags, saved_rip)?;
-    push16(bus, state, pending, cs, saved_rip)?;
-    push16(bus, state, pending, ip, saved_rip)?;
+    if push16(bus, state, pending, flags, saved_rip)? == PushOutcome::NestedExceptionDelivered {
+        return Ok(());
+    }
+    if push16(bus, state, pending, cs, saved_rip)? == PushOutcome::NestedExceptionDelivered {
+        return Ok(());
+    }
+    if push16(bus, state, pending, ip, saved_rip)? == PushOutcome::NestedExceptionDelivered {
+        return Ok(());
+    }
 
     // Real-mode INT clears IF and TF.
     let new_flags = (state.rflags() & !(RFLAGS_IF | RFLAGS_TF)) | RFLAGS_RESERVED1;
@@ -595,18 +607,36 @@ fn deliver_protected_mode<B: CpuBus>(
         bus.sync(state);
 
         // Push old SS:ESP on the new stack.
-        push32(bus, state, pending, old_ss as u32, saved_rip)?;
-        push32(bus, state, pending, old_esp, saved_rip)?;
+        if push32(bus, state, pending, old_ss as u32, saved_rip)?
+            == PushOutcome::NestedExceptionDelivered
+        {
+            return Ok(());
+        }
+        if push32(bus, state, pending, old_esp, saved_rip)? == PushOutcome::NestedExceptionDelivered {
+            return Ok(());
+        }
     }
 
     // Push return frame.
     let eflags = state.rflags() as u32;
-    push32(bus, state, pending, eflags, saved_rip)?;
-    push32(bus, state, pending, old_cs as u32, saved_rip)?;
-    push32(bus, state, pending, saved_rip as u32, saved_rip)?;
+    if push32(bus, state, pending, eflags, saved_rip)? == PushOutcome::NestedExceptionDelivered {
+        return Ok(());
+    }
+    if push32(bus, state, pending, old_cs as u32, saved_rip)?
+        == PushOutcome::NestedExceptionDelivered
+    {
+        return Ok(());
+    }
+    if push32(bus, state, pending, saved_rip as u32, saved_rip)?
+        == PushOutcome::NestedExceptionDelivered
+    {
+        return Ok(());
+    }
 
     if let Some(code) = error_code {
-        push32(bus, state, pending, code, saved_rip)?;
+        if push32(bus, state, pending, code, saved_rip)? == PushOutcome::NestedExceptionDelivered {
+            return Ok(());
+        }
     }
 
     // Clear IF for interrupt gates; trap gates keep IF.
@@ -753,8 +783,14 @@ fn deliver_long_mode<B: CpuBus>(
             bus.sync(state);
         }
 
-        push64(bus, state, pending, old_ss as u64, saved_rip)?;
-        push64(bus, state, pending, old_rsp, saved_rip)?;
+        if push64(bus, state, pending, old_ss as u64, saved_rip)?
+            == PushOutcome::NestedExceptionDelivered
+        {
+            return Ok(());
+        }
+        if push64(bus, state, pending, old_rsp, saved_rip)? == PushOutcome::NestedExceptionDelivered {
+            return Ok(());
+        }
         if new_cpl < current_cpl {
             // In IA-32e mode the CPU loads a NULL selector into SS on privilege transition.
             state.segments.ss.selector = 0;
@@ -766,12 +802,24 @@ fn deliver_long_mode<B: CpuBus>(
 
     // Push return frame (RFLAGS, CS, RIP, error code).
     let rflags = state.rflags();
-    push64(bus, state, pending, rflags, saved_rip)?;
-    push64(bus, state, pending, old_cs as u64, saved_rip)?;
-    push64(bus, state, pending, saved_rip, saved_rip)?;
+    if push64(bus, state, pending, rflags, saved_rip)? == PushOutcome::NestedExceptionDelivered {
+        return Ok(());
+    }
+    if push64(bus, state, pending, old_cs as u64, saved_rip)?
+        == PushOutcome::NestedExceptionDelivered
+    {
+        return Ok(());
+    }
+    if push64(bus, state, pending, saved_rip, saved_rip)? == PushOutcome::NestedExceptionDelivered {
+        return Ok(());
+    }
 
     if let Some(code) = error_code {
-        push64(bus, state, pending, code as u64, saved_rip)?;
+        if push64(bus, state, pending, code as u64, saved_rip)?
+            == PushOutcome::NestedExceptionDelivered
+        {
+            return Ok(());
+        }
     }
 
     // Clear IF for interrupt gates; trap gates keep IF.
@@ -979,12 +1027,12 @@ fn push16<B: CpuBus>(
     pending: &mut PendingEventState,
     value: u16,
     saved_rip: u64,
-) -> Result<(), CpuExit> {
+) -> Result<PushOutcome, CpuExit> {
     let sp = state.read_gpr16(gpr::RSP).wrapping_sub(2);
     state.write_gpr16(gpr::RSP, sp);
     let addr = state.apply_a20(stack_base(state).wrapping_add(sp as u64));
     match bus.write_u16(addr, value) {
-        Ok(()) => Ok(()),
+        Ok(()) => Ok(PushOutcome::Pushed),
         Err(_) => deliver_exception(
             bus,
             state,
@@ -992,7 +1040,8 @@ fn push16<B: CpuBus>(
             Exception::StackFault,
             saved_rip,
             Some(0),
-        ),
+        )
+        .map(|()| PushOutcome::NestedExceptionDelivered),
     }
 }
 
@@ -1002,12 +1051,12 @@ fn push32<B: CpuBus>(
     pending: &mut PendingEventState,
     value: u32,
     saved_rip: u64,
-) -> Result<(), CpuExit> {
+) -> Result<PushOutcome, CpuExit> {
     let esp = state.read_gpr32(gpr::RSP).wrapping_sub(4);
     state.write_gpr32(gpr::RSP, esp);
     let addr = state.apply_a20(stack_base(state).wrapping_add(esp as u64));
     match bus.write_u32(addr, value) {
-        Ok(()) => Ok(()),
+        Ok(()) => Ok(PushOutcome::Pushed),
         Err(_) => deliver_exception(
             bus,
             state,
@@ -1015,7 +1064,8 @@ fn push32<B: CpuBus>(
             Exception::StackFault,
             saved_rip,
             Some(0),
-        ),
+        )
+        .map(|()| PushOutcome::NestedExceptionDelivered),
     }
 }
 
@@ -1025,12 +1075,12 @@ fn push64<B: CpuBus>(
     pending: &mut PendingEventState,
     value: u64,
     saved_rip: u64,
-) -> Result<(), CpuExit> {
+) -> Result<PushOutcome, CpuExit> {
     let rsp = state.read_gpr64(gpr::RSP).wrapping_sub(8);
     state.write_gpr64(gpr::RSP, rsp);
     let addr = state.apply_a20(stack_base(state).wrapping_add(rsp));
     match bus.write_u64(addr, value) {
-        Ok(()) => Ok(()),
+        Ok(()) => Ok(PushOutcome::Pushed),
         Err(_) => deliver_exception(
             bus,
             state,
@@ -1038,7 +1088,8 @@ fn push64<B: CpuBus>(
             Exception::StackFault,
             saved_rip,
             Some(0),
-        ),
+        )
+        .map(|()| PushOutcome::NestedExceptionDelivered),
     }
 }
 

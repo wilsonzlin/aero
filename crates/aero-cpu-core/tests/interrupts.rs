@@ -214,6 +214,156 @@ fn page_fault_sets_cr2_and_pushes_error_code() -> Result<(), CpuExit> {
     Ok(())
 }
 
+#[derive(Debug)]
+struct FailingWriteU32Bus {
+    inner: FlatTestBus,
+    remaining_write_u32_failures: usize,
+}
+
+impl FailingWriteU32Bus {
+    fn new(size: usize, write_u32_failures: usize) -> Self {
+        Self {
+            inner: FlatTestBus::new(size),
+            remaining_write_u32_failures: write_u32_failures,
+        }
+    }
+}
+
+impl CpuBus for FailingWriteU32Bus {
+    fn read_u8(&mut self, vaddr: u64) -> Result<u8, aero_cpu_core::Exception> {
+        self.inner.read_u8(vaddr)
+    }
+
+    fn read_u16(&mut self, vaddr: u64) -> Result<u16, aero_cpu_core::Exception> {
+        self.inner.read_u16(vaddr)
+    }
+
+    fn read_u32(&mut self, vaddr: u64) -> Result<u32, aero_cpu_core::Exception> {
+        self.inner.read_u32(vaddr)
+    }
+
+    fn read_u64(&mut self, vaddr: u64) -> Result<u64, aero_cpu_core::Exception> {
+        self.inner.read_u64(vaddr)
+    }
+
+    fn read_u128(&mut self, vaddr: u64) -> Result<u128, aero_cpu_core::Exception> {
+        self.inner.read_u128(vaddr)
+    }
+
+    fn write_u8(&mut self, vaddr: u64, val: u8) -> Result<(), aero_cpu_core::Exception> {
+        self.inner.write_u8(vaddr, val)
+    }
+
+    fn write_u16(&mut self, vaddr: u64, val: u16) -> Result<(), aero_cpu_core::Exception> {
+        self.inner.write_u16(vaddr, val)
+    }
+
+    fn write_u32(&mut self, vaddr: u64, val: u32) -> Result<(), aero_cpu_core::Exception> {
+        if self.remaining_write_u32_failures > 0 {
+            self.remaining_write_u32_failures -= 1;
+            return Err(aero_cpu_core::Exception::MemoryFault);
+        }
+        self.inner.write_u32(vaddr, val)
+    }
+
+    fn write_u64(&mut self, vaddr: u64, val: u64) -> Result<(), aero_cpu_core::Exception> {
+        self.inner.write_u64(vaddr, val)
+    }
+
+    fn write_u128(&mut self, vaddr: u64, val: u128) -> Result<(), aero_cpu_core::Exception> {
+        self.inner.write_u128(vaddr, val)
+    }
+
+    fn fetch(&mut self, vaddr: u64, max_len: usize) -> Result<[u8; 15], aero_cpu_core::Exception> {
+        self.inner.fetch(vaddr, max_len)
+    }
+
+    fn io_read(&mut self, port: u16, size: u32) -> Result<u64, aero_cpu_core::Exception> {
+        self.inner.io_read(port, size)
+    }
+
+    fn io_write(
+        &mut self,
+        port: u16,
+        size: u32,
+        val: u64,
+    ) -> Result<(), aero_cpu_core::Exception> {
+        self.inner.io_write(port, size, val)
+    }
+}
+
+#[test]
+fn page_fault_delivery_failure_escalates_to_double_fault() -> Result<(), CpuExit> {
+    // Fail the first 32-bit stack push while delivering #PF to force a nested #SS,
+    // which should escalate to #DF.
+    let mut mem = FailingWriteU32Bus::new(0x20000, 1);
+
+    let idt_base = 0x1000;
+    write_idt_gate32(&mut mem, idt_base, 14, 0x08, 0x4000, 0x8E);
+    write_idt_gate32(&mut mem, idt_base, 8, 0x08, 0x5000, 0x8E);
+
+    let mut cpu = CpuCore::new(CpuMode::Protected);
+    cpu.state.tables.idtr.base = idt_base;
+    cpu.state.tables.idtr.limit = 0x7FF;
+    cpu.state.segments.cs.selector = 0x08;
+    cpu.state.segments.ss.selector = 0x10;
+    cpu.state.write_gpr32(gpr::RSP, 0x2000);
+    cpu.state.set_rflags(0x202);
+
+    cpu.pending.raise_exception_fault(
+        &mut cpu.state,
+        aero_cpu_core::exceptions::Exception::PageFault,
+        0x1234,
+        Some(0xDEAD),
+        Some(0xCAFE_BABE),
+    );
+    cpu.deliver_pending_event(&mut mem)?;
+
+    assert_eq!(cpu.state.control.cr2, 0xCAFE_BABE);
+    assert_eq!(cpu.state.rip(), 0x5000);
+
+    // Stack frame for #DF: error_code, eip, cs, eflags.
+    assert_eq!(cpu.state.read_gpr32(gpr::RSP), 0x1FEC);
+    assert_eq!(mem.read_u32(0x1FEC).unwrap(), 0);
+    assert_eq!(mem.read_u32(0x1FF0).unwrap(), 0x1234);
+    assert_eq!(mem.read_u32(0x1FF4).unwrap(), 0x08);
+    assert_eq!(mem.read_u32(0x1FF8).unwrap(), 0x202);
+
+    Ok(())
+}
+
+#[test]
+fn double_fault_delivery_failure_triggers_triple_fault() {
+    // Fail the first stack push while delivering #PF (forcing #DF) and then fail the
+    // first stack push while delivering #DF, which should trigger a triple fault.
+    let mut mem = FailingWriteU32Bus::new(0x20000, 2);
+
+    let idt_base = 0x1000;
+    write_idt_gate32(&mut mem, idt_base, 14, 0x08, 0x4000, 0x8E);
+    write_idt_gate32(&mut mem, idt_base, 8, 0x08, 0x5000, 0x8E);
+
+    let mut cpu = CpuCore::new(CpuMode::Protected);
+    cpu.state.tables.idtr.base = idt_base;
+    cpu.state.tables.idtr.limit = 0x7FF;
+    cpu.state.segments.cs.selector = 0x08;
+    cpu.state.segments.ss.selector = 0x10;
+    cpu.state.write_gpr32(gpr::RSP, 0x2000);
+    cpu.state.set_rflags(0x202);
+
+    cpu.pending.raise_exception_fault(
+        &mut cpu.state,
+        aero_cpu_core::exceptions::Exception::PageFault,
+        0x1234,
+        Some(0xDEAD),
+        Some(0xCAFE_BABE),
+    );
+
+    assert_eq!(
+        cpu.deliver_pending_event(&mut mem),
+        Err(CpuExit::TripleFault)
+    );
+}
+
 #[test]
 fn sti_shadow_blocks_immediate_external_interrupt_delivery() -> Result<(), CpuExit> {
     let mut mem = FlatTestBus::new(0x20000);
