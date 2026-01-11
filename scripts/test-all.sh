@@ -22,6 +22,8 @@ if ! command -v node >/dev/null 2>&1; then
   exit 1
 fi
 
+node "$ROOT_DIR/scripts/check-node-version.mjs"
+
 resolved_env="$(node "$ROOT_DIR/scripts/env/resolve.mjs" --format bash)" || exit $?
 eval "$resolved_env"
 

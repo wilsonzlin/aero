@@ -46,6 +46,18 @@ _warn_deprecated_env:
   fi
 
 [private]
+_check_node_version:
+  #!/usr/bin/env bash
+  set -euo pipefail
+
+  if ! command -v node >/dev/null 2>&1; then
+    echo "error: missing required command: node" >&2
+    exit 1
+  fi
+
+  node scripts/check-node-version.mjs
+
+[private]
 _detect_wasm_crate_dir:
   #!/usr/bin/env bash
   set -euo pipefail
@@ -147,6 +159,7 @@ setup:
 
   if [[ -f "{{WEB_DIR}}/package.json" ]]; then
     echo "==> Node: installing JS dependencies (npm ci)"
+    just _check_node_version
     if ! command -v npm >/dev/null; then
       echo "error: npm is required to install JS deps" >&2
       exit 1
@@ -197,6 +210,7 @@ wasm:
         exit 1
       fi
       echo "==> Building WASM (single + threaded) via 'web' workspace npm scripts"
+      just _check_node_version
       npm --prefix "{{WEB_DIR}}" -w web run wasm:build
       exit 0
     fi
@@ -208,6 +222,7 @@ wasm:
         exit 1
       fi
       echo "==> Building WASM (single + threaded) via '{{WEB_DIR}}' npm scripts"
+      just _check_node_version
       npm --prefix "{{WEB_DIR}}" run wasm:build
       exit 0
     fi
@@ -241,6 +256,7 @@ wasm-single:
         exit 1
       fi
       echo "==> Building WASM (single) via 'web' workspace npm scripts"
+      just _check_node_version
       npm --prefix "{{WEB_DIR}}" -w web run wasm:build:single
       exit 0
     fi
@@ -252,6 +268,7 @@ wasm-single:
         exit 1
       fi
       echo "==> Building WASM (single) via '{{WEB_DIR}}' npm scripts"
+      just _check_node_version
       npm --prefix "{{WEB_DIR}}" run wasm:build:single
       exit 0
     fi
@@ -273,6 +290,7 @@ wasm-threaded:
         exit 1
       fi
       echo "==> Building WASM (threaded/shared-memory) via 'web' workspace npm scripts"
+      just _check_node_version
       npm --prefix "{{WEB_DIR}}" -w web run wasm:build:threaded
       exit 0
     fi
@@ -284,6 +302,7 @@ wasm-threaded:
         exit 1
       fi
       echo "==> Building WASM (threaded/shared-memory) via '{{WEB_DIR}}' npm scripts"
+      just _check_node_version
       npm --prefix "{{WEB_DIR}}" run wasm:build:threaded
       exit 0
     fi
@@ -319,6 +338,9 @@ _maybe_run_web_script script:
 dev:
   #!/usr/bin/env bash
   set -euo pipefail
+
+  just _warn_deprecated_env
+  just _check_node_version
 
   if [[ -f "{{WEB_DIR}}/package.json" ]]; then
     if [[ ! -d "node_modules" && ! -d "{{WEB_DIR}}/node_modules" ]]; then
@@ -397,6 +419,7 @@ build:
       exit 1
     fi
 
+    just _check_node_version
     echo "==> Building web bundle (production)"
     npm --prefix "{{WEB_DIR}}" run build
   else
