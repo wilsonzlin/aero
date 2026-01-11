@@ -535,10 +535,10 @@ of either callback being used to release a handle.
 - **Can be deferred:** Fine-grained telemetry.
  
 #### `DxgkDdiResetFromTimeout` (TDR)
-  
+   
 - **Purpose:** Recover from a “GPU hang” detected by Windows TDR.
 - **AeroGPU MVP behavior:**
-  - Request a device reset via `AEROGPU_MMIO_REG_RING_CONTROL` (`AEROGPU_RING_CONTROL_RESET`), then re-init ring programming + optional fence page.
+  - Request a ring reset via `AEROGPU_MMIO_REG_RING_CONTROL` (`AEROGPU_RING_CONTROL_RESET`), then re-init ring programming + optional fence page.
   - Mark contexts as reset as required by WDDM contract.
   - Ensure future submissions work.
 - **Can be deferred:** Per-engine resets, advanced hang diagnosis.
