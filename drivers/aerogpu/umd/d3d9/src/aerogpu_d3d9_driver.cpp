@@ -348,6 +348,124 @@ uint64_t monotonic_ms() {
 #endif
 }
 
+namespace {
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+template <typename T, typename = void>
+struct has_member_hAllocation : std::false_type {};
+template <typename T>
+struct has_member_hAllocation<T, std::void_t<decltype(std::declval<T&>().hAllocation)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_NumAllocations_res : std::false_type {};
+template <typename T>
+struct has_member_NumAllocations_res<T, std::void_t<decltype(std::declval<T&>().NumAllocations)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_hAllocations : std::false_type {};
+template <typename T>
+struct has_member_hAllocations<T, std::void_t<decltype(std::declval<T&>().hAllocations)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct has_member_pAllocations : std::false_type {};
+template <typename T>
+struct has_member_pAllocations<T, std::void_t<decltype(std::declval<T&>().pAllocations)>> : std::true_type {};
+
+template <typename ArgsT>
+WddmAllocationHandle extract_primary_wddm_allocation_handle(const ArgsT& args) {
+  if constexpr (has_member_hAllocation<ArgsT>::value &&
+                std::is_convertible_v<decltype(std::declval<ArgsT&>().hAllocation), WddmAllocationHandle>) {
+    const auto h = static_cast<WddmAllocationHandle>(args.hAllocation);
+    if (h != 0) {
+      return h;
+    }
+  }
+
+  if constexpr (has_member_hAllocations<ArgsT>::value) {
+    const UINT count = [&]() -> UINT {
+      if constexpr (has_member_NumAllocations_res<ArgsT>::value) {
+        return static_cast<UINT>(args.NumAllocations);
+      }
+      return 0;
+    }();
+
+    if (count != 0) {
+      // `hAllocations` is typically a pointer/array of allocation handles.
+      const auto* handles = args.hAllocations;
+      if (handles) {
+        if constexpr (std::is_convertible_v<std::remove_reference_t<decltype(handles[0])>, WddmAllocationHandle>) {
+          const auto h = static_cast<WddmAllocationHandle>(handles[0]);
+          if (h != 0) {
+            return h;
+          }
+        }
+      }
+    }
+  }
+
+  if constexpr (has_member_pAllocations<ArgsT>::value) {
+    const UINT count = [&]() -> UINT {
+      if constexpr (has_member_NumAllocations_res<ArgsT>::value) {
+        return static_cast<UINT>(args.NumAllocations);
+      }
+      // Some structs may omit a count; assume at least 1 when a pointer is present.
+      return 1;
+    }();
+
+    if (count != 0) {
+      const auto* allocs = args.pAllocations;
+      if (allocs) {
+        using Elem = std::remove_pointer_t<decltype(allocs)>;
+        if constexpr (std::is_class_v<Elem> && has_member_hAllocation<Elem>::value &&
+                      std::is_convertible_v<decltype(std::declval<Elem&>().hAllocation), WddmAllocationHandle>) {
+          const auto h = static_cast<WddmAllocationHandle>(allocs[0].hAllocation);
+          if (h != 0) {
+            return h;
+          }
+        } else if constexpr (!std::is_class_v<Elem> && std::is_convertible_v<Elem, WddmAllocationHandle>) {
+          const auto h = static_cast<WddmAllocationHandle>(allocs[0]);
+          if (h != 0) {
+            return h;
+          }
+        }
+      }
+    }
+  }
+
+  return 0;
+}
+#endif
+
+WddmAllocationHandle get_wddm_allocation_from_create_resource(const AEROGPU_D3D9DDIARG_CREATERESOURCE* args) {
+  if (!args) {
+    return 0;
+  }
+
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+  // In WDK builds, the runtime provides a real `D3D9DDIARG_CREATERESOURCE`.
+  // Our portable struct is only a subset, so query allocation handles from the
+  // official type when available.
+  const auto& wdk = *reinterpret_cast<const D3D9DDIARG_CREATERESOURCE*>(args);
+  return extract_primary_wddm_allocation_handle(wdk);
+#else
+  return static_cast<WddmAllocationHandle>(args->wddm_hAllocation);
+#endif
+}
+
+WddmAllocationHandle get_wddm_allocation_from_open_resource(const AEROGPU_D3D9DDIARG_OPENRESOURCE* args) {
+  if (!args) {
+    return 0;
+  }
+
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+  const auto& wdk = *reinterpret_cast<const D3D9DDIARG_OPENRESOURCE*>(args);
+  return extract_primary_wddm_allocation_handle(wdk);
+#else
+  (void)args;
+  return 0;
+#endif
+}
+} // namespace
+
 uint64_t qpc_now() {
 #if defined(_WIN32)
   LARGE_INTEGER li;
@@ -2897,7 +3015,7 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
   res->mip_levels = mip_levels;
   res->usage = pCreateResource->usage;
   res->pool = pCreateResource->pool;
-  res->wddm_hAllocation = static_cast<WddmAllocationHandle>(pCreateResource->wddm_hAllocation);
+  res->wddm_hAllocation = get_wddm_allocation_from_create_resource(pCreateResource);
   res->is_shared = wants_shared;
   res->is_shared_alias = open_existing_shared;
 
@@ -3200,6 +3318,7 @@ static HRESULT device_open_resource_impl(
   res->depth = std::max(1u, pOpenResource->depth);
   res->mip_levels = std::max(1u, pOpenResource->mip_levels);
   res->usage = pOpenResource->usage;
+  res->wddm_hAllocation = get_wddm_allocation_from_open_resource(pOpenResource);
 
   // Prefer a reconstructed size when the runtime provides a description; fall
   // back to the size_bytes persisted in allocation private data.
