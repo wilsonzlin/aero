@@ -10,7 +10,7 @@ This directory contains the host-side scripts used to run the Windows 7 guest se
 - PowerShell:
   - Windows PowerShell 5.1 or PowerShell 7+ should work
 - A **prepared Windows 7 image** that:
-  - has the virtio drivers installed (virtio-blk + virtio-net + virtio-input, modern-only)
+  - has the virtio drivers installed (virtio-blk + virtio-net + virtio-input + virtio-snd, modern-only)
   - has `aero-virtio-selftest.exe` installed
   - runs the selftest automatically on boot and logs to `COM1`
   - has at least one **mounted/usable virtio-blk volume** (the selftest writes a temporary file to validate disk I/O)
@@ -24,6 +24,7 @@ pwsh ./drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1 `
   -QemuSystem qemu-system-x86_64 `
   -DiskImagePath ./win7-aero-tests.qcow2 `
   -SerialLogPath ./win7-serial.log `
+  -WithVirtioSnd `
   -TimeoutSeconds 600
 ```
 
@@ -34,13 +35,13 @@ pwsh ./drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1 `
   -QemuSystem qemu-system-x86_64 `
   -DiskImagePath ./win7-aero-tests.qcow2 `
   -Snapshot `
+  -WithVirtioSnd `
   -TimeoutSeconds 600
 ```
 
-### Optional: attach virtio-snd (audio)
+### virtio-snd (audio)
 
-If your test image includes the virtio-snd driver **and is provisioned to run the guest virtio-snd test**
-(via `aero-virtio-selftest.exe --test-snd` / `--require-snd`), you can ask the harness to attach a virtio-snd PCI device:
+The guest selftest runs the virtio-snd section by default. To pass, you should attach a virtio-snd PCI device with:
 
 ```powershell
 pwsh ./drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1 `
@@ -168,9 +169,8 @@ python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
 
 Notes:
 
-- Verification requires the **guest virtio-snd selftest** to actually run (use an image provisioned with the virtio-snd
-  driver; to enable the guest test section, provision with `--test-snd` / `--require-snd` (for example via
-  `New-AeroWin7TestImage.ps1 -RequireSnd`)).
+- Verification requires the **guest virtio-snd selftest** to actually run (ensure the scheduled task is not configured
+  with `--disable-snd`).
 - The harness prints a single-line marker suitable for log scraping:
   `AERO_VIRTIO_WIN7_HOST|VIRTIO_SND_WAV|PASS|...` or `...|FAIL|reason=<...>`.
 
@@ -190,7 +190,7 @@ Required workflow inputs:
 - `timeout_seconds`: harness timeout (default `600`)
 - `snapshot`: run QEMU with `snapshot=on` so the base image is not modified (recommended)
 - `serial_log_path`: where to write COM1 output (default is under `out/win7-virtio-harness/` in the workspace)
-- `with_virtio_snd`: attach a virtio-snd device (default `false`)
+- `with_virtio_snd`: attach a virtio-snd device (default `true`)
 - `virtio_snd_audio_backend`: virtio-snd backend (`none` or `wav`; default `none`; requires `with_virtio_snd=true`)
 - `virtio_snd_wav_path`: when `virtio_snd_audio_backend=wav`, output path for the captured wav file
   (default `out/win7-virtio-harness/virtio-snd.wav`)
@@ -296,10 +296,9 @@ pwsh ./drivers/windows7/tests/host-harness/New-AeroWin7TestImage.ps1 `
   -BlkRoot "D:\aero-virtio-selftest\"
 ```
 
-By default the guest selftest **skips** the virtio-snd section unless it is enabled via `--test-snd` / `--require-snd`.
+By default the guest selftest **runs** the virtio-snd section unless it is disabled via `--disable-snd`.
 To exercise virtio-snd, make sure you:
-- include the virtio-snd driver in the drivers directory you provision into the guest,
-- provision the scheduled task with `--test-snd` / `--require-snd` (for example via `New-AeroWin7TestImage.ps1 -RequireSnd`), and
+- include the virtio-snd driver in the drivers directory you provision into the guest, and
 - attach a virtio-snd device when running the harness (`-WithVirtioSnd` / `--with-virtio-snd`).
 
 To disable the guest selftest's virtio-snd section even if a device is present (adds `--disable-snd` to the scheduled task):

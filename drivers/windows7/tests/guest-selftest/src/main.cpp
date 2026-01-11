@@ -48,10 +48,10 @@ struct Options {
   // This must be a directory on a virtio-backed volume (e.g. "D:\\aero-test\\").
   // If empty, the selftest will attempt to auto-detect a mounted virtio volume.
   std::wstring blk_root;
-  // Skip the virtio-snd test (always emits a SKIP marker).
+  // Skip the virtio-snd test (emits a SKIP marker).
   bool disable_snd = false;
-  // Enable the virtio-snd test. Missing device or playback failure causes overall FAIL.
-  bool require_snd = false;
+  // Enable the virtio-snd playback test. Missing device or playback failure causes overall FAIL.
+  bool require_snd = true;
   // If set, missing virtio-snd capture endpoint causes the overall selftest to fail (instead of SKIP).
   bool require_snd_capture = false;
   // If set, run a capture smoke test when a virtio-snd capture endpoint is present.
@@ -440,8 +440,8 @@ static std::optional<std::wstring> GetDeviceInstanceIdString(HDEVINFO devinfo, S
 
 static bool IsVirtioSndPciHardwareId(const std::vector<std::wstring>& hwids) {
   for (const auto& id : hwids) {
-    if (ContainsInsensitive(id, L"PCI\\VEN_1AF4&DEV_1059")) return true;
-    if (ContainsInsensitive(id, L"PCI\\VEN_1AF4&DEV_1018")) return true;
+    if (ContainsInsensitive(id, L"PCI\\VEN_1AF4&DEV_1059")) return true; // modern virtio-snd
+    if (ContainsInsensitive(id, L"PCI\\VEN_1AF4&DEV_1018")) return true; // transitional virtio-snd
   }
   return false;
 }
@@ -1845,9 +1845,25 @@ static TestResult VirtioSndTest(Logger& log, const std::vector<std::wstring>& ma
   }
 
   if (!chosen) {
+    log.LogLine("virtio-snd: no matching ACTIVE render endpoint found");
+
+    // Log the default endpoint (if any) for debugging.
+    ComPtr<IMMDevice> def;
+    hr = enumerator->GetDefaultAudioEndpoint(eRender, eConsole, def.Put());
+    if (SUCCEEDED(hr) && def) {
+      ComPtr<IPropertyStore> props;
+      if (SUCCEEDED(def->OpenPropertyStore(STGM_READ, props.Put())) && props) {
+        const std::wstring friendly = GetPropertyString(props.Get(), PKEY_Device_FriendlyName);
+        const std::wstring instance_id = GetPropertyString(props.Get(), PKEY_Device_InstanceId);
+        log.Logf("virtio-snd: default endpoint name=%s instance_id=%s", WideToUtf8(friendly).c_str(),
+                 WideToUtf8(instance_id).c_str());
+      }
+    } else {
+      log.LogLine("virtio-snd: no default render endpoint available");
+    }
+
     out.fail_reason = "no_matching_endpoint";
     out.hr = HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
-    log.LogLine("virtio-snd: no matching ACTIVE render endpoint found");
     return out;
   }
 
@@ -2790,7 +2806,7 @@ static void PrintUsage() {
       "  --dns-host <hostname>     Hostname for DNS resolution test\n"
       "  --log-file <path>         Log file path (default C:\\\\aero-virtio-selftest.log)\n"
       "  --disable-snd             Skip virtio-snd test (emit SKIP)\n"
-      "  --test-snd                Run virtio-snd test (FAIL if missing/playback fails)\n"
+      "  --test-snd                Deprecated (virtio-snd test runs by default)\n"
       "  --require-snd             Alias for --test-snd\n"
       "  --require-snd-capture     Fail if virtio-snd capture is missing (default: SKIP)\n"
       "  --test-snd-capture        Run virtio-snd capture smoke test if available (default: no)\n"
@@ -2892,15 +2908,6 @@ int wmain(int argc, wchar_t** argv) {
       return 2;
     }
   }
-
-  if (opt.disable_snd && (opt.require_snd || opt.require_snd_capture || opt.test_snd_capture)) {
-    printf(
-        "--disable-snd cannot be combined with --require-snd/--test-snd, --require-snd-capture, or "
-        "--test-snd-capture\n");
-    PrintUsage();
-    return 2;
-  }
-
   Logger log(opt.log_file);
 
   log.LogLine("AERO_VIRTIO_SELFTEST|START|version=1");
@@ -2944,7 +2951,9 @@ int wmain(int argc, wchar_t** argv) {
     if (snd_pci.empty()) {
       log.LogLine("virtio-snd: PCI\\VEN_1AF4&DEV_1059 or PCI\\VEN_1AF4&DEV_1018 device not detected");
       if (want_snd_playback) {
-        log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|device_missing");
+        const HRESULT hr = HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
+        log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|reason=device_missing|hr=0x%08lx",
+                 static_cast<unsigned long>(hr));
         all_ok = false;
       }
 
@@ -2977,20 +2986,24 @@ int wmain(int argc, wchar_t** argv) {
       }
 
       if (want_snd_playback) {
-        bool snd_ok = false;
         const auto snd = VirtioSndTest(log, match_names);
-        if (snd.ok) {
-          snd_ok = true;
-        } else {
+        if (!snd.ok) {
           log.Logf("virtio-snd: WASAPI failed reason=%s hr=0x%08lx",
                    snd.fail_reason.empty() ? "unknown" : snd.fail_reason.c_str(),
                    static_cast<unsigned long>(snd.hr));
-          log.LogLine("virtio-snd: trying waveOut fallback");
-          snd_ok = WaveOutToneTest(log, match_names);
+          log.LogLine("virtio-snd: trying waveOut fallback (debug only; does not affect PASS/FAIL)");
+          const bool wave_ok = WaveOutToneTest(log, match_names);
+          log.Logf("virtio-snd: waveOut fallback result=%s", wave_ok ? "PASS" : "FAIL");
         }
 
-        log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|%s", snd_ok ? "PASS" : "FAIL");
-        all_ok = all_ok && snd_ok;
+        if (snd.ok) {
+          log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS");
+        } else {
+          log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|reason=%s|hr=0x%08lx",
+                   snd.fail_reason.empty() ? "unknown" : snd.fail_reason.c_str(),
+                   static_cast<unsigned long>(snd.hr));
+        }
+        all_ok = all_ok && snd.ok;
       }
 
       if (want_snd_capture) {

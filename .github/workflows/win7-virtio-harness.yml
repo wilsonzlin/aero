@@ -25,7 +25,7 @@ on:
       with_virtio_snd:
         description: "Attach a virtio-snd device (requires QEMU virtio-snd support and guest driver)"
         required: false
-        default: false
+        default: true
         type: boolean
       virtio_snd_audio_backend:
         description: "Audio backend for virtio-snd (requires with_virtio_snd=true)"

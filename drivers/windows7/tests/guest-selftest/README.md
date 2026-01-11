@@ -25,23 +25,19 @@ virtio driver health via **COM1 serial** (host-captured), stdout, and a log file
     - at least one **keyboard-only** HID device exists
     - at least one **mouse-only** HID device exists
     - no matched HID device advertises both keyboard and mouse application collections (contract v1 expects two separate PCI functions).
-- **virtio-snd** (optional; enable with `--test-snd` / `--require-snd`)
+- **virtio-snd** (can be skipped with `--disable-snd`)
   - Detect the virtio-snd PCI function via SetupAPI hardware IDs:
     - `PCI\VEN_1AF4&DEV_1059` (modern; Aero contract v1 expects `REV_01`)
-    - If QEMU is not launched with `disable-legacy=on`, virtio-snd may enumerate as the transitional ID
-      `PCI\VEN_1AF4&DEV_1018`. The Aero INF/contract v1 is **modern-only**, so the device will not bind and
-      the selftest will treat the device as missing.
+    - `PCI\VEN_1AF4&DEV_1018` (transitional; may appear when QEMU is not launched with `disable-legacy=on`)
   - Enumerate audio render endpoints via MMDevice API and start a shared-mode WASAPI render stream.
   - Render a short deterministic tone (440Hz) at 48kHz/16-bit/stereo.
   - If WASAPI fails, a WinMM `waveOut` fallback is attempted.
-  - By default, this test is reported as **SKIP**; enable it with `--test-snd` (alias: `--require-snd`).
-    When enabled, missing virtio-snd or playback failure causes the overall selftest to **FAIL**.
+  - By default, missing device or playback failure is **FAIL**. Use `--disable-snd` to skip.
   - Also emits a separate `virtio-snd-capture` marker by attempting to detect a virtio-snd **capture** endpoint
     (MMDevice `eCapture`).
     - Missing capture is reported as **SKIP** by default; use `--require-snd-capture` to make it **FAIL**.
     - Use `--test-snd-capture` to run a shared-mode WASAPI capture smoke test when a capture endpoint exists
-      (otherwise **SKIP**).
-  - Use `--disable-snd` to force **SKIP** for both playback and capture.
+      (otherwise only endpoint detection is performed).
 
 Note: For deterministic DNS testing under QEMU slirp, the default `--dns-host` is `host.lan`
 (with fallbacks like `gateway.lan` / `dns.lan`).
@@ -54,18 +50,13 @@ The host harness parses these markers from COM1 serial:
 AERO_VIRTIO_SELFTEST|START|...
 AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS|...
 AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS|...
-AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|...
-AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|...
-# or:
-AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS|...
-AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|PASS|...
+AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS
+AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|endpoint_missing
 AERO_VIRTIO_SELFTEST|TEST|virtio-net|PASS|...
 AERO_VIRTIO_SELFTEST|RESULT|PASS
 ```
 
 Notes:
-- If virtio-snd is not enabled via `--test-snd` / `--require-snd`, the tool emits
-  `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|flag_not_set` and `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set`.
 - If the virtio-snd capture endpoint is missing, the tool emits `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|endpoint_missing`
   (unless `--require-snd-capture` is set).
 - If the virtio-snd test is disabled via `--disable-snd`, the tool emits
@@ -119,13 +110,6 @@ copy aero-virtio-selftest.exe C:\AeroTests\
 
 schtasks /Create /F /TN "AeroVirtioSelftest" /SC ONSTART /RU SYSTEM ^
   /TR "\"C:\AeroTests\aero-virtio-selftest.exe\" --http-url http://10.0.2.2:18080/aero-virtio-selftest --dns-host host.lan"
-```
-
-To require virtio-snd (fail the overall run if `PCI\VEN_1AF4&DEV_1059` is missing):
-
-```bat
-schtasks /Create /F /TN "AeroVirtioSelftest" /SC ONSTART /RU SYSTEM ^
-  /TR "\"C:\AeroTests\aero-virtio-selftest.exe\" --require-snd --http-url http://10.0.2.2:18080/aero-virtio-selftest --dns-host host.lan"
 ```
 
 To explicitly skip virtio-snd:

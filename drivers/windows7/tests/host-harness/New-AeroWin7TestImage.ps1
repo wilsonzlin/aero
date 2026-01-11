@@ -55,8 +55,8 @@ param(
   [Parameter(Mandatory = $false)]
   [switch]$AutoReboot,
 
-  # If set, enable the guest selftest's virtio-snd section (adds `--test-snd` to the scheduled task).
-  # Kept for backwards compatibility with older automation that passed -RequireSnd.
+  # Deprecated: previously enabled the guest selftest's virtio-snd section (adds `--test-snd` to the scheduled task).
+  # The guest selftest now runs virtio-snd by default; `--test-snd` is a no-op and kept for backwards compatibility.
   [Parameter(Mandatory = $false)]
   [switch]$RequireSnd,
 
@@ -395,10 +395,11 @@ After reboot, the host harness can boot the VM and parse PASS/FAIL from COM1 ser
 Notes:
 - The virtio-blk selftest requires a usable/mounted virtio volume. If your VM boots from a non-virtio disk,
   consider attaching a separate virtio data disk with a drive letter and using the selftest option `--blk-root`.
- - By default, virtio-snd is skipped. To enable it, generate this media with `-RequireSnd` (adds `--test-snd`).
- - To skip the virtio-snd test entirely (even if enabled), generate this media with `-DisableSnd`.
+ - By default, virtio-snd is tested. To skip the virtio-snd section, generate this media with `-DisableSnd`
+   (adds `--disable-snd` to the scheduled task).
    Note: if you run the host harness with `-WithVirtioSnd` / `--with-virtio-snd`, it expects virtio-snd to PASS (not SKIP).
-- For unsigned/test-signed drivers on Win7 x64, consider generating this media with `-EnableTestSigning -AutoReboot`.
+ - `-RequireSnd` is kept for backwards compatibility but is no longer required.
+ - For unsigned/test-signed drivers on Win7 x64, consider generating this media with `-EnableTestSigning -AutoReboot`.
 "@
 
 Write-TextFileUtf8NoBom -Path (Join-Path $OutputDir "README.txt") -Content $readme
