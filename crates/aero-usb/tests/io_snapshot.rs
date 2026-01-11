@@ -1,4 +1,4 @@
-use aero_io_snapshot::io::state::{IoSnapshot, SnapshotError};
+use aero_io_snapshot::io::state::{IoSnapshot, SnapshotError, SnapshotVersion, SnapshotWriter};
 use aero_usb::hid::{UsbHidKeyboard, UsbHidMouse};
 use aero_usb::hub::UsbHubDevice;
 use aero_usb::passthrough::{UsbHostAction, UsbHostCompletion, UsbHostCompletionIn};
@@ -254,6 +254,41 @@ fn snapshot_restore_rejects_truncated_bytes() {
         let err = restored.load_state(&snap[..len]).unwrap_err();
         assert!(matches!(err, SnapshotError::UnexpectedEof));
     }
+}
+
+#[test]
+fn snapshot_restore_rejects_oversized_bus_device_snapshots() {
+    const TAG_BUS: u16 = 11;
+
+    const BUS_TAG_PORT_COUNT: u16 = 1;
+    const BUS_TAG_DEVICES: u16 = 4;
+
+    const MAX_USB_SNAPSHOT_BYTES: usize = 4 * 1024 * 1024;
+
+    // Construct a minimal `UsbBus` snapshot whose device-entry metadata declares a nested device
+    // snapshot length larger than the defensive cap. The snapshot payload does not need to include
+    // the oversized bytes because `UsbBus::load_state` rejects the declared length first.
+    let mut devices = Vec::new();
+    devices.extend_from_slice(&1u32.to_le_bytes()); // device count
+    devices.push(1); // path len
+    devices.push(0); // root port 0
+    devices.extend_from_slice(&((MAX_USB_SNAPSHOT_BYTES + 1) as u32).to_le_bytes());
+
+    let mut bus = SnapshotWriter::new(*b"USBB", SnapshotVersion::new(1, 0));
+    bus.field_u16(BUS_TAG_PORT_COUNT, 2);
+    bus.field_bytes(BUS_TAG_DEVICES, devices);
+    let bus_snapshot = bus.finish();
+
+    let mut uhci = SnapshotWriter::new(*b"UHCI", SnapshotVersion::new(1, 0));
+    uhci.field_bytes(TAG_BUS, bus_snapshot);
+    let snapshot = uhci.finish();
+
+    let mut restored = UhciController::new(0, 0);
+    let err = restored.load_state(&snapshot).unwrap_err();
+    assert!(matches!(
+        err,
+        SnapshotError::InvalidFieldEncoding("usb device snapshot too large")
+    ));
 }
 
 #[test]

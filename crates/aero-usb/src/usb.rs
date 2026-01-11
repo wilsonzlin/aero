@@ -518,6 +518,7 @@ impl IoSnapshot for UsbBus {
         const MAX_PORTS: usize = 255;
         const MAX_DEVICES: usize = 1024;
         const MAX_PATH_LEN: usize = 32;
+        const MAX_USB_SNAPSHOT_BYTES: usize = 4 * 1024 * 1024;
 
         fn peek_device_id(bytes: &[u8]) -> SnapshotResult<[u8; 4]> {
             if bytes.len() < 12 {
@@ -580,6 +581,11 @@ impl IoSnapshot for UsbBus {
                     ));
                 }
                 let snap_len = d.u32()? as usize;
+                if snap_len > MAX_USB_SNAPSHOT_BYTES {
+                    return Err(SnapshotError::InvalidFieldEncoding(
+                        "usb device snapshot too large",
+                    ));
+                }
                 let snap = d.bytes(snap_len)?;
                 entries.push(Entry { path, snap });
             }
