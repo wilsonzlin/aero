@@ -30,17 +30,25 @@ set "OUT_ROOT=%SCRIPT_DIR%\out"
 
 rem Optional WDK 7.1 root (WinDDK layout; used only for D3D10/11 UMD DDI headers).
 rem If not found, the D3D10/11 UMD build relies on the toolchain's default include paths (WDK10+).
-set "WDKROOT="
-if defined WINDDK set "WDKROOT=%WINDDK%"
-if not defined WDKROOT if defined WDK_ROOT set "WDKROOT=%WDK_ROOT%"
-if not defined WDKROOT (
-  if exist "C:\WinDDK\7600.16385.1\inc\ddk\d3d10umddi.h" set "WDKROOT=C:\WinDDK\7600.16385.1"
-  if exist "C:\WinDDK\7600.16385.1\inc\api\d3d10umddi.h" set "WDKROOT=C:\WinDDK\7600.16385.1"
+rem
+rem Note: do not clobber the standard WDKROOT environment variable; it may be set by modern
+rem Windows Kits installations.
+set "AEROGPU_WDKROOT="
+if defined WINDDK set "AEROGPU_WDKROOT=%WINDDK%"
+if not defined AEROGPU_WDKROOT if defined WDK_ROOT set "AEROGPU_WDKROOT=%WDK_ROOT%"
+rem Some setups define WDKROOT; only treat it as WinDDK root if it has the expected inc\api layout.
+if not defined AEROGPU_WDKROOT if defined WDKROOT (
+  if exist "%WDKROOT%\inc\api\d3d10umddi.h" set "AEROGPU_WDKROOT=%WDKROOT%"
+  if exist "%WDKROOT%\inc\ddk\d3d10umddi.h" set "AEROGPU_WDKROOT=%WDKROOT%"
+)
+if not defined AEROGPU_WDKROOT (
+  if exist "C:\WinDDK\7600.16385.1\inc\ddk\d3d10umddi.h" set "AEROGPU_WDKROOT=C:\WinDDK\7600.16385.1"
+  if exist "C:\WinDDK\7600.16385.1\inc\api\d3d10umddi.h" set "AEROGPU_WDKROOT=C:\WinDDK\7600.16385.1"
 )
 
 set "D3D10_11_WDK_MSBUILD_ARGS="
-if defined WDKROOT (
-  set "D3D10_11_WDK_MSBUILD_ARGS=/p:AeroGpuUseWdkHeaders=1 /p:AeroGpuWdkRoot=""%WDKROOT%"""
+if defined AEROGPU_WDKROOT (
+  set "D3D10_11_WDK_MSBUILD_ARGS=/p:AeroGpuUseWdkHeaders=1 /p:AeroGpuWdkRoot=""%AEROGPU_WDKROOT%"""
 )
 
 set "VARIANTS=fre chk"

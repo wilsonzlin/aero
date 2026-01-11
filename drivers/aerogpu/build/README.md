@@ -50,20 +50,25 @@ For the recommended CI-style flow (packages staged under `out/packages/` and sig
 
 ### Win7 DDI header mode (D3D10/11 UMD)
 
-The D3D10/11 UMD can optionally be built against the Win7-era D3D10/11 DDI headers
-(`d3d10umddi.h`, `d3d10_1umddi.h`, `d3d11umddi.h`) from a Windows SDK/WDK install.
+The D3D10/11 UMD is intended to be built against the official Win7 D3D10/11 DDI
+headers (`d3d10umddi.h`, `d3d10_1umddi.h`, `d3d11umddi.h`) provided by a Windows
+SDK/WDK install.
 
 The repo-local `drivers\\aerogpu\\build\\build_all.cmd` wrapper detects a WDK root via
-`WINDDK` (or `WDK_ROOT`) and, when present, passes these MSBuild properties for the
-D3D10/11 UMD build:
+`WINDDK` / `WDK_ROOT` (and `WDKROOT` only if it looks like a WinDDK-style layout) and,
+when present, passes these MSBuild properties for the D3D10/11 UMD build:
 
 * `/p:AeroGpuUseWdkHeaders=1`
-* `/p:AeroGpuWdkRoot="%WINDDK%"`
+* `/p:AeroGpuWdkRoot="C:\\WinDDK\\7600.16385.1"` (or `%WINDDK%`)
 
-The project expects the DDI headers under:
+For Win7-era WDKs (WDK 7.1 / WinDDK layout), the project expects the DDI headers under:
 
 * `%WINDDK%\\inc\\api`
 * `%WINDDK%\\inc\\ddk`
 
-To disable WDK headers (portable/stub mode), omit the properties or pass
-`/p:AeroGpuUseWdkHeaders=0`.
+If `AeroGpuWdkRoot` is not set, the D3D10/11 UMD build falls back to the toolchain's
+standard include paths (common for modern Windows Kits 10+ installs).
+
+To build without the official DDI headers (portable/stub mode), pass:
+
+* `/p:AeroGpuUseWdkHeaders=0`
