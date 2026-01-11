@@ -1119,7 +1119,13 @@ static bool SupportsTransfer(const Device* dev) {
   if (!dev || !dev->adapter || !dev->adapter->umd_private_valid) {
     return false;
   }
-  return (dev->adapter->umd_private.device_features & AEROGPU_UMDPRIV_FEATURE_TRANSFER) != 0;
+  const aerogpu_umd_private_v1& blob = dev->adapter->umd_private;
+  if ((blob.device_features & AEROGPU_UMDPRIV_FEATURE_TRANSFER) == 0) {
+    return false;
+  }
+  const uint32_t major = blob.device_abi_version_u32 >> 16;
+  const uint32_t minor = blob.device_abi_version_u32 & 0xFFFFu;
+  return (major == AEROGPU_ABI_MAJOR) && (minor >= 1);
 }
 
 static Device* DeviceFromContext(D3D11DDI_HDEVICECONTEXT hCtx) {
