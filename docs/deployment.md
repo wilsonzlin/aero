@@ -162,6 +162,26 @@ This repo provides an nginx reference config:
 
 ---
 
+## CI validation (IaC + Kubernetes)
+
+This repository validates deployment artifacts in CI (Terraform + Helm/Kubernetes schema).
+
+- Workflow: `.github/workflows/iac.yml`
+- Local reproduction:
+
+```bash
+./scripts/ci/check-iac.sh
+# or:
+#   just check-iac
+```
+
+For details and copy/paste commands, see:
+
+- `deploy/README.md` (compose + edge proxy)
+- `deploy/k8s/README.md` (Helm chart)
+
+---
+
 ## Caching defaults (safe + update-friendly)
 
 The provided `_headers` rules do the following:
