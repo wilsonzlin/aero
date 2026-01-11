@@ -869,7 +869,9 @@ impl AerogpuD3d9Executor {
                 };
                 match res {
                     Resource::Buffer { buffer, size, .. } => {
-                        let end = offset_bytes.saturating_add(size_bytes);
+                        let end = offset_bytes
+                            .checked_add(size_bytes)
+                            .ok_or(AerogpuD3d9Error::UploadOutOfBounds(resource_handle))?;
                         if end > *size {
                             return Err(AerogpuD3d9Error::UploadOutOfBounds(resource_handle));
                         }
@@ -998,8 +1000,18 @@ impl AerogpuD3d9Executor {
                         (src_size, dst_size)
                     };
 
-                    let src_end = src_offset_bytes.saturating_add(size_bytes);
-                    let dst_end = dst_offset_bytes.saturating_add(size_bytes);
+                    let src_end = src_offset_bytes.checked_add(size_bytes).ok_or(
+                        AerogpuD3d9Error::CopyOutOfBounds {
+                            src: src_buffer,
+                            dst: dst_buffer,
+                        },
+                    )?;
+                    let dst_end = dst_offset_bytes.checked_add(size_bytes).ok_or(
+                        AerogpuD3d9Error::CopyOutOfBounds {
+                            src: src_buffer,
+                            dst: dst_buffer,
+                        },
+                    )?;
                     if src_end > src_size || dst_end > dst_size {
                         return Err(AerogpuD3d9Error::CopyOutOfBounds {
                             src: src_buffer,
