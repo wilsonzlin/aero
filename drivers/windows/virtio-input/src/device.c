@@ -782,6 +782,30 @@ NTSTATUS VirtioInputEvtDevicePrepareHardware(
             return STATUS_DEVICE_CONFIGURATION_ERROR;
         }
 
+        /*
+         * Contract v1 requires `queue_notify_off(q) = q` (docs/windows7-virtio-driver-contract.md §1.6).
+         *
+         * The transport can function with arbitrary notify offsets, but validate
+         * this to catch device-model contract regressions early.
+         */
+        {
+            USHORT notifyOff0;
+            USHORT notifyOff1;
+
+            notifyOff0 = VirtioPciReadQueueNotifyOffset(&deviceContext->PciDevice, 0);
+            notifyOff1 = VirtioPciReadQueueNotifyOffset(&deviceContext->PciDevice, 1);
+
+            if (notifyOff0 != 0 || notifyOff1 != 1) {
+                VIOINPUT_LOG(
+                    VIOINPUT_LOG_ERROR | VIOINPUT_LOG_VIRTQ,
+                    "virtio-input queue_notify_off mismatch: q0=%u q1=%u (expected 0/1)\n",
+                    (ULONG)notifyOff0,
+                    (ULONG)notifyOff1);
+                VirtioPciModernUninit(&deviceContext->PciDevice);
+                return STATUS_DEVICE_CONFIGURATION_ERROR;
+            }
+        }
+
         status = VioInputEventQInitialize(deviceContext, deviceContext->DmaEnabler, qsz0);
         if (!NT_SUCCESS(status)) {
             VirtioPciModernUninit(&deviceContext->PciDevice);
