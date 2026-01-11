@@ -23,6 +23,10 @@ const DESC_STRING: u8 = 0x03;
 const DESC_HID: u8 = 0x21;
 const DESC_REPORT: u8 = 0x22;
 
+const MAX_PENDING_REPORTS_KEYBOARD: usize = 64;
+const MAX_PENDING_REPORTS_MOUSE: usize = 128;
+const MAX_PENDING_REPORTS_GAMEPAD: usize = 128;
+
 const KEYBOARD_REPORT_DESCRIPTOR_LEN: u16 = 63;
 const MOUSE_REPORT_DESCRIPTOR_LEN: u16 = 52;
 const GAMEPAD_REPORT_DESCRIPTOR_LEN: u16 = 76;
@@ -195,6 +199,9 @@ impl UsbHidKeyboard {
         bytes[1] = self.report.reserved;
         bytes[2..].copy_from_slice(&self.report.keys);
         self.pending_reports.push_back(bytes);
+        if self.pending_reports.len() > MAX_PENDING_REPORTS_KEYBOARD {
+            self.pending_reports.pop_front();
+        }
     }
 
     fn finalize_control(&mut self) {
@@ -562,8 +569,7 @@ impl UsbHidMouse {
     pub fn movement(&mut self, dx: i32, dy: i32) {
         let dx = dx.clamp(-127, 127) as i8 as u8;
         let dy = dy.clamp(-127, 127) as i8 as u8;
-        self.pending_reports
-            .push_back([self.buttons & 0x07, dx, dy, 0]);
+        self.push_report([self.buttons & 0x07, dx, dy, 0]);
     }
 
     pub fn button_event(&mut self, button_mask: u8, pressed: bool) {
@@ -572,14 +578,19 @@ impl UsbHidMouse {
         } else {
             self.buttons &= !button_mask;
         }
-        self.pending_reports
-            .push_back([self.buttons & 0x07, 0, 0, 0]);
+        self.push_report([self.buttons & 0x07, 0, 0, 0]);
     }
 
     pub fn wheel(&mut self, delta: i32) {
         let wheel = delta.clamp(-127, 127) as i8 as u8;
-        self.pending_reports
-            .push_back([self.buttons & 0x07, 0, 0, wheel]);
+        self.push_report([self.buttons & 0x07, 0, 0, wheel]);
+    }
+
+    fn push_report(&mut self, report: [u8; 4]) {
+        self.pending_reports.push_back(report);
+        if self.pending_reports.len() > MAX_PENDING_REPORTS_MOUSE {
+            self.pending_reports.pop_front();
+        }
     }
 
     fn finalize_control(&mut self) {
@@ -1007,6 +1018,9 @@ impl UsbHidGamepad {
 
     fn enqueue_report(&mut self) {
         self.pending_reports.push_back(self.report.to_bytes());
+        if self.pending_reports.len() > MAX_PENDING_REPORTS_GAMEPAD {
+            self.pending_reports.pop_front();
+        }
     }
 
     fn finalize_control(&mut self) {
@@ -1410,8 +1424,7 @@ impl UsbHidCompositeInput {
     pub fn mouse_movement(&mut self, dx: i32, dy: i32) {
         let dx = dx.clamp(-127, 127) as i8 as u8;
         let dy = dy.clamp(-127, 127) as i8 as u8;
-        self.pending_mouse_reports
-            .push_back([self.mouse_buttons & 0x07, dx, dy, 0]);
+        self.push_mouse_report([self.mouse_buttons & 0x07, dx, dy, 0]);
     }
 
     pub fn mouse_button_event(&mut self, button_mask: u8, pressed: bool) {
@@ -1420,14 +1433,19 @@ impl UsbHidCompositeInput {
         } else {
             self.mouse_buttons &= !button_mask;
         }
-        self.pending_mouse_reports
-            .push_back([self.mouse_buttons & 0x07, 0, 0, 0]);
+        self.push_mouse_report([self.mouse_buttons & 0x07, 0, 0, 0]);
     }
 
     pub fn mouse_wheel(&mut self, delta: i32) {
         let wheel = delta.clamp(-127, 127) as i8 as u8;
-        self.pending_mouse_reports
-            .push_back([self.mouse_buttons & 0x07, 0, 0, wheel]);
+        self.push_mouse_report([self.mouse_buttons & 0x07, 0, 0, wheel]);
+    }
+
+    fn push_mouse_report(&mut self, report: [u8; 4]) {
+        self.pending_mouse_reports.push_back(report);
+        if self.pending_mouse_reports.len() > MAX_PENDING_REPORTS_MOUSE {
+            self.pending_mouse_reports.pop_front();
+        }
     }
 
     pub fn gamepad_button_event(&mut self, button_idx: u8, pressed: bool) {
@@ -1440,15 +1458,13 @@ impl UsbHidCompositeInput {
         } else {
             self.gamepad_report.buttons &= !bit;
         }
-        self.pending_gamepad_reports
-            .push_back(self.gamepad_report.to_bytes());
+        self.enqueue_gamepad_report();
     }
 
     pub fn gamepad_axes(&mut self, x: i32, y: i32) {
         self.gamepad_report.x = x.clamp(-127, 127) as i8;
         self.gamepad_report.y = y.clamp(-127, 127) as i8;
-        self.pending_gamepad_reports
-            .push_back(self.gamepad_report.to_bytes());
+        self.enqueue_gamepad_report();
     }
 
     pub fn gamepad_axes_full(&mut self, x: i32, y: i32, rx: i32, ry: i32) {
@@ -1456,8 +1472,15 @@ impl UsbHidCompositeInput {
         self.gamepad_report.y = y.clamp(-127, 127) as i8;
         self.gamepad_report.rx = rx.clamp(-127, 127) as i8;
         self.gamepad_report.ry = ry.clamp(-127, 127) as i8;
+        self.enqueue_gamepad_report();
+    }
+
+    fn enqueue_gamepad_report(&mut self) {
         self.pending_gamepad_reports
             .push_back(self.gamepad_report.to_bytes());
+        if self.pending_gamepad_reports.len() > MAX_PENDING_REPORTS_GAMEPAD {
+            self.pending_gamepad_reports.pop_front();
+        }
     }
 
     fn enqueue_keyboard_report(&mut self) {
@@ -1466,6 +1489,9 @@ impl UsbHidCompositeInput {
         bytes[1] = self.keyboard_report.reserved;
         bytes[2..].copy_from_slice(&self.keyboard_report.keys);
         self.pending_keyboard_reports.push_back(bytes);
+        if self.pending_keyboard_reports.len() > MAX_PENDING_REPORTS_KEYBOARD {
+            self.pending_keyboard_reports.pop_front();
+        }
     }
 
     fn finalize_control(&mut self) {
@@ -1974,5 +2000,44 @@ mod tests {
         let mut out = [0u8; 1];
         assert_eq!(kb.handle_in(0, &mut out), UsbHandshake::Ack { bytes: 1 });
         assert_eq!(out[0], 0x05);
+    }
+
+    #[test]
+    fn pending_report_queues_are_bounded() {
+        let mut kb = UsbHidKeyboard::new();
+        for _ in 0..(MAX_PENDING_REPORTS_KEYBOARD + 32) {
+            kb.key_event(0x04, true);
+            kb.key_event(0x04, false);
+        }
+        assert!(kb.pending_reports.len() <= MAX_PENDING_REPORTS_KEYBOARD);
+
+        let mut mouse = UsbHidMouse::new();
+        for _ in 0..(MAX_PENDING_REPORTS_MOUSE + 32) {
+            mouse.movement(1, 1);
+        }
+        assert!(mouse.pending_reports.len() <= MAX_PENDING_REPORTS_MOUSE);
+
+        let mut gamepad = UsbHidGamepad::new();
+        for i in 0..(MAX_PENDING_REPORTS_GAMEPAD + 32) {
+            gamepad.set_axes(i as i32, -(i as i32));
+        }
+        assert!(gamepad.pending_reports.len() <= MAX_PENDING_REPORTS_GAMEPAD);
+
+        let mut composite = UsbHidCompositeInput::new();
+        for _ in 0..(MAX_PENDING_REPORTS_KEYBOARD + 32) {
+            composite.key_event(0x04, true);
+            composite.key_event(0x04, false);
+        }
+        assert!(composite.pending_keyboard_reports.len() <= MAX_PENDING_REPORTS_KEYBOARD);
+
+        for _ in 0..(MAX_PENDING_REPORTS_MOUSE + 32) {
+            composite.mouse_movement(1, 1);
+        }
+        assert!(composite.pending_mouse_reports.len() <= MAX_PENDING_REPORTS_MOUSE);
+
+        for i in 0..(MAX_PENDING_REPORTS_GAMEPAD + 32) {
+            composite.gamepad_axes(i as i32, -(i as i32));
+        }
+        assert!(composite.pending_gamepad_reports.len() <= MAX_PENDING_REPORTS_GAMEPAD);
     }
 }
