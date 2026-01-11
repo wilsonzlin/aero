@@ -106,6 +106,9 @@ See: `docs/16-driver-packaging-and-signing.md`.
 
 Test-signs staged driver packages under `out/packages/` (or `-InputRoot`) using `signtool.exe`.
 
+When signing the CI packages layout (`out/packages/**`), the script refuses to sign any driver package
+that is not explicitly opted into CI packaging via `drivers/<driver>/ci-package.json` (defense-in-depth).
+
 CI signs:
 
 - `*.sys` (kernel-mode drivers)

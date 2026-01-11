@@ -72,6 +72,91 @@ function Resolve-AbsolutePath {
   return [System.IO.Path]::GetFullPath((Join-Path $BaseDir $Path))
 }
 
+function Assert-CiPackagedDriversOnly {
+  param(
+    [Parameter(Mandatory = $true)][string] $InputRootAbs,
+    [Parameter(Mandatory = $true)][string] $RepoRoot
+  )
+
+  # Only enforce this gate for the CI packages layout (repoRoot/out/packages). This prevents
+  # accidentally signing dev/test driver packages that were not explicitly opted into CI
+  # packaging via drivers/<driverRel>/ci-package.json.
+  $expectedCiPackages = (Resolve-AbsolutePath -Path "out/packages" -BaseDir $RepoRoot).TrimEnd("\", "/")
+  $inputTrimmed = $InputRootAbs.TrimEnd("\", "/")
+  if (-not $inputTrimmed.Equals($expectedCiPackages, [System.StringComparison]::OrdinalIgnoreCase)) {
+    return
+  }
+
+  $driversRoot = Join-Path $RepoRoot "drivers"
+  if (-not (Test-Path -LiteralPath $driversRoot -PathType Container)) {
+    return
+  }
+
+  $infFiles = @(Get-ChildItem -LiteralPath $InputRootAbs -Recurse -File -Filter "*.inf" -ErrorAction SilentlyContinue)
+  if (-not $infFiles -or $infFiles.Count -eq 0) {
+    return
+  }
+
+  $archNames = @("x86", "i386", "win32", "x64", "amd64", "x86_64", "x86-64")
+  $seen = @{}
+  $missing = New-Object System.Collections.Generic.List[object]
+
+  foreach ($inf in $infFiles) {
+    $srcDir = Split-Path -Parent $inf.FullName
+    $relative = ""
+    if ($srcDir.Length -ge $inputTrimmed.Length -and $srcDir.StartsWith($inputTrimmed, [System.StringComparison]::OrdinalIgnoreCase)) {
+      $relative = $srcDir.Substring($inputTrimmed.Length).TrimStart("\", "/")
+    }
+    if ([string]::IsNullOrWhiteSpace($relative)) {
+      continue
+    }
+
+    $segments = $relative -split "[\\/]+"
+    if (-not $segments -or $segments.Count -eq 0) {
+      continue
+    }
+
+    $archIndex = -1
+    for ($i = $segments.Count - 1; $i -ge 0; $i--) {
+      $s = $segments[$i].ToLowerInvariant()
+      if ($archNames -contains $s) {
+        $archIndex = $i
+        break
+      }
+    }
+
+    # If there is no arch directory segment, this INF isn't in the CI packages layout.
+    if ($archIndex -le 0) {
+      continue
+    }
+
+    $driverRel = ($segments[0..($archIndex - 1)] -join "\")
+    if ([string]::IsNullOrWhiteSpace($driverRel)) {
+      continue
+    }
+
+    $key = $driverRel.ToLowerInvariant()
+    if ($seen.ContainsKey($key)) {
+      continue
+    }
+    $seen[$key] = $true
+
+    $manifestPath = Join-Path (Join-Path $driversRoot $driverRel) "ci-package.json"
+    if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+      [void]$missing.Add([pscustomobject]@{
+        Driver = $driverRel.Replace("\", "/")
+        ExampleInf = $inf.FullName
+        Manifest = $manifestPath
+      })
+    }
+  }
+
+  if ($missing.Count -gt 0) {
+    $list = ($missing | Sort-Object -Property Driver | ForEach-Object { "- $($_.Driver) (e.g. $($_.ExampleInf))" }) -join "`r`n"
+    throw "Refusing to sign driver(s) missing drivers/<driver>/ci-package.json.`r`n`r`n$list"
+  }
+}
+
 function Get-JsonPropertyValueRecursive {
   param(
     [Parameter(Mandatory = $true)]
@@ -557,6 +642,8 @@ try {
   if (-not (Test-Path -LiteralPath $inputRootAbs)) {
     throw "InputRoot '$InputRoot' does not exist at '$inputRootAbs'."
   }
+
+  Assert-CiPackagedDriversOnly -InputRootAbs $inputRootAbs -RepoRoot $repoRoot
 
   New-Item -ItemType Directory -Force -Path $certOutDirAbs | Out-Null
   New-Item -ItemType Directory -Force -Path $outDirAbs | Out-Null
