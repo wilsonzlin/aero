@@ -39,6 +39,12 @@ export type HidDetachMessage = {
   deviceId: number;
 };
 
+export type HidRingAttachMessage = {
+  type: "hid.ringAttach";
+  inputRing: SharedArrayBuffer;
+  outputRing: SharedArrayBuffer;
+};
+
 export type HidInputReportMessage = {
   type: "hid.inputReport";
   deviceId: number;
@@ -75,7 +81,14 @@ export type HidErrorMessage = {
   deviceId?: number;
 };
 
-export type HidProxyMessage = HidAttachMessage | HidDetachMessage | HidInputReportMessage | HidSendReportMessage | HidLogMessage | HidErrorMessage;
+export type HidProxyMessage =
+  | HidAttachMessage
+  | HidDetachMessage
+  | HidRingAttachMessage
+  | HidInputReportMessage
+  | HidSendReportMessage
+  | HidLogMessage
+  | HidErrorMessage;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -186,6 +199,14 @@ export function isHidDetachMessage(value: unknown): value is HidDetachMessage {
   return isFiniteNumber(value.deviceId);
 }
 
+export function isHidRingAttachMessage(value: unknown): value is HidRingAttachMessage {
+  if (!isRecord(value) || value.type !== "hid.ringAttach") return false;
+  if (typeof SharedArrayBuffer === "undefined") return false;
+  if (!(value.inputRing instanceof SharedArrayBuffer)) return false;
+  if (!(value.outputRing instanceof SharedArrayBuffer)) return false;
+  return true;
+}
+
 export function isHidInputReportMessage(value: unknown): value is HidInputReportMessage {
   if (!isRecord(value) || value.type !== "hid.inputReport") return false;
   if (!isFiniteNumber(value.deviceId) || !isFiniteNumber(value.reportId)) return false;
@@ -220,6 +241,7 @@ export function isHidProxyMessage(value: unknown): value is HidProxyMessage {
   return (
     isHidAttachMessage(value) ||
     isHidDetachMessage(value) ||
+    isHidRingAttachMessage(value) ||
     isHidInputReportMessage(value) ||
     isHidSendReportMessage(value) ||
     isHidLogMessage(value) ||

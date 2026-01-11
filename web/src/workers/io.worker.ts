@@ -50,15 +50,18 @@ import {
   isHidAttachMessage,
   isHidDetachMessage,
   isHidInputReportMessage,
+  isHidRingAttachMessage,
   type HidAttachMessage,
   type HidDetachMessage,
   type HidErrorMessage,
   type HidInputReportMessage,
   type HidLogMessage,
   type HidProxyMessage,
+  type HidRingAttachMessage,
   type HidSendReportMessage,
 } from "../hid/hid_proxy_protocol";
 import { isGuestUsbPath, type GuestUsbPath, type GuestUsbPort, type HidPassthroughMessage } from "../platform/hid_passthrough_protocol";
+import { HidReportRing, HidReportType as HidRingReportType } from "../usb/hid_report_ring";
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 
@@ -106,8 +109,11 @@ let usbPassthroughRuntime: WebUsbPassthroughRuntime | null = null;
 let usbPassthroughDebugTimer: number | undefined;
 let usbUhciHarnessRuntime: WebUsbUhciHarnessRuntime | null = null;
 
+let hidInputRing: HidReportRing | null = null;
+let hidOutputRing: HidReportRing | null = null;
+
 type HidHostSink = {
-  sendReport: (msg: Omit<HidSendReportMessage, "type">) => void;
+  sendReport: (msg: { deviceId: number; reportType: "output" | "feature"; reportId: number; data: Uint8Array }) => void;
   log: (message: string, deviceId?: number) => void;
   error: (message: string, deviceId?: number) => void;
 };
@@ -119,6 +125,33 @@ function ensureArrayBufferBacked(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
   const out = new Uint8Array(bytes.byteLength);
   out.set(bytes);
   return out;
+}
+
+function attachHidRings(msg: HidRingAttachMessage): void {
+  // `isHidRingAttachMessage` validates SAB existence + instance checks.
+  hidInputRing = new HidReportRing(msg.inputRing);
+  hidOutputRing = new HidReportRing(msg.outputRing);
+}
+
+function drainHidInputRing(): void {
+  const ring = hidInputRing;
+  if (!ring) return;
+
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const consumed = ring.consumeNext((rec) => {
+      if (rec.reportType !== HidRingReportType.Input) return;
+      if (started) Atomics.add(status, StatusIndex.IoHidInputReportCounter, 1);
+      hidGuest.inputReport({
+        type: "hid.inputReport",
+        deviceId: rec.deviceId,
+        reportId: rec.reportId,
+        // Ring buffers are backed by SharedArrayBuffer; the WASM bridge accepts Uint8Array views regardless of buffer type.
+        data: rec.payload as unknown as Uint8Array<ArrayBuffer>,
+      });
+    });
+    if (!consumed) break;
+  }
 }
 
 interface HidGuestBridge {
@@ -280,7 +313,7 @@ class WasmHidGuestBridge implements HidGuestBridge {
           deviceId,
           reportType: report.reportType,
           reportId: report.reportId,
-          data: ensureArrayBufferBacked(report.data),
+          data: report.data,
         });
       }
     }
@@ -319,8 +352,16 @@ class CompositeHidGuestBridge implements HidGuestBridge {
 
 const hidHostSink: HidHostSink = {
   sendReport: (payload) => {
-    const msg: HidSendReportMessage = { type: "hid.sendReport", ...payload };
-    ctx.postMessage(msg, [payload.data.buffer]);
+    const outRing = hidOutputRing;
+    if (outRing) {
+      const ty = payload.reportType === "feature" ? HidRingReportType.Feature : HidRingReportType.Output;
+      outRing.push(payload.deviceId >>> 0, ty, payload.reportId >>> 0, payload.data);
+      return;
+    }
+
+    const data = ensureArrayBufferBacked(payload.data);
+    const msg: HidSendReportMessage = { type: "hid.sendReport", ...payload, data };
+    ctx.postMessage(msg, [data.buffer]);
   },
   log: (message, deviceId) => {
     const msg: HidLogMessage = { type: "hid.log", message, ...(deviceId !== undefined ? { deviceId } : {}) };
@@ -879,6 +920,11 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       return;
     }
 
+    if (isHidRingAttachMessage(data)) {
+      attachHidRings(data);
+      return;
+    }
+
     if (isHidAttachMessage(data)) {
       if (started) Atomics.add(status, StatusIndex.IoHidAttachCounter, 1);
       hidGuest.attach(data);
@@ -1049,6 +1095,7 @@ function startIoIpcServer(): void {
 
       flushPendingIoEvents();
       drainRuntimeCommands();
+      drainHidInputRing();
       mgr.tick(nowMs);
       l2TunnelForwarder?.tick();
       maybeEmitL2TunnelStatsLog(nowMs);

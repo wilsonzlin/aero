@@ -5,10 +5,12 @@ import {
   isHidErrorMessage,
   isHidInputReportMessage,
   isHidLogMessage,
+  isHidRingAttachMessage,
   isHidProxyMessage,
   isHidSendReportMessage,
   type HidAttachMessage,
   type HidInputReportMessage,
+  type HidRingAttachMessage,
   type HidSendReportMessage,
 } from "./hid_proxy_protocol";
 
@@ -121,6 +123,20 @@ describe("hid/hid_proxy_protocol", () => {
     }
   });
 
+  it("validates hid.ringAttach", () => {
+    const msg: HidRingAttachMessage = {
+      type: "hid.ringAttach",
+      inputRing: new SharedArrayBuffer(64),
+      outputRing: new SharedArrayBuffer(64),
+    };
+    expect(isHidRingAttachMessage(msg)).toBe(true);
+    expect(isHidProxyMessage(msg)).toBe(true);
+
+    expect(isHidRingAttachMessage({ type: "hid.ringAttach", inputRing: new ArrayBuffer(1), outputRing: new SharedArrayBuffer(1) })).toBe(
+      false,
+    );
+  });
+
   it("validates optional hid.log/hid.error", () => {
     expect(isHidLogMessage({ type: "hid.log", message: "hello" })).toBe(true);
     expect(isHidErrorMessage({ type: "hid.error", message: "nope", deviceId: 1 })).toBe(true);
@@ -156,5 +172,12 @@ describe("hid/hid_proxy_protocol", () => {
       data: Uint8Array.of(4, 5),
     };
     expect(isHidProxyMessage(structuredClone(send) as unknown)).toBe(true);
+
+    const rings: HidRingAttachMessage = {
+      type: "hid.ringAttach",
+      inputRing: new SharedArrayBuffer(64),
+      outputRing: new SharedArrayBuffer(64),
+    };
+    expect(isHidProxyMessage(structuredClone(rings) as unknown)).toBe(true);
   });
 });

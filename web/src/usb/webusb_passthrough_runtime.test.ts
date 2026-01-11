@@ -41,13 +41,14 @@ describe("usb/WebUsbPassthroughRuntime", () => {
   it("drains actions and forwards them to the broker port as usb.action messages", async () => {
     const port = new FakePort();
 
+    const bulkOutData = Uint8Array.of(1, 2, 3);
     const actions: UsbHostAction[] = [
       {
         kind: "controlIn",
         id: 1,
         setup: { bmRequestType: 0x80, bRequest: 6, wValue: 0x0100, wIndex: 0, wLength: 18 },
       },
-      { kind: "bulkOut", id: 2, endpoint: 1, data: Uint8Array.of(1, 2, 3) },
+      { kind: "bulkOut", id: 2, endpoint: 1, data: bulkOutData },
     ];
 
     const bridge: UsbPassthroughBridgeLike = {

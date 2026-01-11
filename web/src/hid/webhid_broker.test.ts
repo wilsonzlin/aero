@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { WebHidPassthroughManager } from "../platform/webhid_passthrough";
+import { HidReportRing, HidReportType } from "../usb/hid_report_ring";
 import { WebHidBroker } from "./webhid_broker";
 import type { HidAttachMessage, HidInputReportMessage } from "./hid_proxy_protocol";
 
@@ -79,8 +80,16 @@ class FakeHidDevice {
 }
 
 afterEach(() => {
+  const original = Object.getOwnPropertyDescriptor(globalThis, "crossOriginIsolated");
+  if (originalCrossOriginIsolatedDescriptor) {
+    Object.defineProperty(globalThis, "crossOriginIsolated", originalCrossOriginIsolatedDescriptor);
+  } else if (original) {
+    Reflect.deleteProperty(globalThis as any, "crossOriginIsolated");
+  }
   vi.clearAllMocks();
 });
+
+const originalCrossOriginIsolatedDescriptor = Object.getOwnPropertyDescriptor(globalThis, "crossOriginIsolated");
 
 describe("hid/WebHidBroker", () => {
   it("forwards inputreport events to the worker port with transferred bytes", async () => {
@@ -107,6 +116,43 @@ describe("hid/WebHidBroker", () => {
     expect(input!.msg.reportId).toBe(5);
     expect(Array.from(input!.msg.data)).toEqual([1, 2, 3]);
     expect(input!.transfer?.[0]).toBe(input!.msg.data.buffer);
+  });
+
+  it("forwards reports via SharedArrayBuffer rings when crossOriginIsolated", async () => {
+    Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
+
+    const manager = new WebHidPassthroughManager({ hid: null });
+    const broker = new WebHidBroker({ manager });
+    const port = new FakePort();
+    broker.attachWorkerPort(port as unknown as MessagePort);
+
+    const ringAttach = port.posted.find((p) => (p.msg as { type?: unknown }).type === "hid.ringAttach")?.msg as
+      | { inputRing: SharedArrayBuffer; outputRing: SharedArrayBuffer }
+      | undefined;
+    expect(ringAttach).toBeTruthy();
+
+    const inputRing = new HidReportRing(ringAttach!.inputRing);
+    const outputRing = new HidReportRing(ringAttach!.outputRing);
+
+    const device = new FakeHidDevice();
+    const id = await broker.attachDevice(device as unknown as HIDDevice);
+
+    const before = port.posted.length;
+    device.dispatchInputReport(5, Uint8Array.of(1, 2, 3));
+    // No per-report postMessage; the input is queued via the SharedArrayBuffer ring.
+    expect(port.posted.length).toBe(before);
+
+    const rec = inputRing.pop();
+    expect(rec).not.toBeNull();
+    expect(rec).toMatchObject({ deviceId: id, reportType: HidReportType.Input, reportId: 5 });
+    expect(Array.from(rec!.payload)).toEqual([1, 2, 3]);
+
+    // Worker -> main output/feature reports also flow through the ring.
+    outputRing.push(id, HidReportType.Output, 7, Uint8Array.of(9));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(device.sendReport).toHaveBeenCalledWith(7, Uint8Array.of(9));
+
+    broker.destroy();
   });
 
   it("computes hasInterruptOut based on output reports (feature-only does not require interrupt OUT)", async () => {

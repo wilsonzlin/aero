@@ -110,7 +110,6 @@ void installWorkerPerfHandlers();
 const GPU_MESSAGE_BASE = { protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION } as const;
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
-
 // `GpuRuntimeOutMessage` is a tagged union; built-in `Omit<>` would collapse it to
 // only the keys shared by all variants. Use a distributive form so variant-specific
 // payload fields (framesReceived, requestId, etc) remain type-checked.

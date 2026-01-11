@@ -8,9 +8,11 @@ import {
   type HidDetachMessage,
   type HidInputReportMessage,
   type HidProxyMessage,
+  type HidRingAttachMessage,
   type HidSendReportMessage,
 } from "./hid_proxy_protocol";
 import type { GuestUsbPath } from "../platform/hid_passthrough_protocol";
+import { createHidReportRingBuffer, HidReportRing, HidReportType as HidRingReportType } from "../usb/hid_report_ring";
 
 export type WebHidBrokerState = {
   workerAttached: boolean;
@@ -63,6 +65,10 @@ export class WebHidBroker {
   readonly #listeners = new Set<WebHidBrokerListener>();
 
   #inputReportEmitTimer: ReturnType<typeof setTimeout> | null = null;
+
+  #inputRing: HidReportRing | null = null;
+  #outputRing: HidReportRing | null = null;
+  #outputRingDrainTimer: ReturnType<typeof setInterval> | null = null;
 
   #managerUnsubscribe: (() => void) | null = null;
   #prevManagerAttached = new Set<HIDDevice>();
@@ -155,6 +161,7 @@ export class WebHidBroker {
     // When using addEventListener() MessagePorts need start() to begin dispatch.
     (port as unknown as { start?: () => void }).start?.();
 
+    this.#attachRings(port);
     this.#emit();
   }
 
@@ -162,6 +169,8 @@ export class WebHidBroker {
     const active = this.#workerPort;
     if (!active) return;
     if (port && port !== active) return;
+
+    this.#detachRings();
 
     // Best-effort notify the worker that all devices are detached.
     for (const deviceId of this.#attachedToWorker) {
@@ -187,6 +196,71 @@ export class WebHidBroker {
     this.#workerPort = null;
     this.#workerPortListener = null;
     this.#emit();
+  }
+
+  #canUseSharedMemory(): boolean {
+    // SharedArrayBuffer requires cross-origin isolation in browsers. Node/Vitest may still provide it,
+    // but keep the check aligned with the browser contract so behaviour matches production.
+    if ((globalThis as any).crossOriginIsolated !== true) return false;
+    if (typeof SharedArrayBuffer === "undefined") return false;
+    if (typeof Atomics === "undefined") return false;
+    return true;
+  }
+
+  #attachRings(worker: MessagePort | Worker): void {
+    if (this.#inputRing && this.#outputRing) return;
+    if (!this.#canUseSharedMemory()) return;
+
+    const inputSab = createHidReportRingBuffer(64 * 1024);
+    const outputSab = createHidReportRingBuffer(64 * 1024);
+    this.#inputRing = new HidReportRing(inputSab);
+    this.#outputRing = new HidReportRing(outputSab);
+
+    const msg: HidRingAttachMessage = { type: "hid.ringAttach", inputRing: inputSab, outputRing: outputSab };
+    this.#postToWorker(worker, msg);
+
+    // Drain output reports in the background. In Node (Vitest), `unref()` the timer so it doesn't
+    // keep the test runner alive when a broker isn't explicitly destroyed.
+    this.#outputRingDrainTimer = setInterval(() => this.#drainOutputRing(), 8);
+    (this.#outputRingDrainTimer as unknown as { unref?: () => void }).unref?.();
+  }
+
+  #detachRings(): void {
+    if (this.#outputRingDrainTimer) {
+      clearInterval(this.#outputRingDrainTimer);
+      this.#outputRingDrainTimer = null;
+    }
+    this.#inputRing = null;
+    this.#outputRing = null;
+  }
+
+  #drainOutputRing(): void {
+    const ring = this.#outputRing;
+    if (!ring) return;
+
+    while (true) {
+      const rec = ring.pop();
+      if (!rec) break;
+      if (rec.reportType !== HidRingReportType.Output && rec.reportType !== HidRingReportType.Feature) continue;
+
+      const deviceId = rec.deviceId >>> 0;
+      if (!this.#attachedToWorker.has(deviceId)) continue;
+
+      const device = this.#deviceById.get(deviceId);
+      if (!device) continue;
+
+      const data = ensureArrayBufferBacked(rec.payload);
+      const promise =
+        rec.reportType === HidRingReportType.Feature
+          ? device.sendFeatureReport(rec.reportId, data)
+          : device.sendReport(rec.reportId, data);
+      void promise.catch((err) => {
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn(
+          `[webhid] Failed to send ${rec.reportType === HidRingReportType.Feature ? "feature" : "output"} reportId=${rec.reportId} deviceId=${deviceId}: ${message}`,
+        );
+      });
+    }
   }
 
   getDeviceId(device: HIDDevice): number {
@@ -248,13 +322,19 @@ export class WebHidBroker {
       const view = event.data;
       if (!(view instanceof DataView)) return;
       const src = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
-      const data = new Uint8Array(src.byteLength);
-      data.set(src);
 
       const tsMs = typeof event.timeStamp === "number" ? event.timeStamp : undefined;
-      this.#lastInputReportInfo.set(deviceId, { tsMs: tsMs ?? performance.now(), byteLength: data.byteLength });
+      this.#lastInputReportInfo.set(deviceId, { tsMs: tsMs ?? performance.now(), byteLength: src.byteLength });
       this.#scheduleEmitForInputReports();
 
+      const ring = this.#inputRing;
+      if (ring) {
+        ring.push(deviceId >>> 0, HidRingReportType.Input, event.reportId >>> 0, src);
+        return;
+      }
+
+      const data = new Uint8Array(src.byteLength);
+      data.set(src);
       const msg: HidInputReportMessage = {
         type: "hid.inputReport",
         deviceId,
