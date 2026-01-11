@@ -161,6 +161,13 @@ fn read_bdl_entry(mem: &dyn MemoryAccess, base: u64, index: usize) -> BdlEntry {
     }
 }
 
+fn supported_pcm_caps() -> u32 {
+    // PCM Size, Rate capabilities (HDA spec). Advertise a minimal, common subset:
+    // - 16-bit samples
+    // - 44.1kHz and 48kHz
+    (1 << 1) | (1 << 13) | (1 << 14)
+}
+
 /// Minimal Intel HDA codec model.
 ///
 /// This is not intended to be feature complete; it only targets the verbs and
@@ -238,7 +245,8 @@ impl HdaCodec {
             output: CodecOutputWidget {
                 stream_id: 0,
                 channel: 0,
-                format: 0,
+                // Default to the common initial format: 48kHz, 16-bit, stereo.
+                format: 0x0011,
                 amp_gain_left: 0x7f,
                 amp_gain_right: 0x7f,
                 amp_mute_left: false,
@@ -256,7 +264,8 @@ impl HdaCodec {
             input: CodecInputWidget {
                 stream_id: 0,
                 channel: 0,
-                format: 0,
+                // Default to 48kHz, 16-bit, mono.
+                format: 0x0010,
             },
             mic_pin: CodecPinWidget {
                 conn_select: 0,
@@ -439,14 +448,11 @@ impl HdaCodec {
                 (0x0u32) | (1 << 4) | (1 << 6) | (1 << 8)
             }
             0x0A => {
-                // PCM: report support for 16-bit stereo.
-                // This is a simplification; Windows primarily uses stream formats instead.
-                0
+                supported_pcm_caps()
             }
             0x0B => {
-                // Stream formats: advertise a few common ones (16-bit and 32-bit, 44.1/48k).
-                // Bit definitions are codec-specific; returning 0 tends to make drivers unhappy.
-                0x0000_0001 | 0x0000_0010
+                // Supported stream formats. Returning non-zero tends to keep drivers happy.
+                1
             }
             0x12 => {
                 // AMP_OUT_CAP: 0..0x7f steps, 0 offset, 7-bit, mute supported.
@@ -462,8 +468,8 @@ impl HdaCodec {
                 // Audio widget capabilities: type=audio input (1), stereo, in amp present, format override.
                 (0x1u32) | (1 << 4) | (1 << 5) | (1 << 8)
             }
-            0x0A => 0,
-            0x0B => 0x0000_0001 | 0x0000_0010,
+            0x0A => supported_pcm_caps(),
+            0x0B => 1,
             _ => 0,
         }
     }
@@ -474,9 +480,11 @@ impl HdaCodec {
                 // Audio widget capabilities: type=pin complex (0x4), connection list, power control.
                 (0x4u32) | (1 << 12) | (1 << 10)
             }
+            0x0A => supported_pcm_caps(),
+            0x0B => 1,
             0x0C => {
                 // PIN_CAP: output capable.
-                1 << 4
+                (1 << 4) | (1 << 2)
             }
             0x0E => 1, // connection list length
             _ => 0,
@@ -486,9 +494,11 @@ impl HdaCodec {
     fn get_parameter_mic_pin(&self, param_id: u8) -> u32 {
         match param_id {
             0x09 => (0x4u32) | (1 << 12) | (1 << 10),
+            0x0A => supported_pcm_caps(),
+            0x0B => 1,
             0x0C => {
                 // PIN_CAP: input capable.
-                1 << 5
+                (1 << 5) | (1 << 2)
             }
             0x0E => 1,
             _ => 0,
@@ -633,7 +643,7 @@ impl HdaController {
             vmin: 0x00,
             vmaj: 0x01,
             gctl: 0,
-            statests: 0x0001, // codec 0 present
+            statests: 0,
             intctl: 0,
             intsts: 0,
 
@@ -883,6 +893,9 @@ impl HdaController {
                 let new_crst = (v & GCTL_CRST) != 0;
                 if prev_crst && !new_crst {
                     self.reset();
+                } else if !prev_crst && new_crst {
+                    // Leaving reset: report codec 0 presence.
+                    self.statests |= 1;
                 }
             }
             (REG_STATESTS, 2) => {
@@ -1038,6 +1051,7 @@ impl HdaController {
 
     fn reset(&mut self) {
         self.gctl = 0;
+        self.statests = 0;
         self.intctl = 0;
         self.intsts = 0;
         self.irq_pending = false;
