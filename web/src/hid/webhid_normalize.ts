@@ -264,7 +264,7 @@ function normalizeReportItem(item: HidReportItem, path: Path): NormalizedHidRepo
 }
 
 function normalizeReportInfo(report: HidReportInfo, path: Path): NormalizedHidReportInfo {
-  const reportId = report.reportId;
+  const reportId = report.reportId ?? 0;
   if (!Number.isInteger(reportId) || reportId < 0 || reportId > 0xff) {
     throw err(path, `Invalid HID reportId: expected integer in [0,255], got ${String(reportId)}`);
   }
