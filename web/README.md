@@ -32,6 +32,14 @@ Dev builds are written to:
 - `web/src/wasm/pkg-single-dev/`
 - `web/src/wasm/pkg-threaded-dev/` (supported, but typically slower due to `build-std`)
 
+## Toolchains
+
+- **Stable** (default): pinned in [`rust-toolchain.toml`](../rust-toolchain.toml).
+- **Threaded/shared-memory WASM**: requires nightly `-Z build-std` and therefore uses the **pinned nightly**
+  toolchain declared in [`scripts/toolchains.json`](../scripts/toolchains.json) (`rust.nightlyWasm`) plus
+  `rust-src`. `just setup` installs the correct toolchains automatically (see
+  [ADR 0009](../docs/adr/0009-rust-toolchain-policy.md)).
+
 ## Build modes
 
 Build orchestration lives in `web/scripts/build_wasm.mjs`.
@@ -64,4 +72,3 @@ If it is not installed, the build still succeeds and prints a warning.
 - the JS glue
 
 for each available variant.
-

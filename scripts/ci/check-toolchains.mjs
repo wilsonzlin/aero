@@ -51,8 +51,14 @@ function assertNoFloatingNightlyInWorkflows(workflowsDir) {
         // Workflows should install Rust via our pinned wrapper action (`./.github/actions/setup-rust`) so
         // `toolchain: stable`/`toolchain: nightly` always resolve to the repo-pinned versions.
         { pattern: /\bdtolnay\/rust-toolchain@/u, message: "uses dtolnay/rust-toolchain directly" },
-        { pattern: /\btoolchain:\s*\d+\.\d+\.\d+\b/u, message: "hardcodes a stable toolchain version" },
-        { pattern: /\btoolchain:\s*nightly-\d{4}-\d{2}-\d{2}\b/u, message: "hardcodes a pinned nightly toolchain date" },
+        {
+            pattern: /\btoolchain:\s*["']?\d+\.\d+\.\d+\b/u,
+            message: "hardcodes a stable toolchain version",
+        },
+        {
+            pattern: /\btoolchain:\s*["']?nightly-\d{4}-\d{2}-\d{2}\b/u,
+            message: "hardcodes a pinned nightly toolchain date",
+        },
         {
             pattern: /\bcargo\s+\+nightly-\d{4}-\d{2}-\d{2}\b/u,
             message: "hardcodes a pinned nightly toolchain date via `cargo +nightly-YYYY-MM-DD`",
@@ -70,8 +76,20 @@ function assertNoFloatingNightlyInWorkflows(workflowsDir) {
             message: "hardcodes a pinned nightly toolchain date via `--toolchain nightly-YYYY-MM-DD`",
         },
         {
-            pattern: /\bRUSTUP_TOOLCHAIN\b\s*[:=]\s*nightly-\d{4}-\d{2}-\d{2}\b/u,
+            pattern: /\bRUSTUP_TOOLCHAIN\b\s*[:=]\s*["']?nightly-\d{4}-\d{2}-\d{2}\b/u,
             message: "hardcodes a pinned nightly toolchain date via RUSTUP_TOOLCHAIN=nightly-YYYY-MM-DD",
+        },
+        {
+            pattern: /\bRUSTUP_TOOLCHAIN\b\s*[:=]\s*["']?nightly(?!-)\b/u,
+            message: "uses floating nightly via RUSTUP_TOOLCHAIN=nightly",
+        },
+        {
+            pattern: /\bRUSTUP_TOOLCHAIN\b\s*[:=]\s*["']?stable\b/u,
+            message: "uses floating stable via RUSTUP_TOOLCHAIN=stable",
+        },
+        {
+            pattern: /\bRUSTUP_TOOLCHAIN\b\s*[:=]\s*["']?\d+\.\d+\.\d+\b/u,
+            message: "hardcodes a stable toolchain version via RUSTUP_TOOLCHAIN=1.xx.y",
         },
         { pattern: /\bcargo\s+\+nightly(?!-)/u, message: "uses floating cargo +nightly" },
         { pattern: /\brustc\s+\+nightly(?!-)/u, message: "uses floating rustc +nightly" },
