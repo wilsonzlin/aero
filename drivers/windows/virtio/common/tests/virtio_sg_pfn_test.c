@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 
 #include "../virtio_sg_pfn.h"
 
@@ -140,6 +141,37 @@ static void TestBufferTooSmall(void)
 	ASSERT_TRUE(sg[0].write != FALSE);
 }
 
+static void TestLenClampedToU32(void)
+{
+#if SIZE_MAX > 0xFFFFFFFFu
+	const size_t len = ((size_t)0xFFFFFFFFu) + 1u; /* 4GiB + 1 */
+	const UINT32 pfn_count = (UINT32)((len + (PAGE_SIZE - 1)) / PAGE_SIZE);
+	UINT64 *pfns;
+	VIRTQ_SG sg[3];
+	UINT16 count = 0;
+	NTSTATUS status;
+	UINT32 i;
+
+	pfns = (UINT64 *)calloc((size_t)pfn_count, sizeof(UINT64));
+	ASSERT_TRUE(pfns != NULL);
+	for (i = 0; i < pfn_count; i++) {
+		pfns[i] = (UINT64)0x1000u + (UINT64)i;
+	}
+
+	status = VirtioSgBuildFromPfns(pfns, pfn_count, 0, len, TRUE, sg, 3, &count);
+	ASSERT_EQ_STATUS(status, STATUS_SUCCESS);
+	ASSERT_EQ_U16(count, 2);
+
+	ASSERT_EQ_U64(sg[0].addr, ((UINT64)0x1000u << PAGE_SHIFT));
+	ASSERT_EQ_U32(sg[0].len, 0xFFFFFFFFu);
+
+	ASSERT_EQ_U64(sg[1].addr, sg[0].addr + (UINT64)sg[0].len);
+	ASSERT_EQ_U32(sg[1].len, 1u);
+
+	free(pfns);
+#endif
+}
+
 int main(void)
 {
 	TestContiguousCoalesce();
@@ -148,8 +180,8 @@ int main(void)
 	TestMultiPagePartialLast();
 	TestBoundaryCases();
 	TestBufferTooSmall();
+	TestLenClampedToU32();
 
 	printf("virtio_sg_pfn_test: all tests passed\n");
 	return 0;
 }
-
