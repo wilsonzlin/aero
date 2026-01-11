@@ -8,7 +8,7 @@
 
 use std::collections::VecDeque;
 
-use aero_x86::Register;
+use aero_x86::{DecodedInst, Mnemonic, Register};
 
 use crate::exception::Exception as CpuException;
 use crate::exceptions::{Exception, InterruptSource, PendingEvent};
@@ -18,8 +18,8 @@ use crate::linear_mem::{
 };
 use crate::mem::CpuBus;
 use crate::state::{
-    self, gpr, CpuMode, RFLAGS_IF, RFLAGS_IOPL_MASK, RFLAGS_RESERVED1, RFLAGS_TF, RFLAGS_VIF,
-    RFLAGS_VIP, RFLAGS_VM,
+    self, gpr, CpuMode, RFLAGS_IF, RFLAGS_IOPL_MASK, RFLAGS_OF, RFLAGS_RESERVED1, RFLAGS_TF,
+    RFLAGS_VIF, RFLAGS_VIP, RFLAGS_VM,
 };
 use crate::time::TimeSource;
 
@@ -311,6 +311,24 @@ pub struct CpuCore {
     pub time: TimeSource,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InterruptAssistOutcome {
+    /// The instruction retired successfully.
+    ///
+    /// `block_boundary` is a conservative hint for Tier-0 batch execution: the
+    /// instruction either transferred control (`INT*`, `IRET*`, taken `INTO`) or
+    /// otherwise should terminate the current basic block.
+    Retired {
+        block_boundary: bool,
+        /// Whether maskable interrupts should be inhibited for exactly one
+        /// subsequent instruction (STI interrupt shadow).
+        inhibit_interrupts: bool,
+    },
+    /// The instruction faulted and an exception was delivered; the instruction
+    /// did not retire.
+    FaultDelivered,
+}
+
 impl CpuCore {
     pub fn new(mode: CpuMode) -> Self {
         let state = state::CpuState::new(mode);
@@ -355,6 +373,106 @@ impl core::ops::Deref for CpuCore {
 impl core::ops::DerefMut for CpuCore {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.state
+    }
+}
+
+/// Execute an interrupt-related instruction that Tier-0 treats as an "assist".
+///
+/// This helper is the canonical implementation of the architectural semantics
+/// for `CLI`/`STI`/`INT*`/`INTO`/`IRET*` because it has access to
+/// [`PendingEventState`] (interrupt shadow + IRET frame bookkeeping).
+pub fn exec_interrupt_assist_decoded<B: CpuBus>(
+    cpu: &mut CpuCore,
+    bus: &mut B,
+    decoded: &DecodedInst,
+    _addr_size_override: bool,
+) -> Result<InterruptAssistOutcome, CpuExit> {
+    let ip = cpu.state.rip();
+    let next_ip = ip.wrapping_add(decoded.len as u64) & cpu.state.mode.ip_mask();
+
+    match decoded.instr.mnemonic() {
+        Mnemonic::Cli => {
+            let cpl = cpu.state.cpl();
+            let iopl = ((cpu.state.rflags() & RFLAGS_IOPL_MASK) >> 12) as u8;
+            if !matches!(cpu.state.mode, CpuMode::Real | CpuMode::Vm86) && cpl > iopl {
+                cpu.pending.raise_exception_fault(
+                    &mut cpu.state,
+                    Exception::GeneralProtection,
+                    ip,
+                    Some(0),
+                    None,
+                );
+                cpu.deliver_pending_event(bus)?;
+                return Ok(InterruptAssistOutcome::FaultDelivered);
+            }
+            cpu.state.set_flag(RFLAGS_IF, false);
+            cpu.state.set_rip(next_ip);
+            Ok(InterruptAssistOutcome::Retired {
+                block_boundary: false,
+                inhibit_interrupts: false,
+            })
+        }
+        Mnemonic::Sti => {
+            let cpl = cpu.state.cpl();
+            let iopl = ((cpu.state.rflags() & RFLAGS_IOPL_MASK) >> 12) as u8;
+            if !matches!(cpu.state.mode, CpuMode::Real | CpuMode::Vm86) && cpl > iopl {
+                cpu.pending.raise_exception_fault(
+                    &mut cpu.state,
+                    Exception::GeneralProtection,
+                    ip,
+                    Some(0),
+                    None,
+                );
+                cpu.deliver_pending_event(bus)?;
+                return Ok(InterruptAssistOutcome::FaultDelivered);
+            }
+            cpu.state.set_flag(RFLAGS_IF, true);
+            cpu.state.set_rip(next_ip);
+            Ok(InterruptAssistOutcome::Retired {
+                block_boundary: false,
+                inhibit_interrupts: true,
+            })
+        }
+        Mnemonic::Int | Mnemonic::Int1 | Mnemonic::Int3 | Mnemonic::Into => {
+            let vector = match decoded.instr.mnemonic() {
+                Mnemonic::Int => decoded.instr.immediate8(),
+                Mnemonic::Int1 => 1,
+                Mnemonic::Int3 => 3,
+                Mnemonic::Into => {
+                    if !cpu.state.get_flag(RFLAGS_OF) {
+                        cpu.state.set_rip(next_ip);
+                        return Ok(InterruptAssistOutcome::Retired {
+                            block_boundary: false,
+                            inhibit_interrupts: false,
+                        });
+                    }
+                    4
+                }
+                _ => unreachable!(),
+            };
+
+            if matches!(cpu.state.mode, CpuMode::Real | CpuMode::Vm86) {
+                cpu.state.set_pending_bios_int(vector);
+            }
+
+            cpu.pending.raise_software_interrupt(vector, next_ip);
+            cpu.deliver_pending_event(bus)?;
+            Ok(InterruptAssistOutcome::Retired {
+                block_boundary: true,
+                inhibit_interrupts: false,
+            })
+        }
+        Mnemonic::Iret | Mnemonic::Iretd | Mnemonic::Iretq => {
+            cpu.iret(bus)?;
+            if matches!(cpu.state.mode, CpuMode::Real | CpuMode::Vm86) {
+                cpu.state.clear_pending_bios_int();
+            }
+            Ok(InterruptAssistOutcome::Retired {
+                block_boundary: true,
+                inhibit_interrupts: false,
+            })
+        }
+        other => panic!("unsupported interrupt assist mnemonic: {other:?}"),
     }
 }
 

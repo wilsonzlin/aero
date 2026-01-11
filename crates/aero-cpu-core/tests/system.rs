@@ -4,7 +4,7 @@ use aero_cpu_core::interp::tier0::exec::{step, StepExit};
 use aero_cpu_core::mem::{CpuBus, FlatTestBus};
 use aero_cpu_core::msr;
 use aero_cpu_core::state::{
-    CpuMode, CpuState, CR0_PE, RFLAGS_IF, RFLAGS_IOPL_MASK, RFLAGS_RESERVED1,
+    CpuMode, CpuState, CR0_PE, RFLAGS_IF, RFLAGS_RESERVED1,
 };
 use aero_cpu_core::time::TimeSource;
 use aero_cpu_core::{AssistReason, Exception};
@@ -563,65 +563,98 @@ fn io_privilege_checks_raise_gp_and_do_not_touch_device() {
 
 #[test]
 fn cli_sti_are_privileged_by_iopl() {
-    let mut bus = FlatTestBus::new(BUS_SIZE);
-    let mut ctx = AssistContext::default();
-    let mut time = TimeSource::default();
-    let mut state = CpuState::new(CpuMode::Bit32);
-    state.control.cr0 |= CR0_PE;
+    fn write_idt_gate32(
+        mem: &mut impl CpuBus,
+        base: u64,
+        vector: u8,
+        selector: u16,
+        offset: u32,
+        type_attr: u8,
+    ) {
+        let addr = base + (vector as u64) * 8;
+        mem.write_u16(addr, (offset & 0xFFFF) as u16).unwrap();
+        mem.write_u16(addr + 2, selector).unwrap();
+        mem.write_u8(addr + 4, 0).unwrap();
+        mem.write_u8(addr + 5, type_attr).unwrap();
+        mem.write_u16(addr + 6, (offset >> 16) as u16).unwrap();
+    }
 
-    state.segments.cs.selector = 0x23; // CPL3
-    state.set_rflags(RFLAGS_RESERVED1 | RFLAGS_IF); // IOPL=0
+    // CLI/STI are handled by the architectural interrupt engine, not the `assist`
+    // layer (which only has access to `CpuState`).
+    let mut bus = FlatTestBus::new(0x10000);
+    let idt_base = 0x2000u64;
+    let handler = 0x3000u32;
+    let tss_base = 0x4000u64;
 
-    let err = exec_assist(
-        &mut ctx,
-        &mut time,
-        &mut state,
-        &mut bus,
-        CODE_BASE,
-        &[0xFA], // CLI
-        AssistReason::Interrupt,
-    )
-    .unwrap_err();
-    assert_eq!(err, Exception::gp0());
+    // #GP handler: HLT
+    bus.load(handler as u64, &[0xF4]);
+    write_idt_gate32(&mut bus, idt_base, 13, 0x08, handler, 0x8E);
 
-    let err = exec_assist(
-        &mut ctx,
-        &mut time,
-        &mut state,
-        &mut bus,
-        CODE_BASE,
-        &[0xFB], // STI
-        AssistReason::Interrupt,
-    )
-    .unwrap_err();
-    assert_eq!(err, Exception::gp0());
+    // Provide a ring-0 stack in a 32-bit TSS so exceptions from CPL3 can switch stacks.
+    bus.write_u32(tss_base + 4, 0x9000).unwrap(); // ESP0
+    bus.write_u16(tss_base + 8, 0x10).unwrap(); // SS0
+
+    let mut exec_interrupt = |cpu: &mut aero_cpu_core::interrupts::CpuCore, bytes: &[u8]| {
+        cpu.state.set_rip(CODE_BASE);
+        let mut buf = [0u8; 15];
+        buf[..bytes.len()].copy_from_slice(bytes);
+        let decoded = aero_x86::decode(&buf, CODE_BASE, cpu.state.bitness()).expect("decode");
+        aero_cpu_core::interrupts::exec_interrupt_assist_decoded(cpu, &mut bus, &decoded, false)
+            .expect("execute interrupt assist")
+    };
+
+    // IOPL=0, CPL3 => #GP(0) for both CLI and STI.
+    for instr in [&[0xFA][..], &[0xFB][..]] {
+        let mut cpu = aero_cpu_core::interrupts::CpuCore::new(CpuMode::Bit32);
+        cpu.state.tables.idtr.base = idt_base;
+        cpu.state.tables.idtr.limit = 0x7FF;
+        cpu.state.tables.tr.selector = 0x28;
+        cpu.state.tables.tr.base = tss_base;
+        cpu.state.tables.tr.limit = 0x67;
+        cpu.state.tables.tr.access = aero_cpu_core::state::SEG_ACCESS_PRESENT | 0x9;
+        cpu.state.segments.cs.selector = 0x23; // CPL3
+        cpu.state.segments.ss.selector = 0x23;
+        cpu.state.set_rflags(RFLAGS_RESERVED1 | RFLAGS_IF); // IOPL=0
+        cpu.state.write_reg(Register::ESP, 0x8000);
+
+        let outcome = exec_interrupt(&mut cpu, instr);
+        assert_eq!(
+            outcome,
+            aero_cpu_core::interrupts::InterruptAssistOutcome::FaultDelivered
+        );
+        assert_eq!(cpu.state.rip(), handler as u64);
+        assert_eq!(cpu.state.segments.cs.selector, 0x08);
+    }
 
     // Raise IOPL so user mode is allowed to toggle IF.
-    state.set_rflags((state.rflags() & !RFLAGS_IOPL_MASK) | (3u64 << 12));
+    {
+        let mut cpu = aero_cpu_core::interrupts::CpuCore::new(CpuMode::Bit32);
+        cpu.state.segments.cs.selector = 0x23; // CPL3
+        cpu.state.set_rflags((RFLAGS_RESERVED1 | RFLAGS_IF) | (3u64 << 12));
+        let outcome = exec_interrupt(&mut cpu, &[0xFA]); // CLI
+        assert!(matches!(
+            outcome,
+            aero_cpu_core::interrupts::InterruptAssistOutcome::Retired { .. }
+        ));
+        assert_eq!(cpu.state.rflags() & RFLAGS_IF, 0);
+        assert_eq!(cpu.state.rip(), CODE_BASE + 1);
+    }
 
-    exec_assist(
-        &mut ctx,
-        &mut time,
-        &mut state,
-        &mut bus,
-        CODE_BASE,
-        &[0xFA], // CLI
-        AssistReason::Interrupt,
-    )
-    .unwrap();
-    assert_eq!(state.rflags() & RFLAGS_IF, 0);
-
-    exec_assist(
-        &mut ctx,
-        &mut time,
-        &mut state,
-        &mut bus,
-        CODE_BASE,
-        &[0xFB], // STI
-        AssistReason::Interrupt,
-    )
-    .unwrap();
-    assert_eq!(state.rflags() & RFLAGS_IF, RFLAGS_IF);
+    {
+        let mut cpu = aero_cpu_core::interrupts::CpuCore::new(CpuMode::Bit32);
+        cpu.state.segments.cs.selector = 0x23; // CPL3
+        cpu.state.set_rflags((RFLAGS_RESERVED1) | (3u64 << 12));
+        let outcome = exec_interrupt(&mut cpu, &[0xFB]); // STI
+        assert_eq!(
+            outcome,
+            aero_cpu_core::interrupts::InterruptAssistOutcome::Retired {
+                block_boundary: false,
+                inhibit_interrupts: true
+            }
+        );
+        assert_eq!(cpu.state.rflags() & RFLAGS_IF, RFLAGS_IF);
+        assert_eq!(cpu.state.rip(), CODE_BASE + 1);
+    }
 }
 
 #[test]

@@ -1,5 +1,6 @@
 use aero_cpu_core::assist::AssistContext;
-use aero_cpu_core::interp::tier0::exec::{run_batch_with_assists, BatchExit};
+use aero_cpu_core::interp::tier0::exec::{run_batch_cpu_core_with_assists, BatchExit};
+use aero_cpu_core::interp::tier0::Tier0Config;
 use aero_cpu_core::mem::CpuBus as _;
 use aero_cpu_core::state::{CpuMode, CR0_PE, CR0_PG, RFLAGS_IF, RFLAGS_RESERVED1};
 use aero_cpu_core::CpuCore;
@@ -195,7 +196,8 @@ fn tier0_assist_protected_int_stack_switch_ignores_user_supervisor_paging_bit() 
     );
 
     let mut ctx = AssistContext::default();
-    let res = run_batch_with_assists(&mut ctx, &mut cpu, &mut bus, 1);
+    let cfg = Tier0Config::default();
+    let res = run_batch_cpu_core_with_assists(&cfg, &mut ctx, &mut cpu, &mut bus, 1);
     assert_eq!(res.executed, 1);
     assert_eq!(res.exit, BatchExit::Branch);
 

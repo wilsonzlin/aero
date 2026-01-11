@@ -1,5 +1,8 @@
 use aero_cpu_core::assist::AssistContext;
-use aero_cpu_core::interp::tier0::exec::{run_batch_with_assists, BatchExit};
+use aero_cpu_core::interp::tier0::exec::{
+    run_batch_cpu_core_with_assists, run_batch_with_assists, BatchExit,
+};
+use aero_cpu_core::interp::tier0::Tier0Config;
 use aero_cpu_core::mem::FlatTestBus;
 use aero_cpu_core::msr;
 use aero_cpu_core::state::{CpuMode, RFLAGS_IF};
@@ -144,13 +147,14 @@ fn tier0_assists_execute_cpuid_msr_tsc_and_interrupt_flag_ops() {
     cpu.state.write_reg(Register::ESP, sp_pushed);
 
     let mut ctx = AssistContext::default();
+    let cfg = Tier0Config::default();
 
     let mut executed_total = 0u64;
     loop {
         if cpu.state.rip() == RETURN_IP as u64 {
             break;
         }
-        let res = run_batch_with_assists(&mut ctx, &mut cpu, &mut bus, 1024);
+        let res = run_batch_cpu_core_with_assists(&cfg, &mut ctx, &mut cpu, &mut bus, 1024);
         executed_total += res.executed;
         match res.exit {
             BatchExit::Completed | BatchExit::Branch => continue,

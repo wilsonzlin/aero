@@ -311,132 +311,41 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
                             break;
                         }
                     };
-                    let decoded = match aero_x86::decode(&bytes, ip, cpu.cpu.state.bitness()) {
+                    let bitness = cpu.cpu.state.bitness();
+                    let addr_size_override = has_addr_size_override(&bytes, bitness);
+                    let decoded = match aero_x86::decode(&bytes, ip, bitness) {
                         Ok(decoded) => decoded,
                         Err(_) => {
                             deliver_tier0_exception(cpu, ip, Exception::InvalidOpcode);
                             break;
                         }
                     };
-                    let next_ip =
-                        ip.wrapping_add(decoded.len as u64) & cpu.cpu.state.mode.ip_mask();
 
-                    match decoded.instr.mnemonic() {
-                        Mnemonic::Cli => {
-                            let cpl = cpu.cpu.state.cpl();
-                            let iopl = ((cpu.cpu.state.rflags() & crate::state::RFLAGS_IOPL_MASK)
-                                >> 12) as u8;
-                            if !matches!(
-                                cpu.cpu.state.mode,
-                                crate::state::CpuMode::Real | crate::state::CpuMode::Vm86
-                            ) && cpl > iopl
-                            {
-                                cpu.cpu.pending.raise_exception_fault(
-                                    &mut cpu.cpu.state,
-                                    crate::exceptions::Exception::GeneralProtection,
-                                    ip,
-                                    Some(0),
-                                    None,
-                                );
-                                if let Err(exit) = cpu.cpu.deliver_pending_event(&mut cpu.bus) {
-                                    cpu.exit = Some(exit);
-                                }
-                            } else {
-                                cpu.cpu.pending.retire_instruction();
-                                cpu.cpu.time.advance_cycles(1);
-                                cpu.cpu.state.msr.tsc = cpu.cpu.time.read_tsc();
-                                cpu.cpu.state.set_flag(crate::state::RFLAGS_IF, false);
-                                cpu.cpu.state.set_rip(next_ip);
-                            }
-                        }
-                        Mnemonic::Sti => {
-                            let cpl = cpu.cpu.state.cpl();
-                            let iopl = ((cpu.cpu.state.rflags() & crate::state::RFLAGS_IOPL_MASK)
-                                >> 12) as u8;
-                            if !matches!(
-                                cpu.cpu.state.mode,
-                                crate::state::CpuMode::Real | crate::state::CpuMode::Vm86
-                            ) && cpl > iopl
-                            {
-                                cpu.cpu.pending.raise_exception_fault(
-                                    &mut cpu.cpu.state,
-                                    crate::exceptions::Exception::GeneralProtection,
-                                    ip,
-                                    Some(0),
-                                    None,
-                                );
-                                if let Err(exit) = cpu.cpu.deliver_pending_event(&mut cpu.bus) {
-                                    cpu.exit = Some(exit);
-                                }
-                            } else {
-                                cpu.cpu.pending.retire_instruction();
-                                cpu.cpu.time.advance_cycles(1);
-                                cpu.cpu.state.msr.tsc = cpu.cpu.time.read_tsc();
-                                cpu.cpu.state.set_flag(crate::state::RFLAGS_IF, true);
-                                cpu.cpu.pending.inhibit_interrupts_for_one_instruction();
-                                cpu.cpu.state.set_rip(next_ip);
-                            }
-                        }
-                        Mnemonic::Int => {
-                            let vector = decoded.instr.immediate8() as u8;
-                            cpu.cpu.pending.raise_software_interrupt(vector, next_ip);
-                            if let Err(exit) = cpu.cpu.deliver_pending_event(&mut cpu.bus) {
-                                cpu.exit = Some(exit);
-                                break;
-                            }
-                            cpu.cpu.pending.retire_instruction();
-                            cpu.cpu.time.advance_cycles(1);
-                            cpu.cpu.state.msr.tsc = cpu.cpu.time.read_tsc();
-                        }
-                        Mnemonic::Int3 => {
-                            cpu.cpu.pending.raise_software_interrupt(3, next_ip);
-                            if let Err(exit) = cpu.cpu.deliver_pending_event(&mut cpu.bus) {
-                                cpu.exit = Some(exit);
-                                break;
-                            }
-                            cpu.cpu.pending.retire_instruction();
-                            cpu.cpu.time.advance_cycles(1);
-                            cpu.cpu.state.msr.tsc = cpu.cpu.time.read_tsc();
-                        }
-                        Mnemonic::Int1 => {
-                            cpu.cpu.pending.raise_software_interrupt(1, next_ip);
-                            if let Err(exit) = cpu.cpu.deliver_pending_event(&mut cpu.bus) {
-                                cpu.exit = Some(exit);
-                                break;
-                            }
-                            cpu.cpu.pending.retire_instruction();
-                            cpu.cpu.time.advance_cycles(1);
-                            cpu.cpu.state.msr.tsc = cpu.cpu.time.read_tsc();
-                        }
-                        Mnemonic::Into => {
-                            if cpu.cpu.state.get_flag(crate::state::RFLAGS_OF) {
-                                cpu.cpu.pending.raise_software_interrupt(4, next_ip);
-                                if let Err(exit) = cpu.cpu.deliver_pending_event(&mut cpu.bus) {
-                                    cpu.exit = Some(exit);
-                                    break;
-                                }
-                            } else {
-                                cpu.cpu.state.set_rip(next_ip);
-                            }
-                            cpu.cpu.pending.retire_instruction();
-                            cpu.cpu.time.advance_cycles(1);
-                            cpu.cpu.state.msr.tsc = cpu.cpu.time.read_tsc();
-                        }
-                        Mnemonic::Iret | Mnemonic::Iretd | Mnemonic::Iretq => {
-                            if let Err(exit) = cpu.cpu.iret(&mut cpu.bus) {
-                                cpu.exit = Some(exit);
-                                break;
-                            }
-                            cpu.cpu.pending.retire_instruction();
-                            cpu.cpu.time.advance_cycles(1);
-                            cpu.cpu.state.msr.tsc = cpu.cpu.time.read_tsc();
-                        }
-                        _ => {
-                            cpu.exit = Some(crate::interrupts::CpuExit::UnimplementedInstruction(
-                                "interrupt assist mnemonic",
-                            ));
+                    let outcome = match crate::interrupts::exec_interrupt_assist_decoded(
+                        &mut cpu.cpu,
+                        &mut cpu.bus,
+                        &decoded,
+                        addr_size_override,
+                    ) {
+                        Ok(outcome) => outcome,
+                        Err(exit) => {
+                            cpu.exit = Some(exit);
                             break;
                         }
+                    };
+                    match outcome {
+                        crate::interrupts::InterruptAssistOutcome::Retired {
+                            inhibit_interrupts,
+                            ..
+                        } => {
+                            cpu.cpu.pending.retire_instruction();
+                            cpu.cpu.time.advance_cycles(1);
+                            cpu.cpu.state.msr.tsc = cpu.cpu.time.read_tsc();
+                            if inhibit_interrupts {
+                                cpu.cpu.pending.inhibit_interrupts_for_one_instruction();
+                            }
+                        }
+                        crate::interrupts::InterruptAssistOutcome::FaultDelivered => {}
                     }
 
                     // Preserve basic-block behavior: treat this instruction as a block boundary.

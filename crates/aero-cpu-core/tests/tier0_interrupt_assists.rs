@@ -1,5 +1,6 @@
 use aero_cpu_core::assist::AssistContext;
-use aero_cpu_core::interp::tier0::exec::{run_batch_with_assists, BatchExit};
+use aero_cpu_core::interp::tier0::exec::{run_batch_cpu_core_with_assists, BatchExit};
+use aero_cpu_core::interp::tier0::Tier0Config;
 use aero_cpu_core::mem::FlatTestBus;
 use aero_cpu_core::state::{CpuMode, CR0_PE, RFLAGS_IF, RFLAGS_RESERVED1, SEG_ACCESS_PRESENT};
 use aero_cpu_core::CpuBus;
@@ -45,6 +46,27 @@ fn write_idt_gate32(
     bus.write_u8(addr + 4, 0).unwrap();
     bus.write_u8(addr + 5, type_attr).unwrap();
     bus.write_u16(addr + 6, (offset >> 16) as u16).unwrap();
+}
+
+fn write_idt_gate64(
+    bus: &mut FlatTestBus,
+    base: u64,
+    vector: u8,
+    selector: u16,
+    offset: u64,
+    ist: u8,
+    type_attr: u8,
+) {
+    let addr = base + (vector as u64) * 16;
+    bus.write_u16(addr, (offset & 0xFFFF) as u16).unwrap();
+    bus.write_u16(addr + 2, selector).unwrap();
+    bus.write_u8(addr + 4, ist & 0x7).unwrap();
+    bus.write_u8(addr + 5, type_attr).unwrap();
+    bus.write_u16(addr + 6, ((offset >> 16) & 0xFFFF) as u16)
+        .unwrap();
+    bus.write_u32(addr + 8, ((offset >> 32) & 0xFFFF_FFFF) as u32)
+        .unwrap();
+    bus.write_u32(addr + 12, 0).unwrap();
 }
 
 #[test]
@@ -94,12 +116,13 @@ fn tier0_assists_protected_int_iret_no_privilege_change() {
     cpu.state.write_reg(Register::ESP, sp_pushed);
 
     let mut ctx = AssistContext::default();
+    let cfg = Tier0Config::default();
     let mut executed = 0u64;
     loop {
         if cpu.state.rip() == RETURN_IP as u64 {
             break;
         }
-        let res = run_batch_with_assists(&mut ctx, &mut cpu, &mut bus, 1024);
+        let res = run_batch_cpu_core_with_assists(&cfg, &mut ctx, &mut cpu, &mut bus, 1024);
         executed += res.executed;
         match res.exit {
             BatchExit::Completed | BatchExit::Branch => continue,
@@ -187,12 +210,13 @@ fn tier0_assists_protected_int_iret_switches_to_tss_stack() {
     cpu.state.write_reg(Register::ESP, sp_pushed);
 
     let mut ctx = AssistContext::default();
+    let cfg = Tier0Config::default();
     let mut executed = 0u64;
     loop {
         if cpu.state.rip() == RETURN_IP as u64 {
             break;
         }
-        let res = run_batch_with_assists(&mut ctx, &mut cpu, &mut bus, 1024);
+        let res = run_batch_cpu_core_with_assists(&cfg, &mut ctx, &mut cpu, &mut bus, 1024);
         executed += res.executed;
         match res.exit {
             BatchExit::Completed | BatchExit::Branch => continue,
@@ -223,4 +247,64 @@ fn tier0_assists_protected_int_iret_switches_to_tss_stack() {
     ); // old EFLAGS
     assert_eq!(bus.read_u32(frame_base + 12).unwrap(), sp_pushed as u32); // old ESP
     assert_eq!(bus.read_u32(frame_base + 16).unwrap() as u16, 0x23); // old SS
+}
+
+#[test]
+fn tier0_cpu_core_runner_executes_int_iretq_in_long_mode() {
+    const BUS_SIZE: usize = 0x40000;
+    const CODE_BASE: u64 = 0x1000;
+    const HANDLER_BASE: u64 = 0x2000;
+    const IDT_BASE: u64 = 0x3000;
+    const INITIAL_RSP: u64 = 0x9000;
+
+    let mut bus = FlatTestBus::new(BUS_SIZE);
+
+    // Code: int 0x80; hlt
+    bus.load(CODE_BASE, &[0xCD, 0x80, 0xF4]);
+
+    // Handler: mov rax, 0x1234; iretq
+    let handler: [u8; 12] = [
+        0x48, 0xB8, 0x34, 0x12, 0, 0, 0, 0, 0, 0, // mov rax, 0x1234
+        0x48, 0xCF, // iretq
+    ];
+    bus.load(HANDLER_BASE, &handler);
+
+    write_idt_gate64(&mut bus, IDT_BASE, 0x80, 0x08, HANDLER_BASE, 0, 0x8E);
+
+    let mut cpu = CpuCore::new(CpuMode::Bit64);
+    cpu.state.tables.idtr.base = IDT_BASE;
+    cpu.state.tables.idtr.limit = 0x0FFF;
+    cpu.state.segments.cs.selector = 0x08;
+    cpu.state.segments.ss.selector = 0x10;
+    cpu.state.write_reg(Register::RSP, INITIAL_RSP);
+    cpu.state.set_rflags(0x202); // IF=1
+    cpu.state.set_rip(CODE_BASE);
+
+    let mut ctx = AssistContext::default();
+    let cfg = Tier0Config::default();
+    let mut executed = 0u64;
+    loop {
+        if cpu.state.halted {
+            break;
+        }
+        let res = run_batch_cpu_core_with_assists(&cfg, &mut ctx, &mut cpu, &mut bus, 1024);
+        executed += res.executed;
+        match res.exit {
+            BatchExit::Completed | BatchExit::Branch => continue,
+            BatchExit::Halted => break,
+            BatchExit::BiosInterrupt(vector) => {
+                panic!(
+                    "unexpected BIOS interrupt {vector:#x} at rip=0x{:X}",
+                    cpu.state.rip()
+                )
+            }
+            BatchExit::Assist(r) => panic!("unexpected unhandled assist: {r:?}"),
+            BatchExit::Exception(e) => panic!("unexpected exception after {executed} insts: {e:?}"),
+        }
+    }
+
+    assert!(cpu.state.halted);
+    assert_eq!(cpu.state.read_reg(Register::RAX), 0x1234);
+    assert_eq!(cpu.state.read_reg(Register::RSP), INITIAL_RSP);
+    assert!(cpu.state.get_flag(RFLAGS_IF));
 }

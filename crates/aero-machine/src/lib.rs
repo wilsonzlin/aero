@@ -20,7 +20,8 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use aero_cpu_core::assist::AssistContext;
-use aero_cpu_core::interp::tier0::exec::{run_batch_with_assists, BatchExit};
+use aero_cpu_core::interp::tier0::exec::{run_batch_cpu_core_with_assists, BatchExit};
+use aero_cpu_core::interp::tier0::Tier0Config;
 use aero_cpu_core::mem::CpuBus;
 use aero_cpu_core::state::{gpr, CpuMode, CpuState, Segment as CoreSegment};
 use aero_cpu_core::{AssistReason, CpuCore, Exception};
@@ -615,6 +616,7 @@ impl Machine {
     /// Run the CPU for at most `max_insts` guest instructions.
     pub fn run_slice(&mut self, max_insts: u64) -> RunExit {
         let mut executed = 0u64;
+        let cfg = Tier0Config::default();
         while executed < max_insts {
             if let Some(kind) = self.reset_latch.take() {
                 self.flush_serial();
@@ -631,7 +633,7 @@ impl Machine {
             };
 
             let batch =
-                run_batch_with_assists(&mut self.assist, &mut self.cpu, &mut bus, remaining);
+                run_batch_cpu_core_with_assists(&cfg, &mut self.assist, &mut self.cpu, &mut bus, remaining);
             executed = executed.saturating_add(batch.executed);
 
             match batch.exit {

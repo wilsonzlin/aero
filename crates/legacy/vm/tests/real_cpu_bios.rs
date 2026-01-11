@@ -1,7 +1,8 @@
 #![allow(deprecated)]
 
 use aero_cpu_core::assist::AssistContext;
-use aero_cpu_core::interp::tier0::exec::{run_batch_with_assists, BatchExit, StepExit};
+use aero_cpu_core::interp::tier0::exec::{run_batch_cpu_core_with_assists, BatchExit, StepExit};
+use aero_cpu_core::interp::tier0::Tier0Config;
 use aero_cpu_core::CpuCore;
 use aero_cpu_core::mem::CpuBus as CoreCpuBus;
 use aero_cpu_core::state::{
@@ -269,9 +270,16 @@ impl<D: BlockDevice> CoreVm<D> {
         self.cpu = CpuCore::new(CoreCpuMode::Real);
         self.cpu.state = core_reset_state();
         self.cpu.time.set_tsc(self.cpu.state.msr.tsc);
+        let cfg = Tier0Config::default();
         let mut executed = 0u64;
         while executed < 32 {
-            let res = run_batch_with_assists(&mut self.assist, &mut self.cpu, &mut self.mem, 1);
+            let res = run_batch_cpu_core_with_assists(
+                &cfg,
+                &mut self.assist,
+                &mut self.cpu,
+                &mut self.mem,
+                1,
+            );
             executed += res.executed;
             match res.exit {
                 BatchExit::Completed | BatchExit::Branch => continue,
@@ -291,10 +299,19 @@ impl<D: BlockDevice> CoreVm<D> {
 
         sync_machine_to_core(&machine_cpu, &mut self.cpu.state);
         self.cpu.state.halted = false;
+        self.cpu.pending = Default::default();
+        self.cpu.time.set_tsc(self.cpu.state.msr.tsc);
     }
 
     fn step(&mut self) -> StepExit {
-        let res = run_batch_with_assists(&mut self.assist, &mut self.cpu, &mut self.mem, 1);
+        let cfg = Tier0Config::default();
+        let res = run_batch_cpu_core_with_assists(
+            &cfg,
+            &mut self.assist,
+            &mut self.cpu,
+            &mut self.mem,
+            1,
+        );
         let exit = match res.exit {
             BatchExit::Completed => StepExit::Continue,
             BatchExit::Branch => StepExit::Branch,
