@@ -10,6 +10,7 @@ on:
       - "scripts/ci/check-windows7-virtio-contract-consistency.py"
       - "scripts/ci/check-aerogpu-share-token-contract.py"
       - "scripts/ci/check-usb-doc-paths.py"
+      - "scripts/ci/check-virtio-win-guest-tools-docs.py"
       - "scripts/ci/gen-guest-tools-devices-cmd.py"
       - "scripts/generate-guest-tools-devices-cmd.py"
       - "guest-tools/config/devices.cmd"
@@ -18,6 +19,9 @@ on:
       - "crates/aero-virtio/src/devices/net.rs"
       - "crates/aero-virtio/src/devices/input.rs"
       - "crates/aero-virtio/src/devices/snd.rs"
+      - "drivers/scripts/make-guest-tools-from-virtio-win.ps1"
+      - "drivers/scripts/make-guest-tools-from-virtio-win.sh"
+      - "drivers/README.md"
       - "drivers/windows7/virtio/blk/aerovblk.inf"
       - "drivers/windows7/virtio/net/aerovnet.inf"
       - "drivers/windows7/virtio-snd/inf/aero-virtio-snd.inf"
@@ -33,6 +37,8 @@ on:
       - "drivers/aerogpu/tests/win7/README.md"
       - "drivers/aerogpu/umd/d3d9/README.md"
       - "drivers/aerogpu/umd/d3d10_11/README.md"
+      - "tools/packaging/README.md"
+      - "tools/packaging/specs/README.md"
       - ".github/workflows/docs.yml"
   push:
     branches: ["main"]
@@ -44,6 +50,7 @@ on:
       - "scripts/ci/check-windows7-virtio-contract-consistency.py"
       - "scripts/ci/check-aerogpu-share-token-contract.py"
       - "scripts/ci/check-usb-doc-paths.py"
+      - "scripts/ci/check-virtio-win-guest-tools-docs.py"
       - "scripts/ci/gen-guest-tools-devices-cmd.py"
       - "scripts/generate-guest-tools-devices-cmd.py"
       - "guest-tools/config/devices.cmd"
@@ -52,6 +59,9 @@ on:
       - "crates/aero-virtio/src/devices/net.rs"
       - "crates/aero-virtio/src/devices/input.rs"
       - "crates/aero-virtio/src/devices/snd.rs"
+      - "drivers/scripts/make-guest-tools-from-virtio-win.ps1"
+      - "drivers/scripts/make-guest-tools-from-virtio-win.sh"
+      - "drivers/README.md"
       - "drivers/windows7/virtio/blk/aerovblk.inf"
       - "drivers/windows7/virtio/net/aerovnet.inf"
       - "drivers/windows7/virtio-snd/inf/aero-virtio-snd.inf"
@@ -67,6 +77,8 @@ on:
       - "drivers/aerogpu/tests/win7/README.md"
       - "drivers/aerogpu/umd/d3d9/README.md"
       - "drivers/aerogpu/umd/d3d10_11/README.md"
+      - "tools/packaging/README.md"
+      - "tools/packaging/specs/README.md"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
     inputs:
@@ -110,6 +122,9 @@ jobs:
 
       - name: Check Guest Tools devices.cmd is generated from contract
         run: python3 scripts/ci/gen-guest-tools-devices-cmd.py --check
+
+      - name: Check virtio-win Guest Tools docs match wrapper defaults
+        run: python3 scripts/ci/check-virtio-win-guest-tools-docs.py
 
       # Fast, deterministic check for broken relative links in markdown.
       # We intentionally run lychee in `--offline` mode so docs-only PRs get
