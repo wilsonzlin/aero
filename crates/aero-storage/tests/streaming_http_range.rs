@@ -3,7 +3,7 @@
 use aero_storage::{
     ChunkManifest, StreamingCacheBackend, StreamingDisk, StreamingDiskConfig, StreamingDiskError,
 };
-use hyper::header::{ACCEPT_RANGES, CONTENT_LENGTH, CONTENT_RANGE, RANGE};
+use hyper::header::{ACCEPT_RANGES, CONTENT_LENGTH, CONTENT_RANGE, IF_RANGE, RANGE};
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Method, Request, Response, Server, StatusCode};
 use std::convert::Infallible;
@@ -23,7 +23,7 @@ struct Counters {
 
 struct State {
     image: Arc<Vec<u8>>,
-    etag: String,
+    etag: std::sync::Mutex<String>,
     fail_first_range: AtomicBool,
     counters: Counters,
 }
@@ -35,7 +35,7 @@ async fn start_range_server_with_options(
 ) -> (Url, Arc<State>, oneshot::Sender<()>) {
     let state = Arc::new(State {
         image: Arc::new(image),
-        etag: etag.to_string(),
+        etag: std::sync::Mutex::new(etag.to_string()),
         fail_first_range: AtomicBool::new(fail_first_range),
         counters: Counters::default(),
     });
@@ -82,12 +82,30 @@ async fn handle_request(
             resp.headers_mut()
                 .insert(ACCEPT_RANGES, "bytes".parse().unwrap());
             resp.headers_mut()
-                .insert(hyper::header::ETAG, state.etag.parse().unwrap());
+                .insert(hyper::header::ETAG, state.etag.lock().unwrap().parse().unwrap());
             return Ok(resp);
         }
         Method::GET => {
             if let Some(range_header) = req.headers().get(RANGE).and_then(|v| v.to_str().ok()) {
                 state.counters.get_range.fetch_add(1, Ordering::SeqCst);
+
+                let current_etag = state.etag.lock().unwrap().clone();
+                if let Some(if_range) = req.headers().get(IF_RANGE).and_then(|v| v.to_str().ok()) {
+                    if if_range != current_etag {
+                        // Simulate RFC 7233 `If-Range` mismatch behavior: ignore the Range and
+                        // return the full representation with a 200.
+                        let mut resp = Response::new(Body::from(state.image.as_ref().clone()));
+                        *resp.status_mut() = StatusCode::OK;
+                        resp.headers_mut().insert(
+                            CONTENT_LENGTH,
+                            (state.image.len() as u64).to_string().parse().unwrap(),
+                        );
+                        resp.headers_mut().insert(ACCEPT_RANGES, "bytes".parse().unwrap());
+                        resp.headers_mut()
+                            .insert(hyper::header::ETAG, current_etag.parse().unwrap());
+                        return Ok(resp);
+                    }
+                }
 
                 if state.fail_first_range.swap(false, Ordering::SeqCst) {
                     let mut resp = Response::new(Body::empty());
@@ -107,7 +125,7 @@ async fn handle_request(
                         );
                         resp.headers_mut().insert(ACCEPT_RANGES, "bytes".parse().unwrap());
                         resp.headers_mut()
-                            .insert(hyper::header::ETAG, state.etag.parse().unwrap());
+                            .insert(hyper::header::ETAG, current_etag.parse().unwrap());
                         resp.headers_mut().insert(
                             CONTENT_RANGE,
                             format!("bytes {start}-{end_inclusive}/{}", state.image.len())
@@ -132,7 +150,7 @@ async fn handle_request(
             resp.headers_mut()
                 .insert(ACCEPT_RANGES, "bytes".parse().unwrap());
             resp.headers_mut()
-                .insert(hyper::header::ETAG, state.etag.parse().unwrap());
+                .insert(hyper::header::ETAG, state.etag.lock().unwrap().parse().unwrap());
             return Ok(resp);
         }
         _ => {}
@@ -378,6 +396,30 @@ async fn integrity_manifest_rejects_corrupt_chunk() {
     let err = disk.read_at(0, &mut buf).await.err().unwrap();
     assert!(matches!(err, StreamingDiskError::Integrity { .. }));
     assert_eq!(state.counters.get_range.load(Ordering::SeqCst), 1);
+
+    let _ = shutdown.send(());
+}
+
+#[tokio::test]
+async fn if_range_mismatch_is_reported_as_validator_mismatch() {
+    let image: Vec<u8> = (0..4096).map(|i| (i % 251) as u8).collect();
+    let (url, state, shutdown) =
+        start_range_server_with_options(image.clone(), "etag-v1", false).await;
+
+    let cache_dir = tempdir().unwrap();
+    let mut config = StreamingDiskConfig::new(url, cache_dir.path());
+    config.cache_backend = StreamingCacheBackend::Directory;
+    config.options.chunk_size = 1024;
+    config.options.read_ahead_chunks = 0;
+
+    let disk = StreamingDisk::open(config).await.unwrap();
+
+    // Simulate the remote changing while the disk is open.
+    *state.etag.lock().unwrap() = "etag-v2".to_string();
+
+    let mut buf = vec![0u8; 16];
+    let err = disk.read_at(0, &mut buf).await.err().unwrap();
+    assert!(matches!(err, StreamingDiskError::ValidatorMismatch { .. }));
 
     let _ = shutdown.send(());
 }

@@ -50,6 +50,12 @@ pub enum StreamingDiskError {
         actual: String,
     },
 
+    #[error("remote validator mismatch (expected {expected:?}, got {actual:?})")]
+    ValidatorMismatch {
+        expected: Option<String>,
+        actual: Option<String>,
+    },
+
     #[error("operation cancelled")]
     Cancelled,
 
@@ -900,6 +906,7 @@ impl StreamingDisk {
                         e,
                         StreamingDiskError::RangeNotSupported
                             | StreamingDiskError::Integrity { .. }
+                            | StreamingDiskError::ValidatorMismatch { .. }
                             | StreamingDiskError::Cancelled
                     ) {
                         return Err(e);
@@ -945,6 +952,26 @@ impl StreamingDisk {
         };
 
         if resp.status() != reqwest::StatusCode::PARTIAL_CONTENT {
+            if matches!(
+                resp.status(),
+                reqwest::StatusCode::OK | reqwest::StatusCode::PRECONDITION_FAILED
+            ) && self.inner.validator.is_some()
+            {
+                // Per RFC 7233, a server will return the full representation (200) when an
+                // `If-Range` validator does not match. Some implementations use `412
+                // Precondition Failed` instead. Either way, we should not treat this as a lack of
+                // Range support: it indicates the remote image validator changed while the disk
+                // is open.
+                let actual = resp
+                    .headers()
+                    .get(ETAG)
+                    .and_then(|v| v.to_str().ok())
+                    .map(|v| v.to_string());
+                return Err(StreamingDiskError::ValidatorMismatch {
+                    expected: self.inner.validator.clone(),
+                    actual,
+                });
+            }
             if resp.status().is_success() {
                 return Err(StreamingDiskError::RangeNotSupported);
             }
