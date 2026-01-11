@@ -35,6 +35,50 @@ function toLowerHeaderMap(headers) {
   return out;
 }
 
+function validateCanonicalHeaders() {
+  const errors = [];
+  const expectExact = (key, value) => {
+    const actual = canonicalSecurityHeaders[key];
+    if (actual !== value) errors.push(`canonical ${key} must be ${JSON.stringify(value)} (got ${JSON.stringify(actual)})`);
+  };
+
+  // Cross-origin isolation (SharedArrayBuffer / WASM threads)
+  expectExact('Cross-Origin-Opener-Policy', 'same-origin');
+  expectExact('Cross-Origin-Embedder-Policy', 'require-corp');
+  expectExact('Cross-Origin-Resource-Policy', 'same-origin');
+  expectExact('Origin-Agent-Cluster', '?1');
+
+  // Baseline security headers.
+  expectExact('X-Content-Type-Options', 'nosniff');
+  const referrer = canonicalSecurityHeaders['Referrer-Policy'];
+  if (!referrer) errors.push('canonical Referrer-Policy must be non-empty');
+
+  const permissions = canonicalSecurityHeaders['Permissions-Policy'];
+  if (!permissions) {
+    errors.push('canonical Permissions-Policy must be non-empty');
+  } else {
+    if (!permissions.includes('camera=()')) errors.push("canonical Permissions-Policy must include 'camera=()'");
+    if (!permissions.includes('geolocation=()')) errors.push("canonical Permissions-Policy must include 'geolocation=()'");
+    if (!permissions.includes('microphone=')) errors.push("canonical Permissions-Policy must include a microphone policy");
+  }
+
+  // CSP must allow dynamic WASM compilation for JIT, and allow workers.
+  const csp = canonicalSecurityHeaders['Content-Security-Policy'];
+  if (!csp) {
+    errors.push('canonical Content-Security-Policy must be non-empty');
+  } else {
+    const norm = normalizeCsp(csp);
+    if (!norm.includes("script-src 'self' 'wasm-unsafe-eval'")) {
+      errors.push("canonical CSP must include: script-src 'self' 'wasm-unsafe-eval'");
+    }
+    if (!norm.includes("worker-src 'self' blob:")) {
+      errors.push("canonical CSP must include: worker-src 'self' blob:");
+    }
+  }
+
+  return errors;
+}
+
 function diffHeaderMaps(expected, actual) {
   const diffs = [];
   for (const [rawKey, rawExpectedValue] of Object.entries(expected)) {
@@ -354,6 +398,8 @@ const targets = [
 ];
 
 const allErrors = [];
+
+allErrors.push(...validateCanonicalHeaders().map((msg) => `scripts/headers.json: ${msg}`));
 
 for (const target of targets) {
   const filePath = resolve(repoRoot, target.path);
