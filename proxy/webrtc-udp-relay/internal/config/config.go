@@ -36,6 +36,7 @@ const (
 
 	// L2 tunnel bridging (WebRTC DataChannel "l2" <-> backend WS).
 	EnvL2BackendWSURL    = "L2_BACKEND_WS_URL"
+	EnvL2BackendWSToken  = "L2_BACKEND_WS_TOKEN"
 	EnvL2MaxMessageBytes = "L2_MAX_MESSAGE_BYTES"
 
 	// Quota/rate limiting knobs (required by the task).
@@ -187,6 +188,7 @@ type Config struct {
 
 	// L2 tunnel bridging.
 	L2BackendWSURL    string
+	L2BackendWSToken  string
 	L2MaxMessageBytes int
 
 	// WebRTCUDPPortRange restricts the UDP ports used for ICE. When nil, pion uses
@@ -332,6 +334,7 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		return Config{}, err
 	}
 	l2BackendWSURL := envOrDefault(lookup, EnvL2BackendWSURL, "")
+	l2BackendWSToken := envOrDefault(lookup, EnvL2BackendWSToken, "")
 	l2MaxMessageBytes, err := envIntOrDefault(lookup, EnvL2MaxMessageBytes, DefaultL2MaxMessageBytes)
 	if err != nil {
 		return Config{}, err
@@ -510,6 +513,12 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	fs.IntVar(&dataChannelSendQueueBytes, "datachannel-send-queue-bytes", dataChannelSendQueueBytes, "Max queued outbound DataChannel bytes before dropping (env "+EnvDataChannelSendQueueBytes+")")
 	fs.IntVar(&maxDatagramPayloadBytes, "max-datagram-payload-bytes", maxDatagramPayloadBytes, "Max UDP datagram payload bytes for relay frames (env "+EnvMaxDatagramPayloadBytes+")")
 	fs.StringVar(&l2BackendWSURL, "l2-backend-ws-url", l2BackendWSURL, "Backend WebSocket URL for L2 tunnel bridging (env "+EnvL2BackendWSURL+")")
+	fs.StringVar(
+		&l2BackendWSToken,
+		"l2-backend-ws-token",
+		l2BackendWSToken,
+		"Optional token to present to the L2 backend via WebSocket subprotocol (sent as aero-l2-token.<token>; env "+EnvL2BackendWSToken+")",
+	)
 	fs.IntVar(&l2MaxMessageBytes, "l2-max-message-bytes", l2MaxMessageBytes, "Max L2 tunnel message size in bytes (env "+EnvL2MaxMessageBytes+")")
 
 	fs.StringVar(&authModeStr, "auth-mode", authModeDefault, "Signaling auth mode: none, api_key, or jwt (env "+EnvAuthMode+")")
@@ -681,6 +690,14 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		l2BackendWSURL = strings.TrimSpace(l2BackendWSURL)
 	}
 
+	if strings.TrimSpace(l2BackendWSToken) != "" {
+		l2BackendWSToken = strings.TrimSpace(l2BackendWSToken)
+		// RFC 6455: Sec-WebSocket-Protocol values must be HTTP "tokens".
+		if !isHTTPToken(l2BackendWSToken) {
+			return Config{}, fmt.Errorf("invalid %s/%s (token is not valid for Sec-WebSocket-Protocol)", EnvL2BackendWSToken, "--l2-backend-ws-token")
+		}
+	}
+
 	cfg := Config{
 		ListenAddr:          listenAddr,
 		PublicBaseURL:       publicBaseURL,
@@ -705,6 +722,7 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 		PreferV2:                  preferV2,
 
 		L2BackendWSURL:    l2BackendWSURL,
+		L2BackendWSToken:  l2BackendWSToken,
 		L2MaxMessageBytes: l2MaxMessageBytes,
 
 		WebRTCUDPPortRange:           webrtcUDPPortRange,
@@ -744,6 +762,36 @@ func load(lookup func(string) (string, bool), args []string) (Config, error) {
 	}
 
 	return cfg, nil
+}
+
+func isHTTPToken(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if !isHTTPTokenChar(r) {
+			return false
+		}
+	}
+	return true
+}
+
+func isHTTPTokenChar(r rune) bool {
+	if r >= '0' && r <= '9' {
+		return true
+	}
+	if r >= 'A' && r <= 'Z' {
+		return true
+	}
+	if r >= 'a' && r <= 'z' {
+		return true
+	}
+	switch r {
+	case '!', '#', '$', '%', '&', '\'', '*', '+', '-', '.', '^', '_', '`', '|', '~':
+		return true
+	default:
+		return false
+	}
 }
 
 func NewLogger(cfg Config) (*slog.Logger, error) {

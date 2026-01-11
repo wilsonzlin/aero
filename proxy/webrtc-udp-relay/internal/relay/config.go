@@ -36,6 +36,10 @@ type Config struct {
 	//
 	// When empty, "l2" DataChannels are rejected.
 	L2BackendWSURL string
+	// L2BackendWSToken is an optional token presented to the L2 backend via an
+	// additional WebSocket subprotocol entry (`aero-l2-token.<token>`). This
+	// avoids putting tokens in URLs/logs.
+	L2BackendWSToken string
 
 	// L2MaxMessageBytes bounds the size of individual L2 tunnel messages forwarded
 	// over the "l2" DataChannel and backend WebSocket.
@@ -112,6 +116,7 @@ func ConfigFromEnv() Config {
 	c := DefaultConfig()
 	c.PreferV2 = udpproto.PreferV2FromEnv()
 	c.L2BackendWSURL = os.Getenv("L2_BACKEND_WS_URL")
+	c.L2BackendWSToken = os.Getenv("L2_BACKEND_WS_TOKEN")
 	if v := os.Getenv("L2_MAX_MESSAGE_BYTES"); v != "" {
 		if i, err := strconv.Atoi(v); err == nil && i > 0 {
 			c.L2MaxMessageBytes = i

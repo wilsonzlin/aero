@@ -56,6 +56,9 @@ func TestDefaultsDev(t *testing.T) {
 	if cfg.L2BackendWSURL != "" {
 		t.Fatalf("L2BackendWSURL=%q, want empty", cfg.L2BackendWSURL)
 	}
+	if cfg.L2BackendWSToken != "" {
+		t.Fatalf("L2BackendWSToken=%q, want empty", cfg.L2BackendWSToken)
+	}
 	if cfg.L2MaxMessageBytes != DefaultL2MaxMessageBytes {
 		t.Fatalf("L2MaxMessageBytes=%d, want %d", cfg.L2MaxMessageBytes, DefaultL2MaxMessageBytes)
 	}
@@ -247,6 +250,30 @@ func TestL2BackendWSURL_AcceptsWebSocketURL(t *testing.T) {
 	}
 	if cfg.L2MaxMessageBytes != 2048 {
 		t.Fatalf("L2MaxMessageBytes=%d, want 2048", cfg.L2MaxMessageBytes)
+	}
+}
+
+func TestL2BackendWSToken_AcceptsHTTPToken(t *testing.T) {
+	cfg, err := load(lookupMap(map[string]string{
+		EnvL2BackendWSToken: "jwt_like.token-123",
+	}), nil)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.L2BackendWSToken != "jwt_like.token-123" {
+		t.Fatalf("L2BackendWSToken=%q", cfg.L2BackendWSToken)
+	}
+}
+
+func TestL2BackendWSToken_RejectsInvalidToken(t *testing.T) {
+	_, err := load(lookupMap(map[string]string{
+		EnvL2BackendWSToken: "not a token",
+	}), nil)
+	if err == nil {
+		t.Fatalf("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), EnvL2BackendWSToken) {
+		t.Fatalf("expected error mentioning %s (err=%v)", EnvL2BackendWSToken, err)
 	}
 }
 

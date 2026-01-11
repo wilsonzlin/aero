@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -27,6 +28,10 @@ const (
 )
 
 func startTestL2Backend(t *testing.T) (wsURL string, upgradeCount *atomic.Int64) {
+	return startTestL2BackendWithToken(t, "")
+}
+
+func startTestL2BackendWithToken(t *testing.T, token string) (wsURL string, upgradeCount *atomic.Int64) {
 	t.Helper()
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -43,6 +48,21 @@ func startTestL2Backend(t *testing.T) (wsURL string, upgradeCount *atomic.Int64)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /l2", func(w http.ResponseWriter, r *http.Request) {
+		if token != "" {
+			want := "aero-l2-token." + token
+			ok := false
+			for _, raw := range strings.Split(r.Header.Get("Sec-WebSocket-Protocol"), ",") {
+				if strings.TrimSpace(raw) == want {
+					ok = true
+					break
+				}
+			}
+			if !ok {
+				http.Error(w, "missing or invalid token", http.StatusUnauthorized)
+				return
+			}
+		}
+
 		upgrades.Add(1)
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
@@ -278,5 +298,72 @@ func TestWebRTCUDPRelay_L2TunnelPingPongRoundTrip(t *testing.T) {
 	want := []byte{0xA2, 0x03, 0x02, 0x00}
 	if !bytes.Equal(got, want) {
 		t.Fatalf("pong mismatch: %x != %x", got, want)
+	}
+}
+
+func TestWebRTCUDPRelay_L2TunnelBackendTokenViaSubprotocol(t *testing.T) {
+	backendURL, upgrades := startTestL2BackendWithToken(t, "sekrit")
+
+	relayCfg := relay.DefaultConfig()
+	relayCfg.L2BackendWSURL = backendURL
+	relayCfg.L2BackendWSToken = "sekrit"
+	destPolicy := policy.NewDevDestinationPolicy()
+	baseURL := startTestRelayServer(t, relayCfg, destPolicy)
+
+	pc, err := webrtc.NewPeerConnection(webrtc.Configuration{})
+	if err != nil {
+		t.Fatalf("new peer connection: %v", err)
+	}
+	t.Cleanup(func() { _ = pc.Close() })
+
+	ordered := true
+	dc, err := pc.CreateDataChannel("l2", &webrtc.DataChannelInit{
+		Ordered: &ordered,
+	})
+	if err != nil {
+		t.Fatalf("create data channel: %v", err)
+	}
+
+	openCh := make(chan struct{})
+	gotCh := make(chan []byte, 1)
+
+	dc.OnOpen(func() { close(openCh) })
+	dc.OnMessage(func(msg webrtc.DataChannelMessage) {
+		if msg.IsString {
+			return
+		}
+		select {
+		case gotCh <- append([]byte(nil), msg.Data...):
+		default:
+		}
+	})
+
+	exchangeOffer(t, baseURL, pc)
+
+	select {
+	case <-openCh:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timed out waiting for l2 datachannel open")
+	}
+
+	ping := []byte{0xA2, 0x03, 0x01, 0x00}
+	if err := dc.Send(ping); err != nil {
+		t.Fatalf("send ping: %v", err)
+	}
+
+	var got []byte
+	select {
+	case got = <-gotCh:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timed out waiting for pong")
+	}
+
+	want := []byte{0xA2, 0x03, 0x02, 0x00}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("pong mismatch: %x != %x", got, want)
+	}
+
+	if gotUpgrades := upgrades.Load(); gotUpgrades == 0 {
+		t.Fatalf("expected relay to dial backend websocket (got %d upgrades)", gotUpgrades)
 	}
 }
