@@ -919,7 +919,7 @@ fn report_descriptor_report_lengths(
 fn bits_to_report_lengths(bits: &BTreeMap<u8, u64>) -> BTreeMap<u8, usize> {
     let mut out = BTreeMap::new();
     for (&report_id, &total_bits) in bits {
-        let mut bytes = ((total_bits + 7) / 8) as usize;
+        let mut bytes = usize::try_from(total_bits.saturating_add(7) / 8).unwrap_or(usize::MAX);
         if report_id != 0 {
             bytes = bytes.saturating_add(1);
         }
