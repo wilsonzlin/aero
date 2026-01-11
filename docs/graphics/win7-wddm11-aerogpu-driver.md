@@ -133,9 +133,9 @@ dxgkrnl.sys / dxgmms1.sys (VidMM + scheduler)
   │  calls DxgkDdi* entrypoints
   ▼
 AeroGPU KMD (aerogpu.sys)
-  │  writes submission descriptors to shared ring
-  │  pokes MMIO doorbells / scanout regs
-  ▼
+   │  writes submission descriptors to shared ring
+   │  writes AEROGPU_MMIO_REG_DOORBELL / programs AEROGPU_MMIO_REG_SCANOUT0_*
+   ▼
 ┌──────────────────────────────────────────────────────────────┐
 │                 Emulator device model (AeroGPU)              │
 │  PCI config + MMIO regs + shared rings in guest phys memory  │
@@ -521,7 +521,7 @@ of either callback being used to release a handle.
     - `AEROGPU_IRQ_ERROR` (treat as fatal device error)
   - Acknowledge via `AEROGPU_MMIO_REG_IRQ_ACK` (write-1-to-clear).
   - Call the appropriate Dxgk callback to queue DPC work and report interrupt type.
-- **Can be deferred:** Multiple interrupt sources beyond vsync + fence.
+- **Can be deferred:** Multiple interrupt sources beyond vblank + fence.
  
 #### `DxgkDdiDpcRoutine`
   
@@ -653,11 +653,11 @@ Windows flips/sets scanout via `DxgkDdiSetVidPnSourceAddress`. In our driver:
 4. Emulator reads scanout surface from guest memory and displays it.
  
 ### 6.3 Vblank/vsync simulation (DWM stability)
-  
+   
 DWM’s scheduling expects periodic vblank events. Because AeroGPU is virtual:
- 
-- The emulator will generate a **fixed-rate vsync** (default 60Hz) using its host timer.
-- On each vsync:
+  
+- The emulator will generate a **fixed-rate vblank tick** (default 60Hz) using its host timer.
+- On each vblank tick:
   - Emulator raises the AeroGPU interrupt
   - KMD `InterruptRoutine` reports a vblank interrupt for Source 0 (backed by `AEROGPU_IRQ_SCANOUT_VBLANK`)
  
@@ -666,7 +666,7 @@ DWM’s scheduling expects periodic vblank events. Because AeroGPU is virtual:
 - A simple time-based estimate: `scanline = (t % frame_time) * height / frame_time`
 - Or a constant “in vblank” response if acceptable for early bring-up
   
-**MVP requirement:** vsync interrupts must be regular enough that DWM does not hang or TDR due to missed presents.
+**MVP requirement:** vblank interrupts must be regular enough that DWM does not hang or TDR due to missed presents.
 
 For the concrete “minimal contract” (what Win7 expects) and the recommended device model/registers, see:
 
