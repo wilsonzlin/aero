@@ -119,7 +119,7 @@ For Aero’s in-tree drivers and Guest Tools installer logic, the identifiers be
 Guest Tools uses:
 
 - `AERO_VIRTIO_BLK_SERVICE` to configure the storage service as `BOOT_START` and to pre-seed `CriticalDeviceDatabase`.
-- `AERO_VIRTIO_*_HWIDS` to enumerate the hardware IDs the installer should expect. For `AERO-W7-VIRTIO` v1, include `&REV_01` when your INFs are revision-gated (the in-tree `aero_virtio_{blk,net,input,snd}.inf` files all match `...&REV_01`).
+- `AERO_VIRTIO_*_HWIDS` to enumerate the hardware IDs the installer should expect. For `AERO-W7-VIRTIO` v1, include `&REV_01` patterns for contract-major safety (the in-tree `aero_virtio_{blk,net,input,snd}.inf` files match `...&REV_01`, and some drivers also validate the revision at runtime).
 
 Note: `guest-tools/config/devices.cmd` is generated from a Windows device contract JSON
 (see `scripts/generate-guest-tools-devices-cmd.py`) and is regenerated during Guest Tools packaging

@@ -80,7 +80,7 @@ Runtime routing is typically:
 
 Windows 7 has no in-box virtio-input driver. A minimal approach is to ship a custom, test-signed driver that:
 
-1. Binds to the virtio-input PCI function (Aero Win7 contract v1 uses Vendor/Device `PCI\VEN_1AF4&DEV_1052` and requires PCI Revision ID `0x01`).
+1. Binds to the virtio-input PCI function (Aero Win7 contract v1 uses Vendor/Device `PCI\VEN_1AF4&DEV_1052` with PCI Revision ID `0x01` / `REV_01`).
 2. Negotiates virtio features and sets `DRIVER_OK`.
 3. Creates a HID keyboard + HID mouse interface for Windows by translating `virtio_input_event` streams into HID reports.
 4. Optionally forwards LED state changes (Caps Lock / Num Lock / Scroll Lock) from Windows to `statusq`.
@@ -88,8 +88,8 @@ Windows 7 has no in-box virtio-input driver. A minimal approach is to ship a cus
 Contract note:
 
 - `AERO-W7-VIRTIO` v1 encodes the contract major version in the PCI Revision ID (`REV_01`).
-- The in-tree Win7 virtio-input **driver** enforces PCI Revision ID `0x01` at runtime, and the in-tree INF is intentionally **revision-gated** (matches only `...&REV_01`) to avoid binding to non-contract virtio-input devices.
-  QEMU-style `REV_00` virtio-input devices will therefore not bind / will fail to start unless you override the revision (for example `x-pci-revision=0x01`).
+- The in-tree Win7 virtio-input INF is intentionally **revision-gated** (matches only `...&REV_01` HWIDs, including the keyboard/mouse `...&SUBSYS_...&REV_01` variants), so QEMU-style `REV_00` virtio-input devices will not bind unless you override the revision (for example `x-pci-revision=0x01`).
+- The driver also validates the Revision ID at runtime.
 
 ### Installation flow (test signing)
 
