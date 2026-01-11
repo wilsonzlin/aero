@@ -128,6 +128,26 @@ export class InputCapture {
     this.releaseAllKeys();
     this.setMouseButtons(0);
     this.gamepad?.emitNeutral(this.queue, toTimestampUs(performance.now()));
+    // Flush immediately; timers may be throttled in the background and we don't
+    // want the guest to observe "stuck" inputs.
+    this.queue.flush(this.ioWorker, { recycle: this.recycleBuffers });
+  };
+
+  private readonly handleWindowBlur = (): void => {
+    // Do not change `hasFocus` here; the canvas may still be the active element
+    // and we want capture to resume naturally when the window regains focus.
+    this.pointerLock.exit();
+    this.releaseAllKeys();
+    this.setMouseButtons(0);
+    this.gamepad?.emitNeutral(this.queue, toTimestampUs(performance.now()));
+    this.queue.flush(this.ioWorker, { recycle: this.recycleBuffers });
+  };
+
+  private readonly handleVisibilityChange = (): void => {
+    if (document.visibilityState === "visible") {
+      return;
+    }
+    this.handleWindowBlur();
   };
 
   private readonly handleKeyDown = (event: KeyboardEvent): void => {
@@ -297,6 +317,8 @@ export class InputCapture {
     // Use capture phase to get first shot at keys before the browser scrolls.
     window.addEventListener('keydown', this.handleKeyDown, { capture: true });
     window.addEventListener('keyup', this.handleKeyUp, { capture: true });
+    window.addEventListener("blur", this.handleWindowBlur);
+    document.addEventListener("visibilitychange", this.handleVisibilityChange);
 
     // Mouse events should be observed at the document level while pointer locked.
     document.addEventListener('mousemove', this.handleMouseMove, { capture: true });
@@ -338,6 +360,8 @@ export class InputCapture {
 
     window.removeEventListener('keydown', this.handleKeyDown, { capture: true } as AddEventListenerOptions);
     window.removeEventListener('keyup', this.handleKeyUp, { capture: true } as AddEventListenerOptions);
+    window.removeEventListener("blur", this.handleWindowBlur);
+    document.removeEventListener("visibilitychange", this.handleVisibilityChange);
 
     document.removeEventListener('mousemove', this.handleMouseMove, { capture: true } as AddEventListenerOptions);
     document.removeEventListener('mousedown', this.handleMouseDown, { capture: true } as AddEventListenerOptions);
