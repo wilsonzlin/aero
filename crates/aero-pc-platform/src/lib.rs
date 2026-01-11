@@ -7,7 +7,7 @@ use aero_devices::clock::ManualClock;
 use aero_devices::i8042::{register_i8042, I8042Ports, SharedI8042Controller};
 use aero_devices::irq::PlatformIrqLine;
 use aero_devices::pci::{
-    bios_post, register_pci_config_ports, PciBarDefinition, PciConfigPorts, PciDevice,
+    bios_post, register_pci_config_ports, PciBarDefinition, PciBdf, PciConfigPorts, PciDevice,
     PciEcamConfig, PciEcamMmio, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig,
     PciResourceAllocator, PciResourceAllocatorConfig, SharedPciConfigPorts,
 };
@@ -82,15 +82,47 @@ impl PciDevice for HdaPciConfigDevice {
 #[derive(Clone)]
 struct HdaMmio {
     hda: Rc<RefCell<HdaPciDevice>>,
+    pci_cfg: SharedPciConfigPorts,
+    bdf: PciBdf,
 }
 
 impl MmioHandler for HdaMmio {
     fn read(&mut self, offset: u64, size: usize) -> u64 {
+        if !self.mem_decode_enabled() {
+            return all_ones(size);
+        }
         self.hda.borrow_mut().read(offset, size)
     }
 
     fn write(&mut self, offset: u64, size: usize, value: u64) {
+        if !self.mem_decode_enabled() {
+            return;
+        }
         self.hda.borrow_mut().write(offset, size, value);
+    }
+}
+
+impl HdaMmio {
+    fn mem_decode_enabled(&self) -> bool {
+        let mut pci_cfg = self.pci_cfg.borrow_mut();
+        let Some(cfg) = pci_cfg.bus_mut().device_config(self.bdf) else {
+            return false;
+        };
+        (cfg.command() & 0x2) != 0
+    }
+}
+
+fn all_ones(size: usize) -> u64 {
+    match size {
+        0 => 0,
+        1 => 0xff,
+        2 => 0xffff,
+        3 => 0x00ff_ffff,
+        4 => 0xffff_ffff,
+        5 => 0x0000_ffff_ffff,
+        6 => 0x00ff_ffff_ffff,
+        7 => 0x00ff_ffff_ffff_ffff,
+        _ => u64::MAX,
     }
 }
 
@@ -364,7 +396,11 @@ impl PcPlatform {
                 .map_mmio(
                     bar0_base,
                     u64::from(HdaPciDevice::MMIO_BAR_SIZE),
-                    Box::new(HdaMmio { hda }),
+                    Box::new(HdaMmio {
+                        hda,
+                        pci_cfg: pci_cfg.clone(),
+                        bdf,
+                    }),
                 )
                 .unwrap();
         }
