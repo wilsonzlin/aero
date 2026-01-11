@@ -1806,6 +1806,10 @@ impl AeroGpuSoftwareExecutor {
             return true;
         };
 
+        // `AerogpuCmdOpcode` is a fixed protocol enum today. The wildcard arm at the bottom is
+        // intentional forward-compatibility: if the protocol gains new opcodes, the software
+        // backend should ignore them rather than failing compilation.
+        #[allow(unreachable_patterns)]
         match op {
             cmd::AerogpuCmdOpcode::Nop
             | cmd::AerogpuCmdOpcode::DebugMarker
