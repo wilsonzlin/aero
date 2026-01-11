@@ -144,16 +144,18 @@ static VOID
 VirtIoSndWaveRtStopTimer(_Inout_ PVIRTIOSND_WAVERT_STREAM Stream)
 {
     KIRQL oldIrql;
-    BOOLEAN cancelled;
+    BOOLEAN removed;
 
     KeAcquireSpinLock(&Stream->Lock, &oldIrql);
     Stream->Stopping = TRUE;
     KeResetEvent(&Stream->DpcIdleEvent);
     KeReleaseSpinLock(&Stream->Lock, oldIrql);
 
-    cancelled = KeCancelTimer(&Stream->Timer);
-    UNREFERENCED_PARAMETER(cancelled);
-    KeRemoveQueueDpc(&Stream->TimerDpc);
+    (VOID)KeCancelTimer(&Stream->Timer);
+    removed = KeRemoveQueueDpc(&Stream->TimerDpc);
+    if (!removed && KeGetCurrentIrql() == PASSIVE_LEVEL) {
+        KeFlushQueuedDpcs();
+    }
 
     if (InterlockedCompareExchange(&Stream->DpcActive, 0, 0) == 0) {
         KeSetEvent(&Stream->DpcIdleEvent, IO_NO_INCREMENT, FALSE);
