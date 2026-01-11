@@ -256,6 +256,9 @@ test("normaliseBenchResult supports aero-gpu-bench schemaVersion=2 (raw+summary)
 
 test("normaliseBenchResult supports aero-gateway bench results.json format", () => {
   const { scenarios, environment } = normaliseBenchResult({
+    tool: "aero-gateway-bench",
+    startedAt: "2025-01-01T00:00:00Z",
+    finishedAt: "2025-01-01T00:00:01Z",
     meta: {
       mode: "smoke",
       nodeVersion: "v20.0.0",
