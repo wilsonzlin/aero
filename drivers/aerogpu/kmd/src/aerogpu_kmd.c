@@ -2423,14 +2423,13 @@ static NTSTATUS APIENTRY AeroGpuDdiCreateAllocation(_In_ const HANDLE hAdapter,
 
         ULONG allocId = 0;
         ULONGLONG shareToken = 0;
-        ULONG privFlags = (isShared ? AEROGPU_WDDM_ALLOC_PRIV_FLAG_SHARED : 0);
+        ULONG privFlags = 0;
         ULONG kind = 0;
         ULONG width = 0;
         ULONG height = 0;
         ULONG format = 0;
         ULONG rowPitchBytes = 0;
         ULONG pitchBytes = 0;
-        ULONG privFlags = 0;
 
         /*
          * WDDM allocation private driver data (if provided).
