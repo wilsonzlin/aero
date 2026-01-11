@@ -1157,6 +1157,12 @@ function renderRemoteDiskPanel(): HTMLElement {
     updateModeUi();
     updateButtons();
   });
+  for (const input of [urlInput, cacheBackendSelect, credentialsSelect, blockSizeInput, cacheLimitInput, prefetchInput, maxConcurrentFetchesInput]) {
+    input.addEventListener('change', () => {
+      void closeHandle();
+      updateButtons();
+    });
+  }
   updateModeUi();
   updateButtons();
 
