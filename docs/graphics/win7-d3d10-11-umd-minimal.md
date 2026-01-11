@@ -595,7 +595,7 @@ For system-level smoke testing (separate from these app-level tests), use the va
 This repository also contains a guest-side test harness you can use as a starting point:
 
 * `drivers/aerogpu/tests/win7/` (see `drivers/aerogpu/tests/win7/README.md`)
-  * includes `d3d11_triangle` and `readback_sanity` tests that already exercise a large chunk of the Win7 DXGI/D3D11 path.
+  * includes D3D11 coverage tests that exercise a large chunk of the Win7 DXGI/D3D11 path (swapchain present, offscreen render-to-texture readback, texture sampling, dynamic buffer/constant buffer updates, depth/stencil, etc).
 
 ### 7.1 D3D10 triangle (windowed)
 
@@ -616,7 +616,10 @@ This repository also contains a guest-side test harness you can use as a startin
 * D3D11 binding path (VS/PS only)
 * same draw/present path as above, but via D3D11 runtime/DDI
 
-**Existing in repo:** `drivers/aerogpu/tests/win7/d3d11_triangle/` (builds shaders with `fxc.exe` and validates pixels via staging readback).
+**Existing in repo:**
+
+* `drivers/aerogpu/tests/win7/d3d11_triangle/` — swapchain triangle + present; validates pixels via staging readback.
+* `drivers/aerogpu/tests/win7/readback_sanity/` — offscreen render-to-texture + staging readback (no present).
 
 ### 7.3 Texture sampling test (2D)
 
@@ -630,6 +633,8 @@ Render a textured quad:
 * `PSSetShaderResources`, `PSSetSamplers`
 * shader translation handling `sample` ops
 
+**Existing in repo:** `drivers/aerogpu/tests/win7/d3d11_texture_sampling_sanity/` (renders a point-sampled textured quad using an SRV + sampler and validates pixels via staging readback; exercises `IASetIndexBuffer` + `DrawIndexed`).
+
 ### 7.4 Depth test
 
 Draw two overlapping triangles with different Z and enable depth:
@@ -642,10 +647,24 @@ Draw two overlapping triangles with different Z and enable depth:
 * `ClearDepthStencilView`
 * correct depth compare/write behavior in the host translation layer
 
+**Existing in repo:** `drivers/aerogpu/tests/win7/d3d11_depth_test_sanity/` (offscreen RTV + DSV; clears depth then draws overlapping triangles and validates the center pixel is depth-tested).
+
+### 7.5 Dynamic constant buffer test
+
+Draw using a dynamic constant buffer updated via `Map(WRITE_DISCARD)`:
+
+**Covers:**
+
+* `CreateBuffer` (dynamic constant buffer)
+* `Map(WRITE_DISCARD)` + `Unmap` and constant-buffer binding (`*SetConstantBuffers`)
+* validation that constant-buffer updates take effect between draws
+
+**Existing in repo:** `drivers/aerogpu/tests/win7/d3d11_dynamic_constant_buffer_sanity/`.
+
 ---
 
 ### Appendix: practical bring-up order
 
 1. Implement D3D11 DDI at FL10_0 first (many samples use D3D11 even when targeting “DX10 class”).
 2. Reuse the same underlying object model to implement D3D10 DDI entrypoints.
-3. Only after triangle/texture/depth pass, start expanding caps and feature level.
+3. Only after triangle/texture/dynamic-constant-buffer/depth pass, start expanding caps and feature level.
