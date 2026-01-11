@@ -566,6 +566,274 @@ void SetError(AeroGpuDevice* dev, HRESULT hr) {
   }
 }
 
+// -------------------------------------------------------------------------------------------------
+// D3D11 DDI function-table stubs
+//
+// Win7 D3D11 runtimes may call "unexpected" DDIs during device creation / validation even if the app
+// never explicitly uses a feature. Leaving any function pointer as NULL is therefore a crash risk.
+//
+// Strategy:
+// - HRESULT-returning DDIs: return E_NOTIMPL by default.
+// - void-returning DDIs: report E_NOTIMPL via SetErrorCb (when we can reach the device).
+// - CalcPrivate*Size DDIs (SIZE_T): return a small non-zero size.
+//
+// `__if_exists` is used at assignment sites so this stays buildable across WDK header revisions.
+// -------------------------------------------------------------------------------------------------
+
+constexpr SIZE_T kAeroGpuDdiStubPrivateSize = sizeof(uint64_t);
+
+inline AeroGpuDevice* DeviceFromHandle(D3D11DDI_HDEVICE hDevice) {
+  return hDevice.pDrvPrivate ? FromHandle<D3D11DDI_HDEVICE, AeroGpuDevice>(hDevice) : nullptr;
+}
+
+inline AeroGpuDevice* DeviceFromHandle(D3D11DDI_HDEVICECONTEXT hCtx) {
+  auto* ctx = hCtx.pDrvPrivate ? FromHandle<D3D11DDI_HDEVICECONTEXT, AeroGpuImmediateContext>(hCtx) : nullptr;
+  return ctx ? ctx->device : nullptr;
+}
+
+template <typename T>
+inline AeroGpuDevice* DeviceFromHandle(T) {
+  return nullptr;
+}
+
+inline void ReportNotImpl() {}
+
+template <typename Handle0, typename... Rest>
+inline void ReportNotImpl(Handle0 handle0, Rest...) {
+  SetError(DeviceFromHandle(handle0), E_NOTIMPL);
+}
+
+template <typename FnPtr>
+struct AeroGpuDdiStub;
+
+template <typename R, typename... Args>
+struct AeroGpuDdiStub<R(AEROGPU_APIENTRY*)(Args...)> {
+  static R AEROGPU_APIENTRY Func(Args... args) {
+    if constexpr (std::is_same_v<R, void>) {
+      ReportNotImpl(args...);
+      return;
+    } else if constexpr (std::is_same_v<R, HRESULT>) {
+      return E_NOTIMPL;
+    } else if constexpr (std::is_same_v<R, SIZE_T>) {
+      return kAeroGpuDdiStubPrivateSize;
+    } else {
+      return {};
+    }
+  }
+};
+
+inline void AssertNoNullDdiTable(const char* name, const void* table, size_t bytes) {
+#if !defined(NDEBUG)
+  if (!table) {
+    assert(false && "DDI table pointer must be non-null");
+    return;
+  }
+
+  // These tables are expected to contain only function pointers.
+  assert((bytes % sizeof(void*)) == 0);
+
+  const auto* ptrs = reinterpret_cast<const void* const*>(table);
+  const size_t count = bytes / sizeof(void*);
+  for (size_t i = 0; i < count; ++i) {
+    if (!ptrs[i]) {
+#if defined(_WIN32)
+      char buf[256] = {};
+      snprintf(buf, sizeof(buf), "aerogpu-d3d10_11: NULL DDI entry in %s at index=%zu\n", name ? name : "?", i);
+      OutputDebugStringA(buf);
+#endif
+      assert(ptrs[i] && "NULL DDI function pointer");
+    }
+  }
+#else
+  (void)name;
+  (void)table;
+  (void)bytes;
+#endif
+}
+
+#define AEROGPU_D3D11_DEVICEFUNCS_FIELDS(X)                                                                    \
+  X(pfnDestroyDevice)                                                                                           \
+  X(pfnCalcPrivateResourceSize)                                                                                 \
+  X(pfnCreateResource)                                                                                           \
+  X(pfnOpenResource)                                                                                             \
+  X(pfnDestroyResource)                                                                                          \
+  X(pfnCalcPrivateShaderResourceViewSize)                                                                        \
+  X(pfnCreateShaderResourceView)                                                                                 \
+  X(pfnDestroyShaderResourceView)                                                                                \
+  X(pfnCalcPrivateRenderTargetViewSize)                                                                          \
+  X(pfnCreateRenderTargetView)                                                                                   \
+  X(pfnDestroyRenderTargetView)                                                                                  \
+  X(pfnCalcPrivateDepthStencilViewSize)                                                                          \
+  X(pfnCreateDepthStencilView)                                                                                   \
+  X(pfnDestroyDepthStencilView)                                                                                  \
+  X(pfnCalcPrivateUnorderedAccessViewSize)                                                                       \
+  X(pfnCreateUnorderedAccessView)                                                                                \
+  X(pfnDestroyUnorderedAccessView)                                                                               \
+  X(pfnCalcPrivateVertexShaderSize)                                                                              \
+  X(pfnCreateVertexShader)                                                                                       \
+  X(pfnDestroyVertexShader)                                                                                      \
+  X(pfnCalcPrivatePixelShaderSize)                                                                               \
+  X(pfnCreatePixelShader)                                                                                        \
+  X(pfnDestroyPixelShader)                                                                                       \
+  X(pfnCalcPrivateGeometryShaderSize)                                                                            \
+  X(pfnCreateGeometryShader)                                                                                     \
+  X(pfnDestroyGeometryShader)                                                                                    \
+  X(pfnCalcPrivateGeometryShaderWithStreamOutputSize)                                                            \
+  X(pfnCreateGeometryShaderWithStreamOutput)                                                                     \
+  X(pfnCalcPrivateHullShaderSize)                                                                                \
+  X(pfnCreateHullShader)                                                                                         \
+  X(pfnDestroyHullShader)                                                                                        \
+  X(pfnCalcPrivateDomainShaderSize)                                                                              \
+  X(pfnCreateDomainShader)                                                                                       \
+  X(pfnDestroyDomainShader)                                                                                      \
+  X(pfnCalcPrivateComputeShaderSize)                                                                             \
+  X(pfnCreateComputeShader)                                                                                      \
+  X(pfnDestroyComputeShader)                                                                                     \
+  X(pfnCalcPrivateElementLayoutSize)                                                                             \
+  X(pfnCreateElementLayout)                                                                                      \
+  X(pfnDestroyElementLayout)                                                                                     \
+  X(pfnCalcPrivateSamplerSize)                                                                                   \
+  X(pfnCreateSampler)                                                                                            \
+  X(pfnDestroySampler)                                                                                           \
+  X(pfnCalcPrivateBlendStateSize)                                                                                \
+  X(pfnCreateBlendState)                                                                                         \
+  X(pfnDestroyBlendState)                                                                                        \
+  X(pfnCalcPrivateRasterizerStateSize)                                                                           \
+  X(pfnCreateRasterizerState)                                                                                    \
+  X(pfnDestroyRasterizerState)                                                                                   \
+  X(pfnCalcPrivateDepthStencilStateSize)                                                                         \
+  X(pfnCreateDepthStencilState)                                                                                  \
+  X(pfnDestroyDepthStencilState)                                                                                 \
+  X(pfnCalcPrivateQuerySize)                                                                                     \
+  X(pfnCreateQuery)                                                                                               \
+  X(pfnDestroyQuery)                                                                                              \
+  X(pfnCalcPrivatePredicateSize)                                                                                 \
+  X(pfnCreatePredicate)                                                                                           \
+  X(pfnDestroyPredicate)                                                                                          \
+  X(pfnCalcPrivateCounterSize)                                                                                   \
+  X(pfnCreateCounter)                                                                                             \
+  X(pfnDestroyCounter)                                                                                            \
+  X(pfnCalcPrivateDeferredContextSize)                                                                           \
+  X(pfnCreateDeferredContext)                                                                                     \
+  X(pfnDestroyDeferredContext)                                                                                    \
+  X(pfnCalcPrivateCommandListSize)                                                                               \
+  X(pfnCreateCommandList)                                                                                         \
+  X(pfnDestroyCommandList)                                                                                        \
+  X(pfnCalcPrivateClassLinkageSize)                                                                              \
+  X(pfnCreateClassLinkage)                                                                                        \
+  X(pfnDestroyClassLinkage)                                                                                       \
+  X(pfnCalcPrivateClassInstanceSize)                                                                             \
+  X(pfnCreateClassInstance)                                                                                       \
+  X(pfnDestroyClassInstance)                                                                                      \
+  X(pfnCheckCounterInfo)                                                                                           \
+  X(pfnCheckCounter)                                                                                               \
+  X(pfnGetDeviceRemovedReason)                                                                                    \
+  X(pfnGetExceptionMode)                                                                                           \
+  X(pfnSetExceptionMode)                                                                                          \
+  X(pfnPresent)                                                                                                    \
+  X(pfnRotateResourceIdentities)                                                                                   \
+  X(pfnCheckDeferredContextHandleSizes)
+
+#define AEROGPU_D3D11_DEVICECONTEXTFUNCS_FIELDS(X)                                                               \
+  X(pfnVsSetShader)                                                                                               \
+  X(pfnVsSetConstantBuffers)                                                                                      \
+  X(pfnVsSetShaderResources)                                                                                      \
+  X(pfnVsSetSamplers)                                                                                             \
+  X(pfnGsSetShader)                                                                                               \
+  X(pfnGsSetConstantBuffers)                                                                                      \
+  X(pfnGsSetShaderResources)                                                                                      \
+  X(pfnGsSetSamplers)                                                                                             \
+  X(pfnPsSetShader)                                                                                               \
+  X(pfnPsSetConstantBuffers)                                                                                      \
+  X(pfnPsSetShaderResources)                                                                                      \
+  X(pfnPsSetSamplers)                                                                                             \
+  X(pfnHsSetShader)                                                                                               \
+  X(pfnHsSetConstantBuffers)                                                                                      \
+  X(pfnHsSetShaderResources)                                                                                      \
+  X(pfnHsSetSamplers)                                                                                             \
+  X(pfnDsSetShader)                                                                                               \
+  X(pfnDsSetConstantBuffers)                                                                                      \
+  X(pfnDsSetShaderResources)                                                                                      \
+  X(pfnDsSetSamplers)                                                                                             \
+  X(pfnCsSetShader)                                                                                               \
+  X(pfnCsSetConstantBuffers)                                                                                      \
+  X(pfnCsSetShaderResources)                                                                                      \
+  X(pfnCsSetSamplers)                                                                                             \
+  X(pfnCsSetUnorderedAccessViews)                                                                                 \
+  X(pfnIaSetInputLayout)                                                                                           \
+  X(pfnIaSetVertexBuffers)                                                                                        \
+  X(pfnIaSetIndexBuffer)                                                                                           \
+  X(pfnIaSetTopology)                                                                                              \
+  X(pfnSoSetTargets)                                                                                               \
+  X(pfnSetViewports)                                                                                               \
+  X(pfnSetScissorRects)                                                                                            \
+  X(pfnSetRasterizerState)                                                                                         \
+  X(pfnSetBlendState)                                                                                              \
+  X(pfnSetDepthStencilState)                                                                                       \
+  X(pfnSetRenderTargets)                                                                                           \
+  X(pfnSetRenderTargetsAndUnorderedAccessViews)                                                                    \
+  X(pfnDraw)                                                                                                       \
+  X(pfnDrawIndexed)                                                                                                \
+  X(pfnDrawInstanced)                                                                                              \
+  X(pfnDrawIndexedInstanced)                                                                                       \
+  X(pfnDrawAuto)                                                                                                   \
+  X(pfnDrawInstancedIndirect)                                                                                      \
+  X(pfnDrawIndexedInstancedIndirect)                                                                               \
+  X(pfnDispatch)                                                                                                   \
+  X(pfnDispatchIndirect)                                                                                           \
+  X(pfnStagingResourceMap)                                                                                        \
+  X(pfnStagingResourceUnmap)                                                                                      \
+  X(pfnDynamicIABufferMapDiscard)                                                                                 \
+  X(pfnDynamicIABufferMapNoOverwrite)                                                                             \
+  X(pfnDynamicIABufferUnmap)                                                                                      \
+  X(pfnDynamicConstantBufferMapDiscard)                                                                           \
+  X(pfnDynamicConstantBufferUnmap)                                                                                \
+  X(pfnMap)                                                                                                        \
+  X(pfnUnmap)                                                                                                      \
+  X(pfnUpdateSubresourceUP)                                                                                        \
+  X(pfnCopySubresourceRegion)                                                                                      \
+  X(pfnCopyResource)                                                                                               \
+  X(pfnCopyStructureCount)                                                                                          \
+  X(pfnResolveSubresource)                                                                                          \
+  X(pfnGenerateMips)                                                                                               \
+  X(pfnSetResourceMinLOD)                                                                                           \
+  X(pfnClearRenderTargetView)                                                                                      \
+  X(pfnClearUnorderedAccessViewUint)                                                                               \
+  X(pfnClearUnorderedAccessViewFloat)                                                                              \
+  X(pfnClearDepthStencilView)                                                                                      \
+  X(pfnBegin)                                                                                                      \
+  X(pfnEnd)                                                                                                        \
+  X(pfnQueryGetData)                                                                                               \
+  X(pfnSetPredication)                                                                                              \
+  X(pfnExecuteCommandList)                                                                                         \
+  X(pfnFinishCommandList)                                                                                          \
+  X(pfnClearState)                                                                                                 \
+  X(pfnFlush)                                                                                                      \
+  X(pfnPresent)                                                                                                    \
+  X(pfnRotateResourceIdentities)
+
+inline void InitDeviceFuncsWithStubs(D3D11DDI_DEVICEFUNCS* out) {
+  if (!out) {
+    return;
+  }
+  std::memset(out, 0, sizeof(*out));
+#define AEROGPU_ASSIGN_DEVICE_STUB(field)                                                                          \
+  __if_exists(D3D11DDI_DEVICEFUNCS::field) { out->field = &AeroGpuDdiStub<decltype(out->field)>::Func; }
+  AEROGPU_D3D11_DEVICEFUNCS_FIELDS(AEROGPU_ASSIGN_DEVICE_STUB)
+#undef AEROGPU_ASSIGN_DEVICE_STUB
+}
+
+inline void InitDeviceContextFuncsWithStubs(D3D11DDI_DEVICECONTEXTFUNCS* out) {
+  if (!out) {
+    return;
+  }
+  std::memset(out, 0, sizeof(*out));
+#define AEROGPU_ASSIGN_CONTEXT_STUB(field)                                                                         \
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::field) { out->field = &AeroGpuDdiStub<decltype(out->field)>::Func; }
+  AEROGPU_D3D11_DEVICECONTEXTFUNCS_FIELDS(AEROGPU_ASSIGN_CONTEXT_STUB)
+#undef AEROGPU_ASSIGN_CONTEXT_STUB
+}
+
 template <typename Fn, typename HandleA, typename HandleB, typename... Args>
 decltype(auto) CallCbMaybeHandle(Fn fn, HandleA handle_a, HandleB handle_b, Args&&... args) {
   if constexpr (std::is_invocable_v<Fn, HandleA, Args...>) {
@@ -853,26 +1121,6 @@ void flush_locked(AeroGpuImmediateContext* ctx) {
   }
 }
 
-template <typename TFnPtr>
-struct DdiStub;
-
-template <typename Ret, typename... Args>
-struct DdiStub<Ret(AEROGPU_APIENTRY*)(Args...)> {
-  static Ret AEROGPU_APIENTRY Call(Args...) {
-    if constexpr (std::is_same_v<Ret, HRESULT>) {
-      return E_NOTIMPL;
-    } else if constexpr (std::is_same_v<Ret, SIZE_T>) {
-      // Size queries must not return 0 to avoid runtimes treating the object as
-      // unsupported and then dereferencing null private memory.
-      return sizeof(void*);
-    } else if constexpr (std::is_same_v<Ret, void>) {
-      return;
-    } else {
-      return Ret{};
-    }
-  }
-};
-
 // Some DDIs (notably Present/RotateResourceIdentities) historically move between
 // the device and context tables across D3D11 DDI interface versions. Bind them
 // opportunistically based on whether the field exists and the pointer type
@@ -896,20 +1144,6 @@ HRESULT AEROGPU_APIENTRY Present11Device(D3D11DDI_HDEVICE hDevice, const D3D10DD
 void AEROGPU_APIENTRY RotateResourceIdentities11Device(D3D11DDI_HDEVICE hDevice, D3D11DDI_HRESOURCE* pResources, UINT numResources);
 
 template <typename TFuncs>
-void StubPresentAndRotate(TFuncs* funcs) {
-  if (!funcs) {
-    return;
-  }
-
-  if constexpr (HasPresent<TFuncs>::value) {
-    funcs->pfnPresent = &DdiStub<decltype(funcs->pfnPresent)>::Call;
-  }
-  if constexpr (HasRotateResourceIdentities<TFuncs>::value) {
-    funcs->pfnRotateResourceIdentities = &DdiStub<decltype(funcs->pfnRotateResourceIdentities)>::Call;
-  }
-}
-
-template <typename TFuncs>
 void BindPresentAndRotate(TFuncs* funcs) {
   if (!funcs) {
     return;
@@ -922,7 +1156,7 @@ void BindPresentAndRotate(TFuncs* funcs) {
     } else if constexpr (std::is_convertible_v<decltype(&Present11Device), Fn>) {
       funcs->pfnPresent = &Present11Device;
     } else {
-      funcs->pfnPresent = &DdiStub<Fn>::Call;
+      funcs->pfnPresent = &AeroGpuDdiStub<Fn>::Func;
     }
   }
 
@@ -933,179 +1167,9 @@ void BindPresentAndRotate(TFuncs* funcs) {
     } else if constexpr (std::is_convertible_v<decltype(&RotateResourceIdentities11Device), Fn>) {
       funcs->pfnRotateResourceIdentities = &RotateResourceIdentities11Device;
     } else {
-      funcs->pfnRotateResourceIdentities = &DdiStub<Fn>::Call;
+      funcs->pfnRotateResourceIdentities = &AeroGpuDdiStub<Fn>::Func;
     }
   }
-}
-
-static D3D11DDI_DEVICEFUNCS MakeStubDeviceFuncs11() {
-  D3D11DDI_DEVICEFUNCS funcs = {};
-
-#define STUB_FIELD(field) funcs.field = &DdiStub<decltype(funcs.field)>::Call
-  STUB_FIELD(pfnDestroyDevice);
-
-  STUB_FIELD(pfnCalcPrivateResourceSize);
-  STUB_FIELD(pfnCreateResource);
-  STUB_FIELD(pfnDestroyResource);
-
-  STUB_FIELD(pfnOpenResource);
-
-  STUB_FIELD(pfnCalcPrivateShaderResourceViewSize);
-  STUB_FIELD(pfnCreateShaderResourceView);
-  STUB_FIELD(pfnDestroyShaderResourceView);
-
-  STUB_FIELD(pfnCalcPrivateRenderTargetViewSize);
-  STUB_FIELD(pfnCreateRenderTargetView);
-  STUB_FIELD(pfnDestroyRenderTargetView);
-
-  STUB_FIELD(pfnCalcPrivateDepthStencilViewSize);
-  STUB_FIELD(pfnCreateDepthStencilView);
-  STUB_FIELD(pfnDestroyDepthStencilView);
-
-  STUB_FIELD(pfnCalcPrivateUnorderedAccessViewSize);
-  STUB_FIELD(pfnCreateUnorderedAccessView);
-  STUB_FIELD(pfnDestroyUnorderedAccessView);
-
-  STUB_FIELD(pfnCalcPrivateVertexShaderSize);
-  STUB_FIELD(pfnCreateVertexShader);
-  STUB_FIELD(pfnDestroyVertexShader);
-
-  STUB_FIELD(pfnCalcPrivatePixelShaderSize);
-  STUB_FIELD(pfnCreatePixelShader);
-  STUB_FIELD(pfnDestroyPixelShader);
-
-  STUB_FIELD(pfnCalcPrivateGeometryShaderSize);
-  STUB_FIELD(pfnCreateGeometryShader);
-  STUB_FIELD(pfnDestroyGeometryShader);
-
-  STUB_FIELD(pfnCalcPrivateGeometryShaderWithStreamOutputSize);
-  STUB_FIELD(pfnCreateGeometryShaderWithStreamOutput);
-
-  STUB_FIELD(pfnCalcPrivateHullShaderSize);
-  STUB_FIELD(pfnCreateHullShader);
-  STUB_FIELD(pfnDestroyHullShader);
-
-  STUB_FIELD(pfnCalcPrivateDomainShaderSize);
-  STUB_FIELD(pfnCreateDomainShader);
-  STUB_FIELD(pfnDestroyDomainShader);
-
-  STUB_FIELD(pfnCalcPrivateComputeShaderSize);
-  STUB_FIELD(pfnCreateComputeShader);
-  STUB_FIELD(pfnDestroyComputeShader);
-
-  STUB_FIELD(pfnCalcPrivateElementLayoutSize);
-  STUB_FIELD(pfnCreateElementLayout);
-  STUB_FIELD(pfnDestroyElementLayout);
-
-  STUB_FIELD(pfnCalcPrivateSamplerSize);
-  STUB_FIELD(pfnCreateSampler);
-  STUB_FIELD(pfnDestroySampler);
-
-  STUB_FIELD(pfnCalcPrivateBlendStateSize);
-  STUB_FIELD(pfnCreateBlendState);
-  STUB_FIELD(pfnDestroyBlendState);
-
-  STUB_FIELD(pfnCalcPrivateRasterizerStateSize);
-  STUB_FIELD(pfnCreateRasterizerState);
-  STUB_FIELD(pfnDestroyRasterizerState);
-
-  STUB_FIELD(pfnCalcPrivateDepthStencilStateSize);
-  STUB_FIELD(pfnCreateDepthStencilState);
-  STUB_FIELD(pfnDestroyDepthStencilState);
-
-  STUB_FIELD(pfnCalcPrivateQuerySize);
-  STUB_FIELD(pfnCreateQuery);
-  STUB_FIELD(pfnDestroyQuery);
-
-  STUB_FIELD(pfnCalcPrivatePredicateSize);
-  STUB_FIELD(pfnCreatePredicate);
-  STUB_FIELD(pfnDestroyPredicate);
-
-  STUB_FIELD(pfnCalcPrivateCounterSize);
-  STUB_FIELD(pfnCreateCounter);
-  STUB_FIELD(pfnDestroyCounter);
-
-  STUB_FIELD(pfnCalcPrivateDeferredContextSize);
-  STUB_FIELD(pfnCreateDeferredContext);
-  STUB_FIELD(pfnDestroyDeferredContext);
-
-  STUB_FIELD(pfnCalcPrivateCommandListSize);
-  STUB_FIELD(pfnCreateCommandList);
-  STUB_FIELD(pfnDestroyCommandList);
-
-  STUB_FIELD(pfnCalcPrivateClassLinkageSize);
-  STUB_FIELD(pfnCreateClassLinkage);
-  STUB_FIELD(pfnDestroyClassLinkage);
-
-  STUB_FIELD(pfnCalcPrivateClassInstanceSize);
-  STUB_FIELD(pfnCreateClassInstance);
-  STUB_FIELD(pfnDestroyClassInstance);
-#undef STUB_FIELD
-
-  StubPresentAndRotate(&funcs);
-  return funcs;
-}
-
-static D3D11DDI_DEVICECONTEXTFUNCS MakeStubContextFuncs11() {
-  D3D11DDI_DEVICECONTEXTFUNCS funcs = {};
-
-#define STUB_FIELD(field) funcs.field = &DdiStub<decltype(funcs.field)>::Call
-  STUB_FIELD(pfnIaSetInputLayout);
-  STUB_FIELD(pfnIaSetVertexBuffers);
-  STUB_FIELD(pfnIaSetIndexBuffer);
-  STUB_FIELD(pfnIaSetTopology);
-
-  STUB_FIELD(pfnVsSetShader);
-  STUB_FIELD(pfnVsSetConstantBuffers);
-  STUB_FIELD(pfnVsSetShaderResources);
-  STUB_FIELD(pfnVsSetSamplers);
-
-  STUB_FIELD(pfnPsSetShader);
-  STUB_FIELD(pfnPsSetConstantBuffers);
-  STUB_FIELD(pfnPsSetShaderResources);
-  STUB_FIELD(pfnPsSetSamplers);
-
-  STUB_FIELD(pfnGsSetShader);
-  STUB_FIELD(pfnGsSetConstantBuffers);
-  STUB_FIELD(pfnGsSetShaderResources);
-  STUB_FIELD(pfnGsSetSamplers);
-
-  STUB_FIELD(pfnSetViewports);
-  STUB_FIELD(pfnSetScissorRects);
-  STUB_FIELD(pfnSetRasterizerState);
-  STUB_FIELD(pfnSetBlendState);
-  STUB_FIELD(pfnSetDepthStencilState);
-  STUB_FIELD(pfnSetRenderTargets);
-
-  STUB_FIELD(pfnClearState);
-  STUB_FIELD(pfnClearRenderTargetView);
-  STUB_FIELD(pfnClearDepthStencilView);
-
-  STUB_FIELD(pfnDraw);
-  STUB_FIELD(pfnDrawIndexed);
-  STUB_FIELD(pfnDrawInstanced);
-  STUB_FIELD(pfnDrawIndexedInstanced);
-  STUB_FIELD(pfnDrawAuto);
-  STUB_FIELD(pfnDrawInstancedIndirect);
-  STUB_FIELD(pfnDrawIndexedInstancedIndirect);
-
-  STUB_FIELD(pfnUpdateSubresourceUP);
-  STUB_FIELD(pfnCopyResource);
-  STUB_FIELD(pfnCopySubresourceRegion);
-  STUB_FIELD(pfnResolveSubresource);
-  STUB_FIELD(pfnGenerateMips);
-
-  STUB_FIELD(pfnBegin);
-  STUB_FIELD(pfnEnd);
-  STUB_FIELD(pfnSetPredication);
-
-  STUB_FIELD(pfnMap);
-  STUB_FIELD(pfnUnmap);
-  STUB_FIELD(pfnFlush);
-#undef STUB_FIELD
-
-  StubPresentAndRotate(&funcs);
-  return funcs;
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -2942,7 +3006,8 @@ HRESULT AEROGPU_APIENTRY CreateDevice11(D3D10DDI_HADAPTER hAdapter, D3D11DDIARG_
   // device creation / initialization than a simple triangle sample would
   // suggest. Ensure we never leave NULL function pointers in the tables by
   // starting from fully-stubbed defaults and overriding implemented entrypoints.
-  D3D11DDI_DEVICEFUNCS device_funcs = MakeStubDeviceFuncs11();
+  D3D11DDI_DEVICEFUNCS device_funcs = {};
+  InitDeviceFuncsWithStubs(&device_funcs);
   device_funcs.pfnDestroyDevice = &DestroyDevice11;
   device_funcs.pfnCalcPrivateResourceSize = &CalcPrivateResourceSize11;
   device_funcs.pfnCreateResource = &CreateResource11;
@@ -2993,9 +3058,11 @@ HRESULT AEROGPU_APIENTRY CreateDevice11(D3D10DDI_HADAPTER hAdapter, D3D11DDIARG_
   device_funcs.pfnDestroyDepthStencilState = &DestroyDepthStencilState11;
 
   BindPresentAndRotate(&device_funcs);
+  AssertNoNullDdiTable("D3D11DDI_DEVICEFUNCS", &device_funcs, sizeof(device_funcs));
   *pCreate->pDeviceFuncs = device_funcs;
 
-  D3D11DDI_DEVICECONTEXTFUNCS ctx_funcs = MakeStubContextFuncs11();
+  D3D11DDI_DEVICECONTEXTFUNCS ctx_funcs = {};
+  InitDeviceContextFuncsWithStubs(&ctx_funcs);
   ctx_funcs.pfnIaSetInputLayout = &IaSetInputLayout11;
   ctx_funcs.pfnIaSetVertexBuffers = &IaSetVertexBuffers11;
   ctx_funcs.pfnIaSetIndexBuffer = &IaSetIndexBuffer11;
@@ -3082,6 +3149,7 @@ HRESULT AEROGPU_APIENTRY CreateDevice11(D3D10DDI_HADAPTER hAdapter, D3D11DDIARG_
   ctx_funcs.pfnFlush = &Flush11;
 
   BindPresentAndRotate(&ctx_funcs);
+  AssertNoNullDdiTable("D3D11DDI_DEVICECONTEXTFUNCS", &ctx_funcs, sizeof(ctx_funcs));
   *pCreate->pDeviceContextFuncs = ctx_funcs;
   return S_OK;
 }
