@@ -5,7 +5,6 @@
 /* Explicit include to avoid picking up the legacy virtqueue header via include path order. */
 #include "../../../../windows/virtio/common/virtqueue_split.h"
 #include "aero_virtio_pci_modern.h"
-#include "../../common/include/virtio_pci_contract.h"
 
 // Driver identity
 #define AEROVNET_VENDOR_ID 0x1AF4 // virtio vendor
