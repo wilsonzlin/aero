@@ -111,8 +111,9 @@ Already implemented:
 - **Main-thread ↔ I/O worker WebHID broker (TypeScript)**
   - `WebHidBroker` (`web/src/hid/webhid_broker.ts`) + protocol (`web/src/hid/hid_proxy_protocol.ts`)
     forward report traffic:
-    - WebHID `inputreport` events → worker (`hid.inputReport`)
-    - guest output/feature report requests → main thread (`hid.sendReport`)
+    - Preferred fast path (when `crossOriginIsolated`): SharedArrayBuffer ring buffers negotiated by
+      `hid.ringAttach` (see [Forwarding mechanism](#forwarding-mechanism)).
+    - Fallback/legacy path: `postMessage` forwarding (`hid.inputReport` / `hid.sendReport`).
 - **Worker-side WASM bridge (TypeScript)**
   - `web/src/workers/io.worker.ts` creates a WASM `WebHidPassthroughBridge` per attached device and
     drains output reports back to the broker.
@@ -130,7 +131,6 @@ Still missing / in progress (guest-visible USB integration):
   enumerate the device at the `guestPath`/port chosen by the UI.
 - Snapshot/restore integration for passthrough device state (queued reports, USB configuration
   state, etc).
-- (Optional) SharedArrayBuffer ring-buffer fast path to reduce per-report `postMessage` overhead.
 
 ## Host-side model (main thread owns the device)
 
@@ -169,24 +169,51 @@ In the current TypeScript runtime this role is split between:
 
 ### Forwarding mechanism
 
-Current implementation uses `postMessage` with typed payloads and transfers the underlying
-`ArrayBuffer` for report bytes (so the common case is zero-copy), e.g.
-`{ type: "hid.inputReport", deviceId, reportId, data: Uint8Array }`. The canonical message schema
-and validators live in `web/src/hid/hid_proxy_protocol.ts` (`hid.inputReport` / `hid.sendReport`).
+The WebHID handle is main-thread-only, so input/output report traffic is forwarded across the
+main-thread ↔ worker boundary using one of two mechanisms (selected at runtime):
 
-For performance, we can move to a fixed-size shared-memory ring buffer:
+#### Default / legacy path: `postMessage` + transferred `ArrayBuffer`s
 
-- main thread writes input reports into an **input queue**
-- worker writes output report requests into an **output queue**
-- both sides use a small `Int32Array` control header with Atomics to signal
-  availability
+When SharedArrayBuffer is unavailable, forwarding uses `postMessage` with typed payloads and
+transfers the underlying `ArrayBuffer` for report bytes (so the common case is zero-copy), e.g.
+`{ type: "hid.inputReport", deviceId, reportId, data: Uint8Array }`.
 
-This keeps the device model deterministic and avoids per-report allocations on
-hot paths (gamepads can be high-frequency).
+Protocol schema + validators:
 
-Note: `SharedArrayBuffer` requires cross-origin isolation (COOP/COEP) in modern
-browsers. If the app is not `crossOriginIsolated`, fall back to `postMessage`-
-based forwarding. See [`docs/11-browser-apis.md`](./11-browser-apis.md).
+- `web/src/hid/hid_proxy_protocol.ts` (`hid.inputReport`, `hid.sendReport`)
+
+#### Fast path: SharedArrayBuffer ring buffers (`hid.ringAttach`)
+
+When `globalThis.crossOriginIsolated === true` (COOP/COEP enabled) and `SharedArrayBuffer`/`Atomics`
+are available, `WebHidBroker` allocates two SharedArrayBuffers and sends them to the worker via
+`{ type: "hid.ringAttach", inputRing, outputRing }`:
+
+- **`inputRing` (main thread → worker):**
+  - main thread writes WebHID `inputreport` events into the ring as `(deviceId, reportId, bytes)`.
+  - the I/O worker drains the ring once per tick and forwards records into the guest-side HID device
+    model (`push_input_report` in the WASM bridge).
+- **`outputRing` (worker → main thread):**
+  - the I/O worker writes output/feature report requests into the ring as
+    `(deviceId, reportType, reportId, bytes)`.
+  - the main thread periodically drains the ring and executes the corresponding WebHID call
+    (`device.sendReport(...)` / `device.sendFeatureReport(...)`).
+
+The ring implementation is a bounded, single-producer/single-consumer, variable-length record ring
+buffer with an Atomics-managed control header; it is designed to avoid per-report allocations and
+reduce `postMessage` overhead on high-frequency devices.
+
+Implementation pointers:
+
+- Ring buffer: `web/src/usb/hid_report_ring.ts` (`HidReportRing`)
+- Message schema: `web/src/hid/hid_proxy_protocol.ts` (`hid.ringAttach`)
+- Main thread setup + drain:
+  - `web/src/hid/webhid_broker.ts` (`#attachRings`, `#drainOutputRing`, input-report forwarding)
+- Worker-side attach + drain:
+  - `web/src/workers/io.worker.ts` (`attachHidRings`, `drainHidInputRing`, `hidHostSink.sendReport`)
+
+Note: `SharedArrayBuffer` requires cross-origin isolation (COOP/COEP) in modern browsers. When the
+page is not `crossOriginIsolated`, the runtime automatically falls back to the `postMessage` path.
+See [`docs/11-browser-apis.md`](./11-browser-apis.md).
 
 ## Guest-side model (UHCI + generic HID passthrough device)
 
@@ -379,10 +406,11 @@ Recommended guardrails:
   - WebHID attach/detach + debug UI: `web/src/platform/webhid_passthrough.ts`
   - Main↔worker report proxying broker: `web/src/hid/webhid_broker.ts`
   - Main↔worker report proxying protocol: `web/src/hid/hid_proxy_protocol.ts`
+  - SharedArrayBuffer report ring: `web/src/usb/hid_report_ring.ts`
   - Guest USB attachment path schema (UHCI root port + downstream hub ports): `web/src/platform/hid_passthrough_protocol.ts`
   - WebHID normalization (input to descriptor synthesis): `web/src/hid/webhid_normalize.ts`
   - Dev-only main-thread runtime wiring WebHID ↔ WASM bridge: `web/src/usb/webhid_passthrough_runtime.ts`
-  - I/O worker wiring point (WASM bridge + report queues): `web/src/workers/io.worker.ts` (guest USB topology wiring still pending)
+  - I/O worker wiring point (WASM bridge + report queues): `web/src/workers/io.worker.ts` (guest USB topology wiring still pending; ring attach/drain is implemented)
 
 ## Related docs
 

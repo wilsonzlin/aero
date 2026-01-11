@@ -75,8 +75,8 @@ The legacy USB stack in `crates/emulator` (`emulator::io::usb`) is considered **
 - **TypeScript does not emulate UHCI.** It is responsible for host-only concerns:
   - WebUSB/WebHID handles and permission UX (user gesture requirement)
   - async execution of host transfers
-  - main thread ↔ worker proxying (default: `postMessage`; WebHID fast path uses
-    `SharedArrayBuffer` + `Atomics` report rings when `crossOriginIsolated`)
+  - main thread ↔ worker proxying (default: `postMessage` with transferred `ArrayBuffer`s; WebHID
+    fast path uses `SharedArrayBuffer` + `Atomics` report rings when `crossOriginIsolated`)
     - Implementation: `web/src/usb/hid_report_ring.ts`,
       `web/src/hid/hid_proxy_protocol.ts` (`hid.ringAttach`),
       `web/src/hid/webhid_broker.ts`
