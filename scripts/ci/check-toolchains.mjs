@@ -17,6 +17,7 @@ const toolchainsJsonPath = path.join(repoRoot, "scripts/toolchains.json");
 const wasmBuildScriptPath = path.join(repoRoot, "web/scripts/build_wasm.mjs");
 const justfilePath = path.join(repoRoot, "justfile");
 const devcontainerDockerfilePath = path.join(repoRoot, ".devcontainer/Dockerfile");
+const fuzzWorkflowPath = path.join(repoRoot, ".github/workflows/fuzz.yml");
 
 const rustToolchainToml = readFileSync(rustToolchainTomlPath, "utf8");
 const channelMatch = rustToolchainToml.match(/^\s*channel\s*=\s*"([^"]+)"\s*$/m);
@@ -99,6 +100,20 @@ if (/\brustup\s+toolchain\s+install\s+nightly\b/.test(devcontainerDockerfile)) {
 }
 if (/--toolchain\s+nightly\b/.test(devcontainerDockerfile)) {
     fail(".devcontainer/Dockerfile references '--toolchain nightly'; it must use the pinned nightly-YYYY-MM-DD toolchain.");
+}
+
+const fuzzWorkflow = readFileSync(fuzzWorkflowPath, "utf8");
+if (!fuzzWorkflow.includes("scripts/toolchains.json")) {
+    fail(".github/workflows/fuzz.yml must read the pinned nightly toolchain from scripts/toolchains.json.");
+}
+if (/\btoolchain:\s*nightly\b/.test(fuzzWorkflow)) {
+    fail(".github/workflows/fuzz.yml uses floating 'toolchain: nightly'; it must use the pinned nightly toolchain.");
+}
+if (/\bcargo\s+\+nightly\b/.test(fuzzWorkflow)) {
+    fail(".github/workflows/fuzz.yml uses floating 'cargo +nightly'; it must use the pinned nightly toolchain.");
+}
+if (/\brust-toolchain@nightly\b/.test(fuzzWorkflow)) {
+    fail(".github/workflows/fuzz.yml installs Rust via dtolnay/rust-toolchain@nightly; it must use the pinned nightly toolchain.");
 }
 
 process.stdout.write(

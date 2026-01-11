@@ -21,24 +21,25 @@ Historically we relied on the moving `stable` and `+nightly` channels. This has 
 - We **pin stable Rust to an explicit release** in `rust-toolchain.toml` (`channel = "1.xx.y"`).
 - CI and local development should use this pinned version for all stable builds.
 
-### Nightly toolchain (threaded WASM only)
+### Nightly toolchain (pinned by date)
 
-- We **pin the nightly toolchain to a specific date** (`nightly-YYYY-MM-DD`) for threaded
-  WASM builds.
+- We **pin the nightly toolchain to a specific date** (`nightly-YYYY-MM-DD`) for workflows
+  that require nightly (most notably the threaded/shared-memory WASM build).
 - The pinned nightly string lives in a single source of truth: `scripts/toolchains.json`
   (`rust.nightlyWasm`).
-- All threaded WASM build entrypoints must use this pinned nightly toolchain:
+- All nightly-dependent entrypoints must use this pinned nightly toolchain:
   - `web/scripts/build_wasm.mjs` (threaded variant)
   - `just setup` (installs the pinned nightly + `rust-src`)
   - CI (threaded WASM smoke build)
+  - CI fuzz smoke workflow (cargo-fuzz)
 
 ### Update cadence / ownership
 
 - Toolchain bumps happen via PR and must keep CI green.
 - **Stable**: bump intentionally when we need a new stable feature, or on a regular cadence
   (e.g. monthly/quarterly).
-- **Nightly (threaded WASM)**: bump only when necessary (e.g. to fix a regression, or when a
-  new nightly becomes required by the build).
+- **Nightly**: bump only when necessary (e.g. to fix a regression, or when a new nightly
+  becomes required by threaded WASM builds or nightly-only tooling like fuzzing).
 - Any contributor may propose a bump; reviewers/maintainers are responsible for ensuring the
   pinned versions are compatible across supported platforms.
 
@@ -62,4 +63,3 @@ Historically we relied on the moving `stable` and `+nightly` channels. This has 
 - When toolchains are updated, the change is explicit and reviewable.
 - The project must occasionally perform **toolchain bump maintenance**, but CI will catch
   drift (or accidental reintroduction of floating `nightly`) early.
-
