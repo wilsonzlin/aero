@@ -8440,8 +8440,61 @@ void AEROGPU_APIENTRY CopyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE 
   track_resource_alloc_for_submit_locked(dev, dst);
   track_resource_alloc_for_submit_locked(dev, src);
 
+  struct CopySimMapping {
+    uint8_t* data = nullptr;
+    bool mapped_allocation = false;
+    AEROGPU_WDDM_ALLOCATION_HANDLE alloc_handle = 0;
+  };
+
+  auto map_copy_sim = [&](AeroGpuResource* r, uint64_t required_bytes) -> CopySimMapping {
+    CopySimMapping m{};
+    if (!dev || !r || !required_bytes) {
+      return m;
+    }
+
+    const auto* cb = dev->device_callbacks;
+    const bool can_map_allocation = cb && cb->pfnMapAllocation && cb->pfnUnmapAllocation;
+    if (can_map_allocation && r->alloc_handle != 0) {
+      void* base = nullptr;
+      const HRESULT hr = cb->pfnMapAllocation(cb->pUserContext, r->alloc_handle, &base);
+      if (SUCCEEDED(hr) && base) {
+        const uint64_t offset = static_cast<uint64_t>(r->alloc_offset_bytes);
+        if (r->alloc_size_bytes != 0 && required_bytes + offset > r->alloc_size_bytes) {
+          cb->pfnUnmapAllocation(cb->pUserContext, r->alloc_handle);
+          return m;
+        }
+
+        m.data = static_cast<uint8_t*>(base) + r->alloc_offset_bytes;
+        m.mapped_allocation = true;
+        m.alloc_handle = r->alloc_handle;
+        return m;
+      }
+      if (SUCCEEDED(hr) && !base) {
+        cb->pfnUnmapAllocation(cb->pUserContext, r->alloc_handle);
+      }
+    }
+
+    HRESULT hr = ensure_resource_storage(r, required_bytes);
+    if (FAILED(hr) || r->storage.size() < static_cast<size_t>(required_bytes)) {
+      return m;
+    }
+    m.data = r->storage.data();
+    return m;
+  };
+
+  auto unmap_copy_sim = [&](const CopySimMapping& m) {
+    if (!m.mapped_allocation || m.alloc_handle == 0) {
+      return;
+    }
+    const auto* cb = dev->device_callbacks;
+    if (cb && cb->pfnUnmapAllocation) {
+      cb->pfnUnmapAllocation(cb->pUserContext, m.alloc_handle);
+    }
+  };
+
   // Repository builds keep a conservative CPU backing store; simulate the copy
-  // immediately so a subsequent staging Map(READ) sees the bytes.
+  // immediately so a subsequent staging Map(READ) sees the bytes. For
+  // allocation-backed resources, write directly into the backing allocation.
   if (dst->kind == ResourceKind::Buffer) {
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_copy_buffer>(AEROGPU_CMD_COPY_BUFFER);
     if (!cmd) {
@@ -8459,12 +8512,16 @@ void AEROGPU_APIENTRY CopyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE 
             : AEROGPU_COPY_FLAG_NONE;
     cmd->reserved0 = 0;
 
-    const size_t copy_bytes = static_cast<size_t>(cmd->size_bytes);
-    if (copy_bytes && src->storage.size() >= copy_bytes) {
-      if (dst->storage.size() < copy_bytes) {
-        dst->storage.resize(copy_bytes);
+    const uint64_t copy_bytes_u64 = cmd->size_bytes;
+    if (copy_bytes_u64 != 0 && copy_bytes_u64 <= static_cast<uint64_t>(SIZE_MAX)) {
+      const size_t copy_bytes = static_cast<size_t>(copy_bytes_u64);
+      CopySimMapping src_map = map_copy_sim(src, copy_bytes_u64);
+      CopySimMapping dst_map = map_copy_sim(dst, copy_bytes_u64);
+      if (src_map.data && dst_map.data) {
+        std::memcpy(dst_map.data, src_map.data, copy_bytes);
       }
-      std::memcpy(dst->storage.data(), src->storage.data(), copy_bytes);
+      unmap_copy_sim(dst_map);
+      unmap_copy_sim(src_map);
     }
   } else if (dst->kind == ResourceKind::Texture2D) {
     if (dst->dxgi_format != src->dxgi_format || dst->width == 0 || dst->height == 0) {
@@ -8502,23 +8559,34 @@ void AEROGPU_APIENTRY CopyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE 
       return;
     }
 
-    const size_t dst_required = copy_rows * static_cast<size_t>(dst->row_pitch_bytes);
-    const size_t src_required = copy_rows * static_cast<size_t>(src->row_pitch_bytes);
-    if (src->storage.size() < src_required) {
-      return;
-    }
-    if (dst->storage.size() < dst_required) {
-      dst->storage.resize(dst_required);
-    }
     if (row_bytes > dst->row_pitch_bytes || row_bytes > src->row_pitch_bytes) {
       return;
     }
 
-    for (size_t y = 0; y < copy_rows; y++) {
-      std::memcpy(dst->storage.data() + y * dst->row_pitch_bytes,
-                  src->storage.data() + y * src->row_pitch_bytes,
-                  row_bytes);
+    const uint64_t dst_required_u64 = static_cast<uint64_t>(dst->row_pitch_bytes) * static_cast<uint64_t>(copy_rows);
+    const uint64_t src_required_u64 = static_cast<uint64_t>(src->row_pitch_bytes) * static_cast<uint64_t>(copy_rows);
+    if (dst_required_u64 == 0 || src_required_u64 == 0 || dst_required_u64 > static_cast<uint64_t>(SIZE_MAX) ||
+        src_required_u64 > static_cast<uint64_t>(SIZE_MAX)) {
+      return;
     }
+
+    CopySimMapping src_map = map_copy_sim(src, src_required_u64);
+    CopySimMapping dst_map = map_copy_sim(dst, dst_required_u64);
+    if (src_map.data && dst_map.data) {
+      const size_t dst_pitch = static_cast<size_t>(dst->row_pitch_bytes);
+      const size_t src_pitch = static_cast<size_t>(src->row_pitch_bytes);
+      const size_t dst_tight_row_bytes = static_cast<size_t>(dst->width) * bpp;
+      for (size_t y = 0; y < copy_rows; y++) {
+        uint8_t* dst_row = dst_map.data + y * dst_pitch;
+        const uint8_t* src_row = src_map.data + y * src_pitch;
+        std::memcpy(dst_row, src_row, row_bytes);
+        if (dst_pitch > dst_tight_row_bytes) {
+          std::memset(dst_row + dst_tight_row_bytes, 0, dst_pitch - dst_tight_row_bytes);
+        }
+      }
+    }
+    unmap_copy_sim(dst_map);
+    unmap_copy_sim(src_map);
   }
 }
 
@@ -8555,6 +8623,58 @@ HRESULT AEROGPU_APIENTRY CopySubresourceRegion(D3D10DDI_HDEVICE hDevice,
   track_resource_alloc_for_submit_locked(dev, dst);
   track_resource_alloc_for_submit_locked(dev, src);
 
+  struct CopySimMapping {
+    uint8_t* data = nullptr;
+    bool mapped_allocation = false;
+    AEROGPU_WDDM_ALLOCATION_HANDLE alloc_handle = 0;
+  };
+
+  auto map_copy_sim = [&](AeroGpuResource* r, uint64_t required_bytes) -> CopySimMapping {
+    CopySimMapping m{};
+    if (!dev || !r || !required_bytes) {
+      return m;
+    }
+
+    const auto* cb = dev->device_callbacks;
+    const bool can_map_allocation = cb && cb->pfnMapAllocation && cb->pfnUnmapAllocation;
+    if (can_map_allocation && r->alloc_handle != 0) {
+      void* base = nullptr;
+      const HRESULT hr = cb->pfnMapAllocation(cb->pUserContext, r->alloc_handle, &base);
+      if (SUCCEEDED(hr) && base) {
+        const uint64_t offset = static_cast<uint64_t>(r->alloc_offset_bytes);
+        if (r->alloc_size_bytes != 0 && required_bytes + offset > r->alloc_size_bytes) {
+          cb->pfnUnmapAllocation(cb->pUserContext, r->alloc_handle);
+          return m;
+        }
+
+        m.data = static_cast<uint8_t*>(base) + r->alloc_offset_bytes;
+        m.mapped_allocation = true;
+        m.alloc_handle = r->alloc_handle;
+        return m;
+      }
+      if (SUCCEEDED(hr) && !base) {
+        cb->pfnUnmapAllocation(cb->pUserContext, r->alloc_handle);
+      }
+    }
+
+    HRESULT hr = ensure_resource_storage(r, required_bytes);
+    if (FAILED(hr) || r->storage.size() < static_cast<size_t>(required_bytes)) {
+      return m;
+    }
+    m.data = r->storage.data();
+    return m;
+  };
+
+  auto unmap_copy_sim = [&](const CopySimMapping& m) {
+    if (!m.mapped_allocation || m.alloc_handle == 0) {
+      return;
+    }
+    const auto* cb = dev->device_callbacks;
+    if (cb && cb->pfnUnmapAllocation) {
+      cb->pfnUnmapAllocation(cb->pUserContext, m.alloc_handle);
+    }
+  };
+
   if (dst->kind == ResourceKind::Buffer) {
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_copy_buffer>(AEROGPU_CMD_COPY_BUFFER);
     if (!cmd) {
@@ -8571,12 +8691,16 @@ HRESULT AEROGPU_APIENTRY CopySubresourceRegion(D3D10DDI_HDEVICE hDevice,
             : AEROGPU_COPY_FLAG_NONE;
     cmd->reserved0 = 0;
 
-    const size_t copy_bytes = static_cast<size_t>(cmd->size_bytes);
-    if (copy_bytes && src->storage.size() >= copy_bytes) {
-      if (dst->storage.size() < copy_bytes) {
-        dst->storage.resize(copy_bytes);
+    const uint64_t copy_bytes_u64 = cmd->size_bytes;
+    if (copy_bytes_u64 != 0 && copy_bytes_u64 <= static_cast<uint64_t>(SIZE_MAX)) {
+      const size_t copy_bytes = static_cast<size_t>(copy_bytes_u64);
+      CopySimMapping src_map = map_copy_sim(src, copy_bytes_u64);
+      CopySimMapping dst_map = map_copy_sim(dst, copy_bytes_u64);
+      if (src_map.data && dst_map.data) {
+        std::memcpy(dst_map.data, src_map.data, copy_bytes);
       }
-      std::memcpy(dst->storage.data(), src->storage.data(), copy_bytes);
+      unmap_copy_sim(dst_map);
+      unmap_copy_sim(src_map);
     }
   } else if (dst->kind == ResourceKind::Texture2D) {
     if (dst->dxgi_format != src->dxgi_format || dst->width == 0 || dst->height == 0) {
@@ -8613,23 +8737,34 @@ HRESULT AEROGPU_APIENTRY CopySubresourceRegion(D3D10DDI_HDEVICE hDevice,
       return S_OK;
     }
 
-    const size_t dst_required = copy_rows * static_cast<size_t>(dst->row_pitch_bytes);
-    const size_t src_required = copy_rows * static_cast<size_t>(src->row_pitch_bytes);
-    if (src->storage.size() < src_required) {
-      return S_OK;
-    }
-    if (dst->storage.size() < dst_required) {
-      dst->storage.resize(dst_required);
-    }
     if (row_bytes > dst->row_pitch_bytes || row_bytes > src->row_pitch_bytes) {
       return S_OK;
     }
 
-    for (size_t y = 0; y < copy_rows; y++) {
-      std::memcpy(dst->storage.data() + y * dst->row_pitch_bytes,
-                  src->storage.data() + y * src->row_pitch_bytes,
-                  row_bytes);
+    const uint64_t dst_required_u64 = static_cast<uint64_t>(dst->row_pitch_bytes) * static_cast<uint64_t>(copy_rows);
+    const uint64_t src_required_u64 = static_cast<uint64_t>(src->row_pitch_bytes) * static_cast<uint64_t>(copy_rows);
+    if (dst_required_u64 == 0 || src_required_u64 == 0 || dst_required_u64 > static_cast<uint64_t>(SIZE_MAX) ||
+        src_required_u64 > static_cast<uint64_t>(SIZE_MAX)) {
+      return S_OK;
     }
+
+    CopySimMapping src_map = map_copy_sim(src, src_required_u64);
+    CopySimMapping dst_map = map_copy_sim(dst, dst_required_u64);
+    if (src_map.data && dst_map.data) {
+      const size_t dst_pitch = static_cast<size_t>(dst->row_pitch_bytes);
+      const size_t src_pitch = static_cast<size_t>(src->row_pitch_bytes);
+      const size_t dst_tight_row_bytes = static_cast<size_t>(dst->width) * bpp;
+      for (size_t y = 0; y < copy_rows; y++) {
+        uint8_t* dst_row = dst_map.data + y * dst_pitch;
+        const uint8_t* src_row = src_map.data + y * src_pitch;
+        std::memcpy(dst_row, src_row, row_bytes);
+        if (dst_pitch > dst_tight_row_bytes) {
+          std::memset(dst_row + dst_tight_row_bytes, 0, dst_pitch - dst_tight_row_bytes);
+        }
+      }
+    }
+    unmap_copy_sim(dst_map);
+    unmap_copy_sim(src_map);
   }
 
   return S_OK;
