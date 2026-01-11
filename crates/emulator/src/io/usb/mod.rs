@@ -215,6 +215,9 @@ pub trait UsbDeviceModel {
     ///
     /// Implementations should return [`UsbInResult::Nak`] when no data is available yet so the
     /// UHCI scheduler can retry the TD in a later frame.
+    ///
+    /// The default implementation delegates to [`UsbDeviceModel::handle_interrupt_in`] and
+    /// truncates [`UsbInResult::Data`] payloads to `max_len`.
     fn handle_in_transfer(&mut self, ep: u8, max_len: usize) -> UsbInResult {
         match self.handle_interrupt_in(ep) {
             UsbInResult::Data(mut data) => {
