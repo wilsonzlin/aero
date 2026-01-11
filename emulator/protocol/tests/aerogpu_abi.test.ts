@@ -111,6 +111,23 @@ import {
   decodeSubmitDesc,
   writeFencePageCompletedFence,
 } from "../aerogpu/aerogpu_ring.ts";
+import {
+  AEROGPU_UMDPRIV_FEATURE_FENCE_PAGE,
+  AEROGPU_UMDPRIV_FEATURE_VBLANK,
+  AEROGPU_UMDPRIV_FLAG_HAS_FENCE_PAGE,
+  AEROGPU_UMDPRIV_FLAG_HAS_VBLANK,
+  AEROGPU_UMDPRIV_FLAG_IS_LEGACY,
+  AEROGPU_UMDPRIV_MMIO_MAGIC_LEGACY_ARGP,
+  AEROGPU_UMDPRIV_MMIO_MAGIC_NEW_AGPU,
+  AEROGPU_UMDPRIV_STRUCT_VERSION_V1,
+  AEROGPU_UMD_PRIVATE_V1_OFF_DEVICE_ABI_VERSION_U32,
+  AEROGPU_UMD_PRIVATE_V1_OFF_DEVICE_FEATURES,
+  AEROGPU_UMD_PRIVATE_V1_OFF_DEVICE_MMIO_MAGIC,
+  AEROGPU_UMD_PRIVATE_V1_OFF_FLAGS,
+  AEROGPU_UMD_PRIVATE_V1_OFF_SIZE_BYTES,
+  AEROGPU_UMD_PRIVATE_V1_OFF_STRUCT_VERSION,
+  AEROGPU_UMD_PRIVATE_V1_SIZE,
+} from "../aerogpu/aerogpu_umd_private.ts";
 
 type AbiDump = {
   sizes: Map<string, number>;
@@ -228,6 +245,7 @@ test("TypeScript layout matches C headers", () => {
   assert.equal(size("aerogpu_submit_desc"), AEROGPU_SUBMIT_DESC_SIZE);
   assert.equal(size("aerogpu_ring_header"), AEROGPU_RING_HEADER_SIZE);
   assert.equal(size("aerogpu_fence_page"), AEROGPU_FENCE_PAGE_SIZE);
+  assert.equal(size("aerogpu_umd_private_v1"), AEROGPU_UMD_PRIVATE_V1_SIZE);
 
   // Key offsets.
   assert.equal(off("aerogpu_cmd_stream_header", "magic"), AEROGPU_CMD_STREAM_HEADER_OFF_MAGIC);
@@ -265,6 +283,25 @@ test("TypeScript layout matches C headers", () => {
 
   assert.equal(off("aerogpu_ring_header", "head"), AEROGPU_RING_HEADER_OFF_HEAD);
   assert.equal(off("aerogpu_ring_header", "tail"), AEROGPU_RING_HEADER_OFF_TAIL);
+
+  assert.equal(off("aerogpu_umd_private_v1", "size_bytes"), AEROGPU_UMD_PRIVATE_V1_OFF_SIZE_BYTES);
+  assert.equal(
+    off("aerogpu_umd_private_v1", "struct_version"),
+    AEROGPU_UMD_PRIVATE_V1_OFF_STRUCT_VERSION,
+  );
+  assert.equal(
+    off("aerogpu_umd_private_v1", "device_mmio_magic"),
+    AEROGPU_UMD_PRIVATE_V1_OFF_DEVICE_MMIO_MAGIC,
+  );
+  assert.equal(
+    off("aerogpu_umd_private_v1", "device_abi_version_u32"),
+    AEROGPU_UMD_PRIVATE_V1_OFF_DEVICE_ABI_VERSION_U32,
+  );
+  assert.equal(
+    off("aerogpu_umd_private_v1", "device_features"),
+    AEROGPU_UMD_PRIVATE_V1_OFF_DEVICE_FEATURES,
+  );
+  assert.equal(off("aerogpu_umd_private_v1", "flags"), AEROGPU_UMD_PRIVATE_V1_OFF_FLAGS);
 
   // Constants.
   assert.equal(konst("AEROGPU_ABI_MAJOR"), BigInt(AEROGPU_ABI_MAJOR));
@@ -346,6 +383,27 @@ test("TypeScript layout matches C headers", () => {
 
   assert.equal(konst("AEROGPU_SUBMIT_FLAG_PRESENT"), BigInt(AEROGPU_SUBMIT_FLAG_PRESENT));
   assert.equal(konst("AEROGPU_SUBMIT_FLAG_NO_IRQ"), BigInt(AEROGPU_SUBMIT_FLAG_NO_IRQ));
+
+  assert.equal(
+    konst("AEROGPU_UMDPRIV_STRUCT_VERSION_V1"),
+    BigInt(AEROGPU_UMDPRIV_STRUCT_VERSION_V1),
+  );
+  assert.equal(
+    konst("AEROGPU_UMDPRIV_MMIO_MAGIC_LEGACY_ARGP"),
+    BigInt(AEROGPU_UMDPRIV_MMIO_MAGIC_LEGACY_ARGP),
+  );
+  assert.equal(
+    konst("AEROGPU_UMDPRIV_MMIO_MAGIC_NEW_AGPU"),
+    BigInt(AEROGPU_UMDPRIV_MMIO_MAGIC_NEW_AGPU),
+  );
+  assert.equal(konst("AEROGPU_UMDPRIV_FEATURE_FENCE_PAGE"), AEROGPU_UMDPRIV_FEATURE_FENCE_PAGE);
+  assert.equal(konst("AEROGPU_UMDPRIV_FEATURE_VBLANK"), AEROGPU_UMDPRIV_FEATURE_VBLANK);
+  assert.equal(konst("AEROGPU_UMDPRIV_FLAG_IS_LEGACY"), BigInt(AEROGPU_UMDPRIV_FLAG_IS_LEGACY));
+  assert.equal(konst("AEROGPU_UMDPRIV_FLAG_HAS_VBLANK"), BigInt(AEROGPU_UMDPRIV_FLAG_HAS_VBLANK));
+  assert.equal(
+    konst("AEROGPU_UMDPRIV_FLAG_HAS_FENCE_PAGE"),
+    BigInt(AEROGPU_UMDPRIV_FLAG_HAS_FENCE_PAGE),
+  );
 });
 
 test("decodeAllocTableHeader accepts unknown minor versions and extended strides", () => {
