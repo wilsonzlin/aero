@@ -354,7 +354,8 @@ if ($resolvedGuestToolsProfile -eq "auto") {
   } elseif ($specBaseName -eq "win7-virtio-full.json") {
     $resolvedGuestToolsProfile = "full"
   } else {
-    # Best-effort fallback: align with the wrapper default (full).
+    # Best-effort fallback: use the more inclusive profile to keep optional-driver smoke tests
+    # effective even when a custom spec filename is used.
     $resolvedGuestToolsProfile = "full"
   }
 }
@@ -826,14 +827,14 @@ if (-not $SkipGuestToolsDefaultsCheck) {
   }
 
   $defaultsLogText = Get-Content -LiteralPath $guestToolsDefaultsLog -Raw
-  if ($defaultsLogText -notmatch '(?m)^\s*profile\s*:\s*full\s*$') {
-    throw "Expected defaults run to use -Profile full. See $guestToolsDefaultsLog"
+  if ($defaultsLogText -notmatch '(?m)^\s*profile\s*:\s*minimal\s*$') {
+    throw "Expected defaults run to use -Profile minimal. See $guestToolsDefaultsLog"
   }
-  if ($defaultsLogText -notmatch 'win7-virtio-full\.json') {
-    throw "Expected defaults run to select win7-virtio-full.json. See $guestToolsDefaultsLog"
+  if ($defaultsLogText -notmatch 'win7-virtio-win\.json') {
+    throw "Expected defaults run to select win7-virtio-win.json. See $guestToolsDefaultsLog"
   }
-  if ($defaultsLogText -notmatch '(?m)^\s*drivers\s*:\s*viostor,\s*netkvm,\s*viosnd,\s*vioinput\s*$') {
-    throw "Expected defaults run to extract viostor,netkvm,viosnd,vioinput. See $guestToolsDefaultsLog"
+  if ($defaultsLogText -notmatch '(?m)^\s*drivers\s*:\s*viostor,\s*netkvm\s*$') {
+    throw "Expected defaults run to extract only viostor,netkvm. See $guestToolsDefaultsLog"
   }
 
   $defaultsManifestObj = Get-Content -LiteralPath $defaultsManifest -Raw | ConvertFrom-Json
@@ -854,7 +855,7 @@ if (-not $SkipGuestToolsDefaultsCheck) {
     }
   }
 
-  $defaultsSpecPath = Join-Path $repoRoot "tools/packaging/specs/win7-virtio-full.json"
+  $defaultsSpecPath = Join-Path $repoRoot "tools/packaging/specs/win7-virtio-win.json"
   Assert-GuestToolsDevicesCmdServices -ZipPath $defaultsZip -SpecPath $defaultsSpecPath
 
   $optionalDriverPaths = @(
@@ -864,18 +865,10 @@ if (-not $SkipGuestToolsDefaultsCheck) {
     "drivers/amd64/vioinput/vioinput.inf"
   )
 
-  if ($OmitOptionalDrivers) {
-    foreach ($p in $optionalDriverPaths) {
-      if ($defaultsPaths -contains $p) {
-        throw "Did not expect optional driver file path to be packaged when optional drivers are omitted: $p"
-      }
-    }
-  } else {
-    # Default profile is 'full', so optional drivers SHOULD be packaged by default when present.
-    foreach ($p in $optionalDriverPaths) {
-      if (-not ($defaultsPaths -contains $p)) {
-        throw "Expected optional driver file path to be packaged by default (-Profile full): $p"
-      }
+  # Default profile is 'minimal', so optional drivers SHOULD NOT be packaged by default.
+  foreach ($p in $optionalDriverPaths) {
+    if ($defaultsPaths -contains $p) {
+      throw "Did not expect optional driver file path to be packaged by default (-Profile minimal): $p"
     }
   }
 
