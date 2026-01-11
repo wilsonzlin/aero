@@ -215,7 +215,7 @@ pub fn demo_render_rgba8888(
 ) -> u32 {
     #[cfg(target_arch = "wasm32")]
     {
-        if dst_offset == 0 || width == 0 || height == 0 {
+        if width == 0 || height == 0 {
             return 0;
         }
 
