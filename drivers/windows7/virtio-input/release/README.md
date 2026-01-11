@@ -56,7 +56,7 @@ If multiple matching files exist (e.g. because multiple build outputs are presen
 
 The script looks for either:
 
-- `drivers/windows7/virtio-input/inf/virtio-input.inf` (unified INF), or
+- `drivers/windows7/virtio-input/inf/virtio-input.inf` (unified INF; rename from `virtio-input.inf.disabled` when using this scaffold), or
 - `drivers/windows7/virtio-input/inf/virtio-input-<arch>.inf` (per-arch INF)
 
 ## Notes

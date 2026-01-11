@@ -8,6 +8,10 @@ This directory contains **packaging + installation infrastructure** for the Aero
 
 > This is **infrastructure only**. The actual KMDF/virtio/HID driver code (`aero_virtio_input.sys`) is intentionally not present yet.
 
+> Note: The INF is checked in as `inf/virtio-input.inf.disabled` so CI/packaging workflows don't accidentally pick it up
+> (it would conflict with the actively-built `drivers/windows/virtio-input/virtio-input.inf`). When the driver exists,
+> rename it back to `inf/virtio-input.inf` before generating catalogs/signing or installing.
+
 ## KMDF version / WDF runtime (Win7 SP1)
 
 The Windows 7 installation story is intentionally simple: the driver is built against **KMDF 1.9**, which is
@@ -16,7 +20,7 @@ The Windows 7 installation story is intentionally simple: the driver is built ag
 - **Built against:** KMDF **1.9**
 - **Runtime on a clean Win7 SP1 machine:** present (`%SystemRoot%\System32\drivers\Wdf01000.sys`)
 - **KMDF coinstaller required on Win7 SP1:** **No**
-- **INF policy:** `inf/virtio-input.inf` pins `KmdfLibraryVersion = 1.9` and intentionally does **not** include any
+- **INF policy:** `inf/virtio-input.inf.disabled` (rename to `virtio-input.inf` when using it) pins `KmdfLibraryVersion = 1.9` and intentionally does **not** include any
   `CoInstallers32` / `WdfCoInstaller*` sections.
 
 If you intentionally rebuild the driver against **KMDF > 1.9** (for example, by using WDK 10 defaults), Windows 7 will
@@ -91,7 +95,7 @@ See also: `docs/pci-hwids.md` (QEMU behavior + spec mapping).
 
 If your emulator/QEMU build uses a different PCI device ID, update:
 
-- `drivers/windows7/virtio-input/inf/virtio-input.inf` → `[Aero.NTx86]` / `[Aero.NTamd64]`
+- `drivers/windows7/virtio-input/inf/virtio-input.inf.disabled` → `[Aero.NTx86]` / `[Aero.NTamd64]`
 
 To confirm the IDs on Windows 7:
 
@@ -193,7 +197,8 @@ This signs:
 2. **Browse my computer**
 3. **Let me pick** → **Have Disk…**
 4. Browse to `drivers/windows7/virtio-input/inf/`
-5. Select `virtio-input.inf`
+5. If you have not already, rename `virtio-input.inf.disabled` to `virtio-input.inf`
+6. Select `virtio-input.inf`
 
 ### pnputil (Windows 7)
 
@@ -202,6 +207,7 @@ Windows 7 includes `pnputil.exe` but with an older CLI.
 From an elevated command prompt:
 
 ```cmd
+REM First, ensure the INF is named virtio-input.inf (rename from .inf.disabled if needed).
 pnputil -i -a C:\path\to\virtio-input.inf
 ```
 

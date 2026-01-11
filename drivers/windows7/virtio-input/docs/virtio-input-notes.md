@@ -30,7 +30,7 @@ QEMU, pass `x-pci-revision=0x01` (and preferably `disable-legacy=on`) on the
 
 If the emulator uses a non-standard ID, update:
 
-- `inf/virtio-input.inf` → `[Aero.NTx86]` and `[Aero.NTamd64]`
+- `inf/virtio-input.inf.disabled` → `[Aero.NTx86]` and `[Aero.NTamd64]`
 
 ## QEMU device names
 

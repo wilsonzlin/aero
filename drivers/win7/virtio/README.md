@@ -57,9 +57,10 @@ Open `win7-virtio.sln` (or the individual `*.vcxproj`) in Visual Studio, select 
 
 ### Hardware ID / device binding
 
-The INF currently matches the virtio-input modern PCI ID:
+The INF intentionally defaults to a **non-contract** virtio PCI ID so it cannot
+steal binding from real Aero devices when multiple driver packages are staged:
 
-* `PCI\VEN_1AF4&DEV_1052`
+* `PCI\VEN_1AF4&DEV_1040`
 
 To bind to a different virtio modern device, edit the hardware ID in:
 

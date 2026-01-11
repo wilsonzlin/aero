@@ -14,6 +14,7 @@ references one of Aero's contract-v1 modern virtio PCI device IDs:
 
   - `PCI\VEN_1AF4&DEV_1041` (virtio-net)
   - `PCI\VEN_1AF4&DEV_1042` (virtio-blk)
+  - `PCI\VEN_1AF4&DEV_1052` (virtio-input)
 
 The check ignores comment lines (starting with ';') so documentation inside INFs can
 still mention these IDs.
@@ -53,7 +54,8 @@ if (-not $infFiles -or $infFiles.Count -eq 0) {
 # Only enforce the IDs we know are boot/perf-critical today; broaden later if needed.
 $hwidPatterns = @(
   [pscustomobject]@{ Name = 'virtio-net (DEV_1041)'; Regex = [regex]::new('(?i)PCI\\VEN_1AF4&DEV_1041') },
-  [pscustomobject]@{ Name = 'virtio-blk (DEV_1042)'; Regex = [regex]::new('(?i)PCI\\VEN_1AF4&DEV_1042') }
+  [pscustomobject]@{ Name = 'virtio-blk (DEV_1042)'; Regex = [regex]::new('(?i)PCI\\VEN_1AF4&DEV_1042') },
+  [pscustomobject]@{ Name = 'virtio-input (DEV_1052)'; Regex = [regex]::new('(?i)PCI\\VEN_1AF4&DEV_1052') }
 )
 
 $matchesByPattern = @{}
@@ -112,7 +114,7 @@ if ($conflicts.Count -gt 0) {
   exit 1
 }
 
-Write-Host "OK: no duplicate INFs match Aero contract-v1 virtio HWIDs (DEV_1041/DEV_1042)."
+Write-Host "OK: no duplicate INFs match Aero contract-v1 virtio HWIDs (DEV_1041/DEV_1042/DEV_1052)."
 
 # Enforce that there is only one MSBuild project that produces aerovblk.sys.
 $projFiles = @(Get-ChildItem -LiteralPath $driversRoot -Recurse -File -Filter '*.vcxproj' -ErrorAction SilentlyContinue | Sort-Object -Property FullName)

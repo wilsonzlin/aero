@@ -5,7 +5,7 @@ rem Generates a driver catalog for Windows 7 (x86 + x64) using Inf2Cat.
 rem
 rem Prerequisites:
 rem   - Inf2Cat.exe available in PATH (run from a WDK command prompt)
-rem   - inf\virtio-input.inf exists
+rem   - inf\virtio-input.inf exists (note: in-tree scaffold keeps it as virtio-input.inf.disabled)
 rem   - All files referenced by the INF exist in inf\ (at minimum aero_virtio_input.sys)
 
 set SCRIPT_DIR=%~dp0
@@ -15,6 +15,9 @@ set INF_FILE=%INF_DIR%\virtio-input.inf
 
 if not exist "%INF_FILE%" (
   echo ERROR: INF not found: "%INF_FILE%"
+  if exist "%INF_FILE%.disabled" (
+    echo HINT: Rename "%INF_FILE%.disabled" to "%INF_FILE%" before running Inf2Cat.
+  )
   exit /b 1
 )
 

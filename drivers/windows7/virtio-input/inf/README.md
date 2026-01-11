@@ -2,8 +2,8 @@
 
 This folder is intended to be the **exact directory you point Windows to** during installation:
 
-- Device Manager → **Have Disk…** → select `virtio-input.inf`
-- `pnputil -i -a virtio-input.inf` (Windows 7)
+- Device Manager → **Have Disk…** → select `virtio-input.inf` (rename from `virtio-input.inf.disabled` first)
+- `pnputil -i -a virtio-input.inf` (Windows 7; rename from `virtio-input.inf.disabled` first)
 
 In a finished package, this directory will contain (at minimum):
 

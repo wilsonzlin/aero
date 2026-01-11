@@ -13,11 +13,15 @@ CatalogFile=virtio-transport-test.cat
 ; Edit the hardware ID below to bind the smoke-test driver to a different
 ; virtio modern PCI device.
 ;
+; Default policy: use a *non-contract* virtio PCI ID so this test driver cannot
+; steal binding from real Aero devices when multiple driver packages are staged
+; (for example, when recursively installing all *.inf files from a driver bundle).
+;
 [Standard.NTx86.6.1]
-%VirtioTransportTest.DeviceDesc%=VirtioTransportTest_Install, PCI\VEN_1AF4&DEV_1052
+%VirtioTransportTest.DeviceDesc%=VirtioTransportTest_Install, PCI\VEN_1AF4&DEV_1040
 
 [Standard.NTamd64.6.1]
-%VirtioTransportTest.DeviceDesc%=VirtioTransportTest_Install, PCI\VEN_1AF4&DEV_1052
+%VirtioTransportTest.DeviceDesc%=VirtioTransportTest_Install, PCI\VEN_1AF4&DEV_1040
 
 [DestinationDirs]
 DefaultDestDir=12 ; %windir%\System32\drivers
