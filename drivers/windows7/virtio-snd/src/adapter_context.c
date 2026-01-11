@@ -16,6 +16,41 @@ typedef struct _VIRTIOSND_ADAPTER_CONTEXT_ENTRY {
 static LIST_ENTRY g_VirtIoSndAdapterContextList = {&g_VirtIoSndAdapterContextList, &g_VirtIoSndAdapterContextList};
 static KSPIN_LOCK g_VirtIoSndAdapterContextLock = 0;
 
+static _Ret_maybenull_ PUNKNOWN
+VirtIoSndAdapterContext_Canonicalize(
+    _In_ PUNKNOWN UnknownAdapter,
+    _Out_ BOOLEAN* NeedsRelease)
+{
+    PUNKNOWN canonical;
+
+    if (NeedsRelease != NULL) {
+        *NeedsRelease = FALSE;
+    }
+
+    if (UnknownAdapter == NULL) {
+        return UnknownAdapter;
+    }
+
+    /*
+     * QueryInterface can only be called at PASSIVE_LEVEL. If we're invoked at a
+     * higher IRQL (e.g. from an unexpected miniport path), fall back to raw
+     * pointer identity.
+     */
+    if (KeGetCurrentIrql() != PASSIVE_LEVEL) {
+        return UnknownAdapter;
+    }
+
+    canonical = NULL;
+    if (NT_SUCCESS(IUnknown_QueryInterface(UnknownAdapter, &IID_IUnknown, (PVOID*)&canonical)) && canonical != NULL) {
+        if (NeedsRelease != NULL) {
+            *NeedsRelease = TRUE;
+        }
+        return canonical;
+    }
+
+    return UnknownAdapter;
+}
+
 static _Ret_maybenull_ PVIRTIOSND_ADAPTER_CONTEXT_ENTRY
 VirtIoSndAdapterContext_FindLocked(_In_ PUNKNOWN UnknownAdapter)
 {
@@ -54,6 +89,8 @@ VirtIoSndAdapterContext_Register(PUNKNOWN UnknownAdapter, PVIRTIOSND_DEVICE_EXTE
 {
     NTSTATUS status;
     PVIRTIOSND_ADAPTER_CONTEXT_ENTRY newEntry;
+    PUNKNOWN key;
+    BOOLEAN keyNeedsRelease;
     KIRQL oldIrql;
 
     if (UnknownAdapter == NULL || Dx == NULL) {
@@ -62,42 +99,56 @@ VirtIoSndAdapterContext_Register(PUNKNOWN UnknownAdapter, PVIRTIOSND_DEVICE_EXTE
 
     status = STATUS_SUCCESS;
     newEntry = NULL;
+    keyNeedsRelease = FALSE;
+    key = VirtIoSndAdapterContext_Canonicalize(UnknownAdapter, &keyNeedsRelease);
 
     KeAcquireSpinLock(&g_VirtIoSndAdapterContextLock, &oldIrql);
     {
         PVIRTIOSND_ADAPTER_CONTEXT_ENTRY existing;
 
-        existing = VirtIoSndAdapterContext_FindLocked(UnknownAdapter);
+        existing = VirtIoSndAdapterContext_FindLocked(key);
         if (existing != NULL) {
             existing->Dx = Dx;
             existing->ForceNullBackend = ForceNullBackend;
             KeReleaseSpinLock(&g_VirtIoSndAdapterContextLock, oldIrql);
+            if (keyNeedsRelease) {
+                IUnknown_Release(key);
+            }
             return STATUS_SUCCESS;
         }
     }
     KeReleaseSpinLock(&g_VirtIoSndAdapterContextLock, oldIrql);
 
+    /*
+     * Hold a reference so the mapping can survive after VirtIoSndStartDevice drops
+     * its local PcGetAdapterCommon reference.
+     *
+     * Note: If Canonicalize() succeeded, the QueryInterface call already took a
+     * reference on `key`. Otherwise we must AddRef explicitly.
+     */
+    if (!keyNeedsRelease) {
+        IUnknown_AddRef(key);
+        keyNeedsRelease = TRUE;
+    }
+
     newEntry = (PVIRTIOSND_ADAPTER_CONTEXT_ENTRY)ExAllocatePoolWithTag(NonPagedPool, sizeof(*newEntry), VIRTIOSND_POOL_TAG);
     if (newEntry == NULL) {
+        if (keyNeedsRelease) {
+            IUnknown_Release(key);
+        }
         return STATUS_INSUFFICIENT_RESOURCES;
     }
 
     RtlZeroMemory(newEntry, sizeof(*newEntry));
-    newEntry->UnknownAdapter = UnknownAdapter;
+    newEntry->UnknownAdapter = key;
     newEntry->Dx = Dx;
     newEntry->ForceNullBackend = ForceNullBackend;
-
-    /*
-     * Hold a reference so the mapping can survive after VirtIoSndStartDevice drops
-     * its local PcGetAdapterCommon reference.
-     */
-    IUnknown_AddRef(UnknownAdapter);
 
     KeAcquireSpinLock(&g_VirtIoSndAdapterContextLock, &oldIrql);
     {
         PVIRTIOSND_ADAPTER_CONTEXT_ENTRY existing;
 
-        existing = VirtIoSndAdapterContext_FindLocked(UnknownAdapter);
+        existing = VirtIoSndAdapterContext_FindLocked(key);
         if (existing != NULL) {
             existing->Dx = Dx;
             existing->ForceNullBackend = ForceNullBackend;
@@ -111,7 +162,7 @@ VirtIoSndAdapterContext_Register(PUNKNOWN UnknownAdapter, PVIRTIOSND_DEVICE_EXTE
     KeReleaseSpinLock(&g_VirtIoSndAdapterContextLock, oldIrql);
 
     if (newEntry != NULL) {
-        IUnknown_Release(newEntry->UnknownAdapter);
+        IUnknown_Release(key);
         ExFreePoolWithTag(newEntry, VIRTIOSND_POOL_TAG);
     }
 
@@ -123,6 +174,8 @@ VOID
 VirtIoSndAdapterContext_Unregister(PUNKNOWN UnknownAdapter)
 {
     PVIRTIOSND_ADAPTER_CONTEXT_ENTRY entry;
+    PUNKNOWN key;
+    BOOLEAN keyNeedsRelease;
     KIRQL oldIrql;
 
     if (UnknownAdapter == NULL) {
@@ -130,10 +183,12 @@ VirtIoSndAdapterContext_Unregister(PUNKNOWN UnknownAdapter)
     }
 
     entry = NULL;
+    keyNeedsRelease = FALSE;
+    key = VirtIoSndAdapterContext_Canonicalize(UnknownAdapter, &keyNeedsRelease);
 
     KeAcquireSpinLock(&g_VirtIoSndAdapterContextLock, &oldIrql);
     {
-        entry = VirtIoSndAdapterContext_FindLocked(UnknownAdapter);
+        entry = VirtIoSndAdapterContext_FindLocked(key);
         if (entry != NULL) {
             RemoveEntryList(&entry->ListEntry);
             InitializeListHead(&entry->ListEntry);
@@ -145,6 +200,10 @@ VirtIoSndAdapterContext_Unregister(PUNKNOWN UnknownAdapter)
         IUnknown_Release(entry->UnknownAdapter);
         ExFreePoolWithTag(entry, VIRTIOSND_POOL_TAG);
     }
+
+    if (keyNeedsRelease) {
+        IUnknown_Release(key);
+    }
 }
 
 _Use_decl_annotations_
@@ -152,6 +211,8 @@ PVIRTIOSND_DEVICE_EXTENSION
 VirtIoSndAdapterContext_Lookup(PUNKNOWN UnknownAdapter, BOOLEAN* ForceNullBackendOut)
 {
     PVIRTIOSND_DEVICE_EXTENSION dx;
+    PUNKNOWN key;
+    BOOLEAN keyNeedsRelease;
     KIRQL oldIrql;
 
     if (ForceNullBackendOut != NULL) {
@@ -163,12 +224,14 @@ VirtIoSndAdapterContext_Lookup(PUNKNOWN UnknownAdapter, BOOLEAN* ForceNullBacken
     }
 
     dx = NULL;
+    keyNeedsRelease = FALSE;
+    key = VirtIoSndAdapterContext_Canonicalize(UnknownAdapter, &keyNeedsRelease);
 
     KeAcquireSpinLock(&g_VirtIoSndAdapterContextLock, &oldIrql);
     {
         PVIRTIOSND_ADAPTER_CONTEXT_ENTRY entry;
 
-        entry = VirtIoSndAdapterContext_FindLocked(UnknownAdapter);
+        entry = VirtIoSndAdapterContext_FindLocked(key);
         if (entry != NULL) {
             dx = entry->Dx;
             if (ForceNullBackendOut != NULL) {
@@ -178,6 +241,10 @@ VirtIoSndAdapterContext_Lookup(PUNKNOWN UnknownAdapter, BOOLEAN* ForceNullBacken
     }
     KeReleaseSpinLock(&g_VirtIoSndAdapterContextLock, oldIrql);
 
+    if (keyNeedsRelease) {
+        IUnknown_Release(key);
+    }
+
     return dx;
 }
 
@@ -186,6 +253,8 @@ VOID
 VirtIoSndAdapterContext_UnregisterAndStop(PUNKNOWN UnknownAdapter, BOOLEAN MarkRemoved)
 {
     PVIRTIOSND_ADAPTER_CONTEXT_ENTRY entry;
+    PUNKNOWN key;
+    BOOLEAN keyNeedsRelease;
     KIRQL oldIrql;
 
     if (UnknownAdapter == NULL) {
@@ -193,10 +262,12 @@ VirtIoSndAdapterContext_UnregisterAndStop(PUNKNOWN UnknownAdapter, BOOLEAN MarkR
     }
 
     entry = NULL;
+    keyNeedsRelease = FALSE;
+    key = VirtIoSndAdapterContext_Canonicalize(UnknownAdapter, &keyNeedsRelease);
 
     KeAcquireSpinLock(&g_VirtIoSndAdapterContextLock, &oldIrql);
     {
-        entry = VirtIoSndAdapterContext_FindLocked(UnknownAdapter);
+        entry = VirtIoSndAdapterContext_FindLocked(key);
         if (entry != NULL) {
             RemoveEntryList(&entry->ListEntry);
             InitializeListHead(&entry->ListEntry);
@@ -205,6 +276,9 @@ VirtIoSndAdapterContext_UnregisterAndStop(PUNKNOWN UnknownAdapter, BOOLEAN MarkR
     KeReleaseSpinLock(&g_VirtIoSndAdapterContextLock, oldIrql);
 
     if (entry == NULL) {
+        if (keyNeedsRelease) {
+            IUnknown_Release(key);
+        }
         return;
     }
 
@@ -218,4 +292,8 @@ VirtIoSndAdapterContext_UnregisterAndStop(PUNKNOWN UnknownAdapter, BOOLEAN MarkR
 
     IUnknown_Release(entry->UnknownAdapter);
     ExFreePoolWithTag(entry, VIRTIOSND_POOL_TAG);
+
+    if (keyNeedsRelease) {
+        IUnknown_Release(key);
+    }
 }
