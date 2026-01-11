@@ -6,9 +6,11 @@ use aero_cpu_core::state::{
     RFLAGS_IF,
 };
 use firmware::bda::BiosDataArea;
+use firmware::acpi::DEFAULT_PCI_MMIO_START;
 use firmware::bios::{
     build_bios_rom, Bios, BiosBus, BiosConfig, BDA_MIDNIGHT_FLAG_ADDR, BDA_TICK_COUNT_ADDR,
-    BIOS_ALIAS_BASE, BIOS_BASE, BIOS_SEGMENT, RESET_VECTOR_OFFSET, TICKS_PER_DAY,
+    BIOS_ALIAS_BASE, BIOS_BASE, BIOS_SEGMENT, PCIE_ECAM_BASE, PCIE_ECAM_SIZE, RESET_VECTOR_OFFSET,
+    TICKS_PER_DAY,
 };
 use firmware::rtc::{CmosRtc, DateTime};
 use machine::{
@@ -951,12 +953,13 @@ fn aero_cpu_core_int15_e820_loop_reports_pci_hole_and_high_memory_remap() {
     // over INT 15h AX=E820h until BX returns 0 and stores each 24-byte entry contiguously.
     //
     // Use a memory size large enough to force the BIOS to emit:
-    // - the PCIe ECAM window at 0xB000_0000
+    // - the PCIe ECAM window
     // - the PCI/MMIO hole below 4GiB
     // - remapped RAM above 4GiB
+    let mem_size_bytes = 5 * 1024 * 1024 * 1024;
     let cfg = BiosConfig {
         enable_acpi: false,
-        memory_size_bytes: 5 * 1024 * 1024 * 1024,
+        memory_size_bytes: mem_size_bytes,
         ..test_bios_config()
     };
     let bios = Bios::new(cfg);
@@ -1034,6 +1037,8 @@ fn aero_cpu_core_int15_e820_loop_reports_pci_hole_and_high_memory_remap() {
     let mut found_ecam = false;
     let mut found_pci_hole = false;
     let mut found_high_ram = false;
+    const FOUR_GIB: u64 = 0x1_0000_0000;
+    let expected_high_len = mem_size_bytes - PCIE_ECAM_BASE;
     for i in 0..entries {
         let off = 0x0600 + i * 24;
         let base = vm.mem.read_u64(off);
@@ -1041,18 +1046,18 @@ fn aero_cpu_core_int15_e820_loop_reports_pci_hole_and_high_memory_remap() {
         let kind = vm.mem.read_u32(off + 16);
         let attrs = vm.mem.read_u32(off + 20);
 
-        if base == 0xB000_0000 {
-            assert_eq!(length, 0x1000_0000);
+        if base == PCIE_ECAM_BASE {
+            assert_eq!(length, PCIE_ECAM_SIZE);
             assert_eq!(kind, 2);
             assert_eq!(attrs, 1);
             found_ecam = true;
-        } else if base == 0xC000_0000 {
-            assert_eq!(length, 0x4000_0000);
+        } else if base == DEFAULT_PCI_MMIO_START {
+            assert_eq!(length, FOUR_GIB - DEFAULT_PCI_MMIO_START);
             assert_eq!(kind, 2);
             assert_eq!(attrs, 1);
             found_pci_hole = true;
-        } else if base == 0x1_0000_0000 {
-            assert_eq!(length, 0x9000_0000);
+        } else if base == FOUR_GIB {
+            assert_eq!(length, expected_high_len);
             assert_eq!(kind, 1);
             assert_eq!(attrs, 1);
             found_high_ram = true;
