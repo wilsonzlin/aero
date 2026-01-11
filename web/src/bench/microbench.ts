@@ -7,20 +7,51 @@ import type {
 } from "./types";
 import { clearBenchmarks, setBenchmark } from "./store";
 
-import initMicrobench, {
-  bench_branchy,
-  bench_hash,
-  bench_integer_alu,
-  bench_memcpy,
-} from "../wasm/aero_microbench/aero_microbench.js";
+type MicrobenchModule = {
+  default: () => Promise<unknown>;
+  bench_branchy: (iters: number) => unknown;
+  bench_hash: (bytes: number, iters: number) => unknown;
+  bench_integer_alu: (iters: number) => unknown;
+  bench_memcpy: (bytes: number, iters: number) => unknown;
+};
 
-let wasmInit: Promise<void> | null = null;
+type MicrobenchApi = Omit<MicrobenchModule, "default">;
 
-async function ensureMicrobenchWasm(): Promise<void> {
-  if (!wasmInit) {
-    wasmInit = initMicrobench().then(() => undefined);
+// `wasm-pack` outputs the microbench module into `web/src/wasm/aero_microbench/`.
+//
+// This directory is generated (see `web/package.json` script `build:wasm:microbench`) and is not
+// necessarily present in a fresh checkout. Use `import.meta.glob` so the app can still build/run
+// (microbench suite is optional) and surface a clear error only when the benchmark is invoked.
+const microbenchImporters = import.meta.glob("../wasm/aero_microbench/aero_microbench.js");
+
+let microbenchInit: Promise<MicrobenchApi> | null = null;
+
+async function ensureMicrobenchApi(): Promise<MicrobenchApi> {
+  if (!microbenchInit) {
+    microbenchInit = (async () => {
+      const importer = microbenchImporters["../wasm/aero_microbench/aero_microbench.js"];
+      if (!importer) {
+        throw new Error(
+          [
+            "Missing microbench WASM package.",
+            "",
+            "Build it with:",
+            "  cd web",
+            "  npm run build:wasm:microbench",
+          ].join("\n"),
+        );
+      }
+      const mod = (await importer()) as MicrobenchModule;
+      await mod.default();
+      return {
+        bench_branchy: mod.bench_branchy,
+        bench_hash: mod.bench_hash,
+        bench_integer_alu: mod.bench_integer_alu,
+        bench_memcpy: mod.bench_memcpy,
+      };
+    })();
   }
-  await wasmInit;
+  return await microbenchInit;
 }
 
 function nowMs(): number {
@@ -212,7 +243,7 @@ async function runBinaryCase(
 export async function runMicrobenchSuite(
   opts?: MicrobenchSuiteOptions,
 ): Promise<MicrobenchSuiteResultV1> {
-  await ensureMicrobenchWasm();
+  const microbench = await ensureMicrobenchApi();
 
   const resolvedOpts = resolveOptions(opts);
 
@@ -233,7 +264,7 @@ export async function runMicrobenchSuite(
 
   cases.integer_alu = await runUnaryCase(
     "integer_alu",
-    bench_integer_alu,
+    microbench.bench_integer_alu,
     resolvedOpts.mode,
     resolvedOpts.warmup,
     resolvedOpts.timeBudgetMs,
@@ -242,7 +273,7 @@ export async function runMicrobenchSuite(
 
   cases.branchy = await runUnaryCase(
     "branchy",
-    bench_branchy,
+    microbench.bench_branchy,
     resolvedOpts.mode,
     resolvedOpts.warmup,
     resolvedOpts.timeBudgetMs,
@@ -251,7 +282,7 @@ export async function runMicrobenchSuite(
 
   cases.memcpy = await runBinaryCase(
     "memcpy",
-    bench_memcpy,
+    microbench.bench_memcpy,
     resolvedOpts.memcpyBytes,
     resolvedOpts.mode,
     resolvedOpts.warmup,
@@ -261,7 +292,7 @@ export async function runMicrobenchSuite(
 
   cases.hash = await runBinaryCase(
     "hash",
-    bench_hash,
+    microbench.bench_hash,
     resolvedOpts.hashBytes,
     resolvedOpts.mode,
     resolvedOpts.warmup,

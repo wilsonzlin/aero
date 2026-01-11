@@ -31,12 +31,22 @@ export interface MicCaptureOptions {
   autoGainControl?: boolean;
 }
 
+type ResolvedMicCaptureOptions = {
+  sampleRate: number;
+  bufferMs: number;
+  preferWorklet: boolean;
+  deviceId?: string;
+  echoCancellation: boolean;
+  noiseSuppression: boolean;
+  autoGainControl: boolean;
+};
+
 function isAudioWorkletSupported(): boolean {
   return typeof AudioWorkletNode !== "undefined";
 }
 
 export class MicCapture extends EventTarget {
-  readonly options: Required<MicCaptureOptions>;
+  readonly options: ResolvedMicCaptureOptions;
   readonly ringBuffer: MicRingBuffer;
 
   state: MicCaptureState = "inactive";
