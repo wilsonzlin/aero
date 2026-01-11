@@ -2930,10 +2930,6 @@ impl AeroGpuSoftwareExecutor {
             | cmd::AerogpuCmdOpcode::Flush => {
                 // No-op for software backend (work already executes at submit boundaries).
             }
-            _ => {
-                // Forward compatibility: ignore opcodes not yet implemented by the software
-                // backend. Unknown numeric opcodes are already filtered by `from_u32` above.
-            }
         }
 
         true
