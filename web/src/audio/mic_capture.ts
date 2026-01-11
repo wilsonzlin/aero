@@ -6,7 +6,11 @@ import {
   type MicRingBuffer,
   WRITE_POS_INDEX,
 } from "./mic_ring.js";
-import micWorkletProcessorUrl from "./mic-worklet-processor.js?worker&url";
+// Load the AudioWorklet processor module via a URL derived from `import.meta.url`.
+//
+// Avoid Vite-only `?worker&url` imports so this module can be imported in non-bundled
+// environments (e.g. Node unit tests) without custom transforms.
+const micWorkletProcessorUrl = new URL("./mic-worklet-processor.js", import.meta.url).toString();
 
 export { createMicRingBuffer, micRingBufferReadInto, type MicRingBuffer } from "./mic_ring.js";
 
