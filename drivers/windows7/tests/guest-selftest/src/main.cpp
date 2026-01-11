@@ -1031,6 +1031,31 @@ struct VirtioSndBindingCheckResult {
   bool any_problem = false;
 };
 
+static VirtioSndBindingCheckResult SummarizeVirtioSndPciBinding(const std::vector<VirtioSndPciDevice>& devices) {
+  VirtioSndBindingCheckResult out;
+  for (const auto& dev : devices) {
+    const std::wstring expected_service = dev.is_transitional && !dev.is_modern
+                                              ? kVirtioSndExpectedServiceTransitional
+                                              : kVirtioSndExpectedServiceModern;
+    const bool has_service = !dev.service.empty();
+    const bool service_ok = has_service && EqualsInsensitive(dev.service, expected_service);
+    const bool problem_ok = (dev.cm_problem == 0) && ((dev.cm_status & DN_HAS_PROBLEM) == 0);
+
+    if (!has_service) {
+      out.any_missing_service = true;
+    } else if (!service_ok) {
+      out.any_wrong_service = true;
+    }
+    if (!problem_ok) {
+      out.any_problem = true;
+    }
+    if (service_ok && problem_ok) {
+      out.ok = true;
+    }
+  }
+  return out;
+}
+
 static VirtioSndBindingCheckResult CheckVirtioSndPciBinding(Logger& log,
                                                             const std::vector<VirtioSndPciDevice>& devices) {
   VirtioSndBindingCheckResult out;
@@ -3660,7 +3685,7 @@ int wmain(int argc, wchar_t** argv) {
   // exercise the playback path automatically so audio regressions are caught even if the image
   // runs the selftest without `--test-snd`. Use `--disable-snd` to skip all virtio-snd testing, or
   // `--test-snd/--require-snd` to fail if the device is missing.
-  const auto snd_pci =
+  auto snd_pci =
       opt.disable_snd ? std::vector<VirtioSndPciDevice>{}
                       : DetectVirtioSndPciDevices(log, opt.allow_virtio_snd_transitional);
   const bool want_snd_playback = opt.require_snd || !snd_pci.empty();
@@ -3704,135 +3729,166 @@ int wmain(int argc, wchar_t** argv) {
       } else {
         log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|device_missing");
       }
-    } else if (const auto binding = CheckVirtioSndPciBinding(log, snd_pci); !binding.ok) {
-      const char* reason = binding.any_wrong_service   ? "wrong_service"
-                          : binding.any_missing_service ? "driver_not_bound"
-                          : binding.any_problem         ? "device_error"
-                                                        : "driver_not_bound";
-
-      if (want_snd_playback) {
-        log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|%s", reason);
-        all_ok = false;
-      }
-
-      if (opt.disable_snd_capture) {
-        log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|disabled");
-      } else if (opt.require_snd_capture) {
-        log.LogLine("virtio-snd: --require-snd-capture set; failing (driver binding not healthy)");
-        log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL|%s", reason);
-        all_ok = false;
-      } else {
-        log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|%s", reason);
-      }
-    } else if (!VirtioSndHasTopologyInterface(log, snd_pci)) {
-      log.LogLine("virtio-snd: no KSCATEGORY_TOPOLOGY interface found for detected virtio-snd device");
-
-      if (want_snd_playback) {
-        log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL");
-        all_ok = false;
-      }
-
-      if (opt.disable_snd_capture) {
-        log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|disabled");
-      } else if (opt.require_snd_capture) {
-        log.LogLine("virtio-snd: --require-snd-capture set; failing (topology interface missing)");
-        log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL|topology_interface_missing");
-        all_ok = false;
-      } else {
-        log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|topology_interface_missing");
-      }
     } else {
-      std::vector<std::wstring> match_names;
-      for (const auto& d : snd_pci) {
-        if (!d.description.empty()) match_names.push_back(d.description);
-      }
+      auto binding = CheckVirtioSndPciBinding(log, snd_pci);
 
-      if (want_snd_playback) {
-        bool snd_ok = false;
-        const auto snd = VirtioSndTest(log, match_names, opt.allow_virtio_snd_transitional);
-        if (snd.ok) {
-          snd_ok = true;
-        } else {
-          log.Logf("virtio-snd: WASAPI failed reason=%s hr=0x%08lx",
-                   snd.fail_reason.empty() ? "unknown" : snd.fail_reason.c_str(),
-                   static_cast<unsigned long>(snd.hr));
-          log.LogLine("virtio-snd: trying waveOut fallback");
-          snd_ok = WaveOutToneTest(log, match_names, opt.allow_virtio_snd_transitional);
-        }
-
-        log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|%s", snd_ok ? "PASS" : "FAIL");
-        all_ok = all_ok && snd_ok;
-      }
-
-      if (opt.disable_snd_capture) {
-        log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|disabled");
-      } else if (want_snd_capture) {
-        const bool capture_smoke_test = opt.test_snd_capture || opt.require_non_silence;
-        const DWORD capture_wait_ms = (opt.require_snd_capture || capture_smoke_test || want_snd_playback) ? 20000 : 0;
-        bool capture_ok = false;
-        const char* capture_method = "wasapi";
-        bool capture_silence_only = false;
-        bool capture_non_silence = false;
-        UINT64 capture_frames = 0;
-
-        auto capture = VirtioSndCaptureTest(log, match_names, capture_smoke_test, capture_wait_ms,
-                                            opt.allow_virtio_snd_transitional, opt.require_non_silence);
-        if (capture.ok) {
-          capture_ok = true;
-          capture_silence_only = capture.captured_silence_only;
-          capture_non_silence = capture.captured_non_silence;
-          capture_frames = capture.captured_frames;
-        } else if (capture_smoke_test) {
-          log.Logf("virtio-snd: capture WASAPI failed reason=%s hr=0x%08lx",
-                   capture.fail_reason.empty() ? "unknown" : capture.fail_reason.c_str(),
-                   static_cast<unsigned long>(capture.hr));
-          log.LogLine("virtio-snd: trying waveIn fallback");
-          const auto wavein = WaveInCaptureTest(log, match_names, opt.allow_virtio_snd_transitional,
-                                                opt.require_non_silence);
-          if (wavein.ok) {
-            capture_ok = true;
-            capture_method = "waveIn";
-            capture_silence_only = wavein.captured_silence_only;
-            capture_non_silence = wavein.captured_non_silence;
-            capture_frames = wavein.captured_frames;
+      // The scheduled task that runs the selftest can sometimes start very early during boot,
+      // before the device is fully bound to its driver service. When virtio-snd is present and
+      // expected, give PnP a short grace period to bind the driver so we don't report spurious
+      // failures (or capture endpoint missing) due to transient "driver_not_bound" states.
+      if (!binding.ok && !binding.any_wrong_service) {
+        const DWORD deadline_ms = GetTickCount() + 10000;
+        int attempt = 0;
+        while (!binding.ok && !binding.any_wrong_service &&
+               static_cast<int32_t>(GetTickCount() - deadline_ms) < 0) {
+          attempt++;
+          Sleep(250);
+          snd_pci = DetectVirtioSndPciDevices(log, opt.allow_virtio_snd_transitional);
+          binding = SummarizeVirtioSndPciBinding(snd_pci);
+          if (binding.ok) {
+            log.Logf("virtio-snd: pci binding became healthy after wait (attempt=%d)", attempt);
+            break;
           }
         }
 
-        if (capture_ok) {
-          if (capture_smoke_test) {
-            log.Logf(
-                "AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|PASS|method=%s|frames=%llu|non_silence=%d|silence_only=%d",
-                capture_method, capture_frames, capture_non_silence ? 1 : 0, capture_silence_only ? 1 : 0);
-          } else {
-            log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|PASS|endpoint_present");
-          }
-        } else if (capture.fail_reason == "no_matching_endpoint") {
-          if (opt.require_snd_capture) {
-            log.LogLine("virtio-snd: --require-snd-capture set; failing");
-            log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL|endpoint_missing");
-            all_ok = false;
-          } else {
-            log.LogLine("virtio-snd: no capture endpoint; skipping (use --require-snd-capture to require)");
-            log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|endpoint_missing");
-          }
-        } else if (capture.fail_reason == "captured_silence") {
-          log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL|silence");
+        if (!binding.ok) {
+          // Re-run the binding check with logging enabled to capture actionable diagnostics.
+          binding = CheckVirtioSndPciBinding(log, snd_pci);
+        }
+      }
+
+      if (!binding.ok) {
+        const char* reason = binding.any_wrong_service   ? "wrong_service"
+                            : binding.any_missing_service ? "driver_not_bound"
+                            : binding.any_problem         ? "device_error"
+                                                          : "driver_not_bound";
+
+        if (want_snd_playback) {
+          log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|%s", reason);
+          all_ok = false;
+        }
+
+        if (opt.disable_snd_capture) {
+          log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|disabled");
+        } else if (opt.require_snd_capture) {
+          log.LogLine("virtio-snd: --require-snd-capture set; failing (driver binding not healthy)");
+          log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL|%s", reason);
           all_ok = false;
         } else {
-          log.Logf("virtio-snd: capture failed reason=%s hr=0x%08lx",
-                   capture.fail_reason.empty() ? "unknown" : capture.fail_reason.c_str(),
-                   static_cast<unsigned long>(capture.hr));
-          if (opt.require_snd_capture || capture_smoke_test) {
-            log.LogLine(
-                capture.endpoint_found ? "AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL|stream_init_failed"
-                                      : "AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL|error");
-            all_ok = false;
-          } else {
-            log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|error");
-          }
+          log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|%s", reason);
+        }
+      } else if (!VirtioSndHasTopologyInterface(log, snd_pci)) {
+        log.LogLine("virtio-snd: no KSCATEGORY_TOPOLOGY interface found for detected virtio-snd device");
+
+        if (want_snd_playback) {
+          log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL");
+          all_ok = false;
+        }
+
+        if (opt.disable_snd_capture) {
+          log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|disabled");
+        } else if (opt.require_snd_capture) {
+          log.LogLine("virtio-snd: --require-snd-capture set; failing (topology interface missing)");
+          log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL|topology_interface_missing");
+          all_ok = false;
+        } else {
+          log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|topology_interface_missing");
         }
       } else {
-        log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set");
+        std::vector<std::wstring> match_names;
+        for (const auto& d : snd_pci) {
+          if (!d.description.empty()) match_names.push_back(d.description);
+        }
+
+        if (want_snd_playback) {
+          bool snd_ok = false;
+          const auto snd = VirtioSndTest(log, match_names, opt.allow_virtio_snd_transitional);
+          if (snd.ok) {
+            snd_ok = true;
+          } else {
+            log.Logf("virtio-snd: WASAPI failed reason=%s hr=0x%08lx",
+                     snd.fail_reason.empty() ? "unknown" : snd.fail_reason.c_str(),
+                     static_cast<unsigned long>(snd.hr));
+            log.LogLine("virtio-snd: trying waveOut fallback");
+            snd_ok = WaveOutToneTest(log, match_names, opt.allow_virtio_snd_transitional);
+          }
+
+          log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|%s", snd_ok ? "PASS" : "FAIL");
+          all_ok = all_ok && snd_ok;
+        }
+
+        if (opt.disable_snd_capture) {
+          log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|disabled");
+        } else if (want_snd_capture) {
+          const bool capture_smoke_test = opt.test_snd_capture || opt.require_non_silence;
+          const DWORD capture_wait_ms =
+              (opt.require_snd_capture || capture_smoke_test || want_snd_playback) ? 20000 : 0;
+          bool capture_ok = false;
+          const char* capture_method = "wasapi";
+          bool capture_silence_only = false;
+          bool capture_non_silence = false;
+          UINT64 capture_frames = 0;
+
+          auto capture = VirtioSndCaptureTest(log, match_names, capture_smoke_test, capture_wait_ms,
+                                              opt.allow_virtio_snd_transitional, opt.require_non_silence);
+          if (capture.ok) {
+            capture_ok = true;
+            capture_silence_only = capture.captured_silence_only;
+            capture_non_silence = capture.captured_non_silence;
+            capture_frames = capture.captured_frames;
+          } else if (capture_smoke_test) {
+            log.Logf("virtio-snd: capture WASAPI failed reason=%s hr=0x%08lx",
+                     capture.fail_reason.empty() ? "unknown" : capture.fail_reason.c_str(),
+                     static_cast<unsigned long>(capture.hr));
+            log.LogLine("virtio-snd: trying waveIn fallback");
+            const auto wavein = WaveInCaptureTest(log, match_names, opt.allow_virtio_snd_transitional,
+                                                  opt.require_non_silence);
+            if (wavein.ok) {
+              capture_ok = true;
+              capture_method = "waveIn";
+              capture_silence_only = wavein.captured_silence_only;
+              capture_non_silence = wavein.captured_non_silence;
+              capture_frames = wavein.captured_frames;
+            }
+          }
+
+          if (capture_ok) {
+            if (capture_smoke_test) {
+              log.Logf(
+                  "AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|PASS|method=%s|frames=%llu|non_silence=%d|silence_only=%d",
+                  capture_method, capture_frames, capture_non_silence ? 1 : 0,
+                  capture_silence_only ? 1 : 0);
+            } else {
+              log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|PASS|endpoint_present");
+            }
+          } else if (capture.fail_reason == "no_matching_endpoint") {
+            if (opt.require_snd_capture) {
+              log.LogLine("virtio-snd: --require-snd-capture set; failing");
+              log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL|endpoint_missing");
+              all_ok = false;
+            } else {
+              log.LogLine("virtio-snd: no capture endpoint; skipping (use --require-snd-capture to require)");
+              log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|endpoint_missing");
+            }
+          } else if (capture.fail_reason == "captured_silence") {
+            log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL|silence");
+            all_ok = false;
+          } else {
+            log.Logf("virtio-snd: capture failed reason=%s hr=0x%08lx",
+                     capture.fail_reason.empty() ? "unknown" : capture.fail_reason.c_str(),
+                     static_cast<unsigned long>(capture.hr));
+            if (opt.require_snd_capture || capture_smoke_test) {
+              log.LogLine(
+                  capture.endpoint_found ? "AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL|stream_init_failed"
+                                        : "AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL|error");
+              all_ok = false;
+            } else {
+              log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|error");
+            }
+          }
+        } else {
+          log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set");
+        }
       }
     }
   }
