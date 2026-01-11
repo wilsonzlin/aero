@@ -3473,9 +3473,9 @@ function renderWorkersPanel(report: PlatformFeatureReport): HTMLElement {
           hdd: selection?.hdd ?? null,
           cd: selection?.cd ?? null,
         });
+        void webHidManager.resyncAttachedDevices();
       }
       syncWebHidInputReportRing(ioWorker);
-      void webHidManager.resyncAttachedDevices();
       attachedIoWorker = ioWorker;
     }
 

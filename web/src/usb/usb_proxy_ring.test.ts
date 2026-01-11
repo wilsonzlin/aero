@@ -41,9 +41,10 @@ describe("usb/UsbProxyRing", () => {
     expect(roundTripped[2]).toEqual(actions[2]);
 
     const bulkOut = roundTripped[3];
-    if (bulkOut?.kind !== "bulkOut") throw new Error("unreachable");
-    expect(bulkOut.endpoint).toBe((actions[3] as Extract<UsbHostAction, { kind: "bulkOut" }>).endpoint);
-    expect(Array.from(bulkOut.data)).toEqual(Array.from((actions[3] as Extract<UsbHostAction, { kind: "bulkOut" }>).data));
+    if (!bulkOut || bulkOut.kind !== "bulkOut") throw new Error("unreachable");
+    const expectedBulkOut = actions[3] as Extract<UsbHostAction, { kind: "bulkOut" }>;
+    expect(bulkOut.endpoint).toBe(expectedBulkOut.endpoint);
+    expect(Array.from(bulkOut.data)).toEqual(Array.from(expectedBulkOut.data));
   });
 
   it("round-trips all UsbHostCompletion variants", () => {
