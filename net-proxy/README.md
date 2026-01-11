@@ -154,3 +154,4 @@ Security caveat:
 
 - In multiplexed mode, allowlist checks are applied **per datagram** based on the decoded destination **IP:port**.
 - Domain allowlist rules like `example.com:53` cannot be applied because frames contain IP addresses (use IP/CIDR rules like `127.0.0.1:*` / `10.0.0.0/8:*`, or run with `AERO_PROXY_OPEN=1`).
+- The proxy only forwards inbound UDP packets from remote endpoints that the guest has previously sent a packet to (address+port), to avoid acting as a full-cone UDP forwarder.

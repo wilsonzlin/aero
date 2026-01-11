@@ -904,6 +904,8 @@ interface UdpRelayBinding {
   addressFamily: 4 | 6;
   socket: dgram.Socket;
   lastActiveMs: number;
+  allowedRemotes: Map<string, number>;
+  lastAllowedPruneMs: number;
 }
 
 function makeUdpRelayBindingKey(guestPort: number, addressFamily: 4 | 6): UdpRelayBindingKey {
@@ -916,6 +918,58 @@ async function handleUdpRelayMultiplexed(ws: WebSocket, connId: number, config: 
   let bytesOut = 0;
   let closed = false;
   let gcTimer: NodeJS.Timeout | null = null;
+
+  const remoteAllowlistIdleTimeoutMs = config.udpRelayBindingIdleTimeoutMs;
+  const maxAllowedRemotesBeforePrune = 1024;
+
+  const remoteKey = (ipBytes: Uint8Array, port: number): string => `${Buffer.from(ipBytes).toString("hex")}:${port}`;
+
+  const pruneAllowedRemotes = (binding: UdpRelayBinding, now: number) => {
+    if (remoteAllowlistIdleTimeoutMs > 0) {
+      if (
+        binding.allowedRemotes.size <= maxAllowedRemotesBeforePrune &&
+        binding.lastAllowedPruneMs !== 0 &&
+        now - binding.lastAllowedPruneMs <= remoteAllowlistIdleTimeoutMs
+      ) {
+        return;
+      }
+
+      const cutoff = now - remoteAllowlistIdleTimeoutMs;
+      for (const [key, ts] of binding.allowedRemotes) {
+        if (ts < cutoff) {
+          binding.allowedRemotes.delete(key);
+        }
+      }
+      binding.lastAllowedPruneMs = now;
+      return;
+    }
+
+    // No idle timeout: still cap memory growth.
+    if (binding.allowedRemotes.size > maxAllowedRemotesBeforePrune) {
+      binding.allowedRemotes.clear();
+      binding.lastAllowedPruneMs = now;
+    }
+  };
+
+  const allowRemote = (binding: UdpRelayBinding, ipBytes: Uint8Array, port: number, now: number) => {
+    pruneAllowedRemotes(binding, now);
+    binding.allowedRemotes.set(remoteKey(ipBytes, port), now);
+  };
+
+  const remoteAllowed = (binding: UdpRelayBinding, ipBytes: Uint8Array, port: number, now: number): boolean => {
+    const key = remoteKey(ipBytes, port);
+    const last = binding.allowedRemotes.get(key);
+    if (last === undefined) return false;
+
+    if (remoteAllowlistIdleTimeoutMs > 0 && now - last > remoteAllowlistIdleTimeoutMs) {
+      binding.allowedRemotes.delete(key);
+      return false;
+    }
+
+    // Refresh timestamp to keep active flows alive.
+    binding.allowedRemotes.set(key, now);
+    return true;
+  };
 
   const closeAll = (why: string, wsCode: number, wsReason: string) => {
     if (closed) return;
@@ -1021,7 +1075,9 @@ async function handleUdpRelayMultiplexed(ws: WebSocket, connId: number, config: 
       guestPort,
       addressFamily,
       socket,
-      lastActiveMs: Date.now()
+      lastActiveMs: Date.now(),
+      allowedRemotes: new Map(),
+      lastAllowedPruneMs: 0
     };
 
     socket.on("error", (err) => {
@@ -1035,7 +1091,8 @@ async function handleUdpRelayMultiplexed(ws: WebSocket, connId: number, config: 
     });
 
     socket.on("message", (msg, rinfo) => {
-      binding.lastActiveMs = Date.now();
+      const now = Date.now();
+      binding.lastActiveMs = now;
 
       if (msg.length > config.udpRelayMaxPayloadBytes) return;
       if (ws.readyState !== ws.OPEN) return;
@@ -1048,6 +1105,7 @@ async function handleUdpRelayMultiplexed(ws: WebSocket, connId: number, config: 
 
         if (addressFamily === 4) {
           if (ipBytes.length !== 4) return;
+          if (!remoteAllowed(binding, ipBytes, rinfo.port, now)) return;
           frame = encodeUdpRelayV1Datagram(
             {
               guestPort,
@@ -1059,6 +1117,7 @@ async function handleUdpRelayMultiplexed(ws: WebSocket, connId: number, config: 
           );
         } else {
           if (ipBytes.length !== 16) return;
+          if (!remoteAllowed(binding, ipBytes, rinfo.port, now)) return;
           frame = encodeUdpRelayV2Datagram(
             {
               guestPort,
@@ -1163,7 +1222,9 @@ async function handleUdpRelayMultiplexed(ws: WebSocket, connId: number, config: 
 
       const binding = getOrCreateBinding(guestPort, addressFamily);
       if (!binding) return;
-      binding.lastActiveMs = Date.now();
+      const now = Date.now();
+      binding.lastActiveMs = now;
+      allowRemote(binding, remoteIpBytes, remotePort, now);
 
       // Send the raw UDP payload to the decoded destination.
       try {
