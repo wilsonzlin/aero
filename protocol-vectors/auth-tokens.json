@@ -222,6 +222,13 @@
         "expectError": true
       },
       {
+        "name": "expired.atBoundary",
+        "secret": "test-jwt-secret",
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MTcwMDAwMDAwMCwic2lkIjoic2lkLWV4cC1ib3VuZGFyeSJ9._RDRnN76NnDa0lP2nz1-2J4ItzqmHEojWy93FuQ67CI",
+        "nowSec": 1700000000,
+        "expectError": true
+      },
+      {
         "name": "notYetValid.nbfInFuture",
         "secret": "test-jwt-secret",
         "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MTcwMDAwMDA2MCwic2lkIjoic2lkLW5iZi1mdXR1cmUiLCJuYmYiOjE3MDAwMDAwMTB9.wHfMmprNn0u42UzxWZqTcspQ6l20wXQA8OyEgIhKiNA",
@@ -232,6 +239,13 @@
         "name": "wrongType.nbfString",
         "secret": "test-jwt-secret",
         "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MTcwMDAwMDA2MCwic2lkIjoic2lkLW5iZi1zdHJpbmciLCJuYmYiOiIxNzAwMDAwMDEwIn0.pX95gUrPzM6X6Kt982DtGHOsMM5fQ2BCya6n1rugEJ0",
+        "nowSec": 1700000000,
+        "expectError": true
+      },
+      {
+        "name": "invalidSid.emptyString",
+        "secret": "test-jwt-secret",
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MTcwMDAwMDA2MCwic2lkIjoiIn0.DksH6oGRv-gqKjStnWlGJVVPbMZAdKX9unBXrfDAEnw",
         "nowSec": 1700000000,
         "expectError": true
       },
