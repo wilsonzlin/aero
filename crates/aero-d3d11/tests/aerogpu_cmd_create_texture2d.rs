@@ -82,3 +82,60 @@ fn create_texture2d_requires_row_pitch_for_backed_textures() {
             .contains("row_pitch_bytes is required for allocation-backed textures"));
     });
 }
+
+#[test]
+fn create_texture2d_validates_all_mips_against_allocation_size() {
+    pollster::block_on(async {
+        let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
+            Ok(exec) => exec,
+            Err(e) => {
+                eprintln!("wgpu unavailable ({e:#}); skipping create_texture2d test");
+                return;
+            }
+        };
+
+        // Backing allocation is only large enough for mip0 (64 bytes), but the texture declares
+        // mip_levels=2 so validation should fail.
+        let allocs = [AerogpuAllocEntry {
+            alloc_id: 1,
+            flags: 0,
+            gpa: 0,
+            size_bytes: 16 * 4, // row_pitch_bytes * height (mip0 only)
+            reserved0: 0,
+        }];
+
+        let mut stream = Vec::new();
+        // Stream header (24 bytes)
+        stream.extend_from_slice(&AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
+        stream.extend_from_slice(&AEROGPU_ABI_VERSION_U32.to_le_bytes());
+        stream.extend_from_slice(&0u32.to_le_bytes()); // size_bytes (patched later)
+        stream.extend_from_slice(&0u32.to_le_bytes()); // flags
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+        stream.extend_from_slice(&0u32.to_le_bytes()); // reserved1
+
+        let start = begin_cmd(&mut stream, AerogpuCmdOpcode::CreateTexture2d as u32);
+        stream.extend_from_slice(&1u32.to_le_bytes()); // texture_handle
+        stream.extend_from_slice(&AEROGPU_RESOURCE_USAGE_TEXTURE.to_le_bytes());
+        stream.extend_from_slice(&(AerogpuFormat::R8G8B8A8Unorm as u32).to_le_bytes());
+        stream.extend_from_slice(&4u32.to_le_bytes()); // width
+        stream.extend_from_slice(&4u32.to_le_bytes()); // height
+        stream.extend_from_slice(&2u32.to_le_bytes()); // mip_levels
+        stream.extend_from_slice(&1u32.to_le_bytes()); // array_layers
+        stream.extend_from_slice(&16u32.to_le_bytes()); // row_pitch_bytes
+        stream.extend_from_slice(&1u32.to_le_bytes()); // backing_alloc_id
+        stream.extend_from_slice(&0u32.to_le_bytes()); // backing_offset_bytes
+        stream.extend_from_slice(&0u64.to_le_bytes()); // reserved0
+        end_cmd(&mut stream, start);
+
+        // Patch stream size in header.
+        let total_size = stream.len() as u32;
+        stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
+            .copy_from_slice(&total_size.to_le_bytes());
+
+        let guest_mem = VecGuestMemory::new(0);
+        let err = exec
+            .execute_cmd_stream(&stream, Some(&allocs), &guest_mem)
+            .expect_err("expected CREATE_TEXTURE2D to reject undersized allocation");
+        assert!(err.to_string().contains("out of range"));
+    });
+}

@@ -932,9 +932,24 @@ impl AerogpuD3d11Executor {
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         let backing = if backing_alloc_id != 0 {
-            // Only validate the allocation table range for mip0 layer0 for now.
-            let bytes_per_row = row_pitch_bytes as u64;
-            let total_size = bytes_per_row.saturating_mul(height as u64);
+            // Validate that the allocation can hold all mips/layers. We only carry a single
+            // `row_pitch_bytes` value in the protocol, so we use the same conservative estimate as
+            // the generic AeroGPU command processor (shift row pitch/height per mip).
+            let mut total_size = 0u64;
+            for level in 0..mip_levels {
+                let level_row_pitch = (u64::from(row_pitch_bytes) >> level).max(1);
+                let level_height = (u64::from(height) >> level).max(1);
+                let level_size = level_row_pitch
+                    .checked_mul(level_height)
+                    .ok_or_else(|| anyhow!("CREATE_TEXTURE2D: size overflow"))?;
+                total_size = total_size
+                    .checked_add(level_size)
+                    .ok_or_else(|| anyhow!("CREATE_TEXTURE2D: size overflow"))?;
+            }
+            total_size = total_size
+                .checked_mul(u64::from(array_layers))
+                .ok_or_else(|| anyhow!("CREATE_TEXTURE2D: size overflow"))?;
+
             allocs.validate_range(backing_alloc_id, backing_offset_bytes as u64, total_size)?;
             Some(ResourceBacking {
                 alloc_id: backing_alloc_id,
