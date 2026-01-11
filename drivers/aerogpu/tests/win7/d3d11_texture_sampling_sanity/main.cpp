@@ -478,19 +478,24 @@ static int RunD3D11TextureSamplingSanity(int argc, char** argv) {
       (p3 & 0x00FFFFFFu) != (expected_p3 & 0x00FFFFFFu)) {
     return aerogpu_test::Fail(
         kTestName,
-        "pixel mismatch: (%d,%d)=0x%08lX (%d,%d)=0x%08lX (%d,%d)=0x%08lX (%d,%d)=0x%08lX",
+        "pixel mismatch: (%d,%d)=0x%08lX expected 0x%08lX; (%d,%d)=0x%08lX expected 0x%08lX; "
+        "(%d,%d)=0x%08lX expected 0x%08lX; (%d,%d)=0x%08lX expected 0x%08lX",
         x0,
         y0,
         (unsigned long)p0,
+        (unsigned long)expected_p0,
         x1,
         y1,
         (unsigned long)p1,
+        (unsigned long)expected_p1,
         x2,
         y2,
         (unsigned long)p2,
+        (unsigned long)expected_p2,
         x3,
         y3,
-        (unsigned long)p3);
+        (unsigned long)p3,
+        (unsigned long)expected_p3);
   }
 
   aerogpu_test::PrintfStdout("PASS: %s", kTestName);

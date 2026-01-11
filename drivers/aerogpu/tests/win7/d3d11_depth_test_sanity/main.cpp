@@ -420,9 +420,11 @@ static int RunD3D11DepthTestSanity(int argc, char** argv) {
   if ((corner & 0x00FFFFFFu) != (expected_corner & 0x00FFFFFFu) ||
       (center & 0x00FFFFFFu) != (expected_center & 0x00FFFFFFu)) {
     return aerogpu_test::Fail(kTestName,
-                              "pixel mismatch: corner=0x%08lX center=0x%08lX",
+                              "pixel mismatch: corner=0x%08lX expected 0x%08lX; center=0x%08lX expected 0x%08lX",
                               (unsigned long)corner,
-                              (unsigned long)center);
+                              (unsigned long)expected_corner,
+                              (unsigned long)center,
+                              (unsigned long)expected_center);
   }
 
   aerogpu_test::PrintfStdout("PASS: %s", kTestName);
