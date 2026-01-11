@@ -39,6 +39,30 @@ int main() {
   PRINT_SIZE(D3DKMT_HANDLE);
   PrintSeparator();
 
+  // D3D10/11 adapter open negotiation constants.
+  printf("== Interface constants ==\n");
+  printf("  %-46s value=0x%08X\n", "D3D10DDI_INTERFACE_VERSION", (unsigned)D3D10DDI_INTERFACE_VERSION);
+  printf("  %-46s value=0x%08X\n", "D3D10DDI_SUPPORTED", (unsigned)D3D10DDI_SUPPORTED);
+  printf("  %-46s value=0x%08X\n", "D3D10_1DDI_INTERFACE_VERSION", (unsigned)D3D10_1DDI_INTERFACE_VERSION);
+  printf("  %-46s value=0x%08X\n", "D3D10_1DDI_SUPPORTED", (unsigned)D3D10_1DDI_SUPPORTED);
+  printf("  %-46s value=0x%08X\n", "D3D11DDI_INTERFACE_VERSION", (unsigned)D3D11DDI_INTERFACE_VERSION);
+#ifdef D3D11DDI_INTERFACE
+  printf("  %-46s value=0x%08X\n", "D3D11DDI_INTERFACE", (unsigned)D3D11DDI_INTERFACE);
+#endif
+#ifdef D3D11DDI_SUPPORTED
+  printf("  %-46s value=0x%08X\n", "D3D11DDI_SUPPORTED", (unsigned)D3D11DDI_SUPPORTED);
+#endif
+  PrintSeparator();
+
+  // Adapter function tables (returned from OpenAdapter10/10_2/11).
+  PRINT_SIZE(D3D11DDI_ADAPTERFUNCS);
+  PRINT_OFF_OPT(D3D11DDI_ADAPTERFUNCS, pfnGetCaps);
+  PRINT_OFF_OPT(D3D11DDI_ADAPTERFUNCS, pfnCalcPrivateDeviceSize);
+  PRINT_OFF_OPT(D3D11DDI_ADAPTERFUNCS, pfnCalcPrivateDeviceContextSize);
+  PRINT_OFF_OPT(D3D11DDI_ADAPTERFUNCS, pfnCreateDevice);
+  PRINT_OFF_OPT(D3D11DDI_ADAPTERFUNCS, pfnCloseAdapter);
+  PrintSeparator();
+
   // Runtime callback table (function pointers) that the UMD uses for submission/sync.
   PRINT_SIZE(D3DDDI_DEVICECALLBACKS);
   PRINT_OFF_OPT(D3DDDI_DEVICECALLBACKS, pfnCreateDeviceCb);

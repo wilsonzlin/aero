@@ -27,6 +27,12 @@ struct has_member_hRTAdapter : std::false_type {};
 template <typename T>
 struct has_member_hRTAdapter<T, std::void_t<decltype(std::declval<T>().hRTAdapter)>> : std::true_type {};
 
+template <typename T, typename = void>
+struct has_member_pfnCalcPrivateDeviceContextSize : std::false_type {};
+template <typename T>
+struct has_member_pfnCalcPrivateDeviceContextSize<T, std::void_t<decltype(std::declval<T>().pfnCalcPrivateDeviceContextSize)>>
+    : std::true_type {};
+
 int main() {
   std::printf("== Win7 D3D10/11 UMD WDK ABI probe ==\n");
 
@@ -68,6 +74,23 @@ int main() {
 #ifdef D3D11DDI_INTERFACE
   std::printf("  D3D11DDI_INTERFACE          = 0x%08X\n", static_cast<unsigned>(D3D11DDI_INTERFACE));
 #endif
+#ifdef D3D11DDI_SUPPORTED
+  std::printf("  D3D11DDI_SUPPORTED          = 0x%08X\n", static_cast<unsigned>(D3D11DDI_SUPPORTED));
+#endif
+  std::printf("\n");
+
+  std::printf("== D3D11DDI_ADAPTERFUNCS ==\n");
+  std::printf("  sizeof(D3D11DDI_ADAPTERFUNCS) = %zu\n", sizeof(D3D11DDI_ADAPTERFUNCS));
+  std::printf("  offsetof(pfnGetCaps) = %zu\n", offsetof(D3D11DDI_ADAPTERFUNCS, pfnGetCaps));
+  std::printf("  offsetof(pfnCalcPrivateDeviceSize) = %zu\n", offsetof(D3D11DDI_ADAPTERFUNCS, pfnCalcPrivateDeviceSize));
+  if constexpr (has_member_pfnCalcPrivateDeviceContextSize<D3D11DDI_ADAPTERFUNCS>::value) {
+    std::printf("  offsetof(pfnCalcPrivateDeviceContextSize) = %zu\n",
+                offsetof(D3D11DDI_ADAPTERFUNCS, pfnCalcPrivateDeviceContextSize));
+  } else {
+    std::printf("  offsetof(pfnCalcPrivateDeviceContextSize) = <absent>\n");
+  }
+  std::printf("  offsetof(pfnCreateDevice) = %zu\n", offsetof(D3D11DDI_ADAPTERFUNCS, pfnCreateDevice));
+  std::printf("  offsetof(pfnCloseAdapter) = %zu\n", offsetof(D3D11DDI_ADAPTERFUNCS, pfnCloseAdapter));
   std::printf("\n");
 
   std::printf("== Exported entrypoints ==\n");
