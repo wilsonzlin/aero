@@ -233,6 +233,8 @@ Aero mapping (current code):
   - **`SET_ADDRESS` virtualization:** the control pipe intercepts the standard `SET_ADDRESS` request
     and updates only the guest-visible address state. This request must **not** be forwarded to the
     physical device (the host OS already enumerated it).
+    - If a new SETUP arrives before the `SET_ADDRESS` status stage completes, the pending address is
+      discarded (matching USB semantics: a new SETUP aborts the previous control transfer).
 
 - **DATA TD(s)**
   - **Control-IN:** IN DATA TDs read from the already-buffered `Data(bytes)` returned by
