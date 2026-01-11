@@ -135,7 +135,9 @@ jobs:
         run: |
           set -euo pipefail
           KUBECONFORM_VERSION="0.6.6"
-          curl -sSL -o /tmp/kubeconform.tar.gz "https://github.com/yannh/kubeconform/releases/download/v${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
+          KUBECONFORM_SHA256="2ff56999a6ed9e96fe5ab9ee52271f2db5335baf7f17789035b9561970cdd3eb"
+          curl -fsSL -o /tmp/kubeconform.tar.gz "https://github.com/yannh/kubeconform/releases/download/v${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
+          echo "${KUBECONFORM_SHA256}  /tmp/kubeconform.tar.gz" | sha256sum -c -
           tar -C /tmp -xzf /tmp/kubeconform.tar.gz kubeconform
           sudo mv /tmp/kubeconform /usr/local/bin/kubeconform
           kubeconform -v
@@ -153,12 +155,12 @@ jobs:
         run: |
           set -euo pipefail
           CHART="deploy/k8s/chart/aero-gateway"
-          helm lint "$CHART" -f "$CHART/values-dev.yaml"
-          helm lint "$CHART" -f "$CHART/values-prod.yaml"
-          helm lint "$CHART" -f "$CHART/values-traefik.yaml"
-          helm lint "$CHART" -f "$CHART/values-prod-certmanager.yaml"
-          helm lint "$CHART" -f "$CHART/values-prod-certmanager-issuer.yaml"
-          helm lint "$CHART" -f "$CHART/values-prod-appheaders.yaml"
+          helm lint "$CHART" --kube-version "$K8S_VERSION" -f "$CHART/values-dev.yaml"
+          helm lint "$CHART" --kube-version "$K8S_VERSION" -f "$CHART/values-prod.yaml"
+          helm lint "$CHART" --kube-version "$K8S_VERSION" -f "$CHART/values-traefik.yaml"
+          helm lint "$CHART" --kube-version "$K8S_VERSION" -f "$CHART/values-prod-certmanager.yaml"
+          helm lint "$CHART" --kube-version "$K8S_VERSION" -f "$CHART/values-prod-certmanager-issuer.yaml"
+          helm lint "$CHART" --kube-version "$K8S_VERSION" -f "$CHART/values-prod-appheaders.yaml"
 
       - name: helm template + kubeconform (example values)
         shell: bash
