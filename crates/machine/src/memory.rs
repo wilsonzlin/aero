@@ -309,7 +309,14 @@ impl FirmwareMemory for PhysicalMemory {
             .checked_add(len)
             .unwrap_or_else(|| panic!("ROM mapping overflow: 0x{base:016x}+0x{len:x}"));
 
-        self.read_only_ranges.push(base..end);
+        let range = base..end;
+        if !self
+            .read_only_ranges
+            .iter()
+            .any(|r| r.start == range.start && r.end == range.end)
+        {
+            self.read_only_ranges.push(range);
+        }
 
         // Map ROM into the backing RAM when possible, but also support sparse ROM windows outside
         // the allocated RAM (e.g. the BIOS reset-vector alias at 0xFFFF_0000).
@@ -325,10 +332,17 @@ impl FirmwareMemory for PhysicalMemory {
             let end_usize = base_usize + rom.len();
             self.data[base_usize..end_usize].copy_from_slice(rom);
         } else {
-            self.rom_mappings.push(RomMapping {
-                base,
-                bytes: rom.to_vec(),
-            });
+            // Avoid leaking ROM mappings if firmware maps the same region repeatedly (e.g. on
+            // system reset).
+            if let Some(existing) = self.rom_mappings.iter_mut().find(|m| m.base == base) {
+                existing.bytes.clear();
+                existing.bytes.extend_from_slice(rom);
+            } else {
+                self.rom_mappings.push(RomMapping {
+                    base,
+                    bytes: rom.to_vec(),
+                });
+            }
         }
     }
 }
