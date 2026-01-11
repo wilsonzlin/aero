@@ -1404,11 +1404,6 @@ fn fs_main() -> @location(0) vec4<f32> {
         self.queue.submit([encoder.finish()]);
 
         if writeback {
-            let dst_backing = dst_backing.ok_or_else(|| {
-                ExecutorError::Validation(
-                    "COPY_BUFFER: internal error: missing dst guest backing for writeback".into(),
-                )
-            })?;
             let Some(staging) = staging else {
                 return Err(ExecutorError::Validation(
                     "COPY_BUFFER: missing staging buffer for writeback".into(),
@@ -1658,12 +1653,6 @@ fn fs_main() -> @location(0) vec4<f32> {
         self.queue.submit([encoder.finish()]);
 
         if writeback {
-            let dst_backing = dst_backing.ok_or_else(|| {
-                ExecutorError::Validation(
-                    "COPY_TEXTURE2D: internal error: missing dst guest backing for writeback"
-                        .into(),
-                )
-            })?;
             let Some(staging) = staging else {
                 return Err(ExecutorError::Validation(
                     "COPY_TEXTURE2D: missing staging buffer for writeback".into(),
