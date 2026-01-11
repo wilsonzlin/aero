@@ -6,9 +6,10 @@
 //! persisting the translation output avoids repeating this work on subsequent
 //! boots/runs.
 //!
-//! This module is written to be "drop-in" in a real `aero-d3d9` crate. The repo
-//! this agent operates on only includes documentation, so the surrounding
-//! runtime types (GPU device handles, logging, etc) are intentionally abstracted.
+//! This module is a thin Rust wrapper around the browser-side persistent cache
+//! implementation (`web/gpu-cache/persistent_cache.ts`). It is currently only
+//! built for `wasm32` targets and is intended to be wired into higher-level D3D9
+//! shader translation code over time.
 
 use std::collections::HashMap;
 
@@ -17,10 +18,12 @@ use wasm_bindgen::prelude::*;
 
 /// Translation flags that affect WGSL output.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct ShaderTranslationFlags {
     pub half_pixel_center: bool,
     /// Stable hash representing relevant WebGPU capabilities/limits/features.
-    pub caps_hash: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub caps_hash: Option<String>,
 }
 
 /// Persisted output of DXBC -> WGSL translation.
@@ -43,7 +46,7 @@ pub struct PersistedShaderArtifact {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ShaderCacheKey(pub String);
 
-#[wasm_bindgen(module = "/web/gpu-cache/persistent_cache.ts")]
+#[wasm_bindgen(module = "/js/persistent_cache_shim.js")]
 extern "C" {
     #[wasm_bindgen(js_name = computeShaderCacheKey)]
     async fn js_compute_shader_cache_key(dxbc: js_sys::Uint8Array, flags: JsValue) -> JsValue;
@@ -64,15 +67,21 @@ extern "C" {
     async fn js_persistent_delete_shader(this: &JsPersistentGpuCache, key: String);
 }
 
-async fn compute_key(dxbc: &[u8], flags: &ShaderTranslationFlags) -> Result<ShaderCacheKey, JsValue> {
+async fn compute_key(
+    dxbc: &[u8],
+    flags: &ShaderTranslationFlags,
+) -> Result<ShaderCacheKey, JsValue> {
     let dxbc_u8 = js_sys::Uint8Array::from(dxbc);
-    let flags_js = serde_wasm_bindgen::to_value(flags).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let flags_js =
+        serde_wasm_bindgen::to_value(flags).map_err(|e| JsValue::from_str(&e.to_string()))?;
     let key_js = js_compute_shader_cache_key(dxbc_u8, flags_js).await;
-    Ok(ShaderCacheKey(key_js.as_string().ok_or_else(|| JsValue::from_str("computeShaderCacheKey did not return a string"))?))
+    Ok(ShaderCacheKey(key_js.as_string().ok_or_else(|| {
+        JsValue::from_str("computeShaderCacheKey did not return a string")
+    })?))
 }
 
 async fn open_persistent_cache() -> Result<JsPersistentGpuCache, JsValue> {
-    let cache_val = js_open_persistent_cache().await;
+    let cache_val = JsPersistentGpuCache::js_open_persistent_cache().await;
     cache_val.dyn_into::<JsPersistentGpuCache>()
 }
 
@@ -117,30 +126,37 @@ impl ShaderCache {
         }
 
         let persistent = open_persistent_cache().await?;
-        let cached_val = js_persistent_get_shader(&persistent, key.0.clone()).await;
+        let cached_val = persistent.js_persistent_get_shader(key.0.clone()).await;
         if !cached_val.is_undefined() && !cached_val.is_null() {
-            let cached: PersistedShaderArtifact =
-                serde_wasm_bindgen::from_value(cached_val).map_err(|e| JsValue::from_str(&e.to_string()))?;
+            let cached: PersistedShaderArtifact = serde_wasm_bindgen::from_value(cached_val)
+                .map_err(|e| JsValue::from_str(&e.to_string()))?;
             self.in_memory.insert(key, cached.clone());
             return Ok(cached);
         }
 
         // Cache miss: translate and persist.
         let translated = translate_fn().await;
-        let translated_js = serde_wasm_bindgen::to_value(&translated).map_err(|e| JsValue::from_str(&e.to_string()))?;
-        js_persistent_put_shader(&persistent, key.0.clone(), translated_js).await;
+        let translated_js = serde_wasm_bindgen::to_value(&translated)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        persistent
+            .js_persistent_put_shader(key.0.clone(), translated_js)
+            .await;
 
         self.in_memory.insert(key, translated.clone());
         Ok(translated)
     }
 
     /// Remove a shader entry from both in-memory and persistent caches.
-    pub async fn invalidate(&mut self, dxbc: &[u8], flags: ShaderTranslationFlags) -> Result<(), JsValue> {
+    pub async fn invalidate(
+        &mut self,
+        dxbc: &[u8],
+        flags: ShaderTranslationFlags,
+    ) -> Result<(), JsValue> {
         let key = compute_key(dxbc, &flags).await?;
         self.in_memory.remove(&key);
 
         let persistent = open_persistent_cache().await?;
-        js_persistent_delete_shader(&persistent, key.0).await;
+        persistent.js_persistent_delete_shader(key.0).await;
         Ok(())
     }
 }
