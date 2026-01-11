@@ -50,10 +50,15 @@ pub enum AerogpuCmdOpcode {
     CreateTexture2d = 0x101,
     DestroyResource = 0x102,
     ResourceDirtyRange = 0x103,
+    UploadResource = 0x104,
 
     CreateShaderDxbc = 0x200,
     DestroyShader = 0x201,
     BindShaders = 0x202,
+    SetShaderConstantsF = 0x203,
+    CreateInputLayout = 0x204,
+    DestroyInputLayout = 0x205,
+    SetInputLayout = 0x206,
 
     SetBlendState = 0x300,
     SetDepthStencilState = 0x301,
@@ -65,6 +70,10 @@ pub enum AerogpuCmdOpcode {
 
     SetVertexBuffers = 0x500,
     SetIndexBuffer = 0x501,
+    SetPrimitiveTopology = 0x502,
+    SetTexture = 0x510,
+    SetSamplerState = 0x511,
+    SetRenderState = 0x512,
 
     Clear = 0x600,
     Draw = 0x601,
@@ -88,9 +97,14 @@ impl AerogpuCmdOpcode {
             0x101 => Some(Self::CreateTexture2d),
             0x102 => Some(Self::DestroyResource),
             0x103 => Some(Self::ResourceDirtyRange),
+            0x104 => Some(Self::UploadResource),
             0x200 => Some(Self::CreateShaderDxbc),
             0x201 => Some(Self::DestroyShader),
             0x202 => Some(Self::BindShaders),
+            0x203 => Some(Self::SetShaderConstantsF),
+            0x204 => Some(Self::CreateInputLayout),
+            0x205 => Some(Self::DestroyInputLayout),
+            0x206 => Some(Self::SetInputLayout),
             0x300 => Some(Self::SetBlendState),
             0x301 => Some(Self::SetDepthStencilState),
             0x302 => Some(Self::SetRasterizerState),
@@ -99,6 +113,10 @@ impl AerogpuCmdOpcode {
             0x402 => Some(Self::SetScissor),
             0x500 => Some(Self::SetVertexBuffers),
             0x501 => Some(Self::SetIndexBuffer),
+            0x502 => Some(Self::SetPrimitiveTopology),
+            0x510 => Some(Self::SetTexture),
+            0x511 => Some(Self::SetSamplerState),
+            0x512 => Some(Self::SetRenderState),
             0x600 => Some(Self::Clear),
             0x601 => Some(Self::Draw),
             0x602 => Some(Self::DrawIndexed),
@@ -125,6 +143,17 @@ pub enum AerogpuShaderStage {
 pub enum AerogpuIndexFormat {
     Uint16 = 0,
     Uint32 = 1,
+}
+
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AerogpuPrimitiveTopology {
+    PointList = 1,
+    LineList = 2,
+    LineStrip = 3,
+    TriangleList = 4,
+    TriangleStrip = 5,
+    TriangleFan = 6,
 }
 
 pub const AEROGPU_RESOURCE_USAGE_NONE: u32 = 0;
@@ -185,6 +214,20 @@ pub struct AerogpuCmdResourceDirtyRange {
     pub size_bytes: u64,
 }
 
+#[repr(C, packed)]
+#[derive(Clone, Copy)]
+pub struct AerogpuCmdUploadResource {
+    pub hdr: AerogpuCmdHdr,
+    pub resource_handle: AerogpuHandle,
+    pub reserved0: u32,
+    pub offset_bytes: u64,
+    pub size_bytes: u64,
+}
+
+impl AerogpuCmdUploadResource {
+    pub const SIZE_BYTES: usize = 32;
+}
+
 /* -------------------------------- Shaders -------------------------------- */
 
 #[repr(C, packed)]
@@ -213,6 +256,89 @@ pub struct AerogpuCmdBindShaders {
     pub ps: AerogpuHandle,
     pub cs: AerogpuHandle,
     pub reserved0: u32,
+}
+
+#[repr(C, packed)]
+#[derive(Clone, Copy)]
+pub struct AerogpuCmdSetShaderConstantsF {
+    pub hdr: AerogpuCmdHdr,
+    pub stage: u32,
+    pub start_register: u32,
+    pub vec4_count: u32,
+    pub reserved0: u32,
+}
+
+impl AerogpuCmdSetShaderConstantsF {
+    pub const SIZE_BYTES: usize = 24;
+}
+
+pub const AEROGPU_INPUT_LAYOUT_BLOB_MAGIC: u32 = 0x5941_4C49; // "ILAY" LE
+pub const AEROGPU_INPUT_LAYOUT_BLOB_VERSION: u32 = 1;
+
+#[repr(C, packed)]
+#[derive(Clone, Copy)]
+pub struct AerogpuInputLayoutBlobHeader {
+    pub magic: u32,
+    pub version: u32,
+    pub element_count: u32,
+    pub reserved0: u32,
+}
+
+impl AerogpuInputLayoutBlobHeader {
+    pub const SIZE_BYTES: usize = 16;
+}
+
+#[repr(C, packed)]
+#[derive(Clone, Copy)]
+pub struct AerogpuInputLayoutElementDxgi {
+    pub semantic_name_hash: u32,
+    pub semantic_index: u32,
+    pub dxgi_format: u32,
+    pub input_slot: u32,
+    pub aligned_byte_offset: u32,
+    pub input_slot_class: u32,
+    pub instance_data_step_rate: u32,
+}
+
+impl AerogpuInputLayoutElementDxgi {
+    pub const SIZE_BYTES: usize = 28;
+}
+
+#[repr(C, packed)]
+#[derive(Clone, Copy)]
+pub struct AerogpuCmdCreateInputLayout {
+    pub hdr: AerogpuCmdHdr,
+    pub input_layout_handle: AerogpuHandle,
+    pub blob_size_bytes: u32,
+    pub reserved0: u32,
+}
+
+impl AerogpuCmdCreateInputLayout {
+    pub const SIZE_BYTES: usize = 20;
+}
+
+#[repr(C, packed)]
+#[derive(Clone, Copy)]
+pub struct AerogpuCmdDestroyInputLayout {
+    pub hdr: AerogpuCmdHdr,
+    pub input_layout_handle: AerogpuHandle,
+    pub reserved0: u32,
+}
+
+impl AerogpuCmdDestroyInputLayout {
+    pub const SIZE_BYTES: usize = 16;
+}
+
+#[repr(C, packed)]
+#[derive(Clone, Copy)]
+pub struct AerogpuCmdSetInputLayout {
+    pub hdr: AerogpuCmdHdr,
+    pub input_layout_handle: AerogpuHandle,
+    pub reserved0: u32,
+}
+
+impl AerogpuCmdSetInputLayout {
+    pub const SIZE_BYTES: usize = 16;
 }
 
 /* ------------------------------ Pipeline state ---------------------------- */
@@ -367,6 +493,10 @@ pub struct AerogpuVertexBufferBinding {
     pub reserved0: u32,
 }
 
+impl AerogpuVertexBufferBinding {
+    pub const SIZE_BYTES: usize = 16;
+}
+
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
 pub struct AerogpuCmdSetVertexBuffers {
@@ -383,6 +513,58 @@ pub struct AerogpuCmdSetIndexBuffer {
     pub format: u32,
     pub offset_bytes: u32,
     pub reserved0: u32,
+}
+
+#[repr(C, packed)]
+#[derive(Clone, Copy)]
+pub struct AerogpuCmdSetPrimitiveTopology {
+    pub hdr: AerogpuCmdHdr,
+    pub topology: u32,
+    pub reserved0: u32,
+}
+
+impl AerogpuCmdSetPrimitiveTopology {
+    pub const SIZE_BYTES: usize = 16;
+}
+
+#[repr(C, packed)]
+#[derive(Clone, Copy)]
+pub struct AerogpuCmdSetTexture {
+    pub hdr: AerogpuCmdHdr,
+    pub shader_stage: u32,
+    pub slot: u32,
+    pub texture: AerogpuHandle,
+    pub reserved0: u32,
+}
+
+impl AerogpuCmdSetTexture {
+    pub const SIZE_BYTES: usize = 24;
+}
+
+#[repr(C, packed)]
+#[derive(Clone, Copy)]
+pub struct AerogpuCmdSetSamplerState {
+    pub hdr: AerogpuCmdHdr,
+    pub shader_stage: u32,
+    pub slot: u32,
+    pub state: u32,
+    pub value: u32,
+}
+
+impl AerogpuCmdSetSamplerState {
+    pub const SIZE_BYTES: usize = 24;
+}
+
+#[repr(C, packed)]
+#[derive(Clone, Copy)]
+pub struct AerogpuCmdSetRenderState {
+    pub hdr: AerogpuCmdHdr,
+    pub state: u32,
+    pub value: u32,
+}
+
+impl AerogpuCmdSetRenderState {
+    pub const SIZE_BYTES: usize = 16;
 }
 
 /* -------------------------------- Drawing -------------------------------- */
@@ -543,4 +725,195 @@ pub fn decode_cmd_hdr_le(buf: &[u8]) -> Result<AerogpuCmdHdr, AerogpuCmdDecodeEr
     }
 
     Ok(AerogpuCmdHdr { opcode, size_bytes })
+}
+
+fn validate_packet_len(buf: &[u8], hdr: AerogpuCmdHdr) -> Result<usize, AerogpuCmdDecodeError> {
+    let packet_len = hdr.size_bytes as usize;
+    if buf.len() < packet_len {
+        return Err(AerogpuCmdDecodeError::BufferTooSmall);
+    }
+    Ok(packet_len)
+}
+
+/// Decode CREATE_SHADER_DXBC and return the DXBC byte payload (without padding).
+pub fn decode_cmd_create_shader_dxbc_payload_le(
+    buf: &[u8],
+) -> Result<(AerogpuCmdCreateShaderDxbc, &[u8]), AerogpuCmdDecodeError> {
+    if buf.len() < 24 {
+        return Err(AerogpuCmdDecodeError::BufferTooSmall);
+    }
+
+    let hdr = decode_cmd_hdr_le(buf)?;
+    let packet_len = validate_packet_len(buf, hdr)?;
+
+    let dxbc_size_bytes = u32::from_le_bytes(buf[16..20].try_into().unwrap());
+    let payload_start = 24usize;
+    let payload_end = payload_start
+        .checked_add(dxbc_size_bytes as usize)
+        .ok_or(AerogpuCmdDecodeError::BufferTooSmall)?;
+    if payload_end > packet_len {
+        return Err(AerogpuCmdDecodeError::BadSizeBytes { found: hdr.size_bytes });
+    }
+
+    let cmd = AerogpuCmdCreateShaderDxbc {
+        hdr,
+        shader_handle: u32::from_le_bytes(buf[8..12].try_into().unwrap()),
+        stage: u32::from_le_bytes(buf[12..16].try_into().unwrap()),
+        dxbc_size_bytes,
+        reserved0: u32::from_le_bytes(buf[20..24].try_into().unwrap()),
+    };
+
+    Ok((cmd, &buf[payload_start..payload_end]))
+}
+
+/// Decode CREATE_INPUT_LAYOUT and return the blob payload (without padding).
+pub fn decode_cmd_create_input_layout_blob_le(
+    buf: &[u8],
+) -> Result<(AerogpuCmdCreateInputLayout, &[u8]), AerogpuCmdDecodeError> {
+    if buf.len() < AerogpuCmdCreateInputLayout::SIZE_BYTES {
+        return Err(AerogpuCmdDecodeError::BufferTooSmall);
+    }
+
+    let hdr = decode_cmd_hdr_le(buf)?;
+    let packet_len = validate_packet_len(buf, hdr)?;
+
+    let blob_size_bytes = u32::from_le_bytes(buf[12..16].try_into().unwrap());
+    let payload_start = AerogpuCmdCreateInputLayout::SIZE_BYTES;
+    let payload_end = payload_start
+        .checked_add(blob_size_bytes as usize)
+        .ok_or(AerogpuCmdDecodeError::BufferTooSmall)?;
+    if payload_end > packet_len {
+        return Err(AerogpuCmdDecodeError::BadSizeBytes { found: hdr.size_bytes });
+    }
+
+    let cmd = AerogpuCmdCreateInputLayout {
+        hdr,
+        input_layout_handle: u32::from_le_bytes(buf[8..12].try_into().unwrap()),
+        blob_size_bytes,
+        reserved0: u32::from_le_bytes(buf[16..20].try_into().unwrap()),
+    };
+
+    Ok((cmd, &buf[payload_start..payload_end]))
+}
+
+/// Decode SET_SHADER_CONSTANTS_F and return the float payload.
+pub fn decode_cmd_set_shader_constants_f_payload_le(
+    buf: &[u8],
+) -> Result<(AerogpuCmdSetShaderConstantsF, Vec<f32>), AerogpuCmdDecodeError> {
+    if buf.len() < AerogpuCmdSetShaderConstantsF::SIZE_BYTES {
+        return Err(AerogpuCmdDecodeError::BufferTooSmall);
+    }
+
+    let hdr = decode_cmd_hdr_le(buf)?;
+    let packet_len = validate_packet_len(buf, hdr)?;
+
+    let vec4_count = u32::from_le_bytes(buf[16..20].try_into().unwrap());
+    let float_count = vec4_count
+        .checked_mul(4)
+        .ok_or(AerogpuCmdDecodeError::BufferTooSmall)? as usize;
+    let payload_size_bytes = float_count
+        .checked_mul(4)
+        .ok_or(AerogpuCmdDecodeError::BufferTooSmall)?;
+    let payload_start = AerogpuCmdSetShaderConstantsF::SIZE_BYTES;
+    let payload_end = payload_start
+        .checked_add(payload_size_bytes)
+        .ok_or(AerogpuCmdDecodeError::BufferTooSmall)?;
+    if payload_end > packet_len {
+        return Err(AerogpuCmdDecodeError::BadSizeBytes { found: hdr.size_bytes });
+    }
+
+    let cmd = AerogpuCmdSetShaderConstantsF {
+        hdr,
+        stage: u32::from_le_bytes(buf[8..12].try_into().unwrap()),
+        start_register: u32::from_le_bytes(buf[12..16].try_into().unwrap()),
+        vec4_count,
+        reserved0: u32::from_le_bytes(buf[20..24].try_into().unwrap()),
+    };
+
+    let mut out = Vec::with_capacity(float_count);
+    for i in 0..float_count {
+        let off = payload_start + i * 4;
+        let bits = u32::from_le_bytes(buf[off..off + 4].try_into().unwrap());
+        out.push(f32::from_bits(bits));
+    }
+
+    Ok((cmd, out))
+}
+
+/// Decode UPLOAD_RESOURCE and return the raw payload bytes (without padding).
+pub fn decode_cmd_upload_resource_payload_le(
+    buf: &[u8],
+) -> Result<(AerogpuCmdUploadResource, &[u8]), AerogpuCmdDecodeError> {
+    if buf.len() < AerogpuCmdUploadResource::SIZE_BYTES {
+        return Err(AerogpuCmdDecodeError::BufferTooSmall);
+    }
+
+    let hdr = decode_cmd_hdr_le(buf)?;
+    let packet_len = validate_packet_len(buf, hdr)?;
+
+    let size_bytes_u64 = u64::from_le_bytes(buf[24..32].try_into().unwrap());
+    let data_len = usize::try_from(size_bytes_u64).map_err(|_| AerogpuCmdDecodeError::BadSizeBytes {
+        found: hdr.size_bytes,
+    })?;
+    let payload_start = AerogpuCmdUploadResource::SIZE_BYTES;
+    let payload_end = payload_start
+        .checked_add(data_len)
+        .ok_or(AerogpuCmdDecodeError::BufferTooSmall)?;
+    if payload_end > packet_len {
+        return Err(AerogpuCmdDecodeError::BadSizeBytes { found: hdr.size_bytes });
+    }
+
+    let cmd = AerogpuCmdUploadResource {
+        hdr,
+        resource_handle: u32::from_le_bytes(buf[8..12].try_into().unwrap()),
+        reserved0: u32::from_le_bytes(buf[12..16].try_into().unwrap()),
+        offset_bytes: u64::from_le_bytes(buf[16..24].try_into().unwrap()),
+        size_bytes: size_bytes_u64,
+    };
+
+    Ok((cmd, &buf[payload_start..payload_end]))
+}
+
+/// Decode SET_VERTEX_BUFFERS and parse the trailing `aerogpu_vertex_buffer_binding[]`.
+pub fn decode_cmd_set_vertex_buffers_bindings_le(
+    buf: &[u8],
+) -> Result<(AerogpuCmdSetVertexBuffers, Vec<AerogpuVertexBufferBinding>), AerogpuCmdDecodeError> {
+    if buf.len() < 16 {
+        return Err(AerogpuCmdDecodeError::BufferTooSmall);
+    }
+
+    let hdr = decode_cmd_hdr_le(buf)?;
+    let packet_len = validate_packet_len(buf, hdr)?;
+
+    let buffer_count = u32::from_le_bytes(buf[12..16].try_into().unwrap());
+    let bindings_size_bytes = buffer_count
+        .checked_mul(AerogpuVertexBufferBinding::SIZE_BYTES as u32)
+        .ok_or(AerogpuCmdDecodeError::BufferTooSmall)? as usize;
+    let payload_start = 16usize;
+    let payload_end = payload_start
+        .checked_add(bindings_size_bytes)
+        .ok_or(AerogpuCmdDecodeError::BufferTooSmall)?;
+    if payload_end > packet_len {
+        return Err(AerogpuCmdDecodeError::BadSizeBytes { found: hdr.size_bytes });
+    }
+
+    let cmd = AerogpuCmdSetVertexBuffers {
+        hdr,
+        start_slot: u32::from_le_bytes(buf[8..12].try_into().unwrap()),
+        buffer_count,
+    };
+
+    let mut bindings = Vec::with_capacity(buffer_count as usize);
+    for i in 0..(buffer_count as usize) {
+        let off = payload_start + i * AerogpuVertexBufferBinding::SIZE_BYTES;
+        let binding = AerogpuVertexBufferBinding {
+            buffer: u32::from_le_bytes(buf[off..off + 4].try_into().unwrap()),
+            stride_bytes: u32::from_le_bytes(buf[off + 4..off + 8].try_into().unwrap()),
+            offset_bytes: u32::from_le_bytes(buf[off + 8..off + 12].try_into().unwrap()),
+            reserved0: u32::from_le_bytes(buf[off + 12..off + 16].try_into().unwrap()),
+        };
+        bindings.push(binding);
+    }
+
+    Ok((cmd, bindings))
 }

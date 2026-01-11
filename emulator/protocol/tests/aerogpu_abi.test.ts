@@ -9,8 +9,10 @@ import {
   AEROGPU_CMD_BIND_SHADERS_SIZE,
   AEROGPU_CMD_CLEAR_SIZE,
   AEROGPU_CMD_CREATE_BUFFER_SIZE,
+  AEROGPU_CMD_CREATE_INPUT_LAYOUT_SIZE,
   AEROGPU_CMD_CREATE_SHADER_DXBC_SIZE,
   AEROGPU_CMD_CREATE_TEXTURE2D_SIZE,
+  AEROGPU_CMD_DESTROY_INPUT_LAYOUT_SIZE,
   AEROGPU_CMD_DESTROY_RESOURCE_SIZE,
   AEROGPU_CMD_DESTROY_SHADER_SIZE,
   AEROGPU_CMD_DRAW_INDEXED_SIZE,
@@ -20,16 +22,22 @@ import {
   AEROGPU_CMD_HDR_OFF_OPCODE,
   AEROGPU_CMD_HDR_OFF_SIZE_BYTES,
   AEROGPU_CMD_HDR_SIZE,
-  AEROGPU_CMD_PRESENT_SIZE,
-  AEROGPU_CMD_PRESENT_EX_SIZE,
   AEROGPU_CMD_IMPORT_SHARED_SURFACE_SIZE,
+  AEROGPU_CMD_PRESENT_EX_SIZE,
+  AEROGPU_CMD_PRESENT_SIZE,
   AEROGPU_CMD_RESOURCE_DIRTY_RANGE_SIZE,
+  AEROGPU_CMD_SET_INPUT_LAYOUT_SIZE,
   AEROGPU_CMD_SET_BLEND_STATE_SIZE,
   AEROGPU_CMD_SET_DEPTH_STENCIL_STATE_SIZE,
   AEROGPU_CMD_SET_INDEX_BUFFER_SIZE,
+  AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY_SIZE,
   AEROGPU_CMD_SET_RASTERIZER_STATE_SIZE,
   AEROGPU_CMD_SET_RENDER_TARGETS_SIZE,
+  AEROGPU_CMD_SET_RENDER_STATE_SIZE,
+  AEROGPU_CMD_SET_SAMPLER_STATE_SIZE,
   AEROGPU_CMD_SET_SCISSOR_SIZE,
+  AEROGPU_CMD_SET_SHADER_CONSTANTS_F_SIZE,
+  AEROGPU_CMD_SET_TEXTURE_SIZE,
   AEROGPU_CMD_SET_VERTEX_BUFFERS_SIZE,
   AEROGPU_CMD_SET_VIEWPORT_SIZE,
   AEROGPU_CMD_STREAM_HEADER_OFF_ABI_VERSION,
@@ -38,7 +46,13 @@ import {
   AEROGPU_CMD_STREAM_HEADER_OFF_SIZE_BYTES,
   AEROGPU_CMD_STREAM_HEADER_SIZE,
   AEROGPU_CMD_STREAM_MAGIC,
+  AEROGPU_CMD_UPLOAD_RESOURCE_SIZE,
+  AEROGPU_INPUT_LAYOUT_BLOB_HEADER_SIZE,
+  AEROGPU_INPUT_LAYOUT_BLOB_MAGIC,
+  AEROGPU_INPUT_LAYOUT_BLOB_VERSION,
+  AEROGPU_INPUT_LAYOUT_ELEMENT_DXGI_SIZE,
   AerogpuCmdOpcode,
+  AerogpuPrimitiveTopology,
   decodeCmdStreamHeader,
 } from "../aerogpu/aerogpu_cmd.ts";
 import {
@@ -163,9 +177,16 @@ test("TypeScript layout matches C headers", () => {
   assert.equal(size("aerogpu_cmd_create_texture2d"), AEROGPU_CMD_CREATE_TEXTURE2D_SIZE);
   assert.equal(size("aerogpu_cmd_destroy_resource"), AEROGPU_CMD_DESTROY_RESOURCE_SIZE);
   assert.equal(size("aerogpu_cmd_resource_dirty_range"), AEROGPU_CMD_RESOURCE_DIRTY_RANGE_SIZE);
+  assert.equal(size("aerogpu_cmd_upload_resource"), AEROGPU_CMD_UPLOAD_RESOURCE_SIZE);
   assert.equal(size("aerogpu_cmd_create_shader_dxbc"), AEROGPU_CMD_CREATE_SHADER_DXBC_SIZE);
   assert.equal(size("aerogpu_cmd_destroy_shader"), AEROGPU_CMD_DESTROY_SHADER_SIZE);
   assert.equal(size("aerogpu_cmd_bind_shaders"), AEROGPU_CMD_BIND_SHADERS_SIZE);
+  assert.equal(size("aerogpu_cmd_set_shader_constants_f"), AEROGPU_CMD_SET_SHADER_CONSTANTS_F_SIZE);
+  assert.equal(size("aerogpu_input_layout_blob_header"), AEROGPU_INPUT_LAYOUT_BLOB_HEADER_SIZE);
+  assert.equal(size("aerogpu_input_layout_element_dxgi"), AEROGPU_INPUT_LAYOUT_ELEMENT_DXGI_SIZE);
+  assert.equal(size("aerogpu_cmd_create_input_layout"), AEROGPU_CMD_CREATE_INPUT_LAYOUT_SIZE);
+  assert.equal(size("aerogpu_cmd_destroy_input_layout"), AEROGPU_CMD_DESTROY_INPUT_LAYOUT_SIZE);
+  assert.equal(size("aerogpu_cmd_set_input_layout"), AEROGPU_CMD_SET_INPUT_LAYOUT_SIZE);
   assert.equal(size("aerogpu_cmd_set_blend_state"), AEROGPU_CMD_SET_BLEND_STATE_SIZE);
   assert.equal(size("aerogpu_cmd_set_depth_stencil_state"), AEROGPU_CMD_SET_DEPTH_STENCIL_STATE_SIZE);
   assert.equal(size("aerogpu_cmd_set_rasterizer_state"), AEROGPU_CMD_SET_RASTERIZER_STATE_SIZE);
@@ -174,6 +195,10 @@ test("TypeScript layout matches C headers", () => {
   assert.equal(size("aerogpu_cmd_set_scissor"), AEROGPU_CMD_SET_SCISSOR_SIZE);
   assert.equal(size("aerogpu_cmd_set_vertex_buffers"), AEROGPU_CMD_SET_VERTEX_BUFFERS_SIZE);
   assert.equal(size("aerogpu_cmd_set_index_buffer"), AEROGPU_CMD_SET_INDEX_BUFFER_SIZE);
+  assert.equal(size("aerogpu_cmd_set_primitive_topology"), AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY_SIZE);
+  assert.equal(size("aerogpu_cmd_set_texture"), AEROGPU_CMD_SET_TEXTURE_SIZE);
+  assert.equal(size("aerogpu_cmd_set_sampler_state"), AEROGPU_CMD_SET_SAMPLER_STATE_SIZE);
+  assert.equal(size("aerogpu_cmd_set_render_state"), AEROGPU_CMD_SET_RENDER_STATE_SIZE);
   assert.equal(size("aerogpu_cmd_clear"), AEROGPU_CMD_CLEAR_SIZE);
   assert.equal(size("aerogpu_cmd_draw"), AEROGPU_CMD_DRAW_SIZE);
   assert.equal(size("aerogpu_cmd_draw_indexed"), AEROGPU_CMD_DRAW_INDEXED_SIZE);
@@ -231,17 +256,49 @@ test("TypeScript layout matches C headers", () => {
 
   assert.equal(konst("AEROGPU_CMD_STREAM_MAGIC"), BigInt(AEROGPU_CMD_STREAM_MAGIC));
   assert.equal(konst("AEROGPU_CMD_NOP"), BigInt(AerogpuCmdOpcode.Nop));
+  assert.equal(konst("AEROGPU_CMD_DEBUG_MARKER"), BigInt(AerogpuCmdOpcode.DebugMarker));
+  assert.equal(konst("AEROGPU_CMD_CREATE_BUFFER"), BigInt(AerogpuCmdOpcode.CreateBuffer));
+  assert.equal(konst("AEROGPU_CMD_CREATE_TEXTURE2D"), BigInt(AerogpuCmdOpcode.CreateTexture2d));
+  assert.equal(konst("AEROGPU_CMD_DESTROY_RESOURCE"), BigInt(AerogpuCmdOpcode.DestroyResource));
+  assert.equal(konst("AEROGPU_CMD_RESOURCE_DIRTY_RANGE"), BigInt(AerogpuCmdOpcode.ResourceDirtyRange));
+  assert.equal(konst("AEROGPU_CMD_UPLOAD_RESOURCE"), BigInt(AerogpuCmdOpcode.UploadResource));
+  assert.equal(konst("AEROGPU_CMD_CREATE_SHADER_DXBC"), BigInt(AerogpuCmdOpcode.CreateShaderDxbc));
+  assert.equal(konst("AEROGPU_CMD_DESTROY_SHADER"), BigInt(AerogpuCmdOpcode.DestroyShader));
+  assert.equal(konst("AEROGPU_CMD_BIND_SHADERS"), BigInt(AerogpuCmdOpcode.BindShaders));
+  assert.equal(konst("AEROGPU_CMD_SET_SHADER_CONSTANTS_F"), BigInt(AerogpuCmdOpcode.SetShaderConstantsF));
+  assert.equal(konst("AEROGPU_CMD_CREATE_INPUT_LAYOUT"), BigInt(AerogpuCmdOpcode.CreateInputLayout));
+  assert.equal(konst("AEROGPU_CMD_DESTROY_INPUT_LAYOUT"), BigInt(AerogpuCmdOpcode.DestroyInputLayout));
+  assert.equal(konst("AEROGPU_CMD_SET_INPUT_LAYOUT"), BigInt(AerogpuCmdOpcode.SetInputLayout));
+  assert.equal(konst("AEROGPU_CMD_SET_BLEND_STATE"), BigInt(AerogpuCmdOpcode.SetBlendState));
+  assert.equal(konst("AEROGPU_CMD_SET_DEPTH_STENCIL_STATE"), BigInt(AerogpuCmdOpcode.SetDepthStencilState));
+  assert.equal(konst("AEROGPU_CMD_SET_RASTERIZER_STATE"), BigInt(AerogpuCmdOpcode.SetRasterizerState));
+  assert.equal(konst("AEROGPU_CMD_SET_RENDER_TARGETS"), BigInt(AerogpuCmdOpcode.SetRenderTargets));
+  assert.equal(konst("AEROGPU_CMD_SET_VIEWPORT"), BigInt(AerogpuCmdOpcode.SetViewport));
+  assert.equal(konst("AEROGPU_CMD_SET_SCISSOR"), BigInt(AerogpuCmdOpcode.SetScissor));
+  assert.equal(konst("AEROGPU_CMD_SET_VERTEX_BUFFERS"), BigInt(AerogpuCmdOpcode.SetVertexBuffers));
+  assert.equal(konst("AEROGPU_CMD_SET_INDEX_BUFFER"), BigInt(AerogpuCmdOpcode.SetIndexBuffer));
+  assert.equal(konst("AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY"), BigInt(AerogpuCmdOpcode.SetPrimitiveTopology));
+  assert.equal(konst("AEROGPU_CMD_SET_TEXTURE"), BigInt(AerogpuCmdOpcode.SetTexture));
+  assert.equal(konst("AEROGPU_CMD_SET_SAMPLER_STATE"), BigInt(AerogpuCmdOpcode.SetSamplerState));
+  assert.equal(konst("AEROGPU_CMD_SET_RENDER_STATE"), BigInt(AerogpuCmdOpcode.SetRenderState));
+  assert.equal(konst("AEROGPU_CMD_CLEAR"), BigInt(AerogpuCmdOpcode.Clear));
+  assert.equal(konst("AEROGPU_CMD_DRAW"), BigInt(AerogpuCmdOpcode.Draw));
+  assert.equal(konst("AEROGPU_CMD_DRAW_INDEXED"), BigInt(AerogpuCmdOpcode.DrawIndexed));
   assert.equal(konst("AEROGPU_CMD_PRESENT"), BigInt(AerogpuCmdOpcode.Present));
   assert.equal(konst("AEROGPU_CMD_PRESENT_EX"), BigInt(AerogpuCmdOpcode.PresentEx));
-  assert.equal(
-    konst("AEROGPU_CMD_EXPORT_SHARED_SURFACE"),
-    BigInt(AerogpuCmdOpcode.ExportSharedSurface),
-  );
-  assert.equal(
-    konst("AEROGPU_CMD_IMPORT_SHARED_SURFACE"),
-    BigInt(AerogpuCmdOpcode.ImportSharedSurface),
-  );
+  assert.equal(konst("AEROGPU_CMD_EXPORT_SHARED_SURFACE"), BigInt(AerogpuCmdOpcode.ExportSharedSurface));
+  assert.equal(konst("AEROGPU_CMD_IMPORT_SHARED_SURFACE"), BigInt(AerogpuCmdOpcode.ImportSharedSurface));
   assert.equal(konst("AEROGPU_CMD_FLUSH"), BigInt(AerogpuCmdOpcode.Flush));
+
+  assert.equal(konst("AEROGPU_INPUT_LAYOUT_BLOB_MAGIC"), BigInt(AEROGPU_INPUT_LAYOUT_BLOB_MAGIC));
+  assert.equal(konst("AEROGPU_INPUT_LAYOUT_BLOB_VERSION"), BigInt(AEROGPU_INPUT_LAYOUT_BLOB_VERSION));
+
+  assert.equal(konst("AEROGPU_TOPOLOGY_POINTLIST"), BigInt(AerogpuPrimitiveTopology.PointList));
+  assert.equal(konst("AEROGPU_TOPOLOGY_LINELIST"), BigInt(AerogpuPrimitiveTopology.LineList));
+  assert.equal(konst("AEROGPU_TOPOLOGY_LINESTRIP"), BigInt(AerogpuPrimitiveTopology.LineStrip));
+  assert.equal(konst("AEROGPU_TOPOLOGY_TRIANGLELIST"), BigInt(AerogpuPrimitiveTopology.TriangleList));
+  assert.equal(konst("AEROGPU_TOPOLOGY_TRIANGLESTRIP"), BigInt(AerogpuPrimitiveTopology.TriangleStrip));
+  assert.equal(konst("AEROGPU_TOPOLOGY_TRIANGLEFAN"), BigInt(AerogpuPrimitiveTopology.TriangleFan));
 
   assert.equal(konst("AEROGPU_SUBMIT_FLAG_PRESENT"), BigInt(AEROGPU_SUBMIT_FLAG_PRESENT));
   assert.equal(konst("AEROGPU_SUBMIT_FLAG_NO_IRQ"), BigInt(AEROGPU_SUBMIT_FLAG_NO_IRQ));

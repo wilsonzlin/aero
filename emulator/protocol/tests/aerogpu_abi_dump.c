@@ -17,9 +17,16 @@ int main(void) {
   PRINT_SIZE("aerogpu_cmd_create_texture2d", struct aerogpu_cmd_create_texture2d);
   PRINT_SIZE("aerogpu_cmd_destroy_resource", struct aerogpu_cmd_destroy_resource);
   PRINT_SIZE("aerogpu_cmd_resource_dirty_range", struct aerogpu_cmd_resource_dirty_range);
+  PRINT_SIZE("aerogpu_cmd_upload_resource", struct aerogpu_cmd_upload_resource);
   PRINT_SIZE("aerogpu_cmd_create_shader_dxbc", struct aerogpu_cmd_create_shader_dxbc);
   PRINT_SIZE("aerogpu_cmd_destroy_shader", struct aerogpu_cmd_destroy_shader);
   PRINT_SIZE("aerogpu_cmd_bind_shaders", struct aerogpu_cmd_bind_shaders);
+  PRINT_SIZE("aerogpu_cmd_set_shader_constants_f", struct aerogpu_cmd_set_shader_constants_f);
+  PRINT_SIZE("aerogpu_input_layout_blob_header", struct aerogpu_input_layout_blob_header);
+  PRINT_SIZE("aerogpu_input_layout_element_dxgi", struct aerogpu_input_layout_element_dxgi);
+  PRINT_SIZE("aerogpu_cmd_create_input_layout", struct aerogpu_cmd_create_input_layout);
+  PRINT_SIZE("aerogpu_cmd_destroy_input_layout", struct aerogpu_cmd_destroy_input_layout);
+  PRINT_SIZE("aerogpu_cmd_set_input_layout", struct aerogpu_cmd_set_input_layout);
   PRINT_SIZE("aerogpu_blend_state", struct aerogpu_blend_state);
   PRINT_SIZE("aerogpu_cmd_set_blend_state", struct aerogpu_cmd_set_blend_state);
   PRINT_SIZE("aerogpu_depth_stencil_state", struct aerogpu_depth_stencil_state);
@@ -32,6 +39,10 @@ int main(void) {
   PRINT_SIZE("aerogpu_vertex_buffer_binding", struct aerogpu_vertex_buffer_binding);
   PRINT_SIZE("aerogpu_cmd_set_vertex_buffers", struct aerogpu_cmd_set_vertex_buffers);
   PRINT_SIZE("aerogpu_cmd_set_index_buffer", struct aerogpu_cmd_set_index_buffer);
+  PRINT_SIZE("aerogpu_cmd_set_primitive_topology", struct aerogpu_cmd_set_primitive_topology);
+  PRINT_SIZE("aerogpu_cmd_set_texture", struct aerogpu_cmd_set_texture);
+  PRINT_SIZE("aerogpu_cmd_set_sampler_state", struct aerogpu_cmd_set_sampler_state);
+  PRINT_SIZE("aerogpu_cmd_set_render_state", struct aerogpu_cmd_set_render_state);
   PRINT_SIZE("aerogpu_cmd_clear", struct aerogpu_cmd_clear);
   PRINT_SIZE("aerogpu_cmd_draw", struct aerogpu_cmd_draw);
   PRINT_SIZE("aerogpu_cmd_draw_indexed", struct aerogpu_cmd_draw_indexed);
@@ -93,9 +104,14 @@ int main(void) {
   PRINT_CONST(AEROGPU_CMD_CREATE_TEXTURE2D);
   PRINT_CONST(AEROGPU_CMD_DESTROY_RESOURCE);
   PRINT_CONST(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+  PRINT_CONST(AEROGPU_CMD_UPLOAD_RESOURCE);
   PRINT_CONST(AEROGPU_CMD_CREATE_SHADER_DXBC);
   PRINT_CONST(AEROGPU_CMD_DESTROY_SHADER);
   PRINT_CONST(AEROGPU_CMD_BIND_SHADERS);
+  PRINT_CONST(AEROGPU_CMD_SET_SHADER_CONSTANTS_F);
+  PRINT_CONST(AEROGPU_CMD_CREATE_INPUT_LAYOUT);
+  PRINT_CONST(AEROGPU_CMD_DESTROY_INPUT_LAYOUT);
+  PRINT_CONST(AEROGPU_CMD_SET_INPUT_LAYOUT);
   PRINT_CONST(AEROGPU_CMD_SET_BLEND_STATE);
   PRINT_CONST(AEROGPU_CMD_SET_DEPTH_STENCIL_STATE);
   PRINT_CONST(AEROGPU_CMD_SET_RASTERIZER_STATE);
@@ -104,6 +120,10 @@ int main(void) {
   PRINT_CONST(AEROGPU_CMD_SET_SCISSOR);
   PRINT_CONST(AEROGPU_CMD_SET_VERTEX_BUFFERS);
   PRINT_CONST(AEROGPU_CMD_SET_INDEX_BUFFER);
+  PRINT_CONST(AEROGPU_CMD_SET_PRIMITIVE_TOPOLOGY);
+  PRINT_CONST(AEROGPU_CMD_SET_TEXTURE);
+  PRINT_CONST(AEROGPU_CMD_SET_SAMPLER_STATE);
+  PRINT_CONST(AEROGPU_CMD_SET_RENDER_STATE);
   PRINT_CONST(AEROGPU_CMD_CLEAR);
   PRINT_CONST(AEROGPU_CMD_DRAW);
   PRINT_CONST(AEROGPU_CMD_DRAW_INDEXED);
@@ -112,6 +132,16 @@ int main(void) {
   PRINT_CONST(AEROGPU_CMD_EXPORT_SHARED_SURFACE);
   PRINT_CONST(AEROGPU_CMD_IMPORT_SHARED_SURFACE);
   PRINT_CONST(AEROGPU_CMD_FLUSH);
+
+  PRINT_CONST(AEROGPU_INPUT_LAYOUT_BLOB_MAGIC);
+  PRINT_CONST(AEROGPU_INPUT_LAYOUT_BLOB_VERSION);
+
+  PRINT_CONST(AEROGPU_TOPOLOGY_POINTLIST);
+  PRINT_CONST(AEROGPU_TOPOLOGY_LINELIST);
+  PRINT_CONST(AEROGPU_TOPOLOGY_LINESTRIP);
+  PRINT_CONST(AEROGPU_TOPOLOGY_TRIANGLELIST);
+  PRINT_CONST(AEROGPU_TOPOLOGY_TRIANGLESTRIP);
+  PRINT_CONST(AEROGPU_TOPOLOGY_TRIANGLEFAN);
 
   PRINT_CONST(AEROGPU_FORMAT_B8G8R8A8_UNORM);
   PRINT_CONST(AEROGPU_FORMAT_D32_FLOAT);
