@@ -152,8 +152,10 @@ async function main() {
   const fmtPerfExportStatus = (meta) => {
     const aeroPerf = meta?.aeroPerf;
     if (!aeroPerf || typeof aeroPerf !== "object") return "unknown";
-    if (aeroPerf.exportApiTimedOut === true) return "timed out";
-    return aeroPerf.exportAvailable === true ? "available" : "unavailable";
+    const available = aeroPerf.exportAvailable === true;
+    const timedOut = aeroPerf.exportApiTimedOut === true;
+    if (available) return timedOut ? "available (late)" : "available";
+    return timedOut ? "timed out" : "unavailable";
   };
 
   const thresholdsPolicy = await loadThresholdPolicy(opts.thresholdsFile);

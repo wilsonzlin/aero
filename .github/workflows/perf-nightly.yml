@@ -156,7 +156,7 @@ jobs:
               if (aeroPerf) {
                 const exportApiTimedOut = aeroPerf.exportApiTimedOut === true;
                 const exportAvailable = aeroPerf.exportAvailable === true;
-                const exportStatus = exportApiTimedOut ? "timed out" : exportAvailable ? "available" : "unavailable";
+                const exportStatus = exportAvailable ? (exportApiTimedOut ? "available (late)" : "available") : exportApiTimedOut ? "timed out" : "unavailable";
                 console.log(`Perf export: ${exportStatus} (\`perf-results/nightly/perf_export.json\`)`);
                 console.log(`Trace: ${fmtTraceStatus(aeroPerf.trace)} (\`perf-results/nightly/trace.json\`)`);
                 console.log("");
