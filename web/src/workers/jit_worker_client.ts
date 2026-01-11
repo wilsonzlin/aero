@@ -71,6 +71,7 @@ export class JitWorkerClient {
         this.#pending.delete(id);
         reject(new Error("Timed out waiting for JIT worker response."));
       }, timeoutMs);
+      (timeoutId as unknown as { unref?: () => void }).unref?.();
 
       this.#pending.set(id, { resolve, reject, timeoutId });
 

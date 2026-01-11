@@ -827,7 +827,7 @@ export class WorkerCoordinator {
     this.setVmState("restarting", reason);
     this.stopWorkersInternal({ clearShared: true });
 
-    this.pendingFullRestartTimer = globalThis.setTimeout(() => {
+    const fullRestartTimer = globalThis.setTimeout(() => {
       this.pendingFullRestartTimer = null;
       this.pendingFullRestart = null;
       const latest = this.activeConfig;
@@ -840,7 +840,9 @@ export class WorkerCoordinator {
       } catch (err) {
         console.error(err);
       }
-    }, delayMs) as unknown as number;
+    }, delayMs);
+    (fullRestartTimer as unknown as { unref?: () => void }).unref?.();
+    this.pendingFullRestartTimer = fullRestartTimer as unknown as number;
   }
 
   private requestWorkerRestart(role: WorkerRole, opts: { reason: string; useBackoff: boolean }): void {
@@ -859,7 +861,7 @@ export class WorkerCoordinator {
       this.setVmState("starting", `worker_restart:${role}`);
     }
 
-    this.pendingWorkerRestartTimers[role] = globalThis.setTimeout(() => {
+    const workerRestartTimer = globalThis.setTimeout(() => {
       delete this.pendingWorkerRestartTimers[role];
       if (!this.shared) return;
       const latestConfig = this.activeConfig;
@@ -875,7 +877,9 @@ export class WorkerCoordinator {
       this.spawnWorker(role, this.shared.segments);
       this.sendConfigToWorker(role, this.configVersion, latestConfig);
       void this.postWorkerInitMessages({ runId, segments: this.shared.segments, perfChannel, roles: [role] });
-    }, delayMs) as unknown as number;
+    }, delayMs);
+    (workerRestartTimer as unknown as { unref?: () => void }).unref?.();
+    this.pendingWorkerRestartTimers[role] = workerRestartTimer as unknown as number;
   }
 
   private terminateWorker(role: WorkerRole): void {
