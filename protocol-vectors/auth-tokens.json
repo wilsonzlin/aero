@@ -307,6 +307,27 @@
         "expectError": true
       },
       {
+        "name": "wrongType.expFloat",
+        "secret": "test-jwt-secret",
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MTcwMDAwMDA2MC41LCJzaWQiOiJzaWQtZXhwLWZsb2F0In0.6zlMFZglASJXxO9uTonNlFEiLYIBakGkYFT7aUI5gGk",
+        "nowSec": 1700000000,
+        "expectError": true
+      },
+      {
+        "name": "wrongType.iatFloat",
+        "secret": "test-jwt-secret",
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3MDAwMDAwMDAuNSwiZXhwIjoxNzAwMDAwMDYwLCJzaWQiOiJzaWQtaWF0LWZsb2F0In0.dym-1IwWo5r27uVvs95kBQsiPHgYSPFX2WJyZXGHVsw",
+        "nowSec": 1700000000,
+        "expectError": true
+      },
+      {
+        "name": "wrongType.nbfFloat",
+        "secret": "test-jwt-secret",
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MTcwMDAwMDA2MCwic2lkIjoic2lkLW5iZi1mbG9hdCIsIm5iZiI6MTcwMDAwMDAwMC41fQ.XbGWyzmiL5f2BlJjLQ661iNs5xLI-unHB78bAiW-Qhw",
+        "nowSec": 1700000000,
+        "expectError": true
+      },
+      {
         "name": "wrongAlg",
         "secret": "test-jwt-secret",
         "token": "eyJhbGciOiJIUzUxMiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MTcwMDAwMDA2MCwic2lkIjoic2lkLTEyMzQ1Njc4OTAiLCJvcmlnaW4iOiJodHRwczovL2FwcC5leGFtcGxlLnRlc3QiLCJhdWQiOiJhZXJvLXVkcC1yZWxheSIsImlzcyI6ImFlcm8tZ2F0ZXdheSJ9.xxNREd57JHOFSEUoDFwMVDQ-xAYddSly_c1i09zWfXc",
