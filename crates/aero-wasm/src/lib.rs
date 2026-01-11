@@ -14,6 +14,10 @@ mod runtime_alloc;
 #[cfg(any(target_arch = "wasm32", test))]
 mod demo_renderer;
 
+pub mod usb_passthrough;
+
+pub use usb_passthrough::UsbPassthroughBridge;
+
 #[cfg(target_arch = "wasm32")]
 mod webusb_uhci_passthrough_harness;
 
