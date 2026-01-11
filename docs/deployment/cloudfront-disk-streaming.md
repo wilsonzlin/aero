@@ -379,7 +379,7 @@ If using signed cookies across origins, you must allow credentials (and you must
 ```
 Access-Control-Allow-Origin: https://app.example.com
 Access-Control-Allow-Methods: GET, HEAD, OPTIONS
-Access-Control-Allow-Headers: Range, If-Range, Authorization, Content-Type, If-None-Match
+Access-Control-Allow-Headers: Range, If-Range, If-None-Match, If-Modified-Since, Authorization, Content-Type
 Access-Control-Allow-Credentials: true
 Access-Control-Expose-Headers: Accept-Ranges, Content-Range, Content-Length, ETag
 Access-Control-Max-Age: 86400
@@ -390,7 +390,7 @@ If you are using signed URLs and do not need cookies, you can use:
 ```
 Access-Control-Allow-Origin: *
 Access-Control-Allow-Methods: GET, HEAD, OPTIONS
-Access-Control-Allow-Headers: Range, If-Range
+Access-Control-Allow-Headers: Range, If-Range, If-None-Match, If-Modified-Since
 Access-Control-Allow-Credentials: false
 Access-Control-Expose-Headers: Accept-Ranges, Content-Range, Content-Length, ETag
 Access-Control-Max-Age: 86400
@@ -429,7 +429,7 @@ A permissive starting point for a single app origin:
   {
     "AllowedOrigins": ["https://app.example.com"],
     "AllowedMethods": ["GET", "HEAD", "OPTIONS"],
-    "AllowedHeaders": ["Range", "If-Range", "Authorization", "Content-Type", "If-None-Match", "Origin"],
+    "AllowedHeaders": ["Range", "If-Range", "If-None-Match", "If-Modified-Since", "Authorization", "Content-Type", "Origin"],
     "ExposeHeaders": ["Accept-Ranges", "Content-Range", "Content-Length", "ETag"],
     "MaxAgeSeconds": 86400
   }
