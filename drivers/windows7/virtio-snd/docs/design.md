@@ -120,22 +120,26 @@ Power:
 - Treat any virtio device reset (including `device_status = 0`) as requiring full
   reinitialization of queue state and interrupt routing.
 
-## Contract conformance note (contract v1 vs current emulator)
+## Contract conformance note (contract v1)
 
-The virtio-snd device model in `crates/aero-virtio/src/devices/snd.rs` is expected to match
-the definitive contract in `docs/windows7-virtio-driver-contract.md`, including:
+The definitive contract for this driver is `docs/windows7-virtio-driver-contract.md` (§3.4).
+The in-tree emulator model (`crates/aero-virtio/src/devices/snd.rs`) includes unit tests that
+assert contract v1 feature bits and queue sizes.
 
-- Contract v1 does **not** negotiate `VIRTIO_F_RING_EVENT_IDX`.
-- Queue sizes: `controlq/eventq/rxq = 64`, `txq = 256`.
+Contract v1 requirements include:
+
+- Feature bits: MUST offer `VIRTIO_F_VERSION_1` and `VIRTIO_F_RING_INDIRECT_DESC`, and MUST NOT
+  offer `VIRTIO_F_RING_EVENT_IDX` / packed rings.
+- Queue max sizes: `controlq/eventq/rxq = 64`, `txq = 256`.
 
 Driver stance:
 
-- Negotiate only the features the driver actually requires for correctness
-  (at minimum `VIRTIO_F_VERSION_1` + `VIRTIO_F_RING_INDIRECT_DESC` for contract v1).
-- Validate device-reported `common_cfg.queue_size` / `queue_notify_off` against the
-  contract for the queues the driver wires up, and fail bring-up on mismatch.
-- Treat `VIRTIO_F_RING_EVENT_IDX` as optional: only negotiate it if the driver fully
-  implements the event-index algorithms; otherwise operate in always-notify mode.
+- Negotiate only the features required for correctness. For contract v1 this means enabling
+  `VIRTIO_F_VERSION_1` and `VIRTIO_F_RING_INDIRECT_DESC` and leaving `VIRTIO_F_RING_EVENT_IDX`
+  disabled even if a device offers it (for example due to a buggy/emerging device model).
+- Always size ring allocations from the device-reported `common_cfg.queue_size` after selecting
+  each queue. Treat unexpected values (for example smaller than required by the contract, or
+  inconsistent `queue_notify_off`) as an incompatibility during bring-up.
 
 ## References
 
