@@ -149,8 +149,10 @@ fn l2_tunnel_vectors_match_golden_bytes() {
             let wire_b64 = json_str(json_get(v, "wire_b64", &ctx), &format!("{ctx}.wire_b64"));
             let wire = b64_to_bytes(wire_b64);
 
-            let error_contains =
-                json_str(json_get(v, "errorContains", &ctx), &format!("{ctx}.errorContains"));
+            let error_contains = json_str(
+                json_get(v, "errorContains", &ctx),
+                &format!("{ctx}.errorContains"),
+            );
 
             let err = match decode_with_limits(&wire, &limits) {
                 Ok(_) => panic!("{name}: expected decode to fail"),
@@ -198,27 +200,37 @@ fn l2_tunnel_vectors_match_golden_bytes() {
         assert_eq!(decoded.flags, msg_flags);
         assert_eq!(decoded.payload, payload.as_slice());
 
-        let encoded =
-            encode_with_limits(msg_type, msg_flags, &payload, &limits).unwrap_or_else(|err| {
-                panic!("{name}: encode_with_limits failed unexpectedly: {err}")
-            });
-        assert_eq!(encoded, frame, "{name}: encode_with_limits must match golden bytes");
+        let encoded = encode_with_limits(msg_type, msg_flags, &payload, &limits)
+            .unwrap_or_else(|err| panic!("{name}: encode_with_limits failed unexpectedly: {err}"));
+        assert_eq!(
+            encoded, frame,
+            "{name}: encode_with_limits must match golden bytes"
+        );
 
         match msg_type {
             L2_TUNNEL_TYPE_FRAME => {
                 saw_frame = true;
                 let encoded = encode_frame(&payload).unwrap();
-                assert_eq!(encoded, frame, "{name}: encode_frame must match golden bytes");
+                assert_eq!(
+                    encoded, frame,
+                    "{name}: encode_frame must match golden bytes"
+                );
             }
             L2_TUNNEL_TYPE_PING => {
                 saw_ping = true;
                 let encoded = encode_ping(Some(&payload)).unwrap();
-                assert_eq!(encoded, frame, "{name}: encode_ping must match golden bytes");
+                assert_eq!(
+                    encoded, frame,
+                    "{name}: encode_ping must match golden bytes"
+                );
             }
             L2_TUNNEL_TYPE_PONG => {
                 saw_pong = true;
                 let encoded = encode_pong(Some(&payload)).unwrap();
-                assert_eq!(encoded, frame, "{name}: encode_pong must match golden bytes");
+                assert_eq!(
+                    encoded, frame,
+                    "{name}: encode_pong must match golden bytes"
+                );
             }
             L2_TUNNEL_TYPE_ERROR => {
                 saw_error = true;
@@ -231,9 +243,8 @@ fn l2_tunnel_vectors_match_golden_bytes() {
                     // code (u16 BE) | msg_len (u16 BE) | msg (UTF-8)
                     let mut expected_payload = Vec::new();
                     expected_payload.extend_from_slice(&code.to_be_bytes());
-                    expected_payload.extend_from_slice(
-                        &(message.as_bytes().len() as u16).to_be_bytes(),
-                    );
+                    expected_payload
+                        .extend_from_slice(&(message.as_bytes().len() as u16).to_be_bytes());
                     expected_payload.extend_from_slice(message.as_bytes());
                     assert_eq!(
                         expected_payload, payload,
@@ -251,4 +262,3 @@ fn l2_tunnel_vectors_match_golden_bytes() {
     assert!(saw_error, "missing ERROR vector");
     assert!(saw_invalid, "missing invalid/error vectors");
 }
-

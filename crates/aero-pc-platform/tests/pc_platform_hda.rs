@@ -105,7 +105,14 @@ fn pc_platform_routes_hda_mmio_after_bar0_reprogramming() {
     assert_ne!(pc.memory.read_u32(bar0_base + 0x08) & 1, 0);
 
     // Move BAR0 within the platform's PCI MMIO window.
-    write_cfg_u32(&mut pc, bdf.bus, bdf.device, bdf.function, 0x10, new_base as u32);
+    write_cfg_u32(
+        &mut pc,
+        bdf.bus,
+        bdf.device,
+        bdf.function,
+        0x10,
+        new_base as u32,
+    );
 
     // Old base should no longer decode.
     assert_eq!(pc.memory.read_u32(bar0_base + 0x08), 0xFFFF_FFFF);

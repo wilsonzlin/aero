@@ -1048,12 +1048,12 @@ fn protocol_rejects_truncated_set_constant_buffers_payload() {
             push_u32(out, 0); // start_slot
             push_u32(out, 2); // buffer_count (claims 2)
             push_u32(out, 0); // reserved0
-            // binding[0]
+                              // binding[0]
             push_u32(out, 0x90); // buffer
             push_u32(out, 16); // offset_bytes
             push_u32(out, 64); // size_bytes
             push_u32(out, 0); // reserved0
-            // missing binding[1]
+                              // missing binding[1]
         });
     });
 

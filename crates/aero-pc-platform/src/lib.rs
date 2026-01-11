@@ -99,11 +99,7 @@ impl PciMmioWindow {
         Some((mem_enabled, bar0))
     }
 
-    fn map_hda(
-        &mut self,
-        paddr: u64,
-        size: usize,
-    ) -> Option<(Rc<RefCell<HdaPciDevice>>, u64)> {
+    fn map_hda(&mut self, paddr: u64, size: usize) -> Option<(Rc<RefCell<HdaPciDevice>>, u64)> {
         let hda = self.hda.as_ref()?.clone();
         let (mem_enabled, bar0) = self.hda_bar0()?;
         if !mem_enabled || bar0.base == 0 {
