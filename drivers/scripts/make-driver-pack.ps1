@@ -241,7 +241,17 @@ try {
     $isoHash = (Get-FileHash -Algorithm SHA256 -Path $isoPath).Hash.ToLowerInvariant()
     $img = Mount-DiskImage -ImagePath $isoPath -PassThru
     $mounted = $true
-    $vol = $img | Get-Volume
+    # Drive letter assignment can be asynchronous on some hosts; poll briefly before failing.
+    $vol = $null
+    for ($i = 0; $i -lt 20; $i++) {
+      $vols = $img | Get-Volume -ErrorAction SilentlyContinue
+      $vol = $vols | Where-Object { $_.DriveLetter } | Select-Object -First 1
+      if ($vol) { break }
+      Start-Sleep -Milliseconds 200
+    }
+    if (-not $vol -or -not $vol.DriveLetter) {
+      throw "Mounted virtio-win ISO has no drive letter assigned: $isoPath"
+    }
     $isoVolumeLabel = $vol.FileSystemLabel
     $VirtioWinRoot = "$($vol.DriveLetter):\"
   } else {
