@@ -4116,10 +4116,21 @@ HRESULT wddm_acquire_submit_buffers_allocate_impl(Device* dev, CallbackFn cb, ui
     args.CommandBufferSize = request_bytes;
   }
   if constexpr (has_member_AllocationListSize<Arg>::value) {
-    args.AllocationListSize = 0;
+    // Some runtimes treat AllocationListSize as an input (capacity request) and
+    // will fail or return a 0-sized list if it is left at 0. Request a generous
+    // default so allocation tracking can work even when CreateContext did not
+    // provide a persistent allocation list.
+    const uint32_t request_entries = std::max<uint32_t>(
+        dev->wddm_context.AllocationListSize ? dev->wddm_context.AllocationListSize : 0u, 4096u);
+    args.AllocationListSize = request_entries;
   }
   if constexpr (has_member_PatchLocationListSize<Arg>::value) {
     args.PatchLocationListSize = 0;
+  }
+  if constexpr (has_member_DmaBufferPrivateDataSize<Arg>::value) {
+    // Ensure the runtime allocates enough DMA private data for the Win7 AeroGPU
+    // contract (AEROGPU_DMA_PRIV).
+    args.DmaBufferPrivateDataSize = static_cast<uint32_t>(AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES);
   }
 
   const HRESULT hr = cb(static_cast<ArgPtr>(&args));
@@ -4178,6 +4189,10 @@ HRESULT wddm_acquire_submit_buffers_allocate_impl(Device* dev, CallbackFn cb, ui
   if constexpr (has_member_DmaBufferPrivateDataSize<Arg>::value) {
     dma_priv_bytes = static_cast<uint32_t>(args.DmaBufferPrivateDataSize);
   }
+  const uint32_t expected_dma_priv_bytes = static_cast<uint32_t>(AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES);
+  if (dma_priv && dma_priv_bytes == 0) {
+    dma_priv_bytes = expected_dma_priv_bytes;
+  }
 
   if (FAILED(hr) || !cmd_ptr || cap == 0 || !alloc_list || alloc_entries == 0) {
     if constexpr (has_pfnDeallocateCb<WddmDeviceCallbacks>::value) {
@@ -4214,10 +4229,9 @@ HRESULT wddm_acquire_submit_buffers_allocate_impl(Device* dev, CallbackFn cb, ui
 
   // If CreateContext did not provide DMA buffer private data, accept a pointer
   // from AllocateCb.
-  const uint32_t expected_dma_priv_bytes = static_cast<uint32_t>(AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES);
   if ((!dev->wddm_context.pDmaBufferPrivateData ||
        dev->wddm_context.DmaBufferPrivateDataSize < expected_dma_priv_bytes) &&
-      dma_priv_bytes != 0) {
+      dma_priv && dma_priv_bytes >= expected_dma_priv_bytes) {
     dev->wddm_context.pDmaBufferPrivateData = dma_priv;
     dev->wddm_context.DmaBufferPrivateDataSize = dma_priv_bytes;
     dev->wddm_context.dma_priv_from_allocate = true;
@@ -4303,6 +4317,10 @@ HRESULT wddm_acquire_submit_buffers_get_command_buffer_impl(Device* dev, Callbac
   if constexpr (has_member_DmaBufferPrivateDataSize<Arg>::value) {
     dma_priv_bytes = static_cast<uint32_t>(args.DmaBufferPrivateDataSize);
   }
+  const uint32_t expected_dma_priv_bytes = static_cast<uint32_t>(AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES);
+  if (dma_priv && dma_priv_bytes == 0) {
+    dma_priv_bytes = expected_dma_priv_bytes;
+  }
 
   if (!cmd_ptr || cap == 0 || !alloc_list || alloc_entries == 0) {
     return E_OUTOFMEMORY;
@@ -4323,10 +4341,9 @@ HRESULT wddm_acquire_submit_buffers_get_command_buffer_impl(Device* dev, Callbac
   dev->wddm_context.pPatchLocationList = patch_list;
   dev->wddm_context.PatchLocationListSize = patch_entries;
 
-  const uint32_t expected_dma_priv_bytes = static_cast<uint32_t>(AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES);
   if ((!dev->wddm_context.pDmaBufferPrivateData ||
        dev->wddm_context.DmaBufferPrivateDataSize < expected_dma_priv_bytes) &&
-      dma_priv_bytes != 0) {
+      dma_priv && dma_priv_bytes >= expected_dma_priv_bytes) {
     dev->wddm_context.pDmaBufferPrivateData = dma_priv;
     dev->wddm_context.DmaBufferPrivateDataSize = dma_priv_bytes;
     dev->wddm_context.dma_priv_from_allocate = false;
@@ -10904,6 +10921,9 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
                   static_cast<unsigned>(dev->wddm_context.DmaBufferPrivateDataSize));
 
     bool have_submit_cb = false;
+    if constexpr (has_pfnSubmitCommandCb<WddmDeviceCallbacks>::value) {
+      have_submit_cb = have_submit_cb || (dev->wddm_callbacks.pfnSubmitCommandCb != nullptr);
+    }
     if constexpr (has_pfnRenderCb<WddmDeviceCallbacks>::value) {
       have_submit_cb = have_submit_cb || (dev->wddm_callbacks.pfnRenderCb != nullptr);
     }
