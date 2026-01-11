@@ -35,7 +35,7 @@ function maskToSize(value: number, size: number): number {
 /**
  * Minimal UHCI PCI function backed by the WASM `UhciControllerBridge`.
  *
- * Exposes a single IO BAR (BAR0) containing the 0x20-byte UHCI register block and
+ * Exposes a single IO BAR (BAR4) containing the 0x20-byte UHCI register block and
  * advances the controller one 1ms frame at a time via {@link tick}.
  */
 export class UhciPciDevice implements PciDevice, TickableDevice {

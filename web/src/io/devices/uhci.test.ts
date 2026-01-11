@@ -4,7 +4,7 @@ import type { IrqSink } from "../device_manager";
 import { UhciPciDevice, type UhciControllerBridgeLike } from "./uhci";
 
 describe("io/devices/UhciPciDevice", () => {
-  it("exposes a UHCI IO BAR (BAR0) sized for the register block", () => {
+  it("exposes a UHCI IO BAR (BAR4) sized for the register block", () => {
     const bridge: UhciControllerBridgeLike = {
       io_read: vi.fn(() => 0),
       io_write: vi.fn(),
