@@ -2048,7 +2048,7 @@ impl AeroGpuSoftwareExecutor {
                             Self::record_error(regs);
                             return false;
                         }
-                };
+                    };
                 let handle = u32::from_le(packet_cmd.resource_handle);
                 let resolved = self.resolve_handle(handle);
                 self.buffers.remove(&resolved);
@@ -2094,7 +2094,9 @@ impl AeroGpuSoftwareExecutor {
                         *vb = VertexBufferBinding::default();
                     }
                 }
-                if self.state.input_layout == handle || (destroyed_underlying && self.state.input_layout == resolved) {
+                if self.state.input_layout == handle
+                    || (destroyed_underlying && self.state.input_layout == resolved)
+                {
                     self.state.input_layout = 0;
                 }
             }
@@ -2989,7 +2991,7 @@ impl AeroGpuSoftwareExecutor {
                             Self::record_error(regs);
                             return false;
                         }
-                };
+                    };
                 let handle = u32::from_le(packet_cmd.resource_handle);
                 let token = u64::from_le(packet_cmd.share_token);
                 if handle == 0 || token == 0 {

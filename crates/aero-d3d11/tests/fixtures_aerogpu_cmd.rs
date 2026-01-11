@@ -191,11 +191,7 @@ fn parses_aerogpu_cmd_triangle_sm4_fixture() {
                 (1, v1, [3.0, -1.0, 0.0]),
                 (2, v2, [-1.0, 3.0, 0.0]),
             ] {
-                let pos = [
-                    f32_le(&vtx[0..4]),
-                    f32_le(&vtx[4..8]),
-                    f32_le(&vtx[8..12]),
-                ];
+                let pos = [f32_le(&vtx[0..4]), f32_le(&vtx[4..8]), f32_le(&vtx[8..12])];
                 assert_eq!(pos, expected_pos, "unexpected pos for vertex {idx}");
 
                 let color = [
@@ -204,7 +200,11 @@ fn parses_aerogpu_cmd_triangle_sm4_fixture() {
                     f32_le(&vtx[20..24]),
                     f32_le(&vtx[24..28]),
                 ];
-                assert_eq!(color, [1.0, 0.0, 0.0, 1.0], "unexpected color for vertex {idx}");
+                assert_eq!(
+                    color,
+                    [1.0, 0.0, 0.0, 1.0],
+                    "unexpected color for vertex {idx}"
+                );
             }
         }
         other => panic!("unexpected cmd[1]: {other:?}"),

@@ -66,7 +66,10 @@ fn aerogpu_cmd_set_samplers_rejects_slot_out_of_range() {
             .execute_cmd_stream(&stream, None, &guest_mem)
             .expect_err("expected SET_SAMPLERS to reject out-of-range slot");
         let msg = format!("{err:#}");
-        assert!(msg.contains("SET_SAMPLERS: slot range out of supported range"), "{msg}");
+        assert!(
+            msg.contains("SET_SAMPLERS: slot range out of supported range"),
+            "{msg}"
+        );
     });
 }
 
@@ -94,7 +97,7 @@ fn aerogpu_cmd_set_constant_buffers_rejects_slot_out_of_range() {
         stream.extend_from_slice(&16u32.to_le_bytes()); // start_slot (0..15 supported)
         stream.extend_from_slice(&1u32.to_le_bytes()); // buffer_count
         stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
-        // aerogpu_constant_buffer_binding (16 bytes)
+                                                       // aerogpu_constant_buffer_binding (16 bytes)
         stream.extend_from_slice(&0u32.to_le_bytes()); // buffer handle (unbind)
         stream.extend_from_slice(&0u32.to_le_bytes()); // offset_bytes
         stream.extend_from_slice(&0u32.to_le_bytes()); // size_bytes
@@ -113,4 +116,3 @@ fn aerogpu_cmd_set_constant_buffers_rejects_slot_out_of_range() {
         );
     });
 }
-
