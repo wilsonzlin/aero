@@ -170,7 +170,7 @@ async fn origin_allowlist_and_open_mode() {
     // Allowlist enforcement.
     {
         let _open = EnvVarGuard::unset("AERO_L2_OPEN");
-        let _allowed = EnvVarGuard::set("AERO_L2_ALLOWED_ORIGINS", "https://allowed.test");
+        let _allowed = EnvVarGuard::set("AERO_L2_ALLOWED_ORIGINS", "HTTPS://ALLOWED.TEST:443/");
 
         let cfg = ProxyConfig::from_env().unwrap();
         let proxy = start_server(cfg).await.unwrap();
@@ -210,6 +210,29 @@ async fn origin_allowlist_and_open_mode() {
 
         proxy.shutdown().await;
     }
+}
+
+#[tokio::test]
+async fn wildcard_still_rejects_invalid_origin_values() {
+    let _lock = ENV_LOCK.lock().await;
+    let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
+    let _open = EnvVarGuard::unset("AERO_L2_OPEN");
+    let _allowed = EnvVarGuard::set("AERO_L2_ALLOWED_ORIGINS", "*");
+    let _token = EnvVarGuard::unset("AERO_L2_TOKEN");
+
+    let cfg = ProxyConfig::from_env().unwrap();
+    let proxy = start_server(cfg).await.unwrap();
+    let addr = proxy.local_addr();
+
+    let mut req = base_ws_request(addr);
+    req.headers_mut()
+        .insert("origin", HeaderValue::from_static("https://evil.test/path"));
+    let err = tokio_tungstenite::connect_async(req)
+        .await
+        .expect_err("expected invalid Origin header to be rejected");
+    assert_http_status(err, StatusCode::FORBIDDEN);
+
+    proxy.shutdown().await;
 }
 
 #[tokio::test]

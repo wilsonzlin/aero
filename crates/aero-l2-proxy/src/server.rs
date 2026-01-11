@@ -433,8 +433,8 @@ fn enforce_security(
     }
 
     if !state.cfg.security.open {
-        let origin = origin_from_headers(headers);
-        let Some(origin) = origin else {
+        let origin_header = origin_from_headers(headers);
+        let Some(origin_header) = origin_header else {
             state.metrics.upgrade_reject_origin_missing();
             tracing::warn!(
                 reason = "origin_missing",
@@ -450,10 +450,33 @@ fn enforce_security(
             ));
         };
 
+        let origin = match crate::origin::normalize_origin(origin_header) {
+            Some(origin) => origin,
+            None => {
+                state.metrics.upgrade_reject_origin_not_allowed();
+                tracing::warn!(
+                    reason = "origin_invalid",
+                    origin = %origin_header,
+                    auth_mode = %auth_mode(state),
+                    token_present,
+                    cookie_present,
+                    client_ip = %client_ip,
+                    "rejected l2 websocket upgrade",
+                );
+                return Err(Box::new(
+                    (
+                        StatusCode::FORBIDDEN,
+                        format!("invalid Origin header: {origin_header}"),
+                    )
+                        .into_response(),
+                ));
+            }
+        };
+
         match &state.cfg.security.allowed_origins {
             crate::config::AllowedOrigins::Any => {}
             crate::config::AllowedOrigins::List(list) => {
-                if !list.iter().any(|allowed| allowed == origin) {
+                if !list.iter().any(|allowed| allowed == &origin) {
                     state.metrics.upgrade_reject_origin_not_allowed();
                     tracing::warn!(
                         reason = "origin_not_allowed",

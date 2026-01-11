@@ -6,6 +6,7 @@ mod pcapng;
 
 mod config;
 mod dns;
+mod origin;
 mod overrides;
 mod policy;
 mod server;

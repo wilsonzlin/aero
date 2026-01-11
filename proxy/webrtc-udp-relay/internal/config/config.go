@@ -1059,7 +1059,7 @@ func parseAllowedOrigins(raw string) ([]string, error) {
 			continue
 		}
 
-		if entry == "*" || entry == "null" {
+		if entry == "*" {
 			out = append(out, entry)
 			continue
 		}

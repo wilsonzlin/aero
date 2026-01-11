@@ -552,7 +552,7 @@ func TestICEEndpoint_AllowsConfiguredOrigin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new request: %v", err)
 	}
-	req.Header.Set("Origin", "https://app.example.com")
+	req.Header.Set("Origin", "HTTPS://APP.EXAMPLE.COM:443/")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

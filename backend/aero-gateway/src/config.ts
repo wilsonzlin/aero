@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import { z } from 'zod';
 
+import { normalizeAllowedOriginString } from './security/origin.js';
+
 const logLevels = ['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'] as const;
 const udpRelayAuthModes = ['none', 'api_key', 'jwt'] as const;
 
@@ -88,20 +90,6 @@ function splitCommaListNumbers(value: string): number[] {
     }
     return n;
   });
-}
-
-function normalizeOrigin(maybeOrigin: string): string {
-  const trimmed = maybeOrigin.trim();
-  if (trimmed === '*' || trimmed === 'null') return trimmed;
-
-  let url: URL;
-  try {
-    url = new URL(trimmed);
-  } catch {
-    throw new Error(`Invalid origin "${trimmed}". Expected a full origin like "https://example.com".`);
-  }
-
-  return url.origin;
 }
 
 function assertReadableFile(filePath: string, envName: string): void {
@@ -216,9 +204,9 @@ export function loadConfig(env: Env = process.env): Config {
     throw new Error(`Invalid PUBLIC_BASE_URL "${publicBaseUrl}". Expected a URL like "https://example.com".`);
   }
 
-  const allowedOrigins = splitCommaList(raw.ALLOWED_ORIGINS).map(normalizeOrigin);
+  const allowedOrigins = splitCommaList(raw.ALLOWED_ORIGINS).map(normalizeAllowedOriginString);
   const allowedOriginsWithDefault =
-    allowedOrigins.length > 0 ? allowedOrigins : [normalizeOrigin(publicBaseUrlParsed.origin)];
+    allowedOrigins.length > 0 ? allowedOrigins : [normalizeAllowedOriginString(publicBaseUrlParsed.origin)];
 
   const udpRelayBaseUrlRaw = raw.UDP_RELAY_BASE_URL.trim();
   let udpRelayBaseUrl = '';

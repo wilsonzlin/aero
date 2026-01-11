@@ -78,7 +78,12 @@ impl SecurityConfig {
                         any = true;
                         break;
                     }
-                    out.push(entry.to_string());
+                    let normalized = crate::origin::normalize_origin(entry).ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "invalid origin {entry:?} (expected an origin like \"https://example.com\")"
+                        )
+                    })?;
+                    out.push(normalized);
                 }
                 if any {
                     AllowedOrigins::Any

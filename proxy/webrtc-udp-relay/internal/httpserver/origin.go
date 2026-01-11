@@ -58,7 +58,8 @@ func (s *Server) withOriginPolicy(next http.HandlerFunc) http.HandlerFunc {
 // NormalizedOriginFromRequest returns a canonical Origin value for r.
 //
 // If r includes an Origin header and it parses as a valid browser Origin, the
-// returned value is normalized (lower-cased scheme/host, no path/query/fragment).
+// returned value is normalized (lower-cased scheme/host, no path/query/fragment,
+// default ports removed).
 //
 // If r has no Origin header, this derives an origin from the request's Host and
 // scheme. This is primarily used for L2 backend WebSocket dialing, so the relay
@@ -102,5 +103,9 @@ func NormalizedOriginFromRequest(r *http.Request) string {
 		}
 	}
 
-	return scheme + "://" + host
+	candidate := scheme + "://" + host
+	if normalized, _, ok := origin.NormalizeHeader(candidate); ok {
+		return normalized
+	}
+	return candidate
 }

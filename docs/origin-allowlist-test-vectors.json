@@ -1,0 +1,23 @@
+[
+  { "raw": "https://example.com", "normalized": "https://example.com" },
+  { "raw": " https://Example.com ", "normalized": "https://example.com" },
+  { "raw": "https://example.com/", "normalized": "https://example.com" },
+  { "raw": "https://example.com:443", "normalized": "https://example.com" },
+  { "raw": "https://example.com:443/", "normalized": "https://example.com" },
+  { "raw": "https://example.com:444", "normalized": "https://example.com:444" },
+  { "raw": "http://example.com", "normalized": "http://example.com" },
+  { "raw": "http://example.com:80", "normalized": "http://example.com" },
+  { "raw": "http://example.com:8080", "normalized": "http://example.com:8080" },
+  { "raw": "http://[::1]", "normalized": "http://[::1]" },
+  { "raw": "http://[::1]:80", "normalized": "http://[::1]" },
+  { "raw": "https://[2001:db8::1]:443/", "normalized": "https://[2001:db8::1]" },
+  { "raw": "null", "normalized": "null" },
+  { "raw": "https://example.com/path", "normalized": null },
+  { "raw": "https://example.com?x=1", "normalized": null },
+  { "raw": "https://example.com#frag", "normalized": null },
+  { "raw": "https://user:pass@example.com", "normalized": null },
+  { "raw": "ftp://example.com", "normalized": null },
+  { "raw": "example.com", "normalized": null },
+  { "raw": "", "normalized": null },
+  { "raw": "   ", "normalized": null }
+]

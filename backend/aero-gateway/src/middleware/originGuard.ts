@@ -1,23 +1,17 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 
-function normalizeOriginHeader(origin: string): string | null {
-  const trimmed = origin.trim();
-  if (trimmed === 'null') return 'null';
+import { normalizeOriginString } from '../security/origin.js';
 
-  try {
-    return new URL(trimmed).origin;
-  } catch {
-    return null;
-  }
+export function isNormalizedOriginAllowed(normalizedOrigin: string, allowedOrigins: readonly string[]): boolean {
+  if (allowedOrigins.includes('*')) return true;
+  return allowedOrigins.includes(normalizedOrigin);
 }
 
 export function isOriginAllowed(originHeader: string, allowedOrigins: readonly string[]): boolean {
-  if (allowedOrigins.includes('*')) return true;
-
-  const normalized = normalizeOriginHeader(originHeader);
+  const normalized = normalizeOriginString(originHeader);
   if (!normalized) return false;
 
-  return allowedOrigins.includes(normalized);
+  return isNormalizedOriginAllowed(normalized, allowedOrigins);
 }
 
 export async function originGuard(
@@ -28,12 +22,13 @@ export async function originGuard(
   const origin = request.headers.origin;
   if (!origin) return;
 
-  if (!isOriginAllowed(origin, opts.allowedOrigins)) {
+  const normalizedOrigin = normalizeOriginString(origin);
+  if (!normalizedOrigin || !isNormalizedOriginAllowed(normalizedOrigin, opts.allowedOrigins)) {
     reply.code(403).send({ error: 'forbidden', message: 'Origin not allowed' });
     return;
   }
 
-  reply.header('access-control-allow-origin', normalizeOriginHeader(origin) ?? origin);
+  reply.header('access-control-allow-origin', normalizedOrigin);
   reply.header('access-control-allow-credentials', 'true');
   reply.header('access-control-expose-headers', 'x-request-id');
   reply.header('vary', 'Origin');

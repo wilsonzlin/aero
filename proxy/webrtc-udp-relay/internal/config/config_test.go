@@ -443,8 +443,8 @@ func TestParseAllowedOrigins_NormalizesAndValidates(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("len=%d, want 2 (%v)", len(got), got)
 	}
-	if got[0] != "https://example.com:443" {
-		t.Fatalf("got[0]=%q, want %q", got[0], "https://example.com:443")
+	if got[0] != "https://example.com" {
+		t.Fatalf("got[0]=%q, want %q", got[0], "https://example.com")
 	}
 	if got[1] != "http://localhost:5173" {
 		t.Fatalf("got[1]=%q, want %q", got[1], "http://localhost:5173")
