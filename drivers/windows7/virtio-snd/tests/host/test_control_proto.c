@@ -66,6 +66,18 @@ static void test_pcm_set_params_req_packing_and_validation(void)
     TEST_ASSERT(status == STATUS_SUCCESS);
     TEST_ASSERT(req.stream_id == VIRTIO_SND_CAPTURE_STREAM_ID);
     TEST_ASSERT(req.channels == 1u);
+    {
+        const uint8_t expected[] = {
+            0x01, 0x01, 0x00, 0x00, /* code = 0x0101 */
+            0x01, 0x00, 0x00, 0x00, /* stream_id = 1 */
+            0xC0, 0x03, 0x00, 0x00, /* buffer_bytes = 960 */
+            0xE0, 0x01, 0x00, 0x00, /* period_bytes = 480 */
+            0x00, 0x00, 0x00, 0x00, /* features = 0 */
+            0x01, 0x05, 0x07, 0x00, /* channels/format/rate/padding */
+        };
+        TEST_ASSERT(sizeof(req) == sizeof(expected));
+        TEST_ASSERT_MEMEQ(&req, expected, sizeof(expected));
+    }
 
     /* Bad stream id */
     status = VirtioSndCtrlBuildPcmSetParamsReq(&req, 2u, 960u, 480u);
@@ -104,16 +116,40 @@ static void test_pcm_simple_req_packing(void)
     status = VirtioSndCtrlBuildPcmSimpleReq(&req, VIRTIO_SND_CAPTURE_STREAM_ID, VIRTIO_SND_R_PCM_START);
     TEST_ASSERT(status == STATUS_SUCCESS);
     TEST_ASSERT(req.stream_id == VIRTIO_SND_CAPTURE_STREAM_ID);
+    {
+        const uint8_t expected[] = {
+            0x04, 0x01, 0x00, 0x00, /* code = 0x0104 */
+            0x01, 0x00, 0x00, 0x00, /* stream_id = 1 */
+        };
+        TEST_ASSERT(sizeof(req) == sizeof(expected));
+        TEST_ASSERT_MEMEQ(&req, expected, sizeof(expected));
+    }
 
     status = VirtioSndCtrlBuildPcmSimpleReq(&req, VIRTIO_SND_PLAYBACK_STREAM_ID, VIRTIO_SND_R_PCM_STOP);
     TEST_ASSERT(status == STATUS_SUCCESS);
     TEST_ASSERT(req.code == VIRTIO_SND_R_PCM_STOP);
     TEST_ASSERT(req.stream_id == VIRTIO_SND_PLAYBACK_STREAM_ID);
+    {
+        const uint8_t expected[] = {
+            0x05, 0x01, 0x00, 0x00, /* code = 0x0105 */
+            0x00, 0x00, 0x00, 0x00, /* stream_id = 0 */
+        };
+        TEST_ASSERT(sizeof(req) == sizeof(expected));
+        TEST_ASSERT_MEMEQ(&req, expected, sizeof(expected));
+    }
 
     status = VirtioSndCtrlBuildPcmSimpleReq(&req, VIRTIO_SND_CAPTURE_STREAM_ID, VIRTIO_SND_R_PCM_RELEASE);
     TEST_ASSERT(status == STATUS_SUCCESS);
     TEST_ASSERT(req.code == VIRTIO_SND_R_PCM_RELEASE);
     TEST_ASSERT(req.stream_id == VIRTIO_SND_CAPTURE_STREAM_ID);
+    {
+        const uint8_t expected[] = {
+            0x03, 0x01, 0x00, 0x00, /* code = 0x0103 */
+            0x01, 0x00, 0x00, 0x00, /* stream_id = 1 */
+        };
+        TEST_ASSERT(sizeof(req) == sizeof(expected));
+        TEST_ASSERT_MEMEQ(&req, expected, sizeof(expected));
+    }
 
     status = VirtioSndCtrlBuildPcmSimpleReq(&req, VIRTIO_SND_CAPTURE_STREAM_ID, 0xDEADu);
     TEST_ASSERT(status == STATUS_INVALID_PARAMETER);
@@ -229,12 +265,57 @@ static void test_pcm_info_resp_parsing(void)
     TEST_ASSERT(status == STATUS_DEVICE_PROTOCOL_ERROR);
 }
 
+static void test_pcm_info_resp_unaligned_buffer(void)
+{
+    /*
+     * Ensure the parser does not assume alignment for the status field or
+     * PCM_INFO entries (it uses RtlCopyMemory).
+     */
+    uint8_t raw[1 + sizeof(VIRTIO_SND_HDR_RESP) + (sizeof(VIRTIO_SND_PCM_INFO) * 2)];
+    uint8_t* resp = raw + 1;
+    VIRTIO_SND_HDR_RESP hdr;
+    VIRTIO_SND_PCM_INFO info0;
+    VIRTIO_SND_PCM_INFO info1;
+    VIRTIO_SND_PCM_INFO out0;
+    VIRTIO_SND_PCM_INFO out1;
+    NTSTATUS status;
+
+    RtlZeroMemory(raw, sizeof(raw));
+    hdr.status = VIRTIO_SND_S_OK;
+
+    RtlZeroMemory(&info0, sizeof(info0));
+    info0.stream_id = VIRTIO_SND_PLAYBACK_STREAM_ID;
+    info0.direction = VIRTIO_SND_D_OUTPUT;
+    info0.formats = VIRTIO_SND_PCM_FMT_MASK_S16;
+    info0.rates = VIRTIO_SND_PCM_RATE_MASK_48000;
+    info0.channels_min = 2;
+    info0.channels_max = 2;
+
+    RtlZeroMemory(&info1, sizeof(info1));
+    info1.stream_id = VIRTIO_SND_CAPTURE_STREAM_ID;
+    info1.direction = VIRTIO_SND_D_INPUT;
+    info1.formats = VIRTIO_SND_PCM_FMT_MASK_S16;
+    info1.rates = VIRTIO_SND_PCM_RATE_MASK_48000;
+    info1.channels_min = 1;
+    info1.channels_max = 1;
+
+    RtlCopyMemory(resp, &hdr, sizeof(hdr));
+    RtlCopyMemory(resp + sizeof(hdr), &info0, sizeof(info0));
+    RtlCopyMemory(resp + sizeof(hdr) + sizeof(info0), &info1, sizeof(info1));
+
+    status = VirtioSndCtrlParsePcmInfoResp(resp, (ULONG)(sizeof(raw) - 1u), &out0, &out1);
+    TEST_ASSERT(status == STATUS_SUCCESS);
+    TEST_ASSERT(out0.stream_id == VIRTIO_SND_PLAYBACK_STREAM_ID);
+    TEST_ASSERT(out1.stream_id == VIRTIO_SND_CAPTURE_STREAM_ID);
+}
+
 int main(void)
 {
     test_pcm_info_req_packing();
     test_pcm_set_params_req_packing_and_validation();
     test_pcm_simple_req_packing();
     test_pcm_info_resp_parsing();
+    test_pcm_info_resp_unaligned_buffer();
 
     printf("virtiosnd_control_proto_tests: PASS\n");
     return 0;
