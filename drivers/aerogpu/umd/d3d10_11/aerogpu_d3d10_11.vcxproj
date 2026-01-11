@@ -59,17 +59,18 @@
 
   <PropertyGroup Label="UserMacros">
     <!--
-      This UMD is meant to be consumed by the real Win7 D3D10/D3D11 runtimes, so
-      the default build uses the official WDK D3D10/11 DDI headers.
+      This UMD is meant to be consumed by the real Win7 D3D10/D3D11 runtimes.
+      It must be compiled against the official D3D10/D3D11 UMD DDI headers:
+        - d3d10umddi.h / d3d10_1umddi.h
+        - d3d11umddi.h
+        - d3dumddi.h
 
-      Set /p:AeroGpuUseWdkHeaders=0 to build against the repository's minimal
-      compat ABI subset instead.
+      These headers are provided by the Windows Driver Kit (WDK) / Windows Kits.
+      If they are missing, the compiler error will instruct you to install the kit.
 
-      When enabled, /p:AeroGpuWdkRoot may be set to a Win7-era WDK 7.1 (WinDDK)
-      layout root
-      (typically %WINDDK% / C:\WinDDK\7600.16385.1) so d3d10umddi.h/d3d11umddi.h
-      resolve via $(AeroGpuWdkRoot)\inc\{api,ddk}. If AeroGpuWdkRoot is unset,
-      the build falls back to the toolchain's standard include paths (WDK10+).
+      Optional: /p:AeroGpuWdkRoot may be set to a WinDDK-style root (WDK 7.1 layout)
+      so the headers resolve via $(AeroGpuWdkRoot)\inc\{api,ddk}. If unset, the build
+      falls back to the toolchain's standard include paths (common for WDK10+ installs).
     -->
     <AeroGpuUseWdkHeaders Condition="'$(AeroGpuUseWdkHeaders)'==''">1</AeroGpuUseWdkHeaders>
     <!-- Only treat these env vars as WinDDK-style roots when they contain the expected inc\{api,ddk} layout. -->
@@ -187,11 +188,10 @@
   </Target>
 
   <ItemGroup>
-    <ClCompile Include="src\aerogpu_d3d10_11_umd.cpp" />
     <ClCompile Include="src\aerogpu_d3d10_11_log.cpp" />
+    <ClCompile Include="src\aerogpu_d3d10_umd_wdk.cpp" />
     <ClCompile Include="src\aerogpu_d3d10_1_umd_wdk.cpp" />
     <ClCompile Include="src\aerogpu_d3d11_umd_wdk.cpp" />
-    <ClCompile Include="src\aerogpu_d3d10_umd_wdk.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\aerogpu_d3d10_11_umd.h" />

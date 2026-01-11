@@ -56,7 +56,10 @@ This UMD emits `drivers/aerogpu/protocol/aerogpu_cmd.h` packets and references o
 - When a resource is backed by guest memory, create packets may set `backing_alloc_id` (a stable `alloc_id`) and `backing_offset_bytes`. The `alloc_id` is resolved by looking it up in the optional per-submission `aerogpu_alloc_table` (`drivers/aerogpu/protocol/aerogpu_ring.h`), which maps `alloc_id → {gpa, size_bytes, flags}`. `backing_alloc_id` is a lookup key, not an index. `backing_alloc_id = 0` means “host allocated” (no guest backing).
 - `aerogpu_handle_t` values are protocol object IDs; they are intentionally **not** WDDM allocation handles/IDs.
 
-The core emission happens in `src/aerogpu_d3d10_11_umd.cpp` by building a linear command buffer consisting of:
+The core emission happens in the WDK-facing UMD entrypoints
+(`src/aerogpu_d3d10_1_umd_wdk.cpp`, `src/aerogpu_d3d11_umd_wdk.cpp`) and the shared
+encoder/state tracker (`src/aerogpu_d3d10_11_internal.h`) by building a linear
+command buffer consisting of:
 
 ```
 [aerogpu_cmd_stream_header]
@@ -181,20 +184,29 @@ CI builds the same solution (and stages outputs under `out/drivers/aerogpu/`) vi
 
 Optional: `drivers\aerogpu\build\build_all.cmd` is a convenience wrapper around MSBuild/WDK10 that stages outputs under `drivers\aerogpu\build\out\win7\...`.
 
-The project expects the Windows SDK/WDK to provide D3D10/11 DDI headers (e.g. `d3d10umddi.h`, `d3d11umddi.h`) when building the real UMD.  
+The real Win7 UMD must be compiled against the official D3D10/11 user-mode DDI
+headers from the **Windows Driver Kit (WDK)** (Windows Kits):
 
-By default, the Visual Studio project builds against the **official WDK D3D10/11
-DDI headers** (`/p:AeroGpuUseWdkHeaders=1`). You can control header sourcing via
-MSBuild properties:
+- `d3d10umddi.h`
+- `d3d10_1umddi.h`
+- `d3d11umddi.h`
+- `d3dumddi.h`
 
-* `/p:AeroGpuUseWdkHeaders=0` (use the repo-local compat ABI subset instead)
-* `/p:AeroGpuWdkRoot="C:\WinDDK\7600.16385.1"` (optional; WinDDK-style root with `inc\api` / `inc\ddk`,
-  typically `%WINDDK%`, `%WDK_ROOT%`, or `%WDKROOT%` when they point at a WinDDK-style layout)
+On a typical modern WDK install, `d3d11umddi.h` is under:
 
-If `AeroGpuUseWdkHeaders=1` and `AeroGpuWdkRoot` is set, the project adds
-`$(AeroGpuWdkRoot)\inc\{api,ddk}` to the include path and validates the expected
-headers exist. If `AeroGpuWdkRoot` is unset, the build falls back to the
-toolchain's standard include paths (common for Windows Kits 10+ installs).
+- `C:\Program Files (x86)\Windows Kits\10\Include\<ver>\um\`
+- `C:\Program Files (x86)\Windows Kits\10\Include\<ver>\shared\`
+
+The Visual Studio project enables WDK headers by defining
+`AEROGPU_UMD_USE_WDK_HEADERS=1` when `/p:AeroGpuUseWdkHeaders=1` (the default for
+the UMD project, and what `drivers\aerogpu\build\build_all.cmd` passes when
+staging Win7 binaries).
+
+Optional: if you have a WinDDK-style root (WDK 7.1 layout), set
+`/p:AeroGpuWdkRoot="C:\WinDDK\7600.16385.1"` (or `%WINDDK%`/`%WDK_ROOT%`/`%WDKROOT%`)
+to add `$(AeroGpuWdkRoot)\inc\{api,ddk}` to the include path and validate the
+expected headers exist. If `AeroGpuWdkRoot` is unset, the build falls back to
+the toolchain's standard include paths (common for Windows Kits 10+ installs).
 
 ## Install / Register (INF)
 

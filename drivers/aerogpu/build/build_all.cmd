@@ -51,7 +51,8 @@ if not defined AEROGPU_WDKROOT (
   if not defined AEROGPU_WDKROOT if exist "C:\WinDDK\7600.16385.1\inc\ddk\d3d10umddi.h" set "AEROGPU_WDKROOT=C:\WinDDK\7600.16385.1"
 )
 
-set "D3D10_11_WDK_MSBUILD_ARGS="
+rem Ensure the D3D10/11 UMD is compiled against the official WDK UMDDI headers.
+set "D3D10_11_WDK_MSBUILD_ARGS=/p:AeroGpuUseWdkHeaders=1"
 if defined AEROGPU_WDKROOT (
   set "D3D10_11_WDK_MSBUILD_ARGS=/p:AeroGpuUseWdkHeaders=1 /p:AeroGpuWdkRoot=""%AEROGPU_WDKROOT%"""
 )

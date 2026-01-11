@@ -50,26 +50,26 @@ For the recommended CI-style flow (packages staged under `out/packages/` and sig
 
 ### Win7 DDI header mode (D3D10/11 UMD)
 
-The D3D10/11 UMD is intended to be built against the official Win7 D3D10/11 DDI
-headers (`d3d10umddi.h`, `d3d10_1umddi.h`, `d3d11umddi.h`) provided by a Windows
-SDK/WDK install.
+The D3D10/11 UMD must be built against the official D3D10/11 user-mode DDI headers
+(`d3d10umddi.h`, `d3d10_1umddi.h`, `d3d11umddi.h`, `d3dumddi.h`) provided by the
+**Windows Driver Kit (WDK)** (Windows Kits).
 
-The repo-local `drivers\\aerogpu\\build\\build_all.cmd` wrapper detects a WinDDK-style
-WDK root via `WINDDK` / `WDK_ROOT` / `WDKROOT` (only if it contains the expected
-`inc\\{api,ddk}` headers) and, when present, passes these MSBuild properties for the
-D3D10/11 UMD build:
+The repo-local `drivers\\aerogpu\\build\\build_all.cmd` wrapper forces the WDK
+header mode for the D3D10/11 UMD build by passing:
 
 * `/p:AeroGpuUseWdkHeaders=1`
-* `/p:AeroGpuWdkRoot="C:\\WinDDK\\7600.16385.1"` (or `%WINDDK%`)
 
-For Win7-era WDKs (WDK 7.1 / WinDDK layout), the project expects the DDI headers under:
+If a WinDDK-style root is detected (WDK 7.1 layout; `inc\\{api,ddk}`), it also passes:
 
-* `%WINDDK%\\inc\\api`
-* `%WINDDK%\\inc\\ddk`
+* `/p:AeroGpuWdkRoot="<root>"`
 
-If `AeroGpuWdkRoot` is not set, the D3D10/11 UMD build falls back to the toolchain's
-standard include paths (common for modern Windows Kits 10+ installs).
+If no WinDDK-style root is found, the build falls back to the toolchain's
+standard include paths (common for Windows Kits 10+ installs).
 
-To build without the official DDI headers (portable/stub mode), pass:
+On a typical modern WDK install, these headers live under:
 
-* `/p:AeroGpuUseWdkHeaders=0`
+* `C:\\Program Files (x86)\\Windows Kits\\10\\Include\\<ver>\\um\\d3d11umddi.h`
+* `C:\\Program Files (x86)\\Windows Kits\\10\\Include\\<ver>\\shared\\d3d11umddi.h`
+
+If you hit a build error about missing `d3d11umddi.h`, install the Windows WDK
+(for CI we use the `Microsoft.WindowsWDK` winget package) and rebuild.

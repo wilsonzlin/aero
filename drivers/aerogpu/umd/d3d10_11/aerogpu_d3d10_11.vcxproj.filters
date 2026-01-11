@@ -11,9 +11,6 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="src\aerogpu_d3d10_11_umd.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="src\aerogpu_d3d10_11_log.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>

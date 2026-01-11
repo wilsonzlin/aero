@@ -62,6 +62,16 @@
 
 #if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS
   // The canonical build should use the official headers.
+  //
+  // These D3D*UMDDI headers ship with the Windows Driver Kit (WDK) / Windows Kits.
+  // If you see this error, install the WDK and ensure the Windows Kits include
+  // directories are on the compiler include path (Visual Studio/Build Tools
+  // normally configures this automatically).
+  #if defined(__has_include)
+    #if !__has_include(<d3d10umddi.h>) || !__has_include(<d3d10_1umddi.h>) || !__has_include(<d3d11umddi.h>) || !__has_include(<d3dumddi.h>)
+      #error "AEROGPU_UMD_USE_WDK_HEADERS=1 but required D3D DDI headers were not found. Install the Windows Driver Kit (WDK) (Windows Kits) so d3d10umddi.h/d3d11umddi.h are available."
+    #endif
+  #endif
   #include <d3d10umddi.h>
   #include <d3d10_1umddi.h>
   #include <d3d11umddi.h>
