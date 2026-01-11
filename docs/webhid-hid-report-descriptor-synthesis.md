@@ -21,6 +21,11 @@ This document defines the **contract** for that synthesis:
 
 Windows 7 note: the output is intentionally “boring HID 1.11” to maximize compatibility with `hidclass.sys` / `hidparse.sys` on Windows 7.
 
+Implementation references:
+
+- Browser normalization: `web/src/hid/webhid_normalize.ts`
+- Rust synthesis: `crates/emulator/src/io/usb/hid/webhid.rs`
+
 ---
 
 ## High-level algorithm (deterministic descriptor emission)
@@ -79,20 +84,20 @@ See [Validation rules](#validation-rules) for the “mixed 0/non-zero” policy.
 Each `HIDReportItem` maps to:
 
 1. A set of **global** items (apply to the next main item):
-   - `Usage Page` (`item.usagePage`)
-   - `Report Size` (`item.reportSize`)
-   - `Report Count` (`item.reportCount`)
-   - `Logical Minimum` / `Logical Maximum` (`item.logicalMin` / `item.logicalMax`)
-   - `Physical Minimum` / `Physical Maximum` (`item.physicalMin` / `item.physicalMax`)
-   - `Unit Exponent` (`item.unitExponent`)
-   - `Unit` (`item.unit`)
+    - `Usage Page` (`item.usagePage`)
+    - `Report Size` (`item.reportSize`)
+    - `Report Count` (`item.reportCount`)
+    - `Logical Minimum` / `Logical Maximum` (`item.logicalMinimum` / `item.logicalMaximum`)
+    - `Physical Minimum` / `Physical Maximum` (`item.physicalMinimum` / `item.physicalMaximum`)
+    - `Unit Exponent` (`item.unitExponent`)
+    - `Unit` (`item.unit`)
 2. A set of **local** items (consumed by the next main item only):
-   - either a `Usage` list (`item.usages`)
-   - or `Usage Minimum` / `Usage Maximum` (`item.usageMin` / `item.usageMax`)
+    - either a `Usage` list (`item.usages`)
+    - or `Usage Minimum` / `Usage Maximum` (`item.usageMinimum` / `item.usageMaximum`)
 3. The **main item** itself:
-   - `Input(flags)` for input reports
-   - `Output(flags)` for output reports
-   - `Feature(flags)` for feature reports
+    - `Input(flags)` for input reports
+    - `Output(flags)` for output reports
+    - `Feature(flags)` for feature reports
 
 We treat the WebHID `HIDReportInfo` that the item came from as the authoritative “main item kind” (`Input` vs `Output` vs `Feature`).
 
@@ -100,7 +105,14 @@ We treat the WebHID `HIDReportInfo` that the item came from as the authoritative
 
 ## Main item flags
 
-HID main items (`Input`/`Output`/`Feature`) have a bitfield payload. We derive it from the subset of booleans WebHID exposes and default the rest to the most common “safe” values for Windows 7.
+HID main items (`Input`/`Output`/`Feature`) have a bitfield payload.
+
+The synthesis treats these flags as a single `u16` and emits either a 1-byte or 2-byte payload:
+
+- if `flags <= 0xFF`: emit 1 byte
+- otherwise: emit 2 bytes (little-endian)
+
+This matches how `webhid.rs` synthesizes items: it uses a single flag packer and reuses it for `Input`, `Output`, and `Feature`.
 
 ### Bit layout (LSB = bit 0)
 
@@ -115,30 +127,22 @@ Bits are defined by the HID specification as:
 | 4 | Linear | Non Linear |
 | 5 | Preferred State | No Preferred |
 | 6 | No Null Position | Null State |
-| 7 (Input) | Bitfield | Buffered Bytes |
-| 7 (Output/Feature) | Non Volatile | Volatile |
-| 8 (Output/Feature) | Bitfield | Buffered Bytes |
+| 7 | Non Volatile | Volatile |
+| 8 | Bitfield | Buffered Bytes |
 
 ### Derivation from WebHID booleans
 
-We compute the flags as:
+We compute the flags as (WebHID property → HID bit):
 
 - `isConstant` → bit 0 (1 if constant)
 - `isArray` → bit 1 (0 if array, 1 if variable)
-- `isAbsolute` → bit 2 (0 if absolute, 1 if relative)
-- `isBufferedBytes`:
-  - for `Input`: bit 7
-  - for `Output`/`Feature`: bit 8 (requires a 2-byte payload when set)
-
-All other bits are emitted as 0:
-
-- No Wrap
-- Linear
-- Preferred State
-- No Null Position
-- Non Volatile (for Output/Feature)
-
-This is intentionally conservative for Windows 7; if we need the additional WebHID flags in the future, the contract should be extended explicitly.
+- `isAbsolute` / `isRelative` → bit 2 (1 if relative)
+- `isWrapped` → bit 3 (1 if wrap)
+- `isLinear` → bit 4 (1 if non-linear)
+- `hasPreferredState` → bit 5 (1 if *no* preferred state)
+- `hasNull` → bit 6 (1 if null state)
+- `isVolatile` → bit 7 (1 if volatile)
+- `isBufferedBytes` → bit 8 (1 if buffered bytes; forces a 2-byte payload)
 
 ---
 
@@ -182,7 +186,7 @@ The synthesis step validates the WebHID metadata before emitting bytes.
 When using `Usage Minimum` / `Usage Maximum`:
 
 - `usageMax` MUST be `>= usageMin`.
-- The range length (`usageMax - usageMin + 1`) MUST be representable as a non-negative integer and SHOULD be consistent with `reportCount` when used for variable fields (common case: `reportCount == rangeLen`).
+- The range length (`usageMax - usageMin + 1`) SHOULD be consistent with `reportCount` when used for variable fields (common case: `reportCount == rangeLen`).
 
 ### Mixed reportId 0/non-zero policy
 
@@ -190,9 +194,7 @@ Windows HID stacks (including Windows 7) treat “report IDs are present” as a
 
 - If **any** report uses a non-zero report ID, then **all** reports are expected to include a report ID byte in the transmitted report data.
 
-Policy:
-
-- If any `HIDReportInfo.reportId != 0`, then encountering a `reportId == 0` elsewhere is treated as **invalid metadata** and synthesis fails (rather than guessing and generating a descriptor that won’t match the report bytes).
+Policy: the synthesis emits `Report ID` items exactly as provided by WebHID (omitting it when `reportId == 0`) and does not attempt to “fix up” mixed usage. Callers should treat mixed `0`/non-zero report IDs as a metadata error unless they have a device-specific reason to allow it.
 
 ---
 
