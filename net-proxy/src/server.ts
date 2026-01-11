@@ -327,8 +327,6 @@ function handleTcpMuxRelay(ws: WebSocket, connId: number, clientAddress: string 
       destroyStream(streamId);
     }
 
-    wsStream.destroy();
-
     if (ws.readyState === ws.OPEN) {
       wsCloseSafe(ws, wsCode, wsReason);
     }
@@ -656,14 +654,24 @@ function handleTcpMuxRelay(ws: WebSocket, connId: number, clientAddress: string 
     }
   };
 
-  wsStream.on("data", (chunk) => {
+  // Drain the `createWebSocketStream` readable side so it doesn't pause the underlying WebSocket.
+  // We handle incoming messages via `ws.on("message")` so we can reliably detect text vs binary.
+  wsStream.on("data", () => {
+    // ignore
+  });
+
+  ws.on("message", (data, isBinary) => {
     if (closed) return;
-    if (typeof chunk === "string") {
+    if (!isBinary) {
       closeAll("ws_text", 1003, "WebSocket text messages are not supported");
       return;
     }
 
-    const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as ArrayBuffer);
+    const buf = Buffer.isBuffer(data)
+      ? data
+      : Array.isArray(data)
+        ? Buffer.concat(data)
+        : Buffer.from(data as ArrayBuffer);
 
     let frames: TcpMuxFrame[];
     try {
@@ -689,6 +697,7 @@ function handleTcpMuxRelay(ws: WebSocket, connId: number, clientAddress: string 
   });
 
   ws.once("close", (code, reason) => {
+    wsStream.destroy();
     closeAll("ws_close", code, reason.toString());
   });
 

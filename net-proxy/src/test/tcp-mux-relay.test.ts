@@ -173,6 +173,63 @@ test("tcp-mux upgrade requires aero-tcp-mux-v1 subprotocol", async () => {
   }
 });
 
+test("tcp-mux closes with 1003 (unsupported data) on WebSocket text messages", async () => {
+  const proxy = await startProxyServer({ listenHost: "127.0.0.1", listenPort: 0, open: true });
+  const proxyAddr = proxy.server.address();
+  assert.ok(proxyAddr && typeof proxyAddr !== "string");
+
+  let ws: WebSocket | null = null;
+  try {
+    ws = await openWebSocket(`ws://127.0.0.1:${proxyAddr.port}/tcp-mux`, TCP_MUX_SUBPROTOCOL);
+    const closePromise = waitForClose(ws);
+    ws.send("hello");
+    const closed = await closePromise;
+    assert.equal(closed.code, 1003);
+  } finally {
+    if (ws && ws.readyState !== ws.CLOSED) {
+      ws.terminate();
+      await waitForClose(ws).catch(() => {
+        // ignore
+      });
+    }
+    await proxy.close();
+  }
+});
+
+test("tcp-mux closes with 1002 (protocol error) on oversized frame length", async () => {
+  const proxy = await startProxyServer({
+    listenHost: "127.0.0.1",
+    listenPort: 0,
+    open: true,
+    tcpMuxMaxFramePayloadBytes: 4
+  });
+  const proxyAddr = proxy.server.address();
+  assert.ok(proxyAddr && typeof proxyAddr !== "string");
+
+  let ws: WebSocket | null = null;
+  try {
+    ws = await openWebSocket(`ws://127.0.0.1:${proxyAddr.port}/tcp-mux`, TCP_MUX_SUBPROTOCOL);
+    const closePromise = waitForClose(ws);
+
+    const header = Buffer.alloc(9);
+    header.writeUInt8(TcpMuxMsgType.DATA, 0);
+    header.writeUInt32BE(1, 1);
+    header.writeUInt32BE(5, 5);
+    ws.send(header);
+
+    const closed = await closePromise;
+    assert.equal(closed.code, 1002);
+  } finally {
+    if (ws && ws.readyState !== ws.CLOSED) {
+      ws.terminate();
+      await waitForClose(ws).catch(() => {
+        // ignore
+      });
+    }
+    await proxy.close();
+  }
+});
+
 test("tcp-mux relay echoes bytes on multiple concurrent streams", async () => {
   const echoServer = await startTcpEchoServer();
   const proxy = await startProxyServer({ listenHost: "127.0.0.1", listenPort: 0, open: true });
