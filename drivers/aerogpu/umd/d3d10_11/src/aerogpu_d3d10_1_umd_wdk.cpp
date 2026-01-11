@@ -19,14 +19,17 @@
 #include <d3d10_1.h>
 #include <d3dkmthk.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cmath>
 #include <cstring>
 #include <limits>
 #include <mutex>
 #include <new>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 #include "aerogpu_cmd_writer.h"
@@ -281,10 +284,12 @@ struct AeroGpuInputLayout {
 
 struct AeroGpuRenderTargetView {
   aerogpu_handle_t texture = 0;
+  AeroGpuResource* resource = nullptr;
 };
 
 struct AeroGpuDepthStencilView {
   aerogpu_handle_t texture = 0;
+  AeroGpuResource* resource = nullptr;
 };
 
 struct AeroGpuBlendState {
@@ -326,6 +331,15 @@ struct AeroGpuDevice {
   aerogpu_handle_t current_ps = 0;
   aerogpu_handle_t current_input_layout = 0;
   uint32_t current_topology = AEROGPU_TOPOLOGY_TRIANGLELIST;
+
+  // Minimal state required for CPU-side readback tests (`d3d10_triangle`, `d3d10_1_triangle`).
+  AeroGpuResource* current_rtv_res = nullptr;
+  AeroGpuResource* current_vb_res = nullptr;
+  uint32_t current_vb_stride = 0;
+  uint32_t current_vb_offset = 0;
+
+  uint32_t viewport_width = 0;
+  uint32_t viewport_height = 0;
 
   AeroGpuDevice() {
     cmd.reset();
@@ -990,6 +1004,100 @@ void InitDeviceFuncsWithStubs(FuncsT* funcs) {
     funcs->pfnDynamicConstantBufferUnmap = &DdiNoopStub<decltype(funcs->pfnDynamicConstantBufferUnmap)>::Call;
   }
 }
+
+// Minimal CPU-side CopyResource implementation used by the Win7 triangle tests.
+// The runtime copies the swapchain backbuffer into a staging texture and then
+// maps it for readback; until the full WDDM submission path is wired, emulate
+// that flow by copying the CPU backing storage.
+template <typename FnPtr>
+struct CopyResourceImpl;
+
+template <typename Ret, typename... Args>
+struct CopyResourceImpl<Ret(AEROGPU_APIENTRY*)(Args...)> {
+  static Ret AEROGPU_APIENTRY Call(Args... args) {
+    D3D10DDI_HRESOURCE res_args[2]{};
+    uint32_t count = 0;
+
+    auto capture = [&](auto v) {
+      using T = std::decay_t<decltype(v)>;
+      if constexpr (std::is_same_v<T, D3D10DDI_HRESOURCE>) {
+        if (count < 2) {
+          res_args[count++] = v;
+        }
+      }
+    };
+    (capture(args), ...);
+
+    if (count < 2) {
+      if constexpr (std::is_same_v<Ret, HRESULT>) {
+        return E_INVALIDARG;
+      } else if constexpr (std::is_same_v<Ret, void>) {
+        return;
+      } else {
+        return Ret{};
+      }
+    }
+
+    auto* dst = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(res_args[0]);
+    auto* src = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(res_args[1]);
+    if (!dst || !src) {
+      if constexpr (std::is_same_v<Ret, HRESULT>) {
+        return E_INVALIDARG;
+      } else if constexpr (std::is_same_v<Ret, void>) {
+        return;
+      } else {
+        return Ret{};
+      }
+    }
+
+    if (dst->kind == ResourceKind::Buffer && src->kind == ResourceKind::Buffer) {
+      const uint64_t copy_bytes = std::min<uint64_t>(dst->size_bytes, src->size_bytes);
+      if (copy_bytes) {
+        if (dst->storage.size() < static_cast<size_t>(dst->size_bytes)) {
+          dst->storage.resize(static_cast<size_t>(dst->size_bytes), 0);
+        }
+        if (src->storage.size() < static_cast<size_t>(copy_bytes)) {
+          src->storage.resize(static_cast<size_t>(copy_bytes), 0);
+        }
+        std::memcpy(dst->storage.data(), src->storage.data(), static_cast<size_t>(copy_bytes));
+      }
+    } else if (dst->kind == ResourceKind::Texture2D && src->kind == ResourceKind::Texture2D) {
+      if (dst->row_pitch_bytes == 0) {
+        dst->row_pitch_bytes = dst->width * 4;
+      }
+      if (src->row_pitch_bytes == 0) {
+        src->row_pitch_bytes = src->width * 4;
+      }
+
+      const uint32_t copy_w = std::min(dst->width, src->width);
+      const uint32_t copy_h = std::min(dst->height, src->height);
+      const uint32_t row_bytes = copy_w * 4;
+
+      const uint64_t dst_total = static_cast<uint64_t>(dst->row_pitch_bytes) * static_cast<uint64_t>(dst->height);
+      const uint64_t src_total = static_cast<uint64_t>(src->row_pitch_bytes) * static_cast<uint64_t>(src->height);
+      if (dst_total <= static_cast<uint64_t>(SIZE_MAX) && dst->storage.size() < static_cast<size_t>(dst_total)) {
+        dst->storage.resize(static_cast<size_t>(dst_total), 0);
+      }
+      if (src_total <= static_cast<uint64_t>(SIZE_MAX) && src->storage.size() < static_cast<size_t>(src_total)) {
+        src->storage.resize(static_cast<size_t>(src_total), 0);
+      }
+
+      for (uint32_t y = 0; y < copy_h; ++y) {
+        const uint8_t* src_row = src->storage.data() + static_cast<size_t>(y) * src->row_pitch_bytes;
+        uint8_t* dst_row = dst->storage.data() + static_cast<size_t>(y) * dst->row_pitch_bytes;
+        std::memcpy(dst_row, src_row, row_bytes);
+      }
+    }
+
+    if constexpr (std::is_same_v<Ret, HRESULT>) {
+      return S_OK;
+    } else if constexpr (std::is_same_v<Ret, void>) {
+      return;
+    } else {
+      return Ret{};
+    }
+  }
+};
 
 // -------------------------------------------------------------------------------------------------
 // D3D10.1 Device DDI (minimal subset + conservative stubs)
@@ -1752,6 +1860,7 @@ HRESULT AEROGPU_APIENTRY CreateRenderTargetView(D3D10DDI_HDEVICE hDevice,
   auto* res = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(pDesc->hDrvResource);
   auto* rtv = new (hRtv.pDrvPrivate) AeroGpuRenderTargetView();
   rtv->texture = res ? res->handle : 0;
+  rtv->resource = res;
   AEROGPU_D3D10_RET_HR(S_OK);
 }
 
@@ -1782,6 +1891,7 @@ HRESULT AEROGPU_APIENTRY CreateDepthStencilView(D3D10DDI_HDEVICE hDevice,
   auto* res = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(pDesc->hDrvResource);
   auto* dsv = new (hDsv.pDrvPrivate) AeroGpuDepthStencilView();
   dsv->texture = res ? res->handle : 0;
+  dsv->resource = res;
   AEROGPU_D3D10_RET_HR(S_OK);
 }
 
@@ -1902,7 +2012,7 @@ void AEROGPU_APIENTRY DestroyDepthStencilState(D3D10DDI_HDEVICE, D3D10DDI_HDEPTH
 }
 
 void AEROGPU_APIENTRY ClearRenderTargetView(D3D10DDI_HDEVICE hDevice,
-                                            D3D10DDI_HRENDERTARGETVIEW,
+                                            D3D10DDI_HRENDERTARGETVIEW hRtv,
                                             const FLOAT rgba[4]) {
   if (!hDevice.pDrvPrivate || !rgba) {
     return;
@@ -1919,6 +2029,75 @@ void AEROGPU_APIENTRY ClearRenderTargetView(D3D10DDI_HDEVICE hDevice,
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
+
+  auto* view = hRtv.pDrvPrivate ? FromHandle<D3D10DDI_HRENDERTARGETVIEW, AeroGpuRenderTargetView>(hRtv) : nullptr;
+  auto* res = view ? view->resource : nullptr;
+
+  if (res && res->kind == ResourceKind::Texture2D && res->width && res->height) {
+    auto float_to_unorm8 = [](float v) -> uint8_t {
+      if (v <= 0.0f) {
+        return 0;
+      }
+      if (v >= 1.0f) {
+        return 255;
+      }
+      const float scaled = v * 255.0f + 0.5f;
+      if (scaled <= 0.0f) {
+        return 0;
+      }
+      if (scaled >= 255.0f) {
+        return 255;
+      }
+      return static_cast<uint8_t>(scaled);
+    };
+
+    const uint8_t r = float_to_unorm8(rgba[0]);
+    const uint8_t g = float_to_unorm8(rgba[1]);
+    const uint8_t b = float_to_unorm8(rgba[2]);
+    const uint8_t a = float_to_unorm8(rgba[3]);
+
+    if (res->row_pitch_bytes == 0) {
+      res->row_pitch_bytes = res->width * 4;
+    }
+    const uint64_t total_bytes = static_cast<uint64_t>(res->row_pitch_bytes) * static_cast<uint64_t>(res->height);
+    if (total_bytes <= static_cast<uint64_t>(SIZE_MAX)) {
+      if (res->storage.size() < static_cast<size_t>(total_bytes)) {
+        res->storage.resize(static_cast<size_t>(total_bytes));
+      }
+
+      const uint32_t row_bytes = res->width * 4;
+      for (uint32_t y = 0; y < res->height; ++y) {
+        uint8_t* row = res->storage.data() + static_cast<size_t>(y) * res->row_pitch_bytes;
+        for (uint32_t x = 0; x < res->width; ++x) {
+          uint8_t* px = row + static_cast<size_t>(x) * 4;
+          switch (res->dxgi_format) {
+            case kDxgiFormatR8G8B8A8Unorm:
+              px[0] = r;
+              px[1] = g;
+              px[2] = b;
+              px[3] = a;
+              break;
+            case kDxgiFormatB8G8R8X8Unorm:
+              px[0] = b;
+              px[1] = g;
+              px[2] = r;
+              px[3] = 255;
+              break;
+            case kDxgiFormatB8G8R8A8Unorm:
+            default:
+              px[0] = b;
+              px[1] = g;
+              px[2] = r;
+              px[3] = a;
+              break;
+          }
+        }
+        if (res->row_pitch_bytes > row_bytes) {
+          std::memset(row + row_bytes, 0, res->row_pitch_bytes - row_bytes);
+        }
+      }
+    }
+  }
 
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_clear>(AEROGPU_CMD_CLEAR);
   cmd->flags = AEROGPU_CLEAR_COLOR;
@@ -1980,8 +2159,13 @@ void AEROGPU_APIENTRY IaSetVertexBuffers(D3D10DDI_HDEVICE hDevice,
 
   std::lock_guard<std::mutex> lock(dev->mutex);
 
+  auto* vb_res = pBuffers[0].pDrvPrivate ? FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(pBuffers[0]) : nullptr;
+  dev->current_vb_res = vb_res;
+  dev->current_vb_stride = pStrides[0];
+  dev->current_vb_offset = pOffsets[0];
+
   aerogpu_vertex_buffer_binding binding{};
-  binding.buffer = pBuffers[0].pDrvPrivate ? FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(pBuffers[0])->handle : 0;
+  binding.buffer = vb_res ? vb_res->handle : 0;
   binding.stride_bytes = pStrides[0];
   binding.offset_bytes = pOffsets[0];
   binding.reserved0 = 0;
@@ -2105,6 +2289,11 @@ void AEROGPU_APIENTRY SetViewports(D3D10DDI_HDEVICE hDevice, UINT num_viewports,
 
   std::lock_guard<std::mutex> lock(dev->mutex);
 
+  if (vp.Width > 0.0f && vp.Height > 0.0f) {
+    dev->viewport_width = static_cast<uint32_t>(vp.Width);
+    dev->viewport_height = static_cast<uint32_t>(vp.Height);
+  }
+
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_viewport>(AEROGPU_CMD_SET_VIEWPORT);
   cmd->x_f32 = f32_bits(vp.TopLeftX);
   cmd->y_f32 = f32_bits(vp.TopLeftY);
@@ -2133,8 +2322,11 @@ void AEROGPU_APIENTRY SetRenderTargets(D3D10DDI_HDEVICE hDevice,
   std::lock_guard<std::mutex> lock(dev->mutex);
 
   aerogpu_handle_t rtv_handle = 0;
+  AeroGpuResource* rtv_res = nullptr;
   if (pRTVs[0].pDrvPrivate) {
-    rtv_handle = FromHandle<D3D10DDI_HRENDERTARGETVIEW, AeroGpuRenderTargetView>(pRTVs[0])->texture;
+    auto* view = FromHandle<D3D10DDI_HRENDERTARGETVIEW, AeroGpuRenderTargetView>(pRTVs[0]);
+    rtv_handle = view ? view->texture : 0;
+    rtv_res = view ? view->resource : nullptr;
   }
 
   aerogpu_handle_t dsv_handle = 0;
@@ -2143,6 +2335,7 @@ void AEROGPU_APIENTRY SetRenderTargets(D3D10DDI_HDEVICE hDevice,
   }
 
   dev->current_rtv = rtv_handle;
+  dev->current_rtv_res = rtv_res;
   dev->current_dsv = dsv_handle;
 
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_render_targets>(AEROGPU_CMD_SET_RENDER_TARGETS);
@@ -2165,6 +2358,145 @@ void AEROGPU_APIENTRY Draw(D3D10DDI_HDEVICE hDevice, UINT vertex_count, UINT sta
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
+
+  if (vertex_count == 3 && dev->current_topology == static_cast<uint32_t>(D3D10_DDI_PRIMITIVE_TOPOLOGY_TRIANGLELIST) &&
+      dev->current_rtv_res && dev->current_vb_res) {
+    auto* rt = dev->current_rtv_res;
+    auto* vb = dev->current_vb_res;
+
+    if (rt->kind == ResourceKind::Texture2D && vb->kind == ResourceKind::Buffer && rt->width && rt->height &&
+        vb->storage.size() >= static_cast<size_t>(dev->current_vb_offset) +
+                                static_cast<size_t>(start_vertex + 3) * static_cast<size_t>(dev->current_vb_stride)) {
+      if (rt->row_pitch_bytes == 0) {
+        rt->row_pitch_bytes = rt->width * 4;
+      }
+      const uint64_t rt_bytes = static_cast<uint64_t>(rt->row_pitch_bytes) * static_cast<uint64_t>(rt->height);
+      if (rt_bytes <= static_cast<uint64_t>(SIZE_MAX) && rt->storage.size() < static_cast<size_t>(rt_bytes)) {
+        rt->storage.resize(static_cast<size_t>(rt_bytes));
+      }
+
+      auto read_f32 = [](const uint8_t* p) -> float {
+        float v = 0.0f;
+        std::memcpy(&v, p, sizeof(v));
+        return v;
+      };
+
+      struct V2 {
+        float x;
+        float y;
+      };
+
+      V2 pos[3]{};
+      float col[4]{};
+      for (UINT i = 0; i < 3; ++i) {
+        const size_t base = static_cast<size_t>(dev->current_vb_offset) +
+                            static_cast<size_t>(start_vertex + i) * static_cast<size_t>(dev->current_vb_stride);
+        const uint8_t* vtx = vb->storage.data() + base;
+        pos[i].x = read_f32(vtx + 0);
+        pos[i].y = read_f32(vtx + 4);
+        if (i == 0) {
+          col[0] = read_f32(vtx + 8);
+          col[1] = read_f32(vtx + 12);
+          col[2] = read_f32(vtx + 16);
+          col[3] = read_f32(vtx + 20);
+        }
+      }
+
+      auto float_to_unorm8 = [](float v) -> uint8_t {
+        if (v <= 0.0f) {
+          return 0;
+        }
+        if (v >= 1.0f) {
+          return 255;
+        }
+        const float scaled = v * 255.0f + 0.5f;
+        if (scaled <= 0.0f) {
+          return 0;
+        }
+        if (scaled >= 255.0f) {
+          return 255;
+        }
+        return static_cast<uint8_t>(scaled);
+      };
+
+      const uint8_t out_r = float_to_unorm8(col[0]);
+      const uint8_t out_g = float_to_unorm8(col[1]);
+      const uint8_t out_b = float_to_unorm8(col[2]);
+      const uint8_t out_a = float_to_unorm8(col[3]);
+
+      auto ndc_to_px = [&](const V2& p) -> V2 {
+        V2 out{};
+        out.x = (p.x * 0.5f + 0.5f) * static_cast<float>(rt->width);
+        out.y = (-p.y * 0.5f + 0.5f) * static_cast<float>(rt->height);
+        return out;
+      };
+
+      const V2 v0 = ndc_to_px(pos[0]);
+      const V2 v1 = ndc_to_px(pos[1]);
+      const V2 v2 = ndc_to_px(pos[2]);
+
+      auto edge = [](const V2& a, const V2& b, float x, float y) -> float {
+        return (x - a.x) * (b.y - a.y) - (y - a.y) * (b.x - a.x);
+      };
+
+      const float area = edge(v0, v1, v2.x, v2.y);
+      if (area != 0.0f) {
+        const float min_x_f = std::min({v0.x, v1.x, v2.x});
+        const float max_x_f = std::max({v0.x, v1.x, v2.x});
+        const float min_y_f = std::min({v0.y, v1.y, v2.y});
+        const float max_y_f = std::max({v0.y, v1.y, v2.y});
+
+        int min_x = static_cast<int>(std::floor(min_x_f));
+        int max_x = static_cast<int>(std::ceil(max_x_f));
+        int min_y = static_cast<int>(std::floor(min_y_f));
+        int max_y = static_cast<int>(std::ceil(max_y_f));
+
+        min_x = std::max(min_x, 0);
+        min_y = std::max(min_y, 0);
+        max_x = std::min(max_x, static_cast<int>(rt->width));
+        max_y = std::min(max_y, static_cast<int>(rt->height));
+
+        for (int y = min_y; y < max_y; ++y) {
+          uint8_t* row = rt->storage.data() + static_cast<size_t>(y) * rt->row_pitch_bytes;
+          for (int x = min_x; x < max_x; ++x) {
+            const float px = static_cast<float>(x) + 0.5f;
+            const float py = static_cast<float>(y) + 0.5f;
+            const float w0 = edge(v1, v2, px, py);
+            const float w1 = edge(v2, v0, px, py);
+            const float w2 = edge(v0, v1, px, py);
+            const bool inside = (w0 >= 0.0f && w1 >= 0.0f && w2 >= 0.0f) ||
+                                (w0 <= 0.0f && w1 <= 0.0f && w2 <= 0.0f);
+            if (!inside) {
+              continue;
+            }
+
+            uint8_t* dst = row + static_cast<size_t>(x) * 4;
+            switch (rt->dxgi_format) {
+              case kDxgiFormatR8G8B8A8Unorm:
+                dst[0] = out_r;
+                dst[1] = out_g;
+                dst[2] = out_b;
+                dst[3] = out_a;
+                break;
+              case kDxgiFormatB8G8R8X8Unorm:
+                dst[0] = out_b;
+                dst[1] = out_g;
+                dst[2] = out_r;
+                dst[3] = 255;
+                break;
+              case kDxgiFormatB8G8R8A8Unorm:
+              default:
+                dst[0] = out_b;
+                dst[1] = out_g;
+                dst[2] = out_r;
+                dst[3] = out_a;
+                break;
+            }
+          }
+        }
+      }
+    }
+  }
 
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_draw>(AEROGPU_CMD_DRAW);
   cmd->vertex_count = vertex_count;
@@ -2557,7 +2889,8 @@ HRESULT AEROGPU_APIENTRY CreateDevice(D3D10DDI_HADAPTER hAdapter, D3D10_1DDIARG_
     pCreateDevice->pDeviceFuncs->pfnDynamicConstantBufferUnmap = &DynamicConstantBufferUnmap;
   }
   pCreateDevice->pDeviceFuncs->pfnUpdateSubresourceUP = &UpdateSubresourceUP;
-  AEROGPU_D3D10_ASSIGN_STUB(pfnCopyResource, CopyResource);
+  pCreateDevice->pDeviceFuncs->pfnCopyResource =
+      &CopyResourceImpl<decltype(pCreateDevice->pDeviceFuncs->pfnCopyResource)>::Call;
   AEROGPU_D3D10_ASSIGN_STUB(pfnCopySubresourceRegion, CopySubresourceRegion);
 
   #undef AEROGPU_D3D10_ASSIGN_STUB
@@ -2689,7 +3022,8 @@ HRESULT AEROGPU_APIENTRY CreateDevice10(D3D10DDI_HADAPTER hAdapter, D3D10DDIARG_
   pCreateDevice->pDeviceFuncs->pfnMap = &Map;
   pCreateDevice->pDeviceFuncs->pfnUnmap = &Unmap;
   pCreateDevice->pDeviceFuncs->pfnUpdateSubresourceUP = &UpdateSubresourceUP;
-  pCreateDevice->pDeviceFuncs->pfnCopyResource = &DdiErrorStub<decltype(pCreateDevice->pDeviceFuncs->pfnCopyResource)>::Call;
+  pCreateDevice->pDeviceFuncs->pfnCopyResource =
+      &CopyResourceImpl<decltype(pCreateDevice->pDeviceFuncs->pfnCopyResource)>::Call;
   pCreateDevice->pDeviceFuncs->pfnCopySubresourceRegion =
       &DdiErrorStub<decltype(pCreateDevice->pDeviceFuncs->pfnCopySubresourceRegion)>::Call;
 
