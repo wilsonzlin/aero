@@ -77,6 +77,7 @@ function createFrameWaiter(ws) {
           return;
         }
         const timer = setTimeout(() => reject(new Error("timeout")), timeoutMs);
+        timer.unref?.();
         pending.push({ predicate, resolve, reject, timer });
       });
     },
@@ -322,7 +323,7 @@ test("integration: TCP->WS backpressure pauses TCP read (>=1MB)", async () => {
     burstServer = net.createServer((socket) => {
       // Give the test client time to pause its WebSocket socket before we start
       // flooding data.
-      setTimeout(() => {
+      const timer = setTimeout(() => {
         const chunk = Buffer.alloc(64 * 1024, 0x42);
         let remaining = payloadSize;
 
@@ -341,6 +342,7 @@ test("integration: TCP->WS backpressure pauses TCP read (>=1MB)", async () => {
 
         writeMore();
       }, 50);
+      timer.unref?.();
     });
     const burstPort = await listen(burstServer);
 
@@ -397,7 +399,7 @@ test("integration: backpressure poll resumes TCP reads after WS drains (small th
 
   try {
     burstServer = net.createServer((socket) => {
-      setTimeout(() => {
+      const timer = setTimeout(() => {
         const chunk = Buffer.alloc(64 * 1024, 0x33);
         let remaining = payloadSize;
 
@@ -416,6 +418,7 @@ test("integration: backpressure poll resumes TCP reads after WS drains (small th
 
         writeMore();
       }, 50);
+      timer.unref?.();
     });
     const burstPort = await listen(burstServer);
 
