@@ -33,9 +33,10 @@ Aero constrains virtio to a small, testable subset. The definitive contract is:
   - §3.4: virtio-snd device contract (queue layout, minimum feature set, minimal PCM)
 
 ## In-repo implementation guides consulted
-
+ 
 - Virtqueue split-ring implementation guide (Windows 7): `docs/virtio/virtqueue-split-ring-win7.md`
 - virtio-pci modern interrupts on Windows 7 (MSI-X vs INTx): `docs/windows/virtio-pci-modern-interrupts.md`
+- WDM virtio-pci modern bring-up notes (PCI caps, BAR mapping, feature negotiation, queues): `docs/windows/virtio-pci-modern-wdm.md`
 
 ## Microsoft public documentation (PortCls / WaveRT)
 
@@ -68,10 +69,10 @@ MIT-licensed `sysvad` sample in `microsoft/Windows-driver-samples`), record the
 exact upstream URL + revision/date here and ensure any required notices are preserved.
 
 ### In-repo shared code reused by this driver
- 
+  
 The virtio-snd driver is linked against in-repo virtio support code (no copying;
 the WDK build pulls these sources directly). Key paths:
- 
+  
 - `drivers/windows/virtio/common/virtqueue_split.c` (plus headers in that directory)
 - `drivers/win7/virtio/virtio-core/portable/virtio_pci_cap_parser.c`
   (plus `virtio_pci_cap_parser.h`)
@@ -80,6 +81,8 @@ the WDK build pulls these sources directly). Key paths:
 - `drivers/win7/virtio/virtio-core/include/virtio_pci_modern.h`
   (plus other `virtio-core/include` headers used for spec constants/layouts)
 - `drivers/windows7/virtio/common/src/virtio_pci_contract.c`
+- `drivers/windows7/virtio/common/src/virtio_pci_modern_wdm.c`
+- `drivers/windows7/virtio/common/src/virtio_pci_intx_wdm.c`
 - `drivers/windows7/virtio/common/include/virtqueue_split.h`
   (SG entry definitions used by `virtiosnd_sg_core`; this is independent of the
   `drivers/windows/virtio/common` split-virtqueue implementation linked into the driver)
