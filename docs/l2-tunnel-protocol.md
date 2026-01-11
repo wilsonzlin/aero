@@ -182,3 +182,55 @@ It MUST be treated as a high-risk surface (SSRF / open proxy).
   - All frames MUST terminate in a user-space network stack (server-side slirp/NAT or equivalent)
     that provides a **synthetic** L2 segment for the VM session.
 
+---
+
+## `aero-l2-proxy` security hardening (deployment)
+
+The L2 tunnel is an egress-capable primitive; deploy it like you would deploy `/tcp`.
+
+### Origin allowlist
+
+By default, `aero-l2-proxy` requires an `Origin` header on the WebSocket upgrade request and validates it against an allowlist:
+
+- `AERO_L2_ALLOWED_ORIGINS`: comma-separated list of allowed origins (exact match after normalization).
+  - Example: `https://app.example.com,https://staging.example.com`
+  - `*` allows any Origin value (still requires the header to be present).
+
+Dev escape hatch:
+
+- `AERO_L2_OPEN=1` disables Origin enforcement (trusted local development only).
+
+### Token authentication (WebSocket-compatible)
+
+Origin enforcement is not sufficient to protect an internet-exposed L2 endpoint:
+
+- Non-browser WebSocket clients can omit `Origin`.
+- Non-browser clients can trivially forge an `Origin` header.
+
+If `AERO_L2_TOKEN` is set, `aero-l2-proxy` requires a matching token during the WebSocket upgrade:
+
+- Recommended: `?token=<value>` query parameter.
+- Optional: `Sec-WebSocket-Protocol: aero-l2-token.<value>` (to avoid placing tokens in URLs).
+
+Missing/incorrect tokens MUST reject the upgrade with **HTTP 401** (no WebSocket).
+
+### Quotas
+
+To bound abuse and accidental infinite loops, the proxy applies coarse, best-effort limits:
+
+- `AERO_L2_MAX_CONNECTIONS` (default: `64`): process-wide concurrent tunnel cap (`0` disables).
+  - When exceeded, upgrades are rejected with **HTTP 429**.
+- `AERO_L2_MAX_BYTES_PER_CONNECTION` (default: `0` = unlimited): total bytes per connection (rx + tx).
+- `AERO_L2_MAX_FRAMES_PER_SECOND` (default: `0` = unlimited): inbound messages per second per connection.
+
+When a per-connection quota is exceeded, the proxy closes the WebSocket (typically close code `1008`).
+
+### Recommended deployment behind an edge proxy
+
+For production, deploy the L2 proxy behind an edge proxy / load balancer that provides:
+
+- TLS termination (`wss://`)
+- additional authentication (mTLS / JWT / IP allowlists) as appropriate
+- request logging and rate limiting
+
+Do not expose an unauthenticated L2 tunnel directly to the public internet.

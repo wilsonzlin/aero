@@ -52,6 +52,12 @@ export type L2TunnelClientOptions = {
    */
   keepaliveMinMs?: number;
   keepaliveMaxMs?: number;
+
+  /**
+   * Optional token for deployments that require `?token=...` on the `/l2`
+   * WebSocket URL.
+   */
+  token?: string;
 };
 
 export interface L2TunnelClient {
@@ -125,6 +131,7 @@ function decodePeerErrorPayload(payload: Uint8Array): { code?: number; message: 
 
 abstract class BaseL2TunnelClient implements L2TunnelClient {
   protected readonly opts: RequiredOptions;
+  protected readonly token: string | undefined;
 
   private sendQueue: Uint8Array[] = [];
   private sendQueueHead = 0;
@@ -166,6 +173,7 @@ abstract class BaseL2TunnelClient implements L2TunnelClient {
     }
 
     this.opts = { maxQueuedBytes, maxBufferedAmount, maxFrameSize, errorIntervalMs, keepaliveMinMs, keepaliveMaxMs };
+    this.token = opts.token;
   }
 
   connect(): void {
@@ -498,6 +506,10 @@ export class WebSocketL2TunnelClient extends BaseL2TunnelClient {
       url.pathname = path;
     } else {
       url.pathname = `${path}/l2`;
+    }
+
+    if (this.token !== undefined) {
+      url.searchParams.set("token", this.token);
     }
 
     return url.toString();
