@@ -859,7 +859,7 @@ static NDIS_STATUS AerovNetVirtioStart(_Inout_ AEROVNET_ADAPTER* Adapter) {
   // - required: MAC + STATUS
   // - accepted: INDIRECT_DESC (transport strict-mode also requires the device to offer it)
   RequiredFeatures = VIRTIO_NET_F_MAC | VIRTIO_NET_F_STATUS;
-  WantedFeatures = RequiredFeatures | VIRTIO_F_RING_INDIRECT_DESC;
+  WantedFeatures = RequiredFeatures | AEROVNET_FEATURE_RING_INDIRECT_DESC;
   NegotiatedFeatures = 0;
 
   NtStatus = VirtioPciModernTransportNegotiateFeatures(&Adapter->Transport, RequiredFeatures, WantedFeatures, &NegotiatedFeatures);
@@ -899,8 +899,8 @@ static NDIS_STATUS AerovNetVirtioStart(_Inout_ AEROVNET_ADAPTER* Adapter) {
       return NDIS_STATUS_NOT_SUPPORTED;
     }
   }
-  RxIndirectMaxDesc = (Adapter->GuestFeatures & VIRTIO_F_RING_INDIRECT_DESC) ? 2 : 0;
-  TxIndirectMaxDesc = (Adapter->GuestFeatures & VIRTIO_F_RING_INDIRECT_DESC) ? (USHORT)(AEROVNET_MAX_TX_SG_ELEMENTS + 1) : 0;
+  RxIndirectMaxDesc = (Adapter->GuestFeatures & AEROVNET_FEATURE_RING_INDIRECT_DESC) ? 2 : 0;
+  TxIndirectMaxDesc = (Adapter->GuestFeatures & AEROVNET_FEATURE_RING_INDIRECT_DESC) ? (USHORT)(AEROVNET_MAX_TX_SG_ELEMENTS + 1) : 0;
 
   // Virtqueues: 0 = RX, 1 = TX.
   if (VirtioPciModernTransportGetNumQueues(&Adapter->Transport) < 2) {

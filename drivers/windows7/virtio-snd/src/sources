@@ -11,11 +11,13 @@
 TARGETNAME=virtiosnd
 TARGETTYPE=DRIVER
 TARGETPATH=obj
+
 #
-# This driver links against shared virtio transport + virtqueue code under
-# `drivers/windows7/virtio/common`.
+# This driver links against:
+#   - canonical virtio-pci modern transport: drivers/windows/virtio/pci-modern
+#   - shared virtqueue/split-ring implementation: drivers/windows7/virtio/common
 #
-INCLUDES=$(INCLUDES);..\include;..\..\virtio\common\include;..\..\..\win7\virtio\virtio-core\include;..\..\..\win7\virtio\virtio-core\portable
+INCLUDES=$(INCLUDES);..\include;..\..\..\windows\virtio\pci-modern;..\..\virtio\common\include;..\..\..\win7\virtio\virtio-core\include;..\..\..\win7\virtio\virtio-core\portable
 
 TARGETLIBS=$(TARGETLIBS) \
   $(DDK_LIB_PATH)\portcls.lib \
@@ -29,9 +31,7 @@ SOURCES= \
     topology.c \
     wavert.c \
     pci_interface.c \
-    ..\..\virtio\common\src\virtio_pci_modern_wdm.c \
     ..\..\virtio\common\src\virtio_pci_intx_wdm.c \
-    ..\..\virtio\common\src\virtio_pci_contract.c \
     virtio_snd_proto.c \
     virtiosnd_control.c \
     virtiosnd_control_proto.c \
@@ -45,6 +45,5 @@ SOURCES= \
     virtiosnd_sg_core.c \
     virtiosnd_sg_tx.c \
     ..\..\virtio\common\src\virtqueue_split.c \
-    ..\..\..\win7\virtio\virtio-core\portable\virtio_pci_aero_layout.c \
-    ..\..\..\win7\virtio\virtio-core\portable\virtio_pci_cap_parser.c \
-    ..\..\..\win7\virtio\virtio-core\portable\virtio_pci_identity.c
+    ..\..\..\windows\virtio\pci-modern\virtio_pci_modern_transport.c \
+    ..\..\..\win7\virtio\virtio-core\portable\virtio_pci_cap_parser.c

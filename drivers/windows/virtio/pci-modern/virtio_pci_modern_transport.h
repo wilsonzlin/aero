@@ -34,6 +34,14 @@
 extern "C" {
 #endif
 
+/*
+ * Contract v1 strict-mode BAR0 size requirement.
+ *
+ * In STRICT mode the transport enforces the fixed BAR0 layout described by
+ * docs/windows7-virtio-driver-contract.md, which requires a 0x4000-byte BAR0.
+ */
+#define VIRTIO_PCI_MODERN_TRANSPORT_BAR0_REQUIRED_LEN 0x4000u
+
 typedef UINT_PTR VIRTIO_PCI_MODERN_SPINLOCK_STATE;
 
 typedef struct _VIRTIO_PCI_MODERN_OS_INTERFACE {
@@ -133,6 +141,15 @@ typedef struct _VIRTIO_PCI_MODERN_TRANSPORT {
 	UINT32 DeviceCfgLength;
 
 	void *CommonCfgLock;
+
+	/*
+	 * STRICT-mode safety latch: set once we observe queue_notify_off != queue index.
+	 *
+	 * In strict contract mode the transport uses the fast notify path that assumes
+	 * queue_notify_off(q) == q. If the device violates this (or the MMIO mapping
+	 * is inconsistent), treat the device as unsupported.
+	 */
+	BOOLEAN StrictNotifyOffMismatch;
 } VIRTIO_PCI_MODERN_TRANSPORT;
 
 NTSTATUS VirtioPciModernTransportInit(VIRTIO_PCI_MODERN_TRANSPORT *Transport, const VIRTIO_PCI_MODERN_OS_INTERFACE *Os,
@@ -155,10 +172,15 @@ NTSTATUS VirtioPciModernTransportNegotiateFeatures(VIRTIO_PCI_MODERN_TRANSPORT *
 /* Queue programming + notify */
 UINT16 VirtioPciModernTransportGetNumQueues(VIRTIO_PCI_MODERN_TRANSPORT *Transport);
 NTSTATUS VirtioPciModernTransportGetQueueSize(VIRTIO_PCI_MODERN_TRANSPORT *Transport, UINT16 QueueIndex, UINT16 *SizeOut);
+NTSTATUS VirtioPciModernTransportGetQueueNotifyOff(VIRTIO_PCI_MODERN_TRANSPORT *Transport, UINT16 QueueIndex, UINT16 *NotifyOffOut);
 NTSTATUS VirtioPciModernTransportSetupQueue(VIRTIO_PCI_MODERN_TRANSPORT *Transport, UINT16 QueueIndex, UINT64 DescPa,
 					    UINT64 AvailPa, UINT64 UsedPa);
 VOID VirtioPciModernTransportDisableQueue(VIRTIO_PCI_MODERN_TRANSPORT *Transport, UINT16 QueueIndex);
 NTSTATUS VirtioPciModernTransportNotifyQueue(VIRTIO_PCI_MODERN_TRANSPORT *Transport, UINT16 QueueIndex);
+
+/* MSI-X helpers (vectors may be set to 0xFFFF to disable). */
+NTSTATUS VirtioPciModernTransportSetConfigMsixVector(VIRTIO_PCI_MODERN_TRANSPORT *Transport, UINT16 Vector);
+NTSTATUS VirtioPciModernTransportSetQueueMsixVector(VIRTIO_PCI_MODERN_TRANSPORT *Transport, UINT16 QueueIndex, UINT16 Vector);
 
 /* INTx helper (read-to-ack) */
 UINT8 VirtioPciModernTransportReadIsrStatus(VIRTIO_PCI_MODERN_TRANSPORT *Transport);

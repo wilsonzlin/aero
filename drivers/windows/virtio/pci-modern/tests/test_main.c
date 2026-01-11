@@ -128,6 +128,45 @@ static void FakeDevInitValid(FAKE_DEV *dev)
 	common->device_feature = 0;
 }
 
+static void FakeDevInitCompatRelocated(FAKE_DEV *dev)
+{
+	enum {
+		COMMON_OFF = 0x0100,
+		NOTIFY_OFF = 0x1200,
+		ISR_OFF = 0x2200,
+		DEVICE_OFF = 0x3200,
+	};
+
+	volatile virtio_pci_common_cfg *common;
+
+	memset(dev, 0, sizeof(*dev));
+
+	/* PCI header */
+	WriteLe16(&dev->Cfg[PCI_VENDOR_OFF], 0x1AF4);
+	WriteLe16(&dev->Cfg[PCI_DEVICE_OFF], 0x1052);
+	WriteLe16(&dev->Cfg[PCI_STATUS_OFF], PCI_STATUS_CAP_LIST);
+	dev->Cfg[PCI_REVISION_OFF] = 0x01;
+	WriteLe16(&dev->Cfg[PCI_SUBSYSTEM_VENDOR_OFF], 0x1AF4);
+	WriteLe16(&dev->Cfg[PCI_SUBSYSTEM_DEVICE_OFF], 0x0010);
+	dev->Cfg[PCI_INTERRUPT_PIN_OFF] = 0x01;
+	/* BAR0: memory, 64-bit indicator (bits 2:1 = 2) */
+	WriteLe32(&dev->Cfg[PCI_BAR0_OFF], 0x10000000u | 0x4u);
+
+	/* Cap list */
+	dev->Cfg[PCI_CAP_PTR_OFF] = 0x40;
+	AddVirtioCap(dev->Cfg, 0x40, 0x50, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_COMMON, 0, COMMON_OFF, 0x0100, 16);
+	AddVirtioNotifyCap(dev->Cfg, 0x50, 0x64, 0, NOTIFY_OFF, 0x0100, 4);
+	AddVirtioCap(dev->Cfg, 0x64, 0x74, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_ISR, 0, ISR_OFF, 0x0020, 16);
+	AddVirtioCap(dev->Cfg, 0x74, 0x00, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_DEVICE, 0, DEVICE_OFF, 0x0100, 16);
+
+	/* BAR0 MMIO contents */
+	common = (volatile virtio_pci_common_cfg *)(dev->Bar0 + COMMON_OFF);
+	common->num_queues = 1;
+	common->queue_size = 8;
+	common->queue_notify_off = 0;
+	common->device_feature = 1;
+}
+
 static UINT8 OsPciRead8(void *ctx, UINT16 off)
 {
 	FAKE_DEV *dev = (FAKE_DEV *)ctx;
@@ -856,6 +895,7 @@ static void TestQueueSetupAndNotify(void)
 	volatile virtio_pci_common_cfg *common;
 	NTSTATUS st;
 	UINT16 qsz;
+	UINT16 notify_off;
 	const UINT64 desc_pa = 0x1122334455667700ull;
 	const UINT64 avail_pa = 0x1122334455668800ull;
 	const UINT64 used_pa = 0x1122334455669900ull;
@@ -889,11 +929,71 @@ static void TestQueueSetupAndNotify(void)
 	assert(st == STATUS_SUCCESS);
 	assert(*(UINT16 *)(dev.Bar0 + 0x1000) == 0);
 
-	/* STRICT: reject queue_notify_off mismatch at queue setup time. */
+	notify_off = 0;
+	st = VirtioPciModernTransportGetQueueNotifyOff(&t, 0, &notify_off);
+	assert(st == STATUS_SUCCESS);
+	assert(notify_off == 0);
+
+	/* STRICT: reject queue_notify_off mismatch. */
 	dev.QueueNotifyOff[0] = 5;
 	st = VirtioPciModernTransportSetupQueue(&t, 0, desc_pa, avail_pa, used_pa);
 	assert(st == STATUS_NOT_SUPPORTED);
 
+	st = VirtioPciModernTransportNotifyQueue(&t, 0);
+	assert(st == STATUS_NOT_SUPPORTED);
+
+	st = VirtioPciModernTransportGetQueueNotifyOff(&t, 0, &notify_off);
+	assert(st == STATUS_NOT_SUPPORTED);
+
+	/* MSI-X helpers should program fields under the selector lock. */
+	st = VirtioPciModernTransportSetConfigMsixVector(&t, 0xFFFFu);
+	assert(st == STATUS_SUCCESS);
+	assert(common->msix_config == 0xFFFFu);
+
+	st = VirtioPciModernTransportSetQueueMsixVector(&t, 0, 0xFFFFu);
+	assert(st == STATUS_SUCCESS);
+	assert(common->queue_msix_vector == 0xFFFFu);
+
+	VirtioPciModernTransportUninit(&t);
+}
+
+static void TestCompatInitAcceptsRelocatedCaps(void)
+{
+	FAKE_DEV dev;
+	VIRTIO_PCI_MODERN_OS_INTERFACE os;
+	VIRTIO_PCI_MODERN_TRANSPORT t;
+	NTSTATUS st;
+
+	FakeDevInitCompatRelocated(&dev);
+	os = GetOs(&dev);
+
+	st = VirtioPciModernTransportInit(&t, &os, VIRTIO_PCI_MODERN_TRANSPORT_MODE_COMPAT, 0x10000000u, sizeof(dev.Bar0));
+	assert(st == STATUS_SUCCESS);
+	assert(t.CommonCfg == (volatile virtio_pci_common_cfg *)(dev.Bar0 + 0x0100));
+	assert(t.NotifyBase == (volatile UINT8 *)(dev.Bar0 + 0x1200));
+
+	*(UINT16 *)(dev.Bar0 + 0x1200) = 0xFFFFu;
+	st = VirtioPciModernTransportNotifyQueue(&t, 0);
+	assert(st == STATUS_SUCCESS);
+	assert(*(UINT16 *)(dev.Bar0 + 0x1200) == 0);
+
+	VirtioPciModernTransportUninit(&t);
+}
+
+static void TestCompatInitAccepts32BitBar0Mmio(void)
+{
+	FAKE_DEV dev;
+	VIRTIO_PCI_MODERN_OS_INTERFACE os;
+	VIRTIO_PCI_MODERN_TRANSPORT t;
+	NTSTATUS st;
+
+	FakeDevInitValid(&dev);
+	/* Memory BAR, but 32-bit type (bits [2:1]=0b00). */
+	WriteLe32(&dev.Cfg[PCI_BAR0_OFF], 0x10000000u);
+	os = GetOs(&dev);
+
+	st = VirtioPciModernTransportInit(&t, &os, VIRTIO_PCI_MODERN_TRANSPORT_MODE_COMPAT, 0x10000000u, sizeof(dev.Bar0));
+	assert(st == STATUS_SUCCESS);
 	VirtioPciModernTransportUninit(&t);
 }
 
@@ -1234,6 +1334,8 @@ int main(void)
 	TestNegotiateFeaturesStrictRejectPackedRingOffered();
 	TestNegotiateFeaturesCompatDoesNotNegotiatePackedRing();
 	TestQueueSetupAndNotify();
+	TestCompatInitAcceptsRelocatedCaps();
+	TestCompatInitAccepts32BitBar0Mmio();
 	TestQueueSetupRejectUnalignedOrInvalidQueue();
 	TestQueueSetupRejectNotifyOffOutOfRangeCompat();
 	TestNotifyRejectInvalidQueue();

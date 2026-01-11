@@ -12,7 +12,8 @@ At a high level, Aero drivers use two virtio-pci transport styles:
 
 This directory contains implementations and helpers for both. For modern virtio-pci on Windows there are two main consumer models:
 
-- **Miniport-style (NDIS / StorPort):** `virtio_pci_modern_miniport.*`
+- **Miniport-style (NDIS / StorPort):** `virtio_pci_modern_miniport.*` (legacy; new drivers should use
+  `drivers/windows/virtio/pci-modern/` / `virtio_pci_modern_transport.*`)
   - caller provides a BAR0 MMIO mapping and a PCI config snapshot
   - parses virtio vendor-specific capabilities (COMMON/NOTIFY/ISR/DEVICE) and provides helpers
     for `common_cfg` / notify / ISR / device config
@@ -125,6 +126,11 @@ is retained only for compatibility/testing with transitional/QEMU devices.
 
 ### Modern transport (Virtio 1.0+)
 
+Canonical WDF-free virtio-pci modern transport (preferred for new drivers):
+
+- `drivers/windows/virtio/pci-modern/virtio_pci_modern_transport.h` +
+  `drivers/windows/virtio/pci-modern/virtio_pci_modern_transport.c`
+
 This directory provides:
 
 - a portable, OS-agnostic modern transport (`virtio_pci_modern.*`), and
@@ -207,48 +213,28 @@ must link **exactly one** of them.
 
 At a high level, drivers using Aero contract v1 devices should:
 
-### Miniports (NDIS / StorPort)
+1. **Initialize the canonical transport** (`drivers/windows/virtio/pci-modern/`):
+   - Implement `VIRTIO_PCI_MODERN_OS_INTERFACE` callbacks for PCI config reads, BAR0 mapping,
+     stall/barrier, and selector serialization.
+   - Call `VirtioPciModernTransportInit(...)` (STRICT by default; drivers may optionally retry
+     with COMPAT on init errors like capability-layout mismatch).
+2. **Negotiate features** (64-bit; `VirtioPciModernTransportNegotiateFeatures(...)` always requires
+   `VIRTIO_F_VERSION_1`).
+3. **Program queues** using `common_cfg` and notify:
+   - `VirtioPciModernTransportGetQueueSize(...)`
+   - `VirtioPciModernTransportGetQueueNotifyOff(...)`
+   - `VirtioPciModernTransportSetupQueue(...)`
+   - `VirtioPciModernTransportNotifyQueue(...)`
+ 4. **Handle INTx**:
+    - Read-to-ack via `VirtioPciModernTransportReadIsrStatus(...)`, then process queues in a DPC.
+    - WDM drivers may also reuse the INTx helper in this directory:
+      `virtio_pci_intx_wdm.*` (`VirtioIntxConnect(...)` / `VirtioIntxDisconnect(...)`).
 
-1. **Read a PCI config snapshot** (typically 256 bytes) and validate identity
-   (vendor/device/revision ID).
-2. **Map BAR0 MMIO** using your driver framework:
-   - NDIS: `NdisMMapIoSpace`
-   - StorPort: `StorPortGetDeviceBase`
-3. **Initialize the modern transport** (parses virtio vendor capabilities):
-   - `VirtioPciModernMiniportInit(&Dev, Bar0Va, Bar0Len, PciCfg, PciCfgLen)`
-4. **Negotiate features** (64-bit; always requires `VIRTIO_F_VERSION_1`):
-   - `VirtioPciNegotiateFeatures(&Dev, Required, Wanted, &Negotiated)`
-5. **Read device-specific config** (optional; e.g. MAC address / capacity):
-   - `VirtioPciReadDeviceConfig(&Dev, ...)`
-6. **Program queues** and cache notify addresses:
-   - Allocate split-ring memory (descriptor table + avail ring + used ring), then:
-     - `VirtioPciSetupQueue(&Dev, QueueIndex, DescPa, AvailPa, UsedPa)`
-     - optionally cache notify address with `VirtioPciGetQueueNotifyAddress(...)`
-   - Use `virtqueue_split.*` (or your own queue wrapper) to manage split-ring state.
-   - `virtio_queue.*` is **legacy-only** and is not compatible with the modern miniport transport.
-7. **Handle INTx**:
-   - Read the ISR status byte in the ISR to ACK/deassert (read-to-ack), then do
-     queue work in a DPC.
-   - Miniport primitive: `VirtioPciReadIsr(&Dev)`.
-8. **Set `DRIVER_OK`** once queues and interrupts are ready:
-   - `VirtioPciAddStatus(&Dev, VIRTIO_STATUS_DRIVER_OK)`
-
-### WDM drivers
-
-WDM drivers can use the WDM transport + INTx helper:
-
-1. `VirtioPciModernWdmInit(LowerDeviceObject, &Dev)`
-2. `VirtioPciModernWdmMapBars(&Dev, ResourcesRaw, ResourcesTranslated)`
-3. `VirtioPciNegotiateFeatures(&Dev, ...)`
-4. `VirtioPciReadDeviceConfig(&Dev, ...)` (optional)
-5. `VirtioPciSetupQueue(&Dev, ...)` / `VirtioPciNotifyQueue(&Dev, ...)` (or your own queue implementation)
-6. `VirtioIntxConnect(...)` / `VirtioIntxDisconnect(...)`
-7. `VirtioPciAddStatus(&Dev, VIRTIO_STATUS_DRIVER_OK)`
-
-Note: `virtio_queue.*` is built on the legacy `VIRTIO_PCI_DEVICE` type from
-`virtio_pci_legacy.h` and is intended for the legacy/transitional transport only.
-Modern drivers typically pair `VirtioPciSetupQueue` with `virtqueue_split.*`
-directly or use their own queue wrapper.
+Note: `virtio_queue.*` is built on the legacy/transitional virtio-pci PFN queue
+programming model and is not compatible with the modern transport. New drivers
+using `VirtioPciModernTransport*` typically pair it with
+`drivers/windows/virtio/common/virtqueue_split.*` or a driver-specific queue
+wrapper.
 
 ## virtio-pci legacy register offsets
 

@@ -42,8 +42,10 @@ LEGACY_ALIAS_INF_DISABLED = (
 # These are repo-root-relative paths.
 REQUIRED_REPO_SOURCES = {
     "drivers/windows7/virtio-snd/src/virtiosnd_hw.c",
-    "drivers/windows7/virtio/common/src/virtio_pci_modern_wdm.c",
+    "drivers/windows/virtio/pci-modern/virtio_pci_modern_transport.c",
+    "drivers/win7/virtio/virtio-core/portable/virtio_pci_cap_parser.c",
     "drivers/windows7/virtio/common/src/virtio_pci_intx_wdm.c",
+    "drivers/windows7/virtio/common/src/virtqueue_split.c",
     "drivers/windows7/virtio-snd/src/virtiosnd_intx.c",
     "drivers/windows7/virtio-snd/src/virtiosnd_control.c",
     "drivers/windows7/virtio-snd/src/virtiosnd_tx.c",

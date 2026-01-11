@@ -10,7 +10,7 @@ enum {
 
 	AERO_W7_VIRTIO_PCI_REVISION = 0x01,
 
-	AERO_W7_VIRTIO_BAR0_REQUIRED_LEN = 0x4000,
+	AERO_W7_VIRTIO_BAR0_REQUIRED_LEN = VIRTIO_PCI_MODERN_TRANSPORT_BAR0_REQUIRED_LEN,
 
 	AERO_W7_VIRTIO_COMMON_OFF = 0x0000,
 	AERO_W7_VIRTIO_COMMON_MIN_LEN = 0x0100,
@@ -774,6 +774,46 @@ NTSTATUS VirtioPciModernTransportGetQueueSize(VIRTIO_PCI_MODERN_TRANSPORT *t, UI
 	return (qsz != 0) ? STATUS_SUCCESS : STATUS_NOT_FOUND;
 }
 
+NTSTATUS VirtioPciModernTransportGetQueueNotifyOff(VIRTIO_PCI_MODERN_TRANSPORT *t, UINT16 q, UINT16 *notify_off_out)
+{
+	VIRTIO_PCI_MODERN_SPINLOCK_STATE state;
+	UINT16 qsz;
+	UINT16 notify_off;
+	UINT64 byte_off;
+
+	if (t == NULL || t->CommonCfg == NULL || notify_off_out == NULL) {
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	if (t->NotifyBase == NULL || t->NotifyOffMultiplier == 0 || t->NotifyLength < sizeof(UINT16)) {
+		return STATUS_INVALID_DEVICE_STATE;
+	}
+
+	VirtioPciModernLock(t, &state);
+	t->CommonCfg->queue_select = q;
+	VirtioPciModernMb(t);
+	qsz = t->CommonCfg->queue_size;
+	notify_off = t->CommonCfg->queue_notify_off;
+	VirtioPciModernUnlock(t, state);
+
+	if (qsz == 0) {
+		return STATUS_NOT_FOUND;
+	}
+
+	if (t->Mode == VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT && notify_off != q) {
+		t->StrictNotifyOffMismatch = TRUE;
+		return STATUS_NOT_SUPPORTED;
+	}
+
+	byte_off = (UINT64)notify_off * (UINT64)t->NotifyOffMultiplier;
+	if (byte_off + sizeof(UINT16) > (UINT64)t->NotifyLength) {
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	*notify_off_out = notify_off;
+	return STATUS_SUCCESS;
+}
+
 NTSTATUS VirtioPciModernTransportSetupQueue(VIRTIO_PCI_MODERN_TRANSPORT *t, UINT16 q, UINT64 desc_pa, UINT64 avail_pa,
 					    UINT64 used_pa)
 {
@@ -803,6 +843,7 @@ NTSTATUS VirtioPciModernTransportSetupQueue(VIRTIO_PCI_MODERN_TRANSPORT *t, UINT
 
 	notify_off = t->CommonCfg->queue_notify_off;
 	if (t->Mode == VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT && notify_off != q) {
+		t->StrictNotifyOffMismatch = TRUE;
 		VirtioPciModernUnlock(t, state);
 		return STATUS_NOT_SUPPORTED;
 	}
@@ -875,6 +916,9 @@ NTSTATUS VirtioPciModernTransportNotifyQueue(VIRTIO_PCI_MODERN_TRANSPORT *t, UIN
 	 * Avoid touching the selector-based common_cfg registers on the hot path.
 	 */
 	if (t->Mode == VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT) {
+		if (t->StrictNotifyOffMismatch) {
+			return STATUS_NOT_SUPPORTED;
+		}
 		if (q >= t->CommonCfg->num_queues) {
 			return STATUS_NOT_FOUND;
 		}
@@ -906,6 +950,44 @@ NTSTATUS VirtioPciModernTransportNotifyQueue(VIRTIO_PCI_MODERN_TRANSPORT *t, UIN
 	/* Notify uses a 16-bit write by contract. */
 	*(volatile UINT16 *)(t->NotifyBase + (UINT32)byte_off) = q;
 	VirtioPciModernMb(t);
+	return STATUS_SUCCESS;
+}
+
+NTSTATUS VirtioPciModernTransportSetConfigMsixVector(VIRTIO_PCI_MODERN_TRANSPORT *t, UINT16 vector)
+{
+	if (t == NULL || t->CommonCfg == NULL) {
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	t->CommonCfg->msix_config = vector;
+	VirtioPciModernMb(t);
+	return STATUS_SUCCESS;
+}
+
+NTSTATUS VirtioPciModernTransportSetQueueMsixVector(VIRTIO_PCI_MODERN_TRANSPORT *t, UINT16 q, UINT16 vector)
+{
+	VIRTIO_PCI_MODERN_SPINLOCK_STATE state;
+	UINT16 qsz;
+
+	if (t == NULL || t->CommonCfg == NULL) {
+		return STATUS_INVALID_PARAMETER;
+	}
+
+	VirtioPciModernLock(t, &state);
+
+	t->CommonCfg->queue_select = q;
+	VirtioPciModernMb(t);
+
+	qsz = t->CommonCfg->queue_size;
+	if (qsz == 0) {
+		VirtioPciModernUnlock(t, state);
+		return STATUS_NOT_FOUND;
+	}
+
+	t->CommonCfg->queue_msix_vector = vector;
+	VirtioPciModernMb(t);
+
+	VirtioPciModernUnlock(t, state);
 	return STATUS_SUCCESS;
 }
 

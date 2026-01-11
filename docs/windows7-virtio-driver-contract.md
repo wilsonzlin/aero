@@ -40,7 +40,11 @@ This contract describes **device/driver-visible behavior**.
 
 For canonical C layout of the modern common configuration structure, see:
 
-- `drivers/win7/virtio/virtio-core/include/virtio_pci_modern.h`
+- `drivers/win7/virtio/virtio-core/include/virtio_spec.h`
+
+For the canonical **WDF-free** virtio-pci modern transport library (STRICT/COMPAT mode) used by the Windows 7 guest drivers, see:
+
+- `drivers/windows/virtio/pci-modern/`
 
 For a host-buildable Rust crate that locks down struct sizes/offsets used by both sides, see:
 
@@ -152,7 +156,7 @@ This switch is intended for emulator/device-model conformance testing; the defau
 
 ### 1.5 Common configuration (`virtio_pci_common_cfg`)
 
-The common configuration region is a MMIO mapping of `struct virtio_pci_common_cfg` (little-endian). For the canonical packed C layout, see `drivers/win7/virtio/virtio-core/include/virtio_pci_modern.h`.
+The common configuration region is a MMIO mapping of `struct virtio_pci_common_cfg` (little-endian). For the canonical packed C layout, see `drivers/win7/virtio/virtio-core/include/virtio_spec.h`.
 
 Key semantics:
 

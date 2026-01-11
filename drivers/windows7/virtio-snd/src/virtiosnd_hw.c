@@ -3,16 +3,50 @@
 #include <ntddk.h>
 
 #include "trace.h"
+#include "pci_interface.h"
 #include "virtiosnd.h"
 #include "virtiosnd_intx.h"
 
+/* Bounded reset poll (virtio status reset handshake). */
+#define VIRTIOSND_RESET_TIMEOUT_US 1000000u
+#define VIRTIOSND_RESET_POLL_DELAY_US 1000u
+
+static __forceinline UCHAR VirtIoSndReadDeviceStatus(_In_ const VIRTIO_PCI_MODERN_TRANSPORT *Transport)
+{
+    return READ_REGISTER_UCHAR((volatile UCHAR *)&Transport->CommonCfg->device_status);
+}
+
+static __forceinline VOID VirtIoSndWriteDeviceStatus(_In_ const VIRTIO_PCI_MODERN_TRANSPORT *Transport, _In_ UCHAR Status)
+{
+    WRITE_REGISTER_UCHAR((volatile UCHAR *)&Transport->CommonCfg->device_status, Status);
+}
+
 static VOID VirtIoSndResetDeviceBestEffort(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
 {
-    if (Dx == NULL) {
+    ULONG waitedUs;
+    LARGE_INTEGER delay;
+
+    if (Dx == NULL || Dx->Transport.CommonCfg == NULL) {
         return;
     }
 
-    VirtioPciResetDevice(&Dx->Transport);
+    KeMemoryBarrier();
+    VirtIoSndWriteDeviceStatus(&Dx->Transport, 0);
+    KeMemoryBarrier();
+
+    for (waitedUs = 0; waitedUs < VIRTIOSND_RESET_TIMEOUT_US; waitedUs += VIRTIOSND_RESET_POLL_DELAY_US) {
+        if (VirtIoSndReadDeviceStatus(&Dx->Transport) == 0) {
+            KeMemoryBarrier();
+            return;
+        }
+
+        if (KeGetCurrentIrql() == PASSIVE_LEVEL) {
+            delay.QuadPart = -(LONGLONG)VIRTIOSND_RESET_POLL_DELAY_US * 10; /* microseconds -> 100ns */
+            KeDelayExecutionThread(KernelMode, FALSE, &delay);
+        } else {
+            KeStallExecutionProcessor(VIRTIOSND_RESET_POLL_DELAY_US);
+        }
+    }
 }
 
 static VOID VirtIoSndFailDeviceBestEffort(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
@@ -21,7 +55,262 @@ static VOID VirtIoSndFailDeviceBestEffort(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx
         return;
     }
 
-    VirtioPciFailDevice(&Dx->Transport);
+    VirtioPciModernTransportAddStatus(&Dx->Transport, VIRTIO_STATUS_FAILED);
+}
+
+static UINT8 VirtIoSndTransportPciRead8(void *context, UINT16 offset)
+{
+    PVIRTIOSND_DEVICE_EXTENSION dx = (PVIRTIOSND_DEVICE_EXTENSION)context;
+
+    if (dx == NULL || offset >= (UINT16)sizeof(dx->PciCfgSpace)) {
+        return 0;
+    }
+
+    return (UINT8)dx->PciCfgSpace[offset];
+}
+
+static UINT16 VirtIoSndTransportPciRead16(void *context, UINT16 offset)
+{
+    PVIRTIOSND_DEVICE_EXTENSION dx = (PVIRTIOSND_DEVICE_EXTENSION)context;
+
+    if (dx == NULL || (UINT32)offset + sizeof(UINT16) > sizeof(dx->PciCfgSpace)) {
+        return 0;
+    }
+
+    return (UINT16)dx->PciCfgSpace[offset] | ((UINT16)dx->PciCfgSpace[offset + 1] << 8);
+}
+
+static UINT32 VirtIoSndTransportPciRead32(void *context, UINT16 offset)
+{
+    PVIRTIOSND_DEVICE_EXTENSION dx = (PVIRTIOSND_DEVICE_EXTENSION)context;
+
+    if (dx == NULL || (UINT32)offset + sizeof(UINT32) > sizeof(dx->PciCfgSpace)) {
+        return 0;
+    }
+
+    return (UINT32)dx->PciCfgSpace[offset] | ((UINT32)dx->PciCfgSpace[offset + 1] << 8) |
+           ((UINT32)dx->PciCfgSpace[offset + 2] << 16) | ((UINT32)dx->PciCfgSpace[offset + 3] << 24);
+}
+
+static NTSTATUS VirtIoSndTransportMapMmio(void *context, UINT64 physicalAddress, UINT32 length, volatile void **mappedVaOut)
+{
+    PHYSICAL_ADDRESS pa;
+    PVOID va;
+
+    UNREFERENCED_PARAMETER(context);
+
+    if (mappedVaOut != NULL) {
+        *mappedVaOut = NULL;
+    }
+
+    if (mappedVaOut == NULL || physicalAddress == 0 || length == 0) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    pa.QuadPart = (LONGLONG)physicalAddress;
+    va = MmMapIoSpace(pa, (SIZE_T)length, MmNonCached);
+    if (va == NULL) {
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+
+    *mappedVaOut = (volatile void *)va;
+    return STATUS_SUCCESS;
+}
+
+static void VirtIoSndTransportUnmapMmio(void *context, volatile void *mappedVa, UINT32 length)
+{
+    UNREFERENCED_PARAMETER(context);
+
+    if (mappedVa != NULL && length != 0) {
+        MmUnmapIoSpace((PVOID)mappedVa, (SIZE_T)length);
+    }
+}
+
+static void VirtIoSndTransportStallUs(void *context, UINT32 microseconds)
+{
+    UNREFERENCED_PARAMETER(context);
+    KeStallExecutionProcessor(microseconds);
+}
+
+static void VirtIoSndTransportMemoryBarrier(void *context)
+{
+    UNREFERENCED_PARAMETER(context);
+    KeMemoryBarrier();
+}
+
+static void *VirtIoSndTransportSpinlockCreate(void *context)
+{
+    UNREFERENCED_PARAMETER(context);
+
+    {
+        KSPIN_LOCK *lock = (KSPIN_LOCK *)ExAllocatePoolWithTag(NonPagedPool, sizeof(KSPIN_LOCK), VIRTIOSND_POOL_TAG);
+        if (lock == NULL) {
+            return NULL;
+        }
+        KeInitializeSpinLock(lock);
+        return lock;
+    }
+}
+
+static void VirtIoSndTransportSpinlockDestroy(void *context, void *lock)
+{
+    UNREFERENCED_PARAMETER(context);
+    if (lock != NULL) {
+        ExFreePoolWithTag(lock, VIRTIOSND_POOL_TAG);
+    }
+}
+
+static void VirtIoSndTransportSpinlockAcquire(void *context, void *lock, VIRTIO_PCI_MODERN_SPINLOCK_STATE *stateOut)
+{
+    KIRQL oldIrql;
+
+    UNREFERENCED_PARAMETER(context);
+
+    if (stateOut != NULL) {
+        *stateOut = 0;
+    }
+
+    if (lock == NULL || stateOut == NULL) {
+        return;
+    }
+
+    KeAcquireSpinLock((PKSPIN_LOCK)lock, &oldIrql);
+    *stateOut = (VIRTIO_PCI_MODERN_SPINLOCK_STATE)oldIrql;
+}
+
+static void VirtIoSndTransportSpinlockRelease(void *context, void *lock, VIRTIO_PCI_MODERN_SPINLOCK_STATE state)
+{
+    UNREFERENCED_PARAMETER(context);
+
+    if (lock == NULL) {
+        return;
+    }
+
+    KeReleaseSpinLock((PKSPIN_LOCK)lock, (KIRQL)state);
+}
+
+static void VirtIoSndTransportLog(void *context, const char *message)
+{
+    UNREFERENCED_PARAMETER(context);
+
+    if (message != NULL) {
+        VIRTIOSND_TRACE("%s\n", message);
+    }
+}
+
+static ULONG VirtIoSndReadLe32FromCfg(_In_reads_bytes_(256) const UCHAR *cfg, _In_ ULONG offset)
+{
+    ULONG v;
+
+    v = 0;
+    if (cfg == NULL || offset + sizeof(v) > 256u) {
+        return 0;
+    }
+
+    RtlCopyMemory(&v, cfg + offset, sizeof(v));
+    return v;
+}
+
+static ULONGLONG VirtIoSndComputeBar0Base(_In_reads_bytes_(256) const UCHAR *cfg)
+{
+    ULONG bar0Low = VirtIoSndReadLe32FromCfg(cfg, 0x10u);
+    ULONG bar0High = 0;
+    ULONG memType;
+    ULONGLONG base;
+
+    if (bar0Low == 0) {
+        return 0;
+    }
+
+    if ((bar0Low & 0x1u) != 0) {
+        /* I/O BAR (unsupported by contract). */
+        return (ULONGLONG)(bar0Low & ~0x3u);
+    }
+
+    memType = (bar0Low >> 1) & 0x3u;
+    base = (ULONGLONG)(bar0Low & ~0xFu);
+    if (memType == 0x2u) {
+        bar0High = VirtIoSndReadLe32FromCfg(cfg, 0x14u);
+        base |= ((ULONGLONG)bar0High << 32);
+    }
+
+    return base;
+}
+
+static NTSTATUS VirtIoSndFindBar0Resource(_In_ ULONGLONG bar0Base,
+                                         _In_ PCM_RESOURCE_LIST resourcesRaw,
+                                         _In_ PCM_RESOURCE_LIST resourcesTranslated,
+                                         _Out_ PHYSICAL_ADDRESS *translatedStartOut,
+                                         _Out_ UINT32 *lengthOut)
+{
+    ULONG fullIndex;
+    ULONG fullCount;
+
+    if (translatedStartOut != NULL) {
+        translatedStartOut->QuadPart = 0;
+    }
+    if (lengthOut != NULL) {
+        *lengthOut = 0;
+    }
+
+    if (bar0Base == 0 || resourcesRaw == NULL || resourcesTranslated == NULL || translatedStartOut == NULL || lengthOut == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    fullCount = resourcesRaw->Count;
+    if (resourcesTranslated->Count < fullCount) {
+        fullCount = resourcesTranslated->Count;
+    }
+
+    for (fullIndex = 0; fullIndex < fullCount; ++fullIndex) {
+        PCM_FULL_RESOURCE_DESCRIPTOR rawFull;
+        PCM_FULL_RESOURCE_DESCRIPTOR transFull;
+        PCM_PARTIAL_RESOURCE_LIST rawList;
+        PCM_PARTIAL_RESOURCE_LIST transList;
+        ULONG descCount;
+        ULONG descIndex;
+
+        rawFull = &resourcesRaw->List[fullIndex];
+        transFull = &resourcesTranslated->List[fullIndex];
+
+        rawList = &rawFull->PartialResourceList;
+        transList = &transFull->PartialResourceList;
+
+        descCount = rawList->Count;
+        if (transList->Count < descCount) {
+            descCount = transList->Count;
+        }
+
+        for (descIndex = 0; descIndex < descCount; ++descIndex) {
+            PCM_PARTIAL_RESOURCE_DESCRIPTOR rawDesc;
+            PCM_PARTIAL_RESOURCE_DESCRIPTOR transDesc;
+            ULONGLONG rawStart;
+            ULONG len;
+
+            rawDesc = &rawList->PartialDescriptors[descIndex];
+            transDesc = &transList->PartialDescriptors[descIndex];
+
+            if (rawDesc->Type != CmResourceTypeMemory || transDesc->Type != CmResourceTypeMemory) {
+                continue;
+            }
+
+            rawStart = (ULONGLONG)rawDesc->u.Memory.Start.QuadPart;
+            if (rawStart != bar0Base) {
+                continue;
+            }
+
+            len = rawDesc->u.Memory.Length;
+            if (len == 0) {
+                return STATUS_DEVICE_CONFIGURATION_ERROR;
+            }
+
+            *translatedStartOut = transDesc->u.Memory.Start;
+            *lengthOut = (UINT32)len;
+            return STATUS_SUCCESS;
+        }
+    }
+
+    return STATUS_DEVICE_CONFIGURATION_ERROR;
 }
 
 static VOID VirtIoSndDestroyQueues(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
@@ -47,7 +336,7 @@ static NTSTATUS VirtIoSndSetupQueues(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
     if (Dx->Transport.CommonCfg != NULL) {
         USHORT numQueues;
 
-        numQueues = READ_REGISTER_USHORT((volatile USHORT*)&Dx->Transport.CommonCfg->num_queues);
+        numQueues = READ_REGISTER_USHORT((volatile USHORT *)&Dx->Transport.CommonCfg->num_queues);
         if (numQueues < (USHORT)VIRTIOSND_QUEUE_COUNT) {
             VIRTIOSND_TRACE_ERROR(
                 "device exposes %u queues (< %u required by contract v1)\n",
@@ -59,22 +348,36 @@ static NTSTATUS VirtIoSndSetupQueues(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
 
     for (q = 0; q < VIRTIOSND_QUEUE_COUNT; ++q) {
         USHORT size;
+        USHORT expectedSize;
         USHORT notifyOff;
         volatile UINT16* notifyAddr;
         UINT64 descPa, availPa, usedPa;
         USHORT notifyOffReadback;
-        volatile UINT16* notifyAddrReadback;
-
-        size = 0;
+        expectedSize = 0;
         notifyOff = 0;
-        notifyOffReadback = 0;
         notifyAddr = NULL;
         descPa = 0;
         availPa = 0;
         usedPa = 0;
-        notifyAddrReadback = NULL;
+        switch (q) {
+        case VIRTIOSND_QUEUE_CONTROL:
+            expectedSize = VIRTIOSND_QUEUE_SIZE_CONTROLQ;
+            break;
+        case VIRTIOSND_QUEUE_EVENT:
+            expectedSize = VIRTIOSND_QUEUE_SIZE_EVENTQ;
+            break;
+        case VIRTIOSND_QUEUE_TX:
+            expectedSize = VIRTIOSND_QUEUE_SIZE_TXQ;
+            break;
+        case VIRTIOSND_QUEUE_RX:
+            expectedSize = VIRTIOSND_QUEUE_SIZE_RXQ;
+            break;
+        default:
+            expectedSize = 0;
+            break;
+        }
 
-        status = VirtioPciGetQueueSize(&Dx->Transport, (USHORT)q, &size);
+        status = VirtioPciModernTransportGetQueueSize(&Dx->Transport, (USHORT)q, &size);
         if (!NT_SUCCESS(status)) {
             return status;
         }
@@ -87,7 +390,16 @@ static NTSTATUS VirtIoSndSetupQueues(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
             return STATUS_DEVICE_CONFIGURATION_ERROR;
         }
 
-        status = VirtioPciGetQueueNotifyAddress(&Dx->Transport, (USHORT)q, &notifyAddr);
+        if (expectedSize != 0 && size != expectedSize) {
+            VIRTIOSND_TRACE_ERROR(
+                "queue %lu size mismatch: device=%u expected=%u\n",
+                q,
+                (UINT)size,
+                (UINT)expectedSize);
+            return STATUS_DEVICE_CONFIGURATION_ERROR;
+        }
+
+        status = VirtioPciModernTransportGetQueueNotifyOff(&Dx->Transport, (USHORT)q, &notifyOff);
         if (!NT_SUCCESS(status)) {
             return status;
         }
@@ -97,21 +409,11 @@ static NTSTATUS VirtIoSndSetupQueues(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
         }
 
         {
-            ULONGLONG delta;
-            delta = (ULONGLONG)((volatile UCHAR*)notifyAddr - Dx->Transport.NotifyBase);
-            if ((delta % (ULONGLONG)Dx->Transport.NotifyOffMultiplier) != 0) {
+            const UINT64 notifyByteOff = (UINT64)notifyOff * (UINT64)Dx->Transport.NotifyOffMultiplier;
+            if (notifyByteOff + sizeof(UINT16) > (UINT64)Dx->Transport.NotifyLength) {
                 return STATUS_DEVICE_CONFIGURATION_ERROR;
             }
-            notifyOff = (USHORT)(delta / (ULONGLONG)Dx->Transport.NotifyOffMultiplier);
-        }
-
-        if (notifyOff != (USHORT)q) {
-            VIRTIOSND_TRACE_ERROR(
-                "queue %lu notify_off mismatch: device=%u expected=%lu\n",
-                q,
-                (UINT)notifyOff,
-                q);
-            return STATUS_DEVICE_CONFIGURATION_ERROR;
+            notifyAddr = (volatile UINT16 *)(Dx->Transport.NotifyBase + (UINT32)notifyByteOff);
         }
 
         status = VirtioSndQueueSplitCreate(
@@ -130,24 +432,18 @@ static NTSTATUS VirtIoSndSetupQueues(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
             return status;
         }
 
+        /* Disable MSI-X for this queue; INTx/ISR is required by contract v1. */
+        (void)VirtioPciModernTransportSetQueueMsixVector(&Dx->Transport, (USHORT)q, 0xFFFFu);
+
+        status = VirtioPciModernTransportSetupQueue(&Dx->Transport, (USHORT)q, descPa, availPa, usedPa);
+        if (!NT_SUCCESS(status)) {
+            return status;
+        }
+
         notifyOffReadback = 0;
-        status = VirtioPciSetupQueue(&Dx->Transport, (USHORT)q, descPa, availPa, usedPa);
+        status = VirtioPciModernTransportGetQueueNotifyOff(&Dx->Transport, (USHORT)q, &notifyOffReadback);
         if (!NT_SUCCESS(status)) {
             return status;
-        }
-
-        status = VirtioPciGetQueueNotifyAddress(&Dx->Transport, (USHORT)q, &notifyAddrReadback);
-        if (!NT_SUCCESS(status)) {
-            return status;
-        }
-
-        {
-            ULONGLONG delta;
-            delta = (ULONGLONG)((volatile UCHAR*)notifyAddrReadback - Dx->Transport.NotifyBase);
-            if ((delta % (ULONGLONG)Dx->Transport.NotifyOffMultiplier) != 0) {
-                return STATUS_DEVICE_CONFIGURATION_ERROR;
-            }
-            notifyOffReadback = (USHORT)(delta / (ULONGLONG)Dx->Transport.NotifyOffMultiplier);
         }
 
         if (notifyOffReadback != notifyOff) {
@@ -183,6 +479,7 @@ static NTSTATUS VirtIoSndSetupQueues(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
 
     return STATUS_SUCCESS;
 }
+
 _Use_decl_annotations_
 VOID VirtIoSndStopHardware(PVIRTIOSND_DEVICE_EXTENSION Dx)
 {
@@ -238,7 +535,11 @@ VOID VirtIoSndStopHardware(PVIRTIOSND_DEVICE_EXTENSION Dx)
 
     VirtIoSndDmaUninit(&Dx->DmaCtx);
 
-    VirtioPciModernWdmUninit(&Dx->Transport);
+    VirtioPciModernTransportUninit(&Dx->Transport);
+
+    VirtIoSndReleasePciBusInterface(&Dx->PciInterface, &Dx->PciInterfaceAcquired);
+    RtlZeroMemory(Dx->PciCfgSpace, sizeof(Dx->PciCfgSpace));
+    RtlZeroMemory(&Dx->TransportOs, sizeof(Dx->TransportOs));
 
     Dx->NegotiatedFeatures = 0;
 }
@@ -250,6 +551,12 @@ NTSTATUS VirtIoSndStartHardware(
     PCM_RESOURCE_LIST TranslatedResources)
 {
     NTSTATUS status;
+    UINT32 bar0Length;
+    PHYSICAL_ADDRESS bar0TranslatedStart;
+    ULONGLONG bar0Base;
+    ULONG cfgBytes;
+    VIRTIO_PCI_MODERN_TRANSPORT_INIT_ERROR initErr;
+    const UINT64 requiredFeatures = VIRTIO_F_VERSION_1 | (UINT64)VIRTIO_RING_F_INDIRECT_DESC;
 
     if (Dx == NULL) {
         return STATUS_INVALID_PARAMETER;
@@ -257,44 +564,96 @@ NTSTATUS VirtIoSndStartHardware(
 
     VirtIoSndStopHardware(Dx);
 
-    status = VirtioPciModernWdmInit(Dx->LowerDeviceObject, &Dx->Transport);
+    status = VirtIoSndAcquirePciBusInterface(Dx->LowerDeviceObject, &Dx->PciInterface, &Dx->PciInterfaceAcquired);
     if (!NT_SUCCESS(status)) {
-        VIRTIOSND_TRACE_ERROR("transport init failed: 0x%08X\n", (UINT)status);
+        VIRTIOSND_TRACE_ERROR("VirtIoSndAcquirePciBusInterface failed: 0x%08X\n", (UINT)status);
         goto fail;
     }
 
-    status = VirtioPciModernWdmMapBars(&Dx->Transport, RawResources, TranslatedResources);
+    cfgBytes = VirtIoSndPciReadConfig(&Dx->PciInterface, Dx->PciCfgSpace, 0, (ULONG)sizeof(Dx->PciCfgSpace));
+    if (cfgBytes != sizeof(Dx->PciCfgSpace)) {
+        status = STATUS_DEVICE_CONFIGURATION_ERROR;
+        VIRTIOSND_TRACE_ERROR("failed to read PCI config space (got %lu)\n", cfgBytes);
+        goto fail;
+    }
+
+    bar0Base = VirtIoSndComputeBar0Base(Dx->PciCfgSpace);
+    bar0Length = 0;
+    bar0TranslatedStart.QuadPart = 0;
+    status = VirtIoSndFindBar0Resource(bar0Base, RawResources, TranslatedResources, &bar0TranslatedStart, &bar0Length);
     if (!NT_SUCCESS(status)) {
-        VIRTIOSND_TRACE_ERROR("transport BAR mapping failed: 0x%08X\n", (UINT)status);
+        VIRTIOSND_TRACE_ERROR("failed to locate BAR0 resource: 0x%08X\n", (UINT)status);
+        goto fail;
+    }
+
+    RtlZeroMemory(&Dx->TransportOs, sizeof(Dx->TransportOs));
+    Dx->TransportOs.Context = Dx;
+    Dx->TransportOs.PciRead8 = VirtIoSndTransportPciRead8;
+    Dx->TransportOs.PciRead16 = VirtIoSndTransportPciRead16;
+    Dx->TransportOs.PciRead32 = VirtIoSndTransportPciRead32;
+    Dx->TransportOs.MapMmio = VirtIoSndTransportMapMmio;
+    Dx->TransportOs.UnmapMmio = VirtIoSndTransportUnmapMmio;
+    Dx->TransportOs.StallUs = VirtIoSndTransportStallUs;
+    Dx->TransportOs.MemoryBarrier = VirtIoSndTransportMemoryBarrier;
+    Dx->TransportOs.SpinlockCreate = VirtIoSndTransportSpinlockCreate;
+    Dx->TransportOs.SpinlockDestroy = VirtIoSndTransportSpinlockDestroy;
+    Dx->TransportOs.SpinlockAcquire = VirtIoSndTransportSpinlockAcquire;
+    Dx->TransportOs.SpinlockRelease = VirtIoSndTransportSpinlockRelease;
+    Dx->TransportOs.Log = VirtIoSndTransportLog;
+
+    status = VirtioPciModernTransportInit(
+        &Dx->Transport,
+        &Dx->TransportOs,
+        VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT,
+        (UINT64)bar0TranslatedStart.QuadPart,
+        bar0Length);
+    if (!NT_SUCCESS(status)) {
+        initErr = Dx->Transport.InitError;
+        if (initErr == VIRTIO_PCI_MODERN_INIT_ERR_CAP_LAYOUT_MISMATCH ||
+            initErr == VIRTIO_PCI_MODERN_INIT_ERR_BAR0_NOT_64BIT_MMIO ||
+            initErr == VIRTIO_PCI_MODERN_INIT_ERR_BAR0_TOO_SMALL) {
+            VirtioPciModernTransportUninit(&Dx->Transport);
+            status = VirtioPciModernTransportInit(
+                &Dx->Transport,
+                &Dx->TransportOs,
+                VIRTIO_PCI_MODERN_TRANSPORT_MODE_COMPAT,
+                (UINT64)bar0TranslatedStart.QuadPart,
+                bar0Length);
+        }
+    }
+
+    if (!NT_SUCCESS(status)) {
+        VIRTIOSND_TRACE_ERROR(
+            "transport init failed: %s (0x%08X)\n",
+            VirtioPciModernTransportInitErrorStr(Dx->Transport.InitError),
+            (UINT)status);
         goto fail;
     }
 
     VIRTIOSND_TRACE(
-        "transport: rev=0x%02X bar0=0x%I64x len=0x%Ix notify_mult=%lu\n",
+        "transport: mode=%s rev=0x%02X bar0_pa=0x%I64x len=0x%I64x notify_mult=%lu\n",
+        (Dx->Transport.Mode == VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT) ? "strict" : "compat",
         (UINT)Dx->Transport.PciRevisionId,
-        (ULONGLONG)Dx->Transport.Bars[0].Base,
-        Dx->Transport.Bars[0].Length,
-        Dx->Transport.NotifyOffMultiplier);
-
-    /* Contract v1 requires notify_off_multiplier == 4 (docs/windows7-virtio-driver-contract.md §1.6). */
-    if (Dx->Transport.NotifyOffMultiplier != 4u) {
-        VIRTIOSND_TRACE_ERROR("unexpected notify_off_multiplier=%lu (expected 4)\n", (ULONG)Dx->Transport.NotifyOffMultiplier);
-        status = STATUS_NOT_SUPPORTED;
-        goto fail;
-    }
+        (ULONGLONG)Dx->Transport.Bar0Pa,
+        (ULONGLONG)Dx->Transport.Bar0Length,
+        (ULONG)Dx->Transport.NotifyOffMultiplier);
 
     /*
      * Contract v1 requires VIRTIO_RING_F_INDIRECT_DESC and uses split virtqueues.
      * EVENT_IDX/PACKED are tolerated but are not negotiated by this driver.
      */
-    status = VirtioPciNegotiateFeatures(&Dx->Transport,
-                                        /*Required=*/(UINT64)VIRTIO_RING_F_INDIRECT_DESC,
-                                        /*Wanted=*/0,
-                                        &Dx->NegotiatedFeatures);
+    status = VirtioPciModernTransportNegotiateFeatures(
+        &Dx->Transport,
+        /*Required=*/requiredFeatures,
+        /*Wanted=*/0,
+        &Dx->NegotiatedFeatures);
     if (!NT_SUCCESS(status)) {
         VIRTIOSND_TRACE_ERROR("feature negotiation failed: 0x%08X\n", (UINT)status);
         goto fail;
     }
+
+    /* Disable MSI-X config interrupt vector; INTx/ISR is required by contract v1. */
+    (void)VirtioPciModernTransportSetConfigMsixVector(&Dx->Transport, 0xFFFFu);
 
     VIRTIOSND_TRACE("features negotiated: 0x%I64x\n", Dx->NegotiatedFeatures);
     status = VirtIoSndDmaInit(Dx->Pdo, &Dx->DmaCtx);
@@ -330,9 +689,9 @@ NTSTATUS VirtIoSndStartHardware(
     }
 
     /* The device is now ready for normal operation. */
-    VirtioPciAddStatus(&Dx->Transport, VIRTIO_STATUS_DRIVER_OK);
+    VirtioPciModernTransportAddStatus(&Dx->Transport, VIRTIO_STATUS_DRIVER_OK);
 
-    VIRTIOSND_TRACE("device_status=0x%02X\n", (UINT)VirtioPciGetStatus(&Dx->Transport));
+    VIRTIOSND_TRACE("device_status=0x%02X\n", (UINT)VirtIoSndReadDeviceStatus(&Dx->Transport));
 
     Dx->Started = TRUE;
     return STATUS_SUCCESS;
@@ -346,13 +705,13 @@ fail:
 _Use_decl_annotations_
 NTSTATUS VirtIoSndHwSendControl(
     PVIRTIOSND_DEVICE_EXTENSION Dx,
-    const void* Req,
+    const void *Req,
     ULONG ReqLen,
-    void* Resp,
+    void *Resp,
     ULONG RespCap,
     ULONG TimeoutMs,
-    ULONG* OutVirtioStatus,
-    ULONG* OutRespLen)
+    ULONG *OutVirtioStatus,
+    ULONG *OutRespLen)
 {
     if (Dx == NULL) {
         return STATUS_INVALID_PARAMETER;
@@ -372,9 +731,9 @@ NTSTATUS VirtIoSndHwSendControl(
 _Use_decl_annotations_
 NTSTATUS VirtIoSndHwSubmitTx(
     PVIRTIOSND_DEVICE_EXTENSION Dx,
-    const VOID* Pcm1,
+    const VOID *Pcm1,
     ULONG Pcm1Bytes,
-    const VOID* Pcm2,
+    const VOID *Pcm2,
     ULONG Pcm2Bytes,
     BOOLEAN AllowSilenceFill)
 {
@@ -404,7 +763,7 @@ NTSTATUS VirtIoSndHwSubmitTx(
 
 _Use_decl_annotations_
 NTSTATUS
-VirtIoSndHwSubmitTxSg(PVIRTIOSND_DEVICE_EXTENSION Dx, const VIRTIOSND_TX_SEGMENT* Segments, ULONG SegmentCount)
+VirtIoSndHwSubmitTxSg(PVIRTIOSND_DEVICE_EXTENSION Dx, const VIRTIOSND_TX_SEGMENT *Segments, ULONG SegmentCount)
 {
     if (Dx == NULL) {
         return STATUS_INVALID_PARAMETER;

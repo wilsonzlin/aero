@@ -264,14 +264,16 @@ The helpers are thin wrappers over the standard WDM patterns, which is useful to
 
 ## How this relates to other virtio code in this repo
 
-### `drivers/windows7/virtio-modern/common/` (fixed-layout helpers)
+### `drivers/windows/virtio/pci-modern/` (portable modern transport)
 
-`drivers/windows7/virtio-modern/common/` provides contract v1 helpers that assume:
+`drivers/windows/virtio/pci-modern/` provides the canonical WDF-free virtio-pci modern transport used by Aero’s
+Windows 7 drivers (StorPort/NDIS/WDM). It:
 
-- BAR0 is **already mapped** by the caller, and
-- the fixed Aero MMIO layout is in use.
+- parses the PCI vendor capability list (contract §1.3),
+- validates `RevisionID == 0x01`, and
+- supports **STRICT** (enforce fixed offsets) vs **COMPAT** (accept relocated caps / 32-bit BAR0) policy.
 
-This is useful in environments that don’t have WDM PnP start IRPs/resources (e.g. StorPort/NDIS).
+StorPort/NDIS drivers provide the required OS callbacks for PCI config access and BAR0 mapping.
 
 ### `drivers/win7/virtio/virtio-core/` (KMDF-centric modern transport)
 

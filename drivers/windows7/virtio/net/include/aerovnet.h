@@ -14,10 +14,10 @@
 
 #define AEROVNET_PCI_REVISION_ID 0x01u
 
-#define AEROVNET_BAR0_MIN_LEN 0x4000u
+#define AEROVNET_BAR0_MIN_LEN VIRTIO_PCI_MODERN_TRANSPORT_BAR0_REQUIRED_LEN
 
-// Virtio feature bits.
-#define VIRTIO_F_RING_INDIRECT_DESC (1ull << 28)
+// Virtio feature bits (as masks).
+#define AEROVNET_FEATURE_RING_INDIRECT_DESC ((UINT64)1u << VIRTIO_F_RING_INDIRECT_DESC)
 
 // Virtio-net feature bits (lower 32 bits).
 #define VIRTIO_NET_F_CSUM      (1u << 0)

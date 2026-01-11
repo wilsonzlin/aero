@@ -5,7 +5,7 @@
 #include <scsi.h>
 #include <ntddscsi.h>
 
-#include "aero_virtio_pci_modern.h"
+#include "virtio_pci_modern_transport.h"
 /* Explicit include to avoid picking up the legacy virtqueue header via include path order. */
 #include "../../../../windows/virtio/common/virtqueue_split.h"
 
@@ -94,8 +94,16 @@ typedef struct _AEROVBLK_REQUEST_CONTEXT {
 } AEROVBLK_REQUEST_CONTEXT, *PAEROVBLK_REQUEST_CONTEXT;
 
 typedef struct _AEROVBLK_DEVICE_EXTENSION {
-    AERO_VIRTIO_PCI_MODERN_DEVICE Vdev;
-    USHORT QueueNotifyOff;
+    VIRTIO_PCI_MODERN_TRANSPORT Transport;
+    VIRTIO_PCI_MODERN_OS_INTERFACE TransportOs;
+
+    /* Cached PCI configuration space for VirtioPciModernTransportInit(). */
+    UCHAR PciCfgSpace[256];
+
+    /* BAR0 mapping parameters for the transport OS callbacks. */
+    INTERFACE_TYPE PciInterfaceType;
+    ULONG PciBusNumber;
+    ULONG PciSlotNumber;
 
     VIRTQ_SPLIT* Vq;
     PVOID RingVa;

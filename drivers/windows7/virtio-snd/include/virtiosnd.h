@@ -6,7 +6,7 @@
 
 #include "virtio_snd_proto.h"
 #include "virtio_pci_intx_wdm.h"
-#include "virtio_pci_modern_wdm.h"
+#include "virtio_pci_modern_transport.h"
 #include "virtiosnd_control.h"
 #include "virtiosnd_queue_split.h"
 #include "virtiosnd_tx.h"
@@ -89,7 +89,14 @@ typedef struct _VIRTIOSND_DEVICE_EXTENSION {
     PDEVICE_OBJECT Pdo;
     PDEVICE_OBJECT LowerDeviceObject;
 
-    VIRTIO_PCI_MODERN_WDM_DEVICE Transport;
+    IO_REMOVE_LOCK RemoveLock;
+
+    /* virtio-pci modern transport (PCI capability discovery + MMIO BAR0). */
+    VIRTIO_PCI_MODERN_TRANSPORT Transport;
+    VIRTIO_PCI_MODERN_OS_INTERFACE TransportOs;
+    PCI_BUS_INTERFACE_STANDARD PciInterface;
+    BOOLEAN PciInterfaceAcquired;
+    UCHAR PciCfgSpace[256];
     UINT64 NegotiatedFeatures;
 
     /*
