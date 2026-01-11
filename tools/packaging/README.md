@@ -17,6 +17,16 @@ when present in the input directory.
 ```bash
 cd tools/packaging/aero_packager
 
+# (Alternative) Run from the repo root without `cd`:
+# cargo run --release --locked --manifest-path tools/packaging/aero_packager/Cargo.toml -- \
+#   --drivers-dir /path/to/drivers \
+#   --guest-tools-dir /path/to/guest-tools \
+#   --spec /path/to/spec.json \
+#   --out-dir /path/to/out \
+#   --version 1.2.3 \
+#   --build-id ci-123 \
+#   --signing-policy testsigning
+
 # Example:
 #   drivers/ contains:
 #     x86/<driver>/**   (PnP driver package; at minimum: .inf/.sys/.cat; may also include UMD/coinstaller .dll files)
