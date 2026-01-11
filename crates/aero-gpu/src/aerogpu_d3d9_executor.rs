@@ -1243,18 +1243,18 @@ impl AerogpuD3d9Executor {
                 });
                 let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
                 let view_srgb = match format {
-                    wgpu::TextureFormat::Rgba8Unorm => Some(texture.create_view(
-                        &wgpu::TextureViewDescriptor {
+                    wgpu::TextureFormat::Rgba8Unorm => {
+                        Some(texture.create_view(&wgpu::TextureViewDescriptor {
                             format: Some(wgpu::TextureFormat::Rgba8UnormSrgb),
                             ..Default::default()
-                        },
-                    )),
-                    wgpu::TextureFormat::Bgra8Unorm => Some(texture.create_view(
-                        &wgpu::TextureViewDescriptor {
+                        }))
+                    }
+                    wgpu::TextureFormat::Bgra8Unorm => {
+                        Some(texture.create_view(&wgpu::TextureViewDescriptor {
                             format: Some(wgpu::TextureFormat::Bgra8UnormSrgb),
                             ..Default::default()
-                        },
-                    )),
+                        }))
+                    }
                     _ => None,
                 };
                 self.resources.insert(
@@ -1736,7 +1736,10 @@ impl AerogpuD3d9Executor {
                 self.ensure_encoder();
                 let mut encoder_opt = self.encoder.take();
                 #[cfg_attr(target_arch = "wasm32", allow(unused_mut))]
-                let mut writeback_plan: Option<(wgpu::Buffer, TextureWritebackPlan)> = None;
+                let mut writeback_plan: Option<(
+                    wgpu::Buffer,
+                    TextureWritebackPlan,
+                )> = None;
                 let result = (|| -> Result<(), AerogpuD3d9Error> {
                     if width == 0 || height == 0 {
                         return Ok(());
@@ -1920,9 +1923,7 @@ impl AerogpuD3d9Executor {
                         .ok_or(AerogpuD3d9Error::UnknownResource(dst_texture))?
                     {
                         Resource::Texture2d {
-                            texture,
-                            backing,
-                            ..
+                            texture, backing, ..
                         } => (texture, *backing),
                         _ => {
                             return Err(AerogpuD3d9Error::CopyNotSupported {
@@ -3807,9 +3808,7 @@ impl AerogpuD3d9Executor {
             let samp_binding = tex_binding + 1;
 
             let tex_handle = self.state.textures_ps[slot];
-            let srgb_texture = self
-                .state
-                .sampler_states_ps[slot]
+            let srgb_texture = self.state.sampler_states_ps[slot]
                 .get(d3d9::D3DSAMP_SRGBTEXTURE as usize)
                 .copied()
                 .unwrap_or(0)
@@ -3820,9 +3819,7 @@ impl AerogpuD3d9Executor {
                 let underlying = self.resolve_resource_handle(tex_handle).ok();
                 match underlying.and_then(|h| self.resources.get(&h)) {
                     Some(Resource::Texture2d {
-                        view,
-                        view_srgb,
-                        ..
+                        view, view_srgb, ..
                     }) => {
                         if srgb_texture {
                             view_srgb.as_ref().unwrap_or(view)
@@ -4252,9 +4249,7 @@ impl AerogpuD3d9Executor {
                 .ok_or(AerogpuD3d9Error::UnknownResource(handle))?;
             match res {
                 Resource::Texture2d {
-                    view,
-                    view_srgb,
-                    ..
+                    view, view_srgb, ..
                 } => {
                     let out = if srgb_write {
                         view_srgb.as_ref().unwrap_or(view)
@@ -4319,9 +4314,7 @@ impl AerogpuD3d9Executor {
                 .ok_or(AerogpuD3d9Error::UnknownResource(handle))?;
             match res {
                 Resource::Texture2d {
-                    format,
-                    view_srgb,
-                    ..
+                    format, view_srgb, ..
                 } => {
                     let mut out = *format;
                     if srgb_write && view_srgb.is_some() {

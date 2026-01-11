@@ -1881,11 +1881,9 @@ impl AerogpuD3d11Executor {
                 }
                 let row_pitch = dst_row_pitch_bytes as u64;
                 let bytes_per_pixel = {
-                    let dst = self
-                        .resources
-                        .textures
-                        .get(&dst_texture)
-                        .ok_or_else(|| anyhow!("COPY_TEXTURE2D: unknown dst texture {dst_texture}"))?;
+                    let dst = self.resources.textures.get(&dst_texture).ok_or_else(|| {
+                        anyhow!("COPY_TEXTURE2D: unknown dst texture {dst_texture}")
+                    })?;
                     bytes_per_texel(dst.desc.format)?
                 };
                 let dst_x_bytes = (dst_x as u64)
@@ -1926,8 +1924,11 @@ impl AerogpuD3d11Executor {
                     .checked_sub(start_offset)
                     .ok_or_else(|| anyhow!("COPY_TEXTURE2D: dst backing size underflow"))?;
 
-                let base_gpa =
-                    allocs.validate_write_range(dst_backing.alloc_id, start_offset, validate_size)?;
+                let base_gpa = allocs.validate_write_range(
+                    dst_backing.alloc_id,
+                    start_offset,
+                    validate_size,
+                )?;
 
                 let new_encoder =
                     self.device
@@ -2331,7 +2332,10 @@ impl AerogpuD3d11Executor {
     fn exec_set_texture(&mut self, cmd_bytes: &[u8]) -> Result<()> {
         // struct aerogpu_cmd_set_texture (24 bytes)
         if cmd_bytes.len() < 24 {
-            bail!("SET_TEXTURE: expected at least 24 bytes, got {}", cmd_bytes.len());
+            bail!(
+                "SET_TEXTURE: expected at least 24 bytes, got {}",
+                cmd_bytes.len()
+            );
         }
         let stage_u32 = read_u32_le(cmd_bytes, 8)?;
         let slot_u32 = read_u32_le(cmd_bytes, 12)?;
@@ -2376,7 +2380,10 @@ impl AerogpuD3d11Executor {
     fn exec_create_sampler(&mut self, cmd_bytes: &[u8]) -> Result<()> {
         // struct aerogpu_cmd_create_sampler (28 bytes)
         if cmd_bytes.len() < 28 {
-            bail!("CREATE_SAMPLER: expected at least 28 bytes, got {}", cmd_bytes.len());
+            bail!(
+                "CREATE_SAMPLER: expected at least 28 bytes, got {}",
+                cmd_bytes.len()
+            );
         }
         let sampler_handle = read_u32_le(cmd_bytes, 8)?;
         let filter_u32 = read_u32_le(cmd_bytes, 12)?;
@@ -2821,7 +2828,10 @@ impl AerogpuD3d11Executor {
     ) -> Result<()> {
         // struct aerogpu_cmd_present (16 bytes)
         if cmd_bytes.len() < 16 {
-            bail!("PRESENT: expected at least 16 bytes, got {}", cmd_bytes.len());
+            bail!(
+                "PRESENT: expected at least 16 bytes, got {}",
+                cmd_bytes.len()
+            );
         }
         let scanout_id = read_u32_le(cmd_bytes, 8)?;
         let flags = read_u32_le(cmd_bytes, 12)?;

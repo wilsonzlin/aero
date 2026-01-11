@@ -64,4 +64,3 @@ fn aerogpu_cmd_set_texture_accepts_128_slots() {
         exec.execute_cmd_stream(&stream, None, &guest_mem).unwrap();
     });
 }
-

@@ -768,17 +768,11 @@ fn aerogpu_copy_texture2d_writeback_subrect_updates_guest_memory() {
             let idx = (y as usize * row_pitch as usize) + (x as usize * 4);
             let px = &got[idx..idx + 4];
 
-            let in_rect =
-                x >= dst_x && x < (dst_x + copy_w) && y >= dst_y && y < (dst_y + copy_h);
+            let in_rect = x >= dst_x && x < (dst_x + copy_w) && y >= dst_y && y < (dst_y + copy_h);
             if in_rect {
                 let sx = src_x + (x - dst_x);
                 let sy = src_y + (y - dst_y);
-                let expected = [
-                    sx as u8,
-                    sy as u8,
-                    (sx as u8).wrapping_add(sy as u8),
-                    0xFF,
-                ];
+                let expected = [sx as u8, sy as u8, (sx as u8).wrapping_add(sy as u8), 0xFF];
                 assert_eq!(px, expected);
             } else {
                 assert_eq!(px, [0x11, 0x11, 0x11, 0x11]);

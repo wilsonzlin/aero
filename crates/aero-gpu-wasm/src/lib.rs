@@ -13,9 +13,9 @@ mod wasm {
     use aero_gpu::aerogpu_executor::{AllocEntry, AllocTable};
     use aero_gpu::shader_lib::{BuiltinShader, wgsl as builtin_wgsl};
     use aero_gpu::{
-        parse_cmd_stream, AeroGpuCmd, AeroGpuCommandProcessor, AeroGpuEvent, AeroGpuSubmissionAllocation,
+        AeroGpuCmd, AeroGpuCommandProcessor, AeroGpuEvent, AeroGpuSubmissionAllocation,
         AerogpuD3d9Executor, FrameTimingsReport, GpuBackendKind, GpuProfiler, GuestMemory,
-        GuestMemoryError,
+        GuestMemoryError, parse_cmd_stream,
     };
     use aero_protocol::aerogpu::aerogpu_ring as ring;
     use futures_intrusive::channel::shared::oneshot_channel;
@@ -412,8 +412,9 @@ mod wasm {
         let mut bytes = vec![0u8; cmd_stream.length() as usize];
         cmd_stream.copy_to(&mut bytes);
 
-        let stream = parse_cmd_stream(&bytes)
-            .map_err(|err| JsValue::from_str(&format!("failed to parse AeroGPU command stream: {err}")))?;
+        let stream = parse_cmd_stream(&bytes).map_err(|err| {
+            JsValue::from_str(&format!("failed to parse AeroGPU command stream: {err}"))
+        })?;
         let mut last_present_scanout: Option<u32> = None;
         for cmd in &stream.cmds {
             match cmd {
@@ -444,7 +445,12 @@ mod wasm {
                 }
                 (Some(table), Some(mem)) => state
                     .executor
-                    .execute_cmd_stream_with_guest_memory_for_context(context_id, &bytes, mem, Some(table))
+                    .execute_cmd_stream_with_guest_memory_for_context(
+                        context_id,
+                        &bytes,
+                        mem,
+                        Some(table),
+                    )
                     .map_err(|err| JsValue::from_str(&err.to_string()))?,
                 (None, Some(mem)) => state
                     .executor
@@ -1510,7 +1516,11 @@ mod wasm {
             }
         }
 
-        fn present_clear(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) -> Result<(), JsValue> {
+        fn present_clear(
+            &mut self,
+            device: &wgpu::Device,
+            queue: &wgpu::Queue,
+        ) -> Result<(), JsValue> {
             self.ensure_surface_matches_canvas(device);
             let frame = acquire_surface_frame(&mut self.surface, device, &mut self.config)?;
             let view = frame
@@ -2379,10 +2389,12 @@ mod wasm {
         }
 
         if let Some(kind) = D3D9_STATE.with(|slot| {
-            slot.borrow().as_ref().map(|state| match state.backend_kind {
-                GpuBackendKind::WebGpu => "webgpu".to_string(),
-                GpuBackendKind::WebGl2 => "webgl2".to_string(),
-            })
+            slot.borrow()
+                .as_ref()
+                .map(|state| match state.backend_kind {
+                    GpuBackendKind::WebGpu => "webgpu".to_string(),
+                    GpuBackendKind::WebGl2 => "webgl2".to_string(),
+                })
         }) {
             return Ok(kind);
         }

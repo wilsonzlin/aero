@@ -71,8 +71,10 @@ fn patch_semantic_case_insensitive(mut dxbc: Vec<u8>) -> Vec<u8> {
     // ensure the hashing canonicalizes appropriately.
     //
     // Keep lengths identical so the DXBC container remains structurally valid.
-    for (from, to) in [(b"POSITION\0".as_slice(), b"position\0".as_slice()), (b"COLOR\0".as_slice(), b"color\0".as_slice())]
-    {
+    for (from, to) in [
+        (b"POSITION\0".as_slice(), b"position\0".as_slice()),
+        (b"COLOR\0".as_slice(), b"color\0".as_slice()),
+    ] {
         assert_eq!(from.len(), to.len());
         let mut replaced = 0usize;
         for off in 0..=dxbc.len().saturating_sub(from.len()) {
