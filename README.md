@@ -10,7 +10,7 @@ task runner that orchestrates Rust + WASM + web commands.
 If you have bash + [`just`](https://github.com/casey/just), the `justfile` still
 provides convenient aliases, but `cargo xtask` is the canonical implementation.
 
-For a reproducible “clone → build → test” environment (including Rust stable+nightly, Node, QEMU, etc.), see [`docs/dev-environment.md`](./docs/dev-environment.md).
+For a reproducible “clone → build → test” environment (including pinned Rust toolchains, Node, QEMU, etc.), see [`docs/dev-environment.md`](./docs/dev-environment.md).
 
 ### Prerequisites
 

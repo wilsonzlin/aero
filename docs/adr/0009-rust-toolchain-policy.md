@@ -32,6 +32,8 @@ Historically we relied on the moving `stable` and `+nightly` channels. This has 
   - `just setup` (installs the pinned nightly + `rust-src`)
   - CI (threaded WASM smoke build)
   - CI fuzz smoke workflow (cargo-fuzz)
+- In CI, workflows should request `toolchain: nightly` via `./.github/actions/setup-rust`, which resolves
+  `nightly` to the pinned `rust.nightlyWasm` value (avoids duplicating the date string across workflows).
 
 ### Update cadence / ownership
 
