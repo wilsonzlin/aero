@@ -91,7 +91,8 @@ To identify *which* `CreateResource` calls are swapchain backbuffers:
 > * `primary=0/1` (derived from `primary_desc != NULL`)
 >
 > `primary_desc != NULL` / `primary=1` is a strong signal that the resource is a **DXGI primary/backbuffer**
-> allocation, which can make it easier to scan logs manually. The parser script will include `primary` when present.
+> allocation, which can make it easier to scan logs manually. The parser script will include `primary` when present
+> (and can infer it from `primary_desc` for older logs).
 
 ### Optional: automated extraction
 

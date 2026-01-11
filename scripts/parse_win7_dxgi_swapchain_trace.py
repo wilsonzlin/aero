@@ -189,6 +189,13 @@ def parse_create_resource(line: str) -> Optional[CreateResourceDesc]:
     primary_desc = _parse_token(line, "primary_desc")
     if primary_desc is not None:
         d.primary_desc = primary_desc
+        # Backwards compatibility: older WDK-backed logs emitted `primary_desc=<ptr>` without `primary=`.
+        if primary is None:
+            try:
+                if int(primary_desc, 16) != 0:
+                    d.primary = 1
+            except ValueError:
+                pass
 
     return d
 
