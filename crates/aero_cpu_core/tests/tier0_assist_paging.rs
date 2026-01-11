@@ -1,7 +1,8 @@
-use aero_cpu_core::assist::AssistContext;
+use aero_cpu_core::assist::{handle_assist, AssistContext};
 use aero_cpu_core::interp::tier0::exec::{run_batch_with_assists, BatchExit};
+use aero_cpu_core::mem::CpuBus as _;
 use aero_cpu_core::state::{CpuMode, CpuState, CR0_PE, CR0_PG};
-use aero_cpu_core::{Exception, PagingBus};
+use aero_cpu_core::{AssistReason, Exception, PagingBus};
 use aero_mmu::MemoryBus;
 use aero_x86::Register;
 use core::convert::TryInto;
@@ -109,6 +110,96 @@ fn assist_page_fault_updates_cr2() {
     }
 
     assert_eq!(state.control.cr2, 0x4000);
+}
+
+#[test]
+fn handle_assist_syncs_bus_and_updates_cr2() {
+    // Same as `assist_page_fault_updates_cr2`, but calls `assist::handle_assist`
+    // directly (without an explicit `bus.sync(&state)` call by the caller).
+    //
+    // This ensures the public assist surface is self-contained for non-batch
+    // users.
+    let pd_base = 0x1000u64;
+    let pt_base = 0x2000u64;
+    let code_page = 0x3000u64;
+
+    let mut phys = TestMemory::new(0x10000);
+    let flags = PTE_P | PTE_RW;
+
+    phys.write_u32_raw(pd_base + 0 * 4, (pt_base as u32) | flags);
+    phys.write_u32_raw(pt_base + 0 * 4, (code_page as u32) | flags);
+
+    // lgdt [0x00004000]
+    let code = [0x0F, 0x01, 0x15, 0x00, 0x40, 0x00, 0x00];
+    for (i, b) in code.iter().copied().enumerate() {
+        phys.write_u8_raw(code_page + i as u64, b);
+    }
+
+    let mut bus = PagingBus::new(phys);
+    let mut state = CpuState::new(CpuMode::Protected);
+    state.control.cr3 = pd_base;
+    state.control.cr0 = CR0_PE | CR0_PG;
+    state.control.cr4 = 0;
+    state.update_mode();
+    state.set_rip(0);
+
+    let mut ctx = AssistContext::default();
+    let err = handle_assist(&mut ctx, &mut state, &mut bus, AssistReason::Privileged).unwrap_err();
+    match err {
+        Exception::PageFault { addr, .. } => assert_eq!(addr, 0x4000),
+        other => panic!("expected #PF from assist, got {other:?}"),
+    }
+    assert_eq!(state.control.cr2, 0x4000);
+}
+
+#[test]
+fn handle_assist_syncs_bus_after_cr3_write() {
+    // Ensure `handle_assist` syncs paging state back into the bus after a
+    // paging-related state update (e.g. MOV CR3).
+    let pd1_base = 0x1000u64;
+    let pt1_base = 0x2000u64;
+    let pd2_base = 0x4000u64;
+    let pt2_base = 0x5000u64;
+    let code_page = 0x6000u64;
+    let page_a = 0x7000u64;
+    let page_b = 0x8000u64;
+
+    let mut phys = TestMemory::new(0x10000);
+    let flags = PTE_P | PTE_RW;
+
+    // PD1: map linear 0x0000_0000 -> code_page, 0x0000_1000 -> page_a.
+    phys.write_u32_raw(pd1_base + 0 * 4, (pt1_base as u32) | flags);
+    phys.write_u32_raw(pt1_base + 0 * 4, (code_page as u32) | flags);
+    phys.write_u32_raw(pt1_base + 1 * 4, (page_a as u32) | flags);
+
+    // PD2: map linear 0x0000_1000 -> page_b (code mapping not required after the CR3 write).
+    phys.write_u32_raw(pd2_base + 0 * 4, (pt2_base as u32) | flags);
+    phys.write_u32_raw(pt2_base + 1 * 4, (page_b as u32) | flags);
+
+    phys.write_u32_raw(page_a, 0x1111_1111);
+    phys.write_u32_raw(page_b, 0x2222_2222);
+
+    // mov cr3, eax
+    let code = [0x0F, 0x22, 0xD8];
+    for (i, b) in code.iter().copied().enumerate() {
+        phys.write_u8_raw(code_page + i as u64, b);
+    }
+
+    let mut bus = PagingBus::new(phys);
+    let mut state = CpuState::new(CpuMode::Protected);
+    state.control.cr3 = pd1_base;
+    state.control.cr0 = CR0_PE | CR0_PG;
+    state.control.cr4 = 0;
+    state.update_mode();
+    state.set_rip(0);
+    state.write_reg(Register::EAX, pd2_base);
+
+    let mut ctx = AssistContext::default();
+    handle_assist(&mut ctx, &mut state, &mut bus, AssistReason::Privileged).expect("assist");
+
+    // If the bus wasn't synced after the MOV CR3, this read would still use PD1 and
+    // return page A's value.
+    assert_eq!(bus.read_u32(0x1000).unwrap(), 0x2222_2222);
 }
 
 #[test]

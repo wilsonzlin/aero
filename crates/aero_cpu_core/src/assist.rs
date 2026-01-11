@@ -50,6 +50,9 @@ pub fn handle_assist<B: CpuBus>(
     bus: &mut B,
     _reason: AssistReason,
 ) -> Result<(), Exception> {
+    // Keep the bus paging/MMU view coherent with architectural state even when
+    // `handle_assist` is used outside of `tier0::exec::step` / `run_batch_with_assists`.
+    bus.sync(state);
     let ip = state.rip();
     let fetch_addr = state.apply_a20(state.seg_base_reg(Register::CS).wrapping_add(ip));
     let bytes = bus.fetch(fetch_addr, 15).map_err(|e| {
@@ -68,7 +71,12 @@ pub fn handle_assist<B: CpuBus>(
     exec_decoded(ctx, state, bus, &decoded).map_err(|e| {
         state.apply_exception_side_effects(&e);
         e
-    })
+    })?;
+    // Assists can update paging-related state (CR0/CR3/CR4/EFER/CPL). Sync the
+    // bus so the next instruction boundary observes those updates even if the
+    // caller doesn't go through `tier0::exec::step` immediately.
+    bus.sync(state);
+    Ok(())
 }
 
 fn exec_decoded<B: CpuBus>(
