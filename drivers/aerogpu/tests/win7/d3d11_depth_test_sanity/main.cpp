@@ -116,6 +116,9 @@ static int RunD3D11DepthTestSanity(int argc, char** argv) {
   }
 
   aerogpu_test::PrintfStdout("INFO: %s: feature level 0x%04X", kTestName, (unsigned)chosen_level);
+  if (chosen_level < D3D_FEATURE_LEVEL_10_0) {
+    return reporter.Fail("feature level 0x%04X is below required FL10_0", (unsigned)chosen_level);
+  }
 
   ComPtr<IDXGIDevice> dxgi_device;
   hr = device->QueryInterface(__uuidof(IDXGIDevice), (void**)dxgi_device.put());

@@ -128,6 +128,9 @@ static int RunD3D11TextureSamplingSanity(int argc, char** argv) {
   }
 
   aerogpu_test::PrintfStdout("INFO: %s: feature level 0x%04X", kTestName, (unsigned)chosen_level);
+  if (chosen_level < D3D_FEATURE_LEVEL_10_0) {
+    return reporter.Fail("feature level 0x%04X is below required FL10_0", (unsigned)chosen_level);
+  }
 
   ComPtr<IDXGIDevice> dxgi_device;
   hr = device->QueryInterface(__uuidof(IDXGIDevice), (void**)dxgi_device.put());
@@ -440,15 +443,11 @@ static int RunD3D11TextureSamplingSanity(int argc, char** argv) {
 
   ID3D11ShaderResourceView* srvs[] = {srv.get()};
   context->PSSetShaderResources(0, 1, srvs);
-  if (chosen_level >= D3D_FEATURE_LEVEL_10_0) {
-    context->VSSetShaderResources(0, 1, srvs);
-  }
+  context->VSSetShaderResources(0, 1, srvs);
 
   ID3D11SamplerState* samplers[] = {sampler.get()};
   context->PSSetSamplers(0, 1, samplers);
-  if (chosen_level >= D3D_FEATURE_LEVEL_10_0) {
-    context->VSSetSamplers(0, 1, samplers);
-  }
+  context->VSSetSamplers(0, 1, samplers);
 
   const FLOAT clear_rgba[4] = {0.0f, 0.0f, 0.0f, 1.0f};
   context->ClearRenderTargetView(rtv.get(), clear_rgba);
@@ -457,14 +456,10 @@ static int RunD3D11TextureSamplingSanity(int argc, char** argv) {
   // Explicitly unbind resources to exercise the "bind NULL to clear" path.
   ID3D11ShaderResourceView* null_srvs[] = {NULL};
   context->PSSetShaderResources(0, 1, null_srvs);
-  if (chosen_level >= D3D_FEATURE_LEVEL_10_0) {
-    context->VSSetShaderResources(0, 1, null_srvs);
-  }
+  context->VSSetShaderResources(0, 1, null_srvs);
   ID3D11SamplerState* null_samplers[] = {NULL};
   context->PSSetSamplers(0, 1, null_samplers);
-  if (chosen_level >= D3D_FEATURE_LEVEL_10_0) {
-    context->VSSetSamplers(0, 1, null_samplers);
-  }
+  context->VSSetSamplers(0, 1, null_samplers);
   context->IASetIndexBuffer(NULL, DXGI_FORMAT_UNKNOWN, 0);
   ID3D11Buffer* null_vb = NULL;
   const UINT zero = 0;
