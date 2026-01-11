@@ -3,14 +3,14 @@
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 
 type ProbeRequest =
-  | { type: 'probe' }
+  | { id: number; type: 'probe' }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  | { type: 'device'; device: any };
+  | { id: number; type: 'device'; device: any };
 
 type ProbeResponse =
-  | { type: 'probe-result'; report: unknown }
-  | { type: 'device-result'; report: unknown }
-  | { type: 'error'; error: { name: string; message: string } };
+  | { id: number; type: 'probe-result'; report: unknown }
+  | { id: number; type: 'device-result'; report: unknown }
+  | { id: number; type: 'error'; error: { name: string; message: string } };
 
 function serializeError(err: unknown): { name: string; message: string } {
   if (err instanceof DOMException) return { name: err.name, message: err.message };
@@ -62,7 +62,7 @@ async function probe(): Promise<unknown> {
     } catch (err) {
       report.getDevices = {
         ok: false,
-        error: err instanceof Error ? err.message : String(err),
+        error: serializeError(err),
       };
     }
   }
@@ -133,11 +133,11 @@ ctx.onmessage = (ev: MessageEvent<ProbeRequest>) => {
     case 'probe': {
       void probe()
         .then((report) => {
-          const resp: ProbeResponse = { type: 'probe-result', report };
+          const resp: ProbeResponse = { id: msg.id, type: 'probe-result', report };
           ctx.postMessage(resp);
         })
         .catch((err) => {
-          const resp: ProbeResponse = { type: 'error', error: serializeError(err) };
+          const resp: ProbeResponse = { id: msg.id, type: 'error', error: serializeError(err) };
           ctx.postMessage(resp);
         });
       break;
@@ -145,11 +145,11 @@ ctx.onmessage = (ev: MessageEvent<ProbeRequest>) => {
     case 'device': {
       void probeDevice(msg.device)
         .then((report) => {
-          const resp: ProbeResponse = { type: 'device-result', report };
+          const resp: ProbeResponse = { id: msg.id, type: 'device-result', report };
           ctx.postMessage(resp);
         })
         .catch((err) => {
-          const resp: ProbeResponse = { type: 'error', error: serializeError(err) };
+          const resp: ProbeResponse = { id: msg.id, type: 'error', error: serializeError(err) };
           ctx.postMessage(resp);
         });
       break;
@@ -157,6 +157,7 @@ ctx.onmessage = (ev: MessageEvent<ProbeRequest>) => {
     default: {
       const _exhaustive: never = msg;
       const resp: ProbeResponse = {
+        id: typeof (msg as { id?: unknown }).id === 'number' ? (msg as { id: number }).id : -1,
         type: 'error',
         error: { name: 'Error', message: `Unknown message: ${(msg as { type?: unknown }).type}` },
       };
