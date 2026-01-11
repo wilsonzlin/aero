@@ -7,11 +7,19 @@
 # `cargo xtask <subcommand>` is shorthand for running the `xtask` helper binary.
 xtask = "run --locked -p xtask --"
 
-[env]
-# Some sandbox environments ship with a broken `sccache` daemon (or a stale socket)
-# via global Cargo config, which can hang or fail all `cargo build/test` invocations.
+[build]
+# Some sandbox environments configure `build.rustc-wrapper = "sccache"` globally.
+# When that daemon/socket is broken, Cargo will fail before compiling anything.
 #
-# Setting `RUSTC_WRAPPER` to an empty string disables any inherited wrapper while
-# still allowing developers/CI to opt back in by explicitly exporting
-# `RUSTC_WRAPPER=sccache` in their environment.
+# Setting an explicit (empty) wrapper here overrides any inherited global config.
+# Developers can still opt back in by exporting `RUSTC_WRAPPER=sccache` or setting
+# `build.rustc-wrapper` in a higher-precedence config.
+rustc-wrapper = ""
+rustdoc-wrapper = ""
+
+[env]
+# Some sandbox environments ship with a broken `sccache` wrapper via environment
+# variables. Keep this in addition to the `[build]` override above so `cargo`
+# invocations from within the repo are resilient even when `RUSTC_WRAPPER` is
+# exported globally.
 RUSTC_WRAPPER = ""
