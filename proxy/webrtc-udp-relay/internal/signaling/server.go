@@ -718,9 +718,12 @@ func (wss *wsSession) run() {
 	if authRes, err := wss.authorizer.Authorize(wss.req, nil); err != nil {
 		if IsAuthMissing(err) {
 			_ = wss.conn.SetReadDeadline(time.Now().Add(wss.authTimeout))
-		} else {
+		} else if IsUnauthorized(err) {
 			wss.srv.incMetric(metrics.AuthFailure)
 			_ = wss.fail("unauthorized", unauthorizedMessage(err), websocket.ClosePolicyViolation, "unauthorized")
+			return
+		} else {
+			_ = wss.fail("internal_error", "internal error", websocket.CloseInternalServerErr, "internal error")
 			return
 		}
 	} else {
@@ -772,8 +775,12 @@ func (wss *wsSession) run() {
 			}
 			authRes, err := wss.authorizer.Authorize(wss.req, &ClientHello{Type: MessageTypeAuth, Credential: cred})
 			if err != nil {
-				wss.srv.incMetric(metrics.AuthFailure)
-				_ = wss.fail("unauthorized", unauthorizedMessage(err), websocket.ClosePolicyViolation, "unauthorized")
+				if IsUnauthorized(err) {
+					wss.srv.incMetric(metrics.AuthFailure)
+					_ = wss.fail("unauthorized", unauthorizedMessage(err), websocket.ClosePolicyViolation, "unauthorized")
+				} else {
+					_ = wss.fail("internal_error", "internal error", websocket.CloseInternalServerErr, "internal error")
+				}
 				return
 			}
 

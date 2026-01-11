@@ -1,6 +1,7 @@
 package signaling
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -142,5 +143,59 @@ func TestServer_RejectsCrossOriginHTTPRequests(t *testing.T) {
 				t.Fatalf("status=%d, want %d", resp.StatusCode, http.StatusForbidden)
 			}
 		})
+	}
+}
+
+type failingAuthorizer struct{}
+
+func (failingAuthorizer) Authorize(r *http.Request, firstMsg *ClientHello) (AuthResult, error) {
+	return AuthResult{}, errors.New("boom")
+}
+
+func TestServer_WebSocketInternalAuthErrorCloses1011(t *testing.T) {
+	cfg := config.Config{}
+	m := metrics.New()
+	sm := relay.NewSessionManager(cfg, m, nil)
+
+	srv := NewServer(Config{
+		Sessions:    sm,
+		WebRTC:      webrtc.NewAPI(),
+		RelayConfig: relay.DefaultConfig(),
+		Policy:      policy.NewDevDestinationPolicy(),
+		Authorizer:  failingAuthorizer{},
+	})
+
+	mux := http.NewServeMux()
+	srv.RegisterRoutes(mux)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/webrtc/signal"
+	c, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		_ = c.SetReadDeadline(deadline)
+		_, msg, err := c.ReadMessage()
+		if err != nil {
+			if !websocket.IsCloseError(err, websocket.CloseInternalServerErr) {
+				t.Fatalf("expected internal close; got %v", err)
+			}
+			break
+		}
+		parsed, parseErr := ParseSignalMessage(msg)
+		if parseErr == nil {
+			if parsed.Type != MessageTypeError || parsed.Code != "internal_error" {
+				t.Fatalf("unexpected message: %#v", parsed)
+			}
+		}
+	}
+
+	if got := m.Get(metrics.AuthFailure); got != 0 {
+		t.Fatalf("auth_failure=%d, want 0", got)
 	}
 }
