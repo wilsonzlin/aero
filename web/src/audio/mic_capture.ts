@@ -1,3 +1,14 @@
+import {
+  createMicRingBuffer,
+  DROPPED_SAMPLES_INDEX,
+  micRingBufferWrite,
+  READ_POS_INDEX,
+  type MicRingBuffer,
+  WRITE_POS_INDEX,
+} from "./mic_ring";
+
+export { createMicRingBuffer, micRingBufferReadInto, type MicRingBuffer } from "./mic_ring";
+
 export type MicCaptureState =
   | "inactive"
   | "starting"
@@ -20,56 +31,8 @@ export interface MicCaptureOptions {
   autoGainControl?: boolean;
 }
 
-export interface MicRingBuffer {
-  sab: SharedArrayBuffer;
-  header: Uint32Array;
-  data: Float32Array;
-  capacity: number;
-}
-
-const HEADER_U32 = 4;
-const HEADER_BYTES = HEADER_U32 * 4;
-
 function isAudioWorkletSupported(): boolean {
   return typeof AudioWorkletNode !== "undefined";
-}
-
-export function createMicRingBuffer(capacitySamples: number): MicRingBuffer {
-  if (!Number.isFinite(capacitySamples) || capacitySamples <= 0) {
-    throw new Error(`invalid mic ring buffer capacity: ${capacitySamples}`);
-  }
-
-  const sab = new SharedArrayBuffer(HEADER_BYTES + capacitySamples * 4);
-  const header = new Uint32Array(sab, 0, HEADER_U32);
-  const data = new Float32Array(sab, HEADER_BYTES);
-
-  // Use Atomics for indices so the buffer can be shared with the emulator
-  // worker safely.
-  Atomics.store(header, 0, 0); // write_pos
-  Atomics.store(header, 1, 0); // read_pos
-  Atomics.store(header, 2, 0); // dropped
-  header[3] = capacitySamples >>> 0; // capacity (constant)
-
-  return { sab, header, data, capacity: capacitySamples };
-}
-
-export function micRingBufferReadInto(rb: MicRingBuffer, out: Float32Array): number {
-  const readPos = Atomics.load(rb.header, 1) >>> 0;
-  const writePos = Atomics.load(rb.header, 0) >>> 0;
-  const available = (writePos - readPos) >>> 0;
-  const toRead = Math.min(out.length, available);
-  if (toRead === 0) return 0;
-
-  const start = readPos % rb.capacity;
-  const firstPart = Math.min(toRead, rb.capacity - start);
-  out.set(rb.data.subarray(start, start + firstPart), 0);
-  const remaining = toRead - firstPart;
-  if (remaining) {
-    out.set(rb.data.subarray(0, remaining), firstPart);
-  }
-
-  Atomics.store(rb.header, 1, (readPos + toRead) >>> 0);
-  return toRead;
 }
 
 export class MicCapture extends EventTarget {
@@ -110,9 +73,9 @@ export class MicCapture extends EventTarget {
     this.setState("starting");
 
     // Clear indices/counters from any previous run.
-    Atomics.store(this.ringBuffer.header, 0, 0);
-    Atomics.store(this.ringBuffer.header, 1, 0);
-    Atomics.store(this.ringBuffer.header, 2, 0);
+    Atomics.store(this.ringBuffer.header, WRITE_POS_INDEX, 0);
+    Atomics.store(this.ringBuffer.header, READ_POS_INDEX, 0);
+    Atomics.store(this.ringBuffer.header, DROPPED_SAMPLES_INDEX, 0);
 
     try {
       await this.attachPermissionListener();
@@ -170,7 +133,7 @@ export class MicCapture extends EventTarget {
         node.onaudioprocess = (ev) => {
           if (this.muteRequested) return;
           const input = ev.inputBuffer.getChannelData(0);
-          this.writeViaMainThread(input);
+          micRingBufferWrite(this.ringBuffer, input);
         };
         source.connect(node);
         node.connect(sinkGain);
@@ -272,39 +235,5 @@ export class MicCapture extends EventTarget {
     if (this.state === state) return;
     this.state = state;
     this.dispatchEvent(new Event("statechange"));
-  }
-
-  private writeViaMainThread(samples: Float32Array): void {
-    // Mirrors the worklet writer: drop oldest part of the block when the buffer
-    // is under pressure.
-    let writePos = Atomics.load(this.ringBuffer.header, 0) >>> 0;
-    const readPos = Atomics.load(this.ringBuffer.header, 1) >>> 0;
-
-    const used = (writePos - readPos) >>> 0;
-    if (used > this.ringBuffer.capacity) {
-      Atomics.add(this.ringBuffer.header, 2, samples.length);
-      return;
-    }
-
-    const free = this.ringBuffer.capacity - used;
-    if (free === 0) {
-      Atomics.add(this.ringBuffer.header, 2, samples.length);
-      return;
-    }
-
-    const toWrite = Math.min(samples.length, free);
-    const dropped = samples.length - toWrite;
-    if (dropped) Atomics.add(this.ringBuffer.header, 2, dropped);
-
-    const slice = dropped ? samples.subarray(dropped) : samples;
-
-    const start = writePos % this.ringBuffer.capacity;
-    const firstPart = Math.min(toWrite, this.ringBuffer.capacity - start);
-    this.ringBuffer.data.set(slice.subarray(0, firstPart), start);
-    const remaining = toWrite - firstPart;
-    if (remaining) this.ringBuffer.data.set(slice.subarray(firstPart), 0);
-
-    writePos = (writePos + toWrite) >>> 0;
-    Atomics.store(this.ringBuffer.header, 0, writePos);
   }
 }

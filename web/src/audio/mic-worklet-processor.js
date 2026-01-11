@@ -14,8 +14,16 @@
 // worker). When full, this producer drops the oldest part of the current block
 // (keeps the most recent samples) to bias for low latency.
 
-const HEADER_U32 = 4;
-const HEADER_BYTES = HEADER_U32 * 4;
+import {
+  CAPACITY_SAMPLES_INDEX,
+  DROPPED_SAMPLES_INDEX,
+  HEADER_BYTES,
+  HEADER_U32_LEN,
+  micRingBufferWrite,
+  READ_POS_INDEX,
+  samplesAvailable,
+  WRITE_POS_INDEX,
+} from "./mic_ring";
 
 class AeroMicCaptureProcessor extends AudioWorkletProcessor {
   constructor(options) {
@@ -25,9 +33,14 @@ class AeroMicCaptureProcessor extends AudioWorkletProcessor {
       throw new Error("AeroMicCaptureProcessor requires processorOptions.ringBuffer (SharedArrayBuffer)");
     }
 
-    this._header = new Uint32Array(ringBuffer, 0, HEADER_U32);
+    this._header = new Uint32Array(ringBuffer, 0, HEADER_U32_LEN);
     this._data = new Float32Array(ringBuffer, HEADER_BYTES);
-    this._capacity = this._header[3] || this._data.length;
+    const headerCap = this._header[CAPACITY_SAMPLES_INDEX] >>> 0;
+    if (headerCap && headerCap !== this._data.length) {
+      throw new Error("Mic ring buffer capacity does not match SharedArrayBuffer size");
+    }
+    this._capacity = headerCap || this._data.length;
+    this._rb = { header: this._header, data: this._data, capacity: this._capacity };
 
     this._muted = false;
     this._statsCounter = 0;
@@ -84,13 +97,13 @@ class AeroMicCaptureProcessor extends AudioWorkletProcessor {
     // Occasionally report buffered sample count for UI/debugging. Posting every
     // render quantum is expensive.
     if ((this._statsCounter++ & 0x3f) === 0) {
-      const writePos = Atomics.load(this._header, 0) >>> 0;
-      const readPos = Atomics.load(this._header, 1) >>> 0;
-      const buffered = (writePos - readPos) >>> 0;
+      const writePos = Atomics.load(this._header, WRITE_POS_INDEX) >>> 0;
+      const readPos = Atomics.load(this._header, READ_POS_INDEX) >>> 0;
+      const buffered = samplesAvailable(readPos, writePos);
       this.port.postMessage({
         type: "stats",
         buffered,
-        dropped: Atomics.load(this._header, 2) >>> 0,
+        dropped: Atomics.load(this._header, DROPPED_SAMPLES_INDEX) >>> 0,
       });
     }
 
@@ -98,40 +111,7 @@ class AeroMicCaptureProcessor extends AudioWorkletProcessor {
   }
 
   _writeIntoRing(samples) {
-    let writePos = Atomics.load(this._header, 0) >>> 0;
-    const readPos = Atomics.load(this._header, 1) >>> 0;
-
-    let used = (writePos - readPos) >>> 0;
-    if (used > this._capacity) {
-      // Consumer fell behind far enough that we no longer know what's valid.
-      // Drop this block to avoid making things worse.
-      Atomics.add(this._header, 2, samples.length);
-      return;
-    }
-
-    const free = this._capacity - used;
-    if (free === 0) {
-      Atomics.add(this._header, 2, samples.length);
-      return;
-    }
-
-    const toWrite = Math.min(samples.length, free);
-    const dropped = samples.length - toWrite;
-    if (dropped) Atomics.add(this._header, 2, dropped);
-
-    // Keep the most recent part of the block if we have to drop.
-    const slice = dropped ? samples.subarray(dropped) : samples;
-
-    const start = writePos % this._capacity;
-    const firstPart = Math.min(toWrite, this._capacity - start);
-    this._data.set(slice.subarray(0, firstPart), start);
-    const remaining = toWrite - firstPart;
-    if (remaining) {
-      this._data.set(slice.subarray(firstPart), 0);
-    }
-
-    writePos = (writePos + toWrite) >>> 0;
-    Atomics.store(this._header, 0, writePos);
+    micRingBufferWrite(this._rb, samples);
   }
 
   _zeroOutputs(outputs) {

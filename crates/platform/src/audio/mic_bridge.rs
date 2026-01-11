@@ -1,0 +1,365 @@
+//! SharedArrayBuffer ring-buffer layout used to capture microphone PCM samples.
+//!
+//! The browser-side `AudioWorkletProcessor` (or the main-thread fallback) is the
+//! producer, and the emulator is the consumer.
+//!
+//! Indices are stored as monotonically increasing `u32` sample counters
+//! (wrapping naturally at `2^32`) to avoid the classic "read == write" ambiguity.
+
+/// Header layout (`Uint32Array`) in the SharedArrayBuffer.
+pub const HEADER_U32_LEN: usize = 4;
+
+/// Total samples written by the producer (monotonic, wraps at `2^32`).
+pub const WRITE_POS_INDEX: usize = 0;
+/// Total samples read by the consumer.
+pub const READ_POS_INDEX: usize = 1;
+/// Total samples dropped due to buffer pressure.
+pub const DROPPED_SAMPLES_INDEX: usize = 2;
+/// Ring buffer capacity in samples (constant).
+pub const CAPACITY_SAMPLES_INDEX: usize = 3;
+
+/// Total bytes reserved for the header.
+pub const HEADER_BYTES: usize = HEADER_U32_LEN * 4;
+
+#[inline]
+pub fn samples_available(read_pos: u32, write_pos: u32) -> u32 {
+    write_pos.wrapping_sub(read_pos)
+}
+
+#[inline]
+pub fn samples_available_clamped(read_pos: u32, write_pos: u32, capacity_samples: u32) -> u32 {
+    samples_available(read_pos, write_pos).min(capacity_samples)
+}
+
+#[inline]
+pub fn samples_free(read_pos: u32, write_pos: u32, capacity_samples: u32) -> u32 {
+    capacity_samples - samples_available_clamped(read_pos, write_pos, capacity_samples)
+}
+
+/// A small, pure-Rust mono ring buffer used for unit testing index math and wrap-around.
+///
+/// This mirrors the browser producer behaviour: when the buffer is under pressure
+/// it drops the oldest part of the *current block* (keeps the most recent
+/// samples) to bias for low latency.
+#[derive(Debug)]
+pub struct MonoRingBuffer {
+    capacity_samples: u32,
+    read_pos: u32,
+    write_pos: u32,
+    storage: Vec<f32>,
+}
+
+impl MonoRingBuffer {
+    pub fn new(capacity_samples: u32) -> Self {
+        assert!(capacity_samples > 0, "capacity_samples must be non-zero");
+        Self {
+            capacity_samples,
+            read_pos: 0,
+            write_pos: 0,
+            storage: vec![0.0; capacity_samples as usize],
+        }
+    }
+
+    pub fn buffered_samples(&self) -> u32 {
+        samples_available_clamped(self.read_pos, self.write_pos, self.capacity_samples)
+    }
+
+    /// Write a block of samples.
+    ///
+    /// Returns the number of samples written. If the buffer is full, this
+    /// returns 0 without blocking.
+    pub fn write(&mut self, samples: &[f32]) -> u32 {
+        let requested = samples.len() as u32;
+        if requested == 0 {
+            return 0;
+        }
+
+        let used = samples_available(self.read_pos, self.write_pos);
+        if used > self.capacity_samples {
+            // Consumer fell behind far enough that we no longer know what's valid.
+            // Drop this block to avoid making things worse (mirrors JS worklet).
+            return 0;
+        }
+
+        let free = self.capacity_samples - used;
+        if free == 0 {
+            return 0;
+        }
+
+        let to_write = requested.min(free);
+        let dropped = requested - to_write;
+
+        // Keep the most recent part of the block if we have to drop.
+        let slice = if dropped > 0 {
+            &samples[dropped as usize..]
+        } else {
+            samples
+        };
+
+        let start = self.write_pos % self.capacity_samples;
+        let first_part = to_write.min(self.capacity_samples - start);
+        let second_part = to_write - first_part;
+
+        let start_usize = start as usize;
+        let first_usize = first_part as usize;
+        self.storage[start_usize..start_usize + first_usize].copy_from_slice(&slice[..first_usize]);
+
+        if second_part > 0 {
+            let second_usize = second_part as usize;
+            self.storage[..second_usize]
+                .copy_from_slice(&slice[first_usize..first_usize + second_usize]);
+        }
+
+        self.write_pos = self.write_pos.wrapping_add(to_write);
+        to_write
+    }
+
+    /// Read samples into `out`.
+    ///
+    /// Returns the number of samples read. If the buffer is empty, returns 0
+    /// without blocking.
+    pub fn read(&mut self, out: &mut [f32]) -> u32 {
+        let requested = out.len() as u32;
+        if requested == 0 {
+            return 0;
+        }
+
+        let available =
+            samples_available_clamped(self.read_pos, self.write_pos, self.capacity_samples);
+        let to_read = requested.min(available);
+        if to_read == 0 {
+            return 0;
+        }
+
+        let start = self.read_pos % self.capacity_samples;
+        let first_part = to_read.min(self.capacity_samples - start);
+        let second_part = to_read - first_part;
+
+        let start_usize = start as usize;
+        let first_usize = first_part as usize;
+        out[..first_usize]
+            .copy_from_slice(&self.storage[start_usize..start_usize + first_usize]);
+
+        if second_part > 0 {
+            let second_usize = second_part as usize;
+            out[first_usize..first_usize + second_usize]
+                .copy_from_slice(&self.storage[..second_usize]);
+        }
+
+        self.read_pos = self.read_pos.wrapping_add(to_read);
+        to_read
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_samples_available_wraps_u32() {
+        let read = u32::MAX - 10;
+        let write = read.wrapping_add(5);
+        assert_eq!(samples_available(read, write), 5);
+    }
+
+    #[test]
+    fn test_ring_buffer_wrap_around_preserves_order() {
+        let mut rb = MonoRingBuffer::new(4);
+
+        let written = rb.write(&[0.0, 1.0, 2.0]);
+        assert_eq!(written, 3);
+        assert_eq!(rb.buffered_samples(), 3);
+
+        let mut out = [0.0f32; 2];
+        let read = rb.read(&mut out);
+        assert_eq!(read, 2);
+        assert_eq!(out, [0.0, 1.0]);
+        assert_eq!(rb.buffered_samples(), 1);
+
+        let written = rb.write(&[3.0, 4.0, 5.0]);
+        assert_eq!(written, 3);
+        assert_eq!(rb.buffered_samples(), 4);
+
+        let mut out = [0.0f32; 4];
+        let read = rb.read(&mut out);
+        assert_eq!(read, 4);
+        assert_eq!(out, [2.0, 3.0, 4.0, 5.0]);
+        assert_eq!(rb.buffered_samples(), 0);
+    }
+
+    #[test]
+    fn test_partial_write_keeps_most_recent_samples_of_block() {
+        let mut rb = MonoRingBuffer::new(4);
+
+        let written = rb.write(&[0.0, 1.0, 2.0]);
+        assert_eq!(written, 3);
+
+        // Only 1 sample of free space remains. The block [3,4,5] should be
+        // partially written by keeping the most recent sample (5) and dropping
+        // the older part of the block (3,4).
+        let written = rb.write(&[3.0, 4.0, 5.0]);
+        assert_eq!(written, 1);
+
+        let mut out = [0.0f32; 4];
+        let read = rb.read(&mut out);
+        assert_eq!(read, 4);
+        assert_eq!(out, [0.0, 1.0, 2.0, 5.0]);
+    }
+
+    #[test]
+    fn test_read_updates_indices() {
+        let mut rb = MonoRingBuffer::new(8);
+        rb.write(&[0.0, 1.0, 2.0, 3.0]);
+
+        let mut out = [0.0f32; 3];
+        rb.read(&mut out);
+        assert_eq!(rb.read_pos, 3);
+        assert_eq!(rb.write_pos, 4);
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+mod wasm {
+    use super::*;
+    use js_sys::{Float32Array, SharedArrayBuffer, Uint32Array};
+    use wasm_bindgen::prelude::*;
+
+    #[wasm_bindgen]
+    extern "C" {
+        #[wasm_bindgen(js_namespace = Atomics)]
+        fn load(array: &Uint32Array, index: u32) -> u32;
+
+        #[wasm_bindgen(js_namespace = Atomics)]
+        fn store(array: &Uint32Array, index: u32, value: u32) -> u32;
+    }
+
+    #[inline]
+    fn atomic_load_u32(array: &Uint32Array, index: usize) -> u32 {
+        load(array, index as u32)
+    }
+
+    #[inline]
+    fn atomic_store_u32(array: &Uint32Array, index: usize, value: u32) {
+        store(array, index as u32, value);
+    }
+
+    /// Consumer-side handle over the microphone capture ring buffer produced by
+    /// the AudioWorklet.
+    #[wasm_bindgen]
+    pub struct MicBridge {
+        capacity_samples: u32,
+        header: Uint32Array,
+        samples: Float32Array,
+    }
+
+    #[wasm_bindgen]
+    impl MicBridge {
+        /// Create a bridge over an existing microphone capture SharedArrayBuffer.
+        ///
+        /// Capacity is derived from the header (`CAPACITY_SAMPLES_INDEX`) if
+        /// present, otherwise from the buffer size (for backwards
+        /// compatibility).
+        #[wasm_bindgen(js_name = fromSharedBuffer)]
+        pub fn from_shared_buffer(sab: SharedArrayBuffer) -> Result<MicBridge, JsValue> {
+            let byte_len = sab.byte_length() as usize;
+            if byte_len < HEADER_BYTES {
+                return Err(JsValue::from_str(
+                    "SharedArrayBuffer is too small to contain a mic ring buffer header",
+                ));
+            }
+            if (byte_len - HEADER_BYTES) % core::mem::size_of::<f32>() != 0 {
+                return Err(JsValue::from_str(
+                    "SharedArrayBuffer mic ring buffer payload is not 4-byte aligned",
+                ));
+            }
+
+            let payload_samples = ((byte_len - HEADER_BYTES) / core::mem::size_of::<f32>()) as u32;
+            if payload_samples == 0 {
+                return Err(JsValue::from_str(
+                    "SharedArrayBuffer mic ring buffer contains no sample payload",
+                ));
+            }
+
+            let header = Uint32Array::new_with_byte_offset_and_length(&sab, 0, HEADER_U32_LEN as u32);
+            let capacity_from_header = header.get_index(CAPACITY_SAMPLES_INDEX as u32);
+            let capacity_samples = if capacity_from_header != 0 {
+                if capacity_from_header != payload_samples {
+                    return Err(JsValue::from_str(
+                        "SharedArrayBuffer mic ring buffer capacity does not match buffer size",
+                    ));
+                }
+                capacity_from_header
+            } else {
+                payload_samples
+            };
+
+            let samples = Float32Array::new_with_byte_offset_and_length(
+                &sab,
+                HEADER_BYTES as u32,
+                capacity_samples,
+            );
+
+            Ok(Self {
+                capacity_samples,
+                header,
+                samples,
+            })
+        }
+
+        pub fn buffered_samples(&self) -> u32 {
+            let read_pos = atomic_load_u32(&self.header, READ_POS_INDEX);
+            let write_pos = atomic_load_u32(&self.header, WRITE_POS_INDEX);
+            samples_available_clamped(read_pos, write_pos, self.capacity_samples)
+        }
+
+        pub fn dropped_samples(&self) -> u32 {
+            atomic_load_u32(&self.header, DROPPED_SAMPLES_INDEX)
+        }
+
+        /// Read up to `out.len()` samples from the ring buffer into `out`.
+        ///
+        /// Returns the number of samples read.
+        pub fn read_f32_into(&self, out: &mut [f32]) -> u32 {
+            if out.is_empty() {
+                return 0;
+            }
+
+            let read_pos = atomic_load_u32(&self.header, READ_POS_INDEX);
+            let write_pos = atomic_load_u32(&self.header, WRITE_POS_INDEX);
+            let available = samples_available_clamped(read_pos, write_pos, self.capacity_samples);
+
+            let requested = out.len() as u32;
+            let to_read = requested.min(available);
+            if to_read == 0 {
+                return 0;
+            }
+
+            let start = read_pos % self.capacity_samples;
+            let first_part = to_read.min(self.capacity_samples - start);
+            let second_part = to_read - first_part;
+
+            // Bulk copy using typed-array operations (at most 2 copies due to wrap-around).
+            if first_part > 0 {
+                let src = self.samples.subarray(start, start + first_part);
+                src.copy_to(&mut out[..first_part as usize]);
+            }
+            if second_part > 0 {
+                let src = self.samples.subarray(0, second_part);
+                src.copy_to(
+                    &mut out[first_part as usize..(first_part + second_part) as usize],
+                );
+            }
+
+            atomic_store_u32(
+                &self.header,
+                READ_POS_INDEX,
+                read_pos.wrapping_add(to_read),
+            );
+
+            to_read
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub use wasm::MicBridge;
