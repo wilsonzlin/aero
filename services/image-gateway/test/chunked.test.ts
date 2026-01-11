@@ -89,6 +89,70 @@ describe("chunked delivery", () => {
     expect(res.headers["access-control-allow-origin"]).toBe("http://localhost:5173");
   });
 
+  it("uses chunkedManifestKey as the base for chunk lookups when both fields are present", async () => {
+    const config = makeConfig();
+    const store = new MemoryImageStore();
+    const ownerId = "user-1";
+    const imageId = "image-1";
+
+    store.create({
+      id: imageId,
+      ownerId,
+      createdAt: new Date().toISOString(),
+      version: "v1",
+      s3Key: "images/user-1/image-1/v1/disk.img",
+      chunkedPrefix: "images/user-1/image-1/v1/",
+      chunkedManifestKey: "images/user-1/image-1/v9/manifest.json",
+      uploadId: "upload-1",
+      status: "complete",
+    });
+
+    let sawManifest = false;
+    let sawChunk = false;
+
+    const s3 = {
+      async send(command: unknown) {
+        if (command instanceof HeadObjectCommand) {
+          if (command.input.Key === "images/user-1/image-1/v9/manifest.json") {
+            sawManifest = true;
+            return {
+              ContentLength: 10,
+              ContentType: "application/json",
+            };
+          }
+          if (command.input.Key === "images/user-1/image-1/v9/chunks/00000000.bin") {
+            sawChunk = true;
+            return {
+              ContentLength: 123,
+              ContentType: "application/octet-stream",
+            };
+          }
+        }
+        throw new Error(`unexpected command: ${JSON.stringify(command)}`);
+      },
+    } as unknown as S3Client;
+
+    const app = buildApp({ config, s3, store });
+    await app.ready();
+
+    const manifestRes = await app.inject({
+      method: "HEAD",
+      url: `/v1/images/${imageId}/chunked/manifest`,
+      headers: { "x-user-id": ownerId },
+    });
+    expect(manifestRes.statusCode).toBe(200);
+
+    const chunkRes = await app.inject({
+      method: "HEAD",
+      url: `/v1/images/${imageId}/chunked/chunks/0`,
+      headers: { "x-user-id": ownerId },
+    });
+    expect(chunkRes.statusCode).toBe(200);
+
+    expect(sawManifest).toBe(true);
+    expect(sawChunk).toBe(true);
+  });
+
   it("propagates Content-Encoding for the manifest when provided by S3", async () => {
     const config = makeConfig();
     const store = new MemoryImageStore();

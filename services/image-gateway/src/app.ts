@@ -189,13 +189,13 @@ function normalizeS3Prefix(value: string): string {
 }
 
 function getChunkedBasePrefix(record: ImageRecord): string | undefined {
-  if (record.chunkedPrefix) {
-    return normalizeS3Prefix(record.chunkedPrefix);
-  }
   if (record.chunkedManifestKey) {
     const key = normalizeS3Key(record.chunkedManifestKey);
     const lastSlash = key.lastIndexOf("/");
     return lastSlash === -1 ? "" : key.slice(0, lastSlash + 1);
+  }
+  if (record.chunkedPrefix) {
+    return normalizeS3Prefix(record.chunkedPrefix);
   }
   return undefined;
 }
