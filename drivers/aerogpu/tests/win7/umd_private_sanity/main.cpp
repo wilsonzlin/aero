@@ -113,6 +113,10 @@ static int RunUmdPrivateSanity(int argc, char** argv) {
     return reporter.Fail("unexpected blob.struct_version=%lu", (unsigned long)blob.struct_version);
   }
 
+  if (blob.device_mmio_magic == 0) {
+    return reporter.Fail("device_mmio_magic==0 (expected AeroGPU MMIO magic)");
+  }
+
   // Basic consistency check: legacy devices should set IS_LEGACY; new devices should not.
   if (blob.device_mmio_magic == AEROGPU_UMDPRIV_MMIO_MAGIC_LEGACY_ARGP) {
     if ((blob.flags & AEROGPU_UMDPRIV_FLAG_IS_LEGACY) == 0) {
@@ -123,6 +127,15 @@ static int RunUmdPrivateSanity(int argc, char** argv) {
     if ((blob.flags & AEROGPU_UMDPRIV_FLAG_IS_LEGACY) != 0) {
       return reporter.Fail("unexpected AEROGPU_UMDPRIV_FLAG_IS_LEGACY for new device magic");
     }
+  }
+
+  if ((blob.flags & AEROGPU_UMDPRIV_FLAG_HAS_VBLANK) != 0 &&
+      (blob.device_features & AEROGPU_UMDPRIV_FEATURE_VBLANK) == 0) {
+    return reporter.Fail("HAS_VBLANK set but device_features is missing VBLANK bit");
+  }
+  if ((blob.flags & AEROGPU_UMDPRIV_FLAG_HAS_FENCE_PAGE) != 0 &&
+      (blob.device_features & AEROGPU_UMDPRIV_FEATURE_FENCE_PAGE) == 0) {
+    return reporter.Fail("HAS_FENCE_PAGE set but device_features is missing FENCE_PAGE bit");
   }
 
   return reporter.Pass();
