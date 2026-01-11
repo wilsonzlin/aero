@@ -133,7 +133,7 @@ Notable bits include:
 - `AEROGPU_FEATURE_VBLANK`: implements vblank IRQ + timing registers (Win7 pacing).
 - `AEROGPU_FEATURE_TRANSFER`: supports transfer/copy commands (e.g. `COPY_BUFFER`,
   `COPY_TEXTURE2D`), including optional **writeback into guest backing memory**
-  for GPU→CPU readback. (Introduced in ABI minor 1.)
+  for GPU→CPU readback. (Introduced in ABI 1.1.)
 
 ## Command submission transport
 
