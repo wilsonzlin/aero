@@ -507,6 +507,48 @@ fn debug_symbols_are_excluded_from_packaged_driver_dirs() -> anyhow::Result<()> 
 }
 
 #[test]
+fn driver_dll_extensions_are_handled_case_insensitively() -> anyhow::Result<()> {
+    let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let testdata = repo_root.join("testdata");
+    let spec_path = testdata.join("spec.json");
+    let guest_tools_dir = testdata.join("guest-tools");
+
+    // Copy drivers, then rename `test.dll` to an uppercase extension. The packager should
+    // still include it and the INF reference validation should still pass.
+    let drivers_tmp = tempfile::tempdir()?;
+    copy_dir_all(&testdata.join("drivers"), drivers_tmp.path())?;
+    for arch in ["x86", "amd64"] {
+        fs::rename(
+            drivers_tmp.path().join(format!("{arch}/testdrv/test.dll")),
+            drivers_tmp.path().join(format!("{arch}/testdrv/test.DLL")),
+        )?;
+    }
+
+    let out = tempfile::tempdir()?;
+    let config = aero_packager::PackageConfig {
+        drivers_dir: drivers_tmp.path().to_path_buf(),
+        guest_tools_dir: guest_tools_dir.clone(),
+        out_dir: out.path().to_path_buf(),
+        spec_path,
+        version: "0.0.0".to_string(),
+        build_id: "test".to_string(),
+        volume_id: "AERO_GUEST_TOOLS".to_string(),
+        signing_policy: aero_packager::SigningPolicy::TestSigning,
+        source_date_epoch: 0,
+    };
+    let outputs = aero_packager::package_guest_tools(&config)?;
+    let iso_bytes = fs::read(&outputs.iso_path)?;
+    let tree = aero_packager::read_joliet_tree(&iso_bytes)?;
+
+    assert!(tree.contains("drivers/x86/testdrv/test.DLL"));
+    assert!(tree.contains("drivers/amd64/testdrv/test.DLL"));
+    assert!(!tree.contains("drivers/x86/testdrv/test.dll"));
+    assert!(!tree.contains("drivers/amd64/testdrv/test.dll"));
+
+    Ok(())
+}
+
+#[test]
 fn package_outputs_allow_empty_certs_when_signing_policy_none() -> anyhow::Result<()> {
     let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let testdata = repo_root.join("testdata");
