@@ -37,6 +37,7 @@ static void PrintDeviceRemovedReasonIfAny(const char* test_name, ID3D11Device* d
 }
 
 static void DumpBytesToFile(const char* test_name,
+                            aerogpu_test::TestReporter* reporter,
                             const wchar_t* file_name,
                             const void* data,
                             UINT byte_count) {
@@ -65,8 +66,29 @@ static void DumpBytesToFile(const char* test_name,
                                test_name,
                                (unsigned)byte_count,
                                path.c_str());
+    if (reporter) {
+      reporter->AddArtifactPathW(path);
+    }
   }
   CloseHandle(h);
+}
+
+static void DumpTightBgra32(const char* test_name,
+                            aerogpu_test::TestReporter* reporter,
+                            const wchar_t* file_name,
+                            const void* data,
+                            UINT row_pitch,
+                            int width,
+                            int height) {
+  if (!data || width <= 0 || height <= 0 || row_pitch < (UINT)(width * 4)) {
+    return;
+  }
+  std::vector<uint8_t> tight((size_t)width * (size_t)height * 4u, 0);
+  for (int y = 0; y < height; ++y) {
+    const uint8_t* src_row = (const uint8_t*)data + (size_t)y * (size_t)row_pitch;
+    memcpy(&tight[(size_t)y * (size_t)width * 4u], src_row, (size_t)width * 4u);
+  }
+  DumpBytesToFile(test_name, reporter, file_name, &tight[0], (UINT)tight.size());
 }
 
 static uint32_t PackBGRA(uint8_t b, uint8_t g, uint8_t r, uint8_t a) {
@@ -340,6 +362,13 @@ static int RunD3D11UpdateSubresourceTextureSanity(int argc, char** argv) {
     } else {
       reporter.AddArtifactPathW(bmp_path);
     }
+    DumpTightBgra32(kTestName,
+                    &reporter,
+                    L"d3d11_update_subresource_texture_sanity.bin",
+                    map.pData,
+                    map.RowPitch,
+                    kWidth,
+                    kHeight);
   }
 
   for (int y = 0; y < kHeight; ++y) {
@@ -442,11 +471,11 @@ static int RunD3D11UpdateSubresourceTextureSanity(int argc, char** argv) {
     return reporter.Fail("Map(constant staging, READ) returned NULL pData");
   }
   if (dump) {
-    const std::wstring dir = aerogpu_test::GetModuleDir();
-    const std::wstring cb_path =
-        aerogpu_test::JoinPath(dir, L"d3d11_update_subresource_texture_sanity_cb.bin");
-    DumpBytesToFile(kTestName, L"d3d11_update_subresource_texture_sanity_cb.bin", cb_map.pData, kCbBytes);
-    reporter.AddArtifactPathW(cb_path);
+    DumpBytesToFile(kTestName,
+                    &reporter,
+                    L"d3d11_update_subresource_texture_sanity_cb.bin",
+                    cb_map.pData,
+                    kCbBytes);
   }
 
   const uint8_t* got_cb = (const uint8_t*)cb_map.pData;
