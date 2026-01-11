@@ -52,12 +52,6 @@ For Aero production deployments (ADR 0013):
 
 Rationale: when the proxy terminates TCP on behalf of the guest (slirp-style), it can acknowledge
 upstream TCP data before the guest has received it. If the L2 tunnel can drop messages (partial
-reliability), TCP correctness breaks. Additionally, the current proxy-side TCP termination assumes
-in-order delivery of guest TCP segments; a reliable-but-unordered DataChannel can deliver segments
-out of order under loss (including FIN before earlier payload), which breaks correctness. For that
-reason, Aero requires an **ordered** DataChannel for the L2 tunnel.
-Rationale: when the proxy terminates TCP on behalf of the guest (slirp-style), it can acknowledge
-upstream TCP data before the guest has received it. If the L2 tunnel can drop messages (partial
 reliability), TCP correctness breaks. Additionally, the current proxy-side TCP termination code
 (`crates/aero-net-stack`) assumes in-order delivery of guest TCP segments; a reliable-but-unordered
 DataChannel can deliver segments out of order under loss (including FIN before earlier payload),
