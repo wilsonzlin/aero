@@ -1066,6 +1066,9 @@ static int RunParent(int argc,
     if (done_event) {
       CloseHandle(done_event);
     }
+    if (job) {
+      CloseHandle(job);
+    }
     if (shared_handle_is_nt) {
       CloseHandle(shared_handle);
     }
@@ -1098,6 +1101,9 @@ static int RunParent(int argc,
       CloseHandle(ready_event);
       CloseHandle(opened_event);
       CloseHandle(done_event);
+      if (job) {
+        CloseHandle(job);
+      }
       if (shared_handle_is_nt) {
         CloseHandle(shared_handle);
       }
@@ -1116,6 +1122,9 @@ static int RunParent(int argc,
       CloseHandle(ready_event);
       CloseHandle(opened_event);
       CloseHandle(done_event);
+      if (job) {
+        CloseHandle(job);
+      }
       if (shared_handle_is_nt) {
         CloseHandle(shared_handle);
       }
@@ -1132,6 +1141,9 @@ static int RunParent(int argc,
       CloseHandle(ready_event);
       CloseHandle(opened_event);
       CloseHandle(done_event);
+      if (job) {
+        CloseHandle(job);
+      }
       if (shared_handle_is_nt) {
         CloseHandle(shared_handle);
       }
@@ -1157,6 +1169,9 @@ static int RunParent(int argc,
       CloseHandle(ready_event);
       CloseHandle(opened_event);
       CloseHandle(done_event);
+      if (job) {
+        CloseHandle(job);
+      }
       if (shared_handle_is_nt) {
         CloseHandle(shared_handle);
       }
@@ -1183,6 +1198,9 @@ static int RunParent(int argc,
     if (done_event) {
       CloseHandle(done_event);
     }
+    if (job) {
+      CloseHandle(job);
+    }
     if (shared_handle_is_nt) {
       CloseHandle(shared_handle);
     }
@@ -1202,6 +1220,9 @@ static int RunParent(int argc,
     }
     if (done_event) {
       CloseHandle(done_event);
+    }
+    if (job) {
+      CloseHandle(job);
     }
     if (shared_handle_is_nt) {
       CloseHandle(shared_handle);
@@ -1224,6 +1245,9 @@ static int RunParent(int argc,
     }
     if (done_event) {
       CloseHandle(done_event);
+    }
+    if (job) {
+      CloseHandle(job);
     }
     if (shared_handle_is_nt) {
       CloseHandle(shared_handle);
