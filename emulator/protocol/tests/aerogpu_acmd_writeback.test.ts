@@ -88,9 +88,10 @@ test("ACMD COPY_BUFFER writeback rejects READONLY allocs", () => {
   );
 });
 
-test("decodeAerogpuAllocTable rejects entries with gpa=0", () => {
+test("decodeAerogpuAllocTable accepts entries with gpa=0", () => {
   const allocTableBuf = buildAllocTable([{ allocId: 1, flags: 0, gpa: 0, sizeBytes: 128 }]);
-  assert.throws(() => decodeAerogpuAllocTable(allocTableBuf), /gpa=0/);
+  const allocTable = decodeAerogpuAllocTable(allocTableBuf);
+  assert.deepEqual(allocTable.get(1), { gpa: 0, sizeBytes: 128, flags: 0 });
 });
 
 test("decodeAerogpuAllocTable accepts extended entry_stride_bytes", () => {
