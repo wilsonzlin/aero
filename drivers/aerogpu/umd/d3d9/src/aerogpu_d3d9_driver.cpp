@@ -5971,31 +5971,6 @@ HRESULT OpenAdapterCommon(const char* entrypoint,
 
 } // namespace
 
-aerogpu_handle_t allocate_global_handle(Adapter* adapter) {
-  if (!adapter) {
-    return 0;
-  }
-
-#if defined(_WIN32)
-  // Use the share-token allocator as an entropy source so handles are extremely
-  // unlikely to collide across guest processes. Only the low 32 bits are used
-  // because `aerogpu_handle_t` is a 32-bit identifier.
-  for (;;) {
-    const uint64_t token = adapter->share_token_allocator.allocate_share_token();
-    const aerogpu_handle_t handle = static_cast<aerogpu_handle_t>(token & 0xFFFFFFFFu);
-    if (handle != 0) {
-      return handle;
-    }
-  }
-#else
-  aerogpu_handle_t handle = adapter->next_handle.fetch_add(1, std::memory_order_relaxed);
-  if (handle == 0) {
-    handle = adapter->next_handle.fetch_add(1, std::memory_order_relaxed);
-  }
-  return handle;
-#endif
-}
-
 uint64_t submit_locked(Device* dev, bool is_present) {
   return submit(dev, is_present);
 }
