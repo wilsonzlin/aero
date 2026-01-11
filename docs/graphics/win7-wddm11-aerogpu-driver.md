@@ -818,13 +818,15 @@ See `drivers/aerogpu/README.md` for driver layout/entrypoints and `docs/16-windo
  shutdown /r /t 0
  ```
  
- 4. After reboot, install:
+ 4. After reboot, install the **signed** package by pointing at the INF in the copied package directory:
  
  ```bat
- install.cmd
+ install.cmd C:\path\to\out\packages\aerogpu\x64\aerogpu.inf
+ :: or:
+ pnputil -i -a C:\path\to\out\packages\aerogpu\x64\aerogpu.inf
  ```
  
- (Or `install.cmd aerogpu_dx11.inf` if installing the optional D3D10/11 UMD variant.)
+ (If you staged the optional D3D10/11 INF, install that INF instead.)
   
  **Note:** x64 requires proper signing/test mode; do not rely on “F8 disable enforcement” as a workflow.
   

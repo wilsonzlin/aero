@@ -70,18 +70,30 @@ pwsh ci/make-catalogs.ps1 -ToolchainJson out/toolchain.json
 pwsh ci/sign-drivers.ps1 -ToolchainJson out/toolchain.json
 ```
 
-Then copy one of these directories into the Win7 VM and run `install.cmd` there:
+Then copy one of these directories into the Win7 VM:
 
 - `out/packages/aerogpu/x86/` (Windows 7 x86)
 - `out/packages/aerogpu/x64/` (Windows 7 x64)
 
-If the packages were signed with `ci/sign-drivers.ps1`, also copy the test certificate into the VM and trust it before installing:
+Also copy the signing certificate into the VM:
 
-1. Copy `out/certs/aero-test.cer` into this directory (or anywhere in the VM).
-2. Run (as Administrator):
+- `out/certs/aero-test.cer`
+
+Before installing, trust the certificate (and enable test signing if needed) in the Win7 VM:
+
+1. Copy `aero-test.cer` next to `trust_test_cert.cmd` (or pass an explicit path).
+2. Run (as Administrator, in the Win7 VM):
 
 ```bat
 trust_test_cert.cmd aero-test.cer
+```
+
+After reboot, install the signed package by pointing at the INF in the copied package directory:
+
+```bat
+pnputil -i -a C:\path\to\out\packages\aerogpu\x64\aerogpu.inf
+:: or:
+install.cmd C:\path\to\out\packages\aerogpu\x64\aerogpu.inf
 ```
 
 This avoids installing any SDK/WDK tooling in the guest.
