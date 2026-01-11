@@ -181,6 +181,9 @@ static inline bool WriteFileStringW(const std::wstring& path, const std::string&
   DWORD last_err = ok ? 0 : GetLastError();
   CloseHandle(h);
   if (!ok || written != (DWORD)contents.size()) {
+    // Avoid leaving behind partial/truncated JSON output: callers may treat the existence of the
+    // report file as an indication it was written successfully.
+    DeleteFileW(path.c_str());
     if (err) {
       *err = "WriteFile failed: " + Win32ErrorToString(ok ? ERROR_WRITE_FAULT : last_err);
     }

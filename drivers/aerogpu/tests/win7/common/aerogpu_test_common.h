@@ -864,6 +864,8 @@ static inline bool WriteBmp32BGRA(const std::wstring& path,
       *err = "WriteFile(BITMAPFILEHEADER) failed: " + Win32ErrorToString(GetLastError());
     }
     CloseHandle(h);
+    // Avoid leaving behind a partially-written BMP that could be mistaken for a valid artifact.
+    DeleteFileW(path.c_str());
     return false;
   }
   if (!WriteFile(h, &bih, sizeof(bih), &written, NULL) || written != sizeof(bih)) {
@@ -871,6 +873,8 @@ static inline bool WriteBmp32BGRA(const std::wstring& path,
       *err = "WriteFile(BITMAPINFOHEADER) failed: " + Win32ErrorToString(GetLastError());
     }
     CloseHandle(h);
+    // Avoid leaving behind a partially-written BMP that could be mistaken for a valid artifact.
+    DeleteFileW(path.c_str());
     return false;
   }
 
@@ -883,6 +887,8 @@ static inline bool WriteBmp32BGRA(const std::wstring& path,
         *err = "WriteFile(pixels) failed: " + Win32ErrorToString(GetLastError());
       }
       CloseHandle(h);
+      // Avoid leaving behind a partially-written BMP that could be mistaken for a valid artifact.
+      DeleteFileW(path.c_str());
       return false;
     }
   }
