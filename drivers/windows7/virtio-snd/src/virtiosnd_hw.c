@@ -266,7 +266,6 @@ static VOID VirtIoSndDpc(_In_ PKDPC Dpc, _In_ PVOID DeferredContext, _In_ PVOID 
 {
     PVIRTIOSND_DEVICE_EXTENSION dx;
     LONG pending;
-    ULONG q;
 
     UNREFERENCED_PARAMETER(Dpc);
     UNREFERENCED_PARAMETER(SystemArgument1);
@@ -281,15 +280,23 @@ static VOID VirtIoSndDpc(_In_ PKDPC Dpc, _In_ PVOID DeferredContext, _In_ PVOID 
 
     if (InterlockedCompareExchange(&dx->Stopping, 0, 0) == 0) {
         if ((pending & VIRTIO_PCI_ISR_QUEUE_INTERRUPT) != 0) {
-            for (q = 0; q < VIRTIOSND_QUEUE_COUNT; ++q) {
+            /*
+             * Drain used rings. Route completions to protocol engines when
+             * initialized so cookies are not leaked.
+             */
+            VirtioSndCtrlProcessUsed(&dx->Control);
+            VirtioSndTxProcessCompletions(&dx->Tx);
+
+            /*
+             * eventq is device->driver notifications; we do not submit receive
+             * buffers yet, so there should be no used entries. Drain defensively
+             * in case a future path does submit buffers.
+             */
+            if (dx->Queues[VIRTIOSND_QUEUE_EVENT].Ops != NULL) {
                 VOID *cookie;
                 UINT32 usedLen;
 
-                if (dx->Queues[q].Ops == NULL) {
-                    continue;
-                }
-
-                while (VirtioSndQueuePopUsed(&dx->Queues[q], &cookie, &usedLen)) {
+                while (VirtioSndQueuePopUsed(&dx->Queues[VIRTIOSND_QUEUE_EVENT], &cookie, &usedLen)) {
                     UNREFERENCED_PARAMETER(cookie);
                     UNREFERENCED_PARAMETER(usedLen);
                 }
@@ -326,6 +333,8 @@ VOID VirtIoSndStopHardware(PVIRTIOSND_DEVICE_EXTENSION Dx)
 
     VirtIoSndResetDeviceBestEffort(Dx);
 
+    VirtioSndTxUninit(&Dx->Tx);
+
     VirtIoSndDestroyQueues(Dx);
 
     VirtIoSndDmaUninit(&Dx->DmaCtx);
@@ -358,12 +367,20 @@ NTSTATUS VirtIoSndStartHardware(
         goto fail;
     }
 
+    VIRTIOSND_TRACE(
+        "transport: rev=0x%02X bar0=0x%I64x len=0x%I64x notify_mult=%lu\n",
+        (ULONG)Dx->Transport.PciRevisionId,
+        Dx->Transport.Bar0Base,
+        (ULONGLONG)Dx->Transport.Bar0Length,
+        Dx->Transport.NotifyOffMultiplier);
+
     status = VirtIoSndTransportNegotiateFeatures(&Dx->Transport, &Dx->NegotiatedFeatures);
     if (!NT_SUCCESS(status)) {
         VIRTIOSND_TRACE_ERROR("feature negotiation failed: 0x%08X\n", status);
         goto fail;
     }
 
+    VIRTIOSND_TRACE("features negotiated: 0x%I64x\n", Dx->NegotiatedFeatures);
     status = VirtIoSndDmaInit(Dx->Pdo, &Dx->DmaCtx);
     if (!NT_SUCCESS(status)) {
         VIRTIOSND_TRACE_ERROR("VirtIoSndDmaInit failed: 0x%08X\n", status);
@@ -381,6 +398,8 @@ NTSTATUS VirtIoSndStartHardware(
         VIRTIOSND_TRACE_ERROR("queue setup failed: 0x%08X\n", status);
         goto fail;
     }
+
+    VirtioSndCtrlInit(&Dx->Control, &Dx->Queues[VIRTIOSND_QUEUE_CONTROL]);
 
     status = VirtIoSndConnectInterrupt(Dx);
     if (!NT_SUCCESS(status)) {

@@ -4,7 +4,9 @@
 
 #include "virtio_snd_proto.h"
 #include "virtio_pci_modern_wdm.h"
+#include "virtiosnd_control.h"
 #include "virtiosnd_queue_split.h"
+#include "virtiosnd_tx.h"
 
 #define VIRTIOSND_POOL_TAG 'dnSV' // 'VSnd' (endianness depends on debugger display)
 
@@ -33,6 +35,10 @@ typedef struct _VIRTIOSND_DEVICE_EXTENSION {
      */
     VIRTIOSND_QUEUE_SPLIT QueueSplit[VIRTIOSND_QUEUE_COUNT];
     VIRTIOSND_QUEUE Queues[VIRTIOSND_QUEUE_COUNT];
+
+    /* Protocol engines (controlq + txq) */
+    VIRTIOSND_CONTROL Control;
+    VIRTIOSND_TX_ENGINE Tx;
 
     /* INTx plumbing */
     PKINTERRUPT InterruptObject;
