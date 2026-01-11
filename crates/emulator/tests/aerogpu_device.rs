@@ -2685,7 +2685,13 @@ fn cmd_exec_d3d11_depth_clip_toggle_clips_triangle_when_enabled() {
     );
     push_u32(&mut stream, 0);
 
-    for (rt_handle, depth_clip_enable) in [(1u32, 1u32), (2u32, 0u32)] {
+    // `AerogpuRasterizerState.flags` follows D3D11 semantics: bit
+    // `AEROGPU_RASTERIZER_FLAG_DEPTH_CLIP_DISABLE` disables depth clipping (depth clamp).
+    // When the flag is clear (0), DepthClipEnable=TRUE and primitives outside [0, 1] are clipped.
+    for (rt_handle, raster_flags) in [
+        (1u32, 0u32),
+        (2u32, cmd::AEROGPU_RASTERIZER_FLAG_DEPTH_CLIP_DISABLE),
+    ] {
         // SET_RENDER_TARGETS.
         push_u32(&mut stream, cmd::AerogpuCmdOpcode::SetRenderTargets as u32);
         push_u32(&mut stream, 48);
@@ -2696,7 +2702,7 @@ fn cmd_exec_d3d11_depth_clip_toggle_clips_triangle_when_enabled() {
             push_u32(&mut stream, 0);
         }
 
-        // SET_RASTERIZER_STATE: depth clipping toggle is stored in reserved0.
+        // SET_RASTERIZER_STATE: toggle depth clipping via the flags bitfield.
         push_u32(
             &mut stream,
             cmd::AerogpuCmdOpcode::SetRasterizerState as u32,
@@ -2707,7 +2713,7 @@ fn cmd_exec_d3d11_depth_clip_toggle_clips_triangle_when_enabled() {
         push_u32(&mut stream, 0); // front_ccw
         push_u32(&mut stream, 0); // scissor_enable
         push_i32(&mut stream, 0); // depth_bias
-        push_u32(&mut stream, depth_clip_enable);
+        push_u32(&mut stream, raster_flags);
 
         // CLEAR black.
         push_u32(&mut stream, cmd::AerogpuCmdOpcode::Clear as u32);
