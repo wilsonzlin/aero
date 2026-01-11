@@ -4739,6 +4739,28 @@ impl AerogpuD3d9Executor {
         self.state.blend_state.blend_op_alpha = self.state.blend_state.blend_op;
     }
 
+    fn map_d3d9_cull_mode(raw: u32, front_ccw: bool) -> Option<u32> {
+        match raw {
+            0 | d3d9::D3DCULL_NONE => Some(cmd::AerogpuCullMode::None as u32),
+            d3d9::D3DCULL_CW => {
+                if front_ccw {
+                    // CW triangles are back faces when front faces are CCW.
+                    Some(cmd::AerogpuCullMode::Back as u32)
+                } else {
+                    Some(cmd::AerogpuCullMode::Front as u32)
+                }
+            }
+            d3d9::D3DCULL_CCW => {
+                if front_ccw {
+                    Some(cmd::AerogpuCullMode::Front as u32)
+                } else {
+                    Some(cmd::AerogpuCullMode::Back as u32)
+                }
+            }
+            _ => None,
+        }
+    }
+
     fn update_separate_alpha_blend_from_render_state(&mut self) {
         if !self.separate_alpha_blend_enabled() {
             self.sync_alpha_blend_to_color();
@@ -4826,27 +4848,9 @@ impl AerogpuD3d9Executor {
             .unwrap_or(d3d9::D3DCULL_NONE);
 
         let front_ccw = self.state.rasterizer_state.front_ccw;
-        let mapped = match raw {
-            0 | d3d9::D3DCULL_NONE => cmd::AerogpuCullMode::None as u32,
-            d3d9::D3DCULL_CW => {
-                if front_ccw {
-                    // CW triangles are back faces when front faces are CCW.
-                    cmd::AerogpuCullMode::Back as u32
-                } else {
-                    cmd::AerogpuCullMode::Front as u32
-                }
-            }
-            d3d9::D3DCULL_CCW => {
-                if front_ccw {
-                    cmd::AerogpuCullMode::Front as u32
-                } else {
-                    cmd::AerogpuCullMode::Back as u32
-                }
-            }
-            other => {
-                debug!(raw = other, "unknown D3D9 cull mode");
-                return;
-            }
+        let Some(mapped) = Self::map_d3d9_cull_mode(raw, front_ccw) else {
+            debug!(raw, "unknown D3D9 cull mode");
+            return;
         };
         self.state.rasterizer_state.cull_mode = mapped;
     }
@@ -5627,4 +5631,40 @@ mod d3d9 {
     pub const D3DCULL_NONE: u32 = 1;
     pub const D3DCULL_CW: u32 = 2;
     pub const D3DCULL_CCW: u32 = 3;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{cmd, d3d9, AerogpuD3d9Executor};
+
+    #[test]
+    fn d3d9_cull_mode_mapping_tracks_front_ccw() {
+        let map = AerogpuD3d9Executor::map_d3d9_cull_mode;
+
+        assert_eq!(map(0, false), Some(cmd::AerogpuCullMode::None as u32));
+        assert_eq!(
+            map(d3d9::D3DCULL_NONE, true),
+            Some(cmd::AerogpuCullMode::None as u32)
+        );
+
+        assert_eq!(
+            map(d3d9::D3DCULL_CW, false),
+            Some(cmd::AerogpuCullMode::Front as u32)
+        );
+        assert_eq!(
+            map(d3d9::D3DCULL_CW, true),
+            Some(cmd::AerogpuCullMode::Back as u32)
+        );
+
+        assert_eq!(
+            map(d3d9::D3DCULL_CCW, false),
+            Some(cmd::AerogpuCullMode::Back as u32)
+        );
+        assert_eq!(
+            map(d3d9::D3DCULL_CCW, true),
+            Some(cmd::AerogpuCullMode::Front as u32)
+        );
+
+        assert_eq!(map(0xDEAD_BEEF, false), None);
+    }
 }
