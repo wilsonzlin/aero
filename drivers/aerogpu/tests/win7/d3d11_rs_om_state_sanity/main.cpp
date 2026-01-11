@@ -380,6 +380,18 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     return aerogpu_test::FailHresult(kTestName, "CreateBlendState(alpha)", hr);
   }
 
+  // Blend state: blending disabled, but with a non-default color write mask (green channel only).
+  // This validates that the blend state object is honored even when BlendEnable=FALSE.
+  D3D11_BLEND_DESC green_mask_desc = blend_desc;
+  green_mask_desc.RenderTarget[0].BlendEnable = FALSE;
+  green_mask_desc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_GREEN;
+
+  ComPtr<ID3D11BlendState> green_write_mask;
+  hr = device->CreateBlendState(&green_mask_desc, green_write_mask.put());
+  if (FAILED(hr)) {
+    return aerogpu_test::FailHresult(kTestName, "CreateBlendState(write mask)", hr);
+  }
+
   const FLOAT clear_red[4] = {1.0f, 0.0f, 0.0f, 1.0f};
   const FLOAT blend_factor[4] = {0.0f, 0.0f, 0.0f, 0.0f};
   const D3D11_RECT full_rect = {0, 0, kWidth, kHeight};
@@ -491,6 +503,54 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
                                 kWidth - 5,
                                 kHeight / 2,
                                 (unsigned long)outside_disabled,
+                                (unsigned long)expected_green);
+    }
+
+    // Verify that RSSetState(NULL) restores the default rasterizer state, which has scissor disabled.
+    context->RSSetState(NULL);
+    context->RSSetScissorRects(1, &scissor);
+    context->ClearRenderTargetView(rtv.get(), clear_red);
+    context->Draw(3, 0);
+
+    context->CopyResource(staging.get(), rt_tex.get());
+    context->Flush();
+
+    ZeroMemory(&map, sizeof(map));
+    hr = context->Map(staging.get(), 0, D3D11_MAP_READ, 0, &map);
+    if (FAILED(hr)) {
+      return FailD3D11WithRemovedReason(kTestName, "Map(staging) [scissor NULL state]", hr, device.get());
+    }
+
+    const uint32_t inside_null = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, 5, kHeight / 2);
+    const uint32_t outside_null =
+        aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, kWidth - 5, kHeight / 2);
+
+    if (dump) {
+      std::string err;
+      if (!aerogpu_test::WriteBmp32BGRA(
+              aerogpu_test::JoinPath(dir, L"d3d11_rs_om_state_sanity_scissor_null_state.bmp"),
+              kWidth,
+              kHeight,
+              map.pData,
+              (int)map.RowPitch,
+              &err)) {
+        aerogpu_test::PrintfStdout("INFO: %s: scissor-NULL-state BMP dump failed: %s", kTestName, err.c_str());
+      }
+    }
+
+    context->Unmap(staging.get(), 0);
+
+    if ((inside_null & 0x00FFFFFFu) != (expected_green & 0x00FFFFFFu) ||
+        (outside_null & 0x00FFFFFFu) != (expected_green & 0x00FFFFFFu)) {
+      return aerogpu_test::Fail(kTestName,
+                                "scissor NULL state failed: inside(5,%d)=0x%08lX expected ~0x%08lX, "
+                                "outside(%d,%d)=0x%08lX expected ~0x%08lX",
+                                kHeight / 2,
+                                (unsigned long)inside_null,
+                                (unsigned long)expected_green,
+                                kWidth - 5,
+                                kHeight / 2,
+                                (unsigned long)outside_null,
                                 (unsigned long)expected_green);
     }
   }
@@ -732,6 +792,54 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
                                 (unsigned)r2,
                                 (unsigned)g2,
                                 (unsigned)b2);
+    }
+
+    // Verify that RenderTargetWriteMask in the bound blend state is respected.
+    // Clear to red, then draw green while only the G channel is writable => red channel should remain 0xFF,
+    // yielding yellow (0xFFFF_FF00).
+    context->OMSetBlendState(green_write_mask.get(), blend_factor, 0xFFFFFFFFu);
+    context->ClearRenderTargetView(rtv.get(), clear_red);
+    context->Draw(3, 0);
+
+    context->CopyResource(staging.get(), rt_tex.get());
+    context->Flush();
+
+    ZeroMemory(&map, sizeof(map));
+    hr = context->Map(staging.get(), 0, D3D11_MAP_READ, 0, &map);
+    if (FAILED(hr)) {
+      return FailD3D11WithRemovedReason(kTestName, "Map(staging) [write mask]", hr, device.get());
+    }
+
+    const uint32_t center_mask = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, cx, cy);
+    if (dump) {
+      std::string err;
+      if (!aerogpu_test::WriteBmp32BGRA(
+              aerogpu_test::JoinPath(dir, L"d3d11_rs_om_state_sanity_write_mask.bmp"),
+              kWidth,
+              kHeight,
+              map.pData,
+              (int)map.RowPitch,
+              &err)) {
+        aerogpu_test::PrintfStdout("INFO: %s: write-mask BMP dump failed: %s", kTestName, err.c_str());
+      }
+    }
+
+    context->Unmap(staging.get(), 0);
+
+    const uint32_t expected_yellow = 0xFFFFFF00u;
+    if ((center_mask & 0x00FFFFFFu) != (expected_yellow & 0x00FFFFFFu)) {
+      const uint8_t b3 = (uint8_t)(center_mask & 0xFFu);
+      const uint8_t g3 = (uint8_t)((center_mask >> 8) & 0xFFu);
+      const uint8_t r3 = (uint8_t)((center_mask >> 16) & 0xFFu);
+      return aerogpu_test::Fail(kTestName,
+                                "write mask failed: center(%d,%d)=0x%08lX (r=%u g=%u b=%u) expected ~0x%08lX",
+                                cx,
+                                cy,
+                                (unsigned long)center_mask,
+                                (unsigned)r3,
+                                (unsigned)g3,
+                                (unsigned)b3,
+                                (unsigned long)expected_yellow);
     }
   }
 
