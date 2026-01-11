@@ -195,7 +195,7 @@ In a Win7 VM with AeroGPU installed and working correctly:
 * `d3d11_rs_om_state_sanity` validates D3D11 rasterizer/blend state correctness (scissor, cull mode, alpha blending) via readback
 * `d3d11_geometry_shader_smoke` renders a triangle through the Geometry Shader stage (requires feature level >= 10_0) and confirms **corner red + center green** via readback
 * `d3d11_swapchain_rotate_sanity` creates a 2-buffer swapchain, clears buffer0 red + buffer1 green, presents, then validates that DXGI rotated buffer identities (expects **buffer0 green + buffer1 red**)
-* `d3d11_map_dynamic_buffer_sanity` exercises dynamic buffer CPU-write paths (`Map(WRITE_DISCARD)` + `Map(WRITE_NO_OVERWRITE)`), stresses DISCARD renaming hazards, and validates both IA-buffer and constant-buffer map paths via staging readback
+* `d3d11_map_dynamic_buffer_sanity` exercises dynamic buffer CPU-write paths (`Map(WRITE_DISCARD)` + `Map(WRITE_NO_OVERWRITE)`), stresses DISCARD renaming hazards, and validates vertex/index/constant buffer map paths via staging readback
 * `d3d11_update_subresource_texture_sanity` validates `UpdateSubresource` on both textures (full + boxed update, padded RowPitch) and a DEFAULT constant buffer (full + boxed range update) via staging readback
 * `readback_sanity` renders to an offscreen render target and validates readback pixels (corner red, center green)
 * `d3d11_texture_sampling_sanity` renders a textured quad into an offscreen render target and validates a few sampled texels via readback
