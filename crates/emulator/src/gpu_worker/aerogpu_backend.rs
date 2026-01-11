@@ -54,6 +54,13 @@ pub trait AeroGpuCommandBackend {
     ///
     /// `mem` provides access to guest physical memory for implementations that support
     /// `RESOURCE_DIRTY_RANGE` / alloc-table-backed resources.
+    ///
+    /// Backends must ensure guest fences always make forward progress. Even if the submission
+    /// fails validation/execution, implementations should still enqueue a completion for
+    /// `submission.signal_fence` and surface the failure via
+    /// [`AeroGpuBackendCompletion::error`].
+    ///
+    /// Return `Err` only for fatal backend failures where a completion cannot be queued.
     fn submit(
         &mut self,
         mem: &mut dyn MemoryBus,
