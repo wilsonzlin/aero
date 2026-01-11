@@ -67,6 +67,12 @@ jobs:
           set -euo pipefail
           python3 scripts/ci/check-win7-virtqueue-split-headers.py
 
+      - name: Check virtqueue_split driver build files (blk/net/input/snd)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/ci/check-virtqueue-split-driver-builds.py
+
       - name: Check Win7 virtio header collisions
         shell: bash
         run: |

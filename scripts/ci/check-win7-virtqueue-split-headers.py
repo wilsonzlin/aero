@@ -5,8 +5,8 @@ Guardrail: prevent "virtqueue_split.h" include-path ambiguity in Windows 7 drive
 Background
 ----------
 Historically the repo had *two* different headers named `virtqueue_split.h`:
-  - `drivers/windows7/virtio/common/include/virtqueue_split.h`
-  - `drivers/windows/virtio/common/virtqueue_split.h`
+  - `drivers/windows7/virtio/common/include/virtqueue_split.h` (legacy/transitional; now renamed to `virtqueue_split_legacy.h`)
+  - `drivers/windows/virtio/common/virtqueue_split.h` (modern shared engine)
 
 That made header resolution depend on include path ordering, which is a footgun:
 drivers could silently compile against the wrong API.

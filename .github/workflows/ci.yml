@@ -322,6 +322,12 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
+      - name: Win7 virtqueue_split guardrails (headers + driver build files)
+        run: |
+          set -euo pipefail
+          python3 scripts/ci/check-win7-virtqueue-split-headers.py
+          python3 scripts/ci/check-virtio-snd-vcxproj-sources.py
+          python3 scripts/ci/check-virtqueue-split-driver-builds.py
       - name: Build + run virtio-pci cap parser tests
         run: |
           set -euo pipefail

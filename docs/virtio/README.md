@@ -8,7 +8,35 @@ This directory contains virtio-related implementation references intended for **
 
 Reference code in this repo:
 
-- `drivers/windows/virtio/common/` — Windows-friendly virtio split-ring virtqueue implementation (`virtqueue_split.*`) + `make test` user-mode harness.
+- WDF-free split virtqueue engine (`VIRTQ_SPLIT` / `VirtqSplit*` API):
+  - `drivers/windows/virtio/common/virtqueue_split.{c,h}`
+  - Used by:
+    - `drivers/windows/virtio-input/` (KMDF; Win7 target)
+    - `drivers/windows7/virtio-snd/` (WDM; Win7 target)
+    - Host tests: `drivers/windows/virtio/common/tests/` (`CMakeLists.txt`, `Makefile`)
+
+  In-tree `#include "virtqueue_split.h"` sites:
+  - `drivers/windows7/virtio-snd/include/virtiosnd_queue_split.h`
+  - `drivers/windows/virtio-input/src/device.c`
+  - `drivers/windows/virtio-input/src/virtio_statusq.c`
+  - `drivers/windows/virtio/common/virtio_sg_pfn.h`
+
+- Win7 portable split-ring engine (`virtqueue_split_*` + `virtio_os_ops_t` API):
+  - `drivers/windows7/virtio/common/src/virtqueue_split_legacy.c`
+  - `drivers/windows7/virtio/common/include/virtqueue_split_legacy.h`
+  - Used by:
+    - `drivers/windows7/virtio/blk/` (StorPort miniport)
+    - `drivers/windows7/virtio/net/` (NDIS miniport)
+    - Host tests: `drivers/windows7/virtio/common/tests/` (`CMakeLists.txt`)
+
+  In-tree `#include "virtqueue_split_legacy.h"` sites:
+  - `drivers/windows7/virtio/blk/include/aerovblk.h`
+  - `drivers/windows7/virtio/net/include/aerovnet.h`
+  - `drivers/windows7/virtio-snd/include/virtiosnd_sg_core.h` (SG entry shape)
+
+Header policy: `drivers/windows/virtio/common/virtqueue_split.h` is the **only**
+header named `virtqueue_split.h` in-tree. The Win7 portable header is named
+`virtqueue_split_legacy.h` to avoid include-path ambiguity.
 
 Related (outside this directory):
 
