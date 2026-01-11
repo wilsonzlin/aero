@@ -24,6 +24,9 @@ Highlights:
   - barriers (`VIRTIO_MB/RMB/WMB`)
   - volatile read/write helpers (`VirtioReadU16`, …)
   - `VIRTIO_ALIGN_UP` and `VirtioZeroMemory`
+- `virtio_sg_pfn.h/.c` – WDF-free scatter/gather builder:
+  - `VirtioSgBuildFromPfns()` converts PFN lists into `VIRTQ_SG[]` (coalescing contiguous PFNs).
+  - Kernel-mode wrappers build `VIRTQ_SG[]` from an MDL chain without allocations (DISPATCH_LEVEL safe).
 - `virtqueue_split.h/.c` – the split virtqueue engine.
 
 ## Basic usage pattern
@@ -74,6 +77,18 @@ NTSTATUS status = VirtqSplitInit(vq, qsz,
 ```
 
 ### 5) Submit buffers + (maybe) kick
+
+If your payload is MDL-backed, use `virtio_sg_pfn.h` to build a `VIRTQ_SG[]` first:
+
+```c
+VIRTQ_SG sg[32];
+UINT16 sg_count = 0;
+
+NTSTATUS status = VirtioSgBuildFromMdl(Mdl, ByteOffset, ByteLength,
+                                      /*device_write=*/TRUE,
+                                      sg, (UINT16)RTL_NUMBER_OF(sg),
+                                      &sg_count);
+```
 
 ```c
 UINT16 head;
