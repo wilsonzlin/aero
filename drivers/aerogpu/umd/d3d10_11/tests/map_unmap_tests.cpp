@@ -1774,6 +1774,356 @@ bool TestGuestBackedUpdateSubresourceUPTextureDirtyRange() {
   return true;
 }
 
+bool TestHostOwnedUpdateSubresourceUPBufferBoxUploads() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false), "InitTestDevice(UpdateSubresourceUP box buffer host-owned)")) {
+    return false;
+  }
+
+  TestResource buf{};
+  if (!Check(CreateStagingBuffer(&dev, /*byte_width=*/16, /*cpu_access_flags=*/0, &buf), "CreateStagingBuffer")) {
+    return false;
+  }
+
+  const uint8_t patch[8] = {0xDE, 0xC0, 0xAD, 0xDE, 0xBE, 0xEF, 0xCA, 0xFE};
+  AEROGPU_DDI_BOX box{};
+  box.left = 4;
+  box.right = 12;
+  box.top = 0;
+  box.bottom = 1;
+  box.front = 0;
+  box.back = 1;
+
+  dev.device_funcs.pfnUpdateSubresourceUP(dev.hDevice,
+                                          buf.hResource,
+                                          /*dst_subresource=*/0,
+                                          &box,
+                                          patch,
+                                          /*SysMemPitch=*/0,
+                                          /*SysMemSlicePitch=*/0);
+  const HRESULT hr = dev.device_funcs.pfnFlush(dev.hDevice);
+  if (!Check(hr == S_OK, "Flush after UpdateSubresourceUP")) {
+    return false;
+  }
+
+  if (!Check(ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size()), "ValidateStream")) {
+    return false;
+  }
+
+  const uint8_t* stream = dev.harness.last_stream.data();
+  const size_t stream_len = dev.harness.last_stream.size();
+
+  if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_RESOURCE_DIRTY_RANGE) == 0,
+             "host-owned UpdateSubresourceUP(box) should not emit RESOURCE_DIRTY_RANGE")) {
+    return false;
+  }
+  if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_UPLOAD_RESOURCE) == 1,
+             "host-owned UpdateSubresourceUP(box) should emit UPLOAD_RESOURCE")) {
+    return false;
+  }
+
+  CmdLoc upload_loc = FindLastOpcode(stream, stream_len, AEROGPU_CMD_UPLOAD_RESOURCE);
+  if (!Check(upload_loc.hdr != nullptr, "UPLOAD_RESOURCE emitted")) {
+    return false;
+  }
+  const auto* upload_cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(stream + upload_loc.offset);
+  if (!Check(upload_cmd->offset_bytes == 4, "UPLOAD_RESOURCE offset_bytes matches box.left")) {
+    return false;
+  }
+  if (!Check(upload_cmd->size_bytes == sizeof(patch), "UPLOAD_RESOURCE size_bytes matches box span")) {
+    return false;
+  }
+
+  const size_t payload_offset = upload_loc.offset + sizeof(*upload_cmd);
+  if (!Check(payload_offset + sizeof(patch) <= stream_len, "UPLOAD_RESOURCE payload fits")) {
+    return false;
+  }
+  if (!Check(std::memcmp(stream + payload_offset, patch, sizeof(patch)) == 0, "UPLOAD_RESOURCE payload bytes")) {
+    return false;
+  }
+
+  if (!Check(dev.harness.last_allocs.empty(), "host-owned UpdateSubresourceUP(box) alloc list empty")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, buf.hResource);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
+bool TestHostOwnedUpdateSubresourceUPTextureBoxUploads() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false), "InitTestDevice(UpdateSubresourceUP box tex2d host-owned)")) {
+    return false;
+  }
+
+  TestResource tex{};
+  if (!Check(CreateStagingTexture2D(&dev, /*width=*/3, /*height=*/2, /*cpu_access_flags=*/0, &tex), "CreateStagingTexture2D")) {
+    return false;
+  }
+
+  const uint32_t width = 3;
+  const uint32_t height = 2;
+  const uint32_t bytes_per_row = width * 4u;
+
+  // Update only the second row.
+  uint8_t row[12] = {};
+  for (uint32_t i = 0; i < sizeof(row); i++) {
+    row[i] = static_cast<uint8_t>(0xA0u + i);
+  }
+
+  AEROGPU_DDI_BOX box{};
+  box.left = 0;
+  box.right = width;
+  box.top = 1;
+  box.bottom = 2;
+  box.front = 0;
+  box.back = 1;
+
+  dev.device_funcs.pfnUpdateSubresourceUP(dev.hDevice,
+                                          tex.hResource,
+                                          /*dst_subresource=*/0,
+                                          &box,
+                                          row,
+                                          /*SysMemPitch=*/bytes_per_row,
+                                          /*SysMemSlicePitch=*/0);
+  const HRESULT hr = dev.device_funcs.pfnFlush(dev.hDevice);
+  if (!Check(hr == S_OK, "Flush after UpdateSubresourceUP")) {
+    return false;
+  }
+
+  if (!Check(ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size()), "ValidateStream")) {
+    return false;
+  }
+
+  const uint8_t* stream = dev.harness.last_stream.data();
+  const size_t stream_len = dev.harness.last_stream.size();
+
+  if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_RESOURCE_DIRTY_RANGE) == 0,
+             "host-owned tex2d UpdateSubresourceUP(box) should not emit RESOURCE_DIRTY_RANGE")) {
+    return false;
+  }
+  if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_UPLOAD_RESOURCE) == 1,
+             "host-owned tex2d UpdateSubresourceUP(box) should emit UPLOAD_RESOURCE")) {
+    return false;
+  }
+
+  CmdLoc upload_loc = FindLastOpcode(stream, stream_len, AEROGPU_CMD_UPLOAD_RESOURCE);
+  if (!Check(upload_loc.hdr != nullptr, "UPLOAD_RESOURCE emitted")) {
+    return false;
+  }
+  const auto* upload_cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(stream + upload_loc.offset);
+  if (!Check(upload_cmd->offset_bytes == bytes_per_row, "UPLOAD_RESOURCE offset_bytes == RowPitch*top")) {
+    return false;
+  }
+  if (!Check(upload_cmd->size_bytes == sizeof(row), "UPLOAD_RESOURCE size_bytes matches one row")) {
+    return false;
+  }
+
+  const size_t payload_offset = upload_loc.offset + sizeof(*upload_cmd);
+  if (!Check(payload_offset + sizeof(row) <= stream_len, "UPLOAD_RESOURCE payload fits")) {
+    return false;
+  }
+  if (!Check(std::memcmp(stream + payload_offset, row, sizeof(row)) == 0, "UPLOAD_RESOURCE payload bytes")) {
+    return false;
+  }
+
+  if (!Check(dev.harness.last_allocs.empty(), "host-owned tex2d UpdateSubresourceUP(box) alloc list empty")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, tex.hResource);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
+bool TestGuestBackedUpdateSubresourceUPBufferBoxDirtyRange() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/true), "InitTestDevice(UpdateSubresourceUP box buffer guest-backed)")) {
+    return false;
+  }
+
+  TestResource buf{};
+  if (!Check(CreateStagingBuffer(&dev, /*byte_width=*/16, /*cpu_access_flags=*/0, &buf), "CreateStagingBuffer")) {
+    return false;
+  }
+
+  const uint8_t patch[8] = {0x11, 0x33, 0x55, 0x77, 0x99, 0xBB, 0xDD, 0xFF};
+  AEROGPU_DDI_BOX box{};
+  box.left = 4;
+  box.right = 12;
+  box.top = 0;
+  box.bottom = 1;
+  box.front = 0;
+  box.back = 1;
+
+  dev.device_funcs.pfnUpdateSubresourceUP(dev.hDevice,
+                                          buf.hResource,
+                                          /*dst_subresource=*/0,
+                                          &box,
+                                          patch,
+                                          /*SysMemPitch=*/0,
+                                          /*SysMemSlicePitch=*/0);
+  const HRESULT hr = dev.device_funcs.pfnFlush(dev.hDevice);
+  if (!Check(hr == S_OK, "Flush after UpdateSubresourceUP")) {
+    return false;
+  }
+
+  if (!Check(ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size()), "ValidateStream")) {
+    return false;
+  }
+
+  const uint8_t* stream = dev.harness.last_stream.data();
+  const size_t stream_len = dev.harness.last_stream.size();
+
+  if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_UPLOAD_RESOURCE) == 0,
+             "guest-backed UpdateSubresourceUP(box) should not emit UPLOAD_RESOURCE")) {
+    return false;
+  }
+  if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_RESOURCE_DIRTY_RANGE) == 1,
+             "guest-backed UpdateSubresourceUP(box) should emit RESOURCE_DIRTY_RANGE")) {
+    return false;
+  }
+
+  CmdLoc create_loc = FindLastOpcode(stream, stream_len, AEROGPU_CMD_CREATE_BUFFER);
+  if (!Check(create_loc.hdr != nullptr, "CREATE_BUFFER emitted")) {
+    return false;
+  }
+  const auto* create_cmd = reinterpret_cast<const aerogpu_cmd_create_buffer*>(stream + create_loc.offset);
+  if (!Check(create_cmd->backing_alloc_id != 0, "guest-backed CREATE_BUFFER backing_alloc_id != 0")) {
+    return false;
+  }
+
+  CmdLoc dirty_loc = FindLastOpcode(stream, stream_len, AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+  if (!Check(dirty_loc.hdr != nullptr, "RESOURCE_DIRTY_RANGE emitted")) {
+    return false;
+  }
+  const auto* dirty_cmd = reinterpret_cast<const aerogpu_cmd_resource_dirty_range*>(stream + dirty_loc.offset);
+  if (!Check(dirty_cmd->offset_bytes == 0, "RESOURCE_DIRTY_RANGE offset_bytes == 0")) {
+    return false;
+  }
+  if (!Check(dirty_cmd->size_bytes == 16, "RESOURCE_DIRTY_RANGE size_bytes == full buffer")) {
+    return false;
+  }
+
+  Allocation* alloc = dev.harness.FindAlloc(create_cmd->backing_alloc_id);
+  if (!Check(alloc != nullptr, "backing allocation exists")) {
+    return false;
+  }
+  if (!Check(alloc->bytes.size() >= 16, "backing allocation large enough")) {
+    return false;
+  }
+
+  uint8_t expected[16] = {};
+  std::memcpy(expected + 4, patch, sizeof(patch));
+  if (!Check(std::memcmp(alloc->bytes.data(), expected, sizeof(expected)) == 0, "backing allocation bytes")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, buf.hResource);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
+bool TestGuestBackedUpdateSubresourceUPTextureBoxDirtyRange() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/true), "InitTestDevice(UpdateSubresourceUP box tex2d guest-backed)")) {
+    return false;
+  }
+
+  TestResource tex{};
+  if (!Check(CreateStagingTexture2D(&dev, /*width=*/3, /*height=*/2, /*cpu_access_flags=*/0, &tex), "CreateStagingTexture2D")) {
+    return false;
+  }
+
+  const uint8_t pixel[4] = {0x10, 0x20, 0x30, 0x40};
+  AEROGPU_DDI_BOX box{};
+  box.left = 1;
+  box.right = 2;
+  box.top = 0;
+  box.bottom = 1;
+  box.front = 0;
+  box.back = 1;
+
+  dev.device_funcs.pfnUpdateSubresourceUP(dev.hDevice,
+                                          tex.hResource,
+                                          /*dst_subresource=*/0,
+                                          &box,
+                                          pixel,
+                                          /*SysMemPitch=*/0,
+                                          /*SysMemSlicePitch=*/0);
+  const HRESULT hr = dev.device_funcs.pfnFlush(dev.hDevice);
+  if (!Check(hr == S_OK, "Flush after UpdateSubresourceUP")) {
+    return false;
+  }
+
+  if (!Check(ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size()), "ValidateStream")) {
+    return false;
+  }
+
+  const uint8_t* stream = dev.harness.last_stream.data();
+  const size_t stream_len = dev.harness.last_stream.size();
+
+  if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_UPLOAD_RESOURCE) == 0,
+             "guest-backed tex2d UpdateSubresourceUP(box) should not emit UPLOAD_RESOURCE")) {
+    return false;
+  }
+  if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_RESOURCE_DIRTY_RANGE) == 1,
+             "guest-backed tex2d UpdateSubresourceUP(box) should emit RESOURCE_DIRTY_RANGE")) {
+    return false;
+  }
+
+  CmdLoc create_loc = FindLastOpcode(stream, stream_len, AEROGPU_CMD_CREATE_TEXTURE2D);
+  if (!Check(create_loc.hdr != nullptr, "CREATE_TEXTURE2D emitted")) {
+    return false;
+  }
+  const auto* create_cmd = reinterpret_cast<const aerogpu_cmd_create_texture2d*>(stream + create_loc.offset);
+  if (!Check(create_cmd->backing_alloc_id != 0, "guest-backed CREATE_TEXTURE2D backing_alloc_id != 0")) {
+    return false;
+  }
+  const uint32_t row_pitch = create_cmd->row_pitch_bytes;
+  if (!Check(row_pitch != 0, "CREATE_TEXTURE2D row_pitch_bytes non-zero")) {
+    return false;
+  }
+
+  const size_t total_bytes = static_cast<size_t>(row_pitch) * 2u;
+
+  CmdLoc dirty_loc = FindLastOpcode(stream, stream_len, AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+  if (!Check(dirty_loc.hdr != nullptr, "RESOURCE_DIRTY_RANGE emitted")) {
+    return false;
+  }
+  const auto* dirty_cmd = reinterpret_cast<const aerogpu_cmd_resource_dirty_range*>(stream + dirty_loc.offset);
+  if (!Check(dirty_cmd->offset_bytes == 0, "RESOURCE_DIRTY_RANGE offset_bytes == 0")) {
+    return false;
+  }
+  if (!Check(dirty_cmd->size_bytes == total_bytes, "RESOURCE_DIRTY_RANGE size_bytes == full texture bytes")) {
+    return false;
+  }
+
+  Allocation* alloc = dev.harness.FindAlloc(create_cmd->backing_alloc_id);
+  if (!Check(alloc != nullptr, "backing allocation exists")) {
+    return false;
+  }
+  if (!Check(alloc->bytes.size() >= total_bytes, "backing allocation large enough")) {
+    return false;
+  }
+
+  std::vector<uint8_t> expected(total_bytes, 0);
+  const size_t dst_offset = 0u * row_pitch + 1u * 4u;
+  std::memcpy(expected.data() + dst_offset, pixel, sizeof(pixel));
+  if (!Check(std::memcmp(alloc->bytes.data(), expected.data(), expected.size()) == 0, "backing allocation bytes")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, tex.hResource);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
 bool TestHostOwnedCreateBufferInitialDataUploads() {
   TestDevice dev{};
   if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false), "InitTestDevice(CreateResource initial buffer host-owned)")) {
@@ -2164,6 +2514,10 @@ int main() {
   ok &= TestGuestBackedUpdateSubresourceUPBufferDirtyRange();
   ok &= TestHostOwnedUpdateSubresourceUPTextureUploads();
   ok &= TestGuestBackedUpdateSubresourceUPTextureDirtyRange();
+  ok &= TestHostOwnedUpdateSubresourceUPBufferBoxUploads();
+  ok &= TestHostOwnedUpdateSubresourceUPTextureBoxUploads();
+  ok &= TestGuestBackedUpdateSubresourceUPBufferBoxDirtyRange();
+  ok &= TestGuestBackedUpdateSubresourceUPTextureBoxDirtyRange();
   ok &= TestHostOwnedCreateBufferInitialDataUploads();
   ok &= TestGuestBackedCreateBufferInitialDataDirtyRange();
   ok &= TestHostOwnedCreateTextureInitialDataUploads();
