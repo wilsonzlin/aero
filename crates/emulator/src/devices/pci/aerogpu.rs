@@ -261,6 +261,10 @@ impl AeroGpuPciDevice {
                     (self.regs.fence_gpa & 0x0000_0000_ffff_ffff) | (u64::from(value) << 32);
             }
             mmio::DOORBELL => {
+                // Keep the vblank clock caught up to real time before accepting new work. Without
+                // this, a vsynced PRESENT submitted just after a vblank deadline (but before the
+                // next `tick()` call) could complete on that already-elapsed vblank edge.
+                self.tick(mem, Instant::now());
                 self.executor.process_doorbell(&mut self.regs, mem);
                 self.update_irq_level();
             }
