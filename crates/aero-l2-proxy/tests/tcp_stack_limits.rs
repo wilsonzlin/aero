@@ -50,6 +50,20 @@ fn encode_l2_frame(payload: &[u8]) -> Vec<u8> {
     aero_l2_protocol::encode_frame(payload).unwrap()
 }
 
+fn parse_metric(body: &str, name: &str) -> Option<u64> {
+    for line in body.lines() {
+        let line = line.trim();
+        if line.starts_with('#') || line.is_empty() {
+            continue;
+        }
+        let (k, v) = line.split_once(' ')?;
+        if k == name {
+            return v.parse().ok();
+        }
+    }
+    None
+}
+
 async fn wait_for_udp_datagram(
     ws_rx: &mut (impl StreamExt<Item = Result<Message, tokio_tungstenite::tungstenite::Error>> + Unpin),
     pred: impl Fn(&UdpDatagram<'_>) -> bool,
@@ -349,6 +363,127 @@ async fn stack_max_tcp_connections_zero_rejects_syn() {
     .await;
     assert!(flags.contains(TcpFlags::RST));
     assert_eq!(ack, isn + 1);
+
+    ws_tx.send(Message::Close(None)).await.unwrap();
+    proxy.shutdown().await;
+}
+
+#[tokio::test]
+async fn tcp_connect_failures_increment_metric() {
+    let _lock = ENV_LOCK.lock().await;
+
+    let _listen = EnvVarGuard::set("AERO_L2_PROXY_LISTEN_ADDR", "127.0.0.1:0");
+    let _open = EnvVarGuard::set("AERO_L2_OPEN", "1");
+    let _allowed_origins = EnvVarGuard::unset("AERO_L2_ALLOWED_ORIGINS");
+    let _allowed_origins_extra = EnvVarGuard::unset("AERO_L2_ALLOWED_ORIGINS_EXTRA");
+    let _fallback_allowed = EnvVarGuard::unset("ALLOWED_ORIGINS");
+    let _allowed_hosts = EnvVarGuard::unset("AERO_L2_ALLOWED_HOSTS");
+    let _trust_proxy_host = EnvVarGuard::unset("AERO_L2_TRUST_PROXY_HOST");
+    let _auth_mode = EnvVarGuard::set("AERO_L2_AUTH_MODE", "none");
+    let _api_key = EnvVarGuard::unset("AERO_L2_API_KEY");
+    let _jwt_secret = EnvVarGuard::unset("AERO_L2_JWT_SECRET");
+    let _jwt_audience = EnvVarGuard::unset("AERO_L2_JWT_AUDIENCE");
+    let _jwt_issuer = EnvVarGuard::unset("AERO_L2_JWT_ISSUER");
+    let _session_secret = EnvVarGuard::unset("AERO_L2_SESSION_SECRET");
+    let _session_secret_alias = EnvVarGuard::unset("SESSION_SECRET");
+    let _gateway_session_secret = EnvVarGuard::unset("AERO_GATEWAY_SESSION_SECRET");
+    let _legacy_token = EnvVarGuard::unset("AERO_L2_TOKEN");
+    let _ping_interval = EnvVarGuard::set("AERO_L2_PING_INTERVAL_MS", "0");
+    let _max_connections = EnvVarGuard::set("AERO_L2_MAX_CONNECTIONS", "0");
+    let _max_connections_per_session =
+        EnvVarGuard::set("AERO_L2_MAX_CONNECTIONS_PER_SESSION", "0");
+    let _max_bytes = EnvVarGuard::set("AERO_L2_MAX_BYTES_PER_CONNECTION", "0");
+    let _max_fps = EnvVarGuard::set("AERO_L2_MAX_FRAMES_PER_SECOND", "0");
+    let _allow_private_ips = EnvVarGuard::unset("AERO_L2_ALLOW_PRIVATE_IPS");
+    let _allowed_tcp_ports = EnvVarGuard::set("AERO_L2_ALLOWED_TCP_PORTS", "80");
+    let _tcp_forward =
+        EnvVarGuard::set("AERO_L2_TCP_FORWARD", "203.0.113.10:80=127.0.0.1:0");
+    let _tcp_timeout = EnvVarGuard::set("AERO_L2_TCP_CONNECT_TIMEOUT_MS", "200");
+    let _stack_max_tcp = EnvVarGuard::unset("AERO_L2_STACK_MAX_TCP_CONNECTIONS");
+
+    let cfg = ProxyConfig::from_env().unwrap();
+    let proxy = start_server(cfg).await.unwrap();
+    let addr = proxy.local_addr();
+
+    let baseline = reqwest::get(format!("http://{addr}/metrics"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    let start = parse_metric(&baseline, "l2_tcp_connect_fail_total").unwrap_or(0);
+
+    let req = ws_request(addr);
+    let (ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+    let (mut ws_tx, mut ws_rx) = ws.split();
+
+    let guest_mac = MacAddr([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0xee]);
+    let guest_ip = Ipv4Addr::new(10, 0, 2, 15);
+    let gateway_ip = Ipv4Addr::new(10, 0, 2, 2);
+    let stack_mac = MacAddr([0x02, 0x00, 0x00, 0x00, 0x00, 0x01]);
+
+    // Mark the guest IP as assigned so the stack emits TCP RSTs.
+    let dhcp_request = build_dhcp_request(0x1020_3040, guest_mac, guest_ip, gateway_ip);
+    let dhcp_frame = wrap_udp_ipv4_eth(
+        guest_mac,
+        MacAddr::BROADCAST,
+        Ipv4Addr::UNSPECIFIED,
+        Ipv4Addr::BROADCAST,
+        68,
+        67,
+        &dhcp_request,
+    );
+    ws_tx
+        .send(Message::Binary(encode_l2_frame(&dhcp_frame).into()))
+        .await
+        .unwrap();
+    let _ = wait_for_udp_datagram(&mut ws_rx, |udp| udp.src_port() == 67 && udp.dst_port() == 68)
+        .await;
+
+    let remote_ip = Ipv4Addr::new(203, 0, 113, 10);
+    let remote_port = 80;
+    let guest_port = 40_000;
+    let isn = 1234;
+
+    let syn = wrap_tcp_ipv4_eth(
+        guest_mac,
+        stack_mac,
+        guest_ip,
+        remote_ip,
+        guest_port,
+        remote_port,
+        isn,
+        0,
+        TcpFlags::SYN,
+        &[],
+    );
+    ws_tx
+        .send(Message::Binary(encode_l2_frame(&syn).into()))
+        .await
+        .unwrap();
+
+    // Expect a TCP RST after the proxy-side connection fails (Forward mapped to port 0).
+    let (flags, _src_port, _dst_port, _seq, ack) = wait_for_tcp_segment(&mut ws_rx, |seg| {
+        seg.src_port() == remote_port
+            && seg.dst_port() == guest_port
+            && seg.flags().contains(TcpFlags::RST)
+            && seg.ack_number() == isn + 1
+    })
+    .await;
+    assert!(flags.contains(TcpFlags::RST));
+    assert_eq!(ack, isn + 1);
+
+    let body = reqwest::get(format!("http://{addr}/metrics"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    let val = parse_metric(&body, "l2_tcp_connect_fail_total").unwrap_or(0);
+    assert!(
+        val >= start.saturating_add(1),
+        "expected tcp connect fail counter to increment (before={start}, after={val})"
+    );
 
     ws_tx.send(Message::Close(None)).await.unwrap();
     proxy.shutdown().await;
