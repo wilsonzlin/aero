@@ -62,7 +62,9 @@ This provides both a `std::vector`-backed stream (portable bring-up/tests) and a
 
 DXGI/D3D10/11 shared resource interop is not implemented in this UMD yet. The protocol supports it (primarily for D3D9Ex/DWM) via `AEROGPU_CMD_EXPORT_SHARED_SURFACE` / `AEROGPU_CMD_IMPORT_SHARED_SURFACE` and a stable cross-process `share_token` carried in preserved WDDM allocation private driver data (`aerogpu_wddm_alloc_priv`; see `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`).
 
-The allocation private data blob is treated as **UMD → KMD input**: the UMD chooses `alloc_id` / `share_token` at creation time, the KMD validates/consumes it, and dxgkrnl preserves the bytes for shared allocations and returns them verbatim on `OpenResource`/`OpenAllocation` so other processes can observe the same IDs. A simple scheme is `share_token = (uint64_t)alloc_id` when `alloc_id` is globally unique across processes; otherwise include a process-unique component. It is **not** a process-local `HANDLE` value.
+The allocation private data blob is treated as **UMD → KMD input**: the UMD chooses `alloc_id` / `share_token` at creation time, the KMD validates/consumes it, and dxgkrnl preserves the bytes for shared allocations and returns them verbatim on `OpenResource`/`OpenAllocation` so other processes can observe the same IDs.
+
+If `alloc_id` is globally unique across guest processes, `share_token = (uint64_t)alloc_id` is sufficient; otherwise include a process-unique component (e.g. `((uint64_t)pid << 32) | alloc_id`). `share_token` is **not** the process-local shared `HANDLE` value (do not use the numeric handle as a host mapping key).
 
 ## Build
 
