@@ -89,6 +89,22 @@ static __inline VOID VirtioPciModernWriteLe32(UINT8 *p, UINT32 v)
 	p[3] = (UINT8)((v >> 24) & 0xffu);
 }
 
+static UINT32 VirtioPciModernClampCapLength(UINT32 mapped_len, UINT32 cap_offset, UINT32 cap_length)
+{
+	UINT32 max_len;
+
+	if (cap_offset >= mapped_len) {
+		return 0;
+	}
+
+	max_len = mapped_len - cap_offset;
+	if (cap_length > max_len) {
+		cap_length = max_len;
+	}
+
+	return cap_length;
+}
+
 static VOID VirtioPciModernReadCfgSpace256(VIRTIO_PCI_MODERN_TRANSPORT *t, UINT8 cfg_space[256])
 {
 	UINT16 off;
@@ -487,11 +503,11 @@ NTSTATUS VirtioPciModernTransportInit(VIRTIO_PCI_MODERN_TRANSPORT *t, const VIRT
 	t->CommonCfg = (volatile virtio_pci_common_cfg *)(t->Bar0Va + caps.common_cfg.offset);
 	t->NotifyBase = (volatile UINT8 *)(t->Bar0Va + caps.notify_cfg.offset);
 	t->NotifyOffMultiplier = caps.notify_off_multiplier;
-	t->NotifyLength = caps.notify_cfg.length;
+	t->NotifyLength = VirtioPciModernClampCapLength(t->Bar0MappedLength, caps.notify_cfg.offset, caps.notify_cfg.length);
 	t->IsrStatus = (volatile UINT8 *)(t->Bar0Va + caps.isr_cfg.offset);
-	t->IsrLength = caps.isr_cfg.length;
+	t->IsrLength = VirtioPciModernClampCapLength(t->Bar0MappedLength, caps.isr_cfg.offset, caps.isr_cfg.length);
 	t->DeviceCfg = (volatile UINT8 *)(t->Bar0Va + caps.device_cfg.offset);
-	t->DeviceCfgLength = caps.device_cfg.length;
+	t->DeviceCfgLength = VirtioPciModernClampCapLength(t->Bar0MappedLength, caps.device_cfg.offset, caps.device_cfg.length);
 
 	/* Create the CommonCfg selector lock. */
 	t->CommonCfgLock = os->SpinlockCreate(t->OsContext);

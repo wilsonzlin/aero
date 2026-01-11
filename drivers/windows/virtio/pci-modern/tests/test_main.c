@@ -860,6 +860,39 @@ static void TestDeviceConfigWriteFailsWhenGenerationNeverStabilizes(void)
 	VirtioPciModernTransportUninit(&t);
 }
 
+static void TestDeviceConfigBoundsClampedToMappedBar0(void)
+{
+	FAKE_DEV dev;
+	VIRTIO_PCI_MODERN_OS_INTERFACE os;
+	VIRTIO_PCI_MODERN_TRANSPORT t;
+	UINT8 buf;
+	UINT8 in;
+	NTSTATUS st;
+
+	FakeDevInitValid(&dev);
+	/*
+	 * Inflate the DEVICE_CFG cap length so it extends beyond the strict-mapped
+	 * BAR0 window (0x4000). The transport must not allow out-of-bounds accesses
+	 * just because the cap length is large.
+	 */
+	WriteLe32(&dev.Cfg[0x74 + 12], 0x2000);
+
+	os = GetOs(&dev);
+	st = VirtioPciModernTransportInit(&t, &os, VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT, 0x10000000u, 0x8000);
+	assert(st == STATUS_SUCCESS);
+	assert(t.DeviceCfgLength == 0x1000);
+
+	buf = 0;
+	st = VirtioPciModernTransportReadDeviceConfig(&t, 0x1000, &buf, 1);
+	assert(st == STATUS_BUFFER_TOO_SMALL);
+
+	in = 0x5Au;
+	st = VirtioPciModernTransportWriteDeviceConfig(&t, 0x1000, &in, 1);
+	assert(st == STATUS_BUFFER_TOO_SMALL);
+
+	VirtioPciModernTransportUninit(&t);
+}
+
 int main(void)
 {
 	TestInitOk();
@@ -891,6 +924,7 @@ int main(void)
 	TestDeviceConfigReadFailsWhenGenerationNeverStabilizes();
 	TestDeviceConfigWriteRetriesAndSucceeds();
 	TestDeviceConfigWriteFailsWhenGenerationNeverStabilizes();
+	TestDeviceConfigBoundsClampedToMappedBar0();
 	printf("virtio_pci_modern_transport_tests: PASS\n");
 	return 0;
 }

@@ -2017,7 +2017,6 @@ HRESULT AEROGPU_D3D9_CALL device_wait_for_idle(AEROGPU_D3D9DDI_HDEVICE hDevice) 
   if (!hDevice.pDrvPrivate) {
     return E_INVALIDARG;
   }
-
   auto* dev = as_device(hDevice);
   if (!dev) {
     return E_INVALIDARG;
