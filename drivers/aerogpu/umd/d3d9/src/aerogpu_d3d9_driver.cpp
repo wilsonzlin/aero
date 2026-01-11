@@ -3066,11 +3066,14 @@ HRESULT invoke_submit_callback(Device* dev,
   }
 
   // Security: `pDmaBufferPrivateData` is copied by dxgkrnl from user mode to
-  // kernel mode for every submission. Ensure the blob is explicitly zeroed so we
-  // never leak uninitialized user-mode stack/heap bytes into the kernel copy.
+  // kernel mode for every submission. Ensure the blob is explicitly initialized
+  // so we never leak uninitialized user-mode stack/heap bytes into the kernel
+  // copy.
   //
-  // The AeroGPU Win7 KMD overwrites AEROGPU_DMA_PRIV, but relying on that is
-  // brittle (and would still leak via the dxgkrnl copy path).
+  // The AeroGPU Win7 KMD overwrites AEROGPU_DMA_PRIV in DxgkDdiRender /
+  // DxgkDdiPresent, but some runtimes route submissions through SubmitCommandCb
+  // (bypassing those DDIs). Always stamp a deterministic AEROGPU_DMA_PRIV header
+  // before invoking the runtime submission callback.
   const uint32_t expected_dma_priv_bytes = static_cast<uint32_t>(AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES);
   void* dma_priv_ptr = dev ? dev->wddm_context.pDmaBufferPrivateData : nullptr;
   uint32_t dma_priv_bytes = dev ? dev->wddm_context.DmaBufferPrivateDataSize : 0;
@@ -3091,10 +3094,13 @@ HRESULT invoke_submit_callback(Device* dev,
     return E_INVALIDARG;
   }
 
-  const size_t zero_bytes = std::min<size_t>(static_cast<size_t>(dma_priv_bytes), static_cast<size_t>(expected_dma_priv_bytes));
-  if (zero_bytes) {
-    std::memset(dma_priv_ptr, 0, zero_bytes);
-  }
+  // Initialize the expected ABI prefix. If the runtime reports a larger private
+  // data size, we will clamp it below so dxgkrnl only copies this prefix.
+  AEROGPU_DMA_PRIV priv{};
+  priv.Type = is_present ? AEROGPU_SUBMIT_PRESENT : AEROGPU_SUBMIT_RENDER;
+  priv.Reserved0 = 0;
+  priv.MetaHandle = 0;
+  std::memcpy(dma_priv_ptr, &priv, sizeof(priv));
 
   // Safety: if the runtime reports a larger private-data size than the KMD/UMD
   // contract, clamp to the expected size so dxgkrnl does not copy extra bytes of
