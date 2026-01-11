@@ -271,6 +271,7 @@ function render(): void {
     renderRemoteDiskPanel(),
     renderAudioPanel(),
     renderMicrophonePanel(),
+    renderWebUsbDiagnosticsPanel(),
     renderWebUsbPanel(report),
     renderWebHidPassthroughPanel(),
     renderInputPanel(),
@@ -278,6 +279,23 @@ function render(): void {
     renderWorkersPanel(report),
     renderIpcDemoPanel(),
     renderMicrobenchPanel(),
+  );
+}
+
+function renderWebUsbDiagnosticsPanel(): HTMLElement {
+  const link = el("a", {
+    href: "/webusb_diagnostics.html",
+    target: "_blank",
+    rel: "noopener",
+    text: "/webusb_diagnostics.html",
+  });
+  const supported = typeof (navigator as unknown as { usb?: unknown }).usb !== "undefined";
+  return el(
+    "div",
+    { class: "panel" },
+    el("h2", { text: "WebUSB diagnostics" }),
+    el("div", { class: "hint" }, "Standalone WebUSB diagnostics: ", link, "."),
+    supported ? null : el("div", { class: "bad", text: "WebUSB unavailable (navigator.usb missing in this context)." }),
   );
 }
 
