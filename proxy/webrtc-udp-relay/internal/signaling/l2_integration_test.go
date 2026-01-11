@@ -642,6 +642,86 @@ func TestWebRTCUDPRelay_L2TunnelBackendTokenViaQueryForwarding(t *testing.T) {
 	}
 }
 
+func TestWebRTCUDPRelay_L2TunnelBackendTokenViaSubprotocolForwarding(t *testing.T) {
+	backendURL, upgrades, dialInfo := startTestL2BackendWithQueryToken(t, "")
+
+	relayCfg := relay.DefaultConfig()
+	relayCfg.L2BackendWSURL = backendURL
+	relayCfg.L2BackendAuthForwardMode = config.L2BackendAuthForwardModeSubprotocol
+
+	destPolicy := policy.NewDevDestinationPolicy()
+	baseURL := startTestRelayServerWithAuth(t, relayCfg, destPolicy, config.AuthModeAPIKey, "relay-secret")
+
+	pc, err := webrtc.NewPeerConnection(webrtc.Configuration{})
+	if err != nil {
+		t.Fatalf("new peer connection: %v", err)
+	}
+	t.Cleanup(func() { _ = pc.Close() })
+
+	ordered := true
+	dc, err := pc.CreateDataChannel("l2", &webrtc.DataChannelInit{
+		Ordered: &ordered,
+	})
+	if err != nil {
+		t.Fatalf("create data channel: %v", err)
+	}
+
+	openCh := make(chan struct{})
+	gotCh := make(chan []byte, 1)
+
+	dc.OnOpen(func() { close(openCh) })
+	dc.OnMessage(func(msg webrtc.DataChannelMessage) {
+		if msg.IsString {
+			return
+		}
+		select {
+		case gotCh <- append([]byte(nil), msg.Data...):
+		default:
+		}
+	})
+
+	exchangeOfferWithHeaders(t, baseURL+"/offer?token=relay-secret", nil, pc)
+
+	select {
+	case <-openCh:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timed out waiting for l2 datachannel open")
+	}
+
+	ping := []byte{0xA2, 0x03, 0x01, 0x00}
+	if err := dc.Send(ping); err != nil {
+		t.Fatalf("send ping: %v", err)
+	}
+
+	var got []byte
+	select {
+	case got = <-gotCh:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timed out waiting for pong")
+	}
+
+	want := []byte{0xA2, 0x03, 0x02, 0x00}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("pong mismatch: %x != %x", got, want)
+	}
+
+	if gotUpgrades := upgrades.Load(); gotUpgrades == 0 {
+		t.Fatalf("expected relay to dial backend websocket (got %d upgrades)", gotUpgrades)
+	}
+
+	infoAny := dialInfo.Load()
+	info, ok := infoAny.(l2BackendDialInfo)
+	if !ok {
+		t.Fatalf("unexpected dialInfo type: %T", infoAny)
+	}
+	if info.TokenQuery != "" {
+		t.Fatalf("backend query token=%q, want empty", info.TokenQuery)
+	}
+	if !strings.Contains(info.SubprotocolHeader, "aero-l2-token.relay-secret") {
+		t.Fatalf("expected Sec-WebSocket-Protocol to include forwarded credential (got %q)", info.SubprotocolHeader)
+	}
+}
+
 func TestWebRTCUDPRelay_L2TunnelForwardsAeroSessionCookie(t *testing.T) {
 	backendURL, upgrades, dialInfo := startTestL2BackendWithQueryToken(t, "")
 
