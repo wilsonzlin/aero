@@ -10,6 +10,7 @@ use crate::devices::aerogpu_scanout::AeroGpuFormat;
 const MAX_ALLOC_TABLE_SIZE_BYTES: usize = 16 * 1024 * 1024;
 const MAX_CMD_STREAM_SIZE_BYTES: usize = 64 * 1024 * 1024;
 const MAX_VERTEX_BUFFER_SLOTS: usize = 16;
+const MAX_TEXTURE_SLOTS: usize = 16;
 
 #[derive(Clone, Copy, Debug)]
 struct AllocInfo {
@@ -64,6 +65,7 @@ struct InputElement {
 struct ParsedInputLayout {
     position: Option<InputElement>,
     color: Option<InputElement>,
+    texcoord0: Option<InputElement>,
 }
 
 #[derive(Clone, Debug)]
@@ -111,6 +113,7 @@ struct Scissor {
 struct Vertex {
     pos: (f32, f32),
     depth: f32,
+    uv: (f32, f32),
     color: [f32; 4],
 }
 
@@ -181,6 +184,8 @@ struct PipelineState {
     blend: BlendState,
     rasterizer: RasterizerState,
     depth_stencil_state: DepthStencilState,
+    textures_vs: [u32; MAX_TEXTURE_SLOTS],
+    textures_ps: [u32; MAX_TEXTURE_SLOTS],
     vertex_buffers: [VertexBufferBinding; MAX_VERTEX_BUFFER_SLOTS],
     index_buffer: Option<IndexBufferBinding>,
     input_layout: u32,
@@ -200,6 +205,8 @@ impl Default for PipelineState {
             blend: BlendState::default(),
             rasterizer: RasterizerState::default(),
             depth_stencil_state: DepthStencilState::default(),
+            textures_vs: [0; MAX_TEXTURE_SLOTS],
+            textures_ps: [0; MAX_TEXTURE_SLOTS],
             vertex_buffers: [VertexBufferBinding::default(); MAX_VERTEX_BUFFER_SLOTS],
             index_buffer: None,
             input_layout: 0,
@@ -406,6 +413,7 @@ impl AeroGpuSoftwareExecutor {
         }
         let pos_hash = fnv1a32("POSITION");
         let col_hash = fnv1a32("COLOR");
+        let tex_hash = fnv1a32("TEXCOORD");
 
         let mut out = ParsedInputLayout::default();
         for _ in 0..element_count {
@@ -433,6 +441,12 @@ impl AeroGpuSoftwareExecutor {
                 });
             } else if semantic_name_hash == col_hash {
                 out.color = Some(InputElement {
+                    input_slot,
+                    aligned_byte_offset,
+                    dxgi_format,
+                });
+            } else if semantic_name_hash == tex_hash {
+                out.texcoord0 = Some(InputElement {
                     input_slot,
                     aligned_byte_offset,
                     dxgi_format,
@@ -514,6 +528,32 @@ impl AeroGpuSoftwareExecutor {
             ]),
             _ => None,
         }
+    }
+
+    fn sample_texture_point_clamp(tex: &Texture2DResource, uv: (f32, f32)) -> [f32; 4] {
+        if tex.width == 0 || tex.height == 0 {
+            return [0.0, 0.0, 0.0, 1.0];
+        }
+
+        let u = uv.0.clamp(0.0, 1.0);
+        let v = uv.1.clamp(0.0, 1.0);
+
+        let mut x = (u * tex.width as f32).floor() as i32;
+        let mut y = (v * tex.height as f32).floor() as i32;
+
+        x = x.clamp(0, tex.width.saturating_sub(1) as i32);
+        y = y.clamp(0, tex.height.saturating_sub(1) as i32);
+
+        let off = y as usize * tex.row_pitch_bytes as usize + x as usize * 4;
+        let Some(rgba_u8) = Self::read_pixel_rgba_u8(tex, off) else {
+            return [0.0, 0.0, 0.0, 1.0];
+        };
+        [
+            rgba_u8[0] as f32 / 255.0,
+            rgba_u8[1] as f32 / 255.0,
+            rgba_u8[2] as f32 / 255.0,
+            rgba_u8[3] as f32 / 255.0,
+        ]
     }
 
     fn write_pixel_rgba_u8(tex: &mut Texture2DResource, off: usize, rgba: [u8; 4]) {
@@ -952,6 +992,159 @@ impl AeroGpuSoftwareExecutor {
         }
     }
 
+    fn rasterize_triangle_textured(
+        tex: &mut Texture2DResource,
+        src_tex: &Texture2DResource,
+        clip: (i32, i32, i32, i32),
+        v0: (f32, f32),
+        v1: (f32, f32),
+        v2: (f32, f32),
+        uv0: (f32, f32),
+        uv1: (f32, f32),
+        uv2: (f32, f32),
+        blend: BlendState,
+    ) {
+        fn edge(ax: f32, ay: f32, bx: f32, by: f32, px: f32, py: f32) -> f32 {
+            (bx - ax) * (py - ay) - (by - ay) * (px - ax)
+        }
+
+        let area = edge(v0.0, v0.1, v1.0, v1.1, v2.0, v2.1);
+        if area == 0.0 {
+            return;
+        }
+
+        let (sign, inv_area) = if area < 0.0 {
+            (-1.0f32, 1.0f32 / (-area))
+        } else {
+            (1.0f32, 1.0f32 / area)
+        };
+
+        let min_x = v0.0.min(v1.0).min(v2.0).floor() as i32;
+        let max_x = v0.0.max(v1.0).max(v2.0).ceil() as i32;
+        let min_y = v0.1.min(v1.1).min(v2.1).floor() as i32;
+        let max_y = v0.1.max(v1.1).max(v2.1).ceil() as i32;
+
+        let (clip_x0, clip_y0, clip_x1, clip_y1) = clip;
+        let start_x = min_x.max(clip_x0);
+        let end_x = max_x.min(clip_x1);
+        let start_y = min_y.max(clip_y0);
+        let end_y = max_y.min(clip_y1);
+        if start_x >= end_x || start_y >= end_y {
+            return;
+        }
+
+        for y in start_y..end_y {
+            for x in start_x..end_x {
+                let px = x as f32 + 0.5;
+                let py = y as f32 + 0.5;
+                let w0 = edge(v1.0, v1.1, v2.0, v2.1, px, py) * sign;
+                let w1 = edge(v2.0, v2.1, v0.0, v0.1, px, py) * sign;
+                let w2 = edge(v0.0, v0.1, v1.0, v1.1, px, py) * sign;
+                if w0 < 0.0 || w1 < 0.0 || w2 < 0.0 {
+                    continue;
+                }
+                let w0 = w0 * inv_area;
+                let w1 = w1 * inv_area;
+                let w2 = w2 * inv_area;
+
+                let uv = (
+                    uv0.0 * w0 + uv1.0 * w1 + uv2.0 * w2,
+                    uv0.1 * w0 + uv1.1 * w1 + uv2.1 * w2,
+                );
+                let out = Self::sample_texture_point_clamp(src_tex, uv);
+                Self::blend_and_write_pixel(tex, x, y, out, blend);
+            }
+        }
+    }
+
+    fn rasterize_triangle_depth_textured(
+        tex: &mut Texture2DResource,
+        depth_tex: &mut Texture2DResource,
+        src_tex: &Texture2DResource,
+        depth_state: DepthStencilState,
+        clip: (i32, i32, i32, i32),
+        v0: (f32, f32, f32),
+        v1: (f32, f32, f32),
+        v2: (f32, f32, f32),
+        uv0: (f32, f32),
+        uv1: (f32, f32),
+        uv2: (f32, f32),
+        blend: BlendState,
+    ) {
+        fn edge(ax: f32, ay: f32, bx: f32, by: f32, px: f32, py: f32) -> f32 {
+            (bx - ax) * (py - ay) - (by - ay) * (px - ax)
+        }
+
+        let area = edge(v0.0, v0.1, v1.0, v1.1, v2.0, v2.1);
+        if area == 0.0 {
+            return;
+        }
+
+        let (sign, inv_area) = if area < 0.0 {
+            (-1.0f32, 1.0f32 / (-area))
+        } else {
+            (1.0f32, 1.0f32 / area)
+        };
+
+        let min_x = v0.0.min(v1.0).min(v2.0).floor() as i32;
+        let max_x = v0.0.max(v1.0).max(v2.0).ceil() as i32;
+        let min_y = v0.1.min(v1.1).min(v2.1).floor() as i32;
+        let max_y = v0.1.max(v1.1).max(v2.1).ceil() as i32;
+
+        let (clip_x0, clip_y0, clip_x1, clip_y1) = clip;
+        let start_x = min_x.max(clip_x0);
+        let end_x = max_x.min(clip_x1);
+        let start_y = min_y.max(clip_y0);
+        let end_y = max_y.min(clip_y1);
+        if start_x >= end_x || start_y >= end_y {
+            return;
+        }
+
+        let depth_pitch = depth_tex.row_pitch_bytes as usize;
+
+        for y in start_y..end_y {
+            for x in start_x..end_x {
+                let px = x as f32 + 0.5;
+                let py = y as f32 + 0.5;
+                let w0 = edge(v1.0, v1.1, v2.0, v2.1, px, py) * sign;
+                let w1 = edge(v2.0, v2.1, v0.0, v0.1, px, py) * sign;
+                let w2 = edge(v0.0, v0.1, v1.0, v1.1, px, py) * sign;
+                if w0 < 0.0 || w1 < 0.0 || w2 < 0.0 {
+                    continue;
+                }
+                let w0 = w0 * inv_area;
+                let w1 = w1 * inv_area;
+                let w2 = w2 * inv_area;
+
+                let depth = (v0.2 * w0 + v1.2 * w1 + v2.2 * w2).clamp(0.0, 1.0);
+
+                let (Ok(xu), Ok(yu)) = (usize::try_from(x), usize::try_from(y)) else {
+                    continue;
+                };
+                let depth_off = yu * depth_pitch + xu * 4;
+                let Some((dst_depth, dst_stencil)) = Self::read_depth_stencil(depth_tex, depth_off)
+                else {
+                    continue;
+                };
+                if !Self::depth_compare(depth_state.depth_func, depth, dst_depth) {
+                    continue;
+                }
+
+                if depth_state.depth_write_enable {
+                    Self::write_depth_stencil(depth_tex, depth_off, depth, dst_stencil);
+                    depth_tex.dirty = true;
+                }
+
+                let uv = (
+                    uv0.0 * w0 + uv1.0 * w1 + uv2.0 * w2,
+                    uv0.1 * w0 + uv1.1 * w1 + uv2.1 * w2,
+                );
+                let out = Self::sample_texture_point_clamp(src_tex, uv);
+                Self::blend_and_write_pixel(tex, x, y, out, blend);
+            }
+        }
+    }
+
     fn draw_triangle_list(
         &mut self,
         regs: &mut AeroGpuRegs,
@@ -1026,17 +1219,28 @@ impl AeroGpuSoftwareExecutor {
             }
             let idx_u32 = idx as u32;
 
-            // D3D11 path: ILAY blob present and contains POSITION+COLOR.
+            // D3D11 path: ILAY blob present. MVP supports POSITION, optional COLOR, optional TEXCOORD0.
             if let Some(layout) = parsed_layout.as_ref() {
-                if let (Some(pos_el), Some(col_el)) = (layout.position, layout.color) {
+                if let Some(pos_el) = layout.position {
                     let pos = match self.read_vertex_elem_position(mem, pos_el, idx_u32) {
                         Some(v) => v,
                         None => continue,
                     };
-                    let color = match self.read_vertex_elem_f32x4(mem, col_el, idx_u32) {
-                        Some(v) => v,
-                        None => continue,
+                    let color = match layout.color {
+                        Some(col_el) => match self.read_vertex_elem_f32x4(mem, col_el, idx_u32) {
+                            Some(v) => v,
+                            None => continue,
+                        },
+                        None => [1.0, 1.0, 1.0, 1.0],
                     };
+                    let uv = match layout.texcoord0 {
+                        Some(uv_el) => match self.read_vertex_elem_f32x2(mem, uv_el, idx_u32) {
+                            Some(v) => v,
+                            None => continue,
+                        },
+                        None => (0.0, 0.0),
+                    };
+
                     // NDC -> viewport pixels.
                     let x = vp.x + (pos.0 * 0.5 + 0.5) * vp.width;
                     let y = vp.y + (1.0 - (pos.1 * 0.5 + 0.5)) * vp.height;
@@ -1044,6 +1248,7 @@ impl AeroGpuSoftwareExecutor {
                     vertices.push(Vertex {
                         pos: (x, y),
                         depth: z,
+                        uv,
                         color,
                     });
                     continue;
@@ -1065,10 +1270,157 @@ impl AeroGpuSoftwareExecutor {
         let blend = self.state.blend;
         let depth_state = self.state.depth_stencil_state;
         let ds_handle = self.resolve_handle(self.state.depth_stencil);
+        let ps_tex0 = self.resolve_handle(self.state.textures_ps[0]);
+        let wants_sampling = ps_tex0 != 0
+            && ps_tex0 != rt_handle
+            && ps_tex0 != ds_handle
+            && parsed_layout
+                .as_ref()
+                .and_then(|layout| layout.texcoord0)
+                .is_some();
 
         let can_depth_test = depth_state.depth_enable && ds_handle != 0 && ds_handle != rt_handle;
 
-        if can_depth_test {
+        if wants_sampling {
+            let Some(src_tex) = self.textures.remove(&ps_tex0) else {
+                Self::record_error(regs);
+                return;
+            };
+
+            let sampleable = matches!(
+                src_tex.format,
+                AeroGpuFormat::B8G8R8A8Unorm
+                    | AeroGpuFormat::B8G8R8X8Unorm
+                    | AeroGpuFormat::R8G8B8A8Unorm
+                    | AeroGpuFormat::R8G8B8X8Unorm
+            );
+            if !sampleable {
+                self.textures.insert(ps_tex0, src_tex);
+                Self::record_error(regs);
+                return;
+            }
+
+            if can_depth_test {
+                let Some(mut depth_tex) = self.textures.remove(&ds_handle) else {
+                    self.textures.insert(ps_tex0, src_tex);
+                    Self::record_error(regs);
+                    return;
+                };
+
+                if !matches!(
+                    depth_tex.format,
+                    AeroGpuFormat::D24UnormS8Uint | AeroGpuFormat::D32Float
+                ) {
+                    self.textures.insert(ds_handle, depth_tex);
+                    self.textures.insert(ps_tex0, src_tex);
+                    Self::record_error(regs);
+                    return;
+                }
+
+                // Clamp clip to depth texture bounds as well.
+                let clip_x1 = clip_x1.min(depth_tex.width as i32);
+                let clip_y1 = clip_y1.min(depth_tex.height as i32);
+                if clip_x0 >= clip_x1 || clip_y0 >= clip_y1 {
+                    self.textures.insert(ds_handle, depth_tex);
+                    self.textures.insert(ps_tex0, src_tex);
+                    return;
+                }
+
+                {
+                    let Some(tex) = self.textures.get_mut(&rt_handle) else {
+                        self.textures.insert(ds_handle, depth_tex);
+                        self.textures.insert(ps_tex0, src_tex);
+                        Self::record_error(regs);
+                        return;
+                    };
+
+                    for tri in vertices.chunks_exact(3) {
+                        if rast.cull_mode != cmd::AerogpuCullMode::None as u32 {
+                            let area = (tri[1].pos.0 - tri[0].pos.0)
+                                * (tri[2].pos.1 - tri[0].pos.1)
+                                - (tri[1].pos.1 - tri[0].pos.1) * (tri[2].pos.0 - tri[0].pos.0);
+                            if area != 0.0 {
+                                let front_facing = if rast.front_ccw {
+                                    area < 0.0
+                                } else {
+                                    area > 0.0
+                                };
+                                let culled = match rast.cull_mode {
+                                    x if x == cmd::AerogpuCullMode::Front as u32 => front_facing,
+                                    x if x == cmd::AerogpuCullMode::Back as u32 => !front_facing,
+                                    _ => false,
+                                };
+                                if culled {
+                                    continue;
+                                }
+                            }
+                        }
+
+                        Self::rasterize_triangle_depth_textured(
+                            tex,
+                            &mut depth_tex,
+                            &src_tex,
+                            depth_state,
+                            (clip_x0, clip_y0, clip_x1, clip_y1),
+                            (tri[0].pos.0, tri[0].pos.1, tri[0].depth),
+                            (tri[1].pos.0, tri[1].pos.1, tri[1].depth),
+                            (tri[2].pos.0, tri[2].pos.1, tri[2].depth),
+                            tri[0].uv,
+                            tri[1].uv,
+                            tri[2].uv,
+                            blend,
+                        );
+                    }
+
+                    tex.dirty = true;
+                }
+
+                self.textures.insert(ds_handle, depth_tex);
+            } else {
+                let Some(tex) = self.textures.get_mut(&rt_handle) else {
+                    self.textures.insert(ps_tex0, src_tex);
+                    Self::record_error(regs);
+                    return;
+                };
+                for tri in vertices.chunks_exact(3) {
+                    if rast.cull_mode != cmd::AerogpuCullMode::None as u32 {
+                        let area = (tri[1].pos.0 - tri[0].pos.0) * (tri[2].pos.1 - tri[0].pos.1)
+                            - (tri[1].pos.1 - tri[0].pos.1) * (tri[2].pos.0 - tri[0].pos.0);
+                        if area != 0.0 {
+                            let front_facing = if rast.front_ccw {
+                                area < 0.0
+                            } else {
+                                area > 0.0
+                            };
+                            let culled = match rast.cull_mode {
+                                x if x == cmd::AerogpuCullMode::Front as u32 => front_facing,
+                                x if x == cmd::AerogpuCullMode::Back as u32 => !front_facing,
+                                _ => false,
+                            };
+                            if culled {
+                                continue;
+                            }
+                        }
+                    }
+                    Self::rasterize_triangle_textured(
+                        tex,
+                        &src_tex,
+                        (clip_x0, clip_y0, clip_x1, clip_y1),
+                        tri[0].pos,
+                        tri[1].pos,
+                        tri[2].pos,
+                        tri[0].uv,
+                        tri[1].uv,
+                        tri[2].uv,
+                        blend,
+                    );
+                }
+
+                tex.dirty = true;
+            }
+
+            self.textures.insert(ps_tex0, src_tex);
+        } else if can_depth_test {
             let Some(mut depth_tex) = self.textures.remove(&ds_handle) else {
                 Self::record_error(regs);
                 return;
@@ -1214,6 +1566,7 @@ impl AeroGpuSoftwareExecutor {
         Some(Vertex {
             pos: (x, y),
             depth: z,
+            uv: (0.0, 0.0),
             color: [r, g, b, a],
         })
     }
@@ -1256,6 +1609,38 @@ impl AeroGpuSoftwareExecutor {
             0.0
         };
         Some((x, y, z))
+    }
+
+    fn read_vertex_elem_f32x2(
+        &mut self,
+        mem: &mut dyn MemoryBus,
+        elem: InputElement,
+        index: u32,
+    ) -> Option<(f32, f32)> {
+        if elem.dxgi_format != 16 {
+            // DXGI_FORMAT_R32G32_FLOAT
+            return None;
+        }
+        let slot = usize::try_from(elem.input_slot).ok()?;
+        if slot >= self.state.vertex_buffers.len() {
+            return None;
+        }
+        let binding = self.state.vertex_buffers[slot];
+        if binding.buffer == 0 {
+            return None;
+        }
+        let handle = self.resolve_handle(binding.buffer);
+        let stride = binding.stride_bytes as u64;
+        let start =
+            binding.offset_bytes as u64 + (index as u64) * stride + elem.aligned_byte_offset as u64;
+        let mut buf = [0u8; 8];
+        if !self.read_buffer_bytes(mem, handle, start, &mut buf) {
+            return None;
+        }
+        Some((
+            f32::from_bits(u32::from_le_bytes(buf[0..4].try_into().unwrap())),
+            f32::from_bits(u32::from_le_bytes(buf[4..8].try_into().unwrap())),
+        ))
     }
 
     fn read_vertex_elem_f32x4(
@@ -1602,6 +1987,16 @@ impl AeroGpuSoftwareExecutor {
                 if self.state.depth_stencil == handle || self.state.depth_stencil == resolved {
                     self.state.depth_stencil = 0;
                 }
+                self.state.textures_vs.iter_mut().for_each(|tex| {
+                    if *tex == handle || *tex == resolved {
+                        *tex = 0;
+                    }
+                });
+                self.state.textures_ps.iter_mut().for_each(|tex| {
+                    if *tex == handle || *tex == resolved {
+                        *tex = 0;
+                    }
+                });
                 for vb in self.state.vertex_buffers.iter_mut() {
                     if vb.buffer == handle || vb.buffer == resolved {
                         *vb = VertexBufferBinding::default();
@@ -2183,9 +2578,33 @@ impl AeroGpuSoftwareExecutor {
                     depth_func: u32::from_le(state.depth_func),
                 };
             }
-            cmd::AerogpuCmdOpcode::SetTexture
-            | cmd::AerogpuCmdOpcode::SetSamplerState
-            | cmd::AerogpuCmdOpcode::SetRenderState => {
+            cmd::AerogpuCmdOpcode::SetTexture => {
+                let packet_cmd = match Self::read_packed_prefix::<cmd::AerogpuCmdSetTexture>(packet)
+                {
+                    Some(v) => v,
+                    None => {
+                        Self::record_error(regs);
+                        return false;
+                    }
+                };
+
+                let shader_stage = u32::from_le(packet_cmd.shader_stage);
+                let slot = u32::from_le(packet_cmd.slot) as usize;
+                let texture = u32::from_le(packet_cmd.texture);
+                if slot >= MAX_TEXTURE_SLOTS {
+                    return true;
+                }
+                match shader_stage {
+                    x if x == cmd::AerogpuShaderStage::Vertex as u32 => {
+                        self.state.textures_vs[slot] = texture;
+                    }
+                    x if x == cmd::AerogpuShaderStage::Pixel as u32 => {
+                        self.state.textures_ps[slot] = texture;
+                    }
+                    _ => {}
+                }
+            }
+            cmd::AerogpuCmdOpcode::SetSamplerState | cmd::AerogpuCmdOpcode::SetRenderState => {
                 // Parsed but currently ignored by the software backend.
             }
             cmd::AerogpuCmdOpcode::SetRenderTargets => {
