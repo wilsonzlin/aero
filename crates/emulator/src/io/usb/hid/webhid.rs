@@ -910,4 +910,54 @@ mod tests {
             "expected Usage Minimum/Maximum (E0..E7) in descriptor: {desc:02x?}"
         );
     }
+
+    #[test]
+    fn deserialize_accepts_collection_type_as_collectiontype_numeric() {
+        let collections: Vec<HidCollectionInfo> = serde_json::from_str(
+            r#"[
+              {
+                "usagePage": 1,
+                "usage": 2,
+                "collectionType": 1,
+                "children": [],
+                "inputReports": [],
+                "outputReports": [],
+                "featureReports": []
+              }
+            ]"#,
+        )
+        .expect("deserialize collectionType numeric form");
+
+        let desc = synthesize_report_descriptor(&collections).unwrap();
+        assert!(!desc.is_empty());
+        assert!(
+            desc.windows(2).any(|w| w == [0xA1, 0x01]),
+            "expected Collection (Application) encoding (0xa1 0x01): {desc:02x?}"
+        );
+    }
+
+    #[test]
+    fn deserialize_accepts_collection_type_as_type_string_alias() {
+        let collections: Vec<HidCollectionInfo> = serde_json::from_str(
+            r#"[
+              {
+                "usagePage": 1,
+                "usage": 2,
+                "type": "application",
+                "children": [],
+                "inputReports": [],
+                "outputReports": [],
+                "featureReports": []
+              }
+            ]"#,
+        )
+        .expect("deserialize type string alias form");
+
+        let desc = synthesize_report_descriptor(&collections).unwrap();
+        assert!(!desc.is_empty());
+        assert!(
+            desc.windows(2).any(|w| w == [0xA1, 0x01]),
+            "expected Collection (Application) encoding (0xa1 0x01): {desc:02x?}"
+        );
+    }
 }

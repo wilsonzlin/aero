@@ -58,7 +58,7 @@ For each `HIDCollectionInfo`:
 1. Emit the collection “header” items:
    - `Usage Page` (from `usagePage`)
    - `Usage` (from `usage`)
-   - `Collection(type)` (from `type`)
+   - `Collection(type)` (from `collectionType`)
 2. Inside the collection, emit the report definitions in a deterministic grouping:
    - all `inputReports`, then all `outputReports`, then all `featureReports`
    - within a given `HIDReportInfo`, preserve the order of `items` (this defines bit/field layout)
@@ -72,12 +72,12 @@ Because WebHID does not expose the original descriptor byte stream, this groupin
 
 ### Collections (`HIDCollectionInfo`)
 
-`HIDCollectionInfo.usagePage/usage/type/children` maps to:
+`HIDCollectionInfo.usagePage/usage/collectionType/children` maps to:
 
 ```
 Usage Page (usagePage)
 Usage (usage)
-Collection (type)
+Collection (collectionType)
   …contents…
 End Collection
 ```
@@ -89,7 +89,7 @@ Notes:
 
 Collection type codes (as used by the WebHID API, our normalization layer, and by HID):
 
-| WebHID `type` | `Collection(...)` byte |
+| WebHID string enum (`type`) | `collectionType` / `Collection(...)` byte |
 | --- | ---: |
 | `physical` | `0x00` |
 | `application` | `0x01` |
@@ -101,10 +101,8 @@ Collection type codes (as used by the WebHID API, our normalization layer, and b
 
 JSON note:
 
-- In our normalized metadata JSON we store the numeric HID `collectionType` code (`0..=6`) that matches
-  the `Collection(...)` main item payload.
-- For resilience, the Rust deserializer also accepts the WebHID field name `type` (either the string
-  enum like `"application"` or a numeric code).
+- Normalized JSON emitted by `webhid_normalize.ts` uses a numeric `collectionType` code (`0..=6`), matching the HID `Collection(...)` payload byte.
+- For compatibility and debugging, Rust also accepts the WebHID field name `type` as an alias for `collectionType` (either the string enum like `"application"` or a numeric code `0..=6`).
 
 ### Reports (`HIDReportInfo`)
 
