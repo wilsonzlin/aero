@@ -89,12 +89,26 @@ To inspect what was actually written after install, you can query the adapter’
 :: Find the AeroGPU adapter instance key under the Display class (note the \0000 / \0001 path):
 reg query "HKLM\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}" /s /f "AeroGPU Display Adapter" /d
 
-:: Then query values (replace <KEY> with the path printed above):
-reg query "<KEY>" /v InstalledDisplayDrivers
-reg query "<KEY>" /v InstalledDisplayDriversWow
-reg query "<KEY>" /v UserModeDriverName
-reg query "<KEY>" /v UserModeDriverNameWow
+:: Then query values (replace <CLASSKEY> with the path printed above):
+reg query "<CLASSKEY>" /v VideoID
+reg query "<CLASSKEY>" /v InstalledDisplayDrivers
+reg query "<CLASSKEY>" /v InstalledDisplayDriversWow
+reg query "<CLASSKEY>" /v UserModeDriverName
+reg query "<CLASSKEY>" /v UserModeDriverNameWow
 ```
+
+On some systems, the UMD registration values are surfaced under the `Control\Video` key for the adapter. If `InstalledDisplayDrivers` / `UserModeDriverName` aren’t present under `<CLASSKEY>`, use the `VideoID` value to locate:
+
+```bat
+:: Replace <VIDEOID> with the GUID printed by the VideoID query above (including braces):
+set VIDEOID=<VIDEOID>
+reg query "HKLM\SYSTEM\CurrentControlSet\Control\Video\%VIDEOID%\0000" /v InstalledDisplayDrivers
+reg query "HKLM\SYSTEM\CurrentControlSet\Control\Video\%VIDEOID%\0000" /v InstalledDisplayDriversWow
+reg query "HKLM\SYSTEM\CurrentControlSet\Control\Video\%VIDEOID%\0000" /v UserModeDriverName
+reg query "HKLM\SYSTEM\CurrentControlSet\Control\Video\%VIDEOID%\0000" /v UserModeDriverNameWow
+```
+
+`packaging/win7/verify_umd_registration.cmd` performs this lookup automatically and prints the resolved registry key it is using.
 
 ## 2) Confirm the PCI Hardware ID(s) (required)
 

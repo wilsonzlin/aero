@@ -82,20 +82,25 @@ echo INFO: Searching for AeroGPU adapter key under:
 echo   %CLASSKEY%
 echo.
 
-set "AEROGPU_KEY="
+set "AEROGPU_CLASS_KEY="
 for /f "delims=" %%K in ('"%REGEXE%" query "%CLASSKEY%" /s /f "AeroGPU Display Adapter" /d 2^>nul ^| findstr /i /r "^HKEY_"') do (
-  set "AEROGPU_KEY=%%K"
+  set "AEROGPU_CLASS_KEY=%%K"
   goto :found_key
 )
 
 :found_key
-if not defined AEROGPU_KEY (
+if not defined AEROGPU_CLASS_KEY (
   echo ERROR: Could not locate the AeroGPU display adapter registry key.
   echo ERROR: Ensure the AeroGPU driver is installed and Device Manager shows "AeroGPU Display Adapter".
   exit /b 1
 )
 
-echo INFO: Found adapter key:
+set "AEROGPU_KEY=%AEROGPU_CLASS_KEY%"
+call :resolve_umd_reg_key
+
+echo INFO: Found adapter class key:
+echo   %AEROGPU_CLASS_KEY%
+echo INFO: Using UMD registry key:
 echo   %AEROGPU_KEY%
 
 call :query_value InstalledDisplayDrivers
@@ -140,6 +145,58 @@ exit /b 0
 :usage_fail
 call :usage
 exit /b 1
+
+rem -----------------------------------------------------------------------------
+:resolve_umd_reg_key
+rem HKR for display drivers is usually the Display class key instance, but some
+rem setups surface the UMD registration values under Control\Video\{VideoID}\0000.
+rem If the expected values aren't present under the class key, fall back via
+rem VideoID.
+
+set "NEED_VIDEO_FALLBACK=0"
+"%REGEXE%" query "%AEROGPU_CLASS_KEY%" /v InstalledDisplayDrivers >nul 2>nul
+if errorlevel 1 set "NEED_VIDEO_FALLBACK=1"
+if "%REQUIRE_DX11%"=="1" (
+  "%REGEXE%" query "%AEROGPU_CLASS_KEY%" /v UserModeDriverName >nul 2>nul
+  if errorlevel 1 set "NEED_VIDEO_FALLBACK=1"
+)
+
+if "%NEED_VIDEO_FALLBACK%"=="0" (
+  set "AEROGPU_KEY=%AEROGPU_CLASS_KEY%"
+  exit /b 0
+)
+
+set "VIDEOID="
+for /f "skip=1 tokens=3" %%G in ('"%REGEXE%" query "%AEROGPU_CLASS_KEY%" /v VideoID 2^>nul') do (
+  set "VIDEOID=%%G"
+  goto :got_videoid
+)
+
+:got_videoid
+if not defined VIDEOID (
+  exit /b 0
+)
+
+set "VIDEO_ROOT=HKLM\SYSTEM\CurrentControlSet\Control\Video\%VIDEOID%"
+set "VIDEO_KEY="
+for %%I in (0000 0001 0002 0003 0004 0005 0006 0007 0008 0009) do (
+  if not defined VIDEO_KEY (
+    "%REGEXE%" query "%VIDEO_ROOT%\%%I" /v InstalledDisplayDrivers >nul 2>nul
+    if not errorlevel 1 (
+      if "%REQUIRE_DX11%"=="1" (
+        "%REGEXE%" query "%VIDEO_ROOT%\%%I" /v UserModeDriverName >nul 2>nul
+        if not errorlevel 1 set "VIDEO_KEY=%VIDEO_ROOT%\%%I"
+      ) else (
+        set "VIDEO_KEY=%VIDEO_ROOT%\%%I"
+      )
+    )
+  )
+)
+
+if defined VIDEO_KEY (
+  set "AEROGPU_KEY=%VIDEO_KEY%"
+)
+exit /b 0
 
 rem -----------------------------------------------------------------------------
 :check_file_required
