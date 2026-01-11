@@ -40,7 +40,9 @@ class Pkg:
 def cargo_metadata() -> dict:
     try:
         proc = subprocess.run(
-            ["cargo", "metadata", "--format-version", "1", "--no-deps"],
+            # Use `--locked` to enforce the repository-wide Cargo.lock policy (ADR 0012)
+            # and to ensure CI doesn't silently re-resolve dependencies if a lockfile is stale.
+            ["cargo", "metadata", "--locked", "--format-version", "1", "--no-deps"],
             check=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
