@@ -37,7 +37,8 @@ const DEFAULT_MAX_VERTEX_SLOTS: usize = MAX_INPUT_SLOTS as usize;
 // slots up to 127 even if only a smaller subset is used by a given shader.
 const DEFAULT_MAX_TEXTURE_SLOTS: usize = 128;
 const DEFAULT_MAX_SAMPLER_SLOTS: usize = 16;
-const DEFAULT_MAX_CONSTANT_BUFFER_SLOTS: usize = 16;
+// D3D10/11 exposes 14 constant buffer slots (0..13) per shader stage.
+const DEFAULT_MAX_CONSTANT_BUFFER_SLOTS: usize = 14;
 
 // Opcode constants from `aerogpu_cmd.h` (via the canonical `aero-protocol` enum).
 const OPCODE_NOP: u32 = AerogpuCmdOpcode::Nop as u32;

@@ -94,7 +94,7 @@ fn aerogpu_cmd_set_constant_buffers_rejects_slot_out_of_range() {
 
         let start = begin_cmd(&mut stream, AerogpuCmdOpcode::SetConstantBuffers as u32);
         stream.extend_from_slice(&0u32.to_le_bytes()); // shader_stage = vertex
-        stream.extend_from_slice(&16u32.to_le_bytes()); // start_slot (0..15 supported)
+        stream.extend_from_slice(&14u32.to_le_bytes()); // start_slot (0..13 supported)
         stream.extend_from_slice(&1u32.to_le_bytes()); // buffer_count
         stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
                                                        // aerogpu_constant_buffer_binding (16 bytes)
