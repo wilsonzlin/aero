@@ -273,4 +273,3 @@ async fn dns_fail_metric_increments_on_invalid_hostname() {
     ws_tx.send(Message::Close(None)).await.unwrap();
     proxy.shutdown().await;
 }
-

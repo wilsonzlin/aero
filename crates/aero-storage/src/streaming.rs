@@ -1313,7 +1313,9 @@ fn validators_match(expected: &str, actual: &str) -> bool {
     let expected_weak = expected
         .strip_prefix("W/")
         .or_else(|| expected.strip_prefix("w/"));
-    let actual_weak = actual.strip_prefix("W/").or_else(|| actual.strip_prefix("w/"));
+    let actual_weak = actual
+        .strip_prefix("W/")
+        .or_else(|| actual.strip_prefix("w/"));
 
     match (expected_weak, actual_weak) {
         (Some(expected), Some(actual)) => expected == actual,
