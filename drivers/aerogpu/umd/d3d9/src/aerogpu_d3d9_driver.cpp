@@ -1356,7 +1356,7 @@ HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
   }
 
   if (dev->fvf != kSupportedFvfXyzrhwDiffuse) {
-    return E_NOTIMPL;
+    return D3DERR_INVALIDCALL;
   }
 
   if (!dev->fixedfunc_vs) {
@@ -4692,7 +4692,7 @@ HRESULT AEROGPU_D3D9_CALL device_set_fvf(AEROGPU_D3D9DDI_HDEVICE hDevice, uint32
   }
 
   if (fvf != 0 && fvf != kSupportedFvfXyzrhwDiffuse) {
-    return trace.ret(E_NOTIMPL);
+    return trace.ret(D3DERR_INVALIDCALL);
   }
 
   if (fvf == 0) {
