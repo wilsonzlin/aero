@@ -3841,13 +3841,24 @@ void AEROGPU_APIENTRY Map(D3D10DDI_HDEVICE hDevice,
                           const D3D10DDIARG_MAP* pMap,
                           D3D10DDI_MAPPED_SUBRESOURCE* pOut) {
   AEROGPU_D3D10_11_LOG("pfnMap(D3D10DDIARG_MAP) subresource=%u",
-                       static_cast<unsigned>(pMap ? pMap->Subresource : 0));
+                        static_cast<unsigned>(pMap ? pMap->Subresource : 0));
+  uint32_t map_flags_for_log = 0;
+  if (pMap) {
+    __if_exists(D3D10DDIARG_MAP::MapFlags) {
+      map_flags_for_log = static_cast<uint32_t>(pMap->MapFlags);
+    }
+    __if_not_exists(D3D10DDIARG_MAP::MapFlags) {
+      __if_exists(D3D10DDIARG_MAP::Flags) {
+        map_flags_for_log = static_cast<uint32_t>(pMap->Flags);
+      }
+    }
+  }
   AEROGPU_D3D10_TRACEF_VERBOSE("Map2 hDevice=%p hResource=%p sub=%u type=%u flags=0x%X",
                                hDevice.pDrvPrivate,
                                (pMap && pMap->hResource.pDrvPrivate) ? pMap->hResource.pDrvPrivate : nullptr,
                                pMap ? static_cast<unsigned>(pMap->Subresource) : 0u,
                                pMap ? static_cast<unsigned>(pMap->MapType) : 0u,
-                               pMap ? static_cast<unsigned>(pMap->Flags) : 0u);
+                               static_cast<unsigned>(map_flags_for_log));
   if (!hDevice.pDrvPrivate || !pMap || !pOut) {
     return;
   }
@@ -3870,7 +3881,15 @@ void AEROGPU_APIENTRY Map(D3D10DDI_HDEVICE hDevice,
   }
 
   const uint32_t map_type_u = static_cast<uint32_t>(pMap->MapType);
-  const uint32_t map_flags_u = static_cast<uint32_t>(pMap->Flags);
+  uint32_t map_flags_u = 0;
+  __if_exists(D3D10DDIARG_MAP::MapFlags) {
+    map_flags_u = static_cast<uint32_t>(pMap->MapFlags);
+  }
+  __if_not_exists(D3D10DDIARG_MAP::MapFlags) {
+    __if_exists(D3D10DDIARG_MAP::Flags) {
+      map_flags_u = static_cast<uint32_t>(pMap->Flags);
+    }
+  }
 
   if (pMap->Subresource != 0) {
     set_error(dev, E_NOTIMPL);
