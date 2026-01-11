@@ -89,7 +89,17 @@ impl Port {
         // While in reset, the port enable bit reads as 0 and writes are ignored until
         // the reset sequence completes.
         if !self.reset {
-            self.enabled = value & PED != 0;
+            let want_enabled = value & PED != 0;
+            // Hardware only allows enabling a port when a device is actually present.
+            if want_enabled {
+                if self.connected && !self.enabled {
+                    self.enabled = true;
+                    self.enable_change = true;
+                }
+            } else if self.enabled {
+                self.enabled = false;
+                self.enable_change = true;
+            }
         }
     }
 

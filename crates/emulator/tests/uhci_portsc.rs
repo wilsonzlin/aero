@@ -122,3 +122,19 @@ fn uhci_portsc_connect_event_disables_previously_enabled_port() {
     // Port is disabled, so the device should no longer be routable.
     assert!(hub.device_mut_for_address(0).is_none());
 }
+
+#[test]
+fn uhci_portsc_write_enable_ignored_when_disconnected() {
+    const PORTSC_CCS: u16 = 1 << 0;
+    const PORTSC_PED: u16 = 1 << 2;
+    const PORTSC_PEDC: u16 = 1 << 3;
+
+    let mut hub = RootHub::new();
+
+    // With no device present, attempting to enable the port should have no effect.
+    hub.write_portsc(0, PORTSC_PED);
+    let st = hub.read_portsc(0);
+    assert_eq!(st & PORTSC_CCS, 0);
+    assert_eq!(st & PORTSC_PED, 0);
+    assert_eq!(st & PORTSC_PEDC, 0);
+}
