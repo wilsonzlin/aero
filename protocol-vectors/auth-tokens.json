@@ -355,6 +355,20 @@
         "expectError": true
       },
       {
+        "name": "wrongType.typNumber.header",
+        "secret": "test-jwt-secret",
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6MTIzfQ.eyJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MTcwMDAwMDA2MCwic2lkIjoic2lkLXR5cC1udW1iZXIifQ.n64W1k_-5HzUhCB_wGpgY6hB3Gl2bLCLSLBhBCV4VIg",
+        "nowSec": 1700000000,
+        "expectError": true
+      },
+      {
+        "name": "wrongType.typNull.header",
+        "secret": "test-jwt-secret",
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6bnVsbH0.eyJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MTcwMDAwMDA2MCwic2lkIjoic2lkLXR5cC1udW1iZXIifQ.j2lf4u6lZM4p6bpagzYeGHdLfqhkxGbhiSIbxEanomc",
+        "nowSec": 1700000000,
+        "expectError": true
+      },
+      {
         "name": "invalidBase64url.header",
         "secret": "test-jwt-secret",
         "token": "invalid!header.eyJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MTcwMDAwMDA2MCwic2lkIjoic2lkLTEyMzQ1Njc4OTAiLCJvcmlnaW4iOiJodHRwczovL2FwcC5leGFtcGxlLnRlc3QiLCJhdWQiOiJhZXJvLXVkcC1yZWxheSIsImlzcyI6ImFlcm8tZ2F0ZXdheSJ9.7CrM13ZYq4JGjRp27hVmgm9YwPutHrS9BUS3mJpgB3c",

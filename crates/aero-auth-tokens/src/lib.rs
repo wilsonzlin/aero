@@ -140,6 +140,11 @@ pub fn verify_hs256_jwt(token: &str, secret: &[u8], now_sec: i64) -> Option<Clai
     if alg != "HS256" {
         return None;
     }
+    if let Some(typ_val) = header_obj.get("typ") {
+        if !typ_val.is_string() {
+            return None;
+        }
+    }
 
     let provided_sig = decode_base64url(sig_b64)?;
     let expected_sig = hmac_sha256(

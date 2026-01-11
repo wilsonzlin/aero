@@ -46,15 +46,28 @@ func (v JWTVerifier) VerifyAndExtractClaims(token string) (JWTClaims, error) {
 		return JWTClaims{}, ErrInvalidCredentials
 	}
 
-	var header struct {
-		Alg string `json:"alg"`
-		Typ string `json:"typ,omitempty"`
-	}
+	var header map[string]any
 	if err := json.Unmarshal(headerJSON, &header); err != nil {
 		return JWTClaims{}, ErrInvalidCredentials
 	}
-	if header.Alg != "HS256" {
+	algRaw, ok := header["alg"]
+	if !ok {
+		return JWTClaims{}, ErrInvalidCredentials
+	}
+	alg, ok := algRaw.(string)
+	if !ok {
+		return JWTClaims{}, ErrInvalidCredentials
+	}
+	if alg != "HS256" {
 		return JWTClaims{}, ErrUnsupportedJWT
+	}
+	if typRaw, ok := header["typ"]; ok {
+		if typRaw == nil {
+			return JWTClaims{}, ErrInvalidCredentials
+		}
+		if _, ok := typRaw.(string); !ok {
+			return JWTClaims{}, ErrInvalidCredentials
+		}
 	}
 
 	payloadJSON, err := base64.RawURLEncoding.DecodeString(parts[1])
