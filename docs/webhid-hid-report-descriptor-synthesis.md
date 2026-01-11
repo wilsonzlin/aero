@@ -146,11 +146,12 @@ Each `HIDReportItem` maps to:
 We treat the WebHID `HIDReportInfo` that the item came from as the authoritative “main item kind” (`Input` vs `Output` vs `Feature`).
 
 WebHID exposes the following boolean properties on `HIDReportItem` (as defined by the WICG spec and
-exposed by Chromium; note that some WebHID type definitions use `wrap` instead of `isWrapped`):
+exposed by Chromium; note that some WebHID type definitions omit/rename fields, e.g. `isRelative`
+may be missing (it is redundant with `isAbsolute`) and `wrap` may be used instead of `isWrapped`):
 
 - `isConstant`
 - `isArray`
-- `isAbsolute` / `isRelative` (redundant but both are provided)
+- `isAbsolute` / `isRelative` (redundant; `isRelative` may be omitted and can be derived as `!isAbsolute`)
 - `isWrapped`
 - `isLinear`
 - `hasPreferredState`
