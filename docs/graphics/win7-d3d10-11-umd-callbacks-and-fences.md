@@ -262,6 +262,7 @@ At a “flush boundary” (e.g. `D3D10DDI_DEVICEFUNCS::pfnFlush` or `D3D11DDI_DE
      - `PatchLocationListSize = M`, `pPatchLocationList = get.pPatchLocationList`
      - `pDmaBufferPrivateData = get.pDmaBufferPrivateData`
    - Call `pfnRenderCb(&render)`.
+   - On success, read back `render.NewFenceValue` and treat it as the fence value for this submission (store it as “last submitted”, and use it to update per-resource “last write fence” tracking).
 
 ### 3.3 Minimal call sequence (present submission)
 
@@ -271,6 +272,7 @@ In `D3D10DDI_DEVICEFUNCS::pfnPresent` (called by DXGI on Win7 for both D3D10 and
 2. Acquire a command buffer via `pfnGetCommandBufferCb`.
 3. Encode your present command(s) into the DMA buffer (e.g. an `AEROGPU_CMD_PRESENT` packet referencing the backbuffer allocation index).
 4. Submit via `pfnPresentCb(&present)`.
+5. On success, read back `present.NewFenceValue` and treat it as the fence value for the present submission (useful for throttling and for “present implies completion” queries).
 
 ### 3.4 Patch lists: “empty is valid” if you design for it
 
@@ -332,6 +334,7 @@ Important fields:
 **How to pick the target fence value:**
 
 - Track a monotonically increasing fence/timeline value per submission.
+  - On Win7, this is typically the `NewFenceValue` returned by the last `pfnRenderCb` / `pfnPresentCb` submission that produced the data you need.
 - Store “last write fence” on resources that are written by the GPU.
 - When mapping for read, wait for `completed >= last_write_fence`.
 
@@ -410,8 +413,8 @@ This ensures the WOW64 layer performs the correct pointer-size translation for t
 ## 6) Optional: Win7 WDK layout probe tool (sizeof/offsetof)
 
 To catch header/version mismatches early (especially when switching between SDKs/WDKs or x86/x64),
-the repo includes a small Windows-only probe you can build with a Win7-capable WDK/SDK toolchain
-(WDK10+ supported):
+the repo includes a small Windows-only probe you can build with **WDK 7.1** (or any toolchain
+that provides the same Win7-era D3D10/11 UMD DDI headers):
 
 - `drivers/aerogpu/tools/win7_wdk_probe/`
 
