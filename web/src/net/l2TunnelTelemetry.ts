@@ -14,11 +14,14 @@ export type L2TunnelTelemetryOptions = Readonly<{
 }>;
 
 export class L2TunnelTelemetry {
+  private readonly opts: L2TunnelTelemetryOptions;
   private connection: L2TunnelForwarderConnectionState = "closed";
   private lastStats: L2TunnelForwarderStats | null = null;
   private nextLogDeadlineMs = 0;
 
-  constructor(private readonly opts: L2TunnelTelemetryOptions) {}
+  constructor(opts: L2TunnelTelemetryOptions) {
+    this.opts = opts;
+  }
 
   get connectionState(): L2TunnelForwarderConnectionState {
     return this.connection;

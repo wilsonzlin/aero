@@ -122,6 +122,8 @@ export function formatL2TunnelForwarderLog(args: {
 }
 
 export class L2TunnelForwarder {
+  private readonly netTx: RingBuffer;
+  private readonly netRx: RingBuffer;
   private readonly maxFramesPerTick: number;
   private readonly maxPendingRxBytes: number;
   private readonly onTunnelEvent: ((ev: Exclude<L2TunnelEvent, { type: "frame" }>) => void) | null;
@@ -150,10 +152,12 @@ export class L2TunnelForwarder {
   readonly sink: L2TunnelSink;
 
   constructor(
-    private readonly netTx: RingBuffer,
-    private readonly netRx: RingBuffer,
+    netTx: RingBuffer,
+    netRx: RingBuffer,
     opts: L2TunnelForwarderOptions = {},
   ) {
+    this.netTx = netTx;
+    this.netRx = netRx;
     const maxFramesPerTick = opts.maxFramesPerTick ?? Number.POSITIVE_INFINITY;
     const maxPendingRxBytes = opts.maxPendingRxBytes ?? DEFAULT_MAX_PENDING_RX_BYTES;
     validateNonNegativeInt("maxFramesPerTick", maxFramesPerTick === Number.POSITIVE_INFINITY ? 0 : maxFramesPerTick);

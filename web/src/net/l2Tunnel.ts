@@ -205,6 +205,7 @@ function decodePeerErrorPayload(payload: Uint8Array): { code?: number; message: 
 }
 
 abstract class BaseL2TunnelClient implements L2TunnelClient {
+  protected readonly sink: L2TunnelSink;
   protected readonly opts: RequiredOptions;
   protected readonly token: string | undefined;
   protected readonly tokenTransport: L2TunnelTokenTransport;
@@ -227,9 +228,10 @@ abstract class BaseL2TunnelClient implements L2TunnelClient {
   private closing = false;
 
   constructor(
-    protected readonly sink: L2TunnelSink,
+    sink: L2TunnelSink,
     opts: L2TunnelClientOptions = {},
   ) {
+    this.sink = sink;
     const maxQueuedBytes = opts.maxQueuedBytes ?? DEFAULT_MAX_QUEUED_BYTES;
     const maxBufferedAmount = opts.maxBufferedAmount ?? DEFAULT_MAX_BUFFERED_AMOUNT;
     const maxFrameSize = opts.maxFrameSize ?? DEFAULT_MAX_FRAME_SIZE;
@@ -544,13 +546,15 @@ abstract class BaseL2TunnelClient implements L2TunnelClient {
  */
 export class WebSocketL2TunnelClient extends BaseL2TunnelClient {
   private ws: WebSocket | null = null;
+  private readonly gatewayBaseUrl: string;
 
   constructor(
-    private readonly gatewayBaseUrl: string,
+    gatewayBaseUrl: string,
     sink: L2TunnelSink,
     opts: L2TunnelClientOptions = {},
   ) {
     super(sink, opts);
+    this.gatewayBaseUrl = gatewayBaseUrl;
 
     if (this.token !== undefined && this.tokenTransport !== "query") {
       const proto = `${L2_TUNNEL_TOKEN_SUBPROTOCOL_PREFIX}${this.token}`;
@@ -672,12 +676,15 @@ export class WebSocketL2TunnelClient extends BaseL2TunnelClient {
  * See `docs/adr/0013-networking-l2-tunnel.md` and `docs/l2-tunnel-protocol.md`.
  */
 export class WebRtcL2TunnelClient extends BaseL2TunnelClient {
+  private readonly channel: RTCDataChannel;
+
   constructor(
-    private readonly channel: RTCDataChannel,
+    channel: RTCDataChannel,
     sink: L2TunnelSink,
     opts: L2TunnelClientOptions = {},
   ) {
     super(sink, opts);
+    this.channel = channel;
 
     assertL2TunnelDataChannelSemantics(channel);
     channel.binaryType = "arraybuffer";
