@@ -96,7 +96,7 @@ const MOCK_COLLECTIONS: HidCollectionInfo[] = [
 
 test("normalizeCollections: WebHID normalized metadata JSON contract", () => {
   const expected = readFixture();
-  assert.deepStrictEqual(normalizeCollections(MOCK_COLLECTIONS), expected);
+  assert.deepStrictEqual(normalizeCollections(MOCK_COLLECTIONS, { validate: true }), expected);
 });
 
 test("normalizeCollections: derives usageMinimum/Maximum from usages for small ranges", () => {
