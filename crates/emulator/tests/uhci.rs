@@ -45,6 +45,7 @@ const TD_CTRL_SPD: u32 = 1 << 29;
 const USB_REQUEST_GET_DESCRIPTOR: u8 = 0x06;
 const USB_DESCRIPTOR_TYPE_DEVICE: u8 = 0x01;
 const USB_DESCRIPTOR_TYPE_CONFIGURATION: u8 = 0x02;
+const USB_DESCRIPTOR_TYPE_HID_REPORT: u8 = 0x22;
 
 // UHCI root hub PORTSC bits (Intel UHCI spec / Linux uhci-hcd).
 const PORTSC_CCS: u16 = 0x0001;
@@ -467,7 +468,10 @@ fn uhci_control_get_descriptor_device_runtime_descriptor() {
     let config_desc = vec![0x09, 0x02, 0x09, 0x00, 0x00, 0x01, 0x00, 0x80, 50];
     uhci.controller.hub_mut().attach(
         0,
-        Box::new(DynamicDescriptorDevice::new(device_desc.clone(), config_desc)),
+        Box::new(DynamicDescriptorDevice::new(
+            device_desc.clone(),
+            config_desc.clone(),
+        )),
     );
     reset_port(&mut uhci, &mut mem, 0x10);
 
@@ -509,6 +513,52 @@ fn uhci_control_get_descriptor_device_runtime_descriptor() {
     assert_eq!(
         mem.slice(BUF_DATA as usize..BUF_DATA as usize + 18),
         device_desc
+    );
+
+    // GET_DESCRIPTOR(Configuration) to ensure the config descriptor can also be provided at runtime.
+    let config_len = config_desc.len() as u16;
+    mem.write_physical(
+        BUF_SETUP as u64,
+        &[
+            0x80,
+            USB_REQUEST_GET_DESCRIPTOR,
+            0x00,
+            USB_DESCRIPTOR_TYPE_CONFIGURATION,
+            0x00,
+            0x00,
+            (config_len & 0x00ff) as u8,
+            (config_len >> 8) as u8,
+        ],
+    );
+    write_td(
+        &mut mem,
+        TD0,
+        TD1,
+        td_status(true, false),
+        td_token(PID_SETUP, 0, 0, 0, 8),
+        BUF_SETUP,
+    );
+    write_td(
+        &mut mem,
+        TD1,
+        TD2,
+        td_status(true, false),
+        td_token(PID_IN, 0, 0, 1, config_desc.len()),
+        BUF_DATA,
+    );
+    write_td(
+        &mut mem,
+        TD2,
+        1,
+        td_status(true, true),
+        td_token(PID_OUT, 0, 0, 1, 0),
+        0,
+    );
+    run_one_frame(&mut uhci, &mut mem, TD0);
+
+    assert_eq!(
+        mem.slice(BUF_DATA as usize..BUF_DATA as usize + config_desc.len()),
+        config_desc
     );
 }
 
@@ -627,13 +677,14 @@ fn uhci_interrupt_in_out_passthrough_device_queues_reports() {
         0xc0, // End Collection
     ];
 
+    let report_len = report_descriptor.len() as u16;
     let passthrough = UsbHidPassthroughHandle::new(
         0x1234,
         0x5678,
         "Vendor".to_string(),
         "Product".to_string(),
         None,
-        report_descriptor,
+        report_descriptor.clone(),
         true,
         None,
         None,
@@ -692,6 +743,51 @@ fn uhci_interrupt_in_out_passthrough_device_queues_reports() {
         0,
     );
     run_one_frame(&mut uhci, &mut mem, TD0);
+
+    // Fetch the (runtime-provided) HID report descriptor.
+    mem.write_physical(
+        BUF_SETUP as u64,
+        &[
+            0x81,
+            USB_REQUEST_GET_DESCRIPTOR,
+            0x00,
+            USB_DESCRIPTOR_TYPE_HID_REPORT,
+            0x00,
+            0x00,
+            (report_len & 0x00ff) as u8,
+            (report_len >> 8) as u8,
+        ],
+    );
+    write_td(
+        &mut mem,
+        TD0,
+        TD1,
+        td_status(true, false),
+        td_token(PID_SETUP, 5, 0, 0, 8),
+        BUF_SETUP,
+    );
+    write_td(
+        &mut mem,
+        TD1,
+        TD2,
+        td_status(true, false),
+        td_token(PID_IN, 5, 0, 1, report_descriptor.len()),
+        BUF_DATA,
+    );
+    write_td(
+        &mut mem,
+        TD2,
+        1,
+        td_status(true, true),
+        td_token(PID_OUT, 5, 0, 1, 0),
+        0,
+    );
+    run_one_frame(&mut uhci, &mut mem, TD0);
+
+    assert_eq!(
+        mem.slice(BUF_DATA as usize..BUF_DATA as usize + report_descriptor.len()),
+        report_descriptor
+    );
 
     passthrough.push_input_report(1, &[0xaa, 0xbb]);
 
