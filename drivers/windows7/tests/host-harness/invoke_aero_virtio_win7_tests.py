@@ -19,11 +19,14 @@ Use `--virtio-transitional` to opt back into QEMU's default transitional devices
 for older QEMU builds (or when intentionally testing legacy driver packages).
 In transitional mode the harness uses QEMU defaults for virtio-blk/virtio-net (and relaxes per-test marker
 requirements so older guest selftest binaries can still be used).
+It also attempts to attach virtio-input keyboard/mouse devices when QEMU advertises them; otherwise it
+warns that the guest virtio-input selftest will likely fail.
 
 It:
 - starts a tiny HTTP server on 127.0.0.1:<port> (guest reaches it as 10.0.2.2:<port> via slirp)
   - use `--http-log <path>` to record per-request logs (useful for CI artifacts)
 - launches QEMU with virtio-blk + virtio-net + virtio-input (and optionally virtio-snd) and COM1 redirected to a log file
+  - in transitional mode virtio-input is skipped (with a warning) if QEMU does not advertise virtio-keyboard-pci/virtio-mouse-pci
 - captures QEMU stderr to `<serial-base>.qemu.stderr.log` (next to the serial log) for debugging early exits
 - tails the serial log until it sees AERO_VIRTIO_SELFTEST|RESULT|PASS/FAIL
   - in default (non-transitional) mode, a PASS result also requires per-test markers for virtio-blk, virtio-input,
@@ -284,8 +287,9 @@ def main() -> int:
         action="store_true",
         help="Use transitional virtio-pci devices (legacy + modern). "
         "By default the harness uses modern-only virtio-pci (disable-legacy=on, x-pci-revision=0x01) "
-        "so Win7 drivers can bind to the Aero contract v1 IDs. Transitional mode does not attach "
-        "virtio-input keyboard/mouse devices.",
+        "so Win7 drivers can bind to the Aero contract v1 IDs. In transitional mode the harness attempts to attach "
+        "virtio-keyboard-pci/virtio-mouse-pci when QEMU "
+        "advertises those devices; otherwise it warns that the guest virtio-input selftest will likely FAIL.",
     )
     parser.add_argument(
         "--with-virtio-snd",
