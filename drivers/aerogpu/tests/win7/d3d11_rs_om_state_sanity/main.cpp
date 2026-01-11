@@ -392,6 +392,18 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
     return aerogpu_test::FailHresult(kTestName, "CreateBlendState(write mask)", hr);
   }
 
+  // Blend state: uses constant blend factor (SrcBlend=BLEND_FACTOR, DestBlend=INV_BLEND_FACTOR).
+  // This validates that the blend-factor parameter to OMSetBlendState is honored.
+  D3D11_BLEND_DESC factor_desc = blend_desc;
+  factor_desc.RenderTarget[0].SrcBlend = D3D11_BLEND_BLEND_FACTOR;
+  factor_desc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_BLEND_FACTOR;
+
+  ComPtr<ID3D11BlendState> blend_factor_state;
+  hr = device->CreateBlendState(&factor_desc, blend_factor_state.put());
+  if (FAILED(hr)) {
+    return aerogpu_test::FailHresult(kTestName, "CreateBlendState(blend factor)", hr);
+  }
+
   const FLOAT clear_red[4] = {1.0f, 0.0f, 0.0f, 1.0f};
   const FLOAT blend_factor[4] = {0.0f, 0.0f, 0.0f, 0.0f};
   const D3D11_RECT full_rect = {0, 0, kWidth, kHeight};
@@ -840,6 +852,101 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
                                 (unsigned)g3,
                                 (unsigned)b3,
                                 (unsigned long)expected_yellow);
+    }
+
+    // Verify that OMSetBlendState's blend-factor parameter is honored.
+    const FLOAT bf25[4] = {0.25f, 0.25f, 0.25f, 0.25f};
+    context->OMSetBlendState(blend_factor_state.get(), bf25, 0xFFFFFFFFu);
+    context->ClearRenderTargetView(rtv.get(), clear_red);
+    context->Draw(3, 0);
+
+    context->CopyResource(staging.get(), rt_tex.get());
+    context->Flush();
+
+    ZeroMemory(&map, sizeof(map));
+    hr = context->Map(staging.get(), 0, D3D11_MAP_READ, 0, &map);
+    if (FAILED(hr)) {
+      return FailD3D11WithRemovedReason(kTestName, "Map(staging) [blend factor]", hr, device.get());
+    }
+
+    const uint32_t center_bf = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, cx, cy);
+    if (dump) {
+      std::string err;
+      if (!aerogpu_test::WriteBmp32BGRA(
+              aerogpu_test::JoinPath(dir, L"d3d11_rs_om_state_sanity_blend_factor.bmp"),
+              kWidth,
+              kHeight,
+              map.pData,
+              (int)map.RowPitch,
+              &err)) {
+        aerogpu_test::PrintfStdout("INFO: %s: blend-factor BMP dump failed: %s", kTestName, err.c_str());
+      }
+    }
+    context->Unmap(staging.get(), 0);
+
+    const uint8_t b4 = (uint8_t)(center_bf & 0xFFu);
+    const uint8_t g4 = (uint8_t)((center_bf >> 8) & 0xFFu);
+    const uint8_t r4 = (uint8_t)((center_bf >> 16) & 0xFFu);
+    // With BF=0.25, output should be ~0.75*red + 0.25*green => R~0xBF, G~0x40, B~0.
+    const uint8_t exp_r2 = 0xBF;
+    const uint8_t exp_g2 = 0x40;
+    const uint8_t exp_b2 = 0x00;
+    const uint8_t tol2 = 2;
+    if ((r4 < exp_r2 - tol2 || r4 > exp_r2 + tol2) || (g4 < exp_g2 - tol2 || g4 > exp_g2 + tol2) ||
+        (b4 < exp_b2 - tol2 || b4 > exp_b2 + tol2)) {
+      return aerogpu_test::Fail(kTestName,
+                                "blend factor failed: center(%d,%d)=0x%08lX (r=%u g=%u b=%u) expected ~"
+                                "(r=%u g=%u b=%u) tol=%u",
+                                cx,
+                                cy,
+                                (unsigned long)center_bf,
+                                (unsigned)r4,
+                                (unsigned)g4,
+                                (unsigned)b4,
+                                (unsigned)exp_r2,
+                                (unsigned)exp_g2,
+                                (unsigned)exp_b2,
+                                (unsigned)tol2);
+    }
+
+    // Verify OMSetBlendState's SampleMask parameter is honored.
+    // With a 1-sample render target, a sample mask of 0 should discard all color writes.
+    context->OMSetBlendState(NULL, blend_factor, 0u);
+    context->ClearRenderTargetView(rtv.get(), clear_red);
+    context->Draw(3, 0);
+
+    context->CopyResource(staging.get(), rt_tex.get());
+    context->Flush();
+
+    ZeroMemory(&map, sizeof(map));
+    hr = context->Map(staging.get(), 0, D3D11_MAP_READ, 0, &map);
+    if (FAILED(hr)) {
+      return FailD3D11WithRemovedReason(kTestName, "Map(staging) [sample mask]", hr, device.get());
+    }
+
+    const uint32_t center_sm0 = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, cx, cy);
+    if (dump) {
+      std::string err;
+      if (!aerogpu_test::WriteBmp32BGRA(
+              aerogpu_test::JoinPath(dir, L"d3d11_rs_om_state_sanity_sample_mask_0.bmp"),
+              kWidth,
+              kHeight,
+              map.pData,
+              (int)map.RowPitch,
+              &err)) {
+        aerogpu_test::PrintfStdout("INFO: %s: sample-mask BMP dump failed: %s", kTestName, err.c_str());
+      }
+    }
+    context->Unmap(staging.get(), 0);
+
+    const uint32_t expected_red = 0xFFFF0000u;
+    if ((center_sm0 & 0x00FFFFFFu) != (expected_red & 0x00FFFFFFu)) {
+      return aerogpu_test::Fail(kTestName,
+                                "sample mask failed: center(%d,%d)=0x%08lX expected ~0x%08lX",
+                                cx,
+                                cy,
+                                (unsigned long)center_sm0,
+                                (unsigned long)expected_red);
     }
   }
 
