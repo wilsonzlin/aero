@@ -1,6 +1,7 @@
 #pragma once
 
 #include "..\\common\\aerogpu_test_common.h"
+#include "..\\common\\aerogpu_test_report.h"
 
 #include <d3d9.h>
 
@@ -52,8 +53,12 @@ struct AdapterRequirements {
 static inline int ParseAdapterRequirements(int argc,
                                           char** argv,
                                           const char* test_name,
-                                          AdapterRequirements* out) {
+                                          AdapterRequirements* out,
+                                          aerogpu_test::TestReporter* reporter) {
   if (!out) {
+    if (reporter) {
+      return reporter->Fail("internal: ParseAdapterRequirements out == NULL");
+    }
     return aerogpu_test::Fail(test_name, "internal: ParseAdapterRequirements out == NULL");
   }
 
@@ -72,6 +77,9 @@ static inline int ParseAdapterRequirements(int argc,
   if (aerogpu_test::GetArgValue(argc, argv, "--require-vid", &vid_str)) {
     std::string err;
     if (!aerogpu_test::ParseUint32(vid_str, &out->require_vid, &err)) {
+      if (reporter) {
+        return reporter->Fail("invalid --require-vid: %s", err.c_str());
+      }
       return aerogpu_test::Fail(test_name, "invalid --require-vid: %s", err.c_str());
     }
     out->has_require_vid = true;
@@ -82,6 +90,9 @@ static inline int ParseAdapterRequirements(int argc,
   if (aerogpu_test::GetArgValue(argc, argv, "--require-did", &did_str)) {
     std::string err;
     if (!aerogpu_test::ParseUint32(did_str, &out->require_did, &err)) {
+      if (reporter) {
+        return reporter->Fail("invalid --require-did: %s", err.c_str());
+      }
       return aerogpu_test::Fail(test_name, "invalid --require-did: %s", err.c_str());
     }
     out->has_require_did = true;
@@ -91,8 +102,14 @@ static inline int ParseAdapterRequirements(int argc,
   return 0;
 }
 
-static inline int ValidateAdapter(const char* test_name, IDirect3D9Ex* d3d, const AdapterRequirements& req) {
+static inline int ValidateAdapter(const char* test_name,
+                                  IDirect3D9Ex* d3d,
+                                  const AdapterRequirements& req,
+                                  aerogpu_test::TestReporter* reporter) {
   if (!d3d) {
+    if (reporter) {
+      return reporter->Fail("ValidateAdapter: d3d == NULL");
+    }
     return aerogpu_test::Fail(test_name, "ValidateAdapter: d3d == NULL");
   }
 
@@ -101,6 +118,9 @@ static inline int ValidateAdapter(const char* test_name, IDirect3D9Ex* d3d, cons
   HRESULT hr = d3d->GetAdapterIdentifier(D3DADAPTER_DEFAULT, 0, &ident);
   if (FAILED(hr)) {
     if (req.has_require_vid || req.has_require_did) {
+      if (reporter) {
+        return reporter->FailHresult("GetAdapterIdentifier (required for --require-vid/--require-did)", hr);
+      }
       return aerogpu_test::FailHresult(test_name,
                                        "GetAdapterIdentifier (required for --require-vid/--require-did)",
                                        hr);
@@ -108,6 +128,9 @@ static inline int ValidateAdapter(const char* test_name, IDirect3D9Ex* d3d, cons
     return 0;
   }
 
+  if (reporter) {
+    reporter->SetAdapterInfoA(ident.Description, (uint32_t)ident.VendorId, (uint32_t)ident.DeviceId);
+  }
   aerogpu_test::PrintfStdout("INFO: %s: adapter: %s (VID=0x%04X DID=0x%04X)",
                              test_name,
                              ident.Description,
@@ -115,6 +138,12 @@ static inline int ValidateAdapter(const char* test_name, IDirect3D9Ex* d3d, cons
                              (unsigned)ident.DeviceId);
 
   if (!req.allow_microsoft && ident.VendorId == 0x1414) {
+    if (reporter) {
+      return reporter->Fail("refusing to run on Microsoft adapter (VID=0x%04X DID=0x%04X). "
+                            "Install AeroGPU driver or pass --allow-microsoft.",
+                            (unsigned)ident.VendorId,
+                            (unsigned)ident.DeviceId);
+    }
     return aerogpu_test::Fail(test_name,
                               "refusing to run on Microsoft adapter (VID=0x%04X DID=0x%04X). "
                               "Install AeroGPU driver or pass --allow-microsoft.",
@@ -122,12 +151,22 @@ static inline int ValidateAdapter(const char* test_name, IDirect3D9Ex* d3d, cons
                               (unsigned)ident.DeviceId);
   }
   if (req.has_require_vid && ident.VendorId != req.require_vid) {
+    if (reporter) {
+      return reporter->Fail("adapter VID mismatch: got 0x%04X expected 0x%04X",
+                            (unsigned)ident.VendorId,
+                            (unsigned)req.require_vid);
+    }
     return aerogpu_test::Fail(test_name,
                               "adapter VID mismatch: got 0x%04X expected 0x%04X",
                               (unsigned)ident.VendorId,
                               (unsigned)req.require_vid);
   }
   if (req.has_require_did && ident.DeviceId != req.require_did) {
+    if (reporter) {
+      return reporter->Fail("adapter DID mismatch: got 0x%04X expected 0x%04X",
+                            (unsigned)ident.DeviceId,
+                            (unsigned)req.require_did);
+    }
     return aerogpu_test::Fail(test_name,
                               "adapter DID mismatch: got 0x%04X expected 0x%04X",
                               (unsigned)ident.DeviceId,
@@ -136,6 +175,11 @@ static inline int ValidateAdapter(const char* test_name, IDirect3D9Ex* d3d, cons
   if (!req.allow_non_aerogpu && !req.has_require_vid && !req.has_require_did &&
       !(ident.VendorId == 0x1414 && req.allow_microsoft) &&
       !aerogpu_test::StrIContainsA(ident.Description, "AeroGPU")) {
+    if (reporter) {
+      return reporter->Fail("adapter does not look like AeroGPU: %s (pass --allow-non-aerogpu "
+                            "or use --require-vid/--require-did)",
+                            ident.Description);
+    }
     return aerogpu_test::Fail(test_name,
                               "adapter does not look like AeroGPU: %s (pass --allow-non-aerogpu "
                               "or use --require-vid/--require-did)",
@@ -147,14 +191,21 @@ static inline int ValidateAdapter(const char* test_name, IDirect3D9Ex* d3d, cons
 static inline int CreateD3D9ExDevice(const char* test_name,
                                      HWND hwnd,
                                      ComPtr<IDirect3D9Ex>* out_d3d,
-                                     ComPtr<IDirect3DDevice9Ex>* out_dev) {
+                                     ComPtr<IDirect3DDevice9Ex>* out_dev,
+                                     aerogpu_test::TestReporter* reporter) {
   if (!out_d3d || !out_dev) {
+    if (reporter) {
+      return reporter->Fail("internal: CreateD3D9ExDevice out params are NULL");
+    }
     return aerogpu_test::Fail(test_name, "internal: CreateD3D9ExDevice out params are NULL");
   }
 
   ComPtr<IDirect3D9Ex> d3d;
   HRESULT hr = Direct3DCreate9Ex(D3D_SDK_VERSION, d3d.put());
   if (FAILED(hr)) {
+    if (reporter) {
+      return reporter->FailHresult("Direct3DCreate9Ex", hr);
+    }
     return aerogpu_test::FailHresult(test_name, "Direct3DCreate9Ex", hr);
   }
 
@@ -179,6 +230,9 @@ static inline int CreateD3D9ExDevice(const char* test_name,
         D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, hwnd, create_flags, &pp, NULL, dev.put());
   }
   if (FAILED(hr)) {
+    if (reporter) {
+      return reporter->FailHresult("IDirect3D9Ex::CreateDeviceEx", hr);
+    }
     return aerogpu_test::FailHresult(test_name, "IDirect3D9Ex::CreateDeviceEx", hr);
   }
 
@@ -213,4 +267,3 @@ struct Wow64Ipc {
 typedef char Wow64IpcSizeCheck[(sizeof(Wow64Ipc) == 40) ? 1 : -1];
 
 }  // namespace d3d9ex_shared_surface_wow64
-

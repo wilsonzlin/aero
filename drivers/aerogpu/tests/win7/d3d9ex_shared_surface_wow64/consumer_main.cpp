@@ -10,18 +10,24 @@ static int RunConsumer(int argc, char** argv) {
   const char* kTestName = "d3d9ex_shared_surface_wow64_consumer";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
-        "Usage: %s.exe --ipc-map=NAME --ready-event=NAME --done-event=NAME [--dump] [--show] "
+        "Usage: %s.exe --ipc-map=NAME --ready-event=NAME --done-event=NAME [--dump] [--show] [--json[=PATH]] "
         "[--require-vid=0x####] [--require-did=0x####] [--allow-microsoft] [--allow-non-aerogpu] "
         "[--require-umd]",
         kTestName);
     return 0;
   }
 
+  aerogpu_test::TestReporter reporter(kTestName, argc, argv);
+
   const bool dump = aerogpu_test::HasArg(argc, argv, "--dump");
   const bool show = aerogpu_test::HasArg(argc, argv, "--show");
+  if (dump) {
+    reporter.AddArtifactPathW(
+        aerogpu_test::JoinPath(aerogpu_test::GetModuleDir(), L"d3d9ex_shared_surface_wow64.bmp"));
+  }
 
   AdapterRequirements req;
-  int rc = ParseAdapterRequirements(argc, argv, kTestName, &req);
+  int rc = ParseAdapterRequirements(argc, argv, kTestName, &req, &reporter);
   if (rc != 0) {
     return rc;
   }
@@ -30,13 +36,13 @@ static int RunConsumer(int argc, char** argv) {
   std::string ready_name_a;
   std::string done_name_a;
   if (!aerogpu_test::GetArgValue(argc, argv, "--ipc-map", &map_name_a) || map_name_a.empty()) {
-    return aerogpu_test::Fail(kTestName, "missing --ipc-map");
+    return reporter.Fail("missing --ipc-map");
   }
   if (!aerogpu_test::GetArgValue(argc, argv, "--ready-event", &ready_name_a) || ready_name_a.empty()) {
-    return aerogpu_test::Fail(kTestName, "missing --ready-event");
+    return reporter.Fail("missing --ready-event");
   }
   if (!aerogpu_test::GetArgValue(argc, argv, "--done-event", &done_name_a) || done_name_a.empty()) {
-    return aerogpu_test::Fail(kTestName, "missing --done-event");
+    return reporter.Fail("missing --done-event");
   }
 
   const std::wstring map_name(map_name_a.begin(), map_name_a.end());
@@ -45,17 +51,15 @@ static int RunConsumer(int argc, char** argv) {
 
   HANDLE mapping = OpenFileMappingW(FILE_MAP_ALL_ACCESS, FALSE, map_name.c_str());
   if (!mapping) {
-    return aerogpu_test::Fail(kTestName,
-                              "OpenFileMapping failed: %s",
-                              aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
+    return reporter.Fail("OpenFileMapping failed: %s",
+                         aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
   }
 
   Wow64Ipc* ipc = (Wow64Ipc*)MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(Wow64Ipc));
   if (!ipc) {
     DWORD err = GetLastError();
     CloseHandle(mapping);
-    return aerogpu_test::Fail(
-        kTestName, "MapViewOfFile failed: %s", aerogpu_test::Win32ErrorToString(err).c_str());
+    return reporter.Fail("MapViewOfFile failed: %s", aerogpu_test::Win32ErrorToString(err).c_str());
   }
 
   HANDLE ready_event = OpenEventW(SYNCHRONIZE, FALSE, ready_name.c_str());
@@ -70,23 +74,20 @@ static int RunConsumer(int argc, char** argv) {
     }
     UnmapViewOfFile(ipc);
     CloseHandle(mapping);
-    return aerogpu_test::Fail(
-        kTestName, "OpenEvent failed: %s", aerogpu_test::Win32ErrorToString(err).c_str());
+    return reporter.Fail("OpenEvent failed: %s", aerogpu_test::Win32ErrorToString(err).c_str());
   }
 
   int exit_code = 1;
   if (ipc->magic != kIpcMagic || ipc->version != kIpcVersion) {
-    exit_code = aerogpu_test::Fail(kTestName,
-                                   "IPC header mismatch (magic=0x%08lX version=%lu)",
-                                   (unsigned long)ipc->magic,
-                                   (unsigned long)ipc->version);
+    exit_code = reporter.Fail("IPC header mismatch (magic=0x%08lX version=%lu)",
+                              (unsigned long)ipc->magic,
+                              (unsigned long)ipc->version);
     goto Exit;
   }
 
   DWORD wait = WaitForSingleObject(ready_event, 20000);
   if (wait != WAIT_OBJECT_0) {
-    exit_code =
-        aerogpu_test::Fail(kTestName, "timeout waiting for ready event (wait=%lu)", (unsigned long)wait);
+    exit_code = reporter.Fail("timeout waiting for ready event (wait=%lu)", (unsigned long)wait);
     goto Exit;
   }
 
@@ -100,41 +101,40 @@ static int RunConsumer(int argc, char** argv) {
                              aerogpu_test::GetWow64SuffixString());
 
   if (shared_hv == 0) {
-    exit_code = aerogpu_test::Fail(kTestName, "shared handle is zero");
+    exit_code = reporter.Fail("shared handle is zero");
     goto Exit;
   }
   if (shared_hv == producer_hv) {
-    exit_code = aerogpu_test::Fail(
-        kTestName,
-        "shared handle is numerically identical across processes (producer=%s consumer=%s)",
-        FormatU64Hex(producer_hv).c_str(),
-        FormatU64Hex(shared_hv).c_str());
+    exit_code = reporter.Fail("shared handle is numerically identical across processes (producer=%s consumer=%s)",
+                              FormatU64Hex(producer_hv).c_str(),
+                              FormatU64Hex(shared_hv).c_str());
     goto Exit;
   }
 
   HWND hwnd = aerogpu_test::CreateBasicWindow(L"AeroGPU_D3D9ExSharedSurfaceWOW64_Consumer",
                                               L"AeroGPU D3D9Ex Shared Surface WOW64 (Consumer x64)",
-                                              kWidth,
-                                              kHeight,
-                                              show);
+                                               kWidth,
+                                               kHeight,
+                                               show);
   if (!hwnd) {
-    exit_code = aerogpu_test::Fail(kTestName, "CreateBasicWindow failed");
+    exit_code = reporter.Fail("CreateBasicWindow failed");
     goto Exit;
   }
 
   ComPtr<IDirect3D9Ex> d3d;
   ComPtr<IDirect3DDevice9Ex> dev;
-  rc = CreateD3D9ExDevice(kTestName, hwnd, &d3d, &dev);
+  rc = CreateD3D9ExDevice(kTestName, hwnd, &d3d, &dev, &reporter);
   if (rc != 0) {
+    exit_code = rc;
     goto Exit;
   }
-  rc = ValidateAdapter(kTestName, d3d.get(), req);
+  rc = ValidateAdapter(kTestName, d3d.get(), req, &reporter);
   if (rc != 0) {
     exit_code = rc;
     goto Exit;
   }
   if (req.require_umd || (!req.allow_microsoft && !req.allow_non_aerogpu)) {
-    int umd_rc = aerogpu_test::RequireAeroGpuD3D9UmdLoaded(kTestName);
+    int umd_rc = aerogpu_test::RequireAeroGpuD3D9UmdLoaded(&reporter, kTestName);
     if (umd_rc != 0) {
       exit_code = umd_rc;
       goto Exit;
@@ -148,11 +148,11 @@ static int RunConsumer(int argc, char** argv) {
                                   1,
                                   D3DUSAGE_RENDERTARGET,
                                   D3DFMT_A8R8G8B8,
-                                  D3DPOOL_DEFAULT,
-                                  tex.put(),
-                                  &open_handle);
+                                   D3DPOOL_DEFAULT,
+                                   tex.put(),
+                                   &open_handle);
   if (FAILED(hr)) {
-    exit_code = aerogpu_test::FailHresult(kTestName, "CreateTexture(open shared)", hr);
+    exit_code = reporter.FailHresult("CreateTexture(open shared)", hr);
     goto Exit;
   }
 
@@ -166,7 +166,7 @@ static int RunConsumer(int argc, char** argv) {
   ComPtr<IDirect3DSurface9> surf;
   hr = tex->GetSurfaceLevel(0, surf.put());
   if (FAILED(hr)) {
-    exit_code = aerogpu_test::FailHresult(kTestName, "IDirect3DTexture9::GetSurfaceLevel", hr);
+    exit_code = reporter.FailHresult("IDirect3DTexture9::GetSurfaceLevel", hr);
     goto Exit;
   }
 
@@ -174,13 +174,13 @@ static int RunConsumer(int argc, char** argv) {
   hr = dev->CreateOffscreenPlainSurface(
       kWidth, kHeight, D3DFMT_A8R8G8B8, D3DPOOL_SYSTEMMEM, sysmem.put(), NULL);
   if (FAILED(hr)) {
-    exit_code = aerogpu_test::FailHresult(kTestName, "CreateOffscreenPlainSurface", hr);
+    exit_code = reporter.FailHresult("CreateOffscreenPlainSurface", hr);
     goto Exit;
   }
 
   hr = dev->GetRenderTargetData(surf.get(), sysmem.get());
   if (FAILED(hr)) {
-    exit_code = aerogpu_test::FailHresult(kTestName, "GetRenderTargetData(shared)", hr);
+    exit_code = reporter.FailHresult("GetRenderTargetData(shared)", hr);
     goto Exit;
   }
 
@@ -188,7 +188,7 @@ static int RunConsumer(int argc, char** argv) {
   ZeroMemory(&lr, sizeof(lr));
   hr = sysmem->LockRect(&lr, NULL, D3DLOCK_READONLY);
   if (FAILED(hr)) {
-    exit_code = aerogpu_test::FailHresult(kTestName, "IDirect3DSurface9::LockRect", hr);
+    exit_code = reporter.FailHresult("IDirect3DSurface9::LockRect", hr);
     goto Exit;
   }
 
@@ -210,15 +210,13 @@ static int RunConsumer(int argc, char** argv) {
   sysmem->UnlockRect();
 
   if ((pixel & 0x00FFFFFFu) != (kExpectedPixel & 0x00FFFFFFu)) {
-    exit_code = aerogpu_test::Fail(kTestName,
-                                   "pixel mismatch: got=0x%08lX expected=0x%08lX",
-                                   (unsigned long)pixel,
-                                   (unsigned long)kExpectedPixel);
+    exit_code = reporter.Fail("pixel mismatch: got=0x%08lX expected=0x%08lX",
+                              (unsigned long)pixel,
+                              (unsigned long)kExpectedPixel);
     goto Exit;
   }
 
-  aerogpu_test::PrintfStdout("PASS: %s", kTestName);
-  exit_code = 0;
+  exit_code = reporter.Pass();
 
 Exit:
   InterlockedExchange(&ipc->consumer_exit_code, exit_code);

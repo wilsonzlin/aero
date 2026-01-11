@@ -6,18 +6,27 @@
 
 using namespace d3d9ex_shared_surface_wow64;
 
-static int WaitForGpuIdle(const char* test_name, IDirect3DDevice9Ex* dev) {
+static int WaitForGpuIdle(aerogpu_test::TestReporter* reporter, const char* test_name, IDirect3DDevice9Ex* dev) {
   if (!dev) {
+    if (reporter) {
+      return reporter->Fail("internal: WaitForGpuIdle dev == NULL");
+    }
     return aerogpu_test::Fail(test_name, "internal: WaitForGpuIdle dev == NULL");
   }
 
   ComPtr<IDirect3DQuery9> q;
   HRESULT hr = dev->CreateQuery(D3DQUERYTYPE_EVENT, q.put());
   if (FAILED(hr) || !q) {
+    if (reporter) {
+      return reporter->FailHresult("CreateQuery(D3DQUERYTYPE_EVENT)", hr);
+    }
     return aerogpu_test::FailHresult(test_name, "CreateQuery(D3DQUERYTYPE_EVENT)", hr);
   }
   hr = q->Issue(D3DISSUE_END);
   if (FAILED(hr)) {
+    if (reporter) {
+      return reporter->FailHresult("IDirect3DQuery9::Issue", hr);
+    }
     return aerogpu_test::FailHresult(test_name, "IDirect3DQuery9::Issue", hr);
   }
 
@@ -28,9 +37,15 @@ static int WaitForGpuIdle(const char* test_name, IDirect3DDevice9Ex* dev) {
       return 0;
     }
     if (hr != S_FALSE) {
+      if (reporter) {
+        return reporter->FailHresult("IDirect3DQuery9::GetData", hr);
+      }
       return aerogpu_test::FailHresult(test_name, "IDirect3DQuery9::GetData", hr);
     }
     if (GetTickCount() - start > 5000) {
+      if (reporter) {
+        return reporter->Fail("GPU event query timed out");
+      }
       return aerogpu_test::Fail(test_name, "GPU event query timed out");
     }
     Sleep(0);
@@ -68,7 +83,7 @@ static int RunProducer(int argc, char** argv) {
   const char* kTestName = "d3d9ex_shared_surface_wow64";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
-        "Usage: %s.exe [--dump] [--show] [--require-vid=0x####] [--require-did=0x####] "
+        "Usage: %s.exe [--dump] [--show] [--json[=PATH]] [--require-vid=0x####] [--require-did=0x####] "
         "[--allow-microsoft] [--allow-non-aerogpu] [--require-umd]",
         kTestName);
     aerogpu_test::PrintfStdout(
@@ -76,17 +91,24 @@ static int RunProducer(int argc, char** argv) {
     return 0;
   }
 
+  aerogpu_test::TestReporter reporter(kTestName, argc, argv);
+
   // This test only makes sense on a 64-bit OS: the producer is x86 and the consumer is x64.
   if (!aerogpu_test::IsRunningUnderWow64()) {
     aerogpu_test::PrintfStdout("SKIP: %s: requires a 64-bit OS (WOW64)", kTestName);
-    return 0;
+    reporter.SetSkipped("requires a 64-bit OS (WOW64)");
+    return reporter.Pass();
   }
 
   const bool dump = aerogpu_test::HasArg(argc, argv, "--dump");
   const bool show = aerogpu_test::HasArg(argc, argv, "--show");
+  if (dump) {
+    reporter.AddArtifactPathW(
+        aerogpu_test::JoinPath(aerogpu_test::GetModuleDir(), L"d3d9ex_shared_surface_wow64.bmp"));
+  }
 
   AdapterRequirements req;
-  int rc = ParseAdapterRequirements(argc, argv, kTestName, &req);
+  int rc = ParseAdapterRequirements(argc, argv, kTestName, &req, &reporter);
   if (rc != 0) {
     return rc;
   }
@@ -97,21 +119,21 @@ static int RunProducer(int argc, char** argv) {
                                               kHeight,
                                               show);
   if (!hwnd) {
-    return aerogpu_test::Fail(kTestName, "CreateBasicWindow failed");
+    return reporter.Fail("CreateBasicWindow failed");
   }
 
   ComPtr<IDirect3D9Ex> d3d;
   ComPtr<IDirect3DDevice9Ex> dev;
-  rc = CreateD3D9ExDevice(kTestName, hwnd, &d3d, &dev);
+  rc = CreateD3D9ExDevice(kTestName, hwnd, &d3d, &dev, &reporter);
   if (rc != 0) {
     return rc;
   }
-  rc = ValidateAdapter(kTestName, d3d.get(), req);
+  rc = ValidateAdapter(kTestName, d3d.get(), req, &reporter);
   if (rc != 0) {
     return rc;
   }
   if (req.require_umd || (!req.allow_microsoft && !req.allow_non_aerogpu)) {
-    int umd_rc = aerogpu_test::RequireAeroGpuD3D9UmdLoaded(kTestName);
+    int umd_rc = aerogpu_test::RequireAeroGpuD3D9UmdLoaded(&reporter, kTestName);
     if (umd_rc != 0) {
       return umd_rc;
     }
@@ -125,13 +147,13 @@ static int RunProducer(int argc, char** argv) {
                                   D3DUSAGE_RENDERTARGET,
                                   D3DFMT_A8R8G8B8,
                                   D3DPOOL_DEFAULT,
-                                  tex.put(),
-                                  &shared);
+                                   tex.put(),
+                                   &shared);
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CreateTexture(shared)", hr);
+    return reporter.FailHresult("CreateTexture(shared)", hr);
   }
   if (!shared) {
-    return aerogpu_test::Fail(kTestName, "CreateTexture returned NULL shared handle");
+    return reporter.Fail("CreateTexture returned NULL shared handle");
   }
 
   aerogpu_test::PrintfStdout("INFO: %s: producer shared handle=%s (%s%s)",
@@ -143,27 +165,27 @@ static int RunProducer(int argc, char** argv) {
   ComPtr<IDirect3DSurface9> rt;
   hr = tex->GetSurfaceLevel(0, rt.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "IDirect3DTexture9::GetSurfaceLevel", hr);
+    return reporter.FailHresult("IDirect3DTexture9::GetSurfaceLevel", hr);
   }
   hr = dev->SetRenderTarget(0, rt.get());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "SetRenderTarget(shared)", hr);
+    return reporter.FailHresult("SetRenderTarget(shared)", hr);
   }
 
   hr = dev->BeginScene();
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "BeginScene", hr);
+    return reporter.FailHresult("BeginScene", hr);
   }
   hr = dev->Clear(0, NULL, D3DCLEAR_TARGET, kClearColor, 1.0f, 0);
   HRESULT hr_end = dev->EndScene();
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "Clear(shared)", hr);
+    return reporter.FailHresult("Clear(shared)", hr);
   }
   if (FAILED(hr_end)) {
-    return aerogpu_test::FailHresult(kTestName, "EndScene", hr_end);
+    return reporter.FailHresult("EndScene", hr_end);
   }
 
-  rc = WaitForGpuIdle(kTestName, dev.get());
+  rc = WaitForGpuIdle(&reporter, kTestName, dev.get());
   if (rc != 0) {
     return rc;
   }
@@ -199,8 +221,7 @@ static int RunProducer(int argc, char** argv) {
   if (!mapping) {
     DWORD err = GetLastError();
     CloseHandle(shared);
-    return aerogpu_test::Fail(
-        kTestName, "CreateFileMapping failed: %s", aerogpu_test::Win32ErrorToString(err).c_str());
+    return reporter.Fail("CreateFileMapping failed: %s", aerogpu_test::Win32ErrorToString(err).c_str());
   }
 
   Wow64Ipc* ipc = (Wow64Ipc*)MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(Wow64Ipc));
@@ -208,8 +229,7 @@ static int RunProducer(int argc, char** argv) {
     DWORD err = GetLastError();
     CloseHandle(mapping);
     CloseHandle(shared);
-    return aerogpu_test::Fail(
-        kTestName, "MapViewOfFile failed: %s", aerogpu_test::Win32ErrorToString(err).c_str());
+    return reporter.Fail("MapViewOfFile failed: %s", aerogpu_test::Win32ErrorToString(err).c_str());
   }
   ZeroMemory(ipc, sizeof(*ipc));
   ipc->magic = kIpcMagic;
@@ -228,8 +248,7 @@ static int RunProducer(int argc, char** argv) {
     UnmapViewOfFile(ipc);
     CloseHandle(mapping);
     CloseHandle(shared);
-    return aerogpu_test::Fail(
-        kTestName, "CreateEvent failed: %s", aerogpu_test::Win32ErrorToString(err).c_str());
+    return reporter.Fail("CreateEvent failed: %s", aerogpu_test::Win32ErrorToString(err).c_str());
   }
 
   const std::wstring consumer_path = aerogpu_test::JoinPath(
@@ -241,9 +260,7 @@ static int RunProducer(int argc, char** argv) {
     UnmapViewOfFile(ipc);
     CloseHandle(mapping);
     CloseHandle(shared);
-    return aerogpu_test::Fail(kTestName,
-                              "missing consumer binary: %ls",
-                              consumer_path.c_str());
+    return reporter.Fail("missing consumer binary: %ls", consumer_path.c_str());
   }
 
   std::wstring cmdline = L"\"";
@@ -286,8 +303,7 @@ static int RunProducer(int argc, char** argv) {
     UnmapViewOfFile(ipc);
     CloseHandle(mapping);
     CloseHandle(shared);
-    return aerogpu_test::Fail(
-        kTestName, "CreateProcessW failed: %s", aerogpu_test::Win32ErrorToString(err).c_str());
+    return reporter.Fail("CreateProcessW failed: %s", aerogpu_test::Win32ErrorToString(err).c_str());
   }
 
   HANDLE job = CreateJobObjectW(NULL, NULL);
@@ -328,8 +344,7 @@ static int RunProducer(int argc, char** argv) {
     UnmapViewOfFile(ipc);
     CloseHandle(mapping);
     CloseHandle(shared);
-    return aerogpu_test::Fail(
-        kTestName, "DuplicateHandle failed: %s", aerogpu_test::Win32ErrorToString(err).c_str());
+    return reporter.Fail("DuplicateHandle failed: %s", aerogpu_test::Win32ErrorToString(err).c_str());
   }
 
   uint64_t child_hv = (uint64_t)(uintptr_t)shared_in_child;
@@ -388,9 +403,7 @@ static int RunProducer(int argc, char** argv) {
     UnmapViewOfFile(ipc);
     CloseHandle(mapping);
     CloseHandle(shared);
-    return aerogpu_test::Fail(
-        kTestName,
-        "refusing to run: shared handle value is numerically identical across processes after retry");
+    return reporter.Fail("refusing to run: shared handle value is numerically identical across processes after retry");
   }
 
   ipc->producer_handle_value = producer_hv;
@@ -420,7 +433,7 @@ static int RunProducer(int argc, char** argv) {
     UnmapViewOfFile(ipc);
     CloseHandle(mapping);
     CloseHandle(shared);
-    return aerogpu_test::Fail(kTestName, "consumer timed out");
+    return reporter.Fail("consumer timed out");
   }
   if (wait == WAIT_FAILED) {
     DWORD err = GetLastError();
@@ -436,8 +449,7 @@ static int RunProducer(int argc, char** argv) {
     UnmapViewOfFile(ipc);
     CloseHandle(mapping);
     CloseHandle(shared);
-    return aerogpu_test::Fail(
-        kTestName, "WaitForMultipleObjects failed: %s", aerogpu_test::Win32ErrorToString(err).c_str());
+    return reporter.Fail("WaitForMultipleObjects failed: %s", aerogpu_test::Win32ErrorToString(err).c_str());
   }
 
   // Ensure the process has exited before we close the job object handle.
@@ -456,7 +468,7 @@ static int RunProducer(int argc, char** argv) {
     UnmapViewOfFile(ipc);
     CloseHandle(mapping);
     CloseHandle(shared);
-    return aerogpu_test::Fail(kTestName, "timeout waiting for consumer exit");
+    return reporter.Fail("timeout waiting for consumer exit");
   }
 
   DWORD exit_code = 1;
@@ -476,15 +488,13 @@ static int RunProducer(int argc, char** argv) {
   CloseHandle(shared);
 
   if (exit_code != 0) {
-    return aerogpu_test::Fail(kTestName, "consumer failed with exit code %lu", (unsigned long)exit_code);
+    return reporter.Fail("consumer failed with exit code %lu", (unsigned long)exit_code);
   }
 
-  aerogpu_test::PrintfStdout("PASS: %s", kTestName);
-  return 0;
+  return reporter.Pass();
 }
 
 int main(int argc, char** argv) {
   aerogpu_test::ConfigureProcessForAutomation();
   return RunProducer(argc, argv);
 }
-

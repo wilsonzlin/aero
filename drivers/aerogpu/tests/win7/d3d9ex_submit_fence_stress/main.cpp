@@ -1,4 +1,5 @@
 #include "..\\common\\aerogpu_test_common.h"
+#include "..\\common\\aerogpu_test_report.h"
 
 #include <d3d9.h>
 
@@ -536,12 +537,14 @@ static int RunSubmitFenceStress(int argc, char** argv) {
 
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
-        "Usage: %s.exe [--iterations=N] [--show] [--allow-remote] [--allow-microsoft] [--allow-non-aerogpu] "
-        "[--require-umd]",
+        "Usage: %s.exe [--iterations=N] [--show] [--allow-remote] [--json[=PATH]] [--allow-microsoft] "
+        "[--allow-non-aerogpu] [--require-umd]",
         kTestName);
     aerogpu_test::PrintfStdout("Stresses D3D9Ex submits and validates per-submission fences via AeroGPU debug output.");
     return 0;
   }
+
+  aerogpu_test::TestReporter reporter(kTestName, argc, argv);
 
   // Enable per-submit fence logging in the AeroGPU D3D9 UMD (captured via DBWIN).
   // This must be set before the UMD DLL is loaded.
@@ -557,12 +560,10 @@ static int RunSubmitFenceStress(int argc, char** argv) {
   if (GetSystemMetrics(SM_REMOTESESSION)) {
     if (allow_remote) {
       aerogpu_test::PrintfStdout("INFO: %s: remote session detected; skipping", kTestName);
-      aerogpu_test::PrintfStdout("PASS: %s", kTestName);
-      return 0;
+      reporter.SetSkipped("remote session");
+      return reporter.Pass();
     }
-    return aerogpu_test::Fail(
-        kTestName,
-        "running in a remote session (SM_REMOTESESSION=1). Re-run with --allow-remote to skip.");
+    return reporter.Fail("running in a remote session (SM_REMOTESESSION=1). Re-run with --allow-remote to skip.");
   }
 
   uint32_t iterations = 200;
@@ -570,7 +571,7 @@ static int RunSubmitFenceStress(int argc, char** argv) {
   if (aerogpu_test::GetArgValue(argc, argv, "--iterations", &iter_str)) {
     std::string err;
     if (!aerogpu_test::ParseUint32(iter_str, &iterations, &err)) {
-      return aerogpu_test::Fail(kTestName, "invalid --iterations: %s", err.c_str());
+      return reporter.Fail("invalid --iterations: %s", err.c_str());
     }
   }
   if (iterations < 10) {
@@ -588,13 +589,13 @@ static int RunSubmitFenceStress(int argc, char** argv) {
                                               kHeight,
                                               show_window);
   if (!hwnd) {
-    return aerogpu_test::Fail(kTestName, "CreateBasicWindow failed");
+    return reporter.Fail("CreateBasicWindow failed");
   }
 
   ComPtr<IDirect3D9Ex> d3d;
   HRESULT hr = Direct3DCreate9Ex(D3D_SDK_VERSION, d3d.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "Direct3DCreate9Ex", hr);
+    return reporter.FailHresult("Direct3DCreate9Ex", hr);
   }
 
   D3DPRESENT_PARAMETERS pp;
@@ -618,30 +619,29 @@ static int RunSubmitFenceStress(int argc, char** argv) {
     hr = CreateDeviceExWithFallback(d3d.get(), hwnd, &pp, create_flags, dev.put());
   }
   if (FAILED(hr) || !dev) {
-    return aerogpu_test::FailHresult(kTestName, "IDirect3D9Ex::CreateDeviceEx", hr);
+    return reporter.FailHresult("IDirect3D9Ex::CreateDeviceEx", hr);
   }
 
   D3DADAPTER_IDENTIFIER9 ident;
   ZeroMemory(&ident, sizeof(ident));
   hr = d3d->GetAdapterIdentifier(D3DADAPTER_DEFAULT, 0, &ident);
   if (SUCCEEDED(hr)) {
+    reporter.SetAdapterInfoA(ident.Description, (uint32_t)ident.VendorId, (uint32_t)ident.DeviceId);
     aerogpu_test::PrintfStdout("INFO: %s: adapter: %s (VID=0x%04X DID=0x%04X)",
                                kTestName,
                                ident.Description,
                                (unsigned)ident.VendorId,
                                (unsigned)ident.DeviceId);
     if (!allow_microsoft && ident.VendorId == 0x1414) {
-      return aerogpu_test::Fail(kTestName,
-                                "refusing to run on Microsoft adapter (VID=0x%04X DID=0x%04X). "
-                                "Install AeroGPU driver or pass --allow-microsoft.",
-                                (unsigned)ident.VendorId,
-                                (unsigned)ident.DeviceId);
+      return reporter.Fail("refusing to run on Microsoft adapter (VID=0x%04X DID=0x%04X). "
+                           "Install AeroGPU driver or pass --allow-microsoft.",
+                           (unsigned)ident.VendorId,
+                           (unsigned)ident.DeviceId);
     }
     if (!allow_non_aerogpu && !(ident.VendorId == 0x1414 && allow_microsoft) &&
         !aerogpu_test::StrIContainsA(ident.Description, "AeroGPU")) {
-      return aerogpu_test::Fail(kTestName,
-                                "adapter does not look like AeroGPU: %s (pass --allow-non-aerogpu)",
-                                ident.Description);
+      return reporter.Fail("adapter does not look like AeroGPU: %s (pass --allow-non-aerogpu)",
+                           ident.Description);
     }
   }
 
@@ -656,7 +656,7 @@ static int RunSubmitFenceStress(int argc, char** argv) {
   }
 
   if (require_umd || (!allow_microsoft && !allow_non_aerogpu)) {
-    int umd_rc = aerogpu_test::RequireAeroGpuD3D9UmdLoaded(kTestName);
+    int umd_rc = aerogpu_test::RequireAeroGpuD3D9UmdLoaded(&reporter, kTestName);
     if (umd_rc != 0) {
       return umd_rc;
     }
@@ -671,7 +671,7 @@ static int RunSubmitFenceStress(int argc, char** argv) {
   std::string kmt_err;
   if (!LoadD3DKMT(&kmt, &kmt_err)) {
     if (validate_fences) {
-      return aerogpu_test::Fail(kTestName, "%s", kmt_err.c_str());
+      return reporter.Fail("%s", kmt_err.c_str());
     }
     aerogpu_test::PrintfStdout("INFO: %s: %s (skipping KMD fence validation)", kTestName, kmt_err.c_str());
   }
@@ -681,7 +681,7 @@ static int RunSubmitFenceStress(int argc, char** argv) {
     std::string open_err;
     if (!OpenPrimaryKmtAdapter(&kmt, &kmt_adapter, &open_err)) {
       if (validate_fences) {
-        return aerogpu_test::Fail(kTestName, "%s", open_err.c_str());
+        return reporter.Fail("%s", open_err.c_str());
       }
       aerogpu_test::PrintfStdout("INFO: %s: %s (skipping KMD fence validation)", kTestName, open_err.c_str());
     }
@@ -699,9 +699,9 @@ static int RunSubmitFenceStress(int argc, char** argv) {
           base_completed);
     } else if (validate_fences) {
       if (st == STATUS_NOT_SUPPORTED) {
-        return aerogpu_test::Fail(kTestName, "AeroGPU KMD fence escape not supported (NTSTATUS=0x%08lX)", (unsigned long)st);
+        return reporter.Fail("AeroGPU KMD fence escape not supported (NTSTATUS=0x%08lX)", (unsigned long)st);
       }
-      return aerogpu_test::Fail(kTestName, "D3DKMTEscape(query-fence) failed (NTSTATUS=0x%08lX)", (unsigned long)st);
+      return reporter.Fail("D3DKMTEscape(query-fence) failed (NTSTATUS=0x%08lX)", (unsigned long)st);
     }
   }
 
@@ -710,21 +710,21 @@ static int RunSubmitFenceStress(int argc, char** argv) {
     std::string dbwin_err;
     if (!dbwin.Start(&dbwin_err)) {
       CloseKmtAdapter(&kmt, kmt_adapter);
-      return aerogpu_test::Fail(kTestName, "DBWIN capture init failed: %s", dbwin_err.c_str());
+      return reporter.Fail("DBWIN capture init failed: %s", dbwin_err.c_str());
     }
   }
 
   hr = dev->SetMaximumFrameLatency(1);
   if (FAILED(hr)) {
     CloseKmtAdapter(&kmt, kmt_adapter);
-    return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::SetMaximumFrameLatency(1)", hr);
+    return reporter.FailHresult("IDirect3DDevice9Ex::SetMaximumFrameLatency(1)", hr);
   }
 
   ComPtr<IDirect3DQuery9> query;
   hr = dev->CreateQuery(D3DQUERYTYPE_EVENT, query.put());
   if (FAILED(hr) || !query) {
     CloseKmtAdapter(&kmt, kmt_adapter);
-    return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::CreateQuery(EVENT)", hr);
+    return reporter.FailHresult("IDirect3DDevice9Ex::CreateQuery(EVENT)", hr);
   }
 
   if (validate_fences) {
@@ -747,13 +747,13 @@ static int RunSubmitFenceStress(int argc, char** argv) {
     hr = dev->Clear(0, NULL, D3DCLEAR_TARGET, D3DCOLOR_XRGB((int)(i & 255), 0, 0), 1.0f, 0);
     if (FAILED(hr)) {
       CloseKmtAdapter(&kmt, kmt_adapter);
-      return aerogpu_test::FailHresult(kTestName, "Clear", hr);
+      return reporter.FailHresult("Clear", hr);
     }
 
     hr = query->Issue(D3DISSUE_END);
     if (FAILED(hr)) {
       CloseKmtAdapter(&kmt, kmt_adapter);
-      return aerogpu_test::FailHresult(kTestName, "IDirect3DQuery9::Issue(END)", hr);
+      return reporter.FailHresult("IDirect3DQuery9::Issue(END)", hr);
     }
 
     unsigned long long issue_fence = 0;
@@ -761,19 +761,18 @@ static int RunSubmitFenceStress(int argc, char** argv) {
     if (validate_fences) {
       if (!dbwin.WaitForSubmitFence(pid, 2000, /*expected_present=*/0, &issue_fence, &issue_line)) {
         CloseKmtAdapter(&kmt, kmt_adapter);
-        return aerogpu_test::Fail(kTestName, "timed out waiting for submit fence log (iteration %u)", (unsigned)(i + 1));
+        return reporter.Fail("timed out waiting for submit fence log (iteration %u)", (unsigned)(i + 1));
       }
       if (issue_fence == 0) {
         CloseKmtAdapter(&kmt, kmt_adapter);
-        return aerogpu_test::Fail(kTestName, "got fence=0 from submit log: %s", issue_line.c_str());
+        return reporter.Fail("got fence=0 from submit log: %s", issue_line.c_str());
       }
       if (last_fence != 0 && issue_fence <= last_fence) {
         CloseKmtAdapter(&kmt, kmt_adapter);
-        return aerogpu_test::Fail(kTestName,
-                                  "non-monotonic submit fence: prev=%I64u cur=%I64u (line: %s)",
-                                  last_fence,
-                                  issue_fence,
-                                  issue_line.c_str());
+        return reporter.Fail("non-monotonic submit fence: prev=%I64u cur=%I64u (line: %s)",
+                             last_fence,
+                             issue_fence,
+                             issue_line.c_str());
       }
       last_fence = issue_fence;
     }
@@ -787,11 +786,11 @@ static int RunSubmitFenceStress(int argc, char** argv) {
       }
       if (hr != S_FALSE && hr != D3DERR_WASSTILLDRAWING) {
         CloseKmtAdapter(&kmt, kmt_adapter);
-        return aerogpu_test::FailHresult(kTestName, "IDirect3DQuery9::GetData(FLUSH)", hr);
+        return reporter.FailHresult("IDirect3DQuery9::GetData(FLUSH)", hr);
       }
       if ((GetTickCount() - start) > 5000) {
         CloseKmtAdapter(&kmt, kmt_adapter);
-        return aerogpu_test::Fail(kTestName, "query did not complete within 5s (iteration %u)", (unsigned)(i + 1));
+        return reporter.Fail("query did not complete within 5s (iteration %u)", (unsigned)(i + 1));
       }
       Sleep(0);
     }
@@ -802,17 +801,15 @@ static int RunSubmitFenceStress(int argc, char** argv) {
       NTSTATUS st = 0;
       if (!QueryKmdFence(&kmt, kmt_adapter, &submitted, &completed, &st)) {
         CloseKmtAdapter(&kmt, kmt_adapter);
-        return aerogpu_test::Fail(kTestName,
-                                  "D3DKMTEscape(query-fence) failed (NTSTATUS=0x%08lX)",
-                                  (unsigned long)st);
+        return reporter.Fail("D3DKMTEscape(query-fence) failed (NTSTATUS=0x%08lX)", (unsigned long)st);
       }
       if (completed < issue_fence) {
         CloseKmtAdapter(&kmt, kmt_adapter);
-        return aerogpu_test::Fail(kTestName,
-                                  "query completed but KMD fence is behind: fence=%I64u completed=%I64u submitted=%I64u",
-                                  issue_fence,
-                                  completed,
-                                  submitted);
+        return reporter.Fail(
+            "query completed but KMD fence is behind: fence=%I64u completed=%I64u submitted=%I64u",
+            issue_fence,
+            completed,
+            submitted);
       }
     }
 
@@ -828,11 +825,11 @@ static int RunSubmitFenceStress(int argc, char** argv) {
         saw_was_still_drawing = true;
       } else {
         CloseKmtAdapter(&kmt, kmt_adapter);
-        return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::PresentEx(DONOTWAIT)", hr);
+        return reporter.FailHresult("IDirect3DDevice9Ex::PresentEx(DONOTWAIT)", hr);
       }
       if ((GetTickCount() - present_start) > 5000) {
         CloseKmtAdapter(&kmt, kmt_adapter);
-        return aerogpu_test::Fail(kTestName, "PresentEx(DONOTWAIT) did not make progress within 5s");
+        return reporter.Fail("PresentEx(DONOTWAIT) did not make progress within 5s");
       }
       Sleep(0);
     }
@@ -842,19 +839,18 @@ static int RunSubmitFenceStress(int argc, char** argv) {
       std::string present_line;
       if (!dbwin.WaitForSubmitFence(pid, 2000, /*expected_present=*/1, &present_fence, &present_line)) {
         CloseKmtAdapter(&kmt, kmt_adapter);
-        return aerogpu_test::Fail(kTestName, "timed out waiting for present submit fence log");
+        return reporter.Fail("timed out waiting for present submit fence log");
       }
       if (present_fence == 0) {
         CloseKmtAdapter(&kmt, kmt_adapter);
-        return aerogpu_test::Fail(kTestName, "got fence=0 from present submit log: %s", present_line.c_str());
+        return reporter.Fail("got fence=0 from present submit log: %s", present_line.c_str());
       }
       if (present_fence <= last_fence) {
         CloseKmtAdapter(&kmt, kmt_adapter);
-        return aerogpu_test::Fail(kTestName,
-                                  "non-monotonic present fence: prev=%I64u cur=%I64u (line: %s)",
-                                  last_fence,
-                                  present_fence,
-                                  present_line.c_str());
+        return reporter.Fail("non-monotonic present fence: prev=%I64u cur=%I64u (line: %s)",
+                             last_fence,
+                             present_fence,
+                             present_line.c_str());
       }
       last_fence = present_fence;
     }
@@ -871,8 +867,7 @@ static int RunSubmitFenceStress(int argc, char** argv) {
   }
 
   CloseKmtAdapter(&kmt, kmt_adapter);
-  aerogpu_test::PrintfStdout("PASS: %s", kTestName);
-  return 0;
+  return reporter.Pass();
 }
 
 int main(int argc, char** argv) {
