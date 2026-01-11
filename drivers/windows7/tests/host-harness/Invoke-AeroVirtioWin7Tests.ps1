@@ -977,14 +977,8 @@ try {
     }
     "VIRTIO_SND_CAPTURE_SKIPPED" {
       $reason = "unknown"
-      if ($result.Tail -match "AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-snd-capture\\|SKIP\\|endpoint_missing") {
-        $reason = "endpoint_missing"
-      } elseif ($result.Tail -match "AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-snd-capture\\|SKIP\\|flag_not_set") {
-        $reason = "flag_not_set"
-      } elseif ($result.Tail -match "AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-snd-capture\\|SKIP\\|disabled") {
-        $reason = "disabled"
-      } elseif ($result.Tail -match "AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-snd-capture\\|SKIP\\|device_missing") {
-        $reason = "device_missing"
+      if ($result.Tail -match "AERO_VIRTIO_SELFTEST\\|TEST\\|virtio-snd-capture\\|SKIP\\|([^\\|\\r\\n]+)") {
+        $reason = $Matches[1]
       }
 
       Write-Host "FAIL: virtio-snd capture test was skipped ($reason) but -WithVirtioSnd was enabled"

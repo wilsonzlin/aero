@@ -165,6 +165,7 @@ def _virtio_snd_skip_failure_message(tail: bytes) -> str:
 def _virtio_snd_capture_skip_failure_message(tail: bytes) -> str:
     # The capture marker is separate from the playback marker:
     #   AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|PASS/FAIL/SKIP|...
+    prefix = b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|"
     if b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|endpoint_missing" in tail:
         return "FAIL: virtio-snd capture endpoint missing but --with-virtio-snd was enabled"
     if b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set" in tail:
@@ -176,6 +177,21 @@ def _virtio_snd_capture_skip_failure_message(tail: bytes) -> str:
         return "FAIL: virtio-snd capture test was skipped (--disable-snd) but --with-virtio-snd was enabled"
     if b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|device_missing" in tail:
         return "FAIL: virtio-snd capture test was skipped (device missing) but --with-virtio-snd was enabled"
+
+    # Fallback: extract the skip reason token from the marker itself so callers get something actionable
+    # (e.g. wrong_service/driver_not_bound/device_error/topology_interface_missing).
+    idx = tail.rfind(prefix)
+    if idx != -1:
+        end = tail.find(b"\n", idx)
+        if end == -1:
+            end = len(tail)
+        reason = tail[idx + len(prefix) : end].strip()
+        if reason:
+            reason_str = reason.decode("utf-8", errors="replace").strip()
+            return (
+                f"FAIL: virtio-snd capture test was skipped ({reason_str}) "
+                "but --with-virtio-snd was enabled"
+            )
     return "FAIL: virtio-snd capture test was skipped but --with-virtio-snd was enabled"
 
 
