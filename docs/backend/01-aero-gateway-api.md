@@ -138,6 +138,11 @@ Token rules:
 
 Clients must treat `udpRelay.token` as a secret and must not log it.
 
+Relay contract:
+
+- The relay service is implemented by [`proxy/webrtc-udp-relay`](../../proxy/webrtc-udp-relay/).
+- WebRTC signaling schema and v1/v2 datagram framing (used by both the WebRTC DataChannel and the `GET /udp` WebSocket fallback) are specified in [`proxy/webrtc-udp-relay/PROTOCOL.md`](../../proxy/webrtc-udp-relay/PROTOCOL.md).
+
 #### Optional: refresh relay token (`POST /udp-relay/token`)
 
 Some gateway deployments expose `POST /udp-relay/token`, which returns a fresh short-lived relay credential without requiring a full session bootstrap.
