@@ -9,10 +9,12 @@
 #include <condition_variable>
 
 #include "aerogpu_d3d9_objects.h"
+#include "aerogpu_d3d9_submit.h"
 
 #include "aerogpu_cmd_stream_writer.h"
 
 namespace aerogpu {
+
 namespace {
 
 bool Check(bool cond, const char* msg) {
@@ -619,6 +621,57 @@ bool TestEventQueryGetDataSemantics() {
     return false;
   }
 
+  return true;
+}
+
+bool TestAllocationListSplitResetsOnEmptySubmit() {
+  // Repro for a subtle WDDM-only failure mode:
+  //
+  // Allocation list tracking may request a "flush/split" before we've emitted any
+  // command packets in the new submission (e.g. because state-setting packets are
+  // elided due to caching). In that situation submit() must still reset the
+  // submission-local allocation tracking state even though it should not issue an
+  // empty DMA submission.
+  Adapter adapter;
+  Device dev(&adapter);
+
+  dev.wddm_context.hContext = 1; // enable tracking in portable builds
+
+  D3DDDI_ALLOCATIONLIST list[1] = {};
+  dev.alloc_list_tracker.rebind(list, 1, 0xFFFFu);
+
+  auto r0 = dev.alloc_list_tracker.track_buffer_read(/*hAllocation=*/1, /*alloc_id=*/1);
+  if (!Check(r0.status == AllocRefStatus::kOk, "track_buffer_read first")) {
+    return false;
+  }
+  if (!Check(dev.cmd.empty(), "command stream still empty after tracking")) {
+    return false;
+  }
+  if (!Check(dev.alloc_list_tracker.list_len() == 1, "allocation list full")) {
+    return false;
+  }
+
+  // submit() should not issue an empty DMA submission, but it must still reset
+  // submission-local allocation tracking state so we can continue tracking in a
+  // new submission.
+  {
+    std::lock_guard<std::mutex> lock(dev.mutex);
+    (void)submit_locked(&dev);
+  }
+
+  if (!Check(dev.alloc_list_tracker.list_len() == 0, "allocation list reset after empty submit")) {
+    return false;
+  }
+  auto r1 = dev.alloc_list_tracker.track_buffer_read(/*hAllocation=*/2, /*alloc_id=*/2);
+  if (!Check(r1.status == AllocRefStatus::kOk, "track_buffer_read after empty submit")) {
+    return false;
+  }
+  if (!Check(dev.alloc_list_tracker.list_len() == 1, "allocation list len after re-track")) {
+    return false;
+  }
+  if (!Check(list[0].hAllocation == 2, "allocation list entry points at second allocation")) {
+    return false;
+  }
   return true;
 }
 
@@ -1236,6 +1289,7 @@ int main() {
   failures += !aerogpu::TestFixedPacketPadding();
   failures += !aerogpu::TestOwnedAndBorrowedStreamsMatch();
   failures += !aerogpu::TestEventQueryGetDataSemantics();
+  failures += !aerogpu::TestAllocationListSplitResetsOnEmptySubmit();
   failures += !aerogpu::TestInvalidPayloadArgs();
   failures += !aerogpu::TestDestroyBoundShaderUnbinds();
   failures += !aerogpu::TestDestroyBoundVertexDeclUnbinds();
