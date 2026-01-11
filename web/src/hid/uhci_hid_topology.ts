@@ -56,10 +56,11 @@ export class UhciHidTopologyManager {
   }
 
   #normalizeDevicePath(path: GuestUsbPath): GuestUsbPath {
-    // Root port 0 is reserved for the external hub. If a caller tries to attach a device
-    // directly at `[0]` (legacy direct-attach semantics), remap to the direct-attach fallback
-    // root port 1 so we don't clobber the hub.
-    if (path.length === 1 && path[0] === 0) return [1];
+    // Root port 0 is reserved for the external hub and root port 1 is reserved for the
+    // guest-visible WebUSB passthrough device. For backwards compatibility, callers may still
+    // provide a single-element root-port path (`[0]` or `[1]`). Remap these to stable hub-backed
+    // paths so we never clobber the hub or the WebUSB device.
+    if (path.length === 1 && (path[0] === 0 || path[0] === 1)) return [0, path[0] + 1];
     return path;
   }
 

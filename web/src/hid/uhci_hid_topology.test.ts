@@ -27,7 +27,7 @@ describe("hid/UhciHidTopologyManager", () => {
     expect(uhci.attach_hub).toHaveBeenCalledWith(0, 16);
   });
 
-  it("remaps legacy direct attaches at root port 0 to the direct-attach fallback root port 1", () => {
+  it("remaps legacy root-port-only paths onto stable hub ports behind root port 0", () => {
     const mgr = new UhciHidTopologyManager({ defaultHubPortCount: 16 });
     const uhci = createFakeUhci();
     const dev = { kind: "device" };
@@ -39,13 +39,13 @@ describe("hid/UhciHidTopologyManager", () => {
     expect(uhci.attach_hub).toHaveBeenCalledWith(0, 16);
 
     expect(uhci.detach_at_path).toHaveBeenCalledTimes(1);
-    expect(uhci.detach_at_path).toHaveBeenCalledWith([1]);
-    expect(uhci.attach_webhid_device).toHaveBeenCalledWith([1], dev);
+    expect(uhci.detach_at_path).toHaveBeenCalledWith([0, 1]);
+    expect(uhci.attach_webhid_device).toHaveBeenCalledWith([0, 1], dev);
 
     mgr.detachDevice(1);
     // Detach should use the normalized path as well.
     expect(uhci.detach_at_path).toHaveBeenCalledTimes(2);
-    expect(uhci.detach_at_path).toHaveBeenLastCalledWith([1]);
+    expect(uhci.detach_at_path).toHaveBeenLastCalledWith([0, 1]);
   });
 
   it("detaches the previous guest path when a deviceId is re-attached at a new path", () => {
@@ -115,8 +115,8 @@ describe("hid/UhciHidTopologyManager", () => {
     mgr.detachDevice(1);
 
     // One detach for clearing on attach, one for explicit detach.
-    expect(uhci.detach_at_path).toHaveBeenCalledWith([1]);
-    expect(uhci.attach_usb_hid_passthrough_device).toHaveBeenCalledWith([1], dev);
+    expect(uhci.detach_at_path).toHaveBeenCalledWith([0, 2]);
+    expect(uhci.attach_usb_hid_passthrough_device).toHaveBeenCalledWith([0, 2], dev);
     expect(uhci.detach_at_path).toHaveBeenCalledTimes(2);
   });
 
