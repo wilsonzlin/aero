@@ -111,7 +111,30 @@ To confirm the IDs on Windows 7:
 
 ## Build
 
-This driver is intended to be built with the classic WDK 7.1 `build` utility (so KMDF 1.9 is targeted naturally).
+### Supported: WDK10 / MSBuild (CI path)
+
+CI builds this driver via the MSBuild project:
+
+- `drivers/windows7/virtio-input/aero_virtio_input.vcxproj`
+
+From a Windows host with the WDK installed:
+
+```powershell
+# From the repo root:
+.\ci\install-wdk.ps1
+.\ci\build-drivers.ps1 -ToolchainJson .\out\toolchain.json -Drivers windows7/virtio-input
+```
+
+Build outputs are staged under:
+
+- `out/drivers/windows7/virtio-input/x86/aero_virtio_input.sys`
+- `out/drivers/windows7/virtio-input/x64/aero_virtio_input.sys`
+
+The MSBuild project pins `KmdfLibraryVersion = 1.9` so the built driver should load on a stock Windows 7 SP1 machine without a coinstaller (matching the INF policy described above).
+
+### Legacy/deprecated: WDK 7.1 `build.exe`
+
+This driver can also be built with the classic WDK 7.1 `build` utility (so KMDF 1.9 is targeted naturally).
 
 1. Open the WDK build environment:
    - `Windows 7 x86 Free Build Environment`
