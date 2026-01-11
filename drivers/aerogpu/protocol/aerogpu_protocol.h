@@ -254,10 +254,13 @@ typedef struct AEROGPU_CMD_SIGNAL_FENCE_PAYLOAD {
 /* ------------------------------------------------------------------------- */
 
 /*
- * PCI identification.
+ * PCI identification (legacy bring-up ABI).
  *
- * The actual VEN/DEV values are part of the virtual machine's PCI device model.
- * If your device model uses different IDs, update the INF accordingly.
+ * These IDs are part of the guest↔emulator ABI contract. They intentionally differ from the
+ * versioned ABI IDs in `aerogpu_pci.h` (VID=0xA3A0, DID=0x0001).
+ *
+ * If you change the IDs exposed by a device model, you must also update the matching Windows INF.
+ * See: docs/abi/aerogpu-pci-identity.md
  */
 #ifndef AEROGPU_PCI_VENDOR_ID
 #define AEROGPU_PCI_VENDOR_ID 0x1AED
