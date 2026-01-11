@@ -30,7 +30,7 @@ inputs:
 outputs:
   cache-hit:
     description: Whether the browser cache was restored from an exact key match.
-    value: ${{ steps.browser-cache.outputs.cache-hit }}
+    value: ${{ steps.cache-state.outputs.cache_hit != 'false' && steps.cache-state.outputs.cache_hit || steps.browser-cache.outputs.cache-hit }}
 
 runs:
   using: composite
@@ -176,8 +176,10 @@ runs:
         const withDepsInput = (process.env.INPUT_WITH_DEPS || '').trim().toLowerCase();
         const withDeps = runnerOs === 'Linux' ? (withDepsInput ? withDepsInput === 'true' : true) : false;
         
+        const cachePathForGitHub = cachePath.replace(/\\/g, '/');
+        
         // Export env vars for downstream workflow steps.
-        setEnv('PLAYWRIGHT_BROWSERS_PATH', cachePath);
+        setEnv('PLAYWRIGHT_BROWSERS_PATH', cachePathForGitHub);
         setEnv('PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD', '1');
         
         setOutput('browsers', browsers.join(' '));
@@ -185,12 +187,33 @@ runs:
         setOutput('working_directory', workingDirectory.replace(/\\/g, '/'));
         setOutput('lockfile', lockfile);
         setOutput('cache_key_file', cacheKeyFile);
-        setOutput('cache_path', cachePath);
+        setOutput('cache_path', cachePathForGitHub);
         setOutput('with_deps', withDeps ? 'true' : 'false');
         NODE
         
+    - name: Determine whether browser cache is already available (job-local)
+      id: cache-state
+      shell: bash
+      env:
+        CACHE_PATH: ${{ steps.vars.outputs.cache_path }}
+      run: |
+        set -euo pipefail
+        cache_hit="false"
+        skip_restore="false"
+        
+        if [[ "${AERO_PLAYWRIGHT_CACHE_RESTORED:-}" == "1" && "${AERO_PLAYWRIGHT_CACHE_PATH:-}" == "${CACHE_PATH}" ]]; then
+          if [[ -d "${CACHE_PATH}" ]] && [[ -n "$(ls -A "${CACHE_PATH}" 2>/dev/null || true)" ]]; then
+            skip_restore="true"
+            cache_hit="job-local"
+          fi
+        fi
+        
+        echo "skip_restore=${skip_restore}" >> "$GITHUB_OUTPUT"
+        echo "cache_hit=${cache_hit}" >> "$GITHUB_OUTPUT"
+
     - name: Restore Playwright browser cache
       id: browser-cache
+      if: steps.cache-state.outputs.skip_restore != 'true'
       uses: actions/cache@v4
       with:
         path: ${{ steps.vars.outputs.cache_path }}
@@ -198,6 +221,15 @@ runs:
         restore-keys: |
           ${{ runner.os }}-playwright-${{ steps.vars.outputs.browsers_key }}-
           ${{ runner.os }}-playwright-
+
+    - name: Mark Playwright cache as restored (job-local)
+      if: steps.cache-state.outputs.skip_restore != 'true'
+      shell: bash
+      run: |
+        {
+          echo "AERO_PLAYWRIGHT_CACHE_RESTORED=1"
+          echo "AERO_PLAYWRIGHT_CACHE_PATH=${{ steps.vars.outputs.cache_path }}"
+        } >> "$GITHUB_ENV"
 
     - name: Resolve Playwright CLI + version
       id: playwright
@@ -295,7 +327,7 @@ runs:
       if: always()
       shell: bash
       env:
-        CACHE_HIT: ${{ steps.browser-cache.outputs.cache-hit }}
+        CACHE_HIT: ${{ steps.cache-state.outputs.cache_hit != 'false' && steps.cache-state.outputs.cache_hit || steps.browser-cache.outputs.cache-hit }}
         WORKING_DIRECTORY: ${{ steps.vars.outputs.working_directory }}
         CACHE_PATH: ${{ steps.vars.outputs.cache_path }}
         CACHE_KEY_FILE: ${{ steps.vars.outputs.cache_key_file }}

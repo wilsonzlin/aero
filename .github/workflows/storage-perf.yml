@@ -59,11 +59,12 @@ jobs:
           working-directory: head
           lockfile: head/package-lock.json
 
-      - name: Install Chromium (Playwright, baseline)
-        working-directory: base
-        env:
-          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "0"
-        run: npx playwright install chromium
+      - name: Setup Playwright (cached, baseline)
+        uses: ./head/.github/actions/setup-playwright
+        with:
+          browsers: chromium
+          working-directory: base
+          lockfile: base/package-lock.json
 
       - name: Run storage perf (baseline)
         working-directory: base
