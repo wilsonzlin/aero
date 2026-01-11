@@ -393,6 +393,9 @@ static int DoQueryVersion(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
   if (q.features_lo != 0 || q.features_hi != 0) {
     wprintf(L"AeroGPU features:\n");
     wprintf(L"  lo=0x%I64x hi=0x%I64x\n", (unsigned long long)q.features_lo, (unsigned long long)q.features_hi);
+    if (q.detected_mmio_magic == kLegacyMmioMagic) {
+      wprintf(L"  (note: legacy device; feature bits are best-effort)\n");
+    }
     wprintf(L"  decoded:");
     bool any = false;
     if (q.features_lo & AEROGPU_FEATURE_FENCE_PAGE) {
