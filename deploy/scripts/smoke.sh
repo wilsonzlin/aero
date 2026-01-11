@@ -14,6 +14,12 @@ compose() {
   AERO_DOMAIN=localhost \
     AERO_HSTS_MAX_AGE=0 \
     AERO_CSP_CONNECT_SRC_EXTRA= \
+    AERO_GATEWAY_UPSTREAM=aero-gateway:8080 \
+    AERO_L2_PROXY_UPSTREAM=aero-l2-proxy:8090 \
+    AERO_GATEWAY_IMAGE="aero-gateway:${PROJECT_NAME}" \
+    AERO_L2_PROXY_IMAGE="aero-l2-proxy:${PROJECT_NAME}" \
+    TRUST_PROXY=1 \
+    CROSS_ORIGIN_ISOLATION=0 \
     AERO_FRONTEND_ROOT="$SMOKE_FRONTEND_ROOT" \
     docker compose -f "$COMPOSE_FILE" -p "$PROJECT_NAME" "$@"
 }
