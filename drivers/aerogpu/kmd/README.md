@@ -93,24 +93,34 @@ This path is **approximate** (good enough for most D3D9-era `GetRasterStatus` ca
 - It maps elapsed time within the frame onto a synthetic `[0, height + vblank_lines)` scanline range, where `vblank_lines`
   is clamped to a small constant range (currently 20–40 lines).
 
-## Stable `alloc_id` / `share_token` (WDDM allocation private data)
+## Stable `alloc_id` / `share_token` (shared allocations)
 
-To support D3D9Ex + DWM redirected surfaces and other cross-process shared allocations, AeroGPU relies on a stable identifier per WDDM allocation:
+To support D3D9Ex + DWM redirected surfaces and other cross-process shared allocations, AeroGPU relies on stable identifiers:
 
-- `alloc_id` (32-bit, nonzero, stable across opens)
-- `share_token` (64-bit, stable across guest processes; `0` for non-shared allocations)
+- `alloc_id` (32-bit, nonzero): UMD-owned allocation ID used by the per-submit allocation table (`alloc_id → {gpa, size_bytes, flags}`).
+- `share_token` (64-bit): KMD-owned ShareToken used by the AeroGPU command stream shared-surface ops (`EXPORT_SHARED_SURFACE` / `IMPORT_SHARED_SURFACE`).
 
-These values live in **WDDM allocation private driver data** (`aerogpu_wddm_alloc_priv`):
+### `alloc_id` (UMD → KMD input; preserved across `OpenResource`)
 
-- The blob is treated as **UMD → KMD input**: the UMD generates `alloc_id` and `share_token` and attaches them to each allocation.
-- For **shared allocations**, dxgkrnl preserves the blob and returns the exact same bytes on `OpenResource`/`DxgkDdiOpenAllocation` in another process, ensuring both processes observe identical IDs.
-- The KMD validates and stores the IDs in its allocation bookkeeping and uses `alloc_id` when building the per-submit allocation table for the emulator.
+`alloc_id` is carried in **WDDM allocation private driver data** (`aerogpu_wddm_alloc_priv.alloc_id`):
+
+- The blob is treated as **UMD → KMD input**: the UMD generates `alloc_id` and attaches it to each allocation.
+- For **shared allocations**, dxgkrnl preserves the blob and returns the exact same bytes on `OpenResource`/`DxgkDdiOpenAllocation` in another process, ensuring both processes observe the same `alloc_id`.
+- The KMD validates and stores `alloc_id` in its allocation bookkeeping and uses it when building the per-submit allocation table for the emulator.
 - To avoid silent corruption, the KMD rejects submissions where the allocation list contains the same `alloc_id` for different backing base addresses (`gpa`). (Size may vary due to alignment; the allocation table uses the maximum observed size for a given `alloc_id`.)
-- For standard allocations where the runtime does not provide an AeroGPU private-data blob, the KMD synthesizes an `alloc_id` from a reserved namespace (high bit set) and sets `share_token = 0`.
+- For standard allocations where the runtime does not provide an AeroGPU private-data blob, the KMD synthesizes an `alloc_id` from a reserved namespace (high bit set).
 
-The shared layout is defined in:
+The preserved private-data layout is defined in:
 
 - `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`
+
+### `share_token` (KMD → UMD output; stable cross-process)
+
+For shared surfaces, the `share_token` used by the AeroGPU protocol is the **KMD-generated per-allocation `ShareToken`** returned to the UMD via allocation private driver data:
+
+- `drivers/aerogpu/protocol/aerogpu_alloc_privdata.h`
+
+Do **not** derive `share_token` from the numeric value of the D3D shared `HANDLE`: handle values are process-local and not stable cross-process.
 
 ## Building (WDK 10 / MSBuild)
 
