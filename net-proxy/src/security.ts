@@ -140,13 +140,23 @@ function parseAllowRule(entry: string): AllowRule {
   };
 }
 
+const allowlistCache = new Map<string, AllowRule[]>();
+
 function parseAllowlist(rawAllowlist: string): AllowRule[] {
   const trimmed = rawAllowlist.trim();
   if (trimmed === "") return [];
 
-  return trimmed
-    .split(",")
-    .map((entry) => parseAllowRule(entry));
+  const cached = allowlistCache.get(trimmed);
+  if (cached) return cached;
+
+  const parsed = trimmed.split(",").map((entry) => parseAllowRule(entry));
+  allowlistCache.set(trimmed, parsed);
+  // Avoid unbounded memory growth if callers provide lots of distinct allowlists.
+  if (allowlistCache.size > 100) {
+    allowlistCache.clear();
+    allowlistCache.set(trimmed, parsed);
+  }
+  return parsed;
 }
 
 function isPublicUnicast(addr: ipaddr.IPv4 | ipaddr.IPv6): boolean {
