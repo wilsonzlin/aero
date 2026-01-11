@@ -657,6 +657,10 @@ For USB HID **gamepad** details (including the composite HID topology and the ex
 gamepad report descriptor + byte layout), see
 [`docs/usb-hid-gamepad.md`](./usb-hid-gamepad.md).
 
+For WebHID device passthrough (where the browser does not expose the raw HID
+report descriptor bytes), see
+[`docs/webhid-hid-report-descriptor-synthesis.md`](./webhid-hid-report-descriptor-synthesis.md).
+
 ### USB HID Keyboard
 
 ```rust

@@ -9,6 +9,10 @@ The Rust-side mapping helpers live in `emulator::io::usb::hid::usage` (`crates/e
 For USB HID **gamepad** details (composite device layout, Windows 7 driver binding expectations, and the exact gamepad report descriptor/report bytes), see
 [`docs/usb-hid-gamepad.md`](./usb-hid-gamepad.md).
 
+For WebHID passthrough (synthesizing HID report descriptors from WebHID metadata
+because browsers do not expose raw report descriptor bytes), see
+[`docs/webhid-hid-report-descriptor-synthesis.md`](./webhid-hid-report-descriptor-synthesis.md).
+
 ---
 
 ## Keyboard: `KeyboardEvent.code` → HID Usage (Keyboard/Keypad page 0x07)
