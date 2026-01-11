@@ -106,13 +106,16 @@ describe("RemoteStreamingDisk (IndexedDB cache)", () => {
 
   it("caches fetched blocks in IndexedDB and reuses them on subsequent reads", async () => {
     const blockSize = 1024 * 1024;
+    // NOTE: `RemoteStreamingDisk` treats `cacheLimitBytes=null` as "cache disabled".
+    // Use a positive limit here so the IDB cache is enabled.
+    const cacheLimitBytes = blockSize * 8;
     const image = makeTestImage(blockSize * 3);
     const mock = installMockRangeFetch(image, { etag: '"e1"' });
 
     const disk = await RemoteStreamingDisk.open("https://example.test/disk.img", {
       blockSize,
       cacheBackend: "idb",
-      cacheLimitBytes: null,
+      cacheLimitBytes,
       prefetchSequentialBlocks: 0,
     });
 
@@ -131,13 +134,14 @@ describe("RemoteStreamingDisk (IndexedDB cache)", () => {
 
   it("invalidates the IDB cache when the remote ETag changes", async () => {
     const blockSize = 1024 * 1024;
+    const cacheLimitBytes = blockSize * 8;
     const image = makeTestImage(blockSize * 2);
 
     const mock1 = installMockRangeFetch(image, { etag: '"e1"' });
     const disk1 = await RemoteStreamingDisk.open("https://example.test/disk.img", {
       blockSize,
       cacheBackend: "idb",
-      cacheLimitBytes: null,
+      cacheLimitBytes,
       prefetchSequentialBlocks: 0,
     });
     await disk1.read(0, 16);
@@ -149,7 +153,7 @@ describe("RemoteStreamingDisk (IndexedDB cache)", () => {
     const disk2 = await RemoteStreamingDisk.open("https://example.test/disk.img", {
       blockSize,
       cacheBackend: "idb",
-      cacheLimitBytes: null,
+      cacheLimitBytes,
       prefetchSequentialBlocks: 0,
     });
     await disk2.read(0, 16);
@@ -160,13 +164,14 @@ describe("RemoteStreamingDisk (IndexedDB cache)", () => {
 
   it("reuses the IDB cache across refreshed URLs when cache identity is stable", async () => {
     const blockSize = 1024 * 1024;
+    const cacheLimitBytes = blockSize * 8;
     const image = makeTestImage(blockSize * 2);
     const mock = installMockRangeFetch(image, { etag: '"e1"' });
 
     const opts = {
       blockSize,
       cacheBackend: "idb" as const,
-      cacheLimitBytes: null,
+      cacheLimitBytes,
       prefetchSequentialBlocks: 0,
       cacheImageId: "img-1",
       cacheVersion: "v1",
@@ -187,13 +192,14 @@ describe("RemoteStreamingDisk (IndexedDB cache)", () => {
 
   it("invalidates the IDB cache when cacheVersion changes", async () => {
     const blockSize = 1024 * 1024;
+    const cacheLimitBytes = blockSize * 8;
     const image = makeTestImage(blockSize * 2);
     const mock = installMockRangeFetch(image, { etag: '"e1"' });
 
     const common = {
       blockSize,
       cacheBackend: "idb" as const,
-      cacheLimitBytes: null,
+      cacheLimitBytes,
       prefetchSequentialBlocks: 0,
       cacheImageId: "img-1",
     };
