@@ -2764,11 +2764,28 @@ impl AerogpuD3d9Executor {
                 width,
                 height,
             } => {
+                if width <= 0 || height <= 0 {
+                    self.state.scissor = None;
+                    return Ok(());
+                }
+
+                // Treat `x/y` as signed origins, and clamp the resulting rectangle to the
+                // non-negative plane before later clamping to the current render target bounds.
+                // This matches the D3D11 executor's scissor handling and avoids widening the
+                // rectangle when `x/y` are negative.
+                let left = x.max(0);
+                let top = y.max(0);
+                let right = x.saturating_add(width).max(0);
+                let bottom = y.saturating_add(height).max(0);
+                if right <= left || bottom <= top {
+                    self.state.scissor = None;
+                    return Ok(());
+                }
                 self.state.scissor = Some((
-                    x.max(0) as u32,
-                    y.max(0) as u32,
-                    width.max(0) as u32,
-                    height.max(0) as u32,
+                    left as u32,
+                    top as u32,
+                    (right - left) as u32,
+                    (bottom - top) as u32,
                 ));
                 Ok(())
             }
