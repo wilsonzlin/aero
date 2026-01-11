@@ -68,6 +68,7 @@ $packScript = Join-Path (Join-Path (Join-Path $repoRoot "drivers") "scripts") "m
 $driversOutDir = Join-Path (Join-Path $repoRoot "drivers") "out"
 $driverPackRoot = Join-Path $driversOutDir "aero-win7-driver-pack"
 $packagerDriversRoot = Join-Path $driversOutDir "aero-guest-tools-drivers"
+$guestToolsStageDir = Join-Path $driversOutDir "aero-guest-tools-stage"
 
 if (-not (Test-Path -LiteralPath $packScript -PathType Leaf)) {
   throw "Expected script not found: $packScript"
@@ -150,7 +151,29 @@ Copy-DriverTree -SourceArchDir (Join-Path $driverPackWin7Root "amd64") -DestArch
 Write-Host "Packager input prepared:"
 Write-Host "  $packagerDriversRoot"
 
-# 3) Build the actual Guest Tools ISO/zip using the in-repo packager.
+# 3) Stage the Guest Tools directory so we can inject upstream attribution files
+# (without modifying the in-repo guest-tools/ directory).
+Ensure-EmptyDirectory -Path $guestToolsStageDir
+Copy-Item -LiteralPath (Join-Path $guestToolsDir "*") -Destination $guestToolsStageDir -Recurse -Force
+
+$driverPackLicenses = Join-Path $driverPackRoot "licenses"
+$stageLicenses = Join-Path $guestToolsStageDir "licenses"
+if (Test-Path -LiteralPath $stageLicenses) {
+  Remove-Item -LiteralPath $stageLicenses -Recurse -Force -ErrorAction SilentlyContinue
+}
+if (Test-Path -LiteralPath $driverPackLicenses -PathType Container) {
+  Copy-Item -LiteralPath $driverPackLicenses -Destination $guestToolsStageDir -Recurse -Force
+}
+
+$guestToolsNoticesStage = Join-Path $guestToolsStageDir "THIRD_PARTY_NOTICES.md"
+if (-not (Test-Path -LiteralPath $guestToolsNoticesStage -PathType Leaf)) {
+  throw "Expected third-party notices file not found after staging: $guestToolsNoticesStage"
+}
+
+Write-Host "Guest Tools input staged:"
+Write-Host "  $guestToolsStageDir"
+
+# 4) Build the actual Guest Tools ISO/zip using the in-repo packager.
 Require-Command -Name "cargo" | Out-Null
 
 $packagerManifest = Join-Path (Join-Path (Join-Path (Join-Path $repoRoot "tools") "packaging") "aero_packager") "Cargo.toml"
@@ -166,7 +189,7 @@ Write-Host "  out  : $OutDir"
 
 & cargo run --manifest-path $packagerManifest --release -- `
   --drivers-dir $packagerDriversRoot `
-  --guest-tools-dir $guestToolsDir `
+  --guest-tools-dir $guestToolsStageDir `
   --spec $SpecPath `
   --out-dir $OutDir `
   --version $Version `
@@ -181,5 +204,6 @@ if ($CleanStage) {
   Write-Host "Cleaning staging directories..."
   Remove-Item -LiteralPath $driverPackRoot -Recurse -Force -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $packagerDriversRoot -Recurse -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $guestToolsStageDir -Recurse -Force -ErrorAction SilentlyContinue
 }
 

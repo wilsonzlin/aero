@@ -60,6 +60,7 @@ Both the staging directory and the zip include:
 
 - `manifest.json` (provenance info; records the source virtio-win ISO path/hash when applicable)
 - `THIRD_PARTY_NOTICES.md` (third-party attribution/redistribution notices for virtio-win-derived artifacts)
+- `licenses/virtio-win/` (best-effort copy of upstream license/notice files from the virtio-win distribution root)
 
 ### Optional: build a mountable drivers ISO (for Windows Setup “Load driver”)
 
@@ -94,6 +95,11 @@ This emits `aero-guest-tools.iso` and `aero-guest-tools.zip` under `dist/guest-t
 
 The Guest Tools ISO/zip root also includes `THIRD_PARTY_NOTICES.md` (sourced from
 `guest-tools/THIRD_PARTY_NOTICES.md` in this repo).
+
+When building Guest Tools from a virtio-win ISO/root using the wrapper script,
+upstream virtio-win license/notice files (if present) are also included under:
+
+- `licenses/virtio-win/`
 
 ## In-guest install workflow (post-install)
 

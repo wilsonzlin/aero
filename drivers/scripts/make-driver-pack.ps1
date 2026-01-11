@@ -82,6 +82,38 @@ function Derive-VirtioWinVersion {
   return $null
 }
 
+function Copy-VirtioWinNotices {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$VirtioRoot,
+    [Parameter(Mandatory = $true)]
+    [string]$DestDir
+  )
+
+  # Best-effort: copy upstream license/notice files from the virtio-win distribution root.
+  #
+  # virtio-win ISO contents vary across releases; keep this conservative by only
+  # copying common top-level notice files when present.
+  $patterns = @(
+    "LICENSE*",
+    "COPYING*",
+    "NOTICE*",
+    "EULA*",
+    "AUTHORS*",
+    "CREDITS*",
+    "README*"
+  )
+
+  New-Item -ItemType Directory -Path $DestDir -Force | Out-Null
+
+  foreach ($pat in $patterns) {
+    $hits = Get-ChildItem -LiteralPath $VirtioRoot -File -Filter $pat -ErrorAction SilentlyContinue
+    foreach ($h in $hits) {
+      Copy-Item -LiteralPath $h.FullName -Destination (Join-Path $DestDir $h.Name) -Force
+    }
+  }
+}
+
 function Find-ChildDir {
   param(
     [Parameter(Mandatory = $true)]
@@ -229,6 +261,10 @@ try {
   if (Test-Path -LiteralPath $virtioReadmeSrc -PathType Leaf) {
     Copy-Item -LiteralPath $virtioReadmeSrc -Destination (Join-Path $packRoot "README.md") -Force
   }
+
+  # Upstream virtio-win license/notice texts (best-effort). Stored under
+  # licenses/virtio-win/ to avoid colliding with Aero's own README files.
+  Copy-VirtioWinNotices -VirtioRoot $VirtioWinRoot -DestDir (Join-Path $packRoot "licenses\\virtio-win")
 
   $driverResults = @()
   $includedDrivers = New-Object "System.Collections.Generic.HashSet[string]"

@@ -38,6 +38,7 @@ guest-tools/
   verify.ps1 (optional, but required if verify.cmd is present)
   README.md
   THIRD_PARTY_NOTICES.md
+  licenses/ (optional)
   config/
     devices.cmd
   certs/
@@ -69,6 +70,7 @@ The ISO/zip root layout matches what `guest-tools/setup.cmd` expects (and may in
     devices.cmd
   certs/
     *.{cer,crt,p7b}
+  licenses/ (optional)
   drivers/
     x86/
       ...

@@ -194,6 +194,39 @@ fn collect_files(config: &PackageConfig, driver_plan: &DriverPlan) -> Result<Vec
         });
     }
 
+    // Optional: third-party license texts / attribution files.
+    // Keep this optional so local packager runs can still succeed with repo-only assets.
+    let licenses_dir = config.guest_tools_dir.join("licenses");
+    if licenses_dir.is_dir() {
+        for entry in walkdir::WalkDir::new(&licenses_dir)
+            .follow_links(false)
+            .sort_by_file_name()
+        {
+            let entry = entry?;
+            if !entry.file_type().is_file() {
+                continue;
+            }
+
+            // Skip hidden files such as `.DS_Store` (and placeholder `.keep`) to keep outputs
+            // stable across hosts.
+            let file_name = entry.file_name().to_string_lossy();
+            if file_name.starts_with('.') {
+                continue;
+            }
+
+            let rel = entry
+                .path()
+                .strip_prefix(&config.guest_tools_dir)
+                .expect("walkdir under guest_tools_dir");
+            let rel_str = path_to_slash(rel);
+            out.push(FileToPackage {
+                rel_path: rel_str,
+                bytes: fs::read(entry.path())
+                    .with_context(|| format!("read {}", entry.path().display()))?,
+            });
+        }
+    }
+
     // Certificates.
     let certs_dir = config.guest_tools_dir.join("certs");
     if !certs_dir.is_dir() {

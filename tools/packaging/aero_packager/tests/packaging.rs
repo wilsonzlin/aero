@@ -102,6 +102,7 @@ fn package_outputs_are_reproducible_and_contain_expected_files() -> anyhow::Resu
         "verify.ps1",
         "README.md",
         "THIRD_PARTY_NOTICES.md",
+        "licenses/virtio-win/LICENSE.txt",
         "config/devices.cmd",
         "manifest.json",
         "config/README.md",
