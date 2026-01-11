@@ -39,6 +39,20 @@ This repo still contains some older crates that are either:
 
 These are in the workspace for now, but **new crates should not add more naming variants**.
 
+#### Graphics ABI note (AeroGPU)
+
+There are multiple GPU “protocols” in-tree from different phases of bring-up. New work intended
+for the Windows 7 WDDM graphics path should target the canonical AeroGPU ABI in:
+
+- `drivers/aerogpu/protocol/*` (C headers, source of truth)
+- `emulator/protocol` (Rust/TypeScript mirror)
+- `crates/emulator/src/devices/pci/aerogpu.rs` (emulator device model)
+
+Some crates (notably `crates/aero-gpu-device`) implement experimental/prototype ABIs used for
+tests or tooling and are **not** the Win7/WDDM driver contract.
+
+See `docs/graphics/aerogpu-protocols.md` for the full mapping.
+
 ### Backend services (production)
 
 Most maintained backend work lives under:
@@ -81,4 +95,3 @@ These directories are intentionally **not** production code:
 - `prototype/` – larger prototypes / RFC companions
 
 If you add new experiments, keep them under one of these (or a clearly named `legacy/` directory) and document them with a small `README.md`.
-
