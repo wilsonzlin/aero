@@ -2,7 +2,7 @@ use super::ops_data::{calc_ea, op_bits, read_op_sized};
 use super::ExecOutcome;
 use crate::exception::{AssistReason, Exception};
 use crate::mem::CpuBus;
-use crate::state::{mask_bits, CpuState, FLAG_ZF};
+use crate::state::{mask_bits, CpuMode, CpuState, FLAG_OF, FLAG_ZF, RFLAGS_IF, RFLAGS_TF};
 use aero_x86::{DecodedInst, Instruction, Mnemonic, OpKind, Register};
 
 pub fn handles_mnemonic(m: Mnemonic) -> bool {
@@ -42,6 +42,13 @@ pub fn handles_mnemonic(m: Mnemonic) -> bool {
             | Mnemonic::Popa
             | Mnemonic::Pushf
             | Mnemonic::Popf
+            | Mnemonic::Cli
+            | Mnemonic::Sti
+            | Mnemonic::Int
+            | Mnemonic::Int1
+            | Mnemonic::Int3
+            | Mnemonic::Into
+            | Mnemonic::Iret
     )
 }
 
@@ -53,9 +60,26 @@ pub fn exec<B: CpuBus>(
 ) -> Result<ExecOutcome, Exception> {
     let instr = &decoded.instr;
     match instr.mnemonic() {
+        Mnemonic::Cli => {
+            state.set_flag(RFLAGS_IF, false);
+            Ok(ExecOutcome::Continue)
+        }
+        Mnemonic::Sti => {
+            state.set_flag(RFLAGS_IF, true);
+            Ok(ExecOutcome::Continue)
+        }
         Mnemonic::Nop | Mnemonic::Pause => Ok(ExecOutcome::Continue),
         Mnemonic::Jmp => {
             if is_far_branch(instr) {
+                if matches!(state.mode, CpuMode::Real | CpuMode::Vm86) {
+                    // Real-mode far jump (ptr16:16).
+                    let selector = instr.far_branch_selector();
+                    let offset = instr.far_branch16() as u64;
+                    state.write_reg(Register::CS, selector as u64);
+                    state.set_rip(offset);
+                    return Ok(ExecOutcome::Branch);
+                }
+
                 return Ok(ExecOutcome::Assist(AssistReason::Privileged));
             }
             let target = branch_target(state, bus, instr, next_ip)?;
@@ -207,6 +231,66 @@ pub fn exec<B: CpuBus>(
             let new = (state.rflags() & !mask) | (v & mask);
             state.set_rflags(new);
             Ok(ExecOutcome::Continue)
+        }
+        Mnemonic::Int | Mnemonic::Int1 | Mnemonic::Int3 | Mnemonic::Into => {
+            if !matches!(state.mode, CpuMode::Real | CpuMode::Vm86) {
+                return Ok(ExecOutcome::Assist(AssistReason::Interrupt));
+            }
+
+            let vector = match instr.mnemonic() {
+                Mnemonic::Int => instr.immediate8() as u8,
+                Mnemonic::Int1 => 1,
+                Mnemonic::Int3 => 3,
+                Mnemonic::Into => {
+                    if !state.get_flag(FLAG_OF) {
+                        return Ok(ExecOutcome::Continue);
+                    }
+                    4
+                }
+                _ => unreachable!(),
+            };
+
+            // Push FLAGS, CS, IP (in that order).
+            let flags = state.rflags() & 0xFFFF;
+            let cs = state.segments.cs.selector as u64;
+            let ip = next_ip & 0xFFFF;
+            push(state, bus, flags, 2)?;
+            push(state, bus, cs, 2)?;
+            push(state, bus, ip, 2)?;
+
+            // Clear IF and TF.
+            state.commit_lazy_flags();
+            state.rflags &= !(RFLAGS_IF | RFLAGS_TF);
+            state.rflags |= crate::state::RFLAGS_RESERVED1;
+
+            // Load CS:IP from the IVT.
+            let vec_addr = (vector as u64) * 4;
+            let offset = bus.read_u16(vec_addr)? as u64;
+            let segment = bus.read_u16(vec_addr + 2)?;
+            state.write_reg(Register::CS, segment as u64);
+            state.set_rip(offset);
+
+            state.set_pending_bios_int(vector);
+
+            Ok(ExecOutcome::Branch)
+        }
+        Mnemonic::Iret => {
+            if !matches!(state.mode, CpuMode::Real | CpuMode::Vm86) {
+                return Ok(ExecOutcome::Assist(AssistReason::Interrupt));
+            }
+
+            let ip = pop(state, bus, 2)? as u16 as u64;
+            let cs = pop(state, bus, 2)? as u16;
+            let flags = pop(state, bus, 2)? as u16 as u64;
+
+            state.write_reg(Register::CS, cs as u64);
+            state.set_rip(ip);
+
+            let rflags = (state.rflags() & !0xFFFF) | (flags & 0xFFFF);
+            state.set_rflags(rflags);
+            state.clear_pending_bios_int();
+
+            Ok(ExecOutcome::Branch)
         }
         Mnemonic::Loop | Mnemonic::Loope | Mnemonic::Loopne => {
             let addr_bits = state.bitness();

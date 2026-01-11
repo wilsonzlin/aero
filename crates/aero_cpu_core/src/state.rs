@@ -688,7 +688,11 @@ pub struct CpuState {
     pub mode: CpuMode,
     /// Set by `HLT` and cleared by interrupt delivery/reset.
     pub halted: bool,
-    pub _pad0: [u8; 6],
+    /// Interrupt vector recorded by a real-mode `INT n` instruction so the subsequent
+    /// BIOS ROM stub `HLT` can be surfaced to the host as a BIOS hypercall.
+    pub pending_bios_int: u8,
+    pub pending_bios_int_valid: bool,
+    pub _pad0: [u8; 4],
 
     // Segmentation / system tables.
     pub segments: SegmentRegs,
@@ -726,7 +730,9 @@ impl Default for CpuState {
             lazy_flags: LazyFlags::default(),
             mode: CpuMode::Real,
             halted: false,
-            _pad0: [0; 6],
+            pending_bios_int: 0,
+            pending_bios_int_valid: false,
+            _pad0: [0; 4],
             segments: SegmentRegs::default(),
             tables: DescriptorTables::default(),
             control: ControlRegs::default(),
@@ -762,6 +768,7 @@ impl CpuState {
         let mut state = Self::default();
         state.mode = mode;
         state.halted = false;
+        state.pending_bios_int_valid = false;
 
         // Configure CS cache bits so helpers like `bitness()` and `ip_mask()`
         // behave consistently with the requested coarse mode.
@@ -782,6 +789,27 @@ impl CpuState {
         }
 
         state
+    }
+
+    #[inline]
+    pub fn set_pending_bios_int(&mut self, vector: u8) {
+        self.pending_bios_int = vector;
+        self.pending_bios_int_valid = true;
+    }
+
+    #[inline]
+    pub fn take_pending_bios_int(&mut self) -> Option<u8> {
+        if self.pending_bios_int_valid {
+            self.pending_bios_int_valid = false;
+            Some(self.pending_bios_int)
+        } else {
+            None
+        }
+    }
+
+    #[inline]
+    pub fn clear_pending_bios_int(&mut self) {
+        self.pending_bios_int_valid = false;
     }
 
     /// Returns the current effective code bitness (16/32/64).

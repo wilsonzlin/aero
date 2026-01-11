@@ -137,6 +137,9 @@ fn run_until_rip_batch(state: &mut CpuState, bus: &mut FlatTestBus, stop_rip: u6
         match res.exit {
             BatchExit::Completed | BatchExit::Branch => continue,
             BatchExit::Halted => panic!("unexpected HLT at rip=0x{:X}", state.rip()),
+            BatchExit::BiosInterrupt(vector) => {
+                panic!("unexpected BIOS interrupt {vector:#x} at rip=0x{:X}", state.rip())
+            }
             BatchExit::Assist(r) => panic!("unexpected assist: {r:?}"),
             BatchExit::Exception(e) => panic!("unexpected exception: {e:?}"),
         }
@@ -155,6 +158,9 @@ fn run_until_rip_single_step(state: &mut CpuState, bus: &mut FlatTestBus, stop_r
         match exit {
             StepExit::Continue | StepExit::Branch => continue,
             StepExit::Halted => panic!("unexpected HLT at rip=0x{:X}", state.rip()),
+            StepExit::BiosInterrupt(vector) => {
+                panic!("unexpected BIOS interrupt {vector:#x} at rip=0x{:X}", state.rip())
+            }
             StepExit::Assist(r) => panic!("unexpected assist: {r:?}"),
         }
     }

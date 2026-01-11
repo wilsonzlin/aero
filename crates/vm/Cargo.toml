@@ -8,3 +8,6 @@ license = "MIT OR Apache-2.0"
 aero-snapshot = { path = "../aero-snapshot" }
 firmware = { path = "../firmware" }
 machine = { path = "../machine" }
+
+[dev-dependencies]
+aero_cpu_core = { path = "../aero_cpu_core" }

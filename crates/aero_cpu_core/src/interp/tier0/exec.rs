@@ -10,6 +10,7 @@ pub enum StepExit {
     Continue,
     Branch,
     Halted,
+    BiosInterrupt(u8),
     Assist(AssistReason),
 }
 
@@ -18,6 +19,7 @@ pub enum BatchExit {
     Completed,
     Branch,
     Halted,
+    BiosInterrupt(u8),
     Assist(AssistReason),
     Exception(Exception),
 }
@@ -57,8 +59,12 @@ pub fn step<B: CpuBus>(state: &mut CpuState, bus: &mut B) -> Result<StepExit, Ex
         }
         ExecOutcome::Halt => {
             state.set_rip(next_ip);
-            state.halted = true;
-            Ok(StepExit::Halted)
+            if let Some(vector) = state.take_pending_bios_int() {
+                Ok(StepExit::BiosInterrupt(vector))
+            } else {
+                state.halted = true;
+                Ok(StepExit::Halted)
+            }
         }
         ExecOutcome::Branch => Ok(StepExit::Branch),
         ExecOutcome::Assist(r) => Ok(StepExit::Assist(r)),
@@ -113,6 +119,13 @@ pub fn run_batch<B: CpuBus>(state: &mut CpuState, bus: &mut B, max_insts: u64) -
                 return BatchResult {
                     executed,
                     exit: BatchExit::Halted,
+                };
+            }
+            Ok(StepExit::BiosInterrupt(vector)) => {
+                executed += 1;
+                return BatchResult {
+                    executed,
+                    exit: BatchExit::BiosInterrupt(vector),
                 };
             }
             Ok(StepExit::Assist(r)) => {

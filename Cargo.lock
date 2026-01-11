@@ -4816,6 +4816,7 @@ name = "vm"
 version = "0.1.0"
 dependencies = [
  "aero-snapshot",
+ "aero_cpu_core",
  "firmware",
  "machine",
 ]

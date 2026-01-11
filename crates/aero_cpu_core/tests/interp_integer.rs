@@ -11,6 +11,7 @@ fn run_to_halt(state: &mut CpuState, bus: &mut FlatTestBus, max: u64) {
         match res.exit {
             BatchExit::Completed | BatchExit::Branch => continue,
             BatchExit::Halted => return,
+            BatchExit::BiosInterrupt(vector) => panic!("unexpected BIOS interrupt: {vector:#x}"),
             BatchExit::Assist(r) => panic!("unexpected assist: {r:?}"),
             BatchExit::Exception(e) => panic!("unexpected exception: {e:?}"),
         }
@@ -76,7 +77,7 @@ fn real_mode_segment_mov_updates_base() {
 }
 
 #[test]
-fn far_jump_requests_assist() {
+fn far_jump_executes_in_real_mode() {
     // ljmp 0x0000:0x0005 (EA 05 00 00 00)
     let code = [0xEA, 0x05, 0x00, 0x00, 0x00, 0xF4];
     let mut bus = FlatTestBus::new(0x1000);
@@ -85,11 +86,8 @@ fn far_jump_requests_assist() {
     state.set_rip(0);
 
     let res = run_batch(&mut state, &mut bus, 1);
-    assert!(matches!(
-        res.exit,
-        BatchExit::Assist(AssistReason::Privileged)
-    ));
-    assert_eq!(state.rip(), 0);
+    assert!(matches!(res.exit, BatchExit::Branch));
+    assert_eq!(state.rip(), 5);
 }
 
 #[test]
