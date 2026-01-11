@@ -256,6 +256,12 @@ template <typename T>
 struct has_member_ReadOnly<T, std::void_t<decltype(std::declval<T&>().ReadOnly)>> : std::true_type {};
 
 template <typename T, typename = void>
+struct has_member_DoNotWait : std::false_type {};
+
+template <typename T>
+struct has_member_DoNotWait<T, std::void_t<decltype(std::declval<T&>().DoNotWait)>> : std::true_type {};
+
+template <typename T, typename = void>
 struct has_member_CpuVisible : std::false_type {};
 
 template <typename T>
@@ -290,17 +296,20 @@ struct has_member_CreateSharedResource<T, std::void_t<decltype(std::declval<T&>(
 constexpr uint32_t kD3DLOCK_READONLY = 0x00000010u;
 constexpr uint32_t kD3DLOCK_DISCARD = 0x00002000u;
 constexpr uint32_t kD3DLOCK_NOOVERWRITE = 0x00001000u;
+constexpr uint32_t kD3DLOCK_DONOTWAIT = 0x00004000u;
 
 template <typename FlagsT>
 void set_lock_flags(FlagsT& flags, uint32_t lock_flags) {
   const bool discard = (lock_flags & kD3DLOCK_DISCARD) != 0;
   const bool no_overwrite = (lock_flags & kD3DLOCK_NOOVERWRITE) != 0;
   const bool read_only = (lock_flags & kD3DLOCK_READONLY) != 0;
+  const bool do_not_wait = (lock_flags & kD3DLOCK_DONOTWAIT) != 0;
 
   constexpr bool has_bitfields = has_member_Discard<FlagsT>::value ||
                                  has_member_NoOverwrite<FlagsT>::value ||
                                  has_member_NoOverWrite<FlagsT>::value ||
-                                 has_member_ReadOnly<FlagsT>::value;
+                                 has_member_ReadOnly<FlagsT>::value ||
+                                 has_member_DoNotWait<FlagsT>::value;
   if constexpr (has_bitfields) {
     if constexpr (has_member_Discard<FlagsT>::value) {
       flags.Discard = discard ? 1u : 0u;
@@ -313,6 +322,9 @@ void set_lock_flags(FlagsT& flags, uint32_t lock_flags) {
     }
     if constexpr (has_member_ReadOnly<FlagsT>::value) {
       flags.ReadOnly = read_only ? 1u : 0u;
+    }
+    if constexpr (has_member_DoNotWait<FlagsT>::value) {
+      flags.DoNotWait = do_not_wait ? 1u : 0u;
     }
   } else if constexpr (has_member_Value<FlagsT>::value &&
                        std::is_integral_v<std::remove_reference_t<decltype(std::declval<FlagsT&>().Value)>>) {
