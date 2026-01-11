@@ -475,6 +475,7 @@ struct AeroGpuDevice {
   aerogpu::d3d10_11::WddmSubmit wddm_submit;
 
   aerogpu::CmdWriter cmd;
+  std::vector<uint32_t> wddm_submit_allocation_handles;
 
   // Fence tracking for WDDM-backed synchronization (used by Map READ / DO_NOT_WAIT semantics).
   std::atomic<uint64_t> last_submitted_fence{0};
@@ -2194,6 +2195,13 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       AEROGPU_D3D10_RET_HR(init_hr);
     }
 
+    if (res->wddm_allocation_handle != 0 &&
+        std::find(dev->wddm_submit_allocation_handles.begin(),
+                  dev->wddm_submit_allocation_handles.end(),
+                  res->wddm_allocation_handle) == dev->wddm_submit_allocation_handles.end()) {
+      dev->wddm_submit_allocation_handles.push_back(res->wddm_allocation_handle);
+    }
+
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_buffer>(AEROGPU_CMD_CREATE_BUFFER);
     cmd->buffer_handle = res->handle;
     cmd->usage_flags = bind_flags_to_usage_flags(res->bind_flags);
@@ -2367,6 +2375,13 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
       AEROGPU_D3D10_RET_HR(init_hr);
     }
 
+    if (res->wddm_allocation_handle != 0 &&
+        std::find(dev->wddm_submit_allocation_handles.begin(),
+                  dev->wddm_submit_allocation_handles.end(),
+                  res->wddm_allocation_handle) == dev->wddm_submit_allocation_handles.end()) {
+      dev->wddm_submit_allocation_handles.push_back(res->wddm_allocation_handle);
+    }
+
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_texture2d>(AEROGPU_CMD_CREATE_TEXTURE2D);
     cmd->texture_handle = res->handle;
     cmd->usage_flags = bind_flags_to_usage_flags(res->bind_flags) | AEROGPU_RESOURCE_USAGE_TEXTURE;
@@ -2412,6 +2427,14 @@ void AEROGPU_APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOUR
   if (res->mapped) {
     unmap_resource_locked(dev, res, res->mapped_subresource);
   }
+  if (res->wddm_allocation_handle != 0) {
+    dev->wddm_submit_allocation_handles.erase(
+        std::remove(dev->wddm_submit_allocation_handles.begin(),
+                    dev->wddm_submit_allocation_handles.end(),
+                    res->wddm_allocation_handle),
+        dev->wddm_submit_allocation_handles.end());
+  }
+
   if (res->wddm_allocation_handle != 0) {
     dev->wddm_submit_allocation_handles.erase(
         std::remove(dev->wddm_submit_allocation_handles.begin(),
