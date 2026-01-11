@@ -55,6 +55,19 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-terraform-
 
+      - name: Setup TFLint
+        uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: v0.53.0
+
+      - name: Cache TFLint plugins
+        uses: actions/cache@v4
+        with:
+          path: ~/.tflint.d/plugins
+          key: ${{ runner.os }}-tflint-${{ hashFiles(format('{0}/.tflint.hcl', matrix.module)) }}
+          restore-keys: |
+            ${{ runner.os }}-tflint-
+
       - name: terraform fmt (check)
         working-directory: ${{ matrix.module }}
         run: terraform fmt -check -recursive
@@ -66,6 +79,14 @@ jobs:
       - name: terraform validate
         working-directory: ${{ matrix.module }}
         run: terraform validate -no-color
+
+      - name: tflint (init)
+        working-directory: ${{ matrix.module }}
+        run: tflint --init
+
+      - name: tflint
+        working-directory: ${{ matrix.module }}
+        run: tflint --format compact
 
   k8s:
     name: Helm + kubeconform
@@ -91,21 +112,31 @@ jobs:
           sudo mv /tmp/kubeconform /usr/local/bin/kubeconform
           kubeconform -v
 
-      - name: helm lint (dev + prod)
+      - name: helm lint (example values)
         shell: bash
         run: |
           set -euo pipefail
           CHART="deploy/k8s/chart/aero-gateway"
           helm lint "$CHART" -f "$CHART/values-dev.yaml"
           helm lint "$CHART" -f "$CHART/values-prod.yaml"
+          helm lint "$CHART" -f "$CHART/values-traefik.yaml"
+          helm lint "$CHART" -f "$CHART/values-prod-certmanager.yaml"
+          helm lint "$CHART" -f "$CHART/values-prod-certmanager-issuer.yaml"
+          helm lint "$CHART" -f "$CHART/values-prod-appheaders.yaml"
 
-      - name: helm template + kubeconform (dev + prod)
+      - name: helm template + kubeconform (example values)
         shell: bash
         run: |
           set -euo pipefail
           CHART="deploy/k8s/chart/aero-gateway"
 
-          for values in values-dev.yaml values-prod.yaml; do
+          for values in \
+            values-dev.yaml \
+            values-prod.yaml \
+            values-traefik.yaml \
+            values-prod-certmanager.yaml \
+            values-prod-certmanager-issuer.yaml \
+            values-prod-appheaders.yaml; do
             out="/tmp/aero-gateway-${values%.yaml}.yaml"
             helm template aero-gateway "$CHART" -n aero -f "$CHART/$values" > "$out"
 
@@ -117,10 +148,15 @@ jobs:
               "$out"
 
             # Ensure cross-origin isolation + CSP strategy is present in the ingress layer
-            # (COOP/COEP/CORP/OAC + CSP).
-            grep -q "Cross-Origin-Opener-Policy" "$out"
-            grep -q "Cross-Origin-Embedder-Policy" "$out"
-            grep -q "Content-Security-Policy" "$out"
+            # when using ingress-level header injection.
+            #
+            # `values-prod-appheaders.yaml` intentionally disables ingress header injection
+            # (COOP/COEP/CSP are set at the app/proxy layer instead).
+            if [[ "$values" != "values-prod-appheaders.yaml" ]]; then
+              grep -q "Cross-Origin-Opener-Policy" "$out"
+              grep -q "Cross-Origin-Embedder-Policy" "$out"
+              grep -q "Content-Security-Policy" "$out"
+            fi
           done
 
       - name: kubeconform (raw manifests)
