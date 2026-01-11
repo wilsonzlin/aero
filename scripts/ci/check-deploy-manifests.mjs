@@ -105,6 +105,7 @@ function validateComposeConfig(relPath) {
     args.push('--project-directory', projectDir);
   }
   args.push('config', '-q');
+  const cmd = `docker ${args.join(' ')}`;
 
   const res = spawnSync('docker', args, { cwd: repoRoot, encoding: 'utf8' });
   const output = [res.stdout, res.stderr].filter(Boolean).join('\n').trim();
@@ -115,13 +116,13 @@ function validateComposeConfig(relPath) {
     if (!output) return;
     return {
       relPath,
-      message: `docker compose config produced warnings for ${relPath}:\n${output}`,
+      message: `docker compose config produced warnings for ${relPath}:\n$ ${cmd}\n${output}`,
     };
   }
 
   return {
     relPath,
-    message: `docker compose config failed for ${relPath}${output ? `:\n${output}` : ''}`,
+    message: `docker compose config failed for ${relPath}${output ? `:\n$ ${cmd}\n${output}` : ''}`,
   };
 }
 

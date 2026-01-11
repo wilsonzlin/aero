@@ -31,6 +31,13 @@ mkdir -p "$TF_PLUGIN_CACHE_DIR"
 KUBECONFORM_CACHE_DIR="${KUBECONFORM_CACHE_DIR:-$HOME/.cache/kubeconform}"
 mkdir -p "$KUBECONFORM_CACHE_DIR"
 
+echo "==> Tool versions"
+docker compose version
+terraform version | head -n 1
+tflint --version | head -n 1
+helm version --short
+kubeconform -v
+
 echo "==> Deploy manifest hygiene (labels + docker compose config)"
 # Run in "CI mode" so the script enforces docker compose availability.
 CI=true node scripts/ci/check-deploy-manifests.mjs
