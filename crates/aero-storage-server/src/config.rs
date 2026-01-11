@@ -66,6 +66,10 @@ impl Config {
         let cors_origin = args
             .cors_origin
             .or_else(|| env::var("AERO_STORAGE_SERVER_CORS_ORIGIN").ok());
+        let cors_origin = cors_origin.and_then(|v| {
+            let v = v.trim().to_string();
+            (!v.is_empty()).then_some(v)
+        });
 
         let log_level = args
             .log_level
