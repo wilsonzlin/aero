@@ -46,12 +46,14 @@ try {
 try {
   const wsProto = location.protocol === "https:" ? "wss:" : "ws:";
   const wsUrl = new URL("/tcp", `${wsProto}//${location.host}`);
-  // aero-gateway requires a target for /tcp (v=1 protocol).
+  // aero-gateway requires a target host+port for /tcp (v=1 protocol).
+  // We use the canonical `host` + `port` form here.
   //
-  // We use a public host here so the default deployment does not need to opt in
-  // to allowing private IPs (which is unsafe in real production).
+  // We use a public host so the default deployment does not need to opt in to
+  // allowing private IPs (unsafe in real production).
   wsUrl.searchParams.set("v", "1");
-  wsUrl.searchParams.set("target", "example.com:80");
+  wsUrl.searchParams.set("host", "example.com");
+  wsUrl.searchParams.set("port", "80");
   const wsEl = document.querySelector("#ws");
   const ws = new WebSocket(wsUrl.toString());
   const timeout = setTimeout(() => {

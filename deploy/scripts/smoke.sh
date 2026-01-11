@@ -136,6 +136,153 @@ done
 assert_header_exact "Cache-Control" "public, max-age=31536000, immutable" "$wasm_headers"
 assert_header_exact "Content-Type" "application/wasm" "$wasm_headers"
 
+# /tcp WebSocket upgrade check (requires session cookie).
+#
+# We validate the TLS + Upgrade path and cookie/session enforcement without relying on
+# external tools like `wscat`/`websocat`.
+if command -v node >/dev/null 2>&1; then
+  echo "deploy smoke: verifying wss://localhost/tcp upgrade (session cookie)" >&2
+  node --input-type=commonjs - <<'NODE'
+const https = require("node:https");
+const tls = require("node:tls");
+const crypto = require("node:crypto");
+
+const host = "localhost";
+const port = 443;
+
+function requestSessionCookie() {
+  return new Promise((resolve, reject) => {
+    const body = Buffer.from("{}", "utf8");
+    const req = https.request(
+      {
+        host,
+        port,
+        method: "POST",
+        path: "/session",
+        rejectUnauthorized: false,
+        headers: {
+          "content-type": "application/json",
+          "content-length": String(body.length),
+        },
+      },
+      (res) => {
+        const status = res.statusCode ?? 0;
+        res.resume();
+        res.on("end", () => {
+          const setCookie = res.headers["set-cookie"];
+          if (!setCookie) {
+            reject(new Error("missing Set-Cookie from /session"));
+            return;
+          }
+          const cookieLine = Array.isArray(setCookie) ? setCookie[0] : setCookie;
+          if (typeof cookieLine !== "string" || cookieLine.length === 0) {
+            reject(new Error("invalid Set-Cookie from /session"));
+            return;
+          }
+          const cookiePair = cookieLine.split(";", 1)[0] ?? "";
+          if (!cookiePair.startsWith("aero_session=")) {
+            reject(new Error(`unexpected session cookie from /session: ${cookiePair}`));
+            return;
+          }
+          if (status < 200 || status >= 400) {
+            reject(new Error(`unexpected /session status: ${status}`));
+            return;
+          }
+          resolve(cookiePair);
+        });
+      },
+    );
+    req.on("error", reject);
+    req.end(body);
+  });
+}
+
+function checkTcpUpgrade(cookiePair) {
+  return new Promise((resolve, reject) => {
+    const path = "/tcp?v=1&host=example.com&port=80";
+    const guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+    const key = crypto.randomBytes(16).toString("base64");
+    const expectedAccept = crypto.createHash("sha1").update(key + guid).digest("base64");
+
+    const req = [
+      `GET ${path} HTTP/1.1`,
+      `Host: ${host}`,
+      "Connection: Upgrade",
+      "Upgrade: websocket",
+      "Sec-WebSocket-Version: 13",
+      `Sec-WebSocket-Key: ${key}`,
+      `Cookie: ${cookiePair}`,
+      `Origin: https://${host}`,
+      "",
+      "",
+    ].join("\r\n");
+
+    const socket = tls.connect({
+      host,
+      port,
+      servername: host,
+      rejectUnauthorized: false,
+    });
+
+    const timeout = setTimeout(() => {
+      socket.destroy();
+      reject(new Error("timeout waiting for /tcp upgrade response"));
+    }, 5000);
+
+    let buf = "";
+    socket.on("secureConnect", () => {
+      socket.write(req);
+    });
+
+    socket.on("data", (chunk) => {
+      buf += chunk.toString("utf8");
+      const idx = buf.indexOf("\r\n\r\n");
+      if (idx === -1) return;
+
+      clearTimeout(timeout);
+      socket.end();
+
+      const headerBlock = buf.slice(0, idx);
+      const lines = headerBlock.split("\r\n");
+      const statusLine = lines[0] ?? "";
+      if (!statusLine.includes(" 101 ")) {
+        reject(new Error(`unexpected status line from /tcp: ${statusLine}`));
+        return;
+      }
+
+      const acceptLine = lines.find((line) => /^sec-websocket-accept:/i.test(line));
+      if (!acceptLine) {
+        reject(new Error("missing Sec-WebSocket-Accept in /tcp upgrade response"));
+        return;
+      }
+      const accept = acceptLine.split(":", 2)[1]?.trim() ?? "";
+      if (accept !== expectedAccept) {
+        reject(new Error(`unexpected Sec-WebSocket-Accept for /tcp (expected ${expectedAccept}, got ${accept})`));
+        return;
+      }
+
+      resolve();
+    });
+
+    socket.on("error", (err) => {
+      clearTimeout(timeout);
+      reject(err);
+    });
+  });
+}
+
+(async () => {
+  const cookie = await requestSessionCookie();
+  await checkTcpUpgrade(cookie);
+})().catch((err) => {
+  console.error("tcp upgrade check failed:", err);
+  process.exit(1);
+});
+NODE
+else
+  echo "deploy smoke: node not found; skipping /tcp WebSocket validation" >&2
+fi
+
 # /l2 WebSocket upgrade check (L2 tunnel).
 #
 # We validate the TLS + Upgrade path and subprotocol negotiation without relying
