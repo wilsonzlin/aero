@@ -1,14 +1,16 @@
 #include "..\\common\\aerogpu_test_common.h"
+#include "..\\common\\aerogpu_test_report.h"
 
 #include <d3d11.h>
 #include <dxgi.h>
 
 using aerogpu_test::ComPtr;
 
-static int FailD3D11WithRemovedReason(const char* test_name,
-                                     const char* what,
-                                     HRESULT hr,
-                                     ID3D11Device* device) {
+static int FailD3D11WithRemovedReason(aerogpu_test::TestReporter* reporter,
+                                      const char* test_name,
+                                      const char* what,
+                                      HRESULT hr,
+                                      ID3D11Device* device) {
   if (device) {
     HRESULT reason = device->GetDeviceRemovedReason();
     if (FAILED(reason)) {
@@ -17,6 +19,9 @@ static int FailD3D11WithRemovedReason(const char* test_name,
                                  aerogpu_test::HresultToString(reason).c_str());
     }
   }
+  if (reporter) {
+    return reporter->FailHresult(what, hr);
+  }
   return aerogpu_test::FailHresult(test_name, what, hr);
 }
 
@@ -24,11 +29,12 @@ static int RunD3D11SwapchainRotateSanity(int argc, char** argv) {
   const char* kTestName = "d3d11_swapchain_rotate_sanity";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
     aerogpu_test::PrintfStdout(
-        "Usage: %s.exe [--dump] [--hidden] [--require-vid=0x####] [--require-did=0x####] "
+        "Usage: %s.exe [--dump] [--hidden] [--json[=PATH]] [--require-vid=0x####] [--require-did=0x####] "
         "[--allow-microsoft] [--allow-non-aerogpu] [--require-umd]",
         kTestName);
     return 0;
   }
+  aerogpu_test::TestReporter reporter(kTestName, argc, argv);
   const bool dump = aerogpu_test::HasArg(argc, argv, "--dump");
   const bool hidden = aerogpu_test::HasArg(argc, argv, "--hidden");
   const bool allow_microsoft = aerogpu_test::HasArg(argc, argv, "--allow-microsoft");
@@ -43,14 +49,14 @@ static int RunD3D11SwapchainRotateSanity(int argc, char** argv) {
   if (aerogpu_test::GetArgValue(argc, argv, "--require-vid", &require_vid_str)) {
     std::string err;
     if (!aerogpu_test::ParseUint32(require_vid_str, &require_vid, &err)) {
-      return aerogpu_test::Fail(kTestName, "invalid --require-vid: %s", err.c_str());
+      return reporter.Fail("invalid --require-vid: %s", err.c_str());
     }
     has_require_vid = true;
   }
   if (aerogpu_test::GetArgValue(argc, argv, "--require-did", &require_did_str)) {
     std::string err;
     if (!aerogpu_test::ParseUint32(require_did_str, &require_did, &err)) {
-      return aerogpu_test::Fail(kTestName, "invalid --require-did: %s", err.c_str());
+      return reporter.Fail("invalid --require-did: %s", err.c_str());
     }
     has_require_did = true;
   }
@@ -60,11 +66,11 @@ static int RunD3D11SwapchainRotateSanity(int argc, char** argv) {
 
   HWND hwnd = aerogpu_test::CreateBasicWindow(L"AeroGPU_D3D11SwapchainRotateSanity",
                                               L"AeroGPU D3D11 Swapchain Rotate Sanity",
-                                              kWidth,
-                                              kHeight,
-                                              !hidden);
+                                               kWidth,
+                                               kHeight,
+                                               !hidden);
   if (!hwnd) {
-    return aerogpu_test::Fail(kTestName, "CreateBasicWindow failed");
+    return reporter.Fail("CreateBasicWindow failed");
   }
 
   DXGI_SWAP_CHAIN_DESC scd;
@@ -105,12 +111,12 @@ static int RunD3D11SwapchainRotateSanity(int argc, char** argv) {
                                              ARRAYSIZE(feature_levels),
                                              D3D11_SDK_VERSION,
                                              &scd,
-                                             swapchain.put(),
-                                             device.put(),
-                                             &chosen_level,
-                                             context.put());
+                                              swapchain.put(),
+                                              device.put(),
+                                              &chosen_level,
+                                              context.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "D3D11CreateDeviceAndSwapChain(HARDWARE)", hr);
+    return reporter.FailHresult("D3D11CreateDeviceAndSwapChain(HARDWARE)", hr);
   }
 
   aerogpu_test::PrintfStdout("INFO: %s: feature level 0x%04X", kTestName, (unsigned)chosen_level);
@@ -122,9 +128,8 @@ static int RunD3D11SwapchainRotateSanity(int argc, char** argv) {
     HRESULT hr_adapter = dxgi_device->GetAdapter(adapter.put());
     if (FAILED(hr_adapter)) {
       if (has_require_vid || has_require_did) {
-        return aerogpu_test::FailHresult(kTestName,
-                                         "IDXGIDevice::GetAdapter (required for --require-vid/--require-did)",
-                                         hr_adapter);
+        return reporter.FailHresult("IDXGIDevice::GetAdapter (required for --require-vid/--require-did)",
+                                    hr_adapter);
       }
     } else {
       DXGI_ADAPTER_DESC ad;
@@ -132,8 +137,7 @@ static int RunD3D11SwapchainRotateSanity(int argc, char** argv) {
       HRESULT hr_desc = adapter->GetDesc(&ad);
       if (FAILED(hr_desc)) {
         if (has_require_vid || has_require_did) {
-          return aerogpu_test::FailHresult(
-              kTestName, "IDXGIAdapter::GetDesc (required for --require-vid/--require-did)", hr_desc);
+          return reporter.FailHresult("IDXGIAdapter::GetDesc (required for --require-vid/--require-did)", hr_desc);
         }
       } else {
         aerogpu_test::PrintfStdout("INFO: %s: adapter: %ls (VID=0x%04X DID=0x%04X)",
@@ -141,40 +145,34 @@ static int RunD3D11SwapchainRotateSanity(int argc, char** argv) {
                                    ad.Description,
                                    (unsigned)ad.VendorId,
                                    (unsigned)ad.DeviceId);
+        reporter.SetAdapterInfoW(ad.Description, ad.VendorId, ad.DeviceId);
         if (!allow_microsoft && ad.VendorId == 0x1414) {
-          return aerogpu_test::Fail(kTestName,
-                                    "refusing to run on Microsoft adapter (VID=0x%04X DID=0x%04X). "
-                                    "Install AeroGPU driver or pass --allow-microsoft.",
-                                    (unsigned)ad.VendorId,
-                                    (unsigned)ad.DeviceId);
+          return reporter.Fail(
+              "refusing to run on Microsoft adapter (VID=0x%04X DID=0x%04X). Install AeroGPU driver or pass --allow-microsoft.",
+              (unsigned)ad.VendorId,
+              (unsigned)ad.DeviceId);
         }
         if (has_require_vid && ad.VendorId != require_vid) {
-          return aerogpu_test::Fail(kTestName,
-                                    "adapter VID mismatch: got 0x%04X expected 0x%04X",
-                                    (unsigned)ad.VendorId,
-                                    (unsigned)require_vid);
+          return reporter.Fail("adapter VID mismatch: got 0x%04X expected 0x%04X",
+                               (unsigned)ad.VendorId,
+                               (unsigned)require_vid);
         }
         if (has_require_did && ad.DeviceId != require_did) {
-          return aerogpu_test::Fail(kTestName,
-                                    "adapter DID mismatch: got 0x%04X expected 0x%04X",
-                                    (unsigned)ad.DeviceId,
-                                    (unsigned)require_did);
+          return reporter.Fail("adapter DID mismatch: got 0x%04X expected 0x%04X",
+                               (unsigned)ad.DeviceId,
+                               (unsigned)require_did);
         }
         if (!allow_non_aerogpu && !has_require_vid && !has_require_did &&
             !(ad.VendorId == 0x1414 && allow_microsoft) &&
             !aerogpu_test::StrIContainsW(ad.Description, L"AeroGPU")) {
-          return aerogpu_test::Fail(kTestName,
-                                    "adapter does not look like AeroGPU: %ls (pass --allow-non-aerogpu "
-                                    "or use --require-vid/--require-did)",
-                                    ad.Description);
+          return reporter.Fail(
+              "adapter does not look like AeroGPU: %ls (pass --allow-non-aerogpu or use --require-vid/--require-did)",
+              ad.Description);
         }
       }
     }
   } else if (has_require_vid || has_require_did) {
-    return aerogpu_test::FailHresult(
-        kTestName,
-        "QueryInterface(IDXGIDevice) (required for --require-vid/--require-did)",
-        hr);
+    return reporter.FailHresult("QueryInterface(IDXGIDevice) (required for --require-vid/--require-did)", hr);
   }
 
   if (require_umd || (!allow_microsoft && !allow_non_aerogpu)) {
@@ -187,34 +185,33 @@ static int RunD3D11SwapchainRotateSanity(int argc, char** argv) {
   ComPtr<ID3D11Texture2D> buffer0;
   hr = swapchain->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)buffer0.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "IDXGISwapChain::GetBuffer(0)", hr);
+    return reporter.FailHresult("IDXGISwapChain::GetBuffer(0)", hr);
   }
 
   ComPtr<ID3D11Texture2D> buffer1;
   hr = swapchain->GetBuffer(1, __uuidof(ID3D11Texture2D), (void**)buffer1.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "IDXGISwapChain::GetBuffer(1)", hr);
+    return reporter.FailHresult("IDXGISwapChain::GetBuffer(1)", hr);
   }
 
   ComPtr<ID3D11RenderTargetView> rtv0;
   hr = device->CreateRenderTargetView(buffer0.get(), NULL, rtv0.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CreateRenderTargetView(buffer0)", hr);
+    return reporter.FailHresult("CreateRenderTargetView(buffer0)", hr);
   }
 
   ComPtr<ID3D11RenderTargetView> rtv1;
   hr = device->CreateRenderTargetView(buffer1.get(), NULL, rtv1.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CreateRenderTargetView(buffer1)", hr);
+    return reporter.FailHresult("CreateRenderTargetView(buffer1)", hr);
   }
 
   D3D11_TEXTURE2D_DESC bb_desc;
   buffer0->GetDesc(&bb_desc);
   if (bb_desc.Format != DXGI_FORMAT_B8G8R8A8_UNORM) {
-    return aerogpu_test::Fail(kTestName,
-                              "unexpected backbuffer format: %u (expected DXGI_FORMAT_B8G8R8A8_UNORM=%u)",
-                              (unsigned)bb_desc.Format,
-                              (unsigned)DXGI_FORMAT_B8G8R8A8_UNORM);
+    return reporter.Fail("unexpected backbuffer format: %u (expected DXGI_FORMAT_B8G8R8A8_UNORM=%u)",
+                         (unsigned)bb_desc.Format,
+                         (unsigned)DXGI_FORMAT_B8G8R8A8_UNORM);
   }
 
   D3D11_VIEWPORT vp;
@@ -246,13 +243,13 @@ static int RunD3D11SwapchainRotateSanity(int argc, char** argv) {
   ComPtr<ID3D11Texture2D> staging0;
   hr = device->CreateTexture2D(&st_desc, NULL, staging0.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CreateTexture2D(staging0)", hr);
+    return reporter.FailHresult("CreateTexture2D(staging0)", hr);
   }
 
   ComPtr<ID3D11Texture2D> staging1;
   hr = device->CreateTexture2D(&st_desc, NULL, staging1.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CreateTexture2D(staging1)", hr);
+    return reporter.FailHresult("CreateTexture2D(staging1)", hr);
   }
 
   // Validate the pre-present contents to make swapchain-rotation failures clearer. If these don't
@@ -266,19 +263,18 @@ static int RunD3D11SwapchainRotateSanity(int argc, char** argv) {
   ZeroMemory(&map, sizeof(map));
   hr = context->Map(staging0.get(), 0, D3D11_MAP_READ, 0, &map);
   if (FAILED(hr)) {
-    return FailD3D11WithRemovedReason(kTestName, "Map(staging0, pre-present)", hr, device.get());
+    return FailD3D11WithRemovedReason(&reporter, kTestName, "Map(staging0, pre-present)", hr, device.get());
   }
   if (!map.pData) {
     context->Unmap(staging0.get(), 0);
-    return aerogpu_test::Fail(kTestName, "Map(staging0, pre-present) returned NULL pData");
+    return reporter.Fail("Map(staging0, pre-present) returned NULL pData");
   }
   const UINT min_row_pitch = bb_desc.Width * 4;
   if (map.RowPitch < min_row_pitch) {
     context->Unmap(staging0.get(), 0);
-    return aerogpu_test::Fail(kTestName,
-                              "Map(staging0, pre-present) returned too-small RowPitch=%u (min=%u)",
-                              (unsigned)map.RowPitch,
-                              (unsigned)min_row_pitch);
+    return reporter.Fail("Map(staging0, pre-present) returned too-small RowPitch=%u (min=%u)",
+                         (unsigned)map.RowPitch,
+                         (unsigned)min_row_pitch);
   }
   const uint32_t before0 =
       aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, (int)bb_desc.Width / 2, (int)bb_desc.Height / 2);
@@ -287,18 +283,17 @@ static int RunD3D11SwapchainRotateSanity(int argc, char** argv) {
   ZeroMemory(&map, sizeof(map));
   hr = context->Map(staging1.get(), 0, D3D11_MAP_READ, 0, &map);
   if (FAILED(hr)) {
-    return FailD3D11WithRemovedReason(kTestName, "Map(staging1, pre-present)", hr, device.get());
+    return FailD3D11WithRemovedReason(&reporter, kTestName, "Map(staging1, pre-present)", hr, device.get());
   }
   if (!map.pData) {
     context->Unmap(staging1.get(), 0);
-    return aerogpu_test::Fail(kTestName, "Map(staging1, pre-present) returned NULL pData");
+    return reporter.Fail("Map(staging1, pre-present) returned NULL pData");
   }
   if (map.RowPitch < min_row_pitch) {
     context->Unmap(staging1.get(), 0);
-    return aerogpu_test::Fail(kTestName,
-                              "Map(staging1, pre-present) returned too-small RowPitch=%u (min=%u)",
-                              (unsigned)map.RowPitch,
-                              (unsigned)min_row_pitch);
+    return reporter.Fail("Map(staging1, pre-present) returned too-small RowPitch=%u (min=%u)",
+                         (unsigned)map.RowPitch,
+                         (unsigned)min_row_pitch);
   }
   const uint32_t before1 =
       aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, (int)bb_desc.Width / 2, (int)bb_desc.Height / 2);
@@ -308,17 +303,17 @@ static int RunD3D11SwapchainRotateSanity(int argc, char** argv) {
   const uint32_t expected_before1 = 0xFF00FF00u;
   if ((before0 & 0x00FFFFFFu) != (expected_before0 & 0x00FFFFFFu) ||
       (before1 & 0x00FFFFFFu) != (expected_before1 & 0x00FFFFFFu)) {
-    return aerogpu_test::Fail(kTestName,
-                              "pre-present buffer contents mismatch: buffer0=0x%08lX buffer1=0x%08lX (expected buffer0~0x%08lX buffer1~0x%08lX)",
-                              (unsigned long)before0,
-                              (unsigned long)before1,
-                              (unsigned long)expected_before0,
-                              (unsigned long)expected_before1);
+    return reporter.Fail(
+        "pre-present buffer contents mismatch: buffer0=0x%08lX buffer1=0x%08lX (expected buffer0~0x%08lX buffer1~0x%08lX)",
+        (unsigned long)before0,
+        (unsigned long)before1,
+        (unsigned long)expected_before0,
+        (unsigned long)expected_before1);
   }
 
   hr = swapchain->Present(0, 0);
   if (FAILED(hr)) {
-    return FailD3D11WithRemovedReason(kTestName, "IDXGISwapChain::Present", hr, device.get());
+    return FailD3D11WithRemovedReason(&reporter, kTestName, "IDXGISwapChain::Present", hr, device.get());
   }
 
   context->OMSetRenderTargets(0, NULL, NULL);
@@ -331,30 +326,33 @@ static int RunD3D11SwapchainRotateSanity(int argc, char** argv) {
   ZeroMemory(&map, sizeof(map));
   hr = context->Map(staging0.get(), 0, D3D11_MAP_READ, 0, &map);
   if (FAILED(hr)) {
-    return FailD3D11WithRemovedReason(kTestName, "Map(staging0)", hr, device.get());
+    return FailD3D11WithRemovedReason(&reporter, kTestName, "Map(staging0)", hr, device.get());
   }
   if (!map.pData) {
     context->Unmap(staging0.get(), 0);
-    return aerogpu_test::Fail(kTestName, "Map(staging0) returned NULL pData");
+    return reporter.Fail("Map(staging0) returned NULL pData");
   }
   if (map.RowPitch < min_row_pitch) {
     context->Unmap(staging0.get(), 0);
-    return aerogpu_test::Fail(kTestName,
-                              "Map(staging0) returned too-small RowPitch=%u (min=%u)",
-                              (unsigned)map.RowPitch,
-                              (unsigned)min_row_pitch);
+    return reporter.Fail("Map(staging0) returned too-small RowPitch=%u (min=%u)",
+                         (unsigned)map.RowPitch,
+                         (unsigned)min_row_pitch);
   }
   const uint32_t after0 =
       aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, (int)bb_desc.Width / 2, (int)bb_desc.Height / 2);
   if (dump) {
     std::string err;
-    if (!aerogpu_test::WriteBmp32BGRA(aerogpu_test::JoinPath(dir, L"d3d11_swapchain_rotate_sanity_buffer0.bmp"),
+    const std::wstring bmp_path =
+        aerogpu_test::JoinPath(dir, L"d3d11_swapchain_rotate_sanity_buffer0.bmp");
+    if (!aerogpu_test::WriteBmp32BGRA(bmp_path,
                                       (int)bb_desc.Width,
                                       (int)bb_desc.Height,
                                       map.pData,
                                       (int)map.RowPitch,
                                       &err)) {
       aerogpu_test::PrintfStdout("INFO: %s: BMP dump for buffer0 failed: %s", kTestName, err.c_str());
+    } else {
+      reporter.AddArtifactPathW(bmp_path);
     }
   }
   context->Unmap(staging0.get(), 0);
@@ -362,30 +360,33 @@ static int RunD3D11SwapchainRotateSanity(int argc, char** argv) {
   ZeroMemory(&map, sizeof(map));
   hr = context->Map(staging1.get(), 0, D3D11_MAP_READ, 0, &map);
   if (FAILED(hr)) {
-    return FailD3D11WithRemovedReason(kTestName, "Map(staging1)", hr, device.get());
+    return FailD3D11WithRemovedReason(&reporter, kTestName, "Map(staging1)", hr, device.get());
   }
   if (!map.pData) {
     context->Unmap(staging1.get(), 0);
-    return aerogpu_test::Fail(kTestName, "Map(staging1) returned NULL pData");
+    return reporter.Fail("Map(staging1) returned NULL pData");
   }
   if (map.RowPitch < min_row_pitch) {
     context->Unmap(staging1.get(), 0);
-    return aerogpu_test::Fail(kTestName,
-                              "Map(staging1) returned too-small RowPitch=%u (min=%u)",
-                              (unsigned)map.RowPitch,
-                              (unsigned)min_row_pitch);
+    return reporter.Fail("Map(staging1) returned too-small RowPitch=%u (min=%u)",
+                         (unsigned)map.RowPitch,
+                         (unsigned)min_row_pitch);
   }
   const uint32_t after1 =
       aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, (int)bb_desc.Width / 2, (int)bb_desc.Height / 2);
   if (dump) {
     std::string err;
-    if (!aerogpu_test::WriteBmp32BGRA(aerogpu_test::JoinPath(dir, L"d3d11_swapchain_rotate_sanity_buffer1.bmp"),
+    const std::wstring bmp_path =
+        aerogpu_test::JoinPath(dir, L"d3d11_swapchain_rotate_sanity_buffer1.bmp");
+    if (!aerogpu_test::WriteBmp32BGRA(bmp_path,
                                       (int)bb_desc.Width,
                                       (int)bb_desc.Height,
                                       map.pData,
                                       (int)map.RowPitch,
                                       &err)) {
       aerogpu_test::PrintfStdout("INFO: %s: BMP dump for buffer1 failed: %s", kTestName, err.c_str());
+    } else {
+      reporter.AddArtifactPathW(bmp_path);
     }
   }
   context->Unmap(staging1.get(), 0);
@@ -395,18 +396,17 @@ static int RunD3D11SwapchainRotateSanity(int argc, char** argv) {
 
   if ((after0 & 0x00FFFFFFu) != (expected0 & 0x00FFFFFFu) ||
       (after1 & 0x00FFFFFFu) != (expected1 & 0x00FFFFFFu)) {
-    return aerogpu_test::Fail(kTestName,
-                              "swapchain buffer identity mismatch after Present: before(buffer0=0x%08lX buffer1=0x%08lX) after(buffer0=0x%08lX buffer1=0x%08lX) (expected after buffer0~0x%08lX buffer1~0x%08lX)",
-                              (unsigned long)before0,
-                              (unsigned long)before1,
-                              (unsigned long)after0,
-                              (unsigned long)after1,
-                              (unsigned long)expected0,
-                              (unsigned long)expected1);
+    return reporter.Fail(
+        "swapchain buffer identity mismatch after Present: before(buffer0=0x%08lX buffer1=0x%08lX) after(buffer0=0x%08lX buffer1=0x%08lX) (expected after buffer0~0x%08lX buffer1~0x%08lX)",
+        (unsigned long)before0,
+        (unsigned long)before1,
+        (unsigned long)after0,
+        (unsigned long)after1,
+        (unsigned long)expected0,
+        (unsigned long)expected1);
   }
 
-  aerogpu_test::PrintfStdout("PASS: %s", kTestName);
-  return 0;
+  return reporter.Pass();
 }
 
 int main(int argc, char** argv) {

@@ -1,26 +1,34 @@
 #include "..\\common\\aerogpu_test_common.h"
+#include "..\\common\\aerogpu_test_report.h"
 
 #include <d3d11.h>
+#include <dxgi.h>
 
 using aerogpu_test::ComPtr;
 
-static int CheckFormat(const char* test_name,
+static int CheckFormat(aerogpu_test::TestReporter* reporter,
+                       const char* test_name,
                        ID3D11Device* device,
                        DXGI_FORMAT fmt,
                        UINT required_bits,
                        const char* fmt_name) {
+  if (!reporter || !test_name || !device || !fmt_name) {
+    if (reporter) {
+      return reporter->Fail("CheckFormat: invalid args");
+    }
+    return aerogpu_test::Fail(test_name ? test_name : "d3d11_caps_smoke", "CheckFormat: invalid args");
+  }
   UINT support = 0;
   HRESULT hr = device->CheckFormatSupport(fmt, &support);
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(test_name, "ID3D11Device::CheckFormatSupport", hr);
+    return reporter->FailHresult("ID3D11Device::CheckFormatSupport", hr);
   }
   aerogpu_test::PrintfStdout("INFO: %s: format %s support=0x%08lX", test_name, fmt_name, (unsigned long)support);
   if ((support & required_bits) != required_bits) {
-    return aerogpu_test::Fail(test_name,
-                              "format %s missing required bits: have=0x%08lX need=0x%08lX",
-                              fmt_name,
-                              (unsigned long)support,
-                              (unsigned long)required_bits);
+    return reporter->Fail("format %s missing required bits: have=0x%08lX need=0x%08lX",
+                          fmt_name,
+                          (unsigned long)support,
+                          (unsigned long)required_bits);
   }
   return 0;
 }
@@ -28,9 +36,11 @@ static int CheckFormat(const char* test_name,
 static int RunCapsSmoke(int argc, char** argv) {
   const char* kTestName = "d3d11_caps_smoke";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
-    aerogpu_test::PrintfStdout("Usage: %s.exe", kTestName);
+    aerogpu_test::PrintfStdout("Usage: %s.exe [--json[=PATH]]", kTestName);
     return 0;
   }
+
+  aerogpu_test::TestReporter reporter(kTestName, argc, argv);
 
   // Request higher feature levels first; the smoke test validates that the
   // driver advertises only FL10_0 today.
@@ -49,23 +59,43 @@ static int RunCapsSmoke(int argc, char** argv) {
                                  requested_levels,
                                  ARRAYSIZE(requested_levels),
                                  D3D11_SDK_VERSION,
-                                 device.put(),
-                                 &chosen_level,
-                                 context.put());
+                                  device.put(),
+                                  &chosen_level,
+                                  context.put());
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "D3D11CreateDevice(HARDWARE)", hr);
+    return reporter.FailHresult("D3D11CreateDevice(HARDWARE)", hr);
+  }
+
+  ComPtr<IDXGIDevice> dxgi_device;
+  hr = device->QueryInterface(__uuidof(IDXGIDevice), (void**)dxgi_device.put());
+  if (SUCCEEDED(hr) && dxgi_device) {
+    ComPtr<IDXGIAdapter> adapter;
+    HRESULT hr_adapter = dxgi_device->GetAdapter(adapter.put());
+    if (SUCCEEDED(hr_adapter) && adapter) {
+      DXGI_ADAPTER_DESC ad;
+      ZeroMemory(&ad, sizeof(ad));
+      HRESULT hr_desc = adapter->GetDesc(&ad);
+      if (SUCCEEDED(hr_desc)) {
+        aerogpu_test::PrintfStdout("INFO: %s: adapter: %ls (VID=0x%04X DID=0x%04X)",
+                                   kTestName,
+                                   ad.Description,
+                                   (unsigned)ad.VendorId,
+                                   (unsigned)ad.DeviceId);
+        reporter.SetAdapterInfoW(ad.Description, ad.VendorId, ad.DeviceId);
+      }
+    }
   }
 
   aerogpu_test::PrintfStdout("INFO: %s: feature level 0x%04X", kTestName, (unsigned)chosen_level);
   if (chosen_level != D3D_FEATURE_LEVEL_10_0) {
-    return aerogpu_test::Fail(kTestName, "expected FL10_0 only (got 0x%04X)", (unsigned)chosen_level);
+    return reporter.Fail("expected FL10_0 only (got 0x%04X)", (unsigned)chosen_level);
   }
 
   D3D11_FEATURE_DATA_THREADING threading;
   ZeroMemory(&threading, sizeof(threading));
   hr = device->CheckFeatureSupport(D3D11_FEATURE_THREADING, &threading, sizeof(threading));
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CheckFeatureSupport(THREADING)", hr);
+    return reporter.FailHresult("CheckFeatureSupport(THREADING)", hr);
   }
   aerogpu_test::PrintfStdout("INFO: %s: threading: concurrent_creates=%u command_lists=%u",
                              kTestName,
@@ -76,7 +106,7 @@ static int RunCapsSmoke(int argc, char** argv) {
   ZeroMemory(&doubles, sizeof(doubles));
   hr = device->CheckFeatureSupport(D3D11_FEATURE_DOUBLES, &doubles, sizeof(doubles));
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CheckFeatureSupport(DOUBLES)", hr);
+    return reporter.FailHresult("CheckFeatureSupport(DOUBLES)", hr);
   }
   aerogpu_test::PrintfStdout("INFO: %s: doubles: fp64_shader_ops=%u",
                              kTestName,
@@ -86,36 +116,35 @@ static int RunCapsSmoke(int argc, char** argv) {
   ZeroMemory(&hw10x, sizeof(hw10x));
   hr = device->CheckFeatureSupport(D3D11_FEATURE_D3D10_X_HARDWARE_OPTIONS, &hw10x, sizeof(hw10x));
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CheckFeatureSupport(D3D10_X_HARDWARE_OPTIONS)", hr);
+    return reporter.FailHresult("CheckFeatureSupport(D3D10_X_HARDWARE_OPTIONS)", hr);
   }
   aerogpu_test::PrintfStdout(
       "INFO: %s: d3d10_x_hw_options: cs_plus_raw_structured_via_4x=%u",
       kTestName,
       (unsigned)hw10x.ComputeShaders_Plus_RawAndStructuredBuffers_Via_Shader_4_x);
   if (hw10x.ComputeShaders_Plus_RawAndStructuredBuffers_Via_Shader_4_x) {
-    return aerogpu_test::Fail(kTestName,
-                              "unexpected compute capability (expected FALSE until implemented)");
+    return reporter.Fail("unexpected compute capability (expected FALSE until implemented)");
   }
 
   D3D11_FEATURE_DATA_D3D11_OPTIONS options;
   ZeroMemory(&options, sizeof(options));
   hr = device->CheckFeatureSupport(D3D11_FEATURE_D3D11_OPTIONS, &options, sizeof(options));
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CheckFeatureSupport(D3D11_OPTIONS)", hr);
+    return reporter.FailHresult("CheckFeatureSupport(D3D11_OPTIONS)", hr);
   }
   aerogpu_test::PrintfStdout("INFO: %s: d3d11_options: logic_op=%u uav_only_forced_sample_count=%u",
                              kTestName,
                              (unsigned)options.OutputMergerLogicOp,
                              (unsigned)options.UAVOnlyRenderingForcedSampleCount);
   if (options.OutputMergerLogicOp) {
-    return aerogpu_test::Fail(kTestName, "unexpected OutputMergerLogicOp (expected FALSE)");
+    return reporter.Fail("unexpected OutputMergerLogicOp (expected FALSE)");
   }
 
   D3D11_FEATURE_DATA_ARCHITECTURE_INFO arch;
   ZeroMemory(&arch, sizeof(arch));
   hr = device->CheckFeatureSupport(D3D11_FEATURE_ARCHITECTURE_INFO, &arch, sizeof(arch));
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CheckFeatureSupport(ARCHITECTURE_INFO)", hr);
+    return reporter.FailHresult("CheckFeatureSupport(ARCHITECTURE_INFO)", hr);
   }
   aerogpu_test::PrintfStdout("INFO: %s: architecture: tile_based_deferred=%u",
                              kTestName,
@@ -125,7 +154,7 @@ static int RunCapsSmoke(int argc, char** argv) {
   ZeroMemory(&d3d9, sizeof(d3d9));
   hr = device->CheckFeatureSupport(D3D11_FEATURE_D3D9_OPTIONS, &d3d9, sizeof(d3d9));
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CheckFeatureSupport(D3D9_OPTIONS)", hr);
+    return reporter.FailHresult("CheckFeatureSupport(D3D9_OPTIONS)", hr);
   }
   aerogpu_test::PrintfStdout("INFO: %s: d3d9_options: full_non_pow2=%u",
                              kTestName,
@@ -136,33 +165,33 @@ static int RunCapsSmoke(int argc, char** argv) {
   fmt2.InFormat = DXGI_FORMAT_B8G8R8A8_UNORM;
   hr = device->CheckFeatureSupport(D3D11_FEATURE_FORMAT_SUPPORT2, &fmt2, sizeof(fmt2));
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CheckFeatureSupport(FORMAT_SUPPORT2)", hr);
+    return reporter.FailHresult("CheckFeatureSupport(FORMAT_SUPPORT2)", hr);
   }
   aerogpu_test::PrintfStdout(
       "INFO: %s: format_support2(B8G8R8A8)=0x%08lX",
       kTestName,
       (unsigned long)fmt2.OutFormatSupport2);
   if (fmt2.OutFormatSupport2 != 0) {
-    return aerogpu_test::Fail(kTestName,
-                              "unexpected FormatSupport2 bits (expected 0, got 0x%08lX)",
-                              (unsigned long)fmt2.OutFormatSupport2);
+    return reporter.Fail("unexpected FormatSupport2 bits (expected 0, got 0x%08lX)",
+                         (unsigned long)fmt2.OutFormatSupport2);
   }
 
   UINT quality_levels = 0;
   hr = device->CheckMultisampleQualityLevels(DXGI_FORMAT_B8G8R8A8_UNORM, 1, &quality_levels);
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CheckMultisampleQualityLevels(B8G8R8A8, 1x)", hr);
+    return reporter.FailHresult("CheckMultisampleQualityLevels(B8G8R8A8, 1x)", hr);
   }
   aerogpu_test::PrintfStdout("INFO: %s: msaa quality levels (B8G8R8A8, 1x) = %lu",
                              kTestName,
                              (unsigned long)quality_levels);
   if (quality_levels < 1) {
-    return aerogpu_test::Fail(kTestName, "expected at least 1 quality level for 1x sample count");
+    return reporter.Fail("expected at least 1 quality level for 1x sample count");
   }
 
   // Format support checks used by the D3D11 runtime during device creation and by common apps.
   int rc = 0;
-  rc = CheckFormat(kTestName,
+  rc = CheckFormat(&reporter,
+                   kTestName,
                    device.get(),
                    DXGI_FORMAT_B8G8R8A8_UNORM,
                    D3D11_FORMAT_SUPPORT_TEXTURE2D | D3D11_FORMAT_SUPPORT_RENDER_TARGET |
@@ -170,7 +199,8 @@ static int RunCapsSmoke(int argc, char** argv) {
                    "DXGI_FORMAT_B8G8R8A8_UNORM");
   if (rc) return rc;
 
-  rc = CheckFormat(kTestName,
+  rc = CheckFormat(&reporter,
+                   kTestName,
                    device.get(),
                    DXGI_FORMAT_R8G8B8A8_UNORM,
                    D3D11_FORMAT_SUPPORT_TEXTURE2D | D3D11_FORMAT_SUPPORT_RENDER_TARGET |
@@ -178,21 +208,24 @@ static int RunCapsSmoke(int argc, char** argv) {
                    "DXGI_FORMAT_R8G8B8A8_UNORM");
   if (rc) return rc;
 
-  rc = CheckFormat(kTestName,
+  rc = CheckFormat(&reporter,
+                   kTestName,
                    device.get(),
                    DXGI_FORMAT_D24_UNORM_S8_UINT,
                    D3D11_FORMAT_SUPPORT_TEXTURE2D | D3D11_FORMAT_SUPPORT_DEPTH_STENCIL,
                    "DXGI_FORMAT_D24_UNORM_S8_UINT");
   if (rc) return rc;
 
-  rc = CheckFormat(kTestName,
+  rc = CheckFormat(&reporter,
+                   kTestName,
                    device.get(),
                    DXGI_FORMAT_D32_FLOAT,
                    D3D11_FORMAT_SUPPORT_TEXTURE2D | D3D11_FORMAT_SUPPORT_DEPTH_STENCIL,
                    "DXGI_FORMAT_D32_FLOAT");
   if (rc) return rc;
 
-  rc = CheckFormat(kTestName,
+  rc = CheckFormat(&reporter,
+                   kTestName,
                    device.get(),
                    DXGI_FORMAT_B8G8R8X8_UNORM,
                    D3D11_FORMAT_SUPPORT_TEXTURE2D | D3D11_FORMAT_SUPPORT_RENDER_TARGET |
@@ -200,43 +233,47 @@ static int RunCapsSmoke(int argc, char** argv) {
                    "DXGI_FORMAT_B8G8R8X8_UNORM");
   if (rc) return rc;
 
-  rc = CheckFormat(kTestName,
+  rc = CheckFormat(&reporter,
+                   kTestName,
                    device.get(),
                    DXGI_FORMAT_R16_UINT,
                    D3D11_FORMAT_SUPPORT_BUFFER | D3D11_FORMAT_SUPPORT_IA_INDEX_BUFFER,
                    "DXGI_FORMAT_R16_UINT");
   if (rc) return rc;
 
-  rc = CheckFormat(kTestName,
+  rc = CheckFormat(&reporter,
+                   kTestName,
                    device.get(),
                    DXGI_FORMAT_R32_UINT,
                    D3D11_FORMAT_SUPPORT_BUFFER | D3D11_FORMAT_SUPPORT_IA_INDEX_BUFFER,
                    "DXGI_FORMAT_R32_UINT");
   if (rc) return rc;
 
-  rc = CheckFormat(kTestName,
+  rc = CheckFormat(&reporter,
+                   kTestName,
                    device.get(),
                    DXGI_FORMAT_R32G32_FLOAT,
                    D3D11_FORMAT_SUPPORT_BUFFER | D3D11_FORMAT_SUPPORT_IA_VERTEX_BUFFER,
                    "DXGI_FORMAT_R32G32_FLOAT");
   if (rc) return rc;
 
-  rc = CheckFormat(kTestName,
+  rc = CheckFormat(&reporter,
+                   kTestName,
                    device.get(),
                    DXGI_FORMAT_R32G32B32_FLOAT,
                    D3D11_FORMAT_SUPPORT_BUFFER | D3D11_FORMAT_SUPPORT_IA_VERTEX_BUFFER,
                    "DXGI_FORMAT_R32G32B32_FLOAT");
   if (rc) return rc;
 
-  rc = CheckFormat(kTestName,
+  rc = CheckFormat(&reporter,
+                   kTestName,
                    device.get(),
                    DXGI_FORMAT_R32G32B32A32_FLOAT,
                    D3D11_FORMAT_SUPPORT_BUFFER | D3D11_FORMAT_SUPPORT_IA_VERTEX_BUFFER,
                    "DXGI_FORMAT_R32G32B32A32_FLOAT");
   if (rc) return rc;
 
-  aerogpu_test::PrintfStdout("PASS: %s", kTestName);
-  return 0;
+  return reporter.Pass();
 }
 
 int main(int argc, char** argv) {
