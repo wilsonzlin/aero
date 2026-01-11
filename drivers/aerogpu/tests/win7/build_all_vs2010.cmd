@@ -35,6 +35,9 @@ if "%NAME:~0,1%"==";" exit /b 0
 if /I "%NAME%"=="rem" exit /b 0
 if "%NAME:~0,2%"=="::" exit /b 0
 
+echo.
+echo === Building %NAME% ===
+
 set "TESTDIR=%ROOT%%NAME%"
 if not exist "%TESTDIR%\" (
   echo INFO: skipping %NAME% ^(not present^)
@@ -46,9 +49,6 @@ if not exist "%BUILDCMD%" (
   echo ERROR: %NAME%: missing build script: %BUILDCMD%
   exit /b 1
 )
-
-echo.
-echo === Building %NAME% ===
 call "%BUILDCMD%" || exit /b 1
 exit /b 0
 
