@@ -736,11 +736,11 @@ $storagePreseedSkipped = (Test-Path $storagePreseedSkipMarker)
 $report = @{
     schema_version = 1
     tool = @{
-        name = "Aero Guest Tools Verify"
-        version = "2.4.0"
-        started_utc = $started.ToUniversalTime().ToString("o")
-        ended_utc = $null
-        duration_ms = $null
+         name = "Aero Guest Tools Verify"
+         version = "2.4.1"
+         started_utc = $started.ToUniversalTime().ToString("o")
+         ended_utc = $null
+         duration_ms = $null
         script_path = $MyInvocation.MyCommand.Path
         command_line = $MyInvocation.Line
         output_dir = $outDir
@@ -1882,6 +1882,69 @@ try {
         $gpuRegex `
         @("aero","virtio","gpu") `
         "No Aero/virtio GPU devices detected (system may still be using VGA/baseline graphics)."
+
+    # --- AeroGPU UMD DLL placement (WOW64 completeness) ---
+    try {
+        $gpuDetected = $false
+        foreach ($d in $devices) {
+            $pnpid = "" + $d.pnp_device_id
+            if ($pnpid -and ($pnpid -match '(?i)^PCI\\VEN_(A3A0|1AED)&DEV_0001')) {
+                $gpuDetected = $true
+                break
+            }
+        }
+
+        $umdStatus = "PASS"
+        $umdSummary = ""
+        $umdDetails = @()
+        $umdData = @{
+            gpu_detected = $gpuDetected
+            is_64bit = $null
+            expected_files = @()
+            missing_files = @()
+        }
+
+        if (-not $gpuDetected) {
+            # Avoid a redundant WARN: missing GPU is already surfaced by device_binding_graphics.
+            $umdSummary = "Skipped: no AeroGPU device detected."
+        } else {
+            $is64 = ("" + $env:PROCESSOR_ARCHITECTURE) -match '64'
+            $umdData.is_64bit = $is64
+
+            $expected = @()
+            if ($is64) {
+                $expected += (Join-Path (Join-Path $env:SystemRoot "System32") "aerogpu_d3d9_x64.dll")
+                $expected += (Join-Path (Join-Path $env:SystemRoot "SysWOW64") "aerogpu_d3d9.dll")
+            } else {
+                $expected += (Join-Path (Join-Path $env:SystemRoot "System32") "aerogpu_d3d9.dll")
+            }
+            $umdData.expected_files = $expected
+
+            $missing = @()
+            foreach ($p in $expected) {
+                if (-not (Test-Path $p)) { $missing += $p }
+            }
+            $umdData.missing_files = $missing
+
+            if ($missing.Count -gt 0) {
+                $umdStatus = "WARN"
+                $umdSummary = "Missing expected AeroGPU D3D9 UMD DLL(s) (" + $missing.Count + "/" + $expected.Count + ")."
+                $umdDetails += "Expected D3D9 UMD file(s):"
+                foreach ($p in $expected) { $umdDetails += ("  - " + $p) }
+                $umdDetails += "Missing:"
+                foreach ($p in $missing) { $umdDetails += ("  - " + $p) }
+                if ($is64) {
+                    $umdDetails += "See: docs/windows7-driver-troubleshooting.md#issue-32-bit-d3d9-apps-fail-on-windows-7-x64-missing-wow64-umd"
+                }
+            } else {
+                $umdSummary = "AeroGPU D3D9 UMD DLL(s) are present."
+            }
+        }
+
+        Add-Check "aerogpu_umd_files" "AeroGPU D3D9 UMD DLL placement" $umdStatus $umdSummary $umdData $umdDetails
+    } catch {
+        Add-Check "aerogpu_umd_files" "AeroGPU D3D9 UMD DLL placement" "WARN" ("Failed: " + $_.Exception.Message) $null @()
+    }
 
     $audioServiceCandidates = @("viosnd","aerosnd","virtiosnd","aeroviosnd")
     if ($cfgVirtioSndService) { $audioServiceCandidates = @($cfgVirtioSndService) + $audioServiceCandidates }

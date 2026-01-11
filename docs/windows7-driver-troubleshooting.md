@@ -492,6 +492,7 @@ If the `SysWOW64` UMD is missing, **32-bit apps will not be able to use D3D9** e
 1. Confirm the expected UMD files exist on the guest:
     - `C:\\Windows\\System32\\aerogpu_d3d9_x64.dll`
     - `C:\\Windows\\SysWOW64\\aerogpu_d3d9.dll`
+    - Tip: `verify.cmd` reports this under **AeroGPU D3D9 UMD DLL placement**.
 2. Run the guest-side D3D validation suite (recommended) to confirm the *runtime* actually loads the correct UMD DLL:
     - `drivers\\aerogpu\\tests\\win7\\run_all.cmd --require-umd`
     - Or just the D3D9 test:
