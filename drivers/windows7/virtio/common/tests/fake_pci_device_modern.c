@@ -5,7 +5,7 @@
 #include <assert.h>
 #include <string.h>
 
-#include "virtio_pci_modern.h"
+#include "virtio_pci_modern_portable.h"
 
 static uint16_t fake_le16_read(const uint8_t *p)
 {
@@ -564,4 +564,3 @@ void fake_pci_modern_process_queue(fake_pci_device_modern_t *dev, uint16_t queue
     /* Signal INTx via ISR bit 0. */
     dev->isr_status |= 0x1u;
 }
-

@@ -139,7 +139,7 @@ This directory provides:
 The two Windows-facing transports both export a `VirtioPci*` API surface, so a driver
 must link **exactly one** of them.
 
-- `include/virtio_pci_modern.h` + `src/virtio_pci_modern.c`
+- `include/virtio_pci_modern_portable.h` + `src/virtio_pci_modern.c`
   - OS-agnostic virtio-pci modern transport built on `virtio_os_ops_t`.
   - Used by host-side unit tests (fake PCI config + BAR0 MMIO backends).
   - Discovers `COMMON/NOTIFY/ISR/DEVICE` capability regions and performs 64-bit

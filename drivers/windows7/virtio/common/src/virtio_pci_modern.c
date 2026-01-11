@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MIT OR Apache-2.0 */
 
-#include "virtio_pci_modern.h"
+#include "virtio_pci_modern_portable.h"
 
 #include <string.h>
 
@@ -442,4 +442,3 @@ void virtio_pci_modern_notify_queue(virtio_pci_modern_device_t *dev, uint16_t qu
         dev->os->mb(dev->os_ctx);
     }
 }
-
