@@ -81,6 +81,7 @@ options), and are never sent by the browser.
 - `L2_BACKEND_ORIGIN_OVERRIDE` (optional): If set, use this value for the backend
   `Origin` header instead of forwarding the client origin. (Alias that overrides
   `L2_BACKEND_WS_ORIGIN`.)
+- `L2_BACKEND_ORIGIN` (optional): Alias for `L2_BACKEND_ORIGIN_OVERRIDE`.
 - `L2_BACKEND_WS_ORIGIN` (optional): If set, the relay includes
   `Origin: <value>` on the backend WebSocket upgrade request.
 - `L2_BACKEND_AUTH_FORWARD_MODE` (optional, default: `query`):
@@ -98,6 +99,7 @@ options), and are never sent by the browser.
   WebSocket subprotocol `aero-l2-token.<token>` alongside the required
   `aero-l2-tunnel-v1` subprotocol. The negotiated subprotocol is still required
   to be `aero-l2-tunnel-v1`.
+- `L2_BACKEND_TOKEN` (optional): Alias for `L2_BACKEND_WS_TOKEN`.
 
 Security note: If your backend only supports query-string tokens (or your token
 cannot be represented as a WebSocket subprotocol token), you can instead embed

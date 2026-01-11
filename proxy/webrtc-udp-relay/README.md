@@ -209,6 +209,7 @@ Configuration env vars (server → server dialing):
 - `L2_BACKEND_ORIGIN_OVERRIDE` (optional): If set, use this Origin value for all
   backend dials instead of forwarding the client origin. (Alias that overrides
   `L2_BACKEND_WS_ORIGIN`.)
+- `L2_BACKEND_ORIGIN` (optional): Alias for `L2_BACKEND_ORIGIN_OVERRIDE`.
 - `L2_BACKEND_WS_ORIGIN` (optional): If set, send `Origin: <value>` when dialing
   the backend WebSocket.
 - `L2_BACKEND_AUTH_FORWARD_MODE` (default `query`): `none|query|subprotocol` —
@@ -219,6 +220,7 @@ Configuration env vars (server → server dialing):
 - `L2_BACKEND_WS_TOKEN` (optional): If set, send an additional offered WebSocket
   subprotocol `aero-l2-token.<token>` when dialing the backend (alongside
   `aero-l2-tunnel-v1`).
+- `L2_BACKEND_TOKEN` (optional): Alias for `L2_BACKEND_WS_TOKEN`.
 - `L2_MAX_MESSAGE_BYTES` (default `4096`): Per-message size limit enforced on the
   DataChannel and backend WebSocket.
 
@@ -305,6 +307,16 @@ Env vars / flags:
     to the backend WebSocket dial.
 - `L2_BACKEND_ORIGIN_OVERRIDE` / `--l2-backend-origin-override` (optional)
   - When set, this Origin value is used for all backend dials instead of forwarding the client origin.
+- `L2_BACKEND_ORIGIN` / `--l2-backend-origin` (optional)
+  - Alias for `L2_BACKEND_ORIGIN_OVERRIDE` / `--l2-backend-origin-override`.
+- `L2_BACKEND_WS_ORIGIN` / `--l2-backend-ws-origin` (optional)
+  - Static Origin header value to send when dialing the backend WebSocket. If
+    `L2_BACKEND_ORIGIN_OVERRIDE` / `L2_BACKEND_ORIGIN` is set, it takes priority.
+- `L2_BACKEND_TOKEN` / `--l2-backend-token` (optional)
+  - Static token to present to the backend as an additional offered WebSocket
+    subprotocol `aero-l2-token.<token>` (alongside `aero-l2-tunnel-v1`).
+- `L2_BACKEND_WS_TOKEN` / `--l2-backend-ws-token` (optional)
+  - Alias for `L2_BACKEND_TOKEN` / `--l2-backend-token`.
 - `L2_BACKEND_AUTH_FORWARD_MODE` / `--l2-backend-auth-forward-mode` (default `query`)
   - `none`: do not forward auth credentials
   - `query`: append `token=<credential>` and `apiKey=<credential>` query parameters when dialing the backend

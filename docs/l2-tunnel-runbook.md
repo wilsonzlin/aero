@@ -94,11 +94,12 @@ cd proxy/webrtc-udp-relay
 # (The relay will forward the client's Origin + AUTH_MODE credential by default.)
 export L2_BACKEND_WS_URL=ws://127.0.0.1:8090/l2
 
-# Optional knobs:
-# export L2_BACKEND_AUTH_FORWARD_MODE=query        # default
-# export L2_BACKEND_AUTH_FORWARD_MODE=subprotocol  # Sec-WebSocket-Protocol: aero-l2-token.<credential>
-# export L2_BACKEND_ORIGIN_OVERRIDE=https://example.com
-go run ./cmd/aero-webrtc-udp-relay
+ # Optional knobs:
+ # export L2_BACKEND_AUTH_FORWARD_MODE=query        # default
+ # export L2_BACKEND_AUTH_FORWARD_MODE=subprotocol  # Sec-WebSocket-Protocol: aero-l2-token.<credential>
+ # export L2_BACKEND_ORIGIN_OVERRIDE=https://example.com
+ # export L2_BACKEND_ORIGIN=https://example.com # alias for L2_BACKEND_ORIGIN_OVERRIDE
+ go run ./cmd/aero-webrtc-udp-relay
 ```
 
 See [`proxy/webrtc-udp-relay/README.md`](../proxy/webrtc-udp-relay/README.md) for TURN/docker-compose
