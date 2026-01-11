@@ -5,6 +5,8 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { once } from 'node:events';
 import net from 'node:net';
 
+import { L2_TUNNEL_SUBPROTOCOL } from '../../web/src/shared/l2TunnelProtocol.ts';
+
 type UdpEchoServer = {
   port: number;
   close: () => Promise<void>;
@@ -238,11 +240,11 @@ test.describe.serial('l2 tunnel (token auth)', () => {
 
       await page.goto('http://127.0.0.1:5173/tests/e2e/fixtures/l2_tunnel.html', { waitUntil: 'load' });
 
-      const result = await page.evaluate(
+          const result = await page.evaluate(
         async ({ gatewayOrigin, l2ProxyOrigin, l2Token, udpEchoPort }) => {
-          const { decodeL2Message, encodeL2Frame, L2_TUNNEL_TYPE_FRAME } = await import(
-            '/web/src/shared/l2TunnelProtocol.ts'
-          );
+          const { decodeL2Message, encodeL2Frame, L2_TUNNEL_SUBPROTOCOL, L2_TUNNEL_TYPE_FRAME } = await import(
+             '/web/src/shared/l2TunnelProtocol.ts'
+           );
 
           function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
             return Promise.race([
@@ -494,7 +496,7 @@ test.describe.serial('l2 tunnel (token auth)', () => {
           // First, prove that the proxy rejects WebSocket upgrades without the token.
           const unauth = await withTimeout(
             new Promise<{ opened: boolean; code?: number; reason?: string }>((resolve) => {
-              const ws = new WebSocket(wsUrl, 'aero-l2-tunnel-v1');
+              const ws = new WebSocket(wsUrl, L2_TUNNEL_SUBPROTOCOL);
               ws.binaryType = 'arraybuffer';
               let opened = false;
               ws.onopen = () => {
@@ -514,7 +516,7 @@ test.describe.serial('l2 tunnel (token auth)', () => {
           }
 
           wsBase.searchParams.set('token', l2Token);
-          const ws = new WebSocket(wsBase.toString(), 'aero-l2-tunnel-v1');
+          const ws = new WebSocket(wsBase.toString(), L2_TUNNEL_SUBPROTOCOL);
           ws.binaryType = 'arraybuffer';
 
           await withTimeout(
@@ -528,7 +530,7 @@ test.describe.serial('l2 tunnel (token auth)', () => {
           );
 
           const negotiatedProtocol = ws.protocol;
-          if (negotiatedProtocol !== 'aero-l2-tunnel-v1') {
+          if (negotiatedProtocol !== L2_TUNNEL_SUBPROTOCOL) {
             throw new Error(`subprotocol not negotiated: ${negotiatedProtocol || 'none'}`);
           }
 
@@ -648,7 +650,7 @@ test.describe.serial('l2 tunnel (token auth)', () => {
         { gatewayOrigin: gateway!.origin, l2ProxyOrigin: l2Proxy!.origin, l2Token, udpEchoPort: udpEcho.port },
       );
 
-      expect(result.negotiatedProtocol).toBe('aero-l2-tunnel-v1');
+      expect(result.negotiatedProtocol).toBe(L2_TUNNEL_SUBPROTOCOL);
       expect(result.echoed).toBe('hi-udp');
     } finally {
       if (l2Proxy) await l2Proxy.close();
