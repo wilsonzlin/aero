@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
+
 # Windows 7 virtio-snd driver package (build + signing)
 
 This directory contains the Aero **virtio-snd** Windows 7 SP1 driver sources, plus scripts to produce an **installable, test-signed** driver package.

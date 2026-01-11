@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
+
 # `virtio-snd` (Windows 7) — design notes
 
 This document is a **clean-room** design note for the Aero Windows 7 virtio-snd

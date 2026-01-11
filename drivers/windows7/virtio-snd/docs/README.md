@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
+
 # virtio-snd (Windows 7) PortCls/WaveRT driver (render-only)
 
 This directory contains a clean-room **PortCls + WaveRT** Windows 7 audio adapter driver for a PCI virtio-snd device.

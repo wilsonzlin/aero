@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
+
 # virtio-snd PCI hardware IDs (HWIDs)
 
 This driver targets **virtio-snd over PCI** (for example QEMU’s `virtio-sound-pci` device).

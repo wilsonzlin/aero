@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
+
 # SOURCES (virtio-snd Windows 7 driver)
 
 This file tracks the specifications and public references used to design and

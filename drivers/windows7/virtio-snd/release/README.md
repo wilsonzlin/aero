@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
+
 # Aero virtio-snd (Windows 7) release packaging
 
 `../scripts/package-release.ps1` stages an installable driver folder (and can optionally create a deterministic zip) from the payload files in `../inf/`.

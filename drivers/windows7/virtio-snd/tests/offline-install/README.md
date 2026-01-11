@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
+
 # Offline / slipstream install: virtio-snd driver into Windows 7 (WIM or offline OS)
 
 This document describes how to **stage** (preinstall) the Aero `virtio-snd` Windows 7 driver so that Plug-and-Play can bind it **automatically on first boot**.

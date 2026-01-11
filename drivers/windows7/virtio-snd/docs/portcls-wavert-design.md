@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
+
 # virtio-snd (Windows 7): PortCls + WaveRT design
 
 This document captures Aero’s intended **PortCls/WaveRT** architecture for a
