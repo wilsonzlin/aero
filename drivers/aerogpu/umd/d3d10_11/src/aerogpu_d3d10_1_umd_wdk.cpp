@@ -557,7 +557,8 @@ void DestroyKernelDeviceContext(AeroGpuDevice* dev) {
         __if_exists(D3DDDICB_DESTROYSYNCHRONIZATIONOBJECT) {
           D3DDDICB_DESTROYSYNCHRONIZATIONOBJECT args{};
           __if_exists(D3DDDICB_DESTROYSYNCHRONIZATIONOBJECT::hSyncObject) {
-            args.hSyncObject = dev->kmt_fence_syncobj;
+            args.hSyncObject = UintPtrToD3dHandle<decltype(args.hSyncObject)>(
+                static_cast<std::uintptr_t>(dev->kmt_fence_syncobj));
           }
           (void)CallCbMaybeHandle(cb->pfnDestroySynchronizationObjectCb, dev->hrt_device, &args);
         }
@@ -572,7 +573,7 @@ void DestroyKernelDeviceContext(AeroGpuDevice* dev) {
         __if_exists(D3DDDICB_DESTROYCONTEXT) {
           D3DDDICB_DESTROYCONTEXT args{};
           __if_exists(D3DDDICB_DESTROYCONTEXT::hContext) {
-            args.hContext = dev->kmt_context;
+            args.hContext = UintPtrToD3dHandle<decltype(args.hContext)>(static_cast<std::uintptr_t>(dev->kmt_context));
           }
           (void)CallCbMaybeHandle(cb->pfnDestroyContextCb, dev->hrt_device, &args);
         }
@@ -587,7 +588,7 @@ void DestroyKernelDeviceContext(AeroGpuDevice* dev) {
         __if_exists(D3DDDICB_DESTROYDEVICE) {
           D3DDDICB_DESTROYDEVICE args{};
           __if_exists(D3DDDICB_DESTROYDEVICE::hDevice) {
-            args.hDevice = dev->kmt_device;
+            args.hDevice = UintPtrToD3dHandle<decltype(args.hDevice)>(static_cast<std::uintptr_t>(dev->kmt_device));
           }
           (void)CallCbMaybeHandle(cb->pfnDestroyDeviceCb, dev->hrt_device, &args);
         }
@@ -643,13 +644,14 @@ HRESULT InitKernelDeviceContext(AeroGpuDevice* dev, D3D10DDI_HADAPTER hAdapter) 
   __if_exists(D3DDDICB_CREATEDEVICE) {
     D3DDDICB_CREATEDEVICE create_device{};
     __if_exists(D3DDDICB_CREATEDEVICE::hAdapter) {
-      create_device.hAdapter = reinterpret_cast<HANDLE>(hAdapter.pDrvPrivate);
+      create_device.hAdapter =
+          UintPtrToD3dHandle<decltype(create_device.hAdapter)>(reinterpret_cast<std::uintptr_t>(hAdapter.pDrvPrivate));
     }
     HRESULT hr = CallCbMaybeHandle(cb->pfnCreateDeviceCb, dev->hrt_device, &create_device);
     if (FAILED(hr) || !create_device.hDevice) {
       return FAILED(hr) ? hr : E_FAIL;
     }
-    dev->kmt_device = create_device.hDevice;
+    dev->kmt_device = static_cast<D3DKMT_HANDLE>(D3dHandleToUintPtr(create_device.hDevice));
   }
   __if_not_exists(D3DDDICB_CREATEDEVICE) {
     return S_OK;
@@ -658,7 +660,7 @@ HRESULT InitKernelDeviceContext(AeroGpuDevice* dev, D3D10DDI_HADAPTER hAdapter) 
   __if_exists(D3DDDICB_CREATECONTEXT) {
     D3DDDICB_CREATECONTEXT create_ctx{};
     __if_exists(D3DDDICB_CREATECONTEXT::hDevice) {
-      create_ctx.hDevice = dev->kmt_device;
+      create_ctx.hDevice = UintPtrToD3dHandle<decltype(create_ctx.hDevice)>(static_cast<std::uintptr_t>(dev->kmt_device));
     }
     __if_exists(D3DDDICB_CREATECONTEXT::NodeOrdinal) {
       create_ctx.NodeOrdinal = 0;
@@ -688,8 +690,8 @@ HRESULT InitKernelDeviceContext(AeroGpuDevice* dev, D3D10DDI_HADAPTER hAdapter) 
       return FAILED(hr) ? hr : E_FAIL;
     }
 
-    dev->kmt_context = create_ctx.hContext;
-    dev->kmt_fence_syncobj = create_ctx.hSyncObject;
+    dev->kmt_context = static_cast<D3DKMT_HANDLE>(D3dHandleToUintPtr(create_ctx.hContext));
+    dev->kmt_fence_syncobj = static_cast<D3DKMT_HANDLE>(D3dHandleToUintPtr(create_ctx.hSyncObject));
     __if_exists(D3DDDICB_CREATECONTEXT::pDmaBufferPrivateData) {
       dev->dma_buffer_private_data = create_ctx.pDmaBufferPrivateData;
     }
@@ -805,7 +807,7 @@ HRESULT AeroGpuWaitForFence(AeroGpuDevice* dev, uint64_t fence, uint32_t timeout
     if (have_wait_cb) {
       D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT args{};
       __if_exists(D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT::hContext) {
-        args.hContext = dev->kmt_context;
+        args.hContext = UintPtrToD3dHandle<decltype(args.hContext)>(static_cast<std::uintptr_t>(dev->kmt_context));
       }
       __if_exists(D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT::ObjectCount) {
         args.ObjectCount = 1;
@@ -979,7 +981,7 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
       alloc.PatchLocationListSize = 0;
     }
     __if_exists(D3DDDICB_ALLOCATE::hContext) {
-      alloc.hContext = dev->kmt_context;
+      alloc.hContext = UintPtrToD3dHandle<decltype(alloc.hContext)>(static_cast<std::uintptr_t>(dev->kmt_context));
     }
 
     HRESULT alloc_hr = CallCbMaybeHandle(cb->pfnAllocateCb, dev->hrt_device, &alloc);
