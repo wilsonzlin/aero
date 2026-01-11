@@ -116,6 +116,21 @@ export class InputCapture {
   private latencyLogSumUs = 0;
   private latencyLogMaxUs = 0;
 
+  private readonly handlePointerLockChange = (locked: boolean): void => {
+    // If pointer lock exits while the canvas is not focused, we will stop
+    // capturing keyboard/mouse events, which can leave the guest with latched
+    // input state. Emit a best-effort "all released" snapshot immediately.
+    if (locked || this.hasFocus) {
+      return;
+    }
+
+    const nowUs = toTimestampUs(performance.now());
+    this.releaseAllKeys();
+    this.setMouseButtons(0);
+    this.gamepad?.emitNeutral(this.queue, nowUs);
+    this.queue.flush(this.ioWorker, { recycle: this.recycleBuffers });
+  };
+
   private readonly handleClick = (): void => {
     this.canvas.focus();
     this.pointerLock.request();
@@ -320,7 +335,7 @@ export class InputCapture {
       this.canvas.tabIndex = 0;
     }
 
-    this.pointerLock = new PointerLock(this.canvas);
+    this.pointerLock = new PointerLock(this.canvas, { onChange: this.handlePointerLockChange });
 
     this.queue = new InputEventQueue(128, (byteLength) => this.takeRecycledBuffer(byteLength));
   }
