@@ -32,11 +32,14 @@ import {
   type SerialOutputMessage,
   type SetAudioRingBufferMessage,
   type SetMicrophoneRingBufferMessage,
+  type CursorSetImageMessage,
+  type CursorSetStateMessage,
   type WorkerInitMessage,
   type WasmReadyMessage,
 } from "./protocol";
 import type { WasmVariant } from "./wasm_context";
 import { precompileWasm } from "./wasm_preload";
+import type { GpuRuntimeCursorSetImageMessage, GpuRuntimeCursorSetStateMessage } from "../workers/gpu_runtime_protocol";
 
 export type WorkerState = "starting" | "ready" | "failed" | "stopped";
 
@@ -226,6 +229,9 @@ export class WorkerCoordinator {
   private audioChannelCount = 0;
   private audioDstSampleRate = 0;
 
+  private cursorImage: { width: number; height: number; rgba8: ArrayBuffer } | null = null;
+  private cursorState: { enabled: boolean; x: number; y: number; hotX: number; hotY: number } | null = null;
+
   private activeConfig: AeroConfig | null = null;
   private configVersion = 0;
   private workerConfigAckVersions: Partial<Record<WorkerRole, number>> = {};
@@ -329,6 +335,8 @@ export class WorkerCoordinator {
       this.lastResetRequestAtMs = 0;
       this.wasmStatus = {};
       this.lastHeartbeatFromRing = 0;
+      this.cursorImage = null;
+      this.cursorState = null;
 
       // Dedicated, tiny SharedArrayBuffer for GPU frame scheduling state/metrics.
       // Keeping it separate from the main control region avoids growing the core IPC layout.
@@ -470,6 +478,8 @@ export class WorkerCoordinator {
     this.workerConfigAckVersions = {};
     this.wasmStatus = {};
     this.lastHeartbeatFromRing = 0;
+    this.cursorImage = null;
+    this.cursorState = null;
 
     const runId = this.runId;
     const perfChannel = maybeGetHudPerfChannel();
@@ -1021,6 +1031,36 @@ export class WorkerCoordinator {
       return;
     }
 
+    const maybeCursorImage = data as Partial<CursorSetImageMessage>;
+    if (
+      maybeCursorImage?.kind === "cursor.set_image" &&
+      typeof maybeCursorImage.width === "number" &&
+      typeof maybeCursorImage.height === "number" &&
+      maybeCursorImage.rgba8 instanceof ArrayBuffer
+    ) {
+      this.setCursorImage(maybeCursorImage.width, maybeCursorImage.height, maybeCursorImage.rgba8);
+      return;
+    }
+
+    const maybeCursorState = data as Partial<CursorSetStateMessage>;
+    if (
+      maybeCursorState?.kind === "cursor.set_state" &&
+      typeof maybeCursorState.enabled === "boolean" &&
+      typeof maybeCursorState.x === "number" &&
+      typeof maybeCursorState.y === "number" &&
+      typeof maybeCursorState.hotX === "number" &&
+      typeof maybeCursorState.hotY === "number"
+    ) {
+      this.setCursorState(
+        maybeCursorState.enabled,
+        maybeCursorState.x,
+        maybeCursorState.y,
+        maybeCursorState.hotX,
+        maybeCursorState.hotY,
+      );
+      return;
+    }
+
     if (role === "gpu") {
       if (isGpuWorkerGpuErrorMessage(data)) {
         const err = data.error as { message?: unknown; stack?: unknown } | undefined;
@@ -1079,6 +1119,10 @@ export class WorkerCoordinator {
 
       // Kick the worker to start its minimal demo loop.
       void this.trySendCommand(info, { kind: "nop", seq: this.nextCmdSeq++ });
+
+      if (role === "gpu") {
+        this.flushCursorToGpuWorker();
+      }
 
       this.maybeMarkRunning();
       return;
@@ -1262,6 +1306,55 @@ export class WorkerCoordinator {
 
   private trySendCommand(info: WorkerInfo, cmd: Command): boolean {
     return info.commandRing.tryPush(encodeCommand(cmd));
+  }
+
+  private setCursorImage(width: number, height: number, rgba8: ArrayBuffer): void {
+    const w = Math.max(0, width | 0);
+    const h = Math.max(0, height | 0);
+    if (w === 0 || h === 0) return;
+    if (rgba8.byteLength < w * h * 4) return;
+    this.cursorImage = { width: w, height: h, rgba8 };
+    this.flushCursorToGpuWorker();
+  }
+
+  private setCursorState(enabled: boolean, x: number, y: number, hotX: number, hotY: number): void {
+    this.cursorState = {
+      enabled: !!enabled,
+      x: x | 0,
+      y: y | 0,
+      hotX: Math.max(0, hotX | 0),
+      hotY: Math.max(0, hotY | 0),
+    };
+    this.flushCursorToGpuWorker();
+  }
+
+  private flushCursorToGpuWorker(): void {
+    const gpu = this.workers.gpu?.worker;
+    if (!gpu) return;
+
+    const img = this.cursorImage;
+    if (img) {
+      const msg: GpuRuntimeCursorSetImageMessage = {
+        type: "cursor_set_image",
+        width: img.width,
+        height: img.height,
+        rgba8: img.rgba8,
+      };
+      gpu.postMessage(msg);
+    }
+
+    const state = this.cursorState;
+    if (state) {
+      const msg: GpuRuntimeCursorSetStateMessage = {
+        type: "cursor_set_state",
+        enabled: state.enabled,
+        x: state.x,
+        y: state.y,
+        hotX: state.hotX,
+        hotY: state.hotY,
+      };
+      gpu.postMessage(msg);
+    }
   }
 }
 

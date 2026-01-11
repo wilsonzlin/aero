@@ -56,6 +56,8 @@ import {
   type ProtocolMessage,
   type SetMicrophoneRingBufferMessage,
   type SetAudioRingBufferMessage,
+  type CursorSetImageMessage,
+  type CursorSetStateMessage,
   type WorkerInitMessage,
 } from "../runtime/protocol";
 import { initWasmForContext, type WasmApi } from "../runtime/wasm_context";
@@ -99,6 +101,14 @@ type AudioOutputHdaDemoStatsMessage = {
   lastTickProducedFrames?: number;
   lastTickWrittenFrames?: number;
   lastTickDroppedFrames?: number;
+};
+
+type CursorDemoStartMessage = {
+  type: "cursorDemo.start";
+};
+
+type CursorDemoStopMessage = {
+  type: "cursorDemo.stop";
 };
 
 let role: "cpu" | "gpu" | "io" | "jit" = "cpu";
@@ -857,6 +867,31 @@ function pumpMicLoopback(maxWriteFrames: number): number {
 let diskDemoStarted = false;
 let diskDemoResponses = 0;
 
+let cursorDemoEnabled = false;
+
+function startCursorDemo(): void {
+  cursorDemoEnabled = true;
+
+  // 1x1 opaque blue pixel at (0,0). Keeping this tiny and fully opaque makes it
+  // suitable for deterministic screenshot assertions in Playwright, and avoids
+  // colliding with the shared-framebuffer demo's red/green tiles.
+  const cursorBytes = new Uint8Array([0, 0, 255, 255]);
+  ctx.postMessage(
+    { kind: "cursor.set_image", width: 1, height: 1, rgba8: cursorBytes.buffer } satisfies CursorSetImageMessage,
+    [cursorBytes.buffer],
+  );
+  ctx.postMessage(
+    { kind: "cursor.set_state", enabled: true, x: 0, y: 0, hotX: 0, hotY: 0 } satisfies CursorSetStateMessage,
+  );
+}
+
+function stopCursorDemo(): void {
+  cursorDemoEnabled = false;
+  ctx.postMessage(
+    { kind: "cursor.set_state", enabled: false, x: 0, y: 0, hotX: 0, hotY: 0 } satisfies CursorSetStateMessage,
+  );
+}
+
 ctx.onmessage = (ev: MessageEvent<unknown>) => {
   const msg = ev.data as
     | Partial<WorkerInitMessage>
@@ -865,6 +900,8 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
     | Partial<SetMicrophoneRingBufferMessage>
     | Partial<AudioOutputHdaDemoStartMessage>
     | Partial<AudioOutputHdaDemoStopMessage>
+    | Partial<CursorDemoStartMessage>
+    | Partial<CursorDemoStopMessage>
     | undefined;
   if (!msg) return;
 
@@ -882,6 +919,17 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
     });
     return;
   }
+
+  if ((msg as Partial<CursorDemoStopMessage>).type === "cursorDemo.stop") {
+    stopCursorDemo();
+    return;
+  }
+
+  if ((msg as Partial<CursorDemoStartMessage>).type === "cursorDemo.start") {
+    startCursorDemo();
+    return;
+  }
+
   if ((msg as { kind?: unknown }).kind === "config.update") {
     currentConfig = (msg as ConfigUpdateMessage).config;
     currentConfigVersion = (msg as ConfigUpdateMessage).version;

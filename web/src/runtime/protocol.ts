@@ -149,10 +149,41 @@ export type CoordinatorToWorkerPostMessage =
   | SetMicrophoneRingBufferMessage
   | SetAudioRingBufferMessage;
 
+/**
+ * Cursor image update forwarded from an emulation worker (typically CPU/WASM) to the coordinator.
+ *
+ * The coordinator is responsible for forwarding this to the GPU presenter worker (if present).
+ *
+ * NOTE: This intentionally uses `postMessage` (not the ring-buffer IPC) because cursor images are
+ * relatively large payloads and can exceed the fixed control-ring capacity.
+ */
+export type CursorSetImageMessage = {
+  kind: "cursor.set_image";
+  width: number;
+  height: number;
+  rgba8: ArrayBuffer;
+};
+
+/**
+ * Cursor state update forwarded from an emulation worker (typically CPU/WASM) to the coordinator.
+ *
+ * Coordinates use a top-left origin in the source framebuffer coordinate space.
+ */
+export type CursorSetStateMessage = {
+  kind: "cursor.set_state";
+  enabled: boolean;
+  x: number;
+  y: number;
+  hotX: number;
+  hotY: number;
+};
+
 export type WorkerToCoordinatorPostMessage =
   | ReadyMessage
   | ErrorMessage
   | WasmReadyMessage
   | ConfigAckMessage
   | SerialOutputMessage
-  | ResetRequestMessage;
+  | ResetRequestMessage
+  | CursorSetImageMessage
+  | CursorSetStateMessage;
