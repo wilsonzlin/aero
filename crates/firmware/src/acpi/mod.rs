@@ -1,4 +1,3 @@
-mod checksum;
 pub mod tables;
 
 mod builder;

@@ -4,6 +4,10 @@
 
 Windows 7 can boot from both legacy BIOS and UEFI. We implement a custom BIOS that performs POST, initializes devices, and boots the Windows Boot Manager.
 
+> Implementation note: the current legacy BIOS implementation lives in `crates/firmware::bios`.
+> It uses a lightweight "HLT-in-ROM-stub hypercall" dispatch model for INT services (documented in
+> `crates/firmware/README.md`).
+
 ---
 
 ## Boot Architecture
@@ -91,13 +95,17 @@ The trampoline's job is to:
 ```rust
 // BIOS ROM layout
 pub const BIOS_BASE: u64 = 0x000F_0000;
+pub const BIOS_ALIAS_BASE: u64 = 0xFFFF_0000;
 pub const BIOS_SIZE: usize = 0x10000;  // 64KB
 
 // Key entry points
-pub const RESET_VECTOR: u64 = 0xFFFF_FFF0;  // Maps to F000:FFF0
+pub const RESET_VECTOR_OFFSET: u64 = 0xFFF0; // F000:FFF0
+pub const RESET_VECTOR_PHYS: u64 = BIOS_BASE + RESET_VECTOR_OFFSET;
+pub const RESET_VECTOR_ALIAS_PHYS: u64 = BIOS_ALIAS_BASE + RESET_VECTOR_OFFSET; // 0xFFFF_FFF0
 pub const INT_TABLE: u64 = 0x0000_0000;     // Interrupt vector table
 pub const BDA_BASE: u64 = 0x0000_0400;      // BIOS Data Area
-pub const EBDA_BASE: u64 = 0x0009_FC00;     // Extended BIOS Data Area
+pub const EBDA_BASE: u64 = 0x0009_F000;     // Extended BIOS Data Area
+pub const EBDA_SIZE: usize = 0x1000;        // 4KB
 
 #[repr(C)]
 pub struct BiosDataArea {
