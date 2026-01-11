@@ -287,6 +287,12 @@ Clients should treat the manifest as authoritative: if the manifest exists, all 
 
 ## 4) Client Integration Guidance
 
+This repo includes a reference browser implementation:
+
+- `web/src/storage/remote_chunked_disk.ts` (`RemoteChunkedDisk`)
+  - Supports persistent caching (OPFS when available, otherwise an in-memory test store).
+  - Exposes lightweight telemetry via `getTelemetrySnapshot()` (hits/misses, bytes downloaded, inflight fetches).
+
 ### 4.1 `StreamingDisk`: API changes
 
 In the `StreamingDisk` example in [05 - Storage Subsystem](./05-storage-subsystem.md#image-download-and-streaming), the remote path currently uses:

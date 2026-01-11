@@ -1,11 +1,13 @@
-# Disk Images: Local vs Streaming (HTTP Range)
+# Disk Images: Local vs Streaming (HTTP Range / Chunked)
 
 ## Overview
 
 Aero can use **raw disk images** in two ways:
 
 1. **Local images**: you provide a file (or one is generated) and Aero stores it in browser storage (OPFS).
-2. **Streaming images**: you provide a **URL** to a remote raw image and Aero reads it using **HTTP Range requests**, caching only the blocks it actually touches.
+2. **Streaming images**: you provide a **URL** to a remote image and Aero reads it lazily, caching only the blocks/chunks it actually touches.
+   - **HTTP Range** (single file): fetches with `Range: bytes=...`
+   - **Chunked manifest** (many files): fetches `manifest.json` + `chunks/*.bin` with plain `GET` (no `Range` header)
 
 Streaming is essential for very large images (20GB+) because it avoids a full upfront download.
 
@@ -16,6 +18,8 @@ You must only use disk images that you **own** or are otherwise **licensed to us
 Do **not** use Aero’s streaming support to access or distribute pirated Windows installers or disk images. If you don’t have explicit rights to the content, don’t point Aero at it.
 
 ## Streaming images: server requirements
+
+### Mode A: HTTP Range (single object)
 
 To stream a remote image, the server **must** support byte-range requests:
 
@@ -31,7 +35,7 @@ Notes:
 
 ### CORS headers (browser requirement)
 
-Browsers will block cross-origin range reads unless the server is configured for CORS.
+Browsers will block cross-origin reads unless the server is configured for CORS.
 
 For a self-contained local setup (MinIO + optional reverse proxy) to validate Range + CORS behavior, see:
 [`infra/local-object-store/README.md`](../infra/local-object-store/README.md).
@@ -48,14 +52,36 @@ Notes:
 
 - `Access-Control-Allow-Origin: *` is acceptable for public, non-credentialed access.
 - `Content-Range` is not a “simple” header, so it must be **exposed** if the UI needs to read it.
+  - This matters for HTTP Range mode. Chunked mode does not read `Content-Range`.
 
 ## Streaming images: caching behavior
 
-The streaming backend downloads data in fixed-size **blocks** (for example, 1 MiB).
+The streaming backend downloads data in fixed-size **blocks** (for example, 1 MiB for Range mode, or multi-megabyte chunks for the chunked format).
 
-- On a cache miss, Aero fetches the required block with an HTTP Range request.
-- Blocks are stored locally and reused on subsequent runs.
-- A cache size limit can be configured; when exceeded, least-recently-used blocks are evicted.
+- On a cache miss, Aero fetches the required block/chunk from the remote server (Range `GET` or chunk `GET`).
+- Blocks/chunks are stored locally and reused on subsequent runs.
+- A cache size limit can be configured; when exceeded, least-recently-used blocks/chunks are evicted.
+
+### Mode B: Chunked manifest (no `Range`)
+
+Chunked streaming avoids `Range` requests entirely (and therefore can avoid CORS preflight in many deployments):
+
+- You host a `manifest.json` plus fixed-size `chunks/00000000.bin`, `chunks/00000001.bin`, etc.
+- The client reads the manifest once, then fetches chunks with plain `GET`.
+
+See the full format spec: [`18-chunked-disk-image-format.md`](./18-chunked-disk-image-format.md).
+
+## Inspecting streaming performance (telemetry + controls)
+
+The dev UI includes a **Remote disk image (streaming)** panel that can open a remote disk via the runtime disk worker and display live stats:
+
+- total image size
+- cached bytes + configured cache limit
+- cache hit rate
+- bytes downloaded + request counts
+- outstanding in-flight fetches
+
+It also provides buttons to **flush metadata**, **clear cache**, and **close** the streaming handle so you can tune block/chunk sizing and cache limits for 20GB+ boot scenarios.
 
 ## Security / UX expectations
 
