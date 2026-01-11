@@ -2438,7 +2438,8 @@ HRESULT map_resource_locked(AeroGpuDevice* dev,
   InitLockArgsForMap(&lock_cb, subresource, map_type, map_flags);
 
   hr = CallCbMaybeHandle(cb->pfnLockCb, dev->hrt_device, &lock_cb);
-  if (hr == HRESULT_FROM_WIN32(WAIT_TIMEOUT) || hr == HRESULT_FROM_WIN32(ERROR_TIMEOUT)) {
+  if (hr == kDxgiErrorWasStillDrawing || hr == HRESULT_FROM_WIN32(WAIT_TIMEOUT) ||
+      hr == HRESULT_FROM_WIN32(ERROR_TIMEOUT) || hr == static_cast<HRESULT>(0x10000102L)) {
     hr = kDxgiErrorWasStillDrawing;
   }
   if (hr == kDxgiErrorWasStillDrawing) {
