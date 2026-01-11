@@ -1,6 +1,7 @@
 #include <stddef.h>
 #include <stdio.h>
 
+#include "drivers/aerogpu/protocol/aerogpu_alloc_privdata.h"
 #include "drivers/aerogpu/protocol/aerogpu_cmd.h"
 #include "drivers/aerogpu/protocol/aerogpu_dbgctl_escape.h"
 #include "drivers/aerogpu/protocol/aerogpu_escape.h"
@@ -66,6 +67,7 @@ int main(void) {
 
   PRINT_SIZE("aerogpu_umd_private_v1", aerogpu_umd_private_v1);
   PRINT_SIZE("aerogpu_wddm_alloc_priv", aerogpu_wddm_alloc_priv);
+  PRINT_SIZE("aerogpu_alloc_privdata", struct aerogpu_alloc_privdata);
 
   PRINT_SIZE("aerogpu_escape_header", aerogpu_escape_header);
   PRINT_SIZE("aerogpu_escape_query_device_out", aerogpu_escape_query_device_out);
@@ -416,6 +418,11 @@ int main(void) {
   PRINT_OFF("aerogpu_wddm_alloc_priv", aerogpu_wddm_alloc_priv, size_bytes);
   PRINT_OFF("aerogpu_wddm_alloc_priv", aerogpu_wddm_alloc_priv, reserved0);
 
+  PRINT_OFF("aerogpu_alloc_privdata", struct aerogpu_alloc_privdata, magic);
+  PRINT_OFF("aerogpu_alloc_privdata", struct aerogpu_alloc_privdata, version);
+  PRINT_OFF("aerogpu_alloc_privdata", struct aerogpu_alloc_privdata, share_token);
+  PRINT_OFF("aerogpu_alloc_privdata", struct aerogpu_alloc_privdata, reserved0);
+
   PRINT_OFF("aerogpu_escape_header", aerogpu_escape_header, version);
   PRINT_OFF("aerogpu_escape_header", aerogpu_escape_header, op);
   PRINT_OFF("aerogpu_escape_header", aerogpu_escape_header, size);
@@ -656,6 +663,9 @@ int main(void) {
   PRINT_CONST(AEROGPU_UMDPRIV_FLAG_IS_LEGACY);
   PRINT_CONST(AEROGPU_UMDPRIV_FLAG_HAS_VBLANK);
   PRINT_CONST(AEROGPU_UMDPRIV_FLAG_HAS_FENCE_PAGE);
+
+  PRINT_CONST(AEROGPU_ALLOC_PRIVDATA_MAGIC);
+  PRINT_CONST(AEROGPU_ALLOC_PRIVDATA_VERSION);
 
   PRINT_CONST(AEROGPU_WDDM_ALLOC_PRIV_MAGIC);
   PRINT_CONST(AEROGPU_WDDM_ALLOC_PRIV_VERSION);

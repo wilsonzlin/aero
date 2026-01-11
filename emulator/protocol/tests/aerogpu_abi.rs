@@ -3,6 +3,9 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::OnceLock;
 
+use aero_protocol::aerogpu::aerogpu_alloc_privdata::{
+    AerogpuAllocPrivdata, AEROGPU_ALLOC_PRIVDATA_MAGIC, AEROGPU_ALLOC_PRIVDATA_VERSION,
+};
 use aero_protocol::aerogpu::aerogpu_cmd::{
     decode_cmd_hdr_le, AerogpuBlendFactor, AerogpuBlendOp, AerogpuBlendState,
     AerogpuCmdBindShaders, AerogpuCmdClear, AerogpuCmdCopyBuffer, AerogpuCmdCopyTexture2d,
@@ -2060,6 +2063,33 @@ fn rust_layout_matches_c_headers() {
     assert_eq!(abi.offset("aerogpu_wddm_alloc_priv", "size_bytes"), 24);
     assert_eq!(abi.offset("aerogpu_wddm_alloc_priv", "reserved0"), 32);
 
+    // Allocation private data returned by the KMD for shareable allocations (stable across x86/x64).
+    assert_size!(AerogpuAllocPrivdata, "aerogpu_alloc_privdata");
+    assert_off!(
+        AerogpuAllocPrivdata,
+        magic,
+        "aerogpu_alloc_privdata",
+        "magic"
+    );
+    assert_off!(
+        AerogpuAllocPrivdata,
+        version,
+        "aerogpu_alloc_privdata",
+        "version"
+    );
+    assert_off!(
+        AerogpuAllocPrivdata,
+        share_token,
+        "aerogpu_alloc_privdata",
+        "share_token"
+    );
+    assert_off!(
+        AerogpuAllocPrivdata,
+        reserved0,
+        "aerogpu_alloc_privdata",
+        "reserved0"
+    );
+
     // Escape ABI (driver-private; should remain stable across x86/x64).
     assert_eq!(abi.size("aerogpu_escape_header"), 16);
     assert_eq!(abi.size("aerogpu_escape_query_device_out"), 24);
@@ -3135,6 +3165,15 @@ fn rust_layout_matches_c_headers() {
     assert_eq!(
         abi.konst("AEROGPU_UMDPRIV_FLAG_HAS_FENCE_PAGE"),
         AEROGPU_UMDPRIV_FLAG_HAS_FENCE_PAGE as u64
+    );
+
+    assert_eq!(
+        abi.konst("AEROGPU_ALLOC_PRIVDATA_MAGIC"),
+        AEROGPU_ALLOC_PRIVDATA_MAGIC as u64
+    );
+    assert_eq!(
+        abi.konst("AEROGPU_ALLOC_PRIVDATA_VERSION"),
+        AEROGPU_ALLOC_PRIVDATA_VERSION as u64
     );
 
     assert_eq!(abi.konst("AEROGPU_WDDM_ALLOC_PRIV_MAGIC"), 0x414c_4c4f);
