@@ -17,6 +17,7 @@ INCLUDES=$(INCLUDES);..\include;..\..\virtio\common\include;..\..\..\windows\vir
 SOURCES= \
     adapter.c \
     backend_null.c \
+    backend_virtio.c \
     topology.c \
     wavert.c \
     pci_interface.c \

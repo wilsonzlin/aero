@@ -11,6 +11,7 @@
 #include "virtiosnd_tx.h"
 
 #define VIRTIOSND_POOL_TAG 'dnSV' // 'VSnd' (endianness depends on debugger display)
+#define VIRTIOSND_DX_SIGNATURE 'xdSV'
 
 //
 // PortCls subdevice names (must match the driver's PcRegisterSubdevice names).
@@ -57,6 +58,7 @@
 #define VIRTIOSND_QUEUE_COUNT 4u
 
 typedef struct _VIRTIOSND_DEVICE_EXTENSION {
+    ULONG Signature;
     PDEVICE_OBJECT Self;
     PDEVICE_OBJECT Pdo;
     PDEVICE_OBJECT LowerDeviceObject;

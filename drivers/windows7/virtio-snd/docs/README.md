@@ -22,14 +22,15 @@ PortCls / WaveRT:
 Backend:
 
 - The backend interface is defined in `include/backend.h`.
-- The default backend is a **Null backend** (silent; logs write sizes via `DbgPrint` in checked builds).
+- The driver uses a **virtio backend** when the virtio transport is started successfully (controlq + txq).
+- If the transport cannot be started (bring-up/debug), the driver falls back to a **Null backend** (silent; logs write sizes via `DbgPrint` in checked builds).
 
 Virtio transport:
 
 - Sets up split-ring virtqueues (control/event/tx/rx) using the reusable backend in `virtiosnd_queue_split.c`
   - Note: rxq (capture) is initialized for transport bring-up but capture buffers are not submitted yet.
 - Connects **INTx** and routes used-ring completions to the control/TX protocol engines in a DPC
-- Includes control/TX protocol engines (`virtiosnd_control.c` / `virtiosnd_tx.c`) and exposes thin wrappers (`VirtIoSndHwSendControl` / `VirtIoSndHwSubmitTx`) intended for wiring the WaveRT backend to virtio-snd.
+- Includes control/TX protocol engines (`virtiosnd_control.c` / `virtiosnd_tx.c`) and thin wrappers (`VirtIoSndHwSendControl` / `VirtIoSndHwSubmitTx`) used by the WaveRT virtio backend.
 
 ## Compatibility / Aero contract v1
 

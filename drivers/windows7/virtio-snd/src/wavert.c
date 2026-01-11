@@ -13,6 +13,7 @@ typedef struct _VIRTIOSND_WAVERT_MINIPORT {
     LONG RefCount;
 
     PVIRTIOSND_BACKEND Backend;
+    PVIRTIOSND_DEVICE_EXTENSION Dx;
 
     KSPIN_LOCK Lock;
     PVIRTIOSND_WAVERT_STREAM Stream;
@@ -324,12 +325,20 @@ static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_Init(
         *ServiceGroup = NULL;
     }
 
-    status = VirtIoSndBackendNull_Create(&miniport->Backend);
-    if (!NT_SUCCESS(status)) {
-        return status;
+    if (miniport->Backend != NULL) {
+        return STATUS_SUCCESS;
     }
 
-    return STATUS_SUCCESS;
+    status = STATUS_NOT_SUPPORTED;
+    if (miniport->Dx != NULL && miniport->Dx->Started && !miniport->Dx->Removed) {
+        status = VirtIoSndBackendVirtio_Create(miniport->Dx, &miniport->Backend);
+        if (NT_SUCCESS(status)) {
+            return STATUS_SUCCESS;
+        }
+    }
+
+    status = VirtIoSndBackendNull_Create(&miniport->Backend);
+    return status;
 }
 
 static NTSTATUS STDMETHODCALLTYPE VirtIoSndWaveRtMiniport_GetDescription(
@@ -1106,7 +1115,7 @@ static const IMiniportWaveRTStreamVtbl g_VirtIoSndWaveRtStreamVtbl = {
 };
 
 NTSTATUS
-VirtIoSndMiniportWaveRT_Create(_Outptr_result_maybenull_ PUNKNOWN *OutUnknown)
+VirtIoSndMiniportWaveRT_Create(_In_opt_ PVIRTIOSND_DEVICE_EXTENSION Dx, _Outptr_result_maybenull_ PUNKNOWN *OutUnknown)
 {
     PVIRTIOSND_WAVERT_MINIPORT miniport;
 
@@ -1124,6 +1133,7 @@ VirtIoSndMiniportWaveRT_Create(_Outptr_result_maybenull_ PUNKNOWN *OutUnknown)
     RtlZeroMemory(miniport, sizeof(*miniport));
     miniport->Interface.lpVtbl = &g_VirtIoSndWaveRtMiniportVtbl;
     miniport->RefCount = 1;
+    miniport->Dx = Dx;
     KeInitializeSpinLock(&miniport->Lock);
 
     *OutUnknown = (PUNKNOWN)&miniport->Interface;
