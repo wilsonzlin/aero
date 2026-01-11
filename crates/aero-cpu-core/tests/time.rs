@@ -1,4 +1,5 @@
 use aero_cpu_core::assist::AssistContext;
+use aero_cpu_core::exec::{Interpreter, Tier0Interpreter, Vcpu};
 use aero_cpu_core::interp::tier0::exec::{run_batch_with_assists, BatchExit};
 use aero_cpu_core::mem::FlatTestBus;
 use aero_cpu_core::msr;
@@ -190,4 +191,38 @@ fn wallclock_time_source_is_monotonic() {
     }
 
     assert!(t1 > t0);
+}
+
+#[test]
+fn tsc_advances_in_exec_tier0_interpreter() {
+    // Use the `exec::Tier0Interpreter` glue layer (Vcpu + assist handler) rather than the
+    // `run_batch_with_assists` loop, and ensure the IA32_TSC mirror stays coherent.
+    let code = [0x90, 0x90, 0x0F, 0x31, 0x90, 0x0F, 0x31]; // nop; nop; rdtsc; nop; rdtsc
+    let mut bus = FlatTestBus::new(BUS_SIZE);
+    bus.load(CODE_BASE, &code);
+
+    let mut cpu = Vcpu::new_with_mode(CpuMode::Bit32, bus);
+    cpu.cpu.state.set_rip(CODE_BASE);
+    cpu.cpu.time.set_tsc(0);
+    cpu.cpu.state.msr.tsc = 0;
+
+    let mut interp = Tier0Interpreter::new(1);
+
+    interp.exec_block(&mut cpu); // NOP
+    assert_eq!(cpu.cpu.state.msr.tsc, 1);
+    interp.exec_block(&mut cpu); // NOP
+    assert_eq!(cpu.cpu.state.msr.tsc, 2);
+
+    interp.exec_block(&mut cpu); // RDTSC
+    let tsc1 = tsc_from_edx_eax(&cpu.cpu.state);
+    assert_eq!(tsc1, 2);
+    assert_eq!(cpu.cpu.state.msr.tsc, 3);
+
+    interp.exec_block(&mut cpu); // NOP
+    assert_eq!(cpu.cpu.state.msr.tsc, 4);
+
+    interp.exec_block(&mut cpu); // RDTSC
+    let tsc2 = tsc_from_edx_eax(&cpu.cpu.state);
+    assert_eq!(tsc2, 4);
+    assert_eq!(cpu.cpu.state.msr.tsc, 5);
 }
