@@ -83,6 +83,7 @@ if exist "%RUNNER%" (
   if defined NO_TIMEOUT (
     echo INFO: timeout runner found but disabled by --no-timeout
   ) else (
+    call :validate_timeout || exit /b 1
     echo INFO: using timeout runner: %RUNNER% ^(timeout=%TIMEOUT_MS% ms^)
   )
 ) else (
@@ -101,6 +102,19 @@ if %FAILURES%==0 (
   echo %FAILURES% TEST^(S^) FAILED
   exit /b 1
 )
+
+:validate_timeout
+set "NON_DIGIT="
+for /f "delims=0123456789" %%X in ("!TIMEOUT_MS!") do set "NON_DIGIT=1"
+if defined NON_DIGIT (
+  echo ERROR: invalid --timeout-ms value: !TIMEOUT_MS!
+  exit /b 1
+)
+if "!TIMEOUT_MS:0=!"=="" (
+  echo ERROR: --timeout-ms must be ^> 0
+  exit /b 1
+)
+exit /b 0
 
 :run_manifest_line
 set "NAME=%~1"
@@ -135,7 +149,7 @@ if not exist "%EXE%" (
 )
 
 if exist "%RUNNER%" if not defined NO_TIMEOUT (
-  "%RUNNER%" %TIMEOUT_MS% "%EXE%" %*
+  "%RUNNER%" "!TIMEOUT_MS!" "%EXE%" %*
 ) else (
   "%EXE%" %*
 )
