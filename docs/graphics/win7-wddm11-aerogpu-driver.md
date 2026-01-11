@@ -730,7 +730,7 @@ The register names below are the canonical ones from `drivers/aerogpu/protocol/a
     - `AEROGPU_IRQ_SCANOUT_VBLANK`: scanout0 vblank tick (only if `AEROGPU_FEATURE_VBLANK` is set)
     - `AEROGPU_IRQ_ERROR`: fatal device error
   
-- **Scanout 0**
+- **Scanout 0** (if `AEROGPU_FEATURE_SCANOUT` is set)
   - `AEROGPU_MMIO_REG_SCANOUT0_ENABLE`
   - `AEROGPU_MMIO_REG_SCANOUT0_WIDTH` / `_HEIGHT`
   - `AEROGPU_MMIO_REG_SCANOUT0_FORMAT` (`enum aerogpu_format`)
