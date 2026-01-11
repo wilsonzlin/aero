@@ -1,9 +1,8 @@
 package relay
 
 import (
-	"strconv"
+	"errors"
 	"sync"
-	"sync/atomic"
 
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/config"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/metrics"
@@ -17,8 +16,6 @@ type SessionManager struct {
 
 	mu       sync.Mutex
 	sessions map[string]*Session
-
-	nextID atomic.Uint64
 }
 
 func NewSessionManager(cfg config.Config, m *metrics.Metrics, clock ratelimit.Clock) *SessionManager {
@@ -45,20 +42,33 @@ func (sm *SessionManager) ActiveSessions() int {
 }
 
 func (sm *SessionManager) CreateSession() (*Session, error) {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
+	for attempt := 0; attempt < 3; attempt++ {
+		id, err := newSessionID()
+		if err != nil {
+			return nil, err
+		}
 
-	if sm.cfg.MaxSessions > 0 && len(sm.sessions) >= sm.cfg.MaxSessions {
-		sm.metrics.Inc(metrics.DropReasonTooManySessions)
-		return nil, ErrTooManySessions
+		sm.mu.Lock()
+		if sm.cfg.MaxSessions > 0 && len(sm.sessions) >= sm.cfg.MaxSessions {
+			sm.metrics.Inc(metrics.DropReasonTooManySessions)
+			sm.mu.Unlock()
+			return nil, ErrTooManySessions
+		}
+		if _, ok := sm.sessions[id]; ok {
+			// Extremely unlikely (16 bytes of crypto-random entropy). Try again.
+			sm.mu.Unlock()
+			continue
+		}
+
+		session := newSession(id, sm.cfg, sm.metrics, sm.clock, func() {
+			sm.deleteSession(id)
+		})
+		sm.sessions[id] = session
+		sm.mu.Unlock()
+		return session, nil
 	}
 
-	id := strconv.FormatUint(sm.nextID.Add(1), 10)
-	session := newSession(id, sm.cfg, sm.metrics, sm.clock, func() {
-		sm.deleteSession(id)
-	})
-	sm.sessions[id] = session
-	return session, nil
+	return nil, errors.New("failed to allocate unique session id")
 }
 
 func (sm *SessionManager) deleteSession(id string) {
