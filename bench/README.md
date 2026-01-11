@@ -153,6 +153,17 @@ node --experimental-strip-types scripts/compare_gpu_benchmarks.ts \
   --cvThreshold 0.5
 ```
 
+Or via environment variables:
+
+```bash
+GPU_PERF_REGRESSION_THRESHOLD_PCT=15 \
+GPU_PERF_EXTREME_CV_THRESHOLD=0.5 \
+  node --experimental-strip-types scripts/compare_gpu_benchmarks.ts \
+    --baseline baseline.json \
+    --candidate gpu_bench.json \
+    --out-dir gpu-perf-results/compare
+```
+
 ## Storage I/O benchmark suite (OPFS + IndexedDB)
 
 The `storage_io` scenario loads `web/storage_bench.html` in Chromium via Playwright and records:
@@ -194,6 +205,17 @@ The compare tool writes `compare.md` + `summary.json` to `--out-dir` and gates o
 It also includes any `warnings[]` from the benchmark output in the Markdown report.
 The exit code matches other perf suites (`0` pass, `1` regression, `2` unstable).
 
+Optional environment overrides (useful for local debugging or CI tuning):
+
+```bash
+STORAGE_PERF_REGRESSION_THRESHOLD_PCT=15 \
+STORAGE_PERF_EXTREME_CV_THRESHOLD=0.5 \
+  npm run compare:storage -- \
+    --baseline storage-perf-results/base/storage_bench.json \
+    --candidate storage-perf-results/head/storage_bench.json \
+    --out-dir storage-perf-results/compare
+```
+
 `scripts/compare_storage_benchmarks.ts` remains as a compatibility wrapper for older invocations
 (`--current`, `--outDir`, `--thresholdPct`, `--json`) and can write `compare.json` for legacy tooling:
 
@@ -229,6 +251,17 @@ node --experimental-strip-types scripts/compare_gateway_benchmarks.ts \
 
 The compare script writes `compare.md` + `summary.json` to `--out-dir` and exits non-zero on regression
 (exit code 2 indicates extreme variance).
+
+Optional environment overrides:
+
+```bash
+GATEWAY_PERF_REGRESSION_THRESHOLD_PCT=15 \
+GATEWAY_PERF_EXTREME_CV_THRESHOLD=0.5 \
+  node --experimental-strip-types scripts/compare_gateway_benchmarks.ts \
+    --baseline baseline.json \
+    --candidate candidate.json \
+    --out-dir gateway-perf-results/compare
+```
 
 ## Scenario runner (PF-008 macrobench framework)
 
