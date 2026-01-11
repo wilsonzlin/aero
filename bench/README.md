@@ -10,6 +10,7 @@ This directory contains performance/telemetry tooling used for CI regression tra
 - `npm run bench:update-baseline` — re-record `bench/baseline.json` (PF-009).
 - `npm run bench:gpu` — GPU benchmark suite (`bench/gpu_bench.ts`).
 - `npm run bench:storage` — storage macrobench scenario (`bench/runner.ts storage_io`).
+- `npm -w backend/aero-gateway run bench` — backend networking benchmarks (TCP proxy RTT/throughput, DoH QPS/cache).
 
 Note: `bench/run` also has a **legacy macro mode** (triggered by `--output`/`--results-dir`), but it overlaps with
 `tools/perf` and is considered deprecated for contributor workflows (see “Legacy browser macrobench harness” below).
@@ -177,6 +178,35 @@ regresses by more than the configured threshold (exit code 2 indicates extreme v
 `scripts/compare_storage_benchmarks.ts --json` also writes `compare.json` (a copy of `summary.json`) for legacy tooling.
 The per-metric table includes the baseline/current coefficient-of-variation (CV) computed from the
 per-run samples for quick noise inspection.
+
+## Gateway benchmark suite (backend networking)
+
+`backend/aero-gateway/bench/run.mjs` runs local loopback-only benchmarks for:
+
+- TCP proxy RTT (p50/p90/p99)
+- TCP proxy throughput (MiB/s)
+- DoH QPS + cache hit ratio
+
+### Running locally
+
+```bash
+npm ci
+npm -w backend/aero-gateway run bench
+```
+
+### Comparing two runs (PR smoke style)
+
+```bash
+node --experimental-strip-types scripts/compare_gateway_benchmarks.ts \
+  --baseline baseline.json \
+  --candidate candidate.json \
+  --out-dir gateway-perf-results/compare \
+  --thresholds-file bench/perf_thresholds.json \
+  --profile pr-smoke
+```
+
+The compare script writes `compare.md` + `summary.json` to `--out-dir` and exits non-zero on regression
+(exit code 2 indicates extreme variance).
 
 ## Scenario runner (PF-008 macrobench framework)
 
