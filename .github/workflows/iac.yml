@@ -38,11 +38,6 @@ jobs:
     name: Terraform (fmt + validate)
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    strategy:
-      fail-fast: false
-      matrix:
-        module:
-          - infra/aws-s3-cloudfront-range
     env:
       TF_PLUGIN_CACHE_DIR: ~/.terraform.d/plugin-cache
     steps:
@@ -80,24 +75,37 @@ jobs:
             ${{ runner.os }}-tflint-
 
       - name: terraform fmt (check)
-        working-directory: ${{ matrix.module }}
-        run: terraform fmt -check -recursive
+        run: terraform fmt -check -recursive infra
 
-      - name: terraform init (backend disabled)
-        working-directory: ${{ matrix.module }}
-        run: terraform init -backend=false -input=false -lockfile=readonly
+      - name: terraform init + validate (backend disabled)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t modules < <(find infra -name '*.tf' -print0 | xargs -0 -n1 dirname | sort -u)
+          if [[ ${#modules[@]} -eq 0 ]]; then
+            echo "No Terraform modules found under infra/"
+            exit 1
+          fi
 
-      - name: terraform validate
-        working-directory: ${{ matrix.module }}
-        run: terraform validate -no-color
+          printf '%s\n' "${modules[@]}" | tee /tmp/terraform-modules.txt
 
-      - name: tflint (init)
-        working-directory: ${{ matrix.module }}
-        run: tflint --init
+          while IFS= read -r module; do
+            echo "::group::terraform init/validate ($module)"
+            terraform -chdir="$module" init -backend=false -input=false -lockfile=readonly
+            terraform -chdir="$module" validate -no-color
+            echo "::endgroup::"
+          done < /tmp/terraform-modules.txt
 
       - name: tflint
-        working-directory: ${{ matrix.module }}
-        run: tflint --format compact
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r module; do
+            echo "::group::tflint ($module)"
+            tflint --chdir="$module" --init
+            tflint --chdir="$module" --format compact
+            echo "::endgroup::"
+          done < /tmp/terraform-modules.txt
 
   k8s:
     name: Helm + kubeconform
