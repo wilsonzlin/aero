@@ -387,7 +387,7 @@ static int DoQueryUmdPrivate(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
   // and look for a valid AeroGPU UMDRIVERPRIVATE v1 blob.
   UINT foundType = 0xFFFFFFFFu;
   NTSTATUS lastStatus = 0;
-  for (UINT type = 0; type < 64; ++type) {
+  for (UINT type = 0; type < 256; ++type) {
     ZeroMemory(&blob, sizeof(blob));
     q.Type = type;
 
