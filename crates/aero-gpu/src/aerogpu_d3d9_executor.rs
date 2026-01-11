@@ -4156,7 +4156,7 @@ impl AerogpuD3d9Executor {
                         compilation_options: wgpu::PipelineCompilationOptions::default(),
                         targets: &targets,
                     }),
-                    primitive: wgpu::PrimitiveState {
+                     primitive: wgpu::PrimitiveState {
                         topology: self.state.topology,
                         strip_index_format: None,
                         front_face: if self.state.rasterizer_state.front_ccw {
