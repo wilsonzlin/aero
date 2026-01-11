@@ -385,8 +385,8 @@ For each entrypoint:
 - **Can be deferred:** Seamless transitions.
 
 #### `DxgkDdiGetScanLine` + `DxgkDdiControlInterrupt`
-  
-- **Purpose:** Support vblank/vsync timing (DWM stability) and enable/disable interrupts.
+   
+- **Purpose:** Support vblank timing (DWM stability) and enable/disable interrupts.
 - **AeroGPU MVP behavior:**
   - `ControlInterrupt`: gate vblank interrupts by enabling/disabling `AEROGPU_IRQ_SCANOUT_VBLANK` in `AEROGPU_MMIO_REG_IRQ_ENABLE`.
   - `GetScanLine`: return a simulated scanline based on a host timer (or return “in vblank”).
@@ -654,7 +654,7 @@ Windows flips/sets scanout via `DxgkDdiSetVidPnSourceAddress`. In our driver:
 3. KMD programs scanout0 MMIO registers (`AEROGPU_MMIO_REG_SCANOUT0_*`) with this info.
 4. Emulator reads scanout surface from guest memory and displays it.
  
-### 6.3 Vblank/vsync simulation (DWM stability)
+### 6.3 Vblank simulation (DWM stability)
    
 DWM’s scheduling expects periodic vblank events. Because AeroGPU is virtual:
   
