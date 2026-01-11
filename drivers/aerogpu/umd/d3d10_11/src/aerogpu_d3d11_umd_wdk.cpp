@@ -370,6 +370,9 @@ static const void* GetDeviceCallbacks(const D3D11DDIARG_CREATEDEVICE* cd) {
   if constexpr (has_member_pDeviceCallbacks<D3D11DDIARG_CREATEDEVICE>::value) {
     return cd->pDeviceCallbacks;
   }
+  if constexpr (has_member_pUMCallbacks<D3D11DDIARG_CREATEDEVICE>::value) {
+    return cd->pUMCallbacks;
+  }
   return nullptr;
 }
 
