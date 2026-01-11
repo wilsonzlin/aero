@@ -5,9 +5,9 @@
 #include <scsi.h>
 #include <ntddscsi.h>
 
-#include "../../common/include/virtio_pci_modern_miniport.h"
-#include "../../common/include/virtqueue_split_legacy.h"
-#include "../../common/os_shim/virtio_os_storport.h"
+#include "virtio_pci_modern_miniport.h"
+#include "virtqueue_split_legacy.h"
+#include "virtio_os_storport.h"
 
 #if DBG
 #define AEROVBLK_LOG(fmt, ...) DbgPrint("aerovblk: " fmt "\n", __VA_ARGS__)
