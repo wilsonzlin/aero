@@ -13,8 +13,7 @@ an audio endpoint.
 There are currently **two virtio transport implementations** in-tree:
 
 1. **Shipped/default driver package:** `AERO-W7-VIRTIO` v1 **virtio-pci modern**
-   transport (PCI vendor-specific capabilities + MMIO) with split-ring
-   virtqueues.
+   transport (PCI vendor-specific capabilities + MMIO) with split-ring virtqueues.
 2. **Legacy/transitional bring-up code (not shipped):** legacy virtio-pci
    **I/O-port** register layout for transitional devices. This exists for
    historical bring-up, but it is **not** part of the `AERO-W7-VIRTIO` contract.
@@ -30,11 +29,14 @@ There are currently **two virtio transport implementations** in-tree:
 - WaveRT backend interface: `include/backend.h`
 - Virtio backend implementation: `src/backend_virtio.c`
 - Virtio-pci modern bring-up + split virtqueues + protocol engines:
-  - `src/virtio_pci_modern_wdm.c`
+  - `src/pci_interface.c`, `src/virtio_pci_modern_wdm.c`
   - `src/virtiosnd_hw.c`
   - `src/virtiosnd_queue_split.c`
   - `src/virtiosnd_control.c`, `src/virtiosnd_tx.c`, `src/virtiosnd_rx.c`
   - `src/virtiosnd_intx.c`
+- Shared virtio support code linked in from:
+  - `drivers/windows/virtio/common/virtqueue_split.c`
+  - `drivers/win7/virtio/virtio-core/portable/virtio_pci_cap_parser.c`
 
 ### Legacy virtio-pci I/O-port bring-up (not shipped)
 
@@ -44,12 +46,11 @@ path (for example `src/backend_virtio_legacy.c`, `src/aeroviosnd_hw.c`, and
 
 ## Default build architecture (virtio-pci modern endpoint driver)
 
-- **Transport:** virtio-pci **modern** (MMIO + PCI vendor-specific capabilities).
-- **Queues:** contract v1 defines `controlq`/`eventq`/`txq`/`rxq`. The current
-  PortCls integration is render-only and primarily uses `controlq` (0) + `txq`
-  (2); capture endpoint plumbing is still pending.
+- **Transport:** virtio-pci **modern** (MMIO + PCI vendor-specific capabilities; `VIRTIO_F_VERSION_1`).
+- **Queues:** contract v1 defines `controlq`/`eventq`/`txq`/`rxq`. The driver initializes all four, but the current
+  PortCls integration is render-only and primarily uses `controlq` (0) + `txq` (2); capture endpoint plumbing is still pending.
 - **Interrupts:** INTx only.
-- **Protocol:** minimal PCM control flow for stream 0 (playback) and TX submissions.
+- **Protocol:** PCM control + TX/RX protocol engines for streams 0/1 (PortCls integration is render-only today).
 - **Pacing:** WaveRT period timer/DPC provides the playback clock; virtqueue used
   entries are treated as resource reclamation rather than timing.
 
@@ -136,8 +137,8 @@ Current behavior:
   - submit one period of PCM into a backend callback.
 - Uses a backend abstraction (`include/backend.h`) so the WaveRT period timer path
   can remain decoupled from virtio transport details.
-- The shipped driver package uses the virtio-pci modern backend (`backend_virtio.c`).
-  Capture is not yet exposed as a Windows endpoint.
+- The shipped driver package uses the virtio-pci modern backend (`backend_virtio.c`). A legacy backend exists for
+  transitional devices but is not shipped. Capture is not yet exposed as a Windows endpoint.
 
 ### 5) Interrupt + timer pacing model
 
@@ -206,8 +207,9 @@ Implementation note:
 - `AERO-W7-VIRTIO` v1 requires virtio-pci **modern** feature negotiation
   (`VIRTIO_F_VERSION_1` is bit 32). The shipped driver package and INFs assume a
   modern-only device (`DEV_1059` + `REV_01`).
-- The legacy/transitional I/O-port bring-up path does not implement contract v1
-  feature negotiation and is not part of the supported binding contract.
+- The legacy/transitional I/O-port bring-up path only negotiates the low 32 bits
+  of virtio feature flags (so it cannot negotiate `VIRTIO_F_VERSION_1`) and is
+  not part of the supported binding contract.
 
 ## References
 

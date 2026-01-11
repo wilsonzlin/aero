@@ -108,9 +108,14 @@ PortCls miniports:
 Virtio backend (AERO-W7-VIRTIO v1 modern transport):
 
 * `include/backend.h` — WaveRT “backend” interface used by `wavert.c`
-* `src/backend_virtio.c` — virtio-snd backend implementation (controlq/txq protocol for stream 0)
-* `src/virtiosnd_hw.c` + `src/virtio_pci_modern_wdm.c` — virtio-pci modern (MMIO/capability) bring-up + INTx
-* `src/virtiosnd_queue_split.c` + `src/virtiosnd_*` — split virtqueue + virtio-snd protocol engines
+* `src/backend_virtio.c` — virtio-snd backend implementation (PortCls ↔ virtio glue)
+* `src/virtiosnd_hw.c` — virtio-snd WDM bring-up + queue ownership
+* `src/virtio_pci_modern_wdm.c` / `src/pci_interface.c` — virtio-pci modern transport (PCI caps, BAR0 mapping, feature negotiation, INTx)
+* `src/virtiosnd_queue_split.c` — split-ring virtqueue wrapper used by the virtio-snd engines
+* `src/virtiosnd_control.c` / `src/virtiosnd_tx.c` / `src/virtiosnd_rx.c` — control/TX/RX protocol engines
+* Shared virtqueue implementation:
+  - `drivers/windows/virtio/common/virtqueue_split.c`
+  - `drivers/win7/virtio/virtio-core/portable/virtio_pci_cap_parser.c`
 
 Scatter/gather helpers (WaveRT cyclic buffer → virtio descriptors):
 
@@ -135,7 +140,7 @@ Notes:
 
 ## Legacy / transitional virtio-pci path (not shipped)
 
-The repository also contains an older **legacy/transitional virtio-pci I/O-port** bring-up path (for example `src/backend_virtio_legacy.c`, `src/aeroviosnd_hw.c`, and `drivers/windows7/virtio/common`). That code is kept for historical bring-up, but it is **not part of the `AERO-W7-VIRTIO` v1 contract**, and the shipped INF does not bind to transitional IDs.
+The repository also contains an older **legacy/transitional virtio-pci I/O-port** bring-up path (for example `src/backend_virtio_legacy.c`, `src/aeroviosnd_hw.c`, and `drivers/windows7/virtio/common`). That code is kept for historical bring-up, but it is **not part of the `AERO-W7-VIRTIO` v1 contract**: it only negotiates the low 32 bits of virtio feature flags (so it cannot negotiate `VIRTIO_F_VERSION_1`), and the shipped INF does not bind to transitional IDs.
 
 ## Design notes
 
