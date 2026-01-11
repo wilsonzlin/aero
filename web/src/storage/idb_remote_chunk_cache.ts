@@ -27,6 +27,12 @@ type RemoteChunkRecord = {
   lastAccess: number;
 };
 
+// Bounds for per-chunk records stored in IndexedDB.
+//
+// These are intentionally conservative to keep individual IDB records/transactions reasonably sized,
+// while still supporting Aero's canonical remote disk chunk sizes:
+// - Range streaming defaults to 1 MiB
+// - Chunked (manifest + chunk objects) delivery defaults to 4 MiB
 const MIN_CHUNK_SIZE_BYTES = 512 * 1024;
 const MAX_CHUNK_SIZE_BYTES = 8 * 1024 * 1024;
 
@@ -341,4 +347,3 @@ export class IdbRemoteChunkCache {
     return fresh;
   }
 }
-

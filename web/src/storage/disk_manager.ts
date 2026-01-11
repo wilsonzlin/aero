@@ -263,6 +263,13 @@ export class DiskManager {
     kind?: DiskKind;
     format?: DiskFormat;
     cacheBackend?: DiskBackend;
+    /**
+     * Local cache chunk size.
+     *
+     * Defaults:
+     * - `delivery="range"`: 1 MiB
+     * - `delivery="chunked"`: 4 MiB
+     */
     chunkSizeBytes?: number;
     cacheFileName?: string;
     overlayFileName?: string;

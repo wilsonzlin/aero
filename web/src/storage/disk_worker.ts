@@ -425,10 +425,11 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
       const cacheBackendRaw = payload.cacheBackend ?? backend;
       assertValidDiskBackend(cacheBackendRaw);
       const cacheBackend = cacheBackendRaw;
+      const defaultChunkSizeBytes = delivery === "chunked" ? 4 * 1024 * 1024 : 1024 * 1024;
       const chunkSizeBytes =
         typeof payload.chunkSizeBytes === "number" && Number.isFinite(payload.chunkSizeBytes) && payload.chunkSizeBytes > 0
           ? payload.chunkSizeBytes
-          : 1024 * 1024;
+          : defaultChunkSizeBytes;
       if (chunkSizeBytes % 512 !== 0 || !isPowerOfTwo(chunkSizeBytes)) {
         throw new Error("chunkSizeBytes must be a power of two and a multiple of 512");
       }
