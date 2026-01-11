@@ -421,7 +421,7 @@ function isPowerOfTwo(v: number): boolean {
   return x === 1;
 }
 
-function alignUp(v: number, a: number): number {
+export function alignUp(v: number, a: number): number {
   if (!Number.isSafeInteger(v) || v < 0) {
     throw new Error(`alignUp: value must be a non-negative safe integer (got ${v})`);
   }
