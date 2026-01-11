@@ -2231,6 +2231,26 @@ HRESULT OpenAdapterCommon(const char* entrypoint,
     return E_INVALIDARG;
   }
 
+#if defined(_WIN32)
+  // Emit the exact DLL path once so bring-up on Win7 x64 can quickly confirm the
+  // correct UMD bitness was loaded (System32 vs SysWOW64).
+  static bool logged_module_path = false;
+  if (!logged_module_path) {
+    logged_module_path = true;
+
+    HMODULE module = NULL;
+    if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                               GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                           reinterpret_cast<LPCSTR>(&OpenAdapterCommon),
+                           &module)) {
+      char path[MAX_PATH] = {};
+      if (GetModuleFileNameA(module, path, static_cast<DWORD>(sizeof(path))) != 0) {
+        aerogpu::logf("aerogpu-d3d9: module_path=%s\n", path);
+      }
+    }
+  }
+#endif
+
   if (interface_version == 0 || umd_version == 0) {
     aerogpu::logf("aerogpu-d3d9: %s invalid interface/version (%u/%u)\n",
                   entrypoint,

@@ -105,6 +105,36 @@ Optional: `drivers\aerogpu\build\build_all.cmd` is a convenience wrapper around 
 
 The project expects the Windows SDK/WDK to provide D3D10/11 DDI headers (e.g. `d3d10umddi.h`, `d3d11umddi.h`) when building the real UMD.  
 
+## Install / Register (INF)
+
+On Windows 7, the D3D10/D3D11 runtimes load the driver’s UMD based on registry values written by the display driver INF:
+
+- `UserModeDriverName` (`REG_SZ`): native-bitness D3D10/11 UMD filename (include `.dll`)
+- `UserModeDriverNameWow` (`REG_SZ`, x64 only): 32-bit D3D10/11 UMD filename for WOW64 apps
+
+In the Win7 packaging INF (`drivers/aerogpu/packaging/win7/aerogpu_dx11.inf`), this UMD is registered as:
+
+```inf
+[AeroGPU_Device_AddReg_x86]
+HKR,,UserModeDriverName,%REG_SZ%,"aerogpu_d3d10.dll"
+
+[AeroGPU_Device_AddReg_amd64]
+HKR,,UserModeDriverName,%REG_SZ%,"aerogpu_d3d10_x64.dll"
+HKR,,UserModeDriverNameWow,%REG_SZ%,"aerogpu_d3d10.dll"
+```
+
+Then ensure the DLLs are copied into the correct system directories during installation:
+
+- x86 Windows: `System32\aerogpu_d3d10.dll`
+- x64 Windows:
+  - `System32\aerogpu_d3d10_x64.dll` (64-bit)
+  - `SysWOW64\aerogpu_d3d10.dll` (32-bit)
+
+After installation, reboot and confirm adapter open calls in DebugView (`OutputDebugString`), including the resolved DLL path:
+
+- `aerogpu-d3d10_11: module_path=...`
+- `aerogpu-d3d10_11: OpenAdapter11 ...`
+
 ## DDI call logging (Win7 bring-up)
 
 For early bring-up the UMD can emit a lightweight, grep-friendly trace of runtime → UMD calls.

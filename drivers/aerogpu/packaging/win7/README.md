@@ -48,6 +48,32 @@ Only needed if you install using `aerogpu_dx11.inf`:
 | `aerogpu_d3d10.dll` | x86 | `C:\Windows\System32\` (x86 OS) / `C:\Windows\SysWOW64\` (x64 OS) |
 | `aerogpu_d3d10_x64.dll` | x64 | `C:\Windows\System32\` (x64 OS) |
 
+### UMD registration contract (Win7 loader registry values)
+
+On Windows 7 / WDDM 1.1 the Direct3D runtimes locate the display driver’s user-mode DLLs (UMDs) via registry values written by the display driver INF under the adapter’s device key (`HKR`).
+
+> Naming convention:
+>
+> - D3D9 keys use **base names** (no `.dll` extension).
+> - D3D10/11 keys use **file names** (include `.dll`).
+
+| API | Registry value (under `HKR`) | Type | Meaning |
+|-----|-------------------------------|------|---------|
+| D3D9 / D3D9Ex | `InstalledDisplayDrivers` | `REG_MULTI_SZ` | Base-name(s) of the native-bitness D3D9 UMD(s). |
+| D3D9 / D3D9Ex (x64 only) | `InstalledDisplayDriversWow` | `REG_MULTI_SZ` | Base-name(s) of the 32-bit D3D9 UMD(s) used by WOW64 apps. |
+| D3D10/11 | `UserModeDriverName` | `REG_SZ` | Filename of the native-bitness D3D10/11 UMD. |
+| D3D10/11 (x64 only) | `UserModeDriverNameWow` | `REG_SZ` | Filename of the 32-bit D3D10/11 UMD used by WOW64 apps. |
+| (driver ranking) | `FeatureScore` | `REG_DWORD` | Driver rank (lower is better). |
+
+**Concrete values written by the AeroGPU INFs:**
+
+- `aerogpu.inf` (D3D9 only):
+  - x86: `InstalledDisplayDrivers = ["aerogpu_d3d9"]`
+  - x64: `InstalledDisplayDrivers = ["aerogpu_d3d9_x64"]`, `InstalledDisplayDriversWow = ["aerogpu_d3d9"]`
+- `aerogpu_dx11.inf` (D3D9 + D3D10/11):
+  - x86: `UserModeDriverName = "aerogpu_d3d10.dll"`
+  - x64: `UserModeDriverName = "aerogpu_d3d10_x64.dll"`, `UserModeDriverNameWow = "aerogpu_d3d10.dll"`
+
 ## 2) Confirm the PCI Hardware ID(s) (required)
 
 By default, both `aerogpu.inf` and `aerogpu_dx11.inf` bind to the AeroGPU PCI Hardware IDs:
@@ -192,7 +218,22 @@ On a clean Win7 SP1 VM:
       - `C:\Windows\System32\aerogpu_d3d9.dll` exists
       - (if you installed `aerogpu_dx11.inf`) `C:\Windows\System32\aerogpu_d3d10.dll` exists
 
-## 6.1) Optional: run the AeroGPU debug/control tool (dbgctl)
+## 6.1) Confirm which UMD DLL actually loaded (32-bit vs 64-bit)
+
+On Win7 x64 it’s possible for a test to “work” while the wrong UMD is being used (e.g. fallback to Microsoft / WARP). To confirm the **real** AeroGPU UMD loaded for a given process bitness:
+
+1. Run the relevant test executable:
+   - D3D9: `drivers\aerogpu\tests\win7\bin\d3d9ex_triangle.exe` (build/run both x86 and x64)
+   - D3D11: `drivers\aerogpu\tests\win7\bin\d3d11_triangle.exe` (build/run both x86 and x64; requires `aerogpu_dx11.inf`)
+2. Confirm the loaded module using one of:
+   - **Process Explorer**: select the process → View → *Lower Pane View* → *DLLs*, then look for:
+     - D3D9: `aerogpu_d3d9.dll` (x86) or `aerogpu_d3d9_x64.dll` (x64)
+     - D3D10/11: `aerogpu_d3d10.dll` (x86) or `aerogpu_d3d10_x64.dll` (x64)
+   - **DebugView**: capture `OutputDebugString` output from the UMDs.
+     - D3D9 logs `aerogpu-d3d9: OpenAdapter2 ...`
+     - D3D10/11 logs `aerogpu-d3d10_11: OpenAdapter.. ...`
+
+## 6.2) Optional: run the AeroGPU debug/control tool (dbgctl)
 
 For bring-up and debugging, you can use the Escape-based dbgctl tool:
 

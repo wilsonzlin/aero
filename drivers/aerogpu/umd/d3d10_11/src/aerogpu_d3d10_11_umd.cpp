@@ -16,6 +16,7 @@
 #include "../include/aerogpu_d3d10_11_umd.h"
 
 #include <atomic>
+#include <cstdio>
 #include <condition_variable>
 #include <cstring>
 #include <mutex>
@@ -26,6 +27,31 @@
 #include "aerogpu_d3d10_11_log.h"
 
 namespace {
+
+#if defined(_WIN32)
+// Emit the exact DLL path once so bring-up on Win7 x64 can quickly confirm the
+// correct UMD bitness was loaded (System32 vs SysWOW64).
+void LogModulePathOnce() {
+  static bool logged = false;
+  if (logged) {
+    return;
+  }
+  logged = true;
+
+  HMODULE module = NULL;
+  if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                             GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                         reinterpret_cast<LPCSTR>(&LogModulePathOnce),
+                         &module)) {
+    char path[MAX_PATH] = {};
+    if (GetModuleFileNameA(module, path, static_cast<DWORD>(sizeof(path))) != 0) {
+      char buf[MAX_PATH + 64] = {};
+      snprintf(buf, sizeof(buf), "aerogpu-d3d10_11: module_path=%s\n", path);
+      OutputDebugStringA(buf);
+    }
+  }
+}
+#endif
 
 constexpr aerogpu_handle_t kInvalidHandle = 0;
 
@@ -2321,6 +2347,10 @@ void AEROGPU_APIENTRY CloseAdapter(D3D10DDI_HADAPTER hAdapter) {
 // -------------------------------------------------------------------------------------------------
 
 HRESULT OpenAdapterCommon(D3D10DDIARG_OPENADAPTER* pOpenData) {
+#if defined(_WIN32)
+  LogModulePathOnce();
+#endif
+
   if (!pOpenData || !pOpenData->pAdapterFuncs) {
     return E_INVALIDARG;
   }
@@ -2343,16 +2373,43 @@ HRESULT OpenAdapterCommon(D3D10DDIARG_OPENADAPTER* pOpenData) {
 extern "C" {
 
 HRESULT AEROGPU_APIENTRY OpenAdapter10(D3D10DDIARG_OPENADAPTER* pOpenData) {
+#if defined(_WIN32)
+  char buf[256];
+  snprintf(buf,
+           sizeof(buf),
+           "aerogpu-d3d10_11: OpenAdapter10 Interface=%u Version=%u\n",
+           (unsigned)(pOpenData ? pOpenData->Interface : 0),
+           (unsigned)(pOpenData ? pOpenData->Version : 0));
+  OutputDebugStringA(buf);
+#endif
   AEROGPU_D3D10_11_LOG_CALL();
   return OpenAdapterCommon(pOpenData);
 }
 
 HRESULT AEROGPU_APIENTRY OpenAdapter10_2(D3D10DDIARG_OPENADAPTER* pOpenData) {
+#if defined(_WIN32)
+  char buf[256];
+  snprintf(buf,
+           sizeof(buf),
+           "aerogpu-d3d10_11: OpenAdapter10_2 Interface=%u Version=%u\n",
+           (unsigned)(pOpenData ? pOpenData->Interface : 0),
+           (unsigned)(pOpenData ? pOpenData->Version : 0));
+  OutputDebugStringA(buf);
+#endif
   AEROGPU_D3D10_11_LOG_CALL();
   return OpenAdapterCommon(pOpenData);
 }
 
 HRESULT AEROGPU_APIENTRY OpenAdapter11(D3D10DDIARG_OPENADAPTER* pOpenData) {
+#if defined(_WIN32)
+  char buf[256];
+  snprintf(buf,
+           sizeof(buf),
+           "aerogpu-d3d10_11: OpenAdapter11 Interface=%u Version=%u\n",
+           (unsigned)(pOpenData ? pOpenData->Interface : 0),
+           (unsigned)(pOpenData ? pOpenData->Version : 0));
+  OutputDebugStringA(buf);
+#endif
   AEROGPU_D3D10_11_LOG_CALL();
   return OpenAdapterCommon(pOpenData);
 }

@@ -82,11 +82,11 @@ In the Win7 packaging INFs in this repo (`drivers/aerogpu/packaging/win7/aerogpu
 
 ```inf
 [AeroGPU_Device_AddReg_x86]
-HKR,,InstalledDisplayDrivers,0x00010000,"aerogpu_d3d9"
+HKR,,InstalledDisplayDrivers,%REG_MULTI_SZ%,"aerogpu_d3d9"
 
 [AeroGPU_Device_AddReg_amd64]
-HKR,,InstalledDisplayDrivers,0x00010000,"aerogpu_d3d9_x64"
-HKR,,InstalledDisplayDriversWow,0x00010000,"aerogpu_d3d9"
+HKR,,InstalledDisplayDrivers,%REG_MULTI_SZ%,"aerogpu_d3d9_x64"
+HKR,,InstalledDisplayDriversWow,%REG_MULTI_SZ%,"aerogpu_d3d9"
 ```
 
 Then ensure the DLLs are copied into the correct system directories during installation:
@@ -99,7 +99,7 @@ Then ensure the DLLs are copied into the correct system directories during insta
 After installation, reboot (or restart the display driver) and confirm:
 
 1. DWM starts without falling back to Basic mode.
-2. Debug output shows `OpenAdapter2` and subsequent command submissions.
+2. Debug output shows `module_path=...`, `OpenAdapter2`, and subsequent command submissions.
 
 ## Supported feature subset (bring-up)
 

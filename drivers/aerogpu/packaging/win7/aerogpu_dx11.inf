@@ -86,24 +86,24 @@ AeroGPU_UMD_Wow64.CopyFiles = 10,SysWOW64
 ; Registry settings
 ; -------------------------------
 [AeroGPU_Device_AddReg_x86]
-HKR,,FeatureScore,0x00010001,0x000000F8
+HKR,,FeatureScore,%REG_DWORD%,0x000000F8
 
 ; D3D9 UMD registration (32-bit).
-HKR,,InstalledDisplayDrivers,0x00010000,"aerogpu_d3d9"
+HKR,,InstalledDisplayDrivers,%REG_MULTI_SZ%,"aerogpu_d3d9"
 
 ; D3D10/11 UMD registration (32-bit).
-HKR,,UserModeDriverName,0,"aerogpu_d3d10.dll"
+HKR,,UserModeDriverName,%REG_SZ%,"aerogpu_d3d10.dll"
 
 [AeroGPU_Device_AddReg_amd64]
-HKR,,FeatureScore,0x00010001,0x000000F8
+HKR,,FeatureScore,%REG_DWORD%,0x000000F8
 
 ; D3D9 UMD registration (64-bit + WoW32).
-HKR,,InstalledDisplayDrivers,0x00010000,"aerogpu_d3d9_x64"
-HKR,,InstalledDisplayDriversWow,0x00010000,"aerogpu_d3d9"
+HKR,,InstalledDisplayDrivers,%REG_MULTI_SZ%,"aerogpu_d3d9_x64"
+HKR,,InstalledDisplayDriversWow,%REG_MULTI_SZ%,"aerogpu_d3d9"
 
 ; D3D10/11 UMD registration (64-bit + WoW32).
-HKR,,UserModeDriverName,0,"aerogpu_d3d10_x64.dll"
-HKR,,UserModeDriverNameWow,0,"aerogpu_d3d10.dll"
+HKR,,UserModeDriverName,%REG_SZ%,"aerogpu_d3d10_x64.dll"
+HKR,,UserModeDriverNameWow,%REG_SZ%,"aerogpu_d3d10.dll"
 
 ; -------------------------------
 ; Service installation
@@ -141,3 +141,8 @@ AeroGPU.Manufacturer = "AeroGPU"
 AeroGPU.DeviceDesc   = "AeroGPU Display Adapter"
 AeroGPU.ServiceDesc  = "AeroGPU WDDM Miniport"
 AeroGPU.DiskName     = "AeroGPU Driver Disk"
+
+; AddReg type helpers (kept explicit so UMD registration keys stay correct).
+REG_DWORD     = 0x00010001
+REG_MULTI_SZ  = 0x00010000
+REG_SZ        = 0x00000000
