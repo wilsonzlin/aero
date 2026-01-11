@@ -83,6 +83,7 @@ describe("hid/hid_proxy_protocol", () => {
     expect(isHidProxyMessage(msg)).toBe(true);
 
     expect(isHidAttachMessage({ type: "hid.attach", deviceId: 1 })).toBe(false);
+    expect(isHidAttachMessage({ ...msg, guestPort: 1 })).toBe(false);
     expect(isHidAttachMessage({ ...msg, guestPath: [] })).toBe(false);
   });
 
@@ -110,6 +111,14 @@ describe("hid/hid_proxy_protocol", () => {
     expect(isHidSendReportMessage({ type: "hid.sendReport", deviceId: 1, reportType: "bad", reportId: 0, data: Uint8Array.of() })).toBe(
       false,
     );
+
+    // SharedArrayBuffer views should be rejected (messages transfer ArrayBuffers).
+    if (typeof SharedArrayBuffer !== "undefined") {
+      const sab = new SharedArrayBuffer(3);
+      const bytes = new Uint8Array(sab);
+      expect(isHidInputReportMessage({ ...input, data: bytes } as unknown)).toBe(false);
+      expect(isHidSendReportMessage({ ...send, data: bytes } as unknown)).toBe(false);
+    }
   });
 
   it("validates optional hid.log/hid.error", () => {

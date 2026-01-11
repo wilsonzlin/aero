@@ -101,6 +101,10 @@ function isBoolean(value: unknown): value is boolean {
   return typeof value === "boolean";
 }
 
+function isArrayBufferBackedUint8Array(value: unknown): value is Uint8Array<ArrayBuffer> {
+  return value instanceof Uint8Array && value.buffer instanceof ArrayBuffer;
+}
+
 function isNumberArray(value: unknown): value is number[] {
   return Array.isArray(value) && value.every(isFiniteNumber);
 }
@@ -160,17 +164,21 @@ function isNormalizedHidCollectionInfo(value: unknown): value is NormalizedHidCo
 
 export function isHidAttachMessage(value: unknown): value is HidAttachMessage {
   if (!isRecord(value) || value.type !== "hid.attach") return false;
-  return (
-    isFiniteNumber(value.deviceId) &&
-    isFiniteNumber(value.vendorId) &&
-    isFiniteNumber(value.productId) &&
-    isOptionalString(value.productName) &&
-    isOptionalGuestUsbPath(value.guestPath) &&
-    isOptionalGuestUsbPort(value.guestPort) &&
-    Array.isArray(value.collections) &&
-    value.collections.every(isNormalizedHidCollectionInfo) &&
-    isBoolean(value.hasInterruptOut)
-  );
+  if (!isFiniteNumber(value.deviceId)) return false;
+  if (!isFiniteNumber(value.vendorId) || !isFiniteNumber(value.productId)) return false;
+  if (!isOptionalString(value.productName)) return false;
+
+  const guestPath = value.guestPath;
+  if (!isOptionalGuestUsbPath(guestPath)) return false;
+
+  const guestPort = value.guestPort;
+  if (!isOptionalGuestUsbPort(guestPort)) return false;
+
+  if (guestPath !== undefined && guestPort !== undefined && guestPath[0] !== guestPort) return false;
+
+  if (!Array.isArray(value.collections) || !value.collections.every(isNormalizedHidCollectionInfo)) return false;
+  if (!isBoolean(value.hasInterruptOut)) return false;
+  return true;
 }
 
 export function isHidDetachMessage(value: unknown): value is HidDetachMessage {
@@ -181,7 +189,7 @@ export function isHidDetachMessage(value: unknown): value is HidDetachMessage {
 export function isHidInputReportMessage(value: unknown): value is HidInputReportMessage {
   if (!isRecord(value) || value.type !== "hid.inputReport") return false;
   if (!isFiniteNumber(value.deviceId) || !isFiniteNumber(value.reportId)) return false;
-  if (!(value.data instanceof Uint8Array)) return false;
+  if (!isArrayBufferBackedUint8Array(value.data)) return false;
   if (value.tsMs !== undefined && !isFiniteNumber(value.tsMs)) return false;
   return true;
 }
@@ -190,7 +198,7 @@ export function isHidSendReportMessage(value: unknown): value is HidSendReportMe
   if (!isRecord(value) || value.type !== "hid.sendReport") return false;
   if (!isFiniteNumber(value.deviceId) || !isFiniteNumber(value.reportId)) return false;
   if (value.reportType !== "output" && value.reportType !== "feature") return false;
-  if (!(value.data instanceof Uint8Array)) return false;
+  if (!isArrayBufferBackedUint8Array(value.data)) return false;
   return true;
 }
 

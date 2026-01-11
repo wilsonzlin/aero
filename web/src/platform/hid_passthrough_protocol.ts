@@ -179,9 +179,12 @@ function isNormalizedHidCollectionInfo(value: unknown): value is NormalizedHidCo
 export function isHidAttachMessage(value: unknown): value is HidAttachMessage {
   if (!isRecord(value) || value.type !== "hid:attach") return false;
   if (typeof value.deviceId !== "string") return false;
-  if (value.guestPort === undefined && value.guestPath === undefined) return false;
-  if (value.guestPort !== undefined && !isGuestUsbPort(value.guestPort)) return false;
-  if (value.guestPath !== undefined && !isGuestUsbPath(value.guestPath)) return false;
+  const guestPort = value.guestPort;
+  const guestPath = value.guestPath;
+  if (guestPort === undefined && guestPath === undefined) return false;
+  if (guestPort !== undefined && !isGuestUsbPort(guestPort)) return false;
+  if (guestPath !== undefined && !isGuestUsbPath(guestPath)) return false;
+  if (guestPort !== undefined && guestPath !== undefined && guestPath[0] !== guestPort) return false;
   if (!isFiniteNumber(value.vendorId) || !isFiniteNumber(value.productId)) return false;
   if (value.productName !== undefined && typeof value.productName !== "string") return false;
   if (!Array.isArray(value.collections) || !value.collections.every(isNormalizedHidCollectionInfo)) return false;
@@ -191,8 +194,11 @@ export function isHidAttachMessage(value: unknown): value is HidAttachMessage {
 export function isHidDetachMessage(value: unknown): value is HidDetachMessage {
   if (!isRecord(value) || value.type !== "hid:detach") return false;
   if (typeof value.deviceId !== "string") return false;
-  if (value.guestPort !== undefined && !isGuestUsbPort(value.guestPort)) return false;
-  if (value.guestPath !== undefined && !isGuestUsbPath(value.guestPath)) return false;
+  const guestPort = value.guestPort;
+  const guestPath = value.guestPath;
+  if (guestPort !== undefined && !isGuestUsbPort(guestPort)) return false;
+  if (guestPath !== undefined && !isGuestUsbPath(guestPath)) return false;
+  if (guestPort !== undefined && guestPath !== undefined && guestPath[0] !== guestPort) return false;
   return true;
 }
 

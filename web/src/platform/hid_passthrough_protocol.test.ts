@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import {
   isHidAttachMessage,
+  isHidDetachMessage,
   isHidInputReportMessage,
   isHidPassthroughMessage,
   isHidSendReportMessage,
   type HidAttachMessage,
+  type HidDetachMessage,
   type HidInputReportMessage,
   type HidSendReportMessage,
 } from "./hid_passthrough_protocol";
@@ -83,7 +85,19 @@ describe("platform/hid_passthrough_protocol", () => {
     expect(isHidPassthroughMessage(v1)).toBe(true);
 
     expect(isHidAttachMessage({ ...base })).toBe(false);
+    expect(isHidAttachMessage({ ...v1, guestPort: 1 })).toBe(false);
     expect(isHidAttachMessage({ ...v1, guestPath: [] })).toBe(false);
+  });
+
+  it("validates hid:detach (optional guestPath/guestPort hints)", () => {
+    const bare: HidDetachMessage = { type: "hid:detach", deviceId: "dev-1" };
+    expect(isHidDetachMessage(bare)).toBe(true);
+    expect(isHidPassthroughMessage(bare)).toBe(true);
+
+    const hinted: HidDetachMessage = { type: "hid:detach", deviceId: "dev-1", guestPath: [0, 1], guestPort: 0 };
+    expect(isHidDetachMessage(hinted)).toBe(true);
+
+    expect(isHidDetachMessage({ ...hinted, guestPort: 1 })).toBe(false);
   });
 
   it("validates hid:inputReport and hid:sendReport ArrayBuffer payloads", () => {
@@ -140,4 +154,3 @@ describe("platform/hid_passthrough_protocol", () => {
     expect(isHidPassthroughMessage(structuredClone(send) as unknown)).toBe(true);
   });
 });
-
