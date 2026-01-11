@@ -1499,6 +1499,10 @@ def _compute_pcm_metrics_16bit_equiv_audioop(
                 continue
 
             try:
+                # WAV 8-bit PCM is unsigned (silence is 0x80), while `audioop` treats 8-bit
+                # samples as signed. Bias first so silence becomes 0 before converting.
+                if sample_bytes == 1:
+                    chunk = audioop.bias(chunk, 1, -128)
                 frag16 = chunk if sample_bytes == 2 else audioop.lin2lin(chunk, sample_bytes, 2)
                 chunk_peak = audioop.max(frag16, 2)
                 if chunk_peak > peak:
