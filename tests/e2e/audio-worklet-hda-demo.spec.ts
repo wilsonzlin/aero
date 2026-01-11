@@ -5,7 +5,7 @@ test("AudioWorklet output runs and does not underrun with HDA DMA demo", async (
 
   await page.goto("http://127.0.0.1:4173/", { waitUntil: "load" });
 
-  await page.click("#init-audio-output-hda-demo");
+  await page.click("#init-audio-hda-demo");
 
   await page.waitForFunction(() => {
     // Exposed by the audio UI entrypoint (`src/main.ts` in the root app).

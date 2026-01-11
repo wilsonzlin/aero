@@ -1133,7 +1133,7 @@ function renderAudioPanel(): HTMLElement {
   });
 
   const hdaDemoButton = el("button", {
-    id: "init-audio-output-hda-demo",
+    id: "init-audio-hda-demo",
     text: "Init audio output (HDA demo)",
     onclick: async () => {
       status.textContent = "";
