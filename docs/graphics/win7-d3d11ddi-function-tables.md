@@ -231,7 +231,7 @@ Win7-specific gotchas:
   * `D3D10DDIARG_PRESENT` is used even for D3D11 devices.
   * buffer rotation uses `pfnRotateResourceIdentities`.
 
-### 1.1 Interface version negotiation (`D3D11DDI_INTERFACE_VERSION`)
+### 1.2 Interface version negotiation (`D3D11DDI_INTERFACE_VERSION`)
 
 The Win7 D3D11 runtime uses `D3D10DDIARG_OPENADAPTER::Interface` / `::Version` as an ABI negotiation step:
 
@@ -241,12 +241,14 @@ The Win7 D3D11 runtime uses `D3D10DDIARG_OPENADAPTER::Interface` / `::Version` a
 If you accept an unsupported `Version`, the runtime may interpret your filled
 `D3D11DDI_DEVICEFUNCS` / `D3D11DDI_DEVICECONTEXTFUNCS` with the wrong layout and crash.
 
-In AeroGPU we currently accept only `D3D11DDI_INTERFACE_VERSION`:
+Recommended driver behavior:
 
-* `OpenAdapter11` validates the incoming interface/version. If the runtime requests a
-  newer version than we support, we clamp `pOpenData->Version` down to
-  `D3D11DDI_INTERFACE_VERSION` (matching the D3D10.x DDI pattern).
-* `CreateDevice11` verifies the negotiated version before filling function tables.
+* `OpenAdapter11` validates the incoming interface/version.
+* If the runtime requests a newer `Version` than you support, either:
+  * return `E_INVALIDARG` (hard fail), or
+  * clamp `pOpenData->Version` down to your supported version (a common D3D10.x pattern, but still something you should test).
+* Store the negotiated `Version` in adapter-private state and ensure `pfnCreateDevice` fills
+  `D3D11DDI_DEVICEFUNCS` / `D3D11DDI_DEVICECONTEXTFUNCS` matching that struct layout.
 
 ---
 
