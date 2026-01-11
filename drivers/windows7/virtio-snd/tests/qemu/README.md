@@ -15,8 +15,8 @@ What this test plan verifies:
 7. The **virtio-snd** portion of the guest audio smoke test passes (selftest **Task 128**)
 
 > Note: The current Aero Windows 7 virtio-snd driver package is **render-only** (playback).
-> Capture is defined by the virtio-snd device model/protocol, but the current PortCls
-> driver build is render-only and does not expose a Windows capture endpoint yet.
+> Capture is defined by `AERO-W7-VIRTIO` v1 (`rxq`, stream id `1`), but the current
+> PortCls driver is render-only and does not expose a Windows capture endpoint yet.
 
 References:
 
@@ -28,8 +28,9 @@ References:
 
 - A QEMU build new enough to expose a virtio-snd PCI device.
   - Known-good reference: QEMU **8.2.x**.
-  - Must support `disable-legacy=on` and `x-pci-revision=0x01` on the virtio-snd PCI device so it
-    matches the Aero contract v1 HWID (`DEV_1059&REV_01`).
+  - For binding with the stock Aero INF, QEMU must support `disable-legacy=on` and
+    `x-pci-revision=0x01` on the virtio-snd device (to match `DEV_1059&REV_01`).
+  - Verify supported properties with `qemu-system-x86_64 -device virtio-sound-pci,help`.
 - A Windows 7 SP1 VM disk image (x86 or x64).
 - The virtio-snd driver package directory for the target architecture (must contain `aero-virtio-snd.inf` + `virtiosnd.sys`):
   - Repo layout (staging): `drivers/windows7/virtio-snd/inf/`
@@ -65,7 +66,7 @@ The audio backend uses QEMU `wav` so playback can be validated without relying o
 > Note: These command lines intentionally use an IDE boot disk and an e1000 NIC so you do not need any other virtio drivers installed just to boot Windows.
 
 ### Windows 7 SP1 x86
- 
+
 ```bash
 qemu-system-i386 \
   -machine pc,accel=kvm \
@@ -74,7 +75,7 @@ qemu-system-i386 \
   -drive file=win7-x86.qcow2,if=ide,format=qcow2 \
   -net nic,model=e1000 -net user \
   -audiodev wav,id=aerosnd0,path=virtio-snd-x86.wav \
-  -device virtio-sound-pci,audiodev=aerosnd0,disable-legacy=on,x-pci-revision=0x01
+  -device virtio-sound-pci,disable-legacy=on,x-pci-revision=0x01,audiodev=aerosnd0
 ```
 
 ### Windows 7 SP1 x64
@@ -87,7 +88,7 @@ qemu-system-x86_64 \
   -drive file=win7-x64.qcow2,if=ide,format=qcow2 \
   -net nic,model=e1000 -net user \
   -audiodev wav,id=aerosnd0,path=virtio-snd-x64.wav \
-  -device virtio-sound-pci,audiodev=aerosnd0,disable-legacy=on,x-pci-revision=0x01
+  -device virtio-sound-pci,disable-legacy=on,x-pci-revision=0x01,audiodev=aerosnd0
 ```
 
 ### Audio backend alternatives
@@ -97,21 +98,22 @@ If you cannot use the `wav` backend, replace `-audiodev wav,...` with a backend 
 - Linux (PulseAudio): `-audiodev pa,id=aerosnd0`
 - Windows: `-audiodev dsound,id=aerosnd0`
 
-## Transitional vs modern virtio-snd (PCI IDs)
+## Supported PCI IDs (AERO-W7-VIRTIO v1)
 
-The virtio specification defines two PCI device IDs for virtio-snd:
+The shipped Aero Windows 7 virtio-snd driver package targets `AERO-W7-VIRTIO` v1,
+which is **virtio-pci modern only**:
 
-- **Modern / non-transitional**: `PCI\VEN_1AF4&DEV_1059`
-- **Transitional (legacy+modern)**: `PCI\VEN_1AF4&DEV_1018`
+- Modern virtio-snd device ID: `PCI\VEN_1AF4&DEV_1059`
+- Contract major version is encoded in the PCI Revision ID: `REV_01`
 
 The Aero Win7 contract v1 INFs are intentionally strict:
 
-- `aero-virtio-snd.inf` matches only `PCI\VEN_1AF4&DEV_1059&REV_01`
-  (optionally subsystem-qualified as `...&SUBSYS_00191AF4&REV_01`).
+- `aero-virtio-snd.inf` matches only `PCI\VEN_1AF4&DEV_1059&REV_01`.
+  - An optional subsystem-qualified match (`...&SUBSYS_00191AF4&REV_01`) is present but commented out.
 - Transitional `DEV_1018` devices are **out of scope** for `AERO-W7-VIRTIO` v1 and will not bind.
 
 If Windows shows `DEV_1018` or `REV_00`, configure QEMU to expose a modern-only device and the
-contract v1 revision, for example:
+contract v1 revision (the command lines above already do this), for example:
 
 ```bash
 -device virtio-sound-pci,disable-legacy=on,x-pci-revision=0x01
@@ -138,14 +140,20 @@ Expected values include at least one of:
 - `PCI\VEN_1AF4&DEV_1059&REV_01`
 - `PCI\VEN_1AF4&DEV_1059&SUBSYS_00191AF4&REV_01` (if the device exposes the Aero subsystem ID)
 
-More specific forms may also appear (with `SUBSYS_...` / `REV_..`). The Aero INF matches the revision-gated
-forms for the modern ID (`DEV_1059`).
+More specific forms may also appear (with `SUBSYS_...`). The “Hardware Ids” list
+will usually include less-specific variants (without `REV_..`), but the stock Aero
+INF requires the `...&REV_01` entry to be present.
+
+If you see `DEV_1018` (transitional) or `REV_00`, your QEMU configuration does not
+match the stock INF.
 
 If you see `PCI\VEN_1AF4&DEV_1018` (transitional) or `REV_00`, update the QEMU command line to include
 `disable-legacy=on,x-pci-revision=0x01` for the virtio-snd device (or upgrade QEMU if those properties are missing).
 
 The automated Win7 host harness probes QEMU for supported virtio-snd device properties (via
-`-device virtio-sound-pci,help`) and enables contract-v1 identification when supported.
+`-device virtio-sound-pci,help`) and enables contract-v1 identification when supported (for example
+`disable-legacy=on` and `x-pci-revision=0x01`). This is the same configuration required for the
+stock `aero-virtio-snd.inf` to bind under QEMU.
 
 - `drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1`
 - `drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py`
@@ -292,11 +300,13 @@ Then review:
 - If your packages are SHA-2 signed, ensure the Win7 SHA-2 update (commonly KB3033929) is installed.
 
 ### Code 10: device cannot start
-  
+
 - Confirm the device HWID Windows sees (Device Manager → Properties → Details → Hardware Ids).
 - Confirm QEMU is exposing virtio-snd as expected (and you used the correct QEMU device name).
-- Confirm the HWID matches `aero-virtio-snd.inf` (`DEV_1059&REV_01`, optionally subsystem-qualified).
-- If Windows shows `DEV_1018` or `REV_00`, ensure your QEMU command line sets `disable-legacy=on` and `x-pci-revision=0x01` for the virtio-snd device.
+- Confirm the HWID matches `aero-virtio-snd.inf` (requires `PCI\VEN_1AF4&DEV_1059&REV_01`).
+- If you see `DEV_1018` (transitional) or `REV_00`, ensure your QEMU device uses the modern ID space
+  and reports contract v1 revision:
+  - `-device virtio-sound-pci,disable-legacy=on,x-pci-revision=0x01,...`
 
 ### Driver binds, but no playback endpoint appears in Control Panel → Sound
 
@@ -306,8 +316,7 @@ If the PCI device binds successfully but **no render endpoint** shows up:
 - Confirm the driver is installing a complete PortCls/WaveRT stack:
   - A WaveRT render miniport alone is not sufficient; Windows typically also expects the correct KS filter categories and (often) a topology miniport.
 - Re-check the INF:
-  - The Aero INF matches `DEV_1059&REV_01` (optionally `SUBSYS_00191AF4&REV_01`) for contract v1.
-    If the driver does not bind, confirm you are pointing Windows at the correct `aero-virtio-snd.inf`.
+  - The Aero INF matches `DEV_1059&REV_01` for contract v1 (an optional `SUBSYS_...&REV_01` match is present but commented out). If the driver does not bind, confirm you are pointing Windows at the correct `aero-virtio-snd.inf`.
   - The INF must register the correct audio/KS interfaces for render (e.g. `KSCATEGORY_AUDIO`, `KSCATEGORY_RENDER`).
 
 If you are iterating on INF/miniport registration, remove the device from Device Manager (and delete the driver package if requested) before reinstalling so updated INF state is applied.
