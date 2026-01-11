@@ -673,6 +673,16 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
         onA20: (enabled) => {
           perf.counter("cpu:io:a20Enabled", enabled ? 1 : 0);
         },
+        onSerialOutput: (port, data) => {
+          // Forward serial output to the coordinator via the runtime event ring.
+          // Best-effort: don't block the CPU on log traffic.
+          pushEvent({ kind: "serialOutput", port: port & 0xffff, data });
+        },
+        onReset: () => {
+          // Reset requests are rare but important; use a blocking push so the
+          // coordinator reliably observes the event and can restart the VM.
+          pushEventBlocking({ kind: "resetRequest" }, 250);
+        },
       });
 
       try {
