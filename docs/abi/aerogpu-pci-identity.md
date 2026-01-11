@@ -53,8 +53,9 @@ The repo also contains **non-canonical prototypes** that use different PCI IDs. 
 part of the Windows 7 WDDM AeroGPU ABI contract and must not be used for current device models,
 driver packages, or documentation:
 
-* `VID=0xA0E0, DID=0x0001` — experimental `crates/aero-gpu-device` ABI (used for deterministic
-  host-side tests and gpu-trace plumbing; see `crates/aero-gpu-device/README.md`).
+* `VID=0xA0E0, DID=0x0001` — retired experimental prototype ABI (used for deterministic host-side
+  tests and gpu-trace plumbing). The implementation has been removed; the archived spec is in
+  `docs/legacy/experimental-a0e0-gpu-command-abi.md`.
 
 Older prototypes in this repository used a different PCI vendor ID (`VEN_1AE0`)
 and an early placeholder device ID (`E001`). These identifiers are **stale** and

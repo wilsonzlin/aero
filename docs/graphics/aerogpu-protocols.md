@@ -59,18 +59,15 @@ The protocol is still documented for reference, but it is archived:
 
 It is **not** compatible with the Win7/WDDM AeroGPU protocol.
 
-## Prototype ABI: `aero-gpu-device` (AGRN/AGPC)
+## Retired prototype ABI: A0E0 experimental ring (removed)
 
-**Location:** `crates/aero-gpu-device/*`
+This repository previously contained an experimental ring/opcode ABI used for early backend
+experiments and for exercising gpu-trace plumbing. It has been removed so the repo only
+supports the canonical A3A0 AeroGPU protocol.
 
-This is another unrelated guest↔host GPU command ABI. It is identifiable by the FourCC
-values used in its ring/record headers:
+The archived specification is kept under:
 
-- `"AGRN"` — ring header magic
-- `"AGPC"` — command record magic
-
-It is used as a harness for backend experiments and for exercising the GPU trace
-container/recorder (`crates/aero-gpu-trace`), but it is **not** the Win7/WDDM AeroGPU ABI.
+- `docs/legacy/experimental-a0e0-gpu-command-abi.md`
 
 ## Summary / guidance
 

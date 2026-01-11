@@ -48,8 +48,8 @@ for the Windows 7 WDDM graphics path should target the canonical AeroGPU ABI in:
 - `emulator/protocol` (Rust/TypeScript mirror)
 - `crates/emulator/src/devices/pci/aerogpu.rs` (emulator device model)
 
-Some crates (notably `crates/aero-gpu-device`) implement experimental/prototype ABIs used for
-tests or tooling and are **not** the Win7/WDDM driver contract.
+Some legacy/prototype GPU ABIs have existed during bring-up and are **not** the Win7/WDDM driver
+contract.
 
 See `docs/graphics/aerogpu-protocols.md` for the full mapping.
 
