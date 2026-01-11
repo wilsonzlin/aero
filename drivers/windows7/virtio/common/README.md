@@ -5,17 +5,21 @@ Permissive license: **MIT OR Apache-2.0** (see `LICENSE-MIT` and `LICENSE-APACHE
 This directory contains a small, reusable C library intended to be shared by all
 Windows 7 SP1 x86/x64 Aero guest drivers that speak virtio.
 
-It contains two virtio-pci transport implementations:
+At a high level, Aero drivers use two virtio-pci transport styles:
 
-- **Modern (Virtio 1.0+):** `virtio_pci_modern_wdm.*` (PCI vendor capabilities + BAR MMIO)
-- **Legacy/transitional:** `virtio_pci_legacy.*` (virtio 0.9 I/O-port register set)
+- **Modern (Virtio 1.0+ / contract v1):** BAR MMIO + `COMMON/NOTIFY/ISR/DEVICE` capabilities
+- **Legacy/transitional (virtio 0.9):** I/O-port register set (PFN-based queue programming)
+
+This directory contains implementations and helpers for both. For the
+miniport-oriented contract-v1 transport used by the in-tree NDIS/StorPort drivers,
+see `drivers/windows7/virtio-modern/common/` (`aero_virtio_pci_modern.*`).
 
 And additional shared helpers:
 
 - **INTx helper:** `virtio_pci_intx_wdm.*` (ISR read-to-ack + DPC dispatch)
 - **Contract identity validation:** `virtio_pci_contract.*` (AERO-W7-VIRTIO v1 PCI identity)
 - **Split virtqueues:** `virtqueue_split.*` (portable split ring implementation)
-- **Windows queue helper:** `virtio_queue.*` (alloc + queue programming + notify)
+- **Windows queue helper (legacy):** `virtio_queue.*` (alloc + PFN programming + notify)
 
 ## Aero contract v1 (AERO-W7-VIRTIO)
 
@@ -40,7 +44,16 @@ is retained only for compatibility/testing with transitional/QEMU devices.
 
 ## File inventory
 
-### Modern transport (WDM, non-KMDF)
+### Modern transport (Virtio 1.0+)
+
+There are two modern transport helpers in-tree:
+
+- **Miniport-friendly (fixed-layout, contract v1):**
+  `drivers/windows7/virtio-modern/common/include/aero_virtio_pci_modern.h` +
+  `drivers/windows7/virtio-modern/common/src/aero_virtio_pci_modern.c`
+  - Designed for StorPort miniports, NDIS miniports, and WDM drivers.
+  - Assumes the Aero contract v1 fixed BAR0 MMIO layout (does not parse PCI caps).
+  - Programs queues via `queue_desc/queue_avail/queue_used` and `queue_enable`.
 
 - `include/virtio_pci_modern_wdm.h` + `src/virtio_pci_modern_wdm.c`
   - Parses PCI capability list and discovers the required virtio vendor caps
@@ -76,11 +89,10 @@ is retained only for compatibility/testing with transitional/QEMU devices.
   - Portable split ring (`vring`) implementation (descriptor table + avail ring + used ring).
 
 - `include/virtio_queue.h` + `src/virtio_queue.c`
-  - Windows kernel convenience wrapper around split rings:
+  - Legacy Windows kernel convenience wrapper around split rings:
     - allocates ring memory and maintains a descriptor free list
-    - programs queues via `queue_desc/queue_avail/queue_used` + `queue_enable`
-      when using the modern transport
-    - kicks the device via the notify region
+    - shares the ring with the device via legacy `QUEUE_PFN` programming
+    - kicks the device via `QUEUE_NOTIFY`
 
 - `include/virtio_os.h` + `os_shim/`
   - OS abstraction used by the portable code and host-side unit tests.
@@ -92,20 +104,32 @@ At a high level, drivers using Aero contract v1 devices should:
 
 1. **Validate identity** (recommended):
    - `AeroVirtioPciValidateContractV1Pdo(...)`
-2. **Discover capabilities + map BAR0**:
-   - `VirtioPciModernWdmInit(...)`
-   - `VirtioPciModernWdmMapBars(...)`
-3. **Negotiate features** (64-bit; requires `VIRTIO_F_VERSION_1`):
-   - `VirtioPciNegotiateFeatures(...)`
-4. **Program queues** using common configuration (`queue_desc/avail/used` +
+2. **Map BAR0 MMIO** using your driver framework:
+   - NDIS: `NdisMMapIoSpace`
+   - StorPort: `StorPortGetDeviceBase`
+   - WDM: `MmMapIoSpace`
+3. **Initialize the contract-v1 transport**:
+   - `AeroVirtioPciModernInitFromBar0(...)`
+4. **Negotiate features** (64-bit; requires `VIRTIO_F_VERSION_1`):
+   - `AeroVirtioNegotiateFeatures(...)`
+5. **Program queues** using common configuration (`queue_desc/queue_avail/queue_used` +
    `queue_enable`) and notify using the notify region:
-   - `VirtioPciSetupQueue(...)`
-   - `VirtioPciNotifyQueue(...)`
-5. **Handle INTx**:
+   - `AeroVirtioQueryQueue(...)`
+   - `AeroVirtioSetupQueue(...)`
+   - `AeroVirtioNotifyQueue(...)`
+6. **Handle INTx**:
    - Read the ISR status byte in the ISR to ACK/deassert (read-to-ack), then do
      queue work in a DPC.
-   - WDM drivers can use the reusable helper: `VirtioIntxConnect(...)` /
-     `VirtioIntxDisconnect(...)`.
+   - Minimal primitive: `AeroVirtioReadIsr(...)`.
+   - For plain WDM drivers, this directory also provides a reusable INTx helper:
+     `VirtioIntxConnect(...)` / `VirtioIntxDisconnect(...)`.
+
+Drivers that need to validate PCI capability layout and/or automatically map BARs
+from `CM_RESOURCE_LIST` can use `virtio_pci_modern_wdm.*` instead (or in addition):
+
+- `VirtioPciModernWdmInit(...)` / `VirtioPciModernWdmMapBars(...)`
+- `VirtioPciNegotiateFeatures(...)`
+- `VirtioPciSetupQueue(...)` / `VirtioPciNotifyQueue(...)`
 
 ## virtio-pci legacy register offsets
 
