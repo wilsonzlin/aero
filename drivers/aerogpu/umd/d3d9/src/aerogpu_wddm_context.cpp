@@ -4,6 +4,8 @@
 #include <type_traits>
 #include <utility>
 
+#include "aerogpu_cmd_stream_writer.h"
+
 namespace aerogpu {
 namespace {
 
@@ -72,17 +74,11 @@ void WddmContext::reset_submission_buffers() {
     return;
   }
 
-  std::memset(pCommandBuffer, 0, sizeof(aerogpu_cmd_stream_header));
-
-  auto* stream = reinterpret_cast<aerogpu_cmd_stream_header*>(pCommandBuffer);
-  stream->magic = AEROGPU_CMD_STREAM_MAGIC;
-  stream->abi_version = AEROGPU_ABI_VERSION_U32;
-  stream->size_bytes = sizeof(aerogpu_cmd_stream_header);
-  stream->flags = AEROGPU_CMD_STREAM_FLAG_NONE;
-  stream->reserved0 = 0;
-  stream->reserved1 = 0;
-
-  command_buffer_bytes_used = sizeof(aerogpu_cmd_stream_header);
+  // Always initialize the command buffer with a valid AeroGPU stream header so
+  // the KMD/emulator can parse the DMA stream even if the submission is empty.
+  SpanCmdStreamWriter writer(pCommandBuffer, CommandBufferSize);
+  writer.reset();
+  command_buffer_bytes_used = static_cast<uint32_t>(writer.bytes_used());
 }
 
 void WddmContext::destroy(const WddmDeviceCallbacks& callbacks) {
