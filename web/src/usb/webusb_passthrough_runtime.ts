@@ -11,7 +11,7 @@ import {
 
 export type UsbPassthroughBridgeLike = {
   drain_actions(): unknown;
-  push_completion(completion: unknown): void;
+  push_completion(completion: UsbHostCompletion): void;
   reset(): void;
   pending_summary?(): unknown;
   free(): void;
@@ -183,7 +183,7 @@ export class WebUsbPassthroughRuntime {
           } else if (id !== null) {
             this.#lastError = "Invalid UsbHostAction received from WASM (missing kind).";
           } else {
-            this.#lastError = "Invalid UsbHostAction received from WASM (missing id).";
+            this.#lastError = "Invalid UsbHostAction received from WASM (missing id/kind).";
           }
           continue;
         }
