@@ -33,9 +33,9 @@ if grep -R -n -E 'dtolnay/rust-toolchain|Swatinem/rust-cache@v2' "$workflows_dir
 fi
 
 # Lockfile policy: Aero commits Cargo.lock and CI must run with --locked.
-if grep -R -n -E 'locked:\s*(auto|never)\b' "$workflows_dir" >/dev/null; then
+if grep -R -n -E 'locked:[[:space:]]*(auto|never)([[:space:]]|$)' "$workflows_dir" >/dev/null; then
   echo "Found noncompliant setup-rust lockfile policy in workflows:" >&2
-  grep -R -n -E 'locked:\s*(auto|never)\b' "$workflows_dir" >&2 || true
+  grep -R -n -E 'locked:[[:space:]]*(auto|never)([[:space:]]|$)' "$workflows_dir" >&2 || true
   report_error "workflows must not set setup-rust locked policy to auto/never (Aero policy is locked: always)"
 fi
 
