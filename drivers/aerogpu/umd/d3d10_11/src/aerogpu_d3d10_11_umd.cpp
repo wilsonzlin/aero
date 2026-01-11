@@ -3078,6 +3078,9 @@ HRESULT UpdateSubresourceUPImpl(AeroGpuImmediateContext* ctx,
       }
 
       const size_t src_pitch = SysMemPitch ? static_cast<size_t>(SysMemPitch) : static_cast<size_t>(res->row_pitch_bytes);
+      if (src_pitch < static_cast<size_t>(res->row_pitch_bytes)) {
+        return E_INVALIDARG;
+      }
       const uint8_t* src = static_cast<const uint8_t*>(pSysMem);
       for (uint32_t y = 0; y < res->height; y++) {
         std::memcpy(res->storage.data() + static_cast<size_t>(y) * res->row_pitch_bytes,
@@ -6515,6 +6518,9 @@ void AEROGPU_APIENTRY UpdateSubresourceUP(D3D10DDI_HDEVICE hDevice,
       }
 
       const size_t src_pitch = SysMemPitch ? static_cast<size_t>(SysMemPitch) : static_cast<size_t>(res->row_pitch_bytes);
+      if (src_pitch < static_cast<size_t>(res->row_pitch_bytes)) {
+        return;
+      }
       const uint8_t* src = static_cast<const uint8_t*>(pSysMem);
       for (uint32_t y = 0; y < res->height; y++) {
         std::memcpy(res->storage.data() + static_cast<size_t>(y) * res->row_pitch_bytes,
