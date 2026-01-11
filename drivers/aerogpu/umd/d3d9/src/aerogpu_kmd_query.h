@@ -9,10 +9,13 @@
   #endif
   #include <windows.h>
 #else
+  #ifndef AEROGPU_LUID_DEFINED
+    #define AEROGPU_LUID_DEFINED
 typedef struct _LUID {
   uint32_t LowPart;
   int32_t HighPart;
 } LUID;
+  #endif
 #endif
 
 namespace aerogpu {

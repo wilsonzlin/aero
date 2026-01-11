@@ -98,6 +98,21 @@ struct Query {
 };
 
 struct Adapter {
+  // The adapter LUID used for caching/reuse when the runtime opens the same
+  // adapter multiple times (common with D3D9Ex + DWM).
+  LUID luid = {};
+
+  // Reference count for OpenAdapter* / CloseAdapter bookkeeping.
+  std::atomic<uint32_t> open_count{0};
+
+  // Runtime callback tables provided during OpenAdapter*.
+  // Stored as raw pointers; the tables live for the lifetime of the runtime.
+  D3DDDI_ADAPTERCALLBACKS* adapter_callbacks = nullptr;
+  D3DDDI_ADAPTERCALLBACKS2* adapter_callbacks2 = nullptr;
+
+  UINT interface_version = 0;
+  UINT umd_version = 0;
+
   std::atomic<uint32_t> next_handle{1};
   // UMD-owned allocation IDs used in WDDM allocation private driver data
   // (aerogpu_wddm_alloc_priv.alloc_id).

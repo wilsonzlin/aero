@@ -2,3 +2,5 @@ LIBRARY "aerogpu_d3d9_x64"
 EXPORTS
   OpenAdapter
   OpenAdapter2
+  OpenAdapterFromHdc
+  OpenAdapterFromLuid

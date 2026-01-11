@@ -5,6 +5,19 @@
 #include <cstring>
 #include <memory>
 #include <thread>
+#include <unordered_map>
+
+#if defined(_WIN32)
+  #include <d3d9types.h>
+#endif
+
+#ifndef D3DVS_VERSION
+  #define D3DVS_VERSION(major, minor) (0xFFFE0000u | ((major) << 8) | (minor))
+#endif
+
+#ifndef D3DPS_VERSION
+  #define D3DPS_VERSION(major, minor) (0xFFFF0000u | ((major) << 8) | (minor))
+#endif
 
 #include "aerogpu_d3d9_objects.h"
 #include "aerogpu_log.h"
@@ -15,6 +28,11 @@ namespace {
 
 // D3DERR_INVALIDCALL from d3d9.h (returned by UMD for invalid arguments).
 constexpr HRESULT kD3DErrInvalidCall = 0x8876086CUL;
+
+// D3D9 API/UMD query constants (numeric values from d3d9types.h).
+constexpr uint32_t kD3DQueryTypeEvent = 8u;
+constexpr uint32_t kD3DIssueEnd = 0x1u;
+constexpr uint32_t kD3DGetDataFlush = 0x1u;
 
 // -----------------------------------------------------------------------------
 // Minimal caps structure (compat only)
@@ -48,18 +66,6 @@ struct Caps {
   uint32_t shade_caps;
   uint32_t stencil_caps;
 };
-
-constexpr uint32_t D3DVS_VERSION(uint32_t major, uint32_t minor) {
-  return 0xFFFE0000u | (major << 8) | minor;
-}
-constexpr uint32_t D3DPS_VERSION(uint32_t major, uint32_t minor) {
-  return 0xFFFF0000u | (major << 8) | minor;
-}
-
-// D3D9 API/UMD query constants (numeric values from d3d9types.h).
-constexpr uint32_t kD3DQueryTypeEvent = 8u;
-constexpr uint32_t kD3DIssueEnd = 0x1u;
-constexpr uint32_t kD3DGetDataFlush = 0x1u;
 
 uint32_t f32_bits(float v) {
   uint32_t bits = 0;
@@ -410,27 +416,27 @@ uint32_t index_count_from_primitive(AEROGPU_D3D9DDI_PRIMITIVE_TYPE prim, uint32_
 // -----------------------------------------------------------------------------
 
 Adapter* as_adapter(AEROGPU_D3D9DDI_HADAPTER hAdapter) {
-  return reinterpret_cast<Adapter*>(hAdapter);
+  return reinterpret_cast<Adapter*>(hAdapter.pDrvPrivate);
 }
 
 Device* as_device(AEROGPU_D3D9DDI_HDEVICE hDevice) {
-  return reinterpret_cast<Device*>(hDevice);
+  return reinterpret_cast<Device*>(hDevice.pDrvPrivate);
 }
 
 Resource* as_resource(AEROGPU_D3D9DDI_HRESOURCE hRes) {
-  return reinterpret_cast<Resource*>(hRes);
+  return reinterpret_cast<Resource*>(hRes.pDrvPrivate);
 }
 
 Shader* as_shader(AEROGPU_D3D9DDI_HSHADER hShader) {
-  return reinterpret_cast<Shader*>(hShader);
+  return reinterpret_cast<Shader*>(hShader.pDrvPrivate);
 }
 
 VertexDecl* as_vertex_decl(AEROGPU_D3D9DDI_HVERTEXDECL hDecl) {
-  return reinterpret_cast<VertexDecl*>(hDecl);
+  return reinterpret_cast<VertexDecl*>(hDecl.pDrvPrivate);
 }
 
 Query* as_query(AEROGPU_D3D9DDI_HQUERY hQuery) {
-  return reinterpret_cast<Query*>(hQuery);
+  return reinterpret_cast<Query*>(hQuery.pDrvPrivate);
 }
 
 // -----------------------------------------------------------------------------
@@ -637,52 +643,170 @@ HRESULT flush_locked(Device* dev) {
 // Adapter DDIs
 // -----------------------------------------------------------------------------
 
-HRESULT AEROGPU_D3D9_CALL adapter_close(AEROGPU_D3D9DDI_HADAPTER hAdapter) {
-  auto* adapter = as_adapter(hAdapter);
+uint64_t luid_to_u64(const LUID& luid) {
+  const uint64_t hi = static_cast<uint64_t>(static_cast<uint32_t>(luid.HighPart));
+  const uint64_t lo = static_cast<uint64_t>(luid.LowPart);
+  return (hi << 32) | lo;
+}
+
+LUID default_luid() {
+  LUID luid{};
+  luid.LowPart = 0;
+  luid.HighPart = 0;
+  return luid;
+}
+
+std::mutex g_adapter_cache_mutex;
+std::unordered_map<uint64_t, Adapter*> g_adapter_cache;
+
+Adapter* acquire_adapter(const LUID& luid,
+                         UINT interface_version,
+                         UINT umd_version,
+                         D3DDDI_ADAPTERCALLBACKS* callbacks,
+                         D3DDDI_ADAPTERCALLBACKS2* callbacks2) {
+  std::lock_guard<std::mutex> lock(g_adapter_cache_mutex);
+
+  const uint64_t key = luid_to_u64(luid);
+  auto it = g_adapter_cache.find(key);
+  if (it != g_adapter_cache.end()) {
+    Adapter* adapter = it->second;
+    adapter->open_count.fetch_add(1);
+    adapter->interface_version = interface_version;
+    adapter->umd_version = umd_version;
+    adapter->adapter_callbacks = callbacks;
+    adapter->adapter_callbacks2 = callbacks2;
+    return adapter;
+  }
+
+  auto* adapter = new Adapter();
+  adapter->luid = luid;
+  adapter->open_count.store(1);
+  adapter->interface_version = interface_version;
+  adapter->umd_version = umd_version;
+  adapter->adapter_callbacks = callbacks;
+  adapter->adapter_callbacks2 = callbacks2;
+  g_adapter_cache.emplace(key, adapter);
+  return adapter;
+}
+
+void release_adapter(Adapter* adapter) {
+  if (!adapter) {
+    return;
+  }
+
+  std::lock_guard<std::mutex> lock(g_adapter_cache_mutex);
+  const uint32_t remaining = adapter->open_count.fetch_sub(1) - 1;
+  if (remaining != 0) {
+    return;
+  }
+
+  g_adapter_cache.erase(luid_to_u64(adapter->luid));
   delete adapter;
+}
+
+HRESULT AEROGPU_D3D9_CALL adapter_close(D3D9DDI_HADAPTER hAdapter) {
+  release_adapter(as_adapter(hAdapter));
   return S_OK;
 }
 
-HRESULT AEROGPU_D3D9_CALL adapter_get_caps(AEROGPU_D3D9DDI_HADAPTER, void* pCaps, uint32_t caps_size) {
-  if (!pCaps) {
-    return E_INVALIDARG;
-  }
-  if (caps_size < sizeof(Caps)) {
+HRESULT AEROGPU_D3D9_CALL adapter_get_caps(D3D9DDI_HADAPTER, const D3D9DDIARG_GETCAPS* pGetCaps) {
+  if (!pGetCaps || (pGetCaps->DataSize && !pGetCaps->pData)) {
     return E_INVALIDARG;
   }
 
-  Caps caps{};
-  caps.max_texture_width = 4096;
-  caps.max_texture_height = 4096;
-  caps.max_volume_extent = 256;
-  caps.max_simultaneous_textures = 8;
-  caps.max_streams = 16;
+  if (pGetCaps->pData && pGetCaps->DataSize) {
+    std::memset(pGetCaps->pData, 0, pGetCaps->DataSize);
+  }
 
-  // Aero on Win7 requires at least SM2.0. Keep conservative.
-  caps.vertex_shader_version = D3DVS_VERSION(2, 0);
-  caps.pixel_shader_version = D3DPS_VERSION(2, 0);
+  bool handled = false;
 
-  // Present intervals: immediate (bit0) + one (bit1).
-  caps.presentation_intervals = 0x1u | 0x2u;
+#if defined(_WIN32)
+  if (pGetCaps->pData && pGetCaps->DataSize >= sizeof(D3DCAPS9)) {
+    auto* caps = reinterpret_cast<D3DCAPS9*>(pGetCaps->pData);
+    caps->MaxTextureWidth = 4096;
+    caps->MaxTextureHeight = 4096;
+    caps->MaxVolumeExtent = 256;
+    caps->MaxSimultaneousTextures = 8;
+    caps->MaxStreams = 16;
 
-  // Conservative but sufficient to express typical DWM state.
-  caps.raster_caps = 0;
-  caps.texture_caps = 0;
-  caps.texture_filter_caps = 0;
-  caps.texture_address_caps = 0;
-  caps.alpha_cmp_caps = 0;
-  caps.src_blend_caps = 0;
-  caps.dest_blend_caps = 0;
-  caps.shade_caps = 0;
-  caps.stencil_caps = 0;
+    caps->VertexShaderVersion = D3DVS_VERSION(2, 0);
+    caps->PixelShaderVersion = D3DPS_VERSION(2, 0);
 
-  std::memcpy(pCaps, &caps, sizeof(caps));
+    caps->PresentationIntervals = D3DPRESENT_INTERVAL_IMMEDIATE | D3DPRESENT_INTERVAL_ONE;
+    handled = true;
+  }
+#else
+  if (pGetCaps->pData && pGetCaps->DataSize >= sizeof(Caps)) {
+    Caps caps{};
+    caps.max_texture_width = 4096;
+    caps.max_texture_height = 4096;
+    caps.max_volume_extent = 256;
+    caps.max_simultaneous_textures = 8;
+    caps.max_streams = 16;
+
+    caps.vertex_shader_version = D3DVS_VERSION(2, 0);
+    caps.pixel_shader_version = D3DPS_VERSION(2, 0);
+    caps.presentation_intervals = 0x1u | 0x2u;
+    std::memcpy(pGetCaps->pData, &caps, sizeof(caps));
+    handled = true;
+  }
+#endif
+
+  if (!handled) {
+    aerogpu::logf("aerogpu-d3d9: GetCaps type=%u size=%u unsupported\n",
+                  static_cast<unsigned>(pGetCaps->Type),
+                  static_cast<unsigned>(pGetCaps->DataSize));
+    return E_INVALIDARG;
+  }
+
   return S_OK;
+}
+
+HRESULT AEROGPU_D3D9_CALL adapter_query_adapter_info(D3D9DDI_HADAPTER hAdapter,
+                                                     const D3D9DDIARG_QUERYADAPTERINFO* pQueryAdapterInfo) {
+  if (!pQueryAdapterInfo || (pQueryAdapterInfo->DataSize && !pQueryAdapterInfo->pData)) {
+    return E_INVALIDARG;
+  }
+
+  if (pQueryAdapterInfo->pData && pQueryAdapterInfo->DataSize) {
+    std::memset(pQueryAdapterInfo->pData, 0, pQueryAdapterInfo->DataSize);
+  }
+
+  Adapter* adapter = as_adapter(hAdapter);
+  if (!adapter) {
+    return E_INVALIDARG;
+  }
+
+  // Best-effort: if the runtime asks for an 8-byte payload, treat it as a LUID
+  // (common for adapter identity queries).
+  if (pQueryAdapterInfo->pData && pQueryAdapterInfo->DataSize == sizeof(LUID)) {
+    *reinterpret_cast<LUID*>(pQueryAdapterInfo->pData) = adapter->luid;
+    return S_OK;
+  }
+
+#if defined(_WIN32)
+  if (pQueryAdapterInfo->pData && pQueryAdapterInfo->DataSize >= sizeof(D3DADAPTER_IDENTIFIER9)) {
+    auto* ident = reinterpret_cast<D3DADAPTER_IDENTIFIER9*>(pQueryAdapterInfo->pData);
+    std::strncpy(ident->Driver, "aerogpu_d3d9", sizeof(ident->Driver) - 1);
+    std::strncpy(ident->Description, "AeroGPU (virtual)", sizeof(ident->Description) - 1);
+    std::strncpy(ident->DeviceName, "\\\\.\\DISPLAY1", sizeof(ident->DeviceName) - 1);
+    ident->VendorId = 0xFFFF;  // Microsoft reserved / virtual
+    ident->DeviceId = 0x0001;
+    ident->SubSysId = 0;
+    ident->Revision = 0;
+    return S_OK;
+  }
+#endif
+
+  aerogpu::logf("aerogpu-d3d9: QueryAdapterInfo type=%u size=%u unsupported\n",
+                static_cast<unsigned>(pQueryAdapterInfo->Type),
+                static_cast<unsigned>(pQueryAdapterInfo->DataSize));
+  return E_INVALIDARG;
 }
 
 HRESULT AEROGPU_D3D9_CALL adapter_create_device(
-    AEROGPU_D3D9DDIARG_CREATEDEVICE* pCreateDevice,
-    AEROGPU_D3D9DDI_DEVICEFUNCS* pDeviceFuncs);
+    D3D9DDIARG_CREATEDEVICE* pCreateDevice,
+    D3D9DDI_DEVICEFUNCS* pDeviceFuncs);
 
 // -----------------------------------------------------------------------------
 // Device DDIs
@@ -741,7 +865,7 @@ static void consume_wddm_alloc_priv(Resource* res,
 HRESULT AEROGPU_D3D9_CALL device_create_resource(
     AEROGPU_D3D9DDI_HDEVICE hDevice,
     AEROGPU_D3D9DDIARG_CREATERESOURCE* pCreateResource) {
-  if (!hDevice || !pCreateResource) {
+  if (!hDevice.pDrvPrivate || !pCreateResource) {
     return E_INVALIDARG;
   }
 
@@ -877,7 +1001,7 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
     }
   }
 
-  pCreateResource->hResource = res.release();
+  pCreateResource->hResource.pDrvPrivate = res.release();
   return S_OK;
 }
 
@@ -934,7 +1058,7 @@ HRESULT AEROGPU_D3D9_CALL device_lock(
 HRESULT AEROGPU_D3D9_CALL device_unlock(
     AEROGPU_D3D9DDI_HDEVICE hDevice,
     const AEROGPU_D3D9DDIARG_UNLOCK* pUnlock) {
-  if (!hDevice || !pUnlock) {
+  if (!hDevice.pDrvPrivate || !pUnlock) {
     return E_INVALIDARG;
   }
   auto* dev = as_device(hDevice);
@@ -972,7 +1096,7 @@ HRESULT AEROGPU_D3D9_CALL device_set_render_target(
     AEROGPU_D3D9DDI_HDEVICE hDevice,
     uint32_t slot,
     AEROGPU_D3D9DDI_HRESOURCE hSurface) {
-  if (!hDevice) {
+  if (!hDevice.pDrvPrivate) {
     return E_INVALIDARG;
   }
   if (slot >= 4) {
@@ -995,7 +1119,7 @@ HRESULT AEROGPU_D3D9_CALL device_set_render_target(
 HRESULT AEROGPU_D3D9_CALL device_set_depth_stencil(
     AEROGPU_D3D9DDI_HDEVICE hDevice,
     AEROGPU_D3D9DDI_HRESOURCE hSurface) {
-  if (!hDevice) {
+  if (!hDevice.pDrvPrivate) {
     return E_INVALIDARG;
   }
   auto* dev = as_device(hDevice);
@@ -1014,7 +1138,7 @@ HRESULT AEROGPU_D3D9_CALL device_set_depth_stencil(
 HRESULT AEROGPU_D3D9_CALL device_set_viewport(
     AEROGPU_D3D9DDI_HDEVICE hDevice,
     const AEROGPU_D3D9DDI_VIEWPORT* pViewport) {
-  if (!hDevice || !pViewport) {
+  if (!hDevice.pDrvPrivate || !pViewport) {
     return E_INVALIDARG;
   }
   auto* dev = as_device(hDevice);
@@ -1036,7 +1160,7 @@ HRESULT AEROGPU_D3D9_CALL device_set_scissor(
     AEROGPU_D3D9DDI_HDEVICE hDevice,
     const RECT* pRect,
     BOOL enabled) {
-  if (!hDevice) {
+  if (!hDevice.pDrvPrivate) {
     return E_INVALIDARG;
   }
 
@@ -1071,7 +1195,7 @@ HRESULT AEROGPU_D3D9_CALL device_set_texture(
     AEROGPU_D3D9DDI_HDEVICE hDevice,
     uint32_t stage,
     AEROGPU_D3D9DDI_HRESOURCE hTexture) {
-  if (!hDevice) {
+  if (!hDevice.pDrvPrivate) {
     return E_INVALIDARG;
   }
   if (stage >= 16) {
@@ -1101,7 +1225,7 @@ HRESULT AEROGPU_D3D9_CALL device_set_sampler_state(
     uint32_t stage,
     uint32_t state,
     uint32_t value) {
-  if (!hDevice) {
+  if (!hDevice.pDrvPrivate) {
     return E_INVALIDARG;
   }
   if (stage >= 16) {
@@ -1123,7 +1247,7 @@ HRESULT AEROGPU_D3D9_CALL device_set_render_state(
     AEROGPU_D3D9DDI_HDEVICE hDevice,
     uint32_t state,
     uint32_t value) {
-  if (!hDevice) {
+  if (!hDevice.pDrvPrivate) {
     return E_INVALIDARG;
   }
 
@@ -1141,7 +1265,7 @@ HRESULT AEROGPU_D3D9_CALL device_create_vertex_decl(
     const void* pDecl,
     uint32_t decl_size,
     AEROGPU_D3D9DDI_HVERTEXDECL* phDecl) {
-  if (!hDevice || !pDecl || !phDecl || decl_size == 0) {
+  if (!hDevice.pDrvPrivate || !pDecl || !phDecl || decl_size == 0) {
     return E_INVALIDARG;
   }
 
@@ -1159,14 +1283,14 @@ HRESULT AEROGPU_D3D9_CALL device_create_vertex_decl(
 
   emit_create_input_layout_locked(dev, decl.get());
 
-  *phDecl = decl.release();
+  phDecl->pDrvPrivate = decl.release();
   return S_OK;
 }
 
 HRESULT AEROGPU_D3D9_CALL device_set_vertex_decl(
     AEROGPU_D3D9DDI_HDEVICE hDevice,
     AEROGPU_D3D9DDI_HVERTEXDECL hDecl) {
-  if (!hDevice) {
+  if (!hDevice.pDrvPrivate) {
     return E_INVALIDARG;
   }
 
@@ -1208,7 +1332,7 @@ HRESULT AEROGPU_D3D9_CALL device_create_shader(
     const void* pBytecode,
     uint32_t bytecode_size,
     AEROGPU_D3D9DDI_HSHADER* phShader) {
-  if (!hDevice || !pBytecode || !phShader || bytecode_size == 0) {
+  if (!hDevice.pDrvPrivate || !pBytecode || !phShader || bytecode_size == 0) {
     return E_INVALIDARG;
   }
 
@@ -1227,7 +1351,7 @@ HRESULT AEROGPU_D3D9_CALL device_create_shader(
 
   emit_create_shader_locked(dev, sh.get());
 
-  *phShader = sh.release();
+  phShader->pDrvPrivate = sh.release();
   return S_OK;
 }
 
@@ -1235,7 +1359,7 @@ HRESULT AEROGPU_D3D9_CALL device_set_shader(
     AEROGPU_D3D9DDI_HDEVICE hDevice,
     AEROGPU_D3D9DDI_SHADER_STAGE stage,
     AEROGPU_D3D9DDI_HSHADER hShader) {
-  if (!hDevice) {
+  if (!hDevice.pDrvPrivate) {
     return E_INVALIDARG;
   }
 
@@ -1276,7 +1400,7 @@ HRESULT AEROGPU_D3D9_CALL device_set_shader_const_f(
     uint32_t start_reg,
     const float* pData,
     uint32_t vec4_count) {
-  if (!hDevice || !pData || vec4_count == 0) {
+  if (!hDevice.pDrvPrivate || !pData || vec4_count == 0) {
     return E_INVALIDARG;
   }
 
@@ -1300,7 +1424,7 @@ HRESULT AEROGPU_D3D9_CALL device_set_stream_source(
     AEROGPU_D3D9DDI_HRESOURCE hVb,
     uint32_t offset_bytes,
     uint32_t stride_bytes) {
-  if (!hDevice) {
+  if (!hDevice.pDrvPrivate) {
     return E_INVALIDARG;
   }
   if (stream >= 16) {
@@ -1335,7 +1459,7 @@ HRESULT AEROGPU_D3D9_CALL device_set_indices(
     AEROGPU_D3D9DDI_HRESOURCE hIb,
     AEROGPU_D3D9DDI_INDEX_FORMAT fmt,
     uint32_t offset_bytes) {
-  if (!hDevice) {
+  if (!hDevice.pDrvPrivate) {
     return E_INVALIDARG;
   }
 
@@ -1362,7 +1486,7 @@ HRESULT AEROGPU_D3D9_CALL device_clear(
     uint32_t color_rgba8,
     float depth,
     uint32_t stencil) {
-  if (!hDevice) {
+  if (!hDevice.pDrvPrivate) {
     return E_INVALIDARG;
   }
 
@@ -1390,7 +1514,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive(
     AEROGPU_D3D9DDI_PRIMITIVE_TYPE type,
     uint32_t start_vertex,
     uint32_t primitive_count) {
-  if (!hDevice) {
+  if (!hDevice.pDrvPrivate) {
     return E_INVALIDARG;
   }
 
@@ -1416,7 +1540,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
     uint32_t /*num_vertices*/,
     uint32_t start_index,
     uint32_t primitive_count) {
-  if (!hDevice) {
+  if (!hDevice.pDrvPrivate) {
     return E_INVALIDARG;
   }
 
@@ -1438,7 +1562,7 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
 HRESULT AEROGPU_D3D9_CALL device_present_ex(
     AEROGPU_D3D9DDI_HDEVICE hDevice,
     const AEROGPU_D3D9DDIARG_PRESENTEX* pPresentEx) {
-  if (!hDevice || !pPresentEx) {
+  if (!hDevice.pDrvPrivate || !pPresentEx) {
     return E_INVALIDARG;
   }
 
@@ -1470,7 +1594,7 @@ HRESULT AEROGPU_D3D9_CALL device_present_ex(
 HRESULT AEROGPU_D3D9_CALL device_present(
     AEROGPU_D3D9DDI_HDEVICE hDevice,
     const AEROGPU_D3D9DDIARG_PRESENT* pPresent) {
-  if (!hDevice || !pPresent) {
+  if (!hDevice.pDrvPrivate || !pPresent) {
     return E_INVALIDARG;
   }
 
@@ -1502,7 +1626,7 @@ HRESULT AEROGPU_D3D9_CALL device_present(
 HRESULT AEROGPU_D3D9_CALL device_set_maximum_frame_latency(
     AEROGPU_D3D9DDI_HDEVICE hDevice,
     uint32_t max_frame_latency) {
-  if (!hDevice) {
+  if (!hDevice.pDrvPrivate) {
     return E_INVALIDARG;
   }
   auto* dev = as_device(hDevice);
@@ -1518,7 +1642,7 @@ HRESULT AEROGPU_D3D9_CALL device_set_maximum_frame_latency(
 HRESULT AEROGPU_D3D9_CALL device_get_maximum_frame_latency(
     AEROGPU_D3D9DDI_HDEVICE hDevice,
     uint32_t* pMaxFrameLatency) {
-  if (!hDevice || !pMaxFrameLatency) {
+  if (!hDevice.pDrvPrivate || !pMaxFrameLatency) {
     return E_INVALIDARG;
   }
   auto* dev = as_device(hDevice);
@@ -1530,7 +1654,7 @@ HRESULT AEROGPU_D3D9_CALL device_get_maximum_frame_latency(
 HRESULT AEROGPU_D3D9_CALL device_get_present_stats(
     AEROGPU_D3D9DDI_HDEVICE hDevice,
     AEROGPU_D3D9DDI_PRESENTSTATS* pStats) {
-  if (!hDevice || !pStats) {
+  if (!hDevice.pDrvPrivate || !pStats) {
     return E_INVALIDARG;
   }
   auto* dev = as_device(hDevice);
@@ -1548,7 +1672,7 @@ HRESULT AEROGPU_D3D9_CALL device_get_present_stats(
 HRESULT AEROGPU_D3D9_CALL device_get_last_present_count(
     AEROGPU_D3D9DDI_HDEVICE hDevice,
     uint32_t* pLastPresentCount) {
-  if (!hDevice || !pLastPresentCount) {
+  if (!hDevice.pDrvPrivate || !pLastPresentCount) {
     return E_INVALIDARG;
   }
   auto* dev = as_device(hDevice);
@@ -1558,7 +1682,7 @@ HRESULT AEROGPU_D3D9_CALL device_get_last_present_count(
 }
 
 HRESULT AEROGPU_D3D9_CALL device_flush(AEROGPU_D3D9DDI_HDEVICE hDevice) {
-  if (!hDevice) {
+  if (!hDevice.pDrvPrivate) {
     return E_INVALIDARG;
   }
   auto* dev = as_device(hDevice);
@@ -1569,7 +1693,7 @@ HRESULT AEROGPU_D3D9_CALL device_flush(AEROGPU_D3D9DDI_HDEVICE hDevice) {
 HRESULT AEROGPU_D3D9_CALL device_create_query(
     AEROGPU_D3D9DDI_HDEVICE hDevice,
     AEROGPU_D3D9DDIARG_CREATEQUERY* pCreateQuery) {
-  if (!hDevice || !pCreateQuery) {
+  if (!hDevice.pDrvPrivate || !pCreateQuery) {
     return E_INVALIDARG;
   }
   auto* dev = as_device(hDevice);
@@ -1599,7 +1723,7 @@ HRESULT AEROGPU_D3D9_CALL device_create_query(
 
   auto q = std::make_unique<Query>();
   q->type = pCreateQuery->type;
-  pCreateQuery->hQuery = q.release();
+  pCreateQuery->hQuery.pDrvPrivate = q.release();
   return S_OK;
 }
 
@@ -1613,7 +1737,7 @@ HRESULT AEROGPU_D3D9_CALL device_destroy_query(
 HRESULT AEROGPU_D3D9_CALL device_issue_query(
     AEROGPU_D3D9DDI_HDEVICE hDevice,
     const AEROGPU_D3D9DDIARG_ISSUEQUERY* pIssueQuery) {
-  if (!hDevice || !pIssueQuery) {
+  if (!hDevice.pDrvPrivate || !pIssueQuery) {
     return E_INVALIDARG;
   }
   auto* dev = as_device(hDevice);
@@ -1661,7 +1785,7 @@ HRESULT AEROGPU_D3D9_CALL device_issue_query(
 HRESULT AEROGPU_D3D9_CALL device_get_query_data(
     AEROGPU_D3D9DDI_HDEVICE hDevice,
     const AEROGPU_D3D9DDIARG_GETQUERYDATA* pGetQueryData) {
-  if (!hDevice || !pGetQueryData) {
+  if (!hDevice.pDrvPrivate || !pGetQueryData) {
     return E_INVALIDARG;
   }
   auto* dev = as_device(hDevice);
@@ -1742,8 +1866,17 @@ HRESULT AEROGPU_D3D9_CALL device_wait_for_idle(AEROGPU_D3D9DDI_HDEVICE hDevice) 
 }
 
 HRESULT AEROGPU_D3D9_CALL adapter_create_device(
-    AEROGPU_D3D9DDIARG_CREATEDEVICE* pCreateDevice,
-    AEROGPU_D3D9DDI_DEVICEFUNCS* pDeviceFuncs) {
+    D3D9DDIARG_CREATEDEVICE* pCreateDevice,
+    D3D9DDI_DEVICEFUNCS* pDeviceFuncs) {
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+  // WDK mode: the real D3D9DDI_DEVICEFUNCS surface is large and not yet wired
+  // up by the translation layer. Return a clean failure instead of crashing due
+  // to missing device DDIs.
+  (void)pCreateDevice;
+  (void)pDeviceFuncs;
+  aerogpu::logf("aerogpu-d3d9: CreateDevice not implemented (WDK mode)\n");
+  return E_NOTIMPL;
+#else
   if (!pCreateDevice || !pDeviceFuncs) {
     return E_INVALIDARG;
   }
@@ -1753,64 +1886,7 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   }
 
   auto dev = std::make_unique<Device>(adapter);
-
-#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
-  if (!pCreateDevice->pCallbacks) {
-    return E_INVALIDARG;
-  }
-
-  dev->wddm_callbacks = *reinterpret_cast<const WddmDeviceCallbacks*>(pCreateDevice->pCallbacks);
-
-  HRESULT hr = wddm_create_device(dev->wddm_callbacks, pCreateDevice->hAdapter, &dev->wddm_device);
-  if (FAILED(hr)) {
-    return hr;
-  }
-
-  hr = wddm_create_context(dev->wddm_callbacks, dev->wddm_device, &dev->wddm_context);
-  if (FAILED(hr)) {
-    wddm_destroy_device(dev->wddm_callbacks, dev->wddm_device);
-    dev->wddm_device = 0;
-    return hr;
-  }
-
-  // Validate the runtime-provided submission buffers. These must be present for
-  // DMA buffer construction; later milestones will build commands directly into
-  // them.
-  if (!dev->wddm_context.pCommandBuffer ||
-      dev->wddm_context.CommandBufferSize < sizeof(aerogpu_cmd_stream_header) ||
-      !dev->wddm_context.pAllocationList || dev->wddm_context.AllocationListSize == 0 ||
-      !dev->wddm_context.pPatchLocationList || dev->wddm_context.PatchLocationListSize == 0 ||
-      dev->wddm_context.hSyncObject == 0) {
-    logf("aerogpu-d3d9: WDDM CreateContext returned invalid buffers "
-         "cmd=%p size=%u alloc=%p size=%u patch=%p size=%u sync=%llu\n",
-         dev->wddm_context.pCommandBuffer,
-         dev->wddm_context.CommandBufferSize,
-         dev->wddm_context.pAllocationList,
-         dev->wddm_context.AllocationListSize,
-         dev->wddm_context.pPatchLocationList,
-         dev->wddm_context.PatchLocationListSize,
-         static_cast<unsigned long long>(dev->wddm_context.hSyncObject));
-
-    dev->wddm_context.destroy(dev->wddm_callbacks);
-    wddm_destroy_device(dev->wddm_callbacks, dev->wddm_device);
-    dev->wddm_device = 0;
-    return E_FAIL;
-  }
-
-  logf("aerogpu-d3d9: WDDM ctx device=%llu context=%llu sync=%llu "
-       "cmd=%p bytes=%u alloc_list=%p entries=%u patch_list=%p entries=%u\n",
-       static_cast<unsigned long long>(dev->wddm_device),
-       static_cast<unsigned long long>(dev->wddm_context.hContext),
-       static_cast<unsigned long long>(dev->wddm_context.hSyncObject),
-       dev->wddm_context.pCommandBuffer,
-       dev->wddm_context.CommandBufferSize,
-       dev->wddm_context.pAllocationList,
-       dev->wddm_context.AllocationListSize,
-       dev->wddm_context.pPatchLocationList,
-       dev->wddm_context.PatchLocationListSize);
-#endif
-
-  pCreateDevice->hDevice = dev.get();
+  pCreateDevice->hDevice.pDrvPrivate = dev.get();
 
   std::memset(pDeviceFuncs, 0, sizeof(*pDeviceFuncs));
   pDeviceFuncs->pfnDestroyDevice = device_destroy;
@@ -1858,6 +1934,49 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
 
   dev.release();
   return S_OK;
+#endif
+}
+
+HRESULT OpenAdapterCommon(const char* entrypoint,
+                          UINT interface_version,
+                          UINT umd_version,
+                          D3DDDI_ADAPTERCALLBACKS* callbacks,
+                          D3DDDI_ADAPTERCALLBACKS2* callbacks2,
+                          const LUID& luid,
+                          D3D9DDI_HADAPTER* phAdapter,
+                          D3D9DDI_ADAPTERFUNCS* pAdapterFuncs) {
+  if (!entrypoint || !phAdapter || !pAdapterFuncs) {
+    return E_INVALIDARG;
+  }
+
+  if (interface_version == 0 || umd_version == 0) {
+    aerogpu::logf("aerogpu-d3d9: %s invalid interface/version (%u/%u)\n",
+                  entrypoint,
+                  static_cast<unsigned>(interface_version),
+                  static_cast<unsigned>(umd_version));
+    return E_INVALIDARG;
+  }
+
+  Adapter* adapter = acquire_adapter(luid, interface_version, umd_version, callbacks, callbacks2);
+  if (!adapter) {
+    return E_OUTOFMEMORY;
+  }
+
+  phAdapter->pDrvPrivate = adapter;
+
+  std::memset(pAdapterFuncs, 0, sizeof(*pAdapterFuncs));
+  pAdapterFuncs->pfnCloseAdapter = adapter_close;
+  pAdapterFuncs->pfnGetCaps = adapter_get_caps;
+  pAdapterFuncs->pfnCreateDevice = adapter_create_device;
+  pAdapterFuncs->pfnQueryAdapterInfo = adapter_query_adapter_info;
+
+  aerogpu::logf("aerogpu-d3d9: %s Interface=%u Version=%u LUID=%08x:%08x\n",
+                entrypoint,
+                static_cast<unsigned>(interface_version),
+                static_cast<unsigned>(umd_version),
+                static_cast<unsigned>(luid.HighPart),
+                static_cast<unsigned>(luid.LowPart));
+  return S_OK;
 }
 
 } // namespace
@@ -1868,44 +1987,112 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
 // -----------------------------------------------------------------------------
 
 HRESULT AEROGPU_D3D9_CALL OpenAdapter(
-    AEROGPU_D3D9DDIARG_OPENADAPTER* pOpenAdapter,
-    AEROGPU_D3D9DDI_ADAPTERFUNCS* pAdapterFuncs) {
-  return OpenAdapter2(pOpenAdapter, pAdapterFuncs);
-}
-
-HRESULT AEROGPU_D3D9_CALL OpenAdapter2(
-    AEROGPU_D3D9DDIARG_OPENADAPTER* pOpenAdapter,
-    AEROGPU_D3D9DDI_ADAPTERFUNCS* pAdapterFuncs) {
+    D3D9DDIARG_OPENADAPTER* pOpenAdapter,
+    D3D9DDI_ADAPTERFUNCS* pAdapterFuncs) {
   if (!pOpenAdapter || !pAdapterFuncs) {
     return E_INVALIDARG;
   }
 
-  auto* adapter = new aerogpu::Adapter();
-  pOpenAdapter->hAdapter = adapter;
+  const LUID luid = aerogpu::default_luid();
+  return aerogpu::OpenAdapterCommon("OpenAdapter",
+                                    pOpenAdapter->Interface,
+                                    pOpenAdapter->Version,
+                                    pOpenAdapter->pAdapterCallbacks,
+                                    pOpenAdapter->pAdapterCallbacks2,
+                                    luid,
+                                    &pOpenAdapter->hAdapter,
+                                    pAdapterFuncs);
+}
 
-  std::memset(pAdapterFuncs, 0, sizeof(*pAdapterFuncs));
-  pAdapterFuncs->pfnCloseAdapter = aerogpu::adapter_close;
-  pAdapterFuncs->pfnGetCaps = aerogpu::adapter_get_caps;
-  pAdapterFuncs->pfnCreateDevice = aerogpu::adapter_create_device;
+HRESULT AEROGPU_D3D9_CALL OpenAdapter2(
+    D3D9DDIARG_OPENADAPTER2* pOpenAdapter,
+    D3D9DDI_ADAPTERFUNCS* pAdapterFuncs) {
+  if (!pOpenAdapter || !pAdapterFuncs) {
+    return E_INVALIDARG;
+  }
 
-  aerogpu::logf("aerogpu-d3d9: OpenAdapter2 interface_version=%u\n", pOpenAdapter->interface_version);
+  const LUID luid = aerogpu::default_luid();
+  return aerogpu::OpenAdapterCommon("OpenAdapter2",
+                                    pOpenAdapter->Interface,
+                                    pOpenAdapter->Version,
+                                    pOpenAdapter->pAdapterCallbacks,
+                                    pOpenAdapter->pAdapterCallbacks2,
+                                    luid,
+                                    &pOpenAdapter->hAdapter,
+                                    pAdapterFuncs);
+}
+
+HRESULT AEROGPU_D3D9_CALL OpenAdapterFromHdc(
+    D3D9DDIARG_OPENADAPTERFROMHDC* pOpenAdapter,
+    D3D9DDI_ADAPTERFUNCS* pAdapterFuncs) {
+  if (!pOpenAdapter || !pAdapterFuncs) {
+    return E_INVALIDARG;
+  }
+
+  // For bring-up we treat the driver as single-adapter; the runtime may still
+  // choose between HDC and LUID open paths depending on the caller (e.g. DWM).
+  const LUID luid = aerogpu::default_luid();
+  pOpenAdapter->AdapterLuid = luid;
+
+  aerogpu::logf("aerogpu-d3d9: OpenAdapterFromHdc hdc=%p\n", pOpenAdapter->hDc);
+  const HRESULT hr = aerogpu::OpenAdapterCommon("OpenAdapterFromHdc",
+                                                pOpenAdapter->Interface,
+                                                pOpenAdapter->Version,
+                                                pOpenAdapter->pAdapterCallbacks,
+                                                pOpenAdapter->pAdapterCallbacks2,
+                                                luid,
+                                                &pOpenAdapter->hAdapter,
+                                                pAdapterFuncs);
 
 #if defined(_WIN32)
-  // Best-effort wiring for Win7 bring-up: initialize the KMD fence query helper
-  // so we can observe real submission/completion fences via D3DKMTEscape.
-  //
-  // Failure is non-fatal; the UMD can fall back to conservative CPU-side
-  // behavior when the query path is unavailable.
-  if (pOpenAdapter->hDc && adapter->kmd_query.InitFromHdc(pOpenAdapter->hDc)) {
-    uint64_t submitted = 0;
-    uint64_t completed = 0;
-    if (adapter->kmd_query.QueryFence(&submitted, &completed)) {
-      aerogpu::logf("aerogpu-d3d9: KMD fence submitted=%llu completed=%llu\n",
-                    static_cast<unsigned long long>(submitted),
-                    static_cast<unsigned long long>(completed));
+  if (SUCCEEDED(hr) && pOpenAdapter->hDc) {
+    auto* adapter = aerogpu::as_adapter(pOpenAdapter->hAdapter);
+    if (adapter && adapter->kmd_query.InitFromHdc(pOpenAdapter->hDc)) {
+      uint64_t submitted = 0;
+      uint64_t completed = 0;
+      if (adapter->kmd_query.QueryFence(&submitted, &completed)) {
+        aerogpu::logf("aerogpu-d3d9: KMD fence submitted=%llu completed=%llu\n",
+                      static_cast<unsigned long long>(submitted),
+                      static_cast<unsigned long long>(completed));
+      }
     }
   }
 #endif
 
-  return S_OK;
+  return hr;
+}
+
+HRESULT AEROGPU_D3D9_CALL OpenAdapterFromLuid(
+    D3D9DDIARG_OPENADAPTERFROMLUID* pOpenAdapter,
+    D3D9DDI_ADAPTERFUNCS* pAdapterFuncs) {
+  if (!pOpenAdapter || !pAdapterFuncs) {
+    return E_INVALIDARG;
+  }
+
+  const LUID luid = pOpenAdapter->AdapterLuid;
+  const HRESULT hr = aerogpu::OpenAdapterCommon("OpenAdapterFromLuid",
+                                                pOpenAdapter->Interface,
+                                                pOpenAdapter->Version,
+                                                pOpenAdapter->pAdapterCallbacks,
+                                                pOpenAdapter->pAdapterCallbacks2,
+                                                luid,
+                                                &pOpenAdapter->hAdapter,
+                                                pAdapterFuncs);
+
+#if defined(_WIN32)
+  if (SUCCEEDED(hr)) {
+    auto* adapter = aerogpu::as_adapter(pOpenAdapter->hAdapter);
+    if (adapter && adapter->kmd_query.InitFromLuid(luid)) {
+      uint64_t submitted = 0;
+      uint64_t completed = 0;
+      if (adapter->kmd_query.QueryFence(&submitted, &completed)) {
+        aerogpu::logf("aerogpu-d3d9: KMD fence submitted=%llu completed=%llu\n",
+                      static_cast<unsigned long long>(submitted),
+                      static_cast<unsigned long long>(completed));
+      }
+    }
+  }
+#endif
+
+  return hr;
 }

@@ -3,8 +3,11 @@ EXPORTS
   ; Export undecorated names expected by the runtime.
   OpenAdapter=_OpenAdapter@8
   OpenAdapter2=_OpenAdapter2@8
+  OpenAdapterFromHdc=_OpenAdapterFromHdc@8
+  OpenAdapterFromLuid=_OpenAdapterFromLuid@8
 
   ; Also export the raw stdcall-decorated names for robustness.
   _OpenAdapter@8
   _OpenAdapter2@8
-
+  _OpenAdapterFromHdc@8
+  _OpenAdapterFromLuid@8

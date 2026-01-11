@@ -1,15 +1,15 @@
 // AeroGPU D3D9Ex user-mode display driver (UMD) - public entrypoints.
 //
 // This is a clean-room implementation intended for Windows 7 SP1 (WDDM 1.1).
-// The real build uses WDK headers for the D3D9 DDI; for repository builds that
-// don't have the WDK available, we provide a tiny "compat" surface with just
-// enough types to keep the code self-contained.
 //
-// The goal of this header is not to perfectly mirror the WDK; it exists so the
-// command-stream translation code is readable and testable in isolation.
-// When integrating into an actual Win7 WDK build, define
-//   AEROGPU_D3D9_USE_WDK_DDI
-// and include the real WDK D3D9 DDI headers before this file.
+// The canonical driver build is expected to be performed in a Win7 WDK 7.1
+// environment. When `AEROGPU_D3D9_USE_WDK_DDI` is defined, this header pulls in
+// the official WDK DDI headers (`d3d9umddi.h`, `d3dumddi.h`) and the rest of the
+// code should use those types directly.
+//
+// For repository/portable builds (no WDK headers available), we provide a tiny
+// subset of the Win7 D3D9UMDDI ABI. It is intentionally incomplete; it exists so
+// the codebase can be built and iterated on without requiring the WDK.
 //
 #pragma once
 
@@ -26,6 +26,7 @@ typedef void* HANDLE;
 typedef void* HWND;
 typedef void* HDC;
 typedef uint32_t DWORD;
+typedef int32_t LONG;
 typedef uint32_t UINT;
 typedef int32_t HRESULT;
 typedef uint8_t BYTE;
@@ -62,16 +63,16 @@ typedef struct _RECT {
   #ifndef E_NOTIMPL
     #define E_NOTIMPL ((HRESULT)0x80004001L)
   #endif
-
-  // Common D3D9 HRESULTs used by D3D9Ex GetData/CreateQuery paths.
-  #ifndef D3DERR_NOTAVAILABLE
-    #define D3DERR_NOTAVAILABLE ((HRESULT)0x8876086AL)
-  #endif
-  #ifndef D3DERR_WASSTILLDRAWING
-    #define D3DERR_WASSTILLDRAWING ((HRESULT)0x8876021CL)
+  #ifndef AEROGPU_LUID_DEFINED
+    #define AEROGPU_LUID_DEFINED
+typedef struct _LUID {
+  DWORD LowPart;
+  LONG HighPart;
+} LUID;
   #endif
 #endif
 
+// Common D3D9 HRESULTs used by D3D9Ex GetData/CreateQuery paths.
 #ifndef D3DERR_NOTAVAILABLE
   #define D3DERR_NOTAVAILABLE ((HRESULT)0x8876086AL)
 #endif
@@ -88,17 +89,151 @@ typedef struct _RECT {
 #endif
 
 // -----------------------------------------------------------------------------
-// Minimal D3D9 DDI surface (compat only)
+// D3D9UMDDI ABI surface
 // -----------------------------------------------------------------------------
-// Real driver builds should use WDK types (d3d9umddi.h et al). These are a
-// minimal subset used by the translation layer.
+// In WDK mode (`AEROGPU_D3D9_USE_WDK_DDI`), pull in the official headers.
+//
+// In portable mode, define a minimal subset of the Win7 ABI so the UMD sources
+// can be compiled without the WDK.
 
-typedef void* AEROGPU_D3D9DDI_HADAPTER;
-typedef void* AEROGPU_D3D9DDI_HDEVICE;
-typedef void* AEROGPU_D3D9DDI_HRESOURCE;
-typedef void* AEROGPU_D3D9DDI_HSHADER;
-typedef void* AEROGPU_D3D9DDI_HVERTEXDECL;
-typedef void* AEROGPU_D3D9DDI_HQUERY;
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+  #include <d3dumddi.h>
+  #include <d3d9umddi.h>
+#endif
+
+#if !(defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI))
+
+// ---- Minimal WDDM handle shims ------------------------------------------------
+// D3D9UMDDI handle types are opaque driver-private pointers. The WDK represents
+// them as tiny wrapper structs with a single `pDrvPrivate` field; we mirror that
+// layout so call sites can be written once and compiled both with and without
+// the WDK headers.
+
+typedef struct _D3D9DDI_HADAPTER {
+  void* pDrvPrivate;
+} D3D9DDI_HADAPTER;
+
+typedef struct _D3D9DDI_HDEVICE {
+  void* pDrvPrivate;
+} D3D9DDI_HDEVICE;
+
+typedef struct _D3D9DDI_HRESOURCE {
+  void* pDrvPrivate;
+} D3D9DDI_HRESOURCE;
+
+typedef struct _D3D9DDI_HSHADER {
+  void* pDrvPrivate;
+} D3D9DDI_HSHADER;
+
+typedef struct _D3D9DDI_HVERTEXDECL {
+  void* pDrvPrivate;
+} D3D9DDI_HVERTEXDECL;
+
+typedef struct _D3D9DDI_HQUERY {
+  void* pDrvPrivate;
+} D3D9DDI_HQUERY;
+
+// ---- Callback-table shims -----------------------------------------------------
+// The real callback tables are large and defined in `d3dumddi.h`. For portable
+// builds we only need opaque placeholders (we store the pointers).
+
+typedef struct _D3DDDI_ADAPTERCALLBACKS {
+  void* pfnDummy;
+} D3DDDI_ADAPTERCALLBACKS;
+
+typedef struct _D3DDDI_ADAPTERCALLBACKS2 {
+  void* pfnDummy;
+} D3DDDI_ADAPTERCALLBACKS2;
+
+// ---- Adapter open ABI ---------------------------------------------------------
+typedef struct _D3D9DDIARG_OPENADAPTER {
+  UINT Interface;
+  UINT Version;
+  D3DDDI_ADAPTERCALLBACKS* pAdapterCallbacks;
+  D3DDDI_ADAPTERCALLBACKS2* pAdapterCallbacks2;
+  D3D9DDI_HADAPTER hAdapter; // out
+} D3D9DDIARG_OPENADAPTER;
+
+typedef struct _D3D9DDIARG_OPENADAPTER2 {
+  UINT Interface;
+  UINT Version;
+  D3DDDI_ADAPTERCALLBACKS* pAdapterCallbacks;
+  D3DDDI_ADAPTERCALLBACKS2* pAdapterCallbacks2;
+  D3D9DDI_HADAPTER hAdapter; // out
+} D3D9DDIARG_OPENADAPTER2;
+
+typedef struct _D3D9DDIARG_OPENADAPTERFROMHDC {
+  UINT Interface;
+  UINT Version;
+  HDC hDc;
+  LUID AdapterLuid; // out (best effort)
+  D3DDDI_ADAPTERCALLBACKS* pAdapterCallbacks;
+  D3DDDI_ADAPTERCALLBACKS2* pAdapterCallbacks2;
+  D3D9DDI_HADAPTER hAdapter; // out
+} D3D9DDIARG_OPENADAPTERFROMHDC;
+
+typedef struct _D3D9DDIARG_OPENADAPTERFROMLUID {
+  UINT Interface;
+  UINT Version;
+  LUID AdapterLuid; // in
+  D3DDDI_ADAPTERCALLBACKS* pAdapterCallbacks;
+  D3DDDI_ADAPTERCALLBACKS2* pAdapterCallbacks2;
+  D3D9DDI_HADAPTER hAdapter; // out
+} D3D9DDIARG_OPENADAPTERFROMLUID;
+
+// ---- Adapter vtable ABI (minimal) --------------------------------------------
+typedef struct _D3D9DDIARG_GETCAPS {
+  UINT Type;
+  void* pData;
+  UINT DataSize;
+} D3D9DDIARG_GETCAPS;
+
+typedef struct _D3D9DDIARG_CREATEDEVICE {
+  D3D9DDI_HADAPTER hAdapter;
+  D3D9DDI_HDEVICE hDevice; // out
+  UINT Flags;
+} D3D9DDIARG_CREATEDEVICE;
+
+typedef struct _D3D9DDIARG_QUERYADAPTERINFO {
+  UINT Type;
+  void* pData;
+  UINT DataSize;
+} D3D9DDIARG_QUERYADAPTERINFO;
+
+// Note: For portable builds, we alias the D3D9DDI device vtable name to the
+// AeroGPU-private subset so we can keep call sites uniform.
+typedef struct AEROGPU_D3D9DDI_DEVICEFUNCS D3D9DDI_DEVICEFUNCS;
+
+typedef HRESULT(AEROGPU_D3D9_CALL* PFND3D9DDI_CLOSEADAPTER)(D3D9DDI_HADAPTER hAdapter);
+typedef HRESULT(AEROGPU_D3D9_CALL* PFND3D9DDI_GETCAPS)(D3D9DDI_HADAPTER hAdapter, const D3D9DDIARG_GETCAPS* pGetCaps);
+typedef HRESULT(AEROGPU_D3D9_CALL* PFND3D9DDI_CREATEDEVICE)(
+    D3D9DDIARG_CREATEDEVICE* pCreateDevice,
+    D3D9DDI_DEVICEFUNCS* pDeviceFuncs);
+typedef HRESULT(AEROGPU_D3D9_CALL* PFND3D9DDI_QUERYADAPTERINFO)(
+    D3D9DDI_HADAPTER hAdapter,
+    const D3D9DDIARG_QUERYADAPTERINFO* pQueryAdapterInfo);
+
+typedef struct _D3D9DDI_ADAPTERFUNCS {
+  PFND3D9DDI_CLOSEADAPTER pfnCloseAdapter;
+  PFND3D9DDI_GETCAPS pfnGetCaps;
+  PFND3D9DDI_CREATEDEVICE pfnCreateDevice;
+  PFND3D9DDI_QUERYADAPTERINFO pfnQueryAdapterInfo;
+} D3D9DDI_ADAPTERFUNCS;
+
+#endif // !(_WIN32 && AEROGPU_D3D9_USE_WDK_DDI)
+
+// -----------------------------------------------------------------------------
+// AeroGPU private D3D9 DDI surface (translation layer)
+// -----------------------------------------------------------------------------
+// These are internal, portable-only definitions used by the command-stream
+// translation layer. They intentionally do not match the full WDK ABI.
+
+typedef D3D9DDI_HADAPTER AEROGPU_D3D9DDI_HADAPTER;
+typedef D3D9DDI_HDEVICE AEROGPU_D3D9DDI_HDEVICE;
+typedef D3D9DDI_HRESOURCE AEROGPU_D3D9DDI_HRESOURCE;
+typedef D3D9DDI_HSHADER AEROGPU_D3D9DDI_HSHADER;
+typedef D3D9DDI_HVERTEXDECL AEROGPU_D3D9DDI_HVERTEXDECL;
+typedef D3D9DDI_HQUERY AEROGPU_D3D9DDI_HQUERY;
 
 typedef enum AEROGPU_D3D9DDI_SHADER_STAGE {
   AEROGPU_D3D9DDI_SHADER_STAGE_VS = 0,
@@ -134,11 +269,10 @@ typedef struct AEROGPU_D3D9DDI_LOCKED_BOX {
   uint32_t slicePitch;
 } AEROGPU_D3D9DDI_LOCKED_BOX;
 
-typedef struct AEROGPU_D3D9DDIARG_OPENADAPTER {
-  uint32_t interface_version;
-  AEROGPU_D3D9DDI_HADAPTER hAdapter; // out: driver-owned handle
-  HDC hDc;                           // optional (may be NULL)
-} AEROGPU_D3D9DDIARG_OPENADAPTER;
+typedef D3D9DDIARG_OPENADAPTER AEROGPU_D3D9DDIARG_OPENADAPTER;
+typedef D3D9DDIARG_OPENADAPTER2 AEROGPU_D3D9DDIARG_OPENADAPTER2;
+typedef D3D9DDIARG_OPENADAPTERFROMHDC AEROGPU_D3D9DDIARG_OPENADAPTERFROMHDC;
+typedef D3D9DDIARG_OPENADAPTERFROMLUID AEROGPU_D3D9DDIARG_OPENADAPTERFROMLUID;
 
 typedef struct AEROGPU_D3D9DDIARG_CREATEDEVICE {
   AEROGPU_D3D9DDI_HADAPTER hAdapter;
@@ -241,21 +375,8 @@ typedef struct AEROGPU_D3D9DDIARG_GETQUERYDATA {
   uint32_t flags;
 } AEROGPU_D3D9DDIARG_GETQUERYDATA;
 
-typedef struct AEROGPU_D3D9DDI_ADAPTERFUNCS AEROGPU_D3D9DDI_ADAPTERFUNCS;
+typedef D3D9DDI_ADAPTERFUNCS AEROGPU_D3D9DDI_ADAPTERFUNCS;
 typedef struct AEROGPU_D3D9DDI_DEVICEFUNCS AEROGPU_D3D9DDI_DEVICEFUNCS;
-
-typedef HRESULT(AEROGPU_D3D9_CALL* PFN_AEROGPU_D3D9DDI_CLOSEADAPTER)(
-    AEROGPU_D3D9DDI_HADAPTER hAdapter);
-typedef HRESULT(AEROGPU_D3D9_CALL* PFN_AEROGPU_D3D9DDI_GETCAPS)(
-    AEROGPU_D3D9DDI_HADAPTER hAdapter, void* pCaps, uint32_t caps_size);
-typedef HRESULT(AEROGPU_D3D9_CALL* PFN_AEROGPU_D3D9DDI_CREATEDEVICE)(
-    AEROGPU_D3D9DDIARG_CREATEDEVICE* pCreateDevice, AEROGPU_D3D9DDI_DEVICEFUNCS* pDeviceFuncs);
-
-struct AEROGPU_D3D9DDI_ADAPTERFUNCS {
-  PFN_AEROGPU_D3D9DDI_CLOSEADAPTER pfnCloseAdapter;
-  PFN_AEROGPU_D3D9DDI_GETCAPS pfnGetCaps;
-  PFN_AEROGPU_D3D9DDI_CREATEDEVICE pfnCreateDevice;
-};
 
 typedef HRESULT(AEROGPU_D3D9_CALL* PFN_AEROGPU_D3D9DDI_DESTROYDEVICE)(
     AEROGPU_D3D9DDI_HDEVICE hDevice);
@@ -379,14 +500,22 @@ struct AEROGPU_D3D9DDI_DEVICEFUNCS {
 // UMD entrypoints
 // -----------------------------------------------------------------------------
 
-// Win7 D3D9 runtime entrypoint: open an adapter and return the adapter vtable.
-// When built against the real WDK DDI, the signature and structures should be
-// updated to match the WDK exactly. The exported name is the key contract.
+// Win7 D3D9 runtime entrypoints: open an adapter and return the adapter vtable.
+//
+// These signatures match the WDK 7.1 D3D9UMDDI prototypes. In portable mode they
+// compile against the minimal ABI shims above.
 AEROGPU_D3D9_EXPORT HRESULT AEROGPU_D3D9_CALL OpenAdapter(
-    AEROGPU_D3D9DDIARG_OPENADAPTER* pOpenAdapter,
-    AEROGPU_D3D9DDI_ADAPTERFUNCS* pAdapterFuncs);
+    D3D9DDIARG_OPENADAPTER* pOpenAdapter,
+    D3D9DDI_ADAPTERFUNCS* pAdapterFuncs);
 
-// Some runtimes call OpenAdapter2 on WDDM 1.1+ for version negotiation.
 AEROGPU_D3D9_EXPORT HRESULT AEROGPU_D3D9_CALL OpenAdapter2(
-    AEROGPU_D3D9DDIARG_OPENADAPTER* pOpenAdapter,
-    AEROGPU_D3D9DDI_ADAPTERFUNCS* pAdapterFuncs);
+    D3D9DDIARG_OPENADAPTER2* pOpenAdapter,
+    D3D9DDI_ADAPTERFUNCS* pAdapterFuncs);
+
+AEROGPU_D3D9_EXPORT HRESULT AEROGPU_D3D9_CALL OpenAdapterFromHdc(
+    D3D9DDIARG_OPENADAPTERFROMHDC* pOpenAdapter,
+    D3D9DDI_ADAPTERFUNCS* pAdapterFuncs);
+
+AEROGPU_D3D9_EXPORT HRESULT AEROGPU_D3D9_CALL OpenAdapterFromLuid(
+    D3D9DDIARG_OPENADAPTERFROMLUID* pOpenAdapter,
+    D3D9DDI_ADAPTERFUNCS* pAdapterFuncs);
