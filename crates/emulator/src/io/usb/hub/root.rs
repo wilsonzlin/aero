@@ -161,6 +161,8 @@ impl RootHub {
     pub fn attach(&mut self, port: usize, model: Box<dyn UsbDeviceModel>) {
         let p = &mut self.ports[port];
         p.device = Some(AttachedUsbDevice::new(model));
+        p.suspended = false;
+        p.resuming = false;
         if !p.connected {
             p.connected = true;
         }
@@ -176,6 +178,8 @@ impl RootHub {
     pub fn detach(&mut self, port: usize) {
         let p = &mut self.ports[port];
         p.device = None;
+        p.suspended = false;
+        p.resuming = false;
         if p.connected {
             p.connected = false;
             p.connect_change = true;
@@ -221,6 +225,8 @@ impl RootHub {
                 });
             }
             p.device = Some(AttachedUsbDevice::new(model));
+            p.suspended = false;
+            p.resuming = false;
             if !p.connected {
                 p.connected = true;
             }
@@ -281,6 +287,8 @@ impl RootHub {
                 });
             }
             p.device = None;
+            p.suspended = false;
+            p.resuming = false;
             if p.connected {
                 p.connected = false;
                 p.connect_change = true;
