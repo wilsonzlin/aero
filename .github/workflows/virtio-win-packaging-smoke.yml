@@ -42,22 +42,28 @@ jobs:
           toolchain: stable
           locked: always
 
-      - name: Run virtio-win packaging smoke test
+      - name: Run virtio-win packaging smoke test (full)
         shell: pwsh
-        run: |
-          pwsh -NoProfile -ExecutionPolicy Bypass -File "ci/virtio-win-packaging-smoke.ps1" `
-            -OutRoot "out/virtio-win-packaging-smoke/full" `
-            -GuestToolsSpecPath "tools/packaging/specs/win7-virtio-full.json"
+        run: >
+          pwsh -NoProfile -ExecutionPolicy Bypass -File "ci/virtio-win-packaging-smoke.ps1"
+          -OutRoot "out/virtio-win-packaging-smoke/full"
+          -GuestToolsSpecPath "tools/packaging/specs/win7-virtio-full.json"
 
-          pwsh -NoProfile -ExecutionPolicy Bypass -File "ci/virtio-win-packaging-smoke.ps1" `
-            -OutRoot "out/virtio-win-packaging-smoke/full-no-optional" `
-            -OmitOptionalDrivers `
-            -GuestToolsSpecPath "tools/packaging/specs/win7-virtio-full.json"
+      - name: Run virtio-win packaging smoke test (full spec, omit optional drivers)
+        shell: pwsh
+        run: >
+          pwsh -NoProfile -ExecutionPolicy Bypass -File "ci/virtio-win-packaging-smoke.ps1"
+          -OutRoot "out/virtio-win-packaging-smoke/full-no-optional"
+          -OmitOptionalDrivers
+          -GuestToolsSpecPath "tools/packaging/specs/win7-virtio-full.json"
 
-          pwsh -NoProfile -ExecutionPolicy Bypass -File "ci/virtio-win-packaging-smoke.ps1" `
-            -OutRoot "out/virtio-win-packaging-smoke/minimal" `
-            -OmitOptionalDrivers `
-            -GuestToolsSpecPath "tools/packaging/specs/win7-virtio-win.json"
+      - name: Run virtio-win packaging smoke test (minimal spec, omit optional drivers)
+        shell: pwsh
+        run: >
+          pwsh -NoProfile -ExecutionPolicy Bypass -File "ci/virtio-win-packaging-smoke.ps1"
+          -OutRoot "out/virtio-win-packaging-smoke/minimal"
+          -OmitOptionalDrivers
+          -GuestToolsSpecPath "tools/packaging/specs/win7-virtio-win.json"
 
       - name: Upload logs and outputs (failure)
         if: failure()
