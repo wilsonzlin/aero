@@ -13,8 +13,7 @@
 use wasm_bindgen::prelude::*;
 
 use aero_cpu_core::{
-    CpuCore,
-    Exception,
+    CpuCore, Exception,
     assist::AssistContext,
     interp::tier0::exec::{BatchExit, run_batch_with_assists},
     mem::CpuBus,

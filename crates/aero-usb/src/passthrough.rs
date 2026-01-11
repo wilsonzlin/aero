@@ -698,7 +698,10 @@ mod tests {
             },
         });
 
-        assert_eq!(dev.handle_in_transfer(0x81, 2), UsbInResult::Data(vec![1, 2]));
+        assert_eq!(
+            dev.handle_in_transfer(0x81, 2),
+            UsbInResult::Data(vec![1, 2])
+        );
     }
 
     #[test]

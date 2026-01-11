@@ -1,10 +1,10 @@
 use aero_cpu_core::assist::AssistContext;
 use aero_cpu_core::interp::tier0::exec::{run_batch_with_assists, BatchExit};
-use aero_cpu_core::CpuCore;
 use aero_cpu_core::mem::FlatTestBus;
 use aero_cpu_core::msr;
 use aero_cpu_core::state::{CpuMode, RFLAGS_IF};
 use aero_cpu_core::CpuBus;
+use aero_cpu_core::CpuCore;
 use aero_cpu_core::Exception;
 use aero_x86::Register;
 

@@ -131,14 +131,8 @@ fn assemble_vs_passthrough_pos_color() -> Vec<u8> {
     //   mov oD0, v1.zyxw  ; D3DCOLOR is stored as BGRA in memory
     //   end
     let mut words = vec![0xFFFE_0200];
-    words.extend(enc_inst(
-        0x0001,
-        &[enc_dst(4, 0, 0xF), enc_src(1, 0, 0xE4)],
-    ));
-    words.extend(enc_inst(
-        0x0001,
-        &[enc_dst(5, 0, 0xF), enc_src(1, 1, 0xC6)],
-    ));
+    words.extend(enc_inst(0x0001, &[enc_dst(4, 0, 0xF), enc_src(1, 0, 0xE4)]));
+    words.extend(enc_inst(0x0001, &[enc_dst(5, 0, 0xF), enc_src(1, 1, 0xC6)]));
     words.push(0x0000_FFFF);
     to_bytes(&words)
 }
