@@ -698,13 +698,14 @@ impl D3D9Runtime {
         height: u32,
         data: &[u8],
     ) -> Result<(), RuntimeError> {
-        let texture = self
+        let desc = self
             .textures
             .get(&texture_id)
-            .ok_or(RuntimeError::UnknownTexture(texture_id))?;
+            .ok_or(RuntimeError::UnknownTexture(texture_id))?
+            .desc;
 
-        let expected_width = (texture.desc.width >> mip_level).max(1);
-        let expected_height = (texture.desc.height >> mip_level).max(1);
+        let expected_width = (desc.width >> mip_level).max(1);
+        let expected_height = (desc.height >> mip_level).max(1);
         if width != expected_width || height != expected_height {
             return Err(RuntimeError::TextureUpdateDimensionsMismatch {
                 mip_level,
@@ -715,10 +716,8 @@ impl D3D9Runtime {
             });
         }
 
-        if texture.desc.format.as_color().is_none() {
-            return Err(RuntimeError::UnsupportedTextureUpdateFormat(
-                texture.desc.format,
-            ));
+        if desc.format.as_color().is_none() {
+            return Err(RuntimeError::UnsupportedTextureUpdateFormat(desc.format));
         }
 
         let bytes_per_pixel = 4u32;
@@ -730,6 +729,13 @@ impl D3D9Runtime {
                 actual: data.len(),
             });
         }
+
+        self.submit_encoder_for_queue_write();
+
+        let texture = self
+            .textures
+            .get(&texture_id)
+            .ok_or(RuntimeError::UnknownTexture(texture_id))?;
 
         let unpadded_bytes_per_row = width * bytes_per_pixel;
         let padded_bytes_per_row =
@@ -1108,10 +1114,11 @@ impl D3D9Runtime {
         offset: u64,
         data: &[u8],
     ) -> Result<(), RuntimeError> {
-        let buffer = self
+        let buffer_size = self
             .buffers
             .get(&buffer_id)
-            .ok_or(RuntimeError::UnknownBuffer(buffer_id))?;
+            .ok_or(RuntimeError::UnknownBuffer(buffer_id))?
+            .size;
 
         let alignment = wgpu::COPY_BUFFER_ALIGNMENT;
         let size_bytes = data.len() as u64;
@@ -1122,13 +1129,19 @@ impl D3D9Runtime {
         }
 
         let write_end = offset.saturating_add(data.len() as u64);
-        if write_end > buffer.size {
+        if write_end > buffer_size {
             return Err(RuntimeError::BufferWriteOutOfBounds {
-                buffer_size: buffer.size,
+                buffer_size,
                 write_end,
             });
         }
 
+        self.submit_encoder_for_queue_write();
+
+        let buffer = self
+            .buffers
+            .get(&buffer_id)
+            .ok_or(RuntimeError::UnknownBuffer(buffer_id))?;
         self.queue.write_buffer(&buffer.buffer, offset, data);
         Ok(())
     }
@@ -1262,7 +1275,17 @@ impl D3D9Runtime {
                 label: Some("aero-d3d9-encoder"),
             },
         ));
-        self.state.encoder_needs_clear = true;
+    }
+
+    fn submit_encoder_for_queue_write(&mut self) {
+        // `wgpu::Queue::write_buffer` / `write_texture` are executed immediately relative to
+        // subsequent `queue.submit()` calls. If we have pending GPU work recorded into an unsent
+        // command encoder, a mid-stream upload could otherwise be reordered ahead of earlier draws.
+        //
+        // To preserve D3D9 stream ordering we flush the current encoder before performing uploads.
+        if let Some(encoder) = self.state.encoder.take() {
+            self.queue.submit([encoder.finish()]);
+        }
     }
 
     fn next_pass_clear(&mut self) -> bool {
