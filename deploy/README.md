@@ -279,7 +279,7 @@ You can validate that the TLS + upgrade path works with a CLI client like
 ```bash
 # If you haven't trusted the local Caddy CA yet, you may need:
 #   NODE_TLS_REJECT_UNAUTHORIZED=0
-NODE_TLS_REJECT_UNAUTHORIZED=0 npx wscat -c "wss://localhost/tcp?v=1&target=example.com:80"
+NODE_TLS_REJECT_UNAUTHORIZED=0 npx wscat -c "wss://localhost/tcp?v=1&host=example.com&port=80"
 ```
 
 If you see a successful handshake but the connection immediately closes, the
