@@ -77,7 +77,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p out/guest-tools-packager
-          python tools/guest-tools/validate_config.py 2>&1 | tee out/guest-tools-packager/validate-config-win7-virtio-win.log
+          python tools/guest-tools/validate_config.py --spec tools/packaging/specs/win7-virtio-win.json 2>&1 | tee out/guest-tools-packager/validate-config-win7-virtio-win.log
           python tools/guest-tools/validate_config.py --spec tools/packaging/specs/win7-virtio-full.json 2>&1 | tee out/guest-tools-packager/validate-config-win7-virtio-full.log
 
       - name: Upload logs (on failure)
