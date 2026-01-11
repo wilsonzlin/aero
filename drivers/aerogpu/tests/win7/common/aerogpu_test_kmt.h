@@ -3,8 +3,10 @@
 #include "aerogpu_test_common.h"
 
 // Win7 guest-side tests avoid taking a dependency on WDK headers. Instead, we define the minimal
-// D3DKMT structures needed for driver-private escapes (D3DKMTEscape) and adapter opening
-// (D3DKMTOpenAdapterFromHdc).
+// D3DKMT structures needed for:
+//   - driver-private escapes (D3DKMTEscape)
+//   - adapter opening (D3DKMTOpenAdapterFromHdc)
+//   - adapter info queries used by UMD discovery (D3DKMTQueryAdapterInfo)
 
 #include "..\\..\\..\\protocol\\aerogpu_dbgctl_escape.h"
 
@@ -75,10 +77,10 @@ typedef struct D3DKMT_FUNCS {
   PFND3DKMTQueryAdapterInfo QueryAdapterInfo;
 } D3DKMT_FUNCS;
 
-// If an escape call times out, the worker thread may still be blocked inside a kernel thunk.
+// If an escape/query call times out, the worker thread may still be blocked inside a kernel thunk.
 // In that scenario, calling D3DKMTCloseAdapter can deadlock (the kernel may be holding locks
 // needed by close). Mirror the win7_dbgctl safety behavior and skip adapter close when any
-// timed escape has hit a timeout.
+// timed call has hit a timeout.
 static volatile LONG g_skip_close_adapter = 0;
 
 static inline bool LoadD3DKMT(D3DKMT_FUNCS* out, std::string* err) {
