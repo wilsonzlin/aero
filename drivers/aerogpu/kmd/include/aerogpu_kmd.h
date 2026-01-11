@@ -70,6 +70,7 @@ typedef struct _AEROGPU_SUBMISSION {
 
 typedef struct _AEROGPU_ALLOCATION {
     ULONG AllocationId;
+    ULONGLONG ShareToken;
     SIZE_T SizeBytes;
     ULONG Flags;
     PHYSICAL_ADDRESS LastKnownPa; /* updated from allocation lists */

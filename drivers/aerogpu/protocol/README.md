@@ -14,6 +14,7 @@ The contract is expressed as C/C++ headers suitable for **WDK 7.1** builds and f
 - `aerogpu_cmd.h` – command stream packet formats and opcodes (“AeroGPU IR”).
 - `aerogpu_umd_private.h` – `DXGKQAITYPE_UMDRIVERPRIVATE` blob used by UMDs/tools to discover active ABI + feature bits.
 - `aerogpu_dbgctl_escape.h` – driver-private `DxgkDdiEscape` packets used by bring-up tooling (`drivers/aerogpu/tools/win7_dbgctl`).
+- `aerogpu_wddm_alloc.h` – WDDM allocation private-data contract for stable `alloc_id` / `share_token` exchange across CreateAllocation/OpenAllocation.
 - `vblank.md` – vblank IRQ + timing registers required for Win7 DWM/D3D pacing.
 
 ## Versioning model
