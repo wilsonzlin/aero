@@ -859,6 +859,46 @@ fn package_outputs_allow_empty_certs_when_signing_policy_none() -> anyhow::Resul
 }
 
 #[test]
+fn package_outputs_allow_missing_certs_dir_when_signing_policy_none() -> anyhow::Result<()> {
+    let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let testdata = repo_root.join("testdata");
+    let spec_path = testdata.join("spec.json");
+
+    let drivers_dir = testdata.join("drivers");
+    let guest_tools_src = testdata.join("guest-tools-no-certs");
+
+    let guest_tools_tmp = tempfile::tempdir()?;
+    copy_dir_all(&guest_tools_src, guest_tools_tmp.path())?;
+    let certs_dir = guest_tools_tmp.path().join("certs");
+    if certs_dir.exists() {
+        fs::remove_dir_all(&certs_dir)?;
+    }
+
+    let out = tempfile::tempdir()?;
+    let config = aero_packager::PackageConfig {
+        drivers_dir,
+        guest_tools_dir: guest_tools_tmp.path().to_path_buf(),
+        out_dir: out.path().to_path_buf(),
+        spec_path,
+        version: "1.2.3".to_string(),
+        build_id: "test".to_string(),
+        volume_id: "AERO_GUEST_TOOLS".to_string(),
+        signing_policy: aero_packager::SigningPolicy::None,
+        source_date_epoch: 0,
+    };
+
+    let outputs = aero_packager::package_guest_tools(&config)?;
+    let iso_bytes = fs::read(&outputs.iso_path)?;
+    let tree = aero_packager::read_joliet_tree(&iso_bytes)?;
+    assert!(
+        !tree.paths.iter().any(|p| p.starts_with("certs/")),
+        "expected no cert files when certs/ directory is missing"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn packaging_fails_when_signing_policy_requires_certs_but_none_present() -> anyhow::Result<()> {
     let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let testdata = repo_root.join("testdata");
