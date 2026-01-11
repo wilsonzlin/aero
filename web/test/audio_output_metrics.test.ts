@@ -96,7 +96,7 @@ test("writeRingBufferInterleaved() increments overrunCount when frames are dropp
   assert.equal(Atomics.load(header, 3) >>> 0, 2);
 });
 
-test("startAudioPerfSampling() emits audio.* counters and prefers worklet underrunCount", async () => {
+test("startAudioPerfSampling() emits audio.* counters and prefers worklet underrun frames", async () => {
   class FakePort {
     private readonly listeners = new Set<(event: { data: unknown }) => void>();
     addEventListener(type: string, listener: (event: { data: unknown }) => void): void {
@@ -149,15 +149,15 @@ test("startAudioPerfSampling() emits audio.* counters and prefers worklet underr
   try {
     assert.deepEqual(calls.slice(0, 4), [
       { name: "audio.bufferLevelFrames", value: 10 },
-      { name: "audio.underruns", value: 1 },
-      { name: "audio.overruns", value: 2 },
+      { name: "audio.underrunFrames", value: 1 },
+      { name: "audio.overrunFrames", value: 2 },
       { name: "audio.sampleRate", value: 48_000 },
     ]);
 
-    port.dispatchMessage({ type: "underrun", underrunCount: 123 });
+    port.dispatchMessage({ type: "underrun", underrunFramesTotal: 123 });
     await new Promise((resolve) => setTimeout(resolve, 30));
 
-    const underrunValues = calls.filter((c) => c.name === "audio.underruns").map((c) => c.value);
+    const underrunValues = calls.filter((c) => c.name === "audio.underrunFrames").map((c) => c.value);
     assert.equal(underrunValues[0], 1);
     assert.ok(underrunValues.includes(123));
   } finally {

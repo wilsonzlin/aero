@@ -24,6 +24,8 @@ export enum StatusIndex {
 
   // Audio telemetry (producer-side). Values are updated by the worker producing
   // audio for the AudioWorklet ring buffer.
+  //
+  // Counters are expressed in frames and stored as wrapping u32 values.
   AudioBufferLevelFrames = 4,
   AudioUnderrunCount = 5,
   AudioOverrunCount = 6,

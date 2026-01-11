@@ -53,7 +53,13 @@ export type AudioOutputState = AudioContextState | "disabled";
 export type AudioOutputMetrics = {
   bufferLevelFrames: number;
   capacityFrames: number;
+  /**
+   * Total missing output frames rendered as silence due to underruns (wraps at 2^32).
+   */
   underrunCount: number;
+  /**
+   * Total frames dropped by the producer due to buffer full (wraps at 2^32).
+   */
   overrunCount: number;
   sampleRate: number;
   state: AudioOutputState;
@@ -126,8 +132,18 @@ export type AdaptiveRingBufferTargetOptions = {
   maxTargetFrames?: number;
   initialTargetFrames?: number;
   /**
-   * How many frames to add to the target per underrun (and when the buffer level
-   * is consistently very low).
+   * AudioWorklet render quantum size, in frames per channel.
+   *
+   * The underrun counter (`underrunCount`) tracks missing output frames rendered
+   * as silence. To decide how aggressively to increase the buffering target we
+   * scale underrun frames relative to the render quantum size.
+   *
+   * Web Audio currently uses a fixed render quantum of 128 frames.
+   */
+  renderQuantumFrames?: number;
+  /**
+   * How many frames to add to the target per *full* render quantum worth of
+   * underrun (scaled proportionally for partial underruns).
    */
   increaseFrames?: number;
   /**
@@ -169,6 +185,7 @@ export function createAdaptiveRingBufferTarget(
     maxTargetFrames,
   );
 
+  const renderQuantumFrames = clampFrames(options.renderQuantumFrames ?? 128, 1, 4096);
   const increaseFrames = Math.max(1, Math.floor(options.increaseFrames ?? sampleRate / 50)); // ~20ms
   const stableSeconds = Number.isFinite(options.stableSeconds) ? (options.stableSeconds ?? 3) : 3;
   const decreaseFrames = Math.max(1, Math.floor(options.decreaseFrames ?? sampleRate / 200)); // ~5ms
@@ -179,7 +196,7 @@ export function createAdaptiveRingBufferTarget(
     typeof globalThis.performance?.now === "function" ? globalThis.performance.now() : Date.now();
 
   let targetFrames = initialTargetFrames;
-  let lastUnderrunCount: number | null = null;
+  let lastUnderrunFrames: number | null = null;
   let lastUnderrunTimeMs = nowDefault();
   let lastDecreaseTimeMs = lastUnderrunTimeMs;
 
@@ -190,20 +207,21 @@ export function createAdaptiveRingBufferTarget(
     update(bufferLevelFrames: number, underrunCount: number, nowMs?: number) {
       const now = nowMs ?? nowDefault();
       const level = Math.max(0, Math.floor(bufferLevelFrames));
-      const underruns = Math.max(0, Math.floor(underrunCount));
+      const underrunFrames = Math.max(0, Math.floor(underrunCount));
 
-      if (lastUnderrunCount === null) {
-        lastUnderrunCount = underruns;
+      if (lastUnderrunFrames === null) {
+        lastUnderrunFrames = underrunFrames;
         lastUnderrunTimeMs = now;
         lastDecreaseTimeMs = now;
         return targetFrames;
       }
 
-      const deltaUnderruns = (underruns - lastUnderrunCount) >>> 0;
-      lastUnderrunCount = underruns;
+      const deltaUnderrunFrames = (underrunFrames - lastUnderrunFrames) >>> 0;
+      lastUnderrunFrames = underrunFrames;
 
-      if (deltaUnderruns > 0) {
-        targetFrames = clampFrames(targetFrames + deltaUnderruns * increaseFrames, minTargetFrames, maxTargetFrames);
+      if (deltaUnderrunFrames > 0) {
+        const scaledIncrease = Math.ceil((deltaUnderrunFrames / renderQuantumFrames) * increaseFrames);
+        targetFrames = clampFrames(targetFrames + scaledIncrease, minTargetFrames, maxTargetFrames);
         lastUnderrunTimeMs = now;
         lastDecreaseTimeMs = now;
         return targetFrames;
@@ -610,16 +628,22 @@ export function startAudioPerfSampling(
   perf: { counter(name: string, value: number): void },
   intervalMs = 250,
 ): () => void {
-  let workletUnderrunCount: number | null = null;
+  let workletUnderrunFrames: number | null = null;
 
   const onWorkletMessage = (event: MessageEvent) => {
     const data = event.data as unknown;
     if (!data || typeof data !== "object") return;
-    const msg = data as { type?: unknown; underrunCount?: unknown };
+    const msg = data as { type?: unknown; underrunCount?: unknown; underrunFramesTotal?: unknown };
     if (msg.type !== "underrun") return;
-    if (typeof msg.underrunCount !== "number") return;
-    const next = msg.underrunCount >>> 0;
-    workletUnderrunCount = workletUnderrunCount === null ? next : Math.max(workletUnderrunCount, next);
+    const total =
+      typeof msg.underrunFramesTotal === "number"
+        ? msg.underrunFramesTotal
+        : typeof msg.underrunCount === "number"
+          ? msg.underrunCount
+          : null;
+    if (total === null) return;
+    const next = total >>> 0;
+    workletUnderrunFrames = workletUnderrunFrames === null ? next : Math.max(workletUnderrunFrames, next);
   };
 
   output.node.port.addEventListener("message", onWorkletMessage);
@@ -628,10 +652,10 @@ export function startAudioPerfSampling(
 
   const sample = () => {
     const metrics = output.getMetrics();
-    const underruns = workletUnderrunCount ?? metrics.underrunCount;
+    const underrunFrames = workletUnderrunFrames ?? metrics.underrunCount;
     perf.counter("audio.bufferLevelFrames", metrics.bufferLevelFrames);
-    perf.counter("audio.underruns", underruns);
-    perf.counter("audio.overruns", metrics.overrunCount);
+    perf.counter("audio.underrunFrames", underrunFrames);
+    perf.counter("audio.overrunFrames", metrics.overrunCount);
     perf.counter("audio.sampleRate", metrics.sampleRate);
   };
 

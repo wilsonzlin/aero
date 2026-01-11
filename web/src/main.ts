@@ -1517,9 +1517,9 @@ function renderAudioPanel(): HTMLElement {
     writeTone(Math.min(output.ringBuffer.capacityFrames, Math.floor(sr / 10)));
 
     toneTimer = window.setInterval(() => {
-      const underruns = output.getUnderrunCount();
+      const underrunFrames = output.getUnderrunCount();
       const level = output.getBufferLevelFrames();
-      const target = buffering.update(level, underruns);
+      const target = buffering.update(level, underrunFrames);
       const need = Math.max(0, target - level);
       if (need > 0) writeTone(need);
 
@@ -1532,8 +1532,8 @@ function renderAudioPanel(): HTMLElement {
         `bufferLevelFrames: ${metrics.bufferLevelFrames}\n` +
         `targetMs: ${((target / sr) * 1000).toFixed(1)}\n` +
         `bufferLevelMs: ${((metrics.bufferLevelFrames / sr) * 1000).toFixed(1)}\n` +
-        `underruns: ${metrics.underrunCount}\n` +
-        `overruns: ${metrics.overrunCount}`;
+        `underrunFrames: ${metrics.underrunCount}\n` +
+        `overrunFrames: ${metrics.overrunCount}`;
     }, 20);
   }
 
@@ -1629,11 +1629,11 @@ function renderAudioPanel(): HTMLElement {
           `sampleRate: ${metrics.sampleRate}\n` +
           `capacityFrames: ${metrics.capacityFrames}\n` +
           `bufferLevelFrames: ${metrics.bufferLevelFrames}\n` +
-          `underruns: ${metrics.underrunCount}\n` +
-          `overruns: ${metrics.overrunCount}\n` +
+          `underrunFrames: ${metrics.underrunCount}\n` +
+          `overrunFrames: ${metrics.overrunCount}\n` +
           `producer.bufferLevelFrames: ${workerCoordinator.getAudioProducerBufferLevelFrames()}\n` +
-          `producer.underruns: ${workerCoordinator.getAudioProducerUnderrunCount()}\n` +
-          `producer.overruns: ${workerCoordinator.getAudioProducerOverrunCount()}`;
+          `producer.underrunFrames: ${workerCoordinator.getAudioProducerUnderrunCount()}\n` +
+          `producer.overrunFrames: ${workerCoordinator.getAudioProducerOverrunCount()}`;
       }, 50);
 
       status.textContent = "Audio initialized (worker tone backend).";

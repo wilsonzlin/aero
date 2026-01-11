@@ -72,8 +72,8 @@ Current placeholder instrumentation points:
 When `startAudioPerfSampling()` is enabled for an `EnabledAudioOutput`, the trace will contain counter (`ph: "C"`) events with:
 
 - `audio.bufferLevelFrames` — current queued frames in the output ring buffer
-- `audio.underruns` — total underrun count (increments when the worklet has to output silence)
-- `audio.overruns` — total dropped frames due to producer writes exceeding available capacity
+- `audio.underrunFrames` — total missing output frames rendered as silence due to underruns
+- `audio.overrunFrames` — total frames dropped due to producer writes exceeding available capacity
 - `audio.sampleRate` — AudioContext sample rate
 
 See:
