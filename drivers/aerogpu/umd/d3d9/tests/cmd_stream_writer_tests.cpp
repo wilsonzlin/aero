@@ -519,10 +519,17 @@ bool TestEventQueryGetDataSemantics() {
   }
   cleanup.hQuery = create_query.hQuery;
   cleanup.has_query = true;
-
+ 
   auto* adapter = reinterpret_cast<Adapter*>(open.hAdapter.pDrvPrivate);
   auto* query = reinterpret_cast<Query*>(create_query.hQuery.pDrvPrivate);
-
+  uint64_t base_render_submits = 0;
+  uint64_t base_present_submits = 0;
+  {
+    std::lock_guard<std::mutex> lock(adapter->fence_mutex);
+    base_render_submits = adapter->render_submit_count;
+    base_present_submits = adapter->present_submit_count;
+  }
+ 
   // Some D3D9Ex callers have been observed to pass 0 for END, so cover both the
   // explicit D3DISSUE_END bit and the 0-valued encoding.
   D3D9DDIARG_ISSUEQUERY issue{};
@@ -532,7 +539,21 @@ bool TestEventQueryGetDataSemantics() {
   if (!Check(hr == S_OK, "IssueQuery(END=0)")) {
     return false;
   }
-
+  // IssueQuery(END) should submit recorded work so fence-based tests can observe
+  // a real submission (Win7: d3d9ex_submit_fence_stress). It must be classified
+  // as a render submission (not present).
+  {
+    std::lock_guard<std::mutex> lock(adapter->fence_mutex);
+    if (!Check(adapter->render_submit_count >= base_render_submits + 1,
+               "IssueQuery(END) triggers at least one render submission")) {
+      return false;
+    }
+    if (!Check(adapter->present_submit_count == base_present_submits,
+               "IssueQuery(END) does not increment present submission count")) {
+      return false;
+    }
+  }
+ 
   const uint64_t fence_value0 = query->fence_value.load(std::memory_order_acquire);
   if (!Check(fence_value0 != 0, "event query fence_value (END=0)")) {
     return false;
