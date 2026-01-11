@@ -182,7 +182,7 @@ export type NormalizeCollectionsOptions = {
 };
 
 function normalizeReportItem(item: HidReportItem, path: Path): NormalizedHidReportItem {
-  const rawUsages = item.usages;
+  const rawUsages = item.usages ?? [];
 
   // Reject the ambiguous case where the caller claims a non-degenerate range but only provides a
   // single usage entry; our normalizer would otherwise "collapse" the range when deriving min/max.
@@ -201,11 +201,11 @@ function normalizeReportItem(item: HidReportItem, path: Path): NormalizedHidRepo
   //
   // IMPORTANT: When the list is huge, do not clone/copy it just to check contiguity.
   const isRange =
-    item.isRange &&
+    (item.isRange ?? false) &&
     (rawUsages.length > MAX_RANGE_CONTIGUITY_CHECK_LEN || isContiguousUsageRange(rawUsages));
 
-  let usageMinimum = item.usageMinimum;
-  let usageMaximum = item.usageMaximum;
+  let usageMinimum = item.usageMinimum ?? 0;
+  let usageMaximum = item.usageMaximum ?? 0;
 
   if (isRange && rawUsages.length >= 2 && rawUsages.length <= MAX_RANGE_CONTIGUITY_CHECK_LEN) {
     // Derive min/max from the explicit usage list so we don't depend on the browser's bookkeeping
@@ -224,7 +224,8 @@ function normalizeReportItem(item: HidReportItem, path: Path): NormalizedHidRepo
   // representation (even for a degenerate range where `min === max`).
   const usages = isRange ? [usageMinimum, usageMaximum] : Array.from(rawUsages);
 
-  const isRelative = item.isRelative ?? !item.isAbsolute;
+  const isAbsolute = item.isAbsolute ?? true;
+  const isRelative = item.isRelative ?? !isAbsolute;
   const isWrapped = item.isWrapped ?? item.wrap ?? false;
 
   return {
@@ -240,23 +241,23 @@ function normalizeReportItem(item: HidReportItem, path: Path): NormalizedHidRepo
     logicalMaximum: item.logicalMaximum,
     physicalMinimum: item.physicalMinimum,
     physicalMaximum: item.physicalMaximum,
-    strings: Array.from(item.strings),
+    strings: Array.from(item.strings ?? []),
     stringMinimum: item.stringMinimum,
     stringMaximum: item.stringMaximum,
-    designators: Array.from(item.designators),
+    designators: Array.from(item.designators ?? []),
     designatorMinimum: item.designatorMinimum,
     designatorMaximum: item.designatorMaximum,
 
-    isAbsolute: item.isAbsolute,
-    isArray: item.isArray,
-    isBufferedBytes: item.isBufferedBytes,
-    isConstant: item.isConstant,
-    isLinear: item.isLinear,
+    isAbsolute,
+    isArray: item.isArray ?? false,
+    isBufferedBytes: item.isBufferedBytes ?? false,
+    isConstant: item.isConstant ?? false,
+    isLinear: item.isLinear ?? true,
     isRange,
     isRelative,
-    isVolatile: item.isVolatile,
-    hasNull: item.hasNull,
-    hasPreferredState: item.hasPreferredState,
+    isVolatile: item.isVolatile ?? false,
+    hasNull: item.hasNull ?? false,
+    hasPreferredState: item.hasPreferredState ?? true,
     isWrapped,
   };
 }
@@ -267,9 +268,10 @@ function normalizeReportInfo(report: HidReportInfo, path: Path): NormalizedHidRe
     throw err(path, `Invalid HID reportId: expected integer in [0,255], got ${String(reportId)}`);
   }
 
+  const rawItems = report.items ?? [];
   const items: NormalizedHidReportItem[] = [];
-  for (let itemIdx = 0; itemIdx < report.items.length; itemIdx++) {
-    items.push(normalizeReportItem(report.items[itemIdx]!, [...path, `items[${itemIdx}]`]));
+  for (let itemIdx = 0; itemIdx < rawItems.length; itemIdx++) {
+    items.push(normalizeReportItem(rawItems[itemIdx]!, [...path, `items[${itemIdx}]`]));
   }
 
   return {
@@ -285,9 +287,15 @@ function normalizeReportList(
   listName: ReportListName,
   collectionPath: Path,
 ): NormalizedHidReportInfo[] {
+  const rawReports = reports ?? [];
   const out: NormalizedHidReportInfo[] = [];
-  for (let reportIdx = 0; reportIdx < reports.length; reportIdx++) {
-    out.push(normalizeReportInfo(reports[reportIdx]!, [...collectionPath, `${listName}[${reportIdx}]`]));
+  for (let reportIdx = 0; reportIdx < rawReports.length; reportIdx++) {
+    out.push(
+      normalizeReportInfo(rawReports[reportIdx]!, [
+        ...collectionPath,
+        `${listName}[${reportIdx}]`,
+      ]),
+    );
   }
   return out;
 }
@@ -312,8 +320,16 @@ function normalizeCollection(
 
   try {
     const children: NormalizedHidCollectionInfo[] = [];
-    for (let childIdx = 0; childIdx < collection.children.length; childIdx++) {
-      children.push(normalizeCollection(collection.children[childIdx]!, [...path, `children[${childIdx}]`], depth + 1, stack));
+    const rawChildren = collection.children ?? [];
+    for (let childIdx = 0; childIdx < rawChildren.length; childIdx++) {
+      children.push(
+        normalizeCollection(
+          rawChildren[childIdx]!,
+          [...path, `children[${childIdx}]`],
+          depth + 1,
+          stack,
+        ),
+      );
     }
 
     return {
@@ -321,9 +337,9 @@ function normalizeCollection(
       usage: collection.usage,
       collectionType: normalizeCollectionType(collection.type, [...path, "type"]),
       children,
-      inputReports: normalizeReportList(collection.inputReports, "inputReports", path),
-      outputReports: normalizeReportList(collection.outputReports, "outputReports", path),
-      featureReports: normalizeReportList(collection.featureReports, "featureReports", path),
+      inputReports: normalizeReportList(collection.inputReports ?? [], "inputReports", path),
+      outputReports: normalizeReportList(collection.outputReports ?? [], "outputReports", path),
+      featureReports: normalizeReportList(collection.featureReports ?? [], "featureReports", path),
     };
   } finally {
     if (obj) stack.delete(obj);
