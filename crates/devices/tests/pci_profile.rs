@@ -134,6 +134,22 @@ fn virtio_bar0_is_64bit_mmio() {
 }
 
 #[test]
+fn virtio_bar0_probe_returns_expected_size_mask() {
+    let mut cfg = VIRTIO_NET.build_config_space();
+
+    // Standard PCI BAR size probing: write all 1s, then read back the size mask.
+    cfg.write(0x10, 4, 0xffff_ffff);
+    cfg.write(0x14, 4, 0xffff_ffff);
+
+    // VIRTIO_BARS defines BAR0 as a 64-bit MMIO BAR of size 0x4000, non-prefetchable.
+    // That should probe as:
+    // - low dword:  mask 0xffff_c000 + 64-bit type bits2:1=0b10 (0x4) => 0xffff_c004
+    // - high dword: 0xffff_ffff (since size < 4GiB)
+    assert_eq!(cfg.read(0x10, 4), 0xffff_c004);
+    assert_eq!(cfg.read(0x14, 4), 0xffff_ffff);
+}
+
+#[test]
 fn pci_dump_includes_canonical_devices() {
     let dump = pci_dump(CANONICAL_IO_DEVICES);
     assert!(dump.contains("00:01.1 8086:7010"));

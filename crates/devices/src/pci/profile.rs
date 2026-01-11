@@ -1,6 +1,8 @@
 use super::capabilities::VendorSpecificCapability;
 use super::irq_router::{PciIntxRouter, PciIntxRouterConfig};
-use super::{PciBdf, PciBus, PciConfigSpace, PciDevice, PciInterruptPin, PciPlatform};
+use super::{
+    PciBarDefinition, PciBdf, PciBus, PciConfigSpace, PciDevice, PciInterruptPin, PciPlatform,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PciClassCode {
@@ -123,6 +125,31 @@ impl PciDeviceProfile {
         config.write(0x2e, 2, u32::from(self.subsystem_id));
 
         for bar in self.bars {
+            match bar.kind {
+                PciBarKind::Io => config.set_bar_definition(
+                    bar.index,
+                    PciBarDefinition::Io {
+                        size: u32::try_from(bar.size)
+                            .expect("PCI IO BAR size should fit in u32"),
+                    },
+                ),
+                PciBarKind::Mem32 => config.set_bar_definition(
+                    bar.index,
+                    PciBarDefinition::Mmio32 {
+                        size: u32::try_from(bar.size)
+                            .expect("PCI MMIO32 BAR size should fit in u32"),
+                        prefetchable: bar.prefetchable,
+                    },
+                ),
+                PciBarKind::Mem64 => config.set_bar_definition(
+                    bar.index,
+                    PciBarDefinition::Mmio64 {
+                        size: bar.size,
+                        prefetchable: bar.prefetchable,
+                    },
+                ),
+            }
+
             let offset = 0x10u16 + u16::from(bar.index) * 4;
             config.write(offset, 4, bar.initial_register_value());
             if bar.kind == PciBarKind::Mem64 {
