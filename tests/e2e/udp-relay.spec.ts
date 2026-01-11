@@ -14,6 +14,62 @@ type UdpEchoServer = {
   close: () => Promise<void>;
 };
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timeout = setTimeout(resolve, ms);
+    timeout.unref?.();
+  });
+}
+
+function waitForProcessClose(proc: ChildProcessWithoutNullStreams): Promise<void> {
+  if (proc.exitCode !== null) return Promise.resolve();
+  return new Promise((resolve) => {
+    const onDone = () => {
+      cleanup();
+      resolve();
+    };
+    const cleanup = () => {
+      proc.off('exit', onDone);
+      proc.off('close', onDone);
+    };
+    proc.once('exit', onDone);
+    proc.once('close', onDone);
+    // Handle races where the process exits between the first `exitCode` check and
+    // installing the event listeners.
+    if (proc.exitCode !== null) onDone();
+  });
+}
+
+async function stopProcess(proc: ChildProcessWithoutNullStreams, timeoutMs = 5_000): Promise<void> {
+  if (proc.exitCode !== null) return;
+
+  try {
+    proc.kill('SIGTERM');
+  } catch {
+    // ignore
+  }
+
+  try {
+    await Promise.race([
+      waitForProcessClose(proc),
+      sleep(timeoutMs).then(() => {
+        throw new Error('timeout');
+      }),
+    ]);
+    return;
+  } catch {
+    // fall through
+  }
+
+  try {
+    proc.kill('SIGKILL');
+  } catch {
+    // ignore
+  }
+
+  await Promise.race([waitForProcessClose(proc), sleep(timeoutMs)]);
+}
+
 async function startUdpEchoServer(): Promise<UdpEchoServer> {
   const sock = dgram.createSocket('udp4');
   sock.on('message', (msg, rinfo) => {
@@ -93,7 +149,7 @@ async function waitForReady(origin: string, timeoutMs: number): Promise<void> {
     } catch (err) {
       lastErr = err;
     }
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    await sleep(200);
   }
 
   throw lastErr instanceof Error ? lastErr : new Error('relay failed to become ready');
@@ -185,10 +241,7 @@ test.describe.serial('udp relay (webrtc)', () => {
       origin,
       proc,
       close: async () => {
-        if (proc.exitCode === null) {
-          proc.kill('SIGTERM');
-          await once(proc, 'exit');
-        }
+        await stopProcess(proc);
       },
     };
   }
