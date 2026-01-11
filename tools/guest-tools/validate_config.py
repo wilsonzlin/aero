@@ -609,10 +609,6 @@ def validate(devices: DevicesConfig, spec_path: Path, spec_expected: Mapping[str
         drv = spec_expected.get(driver_name)
         if drv is None:
             return
-        # Optional drivers may not be configured in devices.cmd; only validate
-        # them when HWIDs are present.
-        if not drv.required and not hwids:
-            return
         patterns = list(drv.expected_hardware_ids)
         if drv.expected_hardware_ids_from_devices_cmd_var:
             var = drv.expected_hardware_ids_from_devices_cmd_var
