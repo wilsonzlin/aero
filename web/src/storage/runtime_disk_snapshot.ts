@@ -39,6 +39,12 @@ export type LocalDiskBackendSnapshot = {
 
 export type RemoteDiskBackendSnapshot = {
   kind: "remote";
+  /**
+   * Storage backend used for the remote disk cache + overlay.
+   *
+   * v1 snapshots assumed OPFS; this is optional for backwards compatibility.
+   */
+  backend?: DiskBackend;
   diskKind: DiskKind;
   sizeBytes: number;
   base: RemoteDiskBaseSnapshot;
@@ -105,4 +111,3 @@ export function shouldInvalidateRemoteCache(
   if (!a || !b) return true;
   return a.kind !== b.kind || a.value !== b.value;
 }
-

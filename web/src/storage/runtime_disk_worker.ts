@@ -3,6 +3,7 @@ import { OpfsCowDisk } from "./opfs_cow";
 import { OpfsRawDisk } from "./opfs_raw";
 import { OpfsAeroSparseDisk } from "./opfs_sparse";
 import type { AsyncSectorDisk } from "./disk";
+import { IdbCowDisk } from "./idb_cow";
 import { IdbChunkDisk } from "./idb_chunk_disk";
 import { benchSequentialRead, benchSequentialWrite } from "./bench";
 import type { DiskImageMetadata } from "./metadata";
@@ -42,6 +43,12 @@ type DiskEntry = {
   io: DiskIoTelemetry;
   backendSnapshot: DiskBackendSnapshot | null;
 };
+
+function defaultRemoteChunkedManifestUrl(base: RemoteCacheBinding["base"]): string {
+  // See: docs/18-chunked-disk-image-format.md ("images/<imageId>/<version>/manifest.json").
+  // Like `defaultRemoteRangeUrl`, this is intentionally *not* a signed URL.
+  return `/images/${encodeURIComponent(base.imageId)}/${encodeURIComponent(base.version)}/manifest.json`;
+}
 
 type RequestMessage =
   | {
@@ -156,11 +163,8 @@ function emptyIoTelemetry(): DiskIoTelemetry {
 
 async function openDisk(meta: DiskImageMetadata, mode: OpenMode, overlayBlockSizeBytes?: number): Promise<DiskEntry> {
   if (meta.source === "remote") {
-    if (meta.cache.backend !== "opfs") {
-      throw new Error(`unsupported remote cache backend ${meta.cache.backend} (expected opfs)`);
-    }
-    if (meta.remote.delivery !== "range") {
-      throw new Error(`unsupported remote delivery ${meta.remote.delivery} (expected range)`);
+    if (meta.cache.backend === "opfs" && meta.remote.delivery !== "range") {
+      throw new Error(`unsupported remote delivery ${meta.remote.delivery} for OPFS cache backend (expected range)`);
     }
 
     const expectedValidator = meta.remote.validator?.etag
@@ -171,6 +175,7 @@ async function openDisk(meta: DiskImageMetadata, mode: OpenMode, overlayBlockSiz
 
     const backend: DiskBackendSnapshot = {
       kind: "remote",
+      backend: meta.cache.backend,
       diskKind: meta.kind,
       sizeBytes: meta.sizeBytes,
       base: {
@@ -376,26 +381,80 @@ async function openDiskFromSnapshot(entry: RuntimeDiskSnapshotEntry): Promise<Di
   }
 
   // Remote base image with OPFS cache + overlay.
-  await ensureRemoteCacheBinding(backend.base, backend.cache.fileName);
+  const remoteCacheBackend = backend.backend ?? "opfs";
+  if (remoteCacheBackend !== "opfs" && remoteCacheBackend !== "idb") {
+    throw new Error(`unsupported remote cache backend ${String(remoteCacheBackend)}`);
+  }
+  if (remoteCacheBackend === "opfs") {
+    await ensureRemoteCacheBinding(backend.base, backend.cache.fileName);
+  }
 
-  if (backend.base.deliveryType !== "range") {
+  if (backend.base.deliveryType !== "range" && backend.base.deliveryType !== "chunked") {
     throw new Error(`unsupported remote deliveryType=${backend.base.deliveryType}`);
   }
 
-  const url = defaultRemoteRangeUrl(backend.base);
-  const imageKey = `${backend.base.imageId}:${backend.base.version}:${backend.base.deliveryType}`;
-  const sparseCacheFactory = {
-    open: async (_cacheId: string) => await OpfsAeroSparseDisk.open(backend.cache.fileName),
-    create: async (_cacheId: string, opts: { diskSizeBytes: number; blockSizeBytes: number }) =>
-      await OpfsAeroSparseDisk.create(backend.cache.fileName, opts),
-    delete: async (_cacheId: string) => {
-      await opfsDeleteDisk(backend.cache.fileName);
-    },
-  };
-  const base = await RemoteRangeDisk.open(url, { imageKey, chunkSize: backend.base.chunkSize, sparseCacheFactory });
-  if (base.capacityBytes !== backend.sizeBytes) {
-    await base.close?.();
-    throw new Error(`disk size mismatch: expected=${backend.sizeBytes} actual=${base.capacityBytes}`);
+  let base: AsyncSectorDisk;
+  if (remoteCacheBackend === "opfs") {
+    if (backend.base.deliveryType !== "range") {
+      throw new Error(`unsupported remote deliveryType=${backend.base.deliveryType} for OPFS cache backend`);
+    }
+
+    const url = defaultRemoteRangeUrl(backend.base);
+    const imageKey = `${backend.base.imageId}:${backend.base.version}:${backend.base.deliveryType}`;
+    const sparseCacheFactory = {
+      open: async (_cacheId: string) => await OpfsAeroSparseDisk.open(backend.cache.fileName),
+      create: async (_cacheId: string, opts: { diskSizeBytes: number; blockSizeBytes: number }) =>
+        await OpfsAeroSparseDisk.create(backend.cache.fileName, opts),
+      delete: async (_cacheId: string) => {
+        await opfsDeleteDisk(backend.cache.fileName);
+      },
+    };
+    base = await RemoteRangeDisk.open(url, { imageKey, chunkSize: backend.base.chunkSize, sparseCacheFactory });
+    if (base.capacityBytes !== backend.sizeBytes) {
+      await base.close?.();
+      throw new Error(`disk size mismatch: expected=${backend.sizeBytes} actual=${base.capacityBytes}`);
+    }
+  } else {
+    if (backend.base.deliveryType === "range") {
+      const expectedEtag =
+        backend.base.expectedValidator?.kind === "etag" ? backend.base.expectedValidator.value : undefined;
+      const url = defaultRemoteRangeUrl(backend.base);
+      base = await RemoteStreamingDisk.open(url, {
+        blockSize: backend.base.chunkSize,
+        cacheBackend: remoteCacheBackend,
+        credentials: "same-origin",
+        cacheImageId: backend.base.imageId,
+        cacheVersion: backend.base.version,
+        cacheEtag: expectedEtag,
+        expectedSizeBytes: backend.sizeBytes,
+      });
+    } else {
+      const manifestUrl = defaultRemoteChunkedManifestUrl(backend.base);
+      base = await RemoteChunkedDisk.open(manifestUrl, { cacheBackend: remoteCacheBackend, credentials: "same-origin" });
+      if (base.capacityBytes !== backend.sizeBytes) {
+        await base.close?.();
+        throw new Error(`disk size mismatch: expected=${backend.sizeBytes} actual=${base.capacityBytes}`);
+      }
+    }
+  }
+
+  if (entry.readOnly) {
+    return {
+      disk: base,
+      readOnly: entry.readOnly,
+      io: emptyIoTelemetry(),
+      backendSnapshot: backend,
+    };
+  }
+
+  if (remoteCacheBackend === "idb") {
+    const disk = await IdbCowDisk.open(base, backend.overlay.fileName, backend.sizeBytes);
+    return {
+      disk,
+      readOnly: entry.readOnly,
+      io: emptyIoTelemetry(),
+      backendSnapshot: backend,
+    };
   }
 
   const overlay = await openSparseOrCreate(backend.overlay.fileName, {
@@ -571,7 +630,9 @@ async function handleRequest(msg: RequestMessage): Promise<void> {
           throw new Error("disk backend does not support snapshotting (missing backend descriptor)");
         }
         if (backend.kind === "remote") {
-          await writeCacheBinding(cacheBindingFileName(backend.cache.fileName), { version: 1, base: backend.base });
+          if ((backend.backend ?? "opfs") === "opfs") {
+            await writeCacheBinding(cacheBindingFileName(backend.cache.fileName), { version: 1, base: backend.base });
+          }
         }
       }
 

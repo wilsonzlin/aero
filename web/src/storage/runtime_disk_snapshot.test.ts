@@ -41,6 +41,7 @@ describe("runtime disk snapshot payload", () => {
           capacityBytes: 20 * 1024 * 1024,
           backend: {
             kind: "remote",
+            backend: "opfs",
             diskKind: "hdd",
             sizeBytes: 20 * 1024 * 1024,
             base: {
@@ -103,4 +104,3 @@ describe("runtime disk snapshot payload", () => {
     expect(shouldInvalidateRemoteCache(expected, null)).toBe(true);
   });
 });
-

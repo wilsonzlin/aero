@@ -31,6 +31,7 @@ import {
   opfsResizeDisk,
   type ImportProgress,
 } from "./import_export";
+import { RemoteCacheManager } from "./remote_cache_manager";
 
 type DiskWorkerError = { message: string; name?: string; stack?: string };
 
@@ -693,6 +694,12 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
             // Remote disk caches may be stored in the dedicated `remote_chunks` store (LRU cache)
             // and/or in the legacy `chunks` store (disk-style sparse chunks).
             // Best-effort cleanup: try both.
+            const derivedCacheKey = await RemoteCacheManager.deriveCacheKey({
+              imageId: meta.remote.imageId,
+              version: meta.remote.version,
+              deliveryType: meta.remote.delivery,
+            });
+            await idbDeleteRemoteChunkCache(db, derivedCacheKey);
             await idbDeleteRemoteChunkCache(db, meta.cache.fileName);
             await idbDeleteRemoteChunkCache(db, meta.cache.overlayFileName);
             await idbDeleteDiskData(db, meta.cache.fileName);
