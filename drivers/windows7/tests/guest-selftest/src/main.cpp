@@ -65,8 +65,13 @@ static bool ContainsInsensitive(const std::wstring& haystack, const std::wstring
 // Windows 7 SDKs do not consistently ship the HIDClass IOCTL definitions in user-mode headers.
 // Define the subset we need (report descriptor read) locally so the selftest stays buildable with
 // a plain Win7-compatible SDK toolchain.
+#ifndef FILE_DEVICE_HID
+// Some SDK-only environments don't define FILE_DEVICE_HID. The HID class IOCTLs are historically
+// defined under device type 0x0000000B.
+#define FILE_DEVICE_HID 0x0000000B
+#endif
 #ifndef HID_CTL_CODE
-#define HID_CTL_CODE(id) CTL_CODE(FILE_DEVICE_KEYBOARD, (id), METHOD_NEITHER, FILE_ANY_ACCESS)
+#define HID_CTL_CODE(id) CTL_CODE(FILE_DEVICE_HID, (id), METHOD_NEITHER, FILE_ANY_ACCESS)
 #endif
 #ifndef IOCTL_HID_GET_REPORT_DESCRIPTOR
 // WDK `hidclass.h` defines IOCTL_HID_GET_REPORT_DESCRIPTOR as function code 1
@@ -791,15 +796,19 @@ struct VirtioInputTestResult {
 static bool IsVirtioInputHardwareId(const std::vector<std::wstring>& hwids) {
   for (const auto& id : hwids) {
     if (ContainsInsensitive(id, L"VEN_1AF4&DEV_1052")) return true;
+    if (ContainsInsensitive(id, L"VEN_1AF4&DEV_1011")) return true;
     // Some stacks may expose HID-style IDs (VID/PID) instead of PCI-style VEN/DEV.
     if (ContainsInsensitive(id, L"VID_1AF4&PID_1052")) return true;
+    if (ContainsInsensitive(id, L"VID_1AF4&PID_1011")) return true;
   }
   return false;
 }
 
 static bool LooksLikeVirtioInputInterfacePath(const std::wstring& device_path) {
   return ContainsInsensitive(device_path, L"VEN_1AF4&DEV_1052") ||
-         ContainsInsensitive(device_path, L"VID_1AF4&PID_1052");
+         ContainsInsensitive(device_path, L"VEN_1AF4&DEV_1011") ||
+         ContainsInsensitive(device_path, L"VID_1AF4&PID_1052") ||
+         ContainsInsensitive(device_path, L"VID_1AF4&PID_1011");
 }
 
 static HANDLE OpenHidDeviceForIoctl(const wchar_t* path) {
