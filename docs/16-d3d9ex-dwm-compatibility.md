@@ -219,9 +219,9 @@ For correctness **and** to avoid leaking host-side GPU objects, the `share_token
 
 **Host-side (✅ implemented; Task 639 closed):**
 
-- `AEROGPU_CMD_EXPORT_SHARED_SURFACE` creates/updates the `share_token → resource` mapping and increments a per-token refcount.
-- `AEROGPU_CMD_IMPORT_SHARED_SURFACE` increments the refcount and returns a new alias handle referencing the same underlying resource.
-- `AEROGPU_CMD_DESTROY_RESOURCE` decrements the refcount for any handle (original or alias) referencing a shared surface; when it hits 0, the host destroys the underlying resource and drops the `share_token` mapping.
+- `AEROGPU_CMD_EXPORT_SHARED_SURFACE` creates/updates the `share_token → resource` mapping (idempotent when re-exporting the same token/underlying surface).
+- `AEROGPU_CMD_IMPORT_SHARED_SURFACE` increments the underlying surface refcount and returns a new alias handle referencing the same underlying resource.
+- `AEROGPU_CMD_DESTROY_RESOURCE` decrements the refcount for any handle (original or alias) referencing a shared surface; when it hits 0, the host destroys the underlying resource and drops all `share_token` mappings to it.
 - The host rejects `EXPORT_SHARED_SURFACE` collisions (same token mapped to a different underlying resource) and validates that alias handles resolve correctly.
 
 **Remaining gap (Win7 guest driver semantics):**
@@ -234,7 +234,7 @@ The follow-up work is therefore to make the guest-side destruction signal safe a
 
 | Task | Status | Notes |
 | ---- | ------ | ----- |
-| 639 | ✅ Verified | Host-side shared-surface lifetime: `DESTROY_RESOURCE` + per-token refcounting + collision validation + multi-submission coverage (see `crates/aero-gpu/src/protocol.rs`, `crates/aero-gpu/src/command_processor.rs`, and `crates/aero-gpu/tests/aerogpu_d3d9_shared_surface.rs`). |
+| 639 | ✅ Verified | Host-side shared-surface lifetime: `DESTROY_RESOURCE` + refcounting (original + aliases) + collision validation + multi-submission coverage (see `crates/aero-gpu/src/protocol.rs`, `crates/aero-gpu/src/command_processor.rs`, and `crates/aero-gpu/tests/aerogpu_d3d9_shared_surface.rs`). |
 | 639-FU | 🔵 Blocked | Win7 KMD/UMD: define + implement a **cross-process shared-surface destruction contract** so the host can drop `share_token` mappings when the last open is closed (KMD-driven global refcount; emit/synthesize `AEROGPU_CMD_DESTROY_RESOURCE` on last-close). Depends on Task 578 and Task 594. |
 
 #### `D3DPOOL_DEFAULT` semantics for Ex
