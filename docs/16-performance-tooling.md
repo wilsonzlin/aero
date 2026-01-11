@@ -297,6 +297,14 @@ On minimal Linux environments, you may need system dependencies:
 npx playwright install --with-deps chromium
 ```
 
+CI-parity run (build + `vite preview` + perf harness, matching `.github/workflows/perf*.yml`):
+
+```bash
+node scripts/ci/run_browser_perf.mjs --preview --out-dir perf-results/local --iterations 7
+```
+
+Quick run (no build; uses the perf harness' internal `data:` URL):
+
 ```bash
 npm run bench:browser -- --iterations 7 --out-dir perf-results/local
 ```

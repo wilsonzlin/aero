@@ -4,7 +4,8 @@ This directory contains performance/telemetry tooling used for CI regression tra
 
 ## Quick-start (canonical commands)
 
-- `npm run bench:browser` — **browser CI-parity** perf run (wrapper around `tools/perf/run.mjs` via `bench/run`; requires `npm ci` + `npx playwright install chromium` once).
+- `npm run bench:browser` — **browser perf** run (wrapper around `tools/perf/run.mjs` via `bench/run`; pass `--url http://127.0.0.1:4173/` to include a real page load).
+- `node scripts/ci/run_browser_perf.mjs --preview ...` — **CI-parity browser perf** run (build + `vite preview` + perf harness in one step).
 - `npm run bench:node` — **lightweight Node** microbench for PF-009 (`bench/run.js` → `bench/results.json`).
 - `npm run bench:compare` — compare `bench/results.json` against the checked-in `bench/baseline.json` (PF-009).
 - `npm run bench:update-baseline` — re-record `bench/baseline.json` (PF-009).
@@ -29,7 +30,7 @@ Local usage:
 Append a CI-parity browser perf run output (recommended; matches the nightly workflow):
 
 ```bash
-npm run bench:browser -- --iterations 7 --out-dir perf-results/local
+node scripts/ci/run_browser_perf.mjs --preview --iterations 7 --out-dir perf-results/local
 node bench/history.js append \
   --history bench/history.json \
   --input perf-results/local/raw.json \
