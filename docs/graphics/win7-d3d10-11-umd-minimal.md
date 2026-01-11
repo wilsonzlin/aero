@@ -123,8 +123,10 @@ During adapter open, query:
 
 * `D3DKMTQueryAdapterInfo(KMTQAITYPE_UMDRIVERPRIVATE)`
 
-and decode the returned `aerogpu_umd_private_v1` (see `drivers/aerogpu/protocol/aerogpu_umd_private.h`). Use the reported feature bits to gate optional runtime behavior (e.g. vblank-paced present paths).
- 
+ and decode the returned `aerogpu_umd_private_v1` (see `drivers/aerogpu/protocol/aerogpu_umd_private.h`). Use the reported feature bits to gate optional runtime behavior (e.g. vblank-paced present paths).
+
+When validating the blob, require `struct_version == 1` and `size_bytes >= sizeof(aerogpu_umd_private_v1)` (not an exact match), so v1-compatible extensions that append trailing bytes remain usable.
+  
 ---
 
 ## 2) Minimum D3D10DDI + D3D11DDI entrypoints (Win7 bring-up set)

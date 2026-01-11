@@ -16,7 +16,7 @@ This implementation is intentionally conservative and targets **the minimum func
 - Input layout + vertex/index buffers
 - RTV + clear + draw/draw-indexed
 - Blend/raster/depth state objects (accepted; currently conservative/stubbed)
-- Windowed swapchain present (sync interval 0/1) via `AEROGPU_CMD_PRESENT`
+- Windowed swapchain present (sync interval 0 vs non-zero) via `AEROGPU_CMD_PRESENT`
 
 Unsupported functionality must fail cleanly (returning `E_NOTIMPL` / `E_INVALIDARG`) rather than crashing or dereferencing null DDI function pointers.
 
