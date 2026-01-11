@@ -97,6 +97,7 @@ test("compare_gpu_benchmarks exits 1 on regression beyond threshold", async () =
 
     const md = await readFile(path.join(outDir, "compare.md"), "utf8");
     assert.ok(md.includes("# GPU perf comparison"), "expected markdown header");
+    assert.ok(md.includes("## Context"), "expected context section");
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
