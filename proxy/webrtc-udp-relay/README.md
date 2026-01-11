@@ -144,7 +144,8 @@ npm ci
 npm -w proxy/webrtc-udp-relay/e2e test
 ```
 
-`npm test` runs `playwright install chromium` automatically (via `pretest`) to ensure the browser binary is available.
+For local convenience, `npm test` runs `playwright install chromium` automatically (via `pretest`) to ensure the browser binary is available.
+In CI (or when `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1`), the `pretest` hook is a no-op and browser setup should be handled by the shared `.github/actions/setup-playwright` cache/install step.
 
 This E2E test also requires a working Go toolchain (it builds a small local relay helper).
 
