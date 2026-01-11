@@ -223,6 +223,15 @@ struct Resource {
   uint32_t usage = kD3D11UsageDefault;
   uint32_t cpu_access_flags = 0;
 
+  // WDDM identity (kernel-mode handles / allocation identities). DXGI swapchains
+  // on Win7 rotate backbuffers by calling pfnRotateResourceIdentities; when
+  // resources are backed by real WDDM allocations, these must rotate alongside
+  // the AeroGPU handle.
+  struct WddmIdentity {
+    uint64_t km_resource_handle = 0;
+    std::vector<uint64_t> km_allocation_handles;
+  } wddm;
+
   // Buffer fields.
   uint64_t size_bytes = 0;
 

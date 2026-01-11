@@ -448,6 +448,21 @@ struct AeroGpuResource {
   uint32_t usage = 0;
   uint32_t cpu_access_flags = 0;
 
+  // WDDM identity (kernel-mode handles / allocation identities).
+  //
+  // DXGI swapchains on Win7 use pfnRotateResourceIdentities to "flip" buffers by
+  // rotating the backing allocation identities between the runtime's resource
+  // handles. Once resources are backed by real WDDM allocations, it's not enough
+  // to rotate only the AeroGPU-side handle.
+  //
+  // These are stored as opaque values here to keep the repository build
+  // self-contained; in a WDK build these correspond to the KM resource handle
+  // and per-allocation KM handles.
+  struct WddmIdentity {
+    uint64_t km_resource_handle = 0;
+    std::vector<uint64_t> km_allocation_handles;
+  } wddm;
+
   // Buffer fields.
   uint64_t size_bytes = 0;
 
@@ -493,11 +508,11 @@ struct AeroGpuInputLayout {
 };
 
 struct AeroGpuRenderTargetView {
-  aerogpu_handle_t texture = 0;
+  AeroGpuResource* resource = nullptr;
 };
 
 struct AeroGpuDepthStencilView {
-  aerogpu_handle_t texture = 0;
+  AeroGpuResource* resource = nullptr;
 };
 
 // The initial milestone treats pipeline state objects as opaque handles. They
@@ -561,8 +576,10 @@ struct AeroGpuImmediateContext {
 
   // Cached state.
   aerogpu_handle_t current_rtvs[AEROGPU_MAX_RENDER_TARGETS] = {};
+  AeroGpuResource* current_rtv_resources[AEROGPU_MAX_RENDER_TARGETS] = {};
   uint32_t current_rtv_count = 0;
   aerogpu_handle_t current_dsv = 0;
+  AeroGpuResource* current_dsv_resource = nullptr;
   aerogpu_handle_t current_vs = 0;
   aerogpu_handle_t current_ps = 0;
   aerogpu_handle_t current_gs = 0;
@@ -1590,7 +1607,7 @@ HRESULT AEROGPU_APIENTRY CreateRenderTargetView11(D3D11DDI_HDEVICE hDevice,
     return E_INVALIDARG;
   }
   auto* rtv = new (hView.pDrvPrivate) AeroGpuRenderTargetView();
-  (void)pDesc;
+  rtv->resource = pDesc->hResource.pDrvPrivate ? FromHandle<D3D11DDI_HRESOURCE, AeroGpuResource>(pDesc->hResource) : nullptr;
   return S_OK;
 }
 
@@ -1614,7 +1631,7 @@ HRESULT AEROGPU_APIENTRY CreateDepthStencilView11(D3D11DDI_HDEVICE hDevice,
     return E_INVALIDARG;
   }
   auto* dsv = new (hView.pDrvPrivate) AeroGpuDepthStencilView();
-  (void)pDesc;
+  dsv->resource = pDesc->hResource.pDrvPrivate ? FromHandle<D3D11DDI_HRESOURCE, AeroGpuResource>(pDesc->hResource) : nullptr;
   return S_OK;
 }
 
@@ -2166,14 +2183,18 @@ void AEROGPU_APIENTRY SetRenderTargets11(D3D11DDI_HDEVICECONTEXT hCtx,
   ctx->current_rtv_count = (NumViews > AEROGPU_MAX_RENDER_TARGETS) ? AEROGPU_MAX_RENDER_TARGETS : NumViews;
   for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; i++) {
     ctx->current_rtvs[i] = 0;
+    ctx->current_rtv_resources[i] = nullptr;
   }
   for (uint32_t i = 0; i < ctx->current_rtv_count; i++) {
     if (phRtvs && phRtvs[i].pDrvPrivate) {
-      ctx->current_rtvs[i] =
-          FromHandle<D3D11DDI_HRENDERTARGETVIEW, AeroGpuRenderTargetView>(phRtvs[i])->texture;
+      auto* view = FromHandle<D3D11DDI_HRENDERTARGETVIEW, AeroGpuRenderTargetView>(phRtvs[i]);
+      AeroGpuResource* res = view ? view->resource : nullptr;
+      ctx->current_rtv_resources[i] = res;
+      ctx->current_rtvs[i] = res ? res->handle : 0;
     }
   }
-  ctx->current_dsv = hDsv.pDrvPrivate ? FromHandle<D3D11DDI_HDEPTHSTENCILVIEW, AeroGpuDepthStencilView>(hDsv)->texture : 0;
+  ctx->current_dsv_resource = hDsv.pDrvPrivate ? FromHandle<D3D11DDI_HDEPTHSTENCILVIEW, AeroGpuDepthStencilView>(hDsv)->resource : nullptr;
+  ctx->current_dsv = ctx->current_dsv_resource ? ctx->current_dsv_resource->handle : 0;
 
   auto* cmd = ctx->cmd.append_fixed<aerogpu_cmd_set_render_targets>(AEROGPU_CMD_SET_RENDER_TARGETS);
   cmd->color_count = ctx->current_rtv_count;
@@ -3228,24 +3249,67 @@ void AEROGPU_APIENTRY RotateResourceIdentities11(D3D11DDI_HDEVICECONTEXT hCtx, D
 
   std::lock_guard<std::mutex> lock(ctx->mutex);
 
-  auto* first = FromHandle<D3D11DDI_HRESOURCE, AeroGpuResource>(pResources[0]);
-  if (!first) {
-    return;
-  }
-  const aerogpu_handle_t saved = first->handle;
-
-  for (UINT i = 0; i + 1 < numResources; ++i) {
-    auto* dst = FromHandle<D3D11DDI_HRESOURCE, AeroGpuResource>(pResources[i]);
-    auto* src = FromHandle<D3D11DDI_HRESOURCE, AeroGpuResource>(pResources[i + 1]);
-    if (!dst || !src) {
+  std::vector<AeroGpuResource*> resources;
+  resources.reserve(numResources);
+  for (UINT i = 0; i < numResources; ++i) {
+    auto* res = pResources[i].pDrvPrivate ? FromHandle<D3D11DDI_HRESOURCE, AeroGpuResource>(pResources[i]) : nullptr;
+    if (!res) {
       return;
     }
-    dst->handle = src->handle;
+    resources.push_back(res);
   }
 
-  auto* last = FromHandle<D3D11DDI_HRESOURCE, AeroGpuResource>(pResources[numResources - 1]);
-  if (last) {
-    last->handle = saved;
+  const AeroGpuResource* ref = resources[0];
+  if (!ref || ref->kind != ResourceKind::Texture2D || !(ref->bind_flags & kD3D11BindRenderTarget)) {
+    return;
+  }
+  for (UINT i = 1; i < numResources; ++i) {
+    const AeroGpuResource* r = resources[i];
+    if (!r || r->kind != ResourceKind::Texture2D || !(r->bind_flags & kD3D11BindRenderTarget) ||
+        r->width != ref->width || r->height != ref->height || r->dxgi_format != ref->dxgi_format ||
+        r->mip_levels != ref->mip_levels || r->array_size != ref->array_size) {
+      return;
+    }
+  }
+
+  const aerogpu_handle_t saved_handle = resources[0]->handle;
+  auto saved_wddm = std::move(resources[0]->wddm);
+  for (UINT i = 0; i + 1 < numResources; ++i) {
+    resources[i]->handle = resources[i + 1]->handle;
+    resources[i]->wddm = std::move(resources[i + 1]->wddm);
+  }
+  resources[numResources - 1]->handle = saved_handle;
+  resources[numResources - 1]->wddm = std::move(saved_wddm);
+
+  bool needs_rebind = false;
+  for (AeroGpuResource* r : resources) {
+    if (ctx->current_dsv_resource == r) {
+      needs_rebind = true;
+      break;
+    }
+    for (uint32_t i = 0; i < ctx->current_rtv_count; ++i) {
+      if (ctx->current_rtv_resources[i] == r) {
+        needs_rebind = true;
+        break;
+      }
+    }
+    if (needs_rebind) {
+      break;
+    }
+  }
+
+  if (needs_rebind) {
+    for (uint32_t i = 0; i < ctx->current_rtv_count; ++i) {
+      ctx->current_rtvs[i] = ctx->current_rtv_resources[i] ? ctx->current_rtv_resources[i]->handle : 0;
+    }
+    ctx->current_dsv = ctx->current_dsv_resource ? ctx->current_dsv_resource->handle : 0;
+
+    auto* cmd = ctx->cmd.append_fixed<aerogpu_cmd_set_render_targets>(AEROGPU_CMD_SET_RENDER_TARGETS);
+    cmd->color_count = ctx->current_rtv_count;
+    cmd->depth_stencil = ctx->current_dsv;
+    for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; i++) {
+      cmd->colors[i] = ctx->current_rtvs[i];
+    }
   }
 }
 
@@ -3682,8 +3746,8 @@ struct AeroGpuDevice {
 #endif
 
   // Cached state.
-  aerogpu_handle_t current_rtv = 0;
-  aerogpu_handle_t current_dsv = 0;
+  AeroGpuResource* current_rtv = nullptr;
+  AeroGpuResource* current_dsv = nullptr;
   aerogpu_handle_t current_vs = 0;
   aerogpu_handle_t current_ps = 0;
   aerogpu_handle_t current_input_layout = 0;
@@ -4161,6 +4225,23 @@ HRESULT flush_locked(AeroGpuDevice* dev) {
   HRESULT hr = S_OK;
   submit_locked(dev, &hr);
   return hr;
+}
+
+void emit_set_render_targets_locked(AeroGpuDevice* dev) {
+  if (!dev) {
+    return;
+  }
+
+  const aerogpu_handle_t rtv_handle = dev->current_rtv ? dev->current_rtv->handle : 0;
+  const aerogpu_handle_t dsv_handle = dev->current_dsv ? dev->current_dsv->handle : 0;
+
+  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_render_targets>(AEROGPU_CMD_SET_RENDER_TARGETS);
+  cmd->color_count = 1;
+  cmd->depth_stencil = dsv_handle;
+  for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; i++) {
+    cmd->colors[i] = 0;
+  }
+  cmd->colors[0] = rtv_handle;
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -5354,7 +5435,7 @@ HRESULT AEROGPU_APIENTRY CreateRTV(D3D10DDI_HDEVICE hDevice,
   }
   auto* res = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(pDesc->hResource);
   auto* rtv = new (hRtv.pDrvPrivate) AeroGpuRenderTargetView();
-  rtv->texture = res ? res->handle : 0;
+  rtv->resource = res;
   AEROGPU_D3D10_RET_HR(S_OK);
 }
 
@@ -5386,7 +5467,7 @@ HRESULT AEROGPU_APIENTRY CreateDSV(D3D10DDI_HDEVICE hDevice,
   }
   auto* res = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(pDesc->hResource);
   auto* dsv = new (hDsv.pDrvPrivate) AeroGpuDepthStencilView();
-  dsv->texture = res ? res->handle : 0;
+  dsv->resource = res;
   AEROGPU_D3D10_RET_HR(S_OK);
 }
 
@@ -5503,25 +5584,18 @@ void AEROGPU_APIENTRY SetRenderTargets(D3D10DDI_HDEVICE hDevice,
 
   std::lock_guard<std::mutex> lock(dev->mutex);
 
-  aerogpu_handle_t rtv_handle = 0;
-  aerogpu_handle_t dsv_handle = 0;
+  AeroGpuResource* rtv_res = nullptr;
+  AeroGpuResource* dsv_res = nullptr;
   if (hRtv.pDrvPrivate) {
-    rtv_handle = FromHandle<D3D10DDI_HRENDERTARGETVIEW, AeroGpuRenderTargetView>(hRtv)->texture;
+    rtv_res = FromHandle<D3D10DDI_HRENDERTARGETVIEW, AeroGpuRenderTargetView>(hRtv)->resource;
   }
   if (hDsv.pDrvPrivate) {
-    dsv_handle = FromHandle<D3D10DDI_HDEPTHSTENCILVIEW, AeroGpuDepthStencilView>(hDsv)->texture;
+    dsv_res = FromHandle<D3D10DDI_HDEPTHSTENCILVIEW, AeroGpuDepthStencilView>(hDsv)->resource;
   }
 
-  dev->current_rtv = rtv_handle;
-  dev->current_dsv = dsv_handle;
-
-  auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_render_targets>(AEROGPU_CMD_SET_RENDER_TARGETS);
-  cmd->color_count = 1;
-  cmd->depth_stencil = dsv_handle;
-  for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; i++) {
-    cmd->colors[i] = 0;
-  }
-  cmd->colors[0] = rtv_handle;
+  dev->current_rtv = rtv_res;
+  dev->current_dsv = dsv_res;
+  emit_set_render_targets_locked(dev);
 }
 
 void AEROGPU_APIENTRY ClearRTV(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRENDERTARGETVIEW, const float rgba[4]) {
@@ -5894,26 +5968,57 @@ void AEROGPU_APIENTRY RotateResourceIdentities(D3D10DDI_HDEVICE hDevice, D3D10DD
   }
 #endif
 
-  // Rotate AeroGPU handles in-place. This approximates DXGI swapchain buffer
-  // flipping without requiring a full allocation-table/patching implementation.
-  auto* first = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(pResources[0]);
-  if (!first) {
-    return;
-  }
-  const aerogpu_handle_t saved = first->handle;
-
-  for (uint32_t i = 0; i + 1 < numResources; ++i) {
-    auto* dst = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(pResources[i]);
-    auto* src = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(pResources[i + 1]);
-    if (!dst || !src) {
+  // Validate that we're rotating swapchain backbuffers (Texture2D render targets).
+  std::vector<AeroGpuResource*> resources;
+  resources.reserve(numResources);
+  for (uint32_t i = 0; i < numResources; ++i) {
+    auto* res = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(pResources[i]);
+    if (!res) {
       return;
     }
-    dst->handle = src->handle;
+    resources.push_back(res);
   }
 
-  auto* last = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(pResources[numResources - 1]);
-  if (last) {
-    last->handle = saved;
+  const AeroGpuResource* ref = resources[0];
+  if (!ref || ref->kind != ResourceKind::Texture2D || !(ref->bind_flags & kD3D11BindRenderTarget)) {
+    return;
+  }
+
+  for (uint32_t i = 1; i < numResources; ++i) {
+    const AeroGpuResource* r = resources[i];
+    if (!r || r->kind != ResourceKind::Texture2D || !(r->bind_flags & kD3D11BindRenderTarget) ||
+        r->width != ref->width || r->height != ref->height || r->dxgi_format != ref->dxgi_format ||
+        r->mip_levels != ref->mip_levels || r->array_size != ref->array_size) {
+      return;
+    }
+  }
+
+  // Rotate the resource identity (AeroGPU handle + any WDDM allocation identity).
+  // This matches Win7 DXGI's expectation that the *logical* backbuffer resource
+  // (buffer[0]) continues to be used by the app across frames while the
+  // underlying allocation identity flips.
+  const aerogpu_handle_t saved_handle = resources[0]->handle;
+  auto saved_wddm = std::move(resources[0]->wddm);
+
+  for (uint32_t i = 0; i + 1 < numResources; ++i) {
+    resources[i]->handle = resources[i + 1]->handle;
+    resources[i]->wddm = std::move(resources[i + 1]->wddm);
+  }
+
+  resources[numResources - 1]->handle = saved_handle;
+  resources[numResources - 1]->wddm = std::move(saved_wddm);
+
+  // If the current render targets refer to a rotated resource, re-emit the bind
+  // command so the next frame targets the new backbuffer identity.
+  bool needs_rebind = false;
+  for (AeroGpuResource* r : resources) {
+    if (dev->current_rtv == r || dev->current_dsv == r) {
+      needs_rebind = true;
+      break;
+    }
+  }
+  if (needs_rebind) {
+    emit_set_render_targets_locked(dev);
   }
 
 #if defined(AEROGPU_UMD_TRACE_RESOURCES)

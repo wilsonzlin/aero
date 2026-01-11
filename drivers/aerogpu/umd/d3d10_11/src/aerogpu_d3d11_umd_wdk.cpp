@@ -1995,10 +1995,15 @@ void AEROGPU_APIENTRY SetRenderTargets11(D3D11DDI_HDEVICECONTEXT hCtx,
   dev->current_rtv_resource = nullptr;
   if (NumViews && phRtvs && phRtvs[0].pDrvPrivate) {
     auto* rtv = FromHandle<D3D11DDI_HRENDERTARGETVIEW, RenderTargetView>(phRtvs[0]);
-    dev->current_rtv = rtv ? rtv->texture : 0;
     dev->current_rtv_resource = rtv ? rtv->resource : nullptr;
+    dev->current_rtv = dev->current_rtv_resource ? dev->current_rtv_resource->handle : (rtv ? rtv->texture : 0);
   }
-  dev->current_dsv = hDsv.pDrvPrivate ? FromHandle<D3D11DDI_HDEPTHSTENCILVIEW, DepthStencilView>(hDsv)->texture : 0;
+  if (hDsv.pDrvPrivate) {
+    auto* dsv = FromHandle<D3D11DDI_HDEPTHSTENCILVIEW, DepthStencilView>(hDsv);
+    dev->current_dsv = (dsv && dsv->resource) ? dsv->resource->handle : (dsv ? dsv->texture : 0);
+  } else {
+    dev->current_dsv = 0;
+  }
 
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_render_targets>(AEROGPU_CMD_SET_RENDER_TARGETS);
   cmd->color_count = dev->current_rtv ? 1u : 0u;
@@ -2924,27 +2929,60 @@ void AEROGPU_APIENTRY RotateResourceIdentities11(D3D11DDI_HDEVICECONTEXT hCtx, D
       handle = FromHandle<D3D11DDI_HRESOURCE, Resource>(pResources[i])->handle;
     }
     AEROGPU_D3D10_11_LOG("trace_resources:  + slot[%u]=%u",
-                         static_cast<unsigned>(i),
-                         static_cast<unsigned>(handle));
+                          static_cast<unsigned>(i),
+                          static_cast<unsigned>(handle));
   }
 #endif
 
-  auto* first = pResources[0].pDrvPrivate ? FromHandle<D3D11DDI_HRESOURCE, Resource>(pResources[0]) : nullptr;
-  if (!first) {
-    return;
-  }
-  const aerogpu_handle_t saved = first->handle;
-  for (UINT i = 0; i + 1 < numResources; i++) {
-    auto* dst = pResources[i].pDrvPrivate ? FromHandle<D3D11DDI_HRESOURCE, Resource>(pResources[i]) : nullptr;
-    auto* src = pResources[i + 1].pDrvPrivate ? FromHandle<D3D11DDI_HRESOURCE, Resource>(pResources[i + 1]) : nullptr;
-    if (!dst || !src) {
+  std::vector<Resource*> resources;
+  resources.reserve(numResources);
+  for (UINT i = 0; i < numResources; ++i) {
+    auto* res = pResources[i].pDrvPrivate ? FromHandle<D3D11DDI_HRESOURCE, Resource>(pResources[i]) : nullptr;
+    if (!res) {
       return;
     }
-    dst->handle = src->handle;
+    resources.push_back(res);
   }
-  auto* last = pResources[numResources - 1].pDrvPrivate ? FromHandle<D3D11DDI_HRESOURCE, Resource>(pResources[numResources - 1]) : nullptr;
-  if (last) {
-    last->handle = saved;
+
+  const Resource* ref = resources[0];
+  if (!ref || ref->kind != ResourceKind::Texture2D || !(ref->bind_flags & kD3D11BindRenderTarget)) {
+    return;
+  }
+  for (UINT i = 1; i < numResources; ++i) {
+    const Resource* r = resources[i];
+    if (!r || r->kind != ResourceKind::Texture2D || !(r->bind_flags & kD3D11BindRenderTarget) ||
+        r->width != ref->width || r->height != ref->height || r->dxgi_format != ref->dxgi_format ||
+        r->mip_levels != ref->mip_levels || r->array_size != ref->array_size) {
+      return;
+    }
+  }
+
+  const aerogpu_handle_t saved_handle = resources[0]->handle;
+  auto saved_wddm = std::move(resources[0]->wddm);
+  for (UINT i = 0; i + 1 < numResources; i++) {
+    resources[i]->handle = resources[i + 1]->handle;
+    resources[i]->wddm = std::move(resources[i + 1]->wddm);
+  }
+  resources[numResources - 1]->handle = saved_handle;
+  resources[numResources - 1]->wddm = std::move(saved_wddm);
+
+  if (dev->current_rtv_resource) {
+    for (Resource* r : resources) {
+      if (dev->current_rtv_resource == r) {
+        dev->current_rtv = dev->current_rtv_resource->handle;
+
+        auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_render_targets>(AEROGPU_CMD_SET_RENDER_TARGETS);
+        cmd->color_count = dev->current_rtv ? 1u : 0u;
+        cmd->depth_stencil = dev->current_dsv;
+        for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; i++) {
+          cmd->colors[i] = 0;
+        }
+        if (dev->current_rtv) {
+          cmd->colors[0] = dev->current_rtv;
+        }
+        break;
+      }
+    }
   }
 
 #if defined(AEROGPU_UMD_TRACE_RESOURCES)

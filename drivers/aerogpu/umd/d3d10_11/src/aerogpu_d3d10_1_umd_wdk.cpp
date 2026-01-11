@@ -251,6 +251,15 @@ struct AeroGpuResource {
   uint32_t bind_flags = 0;
   uint32_t misc_flags = 0;
 
+  // WDDM identity (kernel-mode handles / allocation identities). DXGI swapchains
+  // on Win7 rotate backbuffers by calling pfnRotateResourceIdentities; when
+  // resources are backed by real WDDM allocations, these must rotate alongside
+  // the AeroGPU handle.
+  struct WddmIdentity {
+    uint64_t km_resource_handle = 0;
+    std::vector<uint64_t> km_allocation_handles;
+  } wddm;
+
   // Buffer fields.
   uint64_t size_bytes = 0;
 
@@ -2877,8 +2886,8 @@ void AEROGPU_APIENTRY SetRenderTargets(D3D10DDI_HDEVICE hDevice,
   AeroGpuResource* rtv_res = nullptr;
   if (pRTVs[0].pDrvPrivate) {
     auto* view = FromHandle<D3D10DDI_HRENDERTARGETVIEW, AeroGpuRenderTargetView>(pRTVs[0]);
-    rtv_handle = view ? view->texture : 0;
     rtv_res = view ? view->resource : nullptr;
+    rtv_handle = rtv_res ? rtv_res->handle : (view ? view->texture : 0);
   }
 
   aerogpu_handle_t dsv_handle = 0;
@@ -3313,24 +3322,53 @@ void AEROGPU_APIENTRY RotateResourceIdentities(D3D10DDI_HDEVICE hDevice,
   }
 #endif
 
-  auto* first = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(pResources[0]);
-  if (!first) {
-    return;
-  }
-  const aerogpu_handle_t saved = first->handle;
-
-  for (UINT i = 0; i + 1 < numResources; ++i) {
-    auto* dst = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(pResources[i]);
-    auto* src = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(pResources[i + 1]);
-    if (!dst || !src) {
+  std::vector<AeroGpuResource*> resources;
+  resources.reserve(numResources);
+  for (UINT i = 0; i < numResources; ++i) {
+    auto* res = pResources[i].pDrvPrivate ? FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(pResources[i]) : nullptr;
+    if (!res) {
       return;
     }
-    dst->handle = src->handle;
+    resources.push_back(res);
   }
 
-  auto* last = FromHandle<D3D10DDI_HRESOURCE, AeroGpuResource>(pResources[numResources - 1]);
-  if (last) {
-    last->handle = saved;
+  const AeroGpuResource* ref = resources[0];
+  if (!ref || ref->kind != ResourceKind::Texture2D || !(ref->bind_flags & kD3D10BindRenderTarget)) {
+    return;
+  }
+  for (UINT i = 1; i < numResources; ++i) {
+    const AeroGpuResource* r = resources[i];
+    if (!r || r->kind != ResourceKind::Texture2D || !(r->bind_flags & kD3D10BindRenderTarget) ||
+        r->width != ref->width || r->height != ref->height || r->dxgi_format != ref->dxgi_format ||
+        r->mip_levels != ref->mip_levels || r->array_size != ref->array_size) {
+      return;
+    }
+  }
+
+  const aerogpu_handle_t saved_handle = resources[0]->handle;
+  auto saved_wddm = std::move(resources[0]->wddm);
+  for (UINT i = 0; i + 1 < numResources; ++i) {
+    resources[i]->handle = resources[i + 1]->handle;
+    resources[i]->wddm = std::move(resources[i + 1]->wddm);
+  }
+  resources[numResources - 1]->handle = saved_handle;
+  resources[numResources - 1]->wddm = std::move(saved_wddm);
+
+  if (dev->current_rtv_res) {
+    for (AeroGpuResource* r : resources) {
+      if (dev->current_rtv_res == r) {
+        dev->current_rtv = dev->current_rtv_res ? dev->current_rtv_res->handle : 0;
+
+        auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_render_targets>(AEROGPU_CMD_SET_RENDER_TARGETS);
+        cmd->color_count = dev->current_rtv ? 1u : 0u;
+        cmd->depth_stencil = dev->current_dsv;
+        for (uint32_t i = 0; i < AEROGPU_MAX_RENDER_TARGETS; i++) {
+          cmd->colors[i] = 0;
+        }
+        cmd->colors[0] = dev->current_rtv;
+        break;
+      }
+    }
   }
 
 #if defined(AEROGPU_UMD_TRACE_RESOURCES)
