@@ -1,4 +1,7 @@
-use std::net::{Ipv4Addr, SocketAddr};
+use std::{
+    net::{Ipv4Addr, SocketAddr},
+    time::Duration,
+};
 
 use aero_l2_proxy::{start_server, ProxyConfig, TUNNEL_SUBPROTOCOL};
 use aero_net_stack::packet::*;
@@ -48,6 +51,20 @@ fn ws_request(addr: SocketAddr) -> tokio_tungstenite::tungstenite::http::Request
 
 fn encode_l2_frame(payload: &[u8]) -> Vec<u8> {
     aero_l2_protocol::encode_frame(payload).unwrap()
+}
+
+fn parse_metric(body: &str, name: &str) -> Option<u64> {
+    for line in body.lines() {
+        let line = line.trim();
+        if line.starts_with('#') || line.is_empty() {
+            continue;
+        }
+        let (k, v) = line.split_once(' ')?;
+        if k == name {
+            return v.parse().ok();
+        }
+    }
+    None
 }
 
 async fn wait_for_dns_response(
@@ -228,6 +245,16 @@ async fn run_dns_case(
     let proxy = start_server(cfg).await.unwrap();
     let addr = proxy.local_addr();
 
+    let baseline = reqwest::get(format!("http://{addr}/metrics"))
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    let policy_denied_start = parse_metric(&baseline, "l2_policy_denied_total").unwrap_or(0);
+    let expected_denied =
+        u64::from(!expect_allowed_ok) + u64::from(!expect_blocked_ok);
+
     let req = ws_request(addr);
     let (ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
     let (mut ws_tx, mut ws_rx) = ws.split();
@@ -280,6 +307,26 @@ async fn run_dns_case(
         assert_dns_has_last_a(&resp, id_blocked, [203, 0, 113, 11]);
     } else {
         assert_dns_rcode_and_ancount(&resp, id_blocked, 3, 0);
+    }
+
+    if expected_denied > 0 {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let body = reqwest::get(format!("http://{addr}/metrics"))
+                    .await
+                    .unwrap()
+                    .text()
+                    .await
+                    .unwrap();
+                let denied = parse_metric(&body, "l2_policy_denied_total").unwrap_or(0);
+                if denied >= policy_denied_start.saturating_add(expected_denied) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
     }
 
     ws_tx.send(Message::Close(None)).await.unwrap();
