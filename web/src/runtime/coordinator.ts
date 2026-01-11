@@ -534,6 +534,21 @@ export class WorkerCoordinator {
     return this.serialOutputBytes;
   }
 
+  getCpuIrqBitmapLo(): number {
+    if (!this.shared) return 0;
+    return Atomics.load(this.shared.status, StatusIndex.CpuIrqBitmapLo) >>> 0;
+  }
+
+  getCpuIrqBitmapHi(): number {
+    if (!this.shared) return 0;
+    return Atomics.load(this.shared.status, StatusIndex.CpuIrqBitmapHi) >>> 0;
+  }
+
+  getCpuA20Enabled(): boolean {
+    if (!this.shared) return false;
+    return Atomics.load(this.shared.status, StatusIndex.CpuA20Enabled) !== 0;
+  }
+
   getResetRequestCount(): number {
     return this.resetRequestCount;
   }

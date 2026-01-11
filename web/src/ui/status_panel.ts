@@ -62,6 +62,11 @@ export function mountStatusPanel(
           bytes: coordinator.getSerialOutputBytes(),
           tail: coordinator.getSerialOutputText().slice(-512),
         },
+        cpuIo: {
+          irqBitmapLo: `0x${coordinator.getCpuIrqBitmapLo().toString(16)}`,
+          irqBitmapHi: `0x${coordinator.getCpuIrqBitmapHi().toString(16)}`,
+          a20Enabled: coordinator.getCpuA20Enabled(),
+        },
         resetRequests: {
           count: coordinator.getResetRequestCount(),
           lastAtMs: coordinator.getLastResetRequestAtMs(),

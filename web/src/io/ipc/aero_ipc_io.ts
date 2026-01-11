@@ -186,7 +186,12 @@ export class AeroIpcIoClient {
         const base = err instanceof Error ? err.message : String(err);
         throw new Error(`${base} while waiting for ${kind} (id=${requestId})`);
       }
-      const evt = decodeEvent(bytes);
+      let evt: Event;
+      try {
+        evt = decodeEvent(bytes);
+      } catch {
+        continue;
+      }
 
       this.#handleIncomingEvent(evt);
     }

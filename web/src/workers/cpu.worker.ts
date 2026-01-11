@@ -90,6 +90,9 @@ let frameState: Int32Array | null = null;
 let io: AeroIpcIoClient | null = null;
 let didIoDemo = false;
 
+let irqBitmapLo = 0;
+let irqBitmapHi = 0;
+
 let perfWriter: PerfWriter | null = null;
 let perfFrameHeader: Int32Array | null = null;
 let perfLastFrameId = 0;
@@ -676,12 +679,28 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
       eventRing = new RingBuffer(segments.control, regions.event.byteOffset);
       const ioCmd = openRingByKind(segments.ioIpc, IO_IPC_CMD_QUEUE_KIND);
       const ioEvt = openRingByKind(segments.ioIpc, IO_IPC_EVT_QUEUE_KIND);
+      irqBitmapLo = 0;
+      irqBitmapHi = 0;
+      Atomics.store(status, StatusIndex.CpuIrqBitmapLo, 0);
+      Atomics.store(status, StatusIndex.CpuIrqBitmapHi, 0);
+      Atomics.store(status, StatusIndex.CpuA20Enabled, 0);
       io = new AeroIpcIoClient(ioCmd, ioEvt, {
         onIrq: (irq, level) => {
           perf.instant("cpu:io:irq", "t", { irq, level });
+          const idx = irq & 0xff;
+          if (idx < 32) {
+            const bit = 1 << idx;
+            irqBitmapLo = level ? (irqBitmapLo | bit) >>> 0 : (irqBitmapLo & ~bit) >>> 0;
+            Atomics.store(status, StatusIndex.CpuIrqBitmapLo, irqBitmapLo | 0);
+          } else if (idx < 64) {
+            const bit = 1 << (idx - 32);
+            irqBitmapHi = level ? (irqBitmapHi | bit) >>> 0 : (irqBitmapHi & ~bit) >>> 0;
+            Atomics.store(status, StatusIndex.CpuIrqBitmapHi, irqBitmapHi | 0);
+          }
         },
         onA20: (enabled) => {
           perf.counter("cpu:io:a20Enabled", enabled ? 1 : 0);
+          Atomics.store(status, StatusIndex.CpuA20Enabled, enabled ? 1 : 0);
         },
         onSerialOutput: (port, data) => {
           // Forward serial output to the coordinator via the runtime event ring.

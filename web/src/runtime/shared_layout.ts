@@ -43,6 +43,12 @@ export enum StatusIndex {
   IoReady = 10,
   JitReady = 11,
 
+  // Device-bus state observed by the CPU worker.
+  // These are primarily for debugging/observability until the real CPU core is wired up.
+  CpuIrqBitmapLo = 32,
+  CpuIrqBitmapHi = 33,
+  CpuA20Enabled = 34,
+
   /**
    * Guest RAM layout contract (in bytes, stored as u32).
    *
