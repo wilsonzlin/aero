@@ -692,6 +692,7 @@ For local development/testing of the `/tcp-mux` framing protocol (`aero-tcp-mux-
 - **Production (Aero Gateway):** canonical framing implemented by `backend/aero-gateway`.
 - **Dev relay (standalone):** `tools/net-proxy-server/` speaks the same framing, but uses `?token=` auth (not gateway cookie sessions).
 - **Browser client:** `web/src/net/tcpMuxProxy.ts`.
+- **TcpProxyEvent adapter:** `web/src/net/tcpProxy.ts` (`WebSocketTcpProxyMuxClient`) exposes the mux client behind the same event-sink interface as the legacy one-WebSocket-per-connection `WebSocketTcpProxyClient`.
 
 ---
 
