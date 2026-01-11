@@ -66,6 +66,50 @@ static std::string BasenameWithoutExtA(const char* path) {
   return leaf;
 }
 
+static std::string TrimAsciiWhitespace(const std::string& s) {
+  size_t start = 0;
+  while (start < s.size()) {
+    const char c = s[start];
+    if (c != ' ' && c != '\t' && c != '\r' && c != '\n') {
+      break;
+    }
+    start++;
+  }
+  size_t end = s.size();
+  while (end > start) {
+    const char c = s[end - 1];
+    if (c != ' ' && c != '\t' && c != '\r' && c != '\n') {
+      break;
+    }
+    end--;
+  }
+  return s.substr(start, end - start);
+}
+
+static bool LooksLikeTestReportJsonObject(const std::string& obj) {
+  if (obj.size() < 2) {
+    return false;
+  }
+  if (obj[0] != '{' || obj[obj.size() - 1] != '}') {
+    return false;
+  }
+  // Very small sanity checks to avoid treating truncated/corrupted output as a valid report.
+  // We intentionally do not attempt to fully parse JSON here (no dependency and no STL iostreams).
+  if (obj.find("\"schema_version\":") == std::string::npos) {
+    return false;
+  }
+  if (obj.find("\"test_name\":") == std::string::npos) {
+    return false;
+  }
+  if (obj.find("\"status\":") == std::string::npos) {
+    return false;
+  }
+  if (obj.find("\"exit_code\":") == std::string::npos) {
+    return false;
+  }
+  return true;
+}
+
 static std::wstring DirNameW(const std::wstring& path) {
   size_t pos = path.find_last_of(L"\\/");
   if (pos == std::wstring::npos) {
@@ -274,10 +318,28 @@ int main(int argc, char** argv) {
   CloseHandle(pi.hThread);
   CloseHandle(pi.hProcess);
   if (emit_json && !json_path_w.empty()) {
+    bool have_json = false;
     DWORD attr = GetFileAttributesW(json_path_w.c_str());
-    if (attr == INVALID_FILE_ATTRIBUTES || (attr & FILE_ATTRIBUTE_DIRECTORY) != 0) {
-      const std::string msg = (exit_code == 0) ? std::string() : aerogpu_test::FormatString("exit_code=%lu",
-                                                                                           (unsigned long)exit_code);
+    if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY) == 0) {
+      std::vector<unsigned char> bytes;
+      std::string read_err;
+      if (aerogpu_test::ReadFileBytes(json_path_w, &bytes, &read_err)) {
+        std::string obj = TrimAsciiWhitespace(std::string(bytes.begin(), bytes.end()));
+        if (!obj.empty() && LooksLikeTestReportJsonObject(obj)) {
+          have_json = true;
+        }
+      }
+      if (!have_json) {
+        printf("INFO: timeout_runner: invalid JSON report from child; writing fallback: %ls\n",
+               json_path_w.c_str());
+        DeleteFileW(json_path_w.c_str());
+      }
+    }
+    if (!have_json) {
+      const std::string msg =
+          (exit_code == 0)
+              ? std::string()
+              : aerogpu_test::FormatString("exit_code=%lu", (unsigned long)exit_code);
       WriteFallbackJsonIfEnabled(json_path_w, test_name, exit_code, msg);
     }
   }
