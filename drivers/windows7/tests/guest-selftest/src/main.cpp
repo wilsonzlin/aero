@@ -947,9 +947,10 @@ static std::vector<VirtioSndPciDevice> DetectVirtioSndPciDevices(Logger& log, bo
 
   SetupDiDestroyDeviceInfoList(devinfo);
   if (!allow_transitional && out.empty() && !ignored_transitional.empty()) {
-    log.LogLine(
-        "virtio-snd: found transitional PCI\\VEN_1AF4&DEV_1018 device(s) but ignoring them (use "
-        "--allow-virtio-snd-transitional to allow)");
+    log.LogLine("virtio-snd: found transitional PCI\\VEN_1AF4&DEV_1018 device(s) but ignoring them "
+                "(contract v1 modern-only)");
+    log.LogLine("virtio-snd: QEMU hint: use disable-legacy=on,x-pci-revision=0x01 for virtio-snd (recommended); "
+                "or use --allow-virtio-snd-transitional + the legacy driver package for backcompat");
   }
   return out;
 }
