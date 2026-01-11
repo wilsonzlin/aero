@@ -261,12 +261,18 @@ See:
 
 ### Optional: L2 tunnel over WebRTC (relay bridging)
 
-`proxy/webrtc-udp-relay` can also bridge a **reliable** WebRTC DataChannel labeled `l2` to an
+`proxy/webrtc-udp-relay` can also bridge a **fully reliable and ordered** WebRTC DataChannel
+labeled `l2` to an
 L2 tunnel backend WebSocket (typically `aero-l2-proxy`):
 
 ```
 browser DataChannel "l2"  <->  aero-webrtc-udp-relay  <->  aero-l2-proxy /l2
 ```
+
+The `l2` DataChannel must be configured as:
+
+- `ordered = true`
+- do **not** set `maxRetransmits` / `maxPacketLifeTime` (partial reliability)
 
 This is useful when you want to carry the L2 tunnel over a UDP-based transport (WebRTC) for
 experimentation under loss/NAT traversal.

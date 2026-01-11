@@ -217,6 +217,10 @@ services:
 
       # Optional: L2 tunnel bridging (WebRTC DataChannel label `l2` <-> backend WS `/l2`).
       #
+      # The `l2` DataChannel MUST be fully reliable and ordered:
+      #   - ordered=true
+      #   - do not set maxRetransmits/maxPacketLifeTime (partial reliability)
+      #
       # Enable by setting in `deploy/.env`:
       #   L2_BACKEND_WS_URL=ws://aero-l2-proxy:8090/l2
       #
