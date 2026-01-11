@@ -8,6 +8,12 @@ param(
 
   [string]$OutIso = (Join-Path $PSScriptRoot "..\out\aero-virtio-win7-drivers.iso"),
 
+  # Optional: override which driver packages are extracted from virtio-win.
+  [string[]]$Drivers,
+
+  # Optional: fail if audio/input drivers are requested but missing from virtio-win.
+  [switch]$StrictOptional,
+
   # Delete the staging directory produced by make-driver-pack.ps1 after the ISO is built.
   [switch]$CleanStage
 )
@@ -41,6 +47,14 @@ $packArgs = @(
   "-OutDir", $driversOut,
   "-NoZip"
 )
+
+if ($PSBoundParameters.ContainsKey("Drivers")) {
+  $packArgs += "-Drivers"
+  $packArgs += $Drivers
+}
+if ($StrictOptional) {
+  $packArgs += "-StrictOptional"
+}
 
 if ($PSCmdlet.ParameterSetName -eq "FromIso") {
   $packArgs += @("-VirtioWinIso", $VirtioWinIso)

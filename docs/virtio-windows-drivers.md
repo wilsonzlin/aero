@@ -48,8 +48,8 @@ We target the **virtio-win** driver distribution (commonly shipped as `virtio-wi
 |------------|----------------------------------------|-----------------------------------|
 | virtio-net | `VEN_1AF4&DEV_1000` / `VEN_1AF4&DEV_1041` | `NetKVM` (`netkvm.inf` / `netkvm.sys`) |
 | virtio-blk | `VEN_1AF4&DEV_1001` / `VEN_1AF4&DEV_1042` | `viostor` (`viostor.inf` / `viostor.sys`) |
-| virtio-input | `VEN_1AF4&DEV_1011` / `VEN_1AF4&DEV_1052` | `vioinput` (best-effort) |
-| virtio-snd | `VEN_1AF4&DEV_1018` / `VEN_1AF4&DEV_1059` | `viosnd` (optional; may not support Win7 in all releases) |
+| virtio-input | `VEN_1AF4&DEV_1011` / `VEN_1AF4&DEV_1052` | `vioinput` (best-effort; Win7 package not present in all virtio-win releases) |
+| virtio-snd | `VEN_1AF4&DEV_1018` / `VEN_1AF4&DEV_1059` | `viosnd` (optional; Win7 package not present in all virtio-win releases) |
 
 Notes:
 
@@ -111,6 +111,11 @@ drivers/virtio/
   sample/                    # repo-owned placeholders used by CI/tests
     ...
 ```
+
+Notes:
+
+- For Windows 7, Aero only **requires** `viostor` (storage) + `netkvm` (network).
+- `vioinput` and `viosnd` are optional and may be missing from some virtio-win versions; the packaging scripts handle this by default.
 
 ### Why we require `.inf` + `.sys` + `.cat`
 
@@ -188,6 +193,11 @@ powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-driver-pack.ps1 
   -VirtioWinIso C:\path\to\virtio-win.iso `
   -NoZip
 ```
+
+By default this requires `viostor` + `netkvm` and attempts to include `vioinput` + `viosnd` best-effort (emits a warning if missing). To control this explicitly:
+
+- Minimal pack: `-Drivers viostor,netkvm`
+- Strict optional (fail if audio/input are missing): `-StrictOptional`
 
 This produces a staging directory (by default) at:
 

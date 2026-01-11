@@ -6,14 +6,14 @@ This directory contains the **Windows 7 guest driver** workflow for Aero: build 
 
 To get a Windows 7 guest using high-performance virtio paths quickly and repeatably, Aero currently **packages drivers from the upstream virtio-win distribution** into an “Aero driver pack” ZIP.
 
-The driver pack contains (Win7 x86 + amd64):
+The driver pack contains (Win7 x86 + amd64). **Storage + network are required**; audio/input are best-effort because not all virtio-win releases ship Win7 packages for them:
 
 | Aero device | Upstream driver | Notes |
 |---|---|---|
 | `virtio-blk` | `viostor` | Storage (critical for install + performance). |
 | `virtio-net` | `NetKVM` | Network. |
-| `virtio-snd` | `viosnd` | Audio. |
-| `virtio-input` | `vioinput` | Keyboard/mouse (HID). |
+| `virtio-snd` | `viosnd` | Audio (optional; Win7 support varies by virtio-win version). |
+| `virtio-input` | `vioinput` | Keyboard/mouse (HID) (optional; Win7 support varies by virtio-win version). |
 
 This repo **does not commit** `.sys` binaries. Instead, we provide scripts that create a reproducible driver pack from a pinned virtio-win ISO.
 
@@ -28,6 +28,14 @@ This repo **does not commit** `.sys` binaries. Instead, we provide scripts that 
 powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-driver-pack.ps1 `
   -VirtioWinIso C:\path\to\virtio-win.iso
 ```
+
+Notes:
+
+- By default, `make-driver-pack.ps1` **requires** `viostor` + `netkvm`, and attempts to include `viosnd` + `vioinput` best-effort (emits a warning if missing).
+- To build a minimal pack explicitly:
+  - `-Drivers viostor,netkvm`
+- To fail if optional drivers are requested but missing:
+  - `-StrictOptional` (typically used together with `-Drivers viostor,netkvm,viosnd,vioinput`)
 
 Output:
 
@@ -113,7 +121,8 @@ See: `drivers/docs/wdk-build.md`.
 ## Basic validation plan (in-guest)
 
 - **Device Manager**
-  - Verify devices bind to `viostor`, `NetKVM`, `viosnd`, `vioinput`.
+  - Verify devices bind to `viostor` and `NetKVM`.
+  - If present in your virtio-win version/driver pack, also verify `viosnd` and `vioinput`.
 - **Storage throughput**
   - `winsat disk -seq -read` and `winsat disk -seq -write`
   - Large file copy in/out of the guest.

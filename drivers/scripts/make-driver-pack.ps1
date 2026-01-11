@@ -13,6 +13,16 @@ param(
   [string[]]$ArchCandidatesAmd64 = @("amd64", "x64"),
   [string[]]$ArchCandidatesX86 = @("x86", "i386"),
 
+  # Which virtio-win driver packages to extract.
+  #
+  # Win7 audio/input support varies by virtio-win version; by default this script
+  # requires storage+network (viostor, netkvm) and attempts to include audio/input
+  # (viosnd, vioinput) on a best-effort basis.
+  [string[]]$Drivers = @("viostor", "netkvm", "viosnd", "vioinput"),
+
+  # If set, fail when optional drivers are requested but missing.
+  [switch]$StrictOptional,
+
   [switch]$NoZip
 )
 
@@ -100,6 +110,54 @@ function Copy-VirtioWinDriver {
   Copy-Item -Path (Join-Path $archBase "*") -Destination $DestDir -Recurse -Force
 }
 
+$driverDefs = @{
+  "viostor"  = @{ Name = "viostor"; Upstream = "viostor"; Required = $true }
+  "netkvm"   = @{ Name = "netkvm"; Upstream = "NetKVM"; Required = $true }
+  "viosnd"   = @{ Name = "viosnd"; Upstream = "viosnd"; Required = $false }
+  "vioinput" = @{ Name = "vioinput"; Upstream = "vioinput"; Required = $false }
+}
+
+$requiredDrivers = @($driverDefs.Values | Where-Object { $_.Required } | ForEach-Object { $_.Name })
+
+$requestedDrivers = New-Object "System.Collections.Generic.List[string]"
+$seenDrivers = New-Object "System.Collections.Generic.HashSet[string]"
+foreach ($d in $Drivers) {
+  if ($null -eq $d) {
+    continue
+  }
+  $id = $d.Trim().ToLowerInvariant()
+  if ($id.Length -eq 0) {
+    continue
+  }
+  if ($seenDrivers.Add($id)) {
+    $requestedDrivers.Add($id) | Out-Null
+  }
+}
+
+if ($requestedDrivers.Count -eq 0) {
+  throw "-Drivers must include at least one driver. Supported: $($driverDefs.Keys -join ', ')"
+}
+
+$unknown = @()
+foreach ($id in $requestedDrivers) {
+  if (-not $driverDefs.ContainsKey($id)) {
+    $unknown += $id
+  }
+}
+if ($unknown.Count -gt 0) {
+  throw "Unknown driver(s) requested: $($unknown -join ', '). Supported: $($driverDefs.Keys -join ', ')"
+}
+
+$missingRequiredInRequest = @()
+foreach ($req in $requiredDrivers) {
+  if ($requestedDrivers -notcontains $req) {
+    $missingRequiredInRequest += $req
+  }
+}
+if ($missingRequiredInRequest.Count -gt 0) {
+  throw "This driver pack requires: $($requiredDrivers -join ', '). Missing from -Drivers: $($missingRequiredInRequest -join ', ')"
+}
+
 $mounted = $false
 $isoPath = $null
 $isoHash = $null
@@ -148,21 +206,93 @@ try {
     Copy-Item -LiteralPath $virtioReadmeSrc -Destination (Join-Path $packRoot "README.md") -Force
   }
 
-  $drivers = @(
-    @{ Name = "viostor"; Upstream = "viostor" },
-    @{ Name = "netkvm"; Upstream = "NetKVM" },
-    @{ Name = "viosnd"; Upstream = "viosnd" },
-    @{ Name = "vioinput"; Upstream = "vioinput" }
-  )
+  $driverResults = @()
+  $includedDrivers = New-Object "System.Collections.Generic.HashSet[string]"
+  $optionalMissing = New-Object "System.Collections.Generic.List[object]"
+  $warnings = New-Object "System.Collections.Generic.List[string]"
 
-  foreach ($drv in $drivers) {
-    $name = $drv.Name
+  foreach ($name in $requestedDrivers) {
+    $drv = $driverDefs[$name]
     $up = $drv.Upstream
+    $isRequired = [bool]$drv.Required
 
     Write-Host "Packing $name (from $up)..."
 
-    Copy-VirtioWinDriver -VirtioRoot $VirtioWinRoot -DriverDirName $up -OsDirCandidates $OsFolderCandidates -ArchCandidates $ArchCandidatesAmd64 -DestDir (Join-Path $win7Amd64 $name)
-    Copy-VirtioWinDriver -VirtioRoot $VirtioWinRoot -DriverDirName $up -OsDirCandidates $OsFolderCandidates -ArchCandidates $ArchCandidatesX86 -DestDir (Join-Path $win7X86 $name)
+    $targets = @(
+      @{ Id = "win7-amd64"; ArchCandidates = $ArchCandidatesAmd64; DestDir = (Join-Path $win7Amd64 $name) },
+      @{ Id = "win7-x86"; ArchCandidates = $ArchCandidatesX86; DestDir = (Join-Path $win7X86 $name) }
+    )
+
+    $includedTargets = @()
+    $missingTargets = @()
+    $targetErrors = @{}
+
+    foreach ($t in $targets) {
+      try {
+        Copy-VirtioWinDriver -VirtioRoot $VirtioWinRoot -DriverDirName $up -OsDirCandidates $OsFolderCandidates -ArchCandidates $t.ArchCandidates -DestDir $t.DestDir
+        $includedTargets += $t.Id
+      } catch {
+        $msg = $_.Exception.Message
+        $missingTargets += $t.Id
+        $targetErrors[$t.Id] = $msg
+      }
+    }
+
+    $status = "included"
+    if ($includedTargets.Count -eq 0) {
+      $status = "missing"
+    } elseif ($missingTargets.Count -gt 0) {
+      $status = "partial"
+    }
+
+    if ($includedTargets.Count -gt 0) {
+      $includedDrivers.Add($name) | Out-Null
+    }
+
+    $driverResults += @{
+      name = $name
+      upstream = $up
+      required = $isRequired
+      status = $status
+      included_targets = $includedTargets
+      missing_targets = $missingTargets
+      errors = $targetErrors
+    }
+
+    if ($missingTargets.Count -gt 0) {
+      $summary = "Driver '$name' ($up) missing for: $($missingTargets -join ', ')."
+      if ($isRequired) {
+        $detail = ""
+        if ($targetErrors.Count -gt 0) {
+          $detail = " Details: " + (($targetErrors.Keys | Sort-Object) | ForEach-Object { "$_=$($targetErrors[$_])" } -join " | ")
+        }
+        throw "$summary$detail"
+      }
+
+      $detail = ""
+      if ($targetErrors.Count -gt 0) {
+        $detail = " Details: " + (($targetErrors.Keys | Sort-Object) | ForEach-Object { "$_=$($targetErrors[$_])" } -join " | ")
+      }
+      $msg = "$summary$detail"
+      $warnings.Add($msg) | Out-Null
+      Write-Warning $msg
+      $optionalMissing.Add(@{ name = $name; missing_targets = $missingTargets; errors = $targetErrors }) | Out-Null
+    }
+  }
+
+  if ($StrictOptional -and $optionalMissing.Count -gt 0) {
+    $lines = @()
+    foreach ($m in $optionalMissing) {
+      $t = @()
+      if ($m.missing_targets) { $t = $m.missing_targets }
+      $detail = ""
+      if ($m.errors -and $m.errors.Count -gt 0) {
+        $detail = " Details: " + (($m.errors.Keys | Sort-Object) | ForEach-Object { "$_=$($m.errors[$_])" } -join " | ")
+      }
+      $lines += ("- " + $m.name + ": missing for " + ($t -join ", ") + $detail)
+    }
+    $formatted = ($lines -join "`n")
+    throw "One or more optional drivers were requested but are missing from the virtio-win source:`n$formatted`n`nHint: use a virtio-win ISO/root that includes Win7 audio/input drivers, re-run without -StrictOptional, or exclude optional drivers via -Drivers viostor,netkvm."
   }
 
   $createdUtc = (Get-Date).ToUniversalTime().ToString("o")
@@ -174,15 +304,22 @@ try {
     pack = "aero-win7-driver-pack"
     created_utc = $createdUtc
     source = [ordered]@{
+      virtio_win_root = $VirtioWinRoot
+      virtio_win_iso = $isoPath
       path = $sourcePath
       hash = $sourceHash
       volume_label = $isoVolumeLabel
       derived_version = $derivedVersion
       timestamp_utc = $createdUtc
     }
-    drivers = @("viostor", "netkvm", "viosnd", "vioinput")
+    drivers_requested = @($requestedDrivers)
+    drivers = @($includedDrivers | Sort-Object)
+    optional_drivers_missing = @($optionalMissing)
+    optional_drivers_missing_any = ($optionalMissing.Count -gt 0)
+    warnings = @($warnings)
+    driver_results = $driverResults
     targets = @("win7-x86", "win7-amd64")
-  } | ConvertTo-Json -Depth 6
+  } | ConvertTo-Json -Depth 8
 
   $manifest | Out-File -FilePath (Join-Path $packRoot "manifest.json") -Encoding UTF8
 
