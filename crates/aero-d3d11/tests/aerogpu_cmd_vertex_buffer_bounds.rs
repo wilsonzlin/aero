@@ -243,4 +243,3 @@ fn aerogpu_cmd_rejects_vertex_buffer_offset_out_of_bounds() {
         );
     });
 }
-

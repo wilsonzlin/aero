@@ -940,7 +940,7 @@ fn bulk_out_pending_queues_once_and_naks_until_completion() {
         id,
         result: UsbHostCompletionOut::Success {
             bytes_written: payload.len() as u32,
-            },
+        },
     });
 
     // Frame #3: TD completes.
