@@ -59,7 +59,7 @@ struct ImportedFuncs {
     mem_write_u16: u32,
     mem_write_u32: u32,
     mem_write_u64: u32,
-    code_page_version: u32,
+    code_page_version: Option<u32>,
     mmu_translate: Option<u32>,
     count: u32,
 }
@@ -77,7 +77,8 @@ impl Tier2WasmCodegen {
     /// - export `trace(cpu_ptr: i32, jit_ctx_ptr: i32) -> i64` (returns `next_rip`)
     /// - import `env.memory`
     /// - import memory helpers described by the `IMPORT_MEM_*` constants
-    /// - import `env.code_page_version(cpu_ptr: i32, page: i64) -> i64`
+    /// - optionally import `env.code_page_version(cpu_ptr: i32, page: i64) -> i64` when
+    ///   [`Tier2WasmOptions::code_version_guard_import`] is enabled.
     ///
     /// The trace spills cached registers + `CpuState.rflags` on every side exit.
     pub fn compile_trace(&self, trace: &TraceIr, plan: &RegAllocPlan) -> Vec<u8> {
@@ -173,7 +174,9 @@ impl Tier2WasmCodegen {
             mem_write_u16: next(&mut next_func),
             mem_write_u32: next(&mut next_func),
             mem_write_u64: next(&mut next_func),
-            code_page_version: next(&mut next_func),
+            code_page_version: options
+                .code_version_guard_import
+                .then(|| next(&mut next_func)),
             mmu_translate: options.inline_tlb.then(|| next(&mut next_func)),
             count: next_func - func_base,
         };
@@ -218,11 +221,13 @@ impl Tier2WasmCodegen {
             IMPORT_MEM_WRITE_U64,
             EntityType::Function(ty_mem_write_u64),
         );
-        imports.import(
-            IMPORT_MODULE,
-            IMPORT_CODE_PAGE_VERSION,
-            EntityType::Function(ty_code_page_version),
-        );
+        if options.code_version_guard_import {
+            imports.import(
+                IMPORT_MODULE,
+                IMPORT_CODE_PAGE_VERSION,
+                EntityType::Function(ty_code_page_version),
+            );
+        }
         if options.inline_tlb {
             imports.import(
                 IMPORT_MODULE,
@@ -625,7 +630,11 @@ impl Emitter<'_> {
                         .instruction(&Instruction::LocalGet(self.layout.cpu_ptr_local()));
                     self.f.instruction(&Instruction::I64Const(page as i64));
                     self.f
-                        .instruction(&Instruction::Call(self.imported.code_page_version));
+                        .instruction(&Instruction::Call(
+                            self.imported
+                                .code_page_version
+                                .expect("code_page_version import missing"),
+                        ));
                 } else {
                     // Inline load from the code-version table (configured by the runtime via
                     // `jit_ctx::CODE_VERSION_TABLE_{PTR,LEN}_OFFSET`).

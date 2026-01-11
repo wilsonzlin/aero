@@ -125,6 +125,33 @@ fn instantiate_trace(
     (store, memory, trace)
 }
 
+fn instantiate_trace_without_code_page_version(
+    bytes: &[u8],
+    host_env: HostEnv,
+) -> (Store<HostEnv>, Memory, TypedFunc<(i32, i32), i64>) {
+    let engine = Engine::default();
+    let module = Module::new(&engine, bytes).unwrap();
+
+    let mut store = Store::new(&engine, host_env);
+    let mut linker = Linker::new(&engine);
+
+    // Two pages: guest memory in page 0, CpuState at CPU_PTR in page 1.
+    let memory = Memory::new(&mut store, MemoryType::new(2, None)).unwrap();
+    linker
+        .define(IMPORT_MODULE, IMPORT_MEMORY, memory.clone())
+        .unwrap();
+
+    define_mem_helpers(&mut store, &mut linker, memory.clone());
+
+    // Crucially: do NOT define `env.code_page_version`. This should still instantiate when the
+    // trace is compiled with `Tier2WasmOptions { code_version_guard_import: false, .. }`.
+    let instance = linker.instantiate_and_start(&mut store, &module).unwrap();
+    let trace = instance
+        .get_typed_func::<(i32, i32), i64>(&store, EXPORT_TRACE_FN)
+        .unwrap();
+    (store, memory, trace)
+}
+
 fn bump_code_versions(
     caller: &mut Caller<'_, HostEnv>,
     memory: &Memory,
@@ -445,7 +472,8 @@ fn tier2_code_version_guard_can_inline_version_table_reads() {
     );
     validate_wasm(&wasm);
 
-    let (mut store, memory, func) = instantiate_trace(&wasm, HostEnv::default());
+    let (mut store, memory, func) =
+        instantiate_trace_without_code_page_version(&wasm, HostEnv::default());
     let guest_mem_init = vec![0u8; GUEST_MEM_SIZE];
     memory.write(&mut store, 0, &guest_mem_init).unwrap();
 
