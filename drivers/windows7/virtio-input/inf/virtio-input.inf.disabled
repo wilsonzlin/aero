@@ -1,4 +1,14 @@
-; aero_virtio_input.inf
+; virtio-input.inf (disabled) - legacy filename alias for aero_virtio_input.inf
+;
+; This INF is kept for compatibility with workflows/tools that still reference
+; the legacy filename (`virtio-input.inf`) instead of `aero_virtio_input.inf`.
+;
+; It installs the same driver/service as the canonical INF:
+;   - service: aero_virtio_input
+;   - binary : aero_virtio_input.sys
+;
+; Note: this file is checked in disabled-by-default (as `*.inf.disabled`) to
+; avoid accidentally shipping/installing **two** INFs that match the same HWIDs.
 ;
 ; Aero virtio-input PCI device -> HIDClass KMDF minidriver (Windows 7 SP1)
 ;
