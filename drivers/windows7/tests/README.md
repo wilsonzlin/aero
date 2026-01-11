@@ -31,8 +31,8 @@ drivers/windows7/tests/
 - Runs a virtio-net test (wait for DHCP, DNS resolve, HTTP GET).
 - Runs a virtio-input HID sanity test (detect virtio-input HID devices + validate separate keyboard-only + mouse-only HID devices).
 - (Optional) Runs a virtio-snd test (PCI detection + endpoint enumeration + short playback).
-  - By default, the tool emits `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|flag_not_set` (and the corresponding
-    `virtio-snd-capture|SKIP|flag_not_set`); enable playback with `--test-snd` / `--require-snd`.
+  - By default, the tool emits `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP` (and the corresponding
+    `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set`); enable playback with `--test-snd` / `--require-snd`.
   - Detects the virtio-snd PCI function by hardware ID:
     - `PCI\VEN_1AF4&DEV_1059` (modern; Aero contract v1 expects `REV_01`)
     - If QEMU is not launched with `disable-legacy=on`, virtio-snd may enumerate as the transitional ID
@@ -65,7 +65,7 @@ The host harness waits for the final `AERO_VIRTIO_SELFTEST|RESULT|...` line and 
 (virtio-blk + virtio-input + virtio-snd + virtio-net) were emitted so older selftest binaries can’t accidentally pass.
 
 Note:
-- virtio-snd playback is **opt-in**. By default the tool emits `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|flag_not_set`.
+- virtio-snd playback is **opt-in**. By default the tool emits `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP`.
   Enable playback (and require a virtio-snd device) with `--require-snd` / `--test-snd`.
   Use `--allow-virtio-snd-transitional` to also accept transitional `DEV_1018` (debug/backcompat only; contract v1 is modern-only).
   Use `--disable-snd` to force `SKIP` for both playback and capture.
@@ -134,7 +134,7 @@ The guest tool is structured so adding more tests is straightforward:
 - Enumerate audio render endpoints via MMDevice API and log them (friendly name + device ID).
 - Select the virtio-snd endpoint by friendly name substring and/or hardware ID.
 - Start a shared-mode WASAPI render stream and play a short deterministic tone (440Hz), with a waveOut fallback.
-- Enabled via `--test-snd` / `--require-snd` (otherwise `SKIP|flag_not_set`).
+- Enabled via `--test-snd` / `--require-snd` (otherwise `SKIP`).
 
 ### virtio-input
 - Enumerate HID devices via SetupAPI/HIDClass.
