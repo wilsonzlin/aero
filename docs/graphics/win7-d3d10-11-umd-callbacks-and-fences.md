@@ -328,9 +328,9 @@ Important fields:
 
 - `D3DKMT_HANDLE hContext` — context whose sync objects/fences are relevant.
 - `UINT ObjectCount`
-- `const D3DKMT_HANDLE* hSyncObjects`
-- `const UINT64* FenceValue` (target values; one per sync object)
-- `UINT64 Timeout` (in 100ns units; `0` is a poll)
+- `const D3DKMT_HANDLE* ObjectHandleArray` (one per sync object)
+- `const UINT64* FenceValueArray` (target values; one per sync object)
+- `UINT64 Timeout` (milliseconds; `0` is a poll, `~0ULL` is effectively “infinite wait”)
 
 **How to pick the target fence value:**
 
@@ -351,14 +351,15 @@ If you are not using the runtime’s wait callback (e.g., in standalone tooling)
 - Function: `NTSTATUS APIENTRY D3DKMTWaitForSynchronizationObject(D3DKMT_WAITFORSYNCHRONIZATIONOBJECT* pData)`
 - Struct: `D3DKMT_WAITFORSYNCHRONIZATIONOBJECT` (in `d3dkmthk.h`)
 
-Important fields (Win7/WDDM 1.1):
+Important fields (header names):
 
+- `D3DKMT_HANDLE hAdapter`
 - `UINT ObjectCount`
 - `const D3DKMT_HANDLE* ObjectHandleArray`
 - `const UINT64* FenceValueArray`
-- `UINT64 Timeout` (**milliseconds**; `0` is a poll)
+- `UINT64 Timeout` (**milliseconds**; `0` is a poll, `~0ULL` is effectively “infinite wait”)
 
-The “target fence value” is specified the same way: via the `FenceValueArray` field inside the wait struct.
+The “target fence value” is specified via `FenceValueArray[i]` for each sync object handle in `ObjectHandleArray[i]`.
 
 **Recommendation:** in a real UMD, prefer the runtime callback if available; it keeps the driver insulated from some OS-version quirks and ensures WOW64 thunking is correct.
 
@@ -415,6 +416,23 @@ If you call `D3DKMT*` thunks directly:
 - do not hand-roll struct layouts; include the SDK/WDK `d3dkmthk.h`
 
 This ensures the WOW64 layer performs the correct pointer-size translation for thunk parameter structs.
+
+### 5.5 x86 stdcall export decoration (common loader gotcha)
+
+On x86 (including WOW64), the UMD exports are `__stdcall`, so the *raw* symbol names are decorated with a stack size suffix:
+
+- `_OpenAdapter10@4`
+- `_OpenAdapter10_2@4`
+- `_OpenAdapter11@4`
+
+However, the runtime uses undecorated names (`"OpenAdapter10"`, etc) with `GetProcAddress`, so your DLL must also export:
+
+- `OpenAdapter10`, `OpenAdapter10_2`, `OpenAdapter11`
+
+In AeroGPU this is handled by `.def` files:
+
+- `drivers/aerogpu/umd/d3d10_11/aerogpu_d3d10_x86.def` (x86, maps undecorated → decorated)
+- `drivers/aerogpu/umd/d3d10_11/aerogpu_d3d10_x64.def` (x64, no `@N` decoration)
 
 ---
 
