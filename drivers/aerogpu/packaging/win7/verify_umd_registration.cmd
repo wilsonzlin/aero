@@ -184,11 +184,15 @@ set "OK=1"
 "%REGEXE%" query "%AEROGPU_KEY%" /v %NAME% 2>nul | findstr /i /l /c:"%TYPE%" >nul
 if errorlevel 1 set "OK=0"
 
-"%REGEXE%" query "%AEROGPU_KEY%" /v %NAME% 2>nul | findstr /i /l /c:"%EXPECT%" >nul
+set "EXPECT_RE=!EXPECT:.=[.]!"
+rem Match the expected value as a full token at end-of-line (avoid false positives
+rem like "aerogpu_d3d9" matching "aerogpu_d3d9_x64", or accidental ".dll" suffixes
+rem on InstalledDisplayDrivers values).
+"%REGEXE%" query "%AEROGPU_KEY%" /v %NAME% 2>nul | findstr /i /r /c:"%EXPECT_RE%[ ]*$" >nul
 if errorlevel 1 set "OK=0"
 
 if "%OK%"=="1" (
-  echo OK:   %NAME% (%TYPE%) contains "%EXPECT%"
+  echo OK:   %NAME% (%TYPE%) == "%EXPECT%"
 ) else (
   echo ERROR: %NAME% missing or does not match expected type/data (%TYPE%, "%EXPECT%")
   set "FAIL=1"
