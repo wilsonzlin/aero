@@ -37,18 +37,41 @@ This directory contains a clean-room, spec-based **virtio-net** driver for **Win
 
 ## Building
 
-CI builds this driver with a modern WDK (currently pinned to 10.0.22621.0) via the MSBuild project `aero_virtio_net.vcxproj`.
+### Supported: WDK10 / MSBuild (CI path)
 
-For local development you can use either:
+CI builds this driver via the MSBuild project:
 
-- `aero_virtio_net.vcxproj` (Visual Studio / MSBuild + WDK 10), or
-- the legacy WinDDK 7600 `build` utility (`sources`/`makefile` are kept for that workflow).
+- `drivers/windows7/virtio-net/aero_virtio_net.vcxproj`
+
+From a Windows host with the WDK installed:
+
+```powershell
+# From the repo root:
+.\ci\install-wdk.ps1
+.\ci\build-drivers.ps1 -ToolchainJson .\out\toolchain.json -Drivers windows7/virtio-net
+```
+
+Build outputs are staged under:
+
+- `out/drivers/windows7/virtio-net/x86/aero_virtio_net.sys`
+- `out/drivers/windows7/virtio-net/x64/aero_virtio_net.sys`
+
+To stage an installable/signable package, copy the built SYS into the package staging folder:
+
+```text
+drivers/windows7/virtio-net/inf/aero_virtio_net.sys
+```
+
+### Legacy/deprecated: WDK 7.1 `build.exe`
+
+For local development you can also use the legacy WinDDK 7600 `build` utility (`sources`/`makefile` are kept for that workflow).
 
 ## Installing on Windows 7
 
 1. Ensure the VM exposes a virtio-net PCI device (e.g. QEMU `-device virtio-net-pci,...`).
-2. Install using Device Manager → Update Driver, pointing at `inf/aero_virtio_net.inf`.
-3. Windows 7 x64 requires signed drivers unless **test signing** is enabled.
+2. Copy `inf/aero_virtio_net.inf` and `aero_virtio_net.sys` into the **same directory** on the guest.
+3. Install using Device Manager → Update Driver, pointing at `aero_virtio_net.inf`.
+4. Windows 7 x64 requires signed drivers unless **test signing** is enabled.
 
 Hardware IDs matched by `inf/aero_virtio_net.inf`:
 
