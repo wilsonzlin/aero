@@ -6,10 +6,10 @@ use aero_d3d11::FourCC;
 use aero_gpu::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode,
-    AerogpuCmdStreamHeader as ProtocolCmdStreamHeader, AerogpuPrimitiveTopology, AEROGPU_CLEAR_COLOR,
-    AEROGPU_CMD_STREAM_MAGIC, AEROGPU_INPUT_LAYOUT_BLOB_MAGIC, AEROGPU_INPUT_LAYOUT_BLOB_VERSION,
-    AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER, AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
-    AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
+    AerogpuCmdStreamHeader as ProtocolCmdStreamHeader, AerogpuPrimitiveTopology,
+    AEROGPU_CLEAR_COLOR, AEROGPU_CMD_STREAM_MAGIC, AEROGPU_INPUT_LAYOUT_BLOB_MAGIC,
+    AEROGPU_INPUT_LAYOUT_BLOB_VERSION, AEROGPU_RESOURCE_USAGE_CONSTANT_BUFFER,
+    AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
 };
 use aero_protocol::aerogpu::aerogpu_pci::{AerogpuFormat, AEROGPU_ABI_VERSION_U32};
 
@@ -180,7 +180,11 @@ fn make_ps_solid_red_dxbc() -> Vec<u8> {
         shdr.extend_from_slice(&t.to_le_bytes());
     }
 
-    make_dxbc(&[(FOURCC_ISGN, isgn), (FOURCC_OSGN, osgn), (FOURCC_SHDR, shdr)])
+    make_dxbc(&[
+        (FOURCC_ISGN, isgn),
+        (FOURCC_OSGN, osgn),
+        (FOURCC_SHDR, shdr),
+    ])
 }
 
 fn matrix_bytes(tx: f32) -> Vec<u8> {
@@ -303,7 +307,10 @@ fn aerogpu_cmd_dynamic_constant_buffer_sanity() {
         stream.extend_from_slice(&0u64.to_le_bytes()); // offset
         stream.extend_from_slice(&(cb_identity.len() as u64).to_le_bytes());
         stream.extend_from_slice(&cb_identity);
-        stream.resize(stream.len() + (align4(cb_identity.len()) - cb_identity.len()), 0);
+        stream.resize(
+            stream.len() + (align4(cb_identity.len()) - cb_identity.len()),
+            0,
+        );
         end_cmd(&mut stream, start);
 
         // CREATE_TEXTURE2D (RT_A)
@@ -401,7 +408,7 @@ fn aerogpu_cmd_dynamic_constant_buffer_sanity() {
         stream.extend_from_slice(&0u32.to_le_bytes()); // start_slot
         stream.extend_from_slice(&1u32.to_le_bytes()); // buffer_count
         stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
-        // bindings[0]
+                                                       // bindings[0]
         stream.extend_from_slice(&CB.to_le_bytes());
         stream.extend_from_slice(&0u32.to_le_bytes()); // offset_bytes
         stream.extend_from_slice(&0u32.to_le_bytes()); // size_bytes (0 = full)
@@ -469,7 +476,10 @@ fn aerogpu_cmd_dynamic_constant_buffer_sanity() {
         stream.extend_from_slice(&0u64.to_le_bytes()); // offset
         stream.extend_from_slice(&(cb_translate.len() as u64).to_le_bytes());
         stream.extend_from_slice(&cb_translate);
-        stream.resize(stream.len() + (align4(cb_translate.len()) - cb_translate.len()), 0);
+        stream.resize(
+            stream.len() + (align4(cb_translate.len()) - cb_translate.len()),
+            0,
+        );
         end_cmd(&mut stream, start);
 
         // Draw with the translated matrix.
