@@ -14,6 +14,7 @@
 mod exception;
 
 pub mod bus;
+pub mod assist;
 pub mod cpu;
 pub mod cpuid;
 pub mod descriptors;

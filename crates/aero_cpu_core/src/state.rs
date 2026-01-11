@@ -627,7 +627,7 @@ pub struct DebugRegs {
 
 /// MSR subset required for Windows 7 syscall/sysenter paths.
 #[repr(C)]
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct MsrState {
     pub efer: u64,
     pub star: u64,
@@ -642,6 +642,28 @@ pub struct MsrState {
     pub kernel_gs_base: u64,
     pub apic_base: u64,
     pub tsc: u64,
+}
+
+impl Default for MsrState {
+    fn default() -> Self {
+        Self {
+            efer: 0,
+            star: 0,
+            lstar: 0,
+            cstar: 0,
+            fmask: 0,
+            sysenter_cs: 0,
+            sysenter_eip: 0,
+            sysenter_esp: 0,
+            fs_base: 0,
+            gs_base: 0,
+            kernel_gs_base: 0,
+            // Typical reset value: APIC enabled at 0xFEE00000 with BSP bit set.
+            // (Intel SDM: IA32_APIC_BASE[11]=global enable, [8]=BSP).
+            apic_base: 0xFEE0_0000 | (1 << 11) | (1 << 8),
+            tsc: 0,
+        }
+    }
 }
 
 /// Canonical CPU state.

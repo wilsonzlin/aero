@@ -65,6 +65,8 @@ fn exec_decoded<B: CpuBus>(
         // Privileged/system instructions that require additional CPU core state.
         Mnemonic::Lgdt
         | Mnemonic::Lidt
+        | Mnemonic::Sgdt
+        | Mnemonic::Sidt
         | Mnemonic::Ltr
         | Mnemonic::Str
         | Mnemonic::Lldt
@@ -78,7 +80,11 @@ fn exec_decoded<B: CpuBus>(
         | Mnemonic::Sysenter
         | Mnemonic::Sysexit
         | Mnemonic::Rsm => Ok(ExecOutcome::Assist(AssistReason::Privileged)),
-        Mnemonic::Rdtsc | Mnemonic::Rdtscp => Ok(ExecOutcome::Assist(AssistReason::Unsupported)),
+        Mnemonic::Rdtsc
+        | Mnemonic::Rdtscp
+        | Mnemonic::Lfence
+        | Mnemonic::Sfence
+        | Mnemonic::Mfence => Ok(ExecOutcome::Assist(AssistReason::Unsupported)),
         _ => Err(Exception::InvalidOpcode),
     }
 }

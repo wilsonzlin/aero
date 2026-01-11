@@ -1,4 +1,5 @@
 use super::{exec_decoded, ExecOutcome};
+use crate::assist::{handle_assist, AssistContext};
 use crate::exception::{AssistReason, Exception};
 use crate::mem::CpuBus;
 use crate::state::CpuState;
@@ -119,6 +120,98 @@ pub fn run_batch<B: CpuBus>(state: &mut CpuState, bus: &mut B, max_insts: u64) -
                     executed,
                     exit: BatchExit::Assist(r),
                 };
+            }
+            Err(e) => {
+                return BatchResult {
+                    executed,
+                    exit: BatchExit::Exception(e),
+                };
+            }
+        }
+    }
+
+    BatchResult {
+        executed,
+        exit: BatchExit::Completed,
+    }
+}
+
+/// Tier-0 batch execution wrapper that resolves [`StepExit::Assist`] exits via
+/// [`crate::assist::handle_assist`].
+///
+/// This keeps the core Tier-0 interpreter minimal while still allowing it to
+/// execute privileged/IO/time instructions required by OS boot code.
+pub fn run_batch_with_assists<B: CpuBus>(
+    ctx: &mut AssistContext,
+    state: &mut CpuState,
+    bus: &mut B,
+    max_insts: u64,
+) -> BatchResult {
+    if state.halted {
+        return BatchResult {
+            executed: 0,
+            exit: BatchExit::Halted,
+        };
+    }
+
+    let mut executed = 0u64;
+    while executed < max_insts {
+        match step(state, bus) {
+            Ok(StepExit::Continue) => executed += 1,
+            Ok(StepExit::Branch) => {
+                executed += 1;
+                return BatchResult {
+                    executed,
+                    exit: BatchExit::Branch,
+                };
+            }
+            Ok(StepExit::Halted) => {
+                executed += 1;
+                return BatchResult {
+                    executed,
+                    exit: BatchExit::Halted,
+                };
+            }
+            Ok(StepExit::Assist(r)) => {
+                // Preserve the "basic block" behavior of `run_batch` by returning
+                // `Branch` when the assist instruction changes RIP.
+                let ip = state.rip();
+                let fetch_addr = state.seg_base_reg(Register::CS).wrapping_add(ip);
+                let bytes = match bus.fetch(fetch_addr, 15) {
+                    Ok(bytes) => bytes,
+                    Err(e) => {
+                        return BatchResult {
+                            executed,
+                            exit: BatchExit::Exception(e),
+                        };
+                    }
+                };
+                let decoded = match aero_x86::decode(&bytes, ip, state.bitness()) {
+                    Ok(decoded) => decoded,
+                    Err(_) => {
+                        return BatchResult {
+                            executed,
+                            exit: BatchExit::Exception(Exception::InvalidOpcode),
+                        };
+                    }
+                };
+                let next_ip_raw = ip.wrapping_add(decoded.len as u64);
+
+                if let Err(e) = handle_assist(ctx, state, bus, r) {
+                    return BatchResult {
+                        executed,
+                        exit: BatchExit::Exception(e),
+                    };
+                }
+                executed += 1;
+
+                let expected_next = next_ip_raw & state.mode.ip_mask();
+                if state.rip() != expected_next {
+                    return BatchResult {
+                        executed,
+                        exit: BatchExit::Branch,
+                    };
+                }
             }
             Err(e) => {
                 return BatchResult {
