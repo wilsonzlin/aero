@@ -7,6 +7,7 @@
 #include <windows.h>
 
 #include <audioclient.h>
+#include <cfgmgr32.h>
 #include <functiondiscoverykeys_devpkey.h>
 #include <mmdeviceapi.h>
 #include <mmsystem.h>
@@ -491,9 +492,279 @@ static bool IsAllowedVirtioSndPciHardwareId(const std::vector<std::wstring>& hwi
   return IsAllowedVirtioSndPciId(info, allow_transitional);
 }
 
+static constexpr const wchar_t* kVirtioSndExpectedService = L"aeroviosnd";
+
+static const char* CmProblemCodeToName(DWORD code) {
+  switch (code) {
+    case MAXDWORD:
+      return "STATUS_QUERY_FAILED";
+    case 0:
+      return "OK";
+    case 1:
+      return "NOT_CONFIGURED";
+    case 2:
+      return "DEVLOADER_FAILED";
+    case 3:
+      return "OUT_OF_MEMORY";
+    case 4:
+      return "ENTRY_IS_WRONG_TYPE";
+    case 5:
+      return "LACKED_ARBITRATOR";
+    case 6:
+      return "BOOT_CONFIG_CONFLICT";
+    case 7:
+      return "FAILED_FILTER";
+    case 8:
+      return "DEVLOADER_NOT_FOUND";
+    case 9:
+      return "INVALID_DATA";
+    case 10:
+      return "FAILED_START";
+    case 11:
+      return "LIAR";
+    case 12:
+      return "NORMAL_CONFLICT";
+    case 13:
+      return "NOT_VERIFIED";
+    case 14:
+      return "NEED_RESTART";
+    case 15:
+      return "REENUMERATION";
+    case 16:
+      return "PARTIAL_LOG_CONF";
+    case 17:
+      return "UNKNOWN_RESOURCE";
+    case 18:
+      return "REINSTALL";
+    case 19:
+      return "REGISTRY";
+    case 20:
+      return "VXDLDR";
+    case 21:
+      return "WILL_BE_REMOVED";
+    case 22:
+      return "DISABLED";
+    case 23:
+      return "DEVLOADER_NOT_READY";
+    case 24:
+      return "DEVICE_NOT_THERE";
+    case 25:
+      return "MOVED";
+    case 26:
+      return "TOO_EARLY";
+    case 27:
+      return "NO_VALID_LOG_CONF";
+    case 28:
+      return "FAILED_INSTALL";
+    case 29:
+      return "HARDWARE_DISABLED";
+    case 30:
+      return "CANT_SHARE_IRQ";
+    case 31:
+      return "FAILED_ADD";
+    case 32:
+      return "DISABLED_SERVICE";
+    case 33:
+      return "TRANSLATION_FAILED";
+    case 34:
+      return "NO_SOFTCONFIG";
+    case 35:
+      return "BIOS_TABLE";
+    case 36:
+      return "IRQ_TRANSLATION_FAILED";
+    case 37:
+      return "FAILED_DRIVER_ENTRY";
+    case 38:
+      return "DRIVER_FAILED_PRIOR_UNLOAD";
+    case 39:
+      return "DRIVER_FAILED_LOAD";
+    case 40:
+      return "DRIVER_SERVICE_KEY_INVALID";
+    case 41:
+      return "LEGACY_SERVICE_NO_DEVICES";
+    case 42:
+      return "DUPLICATE_DEVICE";
+    case 43:
+      return "FAILED_POST_START";
+    case 44:
+      return "HALTED";
+    case 45:
+      return "PHANTOM";
+    case 46:
+      return "SYSTEM_SHUTDOWN";
+    case 47:
+      return "HELD_FOR_EJECT";
+    case 48:
+      return "DRIVER_BLOCKED";
+    case 49:
+      return "REGISTRY_TOO_LARGE";
+    default:
+      return "UNKNOWN";
+  }
+}
+
+static const char* CmProblemCodeToMeaning(DWORD code) {
+  switch (code) {
+    case MAXDWORD:
+      return "CM_Get_DevNode_Status failed";
+    case 0:
+      return "device started";
+    case 1:
+      return "device is not configured";
+    case 2:
+      return "devloader failed";
+    case 3:
+      return "out of memory";
+    case 4:
+      return "device entry is wrong type";
+    case 5:
+      return "device lacked an arbitrator";
+    case 6:
+      return "boot configuration conflict";
+    case 7:
+      return "filter failed";
+    case 8:
+      return "devloader not found";
+    case 9:
+      return "invalid device data";
+    case 10:
+      return "device cannot start";
+    case 11:
+      return "device reported invalid data";
+    case 12:
+      return "resource conflict";
+    case 13:
+      return "driver/device could not be verified";
+    case 14:
+      return "requires restart";
+    case 15:
+      return "reenumeration required";
+    case 16:
+      return "partial log configuration";
+    case 17:
+      return "unknown resource";
+    case 18:
+      return "reinstall the drivers for this device";
+    case 19:
+      return "registry error";
+    case 20:
+      return "VxD loader error";
+    case 21:
+      return "device will be removed";
+    case 22:
+      return "device is disabled";
+    case 23:
+      return "devloader not ready";
+    case 24:
+      return "device is not present / not working properly";
+    case 25:
+      return "device moved";
+    case 26:
+      return "device enumerated too early";
+    case 27:
+      return "no valid log configuration";
+    case 28:
+      return "drivers for this device are not installed";
+    case 29:
+      return "hardware disabled";
+    case 30:
+      return "can't share IRQ";
+    case 31:
+      return "device could not be added";
+    case 32:
+      return "driver service is disabled";
+    case 33:
+      return "resource translation failed";
+    case 34:
+      return "no soft configuration";
+    case 35:
+      return "BIOS table problem";
+    case 36:
+      return "IRQ translation failed";
+    case 37:
+      return "failed driver entry";
+    case 38:
+      return "driver failed prior unload";
+    case 39:
+      return "driver failed to load";
+    case 40:
+      return "driver service key invalid";
+    case 41:
+      return "legacy service has no associated devices";
+    case 42:
+      return "duplicate device";
+    case 43:
+      return "failed post-start";
+    case 44:
+      return "device halted";
+    case 45:
+      return "phantom device";
+    case 46:
+      return "system shutdown";
+    case 47:
+      return "held for eject";
+    case 48:
+      return "driver blocked";
+    case 49:
+      return "registry too large";
+    default:
+      return "";
+  }
+}
+
+static std::string CmStatusFlagsToString(ULONG status) {
+  std::string out;
+  auto add = [&](const char* s) {
+    if (!out.empty()) out.push_back('|');
+    out.append(s);
+  };
+  if (status & DN_STARTED) add("STARTED");
+  if (status & DN_DRIVER_LOADED) add("DRIVER_LOADED");
+  if (status & DN_HAS_PROBLEM) add("HAS_PROBLEM");
+  if (status & DN_DISABLED) add("DISABLED");
+  if (status & DN_REMOVABLE) add("REMOVABLE");
+  if (status & DN_PRIVATE_PROBLEM) add("PRIVATE_PROBLEM");
+  if (status & DN_MF_PARENT) add("MF_PARENT");
+  if (out.empty()) out = "0";
+  return out;
+}
+
+static std::optional<std::wstring> QueryDeviceDriverRegString(HDEVINFO devinfo, SP_DEVINFO_DATA* dev,
+                                                              const wchar_t* value_name) {
+  if (!devinfo || devinfo == INVALID_HANDLE_VALUE || !dev || !value_name) return std::nullopt;
+
+  HKEY key = SetupDiOpenDevRegKey(devinfo, dev, DICS_FLAG_GLOBAL, 0, DIREG_DRV, KEY_QUERY_VALUE);
+  if (key == INVALID_HANDLE_VALUE) return std::nullopt;
+
+  DWORD type = 0;
+  DWORD bytes = 0;
+  LONG rc = RegQueryValueExW(key, value_name, nullptr, &type, nullptr, &bytes);
+  if (rc != ERROR_SUCCESS || bytes == 0 || (type != REG_SZ && type != REG_EXPAND_SZ)) {
+    RegCloseKey(key);
+    return std::nullopt;
+  }
+
+  std::vector<wchar_t> buf((bytes / sizeof(wchar_t)) + 1, L'\0');
+  rc = RegQueryValueExW(key, value_name, nullptr, &type, reinterpret_cast<LPBYTE>(buf.data()), &bytes);
+  RegCloseKey(key);
+  if (rc != ERROR_SUCCESS) return std::nullopt;
+  buf.back() = L'\0';
+  if (buf[0] == L'\0') return std::nullopt;
+  return std::wstring(buf.data());
+}
+
 struct VirtioSndPciDevice {
   std::wstring instance_id;
   std::wstring description;
+  std::vector<std::wstring> hwids;
+  std::wstring service;
+  std::wstring inf_path;
+  std::wstring inf_section;
+  DWORD cm_problem = 0;
+  ULONG cm_status = 0;
+  bool is_modern = false;
+  bool has_rev_01 = false;
+  bool is_transitional = false;
 };
 
 // KSCATEGORY_TOPOLOGY {DDA54A40-1E4C-11D1-A050-405705C10000}
@@ -529,6 +800,10 @@ static std::vector<VirtioSndPciDevice> DetectVirtioSndPciDevices(Logger& log, bo
     if (!id_info.modern && !id_info.transitional) continue;
 
     VirtioSndPciDevice snd{};
+    snd.hwids = hwids;
+    snd.is_modern = id_info.modern;
+    snd.has_rev_01 = id_info.modern_rev01;
+    snd.is_transitional = id_info.transitional;
     if (auto inst = GetDeviceInstanceIdString(devinfo, &dev)) {
       snd.instance_id = *inst;
     }
@@ -538,12 +813,42 @@ static std::vector<VirtioSndPciDevice> DetectVirtioSndPciDevices(Logger& log, bo
       snd.description = *desc;
     }
 
+    if (auto svc = GetDevicePropertyString(devinfo, &dev, SPDRP_SERVICE)) {
+      snd.service = *svc;
+    }
+    if (auto inf = QueryDeviceDriverRegString(devinfo, &dev, L"InfPath")) {
+      snd.inf_path = *inf;
+    }
+    if (auto sec = QueryDeviceDriverRegString(devinfo, &dev, L"InfSection")) {
+      snd.inf_section = *sec;
+    }
+
+    ULONG status = 0;
+    ULONG problem = 0;
+    const CONFIGRET cr = CM_Get_DevNode_Status(&status, &problem, dev.DevInst, 0);
+    if (cr == CR_SUCCESS) {
+      snd.cm_status = status;
+      snd.cm_problem = static_cast<DWORD>(problem);
+    } else {
+      log.Logf("virtio-snd: CM_Get_DevNode_Status failed pnp_id=%s cr=%lu",
+               WideToUtf8(snd.instance_id).c_str(), static_cast<unsigned long>(cr));
+      snd.cm_status = 0;
+      snd.cm_problem = MAXDWORD;
+    }
+
     log.Logf("virtio-snd: detected PCI device instance_id=%s name=%s modern=%d rev01=%d transitional=%d allowed=%d",
              WideToUtf8(snd.instance_id).c_str(), WideToUtf8(snd.description).c_str(), id_info.modern ? 1 : 0,
              id_info.modern_rev01 ? 1 : 0, id_info.transitional ? 1 : 0, allowed ? 1 : 0);
     if (!hwids.empty()) {
       log.Logf("virtio-snd: detected PCI device hwid0=%s", WideToUtf8(hwids[0]).c_str());
     }
+    log.Logf("virtio-snd: pci driver service=%s inf=%s section=%s (expected service=%s)",
+             WideToUtf8(snd.service).c_str(), WideToUtf8(snd.inf_path).c_str(),
+             WideToUtf8(snd.inf_section).c_str(), "aeroviosnd");
+    log.Logf("virtio-snd: pci cm_status=0x%08lx(%s) cm_problem=%lu(%s: %s)",
+             static_cast<unsigned long>(snd.cm_status), CmStatusFlagsToString(snd.cm_status).c_str(),
+             static_cast<unsigned long>(snd.cm_problem), CmProblemCodeToName(snd.cm_problem),
+             CmProblemCodeToMeaning(snd.cm_problem));
     if (allowed) {
       out.push_back(std::move(snd));
     } else {
@@ -616,6 +921,44 @@ static bool VirtioSndHasTopologyInterface(Logger& log, const std::vector<VirtioS
     }
   }
   return found_any;
+}
+
+struct VirtioSndBindingCheckResult {
+  bool ok = false;
+  bool any_wrong_service = false;
+  bool any_problem = false;
+};
+
+static VirtioSndBindingCheckResult CheckVirtioSndPciBinding(Logger& log,
+                                                            const std::vector<VirtioSndPciDevice>& devices) {
+  VirtioSndBindingCheckResult out;
+
+  for (const auto& dev : devices) {
+    const bool service_ok = !dev.service.empty() && EqualsInsensitive(dev.service, kVirtioSndExpectedService);
+    const bool problem_ok = (dev.cm_problem == 0) && ((dev.cm_status & DN_HAS_PROBLEM) == 0);
+
+    if (!service_ok) {
+      out.any_wrong_service = true;
+      log.Logf("virtio-snd: pci device pnp_id=%s bound_service=%s (expected %s)",
+               WideToUtf8(dev.instance_id).c_str(), WideToUtf8(dev.service).c_str(), "aeroviosnd");
+    }
+    if (!problem_ok) {
+      out.any_problem = true;
+      log.Logf("virtio-snd: pci device pnp_id=%s has ConfigManagerErrorCode=%lu (%s: %s)",
+               WideToUtf8(dev.instance_id).c_str(), static_cast<unsigned long>(dev.cm_problem),
+               CmProblemCodeToName(dev.cm_problem), CmProblemCodeToMeaning(dev.cm_problem));
+    }
+
+    if (service_ok && problem_ok) {
+      out.ok = true;
+    }
+  }
+
+  if (!out.ok) {
+    log.LogLine("virtio-snd: no virtio-snd PCI device is healthy and bound to the expected driver");
+  }
+
+  return out;
 }
 
 static std::set<DWORD> DetectVirtioDiskNumbers(Logger& log) {
@@ -3021,6 +3364,16 @@ static void PrintUsage() {
       "  --help                    Show this help\n");
 }
 
+static bool EnvVarTruthy(const wchar_t* name) {
+  if (!name || !*name) return false;
+  wchar_t buf[64]{};
+  const DWORD n = GetEnvironmentVariableW(name, buf, static_cast<DWORD>(sizeof(buf) / sizeof(buf[0])));
+  if (n == 0 || n >= (sizeof(buf) / sizeof(buf[0]))) return false;
+  std::wstring v(buf, buf + n);
+  v = ToLower(std::move(v));
+  return v == L"1" || v == L"true" || v == L"yes" || v == L"on";
+}
+
 static std::optional<uint32_t> ParseU32(const wchar_t* s) {
   if (!s || !*s) return std::nullopt;
   wchar_t* end = nullptr;
@@ -3118,6 +3471,10 @@ int wmain(int argc, wchar_t** argv) {
     }
   }
 
+  if (!opt.disable_snd && !opt.test_snd_capture && EnvVarTruthy(L"AERO_VIRTIO_SELFTEST_TEST_SND_CAPTURE")) {
+    opt.test_snd_capture = true;
+  }
+
   if (opt.disable_snd &&
       (opt.require_snd || opt.require_snd_capture || opt.test_snd_capture || opt.require_non_silence)) {
     fprintf(stderr,
@@ -3184,6 +3541,23 @@ int wmain(int argc, wchar_t** argv) {
         all_ok = false;
       } else {
         log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|device_missing");
+      }
+    } else if (const auto binding = CheckVirtioSndPciBinding(log, snd_pci); !binding.ok) {
+      const char* reason = binding.any_wrong_service ? "wrong_service"
+                          : binding.any_problem      ? "device_error"
+                                                     : "driver_not_bound";
+
+      if (want_snd_playback) {
+        log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|%s", reason);
+        all_ok = false;
+      }
+
+      if (opt.require_snd_capture) {
+        log.LogLine("virtio-snd: --require-snd-capture set; failing (driver binding not healthy)");
+        log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL|%s", reason);
+        all_ok = false;
+      } else {
+        log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|%s", reason);
       }
     } else if (!VirtioSndHasTopologyInterface(log, snd_pci)) {
       log.LogLine("virtio-snd: no KSCATEGORY_TOPOLOGY interface found for detected virtio-snd device");

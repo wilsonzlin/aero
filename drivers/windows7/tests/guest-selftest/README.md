@@ -33,6 +33,9 @@ virtio driver health via **COM1 serial** (host-captured), stdout, and a log file
       the selftest will treat the device as missing.
       - For debugging/backcompat only, you can explicitly allow transitional matching with
         `--allow-virtio-snd-transitional`.
+  - Validate that the PCI device is bound to the expected in-tree driver service (`aeroviosnd`) and emit
+    actionable diagnostics (PNP instance ID, ConfigManagerErrorCode / Device Manager “Code X”, driver INF name
+    when queryable).
   - Enumerate audio render endpoints via MMDevice API and start a shared-mode WASAPI render stream.
   - Render a short deterministic tone (440Hz) at 48kHz/16-bit/stereo.
   - If WASAPI fails, a WinMM `waveOut` fallback is attempted.
@@ -45,6 +48,7 @@ virtio driver health via **COM1 serial** (host-captured), stdout, and a log file
       (otherwise only endpoint detection is performed).
       - By default, the smoke test **PASS**es even if the captured audio is only silence.
       - Use `--require-non-silence` to fail the capture smoke test if no non-silent buffers are observed.
+      - `--test-snd-capture` can also be enabled via env var: `AERO_VIRTIO_SELFTEST_TEST_SND_CAPTURE=1`.
   - Use `--disable-snd` to force **SKIP** for both playback and capture.
 
 Note: For deterministic DNS testing under QEMU slirp, the default `--dns-host` is `host.lan`
