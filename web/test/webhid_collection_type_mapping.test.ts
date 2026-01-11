@@ -31,12 +31,12 @@ test("normalizeCollections: maps WebHID collection type strings to numeric HID c
   }
 });
 
-test("normalizeCollections: accepts numeric HID collection type codes", () => {
-  const codes = [0, 1, 2, 3, 4, 5, 6] as const;
-  for (const code of codes) {
+test("normalizeCollections: accepts numeric WebHID collection type codes", () => {
+  for (const code of [0, 1, 2, 3, 4, 5, 6] as const) {
     const normalized = normalizeCollections([{ ...BASE, type: code }]);
     assert.equal(normalized.length, 1);
     assert.equal(normalized[0]!.collectionType, code);
+    assert.equal("type" in normalized[0]!, false);
   }
 
   assert.throws(() => normalizeCollections([{ ...BASE, type: 999 as unknown as 0 }]), /collection type/i);

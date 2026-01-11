@@ -24,6 +24,7 @@ export type HidCollectionType =
 
 // HID collection type codes (HID 1.11, Collection main item payload).
 export type HidCollectionTypeCode = 0 | 1 | 2 | 3 | 4 | 5 | 6;
+export type HidCollectionTypeLike = HidCollectionType | HidCollectionTypeCode;
 
 export interface HidReportItem {
   usagePage: number;
@@ -77,7 +78,10 @@ export interface HidReportInfo {
 export interface HidCollectionInfo {
   usagePage: number;
   usage: number;
-  type: HidCollectionType | HidCollectionTypeCode;
+  // The WebHID spec exposes collection types as numeric codes, but some browser/type-definition
+  // combos use string enums ("application", "physical", ...). Accept both and normalize to the
+  // numeric HID code in the output contract.
+  type: HidCollectionTypeLike;
   children: readonly HidCollectionInfo[];
   inputReports: readonly HidReportInfo[];
   outputReports: readonly HidReportInfo[];
@@ -103,12 +107,12 @@ export type NormalizedHidReportInfo = Omit<HidReportInfo, "items"> & {
 
 export const MAX_RANGE_CONTIGUITY_CHECK_LEN = 4096;
 
-function normalizeCollectionType(type: HidCollectionType | HidCollectionTypeCode): HidCollectionTypeCode {
+function normalizeCollectionType(type: HidCollectionTypeLike): HidCollectionTypeCode {
   // Some environments surface numeric HID collection type codes directly, while others use the
   // WebHID string enum. Support both to keep the normalizer resilient to typing/library changes.
   if (typeof type === "number") {
     if (!Number.isInteger(type) || type < 0 || type > 6) {
-      throw new Error(`unknown HID collection type: ${String(type)}`);
+      throw new Error(`unknown HID collection type code: ${String(type)}`);
     }
     return type;
   }

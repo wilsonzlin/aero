@@ -87,7 +87,11 @@ Notes:
 - `collectionType` is emitted as the 1-byte collection type value used by the HID specification (e.g. `Application`, `Physical`, …).
 - We **do not** emit `Push`/`Pop`; each report item is emitted with the global state it needs (see below).
 
-Collection type codes (HID `Collection(...)` payload byte):
+Collection type codes (HID `Collection(...)` payload byte).
+
+Note: Depending on the browser / WebHID typing source, `HIDCollectionInfo.type` may be exposed as
+either the string enum (e.g. `"application"`) or the numeric code (`0..=6`). Our normalization layer
+accepts both.
 
 | WebHID collection type (`type`) | `collectionType` / `Collection(...)` byte |
 | --- | ---: |
