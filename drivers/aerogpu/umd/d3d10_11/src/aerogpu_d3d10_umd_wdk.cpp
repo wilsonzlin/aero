@@ -2315,38 +2315,12 @@ void unmap_resource_locked(D3D10DDI_HDEVICE hDevice, AeroGpuDevice* dev, AeroGpu
     return;
   }
 
-  if (res->mapped_write && res->backing_alloc_id == 0 && !res->storage.empty() && res->mapped_size) {
-    uint64_t upload_offset = res->mapped_offset;
-    uint64_t upload_size = res->mapped_size;
-    if (res->kind == ResourceKind::Buffer) {
-      const uint64_t end = res->mapped_offset + res->mapped_size;
-      if (end < res->mapped_offset) {
-        SetError(hDevice, E_INVALIDARG);
-        return;
-      }
-      upload_offset = res->mapped_offset & ~3ull;
-      const uint64_t upload_end = AlignUpU64(end, 4);
-      upload_size = upload_end - upload_offset;
-    }
-
-    if (upload_offset > static_cast<uint64_t>(res->storage.size())) {
-      SetError(hDevice, E_INVALIDARG);
-      return;
-    }
-    const size_t remaining = res->storage.size() - static_cast<size_t>(upload_offset);
-    if (upload_size > static_cast<uint64_t>(remaining)) {
-      SetError(hDevice, E_INVALIDARG);
-      return;
-    }
-    if (upload_size > static_cast<uint64_t>(SIZE_MAX)) {
-      SetError(hDevice, E_OUTOFMEMORY);
-      return;
-    }
-
-    if (res->mapped_wddm_ptr && res->mapped_wddm_allocation) {
+  if (res->mapped_wddm_ptr && res->mapped_wddm_allocation) {
+    if (res->mapped_write && !res->storage.empty() && res->mapped_size) {
       const uint8_t* src = static_cast<const uint8_t*>(res->mapped_wddm_ptr);
       const size_t off = static_cast<size_t>(res->mapped_offset);
       const size_t bytes = static_cast<size_t>(res->mapped_size);
+      const bool range_ok = (off <= res->storage.size()) && (bytes <= (res->storage.size() - off));
       if (res->kind == ResourceKind::Texture2D) {
         const uint32_t aer_fmt = dxgi_format_to_aerogpu(res->dxgi_format);
         const uint32_t bpp = bytes_per_pixel_aerogpu(aer_fmt);
@@ -2364,30 +2338,14 @@ void unmap_resource_locked(D3D10DDI_HDEVICE hDevice, AeroGpuDevice* dev, AeroGpu
               std::memset(dst_row + row_bytes, 0, dst_pitch - row_bytes);
             }
           }
-        } else {
+        } else if (range_ok) {
           std::memcpy(res->storage.data() + off, src + off, bytes);
         }
-      } else {
+      } else if (range_ok) {
         std::memcpy(res->storage.data() + off, src + off, bytes);
       }
     }
 
-    if (res->backing_alloc_id != 0) {
-      auto* dirty = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
-      if (!dirty) {
-        SetError(hDevice, E_OUTOFMEMORY);
-        return;
-      }
-      dirty->resource_handle = res->handle;
-      dirty->reserved0 = 0;
-      dirty->offset_bytes = upload_offset;
-      dirty->size_bytes = upload_size;
-    } else {
-      EmitUploadLocked(hDevice, dev, res, upload_offset, upload_size);
-    }
-  }
-
-  if (res->mapped_wddm_ptr && res->mapped_wddm_allocation) {
     const D3DDDI_DEVICECALLBACKS* cb = dev->um_callbacks;
     if (cb && cb->pfnUnlockCb) {
       D3DDDICB_UNLOCK unlock_cb = {};
@@ -2401,16 +2359,49 @@ void unmap_resource_locked(D3D10DDI_HDEVICE hDevice, AeroGpuDevice* dev, AeroGpu
     }
   }
 
-  if (res->mapped_write && res->backing_alloc_id != 0 && res->mapped_size != 0) {
-    auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
-    if (!cmd) {
-      SetError(hDevice, E_FAIL);
-      return;
+  if (res->mapped_write && res->mapped_size != 0) {
+    uint64_t upload_offset = res->mapped_offset;
+    uint64_t upload_size = res->mapped_size;
+    if (res->kind == ResourceKind::Buffer) {
+      const uint64_t end = res->mapped_offset + res->mapped_size;
+      if (end < res->mapped_offset) {
+        SetError(hDevice, E_INVALIDARG);
+        return;
+      }
+      upload_offset = res->mapped_offset & ~3ull;
+      const uint64_t upload_end = AlignUpU64(end, 4);
+      upload_size = upload_end - upload_offset;
     }
-    cmd->resource_handle = res->handle;
-    cmd->reserved0 = 0;
-    cmd->offset_bytes = res->mapped_offset;
-    cmd->size_bytes = res->mapped_size;
+
+    if (!res->storage.empty()) {
+      if (upload_offset > static_cast<uint64_t>(res->storage.size())) {
+        SetError(hDevice, E_INVALIDARG);
+        return;
+      }
+      const size_t remaining = res->storage.size() - static_cast<size_t>(upload_offset);
+      if (upload_size > static_cast<uint64_t>(remaining)) {
+        SetError(hDevice, E_INVALIDARG);
+        return;
+      }
+      if (upload_size > static_cast<uint64_t>(SIZE_MAX)) {
+        SetError(hDevice, E_OUTOFMEMORY);
+        return;
+      }
+    }
+
+    if (res->backing_alloc_id != 0) {
+      auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+      if (!cmd) {
+        SetError(hDevice, E_FAIL);
+        return;
+      }
+      cmd->resource_handle = res->handle;
+      cmd->reserved0 = 0;
+      cmd->offset_bytes = upload_offset;
+      cmd->size_bytes = upload_size;
+    } else {
+      EmitUploadLocked(hDevice, dev, res, upload_offset, upload_size);
+    }
   }
 
   res->mapped = false;
