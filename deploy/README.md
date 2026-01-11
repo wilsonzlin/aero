@@ -187,9 +187,11 @@ cp deploy/.env.example deploy/.env
   - `crates/aero-l2-proxy` reads this from `AERO_L2_SESSION_SECRET` and falls back to `SESSION_SECRET` / `AERO_GATEWAY_SESSION_SECRET` (so the deploy stack can share one secret across both services).
 - `AERO_L2_API_KEY` / `AERO_L2_JWT_SECRET` (optional)
   - Credentials for `AERO_L2_AUTH_MODE=api_key|jwt|cookie_or_jwt`.
-  - Credentials can be delivered via query params (`?token=...` / `?apiKey=...`) or an additional
-    `Sec-WebSocket-Protocol` entry `aero-l2-token.<value>` (offered alongside `aero-l2-tunnel-v1`;
-    prefer query-string delivery for JWTs).
+  - Credentials can be delivered via query params:
+    - API key auth: `?apiKey=...` (or `?token=...` for compatibility)
+    - JWT auth: `?token=...`
+    or an additional `Sec-WebSocket-Protocol` entry `aero-l2-token.<value>` (offered alongside
+    `aero-l2-tunnel-v1`; prefer query-string delivery for JWTs).
 - `AERO_L2_TOKEN` (optional, legacy)
   - Legacy alias for API-key auth.
   - When `AERO_L2_AUTH_MODE` is unset, setting `AERO_L2_TOKEN` implicitly enables `api_key` mode with
