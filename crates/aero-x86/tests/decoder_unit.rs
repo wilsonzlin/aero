@@ -324,3 +324,14 @@ fn decodes_vex_encoded_instruction_via_iced_backend() {
         .iter()
         .any(|op| matches!(op, Operand::Xmm { .. } | Operand::OtherReg { .. })));
 }
+
+#[test]
+fn decodes_xop_encoded_instruction_via_iced_backend() {
+    // An XOP-encoded SIMD instruction. Like VEX, the XOP prefix shares its first byte with a
+    // legacy opcode (`POP r/m16/32/64`), so the decoder must disambiguate and route to the iced
+    // backend when the prefix is present.
+    let bytes = [0x8F, 0xA9, 0xA8, 0x90, 0xC0];
+    let inst = decode(&bytes, DecodeMode::Bits16, 0).unwrap();
+    assert_eq!(inst.length, 5);
+    assert!(inst.operands.iter().any(|op| matches!(op, Operand::Xmm { .. })));
+}

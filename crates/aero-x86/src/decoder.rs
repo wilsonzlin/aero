@@ -592,6 +592,26 @@ fn parse_opcode(
                 2,
             ))
         }
+    } else if b0 == 0x8F {
+        // XOP prefixes share their first byte with `POP r/m16/32/64`.
+        //
+        // Disambiguate by checking the "map select" bits in what would otherwise be ModRM.rm:
+        // valid XOP maps are 8..=10 (0b01000..0b01010), while POP encodings require ModRM.reg=0
+        // and therefore can only have values 0..=7 in those low bits.
+        let b1 = *bytes.get(off + 1).ok_or(DecodeError::UnexpectedEof)?;
+        let is_extended = matches!(b1 & 0x1F, 0x08 | 0x09 | 0x0A);
+        Ok((
+            OpcodeBytes {
+                map: if is_extended {
+                    OpcodeMap::Extended
+                } else {
+                    OpcodeMap::Primary
+                },
+                opcode: b0,
+                opcode_ext: None,
+            },
+            1,
+        ))
     } else if matches!(b0, 0xC4 | 0xC5 | 0x62) {
         // VEX/EVEX prefixes share their first byte with legacy opcodes (LES/LDS/BOUND). In 16/32-bit
         // modes, the CPU disambiguates them by requiring the following byte to have ModRM.mod=3,
