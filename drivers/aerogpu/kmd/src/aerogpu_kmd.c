@@ -989,6 +989,15 @@ static NTSTATUS APIENTRY AeroGpuDdiStartDevice(_In_ const PVOID MiniportDeviceCo
         features = (ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FEATURES_LO) |
                    ((ULONGLONG)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FEATURES_HI) << 32);
 
+        if ((features & AEROGPU_FEATURE_VBLANK) != 0 &&
+            adapter->Bar0Length < (AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS + sizeof(ULONG))) {
+            AEROGPU_LOG("StartDevice: BAR0 too small (%lu bytes) for vblank regs", adapter->Bar0Length);
+            MmUnmapIoSpace(adapter->Bar0, adapter->Bar0Length);
+            adapter->Bar0 = NULL;
+            adapter->Bar0Length = 0;
+            return STATUS_DEVICE_CONFIGURATION_ERROR;
+        }
+
         AEROGPU_LOG("StartDevice: ABI=v1 magic=0x%08lx (new) abi=0x%08lx features=0x%I64x",
                     magic,
                     abiVersion,
