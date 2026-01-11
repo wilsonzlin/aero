@@ -265,7 +265,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleOffer(w http.ResponseWriter, r *http.Request) {
 	var req OfferRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 2<<20)).Decode(&req); err != nil {
 		http.Error(w, "invalid offer", http.StatusBadRequest)
 		return
 	}
@@ -349,7 +349,12 @@ func (s *Server) handleOffer(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to set local description", http.StatusInternalServerError)
 		return
 	}
-	<-gatherComplete
+	select {
+	case <-gatherComplete:
+	case <-r.Context().Done():
+		_ = sess.Close()
+		return
+	}
 
 	local := pc.LocalDescription()
 	if local == nil {
