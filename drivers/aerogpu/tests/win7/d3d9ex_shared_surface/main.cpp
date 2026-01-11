@@ -4,6 +4,26 @@
 
 using aerogpu_test::ComPtr;
 
+struct Vertex {
+  float x;
+  float y;
+  float z;
+  float rhw;
+  DWORD color;
+};
+
+struct AdapterRequirements {
+  bool allow_microsoft;
+  bool allow_non_aerogpu;
+  bool has_require_vid;
+  bool has_require_did;
+  uint32_t require_vid;
+  uint32_t require_did;
+};
+
+// Minimal NT structures needed to patch a suspended child process command line in-place.
+// This keeps the test single-binary while still passing the *child* handle value when we
+// DuplicateHandle into the child process (handle inheritance is avoided for the shared handle).
 typedef struct _AEROGPU_UNICODE_STRING {
   USHORT Length;
   USHORT MaximumLength;
@@ -65,64 +85,6 @@ static std::string FormatPciIdHex(uint32_t v) {
   return std::string(buf);
 }
 
-static int CheckAdapter(IDirect3D9Ex* d3d,
-                        const char* test_name,
-                        bool allow_microsoft,
-                        bool allow_non_aerogpu,
-                        bool has_require_vid,
-                        uint32_t require_vid,
-                        bool has_require_did,
-                        uint32_t require_did) {
-  if (!d3d) {
-    return aerogpu_test::Fail(test_name, "d3d == NULL");
-  }
-
-  D3DADAPTER_IDENTIFIER9 ident;
-  ZeroMemory(&ident, sizeof(ident));
-  HRESULT hr = d3d->GetAdapterIdentifier(D3DADAPTER_DEFAULT, 0, &ident);
-  if (SUCCEEDED(hr)) {
-    aerogpu_test::PrintfStdout("INFO: %s: adapter: %s (VID=0x%04X DID=0x%04X)",
-                               test_name,
-                               ident.Description,
-                               (unsigned)ident.VendorId,
-                               (unsigned)ident.DeviceId);
-    if (!allow_microsoft && ident.VendorId == 0x1414) {
-      return aerogpu_test::Fail(
-          test_name,
-          "refusing to run on Microsoft adapter (VID=0x%04X DID=0x%04X). "
-          "Install AeroGPU driver or pass --allow-microsoft.",
-          (unsigned)ident.VendorId,
-          (unsigned)ident.DeviceId);
-    }
-    if (has_require_vid && ident.VendorId != require_vid) {
-      return aerogpu_test::Fail(test_name,
-                                "adapter VID mismatch: got 0x%04X expected 0x%04X",
-                                (unsigned)ident.VendorId,
-                                (unsigned)require_vid);
-    }
-    if (has_require_did && ident.DeviceId != require_did) {
-      return aerogpu_test::Fail(test_name,
-                                "adapter DID mismatch: got 0x%04X expected 0x%04X",
-                                (unsigned)ident.DeviceId,
-                                (unsigned)require_did);
-    }
-    if (!allow_non_aerogpu && !has_require_vid && !has_require_did &&
-        !(ident.VendorId == 0x1414 && allow_microsoft) &&
-        !aerogpu_test::StrIContainsA(ident.Description, "AeroGPU")) {
-      return aerogpu_test::Fail(test_name,
-                                "adapter does not look like AeroGPU: %s (pass --allow-non-aerogpu "
-                                "or use --require-vid/--require-did)",
-                                ident.Description);
-    }
-  } else if (has_require_vid || has_require_did) {
-    return aerogpu_test::FailHresult(test_name,
-                                     "GetAdapterIdentifier (required for --require-vid/--require-did)",
-                                     hr);
-  }
-
-  return 0;
-}
-
 static bool ParseUintPtr(const std::string& s, uintptr_t* out, std::string* err) {
   if (s.empty()) {
     if (err) {
@@ -130,6 +92,7 @@ static bool ParseUintPtr(const std::string& s, uintptr_t* out, std::string* err)
     }
     return false;
   }
+
   errno = 0;
   char* end = NULL;
   unsigned __int64 v = _strtoui64(s.c_str(), &end, 0);
@@ -157,21 +120,71 @@ static bool ParseUintPtr(const std::string& s, uintptr_t* out, std::string* err)
   return true;
 }
 
-static HRESULT CreateD3D9ExDevice(HWND hwnd, ComPtr<IDirect3D9Ex>* out_d3d, ComPtr<IDirect3DDevice9Ex>* out_dev) {
+static int CheckD3D9Adapter(const char* test_name, IDirect3D9Ex* d3d, const AdapterRequirements& req) {
+  D3DADAPTER_IDENTIFIER9 ident;
+  ZeroMemory(&ident, sizeof(ident));
+  HRESULT hr = d3d->GetAdapterIdentifier(D3DADAPTER_DEFAULT, 0, &ident);
+  if (SUCCEEDED(hr)) {
+    aerogpu_test::PrintfStdout("INFO: %s: adapter: %s (VID=0x%04X DID=0x%04X)",
+                               test_name,
+                               ident.Description,
+                               (unsigned)ident.VendorId,
+                               (unsigned)ident.DeviceId);
+    if (!req.allow_microsoft && ident.VendorId == 0x1414) {
+      return aerogpu_test::Fail(test_name,
+                                "refusing to run on Microsoft adapter (VID=0x%04X DID=0x%04X). "
+                                "Install AeroGPU driver or pass --allow-microsoft.",
+                                (unsigned)ident.VendorId,
+                                (unsigned)ident.DeviceId);
+    }
+    if (req.has_require_vid && ident.VendorId != req.require_vid) {
+      return aerogpu_test::Fail(test_name,
+                                "adapter VID mismatch: got 0x%04X expected 0x%04X",
+                                (unsigned)ident.VendorId,
+                                (unsigned)req.require_vid);
+    }
+    if (req.has_require_did && ident.DeviceId != req.require_did) {
+      return aerogpu_test::Fail(test_name,
+                                "adapter DID mismatch: got 0x%04X expected 0x%04X",
+                                (unsigned)ident.DeviceId,
+                                (unsigned)req.require_did);
+    }
+    if (!req.allow_non_aerogpu && !req.has_require_vid && !req.has_require_did &&
+        !(ident.VendorId == 0x1414 && req.allow_microsoft) &&
+        !aerogpu_test::StrIContainsA(ident.Description, "AeroGPU")) {
+      return aerogpu_test::Fail(test_name,
+                                "adapter does not look like AeroGPU: %s (pass --allow-non-aerogpu "
+                                "or use --require-vid/--require-did)",
+                                ident.Description);
+    }
+  } else if (req.has_require_vid || req.has_require_did) {
+    return aerogpu_test::FailHresult(
+        test_name, "GetAdapterIdentifier (required for --require-vid/--require-did)", hr);
+  }
+  return 0;
+}
+
+static int CreateD3D9ExDevice(const char* test_name,
+                              HWND hwnd,
+                              int width,
+                              int height,
+                              const AdapterRequirements& req,
+                              ComPtr<IDirect3D9Ex>* out_d3d,
+                              ComPtr<IDirect3DDevice9Ex>* out_dev) {
   if (!out_d3d || !out_dev) {
-    return E_POINTER;
+    return aerogpu_test::Fail(test_name, "internal: CreateD3D9ExDevice out params are NULL");
   }
 
   ComPtr<IDirect3D9Ex> d3d;
   HRESULT hr = Direct3DCreate9Ex(D3D_SDK_VERSION, d3d.put());
   if (FAILED(hr)) {
-    return hr;
+    return aerogpu_test::FailHresult(test_name, "Direct3DCreate9Ex", hr);
   }
 
   D3DPRESENT_PARAMETERS pp;
   ZeroMemory(&pp, sizeof(pp));
-  pp.BackBufferWidth = 64;
-  pp.BackBufferHeight = 64;
+  pp.BackBufferWidth = width;
+  pp.BackBufferHeight = height;
   pp.BackBufferFormat = D3DFMT_X8R8G8B8;
   pp.BackBufferCount = 1;
   pp.SwapEffect = D3DSWAPEFFECT_DISCARD;
@@ -184,15 +197,193 @@ static HRESULT CreateD3D9ExDevice(HWND hwnd, ComPtr<IDirect3D9Ex>* out_d3d, ComP
   hr = d3d->CreateDeviceEx(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, hwnd, create_flags, &pp, NULL, dev.put());
   if (FAILED(hr)) {
     create_flags = D3DCREATE_SOFTWARE_VERTEXPROCESSING | D3DCREATE_NOWINDOWCHANGES;
-    hr = d3d->CreateDeviceEx(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, hwnd, create_flags, &pp, NULL, dev.put());
+    hr = d3d->CreateDeviceEx(D3DADAPTER_DEFAULT,
+                             D3DDEVTYPE_HAL,
+                             hwnd,
+                             create_flags,
+                             &pp,
+                             NULL,
+                             dev.put());
   }
   if (FAILED(hr)) {
-    return hr;
+    return aerogpu_test::FailHresult(test_name, "IDirect3D9Ex::CreateDeviceEx", hr);
   }
+
+  int rc = CheckD3D9Adapter(test_name, d3d.get(), req);
+  if (rc != 0) {
+    return rc;
+  }
+
+  dev->SetRenderState(D3DRS_LIGHTING, FALSE);
+  dev->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
+  dev->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
 
   out_d3d->reset(d3d.detach());
   out_dev->reset(dev.detach());
-  return S_OK;
+  return 0;
+}
+
+static int RenderTriangleToSurface(const char* test_name,
+                                  IDirect3DDevice9Ex* dev,
+                                  IDirect3DSurface9* surface,
+                                  int width,
+                                  int height) {
+  if (!dev || !surface) {
+    return aerogpu_test::Fail(test_name, "internal: RenderTriangleToSurface called with NULL");
+  }
+
+  ComPtr<IDirect3DSurface9> old_rt;
+  HRESULT hr = dev->GetRenderTarget(0, old_rt.put());
+  if (FAILED(hr)) {
+    return aerogpu_test::FailHresult(test_name, "IDirect3DDevice9Ex::GetRenderTarget", hr);
+  }
+
+  hr = dev->SetRenderTarget(0, surface);
+  if (FAILED(hr)) {
+    return aerogpu_test::FailHresult(test_name, "IDirect3DDevice9Ex::SetRenderTarget(shared)", hr);
+  }
+
+  D3DVIEWPORT9 vp;
+  vp.X = 0;
+  vp.Y = 0;
+  vp.Width = (DWORD)width;
+  vp.Height = (DWORD)height;
+  vp.MinZ = 0.0f;
+  vp.MaxZ = 1.0f;
+  hr = dev->SetViewport(&vp);
+  if (FAILED(hr)) {
+    dev->SetRenderTarget(0, old_rt.get());
+    return aerogpu_test::FailHresult(test_name, "IDirect3DDevice9Ex::SetViewport", hr);
+  }
+
+  const DWORD kRed = D3DCOLOR_XRGB(255, 0, 0);
+  const DWORD kGreen = D3DCOLOR_XRGB(0, 255, 0);
+
+  hr = dev->Clear(0, NULL, D3DCLEAR_TARGET, kRed, 1.0f, 0);
+  if (FAILED(hr)) {
+    dev->SetRenderTarget(0, old_rt.get());
+    return aerogpu_test::FailHresult(test_name, "IDirect3DDevice9Ex::Clear", hr);
+  }
+
+  Vertex verts[3];
+  // Triangle that covers the center pixel while leaving the top-left corner untouched.
+  verts[0].x = (float)width * 0.25f;
+  verts[0].y = (float)height * 0.25f;
+  verts[0].z = 0.5f;
+  verts[0].rhw = 1.0f;
+  verts[0].color = kGreen;
+  verts[1].x = (float)width * 0.75f;
+  verts[1].y = (float)height * 0.25f;
+  verts[1].z = 0.5f;
+  verts[1].rhw = 1.0f;
+  verts[1].color = kGreen;
+  verts[2].x = (float)width * 0.5f;
+  verts[2].y = (float)height * 0.75f;
+  verts[2].z = 0.5f;
+  verts[2].rhw = 1.0f;
+  verts[2].color = kGreen;
+
+  hr = dev->BeginScene();
+  if (FAILED(hr)) {
+    dev->SetRenderTarget(0, old_rt.get());
+    return aerogpu_test::FailHresult(test_name, "IDirect3DDevice9Ex::BeginScene", hr);
+  }
+
+  hr = dev->SetFVF(D3DFVF_XYZRHW | D3DFVF_DIFFUSE);
+  if (FAILED(hr)) {
+    dev->EndScene();
+    dev->SetRenderTarget(0, old_rt.get());
+    return aerogpu_test::FailHresult(test_name, "IDirect3DDevice9Ex::SetFVF", hr);
+  }
+
+  hr = dev->DrawPrimitiveUP(D3DPT_TRIANGLELIST, 1, verts, sizeof(Vertex));
+  if (FAILED(hr)) {
+    dev->EndScene();
+    dev->SetRenderTarget(0, old_rt.get());
+    return aerogpu_test::FailHresult(test_name, "IDirect3DDevice9Ex::DrawPrimitiveUP", hr);
+  }
+
+  hr = dev->EndScene();
+  if (FAILED(hr)) {
+    dev->SetRenderTarget(0, old_rt.get());
+    return aerogpu_test::FailHresult(test_name, "IDirect3DDevice9Ex::EndScene", hr);
+  }
+
+  dev->SetRenderTarget(0, old_rt.get());
+  return 0;
+}
+
+static int ValidateSurfacePixels(const char* test_name,
+                                const wchar_t* dump_name,
+                                bool dump,
+                                IDirect3DDevice9Ex* dev,
+                                IDirect3DSurface9* surface) {
+  if (!dev || !surface) {
+    return aerogpu_test::Fail(test_name, "internal: ValidateSurfacePixels called with NULL");
+  }
+
+  D3DSURFACE_DESC desc;
+  ZeroMemory(&desc, sizeof(desc));
+  HRESULT hr = surface->GetDesc(&desc);
+  if (FAILED(hr)) {
+    return aerogpu_test::FailHresult(test_name, "IDirect3DSurface9::GetDesc", hr);
+  }
+
+  ComPtr<IDirect3DSurface9> sysmem;
+  hr = dev->CreateOffscreenPlainSurface(desc.Width,
+                                        desc.Height,
+                                        desc.Format,
+                                        D3DPOOL_SYSTEMMEM,
+                                        sysmem.put(),
+                                        NULL);
+  if (FAILED(hr)) {
+    return aerogpu_test::FailHresult(test_name, "CreateOffscreenPlainSurface", hr);
+  }
+
+  hr = dev->GetRenderTargetData(surface, sysmem.get());
+  if (FAILED(hr)) {
+    return aerogpu_test::FailHresult(test_name, "GetRenderTargetData", hr);
+  }
+
+  D3DLOCKED_RECT lr;
+  ZeroMemory(&lr, sizeof(lr));
+  hr = sysmem->LockRect(&lr, NULL, D3DLOCK_READONLY);
+  if (FAILED(hr)) {
+    return aerogpu_test::FailHresult(test_name, "IDirect3DSurface9::LockRect", hr);
+  }
+
+  const int cx = (int)desc.Width / 2;
+  const int cy = (int)desc.Height / 2;
+  const uint32_t center = aerogpu_test::ReadPixelBGRA(lr.pBits, (int)lr.Pitch, cx, cy);
+  const uint32_t corner = aerogpu_test::ReadPixelBGRA(lr.pBits, (int)lr.Pitch, 5, 5);
+
+  if (dump && dump_name) {
+    std::string err;
+    if (!aerogpu_test::WriteBmp32BGRA(
+            aerogpu_test::JoinPath(aerogpu_test::GetModuleDir(), dump_name),
+            (int)desc.Width,
+            (int)desc.Height,
+            lr.pBits,
+            (int)lr.Pitch,
+            &err)) {
+      aerogpu_test::PrintfStdout("INFO: %s: BMP dump failed: %s", test_name, err.c_str());
+    }
+  }
+
+  sysmem->UnlockRect();
+
+  const uint32_t expected_center = 0xFF00FF00u;  // BGRA = (0, 255, 0, 255).
+  const uint32_t expected_corner = 0xFFFF0000u;  // BGRA = (0, 0, 255, 255).
+
+  if ((center & 0x00FFFFFFu) != (expected_center & 0x00FFFFFFu) ||
+      (corner & 0x00FFFFFFu) != (expected_corner & 0x00FFFFFFu)) {
+    return aerogpu_test::Fail(test_name,
+                              "pixel mismatch: center=0x%08lX corner(5,5)=0x%08lX",
+                              (unsigned long)center,
+                              (unsigned long)corner);
+  }
+
+  return 0;
 }
 
 static bool PatchChildCommandLineSharedHandle(HANDLE child_process,
@@ -322,232 +513,175 @@ static bool PatchChildCommandLineSharedHandle(HANDLE child_process,
   return true;
 }
 
-static int RunChild(int argc, char** argv) {
+static int RunChild(int argc, char** argv, const AdapterRequirements& req, bool dump) {
   const char* kTestName = "d3d9ex_shared_surface(child)";
-
-  const bool allow_microsoft = aerogpu_test::HasArg(argc, argv, "--allow-microsoft");
-  const bool allow_non_aerogpu = aerogpu_test::HasArg(argc, argv, "--allow-non-aerogpu");
-
-  uint32_t require_vid = 0;
-  uint32_t require_did = 0;
-  bool has_require_vid = false;
-  bool has_require_did = false;
-  std::string require_vid_str;
-  std::string require_did_str;
-  if (aerogpu_test::GetArgValue(argc, argv, "--require-vid", &require_vid_str)) {
-    std::string err;
-    if (!aerogpu_test::ParseUint32(require_vid_str, &require_vid, &err)) {
-      return aerogpu_test::Fail(kTestName, "invalid --require-vid: %s", err.c_str());
-    }
-    has_require_vid = true;
-  }
-  if (aerogpu_test::GetArgValue(argc, argv, "--require-did", &require_did_str)) {
-    std::string err;
-    if (!aerogpu_test::ParseUint32(require_did_str, &require_did, &err)) {
-      return aerogpu_test::Fail(kTestName, "invalid --require-did: %s", err.c_str());
-    }
-    has_require_did = true;
-  }
 
   std::string handle_str;
   if (!aerogpu_test::GetArgValue(argc, argv, "--shared-handle", &handle_str)) {
-    return aerogpu_test::Fail(kTestName, "missing --shared-handle");
+    return aerogpu_test::Fail(kTestName, "missing required --shared-handle in --child mode");
   }
 
-  uintptr_t handle_val = 0;
-  std::string parse_err;
-  if (!ParseUintPtr(handle_str, &handle_val, &parse_err) || handle_val == 0) {
-    return aerogpu_test::Fail(kTestName, "invalid --shared-handle: %s", parse_err.c_str());
+  uintptr_t handle_value = 0;
+  std::string err;
+  if (!ParseUintPtr(handle_str, &handle_value, &err) || handle_value == 0) {
+    return aerogpu_test::Fail(kTestName, "invalid --shared-handle: %s", err.c_str());
   }
 
-  HWND hwnd = aerogpu_test::CreateBasicWindow(L"AeroGPU_D3D9ExSharedSurface_Child",
-                                              L"AeroGPU D3D9Ex Shared Surface Child",
-                                              64,
-                                              64,
+  const HANDLE shared_handle = (HANDLE)handle_value;
+  aerogpu_test::PrintfStdout("INFO: %s: shared handle=%p", kTestName, shared_handle);
+
+  const int kWidth = 64;
+  const int kHeight = 64;
+  const D3DFORMAT kFormat = D3DFMT_X8R8G8B8;
+
+  HWND hwnd = aerogpu_test::CreateBasicWindow(L"AeroGPU_D3D9ExSharedSurfaceChild",
+                                              L"AeroGPU D3D9Ex Shared Surface (Child)",
+                                              kWidth,
+                                              kHeight,
                                               false);
   if (!hwnd) {
-    return aerogpu_test::Fail(kTestName, "CreateBasicWindow failed");
+    return aerogpu_test::Fail(kTestName, "CreateBasicWindow(child) failed");
   }
 
   ComPtr<IDirect3D9Ex> d3d;
   ComPtr<IDirect3DDevice9Ex> dev;
-  HRESULT hr = CreateD3D9ExDevice(hwnd, &d3d, &dev);
-  if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CreateD3D9ExDevice", hr);
-  }
-
-  int rc = CheckAdapter(d3d.get(),
-                        kTestName,
-                        allow_microsoft,
-                        allow_non_aerogpu,
-                        has_require_vid,
-                        require_vid,
-                        has_require_did,
-                        require_did);
-  if (rc) {
+  int rc = CreateD3D9ExDevice(kTestName, hwnd, kWidth, kHeight, req, &d3d, &dev);
+  if (rc != 0) {
     return rc;
   }
 
-  HANDLE shared = (HANDLE)handle_val;
+  HANDLE open_handle = shared_handle;
   ComPtr<IDirect3DTexture9> tex;
-  hr = dev->CreateTexture(64,
-                          64,
-                          1,
-                          D3DUSAGE_RENDERTARGET,
-                          D3DFMT_X8R8G8B8,
-                          D3DPOOL_DEFAULT,
-                          tex.put(),
-                          &shared);
-  if (FAILED(hr) || !tex) {
+  HRESULT hr = dev->CreateTexture(kWidth,
+                                  kHeight,
+                                  1,
+                                  D3DUSAGE_RENDERTARGET,
+                                  kFormat,
+                                  D3DPOOL_DEFAULT,
+                                  tex.put(),
+                                  &open_handle);
+  if (FAILED(hr)) {
     return aerogpu_test::FailHresult(kTestName, "CreateTexture(open shared)", hr);
   }
 
-  ComPtr<IDirect3DSurface9> surf;
-  hr = tex->GetSurfaceLevel(0, surf.put());
-  if (FAILED(hr) || !surf) {
-    return aerogpu_test::FailHresult(kTestName, "GetSurfaceLevel", hr);
+  ComPtr<IDirect3DSurface9> surface;
+  hr = tex->GetSurfaceLevel(0, surface.put());
+  if (FAILED(hr)) {
+    return aerogpu_test::FailHresult(kTestName, "IDirect3DTexture9::GetSurfaceLevel", hr);
   }
 
-  hr = dev->ColorFill(surf.get(), NULL, D3DCOLOR_XRGB(0, 128, 255));
-  if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "ColorFill(shared surface)", hr);
+  rc = ValidateSurfacePixels(kTestName,
+                             L"d3d9ex_shared_surface_child.bmp",
+                             dump,
+                             dev.get(),
+                             surface.get());
+  if (rc != 0) {
+    return rc;
   }
 
-  hr = dev->Flush();
-  if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "Flush", hr);
-  }
+  CloseHandle(shared_handle);
 
   aerogpu_test::PrintfStdout("PASS: %s", kTestName);
   return 0;
 }
 
-static int RunParent(int argc, char** argv) {
+static int RunParent(int argc,
+                     char** argv,
+                     const AdapterRequirements& req,
+                     bool dump,
+                     bool hidden) {
   const char* kTestName = "d3d9ex_shared_surface";
 
-  if (aerogpu_test::HasHelpArg(argc, argv)) {
-    aerogpu_test::PrintfStdout(
-        "Usage: %s.exe [--require-vid=0x####] [--require-did=0x####] [--allow-microsoft] "
-        "[--allow-non-aerogpu]",
-        kTestName);
-    return 0;
-  }
-
-  const bool allow_microsoft = aerogpu_test::HasArg(argc, argv, "--allow-microsoft");
-  const bool allow_non_aerogpu = aerogpu_test::HasArg(argc, argv, "--allow-non-aerogpu");
-
-  uint32_t require_vid = 0;
-  uint32_t require_did = 0;
-  bool has_require_vid = false;
-  bool has_require_did = false;
-  std::string require_vid_str;
-  std::string require_did_str;
-  if (aerogpu_test::GetArgValue(argc, argv, "--require-vid", &require_vid_str)) {
-    std::string err;
-    if (!aerogpu_test::ParseUint32(require_vid_str, &require_vid, &err)) {
-      return aerogpu_test::Fail(kTestName, "invalid --require-vid: %s", err.c_str());
-    }
-    has_require_vid = true;
-  }
-  if (aerogpu_test::GetArgValue(argc, argv, "--require-did", &require_did_str)) {
-    std::string err;
-    if (!aerogpu_test::ParseUint32(require_did_str, &require_did, &err)) {
-      return aerogpu_test::Fail(kTestName, "invalid --require-did: %s", err.c_str());
-    }
-    has_require_did = true;
-  }
+  const int kWidth = 64;
+  const int kHeight = 64;
+  const D3DFORMAT kFormat = D3DFMT_X8R8G8B8;
 
   HWND hwnd = aerogpu_test::CreateBasicWindow(L"AeroGPU_D3D9ExSharedSurface",
                                               L"AeroGPU D3D9Ex Shared Surface",
-                                              64,
-                                              64,
-                                              false);
+                                              kWidth,
+                                              kHeight,
+                                              !hidden);
   if (!hwnd) {
     return aerogpu_test::Fail(kTestName, "CreateBasicWindow failed");
   }
 
   ComPtr<IDirect3D9Ex> d3d;
   ComPtr<IDirect3DDevice9Ex> dev;
-  HRESULT hr = CreateD3D9ExDevice(hwnd, &d3d, &dev);
-  if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "CreateD3D9ExDevice", hr);
-  }
-
-  int rc = CheckAdapter(d3d.get(),
-                        kTestName,
-                        allow_microsoft,
-                        allow_non_aerogpu,
-                        has_require_vid,
-                        require_vid,
-                        has_require_did,
-                        require_did);
-  if (rc) {
+  int rc = CreateD3D9ExDevice(kTestName, hwnd, kWidth, kHeight, req, &d3d, &dev);
+  if (rc != 0) {
     return rc;
   }
 
-  HANDLE shared = NULL;
+  HANDLE shared_handle = NULL;
   ComPtr<IDirect3DTexture9> tex;
-  hr = dev->CreateTexture(64,
-                          64,
-                          1,
-                          D3DUSAGE_RENDERTARGET,
-                          D3DFMT_X8R8G8B8,
-                          D3DPOOL_DEFAULT,
-                          tex.put(),
-                          &shared);
-  if (FAILED(hr) || !tex) {
-    return aerogpu_test::FailHresult(kTestName, "CreateTexture(create shared)", hr);
-  }
-  if (!shared) {
-    return aerogpu_test::Fail(kTestName, "CreateTexture(create shared) returned NULL shared handle");
-  }
-
-  ComPtr<IDirect3DSurface9> surf;
-  hr = tex->GetSurfaceLevel(0, surf.put());
-  if (FAILED(hr) || !surf) {
-    return aerogpu_test::FailHresult(kTestName, "GetSurfaceLevel", hr);
-  }
-
-  hr = dev->ColorFill(surf.get(), NULL, D3DCOLOR_XRGB(255, 0, 0));
+  HRESULT hr = dev->CreateTexture(kWidth,
+                                  kHeight,
+                                  1,
+                                  D3DUSAGE_RENDERTARGET,
+                                  kFormat,
+                                  D3DPOOL_DEFAULT,
+                                  tex.put(),
+                                  &shared_handle);
   if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "ColorFill(parent shared surface)", hr);
+    return aerogpu_test::FailHresult(kTestName, "CreateTexture(shared)", hr);
   }
-  hr = dev->Flush();
-  if (FAILED(hr)) {
-    return aerogpu_test::FailHresult(kTestName, "Flush(parent)", hr);
+  if (!shared_handle) {
+    return aerogpu_test::Fail(kTestName,
+                              "CreateTexture(shared) succeeded but returned NULL shared handle");
   }
 
-  // Ensure we don't accidentally rely on handle inheritance for the D3D shared handle; the child
-  // should only see it via DuplicateHandle into the child process.
-  SetHandleInformation(shared, HANDLE_FLAG_INHERIT, 0);
+  ComPtr<IDirect3DSurface9> surface;
+  hr = tex->GetSurfaceLevel(0, surface.put());
+  if (FAILED(hr)) {
+    CloseHandle(shared_handle);
+    return aerogpu_test::FailHresult(kTestName, "IDirect3DTexture9::GetSurfaceLevel", hr);
+  }
+
+  rc = RenderTriangleToSurface(kTestName, dev.get(), surface.get(), kWidth, kHeight);
+  if (rc != 0) {
+    CloseHandle(shared_handle);
+    return rc;
+  }
+
+  rc = ValidateSurfacePixels(
+      kTestName, L"d3d9ex_shared_surface_parent.bmp", dump, dev.get(), surface.get());
+  if (rc != 0) {
+    CloseHandle(shared_handle);
+    return rc;
+  }
+
+  // Ensure the shared handle is not inherited: the child should only observe it via DuplicateHandle
+  // into the child process (which is closer to how DWM consumes app surfaces).
+  SetHandleInformation(shared_handle, HANDLE_FLAG_INHERIT, 0);
 
   std::wstring exe_path = GetModulePath();
   if (exe_path.empty()) {
-    CloseHandle(shared);
+    CloseHandle(shared_handle);
     return aerogpu_test::Fail(kTestName, "GetModuleFileNameW failed");
   }
 
-  // Create the child process first with a placeholder shared-handle token, then duplicate the
-  // handle into the child and patch the child command line in-place before resuming. This keeps
-  // the test single-binary and avoids any extra IPC while still passing the *child* handle value.
   const std::string placeholder_hex = FormatHandleHex((HANDLE)0);
   std::wstring cmdline = L"\"";
   cmdline += exe_path;
   cmdline += L"\" --child --shared-handle=";
   cmdline += std::wstring(placeholder_hex.begin(), placeholder_hex.end());
-  if (allow_microsoft) {
+  cmdline += L" --hidden";
+  if (dump) {
+    cmdline += L" --dump";
+  }
+  if (req.allow_microsoft) {
     cmdline += L" --allow-microsoft";
   }
-  if (allow_non_aerogpu) {
+  if (req.allow_non_aerogpu) {
     cmdline += L" --allow-non-aerogpu";
   }
-  if (has_require_vid) {
-    std::string v = FormatPciIdHex(require_vid);
+  if (req.has_require_vid) {
+    std::string v = FormatPciIdHex(req.require_vid);
     cmdline += L" --require-vid=";
     cmdline += std::wstring(v.begin(), v.end());
   }
-  if (has_require_did) {
-    std::string v = FormatPciIdHex(require_did);
+  if (req.has_require_did) {
+    std::string v = FormatPciIdHex(req.require_did);
     cmdline += L" --require-did=";
     cmdline += std::wstring(v.begin(), v.end());
   }
@@ -574,15 +708,14 @@ static int RunParent(int argc, char** argv) {
                            &pi);
   if (!ok) {
     DWORD err = GetLastError();
-    CloseHandle(shared);
-    return aerogpu_test::Fail(kTestName,
-                              "CreateProcessW failed: %s",
-                              aerogpu_test::Win32ErrorToString(err).c_str());
+    CloseHandle(shared_handle);
+    return aerogpu_test::Fail(
+        kTestName, "CreateProcessW failed: %s", aerogpu_test::Win32ErrorToString(err).c_str());
   }
 
   HANDLE child_handle_value = NULL;
   if (!DuplicateHandle(GetCurrentProcess(),
-                       shared,
+                       shared_handle,
                        pi.hProcess,
                        &child_handle_value,
                        0,
@@ -594,7 +727,7 @@ static int RunParent(int argc, char** argv) {
     WaitForSingleObject(pi.hProcess, 5000);
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
-    CloseHandle(shared);
+    CloseHandle(shared_handle);
     return aerogpu_test::Fail(kTestName,
                               "DuplicateHandle(into child) failed: %s",
                               aerogpu_test::Win32ErrorToString(err).c_str());
@@ -606,18 +739,23 @@ static int RunParent(int argc, char** argv) {
     WaitForSingleObject(pi.hProcess, 5000);
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
-    CloseHandle(shared);
+    CloseHandle(shared_handle);
     return aerogpu_test::Fail(kTestName, "failed to patch child command line: %s", patch_err.c_str());
   }
 
   ResumeThread(pi.hThread);
-  DWORD wait = WaitForSingleObject(pi.hProcess, 30000);
+
+  // Keep this comfortably below the suite's default per-test timeout (30s) so that if the child
+  // hangs, we can still terminate it before aerogpu_timeout_runner.exe kills the parent, which
+  // would otherwise leave an orphaned child process behind.
+  const DWORD kChildTimeoutMs = 20000;
+  DWORD wait = WaitForSingleObject(pi.hProcess, kChildTimeoutMs);
   if (wait == WAIT_TIMEOUT) {
     TerminateProcess(pi.hProcess, 124);
     WaitForSingleObject(pi.hProcess, 5000);
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
-    CloseHandle(shared);
+    CloseHandle(shared_handle);
     return aerogpu_test::Fail(kTestName, "child timed out");
   }
   if (wait != WAIT_OBJECT_0) {
@@ -626,9 +764,9 @@ static int RunParent(int argc, char** argv) {
     WaitForSingleObject(pi.hProcess, 5000);
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
-    CloseHandle(shared);
+    CloseHandle(shared_handle);
     return aerogpu_test::Fail(kTestName,
-                              "child did not exit cleanly: %s",
+                              "WaitForSingleObject(child) failed: %s",
                               aerogpu_test::Win32ErrorToString(err).c_str());
   }
 
@@ -637,7 +775,7 @@ static int RunParent(int argc, char** argv) {
     DWORD err = GetLastError();
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
-    CloseHandle(shared);
+    CloseHandle(shared_handle);
     return aerogpu_test::Fail(kTestName,
                               "GetExitCodeProcess failed: %s",
                               aerogpu_test::Win32ErrorToString(err).c_str());
@@ -645,7 +783,7 @@ static int RunParent(int argc, char** argv) {
 
   CloseHandle(pi.hThread);
   CloseHandle(pi.hProcess);
-  CloseHandle(shared);
+  CloseHandle(shared_handle);
 
   if (exit_code != 0) {
     return aerogpu_test::Fail(kTestName, "child failed with exit code %lu", (unsigned long)exit_code);
@@ -655,10 +793,52 @@ static int RunParent(int argc, char** argv) {
   return 0;
 }
 
+static int RunSharedSurfaceTest(int argc, char** argv) {
+  const char* kTestName = "d3d9ex_shared_surface";
+  if (aerogpu_test::HasHelpArg(argc, argv)) {
+    aerogpu_test::PrintfStdout(
+        "Usage: %s.exe [--dump] [--hidden] [--require-vid=0x####] [--require-did=0x####] "
+        "[--allow-microsoft] [--allow-non-aerogpu]",
+        kTestName);
+    aerogpu_test::PrintfStdout("Internal: %s.exe --child --shared-handle=0x... (used by parent)", kTestName);
+    return 0;
+  }
+
+  const bool child = aerogpu_test::HasArg(argc, argv, "--child");
+  const bool dump = aerogpu_test::HasArg(argc, argv, "--dump");
+  const bool allow_microsoft = aerogpu_test::HasArg(argc, argv, "--allow-microsoft");
+  const bool allow_non_aerogpu = aerogpu_test::HasArg(argc, argv, "--allow-non-aerogpu");
+  const bool hidden = aerogpu_test::HasArg(argc, argv, "--hidden");
+
+  AdapterRequirements req;
+  ZeroMemory(&req, sizeof(req));
+  req.allow_microsoft = allow_microsoft;
+  req.allow_non_aerogpu = allow_non_aerogpu;
+
+  std::string require_vid_str;
+  std::string require_did_str;
+  if (aerogpu_test::GetArgValue(argc, argv, "--require-vid", &require_vid_str)) {
+    std::string err;
+    if (!aerogpu_test::ParseUint32(require_vid_str, &req.require_vid, &err)) {
+      return aerogpu_test::Fail(kTestName, "invalid --require-vid: %s", err.c_str());
+    }
+    req.has_require_vid = true;
+  }
+  if (aerogpu_test::GetArgValue(argc, argv, "--require-did", &require_did_str)) {
+    std::string err;
+    if (!aerogpu_test::ParseUint32(require_did_str, &req.require_did, &err)) {
+      return aerogpu_test::Fail(kTestName, "invalid --require-did: %s", err.c_str());
+    }
+    req.has_require_did = true;
+  }
+
+  if (child) {
+    return RunChild(argc, argv, req, dump);
+  }
+  return RunParent(argc, argv, req, dump, hidden);
+}
+
 int main(int argc, char** argv) {
   aerogpu_test::ConfigureProcessForAutomation();
-  if (aerogpu_test::HasArg(argc, argv, "--child")) {
-    return RunChild(argc, argv);
-  }
-  return RunParent(argc, argv);
+  return RunSharedSurfaceTest(argc, argv);
 }
