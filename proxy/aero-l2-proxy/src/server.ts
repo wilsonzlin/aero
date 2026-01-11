@@ -5,6 +5,7 @@ import { WebSocketServer, type WebSocket } from "../../../tools/minimal_ws.js";
 
 import { loadConfigFromEnv, type L2ProxyConfig } from "./config.ts";
 import { ConnectionCounter, SessionQuota } from "./limits.ts";
+import { L2ProxyMetrics } from "./metrics.ts";
 import { chooseL2Subprotocol, L2_TUNNEL_PATH, validateL2WsUpgrade } from "./policy.ts";
 
 export interface RunningL2ProxyServer {
@@ -76,11 +77,19 @@ function byteLength(data: unknown): number {
 export async function startL2ProxyServer(overrides: Partial<L2ProxyConfig> = {}): Promise<RunningL2ProxyServer> {
   const config: L2ProxyConfig = { ...loadConfigFromEnv(), ...overrides };
 
+  const metrics = new L2ProxyMetrics();
+
   const server = http.createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     if (req.method === "GET" && url.pathname === "/healthz") {
       res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
       res.end(JSON.stringify({ ok: true }));
+      return;
+    }
+    if (req.method === "GET" && url.pathname === "/metrics") {
+      const body = metrics.renderPrometheus();
+      res.writeHead(200, { "content-type": "text/plain; version=0.0.4; charset=utf-8" });
+      res.end(body);
       return;
     }
 
@@ -121,11 +130,13 @@ export async function startL2ProxyServer(overrides: Partial<L2ProxyConfig> = {})
 
     const decision = validateL2WsUpgrade(req, url, config, connCounter.getActive());
     if (!decision.ok) {
+      metrics.policyDenied();
       respondHttp(socket, decision.status, decision.message);
       return;
     }
 
     if (!connCounter.acquire()) {
+      metrics.policyDenied();
       respondHttp(socket, 429, "Too many connections");
       return;
     }
@@ -136,8 +147,11 @@ export async function startL2ProxyServer(overrides: Partial<L2ProxyConfig> = {})
         if (released) return;
         released = true;
         connCounter.release();
+        metrics.sessionClosed();
       };
     })();
+
+    metrics.sessionOpened();
 
     try {
       wss.handleUpgrade(req, socket, head, (ws) => {
@@ -148,8 +162,10 @@ export async function startL2ProxyServer(overrides: Partial<L2ProxyConfig> = {})
 
         ws.on("message", (data) => {
           const len = byteLength(data);
+          metrics.frameRx(len);
           const q = quota.onRxFrame(len);
           if (!q.ok) {
+            metrics.frameDropped();
             wsCloseSafe(ws, 1008, q.reason);
           }
         });
@@ -159,9 +175,11 @@ export async function startL2ProxyServer(overrides: Partial<L2ProxyConfig> = {})
           const len = byteLength(data);
           const q = quota.onTxFrame(len);
           if (!q.ok) {
+            metrics.frameDropped();
             wsCloseSafe(ws, 1008, q.reason);
             return;
           }
+          metrics.frameTx(len);
           // @ts-expect-error - ws has multiple overloads; we forward dynamically.
           return originalSend(data, ...args);
         }) as typeof ws.send;
