@@ -2121,7 +2121,12 @@ static HRESULT CreateShaderCommon(D3D10DDI_HDEVICE hDevice,
   auto* sh = new (hShader.pDrvPrivate) AeroGpuShader();
   sh->handle = AllocateGlobalHandle(dev->adapter);
   sh->stage = stage;
-  sh->dxbc.resize(code_size);
+  try {
+    sh->dxbc.resize(code_size);
+  } catch (...) {
+    sh->~AeroGpuShader();
+    return E_OUTOFMEMORY;
+  }
   std::memcpy(sh->dxbc.data(), pCode, code_size);
 
   auto* cmd = dev->cmd.append_with_payload<aerogpu_cmd_create_shader_dxbc>(
@@ -2215,7 +2220,12 @@ HRESULT AEROGPU_APIENTRY CreateElementLayout(D3D10DDI_HDEVICE hDevice,
 
   const size_t blob_size = sizeof(aerogpu_input_layout_blob_header) +
                            static_cast<size_t>(pDesc->NumElements) * sizeof(aerogpu_input_layout_element_dxgi);
-  layout->blob.resize(blob_size);
+  try {
+    layout->blob.resize(blob_size);
+  } catch (...) {
+    layout->~AeroGpuInputLayout();
+    return E_OUTOFMEMORY;
+  }
 
   auto* hdr = reinterpret_cast<aerogpu_input_layout_blob_header*>(layout->blob.data());
   hdr->magic = AEROGPU_INPUT_LAYOUT_BLOB_MAGIC;
