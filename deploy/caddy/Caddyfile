@@ -45,9 +45,12 @@
 
 	# WebSocket L2 tunnel proxy endpoint.
 	#
-	# Auth note: `/l2` is authenticated by `aero-l2-proxy` using the same `aero_session` cookie
-	# issued by `backend/aero-gateway` at `POST /session`. Browsers must create a session (and
-	# receive the cookie) before opening the WebSocket.
+	# Auth note: `/l2` is served by `aero-l2-proxy` and authentication is enforced by the proxy
+	# itself (see `AERO_L2_AUTH_MODE` in `deploy/.env.example`).
+	#
+	# When using cookie auth (`AERO_L2_AUTH_MODE=cookie`), browser clients must first create a
+	# gateway session (and receive an `aero_session` cookie) via `POST /session` before opening
+	# the WebSocket.
 	@aero_l2 path /l2*
 	handle @aero_l2 {
 		import aero_headers
