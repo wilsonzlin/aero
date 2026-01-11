@@ -138,6 +138,7 @@
   <ItemGroup>
     <ClInclude Include="include\aerogpu_d3d10_11_umd.h" />
     <ClInclude Include="src\aerogpu_cmd_writer.h" />
+    <ClInclude Include="..\d3d9\src\aerogpu_cmd_stream_writer.h" />
     <ClInclude Include="..\..\protocol\aerogpu_cmd.h" />
     <ClInclude Include="..\..\protocol\aerogpu_wddm_alloc.h" />
   </ItemGroup>

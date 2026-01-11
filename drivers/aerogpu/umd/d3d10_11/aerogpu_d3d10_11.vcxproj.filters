@@ -22,6 +22,9 @@
     <ClInclude Include="src\aerogpu_cmd_writer.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="..\d3d9\src\aerogpu_cmd_stream_writer.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="..\..\protocol\aerogpu_cmd.h">
       <Filter>Header Files</Filter>
     </ClInclude>
