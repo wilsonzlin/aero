@@ -13,13 +13,34 @@
     <ClCompile Include="..\..\win7\virtio\virtio-core\portable\virtio_pci_cap_parser.c">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\win7\virtio\virtio-core\portable\virtio_pci_identity.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\windows\virtio\common\virtqueue_split.c">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="src\driver.c">
+    <ClCompile Include="..\virtio\common\src\virtio_pci_contract.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\virtio\common\src\virtio_pci_intx_wdm.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\virtio\common\src\virtio_pci_modern_wdm.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\adapter.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\backend_null.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\backend_virtio.c">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="src\pci_interface.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\topology.c">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="src\virtio_pci_modern_wdm.c">
@@ -37,15 +58,39 @@
     <ClCompile Include="src\virtiosnd_hw.c">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="src\virtiosnd_intx.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="src\virtiosnd_queue_split.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\virtiosnd_sg.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\virtiosnd_sg_core.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\virtiosnd_sg_tx.c">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="src\virtiosnd_tx.c">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="src\wavert.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="include\backend.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="include\pci_interface.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="include\portcls_compat.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="include\topology.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="include\trace.h">
@@ -60,10 +105,16 @@
     <ClInclude Include="include\virtiosnd.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="include\virtiosnd_backend.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="include\virtiosnd_control.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="include\virtiosnd_dma.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="include\virtiosnd_intx.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="include\virtiosnd_queue.h">
@@ -72,7 +123,19 @@
     <ClInclude Include="include\virtiosnd_queue_split.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="include\virtiosnd_sg.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="include\virtiosnd_sg_core.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="include\virtiosnd_sg_tx.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="include\virtiosnd_tx.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="include\wavert.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
