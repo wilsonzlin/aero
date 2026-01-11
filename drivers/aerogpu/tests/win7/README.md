@@ -156,7 +156,9 @@ In a Win7 VM with AeroGPU installed and working correctly:
 * `d3d9ex_shared_surface` creates a D3D9Ex shared render-target (prefers texture; falls back to shared surface), duplicates the shared handle into a child process, and validates cross-process pixel visibility via readback (pass `--no-validate-sharing` to skip readback validation)
   * When debugging the KMD, this is also a good repro for validating stable `alloc_id` / `share_token` via allocation private driver data: the miniport should log the same IDs for `DxgkDdiCreateAllocation` (parent) and `DxgkDdiOpenAllocation` (child).
 * `d3d9ex_shared_surface_ipc` creates a shared D3D9Ex render-target texture in one process, duplicates the shared handle into a second process (asserting the numeric handle value differs), and validates the consumer can read back the producer’s clear color
-* `d3d9ex_shared_allocations` creates shared D3D9Ex resources (shared render-target surface + shared mipmapped texture) to exercise shared-surface allocation behavior
+* `d3d9ex_shared_allocations` exercises allocation behavior for shared resources:
+  * creates a non-shared mip chain texture (Levels=4) as a baseline for `NumAllocations` logging
+  * creates a shared render-target surface and attempts a shared mipmapped texture (Levels=4)
 * `d3d10_triangle` renders a green triangle over a red clear and confirms **corner red + center green** via readback
 * `d3d10_1_triangle` uses `D3D10CreateDeviceAndSwapChain1` (hardware), verifies the D3D10.1 runtime path (`d3d10_1.dll`) and the AeroGPU `OpenAdapter10_2` export, and confirms **corner red + center green** via readback
 * `d3d11_triangle` renders a green triangle over a red clear and confirms **corner red + center green** via readback
