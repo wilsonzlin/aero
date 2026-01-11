@@ -25,5 +25,4 @@ js-sys = "0.3"
 aero-platform = { path = "../platform" }
 aero-audio = { path = "../aero-audio" }
 aero-opfs = { path = "../aero-opfs" }
-aero-snapshot = { path = "../aero-snapshot" }
 wasm-bindgen-futures = "0.4"

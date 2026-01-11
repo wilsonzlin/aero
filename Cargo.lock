@@ -518,7 +518,6 @@ dependencies = [
  "aero-audio",
  "aero-opfs",
  "aero-platform",
- "aero-snapshot",
  "aero-vm",
  "js-sys",
  "wasm-bindgen",
