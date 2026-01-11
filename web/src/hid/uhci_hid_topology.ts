@@ -44,6 +44,11 @@ export class UhciHidTopologyManager {
   }
 
   setUhciBridge(bridge: UhciTopologyBridge | null): void {
+    if (this.#uhci !== bridge) {
+      // Hub attachments are per-controller state; if we swap bridges (or clear),
+      // force reattachment on the next active bridge.
+      this.#hubAttachedRoots.clear();
+    }
     this.#uhci = bridge;
     if (bridge) this.#flush();
   }
@@ -123,4 +128,3 @@ export class UhciHidTopologyManager {
     }
   }
 }
-

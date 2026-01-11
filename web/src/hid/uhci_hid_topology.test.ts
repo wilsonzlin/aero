@@ -73,5 +73,19 @@ describe("hid/UhciHidTopologyManager", () => {
     mgr.setHubConfig([0], 8);
     expect(uhci.attach_hub).toHaveBeenCalledTimes(1);
   });
-});
 
+  it("re-attaches hubs when the UHCI bridge is replaced", () => {
+    const mgr = new UhciHidTopologyManager({ defaultHubPortCount: 16 });
+    const uhci1 = createFakeUhci();
+    const uhci2 = createFakeUhci();
+    const dev = { kind: "device" };
+
+    mgr.attachDevice(1, [0, 1], "webhid", dev);
+    mgr.setUhciBridge(uhci1);
+    expect(uhci1.attach_hub).toHaveBeenCalledTimes(1);
+
+    mgr.setUhciBridge(null);
+    mgr.setUhciBridge(uhci2);
+    expect(uhci2.attach_hub).toHaveBeenCalledTimes(1);
+  });
+});
