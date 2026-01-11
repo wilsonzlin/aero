@@ -4,6 +4,42 @@
 
 using aerogpu_test::ComPtr;
 
+typedef struct _AEROGPU_UNICODE_STRING {
+  USHORT Length;
+  USHORT MaximumLength;
+  PWSTR Buffer;
+} AEROGPU_UNICODE_STRING;
+
+typedef struct _AEROGPU_RTL_USER_PROCESS_PARAMETERS {
+  BYTE Reserved1[16];
+  PVOID Reserved2[10];
+  AEROGPU_UNICODE_STRING ImagePathName;
+  AEROGPU_UNICODE_STRING CommandLine;
+} AEROGPU_RTL_USER_PROCESS_PARAMETERS;
+
+typedef struct _AEROGPU_PEB {
+  BYTE Reserved1[2];
+  BYTE BeingDebugged;
+  BYTE Reserved2[1];
+  PVOID Reserved3[2];
+  PVOID Ldr;
+  AEROGPU_RTL_USER_PROCESS_PARAMETERS* ProcessParameters;
+} AEROGPU_PEB;
+
+typedef struct _AEROGPU_PROCESS_BASIC_INFORMATION {
+  PVOID Reserved1;
+  AEROGPU_PEB* PebBaseAddress;
+  PVOID Reserved2[2];
+  ULONG_PTR UniqueProcessId;
+  PVOID Reserved3;
+} AEROGPU_PROCESS_BASIC_INFORMATION;
+
+typedef LONG(WINAPI* NtQueryInformationProcessFn)(HANDLE,
+                                                  DWORD /*ProcessInformationClass*/,
+                                                  PVOID /*ProcessInformation*/,
+                                                  DWORD /*ProcessInformationLength*/,
+                                                  DWORD* /*ReturnLength*/);
+
 static std::wstring GetModulePath() {
   wchar_t path[MAX_PATH];
   DWORD len = GetModuleFileNameW(NULL, path, MAX_PATH);
@@ -157,6 +193,133 @@ static HRESULT CreateD3D9ExDevice(HWND hwnd, ComPtr<IDirect3D9Ex>* out_d3d, ComP
   out_d3d->reset(d3d.detach());
   out_dev->reset(dev.detach());
   return S_OK;
+}
+
+static bool PatchChildCommandLineSharedHandle(HANDLE child_process,
+                                              const std::string& shared_handle_hex,
+                                              std::string* err) {
+  if (!child_process) {
+    if (err) {
+      *err = "child_process == NULL";
+    }
+    return false;
+  }
+
+  HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+  if (!ntdll) {
+    ntdll = LoadLibraryW(L"ntdll.dll");
+  }
+  if (!ntdll) {
+    if (err) {
+      *err = "LoadLibraryW(ntdll.dll) failed: " + aerogpu_test::Win32ErrorToString(GetLastError());
+    }
+    return false;
+  }
+
+  NtQueryInformationProcessFn nt_query =
+      (NtQueryInformationProcessFn)GetProcAddress(ntdll, "NtQueryInformationProcess");
+  if (!nt_query) {
+    if (err) {
+      *err = "GetProcAddress(NtQueryInformationProcess) failed: " +
+             aerogpu_test::Win32ErrorToString(GetLastError());
+    }
+    return false;
+  }
+
+  AEROGPU_PROCESS_BASIC_INFORMATION pbi;
+  ZeroMemory(&pbi, sizeof(pbi));
+  DWORD ret_len = 0;
+  LONG status = nt_query(child_process, 0 /*ProcessBasicInformation*/, &pbi, sizeof(pbi), &ret_len);
+  if (status != 0 || !pbi.PebBaseAddress) {
+    if (err) {
+      char buf[64];
+      _snprintf(buf, sizeof(buf), "NtQueryInformationProcess failed: 0x%08lX", (unsigned long)status);
+      *err = buf;
+    }
+    return false;
+  }
+
+  AEROGPU_PEB peb;
+  ZeroMemory(&peb, sizeof(peb));
+  SIZE_T nread = 0;
+  if (!ReadProcessMemory(child_process, pbi.PebBaseAddress, &peb, sizeof(peb), &nread) ||
+      nread != sizeof(peb) || !peb.ProcessParameters) {
+    if (err) {
+      *err = "ReadProcessMemory(PEB) failed: " + aerogpu_test::Win32ErrorToString(GetLastError());
+    }
+    return false;
+  }
+
+  AEROGPU_RTL_USER_PROCESS_PARAMETERS params;
+  ZeroMemory(&params, sizeof(params));
+  nread = 0;
+  if (!ReadProcessMemory(child_process, peb.ProcessParameters, &params, sizeof(params), &nread) ||
+      nread != sizeof(params) || !params.CommandLine.Buffer || params.CommandLine.Length == 0) {
+    if (err) {
+      *err = "ReadProcessMemory(ProcessParameters) failed: " + aerogpu_test::Win32ErrorToString(GetLastError());
+    }
+    return false;
+  }
+
+  const size_t cmd_chars = params.CommandLine.Length / sizeof(wchar_t);
+  std::vector<wchar_t> cmdline(cmd_chars + 1, 0);
+  nread = 0;
+  if (!ReadProcessMemory(child_process,
+                         params.CommandLine.Buffer,
+                         &cmdline[0],
+                         params.CommandLine.Length,
+                         &nread) ||
+      nread != params.CommandLine.Length) {
+    if (err) {
+      *err = "ReadProcessMemory(CommandLine) failed: " + aerogpu_test::Win32ErrorToString(GetLastError());
+    }
+    return false;
+  }
+  cmdline[cmd_chars] = 0;
+
+  const wchar_t* key = L"--shared-handle=";
+  wchar_t* pos = wcsstr(&cmdline[0], key);
+  if (!pos) {
+    if (err) {
+      *err = "could not find --shared-handle= in child command line";
+    }
+    return false;
+  }
+  pos += wcslen(key);
+
+  std::wstring repl(shared_handle_hex.begin(), shared_handle_hex.end());
+  size_t existing_len = 0;
+  while (pos[existing_len] && pos[existing_len] != L' ' && pos[existing_len] != L'\t') {
+    existing_len++;
+  }
+  if (existing_len != repl.size()) {
+    if (err) {
+      char buf[128];
+      _snprintf(buf,
+                sizeof(buf),
+                "shared-handle token length mismatch: existing=%lu replacement=%lu",
+                (unsigned long)existing_len,
+                (unsigned long)repl.size());
+      *err = buf;
+    }
+    return false;
+  }
+
+  const size_t replace_index = (size_t)(pos - &cmdline[0]);
+  SIZE_T nwritten = 0;
+  if (!WriteProcessMemory(child_process,
+                          params.CommandLine.Buffer + replace_index,
+                          repl.c_str(),
+                          repl.size() * sizeof(wchar_t),
+                          &nwritten) ||
+      nwritten != repl.size() * sizeof(wchar_t)) {
+    if (err) {
+      *err = "WriteProcessMemory(CommandLine) failed: " + aerogpu_test::Win32ErrorToString(GetLastError());
+    }
+    return false;
+  }
+
+  return true;
 }
 
 static int RunChild(int argc, char** argv) {
@@ -354,21 +517,9 @@ static int RunParent(int argc, char** argv) {
     return aerogpu_test::FailHresult(kTestName, "Flush(parent)", hr);
   }
 
-  HANDLE shared_inherit = NULL;
-  if (!DuplicateHandle(GetCurrentProcess(),
-                       shared,
-                       GetCurrentProcess(),
-                       &shared_inherit,
-                       0,
-                       TRUE,
-                       DUPLICATE_SAME_ACCESS)) {
-    DWORD err = GetLastError();
-    return aerogpu_test::Fail(kTestName,
-                              "DuplicateHandle(make inheritable) failed: %s",
-                              aerogpu_test::Win32ErrorToString(err).c_str());
-  }
-  CloseHandle(shared);
-  shared = shared_inherit;
+  // Ensure we don't accidentally rely on handle inheritance for the D3D shared handle; the child
+  // should only see it via DuplicateHandle into the child process.
+  SetHandleInformation(shared, HANDLE_FLAG_INHERIT, 0);
 
   std::wstring exe_path = GetModulePath();
   if (exe_path.empty()) {
@@ -376,11 +527,14 @@ static int RunParent(int argc, char** argv) {
     return aerogpu_test::Fail(kTestName, "GetModuleFileNameW failed");
   }
 
-  std::string shared_hex = FormatHandleHex(shared);
+  // Create the child process first with a placeholder shared-handle token, then duplicate the
+  // handle into the child and patch the child command line in-place before resuming. This keeps
+  // the test single-binary and avoids any extra IPC while still passing the *child* handle value.
+  const std::string placeholder_hex = FormatHandleHex((HANDLE)0);
   std::wstring cmdline = L"\"";
   cmdline += exe_path;
   cmdline += L"\" --child --shared-handle=";
-  cmdline += std::wstring(shared_hex.begin(), shared_hex.end());
+  cmdline += std::wstring(placeholder_hex.begin(), placeholder_hex.end());
   if (allow_microsoft) {
     cmdline += L" --allow-microsoft";
   }
@@ -424,6 +578,36 @@ static int RunParent(int argc, char** argv) {
     return aerogpu_test::Fail(kTestName,
                               "CreateProcessW failed: %s",
                               aerogpu_test::Win32ErrorToString(err).c_str());
+  }
+
+  HANDLE child_handle_value = NULL;
+  if (!DuplicateHandle(GetCurrentProcess(),
+                       shared,
+                       pi.hProcess,
+                       &child_handle_value,
+                       0,
+                       FALSE,
+                       DUPLICATE_SAME_ACCESS) ||
+      !child_handle_value) {
+    DWORD err = GetLastError();
+    TerminateProcess(pi.hProcess, 1);
+    WaitForSingleObject(pi.hProcess, 5000);
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    CloseHandle(shared);
+    return aerogpu_test::Fail(kTestName,
+                              "DuplicateHandle(into child) failed: %s",
+                              aerogpu_test::Win32ErrorToString(err).c_str());
+  }
+
+  std::string patch_err;
+  if (!PatchChildCommandLineSharedHandle(pi.hProcess, FormatHandleHex(child_handle_value), &patch_err)) {
+    TerminateProcess(pi.hProcess, 1);
+    WaitForSingleObject(pi.hProcess, 5000);
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    CloseHandle(shared);
+    return aerogpu_test::Fail(kTestName, "failed to patch child command line: %s", patch_err.c_str());
   }
 
   ResumeThread(pi.hThread);
