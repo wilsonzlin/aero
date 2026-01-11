@@ -25,6 +25,7 @@ set "PKG_LIST=%INSTALL_ROOT%\installed-driver-packages.txt"
 set "CERT_LIST=%INSTALL_ROOT%\installed-certs.txt"
 set "STATE_TESTSIGN=%INSTALL_ROOT%\testsigning.enabled-by-aero.txt"
 set "STATE_NOINTEGRITY=%INSTALL_ROOT%\nointegritychecks.enabled-by-aero.txt"
+set "STATE_STORAGE_SKIPPED=%INSTALL_ROOT%\storage-preseed.skipped.txt"
 
 set "ARG_FORCE=0"
 set "SIGNING_POLICY=testsigning"
@@ -62,6 +63,11 @@ call :log "WARNING:"
 call :log "  If this VM is currently booting from virtio-blk using the Aero storage driver,"
 call :log "  removing that driver package or re-enabling signature enforcement can make the VM unbootable."
 call :log ""
+if exist "%STATE_STORAGE_SKIPPED%" (
+  call :log "NOTE: setup.cmd previously ran with /skipstorage (marker exists: %STATE_STORAGE_SKIPPED%)."
+  call :log "      This VM may still be configured to boot from AHCI, and virtio-blk boot-critical plumbing may be incomplete."
+  call :log ""
+)
 
 if "%ARG_FORCE%"=="1" (
   call :log "Force mode: skipping confirmation prompt."
