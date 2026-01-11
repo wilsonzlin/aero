@@ -725,7 +725,10 @@ pub struct CpuState {
 
     /// A20 gate state (real mode address wrap behaviour).
     ///
-    /// When disabled, physical addresses are masked to 20 bits (1MiB wraparound).
+    /// When disabled, the A20 address line is forced low, aliasing addresses that
+    /// differ only by bit 20 (the 1MiB bit). For addresses below 2MiB this matches
+    /// the traditional "1MiB wraparound" behaviour.
+    ///
     /// This is only applied by real/v8086 mode linearization helpers.
     pub a20_enabled: bool,
     /// x87 external interrupt indicator for `CR0.NE = 0` mode (IRQ13).
@@ -1415,7 +1418,7 @@ impl CpuState {
     #[inline]
     pub fn apply_a20(&self, addr: u64) -> u64 {
         if !self.a20_enabled && matches!(self.mode, CpuMode::Real | CpuMode::Vm86) {
-            addr & 0xFFFFF
+            addr & !(1u64 << 20)
         } else {
             addr
         }

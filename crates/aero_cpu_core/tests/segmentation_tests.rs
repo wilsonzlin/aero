@@ -93,6 +93,19 @@ fn real_mode_a20_gate_wraps_addresses_when_disabled() {
     );
 }
 
+#[test]
+fn real_mode_a20_gate_clears_bit20_instead_of_masking_to_1mib() {
+    // Real hardware forces the A20 line low. That aliases bit 20 but does not
+    // clear higher address bits (e.g. 3MiB -> 2MiB).
+    let mut cpu = CpuState::new(CpuMode::Real);
+    cpu.a20_enabled = false;
+
+    assert_eq!(
+        cpu.linearize(Seg::DS, 0x0030_0000, AccessType::read(1)).unwrap(),
+        0x0020_0000
+    );
+}
+
 fn setup_gdt(bus: &mut FlatTestBus, gdt_base: u64, descriptors: &[u64]) {
     for (i, &desc) in descriptors.iter().enumerate() {
         bus.load(gdt_base + (i as u64) * 8, &desc.to_le_bytes());
