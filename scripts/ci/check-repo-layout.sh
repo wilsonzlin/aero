@@ -82,10 +82,12 @@ fi
 legacy_guest_windows_dir="guest/""windows"
 if [[ -d "$legacy_guest_windows_dir" ]]; then
   # The legacy driver directory is kept as a tombstone for old links. It must remain a stub
-  # (no buildable driver projects or INFs).
+  # (no buildable driver projects). We allow a tiny set of redirect/stub files so older
+  # links keep working.
   allowed_guest_windows_files=(
     "guest/""windows/README.md"
     "guest/""windows/docs/driver_install.md"
+    "guest/""windows/inf/aerogpu.inf"
   )
 
   # Use a simple prefix scan instead of relying on pathspec glob support (`**`).
