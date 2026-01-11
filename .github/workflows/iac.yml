@@ -81,9 +81,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mapfile -t modules < <(find infra -name '*.tf' -print0 | xargs -0 -n1 dirname | sort -u)
+          mapfile -t modules < <(find infra -name '.terraform.lock.hcl' -print0 | xargs -0 -r -n1 dirname | sort -u)
           if [[ ${#modules[@]} -eq 0 ]]; then
-            echo "No Terraform modules found under infra/"
+            echo "No Terraform modules found under infra/ (expected at least one infra/**/.terraform.lock.hcl)"
             exit 1
           fi
 
