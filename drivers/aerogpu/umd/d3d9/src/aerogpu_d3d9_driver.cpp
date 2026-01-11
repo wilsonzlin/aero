@@ -143,12 +143,10 @@ constexpr uint32_t kMaxFrameLatencyMax = 16;
 // DWM/PresentEx call sites if the GPU stops making forward progress.
 constexpr uint32_t kPresentThrottleMaxWaitMs = 100;
 
-// Allow escape-based inference of "last submitted fence" only as a last-resort
-// debug aid. Correct per-submission fence tracking must come from the exact
-// `SubmissionFenceId` returned by the D3D9 runtime callbacks (Render/Present).
-#ifndef AEROGPU_D3D9_ENABLE_SUBMISSION_FENCE_ESCAPE_FALLBACK
-  #define AEROGPU_D3D9_ENABLE_SUBMISSION_FENCE_ESCAPE_FALLBACK 0
-#endif
+// Some WDDM/D3D9 callback structs may not expose `SubmissionFenceId` depending on
+// the WDK header vintage. When it is unavailable, we fall back to querying the
+// AeroGPU KMD fence counters via D3DKMTEscape so we still return a real fence
+// value for the submission.
 
 #if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
 // Some D3D9 UMD DDI members vary across WDK header vintages. Use compile-time
@@ -1974,37 +1972,49 @@ uint64_t submit(Device* dev, bool is_present) {
 #if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
   if (submitted_to_kmd) {
     // Critical: capture the exact `SubmissionFenceId` returned by the runtime
-    // callback for *this* submission. Do not infer per-submission fences from a
-    // global "last submitted" query; that breaks under multi-process workloads.
+    // callback for *this* submission.
     fence = submission_fence;
 
-#if AEROGPU_D3D9_ENABLE_SUBMISSION_FENCE_ESCAPE_FALLBACK
+    // Some WDK header vintages do not expose `SubmissionFenceId` on the D3D9
+    // callbacks. In that case, fall back to querying the KMD's fence counters
+    // via DxgkDdiEscape (D3DKMTEscape) so we still return a real fence value and
+    // never "fake complete" fences in-process.
+    uint64_t kmd_submitted = 0;
+    uint64_t kmd_completed = 0;
+    bool kmd_ok = false;
     if (fence == 0 && adapter->kmd_query_available.load(std::memory_order_acquire)) {
-      uint64_t submitted = 0;
-      uint64_t completed = 0;
-      const bool ok = adapter->kmd_query.QueryFence(&submitted, &completed);
-      if (ok) {
-        logf("aerogpu-d3d9: WARNING: using KMD last_submitted_fence=%llu as debug fallback\n",
-             static_cast<unsigned long long>(submitted));
-        fence = submitted;
-        std::lock_guard<std::mutex> lock(adapter->fence_mutex);
-        adapter->completed_fence = std::max(adapter->completed_fence, completed);
-      } else {
+      kmd_ok = adapter->kmd_query.QueryFence(&kmd_submitted, &kmd_completed);
+      if (!kmd_ok) {
         adapter->kmd_query_available.store(false, std::memory_order_release);
+      } else {
+        fence = kmd_submitted;
       }
     }
-#endif
+
+    if (kmd_ok) {
+      std::lock_guard<std::mutex> lock(adapter->fence_mutex);
+      const uint64_t prev_submitted = adapter->last_submitted_fence;
+      const uint64_t prev_completed = adapter->completed_fence;
+      adapter->last_submitted_fence = std::max(adapter->last_submitted_fence, kmd_submitted);
+      adapter->completed_fence = std::max(adapter->completed_fence, kmd_completed);
+      adapter->next_fence = std::max(adapter->next_fence, adapter->last_submitted_fence + 1);
+      adapter->last_kmd_fence_query_ms = monotonic_ms();
+      updated = (adapter->last_submitted_fence != prev_submitted) || (adapter->completed_fence != prev_completed);
+      fence = adapter->last_submitted_fence;
+    }
 
     if (fence) {
       std::lock_guard<std::mutex> lock(adapter->fence_mutex);
       const uint64_t prev_submitted = adapter->last_submitted_fence;
       adapter->last_submitted_fence = std::max(adapter->last_submitted_fence, fence);
       adapter->next_fence = std::max(adapter->next_fence, adapter->last_submitted_fence + 1);
-      updated = (adapter->last_submitted_fence != prev_submitted);
+      fence = adapter->last_submitted_fence;
+      updated = updated || (adapter->last_submitted_fence != prev_submitted);
     }
   }
 #endif
 
+#if !(defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI))
   if (fence == 0) {
     {
       std::lock_guard<std::mutex> lock(adapter->fence_mutex);
@@ -2024,6 +2034,7 @@ uint64_t submit(Device* dev, bool is_present) {
       updated = updated || (adapter->last_submitted_fence != prev_submitted) || (adapter->completed_fence != prev_completed);
     }
   }
+#endif
 
   if (updated) {
     adapter->fence_cv.notify_all();
