@@ -387,7 +387,7 @@ queue), while still being efficient for **SPSC** use (per-worker cmd/evt).
 │                                                                  │
 │  2. Resource Allocation                                          │
 │     └─▶ Allocate shared `WebAssembly.Memory` (guest RAM, ≤ 4 GiB, configurable) │
-│     └─▶ Allocate `SharedArrayBuffer` IPC region(s) (cmd/evt queues, state) │
+│     └─▶ Allocate `controlSab` (status + per-worker cmd/evt rings) + `ioIpcSab` (high-frequency AIPC) │
 │         └─▶ Request storage access (OPFS)                        │
 │             └─▶ Load/create disk image                           │
 │                                                                  │
