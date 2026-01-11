@@ -49,11 +49,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Check virtio INFs (no duplicate contract HWIDs)
+      - name: Check virtio driver uniqueness (INF HWIDs + MSBuild)
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci/check-legacy-virtio-inf-hwids.ps1'
+          pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci/check-virtio-driver-uniqueness.ps1'
 
       - name: Run virtio host tests (CMake)
         shell: bash
@@ -116,11 +116,11 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      - name: Check virtio INFs (no duplicate contract HWIDs)
+      - name: Check virtio driver uniqueness (INF HWIDs + MSBuild)
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci/check-legacy-virtio-inf-hwids.ps1'
+          pwsh -NoProfile -ExecutionPolicy Bypass -File 'ci/check-virtio-driver-uniqueness.ps1'
 
       - name: Run virtio host tests (CMake)
         shell: pwsh

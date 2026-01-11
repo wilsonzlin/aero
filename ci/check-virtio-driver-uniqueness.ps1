@@ -2,7 +2,7 @@
 
 <#
 .SYNOPSIS
-Guard against multiple INFs matching the same contract-v1 virtio PCI hardware IDs.
+Guard against non-deterministic virtio driver binding (duplicate INFs / outputs).
 
 .DESCRIPTION
 Windows selects PnP drivers by matching a device's Hardware IDs against installed INFs.
