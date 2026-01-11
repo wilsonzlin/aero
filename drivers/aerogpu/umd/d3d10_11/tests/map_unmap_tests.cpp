@@ -1201,6 +1201,202 @@ bool TestDynamicBufferUsageValidation() {
   return true;
 }
 
+bool TestHostOwnedDynamicConstantBufferUploads() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false), "InitTestDevice(dynamic cb host-owned)")) {
+    return false;
+  }
+
+  TestResource buf{};
+  if (!Check(CreateBuffer(&dev,
+                          /*byte_width=*/32,
+                          AEROGPU_D3D11_USAGE_DYNAMIC,
+                          kD3D11BindConstantBuffer,
+                          AEROGPU_D3D11_CPU_ACCESS_WRITE,
+                          &buf),
+             "CreateBuffer(dynamic CB)")) {
+    return false;
+  }
+
+  void* data = nullptr;
+  HRESULT hr = dev.device_funcs.pfnDynamicConstantBufferMapDiscard(dev.hDevice, buf.hResource, &data);
+  if (!Check(hr == S_OK, "DynamicConstantBufferMapDiscard host-owned")) {
+    return false;
+  }
+  if (!Check(data != nullptr, "DynamicConstantBufferMapDiscard returned data")) {
+    return false;
+  }
+
+  uint8_t expected[32] = {};
+  for (size_t i = 0; i < sizeof(expected); i++) {
+    expected[i] = static_cast<uint8_t>(0x20u + i);
+  }
+  std::memcpy(data, expected, sizeof(expected));
+
+  dev.device_funcs.pfnDynamicConstantBufferUnmap(dev.hDevice, buf.hResource);
+  hr = dev.device_funcs.pfnFlush(dev.hDevice);
+  if (!Check(hr == S_OK, "Flush after DynamicConstantBufferUnmap")) {
+    return false;
+  }
+
+  if (!Check(ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size()), "ValidateStream")) {
+    return false;
+  }
+
+  const uint8_t* stream = dev.harness.last_stream.data();
+  const size_t stream_len = dev.harness.last_stream.size();
+
+  if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_RESOURCE_DIRTY_RANGE) == 0,
+             "host-owned dynamic CB Unmap should not emit RESOURCE_DIRTY_RANGE")) {
+    return false;
+  }
+  if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_UPLOAD_RESOURCE) == 1,
+             "host-owned dynamic CB Unmap should emit UPLOAD_RESOURCE")) {
+    return false;
+  }
+
+  CmdLoc create_loc = FindLastOpcode(stream, stream_len, AEROGPU_CMD_CREATE_BUFFER);
+  if (!Check(create_loc.hdr != nullptr, "CREATE_BUFFER emitted")) {
+    return false;
+  }
+  const auto* create_cmd = reinterpret_cast<const aerogpu_cmd_create_buffer*>(stream + create_loc.offset);
+  if (!Check(create_cmd->backing_alloc_id == 0, "dynamic CB CREATE_BUFFER backing_alloc_id == 0")) {
+    return false;
+  }
+
+  CmdLoc upload_loc = FindLastOpcode(stream, stream_len, AEROGPU_CMD_UPLOAD_RESOURCE);
+  if (!Check(upload_loc.hdr != nullptr, "UPLOAD_RESOURCE emitted")) {
+    return false;
+  }
+  const auto* upload_cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(stream + upload_loc.offset);
+  if (!Check(upload_cmd->offset_bytes == 0, "UPLOAD_RESOURCE offset_bytes == 0")) {
+    return false;
+  }
+  if (!Check(upload_cmd->size_bytes == sizeof(expected), "UPLOAD_RESOURCE size matches dynamic CB")) {
+    return false;
+  }
+
+  const size_t payload_offset = upload_loc.offset + sizeof(*upload_cmd);
+  const size_t payload_size = static_cast<size_t>(upload_cmd->size_bytes);
+  if (!Check(payload_offset + payload_size <= stream_len, "UPLOAD_RESOURCE payload fits")) {
+    return false;
+  }
+  if (!Check(std::memcmp(stream + payload_offset, expected, payload_size) == 0, "UPLOAD_RESOURCE payload bytes")) {
+    return false;
+  }
+
+  if (!Check(dev.harness.last_allocs.empty(), "host-owned dynamic CB submit alloc list should be empty")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, buf.hResource);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
+bool TestGuestBackedDynamicConstantBufferDirtyRange() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/true), "InitTestDevice(dynamic cb guest-backed)")) {
+    return false;
+  }
+
+  TestResource buf{};
+  if (!Check(CreateBuffer(&dev,
+                          /*byte_width=*/32,
+                          AEROGPU_D3D11_USAGE_DYNAMIC,
+                          kD3D11BindConstantBuffer,
+                          AEROGPU_D3D11_CPU_ACCESS_WRITE,
+                          &buf),
+             "CreateBuffer(dynamic CB)")) {
+    return false;
+  }
+
+  void* data = nullptr;
+  HRESULT hr = dev.device_funcs.pfnDynamicConstantBufferMapDiscard(dev.hDevice, buf.hResource, &data);
+  if (!Check(hr == S_OK, "DynamicConstantBufferMapDiscard guest-backed")) {
+    return false;
+  }
+  if (!Check(data != nullptr, "DynamicConstantBufferMapDiscard returned data")) {
+    return false;
+  }
+
+  uint8_t expected[32] = {};
+  for (size_t i = 0; i < sizeof(expected); i++) {
+    expected[i] = static_cast<uint8_t>(0xC0u + i);
+  }
+  std::memcpy(data, expected, sizeof(expected));
+
+  dev.device_funcs.pfnDynamicConstantBufferUnmap(dev.hDevice, buf.hResource);
+  hr = dev.device_funcs.pfnFlush(dev.hDevice);
+  if (!Check(hr == S_OK, "Flush after DynamicConstantBufferUnmap")) {
+    return false;
+  }
+
+  if (!Check(ValidateStream(dev.harness.last_stream.data(), dev.harness.last_stream.size()), "ValidateStream")) {
+    return false;
+  }
+
+  const uint8_t* stream = dev.harness.last_stream.data();
+  const size_t stream_len = dev.harness.last_stream.size();
+
+  if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_UPLOAD_RESOURCE) == 0,
+             "guest-backed dynamic CB Unmap should not emit UPLOAD_RESOURCE")) {
+    return false;
+  }
+  if (!Check(CountOpcode(stream, stream_len, AEROGPU_CMD_RESOURCE_DIRTY_RANGE) == 1,
+             "guest-backed dynamic CB Unmap should emit RESOURCE_DIRTY_RANGE")) {
+    return false;
+  }
+
+  CmdLoc create_loc = FindLastOpcode(stream, stream_len, AEROGPU_CMD_CREATE_BUFFER);
+  if (!Check(create_loc.hdr != nullptr, "CREATE_BUFFER emitted")) {
+    return false;
+  }
+  const auto* create_cmd = reinterpret_cast<const aerogpu_cmd_create_buffer*>(stream + create_loc.offset);
+  if (!Check(create_cmd->backing_alloc_id != 0, "dynamic CB CREATE_BUFFER backing_alloc_id != 0")) {
+    return false;
+  }
+
+  CmdLoc dirty_loc = FindLastOpcode(stream, stream_len, AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+  if (!Check(dirty_loc.hdr != nullptr, "RESOURCE_DIRTY_RANGE emitted")) {
+    return false;
+  }
+  const auto* dirty_cmd = reinterpret_cast<const aerogpu_cmd_resource_dirty_range*>(stream + dirty_loc.offset);
+  if (!Check(dirty_cmd->offset_bytes == 0, "RESOURCE_DIRTY_RANGE offset_bytes == 0")) {
+    return false;
+  }
+  if (!Check(dirty_cmd->size_bytes == sizeof(expected), "RESOURCE_DIRTY_RANGE size matches dynamic CB")) {
+    return false;
+  }
+
+  bool found_alloc = false;
+  for (auto h : dev.harness.last_allocs) {
+    if (h == create_cmd->backing_alloc_id) {
+      found_alloc = true;
+    }
+  }
+  if (!Check(found_alloc, "guest-backed dynamic CB submit alloc list contains backing alloc")) {
+    return false;
+  }
+
+  Allocation* alloc = dev.harness.FindAlloc(create_cmd->backing_alloc_id);
+  if (!Check(alloc != nullptr, "backing allocation exists in harness")) {
+    return false;
+  }
+  if (!Check(alloc->bytes.size() >= sizeof(expected), "backing allocation large enough")) {
+    return false;
+  }
+  if (!Check(std::memcmp(alloc->bytes.data(), expected, sizeof(expected)) == 0, "backing allocation bytes")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, buf.hResource);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
 bool TestGuestBackedCopyResourceBufferReadback() {
   TestDevice dev{};
   if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/true), "InitTestDevice(copy buffer)")) {
@@ -2508,6 +2704,8 @@ int main() {
   ok &= TestHostOwnedDynamicIABufferUploads();
   ok &= TestGuestBackedDynamicIABufferDirtyRange();
   ok &= TestDynamicBufferUsageValidation();
+  ok &= TestHostOwnedDynamicConstantBufferUploads();
+  ok &= TestGuestBackedDynamicConstantBufferDirtyRange();
   ok &= TestGuestBackedCopyResourceBufferReadback();
   ok &= TestGuestBackedCopyResourceTextureReadback();
   ok &= TestHostOwnedUpdateSubresourceUPBufferUploads();
