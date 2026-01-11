@@ -65,6 +65,11 @@ param(
   [Parameter(Mandatory = $false)]
   [switch]$DisableSnd,
 
+  # If set, the scheduled selftest will skip the virtio-snd capture check only (playback still runs).
+  # This adds `--disable-snd-capture` to the scheduled task.
+  [Parameter(Mandatory = $false)]
+  [switch]$DisableSndCapture,
+
   # If set, run the virtio-snd capture smoke test when a capture endpoint exists
   # (adds `--test-snd-capture` to the scheduled task).
   [Parameter(Mandatory = $false)]
@@ -334,6 +339,9 @@ if ($RequireSnd -and $DisableSnd) {
 if ($DisableSnd -and ($TestSndCapture -or $RequireSndCapture -or $RequireNonSilence)) {
   throw "DisableSnd cannot be combined with TestSndCapture/RequireSndCapture/RequireNonSilence."
 }
+if ($DisableSndCapture -and ($TestSndCapture -or $RequireSndCapture -or $RequireNonSilence)) {
+  throw "DisableSndCapture cannot be combined with TestSndCapture/RequireSndCapture/RequireNonSilence."
+}
 if ($DisableSnd -and $AllowVirtioSndTransitional) {
   throw "DisableSnd cannot be combined with AllowVirtioSndTransitional."
 }
@@ -346,6 +354,11 @@ if ($RequireSnd) {
 $disableSndArg = ""
 if ($DisableSnd) {
   $disableSndArg = " --disable-snd"
+}
+
+$disableSndCaptureArg = ""
+if ($DisableSndCapture -and -not $DisableSnd) {
+  $disableSndCaptureArg = " --disable-snd-capture"
 }
 
 $testSndCaptureArg = ""
@@ -415,7 +428,7 @@ $enableTestSigningCmd
 
 REM Configure auto-run on boot (runs as SYSTEM).
 schtasks /Create /F /TN "AeroVirtioSelftest" /SC ONSTART /RU SYSTEM ^
-  /TR "\"C:\AeroTests\aero-virtio-selftest.exe\" --http-url \"$HttpUrl\" --dns-host \"$DnsHost\"$blkArg$requireSndArg$disableSndArg$testSndCaptureArg$requireSndCaptureArg$requireNonSilenceArg$allowVirtioSndTransitionalArg" >> "%LOG%" 2>&1
+  /TR "\"C:\AeroTests\aero-virtio-selftest.exe\" --http-url \"$HttpUrl\" --dns-host \"$DnsHost\"$blkArg$requireSndArg$disableSndArg$disableSndCaptureArg$testSndCaptureArg$requireSndCaptureArg$requireNonSilenceArg$allowVirtioSndTransitionalArg" >> "%LOG%" 2>&1
 
 echo [AERO] provision done >> "%LOG%"
 $autoRebootCmd
@@ -453,9 +466,11 @@ Notes:
  - By default, virtio-snd is optional (SKIP if missing). To require it, generate this media with `-RequireSnd` (adds `--require-snd`).
   - To skip the virtio-snd test entirely, generate this media with `-DisableSnd`.
     Note: if you run the host harness with `-WithVirtioSnd` / `--with-virtio-snd`, it expects virtio-snd to PASS (not SKIP).
- - To run the virtio-snd capture smoke test (if a capture endpoint exists), generate this media with `-TestSndCapture` (adds `--test-snd-capture`).
-   - Use `-RequireSndCapture` to fail if no capture endpoint exists.
-   - Use `-RequireNonSilence` to fail if only silence is captured.
+   - To skip capture-only checks (while still exercising playback), generate this media with `-DisableSndCapture` (adds `--disable-snd-capture`).
+     Note: if you run the host harness with `-WithVirtioSnd` / `--with-virtio-snd`, it expects virtio-snd-capture to PASS (not SKIP).
+   - To run the virtio-snd capture smoke test (if a capture endpoint exists), generate this media with `-TestSndCapture` (adds `--test-snd-capture`).
+     - Use `-RequireSndCapture` to fail if no capture endpoint exists.
+     - Use `-RequireNonSilence` to fail if only silence is captured.
  - To accept the transitional virtio-snd PCI ID (`PCI\VEN_1AF4&DEV_1018`) in the guest selftest, generate this media with
    `-AllowVirtioSndTransitional` (adds `--allow-virtio-snd-transitional`).
  - For unsigned/test-signed drivers on Win7 x64, consider generating this media with `-EnableTestSigning -AutoReboot`.

@@ -15,7 +15,8 @@ This directory contains the host-side scripts used to run the Windows 7 guest se
     - the guest selftest will exercise virtio-snd playback automatically when a virtio-snd device is present and confirm
       a capture endpoint is registered
     - use `--disable-snd` to skip virtio-snd testing, or `--test-snd` / `--require-snd` to fail if the device is missing
-    - use `--disable-snd-capture` to skip capture-only checks (playback still runs when the device is present)
+    - use `--disable-snd-capture` to skip capture-only checks (playback still runs when the device is present);
+      do not use this when running the harness with `-WithVirtioSnd` / `--with-virtio-snd` (capture is required)
   - has `aero-virtio-selftest.exe` installed
   - runs the selftest automatically on boot and logs to `COM1`
   - has at least one **mounted/usable virtio-blk volume** (the selftest writes a temporary file to validate disk I/O)
@@ -360,6 +361,25 @@ pwsh ./drivers/windows7/tests/host-harness/New-AeroWin7TestImage.ps1 `
   ) `
   -DisableSnd
 ```
+
+To disable the guest selftest's **capture-only** checks (adds `--disable-snd-capture` to the scheduled task) while still
+exercising playback when a virtio-snd device is present:
+
+```powershell
+pwsh ./drivers/windows7/tests/host-harness/New-AeroWin7TestImage.ps1 `
+  -SelftestExePath ./aero-virtio-selftest.exe `
+  -DriversDir ./drivers-out `
+  -InfAllowList @(
+    "aerovblk.inf",
+    "aerovnet.inf",
+    "virtio-input.inf",
+    "aero-virtio-snd.inf"
+  ) `
+  -DisableSndCapture
+```
+
+Note: if you run the host harness with `-WithVirtioSnd` / `--with-virtio-snd`, it expects virtio-snd-capture to PASS
+(not SKIP), so do not use `-DisableSndCapture` in that mode.
 
 To run the virtio-snd **capture** smoke test when a capture endpoint exists, provision the scheduled task with
 `--test-snd-capture` (for example via `New-AeroWin7TestImage.ps1 -TestSndCapture`).

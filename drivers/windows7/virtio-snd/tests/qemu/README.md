@@ -330,6 +330,7 @@ The selftest logs to:
     - If no supported virtio-snd PCI function is detected (and no capture flags are set), the tool emits
       `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP` (and `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set`).
     - Use `--disable-snd` to force `SKIP` even when capture/playback flags are present.
+    - Use `--disable-snd-capture` to skip capture-only checks while still exercising playback.
  3. Review `C:\aero-virtio-selftest.log` and locate the virtio-snd marker:
       - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS`
       - `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL` (playback failed; also used when the device is missing or the Topology KS interface is missing)
