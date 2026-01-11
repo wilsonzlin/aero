@@ -1,12 +1,14 @@
 #[test]
-fn aerogpu_pci_identity_is_canonical() {
-    // AeroGPU's PCI IDs are part of the Windows driver contract. Even though `aero-emulator`
-    // doesn't implement the AeroGPU device model anymore, keep a lightweight assertion here so
-    // placeholder values (e.g. early `VEN_1AE0`/`DEV_E001` experiments) don't creep back in.
+fn aerogpu_pci_identity_matches_protocol() {
+    use aero_emulator::devices::aerogpu::{
+        AEROGPU_MMIO_BAR_SIZE, AEROGPU_PCI_DEVICE_ID, AEROGPU_PCI_VENDOR_ID,
+    };
     use aero_protocol::aerogpu::aerogpu_pci as proto;
 
-    assert_eq!(proto::AEROGPU_PCI_VENDOR_ID, 0xA3A0);
-    assert_eq!(proto::AEROGPU_PCI_DEVICE_ID, 0x0001);
-    assert_eq!(proto::AEROGPU_PCI_BAR0_SIZE_BYTES, 64 * 1024);
+    assert_eq!(AEROGPU_PCI_VENDOR_ID, proto::AEROGPU_PCI_VENDOR_ID);
+    assert_eq!(AEROGPU_PCI_DEVICE_ID, proto::AEROGPU_PCI_DEVICE_ID);
+    assert_eq!(
+        AEROGPU_MMIO_BAR_SIZE,
+        u64::from(proto::AEROGPU_PCI_BAR0_SIZE_BYTES)
+    );
 }
-
