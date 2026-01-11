@@ -133,12 +133,14 @@ VirtioPciModernWdmReadBarsFromConfig(_Inout_ PVIRTIO_PCI_MODERN_WDM_DEVICE Dev)
 {
     ULONG barRegs[VIRTIO_PCI_MAX_BARS];
     ULONG bytesRead;
+    ULONG barRegsLen;
     ULONG i;
 
     RtlZeroMemory(barRegs, sizeof(barRegs));
-    bytesRead = VirtioPciReadConfig(&Dev->PciInterface, barRegs, 0x10, sizeof(barRegs));
-    if (bytesRead != sizeof(barRegs)) {
-        VIRTIO_PCI_MODERN_WDM_PRINT("PCI BAR config read failed (%lu/%lu)\n", bytesRead, (ULONG)sizeof(barRegs));
+    barRegsLen = (ULONG)sizeof(barRegs);
+    bytesRead = VirtioPciReadConfig(&Dev->PciInterface, barRegs, 0x10, barRegsLen);
+    if (bytesRead != barRegsLen) {
+        VIRTIO_PCI_MODERN_WDM_PRINT("PCI BAR config read failed (%lu/%lu)\n", bytesRead, barRegsLen);
         return STATUS_DEVICE_DATA_ERROR;
     }
 
@@ -213,6 +215,7 @@ VirtioPciModernWdmDiscoverCaps(_In_ PVIRTIO_PCI_MODERN_WDM_DEVICE Dev)
 {
     UCHAR cfg[256];
     ULONG bytesRead;
+    ULONG cfgLen;
     uint64_t barAddrs[VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT];
     virtio_pci_parsed_caps_t parsed;
     virtio_pci_cap_parse_result_t parseRes;
@@ -221,9 +224,10 @@ VirtioPciModernWdmDiscoverCaps(_In_ PVIRTIO_PCI_MODERN_WDM_DEVICE Dev)
     RtlZeroMemory(&Dev->Caps, sizeof(Dev->Caps));
     RtlZeroMemory(cfg, sizeof(cfg));
 
-    bytesRead = VirtioPciReadConfig(&Dev->PciInterface, cfg, 0, sizeof(cfg));
-    if (bytesRead != sizeof(cfg)) {
-        VIRTIO_PCI_MODERN_WDM_PRINT("PCI config read failed (%lu/%lu)\n", bytesRead, (ULONG)sizeof(cfg));
+    cfgLen = (ULONG)sizeof(cfg);
+    bytesRead = VirtioPciReadConfig(&Dev->PciInterface, cfg, 0, cfgLen);
+    if (bytesRead != cfgLen) {
+        VIRTIO_PCI_MODERN_WDM_PRINT("PCI config read failed (%lu/%lu)\n", bytesRead, cfgLen);
         return STATUS_DEVICE_DATA_ERROR;
     }
 
@@ -382,6 +386,7 @@ VirtioPciModernWdmInit(_In_ PDEVICE_OBJECT LowerDeviceObject, _Out_ PVIRTIO_PCI_
     NTSTATUS status;
     UCHAR revId;
     ULONG bytesRead;
+    ULONG revIdLen;
 
     if (LowerDeviceObject == NULL || Dev == NULL) {
         return STATUS_INVALID_PARAMETER;
@@ -412,9 +417,10 @@ VirtioPciModernWdmInit(_In_ PDEVICE_OBJECT LowerDeviceObject, _Out_ PVIRTIO_PCI_
 
     /* Optional contract enforcement: PCI Revision ID must be 0x01 (AERO-W7-VIRTIO v1). */
     revId = 0;
-    bytesRead = VirtioPciReadConfig(&Dev->PciInterface, &revId, 0x08, sizeof(revId));
-    if (bytesRead != sizeof(revId)) {
-        VIRTIO_PCI_MODERN_WDM_PRINT("PCI revision ID config read failed (%lu/%lu)\n", bytesRead, (ULONG)sizeof(revId));
+    revIdLen = (ULONG)sizeof(revId);
+    bytesRead = VirtioPciReadConfig(&Dev->PciInterface, &revId, 0x08, revIdLen);
+    if (bytesRead != revIdLen) {
+        VIRTIO_PCI_MODERN_WDM_PRINT("PCI revision ID config read failed (%lu/%lu)\n", bytesRead, revIdLen);
         VirtioPciModernWdmUninit(Dev);
         return STATUS_DEVICE_DATA_ERROR;
     }

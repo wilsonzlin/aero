@@ -411,8 +411,8 @@ VirtIoSndTransportInit(_Out_ PVIRTIOSND_TRANSPORT Transport,
     }
 
     RtlZeroMemory(cfg, sizeof(cfg));
-    bytesRead = VirtIoSndPciReadConfig(&Transport->PciInterface, cfg, 0, sizeof(cfg));
-    if (bytesRead != sizeof(cfg)) {
+    bytesRead = VirtIoSndPciReadConfig(&Transport->PciInterface, cfg, 0, (ULONG)sizeof(cfg));
+    if (bytesRead != (ULONG)sizeof(cfg)) {
         status = STATUS_DEVICE_DATA_ERROR;
         goto Fail;
     }
