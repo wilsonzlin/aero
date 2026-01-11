@@ -2546,7 +2546,11 @@ mod wasm {
             let rgba8 = Uint8Array::from(bytes.as_slice()).buffer();
 
             let out = Object::new();
-            Reflect::set(&out, &JsValue::from_str("width"), &JsValue::from_f64(width as f64))?;
+            Reflect::set(
+                &out,
+                &JsValue::from_str("width"),
+                &JsValue::from_f64(width as f64),
+            )?;
             Reflect::set(
                 &out,
                 &JsValue::from_str("height"),
@@ -2578,7 +2582,11 @@ mod wasm {
         let rgba8 = Uint8Array::from(bytes.as_slice()).buffer();
 
         let out = Object::new();
-        Reflect::set(&out, &JsValue::from_str("width"), &JsValue::from_f64(width as f64))?;
+        Reflect::set(
+            &out,
+            &JsValue::from_str("width"),
+            &JsValue::from_f64(width as f64),
+        )?;
         Reflect::set(
             &out,
             &JsValue::from_str("height"),

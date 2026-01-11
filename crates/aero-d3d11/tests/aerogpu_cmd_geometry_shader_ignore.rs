@@ -112,4 +112,3 @@ fn aerogpu_cmd_still_rejects_vertex_pixel_stage_mismatch() {
         );
     });
 }
-
