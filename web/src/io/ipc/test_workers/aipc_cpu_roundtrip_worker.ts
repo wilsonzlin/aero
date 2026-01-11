@@ -52,6 +52,29 @@ try {
   io.mmioWrite(0x1000_0000n, 4, 0x1234_5678);
   const mmio0 = io.mmioRead(0x1000_0000n, 4);
 
+  // PCI config + BAR mapping test (PciTestDevice, bus0/dev0/fn0).
+  const pciAddrBase = 0x8000_0000; // enable bit
+  const pciCfgAddr = (reg: number) => (pciAddrBase | (reg & 0xfc)) >>> 0;
+  const pciReadDword = (reg: number) => {
+    io.portWrite(0x0cf8, 4, pciCfgAddr(reg));
+    return io.portRead(0x0cfc, 4) >>> 0;
+  };
+  const pciWriteDword = (reg: number, value: number) => {
+    io.portWrite(0x0cf8, 4, pciCfgAddr(reg));
+    io.portWrite(0x0cfc, 4, value >>> 0);
+  };
+
+  const pciId = pciReadDword(0x00);
+  const pciVendorId = pciId & 0xffff;
+  const pciDeviceId = (pciId >>> 16) & 0xffff;
+  const pciBar0 = pciReadDword(0x10);
+
+  // Enable memory-space decoding (command bit1).
+  pciWriteDword(0x04, 0x0000_0002);
+  const pciBar0Base = BigInt(pciBar0 >>> 0) & 0xffff_fff0n;
+  io.mmioWrite(pciBar0Base, 4, 0xcafe_babe);
+  const pciMmio0 = io.mmioRead(pciBar0Base, 4);
+
   parentPort!.postMessage({
     ok: true,
     status64,
@@ -62,6 +85,10 @@ try {
     resetRequests,
     serialBytes,
     mmio0,
+    pciVendorId,
+    pciDeviceId,
+    pciBar0,
+    pciMmio0,
   });
 } catch (err) {
   parentPort!.postMessage({ ok: false, error: err instanceof Error ? err.message : String(err) });

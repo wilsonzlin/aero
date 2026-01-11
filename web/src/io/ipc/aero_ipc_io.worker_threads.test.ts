@@ -46,6 +46,10 @@ describe("io/ipc/aero_ipc_io (worker_threads)", () => {
           resetRequests?: number;
           serialBytes?: number[];
           mmio0?: number;
+          pciVendorId?: number;
+          pciDeviceId?: number;
+          pciBar0?: number;
+          pciMmio0?: number;
           error?: string;
         },
       ];
@@ -72,6 +76,12 @@ describe("io/ipc/aero_ipc_io (worker_threads)", () => {
       expect(result.serialBytes).toEqual([0x48, 0x69]);
       // MMIO write/read roundtrip.
       expect(result.mmio0).toBe(0x1234_5678);
+
+      // PCI test device config + BAR0 MMIO mapping.
+      expect(result.pciVendorId).toBe(0x1234);
+      expect(result.pciDeviceId).toBe(0x5678);
+      expect((result.pciBar0 ?? 0) & 0xf).toBe(0); // BAR0 is mmio32 so low 4 bits are 0.
+      expect(result.pciMmio0).toBe(0xcafe_babe);
     } finally {
       await cpuWorker.terminate();
       await ioWorker.terminate();
