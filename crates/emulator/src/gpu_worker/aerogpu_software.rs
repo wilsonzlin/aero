@@ -2123,16 +2123,8 @@ impl AeroGpuSoftwareExecutor {
         // `AerogpuCmdOpcode` is a fixed protocol enum today. The wildcard arm at the bottom is
         // intentional forward-compatibility: if the protocol gains new opcodes, the software
         // backend should ignore them rather than failing compilation.
-        #[allow(unreachable_patterns)]
         match op {
             cmd::AerogpuCmdOpcode::Nop | cmd::AerogpuCmdOpcode::DebugMarker => {}
-            cmd::AerogpuCmdOpcode::CreateSampler
-            | cmd::AerogpuCmdOpcode::DestroySampler
-            | cmd::AerogpuCmdOpcode::SetSamplers
-            | cmd::AerogpuCmdOpcode::SetConstantBuffers => {
-                // The software backend is intentionally minimal and ignores GPU state
-                // that is only needed for shader-based rendering.
-            }
             cmd::AerogpuCmdOpcode::CreateBuffer => {
                 let packet_cmd =
                     match Self::read_packed_prefix::<cmd::AerogpuCmdCreateBuffer>(packet) {
@@ -3497,6 +3489,7 @@ impl AeroGpuSoftwareExecutor {
             | cmd::AerogpuCmdOpcode::Flush => {
                 // No-op for software backend (work already executes at submit boundaries).
             }
+            #[allow(unreachable_patterns)]
             _ => {
                 // Forward compatibility: ignore opcodes not yet implemented by the software
                 // backend. Unknown numeric opcodes are already filtered by `from_u32` above.
