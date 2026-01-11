@@ -6,9 +6,10 @@ Win7 virtio functional tests host harness (QEMU).
 This is a Python alternative to Invoke-AeroVirtioWin7Tests.ps1 for environments where
 PowerShell is inconvenient (e.g. Linux CI).
 
-Note: This harness intentionally uses *modern-only* virtio-pci devices (`disable-legacy=on`) for
+Note: In the default (non-transitional) mode, this harness uses *modern-only* virtio-pci devices
+(`disable-legacy=on`) and forces the Aero contract v1 PCI Revision ID (`x-pci-revision=0x01`) for
 virtio-blk/virtio-net/virtio-input so the Win7 drivers bind to the Aero contract v1 IDs
-(DEV_1041/DEV_1042/DEV_1052).
+(DEV_1041/DEV_1042/DEV_1052) and strict `&REV_01` INFs can bind under QEMU.
 
 When `--with-virtio-snd` is enabled, the harness also configures virtio-snd as a modern-only
 virtio-pci device and forces the Aero contract v1 revision (`disable-legacy=on,x-pci-revision=0x01`)
