@@ -169,6 +169,54 @@ static void test_valid_all_caps(void) {
     expect_u32("valid_all_caps.notify.mult", caps.notify_off_multiplier, 4);
 }
 
+static void test_contract_v1_parse_fixed_layout_ok(void) {
+    uint8_t cfg[256];
+    uint64_t bars[VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT];
+    virtio_pci_parsed_caps_t caps;
+    virtio_pci_cap_parse_result_t res;
+    const uint64_t bar0_base = 0x1A0000000ULL; /* >4 GiB (64-bit BAR) */
+
+    memset(cfg, 0, sizeof(cfg));
+    memset(bars, 0, sizeof(bars));
+
+    write_le16(&cfg[VIRTIO_PCI_CAP_PARSER_PCI_STATUS_OFFSET], VIRTIO_PCI_CAP_PARSER_PCI_STATUS_CAP_LIST);
+    cfg[VIRTIO_PCI_CAP_PARSER_PCI_CAP_PTR_OFFSET] = 0x40;
+
+    add_virtio_cap(cfg, 0x40, 0x54, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_COMMON, 0, 0x0000, 0x0100, 16);
+    add_virtio_notify_cap(cfg, 0x54, 0x70, 0, 0x1000, 0x0100, 4);
+    add_virtio_cap(cfg, 0x70, 0x80, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_ISR, 0, 0x2000, 0x0020, 16);
+    add_virtio_cap(cfg, 0x80, 0x00, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_DEVICE, 0, 0x3000, 0x0100, 16);
+
+    bars[0] = bar0_base;
+
+    res = virtio_pci_cap_parse(cfg, sizeof(cfg), bars, &caps);
+    expect_result("contract_v1_parse_fixed_layout_ok.res", res, VIRTIO_PCI_CAP_PARSE_OK);
+    if (res != VIRTIO_PCI_CAP_PARSE_OK) {
+        return;
+    }
+
+    expect_u32("contract_v1_parse_fixed_layout_ok.common.bar", (uint32_t)caps.common_cfg.bar, 0);
+    expect_u32("contract_v1_parse_fixed_layout_ok.common.offset", caps.common_cfg.offset, 0x0000);
+    expect_u32("contract_v1_parse_fixed_layout_ok.common.length", caps.common_cfg.length, 0x0100);
+    expect_u64("contract_v1_parse_fixed_layout_ok.common.addr", caps.common_cfg.addr, bar0_base + 0x0000);
+
+    expect_u32("contract_v1_parse_fixed_layout_ok.notify.bar", (uint32_t)caps.notify_cfg.bar, 0);
+    expect_u32("contract_v1_parse_fixed_layout_ok.notify.offset", caps.notify_cfg.offset, 0x1000);
+    expect_u32("contract_v1_parse_fixed_layout_ok.notify.length", caps.notify_cfg.length, 0x0100);
+    expect_u64("contract_v1_parse_fixed_layout_ok.notify.addr", caps.notify_cfg.addr, bar0_base + 0x1000);
+    expect_u32("contract_v1_parse_fixed_layout_ok.notify.mult", caps.notify_off_multiplier, 4);
+
+    expect_u32("contract_v1_parse_fixed_layout_ok.isr.bar", (uint32_t)caps.isr_cfg.bar, 0);
+    expect_u32("contract_v1_parse_fixed_layout_ok.isr.offset", caps.isr_cfg.offset, 0x2000);
+    expect_u32("contract_v1_parse_fixed_layout_ok.isr.length", caps.isr_cfg.length, 0x0020);
+    expect_u64("contract_v1_parse_fixed_layout_ok.isr.addr", caps.isr_cfg.addr, bar0_base + 0x2000);
+
+    expect_u32("contract_v1_parse_fixed_layout_ok.device.bar", (uint32_t)caps.device_cfg.bar, 0);
+    expect_u32("contract_v1_parse_fixed_layout_ok.device.offset", caps.device_cfg.offset, 0x3000);
+    expect_u32("contract_v1_parse_fixed_layout_ok.device.length", caps.device_cfg.length, 0x0100);
+    expect_u64("contract_v1_parse_fixed_layout_ok.device.addr", caps.device_cfg.addr, bar0_base + 0x3000);
+}
+
 static void test_aero_layout_validation_ok(void) {
     uint8_t cfg[256];
     uint64_t bars[VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT];
@@ -339,13 +387,11 @@ static void test_missing_notify_cap(void) {
     write_le16(&cfg[VIRTIO_PCI_CAP_PARSER_PCI_STATUS_OFFSET], VIRTIO_PCI_CAP_PARSER_PCI_STATUS_CAP_LIST);
     cfg[VIRTIO_PCI_CAP_PARSER_PCI_CAP_PTR_OFFSET] = 0x40;
 
-    add_virtio_cap(cfg, 0x40, 0x54, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_COMMON, 0, 0x1000, 0x100, 16);
-    add_virtio_cap(cfg, 0x54, 0x68, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_ISR, 1, 0x3000, 0x10, 16);
-    add_virtio_cap(cfg, 0x68, 0x00, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_DEVICE, 4, 0x4000, 0x400, 16);
+    add_virtio_cap(cfg, 0x40, 0x54, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_COMMON, 0, 0x0000, 0x0100, 16);
+    add_virtio_cap(cfg, 0x54, 0x70, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_ISR, 0, 0x2000, 0x0020, 16);
+    add_virtio_cap(cfg, 0x70, 0x00, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_DEVICE, 0, 0x3000, 0x0100, 16);
 
     bars[0] = 0xA0000000ULL;
-    bars[1] = 0xB0000000ULL;
-    bars[4] = 0xD0000000ULL;
 
     res = virtio_pci_cap_parse(cfg, sizeof(cfg), bars, &caps);
     expect_result("missing_notify_cap.res", res, VIRTIO_PCI_CAP_PARSE_ERR_MISSING_NOTIFY_CFG);
@@ -363,15 +409,12 @@ static void test_looping_cap_list(void) {
     write_le16(&cfg[VIRTIO_PCI_CAP_PARSER_PCI_STATUS_OFFSET], VIRTIO_PCI_CAP_PARSER_PCI_STATUS_CAP_LIST);
     cfg[VIRTIO_PCI_CAP_PARSER_PCI_CAP_PTR_OFFSET] = 0x40;
 
-    add_virtio_cap(cfg, 0x40, 0x54, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_COMMON, 0, 0x1000, 0x100, 16);
-    add_virtio_notify_cap(cfg, 0x54, 0x70, 2, 0x2000, 0x200, 4);
-    add_virtio_cap(cfg, 0x70, 0x80, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_ISR, 1, 0x3000, 0x10, 16);
-    add_virtio_cap(cfg, 0x80, 0x54, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_DEVICE, 4, 0x4000, 0x400, 16);
+    add_virtio_cap(cfg, 0x40, 0x54, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_COMMON, 0, 0x0000, 0x0100, 16);
+    add_virtio_notify_cap(cfg, 0x54, 0x70, 0, 0x1000, 0x0100, 4);
+    add_virtio_cap(cfg, 0x70, 0x80, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_ISR, 0, 0x2000, 0x0020, 16);
+    add_virtio_cap(cfg, 0x80, 0x54, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_DEVICE, 0, 0x3000, 0x0100, 16);
 
     bars[0] = 0xA0000000ULL;
-    bars[1] = 0xB0000000ULL;
-    bars[2] = 0xC0000000ULL;
-    bars[4] = 0xD0000000ULL;
 
     res = virtio_pci_cap_parse(cfg, sizeof(cfg), bars, &caps);
     expect_result("looping_cap_list.res", res, VIRTIO_PCI_CAP_PARSE_ERR_CAP_LIST_LOOP);
@@ -408,11 +451,12 @@ static void test_notify_cap_len_too_short(void) {
     write_le16(&cfg[VIRTIO_PCI_CAP_PARSER_PCI_STATUS_OFFSET], VIRTIO_PCI_CAP_PARSER_PCI_STATUS_CAP_LIST);
     cfg[VIRTIO_PCI_CAP_PARSER_PCI_CAP_PTR_OFFSET] = 0x40;
 
-    add_virtio_cap(cfg, 0x40, 0x50, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_COMMON, 0, 0x1000, 0x100, 16);
-    add_virtio_cap(cfg, 0x50, 0x00, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_NOTIFY, 2, 0x2000, 0x200, 16);
+    add_virtio_cap(cfg, 0x40, 0x54, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_COMMON, 0, 0x0000, 0x0100, 16);
+    add_virtio_cap(cfg, 0x54, 0x70, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_NOTIFY, 0, 0x1000, 0x0100, 16);
+    add_virtio_cap(cfg, 0x70, 0x80, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_ISR, 0, 0x2000, 0x0020, 16);
+    add_virtio_cap(cfg, 0x80, 0x00, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_DEVICE, 0, 0x3000, 0x0100, 16);
 
     bars[0] = 0xA0000000ULL;
-    bars[2] = 0xC0000000ULL;
 
     res = virtio_pci_cap_parse(cfg, sizeof(cfg), bars, &caps);
     expect_result("notify_cap_len_too_short.res", res, VIRTIO_PCI_CAP_PARSE_ERR_NOTIFY_CAP_LEN_TOO_SMALL);
@@ -456,15 +500,12 @@ static void test_cap_ptr_unaligned(void) {
     write_le16(&cfg[VIRTIO_PCI_CAP_PARSER_PCI_STATUS_OFFSET], VIRTIO_PCI_CAP_PARSER_PCI_STATUS_CAP_LIST);
     cfg[VIRTIO_PCI_CAP_PARSER_PCI_CAP_PTR_OFFSET] = 0x41;
 
-    add_virtio_cap(cfg, 0x40, 0x54, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_COMMON, 0, 0x1000, 0x100, 16);
-    add_virtio_notify_cap(cfg, 0x54, 0x70, 2, 0x2000, 0x200, 4);
-    add_virtio_cap(cfg, 0x70, 0x80, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_ISR, 1, 0x3000, 0x10, 16);
-    add_virtio_cap(cfg, 0x80, 0x00, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_DEVICE, 4, 0x4000, 0x400, 16);
+    add_virtio_cap(cfg, 0x40, 0x54, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_COMMON, 0, 0x0000, 0x0100, 16);
+    add_virtio_notify_cap(cfg, 0x54, 0x70, 0, 0x1000, 0x0100, 4);
+    add_virtio_cap(cfg, 0x70, 0x80, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_ISR, 0, 0x2000, 0x0020, 16);
+    add_virtio_cap(cfg, 0x80, 0x00, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_DEVICE, 0, 0x3000, 0x0100, 16);
 
     bars[0] = 0xA0000000ULL;
-    bars[1] = 0xB0000000ULL;
-    bars[2] = 0xC0000000ULL;
-    bars[4] = 0xD0000000ULL;
 
     res = virtio_pci_cap_parse(cfg, sizeof(cfg), bars, &caps);
     expect_result("cap_ptr_unaligned.res", res, VIRTIO_PCI_CAP_PARSE_ERR_CAP_PTR_UNALIGNED);
@@ -747,13 +788,11 @@ static void test_missing_common_cfg(void) {
     write_le16(&cfg[VIRTIO_PCI_CAP_PARSER_PCI_STATUS_OFFSET], VIRTIO_PCI_CAP_PARSER_PCI_STATUS_CAP_LIST);
     cfg[VIRTIO_PCI_CAP_PARSER_PCI_CAP_PTR_OFFSET] = 0x40;
 
-    add_virtio_notify_cap(cfg, 0x40, 0x60, 2, 0x2000, 0x200, 4);
-    add_virtio_cap(cfg, 0x60, 0x74, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_ISR, 1, 0x3000, 0x10, 16);
-    add_virtio_cap(cfg, 0x74, 0x00, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_DEVICE, 4, 0x4000, 0x400, 16);
+    add_virtio_notify_cap(cfg, 0x40, 0x60, 0, 0x1000, 0x0100, 4);
+    add_virtio_cap(cfg, 0x60, 0x74, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_ISR, 0, 0x2000, 0x0020, 16);
+    add_virtio_cap(cfg, 0x74, 0x00, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_DEVICE, 0, 0x3000, 0x0100, 16);
 
-    bars[1] = 0xB0000000ULL;
-    bars[2] = 0xC0000000ULL;
-    bars[4] = 0xD0000000ULL;
+    bars[0] = 0xA0000000ULL;
 
     res = virtio_pci_cap_parse(cfg, sizeof(cfg), bars, &caps);
     expect_result("missing_common_cfg.res", res, VIRTIO_PCI_CAP_PARSE_ERR_MISSING_COMMON_CFG);
@@ -771,13 +810,11 @@ static void test_missing_isr_cfg(void) {
     write_le16(&cfg[VIRTIO_PCI_CAP_PARSER_PCI_STATUS_OFFSET], VIRTIO_PCI_CAP_PARSER_PCI_STATUS_CAP_LIST);
     cfg[VIRTIO_PCI_CAP_PARSER_PCI_CAP_PTR_OFFSET] = 0x40;
 
-    add_virtio_cap(cfg, 0x40, 0x54, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_COMMON, 0, 0x1000, 0x100, 16);
-    add_virtio_notify_cap(cfg, 0x54, 0x70, 2, 0x2000, 0x200, 4);
-    add_virtio_cap(cfg, 0x70, 0x00, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_DEVICE, 4, 0x4000, 0x400, 16);
+    add_virtio_cap(cfg, 0x40, 0x54, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_COMMON, 0, 0x0000, 0x0100, 16);
+    add_virtio_notify_cap(cfg, 0x54, 0x70, 0, 0x1000, 0x0100, 4);
+    add_virtio_cap(cfg, 0x70, 0x00, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_DEVICE, 0, 0x3000, 0x0100, 16);
 
     bars[0] = 0xA0000000ULL;
-    bars[2] = 0xC0000000ULL;
-    bars[4] = 0xD0000000ULL;
 
     res = virtio_pci_cap_parse(cfg, sizeof(cfg), bars, &caps);
     expect_result("missing_isr_cfg.res", res, VIRTIO_PCI_CAP_PARSE_ERR_MISSING_ISR_CFG);
@@ -795,13 +832,11 @@ static void test_missing_device_cfg(void) {
     write_le16(&cfg[VIRTIO_PCI_CAP_PARSER_PCI_STATUS_OFFSET], VIRTIO_PCI_CAP_PARSER_PCI_STATUS_CAP_LIST);
     cfg[VIRTIO_PCI_CAP_PARSER_PCI_CAP_PTR_OFFSET] = 0x40;
 
-    add_virtio_cap(cfg, 0x40, 0x54, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_COMMON, 0, 0x1000, 0x100, 16);
-    add_virtio_notify_cap(cfg, 0x54, 0x70, 2, 0x2000, 0x200, 4);
-    add_virtio_cap(cfg, 0x70, 0x00, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_ISR, 1, 0x3000, 0x10, 16);
+    add_virtio_cap(cfg, 0x40, 0x54, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_COMMON, 0, 0x0000, 0x0100, 16);
+    add_virtio_notify_cap(cfg, 0x54, 0x70, 0, 0x1000, 0x0100, 4);
+    add_virtio_cap(cfg, 0x70, 0x00, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_ISR, 0, 0x2000, 0x0020, 16);
 
     bars[0] = 0xA0000000ULL;
-    bars[1] = 0xB0000000ULL;
-    bars[2] = 0xC0000000ULL;
 
     res = virtio_pci_cap_parse(cfg, sizeof(cfg), bars, &caps);
     expect_result("missing_device_cfg.res", res, VIRTIO_PCI_CAP_PARSE_ERR_MISSING_DEVICE_CFG);
@@ -907,6 +942,7 @@ static void test_identity_contract_v1_device_not_allowed(void) {
 
 int main(void) {
     test_valid_all_caps();
+    test_contract_v1_parse_fixed_layout_ok();
     test_aero_layout_validation_ok();
     test_aero_layout_validation_offset_mismatch();
     test_aero_layout_validation_notify_multiplier_mismatch();
