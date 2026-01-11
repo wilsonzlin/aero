@@ -36,6 +36,15 @@ fn x87_em_raises_ud() {
 }
 
 #[test]
+fn x87_em_has_priority_over_ts() {
+    // fld1
+    let code = [0xD9, 0xE8];
+    let mut state = CpuState::new(CpuMode::Bit32);
+    state.control.cr0 |= CR0_EM | CR0_TS;
+    assert_eq!(exec_single(&code, &mut state), Err(Exception::InvalidOpcode));
+}
+
+#[test]
 fn wait_mp_ts_raises_nm() {
     // wait/fwait
     let code = [0x9B];
@@ -45,6 +54,24 @@ fn wait_mp_ts_raises_nm() {
         exec_single(&code, &mut state),
         Err(Exception::DeviceNotAvailable)
     );
+}
+
+#[test]
+fn wait_em_has_priority_over_nm() {
+    // wait/fwait
+    let code = [0x9B];
+    let mut state = CpuState::new(CpuMode::Bit32);
+    state.control.cr0 |= CR0_EM | CR0_MP | CR0_TS;
+    assert_eq!(exec_single(&code, &mut state), Err(Exception::InvalidOpcode));
+}
+
+#[test]
+fn wait_ts_without_mp_does_not_raise_nm() {
+    // wait/fwait
+    let code = [0x9B];
+    let mut state = CpuState::new(CpuMode::Bit32);
+    state.control.cr0 |= CR0_TS;
+    assert_eq!(exec_single(&code, &mut state), Ok(StepExit::Continue));
 }
 
 #[test]
@@ -67,6 +94,17 @@ fn wait_with_pending_unmasked_exception_ne0_sets_irq13_pending() {
     state.fpu.fsw = 0x0001; // pending invalid operation
     assert_eq!(exec_single(&code, &mut state), Ok(StepExit::Continue));
     assert!(state.irq13_pending);
+}
+
+#[test]
+fn wait_with_pending_unmasked_exception_ts_without_mp_still_raises_mf() {
+    // wait/fwait
+    let code = [0x9B];
+    let mut state = CpuState::new(CpuMode::Bit32);
+    state.control.cr0 |= CR0_TS | CR0_NE;
+    state.fpu.fcw = 0x037E; // unmask invalid operation
+    state.fpu.fsw = 0x0001; // pending invalid operation
+    assert_eq!(exec_single(&code, &mut state), Err(Exception::X87Fpu));
 }
 
 #[test]
