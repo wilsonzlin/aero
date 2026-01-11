@@ -96,7 +96,6 @@ impl AudioCaptureSource for aero_audio::capture::VecDequeCaptureSource {
 }
 
 #[cfg(target_arch = "wasm32")]
-#[derive(Debug)]
 pub struct MicCaptureSource {
     bridge: aero_platform::audio::mic_bridge::MicBridge,
     last_dropped_samples: u32,
