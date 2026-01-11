@@ -4,6 +4,13 @@ import { assertSectorAligned, checkedOffset, SECTOR_SIZE, type AsyncSectorDisk }
 import { IdbRemoteChunkCache } from "./idb_remote_chunk_cache";
 import { RemoteCacheManager, type RemoteCacheDirectoryHandle, type RemoteCacheFile, type RemoteCacheFileHandle, type RemoteCacheKeyParts, type RemoteCacheMetaV1, type RemoteCacheWritableFileStream } from "./remote_cache_manager";
 import { OPFS_AERO_DIR, OPFS_DISKS_DIR, OPFS_REMOTE_CACHE_DIR, pickDefaultBackend, type DiskBackend } from "./metadata";
+import {
+  DEFAULT_LEASE_REFRESH_MARGIN_MS,
+  DiskAccessLeaseRefresher,
+  fetchWithDiskAccessLease,
+  fetchWithDiskAccessLeaseForUrl,
+  type DiskAccessLease,
+} from "./disk_access_lease";
 
 export type ChunkedDiskManifestV1 = {
   schema: "aero.chunked-disk-image.v1";
@@ -83,6 +90,10 @@ export type RemoteChunkedDiskOptions = {
    * Defaults to the manifest `version`.
    */
   cacheVersion?: string;
+  /**
+   * For lease-based access, refresh shortly before `expiresAt`.
+   */
+  leaseRefreshMarginMs?: number;
 };
 
 /**
@@ -672,14 +683,16 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
   readonly sectorSize = SECTOR_SIZE;
   readonly capacityBytes: number;
 
-  private readonly manifestUrl: string;
+  private readonly sourceId: string;
+  private readonly lease: DiskAccessLease;
   private readonly manifest: ParsedChunkedDiskManifest;
   private readonly chunkCache: ChunkCache;
-  private readonly credentials: RequestCredentials;
   private readonly prefetchSequentialChunks: number;
   private readonly semaphore: Semaphore;
   private readonly maxAttempts: number;
   private readonly retryBaseDelayMs: number;
+  private readonly leaseRefreshMarginMs: number;
+  private readonly leaseRefresher: DiskAccessLeaseRefresher;
   private readonly abort = new AbortController();
 
   private readonly inflight = new Map<number, Promise<Uint8Array<ArrayBuffer>>>();
@@ -703,34 +716,39 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
   };
 
   private constructor(
-    manifestUrl: string,
+    sourceId: string,
+    lease: DiskAccessLease,
     manifest: ParsedChunkedDiskManifest,
     chunkCache: ChunkCache,
-    options: Required<Pick<RemoteChunkedDiskOptions, "credentials" | "prefetchSequentialChunks" | "maxAttempts" | "retryBaseDelayMs">> & {
+    options: Required<Pick<RemoteChunkedDiskOptions, "prefetchSequentialChunks" | "maxAttempts" | "retryBaseDelayMs" | "leaseRefreshMarginMs">> & {
       maxConcurrentFetches: number;
     },
   ) {
-    this.manifestUrl = manifestUrl;
+    this.sourceId = sourceId;
+    this.lease = lease;
     this.manifest = manifest;
     this.capacityBytes = manifest.totalSize;
     this.chunkCache = chunkCache;
-    this.credentials = options.credentials;
     this.prefetchSequentialChunks = options.prefetchSequentialChunks;
     this.semaphore = new Semaphore(options.maxConcurrentFetches);
     this.maxAttempts = options.maxAttempts;
     this.retryBaseDelayMs = options.retryBaseDelayMs;
+    this.leaseRefreshMarginMs = options.leaseRefreshMarginMs;
+    this.leaseRefresher = new DiskAccessLeaseRefresher(this.lease, { refreshMarginMs: this.leaseRefreshMarginMs });
   }
 
   static async open(manifestUrl: string, options: RemoteChunkedDiskOptions = {}): Promise<RemoteChunkedDisk> {
     if (!manifestUrl) throw new Error("manifestUrl must not be empty");
+    const lease = staticDiskLease(manifestUrl, options.credentials ?? "same-origin");
+    return await RemoteChunkedDisk.openWithLease({ sourceId: manifestUrl, lease }, options);
+  }
+  static async openWithLease(
+    params: { sourceId: string; lease: DiskAccessLease },
+    options: RemoteChunkedDiskOptions = {},
+  ): Promise<RemoteChunkedDisk> {
+    if (!params.sourceId) throw new Error("sourceId must not be empty");
 
-    const resolved: Required<Omit<RemoteChunkedDiskOptions, "store" | "cacheBackend" | "cacheImageId" | "cacheVersion">> & {
-      store: BinaryStore;
-      cacheBackend: DiskBackend;
-      cacheImageId?: string;
-      cacheVersion?: string;
-    } = {
-      credentials: options.credentials ?? "same-origin",
+    const resolved: Required<Omit<RemoteChunkedDiskOptions, "credentials">> = {
       cacheLimitBytes: options.cacheLimitBytes ?? 512 * 1024 * 1024,
       maxConcurrentFetches: options.maxConcurrentFetches ?? 4,
       prefetchSequentialChunks: options.prefetchSequentialChunks ?? 2,
@@ -740,6 +758,7 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
       cacheBackend: options.cacheBackend ?? pickDefaultBackend(),
       cacheImageId: options.cacheImageId,
       cacheVersion: options.cacheVersion,
+      leaseRefreshMarginMs: options.leaseRefreshMarginMs ?? DEFAULT_LEASE_REFRESH_MARGIN_MS,
     };
 
     if (resolved.cacheLimitBytes !== null) {
@@ -759,8 +778,11 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
     if (!Number.isSafeInteger(resolved.retryBaseDelayMs) || resolved.retryBaseDelayMs < 0) {
       throw new Error(`invalid retryBaseDelayMs=${resolved.retryBaseDelayMs}`);
     }
+    if (!Number.isSafeInteger(resolved.leaseRefreshMarginMs) || resolved.leaseRefreshMarginMs < 0) {
+      throw new Error(`invalid leaseRefreshMarginMs=${resolved.leaseRefreshMarginMs}`);
+    }
 
-    const resp = await fetch(manifestUrl, { method: "GET", credentials: resolved.credentials });
+    const resp = await fetchWithDiskAccessLease(params.lease, { method: "GET" }, { retryAuthOnce: true });
     if (!resp.ok) throw new Error(`failed to fetch manifest: ${resp.status}`);
     const json = (await resp.json()) as unknown;
     const manifest = parseManifest(json);
@@ -769,7 +791,7 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
     const derivedImageId =
       typeof manifestV1.imageId === "string" && manifestV1.imageId.trim().length > 0
         ? manifestV1.imageId
-        : stableImageIdFromUrl(manifestUrl);
+        : stableImageIdFromUrl(params.sourceId);
 
     const cacheImageId = (resolved.cacheImageId ?? derivedImageId).trim();
     if (!cacheImageId) {
@@ -804,18 +826,18 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
       );
     } else if (resolved.cacheBackend === "idb" && typeof indexedDB !== "undefined") {
       const cacheKey = await RemoteCacheManager.deriveCacheKey(cacheKeyParts);
-       const idbCache = await IdbRemoteChunkCache.open({
-         cacheKey,
-         signature: {
-           imageId: cacheKeyParts.imageId,
-           version: cacheKeyParts.version,
-           etag: resp.headers.get("etag"),
-           lastModified: resp.headers.get("last-modified"),
-           sizeBytes: manifest.totalSize,
-           chunkSize: manifest.chunkSize,
-         },
-         cacheLimitBytes: resolved.cacheLimitBytes,
-       });
+      const idbCache = await IdbRemoteChunkCache.open({
+        cacheKey,
+        signature: {
+          imageId: cacheKeyParts.imageId,
+          version: cacheKeyParts.version,
+          etag: resp.headers.get("etag"),
+          lastModified: resp.headers.get("last-modified"),
+          sizeBytes: manifest.totalSize,
+          chunkSize: manifest.chunkSize,
+        },
+        cacheLimitBytes: resolved.cacheLimitBytes,
+      });
       const status = await idbCache.getStatus();
       cache = new IdbChunkCache(idbCache, manifest, status);
     } else {
@@ -833,18 +855,20 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
       );
     }
 
-    return new RemoteChunkedDisk(manifestUrl, manifest, cache, {
-      credentials: resolved.credentials,
+    const disk = new RemoteChunkedDisk(cacheImageId, params.lease, manifest, cache, {
       maxConcurrentFetches: resolved.maxConcurrentFetches,
       prefetchSequentialChunks: resolved.prefetchSequentialChunks,
       maxAttempts: resolved.maxAttempts,
       retryBaseDelayMs: resolved.retryBaseDelayMs,
+      leaseRefreshMarginMs: resolved.leaseRefreshMarginMs,
     });
+    disk.leaseRefresher.start();
+    return disk;
   }
 
   getTelemetrySnapshot(): RemoteDiskTelemetrySnapshot {
     return {
-      url: this.manifestUrl,
+      url: this.sourceId,
       totalSize: this.capacityBytes,
       blockSize: this.manifest.chunkSize,
       cacheLimitBytes: this.chunkCache.getCacheLimitBytes(),
@@ -929,6 +953,7 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    this.leaseRefresher.stop();
     this.abort.abort();
     await Promise.allSettled(Array.from(this.inflight.values()));
     this.inflight.clear();
@@ -938,7 +963,7 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
 
   private chunkUrl(chunkIndex: number): string {
     const name = String(chunkIndex).padStart(this.manifest.chunkIndexWidth, "0");
-    return new URL(`chunks/${name}.bin`, this.manifestUrl).toString();
+    return new URL(`chunks/${name}.bin`, this.lease.url).toString();
   }
 
   private shouldRetry(err: unknown): boolean {
@@ -956,21 +981,22 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
   private async fetchChunkOnce(chunkIndex: number, generation: number): Promise<Uint8Array<ArrayBuffer>> {
     const expectedLen = this.manifest.chunkSizes[chunkIndex]!;
     const expectedSha = this.manifest.chunkSha256[chunkIndex];
-    const url = this.chunkUrl(chunkIndex);
 
     if (generation === this.cacheGeneration) {
       this.telemetry.requests += 1;
     }
 
-    const resp = await fetch(url, {
-      method: "GET",
-      credentials: this.credentials,
-      signal: this.abort.signal,
-    });
+    await this.maybeRefreshLease();
+    const resp = await fetchWithDiskAccessLeaseForUrl(
+      this.lease,
+      () => this.chunkUrl(chunkIndex),
+      { method: "GET", signal: this.abort.signal },
+      { retryAuthOnce: true },
+    );
     if (!resp.ok) {
       throw new ChunkFetchError(`chunk fetch failed: ${resp.status}`, resp.status);
     }
-    const bytes = new Uint8Array(await resp.arrayBuffer());
+    const bytes = toArrayBufferUint8(new Uint8Array(await resp.arrayBuffer()));
     if (bytes.length !== expectedLen) {
       throw new Error(`chunk ${chunkIndex} length mismatch: expected=${expectedLen} actual=${bytes.length}`);
     }
@@ -1075,4 +1101,24 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
       });
     }
   }
+
+  private async maybeRefreshLease(): Promise<void> {
+    const expiresAt = this.lease.expiresAt;
+    if (!expiresAt) return;
+    const refreshAtMs = expiresAt.getTime() - this.leaseRefreshMarginMs;
+    if (!Number.isFinite(refreshAtMs) || Date.now() < refreshAtMs) return;
+    await this.lease.refresh();
+  }
+}
+
+function staticDiskLease(url: string, credentialsMode: RequestCredentials): DiskAccessLease {
+  const lease: DiskAccessLease = {
+    url,
+    expiresAt: undefined,
+    credentialsMode,
+    async refresh() {
+      return lease;
+    },
+  };
+  return lease;
 }

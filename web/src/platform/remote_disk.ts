@@ -3,6 +3,12 @@ import { IdbRemoteChunkCache } from "../storage/idb_remote_chunk_cache";
 import { pickDefaultBackend, type DiskBackend } from "../storage/metadata";
 import { OpfsLruChunkCache } from "../storage/remote/opfs_lru_chunk_cache";
 import { RemoteCacheManager, type RemoteCacheKeyParts } from "../storage/remote_cache_manager";
+import {
+  DEFAULT_LEASE_REFRESH_MARGIN_MS,
+  DiskAccessLeaseRefresher,
+  fetchWithDiskAccessLease,
+  type DiskAccessLease,
+} from "../storage/disk_access_lease";
 
 export type ByteRange = { start: number; end: number };
 
@@ -242,6 +248,10 @@ export type RemoteDiskOptions = {
    * Optional expected size for the remote disk image. When provided, a mismatch becomes an error.
    */
   expectedSizeBytes?: number;
+  /**
+   * For lease-based access, refresh shortly before `expiresAt`.
+   */
+  leaseRefreshMarginMs?: number;
 };
 
 type ResolvedRemoteDiskOptions = {
@@ -249,7 +259,7 @@ type ResolvedRemoteDiskOptions = {
   cacheLimitBytes: number | null;
   prefetchSequentialBlocks: number;
   cacheBackend: DiskBackend;
-  credentials: RequestCredentials;
+  leaseRefreshMarginMs: number;
 };
 
 function normalizeCredentials(credentials: RequestCredentials | undefined): RequestCredentials {
@@ -337,13 +347,14 @@ function cacheKeyPartsFromUrl(url: string, options: RemoteDiskOptions): RemoteCa
 export class RemoteStreamingDisk implements AsyncSectorDisk {
   readonly sectorSize = REMOTE_DISK_SECTOR_SIZE;
   readonly capacityBytes: number;
-  private readonly url: string;
+  private readonly sourceId: string;
+  private readonly lease: DiskAccessLease;
   private readonly totalSize: number;
   private readonly blockSize: number;
   private readonly cacheLimitBytes: number | null;
   private readonly prefetchSequentialBlocks: number;
+  private readonly leaseRefreshMarginMs: number;
   private readonly cacheBackend: DiskBackend;
-  private readonly credentials: RequestCredentials;
 
   private opfsCache: OpfsLruChunkCache | null = null;
 
@@ -353,6 +364,7 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
   private readonly inflight = new Map<number, Promise<Uint8Array>>();
   private cacheGeneration = 0;
   private idbCache: IdbRemoteChunkCache | null = null;
+  private readonly leaseRefresher: DiskAccessLeaseRefresher;
 
   private telemetry: RemoteDiskTelemetry = {
     blockRequests: 0,
@@ -367,27 +379,39 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
   };
 
   private constructor(
-    url: string,
+    sourceId: string,
+    lease: DiskAccessLease,
     totalSize: number,
     options: ResolvedRemoteDiskOptions,
     opfsCache?: OpfsLruChunkCache,
   ) {
-    this.url = url;
+    this.sourceId = sourceId;
+    this.lease = lease;
     this.totalSize = totalSize;
     this.capacityBytes = totalSize;
     this.blockSize = options.blockSize;
     this.cacheLimitBytes = options.cacheLimitBytes;
     this.prefetchSequentialBlocks = options.prefetchSequentialBlocks;
     this.cacheBackend = options.cacheBackend;
-    this.credentials = options.credentials;
+    this.leaseRefreshMarginMs = options.leaseRefreshMarginMs;
     this.opfsCache = opfsCache ?? null;
 
     this.rangeSet = new RangeSet();
+    this.leaseRefresher = new DiskAccessLeaseRefresher(this.lease, { refreshMarginMs: this.leaseRefreshMarginMs });
   }
 
   static async open(url: string, options: RemoteDiskOptions = {}): Promise<RemoteStreamingDisk> {
-    const credentials = normalizeCredentials(options.credentials);
-    const probe = await probeRemoteDisk(url, { credentials });
+    const lease = staticDiskLease(url, normalizeCredentials(options.credentials));
+    return await RemoteStreamingDisk.openWithLease({ sourceId: url, lease }, options);
+  }
+
+  static async openWithLease(
+    params: { sourceId: string; lease: DiskAccessLease; etag?: string | null },
+    options: RemoteDiskOptions = {},
+  ): Promise<RemoteStreamingDisk> {
+    if (!params.sourceId) throw new Error("sourceId must not be empty");
+
+    const probe = await probeRemoteDisk(params.lease.url, { credentials: params.lease.credentialsMode });
     if (!probe.partialOk) {
       throw new Error(
         "Remote server does not appear to support HTTP Range requests (required). " +
@@ -400,7 +424,7 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
       cacheLimitBytes: options.cacheLimitBytes ?? 512 * 1024 * 1024,
       prefetchSequentialBlocks: options.prefetchSequentialBlocks ?? 2,
       cacheBackend: options.cacheBackend ?? pickDefaultBackend(),
-      credentials,
+      leaseRefreshMarginMs: options.leaseRefreshMarginMs ?? DEFAULT_LEASE_REFRESH_MARGIN_MS,
     };
 
     if (!Number.isSafeInteger(resolved.blockSize) || resolved.blockSize <= 0) {
@@ -417,6 +441,9 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
     if (!Number.isSafeInteger(resolved.prefetchSequentialBlocks) || resolved.prefetchSequentialBlocks < 0) {
       throw new Error(`Invalid prefetchSequentialBlocks=${resolved.prefetchSequentialBlocks}`);
     }
+    if (!Number.isSafeInteger(resolved.leaseRefreshMarginMs) || resolved.leaseRefreshMarginMs < 0) {
+      throw new Error(`Invalid leaseRefreshMarginMs=${resolved.leaseRefreshMarginMs}`);
+    }
 
     const expectedSizeBytes = options.expectedSizeBytes;
     if (expectedSizeBytes !== undefined) {
@@ -428,13 +455,13 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
       }
     }
 
-    const parts = cacheKeyPartsFromUrl(url, options);
+    const parts = cacheKeyPartsFromUrl(params.sourceId, options);
     const cacheKey = await RemoteCacheManager.deriveCacheKey(parts);
-    const resolvedEtag = options.cacheEtag !== undefined ? options.cacheEtag : probe.etag;
+    const resolvedEtag = options.cacheEtag !== undefined ? options.cacheEtag : params.etag ?? probe.etag;
     const validators = { sizeBytes: probe.size, etag: resolvedEtag, lastModified: probe.lastModified };
 
     if (resolved.cacheBackend === "idb") {
-      const disk = new RemoteStreamingDisk(url, probe.size, resolved);
+      const disk = new RemoteStreamingDisk(parts.imageId, params.lease, probe.size, resolved);
       disk.idbCache = await IdbRemoteChunkCache.open({
         cacheKey,
         signature: {
@@ -449,6 +476,7 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
       });
       const status = await disk.idbCache.getStatus();
       disk.cachedBytes = status.bytesUsed;
+      disk.leaseRefresher.start();
       return disk;
     }
 
@@ -463,13 +491,14 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
       maxBytes: resolved.cacheLimitBytes,
     });
 
-    const disk = new RemoteStreamingDisk(url, probe.size, resolved, opfsCache);
+    const disk = new RemoteStreamingDisk(parts.imageId, params.lease, probe.size, resolved, opfsCache);
     const indices = await opfsCache.getChunkIndices();
     for (const idx of indices) {
       const r = disk.blockRange(idx);
       disk.rangeSet.insert(r.start, r.end);
     }
     disk.cachedBytes = (await opfsCache.getStats()).totalBytes;
+    disk.leaseRefresher.start();
     return disk;
   }
 
@@ -504,7 +533,7 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
 
   getTelemetrySnapshot(): RemoteDiskTelemetrySnapshot {
     return {
-      url: this.url,
+      url: this.sourceId,
       totalSize: this.totalSize,
       blockSize: this.blockSize,
       cacheLimitBytes: this.cacheLimitBytes,
@@ -609,6 +638,7 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
   }
 
   async close(): Promise<void> {
+    this.leaseRefresher.stop();
     this.idbCache?.close();
     this.idbCache = null;
   }
@@ -681,10 +711,12 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
         this.telemetry.lastFetchRange = { ...r };
       }
       onLog?.(`cache miss: fetching bytes=${r.start}-${r.end - 1}`);
-      const resp = await fetch(this.url, {
-        headers: { Range: `bytes=${r.start}-${r.end - 1}` },
-        credentials: this.credentials,
-      });
+      await this.maybeRefreshLease();
+      const resp = await fetchWithDiskAccessLease(
+        this.lease,
+        { headers: { Range: `bytes=${r.start}-${r.end - 1}` } },
+        { retryAuthOnce: true },
+      );
       if (resp.status !== 206) {
         throw new Error(`Expected 206 Partial Content, got ${resp.status}`);
       }
@@ -761,10 +793,12 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
         this.telemetry.lastFetchRange = { ...r };
       }
       onLog?.(`cache miss: fetching bytes=${r.start}-${r.end - 1}`);
-      const resp = await fetch(this.url, {
-        headers: { Range: `bytes=${r.start}-${r.end - 1}` },
-        credentials: this.credentials,
-      });
+      await this.maybeRefreshLease();
+      const resp = await fetchWithDiskAccessLease(
+        this.lease,
+        { headers: { Range: `bytes=${r.start}-${r.end - 1}` } },
+        { retryAuthOnce: true },
+      );
       if (resp.status !== 206) {
         throw new Error(`Expected 206 Partial Content, got ${resp.status}`);
       }
@@ -796,7 +830,27 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
     }
   }
 
+  private async maybeRefreshLease(): Promise<void> {
+    const expiresAt = this.lease.expiresAt;
+    if (!expiresAt) return;
+    const refreshAtMs = expiresAt.getTime() - this.leaseRefreshMarginMs;
+    if (!Number.isFinite(refreshAtMs) || Date.now() < refreshAtMs) return;
+    await this.lease.refresh();
+  }
+
   // OPFS cache eviction is handled by `OpfsLruChunkCache` during `putChunk()`.
+}
+
+function staticDiskLease(url: string, credentialsMode: RequestCredentials): DiskAccessLease {
+  const lease: DiskAccessLease = {
+    url,
+    expiresAt: undefined,
+    credentialsMode,
+    async refresh() {
+      return lease;
+    },
+  };
+  return lease;
 }
 
 // Backwards-compatible alias: this disk implementation uses HTTP Range requests.

@@ -104,8 +104,16 @@ describe('waitUntilNotEqual', () => {
         // Ensure the worker thread is fully initialized before we enter the
         // blocking Atomics.wait() path. Under heavy load, starting the worker
         // can take long enough that a short wait timeout flakes.
-        await new Promise<void>((resolve) => {
-          notifier.once('message', () => resolve());
+        await new Promise<void>((resolve, reject) => {
+          notifier.once('message', (msg) => {
+            if (
+              msg === 'ready' ||
+              (msg && typeof msg === 'object' && (msg as { type?: unknown }).type === 'ready')
+            ) {
+              resolve();
+            }
+          });
+          notifier.once('error', reject);
         });
         notifier.postMessage('go');
         await expect(waitUntilNotEqual(i32, 0, 0, { canBlock: true, timeoutMs: 5_000 })).resolves.toBe('ok');
