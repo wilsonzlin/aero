@@ -43,6 +43,11 @@ The intended end-state is to use the same “main-thread owns the handle, worker
 models the USB device” architecture described below, but with a richer transfer
 bridge.
 
+For the detailed UHCI ↔ WebUSB transfer/TD mapping (including TD-level NAK pending
+semantics), see:
+
+- [`docs/webusb-passthrough.md`](./webusb-passthrough.md)
+
 Note: WebUSB is also a poor fit for many HID-class devices because browsers
 treat some USB interface classes as “protected” and disallow access via WebUSB.
 For HID peripherals, prefer WebHID.

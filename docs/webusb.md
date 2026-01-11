@@ -179,3 +179,7 @@ We should avoid promising:
 - Smart card readers
 
 Those need separate, purpose-built integrations (virtio input, file import/export, `getUserMedia`, etc.) rather than raw USB forwarding.
+
+## Related docs
+
+- [`docs/webusb-passthrough.md`](./webusb-passthrough.md) — UHCI ↔ WebUSB passthrough architecture and TD-level NAK pending semantics

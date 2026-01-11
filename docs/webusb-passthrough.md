@@ -96,6 +96,10 @@ The host side owns the actual `USBDevice` handle and performs WebUSB calls:
   - (re)open/select configuration/claim interfaces
   - handling `disconnect` events and surfacing errors to UI
 
+In this repo, the TypeScript-side action/completion contract and executor live in:
+
+- `web/src/usb/webusb_backend.ts`
+
 Data flow (conceptual):
 
 ```
@@ -185,7 +189,30 @@ Pending behavior:
   emitting another action (keyed by `id` / TD identity).
 - When completion arrives, complete the TD with:
   - actual byte count (short packets are valid and often meaningful), or
-  - STALL / error mapping (see next section).
+  - STALL / error mapping (see [Host completion to guest TD status mapping](#host-completion-to-guest-td-status-mapping)).
+
+---
+
+## Host completion to guest TD status mapping
+
+At the browser layer, WebUSB returns a `USBTransferStatus` (`"ok" | "stall" | "babble"`) for
+`controlTransfer*` / `transfer*` calls, and can also throw `DOMException`s for other failures
+(permissions, disconnects, OS driver issues, etc).
+
+The passthrough bridge normalizes this into a small set of guest-visible outcomes:
+
+| Host-side outcome | Guest-side handshake | Notes |
+|---|---|---|
+| Transfer result `"ok"` | `ACK` | Complete TD, write returned bytes for IN transfers. |
+| Transfer result `"stall"` | `STALL` | Complete TD with STALLED; guest driver is responsible for recovery (e.g. CLEAR_FEATURE HALT). |
+| Transfer result `"babble"` (if surfaced) | `TIMEOUT` (or controller error) | Aero currently does not model babble distinctly in `UsbHandshake`; treat as an error until a richer mapping exists. |
+| Thrown exception / other error | `TIMEOUT` | Most non-stall failures are best surfaced as a retryable error/timeout from the guest’s point of view. |
+| No completion yet (Promise pending / action in-flight) | `NAK` | Keep TD active so the UHCI schedule naturally retries. |
+
+Implementation note: Aero’s UHCI model already has first-class NAK semantics:
+
+- `UsbHandshake::Nak` sets the TD’s NAK bit and leaves it active, so the same TD will be retried.
+- This is the intended mechanism for “WebUSB transfer pending” without blocking the worker.
 
 ---
 
@@ -269,13 +296,18 @@ and [ADR 0002](./adr/0002-cross-origin-isolation.md).
   support in Firefox/Safari; passthrough must be optional and feature-detected.
 - **Secure context:** WebUSB requires HTTPS (or `http://localhost`).
 
-### TODO: Protected interface class list (WebUSB restrictions)
+### Protected interface classes (Chromium WebUSB restrictions)
 
 Chrome blocks WebUSB access to certain “protected” USB interface classes (to avoid
 interfering with system devices/drivers).
 
-TODO: confirm the exact blocked class/subclass/protocol list used by Chromium and record
-it here (with source links / version notes) so device compatibility expectations are clear.
+Aero maintains a best-effort list for diagnostics and UX:
+
+- `web/src/platform/webusb_protection.ts` (`PROTECTED_USB_INTERFACE_CLASSES`)
+- `web/src/platform/webusb.ts` (`WEBUSB_PROTECTED_INTERFACE_CLASSES`)
+
+These lists may differ slightly by Chromium version. When in doubt, verify on the target
+browser via `chrome://usb-internals` and keep the repo’s classifier in sync.
 
 ---
 
@@ -283,10 +315,10 @@ it here (with source links / version notes) so device compatibility expectations
 
 ### Web UI smoke panel (manual)
 
-Add/extend a small debug page that:
+Use the existing WebUSB debug panel as a starting point (`web/src/usb/webusb_panel.ts`), which:
 
 - prompts for a device (`requestDevice`)
-- prints raw descriptors (device/config/interface/endpoint, plus other-speed if present)
+- runs a simple control transfer (`GET_DESCRIPTOR(Device)`) and prints the raw bytes
 - can run a simple control transfer (e.g. `GET_DESCRIPTOR`, vendor request) and a bulk
   transfer (if endpoints exist), showing status/bytes
 - shows broker/executor state (open/claimed interfaces, disconnect events)
@@ -310,3 +342,9 @@ Add unit tests around `UsbPassthroughDevice` + UHCI transaction handling for:
 These tests should run without a real USB device by injecting synthetic `UsbHostCompletion`
 events.
 
+---
+
+## Related docs
+
+- [`docs/webhid-webusb-passthrough.md`](./webhid-webusb-passthrough.md) — overall physical device passthrough model (WebHID MVP + WebUSB future)
+- [`docs/webusb.md`](./webusb.md) — WebUSB troubleshooting (permissions, WinUSB, udev, etc.)
