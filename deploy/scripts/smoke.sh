@@ -78,7 +78,7 @@ pick_udp_port_range() {
       if [[ $port =~ ^[0-9]+$ ]]; then
         used_udp["$port"]=1
       fi
-    done < <(ss -lunH | awk '{print $5}')
+    done < <(ss -lunH | awk '{print $4}')
   fi
 
   for _ in $(seq 1 50); do
