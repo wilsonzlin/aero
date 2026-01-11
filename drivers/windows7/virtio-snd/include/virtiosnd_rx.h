@@ -118,12 +118,14 @@ typedef struct _VIRTIOSND_RX_ENGINE {
 extern "C" {
 #endif
 
+_IRQL_requires_(PASSIVE_LEVEL)
 _Must_inspect_result_ NTSTATUS VirtIoSndRxInit(
     _Out_ VIRTIOSND_RX_ENGINE* Rx,
     _In_ PVIRTIOSND_DMA_CONTEXT DmaCtx,
     _In_ const VIRTIOSND_QUEUE* Queue,
     _In_ ULONG RequestCount);
 
+_IRQL_requires_(PASSIVE_LEVEL)
 VOID VirtIoSndRxUninit(_Inout_ VIRTIOSND_RX_ENGINE* Rx);
 
 /*
@@ -131,11 +133,13 @@ VOID VirtIoSndRxUninit(_Inout_ VIRTIOSND_RX_ENGINE* Rx);
  *
  * The callback may be called at DISPATCH_LEVEL and must be non-blocking.
  */
+_IRQL_requires_max_(DISPATCH_LEVEL)
 VOID VirtIoSndRxSetCompletionCallback(
     _Inout_ VIRTIOSND_RX_ENGINE* Rx,
     _In_opt_ EVT_VIRTIOSND_RX_COMPLETION* Callback,
     _In_opt_ void* Context);
 
+_IRQL_requires_max_(DISPATCH_LEVEL)
 _Must_inspect_result_ NTSTATUS VirtIoSndRxSubmitSg(
     _Inout_ VIRTIOSND_RX_ENGINE* Rx,
     _In_reads_(SegmentCount) const VIRTIOSND_RX_SEGMENT* Segments,
@@ -151,6 +155,7 @@ _Must_inspect_result_ NTSTATUS VirtIoSndRxSubmitSg(
  *
  * Returns the number of used entries drained.
  */
+_IRQL_requires_max_(DISPATCH_LEVEL)
 ULONG VirtIoSndRxDrainCompletions(
     _Inout_ VIRTIOSND_RX_ENGINE* Rx,
     _In_opt_ EVT_VIRTIOSND_RX_COMPLETION* Callback,
@@ -160,6 +165,7 @@ ULONG VirtIoSndRxDrainCompletions(
  * Handle a single used entry completion (typically called from the driver's
  * interrupt DPC via the virtqueue drain callback).
  */
+_IRQL_requires_max_(DISPATCH_LEVEL)
 VOID VirtIoSndRxOnUsed(_Inout_ VIRTIOSND_RX_ENGINE* Rx, _In_opt_ void* Cookie, _In_ UINT32 UsedLen);
 
 #ifdef __cplusplus
