@@ -17,6 +17,26 @@ The older `crates/emulator` audio stack is retained behind the `emulator/legacy-
 
 ---
 
+## Browser demo + CI coverage
+
+To validate the *real* HDA DMA path end-to-end in the browser (guest PCM DMA → HDA model → `WorkletBridge` → AudioWorklet),
+the repo includes a small demo harness:
+
+- **UI button**: click `#init-audio-hda-demo` (“Init audio output (HDA demo)”) in either:
+  - the repo-root harness (`src/main.ts`, used by Playwright at `http://127.0.0.1:4173/`), or
+  - the production host (`web/src/main.ts`).
+- **Implementation**:
+  - The CPU worker (`web/src/workers/cpu.worker.ts`) instantiates the WASM export
+    `HdaPlaybackDemo` and keeps the AudioWorklet ring buffer ~200ms full.
+  - The demo programs a looping guest PCM buffer + BDL and uses the *real* HDA device model
+    (`aero_audio::hda::HdaController`) to generate output.
+- **E2E test**: `tests/e2e/audio-worklet-hda-demo.spec.ts` asserts that:
+  - `AudioContext` reaches `running`,
+  - the ring buffer write index advances over time (i.e. real audio data is being produced),
+  - underruns stay bounded and overruns remain 0.
+
+---
+
 ## Audio Architecture
 
 ```
