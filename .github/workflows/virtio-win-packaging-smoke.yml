@@ -49,6 +49,7 @@ jobs:
           -OutRoot "out/virtio-win-packaging-smoke/full"
           -GuestToolsSpecPath "tools/packaging/specs/win7-virtio-full.json"
           -TestIsoMode
+          -TestSigningPolicies
 
       - name: Run virtio-win packaging smoke test (full spec, omit optional drivers)
         shell: pwsh
@@ -57,6 +58,7 @@ jobs:
           -OutRoot "out/virtio-win-packaging-smoke/full-no-optional"
           -OmitOptionalDrivers
           -GuestToolsSpecPath "tools/packaging/specs/win7-virtio-full.json"
+          -SkipGuestToolsDefaultsCheck
 
       - name: Run virtio-win packaging smoke test (minimal spec, omit optional drivers)
         shell: pwsh
@@ -65,6 +67,7 @@ jobs:
           -OutRoot "out/virtio-win-packaging-smoke/minimal"
           -OmitOptionalDrivers
           -GuestToolsSpecPath "tools/packaging/specs/win7-virtio-win.json"
+          -SkipGuestToolsDefaultsCheck
 
       - name: Upload logs and outputs (failure)
         if: failure()

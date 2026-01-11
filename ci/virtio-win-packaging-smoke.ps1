@@ -9,7 +9,13 @@ param(
   [string]$GuestToolsProfile = "auto",
   # Also exercise the ISO-mounting code paths by creating a synthetic virtio-win ISO
   # (via IMAPI) and running make-driver-pack.ps1 with -VirtioWinIso.
-  [switch]$TestIsoMode
+  [switch]$TestIsoMode,
+  # Skip the second Guest Tools packaging run that validates wrapper defaults.
+  # Useful for reducing CI time when the defaults check is already covered by another job.
+  [switch]$SkipGuestToolsDefaultsCheck,
+  # Also validate the Guest Tools packaging path with a non-default signing policy (testsigning),
+  # ensuring certificate inclusion/requirements are enforced correctly.
+  [switch]$TestSigningPolicies
 )
 
 Set-StrictMode -Version Latest
@@ -544,63 +550,123 @@ if (-not $OmitOptionalDrivers) {
   }
 }
 
-# Validate the wrapper defaults without explicitly passing -Profile/-SpecPath, so any
-# drift between docs/script defaults is caught by CI.
-$guestToolsDefaultsOutDir = Join-Path $OutRoot "guest-tools-defaults"
-Ensure-EmptyDirectory -Path $guestToolsDefaultsOutDir
-$guestToolsDefaultsLog = Join-Path $logsDir "make-guest-tools-from-virtio-win-defaults.log"
+if ($TestSigningPolicies) {
+  $guestToolsTestSigningOutDir = Join-Path $OutRoot "guest-tools-testsigning"
+  Ensure-EmptyDirectory -Path $guestToolsTestSigningOutDir
+  $guestToolsTestSigningLog = Join-Path $logsDir "make-guest-tools-from-virtio-win-testsigning.log"
 
-Write-Host "Running make-guest-tools-from-virtio-win.ps1 (defaults)..."
-& pwsh -NoProfile -ExecutionPolicy Bypass -File $guestToolsScript `
-  -VirtioWinRoot $syntheticRoot `
-  -OutDir $guestToolsDefaultsOutDir `
-  -Version "0.0.0" `
-  -BuildId "ci-defaults" `
-  -CleanStage *>&1 | Tee-Object -FilePath $guestToolsDefaultsLog
-if ($LASTEXITCODE -ne 0) {
-  throw "make-guest-tools-from-virtio-win.ps1 (defaults) failed (exit $LASTEXITCODE). See $guestToolsDefaultsLog"
-}
+  Write-Host "Running make-guest-tools-from-virtio-win.ps1 (signing-policy testsigning)..."
+  $guestToolsTestSigningArgs = @(
+    "-OutDir", $guestToolsTestSigningOutDir,
+    "-Profile", $resolvedGuestToolsProfile,
+    "-SpecPath", $GuestToolsSpecPath,
+    "-SigningPolicy", "testsigning",
+    "-Version", "0.0.0",
+    "-BuildId", "ci-testsigning",
+    "-CleanStage"
+  )
+  if ($TestIsoMode) {
+    $guestToolsTestSigningArgs += @("-VirtioWinIso", $virtioIsoPathResolved)
+  } else {
+    $guestToolsTestSigningArgs += @("-VirtioWinRoot", $syntheticRoot)
+  }
+  & pwsh -NoProfile -ExecutionPolicy Bypass -File $guestToolsScript @guestToolsTestSigningArgs *>&1 | Tee-Object -FilePath $guestToolsTestSigningLog
+  if ($LASTEXITCODE -ne 0) {
+    throw "make-guest-tools-from-virtio-win.ps1 (testsigning) failed (exit $LASTEXITCODE). See $guestToolsTestSigningLog"
+  }
 
-$defaultsIso = Join-Path $guestToolsDefaultsOutDir "aero-guest-tools.iso"
-$defaultsZip = Join-Path $guestToolsDefaultsOutDir "aero-guest-tools.zip"
-$defaultsManifest = Join-Path $guestToolsDefaultsOutDir "manifest.json"
-foreach ($p in @($defaultsIso, $defaultsZip, $defaultsManifest)) {
-  if (-not (Test-Path -LiteralPath $p -PathType Leaf)) {
-    throw "Expected Guest Tools output missing (defaults run): $p"
+  $testSigningManifestPath = Join-Path $guestToolsTestSigningOutDir "manifest.json"
+  if (-not (Test-Path -LiteralPath $testSigningManifestPath -PathType Leaf)) {
+    throw "Expected Guest Tools testsigning manifest not found: $testSigningManifestPath"
+  }
+  $testSigningManifest = Get-Content -LiteralPath $testSigningManifestPath -Raw | ConvertFrom-Json
+  if ($testSigningManifest.package.build_id -ne "ci-testsigning") {
+    throw "Guest Tools testsigning manifest build_id mismatch: expected ci-testsigning, got $($testSigningManifest.package.build_id)"
+  }
+  if ($testSigningManifest.signing_policy -ne "testsigning") {
+    throw "Guest Tools testsigning manifest signing_policy mismatch: expected testsigning, got $($testSigningManifest.signing_policy)"
+  }
+  if ($testSigningManifest.certs_required -ne $true) {
+    throw "Guest Tools testsigning manifest certs_required mismatch: expected true, got $($testSigningManifest.certs_required)"
+  }
+  $testSigningPaths = @($testSigningManifest.files | ForEach-Object { $_.path })
+  $testSigningCerts = @($testSigningPaths | Where-Object { $_ -match '^certs/.*\.(cer|crt|p7b)$' })
+  if ($testSigningCerts.Count -eq 0) {
+    throw "Guest Tools testsigning output contained no certificate artifacts under certs/*.cer|*.crt|*.p7b"
   }
 }
 
-$defaultsLogText = Get-Content -LiteralPath $guestToolsDefaultsLog -Raw
-if ($defaultsLogText -notmatch '(?m)^\s*profile\s*:\s*full\s*$') {
-  throw "Expected defaults run to use -Profile full. See $guestToolsDefaultsLog"
-}
-if ($defaultsLogText -notmatch 'win7-virtio-full\.json') {
-  throw "Expected defaults run to select win7-virtio-full.json. See $guestToolsDefaultsLog"
-}
+if (-not $SkipGuestToolsDefaultsCheck) {
+  # Validate the wrapper defaults without explicitly passing -Profile/-SpecPath, so any
+  # drift between docs/script defaults is caught by CI.
+  $guestToolsDefaultsOutDir = Join-Path $OutRoot "guest-tools-defaults"
+  Ensure-EmptyDirectory -Path $guestToolsDefaultsOutDir
+  $guestToolsDefaultsLog = Join-Path $logsDir "make-guest-tools-from-virtio-win-defaults.log"
 
-$defaultsManifestObj = Get-Content -LiteralPath $defaultsManifest -Raw | ConvertFrom-Json
-if ($defaultsManifestObj.package.build_id -ne "ci-defaults") {
-  throw "Guest Tools defaults manifest build_id mismatch: expected ci-defaults, got $($defaultsManifestObj.package.build_id)"
-}
-if ($defaultsManifestObj.signing_policy -ne "none") {
-  throw "Guest Tools defaults manifest signing_policy mismatch: expected none, got $($defaultsManifestObj.signing_policy)"
-}
-if ($defaultsManifestObj.certs_required -ne $false) {
-  throw "Guest Tools defaults manifest certs_required mismatch: expected false, got $($defaultsManifestObj.certs_required)"
-}
+  Write-Host "Running make-guest-tools-from-virtio-win.ps1 (defaults)..."
+  $guestToolsDefaultsArgs = @(
+    "-OutDir", $guestToolsDefaultsOutDir,
+    "-Version", "0.0.0",
+    "-BuildId", "ci-defaults",
+    "-CleanStage"
+  )
+  if ($TestIsoMode) {
+    $guestToolsDefaultsArgs += @("-VirtioWinIso", $virtioIsoPathResolved)
+  } else {
+    $guestToolsDefaultsArgs += @("-VirtioWinRoot", $syntheticRoot)
+  }
+  & pwsh -NoProfile -ExecutionPolicy Bypass -File $guestToolsScript @guestToolsDefaultsArgs *>&1 | Tee-Object -FilePath $guestToolsDefaultsLog
+  if ($LASTEXITCODE -ne 0) {
+    throw "make-guest-tools-from-virtio-win.ps1 (defaults) failed (exit $LASTEXITCODE). See $guestToolsDefaultsLog"
+  }
 
-# Default profile is 'full', so when optional drivers are present in the source, they should be
-# present in the packaged output too.
-if (-not $OmitOptionalDrivers) {
+  $defaultsIso = Join-Path $guestToolsDefaultsOutDir "aero-guest-tools.iso"
+  $defaultsZip = Join-Path $guestToolsDefaultsOutDir "aero-guest-tools.zip"
+  $defaultsManifest = Join-Path $guestToolsDefaultsOutDir "manifest.json"
+  foreach ($p in @($defaultsIso, $defaultsZip, $defaultsManifest)) {
+    if (-not (Test-Path -LiteralPath $p -PathType Leaf)) {
+      throw "Expected Guest Tools output missing (defaults run): $p"
+    }
+  }
+
+  $defaultsLogText = Get-Content -LiteralPath $guestToolsDefaultsLog -Raw
+  if ($defaultsLogText -notmatch '(?m)^\s*profile\s*:\s*full\s*$') {
+    throw "Expected defaults run to use -Profile full. See $guestToolsDefaultsLog"
+  }
+  if ($defaultsLogText -notmatch 'win7-virtio-full\.json') {
+    throw "Expected defaults run to select win7-virtio-full.json. See $guestToolsDefaultsLog"
+  }
+
+  $defaultsManifestObj = Get-Content -LiteralPath $defaultsManifest -Raw | ConvertFrom-Json
+  if ($defaultsManifestObj.package.build_id -ne "ci-defaults") {
+    throw "Guest Tools defaults manifest build_id mismatch: expected ci-defaults, got $($defaultsManifestObj.package.build_id)"
+  }
+  if ($defaultsManifestObj.signing_policy -ne "none") {
+    throw "Guest Tools defaults manifest signing_policy mismatch: expected none, got $($defaultsManifestObj.signing_policy)"
+  }
+  if ($defaultsManifestObj.certs_required -ne $false) {
+    throw "Guest Tools defaults manifest certs_required mismatch: expected false, got $($defaultsManifestObj.certs_required)"
+  }
+
   $defaultsPaths = @($defaultsManifestObj.files | ForEach-Object { $_.path })
-  foreach ($want in @(
-    "drivers/x86/viosnd/viosnd.inf",
-    "drivers/amd64/viosnd/viosnd.inf",
-    "drivers/x86/vioinput/vioinput.inf",
-    "drivers/amd64/vioinput/vioinput.inf"
-  )) {
-    if (-not ($defaultsPaths -contains $want)) {
-      throw "Defaults Guest Tools manifest missing expected optional driver file path: $want"
+  foreach ($p in $defaultsPaths) {
+    if ($p -like "certs/*" -and $p -ne "certs/README.md") {
+      throw "Did not expect certificate files to be packaged for signing_policy=none (defaults run): $p"
+    }
+  }
+
+  # Default profile is 'full', so when optional drivers are present in the source, they should be
+  # present in the packaged output too.
+  if (-not $OmitOptionalDrivers) {
+    foreach ($want in @(
+      "drivers/x86/viosnd/viosnd.inf",
+      "drivers/amd64/viosnd/viosnd.inf",
+      "drivers/x86/vioinput/vioinput.inf",
+      "drivers/amd64/vioinput/vioinput.inf"
+    )) {
+      if (-not ($defaultsPaths -contains $want)) {
+        throw "Defaults Guest Tools manifest missing expected optional driver file path: $want"
+      }
     }
   }
 }
