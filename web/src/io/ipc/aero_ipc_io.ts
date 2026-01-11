@@ -54,6 +54,7 @@ export class AeroIpcIoClient {
   readonly #onA20?: A20Callback;
   readonly #onReset?: ResetCallback;
   readonly #onSerialOutput?: SerialOutputCallback;
+  readonly #responsesById = new Map<number, Event>();
   #nextId = 1;
 
   constructor(cmdQ: RingBuffer, evtQ: RingBuffer, opts: AeroIpcIoClientOptions = {}) {
@@ -91,6 +92,26 @@ export class AeroIpcIoClient {
     void this.#waitForResponse(id, "mmioWriteResp");
   }
 
+  diskRead(
+    diskOffset: bigint,
+    len: number,
+    guestOffset: bigint,
+    timeoutMs?: number,
+  ): Extract<Event, { kind: "diskReadResp" }> {
+    const id = this.#send({ kind: "diskRead", id: this.#allocId(), diskOffset, len: len >>> 0, guestOffset });
+    return this.#waitForResponse(id, "diskReadResp", timeoutMs);
+  }
+
+  diskWrite(
+    diskOffset: bigint,
+    len: number,
+    guestOffset: bigint,
+    timeoutMs?: number,
+  ): Extract<Event, { kind: "diskWriteResp" }> {
+    const id = this.#send({ kind: "diskWrite", id: this.#allocId(), diskOffset, len: len >>> 0, guestOffset });
+    return this.#waitForResponse(id, "diskWriteResp", timeoutMs);
+  }
+
   #allocId(): number {
     // IDs are u32 in the wire format; keep them non-zero.
     const id = this.#nextId >>> 0;
@@ -107,9 +128,30 @@ export class AeroIpcIoClient {
   #waitForResponse<TKind extends Event["kind"]>(
     requestId: number,
     kind: TKind,
+    timeoutMs?: number,
   ): Extract<Event, { kind: TKind }> {
+    const existing = this.#responsesById.get(requestId);
+    if (existing) {
+      if (existing.kind !== kind) {
+        throw new Error(`unexpected response kind ${existing.kind} for id ${requestId}, expected ${kind}`);
+      }
+      this.#responsesById.delete(requestId);
+      return existing as Extract<Event, { kind: TKind }>;
+    }
+
+    const startMs = timeoutMs == null ? 0 : this.#nowMs();
+    const deadlineMs = timeoutMs == null ? 0 : startMs + timeoutMs;
+
     for (;;) {
-      const bytes = this.#evtQ.popBlocking();
+      const remaining = timeoutMs == null ? undefined : Math.max(0, deadlineMs - this.#nowMs());
+      let bytes: Uint8Array;
+      try {
+        bytes = this.#evtQ.popBlocking(remaining);
+      } catch (err) {
+        // Include a bit more context than RingBuffer's generic message.
+        const base = err instanceof Error ? err.message : String(err);
+        throw new Error(`${base} while waiting for ${kind} (id=${requestId})`);
+      }
       const evt = decodeEvent(bytes);
 
       if (evt.kind === "irqRaise" || evt.kind === "irqLower") {
@@ -132,17 +174,30 @@ export class AeroIpcIoClient {
         continue;
       }
 
-      if (evt.kind !== kind) {
-        // Ignore unrelated events (logs, frames, etc.) while waiting.
-        continue;
+      switch (evt.kind) {
+        case "mmioReadResp":
+        case "mmioWriteResp":
+        case "portReadResp":
+        case "portWriteResp":
+        case "diskReadResp":
+        case "diskWriteResp": {
+          const id = evt.id >>> 0;
+          if (evt.kind === kind && id === (requestId >>> 0)) {
+            return evt as Extract<Event, { kind: TKind }>;
+          }
+          this.#responsesById.set(id, evt);
+          continue;
+        }
+        default:
+          // Ignore unrelated events (logs, frames, etc.) while waiting. Response
+          // events are buffered above so other in-flight calls aren't starved.
+          continue;
       }
-
-      const id = (evt as { id?: number }).id;
-      if (id !== (requestId >>> 0)) {
-        throw new Error(`unexpected ${kind} id ${id}, expected ${requestId}`);
-      }
-      return evt as Extract<Event, { kind: TKind }>;
     }
+  }
+
+  #nowMs(): number {
+    return typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
   }
 }
 

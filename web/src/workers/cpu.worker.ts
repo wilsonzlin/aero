@@ -3,7 +3,7 @@
 import type { AeroConfig } from "../config/aero_config";
 import { openRingByKind } from "../ipc/ipc";
 import { RingBuffer } from "../ipc/ring_buffer";
-import { decodeCommand, decodeEvent, encodeCommand, encodeEvent, type Command, type Event } from "../ipc/protocol";
+import { decodeCommand, encodeEvent, type Command, type Event } from "../ipc/protocol";
 import { perf } from "../perf/perf";
 import { installWorkerPerfHandlers } from "../perf/worker";
 import { PerfWriter } from "../perf/writer.js";
@@ -547,13 +547,8 @@ function pumpMicLoopback(maxWriteFrames: number): number {
   return totalWritten;
 }
 
-let ioCmdRing: RingBuffer | null = null;
-let ioEvtRing: RingBuffer | null = null;
-
 let diskDemoStarted = false;
 let diskDemoResponses = 0;
-let nextIoIpcId = 1;
-let diskDemoCompleted = false;
 
 ctx.onmessage = (ev: MessageEvent<unknown>) => {
   const msg = ev.data as
@@ -670,8 +665,6 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
       eventRing = new RingBuffer(segments.control, regions.event.byteOffset);
       const ioCmd = openRingByKind(segments.ioIpc, IO_IPC_CMD_QUEUE_KIND);
       const ioEvt = openRingByKind(segments.ioIpc, IO_IPC_EVT_QUEUE_KIND);
-      ioCmdRing = ioCmd;
-      ioEvtRing = ioEvt;
       io = new AeroIpcIoClient(ioCmd, ioEvt, {
         onIrq: (irq, level) => {
           perf.instant("cpu:io:irq", "t", { irq, level });
@@ -910,7 +903,7 @@ function runLoopInner(): void {
         Atomics.store(status, StatusIndex.AudioOverrunCount, 0);
       }
 
-      if (!didIoDemo && diskDemoCompleted && io && Atomics.load(status, StatusIndex.IoReady) === 1) {
+      if (!didIoDemo && io && Atomics.load(status, StatusIndex.IoReady) === 1) {
         didIoDemo = true;
         try {
           perf.spanBegin("cpu:io:demo");
@@ -1032,64 +1025,34 @@ function runLoopInner(): void {
 }
 
 async function runDiskReadDemo(): Promise<void> {
+  const client = io;
+  if (!client) return;
+
+  // Wait until the I/O worker reports ready.
+  while (Atomics.load(status, StatusIndex.IoReady) !== 1) {
+    if (Atomics.load(status, StatusIndex.StopRequested) === 1) return;
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+
+  // Read the first sector into guest RAM at an arbitrary scratch offset.
+  const guestOffset = 0x1000n;
+  const len = 512;
   try {
-    const cmdRing = ioCmdRing;
-    const evtRing = ioEvtRing;
-    if (!cmdRing || !evtRing) return;
+    const evt = client.diskRead(0n, len, guestOffset, 2000);
+    diskDemoResponses += 1;
+    perf.counter("diskReadDemoResponses", diskDemoResponses);
+    if (perf.traceEnabled) perf.instant("diskReadDemoResp", "t", evt as unknown as Record<string, unknown>);
 
-    // Wait until the I/O worker reports ready.
-    while (Atomics.load(status, StatusIndex.IoReady) !== 1) {
-      if (Atomics.load(status, StatusIndex.StopRequested) === 1) return;
-      await new Promise((resolve) => setTimeout(resolve, 1));
+    if (evt.ok && evt.bytes >= 4) {
+      const firstDword = new DataView(guestU8.buffer, guestU8.byteOffset + Number(guestOffset), 4).getUint32(0, true);
+      perf.counter("diskReadDemoFirstDword", firstDword);
     }
-
-    // Read the first sector into guest RAM at an arbitrary scratch offset.
-    const id = (nextIoIpcId++ >>> 0) || (nextIoIpcId++ >>> 0);
-    const guestOffset = 0x1000n;
-    const len = 512;
-    const cmdBytes = encodeCommand({ kind: "diskRead", id, diskOffset: 0n, len, guestOffset });
-
-    // Best-effort retry if the ring is temporarily full.
-    while (!cmdRing.tryPush(cmdBytes)) {
-      if (Atomics.load(status, StatusIndex.StopRequested) === 1) return;
-      await new Promise((resolve) => setTimeout(resolve, 1));
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn("[cpu] disk read demo failed:", err);
+    if (perf.traceEnabled) {
+      perf.instant("diskReadDemoError", "t", { message: err instanceof Error ? err.message : String(err) });
     }
-
-    const deadlineMs = performance.now() + 2000;
-    // eslint-disable-next-line no-constant-condition
-    while (true) {
-      while (true) {
-        const bytes = evtRing.tryPop();
-        if (!bytes) break;
-        const evt = decodeEvent(bytes);
-        if (evt.kind !== "diskReadResp") continue;
-        if (evt.id !== id) continue;
-
-        diskDemoResponses += 1;
-        perf.counter("diskReadDemoResponses", diskDemoResponses);
-        if (perf.traceEnabled) perf.instant("diskReadDemoResp", "t", evt as unknown as Record<string, unknown>);
-
-        if (evt.ok && evt.bytes >= 4) {
-          const firstDword = new DataView(guestU8.buffer, guestU8.byteOffset + Number(guestOffset), 4).getUint32(0, true);
-          perf.counter("diskReadDemoFirstDword", firstDword);
-        }
-        return;
-      }
-
-      const now = performance.now();
-      if (now >= deadlineMs) {
-        if (perf.traceEnabled) perf.instant("diskReadDemoTimeout", "t");
-        return;
-      }
-
-      const res = await evtRing.waitForDataAsync(Math.max(0, deadlineMs - now));
-      if (res === "timed-out") {
-        if (perf.traceEnabled) perf.instant("diskReadDemoTimeout", "t");
-        return;
-      }
-    }
-  } finally {
-    diskDemoCompleted = true;
   }
 }
 
