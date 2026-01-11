@@ -13,6 +13,9 @@
 #   - aero-guest-tools.zip
 #   - manifest.json (raw packager output)
 #   - aero-guest-tools.manifest.json (copy of manifest.json; avoids collisions in shared artifact dirs)
+#
+# The packaged ISO/zip root includes `THIRD_PARTY_NOTICES.md` and may include additional
+# third-party license/notice texts under `licenses/` when present in the source Guest Tools tree.
 
 [CmdletBinding()]
 param(
