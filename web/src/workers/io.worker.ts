@@ -521,7 +521,8 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
         if (api.UsbPassthroughBridge && !usbPassthroughRuntime) {
           try {
             const bridge = new api.UsbPassthroughBridge();
-            usbPassthroughRuntime = new WebUsbPassthroughRuntime({ bridge, port: ctx, pollIntervalMs: 8 });
+            // Poll USB passthrough as part of the main IO tick to avoid a separate timer.
+            usbPassthroughRuntime = new WebUsbPassthroughRuntime({ bridge, port: ctx, pollIntervalMs: 0 });
             usbPassthroughRuntime.start();
             if (import.meta.env.DEV) {
               usbPassthroughDebugTimer = setInterval(() => {
@@ -854,6 +855,7 @@ function startIoIpcServer(): void {
       drainRuntimeCommands();
       mgr.tick(nowMs);
       hidGuest.poll?.();
+      void usbPassthroughRuntime?.pollOnce();
 
       if (perfActive) perfIoMs += performance.now() - t0;
       maybeEmitPerfSample();

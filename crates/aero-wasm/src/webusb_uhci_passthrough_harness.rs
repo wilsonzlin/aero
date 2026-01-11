@@ -910,6 +910,10 @@ impl WebUsbUhciPassthroughHarness {
     pub fn drain_actions(&mut self) -> Result<JsValue, JsValue> {
         let mut dev = self.device.borrow_mut();
         let actions = dev.drain_actions();
+        if actions.is_empty() {
+            // Keep polling cheap when the harness is idle.
+            return Ok(JsValue::NULL);
+        }
         serde_wasm_bindgen::to_value(&actions).map_err(|e| JsValue::from_str(&e.to_string()))
     }
 

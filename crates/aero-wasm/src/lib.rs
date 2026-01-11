@@ -577,6 +577,11 @@ impl UsbPassthroughBridge {
     /// Drain all queued host actions as plain JS objects.
     pub fn drain_actions(&mut self) -> Result<JsValue, JsValue> {
         let actions = self.inner.drain_actions();
+        if actions.is_empty() {
+            // Avoid allocating a fresh empty JS array on every poll tick when there are no
+            // pending actions (the worker runtime treats `null`/`undefined` as "no work").
+            return Ok(JsValue::NULL);
+        }
         serde_wasm_bindgen::to_value(&actions).map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
