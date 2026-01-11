@@ -405,7 +405,7 @@ impl CpuBus for Bus<'_> {
         let mut buf = [0u8; 15];
         let len = max_len.min(15);
         for i in 0..len {
-            buf[i] = self.mem.read_u8(vaddr + i as u64);
+            buf[i] = self.mem.read_u8(vaddr.wrapping_add(i as u64));
         }
         Ok(buf)
     }
