@@ -31,6 +31,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 W7_VIRTIO_CONTRACT_MD = REPO_ROOT / "docs/windows7-virtio-driver-contract.md"
 WINDOWS_DEVICE_CONTRACT_MD = REPO_ROOT / "docs/windows-device-contract.md"
 WINDOWS_DEVICE_CONTRACT_JSON = REPO_ROOT / "docs/windows-device-contract.json"
+WINDOWS_DEVICE_CONTRACT_VIRTIO_WIN_JSON = REPO_ROOT / "docs/windows-device-contract-virtio-win.json"
 
 # virtio-pci vendor as allocated by PCI-SIG.
 VIRTIO_PCI_VENDOR_ID = 0x1AF4
@@ -463,41 +464,47 @@ def parse_windows_device_contract_table(md: str) -> Mapping[str, WindowsDeviceCo
     return out
 
 
-def _find_manifest_device(devices: list[object], name: str) -> dict[str, object]:
+def _find_manifest_device(
+    devices: list[object], name: str, *, file: Path = WINDOWS_DEVICE_CONTRACT_JSON
+) -> dict[str, object]:
     for device in devices:
         if isinstance(device, dict) and device.get("device") == name:
             return device
-    fail(f"device entry {name!r} not found in {WINDOWS_DEVICE_CONTRACT_JSON.as_posix()}")
+    fail(f"device entry {name!r} not found in {file.as_posix()}")
 
 
-def _parse_manifest_hex_u16(entry: Mapping[str, object], field: str, *, device: str) -> int:
+def _parse_manifest_hex_u16(
+    entry: Mapping[str, object], field: str, *, device: str, file: Path = WINDOWS_DEVICE_CONTRACT_JSON
+) -> int:
     raw = entry.get(field)
     if not isinstance(raw, str):
-        fail(
-            f"{WINDOWS_DEVICE_CONTRACT_JSON.as_posix()}: {device} field {field!r} must be a hex string like '0x1AF4'"
-        )
+        fail(f"{file.as_posix()}: {device} field {field!r} must be a hex string like '0x1AF4'")
     try:
         if not raw.lower().startswith("0x"):
             fail(
-                f"{WINDOWS_DEVICE_CONTRACT_JSON.as_posix()}: {device} field {field!r} must be a 0x-prefixed hex string "
-                f"like '0x1AF4' (got {raw!r})"
+                f"{file.as_posix()}: {device} field {field!r} must be a 0x-prefixed hex string like '0x1AF4' "
+                f"(got {raw!r})"
             )
         return int(raw, 16)
     except ValueError:
-        fail(
-            f"{WINDOWS_DEVICE_CONTRACT_JSON.as_posix()}: {device} field {field!r} has invalid hex string: {raw!r}"
-        )
+        fail(f"{file.as_posix()}: {device} field {field!r} has invalid hex string: {raw!r}")
 
-def _require_str(entry: Mapping[str, object], field: str, *, device: str) -> str:
+
+def _require_str(
+    entry: Mapping[str, object], field: str, *, device: str, file: Path = WINDOWS_DEVICE_CONTRACT_JSON
+) -> str:
     raw = entry.get(field)
     if not isinstance(raw, str) or not raw.strip():
-        fail(f"{WINDOWS_DEVICE_CONTRACT_JSON.as_posix()}: {device} field {field!r} must be a non-empty string")
+        fail(f"{file.as_posix()}: {device} field {field!r} must be a non-empty string")
     return raw.strip()
 
-def _require_str_list(entry: Mapping[str, object], field: str, *, device: str) -> list[str]:
+
+def _require_str_list(
+    entry: Mapping[str, object], field: str, *, device: str, file: Path = WINDOWS_DEVICE_CONTRACT_JSON
+) -> list[str]:
     raw = entry.get(field)
     if not isinstance(raw, list) or not all(isinstance(p, str) for p in raw):
-        fail(f"{WINDOWS_DEVICE_CONTRACT_JSON.as_posix()}: {device} field {field!r} must be list[str]")
+        fail(f"{file.as_posix()}: {device} field {field!r} must be list[str]")
     return list(raw)
 
 
@@ -508,6 +515,29 @@ def _manifest_contains_subsys(patterns: list[str], subsys_vendor: int, subsys_de
 
 def _manifest_contains_exact(patterns: list[str], expected: str) -> bool:
     return any(p.upper() == expected.upper() for p in patterns)
+
+
+def _normalize_hwid_patterns(patterns: list[str]) -> list[str]:
+    # Normalize for case-insensitive, order-insensitive comparisons.
+    return sorted({p.upper() for p in patterns})
+
+
+def parse_manifest_device_map(manifest: Mapping[str, object], *, file: Path) -> dict[str, dict[str, object]]:
+    devices = manifest.get("devices")
+    if not isinstance(devices, list):
+        fail(f"'devices' must be a list in {file.as_posix()}")
+
+    out: dict[str, dict[str, object]] = {}
+    for i, raw in enumerate(devices):
+        if not isinstance(raw, dict):
+            fail(f"{file.as_posix()}: devices[{i}] must be an object")
+        name = raw.get("device")
+        if not isinstance(name, str) or not name:
+            fail(f"{file.as_posix()}: devices[{i}].device must be a non-empty string")
+        if name in out:
+            fail(f"{file.as_posix()}: duplicate device entry: {name!r}")
+        out[name] = raw
+    return out
 
 
 def parse_contract_feature_bits(md: str, *, file: Path) -> dict[str, int]:
@@ -1377,6 +1407,149 @@ def main() -> None:
                     ],
                 )
             )
+
+    # Optional variant: a contract file intended for binding to virtio-win drivers
+    # (different service/INF names) while keeping emulator-presented HWIDs stable.
+    # If present, keep it aligned with the canonical device contract.
+    if WINDOWS_DEVICE_CONTRACT_VIRTIO_WIN_JSON.exists():
+        try:
+            virtio_win_manifest = json.loads(read_text(WINDOWS_DEVICE_CONTRACT_VIRTIO_WIN_JSON))
+        except json.JSONDecodeError as e:
+            fail(f"invalid JSON in {WINDOWS_DEVICE_CONTRACT_VIRTIO_WIN_JSON.as_posix()}: {e}")
+
+        base_manifest_devices = parse_manifest_device_map(manifest, file=WINDOWS_DEVICE_CONTRACT_JSON)
+        virtio_win_devices = parse_manifest_device_map(virtio_win_manifest, file=WINDOWS_DEVICE_CONTRACT_VIRTIO_WIN_JSON)
+
+        if set(base_manifest_devices) != set(virtio_win_devices):
+            missing = sorted(set(base_manifest_devices) - set(virtio_win_devices))
+            extra = sorted(set(virtio_win_devices) - set(base_manifest_devices))
+            errors.append(
+                format_error(
+                    "windows-device-contract-virtio-win.json must mirror windows-device-contract.json device entries:",
+                    [
+                        f"missing from virtio-win: {missing}" if missing else "missing from virtio-win: (none)",
+                        f"extra in virtio-win:    {extra}" if extra else "extra in virtio-win:    (none)",
+                    ],
+                )
+            )
+
+        expected_virtio_win_bindings: Mapping[str, tuple[str, str]] = {
+            "virtio-blk": ("viostor", "viostor.inf"),
+            "virtio-net": ("netkvm", "netkvm.inf"),
+            "virtio-input": ("vioinput", "vioinput.inf"),
+            "virtio-snd": ("viosnd", "viosnd.inf"),
+        }
+
+        for name in sorted(set(base_manifest_devices) & set(virtio_win_devices)):
+            base_entry = base_manifest_devices[name]
+            win_entry = virtio_win_devices[name]
+
+            base_vendor = _parse_manifest_hex_u16(base_entry, "pci_vendor_id", device=name)
+            base_dev = _parse_manifest_hex_u16(base_entry, "pci_device_id", device=name)
+            win_vendor = _parse_manifest_hex_u16(
+                win_entry, "pci_vendor_id", device=name, file=WINDOWS_DEVICE_CONTRACT_VIRTIO_WIN_JSON
+            )
+            win_dev = _parse_manifest_hex_u16(
+                win_entry, "pci_device_id", device=name, file=WINDOWS_DEVICE_CONTRACT_VIRTIO_WIN_JSON
+            )
+            if (base_vendor, base_dev) != (win_vendor, win_dev):
+                errors.append(
+                    format_error(
+                        f"{name}: PCI Vendor/Device mismatch between contract variants:",
+                        [
+                            f"{WINDOWS_DEVICE_CONTRACT_JSON.as_posix()}: {base_vendor:04X}:{base_dev:04X}",
+                            f"{WINDOWS_DEVICE_CONTRACT_VIRTIO_WIN_JSON.as_posix()}: {win_vendor:04X}:{win_dev:04X}",
+                        ],
+                    )
+                )
+
+            base_patterns = _normalize_hwid_patterns(
+                _require_str_list(base_entry, "hardware_id_patterns", device=name)
+            )
+            win_patterns = _normalize_hwid_patterns(
+                _require_str_list(
+                    win_entry,
+                    "hardware_id_patterns",
+                    device=name,
+                    file=WINDOWS_DEVICE_CONTRACT_VIRTIO_WIN_JSON,
+                )
+            )
+            if base_patterns != win_patterns:
+                errors.append(
+                    format_error(
+                        f"{name}: hardware_id_patterns must be identical between contract variants:",
+                        [
+                            f"{WINDOWS_DEVICE_CONTRACT_JSON.as_posix()}: {base_patterns}",
+                            f"{WINDOWS_DEVICE_CONTRACT_VIRTIO_WIN_JSON.as_posix()}: {win_patterns}",
+                        ],
+                    )
+                )
+
+            if base_entry.get("virtio_device_type") != win_entry.get("virtio_device_type"):
+                errors.append(
+                    format_error(
+                        f"{name}: virtio_device_type mismatch between contract variants:",
+                        [
+                            f"{WINDOWS_DEVICE_CONTRACT_JSON.as_posix()}: {base_entry.get('virtio_device_type')!r}",
+                            f"{WINDOWS_DEVICE_CONTRACT_VIRTIO_WIN_JSON.as_posix()}: {win_entry.get('virtio_device_type')!r}",
+                        ],
+                    )
+                )
+
+            if name in expected_virtio_win_bindings:
+                expected_service, expected_inf = expected_virtio_win_bindings[name]
+                actual_service = _require_str(
+                    win_entry, "driver_service_name", device=name, file=WINDOWS_DEVICE_CONTRACT_VIRTIO_WIN_JSON
+                )
+                actual_inf = _require_str(win_entry, "inf_name", device=name, file=WINDOWS_DEVICE_CONTRACT_VIRTIO_WIN_JSON)
+                if actual_service.lower() != expected_service.lower():
+                    errors.append(
+                        format_error(
+                            f"{name}: unexpected virtio-win service name in {WINDOWS_DEVICE_CONTRACT_VIRTIO_WIN_JSON.as_posix()}:",
+                            [
+                                f"expected: {expected_service}",
+                                f"got: {actual_service}",
+                            ],
+                        )
+                    )
+                if actual_inf.lower() != expected_inf.lower():
+                    errors.append(
+                        format_error(
+                            f"{name}: unexpected virtio-win INF name in {WINDOWS_DEVICE_CONTRACT_VIRTIO_WIN_JSON.as_posix()}:",
+                            [
+                                f"expected: {expected_inf}",
+                                f"got: {actual_inf}",
+                            ],
+                        )
+                    )
+            else:
+                base_service = _require_str(base_entry, "driver_service_name", device=name)
+                win_service = _require_str(
+                    win_entry, "driver_service_name", device=name, file=WINDOWS_DEVICE_CONTRACT_VIRTIO_WIN_JSON
+                )
+                if base_service != win_service:
+                    errors.append(
+                        format_error(
+                            f"{name}: driver_service_name must match between contract variants:",
+                            [
+                                f"{WINDOWS_DEVICE_CONTRACT_JSON.as_posix()}: {base_service}",
+                                f"{WINDOWS_DEVICE_CONTRACT_VIRTIO_WIN_JSON.as_posix()}: {win_service}",
+                            ],
+                        )
+                    )
+
+                base_inf = _require_str(base_entry, "inf_name", device=name)
+                win_inf = _require_str(win_entry, "inf_name", device=name, file=WINDOWS_DEVICE_CONTRACT_VIRTIO_WIN_JSON)
+                if base_inf != win_inf:
+                    errors.append(
+                        format_error(
+                            f"{name}: inf_name must match between contract variants:",
+                            [
+                                f"{WINDOWS_DEVICE_CONTRACT_JSON.as_posix()}: {base_inf}",
+                                f"{WINDOWS_DEVICE_CONTRACT_VIRTIO_WIN_JSON.as_posix()}: {win_inf}",
+                            ],
+                        )
+                    )
 
     # ---------------------------------------------------------------------
     # 3) Feature bit guardrails: docs must agree on Win7 contract v1 ring features.
