@@ -503,12 +503,17 @@ fn translates_texture_load_with_nonzero_lod() {
     let signatures = parse_signatures(&dxbc).expect("parse signatures");
 
     let coord = SrcOperand {
-        kind: SrcKind::ImmediateF32([1, 2, 0, 0]),
+        kind: SrcKind::ImmediateF32([
+            1.0f32.to_bits(),
+            2.0f32.to_bits(),
+            0.0f32.to_bits(),
+            0.0f32.to_bits(),
+        ]),
         swizzle: Swizzle::XYZW,
         modifier: OperandModifier::None,
     };
     let lod = SrcOperand {
-        kind: SrcKind::ImmediateF32([3, 3, 3, 3]),
+        kind: SrcKind::ImmediateF32([3.0f32.to_bits(); 4]),
         swizzle: Swizzle::XXXX,
         modifier: OperandModifier::None,
     };
@@ -530,7 +535,7 @@ fn translates_texture_load_with_nonzero_lod() {
     let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
     assert_wgsl_validates(&translated.wgsl);
     assert!(translated.wgsl.contains("textureLoad(t0"));
-    assert!(translated.wgsl.contains("bitcast<i32>(0x00000003u)"));
+    assert!(translated.wgsl.contains("bitcast<f32>(0x40400000u)"));
 }
 
 #[test]
