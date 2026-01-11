@@ -312,6 +312,17 @@ VirtioSndCtrlCancelAll(_Inout_ VIRTIOSND_CONTROL* Ctrl, _In_ NTSTATUS CancelStat
         return;
     }
 
+    /*
+     * Drain any already-completed used entries before canceling in-flight requests.
+     *
+     * If a request times out (send thread drops its ref) and then completes later,
+     * the queue-owned reference might be the last one keeping the request context
+     * alive. Cancelling and releasing that reference while a cookie is still
+     * present in the used ring can lead to a stale cookie / use-after-free when
+     * the used entry is processed later.
+     */
+    VirtioSndCtrlProcessUsed(Ctrl);
+
     KeAcquireSpinLock(&Ctrl->InflightLock, &oldIrql);
     while (!IsListEmpty(&Ctrl->InflightList)) {
         LIST_ENTRY* entry;

@@ -449,6 +449,56 @@ static void test_control_cancel_all_frees_timed_out_request(void)
     virtio_test_queue_destroy(&q);
 }
 
+static void test_control_cancel_all_drains_used_entries(void)
+{
+    VIRTIO_TEST_QUEUE q;
+    VIRTIOSND_DMA_CONTEXT dma;
+    VIRTIOSND_CONTROL ctrl;
+    NTSTATUS status;
+    VIRTIO_SND_PCM_SIMPLE_REQ req;
+    ULONG respStatus;
+    ULONG respLen;
+
+    virtio_test_queue_init(&q, FALSE /* auto_complete */);
+    RtlZeroMemory(&dma, sizeof(dma));
+    VirtioSndCtrlInit(&ctrl, &dma, &q.queue);
+
+    RtlZeroMemory(&req, sizeof(req));
+    req.code = VIRTIO_SND_R_PCM_RELEASE;
+    req.stream_id = VIRTIO_SND_PLAYBACK_STREAM_ID;
+
+    respStatus = 0xFFFFFFFFu;
+    respLen = 0;
+
+    status = VirtioSndCtrlSendSync(&ctrl, &req, sizeof(req), &respStatus, sizeof(respStatus), 1u, NULL, &respLen);
+    assert(status == STATUS_IO_TIMEOUT);
+
+    /* Still outstanding until completion/cancel. */
+    assert(KeReadStateEvent(&ctrl.ReqIdleEvent) == 0);
+    assert(q.pending_count == 1);
+    assert(q.used_count == 0);
+
+    /*
+     * Simulate the device completing the request after the send thread timed out:
+     * move the pending chain to the used ring without running CtrlProcessUsed yet.
+     */
+    q.auto_complete = TRUE;
+    VirtioSndQueueKick(&q.queue);
+    assert(q.pending_count == 0);
+    assert(q.used_count == 1);
+
+    /*
+     * CancelAll should drain used entries before releasing request contexts so
+     * there are no stale cookies left in the used ring.
+     */
+    VirtioSndCtrlCancelAll(&ctrl, STATUS_CANCELLED);
+    assert(q.used_count == 0);
+    assert(KeReadStateEvent(&ctrl.ReqIdleEvent) != 0);
+
+    VirtioSndCtrlUninit(&ctrl);
+    virtio_test_queue_destroy(&q);
+}
+
 static void test_control_playback_state_machine(void)
 {
     VIRTIO_TEST_QUEUE q;
@@ -616,6 +666,7 @@ int main(void)
     test_control_timeout_then_late_completion_runs_at_dpc_level();
     test_control_uninit_cancels_timed_out_request();
     test_control_cancel_all_frees_timed_out_request();
+    test_control_cancel_all_drains_used_entries();
     test_control_playback_state_machine();
     test_control_capture_state_machine();
     printf("virtiosnd_proto_tests: PASS\n");
