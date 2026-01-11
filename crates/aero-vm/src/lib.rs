@@ -1,4 +1,4 @@
-use std::io::Cursor;
+use std::io::{Cursor, Read, Seek, Write};
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -60,20 +60,38 @@ impl Vm {
         self.take_snapshot_with_options(SaveOptions::default())
     }
 
+    pub fn save_snapshot_full_to<W: Write + Seek>(&mut self, w: &mut W) -> Result<()> {
+        self.save_snapshot_to(w, SaveOptions::default())
+    }
+
     pub fn take_snapshot_dirty(&mut self) -> Result<Vec<u8>> {
         let mut options = SaveOptions::default();
         options.ram.mode = aero_snapshot::RamMode::Dirty;
         self.take_snapshot_with_options(options)
     }
 
+    pub fn save_snapshot_dirty_to<W: Write + Seek>(&mut self, w: &mut W) -> Result<()> {
+        let mut options = SaveOptions::default();
+        options.ram.mode = aero_snapshot::RamMode::Dirty;
+        self.save_snapshot_to(w, options)
+    }
+
+    pub fn save_snapshot_to<W: Write + Seek>(&mut self, w: &mut W, options: SaveOptions) -> Result<()> {
+        aero_snapshot::save_snapshot(w, self, options)
+    }
+
     fn take_snapshot_with_options(&mut self, options: SaveOptions) -> Result<Vec<u8>> {
         let mut cursor = Cursor::new(Vec::new());
-        aero_snapshot::save_snapshot(&mut cursor, self, options)?;
+        self.save_snapshot_to(&mut cursor, options)?;
         Ok(cursor.into_inner())
     }
 
     pub fn restore_snapshot_bytes(&mut self, bytes: &[u8]) -> Result<()> {
-        aero_snapshot::restore_snapshot(&mut Cursor::new(bytes), self)
+        self.restore_snapshot_from(&mut Cursor::new(bytes))
+    }
+
+    pub fn restore_snapshot_from<R: Read>(&mut self, r: &mut R) -> Result<()> {
+        aero_snapshot::restore_snapshot(r, self)
     }
 }
 

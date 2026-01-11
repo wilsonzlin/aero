@@ -341,7 +341,8 @@ impl DemoVm {
             .await
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
-        aero_snapshot::save_snapshot(&mut file, &mut self.inner, aero_snapshot::SaveOptions::default())
+        self.inner
+            .save_snapshot_full_to(&mut file)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
         file.close().map_err(|e| JsValue::from_str(&e.to_string()))?;
@@ -354,10 +355,8 @@ impl DemoVm {
             .await
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
-        let mut options = aero_snapshot::SaveOptions::default();
-        options.ram.mode = aero_snapshot::RamMode::Dirty;
-
-        aero_snapshot::save_snapshot(&mut file, &mut self.inner, options)
+        self.inner
+            .save_snapshot_dirty_to(&mut file)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
         file.close().map_err(|e| JsValue::from_str(&e.to_string()))?;
@@ -370,7 +369,8 @@ impl DemoVm {
             .await
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
-        aero_snapshot::restore_snapshot(&mut file, &mut self.inner)
+        self.inner
+            .restore_snapshot_from(&mut file)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
         file.close().map_err(|e| JsValue::from_str(&e.to_string()))?;
