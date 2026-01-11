@@ -160,9 +160,7 @@ impl fmt::Debug for StreamingDiskConfig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // `url` and `request_headers` may contain sensitive auth material (e.g. signed URLs,
         // `Authorization` headers). Redact by default to avoid accidental leakage in logs.
-        let mut url = self.url.clone();
-        url.set_query(None);
-        url.set_fragment(None);
+        let url = redact_url_for_logs(&self.url);
 
         let header_names: Vec<&str> = self.request_headers.iter().map(|(k, _)| k.as_str()).collect();
 
@@ -542,7 +540,9 @@ struct State {
 impl StreamingDisk {
     pub async fn open(config: StreamingDiskConfig) -> Result<Self, StreamingDiskError> {
         if !config.url.has_host() {
-            return Err(StreamingDiskError::UrlNotAbsolute(config.url.to_string()));
+            return Err(StreamingDiskError::UrlNotAbsolute(
+                redact_url_for_logs(&config.url).to_string(),
+            ));
         }
 
         if config.options.chunk_size == 0 || config.options.chunk_size % DEFAULT_SECTOR_SIZE != 0 {
@@ -1046,7 +1046,7 @@ impl StreamingDisk {
 
         let resp = tokio::select! {
             _ = token.cancelled() => return Err(StreamingDiskError::Cancelled),
-            resp = req.send() => resp.map_err(|e| StreamingDiskError::Http(e.to_string()))?,
+            resp = req.send() => resp.map_err(|e| StreamingDiskError::Http(format_reqwest_error(e)))?,
         };
 
         if resp.status() != reqwest::StatusCode::PARTIAL_CONTENT {
@@ -1124,7 +1124,7 @@ impl StreamingDisk {
 
         let bytes = tokio::select! {
             _ = token.cancelled() => return Err(StreamingDiskError::Cancelled),
-            bytes = resp.bytes() => bytes.map_err(|e| StreamingDiskError::Http(e.to_string()))?,
+            bytes = resp.bytes() => bytes.map_err(|e| StreamingDiskError::Http(format_reqwest_error(e)))?,
         };
 
         self.inner
@@ -1186,7 +1186,7 @@ async fn probe_remote_size_and_validator(
         .header(RANGE, "bytes=0-0")
         .send()
         .await
-        .map_err(|e| StreamingDiskError::Http(e.to_string()))?;
+        .map_err(|e| StreamingDiskError::Http(format_reqwest_error(e)))?;
 
     if resp.status() != reqwest::StatusCode::PARTIAL_CONTENT {
         if resp.status().is_success() {
@@ -1232,6 +1232,25 @@ fn build_header_map(headers: &[(String, String)]) -> Result<HeaderMap, Streaming
         out.insert(name, value);
     }
     Ok(out)
+}
+
+fn redact_url_for_logs(url: &Url) -> Url {
+    let mut url = url.clone();
+    // Username/password are rarely used, but if present they are sensitive.
+    let _ = url.set_username("");
+    let _ = url.set_password(None);
+    url.set_query(None);
+    url.set_fragment(None);
+    url
+}
+
+fn format_reqwest_error(err: reqwest::Error) -> String {
+    let mut msg = err.to_string();
+    if let Some(url) = err.url() {
+        let redacted = redact_url_for_logs(url);
+        msg = msg.replace(url.as_str(), redacted.as_str());
+    }
+    msg
 }
 
 fn cache_backend_looks_populated(

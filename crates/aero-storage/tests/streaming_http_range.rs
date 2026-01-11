@@ -557,6 +557,30 @@ async fn open_fails_when_config_validator_mismatches_remote_etag() {
 }
 
 #[tokio::test]
+async fn http_errors_redact_url_query() {
+    // Create a URL that should fail to connect (unused local port), but embeds a query token.
+    // The returned error message should not leak the query string.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+
+    let url = Url::parse(&format!(
+        "http://127.0.0.1:{port}/image.raw?token=supersecret"
+    ))
+    .unwrap();
+    let cache_dir = tempdir().unwrap();
+    let config = StreamingDiskConfig::new(url, cache_dir.path());
+    let err = StreamingDisk::open(config).await.err().unwrap();
+    let StreamingDiskError::Http(msg) = err else {
+        panic!("expected Http error, got {err:?}");
+    };
+    assert!(
+        !msg.contains("token=supersecret"),
+        "error message should not contain query tokens: {msg}"
+    );
+}
+
+#[tokio::test]
 async fn range_not_supported_is_reported_when_server_ignores_range() {
     let image: Vec<u8> = (0..2048).map(|i| (i % 251) as u8).collect();
     let (url, _state, shutdown) =
