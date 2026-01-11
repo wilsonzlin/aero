@@ -359,6 +359,18 @@ impl UsbPassthroughDevice {
     }
 
     pub fn handle_in_transfer(&mut self, endpoint: u8, max_len: usize) -> UsbInResult {
+        debug_assert!(
+            (endpoint & 0x80) != 0,
+            "handle_in_transfer expects an IN endpoint address (bit7=1), got {endpoint:#04x}"
+        );
+        debug_assert!(
+            (endpoint & 0x70) == 0,
+            "handle_in_transfer expects a valid endpoint number (0..=15), got {endpoint:#04x}"
+        );
+        debug_assert!(
+            (endpoint & 0x0f) != 0,
+            "handle_in_transfer should not be used for control endpoint 0, got {endpoint:#04x}"
+        );
         if let Some(inflight) = self.ep_inflight.get(&endpoint) {
             let inflight_id = inflight.id;
             let inflight_len = inflight.len;
@@ -390,6 +402,18 @@ impl UsbPassthroughDevice {
     }
 
     pub fn handle_out_transfer(&mut self, endpoint: u8, data: &[u8]) -> UsbOutResult {
+        debug_assert!(
+            (endpoint & 0x80) == 0,
+            "handle_out_transfer expects an OUT endpoint address (bit7=0), got {endpoint:#04x}"
+        );
+        debug_assert!(
+            (endpoint & 0x70) == 0,
+            "handle_out_transfer expects a valid endpoint number (0..=15), got {endpoint:#04x}"
+        );
+        debug_assert!(
+            (endpoint & 0x0f) != 0,
+            "handle_out_transfer should not be used for control endpoint 0, got {endpoint:#04x}"
+        );
         if let Some(inflight) = self.ep_inflight.get(&endpoint) {
             if let Some(result) = self.take_result(inflight.id) {
                 self.ep_inflight.remove(&endpoint);
