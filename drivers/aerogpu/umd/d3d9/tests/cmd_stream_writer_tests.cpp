@@ -14,14 +14,15 @@ struct unknown_cmd_fixed {
 };
 
 static void validate_stream(const uint8_t* buf, size_t capacity) {
-  (void)capacity;
   assert(buf != nullptr);
+  assert(capacity >= sizeof(aerogpu_cmd_stream_header));
 
   const auto* stream = reinterpret_cast<const aerogpu_cmd_stream_header*>(buf);
   assert(stream->magic == AEROGPU_CMD_STREAM_MAGIC);
   assert(stream->abi_version == AEROGPU_ABI_VERSION_U32);
   assert(stream->flags == AEROGPU_CMD_STREAM_FLAG_NONE);
   assert(stream->size_bytes >= sizeof(aerogpu_cmd_stream_header));
+  assert(stream->size_bytes <= capacity);
 
   size_t offset = sizeof(aerogpu_cmd_stream_header);
   while (offset < stream->size_bytes) {
@@ -136,6 +137,61 @@ static void test_out_of_space_returns_nullptr() {
   assert(stream->size_bytes == sizeof(aerogpu_cmd_stream_header));
 }
 
+static void test_fixed_packet_padding() {
+  uint8_t buf[256];
+  std::memset(buf, 0xEF, sizeof(buf));
+
+  #pragma pack(push, 1)
+  struct odd_fixed {
+    aerogpu_cmd_hdr hdr;
+    uint16_t v;
+  };
+  #pragma pack(pop)
+
+  static_assert(sizeof(odd_fixed) == 10, "unexpected packing");
+
+  SpanCmdStreamWriter w(buf, sizeof(buf));
+  w.reset();
+
+  auto* cmd = w.append_fixed<odd_fixed>(0x9000u);
+  assert(cmd != nullptr);
+  cmd->v = 0xBEEFu;
+
+  assert(cmd->hdr.size_bytes == 12);
+  const size_t cmd_off = sizeof(aerogpu_cmd_stream_header);
+  assert(buf[cmd_off + sizeof(odd_fixed) + 0] == 0);
+  assert(buf[cmd_off + sizeof(odd_fixed) + 1] == 0);
+
+  w.finalize();
+  validate_stream(buf, sizeof(buf));
+}
+
+static void test_cmd_stream_writer_backend_switch() {
+  uint8_t span_buf[256] = {};
+
+  CmdStreamWriter w;
+
+  // Span mode.
+  w.set_span(span_buf, sizeof(span_buf));
+  auto* present = w.append_fixed<aerogpu_cmd_present>(AEROGPU_CMD_PRESENT);
+  assert(present != nullptr);
+  present->scanout_id = 0;
+  present->flags = AEROGPU_PRESENT_FLAG_NONE;
+
+  w.finalize();
+  validate_stream(span_buf, sizeof(span_buf));
+
+  // Vector mode.
+  w.set_vector();
+  present = w.append_fixed<aerogpu_cmd_present>(AEROGPU_CMD_PRESENT);
+  assert(present != nullptr);
+  present->scanout_id = 0;
+  present->flags = AEROGPU_PRESENT_FLAG_NONE;
+
+  w.finalize();
+  validate_stream(w.data(), w.bytes_used());
+}
+
 } // namespace
 } // namespace aerogpu
 
@@ -144,6 +200,7 @@ int main() {
   aerogpu::test_alignment_and_padding();
   aerogpu::test_unknown_opcode_skip_by_size();
   aerogpu::test_out_of_space_returns_nullptr();
+  aerogpu::test_fixed_packet_padding();
+  aerogpu::test_cmd_stream_writer_backend_switch();
   return 0;
 }
-
