@@ -198,9 +198,9 @@ func (s *UDPWebSocketServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// and outbound framing/negotiation.
 	relay := NewSessionRelay(sender, s.relayCfg, s.policy, nil)
 	if metricsSink != nil && relay.queue != nil {
-		relay.queue.onDrop = func() {
+		relay.queue.SetOnDrop(func() {
 			metricsSink.Inc(wsUDPMetricDroppedBackpress)
-		}
+		})
 	}
 	defer relay.Close()
 

@@ -389,3 +389,56 @@ func TestUDPWebSocketServer_IgnoresRedundantAuthMessage(t *testing.T) {
 		t.Fatalf("payload=%q, want %q", outFrame.Payload, "hello")
 	}
 }
+
+func TestUDPWebSocketServer_RecordsBackpressureDrops(t *testing.T) {
+	echo, echoPort := startUDPEchoServer(t, "udp4", net.IPv4(127, 0, 0, 1))
+	defer echo.Close()
+
+	cfg := config.Config{
+		AuthMode:                 config.AuthModeNone,
+		SignalingAuthTimeout:     50 * time.Millisecond,
+		MaxSignalingMessageBytes: 64 * 1024,
+	}
+	m := metrics.New()
+	sm := NewSessionManager(cfg, m, nil)
+
+	// Ensure the outbound send queue can't fit even a single UDP frame so we can
+	// deterministically force backpressure drops.
+	relayCfg := DefaultConfig()
+	relayCfg.DataChannelSendQueueBytes = 1
+
+	srv, err := NewUDPWebSocketServer(cfg, sm, relayCfg, policy.NewDevDestinationPolicy())
+	if err != nil {
+		t.Fatalf("NewUDPWebSocketServer: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle("GET /udp", srv)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	c := dialWS(t, ts.URL, "/udp")
+
+	in := udpproto.Frame{
+		GuestPort:  1234,
+		RemoteIP:   netip.MustParseAddr("127.0.0.1"),
+		RemotePort: echoPort,
+		Payload:    []byte("hello"),
+	}
+	pkt, err := udpproto.EncodeV1(in)
+	if err != nil {
+		t.Fatalf("EncodeV1: %v", err)
+	}
+	if err := c.WriteMessage(websocket.BinaryMessage, pkt); err != nil {
+		t.Fatalf("WriteMessage: %v", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if m.Get(wsUDPMetricDroppedBackpress) > 0 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("expected %s metric increment", wsUDPMetricDroppedBackpress)
+}

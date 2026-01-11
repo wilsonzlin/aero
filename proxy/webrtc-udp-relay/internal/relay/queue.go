@@ -30,6 +30,12 @@ func newSendQueue(maxBytes int) *sendQueue {
 	return q
 }
 
+func (q *sendQueue) SetOnDrop(fn func()) {
+	q.mu.Lock()
+	q.onDrop = fn
+	q.mu.Unlock()
+}
+
 func (q *sendQueue) DropCount() uint64 {
 	return q.drops.Load()
 }
