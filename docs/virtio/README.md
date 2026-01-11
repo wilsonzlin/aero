@@ -39,6 +39,11 @@ Header policy: `drivers/windows/virtio/common/virtqueue_split.h` is the **only**
 header named `virtqueue_split.h` in-tree. The Win7 portable header is named
 `virtqueue_split_legacy.h` to avoid include-path ambiguity.
 
+With this policy in place, every in-tree `#include "virtqueue_split.h"` resolves
+to `drivers/windows/virtio/common/virtqueue_split.h` (CI enforces that Win7
+driver build files include `drivers/windows/virtio/common` in their include
+paths).
+
 ## Build wiring (where each engine is compiled)
 
 These are the build entry points that pull in each implementation (kept here so
