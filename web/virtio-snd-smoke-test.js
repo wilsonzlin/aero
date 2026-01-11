@@ -60,7 +60,9 @@ playBtn.addEventListener("click", async () => {
     node.connect(ctx.destination);
     node.port.onmessage = (event) => {
       if (event.data?.type === "underrun") {
-        log(`underrunCount=${event.data.underrunCount}`);
+        const added = event.data.underrunFramesAdded ?? null;
+        const total = event.data.underrunFramesTotal ?? event.data.underrunCount;
+        log(`underrunFramesAdded=${added} underrunFramesTotal=${total}`);
       }
     };
 

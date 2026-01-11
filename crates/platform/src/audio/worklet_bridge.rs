@@ -14,6 +14,9 @@ pub const WRITE_FRAME_INDEX: usize = 1;
 ///
 /// This is stored as a wrapping `u32` counter (wraps naturally at `2^32`).
 pub const UNDERRUN_COUNT_INDEX: usize = 2;
+/// Total frames dropped by the producer due to buffer full.
+///
+/// This is stored as a wrapping `u32` counter (wraps naturally at `2^32`).
 pub const OVERRUN_COUNT_INDEX: usize = 3;
 
 /// Total bytes reserved for the header.
@@ -370,6 +373,9 @@ mod wasm {
             atomic_load_u32(&self.header, UNDERRUN_COUNT_INDEX)
         }
 
+        /// Total frames dropped by the producer due to buffer full.
+        ///
+        /// This is a wrapping `u32` counter (wraps naturally at `2^32`).
         pub fn overrun_count(&self) -> u32 {
             atomic_load_u32(&self.header, OVERRUN_COUNT_INDEX)
         }

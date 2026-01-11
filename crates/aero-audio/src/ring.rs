@@ -6,8 +6,8 @@
 ///
 /// - Producer writes interleaved stereo `f32` frames.
 /// - Consumer reads a fixed number of frames per render quantum.
-/// - On underrun, the consumer receives silence and an underrun counter
-///   increments.
+/// - On underrun, the consumer receives silence and `underrun_frames` increments
+///   by the number of missing frames.
 /// - On overrun (buffer full), the producer drops *new* frames (writes are
 ///   truncated) and an overrun counter increments.
 ///
