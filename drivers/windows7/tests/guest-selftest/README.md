@@ -27,8 +27,7 @@ virtio driver health via **COM1 serial** (host-captured), stdout, and a log file
     - no matched HID device advertises both keyboard and mouse application collections (contract v1 expects two separate PCI functions).
 - **virtio-snd** (optional; enable with `--test-snd` / `--require-snd`)
   - Detect the virtio-snd PCI function via SetupAPI hardware IDs:
-    - `PCI\VEN_1AF4&DEV_1059` (modern)
-    - `PCI\VEN_1AF4&DEV_1018` (transitional)
+    - `PCI\VEN_1AF4&DEV_1059` (modern; Aero contract v1 expects `REV_01`)
   - Enumerate audio render endpoints via MMDevice API and start a shared-mode WASAPI render stream.
   - Render a short deterministic tone (440Hz) at 48kHz/16-bit/stereo.
   - If WASAPI fails, a WinMM `waveOut` fallback is attempted.
