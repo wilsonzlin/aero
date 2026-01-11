@@ -142,6 +142,7 @@ bench-results/
 !tests/fixtures/boot/*.img
 !tests/fixtures/boot/*.bin
 !tools/qemu_diff/boot/boot.bin
+!crates/aero-d3d11/tests/fixtures/*.bin
 
 # qemu_diff boot sector build byproducts (boot.bin is committed)
 tools/qemu_diff/boot/boot.o
