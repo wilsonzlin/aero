@@ -4,6 +4,7 @@ import {
   inferFormatFromFileName,
   inferKindFromFileName,
   newDiskId,
+  idbReq,
   idbTxDone,
   openDiskManagerDb,
   opfsGetDisksDir,
@@ -196,6 +197,31 @@ async function idbDeleteRemoteChunkCache(db: IDBDatabase, cacheKey: string): Pro
   });
 
   await idbTxDone(tx);
+}
+
+async function idbSumDiskChunkBytes(db: IDBDatabase, diskId: string): Promise<number> {
+  const tx = db.transaction(["chunks"], "readonly");
+  const store = tx.objectStore("chunks").index("by_id");
+  const range = IDBKeyRange.only(diskId);
+
+  let total = 0;
+  await new Promise<void>((resolve, reject) => {
+    const req = store.openCursor(range);
+    req.onerror = () => reject(req.error || new Error("IndexedDB cursor failed"));
+    req.onsuccess = () => {
+      const cursor = req.result;
+      if (!cursor) return resolve(undefined);
+      const value = cursor.value as { data?: unknown } | undefined;
+      const data = value?.data;
+      if (data && typeof (data as ArrayBufferLike).byteLength === "number") {
+        total += (data as ArrayBufferLike).byteLength;
+      }
+      cursor.continue();
+    };
+  });
+
+  await idbTxDone(tx);
+  return total;
 }
 
 /**
@@ -629,6 +655,79 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
       }
 
       // Remote disks: report local storage usage best-effort.
+      if (meta.cache.backend === "idb") {
+        const db = await openDiskManagerDb();
+        try {
+          let totalBytes = 0;
+          try {
+            // Overlay bytes (user state) live in the `chunks` store under the overlay ID.
+            totalBytes += await idbSumDiskChunkBytes(db, meta.cache.overlayFileName);
+          } catch {
+            // ignore
+          }
+          try {
+            // Legacy per-disk cache may have been stored in the `chunks` store too.
+            if (meta.cache.fileName !== meta.cache.overlayFileName) {
+              totalBytes += await idbSumDiskChunkBytes(db, meta.cache.fileName);
+            }
+          } catch {
+            // ignore
+          }
+
+          try {
+            const deliveryTypes =
+              meta.remote.delivery === "range"
+                ? [remoteRangeDeliveryType(meta.cache.chunkSizeBytes), "range"]
+                : [remoteChunkedDeliveryType(meta.cache.chunkSizeBytes), "chunked"];
+            const derivedKeys = await Promise.all(
+              deliveryTypes.map((deliveryType) =>
+                RemoteCacheManager.deriveCacheKey({
+                  imageId: meta.remote.imageId,
+                  version: meta.remote.version,
+                  deliveryType,
+                }),
+              ),
+            );
+
+            const keysToProbe = new Set<string>([
+              ...derivedKeys,
+              // Legacy IDB caches used un-derived cache identifiers.
+              meta.cache.fileName,
+              meta.cache.overlayFileName,
+              idbOverlayBindingKey(meta.cache.overlayFileName),
+            ]);
+
+            const tx = db.transaction(["remote_chunk_meta"], "readonly");
+            const metaStore = tx.objectStore("remote_chunk_meta");
+            const reqs = Array.from(keysToProbe).map(async (cacheKey) => {
+              try {
+                return (await idbReq(metaStore.get(cacheKey))) as unknown;
+              } catch {
+                return null;
+              }
+            });
+            const records = await Promise.all(reqs);
+            await idbTxDone(tx);
+
+            for (const rec of records) {
+              if (!rec || typeof rec !== "object") continue;
+              const bytesUsed = (rec as { bytesUsed?: unknown }).bytesUsed;
+              if (typeof bytesUsed === "number" && Number.isFinite(bytesUsed) && bytesUsed > 0) {
+                totalBytes += bytesUsed;
+              }
+            }
+          } catch {
+            // ignore remote cache probing failures
+          }
+
+          actualSizeBytes = totalBytes;
+        } finally {
+          db.close();
+        }
+        postOk(requestId, { meta, actualSizeBytes });
+        return;
+      }
+
       if (meta.cache.backend !== "opfs") {
         postOk(requestId, { meta, actualSizeBytes });
         return;
