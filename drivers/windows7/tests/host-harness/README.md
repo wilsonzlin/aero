@@ -215,7 +215,7 @@ only if you explicitly want the base image to be mutated.
   - `virtio-net-pci,disable-legacy=on,x-pci-revision=0x01` with `-netdev user` (modern-only; enumerates as `PCI\VEN_1AF4&DEV_1041`)
   - `virtio-keyboard-pci,disable-legacy=on,x-pci-revision=0x01` + `virtio-mouse-pci,disable-legacy=on,x-pci-revision=0x01` (virtio-input; modern-only; enumerates as `PCI\VEN_1AF4&DEV_1052`)
   - `-drive if=none,id=drive0` + `virtio-blk-pci,drive=drive0,disable-legacy=on,x-pci-revision=0x01` (modern-only; enumerates as `PCI\VEN_1AF4&DEV_1042`)
-  - (optional) `virtio-snd` PCI device when `-WithVirtioSnd` / `--with-virtio-snd` is set (`disable-legacy=on,x-pci-revision=0x01`; enumerates as `PCI\VEN_1AF4&DEV_1059`)
+  - (optional) `virtio-snd` PCI device when `-WithVirtioSnd` / `--with-virtio-snd` is set (`disable-legacy=on,x-pci-revision=0x01`; modern-only; enumerates as `PCI\VEN_1AF4&DEV_1059&REV_01`)
 - Watches the serial log for:
   - `AERO_VIRTIO_SELFTEST|RESULT|PASS` / `AERO_VIRTIO_SELFTEST|RESULT|FAIL`
   - When `RESULT|PASS` is seen, the harness also requires that the guest emitted per-test markers for:
@@ -230,7 +230,7 @@ Revision ID (contract v1 = `0x01`).
 Some QEMU virtio device types report `REV_00` by default. Once the Aero drivers enforce the
 contract Revision ID, they will refuse to bind unless QEMU is told to advertise `REV_01`.
 
-The harness sets `disable-legacy=on` for virtio-net/virtio-blk/virtio-input so QEMU does **not** expose
+The harness sets `disable-legacy=on` for virtio-net/virtio-blk/virtio-input (and virtio-snd when enabled) so QEMU does **not** expose
 the legacy I/O-port transport (transitional devices enumerate with the older `0x1000..` PCI Device IDs such as `1AF4:1000/1001/1011`). This matches
 [`docs/windows7-virtio-driver-contract.md`](../../../../docs/windows7-virtio-driver-contract.md) (`AERO-W7-VIRTIO` v1),
 which is modern-only.
@@ -238,7 +238,6 @@ which is modern-only.
 When `-WithVirtioSnd` / `--with-virtio-snd` is enabled, the harness also forces `disable-legacy=on` and
 `x-pci-revision=0x01` on the virtio-snd device so it matches the Aero contract v1 ID (`DEV_1059&REV_01`)
 and the strict `aero-virtio-snd.inf` binds under QEMU.
-
 #### Verifying what your QEMU build reports (no guest required)
 
 You can probe the PCI IDs (including Revision ID) that your local QEMU build advertises for the harness devices with:
@@ -284,11 +283,11 @@ For safety and determinism, the provisioning script installs **only an allowlist
 (virtio blk/net/input/snd). This avoids accidentally installing experimental/test INFs (for example
 `virtio-transport-test.inf`) that can match the same HWIDs and steal device binding.
 
-Note: the harness uses **modern-only** virtio device IDs for virtio-net/virtio-blk/virtio-input
-(`DEV_1041`/`DEV_1042`/`DEV_1052`).
-
-When `-WithVirtioSnd` / `--with-virtio-snd` is enabled, it also uses the **modern** virtio-snd ID (`DEV_1059`)
-and forces `REV_01` so the strict Aero INF (`aero-virtio-snd.inf`) binds.
+Note: the harness uses **modern-only** virtio device IDs for virtio-net/virtio-blk/virtio-input/virtio-snd
+(`DEV_1041`/`DEV_1042`/`DEV_1052`/`DEV_1059`) and sets `x-pci-revision=0x01` so strict contract-v1 INFs can bind.
+For virtio-snd, the canonical INF (`aero-virtio-snd.inf`) requires `PCI\VEN_1AF4&DEV_1059&REV_01`. The legacy
+filename alias (`virtio-snd.inf`) matches additional compatibility IDs (for example `DEV_1059` without `REV_01` and
+transitional `DEV_1018`), but it is not used by default.
 
 For virtio-net, use a contract-v1 driver that binds `DEV_1041` (for example `drivers/windows7/virtio/net/`).
 Avoid installing multiple INFs that bind the same HWID, or disambiguate by passing a relative INF path via

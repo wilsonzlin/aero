@@ -10,10 +10,9 @@ Note: This harness intentionally uses *modern-only* virtio-pci devices (`disable
 virtio-blk/virtio-net/virtio-input so the Win7 drivers bind to the Aero contract v1 IDs
 (DEV_1041/DEV_1042/DEV_1052).
 
-When `--with-virtio-snd` is enabled, the harness also forces contract-v1 virtio-snd identity:
-
-- `disable-legacy=on` so the device enumerates as the modern virtio-snd ID (`DEV_1059`)
-- `x-pci-revision=0x01` so strict Aero `REV_01` INFs bind under QEMU
+When `--with-virtio-snd` is enabled, the harness also configures virtio-snd as a modern-only
+virtio-pci device and forces the Aero contract v1 revision (`disable-legacy=on,x-pci-revision=0x01`)
+so the canonical Win7 INF (`aero-virtio-snd.inf`) can bind to `DEV_1059&REV_01` under QEMU.
 
 Use `--virtio-transitional` to opt back into QEMU's default transitional devices (legacy + modern)
 for older QEMU builds (or when intentionally testing legacy driver packages).
@@ -155,7 +154,7 @@ def _qemu_device_help_text(qemu_system: str, device_name: str) -> str:
     return proc.stdout or ""
 
 
-def _assert_qemu_supports_aero_w7_virtio_contract_v1(qemu_system: str) -> None:
+def _assert_qemu_supports_aero_w7_virtio_contract_v1(qemu_system: str, *, with_virtio_snd: bool = False) -> None:
     """
     Fail fast with a clear error if the user's QEMU binary can't run the harness in
     a strict AERO-W7-VIRTIO v1 environment.
@@ -179,6 +178,20 @@ def _assert_qemu_supports_aero_w7_virtio_contract_v1(qemu_system: str) -> None:
             raise RuntimeError(
                 f"QEMU device '{device_name}' does not expose 'x-pci-revision'. "
                 "AERO-W7-VIRTIO v1 requires PCI Revision ID 0x01. Upgrade QEMU."
+            )
+
+    if with_virtio_snd:
+        device_name = _detect_virtio_snd_device(qemu_system)
+        help_text = _qemu_device_help_text(qemu_system, device_name)
+        if "disable-legacy" not in help_text:
+            raise RuntimeError(
+                f"QEMU device '{device_name}' does not expose 'disable-legacy'. "
+                "Aero virtio-snd requires modern-only virtio-pci enumeration (DEV_1059). Upgrade QEMU."
+            )
+        if "x-pci-revision" not in help_text:
+            raise RuntimeError(
+                f"QEMU device '{device_name}' does not expose 'x-pci-revision'. "
+                "Aero virtio-snd contract v1 requires PCI Revision ID 0x01 (REV_01). Upgrade QEMU."
             )
 
 
@@ -306,7 +319,10 @@ def main() -> int:
 
     if not args.virtio_transitional:
         try:
-            _assert_qemu_supports_aero_w7_virtio_contract_v1(args.qemu_system)
+            _assert_qemu_supports_aero_w7_virtio_contract_v1(
+                args.qemu_system,
+                with_virtio_snd=args.enable_virtio_snd,
+            )
         except RuntimeError as e:
             print(f"ERROR: {e}", file=sys.stderr)
             return 2
@@ -816,35 +832,22 @@ def _get_qemu_virtio_sound_device_arg(qemu_system: str) -> str:
     Return the virtio-snd PCI device arg string.
 
     The Aero Win7 virtio-snd contract v1 expects the modern virtio-pci ID space (`DEV_1059`) and
-    PCI Revision ID 0x01, so we force:
-      - disable-legacy=on
-      - x-pci-revision=0x01
+    PCI Revision ID 0x01 (`REV_01`). The canonical Win7 INF (`aero-virtio-snd.inf`) is intentionally
+    strict and matches only `DEV_1059&REV_01`, so we force `disable-legacy=on,x-pci-revision=0x01`.
     """
     device_name = _detect_virtio_snd_device(qemu_system)
-    proc = subprocess.run(
-        [qemu_system, "-device", f"{device_name},help"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        check=False,
-    )
-    if proc.returncode != 0:
-        out = (proc.stdout or "").strip()
+    help_text = _qemu_device_help_text(qemu_system, device_name)
+    if "disable-legacy" not in help_text:
         raise RuntimeError(
-            f"virtio-snd device '{device_name}' is not supported by this QEMU binary ({qemu_system}). Output:\n{out}"
+            f"QEMU device '{device_name}' does not expose 'disable-legacy'. "
+            "Aero virtio-snd requires modern-only virtio-pci enumeration (DEV_1059). Upgrade QEMU."
+        )
+    if "x-pci-revision" not in help_text:
+        raise RuntimeError(
+            f"QEMU device '{device_name}' does not expose 'x-pci-revision'. "
+            "Aero virtio-snd contract v1 requires PCI Revision ID 0x01 (REV_01). Upgrade QEMU."
         )
 
-    out = proc.stdout or ""
-    if "disable-legacy" not in out:
-        raise RuntimeError(
-            f"virtio-snd device '{device_name}' does not expose 'disable-legacy' "
-            "(required to force DEV_1059). Upgrade QEMU."
-        )
-    if "x-pci-revision" not in out:
-        raise RuntimeError(
-            f"virtio-snd device '{device_name}' does not expose 'x-pci-revision' "
-            "(required for REV_01). Upgrade QEMU."
-        )
     return f"{device_name},audiodev=snd0,disable-legacy=on,x-pci-revision=0x01"
 
 

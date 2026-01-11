@@ -26,7 +26,8 @@ param(
 
   # If set, use QEMU's transitional virtio-pci devices (legacy + modern).
   # By default this harness uses modern-only (disable-legacy=on) virtio-pci devices so
-  # Win7 drivers can bind to virtio 1.0+ IDs (DEV_1041/DEV_1042).
+  # Win7 drivers can bind to the Aero contract v1 IDs (DEV_1041/DEV_1042/DEV_1052/DEV_1059) and
+  # revision gate (REV_01).
   [Parameter(Mandatory = $false)]
   [switch]$VirtioTransitional,
 
@@ -328,23 +329,16 @@ function Get-AeroVirtioSoundDeviceArg {
   #   - force modern-only virtio-pci enumeration (`disable-legacy=on` => `DEV_1059`)
   #   - force PCI Revision ID 0x01 (`x-pci-revision=0x01` => `REV_01`)
   $deviceName = Resolve-AeroVirtioSndPciDeviceName -QemuSystem $QemuSystem
-  $help = & $QemuSystem -device "$deviceName,help" 2>&1
-  $exitCode = $LASTEXITCODE
-  if ($exitCode -ne 0) {
-    $helpText = ($help | Out-String).Trim()
-    throw "virtio-snd device '$deviceName' is not supported by this QEMU binary ($QemuSystem). Output:`n$helpText"
-  }
+  $helpText = Get-AeroWin7QemuDeviceHelpText -QemuSystem $QemuSystem -DeviceName $deviceName
 
-  $helpText = $help -join "`n"
-  $device = "$deviceName,audiodev=snd0"
   if ($helpText -notmatch "(?m)^\s*disable-legacy\b") {
-    throw "virtio-snd device '$deviceName' does not expose 'disable-legacy' (required to force DEV_1059). Upgrade QEMU."
+    throw "QEMU device '$deviceName' does not expose 'disable-legacy'. AERO-W7-VIRTIO v1 virtio-snd requires modern-only virtio-pci enumeration (DEV_1059). Upgrade QEMU."
   }
   if ($helpText -notmatch "(?m)^\s*x-pci-revision\b") {
-    throw "virtio-snd device '$deviceName' does not expose 'x-pci-revision' (required for REV_01). Upgrade QEMU."
+    throw "QEMU device '$deviceName' does not expose 'x-pci-revision'. AERO-W7-VIRTIO v1 virtio-snd requires PCI Revision ID 0x01 (REV_01). Upgrade QEMU."
   }
-  $device += ",disable-legacy=on,x-pci-revision=0x01"
-  return $device
+
+  return "$deviceName,disable-legacy=on,x-pci-revision=0x01,audiodev=snd0"
 }
 
 function Sanitize-AeroMarkerValue {
