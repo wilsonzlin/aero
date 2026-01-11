@@ -1478,6 +1478,25 @@ HRESULT WddmSubmit::SubmitAeroCmdStream(const uint8_t* stream_bytes,
     return E_INVALIDARG;
   }
 
+  const auto* stream_header = reinterpret_cast<const aerogpu_cmd_stream_header*>(stream_bytes);
+  if (stream_header->magic != AEROGPU_CMD_STREAM_MAGIC) {
+    AEROGPU_D3D10_11_LOG("wddm_submit: invalid cmd stream magic=0x%08x",
+                         static_cast<unsigned>(stream_header->magic));
+    return E_INVALIDARG;
+  }
+  if (stream_header->abi_version != AEROGPU_ABI_VERSION_U32) {
+    AEROGPU_D3D10_11_LOG("wddm_submit: unsupported cmd stream abi_version=0x%08x expected=0x%08x",
+                         static_cast<unsigned>(stream_header->abi_version),
+                         static_cast<unsigned>(AEROGPU_ABI_VERSION_U32));
+    return E_INVALIDARG;
+  }
+  if (stream_header->size_bytes != stream_size) {
+    AEROGPU_D3D10_11_LOG("wddm_submit: cmd stream size mismatch header=%u arg=%llu",
+                         static_cast<unsigned>(stream_header->size_bytes),
+                         static_cast<unsigned long long>(stream_size));
+    return E_INVALIDARG;
+  }
+
   // Ensure we have at least a render callback for submission.
   if constexpr (has_pfnRenderCb<D3DDDI_DEVICECALLBACKS>::value) {
     if (!callbacks_->pfnRenderCb) {
@@ -1489,6 +1508,32 @@ HRESULT WddmSubmit::SubmitAeroCmdStream(const uint8_t* stream_bytes,
 
   const uint8_t* src = stream_bytes;
   const size_t src_size = stream_size;
+
+  // Validate the packet list so we never submit a truncated/invalid stream.
+  size_t validate_off = sizeof(aerogpu_cmd_stream_header);
+  while (validate_off < src_size) {
+    if (src_size - validate_off < sizeof(aerogpu_cmd_hdr)) {
+      AEROGPU_D3D10_11_LOG("wddm_submit: truncated packet header at offset=%llu",
+                           static_cast<unsigned long long>(validate_off));
+      return E_INVALIDARG;
+    }
+    const auto* pkt = reinterpret_cast<const aerogpu_cmd_hdr*>(src + validate_off);
+    const size_t pkt_size = static_cast<size_t>(pkt->size_bytes);
+    if (pkt_size < sizeof(aerogpu_cmd_hdr) || (pkt_size & 3u) != 0 || pkt_size > src_size - validate_off) {
+      AEROGPU_D3D10_11_LOG("wddm_submit: invalid packet at offset=%llu size=%llu remaining=%llu",
+                           static_cast<unsigned long long>(validate_off),
+                           static_cast<unsigned long long>(pkt_size),
+                           static_cast<unsigned long long>(src_size - validate_off));
+      return E_INVALIDARG;
+    }
+    validate_off += pkt_size;
+  }
+  if (validate_off != src_size) {
+    AEROGPU_D3D10_11_LOG("wddm_submit: packet walk ended at offset=%llu expected=%llu",
+                         static_cast<unsigned long long>(validate_off),
+                         static_cast<unsigned long long>(src_size));
+    return E_INVALIDARG;
+  }
 
   uint64_t last_fence = 0;
 
@@ -1616,11 +1661,17 @@ HRESULT WddmSubmit::SubmitAeroCmdStream(const uint8_t* stream_bytes,
     size_t chunk_size = sizeof(aerogpu_cmd_stream_header);
 
     while (chunk_end < src_size) {
+      if (src_size - chunk_end < sizeof(aerogpu_cmd_hdr)) {
+        // Stream was validated above, so this should be unreachable.
+        release();
+        return E_INVALIDARG;
+      }
       const auto* pkt = reinterpret_cast<const aerogpu_cmd_hdr*>(src + chunk_end);
       const size_t pkt_size = static_cast<size_t>(pkt->size_bytes);
       if (pkt_size < sizeof(aerogpu_cmd_hdr) || (pkt_size & 3u) != 0 || chunk_end + pkt_size > src_size) {
-        assert(false && "AeroGPU command stream contains an invalid packet");
-        break;
+        // Stream was validated above, so this should be unreachable.
+        release();
+        return E_INVALIDARG;
       }
       if (chunk_size + pkt_size > dma_cap) {
         break;
