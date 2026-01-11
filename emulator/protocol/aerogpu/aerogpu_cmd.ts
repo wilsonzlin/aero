@@ -282,8 +282,8 @@ export const AerogpuBlendFactor = {
   InvSrcAlpha: 3,
   DestAlpha: 4,
   InvDestAlpha: 5,
-  BlendFactor: 6,
-  InvBlendFactor: 7,
+  Constant: 6,
+  InvConstant: 7,
 } as const;
 
 export type AerogpuBlendFactor = (typeof AerogpuBlendFactor)[keyof typeof AerogpuBlendFactor];
@@ -1207,7 +1207,7 @@ export class AerogpuCmdWriter {
     srcFactorAlpha: AerogpuBlendFactor = srcFactor,
     dstFactorAlpha: AerogpuBlendFactor = dstFactor,
     blendOpAlpha: AerogpuBlendOp = blendOp,
-    blendConstantRgba: [number, number, number, number] = [0, 0, 0, 0],
+    blendConstantRgba: [number, number, number, number] = [1, 1, 1, 1],
     sampleMask = 0xffffffff,
   ): void {
     const base = this.appendRaw(AerogpuCmdOpcode.SetBlendState, AEROGPU_CMD_SET_BLEND_STATE_SIZE);

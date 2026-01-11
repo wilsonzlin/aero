@@ -456,8 +456,8 @@ pub enum AerogpuBlendFactor {
     InvSrcAlpha = 3,
     DestAlpha = 4,
     InvDestAlpha = 5,
-    BlendFactor = 6,
-    InvBlendFactor = 7,
+    Constant = 6,
+    InvConstant = 7,
 }
 
 #[repr(u32)]

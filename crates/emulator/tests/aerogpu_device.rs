@@ -3071,8 +3071,8 @@ fn cmd_exec_d3d11_blend_factor_constant_matches_expected() {
         push_u32(stream, cmd::AerogpuCmdOpcode::SetBlendState as u32);
         push_u32(stream, cmd::AerogpuCmdSetBlendState::SIZE_BYTES as u32);
         push_u32(stream, 1); // enable
-        push_u32(stream, cmd::AerogpuBlendFactor::BlendFactor as u32);
-        push_u32(stream, cmd::AerogpuBlendFactor::InvBlendFactor as u32);
+        push_u32(stream, cmd::AerogpuBlendFactor::Constant as u32);
+        push_u32(stream, cmd::AerogpuBlendFactor::InvConstant as u32);
         push_u32(stream, cmd::AerogpuBlendOp::Add as u32);
         push_u32(stream, 0xF); // write mask + padding
                                // Alpha blend: out_a = src_a
@@ -3102,8 +3102,8 @@ fn cmd_exec_d3d11_sample_mask_discards_draw() {
         push_u32(stream, cmd::AerogpuCmdOpcode::SetBlendState as u32);
         push_u32(stream, cmd::AerogpuCmdSetBlendState::SIZE_BYTES as u32);
         push_u32(stream, 1); // enable
-        push_u32(stream, cmd::AerogpuBlendFactor::BlendFactor as u32);
-        push_u32(stream, cmd::AerogpuBlendFactor::InvBlendFactor as u32);
+        push_u32(stream, cmd::AerogpuBlendFactor::Constant as u32);
+        push_u32(stream, cmd::AerogpuBlendFactor::InvConstant as u32);
         push_u32(stream, cmd::AerogpuBlendOp::Add as u32);
         push_u32(stream, 0xF);
         push_u32(stream, cmd::AerogpuBlendFactor::One as u32);

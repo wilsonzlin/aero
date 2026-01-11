@@ -169,7 +169,7 @@ impl Default for BlendState {
             src_factor_alpha: cmd::AerogpuBlendFactor::One as u32,
             dst_factor_alpha: cmd::AerogpuBlendFactor::Zero as u32,
             blend_op_alpha: cmd::AerogpuBlendOp::Add as u32,
-            blend_constant: [0.0; 4],
+            blend_constant: [1.0; 4],
             sample_mask: 0xFFFF_FFFF,
             write_mask: 0xF,
         }
@@ -797,8 +797,8 @@ impl AeroGpuSoftwareExecutor {
             x if x == cmd::AerogpuBlendFactor::InvSrcAlpha as u32 => 1.0 - src_a,
             x if x == cmd::AerogpuBlendFactor::DestAlpha as u32 => dst_a,
             x if x == cmd::AerogpuBlendFactor::InvDestAlpha as u32 => 1.0 - dst_a,
-            x if x == cmd::AerogpuBlendFactor::BlendFactor as u32 => constant,
-            x if x == cmd::AerogpuBlendFactor::InvBlendFactor as u32 => 1.0 - constant,
+            x if x == cmd::AerogpuBlendFactor::Constant as u32 => constant,
+            x if x == cmd::AerogpuBlendFactor::InvConstant as u32 => 1.0 - constant,
             _ => 1.0,
         }
     }
@@ -2976,7 +2976,7 @@ impl AeroGpuSoftwareExecutor {
                     blend_op
                 };
 
-                let mut blend_constant = [0.0f32; 4];
+                let mut blend_constant = [1.0f32; 4];
                 if packet.len() >= 44 {
                     blend_constant[0] =
                         f32::from_bits(u32::from_le_bytes(packet[40..44].try_into().unwrap()));

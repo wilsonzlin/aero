@@ -548,8 +548,8 @@ enum aerogpu_blend_factor {
   AEROGPU_BLEND_INV_SRC_ALPHA = 3,
   AEROGPU_BLEND_DEST_ALPHA = 4,
   AEROGPU_BLEND_INV_DEST_ALPHA = 5,
-  AEROGPU_BLEND_BLEND_FACTOR = 6,
-  AEROGPU_BLEND_INV_BLEND_FACTOR = 7,
+  AEROGPU_BLEND_CONSTANT = 6,
+  AEROGPU_BLEND_INV_CONSTANT = 7,
 };
 
 enum aerogpu_blend_op {
@@ -572,7 +572,7 @@ struct aerogpu_blend_state {
   uint32_t dst_factor_alpha; /* aerogpu_blend_factor */
   uint32_t blend_op_alpha; /* aerogpu_blend_op */
   uint32_t blend_constant_rgba_f32[4]; /* IEEE-754 float bits */
-  uint32_t sample_mask; /* D3D11 sample mask */
+  uint32_t sample_mask; /* D3D11 OM sample mask (bit0 for single-sample RTs) */
 };
 #pragma pack(pop)
 

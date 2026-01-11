@@ -4477,9 +4477,9 @@ static uint32_t D3D11BlendFactorToAerogpu(uint32_t factor, uint32_t fallback) {
     case D3D11_BLEND_INV_DEST_ALPHA:
       return AEROGPU_BLEND_INV_DEST_ALPHA;
     case D3D11_BLEND_BLEND_FACTOR:
-      return AEROGPU_BLEND_BLEND_FACTOR;
+      return AEROGPU_BLEND_CONSTANT;
     case D3D11_BLEND_INV_BLEND_FACTOR:
-      return AEROGPU_BLEND_INV_BLEND_FACTOR;
+      return AEROGPU_BLEND_INV_CONSTANT;
     default:
       break;
   }

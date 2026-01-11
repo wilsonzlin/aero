@@ -3239,13 +3239,13 @@ fn rust_layout_matches_c_headers() {
     );
     check_const(
         &mut cmd_consts_seen,
-        "AEROGPU_BLEND_BLEND_FACTOR",
-        AerogpuBlendFactor::BlendFactor as u64,
+        "AEROGPU_BLEND_CONSTANT",
+        AerogpuBlendFactor::Constant as u64,
     );
     check_const(
         &mut cmd_consts_seen,
-        "AEROGPU_BLEND_INV_BLEND_FACTOR",
-        AerogpuBlendFactor::InvBlendFactor as u64,
+        "AEROGPU_BLEND_INV_CONSTANT",
+        AerogpuBlendFactor::InvConstant as u64,
     );
 
     check_const(

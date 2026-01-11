@@ -324,7 +324,7 @@ impl Default for AerogpuD3d11State {
             input_layout: None,
             blend: None,
             color_write_mask: wgpu::ColorWrites::ALL,
-            blend_constant: [0.0; 4],
+            blend_constant: [1.0; 4],
             sample_mask: 0xFFFF_FFFF,
             depth_enable: true,
             depth_write_enable: true,
@@ -3091,7 +3091,7 @@ impl AerogpuD3d11Executor {
             op
         };
 
-        let mut blend_constant = [0.0f32; 4];
+        let mut blend_constant = [1.0f32; 4];
         if cmd_bytes.len() >= 44 {
             blend_constant[0] = f32::from_bits(read_u32_le(cmd_bytes, 40)?);
         }

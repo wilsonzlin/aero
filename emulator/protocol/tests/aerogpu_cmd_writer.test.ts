@@ -152,7 +152,17 @@ test("AerogpuCmdWriter emits pipeline and binding packets", () => {
 
   // Validate byte-sized fields within nested state structs.
   const blendBase = pkt0Base + expected[0][1] + expected[1][1] + expected[2][1] + expected[3][1];
+  // `aerogpu_cmd_set_blend_state`:
+  // - hdr @ 0
+  // - state.color_write_mask @ 8 + 16
   assert.equal(view.getUint8(blendBase + 24), 0xf);
+  // Separate-alpha defaults to the color component for the TS cmd writer helper.
+  assert.equal(view.getUint32(blendBase + 28, true), AerogpuBlendFactor.One);
+  assert.equal(view.getUint32(blendBase + 32, true), AerogpuBlendFactor.Zero);
+  assert.equal(view.getUint32(blendBase + 36, true), AerogpuBlendOp.Add);
+  // Blend constant defaults to 1.0 and sample mask defaults to 0xFFFF_FFFF.
+  assert.equal(view.getFloat32(blendBase + 40, true), 1.0);
+  assert.equal(view.getUint32(blendBase + 56, true), 0xffff_ffff);
 
   const depthBase = blendBase + expected[4][1];
   assert.equal(view.getUint8(depthBase + 24), 0xaa);

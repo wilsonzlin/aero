@@ -938,7 +938,7 @@ impl AerogpuCmdWriter {
             src_factor,
             dst_factor,
             blend_op,
-            [0.0; 4],
+            [1.0; 4],
             0xFFFF_FFFF,
             color_write_mask,
         );

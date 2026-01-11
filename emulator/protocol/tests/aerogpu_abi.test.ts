@@ -986,11 +986,8 @@ test("TypeScript layout matches C headers", () => {
   assert.equal(konst("AEROGPU_BLEND_INV_SRC_ALPHA"), BigInt(AerogpuBlendFactor.InvSrcAlpha));
   assert.equal(konst("AEROGPU_BLEND_DEST_ALPHA"), BigInt(AerogpuBlendFactor.DestAlpha));
   assert.equal(konst("AEROGPU_BLEND_INV_DEST_ALPHA"), BigInt(AerogpuBlendFactor.InvDestAlpha));
-  assert.equal(konst("AEROGPU_BLEND_BLEND_FACTOR"), BigInt(AerogpuBlendFactor.BlendFactor));
-  assert.equal(
-    konst("AEROGPU_BLEND_INV_BLEND_FACTOR"),
-    BigInt(AerogpuBlendFactor.InvBlendFactor),
-  );
+  assert.equal(konst("AEROGPU_BLEND_CONSTANT"), BigInt(AerogpuBlendFactor.Constant));
+  assert.equal(konst("AEROGPU_BLEND_INV_CONSTANT"), BigInt(AerogpuBlendFactor.InvConstant));
 
   assert.equal(konst("AEROGPU_BLEND_OP_ADD"), BigInt(AerogpuBlendOp.Add));
   assert.equal(konst("AEROGPU_BLEND_OP_SUBTRACT"), BigInt(AerogpuBlendOp.Subtract));

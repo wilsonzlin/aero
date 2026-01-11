@@ -205,8 +205,8 @@ fn build_stream(blend_constant: [f32; 4], sample_mask: u32) -> Vec<u8> {
     // SET_BLEND_STATE (extended)
     let start = begin_cmd(&mut stream, AerogpuCmdOpcode::SetBlendState as u32);
     stream.extend_from_slice(&1u32.to_le_bytes()); // enable
-    stream.extend_from_slice(&(AerogpuBlendFactor::BlendFactor as u32).to_le_bytes());
-    stream.extend_from_slice(&(AerogpuBlendFactor::InvBlendFactor as u32).to_le_bytes());
+    stream.extend_from_slice(&(AerogpuBlendFactor::Constant as u32).to_le_bytes());
+    stream.extend_from_slice(&(AerogpuBlendFactor::InvConstant as u32).to_le_bytes());
     stream.extend_from_slice(&(AerogpuBlendOp::Add as u32).to_le_bytes());
     stream.extend_from_slice(&0xFu32.to_le_bytes()); // write mask + padding
     stream.extend_from_slice(&(AerogpuBlendFactor::One as u32).to_le_bytes()); // src_factor_alpha
