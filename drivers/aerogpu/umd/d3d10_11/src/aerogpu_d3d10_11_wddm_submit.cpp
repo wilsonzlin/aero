@@ -528,6 +528,24 @@ struct has_member_Timeout : std::false_type {};
 template <typename T>
 struct has_member_Timeout<T, std::void_t<decltype(std::declval<T>().Timeout)>> : std::true_type {};
 
+template <typename T>
+std::uintptr_t d3d_handle_to_uintptr(T value) {
+  if constexpr (std::is_pointer_v<T>) {
+    return reinterpret_cast<std::uintptr_t>(value);
+  } else {
+    return static_cast<std::uintptr_t>(value);
+  }
+}
+
+template <typename T>
+T uintptr_to_d3d_handle(std::uintptr_t value) {
+  if constexpr (std::is_pointer_v<T>) {
+    return reinterpret_cast<T>(value);
+  } else {
+    return static_cast<T>(value);
+  }
+}
+
 template <typename WaitArgsT>
 void fill_wait_for_sync_object_args(WaitArgsT* args,
                                     D3DKMT_HANDLE hContext,
@@ -541,10 +559,12 @@ void fill_wait_for_sync_object_args(WaitArgsT* args,
   }
 
   if constexpr (has_member_hContext<WaitArgsT>::value) {
-    args->hContext = hContext;
+    using FieldT = std::remove_reference_t<decltype(args->hContext)>;
+    args->hContext = uintptr_to_d3d_handle<FieldT>(d3d_handle_to_uintptr(hContext));
   }
   if constexpr (has_member_hAdapter<WaitArgsT>::value) {
-    args->hAdapter = hAdapter;
+    using FieldT = std::remove_reference_t<decltype(args->hAdapter)>;
+    args->hAdapter = uintptr_to_d3d_handle<FieldT>(d3d_handle_to_uintptr(hAdapter));
   }
 
   if constexpr (has_member_ObjectCount<WaitArgsT>::value) {
@@ -559,9 +579,13 @@ void fill_wait_for_sync_object_args(WaitArgsT* args,
       using Base = std::remove_const_t<Pointee>;
       args->ObjectHandleArray = reinterpret_cast<FieldT>(const_cast<Base*>(handles));
     } else if constexpr (std::is_array_v<FieldT>) {
-      args->ObjectHandleArray[0] = handles ? handles[0] : 0;
+      using ElemT = std::remove_reference_t<decltype(args->ObjectHandleArray[0])>;
+      const std::uintptr_t handle_value = handles ? d3d_handle_to_uintptr(handles[0]) : 0;
+      args->ObjectHandleArray[0] = uintptr_to_d3d_handle<ElemT>(handle_value);
     } else {
-      args->ObjectHandleArray = handles ? handles[0] : 0;
+      using ElemT = std::remove_reference_t<FieldT>;
+      const std::uintptr_t handle_value = handles ? d3d_handle_to_uintptr(handles[0]) : 0;
+      args->ObjectHandleArray = uintptr_to_d3d_handle<ElemT>(handle_value);
     }
   } else if constexpr (has_member_hSyncObjects<WaitArgsT>::value) {
     using FieldT = std::remove_reference_t<decltype(args->hSyncObjects)>;
@@ -570,9 +594,13 @@ void fill_wait_for_sync_object_args(WaitArgsT* args,
       using Base = std::remove_const_t<Pointee>;
       args->hSyncObjects = reinterpret_cast<FieldT>(const_cast<Base*>(handles));
     } else if constexpr (std::is_array_v<FieldT>) {
-      args->hSyncObjects[0] = handles ? handles[0] : 0;
+      using ElemT = std::remove_reference_t<decltype(args->hSyncObjects[0])>;
+      const std::uintptr_t handle_value = handles ? d3d_handle_to_uintptr(handles[0]) : 0;
+      args->hSyncObjects[0] = uintptr_to_d3d_handle<ElemT>(handle_value);
     } else {
-      args->hSyncObjects = handles ? handles[0] : 0;
+      using ElemT = std::remove_reference_t<FieldT>;
+      const std::uintptr_t handle_value = handles ? d3d_handle_to_uintptr(handles[0]) : 0;
+      args->hSyncObjects = uintptr_to_d3d_handle<ElemT>(handle_value);
     }
   }
 
