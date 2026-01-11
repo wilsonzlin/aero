@@ -274,10 +274,12 @@ async function handleOpenRemoteDisk(msg: OpenRemoteDiskRequest): Promise<void> {
     const blockSize = msg.options?.blockSize;
     const cacheLimitMiB = msg.options?.cacheLimitMiB;
     const cacheLimitBytes =
-      cacheLimitMiB === null || (typeof cacheLimitMiB === "number" && cacheLimitMiB <= 0)
+      cacheLimitMiB === null
         ? null
         : typeof cacheLimitMiB === "number"
-          ? cacheLimitMiB * 1024 * 1024
+          ? cacheLimitMiB <= 0
+            ? 0
+            : cacheLimitMiB * 1024 * 1024
           : undefined;
 
     await closeActiveRemoteDisk();

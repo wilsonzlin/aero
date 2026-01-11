@@ -1471,7 +1471,9 @@ function renderRemoteDiskPanel(): HTMLElement {
   };
 
   function formatMaybeBytes(bytes: number | null): string {
-    return bytes === null ? 'off' : formatByteSize(bytes);
+    if (bytes === 0) return 'off';
+    if (bytes === null) return 'unlimited';
+    return formatByteSize(bytes);
   }
 
   function updateButtons(): void {
@@ -1549,7 +1551,7 @@ function renderRemoteDiskPanel(): HTMLElement {
     statsBaselineAtMs = null;
 
     const cacheLimitMiB = Number(cacheLimitInput.value);
-    const cacheLimitBytes = cacheLimitMiB <= 0 ? null : cacheLimitMiB * 1024 * 1024;
+    const cacheLimitBytes = cacheLimitMiB <= 0 ? 0 : cacheLimitMiB * 1024 * 1024;
 
     const prefetchSequential = Math.max(0, Number(prefetchInput.value) | 0);
     const cacheImageId = cacheImageIdInput.value.trim();

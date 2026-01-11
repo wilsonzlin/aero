@@ -12,16 +12,44 @@
 // (node: builtins, bare specifiers, absolute URLs) is delegated unchanged.
 
 export async function resolve(specifier, context, nextResolve) {
-  if ((specifier.startsWith('./') || specifier.startsWith('../')) && specifier.endsWith('.js')) {
-    try {
-      return await nextResolve(specifier, context);
-    } catch (err) {
-      const tsSpecifier = `${specifier.slice(0, -3)}.ts`;
-      return nextResolve(tsSpecifier, context);
-    }
+  const isRelative = specifier.startsWith('./') || specifier.startsWith('../');
+  if (!isRelative) {
+    return nextResolve(specifier, context);
   }
 
-  return nextResolve(specifier, context);
+  try {
+    return await nextResolve(specifier, context);
+  } catch (err) {
+    const q = specifier.indexOf('?');
+    const pathPart = q === -1 ? specifier : specifier.slice(0, q);
+    const queryPart = q === -1 ? '' : specifier.slice(q);
+
+    const fallbackSpecifiers = [];
+
+    // 1) Remap NodeNext-style `.js` specifiers to `.ts` sources.
+    if (pathPart.endsWith('.js')) {
+      fallbackSpecifiers.push(`${pathPart.slice(0, -3)}.ts${queryPart}`);
+    }
+
+    // 2) Allow extensionless relative imports (common in Vite/tsconfig "Bundler" mode)
+    // by falling back to `.ts` and `index.ts`.
+    const basename = pathPart.split('/').pop() ?? '';
+    const hasExtension = basename.includes('.');
+    if (!hasExtension) {
+      fallbackSpecifiers.push(`${pathPart}.ts${queryPart}`);
+      fallbackSpecifiers.push(`${pathPart}/index.ts${queryPart}`);
+    }
+
+    for (const fallback of fallbackSpecifiers) {
+      try {
+        return await nextResolve(fallback, context);
+      } catch {
+        // continue
+      }
+    }
+
+    throw err;
+  }
 }
 
 export async function load(url, context, nextLoad) {

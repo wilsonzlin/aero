@@ -1598,7 +1598,7 @@ function renderRemoteDiskPanel(): HTMLElement {
     rangeStatsBaselineAtMs = null;
 
     const cacheLimitMiB = Number(cacheLimitInput.value);
-    const cacheLimitBytes = cacheLimitMiB <= 0 ? null : cacheLimitMiB * 1024 * 1024;
+    const cacheLimitBytes = cacheLimitMiB <= 0 ? 0 : cacheLimitMiB * 1024 * 1024;
 
     const prefetchSequential = Math.max(0, Number(prefetchInput.value) | 0);
     const cacheImageId = cacheImageIdInput.value.trim();
@@ -1631,7 +1631,7 @@ function renderRemoteDiskPanel(): HTMLElement {
 
     const openRes = await ioWorker.openRemoteDisk(url, {
       blockSize: Number(blockSizeInput.value) * 1024,
-      cacheLimitMiB: cacheLimitMiB <= 0 ? null : cacheLimitMiB,
+      cacheLimitMiB: cacheLimitMiB <= 0 ? 0 : cacheLimitMiB,
       credentials,
       prefetchSequentialBlocks: prefetchSequential,
       cacheBackend,
@@ -1688,7 +1688,12 @@ function renderRemoteDiskPanel(): HTMLElement {
         const hitRateDenom = deltaCacheHits + deltaCacheMisses;
         const hitRate = hitRateDenom > 0 ? deltaCacheHits / hitRateDenom : 0;
         const cacheCoverage = remote.totalSize > 0 ? remote.cachedBytes / remote.totalSize : 0;
-        const cacheLimitText = remote.cacheLimitBytes === null ? "off" : formatBytes(remote.cacheLimitBytes);
+        const cacheLimitText =
+          remote.cacheLimitBytes === 0
+            ? "off"
+            : remote.cacheLimitBytes === null
+              ? "unlimited"
+              : formatBytes(remote.cacheLimitBytes);
         const deltaIoBytesRead = res.io.bytesRead - baseIoBytesRead;
         const deltaBytesDownloaded = remote.bytesDownloaded - baseBytesDownloaded;
         const downloadAmplification = deltaIoBytesRead > 0 ? deltaBytesDownloaded / deltaIoBytesRead : 0;
@@ -1729,7 +1734,12 @@ function renderRemoteDiskPanel(): HTMLElement {
       const hitRateDenom = deltaCacheHits + deltaCacheMisses;
       const hitRate = hitRateDenom > 0 ? deltaCacheHits / hitRateDenom : 0;
       const cacheCoverage = remote.totalSize > 0 ? remote.cachedBytes / remote.totalSize : 0;
-      const cacheLimitText = remote.cacheLimitBytes === null ? "off" : formatBytes(remote.cacheLimitBytes);
+      const cacheLimitText =
+        remote.cacheLimitBytes === 0
+          ? "off"
+          : remote.cacheLimitBytes === null
+            ? "unlimited"
+            : formatBytes(remote.cacheLimitBytes);
       const deltaBytesDownloaded = remote.bytesDownloaded - baseBytesDownloaded;
       const lastFetchRangeText = remote.lastFetchRange
         ? `${formatBytes(remote.lastFetchRange.start)}-${formatBytes(remote.lastFetchRange.end - 1)}`
