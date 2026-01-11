@@ -304,7 +304,11 @@ try {
         # fail to mount. Fall back to the cross-platform extractor when possible.
         Write-Warning "Mount-DiskImage failed ($($_.Exception.Message)); falling back to the virtio-win extractor."
         if ($mounted -and $null -ne $isoPath) {
-          Dismount-DiskImage -ImagePath $isoPath | Out-Null
+          try {
+            Dismount-DiskImage -ImagePath $isoPath -ErrorAction Stop | Out-Null
+          } catch {
+            Write-Warning "Failed to dismount virtio-win ISO before extractor fallback: $isoPath ($($_.Exception.Message))"
+          }
           $mounted = $false
         }
         $mountCmd = $null
@@ -540,7 +544,11 @@ try {
 }
 finally {
   if ($mounted -and $null -ne $isoPath) {
-    Dismount-DiskImage -ImagePath $isoPath | Out-Null
+    try {
+      Dismount-DiskImage -ImagePath $isoPath -ErrorAction Stop | Out-Null
+    } catch {
+      Write-Warning "Failed to dismount virtio-win ISO: $isoPath ($($_.Exception.Message))"
+    }
   }
   if ($extractTempDir) {
     Remove-Item -LiteralPath $extractTempDir -Recurse -Force -ErrorAction SilentlyContinue
