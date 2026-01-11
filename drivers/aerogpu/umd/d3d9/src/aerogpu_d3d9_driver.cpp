@@ -1842,9 +1842,20 @@ HRESULT AEROGPU_D3D9_CALL device_wait_for_idle(AEROGPU_D3D9DDI_HDEVICE hDevice) 
     std::lock_guard<std::mutex> lock(dev->mutex);
     fence_value = submit(dev);
   }
+  if (fence_value == 0) {
+    return S_OK;
+  }
 
-  for (;;) {
-    const FenceWaitResult wait_res = wait_for_fence(dev, fence_value, /*timeout_ms=*/250);
+  // Never block indefinitely in a DDI call. Waiting for idle should be best-effort:
+  // if the GPU stops making forward progress we return a non-fatal "still drawing"
+  // code so callers can decide how to proceed.
+  const uint64_t deadline = monotonic_ms() + 2000;
+  while (monotonic_ms() < deadline) {
+    const uint64_t now = monotonic_ms();
+    const uint64_t remaining = (deadline > now) ? (deadline - now) : 0;
+    const uint64_t slice = std::min<uint64_t>(remaining, 250);
+
+    const FenceWaitResult wait_res = wait_for_fence(dev, fence_value, /*timeout_ms=*/slice);
     if (wait_res == FenceWaitResult::Complete) {
       return S_OK;
     }
@@ -1852,6 +1863,15 @@ HRESULT AEROGPU_D3D9_CALL device_wait_for_idle(AEROGPU_D3D9DDI_HDEVICE hDevice) 
       return E_FAIL;
     }
   }
+
+  const FenceWaitResult final_check = wait_for_fence(dev, fence_value, /*timeout_ms=*/0);
+  if (final_check == FenceWaitResult::Complete) {
+    return S_OK;
+  }
+  if (final_check == FenceWaitResult::Failed) {
+    return E_FAIL;
+  }
+  return kD3dErrWasStillDrawing;
 }
 
 HRESULT AEROGPU_D3D9_CALL adapter_create_device(
