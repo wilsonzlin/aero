@@ -75,7 +75,11 @@ The legacy USB stack in `crates/emulator` (`emulator::io::usb`) is considered **
 - **TypeScript does not emulate UHCI.** It is responsible for host-only concerns:
   - WebUSB/WebHID handles and permission UX (user gesture requirement)
   - async execution of host transfers
-  - main thread ↔ worker proxying (`postMessage` now; SharedArrayBuffer rings later)
+  - main thread ↔ worker proxying (default: `postMessage`; WebHID fast path uses
+    `SharedArrayBuffer` + `Atomics` report rings when `crossOriginIsolated`)
+    - Implementation: `web/src/usb/hid_report_ring.ts`,
+      `web/src/hid/hid_proxy_protocol.ts` (`hid.ringAttach`),
+      `web/src/hid/webhid_broker.ts`
 - Long-term, the UHCI controller should be integrated into the canonical VM wiring described by
   [ADR 0014](./0014-canonical-machine-stack.md):
   - `aero_machine::Machine` (in the I/O worker) owns the UHCI controller device model.
