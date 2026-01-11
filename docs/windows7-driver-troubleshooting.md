@@ -452,11 +452,24 @@ This only applies if you are attempting to install Windows directly onto **virti
 2. Switch graphics back to **VGA** in the VM settings.
 3. Boot Windows.
 4. Check Device Manager for the Aero GPU device status:
-   - If you see Code 52, fix signing/trust first.
-   - If you see an unknown device, reinstall drivers (run `setup.cmd` as Administrator).
+    - If you see Code 52, fix signing/trust first.
+    - If you see an unknown device, reinstall drivers (run `setup.cmd` as Administrator).
 5. Try switching to Aero GPU again.
 
 If you must keep the Aero GPU selected while recovering, use Safe Mode (below) since it typically avoids loading third-party display drivers.
+
+### Advanced diagnostics (mode / scanout state)
+
+If the OS boots far enough that you can run tools (local console preferred; RDP may change the active display path), dump the scanout state:
+
+- `aerogpu_dbgctl --query-scanout`
+  - Confirms whether scanout is enabled, the current mode (`width/height/pitch`), and whether a framebuffer GPA is programmed.
+  - Useful for diagnosing blank output caused by mode/pitch mismatches or a missing scanout surface address.
+
+If you have the Win7 guest-side validation suite available, you can also run:
+
+- `drivers\\aerogpu\\tests\\win7\\bin\\scanout_state_sanity.exe`
+  - Validates that the KMD cached mode matches the MMIO scanout registers and the desktop resolution (helps catch broken `DxgkDdiCommitVidPn` mode caching).
 
 ### Alternative recovery options (if the OS boots but the screen is unusable)
 
