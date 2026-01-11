@@ -28,8 +28,8 @@ set "UMD_D3D10_11_SLN=%UMD_D3D10_11_DIR%\aerogpu_d3d10_11.sln"
 
 set "OUT_ROOT=%SCRIPT_DIR%\out"
 
-rem Optional WDK 7.1 root (WinDDK layout; used only for D3D10/11 UMD DDI headers).
-rem If not found, the D3D10/11 UMD build relies on the toolchain's default include paths (WDK10+).
+rem Optional WDK 7.1 root (WinDDK layout; used for D3D9 + D3D10/11 UMD DDI headers).
+rem If not found, the UMD builds rely on the toolchain's default include paths (WDK10+).
 rem
 rem Note: do not clobber the standard WDKROOT environment variable; it may be set by modern
 rem Windows Kits installations.
@@ -54,6 +54,10 @@ if not defined AEROGPU_WDKROOT (
 set "D3D10_11_WDK_MSBUILD_ARGS="
 if defined AEROGPU_WDKROOT (
   set "D3D10_11_WDK_MSBUILD_ARGS=/p:AeroGpuUseWdkHeaders=1 /p:AeroGpuWdkRoot=""%AEROGPU_WDKROOT%"""
+)
+set "D3D9_WDK_MSBUILD_ARGS="
+if defined AEROGPU_WDKROOT (
+  set "D3D9_WDK_MSBUILD_ARGS=/p:AeroGpuWdkRoot=""%AEROGPU_WDKROOT%"""
 )
 
 set "VARIANTS=fre chk"
@@ -203,10 +207,10 @@ set "D3D9_DLL="
 if /i "%ARCH%"=="x86" set "D3D9_DLL=aerogpu_d3d9.dll"
 if /i "%ARCH%"=="x64" set "D3D9_DLL=aerogpu_d3d9_x64.dll"
 
-call "%SCRIPT_DIR%\build_umd.cmd" "%VARIANT%" "%ARCH%" "%UMD_D3D9_PROJ%" "!UMD_OUT_DIR!" "!UMD_OUT_DIR!\obj\d3d9" "!D3D9_DLL!"
-if errorlevel 1 (
-  endlocal & exit /b 1
-)
+  call "%SCRIPT_DIR%\build_umd.cmd" "%VARIANT%" "%ARCH%" "%UMD_D3D9_PROJ%" "!UMD_OUT_DIR!" "!UMD_OUT_DIR!\obj\d3d9" "!D3D9_DLL!" !D3D9_WDK_MSBUILD_ARGS!
+  if errorlevel 1 (
+    endlocal & exit /b 1
+  )
 
   if "%HAVE_D3D10_11%"=="1" (
     set "D3D10_DLL="

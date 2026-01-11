@@ -23,6 +23,7 @@
     <ProjectGuid>{5F7C8B24-8F96-4C3C-9D5C-A6E3C5E2BBE4}</ProjectGuid>
     <Keyword>Win32Proj</Keyword>
     <RootNamespace>aerogpu_d3d9_umd</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
 
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
@@ -69,16 +70,41 @@
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
 
-  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup Label="UserMacros">
+    <!--
+      This UMD is meant to be consumed by the real Win7 D3D9 runtime.
+
+      The canonical build (including CI) uses a modern Windows Kits toolchain, which typically
+      provides the D3D9 UMD DDI headers (d3dumddi.h / d3d9umddi.h) via the default include paths.
+
+      For Win7-era WDK 7.1 (WinDDK) layouts, set /p:AeroGpuWdkRoot=... (or rely on WINDDK / WDK_ROOT / WDKROOT
+      env vars) so the build can locate headers under:
+        - $(AeroGpuWdkRoot)\inc\api
+        - $(AeroGpuWdkRoot)\inc\ddk
+    -->
+    <!-- Only treat these env vars as WinDDK-style roots when they contain the expected inc\{api,ddk} layout. -->
+    <AeroGpuWdkRoot Condition="'$(AeroGpuWdkRoot)'=='' and '$(WINDDK)'!='' and (Exists('$(WINDDK)\\inc\\api\\d3d9umddi.h') Or Exists('$(WINDDK)\\inc\\ddk\\d3d9umddi.h'))">$(WINDDK)</AeroGpuWdkRoot>
+    <AeroGpuWdkRoot Condition="'$(AeroGpuWdkRoot)'=='' and '$(WDK_ROOT)'!='' and (Exists('$(WDK_ROOT)\\inc\\api\\d3d9umddi.h') Or Exists('$(WDK_ROOT)\\inc\\ddk\\d3d9umddi.h'))">$(WDK_ROOT)</AeroGpuWdkRoot>
+    <AeroGpuWdkRoot Condition="'$(AeroGpuWdkRoot)'=='' and '$(WDKROOT)'!='' and (Exists('$(WDKROOT)\\inc\\api\\d3d9umddi.h') Or Exists('$(WDKROOT)\\inc\\ddk\\d3d9umddi.h'))">$(WDKROOT)</AeroGpuWdkRoot>
+    <AeroGpuWdkIncludeDirs Condition="'$(AeroGpuWdkRoot)'!=''">$(AeroGpuWdkRoot)\inc\api;$(AeroGpuWdkRoot)\inc\ddk</AeroGpuWdkIncludeDirs>
+  </PropertyGroup>
 
   <ItemDefinitionGroup>
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
       <LanguageStandard>stdcpp17</LanguageStandard>
       <PreprocessorDefinitions>_WINDLL;_USRDLL;_WIN32_WINNT=0x0601;AEROGPU_D3D9_USE_WDK_DDI;WIN32_LEAN_AND_MEAN;NOMINMAX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>include;..\..\protocol;$(WDKROOT)\inc\api;$(WDKROOT)\inc\ddk;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)include;$(ProjectDir)..\..\protocol;$(AeroGpuWdkIncludeDirs);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
   </ItemDefinitionGroup>
+
+  <Target Name="AeroGpuValidateWdkHeaders" BeforeTargets="ClCompile"
+          Condition="'$(AeroGpuWdkRoot)'!=''">
+    <Error Condition="!Exists('$(AeroGpuWdkRoot)\\inc\\api\\d3d9umddi.h') And !Exists('$(AeroGpuWdkRoot)\\inc\\ddk\\d3d9umddi.h')"
+           Text="WDK header not found: $(AeroGpuWdkRoot)\\inc\\api\\d3d9umddi.h (or inc\\ddk\\d3d9umddi.h)" />
+    <Error Condition="!Exists('$(AeroGpuWdkRoot)\\inc\\api\\d3dumddi.h') And !Exists('$(AeroGpuWdkRoot)\\inc\\ddk\\d3dumddi.h')"
+           Text="WDK header not found: $(AeroGpuWdkRoot)\\inc\\api\\d3dumddi.h (or inc\\ddk\\d3dumddi.h)" />
+  </Target>
 
   <ItemDefinitionGroup Condition="'$(Configuration)'=='Debug'">
     <ClCompile>
