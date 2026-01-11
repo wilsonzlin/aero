@@ -959,6 +959,7 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
   }
 
   dev->cmd.finalize();
+  const size_t submit_bytes = dev->cmd.size();
 
   uint64_t fence = 0;
   const HRESULT hr =
@@ -974,6 +975,11 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
   if (fence != 0) {
     atomic_max_u64(&dev->last_submitted_fence, fence);
   }
+  AEROGPU_D3D10_11_LOG("D3D10.1 submit_locked: present=%u bytes=%llu fence=%llu completed=%llu",
+                       want_present ? 1u : 0u,
+                       static_cast<unsigned long long>(submit_bytes),
+                       static_cast<unsigned long long>(fence),
+                       static_cast<unsigned long long>(AeroGpuQueryCompletedFence(dev)));
   return fence;
 }
 
