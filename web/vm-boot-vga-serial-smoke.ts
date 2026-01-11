@@ -1,6 +1,7 @@
 import { startFrameScheduler } from "./src/main/frameScheduler";
 import { FRAME_DIRTY, FRAME_STATUS_INDEX, GPU_PROTOCOL_NAME, GPU_PROTOCOL_VERSION, isGpuWorkerMessageBase } from "./src/ipc/gpu-protocol";
 import { SHARED_FRAMEBUFFER_HEADER_U32_LEN, SharedFramebufferHeaderIndex } from "./src/ipc/shared-layout";
+import { probeRemoteDisk } from "./src/platform/remote_disk";
 import { WorkerCoordinator } from "./src/runtime/coordinator";
 
 const GPU_MESSAGE_BASE = { protocol: GPU_PROTOCOL_NAME, protocolVersion: GPU_PROTOCOL_VERSION } as const;
@@ -35,41 +36,6 @@ function sleep(ms: number): Promise<void> {
 function samplePixel(rgba: Uint8Array, width: number, x: number, y: number): number[] {
   const i = (y * width + x) * 4;
   return [rgba[i + 0] ?? 0, rgba[i + 1] ?? 0, rgba[i + 2] ?? 0, rgba[i + 3] ?? 0];
-}
-
-async function openRemoteDisk(worker: Worker, url: string): Promise<number> {
-  const requestId = Math.floor(Math.random() * 0x7fff_ffff) >>> 0;
-  return await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      worker.removeEventListener("message", onMessage);
-      reject(new Error("openRemoteDisk timed out"));
-    }, 15_000);
-
-    const onMessage = (event: MessageEvent) => {
-      const msg = event.data as any;
-      if (!msg || typeof msg !== "object") return;
-      if (msg.type !== "openRemoteDiskResult" || msg.id !== requestId) return;
-      clearTimeout(timer);
-      worker.removeEventListener("message", onMessage);
-      if (msg.ok) {
-        resolve(Number(msg.size ?? 0));
-      } else {
-        reject(new Error(String(msg.error ?? "openRemoteDisk failed")));
-      }
-    };
-
-    worker.addEventListener("message", onMessage);
-    worker.postMessage({
-      id: requestId,
-      type: "openRemoteDisk",
-      url,
-      options: {
-        blockSize: 1024,
-        cacheLimitMiB: null,
-        prefetchSequentialBlocks: 0,
-      },
-    });
-  });
 }
 
 async function main() {
@@ -215,7 +181,39 @@ async function main() {
     if (!diskUrl) {
       throw new Error("Missing ?diskUrl=... (must point to a range-capable disk image server).");
     }
-    const diskSize = await openRemoteDisk(ioWorker, diskUrl);
+    const probe = await probeRemoteDisk(diskUrl);
+    const diskSize = probe.size;
+    const diskId = typeof crypto?.randomUUID === "function" ? crypto.randomUUID() : `boot_${Date.now()}`;
+
+    ioWorker.postMessage({
+      type: "setBootDisks",
+      mounts: { hddId: diskId },
+      hdd: {
+        source: "remote",
+        id: diskId,
+        name: "boot_vga_serial.img",
+        kind: "hdd",
+        format: "raw",
+        sizeBytes: diskSize,
+        createdAtMs: Date.now(),
+        remote: {
+          imageId: "boot_vga_serial",
+          version: "1",
+          delivery: "range",
+          urls: { url: diskUrl },
+          ...(probe.etag ? { validator: { etag: probe.etag } } : probe.lastModified ? { validator: { lastModified: probe.lastModified } } : {}),
+        },
+        cache: {
+          // Use IndexedDB-backed cache/overlay so the harness works even when OPFS is unavailable.
+          backend: "idb",
+          chunkSizeBytes: 1024 * 1024,
+          fileName: `${diskId}.cache`,
+          overlayFileName: `${diskId}.overlay`,
+          overlayBlockSizeBytes: 1024 * 1024,
+        },
+      },
+      cd: null,
+    });
     log(`disk: ${diskUrl} (${diskSize} bytes)`);
 
     // Wait for the CPU worker to boot the sector and emit the serial signature.
