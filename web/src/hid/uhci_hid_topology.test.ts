@@ -41,6 +41,11 @@ describe("hid/UhciHidTopologyManager", () => {
     expect(uhci.detach_at_path).toHaveBeenCalledTimes(1);
     expect(uhci.detach_at_path).toHaveBeenCalledWith([1]);
     expect(uhci.attach_webhid_device).toHaveBeenCalledWith([1], dev);
+
+    mgr.detachDevice(1);
+    // Detach should use the normalized path as well.
+    expect(uhci.detach_at_path).toHaveBeenCalledTimes(2);
+    expect(uhci.detach_at_path).toHaveBeenLastCalledWith([1]);
   });
 
   it("detaches the previous guest path when a deviceId is re-attached at a new path", () => {
