@@ -370,42 +370,6 @@ async fn run_session_inner(
                 close_shutting_down(&ws_out_tx).await;
                 break;
             }
-            _ = tokio::time::sleep_until(last_inbound_activity + idle_timeout_duration), if idle_timeout_enabled => {
-                state.metrics.idle_timeout_closed();
-                tracing::warn!(reason = "idle_timeout", "closing idle session");
-                close_policy_violation(&ws_out_tx, "idle timeout");
-                break;
-            }
-            _ = ping_interval.tick(), if ping_enabled => {
-                if let Some((_, sent_at)) = ping_outstanding {
-                    if sent_at.elapsed() > ping_resend_after {
-                        ping_outstanding = None;
-                    }
-                }
-
-                if ping_outstanding.is_none() {
-                    let ping_id = next_ping_id;
-                    next_ping_id = next_ping_id.wrapping_add(1);
-
-                    let payload = ping_id.to_be_bytes();
-                    if let Ok(wire) = aero_l2_protocol::encode_with_limits(
-                        aero_l2_protocol::L2_TUNNEL_TYPE_PING,
-                        0,
-                        &payload,
-                        &state.l2_limits,
-                    ) {
-                        if let Err(exceeded) =
-                            send_ws_message(&ws_out_tx, Message::Binary(wire), &mut quotas).await
-                        {
-                            close_handshake = true;
-                            close_with_error(&ws_out_tx, &state, exceeded.code(), exceeded.reason())
-                                .await;
-                            break;
-                        }
-                        ping_outstanding = Some((ping_id, tokio::time::Instant::now()));
-                    }
-                }
-            }
             msg = ws_receiver.next() => {
                 let Some(msg) = msg else {
                     break;
@@ -538,6 +502,42 @@ async fn run_session_inner(
                     }
                     Message::Close(_) => break,
                     _ => {}
+                }
+            }
+            _ = tokio::time::sleep_until(last_inbound_activity + idle_timeout_duration), if idle_timeout_enabled => {
+                state.metrics.idle_timeout_closed();
+                tracing::warn!(reason = "idle_timeout", "closing idle session");
+                close_policy_violation(&ws_out_tx, "idle timeout");
+                break;
+            }
+            _ = ping_interval.tick(), if ping_enabled => {
+                if let Some((_, sent_at)) = ping_outstanding {
+                    if sent_at.elapsed() > ping_resend_after {
+                        ping_outstanding = None;
+                    }
+                }
+
+                if ping_outstanding.is_none() {
+                    let ping_id = next_ping_id;
+                    next_ping_id = next_ping_id.wrapping_add(1);
+
+                    let payload = ping_id.to_be_bytes();
+                    if let Ok(wire) = aero_l2_protocol::encode_with_limits(
+                        aero_l2_protocol::L2_TUNNEL_TYPE_PING,
+                        0,
+                        &payload,
+                        &state.l2_limits,
+                    ) {
+                        if let Err(exceeded) =
+                            send_ws_message(&ws_out_tx, Message::Binary(wire), &mut quotas).await
+                        {
+                            close_handshake = true;
+                            close_with_error(&ws_out_tx, &state, exceeded.code(), exceeded.reason())
+                                .await;
+                            break;
+                        }
+                        ping_outstanding = Some((ping_id, tokio::time::Instant::now()));
+                    }
                 }
             }
             event = event_rx.recv() => {
