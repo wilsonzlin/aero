@@ -73,9 +73,9 @@ struct Resource {
   uint32_t locked_offset = 0;
   uint32_t locked_size = 0;
 
+  // WDDM allocation handle for this resource's backing store (per-process).
+  // The stable ID referenced in command buffers is `backing_alloc_id`.
   WddmAllocationHandle wddm_hAllocation = 0;
-  uint32_t wddm_alloc_id = 0;
-  uint32_t wddm_alloc_offset_bytes = 0;
 
   std::vector<uint8_t> storage;
 };

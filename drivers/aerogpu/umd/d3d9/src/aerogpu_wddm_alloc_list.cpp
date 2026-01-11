@@ -30,30 +30,33 @@ struct has_member_write_operation : std::false_type {};
 template <typename T>
 struct has_member_write_operation<T, std::void_t<decltype(std::declval<T&>().WriteOperation)>> : std::true_type {};
 
-void set_allocation_list_slot_id(D3DDDI_ALLOCATIONLIST& entry, UINT slot_id) {
-  if constexpr (has_member_allocation_list_slot_id<D3DDDI_ALLOCATIONLIST>::value) {
+template <typename AllocationListT>
+void set_allocation_list_slot_id(AllocationListT& entry, UINT slot_id) {
+  // NOTE: This is intentionally a function template so the non-selected branch
+  // of `if constexpr` can be ill-formed when compiling without WDK headers.
+  if constexpr (has_member_allocation_list_slot_id<AllocationListT>::value) {
     entry.AllocationListSlotId = slot_id;
-  } else if constexpr (has_member_slot_id<D3DDDI_ALLOCATIONLIST>::value) {
+  } else if constexpr (has_member_slot_id<AllocationListT>::value) {
     entry.SlotId = slot_id;
   } else {
-    static_assert(has_member_allocation_list_slot_id<D3DDDI_ALLOCATIONLIST>::value ||
-                      has_member_slot_id<D3DDDI_ALLOCATIONLIST>::value,
+    static_assert(has_member_allocation_list_slot_id<AllocationListT>::value || has_member_slot_id<AllocationListT>::value,
                   "D3DDDI_ALLOCATIONLIST is missing a slot-id field (WDDM 1.1 required)");
   }
 }
 
-void set_write_operation(D3DDDI_ALLOCATIONLIST& entry, bool write) {
-  if constexpr (has_member_value<D3DDDI_ALLOCATIONLIST>::value) {
+template <typename AllocationListT>
+void set_write_operation(AllocationListT& entry, bool write) {
+  if constexpr (has_member_value<AllocationListT>::value) {
     if (write) {
       entry.Value |= 0x1u;
     } else {
       entry.Value &= ~0x1u;
     }
-  } else if constexpr (has_member_write_operation<D3DDDI_ALLOCATIONLIST>::value) {
+  } else if constexpr (has_member_write_operation<AllocationListT>::value) {
     entry.WriteOperation = write ? 1u : 0u;
   } else {
-    static_assert(has_member_value<D3DDDI_ALLOCATIONLIST>::value || has_member_write_operation<D3DDDI_ALLOCATIONLIST>::value,
-                  "D3DDDI_ALLOCATIONLIST is missing a write-operation flag field");
+    static_assert(has_member_value<AllocationListT>::value || has_member_write_operation<AllocationListT>::value,
+                  "D3DDDI_ALLOCATIONLIST is missing a write-operation flag field (WDDM 1.1 required)");
   }
 }
 
