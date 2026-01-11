@@ -144,14 +144,15 @@ default to same host:port only).
 against a local UDP echo server.
 
 ```bash
-# From this directory:
-cd proxy/webrtc-udp-relay/e2e
+# Install deps once from the repo root (npm workspaces; shared lockfile):
 npm ci
-npm test
 
-# Or from the repo root (npm workspaces):
-npm ci
+# Run from the repo root:
 npm -w proxy/webrtc-udp-relay/e2e test
+
+# Or run from this directory (after the root install above):
+cd proxy/webrtc-udp-relay/e2e
+npm test
 ```
 
 For local convenience, `npm test` runs `playwright install chromium` automatically (via `pretest`) to ensure the browser binary is available.
