@@ -5916,17 +5916,30 @@ void unmap_resource_locked(AeroGpuDevice* dev, AeroGpuResource* res, uint32_t su
 #endif
 
   if (res->mapped_write && res->handle != kInvalidHandle) {
-    // For bring-up, inline the updated bytes into the command stream so the host
-    // does not need to dereference guest allocations.
-    if (res->mapped_offset_bytes + res->mapped_size_bytes <= static_cast<uint64_t>(res->storage.size())) {
-      const auto offset = static_cast<size_t>(res->mapped_offset_bytes);
-      const auto size = static_cast<size_t>(res->mapped_size_bytes);
-      auto* upload = dev->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
-          AEROGPU_CMD_UPLOAD_RESOURCE, res->storage.data() + offset, size);
-      upload->resource_handle = res->handle;
-      upload->reserved0 = 0;
-      upload->offset_bytes = res->mapped_offset_bytes;
-      upload->size_bytes = res->mapped_size_bytes;
+    const bool is_guest_backed = res->backing_alloc_id != 0;
+
+    if (is_guest_backed) {
+      // Guest-backed resources are updated by writing into their backing memory
+      // (WDDM allocation / alloc table entry) and then marking the modified
+      // range dirty so the host re-uploads it before GPU use.
+      auto* dirty = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+      dirty->resource_handle = res->handle;
+      dirty->reserved0 = 0;
+      dirty->offset_bytes = res->mapped_offset_bytes;
+      dirty->size_bytes = res->mapped_size_bytes;
+    } else {
+      // Host-owned resources are updated by inlining the modified bytes so the
+      // host does not need to dereference guest allocations.
+      if (res->mapped_offset_bytes + res->mapped_size_bytes <= static_cast<uint64_t>(res->storage.size())) {
+        const auto offset = static_cast<size_t>(res->mapped_offset_bytes);
+        const auto size = static_cast<size_t>(res->mapped_size_bytes);
+        auto* upload = dev->cmd.append_with_payload<aerogpu_cmd_upload_resource>(
+            AEROGPU_CMD_UPLOAD_RESOURCE, res->storage.data() + offset, size);
+        upload->resource_handle = res->handle;
+        upload->reserved0 = 0;
+        upload->offset_bytes = res->mapped_offset_bytes;
+        upload->size_bytes = res->mapped_size_bytes;
+      }
     }
   }
 
@@ -7219,25 +7232,7 @@ void AEROGPU_APIENTRY Unmap(D3D10DDI_HDEVICE hDevice, const AEROGPU_D3D11DDIARG_
     return;
   }
 
-  const bool was_write = res->mapped_map_type == AEROGPU_D3D11_MAP_WRITE ||
-                         res->mapped_map_type == AEROGPU_D3D11_MAP_READ_WRITE ||
-                         res->mapped_map_type == AEROGPU_D3D11_MAP_WRITE_DISCARD ||
-                         res->mapped_map_type == AEROGPU_D3D11_MAP_WRITE_NO_OVERWRITE;
-
   unmap_resource_locked(dev, res, static_cast<uint32_t>(pUnmap->Subresource));
-
-  if (!was_write || res->storage.empty()) {
-    return;
-  }
-
-  // Make CPU writes visible to subsequent GPU reads by marking the resource dirty
-  // for the host-side uploader.
-  const uint64_t size_bytes = (res->kind == ResourceKind::Buffer) ? res->size_bytes : res->storage.size();
-  auto* dirty = dev->cmd.append_fixed<aerogpu_cmd_resource_dirty_range>(AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
-  dirty->resource_handle = res->handle;
-  dirty->reserved0 = 0;
-  dirty->offset_bytes = 0;
-  dirty->size_bytes = size_bytes;
 }
 
 HRESULT AEROGPU_APIENTRY Present(D3D10DDI_HDEVICE hDevice, const AEROGPU_DDIARG_PRESENT* pPresent) {
