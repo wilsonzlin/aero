@@ -2846,10 +2846,21 @@ impl AeroGpuSoftwareExecutor {
                     };
                 let handle = u32::from_le(packet_cmd.resource_handle);
                 let token = u64::from_le(packet_cmd.share_token);
-                if handle != 0 && token != 0 {
-                    self.shared_surfaces
-                        .insert(token, self.resolve_handle(handle));
+                if handle == 0 || token == 0 {
+                    return true;
                 }
+                let underlying = self.resolve_handle(handle);
+                if !self.texture_refcounts.contains_key(&underlying) {
+                    Self::record_error(regs);
+                    return true;
+                }
+                if let Some(&existing) = self.shared_surfaces.get(&token) {
+                    if existing != underlying {
+                        Self::record_error(regs);
+                    }
+                    return true;
+                }
+                self.shared_surfaces.insert(token, underlying);
             }
             cmd::AerogpuCmdOpcode::ImportSharedSurface => {
                 let packet_cmd =
@@ -2869,7 +2880,25 @@ impl AeroGpuSoftwareExecutor {
                     Self::record_error(regs);
                     return true;
                 };
-                if self.resource_aliases.contains_key(&out_handle) {
+                if let Some(&existing) = self.resource_aliases.get(&out_handle) {
+                    if existing != src_handle {
+                        Self::record_error(regs);
+                    }
+                    return true;
+                }
+                if out_handle == src_handle {
+                    // Import is idempotent if the output handle is already bound to the underlying
+                    // resource (the host tracks a per-handle refcount).
+                    if !self.texture_refcounts.contains_key(&src_handle) {
+                        Self::record_error(regs);
+                    }
+                    return true;
+                }
+                if self.textures.contains_key(&out_handle)
+                    || self.buffers.contains_key(&out_handle)
+                    || self.shaders.contains_key(&out_handle)
+                    || self.input_layouts.contains_key(&out_handle)
+                {
                     Self::record_error(regs);
                     return true;
                 }

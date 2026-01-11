@@ -233,3 +233,89 @@ fn shared_surface_alias_survives_destroy_of_original_handle() {
         assert_eq!(px, [0, 255, 0, 255]);
     }
 }
+
+#[test]
+fn shared_surface_import_is_idempotent_for_existing_alias_handle() {
+    let mut mem = VecMemory::new(0x20_000);
+    let mut regs = AeroGpuRegs::default();
+    let mut exec = AeroGpuSoftwareExecutor::new();
+
+    let cmd_gpa = 0x2000u64;
+    let share_token = 0x2222_3333u64;
+
+    let stream = build_stream(
+        |out| {
+            emit_packet(out, AerogpuCmdOpcode::CreateTexture2d as u32, |out| {
+                push_u32(out, 1); // texture_handle
+                push_u32(out, 0); // usage_flags
+                push_u32(out, AerogpuFormat::R8G8B8A8Unorm as u32); // format
+                push_u32(out, 2); // width
+                push_u32(out, 2); // height
+                push_u32(out, 1); // mip_levels
+                push_u32(out, 1); // array_layers
+                push_u32(out, 0); // row_pitch_bytes (auto)
+                push_u32(out, 0); // backing_alloc_id
+                push_u32(out, 0); // backing_offset_bytes
+                push_u64(out, 0); // reserved0
+            });
+
+            emit_packet(out, AerogpuCmdOpcode::ExportSharedSurface as u32, |out| {
+                push_u32(out, 1); // resource_handle
+                push_u32(out, 0); // reserved0
+                push_u64(out, share_token);
+            });
+
+            // Import once...
+            emit_packet(out, AerogpuCmdOpcode::ImportSharedSurface as u32, |out| {
+                push_u32(out, 2); // out_resource_handle
+                push_u32(out, 0); // reserved0
+                push_u64(out, share_token);
+            });
+            // ...and again with the same output handle (should be a no-op, not a refcount bump).
+            emit_packet(out, AerogpuCmdOpcode::ImportSharedSurface as u32, |out| {
+                push_u32(out, 2); // out_resource_handle
+                push_u32(out, 0); // reserved0
+                push_u64(out, share_token);
+            });
+
+            emit_packet(out, AerogpuCmdOpcode::DestroyResource as u32, |out| {
+                push_u32(out, 1); // resource_handle
+                push_u32(out, 0); // reserved0
+            });
+            emit_packet(out, AerogpuCmdOpcode::DestroyResource as u32, |out| {
+                push_u32(out, 2); // resource_handle
+                push_u32(out, 0); // reserved0
+            });
+
+            // If the import above incorrectly incremented the refcount twice, the underlying
+            // texture would still be alive (and mapped) here. Correct behavior is that the
+            // final import fails because the token mapping is dropped when the last handle is
+            // destroyed.
+            emit_packet(out, AerogpuCmdOpcode::ImportSharedSurface as u32, |out| {
+                push_u32(out, 3); // out_resource_handle
+                push_u32(out, 0); // reserved0
+                push_u64(out, share_token);
+            });
+        },
+        regs.abi_version,
+    );
+
+    mem.write_physical(cmd_gpa, &stream);
+
+    let desc = AeroGpuSubmitDesc {
+        desc_size_bytes: AeroGpuSubmitDesc::SIZE_BYTES,
+        flags: 0,
+        context_id: 0,
+        engine_id: 0,
+        cmd_gpa,
+        cmd_size_bytes: stream.len() as u32,
+        alloc_table_gpa: 0,
+        alloc_table_size_bytes: 0,
+        signal_fence: 0,
+    };
+
+    exec.execute_submission(&mut regs, &mut mem, &desc);
+
+    assert_eq!(regs.stats.malformed_submissions, 1);
+    assert_ne!(regs.irq_status & irq_bits::ERROR, 0);
+}
