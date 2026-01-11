@@ -2,11 +2,28 @@ const READ_FRAME_INDEX = 0;
 const WRITE_FRAME_INDEX = 1;
 const UNDERRUN_COUNT = 2;
 
+// Atomically add missing frames to the underrun counter. The counter is a u32
+// that wraps naturally at 2^32.
+export function addUnderrunFrames(header, missingFrames) {
+  const missing = missingFrames >>> 0;
+  // Atomics.add returns the previous value.
+  return (Atomics.add(header, UNDERRUN_COUNT, missing) + missing) >>> 0;
+}
+
 function framesAvailable(readFrameIndex, writeFrameIndex) {
   return (writeFrameIndex - readFrameIndex) >>> 0;
 }
 
-class AeroAudioProcessor extends AudioWorkletProcessor {
+const WorkletProcessorBase =
+  typeof AudioWorkletProcessor === 'undefined'
+    ? class {
+        constructor() {
+          this.port = { postMessage() {} };
+        }
+      }
+    : AudioWorkletProcessor;
+
+export class AeroAudioProcessor extends WorkletProcessorBase {
   constructor(options) {
     super();
 
@@ -71,11 +88,18 @@ class AeroAudioProcessor extends AudioWorkletProcessor {
 
     // Zero-fill any missing frames (underrun).
     if (framesToRead < framesNeeded) {
+      const missing = framesNeeded - framesToRead;
       for (let c = 0; c < output.length; c++) {
         output[c].fill(0, framesToRead);
       }
-      const newCount = Atomics.add(this._header, UNDERRUN_COUNT, 1) + 1;
-      this.port.postMessage({ type: 'underrun', underrunCount: newCount });
+      const newTotal = addUnderrunFrames(this._header, missing);
+      this.port.postMessage({
+        type: 'underrun',
+        underrunFramesAdded: missing,
+        underrunFramesTotal: newTotal,
+        // Backwards-compatible field name; this is a frame counter (not events).
+        underrunCount: newTotal,
+      });
     }
 
     if (framesToRead > 0) {
@@ -86,4 +110,6 @@ class AeroAudioProcessor extends AudioWorkletProcessor {
   }
 }
 
-registerProcessor('aero-audio-processor', AeroAudioProcessor);
+if (typeof registerProcessor === 'function') {
+  registerProcessor('aero-audio-processor', AeroAudioProcessor);
+}

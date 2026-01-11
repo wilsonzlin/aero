@@ -10,6 +10,9 @@ pub const HEADER_U32_LEN: usize = 4;
 
 pub const READ_FRAME_INDEX: usize = 0;
 pub const WRITE_FRAME_INDEX: usize = 1;
+/// Total missing output frames rendered as silence due to underruns.
+///
+/// This is stored as a wrapping `u32` counter (wraps naturally at `2^32`).
 pub const UNDERRUN_COUNT_INDEX: usize = 2;
 pub const OVERRUN_COUNT_INDEX: usize = 3;
 
@@ -360,6 +363,9 @@ mod wasm {
             frames_available_clamped(read_idx, write_idx, self.capacity_frames)
         }
 
+        /// Total missing output frames rendered as silence due to underruns.
+        ///
+        /// This is a wrapping `u32` counter (wraps naturally at `2^32`).
         pub fn underrun_count(&self) -> u32 {
             atomic_load_u32(&self.header, UNDERRUN_COUNT_INDEX)
         }

@@ -6,8 +6,8 @@
 // Ring buffer layout is described in `web/src/platform/audio.ts`:
 // - u32 readFrameIndex (bytes 0..4)
 // - u32 writeFrameIndex (bytes 4..8)
-// - u32 underrunCount (bytes 8..12)
-// - u32 overrunCount (dropped frames, bytes 12..16)
+// - u32 underrunCount (bytes 8..12): total missing output frames rendered as silence due to underruns (wraps at 2^32)
+// - u32 overrunCount (bytes 12..16): frames dropped by the producer due to buffer full (wraps at 2^32)
 // - f32 samples[] (bytes 16..), interleaved by channel: L0, R0, L1, R1, ...
 
 const READ_FRAME_INDEX = 0;
@@ -82,11 +82,18 @@ class AeroAudioProcessor extends AudioWorkletProcessor {
 
     // Zero-fill any missing frames (underrun).
     if (framesToRead < framesNeeded) {
+      const missing = framesNeeded - framesToRead;
       for (let c = 0; c < output.length; c++) {
         output[c].fill(0, framesToRead);
       }
-      const newCount = Atomics.add(this._header, UNDERRUN_COUNT, 1) + 1;
-      this.port.postMessage({ type: "underrun", underrunCount: newCount });
+      const newTotal = (Atomics.add(this._header, UNDERRUN_COUNT, missing) + missing) >>> 0;
+      this.port.postMessage({
+        type: "underrun",
+        underrunFramesAdded: missing,
+        underrunFramesTotal: newTotal,
+        // Backwards-compatible field name; this is a frame counter (not events).
+        underrunCount: newTotal,
+      });
     }
 
     if (framesToRead > 0) {

@@ -24,8 +24,8 @@ export type AudioRingBufferLayout = {
    * Layout (little-endian):
    * - u32 readFrameIndex (bytes 0..4)
    * - u32 writeFrameIndex (bytes 4..8)
-   * - u32 underrunCount (bytes 8..12)
-   * - u32 overrunCount (bytes 12..16) - frames dropped by the producer due to buffer full
+   * - u32 underrunCount (bytes 8..12): total missing output frames rendered as silence due to underruns (wraps at 2^32)
+   * - u32 overrunCount (bytes 12..16): frames dropped by the producer due to buffer full (wraps at 2^32)
    * - f32 samples[] (bytes 16..)
    *
    * Indices are monotonically-increasing frame counters (wrapping naturally at
@@ -60,6 +60,9 @@ export type EnabledAudioOutput = {
    */
   writeInterleaved(samples: Float32Array, srcSampleRate: number): number;
   getBufferLevelFrames(): number;
+  /**
+   * Total missing output frames rendered as silence due to underruns (wraps at 2^32).
+   */
   getUnderrunCount(): number;
   getOverrunCount(): number;
 };
@@ -72,6 +75,11 @@ export type DisabledAudioOutput = {
   close(): Promise<void>;
   writeInterleaved(_samples: Float32Array, _srcSampleRate: number): number;
   getBufferLevelFrames(): number;
+  /**
+   * Total missing output frames rendered as silence due to underruns (wraps at 2^32).
+   *
+   * (Always 0 when audio is disabled.)
+   */
   getUnderrunCount(): number;
   getOverrunCount(): number;
 };
