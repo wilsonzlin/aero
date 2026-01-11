@@ -23,9 +23,12 @@ Vector sections:
   - Signature: HMAC-SHA256 over the **payload base64url string** (not the decoded bytes).
   - Includes fixed `secret`, `nowMs`, and sample tokens (`valid`, `expired`, `badSignature`) along
     with expected claims.
+  - More exhaustive negative-case coverage (malformed base64url, missing fields, type mismatches)
+    lives in `protocol-vectors/auth-tokens.json` (schema `1`).
 - `aero-udp-relay-jwt-hs256`: HS256 JWT tokens used by the WebRTC UDP relay auth mode.
   - Includes fixed `secret`, `nowUnix`, and sample tokens (`valid`, `expired`, `badSignature`) along
     with expected claims.
+  - More exhaustive negative-case coverage lives in `protocol-vectors/auth-tokens.json` (schema `1`).
 
 ## Consumers
 
@@ -36,4 +39,3 @@ These vectors are referenced by tests in:
 - TypeScript (web): `web/src/shared/l2TunnelProtocol.test.ts`
 - Node (gateway): `backend/aero-gateway/src/session.vectors.test.ts` and `backend/aero-gateway/src/udpRelay.vectors.test.ts`
 - Go (relay): `proxy/webrtc-udp-relay/internal/auth/jwt_vectors_test.go`
-

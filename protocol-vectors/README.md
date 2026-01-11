@@ -6,8 +6,9 @@ protocols.
 These JSON files are used by conformance tests across independent implementations
 (Go, TypeScript, JavaScript) for a subset of protocols.
 
-Newer unified, versioned vectors (including auth tokens) live in
-`crates/conformance/test-vectors/`.
+Newer unified, versioned vectors live in `crates/conformance/test-vectors/`.
+Some protocols also have additional, more exhaustive vectors here for legacy
+consumers and extra negative-case coverage.
 
 ## Conventions
 
