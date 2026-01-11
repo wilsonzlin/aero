@@ -37,9 +37,9 @@ Build outputs are staged under:
 
 `out/drivers/windows/virtio-input/<arch>/`
 
-### Legacy WDK 7.1 build.exe (optional)
+### Legacy WinDDK 7600 build.exe (optional)
 
-If you still have WDK 7.1 installed, the classic `build.exe` flow is preserved via `sources`/`makefile`:
+If you still have WinDDK 7600 installed, the classic `build.exe` flow is preserved via `sources`/`makefile`:
 
 ```bat
 cd \path\to\repo\drivers\windows\virtio-input

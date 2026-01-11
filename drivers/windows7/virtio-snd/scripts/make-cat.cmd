@@ -97,7 +97,7 @@ if /I "%VARIANT%"=="contract" (
 where Inf2Cat.exe >nul 2>nul
 if errorlevel 1 (
   echo ERROR: Inf2Cat.exe not found in PATH.
-  echo        Install WDK 7.1 or WDK 10 and run this from a WDK Developer Command Prompt.
+  echo        Install WinDDK 7600 or WDK 10 and run this from a WDK Developer Command Prompt.
   exit /b 1
 )
 

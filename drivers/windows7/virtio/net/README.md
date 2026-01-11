@@ -41,7 +41,7 @@ CI builds this driver with a modern WDK (currently pinned to 10.0.22621.0) via t
 For local development you can use either:
 
 - `aerovnet.vcxproj` (Visual Studio / MSBuild + WDK 10), or
-- the legacy WDK 7.1 `build` utility (`sources`/`makefile` are kept for that workflow).
+- the legacy WinDDK 7600 `build` utility (`sources`/`makefile` are kept for that workflow).
 
 ## Installing on Windows 7
 

@@ -4,7 +4,7 @@
 
 /*
  * Avoid relying on UINT64_MAX/UINT32_MAX from <stdint.h> for maximum toolchain
- * compatibility (WDK 7.1 + older MSVC). Use explicit constants instead.
+ * compatibility (WinDDK 7600 + older MSVC). Use explicit constants instead.
  */
 #define VIRTIOSND_U64_MAX ((uint64_t)~(uint64_t)0)
 #define VIRTIOSND_U32_MAX ((uint32_t)0xffffffffu)

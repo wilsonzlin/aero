@@ -421,7 +421,7 @@ Configuration notes:
 
 - The MSBuild project ships only `Release` and `Legacy` configurations, and both define `DBG=0`
   (free build; debug logging compiled out).
-- To enable `VIRTIOSND_TRACE*` `DbgPrintEx` logging, use a WDK 7.1 checked build or create a local
+- To enable `VIRTIOSND_TRACE*` `DbgPrintEx` logging, use a WinDDK 7600 checked build or create a local
   MSBuild configuration that sets `DBG=1`.
 
 Build outputs are staged under:
@@ -433,11 +433,11 @@ Build outputs are staged under:
   - `out/drivers/windows7/virtio-snd/x86/virtiosnd_legacy.sys`
   - `out/drivers/windows7/virtio-snd/x64/virtiosnd_legacy.sys`
 
-### Legacy: WDK 7600 / WDK 7.1 `build.exe` (deprecated)
+### Legacy: WinDDK 7600 `build.exe` (deprecated)
 
 The original `makefile`/`sources` files are kept for reference, but the supported build path is now MSBuild (WDK10).
 
-If you still need to build with WDK 7.1:
+If you still need to build with WinDDK 7600:
 
 1. Open a WDK build environment:
    - **Windows 7 x86 Free Build Environment** (x86)

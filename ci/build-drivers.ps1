@@ -17,7 +17,7 @@ Discovery conventions (encoded here for CI determinism):
       - Require `ci-package.json` at the driver root (explicit opt-in to CI packaging).
       - Require at least one `.inf` somewhere under the driver directory tree (excluding
         common build-output directories: `obj/`, `out/`, `build/`, `target/`).
-      - Skip WDK 7.1 "NMake wrapper" projects (Keyword=MakeFileProj / ConfigurationType=Makefile)
+      - Skip legacy "NMake wrapper" projects (Keyword=MakeFileProj / ConfigurationType=Makefile)
         by default (pass `-IncludeMakefileProjects` to opt in).
         - For mixed solutions (MSBuild projects + wrapper projects), the script builds only the
           non-wrapper `*.vcxproj` projects to avoid invoking legacy `build.exe`.
@@ -724,7 +724,7 @@ function Get-MakefileSkipInfoForDriverTarget {
     }
 
     # A solution is considered CI-buildable if it references at least one *non-makefile*
-    # vcxproj. If every referenced vcxproj is a WDK 7.1 NMake wrapper (Keyword=MakeFileProj /
+    # vcxproj. If every referenced vcxproj is a legacy NMake wrapper (Keyword=MakeFileProj /
     # ConfigurationType=Makefile), skip the entire solution to avoid invoking legacy build.exe.
     if ($makefileProjects.Count -eq 0) { return $null } # no makefile wrapper projects
     if ($makefileProjects.Count -lt $vcxprojs.Count) { return $null } # at least one non-makefile project exists
@@ -875,7 +875,7 @@ foreach ($target in $targets) {
 
   # If the target is a solution and it contains MakeFileProj/Makefile wrapper projects,
   # build only the non-wrapper vcxproj projects. This avoids msbuild attempting to invoke
-  # legacy WDK 7.1 build.exe wrappers in CI while still allowing real MSBuild projects
+  # legacy build.exe wrappers in CI while still allowing real MSBuild projects
   # in the same solution to build.
   $solutionBuildProjects = $null
   $solutionSkippedMakefileProjects = $null

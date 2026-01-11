@@ -39,7 +39,7 @@ typedef struct _VIRTQ_AVAIL {
 	/*
 	 * Variable-length array (qsz entries).
 	 *
-	 * Note: WDK 7.1 toolchains do not support C99 flexible array members, so
+	 * Note: WinDDK 7600 toolchains do not support C99 flexible array members, so
 	 * this is declared as a single element and accessed via helper functions.
 	 */
 	UINT16 ring[1];

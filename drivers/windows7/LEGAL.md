@@ -72,7 +72,7 @@ copies or substantial portions of the Software.
 **Typical upstream locations**
 
 - Windows 7-era WDK installs: `...\src\audio\sysvad\...`
-  - Example (WDK 7.1 default-ish layout): `C:\WinDDK\7600.16385.1\src\audio\sysvad\...`
+  - Example (WinDDK 7600 default-ish layout): `C:\WinDDK\7600.16385.1\src\audio\sysvad\...`
 - Open-source Microsoft samples repo: `audio/sysvad/`
 
 **License header text you’ll commonly see**
@@ -98,7 +98,7 @@ copies or substantial portions of the Software.
 **Typical upstream locations**
 
 - Windows 7-era WDK installs: `...\src\hid\vhidmini\...`
-  - Example (WDK 7.1 default-ish layout): `C:\WinDDK\7600.16385.1\src\hid\vhidmini\...`
+  - Example (WinDDK 7600 default-ish layout): `C:\WinDDK\7600.16385.1\src\hid\vhidmini\...`
 - Open-source Microsoft samples repo: `hid/vhidmini/`
 
 **License header text you’ll commonly see**
@@ -124,7 +124,7 @@ copies or substantial portions of the Software.
 **Typical upstream locations**
 
 - Windows 7-era WDK installs: `...\src\storage\...` (often under `miniports`, `storport`, or similar subtrees depending on kit)
-  - Example (WDK 7.1 default-ish layout): `C:\WinDDK\7600.16385.1\src\storage\...`
+  - Example (WinDDK 7600 default-ish layout): `C:\WinDDK\7600.16385.1\src\storage\...`
 - Open-source Microsoft samples repo: typically under `storage/` (exact path varies by sample)
 
 **License header text you’ll commonly see**
@@ -150,7 +150,7 @@ copies or substantial portions of the Software.
 **Typical upstream locations**
 
 - Windows 7-era WDK installs: `...\src\network\ndis\...`
-  - Example (WDK 7.1 default-ish layout): `C:\WinDDK\7600.16385.1\src\network\ndis\...`
+  - Example (WinDDK 7600 default-ish layout): `C:\WinDDK\7600.16385.1\src\network\ndis\...`
 - Open-source Microsoft samples repo: typically under `network/ndis/`
 
 **License header text you’ll commonly see**

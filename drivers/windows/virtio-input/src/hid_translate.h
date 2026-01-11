@@ -24,7 +24,7 @@
 #include <stddef.h>
 
 /*
- * WDK 7.1 / older MSVC toolchains don't provide C99 <stdbool.h> (or even
+ * WinDDK 7600 / older MSVC toolchains don't provide C99 <stdbool.h> (or even
  * <stdint.h> in some configurations). Keep this header buildable in both the
  * Windows kernel driver and host-side unit tests.
  */

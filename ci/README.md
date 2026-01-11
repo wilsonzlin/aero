@@ -50,7 +50,7 @@ See:
 ### Legacy WDK BUILD / NMake wrapper projects
 
 Some legacy driver projects are Visual Studio "Makefile" projects (`<Keyword>MakeFileProj</Keyword>` /
-`<ConfigurationType>Makefile</ConfigurationType>`) that invoke classic WDK 7.1 `build.exe`.
+`<ConfigurationType>Makefile</ConfigurationType>`) that invoke classic WinDDK 7600 `build.exe`.
 The modern toolchain installed by `ci/install-wdk.ps1` does not provide `build.exe`, so CI **skips**
 these projects by default.
 

@@ -18,7 +18,7 @@ The intended developer workflow is:
 | `SOURCES.md` | Clean-room/source tracking record (see `drivers/windows7/LEGAL.md` §2.6). |
 | `src/`, `include/` | Driver sources (shared by both build systems). |
 | `virtio-snd.vcxproj` | **CI-supported** MSBuild project (WDK10; builds `virtiosnd.sys`). |
-| `makefile`, `src/sources` | Legacy WDK 7.1 `build.exe` files (deprecated). |
+| `makefile`, `src/sources` | Legacy WinDDK 7600 `build.exe` files (deprecated). |
 | `inf/` | Driver package staging directory (INF/CAT/SYS live together for “Have Disk…” installs). |
 | `scripts/` | Utilities for generating a test cert, generating the catalog, signing, and optional release packaging. |
 | `cert/` | **Local-only** output directory for `.cer/.pfx` (ignored by git). |
@@ -73,9 +73,9 @@ For the optional QEMU/transitional package, stage the legacy binary instead:
 drivers/windows7/virtio-snd/inf/virtiosnd_legacy.sys
 ```
 
-### Legacy/deprecated: WDK 7.1 `build.exe`
+### Legacy/deprecated: WinDDK 7600 `build.exe`
 
-The original WDK 7.1 `build.exe` files are kept for reference. See `docs/README.md` for legacy build environment notes.
+The original WinDDK 7600 `build.exe` files are kept for reference. See `docs/README.md` for legacy build environment notes.
 
 The build must produce:
 

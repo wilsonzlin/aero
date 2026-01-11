@@ -19,7 +19,7 @@ Highlights:
 ## Files
 
 - `virtio_ring.h` – spec-accurate vring structs/constants for split rings.
-  - Uses `ring[1]` + helpers (instead of C99 flexible arrays) for WDK 7.1 compatibility.
+  - Uses `ring[1]` + helpers (instead of C99 flexible arrays) for WinDDK 7600 compatibility.
 - `virtio_osdep.h` – minimal portability layer:
   - barriers (`VIRTIO_MB/RMB/WMB`)
   - volatile read/write helpers (`VirtioReadU16`, …)
