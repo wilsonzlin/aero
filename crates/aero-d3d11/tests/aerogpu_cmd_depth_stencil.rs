@@ -1,3 +1,5 @@
+mod common;
+
 use aero_d3d11::input_layout::fnv1a_32;
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
 use aero_gpu::VecGuestMemory;
@@ -80,7 +82,7 @@ fn aerogpu_cmd_depth_test_blocks_far_fragments() {
         let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
             Ok(exec) => exec,
             Err(e) => {
-                eprintln!("wgpu unavailable ({e:#}); skipping depth test");
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
                 return;
             }
         };
@@ -330,7 +332,7 @@ fn aerogpu_cmd_rasterizer_state_enables_scissor() {
         let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
             Ok(exec) => exec,
             Err(e) => {
-                eprintln!("wgpu unavailable ({e:#}); skipping rasterizer test");
+                common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
                 return;
             }
         };
