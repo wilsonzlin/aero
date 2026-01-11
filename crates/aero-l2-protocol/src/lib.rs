@@ -8,6 +8,11 @@
 pub const L2_TUNNEL_MAGIC: u8 = 0xA2;
 pub const L2_TUNNEL_VERSION: u8 = 0x03;
 
+// Keep in sync with:
+// - docs/l2-tunnel-protocol.md
+// - web/src/shared/l2TunnelProtocol.ts
+pub const L2_TUNNEL_SUBPROTOCOL: &str = "aero-l2-tunnel-v1";
+
 pub const L2_TUNNEL_HEADER_LEN: usize = 4;
 
 pub const L2_TUNNEL_TYPE_FRAME: u8 = 0x00;
