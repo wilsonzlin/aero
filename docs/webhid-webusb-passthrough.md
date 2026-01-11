@@ -41,9 +41,12 @@ larger passthrough bridge:
 
 Implementation status note:
 
-- The repo already contains early scaffolding for WebUSB passthrough (Rust-side
-  `UsbPassthroughDevice` + host-side WebUSB broker/client RPC + descriptor fixups),
-  but it is not yet treated as the MVP path compared to WebHID.
+- The repo already contains early scaffolding for WebUSB passthrough:
+  - Rust-side `UsbPassthroughDevice` (`crates/aero-usb/src/passthrough.rs`), exported to JS as
+    `UsbPassthroughBridge` (`crates/aero-wasm/src/lib.rs`)
+  - host-side WebUSB broker/executor + RPC (`web/src/usb/*`)
+  - descriptor fixups (where possible)
+  - …but it is not yet treated as the MVP path compared to WebHID.
 
 The intended end-state is to use the same “main-thread owns the handle, worker
 models the USB device” architecture described below, but with a richer transfer
@@ -85,6 +88,40 @@ I/O worker (USB controller + device model)
   ↕ (UHCI ports, USB transfers)
 Guest Windows USB/HID stack
 ```
+
+## Current status
+
+The repo has the core building blocks for passthrough, but the “main thread owns
+`HIDDevice`, I/O worker owns the USB device model” split is **not yet wired
+end-to-end** in the web runtime.
+
+Already implemented:
+
+- **Rust device models (`aero-usb`)**
+  - `UsbHidPassthrough` (generic USB HID device with bounded input/output report queues)
+  - WebHID metadata → HID report descriptor synthesis (`aero_usb::hid::webhid`)
+- **WASM exports (`aero-wasm`)**
+  - `WebHidPassthroughBridge` (wraps `UsbHidPassthrough` for JS/WASM interop)
+  - `UsbPassthroughBridge` (wraps `UsbPassthroughDevice` for WebUSB host action/completion RPC)
+- **Main-thread WebHID UX / bookkeeping (TypeScript)**
+  - `WebHidPassthroughManager` + the debug panel UI
+
+Dev-only scaffolding (useful for tests / manual bring-up, but **not** the target architecture):
+
+- `WebHidPassthroughRuntime` currently runs on the **main thread** and directly
+  wires `HIDDevice` events into a WASM `WebHidPassthroughBridge` instance (no
+  I/O worker boundary yet).
+
+Still missing / in progress (production wiring):
+
+- Main↔worker report forwarding (input reports to worker, output/feature report
+  requests back to main thread).
+  - `web/src/platform/hid_passthrough_protocol.ts` currently only models
+    attach/detach; it will need to grow message types for report traffic.
+- Worker-side guest USB topology ownership (UHCI controller + hub + hotplug
+  policy + port allocation beyond the 2 root hub ports).
+- Snapshot/restore integration for passthrough device state (queued reports,
+  configuration state, etc).
 
 ## Host-side model (main thread owns the device)
 
@@ -290,7 +327,9 @@ Recommended guardrails:
 - Tests should use a mocked `navigator.hid` + fake `HIDDevice` objects to cover:
   - attach/detach lifecycle (`open()`/`close()`) and disconnect handling
   - (when implemented) report forwarding semantics and output report execution
-- Implementation reference: `web/src/platform/webhid_passthrough.test.ts`
+- Implementation references:
+  - `web/src/platform/webhid_passthrough.test.ts` (manager + debug UI)
+  - `web/src/usb/webhid_passthrough_runtime.test.ts` (dev-only main-thread runtime wiring)
 
 ### Device model (Rust)
 
@@ -299,15 +338,26 @@ Recommended guardrails:
   - input/output queue behavior (ordering, boundedness, snapshotability)
   - translation between WebHID report IDs and guest-visible USB transfers
 - Implementation references:
-  - `crates/emulator/src/io/usb/hid/passthrough.rs`
-  - `crates/emulator/tests/uhci.rs`
+  - `crates/aero-usb/src/hid/passthrough.rs`
+  - `crates/aero-usb/src/hid/webhid.rs`
+  - `crates/aero-usb/tests/webhid_passthrough.rs`
 
 ## Implementation references (current code)
 
-- Host-side WebHID attach/detach and debug UI: `web/src/platform/webhid_passthrough.ts`
-- WebHID normalization (input to descriptor synthesis): `web/src/hid/webhid_normalize.ts`
-- WebHID → HID report descriptor synthesis (Rust): `crates/emulator/src/io/usb/hid/webhid.rs`
-- Generic USB HID passthrough device model (Rust): `crates/emulator/src/io/usb/hid/passthrough.rs`
+- **WASM exports (browser build)**
+  - `crates/aero-wasm/src/lib.rs`
+    - `WebHidPassthroughBridge`
+    - `UsbPassthroughBridge`
+- **Rust device models**
+  - WebHID → HID report descriptor synthesis: `crates/aero-usb/src/hid/webhid.rs`
+  - Generic USB HID passthrough device model: `crates/aero-usb/src/hid/passthrough.rs`
+  - WebUSB host action/completion queue: `crates/aero-usb/src/passthrough.rs` (`UsbPassthroughDevice`)
+- **Host-side (TypeScript)**
+  - WebHID attach/detach + debug UI: `web/src/platform/webhid_passthrough.ts`
+  - Main↔worker message schema (currently attach/detach only): `web/src/platform/hid_passthrough_protocol.ts`
+  - WebHID normalization (input to descriptor synthesis): `web/src/hid/webhid_normalize.ts`
+  - Dev-only main-thread runtime wiring WebHID ↔ WASM bridge: `web/src/usb/webhid_passthrough_runtime.ts`
+  - Intended production wiring point (I/O worker): `web/src/workers/io.worker.ts` (HID passthrough not wired yet)
 
 ## Related docs
 
