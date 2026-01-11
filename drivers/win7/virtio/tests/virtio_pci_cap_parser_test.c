@@ -295,6 +295,44 @@ static void test_aero_layout_validation_ok(void) {
     expect_layout_result("aero_layout_validation_ok.strict", res, VIRTIO_PCI_AERO_LAYOUT_VALIDATE_OK);
 }
 
+static void test_aero_layout_validation_bad_argument_null_caps(void) {
+    virtio_pci_bar_info_t barInfo[VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT];
+    virtio_pci_aero_layout_validate_result_t res;
+
+    memset(barInfo, 0, sizeof(barInfo));
+
+    res = virtio_pci_validate_aero_pci_layout(NULL, barInfo, VIRTIO_PCI_LAYOUT_POLICY_AERO_STRICT);
+    expect_layout_result("aero_layout_validation_bad_argument_null_caps.res",
+                         res,
+                         VIRTIO_PCI_AERO_LAYOUT_VALIDATE_ERR_BAD_ARGUMENT);
+}
+
+static void test_aero_layout_validation_bad_argument_null_bars(void) {
+    virtio_pci_parsed_caps_t caps;
+    virtio_pci_aero_layout_validate_result_t res;
+
+    memset(&caps, 0, sizeof(caps));
+
+    res = virtio_pci_validate_aero_pci_layout(&caps, NULL, VIRTIO_PCI_LAYOUT_POLICY_AERO_STRICT);
+    expect_layout_result("aero_layout_validation_bad_argument_null_bars.res",
+                         res,
+                         VIRTIO_PCI_AERO_LAYOUT_VALIDATE_ERR_BAD_ARGUMENT);
+}
+
+static void test_aero_layout_validation_bad_argument_unknown_policy(void) {
+    virtio_pci_parsed_caps_t caps;
+    virtio_pci_bar_info_t barInfo[VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT];
+    virtio_pci_aero_layout_validate_result_t res;
+
+    memset(&caps, 0, sizeof(caps));
+    memset(barInfo, 0, sizeof(barInfo));
+
+    res = virtio_pci_validate_aero_pci_layout(&caps, barInfo, (virtio_pci_layout_policy_t)99);
+    expect_layout_result("aero_layout_validation_bad_argument_unknown_policy.res",
+                         res,
+                         VIRTIO_PCI_AERO_LAYOUT_VALIDATE_ERR_BAD_ARGUMENT);
+}
+
 static void test_aero_layout_validation_ok_with_larger_lengths(void) {
     uint8_t cfg[256];
     uint64_t bars[VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT];
@@ -1586,11 +1624,28 @@ static void test_identity_contract_v1_device_not_allowed(void) {
     expect_identity_result("identity_contract_v1_device_not_allowed.res", res, VIRTIO_PCI_IDENTITY_ERR_DEVICE_ID_NOT_ALLOWED);
 }
 
+static void test_identity_contract_v1_cfg_space_too_small(void) {
+    uint8_t cfg[256];
+    virtio_pci_identity_t id;
+    virtio_pci_identity_result_t res;
+
+    memset(cfg, 0, sizeof(cfg));
+    write_le16(&cfg[0x00], VIRTIO_PCI_IDENTITY_VENDOR_ID_VIRTIO);
+    write_le16(&cfg[0x02], 0x1052);
+    cfg[0x08] = VIRTIO_PCI_IDENTITY_AERO_CONTRACT_V1_REVISION_ID;
+
+    res = virtio_pci_identity_validate_aero_contract_v1(cfg, 0x08, NULL, 0, &id);
+    expect_identity_result("identity_contract_v1_cfg_space_too_small.res", res, VIRTIO_PCI_IDENTITY_ERR_CFG_SPACE_TOO_SMALL);
+}
+
 int main(void) {
     test_valid_all_caps();
     test_contract_v1_parse_fixed_layout_ok();
     test_contract_v1_parse_notify_cap_len_larger_ok();
     test_aero_layout_validation_ok();
+    test_aero_layout_validation_bad_argument_null_caps();
+    test_aero_layout_validation_bad_argument_null_bars();
+    test_aero_layout_validation_bad_argument_unknown_policy();
     test_aero_layout_validation_ok_with_larger_lengths();
     test_aero_layout_validation_common_len_too_small();
     test_aero_layout_validation_notify_len_too_small();
@@ -1640,6 +1695,7 @@ int main(void) {
     test_identity_contract_v1_bad_vendor();
     test_identity_contract_v1_device_not_modern();
     test_identity_contract_v1_device_not_allowed();
+    test_identity_contract_v1_cfg_space_too_small();
 
     if (tests_failed == 0) {
         printf("virtio_pci_cap_parser_test: %d checks passed\n", tests_run);
