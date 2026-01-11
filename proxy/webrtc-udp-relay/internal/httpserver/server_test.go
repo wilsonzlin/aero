@@ -19,6 +19,7 @@ import (
 	"github.com/pion/webrtc/v4"
 
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/config"
+	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/metrics"
 )
 
 func startTestServer(t *testing.T, cfg config.Config, register func(*Server)) string {
@@ -174,7 +175,8 @@ func TestICEEndpoint_AuthAPIKey(t *testing.T) {
 		APIKey:          "secret",
 		ICEServers:      []webrtc.ICEServer{{URLs: []string{"stun:stun.example.com:3478"}}},
 	}
-	baseURL := startTestServer(t, cfg, nil)
+	m := metrics.New()
+	baseURL := startTestServer(t, cfg, func(srv *Server) { srv.SetMetrics(m) })
 
 	t.Run("missing", func(t *testing.T) {
 		resp, err := http.Get(baseURL + "/webrtc/ice")
@@ -184,6 +186,9 @@ func TestICEEndpoint_AuthAPIKey(t *testing.T) {
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusUnauthorized {
 			t.Fatalf("status=%d, want %d", resp.StatusCode, http.StatusUnauthorized)
+		}
+		if m.Get(metrics.AuthFailure) != 1 {
+			t.Fatalf("auth_failure=%d, want %d", m.Get(metrics.AuthFailure), 1)
 		}
 	})
 
@@ -203,8 +208,35 @@ func TestICEEndpoint_AuthAPIKey(t *testing.T) {
 		}
 	})
 
+	t.Run("valid Authorization ApiKey header", func(t *testing.T) {
+		req, err := http.NewRequest(http.MethodGet, baseURL+"/webrtc/ice", nil)
+		if err != nil {
+			t.Fatalf("new request: %v", err)
+		}
+		req.Header.Set("Authorization", "ApiKey secret")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("do: %v", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status=%d, want %d", resp.StatusCode, http.StatusOK)
+		}
+	})
+
 	t.Run("valid query", func(t *testing.T) {
 		resp, err := http.Get(baseURL + "/webrtc/ice?apiKey=secret")
+		if err != nil {
+			t.Fatalf("get: %v", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status=%d, want %d", resp.StatusCode, http.StatusOK)
+		}
+	})
+
+	t.Run("valid query alias token", func(t *testing.T) {
+		resp, err := http.Get(baseURL + "/webrtc/ice?token=secret")
 		if err != nil {
 			t.Fatalf("get: %v", err)
 		}
@@ -226,7 +258,8 @@ func TestICEEndpoint_AuthJWT(t *testing.T) {
 		JWTSecret:       "secret",
 		ICEServers:      []webrtc.ICEServer{{URLs: []string{"stun:stun.example.com:3478"}}},
 	}
-	baseURL := startTestServer(t, cfg, nil)
+	m := metrics.New()
+	baseURL := startTestServer(t, cfg, func(srv *Server) { srv.SetMetrics(m) })
 
 	t.Run("missing", func(t *testing.T) {
 		resp, err := http.Get(baseURL + "/webrtc/ice")
@@ -236,6 +269,9 @@ func TestICEEndpoint_AuthJWT(t *testing.T) {
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusUnauthorized {
 			t.Fatalf("status=%d, want %d", resp.StatusCode, http.StatusUnauthorized)
+		}
+		if m.Get(metrics.AuthFailure) != 1 {
+			t.Fatalf("auth_failure=%d, want %d", m.Get(metrics.AuthFailure), 1)
 		}
 	})
 
@@ -259,6 +295,17 @@ func TestICEEndpoint_AuthJWT(t *testing.T) {
 
 	t.Run("valid query", func(t *testing.T) {
 		resp, err := http.Get(baseURL + "/webrtc/ice?token=" + token)
+		if err != nil {
+			t.Fatalf("get: %v", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status=%d, want %d", resp.StatusCode, http.StatusOK)
+		}
+	})
+
+	t.Run("valid query alias apiKey", func(t *testing.T) {
+		resp, err := http.Get(baseURL + "/webrtc/ice?apiKey=" + token)
 		if err != nil {
 			t.Fatalf("get: %v", err)
 		}

@@ -16,6 +16,7 @@ import (
 
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/auth"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/config"
+	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/metrics"
 	"github.com/wilsonzlin/aero/proxy/webrtc-udp-relay/internal/turnrest"
 )
 
@@ -32,6 +33,8 @@ type Server struct {
 	build BuildInfo
 
 	ready atomic.Bool
+
+	metrics *metrics.Metrics
 
 	mux *http.ServeMux
 	srv *http.Server
@@ -63,6 +66,14 @@ func New(cfg config.Config, logger *slog.Logger, build BuildInfo) *Server {
 	}
 
 	return s
+}
+
+// SetMetrics wires a shared metrics registry into the server. When set, certain
+// endpoints (e.g. auth failures) will increment counters.
+//
+// It should only be called during startup before Serve is called.
+func (s *Server) SetMetrics(m *metrics.Metrics) {
+	s.metrics = m
 }
 
 // Mux returns the underlying ServeMux for registering additional routes.
@@ -104,10 +115,17 @@ func (s *Server) registerRoutes() {
 	})
 
 	s.mux.HandleFunc("GET /webrtc/ice", func(w http.ResponseWriter, r *http.Request) {
+		incAuthFailure := func() {
+			if s.metrics != nil {
+				s.metrics.Inc(metrics.AuthFailure)
+			}
+		}
+
 		if s.cfg.AuthMode != config.AuthModeNone {
 			cred, err := auth.CredentialFromRequest(s.cfg.AuthMode, r)
 			if err != nil {
 				if errors.Is(err, auth.ErrMissingCredentials) {
+					incAuthFailure()
 					http.Error(w, "unauthorized", http.StatusUnauthorized)
 					return
 				}
@@ -121,6 +139,7 @@ func (s *Server) registerRoutes() {
 			}
 			if err := verifier.Verify(cred); err != nil {
 				if errors.Is(err, auth.ErrMissingCredentials) || errors.Is(err, auth.ErrInvalidCredentials) || errors.Is(err, auth.ErrUnsupportedJWT) {
+					incAuthFailure()
 					http.Error(w, "unauthorized", http.StatusUnauthorized)
 					return
 				}
