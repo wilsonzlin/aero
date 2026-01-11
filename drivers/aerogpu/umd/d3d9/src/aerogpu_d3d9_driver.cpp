@@ -1514,8 +1514,9 @@ HRESULT convert_xyzrhw_to_clipspace_locked(
 //
 // The D3D9 UMD uses a best-effort cross-process monotonic counter (implemented
 // via a named file mapping) to derive 31-bit alloc_id values for shared
-// allocations. The mapping name retains the historical "ShareToken" prefix to
-// avoid collisions when different in-guest UMD versions coexist briefly.
+// allocations. The mapping name is intentionally stable so different in-guest
+// UMD versions can coexist briefly without breaking the cross-process uniqueness
+// guarantee.
 uint64_t allocate_shared_alloc_id_token(Adapter* adapter) {
   if (!adapter) {
     return 0;
