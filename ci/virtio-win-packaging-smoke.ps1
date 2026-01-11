@@ -112,6 +112,23 @@ Ensure-EmptyDirectory -Path $syntheticRoot
 
 $osDir = "w7"
 
+# Root-level license/notice files (best-effort copy). Use lowercase filenames to ensure
+# packaging is robust on case-sensitive filesystems.
+"license placeholder" | Out-File -FilePath (Join-Path $syntheticRoot "license.txt") -Encoding ascii
+"notice placeholder" | Out-File -FilePath (Join-Path $syntheticRoot "notice.txt") -Encoding ascii
+
+# Root-mode provenance: simulate the JSON emitted by tools/virtio-win/extract.py so
+# make-driver-pack.ps1 can record ISO hash/path even when -VirtioWinRoot is used.
+$fakeIsoPath = "synthetic-virtio-win.iso"
+$fakeIsoSha = ("0123456789abcdef" * 4)
+@{
+  schema_version = 1
+  virtio_win_iso = @{
+    path = $fakeIsoPath
+    sha256 = $fakeIsoSha
+  }
+} | ConvertTo-Json -Depth 4 | Out-File -FilePath (Join-Path $syntheticRoot "virtio-win-provenance.json") -Encoding UTF8
+
 New-SyntheticDriverFiles -VirtioRoot $syntheticRoot -UpstreamDirName "viostor" -InfBaseName "viostor" -OsDirName $osDir -ArchDirName "x86" -HardwareId "PCI\VEN_1AF4&DEV_1042"
 New-SyntheticDriverFiles -VirtioRoot $syntheticRoot -UpstreamDirName "viostor" -InfBaseName "viostor" -OsDirName $osDir -ArchDirName "amd64" -HardwareId "PCI\VEN_1AF4&DEV_1042"
 
@@ -158,8 +175,10 @@ foreach ($p in @(
   (Join-Path $driverPackRoot "enable-testsigning.cmd"),
   (Join-Path $driverPackRoot "THIRD_PARTY_NOTICES.md"),
   (Join-Path $driverPackRoot "README.md"),
+  (Join-Path (Join-Path (Join-Path $driverPackRoot "licenses") "virtio-win") "license.txt"),
+  (Join-Path (Join-Path (Join-Path $driverPackRoot "licenses") "virtio-win") "notice.txt"),
   (Join-Path $driverPackRoot "manifest.json")
-)) {
+ )) {
   if (-not (Test-Path -LiteralPath $p -PathType Leaf)) {
     throw "Expected driver pack output missing: $p"
   }
@@ -167,6 +186,21 @@ foreach ($p in @(
 
 $driverPackManifestPath = Join-Path $driverPackRoot "manifest.json"
 $driverPackManifest = Get-Content -LiteralPath $driverPackManifestPath -Raw | ConvertFrom-Json
+if ($driverPackManifest.source.path -ne $fakeIsoPath) {
+  throw "Driver pack manifest source.path mismatch: expected '$fakeIsoPath', got '$($driverPackManifest.source.path)'"
+}
+if (-not $driverPackManifest.source.hash -or $driverPackManifest.source.hash.value -ne $fakeIsoSha) {
+  throw "Driver pack manifest source.hash mismatch: expected '$fakeIsoSha', got '$($driverPackManifest.source.hash.value)'"
+}
+if ($driverPackManifest.source.hash.algorithm -ne "sha256") {
+  throw "Driver pack manifest source.hash.algorithm mismatch: expected 'sha256', got '$($driverPackManifest.source.hash.algorithm)'"
+}
+$noticeCopied = @($driverPackManifest.source.license_notice_files_copied)
+foreach ($want in @("license.txt", "notice.txt")) {
+  if (-not ($noticeCopied -contains $want)) {
+    throw "Driver pack manifest did not record copied notice file '$want' in source.license_notice_files_copied. Got: $($noticeCopied -join ', ')"
+  }
+}
 if ($OmitOptionalDrivers) {
   if (-not $driverPackManifest.optional_drivers_missing_any) {
     throw "Expected make-driver-pack.ps1 to report optional drivers missing, but optional_drivers_missing_any=false."
@@ -216,7 +250,14 @@ if ($manifestObj.package.build_id -ne "ci") {
 }
 
 $manifestPaths = @($manifestObj.files | ForEach-Object { $_.path })
-foreach ($want in @("drivers/x86/viostor/viostor.inf", "drivers/x86/netkvm/netkvm.inf")) {
+foreach ($want in @(
+  "THIRD_PARTY_NOTICES.md",
+  "licenses/virtio-win/license.txt",
+  "licenses/virtio-win/notice.txt",
+  "licenses/virtio-win/driver-pack-manifest.json",
+  "drivers/x86/viostor/viostor.inf",
+  "drivers/x86/netkvm/netkvm.inf"
+)) {
   if (-not ($manifestPaths -contains $want)) {
     throw "Guest Tools manifest missing expected packaged file path: $want"
   }
