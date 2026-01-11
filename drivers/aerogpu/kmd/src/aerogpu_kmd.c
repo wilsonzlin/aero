@@ -667,7 +667,14 @@ static NTSTATUS APIENTRY AeroGpuDdiStartDevice(_In_ const PVOID MiniportDeviceCo
     const ULONG magic = AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_MAGIC);
     ULONGLONG v1Features = 0;
 
-    adapter->AbiKind = AEROGPU_ABI_KIND_UNKNOWN;
+    /*
+     * ABI detection: treat the versioned "AGPU" MMIO magic as the new ABI, and
+     * fall back to the legacy register map otherwise.
+     *
+     * This keeps older emulator device models working even if they don't report
+     * the expected legacy magic value.
+     */
+    adapter->AbiKind = AEROGPU_ABI_KIND_LEGACY;
     adapter->UsingNewAbi = FALSE;
     if (magic == AEROGPU_MMIO_MAGIC) {
         adapter->AbiKind = AEROGPU_ABI_KIND_V1;
@@ -680,19 +687,14 @@ static NTSTATUS APIENTRY AeroGpuDdiStartDevice(_In_ const PVOID MiniportDeviceCo
                     magic,
                     abiVersion,
                     (unsigned long long)features);
-    } else if (magic == AEROGPU_LEGACY_MMIO_MAGIC) {
-        adapter->AbiKind = AEROGPU_ABI_KIND_LEGACY;
-        const ULONG version = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_VERSION);
-        AEROGPU_LOG("StartDevice: ABI=legacy magic=0x%08lx version=0x%08lx", magic, version);
     } else {
-        AEROGPU_LOG("StartDevice: unknown MMIO magic=0x%08lx (expected 0x%08x or 0x%08x)",
-                    magic,
-                    AEROGPU_MMIO_MAGIC,
-                    AEROGPU_LEGACY_MMIO_MAGIC);
-        MmUnmapIoSpace(adapter->Bar0, adapter->Bar0Length);
-        adapter->Bar0 = NULL;
-        adapter->Bar0Length = 0;
-        return STATUS_DEVICE_HARDWARE_ERROR;
+        const ULONG version = AeroGpuReadRegU32(adapter, AEROGPU_LEGACY_REG_VERSION);
+        if (magic != AEROGPU_LEGACY_MMIO_MAGIC) {
+            AEROGPU_LOG("StartDevice: unknown MMIO magic=0x%08lx (expected 0x%08x); assuming legacy ABI",
+                        magic,
+                        AEROGPU_MMIO_MAGIC);
+        }
+        AEROGPU_LOG("StartDevice: ABI=legacy magic=0x%08lx version=0x%08lx", magic, version);
     }
 
     if (adapter->DxgkInterface.DxgkCbRegisterInterrupt) {
