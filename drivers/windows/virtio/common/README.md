@@ -138,6 +138,18 @@ if (VirtqSplitEnableInterrupts(vq)) {
 
 User-mode simulation tests live in `tests/`.
 
+### CMake / ctest (same as CI)
+
+From the repository root:
+
+```sh
+cmake -S . -B build-virtio-tests -DAERO_VIRTIO_BUILD_TESTS=ON -DAERO_AEROGPU_BUILD_TESTS=OFF
+cmake --build build-virtio-tests --config Release
+ctest --test-dir build-virtio-tests --output-on-failure -C Release
+```
+
+### GNU Make (manual)
+
 ```sh
 cd drivers/windows/virtio/common/tests
 make test
