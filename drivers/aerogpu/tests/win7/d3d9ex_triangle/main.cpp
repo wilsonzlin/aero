@@ -13,6 +13,61 @@ struct Vertex {
   DWORD color;
 };
 
+static void DumpBytesToFile(const char* test_name,
+                            aerogpu_test::TestReporter* reporter,
+                            const wchar_t* file_name,
+                            const void* data,
+                            UINT byte_count) {
+  if (!file_name || !data || byte_count == 0) {
+    return;
+  }
+  const std::wstring dir = aerogpu_test::GetModuleDir();
+  const std::wstring path = aerogpu_test::JoinPath(dir, file_name);
+  HANDLE h =
+      CreateFileW(path.c_str(), GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+  if (h == INVALID_HANDLE_VALUE) {
+    aerogpu_test::PrintfStdout("INFO: %s: dump CreateFileW(%ls) failed: %s",
+                               test_name,
+                               file_name,
+                               aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
+    return;
+  }
+  DWORD written = 0;
+  if (!WriteFile(h, data, byte_count, &written, NULL) || written != byte_count) {
+    aerogpu_test::PrintfStdout("INFO: %s: dump WriteFile(%ls) failed: %s",
+                               test_name,
+                               file_name,
+                               aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
+  } else {
+    aerogpu_test::PrintfStdout("INFO: %s: dumped %u bytes to %ls",
+                               test_name,
+                               (unsigned)byte_count,
+                               path.c_str());
+    if (reporter) {
+      reporter->AddArtifactPathW(path);
+    }
+  }
+  CloseHandle(h);
+}
+
+static void DumpTightBgra32(const char* test_name,
+                            aerogpu_test::TestReporter* reporter,
+                            const wchar_t* file_name,
+                            const void* data,
+                            int row_pitch,
+                            int width,
+                            int height) {
+  if (!data || width <= 0 || height <= 0 || row_pitch < width * 4) {
+    return;
+  }
+  std::vector<uint8_t> tight((size_t)width * (size_t)height * 4u, 0);
+  for (int y = 0; y < height; ++y) {
+    const uint8_t* src_row = (const uint8_t*)data + (size_t)y * (size_t)row_pitch;
+    memcpy(&tight[(size_t)y * (size_t)width * 4u], src_row, (size_t)width * 4u);
+  }
+  DumpBytesToFile(test_name, reporter, file_name, &tight[0], (UINT)tight.size());
+}
+
 static int RunD3D9ExTriangle(int argc, char** argv) {
   const char* kTestName = "d3d9ex_triangle";
   if (aerogpu_test::HasHelpArg(argc, argv)) {
@@ -249,7 +304,8 @@ static int RunD3D9ExTriangle(int argc, char** argv) {
       (corner & 0x00FFFFFFu) != (expected_corner & 0x00FFFFFFu)) {
     if (dump) {
       std::string err;
-      const std::wstring bmp_path = aerogpu_test::JoinPath(aerogpu_test::GetModuleDir(), L"d3d9ex_triangle.bmp");
+      const std::wstring bmp_path =
+          aerogpu_test::JoinPath(aerogpu_test::GetModuleDir(), L"d3d9ex_triangle.bmp");
       if (aerogpu_test::WriteBmp32BGRA(bmp_path,
                                        (int)desc.Width,
                                        (int)desc.Height,
@@ -257,12 +313,23 @@ static int RunD3D9ExTriangle(int argc, char** argv) {
                                        (int)lr.Pitch,
                                        &err)) {
         reporter.AddArtifactPathW(bmp_path);
+      } else {
+        aerogpu_test::PrintfStdout("INFO: %s: BMP dump failed: %s", kTestName, err.c_str());
       }
+      DumpTightBgra32(kTestName,
+                      &reporter,
+                      L"d3d9ex_triangle.bin",
+                      lr.pBits,
+                      (int)lr.Pitch,
+                      (int)desc.Width,
+                      (int)desc.Height);
     }
     sysmem->UnlockRect();
-    return reporter.Fail("pixel mismatch: center=0x%08lX corner(5,5)=0x%08lX",
-                         (unsigned long)center,
-                         (unsigned long)corner);
+    return reporter.Fail("pixel mismatch: center=0x%08lX expected 0x%08lX; corner(5,5)=0x%08lX expected 0x%08lX",
+                          (unsigned long)center,
+                          (unsigned long)expected,
+                          (unsigned long)corner,
+                          (unsigned long)expected_corner);
   }
 
   sysmem->UnlockRect();
@@ -272,7 +339,8 @@ static int RunD3D9ExTriangle(int argc, char** argv) {
     hr = sysmem->LockRect(&lr, NULL, D3DLOCK_READONLY);
     if (SUCCEEDED(hr)) {
       std::string err;
-      const std::wstring bmp_path = aerogpu_test::JoinPath(aerogpu_test::GetModuleDir(), L"d3d9ex_triangle.bmp");
+      const std::wstring bmp_path =
+          aerogpu_test::JoinPath(aerogpu_test::GetModuleDir(), L"d3d9ex_triangle.bmp");
       if (!aerogpu_test::WriteBmp32BGRA(bmp_path,
                                         (int)desc.Width,
                                         (int)desc.Height,
@@ -283,6 +351,13 @@ static int RunD3D9ExTriangle(int argc, char** argv) {
       } else {
         reporter.AddArtifactPathW(bmp_path);
       }
+      DumpTightBgra32(kTestName,
+                      &reporter,
+                      L"d3d9ex_triangle.bin",
+                      lr.pBits,
+                      (int)lr.Pitch,
+                      (int)desc.Width,
+                      (int)desc.Height);
       sysmem->UnlockRect();
     }
   }
