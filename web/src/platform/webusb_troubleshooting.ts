@@ -271,6 +271,9 @@ export function explainWebUsbError(err: unknown): WebUsbErrorExplanation {
 
   if (driverOrPermissionsLikely) {
     addHint("Close other applications that may be using the device, then unplug/replug it and try again.");
+    addHint(
+      "In Chrome/Edge, you can inspect WebUSB state at chrome://usb-internals (or edge://usb-internals) to see detected devices, claimed interfaces, and recent errors.",
+    );
 
     if (hostOs === "windows" || hostOs === "unknown") {
       addHint(

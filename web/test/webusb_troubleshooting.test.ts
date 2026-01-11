@@ -45,6 +45,7 @@ test("explainWebUsbError: claimInterface failures include WinUSB + udev hints", 
   const res = withUserAgent("Node.js/25", () => explainWebUsbError("NetworkError: Unable to claim interface."));
 
   assert.ok(res.title.toLowerCase().includes("claim") || res.title.toLowerCase().includes("communication"));
+  assert.ok(res.hints.some((hint) => hint.includes("usb-internals")));
   assert.ok(res.hints.some((hint) => hint.includes("WinUSB")));
   assert.ok(res.hints.some((hint) => hint.toLowerCase().includes("udev")));
 });

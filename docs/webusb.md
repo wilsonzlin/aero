@@ -35,6 +35,7 @@ If WebUSB calls like `requestDevice()`, `device.open()`, or `device.claimInterfa
   - Ensure your user has permission to access the device (via `udev` rules).
   - Ensure no kernel driver is attached to the interface; a bound kernel driver can prevent `claimInterface()`.
 - **macOS / Android:** support varies. If the OS has a built-in driver attached to the interface (or mobile USB/OTG restrictions apply), WebUSB may not be able to claim it. Vendor-specific interfaces (class `0xFF`) are the most feasible.
+- **Chromium debugging:** in Chrome/Edge, `chrome://usb-internals` (or `edge://usb-internals`) can help confirm what the browser thinks is attached/blocked.
 
 ---
 
