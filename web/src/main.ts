@@ -740,30 +740,30 @@ function renderSnapshotPanel(report: PlatformFeatureReport): HTMLElement {
     })().catch((err) => setError(err instanceof Error ? err.message : String(err)));
   });
 
-    if (!report.opfs) {
-      clearAutosaveTimer();
-      status.textContent = "Snapshots unavailable (OPFS missing).";
-      setButtonsEnabled(false);
-      setError("OPFS is unavailable in this browser/context (navigator.storage.getDirectory missing).");
-      testState.ready = false;
-      testState.streaming = false;
-    } else {
-      setButtonsEnabled(false);
-      status.textContent = "Initializing demo VM worker…";
+  if (!report.opfs) {
+    clearAutosaveTimer();
+    status.textContent = "Snapshots unavailable (OPFS missing).";
+    setButtonsEnabled(false);
+    setError("OPFS is unavailable in this browser/context (navigator.storage.getDirectory missing).");
+    testState.ready = false;
+    testState.streaming = false;
+  } else {
+    setButtonsEnabled(false);
+    status.textContent = "Initializing demo VM worker…";
 
-      try {
-        ensureUnloadHandler();
-        workerClient = new DemoVmWorkerClient({
-          onStatus: (state) => {
-            steps = state.steps;
-            serialBytes = state.serialBytes;
-            output.textContent =
-              `steps=${steps.toLocaleString()} ` +
-              `serial_bytes=${serialBytes === null ? "unknown" : serialBytes.toLocaleString()}`;
-          },
-          onError: (err) => setError(err.message),
-          onFatalError: (err) => handleWorkerFatal(err),
-        });
+    try {
+      ensureUnloadHandler();
+      workerClient = new DemoVmWorkerClient({
+        onStatus: (state) => {
+          steps = state.steps;
+          serialBytes = state.serialBytes;
+          output.textContent =
+            `steps=${steps.toLocaleString()} ` +
+            `serial_bytes=${serialBytes === null ? "unknown" : serialBytes.toLocaleString()}`;
+        },
+        onError: (err) => setError(err.message),
+        onFatalError: (err) => handleWorkerFatal(err),
+      });
     } catch (err) {
       clearAutosaveTimer();
       const message = err instanceof Error ? err.message : String(err);
