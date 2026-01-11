@@ -466,31 +466,20 @@ class CmdStreamWriter {
 
   template <typename T>
   T* append_fixed(uint32_t opcode) {
-    T* packet = TryAppendFixed<T>(opcode);
-    return packet ? packet : SinkAs<T>();
+    return TryAppendFixed<T>(opcode);
   }
 
   template <typename HeaderT>
   HeaderT* append_with_payload(uint32_t opcode, const void* payload, size_t payload_size) {
-    HeaderT* packet = TryAppendWithPayload<HeaderT>(opcode, payload, payload_size);
-    return packet ? packet : SinkAs<HeaderT>();
+    return TryAppendWithPayload<HeaderT>(opcode, payload, payload_size);
   }
 
  private:
   enum class Mode : uint8_t { Vector, Span };
 
-  template <typename T>
-  T* SinkAs() {
-    static_assert(sizeof(T) <= sizeof(sink_), "increase sink_ size to cover packet type");
-    std::memset(sink_, 0, sizeof(sink_));
-    return reinterpret_cast<T*>(sink_);
-  }
-
   Mode mode_ = Mode::Vector;
   VectorCmdStreamWriter vec_;
   SpanCmdStreamWriter span_;
-
-  alignas(8) uint8_t sink_[256] = {};
 };
 
 } // namespace aerogpu
