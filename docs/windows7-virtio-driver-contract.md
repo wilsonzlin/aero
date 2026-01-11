@@ -780,7 +780,7 @@ The guest MAY send output/LED events via `statusq`.
 - Vendor ID: `0x1AF4`
 - Device ID: `0x1059`
 - Subsystem Vendor ID: `0x1AF4`
-- Subsystem Device ID: `0x0003`
+- Subsystem Device ID: `0x0019`
 - Revision ID: `0x01`
 
 #### 3.4.2 Virtqueues
