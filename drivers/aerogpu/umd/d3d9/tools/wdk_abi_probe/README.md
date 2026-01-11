@@ -125,15 +125,20 @@ If you update the WDK/headers/toolchain and the build starts failing due to ABI 
 
    ```cmd
    python drivers\aerogpu\umd\d3d9\tools\wdk_abi_probe\gen_expected_header.py ^
-     --x86 out_x86.txt ^
-     --x64 out_x64.txt ^
-     --out drivers\aerogpu\umd\d3d9\src\aerogpu_d3d9_wdk_abi_expected.h
+      --x86 out_x86.txt ^
+      --x64 out_x64.txt ^
+      --out drivers\aerogpu\umd\d3d9\src\aerogpu_d3d9_wdk_abi_expected.h
    ```
 
-   (If you prefer not to use Python, you can still update the file manually by copying values from the probe output.)
+   Optional: pass `--all` to emit *all* parsed `sizeof(...)`/`offsetof(...)` values
+   from the probe output, not just the curated “high-value anchors”. This can be
+   useful when expanding `aerogpu_d3d9_wdk_abi_expected.h` to cover additional
+   structs/tables.
+
+    (If you prefer not to use Python, you can still update the file manually by copying values from the probe output.)
 4. Re-check x86 export decoration:
-   - The probe prints `_OpenAdapter@N` / `_OpenAdapter2@M` / `_OpenAdapterFromHdc@K` / `_OpenAdapterFromLuid@L`.
-   - Ensure `drivers/aerogpu/umd/d3d9/aerogpu_d3d9_x86.def` maps the undecorated names to the same decorated values.
+    - The probe prints `_OpenAdapter@N` / `_OpenAdapter2@M` / `_OpenAdapterFromHdc@K` / `_OpenAdapterFromLuid@L`.
+    - Ensure `drivers/aerogpu/umd/d3d9/aerogpu_d3d9_x86.def` maps the undecorated names to the same decorated values.
 5. Build the D3D9 UMD (Win32 + x64) and verify exports:
    - `dumpbin /exports aerogpu_d3d9.dll`
    - `dumpbin /exports aerogpu_d3d9_x64.dll`

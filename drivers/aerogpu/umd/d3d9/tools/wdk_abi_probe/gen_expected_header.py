@@ -11,6 +11,11 @@ Usage (from repo root, after building/running the probe for both arches):
     --x86 out_x86.txt \
     --x64 out_x64.txt \
     --out drivers/aerogpu/umd/d3d9/src/aerogpu_d3d9_wdk_abi_expected.h
+
+By default this script emits a small curated set of high-value ABI anchors.
+Pass `--all` to additionally emit *all* `sizeof(...)` / `offsetof(...)` values
+captured by the probe (useful when expanding `aerogpu_d3d9_wdk_abi_expected.h` to
+cover more structs without hand-editing).
 """
 
 from __future__ import annotations
@@ -34,6 +39,7 @@ _EXPORT_RE = re.compile(
 )
 _MSC_VER_RE = re.compile(r"^_MSC_VER\s*=\s*(?P<value>\d+)\s*$", re.MULTILINE)
 _UMD_IFACE_VER_RE = re.compile(r"^D3D_UMD_INTERFACE_VERSION\s*=\s*(?P<value>\d+)\s*$", re.MULTILINE)
+_MACRO_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 @dataclass(frozen=True)
@@ -91,8 +97,10 @@ def _get_export_bytes(data: ProbeData, which: str) -> int:
         raise SystemExit(f"Missing x86 export decoration for {which} in probe output")
 
 
-def _emit_header(x86: ProbeData, x64: ProbeData) -> str:
-    now = _dt.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+def _emit_header(x86: ProbeData, x64: ProbeData, *, emit_all: bool) -> str:
+    # Use a timezone-aware UTC timestamp; `utcnow()` is deprecated in newer
+    # Python versions.
+    now = _dt.datetime.now(tz=_dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
     # Key invariants we pin for both architectures.
     openadapter_fields = [
@@ -190,6 +198,38 @@ def _emit_header(x86: ProbeData, x64: ProbeData) -> str:
 
     def emit_arch_block(kind: str, data: ProbeData, include_exports: bool) -> list[str]:
         out: list[str] = []
+
+        if emit_all:
+            if include_exports:
+                out.extend(
+                    [
+                        "  // Exported entrypoints (x86 stdcall decoration).",
+                        f"  #define AEROGPU_D3D9_WDK_ABI_EXPECT_OPENADAPTER_STDCALL_BYTES {_get_export_bytes(data, 'OPENADAPTER')}",
+                        f"  #define AEROGPU_D3D9_WDK_ABI_EXPECT_OPENADAPTER2_STDCALL_BYTES {_get_export_bytes(data, 'OPENADAPTER2')}",
+                        f"  #define AEROGPU_D3D9_WDK_ABI_EXPECT_OPENADAPTERFROMHDC_STDCALL_BYTES {_get_export_bytes(data, 'OPENADAPTERFROMHDC')}",
+                        f"  #define AEROGPU_D3D9_WDK_ABI_EXPECT_OPENADAPTERFROMLUID_STDCALL_BYTES {_get_export_bytes(data, 'OPENADAPTERFROMLUID')}",
+                        "",
+                    ]
+                )
+
+            out.append("  // sizeof(...)")
+            for type_name, value in sorted(data.sizeof.items()):
+                # Probe output includes `sizeof(void*)`; skip any names that are
+                # not valid preprocessor identifiers.
+                if not _MACRO_IDENT_RE.match(type_name):
+                    continue
+                out.append(f"  #define AEROGPU_D3D9_WDK_ABI_EXPECT_SIZEOF_{type_name} {value}")
+            out.append("")
+
+            out.append("  // offsetof(...)")
+            for (type_name, member), value in sorted(data.offsetof.items()):
+                if not _MACRO_IDENT_RE.match(type_name) or not _MACRO_IDENT_RE.match(member):
+                    continue
+                out.append(f"  #define AEROGPU_D3D9_WDK_ABI_EXPECT_OFFSETOF_{type_name}_{member} {value}")
+            out.append("")
+
+            return out
+
         if include_exports:
             out.extend(
                 [
@@ -305,6 +345,11 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--x86", required=True, type=pathlib.Path, help="Probe output from the x86 build (text file).")
     ap.add_argument("--x64", required=True, type=pathlib.Path, help="Probe output from the x64 build (text file).")
     ap.add_argument("--out", required=True, type=pathlib.Path, help="Output header path.")
+    ap.add_argument(
+        "--all",
+        action="store_true",
+        help="Emit all parsed sizeof/offsetof values from the probe output (not just curated anchors).",
+    )
     args = ap.parse_args(argv)
 
     x86_text = args.x86.read_text(encoding="utf-8", errors="replace")
@@ -313,7 +358,7 @@ def main(argv: list[str]) -> int:
     x86 = _parse_probe_output(x86_text)
     x64 = _parse_probe_output(x64_text)
 
-    header = _emit_header(x86, x64)
+    header = _emit_header(x86, x64, emit_all=args.all)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(header, encoding="utf-8", newline="\n")
 
