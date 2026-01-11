@@ -256,6 +256,9 @@ Additional debug/control escapes used by `drivers/aerogpu/tools/win7_dbgctl`:
 
  - `AEROGPU_ESCAPE_OP_QUERY_FENCE` (see `aerogpu_dbgctl_escape.h`)
  - `AEROGPU_ESCAPE_OP_DUMP_RING_V2` (fallback: `AEROGPU_ESCAPE_OP_DUMP_RING`) (see `aerogpu_dbgctl_escape.h`)
+   - For `AEROGPU_DBGCTL_RING_FORMAT_AGPU`, the v2 dump returns a recent **tail window** of descriptors ending at `tail - 1`
+     (newest is `desc[desc_count - 1]`) so tooling/tests can observe recently completed submissions even when the pending
+     `[head, tail)` region is drained quickly.
  - `AEROGPU_ESCAPE_OP_DUMP_CREATEALLOCATION` (see `aerogpu_dbgctl_escape.h`)
  - `AEROGPU_ESCAPE_OP_QUERY_VBLANK` (see `aerogpu_dbgctl_escape.h`)
  - `AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE` (see `aerogpu_dbgctl_escape.h`)
