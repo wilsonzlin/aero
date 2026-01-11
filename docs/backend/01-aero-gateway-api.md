@@ -85,6 +85,28 @@ Create or refresh a session. The gateway responds with a `Set-Cookie` header.
     - `Path=/`
 - Body: JSON with session metadata and limits (see `docs/backend/openapi.yaml`).
 
+#### Endpoint discovery (`endpoints`)
+
+The JSON response includes an `endpoints` object with **relative paths** to the gateway’s networking surfaces:
+
+```json
+{
+  "endpoints": {
+    "tcp": "/tcp",
+    "tcpMux": "/tcp-mux",
+    "dnsQuery": "/dns-query",
+    "dnsJson": "/dns-json",
+    "l2": "/l2",
+    "udpRelayToken": "/udp-relay/token"
+  }
+}
+```
+
+Notes:
+
+- `endpoints.l2` is routed by the **edge reverse proxy** to `aero-l2-proxy` (the Rust L2 tunnel proxy). It is not served by the `backend/aero-gateway` Node.js process.
+- `endpoints.udpRelayToken` may return `404` when the gateway is not configured with `UDP_RELAY_BASE_URL`.
+
 #### Optional: UDP relay configuration (`udpRelay`)
 
 If the gateway is configured with a UDP relay base URL (`UDP_RELAY_BASE_URL`), the session response includes an additional top-level field:

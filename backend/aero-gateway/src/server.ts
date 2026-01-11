@@ -162,7 +162,14 @@ export function buildServer(config: Config): ServerBundle {
     reply.code(201);
     const response: Record<string, unknown> = {
       session: { expiresAt: new Date(session.expiresAtMs).toISOString() },
-      endpoints: { tcp: '/tcp', dnsQuery: '/dns-query' },
+      endpoints: {
+        tcp: '/tcp',
+        dnsQuery: '/dns-query',
+        tcpMux: '/tcp-mux',
+        dnsJson: '/dns-json',
+        l2: '/l2',
+        udpRelayToken: '/udp-relay/token',
+      },
       limits: {
         tcp: {
           maxConnections: config.TCP_PROXY_MAX_CONNECTIONS,

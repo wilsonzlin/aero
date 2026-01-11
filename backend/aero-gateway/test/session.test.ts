@@ -48,6 +48,7 @@ test('POST /session sets aero_session cookie and returns CreateSessionResponse',
 
   const res = await app.inject({ method: 'POST', url: '/session' });
   assert.equal(res.statusCode, 201);
+  assert.equal(res.headers['cache-control'], 'no-store');
 
   const setCookie = res.headers['set-cookie'];
   assert.ok(setCookie, 'expected Set-Cookie header');
@@ -61,7 +62,14 @@ test('POST /session sets aero_session cookie and returns CreateSessionResponse',
   const body = JSON.parse(res.body);
   assert.equal(typeof body?.session?.expiresAt, 'string');
   assert.ok(!Number.isNaN(Date.parse(body.session.expiresAt)));
-  assert.deepEqual(body.endpoints, { tcp: '/tcp', dnsQuery: '/dns-query' });
+  assert.deepEqual(body.endpoints, {
+    tcp: '/tcp',
+    dnsQuery: '/dns-query',
+    tcpMux: '/tcp-mux',
+    dnsJson: '/dns-json',
+    l2: '/l2',
+    udpRelayToken: '/udp-relay/token',
+  });
   assert.deepEqual(body.limits?.dns, { maxQueryBytes: 4096 });
   assert.equal(body.limits?.tcp?.maxConnections, 64);
   assert.equal(body.limits?.tcp?.maxMessageBytes, 1024 * 1024);
@@ -89,4 +97,3 @@ test('POST /session sets Secure when TRUST_PROXY=1 and X-Forwarded-Proto=https',
 
   await app.close();
 });
-

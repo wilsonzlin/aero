@@ -64,7 +64,11 @@ paths:
                       expiresAt: '2026-01-10T00:00:00Z'
                     endpoints:
                       tcp: /tcp
+                      tcpMux: /tcp-mux
                       dnsQuery: /dns-query
+                      dnsJson: /dns-json
+                      l2: /l2
+                      udpRelayToken: /udp-relay/token
                     udpRelay:
                       baseUrl: https://relay.example.com
                       authMode: jwt
@@ -240,10 +244,30 @@ components:
               type: string
               description: Path for the TCP WebSocket endpoint (upgrade).
               example: /tcp
+            tcpMux:
+              type: string
+              description: Path for the multiplexed TCP WebSocket endpoint (upgrade).
+              example: /tcp-mux
             dnsQuery:
               type: string
               description: Path for DNS-over-HTTPS.
               example: /dns-query
+            dnsJson:
+              type: string
+              description: Path for the DNS JSON convenience endpoint.
+              example: /dns-json
+            l2:
+              type: string
+              description: |
+                Path for the L2 tunnel WebSocket endpoint (`aero-l2-tunnel-v1`).
+
+                This endpoint is served by `aero-l2-proxy` behind the edge proxy,
+                not by the `aero-gateway` Node.js process.
+              example: /l2
+            udpRelayToken:
+              type: string
+              description: Path for the UDP relay token refresh endpoint.
+              example: /udp-relay/token
         udpRelay:
           $ref: '#/components/schemas/UdpRelayInfo'
           description: |
