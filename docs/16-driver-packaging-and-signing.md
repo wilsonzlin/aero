@@ -33,7 +33,7 @@ Supported fields:
   - Entries must be `.dll` file names.
   - Entries must be file names only (no path separators).
   - Requires x86 build outputs to be present (even if you are only generating/staging x64 packages).
-- `additionalFiles` (optional): extra *non-binary* files to include (README/license text, install scripts, etc). Paths are relative to the driver directory (`drivers/<name>/`) and must not escape it (no absolute paths / `..` traversal).
+- `additionalFiles` (optional): extra *non-binary* files to include (README/license text, install scripts, etc). Paths are relative to the driver directory (`drivers/<driver>/`) and must not escape it (no absolute paths / `..` traversal).
 - `wdfCoInstaller` (optional): declare that this driver needs the WDF coinstaller and which KMDF version/DLL name.
   - If `dllName` is omitted, CI derives it from `kmdfVersion` (e.g. `1.11` → `WdfCoInstaller01011.dll`).
   - If provided, `dllName` must be a simple filename like `WdfCoInstaller01011.dll` (not a path).
@@ -74,7 +74,7 @@ Template examples are available under `drivers/_template/`:
 ### Default behavior
 
 - `ci/make-catalogs.ps1` stages driver packages and generates catalogs **without** copying any WDK redistributables.
-- The pipeline intentionally **refuses** to package if it detects `WdfCoInstaller*.dll` checked into `drivers/<name>/` (to prevent accidentally distributing Microsoft binaries).
+- The pipeline intentionally **refuses** to package if it detects `WdfCoInstaller*.dll` checked into `drivers/<driver>/` (to prevent accidentally distributing Microsoft binaries).
 
 ### Enabling WDF coinstaller inclusion (explicit opt-in)
 
