@@ -213,6 +213,45 @@ fn parse_c_cmd_opcode_const_names() -> Vec<String> {
     names
 }
 
+fn parse_c_cmd_struct_def_names() -> Vec<String> {
+    let header_path = repo_root().join("drivers/aerogpu/protocol/aerogpu_cmd.h");
+    let text = std::fs::read_to_string(&header_path).unwrap_or_else(|err| {
+        panic!("failed to read {}: {err}", header_path.display());
+    });
+
+    let mut names = Vec::new();
+    let mut idx = 0;
+    while let Some(pos) = text[idx..].find("struct aerogpu_") {
+        let start = idx + pos + "struct ".len();
+        let mut end = start;
+        while end < text.len() {
+            let b = text.as_bytes()[end];
+            if b.is_ascii_alphanumeric() || b == b'_' {
+                end += 1;
+            } else {
+                break;
+            }
+        }
+
+        let mut after = end;
+        while after < text.len() && text.as_bytes()[after].is_ascii_whitespace() {
+            after += 1;
+        }
+
+        // Only treat `struct name { ... }` as a definition. This excludes usages like:
+        // `struct aerogpu_cmd_hdr hdr;`
+        if after < text.len() && text.as_bytes()[after] == b'{' {
+            names.push(text[start..end].to_string());
+        }
+
+        idx = end;
+    }
+
+    names.sort();
+    names.dedup();
+    names
+}
+
 fn upper_snake_to_pascal_case(s: &str) -> String {
     s.split('_')
         .filter(|part| !part.is_empty())
@@ -230,6 +269,7 @@ fn upper_snake_to_pascal_case(s: &str) -> String {
 #[test]
 fn rust_layout_matches_c_headers() {
     let abi = abi_dump();
+    let mut struct_sizes_seen: Vec<&'static str> = Vec::new();
 
     macro_rules! assert_size {
         ($ty:ty, $c_name:literal) => {
@@ -239,6 +279,7 @@ fn rust_layout_matches_c_headers() {
                 "sizeof({})",
                 $c_name
             );
+            struct_sizes_seen.push($c_name);
         };
     }
 
@@ -471,6 +512,23 @@ fn rust_layout_matches_c_headers() {
     assert_eq!(
         cmd_structs_seen, expected_cmd_structs,
         "command packet struct coverage"
+    );
+
+    // Coverage guard: every `struct aerogpu_* { ... }` definition in `aerogpu_cmd.h` must have its
+    // size validated against the C headers.
+    let struct_sizes_seen: std::collections::BTreeSet<String> = struct_sizes_seen
+        .iter()
+        .map(|name| (*name).to_string())
+        .collect();
+    let mut missing: Vec<String> = Vec::new();
+    for c_name in parse_c_cmd_struct_def_names() {
+        if !struct_sizes_seen.contains(&c_name) {
+            missing.push(c_name);
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "command stream struct size coverage: missing {missing:?}"
     );
 
     // Ring structs.

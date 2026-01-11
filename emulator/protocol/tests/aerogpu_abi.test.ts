@@ -280,6 +280,48 @@ function parseCcmdOpcodeConstNames(): string[] {
   return [...names].sort();
 }
 
+function parseCcmdStructDefNames(): string[] {
+  const headerPath = path.join(repoRoot, "drivers/aerogpu/protocol/aerogpu_cmd.h");
+  const text = fs.readFileSync(headerPath, "utf8");
+
+  const names = new Set<string>();
+  let idx = 0;
+  for (;;) {
+    const pos = text.indexOf("struct aerogpu_", idx);
+    if (pos === -1) break;
+
+    const start = pos + "struct ".length;
+    let end = start;
+    while (end < text.length) {
+      const ch = text.charCodeAt(end);
+      const isAlphaNum =
+        (ch >= 0x30 && ch <= 0x39) || // 0-9
+        (ch >= 0x41 && ch <= 0x5a) || // A-Z
+        (ch >= 0x61 && ch <= 0x7a); // a-z
+      if (!isAlphaNum && ch !== 0x5f) break; // _
+      end++;
+    }
+
+    let after = end;
+    while (after < text.length) {
+      const ch = text.charCodeAt(after);
+      const isWs = ch === 0x20 || ch === 0x09 || ch === 0x0a || ch === 0x0d;
+      if (!isWs) break;
+      after++;
+    }
+
+    // Only treat `struct name { ... }` as a definition. This excludes usages like:
+    // `struct aerogpu_cmd_hdr hdr;`
+    if (after < text.length && text[after] === "{") {
+      names.add(text.slice(start, end));
+    }
+
+    idx = end;
+  }
+
+  return [...names].sort();
+}
+
 function upperSnakeToPascalCase(s: string): string {
   return s
     .split("_")
@@ -706,6 +748,17 @@ test("TypeScript layout matches C headers", () => {
     const sizeConstName = `${cName}_SIZE`;
     const actualSize = cmdAny[sizeConstName];
     assert.equal(typeof actualSize, "number", `missing TS packet size constant ${sizeConstName}`);
+    assert.equal(actualSize, expectedSize, `${sizeConstName} must match sizeof(${structName})`);
+  }
+
+  // Coverage guard: every `struct aerogpu_* { ... }` definition in `aerogpu_cmd.h` must have a
+  // corresponding `AEROGPU_*_SIZE` constant matching the C struct size.
+  for (const structName of parseCcmdStructDefNames()) {
+    const suffix = structName.replace(/^aerogpu_/, "").toUpperCase();
+    const sizeConstName = `AEROGPU_${suffix}_SIZE`;
+    const expectedSize = size(structName);
+    const actualSize = cmdAny[sizeConstName];
+    assert.equal(typeof actualSize, "number", `missing TS struct size constant ${sizeConstName}`);
     assert.equal(actualSize, expectedSize, `${sizeConstName} must match sizeof(${structName})`);
   }
 
