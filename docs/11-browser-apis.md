@@ -973,8 +973,12 @@ import {
 // `WasmApi` exported by `crates/aero-wasm` (see `web/src/runtime/wasm_loader.ts`).
 let wasm = null;
 
-// Canonical full-system VM export (`aero_machine::Machine`).
-let machine = null;
+// Minimal Tier-0 VM loop (wired to injected shared guest RAM).
+//
+// Note: `crates/aero-wasm` also exports `Machine` (the canonical full-system VM,
+// `aero_machine::Machine`), but the current CPU worker harness uses `WasmVm`
+// to execute directly against the shared guest RAM mapping.
+let vm = null;
 
 // Optional lightweight demo harness for the CPU worker (threaded build only).
 let cpuDemo = null;
@@ -1000,8 +1004,19 @@ self.onmessage = async (event) => {
             // Guest RAM layout is published by the coordinator in the status SAB.
             const layout = readGuestRamLayoutFromStatus(status);
 
-            // Construct a full-system VM instance.
-            machine = new wasm.Machine(layout.guest_size);
+            // Create a view of guest RAM (paddr 0..guest_size) inside the module's
+            // shared wasm32 linear memory.
+            const guestU8 = new Uint8Array(guestMemory.buffer, layout.guest_base, layout.guest_size);
+
+            // Minimal Tier-0 VM wrapper: reset to real mode and start at 0x7C00.
+            if (wasm.WasmVm) {
+                vm = new wasm.WasmVm(layout.guest_base, layout.guest_size);
+
+                // In the real CPU worker, a boot sector is loaded from disk into
+                // guest memory at 0x7C00 before resetting.
+                guestU8.set([0x90, 0xF4], 0x7c00); // NOP; HLT (placeholder)
+                vm.reset_real_mode(0x7c00);
+            }
 
             // Optional CPU worker demo (writes frames/counters inside the module's
             // linear memory).
@@ -1033,12 +1048,14 @@ self.onmessage = async (event) => {
 
 function runEmulationLoop() {
     while (Atomics.load(status, StatusIndex.StopRequested) === 0) {
-        // Execute a slice of guest work (full-system path).
+        // Execute a slice of guest work (Tier-0 VM path).
         //
         // `run_slice` returns an object with a small enum-like `kind` field
         // (Completed/Halted/ResetRequested/Assist/Exception) plus an instruction count.
-        const exit = machine.run_slice(10_000);
-        exit.free();
+        if (vm) {
+            const exit = vm.run_slice(10_000);
+            exit.free();
+        }
 
         // Optional demo harness path (shared-memory pattern generator).
         if (cpuDemo) {
