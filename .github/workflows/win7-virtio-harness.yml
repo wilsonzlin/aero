@@ -63,7 +63,9 @@ jobs:
           : >"${http_log}"
           : >"${harness_log}"
 
+          set +e
           {
+            set -euo pipefail
             echo "Runner: ${RUNNER_NAME} (${RUNNER_OS})"
             echo "Inputs:"
             echo "  disk_image_path: '${{ inputs.disk_image_path }}'"
@@ -144,6 +146,13 @@ jobs:
             exit "${harness_exit}"
           } 2>&1 | tee "${harness_log}"
 
+          # Capture the harness exit code even when the pipeline fails, so we can surface it
+          # in job summaries and downstream steps.
+          harness_exit="${PIPESTATUS[0]}"
+          set -e
+          echo "exit_code=${harness_exit}" >>"${GITHUB_OUTPUT}"
+          exit "${harness_exit}"
+
       - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -160,5 +169,6 @@ jobs:
             echo "### Win7 virtio host harness"
             echo ""
             echo "- Harness step: ${{ steps.harness.outcome }}"
+            echo "- Harness exit code: ${{ steps.harness.outputs.exit_code || 'unknown' }}"
             echo "- Logs artifact: win7-virtio-harness-logs"
           } >>"$GITHUB_STEP_SUMMARY"
