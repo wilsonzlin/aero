@@ -32,6 +32,13 @@ namespace {
 
 using namespace aerogpu::d3d10_11;
 
+// Compile-time sanity: avoid `sizeof()` assertions since WDKs can add fields, but
+// ensure the core FL10_0 entrypoints we rely on exist.
+static_assert(std::is_member_object_pointer_v<decltype(&D3D11DDI_DEVICEFUNCS::pfnCreateResource)>,
+              "Expected D3D11DDI_DEVICEFUNCS::pfnCreateResource");
+static_assert(std::is_member_object_pointer_v<decltype(&D3D11DDI_DEVICECONTEXTFUNCS::pfnDraw)>,
+              "Expected D3D11DDI_DEVICECONTEXTFUNCS::pfnDraw");
+
 constexpr bool NtSuccess(NTSTATUS st) {
   return st >= 0;
 }
