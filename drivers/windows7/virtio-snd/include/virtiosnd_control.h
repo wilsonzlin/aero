@@ -47,6 +47,10 @@ typedef struct _VIRTIOSND_CONTROL {
     VIRTIOSND_PCM_PARAMS Params;
 } VIRTIOSND_CONTROL, *PVIRTIOSND_CONTROL;
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 VOID VirtioSndCtrlInit(_Out_ VIRTIOSND_CONTROL* Ctrl, _In_ VIRTIOSND_QUEUE* ControlQ);
 
 /*
@@ -81,3 +85,7 @@ _Must_inspect_result_ NTSTATUS VirtioSndCtrlStart(_Inout_ VIRTIOSND_CONTROL* Ctr
 _Must_inspect_result_ NTSTATUS VirtioSndCtrlStop(_Inout_ VIRTIOSND_CONTROL* Ctrl);
 
 _Must_inspect_result_ NTSTATUS VirtioSndCtrlRelease(_Inout_ VIRTIOSND_CONTROL* Ctrl);
+
+#ifdef __cplusplus
+} /* extern "C" */
+#endif

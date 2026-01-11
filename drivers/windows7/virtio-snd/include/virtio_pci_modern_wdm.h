@@ -71,6 +71,10 @@ typedef struct _VIRTIOSND_TRANSPORT {
     KSPIN_LOCK CommonCfgLock;
 } VIRTIOSND_TRANSPORT, *PVIRTIOSND_TRANSPORT;
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 _IRQL_requires_max_(PASSIVE_LEVEL)
 NTSTATUS
 VirtIoSndTransportInit(_Out_ PVIRTIOSND_TRANSPORT Transport,
@@ -148,3 +152,7 @@ VOID
 VirtIoSndTransportNotifyQueue(_In_ const VIRTIOSND_TRANSPORT *Transport,
                               _In_ USHORT QueueIndex,
                               _In_ USHORT QueueNotifyOff);
+
+#ifdef __cplusplus
+} /* extern "C" */
+#endif

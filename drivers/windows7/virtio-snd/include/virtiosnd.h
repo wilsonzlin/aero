@@ -69,6 +69,10 @@ typedef struct _VIRTIOSND_DEVICE_EXTENSION {
 
 #define VIRTIOSND_GET_DX(_DeviceObject) ((PVIRTIOSND_DEVICE_EXTENSION)(_DeviceObject)->DeviceExtension)
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 NTSTATUS
 VirtIoSndStartHardware(
     _Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx,
@@ -78,3 +82,7 @@ VirtIoSndStartHardware(
 
 VOID
 VirtIoSndStopHardware(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx);
+
+#ifdef __cplusplus
+} /* extern "C" */
+#endif

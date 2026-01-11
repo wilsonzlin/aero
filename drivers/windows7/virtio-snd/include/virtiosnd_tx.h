@@ -67,6 +67,10 @@ typedef struct _VIRTIOSND_TX_ENGINE {
     ULONG NextSequence;
 } VIRTIOSND_TX_ENGINE, *PVIRTIOSND_TX_ENGINE;
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 ULONG VirtioSndTxFrameSizeBytes(VOID);
 
 _Must_inspect_result_ NTSTATUS VirtioSndTxInit(
@@ -87,3 +91,7 @@ _Must_inspect_result_ NTSTATUS VirtioSndTxSubmitPeriod(
     _In_ BOOLEAN AllowSilenceFill);
 
 VOID VirtioSndTxProcessCompletions(_Inout_ VIRTIOSND_TX_ENGINE* Tx);
+
+#ifdef __cplusplus
+} /* extern "C" */
+#endif
