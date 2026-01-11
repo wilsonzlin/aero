@@ -8683,14 +8683,15 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
 
     const bool has_sync_object = (dev->wddm_context.hSyncObject != 0);
     const bool kmd_query_available = adapter->kmd_query_available.load(std::memory_order_acquire);
-    AerogpuNtStatus sync_probe = kStatusNotSupported;
-    if (has_sync_object) {
-      sync_probe = static_cast<AerogpuNtStatus>(
-          adapter->kmd_query.WaitForSyncObject(static_cast<uint32_t>(dev->wddm_context.hSyncObject),
-                                               /*fence_value=*/1,
-                                               /*timeout_ms=*/0));
-    }
-    const bool sync_object_wait_available = has_sync_object && (sync_probe != kStatusNotSupported);
+     AerogpuNtStatus sync_probe = kStatusNotSupported;
+     if (has_sync_object) {
+       sync_probe = static_cast<AerogpuNtStatus>(
+           adapter->kmd_query.WaitForSyncObject(static_cast<uint32_t>(dev->wddm_context.hSyncObject),
+                                                /*fence_value=*/1,
+                                                /*timeout_ms=*/0));
+     }
+     const bool sync_object_wait_available =
+         has_sync_object && (sync_probe == kStatusSuccess || sync_probe == kStatusTimeout);
 
     // `wait_for_fence()` uses different mechanisms depending on whether the caller
     // is doing a bounded wait (PresentEx throttling) or a non-blocking poll (EVENT
