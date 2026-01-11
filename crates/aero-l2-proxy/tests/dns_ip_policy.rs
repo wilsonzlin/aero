@@ -209,7 +209,9 @@ async fn run_dns_case(allow_private_ips: bool, expect_addr: Option<[u8; 4]>) {
     let _fallback_allowed = EnvVarGuard::unset("ALLOWED_ORIGINS");
     let _allowed_hosts = EnvVarGuard::unset("AERO_L2_ALLOWED_HOSTS");
     let _trust_proxy_host = EnvVarGuard::unset("AERO_L2_TRUST_PROXY_HOST");
-    let _auth_mode = EnvVarGuard::unset("AERO_L2_AUTH_MODE");
+    // These tests focus on DNS/private-IP filtering. Run in unauthenticated mode so the proxy can
+    // start without auth secrets, and without relying on `AERO_L2_INSECURE_ALLOW_NO_AUTH`.
+    let _auth_mode = EnvVarGuard::set("AERO_L2_AUTH_MODE", "none");
     let _api_key = EnvVarGuard::unset("AERO_L2_API_KEY");
     let _jwt_secret = EnvVarGuard::unset("AERO_L2_JWT_SECRET");
     let _jwt_audience = EnvVarGuard::unset("AERO_L2_JWT_AUDIENCE");
