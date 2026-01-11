@@ -117,6 +117,7 @@ type RangeServerState = {
   etag?: string;
   lastModified?: string;
   ignoreRange?: boolean;
+  wrongContentRange?: boolean;
   mismatchStatus?: 200 | 412;
   getBytes: (start: number, endExclusive: number) => Uint8Array;
 };
@@ -208,7 +209,11 @@ async function startRangeServer(state: RangeServerState): Promise<{
     const body = state.getBytes(start, endExclusive);
 
     res.statusCode = 206;
-    res.setHeader("content-range", `bytes ${start}-${end}/${state.sizeBytes}`);
+    if (state.wrongContentRange) {
+      res.setHeader("content-range", `bytes ${start + 1}-${end}/${state.sizeBytes}`);
+    } else {
+      res.setHeader("content-range", `bytes ${start}-${end}/${state.sizeBytes}`);
+    }
     res.setHeader("content-length", String(body.byteLength));
     res.end(body);
   });
@@ -415,5 +420,48 @@ describe("RemoteRangeDisk", () => {
     expect(again0).toEqual(data.subarray(0, again0.byteLength));
     expect(server.stats.rangeGets).toBeGreaterThanOrEqual(4);
   });
-});
 
+  it("rejects servers that ignore Range requests", async () => {
+    const chunkSize = 1024 * 1024;
+    const data = makeTestData(2 * chunkSize);
+    const server = await startRangeServer({
+      sizeBytes: data.byteLength,
+      ignoreRange: true,
+      // Do not expose ETag/Last-Modified so the client cannot treat 200 as an If-Range mismatch.
+      getBytes: (s, e) => data.slice(s, e),
+    });
+    activeServers.push(server.close);
+
+    const disk = await RemoteRangeDisk.open(server.url, {
+      imageKey: "no-range",
+      chunkSize,
+      metadataStore: new MemoryMetadataStore(),
+      sparseCacheFactory: new MemorySparseCacheFactory(),
+      readAheadChunks: 0,
+    });
+
+    await expect(disk.readSectors(0, new Uint8Array(4096))).rejects.toThrow(/ignored Range/i);
+  });
+
+  it("rejects 206 responses with mismatched Content-Range", async () => {
+    const chunkSize = 1024 * 1024;
+    const data = makeTestData(2 * chunkSize);
+    const server = await startRangeServer({
+      sizeBytes: data.byteLength,
+      wrongContentRange: true,
+      etag: "\"v1\"",
+      getBytes: (s, e) => data.slice(s, e),
+    });
+    activeServers.push(server.close);
+
+    const disk = await RemoteRangeDisk.open(server.url, {
+      imageKey: "bad-content-range",
+      chunkSize,
+      metadataStore: new MemoryMetadataStore(),
+      sparseCacheFactory: new MemorySparseCacheFactory(),
+      readAheadChunks: 0,
+    });
+
+    await expect(disk.readSectors(0, new Uint8Array(4096))).rejects.toThrow(/Content-Range mismatch/i);
+  });
+});

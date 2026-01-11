@@ -106,6 +106,14 @@ class RemoteValidatorMismatchError extends Error {
   }
 }
 
+async function cancelBody(resp: Response): Promise<void> {
+  try {
+    await resp.body?.cancel();
+  } catch {
+    // ignore best-effort cancellation failures
+  }
+}
+
 class Semaphore {
   private inUse = 0;
   private readonly waiters: Array<() => void> = [];
@@ -274,14 +282,17 @@ async function probeRemoteImage(url: string, fetchFn: typeof fetch): Promise<Rem
   if (sizeBytes === null) {
     const probe = await fetchFn(url, { method: "GET", headers: { Range: "bytes=0-0" } });
     if (probe.status === 200) {
+      await cancelBody(probe);
       throw new Error("remote server ignored Range probe (expected 206 Partial Content, got 200 OK)");
     }
     if (probe.status !== 206) {
+      await cancelBody(probe);
       throw new HttpStatusError(`unexpected range probe status ${probe.status}`, probe.status);
     }
 
     const contentRange = probe.headers.get("content-range");
     if (!contentRange) {
+      await cancelBody(probe);
       throw new Error(
         "Range probe returned 206 Partial Content, but Content-Range is not visible. " +
           "If this is cross-origin, the server must set Access-Control-Expose-Headers: Content-Range, Content-Length.",
@@ -289,6 +300,7 @@ async function probeRemoteImage(url: string, fetchFn: typeof fetch): Promise<Rem
     }
     const parsed = parseContentRangeHeader(contentRange);
     if (parsed.start !== 0 || parsed.endInclusive !== 0) {
+      await cancelBody(probe);
       throw new Error(`Range probe returned unexpected Content-Range: ${contentRange}`);
     }
     sizeBytes = parsed.total;
@@ -406,6 +418,9 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     cacheHitChunks: 0,
     cacheMissChunks: 0,
   };
+
+  private flushTimer: ReturnType<typeof setTimeout> | null = null;
+  private flushPending = false;
 
   private constructor(
     private readonly url: string,
@@ -608,6 +623,11 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     if (this.invalidationPromise) {
       await this.invalidationPromise;
     }
+    if (this.flushTimer !== null) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+    }
+    this.flushPending = false;
     await this.cache.flush();
     await this.cache.close?.();
     this.cache = null;
@@ -688,6 +708,7 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
         }
 
         await cache.writeBlock(chunkIndex, bytes);
+        this.scheduleBackgroundFlush();
         return;
       } catch (err) {
         if (err instanceof RemoteValidatorMismatchError && invalidations < 1) {
@@ -738,31 +759,33 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     };
     if (this.remoteEtag) {
       headers["If-Range"] = this.remoteEtag;
+    } else if (this.remoteLastModified) {
+      // If-Range also accepts an HTTP-date; `Last-Modified` is already formatted as one.
+      headers["If-Range"] = this.remoteLastModified;
     }
+    const hasIfRange = "If-Range" in headers;
 
     this.telemetry.rangeRequests += 1;
     const resp = await this.opts.fetchFn(this.url, { method: "GET", headers });
 
     if (resp.status === 200 || resp.status === 412) {
+      // Don't read the body — it could be a multi-GB full response.
+      await cancelBody(resp);
       // If-Range mismatch (or a server that ignores Range entirely).
-      if (this.remoteEtag) {
-        // Don't read the body — it could be a multi-GB full response.
-        try {
-          await resp.body?.cancel();
-        } catch {
-          // ignore best-effort cancellation failures
-        }
+      if (hasIfRange) {
         throw new RemoteValidatorMismatchError(resp.status);
       }
       throw new Error(`remote server ignored Range request (expected 206, got ${resp.status})`);
     }
 
     if (resp.status !== 206) {
+      await cancelBody(resp);
       throw new HttpStatusError(`unexpected range response status ${resp.status}`, resp.status);
     }
 
     const contentRange = resp.headers.get("content-range");
     if (!contentRange) {
+      await cancelBody(resp);
       throw new Error(
         "Range request returned 206 Partial Content, but Content-Range is not visible. " +
           "If this is cross-origin, the server must set Access-Control-Expose-Headers: Content-Range, Content-Length.",
@@ -771,10 +794,12 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
 
     const parsed = parseContentRangeHeader(contentRange);
     if (parsed.start !== start || parsed.endInclusive !== endInclusive) {
+      await cancelBody(resp);
       throw new Error(`Content-Range mismatch: expected bytes ${start}-${endInclusive}, got ${contentRange}`);
     }
     if (parsed.total !== this.capacityBytesValue) {
       // Image size changed without us noticing; treat like an invalidation event.
+      await cancelBody(resp);
       throw new RemoteValidatorMismatchError(206);
     }
 
@@ -805,12 +830,43 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     return padded;
   }
 
+  private scheduleBackgroundFlush(): void {
+    if (this.flushPending) return;
+    this.flushPending = true;
+
+    // Defer flushing until after the critical read completes. `OpfsAeroSparseDisk.flush()`
+    // is synchronous under the hood, so even an un-awaited call would still block the
+    // current microtask queue. Use a macrotask to keep the caller latency low.
+    this.flushTimer = setTimeout(() => {
+      this.flushTimer = null;
+      const cache = this.cache;
+      if (!cache) {
+        this.flushPending = false;
+        return;
+      }
+      void cache
+        .flush()
+        .catch(() => {
+          // best-effort cache durability
+        })
+        .finally(() => {
+          this.flushPending = false;
+        });
+    }, 0);
+  }
+
   private async invalidateAndReopenCache(): Promise<void> {
     if (this.invalidationPromise) return await this.invalidationPromise;
 
     this.invalidationPromise = (async () => {
       this.cacheGeneration += 1;
       this.inflightChunks.clear();
+
+      if (this.flushTimer !== null) {
+        clearTimeout(this.flushTimer);
+        this.flushTimer = null;
+      }
+      this.flushPending = false;
 
       await this.metadataStore.delete(this.cacheId);
 
