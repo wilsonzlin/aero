@@ -85,7 +85,7 @@ CI validates the deployment artifacts under:
 
 - `infra/` (Terraform formatting + validation)
 - `deploy/k8s/` (Helm lint + template rendering + Kubernetes schema validation)
-- top-level deployment manifests (basic hygiene labelling; see `scripts/ci/check-deploy-manifests.mjs`)
+- Compose deployment manifests (labels + `docker compose config` validation; see `scripts/ci/check-deploy-manifests.mjs`)
 
 Reproduce locally:
 
@@ -95,7 +95,7 @@ Reproduce locally:
 # Or, if you have `just` installed:
 #   just check-iac
 
-# Deploy manifest labelling/hygiene (requires docker compose)
+# Deploy manifest labelling/hygiene (requires docker compose; fails on compose warnings)
 node scripts/ci/check-deploy-manifests.mjs
 
 # Terraform (requires `terraform`; CI also runs `tflint`)
