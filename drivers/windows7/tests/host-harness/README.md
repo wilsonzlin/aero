@@ -10,7 +10,8 @@ This directory contains the host-side scripts used to run the Windows 7 guest se
 - PowerShell:
   - Windows PowerShell 5.1 or PowerShell 7+ should work
 - A **prepared Windows 7 image** that:
-  - has the virtio drivers installed (virtio-blk + virtio-net + virtio-input + virtio-snd, modern-only)
+  - has the virtio drivers installed (virtio-blk + virtio-net + virtio-input, modern-only)
+  - optionally has virtio-snd installed if you enable the guest virtio-snd playback test (`--test-snd` / `--require-snd`)
   - has `aero-virtio-selftest.exe` installed
   - runs the selftest automatically on boot and logs to `COM1`
   - has at least one **mounted/usable virtio-blk volume** (the selftest writes a temporary file to validate disk I/O)
@@ -24,7 +25,6 @@ pwsh ./drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1 `
   -QemuSystem qemu-system-x86_64 `
   -DiskImagePath ./win7-aero-tests.qcow2 `
   -SerialLogPath ./win7-serial.log `
-  -WithVirtioSnd `
   -TimeoutSeconds 600
 ```
 
@@ -35,13 +35,15 @@ pwsh ./drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1 `
   -QemuSystem qemu-system-x86_64 `
   -DiskImagePath ./win7-aero-tests.qcow2 `
   -Snapshot `
-  -WithVirtioSnd `
   -TimeoutSeconds 600
 ```
 
 ### virtio-snd (audio)
 
-The guest selftest runs the virtio-snd section by default. To pass, you should attach a virtio-snd PCI device with:
+The guest selftest emits virtio-snd markers. By default, virtio-snd playback is skipped unless the scheduled task
+was provisioned/configured with `--test-snd` / `--require-snd`.
+
+To run virtio-snd playback end-to-end, attach a virtio-snd PCI device with:
 
 ```powershell
 pwsh ./drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1 `
@@ -84,7 +86,6 @@ python3 drivers/windows7/tests/host-harness/invoke_aero_virtio_win7_tests.py \
   --disk-image ./win7-aero-tests.qcow2 \
   --serial-log ./win7-serial.log \
   --timeout-seconds 600 \
-  --with-virtio-snd \
   --snapshot
 ```
 

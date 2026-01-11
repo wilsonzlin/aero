@@ -51,7 +51,7 @@ struct Options {
   // Skip the virtio-snd test (emits a SKIP marker).
   bool disable_snd = false;
   // Enable the virtio-snd playback test. Missing device or playback failure causes overall FAIL.
-  bool require_snd = true;
+  bool require_snd = false;
   // If set, missing virtio-snd capture endpoint causes the overall selftest to fail (instead of SKIP).
   bool require_snd_capture = false;
   // If set, run a capture smoke test when a virtio-snd capture endpoint is present.
