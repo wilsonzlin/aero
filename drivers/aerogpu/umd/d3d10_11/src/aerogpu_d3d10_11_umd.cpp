@@ -5938,7 +5938,12 @@ void AEROGPU_APIENTRY Map(D3D10DDI_HDEVICE hDevice, const AEROGPU_D3D11DDIARG_MA
   // implementation flushes any pending work so the read observes completed GPU
   // writes once Copy/resolve paths are added.
   if (wants_read) {
-    const uint64_t fence = submit_locked(dev);
+    HRESULT submit_hr = S_OK;
+    const uint64_t fence = submit_locked(dev, &submit_hr);
+    if (FAILED(submit_hr)) {
+      dev->last_error = submit_hr;
+      return;
+    }
     if (fence != 0 && dev->adapter) {
       const bool do_not_wait = (pMap->MapFlags & AEROGPU_D3D11_MAP_FLAG_DO_NOT_WAIT) != 0;
       std::unique_lock<std::mutex> fence_lock(dev->adapter->fence_mutex);
