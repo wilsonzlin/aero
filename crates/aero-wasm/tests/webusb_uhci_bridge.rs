@@ -134,4 +134,3 @@ fn bridge_emits_host_actions_from_guest_frame_list() {
     );
     assert!(matches!(actions[0], UsbHostAction::ControlIn { .. }));
 }
-

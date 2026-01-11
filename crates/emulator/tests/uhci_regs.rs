@@ -655,7 +655,11 @@ fn uhci_portsc_suspend_resume_bits_clear_on_detach() {
     let mut uhci = UhciPciDevice::new(UhciController::new(), 0);
     uhci.controller.hub_mut().attach(0, Box::new(DummyDevice));
 
-    uhci.port_write(REG_PORTSC1, 2, (PORTSC_PED | PORTSC_SUSP | PORTSC_RESUME) as u32);
+    uhci.port_write(
+        REG_PORTSC1,
+        2,
+        (PORTSC_PED | PORTSC_SUSP | PORTSC_RESUME) as u32,
+    );
     assert_ne!(
         uhci.port_read(REG_PORTSC1, 2) as u16 & (PORTSC_SUSP | PORTSC_RESUME),
         0

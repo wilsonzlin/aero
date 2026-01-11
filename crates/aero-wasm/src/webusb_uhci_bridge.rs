@@ -130,8 +130,7 @@ impl WebUsbUhciBridge {
             return;
         };
         let port = self.controller.io_base().wrapping_add(offset);
-        self.controller
-            .port_write(port, size, value, &mut self.irq);
+        self.controller.port_write(port, size, value, &mut self.irq);
     }
 
     pub fn step_frames(&mut self, frames: u32) {
@@ -150,16 +149,13 @@ impl WebUsbUhciBridge {
     }
 
     pub fn set_connected(&mut self, connected: bool) {
-        let was_connected = self
-            .controller
-            .bus()
-            .port(0)
-            .is_some_and(|p| p.connected);
+        let was_connected = self.controller.bus().port(0).is_some_and(|p| p.connected);
 
         match (was_connected, connected) {
             (true, true) | (false, false) => {}
             (false, true) => {
-                self.controller.connect_device(0, Box::new(UsbWebUsbPassthroughDevice::new()));
+                self.controller
+                    .connect_device(0, Box::new(UsbWebUsbPassthroughDevice::new()));
             }
             (true, false) => {
                 self.controller.disconnect_device(0);

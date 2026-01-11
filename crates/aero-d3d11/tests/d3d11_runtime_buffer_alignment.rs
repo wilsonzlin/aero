@@ -21,11 +21,12 @@ fn d3d11_runtime_rejects_unaligned_copy_buffer_to_buffer() {
         writer.copy_buffer_to_buffer(SRC, 0, DST, 0, 2);
         let words = writer.finish();
 
-        let err = rt.execute(&words).expect_err("unaligned copy should be rejected");
+        let err = rt
+            .execute(&words)
+            .expect_err("unaligned copy should be rejected");
         assert!(
             err.to_string().contains("CopyBufferToBuffer"),
             "unexpected error: {err:#}"
         );
     });
 }
-
