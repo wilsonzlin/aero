@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -41,6 +43,24 @@ pub struct HidReportItem {
     pub report_count: u32,
     pub usage_page: u32,
     pub usages: Vec<u32>,
+}
+
+impl HidReportItem {
+    pub fn bit_len(&self) -> u32 {
+        self.report_size.saturating_mul(self.report_count)
+    }
+}
+
+/// A WebHID report kind.
+///
+/// WebHID exposes `inputReports`, `outputReports`, and `featureReports` per collection. The same
+/// report ID can appear in multiple collections (descriptor blocks), each contributing fields to a
+/// single on-the-wire report.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum HidReportKind {
+    Input,
+    Output,
+    Feature,
 }
 
 #[derive(Debug, Error)]
@@ -588,6 +608,197 @@ pub fn synthesize_report_descriptor(
     Ok(out)
 }
 
+enum Frame<'a> {
+    Collections {
+        collections: &'a [HidCollectionInfo],
+        next_idx: usize,
+    },
+    Collection {
+        collection: &'a HidCollectionInfo,
+        stage: u8,
+        report_idx: usize,
+        item_idx: usize,
+    },
+}
+
+/// Iterates over report items in the same deterministic order used by
+/// [`synthesize_report_descriptor`].
+///
+/// Order:
+/// - collection pre-order (visit parent before children)
+/// - within a collection: input reports/items, output reports/items, feature reports/items, then
+///   children.
+pub fn iter_reports_in_synth_order<'a>(
+    collections: &'a [HidCollectionInfo],
+) -> impl Iterator<Item = (HidReportKind, u32, &'a HidReportItem)> + 'a {
+    ReportsInSynthOrder::new(collections)
+}
+
+struct ReportsInSynthOrder<'a> {
+    stack: Vec<Frame<'a>>,
+}
+
+impl<'a> ReportsInSynthOrder<'a> {
+    fn new(collections: &'a [HidCollectionInfo]) -> Self {
+        Self {
+            stack: vec![Frame::Collections {
+                collections,
+                next_idx: 0,
+            }],
+        }
+    }
+}
+
+impl<'a> Iterator for ReportsInSynthOrder<'a> {
+    type Item = (HidReportKind, u32, &'a HidReportItem);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            let frame = self.stack.pop()?;
+            match frame {
+                Frame::Collections {
+                    collections,
+                    mut next_idx,
+                } => {
+                    if next_idx >= collections.len() {
+                        continue;
+                    }
+
+                    let collection = &collections[next_idx];
+                    next_idx += 1;
+
+                    // Ensure siblings are visited after this collection (pre-order).
+                    self.stack.push(Frame::Collections {
+                        collections,
+                        next_idx,
+                    });
+                    self.stack.push(Frame::Collection {
+                        collection,
+                        stage: 0,
+                        report_idx: 0,
+                        item_idx: 0,
+                    });
+                }
+                Frame::Collection {
+                    collection,
+                    mut stage,
+                    mut report_idx,
+                    mut item_idx,
+                } => {
+                    loop {
+                        let (kind, reports): (Option<HidReportKind>, &[HidReportInfo]) =
+                            match stage {
+                                0 => (
+                                    Some(HidReportKind::Input),
+                                    collection.input_reports.as_slice(),
+                                ),
+                                1 => (
+                                    Some(HidReportKind::Output),
+                                    collection.output_reports.as_slice(),
+                                ),
+                                2 => (
+                                    Some(HidReportKind::Feature),
+                                    collection.feature_reports.as_slice(),
+                                ),
+                                _ => (None, &[]),
+                            };
+
+                        if let Some(kind) = kind {
+                            if let Some(report) = reports.get(report_idx) {
+                                if let Some(item) = report.items.get(item_idx) {
+                                    item_idx += 1;
+                                    self.stack.push(Frame::Collection {
+                                        collection,
+                                        stage,
+                                        report_idx,
+                                        item_idx,
+                                    });
+                                    return Some((kind, report.report_id, item));
+                                }
+
+                                report_idx += 1;
+                                item_idx = 0;
+                                continue;
+                            }
+                        }
+
+                        stage += 1;
+                        report_idx = 0;
+                        item_idx = 0;
+
+                        if stage >= 3 {
+                            self.stack.push(Frame::Collections {
+                                collections: &collection.children,
+                                next_idx: 0,
+                            });
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Aggregates report items by `(kind, report_id)` across the entire collection tree.
+///
+/// WebHID report IDs are scoped to the full descriptor, not to individual collections. A report ID
+/// may appear in multiple collections, each contributing fields to a single on-the-wire report.
+pub fn aggregate_reports(
+    collections: &[HidCollectionInfo],
+) -> BTreeMap<(HidReportKind, u32), Vec<HidReportItem>> {
+    let mut out: BTreeMap<(HidReportKind, u32), Vec<HidReportItem>> = BTreeMap::new();
+    for (kind, report_id, item) in iter_reports_in_synth_order(collections) {
+        out.entry((kind, report_id)).or_default().push(item.clone());
+    }
+    out
+}
+
+fn report_bits(items: &[HidReportItem]) -> u32 {
+    items.iter().map(HidReportItem::bit_len).sum()
+}
+
+/// Returns the total number of bits for a given `(kind, report_id)` across the whole descriptor.
+pub fn report_bits_for_id(collections: &[HidCollectionInfo], kind: HidReportKind, report_id: u32) -> u32 {
+    let aggregated = aggregate_reports(collections);
+    aggregated
+        .get(&(kind, report_id))
+        .map(|items| report_bits(items))
+        .unwrap_or(0)
+}
+
+/// Returns the report payload length in bytes (excluding the report ID prefix byte).
+pub fn report_bytes_for_id(
+    collections: &[HidCollectionInfo],
+    kind: HidReportKind,
+    report_id: u32,
+) -> usize {
+    let bits = report_bits_for_id(collections, kind, report_id);
+    usize::try_from((bits + 7) / 8).unwrap_or(usize::MAX)
+}
+
+fn max_report_bytes(collections: &[HidCollectionInfo], kind: HidReportKind) -> usize {
+    let aggregated = aggregate_reports(collections);
+    aggregated
+        .iter()
+        .filter(|((k, _), _)| *k == kind)
+        .map(|(_, items)| usize::try_from((report_bits(items) + 7) / 8).unwrap_or(usize::MAX))
+        .max()
+        .unwrap_or(0)
+}
+
+pub fn max_input_report_bytes(collections: &[HidCollectionInfo]) -> usize {
+    max_report_bytes(collections, HidReportKind::Input)
+}
+
+pub fn max_output_report_bytes(collections: &[HidCollectionInfo]) -> usize {
+    max_report_bytes(collections, HidReportKind::Output)
+}
+
+pub fn max_feature_report_bytes(collections: &[HidCollectionInfo]) -> usize {
+    max_report_bytes(collections, HidReportKind::Feature)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -782,5 +993,111 @@ mod tests {
 
         let reparsed = parse_report_descriptor(&desc).unwrap();
         assert_eq!(collections, reparsed);
+    }
+
+    fn simple_item(report_size: u32, report_count: u32) -> HidReportItem {
+        HidReportItem {
+            is_array: false,
+            is_absolute: true,
+            is_buffered_bytes: false,
+            is_constant: false,
+            is_range: false,
+            logical_minimum: 0,
+            logical_maximum: 0,
+            physical_minimum: 0,
+            physical_maximum: 0,
+            unit_exponent: 0,
+            unit: 0,
+            report_size,
+            report_count,
+            usage_page: 0,
+            usages: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn iter_reports_in_synth_order_matches_collection_preorder() {
+        let collections = vec![HidCollectionInfo {
+            usage_page: 0,
+            usage: 0,
+            collection_type: 0,
+            input_reports: vec![HidReportInfo {
+                report_id: 1,
+                items: vec![simple_item(8, 1)],
+            }],
+            output_reports: vec![HidReportInfo {
+                report_id: 2,
+                items: vec![simple_item(16, 1)],
+            }],
+            feature_reports: vec![HidReportInfo {
+                report_id: 3,
+                items: vec![simple_item(32, 1)],
+            }],
+            children: vec![HidCollectionInfo {
+                usage_page: 0,
+                usage: 0,
+                collection_type: 0,
+                input_reports: vec![HidReportInfo {
+                    report_id: 1,
+                    items: vec![simple_item(8, 2)],
+                }],
+                output_reports: Vec::new(),
+                feature_reports: Vec::new(),
+                children: Vec::new(),
+            }],
+        }];
+
+        let got: Vec<(HidReportKind, u32, u32)> = iter_reports_in_synth_order(&collections)
+            .map(|(kind, report_id, item)| (kind, report_id, item.bit_len()))
+            .collect();
+
+        assert_eq!(
+            got,
+            vec![
+                (HidReportKind::Input, 1, 8),
+                (HidReportKind::Output, 2, 16),
+                (HidReportKind::Feature, 3, 32),
+                (HidReportKind::Input, 1, 16),
+            ]
+        );
+    }
+
+    #[test]
+    fn aggregates_items_across_collections_with_same_report_id() {
+        let collections = vec![HidCollectionInfo {
+            usage_page: 0,
+            usage: 0,
+            collection_type: 0,
+            input_reports: vec![HidReportInfo {
+                report_id: 1,
+                items: vec![simple_item(8, 1)],
+            }],
+            output_reports: Vec::new(),
+            feature_reports: Vec::new(),
+            children: vec![HidCollectionInfo {
+                usage_page: 0,
+                usage: 0,
+                collection_type: 0,
+                input_reports: vec![HidReportInfo {
+                    report_id: 1,
+                    items: vec![simple_item(16, 1)],
+                }],
+                output_reports: Vec::new(),
+                feature_reports: Vec::new(),
+                children: Vec::new(),
+            }],
+        }];
+
+        let aggregated = aggregate_reports(&collections);
+        let items = aggregated
+            .get(&(HidReportKind::Input, 1))
+            .expect("missing aggregated report");
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].bit_len(), 8);
+        assert_eq!(items[1].bit_len(), 16);
+
+        assert_eq!(report_bits_for_id(&collections, HidReportKind::Input, 1), 24);
+        assert_eq!(report_bytes_for_id(&collections, HidReportKind::Input, 1), 3);
+        assert_eq!(max_input_report_bytes(&collections), 3);
     }
 }
