@@ -1230,11 +1230,12 @@ impl HdaController {
             let new = mmio_write_sub_u32(current, offset - REG_CORBWP, size, value);
             let new_wp = (new & 0xffff) as u16;
             let new_rp = (new >> 16) as u16;
-            self.corbwp = new_wp & 0x00ff;
+            let mask = self.corb_ptr_mask();
+            self.corbwp = (new_wp & 0x00ff) & mask;
             if (new_rp & 0x8000) != 0 {
                 self.corbrp = 0;
             } else {
-                self.corbrp = new_rp & 0x00ff;
+                self.corbrp = (new_rp & 0x00ff) & mask;
             }
             return;
         }
@@ -1252,6 +1253,9 @@ impl HdaController {
                     _ => {}
                 }
             }
+            let mask = self.corb_ptr_mask();
+            self.corbwp &= mask;
+            self.corbrp &= mask;
             return;
         }
 
@@ -1272,7 +1276,7 @@ impl HdaController {
             if (new_wp & 0x8000) != 0 {
                 self.rirbwp = 0;
             } else {
-                self.rirbwp = new_wp & 0x00ff;
+                self.rirbwp = (new_wp & 0x00ff) & self.rirb_ptr_mask();
             }
             self.rintcnt = new_cnt;
             return;
@@ -1291,6 +1295,7 @@ impl HdaController {
                     _ => {}
                 }
             }
+            self.rirbwp &= self.rirb_ptr_mask();
             return;
         }
 
@@ -1475,12 +1480,20 @@ impl HdaController {
         }
     }
 
+    fn corb_ptr_mask(&self) -> u16 {
+        self.corb_entries().saturating_sub(1)
+    }
+
     fn rirb_entries(&self) -> u16 {
         match self.rirbsize & 0x3 {
             0 => 2,
             1 => 16,
             _ => 256,
         }
+    }
+
+    fn rirb_ptr_mask(&self) -> u16 {
+        self.rirb_entries().saturating_sub(1)
     }
 
     fn corb_base(&self) -> u64 {
