@@ -157,6 +157,7 @@ To make ABI drift obvious *before* you debug a Win7 loader crash, the repo inclu
 - For ABI verification against the real Win7 D3D9 UMD headers (struct sizes/offsets + x86 stdcall export decoration), see `tools/wdk_abi_probe/`.
 - Logging is done via `OutputDebugStringA` (view with DebugView/WinDbg) and is intentionally lightweight.
   - Set `AEROGPU_D3D9_LOG_SUBMITS=1` before loading the UMD to enable per-submission fence logs (useful for `drivers/aerogpu/tests/win7/d3d9ex_submit_fence_stress` and debugging submit ordering).
+  - Set `AEROGPU_LOG_MIC=1` before loading the UMD to trace whether the cross-process counter file mappings (e.g. `Local\\AeroGPU.GlobalHandleCounter`, `Local\\AeroGPU.D3D9.ShareToken.<luid>`) were created/opened with a Low Integrity label (or fell back to the legacy NULL-DACL path).
 
 ## Install / Register (INF)
 

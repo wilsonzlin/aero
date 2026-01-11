@@ -262,6 +262,8 @@ Enable it by setting these environment variables **before launching the app**:
 set AEROGPU_D3D10_11_LOG=1
 rem Optional: also append to a file
 set AEROGPU_D3D10_11_LOG_FILE=C:\aerogpu_d3d10_11_umd.log
+rem Optional: trace MIC/Low-IL labeling of shared counter mappings (GlobalHandleCounter)
+set AEROGPU_LOG_MIC=1
 ```
 
 Collect the output using one of:
