@@ -2128,6 +2128,63 @@ fn upload_resource_updates_host_owned_resources() {
 }
 
 #[test]
+fn alloc_table_descriptor_requires_gpa_and_size_bytes_to_match() {
+    pollster::block_on(async {
+        let (device, queue) = match create_device_queue().await {
+            Some(v) => v,
+            None => {
+                common::skip_or_panic(module_path!(), "no wgpu adapter available");
+                return;
+            }
+        };
+
+        let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
+        let guest = VecGuestMemory::new(0x10_000);
+
+        // Minimal valid command stream (header only).
+        let stream = build_stream(|_out| {});
+        let cmd_gpa = 0x1000u64;
+        guest.write(cmd_gpa, &stream).expect("write command stream");
+
+        // alloc_table_gpa set but size=0 must be rejected.
+        let report = exec.process_submission_from_guest_memory(
+            &guest,
+            cmd_gpa,
+            stream.len() as u32,
+            0x2000,
+            0,
+        );
+        assert!(
+            !report.is_ok(),
+            "expected error for inconsistent alloc_table_gpa/size, got ok"
+        );
+        assert!(
+            matches!(report.events.first(), Some(ExecutorEvent::Error { message, .. }) if message.contains("alloc table")),
+            "expected alloc table error, got: {:#?}",
+            report.events
+        );
+
+        // alloc_table_size_bytes set but gpa=0 must also be rejected.
+        let report = exec.process_submission_from_guest_memory(
+            &guest,
+            cmd_gpa,
+            stream.len() as u32,
+            0,
+            24,
+        );
+        assert!(
+            !report.is_ok(),
+            "expected error for inconsistent alloc_table_gpa/size, got ok"
+        );
+        assert!(
+            matches!(report.events.first(), Some(ExecutorEvent::Error { message, .. }) if message.contains("alloc table")),
+            "expected alloc table error, got: {:#?}",
+            report.events
+        );
+    });
+}
+
+#[test]
 fn resource_dirty_range_texture_row_pitch_is_respected() {
     pollster::block_on(async {
         let (device, queue) = match create_device_queue().await {

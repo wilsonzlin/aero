@@ -534,7 +534,9 @@ fn fs_main() -> @location(0) vec4<f32> {
             };
         }
 
-        let alloc_table = if alloc_table_gpa != 0 && alloc_table_size_bytes != 0 {
+        let alloc_table = if alloc_table_gpa == 0 && alloc_table_size_bytes == 0 {
+            None
+        } else {
             match AllocTable::decode_from_guest_memory(
                 guest_memory,
                 alloc_table_gpa,
@@ -551,8 +553,6 @@ fn fs_main() -> @location(0) vec4<f32> {
                     };
                 }
             }
-        } else {
-            None
         };
 
         match alloc_table.as_ref() {
