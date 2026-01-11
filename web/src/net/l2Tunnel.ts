@@ -454,6 +454,9 @@ abstract class BaseL2TunnelClient implements L2TunnelClient {
       this.drainRetryTimer = null;
       this.scheduleFlush();
     }, DEFAULT_DRAIN_RETRY_MS);
+    // In Node-based test runners (Vitest), referenced timers can keep the process alive after a
+    // test finishes. Browsers return a numeric handle, so use a safe cast.
+    (this.drainRetryTimer as unknown as { unref?: () => void }).unref?.();
   }
 
   private clearDrainRetryTimer(): void {
@@ -487,6 +490,7 @@ abstract class BaseL2TunnelClient implements L2TunnelClient {
       this.keepaliveTimer = null;
       this.sendPing();
     }, delay);
+    (this.keepaliveTimer as unknown as { unref?: () => void }).unref?.();
   }
 
   private sendPing(): void {
