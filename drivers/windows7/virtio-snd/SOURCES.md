@@ -87,9 +87,9 @@ the build pulls these sources directly).
 
 Contract v1 (virtio-pci modern) references:
 
-- Shared virtio-pci modern WDM transport (PCI capability parsing + BAR mapping + queues):
-  - `drivers/windows7/virtio/common/src/virtio_pci_modern_wdm.c`
-    (plus `drivers/windows7/virtio/common/include/virtio_pci_modern_wdm.h`)
+- Canonical virtio-pci modern transport (PCI vendor capability parsing + BAR0 MMIO):
+  - `drivers/windows/virtio/pci-modern/virtio_pci_modern_transport.c`
+    (plus `drivers/windows/virtio/pci-modern/virtio_pci_modern_transport.h`)
 - Aero contract identity validation (`AERO-W7-VIRTIO` v1 / PCI revision gating):
   - `drivers/windows7/virtio/common/src/virtio_pci_contract.c`
     (plus `drivers/windows7/virtio/common/include/virtio_pci_contract.h`)
@@ -97,15 +97,10 @@ Contract v1 (virtio-pci modern) references:
   - `drivers/windows7/virtio/common/src/virtqueue_split.c` (plus `drivers/windows7/virtio/common/include/virtqueue_split.h`)
 - Virtio PCI capability parsing:
   - `drivers/win7/virtio/virtio-core/portable/virtio_pci_cap_parser.c` (plus `virtio_pci_cap_parser.h`)
-- Aero fixed BAR0 layout validation (optional strict mode):
-  - `drivers/win7/virtio/virtio-core/portable/virtio_pci_aero_layout.c` (plus `virtio_pci_aero_layout.h`)
-- Aero contract identity parsing:
-  - `drivers/win7/virtio/virtio-core/portable/virtio_pci_identity.c` (plus `virtio_pci_identity.h`)
 - INTx ISR/DPC helper:
   - `drivers/windows7/virtio/common/src/virtio_pci_intx_wdm.c` (plus `drivers/windows7/virtio/common/include/virtio_pci_intx_wdm.h`)
 - Spec constants/layouts (headers):
   - `drivers/win7/virtio/virtio-core/include/virtio_spec.h`
-  - `drivers/win7/virtio/virtio-core/include/virtio_pci_modern.h`
 - Shared SG entry definition used by `virtiosnd_sg_*` helpers:
   - `drivers/windows7/virtio/common/include/virtqueue_split.h` (`virtio_sg_entry_t`)
 

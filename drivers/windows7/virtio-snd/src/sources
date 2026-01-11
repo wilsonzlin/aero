@@ -32,6 +32,7 @@ SOURCES= \
     wavert.c \
     pci_interface.c \
     ..\..\virtio\common\src\virtio_pci_intx_wdm.c \
+    ..\..\virtio\common\src\virtio_pci_contract.c \
     virtio_snd_proto.c \
     virtiosnd_control.c \
     virtiosnd_control_proto.c \

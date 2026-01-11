@@ -148,8 +148,8 @@ Virtio transport + protocol engines (AERO-W7-VIRTIO v1 modern transport):
 * `src/backend_null.c` — silent backend implementation (fallback / debugging)
 * `src/virtiosnd_hw.c` — virtio-snd WDM bring-up + queue ownership
   - `VirtIoSndStartHardware` / `VirtIoSndStopHardware` handle BAR0 MMIO discovery/mapping, PCI vendor capability parsing, feature negotiation, queue setup, INTx wiring, and reset/teardown
-* Shared virtio-pci modern transport:
-  - `drivers/windows7/virtio/common/src/virtio_pci_modern_wdm.c`
+* Canonical virtio-pci modern transport:
+  - `drivers/windows/virtio/pci-modern/virtio_pci_modern_transport.c`
 * INTx integration:
   - `drivers/windows7/virtio/common/src/virtio_pci_intx_wdm.c`
   - `src/virtiosnd_intx.c`
@@ -159,8 +159,6 @@ Virtio transport + protocol engines (AERO-W7-VIRTIO v1 modern transport):
 * Shared virtqueue / PCI support code:
   - `drivers/windows7/virtio/common/src/virtqueue_split.c`
   - `drivers/win7/virtio/virtio-core/portable/virtio_pci_cap_parser.c`
-  - `drivers/win7/virtio/virtio-core/portable/virtio_pci_identity.c`
-  - `drivers/win7/virtio/virtio-core/portable/virtio_pci_aero_layout.c`
 
 Scatter/gather helpers (WaveRT cyclic buffer → virtio descriptors):
 

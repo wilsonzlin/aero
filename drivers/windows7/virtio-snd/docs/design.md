@@ -38,7 +38,7 @@ feature flags and is not suitable for contract v1 devices (`VIRTIO_F_VERSION_1` 
 - WaveRT backend interface: `include/backend.h`
 - Virtio backend implementation: `src/backend_virtio.c`
 - Virtio-pci modern bring-up + split virtqueues + protocol engines:
-  - `drivers/windows7/virtio/common/src/virtio_pci_modern_wdm.c`
+  - `drivers/windows/virtio/pci-modern/virtio_pci_modern_transport.c`
   - `drivers/windows7/virtio/common/src/virtio_pci_intx_wdm.c`
   - `src/virtiosnd_hw.c` (`VirtIoSndStartHardware`/`VirtIoSndStopHardware`)
   - `src/virtiosnd_queue_split.c`
@@ -47,8 +47,6 @@ feature flags and is not suitable for contract v1 devices (`VIRTIO_F_VERSION_1` 
 - Shared virtio support code linked in from:
   - `drivers/windows7/virtio/common/src/virtqueue_split.c`
   - `drivers/win7/virtio/virtio-core/portable/virtio_pci_cap_parser.c`
-  - `drivers/win7/virtio/virtio-core/portable/virtio_pci_identity.c`
-  - `drivers/win7/virtio/virtio-core/portable/virtio_pci_aero_layout.c`
   - `drivers/windows7/virtio/common/src/virtio_pci_contract.c`
 
 ### Legacy virtio-pci I/O-port bring-up (not shipped)

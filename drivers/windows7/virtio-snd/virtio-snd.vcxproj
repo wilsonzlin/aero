@@ -136,6 +136,7 @@
     <ClCompile Include="src\**\*.c" />
     <ClCompile Include="..\virtio\common\src\virtqueue_split.c" />
     <ClCompile Include="..\virtio\common\src\virtio_pci_intx_wdm.c" />
+    <ClCompile Include="..\virtio\common\src\virtio_pci_contract.c" />
     <ClCompile Include="..\..\windows\virtio\pci-modern\virtio_pci_modern_transport.c" />
     <ClCompile Include="..\..\win7\virtio\virtio-core\portable\virtio_pci_cap_parser.c" />
   </ItemGroup>
