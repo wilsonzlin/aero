@@ -1095,12 +1095,6 @@ struct _D3D9DDI_DEVICEFUNCS {
   PFND3D9DDI_SETINDICES pfnSetIndices;
   PFND3D9DDI_BEGINSCENE pfnBeginScene;
   PFND3D9DDI_ENDSCENE pfnEndScene;
-  PFND3D9DDI_CLEAR pfnClear;
-  PFND3D9DDI_DRAWPRIMITIVE pfnDrawPrimitive;
-  PFND3D9DDI_DRAWPRIMITIVEUP pfnDrawPrimitiveUP;
-  PFND3D9DDI_DRAWINDEXEDPRIMITIVE pfnDrawIndexedPrimitive;
-  PFND3D9DDI_DRAWPRIMITIVE2 pfnDrawPrimitive2;
-  PFND3D9DDI_DRAWINDEXEDPRIMITIVE2 pfnDrawIndexedPrimitive2;
   PFND3D9DDI_CREATESWAPCHAIN pfnCreateSwapChain;
   PFND3D9DDI_DESTROYSWAPCHAIN pfnDestroySwapChain;
   PFND3D9DDI_GETSWAPCHAIN pfnGetSwapChain;
@@ -1134,7 +1128,127 @@ struct _D3D9DDI_DEVICEFUNCS {
   PFND3D9DDI_COLORFILL pfnColorFill;
   PFND3D9DDI_UPDATESURFACE pfnUpdateSurface;
   PFND3D9DDI_UPDATETEXTURE pfnUpdateTexture;
+
+  // NOTE: The Win7 WDK D3D9DDI_DEVICEFUNCS table places the legacy draw/clear
+  // entrypoints after the swapchain/present/control blocks. Keep these members
+  // at the tail so the offsets for CreateSwapChain/Present/Flush/etc match the
+  // WDK ABI.
+  PFND3D9DDI_CLEAR pfnClear;
+  PFND3D9DDI_DRAWPRIMITIVE pfnDrawPrimitive;
+  PFND3D9DDI_DRAWPRIMITIVEUP pfnDrawPrimitiveUP;
+  PFND3D9DDI_DRAWINDEXEDPRIMITIVE pfnDrawIndexedPrimitive;
+  PFND3D9DDI_DRAWPRIMITIVE2 pfnDrawPrimitive2;
+  PFND3D9DDI_DRAWINDEXEDPRIMITIVE2 pfnDrawIndexedPrimitive2;
 };
+
+// -----------------------------------------------------------------------------
+// Portable ABI sanity checks (anchors)
+// -----------------------------------------------------------------------------
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnDestroyDevice) == 0,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnDestroyDevice offset drift");
+#if UINTPTR_MAX == 0xFFFFFFFFu
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnCreateResource) == 4,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnCreateResource offset drift (x86)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnDestroyResource) == 16,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnDestroyResource offset drift (x86)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnLock) == 20,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnLock offset drift (x86)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnUnlock) == 24,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnUnlock offset drift (x86)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnCreateSwapChain) == 104,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnCreateSwapChain offset drift (x86)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnDestroySwapChain) == 108,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnDestroySwapChain offset drift (x86)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnCheckDeviceState) == 128,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnCheckDeviceState offset drift (x86)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnWaitForVBlank) == 132,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnWaitForVBlank offset drift (x86)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnSetGPUThreadPriority) == 136,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnSetGPUThreadPriority offset drift (x86)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnGetGPUThreadPriority) == 140,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnGetGPUThreadPriority offset drift (x86)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnCheckResourceResidency) == 144,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnCheckResourceResidency offset drift (x86)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnQueryResourceResidency) == 148,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnQueryResourceResidency offset drift (x86)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnGetDisplayModeEx) == 152,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnGetDisplayModeEx offset drift (x86)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnComposeRects) == 156,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnComposeRects offset drift (x86)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnPresent) == 164,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnPresent offset drift (x86)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnFlush) == 172,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnFlush offset drift (x86)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnCreateQuery) == 192,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnCreateQuery offset drift (x86)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnDestroyQuery) == 196,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnDestroyQuery offset drift (x86)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnIssueQuery) == 200,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnIssueQuery offset drift (x86)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnGetQueryData) == 204,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnGetQueryData offset drift (x86)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnWaitForIdle) == 216,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnWaitForIdle offset drift (x86)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnBlt) == 220,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnBlt offset drift (x86)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnColorFill) == 224,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnColorFill offset drift (x86)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnUpdateSurface) == 228,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnUpdateSurface offset drift (x86)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnUpdateTexture) == 232,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnUpdateTexture offset drift (x86)");
+#else
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnCreateResource) == 8,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnCreateResource offset drift (x64)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnDestroyResource) == 32,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnDestroyResource offset drift (x64)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnLock) == 40,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnLock offset drift (x64)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnUnlock) == 48,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnUnlock offset drift (x64)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnCreateSwapChain) == 208,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnCreateSwapChain offset drift (x64)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnDestroySwapChain) == 216,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnDestroySwapChain offset drift (x64)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnCheckDeviceState) == 256,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnCheckDeviceState offset drift (x64)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnWaitForVBlank) == 264,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnWaitForVBlank offset drift (x64)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnSetGPUThreadPriority) == 272,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnSetGPUThreadPriority offset drift (x64)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnGetGPUThreadPriority) == 280,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnGetGPUThreadPriority offset drift (x64)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnCheckResourceResidency) == 288,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnCheckResourceResidency offset drift (x64)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnQueryResourceResidency) == 296,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnQueryResourceResidency offset drift (x64)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnGetDisplayModeEx) == 304,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnGetDisplayModeEx offset drift (x64)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnComposeRects) == 312,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnComposeRects offset drift (x64)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnPresent) == 328,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnPresent offset drift (x64)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnFlush) == 344,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnFlush offset drift (x64)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnCreateQuery) == 384,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnCreateQuery offset drift (x64)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnDestroyQuery) == 392,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnDestroyQuery offset drift (x64)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnIssueQuery) == 400,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnIssueQuery offset drift (x64)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnGetQueryData) == 408,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnGetQueryData offset drift (x64)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnWaitForIdle) == 432,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnWaitForIdle offset drift (x64)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnBlt) == 440,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnBlt offset drift (x64)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnColorFill) == 448,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnColorFill offset drift (x64)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnUpdateSurface) == 456,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnUpdateSurface offset drift (x64)");
+static_assert(offsetof(D3D9DDI_DEVICEFUNCS, pfnUpdateTexture) == 464,
+              "D3D9DDI_DEVICEFUNCS ABI mismatch: pfnUpdateTexture offset drift (x64)");
+#endif
 
 #endif // portable ABI subset
 
