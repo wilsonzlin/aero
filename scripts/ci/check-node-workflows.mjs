@@ -122,9 +122,19 @@ function checkDockerfileNodeFrom(fileRel) {
 
   const lines = fs.readFileSync(filePath, "utf8").split(/\r?\n/);
   for (let i = 0; i < lines.length; i += 1) {
-    const match = lines[i].match(/^\s*FROM\s+node:(\d+\.\d+\.\d+)\b/);
+    const match = lines[i].match(/^\s*FROM\s+(?:--platform=\S+\s+)?node:([^\s]+)\b/);
     if (!match) continue;
-    const version = match[1];
+
+    const tag = match[1];
+    const versionMatch = tag.match(/^(\d+\.\d+\.\d+)\b/);
+    const version = versionMatch ? versionMatch[1] : null;
+    if (!version) {
+      console.error(`error: Dockerfile Node base image must use an exact semver tag`);
+      console.error(`- file: ${rel(filePath)}:${i + 1}`);
+      console.error(`- found: node:${tag}`);
+      console.error(`- expected: node:${pinnedNode}-<variant> (or similar)`);
+      process.exit(1);
+    }
     if (version !== pinnedNode) {
       console.error(`error: Dockerfile Node version is out of sync with .nvmrc`);
       console.error(`- file: ${rel(filePath)}:${i + 1}`);
