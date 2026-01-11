@@ -436,6 +436,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Setup Rust (for Node black-box tests that spawn Rust binaries)
+        id: setup-rust
+        uses: ./.github/actions/setup-rust
+        with:
+          toolchain: stable
+          locked: always
+
       - name: Setup Node workspace
         id: node-workspace
         uses: ./.github/actions/setup-node-workspace
