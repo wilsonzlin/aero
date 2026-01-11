@@ -508,14 +508,16 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
           console.warn("[io.worker] Failed to initialize WebHID passthrough WASM bridge", err);
         }
 
-        if (import.meta.env.DEV && api.UsbPassthroughBridge && !usbPassthroughRuntime) {
+        if (api.UsbPassthroughBridge && !usbPassthroughRuntime) {
           try {
             const bridge = new api.UsbPassthroughBridge();
             usbPassthroughRuntime = new WebUsbPassthroughRuntime({ bridge, port: ctx, pollIntervalMs: 8 });
             usbPassthroughRuntime.start();
-            usbPassthroughDebugTimer = setInterval(() => {
-              console.debug("[io.worker] UsbPassthroughBridge pending_summary()", usbPassthroughRuntime?.pendingSummary());
-            }, 1000) as unknown as number;
+            if (import.meta.env.DEV) {
+              usbPassthroughDebugTimer = setInterval(() => {
+                console.debug("[io.worker] UsbPassthroughBridge pending_summary()", usbPassthroughRuntime?.pendingSummary());
+              }, 1000) as unknown as number;
+            }
           } catch (err) {
             console.warn("[io.worker] Failed to initialize WebUSB passthrough runtime", err);
           }
