@@ -605,8 +605,7 @@ impl HdaPlaybackDemo {
 
         let bridge = WorkletBridge::from_shared_buffer(ring_sab, capacity_frames, channel_count)?;
 
-        let mut hda = HdaController::new();
-        hda.set_output_rate_hz(host_sample_rate);
+        let hda = HdaController::new_with_output_rate(host_sample_rate);
 
         // Allocate a small guest-physical memory backing store. The demo programs
         // a short BDL + PCM buffer and loops it forever.
@@ -662,8 +661,8 @@ impl HdaPlaybackDemo {
             sd.cbl = pcm_len_bytes as u32;
             sd.lvi = 0;
             sd.fmt = fmt_raw;
-            // RUN | IOCE | stream number 1.
-            sd.ctl = (1 << 1) | (1 << 2) | (1 << 20);
+            // SRST | RUN | IOCE | stream number 1.
+            sd.ctl = (1 << 0) | (1 << 1) | (1 << 2) | (1 << 20);
         }
 
         // Enable stream interrupts (best-effort; not currently surfaced to JS).
