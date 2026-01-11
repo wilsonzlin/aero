@@ -92,6 +92,10 @@ class VirtioWinExtractTest(unittest.TestCase):
             # Optional driver present for x86 only; amd64 missing should be reported.
             write("vioinput/win7/x86/vioinput.inf", "vioinput x86")
 
+            # Root-level license/notice files should be extracted too.
+            write("LICENSE.txt", "license text")
+            write("README.md", "readme text")
+
             # Noise that should not be extracted.
             write("Balloon/w7/amd64/balloon.inf", "balloon")
             write("viostor/w10/amd64/should_not_extract.inf", "nope")
@@ -142,6 +146,10 @@ class VirtioWinExtractTest(unittest.TestCase):
             viostor_root = self._resolve_case_insensitive(out_root, "viostor")
             self.assertFalse(self._has_child_case_insensitive(viostor_root, "w10"))
 
+            # Root-level notice files should be present.
+            self.assertTrue(self._resolve_case_insensitive(out_root, "LICENSE.txt").is_file())
+            self.assertTrue(self._resolve_case_insensitive(out_root, "README.md").is_file())
+
             prov_path = out_root / "virtio-win-provenance.json"
             self.assertTrue(prov_path.is_file())
             prov = json.loads(prov_path.read_text(encoding="utf-8"))
@@ -156,6 +164,10 @@ class VirtioWinExtractTest(unittest.TestCase):
             missing = prov.get("missing_optional", [])
             self.assertTrue(any(m.get("driver") == "viosnd" for m in missing))
             self.assertTrue(any(m.get("driver") == "vioinput" and m.get("arch") == "amd64" for m in missing))
+
+            extracted_notice = [p.casefold() for p in prov.get("extracted_notice_files", [])]
+            self.assertIn("license.txt", extracted_notice)
+            self.assertIn("readme.md", extracted_notice)
 
 
 if __name__ == "__main__":
