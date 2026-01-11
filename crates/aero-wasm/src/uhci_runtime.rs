@@ -501,9 +501,9 @@ impl UhciRuntime {
         }
 
         let desired = if let Some(count) = port_count {
-            let clamped = clamp_hub_port_count(count);
-            self.external_hub_port_count_hint = Some(clamped);
-            clamped
+            let validated = validate_hub_port_count(count)?;
+            self.external_hub_port_count_hint = Some(validated);
+            validated
         } else {
             self.external_hub_port_count_hint
                 .unwrap_or(DEFAULT_EXTERNAL_HUB_PORT_COUNT)
@@ -571,12 +571,6 @@ impl UhciRuntime {
                     "Invalid preferredPort {preferred} for WebUSB (expected {WEBUSB_ROOT_PORT})"
                 )));
             }
-        }
-
-        // Root port 1 is reserved for WebUSB. Detach any legacy root-port WebHID device
-        // that may have been attached there (older clients may not use the external hub path).
-        if let Some(device_id) = self.webhid_ports[WEBUSB_ROOT_PORT] {
-            self.webhid_detach(device_id);
         }
 
         if !self.port_is_free(WEBUSB_ROOT_PORT) {
@@ -971,9 +965,9 @@ impl UhciRuntime {
                     "Invalid UHCI runtime snapshot WebUSB device state: {err}"
                 )));
             }
-            // WebUSB host actions are backed by JS Promises and cannot be resumed after a VM
-            // snapshot restore. Drop any inflight/queued host bookkeeping so UHCI TD retries
-            // re-emit fresh actions.
+            // WebUSB host actions are backed by JS Promises. After a snapshot restore, any in-flight
+            // Promise/completion pair is unrecoverable, so drop host bookkeeping to allow UHCI TD
+            // retries to re-emit fresh host actions (matching `WebUsbUhciBridge` semantics).
             dev_mut.reset_host_state_for_restore();
         }
 
@@ -1263,7 +1257,6 @@ fn webhid_output_report_to_js(device_id: u32, report: UsbHidPassthroughOutputRep
     let _ = Reflect::set(&obj, &JsValue::from_str("data"), data.as_ref());
     obj.into()
 }
-
 fn webusb_setup_packet_to_js(setup: PassthroughSetupPacket) -> JsValue {
     let obj = Object::new();
     let _ = Reflect::set(
@@ -1482,9 +1475,12 @@ fn parse_completion_out(obj: &Object, status: &str) -> Result<UsbHostCompletionO
     }
 }
 
-fn clamp_hub_port_count(value: u32) -> u8 {
-    let value = value.clamp(1, u32::from(u8::MAX));
-    value as u8
+fn validate_hub_port_count(value: u32) -> Result<u8, JsValue> {
+    let count = u8::try_from(value).map_err(|_| js_error("portCount must be in 1..=255"))?;
+    if count == 0 {
+        return Err(js_error("portCount must be in 1..=255"));
+    }
+    Ok(count)
 }
 
 fn parse_root_port_guest_path(path: JsValue) -> Result<usize, JsValue> {

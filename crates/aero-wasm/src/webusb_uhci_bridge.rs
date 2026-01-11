@@ -378,6 +378,9 @@ impl WebUsbUhciBridge {
             w.field_bytes(TAG_EXTERNAL_HUB, hub.save_state());
         }
         if let Some(dev) = self.passthrough_device() {
+            // Persist the WebUSB passthrough device's USB-visible state (address, control-transfer
+            // stage, etc) so that after restoring a VM snapshot the guest's TD retries can make
+            // forward progress. Host-side action queues are cleared on restore (see `load_state`).
             w.field_bytes(TAG_WEBUSB_DEVICE, dev.save_state());
         }
         w.finish()

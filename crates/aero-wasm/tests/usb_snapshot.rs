@@ -5,6 +5,8 @@ use aero_usb::uhci::UhciController;
 use aero_wasm::{UhciControllerBridge, UhciRuntime, UsbHidPassthroughBridge, WebUsbUhciBridge};
 use wasm_bindgen_test::wasm_bindgen_test;
 
+mod common;
+
 const MIN_REPORT_DESCRIPTOR: &[u8] = &[
     0x06, 0x00, 0xff, // Usage Page (Vendor-defined 0xFF00)
     0x09, 0x01, // Usage (0x01)
@@ -20,11 +22,10 @@ const MIN_REPORT_DESCRIPTOR: &[u8] = &[
 
 #[wasm_bindgen_test]
 fn uhci_controller_bridge_snapshot_is_deterministic_and_roundtrips() {
-    let mut guest = vec![0u8; 0x8000];
-    let guest_base = guest.as_mut_ptr() as u32;
+    let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x8000);
 
-    let mut bridge = UhciControllerBridge::new(guest_base, guest.len() as u32)
-        .expect("new UhciControllerBridge");
+    let mut bridge =
+        UhciControllerBridge::new(guest_base, guest_size).expect("new UhciControllerBridge");
 
     bridge.attach_hub(0, 1).expect("attach_hub ok");
 
@@ -95,9 +96,8 @@ fn webusb_uhci_bridge_snapshot_is_deterministic_and_roundtrips() {
 
 #[wasm_bindgen_test]
 fn uhci_runtime_snapshot_is_deterministic_and_roundtrips() {
-    let mut guest = vec![0u8; 0x8000];
-    let guest_base = guest.as_mut_ptr() as u32;
-    let mut runtime = UhciRuntime::new(guest_base, guest.len() as u32).expect("new UhciRuntime");
+    let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x8000);
+    let mut runtime = UhciRuntime::new(guest_base, guest_size).expect("new UhciRuntime");
 
     runtime.webusb_attach(None).expect("webusb_attach ok");
 

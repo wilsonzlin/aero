@@ -103,6 +103,7 @@ import {
 import { HidReportRing, HidReportType as HidRingReportType } from "../usb/hid_report_ring";
 import { IoWorkerLegacyHidPassthroughAdapter } from "./io_hid_passthrough_legacy_adapter";
 import { drainIoHidInputRing } from "./io_hid_input_ring";
+import { UhciRuntimeExternalHubConfigManager } from "./uhci_runtime_hub_config";
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 
@@ -163,7 +164,7 @@ type UhciRuntimeInstance = InstanceType<UhciRuntimeCtor>;
 let uhciRuntime: UhciRuntimeInstance | null = null;
 let uhciRuntimeWebUsbBridge: UhciRuntimeWebUsbBridge | null = null;
 let uhciRuntimeHidGuest: WasmUhciHidGuestBridge | null = null;
-let pendingUhciRuntimeHubConfig: { guestPath: GuestUsbPath; portCount?: number } | null = null;
+const uhciRuntimeHubConfig = new UhciRuntimeExternalHubConfigManager();
 
 let pendingWasmInit: { api: WasmApi; variant: WasmVariant } | null = null;
 let wasmReadySent = false;
@@ -591,7 +592,9 @@ function maybeInitUhciRuntime(): void {
     const dev = new UhciPciDevice({ bridge, irqSink: mgr.irqSink });
     uhciDevice = dev;
     uhciRuntime = runtime;
-    applyPendingUhciRuntimeHubConfig();
+    uhciRuntimeHubConfig.apply(runtime, {
+      warn: (message, err) => console.warn(`[io.worker] ${message}`, err),
+    });
     mgr.registerPciDevice(dev);
     mgr.addTickable(dev);
     uhciHidTopology.setUhciBridge(null);
@@ -950,27 +953,13 @@ function findFirstSendableReport(
   return null;
 }
 
-function applyPendingUhciRuntimeHubConfig(): void {
-  const runtime = uhciRuntime;
-  const cfg = pendingUhciRuntimeHubConfig;
-  if (!runtime || !cfg) return;
-
-  const fn = (runtime as unknown as { webhid_attach_hub?: unknown }).webhid_attach_hub;
-  if (typeof fn !== "function") return;
-  try {
-    // Newer UHCI runtime builds support the external-hub topology directly. Older
-    // builds will ignore this and fall back to the root-port attachment scheme.
-    fn.call(runtime, cfg.guestPath, cfg.portCount);
-  } catch (err) {
-    console.warn("[io.worker] Failed to configure UHCI runtime external hub", err);
-  }
-}
-
 function handleHidPassthroughAttachHub(msg: Extract<HidPassthroughMessage, { type: "hid:attachHub" }>): void {
   uhciHidTopology.setHubConfig(msg.guestPath, msg.portCount);
   maybeInitUhciDevice();
-  pendingUhciRuntimeHubConfig = { guestPath: msg.guestPath, ...(msg.portCount !== undefined ? { portCount: msg.portCount } : {}) };
-  applyPendingUhciRuntimeHubConfig();
+  uhciRuntimeHubConfig.setPending(msg.guestPath, msg.portCount);
+  uhciRuntimeHubConfig.apply(uhciRuntime, {
+    warn: (message, err) => console.warn(`[io.worker] ${message}`, err),
+  });
   if (import.meta.env.DEV) {
     const hint = msg.portCount !== undefined ? ` ports=${msg.portCount}` : "";
     console.info(`[hid] attachHub path=${msg.guestPath.join(".")}${hint}`);

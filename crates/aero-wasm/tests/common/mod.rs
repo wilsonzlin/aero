@@ -2,6 +2,7 @@
 #![allow(dead_code)]
 
 pub const WASM_PAGE_BYTES: u32 = 64 * 1024;
+pub const RUNTIME_RESERVED_BYTES: u32 = 64 * 1024 * 1024;
 
 /// Allocate a guest RAM region for wasm-bindgen tests without consuming the wasm heap.
 ///
@@ -16,6 +17,18 @@ pub const WASM_PAGE_BYTES: u32 = 64 * 1024;
 /// - lives above the current heap, so it does not compete with allocator usage
 /// - can be passed to `guest_base` parameters that expect a linear-memory address
 pub fn alloc_guest_region_bytes(min_bytes: u32) -> (u32, u32) {
+    let reserved_pages = RUNTIME_RESERVED_BYTES.div_ceil(WASM_PAGE_BYTES);
+    let current_pages = core::arch::wasm32::memory_size(0) as u32;
+    if current_pages < reserved_pages {
+        let prev = core::arch::wasm32::memory_grow(0, (reserved_pages - current_pages) as usize);
+        assert_ne!(
+            prev,
+            usize::MAX,
+            "wasm memory.grow failed while reserving runtime heap (requested {} pages)",
+            reserved_pages - current_pages
+        );
+    }
+
     let pages = min_bytes.div_ceil(WASM_PAGE_BYTES).max(1);
     let before_pages = core::arch::wasm32::memory_size(0) as u32;
 

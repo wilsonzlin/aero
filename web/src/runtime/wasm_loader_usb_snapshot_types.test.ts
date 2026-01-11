@@ -8,9 +8,12 @@ describe("runtime/wasm_loader (USB snapshot typings)", () => {
     type Runtime = InstanceType<NonNullable<WasmApi["UhciRuntime"]>>;
     type UhciBridge = InstanceType<NonNullable<WasmApi["UhciControllerBridge"]>>;
 
-    const webusb = {} as WebUsbBridge;
-    const runtime = {} as Runtime;
-    const uhci = {} as UhciBridge;
+    // Note: Vitest runs these tests at runtime without TypeScript typechecking, so we must provide
+    // concrete functions to avoid `undefined is not a function` crashes. The compile-time checks are
+    // encoded via `@ts-expect-error` comments and validated in CI by `tsc`.
+    const webusb = { snapshot_state: () => new Uint8Array(), restore_state: (_bytes: Uint8Array) => {} } as unknown as WebUsbBridge;
+    const runtime = { snapshot_state: () => new Uint8Array(), restore_state: (_bytes: Uint8Array) => {} } as unknown as Runtime;
+    const uhci = { snapshot_state: () => new Uint8Array(), restore_state: (_bytes: Uint8Array) => {} } as unknown as UhciBridge;
 
     // Optional methods should require feature detection under `strictNullChecks`.
     //

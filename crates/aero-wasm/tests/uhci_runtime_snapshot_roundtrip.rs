@@ -2,11 +2,16 @@
 
 use aero_io_snapshot::io::state::{SnapshotReader, codec::Decoder};
 use aero_usb::hid::webhid::HidCollectionInfo;
-use aero_usb::passthrough::{UsbHostAction, UsbHostCompletion, UsbHostCompletionIn};
+use aero_usb::passthrough::UsbHostAction;
 use aero_wasm::UhciRuntime;
+use core::fmt::Write as _;
 use js_sys::{Array, Reflect, Uint8Array};
 use wasm_bindgen::JsValue;
 use wasm_bindgen_test::wasm_bindgen_test;
+
+mod common;
+
+const SNAPSHOT_HEADER_BYTES: usize = 16; // `aero_io_snapshot::io::state` header length
 
 // UHCI register offsets / bits (mirrors `crates/aero-usb/src/uhci.rs` tests).
 const REG_USBCMD: u16 = 0x00;
@@ -35,6 +40,144 @@ const TD_TOKEN_DEVADDR_SHIFT: u32 = 8;
 const TD_TOKEN_ENDPT_SHIFT: u32 = 15;
 const TD_TOKEN_D: u32 = 1 << 19;
 const TD_TOKEN_MAXLEN_SHIFT: u32 = 21;
+
+#[derive(Debug)]
+struct SnapshotField<'a> {
+    tag: u16,
+    data: &'a [u8],
+}
+
+fn parse_snapshot_fields(bytes: &[u8]) -> Result<Vec<SnapshotField<'_>>, String> {
+    if bytes.len() < SNAPSHOT_HEADER_BYTES {
+        return Err(format!(
+            "snapshot too short ({} bytes, expected >= {SNAPSHOT_HEADER_BYTES})",
+            bytes.len()
+        ));
+    }
+    let mut offset = SNAPSHOT_HEADER_BYTES;
+    let mut fields = Vec::new();
+    while offset < bytes.len() {
+        if offset + 6 > bytes.len() {
+            return Err(format!("truncated TLV header at offset {offset}"));
+        }
+        let tag = u16::from_le_bytes([bytes[offset], bytes[offset + 1]]);
+        let len = u32::from_le_bytes([
+            bytes[offset + 2],
+            bytes[offset + 3],
+            bytes[offset + 4],
+            bytes[offset + 5],
+        ]) as usize;
+        offset += 6;
+        if offset + len > bytes.len() {
+            return Err(format!(
+                "truncated TLV payload for tag {tag} at offset {offset} (len={len})"
+            ));
+        }
+        fields.push(SnapshotField {
+            tag,
+            data: &bytes[offset..offset + len],
+        });
+        offset += len;
+    }
+    Ok(fields)
+}
+
+fn first_diff_idx(a: &[u8], b: &[u8]) -> usize {
+    let limit = a.len().min(b.len());
+    for idx in 0..limit {
+        if a[idx] != b[idx] {
+            return idx;
+        }
+    }
+    limit
+}
+
+fn hex_preview(bytes: &[u8]) -> String {
+    const MAX: usize = 32;
+    let shown = bytes.len().min(MAX);
+    let mut out = String::new();
+    for (i, b) in bytes[..shown].iter().enumerate() {
+        if i > 0 {
+            out.push(' ');
+        }
+        let _ = write!(&mut out, "{b:02x}");
+    }
+    if bytes.len() > shown {
+        out.push_str(" …");
+    }
+    out
+}
+
+fn snapshot_diff_message(a: &[u8], b: &[u8], context: &str) -> String {
+    if a == b {
+        return String::new();
+    }
+
+    let fields_a = match parse_snapshot_fields(a) {
+        Ok(fields) => fields,
+        Err(e) => {
+            return format!(
+                "{context}: failed to parse first snapshot: {e}\nlen={}\nhead={}",
+                a.len(),
+                hex_preview(&a[..a.len().min(64)])
+            );
+        }
+    };
+    let fields_b = match parse_snapshot_fields(b) {
+        Ok(fields) => fields,
+        Err(e) => {
+            return format!(
+                "{context}: failed to parse second snapshot: {e}\nlen={}\nhead={}",
+                b.len(),
+                hex_preview(&b[..b.len().min(64)])
+            );
+        }
+    };
+
+    if fields_a.len() != fields_b.len() {
+        return format!(
+            "{context}: snapshot field count mismatch ({} vs {})",
+            fields_a.len(),
+            fields_b.len()
+        );
+    }
+
+    for (fa, fb) in fields_a.iter().zip(fields_b.iter()) {
+        if fa.tag != fb.tag {
+            return format!(
+                "{context}: snapshot tag mismatch ({} vs {})",
+                fa.tag, fb.tag
+            );
+        }
+        if fa.data == fb.data {
+            continue;
+        }
+        let diff = first_diff_idx(fa.data, fb.data);
+        let start = diff.saturating_sub(16);
+        let end = (diff + 16).min(fa.data.len().min(fb.data.len()));
+        return format!(
+            "{context}: snapshot differs at tag {} (len {} vs {}, first diff @ {})\nA[..]={}\nB[..]={}",
+            fa.tag,
+            fa.data.len(),
+            fb.data.len(),
+            diff,
+            hex_preview(&fa.data[start..end]),
+            hex_preview(&fb.data[start..end])
+        );
+    }
+
+    let diff = first_diff_idx(a, b);
+    let start = diff.saturating_sub(16);
+    let end = (diff + 16).min(a.len().min(b.len()));
+    format!(
+        "{context}: snapshots have identical parsed fields but bytes differ (len {} vs {}, first diff @ {})\nA[..]={}\nB[..]={}",
+        a.len(),
+        b.len(),
+        diff,
+        hex_preview(&a[start..end]),
+        hex_preview(&b[start..end])
+    )
+}
 
 fn write_u32(mem: &mut [u8], addr: u32, value: u32) {
     let addr = addr as usize;
@@ -186,9 +329,7 @@ fn load_mouse_collections_json() -> JsValue {
 
 #[wasm_bindgen_test]
 fn uhci_runtime_snapshot_is_deterministic() {
-    let mut guest = vec![0u8; 0x20_000];
-    let guest_base = guest.as_mut_ptr() as u32;
-    let guest_size = guest.len() as u32;
+    let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x20_000);
 
     let mut rt = UhciRuntime::new(guest_base, guest_size).expect("new UhciRuntime");
 
@@ -223,15 +364,18 @@ fn uhci_runtime_snapshot_is_deterministic() {
 
     let a = rt.save_state();
     let b = rt.save_state();
-    assert_eq!(a.len(), b.len(), "save_state length must be deterministic");
-    assert!(a == b, "save_state bytes must be deterministic");
+    if a != b {
+        let msg = snapshot_diff_message(&a, &b, "save_state must be deterministic");
+        drop(a);
+        drop(b);
+        drop(rt);
+        panic!("{msg}");
+    }
 }
 
 #[wasm_bindgen_test]
 fn uhci_runtime_snapshot_truncates_webhid_product_string() {
-    let mut guest = vec![0u8; 0x20_000];
-    let guest_base = guest.as_mut_ptr() as u32;
-    let guest_size = guest.len() as u32;
+    let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x20_000);
 
     let mut rt = UhciRuntime::new(guest_base, guest_size).expect("new UhciRuntime");
 
@@ -284,10 +428,14 @@ fn uhci_runtime_snapshot_truncates_webhid_product_string() {
 
 #[wasm_bindgen_test]
 fn uhci_runtime_snapshot_roundtrip_preserves_irq_and_registers() {
-    let mut guest = vec![0u8; 0x50_000];
-    let guest_base = guest.as_mut_ptr() as u32;
-    let guest_size = guest.len() as u32;
-    let fl_base = setup_webusb_control_in_frame_list(&mut guest);
+    let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x50_000);
+    let fl_base = {
+        // Safety: `alloc_guest_region_bytes` reserves `guest_size` bytes in linear memory starting
+        // at `guest_base`.
+        let guest =
+            unsafe { core::slice::from_raw_parts_mut(guest_base as *mut u8, guest_size as usize) };
+        setup_webusb_control_in_frame_list(guest)
+    };
 
     let mut rt = UhciRuntime::new(guest_base, guest_size).expect("new UhciRuntime");
     rt.webusb_attach(Some(1)).expect("attach WebUSB");
@@ -307,12 +455,32 @@ fn uhci_runtime_snapshot_roundtrip_preserves_irq_and_registers() {
         other => panic!("expected ControlIn action, got {other:?}"),
     };
 
-    let completion = UsbHostCompletion::ControlIn {
-        id,
-        result: UsbHostCompletionIn::Success { data: vec![0u8; 8] },
-    };
-    rt.webusb_push_completion(serde_wasm_bindgen::to_value(&completion).unwrap())
-        .unwrap();
+    // `UhciRuntime` expects WebUSB completions to follow the canonical TypeScript wire contract
+    // (binary payloads as `Uint8Array`, not `number[]`). Build the completion object manually
+    // instead of relying on `serde_wasm_bindgen`'s `Vec<u8>` encoding.
+    let completion = js_sys::Object::new();
+    Reflect::set(
+        &completion,
+        &JsValue::from_str("kind"),
+        &JsValue::from_str("controlIn"),
+    )
+    .expect("set completion kind");
+    Reflect::set(
+        &completion,
+        &JsValue::from_str("id"),
+        &JsValue::from_f64(f64::from(id)),
+    )
+    .expect("set completion id");
+    Reflect::set(
+        &completion,
+        &JsValue::from_str("status"),
+        &JsValue::from_str("success"),
+    )
+    .expect("set completion status");
+    let data = Uint8Array::from(vec![0u8; 8].as_slice());
+    Reflect::set(&completion, &JsValue::from_str("data"), data.as_ref())
+        .expect("set completion data");
+    rt.webusb_push_completion(completion.into()).unwrap();
     rt.step_frame();
 
     assert!(rt.irq_level());
@@ -326,7 +494,11 @@ fn uhci_runtime_snapshot_roundtrip_preserves_irq_and_registers() {
     let snapshot = rt.save_state();
 
     let mut rt2 = UhciRuntime::new(guest_base, guest_size).expect("new UhciRuntime #2");
-    rt2.load_state(&snapshot).expect("load_state ok");
+    if let Err(err) = rt2.load_state(&snapshot) {
+        drop(snapshot);
+        drop(rt2);
+        panic!("load_state ok: {err:?}");
+    }
 
     assert_eq!(rt2.port_read(REG_USBCMD, 2), usbcmd);
     assert_eq!(rt2.port_read(REG_USBSTS, 2), usbsts);
@@ -342,10 +514,14 @@ fn uhci_runtime_snapshot_roundtrip_preserves_irq_and_registers() {
 
 #[wasm_bindgen_test]
 fn uhci_runtime_restore_clears_webusb_host_state_and_allows_retry() {
-    let mut guest = vec![0u8; 0x50_000];
-    let guest_base = guest.as_mut_ptr() as u32;
-    let guest_size = guest.len() as u32;
-    let fl_base = setup_webusb_control_in_frame_list(&mut guest);
+    let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x50_000);
+    let fl_base = {
+        // Safety: `alloc_guest_region_bytes` reserves `guest_size` bytes in linear memory starting
+        // at `guest_base`.
+        let guest =
+            unsafe { core::slice::from_raw_parts_mut(guest_base as *mut u8, guest_size as usize) };
+        setup_webusb_control_in_frame_list(guest)
+    };
 
     let mut rt = UhciRuntime::new(guest_base, guest_size).expect("new UhciRuntime");
     rt.webusb_attach(Some(1)).expect("attach WebUSB");
@@ -378,7 +554,11 @@ fn uhci_runtime_restore_clears_webusb_host_state_and_allows_retry() {
     let snapshot = rt.save_state();
 
     let mut rt2 = UhciRuntime::new(guest_base, guest_size).expect("new UhciRuntime #2");
-    rt2.load_state(&snapshot).expect("load_state ok");
+    if let Err(err) = rt2.load_state(&snapshot) {
+        drop(snapshot);
+        drop(rt2);
+        panic!("load_state ok: {err:?}");
+    }
 
     let drained_after_restore = rt2.webusb_drain_actions().expect("drain_actions ok");
     let actions_after_restore: Vec<UsbHostAction> =
@@ -406,9 +586,7 @@ fn uhci_runtime_restore_clears_webusb_host_state_and_allows_retry() {
 
 #[wasm_bindgen_test]
 fn uhci_runtime_snapshot_restores_external_hub_and_allows_webhid_attach_at_path() {
-    let mut guest = vec![0u8; 0x20_000];
-    let guest_base = guest.as_mut_ptr() as u32;
-    let guest_size = guest.len() as u32;
+    let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x20_000);
 
     let mut rt = UhciRuntime::new(guest_base, guest_size).expect("new UhciRuntime");
 
@@ -431,7 +609,11 @@ fn uhci_runtime_snapshot_restores_external_hub_and_allows_webhid_attach_at_path(
     let snapshot = rt.save_state();
 
     let mut rt2 = UhciRuntime::new(guest_base, guest_size).expect("new UhciRuntime #2");
-    rt2.load_state(&snapshot).expect("load_state ok");
+    if let Err(err) = rt2.load_state(&snapshot) {
+        drop(snapshot);
+        drop(rt2);
+        panic!("load_state ok: {err:?}");
+    }
 
     // Sanity: restored runtime snapshot should still include external hub state.
     let after = rt2.save_state();
@@ -452,14 +634,15 @@ fn uhci_runtime_snapshot_restores_external_hub_and_allows_webhid_attach_at_path(
         collections_json,
         path2,
     )
-    .expect("attach WebHID device #2 after restore");
+    .unwrap_or_else(|err| {
+        drop(rt2);
+        panic!("attach WebHID device #2 after restore: {err:?}");
+    });
 }
 
 #[wasm_bindgen_test]
 fn uhci_runtime_restore_preserves_webhid_device_and_allows_set_report() {
-    let mut guest = vec![0u8; 0x20_000];
-    let guest_base = guest.as_mut_ptr() as u32;
-    let guest_size = guest.len() as u32;
+    let (guest_base, guest_size) = common::alloc_guest_region_bytes(0x20_000);
 
     let collections_json = load_mouse_collections_json();
 
@@ -479,10 +662,20 @@ fn uhci_runtime_restore_preserves_webhid_device_and_allows_set_report() {
     let snapshot = rt.save_state();
 
     let mut rt2 = UhciRuntime::new(guest_base, guest_size).expect("new UhciRuntime #2");
-    rt2.load_state(&snapshot).expect("load_state ok");
+    if let Err(err) = rt2.load_state(&snapshot) {
+        drop(snapshot);
+        drop(rt2);
+        panic!("load_state ok: {err:?}");
+    }
 
     let payload = [0x11u8, 0x22, 0x33];
-    let fl_base = setup_webhid_set_report_control_out_frame_list(&mut guest, &payload);
+    let fl_base = {
+        // Safety: `alloc_guest_region_bytes` reserves `guest_size` bytes in linear memory starting
+        // at `guest_base`.
+        let guest =
+            unsafe { core::slice::from_raw_parts_mut(guest_base as *mut u8, guest_size as usize) };
+        setup_webhid_set_report_control_out_frame_list(guest, &payload)
+    };
 
     rt2.port_write(REG_FRBASEADD, 4, fl_base);
     rt2.port_write(REG_PORTSC1, 2, PORTSC_PED as u32);
