@@ -47,9 +47,12 @@ pub fn verify_session_token(
     secret: &[u8],
     now_ms: u64,
 ) -> Result<SessionClaims, SessionVerifyError> {
-    let (payload_b64, sig_b64) = token
-        .split_once('.')
-        .ok_or(SessionVerifyError::InvalidFormat)?;
+    let mut parts = token.split('.');
+    let payload_b64 = parts.next().ok_or(SessionVerifyError::InvalidFormat)?;
+    let sig_b64 = parts.next().ok_or(SessionVerifyError::InvalidFormat)?;
+    if parts.next().is_some() {
+        return Err(SessionVerifyError::InvalidFormat);
+    }
     if payload_b64.is_empty() || sig_b64.is_empty() {
         return Err(SessionVerifyError::InvalidFormat);
     }
@@ -175,6 +178,9 @@ pub fn verify_relay_jwt_hs256(
     let payload_b64 = parts.next().ok_or(JwtVerifyError::InvalidFormat)?;
     let sig_b64 = parts.next().ok_or(JwtVerifyError::InvalidFormat)?;
     if parts.next().is_some() {
+        return Err(JwtVerifyError::InvalidFormat);
+    }
+    if header_b64.is_empty() || payload_b64.is_empty() || sig_b64.is_empty() {
         return Err(JwtVerifyError::InvalidFormat);
     }
 
