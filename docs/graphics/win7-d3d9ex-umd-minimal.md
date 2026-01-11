@@ -301,6 +301,8 @@ If you implement only one blend mode initially, make sure you cover standard pre
 
 **Rule:** if your backend is async (WebGPU, Vulkan, etc), the query completion path must be backed by a real fence/timeline so progress is guaranteed.
 
+**Practical flag quirk:** for EVENT queries, be permissive about the `IssueQuery` flag encoding. Some D3D9Ex paths have been observed to pass `flags=0` for “END”, and some DDI header vintages use `0x2` for END at the DDI boundary. Treat `(flags == 0) || (flags & 0x1) || (flags & 0x2)` as END for EVENT queries.
+
 Guest-side validation:
 
  * `drivers/aerogpu/tests/win7/d3d9ex_event_query` verifies `D3DQUERYTYPE_EVENT` completion behavior and that `GetData(D3DGETDATA_DONOTFLUSH)` remains non-blocking (including an initial poll before `Flush`; DWM relies on this polling pattern).
