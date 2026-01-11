@@ -17,5 +17,14 @@ Same as `win7-virtio-win.json`, but also declares optional drivers:
 
 - Optional: `vioinput` (virtio-input) + `viosnd` (virtio-snd)
 
-This spec can be passed to `drivers/scripts/make-guest-tools-from-virtio-win.ps1` via `-SpecPath`
-to include the optional drivers when they are present in the virtio-win source.
+## Wrapper script defaults (`make-guest-tools-from-virtio-win.ps1`)
+
+`drivers/scripts/make-guest-tools-from-virtio-win.ps1` supports an explicit packaging profile:
+
+- `-Profile full` (default): uses `win7-virtio-full.json` and extracts `viostor, netkvm, viosnd, vioinput`
+- `-Profile minimal`: uses `win7-virtio-win.json` and extracts `viostor, netkvm`
+
+Advanced overrides:
+
+- `-SpecPath` overrides the profile’s spec selection.
+- `-Drivers` overrides the profile’s driver extraction list.

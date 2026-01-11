@@ -15,6 +15,12 @@ param(
   [ValidateSet("none", "testsigning", "nointegritychecks")]
   [string]$SigningPolicy = "none",
 
+  # Packaging profile:
+  # - full: includes optional virtio audio/input drivers if present (default)
+  # - minimal: storage+network only
+  [ValidateSet("minimal", "full")]
+  [string]$Profile = "full",
+
   # Optional: override which driver packages are extracted from virtio-win.
   [string[]]$Drivers,
 
@@ -62,9 +68,41 @@ $repoRoot = Resolve-RepoRoot
 if (-not $OutDir) {
   $OutDir = Join-Path (Join-Path $repoRoot "dist") "guest-tools"
 }
-if (-not $SpecPath) {
-  $SpecPath = Join-Path (Join-Path (Join-Path (Join-Path $repoRoot "tools") "packaging") "specs") "win7-virtio-win.json"
+
+$specsDir = Join-Path (Join-Path (Join-Path $repoRoot "tools") "packaging") "specs"
+$defaultSpecPath = if ($Profile -eq "minimal") {
+  Join-Path $specsDir "win7-virtio-win.json"
+} else {
+  Join-Path $specsDir "win7-virtio-full.json"
 }
+$resolvedSpecPath = if ($PSBoundParameters.ContainsKey("SpecPath")) {
+  if (-not $SpecPath) {
+    throw "-SpecPath must not be empty."
+  }
+  $SpecPath
+} else {
+  $defaultSpecPath
+}
+$SpecPath = $resolvedSpecPath
+
+$defaultDrivers = if ($Profile -eq "minimal") {
+  @("viostor", "netkvm")
+} else {
+  @("viostor", "netkvm", "viosnd", "vioinput")
+}
+$resolvedDrivers = if ($PSBoundParameters.ContainsKey("Drivers")) {
+  $Drivers
+} else {
+  $defaultDrivers
+}
+if ($null -eq $resolvedDrivers -or $resolvedDrivers.Count -eq 0) {
+  throw "Resolved driver list is empty. Pass -Drivers <name>[,<name>...] or use -Profile minimal|full."
+}
+
+Write-Host "Resolved Guest Tools packaging inputs:"
+Write-Host "  profile : $Profile"
+Write-Host "  spec    : $resolvedSpecPath"
+Write-Host "  drivers : $($resolvedDrivers -join ', ')"
 
 $guestToolsDir = Join-Path $repoRoot "guest-tools"
 $packScript = Join-Path (Join-Path (Join-Path $repoRoot "drivers") "scripts") "make-driver-pack.ps1"
@@ -94,10 +132,8 @@ $packArgs = @(
   "-OutDir", $driversOutDir,
   "-NoZip"
 )
-if ($PSBoundParameters.ContainsKey("Drivers")) {
-  $packArgs += "-Drivers"
-  $packArgs += $Drivers
-}
+$packArgs += "-Drivers"
+$packArgs += $resolvedDrivers
 if ($StrictOptional) {
   $packArgs += "-StrictOptional"
 }

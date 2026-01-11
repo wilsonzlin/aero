@@ -163,18 +163,18 @@ If you want the packaged Guest Tools ISO/zip to include the **virtio-win** drive
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\drivers\scripts\make-guest-tools-from-virtio-win.ps1 `
   -VirtioWinIso C:\path\to\virtio-win.iso `
+  -Profile full `
   -OutDir .\dist\guest-tools `
   -Version 0.0.0 `
   -BuildId local
 ```
 
-This uses the in-repo "minimal" spec:
+Profiles:
 
-- `tools/packaging/specs/win7-virtio-win.json` (required: `viostor` + `netkvm`)
+- `-Profile full` (default): uses `tools/packaging/specs/win7-virtio-full.json` (required: `viostor` + `netkvm`, optional: `vioinput` + `viosnd`)
+- `-Profile minimal`: uses `tools/packaging/specs/win7-virtio-win.json` (required: `viostor` + `netkvm`)
 
-To also include optional virtio drivers (if present in the input), use:
-
-- `tools/packaging/specs/win7-virtio-full.json` (optional: `vioinput` + `viosnd`)
+For advanced/custom validation, you can override the profile’s spec selection via `-SpecPath`.
 
 ## Validation: required drivers + hardware IDs
 
