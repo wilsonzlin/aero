@@ -2835,6 +2835,7 @@ function renderWebUsbPassthroughDemoWorkerPanel(): HTMLElement {
   let selectedInfo: { vendorId: number; productId: number; productName?: string } | null = null;
   let selectedError: string | null = null;
   let lastRequest: UsbPassthroughDemoRunMessage["request"] | null = null;
+  let pending = false;
   let configTotalLenHint: number | null = null;
 
   const runDeviceButton = el("button", {
@@ -2842,6 +2843,7 @@ function renderWebUsbPassthroughDemoWorkerPanel(): HTMLElement {
     onclick: () => {
       lastRequest = "deviceDescriptor";
       lastResult = null;
+      pending = true;
       refreshUi();
       attachedIoWorker?.postMessage({ type: "usb.demo.run", request: "deviceDescriptor", length: 18 } satisfies UsbPassthroughDemoRunMessage);
     },
@@ -2852,6 +2854,7 @@ function renderWebUsbPassthroughDemoWorkerPanel(): HTMLElement {
     onclick: () => {
       lastRequest = "configDescriptor";
       lastResult = null;
+      pending = true;
       refreshUi();
       attachedIoWorker?.postMessage({ type: "usb.demo.run", request: "configDescriptor", length: 255 } satisfies UsbPassthroughDemoRunMessage);
     },
@@ -2864,6 +2867,7 @@ function renderWebUsbPassthroughDemoWorkerPanel(): HTMLElement {
       if (len === null) return;
       lastRequest = "configDescriptor";
       lastResult = null;
+      pending = true;
       refreshUi();
       attachedIoWorker?.postMessage({
         type: "usb.demo.run",
@@ -2899,21 +2903,30 @@ function renderWebUsbPassthroughDemoWorkerPanel(): HTMLElement {
         ? `selected=(none) error=${selectedError}`
         : "selected=(none)";
     const requestLine = `lastRequest=${lastRequest ?? "(none)"}`;
+    const resultStatus = lastResult?.status ?? (pending ? "pending" : "(none)");
     status.textContent =
       `ioWorker=${workerReady ? "ready" : "stopped"}\n` +
       `${selectedLine}\n` +
       `${requestLine}\n` +
-      `lastResult=${lastResult?.status ?? "(none)"}`;
+      `lastResult=${resultStatus}`;
 
     if (!lastResult) {
-      resultLine.textContent = "Result: (none yet)";
-      bytesLine.textContent = "(no bytes)";
-      errorLine.textContent = "";
-      clearButton.disabled = true;
+      if (pending) {
+        resultLine.textContent = "Result: pending";
+        bytesLine.textContent = "(waiting)";
+        errorLine.textContent = "";
+        clearButton.disabled = false;
+      } else {
+        resultLine.textContent = "Result: (none yet)";
+        bytesLine.textContent = "(no bytes)";
+        errorLine.textContent = "";
+        clearButton.disabled = true;
+      }
       return;
     }
 
     clearButton.disabled = false;
+    pending = false;
 
     switch (lastResult.status) {
       case "success": {
@@ -2965,6 +2978,7 @@ function renderWebUsbPassthroughDemoWorkerPanel(): HTMLElement {
   const onMessage = (ev: MessageEvent<unknown>): void => {
     if (!isUsbPassthroughDemoResultMessage(ev.data)) return;
     lastResult = ev.data.result;
+    pending = false;
     refreshUi();
   };
 
@@ -2981,6 +2995,7 @@ function renderWebUsbPassthroughDemoWorkerPanel(): HTMLElement {
         if (!selectedInfo || selectedInfo.vendorId !== next.vendorId || selectedInfo.productId !== next.productId) {
           lastResult = null;
           lastRequest = "deviceDescriptor";
+          pending = !!attachedIoWorker;
         }
         selectedInfo = next;
         selectedError = null;
@@ -2989,6 +3004,7 @@ function renderWebUsbPassthroughDemoWorkerPanel(): HTMLElement {
         selectedError = typeof msg.error === "string" ? msg.error : null;
         lastResult = null;
         lastRequest = null;
+        pending = false;
       }
       refreshUi();
     });
@@ -3011,8 +3027,12 @@ function renderWebUsbPassthroughDemoWorkerPanel(): HTMLElement {
     }
     attachedIoWorker = ioWorker;
     lastResult = null;
+    pending = !!attachedIoWorker && !!selectedInfo;
+    if (pending) lastRequest = "deviceDescriptor";
     if (attachedIoWorker) {
       attachedIoWorker.addEventListener("message", onMessage);
+    } else {
+      pending = false;
     }
     refreshUi();
   };
@@ -3021,6 +3041,7 @@ function renderWebUsbPassthroughDemoWorkerPanel(): HTMLElement {
     text: "Clear",
     onclick: () => {
       lastResult = null;
+      pending = false;
       refreshUi();
     },
   }) as HTMLButtonElement;
