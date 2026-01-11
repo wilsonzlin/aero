@@ -87,7 +87,8 @@ use aero_usb::{
 #[cfg(any(target_arch = "wasm32", test))]
 use aero_usb::passthrough::{
     ControlResponse, SetupPacket as HostSetupPacket, UsbHostAction, UsbHostCompletion,
-    UsbHostCompletionIn, UsbPassthroughDevice,
+    UsbHostCompletionIn,
+    UsbPassthroughDevice,
 };
 
 #[cfg(target_arch = "wasm32")]
