@@ -242,6 +242,19 @@ async function ensureIdbRemoteOverlayBinding(expected: RemoteCacheBinding["base"
   }
   await writeIdbOverlayBinding(overlayDiskId, { version: 1, base: expected });
 }
+
+function stableCacheImageIdFromUrl(url: string): string {
+  // Best-effort normalization so ephemeral querystring auth material does not become part of the
+  // persistent cache key (RemoteRangeDisk does not accept signed URL material).
+  try {
+    const base = (globalThis as typeof globalThis & { location?: { href?: string } }).location?.href;
+    const u = base ? new URL(url, base) : new URL(url);
+    return `${u.origin}${u.pathname}`;
+  } catch {
+    const noHash = url.split("#", 1)[0] ?? url;
+    return (noHash.split("?", 1)[0] ?? noHash).trim();
+  }
+}
 function serializeError(err: unknown): { message: string; name?: string; stack?: string } {
   if (err instanceof Error) return { message: err.message, name: err.name, stack: err.stack };
   return { message: String(err) };
@@ -524,16 +537,25 @@ async function openRemoteDisk(url: string, options?: RemoteDiskOptions): Promise
   const cacheLimitBytes = options?.cacheLimitBytes;
   // `RemoteRangeDisk` uses OPFS sparse files (requires SyncAccessHandle) and does not
   // implement cache eviction. Only select it when OPFS is explicitly requested and
-  // caching hasn't been disabled via `cacheLimitBytes: null`.
-  if (cacheBackend === "opfs" && cacheLimitBytes !== null && hasOpfsSyncAccessHandle()) {
+  // eviction has been disabled via `cacheLimitBytes: null`.
+  if (cacheBackend === "opfs" && cacheLimitBytes === null && hasOpfsSyncAccessHandle()) {
     const fetchFn =
       options?.credentials && options.credentials !== "same-origin"
         ? ((input: RequestInfo | URL, init?: RequestInit) => fetch(input, { ...init, credentials: options.credentials })) // respect caller auth mode
         : fetch;
-    const imageKey = options?.cacheImageId ? `${options.cacheImageId}:${options.cacheVersion ?? "1"}` : undefined;
+
+    const chunkSize = options?.blockSize ?? RANGE_STREAM_CHUNK_SIZE;
+    const imageId = (options?.cacheImageId ?? stableCacheImageIdFromUrl(url)).trim();
+    if (!imageId) {
+      throw new Error("cacheImageId must not be empty");
+    }
+    const version = (options?.cacheVersion ?? "1").trim();
+    if (!version) {
+      throw new Error("cacheVersion must not be empty");
+    }
     const disk = await RemoteRangeDisk.open(url, {
-      imageKey,
-      chunkSize: options?.blockSize,
+      cacheKeyParts: { imageId, version, deliveryType: `range:${chunkSize}` },
+      chunkSize,
       readAheadChunks: options?.prefetchSequentialBlocks,
       fetchFn,
     });

@@ -1,9 +1,10 @@
+import { RangeSet, type ByteRange, type RemoteDiskTelemetrySnapshot } from "../platform/remote_disk";
 import { assertSectorAligned, checkedOffset, SECTOR_SIZE, type AsyncSectorDisk } from "./disk";
 import { RANGE_STREAM_CHUNK_SIZE } from "./chunk_sizes";
-import { opfsGetDisksDir } from "./metadata";
+import { opfsGetRemoteCacheDir } from "./metadata";
 import { OpfsAeroSparseDisk } from "./opfs_sparse";
 import type { RemoteDiskBaseSnapshot } from "./runtime_disk_snapshot";
-import type { ByteRange, RemoteDiskTelemetrySnapshot } from "../platform/remote_disk";
+import { RemoteCacheManager, type RemoteCacheKeyParts, type RemoteCacheMetaV1 } from "./remote_cache_manager";
 
 export function defaultRemoteRangeUrl(base: RemoteDiskBaseSnapshot): string {
   // NOTE: This is intentionally *not* a signed URL. Auth is expected to be handled
@@ -18,17 +19,7 @@ export type RemoteRangeDiskTelemetry = {
   cacheMissChunks: number;
 };
 
-type RemoteRangeDiskCacheMeta = {
-  version: 1;
-  /**
-   * Stable identifier for the remote image (MUST NOT contain ephemeral tokens).
-   */
-  imageKey: string;
-  sizeBytes: number;
-  chunkSize: number;
-  etag?: string;
-  lastModified?: string;
-};
+type RemoteRangeDiskCacheMeta = RemoteCacheMetaV1;
 
 export interface RemoteRangeDiskSparseCache extends AsyncSectorDisk {
   readonly blockSizeBytes: number;
@@ -57,11 +48,11 @@ export interface RemoteRangeDiskMetadataStore {
 
 export type RemoteRangeDiskOptions = {
   /**
-   * Stable identifier for the remote image, used to key the persistent cache.
+   * Stable cache identity for the remote image.
    *
-   * If omitted, one is derived from `url` with query/hash stripped.
+   * MUST NOT be derived from signed URLs / bearer tokens.
    */
-  imageKey?: string;
+  cacheKeyParts: RemoteCacheKeyParts;
   chunkSize?: number;
   maxConcurrentFetches?: number;
   maxRetries?: number;
@@ -208,19 +199,6 @@ function parseContentRangeHeader(header: string): { start: number; endInclusive:
   };
 }
 
-function deriveStableImageKey(url: string): string {
-  try {
-    const base = typeof location !== "undefined" ? location.href : undefined;
-    const parsed = base ? new URL(url, base) : new URL(url);
-    parsed.hash = "";
-    parsed.search = "";
-    return parsed.toString();
-  } catch {
-    // Best-effort: strip query/hash without needing URL parsing.
-    return url.split("#")[0]!.split("?")[0]!;
-  }
-}
-
 function bytesToHex(bytes: Uint8Array): string {
   let out = "";
   for (let i = 0; i < bytes.length; i++) {
@@ -230,6 +208,9 @@ function bytesToHex(bytes: Uint8Array): string {
 }
 
 function toArrayBufferUint8(data: Uint8Array): Uint8Array<ArrayBuffer> {
+  // Newer TS libdefs model typed arrays as `Uint8Array<ArrayBufferLike>`, while WebCrypto expects
+  // `ArrayBuffer`-backed views. Most of our data comes from `Response.arrayBuffer()` and is already
+  // ArrayBuffer-backed, so avoid copies when possible.
   return data.buffer instanceof ArrayBuffer ? (data as unknown as Uint8Array<ArrayBuffer>) : new Uint8Array(data);
 }
 
@@ -240,18 +221,6 @@ async function sha256Hex(data: Uint8Array): Promise<string> {
   }
   const digest = await subtle.digest("SHA-256", toArrayBufferUint8(data));
   return bytesToHex(new Uint8Array(digest));
-}
-
-async function stableCacheId(key: string): Promise<string> {
-  try {
-    const subtle = (globalThis as typeof globalThis & { crypto?: Crypto }).crypto?.subtle;
-    if (!subtle) throw new Error("missing crypto.subtle");
-    const data = new TextEncoder().encode(key);
-    const digest = await subtle.digest("SHA-256", data);
-    return bytesToHex(new Uint8Array(digest));
-  } catch {
-    return encodeURIComponent(key).replaceAll("%", "_").slice(0, 128);
-  }
 }
 
 function sleep(ms: number): Promise<void> {
@@ -335,69 +304,54 @@ async function probeRemoteImage(url: string, fetchFn: typeof fetch): Promise<Rem
 }
 
 class OpfsRemoteRangeDiskMetadataStore implements RemoteRangeDiskMetadataStore {
-  private static fileName(cacheId: string): string {
-    return `remote-range-cache-${cacheId}.json`;
+  private managerPromise: Promise<RemoteCacheManager> | null = null;
+
+  private async getManager(): Promise<RemoteCacheManager> {
+    this.managerPromise ??= RemoteCacheManager.openOpfs();
+    return await this.managerPromise;
   }
 
   async read(cacheId: string): Promise<RemoteRangeDiskCacheMeta | null> {
-    const dir = await opfsGetDisksDir();
-    const name = OpfsRemoteRangeDiskMetadataStore.fileName(cacheId);
-    try {
-      const handle = await dir.getFileHandle(name, { create: false });
-      const file = await handle.getFile();
-      if (file.size === 0) return null;
-      const raw = await file.text();
-      const parsed = JSON.parse(raw) as Partial<RemoteRangeDiskCacheMeta> | null;
-      if (!parsed || parsed.version !== 1) return null;
-      if (typeof parsed.imageKey !== "string") return null;
-      if (typeof parsed.sizeBytes !== "number") return null;
-      if (typeof parsed.chunkSize !== "number") return null;
-      return parsed as RemoteRangeDiskCacheMeta;
-    } catch (err) {
-      if (err instanceof DOMException && err.name === "NotFoundError") return null;
-      return null;
-    }
+    return (await this.getManager()).readMeta(cacheId) as Promise<RemoteRangeDiskCacheMeta | null>;
   }
 
   async write(cacheId: string, meta: RemoteRangeDiskCacheMeta): Promise<void> {
-    const dir = await opfsGetDisksDir();
-    const handle = await dir.getFileHandle(OpfsRemoteRangeDiskMetadataStore.fileName(cacheId), { create: true });
-    const writable = await handle.createWritable({ keepExistingData: false });
-    await writable.write(JSON.stringify(meta));
-    await writable.close();
+    await (await this.getManager()).writeMeta(cacheId, meta);
   }
 
   async delete(cacheId: string): Promise<void> {
-    const dir = await opfsGetDisksDir();
-    try {
-      await dir.removeEntry(OpfsRemoteRangeDiskMetadataStore.fileName(cacheId));
-    } catch (err) {
-      if (err instanceof DOMException && err.name === "NotFoundError") return;
-      // ignore other failures (best-effort)
-    }
+    await (await this.getManager()).clearCache(cacheId);
   }
 }
 
 class OpfsRemoteRangeDiskSparseCacheFactory implements RemoteRangeDiskSparseCacheFactory {
-  private static fileName(cacheId: string): string {
-    return `remote-range-cache-${cacheId}.aerospar`;
+  private static baseFileName(): string {
+    // Keep in sync with `RemoteCacheManager`'s canonical file names.
+    return "base.aerospar";
+  }
+
+  private async getCacheDir(cacheId: string, create: boolean): Promise<FileSystemDirectoryHandle> {
+    const root = await opfsGetRemoteCacheDir();
+    return await root.getDirectoryHandle(cacheId, { create });
   }
 
   async open(cacheId: string): Promise<RemoteRangeDiskSparseCache> {
-    return await OpfsAeroSparseDisk.open(OpfsRemoteRangeDiskSparseCacheFactory.fileName(cacheId));
+    const dir = await this.getCacheDir(cacheId, false);
+    return await OpfsAeroSparseDisk.open(OpfsRemoteRangeDiskSparseCacheFactory.baseFileName(), { dir });
   }
 
   async create(
     cacheId: string,
     opts: { diskSizeBytes: number; blockSizeBytes: number },
   ): Promise<RemoteRangeDiskSparseCache> {
-    return await OpfsAeroSparseDisk.create(OpfsRemoteRangeDiskSparseCacheFactory.fileName(cacheId), opts);
+    const dir = await this.getCacheDir(cacheId, true);
+    return await OpfsAeroSparseDisk.create(OpfsRemoteRangeDiskSparseCacheFactory.baseFileName(), { ...opts, dir });
   }
 
   async delete(cacheId: string): Promise<void> {
-    const dir = await opfsGetDisksDir();
+    const root = await opfsGetRemoteCacheDir();
     try {
-      await dir.removeEntry(OpfsRemoteRangeDiskSparseCacheFactory.fileName(cacheId));
+      await root.removeEntry(cacheId, { recursive: true });
     } catch (err) {
       if (err instanceof DOMException && err.name === "NotFoundError") return;
       // ignore other failures (best-effort)
@@ -415,7 +369,10 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
 
   private cache: RemoteRangeDiskSparseCache | null = null;
   private cacheId = "";
-  private imageKey = "";
+  private readonly cacheKeyParts: RemoteCacheKeyParts;
+  private meta: RemoteRangeDiskCacheMeta | null = null;
+  private rangeSet = new RangeSet();
+  private metaWriteChain: Promise<void> = Promise.resolve();
   private cacheGeneration = 0;
 
   private readonly inflightChunks = new Map<number, { generation: number; promise: Promise<void> }>();
@@ -446,8 +403,10 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     private readonly metadataStore: RemoteRangeDiskMetadataStore,
     private readonly sparseCacheFactory: RemoteRangeDiskSparseCacheFactory,
     fetchSemaphore: Semaphore,
+    cacheKeyParts: RemoteCacheKeyParts,
   ) {
     this.fetchSemaphore = fetchSemaphore;
+    this.cacheKeyParts = cacheKeyParts;
   }
 
   get capacityBytes(): number {
@@ -498,7 +457,7 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     };
   }
 
-  static async open(url: string, options: RemoteRangeDiskOptions = {}): Promise<RemoteRangeDisk> {
+  static async open(url: string, options: RemoteRangeDiskOptions): Promise<RemoteRangeDisk> {
     const chunkSize = options.chunkSize ?? RANGE_STREAM_CHUNK_SIZE;
     const maxConcurrentFetches = options.maxConcurrentFetches ?? 4;
     const maxRetries = options.maxRetries ?? 4;
@@ -529,11 +488,7 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
       fetchFn,
     };
 
-    const imageKey = options.imageKey ?? deriveStableImageKey(url);
-    if (!imageKey) {
-      throw new Error("imageKey must not be empty");
-    }
-    const cacheId = await stableCacheId(imageKey);
+    const cacheId = await RemoteCacheManager.deriveCacheKey(options.cacheKeyParts);
 
     const metadataStore = options.metadataStore ?? new OpfsRemoteRangeDiskMetadataStore();
     const sparseCacheFactory = options.sparseCacheFactory ?? new OpfsRemoteRangeDiskSparseCacheFactory();
@@ -545,9 +500,9 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
       metadataStore,
       sparseCacheFactory,
       new Semaphore(maxConcurrentFetches),
+      options.cacheKeyParts,
     );
     disk.cacheId = cacheId;
-    disk.imageKey = imageKey;
     try {
       await disk.init();
     } catch (err) {
@@ -577,34 +532,53 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     const cache = await this.openOrCreateCache(remote, compatible);
     this.cache = cache;
 
+    const now = Date.now();
+    const etag = remote.etag ?? existingMeta?.validators.etag;
+    const lastModified = remote.lastModified ?? existingMeta?.validators.lastModified;
     const metaToPersist: RemoteRangeDiskCacheMeta = {
       version: 1,
-      imageKey: this.imageKey,
-      sizeBytes: remote.sizeBytes,
-      chunkSize: this.opts.chunkSize,
-      etag: remote.etag,
-      lastModified: remote.lastModified,
+      imageId: this.cacheKeyParts.imageId,
+      imageVersion: this.cacheKeyParts.version,
+      deliveryType: this.cacheKeyParts.deliveryType,
+      validators: {
+        sizeBytes: remote.sizeBytes,
+        ...(etag ? { etag } : {}),
+        ...(lastModified ? { lastModified } : {}),
+      },
+      chunkSizeBytes: this.opts.chunkSize,
+      createdAtMs: compatible && existingMeta ? existingMeta.createdAtMs : now,
+      lastAccessedAtMs: now,
+      cachedRanges: compatible && existingMeta ? existingMeta.cachedRanges : [],
     };
+    // Normalize cached ranges so that `getCacheStatus()` reports compacted ranges even if an older
+    // implementation wrote redundant spans.
+    this.rangeSet = new RangeSet();
+    for (const r of metaToPersist.cachedRanges) this.rangeSet.insert(r.start, r.end);
+    metaToPersist.cachedRanges = this.rangeSet.getRanges();
+    this.meta = metaToPersist;
+    this.metaWriteChain = Promise.resolve();
     await this.metadataStore.write(this.cacheId, metaToPersist);
 
     // If the remote didn't expose ETag/Last-Modified, reuse whatever we had in metadata
     // so that we can still use If-Range across sessions.
-    this.remoteEtag ??= existingMeta?.etag;
-    this.remoteLastModified ??= existingMeta?.lastModified;
+    this.remoteEtag = etag;
+    this.remoteLastModified = lastModified;
   }
 
   private isMetaCompatible(meta: RemoteRangeDiskCacheMeta, remote: RemoteProbe): boolean {
     if (!meta || meta.version !== 1) return false;
-    if (meta.imageKey !== this.imageKey) return false;
-    if (meta.chunkSize !== this.opts.chunkSize) return false;
-    if (meta.sizeBytes !== remote.sizeBytes) return false;
+    if (meta.imageId !== this.cacheKeyParts.imageId) return false;
+    if (meta.imageVersion !== this.cacheKeyParts.version) return false;
+    if (meta.deliveryType !== this.cacheKeyParts.deliveryType) return false;
+    if (meta.chunkSizeBytes !== this.opts.chunkSize) return false;
+    if (meta.validators.sizeBytes !== remote.sizeBytes) return false;
 
     // Prefer ETag when the server exposes it; otherwise fall back to Last-Modified.
     if (remote.etag) {
-      return meta.etag === remote.etag;
+      return meta.validators.etag === remote.etag;
     }
     if (remote.lastModified) {
-      return meta.lastModified === remote.lastModified;
+      return meta.validators.lastModified === remote.lastModified;
     }
     // No validator exposed; size+chunk alignment is all we can validate.
     return true;
@@ -679,6 +653,9 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     if (this.invalidationPromise) {
       await this.invalidationPromise;
     }
+    await this.metaWriteChain.catch(() => {
+      // best-effort metadata persistence
+    });
     await this.ensureOpen().flush();
   }
 
@@ -697,10 +674,18 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     }
     this.flushPending = false;
 
-    await this.metadataStore.delete(this.cacheId);
-
     const oldCache = this.cache;
     await oldCache?.close?.();
+    this.cache = null;
+
+    await this.metaWriteChain.catch(() => {
+      // best-effort metadata persistence
+    });
+    this.metaWriteChain = Promise.resolve();
+    this.meta = null;
+    this.rangeSet = new RangeSet();
+
+    await this.metadataStore.delete(this.cacheId);
 
     const cache = await this.sparseCacheFactory.create(this.cacheId, {
       diskSizeBytes: this.capacityBytesValue,
@@ -708,14 +693,23 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     });
     this.cache = cache;
 
+    const now = Date.now();
     const metaToPersist: RemoteRangeDiskCacheMeta = {
       version: 1,
-      imageKey: this.imageKey,
-      sizeBytes: this.capacityBytesValue,
-      chunkSize: this.opts.chunkSize,
-      etag: this.remoteEtag,
-      lastModified: this.remoteLastModified,
+      imageId: this.cacheKeyParts.imageId,
+      imageVersion: this.cacheKeyParts.version,
+      deliveryType: this.cacheKeyParts.deliveryType,
+      validators: {
+        sizeBytes: this.capacityBytesValue,
+        ...(this.remoteEtag ? { etag: this.remoteEtag } : {}),
+        ...(this.remoteLastModified ? { lastModified: this.remoteLastModified } : {}),
+      },
+      chunkSizeBytes: this.opts.chunkSize,
+      createdAtMs: now,
+      lastAccessedAtMs: now,
+      cachedRanges: [],
     };
+    this.meta = metaToPersist;
     await this.metadataStore.write(this.cacheId, metaToPersist);
   }
 
@@ -729,6 +723,9 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
       this.flushTimer = null;
     }
     this.flushPending = false;
+    await this.metaWriteChain.catch(() => {
+      // best-effort metadata persistence
+    });
     const cache = this.cache;
     this.cache = null;
     this.inflightChunks.clear();
@@ -829,6 +826,7 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
           this.lastFetchMs = performance.now() - start;
           this.lastFetchAtMs = Date.now();
         }
+        await this.recordCachedChunk(chunkIndex, generation);
         this.scheduleBackgroundFlush();
         return;
       } catch (err) {
@@ -995,6 +993,38 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     }, 0);
   }
 
+  private async recordCachedChunk(chunkIndex: number, generation: number): Promise<void> {
+    const meta = this.meta;
+    if (!meta) return;
+    if (generation !== this.cacheGeneration) return;
+
+    const start = chunkIndex * this.opts.chunkSize;
+    const end = Math.min(start + this.opts.chunkSize, this.capacityBytesValue);
+    if (end <= start) return;
+
+    this.rangeSet.insert(start, end);
+    meta.cachedRanges = this.rangeSet.getRanges();
+    meta.lastAccessedAtMs = Date.now();
+    await this.persistMeta(generation);
+  }
+
+  private async persistMeta(generation: number): Promise<void> {
+    const meta = this.meta;
+    if (!meta) return;
+
+    // Multiple chunk fetches can complete concurrently; serialize meta writes so that older snapshots
+    // don't race and overwrite newer metadata.
+    this.metaWriteChain = this.metaWriteChain
+      .catch(() => {
+        // Keep the chain alive even if a previous write failed.
+      })
+      .then(async () => {
+        if (generation !== this.cacheGeneration) return;
+        await this.metadataStore.write(this.cacheId, meta);
+      });
+    await this.metaWriteChain;
+  }
+
   private async invalidateAndReopenCache(): Promise<void> {
     if (this.invalidationPromise) return await this.invalidationPromise;
 
@@ -1008,6 +1038,17 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
       }
       this.flushPending = false;
 
+      const oldCache = this.cache;
+      await oldCache?.close?.();
+      this.cache = null;
+
+      await this.metaWriteChain.catch(() => {
+        // best-effort: ensure no metadata write is in-flight before removing the cache directory
+      });
+      this.metaWriteChain = Promise.resolve();
+      this.meta = null;
+      this.rangeSet = new RangeSet();
+
       await this.metadataStore.delete(this.cacheId);
 
       const remote = await probeRemoteImage(this.url, this.opts.fetchFn);
@@ -1015,23 +1056,29 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
       this.remoteEtag = remote.etag;
       this.remoteLastModified = remote.lastModified;
 
-      const oldCache = this.cache;
-      await oldCache?.close?.();
-
       const cache = await this.sparseCacheFactory.create(this.cacheId, {
         diskSizeBytes: remote.sizeBytes,
         blockSizeBytes: this.opts.chunkSize,
       });
       this.cache = cache;
 
+      const now = Date.now();
       const metaToPersist: RemoteRangeDiskCacheMeta = {
         version: 1,
-        imageKey: this.imageKey,
-        sizeBytes: remote.sizeBytes,
-        chunkSize: this.opts.chunkSize,
-        etag: remote.etag,
-        lastModified: remote.lastModified,
+        imageId: this.cacheKeyParts.imageId,
+        imageVersion: this.cacheKeyParts.version,
+        deliveryType: this.cacheKeyParts.deliveryType,
+        validators: {
+          sizeBytes: remote.sizeBytes,
+          ...(remote.etag ? { etag: remote.etag } : {}),
+          ...(remote.lastModified ? { lastModified: remote.lastModified } : {}),
+        },
+        chunkSizeBytes: this.opts.chunkSize,
+        createdAtMs: now,
+        lastAccessedAtMs: now,
+        cachedRanges: [],
       };
+      this.meta = metaToPersist;
       await this.metadataStore.write(this.cacheId, metaToPersist);
     })();
 

@@ -265,7 +265,7 @@ describe("RemoteRangeDisk", () => {
     activeServers.push(server.close);
 
     const disk = await RemoteRangeDisk.open(server.url, {
-      imageKey: "test-image",
+      cacheKeyParts: { imageId: "test-image", version: "v1", deliveryType: "range" },
       chunkSize,
       metadataStore: new MemoryMetadataStore(),
       sparseCacheFactory: new MemorySparseCacheFactory(),
@@ -289,7 +289,7 @@ describe("RemoteRangeDisk", () => {
     activeServers.push(server.close);
 
     const disk = await RemoteRangeDisk.open(server.url, {
-      imageKey: "test-image",
+      cacheKeyParts: { imageId: "test-image", version: "v1", deliveryType: "range" },
       chunkSize,
       metadataStore: new MemoryMetadataStore(),
       sparseCacheFactory: new MemorySparseCacheFactory(),
@@ -335,7 +335,7 @@ describe("RemoteRangeDisk", () => {
     activeServers.push(server.close);
 
     const disk = await RemoteRangeDisk.open(server.url, {
-      imageKey: "test-image",
+      cacheKeyParts: { imageId: "test-image", version: "v1", deliveryType: "range" },
       chunkSize,
       metadataStore: new MemoryMetadataStore(),
       sparseCacheFactory: new MemorySparseCacheFactory(),
@@ -363,7 +363,7 @@ describe("RemoteRangeDisk", () => {
     activeServers.push(server.close);
 
     const disk = await RemoteRangeDisk.open(server.url, {
-      imageKey: "test-image",
+      cacheKeyParts: { imageId: "test-image", version: "v1", deliveryType: "range" },
       chunkSize,
       metadataStore: new MemoryMetadataStore(),
       sparseCacheFactory: new MemorySparseCacheFactory(),
@@ -401,7 +401,7 @@ describe("RemoteRangeDisk", () => {
     activeServers.push(server.close);
 
     const disk = await RemoteRangeDisk.open(server.url, {
-      imageKey: "test-image",
+      cacheKeyParts: { imageId: "test-image", version: "v1", deliveryType: "range" },
       chunkSize,
       metadataStore: new MemoryMetadataStore(),
       sparseCacheFactory: new MemorySparseCacheFactory(),
@@ -435,7 +435,7 @@ describe("RemoteRangeDisk", () => {
     activeServers.push(server.close);
 
     const disk = await RemoteRangeDisk.open(server.url, {
-      imageKey: "huge-image",
+      cacheKeyParts: { imageId: "huge-image", version: "v1", deliveryType: "range" },
       chunkSize,
       metadataStore: new MemoryMetadataStore(),
       sparseCacheFactory: new MemorySparseCacheFactory(),
@@ -473,7 +473,7 @@ describe("RemoteRangeDisk", () => {
     const sparseCacheFactory = new MemorySparseCacheFactory();
 
     const disk = await RemoteRangeDisk.open(server.url, {
-      imageKey: "etag-image",
+      cacheKeyParts: { imageId: "etag-image", version: "v1", deliveryType: "range" },
       chunkSize,
       metadataStore,
       sparseCacheFactory,
@@ -521,7 +521,7 @@ describe("RemoteRangeDisk", () => {
     activeServers.push(server.close);
 
     const disk = await RemoteRangeDisk.open(server.url, {
-      imageKey: "no-range",
+      cacheKeyParts: { imageId: "no-range", version: "v1", deliveryType: "range" },
       chunkSize,
       metadataStore: new MemoryMetadataStore(),
       sparseCacheFactory: new MemorySparseCacheFactory(),
@@ -543,7 +543,7 @@ describe("RemoteRangeDisk", () => {
     activeServers.push(server.close);
 
     const disk = await RemoteRangeDisk.open(server.url, {
-      imageKey: "bad-content-range",
+      cacheKeyParts: { imageId: "bad-content-range", version: "v1", deliveryType: "range" },
       chunkSize,
       metadataStore: new MemoryMetadataStore(),
       sparseCacheFactory: new MemorySparseCacheFactory(),
@@ -564,7 +564,7 @@ describe("RemoteRangeDisk", () => {
     activeServers.push(server.close);
 
     const disk = await RemoteRangeDisk.open(server.url, {
-      imageKey: "clear-cache",
+      cacheKeyParts: { imageId: "clear-cache", version: "v1", deliveryType: "range" },
       chunkSize,
       metadataStore: new MemoryMetadataStore(),
       sparseCacheFactory: new MemorySparseCacheFactory(),
@@ -627,7 +627,7 @@ describe("RemoteRangeDisk", () => {
 
     await expect(
       RemoteRangeDisk.open(server.url, {
-        imageKey: "open-failure-cleanup",
+        cacheKeyParts: { imageId: "open-failure-cleanup", version: "v1", deliveryType: "range" },
         chunkSize,
         metadataStore: new FailingWriteMetadataStore(),
         sparseCacheFactory: factory,
@@ -673,7 +673,7 @@ describe("RemoteRangeDisk", () => {
     const factory = new FlushFailFactory();
 
     const disk = await RemoteRangeDisk.open(server.url, {
-      imageKey: "flush-fail-close",
+      cacheKeyParts: { imageId: "flush-fail-close", version: "v1", deliveryType: "range" },
       chunkSize,
       metadataStore: new MemoryMetadataStore(),
       sparseCacheFactory: factory,
