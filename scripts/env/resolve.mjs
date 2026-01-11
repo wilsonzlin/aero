@@ -53,7 +53,7 @@ function parseBoolean(name, raw, defaultValue) {
   const v = String(raw).trim().toLowerCase();
   if (v === "1" || v === "true" || v === "yes" || v === "on") return true;
   if (v === "0" || v === "false" || v === "no" || v === "off") return false;
-  die(`${name} must be a boolean (1/0/true/false), got: ${raw}`);
+  die(`${name} must be a boolean (1/0/true/false/yes/no/on/off), got: ${raw}`);
 }
 
 function parseUrl(name, raw) {
