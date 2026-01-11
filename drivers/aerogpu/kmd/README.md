@@ -13,6 +13,15 @@ drivers/aerogpu/kmd/
 
 The device ABI is defined in `drivers/aerogpu/protocol/aerogpu_protocol.h`.
 
+> Note: `aerogpu_protocol.h` is the **legacy** “all-in-one” header used by the current bring-up KMD implementation.
+> The current protocol is split across:
+>
+> - `drivers/aerogpu/protocol/aerogpu_pci.h` (PCI/MMIO + versioning)
+> - `drivers/aerogpu/protocol/aerogpu_ring.h` (ring + submissions + optional allocation table)
+> - `drivers/aerogpu/protocol/aerogpu_cmd.h` (command stream packets, `resource_handle`/`backing_alloc_id`, shared surface export/import)
+>
+> New/updated UMDs should target the split headers. The KMD will be migrated as the ring/MMIO ABI is updated.
+
 ## Building (WDK 10 / MSBuild)
 
 This miniport can be built via the **WDK 10** MSBuild project at:

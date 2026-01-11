@@ -7,7 +7,19 @@ The UMD’s job is to:
 1. expose the D3D9 adapter/device entrypoints expected by the Win7 D3D9 runtime, and
 2. translate D3D9 DDI calls into the **AeroGPU high-level command stream** (`drivers/aerogpu/protocol/aerogpu_cmd.h`).
 
-The kernel-mode driver (KMD) is responsible for accepting submissions and providing the emulator with the side-band **allocation list** so the command stream can reference resources by allocation-list index (no patch-location list / relocations).
+The kernel-mode driver (KMD) is responsible for accepting submissions and forwarding them to the emulator via the ring/submission ABI (`drivers/aerogpu/protocol/aerogpu_ring.h`). The command stream does **not** reference resources by “allocation-list index”; instead it uses two separate ID spaces:
+
+- **Protocol resource handles** (`aerogpu_handle_t`, exposed in packets as `resource_handle` / `buffer_handle` / `texture_handle`, etc): these are 32-bit, UMD-chosen handles that identify logical GPU objects in the command stream.
+- **WDDM allocation IDs** (`alloc_id`): when a resource is backed by guest memory, create packets may set `backing_alloc_id` to a non-zero allocation ID. The KMD supplies an optional per-submission `aerogpu_alloc_table` (see `aerogpu_ring.h`) that resolves `alloc_id → {gpa, size_bytes, flags}` for the allocations referenced by that submission.
+
+### Shared surfaces (D3D9Ex / DWM)
+
+Cross-process shared resources are expressed explicitly in the command stream:
+
+- `AEROGPU_CMD_EXPORT_SHARED_SURFACE` associates an existing `resource_handle` with a stable 64-bit `share_token`.
+- `AEROGPU_CMD_IMPORT_SHARED_SURFACE` creates a new `resource_handle` aliasing the exported resource by `share_token`.
+
+`share_token` must be stable across guest processes (in the current model it is derived from the underlying allocation’s stable `alloc_id`, i.e. it is **not** a process-local `HANDLE` value).
 
 ## Build
 

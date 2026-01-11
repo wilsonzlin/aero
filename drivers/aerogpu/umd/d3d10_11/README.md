@@ -32,7 +32,11 @@ The initial feature claim is **D3D_FEATURE_LEVEL_10_0**:
 
 ## Command stream mapping
 
-All resources (buffers, textures, views) are referenced in the command stream using a monotonically increasing 32-bit **allocation index** (`alloc_index`). This mirrors the intended D3D9 UMD strategy and avoids KMD patching of pointers in submitted command buffers.
+This UMD emits `drivers/aerogpu/protocol/aerogpu_cmd.h` packets and references objects using **protocol resource handles** (`aerogpu_handle_t`), not an “allocation list index” model:
+
+- Packets reference resources via `resource_handle` / `buffer_handle` / `texture_handle` fields.
+- When a resource is backed by guest memory, create packets may set `backing_alloc_id` (and `backing_offset_bytes`). `backing_alloc_id` is resolved via the optional per-submission `aerogpu_alloc_table` supplied by the KMD in `aerogpu_submit_desc` (see `drivers/aerogpu/protocol/aerogpu_ring.h`).
+- `aerogpu_handle_t` values are protocol object IDs; they are intentionally **not** WDDM allocation handles/IDs.
 
 The core emission happens in `src/aerogpu_d3d10_11_umd.cpp` by building a linear command buffer consisting of:
 
@@ -42,6 +46,10 @@ The core emission happens in `src/aerogpu_d3d10_11_umd.cpp` by building a linear
   [aerogpu_cmd_hdr + packet fields (+ payload...)]
   ...
 ```
+
+### Shared surface note
+
+DXGI/D3D10/11 shared resource interop is not implemented in this UMD yet. The protocol supports it (primarily for D3D9Ex/DWM) via `AEROGPU_CMD_EXPORT_SHARED_SURFACE` / `AEROGPU_CMD_IMPORT_SHARED_SURFACE` and a stable cross-process `share_token`.
 
 ## Build
 
