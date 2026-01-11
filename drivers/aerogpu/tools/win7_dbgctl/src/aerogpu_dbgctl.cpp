@@ -1111,29 +1111,37 @@ static int DoDumpVblank(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t 
     }
 
     if (havePrev && supported && prevSupported) {
-      const uint64_t dseq = q.vblank_seq - prev.vblank_seq;
-      const uint64_t dt = q.last_vblank_time_ns - prev.last_vblank_time_ns;
-      wprintf(L"  delta: seq=%I64u time=%I64u ns\n", (unsigned long long)dseq, (unsigned long long)dt);
-      if (dseq != 0 && dt != 0) {
-        const double hz = (double)dseq * 1000000000.0 / (double)dt;
-        wprintf(L"  observed: ~%.3f Hz\n", hz);
+      if (q.vblank_seq < prev.vblank_seq || q.last_vblank_time_ns < prev.last_vblank_time_ns) {
+        wprintf(L"  delta: counters reset (prev seq=0x%I64x time=0x%I64x, now seq=0x%I64x time=0x%I64x)\n",
+                (unsigned long long)prev.vblank_seq,
+                (unsigned long long)prev.last_vblank_time_ns,
+                (unsigned long long)q.vblank_seq,
+                (unsigned long long)q.last_vblank_time_ns);
+      } else {
+        const uint64_t dseq = q.vblank_seq - prev.vblank_seq;
+        const uint64_t dt = q.last_vblank_time_ns - prev.last_vblank_time_ns;
+        wprintf(L"  delta: seq=%I64u time=%I64u ns\n", (unsigned long long)dseq, (unsigned long long)dt);
+        if (dseq != 0 && dt != 0) {
+          const double hz = (double)dseq * 1000000000.0 / (double)dt;
+          wprintf(L"  observed: ~%.3f Hz\n", hz);
 
-        const uint64_t perVblankUs = (dt / dseq) / 1000ull;
-        if (perVblankUsSamples == 0) {
-          perVblankUsMin = perVblankUs;
-          perVblankUsMax = perVblankUs;
-        } else {
-          if (perVblankUs < perVblankUsMin) {
+          const uint64_t perVblankUs = (dt / dseq) / 1000ull;
+          if (perVblankUsSamples == 0) {
             perVblankUsMin = perVblankUs;
-          }
-          if (perVblankUs > perVblankUsMax) {
             perVblankUsMax = perVblankUs;
+          } else {
+            if (perVblankUs < perVblankUsMin) {
+              perVblankUsMin = perVblankUs;
+            }
+            if (perVblankUs > perVblankUsMax) {
+              perVblankUsMax = perVblankUs;
+            }
           }
+          perVblankUsSum += perVblankUs;
+          perVblankUsSamples += 1;
+        } else if (dseq == 0) {
+          stallCount += 1;
         }
-        perVblankUsSum += perVblankUs;
-        perVblankUsSamples += 1;
-      } else if (dseq == 0) {
-        stallCount += 1;
       }
     }
 
