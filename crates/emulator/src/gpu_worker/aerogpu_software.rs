@@ -3412,6 +3412,7 @@ impl AeroGpuSoftwareExecutor {
                 let handle = u32::from_le(packet_cmd.resource_handle);
                 let token = u64::from_le(packet_cmd.share_token);
                 if handle == 0 || token == 0 {
+                    Self::record_error(regs);
                     return true;
                 }
                 let underlying = self.resolve_handle(handle);
@@ -3439,6 +3440,7 @@ impl AeroGpuSoftwareExecutor {
                 let out_handle = u32::from_le(packet_cmd.out_resource_handle);
                 let token = u64::from_le(packet_cmd.share_token);
                 if out_handle == 0 || token == 0 {
+                    Self::record_error(regs);
                     return true;
                 }
                 let Some(&src_handle) = self.shared_surfaces.get(&token) else {

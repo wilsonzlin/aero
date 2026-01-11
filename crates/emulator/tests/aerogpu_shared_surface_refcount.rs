@@ -549,6 +549,98 @@ fn shared_surface_release_invalidates_token_but_existing_alias_still_works() {
 }
 
 #[test]
+fn shared_surface_export_with_zero_token_sets_error_irq() {
+    let mut mem = VecMemory::new(0x20_000);
+    let mut regs = AeroGpuRegs::default();
+    let mut exec = AeroGpuSoftwareExecutor::new();
+
+    let cmd_gpa = 0x2000u64;
+
+    let stream = build_stream(
+        |out| {
+            emit_packet(out, AerogpuCmdOpcode::CreateTexture2d as u32, |out| {
+                push_u32(out, 1); // texture_handle
+                push_u32(out, 0); // usage_flags
+                push_u32(out, AerogpuFormat::R8G8B8A8Unorm as u32); // format
+                push_u32(out, 1); // width
+                push_u32(out, 1); // height
+                push_u32(out, 1); // mip_levels
+                push_u32(out, 1); // array_layers
+                push_u32(out, 0); // row_pitch_bytes (auto)
+                push_u32(out, 0); // backing_alloc_id
+                push_u32(out, 0); // backing_offset_bytes
+                push_u64(out, 0); // reserved0
+            });
+
+            emit_packet(out, AerogpuCmdOpcode::ExportSharedSurface as u32, |out| {
+                push_u32(out, 1); // resource_handle
+                push_u32(out, 0); // reserved0
+                push_u64(out, 0); // share_token (reserved)
+            });
+        },
+        regs.abi_version,
+    );
+
+    mem.write_physical(cmd_gpa, &stream);
+
+    let desc = AeroGpuSubmitDesc {
+        desc_size_bytes: AeroGpuSubmitDesc::SIZE_BYTES,
+        flags: 0,
+        context_id: 0,
+        engine_id: 0,
+        cmd_gpa,
+        cmd_size_bytes: stream.len() as u32,
+        alloc_table_gpa: 0,
+        alloc_table_size_bytes: 0,
+        signal_fence: 0,
+    };
+
+    exec.execute_submission(&mut regs, &mut mem, &desc);
+
+    assert_eq!(regs.stats.malformed_submissions, 1);
+    assert_ne!(regs.irq_status & irq_bits::ERROR, 0);
+}
+
+#[test]
+fn shared_surface_import_with_zero_token_sets_error_irq() {
+    let mut mem = VecMemory::new(0x20_000);
+    let mut regs = AeroGpuRegs::default();
+    let mut exec = AeroGpuSoftwareExecutor::new();
+
+    let cmd_gpa = 0x2000u64;
+
+    let stream = build_stream(
+        |out| {
+            emit_packet(out, AerogpuCmdOpcode::ImportSharedSurface as u32, |out| {
+                push_u32(out, 2); // out_resource_handle
+                push_u32(out, 0); // reserved0
+                push_u64(out, 0); // share_token (reserved)
+            });
+        },
+        regs.abi_version,
+    );
+
+    mem.write_physical(cmd_gpa, &stream);
+
+    let desc = AeroGpuSubmitDesc {
+        desc_size_bytes: AeroGpuSubmitDesc::SIZE_BYTES,
+        flags: 0,
+        context_id: 0,
+        engine_id: 0,
+        cmd_gpa,
+        cmd_size_bytes: stream.len() as u32,
+        alloc_table_gpa: 0,
+        alloc_table_size_bytes: 0,
+        signal_fence: 0,
+    };
+
+    exec.execute_submission(&mut regs, &mut mem, &desc);
+
+    assert_eq!(regs.stats.malformed_submissions, 1);
+    assert_ne!(regs.irq_status & irq_bits::ERROR, 0);
+}
+
+#[test]
 fn shared_surface_export_token_collision_is_an_error_but_keeps_existing_mapping() {
     let mut mem = VecMemory::new(0x20_000);
     let mut regs = AeroGpuRegs::default();
