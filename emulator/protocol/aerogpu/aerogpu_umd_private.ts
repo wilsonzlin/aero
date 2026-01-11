@@ -4,6 +4,8 @@
 
 export const AEROGPU_UMDPRIV_STRUCT_VERSION_V1 = 1;
 
+// Legacy "ARGP" magic is only observed when running against the emulator legacy device model
+// (feature `emulator/aerogpu-legacy`).
 export const AEROGPU_UMDPRIV_MMIO_MAGIC_LEGACY_ARGP = 0x41524750; // "ARGP" LE
 export const AEROGPU_UMDPRIV_MMIO_MAGIC_NEW_AGPU = 0x55504741; // "AGPU" LE
 

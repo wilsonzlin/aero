@@ -4,8 +4,9 @@
  * This header defines the stable Escape packet header + base ops used by
  * user-mode tools/UMDs to talk to the AeroGPU Win7 KMD.
  *
- * It is deliberately decoupled from the device ABI (legacy ARGP vs new AGPU) so
- * bring-up tools can remain usable while the stack migrates.
+ * It is deliberately decoupled from the device ABI (legacy ARGP vs new AGPU; legacy is optional and
+ * corresponds to the emulator legacy device model feature `emulator/aerogpu-legacy`) so bring-up
+ * tools can remain usable while the stack migrates.
  *
  * Stability requirements:
  * - Escape packets must have a stable layout across x86/x64 because a 32-bit
@@ -93,4 +94,3 @@ AEROGPU_ESCAPE_STATIC_ASSERT(offsetof(aerogpu_escape_query_device_out, mmio_vers
 #endif
 
 #endif /* AEROGPU_PROTOCOL_AEROGPU_ESCAPE_H_ */
-
