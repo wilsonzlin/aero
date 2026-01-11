@@ -1054,8 +1054,15 @@ function Show-PackagerHwidDiagnostics {
         $maxPrint = 50
         for ($i = 0; $i -lt $lines.Count; $i++) {
           $line = $lines[$i]
+          # Align with `aero_packager` INF validation: ignore comment-only matches (anything after `;`).
+          $lineNoComment = $line
+          $semi = $lineNoComment.IndexOf(';')
+          if ($semi -ge 0) {
+            $lineNoComment = $lineNoComment.Substring(0, $semi)
+          }
+          $lineNoComment = $lineNoComment.Trim()
           foreach ($entry in $compiled) {
-            if ($entry.Regex.IsMatch($line)) {
+            if ($lineNoComment -and $entry.Regex.IsMatch($lineNoComment)) {
               if (-not $anyMatch) {
                 Write-Host "    Matches:"
               }
