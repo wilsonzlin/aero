@@ -11,3 +11,4 @@ export {
   assertL2TunnelDataChannelSemantics,
   createL2TunnelDataChannel,
 } from "./l2Tunnel";
+export { connectL2Relay, connectL2RelaySignaling } from "./l2RelaySignalingClient";

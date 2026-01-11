@@ -566,6 +566,8 @@ export class WebSocketL2TunnelClient extends BaseL2TunnelClient {
  * Recommended channel options for low-latency forwarding:
  * - `ordered: false`
  * - do NOT set `maxRetransmits` or `maxPacketLifeTime` (fully reliable)
+ *
+ * See `docs/adr/0005-networking-l2-tunnel.md` and `docs/l2-tunnel-protocol.md`.
  */
 export class WebRtcL2TunnelClient extends BaseL2TunnelClient {
   constructor(
