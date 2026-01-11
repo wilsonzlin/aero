@@ -187,6 +187,231 @@ function renderWebGpuPanel(): HTMLElement {
   return el("div", { class: "panel" }, el("h2", { text: "WebGPU" }), el("div", { class: "row" }, button), output);
 }
 
+function parseUsbId(text: string): number | null {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+  const normalized = trimmed.toLowerCase().startsWith('0x') ? trimmed.slice(2) : trimmed;
+  const value = Number.parseInt(normalized, 16);
+  if (!Number.isFinite(value)) return null;
+  if (value < 0 || value > 0xffff) return null;
+  return value;
+}
+
+function summarizeUsbDevice(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  device: any,
+): Record<string, unknown> | null {
+  if (!device || typeof device !== 'object') return null;
+  return {
+    productName: device.productName,
+    manufacturerName: device.manufacturerName,
+    serialNumber: device.serialNumber,
+    vendorId: device.vendorId,
+    productId: device.productId,
+    opened: device.opened,
+  };
+}
+
+async function runWebUsbProbeWorker(
+  msg: unknown,
+  { timeoutMs = 10_000 } = {},
+): Promise<unknown> {
+  const worker = new Worker(new URL('./workers/webusb-probe-worker.ts', import.meta.url), { type: 'module' });
+
+  return await new Promise((resolve, reject) => {
+    const timeout = window.setTimeout(() => {
+      worker.terminate();
+      reject(new Error(`WebUSB probe worker timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    const cleanup = () => {
+      window.clearTimeout(timeout);
+      worker.terminate();
+    };
+
+    worker.addEventListener('message', (ev: MessageEvent) => {
+      cleanup();
+      resolve(ev.data);
+    });
+
+    worker.addEventListener('messageerror', () => {
+      cleanup();
+      reject(new Error('WebUSB probe worker message deserialization failed'));
+    });
+
+    worker.addEventListener('error', (ev) => {
+      cleanup();
+      reject(new Error(ev instanceof ErrorEvent ? ev.message : String(ev)));
+    });
+
+    try {
+      worker.postMessage(msg);
+    } catch (err) {
+      cleanup();
+      reject(err);
+    }
+  });
+}
+
+function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
+  const info = el('pre', { text: '' });
+  const output = el('pre', { text: '' });
+  const vendorIdInput = el('input', { type: 'text', placeholder: '0x1234 (optional)' }) as HTMLInputElement;
+  const productIdInput = el('input', { type: 'text', placeholder: '0x5678 (optional)' }) as HTMLInputElement;
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let selectedDevice: any | null = null;
+
+  function updateInfo(): void {
+    const userActivation = (navigator as unknown as { userActivation?: { isActive?: boolean; hasBeenActive?: boolean } })
+      .userActivation;
+    info.textContent =
+      `isSecureContext=${(globalThis as typeof globalThis & { isSecureContext?: boolean }).isSecureContext === true}\n` +
+      `navigator.usb=${report.webusb ? 'present' : 'missing'}\n` +
+      `userActivation.isActive=${userActivation?.isActive ?? 'n/a'}\n` +
+      `userActivation.hasBeenActive=${userActivation?.hasBeenActive ?? 'n/a'}\n` +
+      `selectedDevice=${selectedDevice ? JSON.stringify(summarizeUsbDevice(selectedDevice)) : 'none'}\n`;
+  }
+
+  updateInfo();
+
+  const requestButton = el('button', {
+    text: 'Request USB device (chooser)',
+    onclick: async () => {
+      output.textContent = '';
+      selectedDevice = null;
+      updateInfo();
+
+      if (!report.webusb) {
+        output.textContent = 'WebUSB is unavailable (navigator.usb is undefined).';
+        return;
+      }
+
+      const vendorId = parseUsbId(vendorIdInput.value);
+      const productId = parseUsbId(productIdInput.value);
+      if (productId !== null && vendorId === null) {
+        output.textContent = 'productId filter requires vendorId.';
+        return;
+      }
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const usb: any = (navigator as unknown as { usb?: unknown }).usb;
+      if (!usb || typeof usb.requestDevice !== 'function') {
+        output.textContent = 'navigator.usb.requestDevice is unavailable in this context.';
+        return;
+      }
+
+      // Note: some Chromium versions require at least one filter; `{}` is a best-effort "match all"
+      // filter for probing. If this fails, specify vendorId/productId explicitly.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const filters: any[] = [];
+      if (vendorId !== null) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const filter: any = { vendorId };
+        if (productId !== null) filter.productId = productId;
+        filters.push(filter);
+      } else {
+        filters.push({});
+      }
+
+      try {
+        // Must be called directly from the user gesture handler (transient user activation).
+        selectedDevice = await usb.requestDevice({ filters });
+        updateInfo();
+        output.textContent = JSON.stringify({ selected: summarizeUsbDevice(selectedDevice) }, null, 2);
+      } catch (err) {
+        output.textContent = err instanceof Error ? err.message : String(err);
+      }
+    },
+  });
+
+  const listButton = el('button', {
+    text: 'List permitted devices (getDevices)',
+    onclick: async () => {
+      output.textContent = '';
+      if (!report.webusb) {
+        output.textContent = 'WebUSB is unavailable (navigator.usb is undefined).';
+        return;
+      }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const usb: any = (navigator as unknown as { usb?: unknown }).usb;
+      if (!usb || typeof usb.getDevices !== 'function') {
+        output.textContent = 'navigator.usb.getDevices is unavailable in this context.';
+        return;
+      }
+
+      try {
+        const devices = await usb.getDevices();
+        output.textContent = JSON.stringify(
+          {
+            count: Array.isArray(devices) ? devices.length : null,
+            devices: Array.isArray(devices) ? devices.map(summarizeUsbDevice) : null,
+          },
+          null,
+          2,
+        );
+      } catch (err) {
+        output.textContent = err instanceof Error ? err.message : String(err);
+      }
+    },
+  });
+
+  const workerProbeButton = el('button', {
+    text: 'Probe worker WebUSB (WorkerNavigator.usb)',
+    onclick: async () => {
+      output.textContent = '';
+      try {
+        const resp = await runWebUsbProbeWorker({ type: 'probe' });
+        output.textContent = JSON.stringify(resp, null, 2);
+      } catch (err) {
+        output.textContent = err instanceof Error ? err.message : String(err);
+      }
+    },
+  });
+
+  const cloneButton = el('button', {
+    text: 'Try sending selected device to worker (structured clone)',
+    onclick: async () => {
+      output.textContent = '';
+      if (!selectedDevice) {
+        output.textContent = 'Select a device first (Request USB device).';
+        return;
+      }
+
+      try {
+        const resp = await runWebUsbProbeWorker({ type: 'clone-test', device: selectedDevice });
+        output.textContent = JSON.stringify(resp, null, 2);
+      } catch (err) {
+        output.textContent = err instanceof Error ? err.message : String(err);
+      }
+    },
+  });
+
+  return el(
+    'div',
+    { class: 'panel', id: 'webusb' },
+    el('h2', { text: 'WebUSB (probe)' }),
+    el(
+      'div',
+      { class: 'mono' },
+      'Note: requestDevice() requires a user gesture on the main thread; user activation does not propagate to workers.',
+    ),
+    info,
+    el(
+      'div',
+      { class: 'row' },
+      el('label', { text: 'vendorId:' }),
+      vendorIdInput,
+      el('label', { text: 'productId:' }),
+      productIdInput,
+      requestButton,
+      listButton,
+    ),
+    el('div', { class: 'row' }, workerProbeButton, cloneButton),
+    output,
+  );
+}
+
 function renderOpfsPanel(): HTMLElement {
   const status = el("pre", { text: "" });
   const progress = el("progress", { value: "0", max: "1", style: "width: 320px" }) as HTMLProgressElement;
@@ -1371,6 +1596,7 @@ function render(): void {
     ),
     el('div', { class: 'panel' }, el('h2', { text: 'Capability report' }), renderCapabilityTable(report)),
     renderWebGpuPanel(),
+    renderWebUsbPanel(report),
     renderOpfsPanel(),
     renderRemoteDiskPanel(),
     renderAudioPanel(),
