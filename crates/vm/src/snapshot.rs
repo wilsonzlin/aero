@@ -2,8 +2,8 @@ use std::io::Cursor;
 use std::ops::Range;
 
 use aero_snapshot::{
-    CpuMode, CpuState, DeviceId, DeviceState, DiskOverlayRefs, MmuState, RamMode, SaveOptions,
-    SegmentState, SnapshotMeta, SnapshotSource, SnapshotTarget,
+    CpuMode, CpuState, DeviceId, DeviceState, DiskOverlayRefs, MmuState, RamMode, RestoreOptions,
+    SaveOptions, SegmentState, SnapshotMeta, SnapshotSource, SnapshotTarget,
 };
 use firmware::bios::BiosSnapshot;
 use machine::{A20Gate, BlockDevice, CpuState as MachineCpuState, PhysicalMemory, FLAG_ALWAYS_ON};
@@ -26,35 +26,26 @@ impl Default for SnapshotOptions {
 pub type SnapshotError = aero_snapshot::SnapshotError;
 
 fn machine_cpu_to_snapshot(cpu: &MachineCpuState) -> CpuState {
-    CpuState {
-        rax: cpu.rax,
-        rbx: cpu.rbx,
-        rcx: cpu.rcx,
-        rdx: cpu.rdx,
-        rsi: cpu.rsi,
-        rdi: cpu.rdi,
-        rbp: cpu.rbp,
-        rsp: cpu.rsp,
-        r8: 0,
-        r9: 0,
-        r10: 0,
-        r11: 0,
-        r12: 0,
-        r13: 0,
-        r14: 0,
-        r15: 0,
-        rip: cpu.rip,
-        rflags: cpu.rflags,
-        mode: CpuMode::Real,
-        halted: cpu.halted,
-        cs: SegmentState::real_mode(cpu.cs.selector),
-        ds: SegmentState::real_mode(cpu.ds.selector),
-        es: SegmentState::real_mode(cpu.es.selector),
-        fs: SegmentState::real_mode(0),
-        gs: SegmentState::real_mode(0),
-        ss: SegmentState::real_mode(cpu.ss.selector),
-        ..CpuState::default()
-    }
+    let mut state = CpuState::default();
+    state.rax = cpu.rax;
+    state.rbx = cpu.rbx;
+    state.rcx = cpu.rcx;
+    state.rdx = cpu.rdx;
+    state.rsi = cpu.rsi;
+    state.rdi = cpu.rdi;
+    state.rbp = cpu.rbp;
+    state.rsp = cpu.rsp;
+    state.rip = cpu.rip;
+    state.rflags = cpu.rflags;
+    state.mode = CpuMode::Real;
+    state.halted = cpu.halted;
+    state.cs = SegmentState::real_mode(cpu.cs.selector);
+    state.ds = SegmentState::real_mode(cpu.ds.selector);
+    state.es = SegmentState::real_mode(cpu.es.selector);
+    state.ss = SegmentState::real_mode(cpu.ss.selector);
+    state.fs = SegmentState::real_mode(0);
+    state.gs = SegmentState::real_mode(0);
+    state
 }
 
 fn snapshot_cpu_to_machine(state: CpuState, cpu: &mut MachineCpuState) {
@@ -303,5 +294,12 @@ pub fn restore_vm_snapshot<D: BlockDevice>(
     vm: &mut Vm<D>,
     bytes: &[u8],
 ) -> Result<(), SnapshotError> {
-    aero_snapshot::restore_snapshot(&mut Cursor::new(bytes), vm)
+    let expected_parent_snapshot_id = vm.last_snapshot_id;
+    aero_snapshot::restore_snapshot_with_options(
+        &mut Cursor::new(bytes),
+        vm,
+        RestoreOptions {
+            expected_parent_snapshot_id,
+        },
+    )
 }

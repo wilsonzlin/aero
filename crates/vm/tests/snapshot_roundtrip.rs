@@ -1,7 +1,7 @@
 use aero_snapshot::RamMode;
 use firmware::bios::{Bios, BiosConfig};
 use machine::{CpuExit, InMemoryDisk, MemoryAccess};
-use vm::{SnapshotOptions, Vm};
+use vm::{SnapshotError, SnapshotOptions, Vm};
 
 fn boot_sector_with(bytes: &[u8]) -> [u8; 512] {
     let mut sector = [0u8; 512];
@@ -163,4 +163,40 @@ fn snapshot_round_trip_dirty_chain_preserves_stack_writes() {
     assert_eq!(restored.mem.read_u8(0x7BFA), expected_stack_byte);
     assert_eq!(restored.step(), CpuExit::Halt);
     assert_eq!(restored.bios.tty_output(), expected_output);
+}
+
+#[test]
+fn snapshot_restore_rejects_dirty_snapshot_with_wrong_parent() {
+    let cfg = BiosConfig {
+        memory_size_bytes: 16 * 1024 * 1024,
+        boot_drive: 0x80,
+        ..BiosConfig::default()
+    };
+    let bios = Bios::new(cfg.clone());
+    let disk = InMemoryDisk::from_boot_sector(boot_sector_with(&[]));
+
+    let mut vm = Vm::new(16 * 1024 * 1024, bios, disk);
+    vm.reset();
+
+    let base = vm.save_snapshot(SnapshotOptions::default()).unwrap();
+
+    // Dirty some RAM so the next snapshot is a diff with a non-null parent id.
+    vm.mem.write_physical(0x1234, &[0xAA]);
+    let diff = vm
+        .save_snapshot(SnapshotOptions {
+            ram_mode: RamMode::Dirty,
+        })
+        .unwrap();
+
+    // Restoring a dirty diff without having applied its base snapshot should fail fast.
+    let bios2 = Bios::new(cfg);
+    let disk2 = InMemoryDisk::from_boot_sector(boot_sector_with(&[]));
+    let mut restored = Vm::new(16 * 1024 * 1024, bios2, disk2);
+    restored.reset();
+
+    let err = restored.restore_snapshot(&diff).unwrap_err();
+    assert!(matches!(err, SnapshotError::Corrupt("snapshot parent mismatch")));
+
+    // Full snapshots ignore expected-parent validation and must still restore fine.
+    restored.restore_snapshot(&base).unwrap();
 }
