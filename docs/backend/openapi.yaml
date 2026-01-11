@@ -238,7 +238,7 @@ components:
         endpoints:
           type: object
           additionalProperties: false
-          required: [tcp, dnsQuery]
+          required: [tcp, dnsQuery, l2]
           properties:
             tcp:
               type: string

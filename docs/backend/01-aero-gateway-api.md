@@ -5,6 +5,7 @@ This document specifies the **public backend contract** for Aero networking feat
 
 - A **TCP proxy** exposed as a WebSocket endpoint (`/tcp`)
 - Optional **TCP multiplexing** over WebSocket (`/tcp-mux`) for scaling high connection counts
+- An **L2 tunnel** exposed as a WebSocket endpoint (`/l2`) for Option C networking (see `docs/l2-tunnel-protocol.md`)
 - A **DNS-over-HTTPS** endpoint (`/dns-query`) used by the guest network stack
 - Optional **DNS JSON** convenience endpoint (`/dns-json`) for debugging/simple lookups
 - A lightweight **session bootstrap** endpoint (`POST /session`) that issues cookies used for rate-limiting and authorization
@@ -22,7 +23,7 @@ The intent is that a frontend engineer can build a compatible client **without r
 All endpoints are rooted at the **gateway origin**:
 
 - HTTP: `https://gateway.example.com/session`, `https://gateway.example.com/dns-query`
-- WebSocket: `wss://gateway.example.com/tcp`
+- WebSocket: `wss://gateway.example.com/tcp`, `wss://gateway.example.com/l2`
 
 ### Same-site vs cross-site deployments (cookies)
 
@@ -39,6 +40,7 @@ Generic form:
 
 - `POST http://localhost:PORT/session`
 - `ws://localhost:PORT/tcp?v=1&host=example.com&port=443`
+- `ws://localhost:PORT/l2` (subprotocol: `aero-l2-tunnel-v1`)
 - `ws://localhost:PORT/tcp-mux` (subprotocol: `aero-tcp-mux-v1`)
 - `http://localhost:PORT/dns-query?...`
 
@@ -46,6 +48,7 @@ Concrete example (assuming the gateway is running on port `8080`):
 
 - `POST http://localhost:8080/session`
 - `ws://localhost:8080/tcp?v=1&host=example.com&port=443`
+- `ws://localhost:8080/l2` (subprotocol: `aero-l2-tunnel-v1`)
 - `ws://localhost:8080/tcp-mux` (subprotocol: `aero-tcp-mux-v1`)
 - `http://localhost:8080/dns-query?...`
 
