@@ -49,6 +49,17 @@ def _has_pycdlib() -> bool:
 
 
 class VirtioWinExtractTest(unittest.TestCase):
+    def _resolve_any_case_insensitive(self, root: Path, options: List[str]) -> Path:
+        last_err: Optional[AssertionError] = None
+        for opt in options:
+            try:
+                return self._resolve_case_insensitive(root, opt)
+            except AssertionError as e:
+                last_err = e
+        if last_err is None:
+            raise AssertionError("no options provided to _resolve_any_case_insensitive")
+        raise last_err
+
     def _resolve_case_insensitive(self, root: Path, *parts: str) -> Path:
         cur = root
         for part in parts:
@@ -78,8 +89,10 @@ class VirtioWinExtractTest(unittest.TestCase):
         expect_pycdlib_path_mode: Optional[str] = None,
     ) -> None:
         # Required content should be present.
-        self.assertTrue(self._resolve_case_insensitive(out_root, "viostor", "w7.1", "amd64", "viostor.inf").is_file())
-        self.assertTrue(self._resolve_case_insensitive(out_root, "viostor", "w7.1", "x86", "viostor.inf").is_file())
+        viostor_root = self._resolve_case_insensitive(out_root, "viostor")
+        viostor_os = self._resolve_any_case_insensitive(viostor_root, ["w7.1", "w7_1", "w7", "win7"])
+        self.assertTrue(self._resolve_case_insensitive(viostor_os, "amd64", "viostor.inf").is_file())
+        self.assertTrue(self._resolve_case_insensitive(viostor_os, "x86", "viostor.inf").is_file())
         self.assertTrue(self._resolve_case_insensitive(out_root, "NetKVM", "w7", "x64", "netkvm.inf").is_file())
         self.assertTrue(self._resolve_case_insensitive(out_root, "NetKVM", "w7", "i386", "netkvm.inf").is_file())
 
@@ -92,7 +105,6 @@ class VirtioWinExtractTest(unittest.TestCase):
 
         # Noise should not be extracted.
         self.assertFalse(self._has_child_case_insensitive(out_root, "Balloon"))
-        viostor_root = self._resolve_case_insensitive(out_root, "viostor")
         self.assertFalse(self._has_child_case_insensitive(viostor_root, "w10"))
 
         # Root-level notice files should be present.

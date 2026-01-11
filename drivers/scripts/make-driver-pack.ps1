@@ -41,7 +41,7 @@ param(
 
   [string]$OutDir = (Join-Path (Join-Path $PSScriptRoot "..") "out"),
 
-  [string[]]$OsFolderCandidates = @("w7", "w7.1", "win7"),
+  [string[]]$OsFolderCandidates = @("w7", "w7.1", "w7_1", "win7"),
 
   [string[]]$ArchCandidatesAmd64 = @("amd64", "x64"),
   [string[]]$ArchCandidatesX86 = @("x86", "i386"),
