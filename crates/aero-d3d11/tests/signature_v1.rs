@@ -184,7 +184,7 @@ fn parses_v1_signature_chunk_entries() {
 
 #[test]
 fn rejects_v1_stream_out_of_range() {
-    let chunk_bytes = build_signature_chunk_v1_one_entry(256);
+    let chunk_bytes = build_signature_chunk_v1_one_entry(4);
     let err = parse_signature_chunk(FOURCC_ISG1, &chunk_bytes).unwrap_err();
 
     assert!(matches!(

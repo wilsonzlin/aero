@@ -124,10 +124,15 @@ fn convert_dxbc_signature_chunk(
     let mut parameters = Vec::with_capacity(chunk.entries.len());
     for entry in chunk.entries {
         let stream_u32 = entry.stream.unwrap_or(0);
-        let stream = u8::try_from(stream_u32).map_err(|_| SignatureError::MalformedChunk {
-            fourcc,
-            reason: "stream index out of range".to_owned(),
-        })?;
+        // D3D10+ geometry shaders support at most 4 output streams (0..=3). Treat any larger value
+        // as malformed input.
+        if stream_u32 > 3 {
+            return Err(SignatureError::MalformedChunk {
+                fourcc,
+                reason: "stream index out of range".to_owned(),
+            });
+        }
+        let stream = stream_u32 as u8;
 
         parameters.push(DxbcSignatureParameter {
             semantic_name: entry.semantic_name,
