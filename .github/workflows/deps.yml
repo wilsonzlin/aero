@@ -75,18 +75,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-          cache: "npm"
-          cache-dependency-path: package-lock.json
-
-      - name: npm ci
-        shell: bash
-        run: |
-          set -euo pipefail
-          npm ci --ignore-scripts
+      - name: Setup Node workspace
+        uses: ./.github/actions/setup-node-workspace
+        env:
+          # We intentionally skip npm lifecycle scripts in this workflow because
+          # license metadata does not depend on build steps.
+          NPM_CONFIG_IGNORE_SCRIPTS: "true"
 
       - name: Check npm dependency licenses (allowlist)
         shell: bash

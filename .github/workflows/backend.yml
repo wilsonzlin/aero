@@ -62,15 +62,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-          cache-dependency-path: package-lock.json
-
-      - name: Install dependencies (prod)
-        run: npm ci --omit=dev
+      - name: Setup Node workspace (prod deps)
+        uses: ./.github/actions/setup-node-workspace
+        env:
+          # Keep the smoke test lightweight (only prod deps needed for dist/ entrypoint).
+          NPM_CONFIG_OMIT: dev
 
       - name: Download build artifact
         uses: actions/download-artifact@v4
