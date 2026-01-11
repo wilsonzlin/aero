@@ -65,6 +65,7 @@ drivers/aerogpu/tests/win7/
   d3d9ex_shared_allocations/
   d3d10_triangle/
   d3d10_1_triangle/
+  d3d10_caps_smoke/
   d3d11_triangle/
   d3d11_caps_smoke/
   d3d11_rs_om_state_sanity/
@@ -238,6 +239,7 @@ In a Win7 VM with AeroGPU installed and working correctly:
   * creates a shared render-target surface and attempts shared textures that would imply multiple mips (Levels=4 and Levels=0/full chain), which may be rejected by the MVP single-allocation policy
 * `d3d10_triangle` uses `D3D10CreateDeviceAndSwapChain` (hardware), verifies the D3D10 runtime path (`d3d10.dll`) and the AeroGPU `OpenAdapter10` export, and confirms **corner red + center green** via readback
 * `d3d10_1_triangle` uses `D3D10CreateDeviceAndSwapChain1` (hardware), verifies the D3D10.1 runtime path (`d3d10_1.dll`) and the AeroGPU `OpenAdapter10_2` export, and confirms **corner red + center green** via readback
+* `d3d10_caps_smoke` validates `ID3D10Device::CheckFormatSupport` bits for a few core RT/DS + index/vertex formats used by common apps
 * `d3d11_triangle` uses `D3D11CreateDeviceAndSwapChain` (hardware), verifies the D3D11 runtime path (`d3d11.dll`) and the AeroGPU `OpenAdapter11` export, and confirms **corner red + center green** via readback
 * `d3d11_caps_smoke` validates the expected D3D11 feature level and common format support bits used by the runtime
 * `d3d11_rs_om_state_sanity` validates D3D11 rasterizer + blend state correctness (scissor enable/disable + `RSSetState(NULL)`, cull mode/front-face, depth clip enable/disable, alpha blending + write mask + blend factor + sample mask) via readback

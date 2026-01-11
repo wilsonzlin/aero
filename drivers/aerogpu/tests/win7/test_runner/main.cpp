@@ -542,6 +542,7 @@ int main(int argc, char** argv) {
       "d3d9ex_shared_allocations",
       "d3d10_triangle",
       "d3d10_1_triangle",
+      "d3d10_caps_smoke",
       "d3d11_triangle",
       "d3d11_caps_smoke",
       "d3d11_rs_om_state_sanity",
