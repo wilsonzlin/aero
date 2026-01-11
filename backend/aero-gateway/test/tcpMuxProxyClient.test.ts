@@ -538,6 +538,61 @@ describe("tcp-mux browser client integration", () => {
     }
   });
 
+  it("rejects reusing a stream_id within a session", async () => {
+    const echoServer = net.createServer((socket) => socket.on("data", (data) => socket.write(data)));
+    const echoPort = await listen(echoServer, "127.0.0.1");
+
+    const proxyServer = http.createServer();
+    proxyServer.on("upgrade", (req, socket, head) => {
+      handleTcpMuxUpgrade(req, socket, head, {
+        allowedTargetHosts: ["8.8.8.8"],
+        allowedTargetPorts: [echoPort],
+        maxStreams: 16,
+        createConnection: (() =>
+          net.createConnection({
+            host: "127.0.0.1",
+            port: echoPort,
+            allowHalfOpen: true,
+          })) as typeof net.createConnection,
+      });
+    });
+    const proxyPort = await listen(proxyServer, "127.0.0.1");
+
+    const client = new WebSocketTcpMuxProxyClient(`http://127.0.0.1:${proxyPort}`);
+    const streamId = 1;
+
+    const closed = new Promise<void>((resolve) => {
+      client.onClose = (id) => {
+        if (id === streamId) resolve();
+      };
+    });
+
+    client.open(streamId, "8.8.8.8", echoPort);
+    client.send(streamId, new TextEncoder().encode("hello"));
+    client.close(streamId, { fin: true });
+
+    await withTimeout(closed, 2_000, "expected stream to close before reuse");
+
+    const reuseError = new Promise<{ code: number; message: string }>((resolve) => {
+      client.onError = (id, err) => {
+        if (id === streamId) resolve(err);
+      };
+    });
+
+    client.open(streamId, "8.8.8.8", echoPort);
+
+    const err = await withTimeout(reuseError, 2_000, "expected error when reusing stream_id");
+    assert.equal(err.code, 3);
+    assert.match(err.message, /already used/i);
+
+    try {
+      await client.shutdown();
+    } finally {
+      await closeServer(proxyServer);
+      await closeServer(echoServer);
+    }
+  });
+
   it("OPEN encoding matches the gateway's expectations", () => {
     // Lightweight invariant test: ensure OPEN payload encoder can be decoded by
     // the gateway-side codec. This catches accidental endianness regressions.
