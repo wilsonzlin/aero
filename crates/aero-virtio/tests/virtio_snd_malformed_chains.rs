@@ -193,6 +193,67 @@ fn virtio_snd_tx_missing_status_descriptor_does_not_stall_queue() {
 }
 
 #[test]
+fn virtio_snd_tx_invalid_out_buffer_does_not_stall_queue() {
+    let snd = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
+    let mut dev = VirtioPciDevice::new(Box::new(snd), Box::new(InterruptLog::default()));
+    let caps = parse_caps(&dev);
+
+    let mut mem = GuestRam::new(0x20000);
+    negotiate_features(&mut dev, &mut mem, &caps);
+
+    let tx_desc = 0x1000;
+    let tx_avail = 0x2000;
+    let tx_used = 0x3000;
+    configure_queue(
+        &mut dev,
+        &mut mem,
+        &caps,
+        VIRTIO_SND_QUEUE_TX,
+        tx_desc,
+        tx_avail,
+        tx_used,
+    );
+
+    let invalid_hdr_addr = 0x30000;
+    let status_addr = 0x9000;
+    mem.write(status_addr, &[0xffu8; 8]).unwrap();
+
+    write_desc(
+        &mut mem,
+        tx_desc,
+        0,
+        invalid_hdr_addr,
+        8,
+        VIRTQ_DESC_F_NEXT,
+        1,
+    );
+    write_desc(
+        &mut mem,
+        tx_desc,
+        1,
+        status_addr,
+        8,
+        VIRTQ_DESC_F_WRITE,
+        0,
+    );
+
+    write_u16_le(&mut mem, tx_avail + 4, 0).unwrap();
+    write_u16_le(&mut mem, tx_avail + 2, 1).unwrap();
+
+    kick_queue(&mut dev, &mut mem, &caps, VIRTIO_SND_QUEUE_TX);
+
+    let used_idx = u16::from_le_bytes(mem.get_slice(tx_used + 2, 2).unwrap().try_into().unwrap());
+    assert_eq!(used_idx, 1);
+
+    let elem = mem.get_slice(tx_used + 4, 8).unwrap();
+    assert_eq!(u32::from_le_bytes(elem[0..4].try_into().unwrap()), 0);
+    assert_eq!(u32::from_le_bytes(elem[4..8].try_into().unwrap()), 8);
+
+    let status = u32::from_le_bytes(mem.get_slice(status_addr, 4).unwrap().try_into().unwrap());
+    assert_eq!(status, VIRTIO_SND_S_BAD_MSG);
+}
+
+#[test]
 fn virtio_snd_rx_short_response_descriptor_does_not_stall_queue() {
     let snd = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
     let mut dev = VirtioPciDevice::new(Box::new(snd), Box::new(InterruptLog::default()));
@@ -240,3 +301,77 @@ fn virtio_snd_rx_short_response_descriptor_does_not_stall_queue() {
     assert_eq!(status, VIRTIO_SND_S_BAD_MSG);
 }
 
+#[test]
+fn virtio_snd_rx_invalid_header_buffer_does_not_stall_queue() {
+    let snd = VirtioSnd::new(aero_audio::ring::AudioRingBuffer::new_stereo(8));
+    let mut dev = VirtioPciDevice::new(Box::new(snd), Box::new(InterruptLog::default()));
+    let caps = parse_caps(&dev);
+
+    let mut mem = GuestRam::new(0x20000);
+    negotiate_features(&mut dev, &mut mem, &caps);
+
+    let rx_desc = 0x1000;
+    let rx_avail = 0x2000;
+    let rx_used = 0x3000;
+    configure_queue(
+        &mut dev,
+        &mut mem,
+        &caps,
+        VIRTIO_SND_QUEUE_RX,
+        rx_desc,
+        rx_avail,
+        rx_used,
+    );
+
+    let invalid_hdr_addr = 0x30000;
+    let payload_addr = 0x8100;
+    let resp_addr = 0x8200;
+    mem.write(payload_addr, &[0xffu8; 8]).unwrap();
+    mem.write(resp_addr, &[0xffu8; 8]).unwrap();
+
+    write_desc(
+        &mut mem,
+        rx_desc,
+        0,
+        invalid_hdr_addr,
+        8,
+        VIRTQ_DESC_F_NEXT,
+        1,
+    );
+    write_desc(
+        &mut mem,
+        rx_desc,
+        1,
+        payload_addr,
+        8,
+        VIRTQ_DESC_F_WRITE | VIRTQ_DESC_F_NEXT,
+        2,
+    );
+    write_desc(
+        &mut mem,
+        rx_desc,
+        2,
+        resp_addr,
+        8,
+        VIRTQ_DESC_F_WRITE,
+        0,
+    );
+
+    write_u16_le(&mut mem, rx_avail + 4, 0).unwrap();
+    write_u16_le(&mut mem, rx_avail + 2, 1).unwrap();
+
+    kick_queue(&mut dev, &mut mem, &caps, VIRTIO_SND_QUEUE_RX);
+
+    let used_idx = u16::from_le_bytes(mem.get_slice(rx_used + 2, 2).unwrap().try_into().unwrap());
+    assert_eq!(used_idx, 1);
+
+    let elem = mem.get_slice(rx_used + 4, 8).unwrap();
+    assert_eq!(u32::from_le_bytes(elem[0..4].try_into().unwrap()), 0);
+    assert_eq!(u32::from_le_bytes(elem[4..8].try_into().unwrap()), 16);
+
+    let payload = mem.get_slice(payload_addr, 8).unwrap();
+    assert!(payload.iter().all(|&b| b == 0));
+
+    let status = u32::from_le_bytes(mem.get_slice(resp_addr, 4).unwrap().try_into().unwrap());
+    assert_eq!(status, VIRTIO_SND_S_BAD_MSG);
+}

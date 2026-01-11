@@ -220,9 +220,9 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
         queue: &mut VirtQueue,
         mem: &mut dyn GuestMemory,
     ) -> Result<bool, VirtioDeviceError> {
-        let request = read_all_out(mem, &chain)?;
+        let request = read_all_out(mem, &chain);
         let response = self.handle_control_request(&request);
-        let written = write_all_in(mem, &chain, &response)?;
+        let written = write_all_in(mem, &chain, &response);
         queue
             .add_used(mem, chain.head_index(), written)
             .map_err(|_| VirtioDeviceError::IoError)
@@ -373,9 +373,9 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
         queue: &mut VirtQueue,
         mem: &mut dyn GuestMemory,
     ) -> Result<bool, VirtioDeviceError> {
-        let status = self.handle_tx_chain(mem, &chain)?;
+        let status = self.handle_tx_chain(mem, &chain);
         let resp = virtio_snd_pcm_status(status, 0);
-        let written = write_all_in(mem, &chain, &resp)?;
+        let written = write_all_in(mem, &chain, &resp);
         queue
             .add_used(mem, chain.head_index(), written)
             .map_err(|_| VirtioDeviceError::IoError)
@@ -385,7 +385,7 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
         &mut self,
         mem: &mut dyn GuestMemory,
         chain: &DescriptorChain,
-    ) -> Result<u32, VirtioDeviceError> {
+    ) -> u32 {
         let mut hdr = [0u8; 8];
         let mut hdr_len = 0usize;
         let mut parsed_stream = false;
@@ -394,9 +394,10 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
         self.playback_samples_scratch.clear();
 
         for desc in chain.descriptors().iter().filter(|d| !d.is_write_only()) {
-            let mut slice = mem
-                .get_slice(desc.addr, desc.len as usize)
-                .map_err(|_| VirtioDeviceError::IoError)?;
+            let mut slice = match mem.get_slice(desc.addr, desc.len as usize) {
+                Ok(slice) => slice,
+                Err(_) => return VIRTIO_SND_S_BAD_MSG,
+            };
 
             if hdr_len < hdr.len() {
                 let take = (hdr.len() - hdr_len).min(slice.len());
@@ -410,11 +411,11 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
 
                 let stream_id = u32::from_le_bytes(hdr[0..4].try_into().unwrap());
                 if stream_id != PLAYBACK_STREAM_ID {
-                    return Ok(VIRTIO_SND_S_BAD_MSG);
+                    return VIRTIO_SND_S_BAD_MSG;
                 }
 
                 if self.playback.state != StreamState::Running {
-                    return Ok(VIRTIO_SND_S_IO_ERR);
+                    return VIRTIO_SND_S_IO_ERR;
                 }
 
                 parsed_stream = true;
@@ -431,16 +432,16 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
         }
 
         if !parsed_stream || hdr_len != hdr.len() {
-            return Ok(VIRTIO_SND_S_BAD_MSG);
+            return VIRTIO_SND_S_BAD_MSG;
         }
 
         if pending_lo.is_some() {
-            return Ok(VIRTIO_SND_S_BAD_MSG);
+            return VIRTIO_SND_S_BAD_MSG;
         }
 
         // Stereo frames must be complete.
         if self.playback_samples_scratch.len() % 2 != 0 {
-            return Ok(VIRTIO_SND_S_BAD_MSG);
+            return VIRTIO_SND_S_BAD_MSG;
         }
 
         if !self.playback_samples_scratch.is_empty() {
@@ -448,7 +449,7 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
                 .push_interleaved_f32(&self.playback_samples_scratch);
         }
 
-        Ok(VIRTIO_SND_S_OK)
+        VIRTIO_SND_S_OK
     }
 
     fn process_rx(
@@ -457,7 +458,7 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
         queue: &mut VirtQueue,
         mem: &mut dyn GuestMemory,
     ) -> Result<bool, VirtioDeviceError> {
-        let written = self.handle_rx_chain(mem, &chain)?;
+        let written = self.handle_rx_chain(mem, &chain);
         queue
             .add_used(mem, chain.head_index(), written)
             .map_err(|_| VirtioDeviceError::IoError)
@@ -467,32 +468,31 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
         &mut self,
         mem: &mut dyn GuestMemory,
         chain: &DescriptorChain,
-    ) -> Result<u32, VirtioDeviceError> {
+    ) -> u32 {
         let mut hdr = [0u8; 8];
         let mut hdr_len = 0usize;
-        let mut extra_out = false;
+        let out_bytes: usize = chain
+            .descriptors()
+            .iter()
+            .filter(|d| !d.is_write_only())
+            .map(|d| d.len as usize)
+            .sum();
+        let extra_out = out_bytes > hdr.len();
 
         for desc in chain.descriptors().iter().filter(|d| !d.is_write_only()) {
-            let slice = mem
-                .get_slice(desc.addr, desc.len as usize)
-                .map_err(|_| VirtioDeviceError::IoError)?;
-
             if hdr_len >= hdr.len() {
-                if !slice.is_empty() {
-                    extra_out = true;
-                    break;
-                }
-                continue;
-            }
-
-            let take = (hdr.len() - hdr_len).min(slice.len());
-            hdr[hdr_len..hdr_len + take].copy_from_slice(&slice[..take]);
-            hdr_len += take;
-
-            if hdr_len == hdr.len() && slice.len() > take {
-                extra_out = true;
                 break;
             }
+            let take = (hdr.len() - hdr_len).min(desc.len as usize);
+            if take == 0 {
+                continue;
+            }
+            let slice = match mem.get_slice(desc.addr, take) {
+                Ok(slice) => slice,
+                Err(_) => break,
+            };
+            hdr[hdr_len..hdr_len + take].copy_from_slice(slice);
+            hdr_len += take;
         }
 
         let mut status = if hdr_len != hdr.len() || extra_out {
@@ -519,7 +519,7 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
         // response payload or status. Still complete the chain to avoid
         // stalling the virtqueue.
         if in_descs.is_empty() {
-            return Ok(0);
+            return 0;
         }
 
         if in_descs.len() < 2 {
@@ -539,46 +539,46 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
         }
 
         // Always write deterministic output into the guest payload buffers.
-        if !payload_descs.is_empty() {
-            if status == VIRTIO_SND_S_OK {
-                let samples_needed = payload_bytes / 2;
-                if samples_needed != 0 {
-                    self.capture_telemetry.dropped_samples +=
-                        self.capture_source.take_dropped_samples();
-
-                    self.capture_samples_scratch.resize(samples_needed, 0.0);
-                    let got = self
-                        .capture_source
-                        .read_mono_f32(&mut self.capture_samples_scratch[..]);
-                    if got < samples_needed {
-                        self.capture_telemetry.underrun_samples += (samples_needed - got) as u64;
-                        self.capture_telemetry.underrun_responses += 1;
-                        self.capture_samples_scratch[got..].fill(0.0);
-                    }
-
-                    write_pcm_payload_s16le(
-                        mem,
-                        payload_descs,
-                        &self.capture_samples_scratch[..samples_needed],
-                    )?;
-                } else {
-                    write_payload_silence(mem, payload_descs)?;
-                }
+        let payload_written = if payload_descs.is_empty() {
+            0usize
+        } else if status == VIRTIO_SND_S_OK {
+            let samples_needed = payload_bytes / 2;
+            if samples_needed == 0 {
+                write_payload_silence(mem, payload_descs)
             } else {
-                write_payload_silence(mem, payload_descs)?;
+                self.capture_telemetry.dropped_samples += self.capture_source.take_dropped_samples();
+
+                self.capture_samples_scratch.resize(samples_needed, 0.0);
+                let got = self
+                    .capture_source
+                    .read_mono_f32(&mut self.capture_samples_scratch[..]);
+                if got < samples_needed {
+                    self.capture_telemetry.underrun_samples += (samples_needed - got) as u64;
+                    self.capture_telemetry.underrun_responses += 1;
+                    self.capture_samples_scratch[got..].fill(0.0);
+                }
+
+                write_pcm_payload_s16le(
+                    mem,
+                    payload_descs,
+                    &self.capture_samples_scratch[..samples_needed],
+                )
             }
-        }
+        } else {
+            write_payload_silence(mem, payload_descs)
+        };
 
         let resp = virtio_snd_pcm_status(status, 0);
         let resp_len = (resp_desc.len as usize).min(resp.len());
+        let mut resp_written = 0usize;
         if resp_len != 0 {
-            let out = mem
-                .get_slice_mut(resp_desc.addr, resp_len)
-                .map_err(|_| VirtioDeviceError::IoError)?;
-            out.copy_from_slice(&resp[..resp_len]);
+            if let Ok(out) = mem.get_slice_mut(resp_desc.addr, resp_len) {
+                out.copy_from_slice(&resp[..resp_len]);
+                resp_written = resp_len;
+            }
         }
 
-        Ok((payload_bytes + resp_len) as u32)
+        (payload_written + resp_written) as u32
     }
 }
 
@@ -617,28 +617,35 @@ fn virtio_snd_pcm_status(status: u32, latency_bytes: u32) -> [u8; 8] {
     buf
 }
 
-fn read_all_out(mem: &dyn GuestMemory, chain: &DescriptorChain) -> Result<Vec<u8>, VirtioDeviceError> {
-    let total: usize = chain
-        .descriptors()
-        .iter()
-        .filter(|d| !d.is_write_only())
-        .map(|d| d.len as usize)
-        .sum();
-    let mut out = Vec::with_capacity(total);
+fn read_all_out(mem: &dyn GuestMemory, chain: &DescriptorChain) -> Vec<u8> {
+    // Control requests are small (<=24 bytes for the subset we implement), so a
+    // small cap avoids pathological allocations from malicious guests.
+    const MAX_BYTES: usize = 4096;
+
+    let mut out = Vec::new();
     for d in chain.descriptors().iter().filter(|d| !d.is_write_only()) {
-        let slice = mem
-            .get_slice(d.addr, d.len as usize)
-            .map_err(|_| VirtioDeviceError::IoError)?;
+        if out.len() >= MAX_BYTES {
+            break;
+        }
+        let remaining = MAX_BYTES - out.len();
+        let take = (d.len as usize).min(remaining);
+        if take == 0 {
+            continue;
+        }
+        let slice = match mem.get_slice(d.addr, take) {
+            Ok(slice) => slice,
+            Err(_) => break,
+        };
         out.extend_from_slice(slice);
     }
-    Ok(out)
+    out
 }
 
 fn write_all_in(
     mem: &mut dyn GuestMemory,
     chain: &DescriptorChain,
     data: &[u8],
-) -> Result<u32, VirtioDeviceError> {
+) -> u32 {
     let mut remaining = data;
     let mut written = 0usize;
     for d in chain.descriptors().iter().filter(|d| d.is_write_only()) {
@@ -646,31 +653,33 @@ fn write_all_in(
             break;
         }
         let take = (d.len as usize).min(remaining.len());
-        let dst = mem
-            .get_slice_mut(d.addr, take)
-            .map_err(|_| VirtioDeviceError::IoError)?;
+        let Ok(dst) = mem.get_slice_mut(d.addr, take) else {
+            break;
+        };
         dst.copy_from_slice(&remaining[..take]);
         written += take;
         remaining = &remaining[take..];
     }
 
-    Ok(written as u32)
+    written as u32
 }
 
 fn write_payload_silence(
     mem: &mut dyn GuestMemory,
     descs: &[crate::queue::Descriptor],
-) -> Result<(), VirtioDeviceError> {
+) -> usize {
+    let mut written = 0usize;
     for d in descs {
         if d.len == 0 {
             continue;
         }
-        let slice = mem
-            .get_slice_mut(d.addr, d.len as usize)
-            .map_err(|_| VirtioDeviceError::IoError)?;
+        let Ok(slice) = mem.get_slice_mut(d.addr, d.len as usize) else {
+            break;
+        };
         slice.fill(0);
+        written += d.len as usize;
     }
-    Ok(())
+    written
 }
 
 fn f32_to_i16(sample: f32) -> i16 {
@@ -684,18 +693,19 @@ fn write_pcm_payload_s16le(
     mem: &mut dyn GuestMemory,
     descs: &[crate::queue::Descriptor],
     samples: &[f32],
-) -> Result<(), VirtioDeviceError> {
+) -> usize {
     let mut sample_iter = samples.iter();
     let mut cur_bytes = [0u8; 2];
     let mut cur_pos = 2usize;
+    let mut written = 0usize;
 
     for d in descs {
         if d.len == 0 {
             continue;
         }
-        let slice = mem
-            .get_slice_mut(d.addr, d.len as usize)
-            .map_err(|_| VirtioDeviceError::IoError)?;
+        let Ok(slice) = mem.get_slice_mut(d.addr, d.len as usize) else {
+            break;
+        };
 
         for b in slice {
             if cur_pos >= 2 {
@@ -705,10 +715,11 @@ fn write_pcm_payload_s16le(
             }
             *b = cur_bytes[cur_pos];
             cur_pos += 1;
+            written += 1;
         }
     }
 
-    Ok(())
+    written
 }
 
 impl<O: AudioSink + 'static, I: AudioCaptureSource + 'static> VirtioDevice for VirtioSnd<O, I> {
