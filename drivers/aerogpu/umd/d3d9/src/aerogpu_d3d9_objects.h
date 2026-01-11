@@ -63,6 +63,11 @@ struct Resource {
   // allocation-table entry).
   uint32_t backing_alloc_id = 0;
 
+  // Optional offset into the backing allocation (bytes). Most D3D9Ex shared
+  // surfaces are a single allocation with offset 0, but keeping this explicit
+  // makes it possible to alias suballocations later.
+  uint32_t backing_offset_bytes = 0;
+
   // Stable cross-process token used by EXPORT/IMPORT_SHARED_SURFACE.
   // 0 if the resource is not shareable.
   uint64_t share_token = 0;
@@ -80,6 +85,7 @@ struct Resource {
   WddmAllocationHandle wddm_hAllocation = 0;
 
   std::vector<uint8_t> storage;
+  std::vector<uint8_t> shared_private_driver_data;
 };
 
 struct SwapChain {
@@ -133,9 +139,6 @@ struct Adapter {
   UINT umd_version = 0;
 
   std::atomic<uint32_t> next_handle{1};
-  // UMD-owned allocation IDs used in WDDM allocation private driver data
-  // (aerogpu_wddm_alloc_priv.alloc_id).
-  std::atomic<uint32_t> next_alloc_id{1};
 
   // Different D3D9 runtimes/headers may use different numeric encodings for the
   // EVENT query type at the DDI boundary. Once we observe the first EVENT query
@@ -143,6 +146,14 @@ struct Adapter {
   // query types (e.g. pipeline stats) as EVENT.
   std::atomic<bool> event_query_type_known{false};
   std::atomic<uint32_t> event_query_type{0};
+
+  // Monotonic share-token allocator. When running on Windows, the D3D9 UMD may
+  // be loaded into multiple guest processes (DWM + apps), so we must coordinate
+  // share-token allocation cross-process. See aerogpu_d3d9_driver.cpp.
+  std::mutex share_token_mutex;
+  HANDLE share_token_mapping = nullptr;
+  void* share_token_view = nullptr;
+  std::atomic<uint64_t> next_share_token{1}; // Fallback if cross-process allocator fails.
 
   std::mutex fence_mutex;
   std::condition_variable fence_cv;

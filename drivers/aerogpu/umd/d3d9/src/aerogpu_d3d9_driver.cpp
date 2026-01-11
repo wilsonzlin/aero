@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstring>
+#include <cwchar>
 #include <memory>
 #include <thread>
 #include <unordered_map>
@@ -579,7 +580,7 @@ void emit_create_resource_locked(Device* dev, Resource* res) {
     cmd->usage_flags = AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER | AEROGPU_RESOURCE_USAGE_INDEX_BUFFER;
     cmd->size_bytes = res->size_bytes;
     cmd->backing_alloc_id = res->backing_alloc_id;
-    cmd->backing_offset_bytes = 0;
+    cmd->backing_offset_bytes = res->backing_offset_bytes;
     cmd->reserved0 = 0;
     return;
   }
@@ -595,7 +596,7 @@ void emit_create_resource_locked(Device* dev, Resource* res) {
     cmd->array_layers = 1;
     cmd->row_pitch_bytes = res->row_pitch;
     cmd->backing_alloc_id = res->backing_alloc_id;
-    cmd->backing_offset_bytes = 0;
+    cmd->backing_offset_bytes = res->backing_offset_bytes;
     cmd->reserved0 = 0;
     return;
   }
@@ -676,6 +677,56 @@ void emit_destroy_input_layout_locked(Device* dev, aerogpu_handle_t handle) {
 // -----------------------------------------------------------------------------
 // KMD submission stub
 // -----------------------------------------------------------------------------
+
+uint64_t allocate_share_token(Adapter* adapter) {
+  if (!adapter) {
+    return 0;
+  }
+
+#if defined(_WIN32)
+  {
+    std::lock_guard<std::mutex> lock(adapter->share_token_mutex);
+
+    if (!adapter->share_token_view) {
+      wchar_t name[128];
+      // Keep the object name stable across processes within a session.
+      // Multiple adapters can disambiguate via LUID when available.
+      swprintf(name,
+               sizeof(name) / sizeof(name[0]),
+               L"Local\\AeroGPU.D3D9.ShareToken.%08X%08X",
+               static_cast<unsigned>(adapter->luid.HighPart),
+               static_cast<unsigned>(adapter->luid.LowPart));
+
+      HANDLE mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, sizeof(uint64_t), name);
+      if (mapping) {
+        void* view = MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(uint64_t));
+        if (view) {
+          adapter->share_token_mapping = mapping;
+          adapter->share_token_view = view;
+        } else {
+          CloseHandle(mapping);
+        }
+      }
+    }
+
+    if (adapter->share_token_view) {
+      auto* counter = reinterpret_cast<volatile LONG64*>(adapter->share_token_view);
+      const LONG64 token = InterlockedIncrement64(counter);
+      return static_cast<uint64_t>(token);
+    }
+  }
+
+  // If we fail to set up the cross-process allocator (should be rare), fall
+  // back to a per-process counter salted by PID to avoid collisions.
+  const uint64_t local = adapter->next_share_token.fetch_add(1);
+  const uint64_t pid = static_cast<uint64_t>(GetCurrentProcessId());
+  return (pid << 32) | (local & 0xFFFFFFFFu);
+#else
+  (void)adapter;
+  static std::atomic<uint64_t> next_token{1};
+  return next_token.fetch_add(1);
+#endif
+}
 
 uint64_t submit(Device* dev) {
   // In the initial bring-up implementation we treat submission as synchronous:
@@ -882,6 +933,21 @@ void release_adapter(Adapter* adapter) {
   }
 
   g_adapter_cache.erase(luid_to_u64(adapter->luid));
+
+#if defined(_WIN32)
+  // Release cross-process share-token allocator state.
+  {
+    std::lock_guard<std::mutex> share_lock(adapter->share_token_mutex);
+    if (adapter->share_token_view) {
+      UnmapViewOfFile(adapter->share_token_view);
+      adapter->share_token_view = nullptr;
+    }
+    if (adapter->share_token_mapping) {
+      CloseHandle(adapter->share_token_mapping);
+      adapter->share_token_mapping = nullptr;
+    }
+  }
+#endif
   delete adapter;
 }
 
@@ -1073,9 +1139,10 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
 
   std::lock_guard<std::mutex> lock(dev->mutex);
 
-  const bool is_shared = (pCreateResource->pSharedHandle != NULL);
+  const bool wants_shared = (pCreateResource->pSharedHandle != nullptr);
+  const bool open_existing_shared = wants_shared && (*pCreateResource->pSharedHandle != nullptr);
   const uint32_t mip_levels = std::max(1u, pCreateResource->mip_levels);
-  if (is_shared && mip_levels != 1) {
+  if (wants_shared && mip_levels != 1) {
     // MVP: shared surfaces must be single-allocation (no mip chains/arrays).
     return kD3DErrInvalidCall;
   }
@@ -1090,16 +1157,13 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
   res->mip_levels = mip_levels;
   res->usage = pCreateResource->usage;
   res->pool = pCreateResource->pool;
-
-  const bool wants_shared = (pCreateResource->pSharedHandle != nullptr);
-  const bool open_existing_shared = wants_shared && (*pCreateResource->pSharedHandle != nullptr);
   res->is_shared = wants_shared;
   res->is_shared_alias = open_existing_shared;
 
   consume_wddm_alloc_priv(res.get(),
-                          pCreateResource->pPrivateDriverData,
-                          pCreateResource->PrivateDriverDataSize,
-                          res->is_shared);
+                          pCreateResource->pKmdAllocPrivateData,
+                          pCreateResource->KmdAllocPrivateDataSize,
+                          wants_shared);
 
   // Heuristic: if size is provided, treat as buffer; otherwise treat as a 2D image.
   if (pCreateResource->size) {
@@ -1159,49 +1223,21 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
       return kD3DErrInvalidCall;
     }
 
-    // Generate a stable UMD-owned alloc_id + share_token and persist them in
-    // allocation private data so they survive OpenResource in another process.
+    // Generate a stable cross-process share_token and derive a 31-bit alloc_id
+    // from it. The allocator is shared across guest processes via a named file
+    // mapping (see allocate_share_token()).
     //
     // NOTE: DWM may compose many shared surfaces from *different* processes in a
     // single submission. alloc_id values must therefore avoid collisions across
     // guest processes (not just within one process).
-    uint32_t alloc_id = 0;
-#if defined(_WIN32)
-    const uint32_t pid = static_cast<uint32_t>(GetCurrentProcessId());
-    /*
-     * PIDs on Windows are typically multiples of 4, so drop the bottom two bits
-     * and fold PID + a per-process sequence counter into a 31-bit alloc_id:
-     *
-     *   alloc_id = ((pid >> 2) & 0x1FFFF) << 14 | seq
-     *
-     * This yields:
-     * - 17 PID bits (enough for typical Win7 sessions; collisions only after PID
-     *   reuse across a ~500k range),
-     * - 14 sequence bits (16383 allocations per process before wrap).
-     *
-     * DWM can create thousands of redirected surfaces; keep the sequence range
-     * large enough to avoid collisions in long-running sessions.
-     */
-    const uint32_t pid_bits = (pid >> 2) & 0x1FFFFu;
-    uint32_t seq = dev->adapter->next_alloc_id.fetch_add(1, std::memory_order_relaxed) & 0x3FFFu;
-    if (seq == 0) {
-      seq = dev->adapter->next_alloc_id.fetch_add(1, std::memory_order_relaxed) & 0x3FFFu;
+    const uint64_t share_token = allocate_share_token(dev->adapter);
+    const uint32_t alloc_id = static_cast<uint32_t>(share_token & AEROGPU_WDDM_ALLOC_ID_UMD_MAX);
+    if (!share_token || !alloc_id) {
+      logf("aerogpu-d3d9: Failed to allocate shared ids (share_token=%llu alloc_id=%u)\n",
+           static_cast<unsigned long long>(share_token),
+           static_cast<unsigned>(alloc_id));
+      return E_FAIL;
     }
-    alloc_id = (pid_bits << 14) | seq;
-#else
-    alloc_id = dev->adapter->next_alloc_id.fetch_add(1, std::memory_order_relaxed);
-    alloc_id &= AEROGPU_WDDM_ALLOC_ID_UMD_MAX;
-    if (alloc_id == 0) {
-      alloc_id = 1;
-    }
-#endif
-
-#if defined(_WIN32)
-    const uint64_t share_token =
-        (static_cast<uint64_t>(GetCurrentProcessId()) << 32) | static_cast<uint64_t>(alloc_id);
-#else
-    const uint64_t share_token = static_cast<uint64_t>(alloc_id);
-#endif
 
     aerogpu_wddm_alloc_priv priv{};
     priv.magic = AEROGPU_WDDM_ALLOC_PRIV_MAGIC;
@@ -1228,19 +1264,138 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
   } else {
     emit_create_resource_locked(dev, res.get());
 
-    if (wants_shared) {
+    if (res->is_shared) {
       if (!res->share_token) {
         logf("aerogpu-d3d9: Create shared resource missing share_token (alloc_id=%u)\n", res->backing_alloc_id);
       } else {
         // Shared surface create (D3D9Ex): export exactly once so other guest
         // processes can IMPORT using the same stable share_token.
         emit_export_shared_surface_locked(dev, res.get());
+
+        // Shared surfaces must be importable by other processes immediately
+        // after CreateResource returns. Since AeroGPU resource creation is
+        // expressed in the command stream, force a submission so the host
+        // observes the export.
+        submit(dev);
+
+        logf("aerogpu-d3d9: export shared_surface res=%u token=%llu\n",
+             res->handle,
+             static_cast<unsigned long long>(res->share_token));
       }
     }
   }
 
   pCreateResource->hResource.pDrvPrivate = res.release();
   return S_OK;
+}
+
+HRESULT AEROGPU_D3D9_CALL device_open_resource(
+    AEROGPU_D3D9DDI_HDEVICE hDevice,
+    AEROGPU_D3D9DDIARG_OPENRESOURCE* pOpenResource) {
+  if (!hDevice.pDrvPrivate || !pOpenResource) {
+    return E_INVALIDARG;
+  }
+
+  auto* dev = as_device(hDevice);
+  if (!dev || !dev->adapter) {
+    return E_FAIL;
+  }
+
+  if (!pOpenResource->pPrivateDriverData ||
+      pOpenResource->private_driver_data_size < sizeof(aerogpu_wddm_alloc_priv)) {
+    return E_INVALIDARG;
+  }
+
+  aerogpu_wddm_alloc_priv priv{};
+  std::memcpy(&priv, pOpenResource->pPrivateDriverData, sizeof(priv));
+  if (priv.magic != AEROGPU_WDDM_ALLOC_PRIV_MAGIC || priv.version != AEROGPU_WDDM_ALLOC_PRIV_VERSION) {
+    return E_INVALIDARG;
+  }
+  if ((priv.flags & AEROGPU_WDDM_ALLOC_PRIV_FLAG_IS_SHARED) == 0 || priv.share_token == 0 || priv.alloc_id == 0) {
+    return E_INVALIDARG;
+  }
+
+  std::lock_guard<std::mutex> lock(dev->mutex);
+
+  auto res = std::make_unique<Resource>();
+  res->handle = dev->adapter->next_handle.fetch_add(1);
+
+  res->is_shared = true;
+  res->is_shared_alias = true;
+  res->share_token = priv.share_token;
+  res->backing_alloc_id = priv.alloc_id;
+  res->backing_offset_bytes = 0;
+
+  res->type = pOpenResource->type;
+  res->format = pOpenResource->format;
+  res->width = pOpenResource->width;
+  res->height = pOpenResource->height;
+  res->depth = std::max(1u, pOpenResource->depth);
+  res->mip_levels = std::max(1u, pOpenResource->mip_levels);
+  res->usage = pOpenResource->usage;
+
+  // Prefer a reconstructed size when the runtime provides a description; fall
+  // back to the size_bytes persisted in allocation private data.
+  if (pOpenResource->size) {
+    res->kind = ResourceKind::Buffer;
+    res->size_bytes = pOpenResource->size;
+    res->row_pitch = 0;
+    res->slice_pitch = 0;
+  } else if (res->width && res->height) {
+    res->kind = (res->mip_levels > 1) ? ResourceKind::Texture2D : ResourceKind::Surface;
+
+    const uint32_t bpp = bytes_per_pixel(res->format);
+    uint32_t w = std::max(1u, res->width);
+    uint32_t h = std::max(1u, res->height);
+
+    res->row_pitch = w * bpp;
+    res->slice_pitch = res->row_pitch * h;
+
+    uint64_t total = 0;
+    for (uint32_t level = 0; level < res->mip_levels; level++) {
+      total += static_cast<uint64_t>(std::max(1u, w)) * static_cast<uint64_t>(std::max(1u, h)) * bpp;
+      w = std::max(1u, w / 2);
+      h = std::max(1u, h / 2);
+    }
+    total *= res->depth;
+    if (total > 0x7FFFFFFFu) {
+      return E_OUTOFMEMORY;
+    }
+    res->size_bytes = static_cast<uint32_t>(total);
+  } else if (priv.size_bytes != 0 && priv.size_bytes <= 0x7FFFFFFFu) {
+    res->kind = ResourceKind::Surface;
+    res->size_bytes = static_cast<uint32_t>(priv.size_bytes);
+    res->row_pitch = 0;
+    res->slice_pitch = 0;
+  } else {
+    return E_INVALIDARG;
+  }
+
+  if (!res->size_bytes) {
+    return E_INVALIDARG;
+  }
+
+  try {
+    res->storage.resize(res->size_bytes);
+  } catch (...) {
+    return E_OUTOFMEMORY;
+  }
+
+  emit_import_shared_surface_locked(dev, res.get());
+
+  logf("aerogpu-d3d9: import shared_surface out_res=%u token=%llu alloc_id=%u\n",
+       res->handle,
+       static_cast<unsigned long long>(res->share_token),
+       static_cast<unsigned>(res->backing_alloc_id));
+
+  pOpenResource->hResource.pDrvPrivate = res.release();
+  return S_OK;
+}
+
+HRESULT AEROGPU_D3D9_CALL device_open_resource2(
+    AEROGPU_D3D9DDI_HDEVICE hDevice,
+    AEROGPU_D3D9DDIARG_OPENRESOURCE* pOpenResource) {
+  return device_open_resource(hDevice, pOpenResource);
 }
 
 HRESULT AEROGPU_D3D9_CALL device_destroy_resource(
@@ -1254,9 +1409,6 @@ HRESULT AEROGPU_D3D9_CALL device_destroy_resource(
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
-  // NOTE: For now we emit DESTROY_RESOURCE for both original resources and
-  // shared-surface aliases. The host command processor is expected to normalize
-  // alias lifetimes, but proper cross-process refcounting may be needed later.
   for (SwapChain* sc : dev->swapchains) {
     if (!sc) {
       continue;
@@ -1264,7 +1416,17 @@ HRESULT AEROGPU_D3D9_CALL device_destroy_resource(
     auto& bbs = sc->backbuffers;
     bbs.erase(std::remove(bbs.begin(), bbs.end(), res), bbs.end());
   }
-  emit_destroy_resource_locked(dev, res->handle);
+  if (!res->is_shared) {
+    emit_destroy_resource_locked(dev, res->handle);
+  } else {
+    // Shared resources are opened in multiple processes (e.g. DWM + app). We
+    // intentionally do not emit DESTROY_RESOURCE on per-process close to avoid
+    // premature host-side destruction. This leaks shared resources for now but
+    // keeps DWM stable without requiring a KMD-mediated global refcount.
+    logf("aerogpu-d3d9: close shared_surface res=%u token=%llu (no DESTROY_RESOURCE)\n",
+         res->handle,
+         static_cast<unsigned long long>(res->share_token));
+  }
   delete res;
   return S_OK;
 }
@@ -2821,6 +2983,8 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   std::memset(pDeviceFuncs, 0, sizeof(*pDeviceFuncs));
   pDeviceFuncs->pfnDestroyDevice = device_destroy;
   pDeviceFuncs->pfnCreateResource = device_create_resource;
+  pDeviceFuncs->pfnOpenResource = device_open_resource;
+  pDeviceFuncs->pfnOpenResource2 = device_open_resource2;
   pDeviceFuncs->pfnDestroyResource = device_destroy_resource;
   pDeviceFuncs->pfnLock = device_lock;
   pDeviceFuncs->pfnUnlock = device_unlock;
