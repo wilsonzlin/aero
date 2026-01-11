@@ -451,16 +451,9 @@ fn translates_texture_load_ld() {
     let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
     let signatures = parse_signatures(&dxbc).expect("parse signatures");
 
-    let coord = SrcOperand {
-        kind: SrcKind::ImmediateF32([1, 2, 0, 0]),
-        swizzle: Swizzle::XYZW,
-        modifier: OperandModifier::None,
-    };
-    let lod = SrcOperand {
-        kind: SrcKind::ImmediateF32([0, 0, 0, 0]),
-        swizzle: Swizzle::XXXX,
-        modifier: OperandModifier::None,
-    };
+    let coord = src_imm([1.0, 2.0, 0.0, 0.0]);
+    let mut lod = src_imm([0.0, 0.0, 0.0, 0.0]);
+    lod.swizzle = Swizzle::XXXX;
     let module = Sm4Module {
         stage: ShaderStage::Pixel,
         model: ShaderModel { major: 5, minor: 0 },
@@ -479,7 +472,7 @@ fn translates_texture_load_ld() {
     let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
     assert_wgsl_validates(&translated.wgsl);
     assert!(translated.wgsl.contains("textureLoad(t0"));
-    assert!(translated.wgsl.contains("bitcast<i32>(0x00000001u)"));
+    assert!(translated.wgsl.contains("vec2<i32>(i32(("));
 
     // Reflection should surface the referenced texture slot (no sampler needed for ld).
     assert!(translated
