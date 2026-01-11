@@ -530,7 +530,8 @@ test("bridges an L2 tunnel DataChannel to a backend WebSocket", async ({ page })
         });
 
         const pc = new RTCPeerConnection({ iceServers });
-        const dc = pc.createDataChannel("l2", { ordered: true });
+        // L2 tunnel MUST be reliable (no partial reliability).
+        const dc = pc.createDataChannel("l2", { ordered: false });
         dc.binaryType = "arraybuffer";
 
         const offer = await pc.createOffer();
