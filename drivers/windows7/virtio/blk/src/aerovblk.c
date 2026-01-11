@@ -1123,16 +1123,16 @@ SCSI_ADAPTER_CONTROL_STATUS AerovblkHwAdapterControl(_In_ PVOID deviceExtension,
 
     devExt->Removed = TRUE;
 
+    if (devExt->Vdev.CommonCfg != NULL) {
+      AeroVirtioResetDevice(&devExt->Vdev);
+    }
+
     StorPortAcquireSpinLock(devExt, InterruptLock, &lock);
     AerovblkAbortOutstandingRequestsLocked(devExt);
     if (devExt->Vq != NULL) {
       VirtqSplitReset(devExt->Vq);
     }
     StorPortReleaseSpinLock(devExt, &lock);
-
-    if (devExt->Vdev.CommonCfg != NULL) {
-      AeroVirtioResetDevice(&devExt->Vdev);
-    }
     return ScsiAdapterControlSuccess;
   }
 
