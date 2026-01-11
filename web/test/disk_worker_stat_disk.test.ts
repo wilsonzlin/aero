@@ -3,7 +3,15 @@ import assert from "node:assert/strict";
 
 import "./fake_indexeddb_auto.ts";
 import { installOpfsMock } from "./opfs_mock.ts";
-import { clearIdb, idbTxDone, openDiskManagerDb, opfsGetDisksDir, opfsGetRemoteCacheDir } from "../src/storage/metadata.ts";
+import {
+  clearIdb,
+  createMetadataStore,
+  idbTxDone,
+  openDiskManagerDb,
+  opfsGetDisksDir,
+  opfsGetRemoteCacheDir,
+} from "../src/storage/metadata.ts";
+import { stableCacheKey } from "../src/platform/remote_disk.ts";
 import { RemoteCacheManager, remoteChunkedDeliveryType, remoteRangeDeliveryType } from "../src/storage/remote_cache_manager.ts";
 
 // The disk worker expects to run in a DedicatedWorkerGlobalScope where `self` and `postMessage` exist.
@@ -183,6 +191,52 @@ test("disk_worker stat_disk", async (t) => {
 
     const stat = await requestDiskWorker<any>("idb", "stat_disk", { id: meta.id });
     assert.equal(stat.actualSizeBytes, 10 + 5);
+  });
+
+  await t.test("local OPFS remote-streaming: counts overlay + OPFS chunk cache", async () => {
+    installOpfsMock();
+    await clearIdb();
+
+    const store = createMetadataStore("opfs");
+    const diskId = "local-remote";
+    const meta = {
+      source: "local",
+      id: diskId,
+      name: "remote-stream",
+      backend: "opfs",
+      kind: "hdd",
+      format: "raw",
+      fileName: "unused.img",
+      sizeBytes: 4096,
+      createdAtMs: Date.now(),
+      remote: { url: "https://example.com/disk.img" },
+    };
+    await store.putDisk(meta as any);
+
+    // Runtime overlay (created when opened in COW mode).
+    await writeOpfsFile(`${diskId}.overlay.aerospar`, 12);
+
+    // RemoteStreamingDisk OPFS cache.
+    const cacheKey = await stableCacheKey(meta.remote.url);
+    const remoteCacheDir = await opfsGetRemoteCacheDir();
+    const cacheDir = await remoteCacheDir.getDirectoryHandle(cacheKey, { create: true });
+    const indexHandle = await cacheDir.getFileHandle("index.json", { create: true });
+    const writable = await indexHandle.createWritable({ keepExistingData: false });
+    await writable.write(
+      JSON.stringify({
+        version: 1,
+        chunkSize: 1024,
+        accessCounter: 1,
+        chunks: {
+          "0": { byteLength: 7, lastAccess: 1 },
+          "1": { byteLength: 8, lastAccess: 1 },
+        },
+      }),
+    );
+    await writable.close();
+
+    const stat = await requestDiskWorker<any>("opfs", "stat_disk", { id: diskId });
+    assert.equal(stat.actualSizeBytes, 12 + (7 + 8));
   });
 
   await t.test("remote IDB chunked: includes overlay + remote_chunk_meta bytesUsed", async () => {

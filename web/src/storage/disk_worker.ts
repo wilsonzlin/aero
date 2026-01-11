@@ -231,6 +231,63 @@ async function idbSumDiskChunkBytes(db: IDBDatabase, diskId: string): Promise<nu
   return total;
 }
 
+async function opfsReadLruChunkCacheBytes(
+  remoteCacheDir: FileSystemDirectoryHandle,
+  cacheKey: string,
+): Promise<number> {
+  try {
+    const cacheDir = await remoteCacheDir.getDirectoryHandle(cacheKey, { create: false });
+
+    // Prefer parsing the `OpfsLruChunkCache` index to avoid walking every file.
+    try {
+      const indexHandle = await cacheDir.getFileHandle("index.json", { create: false });
+      const file = await indexHandle.getFile();
+      const raw = await file.text();
+      if (raw.trim()) {
+        try {
+          const parsed = JSON.parse(raw) as unknown;
+          if (parsed && typeof parsed === "object") {
+            const chunks = (parsed as { chunks?: unknown }).chunks;
+            if (chunks && typeof chunks === "object") {
+              let total = 0;
+              for (const meta of Object.values(chunks as Record<string, unknown>)) {
+                if (!meta || typeof meta !== "object") continue;
+                const byteLength = (meta as { byteLength?: unknown }).byteLength;
+                if (typeof byteLength === "number" && Number.isFinite(byteLength) && byteLength > 0) {
+                  total += byteLength;
+                }
+              }
+              return total;
+            }
+          }
+        } catch {
+          // ignore and fall back to scanning
+        }
+      }
+    } catch {
+      // ignore and fall back to scanning
+    }
+
+    // Fall back to scanning the chunk files if the index is missing/corrupt.
+    try {
+      const chunksDir = await cacheDir.getDirectoryHandle("chunks", { create: false });
+      let total = 0;
+      for await (const [name, handle] of chunksDir.entries()) {
+        if (handle.kind !== "file") continue;
+        if (!name.endsWith(".bin")) continue;
+        const file = await (handle as FileSystemFileHandle).getFile();
+        total += file.size;
+      }
+      return total;
+    } catch {
+      // ignore
+    }
+  } catch {
+    // cache directory missing or OPFS unavailable
+  }
+  return 0;
+}
+
 /**
  * @param {DiskBackend} backend
  */
@@ -749,8 +806,27 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
       let actualSizeBytes = meta.sizeBytes;
 
       if (meta.source === "local") {
-        if (meta.backend === "opfs" && !meta.remote) {
-          actualSizeBytes = await opfsGetDiskSizeBytes(meta.fileName, meta.opfsDirectory);
+        if (meta.backend === "opfs") {
+          if (!meta.remote) {
+            actualSizeBytes = await opfsGetDiskSizeBytes(meta.fileName, meta.opfsDirectory);
+          } else {
+            let totalBytes = 0;
+            // Remote-streaming disks store local writes in a runtime overlay.
+            try {
+              totalBytes += await opfsGetDiskSizeBytes(`${meta.id}.overlay.aerospar`);
+            } catch {
+              // ignore
+            }
+            // Count cached bytes stored by RemoteStreamingDisk (OpfsLruChunkCache).
+            try {
+              const cacheKey = await stableCacheKey(meta.remote.url);
+              const remoteCacheDir = await opfsGetRemoteCacheDir();
+              totalBytes += await opfsReadLruChunkCacheBytes(remoteCacheDir, cacheKey);
+            } catch {
+              // ignore
+            }
+            actualSizeBytes = totalBytes;
+          }
         } else if (meta.backend === "idb") {
           const db = await openDiskManagerDb();
           try {
@@ -859,51 +935,6 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
 
         if (meta.remote.delivery === "range") {
           const remoteCacheDir = await opfsGetRemoteCacheDir();
-          const readLruChunkCacheBytes = async (cacheKey: string): Promise<number> => {
-            try {
-              const cacheDir = await remoteCacheDir.getDirectoryHandle(cacheKey, { create: false });
-              // Prefer parsing the `OpfsLruChunkCache` index to avoid walking every file.
-              try {
-                const indexHandle = await cacheDir.getFileHandle("index.json", { create: false });
-                const file = await indexHandle.getFile();
-                const raw = await file.text();
-                if (!raw.trim()) return 0;
-                const parsed = JSON.parse(raw) as unknown;
-                if (!parsed || typeof parsed !== "object") return 0;
-                const chunks = (parsed as { chunks?: unknown }).chunks;
-                if (!chunks || typeof chunks !== "object") return 0;
-                let total = 0;
-                for (const meta of Object.values(chunks as Record<string, unknown>)) {
-                  if (!meta || typeof meta !== "object") continue;
-                  const byteLength = (meta as { byteLength?: unknown }).byteLength;
-                  if (typeof byteLength === "number" && Number.isFinite(byteLength) && byteLength > 0) {
-                    total += byteLength;
-                  }
-                }
-                return total;
-              } catch {
-                // ignore and fall back to scanning
-              }
-
-              // Fall back to scanning the chunk files if the index is missing/corrupt.
-              try {
-                const chunksDir = await cacheDir.getDirectoryHandle("chunks", { create: false });
-                let total = 0;
-                for await (const [name, handle] of chunksDir.entries()) {
-                  if (handle.kind !== "file") continue;
-                  if (!name.endsWith(".bin")) continue;
-                  const file = await (handle as FileSystemFileHandle).getFile();
-                  total += file.size;
-                }
-                return total;
-              } catch {
-                // ignore
-              }
-            } catch {
-              // cache directory missing or OPFS unavailable
-            }
-            return 0;
-          };
 
           for (const deliveryType of deliveryTypes) {
             const cacheKey = await RemoteCacheManager.deriveCacheKey({
@@ -911,7 +942,7 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
               version: meta.remote.version,
               deliveryType,
             });
-            cacheBytes += await readLruChunkCacheBytes(cacheKey);
+            cacheBytes += await opfsReadLruChunkCacheBytes(remoteCacheDir, cacheKey);
           }
         } else {
           const manager = await RemoteCacheManager.openOpfs();
