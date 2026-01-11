@@ -508,59 +508,77 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
             }
         };
 
-        let mut in_descs: Vec<_> = chain
+        let in_descs: Vec<_> = chain
             .descriptors()
             .iter()
             .copied()
             .filter(|d| d.is_write_only())
             .collect();
 
-        // One or more payload buffers plus the final status descriptor.
+        // If the guest forgot to provide any writable buffers, we can't return a
+        // response payload or status. Still complete the chain to avoid
+        // stalling the virtqueue.
+        if in_descs.is_empty() {
+            return Ok(0);
+        }
+
         if in_descs.len() < 2 {
-            return Err(VirtioDeviceError::BadDescriptorChain);
+            status = VIRTIO_SND_S_BAD_MSG;
         }
 
-        let resp_desc = in_descs.pop().unwrap();
-        if resp_desc.len < 8 {
-            return Err(VirtioDeviceError::BadDescriptorChain);
-        }
+        let resp_desc = *in_descs.last().unwrap();
+        let payload_descs = &in_descs[..in_descs.len().saturating_sub(1)];
 
-        let payload_bytes: usize = in_descs.iter().map(|d| d.len as usize).sum();
+        let payload_bytes: usize = payload_descs.iter().map(|d| d.len as usize).sum();
         if payload_bytes % 2 != 0 {
             status = VIRTIO_SND_S_BAD_MSG;
         }
 
+        if resp_desc.len < 8 {
+            status = VIRTIO_SND_S_BAD_MSG;
+        }
+
         // Always write deterministic output into the guest payload buffers.
-        if status == VIRTIO_SND_S_OK {
-            let samples_needed = payload_bytes / 2;
-            self.capture_telemetry.dropped_samples += self.capture_source.take_dropped_samples();
+        if !payload_descs.is_empty() {
+            if status == VIRTIO_SND_S_OK {
+                let samples_needed = payload_bytes / 2;
+                if samples_needed != 0 {
+                    self.capture_telemetry.dropped_samples +=
+                        self.capture_source.take_dropped_samples();
 
-            self.capture_samples_scratch.resize(samples_needed, 0.0);
-            let got = self
-                .capture_source
-                .read_mono_f32(&mut self.capture_samples_scratch[..]);
-            if got < samples_needed {
-                self.capture_telemetry.underrun_samples += (samples_needed - got) as u64;
-                self.capture_telemetry.underrun_responses += 1;
-                self.capture_samples_scratch[got..].fill(0.0);
+                    self.capture_samples_scratch.resize(samples_needed, 0.0);
+                    let got = self
+                        .capture_source
+                        .read_mono_f32(&mut self.capture_samples_scratch[..]);
+                    if got < samples_needed {
+                        self.capture_telemetry.underrun_samples += (samples_needed - got) as u64;
+                        self.capture_telemetry.underrun_responses += 1;
+                        self.capture_samples_scratch[got..].fill(0.0);
+                    }
+
+                    write_pcm_payload_s16le(
+                        mem,
+                        payload_descs,
+                        &self.capture_samples_scratch[..samples_needed],
+                    )?;
+                } else {
+                    write_payload_silence(mem, payload_descs)?;
+                }
+            } else {
+                write_payload_silence(mem, payload_descs)?;
             }
-
-            write_pcm_payload_s16le(
-                mem,
-                &in_descs,
-                &self.capture_samples_scratch[..samples_needed],
-            )?;
-        } else {
-            write_payload_silence(mem, &in_descs)?;
         }
 
         let resp = virtio_snd_pcm_status(status, 0);
-        let out = mem
-            .get_slice_mut(resp_desc.addr, 8)
-            .map_err(|_| VirtioDeviceError::IoError)?;
-        out.copy_from_slice(&resp);
+        let resp_len = (resp_desc.len as usize).min(resp.len());
+        if resp_len != 0 {
+            let out = mem
+                .get_slice_mut(resp_desc.addr, resp_len)
+                .map_err(|_| VirtioDeviceError::IoError)?;
+            out.copy_from_slice(&resp[..resp_len]);
+        }
 
-        Ok((payload_bytes + 8) as u32)
+        Ok((payload_bytes + resp_len) as u32)
     }
 }
 
@@ -634,10 +652,6 @@ fn write_all_in(
         dst.copy_from_slice(&remaining[..take]);
         written += take;
         remaining = &remaining[take..];
-    }
-
-    if !remaining.is_empty() {
-        return Err(VirtioDeviceError::BadDescriptorChain);
     }
 
     Ok(written as u32)
