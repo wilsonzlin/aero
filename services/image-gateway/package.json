@@ -8,10 +8,16 @@
   },
   "main": "dist/index.js",
   "scripts": {
+    "check:node": "node ../../scripts/check-node-version.mjs",
+    "predev": "npm run check:node",
     "dev": "tsx watch src/index.ts",
+    "prebuild": "npm run check:node",
     "build": "tsc -p tsconfig.json",
+    "prestart": "npm run check:node",
     "start": "node dist/index.js",
+    "pretypecheck": "npm run check:node",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "pretest": "npm run check:node",
     "test": "vitest run"
   },
   "dependencies": {

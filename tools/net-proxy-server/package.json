@@ -9,7 +9,10 @@
     "node": ">=22.11.0 <23"
   },
   "scripts": {
+    "check:node": "node ../../scripts/check-node-version.mjs",
+    "prestart": "npm run check:node",
     "start": "node src/cli.js",
+    "pretest": "npm run check:node",
     "test": "node --test"
   },
   "dependencies": {
