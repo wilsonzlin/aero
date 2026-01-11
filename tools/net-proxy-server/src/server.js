@@ -74,6 +74,14 @@ function isPrivateIpv4(ipBytes) {
   // 100.64.0.0/10 (CGNAT)
   if (a === 100 && b >= 64 && b <= 127) return true;
 
+  // 192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24 (TEST-NET)
+  if (a === 192 && b === 0 && c === 2) return true;
+  if (a === 198 && b === 51 && c === 100) return true;
+  if (a === 203 && b === 0 && c === 113) return true;
+
+  // 198.18.0.0/15 (benchmarking)
+  if (a === 198 && (b === 18 || b === 19)) return true;
+
   // Multicast/reserved/broadcast
   if (a >= 224) return true;
   if (a === 192 && b === 0 && c === 0) return true; // 192.0.0.0/24 (IETF protocol assignments)
@@ -180,6 +188,9 @@ function isPrivateIpv6(bytes) {
   // fe80::/10 (link-local)
   // eslint-disable-next-line no-bitwise
   if (bytes[0] === 0xfe && (bytes[1] & 0xc0) === 0x80) return true;
+
+  // 2001:db8::/32 (documentation)
+  if (bytes[0] === 0x20 && bytes[1] === 0x01 && bytes[2] === 0x0d && bytes[3] === 0xb8) return true;
 
   return false;
 }
@@ -820,4 +831,3 @@ export async function createProxyServer(userConfig) {
     },
   };
 }
-

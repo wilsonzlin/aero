@@ -147,6 +147,16 @@ test("integration: policy denies private IPs by default", async () => {
     const errFrame = await waiter.waitFor((f) => f.msgType === TcpMuxMsgType.ERROR && f.streamId === 1);
     const err = decodeTcpMuxErrorPayload(errFrame.payload);
     assert.equal(err.code, TcpMuxErrorCode.POLICY_DENIED);
+
+    ws.send(encodeTcpMuxFrame(TcpMuxMsgType.OPEN, 2, encodeTcpMuxOpenPayload({ host: "192.0.2.1", port: 80 })));
+    const errFrame2 = await waiter.waitFor((f) => f.msgType === TcpMuxMsgType.ERROR && f.streamId === 2);
+    const err2 = decodeTcpMuxErrorPayload(errFrame2.payload);
+    assert.equal(err2.code, TcpMuxErrorCode.POLICY_DENIED);
+
+    ws.send(encodeTcpMuxFrame(TcpMuxMsgType.OPEN, 3, encodeTcpMuxOpenPayload({ host: "2001:db8::1", port: 80 })));
+    const errFrame3 = await waiter.waitFor((f) => f.msgType === TcpMuxMsgType.ERROR && f.streamId === 3);
+    const err3 = decodeTcpMuxErrorPayload(errFrame3.payload);
+    assert.equal(err3.code, TcpMuxErrorCode.POLICY_DENIED);
   } finally {
     if (ws) ws.terminate();
     if (proxy) await proxy.close();
@@ -225,4 +235,3 @@ test("integration: TCP->WS backpressure pauses TCP read (>=1MB)", async () => {
     if (burstServer) await new Promise((resolve) => burstServer.close(resolve));
   }
 });
-
