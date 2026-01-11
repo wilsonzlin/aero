@@ -39,6 +39,12 @@ Minimum supported commands:
 
   Alias: `aerogpu_dbgctl --query-vblank`
 
+- `aerogpu_dbgctl --wait-vblank`  
+  Calls `D3DKMTWaitForVerticalBlankEvent` in a loop (with `--timeout-ms` safety timeout) and prints the observed pacing.
+
+- `aerogpu_dbgctl --query-scanline`  
+  Calls `D3DKMTGetScanLine` and prints the current scanline and vblank state.
+
 - `aerogpu_dbgctl --selftest`  
   Triggers a simple KMD-side self-test.
 
@@ -58,6 +64,8 @@ aerogpu_dbgctl --query-fence
 aerogpu_dbgctl --dump-ring --ring-id 0
 aerogpu_dbgctl --dump-vblank
 aerogpu_dbgctl --dump-vblank --vblank-samples 10 --vblank-interval-ms 200
+aerogpu_dbgctl --wait-vblank --vblank-samples 120 --timeout-ms 2000
+aerogpu_dbgctl --query-scanline --vblank-samples 20 --vblank-interval-ms 10
 aerogpu_dbgctl --selftest --timeout-ms 2000
 ```
 
@@ -109,7 +117,13 @@ Escape ops used:
 - `AEROGPU_ESCAPE_OP_QUERY_VBLANK` (alias: `AEROGPU_ESCAPE_OP_DUMP_VBLANK`) → `--dump-vblank`
 - `AEROGPU_ESCAPE_OP_SELFTEST` → `--selftest`
 
+Additional WDDM queries (do not use the escape channel):
+
+- `--wait-vblank` uses `D3DKMTWaitForVerticalBlankEvent` to measure vblank delivery from the OS.
+- `--query-scanline` uses `D3DKMTGetScanLine` to report the current scanline and vblank state.
+
 ## Notes / troubleshooting
 
 - If `D3DKMTOpenAdapterFromHdc` or `D3DKMTEscape` cannot be resolved from `gdi32.dll`, the OS is too old or the environment is not WDDM-capable.
 - If `D3DKMTEscape` returns an error, ensure the AeroGPU driver is installed and exposes the required escapes.
+- If `--wait-vblank` times out, the process may skip `D3DKMTCloseAdapter` to avoid deadlocking on broken vblank implementations.

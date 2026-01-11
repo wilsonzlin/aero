@@ -389,6 +389,18 @@ Optional: if you suspect vblank pacing/jitter, sample a few times:
 aerogpu_dbgctl --dump-vblank --vblank-samples 10 --vblank-interval-ms 200
 ```
 
+If you suspect the OS is not receiving vblank events at all (interrupt/wait wiring issues), measure the WDDM vblank wait path directly:
+
+```bat
+aerogpu_dbgctl --wait-vblank --vblank-samples 120 --timeout-ms 2000
+```
+
+And if you suspect scanline/vblank state queries are broken, sample `D3DKMTGetScanLine`:
+
+```bat
+aerogpu_dbgctl --query-scanline --vblank-samples 50 --vblank-interval-ms 10
+```
+
 ### 5.2 Suggested `aerogpu_dbgctl` commands (baseline feature set)
 
 | Command | What it should report/do | When to use |
@@ -397,6 +409,8 @@ aerogpu_dbgctl --dump-vblank --vblank-samples 10 --vblank-interval-ms 200
 | `--dump-ring` | ring head/tail, queued packet types, last N submissions | hangs/TDR triage |
 | `--query-fence` | last submitted, last completed, per-context fences | “fence stuck” diagnosis |
 | `--dump-vblank` | IRQ enable/status + vblank seq/time/period (optionally sampled with deltas/observed Hz) | DWM stutter / Basic fallback |
+| `--wait-vblank` | WDDM vblank wait pacing via `D3DKMTWaitForVerticalBlankEvent` | verifying vblank interrupts/waits work |
+| `--query-scanline` | `D3DKMTGetScanLine` (scanline + vblank state) | sanity-check scanline/vblank state queries |
 | `log level <err|warn|info|trace>` | sets runtime verbosity | enable before repro |
 | `perf start <file>` / `perf stop` | lightweight counters (present rate, bytes/sec, latency histograms) | baseline collection |
 | `inject hang <ms>` *(dev)* | intentionally stall completions to validate TDR handling | validates reset path |
