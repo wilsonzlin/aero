@@ -457,7 +457,16 @@ For each entrypoint:
 is invoked once when the underlying allocation is finally destroyed. In
 practice, Windows 7 call patterns can vary, so the AeroGPU KMD must be tolerant
 of either callback being used to release a handle.
- 
+
+To make this robust for cross-process D3D9Ex shared surfaces, the AeroGPU Win7
+KMD maintains an adapter-global refcount keyed by the allocation `share_token`.
+Each successful `CreateAllocation` / `OpenAllocation` wrapper increments the
+count, and `CloseAllocation` / `DestroyAllocation` decrement it only if they
+actually untrack a wrapper (so duplicate callback sequences do not underflow).
+When the final refcount reaches zero, the KMD emits `RELEASE_SHARED_SURFACE` to
+the host so it can remove the `share_token -> resource` mapping used by
+`IMPORT_SHARED_SURFACE`.
+  
 #### `DxgkDdiLock` / `DxgkDdiUnlock`
   
 - **Purpose:** Map/unmap allocation memory for CPU access.
