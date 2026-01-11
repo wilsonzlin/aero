@@ -411,3 +411,110 @@ fn d3d9_shared_surface_import_export_renders_via_alias_handle() {
     exec.execute_cmd_stream(&teardown)
         .expect("destroying alias should succeed");
 }
+
+#[test]
+fn d3d9_presented_scanout_survives_destroying_present_alias_handle() {
+    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
+        Ok(exec) => exec,
+        Err(AerogpuD3d9Error::AdapterNotFound) => {
+            eprintln!("skipping d3d9 present alias test: wgpu adapter not found");
+            return;
+        }
+        Err(err) => panic!("failed to create executor: {err}"),
+    };
+
+    // Protocol constants from `drivers/aerogpu/protocol/aerogpu_cmd.h`.
+    const OPC_CREATE_TEXTURE2D: u32 = 0x101;
+    const OPC_DESTROY_RESOURCE: u32 = 0x102;
+    const OPC_SET_RENDER_TARGETS: u32 = 0x400;
+    const OPC_CLEAR: u32 = 0x600;
+    const OPC_PRESENT: u32 = 0x700;
+    const OPC_EXPORT_SHARED_SURFACE: u32 = 0x710;
+    const OPC_IMPORT_SHARED_SURFACE: u32 = 0x711;
+
+    const AEROGPU_FORMAT_R8G8B8A8_UNORM: u32 = 3;
+    const AEROGPU_RESOURCE_USAGE_TEXTURE: u32 = 1 << 3;
+    const AEROGPU_RESOURCE_USAGE_RENDER_TARGET: u32 = 1 << 4;
+    const AEROGPU_CLEAR_COLOR: u32 = 1 << 0;
+
+    const SHARE_TOKEN: u64 = 0x7788_6655_4433_2211;
+
+    const RT_HANDLE: u32 = 1;
+    const RT_ALIAS: u32 = 2;
+
+    let width = 8u32;
+    let height = 8u32;
+
+    let stream = build_stream(|out| {
+        emit_packet(out, OPC_CREATE_TEXTURE2D, |out| {
+            push_u32(out, RT_HANDLE);
+            push_u32(
+                out,
+                AEROGPU_RESOURCE_USAGE_TEXTURE | AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+            );
+            push_u32(out, AEROGPU_FORMAT_R8G8B8A8_UNORM);
+            push_u32(out, width);
+            push_u32(out, height);
+            push_u32(out, 1); // mip_levels
+            push_u32(out, 1); // array_layers
+            push_u32(out, width * 4); // row_pitch_bytes
+            push_u32(out, 0); // backing_alloc_id
+            push_u32(out, 0); // backing_offset_bytes
+            push_u64(out, 0); // reserved0
+        });
+
+        emit_packet(out, OPC_EXPORT_SHARED_SURFACE, |out| {
+            push_u32(out, RT_HANDLE);
+            push_u32(out, 0); // reserved0
+            push_u64(out, SHARE_TOKEN);
+        });
+
+        emit_packet(out, OPC_IMPORT_SHARED_SURFACE, |out| {
+            push_u32(out, RT_ALIAS);
+            push_u32(out, 0); // reserved0
+            push_u64(out, SHARE_TOKEN);
+        });
+
+        emit_packet(out, OPC_SET_RENDER_TARGETS, |out| {
+            push_u32(out, 1); // color_count
+            push_u32(out, 0); // depth_stencil
+            push_u32(out, RT_ALIAS);
+            for _ in 0..7 {
+                push_u32(out, 0);
+            }
+        });
+
+        emit_packet(out, OPC_CLEAR, |out| {
+            push_u32(out, AEROGPU_CLEAR_COLOR);
+            // RGBA = red
+            push_f32(out, 1.0);
+            push_f32(out, 0.0);
+            push_f32(out, 0.0);
+            push_f32(out, 1.0);
+            push_f32(out, 1.0); // depth
+            push_u32(out, 0); // stencil
+        });
+
+        emit_packet(out, OPC_PRESENT, |out| {
+            push_u32(out, 0); // scanout_id
+            push_u32(out, 0); // flags
+        });
+
+        // Destroy the alias that was used for Present; scanout readback should still work because
+        // the executor records the underlying handle.
+        emit_packet(out, OPC_DESTROY_RESOURCE, |out| {
+            push_u32(out, RT_ALIAS);
+            push_u32(out, 0); // reserved0
+        });
+    });
+
+    exec.execute_cmd_stream(&stream)
+        .expect("execute should succeed");
+
+    let (_w, _h, rgba) = pollster::block_on(exec.read_presented_scanout_rgba8(0))
+        .expect("read_presented_scanout should succeed")
+        .expect("scanout should be present");
+    assert_eq!(rgba.len(), (width * height * 4) as usize);
+    let center = (((height / 2) * width) + (width / 2)) * 4;
+    assert_eq!(&rgba[center as usize..center as usize + 4], &[255, 0, 0, 255]);
+}
