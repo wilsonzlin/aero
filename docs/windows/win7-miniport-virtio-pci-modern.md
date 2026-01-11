@@ -37,6 +37,14 @@ capabilities and fills a `VIRTIO_PCI_DEVICE` (COMMON/NOTIFY/ISR/DEVICE config
 windows, plus helpers like `VirtioPciNegotiateFeatures`, `VirtioPciSetupQueue`,
 `VirtioPciNotifyQueue`, and `VirtioPciReadIsr`).
 
+Example:
+
+```c
+VIRTIO_PCI_DEVICE dev = {0};
+NTSTATUS st = VirtioPciModernMiniportInit(&dev, bar0Va, bar0Len, cfg, sizeof(cfg));
+if (!NT_SUCCESS(st)) return DEVICE_NOT_SUPPORTED;
+```
+
 This is what `drivers/windows7/virtio-net/src/aero_virtio_net.c` and
 `drivers/windows7/virtio-blk/src/aero_virtio_blk.c` are wired against today.
 
