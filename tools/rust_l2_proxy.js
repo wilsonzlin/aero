@@ -276,7 +276,7 @@ async function stopProcess(child) {
     child.kill();
   }
 
-  const exited = await Promise.race([once(child, "exit"), sleep(2_000).then(() => null)]);
+  const exited = await Promise.race([once(child, "exit"), sleep(2_000, undefined, { ref: false }).then(() => null)]);
   if (exited !== null) return;
 
   try {
@@ -432,7 +432,10 @@ async function runCommand(command, args, { cwd, env, timeoutMs = 60_000 } = {}) 
 
       const exitedPromise = once(proc, "exit").catch(() => null);
       signalProcessTree(proc, "SIGTERM");
-      const exited = await Promise.race([exitedPromise, sleep(2_000).then(() => null)]);
+      const exited = await Promise.race([
+        exitedPromise,
+        sleep(2_000, undefined, { ref: false }).then(() => null),
+      ]);
       if (exited !== null) return;
 
       const killedPromise = once(proc, "exit").catch(() => null);
