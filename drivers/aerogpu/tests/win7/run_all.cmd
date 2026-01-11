@@ -61,6 +61,7 @@ call :run_test d3d9ex_shared_allocations !TEST_ARGS!
 call :run_test d3d10_triangle !TEST_ARGS!
 call :run_test d3d10_1_triangle !TEST_ARGS!
 call :run_test d3d11_triangle !TEST_ARGS!
+call :run_test d3d11_caps_smoke !TEST_ARGS!
 call :run_test d3d11_rs_om_state_sanity !TEST_ARGS!
 call :run_test d3d11_geometry_shader_smoke !TEST_ARGS!
 call :run_test d3d11_swapchain_rotate_sanity !TEST_ARGS!

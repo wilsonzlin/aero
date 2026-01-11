@@ -129,6 +129,24 @@ constexpr uint32_t kDxgiFormatR16Uint = 57;
 constexpr uint32_t kDxgiFormatR32Uint = 42;
 constexpr uint32_t kDxgiFormatB8G8R8A8Unorm = 87;
 constexpr uint32_t kDxgiFormatB8G8R8X8Unorm = 88;
+constexpr uint32_t kDxgiFormatR32G32Float = 16;
+constexpr uint32_t kDxgiFormatR32G32B32A32Float = 2;
+
+// D3D_FEATURE_LEVEL subset (numeric values from d3dcommon.h).
+constexpr uint32_t kD3DFeatureLevel10_0 = 0xA000;
+
+// D3D11_FORMAT_SUPPORT subset (numeric values from d3d11.h).
+// These values are stable across Windows versions and are used by
+// ID3D11Device::CheckFormatSupport.
+constexpr uint32_t kD3D11FormatSupportBuffer = 0x1;
+constexpr uint32_t kD3D11FormatSupportIaVertexBuffer = 0x2;
+constexpr uint32_t kD3D11FormatSupportIaIndexBuffer = 0x4;
+constexpr uint32_t kD3D11FormatSupportTexture2D = 0x20;
+constexpr uint32_t kD3D11FormatSupportRenderTarget = 0x4000;
+constexpr uint32_t kD3D11FormatSupportBlendable = 0x8000;
+constexpr uint32_t kD3D11FormatSupportDepthStencil = 0x10000;
+constexpr uint32_t kD3D11FormatSupportCpuLockable = 0x20000;
+constexpr uint32_t kD3D11FormatSupportDisplay = 0x80000;
 
 // D3D11_RESOURCE_MISC_SHARED (numeric value from d3d11.h).
 constexpr uint32_t kD3D11ResourceMiscShared = 0x2;
@@ -1706,15 +1724,100 @@ void AEROGPU_APIENTRY RotateResourceIdentities11(D3D11DDI_HDEVICECONTEXT hCtx, D
 // -------------------------------------------------------------------------------------------------
 
 HRESULT AEROGPU_APIENTRY GetCaps11(D3D10DDI_HADAPTER, const D3D11DDIARG_GETCAPS* pGetCaps) {
+  AEROGPU_D3D10_11_LOG_CALL();
   if (!pGetCaps || !pGetCaps->pData || pGetCaps->DataSize == 0) {
     return E_INVALIDARG;
   }
 
-  std::memset(pGetCaps->pData, 0, pGetCaps->DataSize);
-  // The minimal bring-up path treats unknown cap types as unsupported and relies
-  // on device-creation-time feature level negotiation. Always succeed with a
-  // zero-filled response to avoid runtime crashes on unexpected cap queries.
-  return S_OK;
+  const uint32_t type = static_cast<uint32_t>(pGetCaps->Type);
+  void* data = pGetCaps->pData;
+  const uint32_t data_size = static_cast<uint32_t>(pGetCaps->DataSize);
+
+  // Mirror the non-WDK bring-up behavior: unknown cap types are treated as
+  // "supported but with everything disabled" to avoid runtime crashes.
+  //
+  // NOTE: We avoid blanket zero-fill for in/out cap structs (e.g. format support)
+  // until after we've read the input fields.
+  switch (type) {
+    // D3D11_FEATURE_* values (Win7 D3D11 runtime routes CheckFeatureSupport via these).
+    case 0: // THREADING
+    case 1: // DOUBLES
+    case 4: // D3D10_X_HARDWARE_OPTIONS
+    case 5: // D3D11_OPTIONS
+    case 6: // ARCHITECTURE_INFO
+    case 7: // D3D9_OPTIONS
+      std::memset(data, 0, data_size);
+      return S_OK;
+
+    case 8: { // FEATURE_LEVELS
+      static const D3D_FEATURE_LEVEL kLevels[] = {D3D_FEATURE_LEVEL_10_0};
+      struct FeatureLevelsCaps {
+        UINT NumFeatureLevels;
+        const D3D_FEATURE_LEVEL* pFeatureLevels;
+      };
+
+      if (data_size == sizeof(FeatureLevelsCaps)) {
+        auto* out = reinterpret_cast<FeatureLevelsCaps*>(data);
+        out->NumFeatureLevels = 1;
+        out->pFeatureLevels = kLevels;
+        return S_OK;
+      }
+
+      std::memset(data, 0, data_size);
+      if (data_size >= sizeof(D3D_FEATURE_LEVEL)) {
+        reinterpret_cast<D3D_FEATURE_LEVEL*>(data)[0] = D3D_FEATURE_LEVEL_10_0;
+        return S_OK;
+      }
+      return E_INVALIDARG;
+    }
+
+    case 2: { // FORMAT_SUPPORT
+      struct FormatSupport {
+        UINT InFormat;        // DXGI_FORMAT
+        UINT OutFormatSupport; // D3D11_FORMAT_SUPPORT
+      };
+      if (data_size < sizeof(FormatSupport)) {
+        return E_INVALIDARG;
+      }
+      auto* fs = reinterpret_cast<FormatSupport*>(data);
+      fs->OutFormatSupport = d3d11_format_support_flags(static_cast<uint32_t>(fs->InFormat));
+      return S_OK;
+    }
+
+    case 3: { // FORMAT_SUPPORT2
+      struct FormatSupport2 {
+        UINT InFormat;
+        UINT OutFormatSupport2;
+      };
+      if (data_size < sizeof(FormatSupport2)) {
+        return E_INVALIDARG;
+      }
+      auto* fs = reinterpret_cast<FormatSupport2*>(data);
+      fs->OutFormatSupport2 = 0;
+      return S_OK;
+    }
+
+    case 9: { // MULTISAMPLE_QUALITY_LEVELS
+      struct MsaaQualityLevels {
+        UINT Format;
+        UINT SampleCount;
+        UINT NumQualityLevels;
+      };
+      if (data_size < sizeof(MsaaQualityLevels)) {
+        return E_INVALIDARG;
+      }
+      auto* ms = reinterpret_cast<MsaaQualityLevels*>(data);
+      ms->NumQualityLevels = (ms->SampleCount == 1) ? 1u : 0u;
+      return S_OK;
+    }
+
+    default:
+      AEROGPU_D3D10_11_LOG("GetCaps11 unknown type=%u (size=%u) -> zero-fill + S_OK",
+                           (unsigned)type,
+                           (unsigned)data_size);
+      std::memset(data, 0, data_size);
+      return S_OK;
+  }
 }
 
 SIZE_T AEROGPU_APIENTRY CalcPrivateDeviceSize11(D3D10DDI_HADAPTER, const D3D11DDIARG_CREATEDEVICE*) {
@@ -3999,6 +4102,171 @@ void AEROGPU_APIENTRY CloseAdapter(D3D10DDI_HADAPTER hAdapter) {
   AEROGPU_D3D10_11_LOG_CALL();
   auto* adapter = FromHandle<D3D10DDI_HADAPTER, AeroGpuAdapter>(hAdapter);
   delete adapter;
+}
+
+// -------------------------------------------------------------------------------------------------
+// D3D11 adapter caps (pfnGetCaps)
+// -------------------------------------------------------------------------------------------------
+
+// The real Win7 D3D11 runtime calls D3D11DDI_ADAPTERFUNCS::pfnGetCaps during
+// device creation and to service API calls like CheckFeatureSupport and
+// CheckFormatSupport.
+//
+// For repository builds we do not depend on the WDK headers, so we model only
+// the subset of D3D11DDIARG_GETCAPS / cap types that are exercised by Win7 at
+// FL10_0 and by the guest-side smoke tests.
+//
+// Unknown cap types are treated as "supported but with everything disabled":
+// we zero-fill the caller-provided buffer (when present), log the type, and
+// return S_OK. This is intentionally conservative; the runtime generally
+// interprets missing capabilities as unsupported feature paths.
+//
+// Note: Win7 uses the same layout for D3D10/DDI and D3D11/DDI cap queries, so we
+// model this entrypoint using the shared `D3D10DDIARG_GETCAPS` container from
+// `include/aerogpu_d3d10_11_umd.h`.
+
+// NOTE: These numeric values intentionally match the D3D11_FEATURE enum values
+// for the common CheckFeatureSupport queries on Windows 7. Win7-specific DDI
+// cap queries (feature levels, multisample quality) are assigned consecutive
+// values and may need to be extended as more types are observed in the wild.
+enum AEROGPU_D3D11DDICAPS_TYPE : uint32_t {
+  AEROGPU_D3D11DDICAPS_THREADING = 0,
+  AEROGPU_D3D11DDICAPS_DOUBLES = 1,
+  AEROGPU_D3D11DDICAPS_FORMAT_SUPPORT = 2,
+  AEROGPU_D3D11DDICAPS_FORMAT_SUPPORT2 = 3,
+  AEROGPU_D3D11DDICAPS_D3D10_X_HARDWARE_OPTIONS = 4,
+  AEROGPU_D3D11DDICAPS_D3D11_OPTIONS = 5,
+  AEROGPU_D3D11DDICAPS_ARCHITECTURE_INFO = 6,
+  AEROGPU_D3D11DDICAPS_D3D9_OPTIONS = 7,
+  AEROGPU_D3D11DDICAPS_FEATURE_LEVELS = 8,
+  AEROGPU_D3D11DDICAPS_MULTISAMPLE_QUALITY_LEVELS = 9,
+};
+
+struct AEROGPU_D3D11_FEATURE_DATA_FORMAT_SUPPORT {
+  uint32_t InFormat;
+  uint32_t OutFormatSupport;
+};
+
+struct AEROGPU_D3D11_FEATURE_DATA_FORMAT_SUPPORT2 {
+  uint32_t InFormat;
+  uint32_t OutFormatSupport2;
+};
+
+struct AEROGPU_D3D11_FEATURE_DATA_MULTISAMPLE_QUALITY_LEVELS {
+  uint32_t Format;
+  uint32_t SampleCount;
+  uint32_t NumQualityLevels;
+};
+
+uint32_t d3d11_format_support_flags(uint32_t dxgi_format) {
+  switch (dxgi_format) {
+    case kDxgiFormatB8G8R8A8Unorm:
+    case kDxgiFormatR8G8B8A8Unorm:
+      return kD3D11FormatSupportTexture2D | kD3D11FormatSupportRenderTarget | kD3D11FormatSupportBlendable |
+             kD3D11FormatSupportCpuLockable | kD3D11FormatSupportDisplay;
+    case kDxgiFormatD24UnormS8Uint:
+    case kDxgiFormatD32Float:
+      return kD3D11FormatSupportTexture2D | kD3D11FormatSupportDepthStencil;
+    case kDxgiFormatR16Uint:
+    case kDxgiFormatR32Uint:
+      return kD3D11FormatSupportBuffer | kD3D11FormatSupportIaIndexBuffer;
+    case kDxgiFormatR32G32Float:
+    case kDxgiFormatR32G32B32A32Float:
+      return kD3D11FormatSupportBuffer | kD3D11FormatSupportIaVertexBuffer;
+    default:
+      return 0;
+  }
+}
+
+HRESULT AEROGPU_APIENTRY GetCaps(D3D10DDI_HADAPTER, const D3D10DDIARG_GETCAPS* pGetCaps) {
+  if (!pGetCaps) {
+    return E_INVALIDARG;
+  }
+
+  const uint32_t type = static_cast<uint32_t>(pGetCaps->Type);
+  void* data = pGetCaps->pData;
+  const uint32_t data_size = static_cast<uint32_t>(pGetCaps->DataSize);
+
+  if (!data || data_size == 0) {
+    AEROGPU_D3D10_11_LOG("GetCaps type=%u called with null/empty buffer", (unsigned)type);
+    return E_INVALIDARG;
+  }
+
+  switch (type) {
+    case AEROGPU_D3D11DDICAPS_FEATURE_LEVELS: {
+      // The Win7 runtime uses this to determine which feature levels to attempt.
+      // We advertise only FL10_0 until CS/UAV/etc are implemented.
+      static const uint32_t kLevels[] = {kD3DFeatureLevel10_0};
+
+      // Common layout: {UINT NumFeatureLevels; const D3D_FEATURE_LEVEL* pFeatureLevels;}
+      struct FeatureLevelsCaps {
+        uint32_t NumFeatureLevels;
+        const uint32_t* pFeatureLevels;
+      };
+
+      if (data_size == sizeof(FeatureLevelsCaps)) {
+        auto* out = reinterpret_cast<FeatureLevelsCaps*>(data);
+        out->NumFeatureLevels = 1;
+        out->pFeatureLevels = kLevels;
+        return S_OK;
+      }
+
+      // Fallback layout: an array of D3D_FEATURE_LEVEL values.
+      if (data_size >= sizeof(uint32_t)) {
+        std::memset(data, 0, data_size);
+        auto* out = reinterpret_cast<uint32_t*>(data);
+        out[0] = kD3DFeatureLevel10_0;
+        return S_OK;
+      }
+      return E_INVALIDARG;
+    }
+
+    case AEROGPU_D3D11DDICAPS_THREADING:
+    case AEROGPU_D3D11DDICAPS_DOUBLES:
+    case AEROGPU_D3D11DDICAPS_D3D10_X_HARDWARE_OPTIONS:
+    case AEROGPU_D3D11DDICAPS_D3D11_OPTIONS:
+    case AEROGPU_D3D11DDICAPS_ARCHITECTURE_INFO:
+    case AEROGPU_D3D11DDICAPS_D3D9_OPTIONS: {
+      // Conservative: report "not supported" for everything (all fields zero).
+      std::memset(data, 0, data_size);
+      return S_OK;
+    }
+
+    case AEROGPU_D3D11DDICAPS_FORMAT_SUPPORT: {
+      if (data_size < sizeof(AEROGPU_D3D11_FEATURE_DATA_FORMAT_SUPPORT)) {
+        return E_INVALIDARG;
+      }
+      auto* fs = reinterpret_cast<AEROGPU_D3D11_FEATURE_DATA_FORMAT_SUPPORT*>(data);
+      fs->OutFormatSupport = d3d11_format_support_flags(fs->InFormat);
+      return S_OK;
+    }
+
+    case AEROGPU_D3D11DDICAPS_FORMAT_SUPPORT2: {
+      if (data_size < sizeof(AEROGPU_D3D11_FEATURE_DATA_FORMAT_SUPPORT2)) {
+        return E_INVALIDARG;
+      }
+      auto* fs = reinterpret_cast<AEROGPU_D3D11_FEATURE_DATA_FORMAT_SUPPORT2*>(data);
+      fs->OutFormatSupport2 = 0;
+      return S_OK;
+    }
+
+    case AEROGPU_D3D11DDICAPS_MULTISAMPLE_QUALITY_LEVELS: {
+      if (data_size < sizeof(AEROGPU_D3D11_FEATURE_DATA_MULTISAMPLE_QUALITY_LEVELS)) {
+        return E_INVALIDARG;
+      }
+      auto* ms = reinterpret_cast<AEROGPU_D3D11_FEATURE_DATA_MULTISAMPLE_QUALITY_LEVELS*>(data);
+      // No MSAA support yet; report only the implicit 1x case.
+      ms->NumQualityLevels = (ms->SampleCount == 1) ? 1u : 0u;
+      return S_OK;
+    }
+
+    default:
+      AEROGPU_D3D10_11_LOG("GetCaps unknown type=%u (size=%u) -> zero-fill + S_OK",
+                           (unsigned)type,
+                           (unsigned)data_size);
+      std::memset(data, 0, data_size);
+      return S_OK;
+  }
 }
 
 // -------------------------------------------------------------------------------------------------
