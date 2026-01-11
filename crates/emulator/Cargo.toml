@@ -27,10 +27,11 @@ thiserror = "1"
 anyhow = "1"
 image = { version = "0.25.5", default-features = false, features = ["png", "pnm"] }
 tempfile = "3"
-aero-bios = { path = "../aero-bios" }
+hyper = { version = "0.14", features = ["server", "http1", "tcp"] }
 criterion = { version = "0.5.1", default-features = false, features = ["cargo_bench_support"] }
 proptest = "1.4"
 firmware = { path = "../firmware" }
+machine = { path = "../machine" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "sync", "time"] }

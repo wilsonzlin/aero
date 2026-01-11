@@ -1,78 +1,99 @@
-use crate::acpi::build_acpi_table_set;
+use aero_acpi::{AcpiConfig, AcpiPlacement, AcpiTables, PhysicalMemory as AcpiPhysicalMemory};
 
-use super::{BiosBus, ACPI_TABLE_BASE, ACPI_TABLE_SIZE, EBDA_BASE};
+use super::BiosBus;
 
 #[derive(Debug, Clone, Copy)]
-pub struct AcpiPlacement {
-    /// Physical base address reserved for ACPI tables.
-    pub tables_base: u64,
-    /// Size of the reserved ACPI table area in bytes.
-    pub tables_size: usize,
-    /// Suggested physical address for the RSDP (must be in EBDA or 0xE0000-0xFFFFF).
+pub struct AcpiInfo {
     pub rsdp_addr: u64,
+    /// Reclaimable table blob window (E820 type 3).
+    pub reclaimable: (u64, u64),
+    /// ACPI NVS window (E820 type 4).
+    pub nvs: (u64, u64),
 }
 
-pub trait AcpiBuilder {
-    /// Build ACPI tables and place them into the reserved regions.
-    ///
-    /// Returns the physical address of the RSDP if one was written.
-    fn build(&mut self, bus: &mut dyn BiosBus, placement: AcpiPlacement) -> Option<u64>;
-}
+pub fn build_and_write(
+    bus: &mut dyn BiosBus,
+    memory_size_bytes: u64,
+    cpu_count: u8,
+    pirq_to_gsi: [u32; 4],
+    placement: AcpiPlacement,
+) -> Option<AcpiInfo> {
+    let mut cfg = AcpiConfig::default();
+    cfg.cpu_count = cpu_count.max(1);
+    cfg.pirq_to_gsi = pirq_to_gsi;
 
-/// Default ACPI builder backed by the firmware crate's clean-room ACPI table set.
-///
-/// This places the core tables (DSDT/FADT/MADT/HPET/RSDT/XSDT) in the reserved
-/// table region and writes a copy of the RSDP at `placement.rsdp_addr` so the
-/// guest can find it by scanning the EBDA.
-#[derive(Debug, Default)]
-pub struct FirmwareAcpiBuilder;
+    let tables = AcpiTables::build(&cfg, placement);
 
-impl AcpiBuilder for FirmwareAcpiBuilder {
-    fn build(&mut self, bus: &mut dyn BiosBus, placement: AcpiPlacement) -> Option<u64> {
-        if placement.rsdp_addr % 16 != 0 {
+    // Validate everything fits inside guest RAM.
+    for (name, addr, len) in [
+        ("RSDP", tables.addresses.rsdp, tables.rsdp.len()),
+        ("RSDT", tables.addresses.rsdt, tables.rsdt.len()),
+        ("XSDT", tables.addresses.xsdt, tables.xsdt.len()),
+        ("FADT", tables.addresses.fadt, tables.fadt.len()),
+        ("MADT", tables.addresses.madt, tables.madt.len()),
+        ("HPET", tables.addresses.hpet, tables.hpet.len()),
+        ("DSDT", tables.addresses.dsdt, tables.dsdt.len()),
+        ("FACS", tables.addresses.facs, tables.facs.len()),
+    ] {
+        let Some(end) = addr.checked_add(len as u64) else {
+            eprintln!("BIOS: ACPI {name} address overflow (addr=0x{addr:x} len=0x{len:x})");
+            return None;
+        };
+        if end > memory_size_bytes {
             eprintln!(
-                "BIOS: refusing to write unaligned RSDP at 0x{:x}",
-                placement.rsdp_addr
+                "BIOS: ACPI {name} out of bounds (end=0x{end:x} mem=0x{memory_size_bytes:x})"
             );
             return None;
         }
+    }
+    let Some(nvs_end) = placement.nvs_base.checked_add(placement.nvs_size) else {
+        eprintln!("BIOS: ACPI NVS address overflow");
+        return None;
+    };
+    if nvs_end > memory_size_bytes {
+        eprintln!(
+            "BIOS: ACPI NVS out of bounds (end=0x{nvs_end:x} mem=0x{memory_size_bytes:x})"
+        );
+        return None;
+    }
 
-        let tables = build_acpi_table_set(placement.tables_base);
+    struct Writer<'a> {
+        bus: &'a mut dyn BiosBus,
+    }
 
-        let table_region_end = placement.tables_base + placement.tables_size as u64;
-        for (name, addr, len) in [
-            ("DSDT", tables.dsdt_address, tables.dsdt.len()),
-            ("FADT", tables.fadt_address, tables.fadt.len()),
-            ("MADT", tables.madt_address, tables.madt.len()),
-            ("HPET", tables.hpet_address, tables.hpet.len()),
-            ("RSDT", tables.rsdt_address, tables.rsdt.len()),
-            ("XSDT", tables.xsdt_address, tables.xsdt.len()),
-        ] {
-            let end = addr + len as u64;
-            if end > table_region_end {
-                eprintln!(
-                    "BIOS: ACPI {name} does not fit in reserved region: end=0x{end:x} region_end=0x{table_region_end:x}"
-                );
-                return None;
-            }
+    impl AcpiPhysicalMemory for Writer<'_> {
+        fn write(&mut self, paddr: u64, bytes: &[u8]) {
+            self.bus.write_physical(paddr, bytes);
         }
-
-        bus.write_physical(tables.dsdt_address, &tables.dsdt);
-        bus.write_physical(tables.fadt_address, &tables.fadt);
-        bus.write_physical(tables.madt_address, &tables.madt);
-        bus.write_physical(tables.hpet_address, &tables.hpet);
-        bus.write_physical(tables.rsdt_address, &tables.rsdt);
-        bus.write_physical(tables.xsdt_address, &tables.xsdt);
-        bus.write_physical(placement.rsdp_addr, &tables.rsdp);
-
-        Some(placement.rsdp_addr)
     }
+
+    tables.write_to(&mut Writer { bus });
+
+    let reclaimable = acpi_reclaimable_region_from_tables(&tables);
+    Some(AcpiInfo {
+        rsdp_addr: tables.addresses.rsdp,
+        reclaimable,
+        nvs: (placement.nvs_base, placement.nvs_size),
+    })
 }
 
-pub fn default_placement() -> AcpiPlacement {
-    AcpiPlacement {
-        tables_base: ACPI_TABLE_BASE,
-        tables_size: ACPI_TABLE_SIZE,
-        rsdp_addr: EBDA_BASE + 0x100,
-    }
+fn acpi_reclaimable_region_from_tables(tables: &AcpiTables) -> (u64, u64) {
+    let addrs = &tables.addresses;
+    let mut start = addrs.dsdt;
+    start = start.min(addrs.fadt);
+    start = start.min(addrs.madt);
+    start = start.min(addrs.hpet);
+    start = start.min(addrs.rsdt);
+    start = start.min(addrs.xsdt);
+
+    let mut end = start;
+    end = end.max(addrs.dsdt.saturating_add(tables.dsdt.len() as u64));
+    end = end.max(addrs.fadt.saturating_add(tables.fadt.len() as u64));
+    end = end.max(addrs.madt.saturating_add(tables.madt.len() as u64));
+    end = end.max(addrs.hpet.saturating_add(tables.hpet.len() as u64));
+    end = end.max(addrs.rsdt.saturating_add(tables.rsdt.len() as u64));
+    end = end.max(addrs.xsdt.saturating_add(tables.xsdt.len() as u64));
+
+    (start, end.saturating_sub(start))
 }
+

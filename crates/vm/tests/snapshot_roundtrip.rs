@@ -17,6 +17,7 @@ fn snapshot_round_trip_preserves_pending_bios_int() {
     let cfg = BiosConfig {
         memory_size_bytes: 16 * 1024 * 1024,
         boot_drive: 0x80,
+        ..BiosConfig::default()
     };
     let bios = Bios::new(cfg.clone());
     let disk = InMemoryDisk::from_boot_sector(boot_sector_with(&[]));
@@ -60,6 +61,7 @@ fn snapshot_round_trip_preserves_bios_output_buffer() {
     let cfg = BiosConfig {
         memory_size_bytes: 16 * 1024 * 1024,
         boot_drive: 0x80,
+        ..BiosConfig::default()
     };
     let bios = Bios::new(cfg.clone());
     let disk = InMemoryDisk::from_boot_sector(boot_sector_with(&[]));
@@ -108,6 +110,7 @@ fn snapshot_round_trip_dirty_chain_preserves_stack_writes() {
     let cfg = BiosConfig {
         memory_size_bytes: 16 * 1024 * 1024,
         boot_drive: 0x80,
+        ..BiosConfig::default()
     };
     let bios = Bios::new(cfg.clone());
     let disk = InMemoryDisk::from_boot_sector(boot_sector_with(&[]));

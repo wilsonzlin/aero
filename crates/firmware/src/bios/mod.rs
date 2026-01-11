@@ -21,6 +21,7 @@ mod int10_vbe;
 mod int1a;
 mod interrupts;
 mod ivt;
+mod pci;
 mod post;
 mod rom;
 mod snapshot;
@@ -33,23 +34,25 @@ use crate::rtc::{CmosRtc, DateTime};
 use crate::video::VideoDevice;
 use machine::{BlockDevice, CpuState, DiskError, FirmwareMemory, MemoryAccess, Segment};
 
-pub use acpi::{AcpiBuilder, AcpiPlacement};
 pub use bda_time::{BdaTime, BDA_MIDNIGHT_FLAG_ADDR, BDA_TICK_COUNT_ADDR, TICKS_PER_DAY};
 pub use interrupts::E820Entry;
+pub use pci::{PciConfigSpace, PciDevice};
 pub use snapshot::BiosSnapshot;
+pub use rom::build_bios_rom;
+
+pub use aero_acpi::AcpiPlacement;
 
 pub const BIOS_BASE: u64 = 0x000F_0000;
 pub const BIOS_SIZE: usize = 0x10000; // 64KiB
 pub const BIOS_SEGMENT: u16 = 0xF000;
+pub const RESET_VECTOR_OFFSET: u64 = 0xFFF0;
+pub const RESET_VECTOR_PHYS: u64 = BIOS_BASE + RESET_VECTOR_OFFSET;
 
 pub const IVT_BASE: u64 = 0x0000_0000;
 pub const BDA_BASE: u64 = 0x0000_0400;
 
 pub const EBDA_BASE: u64 = 0x0009_F000;
 pub const EBDA_SIZE: usize = 0x1000;
-
-pub const ACPI_TABLE_BASE: u64 = 0x000E_0000;
-pub const ACPI_TABLE_SIZE: usize = 0x10000;
 
 pub const INT10_STUB_OFFSET: u16 = 0xE300;
 pub const INT13_STUB_OFFSET: u16 = 0xE400;
@@ -90,13 +93,31 @@ pub struct BiosConfig {
     pub memory_size_bytes: u64,
     /// BIOS drive number exposed in `DL` when jumping to the boot sector.
     pub boot_drive: u8,
+    /// Number of virtual CPUs exposed via SMBIOS and ACPI.
+    pub cpu_count: u8,
+    /// Whether to build and publish ACPI tables during POST.
+    pub enable_acpi: bool,
+    /// Fixed placement contract for ACPI tables written during POST.
+    pub acpi_placement: AcpiPlacement,
+    /// Mapping of PCI PIRQ[A-D] -> platform GSI used by both the ACPI DSDT `_PRT`
+    /// and PCI Interrupt Line programming during enumeration.
+    pub pirq_to_gsi: [u32; 4],
 }
 
 impl Default for BiosConfig {
     fn default() -> Self {
+        let mut acpi_placement = AcpiPlacement::default();
+        // RSDP must live in the standard BIOS scan region (< 1MiB) and be 16-byte aligned.
+        // We keep it in the EBDA so guests can find it by scanning the first KiB.
+        acpi_placement.rsdp_addr = EBDA_BASE + 0x100;
         Self {
             memory_size_bytes: 16 * 1024 * 1024,
             boot_drive: 0x80,
+            cpu_count: 1,
+            enable_acpi: true,
+            acpi_placement,
+            // Match the default routing in `aero_acpi::AcpiConfig`.
+            pirq_to_gsi: [10, 11, 12, 13],
         }
     }
 }
@@ -135,6 +156,7 @@ pub struct Bios {
 
     config: BiosConfig,
     e820_map: Vec<E820Entry>,
+    pci_devices: Vec<PciDevice>,
     keyboard_queue: VecDeque<u16>,
     /// Cached value for INT 10h AH=0F "Get current video mode" for snapshotting.
     ///
@@ -147,8 +169,11 @@ pub struct Bios {
 
     /// RSDP physical address (if ACPI tables were built).
     rsdp_addr: Option<u64>,
+    acpi_reclaimable: Option<(u64, u64)>,
+    acpi_nvs: Option<(u64, u64)>,
 
-    acpi_builder: Box<dyn AcpiBuilder>,
+    /// SMBIOS Entry Point Structure physical address (if SMBIOS tables were built).
+    smbios_eps_addr: Option<u32>,
 }
 
 impl Bios {
@@ -165,12 +190,15 @@ impl Bios {
             bda_time,
             config,
             e820_map: Vec::new(),
+            pci_devices: Vec::new(),
             keyboard_queue: VecDeque::new(),
             video_mode: 0x03,
             tty_output: Vec::new(),
             last_int13_status: 0,
             rsdp_addr: None,
-            acpi_builder: Box::new(acpi::FirmwareAcpiBuilder::default()),
+            acpi_reclaimable: None,
+            acpi_nvs: None,
+            smbios_eps_addr: None,
         }
     }
 
@@ -196,8 +224,12 @@ impl Bios {
         self.rsdp_addr
     }
 
-    pub fn set_acpi_builder(&mut self, builder: Box<dyn AcpiBuilder>) {
-        self.acpi_builder = builder;
+    pub fn smbios_eps_addr(&self) -> Option<u32> {
+        self.smbios_eps_addr
+    }
+
+    pub fn pci_devices(&self) -> &[PciDevice] {
+        &self.pci_devices
     }
 
     pub fn push_key(&mut self, key: u16) {
@@ -205,7 +237,17 @@ impl Bios {
     }
 
     pub fn post(&mut self, cpu: &mut CpuState, bus: &mut dyn BiosBus, disk: &mut dyn BlockDevice) {
-        self.post_impl(cpu, bus, disk);
+        self.post_with_pci(cpu, bus, disk, None);
+    }
+
+    pub fn post_with_pci(
+        &mut self,
+        cpu: &mut CpuState,
+        bus: &mut dyn BiosBus,
+        disk: &mut dyn BlockDevice,
+        pci: Option<&mut dyn PciConfigSpace>,
+    ) {
+        self.post_impl(cpu, bus, disk, pci);
     }
 
     pub fn dispatch_interrupt(
@@ -310,6 +352,7 @@ mod tests {
         let mut bios = Bios::new(BiosConfig {
             memory_size_bytes: 16 * 1024 * 1024,
             boot_drive: 0x80,
+            ..BiosConfig::default()
         });
         let mut cpu = CpuState::default();
         let mut mem = PhysicalMemory::new(16 * 1024 * 1024);
@@ -353,8 +396,10 @@ mod tests {
         assert_eq!(checksum36, 0);
 
         let rsdt_addr = u32::from_le_bytes(rsdp[16..20].try_into().unwrap()) as u64;
-        assert!(
-            rsdt_addr >= ACPI_TABLE_BASE && rsdt_addr < ACPI_TABLE_BASE + ACPI_TABLE_SIZE as u64
-        );
+        let (reclaim_base, reclaim_len) = bios
+            .acpi_reclaimable
+            .expect("ACPI reclaimable window should be tracked");
+        assert!(reclaim_len > 0);
+        assert!(rsdt_addr >= reclaim_base && rsdt_addr < reclaim_base + reclaim_len);
     }
 }

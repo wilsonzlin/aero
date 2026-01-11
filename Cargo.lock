@@ -21,7 +21,6 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 name = "aero"
 version = "0.1.0"
 dependencies = [
- "aero-bios",
  "aero-d3d11",
  "aero-d3d9",
  "aero-emulator",
@@ -52,15 +51,6 @@ name = "aero-audio"
 version = "0.1.0"
 dependencies = [
  "aero-platform",
-]
-
-[[package]]
-name = "aero-bios"
-version = "0.1.0"
-dependencies = [
- "aero-acpi",
- "aero-devices",
- "firmware",
 ]
 
 [[package]]
@@ -380,7 +370,6 @@ name = "aero-platform"
 version = "0.1.0"
 dependencies = [
  "aero-acpi",
- "aero-bios",
  "aero-devices",
  "js-sys",
  "memory",
@@ -1613,7 +1602,6 @@ checksum = "edd0f118536f44f5ccd48bcb8b111bdc3de888b58c74639dfb034a357d0f206d"
 name = "emulator"
 version = "0.1.0"
 dependencies = [
- "aero-bios",
  "aero-devices",
  "aero-io-snapshot",
  "aero-net-e1000",
@@ -1623,7 +1611,9 @@ dependencies = [
  "criterion",
  "firmware",
  "font8x8",
+ "hyper 0.14.32",
  "image",
+ "machine",
  "memory",
  "nt-packetlib",
  "proptest",
@@ -1696,6 +1686,7 @@ checksum = "f449e6c6c08c865631d4890cfacf252b3d396c9bcc83adb6623cdb02a8336c41"
 name = "firmware"
 version = "0.1.0"
 dependencies = [
+ "aero-acpi",
  "aero-devices",
  "aero-platform",
  "emulator",

@@ -1,6 +1,11 @@
 use machine::{CpuState, FLAG_ALWAYS_ON, FLAG_IF};
 
-use super::{acpi, ivt, rom, seg, Bios, BiosBus, BiosMemoryBus, BIOS_BASE, BIOS_SEGMENT};
+use super::{
+    acpi, ivt,
+    pci::PciConfigSpace,
+    rom, seg, Bios, BiosBus, BiosMemoryBus, BIOS_BASE, BIOS_SEGMENT, EBDA_BASE,
+};
+use crate::smbios::{SmbiosConfig, SmbiosTables};
 
 impl Bios {
     pub(super) fn post_impl(
@@ -8,7 +13,18 @@ impl Bios {
         cpu: &mut CpuState,
         bus: &mut dyn BiosBus,
         disk: &mut dyn machine::BlockDevice,
+        mut pci: Option<&mut dyn PciConfigSpace>,
     ) {
+        // Reset transient POST state.
+        self.e820_map.clear();
+        self.pci_devices.clear();
+        self.rsdp_addr = None;
+        self.acpi_reclaimable = None;
+        self.acpi_nvs = None;
+        self.smbios_eps_addr = None;
+        self.last_int13_status = 0;
+        self.tty_output.clear();
+
         // 0) Install ROM stubs (read-only).
         let rom_image = rom::build_bios_rom();
         bus.map_rom(BIOS_BASE, &rom_image);
@@ -24,7 +40,7 @@ impl Bios {
         cpu.es = seg(0);
         cpu.ss = seg(0);
         cpu.rsp = 0x7C00;
-        cpu.rip = 0xFFF0; // conventional reset vector within F000 segment
+        cpu.rip = super::RESET_VECTOR_OFFSET; // conventional reset vector within F000 segment
 
         // 2) BDA/EBDA: reserve a 4KiB EBDA page below 1MiB and advertise base memory size.
         ivt::init_bda(bus);
@@ -39,16 +55,48 @@ impl Bios {
         // 3) Interrupt Vector Table.
         ivt::init_ivt(bus);
 
-        // 4) ACPI tables (builder call-out + fixed placement contract).
-        self.rsdp_addr = self.acpi_builder.build(bus, acpi::default_placement());
+        // 4) SMBIOS: publish the SMBIOS EPS in the EBDA so Windows can discover it.
+        //
+        // Keep the EPS within the first 1KiB of EBDA (per spec) while avoiding the RSDP slot.
+        let smbios_cfg = SmbiosConfig {
+            ram_bytes: self.config.memory_size_bytes,
+            cpu_count: self.config.cpu_count.max(1),
+            uuid_seed: 0,
+            eps_addr: Some((EBDA_BASE + 0x200) as u32),
+            table_addr: Some((EBDA_BASE + 0x400) as u32),
+        };
+        let mut smbios_bus = BiosMemoryBus::new(bus);
+        self.smbios_eps_addr = Some(SmbiosTables::build_and_write(&smbios_cfg, &mut smbios_bus));
 
         // 5) Enable A20 (fast A20 path; the bus owns the gating behaviour).
+        //
+        // This must happen before writing any firmware tables above 1MiB (ACPI reclaimable blobs).
         bus.set_a20_enabled(true);
 
-        // 6) Re-enable interrupts after POST.
+        // 6) Optional PCI enumeration + deterministic IRQ routing (must match ACPI `_PRT`).
+        if let Some(pci) = pci.as_deref_mut() {
+            self.enumerate_pci(pci);
+        }
+
+        // 7) ACPI tables (generated via `aero-acpi`).
+        if self.config.enable_acpi {
+            if let Some(info) = acpi::build_and_write(
+                bus,
+                self.config.memory_size_bytes,
+                self.config.cpu_count,
+                self.config.pirq_to_gsi,
+                self.config.acpi_placement,
+            ) {
+                self.rsdp_addr = Some(info.rsdp_addr);
+                self.acpi_reclaimable = Some(info.reclaimable);
+                self.acpi_nvs = Some(info.nvs);
+            }
+        }
+
+        // 8) Re-enable interrupts after POST.
         cpu.rflags |= FLAG_IF;
 
-        // 7) Boot: load sector 0 to 0x7C00 and jump.
+        // 9) Boot: load sector 0 to 0x7C00 and jump.
         if let Err(msg) = self.boot(cpu, bus, disk) {
             self.bios_panic(cpu, bus, msg);
         }

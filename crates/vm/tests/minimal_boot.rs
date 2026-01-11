@@ -20,6 +20,7 @@ fn vm_resets_to_0x7c00_with_dl_set() {
     let cfg = BiosConfig {
         memory_size_bytes: 16 * 1024 * 1024,
         boot_drive: 0x80,
+        ..BiosConfig::default()
     };
     let bios = Bios::new(cfg);
     let disk = InMemoryDisk::from_boot_sector(boot_sector_with(&[0x90, 0x90, 0x90]));
@@ -44,6 +45,7 @@ fn int10_tty_hypercall_roundtrip() {
     let cfg = BiosConfig {
         memory_size_bytes: 16 * 1024 * 1024,
         boot_drive: 0x80,
+        ..BiosConfig::default()
     };
     let bios = Bios::new(cfg);
     let disk = InMemoryDisk::from_boot_sector(boot_sector_with(&[]));
@@ -129,6 +131,7 @@ fn int13_chs_read_reads_second_sector_into_memory() {
     let cfg = BiosConfig {
         memory_size_bytes: 16 * 1024 * 1024,
         boot_drive: 0x80,
+        ..BiosConfig::default()
     };
     let bios = Bios::new(cfg);
 
@@ -166,6 +169,7 @@ fn int15_e820_returns_extended_attributes_when_requested() {
     let cfg = BiosConfig {
         memory_size_bytes: 16 * 1024 * 1024,
         boot_drive: 0x80,
+        ..BiosConfig::default()
     };
     let bios = Bios::new(cfg);
     let disk = InMemoryDisk::from_boot_sector(boot_sector_with(&[]));
@@ -209,6 +213,7 @@ fn int16_read_key_returns_scancode_and_ascii() {
     let cfg = BiosConfig {
         memory_size_bytes: 16 * 1024 * 1024,
         boot_drive: 0x80,
+        ..BiosConfig::default()
     };
     let mut bios = Bios::new(cfg);
     bios.push_key(0x2C5A); // scan=0x2C, ascii='Z'

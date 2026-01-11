@@ -1,14 +1,14 @@
 use machine::{BlockDevice, CpuState, FLAG_CF, FLAG_DF, FLAG_OF, FLAG_PF, FLAG_SF, FLAG_ZF};
 
 use super::{
-    disk_err_to_int13_status, seg, Bios, BiosBus, BiosMemoryBus, BIOS_BASE, BIOS_SIZE, EBDA_BASE,
-    EBDA_SIZE,
+    disk_err_to_int13_status, seg, Bios, BiosBus, BiosMemoryBus, EBDA_BASE, EBDA_SIZE,
 };
 use crate::cpu::CpuState as FirmwareCpuState;
 
 pub const E820_RAM: u32 = 1;
 pub const E820_RESERVED: u32 = 2;
 pub const E820_ACPI: u32 = 3;
+pub const E820_NVS: u32 = 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(C)]
@@ -393,7 +393,11 @@ fn handle_int15(bios: &mut Bios, cpu: &mut CpuState, bus: &mut dyn BiosBus) {
         0xE801 => {
             // Alternative extended memory query used by many bootloaders.
             if bios.e820_map.is_empty() {
-                bios.e820_map = build_e820_map(bios.config.memory_size_bytes);
+                bios.e820_map = build_e820_map(
+                    bios.config.memory_size_bytes,
+                    bios.acpi_reclaimable,
+                    bios.acpi_nvs,
+                );
             }
 
             let (ax_kb, bx_blocks) = e801_from_e820(&bios.e820_map);
@@ -417,7 +421,11 @@ fn handle_int15(bios: &mut Bios, cpu: &mut CpuState, bus: &mut dyn BiosBus) {
             }
 
             if bios.e820_map.is_empty() {
-                bios.e820_map = build_e820_map(bios.config.memory_size_bytes);
+                bios.e820_map = build_e820_map(
+                    bios.config.memory_size_bytes,
+                    bios.acpi_reclaimable,
+                    bios.acpi_nvs,
+                );
             }
 
             let idx = (cpu.rbx & 0xFFFF_FFFF) as usize;
@@ -478,7 +486,9 @@ fn e801_from_e820(map: &[E820Entry]) -> (u16, u16) {
 fn sum_e820_ram(map: &[E820Entry], start: u64, end: u64) -> u64 {
     let mut total = 0u64;
     for entry in map {
-        if entry.region_type != E820_RAM || entry.length == 0 {
+        // INT 15h E801 is a legacy sizing interface; treat ACPI reclaimable + NVS ranges as
+        // "memory present" so small firmware-reserved windows do not perturb the reported size.
+        if !matches!(entry.region_type, E820_RAM | E820_ACPI | E820_NVS) || entry.length == 0 {
             continue;
         }
         let entry_start = entry.base;
@@ -621,7 +631,11 @@ fn handle_int1a(bios: &mut Bios, cpu: &mut CpuState, bus: &mut dyn BiosBus) {
     }
 }
 
-fn build_e820_map(total_memory: u64) -> Vec<E820Entry> {
+fn build_e820_map(
+    total_memory: u64,
+    acpi_region: Option<(u64, u64)>,
+    nvs_region: Option<(u64, u64)>,
+) -> Vec<E820Entry> {
     let mut map = Vec::new();
     const ONE_MIB: u64 = 0x0010_0000;
     // Typical x86 systems reserve a PCI/MMIO window below 4GiB. This must be
@@ -629,85 +643,92 @@ fn build_e820_map(total_memory: u64) -> Vec<E820Entry> {
     const PCI_HOLE_START: u64 = 0xC000_0000;
     const PCI_HOLE_END: u64 = 0x1_0000_0000;
 
+    fn push_region(entries: &mut Vec<E820Entry>, base: u64, end: u64, region_type: u32) {
+        if end <= base {
+            return;
+        }
+        entries.push(E820Entry {
+            base,
+            length: end - base,
+            region_type,
+            extended_attributes: 1,
+        });
+    }
+
+    fn push_ram_split_by_reserved(
+        entries: &mut Vec<E820Entry>,
+        base: u64,
+        end: u64,
+        reserved: &[(u64, u64, u32)],
+    ) {
+        if end <= base {
+            return;
+        }
+
+        let mut cursor = base;
+        for &(r_base, r_len, r_type) in reserved {
+            let r_end = r_base.saturating_add(r_len);
+            let a_start = r_base.clamp(base, end);
+            let a_end = r_end.clamp(base, end);
+            if a_end <= a_start {
+                continue;
+            }
+
+            if a_start > cursor {
+                push_region(entries, cursor, a_start, E820_RAM);
+            }
+            push_region(entries, a_start, a_end, r_type);
+            cursor = a_end;
+        }
+
+        if end > cursor {
+            push_region(entries, cursor, end, E820_RAM);
+        }
+    }
+
+    let mut reserved = Vec::new();
+    if let Some((base, len)) = acpi_region {
+        reserved.push((base, len, E820_ACPI));
+    }
+    if let Some((base, len)) = nvs_region {
+        reserved.push((base, len, E820_NVS));
+    }
+    reserved.sort_by_key(|(base, _, _)| *base);
+
     // Conventional memory (0 - EBDA).
-    map.push(E820Entry {
-        base: 0,
-        length: EBDA_BASE,
-        region_type: E820_RAM,
-        extended_attributes: 1,
-    });
+    push_region(&mut map, 0, EBDA_BASE, E820_RAM);
 
     // EBDA reserved.
-    map.push(E820Entry {
-        base: EBDA_BASE,
-        length: EBDA_SIZE as u64,
-        region_type: E820_RESERVED,
-        extended_attributes: 1,
-    });
+    push_region(
+        &mut map,
+        EBDA_BASE,
+        EBDA_BASE + EBDA_SIZE as u64,
+        E820_RESERVED,
+    );
 
-    // VGA / option ROM area up to the ACPI table region.
-    map.push(E820Entry {
-        base: 0x000A_0000,
-        length: 0x0004_0000, // 0xA0000-0xE0000
-        region_type: E820_RESERVED,
-        extended_attributes: 1,
-    });
+    // VGA/BIOS/option ROM region.
+    push_region(&mut map, 0x000A_0000, ONE_MIB, E820_RESERVED);
 
-    // ACPI tables region (below BIOS ROM).
-    map.push(E820Entry {
-        base: super::ACPI_TABLE_BASE,
-        length: super::ACPI_TABLE_SIZE as u64,
-        region_type: E820_ACPI,
-        extended_attributes: 1,
-    });
-
-    // BIOS ROM.
-    map.push(E820Entry {
-        base: BIOS_BASE,
-        length: BIOS_SIZE as u64,
-        region_type: E820_RESERVED,
-        extended_attributes: 1,
-    });
-
-    // Extended memory (1MiB+), split around the PCI hole when necessary.
-    if total_memory > ONE_MIB {
-        if total_memory <= PCI_HOLE_START {
-            map.push(E820Entry {
-                base: ONE_MIB,
-                length: total_memory - ONE_MIB,
-                region_type: E820_RAM,
-                extended_attributes: 1,
-            });
-        } else {
-            // RAM below the PCI hole.
-            map.push(E820Entry {
-                base: ONE_MIB,
-                length: PCI_HOLE_START - ONE_MIB,
-                region_type: E820_RAM,
-                extended_attributes: 1,
-            });
-
-            // PCI/MMIO hole (includes e.g. VBE linear framebuffer aperture).
-            map.push(E820Entry {
-                base: PCI_HOLE_START,
-                length: PCI_HOLE_END - PCI_HOLE_START,
-                region_type: E820_RESERVED,
-                extended_attributes: 1,
-            });
-
-            // Remap any RAM that would overlap the PCI hole above 4GiB.
-            let remap_len = total_memory - PCI_HOLE_START;
-            map.push(E820Entry {
-                base: PCI_HOLE_END,
-                length: remap_len,
-                region_type: E820_RAM,
-                extended_attributes: 1,
-            });
+    if total_memory <= ONE_MIB {
+        // Guest RAM smaller than 1MiB is unusual, but keep the map well-formed by truncating
+        // the conventional memory entry.
+        if total_memory > 0 {
+            map[0].length = map[0].length.min(total_memory);
         }
-    } else if total_memory > 0 {
-        // Guest RAM smaller than 1MiB is unusual, but keep the map well-formed.
-        // The conventional memory entry already describes 0..EBDA; truncate it if needed.
-        map[0].length = map[0].length.min(total_memory);
+        return map;
+    }
+
+    // Low extended memory: [1MiB, PCI_HOLE_START) with reserved splits.
+    let low_ram_end = total_memory.min(PCI_HOLE_START);
+    push_ram_split_by_reserved(&mut map, ONE_MIB, low_ram_end, &reserved);
+
+    // PCI/MMIO hole + high memory remap when total RAM exceeds 3GiB.
+    if total_memory > PCI_HOLE_START {
+        push_region(&mut map, PCI_HOLE_START, PCI_HOLE_END, E820_RESERVED);
+
+        let high_ram_len = total_memory - PCI_HOLE_START;
+        let high_ram_end = PCI_HOLE_END.saturating_add(high_ram_len);
+        push_ram_split_by_reserved(&mut map, PCI_HOLE_END, high_ram_end, &reserved);
     }
 
     map
@@ -781,6 +802,7 @@ mod tests {
         let mut bios = Bios::new(BiosConfig {
             memory_size_bytes: 2 * 1024 * 1024,
             boot_drive: 0x80,
+            ..BiosConfig::default()
         });
         let mut bus = PhysicalMemory::new(2 * 1024 * 1024);
         let mut cpu = CpuState::default();
@@ -850,6 +872,7 @@ mod tests {
             let mut bios = Bios::new(BiosConfig {
                 memory_size_bytes: case.mem,
                 boot_drive: 0x80,
+                ..BiosConfig::default()
             });
             let mut bus = PhysicalMemory::new(2 * 1024 * 1024);
             let mut cpu = CpuState::default();

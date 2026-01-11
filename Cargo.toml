@@ -21,7 +21,6 @@ members = [
     "crates/aero-http-range",
     "crates/aero-ipc",
     "crates/aero-wasm",
-    "crates/aero-bios",
     "crates/aero_jit",
     "crates/aero-microbench",
     "crates/aero-net-e1000",
@@ -89,7 +88,6 @@ exclude = [
 ]
 
 [dev-dependencies]
-aero-bios = { path = "crates/aero-bios" }
 aero-d3d9 = { path = "crates/aero-d3d9" }
 aero-d3d11 = { path = "crates/aero-d3d11" }
 aero-emulator = { path = "crates/aero-emulator" }

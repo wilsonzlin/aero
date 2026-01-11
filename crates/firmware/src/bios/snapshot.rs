@@ -138,6 +138,9 @@ pub struct BiosSnapshot {
     pub video_mode: u8,
     pub tty_output: Vec<u8>,
     pub rsdp_addr: Option<u64>,
+    pub acpi_reclaimable: Option<(u64, u64)>,
+    pub acpi_nvs: Option<(u64, u64)>,
+    pub smbios_eps_addr: Option<u32>,
     pub last_int13_status: u8,
     pub vbe: VbeSnapshot,
 }
@@ -182,6 +185,48 @@ impl BiosSnapshot {
         w.write_all(&[1])?;
         w.write_all(&[self.last_int13_status])?;
         self.vbe.encode(w)?;
+
+        // v3 extension block: BIOS config + firmware table placement metadata.
+        w.write_all(&[2])?;
+        w.write_all(&[self.config.cpu_count])?;
+        w.write_all(&[self.config.enable_acpi as u8])?;
+
+        let placement = &self.config.acpi_placement;
+        w.write_all(&placement.tables_base.to_le_bytes())?;
+        w.write_all(&placement.nvs_base.to_le_bytes())?;
+        w.write_all(&placement.nvs_size.to_le_bytes())?;
+        w.write_all(&placement.rsdp_addr.to_le_bytes())?;
+        w.write_all(&placement.alignment.to_le_bytes())?;
+
+        for gsi in self.config.pirq_to_gsi {
+            w.write_all(&gsi.to_le_bytes())?;
+        }
+
+        match self.acpi_reclaimable {
+            Some((base, len)) => {
+                w.write_all(&[1])?;
+                w.write_all(&base.to_le_bytes())?;
+                w.write_all(&len.to_le_bytes())?;
+            }
+            None => w.write_all(&[0])?,
+        }
+
+        match self.acpi_nvs {
+            Some((base, len)) => {
+                w.write_all(&[1])?;
+                w.write_all(&base.to_le_bytes())?;
+                w.write_all(&len.to_le_bytes())?;
+            }
+            None => w.write_all(&[0])?,
+        }
+
+        match self.smbios_eps_addr {
+            Some(addr) => {
+                w.write_all(&[1])?;
+                w.write_all(&addr.to_le_bytes())?;
+            }
+            None => w.write_all(&[0])?,
+        }
 
         Ok(())
     }
@@ -250,27 +295,89 @@ impl BiosSnapshot {
             _ => None,
         };
 
-        // Optional extension block.
-        let mut ext_tag = [0u8; 1];
-        let (last_int13_status, vbe) = match r.read_exact(&mut ext_tag) {
-            Ok(()) => match ext_tag[0] {
-                1 => {
-                    r.read_exact(&mut ext_tag)?;
-                    let last_int13_status = ext_tag[0];
-                    let vbe = VbeSnapshot::decode(r)?;
-                    (last_int13_status, vbe)
-                }
-                _ => (0, VbeSnapshot::default()),
-            },
-            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => (0, VbeSnapshot::default()),
-            Err(e) => return Err(e),
+        let mut config = BiosConfig {
+            memory_size_bytes,
+            boot_drive,
+            ..BiosConfig::default()
         };
 
+        let mut last_int13_status = 0;
+        let mut vbe = VbeSnapshot::default();
+        let mut acpi_reclaimable = None;
+        let mut acpi_nvs = None;
+        let mut smbios_eps_addr = None;
+
+        // Optional extension blocks (appended).
+        loop {
+            let mut ext_tag = [0u8; 1];
+            match r.read_exact(&mut ext_tag) {
+                Ok(()) => match ext_tag[0] {
+                    1 => {
+                        r.read_exact(&mut ext_tag)?;
+                        last_int13_status = ext_tag[0];
+                        vbe = VbeSnapshot::decode(r)?;
+                    }
+                    2 => {
+                        r.read_exact(&mut ext_tag)?;
+                        config.cpu_count = ext_tag[0];
+                        r.read_exact(&mut ext_tag)?;
+                        config.enable_acpi = ext_tag[0] != 0;
+
+                        let mut buf8 = [0u8; 8];
+                        r.read_exact(&mut buf8)?;
+                        config.acpi_placement.tables_base = u64::from_le_bytes(buf8);
+                        r.read_exact(&mut buf8)?;
+                        config.acpi_placement.nvs_base = u64::from_le_bytes(buf8);
+                        r.read_exact(&mut buf8)?;
+                        config.acpi_placement.nvs_size = u64::from_le_bytes(buf8);
+                        r.read_exact(&mut buf8)?;
+                        config.acpi_placement.rsdp_addr = u64::from_le_bytes(buf8);
+                        r.read_exact(&mut buf8)?;
+                        config.acpi_placement.alignment = u64::from_le_bytes(buf8);
+
+                        let mut buf4 = [0u8; 4];
+                        for slot in config.pirq_to_gsi.iter_mut() {
+                            r.read_exact(&mut buf4)?;
+                            *slot = u32::from_le_bytes(buf4);
+                        }
+
+                        let mut present = [0u8; 1];
+                        r.read_exact(&mut present)?;
+                        if present[0] != 0 {
+                            r.read_exact(&mut buf8)?;
+                            let base = u64::from_le_bytes(buf8);
+                            r.read_exact(&mut buf8)?;
+                            let len = u64::from_le_bytes(buf8);
+                            acpi_reclaimable = Some((base, len));
+                        }
+
+                        r.read_exact(&mut present)?;
+                        if present[0] != 0 {
+                            r.read_exact(&mut buf8)?;
+                            let base = u64::from_le_bytes(buf8);
+                            r.read_exact(&mut buf8)?;
+                            let len = u64::from_le_bytes(buf8);
+                            acpi_nvs = Some((base, len));
+                        }
+
+                        r.read_exact(&mut present)?;
+                        if present[0] != 0 {
+                            r.read_exact(&mut buf4)?;
+                            smbios_eps_addr = Some(u32::from_le_bytes(buf4));
+                        }
+                    }
+                    _ => {
+                        // Unknown extension; ignore trailing bytes.
+                        break;
+                    }
+                },
+                Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
+                Err(e) => return Err(e),
+            }
+        }
+
         Ok(Self {
-            config: BiosConfig {
-                memory_size_bytes,
-                boot_drive,
-            },
+            config,
             rtc,
             bda_time,
             e820_map,
@@ -278,6 +385,9 @@ impl BiosSnapshot {
             video_mode,
             tty_output,
             rsdp_addr,
+            acpi_reclaimable,
+            acpi_nvs,
+            smbios_eps_addr,
             last_int13_status,
             vbe,
         })
@@ -298,6 +408,9 @@ impl Bios {
             video_mode: BiosDataArea::read_video_mode(memory),
             tty_output: self.tty_output.clone(),
             rsdp_addr: self.rsdp_addr,
+            acpi_reclaimable: self.acpi_reclaimable,
+            acpi_nvs: self.acpi_nvs,
+            smbios_eps_addr: self.smbios_eps_addr,
             last_int13_status: self.last_int13_status,
             vbe: VbeSnapshot::from_device(&self.video.vbe),
         }
@@ -312,6 +425,9 @@ impl Bios {
         BiosDataArea::write_video_mode(memory, snapshot.video_mode);
         self.tty_output = snapshot.tty_output;
         self.rsdp_addr = snapshot.rsdp_addr;
+        self.acpi_reclaimable = snapshot.acpi_reclaimable;
+        self.acpi_nvs = snapshot.acpi_nvs;
+        self.smbios_eps_addr = snapshot.smbios_eps_addr;
         self.last_int13_status = snapshot.last_int13_status;
         snapshot.vbe.restore(&mut self.video.vbe);
     }
