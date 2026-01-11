@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { randomInt } from "node:crypto";
 import { performance } from "node:perf_hooks";
 
-import WebSocket from "ws";
+import WebSocket from "../../tools/minimal_ws.js";
 
 import {
   TCP_FLAGS,
@@ -73,6 +73,7 @@ class FrameQueue {
         if (idx !== -1) this.waiters.splice(idx, 1);
         reject(new Error(`Timed out waiting for frame after ${timeoutMs}ms`));
       }, timeoutMs);
+      timeout.unref?.();
       const waiter = {
         resolve: (frame) => {
           clearTimeout(timeout);
