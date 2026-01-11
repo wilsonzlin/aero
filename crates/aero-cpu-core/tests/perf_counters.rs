@@ -107,14 +107,17 @@ fn exec_bytes_counted(
     state.segments.cs.base = 0;
     state.set_rip(CODE_ADDR);
 
-    let decoded =
-        aero_x86::decode(bytes, CODE_ADDR, state.bitness()).map_err(|_| Exception::InvalidOpcode)?;
+    let decoded = aero_x86::decode(bytes, CODE_ADDR, state.bitness())
+        .map_err(|_| Exception::InvalidOpcode)?;
     let instr = &decoded.instr;
 
     let is_rep = instr.has_rep_prefix() || instr.has_repne_prefix();
     let is_string = is_string_mnemonic(instr.mnemonic());
 
-    let addr_bits = effective_addr_size(state.bitness(), has_addr_size_override(bytes, state.bitness()));
+    let addr_bits = effective_addr_size(
+        state.bitness(),
+        has_addr_size_override(bytes, state.bitness()),
+    );
     let count_reg = string_count_reg(addr_bits);
     let count_mask = mask_bits(addr_bits);
 
@@ -194,11 +197,8 @@ fn repe_cmpsb_reports_actual_iterations_executed() {
 
     let mut bus = setup_bus();
     for i in 0..5u64 {
-        bus.write_u8(
-            0x1000 + 0x10 + i,
-            if i == 3 { 0x99 } else { i as u8 },
-        )
-        .unwrap();
+        bus.write_u8(0x1000 + 0x10 + i, if i == 3 { 0x99 } else { i as u8 })
+            .unwrap();
         bus.write_u8(0x2000 + 0x20 + i, i as u8).unwrap();
     }
 
@@ -210,4 +210,3 @@ fn repe_cmpsb_reports_actual_iterations_executed() {
     assert_eq!(perf.lifetime_snapshot().rep_iterations, 4);
     assert_eq!(state.read_reg(Register::ECX), 1);
 }
-
