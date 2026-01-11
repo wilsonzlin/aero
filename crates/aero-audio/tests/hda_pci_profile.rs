@@ -1,6 +1,8 @@
 use aero_audio::hda_pci::HdaPciDevice;
 use aero_devices::pci::profile::HDA_ICH6;
-use aero_devices::pci::{PciBarDefinition, PciDevice, PciIntxRouter, PciIntxRouterConfig, PciInterruptPin};
+use aero_devices::pci::{
+    PciBarDefinition, PciDevice, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig,
+};
 
 fn read_u8(dev: &mut HdaPciDevice, offset: u16) -> u8 {
     dev.config_mut().read(offset, 1) as u8

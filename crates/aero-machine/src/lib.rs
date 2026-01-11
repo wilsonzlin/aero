@@ -492,7 +492,10 @@ impl Machine {
         snapshot::restore_snapshot(r, self)
     }
 
-    pub fn restore_snapshot_from_checked<R: Read + Seek>(&mut self, r: &mut R) -> snapshot::Result<()> {
+    pub fn restore_snapshot_from_checked<R: Read + Seek>(
+        &mut self,
+        r: &mut R,
+    ) -> snapshot::Result<()> {
         // Restoring a snapshot is conceptually "rewinding time", so discard any accumulated host
         // output/state from the current execution.
         self.flush_serial();
@@ -521,7 +524,10 @@ impl Machine {
         snapshot::save_snapshot(w, self, options)
     }
 
-    fn take_snapshot_with_options(&mut self, options: snapshot::SaveOptions) -> snapshot::Result<Vec<u8>> {
+    fn take_snapshot_with_options(
+        &mut self,
+        options: snapshot::SaveOptions,
+    ) -> snapshot::Result<Vec<u8>> {
         let mut cursor = Cursor::new(Vec::new());
         self.save_snapshot_to(&mut cursor, options)?;
         Ok(cursor.into_inner())
@@ -787,12 +793,11 @@ impl snapshot::SnapshotTarget for Machine {
                     if state.version != 1 {
                         continue;
                     }
-                    let snapshot = match firmware::bios::BiosSnapshot::decode(&mut Cursor::new(
-                        &state.data,
-                    )) {
-                        Ok(v) => v,
-                        Err(_) => continue,
-                    };
+                    let snapshot =
+                        match firmware::bios::BiosSnapshot::decode(&mut Cursor::new(&state.data)) {
+                            Ok(v) => v,
+                            Err(_) => continue,
+                        };
                     self.bios.restore_snapshot(snapshot, &mut self.mem);
                 }
                 snapshot::DeviceId::MEMORY => {

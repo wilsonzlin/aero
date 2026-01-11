@@ -1013,8 +1013,7 @@ impl HdaController {
 
         let pending_streams = self.intsts & 0x3fff_ffff;
         let enabled_streams = self.intctl & 0x3fff_ffff;
-        let pending_controller =
-            (self.intsts & INTSTS_CIS) != 0 && (self.intctl & (1 << 30)) != 0;
+        let pending_controller = (self.intsts & INTSTS_CIS) != 0 && (self.intctl & (1 << 30)) != 0;
 
         (pending_streams & enabled_streams) != 0 || pending_controller
     }

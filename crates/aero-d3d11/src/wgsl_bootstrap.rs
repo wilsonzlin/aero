@@ -14,8 +14,8 @@
 use core::fmt;
 
 use crate::sm4::opcode::{
-    OPERAND_EXTENDED_BIT, OPCODE_EXTENDED_BIT, OPCODE_LEN_MASK, OPCODE_LEN_SHIFT, OPCODE_MASK,
-    OPCODE_CUSTOMDATA, OPCODE_MOV, OPCODE_NOP, OPCODE_RET,
+    OPCODE_CUSTOMDATA, OPCODE_EXTENDED_BIT, OPCODE_LEN_MASK, OPCODE_LEN_SHIFT, OPCODE_MASK,
+    OPCODE_MOV, OPCODE_NOP, OPCODE_RET, OPERAND_EXTENDED_BIT,
 };
 use crate::sm4::{ShaderStage, Sm4Program};
 
@@ -255,12 +255,8 @@ fn extract_movs(program: &Sm4Program) -> Result<Vec<Mov>, WgslBootstrapError> {
                 if inst_tokens.len() < cursor + 4 {
                     return Err(WgslBootstrapError::BadInstructionLength { opcode, len });
                 }
-                let dst = parse_reg_operand(
-                    &inst_tokens[cursor..cursor + 2],
-                )?;
-                let src = parse_reg_operand(
-                    &inst_tokens[cursor + 2..cursor + 4],
-                )?;
+                let dst = parse_reg_operand(&inst_tokens[cursor..cursor + 2])?;
+                let src = parse_reg_operand(&inst_tokens[cursor + 2..cursor + 4])?;
                 movs.push(Mov { dst, src });
             }
             OPCODE_RET => {
@@ -289,7 +285,9 @@ fn parse_reg_operand(tokens: &[u32]) -> Result<RegRef, WgslBootstrapError> {
     }
     let token = tokens[0];
     if (token & OPERAND_EXTENDED_BIT) != 0 {
-        return Err(WgslBootstrapError::UnsupportedOperand("extended operand token"));
+        return Err(WgslBootstrapError::UnsupportedOperand(
+            "extended operand token",
+        ));
     }
 
     let ty = (token >> 4) & 0xff;

@@ -25,4 +25,3 @@ fn hda_pci_mmio_routes_through_physical_memory_bus() {
     // Codec 0 should report present after reset.
     assert_eq!(bus.read_physical_u16(HDA_BASE + REG_STATESTS) & 0x1, 0x1);
 }
-

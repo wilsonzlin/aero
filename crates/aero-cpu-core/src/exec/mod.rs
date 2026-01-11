@@ -439,9 +439,7 @@ fn deliver_tier0_exception<B: crate::mem::CpuBus>(
         InterpException::SimdFloatingPointException => {
             (ArchException::SimdFloatingPoint, None, None)
         }
-        InterpException::MemoryFault => {
-            (ArchException::GeneralProtection, Some(0), None)
-        }
+        InterpException::MemoryFault => (ArchException::GeneralProtection, Some(0), None),
         InterpException::Unimplemented(_) => (ArchException::InvalidOpcode, None, None),
     };
 

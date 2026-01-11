@@ -166,4 +166,3 @@ fn dirty_snapshot_is_rejected_without_matching_parent() {
         "unexpected error: {err}"
     );
 }
-

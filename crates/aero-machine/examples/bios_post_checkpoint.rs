@@ -48,4 +48,3 @@ fn main() {
     let out = m.take_serial_output();
     print!("{}", String::from_utf8_lossy(&out));
 }
-

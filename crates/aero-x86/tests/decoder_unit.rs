@@ -279,11 +279,16 @@ fn decodes_mov_segment_reg_in_long_mode() {
     //   mov word ptr [rsi], ss
     let inst = decode(&[0x44, 0x8C, 0x16], DecodeMode::Bits64, 0).unwrap();
     assert_eq!(inst.length, 3);
-    assert!(inst.operands.iter().any(|op| matches!(op, Operand::Memory(_))));
     assert!(inst
         .operands
         .iter()
-        .any(|op| matches!(op, Operand::Segment { reg: SegmentReg::SS })));
+        .any(|op| matches!(op, Operand::Memory(_))));
+    assert!(inst.operands.iter().any(|op| matches!(
+        op,
+        Operand::Segment {
+            reg: SegmentReg::SS
+        }
+    )));
 }
 
 #[test]

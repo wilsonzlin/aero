@@ -131,12 +131,10 @@ impl SecurityConfig {
         };
 
         let jwt_secret = if matches!(auth_mode, AuthMode::Jwt | AuthMode::CookieOrJwt) {
-            let secret = std::env::var("AERO_L2_JWT_SECRET")
-                .ok()
-                .and_then(|v| {
-                    let trimmed = v.trim();
-                    (!trimmed.is_empty()).then(|| trimmed.as_bytes().to_vec())
-                });
+            let secret = std::env::var("AERO_L2_JWT_SECRET").ok().and_then(|v| {
+                let trimmed = v.trim();
+                (!trimmed.is_empty()).then(|| trimmed.as_bytes().to_vec())
+            });
             if secret.is_none() {
                 return Err(anyhow!(
                     "AERO_L2_JWT_SECRET is required for AERO_L2_AUTH_MODE=jwt/cookie_or_jwt"
