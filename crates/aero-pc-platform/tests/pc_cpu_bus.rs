@@ -444,3 +444,82 @@ fn cpu_core_bus_translates_legacy32_paging_via_mmu() {
     let pte_after_write = memory::MemoryBus::read_u32(&mut bus.platform.memory, pte_addr);
     assert_ne!(pte_after_write & (1 << 6), 0, "PTE dirty bit should be set");
 }
+
+#[test]
+fn cpu_core_bus_translates_pae_paging_via_mmu() {
+    let platform = PcPlatform::new(2 * 1024 * 1024);
+    let mut bus = PcCpuBus::new(platform);
+
+    // Map a virtual address above the available RAM to a physical page in low memory so we can
+    // detect whether paging translation is being applied (but use IA-32 PAE paging structures).
+    let vaddr = 0x0040_0000u64;
+    let pdpt_phys = 0x1000u64;
+    let pd_phys = 0x2000u64;
+    let pt_phys = 0x3000u64;
+    let page_phys = 0x4000u64;
+
+    let pdpt_index = (vaddr >> 30) & 0x3;
+    let pd_index = (vaddr >> 21) & 0x1ff;
+    let pt_index = (vaddr >> 12) & 0x1ff;
+
+    let pdpte_addr = pdpt_phys + pdpt_index * 8;
+    let pde_addr = pd_phys + pd_index * 8;
+    let pte_addr = pt_phys + pt_index * 8;
+
+    // PDPTE: present -> points at PD.
+    //
+    // Note: In IA-32 PAE, PDPTE bits 1..=2 are reserved, so do *not* set RW/US here.
+    memory::MemoryBus::write_u64(&mut bus.platform.memory, pdpte_addr, pd_phys | PTE_P);
+    // PDE: present + writable -> points at PT.
+    memory::MemoryBus::write_u64(
+        &mut bus.platform.memory,
+        pde_addr,
+        pt_phys | PTE_P | PTE_RW | PTE_US,
+    );
+    // PTE: present + writable -> points at the target physical page.
+    memory::MemoryBus::write_u64(
+        &mut bus.platform.memory,
+        pte_addr,
+        page_phys | PTE_P | PTE_RW | PTE_US,
+    );
+
+    bus.platform.memory.write_u8(page_phys, 0xAA);
+
+    let mut cpu = CpuState::new(CpuMode::Protected);
+    cpu.control.cr0 |= CR0_PE | CR0_PG;
+    cpu.control.cr3 = pdpt_phys;
+    cpu.control.cr4 = CR4_PAE;
+    cpu.segments.cs.selector = 0x08;
+    cpu.segments.cs.base = 0;
+    cpu.segments.ss.selector = 0x10;
+    cpu.segments.ss.base = 0;
+    cpu.update_mode();
+
+    bus.sync(&cpu);
+
+    // First access should walk the PAE page tables and observe the mapped physical value.
+    assert_eq!(bus.read_u8(vaddr).unwrap(), 0xAA);
+
+    let pdpte_after_read = memory::MemoryBus::read_u64(&mut bus.platform.memory, pdpte_addr);
+    assert_eq!(
+        pdpte_after_read & (1 << 5),
+        0,
+        "PDPT entries do not have an accessed bit in IA-32 PAE paging"
+    );
+
+    let pde_after_read = memory::MemoryBus::read_u64(&mut bus.platform.memory, pde_addr);
+    assert_ne!(pde_after_read & (1 << 5), 0, "PDE accessed bit should be set");
+
+    let pte_after_read = memory::MemoryBus::read_u64(&mut bus.platform.memory, pte_addr);
+    assert_ne!(pte_after_read & (1 << 5), 0, "PTE accessed bit should be set");
+    assert_eq!(pte_after_read & (1 << 6), 0, "PTE dirty bit should not be set on read");
+    assert_eq!(pte_after_read & 0x000f_ffff_ffff_f000, page_phys);
+
+    // Write through the mapping; the MMU should mark the PTE dirty (even if the translation hits
+    // in the TLB).
+    bus.write_u8(vaddr, 0xBB).unwrap();
+    assert_eq!(bus.platform.memory.read_u8(page_phys), 0xBB);
+
+    let pte_after_write = memory::MemoryBus::read_u64(&mut bus.platform.memory, pte_addr);
+    assert_ne!(pte_after_write & (1 << 6), 0, "PTE dirty bit should be set");
+}
