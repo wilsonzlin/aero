@@ -149,6 +149,57 @@ describe("usb/WebUSB proxy SAB ring integration", () => {
     broker.detachWorkerPort(brokerPort as unknown as MessagePort);
   });
 
+  it("broadcasts completion ring data to multiple runtimes on the same port", async () => {
+    Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
+
+    const broker = new UsbBroker({ ringDrainIntervalMs: 1 });
+    const { brokerPort, workerPort } = createChannel();
+
+    const actions1: UsbHostAction[] = [{ kind: "bulkIn", id: 1, endpoint: 0x81, length: 8 }];
+    const push_completion_1 = vi.fn();
+    const bridge1: UsbPassthroughBridgeLike = {
+      drain_actions: vi.fn(() => actions1),
+      push_completion: push_completion_1,
+      reset: vi.fn(),
+      free: vi.fn(),
+    };
+    const runtime1 = new WebUsbPassthroughRuntime({ bridge: bridge1, port: workerPort as unknown as MessagePort, pollIntervalMs: 0 });
+
+    const actions2: UsbHostAction[] = [{ kind: "bulkIn", id: 2, endpoint: 0x81, length: 8 }];
+    const push_completion_2 = vi.fn();
+    const bridge2: UsbPassthroughBridgeLike = {
+      drain_actions: vi.fn(() => actions2),
+      push_completion: push_completion_2,
+      reset: vi.fn(),
+      free: vi.fn(),
+    };
+    const runtime2 = new WebUsbPassthroughRuntime({ bridge: bridge2, port: workerPort as unknown as MessagePort, pollIntervalMs: 0 });
+
+    broker.attachWorkerPort(brokerPort as unknown as MessagePort);
+
+    // Drop worker -> broker postMessage deliveries to ensure the ring path is used.
+    workerPort.deliverToPeer = false;
+
+    await withTimeout(Promise.all([runtime1.pollOnce(), runtime2.pollOnce()]), 250);
+
+    // Neither runtime should have posted usb.action envelopes (broker would never receive them).
+    const postedActions = workerPort.sent.filter((p) => (p.msg as { type?: unknown }).type === "usb.action");
+    expect(postedActions).toHaveLength(0);
+
+    // Broker should not have posted usb.completion envelopes (completions delivered via ring).
+    const postedCompletions = brokerPort.sent.filter((p) => (p.msg as { type?: unknown }).type === "usb.completion");
+    expect(postedCompletions).toHaveLength(0);
+
+    expect(push_completion_1).toHaveBeenCalledTimes(1);
+    expect(push_completion_2).toHaveBeenCalledTimes(1);
+    expect(push_completion_1.mock.calls[0]?.[0]).toMatchObject({ kind: "bulkIn", id: 1 });
+    expect(push_completion_2.mock.calls[0]?.[0]).toMatchObject({ kind: "bulkIn", id: 2 });
+
+    runtime1.destroy();
+    runtime2.destroy();
+    broker.detachWorkerPort(brokerPort as unknown as MessagePort);
+  });
+
   it("allows late-starting runtimes to request usb.ringAttach (so they can still use rings)", async () => {
     Object.defineProperty(globalThis, "crossOriginIsolated", { value: true, configurable: true });
 

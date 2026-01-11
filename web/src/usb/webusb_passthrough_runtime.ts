@@ -14,6 +14,7 @@ import {
   type UsbSelectedMessage,
 } from "./usb_proxy_protocol";
 import { UsbProxyRing } from "./usb_proxy_ring";
+import { subscribeUsbProxyCompletionRing } from "./usb_proxy_ring_dispatcher";
 
 export type UsbPassthroughBridgeLike = {
   drain_actions(): unknown;
@@ -201,8 +202,7 @@ export class WebUsbPassthroughRuntime {
   #backlogIndex = 0;
 
   #actionRing: UsbProxyRing | null = null;
-  #completionRing: UsbProxyRing | null = null;
-  #completionDrainTimer: ReturnType<typeof setInterval> | null = null;
+  #completionRingUnsubscribe: (() => void) | null = null;
 
   #actionsForwarded = 0;
   #completionsApplied = 0;
@@ -372,8 +372,6 @@ export class WebUsbPassthroughRuntime {
 
     this.#pollInFlight = true;
     try {
-      this.drainCompletionRing();
-
       let drained: unknown[];
       if (this.#backlogIndex < this.#backlog.length) {
         drained = this.#backlog;
@@ -624,44 +622,24 @@ export class WebUsbPassthroughRuntime {
   }
 
   private attachRings(msg: UsbRingAttachMessage): void {
-    if (this.#actionRing && this.#completionRing) return;
+    if (this.#actionRing && this.#completionRingUnsubscribe) return;
     try {
       this.#actionRing = new UsbProxyRing(msg.actionRing);
-      this.#completionRing = new UsbProxyRing(msg.completionRing);
+      this.#completionRingUnsubscribe = subscribeUsbProxyCompletionRing(msg.completionRing, (completion) =>
+        this.handleCompletion(completion),
+      );
     } catch (err) {
       this.#lastError = `Failed to attach USB proxy rings: ${formatError(err)}`;
       this.detachRings();
       return;
     }
-
-    if (!this.#completionDrainTimer) {
-      this.#completionDrainTimer = setInterval(() => this.drainCompletionRing(), 4);
-      (this.#completionDrainTimer as unknown as { unref?: () => void }).unref?.();
-    }
   }
 
   private detachRings(): void {
-    if (this.#completionDrainTimer) {
-      clearInterval(this.#completionDrainTimer);
-      this.#completionDrainTimer = null;
+    if (this.#completionRingUnsubscribe) {
+      this.#completionRingUnsubscribe();
+      this.#completionRingUnsubscribe = null;
     }
     this.#actionRing = null;
-    this.#completionRing = null;
-  }
-
-  private drainCompletionRing(): void {
-    const ring = this.#completionRing;
-    if (!ring) return;
-    while (true) {
-      let completion: UsbHostCompletion | null = null;
-      try {
-        completion = ring.popCompletion();
-      } catch (err) {
-        this.#lastError = `USB completion ring pop failed: ${formatError(err)}`;
-        return;
-      }
-      if (!completion) break;
-      this.handleCompletion(completion);
-    }
   }
 }
