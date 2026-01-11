@@ -166,11 +166,10 @@ pub fn generate_guest_tools_devices_cmd_bytes_with_overrides(
         quote_cmd_list(&virtio_snd_hwids)
     ));
     out.push_str("rem\r\n");
-    out.push_str("rem AeroGPU HWIDs (canonical):\r\n");
-    out.push_str("rem   - PCI\\VEN_A3A0&DEV_0001\r\n");
-    out.push_str(
-        "rem Legacy AeroGPU device models are intentionally out of scope for Guest Tools; use drivers/aerogpu/packaging/win7/legacy with emulator/aerogpu-legacy if needed.\r\n",
-    );
+    out.push_str("rem AeroGPU HWIDs:\r\n");
+    for hwid in &aero_gpu_hwids {
+        out.push_str(&format!("rem   - {hwid}\r\n"));
+    }
     out.push_str(&format!("set \"AERO_GPU_SERVICE={gpu_service}\"\r\n"));
     out.push_str(&format!(
         "set AERO_GPU_HWIDS={}\r\n",
