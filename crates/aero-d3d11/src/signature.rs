@@ -76,9 +76,9 @@ pub fn parse_signatures(dxbc: &DxbcFile<'_>) -> Result<ShaderSignatures, Signatu
     const PSG1: FourCC = FourCC(*b"PSG1");
 
     Ok(ShaderSignatures {
-        // Prefer the `*SG1` variants but accept `*SGN` when needed. We use the
-        // `aero-dxbc` helper to skip malformed duplicate chunks and fall back to
-        // the variant spelling as needed.
+        // Prefer the `*SG1` variants but accept `*SGN` when needed. Real-world
+        // DXBC can contain duplicate signature chunks; we iterate in file order
+        // and take the first one that parses successfully.
         isgn: parse_signature_from_dxbc(dxbc, ISG1)?,
         osgn: parse_signature_from_dxbc(dxbc, OSG1)?,
         psgn: parse_signature_from_dxbc(dxbc, PSG1)?,
@@ -89,23 +89,39 @@ fn parse_signature_from_dxbc(
     dxbc: &DxbcFile<'_>,
     preferred: FourCC,
 ) -> Result<Option<DxbcSignature>, SignatureError> {
-    let Some(res) = dxbc.get_signature(preferred) else {
-        return Ok(None);
+    let fallback = match preferred.0 {
+        [b'I', b'S', b'G', b'1'] => Some(FourCC(*b"ISGN")),
+        [b'O', b'S', b'G', b'1'] => Some(FourCC(*b"OSGN")),
+        [b'P', b'S', b'G', b'1'] => Some(FourCC(*b"PSGN")),
+        _ => None,
     };
 
-    let chunk = res.map_err(|err| {
-        // `DxbcFile::get_signature` wraps parse failures with a context string
-        // that starts with the chunk FourCC (e.g. `"ISGN signature chunk: ..."`).
-        // Prefer reporting that FourCC so callers get accurate diagnostics even
-        // when `preferred` falls back to its `*SGN`/`*SG1` variant.
-        let actual_fourcc = err
-            .context()
-            .get(0..4)
-            .and_then(FourCC::from_str)
-            .unwrap_or(preferred);
-        map_dxbc_signature_error(actual_fourcc, err)
-    })?;
-    Ok(Some(convert_dxbc_signature_chunk(preferred, chunk)?))
+    let mut first_err = None;
+    for chunk in dxbc.get_chunks(preferred) {
+        match parse_signature_chunk(chunk.fourcc, chunk.data) {
+            Ok(sig) => return Ok(Some(sig)),
+            Err(err) => {
+                if first_err.is_none() {
+                    first_err = Some(err);
+                }
+            }
+        }
+    }
+
+    if let Some(fallback) = fallback.filter(|&f| f != preferred) {
+        for chunk in dxbc.get_chunks(fallback) {
+            match parse_signature_chunk(chunk.fourcc, chunk.data) {
+                Ok(sig) => return Ok(Some(sig)),
+                Err(err) => {
+                    if first_err.is_none() {
+                        first_err = Some(err);
+                    }
+                }
+            }
+        }
+    }
+
+    first_err.map_or(Ok(None), Err)
 }
 
 pub fn parse_signature_chunk(
