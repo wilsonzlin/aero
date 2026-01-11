@@ -1,6 +1,6 @@
 # CI driver packaging manifest (`ci-package.json`)
 
-Each driver can provide an optional manifest at:
+Drivers intended to be built/packaged by CI must include a manifest at:
 
 `drivers/<driver>/ci-package.json`
 
@@ -11,6 +11,10 @@ For the canonical documentation, see: [`docs/16-driver-packaging-and-signing.md`
 
 ## Fields
 
+### `$schema` (optional)
+
+JSON Schema reference for editor tooling (example: `"../../ci/driver-package.schema.json"`). CI ignores this field.
+
 ### `infFiles` (optional)
 
 Explicit list of `.inf` files to stage (paths are **relative to the driver directory**).
@@ -18,6 +22,7 @@ Explicit list of `.inf` files to stage (paths are **relative to the driver direc
 - If omitted, CI discovers all `*.inf` files under the driver directory.
 - Use this when a driver ships **multiple INFs** but only a subset should be packaged together
   (feature variants, optional components, etc).
+- If present, the list must be non-empty.
 
 Example:
 
@@ -33,6 +38,9 @@ build output into the **x64** staged package directory.
 This is required for x64 packages that ship WOW64 user-mode components (for example, a 32-bit
 display UMD DLL installed into `SysWOW64`). `Inf2Cat` needs the WOW64 payload to be present in
 the x64 staging directory at catalog-generation time.
+
+- Entries must have a `.dll` extension.
+- Requires x86 build outputs to be present even if you are only generating/staging x64 packages.
 
 Example:
 
@@ -56,5 +64,8 @@ Declare that the driver package requires a WDF coinstaller (`WdfCoInstaller*.dll
   1. declare `wdfCoInstaller` in the manifest, and
   2. run `ci/make-catalogs.ps1` with `-IncludeWdfCoInstaller`.
 
-See `ci-package.wdf-example.json` for an example.
+Examples:
 
+- `ci-package.json` (minimal)
+- `ci-package.inf-wow64-example.json` (INF selection + WOW64 payload DLL example)
+- `ci-package.wdf-example.json` (WDF coinstaller example)
