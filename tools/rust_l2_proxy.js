@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import { access, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -14,6 +14,7 @@ const COMMAND_OUTPUT_LIMIT = 200_000;
 const BUILD_TIMEOUT_MS = 10 * 60_000;
 const BUILD_LOCK_TIMEOUT_MS = BUILD_TIMEOUT_MS + 2 * 60_000;
 const BUILD_LOCK_RETRY_MS = 200;
+const BUILD_STAMP_TIMEOUT_MS = 5_000;
 
 function isSccacheWrapper(value) {
   if (!value) return false;
@@ -26,6 +27,34 @@ function isSccacheWrapper(value) {
     v.endsWith("/sccache.exe") ||
     v.endsWith("\\sccache.exe")
   );
+}
+
+function readBuildStamp() {
+  try {
+    const rev = spawnSync("git", ["rev-parse", "HEAD"], {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: BUILD_STAMP_TIMEOUT_MS,
+    });
+    if (rev.status !== 0) return null;
+    const sha = (rev.stdout ?? "").trim();
+    if (!sha) return null;
+
+    const status = spawnSync("git", ["status", "--porcelain"], {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: BUILD_STAMP_TIMEOUT_MS,
+    });
+    if (status.status !== 0) return null;
+    // If the working tree is dirty, don't attempt to use the cached stamp/binary.
+    if ((status.stdout ?? "").trim() !== "") return null;
+
+    return sha;
+  } catch {
+    return null;
+  }
 }
 
 function appendLimitedOutput(prev, chunk) {
@@ -150,8 +179,33 @@ async function ensureProxyBuilt() {
   if (buildPromise) return buildPromise;
   buildPromise = (async () => {
     const binPath = await getProxyBinPath();
+    const targetDir = await getCargoTargetDir();
+    const stampPath = path.join(targetDir, ".aero-l2-proxy-build.stamp");
+    const expectedStamp = readBuildStamp();
+
+    const isUpToDate = async () => {
+      if (!expectedStamp) return false;
+      const exists = await access(binPath)
+        .then(() => true)
+        .catch(() => false);
+      if (!exists) return false;
+      const existing = await readFile(stampPath, "utf8")
+        .then((s) => s.trim())
+        .catch(() => null);
+      return existing === expectedStamp;
+    };
+
+    // Fast path: we already built this binary for the current git SHA.
+    if (await isUpToDate()) {
+      return;
+    }
+
     await withBuildLock(async () => {
-      const targetDir = await getCargoTargetDir();
+      // Another worker may have completed the build while we were waiting.
+      if (await isUpToDate()) {
+        return;
+      }
+
       const env = { CARGO_TARGET_DIR: targetDir };
       // Avoid global Cargo package cache locks when running concurrent CI jobs / agents.
       env.CARGO_HOME = process.env.AERO_L2_PROXY_TEST_CARGO_HOME ?? path.join(targetDir, "node-test-cargo-home");
@@ -192,6 +246,14 @@ async function ensureProxyBuilt() {
         });
       }
       await access(binPath);
+
+      if (expectedStamp) {
+        try {
+          await writeFile(stampPath, `${expectedStamp}\n`, "utf8");
+        } catch {
+          // Best-effort; a missing stamp only means we might rebuild next time.
+        }
+      }
     });
   })();
   try {
