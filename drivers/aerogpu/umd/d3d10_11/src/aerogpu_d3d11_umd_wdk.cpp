@@ -2307,16 +2307,23 @@ void AEROGPU_APIENTRY CloseAdapter11(D3D10DDI_HADAPTER hAdapter) {
 // -------------------------------------------------------------------------------------------------
 
 void AEROGPU_APIENTRY DestroyDevice11(D3D11DDI_HDEVICE hDevice) {
-  if (!hDevice.pDrvPrivate) {
+  void* device_mem = hDevice.pDrvPrivate;
+  if (!device_mem) {
     return;
   }
-  auto* dev = FromHandle<D3D11DDI_HDEVICE, Device>(hDevice);
-  DestroyWddmContext(dev);
-  delete const_cast<D3D11DDI_DEVICECALLBACKS*>(
-      reinterpret_cast<const D3D11DDI_DEVICECALLBACKS*>(dev ? dev->runtime_callbacks : nullptr));
-  if (dev) {
-    dev->runtime_callbacks = nullptr;
+
+  uint32_t cookie = 0;
+  std::memcpy(&cookie, device_mem, sizeof(cookie));
+  if (cookie != kDeviceDestroyLiveCookie) {
+    return;
   }
+  cookie = 0;
+  std::memcpy(device_mem, &cookie, sizeof(cookie));
+
+  auto* dev = reinterpret_cast<Device*>(device_mem);
+  DestroyWddmContext(dev);
+  delete const_cast<D3D11DDI_DEVICECALLBACKS*>(reinterpret_cast<const D3D11DDI_DEVICECALLBACKS*>(dev->runtime_callbacks));
+  dev->runtime_callbacks = nullptr;
   dev->~Device();
 }
 

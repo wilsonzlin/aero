@@ -60,6 +60,7 @@ HRESULT AEROGPU_APIENTRY AeroGpuOpenAdapter10Wdk(D3D10DDIARG_OPENADAPTER* pOpenD
 namespace {
 
 constexpr aerogpu_handle_t kInvalidHandle = 0;
+constexpr uint32_t kAeroGpuDeviceLiveCookie = 0xA3E0D301u;
 constexpr HRESULT kDxgiErrorWasStillDrawing = static_cast<HRESULT>(0x887A000Au); // DXGI_ERROR_WAS_STILL_DRAWING
 constexpr HRESULT kHrPending = static_cast<HRESULT>(0x8000000Au); // E_PENDING
 constexpr HRESULT kHrNtStatusGraphicsGpuBusy =
@@ -457,6 +458,7 @@ struct AeroGpuSampler {
 using SetErrorFn = void(AEROGPU_APIENTRY*)(D3D10DDI_HRTDEVICE, HRESULT);
 
 struct AeroGpuDevice {
+  uint32_t live_cookie = kAeroGpuDeviceLiveCookie;
   AeroGpuAdapter* adapter = nullptr;
   std::mutex mutex;
 
@@ -501,6 +503,10 @@ struct AeroGpuDevice {
 
   AeroGpuDevice() {
     cmd.reset();
+  }
+
+  ~AeroGpuDevice() {
+    live_cookie = 0;
   }
 };
 
@@ -1706,10 +1712,19 @@ struct CopySubresourceRegionImpl<Ret(AEROGPU_APIENTRY*)(Args...)> {
 
 void AEROGPU_APIENTRY DestroyDevice(D3D10DDI_HDEVICE hDevice) {
   AEROGPU_D3D10_TRACEF("DestroyDevice hDevice=%p", hDevice.pDrvPrivate);
-  if (!hDevice.pDrvPrivate) {
+  void* device_mem = hDevice.pDrvPrivate;
+  if (!device_mem) {
     return;
   }
-  auto* dev = FromHandle<D3D10DDI_HDEVICE, AeroGpuDevice>(hDevice);
+  uint32_t cookie = 0;
+  std::memcpy(&cookie, device_mem, sizeof(cookie));
+  if (cookie != kAeroGpuDeviceLiveCookie) {
+    return;
+  }
+  cookie = 0;
+  std::memcpy(device_mem, &cookie, sizeof(cookie));
+
+  auto* dev = reinterpret_cast<AeroGpuDevice*>(device_mem);
   DestroyKernelDeviceContext(dev);
   dev->~AeroGpuDevice();
 }

@@ -33,6 +33,7 @@
 namespace aerogpu::d3d10_11 {
 
 constexpr aerogpu_handle_t kInvalidHandle = 0;
+constexpr uint32_t kDeviceDestroyLiveCookie = 0xA3E0D311u;
 constexpr uint32_t kMaxConstantBufferSlots = 14;
 constexpr uint32_t kMaxShaderResourceSlots = 128;
 constexpr uint32_t kMaxSamplerSlots = 16;
@@ -473,6 +474,7 @@ struct DepthStencilState {
 };
 
 struct Device {
+  uint32_t destroy_cookie = kDeviceDestroyLiveCookie;
   Adapter* adapter = nullptr;
   // Opaque pointer to the runtime's device callback table (contains e.g.
   // pfnSetErrorCb).
@@ -584,6 +586,10 @@ struct Device {
 
   Device() {
     cmd.reset();
+  }
+
+  ~Device() {
+    destroy_cookie = 0;
   }
 };
 
