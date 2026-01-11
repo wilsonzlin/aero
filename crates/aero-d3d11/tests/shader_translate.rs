@@ -550,6 +550,55 @@ fn translates_texture_load_with_nonzero_lod() {
 }
 
 #[test]
+fn translates_texture_load_with_vertex_id_numeric_coords() {
+    // `SV_VertexID` is surfaced to the translator as a `u32` builtin and expanded into our
+    // internal `vec4<f32>` register model via `f32(input.vertex_id)`. This means that integer
+    // texel coordinates may sometimes appear as numeric floats (not raw integer bits), so `ld`
+    // emission must handle both.
+    const D3D_NAME_VERTEX_ID: u32 = 6;
+
+    let isgn_params = vec![DxbcSignatureParameter {
+        semantic_name: "SV_VertexID".to_owned(),
+        semantic_index: 0,
+        system_value_type: D3D_NAME_VERTEX_ID,
+        component_type: 0,
+        register: 0,
+        mask: 0b0001,
+        read_write_mask: 0b0001,
+        stream: 0,
+        min_precision: 0,
+    }];
+    let osgn_params = vec![sig_param("SV_Position", 0, 0, 0b1111)];
+    let dxbc_bytes = build_dxbc(&[
+        (FOURCC_SHEX, Vec::new()),
+        (FOURCC_ISGN, build_signature_chunk(&isgn_params)),
+        (FOURCC_OSGN, build_signature_chunk(&osgn_params)),
+    ]);
+    let dxbc = DxbcFile::parse(&dxbc_bytes).expect("DXBC parse");
+    let signatures = parse_signatures(&dxbc).expect("parse signatures");
+
+    let module = Sm4Module {
+        stage: ShaderStage::Vertex,
+        model: ShaderModel { major: 5, minor: 0 },
+        decls: Vec::new(),
+        instructions: vec![
+            Sm4Inst::Ld {
+                dst: dst(RegFile::Temp, 0, WriteMask::XYZW),
+                coord: src_reg(RegFile::Input, 0),
+                texture: TextureRef { slot: 0 },
+                lod: src_imm([0.0, 0.0, 0.0, 0.0]),
+            },
+            Sm4Inst::Ret,
+        ],
+    };
+
+    let translated = translate_sm4_module_to_wgsl(&dxbc, &module, &signatures).expect("translate");
+    assert_wgsl_validates(&translated.wgsl);
+    assert!(translated.wgsl.contains("textureLoad(t0"));
+    assert!(translated.wgsl.contains("f32(input.vertex_id)"));
+}
+
+#[test]
 fn translates_vs_system_value_builtins_from_siv_decls() {
     const D3D_NAME_POSITION: u32 = 1;
     const D3D_NAME_VERTEX_ID: u32 = 6;
