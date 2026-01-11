@@ -300,6 +300,74 @@ fn decodes_alloc_table_and_cmd_stream_header() {
 }
 
 #[test]
+fn cmd_buffer_can_exceed_cmd_stream_header_size_bytes() {
+    let mut mem = VecMemory::new(0x40_000);
+    let mut regs = AeroGpuRegs::default();
+    let mut exec = AeroGpuExecutor::new(AeroGpuExecutorConfig {
+        verbose: false,
+        keep_last_submissions: 8,
+        fence_completion: AeroGpuFenceCompletionMode::Immediate,
+    });
+
+    let ring_gpa = 0x1000u64;
+    let ring_size = 0x1000u32;
+    write_ring(&mut mem, ring_gpa, ring_size, 8, 0, 1, regs.abi_version);
+
+    let alloc_table_gpa = 0x5000u64;
+    let alloc_table_size_bytes =
+        write_alloc_table(&mut mem, alloc_table_gpa, regs.abi_version, AEROGPU_ALLOC_TABLE_MAGIC);
+
+    // Forward-compat: `cmd_size_bytes` is the backing buffer size, while the stream header's
+    // `size_bytes` is the number of bytes used.
+    let cmd_gpa = 0x6000u64;
+    write_cmd_stream_header(
+        &mut mem,
+        cmd_gpa,
+        regs.abi_version,
+        ProtocolCmdStreamHeader::SIZE_BYTES as u32,
+        AEROGPU_CMD_STREAM_MAGIC,
+    );
+    let cmd_buffer_size_bytes = 4096u32;
+
+    let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+    write_submit_desc(
+        &mut mem,
+        desc_gpa,
+        cmd_gpa,
+        cmd_buffer_size_bytes,
+        alloc_table_gpa,
+        alloc_table_size_bytes,
+        42,
+    );
+
+    regs.ring_gpa = ring_gpa;
+    regs.ring_size_bytes = ring_size;
+    regs.ring_control = ring_control::ENABLE;
+
+    exec.process_doorbell(&mut regs, &mut mem);
+
+    let record = exec
+        .last_submissions
+        .back()
+        .expect("missing submission record");
+    assert!(
+        record.decode_errors.is_empty(),
+        "unexpected decode errors: {:?}",
+        record.decode_errors
+    );
+    let header = record
+        .submission
+        .cmd_stream_header
+        .as_ref()
+        .expect("missing cmd stream header");
+    assert_eq!(header.size_bytes, ProtocolCmdStreamHeader::SIZE_BYTES as u32);
+    assert_eq!(
+        record.submission.cmd_stream.len(),
+        ProtocolCmdStreamHeader::SIZE_BYTES
+    );
+}
+
+#[test]
 fn alloc_table_entry_with_zero_gpa_decodes() {
     let mut mem = VecMemory::new(0x40_000);
     let mut regs = AeroGpuRegs::default();
