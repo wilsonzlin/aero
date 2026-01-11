@@ -55,7 +55,11 @@ constexpr bool NtSuccess(NTSTATUS st) {
 // missing caps types can be discovered quickly on real Win7 systems without
 // having to attach a debugger first.
 #if !defined(AEROGPU_D3D10_WDK_TRACE_CAPS)
-  #define AEROGPU_D3D10_WDK_TRACE_CAPS 0
+  #if defined(AEROGPU_D3D10_11_CAPS_LOG)
+    #define AEROGPU_D3D10_WDK_TRACE_CAPS 1
+  #else
+    #define AEROGPU_D3D10_WDK_TRACE_CAPS 0
+  #endif
 #endif
 
 void DebugLog(const char* fmt, ...) {
