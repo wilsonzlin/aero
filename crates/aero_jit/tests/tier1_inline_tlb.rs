@@ -1,9 +1,9 @@
 #![cfg(debug_assertions)]
 
-use aero_cpu::CpuState;
 use aero_jit::abi::{
     CPU_AND_JIT_CTX_BYTE_SIZE, JIT_CTX_RAM_BASE_OFFSET, JIT_CTX_TLB_OFFSET, JIT_CTX_TLB_SALT_OFFSET,
 };
+use aero_jit::tier1_ir::interp::TestCpu as InterpCpu;
 use aero_jit::tier1_ir::{GuestReg, IrBuilder, IrTerminator};
 use aero_jit::wasm::tier1::{Tier1WasmCodegen, Tier1WasmOptions};
 use aero_jit::wasm::{
@@ -113,8 +113,16 @@ fn write_u64_to_memory(
         .expect("memory write in bounds");
 }
 
-fn define_mem_helpers(store: &mut Store<HostState>, linker: &mut Linker<HostState>, memory: Memory) {
-    fn read<const N: usize>(caller: &mut Caller<'_, HostState>, memory: &Memory, addr: usize) -> u64 {
+fn define_mem_helpers(
+    store: &mut Store<HostState>,
+    linker: &mut Linker<HostState>,
+    memory: Memory,
+) {
+    fn read<const N: usize>(
+        caller: &mut Caller<'_, HostState>,
+        memory: &Memory,
+        addr: usize,
+    ) -> u64 {
         let mut buf = [0u8; N];
         memory
             .read(caller, addr, &mut buf)
@@ -302,7 +310,11 @@ fn define_mem_helpers(store: &mut Store<HostState>, linker: &mut Linker<HostStat
         .unwrap();
 }
 
-fn define_mmu_translate(store: &mut Store<HostState>, linker: &mut Linker<HostState>, memory: Memory) {
+fn define_mmu_translate(
+    store: &mut Store<HostState>,
+    linker: &mut Linker<HostState>,
+    memory: Memory,
+) {
     let mem = memory;
     linker
         .define(
@@ -310,7 +322,11 @@ fn define_mmu_translate(store: &mut Store<HostState>, linker: &mut Linker<HostSt
             IMPORT_MMU_TRANSLATE,
             Func::wrap(
                 &mut *store,
-                move |mut caller: Caller<'_, HostState>, cpu_ptr: i32, vaddr: i64, _access: i32| -> i64 {
+                move |mut caller: Caller<'_, HostState>,
+                      cpu_ptr: i32,
+                      vaddr: i64,
+                      _access: i32|
+                      -> i64 {
                     caller.data_mut().mmu_translate_calls += 1;
 
                     let vaddr_u = vaddr as u64;
@@ -327,8 +343,10 @@ fn define_mmu_translate(store: &mut Store<HostState>, linker: &mut Linker<HostSt
 
                     let is_ram = vaddr_u < caller.data().ram_size;
                     let phys_base = vaddr_u & PAGE_BASE_MASK;
-                    let flags =
-                        TLB_FLAG_READ | TLB_FLAG_WRITE | TLB_FLAG_EXEC | if is_ram { TLB_FLAG_IS_RAM } else { 0 };
+                    let flags = TLB_FLAG_READ
+                        | TLB_FLAG_WRITE
+                        | TLB_FLAG_EXEC
+                        | if is_ram { TLB_FLAG_IS_RAM } else { 0 };
                     let data = phys_base | flags;
 
                     let entry_addr = (cpu_ptr as u64)
@@ -368,20 +386,21 @@ fn define_mmio_exit(store: &mut Store<HostState>, linker: &mut Linker<HostState>
         .unwrap();
 }
 
-fn run_wasm(block: &aero_jit::tier1_ir::IrBlock, cpu: CpuState, ram: Vec<u8>, ram_size: u64) -> (u64, CpuState, Vec<u8>, HostState) {
-    let wasm = Tier1WasmCodegen::new().compile_block_with_options(
-        block,
-        Tier1WasmOptions {
-            inline_tlb: true,
-        },
-    );
+fn run_wasm(
+    block: &aero_jit::tier1_ir::IrBlock,
+    cpu: InterpCpu,
+    ram: Vec<u8>,
+    ram_size: u64,
+) -> (u64, InterpCpu, Vec<u8>, HostState) {
+    let wasm = Tier1WasmCodegen::new()
+        .compile_block_with_options(block, Tier1WasmOptions { inline_tlb: true });
     validate_wasm(&wasm);
 
     let ram_base = CPU_AND_JIT_CTX_BYTE_SIZE as u64;
     let total_len = ram_base as usize + ram.len();
 
     let mut mem = vec![0u8; total_len];
-    cpu.write_to_mem(&mut mem, 0);
+    cpu.write_to_abi_mem(&mut mem, 0);
     mem[JIT_CTX_RAM_BASE_OFFSET as usize..JIT_CTX_RAM_BASE_OFFSET as usize + 8]
         .copy_from_slice(&ram_base.to_le_bytes());
     mem[JIT_CTX_TLB_SALT_OFFSET as usize..JIT_CTX_TLB_SALT_OFFSET as usize + 8]
@@ -397,7 +416,7 @@ fn run_wasm(block: &aero_jit::tier1_ir::IrBlock, cpu: CpuState, ram: Vec<u8>, ra
 
     let mut got_mem = vec![0u8; total_len];
     memory.read(&store, 0, &mut got_mem).unwrap();
-    let got_cpu = CpuState::read_from_mem(&got_mem, 0);
+    let got_cpu = InterpCpu::from_abi_mem(&got_mem, 0);
     let got_ram = got_mem[ram_base as usize..ram_base as usize + ram.len()].to_vec();
     let host_state = *store.data();
     (got_rip, got_cpu, got_ram, host_state)
@@ -438,7 +457,7 @@ fn tier1_inline_tlb_same_page_access_hits_and_caches() {
     let block = b.finish(IrTerminator::Jump { target: 0x3000 });
     block.validate().unwrap();
 
-    let mut cpu = CpuState::default();
+    let mut cpu = InterpCpu::default();
     cpu.rip = 0x1000;
 
     let ram = vec![0u8; 0x10000];
@@ -450,10 +469,7 @@ fn tier1_inline_tlb_same_page_access_hits_and_caches() {
     assert_eq!(got_cpu.gpr[Gpr::Rbx.as_u8() as usize] & 0xff, 0xAB);
 
     assert_eq!(got_ram[0x1000], 0xAB);
-    assert_eq!(
-        &got_ram[0x1004..0x1008],
-        &0x1234_5678u32.to_le_bytes(),
-    );
+    assert_eq!(&got_ram[0x1004..0x1008], &0x1234_5678u32.to_le_bytes(),);
 
     assert_eq!(host_state.mmu_translate_calls, 1);
     assert_eq!(host_state.mmio_exit_calls, 0);
@@ -503,7 +519,7 @@ fn tier1_inline_tlb_collision_forces_retranslate() {
     let block = b.finish(IrTerminator::Jump { target: 0x3000 });
     block.validate().unwrap();
 
-    let mut cpu = CpuState::default();
+    let mut cpu = InterpCpu::default();
     cpu.rip = 0x1000;
 
     let ram_len = collide_addr as usize + 0x2000;
@@ -543,18 +559,20 @@ fn tier1_inline_tlb_cross_page_load_uses_slow_helper() {
     let block = b.finish(IrTerminator::Jump { target: 0x3000 });
     block.validate().unwrap();
 
-    let mut cpu = CpuState::default();
+    let mut cpu = InterpCpu::default();
     cpu.rip = 0x1000;
 
     let mut ram = vec![0u8; 0x10000];
-    ram[addr as usize..addr as usize + 8]
-        .copy_from_slice(&0x1122_3344_5566_7788u64.to_le_bytes());
+    ram[addr as usize..addr as usize + 8].copy_from_slice(&0x1122_3344_5566_7788u64.to_le_bytes());
 
     let (got_rip, got_cpu, _got_ram, host_state) = run_wasm(&block, cpu, ram, 0x10000);
 
     assert_eq!(got_rip, 0x3000);
     assert_eq!(got_cpu.rip, 0x3000);
-    assert_eq!(got_cpu.gpr[Gpr::Rax.as_u8() as usize], 0x1122_3344_5566_7788);
+    assert_eq!(
+        got_cpu.gpr[Gpr::Rax.as_u8() as usize],
+        0x1122_3344_5566_7788
+    );
     assert_eq!(host_state.mmu_translate_calls, 0);
     assert_eq!(host_state.mmio_exit_calls, 0);
     assert_eq!(host_state.slow_mem_reads, 1);
@@ -569,7 +587,7 @@ fn tier1_inline_tlb_mmio_load_exits_to_runtime() {
     let block = b.finish(IrTerminator::Jump { target: 0x3000 });
     block.validate().unwrap();
 
-    let mut cpu = CpuState::default();
+    let mut cpu = InterpCpu::default();
     cpu.rip = 0x1000;
 
     let ram = vec![0u8; 0x10000];
@@ -592,7 +610,7 @@ fn tier1_inline_tlb_mmio_store_exits_to_runtime() {
     let block = b.finish(IrTerminator::Jump { target: 0x3000 });
     block.validate().unwrap();
 
-    let mut cpu = CpuState::default();
+    let mut cpu = InterpCpu::default();
     cpu.rip = 0x1000;
 
     let ram = vec![0u8; 0x10000];
@@ -605,4 +623,3 @@ fn tier1_inline_tlb_mmio_store_exits_to_runtime() {
     assert_eq!(host_state.slow_mem_reads, 0);
     assert_eq!(host_state.slow_mem_writes, 0);
 }
-
