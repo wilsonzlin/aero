@@ -91,6 +91,10 @@ export CARGO_INCREMENTAL=1
 # Node (if running JS/TS tooling)
 export NODE_OPTIONS="--max-old-space-size=4096"
 
+# If your environment doesn't have the repo's pinned Node version from `.nvmrc`,
+# you can bypass the hard error (it will still warn):
+export AERO_ALLOW_UNSUPPORTED_NODE=1
+
 # Playwright (if running browser tests)
 export PW_TEST_WORKERS=1
 ```
