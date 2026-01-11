@@ -376,10 +376,34 @@ impl UsbDeviceModel for UsbPassthroughHandle {
     }
 
     fn handle_in_transfer(&mut self, ep: u8, max_len: usize) -> UsbInResult {
+        debug_assert!(
+            (ep & 0x80) != 0,
+            "handle_in_transfer expects an IN endpoint address (bit7=1), got {ep:#04x}"
+        );
+        debug_assert!(
+            (ep & 0x70) == 0,
+            "handle_in_transfer expects a valid endpoint number (0..=15), got {ep:#04x}"
+        );
+        debug_assert!(
+            (ep & 0x0f) != 0,
+            "handle_in_transfer should not be used for control endpoint 0, got {ep:#04x}"
+        );
         self.0.borrow_mut().handle_in_transfer(ep, max_len)
     }
 
     fn handle_out_transfer(&mut self, ep: u8, data: &[u8]) -> UsbOutResult {
+        debug_assert!(
+            (ep & 0x80) == 0,
+            "handle_out_transfer expects an OUT endpoint address (bit7=0), got {ep:#04x}"
+        );
+        debug_assert!(
+            (ep & 0x70) == 0,
+            "handle_out_transfer expects a valid endpoint number (0..=15), got {ep:#04x}"
+        );
+        debug_assert!(
+            (ep & 0x0f) != 0,
+            "handle_out_transfer should not be used for control endpoint 0, got {ep:#04x}"
+        );
         self.0.borrow_mut().handle_out_transfer(ep, data)
     }
 }
