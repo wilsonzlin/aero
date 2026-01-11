@@ -1,5 +1,6 @@
 # syntax=docker/dockerfile:1
-FROM node:20-alpine AS build
+ARG NODE_VERSION=20.11.1
+FROM node:${NODE_VERSION}-alpine AS build
 
 ARG GIT_SHA=dev
 ARG VERSION=$GIT_SHA
@@ -27,7 +28,7 @@ RUN set -eux; \
     cp package.json package-lock.json /out/; \
     cp -r dist /out/dist
 
-FROM node:20-alpine AS runtime
+FROM node:${NODE_VERSION}-alpine AS runtime
 WORKDIR /app
 
 ENV NODE_ENV=production

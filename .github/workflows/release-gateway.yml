@@ -22,6 +22,14 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Read pinned Node version
+        id: node
+        shell: bash
+        run: |
+          set -euo pipefail
+          node_version="$(tr -d '\r\n' < .nvmrc)"
+          echo "node_version=$node_version" >> "$GITHUB_OUTPUT"
+
       - name: Compute build metadata
         shell: bash
         run: |
@@ -67,6 +75,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
+            NODE_VERSION=${{ steps.node.outputs.node_version }}
             VERSION=${{ env.AERO_GATEWAY_VERSION }}
             GIT_SHA=${{ github.sha }}
             BUILD_TIMESTAMP=${{ env.BUILD_TIMESTAMP }}
