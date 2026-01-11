@@ -26,6 +26,12 @@ test.describe("vm boot (VGA + serial)", () => {
   test("boots deterministic boot sector end-to-end (WASM VM + IO worker + GPU worker)", async ({ page, browserName }) => {
     test.skip(browserName !== "chromium", "OffscreenCanvas + WebGL2-in-worker coverage is Chromium-only for now.");
 
+    const url = new URL("http://127.0.0.1:5173/web/vm-boot-vga-serial-smoke.html");
+    url.searchParams.set("diskUrl", server.url("/disk.img"));
+    await page.goto(url.toString(), { waitUntil: "load" });
+
+    // Only probe for SAB/WASM threads after navigating to the harness page; the
+    // initial Playwright page is `about:blank` and is not cross-origin isolated.
     const support = await page.evaluate(() => {
       let wasmThreads = false;
       try {
@@ -48,10 +54,6 @@ test.describe("vm boot (VGA + serial)", () => {
       "SharedArrayBuffer requires COOP/COEP headers.",
     );
     test.skip(!support.atomics || !support.wasmThreads, "Shared WebAssembly.Memory (WASM threads) is unavailable.");
-
-    const url = new URL("http://127.0.0.1:5173/web/vm-boot-vga-serial-smoke.html");
-    url.searchParams.set("diskUrl", server.url("/disk.img"));
-    await page.goto(url.toString(), { waitUntil: "load" });
 
     await waitForReady(page);
 
@@ -80,4 +82,3 @@ test.describe("vm boot (VGA + serial)", () => {
     expect(metrics?.framesPresented ?? 0).toBeGreaterThan(0);
   });
 });
-
