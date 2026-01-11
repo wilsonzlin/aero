@@ -140,7 +140,8 @@ docker compose -f docker-compose.minio.yml up -d
 In another terminal, start the gateway pointed at MinIO (disable auth for this local conformance run):
 
 ```bash
-cd services/image-gateway
+# From the repo root (npm workspaces)
+npm ci
 
 export AUTH_MODE=none
 export CORS_ALLOW_ORIGIN='*'
@@ -152,8 +153,7 @@ export AWS_SECRET_ACCESS_KEY='minioadmin'
 export S3_ENDPOINT='http://127.0.0.1:9000'
 export S3_FORCE_PATH_STYLE='true'
 
-npm install
-npm run dev
+npm -w services/image-gateway run dev
 ```
 
 Create a small image via the API, upload a single part, and complete the upload (example uses `jq`):

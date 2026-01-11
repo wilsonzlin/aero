@@ -434,7 +434,6 @@ See also:
 To run the PoC locally:
 
 ```bash
-npm install
 node server/poc-server.mjs --port 4180
 ```
 

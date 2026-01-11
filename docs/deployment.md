@@ -259,9 +259,9 @@ The Disk Images panel includes a **Request persistent storage** button.
 
 ### Manual test instructions
 
-1. Start the web UI (from `web/`):
-   - `npm install`
-   - `npm run dev`
+1. Start the web UI:
+   - `npm ci`
+   - `npm -w web run dev`
 2. Open the Disk Images panel and verify quota numbers render (Chrome/Edge/Firefox support `navigator.storage.estimate()`).
 3. Click **Request persistent storage**:
    - Chrome/Edge: often grants automatically for installed PWAs or high-engagement sites.

@@ -1072,7 +1072,7 @@ Local usage:
 
 ```bash
 # Generate/update goldens (pure CPU generation, no browser required)
-npm install
+npm ci
 npm run generate:goldens
 
 # Run golden tests (requires Playwright browsers; CI installs/caches them via `.github/actions/setup-playwright`)
