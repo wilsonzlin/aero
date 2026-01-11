@@ -84,7 +84,7 @@ let loopbackScratch = new Float32Array();
 
 let wasmApi: WasmApi | null = null;
 
-// Demo framebuffer region inside shared guest memory. The worker drives a tiny JS→WASM→SAB
+// Demo framebuffer region inside guest RAM. The worker drives a tiny JS→WASM→SAB
 // render path by asking WASM to fill pixels here and then bulk-copying them into the VGA SAB.
 const DEMO_FB_OFFSET = 0x200000;
 const DEMO_FB_MAX_BYTES = 1024 * 768 * 4;
@@ -587,6 +587,7 @@ async function runLoop(): Promise<void> {
   let modeIndex = 0;
   let mode = modes[0];
   let demoFbView = guestU8.subarray(DEMO_FB_OFFSET, DEMO_FB_OFFSET + mode.width * mode.height * 4);
+  const demoFbLinearOffset = guestU8.byteOffset + DEMO_FB_OFFSET;
 
   const maybeEmitPerfSample = () => {
     if (!perfWriter || !perfFrameHeader) return;
@@ -707,7 +708,7 @@ async function runLoop(): Promise<void> {
 
         const wasmRender = wasmApi?.demo_render_rgba8888;
         if (typeof wasmRender === "function") {
-          const instructions = wasmRender(DEMO_FB_OFFSET, mode.width, mode.height, strideBytes, now) >>> 0;
+          const instructions = wasmRender(demoFbLinearOffset, mode.width, mode.height, strideBytes, now) >>> 0;
           vgaFramebuffer.pixelsU8Clamped.set(demoFbView);
           perfInstructions += BigInt(instructions);
         } else {
@@ -783,7 +784,7 @@ async function runDiskReadDemo(): Promise<void> {
       if (perf.traceEnabled) perf.instant("diskReadDemoResp", "t", evt as unknown as Record<string, unknown>);
 
       if (evt.ok && evt.bytes >= 4) {
-        const firstDword = new DataView(guestU8.buffer, Number(guestOffset), 4).getUint32(0, true);
+        const firstDword = new DataView(guestU8.buffer, guestU8.byteOffset + Number(guestOffset), 4).getUint32(0, true);
         perf.counter("diskReadDemoFirstDword", firstDword);
       }
       return;
