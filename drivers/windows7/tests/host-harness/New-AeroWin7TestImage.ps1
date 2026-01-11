@@ -78,7 +78,15 @@ param(
   # If set, fail the capture smoke test if only silence is captured
   # (adds `--require-non-silence` to the scheduled task).
   [Parameter(Mandatory = $false)]
-  [switch]$RequireNonSilence
+  [switch]$RequireNonSilence,
+
+  # If set, accept the transitional virtio-snd PCI ID (`DEV_1018`) in the guest selftest.
+  # This adds `--allow-virtio-snd-transitional` to the scheduled task.
+  #
+  # Note: The host harness's virtio-snd test path expects a modern-only virtio-snd device (DEV_1059&REV_01).
+  # This flag is intended for debugging/backcompat when running the guest selftest outside the strict harness setup.
+  [Parameter(Mandatory = $false)]
+  [switch]$AllowVirtioSndTransitional
 )
 
 Set-StrictMode -Version Latest
@@ -320,6 +328,9 @@ if ($RequireSnd -and $DisableSnd) {
 if ($DisableSnd -and ($TestSndCapture -or $RequireSndCapture -or $RequireNonSilence)) {
   throw "DisableSnd cannot be combined with TestSndCapture/RequireSndCapture/RequireNonSilence."
 }
+if ($DisableSnd -and $AllowVirtioSndTransitional) {
+  throw "DisableSnd cannot be combined with AllowVirtioSndTransitional."
+}
 
 $requireSndArg = ""
 if ($RequireSnd) {
@@ -344,6 +355,11 @@ if ($RequireSndCapture) {
 $requireNonSilenceArg = ""
 if ($RequireNonSilence) {
   $requireNonSilenceArg = " --require-non-silence"
+}
+
+$allowVirtioSndTransitionalArg = ""
+if ($AllowVirtioSndTransitional) {
+  $allowVirtioSndTransitionalArg = " --allow-virtio-snd-transitional"
 }
 
 $enableTestSigningCmd = ""
@@ -393,7 +409,7 @@ $enableTestSigningCmd
 
 REM Configure auto-run on boot (runs as SYSTEM).
 schtasks /Create /F /TN "AeroVirtioSelftest" /SC ONSTART /RU SYSTEM ^
-  /TR "\"C:\AeroTests\aero-virtio-selftest.exe\" --http-url \"$HttpUrl\" --dns-host \"$DnsHost\"$blkArg$requireSndArg$disableSndArg$testSndCaptureArg$requireSndCaptureArg$requireNonSilenceArg" >> "%LOG%" 2>&1
+  /TR "\"C:\AeroTests\aero-virtio-selftest.exe\" --http-url \"$HttpUrl\" --dns-host \"$DnsHost\"$blkArg$requireSndArg$disableSndArg$testSndCaptureArg$requireSndCaptureArg$requireNonSilenceArg$allowVirtioSndTransitionalArg" >> "%LOG%" 2>&1
 
 echo [AERO] provision done >> "%LOG%"
 $autoRebootCmd
@@ -434,6 +450,8 @@ Notes:
  - To run the virtio-snd capture smoke test (if a capture endpoint exists), generate this media with `-TestSndCapture` (adds `--test-snd-capture`).
    - Use `-RequireSndCapture` to fail if no capture endpoint exists.
    - Use `-RequireNonSilence` to fail if only silence is captured.
+ - To accept the transitional virtio-snd PCI ID (`DEV_1018`) in the guest selftest, generate this media with
+   `-AllowVirtioSndTransitional` (adds `--allow-virtio-snd-transitional`).
  - For unsigned/test-signed drivers on Win7 x64, consider generating this media with `-EnableTestSigning -AutoReboot`.
 "@
 
