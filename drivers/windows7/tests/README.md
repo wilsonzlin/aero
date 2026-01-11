@@ -51,7 +51,7 @@ The selftest emits machine-parseable markers:
 AERO_VIRTIO_SELFTEST|TEST|virtio-blk|PASS|...
 AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS|...
 # (virtio-snd is emitted as PASS/FAIL/SKIP depending on device/config):
-AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP
+AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|...
 AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|...
 # or:
 AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS
@@ -64,9 +64,9 @@ The host harness waits for the final `AERO_VIRTIO_SELFTEST|RESULT|...` line and 
 (virtio-blk + virtio-input + virtio-snd + virtio-net) were emitted so older selftest binaries can’t accidentally pass.
 
 Note:
-- By default, virtio-snd playback is skipped (emits `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP`) and capture is reported as
-  `AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set`. Enable playback with `--test-snd` / `--require-snd`.
-  Use `--disable-snd` to force SKIP for both playback and capture.
+- virtio-snd playback is **opt-in**. By default the tool emits `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|flag_not_set`.
+  Enable playback (and require a virtio-snd device) with `--require-snd` / `--test-snd`.
+  Use `--disable-snd` to force `SKIP` for both playback and capture.
 - Capture is reported separately via the `virtio-snd-capture` marker. Missing capture is `SKIP` by default unless
   `--require-snd-capture` is set. Use `--test-snd-capture` to run the capture smoke test (otherwise only endpoint
   detection is performed).
