@@ -866,17 +866,16 @@ impl<'a> InstrReader<'a> {
     }
 
     fn read_u32(&mut self) -> Result<u32, Sm4DecodeError> {
-        self.toks
-            .get(self.pos)
-            .copied()
-            .ok_or_else(|| Sm4DecodeError {
-                at_dword: self.base_at + self.pos,
-                kind: Sm4DecodeErrorKind::UnexpectedEof {
-                    wanted: 1,
-                    remaining: 0,
-                },
-            })
-            .inspect(|_| self.pos += 1)
+        let at_dword = self.base_at + self.pos;
+        let value = self.toks.get(self.pos).copied().ok_or(Sm4DecodeError {
+            at_dword,
+            kind: Sm4DecodeErrorKind::UnexpectedEof {
+                wanted: 1,
+                remaining: 0,
+            },
+        })?;
+        self.pos += 1;
+        Ok(value)
     }
 
     fn is_eof(&self) -> bool {

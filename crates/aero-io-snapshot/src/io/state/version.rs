@@ -318,7 +318,7 @@ pub mod codec {
 
     impl Encoder {
         pub fn new() -> Self {
-            Self { buf: Vec::new() }
+            Self::default()
         }
 
         pub fn bytes(mut self, bytes: &[u8]) -> Self {

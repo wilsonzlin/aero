@@ -38,6 +38,12 @@ pub struct FramebufferHeader {
     pub config_counter: AtomicU32,
 }
 
+impl Default for FramebufferHeader {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FramebufferHeader {
     pub const fn new() -> Self {
         Self {
@@ -50,12 +56,6 @@ impl FramebufferHeader {
             frame_counter: AtomicU32::new(0),
             config_counter: AtomicU32::new(0),
         }
-    }
-}
-
-impl Default for FramebufferHeader {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

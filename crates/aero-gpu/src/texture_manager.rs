@@ -650,6 +650,7 @@ fn estimate_mip_level_size_bytes(format: wgpu::TextureFormat, width: u32, height
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn upload_direct(
     ctx: UploadCtx<'_>,
     texture: &wgpu::Texture,
@@ -757,6 +758,7 @@ fn upload_rgba8(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn upload_bc(
     ctx: UploadCtx<'_>,
     texture: &wgpu::Texture,

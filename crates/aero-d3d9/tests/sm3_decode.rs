@@ -35,10 +35,10 @@ fn decode_basic_vs_instructions() {
     let tokens = vec![
         version_token(ShaderStage::Vertex, 3, 0),
         // dcl_position v0
-        31u32 | (1u32 << 24),
+        opcode_token(31, 1),
         dst_token(1, 0, 0xF),
         // dcl_texcoord0 v1.xy
-        31u32 | (1u32 << 24) | (5u32 << 16),
+        opcode_token(31, 1) | (5u32 << 16),
         dst_token(1, 1, 0x3),
         // mov r0, v0
         opcode_token(1, 2),
@@ -148,7 +148,7 @@ fn decode_sampler_dcl() {
     // dcl_2d s0
     let tokens = vec![
         version_token(ShaderStage::Pixel, 3, 0),
-        31u32 | (1u32 << 24) | (2u32 << 16),
+        opcode_token(31, 1) | (2u32 << 16),
         dst_token(10, 0, 0xF),
         0x0000_FFFF,
     ];
@@ -275,7 +275,7 @@ fn decode_ps2_dcl_texcoord_t0() {
     // ps_2_0 dcl t0.xy
     let tokens = vec![
         version_token(ShaderStage::Pixel, 2, 0),
-        31u32 | (1u32 << 24) | (5u32 << 16),
+        opcode_token(31, 1) | (5u32 << 16),
         dst_token(3, 0, 0x3),
         0x0000_FFFF,
     ];

@@ -141,8 +141,7 @@ pub fn decode(bytes: &[u8], mode: DecodeMode, ip: u64) -> Result<DecodedInst, De
         mode,
         ip,
         prefixes,
-        prefix_len,
-        opcode_len,
+        prefix_len + opcode_len,
         opcode,
         operand_size,
     )? {
@@ -665,8 +664,7 @@ fn decode_relative_immediate(
     mode: DecodeMode,
     ip: u64,
     prefixes: Prefixes,
-    prefix_len: usize,
-    opcode_len: usize,
+    imm_off: usize,
     opcode: OpcodeBytes,
     operand_size: OperandSize,
 ) -> Result<Option<(Vec<Operand>, usize)>, DecodeError> {
@@ -700,7 +698,6 @@ fn decode_relative_immediate(
         return Err(DecodeError::Invalid);
     }
 
-    let imm_off = prefix_len + opcode_len;
     let inst_len = imm_off + imm_len;
     if inst_len > MAX_INST_LEN {
         return Err(DecodeError::TooLong);

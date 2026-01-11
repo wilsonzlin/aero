@@ -87,6 +87,12 @@ pub struct PlatformInterrupts {
     imcr: u8,
 }
 
+impl Default for PlatformInterrupts {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl std::fmt::Debug for PlatformInterrupts {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PlatformInterrupts")
@@ -137,12 +143,6 @@ impl PortIoDevice for ImcrPort {
             }
             _ => interrupts.imcr_port_write(port, value as u8),
         }
-    }
-}
-
-impl Default for PlatformInterrupts {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

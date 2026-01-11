@@ -659,11 +659,12 @@ fn decompress_bc3_to_bgra8(width: u32, height: u32, src: &[u8]) -> Result<Vec<u8
 }
 
 fn bc3_alpha_table(a0: u8, a1: u8) -> [u8; 8] {
+    let a0_u16 = u16::from(a0);
+    let a1_u16 = u16::from(a1);
+
     let mut table = [0u8; 8];
     table[0] = a0;
     table[1] = a1;
-    let a0_u16 = u16::from(a0);
-    let a1_u16 = u16::from(a1);
     if a0 > a1 {
         table[2] = ((6u16 * a0_u16 + a1_u16) / 7) as u8;
         table[3] = ((5u16 * a0_u16 + 2u16 * a1_u16) / 7) as u8;

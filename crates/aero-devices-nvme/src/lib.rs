@@ -785,7 +785,6 @@ impl IoSnapshot for NvmeController {
                 phase: cq.phase,
                 irq_enabled: cq.irq_enabled,
             }),
-
             io_sqs: self
                 .io_sqs
                 .values()

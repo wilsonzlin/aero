@@ -443,9 +443,9 @@ fn write_cpu_state(bytes: &mut [u8], cpu: &aero_cpu_core::state::CpuState) {
         bytes.len() >= abi::CPU_STATE_SIZE as usize,
         "cpu state buffer too small"
     );
-    for i in 0..16 {
+    for (i, reg) in cpu.gpr.iter().enumerate() {
         let off = abi::CPU_GPR_OFF[i] as usize;
-        bytes[off..off + 8].copy_from_slice(&cpu.gpr[i].to_le_bytes());
+        bytes[off..off + 8].copy_from_slice(&reg.to_le_bytes());
     }
     bytes[abi::CPU_RIP_OFF as usize..abi::CPU_RIP_OFF as usize + 8]
         .copy_from_slice(&cpu.rip.to_le_bytes());

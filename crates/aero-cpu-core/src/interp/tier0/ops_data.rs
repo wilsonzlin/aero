@@ -499,6 +499,7 @@ pub(crate) fn write_mem<B: CpuBus>(
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
     use crate::state::{CpuMode, CpuState};

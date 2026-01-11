@@ -8,7 +8,7 @@ use crate::audio::worklet::AudioSink;
 use crate::io::virtio::vio_core::{
     Descriptor, DescriptorChain, VirtQueue, VirtQueueError, VRING_DESC_F_WRITE,
 };
-use memory::GuestMemory;
+use memory::{GuestMemory, GuestMemoryError};
 
 pub const VIRTIO_ID_SND: u16 = 25;
 
@@ -36,6 +36,8 @@ pub const VIRTIO_SND_PCM_FMT_MASK_S16: u64 = 1u64 << VIRTIO_SND_PCM_FMT_S16;
 pub const VIRTIO_SND_PCM_RATE_MASK_48000: u64 = 1u64 << VIRTIO_SND_PCM_RATE_48000;
 
 pub const PLAYBACK_STREAM_ID: u32 = 0;
+
+const MAX_CONTROL_MSG_BYTES: usize = 4096;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VirtioSndConfig {
@@ -179,6 +181,7 @@ impl<S: AudioSink> VirtioSndDevice<S> {
         mem: &impl GuestMemory,
         chain: &DescriptorChain,
     ) -> Result<u32, VirtQueueError> {
+        let mem_size = mem.size();
         let mut header = [0u8; 8];
         let mut header_len = 0usize;
         let mut read_buf = [0u8; 4096];
@@ -200,7 +203,13 @@ impl<S: AudioSink> VirtioSndDevice<S> {
                 let to_read = remaining.min(header.len() - header_len);
                 mem.read_into(addr, &mut header[header_len..header_len + to_read])?;
                 header_len += to_read;
-                addr += to_read as u64;
+                addr = addr
+                    .checked_add(to_read as u64)
+                    .ok_or(VirtQueueError::GuestMemory(GuestMemoryError::OutOfRange {
+                        paddr: addr,
+                        len: to_read,
+                        size: mem_size,
+                    }))?;
                 remaining -= to_read;
 
                 if header_len < header.len() {
@@ -242,7 +251,13 @@ impl<S: AudioSink> VirtioSndDevice<S> {
                     }
                 }
 
-                addr += to_read as u64;
+                addr = addr
+                    .checked_add(to_read as u64)
+                    .ok_or(VirtQueueError::GuestMemory(GuestMemoryError::OutOfRange {
+                        paddr: addr,
+                        len: to_read,
+                        size: mem_size,
+                    }))?;
                 remaining -= to_read;
             }
         }
@@ -393,17 +408,23 @@ fn virtio_snd_pcm_status(status: u32, latency_bytes: u32) -> [u8; 8] {
 }
 
 fn read_out_chain(mem: &impl GuestMemory, descs: &[Descriptor]) -> Result<Vec<u8>, VirtQueueError> {
-    let total: usize = descs
-        .iter()
-        .filter(|d| d.flags & VRING_DESC_F_WRITE == 0)
-        .map(|d| d.len as usize)
-        .sum();
+    let mut total: usize = 0;
+    for desc in descs.iter().filter(|d| d.flags & VRING_DESC_F_WRITE == 0) {
+        total = match total.checked_add(desc.len as usize) {
+            Some(total) => total,
+            None => return Ok(Vec::new()),
+        };
+        if total > MAX_CONTROL_MSG_BYTES {
+            return Ok(Vec::new());
+        }
+    }
     let mut buf = vec![0u8; total];
     let mut offset = 0usize;
     for desc in descs.iter().filter(|d| d.flags & VRING_DESC_F_WRITE == 0) {
         let len = desc.len as usize;
-        mem.read_into(desc.addr, &mut buf[offset..offset + len])?;
-        offset += len;
+        let end = offset + len;
+        mem.read_into(desc.addr, &mut buf[offset..end])?;
+        offset = end;
     }
     Ok(buf)
 }
@@ -986,5 +1007,54 @@ mod tests {
             VIRTIO_SND_S_BAD_MSG
         );
         assert_eq!(dev.sink.buffer_level_frames(), 0);
+    }
+
+    #[test]
+    fn control_oversized_request_returns_bad_msg() {
+        let mut mem = DenseMemory::new(0x8000).unwrap();
+
+        let desc_table = 0x1000;
+        let avail = 0x2000;
+        let used = 0x3000;
+
+        let req_addr = 0x110;
+        let resp_addr = 0x200;
+
+        write_desc(
+            &mut mem,
+            desc_table,
+            0,
+            Descriptor {
+                addr: req_addr,
+                len: (MAX_CONTROL_MSG_BYTES as u32) + 1,
+                flags: VRING_DESC_F_NEXT,
+                next: 1,
+            },
+        );
+        write_desc(
+            &mut mem,
+            desc_table,
+            1,
+            Descriptor {
+                addr: resp_addr,
+                len: 16,
+                flags: VRING_DESC_F_WRITE,
+                next: 0,
+            },
+        );
+
+        init_avail(&mut mem, avail, 0, 1, &[0]);
+        init_used(&mut mem, used);
+
+        let control_vq = VirtQueue::new(8, desc_table, avail, used);
+        let tx_vq = VirtQueue::new(8, 0, 0, 0);
+
+        let rb = AudioWorkletRingBuffer::new(1024);
+        let mut dev = VirtioSndDevice::new(rb, control_vq, tx_vq);
+        dev.process_control(&mut mem).unwrap();
+
+        let mut status = [0u8; 4];
+        mem.read_into(resp_addr, &mut status).unwrap();
+        assert_eq!(u32::from_le_bytes(status), VIRTIO_SND_S_BAD_MSG);
     }
 }

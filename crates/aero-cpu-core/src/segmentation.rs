@@ -67,7 +67,6 @@ pub struct SegmentCache {
 }
 
 impl SegmentCache {}
-
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SegmentRegister {
     pub selector: u16,

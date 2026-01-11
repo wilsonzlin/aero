@@ -359,6 +359,12 @@ pub struct HdaCodec {
     afg_power_state: u8,
 }
 
+impl Default for HdaCodec {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Debug, Clone)]
 struct CodecOutputWidget {
     stream_id: u8,
@@ -632,7 +638,7 @@ impl HdaCodec {
         match param_id {
             0x09 => {
                 // Audio widget capabilities: type=audio output (0), stereo, out amp present, format override.
-                (1 << 4) | (1 << 6) | (1 << 8)
+                (1u32 << 4) | (1u32 << 6) | (1u32 << 8)
             }
             0x0A => supported_pcm_caps(),
             0x0B => {
@@ -768,12 +774,6 @@ impl HdaCodec {
         };
 
         ((mute as u32) << 7) | gain as u32
-    }
-}
-
-impl Default for HdaCodec {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -1280,7 +1280,7 @@ impl HdaController {
                     _ if addr == REG_WAKEEN + 1 => {
                         self.wakeen = (self.wakeen & !0xff00) | ((byte as u16) << 8)
                     }
-                    REG_STATESTS => self.statests &= !(byte as u16),
+                    REG_STATESTS => self.statests &= !u16::from(byte),
                     _ if addr == REG_STATESTS + 1 => self.statests &= !((byte as u16) << 8),
                     _ => {}
                 }
