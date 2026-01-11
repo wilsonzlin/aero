@@ -132,6 +132,50 @@ describe("chunked delivery", () => {
     expect(res.headers["cache-control"]).toBe("no-store, no-transform");
   });
 
+  it("accepts padded chunk filenames (00000000.bin) in the gateway route", async () => {
+    const config = makeConfig();
+    const store = new MemoryImageStore();
+    const ownerId = "user-1";
+    const imageId = "image-1";
+
+    store.create({
+      id: imageId,
+      ownerId,
+      createdAt: new Date().toISOString(),
+      version: "v1",
+      s3Key: "images/user-1/image-1/v1/disk.img",
+      chunkedPrefix: "images/user-1/image-1/v1/",
+      uploadId: "upload-1",
+      status: "complete",
+    });
+
+    const s3 = {
+      async send(command: unknown) {
+        if (command instanceof HeadObjectCommand) {
+          expect(command.input.Key).toBe("images/user-1/image-1/v1/chunks/00000000.bin");
+          return {
+            ContentLength: 123,
+            ContentType: "application/octet-stream",
+            ETag: '"etag-chunk"',
+          };
+        }
+        throw new Error("unexpected command");
+      },
+    } as unknown as S3Client;
+
+    const app = buildApp({ config, s3, store });
+    await app.ready();
+
+    const res = await app.inject({
+      method: "HEAD",
+      url: `/v1/images/${imageId}/chunked/chunks/00000000.bin`,
+      headers: { "x-user-id": ownerId },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.headers["content-length"]).toBe("123");
+  });
+
   it("supports HEAD for manifest and chunk objects", async () => {
     const config = makeConfig();
     const store = new MemoryImageStore();
@@ -303,4 +347,3 @@ describe("chunked delivery", () => {
     expect(body.chunked?.manifestUrl).toContain("Signature=");
   });
 });
-

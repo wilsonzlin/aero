@@ -132,6 +132,18 @@ function formatChunkObjectName(chunkIndex: number): string {
   return String(chunkIndex).padStart(CHUNK_INDEX_WIDTH, "0");
 }
 
+function parseChunkIndexParam(raw: string): number {
+  const match = raw.match(/^(\d+)(?:\.bin)?$/);
+  if (!match) {
+    throw new ApiError(400, "chunkIndex must be a non-negative integer", "BAD_REQUEST");
+  }
+  const chunkIndex = Number.parseInt(match[1]!, 10);
+  if (!Number.isFinite(chunkIndex) || !Number.isInteger(chunkIndex) || chunkIndex < 0) {
+    throw new ApiError(400, "chunkIndex must be a non-negative integer", "BAD_REQUEST");
+  }
+  return chunkIndex;
+}
+
 function getChunkObjectKey(record: ImageRecord, chunkIndex: number): string | undefined {
   const prefix = getChunkedBasePrefix(record);
   if (prefix === undefined) return undefined;
@@ -713,10 +725,7 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
       throw new ApiError(409, "Image is not complete", "INVALID_STATE");
     }
 
-    if (!/^\d+$/.test(params.chunkIndex)) {
-      throw new ApiError(400, "chunkIndex must be a non-negative integer", "BAD_REQUEST");
-    }
-    const chunkIndex = Number.parseInt(params.chunkIndex, 10);
+    const chunkIndex = parseChunkIndexParam(params.chunkIndex);
     const key = getChunkObjectKey(record, chunkIndex);
     if (!key) {
       throw new ApiError(404, "Chunked image not available", "NOT_FOUND");
@@ -794,10 +803,7 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
       throw new ApiError(409, "Image is not complete", "INVALID_STATE");
     }
 
-    if (!/^\d+$/.test(params.chunkIndex)) {
-      throw new ApiError(400, "chunkIndex must be a non-negative integer", "BAD_REQUEST");
-    }
-    const chunkIndex = Number.parseInt(params.chunkIndex, 10);
+    const chunkIndex = parseChunkIndexParam(params.chunkIndex);
     const key = getChunkObjectKey(record, chunkIndex);
     if (!key) {
       throw new ApiError(404, "Chunked image not available", "NOT_FOUND");

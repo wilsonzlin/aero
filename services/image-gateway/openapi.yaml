@@ -510,7 +510,7 @@ paths:
           required: true
           schema:
             type: string
-            pattern: "^[0-9]+$"
+            pattern: "^[0-9]+(\\.bin)?$"
       responses:
         "200":
           description: OK
@@ -540,7 +540,7 @@ paths:
           required: true
           schema:
             type: string
-            pattern: "^[0-9]+$"
+            pattern: "^[0-9]+(\\.bin)?$"
       responses:
         "200":
           description: OK
