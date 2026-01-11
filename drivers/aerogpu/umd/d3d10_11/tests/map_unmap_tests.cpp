@@ -134,8 +134,8 @@ struct Harness {
   std::atomic<uint64_t> next_fence{1};
   std::atomic<uint64_t> last_submitted_fence{0};
   std::atomic<uint64_t> completed_fence{0};
-  uint32_t wait_call_count = 0;
-  uint32_t last_wait_timeout_ms = 0;
+  std::atomic<uint32_t> wait_call_count{0};
+  std::atomic<uint32_t> last_wait_timeout_ms{0};
   std::mutex fence_mutex;
   std::condition_variable fence_cv;
 
@@ -252,8 +252,8 @@ struct Harness {
       return E_INVALIDARG;
     }
     auto* h = reinterpret_cast<Harness*>(user);
-    h->wait_call_count++;
-    h->last_wait_timeout_ms = timeout_ms;
+    h->wait_call_count.fetch_add(1, std::memory_order_relaxed);
+    h->last_wait_timeout_ms.store(timeout_ms, std::memory_order_relaxed);
     if (fence == 0) {
       return S_OK;
     }
@@ -1079,8 +1079,8 @@ bool TestMapDoNotWaitReportsStillDrawing() {
   }
 
   AEROGPU_DDI_MAPPED_SUBRESOURCE mapped = {};
-  dev.harness.wait_call_count = 0;
-  dev.harness.last_wait_timeout_ms = ~0u;
+  dev.harness.wait_call_count.store(0, std::memory_order_relaxed);
+  dev.harness.last_wait_timeout_ms.store(~0u, std::memory_order_relaxed);
   HRESULT hr = dev.device_funcs.pfnMap(dev.hDevice,
                                        buf.hResource,
                                        /*subresource=*/0,
@@ -1090,10 +1090,12 @@ bool TestMapDoNotWaitReportsStillDrawing() {
   if (!Check(hr == DXGI_ERROR_WAS_STILL_DRAWING, "Map(DO_NOT_WAIT) should return DXGI_ERROR_WAS_STILL_DRAWING")) {
     return false;
   }
-  if (!Check(dev.harness.wait_call_count == 1, "Map(DO_NOT_WAIT) should issue exactly one fence wait poll")) {
+  if (!Check(dev.harness.wait_call_count.load(std::memory_order_relaxed) == 1,
+             "Map(DO_NOT_WAIT) should issue exactly one fence wait poll")) {
     return false;
   }
-  if (!Check(dev.harness.last_wait_timeout_ms == 0, "Map(DO_NOT_WAIT) should pass timeout_ms=0 to fence wait")) {
+  if (!Check(dev.harness.last_wait_timeout_ms.load(std::memory_order_relaxed) == 0,
+             "Map(DO_NOT_WAIT) should pass timeout_ms=0 to fence wait")) {
     return false;
   }
 
@@ -1102,8 +1104,8 @@ bool TestMapDoNotWaitReportsStillDrawing() {
   dev.harness.fence_cv.notify_all();
 
   mapped = {};
-  dev.harness.wait_call_count = 0;
-  dev.harness.last_wait_timeout_ms = ~0u;
+  dev.harness.wait_call_count.store(0, std::memory_order_relaxed);
+  dev.harness.last_wait_timeout_ms.store(~0u, std::memory_order_relaxed);
   hr = dev.device_funcs.pfnMap(dev.hDevice,
                                buf.hResource,
                                /*subresource=*/0,
@@ -1113,10 +1115,71 @@ bool TestMapDoNotWaitReportsStillDrawing() {
   if (!Check(hr == S_OK, "Map(DO_NOT_WAIT) should succeed once fence is complete")) {
     return false;
   }
-  if (!Check(dev.harness.wait_call_count == 1, "Map(DO_NOT_WAIT) retry should poll fence once")) {
+  if (!Check(dev.harness.wait_call_count.load(std::memory_order_relaxed) == 1,
+             "Map(DO_NOT_WAIT) retry should poll fence once")) {
     return false;
   }
-  if (!Check(dev.harness.last_wait_timeout_ms == 0, "Map(DO_NOT_WAIT) retry should still pass timeout_ms=0")) {
+  if (!Check(dev.harness.last_wait_timeout_ms.load(std::memory_order_relaxed) == 0,
+             "Map(DO_NOT_WAIT) retry should still pass timeout_ms=0")) {
+    return false;
+  }
+  if (!Check(mapped.pData != nullptr, "Map returned a non-null pointer")) {
+    return false;
+  }
+  dev.device_funcs.pfnUnmap(dev.hDevice, buf.hResource, /*subresource=*/0);
+
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, buf.hResource);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
+bool TestMapBlockingWaitUsesInfiniteTimeout() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/true, /*async_fences=*/true),
+             "InitTestDevice(map blocking wait)")) {
+    return false;
+  }
+
+  TestResource buf{};
+  if (!Check(CreateStagingBuffer(&dev, /*byte_width=*/16, AEROGPU_D3D11_CPU_ACCESS_READ, &buf), "CreateStagingBuffer")) {
+    return false;
+  }
+
+  dev.harness.completed_fence.store(0, std::memory_order_relaxed);
+  const HRESULT flush_hr = dev.device_funcs.pfnFlush(dev.hDevice);
+  if (!Check(flush_hr == S_OK, "Flush to create pending fence")) {
+    return false;
+  }
+  const uint64_t pending_fence = dev.harness.last_submitted_fence.load(std::memory_order_relaxed);
+  if (!Check(pending_fence != 0, "Flush returned a non-zero fence")) {
+    return false;
+  }
+
+  // Simulate completion so a blocking Map can succeed, but still force the UMD
+  // to call into the wait callback (its pre-check uses the UMD's internal fence
+  // cache, not the harness value).
+  dev.harness.completed_fence.store(pending_fence, std::memory_order_relaxed);
+
+  dev.harness.wait_call_count.store(0, std::memory_order_relaxed);
+  dev.harness.last_wait_timeout_ms.store(0, std::memory_order_relaxed);
+
+  AEROGPU_DDI_MAPPED_SUBRESOURCE mapped = {};
+  const HRESULT hr = dev.device_funcs.pfnMap(dev.hDevice,
+                                             buf.hResource,
+                                             /*subresource=*/0,
+                                             AEROGPU_DDI_MAP_READ,
+                                             /*map_flags=*/0,
+                                             &mapped);
+  if (!Check(hr == S_OK, "Map(READ) should succeed once fence is complete")) {
+    return false;
+  }
+  if (!Check(dev.harness.wait_call_count.load(std::memory_order_relaxed) == 1,
+             "Map(READ) should issue exactly one blocking fence wait")) {
+    return false;
+  }
+  if (!Check(dev.harness.last_wait_timeout_ms.load(std::memory_order_relaxed) == ~0u,
+             "Map(READ) should pass timeout_ms=~0u to fence wait")) {
     return false;
   }
   if (!Check(mapped.pData != nullptr, "Map returned a non-null pointer")) {
@@ -3349,6 +3412,7 @@ int main() {
   ok &= TestMapUsageValidation();
   ok &= TestMapFlagsValidation();
   ok &= TestMapDoNotWaitReportsStillDrawing();
+  ok &= TestMapBlockingWaitUsesInfiniteTimeout();
   ok &= TestInvalidUnmapReportsError();
   ok &= TestDynamicMapFlagsValidation();
   ok &= TestHostOwnedDynamicIABufferUploads();
