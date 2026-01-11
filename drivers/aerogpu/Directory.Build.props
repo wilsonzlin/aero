@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project>
+  <!--
+    CI builds `drivers/aerogpu/aerogpu.sln` with multiple C++ projects (KMD + UMDs) using:
+      /m
+      /p:BaseIntermediateOutputPath=...
+
+    Without a per-project intermediate directory, projects can contend for shared intermediates
+    like `vc143.pdb`, causing flaky parallel builds (fatal error C1041 / file-in-use).
+
+    `IntDir` may still be overridden by the command line (e.g. build scripts pass /p:IntDir=...).
+  -->
+  <PropertyGroup>
+    <IntDir Condition="'$(IntDir)' == ''">$(BaseIntermediateOutputPath)$(MSBuildProjectName)\$(Platform)\$(Configuration)\</IntDir>
+  </PropertyGroup>
+</Project>
+
