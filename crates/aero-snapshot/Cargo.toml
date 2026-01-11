@@ -13,7 +13,7 @@ aero-cpu-core = { path = "../aero-cpu-core" }
 lz4_flex = "0.11"
 thiserror = "1"
 
-[dev-dependencies]
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 aero-devices-input = { path = "../aero-devices-input" }
 proptest = "1.5"
 rand = "0.8"

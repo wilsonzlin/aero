@@ -1,4 +1,4 @@
-#![cfg(feature = "io-snapshot")]
+#![cfg(all(feature = "io-snapshot", not(target_arch = "wasm32")))]
 
 use std::io::Cursor;
 

@@ -1,3 +1,5 @@
+#![cfg(not(target_arch = "wasm32"))]
+
 use aero_cpu_decoder::{decode_one, DecodeMode, MAX_INSTRUCTION_LEN};
 use proptest::prelude::*;
 

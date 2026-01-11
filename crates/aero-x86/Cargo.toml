@@ -15,4 +15,6 @@ yaxpeax-arch = { version = "0.2", default-features = false, features = ["std"] }
 
 [dev-dependencies]
 iced-x86 = { workspace = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 proptest = "1.4"

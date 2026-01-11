@@ -16,8 +16,10 @@ aero-mmu = { path = "../aero-mmu" }
 qemu_diff = { package = "qemu-diff", path = "../../tools/qemu_diff", optional = true }
 
 [dev-dependencies]
-criterion = "0.5"
 memoffset = "0.9"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+criterion = "0.5"
 
 [[test]]
 name = "bus_wrapping"

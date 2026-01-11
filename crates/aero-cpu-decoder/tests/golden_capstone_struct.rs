@@ -1,3 +1,5 @@
+#![cfg(not(target_arch = "wasm32"))]
+
 use aero_cpu_decoder::{
     decode_instruction, DecodeMode, Instruction, OpKind, Register, MAX_INSTRUCTION_LEN,
 };

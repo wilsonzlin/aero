@@ -1,3 +1,5 @@
+#![cfg(not(target_arch = "wasm32"))]
+
 use aero_x86::decoder::{decode, DecodeMode};
 use iced_x86::{Code, Decoder, DecoderError, DecoderOptions, OpKind};
 use proptest::prelude::*;

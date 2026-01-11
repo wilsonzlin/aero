@@ -1,3 +1,5 @@
+#![cfg(not(target_arch = "wasm32"))]
+
 use aero_mem::{MemoryBus, PhysicalMemory, PhysicalMemoryOptions};
 use proptest::prelude::*;
 use std::sync::Arc;

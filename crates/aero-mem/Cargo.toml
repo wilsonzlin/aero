@@ -12,7 +12,7 @@ default = []
 # Implements compatibility traits for the older `crates/memory` subsystem.
 memory-compat = ["dep:memory"]
 
-[dev-dependencies]
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 criterion = "0.5"
 proptest = "1.5"
 
