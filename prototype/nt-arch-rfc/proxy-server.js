@@ -28,7 +28,8 @@ import {
   L2_TUNNEL_TYPE_PING,
   L2_TUNNEL_TYPE_PONG,
   decodeL2Message,
-  encodeL2Message,
+  encodeL2Frame,
+  encodePong,
 } from "./l2_tunnel_proto.js";
 
 const ETHERTYPE_ARP = 0x0806;
@@ -75,7 +76,7 @@ async function startProxyServer({
     const tcpConns = new Map(); // key: `${clientIp}:${clientPort}->${dstIp}:${dstPort}`
 
     function sendEthernet({ dstMac, srcMac, ethertype, payload }) {
-      ws.send(encodeL2Message(L2_TUNNEL_TYPE_FRAME, encodeEthernetFrame({ dstMac, srcMac, ethertype, payload })));
+      ws.send(encodeL2Frame(encodeEthernetFrame({ dstMac, srcMac, ethertype, payload })));
     }
 
     function sendArpReply({ requestEth, requestArp }) {
@@ -247,7 +248,7 @@ async function startProxyServer({
       }
 
       if (decoded.type === L2_TUNNEL_TYPE_PING) {
-        ws.send(encodeL2Message(L2_TUNNEL_TYPE_PONG, decoded.payload));
+        ws.send(encodePong(decoded.payload));
         return;
       }
 

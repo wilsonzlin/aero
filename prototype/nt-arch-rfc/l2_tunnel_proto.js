@@ -58,5 +58,9 @@ export {
   L2_TUNNEL_TYPE_PONG,
   L2_TUNNEL_VERSION,
   decodeL2Message,
+  encodeError,
+  encodeL2Frame,
   encodeL2Message,
+  encodePing,
+  encodePong,
 };

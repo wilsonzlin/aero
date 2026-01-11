@@ -28,7 +28,8 @@ import {
   L2_TUNNEL_TYPE_PING,
   L2_TUNNEL_TYPE_PONG,
   decodeL2Message,
-  encodeL2Message,
+  encodeL2Frame,
+  encodePong,
 } from "./l2_tunnel_proto.js";
 
 const ETHERTYPE_ARP = 0x0806;
@@ -112,12 +113,12 @@ async function runNetworkingProbe({
     }
 
     if (decoded.type === L2_TUNNEL_TYPE_PING) {
-      ws.send(encodeL2Message(L2_TUNNEL_TYPE_PONG, decoded.payload));
+      ws.send(encodePong(decoded.payload));
     }
   });
 
   function sendFrame(frameBuf) {
-    ws.send(encodeL2Message(L2_TUNNEL_TYPE_FRAME, frameBuf));
+    ws.send(encodeL2Frame(frameBuf));
   }
 
   async function waitFor(predicate, timeoutMs = 2000) {
