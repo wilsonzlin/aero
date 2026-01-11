@@ -42,9 +42,80 @@ describe("cloudfront signing", () => {
     expect(formatted).toContain(`${cookies[0].name}=`);
     expect(formatted).toContain("Path=/images");
     expect(formatted).toContain("Secure");
+    expect(formatted).toContain("HttpOnly");
     expect(formatted).toContain("SameSite=None");
     expect(formatted).toContain("Domain=example.com");
     expect(formatted).toContain(`Expires=${expiresAt.toUTCString()}`);
+  });
+
+  it("supports configurable SameSite attributes", () => {
+    const { privateKey } = generateKeyPairSync("rsa", {
+      modulusLength: 2048,
+      privateKeyEncoding: { type: "pkcs8", format: "pem" },
+      publicKeyEncoding: { type: "spki", format: "pem" },
+    });
+
+    const url = "https://d111111abcdef8.cloudfront.net/images/u/i/v/disk.img";
+    const expiresAt = new Date("2030-01-01T00:00:00.000Z");
+
+    const cookies = createSignedCookies({
+      url,
+      keyPairId: "KTESTKEYPAIR",
+      privateKeyPem: privateKey,
+      expiresAt,
+      cookiePath: "/images",
+      cookieSameSite: "Lax",
+    });
+
+    const formatted = formatSetCookie(cookies[0]);
+    expect(formatted).toContain("HttpOnly");
+    expect(formatted).toContain("SameSite=Lax");
+    expect(formatted).not.toContain("SameSite=None");
+  });
+
+  it("can emit Partitioned cookies when enabled", () => {
+    const { privateKey } = generateKeyPairSync("rsa", {
+      modulusLength: 2048,
+      privateKeyEncoding: { type: "pkcs8", format: "pem" },
+      publicKeyEncoding: { type: "spki", format: "pem" },
+    });
+
+    const url = "https://d111111abcdef8.cloudfront.net/images/u/i/v/disk.img";
+    const expiresAt = new Date("2030-01-01T00:00:00.000Z");
+
+    const cookies = createSignedCookies({
+      url,
+      keyPairId: "KTESTKEYPAIR",
+      privateKeyPem: privateKey,
+      expiresAt,
+      cookiePartitioned: true,
+    });
+
+    const formatted = formatSetCookie(cookies[0]);
+    expect(formatted).toContain("Partitioned");
+    expect(formatted).toContain("SameSite=None");
+  });
+
+  it("rejects Partitioned cookies unless SameSite=None", () => {
+    const { privateKey } = generateKeyPairSync("rsa", {
+      modulusLength: 2048,
+      privateKeyEncoding: { type: "pkcs8", format: "pem" },
+      publicKeyEncoding: { type: "spki", format: "pem" },
+    });
+
+    const url = "https://d111111abcdef8.cloudfront.net/images/u/i/v/disk.img";
+    const expiresAt = new Date("2030-01-01T00:00:00.000Z");
+
+    expect(() =>
+      createSignedCookies({
+        url,
+        keyPairId: "KTESTKEYPAIR",
+        privateKeyPem: privateKey,
+        expiresAt,
+        cookieSameSite: "Strict",
+        cookiePartitioned: true,
+      })
+    ).toThrow(/SameSite=None/);
   });
 
   it("produces a signed URL containing CloudFront query parameters", () => {
@@ -69,4 +140,3 @@ describe("cloudfront signing", () => {
     expect(signed).toMatch(/Signature=/);
   });
 });
-

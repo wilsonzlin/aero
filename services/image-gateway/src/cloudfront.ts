@@ -8,6 +8,8 @@ export interface SignedCookie {
   attributes: string[];
 }
 
+export type CookieSameSite = "None" | "Lax" | "Strict";
+
 export type StreamAuth =
   | { type: "cookie"; cookies: SignedCookie[]; expiresAt: string }
   | { type: "url"; expiresAt: string }
@@ -34,6 +36,8 @@ export function createSignedCookies(params: {
   expiresAt: Date;
   cookieDomain?: string;
   cookiePath?: string;
+  cookieSameSite?: CookieSameSite;
+  cookiePartitioned?: boolean;
 }): SignedCookie[] {
   const cookies = getSignedCookies({
     url: params.url,
@@ -42,11 +46,18 @@ export function createSignedCookies(params: {
     dateLessThan: params.expiresAt.toISOString(),
   });
 
+  const sameSite = params.cookieSameSite ?? "None";
+  if (params.cookiePartitioned && sameSite !== "None") {
+    throw new Error("Partitioned cookies require SameSite=None");
+  }
+
   const baseAttributes: string[] = [
     `Path=${params.cookiePath ?? "/"}`,
     "Secure",
-    "SameSite=None",
+    "HttpOnly",
+    `SameSite=${sameSite}`,
   ];
+  if (params.cookiePartitioned) baseAttributes.push("Partitioned");
   if (params.cookieDomain) baseAttributes.push(`Domain=${params.cookieDomain}`);
 
   // Use an explicit Expires attribute so browsers drop the cookie when the CloudFront policy expires.

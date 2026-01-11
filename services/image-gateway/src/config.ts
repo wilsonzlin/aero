@@ -1,5 +1,7 @@
 import fs from "node:fs";
 
+import type { CookieSameSite } from "./cloudfront";
+
 export type AuthMode = "dev" | "none";
 export type CloudFrontAuthMode = "cookie" | "url";
 
@@ -14,6 +16,8 @@ export interface Config {
   cloudfrontPrivateKeyPem?: string;
   cloudfrontAuthMode: CloudFrontAuthMode;
   cloudfrontCookieDomain?: string;
+  cloudfrontCookieSameSite: CookieSameSite;
+  cloudfrontCookiePartitioned: boolean;
   cloudfrontSignedTtlSeconds: number;
 
   imageBasePath: string;
@@ -47,6 +51,16 @@ function parseIntEnv(name: string, fallback: number): number {
     throw new Error(`Invalid ${name}: ${raw}`);
   }
   return value;
+}
+
+function parseSameSiteEnv(name: string, fallback: CookieSameSite): CookieSameSite {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const normalized = raw.trim().toLowerCase();
+  if (normalized === "none") return "None";
+  if (normalized === "lax") return "Lax";
+  if (normalized === "strict") return "Strict";
+  throw new Error(`Invalid ${name}: ${raw}`);
 }
 
 function normalizeBasePath(basePath: string): string {
@@ -89,6 +103,15 @@ export function loadConfig(): Config {
     ? loadPem(cloudfrontPrivateKeyRaw)
     : undefined;
 
+  const cloudfrontCookieSameSite = parseSameSiteEnv("CLOUDFRONT_COOKIE_SAMESITE", "None");
+  const cloudfrontCookiePartitioned = parseBool(
+    process.env.CLOUDFRONT_COOKIE_PARTITIONED,
+    false
+  );
+  if (cloudfrontCookiePartitioned && cloudfrontCookieSameSite !== "None") {
+    throw new Error("CLOUDFRONT_COOKIE_PARTITIONED requires CLOUDFRONT_COOKIE_SAMESITE=None");
+  }
+
   const partSizeBytes = parseIntEnv(
     "MULTIPART_PART_SIZE_BYTES",
     64 * 1024 * 1024
@@ -111,6 +134,8 @@ export function loadConfig(): Config {
     cloudfrontPrivateKeyPem,
     cloudfrontAuthMode,
     cloudfrontCookieDomain: process.env.CLOUDFRONT_COOKIE_DOMAIN,
+    cloudfrontCookieSameSite,
+    cloudfrontCookiePartitioned,
     cloudfrontSignedTtlSeconds: parseIntEnv(
       "CLOUDFRONT_SIGNED_TTL_SECONDS",
       60 * 60 * 12

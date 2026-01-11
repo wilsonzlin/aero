@@ -18,6 +18,8 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     cloudfrontPrivateKeyPem: undefined,
     cloudfrontAuthMode: "cookie",
     cloudfrontCookieDomain: undefined,
+    cloudfrontCookieSameSite: "None",
+    cloudfrontCookiePartitioned: false,
     cloudfrontSignedTtlSeconds: 60,
 
     imageBasePath: "/images",

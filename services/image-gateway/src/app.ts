@@ -406,6 +406,8 @@ export function buildApp(deps: BuildAppDeps): FastifyInstance {
           expiresAt,
           cookieDomain: deps.config.cloudfrontCookieDomain,
           cookiePath: deps.config.imageBasePath,
+          cookieSameSite: deps.config.cloudfrontCookieSameSite,
+          cookiePartitioned: deps.config.cloudfrontCookiePartitioned,
         });
 
         const setCookie = cookies.map(formatSetCookie);

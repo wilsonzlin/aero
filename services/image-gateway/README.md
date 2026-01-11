@@ -66,6 +66,8 @@ Useful optional knobs:
 
 - `CLOUDFRONT_AUTH_MODE=cookie|url` (default `cookie`)
 - `CLOUDFRONT_COOKIE_DOMAIN` (optional; e.g. `.example.com` when API runs on `api.example.com` and CloudFront on `images.example.com`)
+- `CLOUDFRONT_COOKIE_SAMESITE=None|Lax|Strict` (default `None`; use `Lax`/`Strict` when streaming is same-site and you don't need third-party cookies)
+- `CLOUDFRONT_COOKIE_PARTITIONED=true|false` (default `false`; adds the `Partitioned` attribute for CHIPS-capable browsers, requires `CLOUDFRONT_COOKIE_SAMESITE=None`)
 - `CORS_ALLOW_ORIGIN` (default `*`, used for browser CORS; set an explicit origin if you need credentialed requests / cookie-based auth)
 - `MULTIPART_PART_SIZE_BYTES` (default `67108864` / 64MiB; must be 5MiB–5GiB)
 
