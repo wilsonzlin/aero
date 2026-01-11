@@ -1,5 +1,5 @@
 import { WebHidPassthroughManager } from "../platform/webhid_passthrough";
-import { normalizeCollections, type HidCollectionInfo, type NormalizedHidCollectionInfo } from "./webhid_normalize";
+import { normalizeCollections, type NormalizedHidCollectionInfo } from "./webhid_normalize";
 import {
   isHidErrorMessage,
   isHidLogMessage,
@@ -196,7 +196,7 @@ export class WebHidBroker {
     // but real Chromium devices always populate them. `normalizeCollections` expects a
     // fully-populated shape matching the Rust contract, so cast and let the normalizer
     // throw if a browser provides incomplete metadata.
-    const collections = normalizeCollections(device.collections as unknown as readonly HidCollectionInfo[]);
+    const collections = normalizeCollections(device.collections);
     const hasInterruptOut = computeHasInterruptOut(collections);
 
     const attachMsg: HidAttachMessage = {

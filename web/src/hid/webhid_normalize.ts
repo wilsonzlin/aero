@@ -261,8 +261,10 @@ function normalizeCollection(collection: HidCollectionInfo): NormalizedHidCollec
   };
 }
 
-export function normalizeCollections(
-  collections: readonly HidCollectionInfo[],
-): NormalizedHidCollectionInfo[] {
-  return Array.from(collections, normalizeCollection);
+// Overload so callsites can pass `HIDDevice.collections` without casts (the WebHID types exposed by
+// `@types/w3c-web-hid` are optional/loose and do not precisely match Chromium's runtime shape).
+export function normalizeCollections(collections: readonly HidCollectionInfo[]): NormalizedHidCollectionInfo[];
+export function normalizeCollections(collections: readonly HIDCollectionInfo[]): NormalizedHidCollectionInfo[];
+export function normalizeCollections(collections: readonly unknown[]): NormalizedHidCollectionInfo[] {
+  return Array.from(collections as readonly HidCollectionInfo[], normalizeCollection);
 }
