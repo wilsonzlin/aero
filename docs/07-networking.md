@@ -706,6 +706,8 @@ Running a UDP relay makes your server a **network egress point**. If it is reach
 The WebRTC UDP relay DataChannel framing and signaling schema are specified in
 [`proxy/webrtc-udp-relay/PROTOCOL.md`](../proxy/webrtc-udp-relay/PROTOCOL.md).
 
+The same relay also exposes `GET /udp` as a WebSocket fallback using the same v1/v2 datagram framing.
+
 ### Browser integration: gateway-minted relay credentials
 
 The browser should **not** embed long-lived relay secrets. Instead, it obtains a short-lived relay token from the Aero Gateway:

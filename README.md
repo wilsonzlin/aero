@@ -278,7 +278,7 @@ Browsers cannot open arbitrary TCP/UDP sockets directly. Aero’s guest networki
 - **UDP:** [`proxy/webrtc-udp-relay`](./proxy/webrtc-udp-relay/) is the primary UDP path. It relays UDP over a WebRTC DataChannel (`label="udp"`, `ordered=false`, `maxRetransmits=0`) using versioned v1/v2 datagram framing and signaling defined in:
   - [`proxy/webrtc-udp-relay/PROTOCOL.md`](./proxy/webrtc-udp-relay/PROTOCOL.md)
 
-  A WebSocket UDP fallback is planned; it is intended to reuse the same v1/v2 framing.
+  The same service also exposes `GET /udp` as a WebSocket UDP relay fallback using the same v1/v2 framing (useful when WebRTC isn’t available).
 
 ### Local dev workflow (run alongside Vite)
 
@@ -305,7 +305,7 @@ The proxy exposes:
 - `WS /tcp?v=1&host=<host>&port=<port>` (or `?v=1&target=<host>:<port>`) — compatible with the gateway `/tcp` URL format.
 - `WS /udp?v=1&host=<host>&port=<port>` (or `?v=1&target=<host>:<port>`) — **legacy per-target** UDP relay (one destination per WebSocket). This is *not* the multiplexed v1/v2 datagram framing used by `proxy/webrtc-udp-relay`.
 
-A multiplexed WebSocket UDP mode (same v1/v2 datagram framing as `proxy/webrtc-udp-relay/PROTOCOL.md`) is planned but not yet implemented in `net-proxy`.
+A multiplexed WebSocket UDP mode (same v1/v2 datagram framing as `proxy/webrtc-udp-relay/PROTOCOL.md`) is not yet implemented in `net-proxy`. If you need this framing over WebSocket today, `proxy/webrtc-udp-relay` also exposes `GET /udp`.
 
 See `net-proxy/README.md` for allowlisting and client URL examples.
 

@@ -37,7 +37,7 @@ export function mountSettingsPanel(container: HTMLElement, manager: AeroConfigMa
 
   const proxyInput = document.createElement("input");
   proxyInput.type = "url";
-  proxyInput.placeholder = "wss://proxy.example/ws (or blank)";
+  proxyInput.placeholder = "wss://gateway.example.com (or blank)";
   proxyInput.autocomplete = "off";
   proxyInput.spellcheck = false;
 
