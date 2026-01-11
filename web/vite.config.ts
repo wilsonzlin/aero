@@ -1,4 +1,5 @@
 import { execSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig, type Plugin } from "vite";
@@ -104,9 +105,28 @@ function wasmMimeTypePlugin(): Plugin {
   };
 }
 
+function audioWorkletDependenciesPlugin(): Plugin {
+  // Vite treats AudioWorklet modules loaded via `audioWorklet.addModule(new URL(...))` as static
+  // assets and does not follow their ESM imports. Our mic worklet (`src/audio/mic-worklet-processor.js`)
+  // imports `./mic_ring.js`, so we manually emit a copy into `dist/assets/` so the browser can
+  // resolve it at runtime.
+  const srcMicRingPath = resolve(rootDir, "src/audio/mic_ring.js");
+  const source = readFileSync(srcMicRingPath, "utf8");
+  return {
+    name: "aero-audio-worklet-deps",
+    generateBundle() {
+      this.emitFile({
+        type: "asset",
+        fileName: "assets/mic_ring.js",
+        source,
+      });
+    },
+  };
+}
+
 export default defineConfig({
   assetsInclude: ["**/*.wasm"],
-  plugins: [aeroBuildInfoPlugin(), wasmMimeTypePlugin()],
+  plugins: [aeroBuildInfoPlugin(), wasmMimeTypePlugin(), audioWorkletDependenciesPlugin()],
   server: {
     port: 5173,
     strictPort: true,
