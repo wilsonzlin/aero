@@ -203,8 +203,8 @@ GitHub Actions runs a dedicated workflow (`guest-tools-packager`) on PRs that to
 packaging inputs (`tools/packaging/**`, `guest-tools/**`, etc.). It covers:
 
 - `cargo test --manifest-path tools/packaging/aero_packager/Cargo.toml`
-- A lightweight consistency check that ensures `guest-tools/config/devices.cmd` HWIDs stay in sync
-  with `tools/packaging/specs/win7-virtio-win.json`.
+- A lightweight consistency check that ensures `guest-tools/config/devices.cmd` (service name + HWIDs)
+  stays in sync with `tools/packaging/specs/win7-virtio-win.json`.
 
 You can run the same check locally:
 
