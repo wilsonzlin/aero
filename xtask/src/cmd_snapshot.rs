@@ -135,15 +135,15 @@ fn cmd_inspect(args: Vec<String>) -> Result<()> {
             );
             if let Some(chunk_size) = ram.chunk_size {
                 println!("  chunk_size: {} bytes", chunk_size);
-                let chunks = ram
+                let chunk_count = ram
                     .total_len
                     .checked_add(chunk_size as u64 - 1)
                     .unwrap_or(u64::MAX)
                     / chunk_size as u64;
-                println!("  chunks: {chunks}");
+                println!("  chunk_count: {chunk_count}");
             }
             if let Some(dirty_count) = ram.dirty_count {
-                println!("  dirty_pages: {dirty_count}");
+                println!("  dirty_count: {dirty_count}");
             }
         }
         None => println!("  <missing>"),
