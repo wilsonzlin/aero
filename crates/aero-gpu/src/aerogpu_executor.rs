@@ -1018,7 +1018,13 @@ fn fs_main() -> @location(0) vec4<f32> {
 
             match result {
                 Ok(()) => packets_processed += 1,
-                Err(err) => return Err((0, err, packets_processed)),
+                Err(err) => {
+                    // Drop partially-recorded work, but still flush any pending `queue.write_*`
+                    // uploads so they don't remain queued indefinitely and reorder with later
+                    // submissions.
+                    self.queue.submit([]);
+                    return Err((0, err, packets_processed));
+                }
             }
         }
 
