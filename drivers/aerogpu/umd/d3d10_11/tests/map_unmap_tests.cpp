@@ -278,6 +278,11 @@ struct TestResource {
   std::vector<uint8_t> storage;
 };
 
+struct TestShaderResourceView {
+  D3D10DDI_HSHADERRESOURCEVIEW hView = {};
+  std::vector<uint8_t> storage;
+};
+
 constexpr uint32_t kDxgiFormatB8G8R8A8Unorm = 87; // DXGI_FORMAT_B8G8R8A8_UNORM
 
 constexpr uint32_t kD3D11BindVertexBuffer = 0x1;
@@ -407,6 +412,37 @@ bool CreateStagingTexture2D(TestDevice* dev,
 
   const HRESULT hr = dev->device_funcs.pfnCreateResource(dev->hDevice, &desc, out->hResource);
   if (!Check(hr == S_OK, "CreateResource(tex2d)")) {
+    return false;
+  }
+  return true;
+}
+
+bool CreateShaderResourceView(TestDevice* dev, TestResource* tex, TestShaderResourceView* out) {
+  if (!dev || !tex || !out) {
+    return false;
+  }
+
+  AEROGPU_DDIARG_CREATESHADERRESOURCEVIEW desc = {};
+  desc.hResource = tex->hResource;
+  desc.Format = 0;
+  desc.ViewDimension = AEROGPU_DDI_SRV_DIMENSION_TEXTURE2D;
+  desc.MostDetailedMip = 0;
+  desc.MipLevels = 1;
+
+  const SIZE_T size = dev->device_funcs.pfnCalcPrivateShaderResourceViewSize(dev->hDevice, &desc);
+  // Unlike resources (which must at least hold a pointer-sized `hResource.pDrvPrivate`),
+  // a view's private storage can be smaller than `sizeof(void*)` (our current SRV
+  // backing struct is 4 bytes). Still require a non-zero size so the function is
+  // implemented.
+  if (!Check(size != 0, "CalcPrivateShaderResourceViewSize returned a non-zero size")) {
+    return false;
+  }
+
+  out->storage.assign(static_cast<size_t>(size), 0);
+  out->hView.pDrvPrivate = out->storage.data();
+
+  const HRESULT hr = dev->device_funcs.pfnCreateShaderResourceView(dev->hDevice, &desc, out->hView);
+  if (!Check(hr == S_OK, "CreateShaderResourceView")) {
     return false;
   }
   return true;
@@ -1471,6 +1507,67 @@ bool TestHostOwnedCopyResourceBufferReadback() {
 
   dev.device_funcs.pfnDestroyResource(dev.hDevice, dst.hResource);
   dev.device_funcs.pfnDestroyResource(dev.hDevice, src.hResource);
+
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
+bool TestSubmitAllocListTracksBoundConstantBuffer() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/true), "InitTestDevice(track CB alloc)")) {
+    return false;
+  }
+
+  TestResource cb{};
+  if (!Check(CreateBuffer(&dev,
+                          /*byte_width=*/32,
+                          AEROGPU_D3D11_USAGE_DYNAMIC,
+                          kD3D11BindConstantBuffer,
+                          AEROGPU_D3D11_CPU_ACCESS_WRITE,
+                          &cb),
+             "CreateBuffer(dynamic CB)")) {
+    return false;
+  }
+
+  HRESULT hr = dev.device_funcs.pfnFlush(dev.hDevice);
+  if (!Check(hr == S_OK, "Flush after CreateResource(dynamic CB)")) {
+    return false;
+  }
+
+  CmdLoc create_loc = FindLastOpcode(dev.harness.last_stream.data(), dev.harness.last_stream.size(), AEROGPU_CMD_CREATE_BUFFER);
+  if (!Check(create_loc.hdr != nullptr, "CREATE_BUFFER emitted")) {
+    return false;
+  }
+  const auto* create_cmd =
+      reinterpret_cast<const aerogpu_cmd_create_buffer*>(dev.harness.last_stream.data() + create_loc.offset);
+  const AEROGPU_WDDM_ALLOCATION_HANDLE backing = create_cmd->backing_alloc_id;
+  if (!Check(backing != 0, "CREATE_BUFFER backing_alloc_id != 0")) {
+    return false;
+  }
+
+  // Flush clears the device's referenced allocation list. Binding the CB should
+  // repopulate it before the next submission.
+  D3D10DDI_HRESOURCE buffers[1] = {cb.hResource};
+  dev.device_funcs.pfnVsSetConstantBuffers(dev.hDevice, /*start_slot=*/0, /*buffer_count=*/1, buffers);
+
+  hr = dev.device_funcs.pfnFlush(dev.hDevice);
+  if (!Check(hr == S_OK, "Flush after VsSetConstantBuffers")) {
+    return false;
+  }
+
+  bool found = false;
+  for (auto h : dev.harness.last_allocs) {
+    if (h == backing) {
+      found = true;
+      break;
+    }
+  }
+  if (!Check(found, "submit alloc list contains bound constant buffer allocation")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, cb.hResource);
   dev.device_funcs.pfnDestroyDevice(dev.hDevice);
   dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
   return true;
@@ -1572,6 +1669,67 @@ bool TestHostOwnedCopyResourceTextureReadback() {
 
   dev.device_funcs.pfnDestroyResource(dev.hDevice, dst.hResource);
   dev.device_funcs.pfnDestroyResource(dev.hDevice, src.hResource);
+
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
+bool TestSubmitAllocListTracksBoundShaderResource() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/true), "InitTestDevice(track SRV alloc)")) {
+    return false;
+  }
+
+  TestResource tex{};
+  if (!Check(CreateStagingTexture2D(&dev, /*width=*/3, /*height=*/2, /*cpu_access_flags=*/0, &tex),
+             "CreateStagingTexture2D")) {
+    return false;
+  }
+
+  HRESULT hr = dev.device_funcs.pfnFlush(dev.hDevice);
+  if (!Check(hr == S_OK, "Flush after CreateResource(texture)")) {
+    return false;
+  }
+
+  CmdLoc create_loc =
+      FindLastOpcode(dev.harness.last_stream.data(), dev.harness.last_stream.size(), AEROGPU_CMD_CREATE_TEXTURE2D);
+  if (!Check(create_loc.hdr != nullptr, "CREATE_TEXTURE2D emitted")) {
+    return false;
+  }
+  const auto* create_cmd =
+      reinterpret_cast<const aerogpu_cmd_create_texture2d*>(dev.harness.last_stream.data() + create_loc.offset);
+  const AEROGPU_WDDM_ALLOCATION_HANDLE backing = create_cmd->backing_alloc_id;
+  if (!Check(backing != 0, "CREATE_TEXTURE2D backing_alloc_id != 0")) {
+    return false;
+  }
+
+  TestShaderResourceView srv{};
+  if (!Check(CreateShaderResourceView(&dev, &tex, &srv), "CreateShaderResourceView")) {
+    return false;
+  }
+
+  D3D10DDI_HSHADERRESOURCEVIEW views[1] = {srv.hView};
+  dev.device_funcs.pfnVsSetShaderResources(dev.hDevice, /*start_slot=*/0, /*view_count=*/1, views);
+
+  hr = dev.device_funcs.pfnFlush(dev.hDevice);
+  if (!Check(hr == S_OK, "Flush after VsSetShaderResources")) {
+    return false;
+  }
+
+  bool found = false;
+  for (auto h : dev.harness.last_allocs) {
+    if (h == backing) {
+      found = true;
+      break;
+    }
+  }
+  if (!Check(found, "submit alloc list contains bound shader resource allocation")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnDestroyShaderResourceView(dev.hDevice, srv.hView);
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, tex.hResource);
   dev.device_funcs.pfnDestroyDevice(dev.hDevice);
   dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
   return true;
@@ -2886,6 +3044,8 @@ int main() {
   ok &= TestDynamicBufferUsageValidation();
   ok &= TestHostOwnedDynamicConstantBufferUploads();
   ok &= TestGuestBackedDynamicConstantBufferDirtyRange();
+  ok &= TestSubmitAllocListTracksBoundConstantBuffer();
+  ok &= TestSubmitAllocListTracksBoundShaderResource();
   ok &= TestHostOwnedCopyResourceBufferReadback();
   ok &= TestHostOwnedCopyResourceTextureReadback();
   ok &= TestGuestBackedCopyResourceBufferReadback();

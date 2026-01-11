@@ -966,6 +966,18 @@ void track_resource_alloc_for_submit_locked(AeroGpuDevice* dev, const AeroGpuRes
   track_alloc_for_submit_locked(dev, res->alloc_handle);
 }
 
+static const AeroGpuResource* FindLiveResourceByHandleLocked(const AeroGpuDevice* dev, aerogpu_handle_t handle) {
+  if (!dev || handle == kInvalidHandle) {
+    return nullptr;
+  }
+  for (const auto* res : dev->live_resources) {
+    if (res && res->handle == handle) {
+      return res;
+    }
+  }
+  return nullptr;
+}
+
 void track_current_state_allocs_for_submit_locked(AeroGpuDevice* dev) {
   if (!dev) {
     return;
@@ -974,6 +986,21 @@ void track_current_state_allocs_for_submit_locked(AeroGpuDevice* dev) {
   track_resource_alloc_for_submit_locked(dev, dev->current_dsv);
   track_alloc_for_submit_locked(dev, dev->current_vb_alloc);
   track_alloc_for_submit_locked(dev, dev->current_ib_alloc);
+
+  // Constant buffers and shader resources can be backed by guest allocations. Keep
+  // them in the per-submit allocation list so the host can resolve alloc_id -> GPA
+  // for resource bindings referenced by the command stream.
+  for (uint32_t i = 0; i < kMaxConstantBufferSlots; i++) {
+    const aerogpu_handle_t vs_handle = dev->vs_constant_buffers[i].buffer;
+    track_resource_alloc_for_submit_locked(dev, FindLiveResourceByHandleLocked(dev, vs_handle));
+    const aerogpu_handle_t ps_handle = dev->ps_constant_buffers[i].buffer;
+    track_resource_alloc_for_submit_locked(dev, FindLiveResourceByHandleLocked(dev, ps_handle));
+  }
+
+  for (uint32_t i = 0; i < kMaxShaderResourceSlots; i++) {
+    track_resource_alloc_for_submit_locked(dev, FindLiveResourceByHandleLocked(dev, dev->vs_srvs[i]));
+    track_resource_alloc_for_submit_locked(dev, FindLiveResourceByHandleLocked(dev, dev->ps_srvs[i]));
+  }
 }
 
 #if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS) && AEROGPU_UMD_USE_WDK_HEADERS
