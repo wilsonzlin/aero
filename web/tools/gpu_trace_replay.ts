@@ -1040,11 +1040,12 @@ void main() {
             const height = readU32(pv, off + 24);
             const mipLevels = readU32(pv, off + 28);
             const arrayLayers = readU32(pv, off + 32);
+            const rowPitchBytes = readU32(pv, off + 36);
             const backingAllocId = readU32(pv, off + 40);
+            const backingOffsetBytes = readU32(pv, off + 44);
 
             if (mipLevels !== 1) fail("ACMD CREATE_TEXTURE2D mip_levels not supported: " + mipLevels);
             if (arrayLayers !== 1) fail("ACMD CREATE_TEXTURE2D array_layers not supported: " + arrayLayers);
-            if (backingAllocId !== 0) fail("ACMD CREATE_TEXTURE2D backing_alloc_id not supported yet");
 
             let glInternalFormat = 0;
             let glFormat = 0;
@@ -1065,6 +1066,30 @@ void main() {
             gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
             gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
             gl.texImage2D(gl.TEXTURE_2D, 0, glInternalFormat, width, height, 0, glFormat, glType, null);
+
+            if (backingAllocId !== 0) {
+              if (!allocMemory) fail("ACMD CREATE_TEXTURE2D missing alloc memory map");
+              const alloc = allocMemory.get(backingAllocId);
+              if (!alloc) fail("ACMD CREATE_TEXTURE2D missing alloc_id=" + backingAllocId);
+
+              const rowBytes = width * 4;
+              const pitch = rowPitchBytes !== 0 ? rowPitchBytes : rowBytes;
+              if (pitch < rowBytes) {
+                fail("ACMD CREATE_TEXTURE2D row_pitch_bytes too small: " + pitch + " < " + rowBytes);
+              }
+
+              const requiredBytes = backingOffsetBytes + pitch * height;
+              if (requiredBytes > alloc.bytes.byteLength) {
+                fail("ACMD CREATE_TEXTURE2D backing range out of bounds");
+              }
+
+              const packed = new Uint8Array(rowBytes * height);
+              for (let y = 0; y < height; y++) {
+                const srcOff = backingOffsetBytes + y * pitch;
+                packed.set(alloc.bytes.subarray(srcOff, srcOff + rowBytes), y * rowBytes);
+              }
+              gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, width, height, glFormat, glType, packed);
+            }
 
             const fb = gl.createFramebuffer();
             if (!fb) fail("gl.createFramebuffer failed");
@@ -1631,14 +1656,15 @@ void main() {
             const height = dv.getUint32(off + 24, true);
             const mipLevels = dv.getUint32(off + 28, true);
             const arrayLayers = dv.getUint32(off + 32, true);
+            const rowPitchBytes = dv.getUint32(off + 36, true);
             const backingAllocId = dv.getUint32(off + 40, true);
+            const backingOffsetBytes = dv.getUint32(off + 44, true);
 
             if (width === 0 || height === 0) fail("CREATE_TEXTURE2D invalid dimensions");
             if (mipLevels !== 1 || arrayLayers !== 1) {
               fail("CREATE_TEXTURE2D only supports mip_levels=1, array_layers=1");
             }
             if (format !== AEROGPU_FORMAT_R8G8B8A8_UNORM) fail("unsupported texture format");
-            if (backingAllocId !== 0) fail("backed textures are not supported in JS replayer");
 
             const tex = gl.createTexture();
             if (!tex) fail("gl.createTexture failed");
@@ -1658,6 +1684,28 @@ void main() {
               gl.UNSIGNED_BYTE,
               null,
             );
+
+            if (backingAllocId !== 0) {
+              const allocBytes = memAllocs.get(backingAllocId);
+              if (!allocBytes) fail("missing alloc_id=" + backingAllocId + " for CREATE_TEXTURE2D");
+
+              const rowBytes = width * 4;
+              const pitch = rowPitchBytes !== 0 ? rowPitchBytes : rowBytes;
+              if (pitch < rowBytes) {
+                fail("CREATE_TEXTURE2D row_pitch_bytes too small: " + pitch + " < " + rowBytes);
+              }
+              const requiredBytes = backingOffsetBytes + pitch * height;
+              if (requiredBytes > allocBytes.byteLength) {
+                fail("CREATE_TEXTURE2D backing out of bounds");
+              }
+
+              const packed = new Uint8Array(rowBytes * height);
+              for (let y = 0; y < height; y++) {
+                const srcOff = backingOffsetBytes + y * pitch;
+                packed.set(allocBytes.subarray(srcOff, srcOff + rowBytes), y * rowBytes);
+              }
+              gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, packed);
+            }
 
             const fb = gl.createFramebuffer();
             if (!fb) fail("gl.createFramebuffer failed");
