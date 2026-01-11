@@ -1,3 +1,4 @@
+use js_sys::{Object, Reflect, Uint8Array};
 use wasm_bindgen::prelude::*;
 
 use aero_usb::GuestMemory;
@@ -383,6 +384,9 @@ pub struct WebUsbUhciPassthroughHarness {
     phase: HarnessPhase,
     phase_detail: String,
     reset_remaining: u8,
+    frames_stepped: u32,
+    total_actions_drained: u32,
+    total_completions_pushed: u32,
 
     max_packet: usize,
     pending_chain: Option<ControlChain>,
@@ -394,6 +398,14 @@ pub struct WebUsbUhciPassthroughHarness {
 }
 
 impl WebUsbUhciPassthroughHarness {
+    fn passthrough_device(&self) -> &UsbWebUsbPassthroughDevice {
+        let port = self.ctrl.bus().port(0).expect("UHCI port 0 exists");
+        let dev = port.device.as_deref().expect("UHCI port 0 device attached");
+        dev.as_any()
+            .downcast_ref::<UsbWebUsbPassthroughDevice>()
+            .expect("UHCI port 0 device is UsbWebUsbPassthroughDevice")
+    }
+
     fn passthrough_device_mut(&mut self) -> &mut UsbWebUsbPassthroughDevice {
         let port = self.ctrl.bus_mut().port_mut(0).expect("UHCI port 0 exists");
         let dev = port.device.as_mut().expect("UHCI port 0 device attached");
@@ -440,6 +452,9 @@ impl WebUsbUhciPassthroughHarness {
             phase: HarnessPhase::ResetPort,
             phase_detail: "resetting port".to_string(),
             reset_remaining: 50,
+            frames_stepped: 0,
+            total_actions_drained: 0,
+            total_completions_pushed: 0,
             max_packet: 8,
             pending_chain: None,
             last_error: None,
@@ -455,7 +470,107 @@ impl WebUsbUhciPassthroughHarness {
         format!("{:?}: {}", self.phase, self.phase_detail)
     }
 
-    pub fn tick(&mut self) {
+    pub fn reset(&mut self) {
+        *self = Self::new();
+    }
+
+    pub fn status(&self) -> JsValue {
+        let summary = self.passthrough_device().pending_summary();
+
+        let obj = Object::new();
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("phase"),
+            &JsValue::from_str(&format!("{:?}", self.phase)),
+        );
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("phaseDetail"),
+            &JsValue::from_str(&self.phase_detail),
+        );
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("complete"),
+            &JsValue::from_bool(matches!(self.phase, HarnessPhase::Done)),
+        );
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("resetRemaining"),
+            &JsValue::from_f64(self.reset_remaining as f64),
+        );
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("framesStepped"),
+            &JsValue::from_f64(self.frames_stepped as f64),
+        );
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("totalActionsDrained"),
+            &JsValue::from_f64(self.total_actions_drained as f64),
+        );
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("totalCompletionsPushed"),
+            &JsValue::from_f64(self.total_completions_pushed as f64),
+        );
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("maxPacket"),
+            &JsValue::from_f64(self.max_packet as f64),
+        );
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("configTotalLen"),
+            &JsValue::from_f64(self.config_total_len as f64),
+        );
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("configValue"),
+            &JsValue::from_f64(self.config_value as f64),
+        );
+
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("queuedActions"),
+            &JsValue::from_f64(summary.queued_actions as f64),
+        );
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("queuedCompletions"),
+            &JsValue::from_f64(summary.queued_completions as f64),
+        );
+        let inflight_control = summary
+            .inflight_control
+            .map(|id| JsValue::from_f64(id as f64))
+            .unwrap_or(JsValue::NULL);
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("inflightControl"),
+            &inflight_control,
+        );
+        let _ = Reflect::set(
+            &obj,
+            &JsValue::from_str("inflightEndpoints"),
+            &JsValue::from_f64(summary.inflight_endpoints as f64),
+        );
+
+        let device_desc = if self.device_descriptor.is_empty() {
+            JsValue::NULL
+        } else {
+            Uint8Array::from(self.device_descriptor.as_slice()).into()
+        };
+        let config_desc = if self.config_descriptor.is_empty() {
+            JsValue::NULL
+        } else {
+            Uint8Array::from(self.config_descriptor.as_slice()).into()
+        };
+        let _ = Reflect::set(&obj, &JsValue::from_str("deviceDescriptor"), &device_desc);
+        let _ = Reflect::set(&obj, &JsValue::from_str("configDescriptor"), &config_desc);
+        obj.into()
+    }
+
+    pub fn tick(&mut self) -> JsValue {
+        self.frames_stepped = self.frames_stepped.saturating_add(1);
         // Drive one UHCI frame worth of work.
         self.ctrl.step_frame(&mut self.mem, &mut self.irq);
 
@@ -464,14 +579,14 @@ impl WebUsbUhciPassthroughHarness {
                 self.phase = HarnessPhase::Error;
                 self.phase_detail = err;
                 self.pending_chain = None;
-                return;
+                return self.status();
             }
         }
         if let Some(err) = self.last_error.take() {
             self.phase = HarnessPhase::Error;
             self.phase_detail = err;
             self.pending_chain = None;
-            return;
+            return self.status();
         }
 
         match self.phase {
@@ -479,7 +594,7 @@ impl WebUsbUhciPassthroughHarness {
                 if self.reset_remaining > 0 {
                     self.reset_remaining -= 1;
                     self.phase_detail = format!("port reset... {}/50", 50 - self.reset_remaining);
-                    return;
+                    return self.status();
                 }
 
                 // Enable the controller once the port reset window is done.
@@ -508,7 +623,7 @@ impl WebUsbUhciPassthroughHarness {
             HarnessPhase::GetDeviceDesc8 => {
                 if let Some(chain) = &self.pending_chain {
                     if !chain.is_complete(&self.mem) {
-                        return;
+                        return self.status();
                     }
                     let bytes = chain.collect_in_bytes(&self.mem);
                     if bytes.len() >= 8 {
@@ -540,7 +655,7 @@ impl WebUsbUhciPassthroughHarness {
             HarnessPhase::GetDeviceDesc18 => {
                 if let Some(chain) = &self.pending_chain {
                     if !chain.is_complete(&self.mem) {
-                        return;
+                        return self.status();
                     }
                     self.device_descriptor = chain.collect_in_bytes(&self.mem);
 
@@ -565,7 +680,7 @@ impl WebUsbUhciPassthroughHarness {
             HarnessPhase::SetAddress => {
                 if let Some(chain) = &self.pending_chain {
                     if !chain.is_complete(&self.mem) {
-                        return;
+                        return self.status();
                     }
 
                     self.phase = HarnessPhase::GetConfigDesc9;
@@ -590,7 +705,7 @@ impl WebUsbUhciPassthroughHarness {
             HarnessPhase::GetConfigDesc9 => {
                 if let Some(chain) = &self.pending_chain {
                     if !chain.is_complete(&self.mem) {
-                        return;
+                        return self.status();
                     }
                     let bytes = chain.collect_in_bytes(&self.mem);
                     if bytes.len() >= 9 {
@@ -624,7 +739,7 @@ impl WebUsbUhciPassthroughHarness {
             HarnessPhase::GetConfigDescFull => {
                 if let Some(chain) = &self.pending_chain {
                     if !chain.is_complete(&self.mem) {
-                        return;
+                        return self.status();
                     }
                     self.config_descriptor = chain.collect_in_bytes(&self.mem);
                     self.phase = HarnessPhase::SetConfiguration;
@@ -648,7 +763,7 @@ impl WebUsbUhciPassthroughHarness {
             HarnessPhase::SetConfiguration => {
                 if let Some(chain) = &self.pending_chain {
                     if !chain.is_complete(&self.mem) {
-                        return;
+                        return self.status();
                     }
                     self.phase = HarnessPhase::Done;
                     self.phase_detail = format!(
@@ -662,11 +777,16 @@ impl WebUsbUhciPassthroughHarness {
             }
             HarnessPhase::Done | HarnessPhase::Error => {}
         }
+
+        self.status()
     }
 
     /// Drain all queued UsbHostAction objects.
     pub fn drain_actions(&mut self) -> Result<JsValue, JsValue> {
         let actions = self.passthrough_device_mut().drain_actions();
+        self.total_actions_drained = self
+            .total_actions_drained
+            .saturating_add(actions.len() as u32);
         if actions.is_empty() {
             // Keep polling cheap when the harness is idle.
             return Ok(JsValue::NULL);
@@ -709,6 +829,7 @@ impl WebUsbUhciPassthroughHarness {
             },
         }
         self.passthrough_device_mut().push_completion(completion);
+        self.total_completions_pushed = self.total_completions_pushed.saturating_add(1);
         Ok(())
     }
 }

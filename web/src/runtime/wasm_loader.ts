@@ -134,8 +134,20 @@ export interface WasmApi {
      * Note: optional until all deployed WASM builds include it.
      */
     WebUsbUhciPassthroughHarness?: new () => {
-        tick(): void;
-        drain_actions(): unknown;
+        /**
+         * Human-readable state string for debugging.
+         */
+        state(): string;
+        /**
+         * Advance the harness by one UHCI frame and return the latest status snapshot.
+         */
+        tick(): unknown;
+        /**
+         * Return the current status snapshot without stepping.
+         */
+        status(): unknown;
+        reset(): void;
+        drain_actions(): UsbHostAction[] | null;
         push_completion(completion: UsbHostCompletion): void;
         free(): void;
     };
@@ -159,7 +171,6 @@ export interface WasmApi {
      * Optional while older wasm builds are still in circulation.
      */
     synthesize_webhid_report_descriptor?: (collectionsJson: unknown) => Uint8Array;
-
     CpuWorkerDemo?: new (
         ramSizeBytes: number,
         framebufferOffsetBytes: number,
