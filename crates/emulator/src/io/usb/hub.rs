@@ -417,15 +417,15 @@ impl Default for UsbHubDevice {
 }
 
 impl UsbDeviceModel for UsbHubDevice {
-    fn get_device_descriptor(&self) -> &'static [u8] {
+    fn get_device_descriptor(&self) -> &[u8] {
         &HUB_DEVICE_DESCRIPTOR
     }
 
-    fn get_config_descriptor(&self) -> &'static [u8] {
+    fn get_config_descriptor(&self) -> &[u8] {
         &HUB_CONFIG_DESCRIPTOR
     }
 
-    fn get_hid_report_descriptor(&self) -> &'static [u8] {
+    fn get_hid_report_descriptor(&self) -> &[u8] {
         &[]
     }
 

@@ -5,15 +5,15 @@ use emulator::io::usb::{ControlResponse, SetupPacket, UsbDeviceModel};
 struct TestUsbDevice;
 
 impl UsbDeviceModel for TestUsbDevice {
-    fn get_device_descriptor(&self) -> &'static [u8] {
+    fn get_device_descriptor(&self) -> &[u8] {
         &[]
     }
 
-    fn get_config_descriptor(&self) -> &'static [u8] {
+    fn get_config_descriptor(&self) -> &[u8] {
         &[]
     }
 
-    fn get_hid_report_descriptor(&self) -> &'static [u8] {
+    fn get_hid_report_descriptor(&self) -> &[u8] {
         &[]
     }
 
@@ -89,4 +89,3 @@ fn uhci_portsc_port_reset_is_bit9_and_resets_device_state() {
         .expect("device should be visible at address 0 after reset");
     assert_eq!(dev.address(), 0);
 }
-
