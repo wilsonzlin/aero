@@ -39,7 +39,7 @@ import { mountStatusPanel } from "./ui/status_panel";
 import { renderWebUsbPanel } from "./usb/webusb_panel";
 
 const configManager = new AeroConfigManager({ staticConfigUrl: "/aero.config.json" });
-void configManager.init();
+const configInitPromise = configManager.init();
 
 initAeroStatusApi("booting");
 installPerfHud({ guestRamBytes: configManager.getState().effective.guestMemoryMiB * 1024 * 1024 });
@@ -1839,6 +1839,10 @@ function renderAudioPanel(): HTMLElement {
       let backend: "worker" | "main" = "worker";
       let workerError: string | null = null;
       try {
+        // Ensure the static config (if any) has been loaded before starting the
+        // worker harness. Otherwise, `AeroConfigManager.init()` may emit an update
+        // after we start workers and trigger an avoidable worker restart.
+        await configInitPromise;
         const base = configManager.getState().effective;
         // This debug path does not need a full guest RAM allocation; keep it
         // small so Playwright runs don't reserve hundreds of MiB per page.
