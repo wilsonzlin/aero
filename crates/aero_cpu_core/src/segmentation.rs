@@ -77,15 +77,6 @@ impl Default for SegmentCache {
 }
 
 impl SegmentCache {
-    fn unusable() -> Self {
-        let mut attrs = DescriptorAttributes::default();
-        attrs.unusable = true;
-        Self {
-            base: 0,
-            limit: 0,
-            attrs,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -142,27 +133,6 @@ impl SegmentRegisters {
         }
     }
 
-    fn reg_mut(&mut self, seg: Seg) -> &mut SegmentRegister {
-        match seg {
-            Seg::ES => &mut self.es,
-            Seg::CS => &mut self.cs,
-            Seg::SS => &mut self.ss,
-            Seg::DS => &mut self.ds,
-            Seg::FS => &mut self.fs,
-            Seg::GS => &mut self.gs,
-        }
-    }
-
-    fn reg(&self, seg: Seg) -> &SegmentRegister {
-        match seg {
-            Seg::ES => &self.es,
-            Seg::CS => &self.cs,
-            Seg::SS => &self.ss,
-            Seg::DS => &self.ds,
-            Seg::FS => &self.fs,
-            Seg::GS => &self.gs,
-        }
-    }
 }
 
 fn selector_index(selector: u16) -> u16 {
