@@ -470,6 +470,7 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
 
     const parts = cacheKeyPartsFromUrl(params.sourceId, options, resolved.blockSize);
     // Cache disabled: do not touch OPFS / IndexedDB at all (use direct Range fetches only).
+    // Note: `cacheLimitBytes: null` means "unlimited cache", so `0` is the explicit disable signal.
     if (resolved.cacheLimitBytes === 0) {
       const disk = new RemoteStreamingDisk(parts.imageId, params.lease, probe.size, resolved);
       disk.leaseRefresher.start();
@@ -650,6 +651,12 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
 
   async clearCache(): Promise<void> {
     this.cacheGeneration += 1;
+
+    // Reset in-memory bookkeeping immediately so any reads that occur while the
+    // underlying cache clear is in-flight will contribute to the new generation's
+    // telemetry (see `remote_disk_idb.test.ts`).
+    this.rangeSet = new RangeSet();
+    this.cachedBytes = 0;
     this.lastReadEnd = null;
     this.inflight.clear();
     this.telemetry = {
@@ -673,8 +680,6 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
         await this.opfsCache.clear();
       }
     }
-    this.rangeSet = new RangeSet();
-    this.cachedBytes = 0;
   }
 
   async close(): Promise<void> {

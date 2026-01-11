@@ -95,6 +95,13 @@ export interface WasmApi {
         free(): void;
     };
 
+    /**
+     * Synthesize a HID report descriptor from WebHID-normalized collections metadata.
+     *
+     * Optional while older wasm builds are still in circulation.
+     */
+    synthesize_webhid_report_descriptor?: (collectionsJson: unknown) => Uint8Array;
+
     CpuWorkerDemo?: new (
         ramSizeBytes: number,
         framebufferOffsetBytes: number,
@@ -321,6 +328,8 @@ function toApi(mod: RawWasmModule): WasmApi {
         WebHidPassthroughBridge: mod.WebHidPassthroughBridge,
         UsbPassthroughBridge: mod.UsbPassthroughBridge,
         WebUsbUhciPassthroughHarness: mod.WebUsbUhciPassthroughHarness,
+        WebUsbUhciPassthroughHarness: mod.WebUsbUhciPassthroughHarness,
+        synthesize_webhid_report_descriptor: mod.synthesize_webhid_report_descriptor,
         CpuWorkerDemo: mod.CpuWorkerDemo,
         AeroApi: mod.AeroApi,
         DemoVm: mod.DemoVm,

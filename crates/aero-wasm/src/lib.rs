@@ -50,6 +50,9 @@ use aero_audio::sink::AudioSink;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 #[cfg(target_arch = "wasm32")]
+use wasm_bindgen::JsCast;
+
+#[cfg(target_arch = "wasm32")]
 use aero_usb::{
     hid::passthrough::UsbHidPassthrough,
     hid::webhid,
@@ -168,6 +171,47 @@ pub fn guest_ram_layout(desired_bytes: u32) -> GuestRamLayout {
 #[wasm_bindgen]
 pub fn sum(a: i32, b: i32) -> i32 {
     a + b
+}
+
+// -------------------------------------------------------------------------------------------------
+// WebHID report descriptor synthesis
+// -------------------------------------------------------------------------------------------------
+
+/// Synthesize a USB HID report descriptor (binary bytes) from WebHID-normalized collection metadata.
+///
+/// This is the Rust-side core implementation used by the WASM export
+/// [`synthesize_webhid_report_descriptor`] and by native unit tests in this crate.
+pub fn synthesize_webhid_report_descriptor_bytes(
+    collections: &[aero_usb::hid::webhid::HidCollectionInfo],
+) -> Result<Vec<u8>, aero_usb::hid::webhid::HidDescriptorSynthesisError> {
+    aero_usb::hid::webhid::synthesize_report_descriptor(collections)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn js_error(message: &str) -> JsValue {
+    js_sys::Error::new(message).into()
+}
+
+/// WASM export: synthesize a HID report descriptor from WebHID-normalized metadata.
+///
+/// `collections_json` must be the normalized output of `normalizeCollections()` from
+/// `web/src/hid/webhid_normalize.ts` (array of objects with camelCase fields).
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+pub fn synthesize_webhid_report_descriptor(
+    collections_json: JsValue,
+) -> Result<Uint8Array, JsValue> {
+    let collections: Vec<aero_usb::hid::webhid::HidCollectionInfo> =
+        serde_wasm_bindgen::from_value(collections_json)
+            .map_err(|err| js_error(&format!("Invalid WebHID collection schema: {err}")))?;
+
+    let bytes = synthesize_webhid_report_descriptor_bytes(&collections).map_err(|err| {
+        js_error(&format!(
+            "Failed to synthesize HID report descriptor: {err}"
+        ))
+    })?;
+
+    Ok(Uint8Array::from(bytes.as_slice()))
 }
 
 /// Store a `u32` directly into the module's linear memory at `offset`.
@@ -485,7 +529,6 @@ fn collections_have_output_reports(collections: &[webhid::HidCollectionInfo]) ->
 
     collections.iter().any(walk)
 }
-
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 pub fn create_worklet_bridge(

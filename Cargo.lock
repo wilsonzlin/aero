@@ -606,6 +606,7 @@ dependencies = [
  "js-sys",
  "linked_list_allocator",
  "serde-wasm-bindgen",
+ "serde_json",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "wasm-bindgen-test",

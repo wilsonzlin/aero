@@ -633,6 +633,8 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       | Partial<HidProxyMessage>
       | Partial<UsbSelectedMessage>
       | Partial<UsbCompletionMessage>
+      | Partial<HidAttachMessage>
+      | Partial<HidInputReportMessage>
       | undefined;
     if (!data) return;
 
