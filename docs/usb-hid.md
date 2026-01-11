@@ -160,3 +160,16 @@ Byte 0: buttons
 Byte 1: X delta
 Byte 2: Y delta
 ```
+
+---
+
+## HID report descriptor synthesis notes (WebHID)
+
+When synthesizing HID report descriptors from WebHID metadata, be aware that **Unit Exponent**
+(global item `0x55`) is defined by HID 1.11 as a **4-bit signed value** (`-8..=7`) stored in the
+low nibble of a *single* byte.
+
+- High nibble is reserved and must be `0`.
+- Examples:
+  - `unitExponent = -1` → `0x55 0x0F` (not `0x55 0xFF`)
+  - `unitExponent = -2` → `0x55 0x0E`

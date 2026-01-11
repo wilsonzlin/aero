@@ -85,6 +85,8 @@ pub enum HidDescriptorError {
     IncompleteUsageRange,
     #[error("report id {report_id} is out of range (must be <= 255)")]
     InvalidReportId { report_id: u32 },
+    #[error("unitExponent {unit_exponent} is out of range (must be -8..=7)")]
+    InvalidUnitExponent { unit_exponent: i32 },
     #[error("is_range report items must contain at least two usages (min/max)")]
     InvalidUsageRange,
 }
@@ -162,6 +164,25 @@ fn parse_signed(data: &[u8]) -> i32 {
         4 => i32::from_le_bytes([data[0], data[1], data[2], data[3]]),
         _ => unreachable!("HID short items can only have 0/1/2/4 bytes of data"),
     }
+}
+
+fn parse_unit_exponent(data: &[u8]) -> Result<i32, HidDescriptorError> {
+    // HID 1.11: Unit Exponent is a 4-bit signed value stored in the low nibble
+    // of a *single* byte. High nibble is reserved.
+    if data.len() != 1 {
+        return Err(HidDescriptorError::InvalidItemSize {
+            context: "Unit Exponent",
+            size: data.len(),
+        });
+    }
+
+    let nibble = data[0] & 0x0F;
+    let exponent = if (nibble & 0x08) != 0 {
+        (nibble as i8) - 0x10
+    } else {
+        nibble as i8
+    };
+    Ok(exponent as i32)
 }
 
 fn parse_local_usage(
@@ -370,7 +391,7 @@ pub fn parse_report_descriptor(
                     2 => global.logical_maximum = parse_signed(data),
                     3 => global.physical_minimum = parse_signed(data),
                     4 => global.physical_maximum = parse_signed(data),
-                    5 => global.unit_exponent = parse_signed(data),
+                    5 => global.unit_exponent = parse_unit_exponent(data)?,
                     6 => global.unit = parse_unsigned(data),
                     7 => global.report_size = parse_unsigned(data),
                     8 => global.report_id = parse_unsigned(data),
@@ -474,6 +495,17 @@ fn emit_signed(
     emit_item(out, item_type, tag, data)
 }
 
+fn emit_unit_exponent(out: &mut Vec<u8>, unit_exponent: i32) -> Result<(), HidDescriptorError> {
+    if !(-8..=7).contains(&unit_exponent) {
+        return Err(HidDescriptorError::InvalidUnitExponent { unit_exponent });
+    }
+
+    // HID 1.11 Unit Exponent (0x55): 4-bit signed, stored in the low nibble.
+    // High nibble must be 0.
+    let encoded = (unit_exponent as i8 as u8) & 0x0F;
+    emit_item(out, ItemType::Global, 5, &[encoded])
+}
+
 fn emit_item(
     out: &mut Vec<u8>,
     item_type: ItemType,
@@ -532,7 +564,7 @@ fn synthesize_report(
         emit_signed(out, ItemType::Global, 2, item.logical_maximum)?;
         emit_signed(out, ItemType::Global, 3, item.physical_minimum)?;
         emit_signed(out, ItemType::Global, 4, item.physical_maximum)?;
-        emit_signed(out, ItemType::Global, 5, item.unit_exponent)?;
+        emit_unit_exponent(out, item.unit_exponent)?;
         emit_unsigned(out, ItemType::Global, 6, item.unit)?;
         emit_unsigned(out, ItemType::Global, 7, item.report_size)?;
         emit_unsigned(out, ItemType::Global, 9, item.report_count)?;
@@ -944,6 +976,110 @@ mod tests {
         );
         let reparsed = parse_report_descriptor(&desc).unwrap();
         assert_eq!(collections, reparsed);
+    }
+
+    #[test]
+    fn synth_encodes_negative_unit_exponent_as_low_nibble() {
+        let collections = vec![HidCollectionInfo {
+            usage_page: 0x01,
+            usage: 0x02,
+            collection_type: 0x01,
+            input_reports: vec![HidReportInfo {
+                report_id: 0,
+                items: vec![HidReportItem {
+                    is_array: false,
+                    is_absolute: true,
+                    is_buffered_bytes: false,
+                    is_constant: false,
+                    is_range: false,
+                    logical_minimum: 0,
+                    logical_maximum: 1,
+                    physical_minimum: 0,
+                    physical_maximum: 0,
+                    unit_exponent: -1,
+                    unit: 0,
+                    report_size: 1,
+                    report_count: 1,
+                    usage_page: 0x01,
+                    usages: vec![],
+                }],
+            }],
+            output_reports: vec![],
+            feature_reports: vec![],
+            children: vec![],
+        }];
+
+        let desc = synthesize_report_descriptor(&collections).unwrap();
+        assert!(
+            desc.windows(2).any(|w| w == [0x55, 0x0F]),
+            "expected Unit Exponent (-1) encoding (0x55 0x0f): {desc:02x?}"
+        );
+        assert!(
+            !desc.windows(2).any(|w| w == [0x55, 0xFF]),
+            "Unit Exponent must not be encoded as signed i8 (0x55 0xff): {desc:02x?}"
+        );
+    }
+
+    #[test]
+    fn parse_decodes_unit_exponent_as_4bit_signed() {
+        // Minimal descriptor with a Unit Exponent global item used by a single Input item.
+        let desc = [
+            0x05, 0x01, // Usage Page (Generic Desktop)
+            0x09, 0x02, // Usage (Mouse)
+            0xA1, 0x01, // Collection (Application)
+            0x55, 0x0E, // Unit Exponent (-2) encoded in low nibble
+            0x15, 0x00, // Logical Minimum (0)
+            0x25, 0x01, // Logical Maximum (1)
+            0x75, 0x01, // Report Size (1)
+            0x95, 0x01, // Report Count (1)
+            0x81, 0x02, // Input (Data,Var,Abs)
+            0xC0, // End Collection
+        ];
+
+        let parsed = parse_report_descriptor(&desc).unwrap();
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].input_reports.len(), 1);
+        assert_eq!(parsed[0].input_reports[0].items.len(), 1);
+        assert_eq!(parsed[0].input_reports[0].items[0].unit_exponent, -2);
+    }
+
+    #[test]
+    fn synth_rejects_unit_exponent_out_of_range() {
+        let collections = vec![HidCollectionInfo {
+            usage_page: 0x01,
+            usage: 0x02,
+            collection_type: 0x01,
+            input_reports: vec![HidReportInfo {
+                report_id: 0,
+                items: vec![HidReportItem {
+                    is_array: false,
+                    is_absolute: true,
+                    is_buffered_bytes: false,
+                    is_constant: false,
+                    is_range: false,
+                    logical_minimum: 0,
+                    logical_maximum: 1,
+                    physical_minimum: 0,
+                    physical_maximum: 0,
+                    unit_exponent: 8,
+                    unit: 0,
+                    report_size: 1,
+                    report_count: 1,
+                    usage_page: 0x01,
+                    usages: vec![],
+                }],
+            }],
+            output_reports: vec![],
+            feature_reports: vec![],
+            children: vec![],
+        }];
+
+        match synthesize_report_descriptor(&collections) {
+            Err(HidDescriptorError::InvalidUnitExponent { unit_exponent }) => {
+                assert_eq!(unit_exponent, 8);
+            }
+            other => panic!("expected InvalidUnitExponent error, got {other:?}"),
+        }
     }
 
     #[test]
