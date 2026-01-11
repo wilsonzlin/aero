@@ -105,6 +105,9 @@ Resulting artifact names look like:
 Builds the distributable **Aero Guest Tools** media (ISO + zip) from the signed driver
 packages staged under `out/packages/` (the output of `ci/make-catalogs.ps1` + `ci/sign-drivers.ps1`).
 
+You can also point `-InputRoot` at an extracted `*-bundle.zip` (or the `.zip` file itself)
+produced by `ci/package-drivers.ps1`.
+
 This script is intended to be run after `ci/package-drivers.ps1` in CI so that the release
 contains both:
 

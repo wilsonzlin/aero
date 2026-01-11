@@ -514,7 +514,7 @@ $guestToolsResolved = Resolve-RepoPath -Path $GuestToolsDir
 $certPathResolved = Resolve-RepoPath -Path $CertPath
 $outDirResolved = Resolve-RepoPath -Path $OutDir
 
-if (-not (Test-Path -LiteralPath $inputRootResolved -PathType Container)) {
+if (-not (Test-Path -LiteralPath $inputRootResolved)) {
   throw "InputRoot does not exist: '$inputRootResolved'."
 }
 if (-not (Test-Path -LiteralPath $guestToolsResolved -PathType Container)) {
@@ -544,6 +544,7 @@ New-Item -ItemType Directory -Force -Path $outDirResolved | Out-Null
 $stageRoot = Resolve-RepoPath -Path "out/_staging_guest_tools"
 $stageDriversRoot = Join-Path $stageRoot "drivers"
 $stageGuestTools = Join-Path $stageRoot "guest-tools"
+$stageInputExtract = Join-Path $stageRoot "input"
 $stageSpec = Join-Path $stageRoot "spec.json"
 $stagePackagerOut = Join-Path $stageRoot "packager_out"
 
@@ -551,6 +552,7 @@ $success = $false
 try {
   Ensure-EmptyDirectory -Path $stageRoot
   Ensure-EmptyDirectory -Path $stageDriversRoot
+  Ensure-EmptyDirectory -Path $stageInputExtract
   Ensure-EmptyDirectory -Path $stagePackagerOut
 
   Write-Host "Staging Guest Tools..."
@@ -558,12 +560,27 @@ try {
 
   Write-Host "Staging signed drivers..."
 
-  $bundleDriversDir = Join-Path $inputRootResolved "drivers"
+  $inputRootForStaging = $inputRootResolved
+  $inputExt = [System.IO.Path]::GetExtension($inputRootResolved).ToLowerInvariant()
+  if ((Test-Path -LiteralPath $inputRootResolved -PathType Leaf) -and ($inputExt -eq ".zip")) {
+    Write-Host "  Extracting driver bundle ZIP: $inputRootResolved"
+    Expand-Archive -LiteralPath $inputRootResolved -DestinationPath $stageInputExtract -Force
+
+    $topDirs = @(Get-ChildItem -LiteralPath $stageInputExtract -Directory -ErrorAction SilentlyContinue)
+    $topFiles = @(Get-ChildItem -LiteralPath $stageInputExtract -File -ErrorAction SilentlyContinue)
+    if ($topDirs.Count -eq 1 -and $topFiles.Count -eq 0) {
+      $inputRootForStaging = $topDirs[0].FullName
+    } else {
+      $inputRootForStaging = $stageInputExtract
+    }
+  }
+
+  $bundleDriversDir = Join-Path $inputRootForStaging "drivers"
   $looksLikeBundle = (Test-Path -LiteralPath $bundleDriversDir -PathType Container) -and (Get-ChildItem -LiteralPath $bundleDriversDir -Directory -ErrorAction SilentlyContinue | Select-Object -First 1)
 
   $looksLikePackagerLayout = $false
-  $x86Maybe = Resolve-ArchDirName -DriversRoot $inputRootResolved -ArchOut "x86"
-  $amd64Maybe = Resolve-ArchDirName -DriversRoot $inputRootResolved -ArchOut "amd64"
+  $x86Maybe = Resolve-ArchDirName -DriversRoot $inputRootForStaging -ArchOut "x86"
+  $amd64Maybe = Resolve-ArchDirName -DriversRoot $inputRootForStaging -ArchOut "amd64"
   if ($x86Maybe -and $amd64Maybe) {
     $hasDriverDirs = (Get-ChildItem -LiteralPath $x86Maybe -Directory -ErrorAction SilentlyContinue | Select-Object -First 1) -and (Get-ChildItem -LiteralPath $amd64Maybe -Directory -ErrorAction SilentlyContinue | Select-Object -First 1)
     if ($hasDriverDirs) {
@@ -573,13 +590,13 @@ try {
 
   if ($looksLikePackagerLayout) {
     Write-Host "  Detected input layout: packager (x86/ + amd64/)"
-    Stage-DriversFromPackagerLayout -InputDriversRoot $inputRootResolved -StageDriversRoot $stageDriversRoot
+    Stage-DriversFromPackagerLayout -InputDriversRoot $inputRootForStaging -StageDriversRoot $stageDriversRoot
   } elseif ($looksLikeBundle) {
     Write-Host "  Detected input layout: driver bundle (drivers/<name>/(x86|x64)/...)"
-    Stage-DriversFromBundleLayout -BundleRoot $inputRootResolved -StageDriversRoot $stageDriversRoot
+    Stage-DriversFromBundleLayout -BundleRoot $inputRootForStaging -StageDriversRoot $stageDriversRoot
   } else {
     Write-Host "  Detected input layout: CI packages (out/packages/<driver>/<arch>/...)"
-    Stage-DriversFromPackagesLayout -PackagesRoot $inputRootResolved -StageDriversRoot $stageDriversRoot
+    Stage-DriversFromPackagesLayout -PackagesRoot $inputRootForStaging -StageDriversRoot $stageDriversRoot
   }
 
   Write-Host "Generating packager spec..."
