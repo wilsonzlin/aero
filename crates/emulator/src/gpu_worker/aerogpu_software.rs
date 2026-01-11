@@ -2044,7 +2044,11 @@ impl AeroGpuSoftwareExecutor {
         mem: &mut dyn MemoryBus,
         desc: &AeroGpuSubmitDesc,
     ) {
+        if desc.cmd_gpa == 0 && desc.cmd_size_bytes == 0 {
+            return;
+        }
         if desc.cmd_gpa == 0 || desc.cmd_size_bytes == 0 {
+            Self::record_error(regs);
             return;
         }
         let cmd_size: usize = match usize::try_from(desc.cmd_size_bytes) {
@@ -3591,5 +3595,30 @@ mod tests {
         assert_eq!(allocs.get(&1).unwrap().size_bytes, 0x100);
         assert_eq!(allocs.get(&2).unwrap().size_bytes, 0x100);
         assert_eq!(regs.irq_status, 0);
+    }
+
+    #[test]
+    fn execute_submission_records_error_on_inconsistent_cmd_descriptor() {
+        let mut mem = Bus::new(0x4000);
+        let mut regs = AeroGpuRegs::default();
+
+        let desc = AeroGpuSubmitDesc {
+            desc_size_bytes: AeroGpuSubmitDesc::SIZE_BYTES,
+            flags: 0,
+            context_id: 0,
+            engine_id: 0,
+            // cmd_size_bytes is non-zero but cmd_gpa is 0.
+            cmd_gpa: 0,
+            cmd_size_bytes: 24,
+            alloc_table_gpa: 0,
+            alloc_table_size_bytes: 0,
+            signal_fence: 0,
+        };
+
+        let mut exec = AeroGpuSoftwareExecutor::new();
+        exec.execute_submission(&mut regs, &mut mem, &desc);
+
+        assert_eq!(regs.stats.malformed_submissions, 1);
+        assert_ne!(regs.irq_status & irq_bits::ERROR, 0);
     }
 }

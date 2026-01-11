@@ -522,18 +522,6 @@ fn fs_main() -> @location(0) vec4<f32> {
         alloc_table_gpa: u64,
         alloc_table_size_bytes: u32,
     ) -> ExecutionReport {
-        let cmd_size = cmd_size_bytes as usize;
-        let mut cmd_bytes = vec![0u8; cmd_size];
-        if let Err(err) = guest_memory.read(cmd_gpa, &mut cmd_bytes) {
-            return ExecutionReport {
-                packets_processed: 0,
-                events: vec![ExecutorEvent::Error {
-                    at: 0,
-                    message: format!("failed to read command stream: {err}"),
-                }],
-            };
-        }
-
         let alloc_table = if alloc_table_gpa == 0 && alloc_table_size_bytes == 0 {
             None
         } else {
@@ -554,6 +542,69 @@ fn fs_main() -> @location(0) vec4<f32> {
                 }
             }
         };
+
+        if cmd_gpa == 0 && cmd_size_bytes == 0 {
+            return ExecutionReport {
+                packets_processed: 0,
+                events: Vec::new(),
+            };
+        }
+        if cmd_gpa == 0 || cmd_size_bytes == 0 {
+            return ExecutionReport {
+                packets_processed: 0,
+                events: vec![ExecutorEvent::Error {
+                    at: 0,
+                    message:
+                        "invalid command stream descriptor: cmd_gpa and cmd_size_bytes must be both zero or both non-zero"
+                            .into(),
+                }],
+            };
+        }
+
+        const MAX_CMD_STREAM_SIZE_BYTES: u32 = 64 * 1024 * 1024;
+        if cmd_size_bytes > MAX_CMD_STREAM_SIZE_BYTES {
+            return ExecutionReport {
+                packets_processed: 0,
+                events: vec![ExecutorEvent::Error {
+                    at: 0,
+                    message: format!("command stream too large: {cmd_size_bytes} bytes"),
+                }],
+            };
+        }
+
+        if cmd_gpa.checked_add(u64::from(cmd_size_bytes)).is_none() {
+            return ExecutionReport {
+                packets_processed: 0,
+                events: vec![ExecutorEvent::Error {
+                    at: 0,
+                    message: "command stream gpa+size overflow".into(),
+                }],
+            };
+        }
+
+        let cmd_size = cmd_size_bytes as usize;
+        let mut cmd_bytes = Vec::<u8>::new();
+        if cmd_bytes.try_reserve_exact(cmd_size).is_err() {
+            return ExecutionReport {
+                packets_processed: 0,
+                events: vec![ExecutorEvent::Error {
+                    at: 0,
+                    message: format!(
+                        "failed to allocate command stream buffer of size {cmd_size_bytes} bytes"
+                    ),
+                }],
+            };
+        }
+        cmd_bytes.resize(cmd_size, 0u8);
+        if let Err(err) = guest_memory.read(cmd_gpa, &mut cmd_bytes) {
+            return ExecutionReport {
+                packets_processed: 0,
+                events: vec![ExecutorEvent::Error {
+                    at: 0,
+                    message: format!("failed to read command stream: {err}"),
+                }],
+            };
+        }
 
         match alloc_table.as_ref() {
             Some(table) => self.process_cmd_stream(&cmd_bytes, guest_memory, Some(table)),
