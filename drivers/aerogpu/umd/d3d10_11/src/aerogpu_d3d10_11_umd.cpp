@@ -23,6 +23,7 @@
 #include <cstring>
 #include <mutex>
 #include <new>
+#include <tuple>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -1263,6 +1264,7 @@ inline bool ValidateNoNullDdiTable(const char* name, const void* table, size_t b
   X(pfnSetDepthStencilState)                                                                                       \
   X(pfnSetRenderTargets)                                                                                           \
   X(pfnSetRenderTargetsAndUnorderedAccessViews)                                                                    \
+  X(pfnSetRenderTargetsAndUnorderedAccessViews11_1)                                                                \
   X(pfnDraw)                                                                                                       \
   X(pfnDrawIndexed)                                                                                                \
   X(pfnDrawInstanced)                                                                                              \
@@ -1341,6 +1343,7 @@ inline bool ValidateNoNullDdiTable(const char* name, const void* table, size_t b
   X(pfnCsSetSamplers)                                                                                             \
   X(pfnCsSetUnorderedAccessViews)                                                                                 \
   X(pfnSetRenderTargetsAndUnorderedAccessViews)                                                                    \
+  X(pfnSetRenderTargetsAndUnorderedAccessViews11_1)                                                                \
   X(pfnUnmap)                                                                                                      \
   X(pfnStagingResourceUnmap)                                                                                      \
   X(pfnDynamicIABufferUnmap)                                                                                      \
@@ -4340,54 +4343,84 @@ struct SetRenderTargetsAndUnorderedAccessViewsThunk;
 template <typename Ret, typename... Args>
 struct SetRenderTargetsAndUnorderedAccessViewsThunk<Ret(AEROGPU_APIENTRY*)(Args...)> {
   static Ret AEROGPU_APIENTRY Impl(Args... args) {
-    auto tup = std::forward_as_tuple(args...);
-
-    // Expected signature:
-    //   (hCtx, NumRTVs, phRTVs, hDSV, UAVStartSlot, NumUAVs, phUAVs, pUAVInitialCounts)
-    if constexpr (sizeof...(Args) == 8) {
-      const auto hCtx = std::get<0>(tup);
-      const uint32_t num_rtvs = to_u32(std::get<1>(tup));
-      const auto* ph_rtvs = std::get<2>(tup);
-      const auto h_dsv = std::get<3>(tup);
-      (void)to_u32(std::get<4>(tup)); // uav_start_slot (ignored)
-      const uint32_t num_uavs = to_u32(std::get<5>(tup));
-      const auto* ph_uavs = std::get<6>(tup);
-      (void)std::get<7>(tup); // pUAVInitialCounts (ignored)
-
-      if (!hCtx.pDrvPrivate) {
-        if constexpr (!std::is_void_v<Ret>) {
-          return E_INVALIDARG;
-        } else {
-          return;
-        }
-      }
-
-      auto* ctx = FromHandle<decltype(hCtx), AeroGpuImmediateContext>(hCtx);
-      if (!ctx || !ctx->device) {
-        if constexpr (!std::is_void_v<Ret>) {
-          return E_INVALIDARG;
-        } else {
-          return;
-        }
-      }
-
-      // Always bind render targets (supported subset). UAV binding is unsupported, but unbinding is benign.
-      SetRenderTargets11(hCtx, num_rtvs, ph_rtvs, h_dsv);
-      if (AnyNonNullHandles(ph_uavs, num_uavs)) {
-        SetError(ctx->device, E_NOTIMPL);
-        if constexpr (!std::is_void_v<Ret>) {
-          return E_NOTIMPL;
-        }
-      } else {
-        if constexpr (!std::is_void_v<Ret>) {
-          return S_OK;
-        }
-      }
+    ((void)args, ...);
+    if constexpr (std::is_same_v<Ret, HRESULT>) {
+      return E_NOTIMPL;
+    } else if constexpr (std::is_void_v<Ret>) {
+      return;
     } else {
-      if constexpr (!std::is_void_v<Ret>) {
-        return E_NOTIMPL;
+      return {};
+    }
+  }
+};
+
+template <typename Ret, typename NumViewsT, typename... Tail>
+struct SetRenderTargetsAndUnorderedAccessViewsThunk<
+    Ret(AEROGPU_APIENTRY*)(D3D11DDI_HDEVICECONTEXT,
+                           NumViewsT,
+                           const D3D11DDI_HRENDERTARGETVIEW*,
+                           D3D11DDI_HDEPTHSTENCILVIEW,
+                           Tail...)> {
+  static Ret AEROGPU_APIENTRY Impl(D3D11DDI_HDEVICECONTEXT hCtx,
+                                  NumViewsT numViews,
+                                  const D3D11DDI_HRENDERTARGETVIEW* phRtvs,
+                                  D3D11DDI_HDEPTHSTENCILVIEW hDsv,
+                                  Tail... tail) {
+    // Always bind render targets (supported subset). UAV binding is unsupported, but unbinding is benign.
+    SetRenderTargets11(hCtx, to_u32(numViews), phRtvs, hDsv);
+
+    if constexpr (sizeof...(Tail) >= 3) {
+      using TailTuple = std::tuple<Tail...>;
+      using CountT = std::tuple_element_t<1, TailTuple>;
+      using UavPtrT = std::tuple_element_t<2, TailTuple>;
+      if constexpr ((std::is_integral_v<std::decay_t<CountT>> || std::is_enum_v<std::decay_t<CountT>>) &&
+                    std::is_pointer_v<std::decay_t<UavPtrT>> &&
+                    std::is_same_v<std::remove_cv_t<std::remove_pointer_t<std::decay_t<UavPtrT>>>, D3D11DDI_HUNORDEREDACCESSVIEW>) {
+        auto tail_tup = std::forward_as_tuple(tail...);
+        const uint32_t num_uavs = to_u32(std::get<1>(tail_tup));
+        const auto* ph_uavs = std::get<2>(tail_tup);
+        if (AnyNonNullHandles(ph_uavs, num_uavs)) {
+          SetError(DeviceFromHandle(hCtx), E_NOTIMPL);
+          if constexpr (std::is_same_v<Ret, HRESULT>) {
+            return E_NOTIMPL;
+          } else if constexpr (std::is_void_v<Ret>) {
+            return;
+          } else {
+            return {};
+          }
+        }
       }
     }
+
+    ((void)tail, ...);
+    if constexpr (std::is_same_v<Ret, HRESULT>) {
+      return S_OK;
+    } else if constexpr (std::is_void_v<Ret>) {
+      return;
+    } else {
+      return {};
+    }
+  }
+};
+
+template <typename Ret, typename NumViewsT, typename... Tail>
+struct SetRenderTargetsAndUnorderedAccessViewsThunk<
+    Ret(AEROGPU_APIENTRY*)(D3D11DDI_HDEVICECONTEXT,
+                           NumViewsT,
+                           D3D11DDI_HRENDERTARGETVIEW*,
+                           D3D11DDI_HDEPTHSTENCILVIEW,
+                           Tail...)> {
+  static Ret AEROGPU_APIENTRY Impl(D3D11DDI_HDEVICECONTEXT hCtx,
+                                  NumViewsT numViews,
+                                  D3D11DDI_HRENDERTARGETVIEW* phRtvs,
+                                  D3D11DDI_HDEPTHSTENCILVIEW hDsv,
+                                  Tail... tail) {
+    return SetRenderTargetsAndUnorderedAccessViewsThunk<
+        Ret(AEROGPU_APIENTRY*)(D3D11DDI_HDEVICECONTEXT,
+                               NumViewsT,
+                               const D3D11DDI_HRENDERTARGETVIEW*,
+                               D3D11DDI_HDEPTHSTENCILVIEW,
+                               Tail...)>::Impl(hCtx, numViews, phRtvs, hDsv, tail...);
   }
 };
 
@@ -5190,6 +5223,10 @@ HRESULT AEROGPU_APIENTRY CreateDevice11(D3D10DDI_HADAPTER hAdapter, D3D11DDIARG_
   __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnSetRenderTargetsAndUnorderedAccessViews) {
     using Fn = decltype(std::declval<D3D11DDI_DEVICECONTEXTFUNCS>().pfnSetRenderTargetsAndUnorderedAccessViews);
     ctx_funcs.pfnSetRenderTargetsAndUnorderedAccessViews = &SetRenderTargetsAndUnorderedAccessViewsThunk<Fn>::Impl;
+  }
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnSetRenderTargetsAndUnorderedAccessViews11_1) {
+    using Fn = decltype(std::declval<D3D11DDI_DEVICECONTEXTFUNCS>().pfnSetRenderTargetsAndUnorderedAccessViews11_1);
+    ctx_funcs.pfnSetRenderTargetsAndUnorderedAccessViews11_1 = &SetRenderTargetsAndUnorderedAccessViewsThunk<Fn>::Impl;
   }
 
   ctx_funcs.pfnClearRenderTargetView = &ClearRenderTargetView11;
