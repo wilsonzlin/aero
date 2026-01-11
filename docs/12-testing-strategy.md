@@ -1151,10 +1151,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - name: Setup Rust
+        id: setup-rust
+        uses: ./.github/actions/setup-rust
         with:
+          toolchain: stable
           targets: wasm32-unknown-unknown
+          locked: auto
 
       - name: Install wasm-pack
         uses: taiki-e/install-action@v2
@@ -1162,14 +1165,14 @@ jobs:
           tool: wasm-pack
       
       - name: Run unit tests
-        run: cargo test --all-features
+        run: cargo test ${{ steps.setup-rust.outputs.cargo_locked_flag }} --all-features
       
       - name: Run WASM tests (node)
         working-directory: crates/aero-wasm
         run: wasm-pack test --node
       
       - name: Build
-        run: cargo build --release --target wasm32-unknown-unknown
+        run: cargo build ${{ steps.setup-rust.outputs.cargo_locked_flag }} --release --target wasm32-unknown-unknown
       
   browser-tests:
     runs-on: ubuntu-latest
