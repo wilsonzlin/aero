@@ -84,6 +84,21 @@ uint32_t d3d9_index_format_to_aerogpu(AEROGPU_D3D9DDI_INDEX_FORMAT fmt) {
   return (fmt == AEROGPU_D3D9DDI_INDEX_FORMAT_U32) ? AEROGPU_INDEX_FORMAT_UINT32 : AEROGPU_INDEX_FORMAT_UINT16;
 }
 
+// D3DUSAGE_* subset (numeric values from d3d9types.h).
+constexpr uint32_t kD3DUsageRenderTarget = 0x00000001u;
+constexpr uint32_t kD3DUsageDepthStencil = 0x00000002u;
+
+uint32_t d3d9_usage_to_aerogpu_usage_flags(uint32_t usage) {
+  uint32_t flags = AEROGPU_RESOURCE_USAGE_TEXTURE;
+  if (usage & kD3DUsageRenderTarget) {
+    flags |= AEROGPU_RESOURCE_USAGE_RENDER_TARGET;
+  }
+  if (usage & kD3DUsageDepthStencil) {
+    flags |= AEROGPU_RESOURCE_USAGE_DEPTH_STENCIL;
+  }
+  return flags;
+}
+
 uint32_t d3d9_prim_to_topology(AEROGPU_D3D9DDI_PRIMITIVE_TYPE prim) {
   switch (prim) {
     case AEROGPU_D3D9DDI_PRIM_POINTLIST:
@@ -208,7 +223,7 @@ void emit_create_resource_locked(Device* dev, Resource* res) {
   if (res->kind == ResourceKind::Surface || res->kind == ResourceKind::Texture2D) {
     auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_create_texture2d>(AEROGPU_CMD_CREATE_TEXTURE2D);
     cmd->texture_handle = res->handle;
-    cmd->usage_flags = AEROGPU_RESOURCE_USAGE_TEXTURE;
+    cmd->usage_flags = d3d9_usage_to_aerogpu_usage_flags(res->usage);
     cmd->format = d3d9_format_to_aerogpu(res->format);
     cmd->width = res->width;
     cmd->height = res->height;
@@ -508,10 +523,14 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
   } else {
     emit_create_resource_locked(dev, res.get());
 
-    if (wants_shared && res->share_token) {
-      // Shared surface create (D3D9Ex): export exactly once so other guest
-      // processes can IMPORT using the same stable share_token.
-      emit_export_shared_surface_locked(dev, res.get());
+    if (wants_shared) {
+      if (!res->share_token) {
+        logf("aerogpu-d3d9: Create shared resource missing share_token (alloc_id=%u)\n", res->backing_alloc_id);
+      } else {
+        // Shared surface create (D3D9Ex): export exactly once so other guest
+        // processes can IMPORT using the same stable share_token.
+        emit_export_shared_surface_locked(dev, res.get());
+      }
     }
   }
 
