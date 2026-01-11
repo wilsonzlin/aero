@@ -199,6 +199,15 @@ pwsh ./drivers/windows7/tests/host-harness/New-AeroWin7TestImage.ps1 `
   -RequireSnd
 ```
 
+To disable the guest selftest's virtio-snd section even if a device is present (depends on guest support for `--disable-snd`):
+
+```powershell
+pwsh ./drivers/windows7/tests/host-harness/New-AeroWin7TestImage.ps1 `
+  -SelftestExePath ./aero-virtio-selftest.exe `
+  -DriversDir ./drivers-out `
+  -DisableSnd
+```
+
 ### Enabling test-signing mode (unsigned / test-signed drivers)
 
 On Windows 7 x64, kernel drivers must be signed (or the machine must be in test-signing mode).

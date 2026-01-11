@@ -43,7 +43,12 @@ param(
   # If set, the scheduled selftest will require the virtio-snd section to run and pass.
   # This depends on guest selftest support for `--require-snd` (see Task 128).
   [Parameter(Mandatory = $false)]
-  [switch]$RequireSnd
+  [switch]$RequireSnd,
+
+  # If set, the scheduled selftest will skip the virtio-snd section even if a device is present.
+  # This depends on guest selftest support for `--disable-snd`.
+  [Parameter(Mandatory = $false)]
+  [switch]$DisableSnd
 )
 
 Set-StrictMode -Version Latest
@@ -90,6 +95,15 @@ if (-not [string]::IsNullOrEmpty($BlkRoot)) {
 $requireSndArg = ""
 if ($RequireSnd) {
   $requireSndArg = " --require-snd"
+}
+
+$disableSndArg = ""
+if ($DisableSnd) {
+  $disableSndArg = " --disable-snd"
+}
+
+if ($RequireSnd -and $DisableSnd) {
+  throw "RequireSnd and DisableSnd cannot both be set."
 }
 
 $enableTestSigningCmd = ""
@@ -144,7 +158,7 @@ $enableTestSigningCmd
 
 REM Configure auto-run on boot (runs as SYSTEM).
 schtasks /Create /F /TN "AeroVirtioSelftest" /SC ONSTART /RU SYSTEM ^
-  /TR "\"C:\AeroTests\aero-virtio-selftest.exe\" --http-url \"$HttpUrl\" --dns-host \"$DnsHost\"$blkArg$requireSndArg" >> "%LOG%" 2>&1
+  /TR "\"C:\AeroTests\aero-virtio-selftest.exe\" --http-url \"$HttpUrl\" --dns-host \"$DnsHost\"$blkArg$requireSndArg$disableSndArg" >> "%LOG%" 2>&1
 
 echo [AERO] provision done >> "%LOG%"
 $autoRebootCmd
@@ -179,6 +193,8 @@ After reboot, the host harness can boot the VM and parse PASS/FAIL from COM1 ser
 Notes:
 - The virtio-blk selftest requires a usable/mounted virtio volume. If your VM boots from a non-virtio disk,
   consider attaching a separate virtio data disk with a drive letter and using the selftest option `--blk-root`.
+- To require virtio-snd to be present (and fail if missing), generate this media with `-RequireSnd`.
+- To skip the virtio-snd test entirely (even if a device is present), generate this media with `-DisableSnd`.
 - For unsigned/test-signed drivers on Win7 x64, consider generating this media with `-EnableTestSigning -AutoReboot`.
 "@
 
