@@ -75,6 +75,7 @@ if (tooOld) {
   log(`${allowUnsupported ? "warning" : "error"}: Unsupported Node.js version for this repo.`);
   log(`- Detected: v${current.raw}`);
   log(`- Supported: ${supportedRange}`);
+  log(`- Recommended: ${recommendedRange}`);
 
   if (allowUnsupported) {
     log(`- Override: AERO_ALLOW_UNSUPPORTED_NODE=1 (skipping Node version enforcement)`);
