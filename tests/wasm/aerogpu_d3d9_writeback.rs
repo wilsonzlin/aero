@@ -1,5 +1,6 @@
 #![cfg(target_arch = "wasm32")]
 
+use crate::common;
 use aero_gpu::aerogpu_executor::{AllocEntry, AllocTable};
 use aero_gpu::guest_memory::VecGuestMemory;
 use aero_gpu::{AerogpuD3d9Error, AerogpuD3d9Executor};
@@ -36,9 +37,10 @@ fn end_cmd(stream: &mut Vec<u8>, start: usize) {
 async fn aerogpu_d3d9_writeback_copy_buffer_and_texture() {
     let mut exec = match AerogpuD3d9Executor::new_headless().await {
         Ok(exec) => exec,
-        Err(AerogpuD3d9Error::AdapterNotFound) => return,
-        // WebGPU may be unavailable in this browser/test environment.
-        Err(_) => return,
+        Err(err) => {
+            common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({err})"));
+            return;
+        }
     };
 
     let alloc_table = AllocTable::new([(

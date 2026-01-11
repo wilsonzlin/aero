@@ -4,4 +4,6 @@
 // shim that pulls in the modules under `tests/wasm/` when building for wasm32.
 
 #[cfg(target_arch = "wasm32")]
+mod common;
+#[cfg(target_arch = "wasm32")]
 mod wasm;

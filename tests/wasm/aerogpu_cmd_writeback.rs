@@ -1,5 +1,6 @@
 #![cfg(target_arch = "wasm32")]
 
+use crate::common;
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
 use aero_gpu::guest_memory::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::{
@@ -36,8 +37,10 @@ fn end_cmd(stream: &mut Vec<u8>, start: usize) {
 async fn aerogpu_cmd_writeback_copy_buffer_and_texture() {
     let mut exec = match AerogpuD3d11Executor::new_for_tests().await {
         Ok(exec) => exec,
-        // WebGPU unavailable in this browser/test environment.
-        Err(_) => return,
+        Err(e) => {
+            common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({e:#})"));
+            return;
+        }
     };
 
     let alloc = AerogpuAllocEntry {

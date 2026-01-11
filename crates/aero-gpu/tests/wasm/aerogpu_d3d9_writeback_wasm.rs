@@ -1,5 +1,6 @@
 #![cfg(target_arch = "wasm32")]
 
+use crate::common;
 use aero_gpu::aerogpu_executor::{AllocEntry, AllocTable};
 use aero_gpu::{AerogpuD3d9Error, AerogpuD3d9Executor, GuestMemory, VecGuestMemory};
 use aero_protocol::aerogpu::aerogpu_cmd::{
@@ -42,8 +43,10 @@ fn end_cmd(stream: &mut Vec<u8>, start: usize) {
 async fn aerogpu_d3d9_writeback_dst_updates_guest_memory_on_wasm() {
     let mut exec = match AerogpuD3d9Executor::new_headless().await {
         Ok(exec) => exec,
-        Err(AerogpuD3d9Error::AdapterNotFound) => return,
-        Err(_) => return,
+        Err(err) => {
+            common::skip_or_panic(module_path!(), &format!("wgpu unavailable ({err})"));
+            return;
+        }
     };
 
     const BUF_SRC: u32 = 1;
