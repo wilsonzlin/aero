@@ -1,7 +1,6 @@
 use aero_gpu_trace::{TraceMeta, TraceReader, TraceRecord, TraceWriter};
-use aero_protocol::aerogpu::aerogpu_cmd::{
-    AerogpuCmdOpcode, AEROGPU_CLEAR_COLOR, AEROGPU_CMD_STREAM_MAGIC,
-};
+use aero_protocol::aerogpu::aerogpu_cmd::AEROGPU_CLEAR_COLOR;
+use aero_protocol::aerogpu::cmd_writer::AerogpuCmdWriter;
 use aero_protocol::aerogpu::aerogpu_pci::AEROGPU_ABI_VERSION_U32;
 use std::fs;
 use std::io::Cursor;
@@ -27,43 +26,10 @@ fn generate_aerogpu_a3a0_clear_red_trace() -> Vec<u8> {
 }
 
 fn make_a3a0_clear_red_cmd_stream() -> Vec<u8> {
-    // Command stream layout: `aerogpu_cmd_stream_header` (24 bytes) followed by packets.
-    let mut packets = Vec::<u8>::new();
-
-    // CLEAR: opaque red.
-    // struct aerogpu_cmd_clear (36 bytes)
-    packets.extend_from_slice(&(AerogpuCmdOpcode::Clear as u32).to_le_bytes());
-    packets.extend_from_slice(&(36u32).to_le_bytes());
-    packets.extend_from_slice(&AEROGPU_CLEAR_COLOR.to_le_bytes());
-    packets.extend_from_slice(&1.0f32.to_bits().to_le_bytes()); // R
-    packets.extend_from_slice(&0.0f32.to_bits().to_le_bytes()); // G
-    packets.extend_from_slice(&0.0f32.to_bits().to_le_bytes()); // B
-    packets.extend_from_slice(&1.0f32.to_bits().to_le_bytes()); // A
-    packets.extend_from_slice(&1.0f32.to_bits().to_le_bytes()); // depth (unused)
-    packets.extend_from_slice(&0u32.to_le_bytes()); // stencil (unused)
-
-    // PRESENT: end-of-frame flush.
-    // struct aerogpu_cmd_present (16 bytes)
-    packets.extend_from_slice(&(AerogpuCmdOpcode::Present as u32).to_le_bytes());
-    packets.extend_from_slice(&(16u32).to_le_bytes());
-    packets.extend_from_slice(&0u32.to_le_bytes()); // scanout_id
-    packets.extend_from_slice(&0u32.to_le_bytes()); // flags
-
-    let size_bytes = (24usize + packets.len()) as u32;
-
-    let mut stream = Vec::<u8>::new();
-    stream.extend_from_slice(&AEROGPU_CMD_STREAM_MAGIC.to_le_bytes());
-    stream.extend_from_slice(&AEROGPU_ABI_VERSION_U32.to_le_bytes());
-    stream.extend_from_slice(&size_bytes.to_le_bytes());
-    stream.extend_from_slice(&0u32.to_le_bytes()); // flags
-    stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
-    stream.extend_from_slice(&0u32.to_le_bytes()); // reserved1
-    stream.extend_from_slice(&packets);
-
-    debug_assert_eq!(stream.len() as u32, size_bytes);
-    debug_assert_eq!(stream.len() % 4, 0, "cmd stream must be 4-byte aligned");
-
-    stream
+    let mut w = AerogpuCmdWriter::new();
+    w.clear(AEROGPU_CLEAR_COLOR, [1.0, 0.0, 0.0, 1.0], 1.0, 0);
+    w.present(0, 0);
+    w.finish()
 }
 
 #[test]
