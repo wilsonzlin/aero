@@ -270,7 +270,7 @@ function render(): void {
     renderWasmPanel(),
     renderGraphicsPanel(report),
     renderMachinePanel(),
-    renderSnapshotPanel(),
+    renderSnapshotPanel(report),
     renderWebGpuPanel(),
     renderGpuWorkerPanel(),
     renderSm5TrianglePanel(),
@@ -424,14 +424,14 @@ async function getOpfsFileIfExists(path: string): Promise<File | null> {
   }
 }
 
-function downloadFile(file: File, filename: string): void {
+function downloadFile(file: Blob, filename: string): void {
   const url = URL.createObjectURL(file);
   const a = document.createElement("a");
   a.href = url;
   a.download = filename;
   a.click();
-  // Allow the browser to start the download before revoking the URL.
-  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+  // Safari can cancel the download if the object URL is revoked synchronously.
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 function renderMachinePanel(): HTMLElement {
@@ -514,18 +514,35 @@ function renderMachinePanel(): HTMLElement {
   );
 }
 
-function renderSnapshotPanel(): HTMLElement {
-  const status = el("pre", { text: "Initializing demo VM…" });
-  const output = el("pre", { text: "" });
-  const error = el("pre", { text: "" });
+function renderSnapshotPanel(report: PlatformFeatureReport): HTMLElement {
+  const status = el("pre", { id: "demo-vm-snapshot-status", text: "Initializing demo VM…" });
+  const output = el("pre", { id: "demo-vm-snapshot-output", text: "" });
+  const error = el("pre", { id: "demo-vm-snapshot-error", text: "" });
 
   const autosaveInput = el("input", { type: "number", min: "0", step: "1", value: "0" }) as HTMLInputElement;
-  const importInput = el("input", { type: "file", accept: ".snap,application/octet-stream" }) as HTMLInputElement;
+  const importInput = el("input", {
+    id: "demo-vm-snapshot-import",
+    type: "file",
+    accept: ".snap,application/octet-stream",
+  }) as HTMLInputElement;
 
-  const saveButton = el("button", { text: "Save", disabled: "true" }) as HTMLButtonElement;
-  const loadButton = el("button", { text: "Load", disabled: "true" }) as HTMLButtonElement;
-  const exportButton = el("button", { text: "Export", disabled: "true" }) as HTMLButtonElement;
-  const deleteButton = el("button", { text: "Delete", disabled: "true" }) as HTMLButtonElement;
+  const saveButton = el("button", { id: "demo-vm-snapshot-save", text: "Save", disabled: "true" }) as HTMLButtonElement;
+  const loadButton = el("button", { id: "demo-vm-snapshot-load", text: "Load", disabled: "true" }) as HTMLButtonElement;
+  const exportButton = el("button", {
+    id: "demo-vm-snapshot-export",
+    text: "Export",
+    disabled: "true",
+  }) as HTMLButtonElement;
+  const deleteButton = el("button", {
+    id: "demo-vm-snapshot-delete",
+    text: "Delete",
+    disabled: "true",
+  }) as HTMLButtonElement;
+  const advanceButton = el("button", {
+    id: "demo-vm-snapshot-advance",
+    text: "Advance",
+    disabled: "true",
+  }) as HTMLButtonElement;
 
   const SNAPSHOT_PATH = "state/demo-vm-autosave.snap";
 
@@ -564,6 +581,10 @@ function renderSnapshotPanel(): HTMLElement {
     console.error(msg);
   }
 
+  function formatSerialBytes(value: number | null): string {
+    return value === null ? "unknown" : value.toLocaleString();
+  }
+
   type SnapshotWorkerRequest =
     | { id: number; type: "init"; ramBytes: number }
     | { id: number; type: "runSteps"; steps: number }
@@ -591,6 +612,7 @@ function renderSnapshotPanel(): HTMLElement {
   function setButtonsEnabled(enabled: boolean): void {
     saveButton.disabled = !enabled;
     loadButton.disabled = !enabled;
+    advanceButton.disabled = !enabled;
     exportButton.disabled = !enabled;
     deleteButton.disabled = !enabled;
     autosaveInput.disabled = !enabled;
@@ -616,24 +638,33 @@ function renderSnapshotPanel(): HTMLElement {
     });
   }
 
+  async function restoreSnapshotFromOpfs(): Promise<{ sizeBytes: number; serialBytes: number | null } | null> {
+    if (!workerReady) throw new Error("Demo VM worker not ready");
+    const file = await getOpfsFileIfExists(SNAPSHOT_PATH);
+    if (!file) return null;
+    const restore = await rpc<{ serialBytes: number | null }>({ type: "restoreFromOpfs", path: SNAPSHOT_PATH });
+    return { sizeBytes: file.size, serialBytes: restore.serialBytes };
+  }
+
   async function saveSnapshot(): Promise<void> {
     if (!workerReady) throw new Error("Demo VM worker not ready");
-    await rpc<void>({ type: "snapshotFullToOpfs", path: SNAPSHOT_PATH });
+    const snap = await rpc<{ serialBytes: number | null }>({ type: "snapshotFullToOpfs", path: SNAPSHOT_PATH });
     const file = await getOpfsFileIfExists(SNAPSHOT_PATH);
-    status.textContent = file
-      ? `Saved snapshot (${formatBytes(file.size)})`
-      : "Saved snapshot (size unknown)";
+    status.textContent = `Saved snapshot (${formatMaybeBytes(file?.size ?? null)}) serial_bytes=${formatSerialBytes(
+      snap.serialBytes,
+    )}`;
   }
 
   async function loadSnapshot(): Promise<void> {
     if (!workerReady) throw new Error("Demo VM worker not ready");
-    const file = await getOpfsFileIfExists(SNAPSHOT_PATH);
-    if (!file) {
+    const restored = await restoreSnapshotFromOpfs();
+    if (!restored) {
       status.textContent = "No snapshot found in OPFS.";
       return;
     }
-    await rpc<void>({ type: "restoreFromOpfs", path: SNAPSHOT_PATH });
-    status.textContent = `Loaded snapshot (${formatBytes(file.size)})`;
+    status.textContent = `Loaded snapshot (${formatBytes(restored.sizeBytes)}) serial_bytes=${formatSerialBytes(
+      restored.serialBytes,
+    )}`;
   }
 
   function setAutosave(seconds: number): void {
@@ -669,6 +700,18 @@ function renderSnapshotPanel(): HTMLElement {
     loadSnapshot().catch((err) => setError(err instanceof Error ? err.message : String(err)));
   };
 
+  advanceButton.onclick = () => {
+    clearError();
+    if (!workerReady) return;
+    rpc<{ steps: number; serialBytes: number | null }>({ type: "runSteps", steps: 50_000 })
+      .then((state) => {
+        output.textContent =
+          `steps=${state.steps.toLocaleString()} ` +
+          `serial_bytes=${state.serialBytes === null ? "unknown" : state.serialBytes.toLocaleString()}`;
+      })
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)));
+  };
+
   exportButton.onclick = () => {
     clearError();
     getOpfsFileIfExists(SNAPSHOT_PATH)
@@ -701,23 +744,19 @@ function renderSnapshotPanel(): HTMLElement {
       await importFileToOpfs(file, SNAPSHOT_PATH, (progress) => {
         status.textContent = `Importing snapshot: ${formatBytes(progress.writtenBytes)} / ${formatBytes(progress.totalBytes)}`;
       });
-      await loadSnapshot();
-      status.textContent = `Imported snapshot (${formatBytes(file.size)})`;
+      const restored = await restoreSnapshotFromOpfs();
+      status.textContent = `Imported snapshot (${formatBytes(file.size)}) serial_bytes=${formatSerialBytes(
+        restored?.serialBytes ?? null,
+      )}`;
       importInput.value = "";
     })().catch((err) => setError(err instanceof Error ? err.message : String(err)));
   });
 
-  const platform = detectPlatformFeatures();
-  const opfsOk = platform.opfs;
-  if (!opfsOk) {
+  if (!report.opfs) {
     clearAutosaveTimer();
     status.textContent = "Snapshots unavailable (OPFS missing).";
     setButtonsEnabled(false);
-    setError(
-      platform.opfs
-        ? "OPFS sync access handles are unavailable (createSyncAccessHandle missing)."
-        : "OPFS is unavailable in this browser/context (navigator.storage.getDirectory missing).",
-    );
+    setError("OPFS is unavailable in this browser/context (navigator.storage.getDirectory missing).");
     testState.ready = false;
     testState.streaming = false;
   } else {
@@ -820,10 +859,11 @@ function renderSnapshotPanel(): HTMLElement {
 
           // Best-effort crash recovery: try to restore the last autosave snapshot.
           try {
-            const file = await getOpfsFileIfExists(SNAPSHOT_PATH);
-            if (file) {
-              await rpc<void>({ type: "restoreFromOpfs", path: SNAPSHOT_PATH });
-              status.textContent = `Restored snapshot (${formatBytes(file.size)})`;
+            const restored = await restoreSnapshotFromOpfs();
+            if (restored) {
+              status.textContent = `Restored snapshot (${formatBytes(restored.sizeBytes)}) serial_bytes=${formatSerialBytes(
+                restored.serialBytes,
+              )}`;
             }
           } catch (err) {
             // If restore fails, keep running from a clean state.
@@ -851,6 +891,7 @@ function renderSnapshotPanel(): HTMLElement {
       { class: "row" },
       saveButton,
       loadButton,
+      advanceButton,
       exportButton,
       deleteButton,
       el("label", { text: "Auto-save (seconds):" }),

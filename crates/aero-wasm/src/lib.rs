@@ -1001,6 +1001,11 @@ impl DemoVm {
         self.inner.serial_output().to_vec()
     }
 
+    /// Return the current serial output length without copying the bytes into JS.
+    ///
+    /// The demo VM accumulates serial output as it runs; callers that only need
+    /// a byte count should prefer this over `serial_output()` to avoid large
+    /// allocations in JS.
     pub fn serial_output_len(&self) -> u32 {
         let len = self.inner.serial_output().len();
         len.min(u32::MAX as usize) as u32

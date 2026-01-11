@@ -176,7 +176,7 @@ async function handleRunSteps(steps: number): Promise<{ steps: number; serialByt
   return state;
 }
 
-async function handleSnapshotFullToOpfs(path: string): Promise<void> {
+async function handleSnapshotFullToOpfs(path: string): Promise<{ serialBytes: number | null }> {
   const current = ensureVm();
 
   const fn = (current as unknown as { snapshot_full_to_opfs?: (path: string) => unknown }).snapshot_full_to_opfs;
@@ -185,12 +185,16 @@ async function handleSnapshotFullToOpfs(path: string): Promise<void> {
   }
 
   stopStepLoop();
+  let snapshotSerialBytes: number | null = serialBytes;
   try {
     await fn.call(current, path);
-    savedSerialBytesByPath.set(path, serialBytes);
+    snapshotSerialBytes = serialBytes;
+    savedSerialBytesByPath.set(path, snapshotSerialBytes);
   } finally {
     startStepLoop();
   }
+
+  return { serialBytes: snapshotSerialBytes };
 }
 
 async function handleRestoreFromOpfs(path: string): Promise<{ serialBytes: number | null }> {
