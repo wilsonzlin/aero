@@ -879,8 +879,16 @@ impl AerogpuD3d11Executor {
         }
         if state.scissor_enable {
             if let Some(sc) = state.scissor {
-                if sc.width > 0 && sc.height > 0 {
-                    pass.set_scissor_rect(sc.x, sc.y, sc.width, sc.height);
+                if let Some(rt) = state.render_targets.first() {
+                    if let Some(tex) = resources.textures.get(rt) {
+                        let x = sc.x.min(tex.desc.width);
+                        let y = sc.y.min(tex.desc.height);
+                        let width = sc.width.min(tex.desc.width.saturating_sub(x));
+                        let height = sc.height.min(tex.desc.height.saturating_sub(y));
+                        if width > 0 && height > 0 {
+                            pass.set_scissor_rect(x, y, width, height);
+                        }
+                    }
                 }
             }
         }
