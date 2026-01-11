@@ -444,6 +444,55 @@ static int RunD3D11RSOMStateSanity(int argc, char** argv) {
                                 (unsigned long)outside,
                                 (unsigned long)expected_red);
     }
+
+    // Verify that the scissor rect is ignored when ScissorEnable is FALSE.
+    context->RSSetState(rs_no_cull.get());
+    context->RSSetScissorRects(1, &scissor);
+    context->ClearRenderTargetView(rtv.get(), clear_red);
+    context->Draw(3, 0);
+
+    context->CopyResource(staging.get(), rt_tex.get());
+    context->Flush();
+
+    ZeroMemory(&map, sizeof(map));
+    hr = context->Map(staging.get(), 0, D3D11_MAP_READ, 0, &map);
+    if (FAILED(hr)) {
+      return FailD3D11WithRemovedReason(kTestName, "Map(staging) [scissor disabled]", hr, device.get());
+    }
+
+    const uint32_t inside_disabled =
+        aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, 5, kHeight / 2);
+    const uint32_t outside_disabled =
+        aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, kWidth - 5, kHeight / 2);
+
+    if (dump) {
+      std::string err;
+      if (!aerogpu_test::WriteBmp32BGRA(
+              aerogpu_test::JoinPath(dir, L"d3d11_rs_om_state_sanity_scissor_disabled.bmp"),
+              kWidth,
+              kHeight,
+              map.pData,
+              (int)map.RowPitch,
+              &err)) {
+        aerogpu_test::PrintfStdout("INFO: %s: scissor-disabled BMP dump failed: %s", kTestName, err.c_str());
+      }
+    }
+
+    context->Unmap(staging.get(), 0);
+
+    if ((inside_disabled & 0x00FFFFFFu) != (expected_green & 0x00FFFFFFu) ||
+        (outside_disabled & 0x00FFFFFFu) != (expected_green & 0x00FFFFFFu)) {
+      return aerogpu_test::Fail(kTestName,
+                                "scissor disable failed: inside(5,%d)=0x%08lX expected ~0x%08lX, "
+                                "outside(%d,%d)=0x%08lX expected ~0x%08lX",
+                                kHeight / 2,
+                                (unsigned long)inside_disabled,
+                                (unsigned long)expected_green,
+                                kWidth - 5,
+                                kHeight / 2,
+                                (unsigned long)outside_disabled,
+                                (unsigned long)expected_green);
+    }
   }
 
   // Subtest 2: Cull mode + FrontCounterClockwise toggling.
