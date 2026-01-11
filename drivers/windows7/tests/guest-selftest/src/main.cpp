@@ -56,6 +56,10 @@ struct Options {
   bool require_snd_capture = false;
   // If set, run a capture smoke test when a virtio-snd capture endpoint is present.
   bool test_snd_capture = false;
+  // Allow matching virtio-snd transitional PCI IDs (DEV_1018). Aero contract v1 is modern-only.
+  bool allow_virtio_snd_transitional = false;
+  // When running a capture smoke test, require at least one non-silent capture buffer.
+  bool require_non_silence = false;
 
   DWORD net_timeout_sec = 120;
   DWORD io_file_size_mib = 32;
@@ -300,6 +304,12 @@ struct TestResult {
   bool ok = false;
   std::string fail_reason;
   HRESULT hr = S_OK;
+  // For endpoint-based tests (virtio-snd render/capture), indicates an endpoint was selected.
+  bool endpoint_found = false;
+  // Capture-only diagnostics (only meaningful when a smoke test runs).
+  bool captured_silence_only = false;
+  bool captured_non_silence = false;
+  UINT64 captured_frames = 0;
 };
 
 struct StorageIdStrings {
@@ -438,12 +448,47 @@ static std::optional<std::wstring> GetDeviceInstanceIdString(HDEVINFO devinfo, S
   return std::wstring(buf.data());
 }
 
-static bool IsVirtioSndPciHardwareId(const std::vector<std::wstring>& hwids) {
-  for (const auto& id : hwids) {
-    if (ContainsInsensitive(id, L"PCI\\VEN_1AF4&DEV_1059")) return true;
-    if (ContainsInsensitive(id, L"PCI\\VEN_1AF4&DEV_1018")) return true;
+struct VirtioSndPciIdInfo {
+  bool modern = false;
+  bool modern_rev01 = false;
+  bool transitional = false;
+};
+
+static VirtioSndPciIdInfo GetVirtioSndPciIdInfoFromString(const std::wstring& s) {
+  VirtioSndPciIdInfo out{};
+  if (ContainsInsensitive(s, L"VEN_1AF4&DEV_1059")) {
+    out.modern = true;
+    // The Aero contract v1 in-tree INF matches DEV_1059&REV_01, but some callers may only surface
+    // the device+subsystem IDs. Treat REV_01 as a "nice to have" signal for logging/scoring.
+    if (ContainsInsensitive(s, L"&REV_01")) out.modern_rev01 = true;
   }
-  return false;
+  if (ContainsInsensitive(s, L"VEN_1AF4&DEV_1018")) {
+    out.transitional = true;
+  }
+  return out;
+}
+
+static VirtioSndPciIdInfo GetVirtioSndPciIdInfoFromHwids(const std::vector<std::wstring>& hwids) {
+  VirtioSndPciIdInfo out{};
+  for (const auto& id : hwids) {
+    const auto info = GetVirtioSndPciIdInfoFromString(id);
+    out.modern = out.modern || info.modern;
+    out.modern_rev01 = out.modern_rev01 || info.modern_rev01;
+    out.transitional = out.transitional || info.transitional;
+  }
+  return out;
+}
+
+static bool IsAllowedVirtioSndPciId(const VirtioSndPciIdInfo& info, bool allow_transitional) {
+  if (info.modern) return true;
+  return allow_transitional && info.transitional;
+}
+
+static bool IsAllowedVirtioSndPciHardwareId(const std::vector<std::wstring>& hwids, bool allow_transitional,
+                                            VirtioSndPciIdInfo* info_out = nullptr) {
+  const auto info = GetVirtioSndPciIdInfoFromHwids(hwids);
+  if (info_out) *info_out = info;
+  return IsAllowedVirtioSndPciId(info, allow_transitional);
 }
 
 struct VirtioSndPciDevice {
@@ -453,12 +498,13 @@ struct VirtioSndPciDevice {
 
 // KSCATEGORY_TOPOLOGY {DDA54A40-1E4C-11D1-A050-405705C10000}
 static const GUID kKsCategoryTopology = {0xdda54a40,
-                                         0x1e4c,
-                                         0x11d1,
-                                         {0xa0, 0x50, 0x40, 0x57, 0x05, 0xc1, 0x00, 0x00}};
+                                          0x1e4c,
+                                          0x11d1,
+                                          {0xa0, 0x50, 0x40, 0x57, 0x05, 0xc1, 0x00, 0x00}};
 
-static std::vector<VirtioSndPciDevice> DetectVirtioSndPciDevices(Logger& log) {
+static std::vector<VirtioSndPciDevice> DetectVirtioSndPciDevices(Logger& log, bool allow_transitional) {
   std::vector<VirtioSndPciDevice> out;
+  std::vector<VirtioSndPciDevice> ignored_transitional;
 
   HDEVINFO devinfo =
       // Restrict to PCI enumerated devices for speed/determinism. The virtio-snd function is a PCI
@@ -478,7 +524,9 @@ static std::vector<VirtioSndPciDevice> DetectVirtioSndPciDevices(Logger& log) {
     }
 
     const auto hwids = GetDevicePropertyMultiSz(devinfo, &dev, SPDRP_HARDWAREID);
-    if (!IsVirtioSndPciHardwareId(hwids)) continue;
+    VirtioSndPciIdInfo id_info{};
+    const bool allowed = IsAllowedVirtioSndPciHardwareId(hwids, allow_transitional, &id_info);
+    if (!id_info.modern && !id_info.transitional) continue;
 
     VirtioSndPciDevice snd{};
     if (auto inst = GetDeviceInstanceIdString(devinfo, &dev)) {
@@ -490,15 +538,25 @@ static std::vector<VirtioSndPciDevice> DetectVirtioSndPciDevices(Logger& log) {
       snd.description = *desc;
     }
 
-    log.Logf("virtio-snd: detected PCI device instance_id=%s name=%s",
-             WideToUtf8(snd.instance_id).c_str(), WideToUtf8(snd.description).c_str());
+    log.Logf("virtio-snd: detected PCI device instance_id=%s name=%s modern=%d rev01=%d transitional=%d allowed=%d",
+             WideToUtf8(snd.instance_id).c_str(), WideToUtf8(snd.description).c_str(), id_info.modern ? 1 : 0,
+             id_info.modern_rev01 ? 1 : 0, id_info.transitional ? 1 : 0, allowed ? 1 : 0);
     if (!hwids.empty()) {
       log.Logf("virtio-snd: detected PCI device hwid0=%s", WideToUtf8(hwids[0]).c_str());
     }
-    out.push_back(std::move(snd));
+    if (allowed) {
+      out.push_back(std::move(snd));
+    } else {
+      ignored_transitional.push_back(std::move(snd));
+    }
   }
 
   SetupDiDestroyDeviceInfoList(devinfo);
+  if (!allow_transitional && out.empty() && !ignored_transitional.empty()) {
+    log.LogLine(
+        "virtio-snd: found transitional PCI\\VEN_1AF4&DEV_1018 device(s) but ignoring them (use "
+        "--allow-virtio-snd-transitional to allow)");
+  }
   return out;
 }
 
@@ -1584,19 +1642,28 @@ static std::wstring GetPropertyString(IPropertyStore* store, const PROPERTYKEY& 
 
 static bool LooksLikeVirtioSndEndpoint(const std::wstring& friendly_name, const std::wstring& instance_id,
                                        const std::vector<std::wstring>& hwids,
-                                       const std::vector<std::wstring>& match_names) {
+                                       const std::vector<std::wstring>& match_names,
+                                       bool allow_transitional) {
+  // Prefer the PCI IDs (PKEY_Device_InstanceId + SetupAPI hardware IDs) to avoid false-positive
+  // matches against unrelated audio devices.
+  VirtioSndPciIdInfo hwid_info{};
+  const bool hwid_allowed = IsAllowedVirtioSndPciHardwareId(hwids, allow_transitional, &hwid_info);
+  const auto inst_info = GetVirtioSndPciIdInfoFromString(instance_id);
+  const bool inst_allowed = IsAllowedVirtioSndPciId(inst_info, allow_transitional);
+
+  // If the caller did not allow transitional devices, actively reject a transitional match even if
+  // the friendly name looks plausible.
+  if (!allow_transitional &&
+      ((hwid_info.transitional && !hwid_info.modern) || (inst_info.transitional && !inst_info.modern))) {
+    return false;
+  }
+
+  if (hwid_allowed || inst_allowed) return true;
+
   if (ContainsInsensitive(friendly_name, L"virtio") || ContainsInsensitive(friendly_name, L"aero")) return true;
-  if (ContainsInsensitive(friendly_name, L"snd")) return true;
   for (const auto& m : match_names) {
     if (!m.empty() && ContainsInsensitive(friendly_name, m)) return true;
   }
-  if (ContainsInsensitive(instance_id, L"DEV_1059") || ContainsInsensitive(instance_id, L"VEN_1AF4&DEV_1059") ||
-      ContainsInsensitive(instance_id, L"DEV_1018") || ContainsInsensitive(instance_id, L"VEN_1AF4&DEV_1018")) {
-    return true;
-  }
-  if (IsVirtioSndPciHardwareId(hwids)) return true;
-  if (ContainsInsensitive(instance_id, L"VEN_1AF4") || ContainsInsensitive(instance_id, L"VIRTIO")) return true;
-  if (IsVirtioHardwareId(hwids)) return true;
   return false;
 }
 
@@ -1644,6 +1711,19 @@ static std::string WaveFormatToString(const WAVEFORMATEX* fmt) {
            static_cast<unsigned>(fmt->nChannels), static_cast<unsigned>(fmt->wBitsPerSample),
            static_cast<unsigned>(fmt->nBlockAlign));
   return std::string(buf);
+}
+
+static bool BufferContainsNonSilence(const WAVEFORMATEX* fmt, const BYTE* data, size_t bytes) {
+  if (!fmt || !data || bytes == 0) return false;
+  // For PCM/floating-point formats, silence is a stable byte pattern:
+  // - all zeros (most formats)
+  // - 0x80 for 8-bit unsigned PCM.
+  BYTE silence = 0;
+  if (WaveFormatIsPcm(fmt) && fmt->wBitsPerSample == 8) silence = 0x80;
+  for (size_t i = 0; i < bytes; i++) {
+    if (data[i] != silence) return true;
+  }
+  return false;
 }
 
 static bool FillToneInterleaved(BYTE* dst, UINT32 frames, const WAVEFORMATEX* fmt, double freq_hz,
@@ -1713,7 +1793,7 @@ static bool FillToneInterleaved(BYTE* dst, UINT32 frames, const WAVEFORMATEX* fm
   return true;
 }
 
-static TestResult VirtioSndTest(Logger& log, const std::vector<std::wstring>& match_names) {
+static TestResult VirtioSndTest(Logger& log, const std::vector<std::wstring>& match_names, bool allow_transitional) {
   TestResult out;
 
   ScopedCoInitialize com(COINIT_MULTITHREADED);
@@ -1739,6 +1819,8 @@ static TestResult VirtioSndTest(Logger& log, const std::vector<std::wstring>& ma
   ComPtr<IMMDevice> chosen;
   std::wstring chosen_friendly;
   std::wstring chosen_id;
+  std::wstring chosen_instance_id;
+  std::wstring chosen_pci_hwid;
   int best_score = -1;
 
   const DWORD deadline_ms = GetTickCount() + 20000;
@@ -1800,43 +1882,59 @@ static TestResult VirtioSndTest(Logger& log, const std::vector<std::wstring>& ma
       }
 
       const auto hwids = GetHardwareIdsForInstanceId(instance_id);
-      const bool hwid_virtio_snd = IsVirtioSndPciHardwareId(hwids);
-      const bool hwid_virtio = IsVirtioHardwareId(hwids);
+      VirtioSndPciIdInfo hwid_info{};
+      const bool hwid_allowed = IsAllowedVirtioSndPciHardwareId(hwids, allow_transitional, &hwid_info);
+      const auto inst_info = GetVirtioSndPciIdInfoFromString(instance_id);
+      const bool inst_allowed = IsAllowedVirtioSndPciId(inst_info, allow_transitional);
 
       log.Logf("virtio-snd: endpoint idx=%u state=%s name=%s id=%s instance_id=%s",
                static_cast<unsigned>(i), MmDeviceStateToString(state), WideToUtf8(friendly).c_str(),
                WideToUtf8(dev_id).c_str(), WideToUtf8(instance_id).c_str());
-      if (!hwids.empty()) {
+      std::wstring pci_hwid;
+      for (const auto& hwid : hwids) {
+        if (ContainsInsensitive(hwid, L"PCI\\")) {
+          pci_hwid = hwid;
+          break;
+        }
+      }
+      if (!pci_hwid.empty()) {
+        log.Logf("virtio-snd: endpoint idx=%u pci_hwid=%s", static_cast<unsigned>(i),
+                 WideToUtf8(pci_hwid).c_str());
+      } else if (!hwids.empty()) {
         log.Logf("virtio-snd: endpoint idx=%u hwid0=%s", static_cast<unsigned>(i),
                  WideToUtf8(hwids[0]).c_str());
       }
+      log.Logf(
+          "virtio-snd: endpoint idx=%u virtio_snd_match inst(modern=%d rev01=%d transitional=%d allowed=%d) "
+          "hw(modern=%d rev01=%d transitional=%d allowed=%d)",
+          static_cast<unsigned>(i), inst_info.modern ? 1 : 0, inst_info.modern_rev01 ? 1 : 0,
+          inst_info.transitional ? 1 : 0, inst_allowed ? 1 : 0, hwid_info.modern ? 1 : 0,
+          hwid_info.modern_rev01 ? 1 : 0, hwid_info.transitional ? 1 : 0, hwid_allowed ? 1 : 0);
 
       if (state != DEVICE_STATE_ACTIVE) continue;
 
       int score = 0;
       if (ContainsInsensitive(friendly, L"virtio")) score += 100;
       if (ContainsInsensitive(friendly, L"aero")) score += 50;
-      if (ContainsInsensitive(friendly, L"snd")) score += 20;
       for (const auto& m : match_names) {
         if (!m.empty() && ContainsInsensitive(friendly, m)) score += 200;
       }
-      if (ContainsInsensitive(instance_id, L"DEV_1059") || ContainsInsensitive(instance_id, L"VEN_1AF4&DEV_1059") ||
-          ContainsInsensitive(instance_id, L"DEV_1018") || ContainsInsensitive(instance_id, L"VEN_1AF4&DEV_1018")) {
-        score += 150;
-      }
-      if (ContainsInsensitive(instance_id, L"VEN_1AF4") || ContainsInsensitive(instance_id, L"VIRTIO")) {
-        score += 80;
-      }
-      if (hwid_virtio_snd) score += 200;
-      if (hwid_virtio) score += 90;
+      if (hwid_info.modern) score += 1000;
+      if (hwid_info.modern_rev01) score += 50;
+      if (allow_transitional && hwid_info.transitional) score += 900;
+      if (inst_info.modern) score += 800;
+      if (inst_info.modern_rev01) score += 50;
+      if (allow_transitional && inst_info.transitional) score += 700;
 
       if (score <= 0) continue;
 
-      if (score > best_score && LooksLikeVirtioSndEndpoint(friendly, instance_id, hwids, match_names)) {
+      if (score > best_score && LooksLikeVirtioSndEndpoint(friendly, instance_id, hwids, match_names, allow_transitional)) {
         best_score = score;
         chosen = std::move(dev);
         chosen_friendly = friendly;
         chosen_id = dev_id;
+        chosen_instance_id = instance_id;
+        chosen_pci_hwid = pci_hwid;
       }
     }
 
@@ -1867,8 +1965,10 @@ static TestResult VirtioSndTest(Logger& log, const std::vector<std::wstring>& ma
     return out;
   }
 
-  log.Logf("virtio-snd: selected endpoint name=%s id=%s score=%d", WideToUtf8(chosen_friendly).c_str(),
-           WideToUtf8(chosen_id).c_str(), best_score);
+  out.endpoint_found = true;
+  log.Logf("virtio-snd: selected endpoint name=%s id=%s instance_id=%s pci_hwid=%s score=%d",
+           WideToUtf8(chosen_friendly).c_str(), WideToUtf8(chosen_id).c_str(),
+           WideToUtf8(chosen_instance_id).c_str(), WideToUtf8(chosen_pci_hwid).c_str(), best_score);
 
   ComPtr<IAudioClient> client;
   hr = chosen->Activate(__uuidof(IAudioClient), CLSCTX_INPROC_SERVER, nullptr,
@@ -2161,7 +2261,7 @@ static std::optional<std::wstring> WaveOutDeviceInstanceId(UINT device_id) {
   return std::wstring(buf);
 }
 
-static bool WaveOutToneTest(Logger& log, const std::vector<std::wstring>& match_names) {
+static bool WaveOutToneTest(Logger& log, const std::vector<std::wstring>& match_names, bool allow_transitional) {
   const UINT num = waveOutGetNumDevs();
   log.Logf("virtio-snd: waveOut devices=%u", num);
   if (num == 0) return false;
@@ -2188,13 +2288,13 @@ static bool WaveOutToneTest(Logger& log, const std::vector<std::wstring>& match_
     if (inst_id.has_value()) {
       log.Logf("virtio-snd: waveOut[%u]=%s instance_id=%s", i, WideToUtf8(caps.szPname).c_str(),
                WideToUtf8(*inst_id).c_str());
-      if (ContainsInsensitive(*inst_id, L"DEV_1059") || ContainsInsensitive(*inst_id, L"VEN_1AF4&DEV_1059") ||
-          ContainsInsensitive(*inst_id, L"DEV_1018") || ContainsInsensitive(*inst_id, L"VEN_1AF4&DEV_1018")) {
+      if (ContainsInsensitive(*inst_id, L"VEN_1AF4&DEV_1059")) {
+        score += 500;
+      } else if (allow_transitional && ContainsInsensitive(*inst_id, L"VEN_1AF4&DEV_1018")) {
         score += 500;
       }
       const auto hwids = GetHardwareIdsForInstanceId(*inst_id);
-      if (IsVirtioSndPciHardwareId(hwids)) score += 1000;
-      if (IsVirtioHardwareId(hwids)) score += 200;
+      if (IsAllowedVirtioSndPciHardwareId(hwids, allow_transitional)) score += 1000;
     } else {
       log.Logf("virtio-snd: waveOut[%u]=%s instance_id=<unavailable>", i,
                WideToUtf8(caps.szPname).c_str());
@@ -2315,10 +2415,16 @@ static std::optional<std::wstring> WaveInDeviceInstanceId(UINT device_id) {
   return std::wstring(buf);
 }
 
-static bool WaveInCaptureTest(Logger& log, const std::vector<std::wstring>& match_names) {
+static TestResult WaveInCaptureTest(Logger& log, const std::vector<std::wstring>& match_names, bool allow_transitional,
+                                    bool require_non_silence) {
+  TestResult out{};
   const UINT num = waveInGetNumDevs();
   log.Logf("virtio-snd: waveIn capture devices=%u", num);
-  if (num == 0) return false;
+  if (num == 0) {
+    out.fail_reason = "no_wavein_devices";
+    out.hr = HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
+    return out;
+  }
 
   auto name_matches = [&](const std::wstring& n) -> bool {
     if (ContainsInsensitive(n, L"virtio") || ContainsInsensitive(n, L"aero")) return true;
@@ -2342,13 +2448,13 @@ static bool WaveInCaptureTest(Logger& log, const std::vector<std::wstring>& matc
     if (inst_id.has_value()) {
       log.Logf("virtio-snd: waveIn[%u]=%s instance_id=%s", i, WideToUtf8(caps.szPname).c_str(),
                WideToUtf8(*inst_id).c_str());
-      if (ContainsInsensitive(*inst_id, L"DEV_1059") || ContainsInsensitive(*inst_id, L"VEN_1AF4&DEV_1059") ||
-          ContainsInsensitive(*inst_id, L"DEV_1018") || ContainsInsensitive(*inst_id, L"VEN_1AF4&DEV_1018")) {
+      if (ContainsInsensitive(*inst_id, L"VEN_1AF4&DEV_1059")) {
+        score += 500;
+      } else if (allow_transitional && ContainsInsensitive(*inst_id, L"VEN_1AF4&DEV_1018")) {
         score += 500;
       }
       const auto hwids = GetHardwareIdsForInstanceId(*inst_id);
-      if (IsVirtioSndPciHardwareId(hwids)) score += 1000;
-      if (IsVirtioHardwareId(hwids)) score += 200;
+      if (IsAllowedVirtioSndPciHardwareId(hwids, allow_transitional)) score += 1000;
     } else {
       log.Logf("virtio-snd: waveIn[%u]=%s instance_id=<unavailable>", i, WideToUtf8(caps.szPname).c_str());
     }
@@ -2361,7 +2467,9 @@ static bool WaveInCaptureTest(Logger& log, const std::vector<std::wstring>& matc
 
   if (device_id == UINT_MAX || best_score <= 0) {
     log.LogLine("virtio-snd: waveIn no matching device found");
-    return false;
+    out.fail_reason = "no_matching_device";
+    out.hr = HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
+    return out;
   } else {
     log.Logf("virtio-snd: waveIn using device_id=%u score=%d", device_id, best_score);
   }
@@ -2369,7 +2477,9 @@ static bool WaveInCaptureTest(Logger& log, const std::vector<std::wstring>& matc
   HANDLE done_event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
   if (!done_event) {
     log.Logf("virtio-snd: waveIn CreateEvent failed err=%lu", GetLastError());
-    return false;
+    out.fail_reason = "create_event_failed";
+    out.hr = HRESULT_FROM_WIN32(GetLastError());
+    return out;
   }
 
   auto try_open = [&](WORD channels, HWAVEIN* out_hwi, WAVEFORMATEX* out_fmt) -> MMRESULT {
@@ -2397,7 +2507,9 @@ static bool WaveInCaptureTest(Logger& log, const std::vector<std::wstring>& matc
   if (rc != MMSYSERR_NOERROR) {
     log.Logf("virtio-snd: waveInOpen failed rc=%u text=%s", rc, WideToUtf8(WinmmInErrorToWide(rc)).c_str());
     CloseHandle(done_event);
-    return false;
+    out.fail_reason = "wavein_open_failed";
+    out.hr = E_FAIL;
+    return out;
   }
 
   ResetEvent(done_event);
@@ -2415,7 +2527,9 @@ static bool WaveInCaptureTest(Logger& log, const std::vector<std::wstring>& matc
              WideToUtf8(WinmmInErrorToWide(rc)).c_str());
     waveInClose(hwi);
     CloseHandle(done_event);
-    return false;
+    out.fail_reason = "wavein_prepare_header_failed";
+    out.hr = E_FAIL;
+    return out;
   }
 
   rc = waveInAddBuffer(hwi, &hdr, sizeof(hdr));
@@ -2424,7 +2538,9 @@ static bool WaveInCaptureTest(Logger& log, const std::vector<std::wstring>& matc
     waveInUnprepareHeader(hwi, &hdr, sizeof(hdr));
     waveInClose(hwi);
     CloseHandle(done_event);
-    return false;
+    out.fail_reason = "wavein_add_buffer_failed";
+    out.hr = E_FAIL;
+    return out;
   }
 
   rc = waveInStart(hwi);
@@ -2434,7 +2550,9 @@ static bool WaveInCaptureTest(Logger& log, const std::vector<std::wstring>& matc
     waveInUnprepareHeader(hwi, &hdr, sizeof(hdr));
     waveInClose(hwi);
     CloseHandle(done_event);
-    return false;
+    out.fail_reason = "wavein_start_failed";
+    out.hr = E_FAIL;
+    return out;
   }
 
   const DWORD wait_rc = WaitForSingleObject(done_event, 5000);
@@ -2445,7 +2563,9 @@ static bool WaveInCaptureTest(Logger& log, const std::vector<std::wstring>& matc
     waveInUnprepareHeader(hwi, &hdr, sizeof(hdr));
     waveInClose(hwi);
     CloseHandle(done_event);
-    return false;
+    out.fail_reason = "capture_timeout";
+    out.hr = HRESULT_FROM_WIN32(ERROR_TIMEOUT);
+    return out;
   }
 
   waveInStop(hwi);
@@ -2454,6 +2574,10 @@ static bool WaveInCaptureTest(Logger& log, const std::vector<std::wstring>& matc
   const bool got_bytes = hdr.dwBytesRecorded > 0;
   log.Logf("virtio-snd: waveIn captured bytes=%lu flags=0x%08lx", static_cast<unsigned long>(hdr.dwBytesRecorded),
            static_cast<unsigned long>(hdr.dwFlags));
+  out.captured_frames = (fmt.nBlockAlign != 0) ? (static_cast<UINT64>(hdr.dwBytesRecorded) / fmt.nBlockAlign) : 0;
+  const bool non_silence = got_bytes && BufferContainsNonSilence(&fmt, data.data(), hdr.dwBytesRecorded);
+  out.captured_non_silence = non_silence;
+  out.captured_silence_only = got_bytes && !non_silence;
 
   waveInUnprepareHeader(hwi, &hdr, sizeof(hdr));
   waveInClose(hwi);
@@ -2461,15 +2585,27 @@ static bool WaveInCaptureTest(Logger& log, const std::vector<std::wstring>& matc
 
   if (!got_bytes) {
     log.LogLine("virtio-snd: waveIn capture did not return any bytes");
-    return false;
+    out.fail_reason = "capture_no_bytes";
+    out.hr = HRESULT_FROM_WIN32(ERROR_NO_DATA);
+    return out;
   }
 
-  log.LogLine("virtio-snd: waveIn capture ok");
-  return true;
+  if (require_non_silence && !non_silence) {
+    log.LogLine("virtio-snd: waveIn capture returned only silence; failing (--require-non-silence)");
+    out.fail_reason = "captured_silence";
+    out.hr = E_FAIL;
+    return out;
+  }
+
+  log.Logf("virtio-snd: waveIn capture ok (non_silence=%d)", non_silence ? 1 : 0);
+  out.ok = true;
+  out.hr = S_OK;
+  out.fail_reason.clear();
+  return out;
 }
 
 static TestResult VirtioSndCaptureTest(Logger& log, const std::vector<std::wstring>& match_names, bool smoke_test,
-                                       DWORD endpoint_wait_ms) {
+                                       DWORD endpoint_wait_ms, bool allow_transitional, bool require_non_silence) {
   TestResult out;
 
   ScopedCoInitialize com(COINIT_MULTITHREADED);
@@ -2494,6 +2630,8 @@ static TestResult VirtioSndCaptureTest(Logger& log, const std::vector<std::wstri
   ComPtr<IMMDevice> chosen;
   std::wstring chosen_friendly;
   std::wstring chosen_id;
+  std::wstring chosen_instance_id;
+  std::wstring chosen_pci_hwid;
   int best_score = -1;
 
   const DWORD deadline_ms = GetTickCount() + endpoint_wait_ms;
@@ -2533,6 +2671,8 @@ static TestResult VirtioSndCaptureTest(Logger& log, const std::vector<std::wstri
     chosen.Reset();
     chosen_friendly.clear();
     chosen_id.clear();
+    chosen_instance_id.clear();
+    chosen_pci_hwid.clear();
 
     for (UINT i = 0; i < count; i++) {
       ComPtr<IMMDevice> dev;
@@ -2563,42 +2703,59 @@ static TestResult VirtioSndCaptureTest(Logger& log, const std::vector<std::wstri
       }
 
       const auto hwids = GetHardwareIdsForInstanceId(instance_id);
-      const bool hwid_virtio_snd = IsVirtioSndPciHardwareId(hwids);
-      const bool hwid_virtio = IsVirtioHardwareId(hwids);
+      VirtioSndPciIdInfo hwid_info{};
+      const bool hwid_allowed = IsAllowedVirtioSndPciHardwareId(hwids, allow_transitional, &hwid_info);
+      const auto inst_info = GetVirtioSndPciIdInfoFromString(instance_id);
+      const bool inst_allowed = IsAllowedVirtioSndPciId(inst_info, allow_transitional);
 
       log.Logf("virtio-snd: capture endpoint idx=%u state=%s name=%s id=%s instance_id=%s", static_cast<unsigned>(i),
                MmDeviceStateToString(state), WideToUtf8(friendly).c_str(), WideToUtf8(dev_id).c_str(),
                WideToUtf8(instance_id).c_str());
-      if (!hwids.empty()) {
+      std::wstring pci_hwid;
+      for (const auto& hwid : hwids) {
+        if (ContainsInsensitive(hwid, L"PCI\\")) {
+          pci_hwid = hwid;
+          break;
+        }
+      }
+      if (!pci_hwid.empty()) {
+        log.Logf("virtio-snd: capture endpoint idx=%u pci_hwid=%s", static_cast<unsigned>(i),
+                 WideToUtf8(pci_hwid).c_str());
+      } else if (!hwids.empty()) {
         log.Logf("virtio-snd: capture endpoint idx=%u hwid0=%s", static_cast<unsigned>(i),
                  WideToUtf8(hwids[0]).c_str());
       }
+      log.Logf(
+          "virtio-snd: capture endpoint idx=%u virtio_snd_match inst(modern=%d rev01=%d transitional=%d allowed=%d) "
+          "hw(modern=%d rev01=%d transitional=%d allowed=%d)",
+          static_cast<unsigned>(i), inst_info.modern ? 1 : 0, inst_info.modern_rev01 ? 1 : 0,
+          inst_info.transitional ? 1 : 0, inst_allowed ? 1 : 0, hwid_info.modern ? 1 : 0,
+          hwid_info.modern_rev01 ? 1 : 0, hwid_info.transitional ? 1 : 0, hwid_allowed ? 1 : 0);
 
       if (state != DEVICE_STATE_ACTIVE) continue;
 
       int score = 0;
       if (ContainsInsensitive(friendly, L"virtio")) score += 100;
       if (ContainsInsensitive(friendly, L"aero")) score += 50;
-      if (ContainsInsensitive(friendly, L"snd")) score += 20;
       for (const auto& m : match_names) {
         if (!m.empty() && ContainsInsensitive(friendly, m)) score += 200;
       }
-      if (ContainsInsensitive(instance_id, L"DEV_1059") || ContainsInsensitive(instance_id, L"VEN_1AF4&DEV_1059")) {
-        score += 150;
-      }
-      if (ContainsInsensitive(instance_id, L"VEN_1AF4") || ContainsInsensitive(instance_id, L"VIRTIO")) {
-        score += 80;
-      }
-      if (hwid_virtio_snd) score += 200;
-      if (hwid_virtio) score += 90;
+      if (hwid_info.modern) score += 1000;
+      if (hwid_info.modern_rev01) score += 50;
+      if (allow_transitional && hwid_info.transitional) score += 900;
+      if (inst_info.modern) score += 800;
+      if (inst_info.modern_rev01) score += 50;
+      if (allow_transitional && inst_info.transitional) score += 700;
 
       if (score <= 0) continue;
 
-      if (score > best_score && LooksLikeVirtioSndEndpoint(friendly, instance_id, hwids, match_names)) {
+      if (score > best_score && LooksLikeVirtioSndEndpoint(friendly, instance_id, hwids, match_names, allow_transitional)) {
         best_score = score;
         chosen = std::move(dev);
         chosen_friendly = friendly;
         chosen_id = dev_id;
+        chosen_instance_id = instance_id;
+        chosen_pci_hwid = pci_hwid;
       }
     }
 
@@ -2627,7 +2784,7 @@ static TestResult VirtioSndCaptureTest(Logger& log, const std::vector<std::wstri
       instance_id = GetPropertyString(props.Get(), PKEY_Device_InstanceId);
     }
     const auto hwids = GetHardwareIdsForInstanceId(instance_id);
-    if (!LooksLikeVirtioSndEndpoint(friendly, instance_id, hwids, match_names)) {
+    if (!LooksLikeVirtioSndEndpoint(friendly, instance_id, hwids, match_names, allow_transitional)) {
       out.fail_reason = "no_matching_endpoint";
       out.hr = HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
       log.Logf("virtio-snd: default capture endpoint does not look like virtio-snd (name=%s instance_id=%s)",
@@ -2652,12 +2809,22 @@ static TestResult VirtioSndCaptureTest(Logger& log, const std::vector<std::wstri
       chosen_friendly = GetPropertyString(props.Get(), PKEY_Device_FriendlyName);
       if (chosen_friendly.empty()) chosen_friendly = GetPropertyString(props.Get(), PKEY_Device_DeviceDesc);
     }
+    chosen_instance_id = instance_id;
+    for (const auto& hwid : hwids) {
+      if (ContainsInsensitive(hwid, L"PCI\\")) {
+        chosen_pci_hwid = hwid;
+        break;
+      }
+    }
   }
 
-  log.Logf("virtio-snd: selected capture endpoint name=%s id=%s score=%d", WideToUtf8(chosen_friendly).c_str(),
-           WideToUtf8(chosen_id).c_str(), best_score);
+  out.endpoint_found = true;
+  log.Logf("virtio-snd: selected capture endpoint name=%s id=%s instance_id=%s pci_hwid=%s score=%d",
+           WideToUtf8(chosen_friendly).c_str(), WideToUtf8(chosen_id).c_str(),
+           WideToUtf8(chosen_instance_id).c_str(), WideToUtf8(chosen_pci_hwid).c_str(), best_score);
 
-  if (!smoke_test) {
+  const bool do_smoke_test = smoke_test || require_non_silence;
+  if (!do_smoke_test) {
     out.ok = true;
     out.hr = S_OK;
     out.fail_reason.clear();
@@ -2683,11 +2850,15 @@ static TestResult VirtioSndCaptureTest(Logger& log, const std::vector<std::wstri
     log.Logf("virtio-snd: capture GetMixFormat failed hr=0x%08lx", static_cast<unsigned long>(out.hr));
     return out;
   }
-  log.Logf("virtio-snd: capture mix format=%s", WaveFormatToString(mix).c_str());
-  const DWORD sample_rate_hz = mix->nSamplesPerSec;
+  const size_t mix_size = sizeof(WAVEFORMATEX) + mix->cbSize;
+  std::vector<BYTE> fmt_bytes(reinterpret_cast<const BYTE*>(mix),
+                              reinterpret_cast<const BYTE*>(mix) + mix_size);
+  const auto* fmt = reinterpret_cast<const WAVEFORMATEX*>(fmt_bytes.data());
+  log.Logf("virtio-snd: capture mix format=%s", WaveFormatToString(fmt).c_str());
+  const DWORD sample_rate_hz = fmt->nSamplesPerSec;
 
   constexpr REFERENCE_TIME kBufferDuration100ms = 1000000; // 100ms in 100ns units
-  hr = client->Initialize(AUDCLNT_SHAREMODE_SHARED, 0, kBufferDuration100ms, 0, mix, nullptr);
+  hr = client->Initialize(AUDCLNT_SHAREMODE_SHARED, 0, kBufferDuration100ms, 0, fmt, nullptr);
   CoTaskMemFree(mix);
   if (FAILED(hr)) {
     out.fail_reason = "initialize_shared_failed";
@@ -2727,6 +2898,8 @@ static TestResult VirtioSndCaptureTest(Logger& log, const std::vector<std::wstri
   const UINT64 min_frames =
       (sample_rate_hz != 0) ? std::max<UINT64>(1, static_cast<UINT64>(sample_rate_hz) / 10) : 1;
   UINT64 total_frames = 0;
+  UINT64 silent_frames = 0;
+  UINT64 non_silent_frames = 0;
   DWORD captured_flags = 0;
   const DWORD capture_deadline = GetTickCount() + 2500;
   while (static_cast<int32_t>(GetTickCount() - capture_deadline) < 0) {
@@ -2759,6 +2932,16 @@ static TestResult VirtioSndCaptureTest(Logger& log, const std::vector<std::wstri
     if (frames > 0) {
       total_frames += frames;
       captured_flags = flags;
+      if (flags & AUDCLNT_BUFFERFLAGS_SILENT) {
+        silent_frames += frames;
+      } else if (fmt->nBlockAlign != 0) {
+        const size_t bytes = static_cast<size_t>(frames) * fmt->nBlockAlign;
+        if (data && BufferContainsNonSilence(fmt, data, bytes)) {
+          non_silent_frames += frames;
+        } else {
+          silent_frames += frames;
+        }
+      }
     }
 
     hr = capture->ReleaseBuffer(frames);
@@ -2789,11 +2972,29 @@ static TestResult VirtioSndCaptureTest(Logger& log, const std::vector<std::wstri
     return out;
   }
 
+  out.captured_frames = total_frames;
+  out.captured_non_silence = non_silent_frames > 0;
+  out.captured_silence_only = non_silent_frames == 0;
+
+  if (require_non_silence && !out.captured_non_silence) {
+    log.LogLine("virtio-snd: capture returned only silence; failing (--require-non-silence)");
+    out.ok = false;
+    out.hr = E_FAIL;
+    out.fail_reason = "captured_silence";
+    return out;
+  }
+
+  if (out.captured_silence_only) {
+    log.LogLine("virtio-snd: capture returned only silence (PASS by default; use --require-non-silence to fail)");
+  }
+
   out.ok = true;
   out.hr = S_OK;
   out.fail_reason.clear();
-  log.Logf("virtio-snd: capture smoke ok (frames=%llu min_frames=%llu flags=0x%08lx)", total_frames, min_frames,
-           static_cast<unsigned long>(captured_flags));
+  log.Logf(
+      "virtio-snd: capture smoke ok (frames=%llu min_frames=%llu silent_frames=%llu non_silent_frames=%llu "
+      "flags=0x%08lx)",
+      total_frames, min_frames, silent_frames, non_silent_frames, static_cast<unsigned long>(captured_flags));
   return out;
 }
 
@@ -2811,6 +3012,8 @@ static void PrintUsage() {
       "  --test-snd                Alias for --require-snd\n"
       "  --require-snd-capture     Fail if virtio-snd capture is missing (default: SKIP)\n"
       "  --test-snd-capture        Run virtio-snd capture smoke test if available (default: no)\n"
+      "  --require-non-silence     Fail capture smoke test if only silence is captured\n"
+      "  --allow-virtio-snd-transitional  Also accept legacy PCI\\VEN_1AF4&DEV_1018\n"
       "  --net-timeout-sec <sec>   Wait time for DHCP/link\n"
       "  --io-size-mib <mib>       virtio-blk test file size\n"
       "  --io-chunk-kib <kib>      virtio-blk chunk size\n"
@@ -2879,6 +3082,10 @@ int wmain(int argc, wchar_t** argv) {
       opt.require_snd_capture = true;
     } else if (arg == L"--test-snd-capture") {
       opt.test_snd_capture = true;
+    } else if (arg == L"--require-non-silence") {
+      opt.require_non_silence = true;
+    } else if (arg == L"--allow-virtio-snd-transitional") {
+      opt.allow_virtio_snd_transitional = true;
     } else if (arg == L"--net-timeout-sec") {
       const wchar_t* v = next();
       const auto parsed = ParseU32(v);
@@ -2910,10 +3117,11 @@ int wmain(int argc, wchar_t** argv) {
     }
   }
 
-  if (opt.disable_snd && (opt.require_snd || opt.require_snd_capture || opt.test_snd_capture)) {
+  if (opt.disable_snd &&
+      (opt.require_snd || opt.require_snd_capture || opt.test_snd_capture || opt.require_non_silence)) {
     fprintf(stderr,
-            "--disable-snd cannot be combined with --test-snd/--require-snd, --require-snd-capture, or "
-            "--test-snd-capture\n");
+            "--disable-snd cannot be combined with --test-snd/--require-snd, --require-snd-capture, "
+            "--test-snd-capture, or --require-non-silence\n");
     PrintUsage();
     return 2;
   }
@@ -2938,48 +3146,58 @@ int wmain(int argc, wchar_t** argv) {
            input.ambiguous_devices, input.unknown_devices, input.keyboard_collections, input.mouse_collections,
            input.reason.empty() ? "-" : input.reason.c_str());
   all_ok = all_ok && input.ok;
-
-  const bool want_snd_capture = opt.require_snd_capture || opt.test_snd_capture;
+  const bool want_snd_playback = opt.require_snd;
+  const bool want_snd_capture =
+      opt.require_snd_capture || opt.test_snd_capture || opt.require_non_silence || want_snd_playback;
 
   if (opt.disable_snd) {
     log.LogLine("virtio-snd: disabled by --disable-snd");
     log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|disabled");
     log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|disabled");
+  } else if (!want_snd_playback && !opt.require_snd_capture && !opt.test_snd_capture && !opt.require_non_silence) {
+    log.LogLine("virtio-snd: skipped (enable with --test-snd)");
+    log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|flag_not_set");
+    log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set");
   } else {
-    const auto snd_pci = DetectVirtioSndPciDevices(log);
+    if (!want_snd_playback) {
+      log.LogLine("virtio-snd: skipped (enable with --test-snd)");
+      log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|flag_not_set");
+    }
+
+    const auto snd_pci = DetectVirtioSndPciDevices(log, opt.allow_virtio_snd_transitional);
     if (snd_pci.empty()) {
-      log.LogLine("virtio-snd: PCI\\VEN_1AF4&DEV_1059 or PCI\\VEN_1AF4&DEV_1018 device not detected");
-      if (opt.require_snd) {
-        log.LogLine("virtio-snd: --require-snd set; failing (device missing)");
+      if (opt.allow_virtio_snd_transitional) {
+        log.LogLine("virtio-snd: PCI\\VEN_1AF4&DEV_1059 (or legacy DEV_1018) device not detected");
+      } else {
+        log.LogLine("virtio-snd: PCI\\VEN_1AF4&DEV_1059 device not detected (contract v1 modern-only)");
+      }
+
+      if (want_snd_playback) {
         log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|device_missing");
         all_ok = false;
-      } else {
-        log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|device_missing");
       }
 
       if (opt.require_snd_capture) {
         log.LogLine("virtio-snd: --require-snd-capture set; failing (device missing)");
         log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL|device_missing");
         all_ok = false;
-      } else if (want_snd_capture) {
-        log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|device_missing");
       } else {
-        log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set");
+        log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|device_missing");
       }
     } else if (!VirtioSndHasTopologyInterface(log, snd_pci)) {
       log.LogLine("virtio-snd: no KSCATEGORY_TOPOLOGY interface found for detected virtio-snd device");
 
-      log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|topology_interface_missing");
-      all_ok = false;
+      if (want_snd_playback) {
+        log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|topology_interface_missing");
+        all_ok = false;
+      }
 
       if (opt.require_snd_capture) {
         log.LogLine("virtio-snd: --require-snd-capture set; failing (topology interface missing)");
         log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL|topology_interface_missing");
         all_ok = false;
-      } else if (want_snd_capture) {
-        log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|topology_interface_missing");
       } else {
-        log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|flag_not_set");
+        log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|topology_interface_missing");
       }
     } else {
       std::vector<std::wstring> match_names;
@@ -2987,38 +3205,64 @@ int wmain(int argc, wchar_t** argv) {
         if (!d.description.empty()) match_names.push_back(d.description);
       }
 
-      bool snd_ok = false;
-      const auto snd = VirtioSndTest(log, match_names);
-      if (snd.ok) {
-        snd_ok = true;
-      } else {
-        log.Logf("virtio-snd: WASAPI failed reason=%s hr=0x%08lx",
-                 snd.fail_reason.empty() ? "unknown" : snd.fail_reason.c_str(),
-                 static_cast<unsigned long>(snd.hr));
-        log.LogLine("virtio-snd: trying waveOut fallback");
-        snd_ok = WaveOutToneTest(log, match_names);
+      if (want_snd_playback) {
+        bool snd_ok = false;
+        const auto snd = VirtioSndTest(log, match_names, opt.allow_virtio_snd_transitional);
+        if (snd.ok) {
+          snd_ok = true;
+        } else {
+          log.Logf("virtio-snd: WASAPI failed reason=%s hr=0x%08lx",
+                   snd.fail_reason.empty() ? "unknown" : snd.fail_reason.c_str(),
+                   static_cast<unsigned long>(snd.hr));
+          log.LogLine("virtio-snd: trying waveOut fallback");
+          snd_ok = WaveOutToneTest(log, match_names, opt.allow_virtio_snd_transitional);
+        }
+
+        log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|%s", snd_ok ? "PASS" : "FAIL");
+        all_ok = all_ok && snd_ok;
       }
 
-      log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|%s", snd_ok ? "PASS" : "FAIL");
-      all_ok = all_ok && snd_ok;
-
       if (want_snd_capture) {
-        const DWORD capture_wait_ms = (opt.require_snd_capture || opt.test_snd_capture) ? 20000 : 0;
-        bool capture_ok = false;
+        const bool capture_smoke_test = opt.test_snd_capture || opt.require_non_silence;
+        const DWORD capture_wait_ms = (opt.require_snd_capture || capture_smoke_test) ? 20000 : 0;
 
-        auto capture = VirtioSndCaptureTest(log, match_names, opt.test_snd_capture, capture_wait_ms);
+        bool capture_ok = false;
+        const char* capture_method = "wasapi";
+        bool capture_silence_only = false;
+        bool capture_non_silence = false;
+        UINT64 capture_frames = 0;
+
+        auto capture = VirtioSndCaptureTest(log, match_names, capture_smoke_test, capture_wait_ms,
+                                            opt.allow_virtio_snd_transitional, opt.require_non_silence);
         if (capture.ok) {
           capture_ok = true;
-        } else if (opt.test_snd_capture) {
+          capture_silence_only = capture.captured_silence_only;
+          capture_non_silence = capture.captured_non_silence;
+          capture_frames = capture.captured_frames;
+        } else if (capture_smoke_test) {
           log.Logf("virtio-snd: capture WASAPI failed reason=%s hr=0x%08lx",
                    capture.fail_reason.empty() ? "unknown" : capture.fail_reason.c_str(),
                    static_cast<unsigned long>(capture.hr));
           log.LogLine("virtio-snd: trying waveIn fallback");
-          capture_ok = WaveInCaptureTest(log, match_names);
+          const auto wavein = WaveInCaptureTest(log, match_names, opt.allow_virtio_snd_transitional,
+                                                opt.require_non_silence);
+          if (wavein.ok) {
+            capture_ok = true;
+            capture_method = "waveIn";
+            capture_silence_only = wavein.captured_silence_only;
+            capture_non_silence = wavein.captured_non_silence;
+            capture_frames = wavein.captured_frames;
+          }
         }
 
         if (capture_ok) {
-          log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|PASS");
+          if (capture_smoke_test) {
+            log.Logf(
+                "AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|PASS|method=%s|frames=%llu|non_silence=%d|silence_only=%d",
+                capture_method, capture_frames, capture_non_silence ? 1 : 0, capture_silence_only ? 1 : 0);
+          } else {
+            log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|PASS|endpoint_present");
+          }
         } else if (capture.fail_reason == "no_matching_endpoint") {
           if (opt.require_snd_capture) {
             log.LogLine("virtio-snd: --require-snd-capture set; failing");
@@ -3028,12 +3272,17 @@ int wmain(int argc, wchar_t** argv) {
             log.LogLine("virtio-snd: no capture endpoint; skipping (use --require-snd-capture to require)");
             log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|endpoint_missing");
           }
+        } else if (capture.fail_reason == "captured_silence") {
+          log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL|silence");
+          all_ok = false;
         } else {
           log.Logf("virtio-snd: capture failed reason=%s hr=0x%08lx",
                    capture.fail_reason.empty() ? "unknown" : capture.fail_reason.c_str(),
                    static_cast<unsigned long>(capture.hr));
-          if (opt.require_snd_capture || opt.test_snd_capture) {
-            log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL|error");
+          if (opt.require_snd_capture || capture_smoke_test) {
+            log.LogLine(
+                capture.endpoint_found ? "AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL|stream_init_failed"
+                                      : "AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|FAIL|error");
             all_ok = false;
           } else {
             log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd-capture|SKIP|error");
