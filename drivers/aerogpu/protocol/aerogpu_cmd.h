@@ -291,6 +291,10 @@ AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_destroy_resource) == 16);
  * This is only meaningful for guest-backed resources (`backing_alloc_id != 0`).
  * Host-owned resources (`backing_alloc_id == 0`) should be updated via
  * `UPLOAD_RESOURCE` instead.
+ *
+ * If the resource is guest-backed, the submission must provide an alloc-table
+ * entry for that allocation ID so the host can resolve the guest physical
+ * address range for the dirty bytes.
  */
 #pragma pack(push, 1)
 struct aerogpu_cmd_resource_dirty_range {
