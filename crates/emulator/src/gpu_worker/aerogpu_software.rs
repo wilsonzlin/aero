@@ -261,6 +261,9 @@ impl AeroGpuSoftwareExecutor {
             let Some(&next) = self.resource_aliases.get(&handle) else {
                 break;
             };
+            if next == handle {
+                break;
+            }
             handle = next;
         }
         handle
@@ -2041,49 +2044,53 @@ impl AeroGpuSoftwareExecutor {
                             Self::record_error(regs);
                             return false;
                         }
-                    };
+                };
                 let handle = u32::from_le(packet_cmd.resource_handle);
                 let resolved = self.resolve_handle(handle);
                 self.buffers.remove(&resolved);
                 self.resource_aliases.remove(&handle);
 
+                let mut destroyed_underlying = false;
                 if let Some(count) = self.texture_refcounts.get_mut(&resolved) {
                     *count = count.saturating_sub(1);
                     if *count == 0 {
+                        destroyed_underlying = true;
                         self.texture_refcounts.remove(&resolved);
                         self.textures.remove(&resolved);
                         self.shared_surfaces.retain(|_, v| *v != resolved);
                         self.resource_aliases.retain(|_, v| *v != resolved);
                     }
                 } else {
-                    self.textures.remove(&resolved);
+                    destroyed_underlying = self.textures.remove(&resolved).is_some();
                     self.shared_surfaces.retain(|_, v| *v != resolved);
                     self.resource_aliases.retain(|_, v| *v != resolved);
                 }
                 self.state.render_targets.iter_mut().for_each(|rt| {
-                    if *rt == handle || *rt == resolved {
+                    if *rt == handle || (destroyed_underlying && *rt == resolved) {
                         *rt = 0;
                     }
                 });
-                if self.state.depth_stencil == handle || self.state.depth_stencil == resolved {
+                if self.state.depth_stencil == handle
+                    || (destroyed_underlying && self.state.depth_stencil == resolved)
+                {
                     self.state.depth_stencil = 0;
                 }
                 self.state.textures_vs.iter_mut().for_each(|tex| {
-                    if *tex == handle || *tex == resolved {
+                    if *tex == handle || (destroyed_underlying && *tex == resolved) {
                         *tex = 0;
                     }
                 });
                 self.state.textures_ps.iter_mut().for_each(|tex| {
-                    if *tex == handle || *tex == resolved {
+                    if *tex == handle || (destroyed_underlying && *tex == resolved) {
                         *tex = 0;
                     }
                 });
                 for vb in self.state.vertex_buffers.iter_mut() {
-                    if vb.buffer == handle || vb.buffer == resolved {
+                    if vb.buffer == handle || (destroyed_underlying && vb.buffer == resolved) {
                         *vb = VertexBufferBinding::default();
                     }
                 }
-                if self.state.input_layout == handle || self.state.input_layout == resolved {
+                if self.state.input_layout == handle || (destroyed_underlying && self.state.input_layout == resolved) {
                     self.state.input_layout = 0;
                 }
             }
@@ -2978,7 +2985,7 @@ impl AeroGpuSoftwareExecutor {
                             Self::record_error(regs);
                             return false;
                         }
-                    };
+                };
                 let handle = u32::from_le(packet_cmd.resource_handle);
                 let token = u64::from_le(packet_cmd.share_token);
                 if handle == 0 || token == 0 {
@@ -3064,6 +3071,10 @@ impl AeroGpuSoftwareExecutor {
             | cmd::AerogpuCmdOpcode::PresentEx
             | cmd::AerogpuCmdOpcode::Flush => {
                 // No-op for software backend (work already executes at submit boundaries).
+            }
+            _ => {
+                // Forward compatibility: ignore opcodes not yet implemented by the software
+                // backend. Unknown numeric opcodes are already filtered by `from_u32` above.
             }
         }
 

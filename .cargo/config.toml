@@ -13,7 +13,7 @@
 # opt back in by setting `CARGO_BUILD_RUSTC_WRAPPER=sccache` / `RUSTC_WRAPPER=sccache`
 # (or by overriding `build.rustc-wrapper` in a higher-precedence Cargo config).
 CARGO_BUILD_RUSTC_WRAPPER = ""
-#
+
 # Some sandbox environments ship with a broken `sccache` wrapper via environment
 # variables. Keep this in addition to the `[build]` override below so `cargo`
 # invocations from within the repo are resilient even when `RUSTC_WRAPPER` is

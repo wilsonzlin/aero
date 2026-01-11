@@ -4573,6 +4573,38 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
 }
 
 #if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI) && AEROGPU_D3D9_USE_WDK_DDI
+namespace {
+template <typename T, typename = void>
+struct aerogpu_has_member_hAllocation : std::false_type {};
+template <typename T>
+struct aerogpu_has_member_hAllocation<T, std::void_t<decltype(std::declval<T>().hAllocation)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct aerogpu_has_member_hAllocations : std::false_type {};
+template <typename T>
+struct aerogpu_has_member_hAllocations<T, std::void_t<decltype(std::declval<T>().hAllocations)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct aerogpu_has_member_phAllocation : std::false_type {};
+template <typename T>
+struct aerogpu_has_member_phAllocation<T, std::void_t<decltype(std::declval<T>().phAllocation)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct aerogpu_has_member_NumAllocations : std::false_type {};
+template <typename T>
+struct aerogpu_has_member_NumAllocations<T, std::void_t<decltype(std::declval<T>().NumAllocations)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct aerogpu_has_member_pOpenAllocationInfo : std::false_type {};
+template <typename T>
+struct aerogpu_has_member_pOpenAllocationInfo<T, std::void_t<decltype(std::declval<T>().pOpenAllocationInfo)>> : std::true_type {};
+
+template <typename T, typename = void>
+struct aerogpu_has_member_pAllocations : std::false_type {};
+template <typename T>
+struct aerogpu_has_member_pAllocations<T, std::void_t<decltype(std::declval<T>().pAllocations)>> : std::true_type {};
+} // namespace
+
 template <typename OpenResourceT>
 WddmAllocationHandle get_wddm_allocation_from_openresource(const OpenResourceT* open_resource) {
   if (!open_resource) {
@@ -4580,26 +4612,41 @@ WddmAllocationHandle get_wddm_allocation_from_openresource(const OpenResourceT* 
   }
 
   if constexpr (aerogpu_has_member_hAllocation<OpenResourceT>::value) {
-    return static_cast<WddmAllocationHandle>(open_resource->hAllocation);
+    const auto h = static_cast<WddmAllocationHandle>(open_resource->hAllocation);
+    if (h != 0) {
+      return h;
+    }
   }
 
   if constexpr (aerogpu_has_member_hAllocations<OpenResourceT>::value) {
     const auto& h_allocations = open_resource->hAllocations;
     using AllocationsT = std::remove_reference_t<decltype(h_allocations)>;
     if constexpr (std::is_array_v<AllocationsT>) {
-      return static_cast<WddmAllocationHandle>(h_allocations[0]);
+      const auto h = static_cast<WddmAllocationHandle>(h_allocations[0]);
+      if (h != 0) {
+        return h;
+      }
     } else if constexpr (std::is_pointer_v<AllocationsT>) {
       if (h_allocations) {
-        return static_cast<WddmAllocationHandle>(h_allocations[0]);
+        const auto h = static_cast<WddmAllocationHandle>(h_allocations[0]);
+        if (h != 0) {
+          return h;
+        }
       }
     } else if constexpr (std::is_integral_v<AllocationsT>) {
-      return static_cast<WddmAllocationHandle>(h_allocations);
+      const auto h = static_cast<WddmAllocationHandle>(h_allocations);
+      if (h != 0) {
+        return h;
+      }
     }
   }
 
   if constexpr (aerogpu_has_member_phAllocation<OpenResourceT>::value && aerogpu_has_member_NumAllocations<OpenResourceT>::value) {
     if (open_resource->phAllocation && open_resource->NumAllocations) {
-      return static_cast<WddmAllocationHandle>(open_resource->phAllocation[0]);
+      const auto h = static_cast<WddmAllocationHandle>(open_resource->phAllocation[0]);
+      if (h != 0) {
+        return h;
+      }
     }
   }
 
@@ -4607,7 +4654,28 @@ WddmAllocationHandle get_wddm_allocation_from_openresource(const OpenResourceT* 
     if (open_resource->pOpenAllocationInfo && open_resource->NumAllocations) {
       using InfoT = std::remove_pointer_t<decltype(open_resource->pOpenAllocationInfo)>;
       if constexpr (aerogpu_has_member_hAllocation<InfoT>::value) {
-        return static_cast<WddmAllocationHandle>(open_resource->pOpenAllocationInfo[0].hAllocation);
+        const auto h = static_cast<WddmAllocationHandle>(open_resource->pOpenAllocationInfo[0].hAllocation);
+        if (h != 0) {
+          return h;
+        }
+      }
+    }
+  }
+
+  if constexpr (aerogpu_has_member_pAllocations<OpenResourceT>::value) {
+    const auto* allocs = open_resource->pAllocations;
+    if (allocs) {
+      using Elem = std::remove_pointer_t<decltype(allocs)>;
+      if constexpr (std::is_class_v<Elem> && aerogpu_has_member_hAllocation<Elem>::value) {
+        const auto h = static_cast<WddmAllocationHandle>(allocs[0].hAllocation);
+        if (h != 0) {
+          return h;
+        }
+      } else if constexpr (!std::is_class_v<Elem> && std::is_convertible_v<Elem, WddmAllocationHandle>) {
+        const auto h = static_cast<WddmAllocationHandle>(allocs[0]);
+        if (h != 0) {
+          return h;
+        }
       }
     }
   }
