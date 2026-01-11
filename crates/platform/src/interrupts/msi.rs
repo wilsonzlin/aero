@@ -35,8 +35,13 @@ impl std::fmt::Debug for ApicSystem {
 
 impl ApicSystem {
     pub fn new_single_cpu() -> Self {
+        // The LAPIC resets with SVR[8]=0 (software disabled). Our device model drops injected
+        // interrupts when the LAPIC is disabled, so enable it here to make `ApicSystem` usable
+        // as a simple MSI sink in tests.
+        let lapic = LocalApic::new(0);
+        lapic.mmio_write(0xF0, &(0x1FFu32).to_le_bytes());
         Self {
-            lapics: vec![LocalApic::new(0)],
+            lapics: vec![lapic],
         }
     }
 
@@ -69,5 +74,20 @@ impl MsiTrigger for PlatformInterrupts {
         if dest == self.lapic_apic_id() || dest == 0xFF {
             self.lapic_inject_fixed(vector);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn apic_system_delivers_msi_to_lapic0() {
+        let mut sys = ApicSystem::new_single_cpu();
+        sys.trigger_msi(MsiMessage {
+            address: 0xFEE0_0000,
+            data: 0x0044,
+        });
+        assert_eq!(sys.lapic0().get_pending_vector(), Some(0x44));
     }
 }
