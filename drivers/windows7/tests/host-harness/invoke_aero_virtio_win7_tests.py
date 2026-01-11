@@ -391,7 +391,8 @@ def main() -> int:
                                 file=sys.stderr,
                             )
                             _print_tail(serial_log)
-                            return 1
+                            result_code = 1
+                            break
                         if not saw_virtio_input_pass:
                             print(
                                 "FAIL: selftest RESULT=PASS but did not emit virtio-input test marker",
@@ -447,7 +448,8 @@ def main() -> int:
                                     file=sys.stderr,
                                 )
                                 _print_tail(serial_log)
-                                return 1
+                                result_code = 1
+                                break
                             if not saw_virtio_input_pass:
                                 print(
                                     "FAIL: selftest RESULT=PASS but did not emit virtio-input test marker",
