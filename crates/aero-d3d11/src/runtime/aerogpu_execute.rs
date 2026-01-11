@@ -930,11 +930,14 @@ fn extract_vs_input_signature(
         return Ok(Vec::new());
     };
 
+    // D3D semantics are case-insensitive, but the signature chunk stores the original string. The
+    // aerogpu ILAY protocol only preserves a hash, so we canonicalize to ASCII uppercase to match
+    // how the guest typically hashes semantic names.
     Ok(isgn
         .parameters
         .iter()
         .map(|p| VsInputSignatureElement {
-            semantic_name_hash: fnv1a_32(p.semantic_name.as_bytes()),
+            semantic_name_hash: fnv1a_32(p.semantic_name.to_ascii_uppercase().as_bytes()),
             semantic_index: p.semantic_index,
             input_register: p.register,
         })

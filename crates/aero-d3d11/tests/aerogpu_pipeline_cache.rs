@@ -138,7 +138,9 @@ fn build_test_vs_dxbc() -> Vec<u8> {
         (*b"SHEX", tokens_to_bytes(&tokens)),
         (
             *b"ISGN",
-            build_isgn_chunk(&[("POSITION", 0, 0), ("COLOR", 0, 1)]),
+            // Use mixed-case semantics to ensure our signature parsing is case-insensitive (the
+            // input layout blob uses the canonical uppercase hashes).
+            build_isgn_chunk(&[("Position", 0, 0), ("CoLoR", 0, 1)]),
         ),
     ])
 }
