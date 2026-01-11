@@ -862,7 +862,9 @@ export class RemoteChunkedDisk implements AsyncSectorDisk {
         Pick<RemoteChunkedDiskOptions, "cacheImageId" | "cacheVersion">;
 
     const resolved: ResolvedRemoteChunkedDiskOptions = {
-      cacheLimitBytes: options.cacheLimitBytes ?? 512 * 1024 * 1024,
+      // Preserve `null` to mean "no eviction" (unbounded cache), while `undefined`
+      // selects the default bounded cache size.
+      cacheLimitBytes: options.cacheLimitBytes === undefined ? 512 * 1024 * 1024 : options.cacheLimitBytes,
       maxConcurrentFetches: options.maxConcurrentFetches ?? 4,
       prefetchSequentialChunks: options.prefetchSequentialChunks ?? 2,
       maxAttempts: options.maxAttempts ?? 3,
