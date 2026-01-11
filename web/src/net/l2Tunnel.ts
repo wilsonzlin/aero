@@ -54,6 +54,8 @@ export type L2TunnelEvent =
 
 export type L2TunnelSink = (ev: L2TunnelEvent) => void;
 
+export type L2TunnelTokenTransport = "subprotocol" | "query" | "both";
+
 export type L2TunnelClientOptions = {
   /**
    * Maximum number of bytes allowed to be queued in JS before outbound frames
@@ -86,16 +88,30 @@ export type L2TunnelClientOptions = {
   keepaliveMaxMs?: number;
 
   /**
-   * Optional token for deployments that require `?token=...` on the `/l2`
-   * WebSocket URL (or `Sec-WebSocket-Protocol: aero-l2-token.<token>`).
+   * Optional token for deployments that require auth on the `/l2` WebSocket
+   * endpoint.
    */
   token?: string;
 
   /**
-   * Send `token` via WebSocket subprotocol (as an additional offered protocol),
-   * instead of as a query parameter. This avoids tokens in URLs/logs but
-   * requires a token value that is valid for `Sec-WebSocket-Protocol`
-   * (e.g. base64url/JWT).
+   * How to transport `token` to the server (WebSocket only).
+   *
+   * - `"subprotocol"` (default): send `aero-l2-token.<token>` via
+   *   `Sec-WebSocket-Protocol` to avoid leaking tokens via URLs/logs/referrers.
+   * - `"query"`: send `?token=<token>` (legacy servers).
+   * - `"both"`: send both mechanisms for compatibility during migrations.
+   *
+   * Note: `Sec-WebSocket-Protocol` values must be valid HTTP "tokens" (RFC
+   * 6455). If your token contains spaces or other disallowed characters, use
+   * `"query"` or a header-safe token format (e.g. base64url/JWT).
+   */
+  tokenTransport?: L2TunnelTokenTransport;
+
+  /**
+   * @deprecated Use `tokenTransport` instead.
+   *
+   * - `true`  => `tokenTransport: "subprotocol"`
+   * - `false` => `tokenTransport: "query"`
    */
   tokenViaSubprotocol?: boolean;
 };
@@ -172,7 +188,7 @@ function decodePeerErrorPayload(payload: Uint8Array): { code?: number; message: 
 abstract class BaseL2TunnelClient implements L2TunnelClient {
   protected readonly opts: RequiredOptions;
   protected readonly token: string | undefined;
-  protected readonly tokenViaSubprotocol: boolean;
+  protected readonly tokenTransport: L2TunnelTokenTransport;
 
   private sendQueue: Uint8Array[] = [];
   private sendQueueHead = 0;
@@ -215,14 +231,16 @@ abstract class BaseL2TunnelClient implements L2TunnelClient {
 
     this.opts = { maxQueuedBytes, maxBufferedAmount, maxFrameSize, errorIntervalMs, keepaliveMinMs, keepaliveMaxMs };
     this.token = opts.token;
-    this.tokenViaSubprotocol = opts.tokenViaSubprotocol ?? false;
+    this.tokenTransport =
+      opts.tokenTransport ??
+      (opts.tokenViaSubprotocol === undefined ? "subprotocol" : opts.tokenViaSubprotocol ? "subprotocol" : "query");
 
-    if (this.tokenViaSubprotocol && this.token !== undefined) {
+    if (this.token !== undefined && this.tokenTransport !== "query") {
       const proto = `${L2_TUNNEL_TOKEN_SUBPROTOCOL_PREFIX}${this.token}`;
       if (!WEBSOCKET_SUBPROTOCOL_TOKEN_RE.test(proto)) {
         throw new RangeError(
           `token contains characters not valid for Sec-WebSocket-Protocol; ` +
-            `disable tokenViaSubprotocol or use a header-safe token (got ${JSON.stringify(this.token)})`,
+            `use tokenTransport="query" or a header-safe token (got ${JSON.stringify(this.token)})`,
         );
       }
     }
@@ -519,7 +537,7 @@ export class WebSocketL2TunnelClient extends BaseL2TunnelClient {
     if (this.isClosedOrClosing()) return;
     if (this.ws && this.ws.readyState !== WebSocket.CLOSED) return;
 
-    const ws = new WebSocket(this.buildWebSocketUrl(), this.buildWebSocketSubprotocols());
+    const ws = new WebSocket(this.buildWebSocketUrl(), this.buildWebSocketProtocols());
     ws.binaryType = "arraybuffer";
 
     ws.onopen = () => {
@@ -548,6 +566,12 @@ export class WebSocketL2TunnelClient extends BaseL2TunnelClient {
     this.ws = ws;
   }
 
+  private buildWebSocketProtocols(): string | string[] {
+    if (this.token === undefined) return L2_TUNNEL_SUBPROTOCOL;
+    if (this.tokenTransport === "query") return L2_TUNNEL_SUBPROTOCOL;
+    return [L2_TUNNEL_SUBPROTOCOL, `${L2_TUNNEL_TOKEN_SUBPROTOCOL_PREFIX}${this.token}`];
+  }
+
   private buildWebSocketUrl(): string {
     const url = new URL(this.gatewayBaseUrl);
     if (url.protocol === "http:") url.protocol = "ws:";
@@ -562,16 +586,11 @@ export class WebSocketL2TunnelClient extends BaseL2TunnelClient {
       url.pathname = `${path}/l2`;
     }
 
-    if (this.token !== undefined && !this.tokenViaSubprotocol) {
+    if (this.token !== undefined && this.tokenTransport !== "subprotocol") {
       url.searchParams.set("token", this.token);
     }
 
     return url.toString();
-  }
-
-  private buildWebSocketSubprotocols(): string | string[] {
-    if (this.token === undefined || !this.tokenViaSubprotocol) return L2_TUNNEL_SUBPROTOCOL;
-    return [L2_TUNNEL_SUBPROTOCOL, `${L2_TUNNEL_TOKEN_SUBPROTOCOL_PREFIX}${this.token}`];
   }
 
   protected canEnqueue(): boolean {
