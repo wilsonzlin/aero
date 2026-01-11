@@ -215,7 +215,8 @@ Configuration env vars (server → server dialing):
 - `L2_BACKEND_AUTH_FORWARD_MODE` (default `query`): `none|query|subprotocol` —
   how to forward the relay credential (JWT/API key) to the backend:
   - `query`: append `token=<credential>` and `apiKey=<credential>`
-  - `subprotocol`: offer `aero-l2-token.<credential>`
+  - `subprotocol`: offer `aero-l2-token.<credential>` (credential must be valid
+    for `Sec-WebSocket-Protocol`, i.e. an HTTP token / RFC 7230 `tchar`)
   - `none`: do not forward credentials
 - `L2_BACKEND_WS_TOKEN` (optional): If set, send an additional offered WebSocket
   subprotocol `aero-l2-token.<token>` when dialing the backend (alongside
@@ -321,6 +322,7 @@ Env vars / flags:
   - `none`: do not forward auth credentials
   - `query`: append `token=<credential>` and `apiKey=<credential>` query parameters when dialing the backend
   - `subprotocol`: offer `Sec-WebSocket-Protocol: aero-l2-tunnel-v1, aero-l2-token.<credential>`
+    (credential must be valid for `Sec-WebSocket-Protocol`, i.e. an HTTP token / RFC 7230 `tchar`)
 
 The relay requires that the backend negotiates `aero-l2-tunnel-v1` (strict).
 

@@ -92,6 +92,9 @@ options), and are never sent by the browser.
     `aero-l2-token.<credential>` alongside the required `aero-l2-tunnel-v1`
     subprotocol. The negotiated subprotocol is still required to be
     `aero-l2-tunnel-v1`.
+    - The `<credential>` must be valid for `Sec-WebSocket-Protocol` (HTTP token /
+      RFC 7230 `tchar`); use `query` mode if your credential contains characters
+      that can't be represented as a subprotocol token.
   - The forwarded `<credential>` is the same JWT/API key that authenticated the
     relay's signaling endpoints (`AUTH_MODE`). When `AUTH_MODE=none`, no
     credential is forwarded.
