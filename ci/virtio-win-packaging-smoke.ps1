@@ -131,11 +131,13 @@ $fakeVirtioWinVersion | Out-File -FilePath (Join-Path $syntheticRoot "VERSION") 
 # make-driver-pack.ps1 can record ISO hash/path even when -VirtioWinRoot is used.
 $fakeIsoPath = "synthetic-virtio-win.iso"
 $fakeIsoSha = ("0123456789abcdef" * 4)
+$fakeIsoVolumeId = "SYNTH_VIRTIOWIN"
 @{
   schema_version = 1
   virtio_win_iso = @{
     path = $fakeIsoPath
     sha256 = $fakeIsoSha
+    volume_id = $fakeIsoVolumeId
   }
 } | ConvertTo-Json -Depth 4 | Out-File -FilePath (Join-Path $syntheticRoot "virtio-win-provenance.json") -Encoding UTF8
 
@@ -207,6 +209,9 @@ if (-not $driverPackManifest.source.hash -or $driverPackManifest.source.hash.val
 }
 if ($driverPackManifest.source.hash.algorithm -ne "sha256") {
   throw "Driver pack manifest source.hash.algorithm mismatch: expected 'sha256', got '$($driverPackManifest.source.hash.algorithm)'"
+}
+if ($driverPackManifest.source.volume_label -ne $fakeIsoVolumeId) {
+  throw "Driver pack manifest source.volume_label mismatch: expected '$fakeIsoVolumeId', got '$($driverPackManifest.source.volume_label)'"
 }
 $noticeCopied = @($driverPackManifest.source.license_notice_files_copied)
 foreach ($want in @("license.txt", "notice.txt")) {

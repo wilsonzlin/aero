@@ -160,6 +160,7 @@ class VirtioWinExtractTest(unittest.TestCase):
             prov = json.loads(prov_path.read_text(encoding="utf-8"))
 
             self.assertEqual(prov["virtio_win_iso"]["sha256"], _sha256(iso_path))
+            self.assertEqual(prov["virtio_win_iso"]["volume_id"], "VIRTIOWIN_TEST")
             extracted = {(e["driver"], e["arch"]) for e in prov.get("extracted", [])}
             self.assertIn(("viostor", "amd64"), extracted)
             self.assertIn(("viostor", "x86"), extracted)

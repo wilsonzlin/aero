@@ -68,6 +68,33 @@ def _sha256(path: Path) -> str:
     return h.hexdigest()
 
 
+def _read_iso_volume_id(path: Path) -> Optional[str]:
+    """
+    Best-effort ISO-9660 volume identifier (aka volume label).
+
+    This is stored in the Primary Volume Descriptor (PVD) at sector 16.
+    """
+
+    try:
+        with path.open("rb") as f:
+            f.seek(16 * 2048)
+            pvd = f.read(2048)
+    except OSError:
+        return None
+
+    if len(pvd) < 2048:
+        return None
+    if pvd[0] != 1 or pvd[1:6] != b"CD001":
+        return None
+
+    vol_id_raw = pvd[40:72]
+    try:
+        vol_id = vol_id_raw.decode("ascii", errors="ignore").rstrip(" ")
+    except UnicodeDecodeError:
+        return None
+    return vol_id or None
+
+
 def _utc_now_iso() -> str:
     # `datetime.UTC` was introduced in Python 3.11; use `timezone.utc` for compatibility
     # with the Python versions commonly available on CI runners.
@@ -381,6 +408,7 @@ def main() -> int:
     provenance_path = (args.provenance or (out_root / DEFAULT_PROVENANCE_FILENAME)).resolve()
 
     iso_hash = _sha256(iso_path)
+    iso_volume_id = _read_iso_volume_id(iso_path)
 
     backend: str
     sevenz = _find_7z()
@@ -501,6 +529,7 @@ def main() -> int:
         "virtio_win_iso": {
             "path": str(iso_path),
             "sha256": iso_hash,
+            "volume_id": iso_volume_id,
         },
         "backend": backend_used,
         "extracted": extracted,

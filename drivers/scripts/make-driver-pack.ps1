@@ -265,6 +265,9 @@ try {
               Write-Warning "virtio-win provenance file '$provenancePath' contains an invalid sha256; ignoring."
             }
           }
+          if (-not $isoVolumeLabel -and $prov.virtio_win_iso.volume_id) {
+            $isoVolumeLabel = ("" + $prov.virtio_win_iso.volume_id).Trim()
+          }
         }
       } catch {
         Write-Warning "Failed to parse virtio-win provenance file: $provenancePath ($($_.Exception.Message))"

@@ -257,7 +257,8 @@ pwsh drivers/scripts/make-driver-pack.ps1 -VirtioWinRoot /tmp/virtio-win-root -N
 - `/tmp/virtio-win-root/virtio-win-provenance.json`
 
 `drivers/scripts/make-driver-pack.ps1` will ingest this file when present so the produced
-driver pack `manifest.json` can record the original ISO hash even when using `-VirtioWinRoot`.
+driver pack `manifest.json` can record the original ISO hash/volume label even when using
+`-VirtioWinRoot`.
 
 The extractor also copies common root-level license/notice files (e.g. `LICENSE*`, `NOTICE*`,
 `README*`) into the extracted root so subsequent packaging can propagate them into
