@@ -210,6 +210,7 @@ async function main(): Promise<void> {
         ...GPU_MESSAGE_BASE,
         type: "submit_aerogpu",
         requestId: submitReqId,
+        contextId: 0,
         signalFence: 1n,
         cmdStream: cmdBytes.buffer,
         allocTable,

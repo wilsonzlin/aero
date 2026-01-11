@@ -84,8 +84,8 @@ test("GPU worker: submit_aerogpu with VSYNC present delays submit_complete until
 
           await ready;
 
-          // Ensure `screenshot` triggers an internal `handleTick()` call without using
-          // an explicit GPU-protocol `tick` message.
+          // Ensure "screenshot" triggers an internal "handleTick()" call without using
+          // an explicit GPU-protocol "tick" message.
           frameState[FRAME_STATUS_INDEX] = FRAME_DIRTY;
 
           const writerVsync = new AerogpuCmdWriter();
@@ -103,6 +103,7 @@ test("GPU worker: submit_aerogpu with VSYNC present delays submit_complete until
               ...GPU_MESSAGE_BASE,
               type: "submit_aerogpu",
               requestId: submitRequestId1,
+              contextId: 0,
               signalFence: 1n,
               cmdStream: cmdStreamVsync,
             },
@@ -116,6 +117,7 @@ test("GPU worker: submit_aerogpu with VSYNC present delays submit_complete until
               ...GPU_MESSAGE_BASE,
               type: "submit_aerogpu",
               requestId: submitRequestId2,
+              contextId: 0,
               signalFence: 2n,
               cmdStream: cmdStreamImmediate,
             },
@@ -127,8 +129,8 @@ test("GPU worker: submit_aerogpu with VSYNC present delays submit_complete until
 
           if (!receivedBeforeTick) {
             // Request a screenshot before ticking. This calls into the worker's internal
-            // `handleTick()` to ensure the completion gate is keyed to the explicit
-            // `tick` message (not internal present work).
+            // "handleTick()" to ensure the completion gate is keyed to the explicit
+            // "tick" message (not internal present work).
             const screenshotRequestId = nextRequestId++;
             const screenshotPromise = new Promise((resolve, reject) =>
               pending.set(screenshotRequestId, { resolve, reject }),
@@ -270,8 +272,8 @@ test("GPU worker: multiple VSYNC submit_aerogpu completions advance one-per-tick
 
           await ready;
 
-          // Ensure `screenshot` triggers an internal `handleTick()` call without using
-          // an explicit GPU-protocol `tick` message.
+          // Ensure "screenshot" triggers an internal "handleTick()" call without using
+          // an explicit GPU-protocol "tick" message.
           frameState[FRAME_STATUS_INDEX] = FRAME_DIRTY;
 
           const writer1 = new AerogpuCmdWriter();
@@ -289,6 +291,7 @@ test("GPU worker: multiple VSYNC submit_aerogpu completions advance one-per-tick
               ...GPU_MESSAGE_BASE,
               type: "submit_aerogpu",
               requestId: submitRequestId1,
+              contextId: 0,
               signalFence: 1n,
               cmdStream: cmdStream1,
             },
@@ -302,6 +305,7 @@ test("GPU worker: multiple VSYNC submit_aerogpu completions advance one-per-tick
               ...GPU_MESSAGE_BASE,
               type: "submit_aerogpu",
               requestId: submitRequestId2,
+              contextId: 0,
               signalFence: 2n,
               cmdStream: cmdStream2,
             },

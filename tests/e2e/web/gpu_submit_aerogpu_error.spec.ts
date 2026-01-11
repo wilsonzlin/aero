@@ -175,13 +175,14 @@ test('GPU worker: malformed submit_aerogpu reports error but worker stays alive'
           const badSubmitPromise = new Promise((resolve, reject) => pending.set(badSubmitRequestId, { resolve, reject }));
           const badErrorPromise = waitForNextError();
            worker.postMessage(
-             {
-               ...GPU_MESSAGE_BASE,
-               type: "submit_aerogpu",
-               requestId: badSubmitRequestId,
-               signalFence: 1n,
-               cmdStream: bad,
-             },
+              {
+                ...GPU_MESSAGE_BASE,
+                type: "submit_aerogpu",
+                requestId: badSubmitRequestId,
+                contextId: 0,
+                signalFence: 1n,
+                cmdStream: bad,
+              },
              [bad],
            );
 
@@ -194,13 +195,14 @@ test('GPU worker: malformed submit_aerogpu reports error but worker stays alive'
           const submitRequestId = nextRequestId++;
           const submitPromise = new Promise((resolve, reject) => pending.set(submitRequestId, { resolve, reject }));
            worker.postMessage(
-             {
-               ...GPU_MESSAGE_BASE,
-               type: "submit_aerogpu",
-               requestId: submitRequestId,
-               signalFence: 2n,
-               cmdStream,
-             },
+              {
+                ...GPU_MESSAGE_BASE,
+                type: "submit_aerogpu",
+                requestId: submitRequestId,
+                contextId: 0,
+                signalFence: 2n,
+                cmdStream,
+              },
              [cmdStream],
            );
           await submitPromise;

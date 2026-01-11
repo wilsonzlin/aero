@@ -40,7 +40,12 @@ export interface GpuWorkerHandle {
   ready: Promise<GpuRuntimeReadyMessage>;
   resize(width: number, height: number, devicePixelRatio: number): void;
   presentTestPattern(): void;
-  submitAerogpu(cmdStream: ArrayBuffer, signalFence: bigint, allocTable?: ArrayBuffer): Promise<GpuRuntimeSubmitCompleteMessage>;
+  submitAerogpu(
+    cmdStream: ArrayBuffer,
+    signalFence: bigint,
+    allocTable?: ArrayBuffer,
+    contextId?: number,
+  ): Promise<GpuRuntimeSubmitCompleteMessage>;
   requestScreenshot(): Promise<GpuRuntimeScreenshotResponseMessage>;
   shutdown(): void;
 }
@@ -276,17 +281,20 @@ export function createGpuWorker(params: CreateGpuWorkerParams): GpuWorkerHandle 
     cmdStream: ArrayBuffer,
     signalFence: bigint,
     allocTable?: ArrayBuffer,
+    contextId = 0,
   ): Promise<GpuRuntimeSubmitCompleteMessage> {
     return ready.then(
       () => {
         const requestId = nextRequestId++;
         const transfer: Transferable[] = [cmdStream];
         if (allocTable) transfer.push(allocTable);
+        const normalizedContextId = Number.isFinite(contextId) ? contextId >>> 0 : 0;
         worker.postMessage(
           {
             ...GPU_MESSAGE_BASE,
             type: "submit_aerogpu",
             requestId,
+            contextId: normalizedContextId,
             signalFence,
             cmdStream,
             ...(allocTable ? { allocTable } : {}),

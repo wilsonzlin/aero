@@ -348,6 +348,7 @@ test('GPU worker: submit_aerogpu executes real D3D9 draw via wasm executor', asy
               ...GPU_MESSAGE_BASE,
               type: "submit_aerogpu",
               requestId: submitRequestId,
+              contextId: 0,
               signalFence: 1n,
               cmdStream,
             },

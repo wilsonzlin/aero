@@ -86,6 +86,7 @@ import {
   executeAerogpuCmdStream,
   resetAerogpuCpuExecutorState,
   type AeroGpuCpuTexture,
+  type AerogpuCpuExecutorState,
 } from "./aerogpu-acmd-executor.ts";
 import {
   AEROGPU_PRESENT_FLAG_VSYNC,
@@ -183,7 +184,27 @@ let presenterSrcHeight = 0;
 // AeroGPU command submission (ACMD)
 // -----------------------------------------------------------------------------
 
-const aerogpuState = createAerogpuCpuExecutorState();
+const aerogpuContexts = new Map<number, AerogpuCpuExecutorState>();
+
+type AerogpuLastPresentedFrame = NonNullable<AerogpuCpuExecutorState["lastPresentedFrame"]>;
+let aerogpuLastPresentedFrame: AerogpuLastPresentedFrame | null = null;
+
+const getAerogpuContextState = (contextId: number): AerogpuCpuExecutorState => {
+  const key = contextId >>> 0;
+  const existing = aerogpuContexts.get(key);
+  if (existing) return existing;
+  const created = createAerogpuCpuExecutorState();
+  aerogpuContexts.set(key, created);
+  return created;
+};
+
+const resetAerogpuContexts = (): void => {
+  for (const state of aerogpuContexts.values()) {
+    resetAerogpuCpuExecutorState(state);
+  }
+  aerogpuContexts.clear();
+  aerogpuLastPresentedFrame = null;
+};
 
 type AeroGpuWasmApi = typeof import("../wasm/aero-gpu.ts");
 
@@ -1375,13 +1396,15 @@ const cmdStreamRequiresD3d9Executor = (cmdStream: ArrayBuffer): boolean => {
 const handleSubmitAerogpu = async (req: GpuRuntimeSubmitAerogpuMessage): Promise<void> => {
   const signalFence = typeof req.signalFence === "bigint" ? req.signalFence : BigInt(req.signalFence);
   const vsyncPaced = cmdStreamHasVsyncPresent(req.cmdStream);
+  const rawContextId = (req as unknown as { contextId?: unknown }).contextId;
+  const contextId = typeof rawContextId === "number" && Number.isFinite(rawContextId) ? rawContextId >>> 0 : 0;
+  const aerogpuState = getAerogpuContextState(contextId);
   const requiresD3d9 = cmdStreamRequiresD3d9Executor(req.cmdStream);
 
   let presentCount: bigint | undefined = undefined;
   let submitOk = false;
   try {
     await maybeSendReady();
-
     if (requiresD3d9) {
       const backend = presenter?.backend ?? "webgpu";
       const wasm = await ensureAerogpuWasmD3d9(backend);
@@ -1395,12 +1418,14 @@ const handleSubmitAerogpu = async (req: GpuRuntimeSubmitAerogpuMessage): Promise
       const cmdU8 = new Uint8Array(req.cmdStream);
       const allocTableU8 = req.allocTable ? new Uint8Array(req.allocTable) : undefined;
 
-      const submit = wasm.submit_aerogpu_d3d9(cmdU8, signalFence, 0, allocTableU8);
+      const submit = wasm.submit_aerogpu_d3d9(cmdU8, signalFence, contextId, allocTableU8);
       presentCount = submit.presentCount;
 
       if (presentCount !== undefined) {
         const shot = await wasm.request_screenshot_info();
-        aerogpuState.lastPresentedFrame = { width: shot.width, height: shot.height, rgba8: shot.rgba8 };
+        const frame = { width: shot.width, height: shot.height, rgba8: shot.rgba8 };
+        aerogpuState.lastPresentedFrame = frame;
+        aerogpuLastPresentedFrame = frame;
 
         if (presenter) {
           if (shot.width !== presenterSrcWidth || shot.height !== presenterSrcHeight) {
@@ -1421,7 +1446,12 @@ const handleSubmitAerogpu = async (req: GpuRuntimeSubmitAerogpuMessage): Promise
         guestU8,
         presentTexture: presentAerogpuTexture,
       });
-      if (presentDelta > 0n) presentCount = aerogpuState.presentCount;
+      if (presentDelta > 0n) {
+        presentCount = aerogpuState.presentCount;
+        if (aerogpuState.lastPresentedFrame) {
+          aerogpuLastPresentedFrame = aerogpuState.lastPresentedFrame;
+        }
+      }
       submitOk = true;
     }
   } catch (err) {
@@ -1850,7 +1880,7 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
         presenterSrcWidth = 0;
         presenterSrcHeight = 0;
 
-        resetAerogpuCpuExecutorState(aerogpuState);
+        resetAerogpuContexts();
         // Reset wasm-backed executor state (if it was used previously).
         aerogpuWasmD3d9InitPromise = null;
         aerogpuWasmD3d9Backend = null;
@@ -2113,7 +2143,7 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
             if (await tryScreenshot(true)) return;
           }
 
-          const last = aerogpuState.lastPresentedFrame;
+          const last = aerogpuLastPresentedFrame;
           if (last) {
             const out = last.rgba8.slice(0);
             postToMain(
@@ -2248,7 +2278,7 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
       runtimeCanvas = null;
       runtimeOptions = null;
       runtimeReadySent = false;
-      resetAerogpuCpuExecutorState(aerogpuState);
+      resetAerogpuContexts();
       aerogpuWasmD3d9InitPromise = null;
       aerogpuWasmD3d9Backend = null;
       aerogpuWasmD3d9InternalCanvas = null;

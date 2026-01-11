@@ -177,6 +177,16 @@ export type GpuRuntimeSubmitAerogpuMessage = GpuWorkerMessageBase & {
   type: "submit_aerogpu";
   requestId: number;
   /**
+   * Per-submission context ID (u32).
+   *
+   * Corresponds to `aerogpu_submit_desc.context_id`.
+   *
+   * This is required for correctness when multiple guest processes submit
+   * interleaved AeroGPU command streams: host-side execution state (resources,
+   * bindings, present counters, etc) must be isolated per context.
+   */
+  contextId: number;
+  /**
    * Guest-provided fence value to report as completed once the submission finishes.
    *
    * Uses BigInt to preserve full u64 fidelity across JS/worker IPC.

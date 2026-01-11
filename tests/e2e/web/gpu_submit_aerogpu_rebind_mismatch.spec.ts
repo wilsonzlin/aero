@@ -185,7 +185,7 @@ test('GPU worker: CREATE_TEXTURE2D rebind mismatch reports error but worker stay
             const submit0 = nextRequestId++;
             const submit0Promise = new Promise((resolve, reject) => pending.set(submit0, { resolve, reject }));
             worker.postMessage(
-              { ...GPU_MESSAGE_BASE, type: "submit_aerogpu", requestId: submit0, signalFence: 1n, cmdStream: cmdStream0 },
+              { ...GPU_MESSAGE_BASE, type: "submit_aerogpu", requestId: submit0, contextId: 0, signalFence: 1n, cmdStream: cmdStream0 },
               [cmdStream0],
             );
             await submit0Promise;
@@ -196,7 +196,7 @@ test('GPU worker: CREATE_TEXTURE2D rebind mismatch reports error but worker stay
             const badSubmitPromise = new Promise((resolve, reject) => pending.set(badSubmit, { resolve, reject }));
             const badErrorPromise = waitForNextError();
             worker.postMessage(
-              { ...GPU_MESSAGE_BASE, type: "submit_aerogpu", requestId: badSubmit, signalFence: 2n, cmdStream: cmdStreamBad },
+              { ...GPU_MESSAGE_BASE, type: "submit_aerogpu", requestId: badSubmit, contextId: 0, signalFence: 2n, cmdStream: cmdStreamBad },
               [cmdStreamBad],
             );
             await Promise.all([badSubmitPromise, badErrorPromise]);
@@ -207,7 +207,7 @@ test('GPU worker: CREATE_TEXTURE2D rebind mismatch reports error but worker stay
             const submit1 = nextRequestId++;
             const submit1Promise = new Promise((resolve, reject) => pending.set(submit1, { resolve, reject }));
             worker.postMessage(
-              { ...GPU_MESSAGE_BASE, type: "submit_aerogpu", requestId: submit1, signalFence: 3n, cmdStream: cmdStream1 },
+              { ...GPU_MESSAGE_BASE, type: "submit_aerogpu", requestId: submit1, contextId: 0, signalFence: 3n, cmdStream: cmdStream1 },
               [cmdStream1],
             );
             await submit1Promise;
@@ -244,4 +244,3 @@ test('GPU worker: CREATE_TEXTURE2D rebind mismatch reports error but worker stay
   expect(result.errors.some((e: string) => e.includes("rebind mismatch"))).toBe(true);
   expect(result.pass).toBe(true);
 });
-

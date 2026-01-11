@@ -194,6 +194,7 @@ test('GPU worker: submit_aerogpu COPY_TEXTURE2D copies sub-rects (with BGRX uplo
                 ...GPU_MESSAGE_BASE,
                 type: "submit_aerogpu",
                 requestId: submitRequestId,
+                contextId: 0,
                 signalFence: 1n,
                 cmdStream,
               },
@@ -230,4 +231,3 @@ test('GPU worker: submit_aerogpu COPY_TEXTURE2D copies sub-rects (with BGRX uplo
   expect(result.error ?? null).toBeNull();
   expect(result.pass).toBe(true);
 });
-

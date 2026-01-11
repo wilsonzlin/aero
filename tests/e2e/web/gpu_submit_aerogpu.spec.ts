@@ -160,13 +160,14 @@ test('GPU worker: submit_aerogpu round-trips and presents deterministic triangle
           const submitRequestId = nextRequestId++;
           const submitPromise = new Promise((resolve, reject) => pending.set(submitRequestId, { resolve, reject }));
            worker.postMessage(
-             {
-               ...GPU_MESSAGE_BASE,
-               type: "submit_aerogpu",
-               requestId: submitRequestId,
-               signalFence: 1n,
-               cmdStream,
-             },
+              {
+                ...GPU_MESSAGE_BASE,
+                type: "submit_aerogpu",
+                requestId: submitRequestId,
+                contextId: 0,
+                signalFence: 1n,
+                cmdStream,
+              },
              [cmdStream],
            );
           const submit = await submitPromise;
