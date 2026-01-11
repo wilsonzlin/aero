@@ -9,7 +9,7 @@ The UMD’s job is to:
 
 The kernel-mode driver (KMD) is responsible for accepting submissions and forwarding them to the emulator. The UMD only targets the **command stream** ABI (`aerogpu_cmd.h`); the KMD↔emulator submission transport is an implementation detail of the KMD.
 
-As of today, the in-tree Win7 KMD still uses the **legacy bring-up transport ABI** (`drivers/aerogpu/protocol/aerogpu_protocol.h`). The newer **versioned** ring/MMIO transport (`drivers/aerogpu/protocol/aerogpu_pci.h` + `aerogpu_ring.h`) is the long-term target. See `drivers/aerogpu/kmd/README.md` for current status.
+The in-tree Win7 KMD supports both the **versioned** ring/MMIO transport (`drivers/aerogpu/protocol/aerogpu_pci.h` + `aerogpu_ring.h`) and the legacy bring-up transport (see `drivers/aerogpu/kmd/README.md` for current status and device model/VID selection).
 
 The command stream does **not** reference resources by “allocation-list index”; instead it uses two separate ID spaces:
 

@@ -13,7 +13,7 @@ The contract is expressed as C/C++ headers suitable for **WDK** builds and for h
 > it is **not** the source of truth for the versioned ABI described below (implemented by
 > `crates/emulator/src/devices/pci/aerogpu.rs`).
 >
-> Current status: UMDs in this repo emit the versioned command stream (`aerogpu_cmd.h`), while the Win7 KMD transport is still in transition and continues to use the legacy ring/MMIO submission ABI in `aerogpu_protocol.h` (see `drivers/aerogpu/kmd/README.md`).
+> Current status: UMDs in this repo emit the versioned command stream (`aerogpu_cmd.h`). The Win7 KMD supports both the versioned and legacy submission transports and auto-detects which ABI is active based on the device MMIO magic; see `drivers/aerogpu/kmd/README.md`.
 
 > Note: The repository also contains older/prototype GPU ABIs with similar “AeroGPU” naming.
 > New work intended for Windows 7 should target the protocol in this directory.
