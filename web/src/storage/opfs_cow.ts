@@ -101,6 +101,14 @@ export class OpfsCowDisk implements AsyncSectorDisk {
     await this.base.flush();
   }
 
+  async clearCache(): Promise<void> {
+    const baseAny = this.base as unknown as { clearCache?: () => Promise<void> };
+    if (typeof baseAny.clearCache !== "function") {
+      throw new Error("base disk does not support cache clearing");
+    }
+    await baseAny.clearCache();
+  }
+
   async close(): Promise<void> {
     await this.overlay.close?.();
     await this.base.close?.();

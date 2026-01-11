@@ -618,6 +618,35 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     await this.ensureOpen().flush();
   }
 
+  async clearCache(): Promise<void> {
+    if (this.invalidationPromise) {
+      await this.invalidationPromise;
+    }
+    this.cacheGeneration += 1;
+    this.inflightChunks.clear();
+
+    await this.metadataStore.delete(this.cacheId);
+
+    const oldCache = this.cache;
+    await oldCache?.close?.();
+
+    const cache = await this.sparseCacheFactory.create(this.cacheId, {
+      diskSizeBytes: this.capacityBytesValue,
+      blockSizeBytes: this.opts.chunkSize,
+    });
+    this.cache = cache;
+
+    const metaToPersist: RemoteRangeDiskCacheMeta = {
+      version: 1,
+      imageKey: this.imageKey,
+      sizeBytes: this.capacityBytesValue,
+      chunkSize: this.opts.chunkSize,
+      etag: this.remoteEtag,
+      lastModified: this.remoteLastModified,
+    };
+    await this.metadataStore.write(this.cacheId, metaToPersist);
+  }
+
   async close(): Promise<void> {
     if (!this.cache) return;
     if (this.invalidationPromise) {
