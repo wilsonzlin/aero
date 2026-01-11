@@ -25,6 +25,13 @@ fn enc_inst(opcode: u16, params: &[u32]) -> Vec<u32> {
     v
 }
 
+fn enc_inst_with_extra(opcode: u16, extra: u32, params: &[u32]) -> Vec<u32> {
+    let token = (opcode as u32) | ((params.len() as u32) << 24) | extra;
+    let mut v = vec![token];
+    v.extend_from_slice(params);
+    v
+}
+
 fn assemble_vs_passthrough() -> Vec<u32> {
     // vs_2_0
     let mut out = vec![0xFFFE0200];
@@ -84,20 +91,12 @@ fn assemble_ps_math_ops() -> Vec<u32> {
     // min r0, r0, c1
     out.extend(enc_inst(
         0x000A,
-        &[
-            enc_dst(0, 0, 0xF),
-            enc_src(0, 0, 0xE4),
-            enc_src(2, 1, 0xE4),
-        ],
+        &[enc_dst(0, 0, 0xF), enc_src(0, 0, 0xE4), enc_src(2, 1, 0xE4)],
     ));
     // max r0, r0, c2
     out.extend(enc_inst(
         0x000B,
-        &[
-            enc_dst(0, 0, 0xF),
-            enc_src(0, 0, 0xE4),
-            enc_src(2, 2, 0xE4),
-        ],
+        &[enc_dst(0, 0, 0xF), enc_src(0, 0, 0xE4), enc_src(2, 2, 0xE4)],
     ));
     // rcp r1, c3
     out.extend(enc_inst(0x0006, &[enc_dst(0, 1, 0xF), enc_src(2, 3, 0xE4)]));
@@ -108,20 +107,12 @@ fn assemble_ps_math_ops() -> Vec<u32> {
     // slt r4, c6, c7
     out.extend(enc_inst(
         0x000C,
-        &[
-            enc_dst(0, 4, 0xF),
-            enc_src(2, 6, 0xE4),
-            enc_src(2, 7, 0xE4),
-        ],
+        &[enc_dst(0, 4, 0xF), enc_src(2, 6, 0xE4), enc_src(2, 7, 0xE4)],
     ));
     // sge r5, c8, c9
     out.extend(enc_inst(
         0x000D,
-        &[
-            enc_dst(0, 5, 0xF),
-            enc_src(2, 8, 0xE4),
-            enc_src(2, 9, 0xE4),
-        ],
+        &[enc_dst(0, 5, 0xF), enc_src(2, 8, 0xE4), enc_src(2, 9, 0xE4)],
     ));
     // cmp r6, c10, c11, c12
     out.extend(enc_inst(
@@ -143,6 +134,47 @@ fn assemble_ps_math_ops() -> Vec<u32> {
 fn assemble_vs_passthrough_sm3() -> Vec<u32> {
     let mut out = assemble_vs_passthrough();
     out[0] = 0xFFFE0300; // vs_3_0
+    out
+}
+
+fn assemble_ps3_tex_ifc_def() -> Vec<u32> {
+    // ps_3_0
+    let mut out = vec![0xFFFF0300];
+    // def c0, 0.5, 0.0, 1.0, 1.0
+    out.extend(enc_inst(
+        0x0051,
+        &[
+            enc_dst(2, 0, 0xF),
+            0x3F00_0000,
+            0x0000_0000,
+            0x3F80_0000,
+            0x3F80_0000,
+        ],
+    ));
+    // texld r0, t0, s0
+    out.extend(enc_inst(
+        0x0042,
+        &[
+            enc_dst(0, 0, 0xF),   // r0
+            enc_src(3, 0, 0xE4),  // t0
+            enc_src(10, 0, 0xE4), // s0
+        ],
+    ));
+    // ifc_lt c0.x, r0.x (compare op 3 = lt)
+    out.extend(enc_inst_with_extra(
+        0x0029,
+        3u32 << 16,
+        &[enc_src(2, 0, 0x00), enc_src(0, 0, 0x00)],
+    ));
+    // mov oC0, r0
+    out.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(0, 0, 0xE4)]));
+    // else
+    out.extend(enc_inst(0x002A, &[]));
+    // mov oC0, c0
+    out.extend(enc_inst(0x0001, &[enc_dst(8, 0, 0xF), enc_src(2, 0, 0xE4)]));
+    // endif
+    out.extend(enc_inst(0x002B, &[]));
+    out.push(0x0000FFFF);
     out
 }
 
@@ -247,6 +279,26 @@ fn translates_additional_ps_ops_to_wgsl() {
     assert!(wgsl.wgsl.contains("inverseSqrt"));
     assert!(wgsl.wgsl.contains("fract("));
     assert!(wgsl.wgsl.contains("select("));
+}
+
+#[test]
+fn translates_ps3_ifc_def_to_wgsl() {
+    let ps_bytes = to_bytes(&assemble_ps3_tex_ifc_def());
+    let program = shader::parse(&ps_bytes).unwrap();
+    let ir = shader::to_ir(&program);
+    let wgsl = shader::generate_wgsl(&ir);
+
+    let module = naga::front::wgsl::parse_str(&wgsl.wgsl).expect("wgsl parse");
+    naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    )
+    .validate(&module)
+    .expect("wgsl validate");
+
+    assert!(wgsl.wgsl.contains("if ("));
+    assert!(wgsl.wgsl.contains("} else {"));
+    assert!(wgsl.wgsl.contains("let c0: vec4<f32>"));
 }
 
 fn build_vertex_decl_pos_tex_color() -> state::VertexDecl {
@@ -404,6 +456,79 @@ fn micro_textured_quad_pixel_compare() {
     assert_eq!(
         hash.to_hex().as_str(),
         "6fa50059441133e99a2414be50f613190809d5373953a6e414c373be772438f7"
+    );
+}
+
+#[test]
+fn micro_ps3_ifc_def_pixel_compare() {
+    let vs = shader::to_ir(&shader::parse(&to_bytes(&assemble_vs_passthrough())).unwrap());
+    let ps = shader::to_ir(&shader::parse(&to_bytes(&assemble_ps3_tex_ifc_def())).unwrap());
+
+    let decl = build_vertex_decl_pos_tex_color();
+
+    let mut vb = Vec::new();
+    let white = software::Vec4::new(1.0, 1.0, 1.0, 1.0);
+
+    let verts = [
+        (software::Vec4::new(-1.0, -1.0, 0.0, 1.0), (0.0, 1.0)), // bottom-left
+        (software::Vec4::new(1.0, -1.0, 0.0, 1.0), (1.0, 1.0)),  // bottom-right
+        (software::Vec4::new(1.0, 1.0, 0.0, 1.0), (1.0, 0.0)),   // top-right
+        (software::Vec4::new(-1.0, 1.0, 0.0, 1.0), (0.0, 0.0)),  // top-left
+    ];
+    for (pos, (u, v)) in verts {
+        push_vec4(&mut vb, pos);
+        push_vec2(&mut vb, u, v);
+        push_vec4(&mut vb, white);
+    }
+
+    let indices: [u16; 6] = [0, 1, 2, 0, 2, 3];
+
+    // 2x2 texture with red in the left column and black in the right column.
+    let tex_bytes: [u8; 16] = [
+        255, 0, 0, 255, // top-left red
+        0, 0, 0, 255, // top-right black
+        255, 0, 0, 255, // bottom-left red
+        0, 0, 0, 255, // bottom-right black
+    ];
+    let tex = software::Texture2D::from_rgba8(2, 2, &tex_bytes);
+
+    let mut textures = HashMap::new();
+    textures.insert(0u16, tex);
+
+    let mut sampler_states = HashMap::new();
+    sampler_states.insert(
+        0u16,
+        state::SamplerState {
+            min_filter: state::FilterMode::Point,
+            mag_filter: state::FilterMode::Point,
+            address_u: state::AddressMode::Clamp,
+            address_v: state::AddressMode::Clamp,
+        },
+    );
+
+    let mut rt = software::RenderTarget::new(8, 8, software::Vec4::ZERO);
+    software::draw(
+        &mut rt,
+        &vs,
+        &ps,
+        &decl,
+        &vb,
+        Some(&indices),
+        &zero_constants(),
+        &textures,
+        &sampler_states,
+        state::BlendState::default(),
+    );
+
+    // Left side: r0.x is 1.0 so branch returns the sampled texel (red).
+    assert_eq!(rt.get(1, 4).to_rgba8(), [255, 0, 0, 255]);
+    // Right side: r0.x is 0.0 so branch returns the embedded constant c0 = (0.5, 0.0, 1.0, 1.0).
+    assert_eq!(rt.get(6, 4).to_rgba8(), [128, 0, 255, 255]);
+
+    let hash = blake3::hash(&rt.to_rgba8());
+    assert_eq!(
+        hash.to_hex().as_str(),
+        "fa291c33b86c387331d23b7163e6622bb9553e866980db89570ac967770c0ee3"
     );
 }
 

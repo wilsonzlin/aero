@@ -1,6 +1,6 @@
 //! Shader parsing and translation (DXBC/D3D9 bytecode → IR → WGSL).
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use blake3::Hash;
 use thiserror::Error;
@@ -95,6 +95,7 @@ pub enum Op {
     Nop,
     Mov,
     Add,
+    Sub,
     Mul,
     Mad,
     Dp3,
@@ -106,7 +107,13 @@ pub enum Op {
     Cmp,
     Slt,
     Sge,
+    Seq,
+    Sne,
     Frc,
+    If,
+    Ifc,
+    Else,
+    EndIf,
     Texld,
     End,
 }
@@ -118,12 +125,16 @@ pub struct Instruction {
     pub src: Vec<Src>,
     /// Sampler register for `texld` (s#).
     pub sampler: Option<u16>,
+    /// Extra immediate payload for opcodes that need it (e.g. `ifc` compare op code).
+    pub imm: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ShaderProgram {
     pub version: ShaderVersion,
     pub instructions: Vec<Instruction>,
+    /// `def c#` constants embedded in the shader bytecode.
+    pub const_defs_f32: BTreeMap<u16, [f32; 4]>,
     pub used_samplers: BTreeSet<u16>,
     pub used_consts: BTreeSet<u16>,
     pub used_inputs: BTreeSet<u16>,
@@ -145,6 +156,10 @@ pub enum ShaderError {
     UnsupportedOpcode(u16),
     #[error("unsupported register type {0}")]
     UnsupportedRegisterType(u8),
+    #[error("unsupported ifc comparison op {0}")]
+    UnsupportedCompareOp(u8),
+    #[error("invalid control flow: {0}")]
+    InvalidControlFlow(&'static str),
 }
 
 fn read_u32(words: &[u32], idx: &mut usize) -> Result<u32, ShaderError> {
@@ -221,6 +236,7 @@ fn opcode_to_op(opcode: u16) -> Option<Op> {
         0x0000 => Some(Op::Nop),
         0x0001 => Some(Op::Mov),
         0x0002 => Some(Op::Add),
+        0x0003 => Some(Op::Sub),
         0x0004 => Some(Op::Mad),
         0x0005 => Some(Op::Mul),
         0x0006 => Some(Op::Rcp),
@@ -232,7 +248,13 @@ fn opcode_to_op(opcode: u16) -> Option<Op> {
         0x000C => Some(Op::Slt),
         0x000D => Some(Op::Sge),
         0x0013 => Some(Op::Frc),
+        0x0028 => Some(Op::If),
+        0x0029 => Some(Op::Ifc),
+        0x002A => Some(Op::Else),
+        0x002B => Some(Op::EndIf),
         0x0042 => Some(Op::Texld), // D3DSIO_TEX
+        0x0054 => Some(Op::Seq),
+        0x0055 => Some(Op::Sne),
         0x0058 => Some(Op::Cmp),
         0xFFFF => Some(Op::End),
         _ => None,
@@ -270,11 +292,13 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
 
     let mut idx = 1usize;
     let mut instructions = Vec::new();
+    let mut const_defs_f32 = BTreeMap::<u16, [f32; 4]>::new();
     let mut used_samplers = BTreeSet::new();
     let mut used_consts = BTreeSet::new();
     let mut used_inputs = BTreeSet::new();
     let mut used_outputs = BTreeSet::new();
     let mut temp_max = 0u16;
+    let mut if_stack = Vec::<bool>::new(); // tracks whether an `else` has been seen for each active `if`
 
     while idx < words.len() {
         let token = read_u32(&words, &mut idx)?;
@@ -309,20 +333,39 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
             params.push(read_u32(&words, &mut idx)?);
         }
 
-        // Many real-world SM2/3 shaders include `dcl`, `def`, and `comment` opcodes.
-        // The minimal bring-up translator only understands a small arithmetic+sampling
-        // subset; treat unknown opcodes as no-ops so we can still translate and execute
-        // simple shaders extracted from DXBC containers.
+        // `def` (define float constant) is not part of the executable instruction stream; instead
+        // it defines an embedded constant register value (`c#`) that should override the external
+        // constant buffer.
+        if opcode == 0x0051 {
+            if params.len() != 5 {
+                return Err(ShaderError::UnexpectedEof);
+            }
+            let dst_token = params[0];
+            let reg_type = decode_reg_type(dst_token);
+            if reg_type != 2 {
+                return Err(ShaderError::UnsupportedRegisterType(reg_type));
+            }
+            let reg_num = decode_reg_num(dst_token);
+            let mut vals = [0f32; 4];
+            for i in 0..4 {
+                vals[i] = f32::from_bits(params[1 + i]);
+            }
+            const_defs_f32.insert(reg_num, vals);
+            continue;
+        }
+
+        // The WGSL backend only implements a subset of SM2/SM3. Treat unknown opcodes as no-ops
+        // so we can still translate simple shaders while incrementally adding support.
         let Some(op) = opcode_to_op(opcode) else {
             continue;
         };
-
         if op == Op::End {
             instructions.push(Instruction {
                 op,
                 dst: None,
                 src: Vec::new(),
                 sampler: None,
+                imm: None,
             });
             break;
         }
@@ -333,9 +376,81 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
                 dst: None,
                 src: Vec::new(),
                 sampler: None,
+                imm: None,
             },
+            Op::If => {
+                if params.len() != 1 {
+                    return Err(ShaderError::UnexpectedEof);
+                }
+                if_stack.push(false);
+                Instruction {
+                    op,
+                    dst: None,
+                    src: vec![decode_src(params[0])?],
+                    sampler: None,
+                    imm: None,
+                }
+            }
+            Op::Ifc => {
+                if params.len() != 2 {
+                    return Err(ShaderError::UnexpectedEof);
+                }
+                let cmp_code = ((token >> 16) & 0x7) as u8;
+                if cmp_code > 5 {
+                    return Err(ShaderError::UnsupportedCompareOp(cmp_code));
+                }
+                if_stack.push(false);
+                Instruction {
+                    op,
+                    dst: None,
+                    src: vec![decode_src(params[0])?, decode_src(params[1])?],
+                    sampler: None,
+                    imm: Some(u32::from(cmp_code)),
+                }
+            }
+            Op::Else => {
+                if !params.is_empty() {
+                    return Err(ShaderError::UnexpectedEof);
+                }
+                match if_stack.last_mut() {
+                    Some(seen_else) => {
+                        if *seen_else {
+                            return Err(ShaderError::InvalidControlFlow(
+                                "multiple else in if block",
+                            ));
+                        }
+                        *seen_else = true;
+                    }
+                    None => {
+                        return Err(ShaderError::InvalidControlFlow("else without matching if"))
+                    }
+                }
+                Instruction {
+                    op,
+                    dst: None,
+                    src: Vec::new(),
+                    sampler: None,
+                    imm: None,
+                }
+            }
+            Op::EndIf => {
+                if !params.is_empty() {
+                    return Err(ShaderError::UnexpectedEof);
+                }
+                if if_stack.pop().is_none() {
+                    return Err(ShaderError::InvalidControlFlow("endif without matching if"));
+                }
+                Instruction {
+                    op,
+                    dst: None,
+                    src: Vec::new(),
+                    sampler: None,
+                    imm: None,
+                }
+            }
             Op::Mov
             | Op::Add
+            | Op::Sub
             | Op::Mul
             | Op::Mad
             | Op::Dp3
@@ -347,6 +462,8 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
             | Op::Cmp
             | Op::Slt
             | Op::Sge
+            | Op::Seq
+            | Op::Sne
             | Op::Frc => {
                 if params.len() < 2 {
                     return Err(ShaderError::UnexpectedEof);
@@ -361,6 +478,7 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
                     dst: Some(dst),
                     src,
                     sampler: None,
+                    imm: None,
                 }
             }
             Op::Texld => {
@@ -382,6 +500,7 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
                     dst: Some(dst),
                     src: vec![coord],
                     sampler: Some(sampler_index),
+                    imm: None,
                 }
             }
             Op::End => unreachable!(),
@@ -419,9 +538,14 @@ fn parse_token_stream(token_bytes: &[u8]) -> Result<ShaderProgram, ShaderError> 
         instructions.push(inst);
     }
 
+    if !if_stack.is_empty() {
+        return Err(ShaderError::InvalidControlFlow("missing endif"));
+    }
+
     Ok(ShaderProgram {
         version,
         instructions,
+        const_defs_f32,
         used_samplers,
         used_consts,
         used_inputs,
@@ -441,6 +565,7 @@ pub struct ShaderIr {
     pub version: ShaderVersion,
     pub temp_count: u16,
     pub ops: Vec<Instruction>,
+    pub const_defs_f32: BTreeMap<u16, [f32; 4]>,
     pub used_samplers: BTreeSet<u16>,
     pub used_consts: BTreeSet<u16>,
     pub used_inputs: BTreeSet<u16>,
@@ -452,6 +577,7 @@ pub fn to_ir(program: &ShaderProgram) -> ShaderIr {
         version: program.version,
         temp_count: program.temp_count,
         ops: program.instructions.clone(),
+        const_defs_f32: program.const_defs_f32.clone(),
         used_samplers: program.used_samplers.clone(),
         used_consts: program.used_consts.clone(),
         used_inputs: program.used_inputs.clone(),
@@ -609,6 +735,16 @@ pub fn generate_wgsl(ir: &ShaderIr) -> WgslOutput {
             for &v in &ir.used_inputs {
                 wgsl.push_str(&format!("  let v{}: vec4<f32> = input.v{};\n", v, v));
             }
+            for (&idx, val) in &ir.const_defs_f32 {
+                wgsl.push_str(&format!(
+                    "  let c{}: vec4<f32> = vec4<f32>({}, {}, {}, {});\n",
+                    idx,
+                    wgsl_f32(val[0]),
+                    wgsl_f32(val[1]),
+                    wgsl_f32(val[2]),
+                    wgsl_f32(val[3])
+                ));
+            }
             // Outputs.
             wgsl.push_str("  var oPos: vec4<f32> = vec4<f32>(0.0);\n");
             for &reg in &ir.used_outputs {
@@ -625,9 +761,11 @@ pub fn generate_wgsl(ir: &ShaderIr) -> WgslOutput {
             wgsl.push('\n');
 
             // Instruction emission.
+            let mut indent = 1usize;
             for inst in &ir.ops {
-                emit_inst(&mut wgsl, inst);
+                emit_inst(&mut wgsl, &mut indent, inst, &ir.const_defs_f32);
             }
+            debug_assert_eq!(indent, 1, "unbalanced if/endif indentation");
 
             wgsl.push_str("  var out: VsOutput;\n  out.pos = oPos;\n");
             for &reg in &ir.used_outputs {
@@ -677,7 +815,9 @@ pub fn generate_wgsl(ir: &ShaderIr) -> WgslOutput {
                     }
                 }
                 wgsl.push_str("};\n\n");
-                wgsl.push_str("@fragment\nfn fs_main(input: PsInput) -> @location(0) vec4<f32> {\n");
+                wgsl.push_str(
+                    "@fragment\nfn fs_main(input: PsInput) -> @location(0) vec4<f32> {\n",
+                );
             } else {
                 // WGSL does not permit empty structs, so if the shader uses no varyings we
                 // omit the input parameter entirely.
@@ -696,11 +836,23 @@ pub fn generate_wgsl(ir: &ShaderIr) -> WgslOutput {
                     ));
                 }
             }
+            for (&idx, val) in &ir.const_defs_f32 {
+                wgsl.push_str(&format!(
+                    "  let c{}: vec4<f32> = vec4<f32>({}, {}, {}, {});\n",
+                    idx,
+                    wgsl_f32(val[0]),
+                    wgsl_f32(val[1]),
+                    wgsl_f32(val[2]),
+                    wgsl_f32(val[3])
+                ));
+            }
             wgsl.push_str("  var oC0: vec4<f32> = vec4<f32>(0.0);\n\n");
 
+            let mut indent = 1usize;
             for inst in &ir.ops {
-                emit_inst(&mut wgsl, inst);
+                emit_inst(&mut wgsl, &mut indent, inst, &ir.const_defs_f32);
             }
+            debug_assert_eq!(indent, 1, "unbalanced if/endif indentation");
             wgsl.push_str("  return oC0;\n}\n");
 
             WgslOutput {
@@ -712,7 +864,18 @@ pub fn generate_wgsl(ir: &ShaderIr) -> WgslOutput {
     }
 }
 
-fn emit_inst(wgsl: &mut String, inst: &Instruction) {
+fn push_indent(wgsl: &mut String, indent: usize) {
+    for _ in 0..indent {
+        wgsl.push_str("  ");
+    }
+}
+
+fn emit_inst(
+    wgsl: &mut String,
+    indent: &mut usize,
+    inst: &Instruction,
+    const_defs_f32: &BTreeMap<u16, [f32; 4]>,
+) {
     match inst.op {
         Op::Nop => {}
         Op::End => {}
@@ -720,24 +883,38 @@ fn emit_inst(wgsl: &mut String, inst: &Instruction) {
             let dst = inst.dst.unwrap();
             let src0 = inst.src[0];
             let dst_name = reg_var_name(dst.reg);
-            let src_expr = src_expr(&src0);
+            let src_expr = src_expr(&src0, const_defs_f32);
             if let Some(mask) = mask_suffix(dst.mask) {
-                wgsl.push_str(&format!("  {}{} = {}{};\n", dst_name, mask, src_expr, mask));
+                push_indent(wgsl, *indent);
+                wgsl.push_str(&format!("{}{} = {}{};\n", dst_name, mask, src_expr, mask));
             } else {
-                wgsl.push_str(&format!("  {} = {};\n", dst_name, src_expr));
+                push_indent(wgsl, *indent);
+                wgsl.push_str(&format!("{} = {};\n", dst_name, src_expr));
             }
         }
-        Op::Add | Op::Mul => {
+        Op::Add | Op::Sub | Op::Mul => {
             let dst = inst.dst.unwrap();
             let src0 = inst.src[0];
             let src1 = inst.src[1];
-            let op = if inst.op == Op::Add { "+" } else { "*" };
             let dst_name = reg_var_name(dst.reg);
-            let expr = format!("({} {} {})", src_expr(&src0), op, src_expr(&src1));
+            let op = match inst.op {
+                Op::Add => "+",
+                Op::Sub => "-",
+                Op::Mul => "*",
+                _ => unreachable!(),
+            };
+            let expr = format!(
+                "({} {} {})",
+                src_expr(&src0, const_defs_f32),
+                op,
+                src_expr(&src1, const_defs_f32)
+            );
             if let Some(mask) = mask_suffix(dst.mask) {
-                wgsl.push_str(&format!("  {}{} = {}{};\n", dst_name, mask, expr, mask));
+                push_indent(wgsl, *indent);
+                wgsl.push_str(&format!("{}{} = {}{};\n", dst_name, mask, expr, mask));
             } else {
-                wgsl.push_str(&format!("  {} = {};\n", dst_name, expr));
+                push_indent(wgsl, *indent);
+                wgsl.push_str(&format!("{} = {};\n", dst_name, expr));
             }
         }
         Op::Min | Op::Max => {
@@ -746,63 +923,79 @@ fn emit_inst(wgsl: &mut String, inst: &Instruction) {
             let src1 = inst.src[1];
             let func = if inst.op == Op::Min { "min" } else { "max" };
             let dst_name = reg_var_name(dst.reg);
-            let expr = format!("{}({}, {})", func, src_expr(&src0), src_expr(&src1));
+            let expr = format!(
+                "{}({}, {})",
+                func,
+                src_expr(&src0, const_defs_f32),
+                src_expr(&src1, const_defs_f32)
+            );
             if let Some(mask) = mask_suffix(dst.mask) {
-                wgsl.push_str(&format!("  {}{} = {}{};\n", dst_name, mask, expr, mask));
+                push_indent(wgsl, *indent);
+                wgsl.push_str(&format!("{}{} = {}{};\n", dst_name, mask, expr, mask));
             } else {
-                wgsl.push_str(&format!("  {} = {};\n", dst_name, expr));
+                push_indent(wgsl, *indent);
+                wgsl.push_str(&format!("{} = {};\n", dst_name, expr));
             }
         }
         Op::Mad => {
             let dst = inst.dst.unwrap();
-            let a = src_expr(&inst.src[0]);
-            let b = src_expr(&inst.src[1]);
-            let c = src_expr(&inst.src[2]);
+            let a = src_expr(&inst.src[0], const_defs_f32);
+            let b = src_expr(&inst.src[1], const_defs_f32);
+            let c = src_expr(&inst.src[2], const_defs_f32);
             let expr = format!("fma({}, {}, {})", a, b, c);
             let dst_name = reg_var_name(dst.reg);
             if let Some(mask) = mask_suffix(dst.mask) {
-                wgsl.push_str(&format!("  {}{} = {}{};\n", dst_name, mask, expr, mask));
+                push_indent(wgsl, *indent);
+                wgsl.push_str(&format!("{}{} = {}{};\n", dst_name, mask, expr, mask));
             } else {
-                wgsl.push_str(&format!("  {} = {};\n", dst_name, expr));
+                push_indent(wgsl, *indent);
+                wgsl.push_str(&format!("{} = {};\n", dst_name, expr));
             }
         }
         Op::Cmp => {
             let dst = inst.dst.unwrap();
-            let cond = src_expr(&inst.src[0]);
-            let a = src_expr(&inst.src[1]);
-            let b = src_expr(&inst.src[2]);
+            let cond = src_expr(&inst.src[0], const_defs_f32);
+            let a = src_expr(&inst.src[1], const_defs_f32);
+            let b = src_expr(&inst.src[2], const_defs_f32);
             // Per-component compare: if cond >= 0 then a else b.
-            let expr = format!(
-                "select({}, {}, ({} >= vec4<f32>(0.0)))",
-                b, a, cond
-            );
+            let expr = format!("select({}, {}, ({} >= vec4<f32>(0.0)))", b, a, cond);
             let dst_name = reg_var_name(dst.reg);
             if let Some(mask) = mask_suffix(dst.mask) {
-                wgsl.push_str(&format!("  {}{} = {}{};\n", dst_name, mask, expr, mask));
+                push_indent(wgsl, *indent);
+                wgsl.push_str(&format!("{}{} = {}{};\n", dst_name, mask, expr, mask));
             } else {
-                wgsl.push_str(&format!("  {} = {};\n", dst_name, expr));
+                push_indent(wgsl, *indent);
+                wgsl.push_str(&format!("{} = {};\n", dst_name, expr));
             }
         }
-        Op::Slt | Op::Sge => {
+        Op::Slt | Op::Sge | Op::Seq | Op::Sne => {
             let dst = inst.dst.unwrap();
-            let a = src_expr(&inst.src[0]);
-            let b = src_expr(&inst.src[1]);
-            let op = if inst.op == Op::Slt { "<" } else { ">=" };
+            let a = src_expr(&inst.src[0], const_defs_f32);
+            let b = src_expr(&inst.src[1], const_defs_f32);
+            let op = match inst.op {
+                Op::Slt => "<",
+                Op::Sge => ">=",
+                Op::Seq => "==",
+                Op::Sne => "!=",
+                _ => unreachable!(),
+            };
             let expr = format!(
                 "select(vec4<f32>(0.0), vec4<f32>(1.0), ({} {} {}))",
                 a, op, b
             );
             let dst_name = reg_var_name(dst.reg);
             if let Some(mask) = mask_suffix(dst.mask) {
-                wgsl.push_str(&format!("  {}{} = {}{};\n", dst_name, mask, expr, mask));
+                push_indent(wgsl, *indent);
+                wgsl.push_str(&format!("{}{} = {}{};\n", dst_name, mask, expr, mask));
             } else {
-                wgsl.push_str(&format!("  {} = {};\n", dst_name, expr));
+                push_indent(wgsl, *indent);
+                wgsl.push_str(&format!("{} = {};\n", dst_name, expr));
             }
         }
         Op::Dp3 | Op::Dp4 => {
             let dst = inst.dst.unwrap();
-            let a = src_expr(&inst.src[0]);
-            let b = src_expr(&inst.src[1]);
+            let a = src_expr(&inst.src[0], const_defs_f32);
+            let b = src_expr(&inst.src[1], const_defs_f32);
             let expr = if inst.op == Op::Dp3 {
                 format!("vec4<f32>(dot(({}).xyz, ({}).xyz))", a, b)
             } else {
@@ -810,9 +1003,11 @@ fn emit_inst(wgsl: &mut String, inst: &Instruction) {
             };
             let dst_name = reg_var_name(dst.reg);
             if let Some(mask) = mask_suffix(dst.mask) {
-                wgsl.push_str(&format!("  {}{} = {}{};\n", dst_name, mask, expr, mask));
+                push_indent(wgsl, *indent);
+                wgsl.push_str(&format!("{}{} = {}{};\n", dst_name, mask, expr, mask));
             } else {
-                wgsl.push_str(&format!("  {} = {};\n", dst_name, expr));
+                push_indent(wgsl, *indent);
+                wgsl.push_str(&format!("{} = {};\n", dst_name, expr));
             }
         }
         Op::Texld => {
@@ -820,59 +1015,121 @@ fn emit_inst(wgsl: &mut String, inst: &Instruction) {
             let coord = inst.src[0];
             let s = inst.sampler.unwrap();
             let dst_name = reg_var_name(dst.reg);
-            let coord_expr = src_expr(&coord);
+            let coord_expr = src_expr(&coord, const_defs_f32);
             let sample = format!("textureSample(tex{}, samp{}, ({}).xy)", s, s, coord_expr);
             if let Some(mask) = mask_suffix(dst.mask) {
-                wgsl.push_str(&format!("  {}{} = {}{};\n", dst_name, mask, sample, mask));
+                push_indent(wgsl, *indent);
+                wgsl.push_str(&format!("{}{} = {}{};\n", dst_name, mask, sample, mask));
             } else {
-                wgsl.push_str(&format!("  {} = {};\n", dst_name, sample));
+                push_indent(wgsl, *indent);
+                wgsl.push_str(&format!("{} = {};\n", dst_name, sample));
             }
         }
         Op::Rcp => {
             let dst = inst.dst.unwrap();
-            let src0 = src_expr(&inst.src[0]);
+            let src0 = src_expr(&inst.src[0], const_defs_f32);
             let expr = format!("(vec4<f32>(1.0) / {})", src0);
             let dst_name = reg_var_name(dst.reg);
             if let Some(mask) = mask_suffix(dst.mask) {
-                wgsl.push_str(&format!("  {}{} = {}{};\n", dst_name, mask, expr, mask));
+                push_indent(wgsl, *indent);
+                wgsl.push_str(&format!("{}{} = {}{};\n", dst_name, mask, expr, mask));
             } else {
-                wgsl.push_str(&format!("  {} = {};\n", dst_name, expr));
+                push_indent(wgsl, *indent);
+                wgsl.push_str(&format!("{} = {};\n", dst_name, expr));
             }
         }
         Op::Rsq => {
             let dst = inst.dst.unwrap();
-            let src0 = src_expr(&inst.src[0]);
+            let src0 = src_expr(&inst.src[0], const_defs_f32);
             let expr = format!("inverseSqrt({})", src0);
             let dst_name = reg_var_name(dst.reg);
             if let Some(mask) = mask_suffix(dst.mask) {
-                wgsl.push_str(&format!("  {}{} = {}{};\n", dst_name, mask, expr, mask));
+                push_indent(wgsl, *indent);
+                wgsl.push_str(&format!("{}{} = {}{};\n", dst_name, mask, expr, mask));
             } else {
-                wgsl.push_str(&format!("  {} = {};\n", dst_name, expr));
+                push_indent(wgsl, *indent);
+                wgsl.push_str(&format!("{} = {};\n", dst_name, expr));
             }
         }
         Op::Frc => {
             let dst = inst.dst.unwrap();
-            let src0 = src_expr(&inst.src[0]);
+            let src0 = src_expr(&inst.src[0], const_defs_f32);
             let expr = format!("fract({})", src0);
             let dst_name = reg_var_name(dst.reg);
             if let Some(mask) = mask_suffix(dst.mask) {
-                wgsl.push_str(&format!("  {}{} = {}{};\n", dst_name, mask, expr, mask));
+                push_indent(wgsl, *indent);
+                wgsl.push_str(&format!("{}{} = {}{};\n", dst_name, mask, expr, mask));
             } else {
-                wgsl.push_str(&format!("  {} = {};\n", dst_name, expr));
+                push_indent(wgsl, *indent);
+                wgsl.push_str(&format!("{} = {};\n", dst_name, expr));
             }
+        }
+        Op::If => {
+            let cond = src_expr(&inst.src[0], const_defs_f32);
+            push_indent(wgsl, *indent);
+            wgsl.push_str(&format!("if (({}).x != 0.0) {{\n", cond));
+            *indent += 1;
+        }
+        Op::Ifc => {
+            let a = src_expr(&inst.src[0], const_defs_f32);
+            let b = src_expr(&inst.src[1], const_defs_f32);
+            let op = match inst.imm.unwrap_or(0) {
+                0 => ">",
+                1 => "==",
+                2 => ">=",
+                3 => "<",
+                4 => "!=",
+                5 => "<=",
+                _ => "==",
+            };
+            push_indent(wgsl, *indent);
+            wgsl.push_str(&format!("if (({}).x {} ({}).x) {{\n", a, op, b));
+            *indent += 1;
+        }
+        Op::Else => {
+            *indent = indent.saturating_sub(1);
+            push_indent(wgsl, *indent);
+            wgsl.push_str("} else {\n");
+            *indent += 1;
+        }
+        Op::EndIf => {
+            *indent = indent.saturating_sub(1);
+            push_indent(wgsl, *indent);
+            wgsl.push_str("}\n");
         }
     }
 }
 
-fn src_expr(src: &Src) -> String {
+fn src_expr(src: &Src, const_defs_f32: &BTreeMap<u16, [f32; 4]>) -> String {
     match src.reg.file {
-        RegisterFile::Const => format!(
-            "constants.c[{}u]{}",
-            src.reg.index,
-            swizzle_suffix(src.swizzle)
-        ),
+        RegisterFile::Const => {
+            if const_defs_f32.contains_key(&src.reg.index) {
+                format!("c{}{}", src.reg.index, swizzle_suffix(src.swizzle))
+            } else {
+                format!(
+                    "constants.c[{}u]{}",
+                    src.reg.index,
+                    swizzle_suffix(src.swizzle)
+                )
+            }
+        }
         _ => format!("{}{}", reg_var_name(src.reg), swizzle_suffix(src.swizzle)),
     }
+}
+
+fn wgsl_f32(v: f32) -> String {
+    // WGSL uses abstract numeric literals, but we format floats with an explicit decimal point to
+    // keep the generated code unambiguous and stable for tests.
+    let mut s = format!("{v:.8}");
+    if let Some(dot) = s.find('.') {
+        while s.ends_with('0') {
+            s.pop();
+        }
+        if s.len() == dot + 1 {
+            s.push('0');
+        }
+    }
+    s
 }
 
 #[derive(Debug, Clone)]
