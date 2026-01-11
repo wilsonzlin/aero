@@ -2,6 +2,7 @@ use std::time::{Duration, Instant};
 
 use emulator::devices::aerogpu_regs::{irq_bits, mmio, ring_control, AEROGPU_ABI_MAJOR, AEROGPU_MMIO_MAGIC};
 use emulator::devices::aerogpu_ring::{AEROGPU_FENCE_PAGE_MAGIC, AEROGPU_RING_MAGIC};
+use emulator::devices::aerogpu_scanout::AeroGpuFormat;
 use emulator::devices::pci::aerogpu::{AeroGpuDeviceConfig, AeroGpuPciDevice};
 use emulator::io::pci::MmioDevice;
 use memory::MemoryBus;
@@ -202,7 +203,7 @@ fn scanout_bgra_converts_to_rgba() {
     dev.mmio_write(&mut mem, mmio::SCANOUT0_ENABLE, 4, 1);
     dev.mmio_write(&mut mem, mmio::SCANOUT0_WIDTH, 4, 2);
     dev.mmio_write(&mut mem, mmio::SCANOUT0_HEIGHT, 4, 1);
-    dev.mmio_write(&mut mem, mmio::SCANOUT0_FORMAT, 4, 1);
+    dev.mmio_write(&mut mem, mmio::SCANOUT0_FORMAT, 4, AeroGpuFormat::B8G8R8A8Unorm as u32);
     dev.mmio_write(&mut mem, mmio::SCANOUT0_PITCH_BYTES, 4, 8);
     dev.mmio_write(&mut mem, mmio::SCANOUT0_FB_GPA_LO, 4, fb_gpa as u32);
     dev.mmio_write(&mut mem, mmio::SCANOUT0_FB_GPA_HI, 4, (fb_gpa >> 32) as u32);

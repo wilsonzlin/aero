@@ -1,32 +1,42 @@
 use memory::MemoryBus;
 
-// Values mirrored from `enum aerogpu_format` in `drivers/aerogpu/protocol/aerogpu_pci.h`.
+use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat as ProtocolAerogpuFormat;
+
+// Values derived from the canonical `aero-protocol` definition of `enum aerogpu_format`.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[repr(u32)]
 pub enum AeroGpuFormat {
-    Invalid = 0,
-    B8G8R8A8Unorm = 1,
-    B8G8R8X8Unorm = 2,
-    R8G8B8A8Unorm = 3,
-    R8G8B8X8Unorm = 4,
-    B5G6R5Unorm = 5,
-    B5G5R5A1Unorm = 6,
-    D24UnormS8Uint = 32,
-    D32Float = 33,
+    Invalid = ProtocolAerogpuFormat::Invalid as u32,
+    B8G8R8A8Unorm = ProtocolAerogpuFormat::B8G8R8A8Unorm as u32,
+    B8G8R8X8Unorm = ProtocolAerogpuFormat::B8G8R8X8Unorm as u32,
+    R8G8B8A8Unorm = ProtocolAerogpuFormat::R8G8B8A8Unorm as u32,
+    R8G8B8X8Unorm = ProtocolAerogpuFormat::R8G8B8X8Unorm as u32,
+    B5G6R5Unorm = ProtocolAerogpuFormat::B5G6R5Unorm as u32,
+    B5G5R5A1Unorm = ProtocolAerogpuFormat::B5G5R5A1Unorm as u32,
+    D24UnormS8Uint = ProtocolAerogpuFormat::D24UnormS8Uint as u32,
+    D32Float = ProtocolAerogpuFormat::D32Float as u32,
 }
 
 impl AeroGpuFormat {
     pub fn from_u32(value: u32) -> Self {
-        match value {
-            1 => Self::B8G8R8A8Unorm,
-            2 => Self::B8G8R8X8Unorm,
-            3 => Self::R8G8B8A8Unorm,
-            4 => Self::R8G8B8X8Unorm,
-            5 => Self::B5G6R5Unorm,
-            6 => Self::B5G5R5A1Unorm,
-            32 => Self::D24UnormS8Uint,
-            33 => Self::D32Float,
-            _ => Self::Invalid,
+        if value == Self::B8G8R8A8Unorm as u32 {
+            Self::B8G8R8A8Unorm
+        } else if value == Self::B8G8R8X8Unorm as u32 {
+            Self::B8G8R8X8Unorm
+        } else if value == Self::R8G8B8A8Unorm as u32 {
+            Self::R8G8B8A8Unorm
+        } else if value == Self::R8G8B8X8Unorm as u32 {
+            Self::R8G8B8X8Unorm
+        } else if value == Self::B5G6R5Unorm as u32 {
+            Self::B5G6R5Unorm
+        } else if value == Self::B5G5R5A1Unorm as u32 {
+            Self::B5G5R5A1Unorm
+        } else if value == Self::D24UnormS8Uint as u32 {
+            Self::D24UnormS8Uint
+        } else if value == Self::D32Float as u32 {
+            Self::D32Float
+        } else {
+            Self::Invalid
         }
     }
 
@@ -191,4 +201,3 @@ impl Default for AeroGpuCursorConfig {
         }
     }
 }
-
