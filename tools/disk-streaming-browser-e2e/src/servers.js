@@ -16,7 +16,10 @@ function withCommonAppHeaders(res) {
 }
 
 function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  return new Promise((resolve) => {
+    const timeout = setTimeout(resolve, ms);
+    timeout.unref?.();
+  });
 }
 
 function signalProcessTree(child, signal) {
@@ -92,8 +95,6 @@ async function waitForHttpOk(url, { timeoutMs, shouldAbort }) {
     // the expected response. That's almost always a configuration/boot failure,
     // so fail fast instead of waiting for the full timeout.
     throw new Error(`Unexpected HTTP ${res.status} from ${url} while waiting for readiness`);
-
-    await sleep(100);
   }
   throw new Error(`Timed out waiting for ${url}`);
 }
@@ -102,11 +103,14 @@ async function killChildProcess(child) {
   if (!child || child.killed || child.exitCode !== null) return;
 
   signalProcessTree(child, 'SIGTERM');
-  const exited = new Promise((resolve) => child.once('exit', resolve));
+  const exited = new Promise((resolve) => {
+    child.once('exit', resolve);
+    child.once('close', resolve);
+  });
   await Promise.race([exited, sleep(2000)]);
   if (child.exitCode === null) {
     signalProcessTree(child, 'SIGKILL');
-    await exited;
+    await Promise.race([exited, sleep(2000)]);
   }
 }
 
