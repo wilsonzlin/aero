@@ -15,8 +15,8 @@ pub use mouse::UsbHidMouseHandle;
 pub use report_descriptor::{
     has_report_ids, max_feature_report_bytes, max_input_report_bytes, max_output_report_bytes,
     parse_report_descriptor, report_bits, report_bytes, synthesize_report_descriptor,
-    HidCollectionInfo, HidDescriptorError, HidReportDescriptorParseResult, HidReportInfo,
-    HidReportItem,
+    validate_collections, HidCollectionInfo, HidDescriptorError, HidReportDescriptorParseResult,
+    HidReportInfo, HidReportItem, ValidationSummary,
 };
 
 pub use passthrough::{UsbHidPassthrough, UsbHidPassthroughHandle, UsbHidPassthroughOutputReport};

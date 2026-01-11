@@ -59,7 +59,9 @@ export function requiredFramebufferBytes(
 /**
  * Returns true if `buffer` is a SharedArrayBuffer (and the runtime supports it).
  */
-export function isSharedArrayBuffer(buffer: ArrayBuffer | SharedArrayBuffer): buffer is SharedArrayBuffer {
+export function isSharedArrayBuffer(
+  buffer: ArrayBuffer | SharedArrayBuffer,
+): buffer is SharedArrayBuffer {
   return typeof SharedArrayBuffer !== "undefined" && buffer instanceof SharedArrayBuffer;
 }
 
@@ -155,6 +157,9 @@ export type FramebufferCopyMessageV1 = Readonly<{
   pixels: ArrayBuffer;
 }>;
 
+/**
+ * Runtime type guard for messages produced by the worker copy path.
+ */
 export function isFramebufferCopyMessageV1(msg: unknown): msg is FramebufferCopyMessageV1 {
   if (!msg || typeof msg !== "object") return false;
   const obj = msg as Record<string, unknown>;

@@ -56,7 +56,7 @@ function normalizeSingleItem(item) {
 test('webhid_normalize: accepts isRange with single usage', () => {
   const out = normalizeSingleItem(makeItem({ isRange: true, usages: [5], usageMinimum: 5, usageMaximum: 5 }));
   assert.equal(out.isRange, true);
-  assert.deepEqual(out.usages, [5]);
+  assert.deepEqual(out.usages, [5, 5]);
 });
 
 test('webhid_normalize: downgrades non-contiguous ranges', () => {

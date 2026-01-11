@@ -28,7 +28,7 @@ fn wrap_udp_ipv4_eth(
         payload,
     }
     .build_vec(src_ip, dst_ip)
-    .expect("build UDP");
+    .expect("build UDP packet");
     let ip = Ipv4PacketBuilder {
         dscp_ecn: 0,
         identification: 1,
@@ -41,7 +41,7 @@ fn wrap_udp_ipv4_eth(
         payload: &udp,
     }
     .build_vec()
-    .expect("build IPv4");
+    .expect("build IPv4 packet");
     EthernetFrameBuilder {
         dest_mac: dst_mac,
         src_mac,
@@ -76,7 +76,7 @@ fn wrap_tcp_ipv4_eth(
         payload,
     }
     .build_vec(src_ip, dst_ip)
-    .expect("build TCP");
+    .expect("build TCP segment");
     let ip = Ipv4PacketBuilder {
         dscp_ecn: 0,
         identification: 1,
@@ -89,7 +89,7 @@ fn wrap_tcp_ipv4_eth(
         payload: &tcp,
     }
     .build_vec()
-    .expect("build IPv4");
+    .expect("build IPv4 packet");
     EthernetFrameBuilder {
         dest_mac: dst_mac,
         src_mac,

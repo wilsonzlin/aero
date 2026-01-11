@@ -99,32 +99,273 @@ pub enum HidReportKind {
     Feature,
 }
 
+/// Maximum allowed HID collection nesting depth.
+///
+/// This is a guardrail against pathological/buggy metadata (especially when sourced from WebHID)
+/// that could produce an unusable report descriptor or overflow the call stack during synthesis.
+const MAX_COLLECTION_DEPTH: usize = 32;
+
+/// Maximum allowed report size (in bits).
+///
+/// `REPORT_SIZE` is an 8-bit HID global item, so values above 255 are invalid.
+const MAX_REPORT_SIZE_BITS: u32 = 255;
+
+/// Maximum allowed report count.
+///
+/// `REPORT_COUNT` can be encoded in 1/2/4 bytes in the descriptor, but we cap it to keep report
+/// payload sizes within a sane bound.
+const MAX_REPORT_COUNT: u32 = 65_535;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ValidationSummary {
+    pub has_report_ids: bool,
+    pub max_input_report_bytes: u32,
+    pub max_output_report_bytes: u32,
+    pub max_feature_report_bytes: u32,
+}
+
 #[derive(Debug, Error)]
-pub enum HidDescriptorError {
-    #[error("HID report descriptor ended unexpectedly")]
-    UnexpectedEof,
-    #[error("HID report descriptor contains a long item (0xFE), which is not supported")]
-    LongItemUnsupported,
-    #[error("unsupported HID item: type={item_type} tag={tag}")]
-    UnsupportedItem { item_type: u8, tag: u8 },
-    #[error("invalid item size {size} for {context}")]
-    InvalidItemSize { context: &'static str, size: usize },
-    #[error("unbalanced HID collection stack")]
-    UnbalancedCollections,
-    #[error("global Push/Pop stack underflow")]
-    GlobalStackUnderflow,
-    #[error("main item encountered outside any collection")]
-    MainItemOutsideCollection,
-    #[error("local usages specify multiple usage pages ({existing:#x} vs {new:#x})")]
-    MultipleUsagePages { existing: u32, new: u32 },
-    #[error("usage range is incomplete (must have both Usage Minimum and Usage Maximum)")]
-    IncompleteUsageRange,
-    #[error("usage range is invalid: minimum {min:#x} > maximum {max:#x}")]
-    UsageRangeMinGreaterThanMax { min: u32, max: u32 },
-    #[error("report id {report_id} is out of range (must be <= 255)")]
-    InvalidReportId { report_id: u32 },
-    #[error("unitExponent {unit_exponent} is out of range (must be -8..=7)")]
-    InvalidUnitExponent { unit_exponent: i32 },
+#[error("{message} (at {path})")]
+pub struct HidDescriptorError {
+    pub path: String,
+    pub message: String,
+}
+
+impl HidDescriptorError {
+    fn at(path: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            path: path.into(),
+            message: message.into(),
+        }
+    }
+
+    fn parse(message: impl Into<String>) -> Self {
+        Self::at("reportDescriptor", message)
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ValidationPath {
+    segments: Vec<String>,
+}
+
+impl ValidationPath {
+    fn root_collection(index: usize) -> Self {
+        Self {
+            segments: vec![format!("collections[{index}]")],
+        }
+    }
+
+    fn push_indexed(&mut self, name: &str, index: usize) {
+        self.segments.push(format!("{name}[{index}]"));
+    }
+
+    fn pop(&mut self) {
+        self.segments.pop();
+    }
+
+    fn as_string(&self) -> String {
+        self.segments.join(".")
+    }
+}
+
+#[derive(Debug, Default)]
+struct ValidationState {
+    saw_nonzero_report_id: bool,
+    first_zero_report_path: Option<String>,
+}
+
+impl ValidationState {
+    fn validate_report_id(&mut self, report_id: u32, path: &str) -> Result<(), HidDescriptorError> {
+        if report_id > u8::MAX as u32 {
+            return Err(HidDescriptorError::at(
+                path,
+                format!("reportId {report_id} is out of range (expected 0..=255)"),
+            ));
+        }
+
+        if report_id == 0 {
+            if self.saw_nonzero_report_id {
+                return Err(HidDescriptorError::at(
+                    path,
+                    "Found reportId 0 but other reports use non-zero reportId; when any report uses a reportId, all reports must use a non-zero reportId",
+                ));
+            }
+            if self.first_zero_report_path.is_none() {
+                self.first_zero_report_path = Some(path.to_string());
+            }
+            return Ok(());
+        }
+
+        if let Some(first_zero_path) = self.first_zero_report_path.as_deref() {
+            return Err(HidDescriptorError::at(
+                first_zero_path,
+                "Found reportId 0 but other reports use non-zero reportId; when any report uses a reportId, all reports must use a non-zero reportId",
+            ));
+        }
+
+        self.saw_nonzero_report_id = true;
+        Ok(())
+    }
+}
+
+pub fn validate_collections(
+    collections: &[HidCollectionInfo],
+) -> Result<ValidationSummary, HidDescriptorError> {
+    let mut state = ValidationState::default();
+
+    for (idx, collection) in collections.iter().enumerate() {
+        let mut path = ValidationPath::root_collection(idx);
+        validate_collection(collection, &mut path, 1, &mut state)?;
+    }
+
+    Ok(ValidationSummary {
+        has_report_ids: state.saw_nonzero_report_id,
+        max_input_report_bytes: max_input_report_bytes(collections),
+        max_output_report_bytes: max_output_report_bytes(collections),
+        max_feature_report_bytes: max_feature_report_bytes(collections),
+    })
+}
+
+fn validate_collection(
+    collection: &HidCollectionInfo,
+    path: &mut ValidationPath,
+    depth: usize,
+    state: &mut ValidationState,
+) -> Result<(), HidDescriptorError> {
+    if depth > MAX_COLLECTION_DEPTH {
+        return Err(HidDescriptorError::at(
+            path.as_string(),
+            format!("HID collection nesting exceeds max depth {MAX_COLLECTION_DEPTH}"),
+        ));
+    }
+
+    validate_report_list(&collection.input_reports, "inputReports", path, state)?;
+    validate_report_list(&collection.output_reports, "outputReports", path, state)?;
+    validate_report_list(
+        &collection.feature_reports,
+        "featureReports",
+        path,
+        state,
+    )?;
+
+    for (child_idx, child) in collection.children.iter().enumerate() {
+        path.push_indexed("children", child_idx);
+        validate_collection(child, path, depth + 1, state)?;
+        path.pop();
+    }
+
+    Ok(())
+}
+
+fn validate_report_list(
+    reports: &[HidReportInfo],
+    segment: &str,
+    path: &mut ValidationPath,
+    state: &mut ValidationState,
+) -> Result<(), HidDescriptorError> {
+    for (report_idx, report) in reports.iter().enumerate() {
+        path.push_indexed(segment, report_idx);
+
+        let report_path = path.as_string();
+        state.validate_report_id(report.report_id, &report_path)?;
+
+        for (item_idx, item) in report.items.iter().enumerate() {
+            path.push_indexed("items", item_idx);
+            let item_path = path.as_string();
+            validate_report_item(item, &item_path)?;
+            path.pop();
+        }
+
+        path.pop();
+    }
+    Ok(())
+}
+
+fn validate_report_item(item: &HidReportItem, path: &str) -> Result<(), HidDescriptorError> {
+    if item.report_size == 0 || item.report_size > MAX_REPORT_SIZE_BITS {
+        return Err(HidDescriptorError::at(
+            path,
+            format!(
+                "reportSize must be in 1..={MAX_REPORT_SIZE_BITS} (got {})",
+                item.report_size
+            ),
+        ));
+    }
+
+    if item.report_size.checked_mul(item.report_count).is_none() {
+        return Err(HidDescriptorError::at(
+            path,
+            format!(
+                "reportSize*reportCount overflows u32 ({}*{})",
+                item.report_size, item.report_count
+            ),
+        ));
+    }
+
+    if item.report_count > MAX_REPORT_COUNT {
+        return Err(HidDescriptorError::at(
+            path,
+            format!(
+                "reportCount must be in 0..={MAX_REPORT_COUNT} (got {})",
+                item.report_count
+            ),
+        ));
+    }
+
+    if !(-8..=7).contains(&item.unit_exponent) {
+        return Err(HidDescriptorError::at(
+            path,
+            format!(
+                "unitExponent must be in -8..=7 (got {})",
+                item.unit_exponent
+            ),
+        ));
+    }
+
+    if item.logical_minimum > item.logical_maximum {
+        return Err(HidDescriptorError::at(
+            path,
+            format!(
+                "logicalMinimum must be <= logicalMaximum (got {} > {})",
+                item.logical_minimum, item.logical_maximum
+            ),
+        ));
+    }
+
+    if item.physical_minimum > item.physical_maximum {
+        return Err(HidDescriptorError::at(
+            path,
+            format!(
+                "physicalMinimum must be <= physicalMaximum (got {} > {})",
+                item.physical_minimum, item.physical_maximum
+            ),
+        ));
+    }
+
+    if item.is_range {
+        if item.usages.len() < 2 {
+            return Err(HidDescriptorError::at(
+                path,
+                format!(
+                    "isRange=true requires usages.len() >= 2 (min/max), got {}",
+                    item.usages.len()
+                ),
+            ));
+        }
+
+        if item.usages[0] > item.usages[1] {
+            return Err(HidDescriptorError::at(
+                path,
+                format!(
+                    "isRange=true requires usages[0] <= usages[1] (got {} > {})",
+                    item.usages[0], item.usages[1]
+                ),
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -167,10 +408,9 @@ impl LocalState {
     fn set_usage_page_override(&mut self, page: u32) -> Result<(), HidDescriptorError> {
         if let Some(existing) = self.usage_page_override {
             if existing != page {
-                return Err(HidDescriptorError::MultipleUsagePages {
-                    existing,
-                    new: page,
-                });
+                return Err(HidDescriptorError::parse(format!(
+                    "local usages specify multiple usage pages ({existing:#x} vs {page:#x})"
+                )));
             }
         } else {
             self.usage_page_override = Some(page);
@@ -203,10 +443,10 @@ fn parse_unit_exponent(data: &[u8]) -> Result<i32, HidDescriptorError> {
     // HID 1.11: Unit Exponent is a 4-bit signed value stored in the low nibble
     // of a *single* byte. High nibble is reserved.
     if data.len() != 1 {
-        return Err(HidDescriptorError::InvalidItemSize {
-            context: "Unit Exponent",
-            size: data.len(),
-        });
+        return Err(HidDescriptorError::parse(format!(
+            "invalid item size {} for Unit Exponent",
+            data.len()
+        )));
     }
 
     let nibble = data[0] & 0x0F;
@@ -233,10 +473,9 @@ fn parse_local_usage(
 
     if let Some(override_page) = local.usage_page_override {
         if override_page != global_usage_page {
-            return Err(HidDescriptorError::MultipleUsagePages {
-                existing: override_page,
-                new: global_usage_page,
-            });
+            return Err(HidDescriptorError::parse(format!(
+                "local usages specify multiple usage pages ({override_page:#x} vs {global_usage_page:#x})"
+            )));
         }
     }
 
@@ -275,7 +514,9 @@ pub fn parse_report_descriptor(
         cursor += 1;
 
         if prefix == 0xfe {
-            return Err(HidDescriptorError::LongItemUnsupported);
+            return Err(HidDescriptorError::parse(
+                "HID report descriptor contains a long item (0xFE), which is not supported",
+            ));
         }
 
         let size_code = prefix & 0b11;
@@ -287,7 +528,9 @@ pub fn parse_report_descriptor(
             _ => unreachable!("two-bit size code"),
         };
         if cursor + data_len > bytes.len() {
-            return Err(HidDescriptorError::UnexpectedEof);
+            return Err(HidDescriptorError::parse(
+                "HID report descriptor ended unexpectedly",
+            ));
         }
 
         let item_type = (prefix >> 2) & 0b11;
@@ -303,10 +546,10 @@ pub fn parse_report_descriptor(
                     // Input / Output / Feature
                     8 | 9 | 11 => {
                         if data.len() != 1 && data.len() != 2 {
-                            return Err(HidDescriptorError::InvalidItemSize {
-                                context: "Input/Output/Feature",
-                                size: data.len(),
-                            });
+                            return Err(HidDescriptorError::parse(format!(
+                                "invalid item size {} for Input/Output/Feature",
+                                data.len()
+                            )));
                         }
                         let flags: u16 = if data.len() == 1 {
                             data[0] as u16
@@ -338,12 +581,16 @@ pub fn parse_report_descriptor(
                         let (is_range, usages) = match (local.usage_minimum, local.usage_maximum) {
                             (Some(min), Some(max)) => {
                                 if min > max {
-                                    return Err(HidDescriptorError::UsageRangeMinGreaterThanMax {
-                                        min,
-                                        max,
-                                    });
+                                    return Err(HidDescriptorError::parse(format!(
+                                        "usage range is invalid: minimum {min:#x} > maximum {max:#x}"
+                                    )));
                                 }
-                                match max.checked_sub(min).and_then(|d| d.checked_add(1)) {
+
+                                 match max.checked_sub(min).and_then(|d| d.checked_add(1)) {
+                                    // Keep the canonical `[min, max]` shape even for degenerate
+                                    // ranges (`min == max`) so downstream validation and synthesis
+                                    // don't have to special-case a single-element `usages` list.
+                                    Some(1) => (true, vec![min, max]),
                                     Some(len) if len <= MAX_EXPANDED_USAGE_RANGE => {
                                         let mut out = Vec::with_capacity(len as usize);
                                         for u in min..=max {
@@ -358,7 +605,11 @@ pub fn parse_report_descriptor(
                                 }
                             }
                             (None, None) => (false, local.usages.clone()),
-                            _ => return Err(HidDescriptorError::IncompleteUsageRange),
+                            _ => {
+                                return Err(HidDescriptorError::parse(
+                                    "usage range is incomplete (must have both Usage Minimum and Usage Maximum)",
+                                ))
+                            }
                         };
 
                         let item = HidReportItem {
@@ -386,7 +637,11 @@ pub fn parse_report_descriptor(
 
                         let current = collection_stack
                             .last_mut()
-                            .ok_or(HidDescriptorError::MainItemOutsideCollection)?;
+                            .ok_or_else(|| {
+                                HidDescriptorError::parse(
+                                    "main item encountered outside any collection",
+                                )
+                            })?;
 
                         let report = match tag {
                             8 => get_or_create_report(&mut current.input_reports, global.report_id),
@@ -405,10 +660,10 @@ pub fn parse_report_descriptor(
                     // Collection
                     10 => {
                         if data.len() != 1 {
-                            return Err(HidDescriptorError::InvalidItemSize {
-                                context: "Collection",
-                                size: data.len(),
-                            });
+                            return Err(HidDescriptorError::parse(format!(
+                                "invalid item size {} for Collection",
+                                data.len()
+                            )));
                         }
 
                         let usage_page = local.usage_page_override.unwrap_or(global.usage_page);
@@ -434,16 +689,18 @@ pub fn parse_report_descriptor(
                     // End Collection
                     12 => {
                         if !data.is_empty() {
-                            return Err(HidDescriptorError::InvalidItemSize {
-                                context: "End Collection",
-                                size: data.len(),
-                            });
+                            return Err(HidDescriptorError::parse(format!(
+                                "invalid item size {} for End Collection",
+                                data.len()
+                            )));
                         }
 
                         local.reset();
                         let finished = collection_stack
                             .pop()
-                            .ok_or(HidDescriptorError::UnbalancedCollections)?;
+                            .ok_or_else(|| {
+                                HidDescriptorError::parse("unbalanced HID collection stack")
+                            })?;
                         if let Some(parent) = collection_stack.last_mut() {
                             parent.children.push(finished);
                         } else {
@@ -451,46 +708,52 @@ pub fn parse_report_descriptor(
                         }
                     }
                     _ => {
-                        return Err(HidDescriptorError::UnsupportedItem { item_type, tag });
+                        return Err(HidDescriptorError::parse(format!(
+                            "unsupported HID item: type={item_type} tag={tag}"
+                        )));
                     }
                 }
             }
             // Global items.
-            1 => match tag {
-                0 => global.usage_page = parse_unsigned(data),
-                1 => global.logical_minimum = parse_signed(data),
-                2 => global.logical_maximum = parse_signed(data),
-                3 => global.physical_minimum = parse_signed(data),
-                4 => global.physical_maximum = parse_signed(data),
-                5 => global.unit_exponent = parse_unit_exponent(data)?,
-                6 => global.unit = parse_unsigned(data),
-                7 => global.report_size = parse_unsigned(data),
-                8 => global.report_id = parse_unsigned(data),
-                9 => global.report_count = parse_unsigned(data),
-                10 => {
-                    if !data.is_empty() {
-                        return Err(HidDescriptorError::InvalidItemSize {
-                            context: "Push",
-                            size: data.len(),
-                        });
+            1 => {
+                match tag {
+                    0 => global.usage_page = parse_unsigned(data),
+                    1 => global.logical_minimum = parse_signed(data),
+                    2 => global.logical_maximum = parse_signed(data),
+                    3 => global.physical_minimum = parse_signed(data),
+                    4 => global.physical_maximum = parse_signed(data),
+                    5 => global.unit_exponent = parse_unit_exponent(data)?,
+                    6 => global.unit = parse_unsigned(data),
+                    7 => global.report_size = parse_unsigned(data),
+                    8 => global.report_id = parse_unsigned(data),
+                    9 => global.report_count = parse_unsigned(data),
+                    10 => {
+                        if !data.is_empty() {
+                            return Err(HidDescriptorError::parse(format!(
+                                "invalid item size {} for Push",
+                                data.len()
+                            )));
+                        }
+                        global_stack.push(global.clone());
                     }
-                    global_stack.push(global.clone());
-                }
-                11 => {
-                    if !data.is_empty() {
-                        return Err(HidDescriptorError::InvalidItemSize {
-                            context: "Pop",
-                            size: data.len(),
-                        });
+                    11 => {
+                        if !data.is_empty() {
+                            return Err(HidDescriptorError::parse(format!(
+                                "invalid item size {} for Pop",
+                                data.len()
+                            )));
+                        }
+                        global = global_stack
+                            .pop()
+                            .ok_or_else(|| HidDescriptorError::parse("global Push/Pop stack underflow"))?;
                     }
-                    global = global_stack
-                        .pop()
-                        .ok_or(HidDescriptorError::GlobalStackUnderflow)?;
+                    _ => {
+                        return Err(HidDescriptorError::parse(format!(
+                            "unsupported HID item: type={item_type} tag={tag}"
+                        )));
+                    }
                 }
-                _ => {
-                    return Err(HidDescriptorError::UnsupportedItem { item_type, tag });
-                }
-            },
+            }
             // Local items.
             2 => {
                 match tag {
@@ -510,18 +773,22 @@ pub fn parse_report_descriptor(
                         local.usage_maximum = Some(usage);
                     }
                     _ => {
-                        return Err(HidDescriptorError::UnsupportedItem { item_type, tag });
+                        return Err(HidDescriptorError::parse(format!(
+                            "unsupported HID item: type={item_type} tag={tag}"
+                        )));
                     }
                 }
             }
             _ => {
-                return Err(HidDescriptorError::UnsupportedItem { item_type, tag });
+                return Err(HidDescriptorError::parse(format!(
+                    "unsupported HID item: type={item_type} tag={tag}"
+                )));
             }
         }
     }
 
     if !collection_stack.is_empty() {
-        return Err(HidDescriptorError::UnbalancedCollections);
+        return Err(HidDescriptorError::parse("unbalanced HID collection stack"));
     }
 
     Ok(HidReportDescriptorParseResult {
@@ -570,7 +837,9 @@ fn emit_signed(
 
 fn emit_unit_exponent(out: &mut Vec<u8>, unit_exponent: i32) -> Result<(), HidDescriptorError> {
     if !(-8..=7).contains(&unit_exponent) {
-        return Err(HidDescriptorError::InvalidUnitExponent { unit_exponent });
+        return Err(HidDescriptorError::parse(format!(
+            "unitExponent {unit_exponent} is out of range (expected -8..=7)"
+        )));
     }
 
     // HID 1.11 Unit Exponent (0x55): 4-bit signed, stored in the low nibble.
@@ -591,10 +860,9 @@ fn emit_item(
         2 => 2,
         4 => 3,
         other => {
-            return Err(HidDescriptorError::InvalidItemSize {
-                context: "short item encoding",
-                size: other,
-            });
+            return Err(HidDescriptorError::parse(format!(
+                "invalid item size {other} for short item encoding"
+            )));
         }
     };
 
@@ -618,9 +886,10 @@ fn synthesize_report(
 ) -> Result<(), HidDescriptorError> {
     if report.report_id != 0 {
         if report.report_id > u8::MAX as u32 {
-            return Err(HidDescriptorError::InvalidReportId {
-                report_id: report.report_id,
-            });
+            return Err(HidDescriptorError::parse(format!(
+                "reportId {} is out of range (expected 0..=255)",
+                report.report_id
+            )));
         }
         emit_unsigned(out, ItemType::Global, 8, report.report_id)?;
     }
@@ -768,6 +1037,10 @@ fn synthesize_collection(
 pub fn synthesize_report_descriptor(
     collections: &[HidCollectionInfo],
 ) -> Result<Vec<u8>, HidDescriptorError> {
+    // Validate upfront so we fail deterministically with a pathful error instead of emitting a
+    // descriptor that Windows may reject or misinterpret.
+    let _summary = validate_collections(collections)?;
+
     let mut out = Vec::new();
     for collection in collections {
         synthesize_collection(&mut out, collection)?;
@@ -1534,12 +1807,239 @@ mod tests {
             children: vec![],
         }];
 
-        match synthesize_report_descriptor(&collections) {
-            Err(HidDescriptorError::InvalidUnitExponent { unit_exponent }) => {
-                assert_eq!(unit_exponent, 8);
+        let err = synthesize_report_descriptor(&collections).unwrap_err();
+        assert_eq!(err.path, "collections[0].inputReports[0].items[0]");
+        assert!(err.message.contains("unitExponent"));
+    }
+
+    #[test]
+    fn synth_rejects_mixed_report_ids() {
+        let collections = vec![HidCollectionInfo {
+            usage_page: 0,
+            usage: 0,
+            collection_type: 0,
+            input_reports: vec![HidReportInfo {
+                report_id: 1,
+                items: vec![simple_item(8, 1)],
+            }],
+            output_reports: vec![HidReportInfo {
+                report_id: 0,
+                items: vec![simple_item(8, 1)],
+            }],
+            feature_reports: vec![],
+            children: vec![],
+        }];
+
+        let err = synthesize_report_descriptor(&collections).unwrap_err();
+        assert_eq!(err.path, "collections[0].outputReports[0]");
+        assert!(err.message.contains("Found reportId 0"));
+    }
+
+    #[test]
+    fn synth_rejects_report_id_out_of_range() {
+        let collections = vec![HidCollectionInfo {
+            usage_page: 0,
+            usage: 0,
+            collection_type: 0,
+            input_reports: vec![HidReportInfo {
+                report_id: 256,
+                items: vec![simple_item(8, 1)],
+            }],
+            output_reports: vec![],
+            feature_reports: vec![],
+            children: vec![],
+        }];
+
+        let err = synthesize_report_descriptor(&collections).unwrap_err();
+        assert_eq!(err.path, "collections[0].inputReports[0]");
+        assert!(err.message.contains("reportId"));
+        assert!(err.message.contains("out of range"));
+    }
+
+    #[test]
+    fn synth_rejects_zero_report_size() {
+        let collections = vec![HidCollectionInfo {
+            usage_page: 0,
+            usage: 0,
+            collection_type: 0,
+            input_reports: vec![HidReportInfo {
+                report_id: 0,
+                items: vec![simple_item(0, 1)],
+            }],
+            output_reports: vec![],
+            feature_reports: vec![],
+            children: vec![],
+        }];
+
+        let err = synthesize_report_descriptor(&collections).unwrap_err();
+        assert_eq!(err.path, "collections[0].inputReports[0].items[0]");
+        assert!(err.message.contains("reportSize"));
+    }
+
+    #[test]
+    fn synth_rejects_report_count_out_of_range() {
+        let collections = vec![HidCollectionInfo {
+            usage_page: 0,
+            usage: 0,
+            collection_type: 0,
+            input_reports: vec![HidReportInfo {
+                report_id: 0,
+                items: vec![simple_item(8, MAX_REPORT_COUNT + 1)],
+            }],
+            output_reports: vec![],
+            feature_reports: vec![],
+            children: vec![],
+        }];
+
+        let err = synthesize_report_descriptor(&collections).unwrap_err();
+        assert_eq!(err.path, "collections[0].inputReports[0].items[0]");
+        assert!(err.message.contains("reportCount"));
+    }
+
+    #[test]
+    fn synth_rejects_report_size_times_count_overflow() {
+        let collections = vec![HidCollectionInfo {
+            usage_page: 0,
+            usage: 0,
+            collection_type: 0,
+            input_reports: vec![HidReportInfo {
+                report_id: 0,
+                items: vec![simple_item(255, u32::MAX)],
+            }],
+            output_reports: vec![],
+            feature_reports: vec![],
+            children: vec![],
+        }];
+
+        let err = synthesize_report_descriptor(&collections).unwrap_err();
+        assert_eq!(err.path, "collections[0].inputReports[0].items[0]");
+        assert!(err.message.contains("reportSize*reportCount"));
+        assert!(err.message.contains("overflows"));
+    }
+
+    #[test]
+    fn synth_rejects_logical_min_greater_than_max() {
+        let mut item = simple_item(8, 1);
+        item.logical_minimum = 1;
+        item.logical_maximum = 0;
+
+        let collections = vec![HidCollectionInfo {
+            usage_page: 0,
+            usage: 0,
+            collection_type: 0,
+            input_reports: vec![HidReportInfo {
+                report_id: 0,
+                items: vec![item],
+            }],
+            output_reports: vec![],
+            feature_reports: vec![],
+            children: vec![],
+        }];
+
+        let err = synthesize_report_descriptor(&collections).unwrap_err();
+        assert_eq!(err.path, "collections[0].inputReports[0].items[0]");
+        assert!(err.message.contains("logicalMinimum"));
+    }
+
+    #[test]
+    fn synth_rejects_physical_min_greater_than_max() {
+        let mut item = simple_item(8, 1);
+        item.physical_minimum = 1;
+        item.physical_maximum = 0;
+
+        let collections = vec![HidCollectionInfo {
+            usage_page: 0,
+            usage: 0,
+            collection_type: 0,
+            input_reports: vec![HidReportInfo {
+                report_id: 0,
+                items: vec![item],
+            }],
+            output_reports: vec![],
+            feature_reports: vec![],
+            children: vec![],
+        }];
+
+        let err = synthesize_report_descriptor(&collections).unwrap_err();
+        assert_eq!(err.path, "collections[0].inputReports[0].items[0]");
+        assert!(err.message.contains("physicalMinimum"));
+    }
+
+    #[test]
+    fn synth_rejects_range_item_with_too_few_usages() {
+        let mut item = simple_item(8, 1);
+        item.is_range = true;
+        item.usages = vec![1];
+
+        let collections = vec![HidCollectionInfo {
+            usage_page: 0,
+            usage: 0,
+            collection_type: 0,
+            input_reports: vec![HidReportInfo {
+                report_id: 0,
+                items: vec![item],
+            }],
+            output_reports: vec![],
+            feature_reports: vec![],
+            children: vec![],
+        }];
+
+        let err = synthesize_report_descriptor(&collections).unwrap_err();
+        assert_eq!(err.path, "collections[0].inputReports[0].items[0]");
+        assert!(err.message.contains("isRange=true requires usages.len() >= 2"));
+    }
+
+    #[test]
+    fn synth_rejects_range_item_with_out_of_order_usages() {
+        let mut item = simple_item(8, 1);
+        item.is_range = true;
+        item.usages = vec![5, 3];
+
+        let collections = vec![HidCollectionInfo {
+            usage_page: 0,
+            usage: 0,
+            collection_type: 0,
+            input_reports: vec![HidReportInfo {
+                report_id: 0,
+                items: vec![item],
+            }],
+            output_reports: vec![],
+            feature_reports: vec![],
+            children: vec![],
+        }];
+
+        let err = synthesize_report_descriptor(&collections).unwrap_err();
+        assert_eq!(err.path, "collections[0].inputReports[0].items[0]");
+        assert!(err.message.contains("usages[0] <= usages[1]"));
+    }
+
+    #[test]
+    fn synth_rejects_collection_depth_exceeded() {
+        fn make_depth(depth: usize) -> HidCollectionInfo {
+            HidCollectionInfo {
+                usage_page: 0,
+                usage: 0,
+                collection_type: 0,
+                input_reports: vec![],
+                output_reports: vec![],
+                feature_reports: vec![],
+                children: if depth > 1 {
+                    vec![make_depth(depth - 1)]
+                } else {
+                    vec![]
+                },
             }
-            other => panic!("expected InvalidUnitExponent error, got {other:?}"),
         }
+
+        let collections = vec![make_depth(MAX_COLLECTION_DEPTH + 1)];
+        let err = synthesize_report_descriptor(&collections).unwrap_err();
+
+        let mut expected_path = "collections[0]".to_string();
+        for _ in 0..MAX_COLLECTION_DEPTH {
+            expected_path.push_str(".children[0]");
+        }
+        assert_eq!(err.path, expected_path);
+        assert!(err.message.contains("max depth"));
     }
 
     #[test]
@@ -1866,13 +2366,11 @@ mod tests {
             0xC0, // End Collection
         ];
 
-        match parse_report_descriptor(&desc) {
-            Err(HidDescriptorError::UsageRangeMinGreaterThanMax { min, max }) => {
-                assert_eq!(min, 0x10);
-                assert_eq!(max, 0x00);
-            }
-            other => panic!("expected UsageRangeMinGreaterThanMax, got {other:?}"),
-        }
+        let err = parse_report_descriptor(&desc).unwrap_err();
+        assert_eq!(err.path, "reportDescriptor");
+        assert!(err.message.contains("usage range is invalid"));
+        assert!(err.message.contains("minimum 0x10"));
+        assert!(err.message.contains("maximum 0x0"));
     }
 
     #[test]
@@ -1903,7 +2401,7 @@ mod tests {
                     report_size: 1,
                     report_count: 1,
                     usage_page: 0x07,
-                    usages: vec![5],
+                    usages: vec![5, 5],
                 }],
             }],
             output_reports: vec![],
@@ -2209,7 +2707,11 @@ mod proptests {
                         (usage_u16ish(), usage_u16ish())
                             .prop_map(|(a, b)| {
                                 let (min, max) = if a <= b { (a, b) } else { (b, a) };
-                                (min..=max).collect::<Vec<u32>>()
+                                if min == max {
+                                    vec![min, max]
+                                } else {
+                                    (min..=max).collect::<Vec<u32>>()
+                                }
                             })
                             .boxed()
                     } else {
@@ -2420,5 +2922,187 @@ mod proptests {
             // Regression safety: synthesizing a parsed descriptor must not panic or error.
             let _ = synthesize_report_descriptor(&parsed.collections).unwrap();
         }
+    }
+
+    fn base_item() -> HidReportItem {
+        HidReportItem {
+            is_array: false,
+            is_absolute: true,
+            is_buffered_bytes: false,
+            is_volatile: false,
+            is_constant: false,
+            is_wrapped: false,
+            is_linear: true,
+            has_preferred_state: true,
+            has_null: false,
+            is_range: false,
+            logical_minimum: 0,
+            logical_maximum: 255,
+            physical_minimum: 0,
+            physical_maximum: 255,
+            unit_exponent: 0,
+            unit: 0,
+            report_size: 8,
+            report_count: 1,
+            usage_page: 0x01,
+            usages: vec![0x30],
+        }
+    }
+
+    fn report(report_id: u32, item: HidReportItem) -> HidReportInfo {
+        HidReportInfo {
+            report_id,
+            items: vec![item],
+        }
+    }
+
+    fn empty_collection() -> HidCollectionInfo {
+        HidCollectionInfo {
+            usage_page: 0x01,
+            usage: 0x02,
+            collection_type: 0x01,
+            input_reports: Vec::new(),
+            output_reports: Vec::new(),
+            feature_reports: Vec::new(),
+            children: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn rejects_mixed_report_ids() {
+        let mut collection = empty_collection();
+        collection.input_reports.push(report(1, base_item()));
+        collection.output_reports.push(report(0, base_item()));
+
+        let err = validate_collections(&[collection]).unwrap_err();
+        assert_eq!(err.path, "collections[0].outputReports[0]");
+    }
+
+    #[test]
+    fn rejects_report_id_out_of_range() {
+        let mut collection = empty_collection();
+        collection.input_reports.push(report(256, base_item()));
+
+        let err = validate_collections(&[collection]).unwrap_err();
+        assert_eq!(err.path, "collections[0].inputReports[0]");
+        assert!(err.message.contains("0..=255"));
+    }
+
+    #[test]
+    fn rejects_report_size_zero() {
+        let mut item = base_item();
+        item.report_size = 0;
+        let mut collection = empty_collection();
+        collection.input_reports.push(report(0, item));
+
+        let err = validate_collections(&[collection]).unwrap_err();
+        assert_eq!(err.path, "collections[0].inputReports[0].items[0]");
+        assert!(err.message.contains("reportSize"));
+    }
+
+    #[test]
+    fn rejects_report_count_too_large() {
+        let mut item = base_item();
+        item.report_size = 1;
+        item.report_count = MAX_REPORT_COUNT + 1;
+        let mut collection = empty_collection();
+        collection.input_reports.push(report(0, item));
+
+        let err = validate_collections(&[collection]).unwrap_err();
+        assert_eq!(err.path, "collections[0].inputReports[0].items[0]");
+        assert!(err.message.contains("reportCount"));
+    }
+
+    #[test]
+    fn rejects_report_size_count_overflow() {
+        let mut item = base_item();
+        item.report_size = 255;
+        item.report_count = u32::MAX;
+        let mut collection = empty_collection();
+        collection.input_reports.push(report(0, item));
+
+        let err = validate_collections(&[collection]).unwrap_err();
+        assert_eq!(err.path, "collections[0].inputReports[0].items[0]");
+        assert!(err.message.contains("overflows u32"));
+    }
+
+    #[test]
+    fn rejects_logical_min_greater_than_max() {
+        let mut item = base_item();
+        item.logical_minimum = 10;
+        item.logical_maximum = 0;
+        let mut collection = empty_collection();
+        collection.input_reports.push(report(0, item));
+
+        let err = validate_collections(&[collection]).unwrap_err();
+        assert_eq!(err.path, "collections[0].inputReports[0].items[0]");
+        assert!(err.message.contains("logicalMinimum"));
+    }
+
+    #[test]
+    fn rejects_physical_min_greater_than_max() {
+        let mut item = base_item();
+        item.physical_minimum = 10;
+        item.physical_maximum = 0;
+        let mut collection = empty_collection();
+        collection.input_reports.push(report(0, item));
+
+        let err = validate_collections(&[collection]).unwrap_err();
+        assert_eq!(err.path, "collections[0].inputReports[0].items[0]");
+        assert!(err.message.contains("physicalMinimum"));
+    }
+
+    #[test]
+    fn rejects_range_usage_with_too_few_usages() {
+        let mut item = base_item();
+        item.is_range = true;
+        item.usages = Vec::new();
+        let mut collection = empty_collection();
+        collection.input_reports.push(report(0, item));
+
+        let err = validate_collections(&[collection]).unwrap_err();
+        assert_eq!(err.path, "collections[0].inputReports[0].items[0]");
+        assert!(err.message.contains("isRange"));
+    }
+
+    #[test]
+    fn rejects_range_usage_with_out_of_order_bounds() {
+        let mut item = base_item();
+        item.is_range = true;
+        item.usages = vec![10, 2];
+        let mut collection = empty_collection();
+        collection.input_reports.push(report(0, item));
+
+        let err = validate_collections(&[collection]).unwrap_err();
+        assert_eq!(err.path, "collections[0].inputReports[0].items[0]");
+        assert!(err.message.contains("usages[0]"));
+    }
+
+    #[test]
+    fn rejects_excessive_collection_depth() {
+        let mut root = empty_collection();
+        let mut current = &mut root;
+        for _ in 0..MAX_COLLECTION_DEPTH {
+            current.children.push(empty_collection());
+            current = current.children.last_mut().unwrap();
+        }
+
+        let err = validate_collections(&[root]).unwrap_err();
+        let mut expected = String::from("collections[0]");
+        for _ in 0..MAX_COLLECTION_DEPTH {
+            expected.push_str(".children[0]");
+        }
+        assert_eq!(err.path, expected);
+        assert!(err.message.contains("max depth"));
+    }
+
+    #[test]
+    fn synthesize_runs_validation() {
+        let mut collection = empty_collection();
+        collection.input_reports.push(report(1, base_item()));
+        collection.output_reports.push(report(0, base_item()));
+
+        let err = synthesize_report_descriptor(&[collection]).unwrap_err();
+        assert_eq!(err.path, "collections[0].outputReports[0]");
     }
 }

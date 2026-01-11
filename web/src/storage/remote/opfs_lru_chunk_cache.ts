@@ -1,4 +1,4 @@
-import { createSyncAccessHandleInDedicatedWorker } from "../../platform/opfs.ts";
+import { createSyncAccessHandleInDedicatedWorker } from "../../platform/opfs.js";
 
 export type RemoteChunkCacheStats = {
   totalBytes: number;

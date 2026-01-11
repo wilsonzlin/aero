@@ -671,15 +671,16 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
       lastFetchRange: null,
     };
 
-    if (this.cacheLimitBytes !== 0) {
-      if (this.cacheBackend === "idb") {
-        if (!this.idbCache) throw new Error("Remote disk IDB cache not initialized");
-        await this.idbCache.clear();
-      } else {
-        if (!this.opfsCache) throw new Error("Remote disk OPFS cache not initialized");
-        await this.opfsCache.clear();
-      }
+    if (this.cacheLimitBytes === 0) return;
+
+    if (this.cacheBackend === "idb") {
+      if (!this.idbCache) throw new Error("Remote disk IDB cache not initialized");
+      await this.idbCache.clear();
+      return;
     }
+
+    if (!this.opfsCache) throw new Error("Remote disk OPFS cache not initialized");
+    await this.opfsCache.clear();
   }
 
   async close(): Promise<void> {

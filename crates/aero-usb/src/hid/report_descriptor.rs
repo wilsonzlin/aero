@@ -79,6 +79,31 @@ pub enum HidReportKind {
     Feature,
 }
 
+/// Maximum allowed HID collection nesting depth.
+///
+/// This is a guardrail against pathological/buggy metadata (especially when sourced from WebHID)
+/// that could overflow the call stack during synthesis.
+const MAX_COLLECTION_DEPTH: usize = 32;
+
+/// Maximum allowed report size (in bits).
+///
+/// `REPORT_SIZE` is commonly encoded as a 1-byte HID global item; values above 255 are invalid.
+const MAX_REPORT_SIZE_BITS: u32 = 255;
+
+/// Maximum allowed report count.
+///
+/// `REPORT_COUNT` can be encoded in 1/2/4 bytes in the descriptor, but we cap it to keep report
+/// payload sizes within a sane bound.
+const MAX_REPORT_COUNT: u32 = 65_535;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ValidationSummary {
+    pub has_report_ids: bool,
+    pub max_input_report_bytes: u32,
+    pub max_output_report_bytes: u32,
+    pub max_feature_report_bytes: u32,
+}
+
 #[derive(Debug, Error)]
 pub enum HidDescriptorError {
     #[error("HID report descriptor ended unexpectedly")]
@@ -105,6 +130,238 @@ pub enum HidDescriptorError {
     InvalidUnitExponent { unit_exponent: i32 },
     #[error("is_range report items must contain at least two usages (min/max)")]
     InvalidUsageRange,
+    #[error("{message} (at {path})")]
+    Validation { path: String, message: String },
+}
+
+impl HidDescriptorError {
+    fn at(path: impl Into<String>, message: impl Into<String>) -> Self {
+        HidDescriptorError::Validation {
+            path: path.into(),
+            message: message.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ValidationPath {
+    segments: Vec<String>,
+}
+
+impl ValidationPath {
+    fn root_collection(index: usize) -> Self {
+        Self {
+            segments: vec![format!("collections[{index}]")],
+        }
+    }
+
+    fn push_indexed(&mut self, name: &str, index: usize) {
+        self.segments.push(format!("{name}[{index}]"));
+    }
+
+    fn pop(&mut self) {
+        self.segments.pop();
+    }
+
+    fn as_string(&self) -> String {
+        self.segments.join(".")
+    }
+}
+
+#[derive(Debug, Default)]
+struct ValidationState {
+    saw_nonzero_report_id: bool,
+    first_zero_report_path: Option<String>,
+}
+
+impl ValidationState {
+    fn validate_report_id(&mut self, report_id: u32, path: &str) -> Result<(), HidDescriptorError> {
+        if report_id > u8::MAX as u32 {
+            return Err(HidDescriptorError::at(
+                path,
+                format!("reportId {report_id} is out of range (expected 0..=255)"),
+            ));
+        }
+
+        if report_id == 0 {
+            if self.saw_nonzero_report_id {
+                return Err(HidDescriptorError::at(
+                    path,
+                    "Found reportId 0 but other reports use non-zero reportId; when any report uses a reportId, all reports must use a non-zero reportId",
+                ));
+            }
+            if self.first_zero_report_path.is_none() {
+                self.first_zero_report_path = Some(path.to_string());
+            }
+            return Ok(());
+        }
+
+        if let Some(first_zero_path) = self.first_zero_report_path.as_deref() {
+            return Err(HidDescriptorError::at(
+                first_zero_path,
+                "Found reportId 0 but other reports use non-zero reportId; when any report uses a reportId, all reports must use a non-zero reportId",
+            ));
+        }
+
+        self.saw_nonzero_report_id = true;
+        Ok(())
+    }
+}
+
+pub fn validate_collections(
+    collections: &[HidCollectionInfo],
+) -> Result<ValidationSummary, HidDescriptorError> {
+    let mut state = ValidationState::default();
+
+    for (idx, collection) in collections.iter().enumerate() {
+        let mut path = ValidationPath::root_collection(idx);
+        validate_collection(collection, &mut path, 1, &mut state)?;
+    }
+
+    Ok(ValidationSummary {
+        has_report_ids: state.saw_nonzero_report_id,
+        max_input_report_bytes: u32::try_from(max_input_report_bytes(collections)).unwrap_or(u32::MAX),
+        max_output_report_bytes: u32::try_from(max_output_report_bytes(collections))
+            .unwrap_or(u32::MAX),
+        max_feature_report_bytes: u32::try_from(max_feature_report_bytes(collections))
+            .unwrap_or(u32::MAX),
+    })
+}
+
+fn validate_collection(
+    collection: &HidCollectionInfo,
+    path: &mut ValidationPath,
+    depth: usize,
+    state: &mut ValidationState,
+) -> Result<(), HidDescriptorError> {
+    if depth > MAX_COLLECTION_DEPTH {
+        return Err(HidDescriptorError::at(
+            path.as_string(),
+            format!("HID collection nesting exceeds max depth {MAX_COLLECTION_DEPTH}"),
+        ));
+    }
+
+    validate_report_list(&collection.input_reports, "inputReports", path, state)?;
+    validate_report_list(&collection.output_reports, "outputReports", path, state)?;
+    validate_report_list(&collection.feature_reports, "featureReports", path, state)?;
+
+    for (child_idx, child) in collection.children.iter().enumerate() {
+        path.push_indexed("children", child_idx);
+        validate_collection(child, path, depth + 1, state)?;
+        path.pop();
+    }
+
+    Ok(())
+}
+
+fn validate_report_list(
+    reports: &[HidReportInfo],
+    segment: &str,
+    path: &mut ValidationPath,
+    state: &mut ValidationState,
+) -> Result<(), HidDescriptorError> {
+    for (report_idx, report) in reports.iter().enumerate() {
+        path.push_indexed(segment, report_idx);
+
+        let report_path = path.as_string();
+        state.validate_report_id(report.report_id, &report_path)?;
+
+        for (item_idx, item) in report.items.iter().enumerate() {
+            path.push_indexed("items", item_idx);
+            let item_path = path.as_string();
+            validate_report_item(item, &item_path)?;
+            path.pop();
+        }
+
+        path.pop();
+    }
+    Ok(())
+}
+
+fn validate_report_item(item: &HidReportItem, path: &str) -> Result<(), HidDescriptorError> {
+    if item.report_size == 0 || item.report_size > MAX_REPORT_SIZE_BITS {
+        return Err(HidDescriptorError::at(
+            path,
+            format!(
+                "reportSize must be in 1..={MAX_REPORT_SIZE_BITS} (got {})",
+                item.report_size
+            ),
+        ));
+    }
+
+    if item.report_size.checked_mul(item.report_count).is_none() {
+        return Err(HidDescriptorError::at(
+            path,
+            format!(
+                "reportSize*reportCount overflows u32 ({}*{})",
+                item.report_size, item.report_count
+            ),
+        ));
+    }
+
+    if item.report_count > MAX_REPORT_COUNT {
+        return Err(HidDescriptorError::at(
+            path,
+            format!(
+                "reportCount must be in 0..={MAX_REPORT_COUNT} (got {})",
+                item.report_count
+            ),
+        ));
+    }
+
+    if !(-8..=7).contains(&item.unit_exponent) {
+        return Err(HidDescriptorError::at(
+            path,
+            format!(
+                "unitExponent must be in -8..=7 (got {})",
+                item.unit_exponent
+            ),
+        ));
+    }
+
+    if item.logical_minimum > item.logical_maximum {
+        return Err(HidDescriptorError::at(
+            path,
+            format!(
+                "logicalMinimum must be <= logicalMaximum (got {} > {})",
+                item.logical_minimum, item.logical_maximum
+            ),
+        ));
+    }
+
+    if item.physical_minimum > item.physical_maximum {
+        return Err(HidDescriptorError::at(
+            path,
+            format!(
+                "physicalMinimum must be <= physicalMaximum (got {} > {})",
+                item.physical_minimum, item.physical_maximum
+            ),
+        ));
+    }
+
+    if item.is_range {
+        if item.usages.len() < 2 {
+            return Err(HidDescriptorError::at(
+                path,
+                format!(
+                    "isRange=true requires usages.len() >= 2 (min/max), got {}",
+                    item.usages.len()
+                ),
+            ));
+        }
+
+        if item.usages[0] > item.usages[1] {
+            return Err(HidDescriptorError::at(
+                path,
+                format!(
+                    "isRange=true requires usages[0] <= usages[1] (got {} > {})",
+                    item.usages[0], item.usages[1]
+                ),
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -695,6 +952,10 @@ fn synthesize_collection(
 pub fn synthesize_report_descriptor(
     collections: &[HidCollectionInfo],
 ) -> Result<Vec<u8>, HidDescriptorError> {
+    // Validate upfront so we fail deterministically with a pathful error instead of emitting a
+    // descriptor that Windows may reject or misinterpret.
+    let _summary = validate_collections(collections)?;
+
     let mut out = Vec::new();
     for collection in collections {
         synthesize_collection(&mut out, collection)?;
@@ -1151,10 +1412,11 @@ mod tests {
         }];
 
         match synthesize_report_descriptor(&collections) {
-            Err(HidDescriptorError::InvalidUnitExponent { unit_exponent }) => {
-                assert_eq!(unit_exponent, 8);
+            Err(HidDescriptorError::Validation { path, message }) => {
+                assert_eq!(path, "collections[0].inputReports[0].items[0]");
+                assert!(message.contains("unitExponent"));
             }
-            other => panic!("expected InvalidUnitExponent error, got {other:?}"),
+            other => panic!("expected validation error, got {other:?}"),
         }
     }
 

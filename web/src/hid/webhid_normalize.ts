@@ -158,13 +158,18 @@ function isContiguousUsageRange(usages: readonly number[]): boolean {
   }
   return true;
 }
+export type NormalizeCollectionsOptions = {
+  /**
+   * When enabled, validate key invariants before returning the normalized
+   * metadata. This makes failures deterministic and actionable instead of
+   * synthesizing an invalid report descriptor.
+   */
+  validate?: boolean;
+};
 
 function normalizeReportItem(item: HidReportItem): NormalizedHidReportItem {
   const rawUsages = item.usages;
 
-  // WebHID's isRange flag can be set even for a degenerate range where `usageMinimum === usageMaximum`.
-  // In that case the normalized representation uses a single-element `usages: [usageMinimum]` list.
-  //
   // Reject the ambiguous case where the caller claims a non-degenerate range but only provides a
   // single usage entry; our normalizer would otherwise "collapse" the range when deriving min/max.
   if (item.isRange && rawUsages.length === 1 && item.usageMinimum !== item.usageMaximum) {
@@ -200,11 +205,9 @@ function normalizeReportItem(item: HidReportItem): NormalizedHidReportItem {
     usageMaximum = max;
   }
 
-  const usages = isRange
-    ? usageMinimum === usageMaximum
-      ? [usageMinimum]
-      : [usageMinimum, usageMaximum]
-    : Array.from(rawUsages);
+  // When `isRange` is true in the normalized contract, `usages` is always the compact `[min, max]`
+  // representation (even for a degenerate range where `min === max`).
+  const usages = isRange ? [usageMinimum, usageMaximum] : Array.from(rawUsages);
 
   const isRelative = item.isRelative ?? !item.isAbsolute;
   const isWrapped = item.isWrapped ?? item.wrap ?? false;
@@ -269,8 +272,89 @@ function normalizeCollection(collection: HidCollectionInfo): NormalizedHidCollec
 
 // Overload so callsites can pass `HIDDevice.collections` without casts (the WebHID types exposed by
 // `@types/w3c-web-hid` are optional/loose and do not precisely match Chromium's runtime shape).
-export function normalizeCollections(collections: readonly HidCollectionInfo[]): NormalizedHidCollectionInfo[];
-export function normalizeCollections(collections: readonly HIDCollectionInfo[]): NormalizedHidCollectionInfo[];
-export function normalizeCollections(collections: readonly unknown[]): NormalizedHidCollectionInfo[] {
-  return Array.from(collections as readonly HidCollectionInfo[], normalizeCollection);
+export function normalizeCollections(
+  collections: readonly HidCollectionInfo[],
+  options?: NormalizeCollectionsOptions,
+): NormalizedHidCollectionInfo[];
+export function normalizeCollections(
+  collections: readonly HIDCollectionInfo[],
+  options?: NormalizeCollectionsOptions,
+): NormalizedHidCollectionInfo[];
+export function normalizeCollections(
+  collections: readonly unknown[],
+  options: NormalizeCollectionsOptions = {},
+): NormalizedHidCollectionInfo[] {
+  const normalized = Array.from(collections as readonly HidCollectionInfo[], normalizeCollection);
+  if (options.validate) {
+    validateCollections(normalized);
+  }
+  return normalized;
+}
+
+type Path = string[];
+
+function pathToString(path: Path): string {
+  return path.join(".");
+}
+
+function err(path: Path, message: string): Error {
+  return new Error(`${message} (at ${pathToString(path)})`);
+}
+
+function validateCollections(collections: readonly NormalizedHidCollectionInfo[]): void {
+  let hasNonZeroReportId = false;
+  let firstZeroReportPath: Path | null = null;
+
+  const visitCollection = (collection: NormalizedHidCollectionInfo, path: Path): void => {
+    const visitReportList = (
+      reports: readonly NormalizedHidReportInfo[],
+      listName: "inputReports" | "outputReports" | "featureReports",
+    ): void => {
+      for (let reportIdx = 0; reportIdx < reports.length; reportIdx++) {
+        const report = reports[reportIdx];
+        const reportPath = [...path, `${listName}[${reportIdx}]`];
+
+        if (report.reportId === 0) {
+          if (firstZeroReportPath === null) firstZeroReportPath = reportPath;
+        } else {
+          hasNonZeroReportId = true;
+        }
+
+        for (let itemIdx = 0; itemIdx < report.items.length; itemIdx++) {
+          const item = report.items[itemIdx];
+          if (!item.isRange) continue;
+          const itemPath = [...reportPath, `items[${itemIdx}]`];
+          const usagesLen = Array.isArray(item.usages) ? item.usages.length : 0;
+          if (usagesLen < 2) {
+            throw err(itemPath, `isRange=true requires usages.length >= 2 (got ${usagesLen})`);
+          }
+          if (item.usages[0] > item.usages[1]) {
+            throw err(
+              itemPath,
+              `isRange=true requires usages[0] <= usages[1] (got ${item.usages[0]} > ${item.usages[1]})`,
+            );
+          }
+        }
+      }
+    };
+
+    visitReportList(collection.inputReports, "inputReports");
+    visitReportList(collection.outputReports, "outputReports");
+    visitReportList(collection.featureReports, "featureReports");
+
+    for (let childIdx = 0; childIdx < collection.children.length; childIdx++) {
+      visitCollection(collection.children[childIdx], [...path, `children[${childIdx}]`]);
+    }
+  };
+
+  for (let i = 0; i < collections.length; i++) {
+    visitCollection(collections[i], [`collections[${i}]`]);
+  }
+
+  if (hasNonZeroReportId && firstZeroReportPath !== null) {
+    throw err(
+      firstZeroReportPath,
+      "Found reportId 0 but other reports use non-zero reportId; when any report uses a reportId, all reports must use a non-zero reportId",
+    );
+  }
 }

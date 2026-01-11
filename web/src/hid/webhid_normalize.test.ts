@@ -157,7 +157,7 @@ describe("normalizeCollections(WebHID)", () => {
     expect(() => normalizeCollections([root])).toThrow(/isRange/i);
   });
 
-  it("accepts degenerate isRange items (usageMinimum == usageMaximum) with a single usage", () => {
+  it("accepts degenerate isRange items (usageMinimum == usageMaximum)", () => {
     const root = mockCollection({
       inputReports: [
         mockReport({
@@ -169,7 +169,7 @@ describe("normalizeCollections(WebHID)", () => {
 
     const normalized = normalizeCollections([root]);
     expect(normalized[0]?.inputReports[0]?.items[0]?.isRange).toBe(true);
-    expect(normalized[0]?.inputReports[0]?.items[0]?.usages).toEqual([5]);
+    expect(normalized[0]?.inputReports[0]?.items[0]?.usages).toEqual([5, 5]);
   });
 
   it("derives isRelative when omitted and accepts wrap alias for isWrapped", () => {

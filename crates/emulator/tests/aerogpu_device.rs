@@ -2850,9 +2850,15 @@ fn cmd_exec_d3d11_legacy_blend_state_packet_still_works() {
     let g = ((center >> 8) & 0xFF) as u8;
     let r = ((center >> 16) & 0xFF) as u8;
 
-    assert_eq!(b, 0);
-    assert!((r as i32 - 0x80).abs() <= 2);
-    assert!((g as i32 - 0x80).abs() <= 2);
+    assert_eq!(b, 0, "expected b=0, got {b:#x} (pixel={center:#010x})");
+    assert!(
+        (r as i32 - 0x80).abs() <= 2,
+        "expected r≈0x80, got {r:#x} (pixel={center:#010x})"
+    );
+    assert!(
+        (g as i32 - 0x80).abs() <= 2,
+        "expected g≈0x80, got {g:#x} (pixel={center:#010x})"
+    );
 }
 
 #[test]

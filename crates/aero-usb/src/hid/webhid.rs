@@ -144,12 +144,6 @@ fn convert_report(
     kind: HidReportKindPath,
     report: &HidReportInfo,
 ) -> Result<report_descriptor::HidReportInfo> {
-    if report.report_id > 0xFF {
-        return Err(HidDescriptorSynthesisError::ReportIdOutOfRange {
-            report_id: report.report_id,
-        });
-    }
-
     Ok(report_descriptor::HidReportInfo {
         report_id: report.report_id,
         items: report
@@ -164,19 +158,7 @@ fn convert_item(
     kind: HidReportKindPath,
     item: &HidReportItem,
 ) -> Result<report_descriptor::HidReportItem> {
-    if !(-8..=7).contains(&item.unit_exponent) {
-        return Err(HidDescriptorSynthesisError::UnitExponentOutOfRange {
-            unit_exponent: item.unit_exponent,
-        });
-    }
-
     let usages = if item.is_range {
-        if item.usage_minimum > item.usage_maximum {
-            return Err(HidDescriptorSynthesisError::InvalidUsageRange {
-                min: item.usage_minimum,
-                max: item.usage_maximum,
-            });
-        }
         vec![item.usage_minimum, item.usage_maximum]
     } else {
         item.usages.clone()
@@ -282,10 +264,14 @@ mod tests {
         let collections = make_collections(make_item(8));
 
         match synthesize_report_descriptor(&collections) {
-            Err(HidDescriptorSynthesisError::UnitExponentOutOfRange { unit_exponent }) => {
-                assert_eq!(unit_exponent, 8);
-            }
-            other => panic!("expected UnitExponentOutOfRange error, got {other:?}"),
+            Err(HidDescriptorSynthesisError::HidDescriptor(err)) => match err {
+                report_descriptor::HidDescriptorError::Validation { path, message } => {
+                    assert_eq!(path, "collections[0].inputReports[0].items[0]");
+                    assert!(message.contains("unitExponent"));
+                }
+                other => panic!("expected validation error, got {other:?}"),
+            },
+            other => panic!("expected HidDescriptor error, got {other:?}"),
         }
     }
 

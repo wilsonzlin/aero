@@ -3,8 +3,8 @@ export const TCP_MUX_SUBPROTOCOL = 'aero-tcp-mux-v1';
 export const TCP_MUX_HEADER_BYTES = 9;
 
 // NOTE: This file is executed directly in Node unit tests via `--experimental-strip-types`,
-// which does not support TypeScript `enum` syntax. Keep protocol constants as plain
-// objects so the tests can run without a build step.
+// which does not support TS `enum` syntax. Keep protocol constants as `as const` objects so the
+// module remains runnable in "strip-only" mode.
 export const TcpMuxMsgType = {
   OPEN: 1,
   DATA: 2,
