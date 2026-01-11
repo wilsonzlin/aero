@@ -1437,180 +1437,189 @@ impl AeroApi {
 // Legacy demo VM (snapshotting) API
 // -------------------------------------------------------------------------------------------------
 
-/// Deterministic stub VM used by the snapshot demo panels.
-///
-/// Deprecated in favor of the canonical full-system VM (`Machine`).
-#[wasm_bindgen]
-#[deprecated(
-    note = "DemoVm is a legacy wrapper kept for snapshot demos; use `Machine` (aero_machine::Machine) instead"
-)]
 #[allow(deprecated)]
-pub struct DemoVm {
-    inner: aero_machine::Machine,
-}
+mod legacy_demo_vm {
+    use wasm_bindgen::prelude::*;
 
-#[wasm_bindgen]
-#[allow(deprecated)]
-impl DemoVm {
-    fn demo_boot_sector() -> [u8; 512] {
-        let mut sector = [0u8; 512];
-        let mut i = 0usize;
+    #[cfg(target_arch = "wasm32")]
+    use super::OpfsSyncFile;
 
-        // Real-mode loop that continuously writes bytes to COM1 and stores the same bytes into RAM.
-        //
-        // This is intentionally deterministic and self-contained: it does not rely on BIOS
-        // interrupts, timers, or external input.
-
-        // mov dx, 0x3f8
-        sector[i..i + 3].copy_from_slice(&[0xBA, 0xF8, 0x03]);
-        i += 3;
-        // xor ax, ax
-        sector[i..i + 2].copy_from_slice(&[0x31, 0xC0]);
-        i += 2;
-        // mov di, 0x0500
-        sector[i..i + 3].copy_from_slice(&[0xBF, 0x00, 0x05]);
-        i += 3;
-        // cld (ensure stosb increments DI)
-        sector[i] = 0xFC;
-        i += 1;
-
-        let loop_off = i;
-
-        // out dx, al
-        sector[i] = 0xEE;
-        i += 1;
-        // stosb
-        sector[i] = 0xAA;
-        i += 1;
-        // inc al
-        sector[i..i + 2].copy_from_slice(&[0xFE, 0xC0]);
-        i += 2;
-        // cmp di, 0x7000
-        sector[i..i + 4].copy_from_slice(&[0x81, 0xFF, 0x00, 0x70]);
-        i += 4;
-        // jne loop
-        let jne_ip = i + 2;
-        let rel = loop_off as i32 - jne_ip as i32;
-        sector[i..i + 2].copy_from_slice(&[0x75, rel as i8 as u8]);
-        i += 2;
-        // mov di, 0x0500
-        sector[i..i + 3].copy_from_slice(&[0xBF, 0x00, 0x05]);
-        i += 3;
-        // jmp loop
-        let jmp_ip = i + 2;
-        let rel = loop_off as i32 - jmp_ip as i32;
-        sector[i..i + 2].copy_from_slice(&[0xEB, rel as i8 as u8]);
-
-        sector[510] = 0x55;
-        sector[511] = 0xAA;
-        sector
-    }
-
-    #[wasm_bindgen(constructor)]
-    pub fn new(ram_size_bytes: u32) -> Self {
-        // The BIOS expects to use the EBDA at 0x9F000, so enforce a minimum RAM size.
-        let ram_size_bytes = (ram_size_bytes as u64)
-            .max(2 * 1024 * 1024)
-            .min(64 * 1024 * 1024);
-
-        let mut inner = aero_machine::Machine::new(aero_machine::MachineConfig {
-            ram_size_bytes,
-            // Keep the demo VM minimal and deterministic: only serial is required.
-            enable_i8042: false,
-            enable_a20_gate: false,
-            enable_reset_ctrl: false,
-            ..Default::default()
-        })
-        .expect("DemoVm machine init should succeed");
-
-        inner
-            .set_disk_image(Self::demo_boot_sector().to_vec())
-            .expect("DemoVm boot sector is always valid");
-        inner.reset();
-
-        Self { inner }
-    }
-
-    pub fn run_steps(&mut self, steps: u32) {
-        let _ = self.inner.run_slice(steps as u64);
-    }
-
-    pub fn serial_output(&mut self) -> Vec<u8> {
-        self.inner.serial_output_bytes()
-    }
-
-    /// Return the current serial output length without copying the bytes into JS.
+    /// Deterministic stub VM used by the snapshot demo panels.
     ///
-    /// The demo VM accumulates serial output as it runs; callers that only need
-    /// a byte count should prefer this over `serial_output()` to avoid large
-    /// allocations in JS.
-    pub fn serial_output_len(&mut self) -> u32 {
-        self.inner.serial_output_len().min(u64::from(u32::MAX)) as u32
+    /// Deprecated in favor of the canonical full-system VM (`Machine`).
+    #[wasm_bindgen]
+    #[deprecated(
+        note = "DemoVm is a legacy wrapper kept for snapshot demos; use `Machine` (aero_machine::Machine) instead"
+    )]
+    pub struct DemoVm {
+        inner: aero_machine::Machine,
     }
 
-    pub fn snapshot_full(&mut self) -> Result<Vec<u8>, JsValue> {
-        self.inner
-            .take_snapshot_full()
-            .map_err(|e| JsValue::from_str(&e.to_string()))
-    }
+    #[wasm_bindgen]
+    impl DemoVm {
+        fn demo_boot_sector() -> [u8; 512] {
+            let mut sector = [0u8; 512];
+            let mut i = 0usize;
 
-    pub fn snapshot_dirty(&mut self) -> Result<Vec<u8>, JsValue> {
-        self.inner
-            .take_snapshot_dirty()
-            .map_err(|e| JsValue::from_str(&e.to_string()))
-    }
+            // Real-mode loop that continuously writes bytes to COM1 and stores the same bytes into RAM.
+            //
+            // This is intentionally deterministic and self-contained: it does not rely on BIOS
+            // interrupts, timers, or external input.
 
-    pub fn restore_snapshot(&mut self, bytes: &[u8]) -> Result<(), JsValue> {
-        self.inner
-            .restore_snapshot_bytes(bytes)
-            .map_err(|e| JsValue::from_str(&e.to_string()))
-    }
+            // mov dx, 0x3f8
+            sector[i..i + 3].copy_from_slice(&[0xBA, 0xF8, 0x03]);
+            i += 3;
+            // xor ax, ax
+            sector[i..i + 2].copy_from_slice(&[0x31, 0xC0]);
+            i += 2;
+            // mov di, 0x0500
+            sector[i..i + 3].copy_from_slice(&[0xBF, 0x00, 0x05]);
+            i += 3;
+            // cld (ensure stosb increments DI)
+            sector[i] = 0xFC;
+            i += 1;
 
-    #[cfg(target_arch = "wasm32")]
-    pub async fn snapshot_full_to_opfs(&mut self, path: String) -> Result<(), JsValue> {
-        let mut file = OpfsSyncFile::create(&path)
-            .await
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+            let loop_off = i;
 
-        self.inner
-            .save_snapshot_full_to(&mut file)
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+            // out dx, al
+            sector[i] = 0xEE;
+            i += 1;
+            // stosb
+            sector[i] = 0xAA;
+            i += 1;
+            // inc al
+            sector[i..i + 2].copy_from_slice(&[0xFE, 0xC0]);
+            i += 2;
+            // cmp di, 0x7000
+            sector[i..i + 4].copy_from_slice(&[0x81, 0xFF, 0x00, 0x70]);
+            i += 4;
+            // jne loop
+            let jne_ip = i + 2;
+            let rel = loop_off as i32 - jne_ip as i32;
+            sector[i..i + 2].copy_from_slice(&[0x75, rel as i8 as u8]);
+            i += 2;
+            // mov di, 0x0500
+            sector[i..i + 3].copy_from_slice(&[0xBF, 0x00, 0x05]);
+            i += 3;
+            // jmp loop
+            let jmp_ip = i + 2;
+            let rel = loop_off as i32 - jmp_ip as i32;
+            sector[i..i + 2].copy_from_slice(&[0xEB, rel as i8 as u8]);
 
-        file.close()
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
-        Ok(())
-    }
+            sector[510] = 0x55;
+            sector[511] = 0xAA;
+            sector
+        }
 
-    #[cfg(target_arch = "wasm32")]
-    pub async fn snapshot_dirty_to_opfs(&mut self, path: String) -> Result<(), JsValue> {
-        let mut file = OpfsSyncFile::create(&path)
-            .await
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        #[wasm_bindgen(constructor)]
+        pub fn new(ram_size_bytes: u32) -> Self {
+            // The BIOS expects to use the EBDA at 0x9F000, so enforce a minimum RAM size.
+            let ram_size_bytes = (ram_size_bytes as u64)
+                .max(2 * 1024 * 1024)
+                .min(64 * 1024 * 1024);
 
-        self.inner
-            .save_snapshot_dirty_to(&mut file)
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+            let mut inner = aero_machine::Machine::new(aero_machine::MachineConfig {
+                ram_size_bytes,
+                // Keep the demo VM minimal and deterministic: only serial is required.
+                enable_i8042: false,
+                enable_a20_gate: false,
+                enable_reset_ctrl: false,
+                ..Default::default()
+            })
+            .expect("DemoVm machine init should succeed");
 
-        file.close()
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
-        Ok(())
-    }
+            inner
+                .set_disk_image(Self::demo_boot_sector().to_vec())
+                .expect("DemoVm boot sector is always valid");
+            inner.reset();
 
-    #[cfg(target_arch = "wasm32")]
-    pub async fn restore_snapshot_from_opfs(&mut self, path: String) -> Result<(), JsValue> {
-        let mut file = OpfsSyncFile::open(&path, false)
-            .await
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+            Self { inner }
+        }
 
-        self.inner
-            .restore_snapshot_from_checked(&mut file)
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        pub fn run_steps(&mut self, steps: u32) {
+            let _ = self.inner.run_slice(steps as u64);
+        }
 
-        file.close()
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
-        Ok(())
+        pub fn serial_output(&mut self) -> Vec<u8> {
+            self.inner.serial_output_bytes()
+        }
+
+        /// Return the current serial output length without copying the bytes into JS.
+        ///
+        /// The demo VM accumulates serial output as it runs; callers that only need
+        /// a byte count should prefer this over `serial_output()` to avoid large
+        /// allocations in JS.
+        pub fn serial_output_len(&mut self) -> u32 {
+            self.inner.serial_output_len().min(u64::from(u32::MAX)) as u32
+        }
+
+        pub fn snapshot_full(&mut self) -> Result<Vec<u8>, JsValue> {
+            self.inner
+                .take_snapshot_full()
+                .map_err(|e| JsValue::from_str(&e.to_string()))
+        }
+
+        pub fn snapshot_dirty(&mut self) -> Result<Vec<u8>, JsValue> {
+            self.inner
+                .take_snapshot_dirty()
+                .map_err(|e| JsValue::from_str(&e.to_string()))
+        }
+
+        pub fn restore_snapshot(&mut self, bytes: &[u8]) -> Result<(), JsValue> {
+            self.inner
+                .restore_snapshot_bytes(bytes)
+                .map_err(|e| JsValue::from_str(&e.to_string()))
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        pub async fn snapshot_full_to_opfs(&mut self, path: String) -> Result<(), JsValue> {
+            let mut file = OpfsSyncFile::create(&path)
+                .await
+                .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+            self.inner
+                .save_snapshot_full_to(&mut file)
+                .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+            file.close()
+                .map_err(|e| JsValue::from_str(&e.to_string()))?;
+            Ok(())
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        pub async fn snapshot_dirty_to_opfs(&mut self, path: String) -> Result<(), JsValue> {
+            let mut file = OpfsSyncFile::create(&path)
+                .await
+                .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+            self.inner
+                .save_snapshot_dirty_to(&mut file)
+                .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+            file.close()
+                .map_err(|e| JsValue::from_str(&e.to_string()))?;
+            Ok(())
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        pub async fn restore_snapshot_from_opfs(&mut self, path: String) -> Result<(), JsValue> {
+            let mut file = OpfsSyncFile::open(&path, false)
+                .await
+                .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+            self.inner
+                .restore_snapshot_from_checked(&mut file)
+                .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+            file.close()
+                .map_err(|e| JsValue::from_str(&e.to_string()))?;
+            Ok(())
+        }
     }
 }
+
+#[allow(deprecated)]
+pub use legacy_demo_vm::DemoVm;
 
 // -----------------------------------------------------------------------------
 // CPU worker demo harness (WASM-side render + counters)
