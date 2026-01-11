@@ -18,6 +18,7 @@ const OP_CREATE_BUFFER: u32 = 0x100;
 const OP_CREATE_TEXTURE2D: u32 = 0x101;
 const OP_DESTROY_RESOURCE: u32 = 0x102;
 const OP_RESOURCE_DIRTY_RANGE: u32 = 0x103;
+const OP_UPLOAD_RESOURCE: u32 = 0x104;
 
 const OP_SET_RENDER_TARGETS: u32 = 0x400;
 const OP_SET_VERTEX_BUFFERS: u32 = 0x500;
@@ -241,6 +242,7 @@ struct TextureResource {
     height: u32,
     format: wgpu::TextureFormat,
     bytes_per_pixel: u32,
+    linear_row_pitch_bytes: u32,
     backing: Option<GuestTextureBacking>,
     dirty_ranges: Vec<Range<u64>>,
 }
@@ -570,6 +572,7 @@ fn fs_main() -> @location(0) vec4<f32> {
             OP_CREATE_TEXTURE2D => self.exec_create_texture2d(cmd_bytes, alloc_table),
             OP_DESTROY_RESOURCE => self.exec_destroy_resource(cmd_bytes),
             OP_RESOURCE_DIRTY_RANGE => self.exec_resource_dirty_range(cmd_bytes),
+            OP_UPLOAD_RESOURCE => self.exec_upload_resource(cmd_bytes),
 
             OP_SET_RENDER_TARGETS => self.exec_set_render_targets(cmd_bytes),
             OP_SET_VERTEX_BUFFERS => self.exec_set_vertex_buffers(cmd_bytes),
@@ -711,6 +714,20 @@ fn fs_main() -> @location(0) vec4<f32> {
 
         let (wgpu_format, bytes_per_pixel) = Self::map_format(format)?;
 
+        let min_row_bytes = width
+            .checked_mul(bytes_per_pixel)
+            .ok_or_else(|| ExecutorError::Validation("texture row size overflow".into()))?;
+        let linear_row_pitch_bytes = if row_pitch_bytes != 0 {
+            if row_pitch_bytes < min_row_bytes {
+                return Err(ExecutorError::Validation(format!(
+                    "CREATE_TEXTURE2D row_pitch_bytes={row_pitch_bytes} smaller than minimum row size {min_row_bytes}"
+                )));
+            }
+            row_pitch_bytes
+        } else {
+            min_row_bytes
+        };
+
         let backing = if backing_alloc_id == 0 {
             None
         } else {
@@ -719,14 +736,6 @@ fn fs_main() -> @location(0) vec4<f32> {
                     "CREATE_TEXTURE2D row_pitch_bytes must be non-zero when backing_alloc_id != 0"
                         .into(),
                 ));
-            }
-            let min_row_bytes = width
-                .checked_mul(bytes_per_pixel)
-                .ok_or_else(|| ExecutorError::Validation("texture row size overflow".into()))?;
-            if row_pitch_bytes < min_row_bytes {
-                return Err(ExecutorError::Validation(format!(
-                    "CREATE_TEXTURE2D row_pitch_bytes={row_pitch_bytes} smaller than minimum row size {min_row_bytes}"
-                )));
             }
 
             let table = alloc_table.ok_or_else(|| {
@@ -797,6 +806,7 @@ fn fs_main() -> @location(0) vec4<f32> {
                 height,
                 format: wgpu_format,
                 bytes_per_pixel,
+                linear_row_pitch_bytes,
                 backing,
                 dirty_ranges: Vec::new(),
             },
@@ -876,6 +886,147 @@ fn fs_main() -> @location(0) vec4<f32> {
 
         Err(ExecutorError::Validation(format!(
             "RESOURCE_DIRTY_RANGE for unknown resource {handle}"
+        )))
+    }
+
+    fn exec_upload_resource(&mut self, cmd: &[u8]) -> Result<(), ExecutorError> {
+        if cmd.len() < 32 {
+            return Err(ExecutorError::TruncatedPacket);
+        }
+
+        let handle = read_u32_le(cmd, 8)?;
+        let offset_bytes = read_u64_le(cmd, 16)?;
+        let size_bytes = read_u64_le(cmd, 24)?;
+        if size_bytes == 0 {
+            return Ok(());
+        }
+
+        let data_len = usize::try_from(size_bytes)
+            .map_err(|_| ExecutorError::Validation("UPLOAD_RESOURCE size_bytes too large".into()))?;
+        let data_end = 32usize
+            .checked_add(data_len)
+            .ok_or_else(|| ExecutorError::Validation("UPLOAD_RESOURCE size overflow".into()))?;
+        if cmd.len() < data_end {
+            return Err(ExecutorError::TruncatedPacket);
+        }
+        let data = &cmd[32..data_end];
+
+        if let Some(buffer) = self.buffers.get_mut(&handle) {
+            if buffer.backing.is_some() {
+                return Err(ExecutorError::Validation(format!(
+                    "UPLOAD_RESOURCE on guest-backed buffer {handle} is not supported (use RESOURCE_DIRTY_RANGE)"
+                )));
+            }
+
+            let end = offset_bytes.checked_add(size_bytes).ok_or_else(|| {
+                ExecutorError::Validation("UPLOAD_RESOURCE buffer range overflow".into())
+            })?;
+            if end > buffer.size_bytes {
+                return Err(ExecutorError::Validation(format!(
+                    "UPLOAD_RESOURCE out of bounds for buffer {handle} (offset=0x{offset_bytes:x}, size=0x{size_bytes:x}, buffer_size=0x{:x})",
+                    buffer.size_bytes
+                )));
+            }
+
+            self.queue
+                .write_buffer(&buffer.buffer, offset_bytes, data);
+            return Ok(());
+        }
+
+        if let Some(tex) = self.textures.get_mut(&handle) {
+            if tex.backing.is_some() {
+                return Err(ExecutorError::Validation(format!(
+                    "UPLOAD_RESOURCE on guest-backed texture {handle} is not supported (use RESOURCE_DIRTY_RANGE)"
+                )));
+            }
+
+            let row_pitch = u64::from(tex.linear_row_pitch_bytes);
+            if row_pitch == 0 {
+                return Err(ExecutorError::Validation(format!(
+                    "UPLOAD_RESOURCE texture {handle} is missing row_pitch_bytes"
+                )));
+            }
+
+            if offset_bytes % row_pitch != 0 || size_bytes % row_pitch != 0 {
+                return Err(ExecutorError::Validation(format!(
+                    "UPLOAD_RESOURCE for texture {handle} must be row-aligned (offset_bytes and size_bytes must be multiples of row_pitch_bytes={})",
+                    tex.linear_row_pitch_bytes
+                )));
+            }
+
+            let start_row = (offset_bytes / row_pitch) as u32;
+            let row_count = (size_bytes / row_pitch) as u32;
+            let end_row = start_row.saturating_add(row_count);
+            if end_row > tex.height {
+                return Err(ExecutorError::Validation(format!(
+                    "UPLOAD_RESOURCE out of bounds for texture {handle} (rows {start_row}..{end_row}, height={})",
+                    tex.height
+                )));
+            }
+
+            let unpadded_bpr = tex
+                .width
+                .checked_mul(tex.bytes_per_pixel)
+                .ok_or_else(|| ExecutorError::Validation("texture row size overflow".into()))?;
+
+            if tex.linear_row_pitch_bytes < unpadded_bpr {
+                return Err(ExecutorError::Validation(format!(
+                    "UPLOAD_RESOURCE texture row_pitch_bytes={} smaller than minimum row size {unpadded_bpr}",
+                    tex.linear_row_pitch_bytes
+                )));
+            }
+
+            let upload_bpr = if tex.linear_row_pitch_bytes % wgpu::COPY_BYTES_PER_ROW_ALIGNMENT == 0
+            {
+                tex.linear_row_pitch_bytes
+            } else {
+                align_to(unpadded_bpr, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
+            };
+
+            let mut repacked = Vec::<u8>::new();
+            let bytes: &[u8] = if upload_bpr == tex.linear_row_pitch_bytes {
+                data
+            } else {
+                // Repack to satisfy WebGPU 256-byte row alignment while ignoring any row padding.
+                repacked.resize(upload_bpr as usize * row_count as usize, 0);
+                for row in 0..row_count as usize {
+                    let src_start = row * tex.linear_row_pitch_bytes as usize;
+                    let src_end = src_start + unpadded_bpr as usize;
+                    let dst_start = row * upload_bpr as usize;
+                    repacked[dst_start..dst_start + unpadded_bpr as usize]
+                        .copy_from_slice(&data[src_start..src_end]);
+                }
+                &repacked
+            };
+
+            self.queue.write_texture(
+                wgpu::ImageCopyTexture {
+                    texture: &tex.texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d {
+                        x: 0,
+                        y: start_row,
+                        z: 0,
+                    },
+                    aspect: wgpu::TextureAspect::All,
+                },
+                bytes,
+                wgpu::ImageDataLayout {
+                    offset: 0,
+                    bytes_per_row: Some(upload_bpr),
+                    rows_per_image: Some(row_count),
+                },
+                wgpu::Extent3d {
+                    width: tex.width,
+                    height: row_count,
+                    depth_or_array_layers: 1,
+                },
+            );
+            return Ok(());
+        }
+
+        Err(ExecutorError::Validation(format!(
+            "UPLOAD_RESOURCE for unknown resource {handle}"
         )))
     }
 
@@ -1055,6 +1206,7 @@ fn fs_main() -> @location(0) vec4<f32> {
         };
 
         // Upload pending dirty ranges for any guest-backed resources used by this draw.
+        self.flush_texture_if_dirty(rt, guest_memory)?;
         self.flush_buffer_if_dirty(vb.buffer, guest_memory)?;
         self.flush_texture_if_dirty(tex0, guest_memory)?;
 
