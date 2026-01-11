@@ -6,6 +6,9 @@ use wasm_bindgen::prelude::*;
 use aero_platform::audio::worklet_bridge::WorkletBridge;
 
 #[cfg(target_arch = "wasm32")]
+use aero_opfs::OpfsSyncFile;
+
+#[cfg(target_arch = "wasm32")]
 use js_sys::SharedArrayBuffer;
 
 #[cfg(target_arch = "wasm32")]
@@ -288,5 +291,47 @@ impl DemoVm {
         self.inner
             .restore_snapshot_bytes(bytes)
             .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub async fn snapshot_full_to_opfs(&mut self, path: String) -> Result<(), JsValue> {
+        let mut file = OpfsSyncFile::create(&path)
+            .await
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+        aero_snapshot::save_snapshot(&mut file, &mut self.inner, aero_snapshot::SaveOptions::default())
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+        file.close().map_err(|e| JsValue::from_str(&e.to_string()))?;
+        Ok(())
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub async fn snapshot_dirty_to_opfs(&mut self, path: String) -> Result<(), JsValue> {
+        let mut file = OpfsSyncFile::create(&path)
+            .await
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+        let mut options = aero_snapshot::SaveOptions::default();
+        options.ram.mode = aero_snapshot::RamMode::Dirty;
+
+        aero_snapshot::save_snapshot(&mut file, &mut self.inner, options)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+        file.close().map_err(|e| JsValue::from_str(&e.to_string()))?;
+        Ok(())
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub async fn restore_snapshot_from_opfs(&mut self, path: String) -> Result<(), JsValue> {
+        let mut file = OpfsSyncFile::open(&path, false)
+            .await
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+        aero_snapshot::restore_snapshot(&mut file, &mut self.inner)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+        file.close().map_err(|e| JsValue::from_str(&e.to_string()))?;
+        Ok(())
     }
 }

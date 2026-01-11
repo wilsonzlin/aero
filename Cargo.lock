@@ -509,10 +509,13 @@ name = "aero-wasm"
 version = "0.1.0"
 dependencies = [
  "aero-audio",
+ "aero-opfs",
  "aero-platform",
+ "aero-snapshot",
  "aero-vm",
  "js-sys",
  "wasm-bindgen",
+ "wasm-bindgen-futures",
  "wasm-bindgen-test",
 ]
 
