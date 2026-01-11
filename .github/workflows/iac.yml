@@ -172,7 +172,6 @@ jobs:
             kubeconform \
               -cache "$KUBECONFORM_CACHE_DIR" \
               -strict \
-              -ignore-missing-schemas \
               -schema-location default \
               -schema-location "https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json" \
               -kubernetes-version "$K8S_VERSION" \
@@ -224,8 +223,8 @@ jobs:
           set -euo pipefail
           KUBECONFORM_CACHE_DIR="$HOME/.cache/kubeconform"
           mkdir -p "$KUBECONFORM_CACHE_DIR"
-          kubeconform -cache "$KUBECONFORM_CACHE_DIR" -strict -ignore-missing-schemas -schema-location default -schema-location "https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json" -kubernetes-version "$K8S_VERSION" -summary deploy/k8s/aero-storage-server
-          kubeconform -cache "$KUBECONFORM_CACHE_DIR" -strict -ignore-missing-schemas -schema-location default -schema-location "https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json" -kubernetes-version "$K8S_VERSION" -summary deploy/k8s/examples/cert-manager
+          kubeconform -cache "$KUBECONFORM_CACHE_DIR" -strict -schema-location default -schema-location "https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json" -kubernetes-version "$K8S_VERSION" -summary deploy/k8s/aero-storage-server
+          kubeconform -cache "$KUBECONFORM_CACHE_DIR" -strict -schema-location default -schema-location "https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json" -kubernetes-version "$K8S_VERSION" -summary deploy/k8s/examples/cert-manager
 
   deploy-hygiene:
     name: Deploy manifest hygiene

@@ -104,7 +104,7 @@ for values in \
   values-prod-appheaders.yaml; do
   out="/tmp/aero-${values%.yaml}.yaml"
   helm template aero-gateway "$CHART" -n aero --kube-version 1.28.0 -f "$CHART/$values" > "$out"
-  kubeconform -strict -ignore-missing-schemas \
+  kubeconform -strict \
     -schema-location default \
     -schema-location "https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json" \
     -kubernetes-version 1.28.0 -summary "$out"
