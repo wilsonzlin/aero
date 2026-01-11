@@ -248,6 +248,11 @@ struct IndexBufferBinding {
 #[derive(Debug, Clone)]
 struct InputLayoutResource {
     layout: InputLayoutDesc,
+    /// Sorted, deduplicated list of D3D input slots referenced by this layout.
+    ///
+    /// Used to make the per-layout mapping cache key depend only on slot strides that matter for
+    /// this layout (bindings to unrelated slots should not invalidate the cache).
+    used_slots: Vec<u32>,
     mapping_cache: HashMap<u64, BuiltVertexState>,
 }
 
@@ -2249,10 +2254,14 @@ impl AerogpuD3d11Executor {
 
         let layout = InputLayoutDesc::parse(blob)
             .map_err(|e| anyhow!("CREATE_INPUT_LAYOUT: failed to parse ILAY blob: {e}"))?;
+        let mut used_slots: Vec<u32> = layout.elements.iter().map(|e| e.input_slot).collect();
+        used_slots.sort_unstable();
+        used_slots.dedup();
         self.resources.input_layouts.insert(
             handle,
             InputLayoutResource {
                 layout,
+                used_slots,
                 mapping_cache: HashMap::new(),
             },
         );
@@ -3956,7 +3965,8 @@ fn build_vertex_buffers_for_pipeline(
         }
     }
 
-    let cache_key = hash_input_layout_mapping_key(vs_dxbc_hash_fnv1a64, &slot_strides);
+    let cache_key =
+        hash_input_layout_mapping_key(vs_dxbc_hash_fnv1a64, &layout.used_slots, &slot_strides);
     if let Some(cached) = layout.mapping_cache.get(&cache_key) {
         return Ok(cached.clone());
     }
@@ -4128,11 +4138,17 @@ fn build_fallback_vs_signature(layout: &InputLayoutDesc) -> Vec<VsInputSignature
 const FNV1A64_OFFSET_BASIS: u64 = 0xcbf29ce484222325;
 const FNV1A64_PRIME: u64 = 0x100000001b3;
 
-fn hash_input_layout_mapping_key(vs_dxbc_hash_fnv1a64: u64, slot_strides: &[u32]) -> u64 {
+fn hash_input_layout_mapping_key(
+    vs_dxbc_hash_fnv1a64: u64,
+    used_slots: &[u32],
+    slot_strides: &[u32],
+) -> u64 {
     let mut hash = FNV1A64_OFFSET_BASIS;
     fnv1a64_update(&mut hash, &vs_dxbc_hash_fnv1a64.to_le_bytes());
-    fnv1a64_update(&mut hash, &(slot_strides.len() as u32).to_le_bytes());
-    for &stride in slot_strides {
+    fnv1a64_update(&mut hash, &(used_slots.len() as u32).to_le_bytes());
+    for &slot in used_slots {
+        fnv1a64_update(&mut hash, &slot.to_le_bytes());
+        let stride = slot_strides.get(slot as usize).copied().unwrap_or(0);
         fnv1a64_update(&mut hash, &stride.to_le_bytes());
     }
     hash
