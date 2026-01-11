@@ -1,0 +1,67 @@
+; Aero virtio-net NDIS 6.20 miniport driver (Windows 7 SP1)
+;
+; AERO-W7-VIRTIO contract v1 (virtio-pci modern, BAR0 MMIO, split virtqueues, INTx).
+;
+; Hardware ID: PCI\VEN_1AF4&DEV_1041 (virtio-net modern PCI ID space).
+;
+; Note: Windows 7 x64 requires driver signing unless test mode is enabled.
+
+[Version]
+Signature   = "$Windows NT$"
+Class       = Net
+ClassGuid   = {4d36e972-e325-11ce-bfc1-08002be10318}
+Provider    = %Aero%
+DriverVer   = 01/10/2026,1.0.0.0
+CatalogFile = aerovnet.cat
+
+[Manufacturer]
+%Aero% = Aero,NTx86,NTamd64
+
+[Aero.NTx86]
+%AeroVNet.DeviceDesc% = AeroVNet_Install, PCI\VEN_1AF4&DEV_1041
+
+[Aero.NTamd64]
+%AeroVNet.DeviceDesc% = AeroVNet_Install, PCI\VEN_1AF4&DEV_1041
+
+[DestinationDirs]
+AeroVNet.CopyFiles = 12  ; DIRID_DRIVERS
+
+[AeroVNet_Install.NT]
+Characteristics = 0x84 ; NCF_PHYSICAL | NCF_HAS_UI
+BusType         = 5    ; PCI
+CopyFiles       = AeroVNet.CopyFiles
+AddReg          = AeroVNet.AddReg
+
+[AeroVNet_Install.NT.Services]
+AddService = aerovnet, 2, AeroVNet.Service, AeroVNet.EventLog
+
+[AeroVNet.CopyFiles]
+aerovnet.sys,,,2
+
+[AeroVNet.Service]
+DisplayName    = %AeroVNet.ServiceDesc%
+ServiceType    = 1 ; SERVICE_KERNEL_DRIVER
+StartType      = 3 ; SERVICE_DEMAND_START
+ErrorControl   = 1 ; SERVICE_ERROR_NORMAL
+ServiceBinary  = %12%\aerovnet.sys
+LoadOrderGroup = NDIS
+
+[AeroVNet.EventLog]
+AddReg = AeroVNet.EventLog.AddReg
+
+[AeroVNet.EventLog.AddReg]
+HKR,,EventMessageFile,0x20000,"%SystemRoot%\System32\IoLogMsg.dll"
+HKR,,TypesSupported,0x10001,7
+
+[AeroVNet.AddReg]
+; Bind to our service
+HKR, Ndi, Service, 0, "aerovnet"
+; NDIS 6.x miniport
+HKR, Ndi\Interfaces, UpperRange, 0, "ndis6"
+HKR, Ndi\Interfaces, LowerRange, 0, "ethernet"
+
+[Strings]
+Aero = "Aero"
+AeroVNet.DeviceDesc = "Aero Virtio Ethernet Adapter"
+AeroVNet.ServiceDesc = "Aero Virtio Ethernet Adapter"
+
