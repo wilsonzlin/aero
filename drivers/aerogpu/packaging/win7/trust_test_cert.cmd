@@ -43,6 +43,15 @@ if not defined CERT_FILE (
   if exist "aero-test.cer" set "CERT_FILE=aero-test.cer"
 )
 if not defined CERT_FILE (
+  rem CI artifacts usually place aero-test.cer at the root of the extracted bundle,
+  rem while this script lives under drivers\<driver>\<arch>\packaging\win7\.
+  rem Search a few parent directories so users can run this script without needing
+  rem to manually specify a relative path.
+  for %%P in ("." ".." "..\.." "..\..\.." "..\..\..\.." "..\..\..\..\.." "..\..\..\..\..\.." "..\..\..\..\..\..\..") do (
+    if not defined CERT_FILE if exist "%%~fP\aero-test.cer" set "CERT_FILE=%%~fP\aero-test.cer"
+  )
+)
+if not defined CERT_FILE (
   if exist "aerogpu_test.cer" set "CERT_FILE=aerogpu_test.cer"
 )
 

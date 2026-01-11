@@ -7,6 +7,6 @@
     "packaging/win7/sign_test.cmd",
     "packaging/win7/trust_test_cert.cmd"
   ],
-  "infFiles": ["packaging/win7/aerogpu.inf"],
-  "wow64Files": ["aerogpu_d3d9.dll"]
+  "infFiles": ["packaging/win7/aerogpu.inf", "packaging/win7/aerogpu_dx11.inf"],
+  "wow64Files": ["aerogpu_d3d9.dll", "aerogpu_d3d10.dll"]
 }

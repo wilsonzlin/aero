@@ -29,7 +29,16 @@ set "SYS32=%SystemRoot%\System32"
 if defined PROCESSOR_ARCHITEW6432 set "SYS32=%SystemRoot%\Sysnative"
 set "BCDEDIT=%SYS32%\bcdedit.exe"
 set "CERTUTIL=%SYS32%\certutil.exe"
-pushd "%SCRIPT_DIR%" >nul
+
+rem CI-staged packages place the INF/binaries at the package root, with helper scripts
+rem under packaging\win7\. Support both layouts by operating from the directory that
+rem actually contains the INF(s).
+set "PACKAGE_DIR=%SCRIPT_DIR%"
+if not exist "%PACKAGE_DIR%aerogpu.inf" (
+  if exist "%SCRIPT_DIR%..\..\aerogpu.inf" set "PACKAGE_DIR=%SCRIPT_DIR%..\..\"
+  if exist "%SCRIPT_DIR%..\..\aerogpu_dx11.inf" set "PACKAGE_DIR=%SCRIPT_DIR%..\..\"
+)
+pushd "%PACKAGE_DIR%" >nul
 
 set "NO_BCDEDIT=0"
 set "NO_INF2CAT=0"
@@ -252,7 +261,7 @@ if not exist "%INF2CAT_WORK%\%INF2CAT_CAT%" (
   exit /b 1
 )
 
-copy /y "%INF2CAT_WORK%\%INF2CAT_CAT%" "%SCRIPT_DIR%" >nul
+copy /y "%INF2CAT_WORK%\%INF2CAT_CAT%" "%PACKAGE_DIR%" >nul
 exit /b 0
 
 rem -----------------------------------------------------------------

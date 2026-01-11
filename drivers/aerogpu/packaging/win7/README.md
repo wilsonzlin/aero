@@ -9,6 +9,12 @@ This directory contains a **Windows 7 SP1** driver package skeleton for the Aero
 
 It also includes scripts for **test-signing** and **install/uninstall** in a Win7 VM.
 
+## CI-produced artifacts (out/packages / release ZIP)
+
+CI stages the INF(s) and built binaries at the **package root** (e.g. `out/packages/aerogpu/x64/`), but includes this `packaging/win7/` folder as extra documentation + helper scripts.
+
+The helper scripts (`install.cmd`, `sign_test.cmd`, etc.) auto-detect the package root when run from within this folder, so you do **not** need to copy/move the INF/binaries into `packaging/win7/` for CI-produced packages.
+
 ## 1) Expected build outputs
 
 Copy the built driver binaries into this directory (same folder as the `.inf` files):

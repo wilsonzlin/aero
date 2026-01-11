@@ -18,17 +18,26 @@ if defined PROCESSOR_ARCHITEW6432 set "SYS32=%SystemRoot%\Sysnative"
 set "PNPUTIL=%SYS32%\pnputil.exe"
 pushd "%SCRIPT_DIR%" >nul
 
-set "INF=%~1"
-if "%INF%"=="" set "INF=aerogpu.inf"
+set "INF_FILE=%~1"
+if "%INF_FILE%"=="" set "INF_FILE=aerogpu.inf"
 
-if not exist "%INF%" (
-  echo [ERROR] INF not found: "%SCRIPT_DIR%%INF%"
+rem CI-staged packages place the INF/binaries at the package root, with helper scripts
+rem under packaging\win7\. Support both layouts:
+rem   - Repo/dev layout: packaging\win7\*.inf next to this script
+rem   - CI package layout: <package-root>\*.inf (two levels above this script)
+set "INF_PATH=%INF_FILE%"
+if not exist "%INF_PATH%" (
+  set "INF_PATH=%SCRIPT_DIR%..\..\%INF_FILE%"
+)
+
+if not exist "%INF_PATH%" (
+  echo [ERROR] INF not found: "%INF_FILE%"
   popd >nul
   exit /b 1
 )
 
 echo [INFO] Installing driver package via pnputil...
-echo [INFO]   INF: %INF%
+echo [INFO]   INF: %INF_PATH%
 
 if not exist "%PNPUTIL%" (
   echo [ERROR] pnputil.exe not found at "%PNPUTIL%".
@@ -36,7 +45,7 @@ if not exist "%PNPUTIL%" (
   exit /b 1
 )
 
-"%PNPUTIL%" -i -a "%INF%"
+"%PNPUTIL%" -i -a "%INF_PATH%"
 set "PNP_ERR=%ERRORLEVEL%"
 
 if not "%PNP_ERR%"=="0" (
@@ -48,16 +57,16 @@ if not "%PNP_ERR%"=="0" (
 
   call :FindDevcon
   if defined DEVCON (
-    call :ExtractHwidFromInf "%INF%"
+    call :ExtractHwidFromInf "%INF_PATH%"
     if not defined AEROGPU_HWID (
-      echo [ERROR] Could not extract PCI\VEN_... HWID from "%INF%".
+      echo [ERROR] Could not extract PCI\VEN_... HWID from "%INF_PATH%".
       popd >nul
       exit /b %PNP_ERR%
     )
 
     echo [INFO] devcon: "%DEVCON%"
     echo [INFO] updating device HWID: %AEROGPU_HWID%
-    "%DEVCON%" /r update "%INF%" "%AEROGPU_HWID%"
+    "%DEVCON%" /r update "%INF_PATH%" "%AEROGPU_HWID%"
     set "PNP_ERR=%ERRORLEVEL%"
   ) else (
     echo [WARN] devcon.exe not found on PATH or alongside scripts.
