@@ -50,6 +50,11 @@ jobs:
             -GuestToolsSpecPath "tools/packaging/specs/win7-virtio-full.json"
 
           pwsh -NoProfile -ExecutionPolicy Bypass -File "ci/virtio-win-packaging-smoke.ps1" `
+            -OutRoot "out/virtio-win-packaging-smoke/full-no-optional" `
+            -OmitOptionalDrivers `
+            -GuestToolsSpecPath "tools/packaging/specs/win7-virtio-full.json"
+
+          pwsh -NoProfile -ExecutionPolicy Bypass -File "ci/virtio-win-packaging-smoke.ps1" `
             -OutRoot "out/virtio-win-packaging-smoke/minimal" `
             -OmitOptionalDrivers `
             -GuestToolsSpecPath "tools/packaging/specs/win7-virtio-win.json"
