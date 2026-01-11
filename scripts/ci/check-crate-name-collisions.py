@@ -18,7 +18,9 @@ This script uses `cargo metadata` (workspace truth) and checks for collisions of
 Additionally, it enforces the workspace naming convention from ADR 0007:
 
   - workspace packages must use kebab-case (no `_`) in `[package].name`.
+  - workspace package names must be lowercase.
   - crate directories under `crates/` must be kebab-case (no `_`).
+  - crate directory names under `crates/` must be lowercase.
   - library target crate names must match the normalized package name (rejects
     custom `[lib].name` overrides).
 
@@ -116,11 +118,17 @@ def main() -> int:
 
     normalized_collisions = {k: v for k, v in groups.items() if len(v) > 1}
     underscored = [p for p in pkgs if "_" in p.name]
+    non_lowercase = [p for p in pkgs if p.name != p.name.lower()]
     underscored_crates_dirs = []
     for p in pkgs:
         parts = PurePath(p.path).parts
         if len(parts) >= 2 and parts[0] == "crates" and "_" in parts[1]:
             underscored_crates_dirs.append(p)
+    non_lowercase_crates_dirs = []
+    for p in pkgs:
+        parts = PurePath(p.path).parts
+        if len(parts) >= 2 and parts[0] == "crates" and parts[1] != parts[1].lower():
+            non_lowercase_crates_dirs.append(p)
 
     lib_name_mismatches = [p for p in pkgs if p.lib_crate and p.lib_crate != p.normalized]
 
@@ -133,7 +141,9 @@ def main() -> int:
     if (
         not normalized_collisions
         and not underscored
+        and not non_lowercase
         and not underscored_crates_dirs
+        and not non_lowercase_crates_dirs
         and not lib_name_mismatches
         and not lib_collisions
     ):
@@ -152,9 +162,21 @@ def main() -> int:
             file=sys.stderr,
         )
 
+    if non_lowercase:
+        print("non-lowercase package names detected (use lowercase kebab-case):", file=sys.stderr)
+        for p in sorted(non_lowercase, key=lambda p: (p.name, p.path)):
+            print(f"  - package: {p.name:25s} path: {p.path}", file=sys.stderr)
+        print("", file=sys.stderr)
+
     if underscored_crates_dirs:
         print("crate directories under `crates/` must be kebab-case (no underscores):", file=sys.stderr)
         for p in sorted(underscored_crates_dirs, key=lambda p: (p.path, p.name)):
+            print(f"  - dir: {p.path:30s} package: {p.name}", file=sys.stderr)
+        print("", file=sys.stderr)
+
+    if non_lowercase_crates_dirs:
+        print("crate directories under `crates/` must be lowercase:", file=sys.stderr)
+        for p in sorted(non_lowercase_crates_dirs, key=lambda p: (p.path, p.name)):
             print(f"  - dir: {p.path:30s} package: {p.name}", file=sys.stderr)
         print("", file=sys.stderr)
 

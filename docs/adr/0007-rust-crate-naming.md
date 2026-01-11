@@ -15,6 +15,7 @@ dependency renames, and makes long-term maintenance brittle.
 ### 1) Package naming convention
 
 - **All new Rust packages use `kebab-case`** in `[package].name`.
+- Package names must be **lowercase**.
 - Underscore package names (e.g. `aero_cpu_core`) are not allowed for new crates.
 - In Rust code, crates are still imported using the standard normalized name
   (hyphens become underscores), e.g. `aero-cpu-core` is imported as
@@ -23,6 +24,7 @@ dependency renames, and makes long-term maintenance brittle.
 ### 2) Crate directory naming under `crates/`
 
 - Crate directories under `crates/` must be **`kebab-case`** (no underscores).
+- Crate directories under `crates/` must be **lowercase**.
 - The directory name should match the package name when practical.
 
 ### 3) Legacy crates
