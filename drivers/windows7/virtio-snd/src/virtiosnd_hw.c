@@ -456,7 +456,6 @@ _Use_decl_annotations_
 VOID VirtIoSndStopHardware(PVIRTIOSND_DEVICE_EXTENSION Dx)
 {
     NTSTATUS cancelStatus;
-    BOOLEAN wasStarted;
 
     if (Dx == NULL) {
         return;
@@ -467,7 +466,6 @@ VOID VirtIoSndStopHardware(PVIRTIOSND_DEVICE_EXTENSION Dx)
      * period timer runs independently of the virtio interrupt DPC; dropping this
      * flag up-front prevents racey writes while teardown is in progress.
      */
-    wasStarted = Dx->Started;
     Dx->Started = FALSE;
 
     cancelStatus = Dx->Removed ? STATUS_DEVICE_REMOVED : STATUS_CANCELLED;
@@ -491,9 +489,14 @@ VOID VirtIoSndStopHardware(PVIRTIOSND_DEVICE_EXTENSION Dx)
      * against calling Control::Uninit on a zeroed (uninitialized) struct.
      */
     if (Dx->Control.DmaCtx != NULL) {
-        if (wasStarted) {
-            VirtioSndCtrlCancelAll(&Dx->Control, cancelStatus);
-        }
+        /*
+         * Drain any already-completed used entries before canceling requests.
+         * This avoids racing with the send thread freeing request cookies while
+         * they may still be present in the virtqueue used ring.
+         */
+        VirtioSndCtrlProcessUsed(&Dx->Control);
+
+        VirtioSndCtrlCancelAll(&Dx->Control, cancelStatus);
         VirtioSndCtrlUninit(&Dx->Control);
     }
 

@@ -95,7 +95,7 @@ static VOID VirtIoSndIntxConfigChange(_Inout_ PVIRTIO_INTX Intx, _In_opt_ PVOID 
     UNREFERENCED_PARAMETER(Intx);
 
     dx = (PVIRTIOSND_DEVICE_EXTENSION)Cookie;
-    if (dx == NULL || dx->Transport.CommonCfg == NULL) {
+    if (dx == NULL || dx->Removed || dx->Transport.CommonCfg == NULL) {
         return;
     }
 

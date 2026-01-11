@@ -116,6 +116,7 @@ VirtIoSndDispatchPnp(_In_ PDEVICE_OBJECT DeviceObject, _In_ PIRP Irp)
         const BOOLEAN isRemoveDevice = (stack->MinorFunction == IRP_MN_REMOVE_DEVICE);
         const BOOLEAN removing = (isSurpriseRemoval || isRemoveDevice);
         PUNKNOWN unknownAdapter;
+        ULONG q;
 
         unknownAdapter = NULL;
 
@@ -129,6 +130,22 @@ VirtIoSndDispatchPnp(_In_ PDEVICE_OBJECT DeviceObject, _In_ PIRP Irp)
          */
         if (isSurpriseRemoval) {
             dx->Removed = TRUE;
+
+            /*
+             * SURPRISE_REMOVAL means the device may no longer be present on the
+             * bus. Prevent any further MMIO touches while PortCls tears down the
+             * audio stack:
+             *  - disconnect INTx early so the ISR doesn't read the virtio ISR byte
+             *    on a shared vector
+             *  - invalidate cached notify addresses so late virtqueue kicks don't
+             *    write to BAR-mapped memory
+             */
+            dx->Started = FALSE;
+            dx->Intx.IsrStatusRegister = NULL;
+            for (q = 0; q < VIRTIOSND_QUEUE_COUNT; ++q) {
+                dx->QueueSplit[q].NotifyAddr = NULL;
+            }
+            VirtIoSndIntxDisconnect(dx);
         }
 
         status = PcDispatchIrp(DeviceObject, Irp);
