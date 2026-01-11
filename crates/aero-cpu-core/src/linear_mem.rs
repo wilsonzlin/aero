@@ -95,9 +95,34 @@ pub fn write_bytes_wrapped<B: CpuBus>(
         return bus.write_bytes(start, src);
     }
 
-    for (i, byte) in src.iter().copied().enumerate() {
-        let byte_addr = state.apply_a20(addr.wrapping_add(i as u64));
-        bus.write_u8(byte_addr, byte)?;
+    // Split the access into maximal contiguous runs in masked linear address
+    // space, then preflight *all* runs before committing any writes. This keeps
+    // multi-byte stores atomic w.r.t page faults even when the architectural
+    // address space wraps (32-bit linear wrap, A20 alias wrap).
+    let mut segments: Vec<(u64, &[u8])> = Vec::new();
+    let mut offset = 0usize;
+    while offset < src.len() {
+        let seg_start = state.apply_a20(addr.wrapping_add(offset as u64));
+
+        let mut seg_len = 1usize;
+        while offset + seg_len < src.len() {
+            let cur = state.apply_a20(addr.wrapping_add((offset + seg_len - 1) as u64));
+            let next = state.apply_a20(addr.wrapping_add((offset + seg_len) as u64));
+            if cur.checked_add(1) != Some(next) {
+                break;
+            }
+            seg_len += 1;
+        }
+
+        segments.push((seg_start, &src[offset..offset + seg_len]));
+        offset += seg_len;
+    }
+
+    for (start, chunk) in &segments {
+        bus.preflight_write_bytes(*start, chunk.len())?;
+    }
+    for (start, chunk) in segments {
+        bus.write_bytes(start, chunk)?;
     }
     Ok(())
 }

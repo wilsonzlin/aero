@@ -393,6 +393,10 @@ impl CpuBus for PcCpuBus {
         self.write_bytes_access(vaddr, src, AccessType::Write)
     }
 
+    fn preflight_write_bytes(&mut self, vaddr: u64, len: usize) -> Result<(), Exception> {
+        self.preflight_range(vaddr, len, AccessType::Write)
+    }
+
     fn supports_bulk_copy(&self) -> bool {
         // Bulk string fast paths assume contiguous linear addresses map to contiguous physical
         // addresses. When the chipset A20 gate is disabled, physical bit 20 is forced low and the

@@ -141,6 +141,24 @@ pub trait CpuBus {
         Ok(())
     }
 
+    /// Preflight a contiguous write range without modifying the destination bytes.
+    ///
+    /// This is used by higher-level helpers (e.g. wrapped multi-byte writes) to
+    /// preserve the emulator's "no partial commits on failure" behavior even
+    /// when a single architectural write must be split into multiple contiguous
+    /// segments (e.g. 32-bit linear-address wrap or A20 alias wrap).
+    ///
+    /// Paging/MMU-aware busses should override this to perform translation and
+    /// permission checks with write intent, without touching the actual target
+    /// bytes (similar to how `write_bytes` preflights translations before
+    /// committing).
+    ///
+    /// Default implementation: no-op (assumes writes cannot fault once started).
+    #[inline]
+    fn preflight_write_bytes(&mut self, _vaddr: u64, _len: usize) -> Result<(), Exception> {
+        Ok(())
+    }
+
     /// Whether this bus can perform fast contiguous copies between RAM regions.
     ///
     /// This is a hint only: callers may still invoke [`CpuBus::bulk_copy`] when

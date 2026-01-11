@@ -433,6 +433,52 @@ fn tier0_fetch_wrapping_32bit_linear_address_respects_nx() {
 }
 
 #[test]
+fn wrapped_multi_byte_write_is_atomic_wrt_page_faults() {
+    // The paging bus guarantees multi-byte writes don't partially commit on #PF.
+    // When the architectural linear address space wraps (32-bit truncation),
+    // Tier-0 uses `linear_mem::*_wrapped` helpers which must preserve that
+    // property even though the access becomes non-contiguous in masked space.
+    let mut phys = TestMemory::new(0x20000);
+
+    let pdpt_base = 0x1000u64;
+    let pd_base = 0x2000u64;
+    let pt_base = 0x3000u64;
+    let high_page = 0x4000u64;
+
+    // Map only the high page (0xFFFF_F000). Leave the low page unmapped so the
+    // wrapped bytes at 0x0000_0000.. fault.
+    setup_pae_4k(
+        &mut phys,
+        pdpt_base,
+        pd_base,
+        pt_base,
+        0,
+        high_page | PTE_P | PTE_RW | PTE_US,
+    );
+
+    // Sentinel value at the last byte in the high page (linear 0xFFFF_FFFF).
+    phys.write_u8_raw(high_page + 0xfff, 0xaa);
+
+    let mut bus = PagingBus::new(phys);
+    let state = pae_state(pdpt_base, 0, 0);
+    bus.sync(&state);
+
+    let err =
+        aero_cpu_core::linear_mem::write_u32_wrapped(&state, &mut bus, 0xFFFF_FFFF, 0x1234_5678)
+            .unwrap_err();
+    assert_eq!(
+        err,
+        Exception::PageFault {
+            addr: 0,
+            error_code: 1 << 1, // W=1, P=0, U=0
+        }
+    );
+
+    // The store must not partially commit.
+    assert_eq!(bus.inner_mut().read_u8(high_page + 0xfff), 0xaa);
+}
+
+#[test]
 fn non_canonical_address_in_long_mode_is_gp0() {
     let phys = TestMemory::new(0x2000);
     let mut bus = PagingBus::new(phys);

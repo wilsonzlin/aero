@@ -417,6 +417,29 @@ where
         self.write_bytes_access(vaddr, src, AccessType::Write)
     }
 
+    fn preflight_write_bytes(&mut self, vaddr: u64, len: usize) -> Result<(), Exception> {
+        // Translate the full range with write intent, but do not touch the target bytes.
+        // This allows higher-level helpers (e.g. wrapped multi-byte writes) to remain
+        // atomic w.r.t #PF even when the access must be split into multiple segments.
+        if len == 0 {
+            return Ok(());
+        }
+
+        let mut offset = 0usize;
+        while offset < len {
+            let addr = vaddr.wrapping_add(offset as u64);
+            let _paddr = self.translate(addr, AccessType::Write)?;
+
+            let page_off = (addr & (PAGE_SIZE - 1)) as usize;
+            let page_rem = (PAGE_SIZE as usize) - page_off;
+            let chunk_len = page_rem.min(len - offset);
+
+            offset += chunk_len;
+        }
+
+        Ok(())
+    }
+
     fn atomic_rmw<T, R>(&mut self, vaddr: u64, f: impl FnOnce(T) -> (T, R)) -> Result<R, Exception>
     where
         T: crate::mem::CpuBusValue,
