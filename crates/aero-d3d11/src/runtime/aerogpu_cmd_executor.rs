@@ -871,11 +871,9 @@ impl AerogpuD3d11Executor {
                 }
 
                 // Non-draw commands are processed directly.
-                iter.next()
-                    .expect("peeked Some")
-                    .map_err(|err| {
-                        anyhow!("aerogpu_cmd: invalid cmd header @0x{cursor:x}: {err:?}")
-                    })?;
+                iter.next().expect("peeked Some").map_err(|err| {
+                    anyhow!("aerogpu_cmd: invalid cmd header @0x{cursor:x}: {err:?}")
+                })?;
                 self.exec_non_draw_command(
                     &mut encoder,
                     opcode,
