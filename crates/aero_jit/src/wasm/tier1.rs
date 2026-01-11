@@ -1,4 +1,3 @@
-use aero_cpu::CpuState as Tier1CpuState;
 use aero_types::{Cond, Flag, FlagSet, Gpr, Width};
 use wasm_encoder::{
     BlockType, CodeSection, EntityType, ExportKind, ExportSection, Function, FunctionSection,
@@ -252,20 +251,17 @@ impl Tier1WasmCodegen {
         for gpr in all_gprs() {
             func.instruction(&Instruction::LocalGet(layout.cpu_ptr_local()));
             func.instruction(&Instruction::I64Load(memarg(
-                Tier1CpuState::GPR_OFFSET + (gpr.as_u8() as u32) * 8,
+                crate::abi::CPU_GPR_OFF[gpr.as_u8() as usize],
                 3,
             )));
             func.instruction(&Instruction::LocalSet(layout.gpr_local(gpr)));
         }
         func.instruction(&Instruction::LocalGet(layout.cpu_ptr_local()));
-        func.instruction(&Instruction::I64Load(memarg(Tier1CpuState::RIP_OFFSET, 3)));
+        func.instruction(&Instruction::I64Load(memarg(crate::abi::CPU_RIP_OFF, 3)));
         func.instruction(&Instruction::LocalSet(layout.rip_local()));
 
         func.instruction(&Instruction::LocalGet(layout.cpu_ptr_local()));
-        func.instruction(&Instruction::I64Load(memarg(
-            Tier1CpuState::RFLAGS_OFFSET,
-            3,
-        )));
+        func.instruction(&Instruction::I64Load(memarg(crate::abi::CPU_RFLAGS_OFF, 3)));
         func.instruction(&Instruction::LocalSet(layout.rflags_local()));
 
         // Default next_rip = current RIP (overwritten by terminator emission).
@@ -310,7 +306,7 @@ impl Tier1WasmCodegen {
                 .func
                 .instruction(&Instruction::LocalGet(layout.gpr_local(gpr)));
             emitter.func.instruction(&Instruction::I64Store(memarg(
-                Tier1CpuState::GPR_OFFSET + (gpr.as_u8() as u32) * 8,
+                crate::abi::CPU_GPR_OFF[gpr.as_u8() as usize],
                 3,
             )));
         }
@@ -321,8 +317,12 @@ impl Tier1WasmCodegen {
         emitter
             .func
             .instruction(&Instruction::LocalGet(layout.rflags_local()));
+        emitter
+            .func
+            .instruction(&Instruction::I64Const(crate::abi::RFLAGS_RESERVED1 as i64));
+        emitter.func.instruction(&Instruction::I64Or);
         emitter.func.instruction(&Instruction::I64Store(memarg(
-            Tier1CpuState::RFLAGS_OFFSET,
+            crate::abi::CPU_RFLAGS_OFF,
             3,
         )));
 
@@ -334,11 +334,11 @@ impl Tier1WasmCodegen {
             .instruction(&Instruction::LocalGet(layout.next_rip_local()));
         emitter
             .func
-            .instruction(&Instruction::I64Store(memarg(Tier1CpuState::RIP_OFFSET, 3)));
+            .instruction(&Instruction::I64Store(memarg(crate::abi::CPU_RIP_OFF, 3)));
 
         emitter
             .func
-            .instruction(&Instruction::LocalGet(layout.scratch_local()));
+            .instruction(&Instruction::LocalGet(layout.next_rip_local()));
         emitter.func.instruction(&Instruction::Return);
         emitter.func.instruction(&Instruction::End);
 

@@ -10,6 +10,11 @@ use crate::{JIT_TLB_ENTRIES, JIT_TLB_ENTRY_SIZE};
 
 use wasm_encoder::MemArg;
 
+pub const GPR_COUNT: usize = aero_cpu_core::state::GPR_COUNT;
+
+/// Reserved RFLAGS bit 1. Always reads as 1 on real hardware.
+pub const RFLAGS_RESERVED1: u64 = aero_cpu_core::state::RFLAGS_RESERVED1;
+
 const fn cast_usize_array_16(src: [usize; 16]) -> [u32; 16] {
     let mut out = [0u32; 16];
     let mut i = 0;

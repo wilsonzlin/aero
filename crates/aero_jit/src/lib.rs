@@ -24,10 +24,12 @@ pub mod translate;
 pub mod backend;
 
 pub use block::{discover_block, BasicBlock, BlockEndKind, BlockLimits};
-pub use tier1_pipeline::{CodeProvider, Tier1CompileError, Tier1CompileQueue, Tier1Compiler, Tier1WasmRegistry};
-pub use translate::translate_block;
+pub use tier1_pipeline::{
+    CodeProvider, Tier1CompileError, Tier1CompileQueue, Tier1Compiler, Tier1WasmRegistry,
+};
 pub use cpu::{
     CpuState, Reg, JIT_TLB_ENTRIES, JIT_TLB_ENTRY_SIZE, JIT_TLB_INDEX_MASK, PAGE_BASE_MASK,
     PAGE_OFFSET_MASK, PAGE_SHIFT, PAGE_SIZE, TLB_FLAG_EXEC, TLB_FLAG_IS_RAM, TLB_FLAG_READ,
     TLB_FLAG_WRITE,
 };
+pub use translate::translate_block;

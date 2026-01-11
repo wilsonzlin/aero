@@ -1,6 +1,7 @@
 #![cfg(debug_assertions)]
 
-use aero_cpu::{CpuBus, CpuState, SimpleBus};
+use aero_cpu::{CpuBus, SimpleBus};
+use aero_jit::tier1_ir::interp::TestCpu;
 use aero_jit::{discover_block, translate_block, BlockLimits};
 use aero_types::{Cond, Flag, FlagSet, Gpr, Width};
 use aero_x86::tier1::{AluOp, DecodedInst, InstKind, Operand};
@@ -75,7 +76,7 @@ fn compute_sub_flags(width: Width, lhs: u64, rhs: u64, result: u64) -> FlagVals 
     }
 }
 
-fn write_flagset(cpu: &mut CpuState, mask: FlagSet, vals: FlagVals) {
+fn write_flagset(cpu: &mut TestCpu, mask: FlagSet, vals: FlagVals) {
     if mask.contains(FlagSet::CF) {
         cpu.write_flag(Flag::Cf, vals.cf);
     }
@@ -96,7 +97,7 @@ fn write_flagset(cpu: &mut CpuState, mask: FlagSet, vals: FlagVals) {
     }
 }
 
-fn eval_cond(cpu: &CpuState, cond: Cond) -> bool {
+fn eval_cond(cpu: &TestCpu, cond: Cond) -> bool {
     cond.eval(
         cpu.read_flag(Flag::Cf),
         cpu.read_flag(Flag::Pf),
@@ -106,7 +107,7 @@ fn eval_cond(cpu: &CpuState, cond: Cond) -> bool {
     )
 }
 
-fn calc_addr(inst: &DecodedInst, cpu: &CpuState, addr: &aero_x86::tier1::Address) -> u64 {
+fn calc_addr(inst: &DecodedInst, cpu: &TestCpu, addr: &aero_x86::tier1::Address) -> u64 {
     let mut out = 0u64;
     if addr.rip_relative {
         out = out.wrapping_add(inst.next_rip());
@@ -121,7 +122,13 @@ fn calc_addr(inst: &DecodedInst, cpu: &CpuState, addr: &aero_x86::tier1::Address
     out
 }
 
-fn read_op<B: CpuBus>(inst: &DecodedInst, cpu: &CpuState, bus: &B, op: &Operand, width: Width) -> u64 {
+fn read_op<B: CpuBus>(
+    inst: &DecodedInst,
+    cpu: &TestCpu,
+    bus: &B,
+    op: &Operand,
+    width: Width,
+) -> u64 {
     match op {
         Operand::Imm(v) => width.truncate(*v),
         Operand::Reg(r) => cpu.read_gpr_part(r.gpr, width, r.high8),
@@ -129,7 +136,14 @@ fn read_op<B: CpuBus>(inst: &DecodedInst, cpu: &CpuState, bus: &B, op: &Operand,
     }
 }
 
-fn write_op<B: CpuBus>(inst: &DecodedInst, cpu: &mut CpuState, bus: &mut B, op: &Operand, width: Width, value: u64) {
+fn write_op<B: CpuBus>(
+    inst: &DecodedInst,
+    cpu: &mut TestCpu,
+    bus: &mut B,
+    op: &Operand,
+    width: Width,
+    value: u64,
+) {
     let v = width.truncate(value);
     match op {
         Operand::Imm(_) => panic!("cannot write to immediate"),
@@ -138,7 +152,7 @@ fn write_op<B: CpuBus>(inst: &DecodedInst, cpu: &mut CpuState, bus: &mut B, op: 
     }
 }
 
-fn exec_x86_block<B: CpuBus>(insts: &[DecodedInst], cpu: &mut CpuState, bus: &mut B) {
+fn exec_x86_block<B: CpuBus>(insts: &[DecodedInst], cpu: &mut TestCpu, bus: &mut B) {
     for inst in insts {
         let next = inst.next_rip();
         match &inst.kind {
@@ -152,7 +166,12 @@ fn exec_x86_block<B: CpuBus>(insts: &[DecodedInst], cpu: &mut CpuState, bus: &mu
                 cpu.write_gpr_part(dst.gpr, *width, false, a);
                 cpu.rip = next;
             }
-            InstKind::Alu { op, dst, src, width } => {
+            InstKind::Alu {
+                op,
+                dst,
+                src,
+                width,
+            } => {
                 let l = read_op(inst, cpu, bus, dst, *width);
                 let r = read_op(inst, cpu, bus, src, *width);
                 let (res, flags) = match op {
@@ -231,7 +250,12 @@ fn exec_x86_block<B: CpuBus>(insts: &[DecodedInst], cpu: &mut CpuState, bus: &mu
                 write_op(inst, cpu, bus, dst, Width::W8, v);
                 cpu.rip = next;
             }
-            InstKind::Cmovcc { cond, dst, src, width } => {
+            InstKind::Cmovcc {
+                cond,
+                dst,
+                src,
+                width,
+            } => {
                 if eval_cond(cpu, *cond) {
                     let v = read_op(inst, cpu, bus, src, *width);
                     cpu.write_gpr_part(dst.gpr, *width, false, v);
@@ -269,7 +293,13 @@ fn exec_x86_block<B: CpuBus>(insts: &[DecodedInst], cpu: &mut CpuState, bus: &mu
     }
 }
 
-fn assert_block_ir(code: &[u8], entry_rip: u64, cpu: CpuState, mut bus: SimpleBus, expected_ir: &str) {
+fn assert_block_ir(
+    code: &[u8],
+    entry_rip: u64,
+    cpu: TestCpu,
+    mut bus: SimpleBus,
+    expected_ir: &str,
+) {
     bus.load(entry_rip, code);
 
     let block = discover_block(&bus, entry_rip, BlockLimits::default());
@@ -280,11 +310,19 @@ fn assert_block_ir(code: &[u8], entry_rip: u64, cpu: CpuState, mut bus: SimpleBu
     let mut bus_x86 = bus.clone();
     exec_x86_block(&block.insts, &mut cpu_x86, &mut bus_x86);
 
-    let mut cpu_ir = cpu;
-    let mut bus_ir = bus;
-    let _ = aero_jit::tier1_ir::interp::execute_block(&ir, &mut cpu_ir, &mut bus_ir);
+    let mut cpu_mem = vec![0u8; aero_jit::abi::CPU_STATE_SIZE as usize];
+    cpu.write_to_abi_mem(&mut cpu_mem, 0);
 
-    assert_eq!(cpu_ir, cpu_x86, "CPU state mismatch\nIR:\n{}\n", ir.to_text());
+    let mut bus_ir = bus;
+    let _ = aero_jit::tier1_ir::interp::execute_block(&ir, &mut cpu_mem, &mut bus_ir);
+    let cpu_ir = TestCpu::from_abi_mem(&cpu_mem, 0);
+
+    assert_eq!(
+        cpu_ir,
+        cpu_x86,
+        "CPU state mismatch\nIR:\n{}\n",
+        ir.to_text()
+    );
     assert_eq!(bus_ir.mem(), bus_x86.mem(), "memory mismatch");
 }
 
@@ -304,7 +342,7 @@ fn mov_add_cmp_sete_ret() {
     ];
 
     let entry = 0x1000u64;
-    let mut cpu = CpuState::default();
+    let mut cpu = TestCpu::default();
     cpu.rip = entry;
     cpu.write_gpr(Gpr::Rsp, 0x8000);
 
@@ -343,7 +381,7 @@ fn call_rel32() {
     ];
     let entry = 0x1000u64;
 
-    let mut cpu = CpuState::default();
+    let mut cpu = TestCpu::default();
     cpu.rip = entry;
     cpu.write_gpr(Gpr::Rsp, 0x9000);
 
@@ -375,7 +413,7 @@ fn cmp_jne_not_taken() {
     ];
     let entry = 0x3000u64;
 
-    let mut cpu = CpuState::default();
+    let mut cpu = TestCpu::default();
     cpu.rip = entry;
 
     let bus = SimpleBus::new(0x10000);
@@ -404,7 +442,7 @@ fn lea_sib_ret() {
     ];
     let entry = 0x4000u64;
 
-    let mut cpu = CpuState::default();
+    let mut cpu = TestCpu::default();
     cpu.rip = entry;
     cpu.write_gpr(Gpr::Rsp, 0x8800);
     cpu.write_gpr(Gpr::Rcx, 0x100);

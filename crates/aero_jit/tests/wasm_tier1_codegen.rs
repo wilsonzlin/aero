@@ -1,7 +1,7 @@
 #![cfg(debug_assertions)]
 
-use aero_cpu::{CpuBus, CpuState, SimpleBus};
-use aero_jit::tier1_ir::interp::execute_block;
+use aero_cpu::{CpuBus, SimpleBus};
+use aero_jit::tier1_ir::interp::{execute_block, TestCpu};
 use aero_jit::wasm::tier1::{Tier1WasmCodegen, EXPORT_TIER1_BLOCK_FN};
 use aero_jit::wasm::{
     IMPORT_JIT_EXIT, IMPORT_MEMORY, IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U32, IMPORT_MEM_READ_U64,
@@ -212,9 +212,9 @@ fn define_mem_helpers(store: &mut Store<()>, linker: &mut Linker<()>, memory: Me
 
 fn run_wasm(
     ir: &aero_jit::tier1_ir::IrBlock,
-    cpu: &CpuState,
+    cpu: &TestCpu,
     bus: &SimpleBus,
-) -> (u64, CpuState, Vec<u8>) {
+) -> (u64, TestCpu, Vec<u8>) {
     let wasm = Tier1WasmCodegen::new().compile_block(ir);
     validate_wasm(&wasm);
 
@@ -224,8 +224,8 @@ fn run_wasm(
     memory.write(&mut store, 0, bus.mem()).unwrap();
 
     // Initialize CpuState.
-    let mut cpu_bytes = vec![0u8; CpuState::BYTE_SIZE];
-    cpu.write_to_mem(&mut cpu_bytes, 0);
+    let mut cpu_bytes = vec![0u8; aero_jit::abi::CPU_STATE_SIZE as usize];
+    cpu.write_to_abi_mem(&mut cpu_bytes, 0);
     memory
         .write(&mut store, CPU_PTR as usize, &cpu_bytes)
         .unwrap();
@@ -237,11 +237,11 @@ fn run_wasm(
     memory.read(&store, 0, &mut out_mem).unwrap();
 
     // Read back CpuState.
-    let mut out_cpu_bytes = vec![0u8; CpuState::BYTE_SIZE];
+    let mut out_cpu_bytes = vec![0u8; aero_jit::abi::CPU_STATE_SIZE as usize];
     memory
         .read(&store, CPU_PTR as usize, &mut out_cpu_bytes)
         .unwrap();
-    let out_cpu = CpuState::read_from_mem(&out_cpu_bytes, 0);
+    let out_cpu = TestCpu::from_abi_mem(&out_cpu_bytes, 0);
 
     let next_rip = if ret == JIT_EXIT_SENTINEL_I64 {
         out_cpu.rip
@@ -252,15 +252,17 @@ fn run_wasm(
     (next_rip, out_cpu, out_mem)
 }
 
-fn assert_ir_wasm_matches_interp(code: &[u8], entry_rip: u64, cpu: CpuState, mut bus: SimpleBus) {
+fn assert_ir_wasm_matches_interp(code: &[u8], entry_rip: u64, cpu: TestCpu, mut bus: SimpleBus) {
     bus.load(entry_rip, code);
 
     let block = discover_block(&bus, entry_rip, BlockLimits::default());
     let ir = translate_block(&block);
 
-    let mut interp_cpu = cpu.clone();
     let mut interp_bus = bus.clone();
-    let _ = execute_block(&ir, &mut interp_cpu, &mut interp_bus);
+    let mut interp_cpu_mem = vec![0u8; aero_jit::abi::CPU_STATE_SIZE as usize];
+    cpu.write_to_abi_mem(&mut interp_cpu_mem, 0);
+    let _ = execute_block(&ir, &mut interp_cpu_mem, &mut interp_bus);
+    let interp_cpu = TestCpu::from_abi_mem(&interp_cpu_mem, 0);
 
     let (next_rip, out_cpu, out_mem) = run_wasm(&ir, &cpu, &bus);
 
@@ -280,7 +282,7 @@ fn wasm_tier1_mov_add_cmp_sete_ret() {
     ];
 
     let entry = 0x1000u64;
-    let mut cpu = CpuState::default();
+    let mut cpu = TestCpu::default();
     cpu.rip = entry;
     cpu.write_gpr(Gpr::Rsp, 0x8000);
 
@@ -298,7 +300,7 @@ fn wasm_tier1_cmp_jne_not_taken() {
         0x75, 0x05, // jne +5
     ];
     let entry = 0x3000u64;
-    let mut cpu = CpuState::default();
+    let mut cpu = TestCpu::default();
     cpu.rip = entry;
 
     let bus = SimpleBus::new(0x10000);
@@ -313,7 +315,7 @@ fn wasm_tier1_lea_sib_ret() {
     ];
     let entry = 0x4000u64;
 
-    let mut cpu = CpuState::default();
+    let mut cpu = TestCpu::default();
     cpu.rip = entry;
     cpu.write_gpr(Gpr::Rsp, 0x8800);
     cpu.write_gpr(Gpr::Rcx, 0x100);
