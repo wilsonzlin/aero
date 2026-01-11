@@ -74,6 +74,7 @@ For the browser runtime’s `ioIpcSab` segment (created by
 | `EVT` | `1` (`IO_IPC_EVT_QUEUE_KIND`) | IO worker → CPU/WASM | encoded `Event` (see §7.2) |
 | `NET_TX` | `2` (`IO_IPC_NET_TX_QUEUE_KIND`) | CPU/WASM → network forwarder (IO worker / net worker) | raw Ethernet frame bytes |
 | `NET_RX` | `3` (`IO_IPC_NET_RX_QUEUE_KIND`) | network forwarder (IO worker / net worker) → CPU/WASM | raw Ethernet frame bytes |
+| `HID_IN` | `4` (`IO_IPC_HID_IN_QUEUE_KIND`) | coordinator/main thread → IO worker | WebHID input report record (see below) |
 
 The `NET_TX`/`NET_RX` rings are separate from the command/event rings so bulk frame traffic does not
 starve low-latency device operations.
@@ -110,6 +111,21 @@ One way to visualize the browser-side plumbing:
 CPU/WASM worker  --NET_TX-->  JS net forwarder  --WebSocket/WebRTC-->  proxy
 CPU/WASM worker  <--NET_RX--  JS net forwarder  <--WebSocket/WebRTC--  proxy
 ```
+
+#### HID_IN semantics
+
+The `HID_IN` ring is used to forward WebHID input reports from the coordinator (main thread) to the
+I/O worker.
+
+- Producer: coordinator/main thread.
+- Consumer: IO worker.
+- Record payload: a `HidInputReportRingRecord`:
+  - `u32 device_id`
+  - `u32 report_id`
+  - `u32 ts_ms`
+  - `data` bytes (HID report payload)
+
+See `web/src/hid/hid_input_report_ring.ts`.
 
 ---
 

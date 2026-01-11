@@ -90,6 +90,7 @@ pub mod queue_kind {
     pub const EVT: u32 = 1;
     pub const NET_TX: u32 = 2;
     pub const NET_RX: u32 = 3;
+    pub const HID_IN: u32 = 4;
 }
 
 /// Queue kinds used by the browser runtime's `ioIpcSab` segment.
@@ -100,6 +101,7 @@ pub mod io_ipc_queue_kind {
     pub const EVT: u32 = 1;
     pub const NET_TX: u32 = 2;
     pub const NET_RX: u32 = 3;
+    pub const HID_IN: u32 = 4;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

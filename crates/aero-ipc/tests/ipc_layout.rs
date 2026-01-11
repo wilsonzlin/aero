@@ -13,6 +13,7 @@ fn queue_kind_values_are_stable() {
     assert_eq!(queue_kind::EVT, 1);
     assert_eq!(queue_kind::NET_TX, 2);
     assert_eq!(queue_kind::NET_RX, 3);
+    assert_eq!(queue_kind::HID_IN, 4);
 }
 
 #[test]

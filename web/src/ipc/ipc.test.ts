@@ -9,6 +9,7 @@ describe("ipc/ipc layout", () => {
     expect(queueKind.EVT).toBe(1);
     expect(queueKind.NET_TX).toBe(2);
     expect(queueKind.NET_RX).toBe(3);
+    expect(queueKind.HID_IN).toBe(4);
   });
 
   it("creates and parses a buffer with queue descriptors", () => {

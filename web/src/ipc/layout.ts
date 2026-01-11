@@ -43,6 +43,7 @@ export const queueKind = {
   EVT: 1,
   NET_TX: 2,
   NET_RX: 3,
+  HID_IN: 4,
 } as const;
 
 export function alignUp(value: number, align: number): number {

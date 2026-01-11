@@ -90,7 +90,7 @@ export const IO_IPC_NET_RX_QUEUE_KIND = queueKind.NET_RX;
 export const IO_IPC_NET_RING_CAPACITY_BYTES = 512 * 1024;
 
 // WebHID input report forwarding (main thread -> I/O worker).
-export const IO_IPC_HID_IN_QUEUE_KIND = 4;
+export const IO_IPC_HID_IN_QUEUE_KIND = queueKind.HID_IN;
 export const IO_IPC_HID_IN_RING_CAPACITY_BYTES = 1024 * 1024;
 
 export function createIoIpcSab(): SharedArrayBuffer {
