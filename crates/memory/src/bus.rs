@@ -457,10 +457,22 @@ impl PhysicalMemoryBus {
     fn read_mmio_chunk(&mut self, region_idx: usize, offset: u64, dst: &mut [u8]) {
         let mut pos = 0usize;
         while pos < dst.len() {
-            let size = (dst.len() - pos).min(8);
+            let addr = offset.wrapping_add(pos as u64);
+            let remaining = dst.len() - pos;
+            // Use naturally-aligned access sizes to avoid issuing unaligned 64-bit MMIO operations
+            // to device models that require alignment (e.g. HPET 64-bit registers).
+            //
+            // This also keeps the access sizes in the common PCI/MMIO set {1,2,4,8} even when
+            // higher-level callers request an arbitrary byte count (e.g. DMA-style reads).
+            let size = [8usize, 4, 2, 1]
+                .into_iter()
+                .find(|&candidate| {
+                    remaining >= candidate && (addr % candidate as u64) == 0
+                })
+                .unwrap_or(1);
             let value = self.mmio_regions[region_idx]
                 .handler
-                .read(offset + pos as u64, size);
+                .read(addr, size);
             let bytes = value.to_le_bytes();
             dst[pos..pos + size].copy_from_slice(&bytes[..size]);
             pos += size;
@@ -470,13 +482,20 @@ impl PhysicalMemoryBus {
     fn write_mmio_chunk(&mut self, region_idx: usize, offset: u64, src: &[u8]) {
         let mut pos = 0usize;
         while pos < src.len() {
-            let size = (src.len() - pos).min(8);
+            let addr = offset.wrapping_add(pos as u64);
+            let remaining = src.len() - pos;
+            let size = [8usize, 4, 2, 1]
+                .into_iter()
+                .find(|&candidate| {
+                    remaining >= candidate && (addr % candidate as u64) == 0
+                })
+                .unwrap_or(1);
             let mut buf = [0u8; 8];
             buf[..size].copy_from_slice(&src[pos..pos + size]);
             let value = u64::from_le_bytes(buf);
             self.mmio_regions[region_idx]
                 .handler
-                .write(offset + pos as u64, size, value);
+                .write(addr, size, value);
             pos += size;
         }
     }
@@ -675,6 +694,79 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct StrictMmioState {
+        mem: Vec<u8>,
+        reads: Vec<(u64, usize)>,
+        writes: Vec<(u64, usize, u64)>,
+    }
+
+    #[derive(Clone)]
+    struct StrictMmio {
+        state: Arc<Mutex<StrictMmioState>>,
+    }
+
+    impl StrictMmio {
+        fn new(mem: Vec<u8>) -> (Self, Arc<Mutex<StrictMmioState>>) {
+            let state = Arc::new(Mutex::new(StrictMmioState {
+                mem,
+                ..Default::default()
+            }));
+            (
+                Self {
+                    state: state.clone(),
+                },
+                state,
+            )
+        }
+    }
+
+    impl MmioHandler for StrictMmio {
+        fn read(&mut self, offset: u64, size: usize) -> u64 {
+            assert!(
+                matches!(size, 1 | 2 | 4 | 8),
+                "unexpected MMIO read size {size}"
+            );
+            assert_eq!(
+                offset % size as u64,
+                0,
+                "unaligned MMIO read: offset={offset} size={size}"
+            );
+
+            let mut state = self.state.lock().unwrap();
+            state.reads.push((offset, size));
+
+            let mut buf = [0xFFu8; 8];
+            let off = offset as usize;
+            for i in 0..size {
+                buf[i] = state.mem.get(off + i).copied().unwrap_or(0xFF);
+            }
+            u64::from_le_bytes(buf)
+        }
+
+        fn write(&mut self, offset: u64, size: usize, value: u64) {
+            assert!(
+                matches!(size, 1 | 2 | 4 | 8),
+                "unexpected MMIO write size {size}"
+            );
+            assert_eq!(
+                offset % size as u64,
+                0,
+                "unaligned MMIO write: offset={offset} size={size}"
+            );
+
+            let mut state = self.state.lock().unwrap();
+            state.writes.push((offset, size, value));
+            let bytes = value.to_le_bytes();
+            let off = offset as usize;
+            for i in 0..size {
+                if let Some(dst) = state.mem.get_mut(off + i) {
+                    *dst = bytes[i];
+                }
+            }
+        }
+    }
+
     #[test]
     fn unmapped_reads_return_all_ones() {
         let ram = SharedRam::new(vec![0u8; 4]);
@@ -779,6 +871,25 @@ mod tests {
         assert_eq!(state.writes[0].0, 0);
         assert_eq!(state.writes[0].1, 2);
         assert_eq!(state.mem, vec![0x22, 0x33]);
+    }
+
+    #[test]
+    fn unaligned_u64_mmio_accesses_are_split_into_aligned_operations() {
+        let ram = SharedRam::new(vec![0u8; 32]);
+        let mut bus = PhysicalMemoryBus::new(Box::new(ram));
+
+        let (mmio, mmio_state) = StrictMmio::new((0u8..16).collect());
+        bus.map_mmio(0x1000, 16, Box::new(mmio)).unwrap();
+
+        // This access starts at an odd offset within the MMIO region; the bus must not issue an
+        // unaligned 8-byte read to the handler.
+        let got = bus.read_physical_u64(0x1001);
+        assert_eq!(got, u64::from_le_bytes([1, 2, 3, 4, 5, 6, 7, 8]));
+
+        bus.write_physical_u64(0x1001, 0x1122_3344_5566_7788);
+
+        let state = mmio_state.lock().unwrap();
+        assert_eq!(&state.mem[1..9], &[0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11]);
     }
 }
 
