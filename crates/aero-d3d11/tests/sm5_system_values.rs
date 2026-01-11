@@ -13,8 +13,6 @@ const FOURCC_OSGN: FourCC = FourCC(*b"OSGN");
 const D3D_NAME_POSITION: u32 = 1;
 const D3D_NAME_VERTEX_ID: u32 = 6;
 const D3D_NAME_INSTANCE_ID: u32 = 8;
-const D3D_NAME_IS_FRONT_FACE: u32 = 9;
-const D3D_NAME_TARGET: u32 = 64;
 
 fn build_dxbc(chunks: &[(FourCC, Vec<u8>)]) -> Vec<u8> {
     let chunk_count = u32::try_from(chunks.len()).expect("too many chunks for test");
