@@ -274,6 +274,106 @@ fn aero_virtio_spec_packages_expected_drivers() -> anyhow::Result<()> {
 }
 
 #[test]
+fn win7_aero_guest_tools_spec_rejects_transitional_virtio_ids_in_infs() -> anyhow::Result<()> {
+    let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let testdata = repo_root.join("testdata");
+
+    let guest_tools_dir = testdata.join("guest-tools");
+    let spec_path = repo_root
+        .join("..")
+        .join("specs")
+        .join("win7-aero-guest-tools.json");
+
+    let drivers_tmp = tempfile::tempdir()?;
+    let drivers_dir = drivers_tmp.path();
+
+    for arch in ["x86", "amd64"] {
+        write_stub_pci_driver(
+            &drivers_dir.join(arch).join("aerogpu"),
+            "aerogpu",
+            r"PCI\VEN_A3A0&DEV_0001",
+        )?;
+        write_stub_pci_driver(
+            &drivers_dir.join(arch).join("virtio-blk"),
+            "virtio_blk",
+            // Modern-only virtio-blk ID (AERO-W7-VIRTIO v1).
+            r"PCI\VEN_1AF4&DEV_1042&REV_01",
+        )?;
+        write_stub_pci_driver(
+            &drivers_dir.join(arch).join("virtio-net"),
+            "virtio_net",
+            r"PCI\VEN_1AF4&DEV_1041&REV_01",
+        )?;
+        write_stub_pci_driver(
+            &drivers_dir.join(arch).join("virtio-input"),
+            "virtio_input",
+            r"PCI\VEN_1AF4&DEV_1052&REV_01",
+        )?;
+    }
+
+    let out_ok = tempfile::tempdir()?;
+    let config_ok = aero_packager::PackageConfig {
+        drivers_dir: drivers_dir.to_path_buf(),
+        guest_tools_dir: guest_tools_dir.clone(),
+        windows_device_contract_path: device_contract_path(),
+        out_dir: out_ok.path().to_path_buf(),
+        spec_path: spec_path.clone(),
+        version: "0.0.0".to_string(),
+        build_id: "test".to_string(),
+        volume_id: "AERO_GUEST_TOOLS".to_string(),
+        signing_policy: aero_packager::SigningPolicy::Test,
+        source_date_epoch: 0,
+    };
+
+    // Sanity: should package successfully when all driver INFs contain the modern virtio IDs.
+    aero_packager::package_guest_tools(&config_ok)?;
+
+    // Now regress virtio-blk to transitional IDs only and ensure packaging fails when using the
+    // default Aero Guest Tools spec (`win7-aero-guest-tools.json`), which is contract-v1 strict.
+    let drivers_bad_tmp = tempfile::tempdir()?;
+    let drivers_bad_dir = drivers_bad_tmp.path();
+    for arch in ["x86", "amd64"] {
+        write_stub_pci_driver(
+            &drivers_bad_dir.join(arch).join("aerogpu"),
+            "aerogpu",
+            r"PCI\VEN_A3A0&DEV_0001",
+        )?;
+        write_stub_pci_driver(
+            &drivers_bad_dir.join(arch).join("virtio-blk"),
+            "virtio_blk",
+            // Transitional virtio-blk ID (must not satisfy the spec).
+            r"PCI\VEN_1AF4&DEV_1001&REV_01",
+        )?;
+        write_stub_pci_driver(
+            &drivers_bad_dir.join(arch).join("virtio-net"),
+            "virtio_net",
+            r"PCI\VEN_1AF4&DEV_1041&REV_01",
+        )?;
+        write_stub_pci_driver(
+            &drivers_bad_dir.join(arch).join("virtio-input"),
+            "virtio_input",
+            r"PCI\VEN_1AF4&DEV_1052&REV_01",
+        )?;
+    }
+
+    let out_bad = tempfile::tempdir()?;
+    let config_bad = aero_packager::PackageConfig {
+        drivers_dir: drivers_bad_dir.to_path_buf(),
+        out_dir: out_bad.path().to_path_buf(),
+        ..config_ok
+    };
+
+    let err = aero_packager::package_guest_tools(&config_bad).unwrap_err();
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("virtio-blk") && msg.contains("DEV_1042"),
+        "unexpected error: {msg}"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn drivers_and_required_drivers_merge_case_insensitively() -> anyhow::Result<()> {
     let spec_dir = tempfile::tempdir()?;
     let spec_path = spec_dir.path().join("spec.json");
@@ -1676,6 +1776,46 @@ fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) -> anyhow::Result<
             fs::copy(entry.path(), dst_path)?;
         }
     }
+    Ok(())
+}
+
+fn write_stub_pci_driver(dir: &std::path::Path, base_name: &str, hwid: &str) -> anyhow::Result<()> {
+    fs::create_dir_all(dir)?;
+    fs::write(
+        dir.join(format!("{base_name}.inf")),
+        format!(
+            concat!(
+                "[Version]\n",
+                "Signature=\"$Windows NT$\"\n",
+                "\n",
+                "[Manufacturer]\n",
+                "%Mfg%=Models,NTx86,NTamd64\n",
+                "\n",
+                "[Models.NTx86]\n",
+                "%Dev%=Install, {hwid}\n",
+                "\n",
+                "[Models.NTamd64]\n",
+                "%Dev%=Install, {hwid}\n",
+                "\n",
+                "[Install]\n",
+                "CopyFiles=CopyFilesSection\n",
+                "\n",
+                "[CopyFilesSection]\n",
+                "{base_name}.sys\n",
+                "\n",
+                "[SourceDisksFiles]\n",
+                "{base_name}.sys=1\n",
+                "\n",
+                "[Strings]\n",
+                "Mfg=\"Aero\"\n",
+                "Dev=\"Test\"\n",
+            ),
+            hwid = hwid,
+            base_name = base_name
+        ),
+    )?;
+    fs::write(dir.join(format!("{base_name}.sys")), b"dummy sys\n")?;
+    fs::write(dir.join(format!("{base_name}.cat")), b"dummy cat\n")?;
     Ok(())
 }
 
