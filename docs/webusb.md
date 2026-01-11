@@ -28,6 +28,7 @@ If WebUSB calls like `requestDevice()`, `device.open()`, or `device.claimInterfa
   - Call `requestDevice()` directly from the gesture handler; if you `await` before calling it, the user gesture can be lost.
   - User activation does **not** propagate across `postMessage()` to workers, so do the chooser step on the main thread.
   - If you denied the prompt previously, remove the site's USB permission in browser settings and try again.
+- **Permissions Policy / iframes:** WebUSB can be blocked by Permissions Policy. If you're running in an iframe, ensure the frame is allowed to use USB (e.g. `allow="usb"`) and that the response headers permit it.
 - **Chooser canceled:** closing the chooser can surface as `NotFoundError` or `AbortError`. Just run `requestDevice()` again.
 - **Worker transferability:** if you see `DataCloneError` (e.g. “could not be cloned”), your browser cannot structured-clone a `USBDevice` to a worker. Keep WebUSB I/O on the main thread and proxy requests to workers, or have the worker call `navigator.usb.getDevices()` after permission is granted.
 - **Protected interface classes:** WebUSB cannot access some interface classes (HID, mass storage, audio/video, etc.). Prefer a vendor-specific interface (class `0xFF`) or a more appropriate Web API (e.g. WebHID/WebSerial).
