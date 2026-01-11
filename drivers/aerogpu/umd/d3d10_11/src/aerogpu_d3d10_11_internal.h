@@ -515,6 +515,7 @@ struct Device {
   aerogpu_handle_t current_ps = 0;
   aerogpu_handle_t current_gs = 0;
   aerogpu_handle_t current_input_layout = 0;
+  InputLayout* current_input_layout_obj = nullptr;
   uint32_t current_topology = AEROGPU_TOPOLOGY_TRIANGLELIST;
 
   aerogpu_constant_buffer_binding vs_constant_buffers[kMaxConstantBufferSlots] = {};
@@ -534,9 +535,17 @@ struct Device {
   uint32_t current_ib_format = kDxgiFormatUnknown;
   uint32_t current_ib_offset_bytes = 0;
   Resource* current_vs_cb0 = nullptr;
+  uint32_t current_vs_cb0_first_constant = 0;
+  uint32_t current_vs_cb0_num_constants = 0;
   Resource* current_ps_cb0 = nullptr;
+  uint32_t current_ps_cb0_first_constant = 0;
+  uint32_t current_ps_cb0_num_constants = 0;
   Resource* current_vs_srv0 = nullptr;
   Resource* current_ps_srv0 = nullptr;
+  uint32_t current_vs_sampler0_address_u = AEROGPU_SAMPLER_ADDRESS_CLAMP_TO_EDGE;
+  uint32_t current_vs_sampler0_address_v = AEROGPU_SAMPLER_ADDRESS_CLAMP_TO_EDGE;
+  uint32_t current_ps_sampler0_address_u = AEROGPU_SAMPLER_ADDRESS_CLAMP_TO_EDGE;
+  uint32_t current_ps_sampler0_address_v = AEROGPU_SAMPLER_ADDRESS_CLAMP_TO_EDGE;
   DepthStencilState* current_dss = nullptr;
   uint32_t current_stencil_ref = 0;
   RasterizerState* current_rs = nullptr;

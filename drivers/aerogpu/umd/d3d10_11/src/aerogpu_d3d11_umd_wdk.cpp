@@ -1435,6 +1435,7 @@ static void UnbindResourceFromOutputsLocked(Device* dev, aerogpu_handle_t resour
   }
   if (dev->current_dsv == resource) {
     dev->current_dsv = 0;
+    dev->current_dsv_resource = nullptr;
     changed = true;
   }
   if (changed) {
@@ -3607,7 +3608,9 @@ void AEROGPU_APIENTRY IaSetInputLayout11(D3D11DDI_HDEVICECONTEXT hCtx, D3D11DDI_
   }
 
   std::lock_guard<std::mutex> lock(dev->mutex);
-  dev->current_input_layout = hLayout.pDrvPrivate ? FromHandle<D3D11DDI_HELEMENTLAYOUT, InputLayout>(hLayout)->handle : 0;
+  InputLayout* layout = hLayout.pDrvPrivate ? FromHandle<D3D11DDI_HELEMENTLAYOUT, InputLayout>(hLayout) : nullptr;
+  dev->current_input_layout_obj = layout;
+  dev->current_input_layout = layout ? layout->handle : 0;
 
   auto* cmd = dev->cmd.append_fixed<aerogpu_cmd_set_input_layout>(AEROGPU_CMD_SET_INPUT_LAYOUT);
   cmd->input_layout_handle = dev->current_input_layout;
@@ -3827,6 +3830,8 @@ void AEROGPU_APIENTRY VsSetConstantBuffers11(D3D11DDI_HDEVICECONTEXT hCtx,
   if (StartSlot == 0 && NumBuffers >= 1) {
     dev->current_vs_cb0 = (phBuffers && phBuffers[0].pDrvPrivate) ? FromHandle<D3D11DDI_HRESOURCE, Resource>(phBuffers[0])
                                                                   : nullptr;
+    dev->current_vs_cb0_first_constant = pFirstConstant ? pFirstConstant[0] : 0;
+    dev->current_vs_cb0_num_constants = pNumConstants ? pNumConstants[0] : 0;
   }
   SetConstantBuffers11Locked(dev, AEROGPU_SHADER_STAGE_VERTEX, StartSlot, NumBuffers, phBuffers, pFirstConstant, pNumConstants);
 }
@@ -3845,6 +3850,8 @@ void AEROGPU_APIENTRY PsSetConstantBuffers11(D3D11DDI_HDEVICECONTEXT hCtx,
   if (StartSlot == 0 && NumBuffers >= 1) {
     dev->current_ps_cb0 = (phBuffers && phBuffers[0].pDrvPrivate) ? FromHandle<D3D11DDI_HRESOURCE, Resource>(phBuffers[0])
                                                                   : nullptr;
+    dev->current_ps_cb0_first_constant = pFirstConstant ? pFirstConstant[0] : 0;
+    dev->current_ps_cb0_num_constants = pNumConstants ? pNumConstants[0] : 0;
   }
   SetConstantBuffers11Locked(dev, AEROGPU_SHADER_STAGE_PIXEL, StartSlot, NumBuffers, phBuffers, pFirstConstant, pNumConstants);
 }
@@ -4164,14 +4171,32 @@ static void SetSamplers11Locked(Device* dev,
 
   std::array<aerogpu_handle_t, kMaxSamplerSlots> handles{};
   bool changed = false;
+  bool slot0_touched = false;
+  uint32_t slot0_addr_u = AEROGPU_SAMPLER_ADDRESS_CLAMP_TO_EDGE;
+  uint32_t slot0_addr_v = AEROGPU_SAMPLER_ADDRESS_CLAMP_TO_EDGE;
+
   for (UINT i = 0; i < sampler_count; i++) {
+    const uint32_t slot = static_cast<uint32_t>(start_slot + i);
     aerogpu_handle_t handle = 0;
+    uint32_t addr_u = AEROGPU_SAMPLER_ADDRESS_CLAMP_TO_EDGE;
+    uint32_t addr_v = AEROGPU_SAMPLER_ADDRESS_CLAMP_TO_EDGE;
     if (phSamplers && phSamplers[i].pDrvPrivate) {
-      handle = FromHandle<D3D11DDI_HSAMPLER, Sampler>(phSamplers[i])->handle;
+      auto* sampler = FromHandle<D3D11DDI_HSAMPLER, Sampler>(phSamplers[i]);
+      if (sampler) {
+        handle = sampler->handle;
+        addr_u = sampler->address_u;
+        addr_v = sampler->address_v;
+      }
     }
+
     handles[i] = handle;
     if (!changed) {
-      changed = table[start_slot + i] != handle;
+      changed = table[slot] != handle;
+    }
+    if (slot == 0) {
+      slot0_touched = true;
+      slot0_addr_u = addr_u;
+      slot0_addr_v = addr_v;
     }
   }
 
@@ -4192,6 +4217,15 @@ static void SetSamplers11Locked(Device* dev,
 
   for (UINT i = 0; i < sampler_count; i++) {
     table[start_slot + i] = handles[i];
+  }
+  if (slot0_touched) {
+    if (shader_stage == AEROGPU_SHADER_STAGE_VERTEX) {
+      dev->current_vs_sampler0_address_u = slot0_addr_u;
+      dev->current_vs_sampler0_address_v = slot0_addr_v;
+    } else if (shader_stage == AEROGPU_SHADER_STAGE_PIXEL) {
+      dev->current_ps_sampler0_address_u = slot0_addr_u;
+      dev->current_ps_sampler0_address_v = slot0_addr_v;
+    }
   }
 }
 
@@ -4571,6 +4605,7 @@ void AEROGPU_APIENTRY ClearState11(D3D11DDI_HDEVICECONTEXT hCtx) {
   dev->current_ps = 0;
   dev->current_gs = 0;
   dev->current_input_layout = 0;
+  dev->current_input_layout_obj = nullptr;
   dev->current_topology = AEROGPU_TOPOLOGY_TRIANGLELIST;
   dev->current_vb = nullptr;
   dev->current_vb_stride_bytes = 0;
@@ -4579,9 +4614,17 @@ void AEROGPU_APIENTRY ClearState11(D3D11DDI_HDEVICECONTEXT hCtx) {
   dev->current_ib_format = kDxgiFormatUnknown;
   dev->current_ib_offset_bytes = 0;
   dev->current_vs_cb0 = nullptr;
+  dev->current_vs_cb0_first_constant = 0;
+  dev->current_vs_cb0_num_constants = 0;
   dev->current_ps_cb0 = nullptr;
+  dev->current_ps_cb0_first_constant = 0;
+  dev->current_ps_cb0_num_constants = 0;
   dev->current_vs_srv0 = nullptr;
   dev->current_ps_srv0 = nullptr;
+  dev->current_vs_sampler0_address_u = AEROGPU_SAMPLER_ADDRESS_CLAMP_TO_EDGE;
+  dev->current_vs_sampler0_address_v = AEROGPU_SAMPLER_ADDRESS_CLAMP_TO_EDGE;
+  dev->current_ps_sampler0_address_u = AEROGPU_SAMPLER_ADDRESS_CLAMP_TO_EDGE;
+  dev->current_ps_sampler0_address_v = AEROGPU_SAMPLER_ADDRESS_CLAMP_TO_EDGE;
   dev->current_dss = nullptr;
   dev->current_stencil_ref = 0;
   dev->current_rs = nullptr;
@@ -4847,6 +4890,99 @@ static float EdgeFn(float ax, float ay, float bx, float by, float px, float py) 
   return (px - ax) * (by - ay) - (py - ay) * (bx - ax);
 }
 
+static uint32_t DxgiFormatSizeBytes(uint32_t dxgi_format) {
+  switch (dxgi_format) {
+    case kDxgiFormatR32G32Float:
+      return 8;
+    case kDxgiFormatR32G32B32Float:
+      return 12;
+    case kDxgiFormatR32G32B32A32Float:
+      return 16;
+    default:
+      return 0;
+  }
+}
+
+struct ValidationInputLayout {
+  bool has_position = false;
+  uint32_t position_offset = 0;
+  uint32_t position_format = 0;
+
+  bool has_color = false;
+  uint32_t color_offset = 0;
+
+  bool has_texcoord0 = false;
+  uint32_t texcoord0_offset = 0;
+};
+
+static bool DecodeInputLayout(const InputLayout* layout, ValidationInputLayout* out) {
+  if (!layout || !out) {
+    return false;
+  }
+  *out = {};
+
+  if (layout->blob.size() < sizeof(aerogpu_input_layout_blob_header)) {
+    return false;
+  }
+  aerogpu_input_layout_blob_header header{};
+  std::memcpy(&header, layout->blob.data(), sizeof(header));
+  if (header.magic != AEROGPU_INPUT_LAYOUT_BLOB_MAGIC || header.version != AEROGPU_INPUT_LAYOUT_BLOB_VERSION) {
+    return false;
+  }
+  const size_t elems_bytes = static_cast<size_t>(header.element_count) * sizeof(aerogpu_input_layout_element_dxgi);
+  if (layout->blob.size() < sizeof(header) + elems_bytes) {
+    return false;
+  }
+
+  const uint32_t kPosHash = HashSemanticName("POSITION");
+  const uint32_t kColorHash = HashSemanticName("COLOR");
+  const uint32_t kTexHash = HashSemanticName("TEXCOORD");
+
+  uint32_t running_offset[16] = {};
+  const uint8_t* p = layout->blob.data() + sizeof(header);
+  for (uint32_t i = 0; i < header.element_count; i++) {
+    aerogpu_input_layout_element_dxgi e{};
+    std::memcpy(&e, p + static_cast<size_t>(i) * sizeof(e), sizeof(e));
+
+    if (e.input_slot >= 16) {
+      continue;
+    }
+    if (e.input_slot_class != 0) {
+      // Instance data not supported by the software validator.
+      continue;
+    }
+
+    uint32_t offset = e.aligned_byte_offset;
+    if (offset == 0xFFFFFFFFu) {
+      offset = running_offset[e.input_slot];
+    }
+    const uint32_t size_bytes = DxgiFormatSizeBytes(e.dxgi_format);
+    if (size_bytes != 0) {
+      running_offset[e.input_slot] = offset + size_bytes;
+    }
+
+    // Validation renderer only supports slot 0.
+    if (e.input_slot != 0) {
+      continue;
+    }
+
+    if (e.semantic_name_hash == kPosHash && e.semantic_index == 0 &&
+        (e.dxgi_format == kDxgiFormatR32G32Float || e.dxgi_format == kDxgiFormatR32G32B32Float)) {
+      out->has_position = true;
+      out->position_offset = offset;
+      out->position_format = e.dxgi_format;
+    } else if (e.semantic_name_hash == kColorHash && e.semantic_index == 0 && e.dxgi_format == kDxgiFormatR32G32B32A32Float) {
+      out->has_color = true;
+      out->color_offset = offset;
+    } else if (e.semantic_name_hash == kTexHash && e.semantic_index == 0 && e.dxgi_format == kDxgiFormatR32G32Float) {
+      out->has_texcoord0 = true;
+      out->texcoord0_offset = offset;
+    }
+  }
+
+  return out->has_position;
+}
+
 struct SoftwareVtx {
   float x = 0.0f;
   float y = 0.0f;
@@ -4885,20 +5021,101 @@ static bool ReadFloat4FromCbBinding(Resource* cb,
   return true;
 }
 
+static bool FetchSoftwareVtx(const Device* dev,
+                             const ValidationInputLayout& layout,
+                             uint32_t vertex_index,
+                             bool want_color,
+                             bool want_uv,
+                             SoftwareVtx* out) {
+  if (!dev || !out) {
+    return false;
+  }
+  const Resource* vb = dev->current_vb;
+  if (!vb || vb->kind != ResourceKind::Buffer) {
+    return false;
+  }
+  if (!layout.has_position) {
+    return false;
+  }
+
+  const uint32_t stride = dev->current_vb_stride_bytes;
+  const uint32_t base_off = dev->current_vb_offset_bytes;
+  const uint64_t byte_off = static_cast<uint64_t>(base_off) + static_cast<uint64_t>(vertex_index) * stride;
+
+  auto read = [&](uint32_t off, void* dst, size_t bytes) -> bool {
+    const uint64_t o = byte_off + off;
+    if (o > vb->storage.size() || bytes > vb->storage.size() - static_cast<size_t>(o)) {
+      return false;
+    }
+    std::memcpy(dst, vb->storage.data() + static_cast<size_t>(o), bytes);
+    return true;
+  };
+
+  *out = {};
+
+  if (layout.position_format == kDxgiFormatR32G32Float) {
+    float xy[2] = {};
+    if (!read(layout.position_offset, xy, sizeof(xy))) {
+      return false;
+    }
+    out->x = xy[0];
+    out->y = xy[1];
+    out->z = dev->current_vs_forced_z_valid ? dev->current_vs_forced_z : 0.0f;
+  } else if (layout.position_format == kDxgiFormatR32G32B32Float) {
+    float xyz[3] = {};
+    if (!read(layout.position_offset, xyz, sizeof(xyz))) {
+      return false;
+    }
+    out->x = xyz[0];
+    out->y = xyz[1];
+    out->z = xyz[2];
+  } else {
+    return false;
+  }
+
+  if (want_color && layout.has_color) {
+    (void)read(layout.color_offset, out->a, sizeof(float) * 4);
+  } else if (want_uv && layout.has_texcoord0) {
+    (void)read(layout.texcoord0_offset, out->a, sizeof(float) * 2);
+    out->a[2] = 0.0f;
+    out->a[3] = 0.0f;
+  }
+  return true;
+}
+
 static bool ReadConstantColor(Device* dev, float out_rgba[4]) {
   if (!dev || !out_rgba) {
     return false;
   }
 
-  const aerogpu_constant_buffer_binding& vs_cb0_binding = dev->vs_constant_buffers[0];
-  Resource* vs_cb0 = dev->current_vs_cb0;
-  if (!vs_cb0 || vs_cb0_binding.buffer == 0) {
-    return false;
+  float vs_color[4] = {};
+  bool has_vs_color = false;
+  {
+    const aerogpu_constant_buffer_binding& vs_cb0_binding = dev->vs_constant_buffers[0];
+    Resource* vs_cb0 = dev->current_vs_cb0;
+    if (vs_cb0 && vs_cb0_binding.buffer != 0 && ReadFloat4FromCbBinding(vs_cb0, vs_cb0_binding, 0, vs_color)) {
+      has_vs_color = true;
+    }
   }
 
-  float vs_color[4] = {};
-  if (!ReadFloat4FromCbBinding(vs_cb0, vs_cb0_binding, 0, vs_color)) {
-    return false;
+  float ps_color0[4] = {};
+  bool has_ps_color0 = false;
+  {
+    const aerogpu_constant_buffer_binding& ps_cb0_binding = dev->ps_constant_buffers[0];
+    Resource* ps_cb0 = dev->current_ps_cb0;
+    if (ps_cb0 && ps_cb0_binding.buffer != 0 && ReadFloat4FromCbBinding(ps_cb0, ps_cb0_binding, 0, ps_color0)) {
+      has_ps_color0 = true;
+    }
+  }
+
+  if (!has_vs_color) {
+    if (!has_ps_color0) {
+      return false;
+    }
+    for (int i = 0; i < 4; ++i) {
+      out_rgba[i] = Clamp01(ps_color0[i]);
+    }
+    return true;
   }
 
   float ps_mul[4] = {1.0f, 1.0f, 1.0f, 1.0f};
@@ -4907,7 +5124,8 @@ static bool ReadConstantColor(Device* dev, float out_rgba[4]) {
   if (ps_cb0 && ps_cb0_binding.buffer != 0) {
     uint64_t ps_binding_size = ps_cb0_binding.size_bytes;
     if (ps_binding_size == 0) {
-      ps_binding_size = ps_cb0_binding.offset_bytes < ps_cb0->size_bytes ? (ps_cb0->size_bytes - ps_cb0_binding.offset_bytes) : 0;
+      ps_binding_size =
+          ps_cb0_binding.offset_bytes < ps_cb0->size_bytes ? (ps_cb0->size_bytes - ps_cb0_binding.offset_bytes) : 0;
     }
     const uint32_t ps_mul_off = ps_binding_size >= 32 ? 16 : 0;
     float tmp[4] = {};
@@ -4922,7 +5140,43 @@ static bool ReadConstantColor(Device* dev, float out_rgba[4]) {
   return true;
 }
 
-static bool SampleTexturePointClamp(Resource* tex, float u, float v, float out_rgba[4]) {
+static float ApplySamplerAddress(float coord, uint32_t mode) {
+  if (std::isnan(coord)) {
+    coord = 0.0f;
+  }
+  switch (mode) {
+    case AEROGPU_SAMPLER_ADDRESS_REPEAT:
+    case D3D11_TEXTURE_ADDRESS_WRAP: {
+      coord = coord - std::floor(coord);
+      if (coord < 0.0f) {
+        coord += 1.0f;
+      }
+      return coord;
+    }
+    case AEROGPU_SAMPLER_ADDRESS_MIRROR_REPEAT:
+    case D3D11_TEXTURE_ADDRESS_MIRROR: {
+      if (!std::isfinite(coord)) {
+        coord = 0.0f;
+      }
+      const float floored = std::floor(coord);
+      float frac = coord - floored;
+      if (frac < 0.0f) {
+        frac += 1.0f;
+      }
+      const int64_t whole = static_cast<int64_t>(floored);
+      if (whole & 1) {
+        frac = 1.0f - frac;
+      }
+      return frac;
+    }
+    case AEROGPU_SAMPLER_ADDRESS_CLAMP_TO_EDGE:
+    case D3D11_TEXTURE_ADDRESS_CLAMP:
+    default:
+      return std::clamp(coord, 0.0f, 1.0f);
+  }
+}
+
+static bool SampleTexturePoint(Resource* tex, float u, float v, uint32_t addr_u, uint32_t addr_v, float out_rgba[4]) {
   if (!tex || !out_rgba || tex->kind != ResourceKind::Texture2D || tex->width == 0 || tex->height == 0 ||
       tex->row_pitch_bytes == 0) {
     return false;
@@ -4935,8 +5189,8 @@ static bool SampleTexturePointClamp(Resource* tex, float u, float v, float out_r
     return false;
   }
 
-  u = std::clamp(u, 0.0f, 1.0f);
-  v = std::clamp(v, 0.0f, 1.0f);
+  u = ApplySamplerAddress(u, addr_u);
+  v = ApplySamplerAddress(v, addr_v);
 
   int x = static_cast<int>(u * static_cast<float>(tex->width));
   int y = static_cast<int>(v * static_cast<float>(tex->height));
@@ -4988,7 +5242,9 @@ static void SoftwareRasterTriangle(Device* dev,
                                    bool has_color,
                                    bool has_uv,
                                    const float constant_rgba[4],
-                                   Resource* tex) {
+                                   Resource* tex,
+                                   uint32_t sampler_addr_u,
+                                   uint32_t sampler_addr_v) {
   if (!dev || !rt) {
     return;
   }
@@ -5228,7 +5484,7 @@ static void SoftwareRasterTriangle(Device* dev,
       } else if (has_uv) {
         const float u = b0 * v0.a[0] + b1 * v1.a[0] + b2 * v2.a[0];
         const float v = b0 * v0.a[1] + b1 * v1.a[1] + b2 * v2.a[1];
-        if (!SampleTexturePointClamp(tex, u, v, out_rgba)) {
+        if (!SampleTexturePoint(tex, u, v, sampler_addr_u, sampler_addr_v, out_rgba)) {
           continue;
         }
       } else if (constant_rgba) {
@@ -5341,64 +5597,58 @@ static void SoftwareDrawTriangleList(Device* dev, UINT vertex_count, UINT first_
     return;
   }
 
-  const uint32_t stride = dev->current_vb_stride_bytes;
-  const uint32_t base_off = dev->current_vb_offset_bytes;
-  if (stride < 8) {
+  ValidationInputLayout layout{};
+  if (!DecodeInputLayout(dev->current_input_layout_obj, &layout)) {
     return;
   }
 
-  const bool has_color = (stride >= 24);
-  const bool has_z = has_color && stride >= 28;
-  const bool has_uv = (!has_color && stride >= 16);
+  Resource* tex = dev->current_ps_srv0 ? dev->current_ps_srv0 : dev->current_vs_srv0;
+  const bool has_uv = layout.has_texcoord0 && tex;
+  const bool has_color = (!has_uv) && layout.has_color;
   float constant_rgba[4] = {};
-  Resource* tex = nullptr;
-  if (!has_color && !has_uv) {
+  uint32_t sampler_addr_u = AEROGPU_SAMPLER_ADDRESS_CLAMP_TO_EDGE;
+  uint32_t sampler_addr_v = AEROGPU_SAMPLER_ADDRESS_CLAMP_TO_EDGE;
+  if (has_uv) {
+    if (tex == dev->current_ps_srv0) {
+      sampler_addr_u = dev->current_ps_sampler0_address_u;
+      sampler_addr_v = dev->current_ps_sampler0_address_v;
+    } else {
+      sampler_addr_u = dev->current_vs_sampler0_address_u;
+      sampler_addr_v = dev->current_vs_sampler0_address_v;
+    }
+  } else if (!has_color) {
     if (!ReadConstantColor(dev, constant_rgba)) {
       return;
     }
-  } else if (has_uv) {
-    tex = dev->current_ps_srv0 ? dev->current_ps_srv0 : dev->current_vs_srv0;
-    if (!tex) {
-      return;
-    }
   }
 
-  auto read_vtx = [&](uint32_t idx, SoftwareVtx* out) -> bool {
-    if (!out) {
-      return false;
-    }
-    const uint64_t byte_off = static_cast<uint64_t>(base_off) + static_cast<uint64_t>(idx) * stride;
-    const size_t needed = has_color ? (has_z ? 28 : 24) : (has_uv ? 16 : 8);
-    if (byte_off + needed > vb->storage.size()) {
-      return false;
-    }
-    const uint8_t* p = vb->storage.data() + static_cast<size_t>(byte_off);
-    std::memcpy(&out->x, p + 0, sizeof(float));
-    std::memcpy(&out->y, p + 4, sizeof(float));
-    out->z = dev->current_vs_forced_z_valid ? dev->current_vs_forced_z : 0.0f;
-    if (has_color) {
-      if (has_z) {
-        std::memcpy(&out->z, p + 8, sizeof(float));
-        std::memcpy(&out->a[0], p + 12, sizeof(float) * 4);
-      } else {
-        std::memcpy(&out->a[0], p + 8, sizeof(float) * 4);
-      }
-    } else if (has_uv) {
-      std::memcpy(&out->a[0], p + 8, sizeof(float) * 2);
-      out->a[2] = 0.0f;
-      out->a[3] = 0.0f;
-    }
-    return true;
-  };
+  const uint32_t tri_count = vertex_count / 3;
+  for (uint32_t tri = 0; tri < tri_count; ++tri) {
+    const uint32_t idx0 = first_vertex + tri * 3 + 0;
+    const uint32_t idx1 = first_vertex + tri * 3 + 1;
+    const uint32_t idx2 = first_vertex + tri * 3 + 2;
 
-  SoftwareVtx v0{};
-  SoftwareVtx v1{};
-  SoftwareVtx v2{};
-  if (!read_vtx(first_vertex + 0, &v0) || !read_vtx(first_vertex + 1, &v1) || !read_vtx(first_vertex + 2, &v2)) {
-    return;
+    SoftwareVtx v0{};
+    SoftwareVtx v1{};
+    SoftwareVtx v2{};
+    if (!FetchSoftwareVtx(dev, layout, idx0, has_color, has_uv, &v0) ||
+        !FetchSoftwareVtx(dev, layout, idx1, has_color, has_uv, &v1) ||
+        !FetchSoftwareVtx(dev, layout, idx2, has_color, has_uv, &v2)) {
+      continue;
+    }
+
+    SoftwareRasterTriangle(dev,
+                           rt,
+                           v0,
+                           v1,
+                           v2,
+                           has_color,
+                           has_uv,
+                           has_color || has_uv ? nullptr : constant_rgba,
+                           tex,
+                           sampler_addr_u,
+                           sampler_addr_v);
   }
-
-  SoftwareRasterTriangle(dev, rt, v0, v1, v2, has_color, has_uv, has_color || has_uv ? nullptr : constant_rgba, tex);
 }
 
 static void SoftwareDrawIndexedTriangleList(Device* dev, UINT index_count, UINT first_index, INT base_vertex) {
@@ -5429,24 +5679,27 @@ static void SoftwareDrawIndexedTriangleList(Device* dev, UINT index_count, UINT 
     return;
   }
 
-  const uint32_t stride = dev->current_vb_stride_bytes;
-  const uint32_t base_off = dev->current_vb_offset_bytes;
-  if (stride < 8) {
+  ValidationInputLayout layout{};
+  if (!DecodeInputLayout(dev->current_input_layout_obj, &layout)) {
     return;
   }
 
-  const bool has_color = (stride >= 24);
-  const bool has_z = has_color && stride >= 28;
-  const bool has_uv = (!has_color && stride >= 16);
+  Resource* tex = dev->current_ps_srv0 ? dev->current_ps_srv0 : dev->current_vs_srv0;
+  const bool has_uv = layout.has_texcoord0 && tex;
+  const bool has_color = (!has_uv) && layout.has_color;
   float constant_rgba[4] = {};
-  Resource* tex = nullptr;
-  if (!has_color && !has_uv) {
-    if (!ReadConstantColor(dev, constant_rgba)) {
-      return;
+  uint32_t sampler_addr_u = AEROGPU_SAMPLER_ADDRESS_CLAMP_TO_EDGE;
+  uint32_t sampler_addr_v = AEROGPU_SAMPLER_ADDRESS_CLAMP_TO_EDGE;
+  if (has_uv) {
+    if (tex == dev->current_ps_srv0) {
+      sampler_addr_u = dev->current_ps_sampler0_address_u;
+      sampler_addr_v = dev->current_ps_sampler0_address_v;
+    } else {
+      sampler_addr_u = dev->current_vs_sampler0_address_u;
+      sampler_addr_v = dev->current_vs_sampler0_address_v;
     }
-  } else if (has_uv) {
-    tex = dev->current_ps_srv0 ? dev->current_ps_srv0 : dev->current_vs_srv0;
-    if (!tex) {
+  } else if (!has_color) {
+    if (!ReadConstantColor(dev, constant_rgba)) {
       return;
     }
   }
@@ -5490,34 +5743,6 @@ static void SoftwareDrawIndexedTriangleList(Device* dev, UINT index_count, UINT 
     return false;
   };
 
-  auto read_vtx = [&](uint32_t idx, SoftwareVtx* out) -> bool {
-    if (!out) {
-      return false;
-    }
-    const uint64_t byte_off = static_cast<uint64_t>(base_off) + static_cast<uint64_t>(idx) * stride;
-    const size_t needed = has_color ? (has_z ? 28 : 24) : (has_uv ? 16 : 8);
-    if (byte_off + needed > vb->storage.size()) {
-      return false;
-    }
-    const uint8_t* p = vb->storage.data() + static_cast<size_t>(byte_off);
-    std::memcpy(&out->x, p + 0, sizeof(float));
-    std::memcpy(&out->y, p + 4, sizeof(float));
-    out->z = dev->current_vs_forced_z_valid ? dev->current_vs_forced_z : 0.0f;
-    if (has_color) {
-      if (has_z) {
-        std::memcpy(&out->z, p + 8, sizeof(float));
-        std::memcpy(&out->a[0], p + 12, sizeof(float) * 4);
-      } else {
-        std::memcpy(&out->a[0], p + 8, sizeof(float) * 4);
-      }
-    } else if (has_uv) {
-      std::memcpy(&out->a[0], p + 8, sizeof(float) * 2);
-      out->a[2] = 0.0f;
-      out->a[3] = 0.0f;
-    }
-    return true;
-  };
-
   const uint32_t tri_count = index_count / 3;
   for (uint32_t tri = 0; tri < tri_count; tri++) {
     uint32_t i0 = 0, i1 = 0, i2 = 0;
@@ -5525,9 +5750,9 @@ static void SoftwareDrawIndexedTriangleList(Device* dev, UINT index_count, UINT 
       return;
     }
 
-    const int v0_idx = static_cast<int>(i0) + base_vertex;
-    const int v1_idx = static_cast<int>(i1) + base_vertex;
-    const int v2_idx = static_cast<int>(i2) + base_vertex;
+    const int64_t v0_idx = static_cast<int64_t>(i0) + static_cast<int64_t>(base_vertex);
+    const int64_t v1_idx = static_cast<int64_t>(i1) + static_cast<int64_t>(base_vertex);
+    const int64_t v2_idx = static_cast<int64_t>(i2) + static_cast<int64_t>(base_vertex);
     if (v0_idx < 0 || v1_idx < 0 || v2_idx < 0) {
       continue;
     }
@@ -5535,12 +5760,23 @@ static void SoftwareDrawIndexedTriangleList(Device* dev, UINT index_count, UINT 
     SoftwareVtx v0{};
     SoftwareVtx v1{};
     SoftwareVtx v2{};
-    if (!read_vtx(static_cast<uint32_t>(v0_idx), &v0) || !read_vtx(static_cast<uint32_t>(v1_idx), &v1) ||
-        !read_vtx(static_cast<uint32_t>(v2_idx), &v2)) {
+    if (!FetchSoftwareVtx(dev, layout, static_cast<uint32_t>(v0_idx), has_color, has_uv, &v0) ||
+        !FetchSoftwareVtx(dev, layout, static_cast<uint32_t>(v1_idx), has_color, has_uv, &v1) ||
+        !FetchSoftwareVtx(dev, layout, static_cast<uint32_t>(v2_idx), has_color, has_uv, &v2)) {
       continue;
     }
 
-    SoftwareRasterTriangle(dev, rt, v0, v1, v2, has_color, has_uv, has_color || has_uv ? nullptr : constant_rgba, tex);
+    SoftwareRasterTriangle(dev,
+                           rt,
+                           v0,
+                           v1,
+                           v2,
+                           has_color,
+                           has_uv,
+                           has_color || has_uv ? nullptr : constant_rgba,
+                           tex,
+                           sampler_addr_u,
+                           sampler_addr_v);
   }
 }
 
