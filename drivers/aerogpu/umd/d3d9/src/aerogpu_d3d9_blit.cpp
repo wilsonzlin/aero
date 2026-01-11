@@ -17,10 +17,6 @@ constexpr uint32_t kD3d9FmtA8R8G8B8 = 21u;
 constexpr uint32_t kD3d9FmtX8R8G8B8 = 22u;
 constexpr uint32_t kD3d9FmtA8B8G8R8 = 32u;
 
-// DXGI_FORMAT subset (numeric values from dxgiformat.h).
-constexpr uint32_t kDxgiFormatR32G32B32A32Float = 2;
-constexpr uint32_t kDxgiFormatR32G32Float = 16;
-
 // D3D9 sampler state IDs (numeric values from d3d9types.h).
 constexpr uint32_t kD3d9SampAddressU = 1;
 constexpr uint32_t kD3d9SampAddressV = 2;
@@ -57,19 +53,6 @@ uint32_t f32_bits(float v) {
   static_assert(sizeof(bits) == sizeof(v), "float must be 32-bit");
   std::memcpy(&bits, &v, sizeof(bits));
   return bits;
-}
-
-uint32_t hash_semantic_name(const char* s) {
-  // FNV-1a 32-bit hash (matches D3D10/11 UMD helper).
-  if (!s) {
-    return 0;
-  }
-  uint32_t hash = 2166136261u;
-  for (const unsigned char* p = reinterpret_cast<const unsigned char*>(s); *p; ++p) {
-    hash ^= *p;
-    hash *= 16777619u;
-  }
-  return hash;
 }
 
 bool convert_pixel_4bpp(uint32_t src_format, uint32_t dst_format, const uint8_t* src, uint8_t* dst) {
@@ -626,31 +609,15 @@ HRESULT ensure_blit_objects_locked(Device* dev) {
     auto* decl = new VertexDecl();
     decl->handle = allocate_global_handle(dev->adapter);
 
-    const size_t blob_size = sizeof(aerogpu_input_layout_blob_header) + 2 * sizeof(aerogpu_input_layout_element_dxgi);
-    decl->blob.resize(blob_size);
-
-    auto* hdr = reinterpret_cast<aerogpu_input_layout_blob_header*>(decl->blob.data());
-    hdr->magic = AEROGPU_INPUT_LAYOUT_BLOB_MAGIC;
-    hdr->version = AEROGPU_INPUT_LAYOUT_BLOB_VERSION;
-    hdr->element_count = 2;
-    hdr->reserved0 = 0;
-
-    auto* elems = reinterpret_cast<aerogpu_input_layout_element_dxgi*>(decl->blob.data() + sizeof(*hdr));
-    elems[0].semantic_name_hash = hash_semantic_name("POSITION");
-    elems[0].semantic_index = 0;
-    elems[0].dxgi_format = kDxgiFormatR32G32B32A32Float;
-    elems[0].input_slot = 0;
-    elems[0].aligned_byte_offset = 0;
-    elems[0].input_slot_class = 0;
-    elems[0].instance_data_step_rate = 0;
-
-    elems[1].semantic_name_hash = hash_semantic_name("TEXCOORD");
-    elems[1].semantic_index = 0;
-    elems[1].dxgi_format = kDxgiFormatR32G32Float;
-    elems[1].input_slot = 0;
-    elems[1].aligned_byte_offset = 16;
-    elems[1].input_slot_class = 0;
-    elems[1].instance_data_step_rate = 0;
+    // D3D9 vertex declaration (D3DVERTEXELEMENT9[]), little-endian:
+    //   POSITION0: float4 at stream 0 offset 0
+    //   TEXCOORD0: float2 at stream 0 offset 16
+    //   end marker
+    decl->blob = {
+        0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x10, 0x00, 0x01, 0x00, 0x05, 0x00,
+        0xff, 0x00, 0x00, 0x00, 0x11, 0x00, 0x00, 0x00,
+    };
 
     auto* cmd = append_with_payload_locked<aerogpu_cmd_create_input_layout>(
         dev, AEROGPU_CMD_CREATE_INPUT_LAYOUT, decl->blob.data(), decl->blob.size());
@@ -979,22 +946,74 @@ HRESULT color_fill_locked(Device* dev, Resource* dst, const RECT* dst_rect_in, u
     return E_INVALIDARG;
   }
 
+  HRESULT hr = ensure_blit_objects_locked(dev);
+  if (hr < 0) {
+    return hr;
+  }
+
   RECT dst_rect{};
   if (!clamp_rect(dst_rect_in, dst->width, dst->height, &dst_rect)) {
     return S_OK;
   }
 
-  // Save state.
+  // Save state we overwrite.
   Resource* saved_rts[4] = {dev->render_targets[0], dev->render_targets[1], dev->render_targets[2], dev->render_targets[3]};
   Resource* saved_ds = dev->depth_stencil;
+  Shader* saved_vs = dev->vs;
+  Shader* saved_ps = dev->ps;
+  VertexDecl* saved_decl = dev->vertex_decl;
+  Resource* saved_tex0 = dev->textures[0];
+  DeviceStateStream saved_stream0 = dev->streams[0];
+  const uint32_t saved_topology = dev->topology;
   const AEROGPU_D3D9DDI_VIEWPORT saved_vp = dev->viewport;
   const RECT saved_scissor = dev->scissor_rect;
   const BOOL saved_scissor_enabled = dev->scissor_enabled;
   const uint32_t saved_rs_scissor = dev->render_states[kD3d9RsScissorTestEnable];
+  const uint32_t saved_rs_alpha_blend = dev->render_states[kD3d9RsAlphaBlendEnable];
+  const uint32_t saved_rs_sep_alpha_blend = dev->render_states[kD3d9RsSeparateAlphaBlendEnable];
+  const uint32_t saved_rs_src_blend = dev->render_states[kD3d9RsSrcBlend];
+  const uint32_t saved_rs_dst_blend = dev->render_states[kD3d9RsDestBlend];
+  const uint32_t saved_rs_blend_op = dev->render_states[kD3d9RsBlendOp];
+  const uint32_t saved_rs_color_write = dev->render_states[kD3d9RsColorWriteEnable];
+  const uint32_t saved_rs_z_enable = dev->render_states[kD3d9RsZEnable];
+  const uint32_t saved_rs_z_write = dev->render_states[kD3d9RsZWriteEnable];
+  const uint32_t saved_rs_cull = dev->render_states[kD3d9RsCullMode];
 
-  if (!set_render_state_locked(dev, kD3d9RsScissorTestEnable, TRUE)) {
+  const uint32_t saved_samp_u = dev->sampler_states[0][kD3d9SampAddressU];
+  const uint32_t saved_samp_v = dev->sampler_states[0][kD3d9SampAddressV];
+  const uint32_t saved_samp_min = dev->sampler_states[0][kD3d9SampMinFilter];
+  const uint32_t saved_samp_mag = dev->sampler_states[0][kD3d9SampMagFilter];
+  const uint32_t saved_samp_mip = dev->sampler_states[0][kD3d9SampMipFilter];
+
+  float saved_ps_c0[4];
+  std::memcpy(saved_ps_c0, dev->ps_consts_f, sizeof(saved_ps_c0));
+
+  // Configure a conservative fill state.
+  if (!set_render_state_locked(dev, kD3d9RsScissorTestEnable, FALSE) ||
+      !set_render_state_locked(dev, kD3d9RsAlphaBlendEnable, FALSE) ||
+      !set_render_state_locked(dev, kD3d9RsSeparateAlphaBlendEnable, FALSE) ||
+      !set_render_state_locked(dev, kD3d9RsSrcBlend, kD3d9BlendOne) ||
+      !set_render_state_locked(dev, kD3d9RsDestBlend, kD3d9BlendZero) ||
+      !set_render_state_locked(dev, kD3d9RsBlendOp, kD3d9BlendOpAdd) ||
+      !set_render_state_locked(dev, kD3d9RsColorWriteEnable, 0xFu) ||
+      !set_render_state_locked(dev, kD3d9RsZEnable, 0u) ||
+      !set_render_state_locked(dev, kD3d9RsZWriteEnable, FALSE) ||
+      !set_render_state_locked(dev, kD3d9RsCullMode, kD3d9CullNone)) {
     return E_OUTOFMEMORY;
   }
+
+  if (!set_sampler_state_locked(dev, 0, kD3d9SampAddressU, kD3d9TexAddressClamp) ||
+      !set_sampler_state_locked(dev, 0, kD3d9SampAddressV, kD3d9TexAddressClamp) ||
+      !set_sampler_state_locked(dev, 0, kD3d9SampMinFilter, kD3d9TexFilterPoint) ||
+      !set_sampler_state_locked(dev, 0, kD3d9SampMagFilter, kD3d9TexFilterPoint) ||
+      !set_sampler_state_locked(dev, 0, kD3d9SampMipFilter, kD3d9TexFilterNone)) {
+    return E_OUTOFMEMORY;
+  }
+
+  const float a = static_cast<float>((color_argb >> 24) & 0xFF) / 255.0f;
+  const float r = static_cast<float>((color_argb >> 16) & 0xFF) / 255.0f;
+  const float g = static_cast<float>((color_argb >> 8) & 0xFF) / 255.0f;
+  const float b = static_cast<float>((color_argb >> 0) & 0xFF) / 255.0f;
 
   dev->render_targets[0] = dst;
   dev->render_targets[1] = nullptr;
@@ -1010,40 +1029,109 @@ HRESULT color_fill_locked(Device* dev, Resource* dst, const RECT* dst_rect_in, u
     return E_OUTOFMEMORY;
   }
 
-  dev->scissor_rect = dst_rect;
-  dev->scissor_enabled = TRUE;
+  // Disable scissor rect clipping (quad already matches dst_rect).
+  dev->scissor_enabled = FALSE;
   if (!emit_set_scissor_locked(dev)) {
     return E_OUTOFMEMORY;
   }
 
-  const float a = static_cast<float>((color_argb >> 24) & 0xFF) / 255.0f;
-  const float r = static_cast<float>((color_argb >> 16) & 0xFF) / 255.0f;
-  const float g = static_cast<float>((color_argb >> 8) & 0xFF) / 255.0f;
-  const float b = static_cast<float>((color_argb >> 0) & 0xFF) / 255.0f;
+  // Bind copy shaders.
+  dev->vs = dev->builtin_copy_vs;
+  dev->ps = dev->builtin_copy_ps;
+  if (!emit_bind_shaders_locked(dev)) {
+    return E_OUTOFMEMORY;
+  }
 
+  const float color[4] = {r, g, b, a};
+  if (!set_shader_const_f_locked(dev, AEROGPU_D3D9DDI_SHADER_STAGE_PS, 0, color, 1)) {
+    return E_OUTOFMEMORY;
+  }
+
+  // Bind dummy texture (host substitutes a 1x1 white texture for handle 0).
+  dev->textures[0] = nullptr;
+  if (!emit_set_texture_locked(dev, 0)) {
+    return E_OUTOFMEMORY;
+  }
+
+  // Bind input layout + vertex buffer.
+  dev->vertex_decl = dev->builtin_copy_decl;
+  if (!emit_set_input_layout_locked(dev)) {
+    return E_OUTOFMEMORY;
+  }
+
+  dev->streams[0].vb = dev->builtin_copy_vb;
+  dev->streams[0].offset_bytes = 0;
+  dev->streams[0].stride_bytes = sizeof(BlitVertex);
+  if (!emit_set_vertex_buffer_locked(dev, 0) ||
+      !emit_set_topology_locked(dev, AEROGPU_TOPOLOGY_TRIANGLESTRIP)) {
+    return E_OUTOFMEMORY;
+  }
+
+  const float dst_w = static_cast<float>(dst->width);
+  const float dst_h = static_cast<float>(dst->height);
+
+  const float x0 = (2.0f * static_cast<float>(dst_rect.left) / dst_w) - 1.0f;
+  const float x1 = (2.0f * static_cast<float>(dst_rect.right) / dst_w) - 1.0f;
+  const float y0 = 1.0f - (2.0f * static_cast<float>(dst_rect.top) / dst_h);
+  const float y1 = 1.0f - (2.0f * static_cast<float>(dst_rect.bottom) / dst_h);
+
+  BlitVertex verts[4] = {
+      {x0, y0, 0.0f, 1.0f, 0.0f, 0.0f},
+      {x0, y1, 0.0f, 1.0f, 0.0f, 0.0f},
+      {x1, y0, 0.0f, 1.0f, 0.0f, 0.0f},
+      {x1, y1, 0.0f, 1.0f, 0.0f, 0.0f},
+  };
+
+  if (!upload_resource_bytes_locked(dev,
+                                    dev->builtin_copy_vb,
+                                    /*offset_bytes=*/0,
+                                    reinterpret_cast<const uint8_t*>(verts),
+                                    sizeof(verts))) {
+    return E_OUTOFMEMORY;
+  }
+
+  // Draw.
   // Ensure the command buffer has space before we track allocations; tracking
   // may force a submission split, and command-buffer splits must not occur
   // after tracking or the allocation list would be out of sync.
-  if (!ensure_cmd_space(dev, align_up(sizeof(aerogpu_cmd_clear), 4))) {
+  if (!ensure_cmd_space(dev, align_up(sizeof(aerogpu_cmd_draw), 4))) {
     return E_OUTOFMEMORY;
   }
-  HRESULT hr = track_blit_render_targets_locked(dev);
+  hr = track_blit_draw_state_locked(dev);
   if (FAILED(hr)) {
     return hr;
   }
-  auto* cmd = append_fixed_locked<aerogpu_cmd_clear>(dev, AEROGPU_CMD_CLEAR);
-  if (!cmd) {
+  auto* draw = append_fixed_locked<aerogpu_cmd_draw>(dev, AEROGPU_CMD_DRAW);
+  if (!draw) {
     return E_OUTOFMEMORY;
   }
-  cmd->flags = AEROGPU_CLEAR_COLOR;
-  cmd->color_rgba_f32[0] = f32_bits(r);
-  cmd->color_rgba_f32[1] = f32_bits(g);
-  cmd->color_rgba_f32[2] = f32_bits(b);
-  cmd->color_rgba_f32[3] = f32_bits(a);
-  cmd->depth_f32 = f32_bits(1.0f);
-  cmd->stencil = 0;
+  draw->vertex_count = 4;
+  draw->instance_count = 1;
+  draw->first_vertex = 0;
+  draw->first_instance = 0;
 
   // Restore state.
+  dev->streams[0] = saved_stream0;
+  if (!emit_set_vertex_buffer_locked(dev, 0)) {
+    return E_OUTOFMEMORY;
+  }
+
+  dev->vertex_decl = saved_decl;
+  if (!emit_set_input_layout_locked(dev)) {
+    return E_OUTOFMEMORY;
+  }
+
+  dev->textures[0] = saved_tex0;
+  if (!emit_set_texture_locked(dev, 0)) {
+    return E_OUTOFMEMORY;
+  }
+
+  dev->vs = saved_vs;
+  dev->ps = saved_ps;
+  if (!emit_bind_shaders_locked(dev)) {
+    return E_OUTOFMEMORY;
+  }
+
   dev->render_targets[0] = saved_rts[0];
   dev->render_targets[1] = saved_rts[1];
   dev->render_targets[2] = saved_rts[2];
@@ -1064,7 +1152,32 @@ HRESULT color_fill_locked(Device* dev, Resource* dst, const RECT* dst_rect_in, u
     return E_OUTOFMEMORY;
   }
 
-  if (!set_render_state_locked(dev, kD3d9RsScissorTestEnable, saved_rs_scissor)) {
+  if (!emit_set_topology_locked(dev, saved_topology)) {
+    return E_OUTOFMEMORY;
+  }
+
+  if (!set_shader_const_f_locked(dev, AEROGPU_D3D9DDI_SHADER_STAGE_PS, 0, saved_ps_c0, 1)) {
+    return E_OUTOFMEMORY;
+  }
+
+  if (!set_sampler_state_locked(dev, 0, kD3d9SampAddressU, saved_samp_u) ||
+      !set_sampler_state_locked(dev, 0, kD3d9SampAddressV, saved_samp_v) ||
+      !set_sampler_state_locked(dev, 0, kD3d9SampMinFilter, saved_samp_min) ||
+      !set_sampler_state_locked(dev, 0, kD3d9SampMagFilter, saved_samp_mag) ||
+      !set_sampler_state_locked(dev, 0, kD3d9SampMipFilter, saved_samp_mip)) {
+    return E_OUTOFMEMORY;
+  }
+
+  if (!set_render_state_locked(dev, kD3d9RsScissorTestEnable, saved_rs_scissor) ||
+      !set_render_state_locked(dev, kD3d9RsAlphaBlendEnable, saved_rs_alpha_blend) ||
+      !set_render_state_locked(dev, kD3d9RsSeparateAlphaBlendEnable, saved_rs_sep_alpha_blend) ||
+      !set_render_state_locked(dev, kD3d9RsSrcBlend, saved_rs_src_blend) ||
+      !set_render_state_locked(dev, kD3d9RsDestBlend, saved_rs_dst_blend) ||
+      !set_render_state_locked(dev, kD3d9RsBlendOp, saved_rs_blend_op) ||
+      !set_render_state_locked(dev, kD3d9RsColorWriteEnable, saved_rs_color_write) ||
+      !set_render_state_locked(dev, kD3d9RsZEnable, saved_rs_z_enable) ||
+      !set_render_state_locked(dev, kD3d9RsZWriteEnable, saved_rs_z_write) ||
+      !set_render_state_locked(dev, kD3d9RsCullMode, saved_rs_cull)) {
     return E_OUTOFMEMORY;
   }
 
