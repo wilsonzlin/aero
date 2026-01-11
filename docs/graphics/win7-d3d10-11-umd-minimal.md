@@ -249,7 +249,7 @@ Resource update/copy (minimum)
 
 See also:
 
-* `docs/graphics/win7-d3d10-11-umd-allocations.md` — Win7 WDK 7.1 resource allocation (`CreateResource` → `pfnAllocateCb`) contract.
+* `docs/graphics/win7-d3d10-11-umd-allocations.md` — Win7/WDDM 1.1 resource allocation (`CreateResource` → `pfnAllocateCb`) contract.
 * `docs/graphics/win7-d3d11-map-unmap.md` — Win7 `Map`/`Unmap` semantics (`LockCb`/`UnlockCb`) for dynamic uploads + staging readback.
 
 Command submission
@@ -387,7 +387,7 @@ Resource updates
 
 See also:
 
-* `docs/graphics/win7-d3d10-11-umd-allocations.md` — Win7 WDK 7.1 resource allocation (`CreateResource` → `pfnAllocateCb`) contract.
+* `docs/graphics/win7-d3d10-11-umd-allocations.md` — Win7/WDDM 1.1 resource allocation (`CreateResource` → `pfnAllocateCb`) contract.
 * `docs/graphics/win7-d3d11-map-unmap.md` — Win7 `Map`/`Unmap` semantics (`LockCb`/`UnlockCb`) for dynamic uploads + staging readback.
 
 ---

@@ -72,7 +72,7 @@ At adapter `pfnCreateDevice(...)` time, the runtime passes a `*_ARG_CREATEDEVICE
   * the shared `d3dumddi.h` callback table:
     * `D3DDDI_DEVICECALLBACKS`
 
-**WDK 7.1 wiring (field names):**
+**Win7-era header wiring (field names):**
 
 * `pCallbacks` → `D3D10DDI_DEVICECALLBACKS` / `D3D11DDI_DEVICECALLBACKS`
 * `pUMCallbacks` → `D3DDDI_DEVICECALLBACKS`
