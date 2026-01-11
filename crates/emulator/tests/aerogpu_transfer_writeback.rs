@@ -7,7 +7,7 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
 };
 use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
 use aero_protocol::aerogpu::aerogpu_ring::AEROGPU_ALLOC_TABLE_MAGIC;
-use emulator::devices::aerogpu_regs::{irq_bits, mmio, ring_control};
+use emulator::devices::aerogpu_regs::{irq_bits, mmio, ring_control, FEATURE_TRANSFER};
 use emulator::devices::aerogpu_ring::{AEROGPU_RING_HEADER_SIZE_BYTES, AEROGPU_RING_MAGIC};
 use emulator::devices::pci::aerogpu::{AeroGpuDeviceConfig, AeroGpuPciDevice};
 use emulator::gpu_worker::aerogpu_backend::NativeAeroGpuBackend;
@@ -54,6 +54,20 @@ fn build_stream(packets: impl FnOnce(&mut Vec<u8>), abi_version: u32) -> Vec<u8>
     out
 }
 
+fn drive_until_fence(mem: &mut Bus, dev: &mut AeroGpuPciDevice, fence: u64) {
+    let start = Instant::now();
+    let mut now = start;
+    for _ in 0..200 {
+        if dev.regs.completed_fence >= fence {
+            break;
+        }
+        now += Duration::from_millis(1);
+        dev.tick(mem, now);
+    }
+    assert_eq!(dev.regs.completed_fence, fence);
+    assert_ne!(dev.regs.irq_status & irq_bits::FENCE, 0);
+}
+
 #[test]
 fn aerogpu_copy_texture2d_writeback_updates_guest_memory() {
     let mut mem = Bus::new(0x20_000);
@@ -69,6 +83,7 @@ fn aerogpu_copy_texture2d_writeback_updates_guest_memory() {
     dev.set_backend(Box::new(
         NativeAeroGpuBackend::new_headless().expect("native backend should initialize"),
     ));
+    assert_ne!(dev.regs.features & FEATURE_TRANSFER, 0);
 
     // Ring layout in guest memory.
     let ring_gpa = 0x1000u64;
@@ -228,18 +243,7 @@ fn aerogpu_copy_texture2d_writeback_updates_guest_memory() {
     dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
 
     // Drive polling until the fence completes.
-    let start = Instant::now();
-    let mut now = start;
-    for _ in 0..200 {
-        if dev.regs.completed_fence >= 1 {
-            break;
-        }
-        now += Duration::from_millis(1);
-        dev.tick(&mut mem, now);
-    }
-
-    assert_eq!(dev.regs.completed_fence, 1);
-    assert_ne!(dev.regs.irq_status & irq_bits::FENCE, 0);
+    drive_until_fence(&mut mem, &mut dev, 1);
 
     // Validate guest memory contains RGBA8 green pixels after COPY_TEXTURE2D writeback.
     let mut got = vec![0u8; dst_size as usize];
@@ -248,4 +252,154 @@ fn aerogpu_copy_texture2d_writeback_updates_guest_memory() {
     for px in got.chunks_exact(4) {
         assert_eq!(px, [0, 255, 0, 255]);
     }
+}
+
+#[test]
+fn aerogpu_copy_buffer_writeback_updates_guest_memory() {
+    let mut mem = Bus::new(0x20_000);
+
+    let mut cfg = AeroGpuDeviceConfig::default();
+    cfg.executor = AeroGpuExecutorConfig {
+        verbose: false,
+        keep_last_submissions: 0,
+        fence_completion: AeroGpuFenceCompletionMode::Deferred,
+    };
+
+    let mut dev = AeroGpuPciDevice::new(cfg, 0);
+    dev.set_backend(Box::new(
+        NativeAeroGpuBackend::new_headless().expect("native backend should initialize"),
+    ));
+    assert_ne!(dev.regs.features & FEATURE_TRANSFER, 0);
+
+    // Ring layout in guest memory.
+    let ring_gpa = 0x1000u64;
+    let ring_size = 0x1000u32;
+    let entry_count = 8u32;
+    let entry_stride = 64u32;
+
+    mem.write_u32(ring_gpa + 0, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa + 4, dev.regs.abi_version);
+    mem.write_u32(ring_gpa + 8, ring_size);
+    mem.write_u32(ring_gpa + 12, entry_count);
+    mem.write_u32(ring_gpa + 16, entry_stride);
+    mem.write_u32(ring_gpa + 20, 0);
+    mem.write_u32(ring_gpa + 24, 0); // head
+    mem.write_u32(ring_gpa + 28, 1); // tail
+
+    // Destination allocation (guest-visible memory) + alloc table.
+    let alloc_id = 1u32;
+    let dst_gpa = 0x9000u64;
+    let pattern: [u8; 16] = [
+        0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD,
+        0xEE, 0xFF,
+    ];
+
+    let alloc_table_gpa = 0x6000u64;
+    let alloc_table = {
+        let mut bytes = Vec::new();
+        // aerogpu_alloc_table_header (24 bytes)
+        push_u32(&mut bytes, AEROGPU_ALLOC_TABLE_MAGIC);
+        push_u32(&mut bytes, dev.regs.abi_version);
+        push_u32(&mut bytes, 24 + 32); // size_bytes
+        push_u32(&mut bytes, 1); // entry_count
+        push_u32(&mut bytes, 32); // entry_stride_bytes
+        push_u32(&mut bytes, 0); // reserved0
+
+        // aerogpu_alloc_entry (32 bytes)
+        push_u32(&mut bytes, alloc_id);
+        push_u32(&mut bytes, 0); // flags
+        push_u64(&mut bytes, dst_gpa);
+        push_u64(&mut bytes, pattern.len() as u64);
+        push_u64(&mut bytes, 0); // reserved0
+        bytes
+    };
+    mem.write_physical(alloc_table_gpa, &alloc_table);
+
+    // Command buffer:
+    // - create src buffer (host allocated)
+    // - upload a known byte pattern
+    // - create dst buffer backed by alloc_id
+    // - COPY_BUFFER with WRITEBACK_DST
+    let cmd_gpa = 0x4000u64;
+    let stream = build_stream(
+        |out| {
+            // CREATE_BUFFER src (40 bytes)
+            emit_packet(out, 0x100, |out| {
+                push_u32(out, 1); // buffer_handle
+                push_u32(out, 0); // usage_flags
+                push_u64(out, pattern.len() as u64); // size_bytes
+                push_u32(out, 0); // backing_alloc_id
+                push_u32(out, 0); // backing_offset_bytes
+                push_u64(out, 0); // reserved0
+            });
+
+            // UPLOAD_RESOURCE (32 + payload)
+            emit_packet(out, 0x104, |out| {
+                push_u32(out, 1); // resource_handle
+                push_u32(out, 0); // reserved0
+                push_u64(out, 0); // offset_bytes
+                push_u64(out, pattern.len() as u64); // size_bytes
+                out.extend_from_slice(&pattern);
+            });
+
+            // CREATE_BUFFER dst (40 bytes)
+            emit_packet(out, 0x100, |out| {
+                push_u32(out, 2); // buffer_handle
+                push_u32(out, 0); // usage_flags
+                push_u64(out, pattern.len() as u64); // size_bytes
+                push_u32(out, alloc_id); // backing_alloc_id
+                push_u32(out, 0); // backing_offset_bytes
+                push_u64(out, 0); // reserved0
+            });
+
+            // COPY_BUFFER (48 bytes)
+            emit_packet(out, 0x105, |out| {
+                push_u32(out, 2); // dst_buffer
+                push_u32(out, 1); // src_buffer
+                push_u64(out, 0); // dst_offset_bytes
+                push_u64(out, 0); // src_offset_bytes
+                push_u64(out, pattern.len() as u64); // size_bytes
+                push_u32(out, AEROGPU_COPY_FLAG_WRITEBACK_DST);
+                push_u32(out, 0); // reserved0
+            });
+        },
+        dev.regs.abi_version,
+    );
+    mem.write_physical(cmd_gpa, &stream);
+
+    // Submit descriptor at slot 0.
+    let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+    mem.write_u32(desc_gpa + 0, 64); // desc_size_bytes
+    mem.write_u32(desc_gpa + 4, 0); // flags
+    mem.write_u32(desc_gpa + 8, 0); // context_id
+    mem.write_u32(desc_gpa + 12, 0); // engine_id
+    mem.write_u64(desc_gpa + 16, cmd_gpa); // cmd_gpa
+    mem.write_u32(desc_gpa + 24, stream.len() as u32); // cmd_size_bytes
+    mem.write_u64(desc_gpa + 32, alloc_table_gpa); // alloc_table_gpa
+    mem.write_u32(desc_gpa + 40, alloc_table.len() as u32); // alloc_table_size_bytes
+    mem.write_u64(desc_gpa + 48, 1); // signal_fence
+
+    // Fence page.
+    let fence_gpa = 0x3000u64;
+    dev.mmio_write(&mut mem, mmio::FENCE_GPA_LO, 4, fence_gpa as u32);
+    dev.mmio_write(&mut mem, mmio::FENCE_GPA_HI, 4, (fence_gpa >> 32) as u32);
+
+    dev.mmio_write(&mut mem, mmio::RING_GPA_LO, 4, ring_gpa as u32);
+    dev.mmio_write(&mut mem, mmio::RING_GPA_HI, 4, (ring_gpa >> 32) as u32);
+    dev.mmio_write(&mut mem, mmio::RING_SIZE_BYTES, 4, ring_size);
+    dev.mmio_write(&mut mem, mmio::RING_CONTROL, 4, ring_control::ENABLE);
+
+    dev.mmio_write(
+        &mut mem,
+        mmio::IRQ_ENABLE,
+        4,
+        irq_bits::FENCE | irq_bits::ERROR,
+    );
+    dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
+
+    drive_until_fence(&mut mem, &mut dev, 1);
+
+    let mut got = vec![0u8; pattern.len()];
+    mem.read_physical(dst_gpa, &mut got);
+    assert_eq!(got, pattern);
 }

@@ -2668,6 +2668,10 @@ fn cmd_exec_d3d11_alpha_blend_matches_src_alpha_over() {
     push_u32(&mut stream, 0);
 
     // SET_BLEND_STATE: standard src_alpha/inv_src_alpha.
+    //
+    // The protocol's blend state carries a full D3D11-style payload (separate alpha factors,
+    // blend constant, sample mask). For this test we only care about RGB blending; keep the
+    // remaining fields at sensible defaults.
     push_u32(&mut stream, cmd::AerogpuCmdOpcode::SetBlendState as u32);
     push_u32(&mut stream, cmd::AerogpuCmdSetBlendState::SIZE_BYTES as u32);
     // BlendState { enable, src_factor, dst_factor, blend_op, ... }
