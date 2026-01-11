@@ -50,8 +50,9 @@ Expected behavior:
 
 ### 2) (Optional) Start the WebRTC relay (DataChannel transport)
 
-WebRTC is optional. Use it when you want to evaluate loss/latency behavior that differs from
-WebSocket (e.g. reduced head-of-line blocking).
+WebRTC is optional. Use it when you want a UDP-based tunnel transport for experimentation and
+evaluation under loss. With the current requirement for ordered delivery on the `l2` DataChannel, it
+preserves the same in-order semantics as the baseline WebSocket transport.
 
 If you carry the **L2 tunnel** over WebRTC, the DataChannel must be configured as:
 
