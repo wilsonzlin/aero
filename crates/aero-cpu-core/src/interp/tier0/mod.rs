@@ -20,8 +20,8 @@ use crate::cpuid::CpuFeatureSet;
 use crate::exception::{AssistReason, Exception};
 use crate::fpu::FpKind;
 use crate::linear_mem::{
-    contiguous_masked_start, read_u16_wrapped, read_u32_wrapped, read_u64_wrapped, write_u16_wrapped,
-    write_u32_wrapped, write_u64_wrapped,
+    contiguous_masked_start, read_u16_wrapped, read_u32_wrapped, read_u64_wrapped,
+    write_u16_wrapped, write_u32_wrapped, write_u64_wrapped,
 };
 use crate::mem::CpuBus;
 use crate::state::{CpuState, CR0_EM, CR0_MP, CR0_NE, CR0_TS, CR4_OSFXSR};

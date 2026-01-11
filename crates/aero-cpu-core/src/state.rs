@@ -20,8 +20,7 @@ use crate::{
     linear_mem::{read_bytes_wrapped, read_u32_wrapped, write_bytes_wrapped, write_u32_wrapped},
     mem::CpuBus,
     sse_state::SseState,
-    FxStateError,
-    FXSAVE_AREA_SIZE,
+    FxStateError, FXSAVE_AREA_SIZE,
 };
 
 /// Number of general purpose registers in [`CpuState::gpr`].
