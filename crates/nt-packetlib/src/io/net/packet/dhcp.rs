@@ -65,6 +65,10 @@ pub struct DhcpMessage {
     pub transaction_id: u32,
     pub flags: u16,
     pub client_mac: MacAddr,
+    /// BOOTP `yiaddr` ("your IP address") field from the fixed header.
+    ///
+    /// This is typically non-zero in OFFER/ACK replies and is 0.0.0.0 in client requests.
+    pub your_ip: Ipv4Addr,
     pub message_type: DhcpMessageType,
     pub requested_ip: Option<Ipv4Addr>,
     pub server_identifier: Option<Ipv4Addr>,
@@ -89,6 +93,7 @@ impl DhcpMessage {
 
         let transaction_id = u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]);
         let flags = u16::from_be_bytes([buf[10], buf[11]]);
+        let your_ip = Ipv4Addr::new(buf[16], buf[17], buf[18], buf[19]);
 
         let mut mac = [0u8; 6];
         mac.copy_from_slice(&buf[28..34]);
@@ -141,6 +146,7 @@ impl DhcpMessage {
             transaction_id,
             flags,
             client_mac,
+            your_ip,
             message_type: message_type
                 .ok_or(PacketError::Malformed("missing DHCP message type option"))?,
             requested_ip,
@@ -397,6 +403,7 @@ mod tests {
         assert_eq!(msg.transaction_id, xid);
         assert_eq!(msg.flags, 0x8000);
         assert_eq!(msg.client_mac, mac);
+        assert_eq!(msg.your_ip, Ipv4Addr::UNSPECIFIED);
         assert_eq!(msg.message_type, DhcpMessageType::Discover);
     }
 
@@ -422,5 +429,6 @@ mod tests {
         assert_eq!(msg.transaction_id, 0x12345678);
         assert_eq!(msg.message_type, DhcpMessageType::Offer);
         assert_eq!(msg.client_mac, MacAddr([0, 1, 2, 3, 4, 5]));
+        assert_eq!(msg.your_ip, Ipv4Addr::new(10, 0, 0, 100));
     }
 }

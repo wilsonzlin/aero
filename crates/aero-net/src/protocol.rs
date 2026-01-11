@@ -284,7 +284,6 @@ pub struct DhcpParsed {
 
 pub fn parse_dhcp(payload: &[u8]) -> Option<DhcpParsed> {
     let msg = nt_dhcp::DhcpMessage::parse(payload).ok()?;
-    let yiaddr = Ipv4Addr::new(payload[16], payload[17], payload[18], payload[19]);
     let message_type = match msg.message_type {
         nt_dhcp::DhcpMessageType::Discover => DhcpMessageType::Discover,
         nt_dhcp::DhcpMessageType::Offer => DhcpMessageType::Offer,
@@ -295,7 +294,7 @@ pub fn parse_dhcp(payload: &[u8]) -> Option<DhcpParsed> {
     Some(DhcpParsed {
         xid: msg.transaction_id,
         chaddr: from_nt_mac(msg.client_mac),
-        yiaddr,
+        yiaddr: msg.your_ip,
         message_type,
         requested_ip: msg.requested_ip,
         server_id: msg.server_identifier,
