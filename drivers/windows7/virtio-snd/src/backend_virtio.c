@@ -27,6 +27,7 @@ VirtIoSndBackendVirtio_SetParams(_In_ PVOID Context, _In_ ULONG BufferBytes, _In
     NTSTATUS status;
     ULONG txBuffers;
     USHORT qsz;
+    VIRTIOSND_STREAM_STATE streamState;
 
     if (KeGetCurrentIrql() != PASSIVE_LEVEL) {
         return STATUS_INVALID_DEVICE_STATE;
@@ -51,8 +52,25 @@ VirtIoSndBackendVirtio_SetParams(_In_ PVOID Context, _In_ ULONG BufferBytes, _In
      */
     BufferBytes &= ~(VIRTIOSND_BLOCK_ALIGN - 1u);
     PeriodBytes &= ~(VIRTIOSND_BLOCK_ALIGN - 1u);
-    if (BufferBytes == 0 || PeriodBytes == 0) {
+    if (BufferBytes == 0 || PeriodBytes == 0 || PeriodBytes > BufferBytes) {
         return STATUS_INVALID_PARAMETER;
+    }
+    if ((BufferBytes % PeriodBytes) != 0) {
+        return STATUS_INVALID_BUFFER_SIZE;
+    }
+
+    /*
+     * SET_PARAMS is only valid when the PCM stream is Idle/ParamsSet. WaveRT can
+     * reallocate buffers while paused, so ensure the virtio-snd PCM state machine
+     * is back in Idle first.
+     */
+    streamState = dx->Control.StreamState[VIRTIO_SND_PLAYBACK_STREAM_ID];
+    if (streamState == VirtioSndStreamStateRunning) {
+        (VOID)VirtioSndCtrlStop(&dx->Control);
+        streamState = dx->Control.StreamState[VIRTIO_SND_PLAYBACK_STREAM_ID];
+    }
+    if (streamState != VirtioSndStreamStateIdle && streamState != VirtioSndStreamStateParamsSet) {
+        (VOID)VirtioSndCtrlRelease(&dx->Control);
     }
 
     status = VirtioSndCtrlSetParams(&dx->Control, BufferBytes, PeriodBytes);
@@ -185,7 +203,6 @@ VirtIoSndBackendVirtio_Release(_In_ PVOID Context)
          * Tear down the local tx engine best-effort so buffers are not leaked.
          */
         VirtIoSndUninitTxEngine(ctx->Dx);
-        VirtioSndTxUninit(&ctx->Dx->Tx);
 
         ctx->BufferBytes = 0;
         ctx->PeriodBytes = 0;

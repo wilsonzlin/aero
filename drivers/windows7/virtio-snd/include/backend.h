@@ -5,7 +5,6 @@
 #include <ntddk.h>
 
 typedef struct _VIRTIOSND_BACKEND VIRTIOSND_BACKEND, *PVIRTIOSND_BACKEND;
-typedef struct _VIRTIOSND_DEVICE_EXTENSION VIRTIOSND_DEVICE_EXTENSION, *PVIRTIOSND_DEVICE_EXTENSION;
 
 typedef struct _VIRTIOSND_BACKEND_OPS {
     NTSTATUS (*SetParams)(_In_ PVOID Context, _In_ ULONG BufferBytes, _In_ ULONG PeriodBytes);
@@ -113,5 +112,5 @@ VirtIoSndBackendNull_Create(_Outptr_result_maybenull_ PVIRTIOSND_BACKEND *OutBac
 
 NTSTATUS
 VirtIoSndBackendVirtio_Create(
-    _In_ PVIRTIOSND_DEVICE_EXTENSION Dx,
+    _In_ struct _VIRTIOSND_DEVICE_EXTENSION *Dx,
     _Outptr_result_maybenull_ PVIRTIOSND_BACKEND *OutBackend);
