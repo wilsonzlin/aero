@@ -91,3 +91,194 @@ where
         }
     }
 }
+
+// ---- Tier-0 glue ------------------------------------------------------------
+
+/// A simple vCPU wrapper that bundles the Tier-0/JIT [`crate::state::CpuState`],
+/// interrupt bookkeeping (`interrupts::CpuCore`), and a memory bus implementation.
+///
+/// This provides an [`ExecCpu`] implementation suitable for driving the tiered
+/// dispatcher (`ExecDispatcher`): [`ExecCpu::maybe_deliver_interrupt`] uses the
+/// architectural interrupt delivery logic in [`crate::interrupts`].
+#[derive(Debug)]
+pub struct Vcpu<B: crate::mem::CpuBus> {
+    pub cpu: crate::interrupts::CpuCore,
+    pub bus: B,
+    /// Sticky CPU exit status (e.g. triple fault) observed during event delivery.
+    pub exit: Option<crate::interrupts::CpuExit>,
+}
+
+impl<B: crate::mem::CpuBus> Vcpu<B> {
+    pub fn new(cpu: crate::interrupts::CpuCore, bus: B) -> Self {
+        Self {
+            cpu,
+            bus,
+            exit: None,
+        }
+    }
+
+    pub fn new_with_mode(mode: crate::state::CpuMode, bus: B) -> Self {
+        Self::new(crate::interrupts::CpuCore::new(mode), bus)
+    }
+}
+
+impl<B: crate::mem::CpuBus> ExecCpu for Vcpu<B> {
+    fn rip(&self) -> u64 {
+        self.cpu.state.rip()
+    }
+
+    fn set_rip(&mut self, rip: u64) {
+        self.cpu.state.set_rip(rip);
+    }
+
+    fn maybe_deliver_interrupt(&mut self) -> bool {
+        if self.exit.is_some() {
+            return false;
+        }
+
+        if self.cpu.pending.has_pending_event() {
+            match self.cpu.deliver_pending_event(&mut self.bus) {
+                Ok(()) => return true,
+                Err(e) => {
+                    self.exit = Some(e);
+                    return true;
+                }
+            }
+        }
+
+        if !self.cpu.pending.external_interrupts.is_empty() {
+            let before = self.cpu.pending.external_interrupts.len();
+            match self.cpu.deliver_external_interrupt(&mut self.bus) {
+                Ok(()) => {
+                    if self.cpu.pending.external_interrupts.len() != before {
+                        return true;
+                    }
+                }
+                Err(e) => {
+                    self.exit = Some(e);
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+}
+
+/// Minimal [`Interpreter`] implementation that executes Tier-0 (`interp::tier0`)
+/// instructions.
+///
+/// This is intended for unit tests / integration glue. It only handles interrupt
+/// and interrupt-flag assists (`INT*`, `IRET*`, `CLI`, `STI`, `INTO`), delegating
+/// all other assists to the caller.
+#[derive(Debug, Default)]
+pub struct Tier0Interpreter {
+    /// Maximum Tier-0 instructions executed in one `exec_block` call.
+    pub max_insts: u64,
+}
+
+impl Tier0Interpreter {
+    pub fn new(max_insts: u64) -> Self {
+        Self { max_insts }
+    }
+}
+
+impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
+    fn exec_block(&mut self, cpu: &mut Vcpu<B>) -> u64 {
+        use aero_x86::{Mnemonic, Register};
+
+        use crate::exception::AssistReason;
+        use crate::interp::tier0::exec::StepExit;
+
+        let max = self.max_insts.max(1);
+        let mut executed = 0u64;
+        while executed < max {
+            // Interrupts are delivered at instruction boundaries.
+            if cpu.maybe_deliver_interrupt() {
+                continue;
+            }
+            if cpu.cpu.state.halted {
+                break;
+            }
+
+            let step = crate::interp::tier0::exec::step(&mut cpu.cpu.state, &mut cpu.bus)
+                .expect("tier0 step failed");
+            match step {
+                StepExit::Continue => {
+                    cpu.cpu.pending.retire_instruction();
+                    executed += 1;
+                    continue;
+                }
+                StepExit::Branch => {
+                    cpu.cpu.pending.retire_instruction();
+                    break;
+                }
+                StepExit::Halted => {
+                    cpu.cpu.pending.retire_instruction();
+                    break;
+                }
+                StepExit::Assist(AssistReason::Interrupt) => {
+                    // Decode the instruction again to execute the interrupt/flag semantics.
+                    let ip = cpu.cpu.state.rip();
+                    let fetch_addr = cpu.cpu.state.seg_base_reg(Register::CS).wrapping_add(ip);
+                    let bytes = cpu.bus.fetch(fetch_addr, 15).expect("fetch");
+                    let decoded =
+                        aero_x86::decode(&bytes, ip, cpu.cpu.state.bitness()).expect("decode interrupt assist");
+                    let next_ip = ip.wrapping_add(decoded.len as u64) & cpu.cpu.state.mode.ip_mask();
+
+                    match decoded.instr.mnemonic() {
+                        Mnemonic::Cli => {
+                            cpu.cpu.pending.retire_instruction();
+                            cpu.cpu.state.set_flag(crate::state::RFLAGS_IF, false);
+                            cpu.cpu.state.set_rip(next_ip);
+                        }
+                        Mnemonic::Sti => {
+                            cpu.cpu.pending.retire_instruction();
+                            cpu.cpu.state.set_flag(crate::state::RFLAGS_IF, true);
+                            cpu.cpu.pending.inhibit_interrupts_for_one_instruction();
+                            cpu.cpu.state.set_rip(next_ip);
+                        }
+                        Mnemonic::Int => {
+                            let vector = decoded.instr.immediate8() as u8;
+                            cpu.cpu.pending.raise_software_interrupt(vector, next_ip);
+                            cpu.cpu
+                                .deliver_pending_event(&mut cpu.bus)
+                                .expect("deliver software INT");
+                            cpu.cpu.pending.retire_instruction();
+                        }
+                        Mnemonic::Int3 => {
+                            cpu.cpu.pending.raise_software_interrupt(3, next_ip);
+                            cpu.cpu.deliver_pending_event(&mut cpu.bus).expect("deliver INT3");
+                            cpu.cpu.pending.retire_instruction();
+                        }
+                        Mnemonic::Int1 => {
+                            cpu.cpu.pending.raise_software_interrupt(1, next_ip);
+                            cpu.cpu.deliver_pending_event(&mut cpu.bus).expect("deliver INT1");
+                            cpu.cpu.pending.retire_instruction();
+                        }
+                        Mnemonic::Into => {
+                            if cpu.cpu.state.get_flag(crate::state::RFLAGS_OF) {
+                                cpu.cpu.pending.raise_software_interrupt(4, next_ip);
+                                cpu.cpu.deliver_pending_event(&mut cpu.bus).expect("deliver INTO");
+                            } else {
+                                cpu.cpu.state.set_rip(next_ip);
+                            }
+                            cpu.cpu.pending.retire_instruction();
+                        }
+                        Mnemonic::Iret | Mnemonic::Iretd | Mnemonic::Iretq => {
+                            cpu.cpu.iret(&mut cpu.bus).expect("iret");
+                            cpu.cpu.pending.retire_instruction();
+                        }
+                        other => panic!("unsupported interrupt assist mnemonic: {other:?}"),
+                    }
+
+                    // Preserve basic-block behavior: treat this instruction as a block boundary.
+                    break;
+                }
+                StepExit::Assist(other) => panic!("unexpected tier0 assist: {other:?}"),
+            }
+        }
+
+        cpu.cpu.state.rip()
+    }
+}

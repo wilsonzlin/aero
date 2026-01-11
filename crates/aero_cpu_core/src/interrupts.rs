@@ -172,6 +172,14 @@ impl PendingEventState {
             self.interrupt_inhibit -= 1;
         }
     }
+
+    /// Whether there is a pending exception/interrupt waiting to be delivered.
+    ///
+    /// This is primarily used by execution glue (`exec::Vcpu`) to decide whether
+    /// calling [`deliver_pending_event`] will actually deliver anything.
+    pub fn has_pending_event(&self) -> bool {
+        self.pending_event.is_some()
+    }
 }
 
 /// Convenience wrapper that owns both the JIT ABI state and the non-ABI

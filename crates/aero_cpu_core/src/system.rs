@@ -4,7 +4,7 @@
 //! that Windows 7 expects early during boot and during kernel runtime.
 
 use crate::cpuid::{cpuid, CpuFeatures, CpuidResult};
-use crate::exceptions::{Exception as ArchException, PendingEvent};
+use crate::exceptions::{Exception as ArchException, InterruptSource, PendingEvent};
 use crate::fpu::FpKind;
 use crate::msr::EFER_SCE;
 use crate::time::TimeSource;
@@ -243,6 +243,99 @@ impl Cpu {
     /// after each successfully executed instruction to age this counter.
     pub fn inhibit_interrupts_for_one_instruction(&mut self) {
         self.interrupt_inhibit = 1;
+    }
+
+    /// Queue a software interrupt (`INT n`/`INT3`/`INT1`/`INTO`) for delivery at
+    /// the next instruction boundary.
+    ///
+    /// This mirrors the Tier-0 interrupt delivery model where instruction
+    /// decoding raises a pending event and the dispatcher delivers it before the
+    /// next instruction executes.
+    pub fn raise_software_interrupt(&mut self, vector: u8, return_rip: u64) {
+        self.pending_event = Some(PendingEvent::Interrupt {
+            vector,
+            saved_rip: return_rip,
+            source: InterruptSource::Software,
+        });
+    }
+
+    /// Deliver any queued exception/interrupt event.
+    ///
+    /// The [`Cpu`] model is used primarily by unit-test harnesses that run
+    /// real-mode code, so this currently implements only real-mode IVT delivery.
+    pub fn deliver_pending_event<B: crate::Bus>(&mut self, bus: &mut B) -> Result<(), Exception> {
+        let Some(event) = self.pending_event.take() else {
+            return Ok(());
+        };
+
+        match event {
+            PendingEvent::Interrupt {
+                vector,
+                saved_rip,
+                source: _,
+            } => {
+                if self.mode != CpuMode::Real {
+                    return Err(Exception::Unimplemented(
+                        "system::Cpu interrupt delivery outside real mode",
+                    ));
+                }
+
+                fn push_u16<B: crate::Bus>(cpu: &mut Cpu, bus: &mut B, val: u16) {
+                    let sp = (cpu.rsp as u16).wrapping_sub(2);
+                    cpu.rsp = (cpu.rsp & !0xFFFF) | sp as u64;
+                    let addr = ((cpu.ss as u64) << 4).wrapping_add(sp as u64);
+                    bus.write_u16(addr, val);
+                }
+
+                let flags = self.rflags as u16;
+                let cs = self.cs;
+                let ip = (saved_rip & 0xFFFF) as u16;
+
+                push_u16(self, bus, flags);
+                push_u16(self, bus, cs);
+                push_u16(self, bus, ip);
+
+                // Clear IF + TF (interrupt gate behavior).
+                self.set_rflags(self.rflags & !(Self::RFLAGS_IF | (1 << 8)));
+
+                let ivt = (vector as u64) * 4;
+                let new_ip = bus.read_u16(ivt) as u64;
+                let new_cs = bus.read_u16(ivt + 2);
+
+                self.cs = new_cs;
+                self.rip = new_ip;
+                Ok(())
+            }
+            _ => Err(Exception::Unimplemented("system::Cpu pending event delivery")),
+        }
+    }
+
+    /// Execute an `IRET` return from an interrupt handler.
+    pub fn iret<B: crate::Bus>(&mut self, bus: &mut B) -> Result<(), Exception> {
+        if self.mode != CpuMode::Real {
+            return Err(Exception::Unimplemented("system::Cpu IRET outside real mode"));
+        }
+
+        fn pop_u16<B: crate::Bus>(cpu: &mut Cpu, bus: &mut B) -> u16 {
+            let sp = cpu.rsp as u16;
+            let addr = ((cpu.ss as u64) << 4).wrapping_add(sp as u64);
+            let val = bus.read_u16(addr);
+            let new_sp = sp.wrapping_add(2);
+            cpu.rsp = (cpu.rsp & !0xFFFF) | new_sp as u64;
+            val
+        }
+
+        let ip = pop_u16(self, bus);
+        let cs = pop_u16(self, bus);
+        let flags = pop_u16(self, bus);
+
+        self.cs = cs;
+        self.rip = ip as u64;
+
+        // IRET restores FLAGS (16-bit in real mode), preserving upper bits.
+        let new_flags = (self.rflags & !0xFFFF) | (flags as u64);
+        self.set_rflags(new_flags);
+        Ok(())
     }
 
     /// Current privilege level (CPL), derived from CS.RPL.
