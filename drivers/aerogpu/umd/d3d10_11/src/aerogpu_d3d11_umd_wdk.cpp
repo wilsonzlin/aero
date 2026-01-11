@@ -2374,6 +2374,9 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
     }
 
     D3DDDICB_DEALLOCATE dealloc = {};
+    __if_exists(D3DDDICB_DEALLOCATE::hContext) {
+      dealloc.hContext = static_cast<D3DKMT_HANDLE>(dev->kmt_context);
+    }
     __if_exists(D3DDDICB_DEALLOCATE::hKMResource) {
       dealloc.hKMResource = static_cast<D3DKMT_HANDLE>(res->wddm.km_resource_handle);
     }
@@ -2465,6 +2468,9 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
     alloc_info[0].PrivateDriverDataSize = sizeof(priv);
 
     D3DDDICB_ALLOCATE alloc = {};
+    __if_exists(D3DDDICB_ALLOCATE::hContext) {
+      alloc.hContext = static_cast<D3DKMT_HANDLE>(dev->kmt_context);
+    }
     alloc.hResource = hRTResource;
     alloc.NumAllocations = 1;
     alloc.pAllocationInfo = alloc_info;
@@ -2504,6 +2510,9 @@ HRESULT AEROGPU_APIENTRY CreateResource11(D3D11DDI_HDEVICE hDevice,
     if (!km_resource || !km_alloc) {
       D3DDDICB_DEALLOCATE dealloc = {};
       D3DKMT_HANDLE h = static_cast<D3DKMT_HANDLE>(km_alloc);
+      __if_exists(D3DDDICB_DEALLOCATE::hContext) {
+        dealloc.hContext = static_cast<D3DKMT_HANDLE>(dev->kmt_context);
+      }
       __if_exists(D3DDDICB_DEALLOCATE::hKMResource) {
         dealloc.hKMResource = static_cast<D3DKMT_HANDLE>(km_resource);
       }
@@ -2772,6 +2781,9 @@ void AEROGPU_APIENTRY DestroyResource11(D3D11DDI_HDEVICE hDevice, D3D11DDI_HRESO
     }
 
     D3DDDICB_DEALLOCATE dealloc = {};
+    __if_exists(D3DDDICB_DEALLOCATE::hContext) {
+      dealloc.hContext = static_cast<D3DKMT_HANDLE>(dev->kmt_context);
+    }
     __if_exists(D3DDDICB_DEALLOCATE::hKMResource) {
       dealloc.hKMResource = static_cast<D3DKMT_HANDLE>(res->wddm.km_resource_handle);
     }
