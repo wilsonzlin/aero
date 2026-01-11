@@ -23,9 +23,10 @@ virtio driver health via **COM1 serial** (host-captured), stdout, and a log file
     - at least one HID keyboard application collection exists
     - at least one HID mouse application collection exists
 - **virtio-snd**
-  - Enumerate audio render endpoints via MMDevice API.
-  - Find the virtio-snd endpoint and start a shared-mode WASAPI render stream.
-  - Render a short deterministic tone (440Hz).
+  - Detect the virtio-snd PCI function via SetupAPI hardware IDs (`PCI\VEN_1AF4&DEV_1059`).
+  - Enumerate audio render endpoints via MMDevice API and start a shared-mode WASAPI render stream.
+  - Render a short deterministic tone (440Hz) at 48kHz/16-bit/stereo.
+  - If the device is missing, the test is reported as **SKIP** by default; use `--require-snd` to make it **FAIL**.
 
 Note: For deterministic DNS testing under QEMU slirp, the default `--dns-host` is `host.lan`
 (with fallbacks like `gateway.lan` / `dns.lan`).
@@ -44,7 +45,8 @@ AERO_VIRTIO_SELFTEST|RESULT|PASS
 ```
 
 Notes:
-- If the virtio-snd test is disabled via `--disable-snd`, the tool will emit `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP`.
+- If virtio-snd is missing, the tool emits `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP` (unless `--require-snd` is set).
+- If the virtio-snd test is disabled via `--disable-snd`, the tool also emits `AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP`.
 
 ## Building
 

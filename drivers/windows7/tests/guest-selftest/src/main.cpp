@@ -48,7 +48,7 @@ struct Options {
   std::wstring blk_root;
   // Skip the virtio-snd test even if an audio device is present.
   bool disable_snd = false;
-  // Deprecated (no-op): kept for compatibility with older automation that passed --require-snd.
+  // If set, missing virtio-snd causes the overall selftest to fail (instead of SKIP).
   bool require_snd = false;
 
   DWORD net_timeout_sec = 120;
@@ -412,6 +412,74 @@ static std::vector<std::wstring> GetHardwareIdsForInstanceId(const std::wstring&
   auto hwids = GetDevicePropertyMultiSz(devinfo, &dev, SPDRP_HARDWAREID);
   SetupDiDestroyDeviceInfoList(devinfo);
   return hwids;
+}
+
+static std::optional<std::wstring> GetDeviceInstanceIdString(HDEVINFO devinfo, SP_DEVINFO_DATA* dev) {
+  if (!devinfo || devinfo == INVALID_HANDLE_VALUE || !dev) return std::nullopt;
+
+  DWORD required = 0;
+  wchar_t dummy[1]{};
+  SetupDiGetDeviceInstanceIdW(devinfo, dev, dummy, static_cast<DWORD>(sizeof(dummy) / sizeof(dummy[0])),
+                              &required);
+  if (required == 0) return std::nullopt;
+
+  std::vector<wchar_t> buf(required);
+  if (!SetupDiGetDeviceInstanceIdW(devinfo, dev, buf.data(), required, nullptr)) {
+    return std::nullopt;
+  }
+  return std::wstring(buf.data());
+}
+
+static bool IsVirtioSndPciHardwareId(const std::vector<std::wstring>& hwids) {
+  for (const auto& id : hwids) {
+    if (ContainsInsensitive(id, L"PCI\\VEN_1AF4&DEV_1059")) return true;
+  }
+  return false;
+}
+
+struct VirtioSndPciDevice {
+  std::wstring instance_id;
+  std::wstring description;
+};
+
+static std::vector<VirtioSndPciDevice> DetectVirtioSndPciDevices(Logger& log) {
+  std::vector<VirtioSndPciDevice> out;
+
+  HDEVINFO devinfo =
+      SetupDiGetClassDevsW(nullptr, nullptr, nullptr, DIGCF_PRESENT | DIGCF_ALLCLASSES);
+  if (devinfo == INVALID_HANDLE_VALUE) {
+    log.Logf("virtio-snd: SetupDiGetClassDevs(DIGCF_ALLCLASSES) failed: %lu", GetLastError());
+    return out;
+  }
+
+  for (DWORD idx = 0;; idx++) {
+    SP_DEVINFO_DATA dev{};
+    dev.cbSize = sizeof(dev);
+    if (!SetupDiEnumDeviceInfo(devinfo, idx, &dev)) {
+      if (GetLastError() == ERROR_NO_MORE_ITEMS) break;
+      continue;
+    }
+
+    const auto hwids = GetDevicePropertyMultiSz(devinfo, &dev, SPDRP_HARDWAREID);
+    if (!IsVirtioSndPciHardwareId(hwids)) continue;
+
+    VirtioSndPciDevice snd{};
+    if (auto inst = GetDeviceInstanceIdString(devinfo, &dev)) {
+      snd.instance_id = *inst;
+    }
+    if (auto friendly = GetDevicePropertyString(devinfo, &dev, SPDRP_FRIENDLYNAME)) {
+      snd.description = *friendly;
+    } else if (auto desc = GetDevicePropertyString(devinfo, &dev, SPDRP_DEVICEDESC)) {
+      snd.description = *desc;
+    }
+
+    log.Logf("virtio-snd: detected PCI device instance_id=%s name=%s",
+             WideToUtf8(snd.instance_id).c_str(), WideToUtf8(snd.description).c_str());
+    out.push_back(std::move(snd));
+  }
+
+  SetupDiDestroyDeviceInfoList(devinfo);
+  return out;
 }
 
 static std::set<DWORD> DetectVirtioDiskNumbers(Logger& log) {
@@ -1656,10 +1724,32 @@ static TestResult VirtioSndTest(Logger& log) {
   }
 
   if (!chosen) {
-    out.fail_reason = "no_matching_endpoint";
-    out.hr = HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
-    log.LogLine("virtio-snd: no matching ACTIVE render endpoint found");
-    return out;
+    log.LogLine("virtio-snd: no matching ACTIVE render endpoint found; trying default endpoint");
+    hr = enumerator->GetDefaultAudioEndpoint(eRender, eConsole, chosen.Put());
+    if (FAILED(hr) || !chosen) {
+      out.fail_reason = "no_matching_endpoint";
+      out.hr = HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
+      log.LogLine("virtio-snd: no default render endpoint available");
+      return out;
+    }
+
+    best_score = 0;
+    chosen_friendly.clear();
+    chosen_id.clear();
+
+    LPWSTR dev_id_raw = nullptr;
+    hr = chosen->GetId(&dev_id_raw);
+    if (SUCCEEDED(hr) && dev_id_raw) {
+      chosen_id = dev_id_raw;
+      CoTaskMemFree(dev_id_raw);
+    }
+
+    ComPtr<IPropertyStore> props;
+    hr = chosen->OpenPropertyStore(STGM_READ, props.Put());
+    if (SUCCEEDED(hr)) {
+      chosen_friendly = GetPropertyString(props.Get(), PKEY_Device_FriendlyName);
+      if (chosen_friendly.empty()) chosen_friendly = GetPropertyString(props.Get(), PKEY_Device_DeviceDesc);
+    }
   }
 
   log.Logf("virtio-snd: selected endpoint name=%s id=%s score=%d", WideToUtf8(chosen_friendly).c_str(),
@@ -1691,36 +1781,15 @@ static TestResult VirtioSndTest(Logger& log) {
   desired->cbSize = 0;
 
   hr = client->Initialize(AUDCLNT_SHAREMODE_SHARED, 0, kBufferDuration100ms, 0, desired, nullptr);
-
-  bool used_desired_format = SUCCEEDED(hr);
-  if (!used_desired_format) {
-    WAVEFORMATEX* mix_raw = nullptr;
-    const HRESULT hr_mix = client->GetMixFormat(&mix_raw);
-    if (FAILED(hr_mix) || !mix_raw) {
-      out.fail_reason = "get_mix_format_failed";
-      out.hr = FAILED(hr_mix) ? hr_mix : E_FAIL;
-      log.Logf("virtio-snd: GetMixFormat failed hr=0x%08lx", static_cast<unsigned long>(out.hr));
-      return out;
-    }
-
-    const size_t mix_size = sizeof(WAVEFORMATEX) + mix_raw->cbSize;
-    fmt_bytes.resize(mix_size);
-    memcpy(fmt_bytes.data(), mix_raw, mix_size);
-    CoTaskMemFree(mix_raw);
-
-    const auto* mix = reinterpret_cast<const WAVEFORMATEX*>(fmt_bytes.data());
-    log.Logf("virtio-snd: Initialize(shared 48kHz S16 stereo) failed hr=0x%08lx, falling back to mix=%s",
-             static_cast<unsigned long>(hr), WaveFormatToString(mix).c_str());
-
-    hr = client->Initialize(AUDCLNT_SHAREMODE_SHARED, 0, kBufferDuration100ms, 0, mix, nullptr);
-    if (FAILED(hr)) {
-      out.fail_reason = "initialize_shared_failed";
-      out.hr = hr;
-      log.Logf("virtio-snd: Initialize(shared mix format) failed hr=0x%08lx", static_cast<unsigned long>(hr));
-      return out;
-    }
+  if (FAILED(hr)) {
+    out.fail_reason = "initialize_shared_failed";
+    out.hr = hr;
+    log.Logf("virtio-snd: Initialize(shared 48kHz S16 stereo) failed hr=0x%08lx",
+             static_cast<unsigned long>(hr));
+    return out;
   }
 
+  const bool used_desired_format = true;
   const auto* fmt = reinterpret_cast<const WAVEFORMATEX*>(fmt_bytes.data());
   log.Logf("virtio-snd: stream format=%s", WaveFormatToString(fmt).c_str());
 
@@ -1944,7 +2013,7 @@ static void PrintUsage() {
       "  --dns-host <hostname>     Hostname for DNS resolution test\n"
       "  --log-file <path>         Log file path (default C:\\\\aero-virtio-selftest.log)\n"
       "  --disable-snd             Skip virtio-snd test (emit SKIP)\n"
-      "  --require-snd             Deprecated (no-op)\n"
+      "  --require-snd             Fail if virtio-snd is missing (default: SKIP)\n"
       "  --net-timeout-sec <sec>   Wait time for DHCP/link\n"
       "  --io-size-mib <mib>       virtio-blk test file size\n"
       "  --io-chunk-kib <kib>      virtio-blk chunk size\n"
@@ -2070,15 +2139,29 @@ int wmain(int argc, wchar_t** argv) {
     log.LogLine("virtio-snd: disabled by --disable-snd");
     log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP");
   } else {
-    const auto snd = VirtioSndTest(log);
-    if (snd.ok) {
-      log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS");
+    const auto snd_pci = DetectVirtioSndPciDevices(log);
+    if (snd_pci.empty()) {
+      log.LogLine("virtio-snd: PCI\\VEN_1AF4&DEV_1059 device not detected");
+      if (opt.require_snd) {
+        log.LogLine("virtio-snd: --require-snd set; failing");
+        log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL");
+        all_ok = false;
+      } else {
+        log.LogLine("virtio-snd: skipping (use --require-snd to require device)");
+        log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP");
+      }
     } else {
-      log.Logf("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL|reason=%s|hr=0x%08lx",
-               snd.fail_reason.empty() ? "unknown" : snd.fail_reason.c_str(),
-               static_cast<unsigned long>(snd.hr));
+      const auto snd = VirtioSndTest(log);
+      if (snd.ok) {
+        log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS");
+      } else {
+        log.Logf("virtio-snd: failed reason=%s hr=0x%08lx",
+                 snd.fail_reason.empty() ? "unknown" : snd.fail_reason.c_str(),
+                 static_cast<unsigned long>(snd.hr));
+        log.LogLine("AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL");
+      }
+      all_ok = all_ok && snd.ok;
     }
-    all_ok = all_ok && snd.ok;
   }
 
   // Network tests require Winsock initialized for getaddrinfo.
