@@ -2,8 +2,14 @@
 
 use std::time::{Duration, Instant};
 
-use aero_protocol::aerogpu::aerogpu_cmd::{AEROGPU_CLEAR_COLOR, AEROGPU_CMD_STREAM_MAGIC};
+use aero_protocol::aerogpu::aerogpu_cmd::{
+    AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdStreamHeader as ProtocolCmdStreamHeader,
+    AEROGPU_CLEAR_COLOR, AEROGPU_CMD_STREAM_MAGIC,
+};
 use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
+use aero_protocol::aerogpu::aerogpu_ring::{
+    AerogpuRingHeader as ProtocolRingHeader, AerogpuSubmitDesc as ProtocolSubmitDesc,
+};
 use emulator::devices::aerogpu_regs::{irq_bits, mmio, ring_control};
 use emulator::devices::aerogpu_ring::{
     AeroGpuSubmitDesc, AEROGPU_RING_HEADER_SIZE_BYTES, AEROGPU_RING_MAGIC, RING_HEAD_OFFSET,
@@ -15,6 +21,35 @@ use emulator::gpu_worker::aerogpu_executor::{AeroGpuExecutorConfig, AeroGpuFence
 use emulator::io::pci::MmioDevice;
 use memory::Bus;
 use memory::MemoryBus;
+
+const RING_MAGIC_OFFSET: u64 = core::mem::offset_of!(ProtocolRingHeader, magic) as u64;
+const RING_ABI_VERSION_OFFSET: u64 = core::mem::offset_of!(ProtocolRingHeader, abi_version) as u64;
+const RING_SIZE_BYTES_OFFSET: u64 = core::mem::offset_of!(ProtocolRingHeader, size_bytes) as u64;
+const RING_ENTRY_COUNT_OFFSET: u64 = core::mem::offset_of!(ProtocolRingHeader, entry_count) as u64;
+const RING_ENTRY_STRIDE_BYTES_OFFSET: u64 =
+    core::mem::offset_of!(ProtocolRingHeader, entry_stride_bytes) as u64;
+const RING_FLAGS_OFFSET: u64 = core::mem::offset_of!(ProtocolRingHeader, flags) as u64;
+
+const SUBMIT_DESC_SIZE_BYTES_OFFSET: u64 =
+    core::mem::offset_of!(ProtocolSubmitDesc, desc_size_bytes) as u64;
+const SUBMIT_DESC_FLAGS_OFFSET: u64 = core::mem::offset_of!(ProtocolSubmitDesc, flags) as u64;
+const SUBMIT_DESC_CONTEXT_ID_OFFSET: u64 =
+    core::mem::offset_of!(ProtocolSubmitDesc, context_id) as u64;
+const SUBMIT_DESC_ENGINE_ID_OFFSET: u64 =
+    core::mem::offset_of!(ProtocolSubmitDesc, engine_id) as u64;
+const SUBMIT_DESC_CMD_GPA_OFFSET: u64 = core::mem::offset_of!(ProtocolSubmitDesc, cmd_gpa) as u64;
+const SUBMIT_DESC_CMD_SIZE_BYTES_OFFSET: u64 =
+    core::mem::offset_of!(ProtocolSubmitDesc, cmd_size_bytes) as u64;
+const SUBMIT_DESC_ALLOC_TABLE_GPA_OFFSET: u64 =
+    core::mem::offset_of!(ProtocolSubmitDesc, alloc_table_gpa) as u64;
+const SUBMIT_DESC_ALLOC_TABLE_SIZE_BYTES_OFFSET: u64 =
+    core::mem::offset_of!(ProtocolSubmitDesc, alloc_table_size_bytes) as u64;
+const SUBMIT_DESC_SIGNAL_FENCE_OFFSET: u64 =
+    core::mem::offset_of!(ProtocolSubmitDesc, signal_fence) as u64;
+
+const CMD_STREAM_SIZE_BYTES_OFFSET: usize =
+    core::mem::offset_of!(ProtocolCmdStreamHeader, size_bytes);
+const CMD_HDR_SIZE_BYTES_OFFSET: usize = core::mem::offset_of!(ProtocolCmdHdr, size_bytes);
 
 fn push_u32(out: &mut Vec<u8>, v: u32) {
     out.extend_from_slice(&v.to_le_bytes());
@@ -33,7 +68,8 @@ fn emit_packet(out: &mut Vec<u8>, opcode: u32, payload: impl FnOnce(&mut Vec<u8>
     let size_bytes = (out.len() - start) as u32;
     assert!(size_bytes >= 8);
     assert_eq!(size_bytes % 4, 0);
-    out[start + 4..start + 8].copy_from_slice(&size_bytes.to_le_bytes());
+    out[start + CMD_HDR_SIZE_BYTES_OFFSET..start + CMD_HDR_SIZE_BYTES_OFFSET + 4]
+        .copy_from_slice(&size_bytes.to_le_bytes());
 }
 
 fn build_stream(packets: impl FnOnce(&mut Vec<u8>), abi_version: u32) -> Vec<u8> {
@@ -50,7 +86,8 @@ fn build_stream(packets: impl FnOnce(&mut Vec<u8>), abi_version: u32) -> Vec<u8>
     packets(&mut out);
 
     let size_bytes = out.len() as u32;
-    out[8..12].copy_from_slice(&size_bytes.to_le_bytes());
+    out[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
+        .copy_from_slice(&size_bytes.to_le_bytes());
     out
 }
 
@@ -77,12 +114,12 @@ fn aerogpu_ring_submission_executes_and_updates_scanout() {
     let entry_stride = AeroGpuSubmitDesc::SIZE_BYTES;
 
     // Ring header.
-    mem.write_u32(ring_gpa + 0, AEROGPU_RING_MAGIC);
-    mem.write_u32(ring_gpa + 4, dev.regs.abi_version);
-    mem.write_u32(ring_gpa + 8, ring_size);
-    mem.write_u32(ring_gpa + 12, entry_count);
-    mem.write_u32(ring_gpa + 16, entry_stride);
-    mem.write_u32(ring_gpa + 20, 0);
+    mem.write_u32(ring_gpa + RING_MAGIC_OFFSET, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa + RING_ABI_VERSION_OFFSET, dev.regs.abi_version);
+    mem.write_u32(ring_gpa + RING_SIZE_BYTES_OFFSET, ring_size);
+    mem.write_u32(ring_gpa + RING_ENTRY_COUNT_OFFSET, entry_count);
+    mem.write_u32(ring_gpa + RING_ENTRY_STRIDE_BYTES_OFFSET, entry_stride);
+    mem.write_u32(ring_gpa + RING_FLAGS_OFFSET, 0);
     mem.write_u32(ring_gpa + RING_HEAD_OFFSET, 0); // head
     mem.write_u32(ring_gpa + RING_TAIL_OFFSET, 1); // tail
 
@@ -140,15 +177,15 @@ fn aerogpu_ring_submission_executes_and_updates_scanout() {
 
     // Submit descriptor at slot 0.
     let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
-    mem.write_u32(desc_gpa + 0, AeroGpuSubmitDesc::SIZE_BYTES); // desc_size_bytes
-    mem.write_u32(desc_gpa + 4, 0); // flags
-    mem.write_u32(desc_gpa + 8, 0); // context_id
-    mem.write_u32(desc_gpa + 12, 0); // engine_id
-    mem.write_u64(desc_gpa + 16, cmd_gpa); // cmd_gpa
-    mem.write_u32(desc_gpa + 24, stream.len() as u32); // cmd_size_bytes
-    mem.write_u64(desc_gpa + 32, 0); // alloc_table_gpa
-    mem.write_u32(desc_gpa + 40, 0); // alloc_table_size_bytes
-    mem.write_u64(desc_gpa + 48, 1); // signal_fence
+    mem.write_u32(desc_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET, AeroGpuSubmitDesc::SIZE_BYTES); // desc_size_bytes
+    mem.write_u32(desc_gpa + SUBMIT_DESC_FLAGS_OFFSET, 0); // flags
+    mem.write_u32(desc_gpa + SUBMIT_DESC_CONTEXT_ID_OFFSET, 0); // context_id
+    mem.write_u32(desc_gpa + SUBMIT_DESC_ENGINE_ID_OFFSET, 0); // engine_id
+    mem.write_u64(desc_gpa + SUBMIT_DESC_CMD_GPA_OFFSET, cmd_gpa); // cmd_gpa
+    mem.write_u32(desc_gpa + SUBMIT_DESC_CMD_SIZE_BYTES_OFFSET, stream.len() as u32); // cmd_size_bytes
+    mem.write_u64(desc_gpa + SUBMIT_DESC_ALLOC_TABLE_GPA_OFFSET, 0); // alloc_table_gpa
+    mem.write_u32(desc_gpa + SUBMIT_DESC_ALLOC_TABLE_SIZE_BYTES_OFFSET, 0); // alloc_table_size_bytes
+    mem.write_u64(desc_gpa + SUBMIT_DESC_SIGNAL_FENCE_OFFSET, 1); // signal_fence
 
     // Fence page.
     let fence_gpa = 0x3000u64;

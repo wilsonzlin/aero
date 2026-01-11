@@ -2,9 +2,16 @@ use crate::{
     parse_cmd_stream, AeroGpuCmd, AeroGpuCmdStreamParseError, AeroGpuOpcode,
     AEROGPU_CMD_STREAM_MAGIC,
 };
+use aero_protocol::aerogpu::aerogpu_cmd::{
+    AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdStreamHeader as ProtocolCmdStreamHeader,
+};
 use aero_protocol::aerogpu::aerogpu_pci::AEROGPU_ABI_VERSION_U32;
 
 use crate::protocol::AEROGPU_INPUT_LAYOUT_BLOB_MAGIC;
+
+const CMD_STREAM_SIZE_BYTES_OFFSET: usize =
+    core::mem::offset_of!(ProtocolCmdStreamHeader, size_bytes);
+const CMD_HDR_SIZE_BYTES_OFFSET: usize = core::mem::offset_of!(ProtocolCmdHdr, size_bytes);
 
 fn push_u32(out: &mut Vec<u8>, v: u32) {
     out.extend_from_slice(&v.to_le_bytes());
@@ -38,7 +45,8 @@ fn build_stream(packets: impl FnOnce(&mut Vec<u8>)) -> Vec<u8> {
     packets(&mut out);
 
     let size_bytes = out.len() as u32;
-    out[8..12].copy_from_slice(&size_bytes.to_le_bytes());
+    out[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
+        .copy_from_slice(&size_bytes.to_le_bytes());
     out
 }
 
@@ -52,7 +60,8 @@ fn emit_packet(out: &mut Vec<u8>, opcode: u32, payload: impl FnOnce(&mut Vec<u8>
     let size_bytes = (out.len() - start) as u32;
     assert!(size_bytes >= 8);
     assert_eq!(size_bytes % 4, 0);
-    out[start + 4..start + 8].copy_from_slice(&size_bytes.to_le_bytes());
+    out[start + CMD_HDR_SIZE_BYTES_OFFSET..start + CMD_HDR_SIZE_BYTES_OFFSET + 4]
+        .copy_from_slice(&size_bytes.to_le_bytes());
 }
 
 #[test]

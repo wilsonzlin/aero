@@ -1,7 +1,9 @@
 use std::time::{Duration, Instant};
 
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    AerogpuCmdOpcode, AEROGPU_CMD_STREAM_MAGIC, AEROGPU_PRESENT_FLAG_VSYNC,
+    AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode, AerogpuCmdPresent as ProtocolCmdPresent,
+    AerogpuCmdStreamHeader as ProtocolCmdStreamHeader, AEROGPU_CMD_STREAM_MAGIC,
+    AEROGPU_PRESENT_FLAG_VSYNC,
 };
 use aero_protocol::aerogpu::aerogpu_pci::{AEROGPU_ABI_MAJOR, AEROGPU_ABI_VERSION_U32};
 use aero_protocol::aerogpu::aerogpu_ring::{
@@ -19,6 +21,53 @@ use emulator::gpu_worker::aerogpu_backend::ImmediateAeroGpuBackend;
 use emulator::gpu_worker::aerogpu_executor::{AeroGpuExecutorConfig, AeroGpuFenceCompletionMode};
 use emulator::io::pci::MmioDevice;
 use memory::MemoryBus;
+
+const RING_MAGIC_OFFSET: u64 = core::mem::offset_of!(ProtocolRingHeader, magic) as u64;
+const RING_ABI_VERSION_OFFSET: u64 = core::mem::offset_of!(ProtocolRingHeader, abi_version) as u64;
+const RING_SIZE_BYTES_OFFSET: u64 = core::mem::offset_of!(ProtocolRingHeader, size_bytes) as u64;
+const RING_ENTRY_COUNT_OFFSET: u64 = core::mem::offset_of!(ProtocolRingHeader, entry_count) as u64;
+const RING_ENTRY_STRIDE_BYTES_OFFSET: u64 =
+    core::mem::offset_of!(ProtocolRingHeader, entry_stride_bytes) as u64;
+const RING_FLAGS_OFFSET: u64 = core::mem::offset_of!(ProtocolRingHeader, flags) as u64;
+
+const SUBMIT_DESC_SIZE_BYTES_OFFSET: u64 =
+    core::mem::offset_of!(ProtocolSubmitDesc, desc_size_bytes) as u64;
+const SUBMIT_DESC_FLAGS_OFFSET: u64 = core::mem::offset_of!(ProtocolSubmitDesc, flags) as u64;
+const SUBMIT_DESC_CONTEXT_ID_OFFSET: u64 =
+    core::mem::offset_of!(ProtocolSubmitDesc, context_id) as u64;
+const SUBMIT_DESC_ENGINE_ID_OFFSET: u64 =
+    core::mem::offset_of!(ProtocolSubmitDesc, engine_id) as u64;
+const SUBMIT_DESC_CMD_GPA_OFFSET: u64 = core::mem::offset_of!(ProtocolSubmitDesc, cmd_gpa) as u64;
+const SUBMIT_DESC_CMD_SIZE_BYTES_OFFSET: u64 =
+    core::mem::offset_of!(ProtocolSubmitDesc, cmd_size_bytes) as u64;
+const SUBMIT_DESC_ALLOC_TABLE_GPA_OFFSET: u64 =
+    core::mem::offset_of!(ProtocolSubmitDesc, alloc_table_gpa) as u64;
+const SUBMIT_DESC_ALLOC_TABLE_SIZE_BYTES_OFFSET: u64 =
+    core::mem::offset_of!(ProtocolSubmitDesc, alloc_table_size_bytes) as u64;
+const SUBMIT_DESC_SIGNAL_FENCE_OFFSET: u64 =
+    core::mem::offset_of!(ProtocolSubmitDesc, signal_fence) as u64;
+
+const CMD_STREAM_MAGIC_OFFSET: u64 =
+    core::mem::offset_of!(ProtocolCmdStreamHeader, magic) as u64;
+const CMD_STREAM_ABI_VERSION_OFFSET: u64 =
+    core::mem::offset_of!(ProtocolCmdStreamHeader, abi_version) as u64;
+const CMD_STREAM_SIZE_BYTES_OFFSET: u64 =
+    core::mem::offset_of!(ProtocolCmdStreamHeader, size_bytes) as u64;
+const CMD_STREAM_FLAGS_OFFSET: u64 = core::mem::offset_of!(ProtocolCmdStreamHeader, flags) as u64;
+const CMD_STREAM_RESERVED0_OFFSET: u64 =
+    core::mem::offset_of!(ProtocolCmdStreamHeader, reserved0) as u64;
+const CMD_STREAM_RESERVED1_OFFSET: u64 =
+    core::mem::offset_of!(ProtocolCmdStreamHeader, reserved1) as u64;
+
+const CMD_HDR_OPCODE_OFFSET: u64 = core::mem::offset_of!(ProtocolCmdHdr, opcode) as u64;
+const CMD_HDR_SIZE_BYTES_OFFSET: u64 = core::mem::offset_of!(ProtocolCmdHdr, size_bytes) as u64;
+
+const CMD_PRESENT_SCANOUT_ID_OFFSET: u64 =
+    core::mem::offset_of!(ProtocolCmdPresent, scanout_id) as u64;
+const CMD_PRESENT_FLAGS_OFFSET: u64 = core::mem::offset_of!(ProtocolCmdPresent, flags) as u64;
+
+const CMD_STREAM_HEADER_SIZE_BYTES: u64 = ProtocolCmdStreamHeader::SIZE_BYTES as u64;
+const CMD_PRESENT_SIZE_BYTES: u32 = core::mem::size_of::<ProtocolCmdPresent>() as u32;
 
 #[derive(Clone, Debug)]
 struct VecMemory {
@@ -65,14 +114,6 @@ fn doorbell_updates_ring_head_fence_page_and_irq() {
     let entry_count = 8u32;
     let entry_stride = AeroGpuSubmitDesc::SIZE_BYTES;
 
-    const RING_MAGIC_OFFSET: u64 = core::mem::offset_of!(ProtocolRingHeader, magic) as u64;
-    const RING_ABI_VERSION_OFFSET: u64 = core::mem::offset_of!(ProtocolRingHeader, abi_version) as u64;
-    const RING_SIZE_BYTES_OFFSET: u64 = core::mem::offset_of!(ProtocolRingHeader, size_bytes) as u64;
-    const RING_ENTRY_COUNT_OFFSET: u64 = core::mem::offset_of!(ProtocolRingHeader, entry_count) as u64;
-    const RING_ENTRY_STRIDE_BYTES_OFFSET: u64 =
-        core::mem::offset_of!(ProtocolRingHeader, entry_stride_bytes) as u64;
-    const RING_FLAGS_OFFSET: u64 = core::mem::offset_of!(ProtocolRingHeader, flags) as u64;
-
     // Ring header.
     mem.write_u32(ring_gpa + RING_MAGIC_OFFSET, AEROGPU_RING_MAGIC);
     mem.write_u32(ring_gpa + RING_ABI_VERSION_OFFSET, AEROGPU_ABI_VERSION_U32);
@@ -85,26 +126,15 @@ fn doorbell_updates_ring_head_fence_page_and_irq() {
 
     // Submit descriptor at slot 0.
     let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
-    const DESC_SIZE_BYTES_OFFSET: u64 = core::mem::offset_of!(ProtocolSubmitDesc, desc_size_bytes) as u64;
-    const DESC_FLAGS_OFFSET: u64 = core::mem::offset_of!(ProtocolSubmitDesc, flags) as u64;
-    const DESC_CONTEXT_ID_OFFSET: u64 = core::mem::offset_of!(ProtocolSubmitDesc, context_id) as u64;
-    const DESC_ENGINE_ID_OFFSET: u64 = core::mem::offset_of!(ProtocolSubmitDesc, engine_id) as u64;
-    const DESC_CMD_GPA_OFFSET: u64 = core::mem::offset_of!(ProtocolSubmitDesc, cmd_gpa) as u64;
-    const DESC_CMD_SIZE_BYTES_OFFSET: u64 = core::mem::offset_of!(ProtocolSubmitDesc, cmd_size_bytes) as u64;
-    const DESC_ALLOC_TABLE_GPA_OFFSET: u64 = core::mem::offset_of!(ProtocolSubmitDesc, alloc_table_gpa) as u64;
-    const DESC_ALLOC_TABLE_SIZE_BYTES_OFFSET: u64 =
-        core::mem::offset_of!(ProtocolSubmitDesc, alloc_table_size_bytes) as u64;
-    const DESC_SIGNAL_FENCE_OFFSET: u64 = core::mem::offset_of!(ProtocolSubmitDesc, signal_fence) as u64;
-
-    mem.write_u32(desc_gpa + DESC_SIZE_BYTES_OFFSET, AeroGpuSubmitDesc::SIZE_BYTES); // desc_size_bytes
-    mem.write_u32(desc_gpa + DESC_FLAGS_OFFSET, 0); // flags
-    mem.write_u32(desc_gpa + DESC_CONTEXT_ID_OFFSET, 0); // context_id
-    mem.write_u32(desc_gpa + DESC_ENGINE_ID_OFFSET, 0); // engine_id
-    mem.write_u64(desc_gpa + DESC_CMD_GPA_OFFSET, 0); // cmd_gpa
-    mem.write_u32(desc_gpa + DESC_CMD_SIZE_BYTES_OFFSET, 0); // cmd_size_bytes
-    mem.write_u64(desc_gpa + DESC_ALLOC_TABLE_GPA_OFFSET, 0); // alloc_table_gpa
-    mem.write_u32(desc_gpa + DESC_ALLOC_TABLE_SIZE_BYTES_OFFSET, 0); // alloc_table_size_bytes
-    mem.write_u64(desc_gpa + DESC_SIGNAL_FENCE_OFFSET, 42); // signal_fence
+    mem.write_u32(desc_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET, AeroGpuSubmitDesc::SIZE_BYTES); // desc_size_bytes
+    mem.write_u32(desc_gpa + SUBMIT_DESC_FLAGS_OFFSET, 0); // flags
+    mem.write_u32(desc_gpa + SUBMIT_DESC_CONTEXT_ID_OFFSET, 0); // context_id
+    mem.write_u32(desc_gpa + SUBMIT_DESC_ENGINE_ID_OFFSET, 0); // engine_id
+    mem.write_u64(desc_gpa + SUBMIT_DESC_CMD_GPA_OFFSET, 0); // cmd_gpa
+    mem.write_u32(desc_gpa + SUBMIT_DESC_CMD_SIZE_BYTES_OFFSET, 0); // cmd_size_bytes
+    mem.write_u64(desc_gpa + SUBMIT_DESC_ALLOC_TABLE_GPA_OFFSET, 0); // alloc_table_gpa
+    mem.write_u32(desc_gpa + SUBMIT_DESC_ALLOC_TABLE_SIZE_BYTES_OFFSET, 0); // alloc_table_size_bytes
+    mem.write_u64(desc_gpa + SUBMIT_DESC_SIGNAL_FENCE_OFFSET, 42); // signal_fence
 
     // Fence page.
     let fence_gpa = 0x3000u64;
@@ -150,26 +180,26 @@ fn doorbell_accepts_newer_minor_abi_version() {
     // The protocol versioning rules require consumers to accept forward-compatible minor
     // extensions and ignore what they don't understand.
     let newer_minor = (AEROGPU_ABI_MAJOR << 16) | 999;
-    mem.write_u32(ring_gpa + 0, AEROGPU_RING_MAGIC);
-    mem.write_u32(ring_gpa + 4, newer_minor);
-    mem.write_u32(ring_gpa + 8, ring_size);
-    mem.write_u32(ring_gpa + 12, entry_count);
-    mem.write_u32(ring_gpa + 16, entry_stride);
-    mem.write_u32(ring_gpa + 20, 0);
+    mem.write_u32(ring_gpa + RING_MAGIC_OFFSET, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa + RING_ABI_VERSION_OFFSET, newer_minor);
+    mem.write_u32(ring_gpa + RING_SIZE_BYTES_OFFSET, ring_size);
+    mem.write_u32(ring_gpa + RING_ENTRY_COUNT_OFFSET, entry_count);
+    mem.write_u32(ring_gpa + RING_ENTRY_STRIDE_BYTES_OFFSET, entry_stride);
+    mem.write_u32(ring_gpa + RING_FLAGS_OFFSET, 0);
     mem.write_u32(ring_gpa + RING_HEAD_OFFSET, 0); // head
     mem.write_u32(ring_gpa + RING_TAIL_OFFSET, 1); // tail
 
     // Submit descriptor at slot 0.
     let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
-    mem.write_u32(desc_gpa + 0, AeroGpuSubmitDesc::SIZE_BYTES); // desc_size_bytes
-    mem.write_u32(desc_gpa + 4, 0); // flags
-    mem.write_u32(desc_gpa + 8, 0); // context_id
-    mem.write_u32(desc_gpa + 12, 0); // engine_id
-    mem.write_u64(desc_gpa + 16, 0); // cmd_gpa
-    mem.write_u32(desc_gpa + 24, 0); // cmd_size_bytes
-    mem.write_u64(desc_gpa + 32, 0); // alloc_table_gpa
-    mem.write_u32(desc_gpa + 40, 0); // alloc_table_size_bytes
-    mem.write_u64(desc_gpa + 48, 42); // signal_fence
+    mem.write_u32(desc_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET, AeroGpuSubmitDesc::SIZE_BYTES); // desc_size_bytes
+    mem.write_u32(desc_gpa + SUBMIT_DESC_FLAGS_OFFSET, 0); // flags
+    mem.write_u32(desc_gpa + SUBMIT_DESC_CONTEXT_ID_OFFSET, 0); // context_id
+    mem.write_u32(desc_gpa + SUBMIT_DESC_ENGINE_ID_OFFSET, 0); // engine_id
+    mem.write_u64(desc_gpa + SUBMIT_DESC_CMD_GPA_OFFSET, 0); // cmd_gpa
+    mem.write_u32(desc_gpa + SUBMIT_DESC_CMD_SIZE_BYTES_OFFSET, 0); // cmd_size_bytes
+    mem.write_u64(desc_gpa + SUBMIT_DESC_ALLOC_TABLE_GPA_OFFSET, 0); // alloc_table_gpa
+    mem.write_u32(desc_gpa + SUBMIT_DESC_ALLOC_TABLE_SIZE_BYTES_OFFSET, 0); // alloc_table_size_bytes
+    mem.write_u64(desc_gpa + SUBMIT_DESC_SIGNAL_FENCE_OFFSET, 42); // signal_fence
 
     // Fence page.
     let fence_gpa = 0x3000u64;
@@ -209,12 +239,12 @@ fn doorbell_accepts_larger_submit_desc_stride_and_size() {
     let entry_stride = 128u32;
 
     // Ring header.
-    mem.write_u32(ring_gpa + 0, AEROGPU_RING_MAGIC);
-    mem.write_u32(ring_gpa + 4, dev.regs.abi_version);
-    mem.write_u32(ring_gpa + 8, ring_size);
-    mem.write_u32(ring_gpa + 12, entry_count);
-    mem.write_u32(ring_gpa + 16, entry_stride);
-    mem.write_u32(ring_gpa + 20, 0);
+    mem.write_u32(ring_gpa + RING_MAGIC_OFFSET, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa + RING_ABI_VERSION_OFFSET, dev.regs.abi_version);
+    mem.write_u32(ring_gpa + RING_SIZE_BYTES_OFFSET, ring_size);
+    mem.write_u32(ring_gpa + RING_ENTRY_COUNT_OFFSET, entry_count);
+    mem.write_u32(ring_gpa + RING_ENTRY_STRIDE_BYTES_OFFSET, entry_stride);
+    mem.write_u32(ring_gpa + RING_FLAGS_OFFSET, 0);
     mem.write_u32(ring_gpa + RING_HEAD_OFFSET, 0); // head
     mem.write_u32(ring_gpa + RING_TAIL_OFFSET, 2); // tail
 
@@ -222,12 +252,12 @@ fn doorbell_accepts_larger_submit_desc_stride_and_size() {
     // Slot 1 is deliberately placed at header + entry_stride to verify the device uses
     // `entry_stride_bytes` when walking the ring.
     let desc0_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
-    mem.write_u32(desc0_gpa + 0, 128); // desc_size_bytes
-    mem.write_u64(desc0_gpa + 48, 41); // signal_fence
+    mem.write_u32(desc0_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET, 128); // desc_size_bytes
+    mem.write_u64(desc0_gpa + SUBMIT_DESC_SIGNAL_FENCE_OFFSET, 41); // signal_fence
 
     let desc1_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES + u64::from(entry_stride);
-    mem.write_u32(desc1_gpa + 0, 128); // desc_size_bytes
-    mem.write_u64(desc1_gpa + 48, 42); // signal_fence
+    mem.write_u32(desc1_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET, 128); // desc_size_bytes
+    mem.write_u64(desc1_gpa + SUBMIT_DESC_SIGNAL_FENCE_OFFSET, 42); // signal_fence
 
     dev.mmio_write(&mut mem, mmio::RING_GPA_LO, 4, ring_gpa as u32);
     dev.mmio_write(&mut mem, mmio::RING_GPA_HI, 4, (ring_gpa >> 32) as u32);
@@ -254,19 +284,19 @@ fn doorbell_rejects_unknown_major_abi_version() {
 
     // Ring header: advertise an unsupported major version.
     let unsupported_major = ((AEROGPU_ABI_MAJOR + 1) << 16) | 0;
-    mem.write_u32(ring_gpa + 0, AEROGPU_RING_MAGIC);
-    mem.write_u32(ring_gpa + 4, unsupported_major);
-    mem.write_u32(ring_gpa + 8, ring_size);
-    mem.write_u32(ring_gpa + 12, entry_count);
-    mem.write_u32(ring_gpa + 16, entry_stride);
-    mem.write_u32(ring_gpa + 20, 0);
+    mem.write_u32(ring_gpa + RING_MAGIC_OFFSET, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa + RING_ABI_VERSION_OFFSET, unsupported_major);
+    mem.write_u32(ring_gpa + RING_SIZE_BYTES_OFFSET, ring_size);
+    mem.write_u32(ring_gpa + RING_ENTRY_COUNT_OFFSET, entry_count);
+    mem.write_u32(ring_gpa + RING_ENTRY_STRIDE_BYTES_OFFSET, entry_stride);
+    mem.write_u32(ring_gpa + RING_FLAGS_OFFSET, 0);
     mem.write_u32(ring_gpa + RING_HEAD_OFFSET, 0); // head
     mem.write_u32(ring_gpa + RING_TAIL_OFFSET, 1); // tail
 
     // Submit descriptor at slot 0 (should not be processed due to ABI mismatch).
     let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
-    mem.write_u32(desc_gpa + 0, AeroGpuSubmitDesc::SIZE_BYTES); // desc_size_bytes
-    mem.write_u64(desc_gpa + 48, 42); // signal_fence
+    mem.write_u32(desc_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET, AeroGpuSubmitDesc::SIZE_BYTES); // desc_size_bytes
+    mem.write_u64(desc_gpa + SUBMIT_DESC_SIGNAL_FENCE_OFFSET, 42); // signal_fence
 
     // Fence page.
     let fence_gpa = 0x3000u64;
@@ -312,19 +342,13 @@ fn ring_header_validation_checks_magic_and_abi_version() {
     let entry_count = 8u32;
     let entry_stride = AeroGpuSubmitDesc::SIZE_BYTES;
 
-    const RING_MAGIC_OFFSET: u64 = core::mem::offset_of!(ProtocolRingHeader, magic) as u64;
-    const RING_ABI_VERSION_OFFSET: u64 = core::mem::offset_of!(ProtocolRingHeader, abi_version) as u64;
-    const RING_SIZE_BYTES_OFFSET: u64 = core::mem::offset_of!(ProtocolRingHeader, size_bytes) as u64;
-    const RING_ENTRY_COUNT_OFFSET: u64 = core::mem::offset_of!(ProtocolRingHeader, entry_count) as u64;
-    const RING_ENTRY_STRIDE_BYTES_OFFSET: u64 =
-        core::mem::offset_of!(ProtocolRingHeader, entry_stride_bytes) as u64;
-
     // Start with a header that is valid in every way except the field under test.
     mem.write_u32(ring_gpa + RING_MAGIC_OFFSET, 0);
     mem.write_u32(ring_gpa + RING_ABI_VERSION_OFFSET, AEROGPU_ABI_VERSION_U32);
     mem.write_u32(ring_gpa + RING_SIZE_BYTES_OFFSET, ring_size);
     mem.write_u32(ring_gpa + RING_ENTRY_COUNT_OFFSET, entry_count);
     mem.write_u32(ring_gpa + RING_ENTRY_STRIDE_BYTES_OFFSET, entry_stride);
+    mem.write_u32(ring_gpa + RING_FLAGS_OFFSET, 0);
     mem.write_u32(ring_gpa + RING_HEAD_OFFSET, 0);
     mem.write_u32(ring_gpa + RING_TAIL_OFFSET, 0);
 
@@ -405,43 +429,43 @@ fn vsynced_present_fence_completes_on_vblank() {
     let entry_count = 8u32;
     let entry_stride = AeroGpuSubmitDesc::SIZE_BYTES;
 
-    mem.write_u32(ring_gpa + 0, AEROGPU_RING_MAGIC);
-    mem.write_u32(ring_gpa + 4, dev.regs.abi_version);
-    mem.write_u32(ring_gpa + 8, ring_size);
-    mem.write_u32(ring_gpa + 12, entry_count);
-    mem.write_u32(ring_gpa + 16, entry_stride);
-    mem.write_u32(ring_gpa + 20, 0);
+    mem.write_u32(ring_gpa + RING_MAGIC_OFFSET, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa + RING_ABI_VERSION_OFFSET, dev.regs.abi_version);
+    mem.write_u32(ring_gpa + RING_SIZE_BYTES_OFFSET, ring_size);
+    mem.write_u32(ring_gpa + RING_ENTRY_COUNT_OFFSET, entry_count);
+    mem.write_u32(ring_gpa + RING_ENTRY_STRIDE_BYTES_OFFSET, entry_stride);
+    mem.write_u32(ring_gpa + RING_FLAGS_OFFSET, 0);
     mem.write_u32(ring_gpa + RING_HEAD_OFFSET, 0); // head
     mem.write_u32(ring_gpa + RING_TAIL_OFFSET, 1); // tail
 
     // Command buffer: ACMD header + PRESENT(vsync).
     let cmd_gpa = 0x4000u64;
-    let cmd_size_bytes = 40u32;
+    let cmd_size_bytes = ProtocolCmdStreamHeader::SIZE_BYTES as u32 + CMD_PRESENT_SIZE_BYTES;
 
-    mem.write_u32(cmd_gpa + 0, AEROGPU_CMD_STREAM_MAGIC);
-    mem.write_u32(cmd_gpa + 4, dev.regs.abi_version);
-    mem.write_u32(cmd_gpa + 8, cmd_size_bytes);
-    mem.write_u32(cmd_gpa + 12, 0); // flags
-    mem.write_u32(cmd_gpa + 16, 0);
-    mem.write_u32(cmd_gpa + 20, 0);
+    mem.write_u32(cmd_gpa + CMD_STREAM_MAGIC_OFFSET, AEROGPU_CMD_STREAM_MAGIC);
+    mem.write_u32(cmd_gpa + CMD_STREAM_ABI_VERSION_OFFSET, dev.regs.abi_version);
+    mem.write_u32(cmd_gpa + CMD_STREAM_SIZE_BYTES_OFFSET, cmd_size_bytes);
+    mem.write_u32(cmd_gpa + CMD_STREAM_FLAGS_OFFSET, 0);
+    mem.write_u32(cmd_gpa + CMD_STREAM_RESERVED0_OFFSET, 0);
+    mem.write_u32(cmd_gpa + CMD_STREAM_RESERVED1_OFFSET, 0);
 
-    // aerogpu_cmd_present
-    mem.write_u32(cmd_gpa + 24, AerogpuCmdOpcode::Present as u32);
-    mem.write_u32(cmd_gpa + 28, 16); // size_bytes
-    mem.write_u32(cmd_gpa + 32, 0); // scanout_id
-    mem.write_u32(cmd_gpa + 36, AEROGPU_PRESENT_FLAG_VSYNC);
+    let present_gpa = cmd_gpa + CMD_STREAM_HEADER_SIZE_BYTES;
+    mem.write_u32(present_gpa + CMD_HDR_OPCODE_OFFSET, AerogpuCmdOpcode::Present as u32);
+    mem.write_u32(present_gpa + CMD_HDR_SIZE_BYTES_OFFSET, CMD_PRESENT_SIZE_BYTES);
+    mem.write_u32(present_gpa + CMD_PRESENT_SCANOUT_ID_OFFSET, 0);
+    mem.write_u32(present_gpa + CMD_PRESENT_FLAGS_OFFSET, AEROGPU_PRESENT_FLAG_VSYNC);
 
     // Submit descriptor at slot 0.
     let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
-    mem.write_u32(desc_gpa + 0, AeroGpuSubmitDesc::SIZE_BYTES); // desc_size_bytes
-    mem.write_u32(desc_gpa + 4, AeroGpuSubmitDesc::FLAG_PRESENT); // flags
-    mem.write_u32(desc_gpa + 8, 0); // context_id
-    mem.write_u32(desc_gpa + 12, 0); // engine_id
-    mem.write_u64(desc_gpa + 16, cmd_gpa); // cmd_gpa
-    mem.write_u32(desc_gpa + 24, cmd_size_bytes); // cmd_size_bytes
-    mem.write_u64(desc_gpa + 32, 0); // alloc_table_gpa
-    mem.write_u32(desc_gpa + 40, 0); // alloc_table_size_bytes
-    mem.write_u64(desc_gpa + 48, 42); // signal_fence
+    mem.write_u32(desc_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET, AeroGpuSubmitDesc::SIZE_BYTES); // desc_size_bytes
+    mem.write_u32(desc_gpa + SUBMIT_DESC_FLAGS_OFFSET, AeroGpuSubmitDesc::FLAG_PRESENT); // flags
+    mem.write_u32(desc_gpa + SUBMIT_DESC_CONTEXT_ID_OFFSET, 0); // context_id
+    mem.write_u32(desc_gpa + SUBMIT_DESC_ENGINE_ID_OFFSET, 0); // engine_id
+    mem.write_u64(desc_gpa + SUBMIT_DESC_CMD_GPA_OFFSET, cmd_gpa); // cmd_gpa
+    mem.write_u32(desc_gpa + SUBMIT_DESC_CMD_SIZE_BYTES_OFFSET, cmd_size_bytes); // cmd_size_bytes
+    mem.write_u64(desc_gpa + SUBMIT_DESC_ALLOC_TABLE_GPA_OFFSET, 0); // alloc_table_gpa
+    mem.write_u32(desc_gpa + SUBMIT_DESC_ALLOC_TABLE_SIZE_BYTES_OFFSET, 0); // alloc_table_size_bytes
+    mem.write_u64(desc_gpa + SUBMIT_DESC_SIGNAL_FENCE_OFFSET, 42); // signal_fence
 
     // Fence page.
     let fence_gpa = 0x3000u64;
@@ -507,43 +531,43 @@ fn vsynced_present_fence_completes_on_vblank_with_deferred_backend() {
     let entry_count = 8u32;
     let entry_stride = AeroGpuSubmitDesc::SIZE_BYTES;
 
-    mem.write_u32(ring_gpa + 0, AEROGPU_RING_MAGIC);
-    mem.write_u32(ring_gpa + 4, dev.regs.abi_version);
-    mem.write_u32(ring_gpa + 8, ring_size);
-    mem.write_u32(ring_gpa + 12, entry_count);
-    mem.write_u32(ring_gpa + 16, entry_stride);
-    mem.write_u32(ring_gpa + 20, 0);
+    mem.write_u32(ring_gpa + RING_MAGIC_OFFSET, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa + RING_ABI_VERSION_OFFSET, dev.regs.abi_version);
+    mem.write_u32(ring_gpa + RING_SIZE_BYTES_OFFSET, ring_size);
+    mem.write_u32(ring_gpa + RING_ENTRY_COUNT_OFFSET, entry_count);
+    mem.write_u32(ring_gpa + RING_ENTRY_STRIDE_BYTES_OFFSET, entry_stride);
+    mem.write_u32(ring_gpa + RING_FLAGS_OFFSET, 0);
     mem.write_u32(ring_gpa + RING_HEAD_OFFSET, 0); // head
     mem.write_u32(ring_gpa + RING_TAIL_OFFSET, 1); // tail
 
     // Command buffer: ACMD header + PRESENT(vsync).
     let cmd_gpa = 0x4000u64;
-    let cmd_size_bytes = 40u32;
+    let cmd_size_bytes = ProtocolCmdStreamHeader::SIZE_BYTES as u32 + CMD_PRESENT_SIZE_BYTES;
 
-    mem.write_u32(cmd_gpa + 0, AEROGPU_CMD_STREAM_MAGIC);
-    mem.write_u32(cmd_gpa + 4, dev.regs.abi_version);
-    mem.write_u32(cmd_gpa + 8, cmd_size_bytes);
-    mem.write_u32(cmd_gpa + 12, 0); // flags
-    mem.write_u32(cmd_gpa + 16, 0);
-    mem.write_u32(cmd_gpa + 20, 0);
+    mem.write_u32(cmd_gpa + CMD_STREAM_MAGIC_OFFSET, AEROGPU_CMD_STREAM_MAGIC);
+    mem.write_u32(cmd_gpa + CMD_STREAM_ABI_VERSION_OFFSET, dev.regs.abi_version);
+    mem.write_u32(cmd_gpa + CMD_STREAM_SIZE_BYTES_OFFSET, cmd_size_bytes);
+    mem.write_u32(cmd_gpa + CMD_STREAM_FLAGS_OFFSET, 0);
+    mem.write_u32(cmd_gpa + CMD_STREAM_RESERVED0_OFFSET, 0);
+    mem.write_u32(cmd_gpa + CMD_STREAM_RESERVED1_OFFSET, 0);
 
-    // aerogpu_cmd_present
-    mem.write_u32(cmd_gpa + 24, AerogpuCmdOpcode::Present as u32);
-    mem.write_u32(cmd_gpa + 28, 16); // size_bytes
-    mem.write_u32(cmd_gpa + 32, 0); // scanout_id
-    mem.write_u32(cmd_gpa + 36, AEROGPU_PRESENT_FLAG_VSYNC);
+    let present_gpa = cmd_gpa + CMD_STREAM_HEADER_SIZE_BYTES;
+    mem.write_u32(present_gpa + CMD_HDR_OPCODE_OFFSET, AerogpuCmdOpcode::Present as u32);
+    mem.write_u32(present_gpa + CMD_HDR_SIZE_BYTES_OFFSET, CMD_PRESENT_SIZE_BYTES);
+    mem.write_u32(present_gpa + CMD_PRESENT_SCANOUT_ID_OFFSET, 0);
+    mem.write_u32(present_gpa + CMD_PRESENT_FLAGS_OFFSET, AEROGPU_PRESENT_FLAG_VSYNC);
 
     // Submit descriptor at slot 0.
     let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
-    mem.write_u32(desc_gpa + 0, AeroGpuSubmitDesc::SIZE_BYTES); // desc_size_bytes
-    mem.write_u32(desc_gpa + 4, AeroGpuSubmitDesc::FLAG_PRESENT); // flags
-    mem.write_u32(desc_gpa + 8, 0); // context_id
-    mem.write_u32(desc_gpa + 12, 0); // engine_id
-    mem.write_u64(desc_gpa + 16, cmd_gpa); // cmd_gpa
-    mem.write_u32(desc_gpa + 24, cmd_size_bytes); // cmd_size_bytes
-    mem.write_u64(desc_gpa + 32, 0); // alloc_table_gpa
-    mem.write_u32(desc_gpa + 40, 0); // alloc_table_size_bytes
-    mem.write_u64(desc_gpa + 48, 42); // signal_fence
+    mem.write_u32(desc_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET, AeroGpuSubmitDesc::SIZE_BYTES); // desc_size_bytes
+    mem.write_u32(desc_gpa + SUBMIT_DESC_FLAGS_OFFSET, AeroGpuSubmitDesc::FLAG_PRESENT); // flags
+    mem.write_u32(desc_gpa + SUBMIT_DESC_CONTEXT_ID_OFFSET, 0); // context_id
+    mem.write_u32(desc_gpa + SUBMIT_DESC_ENGINE_ID_OFFSET, 0); // engine_id
+    mem.write_u64(desc_gpa + SUBMIT_DESC_CMD_GPA_OFFSET, cmd_gpa); // cmd_gpa
+    mem.write_u32(desc_gpa + SUBMIT_DESC_CMD_SIZE_BYTES_OFFSET, cmd_size_bytes); // cmd_size_bytes
+    mem.write_u64(desc_gpa + SUBMIT_DESC_ALLOC_TABLE_GPA_OFFSET, 0); // alloc_table_gpa
+    mem.write_u32(desc_gpa + SUBMIT_DESC_ALLOC_TABLE_SIZE_BYTES_OFFSET, 0); // alloc_table_size_bytes
+    mem.write_u64(desc_gpa + SUBMIT_DESC_SIGNAL_FENCE_OFFSET, 42); // signal_fence
 
     // Fence page.
     let fence_gpa = 0x3000u64;
@@ -610,43 +634,43 @@ fn vsynced_present_does_not_complete_on_catchup_vblank_before_submission() {
     let entry_count = 8u32;
     let entry_stride = AeroGpuSubmitDesc::SIZE_BYTES;
 
-    mem.write_u32(ring_gpa + 0, AEROGPU_RING_MAGIC);
-    mem.write_u32(ring_gpa + 4, dev.regs.abi_version);
-    mem.write_u32(ring_gpa + 8, ring_size);
-    mem.write_u32(ring_gpa + 12, entry_count);
-    mem.write_u32(ring_gpa + 16, entry_stride);
-    mem.write_u32(ring_gpa + 20, 0);
+    mem.write_u32(ring_gpa + RING_MAGIC_OFFSET, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa + RING_ABI_VERSION_OFFSET, dev.regs.abi_version);
+    mem.write_u32(ring_gpa + RING_SIZE_BYTES_OFFSET, ring_size);
+    mem.write_u32(ring_gpa + RING_ENTRY_COUNT_OFFSET, entry_count);
+    mem.write_u32(ring_gpa + RING_ENTRY_STRIDE_BYTES_OFFSET, entry_stride);
+    mem.write_u32(ring_gpa + RING_FLAGS_OFFSET, 0);
     mem.write_u32(ring_gpa + RING_HEAD_OFFSET, 0); // head
     mem.write_u32(ring_gpa + RING_TAIL_OFFSET, 1); // tail
 
     // Command buffer: ACMD header + PRESENT(vsync).
     let cmd_gpa = 0x4000u64;
-    let cmd_size_bytes = 40u32;
+    let cmd_size_bytes = ProtocolCmdStreamHeader::SIZE_BYTES as u32 + CMD_PRESENT_SIZE_BYTES;
 
-    mem.write_u32(cmd_gpa + 0, AEROGPU_CMD_STREAM_MAGIC);
-    mem.write_u32(cmd_gpa + 4, dev.regs.abi_version);
-    mem.write_u32(cmd_gpa + 8, cmd_size_bytes);
-    mem.write_u32(cmd_gpa + 12, 0); // flags
-    mem.write_u32(cmd_gpa + 16, 0);
-    mem.write_u32(cmd_gpa + 20, 0);
+    mem.write_u32(cmd_gpa + CMD_STREAM_MAGIC_OFFSET, AEROGPU_CMD_STREAM_MAGIC);
+    mem.write_u32(cmd_gpa + CMD_STREAM_ABI_VERSION_OFFSET, dev.regs.abi_version);
+    mem.write_u32(cmd_gpa + CMD_STREAM_SIZE_BYTES_OFFSET, cmd_size_bytes);
+    mem.write_u32(cmd_gpa + CMD_STREAM_FLAGS_OFFSET, 0);
+    mem.write_u32(cmd_gpa + CMD_STREAM_RESERVED0_OFFSET, 0);
+    mem.write_u32(cmd_gpa + CMD_STREAM_RESERVED1_OFFSET, 0);
 
-    // aerogpu_cmd_present
-    mem.write_u32(cmd_gpa + 24, AerogpuCmdOpcode::Present as u32);
-    mem.write_u32(cmd_gpa + 28, 16); // size_bytes
-    mem.write_u32(cmd_gpa + 32, 0); // scanout_id
-    mem.write_u32(cmd_gpa + 36, AEROGPU_PRESENT_FLAG_VSYNC);
+    let present_gpa = cmd_gpa + CMD_STREAM_HEADER_SIZE_BYTES;
+    mem.write_u32(present_gpa + CMD_HDR_OPCODE_OFFSET, AerogpuCmdOpcode::Present as u32);
+    mem.write_u32(present_gpa + CMD_HDR_SIZE_BYTES_OFFSET, CMD_PRESENT_SIZE_BYTES);
+    mem.write_u32(present_gpa + CMD_PRESENT_SCANOUT_ID_OFFSET, 0);
+    mem.write_u32(present_gpa + CMD_PRESENT_FLAGS_OFFSET, AEROGPU_PRESENT_FLAG_VSYNC);
 
     // Submit descriptor at slot 0.
     let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
-    mem.write_u32(desc_gpa + 0, AeroGpuSubmitDesc::SIZE_BYTES); // desc_size_bytes
-    mem.write_u32(desc_gpa + 4, AeroGpuSubmitDesc::FLAG_PRESENT); // flags
-    mem.write_u32(desc_gpa + 8, 0); // context_id
-    mem.write_u32(desc_gpa + 12, 0); // engine_id
-    mem.write_u64(desc_gpa + 16, cmd_gpa); // cmd_gpa
-    mem.write_u32(desc_gpa + 24, cmd_size_bytes); // cmd_size_bytes
-    mem.write_u64(desc_gpa + 32, 0); // alloc_table_gpa
-    mem.write_u32(desc_gpa + 40, 0); // alloc_table_size_bytes
-    mem.write_u64(desc_gpa + 48, 42); // signal_fence
+    mem.write_u32(desc_gpa + SUBMIT_DESC_SIZE_BYTES_OFFSET, AeroGpuSubmitDesc::SIZE_BYTES); // desc_size_bytes
+    mem.write_u32(desc_gpa + SUBMIT_DESC_FLAGS_OFFSET, AeroGpuSubmitDesc::FLAG_PRESENT); // flags
+    mem.write_u32(desc_gpa + SUBMIT_DESC_CONTEXT_ID_OFFSET, 0); // context_id
+    mem.write_u32(desc_gpa + SUBMIT_DESC_ENGINE_ID_OFFSET, 0); // engine_id
+    mem.write_u64(desc_gpa + SUBMIT_DESC_CMD_GPA_OFFSET, cmd_gpa); // cmd_gpa
+    mem.write_u32(desc_gpa + SUBMIT_DESC_CMD_SIZE_BYTES_OFFSET, cmd_size_bytes); // cmd_size_bytes
+    mem.write_u64(desc_gpa + SUBMIT_DESC_ALLOC_TABLE_GPA_OFFSET, 0); // alloc_table_gpa
+    mem.write_u32(desc_gpa + SUBMIT_DESC_ALLOC_TABLE_SIZE_BYTES_OFFSET, 0); // alloc_table_size_bytes
+    mem.write_u64(desc_gpa + SUBMIT_DESC_SIGNAL_FENCE_OFFSET, 42); // signal_fence
 
     // Fence page.
     let fence_gpa = 0x3000u64;

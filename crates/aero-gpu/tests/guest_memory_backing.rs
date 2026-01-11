@@ -1,10 +1,22 @@
 use aero_gpu::aerogpu_executor::AeroGpuExecutor;
 use aero_gpu::{readback_rgba8, TextureRegion, VecGuestMemory};
 use aero_protocol::aerogpu::{
-    aerogpu_cmd::{AerogpuCmdOpcode, AEROGPU_CMD_STREAM_MAGIC},
+    aerogpu_cmd::{
+        AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode,
+        AerogpuCmdStreamHeader as ProtocolCmdStreamHeader, AEROGPU_CMD_STREAM_MAGIC,
+    },
     aerogpu_pci::{AerogpuFormat, AEROGPU_ABI_VERSION_U32},
-    aerogpu_ring::AEROGPU_ALLOC_TABLE_MAGIC,
+    aerogpu_ring::{
+        AerogpuAllocEntry as ProtocolAllocEntry, AerogpuAllocTableHeader as ProtocolAllocTableHeader,
+        AEROGPU_ALLOC_TABLE_MAGIC,
+    },
 };
+
+const CMD_STREAM_SIZE_BYTES_OFFSET: usize =
+    core::mem::offset_of!(ProtocolCmdStreamHeader, size_bytes);
+const CMD_HDR_SIZE_BYTES_OFFSET: usize = core::mem::offset_of!(ProtocolCmdHdr, size_bytes);
+const ALLOC_TABLE_SIZE_BYTES_OFFSET: usize =
+    core::mem::offset_of!(ProtocolAllocTableHeader, size_bytes);
 
 fn push_u32(out: &mut Vec<u8>, v: u32) {
     out.extend_from_slice(&v.to_le_bytes());
@@ -32,7 +44,8 @@ fn build_stream(packets: impl FnOnce(&mut Vec<u8>)) -> Vec<u8> {
     packets(&mut out);
 
     let size_bytes = out.len() as u32;
-    out[8..12].copy_from_slice(&size_bytes.to_le_bytes());
+    out[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
+        .copy_from_slice(&size_bytes.to_le_bytes());
     out
 }
 
@@ -50,7 +63,8 @@ fn emit_packet(out: &mut Vec<u8>, opcode: u32, payload: impl FnOnce(&mut Vec<u8>
     let size_bytes = (out.len() - start) as u32;
     assert!(size_bytes >= 8);
     assert_eq!(size_bytes % 4, 0);
-    out[start + 4..start + 8].copy_from_slice(&size_bytes.to_le_bytes());
+    out[start + CMD_HDR_SIZE_BYTES_OFFSET..start + CMD_HDR_SIZE_BYTES_OFFSET + 4]
+        .copy_from_slice(&size_bytes.to_le_bytes());
 }
 
 async fn create_device_queue() -> Option<(wgpu::Device, wgpu::Queue)> {
@@ -144,7 +158,7 @@ fn resource_dirty_range_uploads_from_guest_memory_before_draw() {
             push_u32(&mut out, AEROGPU_ABI_VERSION_U32);
             push_u32(&mut out, 0); // size_bytes (patch later)
             push_u32(&mut out, 2); // entry_count
-            push_u32(&mut out, 32); // entry_stride_bytes
+            push_u32(&mut out, ProtocolAllocEntry::SIZE_BYTES as u32); // entry_stride_bytes
             push_u32(&mut out, 0); // reserved0
 
             // aerogpu_alloc_entry (32 bytes)
@@ -161,7 +175,8 @@ fn resource_dirty_range_uploads_from_guest_memory_before_draw() {
             push_u64(&mut out, 0); // reserved0
 
             let size_bytes = out.len() as u32;
-            out[8..12].copy_from_slice(&size_bytes.to_le_bytes());
+            out[ALLOC_TABLE_SIZE_BYTES_OFFSET..ALLOC_TABLE_SIZE_BYTES_OFFSET + 4]
+                .copy_from_slice(&size_bytes.to_le_bytes());
             out
         };
         guest
@@ -354,7 +369,7 @@ fn resource_dirty_range_uploads_guest_backed_index_buffer_before_draw_indexed() 
             push_u32(&mut out, AEROGPU_ABI_VERSION_U32);
             push_u32(&mut out, 0); // size_bytes (patch later)
             push_u32(&mut out, 3); // entry_count
-            push_u32(&mut out, 32); // entry_stride_bytes
+            push_u32(&mut out, ProtocolAllocEntry::SIZE_BYTES as u32); // entry_stride_bytes
             push_u32(&mut out, 0); // reserved0
 
             // aerogpu_alloc_entry (32 bytes)
@@ -377,7 +392,8 @@ fn resource_dirty_range_uploads_guest_backed_index_buffer_before_draw_indexed() 
             push_u64(&mut out, 0); // reserved0
 
             let size_bytes = out.len() as u32;
-            out[8..12].copy_from_slice(&size_bytes.to_le_bytes());
+            out[ALLOC_TABLE_SIZE_BYTES_OFFSET..ALLOC_TABLE_SIZE_BYTES_OFFSET + 4]
+                .copy_from_slice(&size_bytes.to_le_bytes());
             out
         };
         guest
@@ -764,7 +780,7 @@ fn resource_dirty_range_texture_row_pitch_is_respected() {
             push_u32(&mut out, AEROGPU_ABI_VERSION_U32);
             push_u32(&mut out, 0); // size_bytes (patch later)
             push_u32(&mut out, 2); // entry_count
-            push_u32(&mut out, 32); // entry_stride_bytes
+            push_u32(&mut out, ProtocolAllocEntry::SIZE_BYTES as u32); // entry_stride_bytes
             push_u32(&mut out, 0); // reserved0
 
             // aerogpu_alloc_entry (32 bytes)
@@ -781,7 +797,8 @@ fn resource_dirty_range_texture_row_pitch_is_respected() {
             push_u64(&mut out, 0); // reserved0
 
             let size_bytes = out.len() as u32;
-            out[8..12].copy_from_slice(&size_bytes.to_le_bytes());
+            out[ALLOC_TABLE_SIZE_BYTES_OFFSET..ALLOC_TABLE_SIZE_BYTES_OFFSET + 4]
+                .copy_from_slice(&size_bytes.to_le_bytes());
             out
         };
         guest

@@ -1,8 +1,15 @@
 use aero_gpu::{parse_cmd_stream, AeroGpuCommandProcessor, AeroGpuEvent, CommandProcessorError};
 use aero_protocol::aerogpu::{
-    aerogpu_cmd::{AerogpuCmdOpcode, AEROGPU_CMD_STREAM_MAGIC},
+    aerogpu_cmd::{
+        AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode,
+        AerogpuCmdStreamHeader as ProtocolCmdStreamHeader, AEROGPU_CMD_STREAM_MAGIC,
+    },
     aerogpu_pci::{AEROGPU_ABI_MAJOR, AEROGPU_ABI_MINOR, AEROGPU_ABI_VERSION_U32},
 };
+
+const CMD_STREAM_SIZE_BYTES_OFFSET: usize =
+    core::mem::offset_of!(ProtocolCmdStreamHeader, size_bytes);
+const CMD_HDR_SIZE_BYTES_OFFSET: usize = core::mem::offset_of!(ProtocolCmdHdr, size_bytes);
 
 fn push_u32(out: &mut Vec<u8>, v: u32) {
     out.extend_from_slice(&v.to_le_bytes());
@@ -26,7 +33,8 @@ fn build_stream_with_abi(abi_version: u32, packets: impl FnOnce(&mut Vec<u8>)) -
     packets(&mut out);
 
     let size_bytes = out.len() as u32;
-    out[8..12].copy_from_slice(&size_bytes.to_le_bytes());
+    out[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
+        .copy_from_slice(&size_bytes.to_le_bytes());
     out
 }
 
@@ -43,7 +51,8 @@ fn emit_packet(out: &mut Vec<u8>, opcode: u32, payload: impl FnOnce(&mut Vec<u8>
     let size_bytes = (out.len() - start) as u32;
     assert!(size_bytes >= 8);
     assert_eq!(size_bytes % 4, 0);
-    out[start + 4..start + 8].copy_from_slice(&size_bytes.to_le_bytes());
+    out[start + CMD_HDR_SIZE_BYTES_OFFSET..start + CMD_HDR_SIZE_BYTES_OFFSET + 4]
+        .copy_from_slice(&size_bytes.to_le_bytes());
 }
 
 fn emit_create_texture_rgba8(out: &mut Vec<u8>, texture_handle: u32) {

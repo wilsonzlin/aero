@@ -51,6 +51,20 @@ const STREAM_HEADER_SIZE: usize = ProtocolCmdStreamHeader::SIZE_BYTES;
 const ALLOC_TABLE_HEADER_SIZE: usize = ProtocolAllocTableHeader::SIZE_BYTES;
 const ALLOC_ENTRY_SIZE: usize = ProtocolAllocEntry::SIZE_BYTES;
 
+const ALLOC_TABLE_MAGIC_OFFSET: usize = core::mem::offset_of!(ProtocolAllocTableHeader, magic);
+const ALLOC_TABLE_ABI_VERSION_OFFSET: usize =
+    core::mem::offset_of!(ProtocolAllocTableHeader, abi_version);
+const ALLOC_TABLE_SIZE_BYTES_OFFSET: usize =
+    core::mem::offset_of!(ProtocolAllocTableHeader, size_bytes);
+const ALLOC_TABLE_ENTRY_COUNT_OFFSET: usize =
+    core::mem::offset_of!(ProtocolAllocTableHeader, entry_count);
+const ALLOC_TABLE_ENTRY_STRIDE_BYTES_OFFSET: usize =
+    core::mem::offset_of!(ProtocolAllocTableHeader, entry_stride_bytes);
+
+const ALLOC_ENTRY_ALLOC_ID_OFFSET: usize = core::mem::offset_of!(ProtocolAllocEntry, alloc_id);
+const ALLOC_ENTRY_GPA_OFFSET: usize = core::mem::offset_of!(ProtocolAllocEntry, gpa);
+const ALLOC_ENTRY_SIZE_BYTES_OFFSET: usize = core::mem::offset_of!(ProtocolAllocEntry, size_bytes);
+
 fn read_u32_le(bytes: &[u8], offset: usize) -> Result<u32, ExecutorError> {
     let slice = bytes
         .get(offset..offset + 4)
@@ -162,14 +176,14 @@ impl AllocTable {
         let mut header = [0u8; ALLOC_TABLE_HEADER_SIZE];
         guest_memory.read(table_gpa, &mut header)?;
 
-        let magic = u32::from_le_bytes(header[0..4].try_into().unwrap());
+        let magic = read_u32_le(&header, ALLOC_TABLE_MAGIC_OFFSET)?;
         if magic != AEROGPU_ALLOC_TABLE_MAGIC {
             return Err(ExecutorError::Validation(format!(
                 "invalid alloc table magic 0x{magic:08x}"
             )));
         }
 
-        let abi_version = u32::from_le_bytes(header[4..8].try_into().unwrap());
+        let abi_version = read_u32_le(&header, ALLOC_TABLE_ABI_VERSION_OFFSET)?;
         match parse_and_validate_abi_version_u32(abi_version) {
             Ok(_) => {}
             Err(AerogpuAbiError::UnsupportedMajor { found }) => {
@@ -179,7 +193,7 @@ impl AllocTable {
             }
         }
 
-        let size_bytes = u32::from_le_bytes(header[8..12].try_into().unwrap());
+        let size_bytes = read_u32_le(&header, ALLOC_TABLE_SIZE_BYTES_OFFSET)?;
         let size_usize = size_bytes as usize;
         if size_usize < ALLOC_TABLE_HEADER_SIZE || size_usize > table_size {
             return Err(ExecutorError::Validation(format!(
@@ -187,8 +201,8 @@ impl AllocTable {
             )));
         }
 
-        let entry_count = u32::from_le_bytes(header[12..16].try_into().unwrap());
-        let entry_stride_bytes = u32::from_le_bytes(header[16..20].try_into().unwrap());
+        let entry_count = read_u32_le(&header, ALLOC_TABLE_ENTRY_COUNT_OFFSET)?;
+        let entry_stride_bytes = read_u32_le(&header, ALLOC_TABLE_ENTRY_STRIDE_BYTES_OFFSET)?;
         if entry_stride_bytes < ALLOC_ENTRY_SIZE as u32 {
             return Err(ExecutorError::Validation(format!(
                 "alloc table entry_stride_bytes={entry_stride_bytes} too small (min {ALLOC_ENTRY_SIZE})"
@@ -211,7 +225,7 @@ impl AllocTable {
             let mut entry_bytes = [0u8; ALLOC_ENTRY_SIZE];
             guest_memory.read(entry_gpa, &mut entry_bytes)?;
 
-            let alloc_id = u32::from_le_bytes(entry_bytes[0..4].try_into().unwrap());
+            let alloc_id = read_u32_le(&entry_bytes, ALLOC_ENTRY_ALLOC_ID_OFFSET)?;
             if alloc_id == 0 {
                 return Err(ExecutorError::Validation(
                     "alloc table entry alloc_id must be non-zero".into(),
@@ -223,8 +237,8 @@ impl AllocTable {
                 )));
             }
 
-            let gpa = u64::from_le_bytes(entry_bytes[8..16].try_into().unwrap());
-            let size_bytes = u64::from_le_bytes(entry_bytes[16..24].try_into().unwrap());
+            let gpa = read_u64_le(&entry_bytes, ALLOC_ENTRY_GPA_OFFSET)?;
+            let size_bytes = read_u64_le(&entry_bytes, ALLOC_ENTRY_SIZE_BYTES_OFFSET)?;
 
             table
                 .entries
