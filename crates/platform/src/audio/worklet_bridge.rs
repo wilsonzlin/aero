@@ -515,7 +515,8 @@ mod wasm {
 
         /// Restore ring indices from snapshot state.
         ///
-        /// This does not restore the ring's sample contents.
+        /// This does not restore the ring's sample contents; any previously-buffered host audio is
+        /// dropped and replaced with silence to avoid replaying stale samples after restore.
         pub fn restore_state(&self, state: &AudioWorkletRingState) {
             if state.capacity_frames != 0 {
                 debug_assert_eq!(
@@ -523,6 +524,10 @@ mod wasm {
                     "AudioWorklet ring capacity mismatch during restore"
                 );
             }
+
+            // Clear sample contents to silence. The snapshot only preserves the indices (for
+            // determinism), not the audio content itself.
+            let _ = self.samples.fill(0.0, 0, self.samples.length());
 
             atomic_store_u32(&self.header, READ_FRAME_INDEX, state.read_pos);
             atomic_store_u32(&self.header, WRITE_FRAME_INDEX, state.write_pos);
