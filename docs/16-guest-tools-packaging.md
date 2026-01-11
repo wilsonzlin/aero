@@ -157,6 +157,8 @@ Notes:
 - `ci/package-guest-tools.ps1` stages drivers into the packager input layout (`x86/<driver>/...`, `amd64/<driver>/...`),
   copies `guest-tools/`, and (when `-SigningPolicy` is not `none`) replaces any placeholder certs with `out/certs/aero-test.cer`
   so the resulting ISO matches the signed driver catalogs.
+- The wrapper drives inclusion/validation via a packager spec (`-SpecPath`), defaulting to
+  `tools/packaging/specs/win7-aero-guest-tools.json`.
 - The wrapper also updates the staged `config/devices.cmd` **storage service name** (`AERO_VIRTIO_BLK_SERVICE`) to match
   the packaged virtio-blk driver's `AddService` name (when it can be inferred from staged `.inf` files). This keeps
   `setup.cmd` boot-critical pre-seeding aligned with the drivers that were actually packaged.

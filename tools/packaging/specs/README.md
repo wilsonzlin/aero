@@ -17,6 +17,14 @@ Same as `win7-virtio-win.json`, but also declares optional drivers:
 
 - Optional: `vioinput` (virtio-input) + `viosnd` (virtio-snd)
 
+## `win7-aero-guest-tools.json`
+
+Intended for packaging Guest Tools media from **Aero-built** (in-repo) Windows 7 driver packages
+(the output of the Win7 driver CI pipeline under `out/packages/`).
+
+This spec is the default used by `ci/package-guest-tools.ps1` and aims to match what
+`guest-tools/setup.cmd` expects for a full "switch to virtio + Aero GPU" installation.
+
 ## Wrapper script defaults (`make-guest-tools-from-virtio-win.ps1`)
 
 `drivers/scripts/make-guest-tools-from-virtio-win.ps1` supports an explicit packaging profile:

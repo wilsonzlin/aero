@@ -8,10 +8,31 @@
       ]
     },
     {
+      "name": "virtio-blk",
+      "required": true,
+      "expected_hardware_ids": [
+        "PCI\\\\VEN_1AF4&DEV_(1001|1042)"
+      ]
+    },
+    {
+      "name": "virtio-net",
+      "required": true,
+      "expected_hardware_ids": [
+        "PCI\\\\VEN_1AF4&DEV_(1000|1041)"
+      ]
+    },
+    {
       "name": "virtio-input",
       "required": true,
       "expected_hardware_ids": [
         "PCI\\\\VEN_1AF4&DEV_(1011|1052)"
+      ]
+    },
+    {
+      "name": "virtio-snd",
+      "required": false,
+      "expected_hardware_ids": [
+        "PCI\\\\VEN_1AF4&DEV_(1018|1059)"
       ]
     }
   ]
