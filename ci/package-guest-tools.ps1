@@ -10,7 +10,8 @@
 # Outputs (in -OutDir):
 #   - aero-guest-tools.iso
 #   - aero-guest-tools.zip
-#   - manifest.json
+#   - manifest.json (raw packager output)
+#   - aero-guest-tools.manifest.json (copy of manifest.json; avoids collisions in shared artifact dirs)
 
 [CmdletBinding()]
 param(
@@ -848,18 +849,17 @@ try {
   $isoPath = Join-Path $outDirResolved "aero-guest-tools.iso"
   $zipPath = Join-Path $outDirResolved "aero-guest-tools.zip"
   $manifestPath = Join-Path $outDirResolved "manifest.json"
+  $manifestCopyPath = Join-Path $outDirResolved "aero-guest-tools.manifest.json"
 
   Assert-FileExistsNonEmpty -Path $isoPath
   Assert-FileExistsNonEmpty -Path $zipPath
   Assert-FileExistsNonEmpty -Path $manifestPath
 
-  # Backwards-compat: CI workflows and release pipelines historically referenced a
-  # prefixed manifest file name alongside the ISO/zip. Keep emitting it as an alias
-  # (the packager's canonical output is still manifest.json).
-  $manifestAliasPath = Join-Path $outDirResolved "aero-guest-tools.manifest.json"
-  Copy-Item -LiteralPath $manifestPath -Destination $manifestAliasPath -Force
-  Assert-FileExistsNonEmpty -Path $manifestAliasPath
- 
+  # Some CI workflows publish release assets from a directory that already contains other
+  # artifacts (driver bundle zips, etc). Keep a stable, unique manifest file name so the
+  # Guest Tools manifest doesn't clobber any other `manifest.json` that might be present.
+  Copy-Item -LiteralPath $manifestPath -Destination $manifestCopyPath -Force
+  Assert-FileExistsNonEmpty -Path $manifestCopyPath
   if ($includeCerts) {
     $certLeaf = Split-Path -Leaf $certPathResolved
     Assert-ZipContainsFile -ZipPath $zipPath -EntryPath ("certs/{0}" -f $certLeaf)
@@ -876,3 +876,4 @@ Write-Host "Guest Tools artifacts created in '$outDirResolved':"
 Write-Host "  aero-guest-tools.iso"
 Write-Host "  aero-guest-tools.zip"
 Write-Host "  manifest.json"
+Write-Host "  aero-guest-tools.manifest.json"

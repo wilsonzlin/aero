@@ -99,6 +99,9 @@ The tool produces the following in the output directory:
 - `aero-guest-tools.zip`
 - `manifest.json`
 
+The CI wrapper script (`ci/package-guest-tools.ps1`) also writes a copy of the manifest as
+`aero-guest-tools.manifest.json` to avoid collisions when packaging into a shared artifact directory.
+
 The packaged media also includes `THIRD_PARTY_NOTICES.md` at the ISO/zip root.
 
 The ISO/zip root layout matches what `guest-tools/setup.cmd` expects:
@@ -162,6 +165,7 @@ Outputs:
 - `out/artifacts/guest-tools/aero-guest-tools.iso`
 - `out/artifacts/guest-tools/aero-guest-tools.zip`
 - `out/artifacts/guest-tools/manifest.json`
+- `out/artifacts/guest-tools/aero-guest-tools.manifest.json`
 
 ### Direct packager invocation (advanced)
 
