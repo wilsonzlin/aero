@@ -349,6 +349,7 @@ test("TypeScript layout matches C headers", () => {
   assert.equal(size("aerogpu_escape_dump_ring_v2_inout"), 52 + 32 * 40);
   assert.equal(size("aerogpu_escape_selftest_inout"), 32);
   assert.equal(size("aerogpu_escape_query_vblank_out"), 56);
+  assert.equal(size("aerogpu_escape_map_shared_handle_inout"), 32);
 
   // Key offsets.
   assert.equal(off("aerogpu_cmd_stream_header", "magic"), AEROGPU_CMD_STREAM_HEADER_OFF_MAGIC);
@@ -600,6 +601,9 @@ test("TypeScript layout matches C headers", () => {
   assert.equal(off("aerogpu_escape_query_vblank_out", "last_vblank_time_ns"), 40);
   assert.equal(off("aerogpu_escape_query_vblank_out", "vblank_period_ns"), 48);
   assert.equal(off("aerogpu_escape_query_vblank_out", "vblank_interrupt_type"), 52);
+  assert.equal(off("aerogpu_escape_map_shared_handle_inout", "shared_handle"), 16);
+  assert.equal(off("aerogpu_escape_map_shared_handle_inout", "share_token"), 24);
+  assert.equal(off("aerogpu_escape_map_shared_handle_inout", "reserved0"), 28);
 
   // Constants.
   assert.equal(konst("AEROGPU_ABI_MAJOR"), BigInt(AEROGPU_ABI_MAJOR));
@@ -769,6 +773,7 @@ test("TypeScript layout matches C headers", () => {
   assert.equal(konst("AEROGPU_ESCAPE_VERSION"), 1n);
   assert.equal(konst("AEROGPU_ESCAPE_OP_QUERY_DEVICE"), 1n);
   assert.equal(konst("AEROGPU_ESCAPE_OP_QUERY_DEVICE_V2"), 7n);
+  assert.equal(konst("AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE"), 8n);
 
   assert.equal(konst("AEROGPU_ESCAPE_OP_QUERY_FENCE"), 2n);
   assert.equal(konst("AEROGPU_ESCAPE_OP_DUMP_RING"), 3n);

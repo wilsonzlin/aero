@@ -214,6 +214,7 @@ Additional debug/control escapes used by `drivers/aerogpu/tools/win7_dbgctl`:
 - `AEROGPU_ESCAPE_OP_QUERY_FENCE` (see `aerogpu_dbgctl_escape.h`)
 - `AEROGPU_ESCAPE_OP_DUMP_RING_V2` (fallback: `AEROGPU_ESCAPE_OP_DUMP_RING`) (see `aerogpu_dbgctl_escape.h`)
 - `AEROGPU_ESCAPE_OP_QUERY_VBLANK` (see `aerogpu_dbgctl_escape.h`)
+- `AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE` (see `aerogpu_dbgctl_escape.h`)
 - `AEROGPU_ESCAPE_OP_SELFTEST` (see `aerogpu_dbgctl_escape.h`)
 
 These are intended for a small user-mode tool to validate KMD↔emulator communication early.

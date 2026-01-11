@@ -125,11 +125,11 @@ static void PrintUsage() {
            L"  --query-umd-private\n"
            L"  --query-fence\n"
            L"  --dump-ring\n"
-           L"  --dump-vblank  (alias: --query-vblank)\n"
-           L"  --wait-vblank  (D3DKMTWaitForVerticalBlankEvent)\n"
-           L"  --query-scanline  (D3DKMTGetScanLine)\n"
-           L"  --map-shared-handle <HANDLE>\n"
-           L"  --selftest\n");
+            L"  --dump-vblank  (alias: --query-vblank)\n"
+            L"  --wait-vblank  (D3DKMTWaitForVerticalBlankEvent)\n"
+            L"  --query-scanline  (D3DKMTGetScanLine)\n"
+            L"  --map-shared-handle HANDLE\n"
+            L"  --selftest\n");
 }
 
 static void PrintNtStatus(const wchar_t *prefix, const D3DKMT_FUNCS *f, NTSTATUS st) {
@@ -457,6 +457,27 @@ static int DoQueryFence(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
           (unsigned long long)q.last_submitted_fence);
   wprintf(L"Last completed fence: 0x%I64x (%I64u)\n", (unsigned long long)q.last_completed_fence,
           (unsigned long long)q.last_completed_fence);
+  return 0;
+}
+
+static int DoMapSharedHandle(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint64_t sharedHandle) {
+  aerogpu_escape_map_shared_handle_inout q;
+  ZeroMemory(&q, sizeof(q));
+  q.hdr.version = AEROGPU_ESCAPE_VERSION;
+  q.hdr.op = AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE;
+  q.hdr.size = sizeof(q);
+  q.hdr.reserved0 = 0;
+  q.shared_handle = sharedHandle;
+  q.share_token = 0;
+  q.reserved0 = 0;
+
+  NTSTATUS st = SendAerogpuEscape(f, hAdapter, &q, sizeof(q));
+  if (!NT_SUCCESS(st)) {
+    PrintNtStatus(L"D3DKMTEscape(map-shared-handle) failed", f, st);
+    return 2;
+  }
+
+  wprintf(L"share_token: %lu (0x%08lx)\n", (unsigned long)q.share_token, (unsigned long)q.share_token);
   return 0;
 }
 
@@ -1280,6 +1301,25 @@ int wmain(int argc, wchar_t **argv) {
       continue;
     }
 
+    if (wcscmp(a, L"--map-shared-handle") == 0) {
+      if (i + 1 >= argc) {
+        fwprintf(stderr, L"--map-shared-handle requires an argument\n");
+        PrintUsage();
+        return 1;
+      }
+      if (!SetCommand(CMD_MAP_SHARED_HANDLE)) {
+        return 1;
+      }
+      const wchar_t *arg = argv[++i];
+      wchar_t *end = NULL;
+      mapSharedHandle = wcstoull(arg, &end, 0);
+      if (!end || end == arg || *end != 0) {
+        fwprintf(stderr, L"Invalid --map-shared-handle value: %s\n", arg);
+        return 1;
+      }
+      continue;
+    }
+
     if (wcscmp(a, L"--vblank-samples") == 0) {
       if (i + 1 >= argc) {
         fwprintf(stderr, L"--vblank-samples requires an argument\n");
@@ -1446,6 +1486,9 @@ int wmain(int argc, wchar_t **argv) {
     break;
   case CMD_QUERY_SCANLINE:
     rc = DoQueryScanline(&f, open.hAdapter, (uint32_t)open.VidPnSourceId, vblankSamples, vblankIntervalMs);
+    break;
+  case CMD_MAP_SHARED_HANDLE:
+    rc = DoMapSharedHandle(&f, open.hAdapter, mapSharedHandle);
     break;
   case CMD_SELFTEST:
     rc = DoSelftest(&f, open.hAdapter, timeoutMs);

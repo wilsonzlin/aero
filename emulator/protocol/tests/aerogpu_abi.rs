@@ -1826,6 +1826,7 @@ fn rust_layout_matches_c_headers() {
     );
     assert_eq!(abi.size("aerogpu_escape_selftest_inout"), 32);
     assert_eq!(abi.size("aerogpu_escape_query_vblank_out"), 56);
+    assert_eq!(abi.size("aerogpu_escape_map_shared_handle_inout"), 32);
 
     assert_eq!(abi.offset("aerogpu_escape_header", "version"), 0);
     assert_eq!(abi.offset("aerogpu_escape_header", "op"), 4);
@@ -1881,6 +1882,18 @@ fn rust_layout_matches_c_headers() {
     assert_eq!(
         abi.offset("aerogpu_escape_query_vblank_out", "vblank_interrupt_type"),
         52
+    );
+    assert_eq!(
+        abi.offset("aerogpu_escape_map_shared_handle_inout", "shared_handle"),
+        16
+    );
+    assert_eq!(
+        abi.offset("aerogpu_escape_map_shared_handle_inout", "share_token"),
+        24
+    );
+    assert_eq!(
+        abi.offset("aerogpu_escape_map_shared_handle_inout", "reserved0"),
+        28
     );
 
     // UMD-private discovery blob (UMDRIVERPRIVATE).
@@ -2342,6 +2355,7 @@ fn rust_layout_matches_c_headers() {
     assert_eq!(abi.konst("AEROGPU_ESCAPE_VERSION"), 1);
     assert_eq!(abi.konst("AEROGPU_ESCAPE_OP_QUERY_DEVICE"), 1);
     assert_eq!(abi.konst("AEROGPU_ESCAPE_OP_QUERY_DEVICE_V2"), 7);
+    assert_eq!(abi.konst("AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE"), 8);
 
     assert_eq!(abi.konst("AEROGPU_ESCAPE_OP_QUERY_FENCE"), 2);
     assert_eq!(abi.konst("AEROGPU_ESCAPE_OP_DUMP_RING"), 3);
