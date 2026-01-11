@@ -107,264 +107,11 @@ static __forceinline ULONGLONG AerovblkTotalLogicalBlocks(_In_ PAEROVBLK_DEVICE_
 }
 
 /* -------------------------------------------------------------------------- */
-/* Modern virtio-pci (MMIO) helpers                                            */
-/* -------------------------------------------------------------------------- */
+/* Modern virtio-pci (MMIO) helpers are provided by aero_virtio_pci_modern. */
 
-#define AEROVBLK_PCI_RESET_TIMEOUT_US 1000000u
-#define AEROVBLK_PCI_RESET_POLL_DELAY_US 1000u
-#define AEROVBLK_PCI_CONFIG_MAX_READ_RETRIES 10u
-
-static __forceinline VOID AerovblkCommonCfgLock(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, _Out_ PKIRQL oldIrql)
+static __forceinline VOID AerovblkNotifyQueue0(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt)
 {
-    KeAcquireSpinLock(&devExt->CommonCfgLock, oldIrql);
-}
-
-static __forceinline VOID AerovblkCommonCfgUnlock(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, _In_ KIRQL oldIrql)
-{
-    KeReleaseSpinLock(&devExt->CommonCfgLock, oldIrql);
-}
-
-static __forceinline UCHAR AerovblkReadDeviceStatus(_In_ const PAEROVBLK_DEVICE_EXTENSION devExt)
-{
-    return READ_REGISTER_UCHAR((volatile UCHAR *)&devExt->CommonCfg->device_status);
-}
-
-static __forceinline VOID AerovblkWriteDeviceStatus(_In_ const PAEROVBLK_DEVICE_EXTENSION devExt, _In_ UCHAR status)
-{
-    WRITE_REGISTER_UCHAR((volatile UCHAR *)&devExt->CommonCfg->device_status, status);
-}
-
-static VOID AerovblkResetDevice(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt)
-{
-    ULONG waitedUs;
-
-    if (devExt->CommonCfg == NULL) {
-        return;
-    }
-
-    KeMemoryBarrier();
-    AerovblkWriteDeviceStatus(devExt, 0);
-    KeMemoryBarrier();
-
-    for (waitedUs = 0; waitedUs < AEROVBLK_PCI_RESET_TIMEOUT_US; waitedUs += AEROVBLK_PCI_RESET_POLL_DELAY_US) {
-        if (AerovblkReadDeviceStatus(devExt) == 0) {
-            KeMemoryBarrier();
-            return;
-        }
-
-        KeStallExecutionProcessor(AEROVBLK_PCI_RESET_POLL_DELAY_US);
-    }
-}
-
-static VOID AerovblkAddStatus(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, _In_ UCHAR bits)
-{
-    UCHAR status;
-
-    if (devExt->CommonCfg == NULL) {
-        return;
-    }
-
-    KeMemoryBarrier();
-    status = AerovblkReadDeviceStatus(devExt);
-    status |= bits;
-    AerovblkWriteDeviceStatus(devExt, status);
-    KeMemoryBarrier();
-}
-
-static UCHAR AerovblkGetStatus(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt)
-{
-    if (devExt->CommonCfg == NULL) {
-        return 0;
-    }
-
-    KeMemoryBarrier();
-    return AerovblkReadDeviceStatus(devExt);
-}
-
-static VOID AerovblkFailDevice(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt)
-{
-    AerovblkAddStatus(devExt, VIRTIO_STATUS_FAILED);
-}
-
-static UINT64 AerovblkReadDeviceFeaturesLocked(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt)
-{
-    ULONG lo;
-    ULONG hi;
-
-    NT_ASSERT(devExt->CommonCfg != NULL);
-
-    WRITE_REGISTER_ULONG((volatile ULONG *)&devExt->CommonCfg->device_feature_select, 0);
-    KeMemoryBarrier();
-    lo = READ_REGISTER_ULONG((volatile ULONG *)&devExt->CommonCfg->device_feature);
-
-    WRITE_REGISTER_ULONG((volatile ULONG *)&devExt->CommonCfg->device_feature_select, 1);
-    KeMemoryBarrier();
-    hi = READ_REGISTER_ULONG((volatile ULONG *)&devExt->CommonCfg->device_feature);
-
-    return ((UINT64)hi << 32) | (UINT64)lo;
-}
-
-static VOID AerovblkWriteDriverFeaturesLocked(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, _In_ UINT64 features)
-{
-    ULONG lo = (ULONG)(features & 0xFFFFFFFFui64);
-    ULONG hi = (ULONG)(features >> 32);
-
-    NT_ASSERT(devExt->CommonCfg != NULL);
-
-    WRITE_REGISTER_ULONG((volatile ULONG *)&devExt->CommonCfg->driver_feature_select, 0);
-    KeMemoryBarrier();
-    WRITE_REGISTER_ULONG((volatile ULONG *)&devExt->CommonCfg->driver_feature, lo);
-
-    WRITE_REGISTER_ULONG((volatile ULONG *)&devExt->CommonCfg->driver_feature_select, 1);
-    KeMemoryBarrier();
-    WRITE_REGISTER_ULONG((volatile ULONG *)&devExt->CommonCfg->driver_feature, hi);
-
-    KeMemoryBarrier();
-}
-
-static UINT64 AerovblkReadDeviceFeatures(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt)
-{
-    KIRQL oldIrql;
-    UINT64 features;
-
-    AerovblkCommonCfgLock(devExt, &oldIrql);
-    features = AerovblkReadDeviceFeaturesLocked(devExt);
-    AerovblkCommonCfgUnlock(devExt, oldIrql);
-
-    return features;
-}
-
-static USHORT AerovblkReadQueueNotifyOffLocked(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, _In_ USHORT queueIndex)
-{
-    NT_ASSERT(devExt->CommonCfg != NULL);
-    WRITE_REGISTER_USHORT((volatile USHORT *)&devExt->CommonCfg->queue_select, queueIndex);
-    KeMemoryBarrier();
-    return READ_REGISTER_USHORT((volatile USHORT *)&devExt->CommonCfg->queue_notify_off);
-}
-
-static USHORT AerovblkReadQueueSizeLocked(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, _In_ USHORT queueIndex)
-{
-    NT_ASSERT(devExt->CommonCfg != NULL);
-    WRITE_REGISTER_USHORT((volatile USHORT *)&devExt->CommonCfg->queue_select, queueIndex);
-    KeMemoryBarrier();
-    return READ_REGISTER_USHORT((volatile USHORT *)&devExt->CommonCfg->queue_size);
-}
-
-static VOID AerovblkNotifyQueue0(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt)
-{
-    if (devExt->QueueNotify == NULL) {
-        return;
-    }
-
-    WRITE_REGISTER_USHORT((volatile USHORT *)devExt->QueueNotify, (USHORT)AEROVBLK_QUEUE_INDEX);
-    KeMemoryBarrier();
-}
-
-static UCHAR AerovblkReadCfg8(_In_ volatile const VOID *base, _In_ ULONG offset)
-{
-    return READ_REGISTER_UCHAR((volatile UCHAR *)((ULONG_PTR)base + offset));
-}
-
-static USHORT AerovblkReadCfg16(_In_ volatile const VOID *base, _In_ ULONG offset)
-{
-    return READ_REGISTER_USHORT((volatile USHORT *)((ULONG_PTR)base + offset));
-}
-
-static ULONG AerovblkReadCfg32(_In_ volatile const VOID *base, _In_ ULONG offset)
-{
-    return READ_REGISTER_ULONG((volatile ULONG *)((ULONG_PTR)base + offset));
-}
-
-static VOID AerovblkCopyFromDeviceCfg(_In_ volatile const UCHAR *base,
-                                     _In_ ULONG offset,
-                                     _Out_writes_bytes_(length) UCHAR *outBytes,
-                                     _In_ ULONG length)
-{
-    ULONG i = 0;
-
-    while (i < length && ((offset + i) & 3u) != 0) {
-        outBytes[i] = AerovblkReadCfg8(base, offset + i);
-        i++;
-    }
-
-    while (length - i >= sizeof(ULONG)) {
-        ULONG v32 = AerovblkReadCfg32(base, offset + i);
-        RtlCopyMemory(outBytes + i, &v32, sizeof(v32));
-        i += sizeof(ULONG);
-    }
-
-    while (length - i >= sizeof(USHORT)) {
-        USHORT v16 = AerovblkReadCfg16(base, offset + i);
-        RtlCopyMemory(outBytes + i, &v16, sizeof(v16));
-        i += sizeof(USHORT);
-    }
-
-    while (i < length) {
-        outBytes[i] = AerovblkReadCfg8(base, offset + i);
-        i++;
-    }
-}
-
-static NTSTATUS AerovblkReadDeviceConfig(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt,
-                                        _In_ ULONG offset,
-                                        _Out_writes_bytes_(length) PVOID buffer,
-                                        _In_ ULONG length)
-{
-    ULONG attempt;
-    UCHAR gen0;
-    UCHAR gen1;
-    ULONGLONG end;
-
-    if (length == 0) {
-        return STATUS_SUCCESS;
-    }
-
-    if (devExt->CommonCfg == NULL || devExt->DeviceCfg == NULL || buffer == NULL) {
-        return STATUS_INVALID_PARAMETER;
-    }
-
-    end = (ULONGLONG)offset + (ULONGLONG)length;
-    if (end < offset) {
-        return STATUS_INVALID_PARAMETER;
-    }
-
-    if (devExt->DeviceCfgLength != 0 && end > devExt->DeviceCfgLength) {
-        return STATUS_INVALID_PARAMETER;
-    }
-
-    for (attempt = 0; attempt < AEROVBLK_PCI_CONFIG_MAX_READ_RETRIES; attempt++) {
-        gen0 = READ_REGISTER_UCHAR((volatile UCHAR *)&devExt->CommonCfg->config_generation);
-        KeMemoryBarrier();
-
-        AerovblkCopyFromDeviceCfg(devExt->DeviceCfg, offset, (PUCHAR)buffer, length);
-
-        KeMemoryBarrier();
-        gen1 = READ_REGISTER_UCHAR((volatile UCHAR *)&devExt->CommonCfg->config_generation);
-        KeMemoryBarrier();
-
-        if (gen0 == gen1) {
-            return STATUS_SUCCESS;
-        }
-    }
-
-    return STATUS_IO_TIMEOUT;
-}
-
-static BOOLEAN AerovblkComputeQueueNotifyAddr(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, _In_ USHORT notifyOff)
-{
-    ULONGLONG byteOffset;
-
-    if (devExt->NotifyBase == NULL || devExt->NotifyOffMultiplier == 0 || devExt->NotifyLength < sizeof(UINT16)) {
-        return FALSE;
-    }
-
-    byteOffset = (ULONGLONG)notifyOff * (ULONGLONG)devExt->NotifyOffMultiplier;
-    if (byteOffset + sizeof(UINT16) > (ULONGLONG)devExt->NotifyLength) {
-        return FALSE;
-    }
-
-    devExt->QueueNotify = (volatile UINT16 *)((volatile UCHAR *)devExt->NotifyBase + byteOffset);
-    return TRUE;
+    AeroVirtioNotifyQueue(&devExt->Vdev, (USHORT)AEROVBLK_QUEUE_INDEX, 0);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -587,64 +334,28 @@ static BOOLEAN AerovblkAllocateVirtqueue(_Inout_ PAEROVBLK_DEVICE_EXTENSION devE
 
 static NTSTATUS AerovblkSetupQueue0(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt)
 {
-    KIRQL oldIrql;
     USHORT size;
     USHORT notifyOff;
-    USHORT enabled;
+    NTSTATUS st;
 
-    if (devExt->CommonCfg == NULL || devExt->Vq == NULL) {
+    if (devExt->Vq == NULL) {
         return STATUS_INVALID_DEVICE_STATE;
     }
 
-    AerovblkCommonCfgLock(devExt, &oldIrql);
+    st = AeroVirtioQueryQueue(&devExt->Vdev, (USHORT)AEROVBLK_QUEUE_INDEX, &size, &notifyOff);
+    if (!NT_SUCCESS(st)) {
+        return st;
+    }
 
-    /* Ensure MSI-X is disabled so INTx+ISR works even if MSI-X is present. */
-    WRITE_REGISTER_USHORT((volatile USHORT *)&devExt->CommonCfg->msix_config, (USHORT)0xFFFF);
-
-    WRITE_REGISTER_USHORT((volatile USHORT *)&devExt->CommonCfg->queue_select, (USHORT)AEROVBLK_QUEUE_INDEX);
-    KeMemoryBarrier();
-
-    size = READ_REGISTER_USHORT((volatile USHORT *)&devExt->CommonCfg->queue_size);
-    notifyOff = READ_REGISTER_USHORT((volatile USHORT *)&devExt->CommonCfg->queue_notify_off);
-
-    /* Disable per-queue MSI-X vector as well (optional in contract v1). */
-    WRITE_REGISTER_USHORT((volatile USHORT *)&devExt->CommonCfg->queue_msix_vector, (USHORT)0xFFFF);
-
-    if (size != devExt->QueueSize) {
-        AerovblkCommonCfgUnlock(devExt, oldIrql);
+    if (size != devExt->QueueSize || notifyOff != 0) {
         return STATUS_DEVICE_CONFIGURATION_ERROR;
     }
 
-    if (notifyOff != 0) {
-        AerovblkCommonCfgUnlock(devExt, oldIrql);
-        return STATUS_DEVICE_CONFIGURATION_ERROR;
-    }
-
-    WRITE_REGISTER_ULONG((volatile ULONG *)&devExt->CommonCfg->queue_desc_lo, (ULONG)(devExt->Vq->desc_pa & 0xFFFFFFFFui64));
-    WRITE_REGISTER_ULONG((volatile ULONG *)&devExt->CommonCfg->queue_desc_hi, (ULONG)(devExt->Vq->desc_pa >> 32));
-
-    WRITE_REGISTER_ULONG((volatile ULONG *)&devExt->CommonCfg->queue_avail_lo, (ULONG)(devExt->Vq->avail_pa & 0xFFFFFFFFui64));
-    WRITE_REGISTER_ULONG((volatile ULONG *)&devExt->CommonCfg->queue_avail_hi, (ULONG)(devExt->Vq->avail_pa >> 32));
-
-    WRITE_REGISTER_ULONG((volatile ULONG *)&devExt->CommonCfg->queue_used_lo, (ULONG)(devExt->Vq->used_pa & 0xFFFFFFFFui64));
-    WRITE_REGISTER_ULONG((volatile ULONG *)&devExt->CommonCfg->queue_used_hi, (ULONG)(devExt->Vq->used_pa >> 32));
-
-    KeMemoryBarrier();
-
-    WRITE_REGISTER_USHORT((volatile USHORT *)&devExt->CommonCfg->queue_enable, 1);
-    enabled = READ_REGISTER_USHORT((volatile USHORT *)&devExt->CommonCfg->queue_enable);
-
-    AerovblkCommonCfgUnlock(devExt, oldIrql);
-
-    if (enabled != 1) {
-        return STATUS_IO_DEVICE_ERROR;
-    }
-
-    if (!AerovblkComputeQueueNotifyAddr(devExt, notifyOff)) {
-        return STATUS_DEVICE_CONFIGURATION_ERROR;
-    }
-
-    return STATUS_SUCCESS;
+    return AeroVirtioSetupQueue(&devExt->Vdev,
+                                (USHORT)AEROVBLK_QUEUE_INDEX,
+                                (ULONGLONG)devExt->Vq->desc_pa,
+                                (ULONGLONG)devExt->Vq->avail_pa,
+                                (ULONGLONG)devExt->Vq->used_pa);
 }
 
 static BOOLEAN AerovblkDeviceBringUp(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, _In_ BOOLEAN allocateResources)
@@ -661,7 +372,7 @@ static BOOLEAN AerovblkDeviceBringUp(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, 
      * Reset the device into a known state. This also disables all queues and
      * clears pending interrupts per the contract.
      */
-    AerovblkResetDevice(devExt);
+    AeroVirtioResetDevice(&devExt->Vdev);
 
     if (!allocateResources) {
         StorPortAcquireSpinLock(devExt, InterruptLock, &lock);
@@ -675,50 +386,45 @@ static BOOLEAN AerovblkDeviceBringUp(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, 
     requiredFeatures = VIRTIO_F_VERSION_1 | VIRTIO_F_RING_INDIRECT_DESC | VIRTIO_BLK_F_SEG_MAX | VIRTIO_BLK_F_BLK_SIZE |
                        VIRTIO_BLK_F_FLUSH;
 
-    AerovblkAddStatus(devExt, VIRTIO_STATUS_ACKNOWLEDGE);
-    AerovblkAddStatus(devExt, VIRTIO_STATUS_DRIVER);
+    AeroVirtioAddStatus(&devExt->Vdev, VIRTIO_STATUS_ACKNOWLEDGE);
+    AeroVirtioAddStatus(&devExt->Vdev, VIRTIO_STATUS_DRIVER);
 
-    deviceFeatures = AerovblkReadDeviceFeatures(devExt);
+    deviceFeatures = AeroVirtioReadDeviceFeatures(&devExt->Vdev);
     if ((deviceFeatures & requiredFeatures) != requiredFeatures) {
         AEROVBLK_LOG("missing required features (device=0x%I64x required=0x%I64x)", deviceFeatures, requiredFeatures);
-        AerovblkFailDevice(devExt);
+        AeroVirtioFailDevice(&devExt->Vdev);
         return FALSE;
     }
     if ((deviceFeatures & VIRTIO_F_RING_EVENT_IDX) != 0) {
         AEROVBLK_LOG("device offers EVENT_IDX (0x%I64x), not supported by contract v1", deviceFeatures);
-        AerovblkFailDevice(devExt);
+        AeroVirtioFailDevice(&devExt->Vdev);
         return FALSE;
     }
 
     negotiated = requiredFeatures;
     devExt->NegotiatedFeatures = negotiated;
-    devExt->SupportsFlush = TRUE;
+    devExt->SupportsFlush = (negotiated & VIRTIO_BLK_F_FLUSH) ? TRUE : FALSE;
 
-    {
-        KIRQL oldIrql;
-        AerovblkCommonCfgLock(devExt, &oldIrql);
-        AerovblkWriteDriverFeaturesLocked(devExt, negotiated);
-        AerovblkCommonCfgUnlock(devExt, oldIrql);
-    }
+    AeroVirtioWriteDriverFeatures(&devExt->Vdev, negotiated);
 
-    AerovblkAddStatus(devExt, VIRTIO_STATUS_FEATURES_OK);
-    status = AerovblkGetStatus(devExt);
+    AeroVirtioAddStatus(&devExt->Vdev, VIRTIO_STATUS_FEATURES_OK);
+    status = AeroVirtioGetStatus(&devExt->Vdev);
     if ((status & VIRTIO_STATUS_FEATURES_OK) == 0) {
         AEROVBLK_LOG("device rejected FEATURES_OK (status=0x%02x)", status);
-        AerovblkFailDevice(devExt);
+        AeroVirtioFailDevice(&devExt->Vdev);
         return FALSE;
     }
 
     if (allocateResources) {
         if (!AerovblkAllocateVirtqueue(devExt)) {
             AEROVBLK_LOG("%s", "failed to allocate virtqueue resources");
-            AerovblkFailDevice(devExt);
+            AeroVirtioFailDevice(&devExt->Vdev);
             return FALSE;
         }
 
         if (!AerovblkAllocateRequestContexts(devExt)) {
             AEROVBLK_LOG("%s", "failed to allocate request contexts");
-            AerovblkFailDevice(devExt);
+            AeroVirtioFailDevice(&devExt->Vdev);
             return FALSE;
         }
     }
@@ -730,22 +436,22 @@ static BOOLEAN AerovblkDeviceBringUp(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, 
     st = AerovblkSetupQueue0(devExt);
     if (!NT_SUCCESS(st)) {
         AEROVBLK_LOG("AerovblkSetupQueue0 failed: 0x%08lx", st);
-        AerovblkFailDevice(devExt);
+        AeroVirtioFailDevice(&devExt->Vdev);
         return FALSE;
     }
 
     RtlZeroMemory(&cfg, sizeof(cfg));
-    st = AerovblkReadDeviceConfig(devExt, 0, &cfg, sizeof(cfg));
+    st = AeroVirtioReadDeviceConfig(&devExt->Vdev, 0, &cfg, sizeof(cfg));
     if (!NT_SUCCESS(st)) {
-        AEROVBLK_LOG("AerovblkReadDeviceConfig failed: 0x%08lx", st);
-        AerovblkFailDevice(devExt);
+        AEROVBLK_LOG("AeroVirtioReadDeviceConfig failed: 0x%08lx", st);
+        AeroVirtioFailDevice(&devExt->Vdev);
         return FALSE;
     }
 
     /* Contract v1: size_max is not used and must be 0. */
     if (cfg.SizeMax != 0) {
         AEROVBLK_LOG("contract violation: size_max=%lu (expected 0)", cfg.SizeMax);
-        AerovblkFailDevice(devExt);
+        AeroVirtioFailDevice(&devExt->Vdev);
         return FALSE;
     }
 
@@ -760,7 +466,7 @@ static BOOLEAN AerovblkDeviceBringUp(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, 
     devExt->SegMax = cfg.SegMax;
     if (devExt->SegMax == 0) {
         AEROVBLK_LOG("%s", "contract violation: seg_max=0");
-        AerovblkFailDevice(devExt);
+        AeroVirtioFailDevice(&devExt->Vdev);
         return FALSE;
     }
     if (devExt->SegMax > AEROVBLK_MAX_DATA_SG) {
@@ -771,7 +477,7 @@ static BOOLEAN AerovblkDeviceBringUp(_Inout_ PAEROVBLK_DEVICE_EXTENSION devExt, 
 
     AEROVBLK_LOG("capacity_sectors=%I64u blk_size=%lu seg_max=%lu", devExt->CapacitySectors, devExt->LogicalSectorSize, devExt->SegMax);
 
-    AerovblkAddStatus(devExt, VIRTIO_STATUS_DRIVER_OK);
+    AeroVirtioAddStatus(&devExt->Vdev, VIRTIO_STATUS_DRIVER_OK);
     StorPortNotification(NextRequest, devExt, NULL);
     return TRUE;
 }
@@ -1317,7 +1023,6 @@ ULONG AerovblkHwFindAdapter(_In_ PVOID deviceExtension,
 
     devExt = (PAEROVBLK_DEVICE_EXTENSION)deviceExtension;
     RtlZeroMemory(devExt, sizeof(*devExt));
-    KeInitializeSpinLock(&devExt->CommonCfgLock);
 
     base = StorPortGetDeviceBase(devExt,
                                  configInfo->AdapterInterfaceType,
@@ -1374,41 +1079,29 @@ ULONG AerovblkHwFindAdapter(_In_ PVOID deviceExtension,
         return SP_RETURN_NOT_FOUND;
     }
 
-    devExt->CommonCfg = (volatile virtio_pci_common_cfg *)((PUCHAR)base + caps.common_cfg.offset);
-    devExt->NotifyBase = (volatile UCHAR *)((PUCHAR)base + caps.notify_cfg.offset);
-    devExt->NotifyOffMultiplier = caps.notify_off_multiplier;
-    devExt->NotifyLength = caps.notify_cfg.length;
-    devExt->IsrStatus = (volatile UCHAR *)((PUCHAR)base + caps.isr_cfg.offset);
-    devExt->DeviceCfg = (volatile UCHAR *)((PUCHAR)base + caps.device_cfg.offset);
-    devExt->DeviceCfgLength = caps.device_cfg.length;
+    st = AeroVirtioPciModernInitFromBar0(&devExt->Vdev, (volatile void *)base, range->RangeLength);
+    if (!NT_SUCCESS(st)) {
+        return SP_RETURN_NOT_FOUND;
+    }
 
-    numQueues = READ_REGISTER_USHORT((volatile USHORT *)&devExt->CommonCfg->num_queues);
+    numQueues = AeroVirtioGetNumQueues(&devExt->Vdev);
     if (numQueues != 1) {
         return SP_RETURN_NOT_FOUND;
     }
 
-    {
-        KIRQL oldIrql;
-        AerovblkCommonCfgLock(devExt, &oldIrql);
-        qsz = AerovblkReadQueueSizeLocked(devExt, (USHORT)AEROVBLK_QUEUE_INDEX);
-        notifyOff = AerovblkReadQueueNotifyOffLocked(devExt, (USHORT)AEROVBLK_QUEUE_INDEX);
-        AerovblkCommonCfgUnlock(devExt, oldIrql);
-    }
-
-    if (qsz != (USHORT)AEROVBLK_QUEUE_SIZE) {
+    st = AeroVirtioQueryQueue(&devExt->Vdev, (USHORT)AEROVBLK_QUEUE_INDEX, &qsz, &notifyOff);
+    if (!NT_SUCCESS(st)) {
         return SP_RETURN_NOT_FOUND;
     }
-    if (notifyOff != 0) {
+
+    if (qsz != (USHORT)AEROVBLK_QUEUE_SIZE || notifyOff != 0) {
         return SP_RETURN_NOT_FOUND;
     }
 
     devExt->QueueSize = qsz;
-    if (!AerovblkComputeQueueNotifyAddr(devExt, notifyOff)) {
-        return SP_RETURN_NOT_FOUND;
-    }
 
     /* Enforce contract v1 feature bits. */
-    deviceFeatures = AerovblkReadDeviceFeatures(devExt);
+    deviceFeatures = AeroVirtioReadDeviceFeatures(&devExt->Vdev);
     if ((deviceFeatures & (VIRTIO_F_VERSION_1 | VIRTIO_F_RING_INDIRECT_DESC | VIRTIO_BLK_F_SEG_MAX | VIRTIO_BLK_F_BLK_SIZE | VIRTIO_BLK_F_FLUSH)) !=
         (VIRTIO_F_VERSION_1 | VIRTIO_F_RING_INDIRECT_DESC | VIRTIO_BLK_F_SEG_MAX | VIRTIO_BLK_F_BLK_SIZE | VIRTIO_BLK_F_FLUSH)) {
         return SP_RETURN_NOT_FOUND;
@@ -1418,7 +1111,7 @@ ULONG AerovblkHwFindAdapter(_In_ PVOID deviceExtension,
     }
 
     RtlZeroMemory(&blkCfg, sizeof(blkCfg));
-    st = AerovblkReadDeviceConfig(devExt, 0, &blkCfg, sizeof(blkCfg));
+    st = AeroVirtioReadDeviceConfig(&devExt->Vdev, 0, &blkCfg, sizeof(blkCfg));
     if (!NT_SUCCESS(st)) {
         return SP_RETURN_NOT_FOUND;
     }
@@ -1530,7 +1223,7 @@ SCSI_ADAPTER_CONTROL_STATUS AerovblkHwAdapterControl(_In_ PVOID deviceExtension,
         devExt->Removed = TRUE;
 
         /* Stop the device (disables queues and clears pending interrupts). */
-        AerovblkResetDevice(devExt);
+        AeroVirtioResetDevice(&devExt->Vdev);
 
         StorPortAcquireSpinLock(devExt, InterruptLock, &lock);
         AerovblkAbortOutstandingRequestsLocked(devExt);
@@ -1562,12 +1255,19 @@ BOOLEAN AerovblkHwInterrupt(_In_ PVOID deviceExtension)
     UCHAR statusByte;
 
     devExt = (PAEROVBLK_DEVICE_EXTENSION)deviceExtension;
-    if (devExt->IsrStatus == NULL || devExt->Vq == NULL) {
+    if (devExt->Vq == NULL) {
         return FALSE;
     }
 
-    isr = READ_REGISTER_UCHAR((volatile UCHAR *)devExt->IsrStatus);
-    if (isr == 0) {
+    /*
+     * INTx path: ISR is read-to-ack.
+     *
+     * If MSI-X is enabled by the platform (optional) some implementations may
+     * not set the ISR byte. In that case, fall back to checking the used ring
+     * before declaring the interrupt spurious.
+     */
+    isr = AeroVirtioReadIsr(&devExt->Vdev);
+    if (isr == 0 && !VirtqSplitHasUsed(devExt->Vq)) {
         return FALSE;
     }
 

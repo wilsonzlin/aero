@@ -6,7 +6,7 @@
 #include <ntddscsi.h>
 
 /* Shared virtio headers (WDF-free). */
-#include "virtio_spec.h" /* drivers/win7/virtio/virtio-core/include */
+#include "aero_virtio_pci_modern.h" /* drivers/windows7/virtio-modern/common/include */
 #include "virtqueue_split.h" /* drivers/windows/virtio/common */
 #include "virtio_pci_cap_parser.h" /* drivers/win7/virtio/virtio-core/portable */
 
@@ -108,22 +108,8 @@ typedef struct _AEROVBLK_DEVICE_EXTENSION {
     PVOID Bar0Va;
     ULONG Bar0Length;
 
-    /* Parsed capability window sizes (for defensive bounds checks). */
-    ULONG NotifyLength;
-    ULONG DeviceCfgLength;
-
-    /* Modern MMIO pointers (within BAR0) */
-    volatile virtio_pci_common_cfg *CommonCfg;
-    volatile UCHAR *NotifyBase;
-    ULONG NotifyOffMultiplier;
-    volatile UCHAR *IsrStatus;
-    volatile UCHAR *DeviceCfg;
-
-    /* Cached queue0 notify address (computed from queue_notify_off). */
-    volatile UINT16 *QueueNotify;
-
-    /* Serializes selector-based common_cfg access (feature_select / queue_select). */
-    KSPIN_LOCK CommonCfgLock;
+    /* Shared modern virtio-pci MMIO transport (contract v1). */
+    AERO_VIRTIO_PCI_MODERN_DEVICE Vdev;
 
     /* Virtqueue (split ring) */
     VIRTQ_SPLIT *Vq;
@@ -191,4 +177,3 @@ SCSI_ADAPTER_CONTROL_STATUS AerovblkHwAdapterControl(
     _In_ PVOID deviceExtension,
     _In_ SCSI_ADAPTER_CONTROL_TYPE controlType,
     _In_ PVOID parameters);
-

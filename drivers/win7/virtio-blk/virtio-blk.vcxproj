@@ -46,7 +46,7 @@
       <TreatWarningAsError>true</TreatWarningAsError>
       <ConformanceMode>true</ConformanceMode>
       <PreprocessorDefinitions>_KERNEL_MODE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>$(ProjectDir)include;$(ProjectDir)..\..\windows\virtio\common;$(ProjectDir)..\virtio\virtio-core\include;$(ProjectDir)..\virtio\virtio-core\portable;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)include;$(ProjectDir)..\..\windows\virtio\common;$(ProjectDir)..\..\windows7\virtio-modern\common\include;$(ProjectDir)..\virtio\virtio-core\portable;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <AdditionalDependencies>storport.lib;%(AdditionalDependencies)</AdditionalDependencies>
@@ -59,7 +59,7 @@
       <TreatWarningAsError>true</TreatWarningAsError>
       <ConformanceMode>true</ConformanceMode>
       <PreprocessorDefinitions>_KERNEL_MODE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>$(ProjectDir)include;$(ProjectDir)..\..\windows\virtio\common;$(ProjectDir)..\virtio\virtio-core\include;$(ProjectDir)..\virtio\virtio-core\portable;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)include;$(ProjectDir)..\..\windows\virtio\common;$(ProjectDir)..\..\windows7\virtio-modern\common\include;$(ProjectDir)..\virtio\virtio-core\portable;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <AdditionalDependencies>storport.lib;%(AdditionalDependencies)</AdditionalDependencies>
@@ -74,6 +74,7 @@
     <ClCompile Include="src\aerovblk.c" />
     <ClCompile Include="..\..\windows\virtio\common\virtqueue_split.c" />
     <ClCompile Include="..\virtio\virtio-core\portable\virtio_pci_cap_parser.c" />
+    <ClCompile Include="..\..\windows7\virtio-modern\common\src\aero_virtio_pci_modern.c" />
   </ItemGroup>
 
   <ItemGroup>
