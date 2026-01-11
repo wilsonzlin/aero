@@ -276,6 +276,177 @@ static inline int FailHresult(const char* test_name, const char* what, HRESULT h
   return Fail(test_name, "%s failed with %s", what, HresultToString(hr).c_str());
 }
 
+static inline bool Is64BitProcess() {
+#if defined(_WIN64) || defined(_M_X64)
+  return true;
+#else
+  return false;
+#endif
+}
+
+static inline const char* GetProcessBitnessString() {
+  return Is64BitProcess() ? "x64" : "x86";
+}
+
+static inline const wchar_t* ExpectedAeroGpuD3D9UmdModuleBaseName() {
+  return Is64BitProcess() ? L"aerogpu_d3d9_x64.dll" : L"aerogpu_d3d9.dll";
+}
+
+static inline const wchar_t* ExpectedAeroGpuD3D10UmdModuleBaseName() {
+  return Is64BitProcess() ? L"aerogpu_d3d10_x64.dll" : L"aerogpu_d3d10.dll";
+}
+
+static inline bool TryGetModuleFileNameW(HMODULE module, std::wstring* out, std::string* err) {
+  if (out) {
+    out->clear();
+  }
+  if (err) {
+    err->clear();
+  }
+  if (!module) {
+    if (err) {
+      *err = "module handle is NULL";
+    }
+    return false;
+  }
+
+  // MAX_PATH may be too small for some setups; retry with a larger buffer if needed.
+  DWORD cap = MAX_PATH;
+  for (int i = 0; i < 4; ++i) {
+    std::vector<wchar_t> buf(cap);
+    DWORD len = GetModuleFileNameW(module, &buf[0], cap);
+    if (len == 0) {
+      if (err) {
+        *err = "GetModuleFileNameW failed: " + Win32ErrorToString(GetLastError());
+      }
+      return false;
+    }
+    if (len < cap - 1) {
+      if (out) {
+        out->assign(&buf[0], &buf[0] + len);
+      }
+      return true;
+    }
+    cap *= 2;
+  }
+  if (err) {
+    *err = "GetModuleFileNameW returned truncated path";
+  }
+  return false;
+}
+
+static inline bool GetLoadedModulePathByBaseName(const wchar_t* module_base_name,
+                                                 std::wstring* out_path,
+                                                 std::string* out_path_err) {
+  if (out_path) {
+    out_path->clear();
+  }
+  if (out_path_err) {
+    out_path_err->clear();
+  }
+  if (!module_base_name) {
+    if (out_path_err) {
+      *out_path_err = "module name is NULL";
+    }
+    return false;
+  }
+  HMODULE mod = GetModuleHandleW(module_base_name);
+  if (!mod) {
+    return false;
+  }
+  std::string err;
+  std::wstring path;
+  if (!TryGetModuleFileNameW(mod, &path, &err)) {
+    if (out_path_err) {
+      *out_path_err = err;
+    }
+    return true;
+  }
+  if (out_path) {
+    *out_path = path;
+  }
+  return true;
+}
+
+static inline void DumpLoadedAeroGpuUmdModules(const char* test_name) {
+  const wchar_t* const names[] = {L"aerogpu_d3d9.dll",
+                                  L"aerogpu_d3d9_x64.dll",
+                                  L"aerogpu_d3d10.dll",
+                                  L"aerogpu_d3d10_x64.dll"};
+  bool any = false;
+  for (size_t i = 0; i < ARRAYSIZE(names); ++i) {
+    std::wstring path;
+    std::string err;
+    if (!GetLoadedModulePathByBaseName(names[i], &path, &err)) {
+      continue;
+    }
+    any = true;
+    if (!path.empty()) {
+      PrintfStdout("INFO: %s: loaded module %ls => %ls", test_name, names[i], path.c_str());
+    } else if (!err.empty()) {
+      PrintfStdout("INFO: %s: loaded module %ls (path unavailable: %s)",
+                   test_name,
+                   names[i],
+                   err.c_str());
+    } else {
+      PrintfStdout("INFO: %s: loaded module %ls (path unavailable)", test_name, names[i]);
+    }
+  }
+  if (!any) {
+    PrintfStdout("INFO: %s: no AeroGPU UMD modules currently loaded", test_name);
+  }
+}
+
+static inline int RequireAeroGpuUmdLoaded(const char* test_name,
+                                          const wchar_t* expected_module_base_name,
+                                          const char* api_label,
+                                          const char* reg_key_hint) {
+  std::wstring path;
+  std::string err;
+  if (GetLoadedModulePathByBaseName(expected_module_base_name, &path, &err)) {
+    if (!path.empty()) {
+      PrintfStdout("INFO: %s: loaded AeroGPU %s UMD: %ls", test_name, api_label, path.c_str());
+    } else if (!err.empty()) {
+      PrintfStdout("INFO: %s: loaded AeroGPU %s UMD module %ls (path unavailable: %s)",
+                   test_name,
+                   api_label,
+                   expected_module_base_name,
+                   err.c_str());
+    } else {
+      PrintfStdout("INFO: %s: loaded AeroGPU %s UMD module %ls (path unavailable)",
+                   test_name,
+                   api_label,
+                   expected_module_base_name);
+    }
+    return 0;
+  }
+
+  DumpLoadedAeroGpuUmdModules(test_name);
+  return Fail(
+      test_name,
+      "expected AeroGPU %s UMD DLL %ls to be loaded in-process (process=%s), but it was not. "
+      "Likely causes: incorrect INF registry keys (%s), incorrect UMD exports/decoration (stdcall), "
+      "or missing DLL in System32/SysWOW64.",
+      api_label,
+      expected_module_base_name,
+      GetProcessBitnessString(),
+      reg_key_hint);
+}
+
+static inline int RequireAeroGpuD3D9UmdLoaded(const char* test_name) {
+  return RequireAeroGpuUmdLoaded(test_name,
+                                 ExpectedAeroGpuD3D9UmdModuleBaseName(),
+                                 "D3D9",
+                                 "InstalledDisplayDrivers/InstalledDisplayDriversWow");
+}
+
+static inline int RequireAeroGpuD3D10UmdLoaded(const char* test_name) {
+  return RequireAeroGpuUmdLoaded(test_name,
+                                 ExpectedAeroGpuD3D10UmdModuleBaseName(),
+                                 "D3D10/11",
+                                 "UserModeDriverName/UserModeDriverNameWow");
+}
+
 template <typename T>
 class ComPtr {
  public:
