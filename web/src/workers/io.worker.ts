@@ -124,8 +124,9 @@ class InMemoryHidGuestBridge implements HidGuestBridge {
     this.devices.set(msg.deviceId, msg);
     // Treat (re-)attach as a new session; clear any buffered reports.
     this.inputReports.set(msg.deviceId, []);
+    const portHint = msg.guestPort === undefined ? "" : ` port=${msg.guestPort}`;
     this.host.log(
-      `hid.attach deviceId=${msg.deviceId} vid=0x${msg.vendorId.toString(16).padStart(4, "0")} pid=0x${msg.productId.toString(16).padStart(4, "0")}`,
+      `hid.attach deviceId=${msg.deviceId}${portHint} vid=0x${msg.vendorId.toString(16).padStart(4, "0")} pid=0x${msg.productId.toString(16).padStart(4, "0")}`,
       msg.deviceId,
     );
   }
