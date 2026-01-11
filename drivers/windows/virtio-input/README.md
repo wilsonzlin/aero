@@ -20,20 +20,31 @@ In Aero contract v1, virtio-input is exposed as **two PCI functions** (keyboard 
 - keyboard function: ReportID `1` only
 - mouse function: ReportID `2` only
 
-## Building (WDK 7.1 recommended)
+## Building
 
-This project is set up for the classic **WDK 7.1 `build`** system, targeting the in-box Windows 7 KMDF runtime (**KMDF 1.9**).
+### CI / modern WDK (recommended)
 
-1. Install the Windows Driver Kit that targets Windows 7 (WDK 7.1 / 7600.x).
-2. Open the WDK build environment for:
-   - `Win7 x86 Free Build Environment`
-   - `Win7 x64 Free Build Environment`
-3. From the build environment prompt:
+CI builds this driver using **MSBuild + the Windows 10 WDK**, while still targeting **Windows 7** and the in-box **KMDF 1.9** runtime.
 
-   ```bat
-   cd \path\to\repo\drivers\windows\virtio-input
-   build -cZ
-   ```
+On a Windows machine:
+
+```powershell
+pwsh -File ci/install-wdk.ps1
+pwsh -File ci/build-drivers.ps1 -ToolchainJson out/toolchain.json -Drivers windows/virtio-input
+```
+
+Build outputs are staged under:
+
+`out/drivers/windows/virtio-input/<arch>/`
+
+### Legacy WDK 7.1 build.exe (optional)
+
+If you still have WDK 7.1 installed, the classic `build.exe` flow is preserved via `sources`/`makefile`:
+
+```bat
+cd \path\to\repo\drivers\windows\virtio-input
+build -cZ
+```
 
 The output `virtioinput.sys` will be placed under the WDK `objfre_*` output directories.
 
