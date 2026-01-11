@@ -1033,6 +1033,13 @@ function renderRemoteDiskPanel(): HTMLElement {
     el('option', { value: 'opfs', text: 'cache: OPFS' }),
     el('option', { value: 'idb', text: 'cache: IndexedDB' }),
   ) as HTMLSelectElement;
+  const credentialsSelect = el(
+    'select',
+    {},
+    el('option', { value: 'same-origin', text: 'credentials: same-origin' }),
+    el('option', { value: 'include', text: 'credentials: include' }),
+    el('option', { value: 'omit', text: 'credentials: omit' }),
+  ) as HTMLSelectElement;
   const urlInput = el('input', { type: 'url', placeholder: 'https://example.com/disk.raw' }) as HTMLInputElement;
   const blockSizeInput = el('input', { type: 'number', value: String(1024), min: '4' }) as HTMLInputElement;
   const cacheLimitInput = el('input', { type: 'number', value: String(512), min: '0' }) as HTMLInputElement;
@@ -1113,6 +1120,7 @@ function renderRemoteDiskPanel(): HTMLElement {
       modeSelect.value === 'chunked'
         ? await client.openChunked(url, {
             cacheLimitBytes,
+            credentials: credentialsSelect.value as RequestCredentials,
             prefetchSequentialChunks: prefetchSequential,
             maxConcurrentFetches: Math.max(1, Number(maxConcurrentFetchesInput.value) | 0),
             cacheBackend: cacheBackendSelect.value === 'auto' ? undefined : (cacheBackendSelect.value as 'opfs' | 'idb'),
@@ -1120,6 +1128,7 @@ function renderRemoteDiskPanel(): HTMLElement {
         : await client.openRemote(url, {
             blockSize: Number(blockSizeInput.value) * 1024,
             cacheLimitBytes,
+            credentials: credentialsSelect.value as RequestCredentials,
             prefetchSequentialBlocks: prefetchSequential,
             cacheBackend: cacheBackendSelect.value === 'auto' ? undefined : (cacheBackendSelect.value as 'opfs' | 'idb'),
           });
@@ -1261,6 +1270,7 @@ function renderRemoteDiskPanel(): HTMLElement {
       el('label', { text: 'Mode:' }),
       modeSelect,
       cacheBackendSelect,
+      credentialsSelect,
       el('label', { text: 'URL:' }),
       urlInput,
     ),

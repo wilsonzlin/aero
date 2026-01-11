@@ -1300,6 +1300,13 @@ function renderRemoteDiskPanel(): HTMLElement {
     el("option", { value: "opfs", text: "cache: OPFS" }),
     el("option", { value: "idb", text: "cache: IndexedDB" }),
   ) as HTMLSelectElement;
+  const credentialsSelect = el(
+    "select",
+    {},
+    el("option", { value: "same-origin", text: "credentials: same-origin" }),
+    el("option", { value: "include", text: "credentials: include" }),
+    el("option", { value: "omit", text: "credentials: omit" }),
+  ) as HTMLSelectElement;
   const urlInput = el("input", { type: "url", placeholder: "http://localhost:9000/disk-images/large.bin" }) as HTMLInputElement;
   const blockSizeInput = el("input", { type: "number", value: String(1024), min: "4" }) as HTMLInputElement;
   const cacheLimitInput = el("input", { type: "number", value: String(512), min: "0" }) as HTMLInputElement;
@@ -1375,17 +1382,19 @@ function renderRemoteDiskPanel(): HTMLElement {
     const opened =
       modeSelect.value === "chunked"
         ? await client.openChunked(url, {
-            cacheLimitBytes,
-            prefetchSequentialChunks: prefetchSequential,
-            maxConcurrentFetches: Math.max(1, Number(maxConcurrentFetchesInput.value) | 0),
-            cacheBackend: cacheBackendSelect.value === "auto" ? undefined : (cacheBackendSelect.value as "opfs" | "idb"),
-          })
+          cacheLimitBytes,
+          credentials: credentialsSelect.value as RequestCredentials,
+          prefetchSequentialChunks: prefetchSequential,
+          maxConcurrentFetches: Math.max(1, Number(maxConcurrentFetchesInput.value) | 0),
+          cacheBackend: cacheBackendSelect.value === "auto" ? undefined : (cacheBackendSelect.value as "opfs" | "idb"),
+        })
         : await client.openRemote(url, {
-            blockSize: Number(blockSizeInput.value) * 1024,
-            cacheLimitBytes,
-            prefetchSequentialBlocks: prefetchSequential,
-            cacheBackend: cacheBackendSelect.value === "auto" ? undefined : (cacheBackendSelect.value as "opfs" | "idb"),
-          });
+          blockSize: Number(blockSizeInput.value) * 1024,
+          cacheLimitBytes,
+          credentials: credentialsSelect.value as RequestCredentials,
+          prefetchSequentialBlocks: prefetchSequential,
+          cacheBackend: cacheBackendSelect.value === "auto" ? undefined : (cacheBackendSelect.value as "opfs" | "idb"),
+        });
     handle = opened.handle;
     updateButtons();
     return opened.handle;
@@ -1518,15 +1527,16 @@ function renderRemoteDiskPanel(): HTMLElement {
     warning,
     el(
       "div",
-      { class: "row" },
-      el("label", { text: "Enable:" }),
-      enabledInput,
-      el("label", { text: "Mode:" }),
-      modeSelect,
-      cacheBackendSelect,
-      el("label", { text: "URL:" }),
-      urlInput,
-    ),
+        { class: "row" },
+        el("label", { text: "Enable:" }),
+        enabledInput,
+        el("label", { text: "Mode:" }),
+        modeSelect,
+        cacheBackendSelect,
+        credentialsSelect,
+        el("label", { text: "URL:" }),
+        urlInput,
+      ),
     el(
       "div",
       { class: "row" },
