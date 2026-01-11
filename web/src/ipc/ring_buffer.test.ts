@@ -65,4 +65,14 @@ describe("ipc/ring_buffer", () => {
     expect(ring.tryPush(new Uint8Array(0))).toBe(true);
     expect((ring.tryPop() ?? new Uint8Array(1)).byteLength).toBe(0);
   });
+
+  it("supports writing records without allocating an intermediate payload buffer", () => {
+    const ring = makeRing(64);
+    expect(
+      ring.tryPushWithWriter(4, (dest) => {
+        dest.set(Uint8Array.of(9, 8, 7, 6));
+      }),
+    ).toBe(true);
+    expect(Array.from(ring.tryPop() ?? [])).toEqual([9, 8, 7, 6]);
+  });
 });

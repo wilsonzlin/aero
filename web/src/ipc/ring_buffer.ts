@@ -143,6 +143,69 @@ export class RingBuffer {
     }
   }
 
+  /**
+   * Reserve space for a payload and let the caller write it directly into the ring.
+   *
+   * This avoids allocating an intermediate payload buffer (useful for hot paths like
+   * HID input report forwarding).
+   *
+   * The writer is given a `Uint8Array` view backed by the ring's underlying
+   * SharedArrayBuffer. The view is only valid until the next successful push that
+   * overwrites the same region; callers must copy if they need to retain it.
+   */
+  tryPushWithWriter(payloadLen: number, writer: (dest: Uint8Array) => void): boolean {
+    const len = Math.max(0, Math.floor(payloadLen)) >>> 0;
+    const recordSize = alignUp(4 + len, RECORD_ALIGN);
+    if (recordSize > this.cap) return false;
+
+    for (;;) {
+      const head = u32(Atomics.load(this.ctrl, ringCtrl.HEAD));
+      const tail = u32(Atomics.load(this.ctrl, ringCtrl.TAIL_RESERVE));
+
+      const used = u32(tail - head);
+      if (used > this.cap) continue; // raced with consumer
+      const free = this.cap - used;
+
+      const tailIndex = tail % this.cap;
+      const remaining = this.cap - tailIndex;
+      const needsWrap = remaining >= 4 && remaining < recordSize;
+      const padding = remaining < recordSize ? remaining : 0;
+      const reserve = padding + recordSize;
+      if (reserve > free) return false;
+
+      const newTail = u32(tail + reserve);
+      const prev = Atomics.compareExchange(this.ctrl, ringCtrl.TAIL_RESERVE, tail | 0, newTail | 0);
+      if (u32(prev) !== tail) continue;
+
+      if (needsWrap) {
+        this.view.setUint32(tailIndex, WRAP_MARKER, true);
+      }
+
+      const start = u32(tail + padding);
+      const startIndex = start % this.cap;
+      this.view.setUint32(startIndex, len, true);
+      const dest = this.data.subarray(startIndex + 4, startIndex + 4 + len);
+      try {
+        writer(dest);
+      } catch {
+        dest.fill(0);
+      }
+
+      // In-order commit.
+      for (;;) {
+        const committed = Atomics.load(this.ctrl, ringCtrl.TAIL_COMMIT);
+        if (u32(committed) === tail) break;
+        if (canAtomicsWait()) {
+          Atomics.wait(this.ctrl, ringCtrl.TAIL_COMMIT, committed);
+        }
+      }
+
+      Atomics.store(this.ctrl, ringCtrl.TAIL_COMMIT, newTail | 0);
+      Atomics.notify(this.ctrl, ringCtrl.TAIL_COMMIT, 1);
+      return true;
+    }
+  }
+
   tryPop(): Uint8Array | null {
     for (;;) {
       const head = u32(Atomics.load(this.ctrl, ringCtrl.HEAD));

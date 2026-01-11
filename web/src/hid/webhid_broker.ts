@@ -15,7 +15,7 @@ import {
 } from "./hid_proxy_protocol";
 import type { GuestUsbPath } from "../platform/hid_passthrough_protocol";
 import { createHidReportRingBuffer, HidReportRing, HidReportType as HidRingReportType } from "../usb/hid_report_ring";
-import { encodeHidInputReportRingRecord } from "./hid_input_report_ring";
+import { HID_INPUT_REPORT_RECORD_HEADER_BYTES } from "./hid_input_report_ring";
 
 export type WebHidBrokerState = {
   workerAttached: boolean;
@@ -343,8 +343,15 @@ export class WebHidBroker {
 
       const ring = this.#inputReportRing;
       if (ring && this.#canUseSharedMemory()) {
-        const payload = encodeHidInputReportRingRecord({ deviceId, reportId: event.reportId, tsMs, data: src });
-        if (ring.tryPush(payload)) {
+        const tsU32 = tsMs === undefined ? 0 : (Math.max(0, Math.floor(tsMs)) >>> 0);
+        const ok = ring.tryPushWithWriter(HID_INPUT_REPORT_RECORD_HEADER_BYTES + src.byteLength, (dest) => {
+          const view = new DataView(dest.buffer, dest.byteOffset, dest.byteLength);
+          view.setUint32(0, deviceId >>> 0, true);
+          view.setUint32(4, event.reportId >>> 0, true);
+          view.setUint32(8, tsU32, true);
+          dest.set(src, HID_INPUT_REPORT_RECORD_HEADER_BYTES);
+        });
+        if (ok) {
           return;
         }
         // Drop rather than blocking/spinning; this is a best-effort fast path.
