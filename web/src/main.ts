@@ -638,6 +638,7 @@ function renderSnapshotPanel(report: PlatformFeatureReport): HTMLElement {
   let vm: InstanceType<WasmApi["DemoVm"]> | null = null;
   let mainStepTimer: number | null = null;
   let mainThreadStarted = false;
+  const savedSerialBytesByPath = new Map<string, number | null>();
 
   let steps = 0;
   let serialBytes: number | null = 0;
@@ -685,10 +686,16 @@ function renderSnapshotPanel(report: PlatformFeatureReport): HTMLElement {
     importInput.disabled = !enabled;
   }
 
-  function getSerialBytesFromVm(current: InstanceType<WasmApi["DemoVm"]>): number {
+  function getSerialOutputLenFromVm(current: InstanceType<WasmApi["DemoVm"]>): number | null {
     const fn = current.serial_output_len;
-    if (typeof fn === "function") return fn.call(current);
-    return current.serial_output().byteLength;
+    if (typeof fn !== "function") return null;
+    try {
+      const value = fn.call(current);
+      if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return null;
+      return value;
+    } catch {
+      return null;
+    }
   }
 
   function stopMainStepLoop(): void {
@@ -716,9 +723,15 @@ function renderSnapshotPanel(report: PlatformFeatureReport): HTMLElement {
         const current = vm;
         if (!current) return;
         current.run_steps(STEPS_PER_TICK);
-        const serialLen = getSerialBytesFromVm(current);
-        // Demo VM writes one serial byte per step; treat serial length as a proxy for total steps.
-        updateOutputState(serialLen, serialLen);
+        const maybeLen = getSerialOutputLenFromVm(current);
+        if (maybeLen !== null) {
+          // Demo VM writes one serial byte per step; treat serial length as a proxy for total steps.
+          updateOutputState(maybeLen, maybeLen);
+        } else {
+          steps += STEPS_PER_TICK;
+          if (serialBytes !== null) serialBytes += STEPS_PER_TICK;
+          updateOutputState(steps, serialBytes);
+        }
       } catch (err) {
         setError(err);
         stopMainStepLoop();
@@ -769,9 +782,23 @@ function renderSnapshotPanel(report: PlatformFeatureReport): HTMLElement {
       try {
         const bytes = new Uint8Array(await file.arrayBuffer());
         vm.restore_snapshot(bytes);
-        const restoredSerial = getSerialBytesFromVm(vm);
-        updateOutputState(restoredSerial, restoredSerial);
-        return { sizeBytes: file.size, serialBytes: restoredSerial };
+        const maybeLen = getSerialOutputLenFromVm(vm);
+        if (maybeLen !== null) {
+          updateOutputState(maybeLen, maybeLen);
+          return { sizeBytes: file.size, serialBytes: maybeLen };
+        }
+        const saved = savedSerialBytesByPath.get(SNAPSHOT_PATH);
+        if (typeof saved === "number") {
+          updateOutputState(saved, saved);
+          return { sizeBytes: file.size, serialBytes: saved };
+        }
+
+        // If the WASM build lacks `serial_output_len`, fall back to copying the buffer once
+        // during restore (avoid doing this repeatedly in the main stepping loop).
+        const len = vm.serial_output().byteLength;
+        savedSerialBytesByPath.set(SNAPSHOT_PATH, len);
+        updateOutputState(len, len);
+        return { sizeBytes: file.size, serialBytes: len };
       } finally {
         startMainStepLoop();
       }
@@ -795,7 +822,8 @@ function renderSnapshotPanel(report: PlatformFeatureReport): HTMLElement {
     try {
       const bytes = vm.snapshot_full();
       await writeBytesToOpfs(SNAPSHOT_PATH, bytes);
-      const savedSerial = getSerialBytesFromVm(vm);
+      const savedSerial = getSerialOutputLenFromVm(vm) ?? serialBytes ?? null;
+      savedSerialBytesByPath.set(SNAPSHOT_PATH, savedSerial);
       const file = await getOpfsFileIfExists(SNAPSHOT_PATH);
       status.textContent = `Saved snapshot (${formatMaybeBytes(file?.size ?? null)}) serial_bytes=${formatSerialBytes(
         savedSerial,
@@ -863,8 +891,14 @@ function renderSnapshotPanel(report: PlatformFeatureReport): HTMLElement {
     if (!vm) return;
     try {
       vm.run_steps(50_000);
-      const serialLen = getSerialBytesFromVm(vm);
-      updateOutputState(serialLen, serialLen);
+      const maybeLen = getSerialOutputLenFromVm(vm);
+      if (maybeLen !== null) {
+        updateOutputState(maybeLen, maybeLen);
+      } else {
+        steps += 50_000;
+        if (serialBytes !== null) serialBytes += 50_000;
+        updateOutputState(steps, serialBytes);
+      }
     } catch (err) {
       setError(err);
     }
@@ -888,6 +922,7 @@ function renderSnapshotPanel(report: PlatformFeatureReport): HTMLElement {
     clearError();
     removeOpfsEntry(SNAPSHOT_PATH)
       .then(() => {
+        savedSerialBytesByPath.delete(SNAPSHOT_PATH);
         status.textContent = "Deleted snapshot from OPFS.";
       })
       .catch((err) => setError(err));
@@ -899,6 +934,7 @@ function renderSnapshotPanel(report: PlatformFeatureReport): HTMLElement {
       const file = importInput.files?.[0];
       if (!file) return;
       status.textContent = `Importing snapshot (${formatBytes(file.size)})…`;
+      savedSerialBytesByPath.delete(SNAPSHOT_PATH);
       await importFileToOpfs(file, SNAPSHOT_PATH, (progress) => {
         status.textContent = `Importing snapshot: ${formatBytes(progress.writtenBytes)} / ${formatBytes(progress.totalBytes)}`;
       });
