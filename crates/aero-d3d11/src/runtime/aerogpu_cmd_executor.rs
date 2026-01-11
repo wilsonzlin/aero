@@ -3671,13 +3671,20 @@ impl AerogpuD3d11Executor {
                 .map_err(|_| anyhow!("texture upload height out of range"))?;
             let src_row_pitch = bytes_per_row as usize;
 
-            if height > 1 && bytes_per_row % aligned != 0 {
-                // Repack each chunk into an aligned row pitch.
+            let repack_padded_bpr = if height > 1 {
                 let padded_bpr = unpadded_bpr
                     .checked_add(aligned - 1)
                     .map(|v| v / aligned)
                     .and_then(|v| v.checked_mul(aligned))
                     .ok_or_else(|| anyhow!("texture upload padded bytes_per_row overflow"))?;
+                // If the guest row pitch isn't a valid WebGPU `bytes_per_row` (alignment) or contains
+                // extra padding beyond what WebGPU requires, repack into the minimal aligned stride.
+                (bytes_per_row != padded_bpr).then_some(padded_bpr)
+            } else {
+                None
+            };
+
+            if let Some(padded_bpr) = repack_padded_bpr {
                 let padded_bpr_usize = padded_bpr as usize;
                 let rows_per_chunk = (CHUNK_BYTES / padded_bpr_usize).max(1);
 
@@ -4475,13 +4482,8 @@ impl AllocTable {
             if e.alloc_id == 0 {
                 bail!("alloc table entry has alloc_id=0");
             }
-            if e.gpa == 0 || e.size_bytes == 0 {
-                bail!(
-                    "alloc table entry {} has invalid gpa/size: gpa=0x{:x} size=0x{:x}",
-                    e.alloc_id,
-                    e.gpa,
-                    e.size_bytes
-                );
+            if e.size_bytes == 0 {
+                bail!("alloc table entry {} has size_bytes=0", e.alloc_id);
             }
             if e.gpa.checked_add(e.size_bytes).is_none() {
                 bail!(
@@ -4725,39 +4727,73 @@ fn write_texture_linear(
 
     // wgpu requires bytes_per_row alignment for multi-row writes. Repack when needed.
     let aligned = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-    if desc.height > 1 && src_bytes_per_row % aligned != 0 {
+    if desc.height > 1 {
+        // WebGPU requires `bytes_per_row` to be aligned. Also, when the source row pitch contains
+        // extra padding, repack into the minimal aligned stride so we don't upload unnecessary
+        // bytes.
         let padded_bpr = unpadded_bpr
             .checked_add(aligned - 1)
             .map(|v| v / aligned)
             .and_then(|v| v.checked_mul(aligned))
             .ok_or_else(|| anyhow!("write_texture: padded bytes_per_row overflow"))?;
-        let mut repacked = vec![0u8; (padded_bpr as usize) * (desc.height as usize)];
-        for row in 0..desc.height as usize {
-            let src_start = row * src_bytes_per_row as usize;
-            let dst_start = row * padded_bpr as usize;
-            repacked[dst_start..dst_start + unpadded_bpr as usize]
-                .copy_from_slice(&bytes[src_start..src_start + unpadded_bpr as usize]);
+
+        if src_bytes_per_row != padded_bpr {
+            let repacked_len = (padded_bpr as usize)
+                .checked_mul(desc.height as usize)
+                .ok_or_else(|| anyhow!("write_texture: repacked size overflow"))?;
+            let mut repacked = vec![0u8; repacked_len];
+            for row in 0..desc.height as usize {
+                let src_start = row
+                    .checked_mul(src_bytes_per_row as usize)
+                    .ok_or_else(|| anyhow!("write_texture: src row offset overflow"))?;
+                let dst_start = row
+                    .checked_mul(padded_bpr as usize)
+                    .ok_or_else(|| anyhow!("write_texture: dst row offset overflow"))?;
+                repacked[dst_start..dst_start + unpadded_bpr as usize]
+                    .copy_from_slice(&bytes[src_start..src_start + unpadded_bpr as usize]);
+            }
+            queue.write_texture(
+                wgpu::ImageCopyTexture {
+                    texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                &repacked,
+                wgpu::ImageDataLayout {
+                    offset: 0,
+                    bytes_per_row: Some(padded_bpr),
+                    rows_per_image: Some(desc.height),
+                },
+                wgpu::Extent3d {
+                    width: desc.width,
+                    height: desc.height,
+                    depth_or_array_layers: 1,
+                },
+            );
+        } else {
+            queue.write_texture(
+                wgpu::ImageCopyTexture {
+                    texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                bytes,
+                wgpu::ImageDataLayout {
+                    offset: 0,
+                    bytes_per_row: Some(src_bytes_per_row),
+                    rows_per_image: Some(desc.height),
+                },
+                wgpu::Extent3d {
+                    width: desc.width,
+                    height: desc.height,
+                    depth_or_array_layers: 1,
+                },
+            );
         }
-        queue.write_texture(
-            wgpu::ImageCopyTexture {
-                texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            &repacked,
-            wgpu::ImageDataLayout {
-                offset: 0,
-                bytes_per_row: Some(padded_bpr),
-                rows_per_image: Some(desc.height),
-            },
-            wgpu::Extent3d {
-                width: desc.width,
-                height: desc.height,
-                depth_or_array_layers: 1,
-            },
-        );
     } else {
+        // Single-row textures don't require row pitch alignment.
         queue.write_texture(
             wgpu::ImageCopyTexture {
                 texture,

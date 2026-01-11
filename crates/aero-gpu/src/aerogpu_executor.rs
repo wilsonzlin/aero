@@ -126,9 +126,9 @@ impl AllocTable {
                     "alloc table entry alloc_id must be non-zero".into(),
                 ));
             }
-            if entry.gpa == 0 || entry.size_bytes == 0 {
+            if entry.size_bytes == 0 {
                 return Err(ExecutorError::Validation(format!(
-                    "alloc table entry {alloc_id} has invalid gpa/size"
+                    "alloc table entry {alloc_id} has size_bytes=0"
                 )));
             }
             if entry.gpa.checked_add(entry.size_bytes).is_none() {
@@ -1404,6 +1404,11 @@ fn fs_main() -> @location(0) vec4<f32> {
         self.queue.submit([encoder.finish()]);
 
         if writeback {
+            let dst_backing = dst_backing.ok_or_else(|| {
+                ExecutorError::Validation(
+                    "COPY_BUFFER: internal error: missing dst guest backing for writeback".into(),
+                )
+            })?;
             let Some(staging) = staging else {
                 return Err(ExecutorError::Validation(
                     "COPY_BUFFER: missing staging buffer for writeback".into(),
@@ -1411,11 +1416,6 @@ fn fs_main() -> @location(0) vec4<f32> {
             };
             let table = alloc_table.ok_or_else(|| {
                 ExecutorError::Validation("COPY_BUFFER: WRITEBACK_DST requires alloc_table".into())
-            })?;
-            let dst_backing = dst_backing.ok_or_else(|| {
-                ExecutorError::Validation(format!(
-                    "COPY_BUFFER: missing dst backing for writeback (dst_buffer={dst_buffer})"
-                ))
             })?;
             let entry = table.get(dst_backing.alloc_id).ok_or_else(|| {
                 ExecutorError::Validation(format!(
@@ -1658,16 +1658,29 @@ fn fs_main() -> @location(0) vec4<f32> {
                     "COPY_TEXTURE2D: missing staging buffer for writeback".into(),
                 ));
             };
+            let dst_backing = dst_backing.ok_or_else(|| {
+                ExecutorError::Validation(
+                    "COPY_TEXTURE2D: internal error: missing dst guest backing for writeback"
+                        .into(),
+                )
+            })?;
             let table = alloc_table.ok_or_else(|| {
                 ExecutorError::Validation(
                     "COPY_TEXTURE2D: WRITEBACK_DST requires alloc_table".into(),
                 )
             })?;
-            let dst_backing = dst_backing.ok_or_else(|| {
+            let entry = table.get(dst_backing.alloc_id).ok_or_else(|| {
                 ExecutorError::Validation(format!(
-                    "COPY_TEXTURE2D: missing dst backing for writeback (dst_texture={dst_texture})"
+                    "COPY_TEXTURE2D: missing alloc table entry for alloc_id={} (dst_texture={dst_texture})",
+                    dst_backing.alloc_id
                 ))
             })?;
+            if (entry.flags & ring::AEROGPU_ALLOC_FLAG_READONLY) != 0 {
+                return Err(ExecutorError::Validation(format!(
+                    "COPY_TEXTURE2D: dst_texture={dst_texture} backing alloc_id={} is READONLY",
+                    dst_backing.alloc_id
+                )));
+            }
 
             let row_bytes = width.checked_mul(dst_bpp).ok_or_else(|| {
                 ExecutorError::Validation("COPY_TEXTURE2D: row size overflow".into())
@@ -1692,18 +1705,6 @@ fn fs_main() -> @location(0) vec4<f32> {
                 .ok_or_else(|| {
                     ExecutorError::Validation("COPY_TEXTURE2D: dst_x overflow".into())
                 })?;
-            let entry = table.get(dst_backing.alloc_id).ok_or_else(|| {
-                ExecutorError::Validation(format!(
-                    "COPY_TEXTURE2D: missing alloc table entry for alloc_id={} (dst_texture={dst_texture})",
-                    dst_backing.alloc_id
-                ))
-            })?;
-            if (entry.flags & ring::AEROGPU_ALLOC_FLAG_READONLY) != 0 {
-                return Err(ExecutorError::Validation(format!(
-                    "COPY_TEXTURE2D: dst_texture={dst_texture} backing alloc_id={} is READONLY",
-                    dst_backing.alloc_id
-                )));
-            }
 
             let row_pitch = u64::from(dst_backing.row_pitch_bytes);
             if row_pitch == 0 {
@@ -2461,6 +2462,20 @@ mod tests {
         assert_eq!(table.get(1).unwrap().size_bytes, 0x2000);
         assert_eq!(table.get(2).unwrap().gpa, 0x3000);
         assert_eq!(table.get(2).unwrap().size_bytes, 0x4000);
+    }
+
+    #[test]
+    fn alloc_table_decode_accepts_zero_gpa() {
+        let guest = crate::guest_memory::VecGuestMemory::new(4096);
+        let table_bytes = build_alloc_table(&[(1, 0, 0x2000)]);
+        let table_gpa = 0x180u64;
+        guest.write(table_gpa, &table_bytes).unwrap();
+
+        let table =
+            AllocTable::decode_from_guest_memory(&guest, table_gpa, table_bytes.len() as u32)
+                .unwrap();
+        assert_eq!(table.get(1).unwrap().gpa, 0);
+        assert_eq!(table.get(1).unwrap().size_bytes, 0x2000);
     }
 
     #[test]
