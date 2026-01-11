@@ -298,6 +298,12 @@ def main() -> int:
         if args.virtio_snd_audio_backend != "wav":
             parser.error("--virtio-snd-verify-wav requires --virtio-snd-audio-backend=wav")
 
+    if args.virtio_transitional and args.enable_virtio_snd:
+        parser.error(
+            "--virtio-transitional is incompatible with --with-virtio-snd/--enable-virtio-snd "
+            "(virtio-snd testing requires modern-only virtio-pci + contract revision overrides)"
+        )
+
     if not args.virtio_transitional:
         try:
             _assert_qemu_supports_aero_w7_virtio_contract_v1(args.qemu_system)

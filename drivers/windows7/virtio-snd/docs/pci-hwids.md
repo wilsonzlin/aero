@@ -92,8 +92,9 @@ must use:
 
 ### QEMU vs Aero contract v1 (REV_01)
 
-Many QEMU device models report `REV_00` by default. The Aero INFs require `REV_01`, so the driver
-will not bind to stock QEMU unless you override the revision.
+Many QEMU device models report `REV_00` by default. The shipped Aero INF is revision-gated
+(`REV_01`) and the driver validates the Revision ID at runtime, so it will not bind to stock QEMU
+unless you override the revision.
 
 If you see `REV_00` in Device Manager → Hardware Ids, you have a few options:
 
