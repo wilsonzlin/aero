@@ -170,7 +170,8 @@ impl<B: crate::mem::CpuBus> ExecCpu for Vcpu<B> {
 ///
 /// This is intended for unit tests / integration glue. It only handles interrupt
 /// and interrupt-flag assists (`INT*`, `IRET*`, `CLI`, `STI`, `INTO`), delegating
-/// all other assists to the caller.
+/// BIOS interrupt exits (by re-storing the vector in [`crate::state::CpuState`])
+/// and all other assists to the caller.
 #[derive(Debug, Default)]
 pub struct Tier0Interpreter {
     /// Maximum Tier-0 instructions executed in one `exec_block` call.
