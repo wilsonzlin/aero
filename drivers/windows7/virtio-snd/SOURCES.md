@@ -84,15 +84,18 @@ The virtio-snd driver is linked against in-repo virtio support code (no copying;
 
 Default PortCls build (virtio-pci modern, contract v1):
 
-- Shared virtio-pci modern transport + contract validation:
+- Shared virtio-pci modern WDM transport (PCI capability parsing + BAR mapping + queues):
   - `drivers/windows7/virtio/common/src/virtio_pci_modern_wdm.c` (plus `drivers/windows7/virtio/common/include/virtio_pci_modern_wdm.h`)
+- Aero contract identity validation (`AERO-W7-VIRTIO` v1 / PCI revision gating):
   - `drivers/windows7/virtio/common/src/virtio_pci_contract.c` (plus `drivers/windows7/virtio/common/include/virtio_pci_contract.h`)
 - Split virtqueue implementation:
   - `drivers/windows/virtio/common/virtqueue_split.c` (plus `drivers/windows/virtio/common/virtqueue_split.h`)
-- Virtio PCI capability parsing + identity/layout:
+- Virtio PCI capability parsing:
   - `drivers/win7/virtio/virtio-core/portable/virtio_pci_cap_parser.c` (plus `virtio_pci_cap_parser.h`)
-  - `drivers/win7/virtio/virtio-core/portable/virtio_pci_identity.c` (plus `virtio_pci_identity.h`)
+- Aero fixed BAR0 layout validation (optional strict mode):
   - `drivers/win7/virtio/virtio-core/portable/virtio_pci_aero_layout.c` (plus `virtio_pci_aero_layout.h`)
+- Aero contract identity parsing:
+  - `drivers/win7/virtio/virtio-core/portable/virtio_pci_identity.c` (plus `virtio_pci_identity.h`)
 - INTx ISR/DPC helper:
   - `drivers/windows7/virtio/common/src/virtio_pci_intx_wdm.c` (plus `drivers/windows7/virtio/common/include/virtio_pci_intx_wdm.h`)
 - Spec constants/layouts (headers):
