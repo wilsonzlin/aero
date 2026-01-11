@@ -435,8 +435,11 @@ export function decodeCmdDebugMarkerPayload(bytes: Uint8Array, packetOffset: num
   }
 
   const payload = bytes.subarray(packetOffset + AEROGPU_CMD_HDR_SIZE, packetEnd);
+  // Packet size is 4-byte aligned, so padding can only be 0-3 bytes.
   let trimmedLen = payload.byteLength;
-  while (trimmedLen > 0 && payload[trimmedLen - 1] === 0) trimmedLen--;
+  for (let i = 0; i < 3 && trimmedLen > 0 && payload[trimmedLen - 1] === 0; i++) {
+    trimmedLen--;
+  }
   const markerBytes = payload.subarray(0, trimmedLen);
   const marker = new TextDecoder("utf-8", { fatal: true }).decode(markerBytes);
   return { markerBytes, marker };
