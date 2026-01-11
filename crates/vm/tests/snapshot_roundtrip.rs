@@ -152,6 +152,14 @@ fn snapshot_round_trip_dirty_chain_preserves_stack_writes() {
     let expected_output = baseline.bios.tty_output().to_vec();
     let expected_stack_byte = baseline.mem.read_u8(0x7BFA);
 
+    // Restoring a dirty snapshot without first restoring its full parent should fail fast.
+    let bios2 = Bios::new(cfg.clone());
+    let disk2 = InMemoryDisk::from_boot_sector(boot_sector_with(&[]));
+    let mut wrong_base = Vm::new(16 * 1024 * 1024, bios2, disk2);
+    wrong_base.reset();
+    let err = wrong_base.restore_snapshot(&diff).unwrap_err();
+    assert!(matches!(err, SnapshotError::Corrupt("snapshot parent mismatch")));
+
     // Restore base + diff into a fresh VM.
     let bios2 = Bios::new(cfg);
     let disk2 = InMemoryDisk::from_boot_sector(boot_sector_with(&[]));
