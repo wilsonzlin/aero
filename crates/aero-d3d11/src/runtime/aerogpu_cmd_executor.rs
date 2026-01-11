@@ -3275,7 +3275,7 @@ fn get_or_create_render_pipeline_for_state<'a>(
             .textures
             .get(&ds_id)
             .ok_or_else(|| anyhow!("unknown depth-stencil texture {ds_id}"))?;
-
+        let format = tex.desc.format;
         let depth_compare = if state.depth_enable {
             state.depth_compare
         } else {
@@ -3283,7 +3283,8 @@ fn get_or_create_render_pipeline_for_state<'a>(
         };
         let depth_write_enabled = state.depth_enable && state.depth_write_enable;
 
-        let (read_mask, write_mask) = if state.stencil_enable {
+        let (read_mask, write_mask) = if texture_format_has_stencil(format) && state.stencil_enable
+        {
             (
                 state.stencil_read_mask as u32,
                 state.stencil_write_mask as u32,
@@ -3293,7 +3294,7 @@ fn get_or_create_render_pipeline_for_state<'a>(
         };
 
         Some(wgpu::DepthStencilState {
-            format: tex.desc.format,
+            format,
             depth_write_enabled,
             depth_compare,
             stencil: wgpu::StencilState {
