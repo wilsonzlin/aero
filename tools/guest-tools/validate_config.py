@@ -344,7 +344,6 @@ def validate(devices: DevicesConfig, spec_path: Path, spec_expected: Mapping[str
                     driver_kind="virtio-snd",
                 ),
             )
-            )
         )
 
     # Provide context in success output to make debugging CI failures easier.
