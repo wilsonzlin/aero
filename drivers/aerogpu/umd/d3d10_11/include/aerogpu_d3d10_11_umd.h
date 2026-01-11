@@ -449,6 +449,16 @@ typedef HRESULT(AEROGPU_APIENTRY *PFNAEROGPU_DDI_SUBMIT_CMD_STREAM)(
     uint32_t alloc_count,
     uint64_t *out_fence);
 
+// Optional fence wait callback.
+// Used by repository tests to model Win7/WDDM-style asynchronous submission.
+//
+// Semantics match `DXGI`/D3D11 expectations:
+// - `timeout_ms == 0`: poll (return DXGI_ERROR_WAS_STILL_DRAWING if not complete)
+// - `timeout_ms == ~0u`: "infinite"
+typedef HRESULT(AEROGPU_APIENTRY *PFNAEROGPU_DDI_WAIT_FOR_FENCE)(void *pUserContext,
+                                                                uint64_t fence,
+                                                                uint32_t timeout_ms);
+
 // Optional error callback used by the portable (non-WDK) build to emulate Win7
 // runtime `pfnSetErrorCb` behavior for void-returning DDIs (e.g. Unmap).
 typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_SET_ERROR)(void *pUserContext, HRESULT hr);
@@ -459,6 +469,7 @@ struct AEROGPU_D3D10_11_DEVICECALLBACKS {
   PFNAEROGPU_DDI_MAP_ALLOCATION pfnMapAllocation;
   PFNAEROGPU_DDI_UNMAP_ALLOCATION pfnUnmapAllocation;
   PFNAEROGPU_DDI_SUBMIT_CMD_STREAM pfnSubmitCmdStream;
+  PFNAEROGPU_DDI_WAIT_FOR_FENCE pfnWaitForFence;
   PFNAEROGPU_DDI_SET_ERROR pfnSetError;
 };
 

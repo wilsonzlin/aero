@@ -890,6 +890,30 @@ HRESULT AeroGpuWaitForFence(AeroGpuDevice* dev, uint64_t fence, uint32_t timeout
     return S_OK;
   }
 
+  // Portable build: prefer an injected wait callback when available (unit tests
+  // use this to model Win7/WDDM-style asynchronous fence completion).
+  if (dev->device_callbacks && dev->device_callbacks->pfnWaitForFence) {
+    const auto* cb = dev->device_callbacks;
+    const HRESULT hr = cb->pfnWaitForFence(cb->pUserContext, fence, timeout_ms);
+    if (hr == kDxgiErrorWasStillDrawing) {
+      return kDxgiErrorWasStillDrawing;
+    }
+    if (FAILED(hr)) {
+      return hr;
+    }
+
+    if (dev->adapter) {
+      {
+        std::lock_guard<std::mutex> lock(dev->adapter->fence_mutex);
+        dev->adapter->completed_fence = std::max(dev->adapter->completed_fence, fence);
+      }
+      dev->adapter->fence_cv.notify_all();
+    }
+
+    atomic_max_u64(&dev->last_completed_fence, fence);
+    return S_OK;
+  }
+
   if (!dev->adapter) {
     return E_FAIL;
   }
@@ -1060,12 +1084,18 @@ uint64_t submit_locked(AeroGpuDevice* dev, HRESULT* out_hr) {
     {
       std::lock_guard<std::mutex> lock(adapter->fence_mutex);
       adapter->next_fence = std::max(adapter->next_fence, fence + 1);
-      adapter->completed_fence = fence;
+      if (!cb->pfnWaitForFence) {
+        adapter->completed_fence = fence;
+      }
     }
-    adapter->fence_cv.notify_all();
+    if (!cb->pfnWaitForFence) {
+      adapter->fence_cv.notify_all();
+    }
 
     atomic_max_u64(&dev->last_submitted_fence, fence);
-    atomic_max_u64(&dev->last_completed_fence, fence);
+    if (!cb->pfnWaitForFence) {
+      atomic_max_u64(&dev->last_completed_fence, fence);
+    }
 
     dev->cmd.reset();
     return fence;
@@ -1865,8 +1895,12 @@ HRESULT map_resource_locked(AeroGpuDevice* dev,
     const uint64_t fence = submitted_fence > last_fence ? submitted_fence : last_fence;
     if (fence != 0) {
       if (do_not_wait) {
-        if (AeroGpuQueryCompletedFence(dev) < fence) {
+        const HRESULT wait_hr = AeroGpuWaitForFence(dev, fence, /*timeout_ms=*/0);
+        if (wait_hr == kDxgiErrorWasStillDrawing) {
           return kDxgiErrorWasStillDrawing;
+        }
+        if (FAILED(wait_hr)) {
+          return wait_hr;
         }
       } else {
         HRESULT wait_hr = AeroGpuWaitForFence(dev, fence, /*timeout_ms=*/kAeroGpuTimeoutMsInfinite);

@@ -120,6 +120,11 @@ struct Harness {
   std::vector<AEROGPU_WDDM_ALLOCATION_HANDLE> last_allocs;
   std::vector<HRESULT> errors;
 
+  // Simple fence model used by tests that need to validate DO_NOT_WAIT behavior.
+  uint64_t next_fence = 1;
+  uint64_t completed_fence = 0;
+  uint64_t last_submitted_fence = 0;
+
   std::vector<Allocation> allocations;
   AEROGPU_WDDM_ALLOCATION_HANDLE next_handle = 1;
 
@@ -212,9 +217,23 @@ struct Harness {
       h->last_allocs.assign(alloc_handles, alloc_handles + alloc_count);
     }
     if (out_fence) {
-      *out_fence = 0;
+      const uint64_t fence = h->next_fence++;
+      h->last_submitted_fence = fence;
+      *out_fence = fence;
     }
     return S_OK;
+  }
+
+  static HRESULT AEROGPU_APIENTRY WaitForFence(void* user, uint64_t fence, uint32_t timeout_ms) {
+    (void)timeout_ms;
+    if (!user) {
+      return E_INVALIDARG;
+    }
+    auto* h = reinterpret_cast<Harness*>(user);
+    if (fence == 0 || h->completed_fence >= fence) {
+      return S_OK;
+    }
+    return DXGI_ERROR_WAS_STILL_DRAWING;
   }
 
   static void AEROGPU_APIENTRY SetError(void* user, HRESULT hr) {
@@ -981,6 +1000,63 @@ bool TestMapFlagsValidation() {
   if (!Check(hr == E_INVALIDARG, "Map with unknown MapFlags bits should fail")) {
     return false;
   }
+
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, buf.hResource);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
+bool TestMapDoNotWaitReportsStillDrawing() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/true), "InitTestDevice(map DO_NOT_WAIT)")) {
+    return false;
+  }
+  dev.callbacks.pfnWaitForFence = &Harness::WaitForFence;
+
+  TestResource buf{};
+  if (!Check(CreateStagingBuffer(&dev, /*byte_width=*/16, AEROGPU_D3D11_CPU_ACCESS_READ, &buf), "CreateStagingBuffer")) {
+    return false;
+  }
+
+  dev.harness.completed_fence = 0;
+  const HRESULT flush_hr = dev.device_funcs.pfnFlush(dev.hDevice);
+  if (!Check(flush_hr == S_OK, "Flush to create pending fence")) {
+    return false;
+  }
+  const uint64_t pending_fence = dev.harness.last_submitted_fence;
+  if (!Check(pending_fence != 0, "Flush returned a non-zero fence")) {
+    return false;
+  }
+
+  AEROGPU_DDI_MAPPED_SUBRESOURCE mapped = {};
+  HRESULT hr = dev.device_funcs.pfnMap(dev.hDevice,
+                                       buf.hResource,
+                                       /*subresource=*/0,
+                                       AEROGPU_DDI_MAP_READ,
+                                       AEROGPU_D3D11_MAP_FLAG_DO_NOT_WAIT,
+                                       &mapped);
+  if (!Check(hr == DXGI_ERROR_WAS_STILL_DRAWING, "Map(DO_NOT_WAIT) should return DXGI_ERROR_WAS_STILL_DRAWING")) {
+    return false;
+  }
+
+  // Mark the fence complete and retry; DO_NOT_WAIT should now succeed.
+  dev.harness.completed_fence = pending_fence;
+
+  mapped = {};
+  hr = dev.device_funcs.pfnMap(dev.hDevice,
+                               buf.hResource,
+                               /*subresource=*/0,
+                               AEROGPU_DDI_MAP_READ,
+                               AEROGPU_D3D11_MAP_FLAG_DO_NOT_WAIT,
+                               &mapped);
+  if (!Check(hr == S_OK, "Map(DO_NOT_WAIT) should succeed once fence is complete")) {
+    return false;
+  }
+  if (!Check(mapped.pData != nullptr, "Map returned a non-null pointer")) {
+    return false;
+  }
+  dev.device_funcs.pfnUnmap(dev.hDevice, buf.hResource, /*subresource=*/0);
 
   dev.device_funcs.pfnDestroyResource(dev.hDevice, buf.hResource);
   dev.device_funcs.pfnDestroyDevice(dev.hDevice);
@@ -3100,6 +3176,7 @@ int main() {
   ok &= TestGuestBackedTextureUnmapDirtyRange();
   ok &= TestMapUsageValidation();
   ok &= TestMapFlagsValidation();
+  ok &= TestMapDoNotWaitReportsStillDrawing();
   ok &= TestInvalidUnmapReportsError();
   ok &= TestDynamicMapFlagsValidation();
   ok &= TestHostOwnedDynamicIABufferUploads();
