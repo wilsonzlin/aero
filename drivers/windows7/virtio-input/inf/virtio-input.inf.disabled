@@ -126,7 +126,7 @@ KmdfService = aero_virtio_input, AeroVirtioInput_WdfSect
 aero_virtio_input.sys
 
 [AeroVirtioInput_Service_Inst]
-DisplayName   = %AeroVirtioInput.SvcDesc%
+DisplayName   = %AeroVirtioInput.ServiceDesc%
 ServiceType   = 1  ; SERVICE_KERNEL_DRIVER
 StartType     = 3  ; SERVICE_DEMAND_START
 ErrorControl  = 1  ; SERVICE_ERROR_NORMAL
@@ -156,6 +156,6 @@ AeroProvider = "Aero Project"
 MfgName      = "Aero Project"
 DiskName     = "Aero VirtIO Input Driver Install Disk"
 
-AeroVirtioInput.SvcDesc = "Aero VirtIO Input KMDF HID Minidriver"
+AeroVirtioInput.ServiceDesc = "Aero VirtIO Input KMDF HID Minidriver"
 
 AeroVirtioInput.DeviceDesc  = "Aero VirtIO Input Device"
