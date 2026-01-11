@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::ops::Range;
 
@@ -54,6 +55,12 @@ pub struct AerogpuD3d9Executor {
     sampler_state_ps: [D3d9SamplerState; MAX_SAMPLERS],
 
     pipelines: HashMap<PipelineCacheKey, wgpu::RenderPipeline>,
+
+    clear_shader: wgpu::ShaderModule,
+    clear_bind_group: wgpu::BindGroup,
+    clear_pipeline_layout: wgpu::PipelineLayout,
+    clear_color_buffer: wgpu::Buffer,
+    clear_pipelines: HashMap<wgpu::TextureFormat, wgpu::RenderPipeline>,
 
     presented_scanouts: HashMap<u32, u32>,
 
@@ -329,6 +336,30 @@ const MAX_SAMPLERS: usize = 16;
 const MAX_REASONABLE_RENDER_STATE_ID: u32 = 4096;
 const MAX_REASONABLE_SAMPLER_STATE_ID: u32 = 4096;
 
+const CLEAR_SCISSOR_WGSL: &str = r#"
+struct ClearParams {
+    color: vec4<f32>,
+};
+
+@group(0) @binding(0) var<uniform> params: ClearParams;
+
+@vertex
+fn vs(@builtin(vertex_index) idx: u32) -> @builtin(position) vec4<f32> {
+    var positions = array<vec2<f32>, 3>(
+        vec2<f32>(-1.0, -1.0),
+        vec2<f32>(3.0, -1.0),
+        vec2<f32>(-1.0, 3.0),
+    );
+    let p = positions[idx];
+    return vec4<f32>(p.x, p.y, 0.0, 1.0);
+}
+
+@fragment
+fn fs() -> @location(0) vec4<f32> {
+    return params.color;
+}
+"#;
+
 #[derive(Debug, Clone, Copy, Default)]
 struct D3d9SamplerState {
     address_u: u32,
@@ -444,6 +475,45 @@ impl AerogpuD3d9Executor {
             push_constant_ranges: &[],
         });
 
+        let clear_color_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("aerogpu-d3d9.clear_color"),
+            size: 16,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let clear_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("aerogpu-d3d9.clear_bind_group_layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: wgpu::BufferSize::new(16),
+                    },
+                    count: None,
+                }],
+            });
+        let clear_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("aerogpu-d3d9.clear_pipeline_layout"),
+                bind_group_layouts: &[&clear_bind_group_layout],
+                push_constant_ranges: &[],
+            });
+        let clear_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("aerogpu-d3d9.clear_bind_group"),
+            layout: &clear_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: clear_color_buffer.as_entire_binding(),
+            }],
+        });
+        let clear_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("aerogpu-d3d9.clear_shader"),
+            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(CLEAR_SCISSOR_WGSL)),
+        });
+
         let samplers_ps = std::array::from_fn(|_| {
             device.create_sampler(&wgpu::SamplerDescriptor {
                 label: Some("aerogpu-d3d9.sampler_ps_default"),
@@ -477,6 +547,11 @@ impl AerogpuD3d9Executor {
             samplers_ps,
             sampler_state_ps,
             pipelines: HashMap::new(),
+            clear_shader,
+            clear_bind_group,
+            clear_pipeline_layout,
+            clear_color_buffer,
+            clear_pipelines: HashMap::new(),
             presented_scanouts: HashMap::new(),
             state: State {
                 topology: wgpu::PrimitiveTopology::TriangleList,
@@ -496,6 +571,7 @@ impl AerogpuD3d9Executor {
         self.input_layouts.clear();
         self.presented_scanouts.clear();
         self.pipelines.clear();
+        self.clear_pipelines.clear();
         self.bind_group = None;
         self.bind_group_dirty = true;
         self.sampler_state_ps = std::array::from_fn(|_| D3d9SamplerState::default());
@@ -2580,6 +2656,25 @@ impl AerogpuD3d9Executor {
         let clear_depth_enabled = (flags & cmd::AEROGPU_CLEAR_DEPTH) != 0;
         let clear_stencil_enabled = (flags & cmd::AEROGPU_CLEAR_STENCIL) != 0;
 
+        // `wgpu::LoadOp::Clear` ignores the render pass scissor rectangle. If a D3D9 caller is
+        // using `SetScissorRect` + `Clear` to implement rectangle clears (Win7 D3D9 semantics),
+        // we must preserve pixels outside the scissor region.
+        let scissor = self.state.scissor;
+        let scissor_enabled = self.state.rasterizer_state.scissor_enable && scissor.is_some();
+        let scissor_is_subrect = if clear_color_enabled && scissor_enabled {
+            let (rt_w, rt_h) = self.render_target_extent()?;
+            let (x, y, w, h) = scissor.expect("scissor_enabled implies scissor is Some");
+            let clamped = clamp_scissor_rect(x, y, w, h, rt_w, rt_h);
+            clamped != Some((0, 0, rt_w, rt_h))
+        } else {
+            false
+        };
+
+        if clear_color_enabled && scissor_is_subrect {
+            return self
+                .encode_clear_scissored_color(encoder, ctx, flags, color_rgba, depth, stencil);
+        }
+
         if !clear_color_enabled || !clear_depth_enabled || !clear_stencil_enabled {
             let rt = self.state.render_targets;
             if !clear_color_enabled {
@@ -2660,6 +2755,248 @@ impl AerogpuD3d9Executor {
             occlusion_query_set: None,
         });
         Ok(())
+    }
+
+    fn encode_clear_scissored_color(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        ctx: SubmissionCtx<'_>,
+        flags: u32,
+        color_rgba: [f32; 4],
+        depth: f32,
+        stencil: u32,
+    ) -> Result<(), AerogpuD3d9Error> {
+        let clear_color_enabled = (flags & 0x1) != 0;
+        let clear_depth_enabled = (flags & 0x2) != 0;
+        let clear_stencil_enabled = (flags & 0x4) != 0;
+
+        let rt = self.state.render_targets;
+        let (_, depth_format) = self.render_target_formats()?;
+        let depth_has_stencil =
+            matches!(depth_format, Some(wgpu::TextureFormat::Depth24PlusStencil8));
+
+        // When doing a scissored clear we must preserve pixels outside the scissor region.
+        // That means the color attachment needs to be loaded, so flush any pending guest writes.
+        if clear_color_enabled {
+            for slot in 0..rt.color_count.min(8) as usize {
+                let handle = rt.colors[slot];
+                if handle == 0 {
+                    continue;
+                }
+                self.flush_texture_if_dirty_strict(handle, ctx.guest_memory)?;
+            }
+        }
+
+        // Depth/stencil scissored clears are not implemented yet. If requested, we keep the
+        // existing behavior and clear the full depth/stencil attachment via load ops.
+        if (clear_depth_enabled || clear_stencil_enabled) && rt.depth_stencil != 0 {
+            let needs_depth_load = !clear_depth_enabled;
+            let needs_stencil_load = depth_has_stencil && !clear_stencil_enabled;
+            if needs_depth_load || needs_stencil_load {
+                self.flush_texture_if_dirty_strict(rt.depth_stencil, ctx.guest_memory)?;
+            }
+
+            let underlying = self.resolve_resource_handle(rt.depth_stencil)?;
+            let depth_view = match self
+                .resources
+                .get(&underlying)
+                .ok_or(AerogpuD3d9Error::UnknownResource(rt.depth_stencil))?
+            {
+                Resource::Texture2d { view, .. } => view,
+                _ => return Err(AerogpuD3d9Error::UnknownResource(rt.depth_stencil)),
+            };
+
+            let depth_attachment = Some(wgpu::RenderPassDepthStencilAttachment {
+                view: depth_view,
+                depth_ops: Some(wgpu::Operations {
+                    load: if clear_depth_enabled {
+                        wgpu::LoadOp::Clear(depth)
+                    } else {
+                        wgpu::LoadOp::Load
+                    },
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: depth_has_stencil.then(|| wgpu::Operations {
+                    load: if clear_stencil_enabled {
+                        wgpu::LoadOp::Clear(stencil)
+                    } else {
+                        wgpu::LoadOp::Load
+                    },
+                    store: wgpu::StoreOp::Store,
+                }),
+            });
+
+            let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("aerogpu-d3d9.clear_depth_full"),
+                color_attachments: &[],
+                depth_stencil_attachment: depth_attachment,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+        }
+
+        if !clear_color_enabled {
+            return Ok(());
+        }
+
+        let scissor = self
+            .state
+            .scissor
+            .expect("encode_clear_scissored_color requires scissor to be set");
+
+        let mut color_bytes = [0u8; 16];
+        for (i, f) in color_rgba.iter().enumerate() {
+            color_bytes[i * 4..i * 4 + 4].copy_from_slice(&f.to_le_bytes());
+        }
+
+        let staging = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("aerogpu-d3d9.clear_color_staging"),
+                contents: &color_bytes,
+                usage: wgpu::BufferUsages::COPY_SRC,
+            });
+        encoder.copy_buffer_to_buffer(&staging, 0, &self.clear_color_buffer, 0, 16);
+
+        // Collect render target formats/extents so we can build per-format pipelines without
+        // holding borrows into `self.resources`.
+        let mut targets: Vec<(u32, wgpu::TextureFormat, u32, u32)> = Vec::new();
+        for slot in 0..rt.color_count.min(8) as usize {
+            let handle = rt.colors[slot];
+            if handle == 0 {
+                continue;
+            }
+            let underlying = self.resolve_resource_handle(handle)?;
+            let res = self
+                .resources
+                .get(&underlying)
+                .ok_or(AerogpuD3d9Error::UnknownResource(handle))?;
+            match res {
+                Resource::Texture2d {
+                    format,
+                    width,
+                    height,
+                    ..
+                } => targets.push((underlying, *format, *width, *height)),
+                _ => return Err(AerogpuD3d9Error::UnknownResource(handle)),
+            }
+        }
+
+        for (underlying, format, width, height) in targets {
+            let Some((x, y, w, h)) =
+                clamp_scissor_rect(scissor.0, scissor.1, scissor.2, scissor.3, width, height)
+            else {
+                continue;
+            };
+
+            self.ensure_clear_pipeline(format);
+            let pipeline = self.clear_pipeline(format);
+            let view = match self
+                .resources
+                .get(&underlying)
+                .ok_or(AerogpuD3d9Error::UnknownResource(underlying))?
+            {
+                Resource::Texture2d { view, .. } => view,
+                _ => return Err(AerogpuD3d9Error::UnknownResource(underlying)),
+            };
+            let attachment = wgpu::RenderPassColorAttachment {
+                view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+            };
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("aerogpu-d3d9.clear_scissor"),
+                color_attachments: &[Some(attachment)],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_scissor_rect(x, y, w, h);
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, &self.clear_bind_group, &[]);
+            pass.draw(0..3, 0..1);
+        }
+
+        Ok(())
+    }
+
+    fn ensure_clear_pipeline(&mut self, format: wgpu::TextureFormat) {
+        if self.clear_pipelines.contains_key(&format) {
+            return;
+        }
+        let pipeline = self
+            .device
+            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("aerogpu-d3d9.clear_pipeline"),
+                layout: Some(&self.clear_pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &self.clear_shader,
+                    entry_point: "vs",
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    buffers: &[],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &self.clear_shader,
+                    entry_point: "fs",
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    ..Default::default()
+                },
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+            });
+        self.clear_pipelines.insert(format, pipeline);
+    }
+
+    fn clear_pipeline(&self, format: wgpu::TextureFormat) -> &wgpu::RenderPipeline {
+        self.clear_pipelines
+            .get(&format)
+            .expect("missing clear pipeline; ensure_clear_pipeline should be called first")
+    }
+
+    fn render_target_extent(&self) -> Result<(u32, u32), AerogpuD3d9Error> {
+        let rt = &self.state.render_targets;
+        for slot in 0..rt.color_count.min(8) as usize {
+            let handle = rt.colors[slot];
+            if handle == 0 {
+                continue;
+            }
+            let underlying = self.resolve_resource_handle(handle)?;
+            let res = self
+                .resources
+                .get(&underlying)
+                .ok_or(AerogpuD3d9Error::UnknownResource(handle))?;
+            match res {
+                Resource::Texture2d { width, height, .. } => return Ok((*width, *height)),
+                _ => return Err(AerogpuD3d9Error::UnknownResource(handle)),
+            }
+        }
+
+        if rt.depth_stencil != 0 {
+            let handle = rt.depth_stencil;
+            let underlying = self.resolve_resource_handle(handle)?;
+            let res = self
+                .resources
+                .get(&underlying)
+                .ok_or(AerogpuD3d9Error::UnknownResource(handle))?;
+            match res {
+                Resource::Texture2d { width, height, .. } => return Ok((*width, *height)),
+                _ => return Err(AerogpuD3d9Error::UnknownResource(handle)),
+            }
+        }
+
+        Err(AerogpuD3d9Error::MissingRenderTargets)
     }
 
     fn encode_draw(
@@ -3455,6 +3792,36 @@ fn coalesce_ranges_u32(ranges: &mut Vec<Range<u32>>) {
         out.push(r);
     }
     *ranges = out;
+}
+
+fn clamp_scissor_rect(
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+    target_width: u32,
+    target_height: u32,
+) -> Option<(u32, u32, u32, u32)> {
+    if width == 0 || height == 0 {
+        return None;
+    }
+    if target_width == 0 || target_height == 0 {
+        return None;
+    }
+
+    if x >= target_width || y >= target_height {
+        return None;
+    }
+
+    let max_w = target_width - x;
+    let max_h = target_height - y;
+    let width = width.min(max_w);
+    let height = height.min(max_h);
+
+    if width == 0 || height == 0 {
+        return None;
+    }
+    Some((x, y, width, height))
 }
 
 fn map_aerogpu_format(format: u32) -> Result<wgpu::TextureFormat, AerogpuD3d9Error> {
