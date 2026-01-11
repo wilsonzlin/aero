@@ -326,7 +326,8 @@ async function runCommand(command, args, { cwd, env, timeoutMs = 60_000 } = {}) 
         "CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER",
       ];
       const usesSccache = wrapperVars.some((k) => isSccacheWrapper(childEnv[k]));
-      if (usesSccache || (!("RUSTC_WRAPPER" in childEnv) && !("CARGO_BUILD_RUSTC_WRAPPER" in childEnv))) {
+      const hasWrapper = wrapperVars.some((k) => Object.prototype.hasOwnProperty.call(childEnv, k));
+      if (usesSccache || !hasWrapper) {
         if (process.platform === "win32") {
           // Windows wrapper execution semantics differ (batch files vs executables).
           // Keep the existing "empty string disables" behavior.

@@ -320,10 +320,15 @@ async function startDiskGatewayServer({ appOrigin, publicFixturePath, privateFix
   // Some environments configure a rustc wrapper (e.g. `sccache`) via global Cargo config.
   // That can make this harness flaky when the wrapper isn't available. Detect `sccache` wrappers
   // and override them.
-  const usesSccache = ['RUSTC_WRAPPER', 'RUSTC_WORKSPACE_WRAPPER', 'CARGO_BUILD_RUSTC_WRAPPER', 'CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER'].some((k) =>
-    isSccacheWrapper(env[k]),
-  );
-  if (usesSccache || (!('RUSTC_WRAPPER' in env) && !('CARGO_BUILD_RUSTC_WRAPPER' in env))) {
+  const wrapperVars = [
+    'RUSTC_WRAPPER',
+    'RUSTC_WORKSPACE_WRAPPER',
+    'CARGO_BUILD_RUSTC_WRAPPER',
+    'CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER',
+  ];
+  const usesSccache = wrapperVars.some((k) => isSccacheWrapper(env[k]));
+  const hasWrapper = wrapperVars.some((k) => Object.prototype.hasOwnProperty.call(env, k));
+  if (usesSccache || !hasWrapper) {
     env.RUSTC_WRAPPER = '';
     env.RUSTC_WORKSPACE_WRAPPER = '';
     env.CARGO_BUILD_RUSTC_WRAPPER = '';
