@@ -446,7 +446,7 @@ jobs:
         with:
           toolchain: stable
           cache: false
-          locked: auto
+          locked: always
 
       - name: Download signed packages
         uses: actions/download-artifact@v4

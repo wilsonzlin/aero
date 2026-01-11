@@ -22,13 +22,19 @@ jobs:
         uses: ./.github/actions/setup-rust
         with:
           toolchain: nightly
-          locked: auto
+          locked: always
 
       - name: Install cargo-fuzz
-        run: cargo install cargo-fuzz
+        run: cargo install --locked cargo-fuzz
+
+      - name: Verify fuzz Cargo.lock is up to date
+        run: cargo metadata --locked --format-version 1 --manifest-path fuzz/Cargo.toml >/dev/null
 
       - name: fuzz_mmu_translate (10s)
         run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_mmu_translate -- -max_total_time=10
 
       - name: fuzz_bus_rw (10s)
         run: cargo +${{ steps.setup-rust.outputs.rust_toolchain }} fuzz run fuzz_bus_rw -- -max_total_time=10
+
+      - name: Ensure fuzz lockfile was not modified
+        run: git diff --exit-code -- fuzz/Cargo.lock

@@ -352,7 +352,7 @@ test:
 
   if [[ -f "Cargo.toml" ]]; then
     echo "==> Rust: cargo test"
-    cargo test
+    cargo test --locked
   else
     echo "==> Rust: Cargo.toml not found; skipping cargo test"
   fi
@@ -393,7 +393,7 @@ lint:
 
   if [[ -f "Cargo.toml" ]]; then
     echo "==> Rust: cargo clippy"
-    cargo clippy --all-targets --all-features
+    cargo clippy --locked --all-targets --all-features
   else
     echo "==> Rust: Cargo.toml not found; skipping cargo clippy"
   fi

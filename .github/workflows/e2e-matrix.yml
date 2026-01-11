@@ -61,11 +61,12 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Setup Rust
+        id: setup-rust
         uses: ./.github/actions/setup-rust
         with:
           toolchain: stable
           targets: wasm32-unknown-unknown
-          locked: auto
+          locked: always
 
       - name: Install wasm-pack
         uses: jetli/wasm-pack-action@v0.4.0

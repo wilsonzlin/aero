@@ -42,7 +42,7 @@ jobs:
         with:
           toolchain: stable
           cache: false
-          locked: auto
+          locked: always
 
       - name: Install cargo-deny
         if: steps.rust.outputs.has_rust == 'true'
@@ -50,9 +50,11 @@ jobs:
         with:
           tool: cargo-deny
 
-      - name: Generate Cargo.lock (if missing)
+      - name: Verify Cargo.lock is present and in sync
         if: steps.rust.outputs.has_rust == 'true'
-        run: cargo generate-lockfile
+        run: |
+          set -euo pipefail
+          cargo metadata --locked --format-version 1 >/dev/null
 
       # Fast + deterministic policy checks run on every PR.
       - name: cargo-deny check (licenses, bans, sources)

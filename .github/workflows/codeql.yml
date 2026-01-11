@@ -72,7 +72,7 @@ jobs:
         uses: ./.github/actions/setup-rust
         with:
           toolchain: stable
-          locked: auto
+          locked: always
 
       - name: Determine Node workspace directory
         if: matrix.language == 'javascript-typescript'

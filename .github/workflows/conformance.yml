@@ -28,7 +28,7 @@ jobs:
         uses: ./.github/actions/setup-rust
         with:
           toolchain: stable
-          locked: auto
+          locked: always
       - name: Run conformance subset
         run: cargo test ${{ steps.setup-rust.outputs.cargo_locked_flag }} -p conformance --test conformance -- --nocapture
       - name: Upload report
@@ -52,7 +52,7 @@ jobs:
         uses: ./.github/actions/setup-rust
         with:
           toolchain: stable
-          locked: auto
+          locked: always
       - name: Run conformance corpus
         run: cargo test ${{ steps.setup-rust.outputs.cargo_locked_flag }} -p conformance --test conformance -- --nocapture
       - name: Upload report

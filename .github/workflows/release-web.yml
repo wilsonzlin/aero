@@ -45,7 +45,7 @@ jobs:
           toolchain: stable
           targets: wasm32-unknown-unknown
           cache: false
-          locked: auto
+          locked: always
 
       - name: Read pinned nightly toolchain
         id: toolchains
@@ -62,7 +62,7 @@ jobs:
           targets: wasm32-unknown-unknown
           components: rust-src
           cache: false
-          locked: auto
+          locked: always
 
       - name: Install wasm-pack
         uses: taiki-e/install-action@v2

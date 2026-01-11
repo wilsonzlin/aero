@@ -40,7 +40,7 @@ jobs:
         with:
           toolchain: stable
           components: llvm-tools-preview
-          locked: auto
+          locked: always
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov

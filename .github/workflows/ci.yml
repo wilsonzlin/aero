@@ -138,7 +138,7 @@ jobs:
           toolchain: nightly
           targets: wasm32-unknown-unknown
           components: rust-src
-          locked: auto
+          locked: always
 
       - name: Install wasm-pack
         uses: jetli/wasm-pack-action@v0.4.0
@@ -162,7 +162,14 @@ jobs:
           toolchain: stable
           components: rustfmt, clippy
           targets: wasm32-unknown-unknown
-          locked: auto
+          locked: always
+
+      - name: Verify Cargo.lock files are present and in sync
+        run: |
+          set -euo pipefail
+          cargo metadata ${{ steps.setup-rust.outputs.cargo_locked_flag }} --format-version 1 >/dev/null
+          cargo metadata ${{ steps.setup-rust.outputs.cargo_locked_flag }} --format-version 1 --manifest-path tools/packaging/aero_packager/Cargo.toml >/dev/null
+          cargo metadata ${{ steps.setup-rust.outputs.cargo_locked_flag }} --format-version 1 --manifest-path server/disk-gateway/Cargo.toml >/dev/null
 
       - name: Prepare net traces dir
         run: mkdir -p target/net-traces
@@ -300,7 +307,7 @@ jobs:
         uses: ./.github/actions/setup-rust
         with:
           toolchain: stable
-          locked: auto
+          locked: always
 
       - name: Install QEMU + tooling
         run: |
@@ -329,11 +336,12 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Setup Rust
+        id: setup-rust
         uses: ./.github/actions/setup-rust
         with:
           toolchain: stable
           targets: wasm32-unknown-unknown
-          locked: auto
+          locked: always
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -350,7 +358,7 @@ jobs:
         run: cargo xtask wasm single release
 
       - name: wasm-pack test (node)
-        run: cargo xtask test-all --skip-rust --skip-ts --skip-e2e --wasm-crate-dir "${{ steps.wasm-crate.outputs.dir }}"
+        run: cargo run ${{ steps.setup-rust.outputs.cargo_locked_flag }} -p xtask -- test-all --skip-rust --skip-ts --skip-e2e --wasm-crate-dir "${{ steps.wasm-crate.outputs.dir }}"
 
       - name: Upload wasm-pack output (on failure)
         if: failure()
@@ -512,11 +520,12 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Setup Rust
+        id: setup-rust
         uses: ./.github/actions/setup-rust
         with:
           toolchain: stable
           targets: wasm32-unknown-unknown
-          locked: auto
+          locked: always
 
       - name: Install wasm-pack
         uses: jetli/wasm-pack-action@v0.4.0
@@ -589,7 +598,7 @@ jobs:
         uses: ./.github/actions/setup-rust
         with:
           toolchain: stable
-          locked: auto
+          locked: always
 
       - name: Setup Node
         uses: actions/setup-node@v4

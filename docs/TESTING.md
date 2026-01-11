@@ -25,7 +25,7 @@ Boot/system tests use **tiny deterministic fixtures** under `tests/fixtures/boot
 Regenerate them with:
 
 ```bash
-cargo xtask fixtures
+cargo run --locked -p xtask -- fixtures
 ```
 
 CI reruns the same command and fails if it produces any diff (determinism check).
@@ -40,6 +40,9 @@ From the repo root:
 cargo xtask test-all
 ```
 
+Note: in this repo, `cargo xtask` runs Cargo with `--locked` (matching CI). If you hit a lockfile error, update
+the lockfile (e.g. `cargo generate-lockfile`) and include the `Cargo.lock` diff in your PR.
+
 `./scripts/test-all.sh` is kept as a thin wrapper around `cargo xtask test-all`
 for a transition period, but `cargo xtask` is the canonical implementation (and
 works on Windows without bash).
@@ -47,8 +50,8 @@ works on Windows without bash).
 The unified runner executes (in order):
 
 1. `cargo fmt --all -- --check`
-2. `cargo clippy --workspace --all-targets --all-features -- -D warnings`
-3. `cargo test --workspace --all-features`
+2. `cargo clippy --locked --workspace --all-targets --all-features -- -D warnings`
+3. `cargo test --locked --workspace --all-features`
 4. `wasm-pack test --node` (in the WASM crate)
 5. `npm run test:unit`
 6. `npm run test:e2e`
@@ -105,8 +108,8 @@ From the repo root:
 ```bash
 # Rust format/lint/test (host)
 cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace --all-features
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+cargo test --locked --workspace --all-features
 
 # Rust → WASM tests (run from the WASM crate directory; see below)
 # wasm-pack test --node
@@ -134,19 +137,19 @@ Notes:
 Run all Rust tests in the workspace:
 
 ```bash
-cargo test --workspace
+cargo test --locked --workspace
 ```
 
 Run tests for a single crate:
 
 ```bash
-cargo test -p <crate-name>
+cargo test --locked -p <crate-name>
 ```
 
 Run a single test (by name filter):
 
 ```bash
-cargo test -p <crate-name> <test_name_substring>
+cargo test --locked -p <crate-name> <test_name_substring>
 ```
 
 Useful flags:
@@ -184,7 +187,7 @@ These tests are defined under the workspace root `tests/` directory, but are reg
 ./scripts/prepare-freedos.sh
 
 # Run the QEMU boot tests.
-cargo test -p emulator --test boot_sector --test freedos_boot
+cargo test --locked -p emulator --test boot_sector --test freedos_boot
 ```
 
 ### Windows 7 (local only)
@@ -193,7 +196,7 @@ The Windows boot test is intentionally gated and requires user-supplied media:
 
 ```bash
 ./scripts/prepare-windows7.sh
-cargo test -p emulator --test windows7_boot -- --ignored
+cargo test --locked -p emulator --test windows7_boot -- --ignored
 ```
 
 ### Useful environment variables

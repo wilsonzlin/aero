@@ -23,6 +23,17 @@ For a reproducible “clone → build → test” environment (including Rust st
 - Optional: `watchexec` (for `just wasm-watch`)
   - Install via `cargo install watchexec-cli`
 
+### Reproducible Rust builds (`Cargo.lock`)
+
+Rust dependency versions are pinned via checked-in `Cargo.lock` files, and CI runs Rust commands with `--locked`.
+See [ADR 0005](./docs/adr/0005-cargo-lock-policy.md) for the full policy.
+
+If you update Rust dependencies (or see a `--locked` failure), regenerate the lockfile and include it in your PR:
+
+```bash
+cargo generate-lockfile
+```
+
 ### Common workflows (cross-platform)
 
 ```bash
@@ -92,6 +103,7 @@ Infrastructure decisions are captured as ADRs in [`docs/adr/`](./docs/adr/):
 - [`docs/adr/0002-cross-origin-isolation.md`](./docs/adr/0002-cross-origin-isolation.md)
 - [`docs/adr/0003-shared-memory-layout.md`](./docs/adr/0003-shared-memory-layout.md)
 - [`docs/adr/0004-wasm-build-variants.md`](./docs/adr/0004-wasm-build-variants.md)
+- [`docs/adr/0005-cargo-lock-policy.md`](./docs/adr/0005-cargo-lock-policy.md)
 - [`docs/adr/0009-rust-toolchain-policy.md`](./docs/adr/0009-rust-toolchain-policy.md)
 
 ## Web (Vite)
