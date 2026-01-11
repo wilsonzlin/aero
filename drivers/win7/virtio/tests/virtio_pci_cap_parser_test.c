@@ -257,6 +257,116 @@ static void test_aero_layout_validation_ok(void) {
     expect_layout_result("aero_layout_validation_ok.strict", res, VIRTIO_PCI_AERO_LAYOUT_VALIDATE_OK);
 }
 
+static void test_aero_layout_validation_bar0_missing(void) {
+    uint8_t cfg[256];
+    uint64_t bars[VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT];
+    virtio_pci_parsed_caps_t caps;
+    virtio_pci_cap_parse_result_t parseRes;
+    virtio_pci_bar_info_t barInfo[VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT];
+    virtio_pci_aero_layout_validate_result_t res;
+
+    memset(cfg, 0, sizeof(cfg));
+    memset(bars, 0, sizeof(bars));
+    memset(&caps, 0, sizeof(caps));
+    memset(barInfo, 0, sizeof(barInfo));
+
+    write_le16(&cfg[VIRTIO_PCI_CAP_PARSER_PCI_STATUS_OFFSET], VIRTIO_PCI_CAP_PARSER_PCI_STATUS_CAP_LIST);
+    cfg[VIRTIO_PCI_CAP_PARSER_PCI_CAP_PTR_OFFSET] = 0x40;
+
+    add_virtio_cap(cfg, 0x40, 0x54, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_COMMON, 0, 0x0000, 0x0100, 16);
+    add_virtio_notify_cap(cfg, 0x54, 0x70, 0, 0x1000, 0x0100, 4);
+    add_virtio_cap(cfg, 0x70, 0x80, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_ISR, 0, 0x2000, 0x0020, 16);
+    add_virtio_cap(cfg, 0x80, 0x00, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_DEVICE, 0, 0x3000, 0x0100, 16);
+
+    bars[0] = 0xA0000000ULL;
+
+    parseRes = virtio_pci_cap_parse(cfg, sizeof(cfg), bars, &caps);
+    expect_result("aero_layout_validation_bar0_missing.parse", parseRes, VIRTIO_PCI_CAP_PARSE_OK);
+    if (parseRes != VIRTIO_PCI_CAP_PARSE_OK) {
+        return;
+    }
+
+    /* barInfo[0].present remains 0 */
+    res = virtio_pci_validate_aero_pci_layout(&caps, barInfo, VIRTIO_PCI_LAYOUT_POLICY_AERO_STRICT);
+    expect_layout_result("aero_layout_validation_bar0_missing.strict", res, VIRTIO_PCI_AERO_LAYOUT_VALIDATE_ERR_BAR0_MISSING);
+}
+
+static void test_aero_layout_validation_bar0_not_mmio(void) {
+    uint8_t cfg[256];
+    uint64_t bars[VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT];
+    virtio_pci_parsed_caps_t caps;
+    virtio_pci_cap_parse_result_t parseRes;
+    virtio_pci_bar_info_t barInfo[VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT];
+    virtio_pci_aero_layout_validate_result_t res;
+
+    memset(cfg, 0, sizeof(cfg));
+    memset(bars, 0, sizeof(bars));
+    memset(&caps, 0, sizeof(caps));
+    memset(barInfo, 0, sizeof(barInfo));
+
+    write_le16(&cfg[VIRTIO_PCI_CAP_PARSER_PCI_STATUS_OFFSET], VIRTIO_PCI_CAP_PARSER_PCI_STATUS_CAP_LIST);
+    cfg[VIRTIO_PCI_CAP_PARSER_PCI_CAP_PTR_OFFSET] = 0x40;
+
+    add_virtio_cap(cfg, 0x40, 0x54, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_COMMON, 0, 0x0000, 0x0100, 16);
+    add_virtio_notify_cap(cfg, 0x54, 0x70, 0, 0x1000, 0x0100, 4);
+    add_virtio_cap(cfg, 0x70, 0x80, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_ISR, 0, 0x2000, 0x0020, 16);
+    add_virtio_cap(cfg, 0x80, 0x00, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_DEVICE, 0, 0x3000, 0x0100, 16);
+
+    bars[0] = 0xA0000000ULL;
+
+    parseRes = virtio_pci_cap_parse(cfg, sizeof(cfg), bars, &caps);
+    expect_result("aero_layout_validation_bar0_not_mmio.parse", parseRes, VIRTIO_PCI_CAP_PARSE_OK);
+    if (parseRes != VIRTIO_PCI_CAP_PARSE_OK) {
+        return;
+    }
+
+    barInfo[0].present = 1;
+    barInfo[0].is_memory = 0;
+    barInfo[0].length = 0x4000;
+
+    res = virtio_pci_validate_aero_pci_layout(&caps, barInfo, VIRTIO_PCI_LAYOUT_POLICY_AERO_STRICT);
+    expect_layout_result("aero_layout_validation_bar0_not_mmio.strict",
+                         res,
+                         VIRTIO_PCI_AERO_LAYOUT_VALIDATE_ERR_BAR0_NOT_MMIO);
+}
+
+static void test_aero_layout_validation_bar0_too_small(void) {
+    uint8_t cfg[256];
+    uint64_t bars[VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT];
+    virtio_pci_parsed_caps_t caps;
+    virtio_pci_cap_parse_result_t parseRes;
+    virtio_pci_bar_info_t barInfo[VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT];
+    virtio_pci_aero_layout_validate_result_t res;
+
+    memset(cfg, 0, sizeof(cfg));
+    memset(bars, 0, sizeof(bars));
+    memset(&caps, 0, sizeof(caps));
+    memset(barInfo, 0, sizeof(barInfo));
+
+    write_le16(&cfg[VIRTIO_PCI_CAP_PARSER_PCI_STATUS_OFFSET], VIRTIO_PCI_CAP_PARSER_PCI_STATUS_CAP_LIST);
+    cfg[VIRTIO_PCI_CAP_PARSER_PCI_CAP_PTR_OFFSET] = 0x40;
+
+    add_virtio_cap(cfg, 0x40, 0x54, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_COMMON, 0, 0x0000, 0x0100, 16);
+    add_virtio_notify_cap(cfg, 0x54, 0x70, 0, 0x1000, 0x0100, 4);
+    add_virtio_cap(cfg, 0x70, 0x80, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_ISR, 0, 0x2000, 0x0020, 16);
+    add_virtio_cap(cfg, 0x80, 0x00, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_DEVICE, 0, 0x3000, 0x0100, 16);
+
+    bars[0] = 0xA0000000ULL;
+
+    parseRes = virtio_pci_cap_parse(cfg, sizeof(cfg), bars, &caps);
+    expect_result("aero_layout_validation_bar0_too_small.parse", parseRes, VIRTIO_PCI_CAP_PARSE_OK);
+    if (parseRes != VIRTIO_PCI_CAP_PARSE_OK) {
+        return;
+    }
+
+    barInfo[0].present = 1;
+    barInfo[0].is_memory = 1;
+    barInfo[0].length = 0x3000;
+
+    res = virtio_pci_validate_aero_pci_layout(&caps, barInfo, VIRTIO_PCI_LAYOUT_POLICY_AERO_STRICT);
+    expect_layout_result("aero_layout_validation_bar0_too_small.strict", res, VIRTIO_PCI_AERO_LAYOUT_VALIDATE_ERR_BAR0_TOO_SMALL);
+}
+
 static void test_aero_layout_validation_offset_mismatch(void) {
     uint8_t cfg[256];
     uint64_t bars[VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT];
@@ -296,6 +406,117 @@ static void test_aero_layout_validation_offset_mismatch(void) {
 
     res = virtio_pci_validate_aero_pci_layout(&caps, barInfo, VIRTIO_PCI_LAYOUT_POLICY_AERO_STRICT);
     expect_layout_result("aero_layout_validation_offset_mismatch.strict", res, VIRTIO_PCI_AERO_LAYOUT_VALIDATE_ERR_COMMON_MISMATCH);
+}
+
+static void test_aero_layout_validation_notify_mismatch(void) {
+    uint8_t cfg[256];
+    uint64_t bars[VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT];
+    virtio_pci_parsed_caps_t caps;
+    virtio_pci_cap_parse_result_t parseRes;
+    virtio_pci_bar_info_t barInfo[VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT];
+    virtio_pci_aero_layout_validate_result_t res;
+
+    memset(cfg, 0, sizeof(cfg));
+    memset(bars, 0, sizeof(bars));
+    memset(&caps, 0, sizeof(caps));
+    memset(barInfo, 0, sizeof(barInfo));
+
+    write_le16(&cfg[VIRTIO_PCI_CAP_PARSER_PCI_STATUS_OFFSET], VIRTIO_PCI_CAP_PARSER_PCI_STATUS_CAP_LIST);
+    cfg[VIRTIO_PCI_CAP_PARSER_PCI_CAP_PTR_OFFSET] = 0x40;
+
+    add_virtio_cap(cfg, 0x40, 0x54, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_COMMON, 0, 0x0000, 0x0100, 16);
+    add_virtio_notify_cap(cfg, 0x54, 0x70, 0, 0x1100, 0x0100, 4);
+    add_virtio_cap(cfg, 0x70, 0x80, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_ISR, 0, 0x2000, 0x0020, 16);
+    add_virtio_cap(cfg, 0x80, 0x00, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_DEVICE, 0, 0x3000, 0x0100, 16);
+
+    bars[0] = 0xA0000000ULL;
+
+    parseRes = virtio_pci_cap_parse(cfg, sizeof(cfg), bars, &caps);
+    expect_result("aero_layout_validation_notify_mismatch.parse", parseRes, VIRTIO_PCI_CAP_PARSE_OK);
+    if (parseRes != VIRTIO_PCI_CAP_PARSE_OK) {
+        return;
+    }
+
+    barInfo[0].present = 1;
+    barInfo[0].is_memory = 1;
+    barInfo[0].length = 0x4000;
+
+    res = virtio_pci_validate_aero_pci_layout(&caps, barInfo, VIRTIO_PCI_LAYOUT_POLICY_AERO_STRICT);
+    expect_layout_result("aero_layout_validation_notify_mismatch.strict", res, VIRTIO_PCI_AERO_LAYOUT_VALIDATE_ERR_NOTIFY_MISMATCH);
+}
+
+static void test_aero_layout_validation_isr_mismatch(void) {
+    uint8_t cfg[256];
+    uint64_t bars[VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT];
+    virtio_pci_parsed_caps_t caps;
+    virtio_pci_cap_parse_result_t parseRes;
+    virtio_pci_bar_info_t barInfo[VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT];
+    virtio_pci_aero_layout_validate_result_t res;
+
+    memset(cfg, 0, sizeof(cfg));
+    memset(bars, 0, sizeof(bars));
+    memset(&caps, 0, sizeof(caps));
+    memset(barInfo, 0, sizeof(barInfo));
+
+    write_le16(&cfg[VIRTIO_PCI_CAP_PARSER_PCI_STATUS_OFFSET], VIRTIO_PCI_CAP_PARSER_PCI_STATUS_CAP_LIST);
+    cfg[VIRTIO_PCI_CAP_PARSER_PCI_CAP_PTR_OFFSET] = 0x40;
+
+    add_virtio_cap(cfg, 0x40, 0x54, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_COMMON, 0, 0x0000, 0x0100, 16);
+    add_virtio_notify_cap(cfg, 0x54, 0x70, 0, 0x1000, 0x0100, 4);
+    add_virtio_cap(cfg, 0x70, 0x80, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_ISR, 0, 0x2100, 0x0020, 16);
+    add_virtio_cap(cfg, 0x80, 0x00, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_DEVICE, 0, 0x3000, 0x0100, 16);
+
+    bars[0] = 0xA0000000ULL;
+
+    parseRes = virtio_pci_cap_parse(cfg, sizeof(cfg), bars, &caps);
+    expect_result("aero_layout_validation_isr_mismatch.parse", parseRes, VIRTIO_PCI_CAP_PARSE_OK);
+    if (parseRes != VIRTIO_PCI_CAP_PARSE_OK) {
+        return;
+    }
+
+    barInfo[0].present = 1;
+    barInfo[0].is_memory = 1;
+    barInfo[0].length = 0x4000;
+
+    res = virtio_pci_validate_aero_pci_layout(&caps, barInfo, VIRTIO_PCI_LAYOUT_POLICY_AERO_STRICT);
+    expect_layout_result("aero_layout_validation_isr_mismatch.strict", res, VIRTIO_PCI_AERO_LAYOUT_VALIDATE_ERR_ISR_MISMATCH);
+}
+
+static void test_aero_layout_validation_device_mismatch(void) {
+    uint8_t cfg[256];
+    uint64_t bars[VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT];
+    virtio_pci_parsed_caps_t caps;
+    virtio_pci_cap_parse_result_t parseRes;
+    virtio_pci_bar_info_t barInfo[VIRTIO_PCI_CAP_PARSER_PCI_BAR_COUNT];
+    virtio_pci_aero_layout_validate_result_t res;
+
+    memset(cfg, 0, sizeof(cfg));
+    memset(bars, 0, sizeof(bars));
+    memset(&caps, 0, sizeof(caps));
+    memset(barInfo, 0, sizeof(barInfo));
+
+    write_le16(&cfg[VIRTIO_PCI_CAP_PARSER_PCI_STATUS_OFFSET], VIRTIO_PCI_CAP_PARSER_PCI_STATUS_CAP_LIST);
+    cfg[VIRTIO_PCI_CAP_PARSER_PCI_CAP_PTR_OFFSET] = 0x40;
+
+    add_virtio_cap(cfg, 0x40, 0x54, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_COMMON, 0, 0x0000, 0x0100, 16);
+    add_virtio_notify_cap(cfg, 0x54, 0x70, 0, 0x1000, 0x0100, 4);
+    add_virtio_cap(cfg, 0x70, 0x80, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_ISR, 0, 0x2000, 0x0020, 16);
+    add_virtio_cap(cfg, 0x80, 0x00, VIRTIO_PCI_CAP_PARSER_CFG_TYPE_DEVICE, 0, 0x3100, 0x0100, 16);
+
+    bars[0] = 0xA0000000ULL;
+
+    parseRes = virtio_pci_cap_parse(cfg, sizeof(cfg), bars, &caps);
+    expect_result("aero_layout_validation_device_mismatch.parse", parseRes, VIRTIO_PCI_CAP_PARSE_OK);
+    if (parseRes != VIRTIO_PCI_CAP_PARSE_OK) {
+        return;
+    }
+
+    barInfo[0].present = 1;
+    barInfo[0].is_memory = 1;
+    barInfo[0].length = 0x4000;
+
+    res = virtio_pci_validate_aero_pci_layout(&caps, barInfo, VIRTIO_PCI_LAYOUT_POLICY_AERO_STRICT);
+    expect_layout_result("aero_layout_validation_device_mismatch.strict", res, VIRTIO_PCI_AERO_LAYOUT_VALIDATE_ERR_DEVICE_MISMATCH);
 }
 
 static void test_aero_layout_validation_notify_multiplier_mismatch(void) {
@@ -944,7 +1165,13 @@ int main(void) {
     test_valid_all_caps();
     test_contract_v1_parse_fixed_layout_ok();
     test_aero_layout_validation_ok();
+    test_aero_layout_validation_bar0_missing();
+    test_aero_layout_validation_bar0_not_mmio();
+    test_aero_layout_validation_bar0_too_small();
     test_aero_layout_validation_offset_mismatch();
+    test_aero_layout_validation_notify_mismatch();
+    test_aero_layout_validation_isr_mismatch();
+    test_aero_layout_validation_device_mismatch();
     test_aero_layout_validation_notify_multiplier_mismatch();
     test_duplicated_cap_type();
     test_missing_notify_cap();
