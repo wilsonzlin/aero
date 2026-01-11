@@ -6,7 +6,8 @@
 use crate::DxbcError;
 
 const SIGNATURE_HEADER_LEN: usize = 8;
-const SIGNATURE_ENTRY_LEN: usize = 24;
+const SIGNATURE_ENTRY_LEN_V0: usize = 24;
+const SIGNATURE_ENTRY_LEN_V1: usize = 32;
 
 /// A parsed DXBC signature chunk (`ISGN`, `OSGN`, `PSGN`, ...).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -75,11 +76,33 @@ pub fn parse_signature_chunk(bytes: &[u8]) -> Result<SignatureChunk, DxbcError> 
         )));
     }
 
+    // Most DXBC signatures use 24-byte entries, but some toolchains emit a 32-byte
+    // variant (carrying stream/min-precision as DWORDs). Try the common format
+    // first, then fall back to the larger entry size if needed.
+    parse_signature_chunk_with_entry_size(bytes, param_count, param_offset, SIGNATURE_ENTRY_LEN_V0)
+        .or_else(|err_v0| {
+            parse_signature_chunk_with_entry_size(
+                bytes,
+                param_count,
+                param_offset,
+                SIGNATURE_ENTRY_LEN_V1,
+            )
+            .or(Err(err_v0))
+        })
+}
+
+fn parse_signature_chunk_with_entry_size(
+    bytes: &[u8],
+    param_count: u32,
+    param_offset: u32,
+    entry_size: usize,
+) -> Result<SignatureChunk, DxbcError> {
+    let param_count_usize = param_count as usize;
+    let param_offset_usize = param_offset as usize;
+
     let table_bytes = param_count_usize
-        .checked_mul(SIGNATURE_ENTRY_LEN)
-        .ok_or_else(|| {
-            DxbcError::invalid_chunk("signature parameter count overflows table size")
-        })?;
+        .checked_mul(entry_size)
+        .ok_or_else(|| DxbcError::invalid_chunk("signature parameter count overflows table size"))?;
 
     let table_end = param_offset_usize
         .checked_add(table_bytes)
@@ -93,23 +116,21 @@ pub fn parse_signature_chunk(bytes: &[u8]) -> Result<SignatureChunk, DxbcError> 
     }
 
     let mut entries = Vec::new();
-    entries.try_reserve_exact(param_count_usize).map_err(|_| {
-        DxbcError::invalid_chunk(format!(
-            "signature entry count {param_count} is too large to allocate"
-        ))
-    })?;
+    entries
+        .try_reserve_exact(param_count_usize)
+        .map_err(|_| {
+            DxbcError::invalid_chunk(format!(
+                "signature entry count {param_count} is too large to allocate"
+            ))
+        })?;
 
     for entry_index in 0..param_count_usize {
-        let entry_offset = entry_index
-            .checked_mul(SIGNATURE_ENTRY_LEN)
-            .ok_or_else(|| {
-                DxbcError::invalid_chunk(format!("signature entry {entry_index} offset overflows"))
-            })?;
-        let entry_start = param_offset_usize
-            .checked_add(entry_offset)
-            .ok_or_else(|| {
-                DxbcError::invalid_chunk(format!("signature entry {entry_index} start overflows"))
-            })?;
+        let entry_offset = entry_index.checked_mul(entry_size).ok_or_else(|| {
+            DxbcError::invalid_chunk(format!("signature entry {entry_index} offset overflows"))
+        })?;
+        let entry_start = param_offset_usize.checked_add(entry_offset).ok_or_else(|| {
+            DxbcError::invalid_chunk(format!("signature entry {entry_index} start overflows"))
+        })?;
 
         let semantic_name_offset = read_u32_le(
             bytes,
@@ -127,6 +148,7 @@ pub fn parse_signature_chunk(bytes: &[u8]) -> Result<SignatureChunk, DxbcError> 
                 "entry {entry_index} semantic_name_offset {semantic_name_offset} points into signature table ({param_offset_usize}..{table_end})"
             )));
         }
+
         let semantic_index = read_u32_le(
             bytes,
             entry_start + 4,
@@ -148,19 +170,48 @@ pub fn parse_signature_chunk(bytes: &[u8]) -> Result<SignatureChunk, DxbcError> 
             &format!("entry {entry_index} register"),
         )?;
 
-        // The last DWORD is packed as 4 bytes:
-        // - mask
-        // - read_write_mask
-        // - stream
-        // - min_precision (ignored)
-        let packed = read_u32_le(
-            bytes,
-            entry_start + 20,
-            &format!("entry {entry_index} mask/rw_mask/stream"),
-        )?;
-        let mask = (packed & 0xFF) as u8;
-        let read_write_mask = ((packed >> 8) & 0xFF) as u8;
-        let stream = ((packed >> 16) & 0xFF) as u32;
+        let (mask, read_write_mask, stream) = match entry_size {
+            SIGNATURE_ENTRY_LEN_V0 => {
+                // The last DWORD is packed as 4 bytes:
+                // - mask
+                // - read_write_mask
+                // - stream
+                // - min_precision (ignored)
+                let packed = read_u32_le(
+                    bytes,
+                    entry_start + 20,
+                    &format!("entry {entry_index} mask/rw_mask/stream"),
+                )?;
+                (
+                    (packed & 0xFF) as u8,
+                    ((packed >> 8) & 0xFF) as u8,
+                    ((packed >> 16) & 0xFF) as u32,
+                )
+            }
+            SIGNATURE_ENTRY_LEN_V1 => {
+                // 32-byte variant: mask/rw bytes followed by stream/min-precision DWORDs.
+                let mask = *bytes.get(entry_start + 20).ok_or_else(|| {
+                    DxbcError::invalid_chunk(format!(
+                        "need 1 byte for entry {entry_index} mask at {}",
+                        entry_start + 20
+                    ))
+                })?;
+                let read_write_mask = *bytes.get(entry_start + 21).ok_or_else(|| {
+                    DxbcError::invalid_chunk(format!(
+                        "need 1 byte for entry {entry_index} read_write_mask at {}",
+                        entry_start + 21
+                    ))
+                })?;
+                let stream =
+                    read_u32_le(bytes, entry_start + 24, &format!("entry {entry_index} stream"))?;
+                (mask, read_write_mask, stream)
+            }
+            other => {
+                return Err(DxbcError::invalid_chunk(format!(
+                    "unsupported signature entry size {other}"
+                )))
+            }
+        };
 
         let semantic_name = read_cstring(
             bytes,
