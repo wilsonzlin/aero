@@ -4,6 +4,11 @@ This directory contains a small, reusable transport layer for **Virtio 1.0 PCI m
 
 It discovers Virtio vendor-specific PCI capabilities (COMMON/NOTIFY/ISR/DEVICE config) and maps the required BAR(s) into kernel virtual space using `MmMapIoSpace`.
 
+> Note: `virtio-core` is intended for **KMDF** drivers. For WDF-free/WDM/miniport
+> drivers in this repo, prefer the canonical modern transport module:
+>
+> - `drivers/windows/virtio/pci-modern/` (`VirtioPciModernTransport*`)
+
 ## Files
 
 - `include/virtio_spec.h` — minimal Virtio 1.0 structures/constants (common config layout)
