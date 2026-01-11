@@ -1,5 +1,12 @@
 export type WasmVariant = "threaded" | "single";
 
+export type MicBridgeHandle = {
+    buffered_samples(): number;
+    dropped_samples(): number;
+    read_f32_into(out: Float32Array): number;
+    free(): void;
+};
+
 export interface WasmApi {
     greet(name: string): string;
     add(a: number, b: number): number;
@@ -47,6 +54,10 @@ export interface WasmApi {
     };
     create_worklet_bridge?: (capacityFrames: number, channelCount: number) => unknown;
     attach_worklet_bridge?: (sab: SharedArrayBuffer, capacityFrames: number, channelCount: number) => unknown;
+    MicBridge?: {
+        fromSharedBuffer(sab: SharedArrayBuffer): MicBridgeHandle;
+    };
+    attach_mic_bridge?: (sab: SharedArrayBuffer) => MicBridgeHandle;
     SineTone?: new () => {
         write(
             bridge: unknown,
@@ -161,6 +172,8 @@ function toApi(mod: RawWasmModule): WasmApi {
         WorkletBridge: mod.WorkletBridge,
         create_worklet_bridge: mod.create_worklet_bridge,
         attach_worklet_bridge: mod.attach_worklet_bridge,
+        MicBridge: mod.MicBridge,
+        attach_mic_bridge: mod.attach_mic_bridge,
         SineTone: mod.SineTone,
         HdaPcmWriter: mod.HdaPcmWriter,
     };

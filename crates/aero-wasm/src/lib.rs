@@ -9,6 +9,9 @@ use aero_platform::audio::worklet_bridge::WorkletBridge;
 use aero_opfs::OpfsSyncFile;
 
 #[cfg(target_arch = "wasm32")]
+use aero_platform::audio::mic_bridge::MicBridge;
+
+#[cfg(target_arch = "wasm32")]
 use js_sys::SharedArrayBuffer;
 
 #[cfg(target_arch = "wasm32")]
@@ -104,6 +107,12 @@ pub fn attach_worklet_bridge(
     channel_count: u32,
 ) -> Result<WorkletBridge, JsValue> {
     WorkletBridge::from_shared_buffer(sab, capacity_frames, channel_count)
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+pub fn attach_mic_bridge(sab: SharedArrayBuffer) -> Result<MicBridge, JsValue> {
+    MicBridge::from_shared_buffer(sab)
 }
 
 #[cfg(target_arch = "wasm32")]
