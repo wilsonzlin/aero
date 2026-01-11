@@ -659,6 +659,50 @@ fn rep_movsb_a20_wrap_skips_bulk_copy_and_uses_wrapping_addresses() {
 }
 
 #[test]
+fn rep_movsb_a20_disabled_above_1mib_can_still_use_bulk_copy_if_contiguous() {
+    // With A20 disabled, only address bit 20 aliases. Ranges above 1MiB can still be contiguous
+    // (and safe to bulk-copy) when they don't cross a 1MiB boundary.
+    let count = 128u32;
+    let src_start = 0x20_0000u64;
+    let dst_start = 0x21_0000u64;
+
+    let code = [0x67, 0xF3, 0xA4, 0xF4]; // addr-size override + rep movsb; hlt
+    let mut bus = CountingBus::new(0x400000);
+    bus.inner.load(0, &code);
+
+    let mut state = CpuState::new(CpuMode::Bit16);
+    state.set_rip(0);
+    state.set_rflags(0x2);
+    state.a20_enabled = false;
+    state.write_reg(Register::DS, 0x0000);
+    state.write_reg(Register::ES, 0x0000);
+
+    state.write_reg(Register::ESI, src_start);
+    state.write_reg(Register::EDI, dst_start);
+    state.write_reg(Register::ECX, count as u64);
+
+    for i in 0..count as u64 {
+        bus.inner
+            .write_u8(src_start + i, (i ^ 0xA5) as u8)
+            .unwrap();
+    }
+
+    run_to_halt(&mut state, &mut bus, 100_000);
+
+    assert_eq!(bus.bulk_copy_calls, 1);
+    assert_eq!(state.read_reg(Register::ECX), 0);
+    assert_eq!(state.read_reg(Register::ESI), src_start + count as u64);
+    assert_eq!(state.read_reg(Register::EDI), dst_start + count as u64);
+
+    for i in 0..count as u64 {
+        assert_eq!(
+            bus.inner.read_u8(dst_start + i).unwrap(),
+            (i ^ 0xA5) as u8
+        );
+    }
+}
+
+#[test]
 fn rep_stosb_a20_wrap_skips_bulk_set_and_uses_wrapping_addresses() {
     // Same idea as the MOVSB A20 test, but for STOSB bulk-set behavior.
     let count = 128u16;

@@ -324,12 +324,16 @@ fn a20_range_contiguous(state: &CpuState, start: u64, total_bytes: u64) -> bool 
         return true;
     }
 
+    // With A20 disabled, bit 20 is forced low. A repeated range is only contiguous in
+    // masked address space when it stays within a single 1MiB window (no bit-20
+    // boundary crossing).
     let span = match total_bytes.checked_sub(1) {
         Some(v) => v,
         None => return true,
     };
-    match start.checked_add(span) {
-        Some(end) => end <= 0xFFFFF,
+    let start_low = start & 0xFFFFF;
+    match start_low.checked_add(span) {
+        Some(end_low) => end_low <= 0xFFFFF,
         None => false,
     }
 }
