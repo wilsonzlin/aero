@@ -106,6 +106,29 @@ fn assert_http_status(err: WsError, expected: StatusCode) {
     }
 }
 
+type WsStream =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+async fn connect_with_retry(
+    mut make_req: impl FnMut() -> tokio_tungstenite::tungstenite::http::Request<()>,
+) -> WsStream {
+    // Establishing a WebSocket connection can race with server-side permit release after the client
+    // initiates a close. Avoid fixed sleeps here to keep CI deterministic under load.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        match tokio_tungstenite::connect_async(make_req()).await {
+            Ok((ws, _resp)) => return ws,
+            Err(WsError::Http(resp)) if resp.status() == StatusCode::TOO_MANY_REQUESTS => {
+                if tokio::time::Instant::now() >= deadline {
+                    panic!("timed out waiting for server-side session permit to be released");
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+            Err(err) => panic!("unexpected websocket connection error: {err:?}"),
+        }
+    }
+}
+
 fn parse_metric(body: &str, name: &str) -> Option<u64> {
     for line in body.lines() {
         let line = line.trim();
@@ -1483,17 +1506,17 @@ async fn max_connections_per_session_enforced_for_jwt() {
 
     let _ = ws1.send(Message::Close(None)).await;
 
-    // Wait for the server-side session to observe the close and release the permit.
-    tokio::time::sleep(Duration::from_millis(50)).await;
-
-    let mut req = base_ws_request(addr);
-    req.headers_mut()
-        .insert("origin", HeaderValue::from_static("https://any.test"));
-    req.headers_mut().insert(
-        "authorization",
-        HeaderValue::from_str(&format!("Bearer {token}")).unwrap(),
-    );
-    let (mut ws2, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+    let mut ws2 = connect_with_retry(|| {
+        let mut req = base_ws_request(addr);
+        req.headers_mut()
+            .insert("origin", HeaderValue::from_static("https://any.test"));
+        req.headers_mut().insert(
+            "authorization",
+            HeaderValue::from_str(&format!("Bearer {token}")).unwrap(),
+        );
+        req
+    })
+    .await;
     let _ = ws2.send(Message::Close(None)).await;
 
     proxy.shutdown().await;
@@ -1844,13 +1867,13 @@ async fn max_connections_enforced() {
 
     let _ = ws1.send(Message::Close(None)).await;
 
-    // Wait for the server-side session to observe the close and release the permit.
-    tokio::time::sleep(Duration::from_millis(50)).await;
-
-    let mut req = base_ws_request(addr);
-    req.headers_mut()
-        .insert("origin", HeaderValue::from_static("https://any.test"));
-    let (mut ws2, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+    let mut ws2 = connect_with_retry(|| {
+        let mut req = base_ws_request(addr);
+        req.headers_mut()
+            .insert("origin", HeaderValue::from_static("https://any.test"));
+        req
+    })
+    .await;
     let _ = ws2.send(Message::Close(None)).await;
 
     proxy.shutdown().await;
@@ -1926,15 +1949,15 @@ async fn max_connections_per_session_enforced() {
 
     let _ = ws1.send(Message::Close(None)).await;
 
-    // Wait for the server-side session to observe the close and release the permit.
-    tokio::time::sleep(Duration::from_millis(50)).await;
-
-    let mut req = base_ws_request(addr);
-    req.headers_mut()
-        .insert("origin", HeaderValue::from_static("https://any.test"));
-    req.headers_mut()
-        .insert("cookie", HeaderValue::from_str(&cookie).unwrap());
-    let (mut ws2, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+    let mut ws2 = connect_with_retry(|| {
+        let mut req = base_ws_request(addr);
+        req.headers_mut()
+            .insert("origin", HeaderValue::from_static("https://any.test"));
+        req.headers_mut()
+            .insert("cookie", HeaderValue::from_str(&cookie).unwrap());
+        req
+    })
+    .await;
     let _ = ws2.send(Message::Close(None)).await;
 
     proxy.shutdown().await;
@@ -1999,15 +2022,15 @@ async fn max_connections_per_ip_enforced_with_x_forwarded_for_when_trusting_prox
 
     let _ = ws1.send(Message::Close(None)).await;
 
-    // Wait for the server-side session to observe the close and release the permit.
-    tokio::time::sleep(Duration::from_millis(50)).await;
-
-    let mut req = base_ws_request(addr);
-    req.headers_mut()
-        .insert("origin", HeaderValue::from_static("https://any.test"));
-    req.headers_mut()
-        .insert("x-forwarded-for", HeaderValue::from_static("203.0.113.1"));
-    let (mut ws3, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+    let mut ws3 = connect_with_retry(|| {
+        let mut req = base_ws_request(addr);
+        req.headers_mut()
+            .insert("origin", HeaderValue::from_static("https://any.test"));
+        req.headers_mut()
+            .insert("x-forwarded-for", HeaderValue::from_static("203.0.113.1"));
+        req
+    })
+    .await;
     let _ = ws3.send(Message::Close(None)).await;
 
     let _ = ws2.send(Message::Close(None)).await;
@@ -2073,15 +2096,15 @@ async fn max_connections_per_ip_enforced_with_forwarded_header_when_trusting_pro
 
     let _ = ws1.send(Message::Close(None)).await;
 
-    // Wait for the server-side session to observe the close and release the permit.
-    tokio::time::sleep(Duration::from_millis(50)).await;
-
-    let mut req = base_ws_request(addr);
-    req.headers_mut()
-        .insert("origin", HeaderValue::from_static("https://any.test"));
-    req.headers_mut()
-        .insert("forwarded", HeaderValue::from_static("for=203.0.113.1"));
-    let (mut ws3, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+    let mut ws3 = connect_with_retry(|| {
+        let mut req = base_ws_request(addr);
+        req.headers_mut()
+            .insert("origin", HeaderValue::from_static("https://any.test"));
+        req.headers_mut()
+            .insert("forwarded", HeaderValue::from_static("for=203.0.113.1"));
+        req
+    })
+    .await;
     let _ = ws3.send(Message::Close(None)).await;
 
     let _ = ws2.send(Message::Close(None)).await;
