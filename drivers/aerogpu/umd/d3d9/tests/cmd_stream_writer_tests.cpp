@@ -4408,6 +4408,335 @@ bool TestOpenResourceTracksWddmAllocationHandle() {
   return Check(list[0].AllocationListSlotId == 0, "allocation list slot id == 0");
 }
 
+bool TestGuestBackedUnlockEmitsDirtyRangeNotUpload() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3D9DDI_HADAPTER hAdapter{};
+    D3D9DDI_HDEVICE hDevice{};
+    std::vector<AEROGPU_D3D9DDI_HRESOURCE> resources;
+    bool has_adapter = false;
+    bool has_device = false;
+
+    ~Cleanup() {
+      if (has_device && device_funcs.pfnDestroyResource) {
+        for (auto& hRes : resources) {
+          if (hRes.pDrvPrivate) {
+            device_funcs.pfnDestroyResource(hDevice, hRes);
+          }
+        }
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  if (!Check(open.hAdapter.pDrvPrivate != nullptr, "OpenAdapter2 returned adapter handle")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  if (!Check(create_dev.hDevice.pDrvPrivate != nullptr, "CreateDevice returned device handle")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  aerogpu_wddm_alloc_priv priv{};
+  priv.magic = AEROGPU_WDDM_ALLOC_PRIV_MAGIC;
+  priv.version = AEROGPU_WDDM_ALLOC_PRIV_VERSION;
+  priv.alloc_id = 0x1234u;
+  priv.flags = AEROGPU_WDDM_ALLOC_PRIV_FLAG_IS_SHARED;
+  priv.share_token = 0x1122334455667788ull;
+  priv.size_bytes = 64;
+  priv.reserved0 = 0;
+
+  AEROGPU_D3D9DDIARG_OPENRESOURCE open_res{};
+  open_res.pPrivateDriverData = &priv;
+  open_res.private_driver_data_size = sizeof(priv);
+  open_res.type = 0;
+  open_res.format = 0;
+  open_res.width = 0;
+  open_res.height = 0;
+  open_res.depth = 1;
+  open_res.mip_levels = 1;
+  open_res.usage = 0;
+  open_res.size = 64;
+  open_res.hResource.pDrvPrivate = nullptr;
+  open_res.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnOpenResource(create_dev.hDevice, &open_res);
+  if (!Check(hr == S_OK, "OpenResource(guest-backed buffer)")) {
+    return false;
+  }
+  if (!Check(open_res.hResource.pDrvPrivate != nullptr, "OpenResource returned resource handle")) {
+    return false;
+  }
+  cleanup.resources.push_back(open_res.hResource);
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  auto* res = reinterpret_cast<Resource*>(open_res.hResource.pDrvPrivate);
+  if (!Check(dev != nullptr && res != nullptr, "device/resource pointers")) {
+    return false;
+  }
+  if (!Check(res->backing_alloc_id == priv.alloc_id, "resource backing_alloc_id populated from private data")) {
+    return false;
+  }
+  if (!Check(res->handle != 0, "guest-backed resource has non-zero handle")) {
+    return false;
+  }
+
+  AEROGPU_D3D9DDIARG_LOCK lock{};
+  lock.hResource = open_res.hResource;
+  lock.offset_bytes = 8;
+  lock.size_bytes = 16;
+  lock.flags = 0;
+
+  AEROGPU_D3D9DDI_LOCKED_BOX locked{};
+  hr = cleanup.device_funcs.pfnLock(create_dev.hDevice, &lock, &locked);
+  if (!Check(hr == S_OK, "Lock(guest-backed)")) {
+    return false;
+  }
+  if (!Check(locked.pData != nullptr, "Lock returns non-null pData")) {
+    return false;
+  }
+
+  std::memset(locked.pData, 0xAB, lock.size_bytes);
+
+  AEROGPU_D3D9DDIARG_UNLOCK unlock{};
+  unlock.hResource = open_res.hResource;
+  unlock.offset_bytes = lock.offset_bytes;
+  unlock.size_bytes = lock.size_bytes;
+  hr = cleanup.device_funcs.pfnUnlock(create_dev.hDevice, &unlock);
+  if (!Check(hr == S_OK, "Unlock(guest-backed)")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+
+  const CmdLoc upload = FindLastOpcode(buf, len, AEROGPU_CMD_UPLOAD_RESOURCE);
+  if (!Check(upload.hdr == nullptr, "guest-backed unlock must not emit UPLOAD_RESOURCE")) {
+    return false;
+  }
+
+  const CmdLoc dirty = FindLastOpcode(buf, len, AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+  if (!Check(dirty.hdr != nullptr, "guest-backed unlock emits RESOURCE_DIRTY_RANGE")) {
+    return false;
+  }
+  const auto* cmd = reinterpret_cast<const aerogpu_cmd_resource_dirty_range*>(dirty.hdr);
+  if (!Check(cmd->hdr.size_bytes == sizeof(aerogpu_cmd_resource_dirty_range), "dirty_range packet size_bytes")) {
+    return false;
+  }
+  if (!Check(cmd->resource_handle == res->handle, "dirty_range resource_handle matches")) {
+    return false;
+  }
+  if (!Check(cmd->offset_bytes == lock.offset_bytes, "dirty_range offset_bytes matches")) {
+    return false;
+  }
+  if (!Check(cmd->size_bytes == lock.size_bytes, "dirty_range size_bytes matches")) {
+    return false;
+  }
+
+  return ValidateStream(buf, len);
+}
+
+bool TestGuestBackedDirtyRangeSubmitsWhenCmdBufferFull() {
+#if defined(_WIN32)
+  // Portable CI builds do not exercise the WDDM DMA-buffer split behavior.
+  // Skip this test on Windows where the D3D9 UMD is expected to run in the real
+  // WDDM DMA-buffer path.
+  return true;
+#else
+  std::vector<uint8_t> dma_buf(64, 0xCD);
+
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3D9DDI_HADAPTER hAdapter{};
+    D3D9DDI_HDEVICE hDevice{};
+    std::vector<AEROGPU_D3D9DDI_HRESOURCE> resources;
+    bool has_adapter = false;
+    bool has_device = false;
+
+    ~Cleanup() {
+      if (has_device && device_funcs.pfnDestroyResource) {
+        for (auto& hRes : resources) {
+          if (hRes.pDrvPrivate) {
+            device_funcs.pfnDestroyResource(hDevice, hRes);
+          }
+        }
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  aerogpu_wddm_alloc_priv priv{};
+  priv.magic = AEROGPU_WDDM_ALLOC_PRIV_MAGIC;
+  priv.version = AEROGPU_WDDM_ALLOC_PRIV_VERSION;
+  priv.alloc_id = 0x4242u;
+  priv.flags = AEROGPU_WDDM_ALLOC_PRIV_FLAG_IS_SHARED;
+  priv.share_token = 0x1122334455667788ull;
+  priv.size_bytes = 32;
+  priv.reserved0 = 0;
+
+  AEROGPU_D3D9DDIARG_OPENRESOURCE open_res{};
+  open_res.pPrivateDriverData = &priv;
+  open_res.private_driver_data_size = sizeof(priv);
+  open_res.type = 0;
+  open_res.format = 0;
+  open_res.width = 0;
+  open_res.height = 0;
+  open_res.depth = 1;
+  open_res.mip_levels = 1;
+  open_res.usage = 0;
+  open_res.size = 32;
+  open_res.hResource.pDrvPrivate = nullptr;
+  open_res.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnOpenResource(create_dev.hDevice, &open_res);
+  if (!Check(hr == S_OK, "OpenResource(guest-backed buffer)")) {
+    return false;
+  }
+  cleanup.resources.push_back(open_res.hResource);
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  auto* res = reinterpret_cast<Resource*>(open_res.hResource.pDrvPrivate);
+  if (!Check(dev != nullptr && res != nullptr, "device/resource pointers")) {
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    dev->cmd.set_span(dma_buf.data(), dma_buf.size());
+    dev->cmd.reset();
+
+    auto* filler = dev->cmd.TryAppendFixed<unknown_cmd_fixed>(0xDEADBEEFu);
+    if (!Check(filler != nullptr, "append filler cmd")) {
+      return false;
+    }
+    filler->value = 0xDEAD1234u;
+  }
+
+  AEROGPU_D3D9DDIARG_LOCK lock_args{};
+  lock_args.hResource = open_res.hResource;
+  lock_args.offset_bytes = 0;
+  lock_args.size_bytes = 4;
+  lock_args.flags = 0;
+
+  AEROGPU_D3D9DDI_LOCKED_BOX locked{};
+  hr = cleanup.device_funcs.pfnLock(create_dev.hDevice, &lock_args, &locked);
+  if (!Check(hr == S_OK, "Lock(guest-backed)")) {
+    return false;
+  }
+  std::memset(locked.pData, 0xEF, lock_args.size_bytes);
+
+  AEROGPU_D3D9DDIARG_UNLOCK unlock_args{};
+  unlock_args.hResource = open_res.hResource;
+  unlock_args.offset_bytes = lock_args.offset_bytes;
+  unlock_args.size_bytes = lock_args.size_bytes;
+  hr = cleanup.device_funcs.pfnUnlock(create_dev.hDevice, &unlock_args);
+  if (!Check(hr == S_OK, "Unlock(guest-backed)")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+
+  const size_t expected_len = sizeof(aerogpu_cmd_stream_header) + sizeof(aerogpu_cmd_resource_dirty_range);
+  if (!Check(len == expected_len, "dirty range flush leaves a single packet in the command buffer")) {
+    return false;
+  }
+
+  if (!Check(ValidateStream(buf, len), "dirty-range stream validates")) {
+    return false;
+  }
+
+  if (!Check(CountOpcode(buf, len, 0xDEADBEEFu) == 0, "filler packet was flushed")) {
+    return false;
+  }
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_UPLOAD_RESOURCE) == 0, "no upload_resource emitted")) {
+    return false;
+  }
+
+  const CmdLoc dirty = FindLastOpcode(buf, len, AEROGPU_CMD_RESOURCE_DIRTY_RANGE);
+  if (!Check(dirty.hdr != nullptr, "dirty_range emitted")) {
+    return false;
+  }
+  const auto* cmd = reinterpret_cast<const aerogpu_cmd_resource_dirty_range*>(dirty.hdr);
+  if (!Check(cmd->resource_handle == res->handle, "dirty_range resource_handle matches")) {
+    return false;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    dev->cmd.set_vector();
+  }
+
+  return true;
+#endif
+}
+
 } // namespace
 } // namespace aerogpu
 
@@ -4447,5 +4776,7 @@ int main() {
   failures += !aerogpu::TestRotateResourceIdentitiesUndoOnSmallCmdBuffer();
   failures += !aerogpu::TestResetRebindsBackbufferTexture();
   failures += !aerogpu::TestOpenResourceTracksWddmAllocationHandle();
+  failures += !aerogpu::TestGuestBackedUnlockEmitsDirtyRangeNotUpload();
+  failures += !aerogpu::TestGuestBackedDirtyRangeSubmitsWhenCmdBufferFull();
   return failures ? 1 : 0;
 }
