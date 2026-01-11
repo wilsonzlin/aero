@@ -10,9 +10,13 @@ What this test plan verifies:
 2. Windows 7 binds the virtio-snd driver package (INF/SYS) to that PCI function
 3. The Windows audio stack enumerates a **render** endpoint (Control Panel → Sound)
 4. Audio playback works (audible on the host, or captured to a WAV file in headless runs)
-5. (Optional) The Windows audio stack enumerates a **capture** endpoint (Control Panel → Sound → Recording)
-6. (Optional) Audio capture works (records host input if available, otherwise records silence)
+5. (Future) The Windows audio stack enumerates a **capture** endpoint (Control Panel → Sound → Recording)
+6. (Future) Audio capture works (records host input if available, otherwise records silence)
 7. The **virtio-snd** portion of the guest audio smoke test passes (selftest **Task 128**)
+
+> Note: The current Aero Windows 7 virtio-snd driver package is **render-only** (playback).
+> Capture is defined by the virtio-snd contract, and the driver contains RX plumbing, but
+> it is not yet exposed via PortCls as a Windows capture endpoint.
 
 References:
 
@@ -195,7 +199,10 @@ Reboot if prompted.
 
 If you used the `wav` audio backend, the host-side `virtio-snd-*.wav` file should be created and grow when sound plays.
 
-### 4b) (Optional) Verify a capture endpoint exists
+### 4b) (Future) Verify a capture endpoint exists
+
+This section is forward-looking. It will not pass until a PortCls capture endpoint
+is implemented for virtio-snd stream id `1` (RX).
 
 1. Open **Control Panel** → **Sound** (or run `mmsys.cpl`).
 2. On the **Recording** tab, confirm a new recording device exists (capture endpoint).
