@@ -11,10 +11,6 @@ wasm_bindgen_test_configure!(run_in_browser);
 
 #[wasm_bindgen_test(async)]
 async fn aerogpu_d3d9_triangle_smoke() {
-    let _ = tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
-        .try_init();
-
     let mut stream = StreamEncoder::new();
     stream.device_create(1);
     stream.context_create(1, 1);
