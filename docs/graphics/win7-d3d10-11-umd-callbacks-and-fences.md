@@ -657,6 +657,30 @@ In AeroGPU this is handled by `.def` files:
 - `drivers/aerogpu/umd/d3d10_11/aerogpu_d3d10_x86.def` (x86, maps undecorated → decorated)
 - `drivers/aerogpu/umd/d3d10_11/aerogpu_d3d10_x64.def` (x64, no `@N` decoration)
 
+### 5.6 64-bit monitored fence reads on x86 (torn read hazard)
+
+The monitored fence value exposed by `D3DDDICB_CREATECONTEXT` (field name varies:
+`pMonitoredFenceValue` vs `pFenceValue`) is a **64-bit counter** that is updated
+by the kernel/GPU while user mode is reading it.
+
+On a **32-bit UMD** (including WOW64), a plain `*volatile uint64_t` read can be
+**torn** (two independent 32-bit loads), producing a transient garbage value.
+
+Practical guidance:
+
+- Prefer `pfnWaitForSynchronizationObjectCb` for correctness (it avoids direct
+  reads).
+- If you do read the fence value, use an atomic 64-bit read primitive such as
+  an interlocked operation (`InterlockedCompareExchange64` used as a read) or a
+  “read high/low twice” loop.
+- Some stacks map the fence page read-only; avoid atomic helpers that may write
+  to the page on a compare match (use a sentinel comparand that should never
+  occur, or use a read-only-safe technique).
+
+In AeroGPU, the canonical implementation is in:
+
+- `drivers/aerogpu/umd/d3d10_11/src/aerogpu_d3d10_11_wddm_submit.cpp`
+
 ---
 
 ## 6) Optional: Win7 WDK layout probe tool (sizeof/offsetof)
