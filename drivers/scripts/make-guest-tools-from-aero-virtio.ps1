@@ -23,13 +23,18 @@ param(
 
   # Driver signing / boot policy embedded in Guest Tools manifest.json.
   #
-  # - testsigning: media is intended for test-signed/custom-signed drivers (default)
-  # - nointegritychecks: media may prompt to disable signature enforcement (not recommended)
-  # - none: media is intended for WHQL/production-signed drivers (no cert injection)
-  [ValidateSet("none", "testsigning", "nointegritychecks")]
-  [string]$SigningPolicy = "testsigning",
+  # - test: media is intended for test-signed/custom-signed drivers (default)
+  # - production: media is intended for WHQL/production-signed drivers (no cert injection)
+  # - none: same as production (development use)
+  #
+  # Legacy aliases accepted:
+  # - testsigning / test-signing -> test
+  # - nointegritychecks / no-integrity-checks -> none
+  # - prod / whql -> production
+  [ValidateSet("test", "production", "none", "testsigning", "test-signing", "nointegritychecks", "no-integrity-checks", "prod", "whql")]
+  [string]$SigningPolicy = "test",
 
-  # Public certificate to embed under Guest Tools `certs/` when SigningPolicy != none.
+  # Public certificate to embed under Guest Tools `certs/` when SigningPolicy resolves to `test`.
   # If omitted, the script uses whatever certificate(s) already exist under GuestToolsDir\certs\.
   [string]$CertPath,
 
@@ -85,6 +90,22 @@ function Require-Command {
   }
   return $cmd.Source
 }
+
+function Normalize-SigningPolicy {
+  param([Parameter(Mandatory = $true)][string]$Policy)
+  $p = $Policy.Trim().ToLowerInvariant()
+  switch ($p) {
+    "testsigning" { return "test" }
+    "test-signing" { return "test" }
+    "nointegritychecks" { return "none" }
+    "no-integrity-checks" { return "none" }
+    "prod" { return "production" }
+    "whql" { return "production" }
+    default { return $p }
+  }
+}
+
+$SigningPolicy = Normalize-SigningPolicy -Policy $SigningPolicy
 
 function Resolve-InputArchDir {
   param(
@@ -197,9 +218,9 @@ try {
   Ensure-EmptyDirectory -Path $stageGuestTools
   Copy-DirectoryContents -SourceDir $GuestToolsDir -DestDir $stageGuestTools
 
-  # For WHQL/production-signed driver bundles, do not ship/install any custom root certificates
-  # by default.
-  if ($SigningPolicy -eq "none") {
+  # For WHQL/production-signed driver bundles (`signing_policy=production|none`), do not ship/install
+  # any custom root certificates by default.
+  if ($SigningPolicy -ne "test") {
     $certsDir = Join-Path $stageGuestTools "certs"
     if (Test-Path -LiteralPath $certsDir -PathType Container) {
       Get-ChildItem -LiteralPath $certsDir -File -ErrorAction SilentlyContinue |
