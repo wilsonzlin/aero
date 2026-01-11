@@ -286,6 +286,12 @@ See also:
   * `size_bytes = allocation_size`
 * If `CreateResource` copies initial data into the allocation, emit one `RESOURCE_DIRTY_RANGE` after the upload.
 
+**Staging readback / `CopyResource` (MVP):**
+
+* If the UMD uses a staging resource backed by guest memory (`backing_alloc_id != 0`) for `Map(READ)`-style readback, the `CopyResource`/`CopySubresourceRegion` path must emit:
+  * `AEROGPU_CMD_COPY_BUFFER` / `AEROGPU_CMD_COPY_TEXTURE2D` with `AEROGPU_COPY_FLAG_WRITEBACK_DST`, so the host writes the copied bytes back into guest memory before signaling the fence.
+* The submission must include an allocation-table entry for the destination resource’s `backing_alloc_id` (Win7: include the WDDM allocation handle in the submit allocation list).
+
 ### 2.2 D3D11: adapter + device/context entrypoints (D3D11DDI)
 
 For a **table-by-table** checklist of which `d3d11umddi.h` function pointers must be non-null vs safely stubbable for a crash-free Win7 bring-up (FL10_0), see:
