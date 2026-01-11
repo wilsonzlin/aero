@@ -86,8 +86,9 @@ function applyL2TunnelConfig(config: AeroConfig | null): void {
   // Ensure we stop/close the previous tunnel when the proxy URL changes.
   if (proxyUrl !== l2TunnelProxyUrl) {
     telemetry?.onStopped();
-    forwarder.stop();
+    // Drop the reference early so any late events from the old tunnel are ignored.
     l2TunnelClient = null;
+    forwarder.stop();
     l2TunnelProxyUrl = proxyUrl;
   }
 
@@ -179,9 +180,10 @@ async function runLoop(): Promise<void> {
   }
 
   pushEvent({ kind: "log", level: "info", message: "worker shutdown" });
+  // Ignore any close/error events emitted as part of teardown.
+  l2TunnelClient = null;
   l2Forwarder?.stop();
   l2Forwarder = null;
-  l2TunnelClient = null;
   l2TunnelProxyUrl = null;
   l2TunnelTelemetry = null;
   setReadyFlag(status, role, false);
@@ -189,9 +191,10 @@ async function runLoop(): Promise<void> {
 }
 
 function fatal(err: unknown): void {
+  // Ignore any close/error events emitted as part of teardown.
+  l2TunnelClient = null;
   l2Forwarder?.stop();
   l2Forwarder = null;
-  l2TunnelClient = null;
   l2TunnelProxyUrl = null;
   l2TunnelTelemetry = null;
 
