@@ -452,6 +452,23 @@ Write-Host "Using Inf2Cat: $inf2catPath"
 
 $driversRoot = Join-Path -Path $repoRoot -ChildPath 'drivers'
 
+# Best-effort cleanup: remove any stale packages under OutputRoot that do not correspond to a
+# CI-packaged driver (no drivers/<driver>/ci-package.json). This avoids accidentally shipping
+# old package folders after a driver is converted to dev/test-only or removed from CI packaging.
+if (Test-Path -LiteralPath $outputRootAbs -PathType Container) {
+  $existingPackages = @(Find-DriverBuildDirs -InputRoot $outputRootAbs)
+  foreach ($pkg in $existingPackages) {
+    $rel = [string]$pkg.RelativePath
+    if ([string]::IsNullOrWhiteSpace($rel)) { continue }
+    $src = Join-Path -Path $driversRoot -ChildPath $rel
+    $manifest = Join-Path -Path $src -ChildPath 'ci-package.json'
+    if (-not (Test-Path -LiteralPath $manifest -PathType Leaf)) {
+      Write-Host "Removing stale non-CI package directory: $($pkg.DisplayName)"
+      Remove-Item -LiteralPath $pkg.FullName -Recurse -Force -ErrorAction Stop
+    }
+  }
+}
+
 $driverBuildDirs = @(Find-DriverBuildDirs -InputRoot $inputRootAbs)
 if (-not $driverBuildDirs) {
   throw "No driver build directories found under $inputRootAbs"
