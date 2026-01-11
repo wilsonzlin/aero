@@ -1,4 +1,5 @@
 import { crc32Final, crc32Init, crc32ToHex, crc32Update } from "./crc32.ts";
+import { RANGE_STREAM_CHUNK_SIZE } from "./chunk_sizes.ts";
 
 export type ImageFormat = "raw" | "qcow2" | "vhd" | "iso";
 export type ConvertedFormat = "aerospar" | "iso";
@@ -255,7 +256,7 @@ export async function convertToAeroSparse(
   sync: SyncAccessHandleLike,
   options: ImportConvertOptions,
 ): Promise<{ manifest: ImportManifest }> {
-  const blockSize = options.blockSizeBytes ?? 1024 * 1024;
+  const blockSize = options.blockSizeBytes ?? RANGE_STREAM_CHUNK_SIZE;
   assertBlockSize(blockSize);
 
   switch (originalFormat) {

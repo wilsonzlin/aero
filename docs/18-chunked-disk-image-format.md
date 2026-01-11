@@ -75,9 +75,8 @@ The disk image is split into fixed-size chunks:
 
 - `chunkSize` is **configurable** per image/version.
 - `chunkSize` **MUST** be a multiple of 512 bytes (ATA sector size).
-- Recommended default:
-  - **4 MiB** (`4 * 1024 * 1024`) for a good balance of request count vs. over-fetch (this is also the default used by `aero-image-chunker`).
-  - Larger values (e.g. **8 MiB**) can be reasonable if you expect predominantly sequential reads and want fewer requests/objects.
+- Default: **4 MiB** (`4 * 1024 * 1024`) for a good balance of request count vs. over-fetch (this is also the default used by `aero-image-chunker`).
+- Larger values (e.g. **8 MiB**) can be reasonable if you expect predominantly sequential reads and want fewer requests/objects.
 
 Terminology:
 

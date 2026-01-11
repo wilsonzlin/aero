@@ -865,6 +865,11 @@ mod tests {
     }
 
     #[test]
+    fn default_chunk_size_is_4_mib() {
+        assert_eq!(DEFAULT_CHUNK_SIZE_BYTES, 4 * 1024 * 1024);
+    }
+
+    #[test]
     fn prefix_normalization_adds_trailing_slash() {
         assert_eq!(normalize_prefix("images/foo"), "images/foo/");
         assert_eq!(normalize_prefix("images/foo/"), "images/foo/");

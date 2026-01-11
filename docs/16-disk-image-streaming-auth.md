@@ -416,7 +416,7 @@ In these cases, you can often use the same caching headers as public content **a
 
 Even with a CDN, `Range` caching can be inefficient if clients request arbitrary offsets. Clients SHOULD:
 
-* Choose a fixed **chunk size** (e.g., 1 MiB, 2 MiB, or 4 MiB).
+* Choose a fixed **chunk size** (default: **1 MiB** / 1,048,576 bytes).
 * Align reads to chunk boundaries: request `bytes = floor(offset/chunk)*chunk … +chunk-1`.
 
 This increases cache hit rates and reduces origin load because repeated reads map to identical range requests.

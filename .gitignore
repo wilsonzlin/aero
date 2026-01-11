@@ -212,6 +212,9 @@ drivers/windows7/tests/guest-selftest/**/Release/
 # wasm-pack output (generated)
 web/src/wasm/pkg-threaded/
 web/src/wasm/pkg-single/
+# wasm-pack microbench output (generated). We keep a tracked TS stub for typecheck.
+web/src/wasm/aero_microbench/*
+!web/src/wasm/aero_microbench/aero_microbench.ts
 # Visual Studio / MSBuild
 **/bin/
 **/obj/

@@ -42,8 +42,6 @@ These defaults match [`docs/18-chunked-disk-image-format.md`](../../docs/18-chun
 
 ### Example
 
-Example:
-
 ```bash
 ./tools/image-chunker/target/release/aero-image-chunker publish \
   --file ./disk.img \

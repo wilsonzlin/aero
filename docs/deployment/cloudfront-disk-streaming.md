@@ -312,7 +312,7 @@ For CloudFront specifically, keep the cache key minimal (path + version), and re
 
 On the client side, it is still worth using a fixed `CHUNK_SIZE` to reduce redundant downloads and improve your local caching hit rate (OPFS/sparse cache):
 
-- Choose a fixed `CHUNK_SIZE` in the client (example: `1 MiB` or `4 MiB`).
+- Choose a fixed `CHUNK_SIZE` in the client (default: **1 MiB**; tune if needed).
 - Align all requested ranges to `CHUNK_SIZE` boundaries.
 
 Example alignment logic (matches the approach in `StreamingDisk` in `docs/05-storage-subsystem.md`):

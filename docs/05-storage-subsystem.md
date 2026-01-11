@@ -652,7 +652,7 @@ impl CdromDrive {
 Remote disk images can be streamed on-demand using HTTP `Range` requests while opportunistically caching fetched data into a local sparse file (OPFS).
 To maximize cache hit-rate (especially when a CDN sits in front of the disk server), the client should:
 
-- **Align reads to a fixed `CHUNK_SIZE`** (e.g., 1 MiB).
+- **Align reads to a fixed `CHUNK_SIZE`** (default: **1 MiB**).
 - **Reuse the same chunk boundaries** for all requests (always fetch whole chunks like `bytes=N..N+CHUNK_SIZE-1`), rather than issuing variable-sized ranges.
 
 Protocol-level requirements for authenticated disk streaming (HTTP `Range`, auth styles, CORS/COEP/CORP) are specified in [16 - Disk Image Streaming (HTTP Range + Auth + COOP/COEP)](./16-disk-image-streaming-auth.md).

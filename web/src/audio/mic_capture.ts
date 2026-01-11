@@ -36,15 +36,8 @@ export interface MicCaptureOptions {
   autoGainControl?: boolean;
 }
 
-type ResolvedMicCaptureOptions = {
-  sampleRate: number;
-  bufferMs: number;
-  preferWorklet: boolean;
-  deviceId?: string;
-  echoCancellation: boolean;
-  noiseSuppression: boolean;
-  autoGainControl: boolean;
-};
+type ResolvedMicCaptureOptions = Required<Omit<MicCaptureOptions, "deviceId">> &
+  Pick<MicCaptureOptions, "deviceId">;
 
 function isAudioWorkletSupported(): boolean {
   return typeof AudioWorkletNode !== "undefined";

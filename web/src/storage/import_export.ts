@@ -6,8 +6,9 @@
  * to run inside a dedicated Worker.
  */
 
-import { crc32Final, crc32Init, crc32ToHex, crc32Update } from "./crc32";
-import { idbReq, idbTxDone, openDiskManagerDb, opfsGetDisksDir } from "./metadata";
+import { crc32Final, crc32Init, crc32ToHex, crc32Update } from "./crc32.ts";
+import { idbReq, idbTxDone, openDiskManagerDb, opfsGetDisksDir } from "./metadata.ts";
+import { CHUNKED_DISK_CHUNK_SIZE, RANGE_STREAM_CHUNK_SIZE } from "./chunk_sizes.ts";
 
 /**
  * Chunk sizing notes (different subsystems use different units):
@@ -24,8 +25,8 @@ import { idbReq, idbTxDone, openDiskManagerDb, opfsGetDisksDir } from "./metadat
  * - `EXPORT_CHUNK_SIZE` controls the streaming unit used for CRC32/checksum and message passing
  *   during import/export flows; smaller chunks keep memory bounded and provide smoother progress.
  */
-export const IDB_CHUNK_SIZE = 4 * 1024 * 1024;
-export const EXPORT_CHUNK_SIZE = 1024 * 1024;
+export const IDB_CHUNK_SIZE = CHUNKED_DISK_CHUNK_SIZE;
+export const EXPORT_CHUNK_SIZE = RANGE_STREAM_CHUNK_SIZE;
 const MAX_IMPORT_CHECKSUM_BYTES = 32 * 1024 * 1024;
 
 export type ImportProgress = {

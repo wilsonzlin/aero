@@ -1,4 +1,5 @@
 import type { AsyncSectorDisk } from "../storage/disk.ts";
+import { RANGE_STREAM_CHUNK_SIZE } from "../storage/chunk_sizes.ts";
 import { IdbRemoteChunkCache } from "../storage/idb_remote_chunk_cache.ts";
 import { pickDefaultBackend, type DiskBackend } from "../storage/metadata.ts";
 import { OpfsLruChunkCache } from "../storage/remote/opfs_lru_chunk_cache.ts";
@@ -423,7 +424,7 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
       options.cacheLimitBytes === undefined ? 512 * 1024 * 1024 : options.cacheLimitBytes;
 
     const resolved: ResolvedRemoteDiskOptions = {
-      blockSize: options.blockSize ?? 1024 * 1024,
+      blockSize: options.blockSize ?? RANGE_STREAM_CHUNK_SIZE,
       cacheLimitBytes: resolvedCacheLimitBytes,
       prefetchSequentialBlocks: options.prefetchSequentialBlocks ?? 2,
       cacheBackend: options.cacheBackend ?? pickDefaultBackend(),
@@ -439,10 +440,6 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
     if (resolved.cacheLimitBytes !== null) {
       if (!Number.isSafeInteger(resolved.cacheLimitBytes) || resolved.cacheLimitBytes < 0) {
         throw new Error(`Invalid cacheLimitBytes=${resolved.cacheLimitBytes}`);
-      }
-      // Treat 0 as "cache disabled" so callers can use 0/null interchangeably.
-      if (resolved.cacheLimitBytes === 0) {
-        resolved.cacheLimitBytes = null;
       }
     }
     if (!Number.isSafeInteger(resolved.prefetchSequentialBlocks) || resolved.prefetchSequentialBlocks < 0) {
@@ -464,7 +461,7 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
 
     const parts = cacheKeyPartsFromUrl(params.sourceId, options);
     // Cache disabled: do not touch OPFS / IndexedDB at all (use direct Range fetches only).
-    if (resolved.cacheLimitBytes === null) {
+    if (resolved.cacheLimitBytes === 0) {
       const disk = new RemoteStreamingDisk(parts.imageId, params.lease, probe.size, resolved);
       disk.leaseRefresher.start();
       return disk;
@@ -517,12 +514,12 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
   }
 
   async getCacheStatus(): Promise<RemoteDiskCacheStatus> {
-    if (this.cacheLimitBytes === null) {
+    if (this.cacheLimitBytes === 0) {
       return {
         totalSize: this.totalSize,
         cachedBytes: 0,
         cachedRanges: [],
-        cacheLimitBytes: null,
+        cacheLimitBytes: 0,
       };
     }
     if (this.cacheBackend === "idb") {
@@ -578,7 +575,7 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
   }
 
   async flushCache(): Promise<void> {
-    if (this.cacheLimitBytes === null) return;
+    if (this.cacheLimitBytes === 0) return;
     if (this.cacheBackend === "idb") return;
     await this.opfsCache?.flush();
   }
@@ -637,7 +634,7 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
 
   async clearCache(): Promise<void> {
     this.cacheGeneration += 1;
-    if (this.cacheLimitBytes !== null) {
+    if (this.cacheLimitBytes !== 0) {
       if (this.cacheBackend === "idb") {
         if (!this.idbCache) throw new Error("Remote disk IDB cache not initialized");
         await this.idbCache.clear();
@@ -695,7 +692,7 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
 
   private async getBlock(blockIndex: number, onLog?: (msg: string) => void): Promise<Uint8Array> {
     this.telemetry.blockRequests++;
-    if (this.cacheLimitBytes === null) {
+    if (this.cacheLimitBytes === 0) {
       return await this.getBlockNoCache(blockIndex, onLog);
     }
     if (this.cacheBackend === "idb") {

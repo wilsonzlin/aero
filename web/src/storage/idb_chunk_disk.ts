@@ -1,5 +1,5 @@
 import { assertSectorAligned, checkedOffset, SECTOR_SIZE, type AsyncSectorDisk } from "./disk";
-import { IDB_CHUNK_SIZE } from "./import_export.ts";
+import { CHUNKED_DISK_CHUNK_SIZE } from "./chunk_sizes.ts";
 import { idbReq, idbTxDone, openDiskManagerDb } from "./metadata.ts";
 
 type ChunkRecord = { id: string; index: number; data: ArrayBuffer };
@@ -30,7 +30,7 @@ export class IdbChunkDisk implements AsyncSectorDisk {
     private readonly maxCachedChunks: number,
   ) {
     this.capacityBytes = capacityBytes;
-    this.chunkSizeBytes = IDB_CHUNK_SIZE;
+    this.chunkSizeBytes = CHUNKED_DISK_CHUNK_SIZE;
   }
 
   static async open(

@@ -56,7 +56,7 @@ Notes:
 
 ## Streaming images: caching behavior
 
-The streaming backend downloads data in fixed-size **blocks** (for example, 1 MiB for Range mode, or multi-megabyte chunks for the chunked format).
+The streaming backend downloads data in fixed-size **blocks** (default: **1 MiB** for HTTP Range mode, or **4 MiB** chunks for the chunked format).
 
 - On a cache miss, Aero fetches the required block/chunk from the remote server (Range `GET` or chunk `GET`).
 - Blocks/chunks are stored locally and reused on subsequent runs.
