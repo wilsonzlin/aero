@@ -10,6 +10,7 @@ import {
   type UsbHostCompletion,
   type UsbQuerySelectedMessage,
   type UsbRingAttachMessage,
+  type UsbRingAttachRequestMessage,
   type UsbSelectedMessage,
 } from "./usb_proxy_protocol";
 import { UsbProxyRing } from "./usb_proxy_ring";
@@ -349,6 +350,14 @@ export class WebUsbUhciHarnessRuntime {
     this.#port.addEventListener("message", this.#onMessage);
     // When using addEventListener() MessagePorts need start() to begin dispatch.
     (this.#port as unknown as { start?: () => void }).start?.();
+
+    // Request SAB rings from the broker. This is useful when the runtime starts
+    // after the broker already sent `usb.ringAttach` (e.g. WASM loaded late).
+    try {
+      this.#port.postMessage({ type: "usb.ringAttachRequest" } satisfies UsbRingAttachRequestMessage);
+    } catch {
+      // ignore
+    }
 
     // If we start blocked, proactively ask the broker for the current selection
     // state so we don't wedge when a device was selected before this harness

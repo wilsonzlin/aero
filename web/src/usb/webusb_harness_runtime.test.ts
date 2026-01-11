@@ -63,7 +63,7 @@ describe("usb/WebUsbUhciHarnessRuntime", () => {
 
     // Harness should be blocked until `usb.selected ok:true`.
     runtime.pollOnce();
-    expect(port.posted).toEqual([{ type: "usb.querySelected" }]);
+    expect(port.posted).toEqual([{ type: "usb.ringAttachRequest" }, { type: "usb.querySelected" }]);
 
     port.emit({ type: "usb.selected", ok: true, info: { vendorId: 0x1234, productId: 0x5678 } });
 
@@ -127,9 +127,9 @@ describe("usb/WebUsbUhciHarnessRuntime", () => {
     runtime.pollOnce();
 
     const posted = port.posted as Array<{ type: string; action: UsbHostAction }>;
-    expect(posted).toHaveLength(2);
-    const brokerId1 = posted[0]!.action.id;
-    const brokerId2 = posted[1]!.action.id;
+    expect(posted).toHaveLength(3);
+    const brokerId1 = posted[1]!.action.id;
+    const brokerId2 = posted[2]!.action.id;
 
     port.emit({
       type: "usb.completion",
@@ -168,8 +168,8 @@ describe("usb/WebUsbUhciHarnessRuntime", () => {
     });
     runtime.start();
     runtime.pollOnce();
-    expect(port.posted).toHaveLength(1);
-    const posted = port.posted[0] as { type: string; action: UsbHostAction };
+    expect(port.posted).toHaveLength(2);
+    const posted = port.posted[1] as { type: string; action: UsbHostAction };
     expect(posted.type).toBe("usb.action");
     expect(posted.action.kind).toBe("bulkIn");
 
