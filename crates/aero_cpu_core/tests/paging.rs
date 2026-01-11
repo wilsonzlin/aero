@@ -348,3 +348,39 @@ fn supervisor_write_respects_wp() {
     );
 }
 
+#[test]
+fn atomic_rmw_faults_on_user_read_only_pages() {
+    let mut phys = TestMemory::new(0x20000);
+
+    let pml4_base = 0x1000u64;
+    let pdpt_base = 0x2000u64;
+    let pd_base = 0x3000u64;
+    let pt_base = 0x4000u64;
+    let data_page = 0x5000u64;
+
+    // User-accessible but read-only page.
+    setup_long4_4k(
+        &mut phys,
+        pml4_base,
+        pdpt_base,
+        pd_base,
+        pt_base,
+        data_page | PTE_P | PTE_US,
+        0,
+    );
+
+    phys.write_u8_raw(data_page, 0x7B);
+
+    let mut bus = PagingBus::new(phys);
+    let state = long_state(pml4_base, 0, 3);
+    bus.sync(&state);
+
+    // Atomic RMWs are write-intent operations, even if the update is a no-op.
+    assert_eq!(
+        bus.atomic_rmw::<u8, _>(0, |old| (old, old)),
+        Err(Exception::PageFault {
+            addr: 0,
+            error_code: (1 << 0) | (1 << 1) | (1 << 2),
+        })
+    );
+}

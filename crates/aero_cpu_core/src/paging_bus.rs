@@ -83,6 +83,104 @@ impl<B> PagingBus<B> {
     }
 }
 
+/// Adapter that performs reads with write-intent access checks.
+///
+/// Tier-0 uses [`CpuBus::atomic_rmw`] to model `LOCK`ed RMW instructions. Even if
+/// the computed new value equals the old one, real hardware still performs a
+/// write-intent access (and thus may set accessed/dirty bits and fault on
+/// read-only pages). By performing reads with [`AccessType::Write`], we ensure
+/// those permission checks happen.
+struct WriteIntent<'a, B> {
+    bus: &'a mut PagingBus<B>,
+}
+
+impl<B: MemoryBus> CpuBus for WriteIntent<'_, B> {
+    fn sync(&mut self, state: &crate::state::CpuState) {
+        self.bus.sync(state);
+    }
+
+    fn invlpg(&mut self, vaddr: u64) {
+        self.bus.invlpg(vaddr);
+    }
+
+    fn read_u8(&mut self, vaddr: u64) -> Result<u8, Exception> {
+        self.bus.read_u8_access(vaddr, AccessType::Write)
+    }
+
+    fn read_u16(&mut self, vaddr: u64) -> Result<u16, Exception> {
+        let b0 = self.read_u8(vaddr)? as u16;
+        let b1 = self.read_u8(vaddr + 1)? as u16;
+        Ok(b0 | (b1 << 8))
+    }
+
+    fn read_u32(&mut self, vaddr: u64) -> Result<u32, Exception> {
+        let mut v = 0u32;
+        for i in 0..4 {
+            v |= (self.read_u8(vaddr + i)? as u32) << (i * 8);
+        }
+        Ok(v)
+    }
+
+    fn read_u64(&mut self, vaddr: u64) -> Result<u64, Exception> {
+        let mut v = 0u64;
+        for i in 0..8 {
+            v |= (self.read_u8(vaddr + i)? as u64) << (i * 8);
+        }
+        Ok(v)
+    }
+
+    fn read_u128(&mut self, vaddr: u64) -> Result<u128, Exception> {
+        let mut v = 0u128;
+        for i in 0..16 {
+            v |= (self.read_u8(vaddr + i)? as u128) << (i * 8);
+        }
+        Ok(v)
+    }
+
+    fn write_u8(&mut self, vaddr: u64, val: u8) -> Result<(), Exception> {
+        self.bus.write_u8_access(vaddr, AccessType::Write, val)
+    }
+
+    fn write_u16(&mut self, vaddr: u64, val: u16) -> Result<(), Exception> {
+        self.write_u8(vaddr, (val & 0xff) as u8)?;
+        self.write_u8(vaddr + 1, (val >> 8) as u8)?;
+        Ok(())
+    }
+
+    fn write_u32(&mut self, vaddr: u64, val: u32) -> Result<(), Exception> {
+        for i in 0..4 {
+            self.write_u8(vaddr + i, (val >> (i * 8)) as u8)?;
+        }
+        Ok(())
+    }
+
+    fn write_u64(&mut self, vaddr: u64, val: u64) -> Result<(), Exception> {
+        for i in 0..8 {
+            self.write_u8(vaddr + i, (val >> (i * 8)) as u8)?;
+        }
+        Ok(())
+    }
+
+    fn write_u128(&mut self, vaddr: u64, val: u128) -> Result<(), Exception> {
+        for i in 0..16 {
+            self.write_u8(vaddr + i, (val >> (i * 8)) as u8)?;
+        }
+        Ok(())
+    }
+
+    fn fetch(&mut self, vaddr: u64, max_len: usize) -> Result<[u8; 15], Exception> {
+        self.bus.fetch(vaddr, max_len)
+    }
+
+    fn io_read(&mut self, port: u16, size: u32) -> Result<u64, Exception> {
+        self.bus.io_read(port, size)
+    }
+
+    fn io_write(&mut self, port: u16, size: u32, val: u64) -> Result<(), Exception> {
+        self.bus.io_write(port, size, val)
+    }
+}
+
 impl<B> CpuBus for PagingBus<B>
 where
     B: MemoryBus,
@@ -159,6 +257,25 @@ where
             self.write_u8(vaddr + i, (val >> (i * 8)) as u8)?;
         }
         Ok(())
+    }
+
+    fn atomic_rmw<T, R>(&mut self, vaddr: u64, f: impl FnOnce(T) -> (T, R)) -> Result<R, Exception>
+    where
+        T: crate::mem::CpuBusValue,
+        Self: Sized,
+    {
+        // Perform the read with write-intent translation so that permission
+        // checks and accessed/dirty bit updates match real RMW semantics.
+        let old = {
+            let mut intent = WriteIntent { bus: self };
+            T::read_from(&mut intent, vaddr)?
+        };
+        let (new, ret) = f(old);
+        if new != old {
+            let mut intent = WriteIntent { bus: self };
+            T::write_to(&mut intent, vaddr, new)?;
+        }
+        Ok(ret)
     }
 
     fn fetch(&mut self, vaddr: u64, max_len: usize) -> Result<[u8; 15], Exception> {
