@@ -15,6 +15,9 @@ export type ConnectRelaySignalingOptions = {
   mode?: RelaySignalingMode;
 };
 
+const DEFAULT_ICE_GATHER_TIMEOUT_MS = 10_000;
+const DEFAULT_DATA_CHANNEL_OPEN_TIMEOUT_MS = 30_000;
+
 export async function connectRelaySignaling(
   opts: ConnectRelaySignalingOptions,
   createDataChannel: (pc: RTCPeerConnection) => RTCDataChannel,
@@ -111,12 +114,26 @@ function toHttpUrl(baseUrl: string, path: string): URL {
 function waitForIceGatheringComplete(pc: RTCPeerConnection): Promise<void> {
   if (pc.iceGatheringState === "complete") return Promise.resolve();
 
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
     const onChange = () => {
       if (pc.iceGatheringState !== "complete") return;
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
       pc.removeEventListener("icegatheringstatechange", onChange);
       resolve();
     };
+
+    timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      pc.removeEventListener("icegatheringstatechange", onChange);
+      reject(new Error("ICE gathering timed out"));
+    }, DEFAULT_ICE_GATHER_TIMEOUT_MS);
+
     pc.addEventListener("icegatheringstatechange", onChange);
   });
 }
@@ -126,27 +143,49 @@ function waitForDataChannelOpen(dc: RTCDataChannel): Promise<void> {
   if (dc.readyState === "closed") return Promise.reject(new Error("data channel closed"));
 
   return new Promise((resolve, reject) => {
-    const onOpen = () => {
-      cleanup();
-      resolve();
-    };
-    const onClose = () => {
-      cleanup();
-      reject(new Error("data channel closed"));
-    };
-    const onError = () => {
-      cleanup();
-      reject(new Error("data channel error"));
-    };
-    const cleanup = () => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    function cleanup() {
       dc.removeEventListener("open", onOpen);
       dc.removeEventListener("close", onClose);
       dc.removeEventListener("error", onError);
-    };
+    }
+
+    function onOpen() {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      cleanup();
+      resolve();
+    }
+
+    function onClose() {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      cleanup();
+      reject(new Error("data channel closed"));
+    }
+
+    function onError() {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      cleanup();
+      reject(new Error("data channel error"));
+    }
 
     dc.addEventListener("open", onOpen);
     dc.addEventListener("close", onClose);
     dc.addEventListener("error", onError);
+
+    timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(new Error("data channel open timed out"));
+    }, DEFAULT_DATA_CHANNEL_OPEN_TIMEOUT_MS);
   });
 }
 
