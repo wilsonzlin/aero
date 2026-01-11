@@ -99,6 +99,42 @@ static std::string NtStatusToString(const D3DKMT_FUNCS* f, NTSTATUS st) {
   return out;
 }
 
+static bool GetPrimaryDisplayName(wchar_t out[CCHDEVICENAME]) {
+  if (!out) {
+    return false;
+  }
+
+  DISPLAY_DEVICEW dd;
+  ZeroMemory(&dd, sizeof(dd));
+  dd.cb = sizeof(dd);
+
+  for (DWORD i = 0; EnumDisplayDevicesW(NULL, i, &dd, 0); ++i) {
+    if ((dd.StateFlags & DISPLAY_DEVICE_PRIMARY_DEVICE) != 0) {
+      wcsncpy(out, dd.DeviceName, CCHDEVICENAME - 1);
+      out[CCHDEVICENAME - 1] = 0;
+      return true;
+    }
+    ZeroMemory(&dd, sizeof(dd));
+    dd.cb = sizeof(dd);
+  }
+
+  ZeroMemory(&dd, sizeof(dd));
+  dd.cb = sizeof(dd);
+  for (DWORD i = 0; EnumDisplayDevicesW(NULL, i, &dd, 0); ++i) {
+    if ((dd.StateFlags & DISPLAY_DEVICE_ACTIVE) != 0) {
+      wcsncpy(out, dd.DeviceName, CCHDEVICENAME - 1);
+      out[CCHDEVICENAME - 1] = 0;
+      return true;
+    }
+    ZeroMemory(&dd, sizeof(dd));
+    dd.cb = sizeof(dd);
+  }
+
+  wcsncpy(out, L"\\\\.\\DISPLAY1", CCHDEVICENAME - 1);
+  out[CCHDEVICENAME - 1] = 0;
+  return true;
+}
+
 static double QpcToMs(LONGLONG qpc_delta, LONGLONG qpc_freq) {
   if (qpc_freq <= 0) {
     return 0.0;
@@ -277,18 +313,29 @@ static int RunWaitVblankPacing(int argc, char** argv) {
 
   D3DKMT_HANDLE h_adapter = 0;
 
-  // Open the default display adapter via the screen HDC.
-  HDC hdc = GetDC(NULL);
+  wchar_t display_name[CCHDEVICENAME];
+  if (!GetPrimaryDisplayName(display_name)) {
+    FreeLibrary(f.gdi32);
+    return aerogpu_test::Fail(kTestName, "failed to determine primary display name");
+  }
+
+  aerogpu_test::PrintfStdout("INFO: %s: using display %ls", kTestName, display_name);
+
+  // Open the default display adapter via an HDC for the primary display.
+  HDC hdc = CreateDCW(L"DISPLAY", display_name, NULL, NULL);
   if (!hdc) {
     FreeLibrary(f.gdi32);
-    return aerogpu_test::Fail(kTestName, "GetDC(NULL) failed");
+    return aerogpu_test::Fail(kTestName,
+                              "CreateDCW failed for %ls: %s",
+                              display_name,
+                              aerogpu_test::Win32ErrorToString(GetLastError()).c_str());
   }
 
   D3DKMT_OPENADAPTERFROMHDC open;
   ZeroMemory(&open, sizeof(open));
   open.hDc = hdc;
   NTSTATUS st = f.OpenAdapterFromHdc(&open);
-  ReleaseDC(NULL, hdc);
+  DeleteDC(hdc);
   if (!NT_SUCCESS(st)) {
     FreeLibrary(f.gdi32);
     return aerogpu_test::Fail(kTestName,
