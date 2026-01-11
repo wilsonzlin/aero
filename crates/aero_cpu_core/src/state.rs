@@ -1179,12 +1179,24 @@ impl CpuState {
         }
 
         match reg {
-            Register::ES => Self::write_segment_register(self.mode, &mut self.segments.es, val as u16),
-            Register::CS => Self::write_segment_register(self.mode, &mut self.segments.cs, val as u16),
-            Register::SS => Self::write_segment_register(self.mode, &mut self.segments.ss, val as u16),
-            Register::DS => Self::write_segment_register(self.mode, &mut self.segments.ds, val as u16),
-            Register::FS => Self::write_segment_register(self.mode, &mut self.segments.fs, val as u16),
-            Register::GS => Self::write_segment_register(self.mode, &mut self.segments.gs, val as u16),
+            Register::ES => {
+                Self::write_segment_register(self.mode, &mut self.segments.es, val as u16)
+            }
+            Register::CS => {
+                Self::write_segment_register(self.mode, &mut self.segments.cs, val as u16)
+            }
+            Register::SS => {
+                Self::write_segment_register(self.mode, &mut self.segments.ss, val as u16)
+            }
+            Register::DS => {
+                Self::write_segment_register(self.mode, &mut self.segments.ds, val as u16)
+            }
+            Register::FS => {
+                Self::write_segment_register(self.mode, &mut self.segments.fs, val as u16)
+            }
+            Register::GS => {
+                Self::write_segment_register(self.mode, &mut self.segments.gs, val as u16)
+            }
             _ => {}
         }
 

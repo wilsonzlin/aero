@@ -1,4 +1,4 @@
-use super::{exec_decoded, ExecOutcome};
+use super::{exec_decoded, ExecOutcome, Tier0Config};
 use crate::assist::{handle_assist, AssistContext};
 use crate::exception::{AssistReason, Exception};
 use crate::mem::CpuBus;
@@ -30,8 +30,13 @@ pub struct BatchResult {
     pub exit: BatchExit,
 }
 
-pub fn step<B: CpuBus>(state: &mut CpuState, bus: &mut B) -> Result<StepExit, Exception> {
+pub fn step_with_config<B: CpuBus>(
+    cfg: &Tier0Config,
+    state: &mut CpuState,
+    bus: &mut B,
+) -> Result<StepExit, Exception> {
     bus.sync(state);
+
     let ip = state.rip();
     let fetch_addr = state.apply_a20(state.seg_base_reg(Register::CS).wrapping_add(ip));
     let bytes = match bus.fetch(fetch_addr, 15) {
@@ -45,13 +50,15 @@ pub fn step<B: CpuBus>(state: &mut CpuState, bus: &mut B) -> Result<StepExit, Ex
     let decoded =
         aero_x86::decode(&bytes, ip, state.bitness()).map_err(|_| Exception::InvalidOpcode)?;
     let next_ip = ip.wrapping_add(decoded.len as u64) & state.mode.ip_mask();
-    let outcome = match exec_decoded(state, bus, &decoded, next_ip, addr_size_override) {
+
+    let outcome = match exec_decoded(cfg, state, bus, &decoded, next_ip, addr_size_override) {
         Ok(v) => v,
         Err(e) => {
             state.apply_exception_side_effects(&e);
             return Err(e);
         }
     };
+
     match outcome {
         ExecOutcome::Continue => {
             state.set_rip(next_ip);
@@ -69,6 +76,11 @@ pub fn step<B: CpuBus>(state: &mut CpuState, bus: &mut B) -> Result<StepExit, Ex
         ExecOutcome::Branch => Ok(StepExit::Branch),
         ExecOutcome::Assist(r) => Ok(StepExit::Assist(r)),
     }
+}
+
+pub fn step<B: CpuBus>(state: &mut CpuState, bus: &mut B) -> Result<StepExit, Exception> {
+    let cfg = Tier0Config::default();
+    step_with_config(&cfg, state, bus)
 }
 
 fn has_addr_size_override(bytes: &[u8; 15], bitness: u32) -> bool {
@@ -95,7 +107,12 @@ fn has_addr_size_override(bytes: &[u8; 15], bitness: u32) -> bool {
     seen
 }
 
-pub fn run_batch<B: CpuBus>(state: &mut CpuState, bus: &mut B, max_insts: u64) -> BatchResult {
+pub fn run_batch_with_config<B: CpuBus>(
+    cfg: &Tier0Config,
+    state: &mut CpuState,
+    bus: &mut B,
+    max_insts: u64,
+) -> BatchResult {
     if state.halted {
         return BatchResult {
             executed: 0,
@@ -105,7 +122,7 @@ pub fn run_batch<B: CpuBus>(state: &mut CpuState, bus: &mut B, max_insts: u64) -
 
     let mut executed = 0u64;
     while executed < max_insts {
-        match step(state, bus) {
+        match step_with_config(cfg, state, bus) {
             Ok(StepExit::Continue) => executed += 1,
             Ok(StepExit::Branch) => {
                 executed += 1;
@@ -149,12 +166,28 @@ pub fn run_batch<B: CpuBus>(state: &mut CpuState, bus: &mut B, max_insts: u64) -
     }
 }
 
+pub fn run_batch<B: CpuBus>(state: &mut CpuState, bus: &mut B, max_insts: u64) -> BatchResult {
+    let cfg = Tier0Config::default();
+    run_batch_with_config(&cfg, state, bus, max_insts)
+}
+
 /// Tier-0 batch execution wrapper that resolves [`StepExit::Assist`] exits via
 /// [`crate::assist::handle_assist`].
 ///
 /// This keeps the core Tier-0 interpreter minimal while still allowing it to
 /// execute privileged/IO/time instructions required by OS boot code.
 pub fn run_batch_with_assists<B: CpuBus>(
+    ctx: &mut AssistContext,
+    state: &mut CpuState,
+    bus: &mut B,
+    max_insts: u64,
+) -> BatchResult {
+    let cfg = Tier0Config::default();
+    run_batch_with_assists_with_config(&cfg, ctx, state, bus, max_insts)
+}
+
+pub fn run_batch_with_assists_with_config<B: CpuBus>(
+    cfg: &Tier0Config,
     ctx: &mut AssistContext,
     state: &mut CpuState,
     bus: &mut B,
@@ -169,7 +202,7 @@ pub fn run_batch_with_assists<B: CpuBus>(
 
     let mut executed = 0u64;
     while executed < max_insts {
-        match step(state, bus) {
+        match step_with_config(cfg, state, bus) {
             Ok(StepExit::Continue) => executed += 1,
             Ok(StepExit::Branch) => {
                 executed += 1;

@@ -10,11 +10,32 @@ mod ops_sse;
 mod ops_string;
 mod ops_x87;
 
+use crate::cpuid::CpuFeatureSet;
 use crate::exception::{AssistReason, Exception};
 use crate::fpu::FpKind;
 use crate::mem::CpuBus;
 use crate::state::{CpuState, CR0_EM, CR0_MP, CR0_NE, CR0_TS, CR4_OSFXSR};
 use aero_x86::{DecodedInst, Mnemonic};
+
+/// Configuration inputs for the Tier-0 interpreter.
+///
+/// Tier-0 executes directly against [`crate::state::CpuState`], so CPU-wide
+/// knobs like CPUID feature reporting live outside the architectural state and
+/// are plumbed in via this config.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Tier0Config {
+    pub features: CpuFeatureSet,
+}
+
+impl Default for Tier0Config {
+    fn default() -> Self {
+        Self {
+            // Tier-0 defaults to the minimum viable Win7 x86-64 profile.
+            // Individual tests can override this to exercise optional features.
+            features: CpuFeatureSet::win7_minimum(),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ExecOutcome {
@@ -49,6 +70,7 @@ fn atomic_rmw_sized<B: CpuBus, R>(
 }
 
 fn exec_decoded<B: CpuBus>(
+    cfg: &Tier0Config,
     state: &mut CpuState,
     bus: &mut B,
     decoded: &DecodedInst,
@@ -74,14 +96,14 @@ fn exec_decoded<B: CpuBus>(
     if ops_fx::handles_mnemonic(mnem) {
         return ops_fx::exec(state, bus, decoded, next_ip);
     }
-    if ops_sse::handles_mnemonic(mnem) {
-        return ops_sse::exec(state, bus, decoded, next_ip);
-    }
     if ops_x87::handles_mnemonic(mnem) {
         return ops_x87::exec(state, bus, decoded, next_ip);
     }
     if ops_string::handles(&decoded.instr) {
         return ops_string::exec(state, bus, decoded, next_ip, addr_size_override);
+    }
+    if ops_sse::handles_mnemonic(mnem) {
+        return ops_sse::exec(cfg, state, bus, decoded, next_ip);
     }
 
     match mnem {

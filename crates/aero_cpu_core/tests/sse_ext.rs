@@ -1,6 +1,13 @@
-use aero_cpu_core::interp::ExecError;
 use aero_cpu_core::cpuid::bits;
-use aero_cpu_core::{Cpu, CpuMode, RamBus};
+use aero_cpu_core::interp::tier0::exec::step_with_config;
+use aero_cpu_core::interp::tier0::Tier0Config;
+use aero_cpu_core::mem::FlatTestBus;
+use aero_cpu_core::state::{CpuMode, CpuState, CR4_OSFXSR};
+use aero_cpu_core::Exception;
+use aero_x86::Register;
+
+const BUS_SIZE: usize = 0x4000;
+const CODE_BASE: u64 = 0x1000;
 
 fn crc32c_sw(mut crc: u32, bytes: &[u8]) -> u32 {
     const POLY: u32 = 0x82F63B78;
@@ -59,243 +66,291 @@ fn xmm_to_f32x4(xmm: u128) -> [f32; 4] {
     out
 }
 
-fn setup() -> (Cpu, RamBus) {
-    let mut cpu = Cpu::new(CpuMode::Long64);
-    cpu.features.leaf1_ecx |= bits::LEAF1_ECX_SSE3
+fn new_state(mode: CpuMode) -> CpuState {
+    let mut state = CpuState::new(mode);
+    state.control.cr4 |= CR4_OSFXSR;
+    state
+}
+
+fn cfg_with_ext_bits() -> Tier0Config {
+    let mut cfg = Tier0Config::default();
+    cfg.features.leaf1_ecx |= bits::LEAF1_ECX_SSE3
         | bits::LEAF1_ECX_SSSE3
         | bits::LEAF1_ECX_SSE41
         | bits::LEAF1_ECX_SSE42
         | bits::LEAF1_ECX_POPCNT;
-    (cpu, RamBus::new(0x10_000))
+    cfg
+}
+
+fn exec_once(
+    cfg: &Tier0Config,
+    state: &mut CpuState,
+    bus: &mut FlatTestBus,
+    code: &[u8],
+) -> Result<(), Exception> {
+    bus.load(CODE_BASE, code);
+    state.set_rip(CODE_BASE);
+    step_with_config(cfg, state, bus).map(|_| ())
 }
 
 #[test]
 fn pshufb_shuffle() {
-    let (mut cpu, mut bus) = setup();
-    cpu.sse.xmm[0] = xmm_from_bytes([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
-    cpu.sse.xmm[1] =
-        xmm_from_bytes([0x80, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0]);
+    let cfg = cfg_with_ext_bits();
+    let mut state = new_state(CpuMode::Bit64);
+    let mut bus = FlatTestBus::new(0x10_000);
 
-    cpu.execute_bytes(&mut bus, &[0x66, 0x0F, 0x38, 0x00, 0xC1])
-        .unwrap();
+    state.sse.xmm[0] = xmm_from_bytes([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
+    state.sse.xmm[1] = xmm_from_bytes([0x80, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0]);
+
+    exec_once(&cfg, &mut state, &mut bus, &[0x66, 0x0F, 0x38, 0x00, 0xC1]).unwrap(); // pshufb xmm0,xmm1
 
     assert_eq!(
-        xmm_to_bytes(cpu.sse.xmm[0]),
+        xmm_to_bytes(state.sse.xmm[0]),
         [0, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0]
     );
 }
 
 #[test]
 fn pshufb_memory_operand_protected32() {
-    let mut cpu = Cpu::new(CpuMode::Protected32);
-    let mut bus = RamBus::new(0x10_000);
-    cpu.features.leaf1_ecx |= bits::LEAF1_ECX_SSSE3;
+    let mut cfg = Tier0Config::default();
+    cfg.features.leaf1_ecx |= bits::LEAF1_ECX_SSSE3;
 
-    cpu.sse.xmm[0] = xmm_from_bytes([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
+    let mut state = new_state(CpuMode::Bit32);
+    let mut bus = FlatTestBus::new(0x10_000);
+
+    state.sse.xmm[0] = xmm_from_bytes([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
 
     let mask_addr = 0x200u64;
-    cpu.regs.rax = mask_addr; // EAX base
+    state.write_reg(Register::EAX, mask_addr);
     let mask = [0x80, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0];
-    bus.as_mut_slice()[mask_addr as usize..mask_addr as usize + 16].copy_from_slice(&mask);
+    bus.load(mask_addr, &mask);
 
-    // pshufb xmm0, [eax]
-    cpu.execute_bytes(&mut bus, &[0x66, 0x0F, 0x38, 0x00, 0x00])
-        .unwrap();
+    exec_once(&cfg, &mut state, &mut bus, &[0x66, 0x0F, 0x38, 0x00, 0x00]).unwrap(); // pshufb xmm0,[eax]
 
     assert_eq!(
-        xmm_to_bytes(cpu.sse.xmm[0]),
+        xmm_to_bytes(state.sse.xmm[0]),
         [0, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0]
     );
 }
 
 #[test]
 fn lddqu_memory_operand_protected32() {
-    let mut cpu = Cpu::new(CpuMode::Protected32);
-    let mut bus = RamBus::new(0x10_000);
-    cpu.features.leaf1_ecx |= bits::LEAF1_ECX_SSE3;
+    let mut cfg = Tier0Config::default();
+    cfg.features.leaf1_ecx |= bits::LEAF1_ECX_SSE3;
+
+    let mut state = new_state(CpuMode::Bit32);
+    let mut bus = FlatTestBus::new(0x10_000);
 
     let addr = 0x400u64;
-    cpu.regs.rax = addr; // EAX base
+    state.write_reg(Register::EAX, addr);
     let expected = [0xA5u8; 16];
-    bus.as_mut_slice()[addr as usize..addr as usize + 16].copy_from_slice(&expected);
+    bus.load(addr, &expected);
 
-    // lddqu xmm0, [eax]
-    cpu.execute_bytes(&mut bus, &[0xF2, 0x0F, 0xF0, 0x00])
-        .unwrap();
+    exec_once(&cfg, &mut state, &mut bus, &[0xF2, 0x0F, 0xF0, 0x00]).unwrap(); // lddqu xmm0,[eax]
 
-    assert_eq!(xmm_to_bytes(cpu.sse.xmm[0]), expected);
+    assert_eq!(xmm_to_bytes(state.sse.xmm[0]), expected);
 }
 
 #[test]
 fn pshufb_real16_segment_override() {
-    let mut cpu = Cpu::new(CpuMode::Real16);
-    let mut bus = RamBus::new(0x20_000);
-    cpu.features.leaf1_ecx |= bits::LEAF1_ECX_SSSE3;
+    let mut cfg = Tier0Config::default();
+    cfg.features.leaf1_ecx |= bits::LEAF1_ECX_SSSE3;
 
-    cpu.sse.xmm[0] = xmm_from_bytes([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
+    let mut state = new_state(CpuMode::Bit16);
+    let mut bus = FlatTestBus::new(0x20_000);
+
+    state.sse.xmm[0] = xmm_from_bytes([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
 
     // Addressing form [BX+SI] with an ES override.
-    cpu.regs.rbx = 0x0010;
-    cpu.regs.rsi = 0x0020;
-    cpu.segs.es.base = 0x1000;
-    let addr = cpu.segs.es.base + 0x30;
+    state.write_reg(Register::BX, 0x0010);
+    state.write_reg(Register::SI, 0x0020);
+    state.segments.es.base = 0x1000;
+    let addr = state.segments.es.base + 0x30;
 
     let mask = [0x80, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0];
-    bus.as_mut_slice()[addr as usize..addr as usize + 16].copy_from_slice(&mask);
+    bus.load(addr, &mask);
 
-    // pshufb xmm0, es:[bx+si]
-    cpu.execute_bytes(&mut bus, &[0x26, 0x66, 0x0F, 0x38, 0x00, 0x00])
-        .unwrap();
+    exec_once(
+        &cfg,
+        &mut state,
+        &mut bus,
+        &[0x26, 0x66, 0x0F, 0x38, 0x00, 0x00],
+    )
+    .unwrap(); // pshufb xmm0,es:[bx+si]
 
     assert_eq!(
-        xmm_to_bytes(cpu.sse.xmm[0]),
+        xmm_to_bytes(state.sse.xmm[0]),
         [0, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0]
     );
 }
 
 #[test]
 fn haddps_basic() {
-    let (mut cpu, mut bus) = setup();
-    cpu.sse.xmm[0] = xmm_from_f32x4([1.0, 2.0, 3.0, 4.0]);
-    cpu.sse.xmm[1] = xmm_from_f32x4([10.0, 20.0, 30.0, 40.0]);
+    let cfg = cfg_with_ext_bits();
+    let mut state = new_state(CpuMode::Bit64);
+    let mut bus = FlatTestBus::new(0x10_000);
 
-    // haddps xmm0, xmm1
-    cpu.execute_bytes(&mut bus, &[0xF2, 0x0F, 0x7C, 0xC1])
-        .unwrap();
+    state.sse.xmm[0] = xmm_from_f32x4([1.0, 2.0, 3.0, 4.0]);
+    state.sse.xmm[1] = xmm_from_f32x4([10.0, 20.0, 30.0, 40.0]);
 
-    assert_eq!(xmm_to_f32x4(cpu.sse.xmm[0]), [3.0, 7.0, 30.0, 70.0]);
+    exec_once(&cfg, &mut state, &mut bus, &[0xF2, 0x0F, 0x7C, 0xC1]).unwrap(); // haddps xmm0,xmm1
+
+    assert_eq!(xmm_to_f32x4(state.sse.xmm[0]), [3.0, 7.0, 30.0, 70.0]);
 }
 
 #[test]
 fn insertps_basic() {
-    let (mut cpu, mut bus) = setup();
-    cpu.sse.xmm[0] = xmm_from_f32x4([1.0, 2.0, 3.0, 4.0]);
-    cpu.sse.xmm[1] = xmm_from_f32x4([10.0, 20.0, 30.0, 40.0]);
+    let cfg = cfg_with_ext_bits();
+    let mut state = new_state(CpuMode::Bit64);
+    let mut bus = FlatTestBus::new(0x10_000);
 
-    // insertps xmm0, xmm1, imm8
-    // src=1 (bits 7:6), dst=2 (bits 5:4), zmask zero lane0 (bit0)
-    cpu.execute_bytes(&mut bus, &[0x66, 0x0F, 0x3A, 0x21, 0xC1, 0x61])
-        .unwrap();
+    state.sse.xmm[0] = xmm_from_f32x4([1.0, 2.0, 3.0, 4.0]);
+    state.sse.xmm[1] = xmm_from_f32x4([10.0, 20.0, 30.0, 40.0]);
 
-    assert_eq!(xmm_to_f32x4(cpu.sse.xmm[0]), [0.0, 2.0, 20.0, 4.0]);
+    // insertps xmm0, xmm1, 0x61
+    exec_once(
+        &cfg,
+        &mut state,
+        &mut bus,
+        &[0x66, 0x0F, 0x3A, 0x21, 0xC1, 0x61],
+    )
+    .unwrap();
+
+    assert_eq!(xmm_to_f32x4(state.sse.xmm[0]), [0.0, 2.0, 20.0, 4.0]);
 }
 
 #[test]
 fn ud_when_disabled() {
-    let (mut cpu, mut bus) = setup();
-    cpu.features.leaf1_ecx &= !bits::LEAF1_ECX_SSSE3;
-    cpu.sse.xmm[0] = 0;
-    cpu.sse.xmm[1] = 0;
+    let mut cfg = cfg_with_ext_bits();
+    cfg.features.leaf1_ecx &= !bits::LEAF1_ECX_SSSE3;
 
-    let err = cpu
-        .execute_bytes(&mut bus, &[0x66, 0x0F, 0x38, 0x00, 0xC1])
-        .unwrap_err();
-    assert!(matches!(err, ExecError::InvalidOpcode(_)));
+    let mut state = new_state(CpuMode::Bit64);
+    let mut bus = FlatTestBus::new(0x10_000);
+    state.sse.xmm[0] = 0;
+    state.sse.xmm[1] = 0;
+
+    let err = exec_once(&cfg, &mut state, &mut bus, &[0x66, 0x0F, 0x38, 0x00, 0xC1]).unwrap_err();
+    assert_eq!(err, Exception::InvalidOpcode);
 }
 
 #[test]
 fn popcnt_widths() {
-    let (mut cpu, mut bus) = setup();
+    let cfg = cfg_with_ext_bits();
+    let mut state = new_state(CpuMode::Bit64);
+    let mut bus = FlatTestBus::new(BUS_SIZE);
 
     // 16-bit: popcnt ax, cx
-    cpu.regs.rax = 0xFFFF_0000_0000_0000;
-    cpu.regs.rcx = 0b1011_0001_0000_1111;
-    cpu.execute_bytes(&mut bus, &[0x66, 0xF3, 0x0F, 0xB8, 0xC1])
-        .unwrap();
-    assert_eq!(cpu.regs.rax, 0xFFFF_0000_0000_0000 | 8);
+    state.write_reg(Register::RAX, 0xFFFF_0000_0000_0000);
+    state.write_reg(Register::RCX, 0b1011_0001_0000_1111);
+    exec_once(&cfg, &mut state, &mut bus, &[0x66, 0xF3, 0x0F, 0xB8, 0xC1]).unwrap();
+    assert_eq!(state.read_reg(Register::RAX), 0xFFFF_0000_0000_0000 | 8);
 
     // 32-bit: popcnt eax, ecx (zero-extends into rax in long mode)
-    cpu.regs.rax = 0xFFFF_FFFF_FFFF_FFFF;
-    cpu.regs.rcx = 0xFFFF_0000_F0F0_F0F0;
-    cpu.execute_bytes(&mut bus, &[0xF3, 0x0F, 0xB8, 0xC1]).unwrap();
-    assert_eq!(cpu.regs.rax, (0xF0F0_F0F0u32.count_ones()) as u64);
+    state.write_reg(Register::RAX, 0xFFFF_FFFF_FFFF_FFFF);
+    state.write_reg(Register::RCX, 0xFFFF_0000_F0F0_F0F0);
+    exec_once(&cfg, &mut state, &mut bus, &[0xF3, 0x0F, 0xB8, 0xC1]).unwrap();
+    assert_eq!(
+        state.read_reg(Register::RAX),
+        (0xF0F0_F0F0u32.count_ones()) as u64
+    );
 
     // 64-bit: popcnt rax, rcx
-    cpu.regs.rax = 0;
-    cpu.regs.rcx = 0x8000_0000_0000_0001;
-    cpu.execute_bytes(&mut bus, &[0xF3, 0x48, 0x0F, 0xB8, 0xC1])
-        .unwrap();
-    assert_eq!(cpu.regs.rax, 2);
+    state.write_reg(Register::RAX, 0);
+    state.write_reg(Register::RCX, 0x8000_0000_0000_0001);
+    exec_once(&cfg, &mut state, &mut bus, &[0xF3, 0x48, 0x0F, 0xB8, 0xC1]).unwrap();
+    assert_eq!(state.read_reg(Register::RAX), 2);
 }
 
 #[test]
 fn crc32_vectors() {
-    let (mut cpu, mut bus) = setup();
+    let cfg = cfg_with_ext_bits();
+    let mut state = new_state(CpuMode::Bit64);
+    let mut bus = FlatTestBus::new(BUS_SIZE);
 
     // CRC32 over "123456789" using crc32 eax, cl.
     let seed = 0xFFFF_FFFFu32;
-    cpu.regs.set_eax(seed, cpu.mode);
+    state.write_reg(Register::EAX, seed as u64);
     for &b in b"123456789" {
-        cpu.regs.set_rcx(b as u64);
-        cpu.execute_bytes(&mut bus, &[0xF2, 0x0F, 0x38, 0xF0, 0xC1])
-            .unwrap();
+        state.write_reg(Register::CL, b as u64);
+        exec_once(&cfg, &mut state, &mut bus, &[0xF2, 0x0F, 0x38, 0xF0, 0xC1]).unwrap();
     }
     let expected = crc32c_sw(seed, b"123456789");
-    assert_eq!(cpu.regs.eax(), expected);
+    assert_eq!(state.read_reg(Register::EAX) as u32, expected);
 
     // CRC32 eax, ecx (dword) processes little-endian bytes of the source.
-    cpu.regs.set_eax(0, cpu.mode);
-    cpu.regs.set_ecx(0x1234_5678, cpu.mode);
-    cpu.execute_bytes(&mut bus, &[0xF2, 0x0F, 0x38, 0xF1, 0xC1])
-        .unwrap();
+    state.write_reg(Register::EAX, 0);
+    state.write_reg(Register::ECX, 0x1234_5678);
+    exec_once(&cfg, &mut state, &mut bus, &[0xF2, 0x0F, 0x38, 0xF1, 0xC1]).unwrap();
     assert_eq!(
-        cpu.regs.eax(),
+        state.read_reg(Register::EAX) as u32,
         crc32c_sw(0, &0x1234_5678u32.to_le_bytes())
     );
 
     // CRC32 rax, rcx (qword) zero-extends the 32-bit CRC result.
-    cpu.regs.rax = 0xFFFF_FFFF_FFFF_FFFF;
-    cpu.regs.rcx = 0x0102_0304_0506_0708;
-    cpu.execute_bytes(&mut bus, &[0xF2, 0x48, 0x0F, 0x38, 0xF1, 0xC1])
-        .unwrap();
+    state.write_reg(Register::RAX, 0xFFFF_FFFF_FFFF_FFFF);
+    state.write_reg(Register::RCX, 0x0102_0304_0506_0708);
+    exec_once(
+        &cfg,
+        &mut state,
+        &mut bus,
+        &[0xF2, 0x48, 0x0F, 0x38, 0xF1, 0xC1],
+    )
+    .unwrap();
     let expected64 = crc32c_sw(0xFFFF_FFFF, &0x0102_0304_0506_0708u64.to_le_bytes());
-    assert_eq!(cpu.regs.rax, expected64 as u64);
+    assert_eq!(state.read_reg(Register::RAX), expected64 as u64);
 }
 
 #[test]
 fn pmulld_basic() {
-    let (mut cpu, mut bus) = setup();
-    cpu.sse.xmm[0] = xmm_from_i32x4([2, -3, 4, 0x4000_0000]);
-    cpu.sse.xmm[1] = xmm_from_i32x4([5, 7, -8, 4]);
-    cpu.execute_bytes(&mut bus, &[0x66, 0x0F, 0x38, 0x40, 0xC1])
-        .unwrap();
-    assert_eq!(
-        xmm_to_i32x4(cpu.sse.xmm[0]),
-        [10, -21, -32, 0x0000_0000]
-    );
+    let cfg = cfg_with_ext_bits();
+    let mut state = new_state(CpuMode::Bit64);
+    let mut bus = FlatTestBus::new(BUS_SIZE);
+
+    state.sse.xmm[0] = xmm_from_i32x4([2, -3, 4, 0x4000_0000]);
+    state.sse.xmm[1] = xmm_from_i32x4([5, 7, -8, 4]);
+    exec_once(&cfg, &mut state, &mut bus, &[0x66, 0x0F, 0x38, 0x40, 0xC1]).unwrap();
+    assert_eq!(xmm_to_i32x4(state.sse.xmm[0]), [10, -21, -32, 0x0000_0000]);
 }
 
 #[test]
 fn pcmpestri_finds_nul() {
-    let (mut cpu, mut bus) = setup();
+    let cfg = cfg_with_ext_bits();
+    let mut state = new_state(CpuMode::Bit64);
+    let mut bus = FlatTestBus::new(BUS_SIZE);
 
     let mut chunk = [0u8; 16];
     chunk[..5].copy_from_slice(b"he\0lo");
-    cpu.sse.xmm[0] = 0;
-    cpu.sse.xmm[1] = xmm_from_bytes(chunk);
+    state.sse.xmm[0] = 0;
+    state.sse.xmm[1] = xmm_from_bytes(chunk);
 
-    cpu.regs.set_eax(16, cpu.mode);
-    cpu.regs.rdx = 16;
-    cpu.execute_bytes(&mut bus, &[0x66, 0x0F, 0x3A, 0x61, 0xC1, 0x08])
-        .unwrap();
-    assert_eq!(cpu.regs.ecx(), 2);
+    state.write_reg(Register::EAX, 16);
+    state.write_reg(Register::EDX, 16);
+    exec_once(
+        &cfg,
+        &mut state,
+        &mut bus,
+        &[0x66, 0x0F, 0x3A, 0x61, 0xC1, 0x08],
+    )
+    .unwrap();
+    assert_eq!(state.read_reg(Register::ECX) as u32, 2);
 }
 
 #[test]
 fn scalar_ud_when_disabled() {
-    let (mut cpu, mut bus) = setup();
-    cpu.features.leaf1_ecx &= !(bits::LEAF1_ECX_POPCNT | bits::LEAF1_ECX_SSE42);
-    cpu.regs.rax = 0;
-    cpu.regs.rcx = 123;
+    let mut cfg = cfg_with_ext_bits();
+    cfg.features.leaf1_ecx &= !(bits::LEAF1_ECX_POPCNT | bits::LEAF1_ECX_SSE42);
 
-    assert!(matches!(
-        cpu.execute_bytes(&mut bus, &[0xF3, 0x0F, 0xB8, 0xC1])
-            .unwrap_err(),
-        ExecError::InvalidOpcode(_)
-    ));
-    assert!(matches!(
-        cpu.execute_bytes(&mut bus, &[0xF2, 0x0F, 0x38, 0xF0, 0xC1])
-            .unwrap_err(),
-        ExecError::InvalidOpcode(_)
-    ));
+    let mut state = new_state(CpuMode::Bit64);
+    let mut bus = FlatTestBus::new(BUS_SIZE);
+    state.write_reg(Register::RAX, 0);
+    state.write_reg(Register::RCX, 123);
+
+    assert_eq!(
+        exec_once(&cfg, &mut state, &mut bus, &[0xF3, 0x0F, 0xB8, 0xC1]).unwrap_err(),
+        Exception::InvalidOpcode
+    );
+    assert_eq!(
+        exec_once(&cfg, &mut state, &mut bus, &[0xF2, 0x0F, 0x38, 0xF0, 0xC1]).unwrap_err(),
+        Exception::InvalidOpcode
+    );
 }
