@@ -4,6 +4,8 @@
 #include <cstring>
 #include <vector>
 
+#include "aerogpu_d3d9_objects.h"
+
 #include "aerogpu_cmd_stream_writer.h"
 
 namespace aerogpu {
@@ -350,6 +352,135 @@ bool TestOwnedAndBorrowedStreamsMatch() {
   return ValidateStream(borrowed.data(), span_buf.size()) && ValidateStream(owned.data(), owned.bytes_used());
 }
 
+bool TestEventQueryGetDataSemantics() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3D9DDI_HADAPTER hAdapter{};
+    D3D9DDI_HDEVICE hDevice{};
+    AEROGPU_D3D9DDI_HQUERY hQuery{};
+    bool has_adapter = false;
+    bool has_device = false;
+    bool has_query = false;
+
+    ~Cleanup() {
+      if (has_query && device_funcs.pfnDestroyQuery) {
+        device_funcs.pfnDestroyQuery(hDevice, hQuery);
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3D9DDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+
+  HRESULT hr = ::OpenAdapter2(&open, &cleanup.adapter_funcs);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  if (!Check(open.hAdapter.pDrvPrivate != nullptr, "OpenAdapter2 returned adapter handle")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  if (!Check(create_dev.hDevice.pDrvPrivate != nullptr, "CreateDevice returned device handle")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  hr = cleanup.device_funcs.pfnClear(create_dev.hDevice,
+                                     /*flags=*/0x1u,
+                                     /*color_rgba8=*/0xFFFFFFFFu,
+                                     /*depth=*/1.0f,
+                                     /*stencil=*/0);
+  if (!Check(hr == S_OK, "Clear")) {
+    return false;
+  }
+
+  // D3DQUERYTYPE_EVENT = 8 (public D3D9 encoding). The UMD also accepts 0.
+  AEROGPU_D3D9DDIARG_CREATEQUERY create_query{};
+  create_query.type = 8u;
+  hr = cleanup.device_funcs.pfnCreateQuery(create_dev.hDevice, &create_query);
+  if (!Check(hr == S_OK, "CreateQuery(EVENT)")) {
+    return false;
+  }
+  if (!Check(create_query.hQuery.pDrvPrivate != nullptr, "CreateQuery returned query handle")) {
+    return false;
+  }
+  cleanup.hQuery = create_query.hQuery;
+  cleanup.has_query = true;
+
+  AEROGPU_D3D9DDIARG_ISSUEQUERY issue{};
+  issue.hQuery = create_query.hQuery;
+  issue.flags = 0x1u; // D3DISSUE_END
+  hr = cleanup.device_funcs.pfnIssueQuery(create_dev.hDevice, &issue);
+  if (!Check(hr == S_OK, "IssueQuery(END)")) {
+    return false;
+  }
+
+  auto* adapter = reinterpret_cast<Adapter*>(open.hAdapter.pDrvPrivate);
+  auto* query = reinterpret_cast<Query*>(create_query.hQuery.pDrvPrivate);
+  const uint64_t fence_value = query->fence_value.load(std::memory_order_acquire);
+  if (!Check(fence_value != 0, "event query fence_value")) {
+    return false;
+  }
+
+  // Force the query into the "not ready" state.
+  {
+    std::lock_guard<std::mutex> lock(adapter->fence_mutex);
+    adapter->completed_fence = 0;
+  }
+
+  uint32_t done = 0;
+  AEROGPU_D3D9DDIARG_GETQUERYDATA get_data{};
+  get_data.hQuery = create_query.hQuery;
+  get_data.pData = &done;
+  get_data.data_size = sizeof(done);
+  get_data.flags = 0;
+
+  hr = cleanup.device_funcs.pfnGetQueryData(create_dev.hDevice, &get_data);
+  if (!Check(hr == S_FALSE, "GetQueryData not-ready returns S_FALSE")) {
+    return false;
+  }
+
+  // Mark the fence complete and re-poll.
+  {
+    std::lock_guard<std::mutex> lock(adapter->fence_mutex);
+    adapter->completed_fence = fence_value;
+  }
+
+  done = 0;
+  hr = cleanup.device_funcs.pfnGetQueryData(create_dev.hDevice, &get_data);
+  if (!Check(hr == S_OK, "GetQueryData ready returns S_OK")) {
+    return false;
+  }
+  if (!Check(done != 0, "GetQueryData ready writes TRUE")) {
+    return false;
+  }
+
+  return true;
+}
+
 } // namespace
 } // namespace aerogpu
 
@@ -361,6 +492,6 @@ int main() {
   failures += !aerogpu::TestOutOfSpaceReturnsNullptrAndSetsError();
   failures += !aerogpu::TestFixedPacketPadding();
   failures += !aerogpu::TestOwnedAndBorrowedStreamsMatch();
+  failures += !aerogpu::TestEventQueryGetDataSemantics();
   return failures ? 1 : 0;
 }
-
