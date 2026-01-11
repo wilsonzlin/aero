@@ -321,6 +321,14 @@ export class InputCapture {
     window.clearInterval(this.flushTimer);
     this.flushTimer = null;
 
+    // Flush a final "all released" state before detaching so the guest cannot get
+    // stuck with latched inputs if capture is stopped while keys/buttons are held.
+    this.pointerLock.exit();
+    this.releaseAllKeys();
+    this.setMouseButtons(0);
+    this.gamepad?.emitNeutral(this.queue, toTimestampUs(performance.now()));
+    this.queue.flush(this.ioWorker, { recycle: false });
+
     const workerWithEvents = this.ioWorker as unknown as MessageEventTarget;
     workerWithEvents.removeEventListener?.("message", this.handleWorkerMessage);
 
@@ -338,11 +346,7 @@ export class InputCapture {
     this.canvas.removeEventListener('wheel', this.handleWheel as EventListener);
     this.canvas.removeEventListener('contextmenu', this.handleContextMenu);
 
-    this.pointerLock.exit();
     this.pointerLock.dispose();
-
-    this.releaseAllKeys();
-    this.setMouseButtons(0);
   }
 
   flushNow(): void {

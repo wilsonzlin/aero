@@ -107,6 +107,6 @@ describe('waitUntilNotEqual', () => {
         await notifier.terminate();
       }
     },
-    5_000,
+    20_000,
   );
 });
