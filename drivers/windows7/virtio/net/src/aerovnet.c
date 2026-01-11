@@ -305,6 +305,54 @@ static NDIS_STATUS AerovNetParseResources(_Inout_ AEROVNET_ADAPTER* Adapter, _In
     return NDIS_STATUS_NOT_SUPPORTED;
   }
 
+  // Contract v1: INTA# is required.
+  if (PciCfg[0x3D] != 0x01u) {
+    NdisMUnmapIoSpace(Adapter->MiniportAdapterHandle, Adapter->Bar0Va, Adapter->Bar0Length);
+    Adapter->Bar0Va = NULL;
+    Adapter->Bar0Length = 0;
+    Adapter->Bar0Pa.QuadPart = 0;
+    return NDIS_STATUS_NOT_SUPPORTED;
+  }
+
+  // Contract v1: BAR0 must be a 64-bit MMIO BAR and must match the mapped resource.
+  {
+    UINT32 Bar0LowCfg;
+    UINT32 Bar0HighCfg;
+    UINT64 Bar0CfgBase;
+
+    Bar0LowCfg = 0;
+    Bar0HighCfg = 0;
+    RtlCopyMemory(&Bar0LowCfg, PciCfg + 0x10, sizeof(Bar0LowCfg));
+    RtlCopyMemory(&Bar0HighCfg, PciCfg + 0x14, sizeof(Bar0HighCfg));
+
+    // Bit0=1 => I/O BAR (not permitted by contract v1).
+    if ((Bar0LowCfg & 0x1u) != 0) {
+      NdisMUnmapIoSpace(Adapter->MiniportAdapterHandle, Adapter->Bar0Va, Adapter->Bar0Length);
+      Adapter->Bar0Va = NULL;
+      Adapter->Bar0Length = 0;
+      Adapter->Bar0Pa.QuadPart = 0;
+      return NDIS_STATUS_NOT_SUPPORTED;
+    }
+
+    // Bits[2:1]=0b10 => 64-bit BAR (required by contract v1).
+    if ((Bar0LowCfg & 0x6u) != 0x4u) {
+      NdisMUnmapIoSpace(Adapter->MiniportAdapterHandle, Adapter->Bar0Va, Adapter->Bar0Length);
+      Adapter->Bar0Va = NULL;
+      Adapter->Bar0Length = 0;
+      Adapter->Bar0Pa.QuadPart = 0;
+      return NDIS_STATUS_NOT_SUPPORTED;
+    }
+
+    Bar0CfgBase = ((UINT64)Bar0HighCfg << 32) | (UINT64)(Bar0LowCfg & ~0xFu);
+    if (Bar0CfgBase != (UINT64)Adapter->Bar0Pa.QuadPart) {
+      NdisMUnmapIoSpace(Adapter->MiniportAdapterHandle, Adapter->Bar0Va, Adapter->Bar0Length);
+      Adapter->Bar0Va = NULL;
+      Adapter->Bar0Length = 0;
+      Adapter->Bar0Pa.QuadPart = 0;
+      return NDIS_STATUS_NOT_SUPPORTED;
+    }
+  }
+
   NtStatus = VirtioPciModernMiniportInit(&Adapter->Vdev, Adapter->Bar0Va, Adapter->Bar0Length, PciCfg, sizeof(PciCfg));
   if (!NT_SUCCESS(NtStatus)) {
     NdisMUnmapIoSpace(Adapter->MiniportAdapterHandle, Adapter->Bar0Va, Adapter->Bar0Length);

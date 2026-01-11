@@ -915,6 +915,35 @@ ULONG AerovblkHwFindAdapter(_In_ PVOID deviceExtension, _In_ PVOID hwContext, _I
     return SP_RETURN_NOT_FOUND;
   }
 
+  /* Contract v1: INTA# is required. */
+  if (pciCfg[0x3D] != 0x01u) {
+    return SP_RETURN_NOT_FOUND;
+  }
+
+  /* Contract v1: BAR0 must be 64-bit MMIO and must match the mapped range. */
+  {
+    ULONG bar0Low;
+    ULONG bar0High;
+    ULONGLONG bar0Base;
+
+    bar0Low = 0;
+    bar0High = 0;
+    RtlCopyMemory(&bar0Low, pciCfg + 0x10, sizeof(bar0Low));
+    RtlCopyMemory(&bar0High, pciCfg + 0x14, sizeof(bar0High));
+
+    if ((bar0Low & 0x1u) != 0) {
+      return SP_RETURN_NOT_FOUND;
+    }
+    if ((bar0Low & 0x6u) != 0x4u) {
+      return SP_RETURN_NOT_FOUND;
+    }
+
+    bar0Base = ((ULONGLONG)bar0High << 32) | (ULONGLONG)(bar0Low & ~0xFu);
+    if (bar0Base != (ULONGLONG)range->RangeStart.QuadPart) {
+      return SP_RETURN_NOT_FOUND;
+    }
+  }
+
   base = StorPortGetDeviceBase(devExt, configInfo->AdapterInterfaceType, configInfo->SystemIoBusNumber, range->RangeStart, range->RangeLength, FALSE);
   if (base == NULL) {
     return SP_RETURN_NOT_FOUND;
