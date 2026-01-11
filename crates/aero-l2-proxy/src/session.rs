@@ -4,7 +4,7 @@ use std::{
 };
 
 use aero_net_stack::{
-    Action, DnsResolved, Millis, NetworkStack, StackConfig, TcpProxyEvent, UdpProxyEvent,
+    Action, DnsResolved, IpCidr, Millis, NetworkStack, StackConfig, TcpProxyEvent, UdpProxyEvent,
 };
 use axum::extract::ws::{Message, WebSocket};
 use futures_util::{SinkExt, StreamExt};
@@ -17,6 +17,25 @@ use tokio::{
 };
 
 use crate::{overrides::ForwardKey, server::AppState};
+
+// Default-deny private/reserved ranges in the stack itself so we can drop obviously-invalid
+// connections early (before creating any tokio socket state).
+//
+// NOTE: This list intentionally excludes TEST-NET blocks (192.0.2.0/24, 198.51.100.0/24,
+// 203.0.113.0/24) so deterministic CI can use those addresses with the test-mode forward maps.
+const STACK_DEFAULT_DENY_IPV4: &[IpCidr] = &[
+    IpCidr::new(Ipv4Addr::new(0, 0, 0, 0), 8),
+    IpCidr::new(Ipv4Addr::new(10, 0, 0, 0), 8),
+    IpCidr::new(Ipv4Addr::new(100, 64, 0, 0), 10),
+    IpCidr::new(Ipv4Addr::new(127, 0, 0, 0), 8),
+    IpCidr::new(Ipv4Addr::new(169, 254, 0, 0), 16),
+    IpCidr::new(Ipv4Addr::new(172, 16, 0, 0), 12),
+    IpCidr::new(Ipv4Addr::new(192, 168, 0, 0), 16),
+    IpCidr::new(Ipv4Addr::new(192, 0, 0, 0), 24),
+    IpCidr::new(Ipv4Addr::new(198, 18, 0, 0), 15),
+    IpCidr::new(Ipv4Addr::new(224, 0, 0, 0), 4),
+    IpCidr::new(Ipv4Addr::new(240, 0, 0, 0), 4),
+];
 
 #[derive(Debug)]
 enum TcpOutMsg {
@@ -67,6 +86,11 @@ pub(crate) async fn run_session(socket: WebSocket, state: AppState) -> anyhow::R
 
     let mut cfg = StackConfig::default();
     cfg.host_policy.enabled = true;
+    if !state.cfg.policy.allows_ip(Ipv4Addr::new(10, 0, 0, 1)) {
+        cfg.host_policy
+            .deny_ips
+            .extend_from_slice(STACK_DEFAULT_DENY_IPV4);
+    }
     // This service always fulfills UDP proxy actions using tokio `UdpSocket`s (no WebRTC relay),
     // so ensure the stack labels outbound UDP actions as `UdpTransport::Proxy`.
     cfg.webrtc_udp = false;
