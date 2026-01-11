@@ -71,6 +71,15 @@ export type ConnectedL2Tunnel = Readonly<{
 }>;
 
 type GatewaySessionResponse = Readonly<{
+  endpoints?: Readonly<{
+    l2?: string;
+  }>;
+  limits?: Readonly<{
+    l2?: Readonly<{
+      maxFramePayloadBytes: number;
+      maxControlPayloadBytes: number;
+    }>;
+  }>;
   udpRelay?: Readonly<{
     baseUrl: string;
     token?: string;
@@ -97,6 +106,29 @@ function buildSessionUrl(gatewayBaseUrl: string): string {
   }
 
   url.pathname = `${path.replace(/\/$/, "")}/session`;
+  return url.toString();
+}
+
+function buildWebSocketUrlFromEndpoint(gatewayBaseUrl: string, endpoint: string): string {
+  const url = new URL(gatewayBaseUrl);
+  if (url.protocol === "http:") url.protocol = "ws:";
+  if (url.protocol === "https:") url.protocol = "wss:";
+  url.search = "";
+  url.hash = "";
+
+  // `gatewayBaseUrl` may already include `/l2` or legacy `/eth`.
+  let basePath = url.pathname.replace(/\/$/, "");
+  if (basePath.endsWith("/l2") || basePath.endsWith("/eth")) {
+    basePath = basePath.replace(/\/(l2|eth)$/, "");
+  }
+
+  if (endpoint.startsWith("/")) {
+    url.pathname = endpoint;
+  } else {
+    const normalizedBase = basePath.replace(/\/$/, "");
+    url.pathname = `${normalizedBase}/${endpoint}`;
+  }
+
   return url.toString();
 }
 
@@ -235,6 +267,32 @@ export async function connectL2Tunnel(gatewayBaseUrl: string, opts: ConnectL2Tun
   };
 
   const sessionText = await bootstrapSession(gatewayBaseUrl);
+  let initialSession: GatewaySessionResponse | null = null;
+  try {
+    initialSession = parseGatewaySessionResponse(sessionText);
+  } catch (err) {
+    if (mode === "webrtc") {
+      throw new Error(`invalid gateway session response JSON: ${(err as Error).message}`);
+    }
+  }
+
+  const computeTunnelOptions = (session: GatewaySessionResponse | null): L2TunnelClientOptions => {
+    const out: L2TunnelClientOptions = { ...(opts.tunnelOptions ?? {}) };
+    if (out.maxFrameSize === undefined) {
+      const maxFramePayloadBytes = session?.limits?.l2?.maxFramePayloadBytes;
+      if (Number.isInteger(maxFramePayloadBytes) && maxFramePayloadBytes > 0) {
+        out.maxFrameSize = maxFramePayloadBytes;
+      }
+    }
+    return out;
+  };
+
+  const computeWsBaseUrl = (session: GatewaySessionResponse | null): string => {
+    const endpoint = session?.endpoints?.l2;
+    return typeof endpoint === "string" && endpoint.length > 0
+      ? buildWebSocketUrlFromEndpoint(gatewayBaseUrl, endpoint)
+      : gatewayBaseUrl;
+  };
 
   const installTunnel = (sendFrame: (frame: Uint8Array) => void, close: () => void) => {
     currentSendFrame = sendFrame;
@@ -260,15 +318,24 @@ export async function connectL2Tunnel(gatewayBaseUrl: string, opts: ConnectL2Tun
     generation = gen;
 
     if (mode === "ws") {
+      let nextSessionText: string;
       try {
-        await bootstrapSession(gatewayBaseUrl);
+        nextSessionText = await bootstrapSession(gatewayBaseUrl);
       } catch (err) {
         emitErrorThrottled(err);
         scheduleReconnect();
         return;
       }
 
-      const l2 = new WebSocketL2TunnelClient(gatewayBaseUrl, makeSink(gen), opts.tunnelOptions);
+      let nextSession: GatewaySessionResponse | null = null;
+      try {
+        nextSession = parseGatewaySessionResponse(nextSessionText);
+      } catch {
+        // Session response parsing is best-effort for ws mode; fall back to
+        // gatewayBaseUrl when the JSON is absent or malformed.
+      }
+
+      const l2 = new WebSocketL2TunnelClient(computeWsBaseUrl(nextSession), makeSink(gen), computeTunnelOptions(nextSession));
       l2.connect();
       installTunnel((frame) => l2.sendFrame(frame), () => l2.close());
       return;
@@ -303,13 +370,15 @@ export async function connectL2Tunnel(gatewayBaseUrl: string, opts: ConnectL2Tun
         return;
       }
 
+      const tunnelOptions = computeTunnelOptions(session);
+
       try {
         const { l2, close } = await connectL2Relay({
           baseUrl: relay.baseUrl,
           authToken: relay.token,
           mode: opts.relaySignalingMode,
           sink: makeSink(gen),
-          tunnelOptions: opts.tunnelOptions,
+          tunnelOptions,
         });
         if (closed) {
           close();
@@ -326,20 +395,13 @@ export async function connectL2Tunnel(gatewayBaseUrl: string, opts: ConnectL2Tun
 
   if (mode === "ws") {
     generation = 1;
-    const l2 = new WebSocketL2TunnelClient(gatewayBaseUrl, makeSink(generation), opts.tunnelOptions);
+    const l2 = new WebSocketL2TunnelClient(computeWsBaseUrl(initialSession), makeSink(generation), computeTunnelOptions(initialSession));
     l2.connect();
     installTunnel((frame) => l2.sendFrame(frame), () => l2.close());
   }
 
   if (mode === "webrtc") {
-    let session: GatewaySessionResponse;
-    try {
-      session = parseGatewaySessionResponse(sessionText);
-    } catch (err) {
-      throw new Error(`invalid gateway session response JSON: ${(err as Error).message}`);
-    }
-
-    const relay = session.udpRelay;
+    const relay = initialSession?.udpRelay;
     if (!relay) {
       throw new Error(
         "mode=webrtc requested but gateway session response did not include udpRelay; ensure the gateway is configured with UDP_RELAY_BASE_URL",
@@ -352,7 +414,7 @@ export async function connectL2Tunnel(gatewayBaseUrl: string, opts: ConnectL2Tun
       authToken: relay.token,
       mode: opts.relaySignalingMode,
       sink: makeSink(generation),
-      tunnelOptions: opts.tunnelOptions,
+      tunnelOptions: computeTunnelOptions(initialSession),
     });
     installTunnel((frame) => l2.sendFrame(frame), close);
   }
