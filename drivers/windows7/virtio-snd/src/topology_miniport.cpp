@@ -199,7 +199,7 @@ static const KSPIN_DESCRIPTOR g_TopologyPinDescriptors[] = {
         NULL,
         KSPIN_DATAFLOW_IN,
         KSPIN_COMMUNICATION_BRIDGE,
-        &KSNODETYPE_WAVE_OUT,
+        &KSCATEGORY_AUDIO,
         &KSPINNAME_WAVE_OUT
     },
 
@@ -213,7 +213,7 @@ static const KSPIN_DESCRIPTOR g_TopologyPinDescriptors[] = {
         NULL,
         KSPIN_DATAFLOW_OUT,
         KSPIN_COMMUNICATION_NONE,
-        &KSNODETYPE_SPEAKER,
+        &KSCATEGORY_AUDIO,
         &KSPINNAME_SPEAKER
     },
 };
@@ -222,14 +222,14 @@ static const PCPIN_DESCRIPTOR g_TopologyPins[] = {
     {
         1,
         1,
-        1,
+        0,
         NULL,
         g_TopologyPinDescriptors[VIRTIO_SND_TOPOLOGY_PIN_WAVE_BRIDGE],
     },
     {
         1,
         1,
-        1,
+        0,
         NULL,
         g_TopologyPinDescriptors[VIRTIO_SND_TOPOLOGY_PIN_SPEAKER],
     },
