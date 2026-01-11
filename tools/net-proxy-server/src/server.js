@@ -394,7 +394,7 @@ export async function createProxyServer(userConfig) {
     /** @type {Map<number, { socket: net.Socket, connected: boolean, clientFin: boolean, endSent: boolean, serverFin: boolean, pendingWrites: Buffer[], pendingWriteBytes: number, writePaused: boolean, pausedForWsBackpressure: boolean }>} */
     const streams = new Map();
 
-    const muxParser = new TcpMuxFrameParser();
+    const muxParser = new TcpMuxFrameParser(config.maxFramePayloadBytes);
 
     /** @type {Buffer[]} */
     const wsSendQueue = [];
@@ -810,7 +810,13 @@ export async function createProxyServer(userConfig) {
 
       stats.bytesFromClient += chunk.length;
 
-      const frames = muxParser.push(chunk);
+      let frames;
+      try {
+        frames = muxParser.push(chunk);
+      } catch (err) {
+        ws.close(1002, "Protocol error");
+        return;
+      }
       stats.framesFromClient += frames.length;
       for (const frame of frames) {
         handleMuxFrame(frame);

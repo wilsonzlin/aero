@@ -56,6 +56,14 @@ export function encodeTcpMuxFrame(msgType, streamId, payload) {
 export class TcpMuxFrameParser {
   /** @type {Buffer} */
   buffer = Buffer.alloc(0);
+  maxFramePayloadBytes;
+
+  constructor(maxFramePayloadBytes = 16 * 1024 * 1024) {
+    if (!Number.isInteger(maxFramePayloadBytes) || maxFramePayloadBytes < 0) {
+      throw new Error(`Invalid maxFramePayloadBytes: ${maxFramePayloadBytes}`);
+    }
+    this.maxFramePayloadBytes = maxFramePayloadBytes;
+  }
 
   /**
    * @param {Buffer} chunk
@@ -72,6 +80,9 @@ export class TcpMuxFrameParser {
       const msgType = this.buffer.readUInt8(0);
       const streamId = this.buffer.readUInt32BE(1);
       const length = this.buffer.readUInt32BE(5);
+      if (length > this.maxFramePayloadBytes) {
+        throw new Error(`Frame payload length ${length} exceeds max ${this.maxFramePayloadBytes}`);
+      }
 
       const frameTotalBytes = TCP_MUX_HEADER_BYTES + length;
       if (this.buffer.length < frameTotalBytes) break;
@@ -194,4 +205,3 @@ export function decodeTcpMuxErrorPayload(buf) {
   const message = buf.subarray(4).toString("utf8");
   return { code, message };
 }
-

@@ -64,3 +64,12 @@ test("tcp-mux: frame parser supports split + concatenated chunks", () => {
   assert.equal(parser.pendingBytes(), 0);
 });
 
+test("tcp-mux: frame parser rejects payload length larger than max", () => {
+  const header = Buffer.alloc(TCP_MUX_HEADER_BYTES);
+  header.writeUInt8(TcpMuxMsgType.DATA, 0);
+  header.writeUInt32BE(1, 1);
+  header.writeUInt32BE(1024, 5);
+
+  const parser = new TcpMuxFrameParser(16);
+  assert.throws(() => parser.push(header), /exceeds max/i);
+});
