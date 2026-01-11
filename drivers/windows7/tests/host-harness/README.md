@@ -244,7 +244,7 @@ the legacy I/O-port transport (transitional devices enumerate with the older `0x
 which is modern-only.
 
 When `-WithVirtioSnd` / `--with-virtio-snd` is enabled, the harness also forces `disable-legacy=on` and
-`x-pci-revision=0x01` on the virtio-snd device so it matches the Aero contract v1 ID (`DEV_1059&REV_01`)
+`x-pci-revision=0x01` on the virtio-snd device so it matches the Aero contract v1 HWID (`PCI\VEN_1AF4&DEV_1059&REV_01`)
 and the strict `aero-virtio-snd.inf` binds under QEMU.
 #### Verifying what your QEMU build reports (no guest required)
 
