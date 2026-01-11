@@ -124,6 +124,9 @@ jobs:
       - name: Check repository layout
         run: scripts/ci/check-repo-layout.sh
 
+      - name: Check AeroGPU WDK guard macros
+        run: python3 scripts/ci/check-aerogpu-wdk-guards.py
+
       - name: Check Node workflow pinning
         run: node scripts/ci/check-node-workflows.mjs
 
