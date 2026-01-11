@@ -104,6 +104,12 @@ For each entry:
   - the allocation table is present for the submission, and
   - the referenced `alloc_id` exists in that table.
 
+## Guest-side requirements (Win7/WDDM 1.1)
+
+On Win7, the KMD builds the per-submit allocation table from the submission’s WDDM allocation list (`DXGK_ALLOCATIONLIST`), and only allocations that appear in that list can contribute `alloc_id → gpa` entries.
+
+Therefore, any UMD packet that references `backing_alloc_id != 0` must ensure the corresponding WDDM allocation handle is included in the submit allocation list for that submission (even if the resource is not currently bound; `RESOURCE_DIRTY_RANGE` is a common case).
+
 ## Backing interpretation (`aerogpu_cmd.h`)
 
 ### `CREATE_BUFFER`

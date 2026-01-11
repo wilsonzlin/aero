@@ -54,14 +54,25 @@ time. That is both fragile and easy to get wrong in DWM / multi-frame apps.
      `alloc_id` values (monotonic counter is recommended).
 
 5. **`CREATE_*` for an existing `resource_handle`**
-   - The host treats this as a **rebind/update** of the backing memory *only if*
-     all immutable resource properties match the existing resource:
-       - Buffers: `size_bytes`, `usage_flags`
-       - Textures: `format`, `width`, `height`, `mip_levels`, `array_layers`,
-         `row_pitch_bytes`, `usage_flags`
-   - If immutable properties differ, the host must treat the command as a
-     validation error (the guest should `DESTROY_RESOURCE` and create a new
-     handle instead).
+    - The host treats this as a **rebind/update** of the backing memory *only if*
+      all immutable resource properties match the existing resource:
+        - Buffers: `size_bytes`, `usage_flags`
+        - Textures: `format`, `width`, `height`, `mip_levels`, `array_layers`,
+          `row_pitch_bytes`, `usage_flags`
+    - If immutable properties differ, the host must treat the command as a
+      validation error (the guest should `DESTROY_RESOURCE` and create a new
+      handle instead).
+
+## Guest-side requirement (Win7): referenced `alloc_id` must be present in the submit’s allocation table
+
+Host-side validation requires that any packet referencing `backing_alloc_id != 0` can be resolved through the submission’s `aerogpu_alloc_table`.
+
+On Win7/WDDM 1.1, that table is derived from the submission’s WDDM allocation list (`DXGK_ALLOCATIONLIST`). Therefore, the guest must ensure:
+
+- Any submission containing packets that reference `backing_alloc_id != 0` includes the corresponding **WDDM allocation handle(s)** in the submit allocation list.
+- This is not guaranteed by “currently bound” state alone: update packets like `AEROGPU_CMD_RESOURCE_DIRTY_RANGE` can be emitted during Map/Unmap while a resource is not bound, and still require the allocation to be listed for that submit.
+
+If the allocation list omits a referenced `alloc_id`, the host must treat it as a validation error (“missing alloc_id entry”).
 
 ## Where this is implemented
 

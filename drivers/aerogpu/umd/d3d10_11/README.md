@@ -60,6 +60,21 @@ This UMD emits `drivers/aerogpu/protocol/aerogpu_cmd.h` packets and references o
 - When a resource is backed by guest memory, create packets may set `backing_alloc_id` (a stable `alloc_id`) and `backing_offset_bytes`. The `alloc_id` is resolved by looking it up in the optional per-submission `aerogpu_alloc_table` (`drivers/aerogpu/protocol/aerogpu_ring.h`), which maps `alloc_id → {gpa, size_bytes, flags}`. `backing_alloc_id` is a lookup key, not an index. `backing_alloc_id = 0` means “host allocated” (no guest backing).
 - `aerogpu_handle_t` values are protocol object IDs; they are intentionally **not** WDDM allocation handles/IDs.
 
+### Win7 submission invariant: allocation list drives the `alloc_table`
+
+On Win7/WDDM 1.1, the KMD builds the per-submit `aerogpu_alloc_table` from the submission’s WDDM allocation list (`DXGK_ALLOCATIONLIST`), so the UMD must ensure:
+
+- Any submission that emits packets referencing `backing_alloc_id != 0` includes the corresponding **WDDM allocation handle** in the submit allocation list (so the KMD can emit the `alloc_id → gpa` mapping).
+- This includes packets that may be emitted while a resource is **not currently bound**, such as `AEROGPU_CMD_RESOURCE_DIRTY_RANGE` (used by Map/Unmap upload paths).
+
+The WDK-backed UMDs enforce this via `TrackWddmAllocForSubmitLocked()` in:
+
+- `src/aerogpu_d3d10_umd_wdk.cpp`
+- `src/aerogpu_d3d10_1_umd_wdk.cpp`
+- `src/aerogpu_d3d11_umd_wdk.cpp`
+
+Related lifetime rule: when destroying a **guest-backed** resource, emit `AEROGPU_CMD_DESTROY_RESOURCE` and flush/submit it before calling `pfnDeallocateCb` (so the submission does not reference a freed allocation handle).
+
 The core emission happens in the WDK-facing UMD entrypoints
 (`src/aerogpu_d3d10_1_umd_wdk.cpp`, `src/aerogpu_d3d11_umd_wdk.cpp`) and the shared
 encoder/state tracker (`src/aerogpu_d3d10_11_internal.h`) by building a linear

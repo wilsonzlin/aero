@@ -176,6 +176,15 @@ On Win7/WDDM 1.1, a D3D10/11 UMD submits work by building:
 - an optional **patch-location list** (relocations)
 - optional **DMA-buffer private data** (per-submission sideband blob)
 
+### 3.0.1 AeroGPU note: the allocation list is also the input to `aerogpu_alloc_table`
+
+For AeroGPU guest-backed resources, the KMD builds the per-submit `aerogpu_alloc_table` (used to resolve protocol `backing_alloc_id`) from the submission’s WDDM allocation list (`DXGK_ALLOCATIONLIST`).
+
+Practical implication for UMDs:
+
+- Any submission that emits packets with `backing_alloc_id != 0` must include the corresponding WDDM allocation handle(s) in the submit allocation list so the KMD can provide the `alloc_id → gpa` mapping to the host.
+- Do not rely solely on “currently bound” state when building the list: packets like `AEROGPU_CMD_RESOURCE_DIRTY_RANGE` may be emitted while the resource is not bound and still require the allocation to be listed for that submit.
+
 Then it submits via the runtime callbacks which route into:
 
 - KMD `DxgkDdiRender` for “render” submissions, or

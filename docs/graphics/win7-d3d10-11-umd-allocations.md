@@ -344,6 +344,13 @@ The Win7 bring-up set of bits you should expect to touch:
 * `const D3DKMT_HANDLE* HandleList` / `phAllocations`
   * Array of allocation handles (`hKMAllocation` / `hAllocation`) to free (member name is header-dependent).
 
+> AeroGPU note (guest-backed resources): if your UMD emits protocol cleanup packets (for example
+> `AEROGPU_CMD_DESTROY_RESOURCE`) that depend on a non-zero `alloc_id` / `backing_alloc_id`
+> being resolvable, ensure those packets are **submitted/flushed before** calling `pfnDeallocateCb`
+> for the backing WDDM allocation(s). On Win7, the KMD’s per-submit `aerogpu_alloc_table` is
+> derived from the submission allocation list, and submitting after freeing an allocation handle can
+> lead to missing `alloc_id` entries or invalid handles during submission processing.
+
 #### 4.2.2 DMA buffer release fields (submission path)
 
 * `VOID* pDmaBuffer` / `VOID* pCommandBuffer`
