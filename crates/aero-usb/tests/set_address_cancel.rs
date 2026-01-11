@@ -689,3 +689,97 @@ fn invalid_set_configuration_nonzero_windex_stalls_composite() {
         vec![0]
     );
 }
+
+#[test]
+fn invalid_get_configuration_nonzero_wvalue_stalls_keyboard() {
+    let mut dev = UsbHidKeyboard::new();
+
+    dev.handle_setup(SetupPacket {
+        request_type: 0x80, // IN | Standard | Device
+        request: 0x08,      // GET_CONFIGURATION
+        value: 1,           // invalid (must be 0)
+        index: 0,
+        length: 1,
+    });
+
+    let mut buf = [0u8; 1];
+    assert_eq!(dev.handle_in(0, &mut buf), UsbHandshake::Stall);
+}
+
+#[test]
+fn invalid_get_status_nonzero_wvalue_stalls_keyboard() {
+    let mut dev = UsbHidKeyboard::new();
+
+    dev.handle_setup(SetupPacket {
+        request_type: 0x80, // IN | Standard | Device
+        request: 0x00,      // GET_STATUS
+        value: 1,           // invalid (must be 0)
+        index: 0,
+        length: 2,
+    });
+
+    let mut buf = [0u8; 2];
+    assert_eq!(dev.handle_in(0, &mut buf), UsbHandshake::Stall);
+}
+
+#[test]
+fn invalid_set_feature_remote_wakeup_nonzero_windex_stalls_keyboard() {
+    let mut dev = UsbHidKeyboard::new();
+
+    dev.handle_setup(SetupPacket {
+        request_type: 0x00, // OUT | Standard | Device
+        request: 0x03,      // SET_FEATURE
+        value: 1,           // DEVICE_REMOTE_WAKEUP
+        index: 1,           // invalid (must be 0)
+        length: 0,
+    });
+
+    assert_eq!(complete_status_in(&mut dev), UsbHandshake::Stall);
+}
+
+#[test]
+fn invalid_get_configuration_nonzero_wvalue_stalls_passthrough() {
+    let mut dev = UsbHidPassthrough::default();
+
+    dev.handle_setup(SetupPacket {
+        request_type: 0x80, // IN | Standard | Device
+        request: 0x08,      // GET_CONFIGURATION
+        value: 1,           // invalid (must be 0)
+        index: 0,
+        length: 1,
+    });
+
+    let mut buf = [0u8; 1];
+    assert_eq!(dev.handle_in(0, &mut buf), UsbHandshake::Stall);
+}
+
+#[test]
+fn invalid_get_status_nonzero_wvalue_stalls_passthrough() {
+    let mut dev = UsbHidPassthrough::default();
+
+    dev.handle_setup(SetupPacket {
+        request_type: 0x80, // IN | Standard | Device
+        request: 0x00,      // GET_STATUS
+        value: 1,           // invalid (must be 0)
+        index: 0,
+        length: 2,
+    });
+
+    let mut buf = [0u8; 2];
+    assert_eq!(dev.handle_in(0, &mut buf), UsbHandshake::Stall);
+}
+
+#[test]
+fn invalid_set_feature_remote_wakeup_nonzero_windex_stalls_passthrough() {
+    let mut dev = UsbHidPassthrough::default();
+
+    dev.handle_setup(SetupPacket {
+        request_type: 0x00, // OUT | Standard | Device
+        request: 0x03,      // SET_FEATURE
+        value: 1,           // DEVICE_REMOTE_WAKEUP
+        index: 1,           // invalid (must be 0)
+        length: 0,
+    });
+
+    assert_eq!(complete_status_in(&mut dev), UsbHandshake::Stall);
+}
