@@ -15,9 +15,13 @@ use aero_protocol::aerogpu::aerogpu_cmd::{
 use aero_protocol::aerogpu::aerogpu_ring::AerogpuAllocEntry;
 use anyhow::{anyhow, bail, Context, Result};
 
-use crate::{translate_sm4_to_wgsl, Sm4Program};
+use crate::input_layout::{
+    fnv1a_32, map_layout_to_shader_locations_compact, InputLayoutBinding, InputLayoutDesc,
+    VertexBufferLayoutOwned, VsInputSignatureElement, MAX_INPUT_SLOTS,
+};
+use crate::{parse_signatures, translate_sm4_to_wgsl, DxbcFile, Sm4Program};
 
-const DEFAULT_MAX_VERTEX_SLOTS: usize = 16;
+const DEFAULT_MAX_VERTEX_SLOTS: usize = MAX_INPUT_SLOTS as usize;
 
 // NOTE: `emulator/protocol`'s `AerogpuCmdOpcode` enum currently lags behind the C
 // header, so this executor matches numeric opcode values from
@@ -59,10 +63,6 @@ const OPCODE_PRESENT: u32 = 0x0700;
 const OPCODE_PRESENT_EX: u32 = 0x0701;
 
 const OPCODE_FLUSH: u32 = 0x0720;
-
-// ILAY blob format (see `aerogpu_cmd.h`).
-const INPUT_LAYOUT_BLOB_MAGIC: u32 = 0x5941_4C49; // "ILAY" LE
-const INPUT_LAYOUT_BLOB_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Default)]
 pub struct ExecuteReport {
@@ -147,6 +147,7 @@ enum ShaderStage {
 struct ShaderResource {
     stage: ShaderStage,
     wgsl_hash: ShaderHash,
+    vs_input_signature: Vec<VsInputSignatureElement>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -163,18 +164,9 @@ struct IndexBufferBinding {
     offset_bytes: u64,
 }
 
-#[derive(Debug, Clone, Copy)]
-struct InputLayoutElement {
-    input_slot: u32,
-    offset: u32,
-    format: wgpu::VertexFormat,
-    step_mode: wgpu::VertexStepMode,
-    shader_location: u32,
-}
-
 #[derive(Debug, Clone)]
 struct InputLayoutResource {
-    elements: Vec<InputLayoutElement>,
+    layout: InputLayoutDesc,
 }
 
 #[derive(Debug)]
@@ -586,7 +578,7 @@ impl AerogpuD3d11Executor {
         let state = &self.state;
         let resources = &self.resources;
 
-        let (_pipeline_key, pipeline) = get_or_create_render_pipeline_for_state(
+        let (_pipeline_key, pipeline, wgpu_slot_to_d3d_slot) = get_or_create_render_pipeline_for_state(
             &self.device,
             &mut self.pipeline_cache,
             &self.pipeline_layout_empty,
@@ -650,13 +642,16 @@ impl AerogpuD3d11Executor {
 
         pass.set_pipeline(pipeline);
 
-        for (slot, vb) in state.vertex_buffers.iter().enumerate() {
-            let Some(vb) = vb else { continue };
+        for (wgpu_slot, d3d_slot) in wgpu_slot_to_d3d_slot.iter().copied().enumerate() {
+            let slot = d3d_slot as usize;
+            let Some(vb) = state.vertex_buffers.get(slot).and_then(|v| *v) else {
+                bail!("input layout requires vertex buffer slot {d3d_slot}");
+            };
             let buf = resources
                 .buffers
                 .get(&vb.buffer)
                 .ok_or_else(|| anyhow!("unknown vertex buffer {}", vb.buffer))?;
-            pass.set_vertex_buffer(slot as u32, buf.buffer.slice(vb.offset_bytes..));
+            pass.set_vertex_buffer(wgpu_slot as u32, buf.buffer.slice(vb.offset_bytes..));
         }
         if let Some(ib) = state.index_buffer {
             let buf = resources
@@ -1029,11 +1024,18 @@ impl AerogpuD3d11Executor {
             Some("aerogpu_cmd shader"),
         );
 
+        let vs_input_signature = if stage == ShaderStage::Vertex {
+            extract_vs_input_signature(dxbc).context("extract VS input signature")?
+        } else {
+            Vec::new()
+        };
+
         self.resources.shaders.insert(
             shader_handle,
             ShaderResource {
                 stage,
                 wgsl_hash: hash,
+                vs_input_signature,
             },
         );
         Ok(())
@@ -1084,8 +1086,11 @@ impl AerogpuD3d11Executor {
         }
         let blob = &cmd_bytes[20..20 + blob_size];
 
-        let layout = parse_input_layout_blob(blob)?;
-        self.resources.input_layouts.insert(handle, layout);
+        let layout = InputLayoutDesc::parse(blob)
+            .map_err(|e| anyhow!("CREATE_INPUT_LAYOUT: failed to parse ILAY blob: {e}"))?;
+        self.resources
+            .input_layouts
+            .insert(handle, InputLayoutResource { layout });
         Ok(())
     }
 
@@ -1572,11 +1577,12 @@ impl AerogpuD3d11Executor {
     }
 }
 
-#[derive(Clone, Debug)]
-struct VertexBufferLayoutData {
-    array_stride: u64,
-    step_mode: wgpu::VertexStepMode,
-    attributes: Vec<wgpu::VertexAttribute>,
+#[derive(Debug)]
+struct BuiltVertexState {
+    vertex_buffers: Vec<VertexBufferLayoutOwned>,
+    vertex_buffer_keys: Vec<aero_gpu::pipeline_key::VertexBufferLayoutKey>,
+    /// WebGPU vertex buffer slot → D3D11 input slot.
+    wgpu_slot_to_d3d_slot: Vec<u32>,
 }
 
 fn exec_draw<'a>(pass: &mut wgpu::RenderPass<'a>, cmd_bytes: &[u8]) -> Result<()> {
@@ -1619,7 +1625,7 @@ fn get_or_create_render_pipeline_for_state<'a>(
     pipeline_layout_empty: &wgpu::PipelineLayout,
     resources: &AerogpuD3d11Resources,
     state: &AerogpuD3d11State,
-) -> Result<(RenderPipelineKey, &'a wgpu::RenderPipeline)> {
+) -> Result<(RenderPipelineKey, &'a wgpu::RenderPipeline, Vec<u32>)> {
     let vs_handle = state
         .vs
         .ok_or_else(|| anyhow!("render draw without bound VS"))?;
@@ -1642,7 +1648,11 @@ fn get_or_create_render_pipeline_for_state<'a>(
         bail!("shader {ps_handle} is not a pixel shader");
     }
 
-    let (vertex_buffers, vertex_buffer_keys) = build_vertex_buffers_for_pipeline(resources, state)?;
+    let BuiltVertexState {
+        vertex_buffers,
+        vertex_buffer_keys,
+        wgpu_slot_to_d3d_slot,
+    } = build_vertex_buffers_for_pipeline(resources, state, &vs.vs_input_signature)?;
 
     let mut color_targets = Vec::with_capacity(state.render_targets.len());
     let mut color_target_states = Vec::with_capacity(state.render_targets.len());
@@ -1684,20 +1694,10 @@ fn get_or_create_render_pipeline_for_state<'a>(
 
     let pipeline = pipeline_cache
         .get_or_create_render_pipeline(device, key.clone(), move |device, vs, fs| {
-            // Build the vertex buffer layout slices inside the closure so they live
-            // for the duration of `create_render_pipeline`.
-            let mut attrs_storage: Vec<Vec<wgpu::VertexAttribute>> = Vec::new();
-            let mut vb_layouts: Vec<wgpu::VertexBufferLayout<'_>> = Vec::new();
-            for vb in &vertex_buffers {
-                attrs_storage.push(vb.attributes.clone());
-            }
-            for (i, vb) in vertex_buffers.iter().enumerate() {
-                vb_layouts.push(wgpu::VertexBufferLayout {
-                    array_stride: vb.array_stride,
-                    step_mode: vb.step_mode,
-                    attributes: &attrs_storage[i],
-                });
-            }
+            let vb_layouts: Vec<wgpu::VertexBufferLayout<'_>> = vertex_buffers
+                .iter()
+                .map(VertexBufferLayoutOwned::as_wgpu)
+                .collect();
 
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("aerogpu_cmd render pipeline"),
@@ -1730,16 +1730,14 @@ fn get_or_create_render_pipeline_for_state<'a>(
         })
         .map_err(|e| anyhow!("wgpu pipeline cache: {e:?}"))?;
 
-    Ok((key, pipeline))
+    Ok((key, pipeline, wgpu_slot_to_d3d_slot))
 }
 
 fn build_vertex_buffers_for_pipeline(
     resources: &AerogpuD3d11Resources,
     state: &AerogpuD3d11State,
-) -> Result<(
-    Vec<VertexBufferLayoutData>,
-    Vec<aero_gpu::pipeline_key::VertexBufferLayoutKey>,
-)> {
+    vs_signature: &[VsInputSignatureElement],
+) -> Result<BuiltVertexState> {
     let Some(layout_handle) = state.input_layout else {
         bail!("draw without input layout");
     };
@@ -1748,79 +1746,47 @@ fn build_vertex_buffers_for_pipeline(
         .get(&layout_handle)
         .ok_or_else(|| anyhow!("unknown input layout {layout_handle}"))?;
 
-    let max_slot = layout
-        .elements
+    let mut slot_strides = vec![0u32; MAX_INPUT_SLOTS as usize];
+    for (slot, vb) in state
+        .vertex_buffers
         .iter()
-        .map(|e| e.input_slot as usize)
-        .max()
-        .unwrap_or(0);
-
-    let mut per_slot: Vec<Vec<InputLayoutElement>> = vec![Vec::new(); max_slot + 1];
-    for e in &layout.elements {
-        per_slot[e.input_slot as usize].push(*e);
+        .enumerate()
+        .take(slot_strides.len())
+    {
+        if let Some(vb) = vb {
+            slot_strides[slot] = vb.stride_bytes;
+        }
     }
 
-    let mut out = Vec::with_capacity(per_slot.len());
-    let mut keys = Vec::with_capacity(per_slot.len());
-    for (slot, elems) in per_slot.into_iter().enumerate() {
-        if elems.is_empty() {
-            // Unused slot; provide a dummy layout to keep indices aligned.
-            let vb = VertexBufferLayoutData {
-                array_stride: 1,
-                step_mode: wgpu::VertexStepMode::Vertex,
-                attributes: Vec::new(),
-            };
-            let layout = wgpu::VertexBufferLayout {
-                array_stride: vb.array_stride,
-                step_mode: vb.step_mode,
-                attributes: &[],
-            };
-            keys.push((&layout).into());
-            out.push(vb);
-            continue;
-        }
+    let fallback_signature;
+    let sig = if vs_signature.is_empty() {
+        fallback_signature = build_fallback_vs_signature(&layout.layout);
+        fallback_signature.as_slice()
+    } else {
+        vs_signature
+    };
 
-        let binding = state
-            .vertex_buffers
-            .get(slot)
-            .and_then(|v| *v)
-            .ok_or_else(|| anyhow!("input layout requires vertex buffer slot {slot}"))?;
+    let binding = InputLayoutBinding::new(&layout.layout, &slot_strides);
+    let mapped = map_layout_to_shader_locations_compact(&binding, sig)
+        .map_err(|e| anyhow!("input layout mapping failed: {e}"))?;
 
-        if binding.stride_bytes == 0 {
-            bail!("vertex buffer slot {slot} has stride 0");
-        }
-
-        let step_mode = elems[0].step_mode;
-        if elems.iter().any(|e| e.step_mode != step_mode) {
-            bail!("input layout slot {slot} has mixed step modes");
-        }
-
-        let mut attrs: Vec<wgpu::VertexAttribute> = elems
-            .into_iter()
-            .map(|e| wgpu::VertexAttribute {
-                format: e.format,
-                offset: e.offset as u64,
-                shader_location: e.shader_location,
-            })
-            .collect();
-        attrs.sort_by_key(|a| a.shader_location);
-
-        let vb = VertexBufferLayoutData {
-            array_stride: binding.stride_bytes as u64,
-            step_mode,
-            attributes: attrs,
-        };
-
-        let key_layout = wgpu::VertexBufferLayout {
-            array_stride: vb.array_stride,
-            step_mode: vb.step_mode,
-            attributes: &vb.attributes,
-        };
-        keys.push((&key_layout).into());
-        out.push(vb);
+    let mut keys: Vec<aero_gpu::pipeline_key::VertexBufferLayoutKey> =
+        Vec::with_capacity(mapped.buffers.len());
+    for vb in &mapped.buffers {
+        let w = vb.as_wgpu();
+        keys.push((&w).into());
     }
 
-    Ok((out, keys))
+    let mut wgpu_slot_to_d3d_slot = vec![0u32; mapped.buffers.len()];
+    for (d3d_slot, wgpu_slot) in &mapped.d3d_slot_to_wgpu_slot {
+        wgpu_slot_to_d3d_slot[*wgpu_slot as usize] = *d3d_slot;
+    }
+
+    Ok(BuiltVertexState {
+        vertex_buffers: mapped.buffers,
+        vertex_buffer_keys: keys,
+        wgpu_slot_to_d3d_slot,
+    })
 }
 
 struct AllocTable {
@@ -1878,69 +1844,42 @@ fn map_pipeline_cache_stage(stage: ShaderStage) -> aero_gpu::pipeline_key::Shade
     }
 }
 
-fn parse_input_layout_blob(blob: &[u8]) -> Result<InputLayoutResource> {
-    if blob.len() < 16 {
-        bail!("input layout blob too small");
-    }
-    let magic = read_u32_le(blob, 0)?;
-    let version = read_u32_le(blob, 4)?;
-    let element_count = read_u32_le(blob, 8)? as usize;
-    if magic != INPUT_LAYOUT_BLOB_MAGIC {
-        bail!("input layout blob: bad magic {magic:#x}");
-    }
-    if version != INPUT_LAYOUT_BLOB_VERSION {
-        bail!("input layout blob: unsupported version {version}");
-    }
+fn extract_vs_input_signature(dxbc_bytes: &[u8]) -> Result<Vec<VsInputSignatureElement>> {
+    let dxbc = DxbcFile::parse(dxbc_bytes).context("parse DXBC container")?;
+    let signatures = parse_signatures(&dxbc).context("parse DXBC signatures")?;
+    let Some(isgn) = signatures.isgn.as_ref() else {
+        return Ok(Vec::new());
+    };
+    Ok(isgn
+        .parameters
+        .iter()
+        .map(|p| VsInputSignatureElement {
+            semantic_name_hash: fnv1a_32(p.semantic_name.as_bytes()),
+            semantic_index: p.semantic_index,
+            input_register: p.register,
+        })
+        .collect())
+}
 
-    let elem_size = 28usize;
-    let expected = 16 + element_count * elem_size;
-    if blob.len() != expected {
-        bail!(
-            "input layout blob: size mismatch: blob_len={} expected={}",
-            blob.len(),
-            expected
-        );
-    }
+fn build_fallback_vs_signature(layout: &InputLayoutDesc) -> Vec<VsInputSignatureElement> {
+    let mut seen: HashMap<(u32, u32), u32> = HashMap::new();
+    let mut out: Vec<VsInputSignatureElement> = Vec::new();
 
-    let mut elements = Vec::with_capacity(element_count);
-    for i in 0..element_count {
-        let base = 16 + i * elem_size;
-        let _semantic_name_hash = read_u32_le(blob, base)?;
-        let _semantic_index = read_u32_le(blob, base + 4)?;
-        let dxgi_format = read_u32_le(blob, base + 8)?;
-        let input_slot = read_u32_le(blob, base + 12)?;
-        let aligned_byte_offset = read_u32_le(blob, base + 16)?;
-        let input_slot_class = read_u32_le(blob, base + 20)?;
-        let _instance_data_step_rate = read_u32_le(blob, base + 24)?;
-
-        let format = map_dxgi_vertex_format(dxgi_format)?;
-        let step_mode = if input_slot_class == 0 {
-            wgpu::VertexStepMode::Vertex
-        } else {
-            wgpu::VertexStepMode::Instance
-        };
-
-        elements.push(InputLayoutElement {
-            input_slot,
-            offset: aligned_byte_offset,
-            format,
-            step_mode,
-            shader_location: i as u32,
+    for elem in &layout.elements {
+        let key = (elem.semantic_name_hash, elem.semantic_index);
+        if seen.contains_key(&key) {
+            continue;
+        }
+        let reg = out.len() as u32;
+        seen.insert(key, reg);
+        out.push(VsInputSignatureElement {
+            semantic_name_hash: key.0,
+            semantic_index: key.1,
+            input_register: reg,
         });
     }
 
-    Ok(InputLayoutResource { elements })
-}
-
-fn map_dxgi_vertex_format(dxgi_format: u32) -> Result<wgpu::VertexFormat> {
-    // Numeric values are DXGI_FORMAT.
-    Ok(match dxgi_format {
-        2 => wgpu::VertexFormat::Float32x4,  // R32G32B32A32_FLOAT
-        6 => wgpu::VertexFormat::Float32x3,  // R32G32B32_FLOAT
-        16 => wgpu::VertexFormat::Float32x2, // R32G32_FLOAT
-        41 => wgpu::VertexFormat::Float32,   // R32_FLOAT
-        other => bail!("unsupported DXGI vertex format {other}"),
-    })
+    out
 }
 
 fn map_buffer_usage_flags(flags: u32) -> wgpu::BufferUsages {

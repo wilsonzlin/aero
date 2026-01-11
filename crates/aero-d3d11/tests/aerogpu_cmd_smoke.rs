@@ -1,4 +1,5 @@
 use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
+use aero_d3d11::input_layout::fnv1a_32;
 use aero_d3d11::FourCC;
 use aero_gpu::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::AEROGPU_CMD_STREAM_MAGIC;
@@ -6,6 +7,7 @@ use aero_protocol::aerogpu::aerogpu_pci::AEROGPU_ABI_VERSION_U32;
 use aero_protocol::aerogpu::aerogpu_ring::AerogpuAllocEntry;
 
 const FOURCC_SHEX: FourCC = FourCC(*b"SHEX");
+const FOURCC_ISGN: FourCC = FourCC(*b"ISGN");
 
 const OPCODE_CREATE_BUFFER: u32 = 0x0100;
 const OPCODE_CREATE_TEXTURE2D: u32 = 0x0101;
@@ -43,23 +45,68 @@ const AEROGPU_INPUT_LAYOUT_BLOB_VERSION: u32 = 1;
 // DXGI_FORMAT_R32G32B32A32_FLOAT
 const DXGI_FORMAT_R32G32B32A32_FLOAT: u32 = 2;
 
-fn make_dxbc_with_single_chunk(fourcc: FourCC, chunk_data: &[u8]) -> Vec<u8> {
-    let header_size = 4 + 16 + 4 + 4 + 4 + 4; // magic + checksum + one + total + count + offset[0]
-    let chunk_offset = header_size;
-    let total_size = header_size + 8 + chunk_data.len();
+fn make_dxbc(chunks: &[(FourCC, Vec<u8>)]) -> Vec<u8> {
+    let chunk_count = u32::try_from(chunks.len()).expect("too many chunks");
+    let header_len = 4 + 16 + 4 + 4 + 4 + (chunks.len() * 4);
 
-    let mut bytes = Vec::with_capacity(total_size);
+    let mut offsets = Vec::with_capacity(chunks.len());
+    let mut cursor = header_len;
+    for (_fourcc, data) in chunks {
+        offsets.push(cursor as u32);
+        cursor += 8 + data.len();
+    }
+    let total_size = cursor as u32;
+
+    let mut bytes = Vec::with_capacity(cursor);
     bytes.extend_from_slice(b"DXBC");
     bytes.extend_from_slice(&[0u8; 16]); // checksum
     bytes.extend_from_slice(&1u32.to_le_bytes()); // "one"
-    bytes.extend_from_slice(&(total_size as u32).to_le_bytes());
-    bytes.extend_from_slice(&1u32.to_le_bytes()); // chunk count
-    bytes.extend_from_slice(&(chunk_offset as u32).to_le_bytes());
+    bytes.extend_from_slice(&total_size.to_le_bytes());
+    bytes.extend_from_slice(&chunk_count.to_le_bytes());
+    for off in offsets {
+        bytes.extend_from_slice(&off.to_le_bytes());
+    }
+    for (fourcc, data) in chunks {
+        bytes.extend_from_slice(&fourcc.0);
+        bytes.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(data);
+    }
 
-    bytes.extend_from_slice(&fourcc.0);
-    bytes.extend_from_slice(&(chunk_data.len() as u32).to_le_bytes());
-    bytes.extend_from_slice(chunk_data);
+    assert_eq!(bytes.len(), total_size as usize);
+    bytes
+}
 
+fn build_isgn_chunk(params: &[(&str, u32, u32)]) -> Vec<u8> {
+    // Mirrors the format parsed by `aero_d3d11::signature::parse_signature_chunk`.
+    let param_count = u32::try_from(params.len()).expect("too many signature params");
+    let header_len = 8usize;
+    let entry_size = 24usize;
+    let table_len = params.len() * entry_size;
+
+    let mut strings = Vec::<u8>::new();
+    let mut name_offsets = Vec::<u32>::with_capacity(params.len());
+    for (name, _index, _reg) in params {
+        name_offsets.push((header_len + table_len + strings.len()) as u32);
+        strings.extend_from_slice(name.as_bytes());
+        strings.push(0);
+    }
+
+    let mut bytes = Vec::with_capacity(header_len + table_len + strings.len());
+    bytes.extend_from_slice(&param_count.to_le_bytes());
+    bytes.extend_from_slice(&(header_len as u32).to_le_bytes());
+
+    for ((_, index, reg), &name_off) in params.iter().zip(name_offsets.iter()) {
+        bytes.extend_from_slice(&name_off.to_le_bytes());
+        bytes.extend_from_slice(&index.to_le_bytes());
+        bytes.extend_from_slice(&0u32.to_le_bytes()); // system_value_type
+        bytes.extend_from_slice(&0u32.to_le_bytes()); // component_type
+        bytes.extend_from_slice(&reg.to_le_bytes());
+        bytes.push(0b1111); // mask
+        bytes.push(0b1111); // read_write_mask
+        bytes.push(0); // stream
+        bytes.push(0); // min_precision
+    }
+    bytes.extend_from_slice(&strings);
     bytes
 }
 
@@ -118,7 +165,13 @@ fn make_passthrough_vs() -> Vec<u8> {
         1,
         &[mov0.as_slice(), mov1.as_slice(), ret.as_slice()].concat(),
     );
-    make_dxbc_with_single_chunk(FOURCC_SHEX, &tokens_to_bytes(&tokens))
+    make_dxbc(&[
+        (FOURCC_SHEX, tokens_to_bytes(&tokens)),
+        (
+            FOURCC_ISGN,
+            build_isgn_chunk(&[("POSITION", 0, 0), ("COLOR", 0, 1)]),
+        ),
+    ])
 }
 
 fn make_passthrough_ps() -> Vec<u8> {
@@ -138,7 +191,7 @@ fn make_passthrough_ps() -> Vec<u8> {
     let ret = [opcode_token(OPCODE_RET, 1)];
 
     let tokens = make_sm5_program_tokens(0, &[mov.as_slice(), ret.as_slice()].concat());
-    make_dxbc_with_single_chunk(FOURCC_SHEX, &tokens_to_bytes(&tokens))
+    make_dxbc(&[(FOURCC_SHEX, tokens_to_bytes(&tokens))])
 }
 
 fn align4(len: usize) -> usize {
@@ -219,15 +272,23 @@ fn aerogpu_cmd_renders_fullscreen_triangle() {
         ilay.extend_from_slice(&2u32.to_le_bytes()); // element_count
         ilay.extend_from_slice(&0u32.to_le_bytes()); // reserved0
 
-        for (offset, semantic_index) in [(0u32, 0u32), (16u32, 0u32)] {
-            ilay.extend_from_slice(&0u32.to_le_bytes()); // semantic_name_hash
-            ilay.extend_from_slice(&semantic_index.to_le_bytes());
-            ilay.extend_from_slice(&DXGI_FORMAT_R32G32B32A32_FLOAT.to_le_bytes());
-            ilay.extend_from_slice(&0u32.to_le_bytes()); // input_slot
-            ilay.extend_from_slice(&offset.to_le_bytes()); // aligned_byte_offset
-            ilay.extend_from_slice(&0u32.to_le_bytes()); // input_slot_class (per-vertex)
-            ilay.extend_from_slice(&0u32.to_le_bytes()); // instance_data_step_rate
-        }
+        // POSITION0 (v0)
+        ilay.extend_from_slice(&fnv1a_32(b"POSITION").to_le_bytes()); // semantic_name_hash
+        ilay.extend_from_slice(&0u32.to_le_bytes()); // semantic_index
+        ilay.extend_from_slice(&DXGI_FORMAT_R32G32B32A32_FLOAT.to_le_bytes());
+        ilay.extend_from_slice(&0u32.to_le_bytes()); // input_slot
+        ilay.extend_from_slice(&0u32.to_le_bytes()); // aligned_byte_offset
+        ilay.extend_from_slice(&0u32.to_le_bytes()); // input_slot_class (per-vertex)
+        ilay.extend_from_slice(&0u32.to_le_bytes()); // instance_data_step_rate
+
+        // COLOR0 (v1)
+        ilay.extend_from_slice(&fnv1a_32(b"COLOR").to_le_bytes()); // semantic_name_hash
+        ilay.extend_from_slice(&0u32.to_le_bytes()); // semantic_index
+        ilay.extend_from_slice(&DXGI_FORMAT_R32G32B32A32_FLOAT.to_le_bytes());
+        ilay.extend_from_slice(&0u32.to_le_bytes()); // input_slot
+        ilay.extend_from_slice(&16u32.to_le_bytes()); // aligned_byte_offset
+        ilay.extend_from_slice(&0u32.to_le_bytes()); // input_slot_class (per-vertex)
+        ilay.extend_from_slice(&0u32.to_le_bytes()); // instance_data_step_rate
 
         let dxbc_vs = make_passthrough_vs();
         let dxbc_ps = make_passthrough_ps();
