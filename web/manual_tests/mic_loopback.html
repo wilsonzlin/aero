@@ -83,6 +83,8 @@
         const base = {
           hasContext: !!audioContext,
           hasStream: !!stream,
+          sampleRate: audioContext?.sampleRate ?? null,
+          ringCapacitySamples: rb?.capacity ?? null,
           bufferedSamples: stats.buffered,
           droppedSamples: stats.dropped,
         };
@@ -103,10 +105,14 @@
 
       async function startMic() {
         stats = { buffered: 0, dropped: 0 };
-        rb = createMicRingBuffer(48000 * 2); // 2 seconds @ 48kHz mono.
 
         stream = await navigator.mediaDevices.getUserMedia(getConstraints());
         audioContext = new AudioContext({ sampleRate: 48000, latencyHint: "interactive" });
+
+        // Browsers may ignore the requested 48kHz rate (commonly choosing 44.1kHz).
+        // Allocate the ring buffer based on the *actual* capture sample rate so the
+        // buffer duration stays consistent.
+        rb = createMicRingBuffer(Math.max(1, Math.floor(audioContext.sampleRate * 2))); // 2 seconds mono.
 
         await audioContext.audioWorklet.addModule("../src/audio/mic-worklet-processor.js");
         const sinkGain = audioContext.createGain();
