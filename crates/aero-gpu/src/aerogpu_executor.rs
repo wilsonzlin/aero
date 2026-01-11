@@ -574,6 +574,36 @@ fn fs_main() -> @location(0) vec4<f32> {
                     flags,
                     guest_memory,
                 ),
+                AeroGpuCmd::CopyTexture2d {
+                    dst_texture,
+                    src_texture,
+                    dst_mip_level,
+                    dst_array_layer,
+                    src_mip_level,
+                    src_array_layer,
+                    dst_x,
+                    dst_y,
+                    src_x,
+                    src_y,
+                    width,
+                    height,
+                    flags,
+                } => self.exec_copy_texture2d(
+                    dst_texture,
+                    src_texture,
+                    dst_mip_level,
+                    dst_array_layer,
+                    src_mip_level,
+                    src_array_layer,
+                    dst_x,
+                    dst_y,
+                    src_x,
+                    src_y,
+                    width,
+                    height,
+                    flags,
+                    guest_memory,
+                ),
                 AeroGpuCmd::SetRenderTargets {
                     color_count,
                     depth_stencil,
@@ -1229,6 +1259,160 @@ fn fs_main() -> @location(0) vec4<f32> {
                 label: Some("aerogpu.executor.copy_buffer.encoder"),
             });
         encoder.copy_buffer_to_buffer(src, src_offset_bytes, dst, dst_offset_bytes, size_bytes);
+        self.queue.submit([encoder.finish()]);
+        Ok(())
+    }
+
+    fn exec_copy_texture2d(
+        &mut self,
+        dst_texture: u32,
+        src_texture: u32,
+        dst_mip_level: u32,
+        dst_array_layer: u32,
+        src_mip_level: u32,
+        src_array_layer: u32,
+        dst_x: u32,
+        dst_y: u32,
+        src_x: u32,
+        src_y: u32,
+        width: u32,
+        height: u32,
+        flags: u32,
+        guest_memory: &dyn GuestMemory,
+    ) -> Result<(), ExecutorError> {
+        if width == 0 || height == 0 {
+            return Ok(());
+        }
+
+        if flags != 0 {
+            if flags == cmd::AEROGPU_COPY_FLAG_WRITEBACK_DST {
+                return Err(ExecutorError::Validation(
+                    "COPY_TEXTURE2D: AEROGPU_COPY_FLAG_WRITEBACK_DST is not supported yet".into(),
+                ));
+            }
+            return Err(ExecutorError::Validation(format!(
+                "COPY_TEXTURE2D: unsupported flags 0x{flags:08X}"
+            )));
+        }
+
+        if dst_texture == 0 || src_texture == 0 {
+            return Err(ExecutorError::Validation(
+                "COPY_TEXTURE2D: resource handles must be non-zero".into(),
+            ));
+        }
+        if dst_texture == src_texture {
+            return Err(ExecutorError::Validation(
+                "COPY_TEXTURE2D: src==dst is not supported".into(),
+            ));
+        }
+
+        if dst_mip_level != 0 || dst_array_layer != 0 || src_mip_level != 0 || src_array_layer != 0
+        {
+            return Err(ExecutorError::Validation(
+                "COPY_TEXTURE2D only supports mip0 layer0".into(),
+            ));
+        }
+
+        let (src_extent, dst_extent, src_format, dst_format) = {
+            let src = self.textures.get(&src_texture).ok_or_else(|| {
+                ExecutorError::Validation(format!(
+                    "COPY_TEXTURE2D: unknown src texture {src_texture}"
+                ))
+            })?;
+            let dst = self.textures.get(&dst_texture).ok_or_else(|| {
+                ExecutorError::Validation(format!(
+                    "COPY_TEXTURE2D: unknown dst texture {dst_texture}"
+                ))
+            })?;
+
+            (
+                (src.width, src.height),
+                (dst.width, dst.height),
+                src.format,
+                dst.format,
+            )
+        };
+
+        if src_format != dst_format {
+            return Err(ExecutorError::Validation(
+                "COPY_TEXTURE2D: format mismatch".into(),
+            ));
+        }
+
+        let src_end_x = src_x
+            .checked_add(width)
+            .ok_or_else(|| ExecutorError::Validation("COPY_TEXTURE2D: src rect overflow".into()))?;
+        let src_end_y = src_y
+            .checked_add(height)
+            .ok_or_else(|| ExecutorError::Validation("COPY_TEXTURE2D: src rect overflow".into()))?;
+        let dst_end_x = dst_x
+            .checked_add(width)
+            .ok_or_else(|| ExecutorError::Validation("COPY_TEXTURE2D: dst rect overflow".into()))?;
+        let dst_end_y = dst_y
+            .checked_add(height)
+            .ok_or_else(|| ExecutorError::Validation("COPY_TEXTURE2D: dst rect overflow".into()))?;
+
+        if src_end_x > src_extent.0 || src_end_y > src_extent.1 {
+            return Err(ExecutorError::Validation(
+                "COPY_TEXTURE2D: src rect out of bounds".into(),
+            ));
+        }
+        if dst_end_x > dst_extent.0 || dst_end_y > dst_extent.1 {
+            return Err(ExecutorError::Validation(
+                "COPY_TEXTURE2D: dst rect out of bounds".into(),
+            ));
+        }
+
+        // Flush any pending CPU writes before the copy reads/writes the textures.
+        self.flush_texture_if_dirty(src_texture, guest_memory)?;
+        self.flush_texture_if_dirty(dst_texture, guest_memory)?;
+
+        let (src, dst) = {
+            let src = self.textures.get(&src_texture).ok_or_else(|| {
+                ExecutorError::Validation(format!(
+                    "COPY_TEXTURE2D: unknown src texture {src_texture}"
+                ))
+            })?;
+            let dst = self.textures.get(&dst_texture).ok_or_else(|| {
+                ExecutorError::Validation(format!(
+                    "COPY_TEXTURE2D: unknown dst texture {dst_texture}"
+                ))
+            })?;
+            (&src.texture, &dst.texture)
+        };
+
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("aerogpu.executor.copy_texture2d.encoder"),
+            });
+        encoder.copy_texture_to_texture(
+            wgpu::ImageCopyTexture {
+                texture: src,
+                mip_level: 0,
+                origin: wgpu::Origin3d {
+                    x: src_x,
+                    y: src_y,
+                    z: 0,
+                },
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::ImageCopyTexture {
+                texture: dst,
+                mip_level: 0,
+                origin: wgpu::Origin3d {
+                    x: dst_x,
+                    y: dst_y,
+                    z: 0,
+                },
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
         self.queue.submit([encoder.finish()]);
         Ok(())
     }
