@@ -4,6 +4,7 @@ This directory collects practical notes for writing/debugging Windows 7 (WDM/KMD
 
 ## Index
 
+- [Win7 WDDM 1.1 D3D10/11 UMD resource backing allocations + Map/Unmap (WDK 7.1 reference)](./win7-wddm11-d3d10-11-umd-alloc-map.md)
 - [Virtio PCI modern transport bring-up (Windows 7, WDM + INTx)](./virtio-pci-modern-wdm.md)
 - [Windows 7 miniport guide: virtio-pci modern (NDIS/StorPort)](./win7-miniport-virtio-pci-modern.md)
 - [Virtio PCI (modern) interrupts implementation guide (Windows 7, KMDF)](./virtio-pci-modern-interrupts.md)

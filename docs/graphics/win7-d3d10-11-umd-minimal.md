@@ -20,7 +20,7 @@ This document is an implementation-oriented checklist/spec for bringing up **Dir
 
 * `docs/graphics/win7-wddm11-aerogpu-driver.md` — KMD+UMD architecture, memory model, fence/vblank requirements, and the guest↔emulator command transport.
 * `docs/graphics/win7-aerogpu-validation.md` — bring-up/stability checklist (TDR avoidance, vblank pacing, debug playbook).
-* `docs/graphics/win7-d3d10-11-umd-allocations.md` — authoritative Win7 (WDK 7.1) UMD-side allocation callback contract (`pfnAllocateCb`/`pfnDeallocateCb`) and CreateResource allocation flow.
+* `docs/windows/win7-wddm11-d3d10-11-umd-alloc-map.md` — Win7/WDDM 1.1 reference for D3D10/D3D11 resource backing allocations + Map/Unmap (`D3DDDICB_LOCK`/`D3DDDICB_UNLOCK`), pitch, and staging readback sync.
 * `docs/graphics/win7-d3d11ddi-function-tables.md` — D3D11 `d3d11umddi.h` function-table checklist (which entries must be non-null vs safely stubbed for FL10_0 bring-up).
 * `docs/graphics/win7-d3d10-11-umd-callbacks-and-fences.md` — Win7 WDK symbol-name reference for D3D10/11 UMD callbacks (submission, fences, `SetErrorCb`, WOW64 gotchas).
 * `docs/graphics/win7-d3d10-caps-tracing.md` — how to enable `GetCaps` + entrypoint tracing in the D3D10/11 UMD during Win7 bring-up.

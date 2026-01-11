@@ -18,6 +18,10 @@ It is written against **WDK 7.1** headers:
 
 The goal is that a developer with WDK 7.1 can implement a correct `CreateResource` allocation flow without chasing definitions across multiple headers.
 
+For the **combined** reference that also covers Win7 `Map`/`Unmap` (`D3DDDICB_LOCK`/`D3DDDICB_UNLOCK`), pitch return rules, and staging readback synchronization, see:
+
+* `docs/windows/win7-wddm11-d3d10-11-umd-alloc-map.md`
+
 ## Related AeroGPU code/docs (cross-links)
 
 * UMD D3D10/11 stubs: `drivers/aerogpu/umd/d3d10_11/src/aerogpu_d3d10_11_umd.cpp` (CreateResource/DestroyResource are currently “no-WDK” stubs).

@@ -1,31 +1,71 @@
-# Win7 (WDDM 1.1) D3D10/D3D11 UMD resource allocation + Map/Unmap callback usage (WDK 7.1 reference)
+# Win7 (WDDM 1.1) D3D10/D3D11 UMD resource backing allocations + Map/Unmap (WDK 7.1 reference)
 
-This document is a **Win7 / WDDM 1.1 (WDK 7.1)** reference for the parts of the D3D10/D3D11 user-mode driver (UMD) DDI that are easy to get subtly wrong during bring-up:
+This document is a **Windows 7 / WDDM 1.1 (WDK 7.1)** reference for the parts of the D3D10/D3D11 user‑mode driver (UMD) DDI that are easy to get subtly wrong during bring‑up:
 
-* **Where resource backing allocations are created** (and freed)
-* **Which runtime callback tables/structs are involved**
+* **How `CreateResource` decides backing WDDM allocations** (buffers + Texture2D)
 * **How `Map`/`Unmap` is implemented using `D3DDDICB_LOCK` / `D3DDDICB_UNLOCK`**
-* **Pitch (row/slice) expectations**
-* **Staging readback synchronization behavior**
+* **Map flag translation** (D3D10 + D3D11) → `D3DDDICB_LOCKFLAGS`
+* **Pitch** (`RowPitch` / `DepthPitch`) expectations for staging readback
+* **Synchronization** expectations for `CopyResource` + `Flush` + `Map(READ)`
 
-Scope is intentionally narrow: **allocation + Map/Unmap only**. Shader/pipeline/DDI breadth is covered elsewhere.
+Scope is intentionally narrow: **resource backing allocations + Map/Unmap only** (no shader/pipeline breadth).
 
-> Header references: symbol names in this doc match Windows 7-era WDK headers: `d3dumddi.h`, `d3d10umddi.h`, `d3d11umddi.h`.
+> Header references: symbol names in this doc match Win7-era WDK headers: `d3dumddi.h`, `d3d10umddi.h`, `d3d11umddi.h`, and (for KMD allocation creation) `dispmprt.h`.
 
 ---
 
-## 0) “Resource” vs “allocation” (the mental model Win7 expects)
+## 0) Glossary: “resource”, “WDDM allocation”, and “DMA buffer allocation” (don’t mix these up)
 
-On WDDM 1.1, a D3D “resource” (buffer/texture) is a **driver object** that typically owns **one or more WDDM allocations**:
+WDDM uses the word “allocation” in *two* distinct ways that both show up in the Win7 D3D10/11 stack:
 
-* The **resource handle** the runtime passes to the UMD is `D3D10DDI_HRESOURCE` (D3D10) or `D3D11DDI_HRESOURCE` (D3D11).
-* The **backing memory** that VidMm manages is represented to the UMD by allocation handles returned from the runtime callback **`pfnAllocateCb`** (see `D3DDDICB_ALLOCATE` / `D3DDDICB_ALLOCATIONINFO`).
+### 0.1 Resource backing allocations (the thing resources are backed by)
 
-For bring-up, it helps to think in layers:
+* A D3D “resource” (buffer/texture) is a **UMD object** (`D3D10DDI_HRESOURCE` / `D3D11DDI_HRESOURCE`).
+* That resource is typically backed by one or more **WDDM allocations** (kernel objects tracked by VidMm).
+* These backing allocations are represented to the UMD by per‑process allocation handles (`D3DKMT_HANDLE`, often named `hAllocation` in WDK structs).
 
-1. **DDI object**: what the D3D10/11 runtime calls your UMD with (e.g. `PFND3D11DDI_CREATERESOURCE`).
-2. **WDDM allocation(s)**: what you ask the runtime/VidMm to create via callbacks (`D3DDDICB_ALLOCATE`).
-3. **CPU mapping**: what you obtain by locking an allocation (`D3DDDICB_LOCK`) and return through the DDI `Map` output structure.
+This doc’s “resource allocation” topic is about these backing allocations.
+
+### 0.2 DMA buffer allocation (the thing you write commands into)
+
+The runtime callback table `D3DDDI_DEVICECALLBACKS` also contains:
+
+* `pfnAllocateCb` / `pfnDeallocateCb` using:
+  * `D3DDDICB_ALLOCATE`
+  * `D3DDDICB_DEALLOCATE`
+
+On Win7 these are used to **acquire and return DMA buffers** (command buffer backing store) for submission.
+They are **not** how you create resource backing allocations.
+
+For the DMA buffer “allocate/deallocate” contract, see:
+
+* `docs/graphics/win7-d3d10-11-umd-callbacks-and-fences.md`
+
+### 0.3 `D3DDDICB_ALLOCATE` / `D3DDDICB_DEALLOCATE` (DMA buffer) field cheat-sheet
+
+If you are building a Win7-style submit path, the shared runtime callback table (`D3DDDI_DEVICECALLBACKS`) provides:
+
+* `pfnAllocateCb` taking `D3DDDICB_ALLOCATE`
+* `pfnDeallocateCb` taking `D3DDDICB_DEALLOCATE`
+
+Important `D3DDDICB_ALLOCATE` fields (names vary slightly across Win7-capable header vintages; both spellings are common):
+
+* Requested capacity (bytes):
+  * `DmaBufferSize` **or** `CommandBufferSize`
+* Returned pointers (owned by the runtime for this DMA buffer instance):
+  * `pDmaBuffer` **or** `pCommandBuffer`
+  * `pAllocationList` + `AllocationListSize` (entries)
+  * `pPatchLocationList` + `PatchLocationListSize` (entries)
+  * If present: `pDmaBufferPrivateData` + `DmaBufferPrivateDataSize` (bytes)
+* If present: `hContext` (kernel context handle this DMA buffer is scoped to)
+
+Important `D3DDDICB_DEALLOCATE` fields:
+
+* Return the same pointers you received from `D3DDDICB_ALLOCATE`:
+  * `pDmaBuffer`/`pCommandBuffer`
+  * `pAllocationList`
+  * `pPatchLocationList`
+  * (and `pDmaBufferPrivateData` if present)
 
 ---
 
@@ -33,303 +73,226 @@ For bring-up, it helps to think in layers:
 
 ### Shared (D3D10 and D3D11 on Win7)
 
-These names/structures are used by **both** D3D10 and D3D11 UMDs on Win7:
-
-* Runtime callback struct namespace: `D3DDDICB_*` (from `d3dumddi.h`)
-  * `D3DDDICB_ALLOCATE` + `D3DDDICB_ALLOCATIONINFO`
-  * `D3DDDICB_DEALLOCATE`
+* Resource creation entrypoints:
+  * `PFND3D10DDI_CREATERESOURCE`
+  * `PFND3D11DDI_CREATERESOURCE`
+* The WDDM allocation descriptor layout:
+  * `D3D10DDI_ALLOCATIONINFO` / `D3D11DDI_ALLOCATIONINFO` (aliases of `D3DDDI_ALLOCATIONINFO` from `d3dumddi.h` on Win7-capable header sets)
+  * `D3DDDI_ALLOCATIONINFOFLAGS`
+* CPU mapping callback structs (from `d3dumddi.h`):
   * `D3DDDICB_LOCK` + `D3DDDICB_LOCKFLAGS`
   * `D3DDDICB_UNLOCK`
-* The core runtime callback table concept: `D3DDDI_DEVICECALLBACKS` (and the D3D10/11-specific wrapper tables that contain the same callback entrypoints).
 
 ### D3D11-only split: device funcs vs device-context funcs
 
-* Allocation happens during **resource creation**, which is a **device** entrypoint: `PFND3D11DDI_CREATERESOURCE` (in `D3D11DDI_DEVICEFUNCS`).
-* `Map`/`Unmap` are **immediate context** entrypoints in D3D11: `PFND3D11DDI_MAP` / `PFND3D11DDI_UNMAP` (in `D3D11DDI_DEVICECONTEXTFUNCS`).
+* Allocation decisions happen during **resource creation**, which is a **device** entrypoint:
+  * `PFND3D11DDI_CREATERESOURCE` (in `D3D11DDI_DEVICEFUNCS`)
+* `Map`/`Unmap` are **immediate context** entrypoints in D3D11:
+  * `PFND3D11DDI_MAP` / `PFND3D11DDI_UNMAP` (in `D3D11DDI_DEVICECONTEXTFUNCS`)
 
-In D3D10, `Map`/`Unmap` live on the device function table (see §3).
-
----
-
-## 2) Runtime callback tables involved (and the structs they take)
-
-During device creation the runtime hands the UMD a callbacks table:
-
-* D3D10: `D3D10DDI_DEVICECALLBACKS`
-* D3D11: `D3D11DDI_DEVICECALLBACKS`
-
-These tables expose the “VidMm interaction” callbacks the UMD must use for allocations and CPU mappings:
-
-| Callback table member | Callback prototype uses | What it does |
-|---|---|---|
-| `pfnAllocateCb` | `D3DDDICB_ALLOCATE`, `D3DDDICB_ALLOCATIONINFO` | Create WDDM allocation(s) to back a resource. |
-| `pfnDeallocateCb` | `D3DDDICB_DEALLOCATE` | Free allocation(s) created by `pfnAllocateCb`. |
-| `pfnLockCb` | `D3DDDICB_LOCK`, `D3DDDICB_LOCKFLAGS` | Map an allocation into CPU VA space (and implicitly synchronize if needed). |
-| `pfnUnlockCb` | `D3DDDICB_UNLOCK` | Release a CPU mapping acquired via `pfnLockCb`. |
-
-> Practical rule: **UMD resource allocation is not “malloc”.** On Win7 you are expected to request allocations through the runtime callback table so VidMm can track residency, paging, and GPU synchronization.
+In D3D10, `Map`/`Unmap` are device funcs (`D3D10DDI_DEVICEFUNCS`).
 
 ---
 
-## 3) Which DDI entrypoints allocate backing allocations for resources?
+## 2) Which DDI entrypoints decide backing allocations for resources?
 
-### D3D10: `PFND3D10DDI_CREATERESOURCE`
+### 2.1 D3D10: `PFND3D10DDI_CREATERESOURCE`
 
-On Win7 the D3D10 runtime expects the UMD to create backing allocations inside:
+On Win7 the D3D10 runtime calls the UMD’s `PFND3D10DDI_CREATERESOURCE`. This is where the UMD must:
 
-* `PFND3D10DDI_CREATERESOURCE` (device function table: `D3D10DDI_DEVICEFUNCS`)
+1. Classify the resource (buffer vs texture, usage, bind flags, CPU access).
+2. Decide how many backing allocations are needed (bring‑up usually uses **1 allocation per resource**).
+3. Fill the per‑allocation descriptors (`D3D10DDI_ALLOCATIONINFO` / `D3DDDI_ALLOCATIONINFO`) including:
+   * size
+   * alignment
+   * flags (`D3DDDI_ALLOCATIONINFOFLAGS`)
+   * KMD private driver data blob
 
-**Flow (minimal, one allocation per resource):**
+Ultimately dxgkrnl will call the KMD’s `DxgkDdiCreateAllocation` using the private driver data you supplied.
 
-1. Runtime calls `PFND3D10DDI_CALCPRIVATERESOURCESIZE` → allocates `hResource.pDrvPrivate`.
-2. Runtime calls `PFND3D10DDI_CREATERESOURCE(hDevice, pCreate, hResource, hRTResource)`.
-3. UMD decides allocation layout (size/pitch/flags).
-4. UMD calls runtime callback `pfnAllocateCb` with a filled `D3DDDICB_ALLOCATE` containing:
-   * `NumAllocations = 1`
-   * `pAllocationInfo = &allocationInfo` (an array of `D3DDDICB_ALLOCATIONINFO`)
-5. Runtime fills out the allocation handle(s) (in `D3DDDICB_ALLOCATIONINFO`) and returns.
-6. UMD stores allocation handle(s) in its private resource object for later `Map`/`Unmap` and destruction.
+### 2.2 D3D11: `PFND3D11DDI_CREATERESOURCE`
 
-On `PFND3D10DDI_DESTROYRESOURCE`, free those allocations via `pfnDeallocateCb` (`D3DDDICB_DEALLOCATE`).
+Same conceptual responsibilities as D3D10, but the D3D11 runtime calls the device entrypoint `PFND3D11DDI_CREATERESOURCE`.
 
-### D3D11: `PFND3D11DDI_CREATERESOURCE`
-
-D3D11 uses the same basic allocation model but splits entrypoints across tables:
-
-* Allocation happens inside `PFND3D11DDI_CREATERESOURCE` (device table: `D3D11DDI_DEVICEFUNCS`)
-* CPU mapping happens inside `PFND3D11DDI_MAP` / `PFND3D11DDI_UNMAP` (immediate context table: `D3D11DDI_DEVICECONTEXTFUNCS`)
-
-The `PFND3D11DDI_CREATERESOURCE` allocation flow is the same as D3D10: call `pfnAllocateCb` with `D3DDDICB_ALLOCATE` and persist the returned allocation handle(s).
+`Map`/`Unmap` are not device funcs in D3D11; see §5.
 
 ---
 
-## 4) `D3DDDICB_ALLOCATE` / `D3DDDICB_ALLOCATIONINFO`: what you must fill (bring-up essentials)
+## 3) Backing allocation descriptor structures (what you must fill in `CreateResource`)
 
-The runtime callback `pfnAllocateCb` takes a `D3DDDICB_ALLOCATE` containing an array of `D3DDDICB_ALLOCATIONINFO`.
+### 3.1 `D3DDDI_ALLOCATIONINFO` (alias: `D3D10DDI_ALLOCATIONINFO` / `D3D11DDI_ALLOCATIONINFO`)
 
-For a minimal FL10_0 bring-up, the “must decide and persist” pieces are:
+On Win7, D3D10/11 `CreateResource` flows use the `d3dumddi.h` allocation-info layout:
 
-### 4.1 The key inputs to allocation layout decisions
+* `D3DDDI_ALLOCATIONINFO`
+  * commonly aliased as `D3D10DDI_ALLOCATIONINFO` and `D3D11DDI_ALLOCATIONINFO` in the D3D10/11 DDI headers.
 
-From the D3D runtime you primarily look at the resource description passed to:
+The bring-up‑critical fields in each entry are:
 
-* `PFND3D10DDI_CREATERESOURCE` via `D3D10DDIARG_CREATERESOURCE`
-* `PFND3D11DDI_CREATERESOURCE` via `D3D11DDIARG_CREATERESOURCE`
+* `UINT64 Size` (bytes) — **input** from UMD
+* `UINT64 Alignment` — **input** from UMD (0 typically means “default”)
+* `D3DDDI_ALLOCATIONINFOFLAGS Flags` — **input** from UMD
+  * `Primary` (swapchain/backbuffer style allocations)
+  * `RenderTarget` (RTV-capable allocations)
+  * `CpuVisible` (required for staging readback and any CPU-mapped resource)
+* `VOID* pPrivateDriverData` + `UINT PrivateDriverDataSize` — **input** from UMD
+  * This blob is preserved and passed to the KMD (`DxgkDdiCreateAllocation`) so the KMD can learn:
+    * format / dimensions
+    * pitch / layout expectations
+    * sharing IDs (if applicable)
+* `D3DKMT_HANDLE hAllocation` — **output** (filled by the runtime/OS on success)
 
-The important API-visible concepts they encode:
+> Important: `hAllocation` is per‑process. Do not treat it as a stable cross‑process identity key.
 
-* **Usage** (`D3D10_USAGE_*` / `D3D11_USAGE_*`): DEFAULT vs DYNAMIC vs STAGING
-* **BindFlags** (DEFAULT resources only): e.g. `D3D11_BIND_RENDER_TARGET`, `D3D11_BIND_VERTEX_BUFFER`
-* **CPUAccessFlags** (DYNAMIC/STAGING): e.g. `D3D11_CPU_ACCESS_READ`, `D3D11_CPU_ACCESS_WRITE`
+### 3.2 Typical allocation recipes (minimal FL10_0 bring‑up)
 
-These fields drive whether the allocation must be:
-
-* GPU-only (DEFAULT)
-* CPU-writable (DYNAMIC)
-* CPU-readable (STAGING readback)
-
-### 4.2 The “typical” `D3DDDICB_ALLOCATIONINFO` fields you must set correctly
-
-For each element in the `D3DDDICB_ALLOCATIONINFO` array, the UMD must provide (at minimum):
-
-* `Size` (total bytes)
-* `Alignment` (0 is commonly used to mean “default alignment”; use explicit alignment if your KMD requires it)
-* `pPrivateDriverData` + `PrivateDriverDataSize`
-  * This is the blob the runtime passes down to the KMD for `DxgkDdiCreateAllocation` (how your KMD learns the size/format/pitch/usage of the allocation).
-
-And the UMD must consume:
-
-* `hAllocation` (filled in by the runtime on success) — store this per allocation/subresource.
-
-> `D3DDDICB_ALLOCATIONINFO::Flags` exists and is important, but the exact bits you need depend on your KMD’s segment/memory model. For bring-up, treat flags as a way to express “CPU visible vs GPU-only” (see §5) and encode the rest in `pPrivateDriverData` so the KMD can make the real placement decision.
-
-### 4.3 Minimal allocation recipes (buffers + Texture2D)
-
-The tables below describe conservative, “works first” layouts.
+These are conservative “works first” defaults.
 
 #### Buffers
 
-| API intent | Typical D3D desc | Allocation placement | Map allowed? | Notes |
-|---|---|---|---|---|
-| DEFAULT GPU buffer | `D3D11_USAGE_DEFAULT`, `CPUAccessFlags = 0` | GPU memory (or “GPU-only” segment) | No | Upload via `UpdateSubresource(UP)` or staging copy. |
-| DYNAMIC upload buffer | `D3D11_USAGE_DYNAMIC`, `CPUAccessFlags = D3D11_CPU_ACCESS_WRITE` | CPU-visible, write-optimized | Yes (WRITE_DISCARD/NO_OVERWRITE) | `Map(WRITE_DISCARD)` should not stall on GPU reads; use DISCARD semantics (§6). |
-| STAGING readback buffer | `D3D11_USAGE_STAGING`, `CPUAccessFlags = D3D11_CPU_ACCESS_READ` | CPU-visible, read-optimized | Yes (READ) | Map must block until copy completes (§8). |
+| API intent | Typical desc | `D3DDDI_ALLOCATIONINFOFLAGS` | Mappable? |
+|---|---|---|---|
+| DEFAULT GPU buffer | `D3D11_USAGE_DEFAULT`, `CPUAccessFlags = 0` | `CpuVisible = 0` | No |
+| DYNAMIC upload buffer | `D3D11_USAGE_DYNAMIC`, `CPUAccessFlags = D3D11_CPU_ACCESS_WRITE` | `CpuVisible = 1` | Yes (WRITE_DISCARD / NO_OVERWRITE) |
+| STAGING readback buffer | `D3D11_USAGE_STAGING`, `CPUAccessFlags = D3D11_CPU_ACCESS_READ` | `CpuVisible = 1` | Yes (READ) |
 
-#### Texture2D (common Win7 bring-up cases)
+#### Texture2D
 
-| API intent | Typical D3D desc | Allocation placement | Map allowed? | Pitch requirements |
-|---|---|---|---|---|
-| DEFAULT render target | `D3D11_USAGE_DEFAULT`, `BindFlags` contains `D3D11_BIND_RENDER_TARGET`, `CPUAccessFlags = 0` | GPU-only | No | Pitch is internal; if you ever allow CPU mapping of DEFAULT, you must handle tiling/resolve yourself. |
-| STAGING Texture2D readback | `D3D11_USAGE_STAGING`, `CPUAccessFlags = D3D11_CPU_ACCESS_READ`, `BindFlags = 0` | CPU-visible (linear) | Yes (READ) | Must return correct `RowPitch`/`DepthPitch` to the app (§7). |
+| API intent | Typical desc | `D3DDDI_ALLOCATIONINFOFLAGS` | Mappable? |
+|---|---|---|---|
+| DEFAULT render target | `D3D11_USAGE_DEFAULT`, `BindFlags` contains `D3D11_BIND_RENDER_TARGET`, `CPUAccessFlags = 0` | `RenderTarget = 1`, `CpuVisible = 0` | No |
+| STAGING readback Texture2D | `D3D11_USAGE_STAGING`, `CPUAccessFlags = D3D11_CPU_ACCESS_READ`, `BindFlags = 0` | `CpuVisible = 1` | Yes (READ) |
 
-Bring-up simplifications that are consistent with Win7 expectations:
+Bring-up simplifications:
 
-* Start with **MipLevels = 1** and **ArraySize = 1** (one subresource) for staging readback and tests.
-* Use a **linear layout** for any resource you intend to `Map`.
-
----
-
-## 5) CPU access flags → allocation characteristics (what “must be true”)
-
-Even if your exact KMD segment flags differ, the Win7 runtime contract boils down to:
-
-* If the resource is intended to be CPU-readable/writable, **`pfnLockCb` must return a valid CPU pointer** for the allocation (and `pfnUnlockCb` must succeed).
-* If the resource is GPU-only (DEFAULT), either:
-  * the runtime will never call `Map`, or
-  * your UMD must fail `Map` cleanly (set error / return failure) according to the DDI contract.
-
-Concrete guidance for minimal FL10_0:
-
-* **DYNAMIC** (CPU write):
-  * Choose an allocation kind that is CPU-visible and optimized for write-combined behavior.
-  * Always implement `WRITE_DISCARD` and `WRITE_NO_OVERWRITE` mapping flags (even if conservatively).
-* **STAGING readback** (CPU read):
-  * Choose an allocation kind that is CPU-visible and suitable for cached reads.
-  * Ensure `CopyResource/CopySubresourceRegion` into this allocation is visible after `Map(READ)` returns (the implicit synchronization is described in §8).
+* Prefer **linear layouts** for anything you intend to `Map`.
+* Start with **MipLevels = 1** and **ArraySize = 1** for staging readback paths.
 
 ---
 
-## 6) Map/Unmap: where it lives and how it uses `D3DDDICB_LOCK` / `D3DDDICB_UNLOCK`
+## 4) Runtime callback tables involved (and what they’re used for here)
 
-### D3D10 Map/Unmap (device funcs)
+During device creation the runtime provides callback tables (names differ slightly by D3D10 vs D3D11):
 
-* Entry points: `PFND3D10DDI_MAP` / `PFND3D10DDI_UNMAP`
-* Table: `D3D10DDI_DEVICEFUNCS`
-* Map arg struct: `D3D10DDIARG_MAP`
+* D3D10: `D3D10DDI_DEVICECALLBACKS`
+* D3D11: `D3D11DDI_DEVICECALLBACKS`
+* Shared WDDM callbacks (submission/sync/mapping): `D3DDDI_DEVICECALLBACKS` (from `d3dumddi.h`)
 
-Typical implementation skeleton:
+For allocation + Map/Unmap, the callbacks you care about are:
 
-1. Determine which allocation/subresource is being mapped (often 1:1 in bring-up).
-2. Translate `D3D10_DDI_MAP` + `D3D10_DDI_MAPFLAGS` to `D3DDDICB_LOCKFLAGS` (§6.3).
-3. Call runtime callback `pfnLockCb` with `D3DDDICB_LOCK`.
-4. Return the CPU pointer + pitches to the runtime via `D3D10DDI_MAPPED_SUBRESOURCE`.
-5. On `PFND3D10DDI_UNMAP`, call `pfnUnlockCb` with `D3DDDICB_UNLOCK`.
+| Callback | Structs | Used for |
+|---|---|---|
+| `pfnLockCb` | `D3DDDICB_LOCK` / `D3DDDICB_LOCKFLAGS` | CPU mapping (`Map`) + implicit sync for staging readback. |
+| `pfnUnlockCb` | `D3DDDICB_UNLOCK` | End CPU mapping (`Unmap`). |
+| *(optional for explicit waits)* `pfnWaitForSynchronizationObjectCb` | `D3DDDICB_WAITFORSYNCHRONIZATIONOBJECT` | Poll/wait for a fence value before mapping readback resources. |
 
-### D3D11 Map/Unmap (device-context funcs)
+---
 
-* Entry points: `PFND3D11DDI_MAP` / `PFND3D11DDI_UNMAP`
-* Table: `D3D11DDI_DEVICECONTEXTFUNCS`
-* Map arg struct: `D3D11DDIARG_MAP`
+## 5) Map/Unmap: where it lives and how it uses `D3DDDICB_LOCK` / `D3DDDICB_UNLOCK`
 
-The `D3DDDICB_LOCK` / `D3DDDICB_UNLOCK` callback usage is identical to D3D10; only the DDI table/argument types differ.
+### 5.1 D3D10 Map/Unmap (device funcs)
 
-### 6.3 Map semantics translation tables
+* Entry points: `PFND3D10DDI_MAP` / `PFND3D10DDI_UNMAP` (`D3D10DDI_DEVICEFUNCS`)
+* The UMD implements `pfnMap` by calling `pfnLockCb` with a `D3DDDICB_LOCK`:
+  * `hAllocation = <backing allocation for the (sub)resource>`
+  * `SubResourceIndex` / `SubresourceIndex = <subresource>`
+  * `Flags = <translated lock flags>`
+* On success, `pfnLockCb` fills:
+  * `pData` (CPU pointer)
+  * `Pitch` (row pitch)
+  * `SlicePitch` (slice pitch)
+* `pfnUnmap` calls `pfnUnlockCb` with `D3DDDICB_UNLOCK`.
 
-These tables are the intended translation of API-level map modes to `D3DDDICB_LOCKFLAGS` bits.
+### 5.2 D3D11 Map/Unmap (device-context funcs)
 
-#### D3D11: `D3D11_MAP` + `D3D11_MAP_FLAG_DO_NOT_WAIT` → `D3DDDICB_LOCKFLAGS`
+* Entry points: `PFND3D11DDI_MAP` / `PFND3D11DDI_UNMAP` (`D3D11DDI_DEVICECONTEXTFUNCS`)
+* Same `pfnLockCb`/`pfnUnlockCb` callback usage; only the DDI table/argument types differ.
+
+> Win7 D3D11 quirk: the DDI `MapType` parameter is commonly typed as `D3D10_DDI_MAP` even in the D3D11 DDI. The numeric values match `D3D11_MAP`.
+
+---
+
+## 6) Map semantics translation tables (`D3D11_MAP_*` / `D3D10_DDI_MAP*` → `D3DDDICB_LOCKFLAGS`)
+
+### 6.1 D3D11: `D3D11_MAP` + `D3D11_MAP_FLAG_DO_NOT_WAIT`
 
 | API map mode | `D3DDDICB_LOCKFLAGS` bits |
 |---|---|
 | `D3D11_MAP_READ` | `ReadOnly = 1` |
 | `D3D11_MAP_WRITE` | `WriteOnly = 1` |
-| `D3D11_MAP_READ_WRITE` | `ReadOnly = 0`, `WriteOnly = 0` (read/write) |
+| `D3D11_MAP_READ_WRITE` | read+write (`ReadOnly = 0`, `WriteOnly = 0`) |
 | `D3D11_MAP_WRITE_DISCARD` | `WriteOnly = 1`, `Discard = 1` |
 | `D3D11_MAP_WRITE_NO_OVERWRITE` | `WriteOnly = 1`, `NoOverwrite = 1` |
 
 Additional flags:
 
-* If the caller specifies `D3D11_MAP_FLAG_DO_NOT_WAIT`, set `D3DDDICB_LOCKFLAGS::DoNotWait = 1`.
+* If the caller specifies `D3D11_MAP_FLAG_DO_NOT_WAIT`, set `D3DDDICB_LOCKFLAGS::DonotWait = 1`.
 
-#### D3D10: `D3D10_DDI_MAP` + `D3D10_DDI_MAPFLAGS` → `D3DDDICB_LOCKFLAGS`
+If `DonotWait = 1` and the allocation is still busy, `pfnLockCb` should fail in a “still drawing” way and the UMD’s `pfnMap` must return `DXGI_ERROR_WAS_STILL_DRAWING`.
+
+### 6.2 D3D10: `D3D10_DDI_MAP` + `D3D10_DDI_MAPFLAGS`
 
 | DDI map mode | `D3DDDICB_LOCKFLAGS` bits |
 |---|---|
 | `D3D10_DDI_MAP_READ` | `ReadOnly = 1` |
 | `D3D10_DDI_MAP_WRITE` | `WriteOnly = 1` |
-| `D3D10_DDI_MAP_READWRITE` | `ReadOnly = 0`, `WriteOnly = 0` (read/write) |
+| `D3D10_DDI_MAP_READWRITE` | read+write (`ReadOnly = 0`, `WriteOnly = 0`) |
 | `D3D10_DDI_MAP_WRITE_DISCARD` | `WriteOnly = 1`, `Discard = 1` |
 | `D3D10_DDI_MAP_WRITE_NOOVERWRITE` | `WriteOnly = 1`, `NoOverwrite = 1` |
 
 Additional flags:
 
-* If `D3D10_DDI_MAPFLAGS` contains `D3D10_DDI_MAP_FLAG_DO_NOT_WAIT`, set `D3DDDICB_LOCKFLAGS::DoNotWait = 1`.
+* If `D3D10_DDI_MAPFLAGS` contains `D3D10_DDI_MAP_FLAG_DO_NOT_WAIT`, set `D3DDDICB_LOCKFLAGS::DonotWait = 1`.
 
-> For both D3D10 and D3D11: `Discard` and `NoOverwrite` are *not* “UMD-only hints”; they change the expected synchronization behavior. Do not ignore them for dynamic buffers.
+> `Discard` and `NoOverwrite` are not “optional hints”; they materially change synchronization behavior for dynamic resources.
 
 ---
 
-## 7) Row pitch / slice pitch: what the runtime expects the UMD to return
+## 7) Row pitch / slice pitch: where they come from and what you must return
 
-### 7.1 Where the app-visible pitch values come from
+On Win7, the runtime does not “fix up” pitches:
 
-On Win7, the runtime does not “fix up” pitches for you:
+* The values returned from the UMD DDI `Map` are what the API returns to the app (`D3D11_MAPPED_SUBRESOURCE`, etc).
 
-* Whatever pitches you return from the UMD’s DDI `Map` are what the runtime returns to the app in:
-  * `D3D10_MAPPED_TEXTURE2D` / `D3D10_MAPPED_TEXTURE3D` (D3D10 API), or
-  * `D3D11_MAPPED_SUBRESOURCE` (D3D11 API).
+For Win7 D3D10/11 UMDs, the pitches come from the runtime lock callback output:
 
-At the DDI level, you typically fill:
+* `D3DDDICB_LOCK::Pitch` → D3D `RowPitch`
+* `D3DDDICB_LOCK::SlicePitch` → D3D `DepthPitch` (for 2D, typically `RowPitch * Height`)
 
-* D3D10: `D3D10DDI_MAPPED_SUBRESOURCE::{pData, RowPitch, DepthPitch}`
-* D3D11: `D3D11DDI_MAPPED_SUBRESOURCE::{pData, RowPitch, DepthPitch}`
+Where `Pitch`/`SlicePitch` ultimately come from:
 
-### 7.2 Where to source pitch values (Win7 bring-up guidance)
+* Your **allocation layout decision** must be communicated to the KMD (usually via the per‑allocation `pPrivateDriverData` blob).
+* The KMD’s `DxgkDdiLock` implementation returns a CPU pointer and pitch metadata consistent with that layout.
 
-The runtime lock callback (`pfnLockCb` with `D3DDDICB_LOCK`) gives you a CPU pointer to the allocation. The pitch values are expected to come from your **resource layout decision**:
-
-* Either compute and store pitches in your private resource object at `CreateResource` time, or
-* Treat pitches as derived from the same layout fields you pass down to the KMD via `D3DDDICB_ALLOCATIONINFO::pPrivateDriverData`.
-
-Practical, correct defaults for linear staging resources:
-
-* `RowPitch = Align(width_in_bytes, 256)` (or whatever alignment your backend requires)
-* `DepthPitch = RowPitch * height` (for Texture2D, “slice pitch”)
-
-### 7.3 Buffers vs textures
-
-* For **buffers**, the API does not meaningfully use row/slice pitch; apps treat `pData` as a flat byte array.
-* For **Texture2D**, apps rely on `RowPitch` and will interpret the data incorrectly if it is wrong (common readback corruption cause).
+For staging readback, `RowPitch` correctness is critical: apps/tests index pixels using the returned pitch.
 
 ---
 
 ## 8) Staging readback synchronization (Copy → Flush → Map(READ))
 
-### The expectation (what tests will assume)
-
-For a staging readback path like:
+For a staging readback pattern like:
 
 1. `CopyResource` (DEFAULT render target → STAGING texture)
 2. `Flush`
-3. `Map(D3D11_MAP_READ)` on the staging texture
+3. `Map(READ)` on the staging texture
 
-…the `Map(READ)` call must **block until the GPU copy completes**, unless the caller asked for “don’t wait”.
+…`Map(READ)` must **block until the GPU copy completes**, unless `DO_NOT_WAIT` is specified.
 
-### Where the implicit sync happens on Win7
+### 8.1 Where the “implicit sync” happens on Win7
 
-On Windows 7 / WDDM 1.1, the intended implicit sync point is the runtime callback:
+On Win7/WDDM 1.1, the intended implicit sync point is:
 
 * `pfnLockCb` with `D3DDDICB_LOCK`
 
 Behavior:
 
-* If you call `pfnLockCb` **without** `D3DDDICB_LOCKFLAGS::DoNotWait`, the runtime/VidMm path will wait until the allocation is safe to map for CPU access (i.e. until prior GPU work that writes that allocation completes).
-* If you set `D3DDDICB_LOCKFLAGS::DoNotWait` and the allocation is still busy, `pfnLockCb` may fail with `D3DDDIERR_WASSTILLDRAWING` (which the runtime surfaces back to the app as `DXGI_ERROR_WAS_STILL_DRAWING` for `Map`).
+* If you call `pfnLockCb` **without** `D3DDDICB_LOCKFLAGS::DonotWait`, the runtime/VidMm path will wait until it is safe to expose the allocation to CPU.
+* If `DonotWait = 1` and the allocation is still in use, the lock should fail without blocking; the UMD returns `DXGI_ERROR_WAS_STILL_DRAWING` to the app.
 
-UMD guidance:
+### 8.2 “Flush before you wait” rule
 
-* Do not implement your own busy-wait loop for staging readback; rely on the `pfnLockCb` synchronization behavior.
-* Ensure your `pfnFlush` actually submits GPU work so the copy can complete; otherwise `pfnLockCb` can block indefinitely and trigger TDR.
+If the UMD buffers GPU work in user‑mode, a `Map(READ)` that needs the result must ensure the producing work is submitted before waiting (otherwise you can deadlock waiting on work that has not been queued).
 
----
+In practice:
 
-## 9) Minimal end-to-end example (conceptual)
-
-This is the “shape” of a correct bring-up implementation (pseudo-flow, not code):
-
-1. `PFND3D11DDI_CREATERESOURCE` (DEFAULT render target):
-   * allocate GPU-only allocation via `pfnAllocateCb(D3DDDICB_ALLOCATE)`
-2. `PFND3D11DDI_CREATERESOURCE` (STAGING readback texture):
-   * allocate CPU-visible linear allocation via `pfnAllocateCb(D3DDDICB_ALLOCATE)`
-3. `PFND3D11DDI_COPYRESOURCE`:
-   * enqueue a GPU copy from DEFAULT → STAGING
-4. `PFND3D11DDI_FLUSH`:
-   * submit work
-5. `PFND3D11DDI_MAP` on STAGING with `D3D11_MAP_READ`:
-   * call `pfnLockCb(D3DDDICB_LOCK)` (no `DoNotWait`) → blocks until copy done
-   * return `{pData, RowPitch, DepthPitch}` to runtime
-6. `PFND3D11DDI_UNMAP`:
-   * call `pfnUnlockCb(D3DDDICB_UNLOCK)`
-
-If any step returns “still drawing” while `DO_NOT_WAIT` is set, propagate that failure cleanly.
-
+* treat `Map(READ)` on staging as an implicit submit/flush boundary, then call `pfnLockCb`.
