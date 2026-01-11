@@ -30,12 +30,16 @@ impl Port {
         const CSC: u16 = 1 << 1;
         const PED: u16 = 1 << 2;
         const PEDC: u16 = 1 << 3;
+        const LS_J_FS: u16 = 0b01 << 4;
         const LSDA: u16 = 1 << 8;
         const PR: u16 = 1 << 9;
 
         let mut v = 0u16;
         if self.connected {
             v |= CCS;
+            if !self.reset {
+                v |= LS_J_FS;
+            }
         }
         if self.connect_change {
             v |= CSC;
