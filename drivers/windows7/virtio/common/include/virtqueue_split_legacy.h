@@ -119,7 +119,11 @@ typedef struct virtqueue_split {
  * Compute the ring buffer size required for a split ring with `queue_size`
  * descriptors, where the used ring is aligned to `queue_align`.
  *
- * `queue_align` must be a power of two (virtio-pci legacy QUEUE_ALIGN).
+ * `queue_align` must be a power of two.
+ *
+ * Typical values:
+ *  - 4096 for virtio-pci legacy/transitional devices (QUEUE_ALIGN)
+ *  - 4 for virtio-pci modern split rings (used ring alignment)
  */
 size_t virtqueue_split_ring_size(uint16_t queue_size, uint32_t queue_align, virtio_bool_t event_idx);
 

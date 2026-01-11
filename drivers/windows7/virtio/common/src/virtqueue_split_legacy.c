@@ -88,6 +88,7 @@ int virtqueue_split_alloc_ring(const virtio_os_ops_t *os,
                                virtio_dma_buffer_t *out_ring)
 {
     size_t ring_size;
+    size_t alloc_align;
 
     if (out_ring == NULL || os == NULL || os->alloc_dma == NULL) {
         return VIRTIO_ERR_INVAL;
@@ -98,8 +99,18 @@ int virtqueue_split_alloc_ring(const virtio_os_ops_t *os,
         return VIRTIO_ERR_INVAL;
     }
 
+    /*
+     * The descriptor table (vring_desc) must be 16-byte aligned (virtio 1.0+).
+     * Even when the caller uses a smaller `queue_align` (e.g. 4 for modern
+     * split rings), ensure the base allocation meets the descriptor alignment.
+     */
+    alloc_align = (size_t)queue_align;
+    if (alloc_align < 16u) {
+        alloc_align = 16u;
+    }
+
     virtio_memset(out_ring, 0, sizeof(*out_ring));
-    if (os->alloc_dma(os_ctx, ring_size, (size_t)queue_align, out_ring) == VIRTIO_FALSE) {
+    if (os->alloc_dma(os_ctx, ring_size, alloc_align, out_ring) == VIRTIO_FALSE) {
         return VIRTIO_ERR_NOMEM;
     }
 
@@ -206,6 +217,14 @@ int virtqueue_split_init(virtqueue_split_t *vq,
     }
     if ((ring_dma->paddr & ((uint64_t)queue_align - 1u)) != 0) {
         /* Legacy queue base must satisfy QUEUE_ALIGN. */
+        return VIRTIO_ERR_RANGE;
+    }
+    /*
+     * virtio 1.0 split rings require the descriptor table to be 16-byte aligned.
+     * Since the descriptor table starts at the base of the ring allocation, the
+     * ring base must also be 16-byte aligned.
+     */
+    if ((ring_dma->paddr & 0xFu) != 0 || (((uintptr_t)ring_dma->vaddr) & 0xFu) != 0) {
         return VIRTIO_ERR_RANGE;
     }
 

@@ -234,6 +234,67 @@ static void test_wraparound(void)
     virtqueue_split_free_ring(&os_ops, &os_ctx, &ring);
 }
 
+static void test_small_queue_align(void)
+{
+    test_os_ctx_t os_ctx;
+    virtio_os_ops_t os_ops;
+    virtio_dma_buffer_t ring;
+    virtqueue_split_t vq;
+    vring_device_sim_t sim;
+    virtio_sg_entry_t sg;
+    uint16_t head;
+    void *cookie_in;
+    void *cookie_out;
+    uint32_t used_len;
+
+    test_os_ctx_init(&os_ctx);
+    test_os_get_ops(&os_ops);
+
+    /* Modern split rings only require 4-byte alignment for the used ring. */
+    assert(virtqueue_split_alloc_ring(&os_ops, &os_ctx, 8, 4, VIRTIO_FALSE, &ring) == VIRTIO_OK);
+
+    /* Descriptor table still requires 16-byte alignment. */
+    assert(((uintptr_t)ring.vaddr & 0xFu) == 0);
+    assert((ring.paddr & 0xFu) == 0);
+
+    assert(virtqueue_split_init(&vq,
+                                &os_ops,
+                                &os_ctx,
+                                0,
+                                8,
+                                4,
+                                &ring,
+                                VIRTIO_FALSE,
+                                VIRTIO_FALSE,
+                                0) == VIRTIO_OK);
+
+    memset(&sim, 0, sizeof(sim));
+    sim.vq = &vq;
+    sim.notify_batch = 1;
+
+    sg.addr = 0x200000u;
+    sg.len = 512;
+    sg.device_writes = VIRTIO_FALSE;
+
+    cookie_in = (void *)(uintptr_t)0x1u;
+    assert(virtqueue_split_add_sg(&vq, &sg, 1, cookie_in, VIRTIO_FALSE, &head) == VIRTIO_OK);
+    assert(virtqueue_split_kick_prepare(&vq) == VIRTIO_TRUE);
+
+    sim_process(&sim);
+
+    cookie_out = NULL;
+    used_len = 0;
+    assert(virtqueue_split_pop_used(&vq, &cookie_out, &used_len) == VIRTIO_TRUE);
+    assert(cookie_out == cookie_in);
+    assert(used_len == sg.len);
+
+    assert(vq.num_free == vq.queue_size);
+    validate_queue(&vq);
+
+    virtqueue_split_destroy(&vq);
+    virtqueue_split_free_ring(&os_ops, &os_ctx, &ring);
+}
+
 static void test_indirect_descriptors(void)
 {
     test_os_ctx_t os_ctx;
@@ -783,6 +844,7 @@ static void test_pci_modern_integration(void)
 int main(void)
 {
     test_wraparound();
+    test_small_queue_align();
     test_indirect_descriptors();
     test_reset();
     test_fuzz();
