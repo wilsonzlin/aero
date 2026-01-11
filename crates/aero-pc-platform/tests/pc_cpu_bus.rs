@@ -1175,3 +1175,80 @@ fn pc_cpu_bus_paging_disabled_truncates_linear_addresses_to_32bit() {
     assert_eq!(bus.read_u8(0x1_0000_0000).unwrap(), 0xAA);
     assert_eq!(bus.read_u8(0x1_0000_0000 + 0x1234).unwrap(), 0xBB);
 }
+
+#[test]
+fn pc_cpu_bus_supervisor_write_to_read_only_page_succeeds_when_wp0() {
+    let platform = PcPlatform::new(2 * 1024 * 1024);
+    let mut bus = PcCpuBus::new(platform);
+
+    let pml4_base = 0x1000u64;
+    let pdpt_base = 0x2000u64;
+    let pd_base = 0x3000u64;
+    let pt_base = 0x4000u64;
+    let data_page = 0x5000u64;
+
+    // Read-only leaf PTE (R/W=0), but user-accessible (U/S=1) so we can test supervisor write
+    // behavior under CR0.WP.
+    setup_long4_4k(
+        &mut bus.platform.memory,
+        pml4_base,
+        pdpt_base,
+        pd_base,
+        pt_base,
+        data_page | PTE_P | PTE_US,
+        0,
+    );
+
+    bus.platform.memory.write_u8(data_page, 0xAA);
+
+    let state = long_state(pml4_base, 0);
+    bus.sync(&state);
+
+    // With CR0.WP=0 (default), supervisor writes ignore the read-only bit.
+    bus.write_u8(0, 0xBB).unwrap();
+    assert_eq!(bus.platform.memory.read_u8(data_page), 0xBB);
+
+    let pte_after = memory::MemoryBus::read_u64(&mut bus.platform.memory, pt_base);
+    assert_eq!(pte_after & PTE_RW, 0, "PTE should remain read-only");
+    assert_ne!(pte_after & (1 << 6), 0, "PTE dirty bit should be set");
+}
+
+#[test]
+fn pc_cpu_bus_supervisor_write_to_read_only_page_faults_when_wp1() {
+    let platform = PcPlatform::new(2 * 1024 * 1024);
+    let mut bus = PcCpuBus::new(platform);
+
+    let pml4_base = 0x1000u64;
+    let pdpt_base = 0x2000u64;
+    let pd_base = 0x3000u64;
+    let pt_base = 0x4000u64;
+    let data_page = 0x5000u64;
+
+    setup_long4_4k(
+        &mut bus.platform.memory,
+        pml4_base,
+        pdpt_base,
+        pd_base,
+        pt_base,
+        data_page | PTE_P | PTE_US,
+        0,
+    );
+    bus.platform.memory.write_u8(data_page, 0xAA);
+
+    const CR0_WP: u64 = 1 << 16;
+    let mut state = long_state(pml4_base, 0);
+    state.control.cr0 |= CR0_WP;
+    bus.sync(&state);
+
+    assert_eq!(
+        bus.write_u8(0, 0xBB),
+        Err(Exception::PageFault {
+            addr: 0,
+            error_code: (1 << 0) | (1 << 1), // P=1, W=1, U=0
+        })
+    );
+    assert_eq!(bus.platform.memory.read_u8(data_page), 0xAA);
+
+    let pte_after = memory::MemoryBus::read_u64(&mut bus.platform.memory, pt_base);
+    assert_eq!(pte_after & (1 << 6), 0, "PTE dirty bit should not be set");
+}
