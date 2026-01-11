@@ -32,7 +32,7 @@ drivers/windows7/tests/
 - Runs a virtio-input HID sanity test (detect virtio-input HID devices + validate separate keyboard-only + mouse-only HID devices).
 - Optionally runs a virtio-snd test (PCI detection + endpoint enumeration + short playback) when enabled with `--test-snd`
   (or `--require-snd`).
-  - Detects the virtio-snd PCI function by hardware ID (`PCI\\VEN_1AF4&DEV_1059` or `PCI\\VEN_1AF4&DEV_1018`).
+  - Detects the virtio-snd PCI function by hardware ID (`PCI\\VEN_1AF4&DEV_1059`).
 - Logs to:
   - stdout
   - `C:\aero-virtio-selftest.log`
