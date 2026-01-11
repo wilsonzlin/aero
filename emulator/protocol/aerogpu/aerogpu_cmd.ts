@@ -589,8 +589,11 @@ export function decodeCmdCreateShaderDxbcPayloadFromPacket(packet: AerogpuCmdPac
   const reserved0 = view.getUint32(12, true);
 
   const expected = AEROGPU_CMD_CREATE_SHADER_DXBC_SIZE + alignUp4U32(dxbcSizeBytes);
-  if (packet.sizeBytes !== expected) {
-    throw new Error(`CREATE_SHADER_DXBC payload size mismatch: expected ${expected}, got ${packet.sizeBytes}`);
+  // Forward-compat: treat this as a minimum size so packets can be extended by appending new fields.
+  if (packet.sizeBytes < expected) {
+    throw new Error(
+      `CREATE_SHADER_DXBC payload size mismatch: expected at least ${expected}, got ${packet.sizeBytes}`,
+    );
   }
 
   const dxbcStart = 16;
@@ -635,8 +638,11 @@ export function decodeCmdCreateInputLayoutBlobFromPacket(
   const reserved0 = view.getUint32(8, true);
 
   const expected = AEROGPU_CMD_CREATE_INPUT_LAYOUT_SIZE + alignUp4U32(blobSizeBytes);
-  if (packet.sizeBytes !== expected) {
-    throw new Error(`CREATE_INPUT_LAYOUT payload size mismatch: expected ${expected}, got ${packet.sizeBytes}`);
+  // Forward-compat: treat this as a minimum size so packets can be extended by appending new fields.
+  if (packet.sizeBytes < expected) {
+    throw new Error(
+      `CREATE_INPUT_LAYOUT payload size mismatch: expected at least ${expected}, got ${packet.sizeBytes}`,
+    );
   }
 
   const blobStart = 12;
@@ -678,8 +684,9 @@ export function decodeCmdUploadResourcePayloadFromPacket(packet: AerogpuCmdPacke
 
   const dataSize = u64ToSafeNumber(sizeBytes, "upload_resource.size_bytes");
   const expected = AEROGPU_CMD_UPLOAD_RESOURCE_SIZE + alignUp4U32(dataSize);
-  if (packet.sizeBytes !== expected) {
-    throw new Error(`UPLOAD_RESOURCE payload size mismatch: expected ${expected}, got ${packet.sizeBytes}`);
+  // Forward-compat: treat this as a minimum size so packets can be extended by appending new fields.
+  if (packet.sizeBytes < expected) {
+    throw new Error(`UPLOAD_RESOURCE payload size mismatch: expected at least ${expected}, got ${packet.sizeBytes}`);
   }
 
   const dataStart = 24;
@@ -723,8 +730,9 @@ export function decodeCmdSetVertexBuffersBindingsFromPacket(
 
   const bindingsSize = BigInt(bufferCount) * 16n;
   const expected = BigInt(AEROGPU_CMD_SET_VERTEX_BUFFERS_SIZE) + bindingsSize;
-  if (expected !== BigInt(packet.sizeBytes)) {
-    throw new Error(`SET_VERTEX_BUFFERS payload size mismatch: expected ${expected}, got ${packet.sizeBytes}`);
+  // Forward-compat: treat this as a minimum size so packets can be extended by appending new fields.
+  if (BigInt(packet.sizeBytes) < expected) {
+    throw new Error(`SET_VERTEX_BUFFERS payload size mismatch: expected at least ${expected}, got ${packet.sizeBytes}`);
   }
   if (bindingsSize > BigInt(Number.MAX_SAFE_INTEGER)) {
     throw new Error(`SET_VERTEX_BUFFERS bindings too large: ${bufferCount}`);

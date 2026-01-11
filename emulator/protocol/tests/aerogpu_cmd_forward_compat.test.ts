@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   AEROGPU_CMD_HDR_OFF_SIZE_BYTES,
+  AEROGPU_CMD_CREATE_SHADER_DXBC_SIZE,
   AEROGPU_CMD_SET_BLEND_STATE_SIZE,
   AEROGPU_CMD_STREAM_HEADER_OFF_SIZE_BYTES,
   AEROGPU_CMD_STREAM_HEADER_SIZE,
@@ -10,6 +11,7 @@ import {
   AerogpuBlendFactor,
   AerogpuBlendOp,
   AerogpuCmdOpcode,
+  decodeCmdCreateShaderDxbcPayload,
   decodeCmdStreamView,
   decodeCmdSetBlendState,
 } from "../aerogpu/aerogpu_cmd.ts";
@@ -100,4 +102,42 @@ test("AeroGPU command stream decoders accept trailing bytes in fixed-size packet
   const decodedExt = decodeCmdSetBlendState(viewExt, packetsExt[1]!.offsetBytes);
 
   assert.deepEqual(decodedExt, decodedBase);
+});
+
+test("variable-payload decoders accept trailing bytes in cmd.size_bytes", () => {
+  const bytes: number[] = [];
+
+  // Stream header.
+  pushU32(bytes, AEROGPU_CMD_STREAM_MAGIC);
+  pushU32(bytes, AEROGPU_ABI_VERSION_U32);
+  pushU32(bytes, 0); // size_bytes (patched later)
+  pushU32(bytes, 0); // flags
+  pushU32(bytes, 0); // reserved0
+  pushU32(bytes, 0); // reserved1
+
+  const cmdOffset = bytes.length;
+  pushU32(bytes, AerogpuCmdOpcode.CreateShaderDxbc);
+  pushU32(bytes, 0); // size_bytes (patched later)
+  pushU32(bytes, 7); // shader_handle
+  pushU32(bytes, 0); // stage (vertex)
+  pushU32(bytes, 8); // dxbc_size_bytes
+  pushU32(bytes, 0); // reserved0
+  // 8 bytes of DXBC payload (already 4-byte aligned, so no padding required).
+  bytes.push(1, 2, 3, 4, 5, 6, 7, 8);
+  // Forward-compatible extension (ignored by old decoders).
+  pushU32(bytes, 0xdead_beef);
+
+  const out = new Uint8Array(bytes);
+  const dv = new DataView(out.buffer, out.byteOffset, out.byteLength);
+  dv.setUint32(cmdOffset + AEROGPU_CMD_HDR_OFF_SIZE_BYTES, out.byteLength - cmdOffset, true);
+  dv.setUint32(AEROGPU_CMD_STREAM_HEADER_OFF_SIZE_BYTES, out.byteLength, true);
+
+  assert.equal(out.byteLength % 4, 0);
+  assert.equal(out.byteLength - cmdOffset, AEROGPU_CMD_CREATE_SHADER_DXBC_SIZE + 8 + 4);
+
+  const decoded = decodeCmdCreateShaderDxbcPayload(out, cmdOffset);
+  assert.equal(decoded.shaderHandle, 7);
+  assert.equal(decoded.stage, 0);
+  assert.equal(decoded.dxbcSizeBytes, 8);
+  assert.deepEqual(Array.from(decoded.dxbcBytes), [1, 2, 3, 4, 5, 6, 7, 8]);
 });
