@@ -13,7 +13,7 @@ this tool produces a new **bootable** ISO that:
 - loads Aero drivers in Windows Setup (WinPE),
 - stages them for the installed OS,
 - enables the requested boot policy (`testsigning` or `nointegritychecks`),
-- injects the Aero root certificate into offline images when needed.
+- injects the Aero test certificate into offline images when needed.
 
 No Windows files are shipped in this repository. The tool only transforms user-provided media.
 
