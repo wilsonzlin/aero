@@ -23,29 +23,51 @@ struct fn_first_param<Ret(*)(Arg0, Rest...)> {
   using type = Arg0;
 };
 
+template <typename T>
+struct is_function_pointer
+    : std::bool_constant<std::is_pointer_v<T> && std::is_function_v<std::remove_pointer_t<T>>> {};
+
 template <typename T, typename = void>
 struct has_pfnCreateAllocationCb : std::false_type {};
 
 template <typename T>
-struct has_pfnCreateAllocationCb<T, std::void_t<decltype(std::declval<T>().pfnCreateAllocationCb)>> : std::true_type {};
+struct has_pfnCreateAllocationCb<T, std::void_t<decltype(std::declval<T>().pfnCreateAllocationCb)>>
+    : is_function_pointer<decltype(std::declval<T>().pfnCreateAllocationCb)> {};
+
+template <typename T, typename = void>
+struct has_pfnAllocateCb : std::false_type {};
+
+template <typename T>
+struct has_pfnAllocateCb<T, std::void_t<decltype(std::declval<T>().pfnAllocateCb)>>
+    : is_function_pointer<decltype(std::declval<T>().pfnAllocateCb)> {};
 
 template <typename T, typename = void>
 struct has_pfnDestroyAllocationCb : std::false_type {};
 
 template <typename T>
-struct has_pfnDestroyAllocationCb<T, std::void_t<decltype(std::declval<T>().pfnDestroyAllocationCb)>> : std::true_type {};
+struct has_pfnDestroyAllocationCb<T, std::void_t<decltype(std::declval<T>().pfnDestroyAllocationCb)>>
+    : is_function_pointer<decltype(std::declval<T>().pfnDestroyAllocationCb)> {};
+
+template <typename T, typename = void>
+struct has_pfnDeallocateCb : std::false_type {};
+
+template <typename T>
+struct has_pfnDeallocateCb<T, std::void_t<decltype(std::declval<T>().pfnDeallocateCb)>>
+    : is_function_pointer<decltype(std::declval<T>().pfnDeallocateCb)> {};
 
 template <typename T, typename = void>
 struct has_pfnLockCb : std::false_type {};
 
 template <typename T>
-struct has_pfnLockCb<T, std::void_t<decltype(std::declval<T>().pfnLockCb)>> : std::true_type {};
+struct has_pfnLockCb<T, std::void_t<decltype(std::declval<T>().pfnLockCb)>>
+    : is_function_pointer<decltype(std::declval<T>().pfnLockCb)> {};
 
 template <typename T, typename = void>
 struct has_pfnUnlockCb : std::false_type {};
 
 template <typename T>
-struct has_pfnUnlockCb<T, std::void_t<decltype(std::declval<T>().pfnUnlockCb)>> : std::true_type {};
+struct has_pfnUnlockCb<T, std::void_t<decltype(std::declval<T>().pfnUnlockCb)>>
+    : is_function_pointer<decltype(std::declval<T>().pfnUnlockCb)> {};
 
 template <typename T, typename = void>
 struct has_member_hDevice : std::false_type {};
@@ -151,6 +173,79 @@ struct has_member_pData<T, std::void_t<decltype(std::declval<T&>().pData)>> : st
 
 } // namespace
 
+template <typename CallbackFn>
+HRESULT invoke_create_allocation_cb(CallbackFn cb,
+                                    WddmHandle hDevice,
+                                    uint64_t size_bytes,
+                                    const aerogpu_wddm_alloc_priv* priv,
+                                    uint32_t priv_size,
+                                    WddmAllocationHandle* hAllocationOut) {
+  using Fn = CallbackFn;
+  using ArgPtr = typename fn_first_param<Fn>::type;
+  using Args = std::remove_pointer_t<ArgPtr>;
+  Args data{};
+
+  if constexpr (has_member_hDevice<Args>::value) {
+    data.hDevice = hDevice;
+  }
+  if constexpr (has_member_hResource<Args>::value) {
+    data.hResource = 0;
+  }
+  if constexpr (has_member_hKMResource<Args>::value) {
+    data.hKMResource = 0;
+  }
+
+  if constexpr (!has_member_pAllocationInfo<Args>::value) {
+    return E_NOTIMPL;
+  } else {
+    using InfoPtr = decltype(std::declval<Args&>().pAllocationInfo);
+    using Info = std::remove_pointer_t<InfoPtr>;
+    Info info{};
+    std::memset(&info, 0, sizeof(info));
+
+    if constexpr (has_member_Size<Info>::value) {
+      info.Size = static_cast<decltype(info.Size)>(size_bytes);
+    } else if constexpr (has_member_SizeInBytes<Info>::value) {
+      info.SizeInBytes = static_cast<decltype(info.SizeInBytes)>(size_bytes);
+    } else {
+      return E_NOTIMPL;
+    }
+
+    if constexpr (has_member_pPrivateDriverData<Info>::value) {
+      info.pPrivateDriverData = const_cast<void*>(reinterpret_cast<const void*>(priv));
+    } else {
+      return E_NOTIMPL;
+    }
+    if constexpr (has_member_PrivateDriverDataSize<Info>::value) {
+      info.PrivateDriverDataSize = priv_size;
+    } else {
+      return E_NOTIMPL;
+    }
+
+    if constexpr (has_member_NumAllocations<Args>::value) {
+      data.NumAllocations = 1;
+    } else if constexpr (has_member_AllocationCount<Args>::value) {
+      data.AllocationCount = 1;
+    } else {
+      return E_NOTIMPL;
+    }
+    data.pAllocationInfo = &info;
+
+    const HRESULT hr = cb(&data);
+    if (FAILED(hr)) {
+      return hr;
+    }
+
+    if constexpr (has_member_hAllocation<Info>::value) {
+      *hAllocationOut = info.hAllocation;
+    } else {
+      return E_NOTIMPL;
+    }
+
+    return (*hAllocationOut != 0) ? S_OK : E_FAIL;
+  }
+}
+
 HRESULT wddm_create_allocation(const WddmDeviceCallbacks& callbacks,
                                WddmHandle hDevice,
                                uint64_t size_bytes,
@@ -165,128 +260,86 @@ HRESULT wddm_create_allocation(const WddmDeviceCallbacks& callbacks,
     return E_INVALIDARG;
   }
 
-  if constexpr (!has_pfnCreateAllocationCb<WddmDeviceCallbacks>::value) {
-    return E_NOTIMPL;
-  } else {
-    if (!callbacks.pfnCreateAllocationCb) {
-      return E_FAIL;
-    }
+  // The Win7 D3D9 runtime uses pfnAllocateCb/pfnDeallocateCb for WDDM allocation
+  // management. Some newer header sets also expose CreateAllocation/DestroyAllocation
+  // spellings. Prefer the Win7 names but keep a fallback for compatibility.
 
-    using Fn = decltype(callbacks.pfnCreateAllocationCb);
-    using ArgPtr = typename fn_first_param<Fn>::type;
-    using Args = std::remove_pointer_t<ArgPtr>;
-    Args data{};
-
-    if constexpr (has_member_hDevice<Args>::value) {
-      data.hDevice = hDevice;
-    }
-    if constexpr (has_member_hResource<Args>::value) {
-      data.hResource = 0;
-    }
-    if constexpr (has_member_hKMResource<Args>::value) {
-      data.hKMResource = 0;
-    }
-
-    if constexpr (!has_member_pAllocationInfo<Args>::value) {
-      return E_NOTIMPL;
-    } else {
-      using InfoPtr = decltype(std::declval<Args&>().pAllocationInfo);
-      using Info = std::remove_pointer_t<InfoPtr>;
-      Info info{};
-      std::memset(&info, 0, sizeof(info));
-
-      if constexpr (has_member_Size<Info>::value) {
-        info.Size = static_cast<decltype(info.Size)>(size_bytes);
-      } else if constexpr (has_member_SizeInBytes<Info>::value) {
-        info.SizeInBytes = static_cast<decltype(info.SizeInBytes)>(size_bytes);
-      } else {
-        return E_NOTIMPL;
-      }
-
-      if constexpr (has_member_pPrivateDriverData<Info>::value) {
-        info.pPrivateDriverData = const_cast<void*>(reinterpret_cast<const void*>(priv));
-      } else {
-        return E_NOTIMPL;
-      }
-      if constexpr (has_member_PrivateDriverDataSize<Info>::value) {
-        info.PrivateDriverDataSize = priv_size;
-      } else {
-        return E_NOTIMPL;
-      }
-
-      if constexpr (has_member_NumAllocations<Args>::value) {
-        data.NumAllocations = 1;
-      } else {
-        return E_NOTIMPL;
-      }
-      data.pAllocationInfo = &info;
-
-      const HRESULT hr = callbacks.pfnCreateAllocationCb(&data);
-      if (FAILED(hr)) {
-        return hr;
-      }
-
-      if constexpr (has_member_hAllocation<Info>::value) {
-        *hAllocationOut = info.hAllocation;
-      } else {
-        return E_NOTIMPL;
-      }
-
-      return (*hAllocationOut != 0) ? S_OK : E_FAIL;
+  if constexpr (has_pfnAllocateCb<WddmDeviceCallbacks>::value) {
+    if (callbacks.pfnAllocateCb) {
+      return invoke_create_allocation_cb(callbacks.pfnAllocateCb, hDevice, size_bytes, priv, priv_size, hAllocationOut);
     }
   }
+
+  if constexpr (has_pfnCreateAllocationCb<WddmDeviceCallbacks>::value) {
+    if (callbacks.pfnCreateAllocationCb) {
+      return invoke_create_allocation_cb(callbacks.pfnCreateAllocationCb, hDevice, size_bytes, priv, priv_size, hAllocationOut);
+    }
+  }
+
+  return E_FAIL;
+}
+
+template <typename CallbackFn>
+HRESULT invoke_destroy_allocation_cb(CallbackFn cb,
+                                     WddmHandle hDevice,
+                                     WddmAllocationHandle hAllocation) {
+  using Fn = CallbackFn;
+  using ArgPtr = typename fn_first_param<Fn>::type;
+  using Args = std::remove_pointer_t<ArgPtr>;
+  Args data{};
+  std::memset(&data, 0, sizeof(data));
+
+  if constexpr (has_member_hDevice<Args>::value) {
+    data.hDevice = hDevice;
+  }
+  if constexpr (has_member_hResource<Args>::value) {
+    data.hResource = 0;
+  }
+  if constexpr (has_member_hKMResource<Args>::value) {
+    data.hKMResource = 0;
+  }
+
+  WddmAllocationHandle allocs[1] = {hAllocation};
+
+  if constexpr (has_member_NumAllocations<Args>::value) {
+    data.NumAllocations = 1;
+  } else if constexpr (has_member_AllocationCount<Args>::value) {
+    data.AllocationCount = 1;
+  } else {
+    return E_NOTIMPL;
+  }
+
+  if constexpr (has_member_phAllocationList<Args>::value) {
+    data.phAllocationList = allocs;
+  } else if constexpr (has_member_pAllocationList<Args>::value) {
+    data.pAllocationList = allocs;
+  } else {
+    return E_NOTIMPL;
+  }
+
+  return cb(&data);
 }
 
 HRESULT wddm_destroy_allocation(const WddmDeviceCallbacks& callbacks,
-                                WddmHandle hDevice,
-                                WddmAllocationHandle hAllocation) {
+                                 WddmHandle hDevice,
+                                 WddmAllocationHandle hAllocation) {
   if (!hDevice || !hAllocation) {
     return E_INVALIDARG;
   }
 
-  if constexpr (!has_pfnDestroyAllocationCb<WddmDeviceCallbacks>::value) {
-    return E_NOTIMPL;
-  } else {
-    if (!callbacks.pfnDestroyAllocationCb) {
-      return E_FAIL;
+  if constexpr (has_pfnDeallocateCb<WddmDeviceCallbacks>::value) {
+    if (callbacks.pfnDeallocateCb) {
+      return invoke_destroy_allocation_cb(callbacks.pfnDeallocateCb, hDevice, hAllocation);
     }
-
-    using Fn = decltype(callbacks.pfnDestroyAllocationCb);
-    using ArgPtr = typename fn_first_param<Fn>::type;
-    using Args = std::remove_pointer_t<ArgPtr>;
-    Args data{};
-    std::memset(&data, 0, sizeof(data));
-
-    if constexpr (has_member_hDevice<Args>::value) {
-      data.hDevice = hDevice;
-    }
-    if constexpr (has_member_hResource<Args>::value) {
-      data.hResource = 0;
-    }
-    if constexpr (has_member_hKMResource<Args>::value) {
-      data.hKMResource = 0;
-    }
-
-    WddmAllocationHandle allocs[1] = {hAllocation};
-
-    if constexpr (has_member_NumAllocations<Args>::value) {
-      data.NumAllocations = 1;
-    } else if constexpr (has_member_AllocationCount<Args>::value) {
-      data.AllocationCount = 1;
-    } else {
-      return E_NOTIMPL;
-    }
-
-    if constexpr (has_member_phAllocationList<Args>::value) {
-      data.phAllocationList = allocs;
-    } else if constexpr (has_member_pAllocationList<Args>::value) {
-      data.pAllocationList = allocs;
-    } else {
-      return E_NOTIMPL;
-    }
-
-    return callbacks.pfnDestroyAllocationCb(&data);
   }
+
+  if constexpr (has_pfnDestroyAllocationCb<WddmDeviceCallbacks>::value) {
+    if (callbacks.pfnDestroyAllocationCb) {
+      return invoke_destroy_allocation_cb(callbacks.pfnDestroyAllocationCb, hDevice, hAllocation);
+    }
+  }
+
+  return E_FAIL;
 }
 
 HRESULT wddm_lock_allocation(const WddmDeviceCallbacks& callbacks,
@@ -411,4 +464,3 @@ HRESULT wddm_unlock_allocation(const WddmDeviceCallbacks&, WddmHandle, WddmAlloc
 #endif
 
 } // namespace aerogpu
-
