@@ -123,11 +123,11 @@ type UsbHostCompletion =
 The `id` correlates an action with its completion and is also how we prevent duplicate
 WebUSB calls when the guest retries a NAKed TD.
 
-⚠️ **WASM note:** ids are generated in Rust and must be representable as JS numbers. Older WASM
-builds used `u64` ids, which can be surfaced to JavaScript as `bigint` via `serde-wasm-bindgen`.
-The worker-side runtime (`web/src/usb/webusb_passthrough_runtime.ts`) defensively normalizes
-`bigint` ids into JS numbers (and will reset the bridge if an id exceeds
-`Number.MAX_SAFE_INTEGER`) before forwarding actions to the main-thread broker.
+⚠️ **WASM note:** ids are generated in Rust and must fit in a JS `number` without loss.
+The canonical wire contract uses **`u32` ids** (`0..=0xFFFF_FFFF`). The worker-side runtime
+(`web/src/usb/webusb_passthrough_runtime.ts`) accepts `number` or `bigint` ids from WASM, but
+will reject and reset the bridge if an action id is missing or out of the `u32` range (to avoid
+deadlocking the Rust-side action queue on an action we can never complete).
 
 ⚠️ **WASM note:** the wasm-bindgen export `UsbPassthroughBridge.drain_actions()` returns `null`
 when there are no queued actions (to keep the poll path allocation-free). Treat `null`/`undefined`
