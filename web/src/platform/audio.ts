@@ -29,7 +29,7 @@ export type AudioRingBufferLayout = {
    * - u32 readFrameIndex (bytes 0..4)
    * - u32 writeFrameIndex (bytes 4..8)
    * - u32 underrunCount (bytes 8..12)
-   * - u32 reserved (bytes 12..16)
+   * - u32 overrunCount (dropped frames, bytes 12..16)
    * - f32 samples[] (bytes 16..)
    *
    * Indices are monotonically-increasing frame counters (wrapping naturally at
@@ -42,9 +42,21 @@ export type AudioRingBufferLayout = {
   readIndex: Uint32Array;
   writeIndex: Uint32Array;
   underrunCount: Uint32Array;
+  overrunCount: Uint32Array;
   samples: Float32Array;
   channelCount: number;
   capacityFrames: number;
+};
+
+export type AudioOutputState = AudioContextState | "disabled";
+
+export type AudioOutputMetrics = {
+  bufferLevelFrames: number;
+  capacityFrames: number;
+  underrunCount: number;
+  overrunCount: number;
+  sampleRate: number;
+  state: AudioOutputState;
 };
 
 export type EnabledAudioOutput = {
@@ -64,6 +76,8 @@ export type EnabledAudioOutput = {
   writeInterleaved(samples: Float32Array, srcSampleRate: number): number;
   getBufferLevelFrames(): number;
   getUnderrunCount(): number;
+  getOverrunCount(): number;
+  getMetrics(): AudioOutputMetrics;
 };
 
 export type DisabledAudioOutput = {
@@ -75,6 +89,8 @@ export type DisabledAudioOutput = {
   writeInterleaved(_samples: Float32Array, _srcSampleRate: number): number;
   getBufferLevelFrames(): number;
   getUnderrunCount(): number;
+  getOverrunCount(): number;
+  getMetrics(): AudioOutputMetrics;
 };
 
 export type AudioOutput = EnabledAudioOutput | DisabledAudioOutput;
@@ -223,6 +239,7 @@ function createRingBuffer(channelCount: number, ringBufferFrames: number): Audio
   Atomics.store(header, 0, 0);
   Atomics.store(header, 1, 0);
   Atomics.store(header, 2, 0);
+  Atomics.store(header, 3, 0);
 
   return {
     buffer,
@@ -230,6 +247,7 @@ function createRingBuffer(channelCount: number, ringBufferFrames: number): Audio
     readIndex: header.subarray(0, 1),
     writeIndex: header.subarray(1, 2),
     underrunCount: header.subarray(2, 3),
+    overrunCount: header.subarray(3, 4),
     samples,
     channelCount,
     capacityFrames: ringBufferFrames,
@@ -256,6 +274,7 @@ function wrapRingBuffer(buffer: SharedArrayBuffer, channelCount: number, ringBuf
     readIndex: header.subarray(0, 1),
     writeIndex: header.subarray(1, 2),
     underrunCount: header.subarray(2, 3),
+    overrunCount: header.subarray(3, 4),
     samples,
     channelCount,
     capacityFrames: ringBufferFrames,
@@ -278,6 +297,7 @@ function inferRingBufferFrames(buffer: SharedArrayBuffer, channelCount: number):
 const READ_FRAME_INDEX = 0;
 const WRITE_FRAME_INDEX = 1;
 const UNDERRUN_COUNT = 2;
+const OVERRUN_COUNT = 3;
 
 function framesAvailable(readFrameIndex: number, writeFrameIndex: number): number {
   return (writeFrameIndex - readFrameIndex) >>> 0;
@@ -303,6 +323,10 @@ export function getRingBufferLevelFrames(ringBuffer: AudioRingBufferLayout): num
 
 export function getRingBufferUnderrunCount(ringBuffer: AudioRingBufferLayout): number {
   return Atomics.load(ringBuffer.header, UNDERRUN_COUNT) >>> 0;
+}
+
+export function getRingBufferOverrunCount(ringBuffer: AudioRingBufferLayout): number {
+  return Atomics.load(ringBuffer.header, OVERRUN_COUNT) >>> 0;
 }
 
 export function resampleLinearInterleaved(
@@ -358,6 +382,8 @@ export function writeRingBufferInterleaved(
 
   const free = framesFree(read, write, ringBuffer.capacityFrames);
   const framesToWrite = Math.min(requestedFrames, free);
+  const droppedFrames = requestedFrames - framesToWrite;
+  if (droppedFrames > 0) Atomics.add(ringBuffer.header, OVERRUN_COUNT, droppedFrames);
   if (framesToWrite === 0) return 0;
 
   const writePos = write % ringBuffer.capacityFrames;
@@ -409,21 +435,10 @@ function prefillSilenceIfEmpty(ringBuffer: AudioRingBufferLayout, frames: number
 export async function createAudioOutput(options: CreateAudioOutputOptions = {}): Promise<AudioOutput> {
   const AudioContextCtor = getAudioContextCtor();
   if (!AudioContextCtor) {
-    return {
-      enabled: false,
+    return createDisabledAudioOutput({
       message: "Web Audio API is unavailable (AudioContext missing).",
-      async resume() {},
-      async close() {},
-      writeInterleaved() {
-        return 0;
-      },
-      getBufferLevelFrames() {
-        return 0;
-      },
-      getUnderrunCount() {
-        return 0;
-      },
-    };
+      sampleRate: options.sampleRate ?? 48_000,
+    });
   }
 
   const sampleRate = options.sampleRate ?? 48_000;
@@ -439,21 +454,10 @@ export async function createAudioOutput(options: CreateAudioOutputOptions = {}):
       ? wrapRingBuffer(options.ringBuffer, channelCount, ringBufferFrames)
       : createRingBuffer(channelCount, ringBufferFrames);
   } catch (err) {
-    return {
-      enabled: false,
+    return createDisabledAudioOutput({
       message: err instanceof Error ? err.message : "Failed to allocate SharedArrayBuffer for audio.",
-      async resume() {},
-      async close() {},
-      writeInterleaved() {
-        return 0;
-      },
-      getBufferLevelFrames() {
-        return 0;
-      },
-      getUnderrunCount() {
-        return 0;
-      },
-    };
+      sampleRate,
+    });
   }
 
   const context = new AudioContextCtor({
@@ -466,47 +470,25 @@ export async function createAudioOutput(options: CreateAudioOutputOptions = {}):
 
   if (!context.audioWorklet || typeof context.audioWorklet.addModule !== "function") {
     await context.close();
-    return {
-      enabled: false,
+    return createDisabledAudioOutput({
       message: "AudioWorklet is unavailable in this browser (AudioContext.audioWorklet missing).",
       ringBuffer,
-      async resume() {},
-      async close() {},
-      writeInterleaved() {
-        return 0;
-      },
-      getBufferLevelFrames() {
-        return 0;
-      },
-      getUnderrunCount() {
-        return 0;
-      },
-    };
+      sampleRate,
+    });
   }
 
   try {
     await context.audioWorklet.addModule(new URL("./audio-worklet-processor.js", import.meta.url));
   } catch (err) {
     await context.close();
-    return {
-      enabled: false,
+    return createDisabledAudioOutput({
       message:
         err instanceof Error
           ? `Failed to load AudioWorklet module: ${err.message}`
           : "Failed to load AudioWorklet module.",
       ringBuffer,
-      async resume() {},
-      async close() {},
-      writeInterleaved() {
-        return 0;
-      },
-      getBufferLevelFrames() {
-        return 0;
-      },
-      getUnderrunCount() {
-        return 0;
-      },
-    };
+      sampleRate,
+    });
   }
 
   let node: AudioWorkletNode;
@@ -521,25 +503,14 @@ export async function createAudioOutput(options: CreateAudioOutputOptions = {}):
     });
   } catch (err) {
     await context.close();
-    return {
-      enabled: false,
+    return createDisabledAudioOutput({
       message:
         err instanceof Error
           ? `Failed to create AudioWorkletNode: ${err.message}`
           : "Failed to create AudioWorkletNode.",
       ringBuffer,
-      async resume() {},
-      async close() {},
-      writeInterleaved() {
-        return 0;
-      },
-      getBufferLevelFrames() {
-        return 0;
-      },
-      getUnderrunCount() {
-        return 0;
-      },
-    };
+      sampleRate,
+    });
   }
 
   // Prefill a small amount of silence to avoid counting an initial underrun
@@ -572,5 +543,79 @@ export async function createAudioOutput(options: CreateAudioOutputOptions = {}):
     getUnderrunCount() {
       return getRingBufferUnderrunCount(ringBuffer);
     },
+    getOverrunCount() {
+      return getRingBufferOverrunCount(ringBuffer);
+    },
+    getMetrics() {
+      return {
+        bufferLevelFrames: getRingBufferLevelFrames(ringBuffer),
+        capacityFrames: ringBuffer.capacityFrames,
+        underrunCount: getRingBufferUnderrunCount(ringBuffer),
+        overrunCount: getRingBufferOverrunCount(ringBuffer),
+        sampleRate: context.sampleRate,
+        state: context.state,
+      };
+    },
+  };
+}
+
+function createDisabledAudioOutput(options: {
+  message: string;
+  ringBuffer?: AudioRingBufferLayout;
+  sampleRate?: number;
+}): DisabledAudioOutput {
+  const { message, ringBuffer } = options;
+  const sampleRate = options.sampleRate ?? 0;
+  return {
+    enabled: false,
+    message,
+    ringBuffer,
+    async resume() {},
+    async close() {},
+    writeInterleaved() {
+      return 0;
+    },
+    getBufferLevelFrames() {
+      return ringBuffer ? getRingBufferLevelFrames(ringBuffer) : 0;
+    },
+    getUnderrunCount() {
+      return ringBuffer ? getRingBufferUnderrunCount(ringBuffer) : 0;
+    },
+    getOverrunCount() {
+      return ringBuffer ? getRingBufferOverrunCount(ringBuffer) : 0;
+    },
+    getMetrics() {
+      return {
+        bufferLevelFrames: ringBuffer ? getRingBufferLevelFrames(ringBuffer) : 0,
+        capacityFrames: ringBuffer?.capacityFrames ?? 0,
+        underrunCount: ringBuffer ? getRingBufferUnderrunCount(ringBuffer) : 0,
+        overrunCount: ringBuffer ? getRingBufferOverrunCount(ringBuffer) : 0,
+        sampleRate,
+        state: "disabled",
+      };
+    },
+  };
+}
+
+export function startAudioPerfSampling(
+  output: EnabledAudioOutput,
+  perf: { counter(name: string, value: number): void },
+  intervalMs = 250,
+): () => void {
+  const sample = () => {
+    const metrics = output.getMetrics();
+    perf.counter("audio.bufferLevelFrames", metrics.bufferLevelFrames);
+    perf.counter("audio.underruns", metrics.underrunCount);
+    perf.counter("audio.overruns", metrics.overrunCount);
+    perf.counter("audio.sampleRate", metrics.sampleRate);
+  };
+
+  sample();
+  const intervalId = globalThis.setInterval(sample, intervalMs);
+  let stopped = false;
+  return () => {
+    if (stopped) return;
+    stopped = true;
+    globalThis.clearInterval(intervalId);
   };
 }

@@ -5,7 +5,7 @@ import { startFrameScheduler, type FrameSchedulerHandle } from "./main/frameSche
 import { GpuRuntime } from "./gpu/gpuRuntime";
 import { fnv1a32Hex } from "./utils/fnv1a";
 import { perf } from "./perf/perf";
-import { createAdaptiveRingBufferTarget, createAudioOutput } from "./platform/audio";
+import { createAdaptiveRingBufferTarget, createAudioOutput, startAudioPerfSampling } from "./platform/audio";
 import { MicCapture } from "./audio/mic_capture";
 import { detectPlatformFeatures, explainMissingRequirements, type PlatformFeatureReport } from "./platform/features";
 import { importFileToOpfs, openFileHandle, removeOpfsEntry } from "./platform/opfs";
@@ -1267,12 +1267,17 @@ function renderAudioPanel(): HTMLElement {
   let toneGeneration = 0;
   let wasmBridge: unknown | null = null;
   let wasmTone: { free(): void } | null = null;
+  let stopPerfSampling: (() => void) | null = null;
 
   function stopTone() {
     toneGeneration += 1;
     if (toneTimer !== null) {
       window.clearInterval(toneTimer);
       toneTimer = null;
+    }
+    if (stopPerfSampling) {
+      stopPerfSampling();
+      stopPerfSampling = null;
     }
     if (wasmTone) {
       wasmTone.free();
@@ -1350,15 +1355,17 @@ function renderAudioPanel(): HTMLElement {
       const need = Math.max(0, target - level);
       if (need > 0) writeTone(need);
 
+      const metrics = output.getMetrics();
       status.textContent =
-        `AudioContext: ${output.context.state}\n` +
-        `sampleRate: ${sr}\n` +
-        `capacityFrames: ${output.ringBuffer.capacityFrames}\n` +
+        `AudioContext: ${metrics.state}\n` +
+        `sampleRate: ${metrics.sampleRate}\n` +
+        `capacityFrames: ${metrics.capacityFrames}\n` +
         `targetFrames: ${target}\n` +
-        `bufferLevelFrames: ${level}\n` +
+        `bufferLevelFrames: ${metrics.bufferLevelFrames}\n` +
         `targetMs: ${((target / sr) * 1000).toFixed(1)}\n` +
-        `bufferLevelMs: ${((level / sr) * 1000).toFixed(1)}\n` +
-        `underruns: ${underruns}`;
+        `bufferLevelMs: ${((metrics.bufferLevelFrames / sr) * 1000).toFixed(1)}\n` +
+        `underruns: ${metrics.underrunCount}\n` +
+        `overruns: ${metrics.overrunCount}`;
     }, 20);
   }
 
@@ -1378,7 +1385,12 @@ function renderAudioPanel(): HTMLElement {
       try {
         await startTone(output);
         await output.resume();
+        if (window.aero?.perf) {
+          stopPerfSampling?.();
+          stopPerfSampling = startAudioPerfSampling(output, perf);
+        }
       } catch (err) {
+        stopTone();
         status.textContent = err instanceof Error ? err.message : String(err);
         return;
       }
