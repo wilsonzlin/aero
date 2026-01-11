@@ -74,8 +74,6 @@ Aero GPU is a custom PCI device (not virtio). It uses project-specific virtual P
 > See also: `docs/abi/aerogpu-pci-identity.md` (context on why two IDs exist, and which emulator device models implement each ABI).
 >
 > Legacy IDs: some bring-up builds may use `VEN_1AED` for the AeroGPU device. This is **not** the canonical contract ID; the stable binding target is `PCI\VEN_A3A0&DEV_0001`.
->
-> Deprecated IDs: older prototype stacks in this repo used a different PCI vendor ID (`VEN_1AE0`). That ID is stale and must not be used for the supported Win7 AeroGPU stack. The old `guest/windows/` prototype driver tree that targeted it was also not WOW64-complete on Win7 x64 and has been removed (only a pointer README remains).
 
 ## Device table (normative)
 
