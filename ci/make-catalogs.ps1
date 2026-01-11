@@ -570,7 +570,12 @@ foreach ($driverBuildDir in $driverBuildDirs) {
           throw "Driver '$driverNameForLog' requests WOW64 file '$fileName' via '$($manifest.ManifestPath)', but it was not found in x86 build output directory: $src"
         }
 
-        Copy-Item -LiteralPath $src -Destination (Join-Path -Path $packageDir -ChildPath $fileName) -Force
+        $dest = Join-Path -Path $packageDir -ChildPath $fileName
+        if (Test-Path -LiteralPath $dest -PathType Leaf) {
+          throw "Driver '$driverNameForLog' requests WOW64 file '$fileName' via '$($manifest.ManifestPath)', but '$dest' already exists in the x64 staged package. WOW64 payloads are copied into the package root; ensure the 64-bit build output uses a different file name (example: use a '_x64' suffix) so the 32-bit DLL does not overwrite the 64-bit one."
+        }
+
+        Copy-Item -LiteralPath $src -Destination $dest -Force
       }
     }
 

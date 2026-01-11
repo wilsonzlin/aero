@@ -44,6 +44,9 @@ the x64 staging directory at catalog-generation time.
 
 - Entries must have a `.dll` extension.
 - Requires x86 build outputs to be present even if you are only generating/staging x64 packages.
+- WOW64 DLL names must **not** collide with 64-bit build output file names, since WOW64 payloads
+  are copied into the x64 package root. Use distinct names (example: `mydriver_umd_x64.dll` for
+  the 64-bit DLL, `mydriver_umd.dll` for the 32-bit WOW64 DLL).
 
 Example:
 
