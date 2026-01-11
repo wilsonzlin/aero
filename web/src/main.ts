@@ -2935,6 +2935,7 @@ function renderWebUsbPassthroughDemoWorkerPanel(): HTMLElement {
             configTotalLenHint = totalLen;
             runConfigFullButton.hidden = false;
             runConfigFullButton.disabled = !workerReady || !selected;
+            runConfigFullButton.textContent = `Run GET_DESCRIPTOR(Configuration full, len=${totalLen})`;
           }
           resultLine.textContent = `Result: success (config totalLen=${totalLen} interfaces=${numInterfaces}${truncated ? ` truncated=${bytes.byteLength}` : ""})`;
         } else {
