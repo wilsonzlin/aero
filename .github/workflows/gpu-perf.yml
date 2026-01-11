@@ -55,7 +55,7 @@ jobs:
           lockfile: ${{ steps.node-workspace-head.outputs.lockfile }}
 
       - name: Setup Playwright (cached, baseline)
-        uses: ./head/.github/actions/setup-playwright
+        uses: ./base/.github/actions/setup-playwright
         with:
           browsers: chromium
           working-directory: ${{ steps.node-workspace-base.outputs.dir }}
