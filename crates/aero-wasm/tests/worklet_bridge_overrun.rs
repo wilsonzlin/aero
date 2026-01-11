@@ -95,3 +95,32 @@ fn worklet_bridge_bulk_copy_handles_wraparound() {
         assert_eq!(ring_samples.get_index(i as u32), *value);
     }
 }
+
+#[wasm_bindgen_test]
+fn worklet_bridge_rejects_layout_exceeding_4gib() {
+    // `capacity_frames * channel_count * sizeof(f32) + HEADER_BYTES` must fit in a u32 length
+    // for `SharedArrayBuffer` + typed array constructors.
+    //
+    // This input would require exactly 4GiB of sample bytes (1_073_741_820 * 4) plus the
+    // 16-byte header, which cannot be represented in a u32 byte length.
+    let err = match WorkletBridge::new(1_073_741_820, 1) {
+        Ok(_) => panic!("expected WorkletBridge::new to fail for >4GiB layout"),
+        Err(err) => err,
+    };
+    let msg = err.as_string().unwrap_or_default();
+    assert!(
+        msg.contains("exceeds 4GiB"),
+        "expected overflow error, got: {msg}"
+    );
+
+    // Also ensure we reject u32 multiplication overflows when computing sample capacity.
+    let err2 = match WorkletBridge::new(u32::MAX, 2) {
+        Ok(_) => panic!("expected WorkletBridge::new to fail for overflowing sample count"),
+        Err(err) => err,
+    };
+    let msg2 = err2.as_string().unwrap_or_default();
+    assert!(
+        msg2.contains("exceeds 4GiB"),
+        "expected overflow error, got: {msg2}"
+    );
+}
