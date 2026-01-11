@@ -23,6 +23,7 @@ static __forceinline VOID VirtIoSndWriteDeviceStatus(_In_ const VIRTIOSND_TRANSP
 static VOID VirtIoSndResetDeviceBestEffort(_Inout_ PVIRTIOSND_DEVICE_EXTENSION Dx)
 {
     ULONG waitedUs;
+    LARGE_INTEGER delay;
 
     if (Dx->Transport.CommonCfg == NULL) {
         return;
@@ -38,7 +39,12 @@ static VOID VirtIoSndResetDeviceBestEffort(_Inout_ PVIRTIOSND_DEVICE_EXTENSION D
             return;
         }
 
-        KeStallExecutionProcessor(VIRTIOSND_RESET_POLL_DELAY_US);
+        if (KeGetCurrentIrql() == PASSIVE_LEVEL) {
+            delay.QuadPart = -(LONGLONG)VIRTIOSND_RESET_POLL_DELAY_US * 10; /* microseconds -> 100ns */
+            KeDelayExecutionThread(KernelMode, FALSE, &delay);
+        } else {
+            KeStallExecutionProcessor(VIRTIOSND_RESET_POLL_DELAY_US);
+        }
     }
 }
 

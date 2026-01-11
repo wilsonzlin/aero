@@ -271,6 +271,7 @@ static NTSTATUS
 VirtIoSndTransportResetDevice(_Inout_ PVIRTIOSND_TRANSPORT Transport)
 {
     ULONG waitedUs;
+    LARGE_INTEGER delay;
 
     if (Transport == NULL || Transport->CommonCfg == NULL) {
         return STATUS_INVALID_PARAMETER;
@@ -286,7 +287,12 @@ VirtIoSndTransportResetDevice(_Inout_ PVIRTIOSND_TRANSPORT Transport)
             return STATUS_SUCCESS;
         }
 
-        KeStallExecutionProcessor(VIRTIO_PCI_RESET_POLL_DELAY_US);
+        if (KeGetCurrentIrql() == PASSIVE_LEVEL) {
+            delay.QuadPart = -(LONGLONG)VIRTIO_PCI_RESET_POLL_DELAY_US * 10; /* microseconds -> 100ns */
+            KeDelayExecutionThread(KernelMode, FALSE, &delay);
+        } else {
+            KeStallExecutionProcessor(VIRTIO_PCI_RESET_POLL_DELAY_US);
+        }
     }
 
     return STATUS_IO_TIMEOUT;
