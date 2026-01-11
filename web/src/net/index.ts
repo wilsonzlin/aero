@@ -10,6 +10,9 @@ export {
   WebSocketL2TunnelClient,
   assertL2TunnelDataChannelSemantics,
   createL2TunnelDataChannel,
+  type L2TunnelClientOptions,
+  type L2TunnelEvent,
+  type L2TunnelTokenTransport,
 } from "./l2Tunnel";
 export { connectL2Relay, connectL2RelaySignaling } from "./l2RelaySignalingClient";
 export { connectL2Tunnel } from "./connectL2Tunnel";
