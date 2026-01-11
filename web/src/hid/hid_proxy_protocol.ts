@@ -1,4 +1,5 @@
 import type { NormalizedHidCollectionInfo } from "./webhid_normalize";
+import type { GuestUsbPort } from "../platform/hid_passthrough_protocol";
 
 export type HidReportType = "output" | "feature";
 
@@ -8,6 +9,13 @@ export type HidAttachMessage = {
   vendorId: number;
   productId: number;
   productName?: string;
+  /**
+   * Optional hint for which guest UHCI root port this device should be attached to.
+   *
+   * This is currently only used for forward-compatible guest USB wiring; the
+   * passthrough bridge itself is keyed by `deviceId`.
+   */
+  guestPort?: GuestUsbPort;
   collections: NormalizedHidCollectionInfo[];
   /**
    * True when the device declares any output reports. This is used by the
@@ -70,6 +78,10 @@ function isFiniteNumber(value: unknown): value is number {
 
 function isOptionalString(value: unknown): value is string | undefined {
   return value === undefined || typeof value === "string";
+}
+
+function isOptionalGuestUsbPort(value: unknown): value is GuestUsbPort | undefined {
+  return value === undefined || value === 0 || value === 1;
 }
 
 function isBoolean(value: unknown): value is boolean {
@@ -140,6 +152,7 @@ export function isHidAttachMessage(value: unknown): value is HidAttachMessage {
     isFiniteNumber(value.vendorId) &&
     isFiniteNumber(value.productId) &&
     isOptionalString(value.productName) &&
+    isOptionalGuestUsbPort(value.guestPort) &&
     Array.isArray(value.collections) &&
     value.collections.every(isNormalizedHidCollectionInfo) &&
     isBoolean(value.hasInterruptOut)

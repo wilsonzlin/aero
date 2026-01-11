@@ -73,6 +73,7 @@ describe("hid/hid_proxy_protocol", () => {
       vendorId: 0x1234,
       productId: 0xabcd,
       productName: "Demo",
+      guestPort: 0,
       collections: sampleCollections(),
       hasInterruptOut: false,
     };
@@ -146,4 +147,3 @@ describe("hid/hid_proxy_protocol", () => {
     expect(isHidProxyMessage(structuredClone(send) as unknown)).toBe(true);
   });
 });
-

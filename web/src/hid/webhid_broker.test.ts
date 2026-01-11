@@ -94,6 +94,7 @@ describe("hid/WebHidBroker", () => {
 
     const attach = port.posted.find((p) => (p.msg as { type?: unknown }).type === "hid.attach")?.msg as HidAttachMessage | undefined;
     expect(attach).toBeTruthy();
+    expect(attach!.guestPort).toBe(0);
 
     device.dispatchInputReport(5, Uint8Array.of(1, 2, 3));
 
