@@ -253,6 +253,18 @@ def _find_uncovered_hwids(patterns: Sequence[str], hwids: Sequence[str]) -> List
     return uncovered
 
 
+def _find_unmatched_patterns(patterns: Sequence[str], hwids: Sequence[str]) -> List[str]:
+    """Return spec patterns that match none of the configured HWIDs."""
+    unmatched: List[str] = []
+    for pattern in patterns:
+        compiled = _compile_patterns([pattern])
+        assert len(compiled) == 1
+        regex = compiled[0]
+        if not any(regex.search(hwid) for hwid in hwids):
+            unmatched.append(pattern)
+    return unmatched
+
+
 def _validate_hwid_contract(
     *,
     spec_path: Path,
@@ -311,6 +323,29 @@ def _validate_hwid_contract(
             "Remediation:\n"
             f"- If the emulator/device contract changed, expand {driver_name}.expected_hardware_ids in the spec to cover the new IDs.\n"
             f"- If devices.cmd is wrong/out-of-date, update {devices_var} to match the supported IDs.\n"
+        )
+
+    # Enforce that every explicit HWID-family regex in the spec is represented by
+    # at least one HWID in devices.cmd.
+    #
+    # This catches regressions where the packager spec is updated to require
+    # multiple HWID families (e.g. AeroGPU's canonical A3A0 + legacy 1AED), but
+    # devices.cmd only lists one of them.
+    patterns_requiring_match = [p for p in patterns if re.search(r"(?i)(VEN_|VID_)", p)]
+    unmatched_patterns = _find_unmatched_patterns(patterns_requiring_match, hwids)
+    if unmatched_patterns:
+        raise ValidationError(
+            f"Mismatch: {spec_path.name} expects additional {driver_kind} HWID pattern(s) not present in devices.cmd.\n"
+            "\n"
+            f"Spec patterns ({driver_name}.expected_hardware_ids):\n{_format_bullets(patterns)}\n"
+            "\n"
+            f"Unmatched pattern(s):\n{_format_bullets(unmatched_patterns)}\n"
+            "\n"
+            f"devices.cmd {devices_var}:\n{_format_bullets(hwids)}\n"
+            "\n"
+            "Remediation:\n"
+            f"- If the emulator/device contract supports multiple HWID families, include each supported HWID in {devices_var}.\n"
+            f"- Otherwise, remove/adjust the extra pattern(s) in {spec_path.name}.\n"
         )
 
     return match

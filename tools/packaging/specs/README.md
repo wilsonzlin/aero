@@ -28,6 +28,10 @@ This spec is the default used by `ci/package-guest-tools.ps1` and aims to match 
 - Requires: `aerogpu` + `virtio-blk` + `virtio-net` + `virtio-input`
 - Optional: `virtio-snd`
 
+The `aerogpu.expected_hardware_ids` list intentionally includes **both** AeroGPU HWID families
+(`PCI\\VEN_A3A0&DEV_0001` and `PCI\\VEN_1AED&DEV_0001`) so packaging fails if either HWID is
+accidentally dropped from the Win7 AeroGPU INFs.
+
 ## Wrapper script defaults (`make-guest-tools-from-virtio-win.ps1`)
 
 `drivers/scripts/make-guest-tools-from-virtio-win.ps1` supports an explicit packaging profile:
