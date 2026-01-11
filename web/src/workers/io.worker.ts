@@ -516,7 +516,12 @@ function setL2TunnelConnectionState(next: L2TunnelForwarderConnectionState, deta
   // captures both the transition and the latest counters.
   l2NextStatsLogMs = 0;
   const suffix = detail ? `: ${detail}` : "";
-  const logLevel = next === "error" ? "error" : "info";
+  const logLevel =
+    next === "error"
+      ? "error"
+      : next === "closed" && l2TunnelProxyUrl !== null
+        ? "warn"
+        : "info";
   pushEvent({ kind: "log", level: logLevel, message: `l2: ${next}${suffix}` });
 }
 
