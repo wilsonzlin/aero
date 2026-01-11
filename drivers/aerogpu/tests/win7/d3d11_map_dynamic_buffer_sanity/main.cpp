@@ -361,6 +361,81 @@ static int RunD3D11MapDynamicBufferSanity(int argc, char** argv) {
 
   context->Unmap(staging_b.get(), 0);
 
+  // Also exercise the dynamic *constant buffer* map-discard path. On Win7, this is often routed to
+  // distinct DDI entrypoints vs dynamic IA buffers.
+  D3D11_BUFFER_DESC cb_desc = dyn_desc;
+  cb_desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+  // D3D11 constant buffers must be multiples of 16 bytes.
+  cb_desc.ByteWidth = (kByteWidth + 15u) & ~15u;
+
+  ComPtr<ID3D11Buffer> dynamic_cb;
+  hr = device->CreateBuffer(&cb_desc, NULL, dynamic_cb.put());
+  if (FAILED(hr)) {
+    return aerogpu_test::FailHresult(kTestName, "CreateBuffer(dynamic constant)", hr);
+  }
+
+  ID3D11Buffer* cbs[] = {dynamic_cb.get()};
+  context->VSSetConstantBuffers(0, 1, cbs);
+
+  ZeroMemory(&map, sizeof(map));
+  hr = context->Map(dynamic_cb.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &map);
+  if (FAILED(hr)) {
+    return FailD3D11WithRemovedReason(kTestName,
+                                     "Map(dynamic constant, WRITE_DISCARD)",
+                                     hr,
+                                     device.get());
+  }
+  if (!map.pData) {
+    context->Unmap(dynamic_cb.get(), 0);
+    return aerogpu_test::Fail(kTestName, "Map(dynamic constant, WRITE_DISCARD) returned NULL pData");
+  }
+
+  uint8_t* cb_dst = (uint8_t*)map.pData;
+  for (size_t i = 0; i < cb_desc.ByteWidth; ++i) {
+    cb_dst[i] = (uint8_t)(PatternByte(i) ^ 0x3Du);
+  }
+  context->Unmap(dynamic_cb.get(), 0);
+
+  ComPtr<ID3D11Buffer> staging_cb;
+  st_desc.ByteWidth = cb_desc.ByteWidth;
+  hr = device->CreateBuffer(&st_desc, NULL, staging_cb.put());
+  if (FAILED(hr)) {
+    return aerogpu_test::FailHresult(kTestName, "CreateBuffer(staging constant)", hr);
+  }
+
+  context->CopyResource(staging_cb.get(), dynamic_cb.get());
+  context->Flush();
+
+  ZeroMemory(&map, sizeof(map));
+  hr = context->Map(staging_cb.get(), 0, D3D11_MAP_READ, 0, &map);
+  if (FAILED(hr)) {
+    return FailD3D11WithRemovedReason(kTestName, "Map(staging constant, READ)", hr, device.get());
+  }
+  if (!map.pData) {
+    context->Unmap(staging_cb.get(), 0);
+    return aerogpu_test::Fail(kTestName, "Map(staging constant, READ) returned NULL pData");
+  }
+
+  if (dump) {
+    DumpBytesToFileIfRequested(
+        kTestName, L"d3d11_map_dynamic_buffer_sanity_constant.bin", map.pData, cb_desc.ByteWidth);
+  }
+
+  got = (const uint8_t*)map.pData;
+  for (size_t i = 0; i < cb_desc.ByteWidth; ++i) {
+    const uint8_t expected = (uint8_t)(PatternByte(i) ^ 0x3Du);
+    if (got[i] != expected) {
+      context->Unmap(staging_cb.get(), 0);
+      return aerogpu_test::Fail(kTestName,
+                                "staging constant mismatch at offset %lu: got 0x%02X expected 0x%02X",
+                                (unsigned long)i,
+                                (unsigned)got[i],
+                                (unsigned)expected);
+    }
+  }
+
+  context->Unmap(staging_cb.get(), 0);
+
   aerogpu_test::PrintfStdout("PASS: %s", kTestName);
   return 0;
 }
