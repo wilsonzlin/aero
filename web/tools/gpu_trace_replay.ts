@@ -10,6 +10,9 @@
 //   await r.step(); // replay frame 0
 //
 // See docs/abi/gpu-trace-format.md.
+//
+// AeroGPU command stream source of truth:
+//   drivers/aerogpu/protocol/aerogpu_cmd.h
 
 (function () {
   const TRACE_MAGIC = asciiBytes("AEROGPUT");
@@ -38,6 +41,23 @@
   const OP_CLEAR = 0x0008;
   const OP_DRAW = 0x0009;
   const OP_PRESENT = 0x000a;
+
+  // AeroGPU command stream ABI (canonical, A3A0).
+  // Source of truth: drivers/aerogpu/protocol/aerogpu_cmd.h
+  //
+  // Command streams start with magic "ACMD" (little-endian) and contain a
+  // sequence of size-prefixed packets (unknown opcodes must be skipped).
+  const AEROGPU_CMD_STREAM_MAGIC = asciiBytes("ACMD");
+  const AEROGPU_CMD_STREAM_MAGIC_U32 = 0x444d4341; // "ACMD" LE
+
+  const AEROGPU_CMD_SET_VIEWPORT = 0x0401;
+  const AEROGPU_CMD_CLEAR = 0x0600;
+  const AEROGPU_CMD_PRESENT = 0x0700;
+  const AEROGPU_CMD_PRESENT_EX = 0x0701;
+
+  const AEROGPU_CLEAR_COLOR = 1 << 0;
+  const AEROGPU_CLEAR_DEPTH = 1 << 1;
+  const AEROGPU_CLEAR_STENCIL = 1 << 2;
 
   function asciiBytes(s) {
     const out = new Uint8Array(s.length);
@@ -696,7 +716,130 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
 
     let currentProgram = null;
 
+    function isAerogpuCmdStreamPacket(packetBytes) {
+      return (
+        packetBytes.byteLength >= 4 &&
+        packetBytes[0] === AEROGPU_CMD_STREAM_MAGIC[0] &&
+        packetBytes[1] === AEROGPU_CMD_STREAM_MAGIC[1] &&
+        packetBytes[2] === AEROGPU_CMD_STREAM_MAGIC[2] &&
+        packetBytes[3] === AEROGPU_CMD_STREAM_MAGIC[3]
+      );
+    }
+
+    function executeAerogpuCmdStream(packetBytes) {
+      // `aerogpu_cmd_stream_header` (24 bytes) followed by `aerogpu_cmd_hdr` packets.
+      // Forward-compat rules: validate `size_bytes`, skip unknown opcodes.
+      if (packetBytes.byteLength < 24) fail("ACMD stream header out of bounds");
+      const pv = new DataView(packetBytes.buffer, packetBytes.byteOffset, packetBytes.byteLength);
+
+      const magic = readU32(pv, 0);
+      if (magic !== AEROGPU_CMD_STREAM_MAGIC_U32) fail("bad ACMD magic");
+
+      const sizeBytes = readU32(pv, 8);
+      if (sizeBytes < 24) fail("ACMD size_bytes too small: " + sizeBytes);
+      if (sizeBytes > packetBytes.byteLength) fail("ACMD size_bytes out of bounds: " + sizeBytes);
+
+      // Ignore flags and reserved fields for forward compatibility.
+      const streamEnd = sizeBytes;
+      let off = 24;
+
+      function clampI32(v) {
+        if (!Number.isFinite(v)) return 0;
+        let n = Math.round(v);
+        if (n < -2147483648) n = -2147483648;
+        if (n > 2147483647) n = 2147483647;
+        return n | 0;
+      }
+
+      function clampU31(v) {
+        if (!Number.isFinite(v)) return 0;
+        let n = Math.round(v);
+        if (n < 0) n = 0;
+        if (n > 2147483647) n = 2147483647;
+        return n | 0;
+      }
+
+      while (off < streamEnd) {
+        if (off + 8 > streamEnd) fail("ACMD command header out of bounds");
+        const opcode = readU32(pv, off + 0);
+        const cmdSize = readU32(pv, off + 4);
+
+        if (cmdSize < 8) fail("ACMD cmd size_bytes too small: " + cmdSize);
+        if ((cmdSize & 3) !== 0) fail("ACMD cmd size_bytes not 4-byte aligned: " + cmdSize);
+        if (off + cmdSize > streamEnd) fail("ACMD cmd overruns stream");
+
+        switch (opcode) {
+          case AEROGPU_CMD_SET_VIEWPORT: {
+            // struct aerogpu_cmd_set_viewport (32 bytes)
+            if (cmdSize < 32) fail("ACMD SET_VIEWPORT size_bytes too small: " + cmdSize);
+            const x = readF32(pv, off + 8);
+            const y = readF32(pv, off + 12);
+            const wf = readF32(pv, off + 16);
+            const hf = readF32(pv, off + 20);
+
+            // Treat a 0/0 viewport as "use canvas size" (like the minimal ABI).
+            let w = wf;
+            let h = hf;
+            if (w === 0 && h === 0) {
+              w = canvas.width;
+              h = canvas.height;
+            }
+
+            gl.viewport(clampI32(x), clampI32(y), clampU31(w), clampU31(h));
+            break;
+          }
+          case AEROGPU_CMD_CLEAR: {
+            // struct aerogpu_cmd_clear (36 bytes)
+            if (cmdSize < 36) fail("ACMD CLEAR size_bytes too small: " + cmdSize);
+            const flags = readU32(pv, off + 8);
+            let mask = 0;
+            if (flags & AEROGPU_CLEAR_COLOR) {
+              const r = readF32(pv, off + 12);
+              const g = readF32(pv, off + 16);
+              const b = readF32(pv, off + 20);
+              const a = readF32(pv, off + 24);
+              gl.clearColor(r, g, b, a);
+              mask |= gl.COLOR_BUFFER_BIT;
+            }
+            if (flags & AEROGPU_CLEAR_DEPTH) {
+              const depth = readF32(pv, off + 28);
+              gl.clearDepth(depth);
+              mask |= gl.DEPTH_BUFFER_BIT;
+            }
+            if (flags & AEROGPU_CLEAR_STENCIL) {
+              const stencil = readU32(pv, off + 32);
+              gl.clearStencil(stencil | 0);
+              mask |= gl.STENCIL_BUFFER_BIT;
+            }
+            if (mask !== 0) gl.clear(mask);
+            break;
+          }
+          case AEROGPU_CMD_PRESENT: {
+            // struct aerogpu_cmd_present (16 bytes)
+            if (cmdSize < 16) fail("ACMD PRESENT size_bytes too small: " + cmdSize);
+            gl.finish();
+            break;
+          }
+          case AEROGPU_CMD_PRESENT_EX: {
+            // struct aerogpu_cmd_present_ex (24 bytes)
+            if (cmdSize < 24) fail("ACMD PRESENT_EX size_bytes too small: " + cmdSize);
+            gl.finish();
+            break;
+          }
+          default:
+            // Unknown opcode: skip (forward-compat).
+            break;
+        }
+
+        off += cmdSize;
+      }
+    }
+
     async function executePacket(packetBytes, trace) {
+      if (isAerogpuCmdStreamPacket(packetBytes)) {
+        executeAerogpuCmdStream(packetBytes);
+        return;
+      }
       const pv = new DataView(packetBytes.buffer, packetBytes.byteOffset, packetBytes.byteLength);
       const opcode = readU32(pv, 0);
       const totalDwords = readU32(pv, 4);
@@ -1047,11 +1190,20 @@ fn fs_main(@location(0) color: vec4<f32>) -> @location(0) vec4<f32> {
 
   async function loadTrace(bytesLike, canvas, opts) {
     const trace = parseTrace(bytesLike);
-    if (trace.commandAbiVersion !== 1) {
+    // `command_abi_version` is primarily for tooling; the actual packet format is
+    // detected per-packet.
+    //
+    // Currently supported:
+    // - 1: Minimal reference command ABI v1 (Appendix A).
+    // - (major=1, minor=*): AeroGPU command stream ABI (A3A0), i.e. `0x0001_xxxx`.
+    const abi = trace.commandAbiVersion >>> 0;
+    const isMinimalAbiV1 = abi === 1;
+    const isAerogpuAbiV1 = (abi >>> 16) === 1;
+    if (!isMinimalAbiV1 && !isAerogpuAbiV1) {
       fail(
         "unsupported command_abi_version=" +
-          trace.commandAbiVersion +
-          " (this replayer only supports the minimal command ABI v1)",
+          abi +
+          " (supported: 1 (minimal ABI v1) or 0x0001_xxxx (AeroGPU ABI v1))",
       );
     }
     const backendName = (opts && opts.backend) || "webgl2";
