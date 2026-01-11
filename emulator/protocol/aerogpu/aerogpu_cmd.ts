@@ -3,7 +3,7 @@
 // Source of truth: `drivers/aerogpu/protocol/aerogpu_cmd.h`.
 //
 // Keep this file in lockstep with the C header above; ABI is validated by:
-// - `cargo test -p aero-protocol`
+// - `cargo test --locked -p aero-protocol`
 // - `npm run test:protocol`
 
 import { AEROGPU_ABI_VERSION_U32, parseAndValidateAbiVersionU32 } from "./aerogpu_pci.ts";
