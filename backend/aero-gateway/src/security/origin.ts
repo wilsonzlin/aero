@@ -9,6 +9,9 @@ export function normalizeOriginString(origin: string): string | null {
   // Disallow percent-encoding and IPv6 zone identifiers; browsers don't emit
   // these in Origin, and different URL libraries disagree on how to handle them.
   if (trimmed.includes('%')) return null;
+  // Reject comma-delimited values. Browsers send a single Origin serialization,
+  // but some HTTP stacks may join repeated headers with commas.
+  if (trimmed.includes(',')) return null;
   // Require an explicit scheme://host serialization; WHATWG URL parsers accept
   // weird variants like `https:example.com` and will normalize them to an
   // authority URL, but browsers don't emit those in Origin headers.

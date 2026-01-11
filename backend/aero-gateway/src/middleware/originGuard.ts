@@ -19,7 +19,8 @@ export async function originGuard(
   reply: FastifyReply,
   opts: { allowedOrigins: readonly string[] },
 ): Promise<void> {
-  const origin = request.headers.origin;
+  const originHeader = request.headers.origin;
+  const origin = Array.isArray(originHeader) ? originHeader[0] : originHeader;
   if (!origin) return;
 
   const normalizedOrigin = normalizeOriginString(origin);

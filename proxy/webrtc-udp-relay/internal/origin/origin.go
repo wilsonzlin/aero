@@ -27,6 +27,9 @@ func NormalizeHeader(originHeader string) (normalizedOrigin string, host string,
 	if strings.Contains(trimmed, "%") {
 		return "", "", false
 	}
+	if strings.Contains(trimmed, ",") {
+		return "", "", false
+	}
 	lower := strings.ToLower(trimmed)
 	schemePrefix := ""
 	switch {

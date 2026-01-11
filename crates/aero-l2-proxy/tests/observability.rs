@@ -3,6 +3,7 @@ use std::{net::SocketAddr, path::PathBuf, time::Duration};
 use aero_l2_proxy::{
     start_server, AllowedOrigins, EgressPolicy, ProxyConfig, SecurityConfig, TUNNEL_SUBPROTOCOL,
 };
+use aero_net_stack::StackConfig;
 use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::tungstenite::{
     client::IntoClientRequest,
@@ -17,6 +18,7 @@ struct TestServer {
 
 impl TestServer {
     async fn start(capture_dir: Option<PathBuf>, ping_interval: Option<Duration>) -> Self {
+        let stack_defaults = StackConfig::default();
         let cfg = ProxyConfig {
             bind_addr: SocketAddr::from(([127, 0, 0, 1], 0)),
             l2_max_frame_payload: aero_l2_protocol::L2_TUNNEL_DEFAULT_MAX_FRAME_PAYLOAD,
@@ -28,10 +30,10 @@ impl TestServer {
             ws_send_buffer: 8,
             max_udp_flows_per_tunnel: 256,
             udp_flow_idle_timeout: Some(Duration::from_secs(60)),
-            stack_max_tcp_connections: 1024,
-            stack_max_pending_dns: 1024,
-            stack_max_dns_cache_entries: 10_000,
-            stack_max_buffered_tcp_bytes_per_conn: 256 * 1024,
+            stack_max_tcp_connections: stack_defaults.max_tcp_connections,
+            stack_max_pending_dns: stack_defaults.max_pending_dns,
+            stack_max_dns_cache_entries: stack_defaults.max_dns_cache_entries,
+            stack_max_buffered_tcp_bytes_per_conn: stack_defaults.max_buffered_tcp_bytes_per_conn,
             dns_default_ttl_secs: 60,
             dns_max_ttl_secs: 300,
             capture_dir,
@@ -101,6 +103,7 @@ async fn metrics_increment_after_frames() {
 
 #[tokio::test]
 async fn upgrade_rejection_metrics_increment_on_missing_origin() {
+    let stack_defaults = StackConfig::default();
     let cfg = ProxyConfig {
         bind_addr: SocketAddr::from(([127, 0, 0, 1], 0)),
         l2_max_frame_payload: aero_l2_protocol::L2_TUNNEL_DEFAULT_MAX_FRAME_PAYLOAD,
@@ -110,6 +113,12 @@ async fn upgrade_rejection_metrics_increment_on_missing_origin() {
         tcp_connect_timeout: Duration::from_millis(200),
         tcp_send_buffer: 8,
         ws_send_buffer: 8,
+        max_udp_flows_per_tunnel: 256,
+        udp_flow_idle_timeout: Some(Duration::from_secs(60)),
+        stack_max_tcp_connections: stack_defaults.max_tcp_connections,
+        stack_max_pending_dns: stack_defaults.max_pending_dns,
+        stack_max_dns_cache_entries: stack_defaults.max_dns_cache_entries,
+        stack_max_buffered_tcp_bytes_per_conn: stack_defaults.max_buffered_tcp_bytes_per_conn,
         dns_default_ttl_secs: 60,
         dns_max_ttl_secs: 300,
         capture_dir: None,

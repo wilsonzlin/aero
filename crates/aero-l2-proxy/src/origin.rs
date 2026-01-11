@@ -18,6 +18,11 @@ pub(crate) fn normalize_origin(input: &str) -> Option<String> {
     if trimmed.contains('%') {
         return None;
     }
+    // Reject comma-delimited values. Browsers send a single Origin serialization,
+    // but some HTTP stacks may join repeated headers with commas.
+    if trimmed.contains(',') {
+        return None;
+    }
     // Require an explicit scheme://host serialization; `url` will happily
     // normalize `https:example.com` to `https://example.com/`, but browsers won't
     // emit those in Origin headers.

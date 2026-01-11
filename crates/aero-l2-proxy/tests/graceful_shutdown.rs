@@ -1,6 +1,7 @@
 use std::{net::SocketAddr, time::Duration};
 
 use aero_l2_proxy::{start_server, EgressPolicy, ProxyConfig, SecurityConfig, TUNNEL_SUBPROTOCOL};
+use aero_net_stack::StackConfig;
 use futures_util::StreamExt;
 use tokio_tungstenite::tungstenite::{
     client::IntoClientRequest,
@@ -9,6 +10,7 @@ use tokio_tungstenite::tungstenite::{
 };
 
 fn test_config(bind_addr: SocketAddr, shutdown_grace: Duration) -> ProxyConfig {
+    let stack_defaults = StackConfig::default();
     ProxyConfig {
         bind_addr,
         l2_max_frame_payload: aero_l2_protocol::L2_TUNNEL_DEFAULT_MAX_FRAME_PAYLOAD,
@@ -18,6 +20,12 @@ fn test_config(bind_addr: SocketAddr, shutdown_grace: Duration) -> ProxyConfig {
         tcp_connect_timeout: Duration::from_millis(200),
         tcp_send_buffer: 8,
         ws_send_buffer: 8,
+        max_udp_flows_per_tunnel: 256,
+        udp_flow_idle_timeout: Some(Duration::from_millis(60_000)),
+        stack_max_tcp_connections: stack_defaults.max_tcp_connections,
+        stack_max_pending_dns: stack_defaults.max_pending_dns,
+        stack_max_dns_cache_entries: stack_defaults.max_dns_cache_entries,
+        stack_max_buffered_tcp_bytes_per_conn: stack_defaults.max_buffered_tcp_bytes_per_conn,
         dns_default_ttl_secs: 60,
         dns_max_ttl_secs: 300,
         capture_dir: None,
