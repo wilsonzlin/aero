@@ -179,6 +179,7 @@ let presenterInitPromise: Promise<void> | null = null;
 let presenterErrorGeneration = 0;
 let presenterSrcWidth = 0;
 let presenterSrcHeight = 0;
+let presenterNeedsFullUpload = true;
 
 // -----------------------------------------------------------------------------
 // AeroGPU command submission (ACMD)
@@ -1081,6 +1082,7 @@ function handleDeviceLost(message: string, details?: unknown, startRecovery?: bo
   presenterFallback = undefined;
   presenterSrcWidth = 0;
   presenterSrcHeight = 0;
+  presenterNeedsFullUpload = true;
 
   if (startRecovery) {
     void attemptRecovery("device_lost");
@@ -1348,12 +1350,17 @@ const presentOnce = async (): Promise<boolean> => {
         presenterSrcHeight = frame.height;
         if (presenter.backend === "webgpu") surfaceReconfigures += 1;
         presenter.resize(frame.width, frame.height, outputDpr);
+        presenterNeedsFullUpload = true;
       }
 
       const dirtyPresenter = presenter as Presenter & {
         presentDirtyRects?: (frame: number | ArrayBuffer | ArrayBufferView, stride: number, dirtyRects: DirtyRect[]) => void;
       };
-      if (dirtyRects && dirtyRects.length > 0 && typeof dirtyPresenter.presentDirtyRects === "function") {
+      const needsFullUpload = presenterNeedsFullUpload || aerogpuLastOutputSource !== "framebuffer";
+      if (needsFullUpload) {
+        presenter.present(frame.pixels, frame.strideBytes);
+        presenterNeedsFullUpload = false;
+      } else if (dirtyRects && dirtyRects.length > 0 && typeof dirtyPresenter.presentDirtyRects === "function") {
         dirtyPresenter.presentDirtyRects(frame.pixels, frame.strideBytes, dirtyRects);
         lastUploadDirtyRects = dirtyRects;
       } else {
@@ -1385,10 +1392,12 @@ const presentAerogpuTexture = (tex: AeroGpuCpuTexture): void => {
     presenterSrcWidth = tex.width;
     presenterSrcHeight = tex.height;
     presenter.resize(tex.width, tex.height, outputDpr);
+    presenterNeedsFullUpload = true;
   }
 
   aerogpuLastOutputSource = "aerogpu";
   presenter.present(tex.data, tex.width * 4);
+  presenterNeedsFullUpload = false;
 };
 
 type AerogpuCmdStreamAnalysis = { vsyncPaced: boolean; presentCount: bigint; requiresD3d9: boolean };
@@ -1545,8 +1554,10 @@ const handleSubmitAerogpu = async (req: GpuRuntimeSubmitAerogpuMessage): Promise
                 presenterSrcHeight = shot.height;
                 if (presenter.backend === "webgpu") surfaceReconfigures += 1;
                 presenter.resize(shot.width, shot.height, outputDpr);
+                presenterNeedsFullUpload = true;
               }
               presenter.present(shot.rgba8, shot.width * BYTES_PER_PIXEL_RGBA8);
+              presenterNeedsFullUpload = false;
             }
           } else {
             aerogpuLastOutputSource = "aerogpu";
@@ -1773,6 +1784,7 @@ async function initPresenterForRuntime(canvas: OffscreenCanvas, width: number, h
       presenter = await tryInitBackend(backend, canvas, width, height, dpr, opts, generation);
       presenterSrcWidth = width;
       presenterSrcHeight = height;
+      presenterNeedsFullUpload = true;
       runtimeCanvasContextKind = presenter.backend === "webgpu" ? "webgpu" : "webgl2";
       if (presenter.backend === "webgpu") surfaceReconfigures += 1;
       syncCursorToPresenter();
@@ -2029,6 +2041,7 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
         presenterInitPromise = null;
         presenterSrcWidth = 0;
         presenterSrcHeight = 0;
+        presenterNeedsFullUpload = true;
 
         resetAerogpuContexts();
         aerogpuLastOutputSource = "framebuffer";
@@ -2328,8 +2341,10 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
                     presenterSrcHeight = last.height;
                     if (presenter.backend === "webgpu") surfaceReconfigures += 1;
                     presenter.resize(last.width, last.height, outputDpr);
+                    presenterNeedsFullUpload = true;
                   }
                   presenter.present(last.rgba8, last.width * BYTES_PER_PIXEL_RGBA8);
+                  presenterNeedsFullUpload = false;
                 }
               } else {
                 const frame = getCurrentFrameInfo();
@@ -2339,9 +2354,11 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
                     presenterSrcHeight = frame.height;
                     if (presenter.backend === "webgpu") surfaceReconfigures += 1;
                     presenter.resize(frame.width, frame.height, outputDpr);
+                    presenterNeedsFullUpload = true;
                   }
                   presenter.present(frame.pixels, frame.strideBytes);
                   aerogpuLastOutputSource = "framebuffer";
+                  presenterNeedsFullUpload = false;
                 }
               }
             }
@@ -2623,6 +2640,7 @@ ctx.onmessage = (event: MessageEvent<unknown>) => {
       aerogpuWasmD3d9InitBackend = null;
       aerogpuWasmD3d9Backend = null;
       aerogpuWasmD3d9InternalCanvas = null;
+      presenterNeedsFullUpload = true;
       if (aerogpuWasm) {
         try {
           aerogpuWasm.clear_guest_memory();
