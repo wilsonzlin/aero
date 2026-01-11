@@ -281,7 +281,10 @@ async fn run_session_inner(
                         &payload,
                         &state.l2_limits,
                     ) {
-                        if ws_out_tx.send(Message::Binary(wire)).await.is_err() {
+                        if let Err(exceeded) =
+                            send_ws_message(&ws_out_tx, Message::Binary(wire), &mut quotas).await
+                        {
+                            close_policy_violation(&ws_out_tx, exceeded.reason()).await;
                             break;
                         }
                         ping_outstanding = Some((ping_id, tokio::time::Instant::now()));
