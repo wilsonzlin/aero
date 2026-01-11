@@ -113,10 +113,73 @@ static inline void UnloadD3DKMT(D3DKMT_FUNCS* f) {
   if (!f) {
     return;
   }
-  if (f->gdi32) {
+  // If an escape call timed out, a worker thread may still be executing inside gdi32's
+  // D3DKMTEscape thunk. FreeLibrary'ing gdi32 in that scenario is unsafe (could unload code
+  // while it is still in use). Skip unloading and rely on process termination instead.
+  if (f->gdi32 && InterlockedCompareExchange(&g_skip_close_adapter, 0, 0) == 0) {
     FreeLibrary(f->gdi32);
   }
   ZeroMemory(f, sizeof(*f));
+}
+
+static inline bool OpenAdapterFromHdc(const D3DKMT_FUNCS* f,
+                                      HDC hdc,
+                                      D3DKMT_HANDLE* out_adapter,
+                                      std::string* err) {
+  if (err) {
+    err->clear();
+  }
+  if (!f || !out_adapter || !f->OpenAdapterFromHdc || !hdc) {
+    if (err) {
+      *err = "OpenAdapterFromHdc: invalid args";
+    }
+    return false;
+  }
+  *out_adapter = 0;
+
+  D3DKMT_OPENADAPTERFROMHDC open;
+  ZeroMemory(&open, sizeof(open));
+  open.hDc = hdc;
+  NTSTATUS st = f->OpenAdapterFromHdc(&open);
+  if (!NtSuccess(st) || open.hAdapter == 0) {
+    if (err) {
+      char buf[128];
+      _snprintf(buf, sizeof(buf), "D3DKMTOpenAdapterFromHdc failed (NTSTATUS=0x%08lX)", (unsigned long)st);
+      buf[sizeof(buf) - 1] = 0;
+      *err = buf;
+    }
+    return false;
+  }
+
+  *out_adapter = open.hAdapter;
+  return true;
+}
+
+static inline bool OpenAdapterFromHwnd(const D3DKMT_FUNCS* f,
+                                       HWND hwnd,
+                                       D3DKMT_HANDLE* out_adapter,
+                                       std::string* err) {
+  if (err) {
+    err->clear();
+  }
+  if (!hwnd) {
+    if (err) {
+      *err = "OpenAdapterFromHwnd: hwnd == NULL";
+    }
+    return false;
+  }
+
+  HDC hdc = GetDC(hwnd);
+  if (!hdc) {
+    if (err) {
+      *err = "GetDC(hwnd) failed: " + aerogpu_test::Win32ErrorToString(GetLastError());
+    }
+    return false;
+  }
+
+  const bool ok = OpenAdapterFromHdc(f, hdc, out_adapter, err);
+  ReleaseDC(hwnd, hdc);
+  return ok;
 }
 
 static inline bool OpenPrimaryAdapter(const D3DKMT_FUNCS* f, D3DKMT_HANDLE* out_adapter, std::string* err) {
@@ -139,24 +202,9 @@ static inline bool OpenPrimaryAdapter(const D3DKMT_FUNCS* f, D3DKMT_HANDLE* out_
     return false;
   }
 
-  D3DKMT_OPENADAPTERFROMHDC open;
-  ZeroMemory(&open, sizeof(open));
-  open.hDc = hdc;
-  NTSTATUS st = f->OpenAdapterFromHdc(&open);
+  const bool ok = OpenAdapterFromHdc(f, hdc, out_adapter, err);
   ReleaseDC(NULL, hdc);
-
-  if (!NtSuccess(st) || open.hAdapter == 0) {
-    if (err) {
-      char buf[128];
-      _snprintf(buf, sizeof(buf), "D3DKMTOpenAdapterFromHdc failed (NTSTATUS=0x%08lX)", (unsigned long)st);
-      buf[sizeof(buf) - 1] = 0;
-      *err = buf;
-    }
-    return false;
-  }
-
-  *out_adapter = open.hAdapter;
-  return true;
+  return ok;
 }
 
 static inline void CloseAdapter(const D3DKMT_FUNCS* f, D3DKMT_HANDLE adapter) {
@@ -326,10 +374,10 @@ static inline bool AerogpuQueryFence(const D3DKMT_FUNCS* f,
 }
 
 static inline bool AerogpuDumpRingV2(const D3DKMT_FUNCS* f,
-                                    D3DKMT_HANDLE adapter,
-                                    uint32_t ring_id,
-                                    aerogpu_escape_dump_ring_v2_inout* out_dump,
-                                    NTSTATUS* out_status) {
+                                     D3DKMT_HANDLE adapter,
+                                     uint32_t ring_id,
+                                     aerogpu_escape_dump_ring_v2_inout* out_dump,
+                                     NTSTATUS* out_status) {
   if (out_dump) {
     ZeroMemory(out_dump, sizeof(*out_dump));
   }
@@ -348,6 +396,35 @@ static inline bool AerogpuDumpRingV2(const D3DKMT_FUNCS* f,
   out_dump->desc_capacity = AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS;
 
   return AerogpuEscapeWithTimeout(f, adapter, out_dump, sizeof(*out_dump), 2000, out_status);
+}
+
+static inline bool AerogpuMapSharedHandleDebugToken(const D3DKMT_FUNCS* f,
+                                                    D3DKMT_HANDLE adapter,
+                                                    unsigned long long shared_handle,
+                                                    uint32_t* out_token,
+                                                    NTSTATUS* out_status) {
+  if (out_token) {
+    *out_token = 0;
+  }
+
+  aerogpu_escape_map_shared_handle_inout q;
+  ZeroMemory(&q, sizeof(q));
+  q.hdr.version = AEROGPU_ESCAPE_VERSION;
+  q.hdr.op = AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE;
+  q.hdr.size = sizeof(q);
+  q.hdr.reserved0 = 0;
+  q.shared_handle = (uint64_t)shared_handle;
+  q.debug_token = 0;
+  q.reserved0 = 0;
+
+  if (!AerogpuEscapeWithTimeout(f, adapter, &q, sizeof(q), 2000, out_status)) {
+    return false;
+  }
+
+  if (out_token) {
+    *out_token = q.debug_token;
+  }
+  return q.debug_token != 0;
 }
 
 static inline bool FindRingDescByFence(const aerogpu_escape_dump_ring_v2_inout& dump,

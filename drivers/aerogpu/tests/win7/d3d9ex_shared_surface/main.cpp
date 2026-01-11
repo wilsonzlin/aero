@@ -1,11 +1,13 @@
 #include "..\\common\\aerogpu_test_common.h"
+#include "..\\common\\aerogpu_test_kmt.h"
 #include "..\\common\\aerogpu_test_report.h"
 
 #include <d3d9.h>
 
-#include "..\\..\\..\\protocol\\aerogpu_dbgctl_escape.h"
-
 using aerogpu_test::ComPtr;
+using aerogpu_test::kmt::D3DKMT_FUNCS;
+using aerogpu_test::kmt::D3DKMT_HANDLE;
+using aerogpu_test::kmt::NTSTATUS;
 
 static void DumpBytesToFile(const char* test_name,
                             aerogpu_test::TestReporter* reporter,
@@ -62,53 +64,6 @@ static void DumpTightBgra32(const char* test_name,
   DumpBytesToFile(test_name, reporter, file_name, &tight[0], (UINT)tight.size());
 }
 
-typedef LONG NTSTATUS;
-
-#ifndef NT_SUCCESS
-#define NT_SUCCESS(Status) (((NTSTATUS)(Status)) >= 0)
-#endif
-
-typedef UINT D3DKMT_HANDLE;
-
-typedef struct D3DKMT_OPENADAPTERFROMHDC {
-  HDC hDc;
-  D3DKMT_HANDLE hAdapter;
-  LUID AdapterLuid;
-  UINT VidPnSourceId;
-} D3DKMT_OPENADAPTERFROMHDC;
-
-typedef struct D3DKMT_CLOSEADAPTER {
-  D3DKMT_HANDLE hAdapter;
-} D3DKMT_CLOSEADAPTER;
-
-typedef enum D3DKMT_ESCAPETYPE {
-  D3DKMT_ESCAPE_DRIVERPRIVATE = 0,
-} D3DKMT_ESCAPETYPE;
-
-typedef struct D3DKMT_ESCAPEFLAGS {
-  union {
-    struct {
-      UINT HardwareAccess : 1;
-      UINT Reserved : 31;
-    };
-    UINT Value;
-  };
-} D3DKMT_ESCAPEFLAGS;
-
-typedef struct D3DKMT_ESCAPE {
-  D3DKMT_HANDLE hAdapter;
-  D3DKMT_HANDLE hDevice;
-  D3DKMT_HANDLE hContext;
-  D3DKMT_ESCAPETYPE Type;
-  D3DKMT_ESCAPEFLAGS Flags;
-  VOID* pPrivateDriverData;
-  UINT PrivateDriverDataSize;
-} D3DKMT_ESCAPE;
-
-typedef NTSTATUS(WINAPI* PFND3DKMTOpenAdapterFromHdc)(D3DKMT_OPENADAPTERFROMHDC* pData);
-typedef NTSTATUS(WINAPI* PFND3DKMTCloseAdapter)(D3DKMT_CLOSEADAPTER* pData);
-typedef NTSTATUS(WINAPI* PFND3DKMTEscape)(D3DKMT_ESCAPE* pData);
-
 static bool MapSharedHandleToken(HWND hwnd, HANDLE shared_handle, uint32_t* out_token, std::string* err) {
   if (out_token) {
     *out_token = 0;
@@ -120,86 +75,50 @@ static bool MapSharedHandleToken(HWND hwnd, HANDLE shared_handle, uint32_t* out_
     return false;
   }
 
-  HMODULE gdi32 = LoadLibraryW(L"gdi32.dll");
-  if (!gdi32) {
+  D3DKMT_FUNCS kmt;
+  std::string kmt_err;
+  if (!aerogpu_test::kmt::LoadD3DKMT(&kmt, &kmt_err)) {
     if (err) {
-      *err = "LoadLibraryW(gdi32.dll) failed: " + aerogpu_test::Win32ErrorToString(GetLastError());
+      *err = kmt_err;
     }
     return false;
   }
 
-  PFND3DKMTOpenAdapterFromHdc OpenAdapterFromHdc =
-      (PFND3DKMTOpenAdapterFromHdc)GetProcAddress(gdi32, "D3DKMTOpenAdapterFromHdc");
-  PFND3DKMTCloseAdapter CloseAdapter = (PFND3DKMTCloseAdapter)GetProcAddress(gdi32, "D3DKMTCloseAdapter");
-  PFND3DKMTEscape Escape = (PFND3DKMTEscape)GetProcAddress(gdi32, "D3DKMTEscape");
-  if (!OpenAdapterFromHdc || !CloseAdapter || !Escape) {
+  D3DKMT_HANDLE adapter = 0;
+  if (!aerogpu_test::kmt::OpenAdapterFromHwnd(&kmt, hwnd, &adapter, &kmt_err)) {
+    aerogpu_test::kmt::UnloadD3DKMT(&kmt);
     if (err) {
-      *err = "Missing required D3DKMT* exports in gdi32.dll";
+      *err = kmt_err;
     }
-    FreeLibrary(gdi32);
     return false;
   }
 
-  HDC hdc = GetDC(hwnd);
-  if (!hdc) {
+  uint32_t token = 0;
+  NTSTATUS st = 0;
+  const bool ok = aerogpu_test::kmt::AerogpuMapSharedHandleDebugToken(
+      &kmt, adapter, (unsigned long long)(uintptr_t)shared_handle, &token, &st);
+
+  aerogpu_test::kmt::CloseAdapter(&kmt, adapter);
+  aerogpu_test::kmt::UnloadD3DKMT(&kmt);
+
+  if (!ok) {
     if (err) {
-      *err = "GetDC failed: " + aerogpu_test::Win32ErrorToString(GetLastError());
-    }
-    FreeLibrary(gdi32);
-    return false;
-  }
-
-  D3DKMT_OPENADAPTERFROMHDC open;
-  ZeroMemory(&open, sizeof(open));
-  open.hDc = hdc;
-  NTSTATUS st = OpenAdapterFromHdc(&open);
-  ReleaseDC(hwnd, hdc);
-  if (!NT_SUCCESS(st) || open.hAdapter == 0) {
-    if (err) {
-      char buf[64];
-      _snprintf(buf, sizeof(buf), "D3DKMTOpenAdapterFromHdc failed: 0x%08lX", (unsigned long)st);
-      *err = buf;
-    }
-    FreeLibrary(gdi32);
-    return false;
-  }
-
-  aerogpu_escape_map_shared_handle_inout q;
-  ZeroMemory(&q, sizeof(q));
-  q.hdr.version = AEROGPU_ESCAPE_VERSION;
-  q.hdr.op = AEROGPU_ESCAPE_OP_MAP_SHARED_HANDLE;
-  q.hdr.size = sizeof(q);
-  q.shared_handle = (uint64_t)(uintptr_t)shared_handle;
-
-  D3DKMT_ESCAPE esc;
-  ZeroMemory(&esc, sizeof(esc));
-  esc.hAdapter = open.hAdapter;
-  esc.Type = D3DKMT_ESCAPE_DRIVERPRIVATE;
-  esc.Flags.Value = 0;
-  esc.pPrivateDriverData = &q;
-  esc.PrivateDriverDataSize = sizeof(q);
-
-  st = Escape(&esc);
-
-  D3DKMT_CLOSEADAPTER close;
-  ZeroMemory(&close, sizeof(close));
-  close.hAdapter = open.hAdapter;
-  CloseAdapter(&close);
-  FreeLibrary(gdi32);
-
-  if (!NT_SUCCESS(st)) {
-    if (err) {
-      char buf[64];
-      _snprintf(buf, sizeof(buf), "D3DKMTEscape(map-shared-handle) failed: 0x%08lX", (unsigned long)st);
-      *err = buf;
+      if (st == 0) {
+        *err = "MAP_SHARED_HANDLE returned debug_token=0";
+      } else {
+        char buf[96];
+        _snprintf(buf, sizeof(buf), "D3DKMTEscape(map-shared-handle) failed (NTSTATUS=0x%08lX)", (unsigned long)st);
+        buf[sizeof(buf) - 1] = 0;
+        *err = buf;
+      }
     }
     return false;
   }
 
   if (out_token) {
-    *out_token = q.debug_token;
+    *out_token = token;
   }
-  return q.debug_token != 0;
+  return token != 0;
 }
 
 struct Vertex {
