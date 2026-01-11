@@ -2883,7 +2883,7 @@ impl AerogpuD3d9Executor {
                 if handle == 0 {
                     continue;
                 }
-                self.flush_texture_if_dirty_strict(handle, ctx.guest_memory)?;
+                self.flush_texture_if_dirty_strict(Some(encoder), handle, ctx.guest_memory)?;
             }
         }
 
@@ -2893,7 +2893,11 @@ impl AerogpuD3d9Executor {
             let needs_depth_load = !clear_depth_enabled;
             let needs_stencil_load = depth_has_stencil && !clear_stencil_enabled;
             if needs_depth_load || needs_stencil_load {
-                self.flush_texture_if_dirty_strict(rt.depth_stencil, ctx.guest_memory)?;
+                self.flush_texture_if_dirty_strict(
+                    Some(encoder),
+                    rt.depth_stencil,
+                    ctx.guest_memory,
+                )?;
             }
 
             let underlying = self.resolve_resource_handle(rt.depth_stencil)?;
