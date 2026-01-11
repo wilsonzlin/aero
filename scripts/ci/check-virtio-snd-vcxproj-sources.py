@@ -80,6 +80,56 @@ def read_text(path: Path) -> str:
     return path.read_text(encoding="utf-8", errors="replace")
 
 
+def iter_inf_non_comment_lines(text: str) -> list[str]:
+    """
+    Return non-empty, non-comment INF lines.
+
+    INF syntax treats ';' as a comment delimiter. This helper strips trailing
+    comments so guardrails don't trigger on documentation text.
+    """
+
+    out: list[str] = []
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith(";"):
+            continue
+        if ";" in line:
+            line = line.split(";", 1)[0].strip()
+        if line:
+            out.append(line)
+    return out
+
+
+def validate_virtio_snd_inf_hwid_policy(inf_path: Path) -> None:
+    """
+    Enforce Aero virtio-snd INF HWID policy (contract v1 strict identity).
+
+    The runtime driver enforces contract identity (DEV_1059 + REV_01), so letting
+    an INF bind to transitional or non-revision-gated IDs creates confusing
+    "installs but won't start (Code 10)" behavior.
+    """
+
+    text = read_text(inf_path)
+    lines = iter_inf_non_comment_lines(text)
+
+    for line in lines:
+        upper = line.upper()
+
+        if "PCI\\VEN_1AF4&DEV_1018" in upper:
+            fail(
+                f"virtio-snd INF must not match transitional DEV_1018: {inf_path.as_posix()}\n"
+                f"  offending line: {line}"
+            )
+
+        if "PCI\\VEN_1AF4&DEV_1059" in upper and "&REV_01" not in upper:
+            fail(
+                f"virtio-snd INF must gate DEV_1059 by REV_01: {inf_path.as_posix()}\n"
+                f"  offending line: {line}"
+            )
+
+
 def normalize_path(value: str) -> str:
     # MSBuild projects are Windows-first and typically use backslashes. Normalize
     # for stable comparisons in CI (Linux).
@@ -282,6 +332,7 @@ def main() -> None:
     # Ensure the produced SYS name matches the INF's NTMPDriver.
     output_name = parse_vcxproj_output_name(VCXPROJ)
     expected = extract_inf_ntmpdriver_required(AERO_INF)
+    validate_virtio_snd_inf_hwid_policy(AERO_INF)
     if output_name.lower() != expected.lower():
         fail(
             "virtio-snd output name mismatch between MSBuild project and INF:\n"
@@ -297,6 +348,7 @@ def main() -> None:
 
     if (name := extract_inf_ntmpdriver_optional(LEGACY_ALIAS_INF)) is not None:
         legacy_checked = True
+        validate_virtio_snd_inf_hwid_policy(LEGACY_ALIAS_INF)
         if name.lower() != legacy_expected:
             fail(
                 "virtio-snd legacy alias INF disagrees on NTMPDriver:\n"
@@ -306,6 +358,7 @@ def main() -> None:
 
     elif (name := extract_inf_ntmpdriver_optional(LEGACY_ALIAS_INF_DISABLED)) is not None:
         legacy_checked = True
+        validate_virtio_snd_inf_hwid_policy(LEGACY_ALIAS_INF_DISABLED)
         if name.lower() != legacy_expected:
             fail(
                 "virtio-snd legacy alias INF (.disabled) disagrees on NTMPDriver:\n"
