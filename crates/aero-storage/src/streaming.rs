@@ -565,6 +565,16 @@ impl StreamingDisk {
         request_headers.insert(ACCEPT_ENCODING, HeaderValue::from_static("identity"));
         let (total_size, probed_validator) =
             probe_remote_size_and_validator(&client, &config.url, &request_headers).await?;
+
+        if let (Some(expected), Some(actual)) = (&config.validator, &probed_validator) {
+            if expected != actual {
+                return Err(StreamingDiskError::ValidatorMismatch {
+                    expected: Some(expected.clone()),
+                    actual: Some(actual.clone()),
+                });
+            }
+        }
+
         let validator = config.validator.or(probed_validator);
 
         if let Some(manifest) = &config.options.manifest {

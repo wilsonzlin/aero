@@ -529,6 +529,34 @@ async fn missing_required_header_fails_open_with_http_error() {
 }
 
 #[tokio::test]
+async fn open_fails_when_config_validator_mismatches_remote_etag() {
+    let image: Vec<u8> = (0..2048).map(|i| (i % 251) as u8).collect();
+    let (url, _state, shutdown) = start_range_server_with_options(
+        image,
+        "etag-actual",
+        false,
+        None,
+        false,
+        false,
+        None,
+    )
+    .await;
+
+    let cache_dir = tempdir().unwrap();
+    let mut config = StreamingDiskConfig::new(url, cache_dir.path());
+    config.cache_backend = StreamingCacheBackend::Directory;
+    config.options.chunk_size = 1024;
+    config.options.read_ahead_chunks = 0;
+    config.options.max_retries = 1;
+    config.validator = Some("etag-expected".to_string());
+
+    let err = StreamingDisk::open(config).await.err().unwrap();
+    assert!(matches!(err, StreamingDiskError::ValidatorMismatch { .. }));
+
+    let _ = shutdown.send(());
+}
+
+#[tokio::test]
 async fn range_not_supported_is_reported_when_server_ignores_range() {
     let image: Vec<u8> = (0..2048).map(|i| (i % 251) as u8).collect();
     let (url, _state, shutdown) =
