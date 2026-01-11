@@ -604,6 +604,19 @@ static int RunChild(int argc, char** argv, const AdapterRequirements& req, bool 
     }
   }
 
+  // Exercise a minimal GPU operation that references the opened resource without disturbing the
+  // pixels we validate (corner + center). This helps validate the "open + submit" path without
+  // needing full rendering.
+  RECT touch = {kWidth - 4, kHeight - 4, kWidth, kHeight};
+  hr = dev->ColorFill(surface.get(), &touch, D3DCOLOR_XRGB(0, 128, 255));
+  if (FAILED(hr)) {
+    return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::ColorFill(opened surface)", hr);
+  }
+  hr = dev->Flush();
+  if (FAILED(hr)) {
+    return aerogpu_test::FailHresult(kTestName, "IDirect3DDevice9Ex::Flush", hr);
+  }
+
   rc = ValidateSurfacePixels(kTestName,
                              L"d3d9ex_shared_surface_child.bmp",
                              dump,
