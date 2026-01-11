@@ -12,6 +12,11 @@ This file is intended to be kept in sync with:
 - The `.inf` hardware ID matches
 - The storage driver's service name (INF `AddService` name)
 
+When building Guest Tools media from CI-produced signed driver packages, `ci/package-guest-tools.ps1`
+may update the **staged** copy of `devices.cmd` to keep the storage service name
+(`AERO_VIRTIO_BLK_SERVICE`) consistent with the packaged virtio-blk driver's INF `AddService` name.
+This keeps boot-critical pre-seeding aligned with whichever storage driver is actually being shipped.
+
 The `*_HWIDS` values are stored as a list of individually quoted hardware IDs to safely include
 `&` characters (e.g. `"PCI\VEN_1AF4&DEV_1042&REV_01"`).
 
