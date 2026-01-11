@@ -3344,7 +3344,11 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
             out->last_vblank_time_ns = 0;
             out->vblank_period_ns = 0;
         }
-        out->reserved0 = 0;
+        out->vblank_interrupt_type = 0;
+        if (adapter->VblankInterruptTypeValid) {
+            out->flags |= AEROGPU_DBGCTL_QUERY_VBLANK_FLAG_INTERRUPT_TYPE_VALID;
+            out->vblank_interrupt_type = (uint32_t)adapter->VblankInterruptType;
+        }
         return STATUS_SUCCESS;
     }
 

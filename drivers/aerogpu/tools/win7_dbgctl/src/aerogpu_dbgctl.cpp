@@ -320,6 +320,10 @@ static int DoQueryVersion(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter) {
     wprintf(L"  irq_enable: 0x%08lx\n", (unsigned long)qv.irq_enable);
     wprintf(L"  irq_status: 0x%08lx\n", (unsigned long)qv.irq_status);
     wprintf(L"  irq_active: 0x%08lx\n", (unsigned long)(qv.irq_enable & qv.irq_status));
+    if ((qv.flags & AEROGPU_DBGCTL_QUERY_VBLANK_FLAGS_VALID) != 0 &&
+        (qv.flags & AEROGPU_DBGCTL_QUERY_VBLANK_FLAG_INTERRUPT_TYPE_VALID) != 0) {
+      wprintf(L"  vblank_interrupt_type: %lu\n", (unsigned long)qv.vblank_interrupt_type);
+    }
     if (!supported) {
       wprintf(L"  (not supported)\n");
       return;
@@ -671,6 +675,10 @@ static void PrintVblankSnapshot(const aerogpu_escape_query_vblank_out *q, bool s
   PrintIrqMask(L"IRQ_ENABLE", q->irq_enable);
   PrintIrqMask(L"IRQ_STATUS", q->irq_status);
   PrintIrqMask(L"IRQ_ACTIVE", q->irq_enable & q->irq_status);
+  if ((q->flags & AEROGPU_DBGCTL_QUERY_VBLANK_FLAGS_VALID) != 0 &&
+      (q->flags & AEROGPU_DBGCTL_QUERY_VBLANK_FLAG_INTERRUPT_TYPE_VALID) != 0) {
+    wprintf(L"  vblank_interrupt_type: %lu\n", (unsigned long)q->vblank_interrupt_type);
+  }
 
   if (!supported) {
     if ((q->flags & AEROGPU_DBGCTL_QUERY_VBLANK_FLAGS_VALID) != 0) {
