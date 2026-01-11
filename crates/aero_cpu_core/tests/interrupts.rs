@@ -1,7 +1,6 @@
 use aero_cpu_core::interrupts::{CpuCore, CpuExit, InterruptController};
 use aero_cpu_core::mem::{CpuBus, FlatTestBus};
-use aero_cpu_core::state::{gpr, CpuMode, RFLAGS_IF};
-use aero_cpu_core::system::{Tss32, Tss64};
+use aero_cpu_core::state::{gpr, CpuMode, RFLAGS_IF, SEG_ACCESS_PRESENT};
 use aero_x86::Register;
 
 fn write_idt_gate32(
@@ -138,11 +137,15 @@ fn int_protected_mode_cpl3_to_cpl0_stack_switch_and_iret_restore() -> Result<(),
     cpu.state.segments.ss.selector = 0x23;
     cpu.state.write_gpr32(gpr::RSP, 0x8000);
     cpu.state.set_rflags(0x202);
-    cpu.pending.tss32 = Some(Tss32 {
-        ss0: 0x10,
-        esp0: 0x9000,
-        ..Tss32::default()
-    });
+
+    let tss_base = 0x18000u64;
+    cpu.state.tables.tr.selector = 0x40;
+    cpu.state.tables.tr.base = tss_base;
+    cpu.state.tables.tr.limit = 0x67;
+    cpu.state.tables.tr.access = SEG_ACCESS_PRESENT;
+    // 32-bit TSS: ESP0 at +4, SS0 at +8.
+    mem.write_u32(tss_base + 4, 0x9000).unwrap();
+    mem.write_u16(tss_base + 8, 0x10).unwrap();
 
     cpu.pending.raise_software_interrupt(0x80, 0x0040_0000);
     cpu.deliver_pending_event(&mut mem)?;
@@ -288,10 +291,14 @@ fn int_long_mode_cpl3_to_cpl0_uses_rsp0_and_iretq_returns() -> Result<(), CpuExi
     cpu.state.set_rip(0x4000_0000);
     cpu.state.write_gpr64(gpr::RSP, 0x7000);
     cpu.state.set_rflags(0x202);
-    cpu.pending.tss64 = Some(Tss64 {
-        rsp0: 0x9000,
-        ..Tss64::default()
-    });
+
+    let tss_base = 0x10000u64;
+    cpu.state.tables.tr.selector = 0x40;
+    cpu.state.tables.tr.base = tss_base;
+    cpu.state.tables.tr.limit = 0x67;
+    cpu.state.tables.tr.access = SEG_ACCESS_PRESENT;
+    // 64-bit TSS: RSP0 at +4.
+    mem.write_u64(tss_base + 4, 0x9000).unwrap();
 
     cpu.pending.raise_software_interrupt(0x80, 0x4000_0010);
     cpu.deliver_pending_event(&mut mem)?;
@@ -334,11 +341,15 @@ fn int_long_mode_ist_overrides_rsp0() -> Result<(), CpuExit> {
     cpu.state.set_rip(0x4000_0000);
     cpu.state.write_gpr64(gpr::RSP, 0x7000);
     cpu.state.set_rflags(0x202);
-    cpu.pending.tss64 = Some(Tss64 {
-        rsp0: 0x9000,
-        ist: [0xA000, 0, 0, 0, 0, 0, 0],
-        ..Tss64::default()
-    });
+
+    let tss_base = 0x10000u64;
+    cpu.state.tables.tr.selector = 0x40;
+    cpu.state.tables.tr.base = tss_base;
+    cpu.state.tables.tr.limit = 0x67;
+    cpu.state.tables.tr.access = SEG_ACCESS_PRESENT;
+    mem.write_u64(tss_base + 4, 0x9000).unwrap();
+    // 64-bit TSS: IST1 at +0x24.
+    mem.write_u64(tss_base + 0x24, 0xA000).unwrap();
 
     cpu.pending.raise_software_interrupt(0x81, 0x4000_0010);
     cpu.deliver_pending_event(&mut mem)?;

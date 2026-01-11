@@ -482,13 +482,91 @@ fn deliver_protected_mode<B: CpuBus>(
     let old_esp = state.read_gpr32(gpr::RSP);
 
     if new_cpl < current_cpl {
-        let tss = match pending.tss32 {
-            Some(tss) => tss,
-            None => return deliver_exception(bus, state, pending, Exception::InvalidTss, saved_rip, Some(0)),
-        };
-        let (new_ss, new_esp) = match tss.stack_for_cpl(new_cpl) {
-            Some(stack) => stack,
-            None => return deliver_exception(bus, state, pending, Exception::InvalidTss, saved_rip, Some(0)),
+        let (new_ss, new_esp) = match pending.tss32 {
+            Some(tss) => match tss.stack_for_cpl(new_cpl) {
+                Some(stack) => stack,
+                None => {
+                    return deliver_exception(
+                        bus,
+                        state,
+                        pending,
+                        Exception::InvalidTss,
+                        saved_rip,
+                        Some(0),
+                    )
+                }
+            },
+            None => {
+                if state.tables.tr.is_unusable() || !state.tables.tr.is_present() {
+                    return deliver_exception(bus, state, pending, Exception::InvalidTss, saved_rip, Some(0));
+                }
+                if new_cpl > 2 {
+                    return deliver_exception(bus, state, pending, Exception::InvalidTss, saved_rip, Some(0));
+                }
+                let base = state.tables.tr.base;
+                let esp_off = 4u64 + (new_cpl as u64) * 8;
+                let ss_off = 8u64 + (new_cpl as u64) * 8;
+
+                let esp_addr = match base.checked_add(esp_off) {
+                    Some(addr) => addr,
+                    None => {
+                        return deliver_exception(
+                            bus,
+                            state,
+                            pending,
+                            Exception::InvalidTss,
+                            saved_rip,
+                            Some(0),
+                        )
+                    }
+                };
+                let new_esp = match bus.read_u32(esp_addr) {
+                    Ok(val) => val,
+                    Err(_) => {
+                        return deliver_exception(
+                            bus,
+                            state,
+                            pending,
+                            Exception::InvalidTss,
+                            saved_rip,
+                            Some(0),
+                        )
+                    }
+                };
+
+                let ss_addr = match base.checked_add(ss_off) {
+                    Some(addr) => addr,
+                    None => {
+                        return deliver_exception(
+                            bus,
+                            state,
+                            pending,
+                            Exception::InvalidTss,
+                            saved_rip,
+                            Some(0),
+                        )
+                    }
+                };
+                let new_ss = match bus.read_u16(ss_addr) {
+                    Ok(val) => val,
+                    Err(_) => {
+                        return deliver_exception(
+                            bus,
+                            state,
+                            pending,
+                            Exception::InvalidTss,
+                            saved_rip,
+                            Some(0),
+                        )
+                    }
+                };
+
+                if new_ss == 0 {
+                    return deliver_exception(bus, state, pending, Exception::InvalidTss, saved_rip, Some(0));
+                }
+
+                (new_ss, new_esp)
+            }
         };
 
         state.segments.ss.selector = new_ss;
@@ -580,23 +658,60 @@ fn deliver_long_mode<B: CpuBus>(
     let mut used_ist = false;
     if gate.ist != 0 {
         used_ist = true;
-        let tss = match pending.tss64 {
-            Some(tss) => tss,
-            None => return deliver_exception(bus, state, pending, Exception::InvalidTss, saved_rip, Some(0)),
-        };
-        let new_rsp = match tss.ist_stack(gate.ist) {
-            Some(rsp) => rsp,
-            None => return deliver_exception(bus, state, pending, Exception::InvalidTss, saved_rip, Some(0)),
+        let new_rsp = match pending.tss64 {
+            Some(tss) => match tss.ist_stack(gate.ist) {
+                Some(rsp) => rsp,
+                None => return deliver_exception(bus, state, pending, Exception::InvalidTss, saved_rip, Some(0)),
+            },
+            None => {
+                if state.tables.tr.is_unusable() || !state.tables.tr.is_present() {
+                    return deliver_exception(bus, state, pending, Exception::InvalidTss, saved_rip, Some(0));
+                }
+                let base = state.tables.tr.base;
+                let off = 0x24u64 + (gate.ist as u64 - 1) * 8;
+                let addr = match base.checked_add(off) {
+                    Some(addr) => addr,
+                    None => return deliver_exception(bus, state, pending, Exception::InvalidTss, saved_rip, Some(0)),
+                };
+                let rsp = match bus.read_u64(addr) {
+                    Ok(val) => val,
+                    Err(_) => return deliver_exception(bus, state, pending, Exception::InvalidTss, saved_rip, Some(0)),
+                };
+                if rsp == 0 {
+                    return deliver_exception(bus, state, pending, Exception::InvalidTss, saved_rip, Some(0));
+                }
+                rsp
+            }
         };
         state.write_gpr64(gpr::RSP, new_rsp);
     } else if new_cpl < current_cpl {
-        let tss = match pending.tss64 {
-            Some(tss) => tss,
-            None => return deliver_exception(bus, state, pending, Exception::InvalidTss, saved_rip, Some(0)),
-        };
-        let new_rsp = match tss.rsp_for_cpl(new_cpl) {
-            Some(rsp) if rsp != 0 => rsp,
-            _ => return deliver_exception(bus, state, pending, Exception::InvalidTss, saved_rip, Some(0)),
+        let new_rsp = match pending.tss64 {
+            Some(tss) => match tss.rsp_for_cpl(new_cpl) {
+                Some(rsp) if rsp != 0 => rsp,
+                _ => return deliver_exception(bus, state, pending, Exception::InvalidTss, saved_rip, Some(0)),
+            },
+            None => {
+                if state.tables.tr.is_unusable() || !state.tables.tr.is_present() {
+                    return deliver_exception(bus, state, pending, Exception::InvalidTss, saved_rip, Some(0));
+                }
+                if new_cpl > 2 {
+                    return deliver_exception(bus, state, pending, Exception::InvalidTss, saved_rip, Some(0));
+                }
+                let base = state.tables.tr.base;
+                let off = 4u64 + (new_cpl as u64) * 8;
+                let addr = match base.checked_add(off) {
+                    Some(addr) => addr,
+                    None => return deliver_exception(bus, state, pending, Exception::InvalidTss, saved_rip, Some(0)),
+                };
+                let rsp = match bus.read_u64(addr) {
+                    Ok(val) => val,
+                    Err(_) => return deliver_exception(bus, state, pending, Exception::InvalidTss, saved_rip, Some(0)),
+                };
+                if rsp == 0 {
+                    return deliver_exception(bus, state, pending, Exception::InvalidTss, saved_rip, Some(0));
+                }
+                rsp
+            }
         };
         state.write_gpr64(gpr::RSP, new_rsp);
     }

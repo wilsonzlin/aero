@@ -1,7 +1,6 @@
 use aero_cpu_core::exec::{Interpreter, Tier0Interpreter, Vcpu};
 use aero_cpu_core::mem::{CpuBus, FlatTestBus};
-use aero_cpu_core::state::{gpr, CpuMode, RFLAGS_IF};
-use aero_cpu_core::system::Tss64;
+use aero_cpu_core::state::{gpr, CpuMode, RFLAGS_IF, SEG_ACCESS_PRESENT};
 use aero_x86::Register;
 
 fn write_idt_gate32(
@@ -180,10 +179,12 @@ fn tier0_executes_int_iretq_cpl3_to_cpl0_stack_switch() {
     cpu.cpu.state.set_rflags(0x202);
     cpu.cpu.state.set_rip(code_base);
 
-    cpu.cpu.pending.tss64 = Some(Tss64 {
-        rsp0: 0x9000,
-        ..Tss64::default()
-    });
+    let tss_base = 0x10000u64;
+    cpu.cpu.state.tables.tr.selector = 0x40;
+    cpu.cpu.state.tables.tr.base = tss_base;
+    cpu.cpu.state.tables.tr.limit = 0x67;
+    cpu.cpu.state.tables.tr.access = SEG_ACCESS_PRESENT;
+    cpu.bus.write_u64(tss_base + 4, 0x9000).unwrap();
 
     let mut interp = Tier0Interpreter::new(1024);
     run_to_halt(&mut cpu, &mut interp, 128);
