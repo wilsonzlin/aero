@@ -24,6 +24,8 @@ Explicit list of `.inf` files to stage (paths are **relative to the driver direc
 - Use this when a driver ships **multiple INFs** but only a subset should be packaged together
   (feature variants, optional components, etc).
 - If present, the list must be non-empty.
+- CI copies selected INFs into the staged package root by file name; ensure selected INF file
+  names are unique within the driver (avoid two different `foo.inf` files in different folders).
 
 Example:
 
@@ -53,6 +55,10 @@ Example:
 
 Extra files (paths relative to the driver directory) to include in staged packages. Intended
 for **non-binary** assets like README/license text or helper scripts.
+
+- CI rejects binary-looking extensions here (`.sys`, `.dll`, `.exe`, `.cat`, `.msi`, `.cab`) so
+  we don't accidentally commit or ship build outputs via `additionalFiles`.
+- Paths must stay under the driver directory (no absolute paths / `..` traversal).
 
 ### `wdfCoInstaller` (optional, opt-in)
 
