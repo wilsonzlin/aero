@@ -41,6 +41,16 @@ function summarizeUsbDevice(device: USBDevice): Record<string, unknown> {
   };
 }
 
+function describeUsbDevice(device: USBDevice): string {
+  const vidPid = `${hex16(device.vendorId)}:${hex16(device.productId)}`;
+  const parts = [vidPid];
+  if (device.manufacturerName) parts.push(device.manufacturerName);
+  if (device.productName) parts.push(device.productName);
+  if (device.serialNumber) parts.push(`sn=${device.serialNumber}`);
+  if (device.opened) parts.push("(opened)");
+  return parts.join(" ");
+}
+
 async function requestUsbDevice(usb: USB): Promise<{ device: USBDevice; filterNote: string }> {
   // Chromium versions differ on whether `filters: []` and/or `filters: [{}]` are allowed.
   // Try a few reasonable fallbacks so the smoke test works in more environments.
@@ -170,6 +180,14 @@ export function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
   const output = document.createElement("pre");
   output.className = "mono";
 
+  const permittedTitle = document.createElement("div");
+  permittedTitle.className = "hint";
+  permittedTitle.textContent = "Permitted devices (navigator.usb.getDevices()):";
+  permittedTitle.hidden = true;
+
+  const permittedList = document.createElement("ul");
+  permittedList.hidden = true;
+
   const errorTitle = document.createElement("div");
   errorTitle.className = "bad";
 
@@ -181,7 +199,20 @@ export function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
 
   const errorHints = document.createElement("ul");
 
-  panel.append(title, note, actions, workerActions, status, output, errorTitle, errorDetails, errorRaw, errorHints);
+  panel.append(
+    title,
+    note,
+    actions,
+    workerActions,
+    status,
+    output,
+    permittedTitle,
+    permittedList,
+    errorTitle,
+    errorDetails,
+    errorRaw,
+    errorHints,
+  );
 
   let selected: USBDevice | null = null;
   let nextRequestId = 1;
@@ -281,6 +312,9 @@ export function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
   listButton.onclick = async () => {
     clearError();
     output.textContent = "";
+    permittedTitle.hidden = true;
+    permittedList.hidden = true;
+    permittedList.replaceChildren();
 
     if (!report.webusb) {
       showMessage("WebUSB is not supported in this browser/context.");
@@ -300,6 +334,37 @@ export function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
         },
         null,
         2,
+      );
+
+      permittedTitle.hidden = false;
+      permittedList.hidden = false;
+      permittedList.replaceChildren(
+        ...(devices.length
+          ? devices.map((device) => {
+              const li = document.createElement("li");
+              li.className = "row";
+              const label = document.createElement("span");
+              label.className = "mono";
+              label.textContent = describeUsbDevice(device);
+
+              const select = document.createElement("button");
+              select.type = "button";
+              select.textContent = "Select";
+              select.onclick = () => {
+                selected = device;
+                clearError();
+                output.textContent = JSON.stringify({ selected: summarizeUsbDevice(device), source: "getDevices()" }, null, 2);
+                refreshStatus();
+              };
+
+              li.append(label, select);
+              return li;
+            })
+          : [
+              Object.assign(document.createElement("li"), {
+                textContent: "No permitted devices. Use “Request USB device” to grant access.",
+              }),
+            ]),
       );
     } catch (err) {
       showError(err);
