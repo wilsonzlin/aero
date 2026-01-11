@@ -74,6 +74,9 @@ If `-ToolchainJson` is provided, it will use `StampInfExe` from that manifest (w
 
 Runs `ci/stamp-infs.ps1` **before** calling `Inf2Cat.exe`, because catalog hashes include the INF contents.
 
+Only drivers that include `drivers/<driver>/ci-package.json` are staged into `out/packages/`. This is the
+explicit opt-in gate that keeps CI driver bundles from accidentally including dev/test drivers.
+
 Environment variables:
 
 - `AERO_STAMP_INFS`: `0|false|no|off` disables stamping (default is enabled).

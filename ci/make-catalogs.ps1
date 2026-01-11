@@ -16,6 +16,11 @@
 
   The output staging folders are intended to be consumed by later signing/packaging steps.
 
+  CI packaging gate:
+    - Only drivers that contain `ci-package.json` at the driver root are staged/packaged.
+      This is an explicit opt-in to avoid accidentally shipping dev/test drivers (or
+      conflicting INFs that match real HWIDs).
+
 .PARAMETER OsList
   List of OS identifiers to pass to Inf2Cat. Defaults to @('7_X86','7_X64').
   You may also include Server2008R2_X64 (it will be grouped into the x64 package).
@@ -454,6 +459,9 @@ if (-not $driverBuildDirs) {
 
 $stampScript = Join-Path -Path $PSScriptRoot -ChildPath 'stamp-infs.ps1'
 
+$processedDriverCount = 0
+$skippedMissingManifestCount = 0
+
 foreach ($driverBuildDir in $driverBuildDirs) {
   $driverRel = [string]$driverBuildDir.RelativePath
   $driverNameForLog = [string]$driverBuildDir.DisplayName
@@ -464,6 +472,15 @@ foreach ($driverBuildDir in $driverBuildDirs) {
   if (-not (Test-Path -LiteralPath $driverSourceDir)) {
     throw "Driver source directory not found for '$driverNameForLog'. Expected: $driverSourceDir"
   }
+
+  $manifestPath = Join-Path -Path $driverSourceDir -ChildPath 'ci-package.json'
+  if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+    Write-Host "  -> Skipping: missing ci-package.json (treating as dev/test driver; not CI-packaged)."
+    $skippedMissingManifestCount++
+    continue
+  }
+
+  $processedDriverCount++
 
   $manifest = Read-DriverPackageManifest -DriverSourceDir $driverSourceDir
   $needsWdfCoInstaller = ($null -ne $manifest.WdfCoInstaller)
@@ -633,5 +650,9 @@ foreach ($driverBuildDir in $driverBuildDirs) {
       Write-Host "       - $($cat.FullName)"
     }
   }
+}
+
+if ($processedDriverCount -eq 0 -and $skippedMissingManifestCount -gt 0) {
+  throw "No CI-packaged drivers were staged from '$inputRootAbs' ($skippedMissingManifestCount driver build dir(s) were skipped because their source directories are missing ci-package.json)."
 }
 
