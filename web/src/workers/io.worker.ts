@@ -1089,7 +1089,6 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
             usbDemo = new UsbPassthroughDemoRuntime({
               demo: usbDemoApi,
               postMessage: (msg: UsbActionMessage | UsbPassthroughDemoResultMessage) => {
-                ctx.postMessage(msg as unknown);
                 if (import.meta.env.DEV && msg.type === "usb.demoResult") {
                   if (msg.result.status === "success") {
                     const bytes = msg.result.data;
@@ -1105,6 +1104,24 @@ async function initWorker(init: WorkerInitMessage): Promise<void> {
                     console.log("[io.worker] WebUSB demo result", msg.result);
                   }
                 }
+
+                // `usb.demoResult` can contain a (potentially large) config descriptor payload.
+                // Attempt to transfer the underlying buffer for the common case where it's a
+                // standalone ArrayBuffer, but fall back to structured clone when the buffer is
+                // non-transferable (e.g. a WebAssembly.Memory view).
+                if (msg.type === "usb.demoResult" && msg.result.status === "success") {
+                  const bytes = msg.result.data;
+                  if (bytes.buffer instanceof ArrayBuffer && bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength) {
+                    try {
+                      ctx.postMessage(msg as unknown, [bytes.buffer]);
+                      return;
+                    } catch {
+                      // fall through
+                    }
+                  }
+                }
+
+                ctx.postMessage(msg as unknown);
               },
             });
 
