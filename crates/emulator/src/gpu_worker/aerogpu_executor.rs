@@ -1028,7 +1028,7 @@ fn decode_alloc_table(
         };
 
         let entry = AeroGpuAllocEntry::read_from(mem, entry_gpa);
-        if entry.alloc_id == 0 || entry.size_bytes == 0 || entry.gpa == 0 {
+        if entry.alloc_id == 0 || entry.size_bytes == 0 {
             decode_errors.push(AeroGpuSubmissionDecodeError::AllocTable(
                 AeroGpuAllocTableDecodeError::InvalidEntry,
             ));
