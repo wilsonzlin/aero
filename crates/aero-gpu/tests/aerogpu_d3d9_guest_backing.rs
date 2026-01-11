@@ -11,6 +11,7 @@ use aero_protocol::aerogpu::{
         AEROGPU_RESOURCE_USAGE_TEXTURE, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
     },
     aerogpu_pci::{AerogpuFormat, AEROGPU_ABI_MAJOR},
+    aerogpu_ring as ring,
 };
 
 const CMD_STREAM_SIZE_BYTES_OFFSET: usize =
@@ -806,6 +807,102 @@ fn d3d9_copy_buffer_writeback_writes_guest_backing() {
         .read(DST_GPA, &mut out)
         .expect("read guest backing");
     assert_eq!(&out, &pattern);
+}
+
+#[test]
+fn d3d9_copy_buffer_writeback_rejects_readonly_alloc() {
+    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
+        Ok(exec) => exec,
+        Err(AerogpuD3d9Error::AdapterNotFound) => {
+            common::skip_or_panic(module_path!(), "wgpu adapter not found");
+            return;
+        }
+        Err(err) => panic!("failed to create executor: {err}"),
+    };
+
+    // Protocol constants from `aero-protocol`.
+    const OPC_CREATE_BUFFER: u32 = AerogpuCmdOpcode::CreateBuffer as u32;
+    const OPC_UPLOAD_RESOURCE: u32 = AerogpuCmdOpcode::UploadResource as u32;
+    const OPC_COPY_BUFFER: u32 = AerogpuCmdOpcode::CopyBuffer as u32;
+
+    const SRC_HANDLE: u32 = 1;
+    const DST_HANDLE: u32 = 2;
+
+    const DST_ALLOC_ID: u32 = 1;
+    const DST_GPA: u64 = 0x1000;
+
+    let guest_memory = VecGuestMemory::new(0x4000);
+    guest_memory
+        .write(DST_GPA, &[0xEEu8; 16])
+        .expect("write dst sentinel");
+    let alloc_table = AllocTable::new([(
+        DST_ALLOC_ID,
+        AllocEntry {
+            flags: ring::AEROGPU_ALLOC_FLAG_READONLY,
+            gpa: DST_GPA,
+            size_bytes: 0x1000,
+        },
+    )])
+    .expect("alloc table");
+
+    let pattern = [
+        0xDEu8, 0xAD, 0xBE, 0xEF, 0xAA, 0xBB, 0xCC, 0xDD, 0x10, 0x20, 0x30, 0x40, 0x55, 0x66,
+        0x77, 0x88,
+    ];
+    let stream = build_stream(|out| {
+        emit_packet(out, OPC_CREATE_BUFFER, |out| {
+            push_u32(out, SRC_HANDLE);
+            push_u32(out, 0); // usage_flags
+            push_u64(out, 16); // size_bytes
+            push_u32(out, 0); // backing_alloc_id
+            push_u32(out, 0); // backing_offset_bytes
+            push_u64(out, 0); // reserved0
+        });
+
+        emit_packet(out, OPC_CREATE_BUFFER, |out| {
+            push_u32(out, DST_HANDLE);
+            push_u32(out, 0); // usage_flags
+            push_u64(out, 16); // size_bytes
+            push_u32(out, DST_ALLOC_ID); // backing_alloc_id
+            push_u32(out, 0); // backing_offset_bytes
+            push_u64(out, 0); // reserved0
+        });
+
+        emit_packet(out, OPC_UPLOAD_RESOURCE, |out| {
+            push_u32(out, SRC_HANDLE);
+            push_u32(out, 0); // reserved0
+            push_u64(out, 0); // offset_bytes
+            push_u64(out, pattern.len() as u64); // size_bytes
+            out.extend_from_slice(&pattern);
+        });
+
+        emit_packet(out, OPC_COPY_BUFFER, |out| {
+            push_u32(out, DST_HANDLE);
+            push_u32(out, SRC_HANDLE);
+            push_u64(out, 0); // dst_offset_bytes
+            push_u64(out, 0); // src_offset_bytes
+            push_u64(out, 16); // size_bytes
+            push_u32(out, AEROGPU_COPY_FLAG_WRITEBACK_DST);
+            push_u32(out, 0); // reserved0
+        });
+    });
+
+    let err = exec
+        .execute_cmd_stream_with_guest_memory(&stream, &guest_memory, Some(&alloc_table))
+        .expect_err("execute should fail");
+    match err {
+        AerogpuD3d9Error::Validation(msg) => assert!(
+            msg.contains("READONLY"),
+            "expected READONLY validation error, got: {msg}"
+        ),
+        other => panic!("unexpected error: {other}"),
+    }
+
+    let mut out = vec![0u8; pattern.len()];
+    guest_memory
+        .read(DST_GPA, &mut out)
+        .expect("read guest backing");
+    assert_eq!(&out, &[0xEEu8; 16]);
 }
 
 #[test]

@@ -1,6 +1,6 @@
 mod common;
 
-use aero_gpu::aerogpu_executor::AeroGpuExecutor;
+use aero_gpu::aerogpu_executor::{AeroGpuExecutor, ExecutorEvent};
 use aero_gpu::{readback_rgba8, GuestMemory, TextureRegion, VecGuestMemory};
 use aero_protocol::aerogpu::{
     aerogpu_cmd::{
@@ -11,7 +11,8 @@ use aero_protocol::aerogpu::{
     aerogpu_pci::{AerogpuFormat, AEROGPU_ABI_VERSION_U32},
     aerogpu_ring::{
         AerogpuAllocEntry as ProtocolAllocEntry,
-        AerogpuAllocTableHeader as ProtocolAllocTableHeader, AEROGPU_ALLOC_TABLE_MAGIC,
+        AerogpuAllocTableHeader as ProtocolAllocTableHeader, AEROGPU_ALLOC_FLAG_READONLY,
+        AEROGPU_ALLOC_TABLE_MAGIC,
     },
 };
 
@@ -1175,6 +1176,124 @@ fn copy_buffer_writeback_writes_guest_backing() {
 }
 
 #[test]
+fn copy_buffer_writeback_rejects_readonly_alloc() {
+    pollster::block_on(async {
+        let (device, queue) = match create_device_queue().await {
+            Some(v) => v,
+            None => {
+                common::skip_or_panic(module_path!(), "no wgpu adapter available");
+                return;
+            }
+        };
+        let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
+
+        let guest = VecGuestMemory::new(0x20_000);
+
+        const ALLOC_DST: u32 = 1;
+        const DST_GPA: u64 = 0x1000;
+        let alloc_table_gpa = 0x8000u64;
+        let alloc_table_bytes = {
+            let mut out = Vec::new();
+
+            // aerogpu_alloc_table_header (24 bytes)
+            push_u32(&mut out, AEROGPU_ALLOC_TABLE_MAGIC);
+            push_u32(&mut out, AEROGPU_ABI_VERSION_U32);
+            push_u32(&mut out, 0); // size_bytes (patch later)
+            push_u32(&mut out, 1); // entry_count
+            push_u32(&mut out, ProtocolAllocEntry::SIZE_BYTES as u32); // entry_stride_bytes
+            push_u32(&mut out, 0); // reserved0
+
+            // aerogpu_alloc_entry (32 bytes)
+            push_u32(&mut out, ALLOC_DST);
+            push_u32(&mut out, AEROGPU_ALLOC_FLAG_READONLY); // flags
+            push_u64(&mut out, DST_GPA);
+            push_u64(&mut out, 0x100); // size_bytes
+            push_u64(&mut out, 0); // reserved0
+
+            let size_bytes = out.len() as u32;
+            out[ALLOC_TABLE_SIZE_BYTES_OFFSET..ALLOC_TABLE_SIZE_BYTES_OFFSET + 4]
+                .copy_from_slice(&size_bytes.to_le_bytes());
+            out
+        };
+        guest
+            .write(alloc_table_gpa, &alloc_table_bytes)
+            .expect("write alloc table");
+
+        guest
+            .write(DST_GPA, &[0xEE; 16])
+            .expect("write dst sentinel");
+
+        let payload = *b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0A\x0B\x0C\x0D\x0E\x0F";
+        let stream = build_stream(|out| {
+            // CREATE_BUFFER src (handle=1) host-owned.
+            emit_packet(out, AerogpuCmdOpcode::CreateBuffer as u32, |out| {
+                push_u32(out, 1); // buffer_handle
+                push_u32(out, 0); // usage_flags
+                push_u64(out, payload.len() as u64); // size_bytes
+                push_u32(out, 0); // backing_alloc_id
+                push_u32(out, 0); // backing_offset_bytes
+                push_u64(out, 0); // reserved0
+            });
+
+            // CREATE_BUFFER dst (handle=2) guest-backed.
+            emit_packet(out, AerogpuCmdOpcode::CreateBuffer as u32, |out| {
+                push_u32(out, 2); // buffer_handle
+                push_u32(out, 0); // usage_flags
+                push_u64(out, payload.len() as u64); // size_bytes
+                push_u32(out, ALLOC_DST); // backing_alloc_id
+                push_u32(out, 0); // backing_offset_bytes
+                push_u64(out, 0); // reserved0
+            });
+
+            // UPLOAD_RESOURCE src.
+            emit_packet(out, AerogpuCmdOpcode::UploadResource as u32, |out| {
+                push_u32(out, 1); // resource_handle
+                push_u32(out, 0); // reserved0
+                push_u64(out, 0); // offset_bytes
+                push_u64(out, payload.len() as u64); // size_bytes
+                out.extend_from_slice(&payload);
+            });
+
+            // COPY_BUFFER: dst <- src (with writeback).
+            emit_packet(out, AerogpuCmdOpcode::CopyBuffer as u32, |out| {
+                push_u32(out, 2); // dst_buffer
+                push_u32(out, 1); // src_buffer
+                push_u64(out, 0); // dst_offset_bytes
+                push_u64(out, 0); // src_offset_bytes
+                push_u64(out, payload.len() as u64); // size_bytes
+                push_u32(out, AEROGPU_COPY_FLAG_WRITEBACK_DST); // flags
+                push_u32(out, 0); // reserved0
+            });
+        });
+
+        let cmd_gpa = 0x9000u64;
+        guest.write(cmd_gpa, &stream).expect("write command stream");
+
+        let report = exec.process_submission_from_guest_memory(
+            &guest,
+            cmd_gpa,
+            stream.len() as u32,
+            alloc_table_gpa,
+            alloc_table_bytes.len() as u32,
+        );
+        assert!(!report.is_ok(), "expected error report");
+        assert!(
+            report.events.iter().any(|e| matches!(
+                e,
+                ExecutorEvent::Error { message, .. }
+                    if message.contains("READONLY") || message.contains("read-only")
+            )),
+            "expected read-only validation error, got: {:#?}",
+            report.events
+        );
+
+        let mut readback = [0u8; 16];
+        guest.read(DST_GPA, &mut readback).expect("read dst sentinel");
+        assert_eq!(readback, [0xEE; 16]);
+    });
+}
+
+#[test]
 fn copy_texture2d_writeback_writes_guest_backing() {
     pollster::block_on(async {
         let (device, queue) = match create_device_queue().await {
@@ -1306,6 +1425,142 @@ fn copy_texture2d_writeback_writes_guest_backing() {
         expected[0..8].copy_from_slice(&src_pixels[0..8]);
         expected[12..20].copy_from_slice(&src_pixels[8..16]);
         assert_eq!(readback, expected);
+    });
+}
+
+#[test]
+fn copy_texture2d_writeback_rejects_readonly_alloc() {
+    pollster::block_on(async {
+        let (device, queue) = match create_device_queue().await {
+            Some(v) => v,
+            None => {
+                common::skip_or_panic(module_path!(), "no wgpu adapter available");
+                return;
+            }
+        };
+        let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
+
+        let guest = VecGuestMemory::new(0x20_000);
+
+        const ALLOC_DST: u32 = 1;
+        const DST_GPA: u64 = 0x1000;
+        let alloc_table_gpa = 0x8000u64;
+        let alloc_table_bytes = {
+            let mut out = Vec::new();
+
+            // aerogpu_alloc_table_header (24 bytes)
+            push_u32(&mut out, AEROGPU_ALLOC_TABLE_MAGIC);
+            push_u32(&mut out, AEROGPU_ABI_VERSION_U32);
+            push_u32(&mut out, 0); // size_bytes (patch later)
+            push_u32(&mut out, 1); // entry_count
+            push_u32(&mut out, ProtocolAllocEntry::SIZE_BYTES as u32); // entry_stride_bytes
+            push_u32(&mut out, 0); // reserved0
+
+            // aerogpu_alloc_entry (32 bytes)
+            push_u32(&mut out, ALLOC_DST);
+            push_u32(&mut out, AEROGPU_ALLOC_FLAG_READONLY); // flags
+            push_u64(&mut out, DST_GPA);
+            push_u64(&mut out, 0x100); // size_bytes
+            push_u64(&mut out, 0); // reserved0
+
+            let size_bytes = out.len() as u32;
+            out[ALLOC_TABLE_SIZE_BYTES_OFFSET..ALLOC_TABLE_SIZE_BYTES_OFFSET + 4]
+                .copy_from_slice(&size_bytes.to_le_bytes());
+            out
+        };
+        guest
+            .write(alloc_table_gpa, &alloc_table_bytes)
+            .expect("write alloc table");
+
+        // 2x2 RGBA8 with row_pitch_bytes=12 means 4 padding bytes at the end of each row.
+        let sentinel = vec![0xEEu8; 24];
+        guest.write(DST_GPA, &sentinel).expect("write dst sentinel");
+
+        let src_pixels: [u8; 16] = [
+            255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 0, 255,
+        ];
+
+        let stream = build_stream(|out| {
+            // Source texture (handle=1) host-owned.
+            emit_packet(out, AerogpuCmdOpcode::CreateTexture2d as u32, |out| {
+                push_u32(out, 1); // texture_handle
+                push_u32(out, 1u32 << 3); // usage_flags: TEXTURE
+                push_u32(out, AerogpuFormat::R8G8B8A8Unorm as u32); // format
+                push_u32(out, 2); // width
+                push_u32(out, 2); // height
+                push_u32(out, 1); // mip_levels
+                push_u32(out, 1); // array_layers
+                push_u32(out, 0); // row_pitch_bytes (unused when backing_alloc_id == 0)
+                push_u32(out, 0); // backing_alloc_id
+                push_u32(out, 0); // backing_offset_bytes
+                push_u64(out, 0); // reserved0
+            });
+            emit_packet(out, AerogpuCmdOpcode::UploadResource as u32, |out| {
+                push_u32(out, 1); // resource_handle
+                push_u32(out, 0); // reserved0
+                push_u64(out, 0); // offset_bytes
+                push_u64(out, src_pixels.len() as u64); // size_bytes
+                out.extend_from_slice(&src_pixels);
+            });
+
+            // Destination texture (handle=2) guest-backed.
+            emit_packet(out, AerogpuCmdOpcode::CreateTexture2d as u32, |out| {
+                push_u32(out, 2); // texture_handle
+                push_u32(out, 1u32 << 3); // usage_flags: TEXTURE
+                push_u32(out, AerogpuFormat::R8G8B8A8Unorm as u32); // format
+                push_u32(out, 2); // width
+                push_u32(out, 2); // height
+                push_u32(out, 1); // mip_levels
+                push_u32(out, 1); // array_layers
+                push_u32(out, 12); // row_pitch_bytes
+                push_u32(out, ALLOC_DST); // backing_alloc_id
+                push_u32(out, 0); // backing_offset_bytes
+                push_u64(out, 0); // reserved0
+            });
+
+            // COPY_TEXTURE2D: dst <- src (with writeback).
+            emit_packet(out, AerogpuCmdOpcode::CopyTexture2d as u32, |out| {
+                push_u32(out, 2); // dst_texture
+                push_u32(out, 1); // src_texture
+                push_u32(out, 0); // dst_mip_level
+                push_u32(out, 0); // dst_array_layer
+                push_u32(out, 0); // src_mip_level
+                push_u32(out, 0); // src_array_layer
+                push_u32(out, 0); // dst_x
+                push_u32(out, 0); // dst_y
+                push_u32(out, 0); // src_x
+                push_u32(out, 0); // src_y
+                push_u32(out, 2); // width
+                push_u32(out, 2); // height
+                push_u32(out, AEROGPU_COPY_FLAG_WRITEBACK_DST);
+                push_u32(out, 0); // reserved0
+            });
+        });
+
+        let cmd_gpa = 0x9000u64;
+        guest.write(cmd_gpa, &stream).expect("write command stream");
+
+        let report = exec.process_submission_from_guest_memory(
+            &guest,
+            cmd_gpa,
+            stream.len() as u32,
+            alloc_table_gpa,
+            alloc_table_bytes.len() as u32,
+        );
+        assert!(!report.is_ok(), "expected error report");
+        assert!(
+            report.events.iter().any(|e| matches!(
+                e,
+                ExecutorEvent::Error { message, .. }
+                    if message.contains("READONLY") || message.contains("read-only")
+            )),
+            "expected read-only validation error, got: {:#?}",
+            report.events
+        );
+
+        let mut readback = vec![0u8; sentinel.len()];
+        guest.read(DST_GPA, &mut readback).expect("read dst sentinel");
+        assert_eq!(readback, sentinel);
     });
 }
 
