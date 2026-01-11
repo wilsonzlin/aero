@@ -1,6 +1,6 @@
 use aero_cpu_core::interrupts::{CpuCore, CpuExit, InterruptController};
 use aero_cpu_core::mem::{CpuBus, FlatTestBus};
-use aero_cpu_core::state::{gpr, CpuMode, RFLAGS_IF, SEG_ACCESS_PRESENT};
+use aero_cpu_core::state::{gpr, CpuMode, RFLAGS_IF, RFLAGS_IOPL_MASK, SEG_ACCESS_PRESENT};
 use aero_x86::Register;
 
 fn write_idt_gate32(
@@ -708,6 +708,39 @@ fn iret_protected_mode_cannot_return_to_more_privileged_cpl() -> Result<(), CpuE
 }
 
 #[test]
+fn iret_protected_mode_does_not_restore_iopl_from_user_frame() -> Result<(), CpuExit> {
+    let mut mem = FlatTestBus::new(0x40000);
+
+    let idt_base = 0x1000;
+    // Deliver an interrupt to a CPL3 handler so IRET executes at CPL3.
+    write_idt_gate32(&mut mem, idt_base, 0x80, 0x1B, 0x5000, 0xEE);
+
+    let mut cpu = CpuCore::new(CpuMode::Protected);
+    cpu.state.tables.idtr.base = idt_base;
+    cpu.state.tables.idtr.limit = 0x7FF;
+    cpu.state.segments.cs.selector = 0x1B; // CPL3
+    cpu.state.segments.ss.selector = 0x23;
+    cpu.state.set_rip(0x4000_0000);
+    cpu.state.write_gpr32(gpr::RSP, 0x7000);
+    cpu.state.set_rflags(0x202); // IF=1, IOPL=0
+
+    cpu.pending.raise_software_interrupt(0x80, 0x4000_0010);
+    cpu.deliver_pending_event(&mut mem)?;
+
+    // Corrupt the saved EFLAGS to attempt raising IOPL=3.
+    let frame_base = cpu.state.read_gpr32(gpr::RSP) as u64;
+    mem.write_u32(frame_base + 8, 0x202 | (3 << 12)).unwrap();
+
+    cpu.iret(&mut mem)?;
+
+    assert_eq!(cpu.state.segments.cs.selector, 0x1B);
+    assert_eq!(cpu.state.rip(), 0x4000_0010);
+    assert_eq!(cpu.state.rflags() & RFLAGS_IOPL_MASK, 0);
+
+    Ok(())
+}
+
+#[test]
 fn iretq_long_mode_cannot_return_to_more_privileged_cpl() -> Result<(), CpuExit> {
     let mut mem = FlatTestBus::new(0x40000);
 
@@ -749,6 +782,39 @@ fn iretq_long_mode_cannot_return_to_more_privileged_cpl() -> Result<(), CpuExit>
     // The IRETQ should fault with #GP(0) instead of returning to CPL0.
     assert_eq!(cpu.state.segments.cs.selector, 0x08);
     assert_eq!(cpu.state.rip(), 0x6000);
+
+    Ok(())
+}
+
+#[test]
+fn iretq_long_mode_does_not_restore_iopl_from_user_frame() -> Result<(), CpuExit> {
+    let mut mem = FlatTestBus::new(0x40000);
+
+    let idt_base = 0x1000;
+    // Deliver an interrupt to a CPL3 handler so IRETQ executes at CPL3.
+    write_idt_gate64(&mut mem, idt_base, 0x80, 0x33, 0x5000, 0, 0xEE);
+
+    let mut cpu = CpuCore::new(CpuMode::Long);
+    cpu.state.tables.idtr.base = idt_base;
+    cpu.state.tables.idtr.limit = 0x0FFF;
+    cpu.state.segments.cs.selector = 0x33; // CPL3
+    cpu.state.segments.ss.selector = 0x2B;
+    cpu.state.set_rip(0x4000_0000);
+    cpu.state.write_gpr64(gpr::RSP, 0x7000);
+    cpu.state.set_rflags(0x202); // IF=1, IOPL=0
+
+    cpu.pending.raise_software_interrupt(0x80, 0x4000_0010);
+    cpu.deliver_pending_event(&mut mem)?;
+
+    // Corrupt the saved RFLAGS to attempt raising IOPL=3.
+    let frame_base = cpu.state.read_gpr64(gpr::RSP);
+    mem.write_u64(frame_base + 16, 0x202 | (3 << 12)).unwrap();
+
+    cpu.iret(&mut mem)?;
+
+    assert_eq!(cpu.state.segments.cs.selector, 0x33);
+    assert_eq!(cpu.state.rip(), 0x4000_0010);
+    assert_eq!(cpu.state.rflags() & RFLAGS_IOPL_MASK, 0);
 
     Ok(())
 }

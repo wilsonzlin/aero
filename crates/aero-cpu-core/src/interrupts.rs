@@ -12,7 +12,10 @@ use aero_x86::Register;
 
 use crate::exceptions::{Exception, InterruptSource, PendingEvent};
 use crate::mem::CpuBus;
-use crate::state::{self, gpr, CpuMode, RFLAGS_IF, RFLAGS_RESERVED1, RFLAGS_TF};
+use crate::state::{
+    self, gpr, CpuMode, RFLAGS_IF, RFLAGS_IOPL_MASK, RFLAGS_RESERVED1, RFLAGS_TF, RFLAGS_VIF,
+    RFLAGS_VIP, RFLAGS_VM,
+};
 use crate::time::TimeSource;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -914,8 +917,23 @@ fn iret_protected<B: CpuBus>(
 
     state.segments.cs.selector = new_cs;
     state.set_ip(new_eip);
+
     let cur = state.rflags();
-    let merged = (cur & !0xFFFF_FFFF) | (new_eflags & 0xFFFF_FFFF) | RFLAGS_RESERVED1;
+    let mut write_mask = 0xFFFF_FFFFu64;
+    // Protected-mode IRET applies the same privilege gating as POPF:
+    // - IOPL can only change at CPL0.
+    // - IF can only change when CPL <= IOPL.
+    if current_cpl != 0 {
+        write_mask &= !RFLAGS_IOPL_MASK;
+    }
+    let iopl = ((cur & RFLAGS_IOPL_MASK) >> 12) as u8;
+    if current_cpl > iopl {
+        write_mask &= !RFLAGS_IF;
+    }
+    write_mask &= !(RFLAGS_VM | RFLAGS_VIF | RFLAGS_VIP);
+
+    let new_low = (cur & 0xFFFF_FFFF & !write_mask) | (new_eflags & 0xFFFF_FFFF & write_mask);
+    let merged = (cur & !0xFFFF_FFFF) | new_low | RFLAGS_RESERVED1;
     state.set_rflags(merged);
 
     if let (Some(esp), Some(ss)) = (new_esp, new_ss) {
@@ -987,7 +1005,23 @@ fn iret_long<B: CpuBus>(
 
     state.segments.cs.selector = new_cs;
     state.set_ip(new_rip);
-    state.set_rflags(new_rflags | RFLAGS_RESERVED1);
+
+    let cur = state.rflags();
+    let mut write_mask = u64::MAX;
+    // IRETQ applies the same privilege gating as POPF/IRET:
+    // - IOPL can only change at CPL0.
+    // - IF can only change when CPL <= IOPL.
+    if current_cpl != 0 {
+        write_mask &= !RFLAGS_IOPL_MASK;
+    }
+    let iopl = ((cur & RFLAGS_IOPL_MASK) >> 12) as u8;
+    if current_cpl > iopl {
+        write_mask &= !RFLAGS_IF;
+    }
+    write_mask &= !(RFLAGS_VM | RFLAGS_VIF | RFLAGS_VIP);
+
+    let merged = (cur & !write_mask) | (new_rflags & write_mask) | RFLAGS_RESERVED1;
+    state.set_rflags(merged);
 
     if let (Some(rsp), Some(ss)) = (new_rsp, new_ss) {
         state.write_gpr64(gpr::RSP, rsp);
