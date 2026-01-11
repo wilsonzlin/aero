@@ -8,6 +8,7 @@
 
 #include <audioclient.h>
 #include <cfgmgr32.h>
+#include <endpointvolume.h>
 #include <functiondiscoverykeys_devpkey.h>
 #include <mmdeviceapi.h>
 #include <mmsystem.h>
@@ -2151,6 +2152,73 @@ static std::wstring GetPropertyString(IPropertyStore* store, const PROPERTYKEY& 
   return out;
 }
 
+static void TryEnsureEndpointVolumeAudible(Logger& log, IMMDevice* endpoint, const char* tag) {
+  if (!endpoint || !tag) return;
+
+  ComPtr<IAudioEndpointVolume> vol;
+  HRESULT hr = endpoint->Activate(__uuidof(IAudioEndpointVolume), CLSCTX_INPROC_SERVER, nullptr,
+                                  reinterpret_cast<void**>(vol.Put()));
+  if (FAILED(hr) || !vol) {
+    log.Logf("virtio-snd: %s endpoint IAudioEndpointVolume unavailable hr=0x%08lx", tag,
+             static_cast<unsigned long>(hr));
+    return;
+  }
+
+  BOOL mute = FALSE;
+  hr = vol->GetMute(&mute);
+  if (SUCCEEDED(hr)) {
+    log.Logf("virtio-snd: %s endpoint mute=%d", tag, mute ? 1 : 0);
+  }
+
+  if (mute) {
+    hr = vol->SetMute(FALSE, nullptr);
+    log.Logf("virtio-snd: %s endpoint SetMute(FALSE) hr=0x%08lx", tag, static_cast<unsigned long>(hr));
+  }
+
+  float before = 0.0f;
+  hr = vol->GetMasterVolumeLevelScalar(&before);
+  if (SUCCEEDED(hr)) {
+    log.Logf("virtio-snd: %s endpoint volume=%.3f", tag, before);
+  }
+
+  // Some Win7 images can have the master volume muted/at 0, which results in silent host-side wav
+  // captures even though waveOut/WASAPI calls succeed. Force a non-trivial master volume so the
+  // harness can validate end-to-end audio output deterministically.
+  hr = vol->SetMasterVolumeLevelScalar(0.50f, nullptr);
+  if (FAILED(hr)) {
+    log.Logf("virtio-snd: %s endpoint SetMasterVolumeLevelScalar(0.50) failed hr=0x%08lx", tag,
+             static_cast<unsigned long>(hr));
+  }
+}
+
+static void TryEnsureDefaultRenderEndpointAudible(Logger& log) {
+  ScopedCoInitialize com(COINIT_MULTITHREADED);
+  if (FAILED(com.hr())) {
+    log.Logf("virtio-snd: default render endpoint volume: CoInitializeEx failed hr=0x%08lx",
+             static_cast<unsigned long>(com.hr()));
+    return;
+  }
+
+  ComPtr<IMMDeviceEnumerator> enumerator;
+  HRESULT hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_INPROC_SERVER,
+                                __uuidof(IMMDeviceEnumerator), reinterpret_cast<void**>(enumerator.Put()));
+  if (FAILED(hr) || !enumerator) {
+    log.Logf("virtio-snd: default render endpoint volume: CoCreateInstance failed hr=0x%08lx",
+             static_cast<unsigned long>(hr));
+    return;
+  }
+
+  ComPtr<IMMDevice> endpoint;
+  hr = enumerator->GetDefaultAudioEndpoint(eRender, eConsole, endpoint.Put());
+  if (FAILED(hr) || !endpoint) {
+    log.Logf("virtio-snd: default render endpoint volume: GetDefaultAudioEndpoint failed hr=0x%08lx",
+             static_cast<unsigned long>(hr));
+    return;
+  }
+
+  TryEnsureEndpointVolumeAudible(log, endpoint.Get(), "default-render");
+}
+
 static bool LooksLikeVirtioSndEndpoint(const std::wstring& friendly_name, const std::wstring& instance_id,
                                        const std::vector<std::wstring>& hwids,
                                        const std::vector<std::wstring>& match_names,
@@ -2480,6 +2548,7 @@ static TestResult VirtioSndTest(Logger& log, const std::vector<std::wstring>& ma
   log.Logf("virtio-snd: selected endpoint name=%s id=%s instance_id=%s pci_hwid=%s score=%d",
            WideToUtf8(chosen_friendly).c_str(), WideToUtf8(chosen_id).c_str(),
            WideToUtf8(chosen_instance_id).c_str(), WideToUtf8(chosen_pci_hwid).c_str(), best_score);
+  TryEnsureEndpointVolumeAudible(log, chosen.Get(), "render");
 
   ComPtr<IAudioClient> client;
   hr = chosen->Activate(__uuidof(IAudioClient), CLSCTX_INPROC_SERVER, nullptr,
@@ -2777,6 +2846,10 @@ static bool WaveOutToneTest(Logger& log, const std::vector<std::wstring>& match_
   const UINT num = waveOutGetNumDevs();
   log.Logf("virtio-snd: waveOut devices=%u", num);
   if (num == 0) return false;
+
+  // Ensure the master volume isn't muted/at 0 before attempting the winmm fallback.
+  // This is best-effort; failures do not cause the test to fail directly.
+  TryEnsureDefaultRenderEndpointAudible(log);
 
   auto name_matches = [&](const std::wstring& n) -> bool {
     if (ContainsInsensitive(n, L"virtio") || ContainsInsensitive(n, L"aero")) return true;

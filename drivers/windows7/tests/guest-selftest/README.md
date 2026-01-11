@@ -43,6 +43,8 @@ virtio driver health via **COM1 serial** (host-captured), stdout, and a log file
     - QEMU compatibility package (`aero-virtio-snd-legacy.inf`): expects service `aeroviosnd_legacy`
   - Enumerate audio render endpoints via MMDevice API and start a shared-mode WASAPI render stream.
   - Render a short deterministic tone (440Hz) at 48kHz/16-bit/stereo.
+  - Best-effort: unmute the selected render endpoint and set its master volume to a non-trivial level
+    (so host-side wav capture is not accidentally silent due to a muted/zero-volume image).
   - If WASAPI fails, a WinMM `waveOut` fallback is attempted.
   - By default, if a supported virtio-snd PCI function is detected, the selftest exercises playback automatically.
     - If no supported device is detected, virtio-snd is reported as **SKIP**.
