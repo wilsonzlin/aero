@@ -201,7 +201,7 @@ pub trait GpuCommandProcessor {
 | MM-010 | Sparse memory allocation             | P1       | MM-001       | Medium     |
 | MM-011 | Memory test suite                    | P0       | MM-006       | Medium     |
 | MM-012 | JIT-visible TLB layout (stable offsets, packed entries) | P0 | MM-007 | Medium |
-| MM-013 | `mmu_translate_slow` helper for JIT (page walk + fill TLB) | P0 | MM-006..MM-012 | High |
+| MM-013 | `mmu_translate` helper for JIT (page walk + fill TLB) | P0 | MM-006..MM-012 | High |
 | MM-014 | MMIO classification/epoch for JIT fast-path safety          | P0 | MM-003, MM-012 | Medium |
 
 

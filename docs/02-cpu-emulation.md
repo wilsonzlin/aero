@@ -760,14 +760,15 @@ impl WasmCompiler {
     fn compile_basic_block(&mut self, block: &BasicBlock) -> WasmModule {
         let mut builder = WasmBuilder::new();
         
-        // Function signature: (cpu_ptr: i32) -> i32 (next_rip)
-        builder.begin_function(&[ValType::I32], &[ValType::I32]);
+        // Function signature: (cpu_ptr: i32, jit_ctx_ptr: i32) -> i64 (next_rip)
+        builder.begin_function(&[ValType::I32, ValType::I32], &[ValType::I64]);
         
-        // Load CPU state pointer into local
+        // Load CPU state + JIT context pointers into locals.
         let cpu_ptr = builder.get_param(0);
+        let jit_ctx_ptr = builder.get_param(1);
         
         for inst in &block.instructions {
-            self.emit_instruction(&mut builder, cpu_ptr, inst);
+            self.emit_instruction(&mut builder, cpu_ptr, jit_ctx_ptr, inst);
         }
         
         // Return next RIP
@@ -778,7 +779,13 @@ impl WasmCompiler {
         builder.build()
     }
     
-    fn emit_instruction(&mut self, builder: &mut WasmBuilder, cpu: Local, inst: &Instruction) {
+    fn emit_instruction(
+        &mut self,
+        builder: &mut WasmBuilder,
+        cpu: Local,
+        jit_ctx: Local,
+        inst: &Instruction,
+    ) {
         match inst.opcode {
             Opcode::MovRegReg => {
                 // dst = src
@@ -831,42 +838,55 @@ impl WasmCompiler {
 
 ### Inlined Guest Memory Loads/Stores (TLB + RAM Fast Path)
 
-Baseline JIT blocks must avoid an imported helper call per guest load/store. Instead, the code generator should inline address translation against a **JIT-visible TLB** (see [Memory Management](./03-memory-management.md#jit-visible-tlb-baseline-jit-memory-fast-path)) and directly `load/store` the guest RAM region in WASM linear memory.
+Baseline JIT blocks must avoid an imported helper call per guest load/store. Instead, the code generator should inline address translation against a **JIT-visible TLB** stored in a separate JIT context region (addressed by `jit_ctx_ptr`) (see [Memory Management](./03-memory-management.md#jit-visible-tlb-baseline-jit-memory-fast-path)) and directly `load/store` the guest RAM region in WASM linear memory.
 
 The high-level strategy for each IR memory op is:
 
 1. Compute effective `vaddr`
-2. Attempt a direct-mapped TLB lookup (inline loads from the `JitTlb` struct)
+2. Attempt a direct-mapped TLB lookup (inline loads from the `JitTlb` struct inside the JIT context pointed to by `jit_ctx_ptr`)
 3. On hit + `IS_RAM`: perform a direct WASM `load/store` at `ram_base + paddr`
 4. On hit but non-RAM (MMIO/ROM/unmapped): exit the block via `jit_exit_mmio(...)`
-5. On miss or permission mismatch: call `mmu_translate_slow(vaddr, access)` and continue (or raise `#PF`)
+5. On miss or permission mismatch: call `mmu_translate(cpu_ptr, jit_ctx_ptr, vaddr, access) -> i64` and continue (or raise `#PF`)
 
 #### Codegen sketch
 
 ```rust
 impl WasmCompiler {
-    fn emit_load_u64(&mut self, b: &mut WasmBuilder, cpu: Local, vaddr: Local) -> Local {
+    fn emit_load_u64(
+        &mut self,
+        b: &mut WasmBuilder,
+        cpu: Local,
+        jit_ctx: Local,
+        vaddr: Local,
+    ) -> Local {
         // (1) Optional cross-page guard. If the load crosses a 4KB boundary, go slow-path.
         // if ((vaddr & 0xFFF) > 0xFFF - 7) => slow
         self.emit_cross_page_guard(b, vaddr, 8);
 
         // (2) Fast-path translate: returns (phys_base_and_flags, hit?)
-        let tlb_res = self.emit_tlb_lookup(b, cpu, vaddr, AccessType::Read);
+        let tlb_res = self.emit_tlb_lookup(b, cpu, jit_ctx, vaddr, AccessType::Read);
 
         // (3) On RAM, do the direct memory load
         // paddr = (phys_base & !0xFFF) | (vaddr & 0xFFF)
-        // wasm_addr = RAM_BASE + paddr
+        // wasm_addr = ram_base + paddr  // `ram_base` comes from the JIT context (`jit_ctx_ptr`)
         let val = self.emit_direct_ram_load(b, tlb_res, vaddr, 8);
 
         // (4) Otherwise, `emit_direct_ram_load` will have emitted a `jit_exit_mmio`
-        // or fallen back to `mmu_translate_slow`.
+        // or fallen back to `mmu_translate`.
         val
     }
 
-    fn emit_store_u64(&mut self, b: &mut WasmBuilder, cpu: Local, vaddr: Local, value: Local) {
+    fn emit_store_u64(
+        &mut self,
+        b: &mut WasmBuilder,
+        cpu: Local,
+        jit_ctx: Local,
+        vaddr: Local,
+        value: Local,
+    ) {
         self.emit_cross_page_guard(b, vaddr, 8);
 
-        let tlb_res = self.emit_tlb_lookup(b, cpu, vaddr, AccessType::Write);
+        let tlb_res = self.emit_tlb_lookup(b, cpu, jit_ctx, vaddr, AccessType::Write);
         self.emit_direct_ram_store(b, tlb_res, vaddr, value, 8);
 
         // If the translation is non-RAM, the store exits to the runtime for MMIO.

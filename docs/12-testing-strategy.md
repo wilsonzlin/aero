@@ -211,7 +211,7 @@ fn jit_memory_loop_matches_interpreter() {
     assert_eq!(jit.memory_digest(), interp.memory_digest());
 
     // Performance sanity check: the JIT should not be calling translation helpers per access.
-    assert!(jit.stats.mmu_translate_slow_calls < 10_000);
+    assert!(jit.stats.mmu_translate_calls < 10_000);
 }
 ```
 

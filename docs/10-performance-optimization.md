@@ -196,13 +196,13 @@ For common-case RAM accesses we should instead generate:
 - **inline TLB lookup** against a compact JIT-visible TLB stored in linear memory
 - **direct WASM `load/store`** from the guest RAM region on hit
 - **clean exits** back to the runtime for MMIO / ROM / unmapped addresses
-- **slow-path translation** (`mmu_translate_slow`) only on TLB miss or permission failure
+- **slow-path translation** (`mmu_translate(cpu_ptr, jit_ctx_ptr, vaddr, access)`) only on TLB miss or permission failure
 
 This reduces imported calls from “every memory op” to “once per page” for tight loops, and turns the hot path into a small amount of integer work plus a final linear-memory load/store.
 
 Key metrics to track:
 
-- `mmu_translate_slow_calls / guest_mem_ops` (should approach `~1 / (page_bytes / access_bytes)` for streaming loops)
+- `mmu_translate_calls / guest_mem_ops` (should approach `~1 / (page_bytes / access_bytes)` for streaming loops)
 - `jit_exit_mmio_calls` (should match actual device accesses; validate that it does **not** trigger for RAM)
 - instruction throughput delta for synthetic memory loops (interpreter vs baseline JIT vs optimized JIT)
 
