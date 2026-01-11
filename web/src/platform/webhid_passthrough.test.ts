@@ -148,6 +148,42 @@ describe("WebHidPassthroughManager UI (mocked WebHID)", () => {
     expect(spans.length).toBe(1);
   });
 
+  it("shows Forget only for devices that expose device.forget()", async () => {
+    const forgettable = {
+      productName: "Forgettable",
+      vendorId: 0x0001,
+      productId: 0x0002,
+      opened: false,
+      open: vi.fn(async () => {}),
+      close: vi.fn(async () => {}),
+      forget: vi.fn(async () => {}),
+    } as unknown as HIDDevice;
+    const normal = {
+      productName: "Normal",
+      vendorId: 0x0003,
+      productId: 0x0004,
+      opened: false,
+      open: vi.fn(async () => {}),
+      close: vi.fn(async () => {}),
+    } as unknown as HIDDevice;
+
+    const hid = new FakeHid({
+      getDevices: vi.fn(async () => [forgettable, normal]),
+      requestDevice: vi.fn(async () => []),
+    });
+    stubNavigator({ hid } as any);
+    stubDocument(new FakeDocument());
+
+    const host = (document as any).createElement("div") as FakeElement;
+    const manager = new WebHidPassthroughManager();
+    mountWebHidPassthroughPanel(host as any, manager);
+
+    await manager.refreshKnownDevices();
+
+    const forgetButtons = findAll(host, (el) => el.tagName === "BUTTON" && el.textContent === "Forget");
+    expect(forgetButtons).toHaveLength(1);
+  });
+
   it("attaches known devices without calling requestDevice()", async () => {
     let opened = false;
     const device = {
@@ -190,6 +226,91 @@ describe("WebHidPassthroughManager UI (mocked WebHID)", () => {
     expect(attached).toHaveLength(1);
     expect(attached[0]?.device).toBe(device);
     expect(attached[0]?.guestPath).toEqual([0, 1]);
+  });
+
+  it("detaches an attached device before calling device.forget()", async () => {
+    const callOrder: string[] = [];
+    const device = {
+      productName: "Detach+Forget",
+      vendorId: 0x0001,
+      productId: 0x0002,
+      opened: false,
+      open: vi.fn(async () => {}),
+      close: vi.fn(async () => {}),
+      forget: vi.fn(async () => {
+        callOrder.push("forget");
+      }),
+    } as unknown as HIDDevice;
+
+    const hid = new FakeHid({
+      getDevices: vi.fn(async () => [device]),
+      requestDevice: vi.fn(async () => []),
+    });
+    stubNavigator({ hid } as any);
+    stubDocument(new FakeDocument());
+
+    const host = (document as any).createElement("div") as FakeElement;
+    const manager = new WebHidPassthroughManager({
+      target: {
+        postMessage: (msg: HidPassthroughMessage) => {
+          if (msg.type === "hid:detach") {
+            callOrder.push("detach");
+            throw new Error("vm detach failed");
+          }
+        },
+      },
+    });
+    mountWebHidPassthroughPanel(host as any, manager);
+
+    await manager.refreshKnownDevices();
+    const attachButton = findAll(host, (el) => el.tagName === "BUTTON" && el.textContent === "Attach")[0];
+    expect(attachButton).toBeTruthy();
+    await (attachButton.onclick as () => Promise<void>)();
+
+    const forgetButton = findAll(host, (el) => el.tagName === "BUTTON" && el.textContent === "Forget")[0];
+    expect(forgetButton).toBeTruthy();
+
+    await (forgetButton.onclick as () => Promise<void>)();
+
+    expect(callOrder).toEqual(["detach", "forget"]);
+  });
+
+  it("surfaces forget errors without breaking the panel UI", async () => {
+    const device = {
+      productName: "BrokenForget",
+      vendorId: 0x0001,
+      productId: 0x0002,
+      opened: false,
+      open: vi.fn(async () => {}),
+      close: vi.fn(async () => {}),
+      forget: vi.fn(async () => {
+        throw new Error("boom");
+      }),
+    } as unknown as HIDDevice;
+
+    const hid = new FakeHid({
+      getDevices: vi.fn(async () => [device]),
+      requestDevice: vi.fn(async () => []),
+    });
+    stubNavigator({ hid } as any);
+    stubDocument(new FakeDocument());
+
+    const host = (document as any).createElement("div") as FakeElement;
+    const manager = new WebHidPassthroughManager();
+    mountWebHidPassthroughPanel(host as any, manager);
+
+    await manager.refreshKnownDevices();
+
+    const forgetButton = findAll(host, (el) => el.tagName === "BUTTON" && el.textContent === "Forget")[0];
+    expect(forgetButton).toBeTruthy();
+    await (forgetButton.onclick as () => Promise<void>)();
+
+    const errors = findAll(host, (el) => el.tagName === "PRE");
+    expect(errors.some((el) => el.textContent.includes("Forget failed: boom"))).toBe(true);
+
+    // Still renders the device row and actions.
+    const attachButtons = findAll(host, (el) => el.tagName === "BUTTON" && el.textContent === "Attach");
+    expect(attachButtons).toHaveLength(1);
   });
 });
 

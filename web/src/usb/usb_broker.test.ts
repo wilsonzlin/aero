@@ -503,4 +503,5 @@ describe("usb/UsbBroker", () => {
 
     expect(onChange).toHaveBeenCalledTimes(2);
   });
+
 });

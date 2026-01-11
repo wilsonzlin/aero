@@ -179,5 +179,58 @@ describe("renderWebUsbPanel UI (mocked WebUSB)", () => {
     expect(status.textContent).toContain("No device selected");
     expect(forgetButton.hidden).toBe(true);
   });
-});
 
+  it("surfaces forget() errors without breaking the panel", async () => {
+    const device = {
+      vendorId: 0x1234,
+      productId: 0x5678,
+      opened: false,
+      productName: "Example USB Device",
+      close: vi.fn(async () => {}),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      forget: vi.fn(async () => {
+        throw new Error("boom");
+      }),
+    } as unknown as USBDevice;
+
+    const usb = {
+      getDevices: vi.fn(async () => [device]),
+    } satisfies Partial<USB>;
+
+    stubIsSecureContext(true);
+    stubNavigator({ usb } as any);
+    stubDocument(new FakeDocument());
+
+    const report: PlatformFeatureReport = {
+      crossOriginIsolated: false,
+      sharedArrayBuffer: false,
+      wasmSimd: false,
+      wasmThreads: false,
+      jit_dynamic_wasm: false,
+      webgpu: false,
+      webusb: true,
+      webgl2: false,
+      opfs: false,
+      opfsSyncAccessHandle: false,
+      audioWorklet: false,
+      offscreenCanvas: false,
+    };
+
+    const panel = renderWebUsbPanel(report) as unknown as FakeElement;
+
+    const listButton = findAll(panel, (el) => el.tagName === "BUTTON" && el.textContent === "List permitted devices (getDevices)")[0];
+    await (listButton.onclick as () => Promise<void>)();
+
+    const selectButtons = findAll(panel, (el) => el.tagName === "BUTTON" && el.textContent === "Select");
+    (selectButtons[0].onclick as () => void)();
+
+    const forgetButton = findAll(panel, (el) => el.tagName === "BUTTON" && el.textContent === "Forget permission")[0];
+    await (forgetButton.onclick as () => Promise<void>)();
+
+    const errorTitle = findAll(panel, (el) => el.tagName === "DIV" && el.className === "bad")[0];
+    expect(errorTitle.textContent).toContain("WebUSB");
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((device as any).forget).toHaveBeenCalledTimes(1);
+    expect(forgetButton.hidden).toBe(false);
+  });
+});

@@ -45,14 +45,28 @@ function describeDevice(device: HIDDevice): string {
   return `${name} [${device.vendorId.toString(16).padStart(4, "0")}:${device.productId.toString(16).padStart(4, "0")}]`;
 }
 
-const NOOP_TARGET: HidPassthroughTarget = { postMessage: () => {} };
-type HidForgettableDevice = HIDDevice & { forget: () => Promise<void> };
+type ForgettableHidDevice = HIDDevice & { forget: () => Promise<void> };
 
-function canForgetDevice(device: HIDDevice): device is HidForgettableDevice {
+function canForgetDevice(device: HIDDevice): device is ForgettableHidDevice {
   // `HIDDevice.forget()` is currently Chromium-specific. Keep the check tolerant so
   // this UI continues to work on browsers that don't yet implement it.
   return typeof (device as unknown as { forget?: unknown }).forget === "function";
 }
+
+function supportsHidForget(): boolean {
+  const ctor = (globalThis as unknown as { HIDDevice?: { prototype?: { forget?: unknown } } }).HIDDevice;
+  return typeof ctor?.prototype?.forget === "function";
+}
+
+function getBrowserSiteSettingsUrl(): string {
+  // Chromium exposes `chrome://settings/content/siteDetails?site=<origin>`.
+  // This isn't standardized, but is still a useful hint for the common WebHID/WebUSB case.
+  const origin = (globalThis as unknown as { location?: { origin?: unknown } }).location?.origin;
+  const encodedOrigin = typeof origin === "string" ? encodeURIComponent(origin) : "";
+  return `chrome://settings/content/siteDetails?site=${encodedOrigin}`;
+}
+
+const NOOP_TARGET: HidPassthroughTarget = { postMessage: () => {} };
 
 export class WebHidPassthroughManager {
   readonly #hid: HidLike | null;
@@ -360,12 +374,41 @@ export function mountWebHidPassthroughPanel(host: HTMLElement, manager: WebHidPa
       "if the hub fills up, one extra device can attach directly at path=1.",
   });
 
-  const permissionHint = el("div", {
-    class: "mono",
-    text: "WebHID permissions persist per-origin. Some Chromium builds support revoking permissions via the “Forget” buttons below; otherwise, use your browser's site settings and remove HID device permissions for this site.",
+  const permissionHint = el("div", { class: "mono" });
+  const siteSettingsLink = el("a", {
+    href: getBrowserSiteSettingsUrl(),
+    target: "_blank",
+    rel: "noopener",
+    text: "site settings",
   });
 
   const error = el("pre", { text: "" });
+
+  const forgetDevice = async (device: HIDDevice): Promise<void> => {
+    error.textContent = "";
+    const errors: string[] = [];
+
+    const attached = manager.getState().attachedDevices.some((d) => d.device === device);
+    if (attached) {
+      try {
+        await manager.detachDevice(device);
+      } catch (err) {
+        errors.push(`Detach failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
+    try {
+      await (device as ForgettableHidDevice).forget();
+    } catch (err) {
+      errors.push(`Forget failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    await manager.refreshKnownDevices();
+
+    if (errors.length) {
+      error.textContent = errors.join("\n");
+    }
+  };
 
   const requestButton = el("button", {
     text: "Request device…",
@@ -388,7 +431,23 @@ export function mountWebHidPassthroughPanel(host: HTMLElement, manager: WebHidPa
     if (!state.supported) {
       knownList.replaceChildren(el("li", { text: "WebHID is not available in this browser/context." }));
       attachedList.replaceChildren(el("li", { text: "No devices attached." }));
+      permissionHint.textContent = "";
       return;
+    }
+
+    const forgetSupported =
+      supportsHidForget() ||
+      state.knownDevices.some((d) => canForgetDevice(d)) ||
+      state.attachedDevices.some((d) => canForgetDevice(d.device));
+
+    if (!forgetSupported) {
+      permissionHint.replaceChildren(
+        el("span", { text: "WebHID permissions persist per-origin. To revoke access, use your browser's " }),
+        siteSettingsLink,
+        el("span", { text: " and remove HID device permissions for this site." }),
+      );
+    } else {
+      permissionHint.textContent = "";
     }
 
     const attachedSet = new Set(state.attachedDevices.map((d) => d.device));
@@ -416,13 +475,7 @@ export function mountWebHidPassthroughPanel(host: HTMLElement, manager: WebHidPa
                 ? el("button", {
                     text: "Forget",
                     onclick: async () => {
-                      error.textContent = "";
-                      try {
-                        await device.forget();
-                        await manager.refreshKnownDevices();
-                      } catch (err) {
-                        error.textContent = err instanceof Error ? err.message : String(err);
-                      }
+                      await forgetDevice(device);
                     },
                   })
                 : null,
@@ -455,14 +508,7 @@ export function mountWebHidPassthroughPanel(host: HTMLElement, manager: WebHidPa
                 ? el("button", {
                     text: "Forget",
                     onclick: async () => {
-                      error.textContent = "";
-                      try {
-                        await manager.detachDevice(device);
-                        await device.forget();
-                        await manager.refreshKnownDevices();
-                      } catch (err) {
-                        error.textContent = err instanceof Error ? err.message : String(err);
-                      }
+                      await forgetDevice(device);
                     },
                   })
                 : null,

@@ -354,7 +354,7 @@ export class UsbBroker {
     this.processing = false;
   }
 
-  private resetSelectedDevice(reason: string): void {
+  private resetSelectedDevice(reason: string, options: { closeDevice?: boolean } = {}): void {
     const prevDevice = this.device;
     if (this.backend || this.device) {
       // Resolve in-flight actions (if any) via the disconnect signal.
@@ -366,7 +366,8 @@ export class UsbBroker {
     this.device = null;
     this.selectedInfo = null;
 
-    if (prevDevice) {
+    const shouldCloseDevice = options.closeDevice !== false;
+    if (prevDevice && shouldCloseDevice) {
       void prevDevice.close?.().catch(() => undefined);
     }
 
