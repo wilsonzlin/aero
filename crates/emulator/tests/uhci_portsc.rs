@@ -33,6 +33,8 @@ impl UsbDeviceModel for TestUsbDevice {
 #[test]
 fn uhci_portsc_port_reset_is_bit9_and_resets_device_state() {
     const PORTSC_PED: u16 = 1 << 2;
+    const PORTSC_LS_MASK: u16 = 0b11 << 4;
+    const PORTSC_LS_J_FS: u16 = 0b01 << 4;
     const PORTSC_LSDA: u16 = 1 << 8;
     const PORTSC_PR: u16 = 1 << 9;
 
@@ -59,6 +61,7 @@ fn uhci_portsc_port_reset_is_bit9_and_resets_device_state() {
         assert_eq!(dev.address(), 5);
     }
     assert!(hub.device_mut_for_address(5).is_some());
+    assert_eq!(hub.read_portsc(0) & PORTSC_LS_MASK, PORTSC_LS_J_FS);
 
     // Trigger a port reset. The UHCI PORTSC PR bit is bit 9; bit 8 is LSDA.
     hub.write_portsc(0, PORTSC_PR | PORTSC_PED);
@@ -68,12 +71,14 @@ fn uhci_portsc_port_reset_is_bit9_and_resets_device_state() {
     assert_ne!(portsc & PORTSC_PR, 0);
     assert_eq!(portsc & PORTSC_PED, 0);
     assert_eq!(portsc & PORTSC_LSDA, 0);
+    assert_eq!(portsc & PORTSC_LS_MASK, 0);
 
     for _ in 0..49 {
         hub.tick_1ms();
         let portsc = hub.read_portsc(0);
         assert_ne!(portsc & PORTSC_PR, 0);
         assert_eq!(portsc & PORTSC_PED, 0);
+        assert_eq!(portsc & PORTSC_LS_MASK, 0);
     }
 
     // After 50ms the reset auto-completes, PR clears, and the port is enabled again.
@@ -81,6 +86,7 @@ fn uhci_portsc_port_reset_is_bit9_and_resets_device_state() {
     let portsc = hub.read_portsc(0);
     assert_eq!(portsc & PORTSC_PR, 0);
     assert_ne!(portsc & PORTSC_PED, 0);
+    assert_eq!(portsc & PORTSC_LS_MASK, PORTSC_LS_J_FS);
 
     // The device should have returned to address 0 after the bus reset.
     assert!(hub.device_mut_for_address(5).is_none());

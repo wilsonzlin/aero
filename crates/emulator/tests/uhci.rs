@@ -51,6 +51,8 @@ const PORTSC_CCS: u16 = 0x0001;
 const PORTSC_CSC: u16 = 0x0002;
 const PORTSC_PED: u16 = 0x0004;
 const PORTSC_PEDC: u16 = 0x0008;
+const PORTSC_LS_MASK: u16 = 0x0030;
+const PORTSC_LS_J_FS: u16 = 0x0010;
 const PORTSC_LSDA: u16 = 0x0100;
 const PORTSC_PR: u16 = 0x0200;
 
@@ -309,11 +311,13 @@ fn uhci_root_hub_portsc_reset_enables_port() {
 
     let st = read_portsc(&uhci, 0x10);
     assert_eq!(st & (PORTSC_CCS | PORTSC_CSC), PORTSC_CCS | PORTSC_CSC);
+    assert_eq!(st & PORTSC_LS_MASK, PORTSC_LS_J_FS);
 
     write_portsc(&mut uhci, 0x10, PORTSC_PR);
     let st = read_portsc(&uhci, 0x10);
     assert_ne!(st & PORTSC_PR, 0);
     assert_eq!(st & PORTSC_LSDA, 0);
+    assert_eq!(st & PORTSC_LS_MASK, 0);
 
     for _ in 0..50 {
         uhci.tick_1ms(&mut mem);
@@ -323,6 +327,7 @@ fn uhci_root_hub_portsc_reset_enables_port() {
     assert_eq!(st & PORTSC_PR, 0);
     assert_ne!(st & PORTSC_PED, 0);
     assert_ne!(st & PORTSC_PEDC, 0);
+    assert_eq!(st & PORTSC_LS_MASK, PORTSC_LS_J_FS);
 }
 
 #[test]
