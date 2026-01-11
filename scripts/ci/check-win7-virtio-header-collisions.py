@@ -26,6 +26,7 @@ Notes
 from __future__ import annotations
 
 import sys
+import subprocess
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -71,20 +72,46 @@ def main() -> None:
     # collide even if they are distinct files on a case-sensitive filesystem.
     include_map: dict[str, list[HeaderEntry]] = defaultdict(list)
 
-    for root in INCLUDE_ROOTS:
-        if not root.is_dir():
-            continue
-
-        for path in root.rglob("*"):
-            if not path.is_file():
+    # Prefer `git ls-files` so untracked local build artifacts don't trip the
+    # guardrail when run locally. Fall back to a filesystem walk if git isn't
+    # available.
+    try:
+        out = subprocess.check_output(
+            ["git", "-C", str(REPO_ROOT), "ls-files"], text=True
+        )
+        tracked = [line.strip() for line in out.splitlines() if line.strip()]
+        for root in INCLUDE_ROOTS:
+            if not root.is_dir():
                 continue
-            if path.suffix.lower() not in HEADER_SUFFIXES:
+
+            root_rel = root.relative_to(REPO_ROOT).as_posix().rstrip("/")
+            prefix = root_rel + "/"
+            for rel in tracked:
+                if not rel.startswith(prefix):
+                    continue
+                path = REPO_ROOT / rel
+                if path.suffix.lower() not in HEADER_SUFFIXES:
+                    continue
+
+                virtual = rel[len(prefix) :]
+                include_map[virtual.lower()].append(
+                    HeaderEntry(virtual=virtual, real=rel)
+                )
+    except (OSError, subprocess.CalledProcessError):
+        for root in INCLUDE_ROOTS:
+            if not root.is_dir():
                 continue
 
-            virtual = path.relative_to(root).as_posix()
-            include_map[virtual.lower()].append(
-                HeaderEntry(virtual=virtual, real=relposix(path))
-            )
+            for path in root.rglob("*"):
+                if not path.is_file():
+                    continue
+                if path.suffix.lower() not in HEADER_SUFFIXES:
+                    continue
+
+                virtual = path.relative_to(root).as_posix()
+                include_map[virtual.lower()].append(
+                    HeaderEntry(virtual=virtual, real=relposix(path))
+                )
 
     collisions = {k: v for k, v in include_map.items() if len(v) > 1}
     if collisions:
