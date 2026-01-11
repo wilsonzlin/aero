@@ -990,6 +990,246 @@ bool TestResetShrinkUnbindsBackbuffer() {
   return Check(dev->render_targets[0] != bb1, "render target no longer points at removed backbuffer");
 }
 
+bool TestRotateResourceIdentitiesRebindsChangedHandles() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3D9DDI_HADAPTER hAdapter{};
+    D3D9DDI_HDEVICE hDevice{};
+    std::vector<AEROGPU_D3D9DDI_HRESOURCE> resources;
+    bool has_adapter = false;
+    bool has_device = false;
+
+    ~Cleanup() {
+      if (has_device && device_funcs.pfnDestroyResource) {
+        for (auto& hRes : resources) {
+          if (hRes.pDrvPrivate) {
+            device_funcs.pfnDestroyResource(hDevice, hRes);
+          }
+        }
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  auto create_buffer = [&](uint32_t size_bytes) -> AEROGPU_D3D9DDI_HRESOURCE {
+    AEROGPU_D3D9DDIARG_CREATERESOURCE args{};
+    args.type = 0;
+    args.format = 0;
+    args.width = 0;
+    args.height = 0;
+    args.depth = 0;
+    args.mip_levels = 1;
+    args.usage = 0;
+    args.pool = 0;
+    args.size = size_bytes;
+    args.hResource.pDrvPrivate = nullptr;
+    args.pSharedHandle = nullptr;
+    args.pKmdAllocPrivateData = nullptr;
+    args.KmdAllocPrivateDataSize = 0;
+
+    HRESULT hr_local = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &args);
+    if (hr_local != S_OK) {
+      std::fprintf(stderr, "FAIL: CreateResource(buffer) hr=0x%08x\n", static_cast<unsigned>(hr_local));
+      return {};
+    }
+    cleanup.resources.push_back(args.hResource);
+    return args.hResource;
+  };
+
+  auto create_surface = [&](uint32_t w, uint32_t h) -> AEROGPU_D3D9DDI_HRESOURCE {
+    AEROGPU_D3D9DDIARG_CREATERESOURCE args{};
+    args.type = 0;
+    args.format = 22u; // D3DFMT_X8R8G8B8
+    args.width = w;
+    args.height = h;
+    args.depth = 1;
+    args.mip_levels = 1;
+    args.usage = 0;
+    args.pool = 0;
+    args.size = 0;
+    args.hResource.pDrvPrivate = nullptr;
+    args.pSharedHandle = nullptr;
+    args.pKmdAllocPrivateData = nullptr;
+    args.KmdAllocPrivateDataSize = 0;
+
+    HRESULT hr_local = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &args);
+    if (hr_local != S_OK) {
+      std::fprintf(stderr, "FAIL: CreateResource(surface) hr=0x%08x\n", static_cast<unsigned>(hr_local));
+      return {};
+    }
+    cleanup.resources.push_back(args.hResource);
+    return args.hResource;
+  };
+
+  AEROGPU_D3D9DDI_HRESOURCE hVb0 = create_buffer(256);
+  AEROGPU_D3D9DDI_HRESOURCE hVb1 = create_buffer(256);
+  if (!Check(hVb0.pDrvPrivate != nullptr && hVb1.pDrvPrivate != nullptr, "vertex buffers created")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnSetStreamSource(create_dev.hDevice, 0, hVb0, 0, 16);
+  if (!Check(hr == S_OK, "SetStreamSource")) {
+    return false;
+  }
+
+  AEROGPU_D3D9DDI_HRESOURCE hTex0 = create_surface(32, 32);
+  AEROGPU_D3D9DDI_HRESOURCE hTex1 = create_surface(32, 32);
+  if (!Check(hTex0.pDrvPrivate != nullptr && hTex1.pDrvPrivate != nullptr, "textures created")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnSetTexture(create_dev.hDevice, 0, hTex0);
+  if (!Check(hr == S_OK, "SetTexture")) {
+    return false;
+  }
+
+  AEROGPU_D3D9DDI_HRESOURCE hIb0 = create_buffer(128);
+  AEROGPU_D3D9DDI_HRESOURCE hIb1 = create_buffer(128);
+  if (!Check(hIb0.pDrvPrivate != nullptr && hIb1.pDrvPrivate != nullptr, "index buffers created")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnSetIndices(create_dev.hDevice, hIb0, AEROGPU_D3D9DDI_INDEX_FORMAT_U16, 4);
+  if (!Check(hr == S_OK, "SetIndices")) {
+    return false;
+  }
+
+  auto reset_stream = [&]() {
+    std::lock_guard<std::mutex> lock(dev->mutex);
+    dev->cmd.reset();
+  };
+
+  // Rotate vertex buffers: must re-emit SET_VERTEX_BUFFERS for stream 0 using the
+  // new handle.
+  reset_stream();
+  auto* vb0 = reinterpret_cast<Resource*>(hVb0.pDrvPrivate);
+  auto* vb1 = reinterpret_cast<Resource*>(hVb1.pDrvPrivate);
+  const aerogpu_handle_t vb0_before = vb0->handle;
+  const aerogpu_handle_t vb1_before = vb1->handle;
+  AEROGPU_D3D9DDI_HRESOURCE vb_rotate[2] = {hVb0, hVb1};
+  hr = cleanup.device_funcs.pfnRotateResourceIdentities(create_dev.hDevice, vb_rotate, 2);
+  if (!Check(hr == S_OK, "RotateResourceIdentities(vb)")) {
+    return false;
+  }
+  if (!Check(vb0->handle == vb1_before && vb1->handle == vb0_before, "vertex buffer handles rotated")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  {
+    const CmdLoc loc = FindLastOpcode(dev->cmd.data(), dev->cmd.bytes_used(), AEROGPU_CMD_SET_VERTEX_BUFFERS);
+    if (!Check(loc.hdr != nullptr, "SET_VERTEX_BUFFERS emitted after rotate")) {
+      return false;
+    }
+    const auto* cmd = reinterpret_cast<const aerogpu_cmd_set_vertex_buffers*>(loc.hdr);
+    if (!Check(cmd->start_slot == 0 && cmd->buffer_count == 1, "SET_VERTEX_BUFFERS header fields")) {
+      return false;
+    }
+    const auto* binding = reinterpret_cast<const aerogpu_vertex_buffer_binding*>(
+        reinterpret_cast<const uint8_t*>(cmd) + sizeof(*cmd));
+    if (!Check(binding->buffer == vb0->handle, "SET_VERTEX_BUFFERS uses rotated handle")) {
+      return false;
+    }
+  }
+
+  // Rotate textures: must re-emit SET_TEXTURE for stage 0 using the new handle.
+  reset_stream();
+  auto* tex0 = reinterpret_cast<Resource*>(hTex0.pDrvPrivate);
+  auto* tex1 = reinterpret_cast<Resource*>(hTex1.pDrvPrivate);
+  const aerogpu_handle_t tex0_before = tex0->handle;
+  const aerogpu_handle_t tex1_before = tex1->handle;
+  AEROGPU_D3D9DDI_HRESOURCE tex_rotate[2] = {hTex0, hTex1};
+  hr = cleanup.device_funcs.pfnRotateResourceIdentities(create_dev.hDevice, tex_rotate, 2);
+  if (!Check(hr == S_OK, "RotateResourceIdentities(tex)")) {
+    return false;
+  }
+  if (!Check(tex0->handle == tex1_before && tex1->handle == tex0_before, "texture handles rotated")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  {
+    const CmdLoc loc = FindLastOpcode(dev->cmd.data(), dev->cmd.bytes_used(), AEROGPU_CMD_SET_TEXTURE);
+    if (!Check(loc.hdr != nullptr, "SET_TEXTURE emitted after rotate")) {
+      return false;
+    }
+    const auto* cmd = reinterpret_cast<const aerogpu_cmd_set_texture*>(loc.hdr);
+    if (!Check(cmd->slot == 0 && cmd->texture == tex0->handle, "SET_TEXTURE uses rotated handle")) {
+      return false;
+    }
+  }
+
+  // Rotate index buffers: must re-emit SET_INDEX_BUFFER with the new handle.
+  reset_stream();
+  auto* ib0 = reinterpret_cast<Resource*>(hIb0.pDrvPrivate);
+  auto* ib1 = reinterpret_cast<Resource*>(hIb1.pDrvPrivate);
+  const aerogpu_handle_t ib0_before = ib0->handle;
+  const aerogpu_handle_t ib1_before = ib1->handle;
+  AEROGPU_D3D9DDI_HRESOURCE ib_rotate[2] = {hIb0, hIb1};
+  hr = cleanup.device_funcs.pfnRotateResourceIdentities(create_dev.hDevice, ib_rotate, 2);
+  if (!Check(hr == S_OK, "RotateResourceIdentities(ib)")) {
+    return false;
+  }
+  if (!Check(ib0->handle == ib1_before && ib1->handle == ib0_before, "index buffer handles rotated")) {
+    return false;
+  }
+
+  dev->cmd.finalize();
+  {
+    const CmdLoc loc = FindLastOpcode(dev->cmd.data(), dev->cmd.bytes_used(), AEROGPU_CMD_SET_INDEX_BUFFER);
+    if (!Check(loc.hdr != nullptr, "SET_INDEX_BUFFER emitted after rotate")) {
+      return false;
+    }
+    const auto* cmd = reinterpret_cast<const aerogpu_cmd_set_index_buffer*>(loc.hdr);
+    if (!Check(cmd->buffer == ib0->handle, "SET_INDEX_BUFFER uses rotated handle")) {
+      return false;
+    }
+    if (!Check(cmd->offset_bytes == 4, "SET_INDEX_BUFFER preserves offset")) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 } // namespace
 } // namespace aerogpu
 
@@ -1007,5 +1247,6 @@ int main() {
   failures += !aerogpu::TestDestroyBoundShaderUnbinds();
   failures += !aerogpu::TestDestroyBoundVertexDeclUnbinds();
   failures += !aerogpu::TestResetShrinkUnbindsBackbuffer();
+  failures += !aerogpu::TestRotateResourceIdentitiesRebindsChangedHandles();
   return failures ? 1 : 0;
 }
