@@ -1,7 +1,7 @@
 use std::{
     collections::{HashMap, VecDeque},
     net::{IpAddr, Ipv4Addr, SocketAddr},
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use aero_net_stack::{
@@ -131,8 +131,47 @@ async fn run_session_inner(
     let start = tokio::time::Instant::now();
     let mut fatal_err: Option<anyhow::Error> = None;
 
+    // Optional server-driven keepalive/RTT measurement.
+    let ping_enabled = state.cfg.ping_interval.is_some();
+    let ping_interval_duration = state
+        .cfg
+        .ping_interval
+        .unwrap_or_else(|| Duration::from_secs(3600));
+    let ping_resend_after = ping_interval_duration
+        .checked_mul(3)
+        .unwrap_or(ping_interval_duration);
+    let mut ping_interval = tokio::time::interval(ping_interval_duration);
+    ping_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut next_ping_id: u64 = 1;
+    let mut ping_outstanding: Option<(u64, tokio::time::Instant)> = None;
+
     loop {
         tokio::select! {
+            _ = ping_interval.tick(), if ping_enabled => {
+                if let Some((_, sent_at)) = ping_outstanding {
+                    if sent_at.elapsed() > ping_resend_after {
+                        ping_outstanding = None;
+                    }
+                }
+
+                if ping_outstanding.is_none() {
+                    let ping_id = next_ping_id;
+                    next_ping_id = next_ping_id.wrapping_add(1);
+
+                    let payload = ping_id.to_be_bytes();
+                    if let Ok(wire) = aero_l2_protocol::encode_with_limits(
+                        aero_l2_protocol::L2_TUNNEL_TYPE_PING,
+                        0,
+                        &payload,
+                        &state.l2_limits,
+                    ) {
+                        if ws_out_tx.send(Message::Binary(wire)).await.is_err() {
+                            break;
+                        }
+                        ping_outstanding = Some((ping_id, tokio::time::Instant::now()));
+                    }
+                }
+            }
             msg = ws_receiver.next() => {
                 let Some(msg) = msg else {
                     break;
@@ -184,7 +223,28 @@ async fn run_session_inner(
                                             let _ = ws_out_tx.send(Message::Binary(pong)).await;
                                         }
                                     }
-                                    aero_l2_protocol::L2_TUNNEL_TYPE_PONG => {}
+                                    aero_l2_protocol::L2_TUNNEL_TYPE_PONG => {
+                                        if !ping_enabled {
+                                            continue;
+                                        }
+
+                                        let Some((expected_id, sent_at)) = ping_outstanding else {
+                                            continue;
+                                        };
+
+                                        let payload: [u8; 8] = match decoded.payload.try_into() {
+                                            Ok(payload) => payload,
+                                            Err(_) => continue,
+                                        };
+                                        let pong_id = u64::from_be_bytes(payload);
+                                        if pong_id != expected_id {
+                                            continue;
+                                        }
+
+                                        let rtt_ms = sent_at.elapsed().as_millis().min(u64::MAX as u128) as u64;
+                                        state.metrics.record_ping_rtt_ms(rtt_ms);
+                                        ping_outstanding = None;
+                                    }
                                     _ => {}
                                 }
                             }
@@ -413,6 +473,7 @@ async fn process_actions(
                 if handle.tx.try_send(TcpOutMsg::Data(data)).is_err() {
                     if let Some(handle) = tcp_conns.remove(&connection_id) {
                         handle.task.abort();
+                        state.metrics.tcp_conn_closed();
                     }
                     queue.extend(
                         stack

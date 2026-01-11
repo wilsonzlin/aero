@@ -11,6 +11,10 @@ pub struct ProxyConfig {
     pub l2_max_frame_payload: usize,
     pub l2_max_control_payload: usize,
 
+    /// Interval at which the proxy sends protocol-level PING messages. This is optional and
+    /// disabled by default; clients may still implement their own keepalive.
+    pub ping_interval: Option<Duration>,
+
     pub tcp_connect_timeout: Duration,
     pub tcp_send_buffer: usize,
     pub ws_send_buffer: usize,
@@ -42,6 +46,12 @@ impl ProxyConfig {
             .ok()
             .and_then(|v| v.parse::<usize>().ok())
             .unwrap_or(aero_l2_protocol::L2_TUNNEL_DEFAULT_MAX_CONTROL_PAYLOAD);
+
+        let ping_interval = std::env::var("AERO_L2_PING_INTERVAL_MS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .filter(|v| *v > 0)
+            .map(Duration::from_millis);
 
         let tcp_connect_timeout = std::env::var("AERO_L2_TCP_CONNECT_TIMEOUT_MS")
             .ok()
@@ -80,6 +90,7 @@ impl ProxyConfig {
             bind_addr,
             l2_max_frame_payload,
             l2_max_control_payload,
+            ping_interval,
             tcp_connect_timeout,
             tcp_send_buffer,
             ws_send_buffer,

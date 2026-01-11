@@ -562,7 +562,8 @@ fn parse_udp_from_frame(frame: &[u8]) -> anyhow::Result<UdpDatagram<'_>> {
     if eth.ethertype != EtherType::IPV4 {
         return Err(anyhow::anyhow!("not ipv4"));
     }
-    let ip = Ipv4Packet::parse(eth.payload).map_err(|err| anyhow::anyhow!("ipv4 parse: {err:?}"))?;
+    let ip =
+        Ipv4Packet::parse(eth.payload).map_err(|err| anyhow::anyhow!("ipv4 parse: {err:?}"))?;
     if ip.protocol != Ipv4Protocol::UDP {
         return Err(anyhow::anyhow!("not udp"));
     }

@@ -36,7 +36,14 @@ struct MetricsInner {
     // DNS
     dns_queries_total: AtomicU64,
     dns_fail_total: AtomicU64,
+
+    // PING RTT histogram (ms)
+    ping_rtt_ms_bucket_counts: [AtomicU64; PING_RTT_MS_BUCKETS.len() + 1],
+    ping_rtt_ms_sum_ms: AtomicU64,
+    ping_rtt_ms_count: AtomicU64,
 }
+
+const PING_RTT_MS_BUCKETS: [u64; 10] = [1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500];
 
 impl Metrics {
     pub fn new() -> Self {
@@ -57,6 +64,9 @@ impl Metrics {
                 udp_send_fail_total: AtomicU64::new(0),
                 dns_queries_total: AtomicU64::new(0),
                 dns_fail_total: AtomicU64::new(0),
+                ping_rtt_ms_bucket_counts: std::array::from_fn(|_| AtomicU64::new(0)),
+                ping_rtt_ms_sum_ms: AtomicU64::new(0),
+                ping_rtt_ms_count: AtomicU64::new(0),
             }),
         }
     }
@@ -100,6 +110,19 @@ impl Metrics {
         self.inner
             .udp_send_fail_total
             .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn record_ping_rtt_ms(&self, ms: u64) {
+        self.inner.ping_rtt_ms_count.fetch_add(1, Ordering::Relaxed);
+        self.inner
+            .ping_rtt_ms_sum_ms
+            .fetch_add(ms, Ordering::Relaxed);
+
+        let idx = PING_RTT_MS_BUCKETS
+            .iter()
+            .position(|bound| ms <= *bound)
+            .unwrap_or(PING_RTT_MS_BUCKETS.len());
+        self.inner.ping_rtt_ms_bucket_counts[idx].fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn frame_rx(&self, bytes: usize) {
@@ -178,6 +201,8 @@ impl Metrics {
         push_counter(&mut out, "l2_dns_queries_total", dns_queries_total);
         push_counter(&mut out, "l2_dns_fail_total", dns_fail_total);
 
+        push_ping_rtt_histogram(&mut out, &self.inner);
+
         out
     }
 }
@@ -199,5 +224,33 @@ fn push_counter(out: &mut String, name: &str, val: u64) {
     out.push_str(name);
     out.push(' ');
     out.push_str(&val.to_string());
+    out.push('\n');
+}
+
+fn push_ping_rtt_histogram(out: &mut String, metrics: &MetricsInner) {
+    out.push_str("# TYPE l2_ping_rtt_ms histogram\n");
+
+    let mut cumulative = 0u64;
+    for (idx, bound) in PING_RTT_MS_BUCKETS.iter().enumerate() {
+        cumulative += metrics.ping_rtt_ms_bucket_counts[idx].load(Ordering::Relaxed);
+        out.push_str("l2_ping_rtt_ms_bucket{le=\"");
+        out.push_str(&bound.to_string());
+        out.push_str("\"} ");
+        out.push_str(&cumulative.to_string());
+        out.push('\n');
+    }
+
+    let total = metrics.ping_rtt_ms_count.load(Ordering::Relaxed);
+    out.push_str("l2_ping_rtt_ms_bucket{le=\"+Inf\"} ");
+    out.push_str(&total.to_string());
+    out.push('\n');
+
+    let sum_ms = metrics.ping_rtt_ms_sum_ms.load(Ordering::Relaxed);
+    out.push_str("l2_ping_rtt_ms_sum ");
+    out.push_str(&sum_ms.to_string());
+    out.push('\n');
+
+    out.push_str("l2_ping_rtt_ms_count ");
+    out.push_str(&total.to_string());
     out.push('\n');
 }

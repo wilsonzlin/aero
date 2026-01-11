@@ -15,6 +15,7 @@ impl TestServer {
             bind_addr: SocketAddr::from(([127, 0, 0, 1], 0)),
             l2_max_frame_payload: aero_l2_protocol::L2_TUNNEL_DEFAULT_MAX_FRAME_PAYLOAD,
             l2_max_control_payload: aero_l2_protocol::L2_TUNNEL_DEFAULT_MAX_CONTROL_PAYLOAD,
+            ping_interval: None,
             tcp_connect_timeout: Duration::from_millis(200),
             tcp_send_buffer: 8,
             ws_send_buffer: 8,
