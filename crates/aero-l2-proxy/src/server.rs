@@ -356,8 +356,7 @@ async fn l2_ws_handler(
         .l2_limits
         .max_frame_payload
         .max(state.l2_limits.max_control_payload);
-    let max_ws_message_size =
-        aero_l2_protocol::L2_TUNNEL_HEADER_LEN.saturating_add(max_payload);
+    let max_ws_message_size = aero_l2_protocol::L2_TUNNEL_HEADER_LEN.saturating_add(max_payload);
 
     ws.protocols([TUNNEL_SUBPROTOCOL])
         .max_message_size(max_ws_message_size)
