@@ -2325,9 +2325,7 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
   #else
     is_shared = (res->misc_flags & D3D10_RESOURCE_MISC_SHARED) != 0;
   #endif
-    const bool want_guest_backed =
-        !is_shared && !is_primary && !is_staging && !is_rt && !is_ds &&
-        ((res->bind_flags & kD3D10BindShaderResource) != 0);
+    const bool want_guest_backed = !is_shared && !is_primary && !is_staging && !is_rt && !is_ds;
     cpu_visible = cpu_visible || want_guest_backed;
 
     bool want_host_owned = false;
