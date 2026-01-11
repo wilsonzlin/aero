@@ -31,7 +31,7 @@ And additional shared helpers:
 
 - **INTx helper (WDM):** `virtio_pci_intx_wdm.*` (ISR read-to-ack + DPC dispatch)
 - **Contract identity validation:** `virtio_pci_contract.*` (AERO-W7-VIRTIO v1 PCI identity)
-- **Split virtqueues (vring):** `virtqueue_split_legacy.*` (shared split-ring descriptor/ring management; name avoids `virtqueue_split.h` collisions)
+- **Split virtqueues (vring):** `virtqueue_split_legacy.*` (legacy/host-test split-ring implementation; name avoids `virtqueue_split.h` collisions)
 - **Legacy queue helper:** `virtio_queue.*` (alloc + PFN queue programming + notify)
 
 For a WDM-focused modern transport bring-up guide (caps + BAR mapping + queues + INTx), see:
