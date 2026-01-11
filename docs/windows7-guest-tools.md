@@ -462,6 +462,28 @@ Depending on your Guest Tools version, the report may include:
   - virtio-snd audio
   - virtio-input
   - Aero GPU / virtio-gpu graphics
+
+#### Note: how `verify.cmd` detects virtio-snd audio binding
+
+The **Device Binding: Audio (virtio-snd)** check in `report.txt` is derived from `verify.ps1` scanning `Win32_PnPEntity` and attempting to match the virtio-snd PCI device by:
+
+- the Windows **driver service name** bound to the device (preferred), and
+- the expected virtio-snd PCI Hardware IDs from `config\devices.cmd` (fallback).
+
+`verify.ps1` reads `AERO_VIRTIO_SND_SERVICE` from `config\devices.cmd` and checks it first, then falls back to common service names:
+
+- `viosnd` (upstream virtio-win)
+- `aerosnd`
+- `virtiosnd`
+- `aeroviosnd` (Aero clean-room)
+
+If you are using a virtio-snd driver with a different service name, copy the Guest Tools media to a writable folder and edit `config\devices.cmd` to set:
+
+```cmd
+set "AERO_VIRTIO_SND_SERVICE=your-service-name"
+```
+
+Missing virtio-snd devices are reported as **WARN** (audio is optional).
 - Boot-critical storage readiness for switching AHCI → virtio-blk:
   - storage service `Start=0` (BOOT_START)
   - `CriticalDeviceDatabase` mappings for the expected virtio-blk PCI HWIDs (prevents `0x7B INACCESSIBLE_BOOT_DEVICE`)

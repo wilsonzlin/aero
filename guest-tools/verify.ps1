@@ -69,6 +69,22 @@ function Build-HwidPrefixRegex([string[]]$hwids) {
     return "(?i)^(" + ($parts -join "|") + ")"
 }
 
+function Dedup-CaseInsensitive([string[]]$items) {
+    $out = @()
+    if (-not $items) { return $out }
+    foreach ($s in $items) {
+        if (-not $s) { continue }
+        $t = ("" + $s).Trim()
+        if ($t.Length -eq 0) { continue }
+        $exists = $false
+        foreach ($e in $out) {
+            if ($e.ToLower() -eq $t.ToLower()) { $exists = $true; break }
+        }
+        if (-not $exists) { $out += $t }
+    }
+    return $out
+}
+
 function Load-GuestToolsConfig([string]$scriptDir) {
     $cfgFile = Join-Path (Join-Path $scriptDir "config") "devices.cmd"
     $result = @{
@@ -218,6 +234,10 @@ function Add-DeviceBindingCheck(
         matched_devices = @()
     }
     $details = @()
+    if ($serviceCandidates -and $serviceCandidates.Count -gt 0) { $details += "Service candidates: " + ($serviceCandidates -join ", ") }
+    if ($pnpClassCandidates -and $pnpClassCandidates.Count -gt 0) { $details += "PNP class candidates: " + ($pnpClassCandidates -join ", ") }
+    if ($pnpIdRegex) { $details += "PNP ID regex: " + $pnpIdRegex }
+    if ($nameKeywords -and $nameKeywords.Count -gt 0) { $details += "Name keywords: " + ($nameKeywords -join ", ") }
 
     foreach ($m in $matches) {
         $inf = $null
@@ -676,6 +696,17 @@ if ($cfgVars -and $cfgVars.ContainsKey("AERO_VIRTIO_BLK_SYS")) {
     if ($cfgVirtioBlkSys.Length -eq 0) { $cfgVirtioBlkSys = $null }
 }
 
+$cfgVirtioSndService = $null
+if ($cfgVars -and $cfgVars.ContainsKey("AERO_VIRTIO_SND_SERVICE")) {
+    $cfgVirtioSndService = ("" + $cfgVars["AERO_VIRTIO_SND_SERVICE"]).Trim()
+    if ($cfgVirtioSndService.Length -eq 0) { $cfgVirtioSndService = $null }
+}
+$cfgVirtioSndSys = $null
+if ($cfgVars -and $cfgVars.ContainsKey("AERO_VIRTIO_SND_SYS")) {
+    $cfgVirtioSndSys = ("" + $cfgVars["AERO_VIRTIO_SND_SYS"]).Trim()
+    if ($cfgVirtioSndSys.Length -eq 0) { $cfgVirtioSndSys = $null }
+}
+
 $cfgVirtioBlkHwids = @()
 $cfgVirtioNetHwids = @()
 $cfgVirtioSndHwids = @()
@@ -1070,6 +1101,8 @@ try {
         }
         if ($cfgVirtioBlkService) { $cfgDetails += "AERO_VIRTIO_BLK_SERVICE=" + $cfgVirtioBlkService }
         if ($cfgVirtioBlkSys) { $cfgDetails += "AERO_VIRTIO_BLK_SYS=" + $cfgVirtioBlkSys }
+        if ($cfgVirtioSndService) { $cfgDetails += "AERO_VIRTIO_SND_SERVICE=" + $cfgVirtioSndService }
+        if ($cfgVirtioSndSys) { $cfgDetails += "AERO_VIRTIO_SND_SYS=" + $cfgVirtioSndSys }
         if ($cfgVirtioBlkHwids -and $cfgVirtioBlkHwids.Count -gt 0) { $cfgDetails += "AERO_VIRTIO_BLK_HWIDS=" + ($cfgVirtioBlkHwids -join ", ") }
         if ($cfgVirtioNetHwids -and $cfgVirtioNetHwids.Count -gt 0) { $cfgDetails += "AERO_VIRTIO_NET_HWIDS=" + ($cfgVirtioNetHwids -join ", ") }
         if ($cfgVirtioSndHwids -and $cfgVirtioSndHwids.Count -gt 0) { $cfgDetails += "AERO_VIRTIO_SND_HWIDS=" + ($cfgVirtioSndHwids -join ", ") }
@@ -1512,7 +1545,7 @@ try {
     $pnp = Invoke-Capture "pnputil.exe" @("-e")
     $raw = $pnp.output
 
-    $keywords = @("aero","virtio","viostor","vionet","netkvm","viogpu","vioinput","viosnd","1af4")
+    $keywords = @("aero","virtio","viostor","vionet","netkvm","viogpu","vioinput","viosnd","aerosnd","virtiosnd","aeroviosnd","1af4")
     $blocks = @()
     if ($raw) {
         # Split on blank lines (package blocks).
@@ -1625,17 +1658,11 @@ try {
     $devconDir = Split-Path -Parent $MyInvocation.MyCommand.Path
     $devconPath = Join-Path $devconDir "devcon.exe"
 
-    $svcCandidates = @("viostor","aeroviostor","virtio_blk","virtio-blk","vionet","netkvm","viogpu","viosnd","vioinput")
+    $svcCandidates = @("viostor","aeroviostor","virtio_blk","virtio-blk","vionet","netkvm","viogpu","viosnd","aerosnd","virtiosnd","aeroviosnd","vioinput")
     if ($cfgVirtioBlkService) { $svcCandidates = @($cfgVirtioBlkService) + $svcCandidates }
-    $svcDedup = @()
-    foreach ($s in $svcCandidates) {
-        $exists = $false
-        foreach ($e in $svcDedup) {
-            if ($e.ToLower() -eq $s.ToLower()) { $exists = $true; break }
-        }
-        if (-not $exists) { $svcDedup += $s }
-    }
-    $svcCandidates = $svcDedup
+    if ($cfgVirtioSndService) { $svcCandidates = @($cfgVirtioSndService) + $svcCandidates }
+    $svcCandidates = Dedup-CaseInsensitive $svcCandidates
+
     # Heuristic keywords used to identify Aero/virtio devices in WMI output.
     #
     # Includes AeroGPU PCI vendor IDs:
@@ -1822,11 +1849,15 @@ try {
         @("aero","virtio","gpu") `
         "No Aero/virtio GPU devices detected (system may still be using VGA/baseline graphics)."
 
+    $audioServiceCandidates = @("viosnd","aerosnd","virtiosnd","aeroviosnd")
+    if ($cfgVirtioSndService) { $audioServiceCandidates = @($cfgVirtioSndService) + $audioServiceCandidates }
+    $audioServiceCandidates = Dedup-CaseInsensitive $audioServiceCandidates
+
     Add-DeviceBindingCheck `
         "device_binding_audio" `
         "Device Binding: Audio (virtio-snd)" `
         $devices `
-        @("viosnd","aerosnd") `
+        $audioServiceCandidates `
         @("MEDIA") `
         $sndRegex `
         @("aero","virtio","audio") `

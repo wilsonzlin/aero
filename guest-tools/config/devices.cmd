@@ -27,6 +27,16 @@ rem ---------------------------
 rem Non-boot-critical devices (used for documentation / potential future checks)
 rem ---------------------------
 
+rem Service name for the virtio-snd audio driver.
+rem Used by verify.ps1 to confirm device binding.
+rem Default aligns with upstream virtio-win (`viosnd`), but verify.ps1 also checks
+rem common clean-room/Aero candidates (e.g. `virtiosnd`, `aeroviosnd`).
+set "AERO_VIRTIO_SND_SERVICE=viosnd"
+
+rem Optional explicit .sys name for the virtio-snd driver.
+rem If empty, tools assume "<service>.sys".
+set "AERO_VIRTIO_SND_SYS="
+
 set AERO_VIRTIO_NET_HWIDS="PCI\VEN_1AF4&DEV_1000" "PCI\VEN_1AF4&DEV_1041"
 set AERO_VIRTIO_INPUT_HWIDS="PCI\VEN_1AF4&DEV_1011" "PCI\VEN_1AF4&DEV_1052"
 set AERO_VIRTIO_SND_HWIDS="PCI\VEN_1AF4&DEV_1018" "PCI\VEN_1AF4&DEV_1059"
