@@ -9,8 +9,8 @@
       "pci_device_id": "0x1042",
       "hardware_id_patterns": [
         "PCI\\VEN_1AF4&DEV_1042&SUBSYS_00021AF4&REV_01",
-        "PCI\\VEN_1AF4&DEV_1042&REV_01",
         "PCI\\VEN_1AF4&DEV_1042&SUBSYS_00021AF4",
+        "PCI\\VEN_1AF4&DEV_1042&REV_01",
         "PCI\\VEN_1AF4&DEV_1042"
       ],
       "driver_service_name": "aerovblk",
@@ -23,8 +23,8 @@
       "pci_device_id": "0x1041",
       "hardware_id_patterns": [
         "PCI\\VEN_1AF4&DEV_1041&SUBSYS_00011AF4&REV_01",
-        "PCI\\VEN_1AF4&DEV_1041&REV_01",
         "PCI\\VEN_1AF4&DEV_1041&SUBSYS_00011AF4",
+        "PCI\\VEN_1AF4&DEV_1041&REV_01",
         "PCI\\VEN_1AF4&DEV_1041"
       ],
       "driver_service_name": "aerovnet",
