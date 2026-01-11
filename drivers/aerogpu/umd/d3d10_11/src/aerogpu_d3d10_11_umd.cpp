@@ -1933,6 +1933,13 @@ void AEROGPU_APIENTRY DestroyDevice11(D3D11DDI_HDEVICE hDevice) {
   dev->~AeroGpuDevice();
 }
 
+HRESULT AEROGPU_APIENTRY GetDeviceRemovedReason11(D3D11DDI_HDEVICE) {
+  // The runtime expects S_OK when the device is healthy. Returning E_NOTIMPL
+  // here can cause higher-level API calls like ID3D11Device::GetDeviceRemovedReason
+  // to fail unexpectedly.
+  return S_OK;
+}
+
 SIZE_T AEROGPU_APIENTRY CalcPrivateResourceSize11(D3D11DDI_HDEVICE, const D3D11DDIARG_CREATERESOURCE*) {
   return sizeof(AeroGpuResource);
 }
@@ -2853,6 +2860,88 @@ static bool AnyNonNullHandles(const THandle* handles, UINT count) {
   }
   return false;
 }
+
+template <typename FnPtr>
+struct SoSetTargetsThunk;
+
+template <typename Ret, typename... Args>
+struct SoSetTargetsThunk<Ret(AEROGPU_APIENTRY*)(Args...)> {
+  static Ret AEROGPU_APIENTRY Impl(Args... args) {
+    ((void)args, ...);
+    if constexpr (std::is_same_v<Ret, HRESULT>) {
+      return E_NOTIMPL;
+    } else if constexpr (std::is_void_v<Ret>) {
+      return;
+    } else {
+      return {};
+    }
+  }
+};
+
+// Stream-output is unsupported for bring-up. Treat unbind (all-null handles) as a
+// no-op but report E_NOTIMPL if an app attempts to bind real targets.
+template <typename Ret, typename TargetsPtr, typename... Tail>
+struct SoSetTargetsThunk<Ret(AEROGPU_APIENTRY*)(D3D11DDI_HDEVICECONTEXT, UINT, TargetsPtr, Tail...)> {
+  static Ret AEROGPU_APIENTRY Impl(D3D11DDI_HDEVICECONTEXT hCtx, UINT NumTargets, TargetsPtr phTargets, Tail... tail) {
+    ((void)tail, ...);
+    if (!hCtx.pDrvPrivate || !AnyNonNullHandles(phTargets, NumTargets)) {
+      if constexpr (std::is_same_v<Ret, HRESULT>) {
+        return S_OK;
+      } else if constexpr (std::is_void_v<Ret>) {
+        return;
+      } else {
+        return {};
+      }
+    }
+    SetError(DeviceFromHandle(hCtx), E_NOTIMPL);
+    if constexpr (std::is_same_v<Ret, HRESULT>) {
+      return E_NOTIMPL;
+    } else if constexpr (!std::is_void_v<Ret>) {
+      return {};
+    }
+  }
+};
+
+template <typename FnPtr>
+struct SetPredicationThunk;
+
+template <typename Ret, typename... Args>
+struct SetPredicationThunk<Ret(AEROGPU_APIENTRY*)(Args...)> {
+  static Ret AEROGPU_APIENTRY Impl(Args... args) {
+    ((void)args, ...);
+    if constexpr (std::is_same_v<Ret, HRESULT>) {
+      return E_NOTIMPL;
+    } else if constexpr (std::is_void_v<Ret>) {
+      return;
+    } else {
+      return {};
+    }
+  }
+};
+
+// Predication is optional. Treat clearing/unbinding as a no-op but report
+// E_NOTIMPL when a non-null predicate is set.
+template <typename Ret, typename PredicateHandle, typename... Tail>
+struct SetPredicationThunk<Ret(AEROGPU_APIENTRY*)(D3D11DDI_HDEVICECONTEXT, PredicateHandle, Tail...)> {
+  static Ret AEROGPU_APIENTRY Impl(D3D11DDI_HDEVICECONTEXT hCtx, PredicateHandle hPredicate, Tail... tail) {
+    ((void)tail, ...);
+    if (!hCtx.pDrvPrivate || !hPredicate.pDrvPrivate) {
+      if constexpr (std::is_same_v<Ret, HRESULT>) {
+        return S_OK;
+      } else if constexpr (std::is_void_v<Ret>) {
+        return;
+      } else {
+        return {};
+      }
+    }
+    SetError(DeviceFromHandle(hCtx), E_NOTIMPL);
+    if constexpr (std::is_same_v<Ret, HRESULT>) {
+      return E_NOTIMPL;
+    } else if constexpr (!std::is_void_v<Ret>) {
+      return {};
+    }
+  }
+};
 
 // Tessellation and compute stages are unsupported in the current FL10_0 bring-up implementation.
 // These entrypoints must behave like no-ops when clearing/unbinding (runtime ClearState), but
@@ -5188,6 +5277,8 @@ HRESULT AEROGPU_APIENTRY CreateDevice11(D3D10DDI_HADAPTER hAdapter, D3D11DDIARG_
   device_funcs.pfnCreateDepthStencilState = &CreateDepthStencilState11;
   device_funcs.pfnDestroyDepthStencilState = &DestroyDepthStencilState11;
 
+  __if_exists(D3D11DDI_DEVICEFUNCS::pfnGetDeviceRemovedReason) { device_funcs.pfnGetDeviceRemovedReason = &GetDeviceRemovedReason11; }
+
   BindPresentAndRotate(&device_funcs);
   if (!ValidateNoNullDdiTable("D3D11DDI_DEVICEFUNCS", &device_funcs, sizeof(device_funcs))) {
     pCreate->hImmediateContext.pDrvPrivate = nullptr;
@@ -5201,6 +5292,10 @@ HRESULT AEROGPU_APIENTRY CreateDevice11(D3D10DDI_HADAPTER hAdapter, D3D11DDIARG_
   ctx_funcs.pfnIaSetVertexBuffers = &IaSetVertexBuffers11;
   ctx_funcs.pfnIaSetIndexBuffer = &IaSetIndexBuffer11;
   ctx_funcs.pfnIaSetTopology = &IaSetTopology11;
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnSoSetTargets) {
+    using Fn = decltype(std::declval<D3D11DDI_DEVICECONTEXTFUNCS>().pfnSoSetTargets);
+    ctx_funcs.pfnSoSetTargets = &SoSetTargetsThunk<Fn>::Impl;
+  }
 
   ctx_funcs.pfnVsSetShader = &VsSetShader11;
   ctx_funcs.pfnVsSetConstantBuffers = &VsSetConstantBuffers11;
@@ -5268,9 +5363,18 @@ HRESULT AEROGPU_APIENTRY CreateDevice11(D3D10DDI_HADAPTER hAdapter, D3D11DDIARG_
   ctx_funcs.pfnDraw = &Draw11;
   ctx_funcs.pfnDrawIndexed = &DrawIndexed11;
 
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnSetPredication) {
+    using Fn = decltype(std::declval<D3D11DDI_DEVICECONTEXTFUNCS>().pfnSetPredication);
+    ctx_funcs.pfnSetPredication = &SetPredicationThunk<Fn>::Impl;
+  }
+
   __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnUpdateSubresourceUP) {
     using Fn = decltype(std::declval<D3D11DDI_DEVICECONTEXTFUNCS>().pfnUpdateSubresourceUP);
     ctx_funcs.pfnUpdateSubresourceUP = &UpdateSubresourceUPThunk<Fn>::Impl;
+  }
+  __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnUpdateSubresource) {
+    using Fn = decltype(std::declval<D3D11DDI_DEVICECONTEXTFUNCS>().pfnUpdateSubresource);
+    ctx_funcs.pfnUpdateSubresource = &UpdateSubresourceUPThunk<Fn>::Impl;
   }
   __if_exists(D3D11DDI_DEVICECONTEXTFUNCS::pfnCopyResource) {
     using Fn = decltype(std::declval<D3D11DDI_DEVICECONTEXTFUNCS>().pfnCopyResource);
