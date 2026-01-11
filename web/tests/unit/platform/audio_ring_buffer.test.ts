@@ -82,4 +82,22 @@ describe("audio ring buffer overruns", () => {
     expect(writeRingBufferInterleaved(ring, new Float32Array(4), 48_000, 48_000)).toBe(0);
     expect(getRingBufferOverrunCount(ring)).toBe(2);
   });
+
+  it("writes samples correctly across wraparound", () => {
+    const ring = createTestRingBuffer(2, 4);
+
+    // Write 3 frames (L0, R0, L1, R1, L2, R2).
+    const first = Float32Array.from([0, 1, 2, 3, 4, 5]);
+    expect(writeRingBufferInterleaved(ring, first, 48_000, 48_000)).toBe(3);
+
+    // Simulate the consumer draining 2 frames so the next write wraps: 1 frame at the end
+    // and 2 frames at the start.
+    Atomics.store(ring.header, 0, 2);
+
+    const second = Float32Array.from([100, 101, 102, 103, 104, 105]);
+    expect(writeRingBufferInterleaved(ring, second, 48_000, 48_000)).toBe(3);
+    expect(getRingBufferOverrunCount(ring)).toBe(0);
+
+    expect(ring.samples).toEqual(Float32Array.from([102, 103, 104, 105, 4, 5, 100, 101]));
+  });
 });
