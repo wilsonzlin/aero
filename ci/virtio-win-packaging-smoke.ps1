@@ -687,7 +687,8 @@ $verifyIsoLog = Join-Path $logsDir "verify-virtio-driver-iso.log"
 
 Write-Host "Running make-virtio-driver-iso.ps1..."
 $driverIsoArgs = @(
-  "-OutIso", $driverIsoPath
+  "-OutIso", $driverIsoPath,
+  "-CleanStage"
 )
 if ($TestIsoMode) {
   $driverIsoArgs += @("-VirtioWinIso", $virtioIsoPathResolved)
