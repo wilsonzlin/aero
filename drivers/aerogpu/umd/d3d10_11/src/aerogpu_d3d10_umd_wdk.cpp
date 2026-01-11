@@ -2219,10 +2219,9 @@ HRESULT APIENTRY Map(D3D10DDI_HDEVICE hDevice, D3D10DDIARG_MAP* pMap) {
 
   const bool do_not_wait = (map_flags_u & kD3DMapFlagDoNotWait) != 0;
   HRESULT hr = CallCbMaybeHandle(cb->pfnLockCb, dev->hrt_device, &lock_cb);
-  if (hr == kDxgiErrorWasStillDrawing || hr == HRESULT_FROM_WIN32(WAIT_TIMEOUT) ||
-      hr == HRESULT_FROM_WIN32(ERROR_TIMEOUT) || hr == static_cast<HRESULT>(0x10000102L) ||
-      hr == kHrNtStatusGraphicsGpuBusy ||
-      (do_not_wait && hr == kHrPending)) {
+  if (hr == kDxgiErrorWasStillDrawing || hr == kHrNtStatusGraphicsGpuBusy ||
+      (do_not_wait && (hr == kHrPending || hr == HRESULT_FROM_WIN32(WAIT_TIMEOUT) ||
+                       hr == HRESULT_FROM_WIN32(ERROR_TIMEOUT) || hr == static_cast<HRESULT>(0x10000102L)))) {
     hr = kDxgiErrorWasStillDrawing;
   }
   if (hr == kDxgiErrorWasStillDrawing) {

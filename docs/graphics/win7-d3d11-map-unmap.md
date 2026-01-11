@@ -211,6 +211,13 @@ Required behavior:
 * The UMD must attempt `pfnLockCb` with `DoNotWait/DonotWait = 1`.
 * If the runtime reports the allocation is still in use (i.e. the lock would block), `pfnMap` must return `DXGI_ERROR_WAS_STILL_DRAWING` (not `S_FALSE`, not `E_FAIL`).
 
+Practical Win7 note: different WDK/runtime combinations do not always return `DXGI_ERROR_WAS_STILL_DRAWING` directly from `pfnLockCb`/fence waits when `DO_NOT_WAIT` is set. Treat the common "would block" variants as equivalent to still-drawing and return `DXGI_ERROR_WAS_STILL_DRAWING` to the API:
+
+* `HRESULT_FROM_WIN32(WAIT_TIMEOUT)`
+* `HRESULT_FROM_WIN32(ERROR_TIMEOUT)`
+* `HRESULT_FROM_NT(STATUS_TIMEOUT)` (`0x10000102`; note that this is `SUCCEEDED()` and must be checked explicitly)
+* `E_PENDING` (`0x8000000A`) (observed in some poll-style wait paths)
+
 ---
 
 ## 4) Synchronization rules (the part that makes staging readback work)

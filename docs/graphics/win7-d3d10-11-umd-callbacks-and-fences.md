@@ -509,6 +509,14 @@ Important fields:
 - Call the wait callback with `Timeout = 0`.
 - If it indicates not-ready (timeout), return `DXGI_ERROR_WAS_STILL_DRAWING` from the `Map` DDI (D3D11), or (for `void`-returning map variants) call `pfnSetErrorCb(hRTDevice, DXGI_ERROR_WAS_STILL_DRAWING)` and return.
 
+Practical Win7 note: the wait callback does not always report "not ready" as `DXGI_ERROR_WAS_STILL_DRAWING`. Depending on header/runtime vintage, a poll (`Timeout = 0`) may yield one of several timeout/pending HRESULTs; treat them as still-drawing for `Map(DO_NOT_WAIT)`:
+
+- `DXGI_ERROR_WAS_STILL_DRAWING`
+- `HRESULT_FROM_WIN32(WAIT_TIMEOUT)`
+- `HRESULT_FROM_WIN32(ERROR_TIMEOUT)`
+- `HRESULT_FROM_NT(STATUS_TIMEOUT)` (`0x10000102`; `SUCCEEDED()`, so don't rely solely on `FAILED(hr)`)
+- `E_PENDING` (`0x8000000A`) (seen in some stacks)
+
 ### 4.3 Direct thunk alternative: `D3DKMTWaitForSynchronizationObject`
 
 If you are not using the runtime’s wait callback (e.g., in standalone tooling), you can call the kernel thunk directly:
