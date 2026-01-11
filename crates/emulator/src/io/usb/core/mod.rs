@@ -131,8 +131,10 @@ impl AttachedUsbDevice {
                 if setup.request_type() == RequestType::Standard
                     && setup.recipient() == RequestRecipient::Device
                     && setup.b_request == USB_REQUEST_SET_ADDRESS
-                    && setup.w_length == 0
                 {
+                    if setup.w_index != 0 || setup.w_length != 0 || setup.w_value > 127 {
+                        return UsbOutResult::Stall;
+                    }
                     self.pending_address = Some((setup.w_value & 0x00ff) as u8);
                     ControlStage::StatusIn
                 } else if setup.w_length == 0 {
@@ -334,6 +336,47 @@ mod tests {
         ) -> ControlResponse {
             ControlResponse::Ack
         }
+    }
+
+    #[test]
+    fn set_address_invalid_fields_stall() {
+        let mut dev = AttachedUsbDevice::new(Box::new(AckModel::default()));
+
+        // Invalid address (must be <= 127).
+        assert_eq!(
+            dev.handle_setup(SetupPacket {
+                bm_request_type: 0x00, // HostToDevice | Standard | Device
+                b_request: USB_REQUEST_SET_ADDRESS,
+                w_value: 200,
+                w_index: 0,
+                w_length: 0,
+            }),
+            UsbOutResult::Stall
+        );
+
+        // Invalid wIndex.
+        assert_eq!(
+            dev.handle_setup(SetupPacket {
+                bm_request_type: 0x00,
+                b_request: USB_REQUEST_SET_ADDRESS,
+                w_value: 5,
+                w_index: 1,
+                w_length: 0,
+            }),
+            UsbOutResult::Stall
+        );
+
+        // Invalid wLength.
+        assert_eq!(
+            dev.handle_setup(SetupPacket {
+                bm_request_type: 0x00,
+                b_request: USB_REQUEST_SET_ADDRESS,
+                w_value: 5,
+                w_index: 0,
+                w_length: 1,
+            }),
+            UsbOutResult::Stall
+        );
     }
 
     #[test]
