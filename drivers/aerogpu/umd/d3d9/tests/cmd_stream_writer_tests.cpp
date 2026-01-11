@@ -1287,6 +1287,87 @@ bool TestPresentStatsAndFrameLatency() {
   return true;
 }
 
+bool TestGetDisplayModeExReturnsPrimaryMode() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3D9DDI_HADAPTER hAdapter{};
+    D3D9DDI_HDEVICE hDevice{};
+    bool has_adapter = false;
+    bool has_device = false;
+
+    ~Cleanup() {
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  if (!Check(open.hAdapter.pDrvPrivate != nullptr, "OpenAdapter2 returned adapter handle")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnGetDisplayModeEx != nullptr, "GetDisplayModeEx must be available")) {
+    return false;
+  }
+
+  AEROGPU_D3D9DDI_DISPLAYMODEEX mode{};
+  AEROGPU_D3D9DDI_DISPLAYROTATION rotation = AEROGPU_D3D9DDI_ROTATION_IDENTITY;
+  AEROGPU_D3D9DDIARG_GETDISPLAYMODEEX args{};
+  args.swapchain = 0;
+  args.pMode = &mode;
+  args.pRotation = &rotation;
+
+  hr = cleanup.device_funcs.pfnGetDisplayModeEx(create_dev.hDevice, &args);
+  if (!Check(hr == S_OK, "GetDisplayModeEx")) {
+    return false;
+  }
+  if (!Check(mode.size == sizeof(AEROGPU_D3D9DDI_DISPLAYMODEEX), "display mode size field")) {
+    return false;
+  }
+  if (!Check(mode.width != 0 && mode.height != 0, "display mode dimensions non-zero")) {
+    return false;
+  }
+  if (!Check(mode.refresh_rate_hz != 0, "display mode refresh non-zero")) {
+    return false;
+  }
+  if (!Check(mode.format == 22u, "display mode format is X8R8G8B8")) {
+    return false;
+  }
+  if (!Check(mode.scanline_ordering == AEROGPU_D3D9DDI_SCANLINEORDERING_PROGRESSIVE, "display mode scanline progressive")) {
+    return false;
+  }
+  return Check(rotation == AEROGPU_D3D9DDI_ROTATION_IDENTITY, "display rotation identity");
+}
+
 bool TestAllocationListSplitResetsOnEmptySubmit() {
   // Repro for a subtle WDDM-only failure mode:
   //
@@ -2938,6 +3019,7 @@ int main() {
   failures += !aerogpu::TestAdapterCachingUpdatesCallbacks();
   failures += !aerogpu::TestCreateResourceRejectsUnsupportedGpuFormat();
   failures += !aerogpu::TestPresentStatsAndFrameLatency();
+  failures += !aerogpu::TestGetDisplayModeExReturnsPrimaryMode();
   failures += !aerogpu::TestAllocationListSplitResetsOnEmptySubmit();
   failures += !aerogpu::TestInvalidPayloadArgs();
   failures += !aerogpu::TestDestroyBoundShaderUnbinds();
