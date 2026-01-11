@@ -34,7 +34,6 @@ memory = { path = "../memory" }
 aero-net-stack = { path = "../aero-net-stack" }
 aero-net-e1000 = { path = "../aero-net-e1000" }
 aero-ipc = { path = "../aero-ipc" }
-nt-packetlib = { path = "../nt-packetlib" }
 pollster = { version = "0.3", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

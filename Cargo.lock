@@ -1676,7 +1676,6 @@ dependencies = [
  "image",
  "machine",
  "memory",
- "nt-packetlib",
  "pollster",
  "proptest",
  "serde",
