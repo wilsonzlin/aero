@@ -5,6 +5,7 @@ import {
   isWebUsbProtectedInterfaceClass,
   type WebUsbDeviceClassification,
 } from "./platform/webusb";
+import { explainWebUsbError, formatWebUsbError } from "./platform/webusb_troubleshooting";
 
 function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -42,13 +43,7 @@ function fmtVidPid(device: USBDevice): string {
 }
 
 function fmtError(err: unknown): string {
-  if (err instanceof DOMException) {
-    return `${err.name}: ${err.message}`;
-  }
-  if (err instanceof Error) {
-    return err.message;
-  }
-  return String(err);
+  return formatWebUsbError(err);
 }
 
 function getUsbApi(): USB | null {
@@ -302,12 +297,31 @@ function main(): void {
     return;
   }
 
-  const log = el("pre", { class: "mono", text: "" });
+  const status = el("pre", { class: "mono", text: "" });
+  const errorTitle = el("div", { class: "bad", text: "" });
+  const errorDetails = el("div", { class: "hint", text: "" });
+  const errorRaw = el("pre", { class: "mono", text: "" });
+  const errorHints = el("ul");
   const deviceHost = el("div", {});
 
   let selectedDevice: USBDevice | null = null;
   let selectedClass: WebUsbDeviceClassification | null = null;
   let lastFilterNote: string | null = null;
+
+  function clearError(): void {
+    errorTitle.textContent = "";
+    errorDetails.textContent = "";
+    errorRaw.textContent = "";
+    errorHints.replaceChildren();
+  }
+
+  function showError(err: unknown): void {
+    const explained = explainWebUsbError(err);
+    errorTitle.textContent = explained.title;
+    errorDetails.textContent = explained.details ?? "";
+    errorRaw.textContent = fmtError(err);
+    errorHints.replaceChildren(...explained.hints.map((h) => el("li", { text: h })));
+  }
 
   const renderSelected = (): void => {
     if (!selectedDevice || !selectedClass) {
@@ -329,7 +343,8 @@ function main(): void {
 
   requestBtn.onclick = () => {
     void (async () => {
-      log.textContent = "";
+      status.textContent = "";
+      clearError();
       try {
         const { device, filterNote } = await requestUsbDevice(usb);
         selectedDevice = device;
@@ -339,8 +354,7 @@ function main(): void {
 
         renderSelected();
       } catch (err) {
-        const msg = fmtError(err);
-        log.textContent = msg;
+        showError(err);
         console.error(err);
       }
     })();
@@ -348,20 +362,20 @@ function main(): void {
 
   claimBtn.onclick = () => {
     void (async () => {
-      log.textContent = "";
+      status.textContent = "";
+      clearError();
       if (!selectedDevice || !selectedClass) {
-        log.textContent = "No device selected.";
+        status.textContent = "No device selected.";
         return;
       }
       try {
         const result = await tryOpenAndClaim(selectedDevice, selectedClass);
-        log.textContent = result;
+        status.textContent = result;
         // Re-render so `opened`/`claimed` state updates.
         selectedClass = classifyWebUsbDevice(selectedDevice);
         renderSelected();
       } catch (err) {
-        const msg = fmtError(err);
-        log.textContent = msg;
+        showError(err);
         console.error(err);
       }
     })();
@@ -374,7 +388,11 @@ function main(): void {
       { class: "panel" },
       el("h2", { text: "Actions" }),
       el("div", { class: "row actions" }, requestBtn, claimBtn),
-      log,
+      status,
+      errorTitle,
+      errorDetails,
+      errorRaw,
+      errorHints,
     ),
     deviceHost,
   );

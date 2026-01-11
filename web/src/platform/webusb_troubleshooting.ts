@@ -68,6 +68,8 @@ export function explainWebUsbError(err: unknown): WebUsbErrorExplanation {
 
   const mentionsUserGesture = includesAny(msgLower, ["user gesture", "user activation"]);
   const mentionsPermissionDenied = includesAny(msgLower, ["permission", "not allowed", "denied", "access denied"]);
+  const mentionsFilters = includesAny(msgLower, ["filter", "filters"]);
+  const mentionsPermissionsPolicy = includesAny(msgLower, ["permissions policy", "permission policy", "feature policy"]);
   const mentionsClaimInterface = includesAny(msgLower, ["claiminterface", "claim interface", "unable to claim"]);
   const mentionsOpen = includesAny(msgLower, ["failed to open", "unable to open", "open()"]);
   const mentionsDisconnected = includesAny(msgLower, ["disconnected", "not found", "no device selected"]);
@@ -76,6 +78,8 @@ export function explainWebUsbError(err: unknown): WebUsbErrorExplanation {
     "protected class",
     "is protected",
     "interface is protected",
+    "webusb-protected",
+    "no claimable interface",
   ]);
 
   const driverOrPermissionsLikely =
@@ -89,6 +93,10 @@ export function explainWebUsbError(err: unknown): WebUsbErrorExplanation {
   let details: string | undefined;
 
   switch (name) {
+    case "TypeError":
+      title = "WebUSB call failed (invalid parameters or unsupported usage)";
+      details = "The browser rejected the WebUSB call; this is often caused by `requestDevice()` filter requirements.";
+      break;
     case "NotFoundError":
       title = "No USB device selected (or the device was disconnected)";
       details = "The browser did not have an active permission grant for a device.";
@@ -136,6 +144,18 @@ export function explainWebUsbError(err: unknown): WebUsbErrorExplanation {
     );
   }
 
+  if (name === "TypeError" && mentionsFilters) {
+    addHint(
+      "`requestDevice()` filtering rules vary by Chromium version. If the browser rejects your options, try providing an explicit `vendorId`/`productId` filter (or `acceptAllDevices: true` if supported).",
+    );
+  }
+
+  if (mentionsPermissionsPolicy) {
+    addHint(
+      "WebUSB can be blocked by Permissions Policy / enterprise policy. If you're running in an iframe, ensure the frame is allowed to use WebUSB (e.g. `allow=\"usb\"`) and that response headers permit it.",
+    );
+  }
+
   if (name === "InvalidStateError") {
     addHint("Call `await device.open()` before `claimInterface()` / transfers.");
     addHint(
@@ -180,4 +200,3 @@ export function formatWebUsbError(err: unknown): string {
   if (message) return message;
   return safeToString(err);
 }
-
