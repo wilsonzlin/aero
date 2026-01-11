@@ -55,15 +55,24 @@ typedef struct D3DKMT_ESCAPE {
   UINT PrivateDriverDataSize;
 } D3DKMT_ESCAPE;
 
+typedef struct D3DKMT_QUERYADAPTERINFO {
+  D3DKMT_HANDLE hAdapter;
+  UINT Type; /* KMTQUERYADAPTERINFOTYPE */
+  VOID* pPrivateDriverData;
+  UINT PrivateDriverDataSize;
+} D3DKMT_QUERYADAPTERINFO;
+
 typedef NTSTATUS(WINAPI* PFND3DKMTOpenAdapterFromHdc)(D3DKMT_OPENADAPTERFROMHDC* pData);
 typedef NTSTATUS(WINAPI* PFND3DKMTCloseAdapter)(D3DKMT_CLOSEADAPTER* pData);
 typedef NTSTATUS(WINAPI* PFND3DKMTEscape)(D3DKMT_ESCAPE* pData);
+typedef NTSTATUS(WINAPI* PFND3DKMTQueryAdapterInfo)(D3DKMT_QUERYADAPTERINFO* pData);
 
 typedef struct D3DKMT_FUNCS {
   HMODULE gdi32;
   PFND3DKMTOpenAdapterFromHdc OpenAdapterFromHdc;
   PFND3DKMTCloseAdapter CloseAdapter;
   PFND3DKMTEscape Escape;
+  PFND3DKMTQueryAdapterInfo QueryAdapterInfo;
 } D3DKMT_FUNCS;
 
 // If an escape call times out, the worker thread may still be blocked inside a kernel thunk.
@@ -96,6 +105,7 @@ static inline bool LoadD3DKMT(D3DKMT_FUNCS* out, std::string* err) {
       (PFND3DKMTOpenAdapterFromHdc)GetProcAddress(out->gdi32, "D3DKMTOpenAdapterFromHdc");
   out->CloseAdapter = (PFND3DKMTCloseAdapter)GetProcAddress(out->gdi32, "D3DKMTCloseAdapter");
   out->Escape = (PFND3DKMTEscape)GetProcAddress(out->gdi32, "D3DKMTEscape");
+  out->QueryAdapterInfo = (PFND3DKMTQueryAdapterInfo)GetProcAddress(out->gdi32, "D3DKMTQueryAdapterInfo");
 
   if (!out->OpenAdapterFromHdc || !out->CloseAdapter || !out->Escape) {
     if (err) {
