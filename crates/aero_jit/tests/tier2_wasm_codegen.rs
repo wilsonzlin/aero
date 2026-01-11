@@ -1,8 +1,10 @@
 use std::collections::HashMap;
 
-use aero_cpu::SimpleBus;
 use aero_cpu_core::state::RFLAGS_DF;
 use aero_types::{Flag, Gpr, Width};
+mod tier1_common;
+
+use tier1_common::SimpleBus;
 
 use aero_jit::abi;
 use aero_jit::opt::{optimize_trace, OptConfig};

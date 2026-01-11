@@ -10,35 +10,33 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
 
-use aero_cpu::{CpuBus, CpuState};
 use aero_cpu_core::jit::cache::{CompiledBlockHandle, CompiledBlockMeta, PageVersionSnapshot};
 use aero_cpu_core::jit::runtime::{CompileRequestSink, JitBackend, JitRuntime, PAGE_SHIFT};
+use aero_cpu_core::state::CpuState as CoreCpuState;
 
 use crate::compiler::tier1::compile_tier1_block_with_options;
 use crate::tier1_pipeline::Tier1WasmRegistry;
 use crate::wasm::tier1::Tier1WasmOptions;
 use crate::BlockLimits;
+use crate::Tier1Bus;
 
 /// Minimal interface a host CPU type must expose to execute Tier-1 WASM blocks.
 ///
-/// The Tier-1 WASM ABI uses the in-memory layout of [`aero_cpu_core::state::CpuState`]. The backend
-/// copies the host CPU state into the shared `WebAssembly.Memory`, calls the compiled block, and
-/// then copies the updated state back into the host CPU value.
-///
-/// Note: the current trait is intentionally narrow (GPRs/RIP/RFLAGS only) and is used by unit tests
-/// that wrap the lightweight `aero_cpu::CpuState`. Full-system integration uses the canonical
-/// `aero_cpu_core::state::CpuState` layout through [`crate::abi`].
+/// The Tier-1 WASM ABI uses the in-memory layout of [`aero_cpu_core::state::CpuState`] (plus
+/// optional JIT-only context data appended after the struct). The backend copies the architectural
+/// subset used by Tier-1 (GPRs/RIP/RFLAGS) into the shared `WebAssembly.Memory`, calls the compiled
+/// block, and then copies the updated values back into the host CPU value.
 pub trait Tier1Cpu {
-    fn tier1_state(&self) -> &CpuState;
-    fn tier1_state_mut(&mut self) -> &mut CpuState;
+    fn tier1_state(&self) -> &CoreCpuState;
+    fn tier1_state_mut(&mut self) -> &mut CoreCpuState;
 }
 
-impl Tier1Cpu for CpuState {
-    fn tier1_state(&self) -> &CpuState {
+impl Tier1Cpu for CoreCpuState {
+    fn tier1_state(&self) -> &CoreCpuState {
         self
     }
 
-    fn tier1_state_mut(&mut self) -> &mut CpuState {
+    fn tier1_state_mut(&mut self) -> &mut CoreCpuState {
         self
     }
 }
@@ -50,7 +48,7 @@ pub use wasmtime::WasmtimeBackend;
 /// A cloneable handle around [`WasmtimeBackend`] so compilation workers can add table entries while
 /// the [`JitRuntime`] owns a copy of the backend.
 ///
-/// `WasmBackend` also implements [`CpuBus`], allowing the Tier-1 compiler pipeline to read guest
+/// `WasmBackend` also implements [`Tier1Bus`], allowing the Tier-1 compiler pipeline to read guest
 /// code bytes directly from the backend's shared linear memory.
 pub struct WasmBackend<Cpu>(Rc<RefCell<WasmtimeBackend<Cpu>>>);
 
@@ -90,7 +88,7 @@ impl<Cpu> Tier1WasmRegistry for WasmBackend<Cpu> {
     }
 }
 
-impl<Cpu> CpuBus for WasmBackend<Cpu> {
+impl<Cpu> Tier1Bus for WasmBackend<Cpu> {
     fn read_u8(&self, addr: u64) -> u8 {
         self.0.borrow().read_u8(addr)
     }

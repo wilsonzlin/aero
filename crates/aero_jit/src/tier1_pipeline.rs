@@ -15,9 +15,9 @@ pub trait CodeProvider {
     fn fetch(&self, rip: u64, max: usize) -> Vec<u8>;
 }
 
-impl<T: aero_cpu::CpuBus> CodeProvider for T {
+impl<T: crate::Tier1Bus> CodeProvider for T {
     fn fetch(&self, rip: u64, max: usize) -> Vec<u8> {
-        aero_cpu::CpuBus::fetch(self, rip, max)
+        crate::Tier1Bus::fetch(self, rip, max)
     }
 }
 

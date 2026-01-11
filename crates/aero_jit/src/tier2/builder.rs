@@ -1,7 +1,8 @@
 use std::collections::{HashMap, VecDeque};
 
-use aero_cpu::CpuBus;
 use aero_types::{Cond, Flag, FlagSet, Width};
+
+use crate::Tier1Bus;
 
 use crate::tier1_ir::{BinOp as T1BinOp, GuestReg, IrBlock, IrInst, IrTerminator, ValueId as T1ValueId};
 use crate::t2_ir::{
@@ -603,7 +604,7 @@ fn lower_block(ir: &IrBlock) -> DraftBlock {
 
 /// Build a Tier-2 CFG by discovering x86 basic blocks starting at `entry_rip`,
 /// translating them through Tier-1 IR, and lowering into [`crate::t2_ir::Function`].
-pub fn build_function_from_x86<B: CpuBus>(bus: &B, entry_rip: u64, cfg: CfgBuildConfig) -> Function {
+pub fn build_function_from_x86<B: Tier1Bus>(bus: &B, entry_rip: u64, cfg: CfgBuildConfig) -> Function {
     let mut rip_to_id: HashMap<u64, BlockId> = HashMap::new();
     let mut drafts: Vec<DraftBlock> = Vec::new();
     let mut worklist: VecDeque<u64> = VecDeque::new();

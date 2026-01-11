@@ -1,5 +1,7 @@
-use aero_cpu::SimpleBus;
+mod tier1_common;
+
 use aero_types::{Flag, Width};
+use tier1_common::SimpleBus;
 
 use aero_jit::profile::{ProfileData, TraceConfig};
 use aero_jit::t2_ir::{FlagMask, Instr, Terminator, TraceKind};

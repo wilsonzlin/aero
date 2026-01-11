@@ -1,16 +1,14 @@
 use std::marker::PhantomData;
 
-use aero_cpu::CpuBus;
-use aero_cpu::CpuState;
 use aero_cpu_core::jit::runtime::{JitBackend, JitBlockExit};
+use aero_cpu_core::state::CpuState as CoreCpuState;
 use wasmtime::{Caller, Engine, Linker, Memory, MemoryType, Module, Store, TypedFunc};
 
 use super::Tier1Cpu;
-use crate::abi::{
-    self, CPU_AND_JIT_CTX_BYTE_SIZE, JIT_CTX_RAM_BASE_OFFSET, JIT_CTX_TLB_OFFSET,
-    JIT_CTX_TLB_SALT_OFFSET,
-};
+use crate::abi;
+use crate::abi::{JIT_CTX_RAM_BASE_OFFSET, JIT_CTX_TLB_OFFSET, JIT_CTX_TLB_SALT_OFFSET};
 use crate::tier1_pipeline::Tier1WasmRegistry;
+use crate::Tier1Bus;
 use crate::wasm::tier1::EXPORT_TIER1_BLOCK_FN;
 use crate::wasm::{
     IMPORT_JIT_EXIT, IMPORT_MEMORY, IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U32, IMPORT_MEM_READ_U64,
@@ -24,11 +22,7 @@ use crate::wasm::{
 /// ## Tier-1 ABI contract (`export block(cpu_ptr: i32) -> i64`)
 ///
 /// The compiled block receives a pointer (`cpu_ptr`) into the shared linear memory where an
-/// `aero_cpu_core::state::CpuState` *layout* is stored. This backend currently syncs only the
-/// architectural subset required by Tier-1 tests (GPRs/RIP/RFLAGS) from the host [`aero_cpu::CpuState`]
-/// into that canonical layout.
-///
-/// The block mutates CPU state in-place and returns an `i64`:
+/// [`aero_cpu_core::state::CpuState`] is stored. The block mutates CPU state in-place and returns an `i64`:
 ///
 /// - `ret != JIT_EXIT_SENTINEL_I64`: `ret` is the next RIP; execution can continue in the JIT.
 /// - `ret == JIT_EXIT_SENTINEL_I64`: the block requests a one-shot exit to the interpreter.
@@ -65,8 +59,11 @@ impl<Cpu> WasmtimeBackend<Cpu> {
         let mut linker = Linker::new(&engine);
 
         // A single shared memory is imported by all generated blocks.
-        let memory = Memory::new(&mut store, MemoryType::new(memory_pages, None))
-            .expect("create wasmtime memory");
+        let memory = Memory::new(
+            &mut store,
+            MemoryType::new(memory_pages, None),
+        )
+        .expect("create wasmtime memory");
         linker
             .define(&mut store, IMPORT_MODULE, IMPORT_MEMORY, memory)
             .expect("define env.memory import");
@@ -79,12 +76,12 @@ impl<Cpu> WasmtimeBackend<Cpu> {
             .checked_mul(65_536)
             .expect("memory_pages overflow");
         let end = (cpu_ptr as usize)
-            .checked_add(CPU_AND_JIT_CTX_BYTE_SIZE as usize)
+            .checked_add(abi::CPU_AND_JIT_CTX_BYTE_SIZE as usize)
             .expect("cpu_ptr overflow");
         assert!(
             end <= byte_len,
             "cpu_ptr (0x{cpu_ptr:x}) + CPU_AND_JIT_CTX_BYTE_SIZE ({}) must fit in linear memory ({} bytes)",
-            CPU_AND_JIT_CTX_BYTE_SIZE,
+            abi::CPU_AND_JIT_CTX_BYTE_SIZE,
             byte_len
         );
 
@@ -116,54 +113,58 @@ impl<Cpu> WasmtimeBackend<Cpu> {
         idx
     }
 
-    fn sync_cpu_to_wasm(&mut self, cpu: &CpuState) {
+    fn sync_cpu_to_wasm(&mut self, cpu: &CoreCpuState) {
+        for i in 0..16 {
+            let off = self.cpu_ptr as usize + abi::CPU_GPR_OFF[i] as usize;
+            self.memory
+                .write(&mut self.store, off, &cpu.gpr[i].to_le_bytes())
+                .expect("write CpuState.gpr into linear memory");
+        }
+        let rip_off = self.cpu_ptr as usize + abi::CPU_RIP_OFF as usize;
+        self.memory
+            .write(&mut self.store, rip_off, &cpu.rip.to_le_bytes())
+            .expect("write CpuState.rip into linear memory");
+
+        let rflags_off = self.cpu_ptr as usize + abi::CPU_RFLAGS_OFF as usize;
+        let rflags = cpu.rflags_snapshot();
+        self.memory
+            .write(&mut self.store, rflags_off, &rflags.to_le_bytes())
+            .expect("write CpuState.rflags into linear memory");
+
+        // Keep the Tier-1 JIT context fields initialized for the inline-TLB fast-path.
         let mem = self.memory.data_mut(&mut self.store);
         let base = self.cpu_ptr as usize;
-        for (i, v) in cpu.gpr.iter().enumerate() {
-            write_u64_le(mem, base + (abi::CPU_GPR_OFF[i] as usize), *v);
-        }
-        write_u64_le(mem, base + (abi::CPU_RIP_OFF as usize), cpu.rip);
-        write_u64_le(
-            mem,
-            base + (abi::CPU_RFLAGS_OFF as usize),
-            cpu.rflags | abi::RFLAGS_RESERVED1,
-        );
-
-        // Keep the Tier-1 JIT context fields initialized even when running with the minimal
-        // `aero_cpu::CpuState` prefix.
-        //
-        // The inline-TLB fast-path expects these fields at offsets derived from the
-        // `aero_cpu_core::state::CpuState` ABI; we treat the region between the minimal CpuState
-        // and the JIT context as reserved padding.
         mem[base + JIT_CTX_RAM_BASE_OFFSET as usize..base + JIT_CTX_RAM_BASE_OFFSET as usize + 8]
             .copy_from_slice(&0u64.to_le_bytes()); // guest RAM begins at linear address 0
         mem[base + JIT_CTX_TLB_SALT_OFFSET as usize..base + JIT_CTX_TLB_SALT_OFFSET as usize + 8]
             .copy_from_slice(&0x1234_5678_9abc_def0u64.to_le_bytes());
     }
 
-    fn sync_cpu_from_wasm(&mut self, cpu: &mut CpuState) {
-        let buf = self.memory.data(&self.store);
-        let base = self.cpu_ptr as usize;
-        for (i, slot) in cpu.gpr.iter_mut().enumerate() {
-            *slot = read_u64_le(buf, base + (abi::CPU_GPR_OFF[i] as usize));
+    fn sync_cpu_from_wasm(&mut self, cpu: &mut CoreCpuState) {
+        let mut buf = vec![0u8; abi::CPU_STATE_SIZE as usize];
+        self.memory
+            .read(&self.store, self.cpu_ptr as usize, &mut buf)
+            .expect("read CpuState from linear memory");
+
+        for i in 0..16 {
+            let off = abi::CPU_GPR_OFF[i] as usize;
+            let mut b = [0u8; 8];
+            b.copy_from_slice(&buf[off..off + 8]);
+            cpu.gpr[i] = u64::from_le_bytes(b);
         }
-        cpu.rip = read_u64_le(buf, base + (abi::CPU_RIP_OFF as usize));
-        cpu.rflags =
-            read_u64_le(buf, base + (abi::CPU_RFLAGS_OFF as usize)) | abi::RFLAGS_RESERVED1;
+
+        let mut b = [0u8; 8];
+        let rip_off = abi::CPU_RIP_OFF as usize;
+        b.copy_from_slice(&buf[rip_off..rip_off + 8]);
+        cpu.rip = u64::from_le_bytes(b);
+
+        let rflags_off = abi::CPU_RFLAGS_OFF as usize;
+        b.copy_from_slice(&buf[rflags_off..rflags_off + 8]);
+        cpu.set_rflags(u64::from_le_bytes(b));
     }
 }
 
-fn read_u64_le(mem: &[u8], off: usize) -> u64 {
-    let mut buf = [0u8; 8];
-    buf.copy_from_slice(&mem[off..off + 8]);
-    u64::from_le_bytes(buf)
-}
-
-fn write_u64_le(mem: &mut [u8], off: usize, value: u64) {
-    mem[off..off + 8].copy_from_slice(&value.to_le_bytes());
-}
-
-impl<Cpu> CpuBus for WasmtimeBackend<Cpu> {
+impl<Cpu> Tier1Bus for WasmtimeBackend<Cpu> {
     fn read_u8(&self, addr: u64) -> u8 {
         self.memory.data(&self.store)[addr as usize]
     }

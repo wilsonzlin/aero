@@ -4,6 +4,7 @@ use wasm_encoder::{
     ImportSection, Instruction, MemArg, MemoryType, Module, TypeSection, ValType,
 };
 
+use crate::abi;
 use crate::abi::{
     JIT_CTX_RAM_BASE_OFFSET, JIT_CTX_TLB_OFFSET, JIT_CTX_TLB_SALT_OFFSET, MMU_ACCESS_READ,
     MMU_ACCESS_WRITE,
@@ -251,17 +252,17 @@ impl Tier1WasmCodegen {
         for gpr in all_gprs() {
             func.instruction(&Instruction::LocalGet(layout.cpu_ptr_local()));
             func.instruction(&Instruction::I64Load(memarg(
-                crate::abi::CPU_GPR_OFF[gpr.as_u8() as usize],
+                abi::CPU_GPR_OFF[gpr.as_u8() as usize],
                 3,
             )));
             func.instruction(&Instruction::LocalSet(layout.gpr_local(gpr)));
         }
         func.instruction(&Instruction::LocalGet(layout.cpu_ptr_local()));
-        func.instruction(&Instruction::I64Load(memarg(crate::abi::CPU_RIP_OFF, 3)));
+        func.instruction(&Instruction::I64Load(memarg(abi::CPU_RIP_OFF, 3)));
         func.instruction(&Instruction::LocalSet(layout.rip_local()));
 
         func.instruction(&Instruction::LocalGet(layout.cpu_ptr_local()));
-        func.instruction(&Instruction::I64Load(memarg(crate::abi::CPU_RFLAGS_OFF, 3)));
+        func.instruction(&Instruction::I64Load(memarg(abi::CPU_RFLAGS_OFF, 3)));
         func.instruction(&Instruction::LocalSet(layout.rflags_local()));
 
         // Default next_rip = current RIP (overwritten by terminator emission).
@@ -306,7 +307,7 @@ impl Tier1WasmCodegen {
                 .func
                 .instruction(&Instruction::LocalGet(layout.gpr_local(gpr)));
             emitter.func.instruction(&Instruction::I64Store(memarg(
-                crate::abi::CPU_GPR_OFF[gpr.as_u8() as usize],
+                abi::CPU_GPR_OFF[gpr.as_u8() as usize],
                 3,
             )));
         }
@@ -319,10 +320,10 @@ impl Tier1WasmCodegen {
             .instruction(&Instruction::LocalGet(layout.rflags_local()));
         emitter
             .func
-            .instruction(&Instruction::I64Const(crate::abi::RFLAGS_RESERVED1 as i64));
+            .instruction(&Instruction::I64Const(abi::RFLAGS_RESERVED1 as i64));
         emitter.func.instruction(&Instruction::I64Or);
         emitter.func.instruction(&Instruction::I64Store(memarg(
-            crate::abi::CPU_RFLAGS_OFF,
+            abi::CPU_RFLAGS_OFF,
             3,
         )));
 
@@ -334,7 +335,7 @@ impl Tier1WasmCodegen {
             .instruction(&Instruction::LocalGet(layout.next_rip_local()));
         emitter
             .func
-            .instruction(&Instruction::I64Store(memarg(crate::abi::CPU_RIP_OFF, 3)));
+            .instruction(&Instruction::I64Store(memarg(abi::CPU_RIP_OFF, 3)));
 
         emitter
             .func

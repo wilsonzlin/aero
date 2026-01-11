@@ -1,4 +1,4 @@
-use aero_cpu::CpuBus;
+use crate::Tier1Bus;
 
 use crate::{discover_block, translate_block, BlockLimits};
 use crate::wasm::tier1::Tier1WasmOptions;
@@ -13,7 +13,7 @@ pub struct Tier1Compilation {
 
 /// Compile a single basic block starting at `entry_rip` into a standalone WASM module.
 #[must_use]
-pub fn compile_tier1_block<B: CpuBus>(
+pub fn compile_tier1_block<B: Tier1Bus>(
     bus: &B,
     entry_rip: u64,
     limits: BlockLimits,
@@ -24,7 +24,7 @@ pub fn compile_tier1_block<B: CpuBus>(
 /// Compile a single basic block starting at `entry_rip` into a standalone WASM module, using the
 /// provided Tier-1 WASM codegen options.
 #[must_use]
-pub fn compile_tier1_block_with_options<B: CpuBus>(
+pub fn compile_tier1_block_with_options<B: Tier1Bus>(
     bus: &B,
     entry_rip: u64,
     limits: BlockLimits,

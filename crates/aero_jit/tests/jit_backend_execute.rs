@@ -1,11 +1,11 @@
 #![cfg(not(target_arch = "wasm32"))]
 
-use aero_cpu::{CpuBus, CpuState};
 use aero_cpu_core::jit::runtime::{CompileRequestSink, JitBackend, JitConfig, JitRuntime};
+use aero_cpu_core::state::CpuState;
 use aero_jit::backend::WasmtimeBackend;
 use aero_jit::tier1_ir::{GuestReg, IrBuilder, IrTerminator};
 use aero_jit::wasm::tier1::Tier1WasmCodegen;
-use aero_jit::{discover_block, translate_block, BlockLimits};
+use aero_jit::{discover_block, translate_block, BlockLimits, Tier1Bus};
 use aero_types::{Gpr, Width};
 
 #[derive(Default)]
@@ -52,7 +52,7 @@ fn jit_backend_executes_tier1_block_by_table_index() {
 
     let mut cpu = CpuState::default();
     cpu.rip = entry;
-    cpu.write_gpr(Gpr::Rsp, 0x8000);
+    cpu.gpr[Gpr::Rsp.as_u8() as usize] = 0x8000;
 
     let handle = jit.prepare_block(entry).expect("expected compiled handle");
     let exit = jit.execute_block(&mut cpu, &handle);
@@ -60,8 +60,8 @@ fn jit_backend_executes_tier1_block_by_table_index() {
     assert_eq!(exit.next_rip, 0x2000);
     assert!(!exit.exit_to_interpreter);
     assert_eq!(cpu.rip, 0x2000);
-    assert_eq!(cpu.read_gpr(Gpr::Rax), 12);
-    assert_eq!(cpu.read_gpr(Gpr::Rsp), 0x8008);
+    assert_eq!(cpu.gpr[Gpr::Rax.as_u8() as usize], 12);
+    assert_eq!(cpu.gpr[Gpr::Rsp.as_u8() as usize], 0x8008);
 }
 
 #[test]
@@ -93,5 +93,5 @@ fn jit_backend_exit_to_interpreter_uses_sentinel() {
     assert_eq!(exit.next_rip, next_rip);
     assert!(exit.exit_to_interpreter);
     assert_eq!(cpu.rip, next_rip);
-    assert_eq!(cpu.read_gpr(Gpr::Rax), 0x1234);
+    assert_eq!(cpu.gpr[Gpr::Rax.as_u8() as usize], 0x1234);
 }

@@ -1,11 +1,32 @@
 use std::time::Instant;
 
-use aero_cpu::SimpleBus;
+use aero_jit::Tier1Bus;
 use aero_types::Gpr;
 
 use aero_jit::opt::{optimize_trace, OptConfig};
 use aero_jit::t2_exec::{run_trace, run_trace_with_cached_regs, RuntimeEnv, T2State};
 use aero_jit::t2_ir::{BinOp, FlagMask, Instr, Operand, TraceIr, TraceKind, ValueId};
+
+#[derive(Clone, Debug)]
+struct SimpleBus {
+    mem: Vec<u8>,
+}
+
+impl SimpleBus {
+    fn new(size: usize) -> Self {
+        Self { mem: vec![0; size] }
+    }
+}
+
+impl Tier1Bus for SimpleBus {
+    fn read_u8(&self, addr: u64) -> u8 {
+        self.mem[addr as usize]
+    }
+
+    fn write_u8(&mut self, addr: u64, value: u8) {
+        self.mem[addr as usize] = value;
+    }
+}
 
 fn v(i: u32) -> ValueId {
     ValueId(i)

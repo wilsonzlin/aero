@@ -1,4 +1,4 @@
-use aero_cpu::CpuBus;
+use crate::Tier1Bus;
 use aero_x86::tier1::{decode_one, DecodedInst, InstKind};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,7 +37,7 @@ pub struct BasicBlock {
 /// - an unsupported/invalid instruction is decoded (must exit to interpreter)
 /// - `limits` are exceeded
 #[must_use]
-pub fn discover_block<B: CpuBus>(bus: &B, entry_rip: u64, limits: BlockLimits) -> BasicBlock {
+pub fn discover_block<B: Tier1Bus>(bus: &B, entry_rip: u64, limits: BlockLimits) -> BasicBlock {
     let mut insts = Vec::new();
     let mut rip = entry_rip;
     let mut total_bytes = 0usize;

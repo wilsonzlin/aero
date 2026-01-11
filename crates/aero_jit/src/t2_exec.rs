@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 
-use aero_cpu::CpuBus;
 use aero_types::Flag;
 
 use crate::t2_ir::{
     eval_binop, FlagMask, FlagValues, Function, Instr, Operand, TraceIr, TraceKind, REG_COUNT,
 };
+use crate::Tier1Bus;
 
 #[derive(Clone, Debug)]
 pub struct T2State {
@@ -84,7 +84,7 @@ fn exec_instr(
     inst: &Instr,
     state: &mut T2State,
     env: &RuntimeEnv,
-    bus: &mut dyn CpuBus,
+    bus: &mut dyn Tier1Bus,
     values: &mut [u64],
     stats: &mut ExecStats,
     reg_cache: Option<&mut RegCache>,
@@ -198,7 +198,7 @@ fn exec_instr(
 pub fn run_function(
     func: &Function,
     env: &RuntimeEnv,
-    bus: &mut dyn CpuBus,
+    bus: &mut dyn Tier1Bus,
     state: &mut T2State,
     max_steps: usize,
 ) -> RunExit {
@@ -208,7 +208,7 @@ pub fn run_function(
 pub fn run_function_from_block(
     func: &Function,
     env: &RuntimeEnv,
-    bus: &mut dyn CpuBus,
+    bus: &mut dyn Tier1Bus,
     state: &mut T2State,
     start: crate::t2_ir::BlockId,
     max_steps: usize,
@@ -259,7 +259,7 @@ pub fn run_function_from_block(
 pub fn run_trace(
     trace: &TraceIr,
     env: &RuntimeEnv,
-    bus: &mut dyn CpuBus,
+    bus: &mut dyn Tier1Bus,
     state: &mut T2State,
     max_iters: usize,
 ) -> RunResult {
@@ -269,7 +269,7 @@ pub fn run_trace(
 pub fn run_trace_with_cached_regs(
     trace: &TraceIr,
     env: &RuntimeEnv,
-    bus: &mut dyn CpuBus,
+    bus: &mut dyn Tier1Bus,
     state: &mut T2State,
     max_iters: usize,
     cached_regs: &[bool; REG_COUNT],
@@ -281,7 +281,7 @@ pub fn run_trace_with_cached_regs(
 fn run_trace_inner(
     trace: &TraceIr,
     env: &RuntimeEnv,
-    bus: &mut dyn CpuBus,
+    bus: &mut dyn Tier1Bus,
     state: &mut T2State,
     max_iters: usize,
     mut cache: Option<RegCache>,

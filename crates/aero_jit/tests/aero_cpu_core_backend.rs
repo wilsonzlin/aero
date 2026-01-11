@@ -3,14 +3,15 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use aero_cpu::{CpuBus, CpuState};
 use aero_cpu_core::exec::{ExecCpu, ExecDispatcher, ExecutedTier, Interpreter, StepOutcome};
 use aero_cpu_core::jit::cache::CompiledBlockHandle;
 use aero_cpu_core::jit::runtime::{CompileRequestSink, JitBackend, JitConfig, JitRuntime};
+use aero_cpu_core::state::CpuState;
 use aero_jit::backend::{Tier1Cpu, WasmtimeBackend};
 use aero_jit::tier1_ir::{BinOp, GuestReg, IrBuilder, IrTerminator};
 use aero_jit::wasm::tier1::Tier1WasmCodegen;
 use aero_jit::wasm::tier1::Tier1WasmOptions;
+use aero_jit::Tier1Bus;
 use aero_types::{FlagSet, Gpr, Width};
 
 #[derive(Default)]
@@ -58,7 +59,7 @@ struct TestInterpreter {
 impl Interpreter<TestCpu> for TestInterpreter {
     fn exec_block(&mut self, cpu: &mut TestCpu) -> u64 {
         self.calls.set(self.calls.get() + 1);
-        cpu.state.write_gpr(Gpr::Rcx, 0x99);
+        cpu.state.gpr[Gpr::Rcx.as_u8() as usize] = 0x99;
         0x4000
     }
 }
@@ -161,7 +162,7 @@ fn wasmtime_backend_executes_blocks_via_exec_dispatcher() {
 
     let mut cpu = TestCpu::default();
     cpu.state.rip = entry1;
-    cpu.state.write_gpr(Gpr::Rax, 41);
+    cpu.state.gpr[Gpr::Rax.as_u8() as usize] = 41;
 
     // Step 1: runs JIT block 1.
     match dispatcher.step(&mut cpu) {
@@ -175,7 +176,7 @@ fn wasmtime_backend_executes_blocks_via_exec_dispatcher() {
         }
         other => panic!("unexpected outcome: {other:?}"),
     }
-    assert_eq!(cpu.state.read_gpr(Gpr::Rax), 42);
+    assert_eq!(cpu.state.gpr[Gpr::Rax.as_u8() as usize], 42);
     assert_eq!(calls.get(), 0, "interpreter should not run for normal JIT exit");
 
     // Step 2: runs JIT block 2, which requests an interpreter step at entry3.
@@ -190,7 +191,7 @@ fn wasmtime_backend_executes_blocks_via_exec_dispatcher() {
         }
         other => panic!("unexpected outcome: {other:?}"),
     }
-    assert_eq!(cpu.state.read_gpr(Gpr::Rbx), 0x42);
+    assert_eq!(cpu.state.gpr[Gpr::Rbx.as_u8() as usize], 0x42);
 
     // Step 3: forced interpreter step due to exit_to_interpreter flag.
     match dispatcher.step(&mut cpu) {
@@ -205,7 +206,7 @@ fn wasmtime_backend_executes_blocks_via_exec_dispatcher() {
         other => panic!("unexpected outcome: {other:?}"),
     }
     assert_eq!(calls.get(), 1);
-    assert_eq!(cpu.state.read_gpr(Gpr::Rcx), 0x99);
+    assert_eq!(cpu.state.gpr[Gpr::Rcx.as_u8() as usize], 0x99);
 }
 
 #[test]
@@ -243,7 +244,7 @@ fn wasmtime_backend_executes_inline_tlb_load_store() {
     let exit = backend.execute(idx, &mut cpu);
     assert_eq!(exit.next_rip, 0x2000);
     assert!(!exit.exit_to_interpreter);
-    assert_eq!(cpu.read_gpr(Gpr::Rax), 0x1122_3344);
+    assert_eq!(cpu.gpr[Gpr::Rax.as_u8() as usize], 0x1122_3344);
 
     let bytes = [
         backend.read_u8(0x10),

@@ -1,8 +1,10 @@
 use rand::{seq::SliceRandom, Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 
-use aero_cpu::SimpleBus;
+mod tier1_common;
+
 use aero_types::{Flag, Gpr, Width};
+use tier1_common::SimpleBus;
 
 use aero_jit::opt::{optimize_trace, passes, OptConfig};
 use aero_jit::profile::{ProfileData, TraceConfig};

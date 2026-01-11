@@ -3,12 +3,14 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use aero_cpu::{CpuBus, CpuState};
 use aero_cpu_core::exec::{ExecCpu, ExecDispatcher, ExecutedTier, Interpreter, StepOutcome};
 use aero_cpu_core::jit::runtime::{JitBackend, JitBlockExit, JitConfig, JitRuntime};
+use aero_cpu_core::state::CpuState;
 use aero_jit::backend::{Tier1Cpu, WasmtimeBackend};
 use aero_jit::tier1_ir::interp as tier1_interp;
-use aero_jit::{discover_block, BlockLimits, Tier1CompileQueue, Tier1Compiler, Tier1WasmRegistry};
+use aero_jit::{
+    discover_block, BlockLimits, Tier1Bus, Tier1CompileQueue, Tier1Compiler, Tier1WasmRegistry,
+};
 use aero_types::Gpr;
 
 #[derive(Clone)]
@@ -20,7 +22,7 @@ impl SharedWasmtimeBackend {
     }
 }
 
-impl CpuBus for SharedWasmtimeBackend {
+impl Tier1Bus for SharedWasmtimeBackend {
     fn read_u8(&self, addr: u64) -> u8 {
         self.0.borrow().read_u8(addr)
     }
@@ -84,22 +86,7 @@ impl Interpreter<TestCpu> for Tier1Interpreter {
         let entry = cpu.rip();
         let block = discover_block(&self.bus, entry, BlockLimits::default());
         let ir = aero_jit::translate_block(&block);
-
-        let mut cpu_mem = vec![0u8; aero_jit::abi::CPU_STATE_SIZE as usize];
-        tier1_interp::TestCpu {
-            gpr: cpu.state.gpr,
-            rip: cpu.state.rip,
-            rflags: cpu.state.rflags,
-        }
-        .write_to_abi_mem(&mut cpu_mem, 0);
-
-        let _ = tier1_interp::execute_block(&ir, &mut cpu_mem, &mut self.bus);
-
-        let out = tier1_interp::TestCpu::from_abi_mem(&cpu_mem, 0);
-        cpu.state.gpr = out.gpr;
-        cpu.state.rip = out.rip;
-        cpu.state.rflags = out.rflags;
-
+        let _ = tier1_interp::execute_block(&ir, &mut cpu.state, &mut self.bus);
         cpu.state.rip
     }
 }
@@ -195,7 +182,7 @@ fn tier1_end_to_end_compile_install_and_execute() {
     }
 
     // 5 interpreted blocks + 1 JIT block, each does `add eax, 1`.
-    assert_eq!(cpu.state.read_gpr(Gpr::Rax), 6);
+    assert_eq!(cpu.state.gpr[Gpr::Rax.as_u8() as usize], 6);
 
     // Ensure the backend handle we used for compilation is shared with the runtime backend.
     // If it weren't, we'd install a table index that the runtime couldn't execute.

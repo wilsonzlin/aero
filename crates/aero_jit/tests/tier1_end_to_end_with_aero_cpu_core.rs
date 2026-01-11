@@ -1,11 +1,12 @@
 #![cfg(not(target_arch = "wasm32"))]
 
-use aero_cpu::{CpuBus, CpuState};
 use aero_cpu_core::exec::{ExecCpu, ExecDispatcher, ExecutedTier, Interpreter, StepOutcome};
 use aero_cpu_core::jit::runtime::{JitConfig, JitRuntime};
+use aero_cpu_core::state::CpuState;
 use aero_jit::backend::{compile_and_install_with_options, CompileQueue, Tier1Cpu, WasmBackend};
-use aero_jit::tier1_ir::interp::{execute_block, TestCpu as InterpCpu};
+use aero_jit::tier1_ir::interp::execute_block;
 use aero_jit::wasm::tier1::Tier1WasmOptions;
+use aero_jit::Tier1Bus;
 use aero_jit::{discover_block, translate_block, BlockLimits};
 use aero_types::Gpr;
 
@@ -47,19 +48,7 @@ impl Interpreter<TestCpu> for Tier1Interpreter {
         let entry_rip = cpu.rip();
         let block = discover_block(&self.bus, entry_rip, BlockLimits::default());
         let ir = translate_block(&block);
-        let mut cpu_mem = vec![0u8; aero_jit::abi::CPU_STATE_SIZE as usize];
-        InterpCpu {
-            gpr: cpu.state.gpr,
-            rip: cpu.state.rip,
-            rflags: cpu.state.rflags,
-        }
-        .write_to_abi_mem(&mut cpu_mem, 0);
-
-        let _ = execute_block(&ir, &mut cpu_mem, &mut self.bus);
-        let out = InterpCpu::from_abi_mem(&cpu_mem, 0);
-        cpu.state.gpr = out.gpr;
-        cpu.state.rip = out.rip;
-        cpu.state.rflags = out.rflags;
+        let _ = execute_block(&ir, &mut cpu.state, &mut self.bus);
         cpu.state.rip
     }
 }
@@ -141,7 +130,7 @@ fn tier1_hotness_triggers_compile_and_subsequent_execution_uses_jit() {
 
     // Prove we actually executed the compiled block by seeding RAX to a different value and
     // checking the block's `mov eax, 0; add eax, 1` sequence ran.
-    cpu.state.write_gpr(Gpr::Rax, 0x1234);
+    cpu.state.gpr[Gpr::Rax.as_u8() as usize] = 0x1234;
 
     match dispatcher.step(&mut cpu) {
         StepOutcome::Block {
@@ -156,6 +145,6 @@ fn tier1_hotness_triggers_compile_and_subsequent_execution_uses_jit() {
         other => panic!("expected block execution, got {other:?}"),
     }
 
-    assert_eq!(cpu.state.read_gpr(Gpr::Rax), 1);
+    assert_eq!(cpu.state.gpr[Gpr::Rax.as_u8() as usize], 1);
     assert!(queue.is_empty());
 }

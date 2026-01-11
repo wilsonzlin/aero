@@ -1,10 +1,15 @@
 #![cfg(debug_assertions)]
 
-use aero_cpu::{CpuBus, SimpleBus};
-use aero_jit::tier1_ir::interp::TestCpu;
-use aero_jit::{discover_block, translate_block, BlockLimits};
+mod tier1_common;
+
+use aero_cpu_core::state::CpuState;
+use aero_jit::{discover_block, translate_block, BlockLimits, Tier1Bus};
 use aero_types::{Cond, Flag, FlagSet, Gpr, Width};
 use aero_x86::tier1::{AluOp, DecodedInst, InstKind, Operand};
+use tier1_common::{
+    read_flag, read_gpr, read_gpr_part, write_flag, write_gpr, write_gpr_part, CpuSnapshot,
+    SimpleBus,
+};
 
 fn parity_even(byte: u8) -> bool {
     byte.count_ones() % 2 == 0
@@ -76,69 +81,69 @@ fn compute_sub_flags(width: Width, lhs: u64, rhs: u64, result: u64) -> FlagVals 
     }
 }
 
-fn write_flagset(cpu: &mut TestCpu, mask: FlagSet, vals: FlagVals) {
+fn write_flagset(cpu: &mut CpuState, mask: FlagSet, vals: FlagVals) {
     if mask.contains(FlagSet::CF) {
-        cpu.write_flag(Flag::Cf, vals.cf);
+        write_flag(cpu, Flag::Cf, vals.cf);
     }
     if mask.contains(FlagSet::PF) {
-        cpu.write_flag(Flag::Pf, vals.pf);
+        write_flag(cpu, Flag::Pf, vals.pf);
     }
     if mask.contains(FlagSet::AF) {
-        cpu.write_flag(Flag::Af, vals.af);
+        write_flag(cpu, Flag::Af, vals.af);
     }
     if mask.contains(FlagSet::ZF) {
-        cpu.write_flag(Flag::Zf, vals.zf);
+        write_flag(cpu, Flag::Zf, vals.zf);
     }
     if mask.contains(FlagSet::SF) {
-        cpu.write_flag(Flag::Sf, vals.sf);
+        write_flag(cpu, Flag::Sf, vals.sf);
     }
     if mask.contains(FlagSet::OF) {
-        cpu.write_flag(Flag::Of, vals.of);
+        write_flag(cpu, Flag::Of, vals.of);
     }
 }
 
-fn eval_cond(cpu: &TestCpu, cond: Cond) -> bool {
+fn eval_cond(cpu: &CpuState, cond: Cond) -> bool {
     cond.eval(
-        cpu.read_flag(Flag::Cf),
-        cpu.read_flag(Flag::Pf),
-        cpu.read_flag(Flag::Zf),
-        cpu.read_flag(Flag::Sf),
-        cpu.read_flag(Flag::Of),
+        read_flag(cpu, Flag::Cf),
+        read_flag(cpu, Flag::Pf),
+        read_flag(cpu, Flag::Zf),
+        read_flag(cpu, Flag::Sf),
+        read_flag(cpu, Flag::Of),
     )
 }
 
-fn calc_addr(inst: &DecodedInst, cpu: &TestCpu, addr: &aero_x86::tier1::Address) -> u64 {
+fn calc_addr(inst: &DecodedInst, cpu: &CpuState, addr: &aero_x86::tier1::Address) -> u64 {
     let mut out = 0u64;
     if addr.rip_relative {
         out = out.wrapping_add(inst.next_rip());
     }
     if let Some(base) = addr.base {
-        out = out.wrapping_add(cpu.read_gpr(base));
+        out = out.wrapping_add(read_gpr(cpu, base));
     }
     if let Some(index) = addr.index {
-        out = out.wrapping_add(cpu.read_gpr(index).wrapping_mul(addr.scale as u64));
+        out = out.wrapping_add(read_gpr(cpu, index).wrapping_mul(addr.scale as u64));
     }
     out = out.wrapping_add(addr.disp as i64 as u64);
     out
 }
 
-fn read_op<B: CpuBus>(
+fn read_op<B: Tier1Bus>(
     inst: &DecodedInst,
-    cpu: &TestCpu,
+    cpu: &CpuState,
     bus: &B,
     op: &Operand,
     width: Width,
 ) -> u64 {
     match op {
         Operand::Imm(v) => width.truncate(*v),
-        Operand::Reg(r) => cpu.read_gpr_part(r.gpr, width, r.high8),
+        Operand::Reg(r) => read_gpr_part(cpu, r.gpr, width, r.high8),
         Operand::Mem(addr) => bus.read(calc_addr(inst, cpu, addr), width),
     }
 }
 
-fn write_op<B: CpuBus>(
+fn write_op<B: Tier1Bus>(
     inst: &DecodedInst,
-    cpu: &mut TestCpu,
+    cpu: &mut CpuState,
     bus: &mut B,
     op: &Operand,
     width: Width,
@@ -147,12 +152,12 @@ fn write_op<B: CpuBus>(
     let v = width.truncate(value);
     match op {
         Operand::Imm(_) => panic!("cannot write to immediate"),
-        Operand::Reg(r) => cpu.write_gpr_part(r.gpr, width, r.high8, v),
+        Operand::Reg(r) => write_gpr_part(cpu, r.gpr, width, r.high8, v),
         Operand::Mem(addr) => bus.write(calc_addr(inst, cpu, addr), width, v),
     }
 }
 
-fn exec_x86_block<B: CpuBus>(insts: &[DecodedInst], cpu: &mut TestCpu, bus: &mut B) {
+fn exec_x86_block<B: Tier1Bus>(insts: &[DecodedInst], cpu: &mut CpuState, bus: &mut B) {
     for inst in insts {
         let next = inst.next_rip();
         match &inst.kind {
@@ -163,15 +168,10 @@ fn exec_x86_block<B: CpuBus>(insts: &[DecodedInst], cpu: &mut TestCpu, bus: &mut
             }
             InstKind::Lea { dst, addr, width } => {
                 let a = calc_addr(inst, cpu, addr);
-                cpu.write_gpr_part(dst.gpr, *width, false, a);
+                write_gpr_part(cpu, dst.gpr, *width, false, a);
                 cpu.rip = next;
             }
-            InstKind::Alu {
-                op,
-                dst,
-                src,
-                width,
-            } => {
+            InstKind::Alu { op, dst, src, width } => {
                 let l = read_op(inst, cpu, bus, dst, *width);
                 let r = read_op(inst, cpu, bus, src, *width);
                 let (res, flags) = match op {
@@ -232,16 +232,16 @@ fn exec_x86_block<B: CpuBus>(insts: &[DecodedInst], cpu: &mut TestCpu, bus: &mut
             }
             InstKind::Push { src } => {
                 let v = read_op(inst, cpu, bus, src, Width::W64);
-                let rsp = cpu.read_gpr(Gpr::Rsp);
+                let rsp = read_gpr(cpu, Gpr::Rsp);
                 let new_rsp = rsp.wrapping_sub(8);
-                cpu.write_gpr(Gpr::Rsp, new_rsp);
+                write_gpr(cpu, Gpr::Rsp, new_rsp);
                 bus.write(new_rsp, Width::W64, v);
                 cpu.rip = next;
             }
             InstKind::Pop { dst } => {
-                let rsp = cpu.read_gpr(Gpr::Rsp);
+                let rsp = read_gpr(cpu, Gpr::Rsp);
                 let v = bus.read(rsp, Width::W64);
-                cpu.write_gpr(Gpr::Rsp, rsp.wrapping_add(8));
+                write_gpr(cpu, Gpr::Rsp, rsp.wrapping_add(8));
                 write_op(inst, cpu, bus, dst, Width::W64, v);
                 cpu.rip = next;
             }
@@ -250,15 +250,10 @@ fn exec_x86_block<B: CpuBus>(insts: &[DecodedInst], cpu: &mut TestCpu, bus: &mut
                 write_op(inst, cpu, bus, dst, Width::W8, v);
                 cpu.rip = next;
             }
-            InstKind::Cmovcc {
-                cond,
-                dst,
-                src,
-                width,
-            } => {
+            InstKind::Cmovcc { cond, dst, src, width } => {
                 if eval_cond(cpu, *cond) {
                     let v = read_op(inst, cpu, bus, src, *width);
-                    cpu.write_gpr_part(dst.gpr, *width, false, v);
+                    write_gpr_part(cpu, dst.gpr, *width, false, v);
                 }
                 cpu.rip = next;
             }
@@ -271,17 +266,17 @@ fn exec_x86_block<B: CpuBus>(insts: &[DecodedInst], cpu: &mut TestCpu, bus: &mut
                 break;
             }
             InstKind::CallRel { target } => {
-                let rsp = cpu.read_gpr(Gpr::Rsp);
+                let rsp = read_gpr(cpu, Gpr::Rsp);
                 let new_rsp = rsp.wrapping_sub(8);
-                cpu.write_gpr(Gpr::Rsp, new_rsp);
+                write_gpr(cpu, Gpr::Rsp, new_rsp);
                 bus.write(new_rsp, Width::W64, next);
                 cpu.rip = *target;
                 break;
             }
             InstKind::Ret => {
-                let rsp = cpu.read_gpr(Gpr::Rsp);
+                let rsp = read_gpr(cpu, Gpr::Rsp);
                 let target = bus.read(rsp, Width::W64);
-                cpu.write_gpr(Gpr::Rsp, rsp.wrapping_add(8));
+                write_gpr(cpu, Gpr::Rsp, rsp.wrapping_add(8));
                 cpu.rip = target;
                 break;
             }
@@ -293,13 +288,7 @@ fn exec_x86_block<B: CpuBus>(insts: &[DecodedInst], cpu: &mut TestCpu, bus: &mut
     }
 }
 
-fn assert_block_ir(
-    code: &[u8],
-    entry_rip: u64,
-    cpu: TestCpu,
-    mut bus: SimpleBus,
-    expected_ir: &str,
-) {
+fn assert_block_ir(code: &[u8], entry_rip: u64, cpu: CpuState, mut bus: SimpleBus, expected_ir: &str) {
     bus.load(entry_rip, code);
 
     let block = discover_block(&bus, entry_rip, BlockLimits::default());
@@ -310,16 +299,13 @@ fn assert_block_ir(
     let mut bus_x86 = bus.clone();
     exec_x86_block(&block.insts, &mut cpu_x86, &mut bus_x86);
 
-    let mut cpu_mem = vec![0u8; aero_jit::abi::CPU_STATE_SIZE as usize];
-    cpu.write_to_abi_mem(&mut cpu_mem, 0);
-
+    let mut cpu_ir = cpu;
     let mut bus_ir = bus;
-    let _ = aero_jit::tier1_ir::interp::execute_block(&ir, &mut cpu_mem, &mut bus_ir);
-    let cpu_ir = TestCpu::from_abi_mem(&cpu_mem, 0);
+    let _ = aero_jit::tier1_ir::interp::execute_block(&ir, &mut cpu_ir, &mut bus_ir);
 
     assert_eq!(
-        cpu_ir,
-        cpu_x86,
+        CpuSnapshot::from_cpu(&cpu_ir),
+        CpuSnapshot::from_cpu(&cpu_x86),
         "CPU state mismatch\nIR:\n{}\n",
         ir.to_text()
     );
@@ -342,9 +328,9 @@ fn mov_add_cmp_sete_ret() {
     ];
 
     let entry = 0x1000u64;
-    let mut cpu = TestCpu::default();
+    let mut cpu = CpuState::default();
     cpu.rip = entry;
-    cpu.write_gpr(Gpr::Rsp, 0x8000);
+    write_gpr(&mut cpu, Gpr::Rsp, 0x8000);
 
     let mut bus = SimpleBus::new(0x10000);
     bus.write(0x8000, Width::W64, 0x2000);
@@ -381,9 +367,9 @@ fn call_rel32() {
     ];
     let entry = 0x1000u64;
 
-    let mut cpu = TestCpu::default();
+    let mut cpu = CpuState::default();
     cpu.rip = entry;
-    cpu.write_gpr(Gpr::Rsp, 0x9000);
+    write_gpr(&mut cpu, Gpr::Rsp, 0x9000);
 
     let bus = SimpleBus::new(0x10000);
 
@@ -413,7 +399,7 @@ fn cmp_jne_not_taken() {
     ];
     let entry = 0x3000u64;
 
-    let mut cpu = TestCpu::default();
+    let mut cpu = CpuState::default();
     cpu.rip = entry;
 
     let bus = SimpleBus::new(0x10000);
@@ -442,11 +428,11 @@ fn lea_sib_ret() {
     ];
     let entry = 0x4000u64;
 
-    let mut cpu = TestCpu::default();
+    let mut cpu = CpuState::default();
     cpu.rip = entry;
-    cpu.write_gpr(Gpr::Rsp, 0x8800);
-    cpu.write_gpr(Gpr::Rcx, 0x100);
-    cpu.write_gpr(Gpr::Rdx, 0x2);
+    write_gpr(&mut cpu, Gpr::Rsp, 0x8800);
+    write_gpr(&mut cpu, Gpr::Rcx, 0x100);
+    write_gpr(&mut cpu, Gpr::Rdx, 0x2);
 
     let mut bus = SimpleBus::new(0x10000);
     bus.write(0x8800, Width::W64, 0x5000);
