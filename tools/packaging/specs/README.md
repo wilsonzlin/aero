@@ -64,8 +64,9 @@ Contract notes:
   **modern-only** virtio-pci device IDs (`DEV_1042`/`DEV_1041`/`DEV_1052`) and contract v1
   uses PCI Revision ID `0x01` (`REV_01`).
 - The virtio HWID regexes in this spec intentionally **do not** match transitional IDs
-  (the virtio-pci `0x1000..0x103F` transitional device ID range). This is deliberate: packaging
-  should fail if a driver INF regresses back to transitional IDs and drops the modern IDs.
+  (the virtio-pci `0x1000..0x103F` transitional device ID range; for example: `1AF4:1000` net,
+  `1AF4:1001` blk, `1AF4:1011` input). This is deliberate: packaging should fail if a driver INF
+  regresses back to transitional IDs and drops the modern IDs.
 
 Notes:
 

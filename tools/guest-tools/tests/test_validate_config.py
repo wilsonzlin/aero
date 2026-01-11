@@ -381,7 +381,7 @@ class ValidateConfigTests(unittest.TestCase):
                     validate_config.validate(devices, spec_path, expected)
 
             self.assertIn("transitional virtio pci ids", str(ctx.exception).lower())
-            self.assertIn("DEV_1000", str(ctx.exception))
+            self.assertIn("1AF4:1000", str(ctx.exception))
 
     def test_virtio_win_spec_rejects_transitional_virtio_ids(self) -> None:
         # The virtio-win packaging specs used by Aero are also modern-only: transitional virtio-pci
@@ -431,7 +431,7 @@ class ValidateConfigTests(unittest.TestCase):
                     validate_config.validate(devices, spec_path, expected)
 
             self.assertIn("transitional virtio pci ids", str(ctx.exception).lower())
-            self.assertIn("DEV_1000", str(ctx.exception))
+            self.assertIn("1AF4:1000", str(ctx.exception))
 
     def test_aero_guest_tools_spec_rejects_transitional_virtio_input_id(self) -> None:
         # Aero-facing specs must not allow transitional virtio-pci IDs for virtio-input.
@@ -494,7 +494,7 @@ class ValidateConfigTests(unittest.TestCase):
                 with redirect_stdout(io.StringIO()):
                     validate_config.validate(devices, spec_path, expected)
 
-            self.assertIn("DEV_1011", str(ctx.exception))
+            self.assertIn("1AF4:1011", str(ctx.exception))
 
     def test_virtio_full_spec_rejects_transitional_virtio_snd_id(self) -> None:
         # Upstream virtio-win packaging (full profile) is also Aero-facing: it must not allow
@@ -553,7 +553,7 @@ class ValidateConfigTests(unittest.TestCase):
                 with redirect_stdout(io.StringIO()):
                     validate_config.validate(devices, spec_path, expected)
 
-            self.assertIn("DEV_1018", str(ctx.exception))
+            self.assertIn("1AF4:1018", str(ctx.exception))
 
 if __name__ == "__main__":
     unittest.main()

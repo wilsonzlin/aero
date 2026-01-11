@@ -402,7 +402,7 @@ def _find_transitional_virtio_device_ids(pattern: str) -> List[str]:
 
     This is intended as a fast/safe guardrail for Aero packaging specs: Aero's virtio
     contract v1 is virtio-pci **modern-only**, so packaging specs should not accept
-    transitional IDs (e.g. DEV_(1000|1041)).
+    transitional IDs (the older `0x1000..` device-ID range).
     """
 
     if not re.search(r"(?i)VEN_1AF4", pattern):
@@ -706,7 +706,7 @@ def validate(
 
             for pattern in patterns:
                 for dev_id in _find_transitional_virtio_device_ids(pattern):
-                    offenders.append(f"{driver_name}: {pattern} (contains DEV_{dev_id})")
+                    offenders.append(f"{driver_name}: {pattern} (contains 1AF4:{dev_id})")
         if offenders:
             raise ValidationError(
                 f"Packaging spec {spec_path.name} contains transitional virtio PCI IDs, but AERO-W7-VIRTIO v1 is modern-only.\n"
