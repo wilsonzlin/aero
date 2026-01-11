@@ -279,6 +279,28 @@ describe("UsbPassthroughDemoRuntime", () => {
     expect(() => runtime.tick()).toThrow(/invalid usb action id/i);
   });
 
+  it("throws when the demo emits an action that fails UsbHostAction validation", () => {
+    const demo = new FakeDemo();
+    demo.actions.push({
+      kind: "controlIn",
+      id: 1,
+      setup: {
+        bmRequestType: -1,
+        bRequest: 0x06,
+        wValue: 0x0100,
+        wIndex: 0,
+        wLength: 18,
+      },
+    });
+
+    const runtime = new UsbPassthroughDemoRuntime({
+      demo,
+      postMessage: () => undefined,
+    });
+
+    expect(() => runtime.tick()).toThrow(/invalid usb host action/i);
+  });
+
   it("treats null drain_actions as no actions (compat with Option-returning wasm bindings)", () => {
     class NullActionsDemo extends FakeDemo {
       override drain_actions(): unknown {

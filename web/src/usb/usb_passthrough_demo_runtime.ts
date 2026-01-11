@@ -1,4 +1,5 @@
 import {
+  isUsbHostAction,
   usbErrorCompletion,
   type UsbActionMessage,
   type UsbCompletionMessage,
@@ -232,8 +233,13 @@ export class UsbPassthroughDemoRuntime {
         throw new Error(`USB passthrough demo ran out of valid action IDs (next=${this.#nextProxyId})`);
       }
 
+      const outgoing = { ...proxy, id: proxyId } satisfies UsbHostAction;
+      if (!isUsbHostAction(outgoing)) {
+        throw new Error(`UsbPassthroughDemo emitted an invalid USB host action (kind=${proxy.kind}).`);
+      }
+
       this.#inflightByProxyId.set(proxyId, { wasmId: proxy.id, kind: proxy.kind });
-      this.#postMessage({ type: "usb.action", action: { ...proxy, id: proxyId } });
+      this.#postMessage({ type: "usb.action", action: outgoing });
     }
   }
 
