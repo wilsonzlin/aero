@@ -12,6 +12,7 @@ to avoid accidentally shipping dev/test drivers or conflicting INFs.
 
 The manifest can declare:
 
+- `$schema` (optional): JSON Schema reference for editor tooling. CI ignores this field, but it can be useful for validation/autocomplete in editors. Update the relative path if your driver lives deeper than `drivers/<name>/`.
 - explicit list of `.inf` files to stage (`infFiles`) to avoid packaging multiple optional INFs together
   - paths are relative to the driver directory
   - if omitted, CI stages all `.inf` files discovered under the driver directory
