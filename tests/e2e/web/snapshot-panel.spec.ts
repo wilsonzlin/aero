@@ -20,7 +20,7 @@ test("demo VM snapshot panel saves/restores via OPFS streaming", async ({ page }
   // OPFS / missing streaming exports / missing sync access handles).
   await page.waitForFunction(() => {
     const state = (window as any).__aeroDemoVmSnapshot;
-    return !!state && (state.ready === true || typeof state.error === "string");
+    return !!state && state.ready === true;
   });
 
   const state = await page.evaluate(() => (window as any).__aeroDemoVmSnapshot);
@@ -35,8 +35,9 @@ test("demo VM snapshot panel saves/restores via OPFS streaming", async ({ page }
   const advanceButton = page.locator("#demo-vm-snapshot-advance");
   const importInput = page.locator("#demo-vm-snapshot-import");
 
-  if (!state?.ready) {
-    await expect(saveButton).toBeDisabled();
+  // When snapshots are unavailable (OPFS missing, WASM init failed, etc.) the panel
+  // still sets `ready=true` but keeps the buttons disabled.
+  if (await saveButton.isDisabled()) {
     await expect(status).toContainText("unavailable");
     return;
   }

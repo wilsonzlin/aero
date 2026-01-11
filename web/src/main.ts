@@ -863,7 +863,8 @@ function renderSnapshotPanel(report: PlatformFeatureReport): HTMLElement {
     status.textContent = "Snapshots unavailable (OPFS missing).";
     setButtonsEnabled(false);
     setError("OPFS is unavailable in this browser/context (navigator.storage.getDirectory missing).");
-    testState.ready = false;
+    // Initialization is complete but the feature is unavailable.
+    testState.ready = true;
     testState.streaming = false;
   } else {
     function startMainThreadVm(reason: string): void {
@@ -896,7 +897,7 @@ function renderSnapshotPanel(report: PlatformFeatureReport): HTMLElement {
           status.textContent = "Demo VM unavailable (WASM init failed)";
           setButtonsEnabled(false);
           setError(err);
-          testState.ready = false;
+          testState.ready = true;
           testState.streaming = false;
         });
     }
