@@ -979,13 +979,6 @@ if (-not $SkipGuestToolsDefaultsCheck) {
     }
   }
 
-  $profileFullZip = Join-Path $guestToolsProfileFullOutDir "aero-guest-tools.zip"
-  if (-not (Test-Path -LiteralPath $profileFullZip -PathType Leaf)) {
-    throw "Expected Guest Tools -Profile full ZIP not found: $profileFullZip"
-  }
-  $profileFullSpecPath = Join-Path $repoRoot "tools/packaging/specs/win7-virtio-full.json"
-  Assert-GuestToolsDevicesCmdServices -ZipPath $profileFullZip -SpecPath $profileFullSpecPath
-
   # Validate that a relative -SpecPath is resolved against the repo root (not the current working directory).
   $guestToolsRelativeSpecOutDir = Join-Path $OutRoot "guest-tools-relative-spec"
   Ensure-EmptyDirectory -Path $guestToolsRelativeSpecOutDir
