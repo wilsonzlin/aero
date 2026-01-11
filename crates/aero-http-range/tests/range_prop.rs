@@ -146,8 +146,5 @@ fn accepts_zero_padded_numbers_longer_than_20_digits() {
     let header = format!("bytes={start}-{end}");
 
     let specs = parse_range_header(&header).expect("zero padded values should parse");
-    assert_eq!(
-        specs,
-        vec![ByteRangeSpec::FromTo { start: 1, end: 2 }]
-    );
+    assert_eq!(specs, vec![ByteRangeSpec::FromTo { start: 1, end: 2 }]);
 }

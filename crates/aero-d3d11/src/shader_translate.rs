@@ -259,13 +259,19 @@ fn build_io_maps(
     let mut inputs = BTreeMap::new();
     for p in &isgn.parameters {
         let sys_value = resolve_sys_value_type(p, &input_sivs);
-        inputs.insert(p.register, ParamInfo::from_sig_param("input", p, sys_value)?);
+        inputs.insert(
+            p.register,
+            ParamInfo::from_sig_param("input", p, sys_value)?,
+        );
     }
 
     let mut outputs = BTreeMap::new();
     for p in &osgn.parameters {
         let sys_value = resolve_sys_value_type(p, &output_sivs);
-        outputs.insert(p.register, ParamInfo::from_sig_param("output", p, sys_value)?);
+        outputs.insert(
+            p.register,
+            ParamInfo::from_sig_param("output", p, sys_value)?,
+        );
     }
 
     let mut vs_position_reg = outputs
@@ -452,15 +458,13 @@ impl IoMaps {
     fn inputs_reflection(&self) -> Vec<IoParam> {
         self.inputs
             .values()
-            .map(|p| {
-                IoParam {
-                    semantic_name: p.param.semantic_name.clone(),
-                    semantic_index: p.param.semantic_index,
-                    register: p.param.register,
-                    location: p.builtin.is_none().then_some(p.param.register),
-                    builtin: p.builtin,
-                    mask: p.param.mask,
-                }
+            .map(|p| IoParam {
+                semantic_name: p.param.semantic_name.clone(),
+                semantic_index: p.param.semantic_index,
+                register: p.param.register,
+                location: p.builtin.is_none().then_some(p.param.register),
+                builtin: p.builtin,
+                mask: p.param.mask,
             })
             .collect()
     }
@@ -468,15 +472,13 @@ impl IoMaps {
     fn outputs_reflection_vertex(&self) -> Vec<IoParam> {
         self.outputs
             .values()
-            .map(|p| {
-                IoParam {
-                    semantic_name: p.param.semantic_name.clone(),
-                    semantic_index: p.param.semantic_index,
-                    register: p.param.register,
-                    location: p.builtin.is_none().then_some(p.param.register),
-                    builtin: p.builtin,
-                    mask: p.param.mask,
-                }
+            .map(|p| IoParam {
+                semantic_name: p.param.semantic_name.clone(),
+                semantic_index: p.param.semantic_index,
+                register: p.param.register,
+                location: p.builtin.is_none().then_some(p.param.register),
+                builtin: p.builtin,
+                mask: p.param.mask,
             })
             .collect()
     }
@@ -674,7 +676,10 @@ fn builtin_from_d3d_name(name: u32) -> Option<Builtin> {
     }
 }
 
-fn resolve_sys_value_type(param: &DxbcSignatureParameter, decl_sivs: &BTreeMap<u32, u32>) -> Option<u32> {
+fn resolve_sys_value_type(
+    param: &DxbcSignatureParameter,
+    decl_sivs: &BTreeMap<u32, u32>,
+) -> Option<u32> {
     if let Some(&sys_value) = decl_sivs.get(&param.register) {
         return Some(sys_value);
     }

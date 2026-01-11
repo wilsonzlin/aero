@@ -447,13 +447,9 @@ fn deliver_tier0_exception<B: crate::mem::CpuBus>(
         }
     };
 
-    cpu.cpu.pending.raise_exception_fault(
-        &mut cpu.cpu.state,
-        arch,
-        faulting_rip,
-        error_code,
-        cr2,
-    );
+    cpu.cpu
+        .pending
+        .raise_exception_fault(&mut cpu.cpu.state, arch, faulting_rip, error_code, cr2);
     if let Err(exit) = cpu.cpu.deliver_pending_event(&mut cpu.bus) {
         cpu.exit = Some(exit);
     }

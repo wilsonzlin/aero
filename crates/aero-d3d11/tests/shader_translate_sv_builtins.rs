@@ -45,7 +45,13 @@ fn build_dxbc(chunks: &[(FourCC, Vec<u8>)]) -> Vec<u8> {
     bytes
 }
 
-fn sig_param(name: &str, index: u32, system_value_type: u32, register: u32, mask: u8) -> DxbcSignatureParameter {
+fn sig_param(
+    name: &str,
+    index: u32,
+    system_value_type: u32,
+    register: u32,
+    mask: u8,
+) -> DxbcSignatureParameter {
     DxbcSignatureParameter {
         semantic_name: name.to_owned(),
         semantic_index: index,
@@ -183,7 +189,9 @@ fn translates_vertex_system_values_from_siv_decls() {
 
     assert!(translated.wgsl.contains("@builtin(vertex_index)"));
     assert!(translated.wgsl.contains("@builtin(instance_index)"));
-    assert!(translated.wgsl.contains("@builtin(position) pos: vec4<f32>"));
+    assert!(translated
+        .wgsl
+        .contains("@builtin(position) pos: vec4<f32>"));
 }
 
 #[test]
@@ -233,5 +241,7 @@ fn translates_pixel_system_values_front_facing() {
     assert_wgsl_parses(&translated.wgsl);
 
     assert!(translated.wgsl.contains("@builtin(front_facing)"));
-    assert!(translated.wgsl.contains("@builtin(position) pos: vec4<f32>"));
+    assert!(translated
+        .wgsl
+        .contains("@builtin(position) pos: vec4<f32>"));
 }

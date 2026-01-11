@@ -737,8 +737,7 @@ impl AeroGpuSoftwareExecutor {
                 tex.data[off..off + 4].copy_from_slice(&bits.to_le_bytes());
             }
             AeroGpuFormat::D24UnormS8Uint => {
-                let depth_bits =
-                    (depth.clamp(0.0, 1.0) * 0x00ff_ffff as f32 + 0.5).floor() as u32;
+                let depth_bits = (depth.clamp(0.0, 1.0) * 0x00ff_ffff as f32 + 0.5).floor() as u32;
                 let v = (depth_bits & 0x00ff_ffff) | ((stencil as u32) << 24);
                 tex.data[off..off + 4].copy_from_slice(&v.to_le_bytes());
             }
@@ -1075,7 +1074,10 @@ impl AeroGpuSoftwareExecutor {
                 return;
             };
 
-            if !matches!(depth_tex.format, AeroGpuFormat::D24UnormS8Uint | AeroGpuFormat::D32Float) {
+            if !matches!(
+                depth_tex.format,
+                AeroGpuFormat::D24UnormS8Uint | AeroGpuFormat::D32Float
+            ) {
                 self.textures.insert(ds_handle, depth_tex);
                 Self::record_error(regs);
                 return;
@@ -1101,7 +1103,11 @@ impl AeroGpuSoftwareExecutor {
                         let area = (tri[1].pos.0 - tri[0].pos.0) * (tri[2].pos.1 - tri[0].pos.1)
                             - (tri[1].pos.1 - tri[0].pos.1) * (tri[2].pos.0 - tri[0].pos.0);
                         if area != 0.0 {
-                            let front_facing = if rast.front_ccw { area < 0.0 } else { area > 0.0 };
+                            let front_facing = if rast.front_ccw {
+                                area < 0.0
+                            } else {
+                                area > 0.0
+                            };
                             let culled = match rast.cull_mode {
                                 x if x == cmd::AerogpuCullMode::Front as u32 => front_facing,
                                 x if x == cmd::AerogpuCullMode::Back as u32 => !front_facing,
@@ -1142,7 +1148,11 @@ impl AeroGpuSoftwareExecutor {
                     let area = (tri[1].pos.0 - tri[0].pos.0) * (tri[2].pos.1 - tri[0].pos.1)
                         - (tri[1].pos.1 - tri[0].pos.1) * (tri[2].pos.0 - tri[0].pos.0);
                     if area != 0.0 {
-                        let front_facing = if rast.front_ccw { area < 0.0 } else { area > 0.0 };
+                        let front_facing = if rast.front_ccw {
+                            area < 0.0
+                        } else {
+                            area > 0.0
+                        };
                         let culled = match rast.cull_mode {
                             x if x == cmd::AerogpuCullMode::Front as u32 => front_facing,
                             x if x == cmd::AerogpuCullMode::Back as u32 => !front_facing,
@@ -2186,7 +2196,7 @@ impl AeroGpuSoftwareExecutor {
                             Self::record_error(regs);
                             return false;
                         }
-                };
+                    };
 
                 // color_count ignored for now; we accept RT0 and clear the rest.
                 self.state.depth_stencil = u32::from_le(packet_cmd.depth_stencil);

@@ -112,7 +112,10 @@ fn inf_has_line_containing_all(inf_text: &str, needles: &[&str]) -> bool {
         }
 
         let upper = line.to_ascii_uppercase();
-        if needles.iter().all(|needle| upper.contains(&needle.to_ascii_uppercase())) {
+        if needles
+            .iter()
+            .all(|needle| upper.contains(&needle.to_ascii_uppercase()))
+        {
             return true;
         }
     }
@@ -328,7 +331,10 @@ fn win7_aerogpu_infs_register_umds_with_expected_registry_types() {
     let root = repo_root();
 
     let infs = [
-        (root.join("drivers/aerogpu/packaging/win7/aerogpu.inf"), false),
+        (
+            root.join("drivers/aerogpu/packaging/win7/aerogpu.inf"),
+            false,
+        ),
         (
             root.join("drivers/aerogpu/packaging/win7/aerogpu_dx11.inf"),
             true,
@@ -376,7 +382,10 @@ fn win7_aerogpu_infs_register_umds_with_expected_registry_types() {
         if is_dx11 {
             // D3D10/11 registration uses filename (with .dll) and must be REG_SZ.
             assert!(
-                contains_needle(&inf_text, "HKR,,UserModeDriverName,%REG_SZ%,\"aerogpu_d3d10.dll\""),
+                contains_needle(
+                    &inf_text,
+                    "HKR,,UserModeDriverName,%REG_SZ%,\"aerogpu_d3d10.dll\""
+                ),
                 "{} must register x86 D3D10/11 via UserModeDriverName REG_SZ filename",
                 inf_path.display()
             );

@@ -174,14 +174,7 @@ fn protected_mode_page_fault_handler_can_map_page_and_restart_faulting_instructi
     }
 
     // IDT[14] -> page fault handler (32-bit interrupt gate).
-    write_idt_gate32(
-        &mut phys,
-        IDT_BASE,
-        14,
-        0x08,
-        HANDLER_BASE as u32,
-        0x8E,
-    );
+    write_idt_gate32(&mut phys, IDT_BASE, 14, 0x08, HANDLER_BASE as u32, 0x8E);
 
     let bus = PagingBus::new(phys);
     let mut cpu = Vcpu::new_with_mode(CpuMode::Protected, bus);
@@ -203,7 +196,9 @@ fn protected_mode_page_fault_handler_can_map_page_and_restart_faulting_instructi
     assert!(cpu.cpu.state.halted);
     assert_eq!(cpu.cpu.state.read_reg(Register::AL) as u8, 0xAA);
     assert_eq!(cpu.cpu.state.control.cr2, FAULT_ADDR as u64);
-    assert_eq!(cpu.bus.read_u32(SCRATCH_EIP as u64).unwrap(), CODE_BASE as u32);
+    assert_eq!(
+        cpu.bus.read_u32(SCRATCH_EIP as u64).unwrap(),
+        CODE_BASE as u32
+    );
     assert_eq!(interp.assist.invlpg_log, vec![FAULT_ADDR as u64]);
 }
-

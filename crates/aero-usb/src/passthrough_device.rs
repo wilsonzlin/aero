@@ -132,7 +132,11 @@ impl UsbDevice for UsbWebUsbPassthroughDevice {
 
         // Intercept SET_ADDRESS so it is never forwarded to the host.
         if setup.request == USB_REQUEST_SET_ADDRESS {
-            if setup.request_type != 0x00 || setup.index != 0 || setup.length != 0 || setup.value > 127 {
+            if setup.request_type != 0x00
+                || setup.index != 0
+                || setup.length != 0
+                || setup.value > 127
+            {
                 self.control = Some(ControlState {
                     setup,
                     stage: ControlStage::StatusIn,
@@ -383,10 +387,10 @@ impl UsbDevice for UsbWebUsbPassthroughDevice {
                     return UsbHandshake::Stall;
                 }
                 let setup = state.setup;
-                match self.passthrough.handle_control_request(
-                    Self::to_passthrough_setup(setup),
-                    data.as_deref(),
-                ) {
+                match self
+                    .passthrough
+                    .handle_control_request(Self::to_passthrough_setup(setup), data.as_deref())
+                {
                     ControlResponse::Nak => UsbHandshake::Nak,
                     ControlResponse::Ack => {
                         if let Some(addr) = self.pending_address.take() {

@@ -196,7 +196,12 @@ impl ControlChain {
             }
 
             // Ignore the "NAK" bit for detection; it's used while ACTIVE.
-            let err_bits = ctrl_sts & (TD_CTRL_STALLED | TD_CTRL_CRCERR | TD_CTRL_BABBLE | TD_CTRL_DBUFERR | TD_CTRL_BITSTUFF);
+            let err_bits = ctrl_sts
+                & (TD_CTRL_STALLED
+                    | TD_CTRL_CRCERR
+                    | TD_CTRL_BABBLE
+                    | TD_CTRL_DBUFERR
+                    | TD_CTRL_BITSTUFF);
             if err_bits == 0 {
                 continue;
             }
@@ -223,7 +228,9 @@ impl ControlChain {
             } else {
                 reasons.join("+")
             };
-            return Some(format!("UHCI TD error at 0x{td_addr:08x}: {reason} (ctrl_sts=0x{ctrl_sts:08x})"));
+            return Some(format!(
+                "UHCI TD error at 0x{td_addr:08x}: {reason} (ctrl_sts=0x{ctrl_sts:08x})"
+            ));
         }
         None
     }

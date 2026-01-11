@@ -1,8 +1,8 @@
 #![cfg(target_arch = "wasm32")]
 
-use aero_wasm::{add, demo_render_rgba8888};
-use aero_wasm::WebUsbUhciPassthroughHarness;
 use aero_usb::passthrough::UsbHostAction;
+use aero_wasm::WebUsbUhciPassthroughHarness;
+use aero_wasm::{add, demo_render_rgba8888};
 use wasm_bindgen_test::wasm_bindgen_test;
 
 #[wasm_bindgen_test]
@@ -30,7 +30,10 @@ fn webusb_uhci_harness_queues_actions_without_host() {
     let actions: Vec<UsbHostAction> =
         serde_wasm_bindgen::from_value(drained).expect("deserialize UsbHostAction[]");
 
-    assert!(!actions.is_empty(), "expected at least one queued UsbHostAction");
+    assert!(
+        !actions.is_empty(),
+        "expected at least one queued UsbHostAction"
+    );
     // We should start enumeration with a control IN descriptor request.
     assert!(matches!(actions[0], UsbHostAction::ControlIn { .. }));
 }

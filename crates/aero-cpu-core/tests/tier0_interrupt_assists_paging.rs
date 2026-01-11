@@ -4,8 +4,8 @@ use aero_cpu_core::mem::CpuBus as _;
 use aero_cpu_core::state::{CpuMode, CpuState, CR0_PE, CR0_PG, RFLAGS_IF, RFLAGS_RESERVED1};
 use aero_cpu_core::{Exception, PagingBus};
 use aero_mmu::MemoryBus;
-use core::convert::TryInto;
 use aero_x86::Register;
+use core::convert::TryInto;
 
 const PTE_P32: u32 = 1 << 0;
 const PTE_RW32: u32 = 1 << 1;
@@ -65,10 +65,7 @@ impl MemoryBus for TestMemory {
 }
 
 fn set_pte32(mem: &mut impl MemoryBus, pt_base: u64, page_idx: u64, flags: u32) {
-    mem.write_u32(
-        pt_base + page_idx * 4,
-        ((page_idx * 0x1000) as u32) | flags,
-    );
+    mem.write_u32(pt_base + page_idx * 4, ((page_idx * 0x1000) as u32) | flags);
 }
 
 fn seg_desc(base: u32, limit: u32, typ: u8, dpl: u8) -> u64 {
@@ -215,4 +212,3 @@ fn tier0_assist_protected_int_stack_switch_ignores_user_supervisor_paging_bit() 
     assert_eq!(bus.read_u32(frame_base + 12).unwrap(), user_stack_top); // old ESP
     assert_eq!(bus.read_u32(frame_base + 16).unwrap() as u16, 0x23); // old SS
 }
-

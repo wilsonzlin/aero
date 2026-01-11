@@ -44,10 +44,7 @@ fn new_setup_aborts_pending_set_address_keyboard() {
         length: 0,
     });
 
-    assert_eq!(
-        complete_status_in(&mut dev),
-        UsbHandshake::Ack { bytes: 0 }
-    );
+    assert_eq!(complete_status_in(&mut dev), UsbHandshake::Ack { bytes: 0 });
     assert_eq!(dev.address(), 0);
 }
 
@@ -88,10 +85,6 @@ fn new_setup_aborts_pending_set_address_passthrough() {
         length: 0,
     });
 
-    assert_eq!(
-        complete_status_in(&mut dev),
-        UsbHandshake::Ack { bytes: 0 }
-    );
+    assert_eq!(complete_status_in(&mut dev), UsbHandshake::Ack { bytes: 0 });
     assert_eq!(dev.address(), 0);
 }
-

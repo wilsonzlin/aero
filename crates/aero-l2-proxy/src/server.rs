@@ -291,7 +291,12 @@ fn enforce_security(
             }
         }
         crate::config::AuthMode::Cookie => {
-            let secret = state.cfg.security.session_secret.as_deref().unwrap_or_default();
+            let secret = state
+                .cfg
+                .security
+                .session_secret
+                .as_deref()
+                .unwrap_or_default();
             let cookie = headers
                 .get(axum::http::header::COOKIE)
                 .and_then(|v| v.to_str().ok())
@@ -322,7 +327,12 @@ fn enforce_security(
             }
         }
         crate::config::AuthMode::CookieOrJwt => {
-            let cookie_secret = state.cfg.security.session_secret.as_deref().unwrap_or_default();
+            let cookie_secret = state
+                .cfg
+                .security
+                .session_secret
+                .as_deref()
+                .unwrap_or_default();
             let jwt_secret = state.cfg.security.jwt_secret.as_deref().unwrap_or_default();
 
             let cookie = headers
