@@ -68,4 +68,18 @@ describe("audio ring buffer overruns", () => {
     expect(writeRingBufferInterleaved(ring, dropped, 48_000, 48_000)).toBe(0);
     expect(getRingBufferOverrunCount(ring)).toBe(3);
   });
+
+  it("wraps overrunCount as u32", () => {
+    const ring = createTestRingBuffer(1, 1);
+
+    // Seed the counter near u32::MAX.
+    Atomics.store(ring.header, 3, 0xffff_fffe);
+
+    // Fill the ring buffer so the next write is fully dropped.
+    expect(writeRingBufferInterleaved(ring, new Float32Array([0]), 48_000, 48_000)).toBe(1);
+
+    // Drop 4 frames -> 0xffff_fffe + 4 == 2 (mod 2^32).
+    expect(writeRingBufferInterleaved(ring, new Float32Array(4), 48_000, 48_000)).toBe(0);
+    expect(getRingBufferOverrunCount(ring)).toBe(2);
+  });
 });
