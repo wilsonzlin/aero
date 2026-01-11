@@ -8,6 +8,10 @@ export type CreateAudioOutputOptions = {
    * Size of the ring buffer in frames (per channel).
    *
    * The actual sample capacity is `ringBufferFrames * channelCount`.
+   *
+   * If omitted (and `ringBuffer` is not provided), this defaults to ~200ms of
+   * audio (`sampleRate / 5`, clamped to `[2048, sampleRate / 2]`). The previous
+   * behavior (~1s) was safe but introduced unacceptable interactive latency.
    */
   ringBufferFrames?: number;
   /**
@@ -87,6 +91,22 @@ export type DisabledAudioOutput = {
 };
 
 export type AudioOutput = EnabledAudioOutput | DisabledAudioOutput;
+
+function clampFrames(value: number, min: number, max: number): number {
+  const v = Math.floor(Number.isFinite(value) ? value : 0);
+  const lo = Math.floor(Number.isFinite(min) ? min : 0);
+  const hi = Math.floor(Number.isFinite(max) ? max : 0);
+  const clampedHi = Math.max(lo, hi);
+  return Math.min(Math.max(v, lo), clampedHi);
+}
+
+export function getDefaultRingBufferFrames(sampleRate: number): number {
+  // Default to ~200ms of capacity to keep interactive audio latency reasonable,
+  // while still allowing producers to buffer enough samples to avoid underruns.
+  const minFrames = 2048;
+  const maxFrames = Math.max(minFrames, Math.floor(sampleRate / 2));
+  return clampFrames(sampleRate / 5, minFrames, maxFrames);
+}
 
 function getAudioContextCtor(): typeof AudioContext | undefined {
   return (
@@ -326,7 +346,9 @@ export async function createAudioOutput(options: CreateAudioOutputOptions = {}):
   const channelCount = options.channelCount ?? 2;
   const ringBufferFrames =
     options.ringBufferFrames ??
-    (options.ringBuffer ? inferRingBufferFrames(options.ringBuffer, channelCount) : sampleRate); // ~1 second by default
+    (options.ringBuffer
+      ? inferRingBufferFrames(options.ringBuffer, channelCount)
+      : getDefaultRingBufferFrames(sampleRate));
 
   let ringBuffer: AudioRingBufferLayout;
   try {
