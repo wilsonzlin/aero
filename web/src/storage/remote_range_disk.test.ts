@@ -124,6 +124,8 @@ type RangeServerState = {
   lastModified?: string;
   requiredToken?: string;
   ignoreRange?: boolean;
+  ignoreIfRangeMismatch?: boolean;
+  rejectWeakIfRange?: boolean;
   wrongContentRange?: boolean;
   mismatchStatus?: 200 | 412;
   getBytes: (start: number, endExclusive: number) => Uint8Array;
@@ -213,12 +215,29 @@ async function startRangeServer(state: RangeServerState): Promise<{
       return;
     }
 
-    if (typeof ifRange === "string" && state.etag && ifRange !== state.etag) {
-      const status = state.mismatchStatus ?? 200;
-      res.statusCode = status;
-      res.setHeader("content-length", String(state.sizeBytes));
-      res.end(state.getBytes(0, state.sizeBytes));
-      return;
+    if (state.rejectWeakIfRange && typeof ifRange === "string") {
+      const trimmed = ifRange.trimStart();
+      if (trimmed.startsWith("W/") || trimmed.startsWith("w/")) {
+        // Some servers reject weak validators in `If-Range` (RFC 9110 requires strong ETags).
+        // Model that by falling back to a full representation.
+        res.statusCode = 200;
+        res.setHeader("content-length", String(state.sizeBytes));
+        res.end(state.getBytes(0, state.sizeBytes));
+        return;
+      }
+    }
+
+    if (!state.ignoreIfRangeMismatch && typeof ifRange === "string" && (state.etag || state.lastModified)) {
+      const matches =
+        (state.etag !== undefined && ifRange === state.etag) ||
+        (state.lastModified !== undefined && ifRange === state.lastModified);
+      if (!matches) {
+        const status = state.mismatchStatus ?? 200;
+        res.statusCode = status;
+        res.setHeader("content-length", String(state.sizeBytes));
+        res.end(state.getBytes(0, state.sizeBytes));
+        return;
+      }
     }
 
     if (start >= state.sizeBytes) {
@@ -526,6 +545,104 @@ describe("RemoteRangeDisk", () => {
     await disk.readSectors(0, again0);
     expect(again0).toEqual(data.subarray(0, again0.byteLength));
     expect(server.stats.rangeGets).toBeGreaterThanOrEqual(4);
+  });
+
+  it("omits If-Range for weak ETags (some servers reject them)", async () => {
+    const chunkSize = 1024 * 1024;
+    const data = makeTestData(2 * chunkSize);
+    const server = await startRangeServer({
+      sizeBytes: data.byteLength,
+      etag: 'W/"v1"',
+      rejectWeakIfRange: true,
+      getBytes: (s, e) => data.slice(s, e),
+    });
+    activeServers.push(server.close);
+
+    const disk = await RemoteRangeDisk.open(server.url, {
+      cacheKeyParts: { imageId: "weak-etag", version: "v1", deliveryType: remoteRangeDeliveryType(chunkSize) },
+      chunkSize,
+      metadataStore: new MemoryMetadataStore(),
+      sparseCacheFactory: new MemorySparseCacheFactory(),
+      readAheadChunks: 0,
+    });
+
+    const buf = new Uint8Array(4096);
+    await disk.readSectors(0, buf);
+    expect(buf).toEqual(data.subarray(0, buf.byteLength));
+    expect(server.stats.lastIfRange).toBeUndefined();
+    expect(server.stats.seenIfRanges).toEqual([]);
+  });
+
+  it("uses Last-Modified for If-Range when ETag is weak", async () => {
+    const chunkSize = 1024 * 1024;
+    const data = makeTestData(2 * chunkSize);
+    const lastModified = "Mon, 01 Jan 2024 00:00:00 GMT";
+    const server = await startRangeServer({
+      sizeBytes: data.byteLength,
+      etag: 'W/"v1"',
+      lastModified,
+      rejectWeakIfRange: true,
+      getBytes: (s, e) => data.slice(s, e),
+    });
+    activeServers.push(server.close);
+
+    const disk = await RemoteRangeDisk.open(server.url, {
+      cacheKeyParts: { imageId: "weak-etag-date", version: "v1", deliveryType: remoteRangeDeliveryType(chunkSize) },
+      chunkSize,
+      metadataStore: new MemoryMetadataStore(),
+      sparseCacheFactory: new MemorySparseCacheFactory(),
+      readAheadChunks: 0,
+    });
+
+    const buf = new Uint8Array(4096);
+    await disk.readSectors(0, buf);
+    expect(buf).toEqual(data.subarray(0, buf.byteLength));
+    expect(server.stats.lastIfRange).toBe(lastModified);
+  });
+
+  it("detects validator drift on 206 responses and retries successfully", async () => {
+    const chunkSize = 1024 * 1024;
+    let data = makeTestData(2 * chunkSize);
+    let etag = "\"v1\"";
+
+    const server = await startRangeServer({
+      sizeBytes: data.byteLength,
+      getBytes: (s, e) => data.slice(s, e),
+      get etag() {
+        return etag;
+      },
+      ignoreIfRangeMismatch: true,
+    } as RangeServerState);
+    activeServers.push(server.close);
+
+    const disk = await RemoteRangeDisk.open(server.url, {
+      cacheKeyParts: { imageId: "etag-drift", version: "v1", deliveryType: remoteRangeDeliveryType(chunkSize) },
+      chunkSize,
+      metadataStore: new MemoryMetadataStore(),
+      sparseCacheFactory: new MemorySparseCacheFactory(),
+      readAheadChunks: 0,
+    });
+
+    // Cache chunk 0 under ETag v1.
+    const chunk0 = new Uint8Array(4096);
+    await disk.readSectors(0, chunk0);
+    expect(server.stats.seenIfRanges).toContain("\"v1\"");
+    expect(server.stats.rangeGets).toBe(1);
+
+    // Mutate the server: new ETag and new content.
+    data = new Uint8Array(data.length);
+    data.fill(7);
+    etag = "\"v2\"";
+
+    // Read chunk 1: server ignores If-Range mismatch and returns 206 with the new ETag.
+    // The client should detect the validator drift, invalidate, re-probe, and retry.
+    const chunk1Lba = chunkSize / SECTOR_SIZE;
+    const chunk1 = new Uint8Array(4096);
+    await disk.readSectors(chunk1Lba, chunk1);
+    expect(chunk1).toEqual(data.subarray(chunkSize, chunkSize + chunk1.byteLength));
+
+    expect(server.stats.seenIfRanges).toContain("\"v2\"");
+    expect(server.stats.rangeGets).toBeGreaterThanOrEqual(3);
   });
 
   it("rejects servers that ignore Range requests", async () => {

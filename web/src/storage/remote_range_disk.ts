@@ -195,6 +195,29 @@ function toSafeNumber(value: bigint, label: string): number {
   return n;
 }
 
+function isWeakEtag(etag: string): boolean {
+  const trimmed = etag.trimStart();
+  return trimmed.startsWith("W/") || trimmed.startsWith("w/");
+}
+
+function validatorsMatch(expected: string, actual: string): boolean {
+  const e = expected.trim();
+  const a = actual.trim();
+
+  const eWeak = e.startsWith("W/") || e.startsWith("w/");
+  const aWeak = a.startsWith("W/") || a.startsWith("w/");
+
+  if (eWeak && aWeak) {
+    return e.slice(2).trimStart() === a.slice(2).trimStart();
+  }
+
+  return e === a;
+}
+
+function extractValidatorFromHeaders(headers: Headers): string | undefined {
+  return (headers.get("etag") ?? headers.get("last-modified") ?? undefined) || undefined;
+}
+
 function parseContentRangeHeader(header: string): { start: number; endInclusive: number; total: number } {
   // Example: "bytes 0-0/12345"
   const m = /^bytes\s+(\d+)-(\d+)\/(\d+|\*)$/i.exec(header.trim());
@@ -628,10 +651,10 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
 
     // Prefer ETag when the server exposes it; otherwise fall back to Last-Modified.
     if (remote.etag) {
-      return meta.validators.etag === remote.etag;
+      return meta.validators.etag ? validatorsMatch(meta.validators.etag, remote.etag) : false;
     }
     if (remote.lastModified) {
-      return meta.validators.lastModified === remote.lastModified;
+      return meta.validators.lastModified ? validatorsMatch(meta.validators.lastModified, remote.lastModified) : false;
     }
     // No validator exposed; size+chunk alignment is all we can validate.
     return true;
@@ -930,13 +953,12 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     const headers: Record<string, string> = {
       Range: `bytes=${start}-${endInclusive}`,
     };
-    if (this.remoteEtag) {
-      headers["If-Range"] = this.remoteEtag;
-    } else if (this.remoteLastModified) {
-      // If-Range also accepts an HTTP-date; `Last-Modified` is already formatted as one.
-      headers["If-Range"] = this.remoteLastModified;
+    const expectedValidator = this.remoteEtag ?? this.remoteLastModified;
+    const ifRangeValidator =
+      this.remoteEtag && !isWeakEtag(this.remoteEtag) ? this.remoteEtag : this.remoteLastModified;
+    if (ifRangeValidator) {
+      headers["If-Range"] = ifRangeValidator;
     }
-    const hasIfRange = "If-Range" in headers;
 
     if (generation === this.cacheGeneration) {
       this.telemetry.rangeRequests += 1;
@@ -952,9 +974,21 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
     if (resp.status === 200 || resp.status === 412) {
       // Don't read the body — it could be a multi-GB full response.
       await cancelBody(resp);
-      // If-Range mismatch (or a server that ignores Range entirely).
-      if (hasIfRange) {
-        throw new RemoteValidatorMismatchError(resp.status);
+
+      // Per RFC 7233, a server will return the full representation (200) when an If-Range
+      // validator does not match. Some implementations use `412 Precondition Failed`.
+      //
+      // However, a server that does not support Range (or ignores the header) may also reply with
+      // 200. Only treat 200 as a validator mismatch when the response provides a differing
+      // validator.
+      if (expectedValidator) {
+        if (resp.status === 412) {
+          throw new RemoteValidatorMismatchError(resp.status);
+        }
+        const actual = extractValidatorFromHeaders(resp.headers);
+        if (actual && !validatorsMatch(expectedValidator, actual)) {
+          throw new RemoteValidatorMismatchError(resp.status);
+        }
       }
       throw new Error(`remote server ignored Range request (expected 206, got ${resp.status})`);
     }
@@ -982,6 +1016,17 @@ export class RemoteRangeDisk implements AsyncSectorDisk {
       // Image size changed without us noticing; treat like an invalidation event.
       await cancelBody(resp);
       throw new RemoteValidatorMismatchError(206);
+    }
+
+    // Servers that don't implement If-Range may still return 206 after the representation has
+    // changed. When the response exposes a validator (ETag / Last-Modified), detect mismatches to
+    // avoid mixing bytes from different versions under one cache identity.
+    if (expectedValidator) {
+      const actual = extractValidatorFromHeaders(resp.headers);
+      if (actual && !validatorsMatch(expectedValidator, actual)) {
+        await cancelBody(resp);
+        throw new RemoteValidatorMismatchError(206);
+      }
     }
 
     const body = new Uint8Array(await resp.arrayBuffer());
