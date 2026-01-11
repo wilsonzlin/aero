@@ -187,6 +187,7 @@ struct ControlInflight {
 #[derive(Debug, Clone)]
 struct EpInflight {
     id: u64,
+    len: usize,
 }
 
 #[derive(Debug)]
@@ -359,12 +360,14 @@ impl UsbPassthroughDevice {
 
     pub fn handle_in_transfer(&mut self, endpoint: u8, max_len: usize) -> UsbInResult {
         if let Some(inflight) = self.ep_inflight.get(&endpoint) {
-            if let Some(result) = self.take_result(inflight.id) {
+            let inflight_id = inflight.id;
+            let inflight_len = inflight.len;
+            if let Some(result) = self.take_result(inflight_id) {
                 self.ep_inflight.remove(&endpoint);
                 return match result {
                     UsbHostResult::OkIn { mut data } => {
-                        if data.len() > max_len {
-                            data.truncate(max_len);
+                        if data.len() > inflight_len {
+                            data.truncate(inflight_len);
                         }
                         UsbInResult::Data(data)
                     }
@@ -381,7 +384,8 @@ impl UsbPassthroughDevice {
             endpoint,
             length: max_len as u32,
         });
-        self.ep_inflight.insert(endpoint, EpInflight { id });
+        self.ep_inflight
+            .insert(endpoint, EpInflight { id, len: max_len });
         UsbInResult::Nak
     }
 
@@ -404,7 +408,13 @@ impl UsbPassthroughDevice {
             endpoint,
             data: data.to_vec(),
         });
-        self.ep_inflight.insert(endpoint, EpInflight { id });
+        self.ep_inflight.insert(
+            endpoint,
+            EpInflight {
+                id,
+                len: data.len(),
+            },
+        );
         UsbOutResult::Nak
     }
 }
@@ -609,6 +619,42 @@ mod tests {
         });
 
         assert_eq!(dev.handle_in_transfer(0x81, 8), UsbInResult::Nak);
+    }
+
+    #[test]
+    fn bulk_in_completion_is_truncated_to_requested_len() {
+        let mut dev = UsbPassthroughDevice::new();
+
+        assert_eq!(dev.handle_in_transfer(0x81, 2), UsbInResult::Nak);
+        let id = match dev.pop_action().expect("expected BulkIn action") {
+            UsbHostAction::BulkIn {
+                id,
+                endpoint,
+                length,
+            } => {
+                assert_eq!(endpoint, 0x81);
+                assert_eq!(length, 2);
+                id
+            }
+            other => panic!("unexpected action: {other:?}"),
+        };
+
+        // UHCI may retry while providing a different `max_len`; we must still truncate to the
+        // original requested length.
+        assert_eq!(dev.handle_in_transfer(0x81, 8), UsbInResult::Nak);
+        assert!(dev.pop_action().is_none(), "no duplicate action");
+
+        dev.push_completion(UsbHostCompletion::BulkIn {
+            id,
+            result: UsbHostCompletionIn::Success {
+                data: vec![1, 2, 3, 4],
+            },
+        });
+
+        assert_eq!(
+            dev.handle_in_transfer(0x81, 8),
+            UsbInResult::Data(vec![1, 2])
+        );
     }
 
     #[test]
