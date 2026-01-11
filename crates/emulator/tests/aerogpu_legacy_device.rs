@@ -1,6 +1,7 @@
 use emulator::devices::pci::aerogpu_legacy::{AeroGpuLegacyDeviceConfig, AeroGpuLegacyPciDevice};
 use emulator::io::pci::MmioDevice;
 use memory::MemoryBus;
+use std::time::{Duration, Instant};
 
 #[derive(Clone, Debug)]
 struct VecMemory {
@@ -51,6 +52,14 @@ mod mmio {
     pub const SCANOUT_HEIGHT: u64 = 0x0110;
     pub const SCANOUT_FORMAT: u64 = 0x0114;
     pub const SCANOUT_ENABLE: u64 = 0x0118;
+
+    pub const IRQ_STATUS: u64 = 0x0300;
+    pub const IRQ_ENABLE: u64 = 0x0304;
+
+    pub const SCANOUT0_VBLANK_SEQ_LO: u64 = 0x0420;
+    pub const SCANOUT0_VBLANK_SEQ_HI: u64 = 0x0424;
+    pub const SCANOUT0_VBLANK_TIME_NS_LO: u64 = 0x0428;
+    pub const SCANOUT0_VBLANK_TIME_NS_HI: u64 = 0x042c;
 }
 
 #[test]
@@ -121,3 +130,31 @@ fn scanout_x8r8g8b8_converts_to_rgba() {
     assert_eq!(rgba, vec![1, 2, 3, 0xff, 10, 20, 30, 0xff]);
 }
 
+#[test]
+fn vblank_tick_updates_counters_and_latches_irq_status() {
+    let mut cfg = AeroGpuLegacyDeviceConfig::default();
+    cfg.vblank_hz = Some(10);
+    let mut mem = VecMemory::new(0x1000);
+    let mut dev = AeroGpuLegacyPciDevice::new(cfg, 0);
+
+    const IRQ_SCANOUT_VBLANK: u32 = 1 << 1;
+
+    dev.mmio_write(&mut mem, mmio::SCANOUT_ENABLE, 4, 1);
+    dev.mmio_write(&mut mem, mmio::IRQ_ENABLE, 4, IRQ_SCANOUT_VBLANK);
+
+    let t0 = Instant::now();
+    dev.tick(t0);
+    assert_eq!(dev.mmio_read(&mut mem, mmio::IRQ_STATUS, 4) & IRQ_SCANOUT_VBLANK, 0);
+    assert_eq!(dev.mmio_read(&mut mem, mmio::SCANOUT0_VBLANK_SEQ_LO, 4), 0);
+
+    dev.tick(t0 + Duration::from_millis(100));
+    assert_ne!(dev.mmio_read(&mut mem, mmio::IRQ_STATUS, 4) & IRQ_SCANOUT_VBLANK, 0);
+
+    let seq = (dev.mmio_read(&mut mem, mmio::SCANOUT0_VBLANK_SEQ_LO, 4) as u64)
+        | ((dev.mmio_read(&mut mem, mmio::SCANOUT0_VBLANK_SEQ_HI, 4) as u64) << 32);
+    assert_ne!(seq, 0);
+
+    let t_ns = (dev.mmio_read(&mut mem, mmio::SCANOUT0_VBLANK_TIME_NS_LO, 4) as u64)
+        | ((dev.mmio_read(&mut mem, mmio::SCANOUT0_VBLANK_TIME_NS_HI, 4) as u64) << 32);
+    assert_ne!(t_ns, 0);
+}

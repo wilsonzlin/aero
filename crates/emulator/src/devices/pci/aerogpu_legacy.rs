@@ -9,6 +9,7 @@
 //! even before the guest stack migrates to the newer ABI.
 
 use memory::MemoryBus;
+use std::time::{Duration, Instant};
 
 use crate::devices::aerogpu_scanout::{AeroGpuFormat, AeroGpuScanoutConfig};
 use crate::io::pci::{MmioDevice, PciConfigSpace, PciDevice};
@@ -26,6 +27,10 @@ mod mmio {
     // Identification.
     pub const MAGIC: u64 = 0x0000;
     pub const VERSION: u64 = 0x0004;
+
+    // Feature bits (mirrors `drivers/aerogpu/protocol/aerogpu_pci.h`).
+    pub const FEATURES_LO: u64 = 0x0008;
+    pub const FEATURES_HI: u64 = 0x000c;
 
     // Ring setup.
     pub const RING_BASE_LO: u64 = 0x0010;
@@ -48,10 +53,26 @@ mod mmio {
     pub const SCANOUT_HEIGHT: u64 = 0x0110;
     pub const SCANOUT_FORMAT: u64 = 0x0114;
     pub const SCANOUT_ENABLE: u64 = 0x0118;
+
+    // Newer interrupt + vblank timing block (mirrors `drivers/aerogpu/protocol/aerogpu_pci.h`).
+    pub const IRQ_STATUS: u64 = 0x0300;
+    pub const IRQ_ENABLE: u64 = 0x0304;
+    pub const IRQ_ACK: u64 = 0x0308;
+
+    pub const SCANOUT0_VBLANK_SEQ_LO: u64 = 0x0420;
+    pub const SCANOUT0_VBLANK_SEQ_HI: u64 = 0x0424;
+    pub const SCANOUT0_VBLANK_TIME_NS_LO: u64 = 0x0428;
+    pub const SCANOUT0_VBLANK_TIME_NS_HI: u64 = 0x042c;
+    pub const SCANOUT0_VBLANK_PERIOD_NS: u64 = 0x0430;
 }
 
 mod int_bits {
     pub const FENCE: u32 = 0x0000_0001;
+}
+
+mod irq_bits {
+    pub const FENCE: u32 = 1 << 0;
+    pub const SCANOUT_VBLANK: u32 = 1 << 1;
 }
 
 mod ring_entry_type {
@@ -62,6 +83,9 @@ mod scanout_format {
     // `enum aerogpu_scanout_format` (legacy): only one format currently defined.
     pub const X8R8G8B8: u32 = 1;
 }
+
+// Feature bits (mirrors `drivers/aerogpu/protocol/aerogpu_pci.h`).
+const FEATURE_VBLANK: u64 = 1u64 << 3;
 
 const LEGACY_RING_ENTRY_STRIDE_BYTES: u64 = 24;
 const LEGACY_SUBMISSION_HEADER_SIZE_BYTES: u32 = 32;
@@ -85,6 +109,14 @@ pub struct AeroGpuLegacyRegs {
 
     pub scanout: AeroGpuScanoutConfig,
 
+    // Newer interrupt + vblank timing block (mirrors `drivers/aerogpu/protocol/aerogpu_pci.h`).
+    pub features: u64,
+    pub irq_status: u32,
+    pub irq_enable: u32,
+    pub scanout0_vblank_seq: u64,
+    pub scanout0_vblank_time_ns: u64,
+    pub scanout0_vblank_period_ns: u32,
+
     pub stats: AeroGpuLegacyStats,
 }
 
@@ -98,6 +130,12 @@ impl Default for AeroGpuLegacyRegs {
             int_status: 0,
             fence_completed: 0,
             scanout: AeroGpuScanoutConfig::default(),
+            features: FEATURE_VBLANK,
+            irq_status: 0,
+            irq_enable: 0,
+            scanout0_vblank_seq: 0,
+            scanout0_vblank_time_ns: 0,
+            scanout0_vblank_period_ns: 0,
             stats: AeroGpuLegacyStats::default(),
         }
     }
@@ -107,6 +145,7 @@ impl Default for AeroGpuLegacyRegs {
 pub struct AeroGpuLegacyDeviceConfig {
     pub vendor_id: u16,
     pub device_id: u16,
+    pub vblank_hz: Option<u32>,
 }
 
 impl Default for AeroGpuLegacyDeviceConfig {
@@ -114,6 +153,7 @@ impl Default for AeroGpuLegacyDeviceConfig {
         Self {
             vendor_id: AEROGPU_LEGACY_PCI_VENDOR_ID,
             device_id: AEROGPU_LEGACY_PCI_DEVICE_ID,
+            vblank_hz: Some(60),
         }
     }
 }
@@ -125,6 +165,10 @@ pub struct AeroGpuLegacyPciDevice {
 
     pub regs: AeroGpuLegacyRegs,
     irq_level: bool,
+
+    boot_time: Instant,
+    vblank_interval: Option<Duration>,
+    next_vblank: Option<Instant>,
 }
 
 impl AeroGpuLegacyPciDevice {
@@ -145,12 +189,31 @@ impl AeroGpuLegacyPciDevice {
         // Interrupt pin INTA#.
         config_space.write(0x3d, 1, 1);
 
+        let vblank_interval = cfg.vblank_hz.and_then(|hz| {
+            if hz == 0 {
+                return None;
+            }
+            // Use ceil division to keep 60 Hz at 16_666_667 ns (rather than truncating to 16_666_666).
+            let period_ns = (1_000_000_000u64 + hz as u64 - 1) / hz as u64;
+            Some(Duration::from_nanos(period_ns))
+        });
+
+        let mut regs = AeroGpuLegacyRegs::default();
+        if let Some(interval) = vblank_interval {
+            regs.scanout0_vblank_period_ns = interval.as_nanos().min(u32::MAX as u128) as u32;
+        } else {
+            regs.features &= !FEATURE_VBLANK;
+        }
+
         Self {
             config: config_space,
             bar0,
             bar0_probe: false,
-            regs: AeroGpuLegacyRegs::default(),
+            regs,
             irq_level: false,
+            boot_time: Instant::now(),
+            vblank_interval,
+            next_vblank: None,
         }
     }
 
@@ -168,6 +231,41 @@ impl AeroGpuLegacyPciDevice {
 
     fn update_irq_level(&mut self) {
         self.irq_level = self.regs.int_status != 0;
+    }
+
+    pub fn tick(&mut self, now: Instant) {
+        let Some(interval) = self.vblank_interval else {
+            return;
+        };
+        if !self.regs.scanout.enable {
+            return;
+        }
+        let mut next = self.next_vblank.unwrap_or(now + interval);
+        if now < next {
+            self.next_vblank = Some(next);
+            return;
+        }
+
+        let mut ticks = 0u32;
+        while now >= next {
+            self.regs.scanout0_vblank_seq = self.regs.scanout0_vblank_seq.wrapping_add(1);
+            let t_ns = next.saturating_duration_since(self.boot_time).as_nanos();
+            self.regs.scanout0_vblank_time_ns = t_ns.min(u64::MAX as u128) as u64;
+
+            // Only latch the vblank IRQ status bit while the guest has it enabled.
+            if (self.regs.irq_enable & irq_bits::SCANOUT_VBLANK) != 0 {
+                self.regs.irq_status |= irq_bits::SCANOUT_VBLANK;
+            }
+
+            next += interval;
+            ticks += 1;
+            if ticks >= 1024 {
+                next = now + interval;
+                break;
+            }
+        }
+
+        self.next_vblank = Some(next);
     }
 
     fn map_scanout_format(value: u32) -> AeroGpuFormat {
@@ -233,6 +331,7 @@ impl AeroGpuLegacyPciDevice {
 
         if fence_advanced {
             self.regs.int_status |= int_bits::FENCE;
+            self.regs.irq_status |= irq_bits::FENCE;
         }
 
         self.update_irq_level();
@@ -242,6 +341,8 @@ impl AeroGpuLegacyPciDevice {
         match offset {
             mmio::MAGIC => AEROGPU_LEGACY_MMIO_MAGIC,
             mmio::VERSION => AEROGPU_LEGACY_MMIO_VERSION,
+            mmio::FEATURES_LO => (self.regs.features & 0xffff_ffff) as u32,
+            mmio::FEATURES_HI => (self.regs.features >> 32) as u32,
 
             mmio::RING_BASE_LO => self.regs.ring_base_gpa as u32,
             mmio::RING_BASE_HI => (self.regs.ring_base_gpa >> 32) as u32,
@@ -263,6 +364,15 @@ impl AeroGpuLegacyPciDevice {
                 _ => 0,
             },
             mmio::SCANOUT_ENABLE => self.regs.scanout.enable as u32,
+
+            mmio::IRQ_STATUS => self.regs.irq_status,
+            mmio::IRQ_ENABLE => self.regs.irq_enable,
+
+            mmio::SCANOUT0_VBLANK_SEQ_LO => self.regs.scanout0_vblank_seq as u32,
+            mmio::SCANOUT0_VBLANK_SEQ_HI => (self.regs.scanout0_vblank_seq >> 32) as u32,
+            mmio::SCANOUT0_VBLANK_TIME_NS_LO => self.regs.scanout0_vblank_time_ns as u32,
+            mmio::SCANOUT0_VBLANK_TIME_NS_HI => (self.regs.scanout0_vblank_time_ns >> 32) as u32,
+            mmio::SCANOUT0_VBLANK_PERIOD_NS => self.regs.scanout0_vblank_period_ns,
 
             _ => 0,
         }
@@ -294,6 +404,9 @@ impl AeroGpuLegacyPciDevice {
 
             mmio::INT_ACK => {
                 self.regs.int_status &= !value;
+                if (value & int_bits::FENCE) != 0 {
+                    self.regs.irq_status &= !irq_bits::FENCE;
+                }
                 self.update_irq_level();
             }
 
@@ -309,7 +422,24 @@ impl AeroGpuLegacyPciDevice {
             mmio::SCANOUT_WIDTH => self.regs.scanout.width = value,
             mmio::SCANOUT_HEIGHT => self.regs.scanout.height = value,
             mmio::SCANOUT_FORMAT => self.regs.scanout.format = Self::map_scanout_format(value),
-            mmio::SCANOUT_ENABLE => self.regs.scanout.enable = value != 0,
+            mmio::SCANOUT_ENABLE => {
+                let new_enable = value != 0;
+                if self.regs.scanout.enable && !new_enable {
+                    self.next_vblank = None;
+                    self.regs.irq_status &= !irq_bits::SCANOUT_VBLANK;
+                }
+                self.regs.scanout.enable = new_enable;
+            }
+
+            mmio::IRQ_ENABLE => {
+                self.regs.irq_enable = value;
+                if (value & irq_bits::SCANOUT_VBLANK) == 0 {
+                    self.regs.irq_status &= !irq_bits::SCANOUT_VBLANK;
+                }
+            }
+            mmio::IRQ_ACK => {
+                self.regs.irq_status &= !value;
+            }
 
             // Ignore writes to read-only / unknown registers.
             _ => {}
@@ -386,4 +516,3 @@ impl MmioDevice for AeroGpuLegacyPciDevice {
         self.mmio_write_dword(mem, aligned, merged);
     }
 }
-
