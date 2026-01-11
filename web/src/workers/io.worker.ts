@@ -673,6 +673,8 @@ function setL2TunnelConnectionState(next: L2TunnelForwarderConnectionState, deta
 }
 
 function maybeEmitL2TunnelStatsLog(nowMs: number): void {
+  // If networking is disabled (no proxy URL), avoid spamming periodic logs.
+  if (l2TunnelProxyUrl === null) return;
   const fwd = l2TunnelForwarder;
   if (!fwd) return;
   if (nowMs < l2NextStatsLogMs) return;
