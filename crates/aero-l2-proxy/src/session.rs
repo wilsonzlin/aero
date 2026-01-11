@@ -179,11 +179,10 @@ async fn close_shutting_down(ws_out_tx: &mpsc::Sender<Message>) {
     };
 
     // Best-effort: if the sender/connection is already gone, ignore.
-    let _ = ws_out_tx
-        .try_send(Message::Close(Some(CloseFrame {
-            code: CLOSE_CODE_GOING_AWAY,
-            reason,
-        })));
+    let _ = ws_out_tx.try_send(Message::Close(Some(CloseFrame {
+        code: CLOSE_CODE_GOING_AWAY,
+        reason,
+    })));
 }
 
 fn truncate_utf8(input: &str, max_bytes: usize) -> String {

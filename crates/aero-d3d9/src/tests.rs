@@ -223,7 +223,10 @@ fn dxbc_container_missing_shdr_is_an_error() {
     let container = dxbc::build_container(&[(dxbc::FourCC::RDEF, &dummy_rdef)]);
 
     let err = dxbc::extract_shader_bytecode(&container).unwrap_err();
-    assert!(matches!(err, dxbc::DxbcError::MissingShaderChunk), "{err:?}");
+    assert!(
+        matches!(err, dxbc::DxbcError::MissingShaderChunk),
+        "{err:?}"
+    );
 }
 
 #[test]

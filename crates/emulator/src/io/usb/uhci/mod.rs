@@ -241,15 +241,13 @@ impl UhciController {
             REG_PORTSC1_HI => {
                 // Use a masked write so high-byte stores don't inadvertently clear W1C bits in
                 // the low byte (CSC/PEDC).
-                self.hub
-                    .write_portsc_masked(0, (value as u16) << 8, 0xff00);
+                self.hub.write_portsc_masked(0, (value as u16) << 8, 0xff00);
             }
             REG_PORTSC2 => {
                 self.hub.write_portsc_masked(1, value as u16, 0x00ff);
             }
             REG_PORTSC2_HI => {
-                self.hub
-                    .write_portsc_masked(1, (value as u16) << 8, 0xff00);
+                self.hub.write_portsc_masked(1, (value as u16) << 8, 0xff00);
             }
             _ => {}
         }

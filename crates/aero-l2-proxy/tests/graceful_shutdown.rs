@@ -32,7 +32,10 @@ fn test_config(bind_addr: SocketAddr, shutdown_grace: Duration) -> ProxyConfig {
 
 #[tokio::test]
 async fn readyz_drains_on_shutdown() {
-    let cfg = test_config(SocketAddr::from(([127, 0, 0, 1], 0)), Duration::from_millis(3000));
+    let cfg = test_config(
+        SocketAddr::from(([127, 0, 0, 1], 0)),
+        Duration::from_millis(3000),
+    );
     let handle = start_server(cfg).await.unwrap();
     let addr = handle.local_addr();
 
