@@ -253,5 +253,39 @@ describe("WebHID guest port allocation (UHCI 2-port root)", () => {
     expect(target.messages[2]).toMatchObject({ type: "hid:detach", guestPort: 0 });
     expect(target.messages[3]).toMatchObject({ type: "hid:attach", guestPort: 0 });
   });
-});
 
+  it("forgets known devices without calling requestDevice()", async () => {
+    const device = {
+      productName: "Forgettable Device",
+      vendorId: 0x0003,
+      productId: 0x0004,
+      opened: false,
+      open: vi.fn(async () => {}),
+      close: vi.fn(async () => {}),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      forget: vi.fn(async () => {}),
+    } as unknown as HIDDevice;
+
+    const hid = new FakeHid({
+      getDevices: vi.fn(async () => [device]),
+      requestDevice: vi.fn(async () => []),
+    });
+    stubNavigator({ hid } as any);
+    stubDocument(new FakeDocument());
+
+    const host = (document as any).createElement("div") as FakeElement;
+    const manager = new WebHidPassthroughManager();
+    mountWebHidPassthroughPanel(host as any, manager);
+
+    await manager.refreshKnownDevices();
+
+    const forgetButtons = findAll(host, (el) => el.tagName === "BUTTON" && el.textContent === "Forget");
+    expect(forgetButtons.length).toBe(1);
+
+    await (forgetButtons[0].onclick as () => Promise<void>)();
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((device as any).forget).toHaveBeenCalledTimes(1);
+    expect((hid.requestDevice as unknown as ReturnType<typeof vi.fn>).mock.calls.length).toBe(0);
+  });
+});

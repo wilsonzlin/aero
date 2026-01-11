@@ -80,17 +80,48 @@ export function renderWebUsbBrokerPanel(broker: UsbBroker): HTMLElement {
     },
   }) as HTMLButtonElement;
 
+  const forgetButton = el("button", {
+    text: "Forget selected device",
+    disabled: "true",
+    onclick: async () => {
+      clearError();
+      try {
+        await broker.forgetSelectedDevice();
+        await refreshKnownDevices();
+      } catch (err) {
+        showError(err);
+      } finally {
+        updateForgetButton();
+      }
+    },
+  }) as HTMLButtonElement;
+  forgetButton.hidden = true;
+
   let selected: SelectedInfo | null = null;
+
+  const updateForgetButton = (): void => {
+    if (!supported || !selected) {
+      forgetButton.hidden = true;
+      forgetButton.disabled = true;
+      return;
+    }
+
+    const canForget = broker.canForgetSelectedDevice();
+    forgetButton.hidden = !canForget;
+    forgetButton.disabled = !canForget;
+  };
 
   const setStatus = (info: SelectedInfo | null): void => {
     selected = info;
     if (!info) {
       status.textContent = "Selected device: (none)";
       detachButton.disabled = true;
+      updateForgetButton();
       return;
     }
     status.textContent = `Selected device: ${info.productName ? `${info.productName} ` : ""}(vid=${hex16(info.vendorId)} pid=${hex16(info.productId)})`;
     detachButton.disabled = false;
+    updateForgetButton();
   };
 
   const renderKnownDevices = (devices: USBDevice[]): void => {
@@ -209,6 +240,7 @@ export function renderWebUsbBrokerPanel(broker: UsbBroker): HTMLElement {
     class: "mono",
     text:
       "WebUSB permissions persist per-origin; devices granted via the chooser will appear under “Known devices”. " +
+      "Some Chromium builds support revoking permissions via “Forget selected device”; otherwise, use your browser's site settings. " +
       "The main thread owns WebUSB; workers send usb.action messages and receive usb.completion replies.",
   });
 
@@ -218,7 +250,7 @@ export function renderWebUsbBrokerPanel(broker: UsbBroker): HTMLElement {
     el("h2", { text: "WebUSB passthrough broker" }),
     hint,
     el("div", { class: "row" }, selectButton, refreshButton),
-    el("div", { class: "row" }, detachButton),
+    el("div", { class: "row" }, detachButton, forgetButton),
     status,
     el("h4", { text: "Known devices (navigator.usb.getDevices())" }),
     knownList,

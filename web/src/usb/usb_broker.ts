@@ -23,6 +23,15 @@ type QueueItem = {
   resolve: (completion: UsbHostCompletion) => void;
 };
 
+type UsbForgettableDevice = USBDevice & { forget: () => Promise<void> };
+
+function canForgetUsbDevice(device: USBDevice): device is UsbForgettableDevice {
+  // `USBDevice.forget()` is currently Chromium-specific. Keep this check tolerant
+  // so the broker continues to work on browsers without the API.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return typeof (device as any).forget === "function";
+}
+
 function createDeferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((r) => {
@@ -248,6 +257,39 @@ export class UsbBroker {
     const msg: UsbSelectedMessage = { type: "usb.selected", ok: true, info: this.selectedInfo };
     this.broadcast(msg);
     return this.selectedInfo;
+  }
+
+  canForgetSelectedDevice(): boolean {
+    return this.device !== null && canForgetUsbDevice(this.device);
+  }
+
+  async forgetSelectedDevice(): Promise<void> {
+    const device = this.device;
+    if (!device) {
+      throw new Error("WebUSB device not selected.");
+    }
+    if (!canForgetUsbDevice(device)) {
+      throw new Error("USBDevice.forget() is unavailable in this browser.");
+    }
+
+    // Prevent any further actions from racing with forget().
+    this.resetSelectedDevice("WebUSB device forgotten.");
+
+    // WebHID/WebUSB forget flows are more reliable when the device is closed first.
+    try {
+      await device.close();
+    } catch {
+      // Best-effort; proceed to forget().
+    }
+
+    await device.forget();
+
+    // Return to the initial "no device selected" state (no sticky disconnect error).
+    this.disconnectError = null;
+    this.disconnectSignal = createDeferred<string>();
+
+    this.broadcast({ type: "usb.selected", ok: false });
+    this.emitDeviceChange();
   }
 
   async execute(action: UsbHostAction): Promise<UsbHostCompletion> {

@@ -169,6 +169,8 @@ export function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
       textContent: "./webusb_diagnostics.html",
     }),
     ".",
+    document.createElement("br"),
+    "To revoke access, use “Forget permission” (if available) or remove this site's USB permissions in your browser settings.",
   );
 
   const requestButton = document.createElement("button");
@@ -204,6 +206,12 @@ export function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
   listButton.type = "button";
   listButton.textContent = "List permitted devices (getDevices)";
 
+  const forgetButton = document.createElement("button");
+  forgetButton.type = "button";
+  forgetButton.textContent = "Forget permission";
+  forgetButton.hidden = true;
+  forgetButton.disabled = true;
+
   const workerProbeButton = document.createElement("button");
   workerProbeButton.type = "button";
   workerProbeButton.textContent = "Probe worker WebUSB";
@@ -214,7 +222,7 @@ export function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
 
   const actions = document.createElement("div");
   actions.className = "row";
-  actions.append(vidLabel, vendorIdInput, pidLabel, productIdInput, requestButton, openButton, listButton);
+  actions.append(vidLabel, vendorIdInput, pidLabel, productIdInput, requestButton, openButton, listButton, forgetButton);
 
   const workerActions = document.createElement("div");
   workerActions.className = "row";
@@ -326,6 +334,8 @@ export function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
       openButton.disabled = true;
       listButton.disabled = true;
       cloneButton.disabled = true;
+      forgetButton.disabled = true;
+      forgetButton.hidden = true;
       vendorIdInput.disabled = true;
       productIdInput.disabled = true;
       return;
@@ -339,6 +349,8 @@ export function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
       openButton.disabled = true;
       listButton.disabled = false;
       cloneButton.disabled = true;
+      forgetButton.disabled = true;
+      forgetButton.hidden = true;
       return;
     }
 
@@ -346,9 +358,62 @@ export function renderWebUsbPanel(report: PlatformFeatureReport): HTMLElement {
     openButton.disabled = false;
     listButton.disabled = false;
     cloneButton.disabled = false;
+
+    // `USBDevice.forget()` is currently Chromium-specific; hide the action when absent.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const canForget = typeof (selected as any).forget === "function";
+    forgetButton.hidden = !canForget;
+    forgetButton.disabled = !canForget;
   };
 
   refreshStatus();
+
+  forgetButton.onclick = async () => {
+    clearError();
+    output.textContent = "";
+
+    const device = selected;
+    if (!device) {
+      showMessage("No device selected. Click “Request USB device” first.");
+      refreshStatus();
+      return;
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const forget = (device as any).forget as unknown;
+    if (typeof forget !== "function") {
+      showMessage("USBDevice.forget() is unavailable in this browser.");
+      refreshStatus();
+      return;
+    }
+
+    requestButton.disabled = true;
+    openButton.disabled = true;
+    listButton.disabled = true;
+    cloneButton.disabled = true;
+    forgetButton.disabled = true;
+    status.textContent = "Forgetting device permission…";
+
+    try {
+      if (device.opened) {
+        try {
+          await device.close();
+        } catch (err) {
+          console.warn("WebUSB device.close() before forget() failed", err);
+        }
+      }
+
+      await (forget as () => Promise<void>).call(device);
+      selected = null;
+      status.textContent = "Device permission revoked.";
+    } catch (err) {
+      showError(err);
+      console.error(err);
+    } finally {
+      requestButton.disabled = false;
+      refreshStatus();
+    }
+  };
 
   requestButton.onclick = async () => {
     clearError();
