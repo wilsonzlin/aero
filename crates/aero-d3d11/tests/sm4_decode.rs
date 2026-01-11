@@ -678,3 +678,49 @@ fn decodes_sample_and_sample_l() {
     assert_eq!(module.model, ShaderModel { major: 5, minor: 0 });
     assert_eq!(module.decls, vec![Sm4Decl::Unknown { opcode: DCL_DUMMY }]);
 }
+
+#[test]
+fn decodes_ld_texture_load() {
+    let mut body = Vec::<u32>::new();
+
+    // ld r0, r1, t0
+    let mut ld = vec![opcode_token(OPCODE_LD, 1 + 2 + 2 + 2)];
+    ld.extend_from_slice(&reg_dst(OPERAND_TYPE_TEMP, 0, WriteMask::XYZW));
+    ld.extend_from_slice(&reg_src(
+        OPERAND_TYPE_TEMP,
+        &[1],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    ld.extend_from_slice(&reg_src(
+        OPERAND_TYPE_RESOURCE,
+        &[0],
+        Swizzle::XYZW,
+        OperandModifier::None,
+    ));
+    body.extend_from_slice(&ld);
+
+    body.push(opcode_token(OPCODE_RET, 1));
+
+    let tokens = make_sm5_program_tokens(0, &body);
+    let program =
+        Sm4Program::parse_program_tokens(&tokens_to_bytes(&tokens)).expect("parse_program_tokens");
+    let module = program.decode().expect("decode");
+
+    assert_eq!(
+        module.instructions[0],
+        Sm4Inst::Ld {
+            dst: dst(RegFile::Temp, 0, WriteMask::XYZW),
+            coord: src_reg(RegFile::Temp, 1),
+            texture: TextureRef { slot: 0 },
+            lod: SrcOperand {
+                kind: SrcKind::Register(RegisterRef {
+                    file: RegFile::Temp,
+                    index: 1
+                }),
+                swizzle: Swizzle::ZZZZ,
+                modifier: OperandModifier::None,
+            },
+        }
+    );
+}

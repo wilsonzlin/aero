@@ -180,7 +180,6 @@ pub fn decode_program(program: &Sm4Program) -> Result<Sm4Module, Sm4DecodeError>
         instructions,
     })
 }
-
 fn decode_instruction(
     opcode: u32,
     inst_toks: &[u32],
@@ -274,6 +273,7 @@ fn decode_instruction(
             Ok(Sm4Inst::Ret)
         }
         OPCODE_SAMPLE | OPCODE_SAMPLE_L => decode_sample_like(opcode, saturate, &mut r),
+        OPCODE_LD => decode_ld(saturate, &mut r),
         other => {
             // Structural fallback for sample/sample_l when opcode IDs differ.
             if let Some(sample) = try_decode_sample_like(saturate, inst_toks, at)? {
@@ -282,6 +282,43 @@ fn decode_instruction(
             Ok(Sm4Inst::Unknown { opcode: other })
         }
     }
+}
+
+fn decode_ld(saturate: bool, r: &mut InstrReader<'_>) -> Result<Sm4Inst, Sm4DecodeError> {
+    let mut dst = decode_dst(r)?;
+    dst.saturate = saturate;
+    let coord = decode_src(r)?;
+    let texture = decode_texture_ref(r)?;
+
+    // Some `ld` forms may include an explicit LOD operand, but for the common
+    // `Texture2D.Load(int3(x,y,mip))` encoding it is part of `coord.z`. Model that
+    // by defaulting the LOD operand to the third component of the coordinate.
+    let default_lod_sel = coord.swizzle.0[2];
+    let mut lod = coord.clone();
+    lod.swizzle = Swizzle([default_lod_sel; 4]);
+
+    if r.is_eof() {
+        return Ok(Sm4Inst::Ld {
+            dst,
+            coord,
+            texture,
+            lod,
+        });
+    }
+
+    // Optional explicit LOD operand.
+    let explicit_lod = decode_src(r)?;
+    if r.is_eof() {
+        return Ok(Sm4Inst::Ld {
+            dst,
+            coord,
+            texture,
+            lod: explicit_lod,
+        });
+    }
+
+    // Unsupported `ld` variant (e.g. with offsets); preserve as unknown.
+    Ok(Sm4Inst::Unknown { opcode: OPCODE_LD })
 }
 
 fn decode_decl(opcode: u32, inst_toks: &[u32], at: usize) -> Result<Sm4Decl, Sm4DecodeError> {

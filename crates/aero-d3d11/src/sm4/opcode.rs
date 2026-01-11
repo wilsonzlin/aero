@@ -39,6 +39,8 @@ pub const OPCODE_RET: u32 = 0x3e;
 // numeric IDs but also support structural detection in the decoder.
 pub const OPCODE_SAMPLE: u32 = 0x45;
 pub const OPCODE_SAMPLE_L: u32 = 0x46;
+/// `ld` (Resource load; used by `Texture2D.Load`).
+pub const OPCODE_LD: u32 = 0x4c;
 
 // ---- Operand token bitfields ----
 

@@ -121,6 +121,20 @@ pub enum Sm4Inst {
         sampler: SamplerRef,
         lod: SrcOperand,
     },
+    /// `ld dest, coord, t#` (e.g. `Texture2D.Load`).
+    ///
+    /// Note: `coord` and `lod` are integer-typed in SM4/SM5. The current IR does not
+    /// model integer-typed temporaries, so the translator treats the underlying 32-bit
+    /// values as raw bits and uses `bitcast<i32>` when emitting WGSL.
+    Ld {
+        dst: DstOperand,
+        /// Texel coordinate (x/y in `.xy`).
+        coord: SrcOperand,
+        texture: TextureRef,
+        /// Mip level. For common `Texture2D.Load(int3(x,y,mip))` forms this is derived
+        /// from the third component of `coord`.
+        lod: SrcOperand,
+    },
     /// A decoded instruction that the IR producer does not model yet.
     ///
     /// This allows the WGSL backend to fail with a precise opcode + instruction
