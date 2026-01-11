@@ -19,11 +19,10 @@ void main() {
   vec4 color = texture(u_frame, v_uv);
 
   if (u_cursor_enable != 0 && u_cursor_size.x > 0 && u_cursor_size.y > 0) {
-    // v_uv has a bottom-left origin (OpenGL/WebGL), but Aero cursor coordinates are top-left
-    // to match D3D/Windows. Flip Y for cursor math.
+    // `v_uv` uses a top-left origin (see `blit.vert.glsl`) to match D3D/Windows,
+    // so we can use it directly for cursor math.
     ivec2 srcSize = max(u_src_size, ivec2(1, 1));
-    vec2 uv_tl = vec2(v_uv.x, 1.0 - v_uv.y);
-    ivec2 screenPx = ivec2(uv_tl * vec2(srcSize));
+    ivec2 screenPx = ivec2(v_uv * vec2(srcSize));
     screenPx = clamp(screenPx, ivec2(0, 0), srcSize - ivec2(1, 1));
 
     ivec2 origin = u_cursor_pos - u_cursor_hot;
