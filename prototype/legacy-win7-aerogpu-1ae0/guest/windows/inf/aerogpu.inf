@@ -1,3 +1,15 @@
+; ---------------------------------------------------------------------------
+; NOTE: ARCHIVED / PROTOTYPE DRIVER PACKAGE (VEN_1AE0)
+;
+; This INF is kept for historical reference and is NOT the supported Win7 AeroGPU
+; driver package.
+;
+; On Win7 x64 this prototype stack does not include/install a WOW64/x86 UMD, so
+; 32-bit D3D9 applications will fail to create devices.
+;
+; Use the maintained package under drivers/aerogpu/packaging/win7/ instead.
+; ---------------------------------------------------------------------------
+;
 ; AeroGPU WDDM 1.1 display + D3D9 UMD driver package (Windows 7)
 ;
 ; This is a minimal, test-signing friendly INF. It installs:
@@ -61,6 +73,8 @@ ServiceBinary=%12%\aerogpu_kmd.sys
 [AeroGPU.AddReg]
 ; UMD registration
 HKR,,UserModeDriverName,%REG_SZ%,aerogpu_d3d9umd.dll
+; NOTE: This legacy prototype does not ship an x86/WOW64 UMD. This key is a leftover
+; from early experimentation and does not make 32-bit D3D9 apps work on Win7 x64.
 HKR,,UserModeDriverNameWow,%REG_SZ%,aerogpu_d3d9umd.dll
 
 ; Prefer this driver when matching by class code.

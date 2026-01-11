@@ -1,5 +1,15 @@
 # AeroGPU Windows 7 Driver Install (deprecated 1AE0 prototype)
 
+> [!WARNING]
+> **Archived prototype:** this driver stack is kept for historical reference and is **not** the supported Win7 AeroGPU driver package.
+>
+> - Targets the deprecated AeroGPU `VEN_1AE0` prototype device and does not match the supported AeroGPU ABIs (`VEN_A3A0` / `VEN_1AED`).
+> - On Win7 x64 it is **not WOW64-complete** (no x86 UMD). **32-bit D3D9 apps will fail.**
+> - Use the supported Win7 driver package under [`drivers/aerogpu/packaging/win7/`](../../../../../drivers/aerogpu/packaging/win7/README.md)
+>   and stage via [`drivers/aerogpu/build/stage_packaging_win7.cmd`](../../../../../drivers/aerogpu/build/stage_packaging_win7.cmd).
+>
+> The remainder of this document describes the archived prototype build/install flow.
+
 This directory contains a minimal Windows 7 WDDM 1.1 driver stack for the **deprecated**
 AeroGPU prototype PCI device (vendor 1AE0).
 
@@ -61,5 +71,5 @@ If you generate a catalog (`aerogpu.cat`) via `inf2cat`, include it as well.
 
 ## Notes
 
-- PCI IDs: the default INF matches `PCI\\VEN_1AE0&DEV_0001` and also matches by display class code (`PCI\\CC_030000`) to simplify bringup. If the emulator uses different IDs, update both `prototype/legacy-win7-aerogpu-1ae0/guest/windows/common/aerogpu_protocol.h` and `prototype/legacy-win7-aerogpu-1ae0/guest/windows/inf/aerogpu.inf` together.
+- PCI IDs: the default INF matches `PCI\VEN_1AE0&DEV_0001` and also matches by display class code (`PCI\CC_030000`) to simplify bringup. If the emulator uses different IDs, update both `prototype/legacy-win7-aerogpu-1ae0/guest/windows/common/aerogpu_protocol.h` and `prototype/legacy-win7-aerogpu-1ae0/guest/windows/inf/aerogpu.inf` together.
 - This is a minimal bring-up stack. The UMD currently provides the escape submission plumbing and is expected to grow into a functional D3D9 driver that serializes D3D9 state + draws into the AeroGPU command stream.

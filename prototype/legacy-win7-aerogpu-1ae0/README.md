@@ -4,6 +4,9 @@ This directory contains a **deprecated** AeroGPU prototype stack that used PCI v
 It predates (and does **not** match) the supported AeroGPU device models/protocols in this
 repository.
 
+On Windows 7 x64, the archived 1AE0 Windows driver package is also **not WOW64-complete**
+(it does not ship/install an x86 UMD), so 32-bit D3D9 apps will fail.
+
 Supported AeroGPU ABIs in this repo:
 
 - **Legacy bring-up ABI (1AED)**: `drivers/aerogpu/protocol/aerogpu_protocol.h` and the emulator
@@ -19,3 +22,6 @@ Contents:
   `aerogpu-1ae0-prototype` crate feature).
 
 Do not use this prototype for new development.
+
+For the supported Win7 driver package + install workflow, start at:
+`drivers/aerogpu/packaging/win7/README.md` (and `drivers/aerogpu/build/stage_packaging_win7.cmd`).
