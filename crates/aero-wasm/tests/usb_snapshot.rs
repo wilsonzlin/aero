@@ -186,7 +186,8 @@ fn usb_snapshot_restore_rejects_oversized_payload() {
     {
         let mut guest = vec![0u8; 0x8000];
         let guest_base = guest.as_mut_ptr() as u32;
-        let mut runtime = UhciRuntime::new(guest_base, guest.len() as u32).expect("new UhciRuntime");
+        let mut runtime =
+            UhciRuntime::new(guest_base, guest.len() as u32).expect("new UhciRuntime");
         assert!(
             runtime.restore_state(&oversized).is_err(),
             "expected restore_state to reject oversized payload"
@@ -204,7 +205,10 @@ fn usb_snapshot_restore_rejects_truncated_bytes() {
             .expect("new UhciControllerBridge");
 
         let snap = bridge.snapshot_state().to_vec();
-        assert!(snap.len() >= 16, "expected snapshot to include header bytes");
+        assert!(
+            snap.len() >= 16,
+            "expected snapshot to include header bytes"
+        );
 
         for len in [0usize, 1, snap.len().saturating_sub(1)] {
             assert!(
@@ -218,7 +222,10 @@ fn usb_snapshot_restore_rejects_truncated_bytes() {
     {
         let mut bridge = WebUsbUhciBridge::new(0);
         let snap = bridge.snapshot_state().to_vec();
-        assert!(snap.len() >= 16, "expected snapshot to include header bytes");
+        assert!(
+            snap.len() >= 16,
+            "expected snapshot to include header bytes"
+        );
         for len in [0usize, 1, snap.len().saturating_sub(1)] {
             assert!(
                 bridge.restore_state(&snap[..len]).is_err(),
@@ -231,9 +238,13 @@ fn usb_snapshot_restore_rejects_truncated_bytes() {
     {
         let mut guest = vec![0u8; 0x8000];
         let guest_base = guest.as_mut_ptr() as u32;
-        let mut runtime = UhciRuntime::new(guest_base, guest.len() as u32).expect("new UhciRuntime");
+        let mut runtime =
+            UhciRuntime::new(guest_base, guest.len() as u32).expect("new UhciRuntime");
         let snap = runtime.snapshot_state().to_vec();
-        assert!(snap.len() >= 16, "expected snapshot to include header bytes");
+        assert!(
+            snap.len() >= 16,
+            "expected snapshot to include header bytes"
+        );
         for len in [0usize, 1, snap.len().saturating_sub(1)] {
             assert!(
                 runtime.restore_state(&snap[..len]).is_err(),
