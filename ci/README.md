@@ -43,7 +43,7 @@ See:
   - `ci/driver-package.schema.json`
   - Template manifests under `drivers/_template/`:
     - `ci-package.README.md` (field reference)
-    - `ci-package.json` (starter template; add `infFiles` if you need explicit INF selection)
+    - `ci-package.json` (starter template; replace/remove the `infFiles` placeholder)
     - `ci-package.inf-wow64-example.json` (INF selection + WOW64 payload DLL example)
     - `ci-package.wdf-example.json` (WDF coinstaller example)
 
