@@ -7,6 +7,7 @@ import { formatWebUsbError } from "../platform/webusb_troubleshooting";
 import { isWebUsbProtectedInterfaceClass } from "../platform/webusb";
 
 import type { SetupPacket, UsbHostAction, UsbHostCompletion } from "./usb_passthrough_types";
+import { hex8 } from "./usb_hex";
 
 export type { SetupPacket, UsbHostAction, UsbHostCompletion } from "./usb_passthrough_types";
 
@@ -460,7 +461,7 @@ export class WebUsbBackend {
               await this.device.clearHalt(direction, endpointNumber);
             } catch (err) {
               throw wrapWithCause(
-                `Failed to clear HALT for endpoint 0x${endpointAddress.toString(16)} (ep ${endpointNumber})`,
+                `Failed to clear HALT for endpoint ${hex8(endpointAddress)} (ep ${endpointNumber})`,
                 err,
               );
             }
