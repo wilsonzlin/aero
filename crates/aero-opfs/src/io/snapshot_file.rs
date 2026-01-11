@@ -237,11 +237,18 @@ where
     pub async fn open(path: &str, create: bool) -> io::Result<Self> {
         use crate::platform::storage::opfs as opfs_platform;
 
+        if !opfs_platform::is_worker_scope() {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "OPFS sync access handles are unavailable; this API requires DedicatedWorkerGlobalScope",
+            ));
+        }
+
         let file = opfs_platform::open_file(path, create)
             .await
             .map_err(platform_handle::disk_error_to_io)?;
 
-        if !opfs_platform::is_worker_scope() || !opfs_platform::file_handle_supports_sync_access_handle(&file) {
+        if !opfs_platform::file_handle_supports_sync_access_handle(&file) {
             return Err(io::Error::new(
                 io::ErrorKind::Unsupported,
                 "OPFS sync access handles are unavailable; this API requires DedicatedWorkerGlobalScope",
