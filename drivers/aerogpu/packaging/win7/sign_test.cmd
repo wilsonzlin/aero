@@ -228,33 +228,35 @@ if exist "aerogpu_dx11.inf" (
 rem Optional: generate catalogs for legacy bring-up INFs under legacy\.
 rem These are not shipped by default, but are used for compatibility/regression installs.
 if exist "legacy\aerogpu.inf" (
-  set "INF2CAT_OUTDIR=%PACKAGE_DIR%legacy"
   if /i "%INF2CAT_ARCH%"=="amd64" (
-    call :Inf2CatOne "legacy\aerogpu.inf" "aerogpu.cat" aerogpu.sys aerogpu_d3d9.dll aerogpu_d3d9_x64.dll
+    call :Inf2CatLegacyOne "legacy\aerogpu.inf" "aerogpu.cat" aerogpu.sys aerogpu_d3d9.dll aerogpu_d3d9_x64.dll
   ) else (
-    call :Inf2CatOne "legacy\aerogpu.inf" "aerogpu.cat" aerogpu.sys aerogpu_d3d9.dll
+    call :Inf2CatLegacyOne "legacy\aerogpu.inf" "aerogpu.cat" aerogpu.sys aerogpu_d3d9.dll
   )
-  if not "!ERRORLEVEL!"=="0" goto :Inf2CatFail
-  set "INF2CAT_OUTDIR="
+  if not "!ERRORLEVEL!"=="0" (
+    echo [WARN] Failed to generate legacy\aerogpu.cat (legacy INF installs may fail).
+  )
 )
 if exist "legacy\aerogpu_dx11.inf" (
-  set "INF2CAT_OUTDIR=%PACKAGE_DIR%legacy"
   if /i "%INF2CAT_ARCH%"=="amd64" (
     if exist "aerogpu_d3d10.dll" if exist "aerogpu_d3d10_x64.dll" (
-      call :Inf2CatOne "legacy\aerogpu_dx11.inf" "aerogpu_dx11.cat" aerogpu.sys aerogpu_d3d9.dll aerogpu_d3d9_x64.dll aerogpu_d3d10.dll aerogpu_d3d10_x64.dll
-      if not "!ERRORLEVEL!"=="0" goto :Inf2CatFail
+      call :Inf2CatLegacyOne "legacy\aerogpu_dx11.inf" "aerogpu_dx11.cat" aerogpu.sys aerogpu_d3d9.dll aerogpu_d3d9_x64.dll aerogpu_d3d10.dll aerogpu_d3d10_x64.dll
+      if not "!ERRORLEVEL!"=="0" (
+        echo [WARN] Failed to generate legacy\aerogpu_dx11.cat (legacy DX11 INF installs may fail).
+      )
     ) else (
       echo [INFO] Skipping legacy\aerogpu_dx11.inf catalog generation (optional D3D10/11 UMDs not found).
     )
   ) else (
     if exist "aerogpu_d3d10.dll" (
-      call :Inf2CatOne "legacy\aerogpu_dx11.inf" "aerogpu_dx11.cat" aerogpu.sys aerogpu_d3d9.dll aerogpu_d3d10.dll
-      if not "!ERRORLEVEL!"=="0" goto :Inf2CatFail
+      call :Inf2CatLegacyOne "legacy\aerogpu_dx11.inf" "aerogpu_dx11.cat" aerogpu.sys aerogpu_d3d9.dll aerogpu_d3d10.dll
+      if not "!ERRORLEVEL!"=="0" (
+        echo [WARN] Failed to generate legacy\aerogpu_dx11.cat (legacy DX11 INF installs may fail).
+      )
     ) else (
       echo [INFO] Skipping legacy\aerogpu_dx11.inf catalog generation (optional D3D10/11 UMDs not found).
     )
   )
-  set "INF2CAT_OUTDIR="
 )
 
 rd /s /q "%INF2CAT_TMPBASE%" >nul 2>&1
@@ -310,6 +312,65 @@ if not exist "%INF2CAT_WORK%\%INF2CAT_CAT%" (
 set "INF2CAT_DEST_DIR=%PACKAGE_DIR%"
 if defined INF2CAT_OUTDIR set "INF2CAT_DEST_DIR=%INF2CAT_OUTDIR%"
 copy /y "%INF2CAT_WORK%\%INF2CAT_CAT%" "%INF2CAT_DEST_DIR%\%INF2CAT_CAT%" >nul
+exit /b 0
+
+rem -----------------------------------------------------------------
+rem :Inf2CatLegacyOne
+rem
+rem Generates a catalog for an INF that lives under the legacy\ subdirectory but shares the same
+rem binaries staged into the parent directory. The legacy INFs set SourceDisksNames path to `..`,
+rem so we must preserve the directory structure when running Inf2Cat.
+rem -----------------------------------------------------------------
+:Inf2CatLegacyOne
+set "INF2CAT_INF=%~1"
+set "INF2CAT_CAT=%~2"
+set "INF2CAT_INFBASENAME=%~n1"
+shift
+shift
+
+set "INF2CAT_WORK=%INF2CAT_TMPBASE%\legacy_%INF2CAT_INFBASENAME%_%RANDOM%"
+mkdir "%INF2CAT_WORK%" >nul 2>&1
+if not "%ERRORLEVEL%"=="0" (
+  echo [ERROR] Failed to create: "%INF2CAT_WORK%"
+  exit /b 1
+)
+mkdir "%INF2CAT_WORK%\legacy" >nul 2>&1
+if not "%ERRORLEVEL%"=="0" (
+  echo [ERROR] Failed to create: "%INF2CAT_WORK%\legacy"
+  exit /b 1
+)
+
+copy /y "%INF2CAT_INF%" "%INF2CAT_WORK%\legacy\" >nul
+for %%F in (%*) do (
+  if not exist "%%F" (
+    echo [ERROR] Missing file required by %INF2CAT_INF%: %%F
+    exit /b 1
+  )
+  copy /y "%%F" "%INF2CAT_WORK%\" >nul
+)
+
+echo [INFO] Generating legacy\%INF2CAT_CAT% (from %INF2CAT_INF%)...
+if not defined INF2CAT_OS (
+  echo [ERROR] Internal error: INF2CAT_OS is not set.
+  exit /b 1
+)
+inf2cat.exe /driver:"%INF2CAT_WORK%" /os:%INF2CAT_OS% >nul
+if not "%ERRORLEVEL%"=="0" (
+  echo [ERROR] inf2cat.exe failed for %INF2CAT_INF%.
+  exit /b 1
+)
+
+set "INF2CAT_OUT="
+if exist "%INF2CAT_WORK%\legacy\%INF2CAT_CAT%" set "INF2CAT_OUT=%INF2CAT_WORK%\legacy\%INF2CAT_CAT%"
+if not defined INF2CAT_OUT if exist "%INF2CAT_WORK%\%INF2CAT_CAT%" set "INF2CAT_OUT=%INF2CAT_WORK%\%INF2CAT_CAT%"
+if not defined INF2CAT_OUT (
+  echo [ERROR] inf2cat did not produce "%INF2CAT_CAT%" for %INF2CAT_INF%.
+  exit /b 1
+)
+
+set "INF2CAT_DEST_DIR=%PACKAGE_DIR%legacy"
+if not exist "%INF2CAT_DEST_DIR%" mkdir "%INF2CAT_DEST_DIR%" >nul 2>&1
+copy /y "%INF2CAT_OUT%" "%INF2CAT_DEST_DIR%\%INF2CAT_CAT%" >nul
 exit /b 0
 
 rem -----------------------------------------------------------------
