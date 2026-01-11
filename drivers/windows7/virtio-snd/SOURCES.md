@@ -19,8 +19,10 @@ request/response structures.
   - *Virtio over PCI Bus* (`virtio-pci` modern transport): PCI capability discovery,
     common configuration, notification mechanism, and interrupt routing.
   - *Virtio over PCI Bus* (legacy / transitional transport): I/O-port register map
-    used by transitional devices (e.g. `DEV_1018`). This driver keeps an in-tree legacy backend for
-    reference/testing, but the default build targets Aero’s modern-only contract (`AERO-W7-VIRTIO` v1).
+    used by transitional devices (e.g. `DEV_1018`). This driver keeps an in-tree
+    legacy backend for bring-up/testing, but the default build targets Aero’s
+    modern-only contract (`AERO-W7-VIRTIO` v1) and the shipped INFs do not bind
+    to transitional IDs.
   - *Split Virtqueues*: descriptor table, available ring, used ring, and memory
     ordering requirements.
   - URL: https://docs.oasis-open.org/virtio/ (select the specific 1.x revision used by
@@ -36,7 +38,8 @@ Aero constrains virtio to a small, testable subset. The definitive contract is:
   - §3.4: virtio-snd device contract (queue layout, minimum feature set, minimal PCM)
 
 Note: `AERO-W7-VIRTIO` v1 is modern-only. The default virtio-snd driver build targets
-that modern transport subset and negotiates `VIRTIO_F_VERSION_1` as required by the contract.
+that modern transport subset (BAR0 MMIO virtio-pci modern + split rings) and negotiates
+`VIRTIO_F_VERSION_1` as required by the contract.
 
 ## In-repo implementation guides consulted
  
@@ -85,8 +88,13 @@ Default PortCls build (virtio-pci modern, contract v1):
   - `drivers/windows/virtio/common/virtqueue_split.c` (plus `drivers/windows/virtio/common/virtqueue_split.h`)
 - Virtio PCI capability parsing:
   - `drivers/win7/virtio/virtio-core/portable/virtio_pci_cap_parser.c` (plus `virtio_pci_cap_parser.h`)
+- Aero MMIO layout helper (BAR0 offsets/multipliers):
+  - `drivers/win7/virtio/virtio-core/portable/virtio_pci_aero_layout.c` (plus `virtio_pci_aero_layout.h`)
+- Aero contract identity enforcement:
+  - `drivers/windows7/virtio/common/src/virtio_pci_contract.c` (plus `drivers/windows7/virtio/common/include/virtio_pci_contract.h`)
+  - `drivers/win7/virtio/virtio-core/portable/virtio_pci_identity.c` (plus `virtio_pci_identity.h`)
 - INTx ISR/DPC helper:
-  - `drivers/windows7/virtio/common/src/virtio_pci_intx_wdm.c` (plus `virtio_pci_intx_wdm.h`)
+  - `drivers/windows7/virtio/common/src/virtio_pci_intx_wdm.c` (plus `drivers/windows7/virtio/common/include/virtio_pci_intx_wdm.h`)
 - Spec constants/layouts (headers):
   - `drivers/win7/virtio/virtio-core/include/virtio_spec.h`
   - `drivers/win7/virtio/virtio-core/include/virtio_pci_modern.h`

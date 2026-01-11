@@ -172,11 +172,13 @@ VirtIoSndBackendVirtio_Stop(_In_ PVOID Context)
         return STATUS_INVALID_PARAMETER;
     }
 
-    if (ctx->Dx->Removed) {
-        return STATUS_DEVICE_REMOVED;
-    }
-    if (!ctx->Dx->Started) {
-        return STATUS_INVALID_DEVICE_STATE;
+    /*
+     * Stop is best-effort and should be idempotent. PortCls may invoke stream
+     * state transitions during STOP_DEVICE / (surprise) REMOVE teardown after
+     * the adapter has already been stopped.
+     */
+    if (ctx->Dx->Removed || !ctx->Dx->Started) {
+        return STATUS_SUCCESS;
     }
 
     return VirtioSndCtrlStop(&ctx->Dx->Control);

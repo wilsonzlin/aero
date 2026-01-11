@@ -25,7 +25,7 @@ There are currently **two virtio transport implementations** in-tree:
 
 ### Default build (AERO-W7-VIRTIO v1, virtio-pci modern)
 
-- PortCls adapter + miniports: `src/adapter.c`, `src/wavert.c`, `src/topology.c`
+- PortCls adapter + miniports: `src/adapter.c`, `src/adapter_context.c`, `src/wavert.c`, `src/topology.c`
 - WaveRT backend interface: `include/backend.h`
 - Virtio backend implementation: `src/backend_virtio.c`
 - Virtio-pci modern bring-up + split virtqueues + protocol engines:
@@ -39,6 +39,8 @@ There are currently **two virtio transport implementations** in-tree:
   - `drivers/windows/virtio/common/virtqueue_split.c`
   - `drivers/win7/virtio/virtio-core/portable/virtio_pci_cap_parser.c`
   - `drivers/win7/virtio/virtio-core/portable/virtio_pci_aero_layout.c`
+  - `drivers/win7/virtio/virtio-core/portable/virtio_pci_identity.c`
+  - `drivers/windows7/virtio/common/src/virtio_pci_contract.c`
 
 ### Legacy virtio-pci I/O-port bring-up (not shipped)
 
