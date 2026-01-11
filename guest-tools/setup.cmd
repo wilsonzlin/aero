@@ -81,12 +81,12 @@ call :require_admin || goto :fail
 call :detect_arch || goto :fail
 call :apply_force_defaults || goto :fail
 call :load_config || goto :fail
+call :validate_storage_service_infs || goto :fail
 call :check_kb3033929
 
 call :install_certs || goto :fail
 call :maybe_enable_testsigning || goto :fail
 call :stage_all_drivers || goto :fail
-call :validate_storage_service_infs || goto :fail
 call :preseed_storage_boot || goto :fail
 
 call :log ""
