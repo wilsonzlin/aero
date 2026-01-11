@@ -499,7 +499,7 @@ impl AerogpuD3d9Executor {
         let Some(&handle) = self.presented_scanouts.get(&scanout_id) else {
             return Ok(None);
         };
-        let (w, h, rgba8) = self.readback_texture_rgba8(handle).await?;
+        let (w, h, rgba8) = self.readback_texture_rgba8_underlying(handle).await?;
         Ok(Some((w, h, rgba8)))
     }
 
@@ -508,9 +508,16 @@ impl AerogpuD3d9Executor {
         texture_handle: u32,
     ) -> Result<(u32, u32, Vec<u8>), AerogpuD3d9Error> {
         let underlying = self.resolve_resource_handle(texture_handle)?;
+        self.readback_texture_rgba8_underlying(underlying).await
+    }
+
+    async fn readback_texture_rgba8_underlying(
+        &self,
+        texture_handle: u32,
+    ) -> Result<(u32, u32, Vec<u8>), AerogpuD3d9Error> {
         let res = self
             .resources
-            .get(&underlying)
+            .get(&texture_handle)
             .ok_or(AerogpuD3d9Error::UnknownResource(texture_handle))?;
         let (texture, format, width, height) = match res {
             Resource::Texture2d {
@@ -1410,7 +1417,14 @@ impl AerogpuD3d9Executor {
             self.presented_scanouts.remove(&scanout_id);
             return;
         }
-        self.presented_scanouts.insert(scanout_id, color0);
+        let underlying = match self.resolve_resource_handle(color0) {
+            Ok(handle) => handle,
+            Err(_) => {
+                self.presented_scanouts.remove(&scanout_id);
+                return;
+            }
+        };
+        self.presented_scanouts.insert(scanout_id, underlying);
     }
 
     fn ensure_encoder(&mut self) {
