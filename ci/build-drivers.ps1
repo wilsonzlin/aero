@@ -439,10 +439,10 @@ function Discover-DriverBuildTargets {
 
   $targets = New-Object System.Collections.Generic.List[object]
 
-  # Discover driver roots under drivers/. A directory is considered a
-  # build target if it contains:
-  #   - <dirName>.sln, OR
-  #   - exactly one *.vcxproj
+  # CI only builds drivers that explicitly opt in via `ci-package.json` at the driver root.
+  # We enumerate candidate driver roots by scanning for these manifests, then validate that each
+  # candidate directory also contains a build target (<dirName>.sln or exactly one *.vcxproj) and
+  # at least one INF somewhere under its directory tree.
   #
   # Additionally, we filter to CI-buildable *driver roots*:
   #   - require at least one INF in the directory tree (for catalog/sign/package)
