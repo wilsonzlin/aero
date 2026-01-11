@@ -188,6 +188,7 @@ type AeroGpuCpuTexture = {
   width: number;
   height: number;
   format: number;
+  rowPitchBytes: number;
   data: Uint8Array;
 };
 
@@ -1253,10 +1254,16 @@ const executeAerogpuCmdStream = (cmdStream: ArrayBuffer): bigint => {
         const format = readU32LeChecked(dv, offset + 16, end, "format");
         const width = readU32LeChecked(dv, offset + 20, end, "width");
         const height = readU32LeChecked(dv, offset + 24, end, "height");
+        const mipLevels = readU32LeChecked(dv, offset + 28, end, "mip_levels");
+        const arrayLayers = readU32LeChecked(dv, offset + 32, end, "array_layers");
+        const rowPitchBytesRaw = readU32LeChecked(dv, offset + 36, end, "row_pitch_bytes");
 
         if (handle === 0) throw new Error("aerogpu: CREATE_TEXTURE2D invalid handle 0");
         if (width === 0 || height === 0) {
           throw new Error(`aerogpu: CREATE_TEXTURE2D invalid dimensions ${width}x${height}`);
+        }
+        if (mipLevels !== 1 || arrayLayers !== 1) {
+          throw new Error("aerogpu: CREATE_TEXTURE2D only supports mip_levels=1 and array_layers=1 in the browser executor");
         }
         if (
           format !== AEROGPU_FORMAT_R8G8B8A8_UNORM &&
@@ -1267,15 +1274,26 @@ const executeAerogpuCmdStream = (cmdStream: ArrayBuffer): bigint => {
           throw new Error(`aerogpu: CREATE_TEXTURE2D unsupported format ${format}`);
         }
 
-        const byteLen = width * height * 4;
-        const data = new Uint8Array(byteLen);
+        const bytesPerRow = width * 4;
+        const rowPitchBytes = rowPitchBytesRaw !== 0 ? rowPitchBytesRaw : bytesPerRow;
+        if (rowPitchBytes < bytesPerRow) {
+          throw new Error(
+            `aerogpu: CREATE_TEXTURE2D row_pitch_bytes too small (${rowPitchBytes} < ${bytesPerRow})`,
+          );
+        }
+
+        const byteLenBig = BigInt(width) * BigInt(height) * 4n;
+        if (byteLenBig > BigInt(Number.MAX_SAFE_INTEGER)) {
+          throw new Error(`aerogpu: CREATE_TEXTURE2D texture too large for JS (${byteLenBig} bytes)`);
+        }
+        const data = new Uint8Array(Number(byteLenBig));
         if (format === AEROGPU_FORMAT_R8G8B8X8_UNORM || format === AEROGPU_FORMAT_B8G8R8X8_UNORM) {
           for (let i = 3; i < data.length; i += 4) {
             data[i] = 255;
           }
         }
         aerogpuBuffers.delete(handle);
-        aerogpuTextures.set(handle, { width, height, format, data });
+        aerogpuTextures.set(handle, { width, height, format, rowPitchBytes, data });
         break;
       }
 
@@ -1332,46 +1350,116 @@ const executeAerogpuCmdStream = (cmdStream: ArrayBuffer): bigint => {
         if (!tex) {
           throw new Error(`aerogpu: UPLOAD_RESOURCE references unknown resource handle ${handle}`);
         }
-        if (offsetBytes + uploadBytes > tex.data.byteLength) {
+
+        const bytesPerRow = tex.width * 4;
+        const linearSizeBig = BigInt(tex.rowPitchBytes) * BigInt(tex.height);
+        if (linearSizeBig > BigInt(Number.MAX_SAFE_INTEGER)) {
+          throw new Error(`aerogpu: UPLOAD_RESOURCE texture too large for JS (${linearSizeBig} bytes)`);
+        }
+        const linearSize = Number(linearSizeBig);
+        if (offsetBytes + uploadBytes > linearSize) {
           throw new Error(
-            `aerogpu: UPLOAD_RESOURCE out of bounds (offset=${offsetBytes}, size=${uploadBytes}, texBytes=${tex.data.byteLength})`,
+            `aerogpu: UPLOAD_RESOURCE out of bounds (offset=${offsetBytes}, size=${uploadBytes}, texBytes=${linearSize})`,
           );
         }
 
         const dstBytes = tex.data;
-        if (tex.format === AEROGPU_FORMAT_R8G8B8A8_UNORM) {
-          dstBytes.set(srcBytes, offsetBytes);
-        } else {
+        if (tex.rowPitchBytes === bytesPerRow) {
+          // Common case: tightly packed rows.
+          if (offsetBytes + uploadBytes > dstBytes.byteLength) {
+            throw new Error(
+              `aerogpu: UPLOAD_RESOURCE out of bounds (offset=${offsetBytes}, size=${uploadBytes}, texBytes=${dstBytes.byteLength})`,
+            );
+          }
+
+          if (tex.format === AEROGPU_FORMAT_R8G8B8A8_UNORM) {
+            dstBytes.set(srcBytes, offsetBytes);
+            break;
+          }
+
           if (offsetBytes % 4 !== 0 || uploadBytes % 4 !== 0) {
             throw new Error("aerogpu: UPLOAD_RESOURCE texture uploads must be 4-byte aligned");
           }
           for (let i = 0; i < uploadBytes; i += 4) {
             const srcOff = i;
             const dstOff = offsetBytes + i;
-            const r0 = srcBytes[srcOff + 0]!;
-            const g0 = srcBytes[srcOff + 1]!;
-            const b0 = srcBytes[srcOff + 2]!;
-            const a0 = srcBytes[srcOff + 3]!;
+            const c0 = srcBytes[srcOff + 0]!;
+            const c1 = srcBytes[srcOff + 1]!;
+            const c2 = srcBytes[srcOff + 2]!;
+            const c3 = srcBytes[srcOff + 3]!;
 
             switch (tex.format) {
               case AEROGPU_FORMAT_R8G8B8X8_UNORM: {
-                dstBytes[dstOff + 0] = r0;
-                dstBytes[dstOff + 1] = g0;
-                dstBytes[dstOff + 2] = b0;
+                dstBytes[dstOff + 0] = c0;
+                dstBytes[dstOff + 1] = c1;
+                dstBytes[dstOff + 2] = c2;
                 dstBytes[dstOff + 3] = 255;
                 break;
               }
               case AEROGPU_FORMAT_B8G8R8A8_UNORM: {
-                dstBytes[dstOff + 0] = b0;
-                dstBytes[dstOff + 1] = g0;
-                dstBytes[dstOff + 2] = r0;
-                dstBytes[dstOff + 3] = a0;
+                dstBytes[dstOff + 0] = c2;
+                dstBytes[dstOff + 1] = c1;
+                dstBytes[dstOff + 2] = c0;
+                dstBytes[dstOff + 3] = c3;
                 break;
               }
               case AEROGPU_FORMAT_B8G8R8X8_UNORM: {
-                dstBytes[dstOff + 0] = b0;
-                dstBytes[dstOff + 1] = g0;
-                dstBytes[dstOff + 2] = r0;
+                dstBytes[dstOff + 0] = c2;
+                dstBytes[dstOff + 1] = c1;
+                dstBytes[dstOff + 2] = c0;
+                dstBytes[dstOff + 3] = 255;
+                break;
+              }
+              default:
+                throw new Error(`aerogpu: UPLOAD_RESOURCE unsupported texture format ${tex.format}`);
+            }
+          }
+          break;
+        }
+
+        // Row-pitched uploads: only support full texture uploads for now and ignore per-row padding.
+        if (offsetBytes !== 0 || uploadBytes !== linearSize) {
+          throw new Error(
+            `aerogpu: UPLOAD_RESOURCE requires full texture upload when row_pitch_bytes != width*4 (offset=${offsetBytes}, size=${uploadBytes}, expected=${linearSize})`,
+          );
+        }
+
+        for (let row = 0; row < tex.height; row += 1) {
+          const srcRowOff = row * tex.rowPitchBytes;
+          const dstRowOff = row * bytesPerRow;
+
+          if (tex.format === AEROGPU_FORMAT_R8G8B8A8_UNORM) {
+            dstBytes.set(srcBytes.subarray(srcRowOff, srcRowOff + bytesPerRow), dstRowOff);
+            continue;
+          }
+
+          for (let i = 0; i < bytesPerRow; i += 4) {
+            const srcOff = srcRowOff + i;
+            const dstOff = dstRowOff + i;
+            const c0 = srcBytes[srcOff + 0]!;
+            const c1 = srcBytes[srcOff + 1]!;
+            const c2 = srcBytes[srcOff + 2]!;
+            const c3 = srcBytes[srcOff + 3]!;
+
+            switch (tex.format) {
+              case AEROGPU_FORMAT_R8G8B8X8_UNORM: {
+                dstBytes[dstOff + 0] = c0;
+                dstBytes[dstOff + 1] = c1;
+                dstBytes[dstOff + 2] = c2;
+                dstBytes[dstOff + 3] = 255;
+                break;
+              }
+              case AEROGPU_FORMAT_B8G8R8A8_UNORM: {
+                dstBytes[dstOff + 0] = c2;
+                dstBytes[dstOff + 1] = c1;
+                dstBytes[dstOff + 2] = c0;
+                dstBytes[dstOff + 3] = c3;
+                break;
+              }
+              case AEROGPU_FORMAT_B8G8R8X8_UNORM: {
+                dstBytes[dstOff + 0] = c2;
+                dstBytes[dstOff + 1] = c1;
+                dstBytes[dstOff + 2] = c0;
                 dstBytes[dstOff + 3] = 255;
                 break;
               }
