@@ -74,6 +74,17 @@ pub struct AerogpuD3d9Executor {
     encoder: Option<wgpu::CommandEncoder>,
 }
 
+/// Metadata + view for a scanout that has been presented via `PRESENT`/`PRESENT_EX`.
+///
+/// This is primarily intended for WASM presenters which need to blit the scanout to a surface
+/// without performing a CPU readback.
+pub struct PresentedScanout<'a> {
+    pub view: &'a wgpu::TextureView,
+    pub format: wgpu::TextureFormat,
+    pub width: u32,
+    pub height: u32,
+}
+
 #[derive(Clone, Copy)]
 struct SubmissionCtx<'a> {
     guest_memory: Option<&'a dyn GuestMemory>,
@@ -742,6 +753,25 @@ impl AerogpuD3d9Executor {
         drop(mapped);
         buffer.unmap();
         Ok(out)
+    }
+
+    pub fn presented_scanout(&self, scanout_id: u32) -> Option<PresentedScanout<'_>> {
+        let &underlying = self.presented_scanouts.get(&scanout_id)?;
+        match self.resources.get(&underlying)? {
+            Resource::Texture2d {
+                view,
+                format,
+                width,
+                height,
+                ..
+            } => Some(PresentedScanout {
+                view,
+                format: *format,
+                width: *width,
+                height: *height,
+            }),
+            _ => None,
+        }
     }
 
     pub fn execute_cmd_stream(&mut self, bytes: &[u8]) -> Result<(), AerogpuD3d9Error> {
@@ -1633,6 +1663,7 @@ impl AerogpuD3d9Executor {
                         size_bytes,
                     );
 
+                    #[cfg(not(target_arch = "wasm32"))]
                     if writeback {
                         let dst_backing = dst_backing.ok_or_else(|| {
                             AerogpuD3d9Error::Validation(
@@ -1696,6 +1727,7 @@ impl AerogpuD3d9Executor {
             } => {
                 self.ensure_encoder();
                 let mut encoder_opt = self.encoder.take();
+                #[cfg_attr(target_arch = "wasm32", allow(unused_mut))]
                 let mut writeback_plan: Option<(wgpu::Buffer, TextureWritebackPlan)> = None;
                 let result = (|| -> Result<(), AerogpuD3d9Error> {
                     if width == 0 || height == 0 {
@@ -1874,7 +1906,7 @@ impl AerogpuD3d9Executor {
                             })
                         }
                     };
-                    let (dst_tex, dst_backing, _dst_row_pitch) = match self
+                    let (dst_tex, dst_backing) = match self
                         .resources
                         .get(&dst_underlying)
                         .ok_or(AerogpuD3d9Error::UnknownResource(dst_texture))?
@@ -1882,9 +1914,8 @@ impl AerogpuD3d9Executor {
                         Resource::Texture2d {
                             texture,
                             backing,
-                            row_pitch_bytes,
                             ..
-                        } => (texture, *backing, *row_pitch_bytes),
+                        } => (texture, *backing),
                         _ => {
                             return Err(AerogpuD3d9Error::CopyNotSupported {
                                 src: src_texture,
@@ -1926,6 +1957,7 @@ impl AerogpuD3d9Executor {
                         },
                     );
 
+                    #[cfg(not(target_arch = "wasm32"))]
                     if writeback {
                         let dst_backing = dst_backing.expect("validated dst_backing for writeback");
                         if ctx.guest_memory.is_none() {

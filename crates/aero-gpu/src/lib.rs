@@ -56,7 +56,7 @@ pub mod protocol_d3d9;
 pub mod stats;
 
 pub use acmd_executor::{AeroGpuAcmdExecutor, AeroGpuAcmdExecutorError};
-pub use aerogpu_d3d9_executor::{AerogpuD3d9Error, AerogpuD3d9Executor};
+pub use aerogpu_d3d9_executor::{AerogpuD3d9Error, AerogpuD3d9Executor, PresentedScanout};
 pub use bc_decompress::{
     decompress_bc1_rgba8, decompress_bc2_rgba8, decompress_bc3_rgba8, decompress_bc7_rgba8,
 };

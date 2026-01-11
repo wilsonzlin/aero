@@ -10,10 +10,12 @@ mod wasm {
     use std::cell::RefCell;
     use std::collections::HashSet;
 
+    use aero_gpu::aerogpu_executor::{AllocEntry, AllocTable};
     use aero_gpu::shader_lib::{BuiltinShader, wgsl as builtin_wgsl};
     use aero_gpu::{
-        AeroGpuCommandProcessor, AeroGpuEvent, AeroGpuSubmissionAllocation, FrameTimingsReport,
-        GpuBackendKind, GpuProfiler, GuestMemory, GuestMemoryError,
+        parse_cmd_stream, AeroGpuCmd, AeroGpuCommandProcessor, AeroGpuEvent, AeroGpuSubmissionAllocation,
+        AerogpuD3d9Executor, FrameTimingsReport, GpuBackendKind, GpuProfiler, GuestMemory,
+        GuestMemoryError,
     };
     use aero_protocol::aerogpu::aerogpu_ring as ring;
     use futures_intrusive::channel::shared::oneshot_channel;
@@ -43,6 +45,7 @@ mod wasm {
             RefCell::new(AeroGpuCommandProcessor::new());
     }
 
+    #[derive(Clone)]
     struct JsGuestMemory {
         view: Uint8Array,
     }
@@ -233,6 +236,124 @@ mod wasm {
         Ok(out)
     }
 
+    fn decode_alloc_table_bytes(
+        buf: &Uint8Array,
+    ) -> Result<(AllocTable, Vec<AeroGpuSubmissionAllocation>), JsValue> {
+        let buf_len = buf.length() as usize;
+        if buf_len < ring::AerogpuAllocTableHeader::SIZE_BYTES {
+            return Err(JsValue::from_str(&format!(
+                "alloc table too small (got {buf_len} bytes, need {})",
+                ring::AerogpuAllocTableHeader::SIZE_BYTES
+            )));
+        }
+
+        let mut bytes = vec![0u8; buf_len];
+        buf.copy_to(&mut bytes);
+
+        let header =
+            ring::AerogpuAllocTableHeader::decode_from_le_bytes(&bytes).map_err(|err| {
+                JsValue::from_str(&format!("failed to decode alloc table header: {err:?}"))
+            })?;
+        header
+            .validate_prefix()
+            .map_err(|err| JsValue::from_str(&format!("invalid alloc table header: {err:?}")))?;
+
+        // Match the native emulator's decoder: the entry stride must match the ABI's exact entry
+        // size. (Future extensions can use a new header ABI version.)
+        if header.entry_stride_bytes != ring::AerogpuAllocEntry::SIZE_BYTES as u32 {
+            return Err(JsValue::from_str(&format!(
+                "invalid alloc table entry_stride_bytes={} (expected {})",
+                header.entry_stride_bytes,
+                ring::AerogpuAllocEntry::SIZE_BYTES
+            )));
+        }
+
+        let size_bytes = usize::try_from(header.size_bytes).map_err(|_| {
+            JsValue::from_str("alloc table header size_bytes does not fit in usize")
+        })?;
+        if size_bytes < ring::AerogpuAllocTableHeader::SIZE_BYTES || size_bytes > bytes.len() {
+            return Err(JsValue::from_str(&format!(
+                "invalid alloc table header size_bytes={} (buffer_len={})",
+                header.size_bytes,
+                bytes.len()
+            )));
+        }
+
+        let entry_count = usize::try_from(header.entry_count).map_err(|_| {
+            JsValue::from_str("alloc table header entry_count does not fit in usize")
+        })?;
+        let entry_stride_bytes = usize::try_from(header.entry_stride_bytes).map_err(|_| {
+            JsValue::from_str("alloc table header entry_stride_bytes does not fit in usize")
+        })?;
+
+        let required_bytes =
+            ring::AerogpuAllocTableHeader::SIZE_BYTES
+                .checked_add(entry_count.checked_mul(entry_stride_bytes).ok_or_else(|| {
+                    JsValue::from_str("alloc table entry_count * stride overflows")
+                })?)
+                .ok_or_else(|| JsValue::from_str("alloc table size computation overflows"))?;
+        if required_bytes > size_bytes {
+            return Err(JsValue::from_str(&format!(
+                "alloc table size_bytes too small for layout (size_bytes={} < required_bytes={required_bytes})",
+                header.size_bytes,
+            )));
+        }
+
+        let mut seen = HashSet::with_capacity(entry_count);
+        let mut entries = Vec::with_capacity(entry_count);
+        let mut allocations = Vec::with_capacity(entry_count);
+
+        for i in 0..entry_count {
+            let base = ring::AerogpuAllocTableHeader::SIZE_BYTES
+                .checked_add(
+                    i.checked_mul(entry_stride_bytes)
+                        .ok_or_else(|| JsValue::from_str("alloc table entry offset overflows"))?,
+                )
+                .ok_or_else(|| JsValue::from_str("alloc table entry offset overflows"))?;
+            let end = base
+                .checked_add(ring::AerogpuAllocEntry::SIZE_BYTES)
+                .ok_or_else(|| JsValue::from_str("alloc table entry range overflows"))?;
+            if end > size_bytes {
+                return Err(JsValue::from_str(&format!(
+                    "alloc table entry {i} is out of bounds (end={end}, size_bytes={size_bytes})"
+                )));
+            }
+
+            let entry = ring::AerogpuAllocEntry::decode_from_le_bytes(&bytes[base..end]).map_err(
+                |err| {
+                    JsValue::from_str(&format!("failed to decode alloc table entry {i}: {err:?}"))
+                },
+            )?;
+
+            let alloc_id = entry.alloc_id;
+            if alloc_id == 0 {
+                return Err(JsValue::from_str(&format!(
+                    "alloc table entry {i} has alloc_id=0"
+                )));
+            }
+            if !seen.insert(alloc_id) {
+                return Err(JsValue::from_str(&format!(
+                    "alloc table contains duplicate alloc_id={alloc_id}"
+                )));
+            }
+
+            entries.push((
+                alloc_id,
+                AllocEntry {
+                    gpa: entry.gpa,
+                    size_bytes: entry.size_bytes,
+                },
+            ));
+            allocations.push(AeroGpuSubmissionAllocation {
+                alloc_id,
+                gpa: entry.gpa,
+                size_bytes: entry.size_bytes,
+            });
+        }
+
+        Ok((AllocTable::new(entries), allocations))
+    }
+
     #[wasm_bindgen]
     pub fn submit_aerogpu(
         cmd_stream: Uint8Array,
@@ -248,6 +369,117 @@ mod wasm {
         let mut bytes = vec![0u8; cmd_stream.length() as usize];
         cmd_stream.copy_to(&mut bytes);
 
+        let present_count = PROCESSOR.with(|processor| {
+            let mut processor = processor.borrow_mut();
+            let events = processor
+                .process_submission_with_allocations(&bytes, allocations, signal_fence)
+                .map_err(|err| JsValue::from_str(&err.to_string()))?;
+
+            let mut had_present = false;
+            for event in events {
+                if matches!(event, AeroGpuEvent::PresentCompleted { .. }) {
+                    had_present = true;
+                }
+            }
+
+            Ok::<Option<u64>, JsValue>(had_present.then(|| processor.present_count()))
+        })?;
+
+        let out = Object::new();
+        Reflect::set(
+            &out,
+            &JsValue::from_str("completedFence"),
+            &BigInt::from(signal_fence).into(),
+        )?;
+        if let Some(present_count) = present_count {
+            Reflect::set(
+                &out,
+                &JsValue::from_str("presentCount"),
+                &BigInt::from(present_count).into(),
+            )?;
+        }
+
+        Ok(out.into())
+    }
+
+    #[wasm_bindgen]
+    pub fn submit_aerogpu_d3d9(
+        cmd_stream: Uint8Array,
+        signal_fence: u64,
+        context_id: u32,
+        alloc_table: Option<Uint8Array>,
+    ) -> Result<JsValue, JsValue> {
+        let mut bytes = vec![0u8; cmd_stream.length() as usize];
+        cmd_stream.copy_to(&mut bytes);
+
+        let stream = parse_cmd_stream(&bytes)
+            .map_err(|err| JsValue::from_str(&format!("failed to parse AeroGPU command stream: {err}")))?;
+        let mut last_present_scanout: Option<u32> = None;
+        for cmd in &stream.cmds {
+            match cmd {
+                AeroGpuCmd::Present { scanout_id, .. }
+                | AeroGpuCmd::PresentEx { scanout_id, .. } => {
+                    last_present_scanout = Some(*scanout_id);
+                }
+                _ => {}
+            }
+        }
+
+        let (alloc_table, allocations) = match alloc_table.as_ref() {
+            Some(buf) => {
+                let (table, allocs) = decode_alloc_table_bytes(buf)?;
+                (Some(table), Some(allocs))
+            }
+            None => (None, None),
+        };
+
+        let guest_memory = GUEST_MEMORY.with(|slot| slot.borrow().clone());
+
+        with_d3d9_state_mut(|state| {
+            match (alloc_table.as_ref(), guest_memory.as_ref()) {
+                (Some(_), None) => {
+                    return Err(JsValue::from_str(
+                        "guest memory is not configured; call set_guest_memory(Uint8Array) before executing submissions with alloc_table",
+                    ));
+                }
+                (Some(table), Some(mem)) => state
+                    .executor
+                    .execute_cmd_stream_with_guest_memory_for_context(context_id, &bytes, mem, Some(table))
+                    .map_err(|err| JsValue::from_str(&err.to_string()))?,
+                (None, Some(mem)) => state
+                    .executor
+                    .execute_cmd_stream_with_guest_memory_for_context(context_id, &bytes, mem, None)
+                    .map_err(|err| JsValue::from_str(&err.to_string()))?,
+                (None, None) => state
+                    .executor
+                    .execute_cmd_stream_for_context(context_id, &bytes)
+                    .map_err(|err| JsValue::from_str(&err.to_string()))?,
+            }
+
+            if let Some(scanout_id) = last_present_scanout {
+                state.last_presented_scanout = Some(scanout_id);
+
+                if let Some(presenter) = state.presenter.as_mut() {
+                    let device = state.executor.device();
+                    let queue = state.executor.queue();
+                    if let Some(scanout) = state.executor.presented_scanout(scanout_id) {
+                        presenter.present_texture_view(
+                            device,
+                            queue,
+                            scanout.view,
+                            scanout.width,
+                            scanout.height,
+                        )?;
+                    } else {
+                        presenter.present_clear(device, queue)?;
+                    }
+                }
+            }
+
+            Ok(())
+        })?;
+
+        let allocations = allocations.as_deref();
         let present_count = PROCESSOR.with(|processor| {
             let mut processor = processor.borrow_mut();
             let events = processor
@@ -307,6 +539,7 @@ mod wasm {
         Integer,
     }
 
+    #[derive(Clone)]
     struct AdapterInfo {
         vendor: Option<String>,
         renderer: Option<String>,
@@ -642,6 +875,19 @@ mod wasm {
             }
         }
 
+        fn ensure_surface_matches_canvas(&mut self) {
+            // If the canvas is resized externally (without calling `resize()`), the surface can
+            // become outdated and `get_current_texture` may fail. Keep the configuration in sync
+            // with the current canvas pixel size.
+            let w = self.canvas.width().max(1);
+            let h = self.canvas.height().max(1);
+            if self.config.width != w || self.config.height != h {
+                self.config.width = w;
+                self.config.height = h;
+                self.surface.configure(&self.device, &self.config);
+            }
+        }
+
         fn set_canvas_size(&mut self, pixel_width: u32, pixel_height: u32) {
             self.canvas.set_width(pixel_width.max(1));
             self.canvas.set_height(pixel_height.max(1));
@@ -789,6 +1035,7 @@ mod wasm {
 
         fn present(&mut self) -> Result<(), JsValue> {
             self.profiler.begin_frame(None, None);
+            self.ensure_surface_matches_canvas();
 
             let device = &self.device;
             let frame = acquire_surface_frame(&mut self.surface, device, &mut self.config)?;
@@ -995,6 +1242,393 @@ mod wasm {
         }
     }
 
+    /// Simple surface presenter used by the D3D9 AeroGPU executor.
+    ///
+    /// Unlike [`Presenter`], this does not own a `wgpu::Device`/`wgpu::Queue`. The executor owns
+    /// them, and the presenter borrows them when it needs to blit a scanout to the surface.
+    struct ScanoutPresenter {
+        canvas: OffscreenCanvas,
+
+        // Keep the `wgpu::Instance` alive for the lifetime of the surface.
+        #[allow(dead_code)]
+        instance: wgpu::Instance,
+        surface: wgpu::Surface<'static>,
+        config: wgpu::SurfaceConfiguration,
+
+        pipeline: wgpu::RenderPipeline,
+        bind_group_layout: wgpu::BindGroupLayout,
+
+        sampler: wgpu::Sampler,
+        scale_mode: ScaleMode,
+        clear_color: wgpu::Color,
+        viewport_buffer: wgpu::Buffer,
+        params_buffer: wgpu::Buffer,
+    }
+
+    impl ScanoutPresenter {
+        async fn new(
+            canvas: OffscreenCanvas,
+            backend_kind: GpuBackendKind,
+            required_features: wgpu::Features,
+            scale_mode: ScaleMode,
+            filter_mode: wgpu::FilterMode,
+            clear_color: wgpu::Color,
+        ) -> Result<(Self, wgpu::Device, wgpu::Queue, AdapterInfo), JsValue> {
+            let backends = match backend_kind {
+                GpuBackendKind::WebGpu => wgpu::Backends::BROWSER_WEBGPU,
+                GpuBackendKind::WebGl2 => wgpu::Backends::GL,
+            };
+
+            let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+                backends,
+                ..Default::default()
+            });
+
+            let surface = instance
+                .create_surface(wgpu::SurfaceTarget::OffscreenCanvas(canvas.clone()))
+                .map_err(|err| {
+                    JsValue::from_str(&format!("Failed to create wgpu surface: {err:?}"))
+                })?;
+
+            let adapter = request_adapter_robust(&instance, &surface)
+                .await
+                .ok_or_else(|| JsValue::from_str("No suitable GPU adapter found"))?;
+
+            let supported = adapter.features();
+            if !supported.contains(required_features) {
+                return Err(JsValue::from_str(&format!(
+                    "Adapter does not support required features: {required_features:?}"
+                )));
+            }
+
+            // Keep limits conservative to ensure WebGL2 fallback compatibility.
+            let limits = wgpu::Limits::downlevel_webgl2_defaults();
+            let (device, queue) = adapter
+                .request_device(
+                    &wgpu::DeviceDescriptor {
+                        label: Some("aero-gpu-wasm scanout presenter"),
+                        required_features,
+                        required_limits: limits,
+                    },
+                    None,
+                )
+                .await
+                .map_err(|err| JsValue::from_str(&format!("Failed to request device: {err}")))?;
+
+            let info = adapter.get_info();
+            let adapter_info = AdapterInfo {
+                vendor: Some(format!("0x{:04x}", info.vendor)),
+                renderer: Some(info.name.clone()),
+                description: if info.driver_info.is_empty() {
+                    None
+                } else {
+                    Some(info.driver_info.clone())
+                },
+            };
+
+            let surface_caps = surface.get_capabilities(&adapter);
+            let surface_format = choose_surface_format(&surface_caps.formats);
+            let alpha_mode = choose_alpha_mode(&surface_caps.alpha_modes);
+            let present_mode = choose_present_mode(&surface_caps.present_modes);
+
+            let config = wgpu::SurfaceConfiguration {
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                format: surface_format,
+                width: canvas.width().max(1),
+                height: canvas.height().max(1),
+                present_mode,
+                alpha_mode,
+                desired_maximum_frame_latency: 2,
+                view_formats: vec![],
+            };
+            surface.configure(&device, &config);
+
+            let bind_group_layout =
+                device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("aero-gpu-wasm.scanout.blit.bind_group_layout"),
+                    entries: &[
+                        // viewport
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::VERTEX,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Uniform,
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                        // input texture
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 1,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Texture {
+                                multisampled: false,
+                                view_dimension: wgpu::TextureViewDimension::D2,
+                                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            },
+                            count: None,
+                        },
+                        // sampler
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 2,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                            count: None,
+                        },
+                        // params
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 3,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Uniform,
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                    ],
+                });
+
+            let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("aero-gpu-wasm.scanout.blit.pipeline_layout"),
+                bind_group_layouts: &[&bind_group_layout],
+                push_constant_ranges: &[],
+            });
+
+            let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("aero-gpu-wasm.scanout.blit.shader"),
+                source: wgpu::ShaderSource::Wgsl(builtin_wgsl(BuiltinShader::Blit).into()),
+            });
+
+            let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("aero-gpu-wasm.scanout.blit.pipeline"),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: "vs_main",
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    buffers: &[],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: "fs_main",
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: surface_format,
+                        blend: Some(wgpu::BlendState::REPLACE),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    strip_index_format: None,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: None,
+                    unclipped_depth: false,
+                    polygon_mode: wgpu::PolygonMode::Fill,
+                    conservative: false,
+                },
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+            });
+
+            let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some("aero-gpu-wasm.scanout.blit.sampler"),
+                mag_filter: filter_mode,
+                min_filter: filter_mode,
+                mipmap_filter: filter_mode,
+                ..Default::default()
+            });
+
+            let viewport_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("aero-gpu-wasm.scanout.blit.viewport_uniform"),
+                size: std::mem::size_of::<ViewportTransform>() as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+
+            let params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("aero-gpu-wasm.scanout.blit.params_uniform"),
+                size: std::mem::size_of::<BlitParams>() as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+
+            let mut flags = FLAG_FORCE_OPAQUE_ALPHA;
+            if needs_srgb_encode_in_shader(surface_format) {
+                flags |= FLAG_APPLY_SRGB_ENCODE;
+            }
+            flags &= !FLAG_FLIP_Y;
+            flags &= !FLAG_PREMULTIPLY_ALPHA;
+
+            let viewport_transform = compute_viewport_transform(
+                canvas.width().max(1),
+                canvas.height().max(1),
+                1,
+                1,
+                scale_mode,
+            );
+            queue.write_buffer(&viewport_buffer, 0, bytemuck::bytes_of(&viewport_transform));
+            queue.write_buffer(
+                &params_buffer,
+                0,
+                bytemuck::bytes_of(&BlitParams {
+                    flags,
+                    _pad: [0; 3],
+                }),
+            );
+
+            Ok((
+                Self {
+                    canvas,
+                    instance,
+                    surface,
+                    config,
+                    pipeline,
+                    bind_group_layout,
+                    sampler,
+                    scale_mode,
+                    clear_color,
+                    viewport_buffer,
+                    params_buffer,
+                },
+                device,
+                queue,
+                adapter_info,
+            ))
+        }
+
+        fn ensure_surface_matches_canvas(&mut self, device: &wgpu::Device) {
+            let w = self.canvas.width().max(1);
+            let h = self.canvas.height().max(1);
+            if self.config.width != w || self.config.height != h {
+                self.config.width = w;
+                self.config.height = h;
+                self.surface.configure(device, &self.config);
+            }
+        }
+
+        fn present_clear(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) -> Result<(), JsValue> {
+            self.ensure_surface_matches_canvas(device);
+            let frame = acquire_surface_frame(&mut self.surface, device, &mut self.config)?;
+            let view = frame
+                .texture
+                .create_view(&wgpu::TextureViewDescriptor::default());
+
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("aero-gpu-wasm.scanout.present_clear.encoder"),
+            });
+
+            {
+                let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("aero-gpu-wasm.scanout.present_clear.pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(self.clear_color),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+            }
+
+            queue.submit([encoder.finish()]);
+            frame.present();
+            Ok(())
+        }
+
+        fn present_texture_view(
+            &mut self,
+            device: &wgpu::Device,
+            queue: &wgpu::Queue,
+            src_view: &wgpu::TextureView,
+            src_width: u32,
+            src_height: u32,
+        ) -> Result<(), JsValue> {
+            self.ensure_surface_matches_canvas(device);
+
+            let out_width_px = self.config.width.max(1);
+            let out_height_px = self.config.height.max(1);
+            let src_width = src_width.max(1);
+            let src_height = src_height.max(1);
+
+            let viewport_transform = compute_viewport_transform(
+                out_width_px,
+                out_height_px,
+                src_width,
+                src_height,
+                self.scale_mode,
+            );
+            queue.write_buffer(
+                &self.viewport_buffer,
+                0,
+                bytemuck::bytes_of(&viewport_transform),
+            );
+
+            let frame = acquire_surface_frame(&mut self.surface, device, &mut self.config)?;
+            let view = frame
+                .texture
+                .create_view(&wgpu::TextureViewDescriptor::default());
+
+            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("aero-gpu-wasm.scanout.blit.bind_group"),
+                layout: &self.bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: self.viewport_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(src_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::Sampler(&self.sampler),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: self.params_buffer.as_entire_binding(),
+                    },
+                ],
+            });
+
+            let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("aero-gpu-wasm.scanout.present.encoder"),
+            });
+
+            {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("aero-gpu-wasm.scanout.present.pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(self.clear_color),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                pass.set_pipeline(&self.pipeline);
+                pass.set_bind_group(0, &bind_group, &[]);
+                pass.draw(0..6, 0..1);
+            }
+
+            queue.submit([encoder.finish()]);
+            frame.present();
+            Ok(())
+        }
+    }
+
     fn create_framebuffer_texture(
         device: &wgpu::Device,
         width: u32,
@@ -1136,6 +1770,26 @@ mod wasm {
         None
     }
 
+    async fn request_adapter_headless(instance: &wgpu::Instance) -> Option<wgpu::Adapter> {
+        for (power, fallback) in [
+            (wgpu::PowerPreference::HighPerformance, false),
+            (wgpu::PowerPreference::LowPower, false),
+            (wgpu::PowerPreference::LowPower, true),
+        ] {
+            let adapter = instance
+                .request_adapter(&wgpu::RequestAdapterOptions {
+                    power_preference: power,
+                    compatible_surface: None,
+                    force_fallback_adapter: fallback,
+                })
+                .await;
+            if adapter.is_some() {
+                return adapter;
+            }
+        }
+        None
+    }
+
     fn acquire_surface_frame(
         surface: &mut wgpu::Surface<'static>,
         device: &wgpu::Device,
@@ -1185,6 +1839,18 @@ mod wasm {
         static STATE: RefCell<Option<GpuState>> = RefCell::new(None);
     }
 
+    struct AerogpuD3d9State {
+        backend_kind: GpuBackendKind,
+        adapter_info: AdapterInfo,
+        executor: AerogpuD3d9Executor,
+        presenter: Option<ScanoutPresenter>,
+        last_presented_scanout: Option<u32>,
+    }
+
+    thread_local! {
+        static D3D9_STATE: RefCell<Option<AerogpuD3d9State>> = RefCell::new(None);
+    }
+
     fn with_state<T>(f: impl FnOnce(&GpuState) -> Result<T, JsValue>) -> Result<T, JsValue> {
         STATE.with(|state| match state.borrow().as_ref() {
             Some(s) => f(s),
@@ -1198,6 +1864,17 @@ mod wasm {
         STATE.with(|state| match state.borrow_mut().as_mut() {
             Some(s) => f(s),
             None => Err(JsValue::from_str("GPU backend not initialized.")),
+        })
+    }
+
+    fn with_d3d9_state_mut<T>(
+        f: impl FnOnce(&mut AerogpuD3d9State) -> Result<T, JsValue>,
+    ) -> Result<T, JsValue> {
+        D3D9_STATE.with(|state| match state.borrow_mut().as_mut() {
+            Some(s) => f(s),
+            None => Err(JsValue::from_str(
+                "AeroGPU D3D9 executor not initialized. Call init_aerogpu_d3d9(...) first.",
+            )),
         })
     }
 
@@ -1527,6 +2204,130 @@ mod wasm {
     }
 
     #[wasm_bindgen]
+    pub async fn init_aerogpu_d3d9(
+        offscreen_canvas: Option<OffscreenCanvas>,
+        options: Option<JsValue>,
+    ) -> Result<(), JsValue> {
+        let options = options.unwrap_or(JsValue::UNDEFINED);
+
+        let prefer_webgpu = parse_bool(&options, "preferWebGpu").unwrap_or(true);
+        let disable_webgpu = parse_bool(&options, "disableWebGpu").unwrap_or(false);
+
+        let scale_mode = parse_scale_mode(&options)?;
+        let filter_mode = parse_filter_mode(&options)?;
+        let clear_color = parse_clear_color(&options)?;
+
+        if let Some(canvas) = offscreen_canvas {
+            let backends = if disable_webgpu {
+                vec![GpuBackendKind::WebGl2]
+            } else if prefer_webgpu {
+                vec![GpuBackendKind::WebGpu, GpuBackendKind::WebGl2]
+            } else {
+                vec![GpuBackendKind::WebGl2, GpuBackendKind::WebGpu]
+            };
+
+            let mut last_err: Option<JsValue> = None;
+            for backend_kind in backends {
+                let required_features = match backend_kind {
+                    GpuBackendKind::WebGpu => parse_required_features(&options)?,
+                    GpuBackendKind::WebGl2 => wgpu::Features::empty(),
+                };
+
+                match ScanoutPresenter::new(
+                    canvas.clone(),
+                    backend_kind,
+                    required_features,
+                    scale_mode,
+                    filter_mode,
+                    clear_color,
+                )
+                .await
+                {
+                    Ok((presenter, device, queue, adapter_info)) => {
+                        let executor = AerogpuD3d9Executor::new(device, queue);
+
+                        D3D9_STATE.with(|slot| {
+                            *slot.borrow_mut() = Some(AerogpuD3d9State {
+                                backend_kind,
+                                adapter_info,
+                                executor,
+                                presenter: Some(presenter),
+                                last_presented_scanout: None,
+                            });
+                        });
+
+                        return Ok(());
+                    }
+                    Err(err) => last_err = Some(err),
+                }
+            }
+
+            Err(last_err.unwrap_or_else(|| {
+                JsValue::from_str("No supported GPU backend could be initialized.")
+            }))
+        } else {
+            if disable_webgpu {
+                return Err(JsValue::from_str(
+                    "Headless AeroGPU D3D9 executor requires WebGPU; disableWebGpu was set.",
+                ));
+            }
+
+            let required_features = parse_required_features(&options)?;
+            let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+                backends: wgpu::Backends::BROWSER_WEBGPU,
+                ..Default::default()
+            });
+            let adapter = request_adapter_headless(&instance)
+                .await
+                .ok_or_else(|| JsValue::from_str("No suitable GPU adapter found"))?;
+
+            let supported = adapter.features();
+            if !supported.contains(required_features) {
+                return Err(JsValue::from_str(&format!(
+                    "Adapter does not support required features: {required_features:?}"
+                )));
+            }
+
+            let limits = wgpu::Limits::downlevel_webgl2_defaults();
+            let (device, queue) = adapter
+                .request_device(
+                    &wgpu::DeviceDescriptor {
+                        label: Some("aero-gpu-wasm AerogpuD3d9Executor (headless)"),
+                        required_features,
+                        required_limits: limits,
+                    },
+                    None,
+                )
+                .await
+                .map_err(|err| JsValue::from_str(&format!("Failed to request device: {err}")))?;
+
+            let info = adapter.get_info();
+            let adapter_info = AdapterInfo {
+                vendor: Some(format!("0x{:04x}", info.vendor)),
+                renderer: Some(info.name.clone()),
+                description: if info.driver_info.is_empty() {
+                    None
+                } else {
+                    Some(info.driver_info.clone())
+                },
+            };
+
+            let executor = AerogpuD3d9Executor::new(device, queue);
+            D3D9_STATE.with(|slot| {
+                *slot.borrow_mut() = Some(AerogpuD3d9State {
+                    backend_kind: GpuBackendKind::WebGpu,
+                    adapter_info,
+                    executor,
+                    presenter: None,
+                    last_presented_scanout: None,
+                });
+            });
+
+            Ok(())
+        }
+    }
+
+    #[wasm_bindgen]
     pub fn resize(
         width: u32,
         height: u32,
@@ -1569,12 +2370,67 @@ mod wasm {
 
     #[wasm_bindgen]
     pub fn backend_kind() -> Result<String, JsValue> {
-        with_state(|state| Ok(state.presenter.backend_kind_string().to_string()))
+        if let Some(kind) = STATE.with(|slot| {
+            slot.borrow()
+                .as_ref()
+                .map(|state| state.presenter.backend_kind_string().to_string())
+        }) {
+            return Ok(kind);
+        }
+
+        if let Some(kind) = D3D9_STATE.with(|slot| {
+            slot.borrow().as_ref().map(|state| match state.backend_kind {
+                GpuBackendKind::WebGpu => "webgpu".to_string(),
+                GpuBackendKind::WebGl2 => "webgl2".to_string(),
+            })
+        }) {
+            return Ok(kind);
+        }
+
+        Err(JsValue::from_str("GPU backend not initialized."))
     }
 
     #[wasm_bindgen]
     pub fn adapter_info() -> Result<JsValue, JsValue> {
-        with_state(|state| Ok(state.presenter.adapter_info_js()))
+        if let Some(info) = STATE.with(|slot| {
+            slot.borrow()
+                .as_ref()
+                .map(|state| state.presenter.adapter_info_js())
+        }) {
+            return Ok(info);
+        }
+
+        if let Some(info) = D3D9_STATE.with(|slot| {
+            slot.borrow().as_ref().map(|state| {
+                let obj = Object::new();
+                if let Some(vendor) = &state.adapter_info.vendor {
+                    let _ = Reflect::set(
+                        &obj,
+                        &JsValue::from_str("vendor"),
+                        &JsValue::from_str(vendor),
+                    );
+                }
+                if let Some(renderer) = &state.adapter_info.renderer {
+                    let _ = Reflect::set(
+                        &obj,
+                        &JsValue::from_str("renderer"),
+                        &JsValue::from_str(renderer),
+                    );
+                }
+                if let Some(description) = &state.adapter_info.description {
+                    let _ = Reflect::set(
+                        &obj,
+                        &JsValue::from_str("description"),
+                        &JsValue::from_str(description),
+                    );
+                }
+                obj.into()
+            })
+        }) {
+            return Ok(info);
+        }
+
+        Err(JsValue::from_str("GPU backend not initialized."))
     }
 
     #[wasm_bindgen]
@@ -1612,6 +2468,27 @@ mod wasm {
 
     #[wasm_bindgen]
     pub async fn request_screenshot() -> Result<Uint8Array, JsValue> {
+        let d3d9_state = D3D9_STATE.with(|slot| slot.borrow_mut().take());
+        if let Some(d3d9_state) = d3d9_state {
+            let result = if let Some(scanout_id) = d3d9_state.last_presented_scanout {
+                d3d9_state
+                    .executor
+                    .read_presented_scanout_rgba8(scanout_id)
+                    .await
+                    .map_err(|err| JsValue::from_str(&err.to_string()))
+                    .map(|opt| opt.map(|(_, _, bytes)| bytes).unwrap_or_default())
+            } else {
+                Ok(Vec::new())
+            };
+
+            D3D9_STATE.with(|slot| {
+                *slot.borrow_mut() = Some(d3d9_state);
+            });
+
+            let bytes = result?;
+            return Ok(Uint8Array::from(bytes.as_slice()));
+        }
+
         let state = STATE
             .with(|slot| slot.borrow_mut().take())
             .ok_or_else(|| JsValue::from_str("GPU backend not initialized."))?;
@@ -1638,6 +2515,9 @@ mod wasm {
     #[wasm_bindgen]
     pub fn destroy_gpu() -> Result<(), JsValue> {
         STATE.with(|slot| {
+            *slot.borrow_mut() = None;
+        });
+        D3D9_STATE.with(|slot| {
             *slot.borrow_mut() = None;
         });
         Ok(())
