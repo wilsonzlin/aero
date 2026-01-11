@@ -161,7 +161,10 @@ enum ShaderStage {
 struct ShaderResource {
     stage: ShaderStage,
     wgsl_hash: ShaderHash,
+    entry_point: &'static str,
     vs_input_signature: Vec<VsInputSignatureElement>,
+    #[cfg(debug_assertions)]
+    wgsl_source: String,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1329,6 +1332,12 @@ impl AerogpuD3d11Executor {
                 .wgsl
         };
 
+        let entry_point = match stage {
+            ShaderStage::Vertex => "vs_main",
+            ShaderStage::Pixel => "fs_main",
+            ShaderStage::Compute => "cs_main",
+        };
+
         let (hash, _module) = self.pipeline_cache.get_or_create_shader_module(
             &self.device,
             map_pipeline_cache_stage(stage),
@@ -1342,14 +1351,23 @@ impl AerogpuD3d11Executor {
             Vec::new()
         };
 
-        self.resources.shaders.insert(
-            shader_handle,
-            ShaderResource {
-                stage,
-                wgsl_hash: hash,
-                vs_input_signature,
-            },
-        );
+        #[cfg(debug_assertions)]
+        let shader = ShaderResource {
+            stage,
+            wgsl_hash: hash,
+            entry_point,
+            vs_input_signature,
+            wgsl_source: wgsl,
+        };
+        #[cfg(not(debug_assertions))]
+        let shader = ShaderResource {
+            stage,
+            wgsl_hash: hash,
+            entry_point,
+            vs_input_signature,
+        };
+
+        self.resources.shaders.insert(shader_handle, shader);
         Ok(())
     }
 
@@ -2001,6 +2019,8 @@ fn get_or_create_render_pipeline_for_state<'a>(
     let topology = state.primitive_topology;
     let cull_mode = state.cull_mode;
     let front_face = state.front_face;
+    let vs_entry_point = vs.entry_point;
+    let fs_entry_point = ps.entry_point;
 
     let pipeline = pipeline_cache
         .get_or_create_render_pipeline(device, key.clone(), move |device, vs, fs| {
@@ -2014,13 +2034,13 @@ fn get_or_create_render_pipeline_for_state<'a>(
                 layout: Some(pipeline_layout_empty),
                 vertex: wgpu::VertexState {
                     module: vs,
-                    entry_point: "vs_main",
+                    entry_point: vs_entry_point,
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
                     buffers: &vb_layouts,
                 },
                 fragment: Some(wgpu::FragmentState {
                     module: fs,
-                    entry_point: "fs_main",
+                    entry_point: fs_entry_point,
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
                     targets: &color_target_states,
                 }),
