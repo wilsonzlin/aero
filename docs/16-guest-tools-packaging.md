@@ -50,7 +50,7 @@ do stricter local validation:
 | Spec | Typical use | Required drivers | Optional drivers | HWID validation |
 |---|---|---|---|---|
 | `tools/packaging/specs/win7-signed.json` | CI/release workflows (packaging from `out/packages` + `out/certs`) | `aerogpu`, `virtio-blk`, `virtio-net`, `virtio-input` | `virtio-snd` | Derives HWIDs from `devices.cmd` (no hardcoded regex list) |
-| `tools/packaging/specs/win7-aero-guest-tools.json` | Local default (`ci/package-guest-tools.ps1` with no `-SpecPath`) | `aerogpu`, `virtio-blk`, `virtio-net`, `virtio-input` | `virtio-snd` | Stricter HWID validation (pins virtio IDs + AeroGPU IDs via `devices.cmd`) |
+| `tools/packaging/specs/win7-aero-guest-tools.json` | Local default (`ci/package-guest-tools.ps1` with no `-SpecPath`) | `aerogpu`, `virtio-blk`, `virtio-net`, `virtio-input` | `virtio-snd` | Stricter HWID validation (pins virtio HWIDs in the spec; AeroGPU HWIDs via `devices.cmd`) |
 
 To reproduce CI packaging locally (assuming you already have `out/packages/` + `out/certs/`):
 
