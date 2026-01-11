@@ -442,6 +442,115 @@ fn aero_cpu_core_int13_get_drive_parameters_returns_fixed_geometry() {
 }
 
 #[test]
+fn aero_cpu_core_int13_ext_read_reads_lba_into_memory() {
+    let bios = Bios::new(test_bios_config());
+
+    let boot_sector = boot_sector_with(&[]);
+    let mut disk_bytes = vec![0u8; 512 * 4];
+    disk_bytes[..512].copy_from_slice(&boot_sector);
+    disk_bytes[512..1024].fill(0xAA);
+    let disk = machine::InMemoryDisk::new(disk_bytes);
+
+    let mut vm = CoreVm::new(TEST_MEM_SIZE, bios, disk);
+    vm.reset();
+
+    // Program: INT 13h; HLT
+    vm.mem.write_physical(0x7C00, &[0xCD, 0x13, 0xF4]);
+
+    // Disk Address Packet at 0000:0500.
+    let dap = 0x0500u64;
+    MemoryAccess::write_u8(&mut vm.mem, dap + 0, 0x10);
+    MemoryAccess::write_u8(&mut vm.mem, dap + 1, 0x00);
+    MemoryAccess::write_u16(&mut vm.mem, dap + 2, 1); // count
+    MemoryAccess::write_u16(&mut vm.mem, dap + 4, 0x1000); // offset
+    MemoryAccess::write_u16(&mut vm.mem, dap + 6, 0x0000); // segment
+    MemoryAccess::write_u64(&mut vm.mem, dap + 8, 1); // LBA
+
+    vm.cpu.gpr[gpr::RAX] = 0x4200; // AH=42h
+    vm.cpu.gpr[gpr::RDX] = 0x0080; // DL=0x80
+    vm.cpu.gpr[gpr::RSI] = 0x0500;
+
+    assert!(matches!(vm.step(), StepExit::Branch));
+    assert!(matches!(vm.step(), StepExit::BiosInterrupt(0x13)));
+    assert!(matches!(vm.step(), StepExit::Branch));
+    assert!(matches!(vm.step(), StepExit::Halted));
+
+    assert!(!vm.cpu.get_flag(FLAG_CF));
+    assert_eq!(((vm.cpu.gpr[gpr::RAX] >> 8) & 0xFF) as u8, 0);
+
+    let mut buf = vec![0u8; 512];
+    vm.mem.read_physical(0x1000, &mut buf);
+    assert_eq!(buf, vec![0xAA; 512]);
+}
+
+#[test]
+fn aero_cpu_core_int13_ext_get_drive_params_reports_sector_count() {
+    let bios = Bios::new(test_bios_config());
+
+    let boot_sector = boot_sector_with(&[]);
+    let mut disk_bytes = vec![0u8; 512 * 8];
+    disk_bytes[..512].copy_from_slice(&boot_sector);
+    let sectors = (disk_bytes.len() / 512) as u64;
+    let disk = machine::InMemoryDisk::new(disk_bytes);
+
+    let mut vm = CoreVm::new(TEST_MEM_SIZE, bios, disk);
+    vm.reset();
+
+    // Program: INT 13h; HLT
+    vm.mem.write_physical(0x7C00, &[0xCD, 0x13, 0xF4]);
+
+    // Drive parameter table at 0000:0600, with a caller-supplied buffer size.
+    MemoryAccess::write_u16(&mut vm.mem, 0x0600, 0x1E);
+
+    vm.cpu.gpr[gpr::RAX] = 0x4800; // AH=48h
+    vm.cpu.gpr[gpr::RDX] = 0x0080; // DL=0x80
+    vm.cpu.gpr[gpr::RSI] = 0x0600;
+
+    assert!(matches!(vm.step(), StepExit::Branch));
+    assert!(matches!(vm.step(), StepExit::BiosInterrupt(0x13)));
+    assert!(matches!(vm.step(), StepExit::Branch));
+    assert!(matches!(vm.step(), StepExit::Halted));
+
+    assert!(!vm.cpu.get_flag(FLAG_CF));
+    assert_eq!(((vm.cpu.gpr[gpr::RAX] >> 8) & 0xFF) as u8, 0);
+    assert_eq!(vm.mem.read_u64(0x0600 + 16), sectors);
+    assert_eq!(vm.mem.read_u16(0x0600 + 24), 512);
+}
+
+#[test]
+fn aero_cpu_core_int13_chs_read_rejects_buffers_crossing_64k_boundary() {
+    let bios = Bios::new(test_bios_config());
+
+    // Three sectors so CHS read of sectors 2+3 is in-range.
+    let mut disk_bytes = vec![0u8; 3 * 512];
+    disk_bytes[510] = 0x55;
+    disk_bytes[511] = 0xAA;
+    let disk = machine::InMemoryDisk::new(disk_bytes);
+
+    let mut vm = CoreVm::new(TEST_MEM_SIZE, bios, disk);
+    vm.reset();
+
+    // Program: INT 13h; HLT
+    vm.mem.write_physical(0x7C00, &[0xCD, 0x13, 0xF4]);
+
+    // CHS read 2 sectors from cylinder 0, head 0, sector 2 into 0x0000:0xFF00.
+    // This crosses a 64KiB physical boundary and should return AH=09h.
+    vm.cpu.gpr[gpr::RAX] = 0x0202;
+    vm.cpu.gpr[gpr::RCX] = 0x0002; // CH=0, CL=2
+    vm.cpu.gpr[gpr::RDX] = 0x0080; // DH=0, DL=0x80
+    set_real_mode_seg(&mut vm.cpu.segments.es, 0x0000);
+    vm.cpu.gpr[gpr::RBX] = 0xFF00;
+
+    assert!(matches!(vm.step(), StepExit::Branch));
+    assert!(matches!(vm.step(), StepExit::BiosInterrupt(0x13)));
+    assert!(matches!(vm.step(), StepExit::Branch));
+    assert!(matches!(vm.step(), StepExit::Halted));
+
+    assert!(vm.cpu.get_flag(FLAG_CF));
+    assert_eq!(vm.cpu.gpr[gpr::RAX] as u16, 0x0900);
+}
+
+#[test]
 fn aero_cpu_core_int13_out_of_range_read_sets_status_and_int13_status_reports_it() {
     let bios = Bios::new(test_bios_config());
     // Only one sector so a CHS read of sector 2 (LBA 1) is out-of-range.
