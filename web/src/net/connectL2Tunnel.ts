@@ -190,6 +190,11 @@ export async function connectL2Tunnel(gatewayBaseUrl: string, opts: ConnectL2Tun
   const reconnectMaxDelayMs = opts.reconnectMaxDelayMs ?? 30_000;
   const reconnectJitterFraction = opts.reconnectJitterFraction ?? 0.2;
 
+  if (mode !== "ws" && mode !== "webrtc") {
+    // Runtime guard for consumers that bypass TS typechecking.
+    throw new Error(`unsupported L2 tunnel mode: ${String(mode)}`);
+  }
+
   validateNonNegativeInt("reconnectBaseDelayMs", reconnectBaseDelayMs);
   validateNonNegativeInt("reconnectMaxDelayMs", reconnectMaxDelayMs);
   validateFraction01("reconnectJitterFraction", reconnectJitterFraction);
@@ -209,6 +214,22 @@ export async function connectL2Tunnel(gatewayBaseUrl: string, opts: ConnectL2Tun
 
   let currentSendFrame: ((frame: Uint8Array) => void) | null = null;
   let currentClose: (() => void) | null = null;
+
+  function installTunnel(sendFrame: (frame: Uint8Array) => void, close: () => void): void {
+    currentSendFrame = sendFrame;
+    currentClose = close;
+  }
+
+  function teardownTunnel(): void {
+    const close = currentClose;
+    currentSendFrame = null;
+    currentClose = null;
+    try {
+      close?.();
+    } catch {
+      // Ignore.
+    }
+  }
 
   let lastErrorEmitAt = 0;
   const emitErrorThrottled = (error: unknown) => {
@@ -255,8 +276,9 @@ export async function connectL2Tunnel(gatewayBaseUrl: string, opts: ConnectL2Tun
       if (ev.type === "open") {
         reconnectAttempts = 0;
       } else if (ev.type === "close") {
-        // Forward the close event first so callers can treat the tunnel as
-        // disconnected immediately.
+        // Drop references immediately so `sendFrame()` starts behaving like a
+        // disconnected tunnel (rather than silently calling into a closed client).
+        teardownTunnel();
         opts.sink(ev);
         scheduleReconnect();
         return;
@@ -294,22 +316,6 @@ export async function connectL2Tunnel(gatewayBaseUrl: string, opts: ConnectL2Tun
       : gatewayBaseUrl;
   };
 
-  const installTunnel = (sendFrame: (frame: Uint8Array) => void, close: () => void) => {
-    currentSendFrame = sendFrame;
-    currentClose = close;
-  };
-
-  const teardownTunnel = () => {
-    const close = currentClose;
-    currentSendFrame = null;
-    currentClose = null;
-    try {
-      close?.();
-    } catch {
-      // Ignore.
-    }
-  };
-
   const reconnectNow = async () => {
     if (closed) return;
     teardownTunnel();
@@ -326,6 +332,7 @@ export async function connectL2Tunnel(gatewayBaseUrl: string, opts: ConnectL2Tun
         scheduleReconnect();
         return;
       }
+      if (closed) return;
 
       let nextSession: GatewaySessionResponse | null = null;
       try {
@@ -337,6 +344,10 @@ export async function connectL2Tunnel(gatewayBaseUrl: string, opts: ConnectL2Tun
 
       const l2 = new WebSocketL2TunnelClient(computeWsBaseUrl(nextSession), makeSink(gen), computeTunnelOptions(nextSession));
       l2.connect();
+      if (closed) {
+        l2.close();
+        return;
+      }
       installTunnel((frame) => l2.sendFrame(frame), () => l2.close());
       return;
     }
@@ -350,6 +361,7 @@ export async function connectL2Tunnel(gatewayBaseUrl: string, opts: ConnectL2Tun
         scheduleReconnect();
         return;
       }
+      if (closed) return;
 
       let session: GatewaySessionResponse;
       try {
