@@ -368,6 +368,11 @@ export function renderWebUsbUhciHarnessPanel(
     capture.configDescriptor = null;
   };
 
+  const freeHarness = () => {
+    safeFree(harness);
+    harness = null;
+  };
+
   const refreshUi = () => {
     const env = [
       `webusb=${report.webusb}`,
@@ -452,6 +457,7 @@ export function renderWebUsbUhciHarnessPanel(
       if (device !== selected) return;
       void (async () => {
         await stopAndWait();
+        freeHarness();
         selected = null;
         backend = null;
         resetHarnessUiState();
@@ -462,6 +468,7 @@ export function renderWebUsbUhciHarnessPanel(
 
   const selectDevice = async (device: USBDevice) => {
     await stopAndWait();
+    freeHarness();
     resetHarnessUiState();
     clearError();
     permittedList.replaceChildren();
@@ -549,6 +556,7 @@ export function renderWebUsbUhciHarnessPanel(
 
     clearError();
     resetHarnessUiState();
+    freeHarness();
 
     const controller = new AbortController();
     abortController = controller;
@@ -602,7 +610,11 @@ export function renderWebUsbUhciHarnessPanel(
             maybeCaptureDescriptors(capture, action, completion);
           }
 
+          const stateText = readHarnessState(harness);
           refreshUi();
+          if (stateText.startsWith("Done") || stateText.startsWith("Error")) {
+            break;
+          }
           await yieldToEventLoop();
         }
       } catch (err) {
@@ -617,8 +629,6 @@ export function renderWebUsbUhciHarnessPanel(
         console.error(err);
       })
       .finally(() => {
-        safeFree(harness);
-        harness = null;
         abortController = null;
         runPromise = null;
         refreshUi();
@@ -632,6 +642,7 @@ export function renderWebUsbUhciHarnessPanel(
       return;
     }
     clearError();
+    freeHarness();
     resetHarnessUiState();
     refreshUi();
   };
