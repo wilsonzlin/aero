@@ -71,8 +71,15 @@ mod platform_handle {
         use emulator::io::storage::disk::DiskError;
 
         match err {
-            DiskError::NotSupported(_) => io::Error::new(io::ErrorKind::Unsupported, err.to_string()),
+            DiskError::NotSupported(_) | DiskError::Unsupported(_) => {
+                io::Error::new(io::ErrorKind::Unsupported, err.to_string())
+            }
             DiskError::InUse => io::Error::new(io::ErrorKind::WouldBlock, err.to_string()),
+            DiskError::QuotaExceeded => io::Error::new(io::ErrorKind::StorageFull, err.to_string()),
+            DiskError::InvalidState(_) => io::Error::new(io::ErrorKind::BrokenPipe, err.to_string()),
+            DiskError::OutOfBounds | DiskError::OutOfRange { .. } => {
+                io::Error::new(io::ErrorKind::InvalidInput, err.to_string())
+            }
             _ => io::Error::new(io::ErrorKind::Other, err.to_string()),
         }
     }
