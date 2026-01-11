@@ -31,6 +31,7 @@ jobs:
     outputs:
       code_changed: ${{ steps.changes.outputs.code_changed }}
       docs_only: ${{ steps.changes.outputs.docs_only }}
+      win7_virtio_snd_changed: ${{ steps.changes.outputs.win7_virtio_snd_changed }}
     env:
       BASE_REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event.before }}
       HEAD_REF: ${{ github.event_name == 'merge_group' && github.event.merge_group.head_sha || github.sha }}
@@ -53,6 +54,7 @@ jobs:
           if [[ -z "${base:-}" || "$base" == "0000000000000000000000000000000000000000" ]]; then
             echo "code_changed=true" >> "$GITHUB_OUTPUT"
             echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            echo "win7_virtio_snd_changed=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -76,6 +78,17 @@ jobs:
             echo "docs_only=true" >> "$GITHUB_OUTPUT"
           fi
 
+          win7_virtio_snd_changed=false
+          while IFS= read -r file; do
+            [[ -z "$file" ]] && continue
+            if [[ "$file" == drivers/windows7/virtio-snd/* || "$file" == drivers/windows7/virtio/common/* ]]; then
+              win7_virtio_snd_changed=true
+              break
+            fi
+          done <<< "$files"
+
+          echo "win7_virtio_snd_changed=$win7_virtio_snd_changed" >> "$GITHUB_OUTPUT"
+
       - name: Change filter summary
         if: always()
         shell: bash
@@ -85,6 +98,7 @@ jobs:
             echo ""
             echo "- Docs-only: \`${{ steps.changes.outputs.docs_only }}\`"
             echo "- Code changed: \`${{ steps.changes.outputs.code_changed }}\`"
+            echo "- Win7 virtio-snd/common changed: \`${{ steps.changes.outputs.win7_virtio_snd_changed }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Check repository policy
@@ -309,6 +323,7 @@ jobs:
             CC=clang ./drivers/win7/virtio/tests/build_and_run.sh
           fi
       - name: Build + run virtio-snd host tests
+        if: needs.policy.outputs.win7_virtio_snd_changed == 'true'
         run: |
           set -euo pipefail
           cmake -S drivers/windows7/virtio-snd/tests -B out/virtiosnd-host-tests
