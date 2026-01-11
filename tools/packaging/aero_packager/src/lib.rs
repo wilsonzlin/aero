@@ -891,6 +891,11 @@ fn read_inf_text(path: &Path) -> Result<String> {
     } else {
         String::from_utf8_lossy(&bytes).to_string()
     };
+    // Strip UTF-8 BOM if present.
+    let stripped = text.trim_start_matches('\u{feff}');
+    if stripped.len() != text.len() {
+        return Ok(stripped.to_string());
+    }
     Ok(text)
 }
 
