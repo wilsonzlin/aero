@@ -1701,20 +1701,26 @@ void APIENTRY CopySubresourceRegion(D3D10DDI_HDEVICE hDevice,
     const uint64_t max_dst = (dst_off < dst->size_bytes) ? (dst->size_bytes - dst_off) : 0;
     const uint64_t bytes = std::min(std::min(requested, max_src), max_dst);
 
-    if (dst->storage.size() < static_cast<size_t>(dst->size_bytes)) {
-      try {
-        dst->storage.resize(static_cast<size_t>(dst->size_bytes), 0);
-      } catch (...) {
-        SetError(hDevice, E_OUTOFMEMORY);
-        return;
+    if (dst->size_bytes <= static_cast<uint64_t>(SIZE_MAX)) {
+      const size_t dst_size = static_cast<size_t>(dst->size_bytes);
+      if (dst->storage.size() < dst_size) {
+        try {
+          dst->storage.resize(dst_size, 0);
+        } catch (...) {
+          SetError(hDevice, E_OUTOFMEMORY);
+          return;
+        }
       }
     }
-    if (src->storage.size() < static_cast<size_t>(src->size_bytes)) {
-      try {
-        src->storage.resize(static_cast<size_t>(src->size_bytes), 0);
-      } catch (...) {
-        SetError(hDevice, E_OUTOFMEMORY);
-        return;
+    if (src->size_bytes <= static_cast<uint64_t>(SIZE_MAX)) {
+      const size_t src_size = static_cast<size_t>(src->size_bytes);
+      if (src->storage.size() < src_size) {
+        try {
+          src->storage.resize(src_size, 0);
+        } catch (...) {
+          SetError(hDevice, E_OUTOFMEMORY);
+          return;
+        }
       }
     }
 
@@ -1772,14 +1778,20 @@ void APIENTRY CopySubresourceRegion(D3D10DDI_HDEVICE hDevice,
 
     const uint32_t copy_width = std::min(src_right - src_left, dst->width > dstX ? (dst->width - dstX) : 0u);
     const uint32_t copy_height = std::min(src_bottom - src_top, dst->height > dstY ? (dst->height - dstY) : 0u);
-    const size_t row_bytes = static_cast<size_t>(copy_width) * bpp;
+    const uint64_t row_bytes_u64 = static_cast<uint64_t>(copy_width) * static_cast<uint64_t>(bpp);
 
-    if (dst->row_pitch_bytes == 0) {
-      dst->row_pitch_bytes = dst->width * bpp;
-    }
-    if (src->row_pitch_bytes == 0) {
-      src->row_pitch_bytes = src->width * bpp;
-    }
+    auto ensure_row_pitch = [&](AeroGpuResource* res) -> bool {
+      if (res->row_pitch_bytes != 0) {
+        return true;
+      }
+      const uint64_t pitch = static_cast<uint64_t>(res->width) * static_cast<uint64_t>(bpp);
+      if (pitch > UINT32_MAX) {
+        return false;
+      }
+      res->row_pitch_bytes = static_cast<uint32_t>(pitch);
+      return true;
+    };
+    const bool has_row_pitch = ensure_row_pitch(dst) && ensure_row_pitch(src);
 
     const uint64_t dst_total = static_cast<uint64_t>(dst->row_pitch_bytes) * static_cast<uint64_t>(dst->height);
     const uint64_t src_total = static_cast<uint64_t>(src->row_pitch_bytes) * static_cast<uint64_t>(src->height);
@@ -1800,14 +1812,22 @@ void APIENTRY CopySubresourceRegion(D3D10DDI_HDEVICE hDevice,
       }
     }
 
-    if (row_bytes && dst->row_pitch_bytes >= dstX * bpp + row_bytes && src->row_pitch_bytes >= src_left * bpp + row_bytes) {
-      for (uint32_t y = 0; y < copy_height; y++) {
-        const size_t dst_off =
-            static_cast<size_t>(dstY + y) * dst->row_pitch_bytes + static_cast<size_t>(dstX) * bpp;
-        const size_t src_off =
-            static_cast<size_t>(src_top + y) * src->row_pitch_bytes + static_cast<size_t>(src_left) * bpp;
-        if (dst_off + row_bytes <= dst->storage.size() && src_off + row_bytes <= src->storage.size()) {
-          std::memcpy(dst->storage.data() + dst_off, src->storage.data() + src_off, row_bytes);
+    if (has_row_pitch && row_bytes_u64 && row_bytes_u64 <= static_cast<uint64_t>(SIZE_MAX)) {
+      const uint64_t dst_row_needed = static_cast<uint64_t>(dstX) * static_cast<uint64_t>(bpp) + row_bytes_u64;
+      const uint64_t src_row_needed = static_cast<uint64_t>(src_left) * static_cast<uint64_t>(bpp) + row_bytes_u64;
+      if (dst_row_needed <= static_cast<uint64_t>(dst->row_pitch_bytes) && src_row_needed <= static_cast<uint64_t>(src->row_pitch_bytes)) {
+        for (uint32_t y = 0; y < copy_height; y++) {
+          const uint64_t dst_off_u64 =
+              static_cast<uint64_t>(dstY + y) * static_cast<uint64_t>(dst->row_pitch_bytes) +
+              static_cast<uint64_t>(dstX) * static_cast<uint64_t>(bpp);
+          const uint64_t src_off_u64 =
+              static_cast<uint64_t>(src_top + y) * static_cast<uint64_t>(src->row_pitch_bytes) +
+              static_cast<uint64_t>(src_left) * static_cast<uint64_t>(bpp);
+          if (dst_off_u64 + row_bytes_u64 <= dst->storage.size() && src_off_u64 + row_bytes_u64 <= src->storage.size()) {
+            std::memcpy(dst->storage.data() + static_cast<size_t>(dst_off_u64),
+                        src->storage.data() + static_cast<size_t>(src_off_u64),
+                        static_cast<size_t>(row_bytes_u64));
+          }
         }
       }
     }
