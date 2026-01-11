@@ -64,6 +64,11 @@ Run the probe for **x86** and **x64** and save the output. Confirm the following
 - `sizeof(D3DDDIARG_OPENADAPTER)` and key offsets like `pAdapterFuncs` / `pAdapterCallbacks`
 - `sizeof(D3D9DDI_ADAPTERFUNCS)` and offsets for the “anchor” function pointers (Close/GetCaps/CreateDevice)
 - `sizeof(D3D9DDI_DEVICEFUNCS)` and offsets for the subset your UMD fills (CreateResource/Present/Flush/etc)
+- D3D9 device argument structs the runtime passes across the ABI boundary:
+  - `D3D9DDIARG_CREATEDEVICE` (notably `pCallbacks`)
+  - `D3D9DDIARG_CREATERESOURCE` / `D3D9DDIARG_OPENRESOURCE`
+  - `D3D9DDIARG_LOCK` / `D3D9DDIARG_UNLOCK`
+  - `D3D9DDIARG_PRESENT` / `D3D9DDIARG_PRESENTEX`
 - `sizeof(D3DDDI_DEVICECALLBACKS)` and offsets for the callbacks your UMD uses (Allocate/Submit/Render/etc)
 - Submission structs used to pass DMA buffer pointers (`D3DDDIARG_CREATECONTEXT`, `D3DDDIARG_SUBMITCOMMAND`)
 

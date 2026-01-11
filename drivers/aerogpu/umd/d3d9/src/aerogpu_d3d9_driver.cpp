@@ -40,6 +40,10 @@
 #include "aerogpu_trace.h"
 #include "aerogpu_wddm_alloc.h"
 
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+#include "aerogpu_d3d9_wdk_abi_asserts.h"
+#endif
+
 namespace {
 
 template <typename T, typename = void>
@@ -7540,6 +7544,132 @@ HRESULT AEROGPU_D3D9_CALL device_wait_for_idle(D3DDDI_HDEVICE hDevice) {
   return trace.ret(kD3dErrWasStillDrawing);
 }
 
+#if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+// -----------------------------------------------------------------------------
+// WDK-signature wrappers for entrypoints that use AeroGPU's portable arg structs.
+// -----------------------------------------------------------------------------
+// In WDK builds, the runtime calls into the UMD using the WDK D3D9UMDDI argument
+// structs. The translation layer uses a reduced `AEROGPU_D3D9DDIARG_*` surface.
+//
+// For ABI safety, keep these wrappers WDK-typed and copy the prefix bytes into
+// the portable structs. The optional `aerogpu_d3d9_wdk_abi_asserts.h` checks can
+// be enabled to prove the prefix layouts are stable for Win7 (WDDM 1.1).
+
+static HRESULT AEROGPU_D3D9_CALL wdk_device_create_resource(
+    D3D9DDI_HDEVICE hDevice,
+    D3D9DDIARG_CREATERESOURCE* pCreateResource) {
+  static_assert(sizeof(AEROGPU_D3D9DDIARG_CREATERESOURCE) <= sizeof(D3D9DDIARG_CREATERESOURCE),
+                "AEROGPU_D3D9DDIARG_CREATERESOURCE must be a prefix of D3D9DDIARG_CREATERESOURCE");
+  if (!pCreateResource) {
+    return device_create_resource(hDevice, nullptr);
+  }
+
+  AEROGPU_D3D9DDIARG_CREATERESOURCE args{};
+  std::memcpy(&args, pCreateResource, sizeof(args));
+  const HRESULT hr = device_create_resource(hDevice, &args);
+  std::memcpy(pCreateResource, &args, sizeof(args));
+  return hr;
+}
+
+static HRESULT AEROGPU_D3D9_CALL wdk_device_open_resource(
+    D3D9DDI_HDEVICE hDevice,
+    D3D9DDIARG_OPENRESOURCE* pOpenResource) {
+  static_assert(sizeof(AEROGPU_D3D9DDIARG_OPENRESOURCE) <= sizeof(D3D9DDIARG_OPENRESOURCE),
+                "AEROGPU_D3D9DDIARG_OPENRESOURCE must be a prefix of D3D9DDIARG_OPENRESOURCE");
+  if (!pOpenResource) {
+    return device_open_resource(hDevice, nullptr);
+  }
+
+  AEROGPU_D3D9DDIARG_OPENRESOURCE args{};
+  std::memcpy(&args, pOpenResource, sizeof(args));
+  const HRESULT hr = device_open_resource(hDevice, &args);
+  std::memcpy(pOpenResource, &args, sizeof(args));
+  return hr;
+}
+
+static HRESULT AEROGPU_D3D9_CALL wdk_device_open_resource2(
+    D3D9DDI_HDEVICE hDevice,
+    D3D9DDIARG_OPENRESOURCE* pOpenResource) {
+  static_assert(sizeof(AEROGPU_D3D9DDIARG_OPENRESOURCE) <= sizeof(D3D9DDIARG_OPENRESOURCE),
+                "AEROGPU_D3D9DDIARG_OPENRESOURCE must be a prefix of D3D9DDIARG_OPENRESOURCE");
+  if (!pOpenResource) {
+    return device_open_resource2(hDevice, nullptr);
+  }
+
+  AEROGPU_D3D9DDIARG_OPENRESOURCE args{};
+  std::memcpy(&args, pOpenResource, sizeof(args));
+  const HRESULT hr = device_open_resource2(hDevice, &args);
+  std::memcpy(pOpenResource, &args, sizeof(args));
+  return hr;
+}
+
+static HRESULT AEROGPU_D3D9_CALL wdk_device_lock(
+    D3D9DDI_HDEVICE hDevice,
+    const D3D9DDIARG_LOCK* pLock,
+    D3D9DDI_LOCKED_BOX* pLockedBox) {
+  static_assert(sizeof(AEROGPU_D3D9DDIARG_LOCK) <= sizeof(D3D9DDIARG_LOCK),
+                "AEROGPU_D3D9DDIARG_LOCK must be a prefix of D3D9DDIARG_LOCK");
+  static_assert(sizeof(AEROGPU_D3D9DDI_LOCKED_BOX) == sizeof(D3D9DDI_LOCKED_BOX),
+                "AEROGPU_D3D9DDI_LOCKED_BOX must match D3D9DDI_LOCKED_BOX");
+
+  if (!pLock || !pLockedBox) {
+    // Mirror the internal implementation's argument validation without relying
+    // on any DDI struct aliasing in this error path.
+    return E_INVALIDARG;
+  }
+
+  AEROGPU_D3D9DDIARG_LOCK lock_args{};
+  std::memcpy(&lock_args, pLock, sizeof(lock_args));
+
+  AEROGPU_D3D9DDI_LOCKED_BOX locked{};
+  const HRESULT hr = device_lock(hDevice, &lock_args, &locked);
+  std::memcpy(pLockedBox, &locked, sizeof(locked));
+  return hr;
+}
+
+static HRESULT AEROGPU_D3D9_CALL wdk_device_unlock(
+    D3D9DDI_HDEVICE hDevice,
+    const D3D9DDIARG_UNLOCK* pUnlock) {
+  static_assert(sizeof(AEROGPU_D3D9DDIARG_UNLOCK) <= sizeof(D3D9DDIARG_UNLOCK),
+                "AEROGPU_D3D9DDIARG_UNLOCK must be a prefix of D3D9DDIARG_UNLOCK");
+  if (!pUnlock) {
+    return device_unlock(hDevice, nullptr);
+  }
+
+  AEROGPU_D3D9DDIARG_UNLOCK args{};
+  std::memcpy(&args, pUnlock, sizeof(args));
+  return device_unlock(hDevice, &args);
+}
+
+static HRESULT AEROGPU_D3D9_CALL wdk_device_present(
+    D3D9DDI_HDEVICE hDevice,
+    const D3D9DDIARG_PRESENT* pPresent) {
+  static_assert(sizeof(AEROGPU_D3D9DDIARG_PRESENT) <= sizeof(D3D9DDIARG_PRESENT),
+                "AEROGPU_D3D9DDIARG_PRESENT must be a prefix of D3D9DDIARG_PRESENT");
+  if (!pPresent) {
+    return device_present(hDevice, nullptr);
+  }
+
+  AEROGPU_D3D9DDIARG_PRESENT args{};
+  std::memcpy(&args, pPresent, sizeof(args));
+  return device_present(hDevice, &args);
+}
+
+static HRESULT AEROGPU_D3D9_CALL wdk_device_present_ex(
+    D3D9DDI_HDEVICE hDevice,
+    const D3D9DDIARG_PRESENTEX* pPresentEx) {
+  static_assert(sizeof(AEROGPU_D3D9DDIARG_PRESENTEX) <= sizeof(D3D9DDIARG_PRESENTEX),
+                "AEROGPU_D3D9DDIARG_PRESENTEX must be a prefix of D3D9DDIARG_PRESENTEX");
+  if (!pPresentEx) {
+    return device_present_ex(hDevice, nullptr);
+  }
+
+  AEROGPU_D3D9DDIARG_PRESENTEX args{};
+  std::memcpy(&args, pPresentEx, sizeof(args));
+  return device_present_ex(hDevice, &args);
+}
+#endif
+
 HRESULT AEROGPU_D3D9_CALL adapter_create_device(
     D3D9DDIARG_CREATEDEVICE* pCreateDevice,
     D3D9DDI_DEVICEFUNCS* pDeviceFuncs) {
@@ -7716,25 +7846,29 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
 
   std::memset(pDeviceFuncs, 0, sizeof(*pDeviceFuncs));
 
-  // The translation layer uses a reduced set of DDI argument structs (prefixed
-  // with D3D9DDIARG_*). In WDK builds, cast the entrypoints to the
-  // runtime's expected function pointer types.
+  // The translation layer uses AeroGPU's reduced `AEROGPU_D3D9DDIARG_*` surface.
+  // In WDK builds, use WDK-typed wrappers for entrypoints that pass these
+  // argument structs across the DDI to avoid relying on reinterpret_cast-based
+  // struct aliasing.
+  pDeviceFuncs->pfnDestroyDevice = device_destroy;
+  pDeviceFuncs->pfnCreateResource = wdk_device_create_resource;
+  if constexpr (aerogpu_has_member_pfnOpenResource<D3D9DDI_DEVICEFUNCS>::value) {
+    pDeviceFuncs->pfnOpenResource = wdk_device_open_resource;
+  }
+  if constexpr (aerogpu_has_member_pfnOpenResource2<D3D9DDI_DEVICEFUNCS>::value) {
+    pDeviceFuncs->pfnOpenResource2 = wdk_device_open_resource2;
+  }
+  pDeviceFuncs->pfnDestroyResource = device_destroy_resource;
+  pDeviceFuncs->pfnLock = wdk_device_lock;
+  pDeviceFuncs->pfnUnlock = wdk_device_unlock;
+
+  // Most entrypoints use ABI-compatible scalar arguments (handles/UINT/BOOL/etc).
+  // Keep using the existing reinterpret_cast wiring for the remaining D3D9 DDIs
+  // until they have been fully audited against the Win7 WDK headers.
 #define AEROGPU_SET_D3D9DDI_FN(member, fn)                                                            \
   do {                                                                                                \
     pDeviceFuncs->member = reinterpret_cast<decltype(pDeviceFuncs->member)>(fn);                      \
   } while (0)
-
-  AEROGPU_SET_D3D9DDI_FN(pfnDestroyDevice, device_destroy);
-  AEROGPU_SET_D3D9DDI_FN(pfnCreateResource, device_create_resource);
-  if constexpr (aerogpu_has_member_pfnOpenResource<D3D9DDI_DEVICEFUNCS>::value) {
-    AEROGPU_SET_D3D9DDI_FN(pfnOpenResource, device_open_resource);
-  }
-  if constexpr (aerogpu_has_member_pfnOpenResource2<D3D9DDI_DEVICEFUNCS>::value) {
-    AEROGPU_SET_D3D9DDI_FN(pfnOpenResource2, device_open_resource2);
-  }
-  AEROGPU_SET_D3D9DDI_FN(pfnDestroyResource, device_destroy_resource);
-  AEROGPU_SET_D3D9DDI_FN(pfnLock, device_lock);
-  AEROGPU_SET_D3D9DDI_FN(pfnUnlock, device_unlock);
 
   AEROGPU_SET_D3D9DDI_FN(pfnSetRenderTarget, device_set_render_target);
   AEROGPU_SET_D3D9DDI_FN(pfnSetDepthStencil, device_set_depth_stencil);
@@ -8101,9 +8235,9 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   }
 
   AEROGPU_SET_D3D9DDI_FN(pfnRotateResourceIdentities, device_rotate_resource_identities);
-  AEROGPU_SET_D3D9DDI_FN(pfnPresent, device_present);
-  AEROGPU_SET_D3D9DDI_FN(pfnPresentEx, device_present_ex);
-  AEROGPU_SET_D3D9DDI_FN(pfnFlush, device_flush);
+  pDeviceFuncs->pfnPresent = wdk_device_present;
+  pDeviceFuncs->pfnPresentEx = wdk_device_present_ex;
+  pDeviceFuncs->pfnFlush = device_flush;
   AEROGPU_SET_D3D9DDI_FN(pfnSetMaximumFrameLatency, device_set_maximum_frame_latency);
   AEROGPU_SET_D3D9DDI_FN(pfnGetMaximumFrameLatency, device_get_maximum_frame_latency);
   AEROGPU_SET_D3D9DDI_FN(pfnGetPresentStats, device_get_present_stats);

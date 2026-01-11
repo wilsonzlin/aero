@@ -87,6 +87,40 @@ CI builds the same solution (and stages outputs under `out/drivers/aerogpu/`) vi
 
 Optional: `drivers\aerogpu\build\build_all.cmd` is a convenience wrapper around MSBuild/WDK10 that stages outputs under `drivers\aerogpu\build\out\win7\...`.
 
+## Win7 WDK ABI verification (recommended)
+
+The D3D9 runtime loads the UMD by **ABI contract**: exported entrypoint names, calling conventions, and the exact layout of D3D9UMDDI/WDDM structs passed across the boundary.
+
+To make ABI drift obvious *before* you debug a Win7 loader crash, the repo includes:
+
+- A standalone **WDK ABI probe** tool:
+  - `tools/wdk_abi_probe/`
+- Optional **compile-time ABI asserts** wired into WDK builds:
+  - `src/aerogpu_d3d9_wdk_abi_asserts.h` (included automatically when `AEROGPU_D3D9_USE_WDK_DDI` is defined)
+
+### Step-by-step
+
+1. **Run the probe in a Win7-era WDK environment** (x86 + x64):
+   - Follow: `tools/wdk_abi_probe/README.md`
+   - Save the output for both architectures.
+
+2. **Update `.def` exports (x86)** if needed:
+   - Compare the probe’s “x86 stdcall decoration” section against:
+     - `aerogpu_d3d9_x86.def`
+   - The `@N` stack byte counts must match.
+
+3. **Freeze ABI expectations in the WDK build (optional but recommended)**:
+   - Take the `sizeof(...)` / `offsetof(...)` values printed by the probe and define the matching
+     `AEROGPU_D3D9_WDK_ABI_EXPECT_*` macros in your WDK build (for example via `AdditionalOptions` / `/D...`
+     in `aerogpu_d3d9_umd.vcxproj`).
+   - Macro names live in: `src/aerogpu_d3d9_wdk_abi_asserts.h`
+
+4. **Rebuild the UMD**:
+   - With the expected macros defined, the build will fail if:
+     - the WDK headers/toolchain no longer match the expected Win7 ABI, or
+     - AeroGPU’s portable `AEROGPU_D3D9DDIARG_*` structs are no longer prefix-compatible with the WDK structs
+       for the fields the UMD consumes.
+
 ### Notes
 
 - The code in `include/aerogpu_d3d9_umd.h` includes a tiny “compat” subset of the Win7 D3D9 UMD DDI types so the core translation code is self-contained in this repository. When building in a real Win7 WDK environment, define `AEROGPU_UMD_USE_WDK_HEADERS=1` (or set `/p:AeroGpuUseWdkHeaders=1` in the VS project) to compile against the canonical WDK headers (`d3dumddi.h`, `d3d9umddi.h`).
