@@ -476,6 +476,13 @@ struct AeroGpuResource {
 
 #if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS)
   uint64_t wddm_allocation = 0;
+
+  // When Map/Unmap is implemented via the runtime LockCb/UnlockCb path, keep the
+  // lock pointer/pitch here so Unmap can copy the final bytes into `storage`
+  // (used by the bring-up upload path) before unlocking.
+  void* mapped_wddm_ptr = nullptr;
+  uint32_t mapped_wddm_pitch = 0;
+  uint32_t mapped_wddm_slice_pitch = 0;
 #endif
 
   // CPU-visible backing storage for resource uploads.
@@ -5556,11 +5563,14 @@ HRESULT ensure_resource_storage(AeroGpuResource* res, uint64_t size_bytes) {
   return S_OK;
 }
 
-HRESULT map_resource_locked(AeroGpuResource* res,
+template <typename TMappedSubresource>
+HRESULT map_resource_locked(AeroGpuDevice* dev,
+                            AeroGpuResource* res,
                             uint32_t subresource,
                             uint32_t map_type,
-                            AEROGPU_DDI_MAPPED_SUBRESOURCE* pMapped) {
-  if (!res || !pMapped) {
+                            uint32_t map_flags,
+                            TMappedSubresource* pMapped) {
+  if (!dev || !res || !pMapped) {
     return E_INVALIDARG;
   }
   if (res->mapped) {
@@ -5589,6 +5599,38 @@ HRESULT map_resource_locked(AeroGpuResource* res,
       return E_INVALIDARG;
   }
 
+  if (want_read && (res->cpu_access_flags & kD3D11CpuAccessRead) == 0) {
+    return E_INVALIDARG;
+  }
+  if (want_write && (res->cpu_access_flags & kD3D11CpuAccessWrite) == 0) {
+    return E_INVALIDARG;
+  }
+
+  // Staging readback maps are synchronization points. For bring-up we conservatively
+  // submit and wait for the latest fence whenever the CPU requests a read.
+  if (want_read) {
+    const bool do_not_wait = (map_flags & AEROGPU_D3D11_MAP_FLAG_DO_NOT_WAIT) != 0;
+    HRESULT submit_hr = S_OK;
+    const uint64_t submitted_fence = submit_locked(dev, &submit_hr);
+    if (FAILED(submit_hr)) {
+      return submit_hr;
+    }
+    const uint64_t last_fence = dev->last_submitted_fence.load(std::memory_order_relaxed);
+    const uint64_t fence = submitted_fence > last_fence ? submitted_fence : last_fence;
+    if (fence != 0) {
+      if (do_not_wait) {
+        if (AeroGpuQueryCompletedFence(dev) < fence) {
+          return kDxgiErrorWasStillDrawing;
+        }
+      } else {
+        HRESULT wait_hr = AeroGpuWaitForFence(dev, fence, /*timeout_ms=*/0);
+        if (FAILED(wait_hr)) {
+          return wait_hr;
+        }
+      }
+    }
+  }
+
   const uint64_t total = resource_total_bytes(res);
   if (!total) {
     return E_INVALIDARG;
@@ -5597,6 +5639,68 @@ HRESULT map_resource_locked(AeroGpuResource* res,
   HRESULT hr = ensure_resource_storage(res, total);
   if (FAILED(hr)) {
     return hr;
+  }
+
+#if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS)
+  res->mapped_wddm_ptr = nullptr;
+  res->mapped_wddm_pitch = 0;
+  res->mapped_wddm_slice_pitch = 0;
+
+  if (res->wddm_allocation && dev->callbacks && dev->callbacks->pfnLockCb && dev->callbacks->pfnUnlockCb) {
+    D3DDDICB_LOCK lock = {};
+    lock.hAllocation = static_cast<D3DKMT_HANDLE>(res->wddm_allocation);
+    hr = dev->callbacks->pfnLockCb(dev->hrt_device, &lock);
+    if (FAILED(hr)) {
+      return hr;
+    }
+    if (!lock.pData) {
+      D3DDDICB_UNLOCK unlock = {};
+      unlock.hAllocation = static_cast<D3DKMT_HANDLE>(res->wddm_allocation);
+      dev->callbacks->pfnUnlockCb(dev->hrt_device, &unlock);
+      return E_FAIL;
+    }
+
+    res->mapped_wddm_ptr = lock.pData;
+    res->mapped_wddm_pitch = lock.Pitch;
+    res->mapped_wddm_slice_pitch = lock.SlicePitch;
+
+    if (map_type == AEROGPU_DDI_MAP_WRITE_DISCARD) {
+      // Discard contents are undefined; clear for deterministic tests.
+      if (res->kind == ResourceKind::Buffer) {
+        std::memset(lock.pData, 0, static_cast<size_t>(res->size_bytes));
+      } else if (res->kind == ResourceKind::Texture2D) {
+        const uint32_t pitch = lock.Pitch ? lock.Pitch : res->row_pitch_bytes;
+        const uint64_t bytes = static_cast<uint64_t>(pitch) * static_cast<uint64_t>(res->height);
+        if (bytes <= static_cast<uint64_t>(SIZE_MAX)) {
+          std::memset(lock.pData, 0, static_cast<size_t>(bytes));
+        }
+      }
+    }
+
+    pMapped->pData = lock.pData;
+    if (res->kind == ResourceKind::Texture2D) {
+      const uint32_t pitch = lock.Pitch ? lock.Pitch : res->row_pitch_bytes;
+      pMapped->RowPitch = pitch;
+      const uint32_t slice = lock.SlicePitch ? lock.SlicePitch : pitch * res->height;
+      pMapped->DepthPitch = slice;
+    } else {
+      pMapped->RowPitch = 0;
+      pMapped->DepthPitch = 0;
+    }
+
+    res->mapped = true;
+    res->mapped_write = want_write;
+    res->mapped_subresource = subresource;
+    res->mapped_map_type = map_type;
+    res->mapped_offset_bytes = 0;
+    res->mapped_size_bytes = total;
+    return S_OK;
+  }
+#endif
+
+  if (map_type == AEROGPU_DDI_MAP_WRITE_DISCARD) {
+    // Discard contents are undefined; clear for deterministic tests.
+    std::memset(res->storage.data(), 0, res->storage.size());
   }
 
   pMapped->pData = res->storage.data();
@@ -5614,7 +5718,6 @@ HRESULT map_resource_locked(AeroGpuResource* res,
   res->mapped_map_type = map_type;
   res->mapped_offset_bytes = 0;
   res->mapped_size_bytes = total;
-  (void)want_read;
   return S_OK;
 }
 
@@ -5628,6 +5731,33 @@ void unmap_resource_locked(AeroGpuDevice* dev, AeroGpuResource* res, uint32_t su
   if (subresource != res->mapped_subresource) {
     return;
   }
+
+#if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS)
+  const bool had_wddm_lock = res->mapped_wddm_ptr != nullptr;
+  if (had_wddm_lock && res->mapped_write) {
+    // Copy the final bytes from the locked WDDM allocation back into our shadow
+    // storage so subsequent uploads use a tightly-packed layout.
+    if (res->kind == ResourceKind::Buffer) {
+      const uint64_t bytes = res->size_bytes;
+      if (SUCCEEDED(ensure_resource_storage(res, bytes)) && bytes <= static_cast<uint64_t>(res->storage.size())) {
+        std::memcpy(res->storage.data(), res->mapped_wddm_ptr, static_cast<size_t>(bytes));
+      }
+    } else if (res->kind == ResourceKind::Texture2D) {
+      const uint64_t bytes = resource_total_bytes(res);
+      const uint32_t bytes_per_row = res->row_pitch_bytes;
+      const uint32_t src_pitch = res->mapped_wddm_pitch ? res->mapped_wddm_pitch : bytes_per_row;
+      if (bytes_per_row != 0 && src_pitch >= bytes_per_row && bytes != 0 &&
+          SUCCEEDED(ensure_resource_storage(res, bytes)) && bytes <= static_cast<uint64_t>(res->storage.size())) {
+        const uint8_t* src = static_cast<const uint8_t*>(res->mapped_wddm_ptr);
+        for (uint32_t y = 0; y < res->height; y++) {
+          std::memcpy(res->storage.data() + static_cast<size_t>(y) * bytes_per_row,
+                      src + static_cast<size_t>(y) * src_pitch,
+                      bytes_per_row);
+        }
+      }
+    }
+  }
+#endif
 
   if (res->mapped_write && res->handle != kInvalidHandle) {
     // For bring-up, inline the updated bytes into the command stream so the host
@@ -5643,6 +5773,17 @@ void unmap_resource_locked(AeroGpuDevice* dev, AeroGpuResource* res, uint32_t su
       upload->size_bytes = res->mapped_size_bytes;
     }
   }
+
+#if defined(_WIN32) && defined(AEROGPU_UMD_USE_WDK_HEADERS)
+  if (had_wddm_lock && res->wddm_allocation && dev->callbacks && dev->callbacks->pfnUnlockCb) {
+    D3DDDICB_UNLOCK unlock = {};
+    unlock.hAllocation = static_cast<D3DKMT_HANDLE>(res->wddm_allocation);
+    dev->callbacks->pfnUnlockCb(dev->hrt_device, &unlock);
+  }
+  res->mapped_wddm_ptr = nullptr;
+  res->mapped_wddm_pitch = 0;
+  res->mapped_wddm_slice_pitch = 0;
+#endif
 
   res->mapped = false;
   res->mapped_write = false;
@@ -5714,7 +5855,7 @@ HRESULT AEROGPU_APIENTRY StagingResourceMap(D3D10DDI_HDEVICE hDevice,
   if (res->kind != ResourceKind::Texture2D) {
     return E_INVALIDARG;
   }
-  return map_resource_locked(res, subresource, map_type, pMapped);
+  return map_resource_locked(dev, res, subresource, map_type, map_flags, pMapped);
 }
 
 void AEROGPU_APIENTRY StagingResourceUnmap(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hResource, uint32_t subresource) {
@@ -5894,12 +6035,12 @@ HRESULT AEROGPU_APIENTRY Map(D3D10DDI_HDEVICE hDevice,
   }
 
   if (res->kind == ResourceKind::Texture2D && res->bind_flags == 0) {
-    return map_resource_locked(res, subresource, map_type, pMapped);
+    return map_resource_locked(dev, res, subresource, map_type, map_flags, pMapped);
   }
 
   // Conservative: only support generic map on buffers and staging textures for now.
   if (res->kind == ResourceKind::Buffer) {
-    return map_resource_locked(res, subresource, map_type, pMapped);
+    return map_resource_locked(dev, res, subresource, map_type, map_flags, pMapped);
   }
   return E_NOTIMPL;
 }
@@ -6888,92 +7029,15 @@ void AEROGPU_APIENTRY Map(D3D10DDI_HDEVICE hDevice, const AEROGPU_D3D11DDIARG_MA
   std::lock_guard<std::mutex> lock(dev->mutex);
   dev->last_error = S_OK;
 
-  if (pMap->Subresource != 0) {
-    dev->last_error = E_NOTIMPL;
-    return;
+  HRESULT hr = map_resource_locked(dev,
+                                   res,
+                                   static_cast<uint32_t>(pMap->Subresource),
+                                   static_cast<uint32_t>(pMap->MapType),
+                                   static_cast<uint32_t>(pMap->MapFlags),
+                                   pMap->pMappedSubresource);
+  if (FAILED(hr)) {
+    dev->last_error = hr;
   }
-
-  if (res->mapped) {
-    dev->last_error = E_FAIL;
-    return;
-  }
-
-  const bool wants_read = pMap->MapType == AEROGPU_D3D11_MAP_READ || pMap->MapType == AEROGPU_D3D11_MAP_READ_WRITE;
-  const bool wants_write = pMap->MapType == AEROGPU_D3D11_MAP_WRITE || pMap->MapType == AEROGPU_D3D11_MAP_READ_WRITE ||
-                           pMap->MapType == AEROGPU_D3D11_MAP_WRITE_DISCARD ||
-                           pMap->MapType == AEROGPU_D3D11_MAP_WRITE_NO_OVERWRITE;
-
-  if (wants_read && (res->cpu_access_flags & AEROGPU_D3D11_CPU_ACCESS_READ) == 0) {
-    dev->last_error = E_INVALIDARG;
-    return;
-  }
-  if (wants_write && (res->cpu_access_flags & AEROGPU_D3D11_CPU_ACCESS_WRITE) == 0) {
-    dev->last_error = E_INVALIDARG;
-    return;
-  }
-
-  // Map(READ) on a staging resource is a synchronization point. The minimal
-  // implementation flushes any pending work so the read observes completed GPU
-  // writes once Copy/resolve paths are added.
-  if (wants_read) {
-    HRESULT submit_hr = S_OK;
-    const uint64_t fence = submit_locked(dev, &submit_hr);
-    if (FAILED(submit_hr)) {
-      dev->last_error = submit_hr;
-      return;
-    }
-    if (fence != 0 && dev->adapter) {
-      const bool do_not_wait = (pMap->MapFlags & AEROGPU_D3D11_MAP_FLAG_DO_NOT_WAIT) != 0;
-      std::unique_lock<std::mutex> fence_lock(dev->adapter->fence_mutex);
-      if (do_not_wait) {
-        if (dev->adapter->completed_fence < fence) {
-          dev->last_error = DXGI_ERROR_WAS_STILL_DRAWING;
-          return;
-        }
-      } else {
-        while (dev->adapter->completed_fence < fence) {
-          dev->adapter->fence_cv.wait(fence_lock);
-        }
-      }
-    }
-  }
-
-  if (res->storage.empty()) {
-    size_t bytes = 0;
-    if (res->kind == ResourceKind::Buffer) {
-      bytes = static_cast<size_t>(res->size_bytes);
-    } else if (res->kind == ResourceKind::Texture2D) {
-      bytes = static_cast<size_t>(res->row_pitch_bytes) * static_cast<size_t>(res->height);
-    } else {
-      dev->last_error = E_NOTIMPL;
-      return;
-    }
-    try {
-      res->storage.resize(bytes);
-    } catch (...) {
-      dev->last_error = E_OUTOFMEMORY;
-      return;
-    }
-  }
-
-  if (pMap->MapType == AEROGPU_D3D11_MAP_WRITE_DISCARD) {
-    // Contents become undefined; clear to zero for deterministic tests.
-    std::memset(res->storage.data(), 0, res->storage.size());
-  }
-
-  auto* mapped = pMap->pMappedSubresource;
-  mapped->pData = res->storage.data();
-  if (res->kind == ResourceKind::Texture2D) {
-    mapped->RowPitch = res->row_pitch_bytes;
-    mapped->DepthPitch = res->row_pitch_bytes * res->height;
-  } else {
-    mapped->RowPitch = static_cast<uint32_t>(res->size_bytes);
-    mapped->DepthPitch = 0;
-  }
-
-  res->mapped = true;
-  res->mapped_subresource = pMap->Subresource;
-  res->mapped_map_type = pMap->MapType;
 }
 
 void AEROGPU_APIENTRY Unmap(D3D10DDI_HDEVICE hDevice, const AEROGPU_D3D11DDIARG_UNMAP* pUnmap) {
@@ -6999,9 +7063,7 @@ void AEROGPU_APIENTRY Unmap(D3D10DDI_HDEVICE hDevice, const AEROGPU_D3D11DDIARG_
                          res->mapped_map_type == AEROGPU_D3D11_MAP_WRITE_DISCARD ||
                          res->mapped_map_type == AEROGPU_D3D11_MAP_WRITE_NO_OVERWRITE;
 
-  res->mapped = false;
-  res->mapped_subresource = 0;
-  res->mapped_map_type = 0;
+  unmap_resource_locked(dev, res, static_cast<uint32_t>(pUnmap->Subresource));
 
   if (!was_write || res->storage.empty()) {
     return;
