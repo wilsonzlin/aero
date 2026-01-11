@@ -4,6 +4,7 @@
 
 #include "trace.h"
 #include "virtiosnd_rx.h"
+#include "virtiosnd_queue_split.h"
 
 #ifndef VIRTIOSND_POOL_TAG
 #if defined(_MSC_VER)
