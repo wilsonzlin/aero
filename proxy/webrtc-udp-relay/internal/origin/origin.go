@@ -471,6 +471,10 @@ func splitHostPort(rawHost string) (hostname, port string, ok bool) {
 			return "", "", false
 		}
 		hostname = rawHost[1:end]
+		addr, err := netip.ParseAddr(hostname)
+		if err != nil || !addr.Is6() {
+			return "", "", false
+		}
 		rest := rawHost[end+1:]
 		if rest == "" {
 			return hostname, "", true

@@ -63,6 +63,9 @@
     { "name": "reject_hostname_with_open_brace", "rawOriginHeader": "https://exa{mple.com", "expectError": true },
     { "name": "reject_hostname_with_close_brace", "rawOriginHeader": "https://exa}mple.com", "expectError": true },
     { "name": "reject_hostname_with_backtick", "rawOriginHeader": "https://exa`mple.com", "expectError": true },
+    { "name": "reject_bracketed_domain", "rawOriginHeader": "https://[example.com]", "expectError": true },
+    { "name": "reject_bracketed_domain_with_port", "rawOriginHeader": "https://[example.com]:443", "expectError": true },
+    { "name": "reject_bracketed_ipv4", "rawOriginHeader": "http://[127.0.0.1]", "expectError": true },
     { "name": "reject_percent_encoding", "rawOriginHeader": "https://%65xample.com", "expectError": true },
     { "name": "reject_tab", "rawOriginHeader": "https://example.com\t:443", "expectError": true },
     { "name": "reject_newline", "rawOriginHeader": "https://example.com\n.evil.com", "expectError": true },
@@ -97,6 +100,13 @@
       "allowedOrigins": ["*"],
       "requestHost": "relay.example.com",
       "rawOriginHeader": "https://evil.com#",
+      "expectAllowed": false
+    },
+    {
+      "name": "deny_star_invalid_bracketed_domain",
+      "allowedOrigins": ["*"],
+      "requestHost": "relay.example.com",
+      "rawOriginHeader": "https://[example.com]",
       "expectAllowed": false
     },
     {
@@ -194,6 +204,13 @@
       "name": "default_same_host_rejects_request_host_with_trailing_slash",
       "allowedOrigins": [],
       "requestHost": "example.com/",
+      "rawOriginHeader": "https://example.com",
+      "expectAllowed": false
+    },
+    {
+      "name": "default_same_host_rejects_bracketed_domain_in_host_header",
+      "allowedOrigins": [],
+      "requestHost": "[example.com]",
       "rawOriginHeader": "https://example.com",
       "expectAllowed": false
     },
