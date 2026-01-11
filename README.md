@@ -289,6 +289,12 @@ Browsers cannot open arbitrary TCP/UDP sockets directly. Aero’s guest networki
 
   Wire contracts: [`docs/backend/01-aero-gateway-api.md`](./docs/backend/01-aero-gateway-api.md)
 
+- **L2 tunnel (Option C):** [`crates/aero-l2-proxy`](./crates/aero-l2-proxy/) provides an Ethernet (L2) tunnel over WebSocket:
+  - `WS /l2` (subprotocol `aero-l2-tunnel-v1`)
+  - Browser clients should call `POST /session` first and use the gateway response for discovery (`endpoints.l2`) and tuning (`limits.l2`) instead of hardcoding paths.
+
+  Wire contract: [`docs/l2-tunnel-protocol.md`](./docs/l2-tunnel-protocol.md)
+
 - **UDP:** [`proxy/webrtc-udp-relay`](./proxy/webrtc-udp-relay/) is the primary UDP path. It relays UDP over a WebRTC DataChannel (`label="udp"`, `ordered=false`, `maxRetransmits=0`) using versioned v1/v2 datagram framing and signaling defined in:
   - [`proxy/webrtc-udp-relay/PROTOCOL.md`](./proxy/webrtc-udp-relay/PROTOCOL.md)
 
