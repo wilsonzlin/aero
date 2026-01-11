@@ -105,6 +105,7 @@ export class InputCapture {
 
   private hasFocus = false;
   private windowFocused = typeof document !== "undefined" ? document.hasFocus() : true;
+  private pageVisible = typeof document !== "undefined" ? document.visibilityState !== "hidden" : true;
 
   private mouseButtons = 0;
   private mouseFracX = 0;
@@ -149,10 +150,16 @@ export class InputCapture {
   };
 
   private readonly handleVisibilityChange = (): void => {
-    if (document.visibilityState === "visible") {
+    this.pageVisible = document.visibilityState !== "hidden";
+    if (this.pageVisible) {
       return;
     }
-    this.handleWindowBlur();
+
+    this.pointerLock.exit();
+    this.releaseAllKeys();
+    this.setMouseButtons(0);
+    this.gamepad?.emitNeutral(this.queue, toTimestampUs(performance.now()));
+    this.queue.flush(this.ioWorker, { recycle: this.recycleBuffers });
   };
 
   private readonly handleKeyDown = (event: KeyboardEvent): void => {
@@ -428,13 +435,13 @@ export class InputCapture {
   }
 
   private isCapturingKeyboard(): boolean {
-    return this.windowFocused && (this.hasFocus || this.pointerLock.isLocked);
+    return this.windowFocused && this.pageVisible && (this.hasFocus || this.pointerLock.isLocked);
   }
 
   private isCapturingMouse(): boolean {
     // If pointer lock is active, we always capture. Otherwise require focus to avoid
     // eating wheel events while the user scrolls elsewhere on the page.
-    return this.windowFocused && (this.pointerLock.isLocked || this.hasFocus);
+    return this.windowFocused && this.pageVisible && (this.pointerLock.isLocked || this.hasFocus);
   }
 
   private releaseAllKeys(): void {
