@@ -12,17 +12,28 @@
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <ProjectGuid>{0C3D42AA-52B7-4F87-A7FA-CC4A0798B9D9}</ProjectGuid>
-    <Keyword>MakeFileProj</Keyword>
+    <Keyword>Win32Proj</Keyword>
     <RootNamespace>virtioinput</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0.22621.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
-    <ConfigurationType>Makefile</ConfigurationType>
+    <ConfigurationType>Driver</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>WindowsKernelModeDriver10.0</PlatformToolset>
+    <DriverType>KMDF</DriverType>
+    <TargetVersion>Windows7</TargetVersion>
+    <KMDF_VERSION_MAJOR>1</KMDF_VERSION_MAJOR>
+    <KMDF_VERSION_MINOR>9</KMDF_VERSION_MINOR>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
-    <ConfigurationType>Makefile</ConfigurationType>
+    <ConfigurationType>Driver</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>WindowsKernelModeDriver10.0</PlatformToolset>
+    <DriverType>KMDF</DriverType>
+    <TargetVersion>Windows7</TargetVersion>
+    <KMDF_VERSION_MAJOR>1</KMDF_VERSION_MAJOR>
+    <KMDF_VERSION_MINOR>9</KMDF_VERSION_MINOR>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <ImportGroup Label="ExtensionSettings" />
@@ -38,16 +49,32 @@
             Label="LocalAppDataPlatform" />
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
-    <NMakeBuildCommandLine>build -cZ</NMakeBuildCommandLine>
-    <NMakeReBuildCommandLine>build -cZ</NMakeReBuildCommandLine>
-    <NMakeCleanCommandLine>build -c</NMakeCleanCommandLine>
+  <PropertyGroup>
+    <!-- INF expects virtioinput.sys (no dash). -->
+    <TargetName>virtioinput</TargetName>
   </PropertyGroup>
-  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <NMakeBuildCommandLine>build -cZ</NMakeBuildCommandLine>
-    <NMakeReBuildCommandLine>build -cZ</NMakeReBuildCommandLine>
-    <NMakeCleanCommandLine>build -c</NMakeCleanCommandLine>
-  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
+    <ClCompile>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <WarningLevel>Level3</WarningLevel>
+      <AdditionalIncludeDirectories>src;..\..\win7\virtio\virtio-core\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>KMDF_VERSION_MAJOR=$(KMDF_VERSION_MAJOR);KMDF_VERSION_MINOR=$(KMDF_VERSION_MINOR);%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <Link>
+      <AdditionalDependencies>hidclass.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <WarningLevel>Level3</WarningLevel>
+      <AdditionalIncludeDirectories>src;..\..\win7\virtio\virtio-core\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>KMDF_VERSION_MAJOR=$(KMDF_VERSION_MAJOR);KMDF_VERSION_MINOR=$(KMDF_VERSION_MINOR);%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <Link>
+      <AdditionalDependencies>hidclass.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="src\driver.c" />
     <ClCompile Include="src\device.c" />
@@ -60,6 +87,9 @@
     <ClCompile Include="src\virtio_input.c" />
     <ClCompile Include="src\virtio_pci_interrupts.c" />
     <ClCompile Include="src\virtio_statusq.c" />
+    <ClCompile Include="..\..\win7\virtio\virtio-core\src\virtio_pci_caps.c" />
+    <ClCompile Include="..\..\win7\virtio\virtio-core\src\virtio_pci_modern.c" />
+    <ClCompile Include="..\..\win7\virtio\virtio-core\portable\virtio_pci_cap_parser.c" />
     <ClCompile Include="src\log.c" />
     <ClCompile Include="src\hid.c" />
     <ClCompile Include="src\descriptor.c" />
