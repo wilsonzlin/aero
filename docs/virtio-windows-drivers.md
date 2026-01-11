@@ -260,6 +260,7 @@ Notes:
 - `drivers/scripts/make-driver-pack.ps1` requires PowerShell 7 (`pwsh`) on non-Windows hosts.
 - See `tools/virtio-win/README.md` for details (what is extracted, backends, provenance fields).
 - Convenience: `drivers/scripts/make-driver-pack.sh` wraps the extraction + `pwsh` invocation into one command on Linux/macOS.
+- Convenience: `drivers/scripts/make-virtio-driver-iso.sh` and `drivers/scripts/make-guest-tools-from-virtio-win.sh` provide one-shot wrappers for building the drivers ISO and Guest Tools media on Linux/macOS.
 
 `tools/virtio-win/extract.py` also writes a machine-readable provenance file to:
 

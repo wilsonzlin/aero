@@ -61,6 +61,8 @@ Notes:
 - `make-driver-pack.ps1` requires PowerShell 7 (`pwsh`) on non-Windows hosts.
 - See `tools/virtio-win/README.md` for extractor details (outputs, provenance, backends).
 - Convenience: `drivers/scripts/make-driver-pack.sh` wraps the extraction + `pwsh` invocation into one command.
+- Convenience: `drivers/scripts/make-virtio-driver-iso.sh` builds `aero-virtio-win7-drivers.iso` from a virtio-win ISO on Linux/macOS.
+- Convenience: `drivers/scripts/make-guest-tools-from-virtio-win.sh` builds `aero-guest-tools.iso`/`.zip` from a virtio-win ISO on Linux/macOS.
 
 Output:
 

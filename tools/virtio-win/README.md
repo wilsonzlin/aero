@@ -21,6 +21,12 @@ Then pass the extracted directory to the existing packaging scripts:
 pwsh drivers/scripts/make-driver-pack.ps1 -VirtioWinRoot /tmp/virtio-win-root
 ```
 
+For convenience, Aero also provides one-shot wrappers that do the extraction + packaging in one command:
+
+- `drivers/scripts/make-driver-pack.sh` (driver pack zip/staging dir)
+- `drivers/scripts/make-virtio-driver-iso.sh` (mountable drivers ISO)
+- `drivers/scripts/make-guest-tools-from-virtio-win.sh` (Guest Tools ISO + zip)
+
 ## What gets extracted
 
 - Win7 driver subtrees used by Aero:
@@ -51,4 +57,3 @@ Installing dependencies:
 - Linux (Ubuntu/Debian): `sudo apt-get install p7zip-full`
 - macOS (Homebrew): `brew install p7zip`
 - Pure Python fallback: `python3 -m pip install pycdlib`
-
