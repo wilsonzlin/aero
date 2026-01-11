@@ -71,5 +71,9 @@ If you generate a catalog (`aerogpu.cat`) via `inf2cat`, include it as well.
 
 ## Notes
 
-- PCI IDs: the default INF matches `PCI\VEN_1AE0&DEV_0001` and also matches by display class code (`PCI\CC_030000`) to simplify bringup. If the emulator uses different IDs, update both `prototype/legacy-win7-aerogpu-1ae0/guest/windows/common/aerogpu_protocol.h` and `prototype/legacy-win7-aerogpu-1ae0/guest/windows/inf/aerogpu.inf` together.
+- PCI IDs: the prototype INF binds to `PCI\VEN_1AE0&DEV_0001`. The supported driver package binds to
+  `PCI\VEN_A3A0&DEV_0001` + `PCI\VEN_1AED&DEV_0001`.
+- Do not use class-code matching: older revisions of this prototype INF matched by display class code
+  (`PCI\CC_030000`), which is extremely broad and can hijack display binding on unrelated devices.
+  This is intentionally disabled; see comments in the INF.
 - This is a minimal bring-up stack. The UMD currently provides the escape submission plumbing and is expected to grow into a functional D3D9 driver that serializes D3D9 state + draws into the AeroGPU command stream.

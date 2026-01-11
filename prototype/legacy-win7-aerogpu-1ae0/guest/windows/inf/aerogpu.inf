@@ -16,6 +16,20 @@
 ;  - aerogpu_kmd.sys      (kernel-mode display miniport)
 ;  - aerogpu_d3d9umd.dll  (Direct3D 9 user-mode driver)
 ;
+; -----------------------------------------------------------------------------
+; NOTE: LEGACY / DEPRECATED (VEN_1AE0 prototype)
+; -----------------------------------------------------------------------------
+; This INF targets the historical AeroGPU 1AE0 prototype stack archived under:
+;   prototype/legacy-win7-aerogpu-1ae0/
+;
+; The supported AeroGPU Win7 driver package lives under:
+;   drivers/aerogpu/packaging/win7/
+; and binds to:
+;   - PCI\VEN_A3A0&DEV_0001 (canonical)
+;   - PCI\VEN_1AED&DEV_0001 (legacy)
+;
+; Do NOT ship this INF as part of production Guest Tools media.
+;
 ; The PCI IDs must match the host device model (Task 51). The default IDs are
 ; defined in prototype/legacy-win7-aerogpu-1ae0/guest/windows/common/aerogpu_protocol.h.
 
@@ -32,11 +46,21 @@ CatalogFile=aerogpu.cat
 
 [Aero.NTamd64.6.1]
 %AeroGPU.DeviceDesc%=AeroGPU_Install,PCI\VEN_1AE0&DEV_0001
-%AeroGPU.DeviceDesc%=AeroGPU_Install,PCI\CC_030000
+;
+; SAFETY WARNING:
+;   PCI\CC_030000 matches *any* Display-class PCI device. Keeping this enabled in
+;   an INF (especially with aggressive FeatureScore) can hijack display driver
+;   binding on unrelated hardware.
+;   This is prototype bring-up glue only; do not enable for real installs.
+;
+; %AeroGPU.DeviceDesc%=AeroGPU_Install,PCI\CC_030000
 
 [Aero.NTx86.6.1]
 %AeroGPU.DeviceDesc%=AeroGPU_Install,PCI\VEN_1AE0&DEV_0001
-%AeroGPU.DeviceDesc%=AeroGPU_Install,PCI\CC_030000
+;
+; See SAFETY WARNING above.
+;
+; %AeroGPU.DeviceDesc%=AeroGPU_Install,PCI\CC_030000
 
 [DestinationDirs]
 DefaultDestDir=12
@@ -77,8 +101,9 @@ HKR,,UserModeDriverName,%REG_SZ%,aerogpu_d3d9umd.dll
 ; from early experimentation and does not make 32-bit D3D9 apps work on Win7 x64.
 HKR,,UserModeDriverNameWow,%REG_SZ%,aerogpu_d3d9umd.dll
 
-; Prefer this driver when matching by class code.
-HKR,,FeatureScore,%REG_DWORD%,0
+; Driver ranking (lower is better). Keep this non-zero: a FeatureScore of 0
+; combined with broad compatible-ID matching (e.g. PCI\CC_030000) is dangerous.
+HKR,,FeatureScore,%REG_DWORD%,0x000000F8
 
 [Strings]
 Aero="Aero Project"
