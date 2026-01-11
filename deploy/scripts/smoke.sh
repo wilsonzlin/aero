@@ -16,6 +16,8 @@ SMOKE_WEBRTC_UDP_PORT_MAX=$((SMOKE_WEBRTC_UDP_PORT_MIN + SMOKE_WEBRTC_UDP_PORT_R
 SMOKE_SESSION_SECRET="__aero_smoke_session_${PROJECT_NAME}"
 
 compose() {
+  # The /udp smoke test sends a UDP datagram to the host via the docker network.
+  # Use the relay dev destination policy so the packet isn't denied by default.
   env \
     -u AERO_L2_ALLOWED_TCP_PORTS \
     -u AERO_L2_ALLOWED_UDP_PORTS \
@@ -50,9 +52,6 @@ compose() {
     SIGNALING_AUTH_TIMEOUT= \
     MAX_SIGNALING_MESSAGE_BYTES= \
     MAX_SIGNALING_MESSAGES_PER_SECOND= \
-    # The relay defaults to a deny-by-default destination policy (production).
-    # For the deploy smoke test we enable the dev preset so we can validate the
-    # /udp WebSocket data plane with a local UDP echo server.
     DESTINATION_POLICY_PRESET=dev \
     ALLOW_PRIVATE_NETWORKS=true \
     ALLOW_UDP_CIDRS= \
@@ -437,8 +436,8 @@ if command -v node >/dev/null 2>&1; then
    });
  }
 
- function checkTcpUpgrade(cookiePair) {
-   return new Promise((resolve, reject) => {
+function checkTcpUpgrade(cookiePair) {
+  return new Promise((resolve, reject) => {
     const path = "/tcp?v=1&host=example.com&port=80";
     const guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
     const key = crypto.randomBytes(16).toString("base64");
@@ -508,8 +507,106 @@ if command -v node >/dev/null 2>&1; then
       clearTimeout(timeout);
       reject(err);
     });
-   });
- }
+  });
+}
+
+function buildDnsQueryAny(name) {
+  const id = Math.floor(Math.random() * 65536);
+  const bytes = [];
+  bytes.push((id >> 8) & 0xff, id & 0xff); // ID
+  bytes.push(0x01, 0x00); // flags: RD
+  bytes.push(0x00, 0x01); // QDCOUNT
+  bytes.push(0x00, 0x00); // ANCOUNT
+  bytes.push(0x00, 0x00); // NSCOUNT
+  bytes.push(0x00, 0x00); // ARCOUNT
+
+  for (const label of name.split(".")) {
+    const encoded = Buffer.from(label, "utf8");
+    if (encoded.length === 0 || encoded.length > 63) throw new Error(`invalid DNS label: ${label}`);
+    bytes.push(encoded.length);
+    for (const b of encoded) bytes.push(b);
+  }
+  bytes.push(0x00); // end of QNAME
+
+  bytes.push(0x00, 0xff); // QTYPE=ANY
+  bytes.push(0x00, 0x01); // QCLASS=IN
+
+  const message = Buffer.from(bytes);
+  const dnsParam = message
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+  return { id, dnsParam };
+}
+
+function checkDnsQuery(cookiePair) {
+  return new Promise((resolve, reject) => {
+    let id;
+    let dnsParam;
+    try {
+      ({ id, dnsParam } = buildDnsQueryAny("example.com"));
+    } catch (err) {
+      reject(err);
+      return;
+    }
+
+    const path = `/dns-query?dns=${encodeURIComponent(dnsParam)}`;
+    const req = https.request(
+      {
+        host,
+        port,
+        method: "GET",
+        path,
+        rejectUnauthorized: false,
+        headers: {
+          origin: `https://${host}`,
+          cookie: cookiePair,
+          accept: "application/dns-message",
+        },
+      },
+      (res) => {
+        const status = res.statusCode ?? 0;
+        const contentType = String(res.headers["content-type"] ?? "")
+          .split(";", 1)[0]
+          .trim()
+          .toLowerCase();
+
+        const chunks = [];
+        res.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+        res.on("end", () => {
+          const body = Buffer.concat(chunks);
+          if (status !== 200) {
+            reject(new Error(`unexpected /dns-query status: ${status} bytes: ${body.length}`));
+            return;
+          }
+          if (contentType !== "application/dns-message") {
+            reject(new Error(`unexpected /dns-query content-type: ${contentType}`));
+            return;
+          }
+          if (body.length < 12) {
+            reject(new Error(`unexpected /dns-query body length: ${body.length}`));
+            return;
+          }
+          const gotId = body.readUInt16BE(0);
+          if (gotId !== id) {
+            reject(new Error(`unexpected /dns-query ID: ${gotId} (expected ${id})`));
+            return;
+          }
+          const flags = body.readUInt16BE(2);
+          const rcode = flags & 0x000f;
+          if (rcode !== 5) {
+            reject(new Error(`unexpected /dns-query rcode: ${rcode} (expected 5/REFUSED)`));
+            return;
+          }
+          resolve();
+        });
+      },
+    );
+    req.on("error", reject);
+    req.end();
+  });
+}
 
 function checkUdpRelayToken(cookiePair) {
   return new Promise((resolve, reject) => {
@@ -944,13 +1041,14 @@ function checkUdpRelayToken(cookiePair) {
   });
 }
 
- (async () => {
-   const session = await requestSessionInfo();
-   await checkTcpUpgrade(session.cookiePair);
-   const token = await checkUdpRelayToken(session.cookiePair);
-   if (token !== session.udpRelayToken) {
-     throw new Error(`mismatched udp relay token: /session=${session.udpRelayToken} /udp-relay/token=${token}`);
-   }
+(async () => {
+  const session = await requestSessionInfo();
+  await checkDnsQuery(session.cookiePair);
+  await checkTcpUpgrade(session.cookiePair);
+  const token = await checkUdpRelayToken(session.cookiePair);
+  if (token !== session.udpRelayToken) {
+    throw new Error(`mismatched udp relay token: /session=${session.udpRelayToken} /udp-relay/token=${token}`);
+  }
    await checkRelayWebSocketUpgrade(`/webrtc/signal?token=${encodeURIComponent(token)}`, "/webrtc/signal");
    await checkUdpWebSocketRoundTrip(token);
  })().catch((err) => {
