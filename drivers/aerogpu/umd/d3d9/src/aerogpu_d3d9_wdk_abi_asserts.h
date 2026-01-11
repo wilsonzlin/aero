@@ -109,6 +109,20 @@ AEROGPU_ABI_STATIC_ASSERT(
     aerogpu_abi_stdcall_stack_bytes<PFND3DDDI_OPENADAPTER2>::value == AEROGPU_D3D9_WDK_ABI_EXPECT_OPENADAPTER2_STDCALL_BYTES,
     "x86 stdcall stack bytes for OpenAdapter2 do not match expected value");
   #endif
+
+  #if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OPENADAPTERFROMHDC_STDCALL_BYTES)
+AEROGPU_ABI_STATIC_ASSERT(
+    aerogpu_abi_stdcall_stack_bytes<PFND3DDDI_OPENADAPTERFROMHDC>::value ==
+        AEROGPU_D3D9_WDK_ABI_EXPECT_OPENADAPTERFROMHDC_STDCALL_BYTES,
+    "x86 stdcall stack bytes for OpenAdapterFromHdc do not match expected value");
+  #endif
+
+  #if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_OPENADAPTERFROMLUID_STDCALL_BYTES)
+AEROGPU_ABI_STATIC_ASSERT(
+    aerogpu_abi_stdcall_stack_bytes<PFND3DDDI_OPENADAPTERFROMLUID>::value ==
+        AEROGPU_D3D9_WDK_ABI_EXPECT_OPENADAPTERFROMLUID_STDCALL_BYTES,
+    "x86 stdcall stack bytes for OpenAdapterFromLuid do not match expected value");
+  #endif
 #endif
 
 #if defined(AEROGPU_D3D9_WDK_ABI_EXPECT_SIZEOF_D3DDDIARG_OPENADAPTER)

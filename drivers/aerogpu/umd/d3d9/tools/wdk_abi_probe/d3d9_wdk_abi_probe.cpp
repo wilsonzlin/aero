@@ -134,6 +134,11 @@ AEROGPU_DEFINE_HAS_MEMBER(pfnCreateQuery)
 AEROGPU_DEFINE_HAS_MEMBER(pfnDestroyQuery)
 AEROGPU_DEFINE_HAS_MEMBER(pfnIssueQuery)
 AEROGPU_DEFINE_HAS_MEMBER(pfnGetQueryData)
+AEROGPU_DEFINE_HAS_MEMBER(pfnWaitForIdle)
+AEROGPU_DEFINE_HAS_MEMBER(pfnBlt)
+AEROGPU_DEFINE_HAS_MEMBER(pfnColorFill)
+AEROGPU_DEFINE_HAS_MEMBER(pfnUpdateSurface)
+AEROGPU_DEFINE_HAS_MEMBER(pfnUpdateTexture)
 
 AEROGPU_DEFINE_HAS_MEMBER(pfnAllocateCb)
 AEROGPU_DEFINE_HAS_MEMBER(pfnDeallocateCb)
@@ -241,6 +246,11 @@ static void probe_function_tables() {
   AEROGPU_PRINT_MEMBER_OFFSET(D3D9DDI_DEVICEFUNCS, pfnDestroyQuery)
   AEROGPU_PRINT_MEMBER_OFFSET(D3D9DDI_DEVICEFUNCS, pfnIssueQuery)
   AEROGPU_PRINT_MEMBER_OFFSET(D3D9DDI_DEVICEFUNCS, pfnGetQueryData)
+  AEROGPU_PRINT_MEMBER_OFFSET(D3D9DDI_DEVICEFUNCS, pfnWaitForIdle)
+  AEROGPU_PRINT_MEMBER_OFFSET(D3D9DDI_DEVICEFUNCS, pfnBlt)
+  AEROGPU_PRINT_MEMBER_OFFSET(D3D9DDI_DEVICEFUNCS, pfnColorFill)
+  AEROGPU_PRINT_MEMBER_OFFSET(D3D9DDI_DEVICEFUNCS, pfnUpdateSurface)
+  AEROGPU_PRINT_MEMBER_OFFSET(D3D9DDI_DEVICEFUNCS, pfnUpdateTexture)
 }
 
 static void probe_device_callbacks() {
@@ -282,9 +292,13 @@ static void probe_export_decorations() {
 #if defined(_M_IX86)
   const size_t openadapter_stack = aerogpu_stdcall_stack_bytes<PFND3DDDI_OPENADAPTER>::value;
   const size_t openadapter2_stack = aerogpu_stdcall_stack_bytes<PFND3DDDI_OPENADAPTER2>::value;
+  const size_t openadapter_from_hdc_stack = aerogpu_stdcall_stack_bytes<PFND3DDDI_OPENADAPTERFROMHDC>::value;
+  const size_t openadapter_from_luid_stack = aerogpu_stdcall_stack_bytes<PFND3DDDI_OPENADAPTERFROMLUID>::value;
 
   printf("PFND3DDDI_OPENADAPTER  => _OpenAdapter@" AEROGPU_PRIuSIZE "\n", openadapter_stack);
   printf("PFND3DDDI_OPENADAPTER2 => _OpenAdapter2@" AEROGPU_PRIuSIZE "\n", openadapter2_stack);
+  printf("PFND3DDDI_OPENADAPTERFROMHDC  => _OpenAdapterFromHdc@" AEROGPU_PRIuSIZE "\n", openadapter_from_hdc_stack);
+  printf("PFND3DDDI_OPENADAPTERFROMLUID => _OpenAdapterFromLuid@" AEROGPU_PRIuSIZE "\n", openadapter_from_luid_stack);
 #else
   printf("(x64 build: Win64 has no stdcall @N decoration; use dumpbin to verify exports)\n");
 #endif
