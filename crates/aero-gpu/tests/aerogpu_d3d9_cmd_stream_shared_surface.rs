@@ -635,3 +635,62 @@ fn d3d9_cmd_stream_presented_scanout_survives_original_destroy_when_alias_keeps_
     let idx = ((2 * width + 2) * 4) as usize;
     assert_eq!(&rgba[idx..idx + 4], &[255, 0, 0, 255]);
 }
+
+#[test]
+fn d3d9_cmd_stream_destroying_last_handle_clears_presented_scanout() {
+    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
+        Ok(exec) => exec,
+        Err(AerogpuD3d9Error::AdapterNotFound) => {
+            eprintln!("skipping shared surface test: wgpu adapter not found");
+            return;
+        }
+        Err(err) => panic!("failed to create executor: {err}"),
+    };
+
+    const TEX: u32 = 0x10;
+    let width = 4u32;
+    let height = 4u32;
+
+    let stream = build_stream(|out| {
+        emit_create_texture2d_rgba8(out, TEX, width, height);
+
+        emit_packet(out, OPC_SET_RENDER_TARGETS, |out| {
+            push_u32(out, 1); // color_count
+            push_u32(out, 0); // depth_stencil
+            push_u32(out, TEX);
+            for _ in 0..7 {
+                push_u32(out, 0);
+            }
+        });
+
+        // Clear to solid red.
+        emit_packet(out, OPC_CLEAR, |out| {
+            push_u32(out, AEROGPU_CLEAR_COLOR);
+            push_f32(out, 1.0);
+            push_f32(out, 0.0);
+            push_f32(out, 0.0);
+            push_f32(out, 1.0);
+            push_f32(out, 1.0); // depth
+            push_u32(out, 0); // stencil
+        });
+
+        emit_packet(out, OPC_PRESENT, |out| {
+            push_u32(out, 0); // scanout_id
+            push_u32(out, 0); // flags
+        });
+
+        // Destroy the last handle to the resource; the scanout mapping should be cleared to avoid
+        // dangling references.
+        emit_packet(out, OPC_DESTROY_RESOURCE, |out| {
+            push_u32(out, TEX);
+            push_u32(out, 0);
+        });
+    });
+
+    exec.execute_cmd_stream(&stream)
+        .expect("execute should succeed");
+
+    let scanout = pollster::block_on(exec.read_presented_scanout_rgba8(0))
+        .expect("read_presented_scanout should succeed");
+    assert!(scanout.is_none(), "scanout mapping should be cleared");
+}

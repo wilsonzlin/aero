@@ -681,6 +681,7 @@ impl AerogpuD3d9Executor {
         self.resource_refcounts.remove(&underlying);
         self.resources.remove(&underlying);
         self.shared_surface_by_token.retain(|_, v| *v != underlying);
+        self.presented_scanouts.retain(|_, v| *v != underlying);
     }
 
     fn execute_cmd(
