@@ -24,15 +24,17 @@ In the AeroGPU guest↔host command stream, shared surfaces are keyed by a stabl
 On Win7/WDDM 1.1, the guest UMD generates a collision-resistant `share_token` and
 persists it in the preserved WDDM allocation private driver data blob
 (`aerogpu_wddm_alloc_priv.share_token` in `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`).
-dxgkrnl preserves these bytes and returns them verbatim when another process opens the shared
-resource, so the opening UMD instance observes the same `share_token`.
+For shared allocations, dxgkrnl preserves these bytes and returns them verbatim when
+another process opens the shared resource, so the opening UMD instance observes the
+same `share_token`.
 
 ## Expected flow (UMD ↔ KMD ↔ host)
 
 ### 1) Create shared resource → export (token)
 
 1. Producer creates a shareable resource (`pSharedHandle != NULL` in the D3D API/DDI).
-2. The UMD generates a collision-resistant `share_token` and writes it into the preserved allocation private driver data blob (`aerogpu_wddm_alloc_priv.share_token`).
+2. The UMD generates a collision-resistant `share_token` and writes it into the preserved
+   WDDM allocation private driver data blob (`aerogpu_wddm_alloc_priv.share_token`).
 3. The UMD sends `AEROGPU_CMD_EXPORT_SHARED_SURFACE` with `share_token`.
 
 ### 2) Open shared resource → import (token)

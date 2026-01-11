@@ -48,11 +48,10 @@ Cross-process shared resources are expressed explicitly in the command stream:
 **not** use the numeric value of the D3D shared `HANDLE` as `share_token`: handle
 values are process-local and not stable cross-process.
 
-Canonical contract: on Win7/WDDM 1.1, the guest UMD generates a collision-resistant
+Canonical contract: on Win7/WDDM 1.1, the guest UMD generates a collision-resistant non-zero
 `share_token` and persists it in the preserved WDDM allocation private driver data blob
-(`aerogpu_wddm_alloc_priv.share_token` in `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`).
-dxgkrnl returns the same bytes on cross-process opens, so both processes observe the
-same `share_token`.
+(`aerogpu_wddm_alloc_priv.share_token` in `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`),
+which dxgkrnl returns verbatim on cross-process opens.
 
 The in-tree D3D9 UMD uses `ShareTokenAllocator` to generate collision-resistant
 `share_token` values in user mode and persists them in the WDDM private-data blob

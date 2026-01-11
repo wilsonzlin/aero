@@ -931,8 +931,9 @@ AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_present_ex) == 24);
  *   guest processes.
  * - On Win7/WDDM 1.1, the guest UMD persists `share_token` in the preserved WDDM
  *   allocation private driver data blob (`aerogpu_wddm_alloc_priv.share_token` in
- *   `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`). dxgkrnl returns the exact
- *   same bytes on cross-process `OpenResource`, so both processes observe the same token.
+ *   `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`). dxgkrnl preserves this blob
+ *   and returns the exact same bytes on cross-process `OpenResource`, so both
+ *   processes observe the same token.
  * - Do NOT use the numeric value of the D3D shared `HANDLE` as `share_token`:
  *   handle values are process-local and not stable cross-process.
  * - The host stores a mapping of (share_token -> resource).
