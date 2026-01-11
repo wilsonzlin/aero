@@ -394,3 +394,53 @@ fn pc_cpu_bus_bulk_set_is_atomic_wrt_page_faults() {
     assert_eq!(bus.platform.memory.read_u8(data_page0 + 0xffe), 0xaa);
     assert_eq!(bus.platform.memory.read_u8(data_page0 + 0xfff), 0xbb);
 }
+
+#[test]
+fn cpu_core_bus_translates_legacy32_paging_via_mmu() {
+    let platform = PcPlatform::new(2 * 1024 * 1024);
+    let mut bus = PcCpuBus::new(platform);
+
+    // Map a virtual address above the available RAM to a physical page in low memory so we can
+    // detect whether paging translation is being applied.
+    let vaddr = 0x0040_0000u64;
+    let pd_phys = 0x1000u64;
+    let pt_phys = 0x2000u64;
+    let page_phys = 0x3000u64;
+
+    let pd_index = (vaddr >> 22) & 0x3ff;
+    let pt_index = (vaddr >> 12) & 0x3ff;
+    let pde_addr = pd_phys + pd_index * 4;
+    let pte_addr = pt_phys + pt_index * 4;
+
+    // PDE: present + writable -> points at PT.
+    memory::MemoryBus::write_u32(&mut bus.platform.memory, pde_addr, (pt_phys as u32) | 0x3);
+    // PTE: present + writable -> points at the target physical page.
+    memory::MemoryBus::write_u32(&mut bus.platform.memory, pte_addr, (page_phys as u32) | 0x3);
+
+    bus.platform.memory.write_u8(page_phys, 0xAA);
+
+    let mut cpu = CpuState::new(CpuMode::Protected);
+    cpu.control.cr0 |= CR0_PE | CR0_PG;
+    cpu.control.cr3 = pd_phys;
+    cpu.control.cr4 = 0;
+    cpu.segments.cs.selector = 0x08;
+    cpu.segments.cs.base = 0;
+    cpu.segments.ss.selector = 0x10;
+    cpu.segments.ss.base = 0;
+
+    bus.sync(&cpu);
+
+    // First access should walk page tables and observe the mapped physical value.
+    assert_eq!(bus.read_u8(vaddr).unwrap(), 0xAA);
+
+    let pte_after_read = memory::MemoryBus::read_u32(&mut bus.platform.memory, pte_addr);
+    assert_ne!(pte_after_read & (1 << 5), 0, "PTE accessed bit should be set");
+    assert_eq!(pte_after_read & 0xffff_f000, page_phys as u32);
+
+    // Write through the mapping; the MMU should mark the PTE dirty.
+    bus.write_u8(vaddr, 0xBB).unwrap();
+    assert_eq!(bus.platform.memory.read_u8(page_phys), 0xBB);
+
+    let pte_after_write = memory::MemoryBus::read_u32(&mut bus.platform.memory, pte_addr);
+    assert_ne!(pte_after_write & (1 << 6), 0, "PTE dirty bit should be set");
+}

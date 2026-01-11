@@ -417,27 +417,3 @@ impl<B: crate::mem::CpuBus> Interpreter<Vcpu<B>> for Tier0Interpreter {
         cpu.cpu.state.rip()
     }
 }
-
-fn has_addr_size_override(bytes: &[u8; 15], bitness: u32) -> bool {
-    let mut i = 0usize;
-    let mut seen = false;
-    while i < bytes.len() {
-        let b = bytes[i];
-        let is_legacy_prefix = matches!(
-            b,
-            0xF0 | 0xF2 | 0xF3 // lock/rep
-                | 0x2E | 0x36 | 0x3E | 0x26 | 0x64 | 0x65 // segment overrides
-                | 0x66 // operand-size override
-                | 0x67 // address-size override
-        );
-        let is_rex = bitness == 64 && (0x40..=0x4F).contains(&b);
-        if !(is_legacy_prefix || is_rex) {
-            break;
-        }
-        if b == 0x67 {
-            seen = true;
-        }
-        i += 1;
-    }
-    seen
-}
