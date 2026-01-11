@@ -49,8 +49,8 @@ describe("usb/usb_proxy_protocol", () => {
 
     // Endpoint is u8, length is non-negative.
     expect(isUsbHostAction({ kind: "bulkIn", id: 1, endpoint: 0x1_00, length: 8 })).toBe(false);
-    expect(isUsbHostAction({ kind: "bulkIn", id: 1, endpoint: 1, length: -1 })).toBe(false);
-    expect(isUsbHostAction({ kind: "bulkIn", id: 1, endpoint: 1, length: 0xffff_ffff + 1 })).toBe(false);
+    expect(isUsbHostAction({ kind: "bulkIn", id: 1, endpoint: 0x81, length: -1 })).toBe(false);
+    expect(isUsbHostAction({ kind: "bulkIn", id: 1, endpoint: 0x81, length: 0xffff_ffff + 1 })).toBe(false);
 
     // bytesWritten must be a non-negative safe integer.
     expect(isUsbHostCompletion({ kind: "bulkOut", id: 1, status: "success", bytesWritten: 1.5 })).toBe(false);
@@ -82,7 +82,7 @@ describe("usb/usb_proxy_protocol", () => {
   it("validates usb.* envelope messages", () => {
     const actionMsg: UsbActionMessage = {
       type: "usb.action",
-      action: { kind: "bulkIn", id: 1, endpoint: 1, length: 8 },
+      action: { kind: "bulkIn", id: 1, endpoint: 0x81, length: 8 },
     };
     expect(isUsbActionMessage(actionMsg)).toBe(true);
     expect(isUsbProxyMessage(actionMsg)).toBe(true);

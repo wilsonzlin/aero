@@ -230,8 +230,8 @@ describe("usb/UsbBroker", () => {
     const broker = new UsbBroker();
     await broker.requestDevice();
 
-    const a1: ProxyUsbHostAction = { kind: "bulkIn", id: 1, endpoint: 1, length: 8 };
-    const a2: ProxyUsbHostAction = { kind: "bulkIn", id: 2, endpoint: 1, length: 8 };
+    const a1: ProxyUsbHostAction = { kind: "bulkIn", id: 1, endpoint: 0x81, length: 8 };
+    const a2: ProxyUsbHostAction = { kind: "bulkIn", id: 2, endpoint: 0x81, length: 8 };
 
     const p1 = broker.execute(a1);
     const p2 = broker.execute(a2);
@@ -275,8 +275,8 @@ describe("usb/UsbBroker", () => {
     const broker = new UsbBroker();
     await broker.requestDevice();
 
-    const p1 = broker.execute({ kind: "bulkIn", id: 1, endpoint: 1, length: 8 });
-    const p2 = broker.execute({ kind: "bulkIn", id: 2, endpoint: 1, length: 8 });
+    const p1 = broker.execute({ kind: "bulkIn", id: 1, endpoint: 0x81, length: 8 });
+    const p2 = broker.execute({ kind: "bulkIn", id: 2, endpoint: 0x81, length: 8 });
 
     await Promise.resolve();
     expect(resolvers).toHaveLength(1);
@@ -355,7 +355,7 @@ describe("usb/UsbBroker", () => {
     port.posted.length = 0;
     port.transfers.length = 0;
 
-    port.emit({ type: "usb.action", action: { kind: "bulkIn", id: 1, endpoint: 1, length: 1 } });
+    port.emit({ type: "usb.action", action: { kind: "bulkIn", id: 1, endpoint: 0x81, length: 1 } });
 
     await new Promise((r) => setTimeout(r, 0));
 
@@ -401,8 +401,8 @@ describe("usb/UsbBroker", () => {
     port.posted.length = 0;
     port.transfers.length = 0;
 
-    port.emit({ type: "usb.action", action: { kind: "bulkIn", id: 1, endpoint: 1, length: 1 } });
-    port.emit({ type: "usb.action", action: { kind: "bulkIn", id: 2, endpoint: 1, length: 1 } });
+    port.emit({ type: "usb.action", action: { kind: "bulkIn", id: 1, endpoint: 0x81, length: 1 } });
+    port.emit({ type: "usb.action", action: { kind: "bulkIn", id: 2, endpoint: 0x81, length: 1 } });
 
     await new Promise((r) => setTimeout(r, 0));
 
@@ -436,7 +436,7 @@ describe("usb/UsbBroker", () => {
     const port = new FakePort();
     broker.attachWorkerPort(port as unknown as MessagePort);
 
-    port.emit({ type: "usb.action", action: { kind: "bulkIn", id: 7, endpoint: 1, length: "bad" } });
+    port.emit({ type: "usb.action", action: { kind: "bulkIn", id: 7, endpoint: 0x81, length: "bad" } });
     await Promise.resolve();
 
     const completions = port.posted.filter((m) => (m as { type?: unknown }).type === "usb.completion");
@@ -454,7 +454,7 @@ describe("usb/UsbBroker", () => {
     const port = new FakePort();
     broker.attachWorkerPort(port as unknown as MessagePort);
 
-    port.emit({ type: "usb.action", action: { kind: "bulkIn", id: 1.5, endpoint: 1, length: "bad" } });
+    port.emit({ type: "usb.action", action: { kind: "bulkIn", id: 1.5, endpoint: 0x81, length: "bad" } });
     await Promise.resolve();
 
     expect(port.posted).toEqual([]);
@@ -546,7 +546,7 @@ describe("usb/UsbBroker", () => {
     const broker = new UsbBroker();
     await broker.requestDevice([{ vendorId: 1 }]);
 
-    const p1 = broker.execute({ kind: "bulkIn", id: 1, endpoint: 1, length: 8 });
+    const p1 = broker.execute({ kind: "bulkIn", id: 1, endpoint: 0x81, length: 8 });
     await Promise.resolve();
     expect(resolvers).toHaveLength(1);
 
@@ -589,7 +589,7 @@ describe("usb/UsbBroker", () => {
     const selected = port.posted.filter((m) => (m as { type?: unknown }).type === "usb.selected");
     expect(selected).toEqual([{ type: "usb.selected", ok: false, error: "device detached" }]);
 
-    await expect(broker.execute({ kind: "bulkIn", id: 1, endpoint: 1, length: 8 })).resolves.toEqual({
+    await expect(broker.execute({ kind: "bulkIn", id: 1, endpoint: 0x81, length: 8 })).resolves.toEqual({
       kind: "bulkIn",
       id: 1,
       status: "error",
@@ -639,7 +639,7 @@ describe("usb/UsbBroker", () => {
     const selected = port.posted.filter((m) => (m as { type?: unknown }).type === "usb.selected");
     expect(selected).toEqual([{ type: "usb.selected", ok: false }]);
 
-    await expect(broker.execute({ kind: "bulkIn", id: 123, endpoint: 1, length: 8 })).resolves.toEqual({
+    await expect(broker.execute({ kind: "bulkIn", id: 123, endpoint: 0x81, length: 8 })).resolves.toEqual({
       kind: "bulkIn",
       id: 123,
       status: "error",
@@ -745,7 +745,7 @@ describe("usb/UsbBroker", () => {
     const broker = new UsbBroker();
     await broker.attachPermittedDevice(device1);
 
-    const p1 = broker.execute({ kind: "bulkIn", id: 1, endpoint: 1, length: 8 });
+    const p1 = broker.execute({ kind: "bulkIn", id: 1, endpoint: 0x81, length: 8 });
     await Promise.resolve();
     expect(resolvers).toHaveLength(1);
 
