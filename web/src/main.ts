@@ -640,11 +640,15 @@ function renderSnapshotPanel(report: PlatformFeatureReport): HTMLElement {
     unloadHandlerAttached = true;
     window.addEventListener(
       "pagehide",
-      () => {
+      (ev) => {
+        // `pagehide` fires for both real navigations and BFCache. If the page is being
+        // preserved (`persisted=true`), keep the worker so the demo VM continues to work
+        // when the page is restored.
+        if ("persisted" in ev && (ev as PageTransitionEvent).persisted) return;
         workerClient?.terminate();
         workerClient = null;
       },
-      { once: true },
+      { passive: true },
     );
   }
 
