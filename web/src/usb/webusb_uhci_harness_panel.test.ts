@@ -101,10 +101,10 @@ describe("bridgeHarnessDrainActions", () => {
       push_completion: (_completion: UsbHostCompletion) => {},
     };
     const backend = {
-      execute: vi.fn(async (action: UsbHostAction) => {
+      execute: vi.fn(async (action: UsbHostAction): Promise<UsbHostCompletion> => {
         expect(typeof action.id).toBe("number");
         expect(action.id).toBe(1);
-        return { kind: "controlIn", id: action.id, status: "stall" };
+        return { kind: "controlIn", id: action.id, status: "stall" } satisfies UsbHostCompletion;
       }),
     };
 
@@ -123,11 +123,11 @@ describe("bridgeHarnessDrainActions", () => {
       push_completion: (_completion: UsbHostCompletion) => {},
     };
     const backend = {
-      execute: vi.fn(async (action: UsbHostAction) => {
-        expect(action.kind).toBe("bulkOut");
+      execute: vi.fn(async (action: UsbHostAction): Promise<UsbHostCompletion> => {
+        if (action.kind !== "bulkOut") throw new Error("expected bulkOut action");
         expect(action.data).toBeInstanceOf(Uint8Array);
         expect(Array.from(action.data)).toEqual([1, 2, 3]);
-        return { kind: "bulkOut", id: action.id, status: "success", bytesWritten: action.data.byteLength };
+        return { kind: "bulkOut", id: action.id, status: "success", bytesWritten: action.data.byteLength } satisfies UsbHostCompletion;
       }),
     };
 
