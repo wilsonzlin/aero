@@ -24,6 +24,7 @@
 
 #include "aerogpu_d3d9_caps.h"
 #include "aerogpu_d3d9_blit.h"
+#include "aerogpu_d3d9_fixedfunc_shaders.h"
 #include "aerogpu_d3d9_objects.h"
 #include "aerogpu_d3d9_submit.h"
 #include "aerogpu_log.h"
@@ -144,6 +145,7 @@ constexpr uint32_t kPresentThrottleMaxWaitMs = 100;
 
 AEROGPU_DEFINE_HAS_MEMBER(pfnOpenResource);
 AEROGPU_DEFINE_HAS_MEMBER(pfnOpenResource2);
+AEROGPU_DEFINE_HAS_MEMBER(pfnSetFVF);
 AEROGPU_DEFINE_HAS_MEMBER(pfnWaitForVBlank);
 AEROGPU_DEFINE_HAS_MEMBER(pfnSetGPUThreadPriority);
 AEROGPU_DEFINE_HAS_MEMBER(pfnGetGPUThreadPriority);
@@ -151,6 +153,7 @@ AEROGPU_DEFINE_HAS_MEMBER(pfnCheckResourceResidency);
 AEROGPU_DEFINE_HAS_MEMBER(pfnQueryResourceResidency);
 AEROGPU_DEFINE_HAS_MEMBER(pfnGetDisplayModeEx);
 AEROGPU_DEFINE_HAS_MEMBER(pfnComposeRects);
+AEROGPU_DEFINE_HAS_MEMBER(pfnDrawPrimitiveUP);
 
 #undef AEROGPU_DEFINE_HAS_MEMBER
 #endif
@@ -639,6 +642,38 @@ uint32_t index_count_from_primitive(AEROGPU_D3D9DDI_PRIMITIVE_TYPE prim, uint32_
 }
 
 // -----------------------------------------------------------------------------
+// Minimal fixed-function (FVF) support (bring-up)
+// -----------------------------------------------------------------------------
+
+constexpr uint32_t kD3dFvfXyz = 0x00000002u;
+constexpr uint32_t kD3dFvfXyzRhw = 0x00000004u;
+constexpr uint32_t kD3dFvfDiffuse = 0x00000040u;
+
+constexpr uint32_t kSupportedFvfXyzrhwDiffuse = kD3dFvfXyzRhw | kD3dFvfDiffuse;
+
+#pragma pack(push, 1)
+struct D3DVERTEXELEMENT9_COMPAT {
+  uint16_t Stream;
+  uint16_t Offset;
+  uint8_t Type;
+  uint8_t Method;
+  uint8_t Usage;
+  uint8_t UsageIndex;
+};
+#pragma pack(pop)
+
+static_assert(sizeof(D3DVERTEXELEMENT9_COMPAT) == 8, "D3DVERTEXELEMENT9 must be 8 bytes");
+
+constexpr uint8_t kD3dDeclTypeFloat4 = 3;
+constexpr uint8_t kD3dDeclTypeD3dColor = 4;
+constexpr uint8_t kD3dDeclTypeUnused = 17;
+
+constexpr uint8_t kD3dDeclMethodDefault = 0;
+
+constexpr uint8_t kD3dDeclUsagePositionT = 9;
+constexpr uint8_t kD3dDeclUsageColor = 10;
+
+// -----------------------------------------------------------------------------
 // Handle helpers
 // -----------------------------------------------------------------------------
 
@@ -1059,6 +1094,358 @@ bool emit_destroy_input_layout_locked(Device* dev, aerogpu_handle_t handle) {
   cmd->input_layout_handle = handle;
   cmd->reserved0 = 0;
   return true;
+}
+
+bool emit_set_input_layout_locked(Device* dev, VertexDecl* decl) {
+  if (!dev) {
+    return false;
+  }
+  if (dev->vertex_decl == decl) {
+    return true;
+  }
+
+  auto* cmd = append_fixed_locked<aerogpu_cmd_set_input_layout>(dev, AEROGPU_CMD_SET_INPUT_LAYOUT);
+  if (!cmd) {
+    return false;
+  }
+
+  dev->vertex_decl = decl;
+  cmd->input_layout_handle = decl ? decl->handle : 0;
+  cmd->reserved0 = 0;
+  return true;
+}
+
+bool emit_set_stream_source_locked(
+    Device* dev,
+    uint32_t stream,
+    Resource* vb,
+    uint32_t offset_bytes,
+    uint32_t stride_bytes) {
+  if (!dev || stream >= 16) {
+    return false;
+  }
+
+  DeviceStateStream& ss = dev->streams[stream];
+  if (ss.vb == vb && ss.offset_bytes == offset_bytes && ss.stride_bytes == stride_bytes) {
+    return true;
+  }
+
+  aerogpu_vertex_buffer_binding binding{};
+  binding.buffer = vb ? vb->handle : 0;
+  binding.stride_bytes = stride_bytes;
+  binding.offset_bytes = offset_bytes;
+  binding.reserved0 = 0;
+
+  auto* cmd = append_with_payload_locked<aerogpu_cmd_set_vertex_buffers>(
+      dev, AEROGPU_CMD_SET_VERTEX_BUFFERS, &binding, sizeof(binding));
+  if (!cmd) {
+    return false;
+  }
+  cmd->start_slot = stream;
+  cmd->buffer_count = 1;
+
+  ss.vb = vb;
+  ss.offset_bytes = offset_bytes;
+  ss.stride_bytes = stride_bytes;
+  return true;
+}
+
+Shader* create_internal_shader_locked(
+    Device* dev,
+    AEROGPU_D3D9DDI_SHADER_STAGE stage,
+    const void* bytecode,
+    uint32_t bytecode_size) {
+  if (!dev || !dev->adapter || !bytecode || bytecode_size == 0) {
+    return nullptr;
+  }
+
+  auto sh = std::make_unique<Shader>();
+  sh->handle = dev->adapter->next_handle.fetch_add(1);
+  sh->stage = stage;
+  try {
+    sh->bytecode.resize(bytecode_size);
+  } catch (...) {
+    return nullptr;
+  }
+  std::memcpy(sh->bytecode.data(), bytecode, bytecode_size);
+
+  if (!emit_create_shader_locked(dev, sh.get())) {
+    return nullptr;
+  }
+  return sh.release();
+}
+
+VertexDecl* create_internal_vertex_decl_locked(Device* dev, const void* pDecl, uint32_t decl_size) {
+  if (!dev || !dev->adapter || !pDecl || decl_size == 0) {
+    return nullptr;
+  }
+
+  auto decl = std::make_unique<VertexDecl>();
+  decl->handle = dev->adapter->next_handle.fetch_add(1);
+  try {
+    decl->blob.resize(decl_size);
+  } catch (...) {
+    return nullptr;
+  }
+  std::memcpy(decl->blob.data(), pDecl, decl_size);
+
+  if (!emit_create_input_layout_locked(dev, decl.get())) {
+    return nullptr;
+  }
+  return decl.release();
+}
+
+HRESULT ensure_fixedfunc_pipeline_locked(Device* dev) {
+  if (!dev || !dev->adapter) {
+    return E_FAIL;
+  }
+
+  if (dev->fvf != kSupportedFvfXyzrhwDiffuse) {
+    return E_NOTIMPL;
+  }
+
+  if (!dev->fixedfunc_vs) {
+    const void* vs_bytes = fixedfunc::kVsPassthroughPosColor;
+    const uint32_t vs_size = static_cast<uint32_t>(sizeof(fixedfunc::kVsPassthroughPosColor));
+    dev->fixedfunc_vs = create_internal_shader_locked(dev, AEROGPU_D3D9DDI_SHADER_STAGE_VS, vs_bytes, vs_size);
+    if (!dev->fixedfunc_vs) {
+      return E_OUTOFMEMORY;
+    }
+  }
+  if (!dev->fixedfunc_ps) {
+    const void* ps_bytes = fixedfunc::kPsPassthroughColor;
+    const uint32_t ps_size = static_cast<uint32_t>(sizeof(fixedfunc::kPsPassthroughColor));
+    dev->fixedfunc_ps = create_internal_shader_locked(dev, AEROGPU_D3D9DDI_SHADER_STAGE_PS, ps_bytes, ps_size);
+    if (!dev->fixedfunc_ps) {
+      return E_OUTOFMEMORY;
+    }
+  }
+
+  // Ensure the FVF-derived declaration is bound.
+  if (dev->fvf_vertex_decl) {
+    if (!emit_set_input_layout_locked(dev, dev->fvf_vertex_decl)) {
+      return E_OUTOFMEMORY;
+    }
+  }
+
+  // Bind the fixed-function shaders iff the app did not set explicit shaders.
+  if (!dev->user_vs && !dev->user_ps) {
+    if (dev->vs != dev->fixedfunc_vs || dev->ps != dev->fixedfunc_ps) {
+      Shader* prev_vs = dev->vs;
+      Shader* prev_ps = dev->ps;
+      dev->vs = dev->fixedfunc_vs;
+      dev->ps = dev->fixedfunc_ps;
+      if (!emit_bind_shaders_locked(dev)) {
+        dev->vs = prev_vs;
+        dev->ps = prev_ps;
+        return E_OUTOFMEMORY;
+      }
+    }
+  }
+
+  return S_OK;
+}
+
+HRESULT ensure_up_vertex_buffer_locked(Device* dev, uint32_t required_size) {
+  if (!dev || !dev->adapter) {
+    return E_FAIL;
+  }
+  if (required_size == 0) {
+    return E_INVALIDARG;
+  }
+
+  const uint32_t current_size = dev->up_vertex_buffer ? dev->up_vertex_buffer->size_bytes : 0;
+  if (dev->up_vertex_buffer && current_size >= required_size) {
+    return S_OK;
+  }
+
+  // Grow to the next power-of-two-ish size to avoid reallocating every draw.
+  uint32_t new_size = current_size ? current_size : 4096u;
+  while (new_size < required_size) {
+    new_size = (new_size > (0x7FFFFFFFu / 2)) ? required_size : (new_size * 2);
+  }
+
+  auto vb = std::make_unique<Resource>();
+  vb->handle = dev->adapter->next_handle.fetch_add(1);
+  vb->kind = ResourceKind::Buffer;
+  vb->size_bytes = new_size;
+  try {
+    vb->storage.resize(new_size);
+  } catch (...) {
+    return E_OUTOFMEMORY;
+  }
+
+  if (!emit_create_resource_locked(dev, vb.get())) {
+    return E_OUTOFMEMORY;
+  }
+
+  Resource* old = dev->up_vertex_buffer;
+  dev->up_vertex_buffer = vb.release();
+  if (old) {
+    (void)emit_destroy_resource_locked(dev, old->handle);
+    delete old;
+  }
+  return S_OK;
+}
+
+HRESULT emit_upload_buffer_locked(Device* dev, Resource* res, const void* data, uint32_t size_bytes) {
+  if (!dev || !res || !data || size_bytes == 0) {
+    return E_INVALIDARG;
+  }
+  if (size_bytes > res->size_bytes) {
+    return E_INVALIDARG;
+  }
+
+  // Keep a CPU copy for debug/validation and for fixed-function emulation that
+  // reads from buffers.
+  if (res->storage.size() < size_bytes) {
+    try {
+      res->storage.resize(size_bytes);
+    } catch (...) {
+      return E_OUTOFMEMORY;
+    }
+  }
+  std::memcpy(res->storage.data(), data, size_bytes);
+
+  const uint8_t* src = reinterpret_cast<const uint8_t*>(data);
+  uint32_t remaining = size_bytes;
+  uint32_t cur_offset = 0;
+
+  while (remaining) {
+    // Ensure we can fit at least a minimal upload packet (header + 1 byte).
+    const size_t min_needed = align_up(sizeof(aerogpu_cmd_upload_resource) + 1, 4);
+    if (!ensure_cmd_space(dev, min_needed)) {
+      return E_OUTOFMEMORY;
+    }
+
+    const size_t avail = dev->cmd.bytes_remaining();
+    size_t chunk = 0;
+    if (avail > sizeof(aerogpu_cmd_upload_resource)) {
+      chunk = std::min<size_t>(remaining, avail - sizeof(aerogpu_cmd_upload_resource));
+    }
+    while (chunk && align_up(sizeof(aerogpu_cmd_upload_resource) + chunk, 4) > avail) {
+      chunk--;
+    }
+    if (!chunk) {
+      // Should only happen if the command buffer is extremely small; try a forced
+      // submit and retry.
+      submit(dev);
+      continue;
+    }
+
+    auto* cmd = append_with_payload_locked<aerogpu_cmd_upload_resource>(
+        dev, AEROGPU_CMD_UPLOAD_RESOURCE, src, chunk);
+    if (!cmd) {
+      return E_OUTOFMEMORY;
+    }
+
+    cmd->resource_handle = res->handle;
+    cmd->reserved0 = 0;
+    cmd->offset_bytes = cur_offset;
+    cmd->size_bytes = chunk;
+
+    src += chunk;
+    cur_offset += static_cast<uint32_t>(chunk);
+    remaining -= static_cast<uint32_t>(chunk);
+  }
+  return S_OK;
+}
+
+float read_f32_unaligned(const uint8_t* p) {
+  float v = 0.0f;
+  std::memcpy(&v, p, sizeof(v));
+  return v;
+}
+
+void write_f32_unaligned(uint8_t* p, float v) {
+  std::memcpy(p, &v, sizeof(v));
+}
+
+void get_viewport_dims_locked(Device* dev, float* out_x, float* out_y, float* out_w, float* out_h) {
+  float x = dev->viewport.x;
+  float y = dev->viewport.y;
+  float w = dev->viewport.w;
+  float h = dev->viewport.h;
+
+  if (w <= 0.0f || h <= 0.0f) {
+    // Some apps rely on the default viewport. Use the current render target as a
+    // conservative fallback.
+    if (dev->render_targets[0]) {
+      w = static_cast<float>(std::max(1u, dev->render_targets[0]->width));
+      h = static_cast<float>(std::max(1u, dev->render_targets[0]->height));
+      x = 0.0f;
+      y = 0.0f;
+    }
+  }
+  if (w <= 0.0f) {
+    w = 1.0f;
+  }
+  if (h <= 0.0f) {
+    h = 1.0f;
+  }
+
+  *out_x = x;
+  *out_y = y;
+  *out_w = w;
+  *out_h = h;
+}
+
+HRESULT convert_xyzrhw_to_clipspace_locked(
+    Device* dev,
+    const void* src_vertices,
+    uint32_t stride_bytes,
+    uint32_t vertex_count,
+    std::vector<uint8_t>* out_bytes) {
+  if (!out_bytes) {
+    return E_INVALIDARG;
+  }
+  out_bytes->clear();
+  if (!dev || !src_vertices || stride_bytes < 20 || vertex_count == 0) {
+    return E_INVALIDARG;
+  }
+
+  float vp_x = 0.0f;
+  float vp_y = 0.0f;
+  float vp_w = 1.0f;
+  float vp_h = 1.0f;
+  get_viewport_dims_locked(dev, &vp_x, &vp_y, &vp_w, &vp_h);
+
+  const uint64_t total_bytes_u64 = static_cast<uint64_t>(stride_bytes) * static_cast<uint64_t>(vertex_count);
+  if (total_bytes_u64 == 0 || total_bytes_u64 > 0x7FFFFFFFu) {
+    return E_INVALIDARG;
+  }
+  try {
+    out_bytes->resize(static_cast<size_t>(total_bytes_u64));
+  } catch (...) {
+    return E_OUTOFMEMORY;
+  }
+
+  const uint8_t* src_base = reinterpret_cast<const uint8_t*>(src_vertices);
+  uint8_t* dst_base = out_bytes->data();
+
+  for (uint32_t i = 0; i < vertex_count; i++) {
+    const uint8_t* src = src_base + static_cast<size_t>(i) * stride_bytes;
+    uint8_t* dst = dst_base + static_cast<size_t>(i) * stride_bytes;
+
+    // Preserve any trailing fields (diffuse color etc).
+    std::memcpy(dst, src, stride_bytes);
+
+    const float x = read_f32_unaligned(src + 0);
+    const float y = read_f32_unaligned(src + 4);
+    const float z = read_f32_unaligned(src + 8);
+    const float rhw = read_f32_unaligned(src + 12);
+
+    const float w = (rhw != 0.0f) ? (1.0f / rhw) : 1.0f;
+    const float ndc_x = ((x - vp_x) / vp_w) * 2.0f - 1.0f;
+    const float ndc_y = 1.0f - ((y - vp_y) / vp_h) * 2.0f;
+    const float ndc_z = z;
+
+    write_f32_unaligned(dst + 0, ndc_x * w);
+    write_f32_unaligned(dst + 4, ndc_y * w);
+    write_f32_unaligned(dst + 8, ndc_z * w);
+    write_f32_unaligned(dst + 12, w);
+  }
+  return S_OK;
 }
 
 // -----------------------------------------------------------------------------
@@ -1862,6 +2249,28 @@ HRESULT AEROGPU_D3D9_CALL device_destroy(AEROGPU_D3D9DDI_HDEVICE hDevice) {
 
   {
     std::lock_guard<std::mutex> lock(dev->mutex);
+    // Tear down internal objects that the runtime does not know about.
+    if (dev->fvf_vertex_decl) {
+      (void)emit_destroy_input_layout_locked(dev, dev->fvf_vertex_decl->handle);
+      delete dev->fvf_vertex_decl;
+      dev->fvf_vertex_decl = nullptr;
+    }
+    if (dev->fixedfunc_vs) {
+      (void)emit_destroy_shader_locked(dev, dev->fixedfunc_vs->handle);
+      delete dev->fixedfunc_vs;
+      dev->fixedfunc_vs = nullptr;
+    }
+    if (dev->fixedfunc_ps) {
+      (void)emit_destroy_shader_locked(dev, dev->fixedfunc_ps->handle);
+      delete dev->fixedfunc_ps;
+      dev->fixedfunc_ps = nullptr;
+    }
+    if (dev->up_vertex_buffer) {
+      (void)emit_destroy_resource_locked(dev, dev->up_vertex_buffer->handle);
+      delete dev->up_vertex_buffer;
+      dev->up_vertex_buffer = nullptr;
+    }
+
     destroy_blit_objects_locked(dev);
     for (SwapChain* sc : dev->swapchains) {
       if (!sc) {
@@ -1871,7 +2280,7 @@ HRESULT AEROGPU_D3D9_CALL device_destroy(AEROGPU_D3D9DDI_HDEVICE hDevice) {
         if (!bb) {
           continue;
         }
-        emit_destroy_resource_locked(dev, bb->handle);
+        (void)emit_destroy_resource_locked(dev, bb->handle);
         delete bb;
       }
       delete sc;
@@ -3471,18 +3880,30 @@ HRESULT AEROGPU_D3D9_CALL device_set_vertex_decl(
   auto* decl = as_vertex_decl(hDecl);
 
   std::lock_guard<std::mutex> lock(dev->mutex);
-
-  if (dev->vertex_decl == decl) {
-    return trace.ret(S_OK);
-  }
-  dev->vertex_decl = decl;
-
-  auto* cmd = append_fixed_locked<aerogpu_cmd_set_input_layout>(dev, AEROGPU_CMD_SET_INPUT_LAYOUT);
-  if (!cmd) {
+  if (!emit_set_input_layout_locked(dev, decl)) {
     return trace.ret(E_OUTOFMEMORY);
   }
-  cmd->input_layout_handle = decl ? decl->handle : 0;
-  cmd->reserved0 = 0;
+
+  // Some runtimes implement SetFVF by synthesizing a declaration and calling
+  // SetVertexDecl. Detect the specific `XYZRHW | DIFFUSE` layout used by the
+  // Win7 bring-up test so we can enable the fixed-function fallback path even
+  // if `pfnSetFVF` is not invoked.
+  bool matches_fvf_xyzrhw_diffuse = false;
+  if (decl && decl->blob.size() >= sizeof(D3DVERTEXELEMENT9_COMPAT) * 3) {
+    const auto* elems = reinterpret_cast<const D3DVERTEXELEMENT9_COMPAT*>(decl->blob.data());
+    const auto& e0 = elems[0];
+    const auto& e1 = elems[1];
+    const auto& e2 = elems[2];
+
+    const bool e0_ok = (e0.Stream == 0) && (e0.Offset == 0) && (e0.Type == kD3dDeclTypeFloat4) &&
+                       (e0.Method == kD3dDeclMethodDefault) &&
+                       (e0.Usage == kD3dDeclUsagePositionT || e0.Usage == 0) && (e0.UsageIndex == 0);
+    const bool e1_ok = (e1.Stream == 0) && (e1.Offset == 16) && (e1.Type == kD3dDeclTypeD3dColor) &&
+                       (e1.Method == kD3dDeclMethodDefault) && (e1.Usage == kD3dDeclUsageColor) && (e1.UsageIndex == 0);
+    const bool e2_ok = (e2.Stream == 0xFF) && (e2.Type == kD3dDeclTypeUnused);
+    matches_fvf_xyzrhw_diffuse = e0_ok && e1_ok && e2_ok;
+  }
+  dev->fvf = matches_fvf_xyzrhw_diffuse ? kSupportedFvfXyzrhwDiffuse : 0;
   return trace.ret(S_OK);
 }
 
@@ -3512,6 +3933,53 @@ HRESULT AEROGPU_D3D9_CALL device_destroy_vertex_decl(
   (void)emit_destroy_input_layout_locked(dev, decl->handle);
   delete decl;
   return trace.ret(S_OK);
+}
+
+HRESULT AEROGPU_D3D9_CALL device_set_fvf(AEROGPU_D3D9DDI_HDEVICE hDevice, uint32_t fvf) {
+  if (!hDevice.pDrvPrivate) {
+    return E_INVALIDARG;
+  }
+
+  auto* dev = as_device(hDevice);
+  if (!dev) {
+    return E_INVALIDARG;
+  }
+  std::lock_guard<std::mutex> lock(dev->mutex);
+
+  if (fvf == dev->fvf) {
+    return S_OK;
+  }
+
+  if (fvf != 0 && fvf != kSupportedFvfXyzrhwDiffuse) {
+    return E_NOTIMPL;
+  }
+
+  if (fvf == 0) {
+    dev->fvf = 0;
+    return S_OK;
+  }
+
+  if (!dev->fvf_vertex_decl) {
+    // Build the declaration for this FVF. For bring-up we only support the
+    // `XYZRHW | DIFFUSE` path used by the Win7 d3d9ex_triangle test.
+    const D3DVERTEXELEMENT9_COMPAT elems[] = {
+        // stream, offset, type, method, usage, usage_index
+        {0, 0, kD3dDeclTypeFloat4, kD3dDeclMethodDefault, kD3dDeclUsagePositionT, 0},
+        {0, 16, kD3dDeclTypeD3dColor, kD3dDeclMethodDefault, kD3dDeclUsageColor, 0},
+        {0xFF, 0, kD3dDeclTypeUnused, 0, 0, 0}, // D3DDECL_END
+    };
+
+    dev->fvf_vertex_decl = create_internal_vertex_decl_locked(dev, elems, sizeof(elems));
+    if (!dev->fvf_vertex_decl) {
+      return E_OUTOFMEMORY;
+    }
+  }
+
+  if (!emit_set_input_layout_locked(dev, dev->fvf_vertex_decl)) {
+    return E_OUTOFMEMORY;
+  }
+  dev->fvf = fvf;
+  return S_OK;
 }
 
 HRESULT AEROGPU_D3D9_CALL device_create_shader(
@@ -3568,11 +4036,17 @@ HRESULT AEROGPU_D3D9_CALL device_set_shader(
 
   std::lock_guard<std::mutex> lock(dev->mutex);
 
-  Shader** slot = (stage == AEROGPU_D3D9DDI_SHADER_STAGE_VS) ? &dev->vs : &dev->ps;
-  if (*slot == sh) {
+  Shader** user_slot = (stage == AEROGPU_D3D9DDI_SHADER_STAGE_VS) ? &dev->user_vs : &dev->user_ps;
+  if (*user_slot == sh) {
     return trace.ret(S_OK);
   }
-  *slot = sh;
+
+  *user_slot = sh;
+
+  // Bind exactly what the runtime requested. Fixed-function fallbacks are
+  // re-bound lazily at draw time when `user_vs/user_ps` are both null.
+  dev->vs = dev->user_vs;
+  dev->ps = dev->user_ps;
 
   if (!emit_bind_shaders_locked(dev)) {
     return trace.ret(E_OUTOFMEMORY);
@@ -3767,25 +4241,9 @@ HRESULT AEROGPU_D3D9_CALL device_set_stream_source(
   auto* vb = as_resource(hVb);
 
   std::lock_guard<std::mutex> lock(dev->mutex);
-
-  DeviceStateStream& ss = dev->streams[stream];
-  ss.vb = vb;
-  ss.offset_bytes = offset_bytes;
-  ss.stride_bytes = stride_bytes;
-
-  aerogpu_vertex_buffer_binding binding{};
-  binding.buffer = vb ? vb->handle : 0;
-  binding.stride_bytes = stride_bytes;
-  binding.offset_bytes = offset_bytes;
-  binding.reserved0 = 0;
-
-  auto* cmd = append_with_payload_locked<aerogpu_cmd_set_vertex_buffers>(
-      dev, AEROGPU_CMD_SET_VERTEX_BUFFERS, &binding, sizeof(binding));
-  if (!cmd) {
+  if (!emit_set_stream_source_locked(dev, stream, vb, offset_bytes, stride_bytes)) {
     return trace.ret(E_OUTOFMEMORY);
   }
-  cmd->start_slot = stream;
-  cmd->buffer_count = 1;
   return trace.ret(S_OK);
 }
 
@@ -3889,6 +4347,76 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive(
   auto* dev = as_device(hDevice);
   std::lock_guard<std::mutex> lock(dev->mutex);
 
+  // Fixed-function emulation path: for XYZRHW vertices we upload a transformed
+  // (clip-space) copy of the referenced vertices into a scratch VB and draw
+  // using a built-in shader pair.
+  if (dev->fvf == kSupportedFvfXyzrhwDiffuse && !dev->user_vs && !dev->user_ps) {
+    DeviceStateStream saved = dev->streams[0];
+    DeviceStateStream& ss = dev->streams[0];
+    if (!ss.vb || ss.stride_bytes < 20) {
+      return E_FAIL;
+    }
+
+    const uint32_t vertex_count = vertex_count_from_primitive(type, primitive_count);
+    const uint64_t src_offset_u64 =
+        static_cast<uint64_t>(ss.offset_bytes) + static_cast<uint64_t>(start_vertex) * ss.stride_bytes;
+    const uint64_t size_u64 = static_cast<uint64_t>(vertex_count) * ss.stride_bytes;
+    if (src_offset_u64 > ss.vb->storage.size() || size_u64 > ss.vb->storage.size() - src_offset_u64) {
+      return E_INVALIDARG;
+    }
+
+    std::vector<uint8_t> converted;
+    HRESULT hr = convert_xyzrhw_to_clipspace_locked(
+        dev,
+        ss.vb->storage.data() + static_cast<size_t>(src_offset_u64),
+        ss.stride_bytes,
+        vertex_count,
+        &converted);
+    if (FAILED(hr)) {
+      return hr;
+    }
+
+    hr = ensure_up_vertex_buffer_locked(dev, static_cast<uint32_t>(converted.size()));
+    if (FAILED(hr)) {
+      return hr;
+    }
+    hr = emit_upload_buffer_locked(dev, dev->up_vertex_buffer, converted.data(), static_cast<uint32_t>(converted.size()));
+    if (FAILED(hr)) {
+      return hr;
+    }
+
+    if (!emit_set_stream_source_locked(dev, 0, dev->up_vertex_buffer, 0, ss.stride_bytes)) {
+      return E_OUTOFMEMORY;
+    }
+
+    hr = ensure_fixedfunc_pipeline_locked(dev);
+    if (FAILED(hr)) {
+      (void)emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes);
+      return hr;
+    }
+
+    const uint32_t topology = d3d9_prim_to_topology(type);
+    if (!emit_set_topology_locked(dev, topology)) {
+      (void)emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes);
+      return E_OUTOFMEMORY;
+    }
+
+    auto* cmd = append_fixed_locked<aerogpu_cmd_draw>(dev, AEROGPU_CMD_DRAW);
+    if (!cmd) {
+      (void)emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes);
+      return E_OUTOFMEMORY;
+    }
+    cmd->vertex_count = vertex_count;
+    cmd->instance_count = 1;
+    cmd->first_vertex = 0;
+    cmd->first_instance = 0;
+
+    if (!emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes)) {
+      return E_OUTOFMEMORY;
+    }
+    return S_OK;
+  }
+
   const uint32_t topology = d3d9_prim_to_topology(type);
   if (!emit_set_topology_locked(dev, topology)) {
     return trace.ret(E_OUTOFMEMORY);
@@ -3917,6 +4445,86 @@ HRESULT AEROGPU_D3D9_CALL device_draw_primitive(
   return trace.ret(S_OK);
 }
 
+HRESULT AEROGPU_D3D9_CALL device_draw_primitive_up(
+    AEROGPU_D3D9DDI_HDEVICE hDevice,
+    AEROGPU_D3D9DDI_PRIMITIVE_TYPE type,
+    uint32_t primitive_count,
+    const void* pVertexData,
+    uint32_t stride_bytes) {
+  if (!hDevice.pDrvPrivate || !pVertexData || stride_bytes == 0) {
+    return E_INVALIDARG;
+  }
+
+  auto* dev = as_device(hDevice);
+  if (!dev) {
+    return E_INVALIDARG;
+  }
+  std::lock_guard<std::mutex> lock(dev->mutex);
+
+  const uint32_t vertex_count = vertex_count_from_primitive(type, primitive_count);
+  const uint64_t size_u64 = static_cast<uint64_t>(vertex_count) * stride_bytes;
+  if (size_u64 == 0 || size_u64 > 0x7FFFFFFFu) {
+    return E_INVALIDARG;
+  }
+
+  DeviceStateStream saved = dev->streams[0];
+
+  std::vector<uint8_t> converted;
+  const void* upload_data = pVertexData;
+  uint32_t upload_size = static_cast<uint32_t>(size_u64);
+
+  if (dev->fvf == kSupportedFvfXyzrhwDiffuse && !dev->user_vs && !dev->user_ps) {
+    HRESULT hr = convert_xyzrhw_to_clipspace_locked(dev, pVertexData, stride_bytes, vertex_count, &converted);
+    if (FAILED(hr)) {
+      return hr;
+    }
+    upload_data = converted.data();
+    upload_size = static_cast<uint32_t>(converted.size());
+  }
+
+  HRESULT hr = ensure_up_vertex_buffer_locked(dev, upload_size);
+  if (FAILED(hr)) {
+    return hr;
+  }
+  hr = emit_upload_buffer_locked(dev, dev->up_vertex_buffer, upload_data, upload_size);
+  if (FAILED(hr)) {
+    return hr;
+  }
+
+  if (!emit_set_stream_source_locked(dev, 0, dev->up_vertex_buffer, 0, stride_bytes)) {
+    return E_OUTOFMEMORY;
+  }
+
+  if (dev->fvf == kSupportedFvfXyzrhwDiffuse && !dev->user_vs && !dev->user_ps) {
+    hr = ensure_fixedfunc_pipeline_locked(dev);
+    if (FAILED(hr)) {
+      (void)emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes);
+      return hr;
+    }
+  }
+
+  const uint32_t topology = d3d9_prim_to_topology(type);
+  if (!emit_set_topology_locked(dev, topology)) {
+    (void)emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes);
+    return E_OUTOFMEMORY;
+  }
+
+  auto* cmd = append_fixed_locked<aerogpu_cmd_draw>(dev, AEROGPU_CMD_DRAW);
+  if (!cmd) {
+    (void)emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes);
+    return E_OUTOFMEMORY;
+  }
+  cmd->vertex_count = vertex_count;
+  cmd->instance_count = 1;
+  cmd->first_vertex = 0;
+  cmd->first_instance = 0;
+
+  if (!emit_set_stream_source_locked(dev, 0, saved.vb, saved.offset_bytes, saved.stride_bytes)) {
+    return E_OUTOFMEMORY;
+  }
+  return S_OK;
+}
+
 HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
     AEROGPU_D3D9DDI_HDEVICE hDevice,
     AEROGPU_D3D9DDI_PRIMITIVE_TYPE type,
@@ -3936,6 +4544,128 @@ HRESULT AEROGPU_D3D9_CALL device_draw_indexed_primitive(
 
   auto* dev = as_device(hDevice);
   std::lock_guard<std::mutex> lock(dev->mutex);
+
+  // Fixed-function emulation for indexed draws: expand indices into a temporary
+  // vertex stream and issue a non-indexed draw. This is intentionally
+  // conservative but is sufficient for bring-up.
+  if (dev->fvf == kSupportedFvfXyzrhwDiffuse && !dev->user_vs && !dev->user_ps) {
+    DeviceStateStream saved_stream = dev->streams[0];
+    DeviceStateStream& ss = dev->streams[0];
+
+    if (!ss.vb || ss.stride_bytes < 20) {
+      return E_FAIL;
+    }
+    if (!dev->index_buffer) {
+      return E_FAIL;
+    }
+
+    const uint32_t index_count = index_count_from_primitive(type, primitive_count);
+    const uint32_t index_size = (dev->index_format == AEROGPU_D3D9DDI_INDEX_FORMAT_U32) ? 4u : 2u;
+    const uint64_t index_bytes_u64 = static_cast<uint64_t>(index_count) * index_size;
+    const uint64_t index_offset_u64 =
+        static_cast<uint64_t>(dev->index_offset_bytes) + static_cast<uint64_t>(start_index) * index_size;
+
+    if (index_offset_u64 > dev->index_buffer->storage.size() ||
+        index_bytes_u64 > dev->index_buffer->storage.size() - index_offset_u64) {
+      return E_INVALIDARG;
+    }
+
+    const uint8_t* index_data = dev->index_buffer->storage.data() + static_cast<size_t>(index_offset_u64);
+
+    std::vector<uint8_t> expanded;
+    try {
+      expanded.resize(static_cast<size_t>(static_cast<uint64_t>(index_count) * ss.stride_bytes));
+    } catch (...) {
+      return E_OUTOFMEMORY;
+    }
+
+    float vp_x = 0.0f;
+    float vp_y = 0.0f;
+    float vp_w = 1.0f;
+    float vp_h = 1.0f;
+    get_viewport_dims_locked(dev, &vp_x, &vp_y, &vp_w, &vp_h);
+
+    for (uint32_t i = 0; i < index_count; i++) {
+      uint32_t idx = 0;
+      if (index_size == 4) {
+        std::memcpy(&idx, index_data + i * 4, sizeof(idx));
+      } else {
+        uint16_t idx16 = 0;
+        std::memcpy(&idx16, index_data + i * 2, sizeof(idx16));
+        idx = idx16;
+      }
+
+      const int64_t vtx = static_cast<int64_t>(base_vertex) + static_cast<int64_t>(idx);
+      if (vtx < 0) {
+        return E_INVALIDARG;
+      }
+
+      const uint64_t src_off_u64 =
+          static_cast<uint64_t>(ss.offset_bytes) + static_cast<uint64_t>(vtx) * ss.stride_bytes;
+      if (src_off_u64 > ss.vb->storage.size() || ss.stride_bytes > ss.vb->storage.size() - src_off_u64) {
+        return E_INVALIDARG;
+      }
+
+      const uint8_t* src = ss.vb->storage.data() + static_cast<size_t>(src_off_u64);
+      uint8_t* dst = expanded.data() + static_cast<size_t>(i) * ss.stride_bytes;
+      std::memcpy(dst, src, ss.stride_bytes);
+
+      const float x = read_f32_unaligned(src + 0);
+      const float y = read_f32_unaligned(src + 4);
+      const float z = read_f32_unaligned(src + 8);
+      const float rhw = read_f32_unaligned(src + 12);
+
+      const float w = (rhw != 0.0f) ? (1.0f / rhw) : 1.0f;
+      const float ndc_x = ((x - vp_x) / vp_w) * 2.0f - 1.0f;
+      const float ndc_y = 1.0f - ((y - vp_y) / vp_h) * 2.0f;
+      const float ndc_z = z;
+
+      write_f32_unaligned(dst + 0, ndc_x * w);
+      write_f32_unaligned(dst + 4, ndc_y * w);
+      write_f32_unaligned(dst + 8, ndc_z * w);
+      write_f32_unaligned(dst + 12, w);
+    }
+
+    HRESULT hr = ensure_up_vertex_buffer_locked(dev, static_cast<uint32_t>(expanded.size()));
+    if (FAILED(hr)) {
+      return hr;
+    }
+    hr = emit_upload_buffer_locked(dev, dev->up_vertex_buffer, expanded.data(), static_cast<uint32_t>(expanded.size()));
+    if (FAILED(hr)) {
+      return hr;
+    }
+
+    if (!emit_set_stream_source_locked(dev, 0, dev->up_vertex_buffer, 0, ss.stride_bytes)) {
+      return E_OUTOFMEMORY;
+    }
+
+    hr = ensure_fixedfunc_pipeline_locked(dev);
+    if (FAILED(hr)) {
+      (void)emit_set_stream_source_locked(dev, 0, saved_stream.vb, saved_stream.offset_bytes, saved_stream.stride_bytes);
+      return hr;
+    }
+
+    const uint32_t topology = d3d9_prim_to_topology(type);
+    if (!emit_set_topology_locked(dev, topology)) {
+      (void)emit_set_stream_source_locked(dev, 0, saved_stream.vb, saved_stream.offset_bytes, saved_stream.stride_bytes);
+      return E_OUTOFMEMORY;
+    }
+
+    auto* cmd = append_fixed_locked<aerogpu_cmd_draw>(dev, AEROGPU_CMD_DRAW);
+    if (!cmd) {
+      (void)emit_set_stream_source_locked(dev, 0, saved_stream.vb, saved_stream.offset_bytes, saved_stream.stride_bytes);
+      return E_OUTOFMEMORY;
+    }
+    cmd->vertex_count = index_count;
+    cmd->instance_count = 1;
+    cmd->first_vertex = 0;
+    cmd->first_instance = 0;
+
+    if (!emit_set_stream_source_locked(dev, 0, saved_stream.vb, saved_stream.offset_bytes, saved_stream.stride_bytes)) {
+      return E_OUTOFMEMORY;
+    }
+    return S_OK;
+  }
 
   const uint32_t topology = d3d9_prim_to_topology(type);
   if (!emit_set_topology_locked(dev, topology)) {
@@ -4795,6 +5525,9 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   AEROGPU_SET_D3D9DDI_FN(pfnCreateVertexDecl, device_create_vertex_decl);
   AEROGPU_SET_D3D9DDI_FN(pfnSetVertexDecl, device_set_vertex_decl);
   AEROGPU_SET_D3D9DDI_FN(pfnDestroyVertexDecl, device_destroy_vertex_decl);
+  if constexpr (aerogpu_has_member_pfnSetFVF<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(pfnSetFVF, device_set_fvf);
+  }
 
   AEROGPU_SET_D3D9DDI_FN(pfnCreateShader, device_create_shader);
   AEROGPU_SET_D3D9DDI_FN(pfnSetShader, device_set_shader);
@@ -4806,6 +5539,9 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
 
   AEROGPU_SET_D3D9DDI_FN(pfnClear, device_clear);
   AEROGPU_SET_D3D9DDI_FN(pfnDrawPrimitive, device_draw_primitive);
+  if constexpr (aerogpu_has_member_pfnDrawPrimitiveUP<D3D9DDI_DEVICEFUNCS>::value) {
+    AEROGPU_SET_D3D9DDI_FN(pfnDrawPrimitiveUP, device_draw_primitive_up);
+  }
   AEROGPU_SET_D3D9DDI_FN(pfnDrawIndexedPrimitive, device_draw_indexed_primitive);
   AEROGPU_SET_D3D9DDI_FN(pfnCreateSwapChain, device_create_swap_chain);
   AEROGPU_SET_D3D9DDI_FN(pfnDestroySwapChain, device_destroy_swap_chain);
@@ -4895,6 +5631,7 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
   pDeviceFuncs->pfnCreateVertexDecl = device_create_vertex_decl;
   pDeviceFuncs->pfnSetVertexDecl = device_set_vertex_decl;
   pDeviceFuncs->pfnDestroyVertexDecl = device_destroy_vertex_decl;
+  pDeviceFuncs->pfnSetFVF = device_set_fvf;
 
   pDeviceFuncs->pfnCreateShader = device_create_shader;
   pDeviceFuncs->pfnSetShader = device_set_shader;
@@ -4906,6 +5643,7 @@ HRESULT AEROGPU_D3D9_CALL adapter_create_device(
 
   pDeviceFuncs->pfnClear = device_clear;
   pDeviceFuncs->pfnDrawPrimitive = device_draw_primitive;
+  pDeviceFuncs->pfnDrawPrimitiveUP = device_draw_primitive_up;
   pDeviceFuncs->pfnDrawIndexedPrimitive = device_draw_indexed_primitive;
   pDeviceFuncs->pfnCreateSwapChain = device_create_swap_chain;
   pDeviceFuncs->pfnDestroySwapChain = device_destroy_swap_chain;

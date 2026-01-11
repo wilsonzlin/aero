@@ -291,9 +291,25 @@ struct Device {
   uint32_t index_offset_bytes = 0;
   uint32_t topology = AEROGPU_TOPOLOGY_TRIANGLELIST;
 
+  // "User" shaders are the ones explicitly set via the D3D9 runtime.
+  // `vs`/`ps` below track what is currently bound in the AeroGPU command stream
+  // (may be a fixed-function fallback shader).
+  Shader* user_vs = nullptr;
+  Shader* user_ps = nullptr;
+
   Shader* vs = nullptr;
   Shader* ps = nullptr;
   VertexDecl* vertex_decl = nullptr;
+
+  // Fixed-function (FVF) fallback state.
+  uint32_t fvf = 0;
+  VertexDecl* fvf_vertex_decl = nullptr;
+  Shader* fixedfunc_vs = nullptr;
+  Shader* fixedfunc_ps = nullptr;
+
+  // Scratch vertex buffer used to emulate DrawPrimitiveUP and fixed-function
+  // transformed vertex uploads.
+  Resource* up_vertex_buffer = nullptr;
 
   AEROGPU_D3D9DDI_VIEWPORT viewport = {0, 0, 0, 0, 0.0f, 1.0f};
   RECT scissor_rect = {0, 0, 0, 0};
