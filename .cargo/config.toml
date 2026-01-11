@@ -3,6 +3,15 @@
 # Keep this file minimal to avoid impacting CI. Agent-only build/memory limits are
 # applied via environment variables in `scripts/agent-env.sh`.
 
+[env]
+# Some environments configure Cargo to use `sccache` via a global Cargo config. In
+# ephemeral agent sandboxes the sccache server is not always available, which
+# causes *all* cargo commands to fail before compilation even starts.
+#
+# Default to no rustc wrapper for this repo. Developers/CI that want sccache can
+# opt back in by setting `CARGO_BUILD_RUSTC_WRAPPER=sccache` in their shell.
+CARGO_BUILD_RUSTC_WRAPPER = ""
+
 [alias]
 # `cargo xtask <subcommand>` is shorthand for running the `xtask` helper binary.
 xtask = "run --locked -p xtask --"
