@@ -1,67 +1,79 @@
 import { describe, expect, it } from "vitest";
 
 import { computeGuestRamLayout, guestToLinear } from "./shared_layout";
+import { initWasm } from "./wasm_loader";
 
-const wasmImporters = import.meta.glob("../wasm/pkg-*/aero_wasm.js");
-
-type WasmImporter = (() => Promise<any>) | undefined;
-
-function pickImporter(paths: string[]): WasmImporter {
-  for (const p of paths) {
-    const importer = wasmImporters[p];
-    if (importer) return importer;
-  }
-  return undefined;
-}
-
-const THREADED_IMPORTER = pickImporter(["../wasm/pkg-threaded/aero_wasm.js", "../wasm/pkg-threaded-dev/aero_wasm.js"]);
-const SINGLE_IMPORTER = pickImporter(["../wasm/pkg-single/aero_wasm.js", "../wasm/pkg-single-dev/aero_wasm.js"]);
-
-async function initWithImportedMemory(mod: any, memory: WebAssembly.Memory): Promise<void> {
-  // wasm-bindgen's init signature varies slightly across versions; support the
-  // common `(input?, memory?)` form used for `--import-memory` builds.
+function sharedMemorySupported(): boolean {
+  if (typeof WebAssembly === "undefined" || typeof WebAssembly.Memory !== "function") return false;
+  if (typeof SharedArrayBuffer === "undefined") return false;
   try {
-    await mod.default(undefined, memory);
-    return;
+    // eslint-disable-next-line no-new
+    const mem = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
+    return mem.buffer instanceof SharedArrayBuffer;
   } catch {
-    // Fallback for older glue code that takes an options object.
-    await mod.default({ memory });
+    return false;
   }
 }
 
-describe.runIf(Boolean(THREADED_IMPORTER || SINGLE_IMPORTER))("runtime/wasm_guest_layout", () => {
+describe("runtime/wasm_guest_layout", () => {
   it("maps guest physical memory into wasm linear memory after the runtime reserved region", async () => {
-    const variant = THREADED_IMPORTER ? "threaded" : "single";
-    const importer = (THREADED_IMPORTER ?? SINGLE_IMPORTER)!;
-    const mod = await importer();
-
     const desiredGuestBytes = 1 * 1024 * 1024;
     const jsLayout = computeGuestRamLayout(desiredGuestBytes);
 
-    const memory = new WebAssembly.Memory({
-      initial: jsLayout.wasm_pages,
-      maximum: jsLayout.wasm_pages,
-      ...(variant === "threaded" ? { shared: true } : {}),
-    });
+    const variants: Array<"threaded" | "single"> = sharedMemorySupported() ? ["threaded", "single"] : ["single"];
 
-    await initWithImportedMemory(mod, memory);
+    for (const variant of variants) {
+      // `initWasm` only selects the threaded build when `crossOriginIsolated` is
+      // true. In Node/Vitest that flag is absent, so spoof it for this test.
+      const hadCrossOriginIsolated = Object.prototype.hasOwnProperty.call(globalThis, "crossOriginIsolated");
+      const originalCrossOriginIsolated = (globalThis as any).crossOriginIsolated;
+      if (variant === "threaded") {
+        (globalThis as any).crossOriginIsolated = true;
+      }
 
-    expect(typeof mod.guest_ram_layout).toBe("function");
-    expect(typeof mod.mem_load_u32).toBe("function");
+      try {
+        const memory = new WebAssembly.Memory({
+          initial: jsLayout.wasm_pages,
+          maximum: jsLayout.wasm_pages,
+          ...(variant === "threaded" ? { shared: true } : {}),
+        });
 
-    const wasmLayout = mod.guest_ram_layout(desiredGuestBytes);
-    expect(wasmLayout.guest_base >>> 0).toBe(jsLayout.guest_base);
-    expect(wasmLayout.guest_size >>> 0).toBe(jsLayout.guest_size);
-    expect(wasmLayout.runtime_reserved >>> 0).toBe(jsLayout.runtime_reserved);
+        const { api } = await initWasm({ variant, memory });
 
-    const paddr = 0x100;
-    const linear = guestToLinear(jsLayout, paddr);
-    const dv = new DataView(memory.buffer);
-    dv.setUint32(linear, 0x12345678, true);
+        const wasmLayout = api.guest_ram_layout(desiredGuestBytes);
+        expect(wasmLayout.guest_base >>> 0).toBe(jsLayout.guest_base);
+        expect(wasmLayout.guest_size >>> 0).toBe(jsLayout.guest_size);
+        expect(wasmLayout.runtime_reserved >>> 0).toBe(jsLayout.runtime_reserved);
 
-    expect(mod.mem_load_u32(linear) >>> 0).toBe(0x12345678);
+        const paddr = 0x100;
+        const linear = guestToLinear(jsLayout, paddr);
+        const dv = new DataView(memory.buffer);
+        dv.setUint32(linear, 0x12345678, true);
 
-    expect(() => guestToLinear(jsLayout, -1)).toThrow();
-    expect(() => guestToLinear(jsLayout, jsLayout.guest_size)).toThrow();
+        expect(api.mem_load_u32(linear) >>> 0).toBe(0x12345678);
+
+        expect(() => guestToLinear(jsLayout, -1)).toThrow();
+        expect(() => guestToLinear(jsLayout, jsLayout.guest_size)).toThrow();
+        return;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        // The wasm-pack output is generated and may be absent in some test
+        // environments; skip rather than failing unrelated suites.
+        const missingMessage =
+          variant === "threaded" ? "Missing threaded WASM package" : "Missing single-thread WASM package";
+        if (message.includes(missingMessage)) {
+          continue;
+        }
+        throw err;
+      } finally {
+        if (variant === "threaded") {
+          if (hadCrossOriginIsolated) {
+            (globalThis as any).crossOriginIsolated = originalCrossOriginIsolated;
+          } else {
+            delete (globalThis as any).crossOriginIsolated;
+          }
+        }
+      }
+    }
   });
 });
