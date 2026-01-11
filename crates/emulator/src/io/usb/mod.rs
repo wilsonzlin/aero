@@ -213,6 +213,8 @@ pub trait UsbDeviceModel {
 
     /// Handles a non-control IN transfer (interrupt/bulk).
     ///
+    /// `ep` is the USB endpoint **address** (e.g. `0x81`), not the endpoint number.
+    ///
     /// Implementations should return [`UsbInResult::Nak`] when no data is available yet so the
     /// UHCI scheduler can retry the TD in a later frame.
     ///
@@ -231,6 +233,8 @@ pub trait UsbDeviceModel {
     }
 
     /// Handles a non-control OUT transfer (interrupt/bulk).
+    ///
+    /// `ep` is the USB endpoint **address** (e.g. `0x01`), not the endpoint number.
     ///
     /// The default implementation delegates to [`UsbDeviceModel::handle_interrupt_out`] for
     /// backwards compatibility with interrupt-only device models.
