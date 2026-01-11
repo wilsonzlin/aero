@@ -746,10 +746,14 @@ impl IoSnapshot for UhciController {
         }
 
         let bus_snapshotable = (0..self.bus.num_ports()).all(|idx| {
-            self.bus
-                .port(idx)
-                .and_then(|port| port.device.as_deref())
-                .is_none_or(device_tree_is_snapshotable)
+            let Some(port) = self.bus.port(idx) else {
+                return false;
+            };
+
+            match port.device.as_deref() {
+                Some(dev) => port.connected && device_tree_is_snapshotable(dev),
+                None => !port.connected && !port.enabled,
+            }
         });
 
         if bus_snapshotable {

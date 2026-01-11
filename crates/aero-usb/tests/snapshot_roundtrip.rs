@@ -551,6 +551,16 @@ fn uhci_snapshot_roundtrip_preserves_regs_and_port_timer() {
         "port should be enabled after reset completes"
     );
     assert!(restored.bus().port(0).unwrap().enabled);
+
+    // Snapshots that omit a full `UsbBus` topology (e.g. because some devices aren't snapshotable)
+    // can restore with `connected=true` but without a concrete `UsbDevice` attached. Saving again
+    // must not switch to a full bus snapshot in that case, otherwise the resulting snapshot would
+    // be invalid (connected port but missing device entries).
+    let snapshot2 = restored.save_state();
+    let mut restored2 = UhciController::new(0, 0);
+    restored2
+        .load_state(&snapshot2)
+        .expect("re-saved UHCI snapshot should still be loadable");
 }
 
 #[test]
