@@ -899,6 +899,28 @@ static void TestNotifyRejectInvalidQueueCompat(void)
 	VirtioPciModernTransportUninit(&t);
 }
 
+static void TestNotifyRejectNotifyOffTooLargeCompat(void)
+{
+	FAKE_DEV dev;
+	VIRTIO_PCI_MODERN_OS_INTERFACE os;
+	VIRTIO_PCI_MODERN_TRANSPORT t;
+	NTSTATUS st;
+
+	FakeDevInitValid(&dev);
+	dev.QueueNotifyOff[0] = 100;
+	os = GetOs(&dev);
+
+	st = VirtioPciModernTransportInit(&t, &os, VIRTIO_PCI_MODERN_TRANSPORT_MODE_COMPAT, 0x10000000u, sizeof(dev.Bar0));
+	assert(st == STATUS_SUCCESS);
+
+	*(UINT16 *)(dev.Bar0 + 0x1000) = 0xBEEFu;
+	st = VirtioPciModernTransportNotifyQueue(&t, 0);
+	assert(st == STATUS_INVALID_PARAMETER);
+	assert(*(UINT16 *)(dev.Bar0 + 0x1000) == 0xBEEFu);
+
+	VirtioPciModernTransportUninit(&t);
+}
+
 static void TestDeviceConfigReadStable(void)
 {
 	FAKE_DEV dev;
@@ -1118,6 +1140,7 @@ int main(void)
 	TestQueueSetupRejectUnalignedOrInvalidQueue();
 	TestNotifyRejectInvalidQueue();
 	TestNotifyRejectInvalidQueueCompat();
+	TestNotifyRejectNotifyOffTooLargeCompat();
 	TestDeviceConfigReadStable();
 	TestDeviceConfigZeroLengthIsNoop();
 	TestDeviceConfigReadRetriesAndGetsLatest();
