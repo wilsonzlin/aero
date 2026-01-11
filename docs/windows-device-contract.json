@@ -50,8 +50,11 @@
       "pci_vendor_id": "0x1AF4",
       "pci_device_id": "0x1052",
       "hardware_id_patterns": [
+        "PCI\\VEN_1AF4&DEV_1052&SUBSYS_00101AF4&REV_01",
         "PCI\\VEN_1AF4&DEV_1052&SUBSYS_00101AF4",
+        "PCI\\VEN_1AF4&DEV_1052&SUBSYS_00111AF4&REV_01",
         "PCI\\VEN_1AF4&DEV_1052&SUBSYS_00111AF4",
+        "PCI\\VEN_1AF4&DEV_1052&REV_01",
         "PCI\\VEN_1AF4&DEV_1052"
       ],
       "driver_service_name": "aero_virtio_input",
