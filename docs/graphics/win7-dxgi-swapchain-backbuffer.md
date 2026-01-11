@@ -114,6 +114,9 @@ correlate swapchain backbuffer handles to recent `DxgkDdiCreateAllocation` flag 
 allocation size):
 
 ```bash
+rem Windows cmd example:
+aerogpu_dbgctl --dump-createalloc > createalloc.txt
+
 python scripts/parse_win7_dxgi_swapchain_trace.py --createalloc=createalloc.txt aerogpu_d3d10_11_umd.log
 python scripts/parse_win7_dxgi_swapchain_trace.py --json=swapchain_trace.json --createalloc=createalloc.txt aerogpu_d3d10_11_umd.log
 ```

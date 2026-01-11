@@ -455,7 +455,7 @@ def main(argv: List[str]) -> int:
         }
 
         matches: Dict[str, List[dict]] = {}
-        for h in rotate_handles:
+        for h in candidate_handles:
             d = resources.get(h)
             if not d:
                 continue
