@@ -131,12 +131,12 @@ func (s *Server) registerRoutes() {
 					WriteJSON(w, http.StatusUnauthorized, map[string]any{"code": "unauthorized", "message": "unauthorized"})
 					return
 				}
-				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+				WriteJSON(w, http.StatusInternalServerError, map[string]any{"code": "internal_error", "message": "internal error"})
 				return
 			}
 			verifier, err := auth.NewVerifier(s.cfg)
 			if err != nil {
-				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+				WriteJSON(w, http.StatusInternalServerError, map[string]any{"code": "internal_error", "message": "internal error"})
 				return
 			}
 			if err := verifier.Verify(cred); err != nil {
@@ -145,7 +145,7 @@ func (s *Server) registerRoutes() {
 					WriteJSON(w, http.StatusUnauthorized, map[string]any{"code": "unauthorized", "message": "unauthorized"})
 					return
 				}
-				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+				WriteJSON(w, http.StatusInternalServerError, map[string]any{"code": "internal_error", "message": "internal error"})
 				return
 			}
 		}
@@ -167,12 +167,12 @@ func (s *Server) registerRoutes() {
 				SessionIDSource: turnrest.CryptoRandomSessionID,
 			})
 			if err != nil {
-				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+				WriteJSON(w, http.StatusInternalServerError, map[string]any{"code": "internal_error", "message": "internal error"})
 				return
 			}
 			creds, err := gen.GenerateRandom()
 			if err != nil {
-				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+				WriteJSON(w, http.StatusInternalServerError, map[string]any{"code": "internal_error", "message": "internal error"})
 				return
 			}
 			iceServers = withTURNRESTCredentials(iceServers, creds.Username, creds.Credential)
