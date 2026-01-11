@@ -38,6 +38,9 @@ impl SetupPacket {
 ///
 /// This is the canonical wire representation shared with TypeScript:
 /// `web/src/usb/usb_passthrough_types.ts` (re-exported from `web/src/usb/webusb_backend.ts`).
+///
+/// `id` is a Rust-generated u32 used to correlate an action with its completion. Keep it
+/// representable as a JS number without loss (`<= 0xFFFF_FFFF`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum UsbHostAction {
