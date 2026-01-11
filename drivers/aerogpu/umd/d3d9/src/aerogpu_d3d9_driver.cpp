@@ -5325,7 +5325,8 @@ static void consume_wddm_alloc_priv(Resource* res,
   aerogpu_wddm_alloc_priv priv{};
   std::memcpy(&priv, priv_data, sizeof(priv));
 
-  if (priv.magic != AEROGPU_WDDM_ALLOC_PRIV_MAGIC || priv.version != AEROGPU_WDDM_ALLOC_PRIV_VERSION) {
+  if (priv.magic != AEROGPU_WDDM_ALLOC_PRIV_MAGIC ||
+      (priv.version != AEROGPU_WDDM_ALLOC_PRIV_VERSION && priv.version != AEROGPU_WDDM_ALLOC_PRIV_VERSION_2)) {
     return;
   }
 
@@ -5618,9 +5619,13 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
     // WDDM path: back the systemmem surface with a guest allocation so the host
     // can write pixels back into guest memory (WRITEBACK_DST) and the CPU can
     // lock/map the allocation to read them.
-    if (!pCreateResource->pPrivateDriverData ||
-        pCreateResource->PrivateDriverDataSize < sizeof(aerogpu_wddm_alloc_priv)) {
-      logf("aerogpu-d3d9: Create systemmem resource missing private data buffer (have=%u need=%u)\n",
+    const bool have_runtime_priv =
+        (pCreateResource->pPrivateDriverData &&
+         pCreateResource->PrivateDriverDataSize >= sizeof(aerogpu_wddm_alloc_priv));
+    if (res->wddm_hAllocation != 0 && !have_runtime_priv) {
+      // If the runtime already attached a kernel allocation handle, we need a
+      // private-driver-data buffer to communicate the alloc_id to the KMD.
+      logf("aerogpu-d3d9: Create systemmem resource missing private data buffer for existing hAllocation (have=%u need=%u)\n",
            pCreateResource->PrivateDriverDataSize,
            static_cast<unsigned>(sizeof(aerogpu_wddm_alloc_priv)));
       return trace.ret(D3DERR_INVALIDCALL);
@@ -5646,7 +5651,9 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
     priv.share_token = 0;
     priv.size_bytes = static_cast<aerogpu_wddm_u64>(res->size_bytes);
     priv.reserved0 = encode_wddm_alloc_priv_desc(res->format, res->width, res->height);
-    std::memcpy(pCreateResource->pPrivateDriverData, &priv, sizeof(priv));
+    if (have_runtime_priv) {
+      std::memcpy(pCreateResource->pPrivateDriverData, &priv, sizeof(priv));
+    }
 
     res->backing_alloc_id = alloc_id;
     res->backing_offset_bytes = 0;
@@ -5715,9 +5722,13 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
   // table).
   if (!wants_shared && dev->wddm_context.hContext != 0) {
     if (!res->backing_alloc_id) {
-      if (!pCreateResource->pPrivateDriverData ||
-          pCreateResource->PrivateDriverDataSize < sizeof(aerogpu_wddm_alloc_priv)) {
-        logf("aerogpu-d3d9: CreateResource missing private data buffer (have=%u need=%u)\n",
+      const bool have_runtime_priv =
+          (pCreateResource->pPrivateDriverData &&
+           pCreateResource->PrivateDriverDataSize >= sizeof(aerogpu_wddm_alloc_priv));
+      if (res->wddm_hAllocation != 0 && !have_runtime_priv) {
+        // If the runtime already attached an allocation handle, we have no other
+        // way to communicate the alloc_id into the KMD allocation record.
+        logf("aerogpu-d3d9: CreateResource missing private data buffer for existing hAllocation (have=%u need=%u)\n",
              pCreateResource->PrivateDriverDataSize,
              static_cast<unsigned>(sizeof(aerogpu_wddm_alloc_priv)));
         return trace.ret(D3DERR_INVALIDCALL);
@@ -5748,7 +5759,9 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
       priv.share_token = 0;
       priv.size_bytes = static_cast<aerogpu_wddm_u64>(res->size_bytes);
       priv.reserved0 = encode_wddm_alloc_priv_desc(res->format, res->width, res->height);
-      std::memcpy(pCreateResource->pPrivateDriverData, &priv, sizeof(priv));
+      if (have_runtime_priv) {
+        std::memcpy(pCreateResource->pPrivateDriverData, &priv, sizeof(priv));
+      }
 
       res->backing_alloc_id = alloc_id;
       res->backing_offset_bytes = 0;
@@ -5909,7 +5922,8 @@ HRESULT AEROGPU_D3D9_CALL device_create_resource(
       res->share_token = dev->adapter->share_token_allocator.allocate_share_token();
       if (pCreateResource->pPrivateDriverData && pCreateResource->PrivateDriverDataSize >= sizeof(aerogpu_wddm_alloc_priv)) {
         auto* priv = reinterpret_cast<aerogpu_wddm_alloc_priv*>(pCreateResource->pPrivateDriverData);
-        if (priv->magic == AEROGPU_WDDM_ALLOC_PRIV_MAGIC && priv->version == AEROGPU_WDDM_ALLOC_PRIV_VERSION) {
+        if (priv->magic == AEROGPU_WDDM_ALLOC_PRIV_MAGIC &&
+            (priv->version == AEROGPU_WDDM_ALLOC_PRIV_VERSION || priv->version == AEROGPU_WDDM_ALLOC_PRIV_VERSION_2)) {
           priv->share_token = res->share_token;
         }
       }
@@ -6100,7 +6114,8 @@ static HRESULT device_open_resource_impl(
 
   aerogpu_wddm_alloc_priv priv{};
   std::memcpy(&priv, priv_data, sizeof(priv));
-  if (priv.magic != AEROGPU_WDDM_ALLOC_PRIV_MAGIC || priv.version != AEROGPU_WDDM_ALLOC_PRIV_VERSION) {
+  if (priv.magic != AEROGPU_WDDM_ALLOC_PRIV_MAGIC ||
+      (priv.version != AEROGPU_WDDM_ALLOC_PRIV_VERSION && priv.version != AEROGPU_WDDM_ALLOC_PRIV_VERSION_2)) {
     return E_INVALIDARG;
   }
   if ((priv.flags & AEROGPU_WDDM_ALLOC_PRIV_FLAG_IS_SHARED) == 0 || priv.share_token == 0 || priv.alloc_id == 0) {
@@ -10677,29 +10692,36 @@ HRESULT AEROGPU_D3D9_CALL device_issue_query(
   // must therefore not force a submission: the query should remain "not ready"
   // until an explicit flush/submission boundary occurs (Flush/Present/etc).
   //
-  // We still submit the current command buffer when it contains recorded work so
-  // per-submit fence tracking (and related tests) can observe real submissions,
-  // but we defer associating the EVENT query with that fence until a later
-  // flush/submission boundary.
   const bool had_pending_cmds = !dev->cmd.empty();
-  uint64_t issue_fence = dev->last_submission_fence;
-  if (had_pending_cmds) {
-    issue_fence = submit(dev);
-  }
   dev->pending_event_queries.erase(std::remove(dev->pending_event_queries.begin(),
                                                dev->pending_event_queries.end(),
                                                q),
                                    dev->pending_event_queries.end());
-  q->fence_value.store(issue_fence, std::memory_order_release);
-  q->submitted.store(false, std::memory_order_relaxed);
   q->issued.store(true, std::memory_order_release);
   q->completion_logged.store(false, std::memory_order_relaxed);
+
   if (!had_pending_cmds) {
+    // No pending commands: associate the query with the most recent submission.
     q->fence_value.store(dev->last_submission_fence, std::memory_order_release);
     q->submitted.store(true, std::memory_order_release);
-  } else {
-    dev->pending_event_queries.push_back(q);
+    return trace.ret(S_OK);
   }
+
+  uint64_t issue_fence = 0;
+  if (dev->wddm_context.hContext == 0) {
+    // Portable bring-up path: submit immediately so the query can latch a fence
+    // value, but keep it "unsubmitted" until a later flush boundary arms it.
+    issue_fence = submit(dev);
+  } else {
+    // Real WDDM path: do not flush the command buffer as a side effect of
+    // IssueQuery(END). Keep the query pending until the next explicit
+    // submission boundary (Flush/Present/etc) stamps it with a fence value.
+    issue_fence = 0;
+  }
+
+  q->fence_value.store(issue_fence, std::memory_order_release);
+  q->submitted.store(false, std::memory_order_relaxed);
+  dev->pending_event_queries.push_back(q);
   return trace.ret(S_OK);
 }
 

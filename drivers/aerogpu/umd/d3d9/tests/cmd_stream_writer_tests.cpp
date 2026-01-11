@@ -1288,6 +1288,104 @@ bool TestCreateResourceIgnoresStaleAllocPrivDataForNonShared() {
   return true;
 }
 
+bool TestCreateResourceAllowsNullPrivateDataWhenNotAllocBacked() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    D3DDDI_HRESOURCE hResource{};
+    bool has_adapter = false;
+    bool has_device = false;
+    bool has_resource = false;
+
+    ~Cleanup() {
+      if (has_resource && device_funcs.pfnDestroyResource) {
+        device_funcs.pfnDestroyResource(hDevice, hResource);
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Simulate WDDM-enabled mode but do NOT supply a WDDM allocation handle. The
+  // driver should fall back to host-allocated resources and must not require a
+  // runtime private-driver-data buffer in this case.
+  dev->wddm_context.hContext = 1;
+  D3DDDI_ALLOCATIONLIST list[4] = {};
+  dev->alloc_list_tracker.rebind(list, 4, 0xFFFFu);
+
+  D3D9DDIARG_CREATERESOURCE create_res{};
+  create_res.type = 0;
+  create_res.format = 22u; // D3DFMT_X8R8G8B8
+  create_res.width = 16;
+  create_res.height = 16;
+  create_res.depth = 1;
+  create_res.mip_levels = 1;
+  create_res.usage = 0;
+  create_res.pool = 0;
+  create_res.size = 0;
+  create_res.hResource.pDrvPrivate = nullptr;
+  create_res.pSharedHandle = nullptr;
+  create_res.pPrivateDriverData = nullptr;
+  create_res.PrivateDriverDataSize = 0;
+  create_res.wddm_hAllocation = 0;
+
+  hr = cleanup.device_funcs.pfnCreateResource(create_dev.hDevice, &create_res);
+  if (!Check(hr == S_OK, "CreateResource(no privdata, no hAllocation)")) {
+    return false;
+  }
+  if (!Check(create_res.hResource.pDrvPrivate != nullptr, "CreateResource returned resource handle")) {
+    return false;
+  }
+  cleanup.hResource = create_res.hResource;
+  cleanup.has_resource = true;
+
+  auto* res = reinterpret_cast<Resource*>(create_res.hResource.pDrvPrivate);
+  if (!Check(res != nullptr, "resource pointer")) {
+    return false;
+  }
+  if (!Check(res->wddm_hAllocation == 0, "resource remains non-alloc-backed")) {
+    return false;
+  }
+  return Check(res->backing_alloc_id == 0, "resource remains host-allocated (alloc_id == 0)");
+}
+
 bool TestAllocBackedUnlockEmitsDirtyRange() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
@@ -1644,7 +1742,12 @@ bool TestSharedResourceCreateAndOpenEmitsExportImport() {
   std::memset(dma.data(), 0, dma.size());
   dev->cmd.set_span(dma.data(), dma.size());
 
-  aerogpu_wddm_alloc_priv priv_open = priv;
+  // Accept both v1 and v2 allocation private data blobs (the KMD may return v2
+  // when the caller provided a large-enough buffer).
+  aerogpu_wddm_alloc_priv_v2 priv_open{};
+  std::memset(&priv_open, 0, sizeof(priv_open));
+  std::memcpy(&priv_open, &priv, sizeof(priv));
+  priv_open.version = AEROGPU_WDDM_ALLOC_PRIV_VERSION_2;
   HANDLE open_handle = reinterpret_cast<HANDLE>(static_cast<uintptr_t>(0x1));
 
   D3D9DDIARG_CREATERESOURCE open_shared{};
@@ -5474,6 +5577,143 @@ bool TestOpenResourceTracksWddmAllocationHandle() {
   return Check(list[0].AllocationListSlotId == 0, "allocation list slot id == 0");
 }
 
+bool TestOpenResourceAcceptsAllocPrivV2() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3DDDI_HADAPTER hAdapter{};
+    D3DDDI_HDEVICE hDevice{};
+    D3DDDI_HRESOURCE hResource{};
+    bool has_adapter = false;
+    bool has_device = false;
+    bool has_resource = false;
+
+    ~Cleanup() {
+      if (has_resource && device_funcs.pfnDestroyResource) {
+        device_funcs.pfnDestroyResource(hDevice, hResource);
+      }
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  if (!Check(create_dev.hDevice.pDrvPrivate != nullptr, "CreateDevice returned device handle")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  if (!Check(dev != nullptr, "device pointer")) {
+    return false;
+  }
+
+  // Simulate a WDDM-enabled device so allocation-list tracking is active in
+  // portable builds.
+  dev->wddm_context.hContext = 1;
+  D3DDDI_ALLOCATIONLIST list[4] = {};
+  dev->alloc_list_tracker.rebind(list, 4, 0xFFFFu);
+
+  aerogpu_wddm_alloc_priv_v2 priv{};
+  std::memset(&priv, 0, sizeof(priv));
+  priv.magic = AEROGPU_WDDM_ALLOC_PRIV_MAGIC;
+  priv.version = AEROGPU_WDDM_ALLOC_PRIV_VERSION_2;
+  priv.alloc_id = 0x1234u;
+  priv.flags = AEROGPU_WDDM_ALLOC_PRIV_FLAG_IS_SHARED;
+  priv.share_token = 0x1122334455667788ull;
+  priv.size_bytes = 64ull * 64ull * 4ull;
+  priv.reserved0 = AEROGPU_WDDM_ALLOC_PRIV_DESC_PACK(/*format=*/22u, /*width=*/64u, /*height=*/64u);
+
+  D3D9DDIARG_OPENRESOURCE open_res{};
+  open_res.pPrivateDriverData = &priv;
+  open_res.private_driver_data_size = sizeof(priv);
+  open_res.type = 0;
+  open_res.format = 0; // reconstructed from alloc priv desc
+  open_res.width = 0;
+  open_res.height = 0;
+  open_res.depth = 1;
+  open_res.mip_levels = 1;
+  open_res.usage = 0;
+  open_res.size = 0;
+  open_res.hResource.pDrvPrivate = nullptr;
+  open_res.wddm_hAllocation = 0xABCDu;
+
+  hr = cleanup.device_funcs.pfnOpenResource(create_dev.hDevice, &open_res);
+  if (!Check(hr == S_OK, "OpenResource(v2)")) {
+    return false;
+  }
+  if (!Check(open_res.hResource.pDrvPrivate != nullptr, "OpenResource(v2) returned resource handle")) {
+    return false;
+  }
+
+  cleanup.hResource = open_res.hResource;
+  cleanup.has_resource = true;
+
+  auto* res = reinterpret_cast<Resource*>(open_res.hResource.pDrvPrivate);
+  if (!Check(res != nullptr, "resource pointer")) {
+    return false;
+  }
+  if (!Check(res->backing_alloc_id == priv.alloc_id, "OpenResource(v2) preserves alloc_id from private data")) {
+    return false;
+  }
+  if (!Check(res->wddm_hAllocation == open_res.wddm_hAllocation, "OpenResource(v2) captures WDDM hAllocation")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnSetRenderTarget(create_dev.hDevice, 0, open_res.hResource);
+  if (!Check(hr == S_OK, "SetRenderTarget(opened resource)")) {
+    return false;
+  }
+
+  hr = cleanup.device_funcs.pfnClear(create_dev.hDevice,
+                                     /*flags=*/0x1u,
+                                     /*color_rgba8=*/0xFF00FF00u,
+                                     /*depth=*/1.0f,
+                                     /*stencil=*/0);
+  if (!Check(hr == S_OK, "Clear tracks allocation list")) {
+    return false;
+  }
+
+  if (!Check(dev->alloc_list_tracker.list_len() == 1, "allocation list has 1 entry")) {
+    return false;
+  }
+  if (!Check(list[0].hAllocation == open_res.wddm_hAllocation, "allocation list carries hAllocation")) {
+    return false;
+  }
+  if (!Check(list[0].WriteOperation == 1, "allocation list entry is write")) {
+    return false;
+  }
+  return Check(list[0].AllocationListSlotId == 0, "allocation list slot id == 0");
+}
+
 bool TestGuestBackedUnlockEmitsDirtyRangeNotUpload() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
@@ -6284,6 +6524,7 @@ int main() {
   failures += !aerogpu::TestAdapterCachingUpdatesCallbacks();
   failures += !aerogpu::TestCreateResourceRejectsUnsupportedGpuFormat();
   failures += !aerogpu::TestCreateResourceIgnoresStaleAllocPrivDataForNonShared();
+  failures += !aerogpu::TestCreateResourceAllowsNullPrivateDataWhenNotAllocBacked();
   failures += !aerogpu::TestAllocBackedUnlockEmitsDirtyRange();
   failures += !aerogpu::TestSharedResourceCreateAndOpenEmitsExportImport();
   failures += !aerogpu::TestPresentStatsAndFrameLatency();
@@ -6297,6 +6538,7 @@ int main() {
   failures += !aerogpu::TestDeviceMiscExApisSucceed();
   failures += !aerogpu::TestAllocationListSplitResetsOnEmptySubmit();
   failures += !aerogpu::TestOpenResourceCapturesWddmAllocationForTracking();
+  failures += !aerogpu::TestOpenResourceAcceptsAllocPrivV2();
   failures += !aerogpu::TestInvalidPayloadArgs();
   failures += !aerogpu::TestDestroyBoundShaderUnbinds();
   failures += !aerogpu::TestDestroyBoundVertexDeclUnbinds();
