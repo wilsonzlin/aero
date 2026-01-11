@@ -91,5 +91,41 @@ describe("io/devices/UhciPciDevice", () => {
     // Clamp to 32 frames to avoid large stalls.
     expect(bridge.tick_1ms).toHaveBeenCalledTimes(32);
   });
-});
 
+  it("prefers step_frames() when available", () => {
+    const bridge: UhciControllerBridgeLike = {
+      io_read: vi.fn(() => 0),
+      io_write: vi.fn(),
+      step_frames: vi.fn(),
+      tick_1ms: vi.fn(),
+      irq_asserted: vi.fn(() => false),
+      free: vi.fn(),
+    };
+    const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
+
+    const dev = new UhciPciDevice({ bridge, irqSink });
+    dev.tick(0);
+    dev.tick(8);
+
+    expect(bridge.step_frames).toHaveBeenCalledTimes(1);
+    expect(bridge.step_frames).toHaveBeenCalledWith(8);
+    expect(bridge.tick_1ms).not.toHaveBeenCalled();
+  });
+
+  it("falls back to step_frame() when tick_1ms() is unavailable", () => {
+    const bridge: UhciControllerBridgeLike = {
+      io_read: vi.fn(() => 0),
+      io_write: vi.fn(),
+      step_frame: vi.fn(),
+      irq_asserted: vi.fn(() => false),
+      free: vi.fn(),
+    };
+    const irqSink: IrqSink = { raiseIrq: vi.fn(), lowerIrq: vi.fn() };
+
+    const dev = new UhciPciDevice({ bridge, irqSink });
+    dev.tick(0);
+    dev.tick(3);
+
+    expect(bridge.step_frame).toHaveBeenCalledTimes(3);
+  });
+});
