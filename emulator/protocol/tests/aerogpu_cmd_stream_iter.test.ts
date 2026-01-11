@@ -14,6 +14,7 @@ import {
   decodeCmdSetShaderConstantsFPayload,
   decodeCmdSetVertexBuffersBindings,
   decodeCmdUploadResourcePayload,
+  decodeCmdStreamView,
   iterCmdStream,
 } from "../aerogpu/aerogpu_cmd.ts";
 
@@ -181,4 +182,20 @@ test("variable-payload decoders reject size/count fields that would overrun pack
     view.setUint32(packetOffset + 16, 2, true);
     assert.throws(() => decodeCmdSetShaderConstantsFPayload(bytes, packetOffset), /too small/);
   }
+});
+
+test("decodeCmdStreamView collects header + packets", () => {
+  const w = new AerogpuCmdWriter();
+  w.createBuffer(1, 0, 16n, 0, 0);
+  w.draw(3, 1, 0, 0);
+  w.flush();
+
+  const bytes = w.finish();
+  const view = decodeCmdStreamView(bytes);
+
+  assert.equal(view.header.sizeBytes, bytes.byteLength);
+  assert.deepEqual(
+    view.packets.map((p) => p.opcode),
+    [AerogpuCmdOpcode.CreateBuffer, AerogpuCmdOpcode.Draw, AerogpuCmdOpcode.Flush],
+  );
 });

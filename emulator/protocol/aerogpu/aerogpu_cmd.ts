@@ -171,6 +171,22 @@ export function* iterCmdStream(bytes: Uint8Array): Generator<AerogpuCmdPacket> {
   yield* new AerogpuCmdStreamIter(bytes);
 }
 
+export interface AerogpuCmdStreamView {
+  header: AerogpuCmdStreamHeader;
+  packets: AerogpuCmdPacketView[];
+}
+
+/**
+ * Decode a command stream into an eagerly collected view (header + packet list).
+ *
+ * This mirrors Rust `AerogpuCmdStreamView::decode_from_le_bytes` and is useful for tests and tooling
+ * where a one-shot parse is more convenient than manual iteration.
+ */
+export function decodeCmdStreamView(bytes: ArrayBuffer | Uint8Array): AerogpuCmdStreamView {
+  const iter = new AerogpuCmdStreamIter(bytes);
+  return { header: iter.header, packets: Array.from(iter) };
+}
+
 export const AerogpuCmdOpcode = {
   Nop: 0,
   // Packet payload is UTF-8 bytes (no NUL terminator); padded to 4-byte alignment.
