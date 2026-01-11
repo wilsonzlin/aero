@@ -8,8 +8,10 @@
 // those `.js` files. This loader transparently falls back to `.ts` when a
 // relative `.js` specifier can't be resolved.
 //
-// This intentionally only remaps relative `.js` specifiers. Anything else
-// (node: builtins, bare specifiers, absolute URLs) is delegated unchanged.
+// This loader is intentionally conservative: it only rewrites relative specifiers
+// (NodeNext-style `.js` -> `.ts`, and extensionless -> `.ts`/`index.ts`), plus a
+// `ws` shim for offline unit tests. Everything else (node: builtins, bare
+// specifiers, absolute URLs) is delegated unchanged.
 
 export async function resolve(specifier, context, nextResolve) {
   if (specifier === "ws") {
@@ -34,15 +36,35 @@ export async function resolve(specifier, context, nextResolve) {
   try {
     return await nextResolve(specifier, context);
   } catch (err) {
-    const q = specifier.indexOf('?');
-    const pathPart = q === -1 ? specifier : specifier.slice(0, q);
-    const queryPart = q === -1 ? '' : specifier.slice(q);
+    // Only try fallbacks when the specifier fails to resolve because it does
+    // not exist as-written (common when running TS sources directly).
+    //
+    // - ERR_MODULE_NOT_FOUND: typical missing file case (e.g. `./foo.js` when
+    //   only `foo.ts` exists).
+    // - ERR_UNSUPPORTED_DIR_IMPORT: extensionless directory import (e.g. `./foo`
+    //   where `foo/index.ts` exists).
+    if (err && typeof err === "object" && "code" in err) {
+      const code = err.code;
+      if (code !== "ERR_MODULE_NOT_FOUND" && code !== "ERR_UNSUPPORTED_DIR_IMPORT") {
+        throw err;
+      }
+    }
+
+    // Preserve `?query` / `#hash` suffixes when rewriting specifiers.
+    const queryIdx = specifier.indexOf("?");
+    const hashIdx = specifier.indexOf("#");
+    const cut = Math.min(
+      queryIdx === -1 ? Number.POSITIVE_INFINITY : queryIdx,
+      hashIdx === -1 ? Number.POSITIVE_INFINITY : hashIdx,
+    );
+    const pathPart = specifier.slice(0, cut === Number.POSITIVE_INFINITY ? specifier.length : cut);
+    const suffix = specifier.slice(pathPart.length);
 
     const fallbackSpecifiers = [];
 
     // 1) Remap NodeNext-style `.js` specifiers to `.ts` sources.
     if (pathPart.endsWith('.js')) {
-      fallbackSpecifiers.push(`${pathPart.slice(0, -3)}.ts${queryPart}`);
+      fallbackSpecifiers.push(`${pathPart.slice(0, -3)}.ts${suffix}`);
     }
 
     // 2) Allow extensionless relative imports (common in Vite/tsconfig "Bundler" mode)
@@ -50,8 +72,8 @@ export async function resolve(specifier, context, nextResolve) {
     const basename = pathPart.split('/').pop() ?? '';
     const hasExtension = basename.includes('.');
     if (!hasExtension) {
-      fallbackSpecifiers.push(`${pathPart}.ts${queryPart}`);
-      fallbackSpecifiers.push(`${pathPart}/index.ts${queryPart}`);
+      fallbackSpecifiers.push(`${pathPart}.ts${suffix}`);
+      fallbackSpecifiers.push(`${pathPart}/index.ts${suffix}`);
     }
 
     for (const fallback of fallbackSpecifiers) {
