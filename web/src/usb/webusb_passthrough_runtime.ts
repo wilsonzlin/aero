@@ -185,6 +185,33 @@ export class WebUsbPassthroughRuntime {
 
       if (isUsbSelectedMessage(data)) {
         this.handleSelected(data);
+        return;
+      }
+
+      // If a `usb.*` envelope arrives but fails validation, synthesize a fallback
+      // completion (or reset the bridge) so we don't deadlock pending actions.
+      if (!data || typeof data !== "object") return;
+      const record = data as Record<string, unknown>;
+      if (record.type === "usb.completion") {
+        const completionRaw = record.completion;
+        const comp = completionRaw && typeof completionRaw === "object" ? (completionRaw as Record<string, unknown>) : null;
+        const id = comp ? normalizeActionId(comp.id) : null;
+        const kind = comp ? normalizeUsbHostActionKind(comp.kind) : null;
+
+        if (id !== null && kind !== null) {
+          this.#lastError = `Invalid UsbHostCompletion received from broker (kind=${kind} id=${id}).`;
+          this.handleCompletion(usbErrorCompletion(kind, id, "Invalid UsbHostCompletion received from broker."));
+          return;
+        }
+
+        this.#lastError = "Invalid UsbHostCompletion received from broker (missing id/kind).";
+        try {
+          this.#bridge.reset();
+        } catch (resetErr) {
+          this.#lastError = `${this.#lastError}; reset failed: ${formatError(resetErr)}`;
+        }
+        this.cancelPending("WebUSB passthrough reset due to invalid completion from broker.");
+        return;
       }
     };
 

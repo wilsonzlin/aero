@@ -288,4 +288,38 @@ describe("usb/WebUsbPassthroughRuntime", () => {
     expect(reset).toHaveBeenCalledTimes(1);
     expect(runtime.getMetrics().lastError).toMatch(/missing id/);
   });
+
+  it("synthesizes an error completion when the broker sends an invalid usb.completion payload", async () => {
+    const port = new FakePort();
+    const action: UsbHostAction = { kind: "bulkIn", id: 1, endpoint: 1, length: 8 };
+
+    const push_completion = vi.fn();
+    const reset = vi.fn();
+    const bridge: UsbPassthroughBridgeLike = {
+      drain_actions: vi.fn(() => [action]),
+      push_completion,
+      reset,
+      free: vi.fn(),
+    };
+
+    const runtime = new WebUsbPassthroughRuntime({ bridge, port: port as unknown as MessagePort, pollIntervalMs: 0 });
+
+    const p = runtime.pollOnce();
+    expect(port.posted).toEqual([{ type: "usb.action", action }]);
+
+    // `data` is an array instead of a Uint8Array, so it fails validation.
+    port.emit({
+      type: "usb.completion",
+      completion: { kind: "bulkIn", id: 1, status: "success", data: [1, 2, 3] },
+    });
+
+    await p;
+
+    expect(reset).not.toHaveBeenCalled();
+    expect(push_completion).toHaveBeenCalledTimes(1);
+    const completion = push_completion.mock.calls[0]?.[0] as UsbHostCompletion;
+    expect(completion.kind).toBe("bulkIn");
+    expect(completion.id).toBe(1);
+    expect(completion.status).toBe("error");
+  });
 });
