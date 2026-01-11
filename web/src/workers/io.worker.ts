@@ -37,6 +37,8 @@ import type { MountConfig } from "../storage/metadata";
 import { RuntimeDiskClient, type DiskImageMetadata } from "../storage/runtime_disk_client";
 import {
   isUsbRingAttachMessage,
+  isUsbCompletionMessage,
+  isUsbSelectedMessage,
   type UsbActionMessage,
   type UsbCompletionMessage,
   type UsbGuestWebUsbSnapshot,
@@ -1505,8 +1507,8 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       return;
     }
 
-    if ((data as Partial<UsbSelectedMessage>).type === "usb.selected") {
-      const msg = data as UsbSelectedMessage;
+    if (isUsbSelectedMessage(data)) {
+      const msg = data;
       usbAvailable = msg.ok;
       lastUsbSelected = msg;
       if (webUsbGuestBridge) {
@@ -1569,8 +1571,8 @@ ctx.onmessage = (ev: MessageEvent<unknown>) => {
       return;
     }
 
-    if ((data as Partial<UsbCompletionMessage>).type === "usb.completion") {
-      const msg = data as UsbCompletionMessage;
+    if (isUsbCompletionMessage(data)) {
+      const msg = data;
       if (usbDemo) {
         try {
           usbDemo.onUsbCompletion(msg);
