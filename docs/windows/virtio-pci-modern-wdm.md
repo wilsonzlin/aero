@@ -109,7 +109,7 @@ High-level sequencing (omitting the IRP forwarding boilerplate):
    - `VirtioPciSetupQueue(&ctx->Vdev, q, descPa, availPa, usedPa)`
 5. **Connect INTx**
    - locate `CmResourceTypeInterrupt` in the translated resource list
-   - `VirtioIntxConnect(DeviceObject, InterruptDescTranslated, ctx->Vdev.IsrStatus, ...)`
+   - `VirtioIntxConnect(DeviceObject, InterruptDescTranslated, ctx->Vdev.IsrStatus, EvtConfigChange, EvtQueueWork, EvtDpc, Cookie, &ctx->Intx)`
 6. **Set `DRIVER_OK`**
    - `VirtioPciAddStatus(&ctx->Vdev, VIRTIO_STATUS_DRIVER_OK)`
 
@@ -136,29 +136,31 @@ This snippet is intentionally simplified and omits DMA allocation details, queue
 #define VIRTIO_F_RING_INDIRECT_DESC (1ull << 28)
 #endif
 
-typedef struct _DEVICE_CONTEXT {
-    PDEVICE_OBJECT Self;
-    PDEVICE_OBJECT Lower; // attached device object
-
-    VIRTIO_PCI_MODERN_WDM_DEVICE Vdev;
-    VIRTIO_INTX_WDM Intx;
-
-    // Driver-owned queue state + ring allocations live here.
-} DEVICE_CONTEXT;
-
-static VOID
-EvtVirtioQueueDpc(_In_opt_ PVOID Context)
-{
-    DEVICE_CONTEXT *ctx = (DEVICE_CONTEXT *)Context;
-    // DISPATCH_LEVEL: drain used rings, complete requests, etc.
-}
-
-static VOID
-EvtVirtioConfigDpc(_In_opt_ PVOID Context)
-{
-    DEVICE_CONTEXT *ctx = (DEVICE_CONTEXT *)Context;
-    // DISPATCH_LEVEL: re-read device config if your device supports changes.
-}
+ typedef struct _DEVICE_CONTEXT {
+     PDEVICE_OBJECT Self;
+     PDEVICE_OBJECT Lower; // attached device object
+ 
+     VIRTIO_PCI_MODERN_WDM_DEVICE Vdev;
+     VIRTIO_INTX Intx;
+ 
+     // Driver-owned queue state + ring allocations live here.
+ } DEVICE_CONTEXT;
+ 
+ static VOID
+ EvtVirtioQueueWork(_Inout_ PVIRTIO_INTX Intx, _In_opt_ PVOID Cookie)
+ {
+     DEVICE_CONTEXT *ctx = (DEVICE_CONTEXT *)Cookie;
+     UNREFERENCED_PARAMETER(Intx);
+     // DISPATCH_LEVEL: drain used rings, complete requests, etc.
+ }
+ 
+ static VOID
+ EvtVirtioConfigChange(_Inout_ PVIRTIO_INTX Intx, _In_opt_ PVOID Cookie)
+ {
+     DEVICE_CONTEXT *ctx = (DEVICE_CONTEXT *)Cookie;
+     UNREFERENCED_PARAMETER(Intx);
+     // DISPATCH_LEVEL: re-read device config if your device supports changes.
+ }
 
 static const CM_PARTIAL_RESOURCE_DESCRIPTOR *
 FindTranslatedInterruptDesc(_In_ PCM_RESOURCE_LIST ResourcesTranslated)
@@ -202,16 +204,16 @@ StartDevice(_Inout_ DEVICE_CONTEXT *ctx, _In_ PIRP Irp)
     // Notify after publishing avail entries (shown here for completeness).
     VirtioPciNotifyQueue(&ctx->Vdev, /*QueueIndex=*/0);
 
-    const CM_PARTIAL_RESOURCE_DESCRIPTOR *intDesc = FindTranslatedInterruptDesc(translated);
-    status = VirtioIntxConnect(ctx->Self,
-                               intDesc,
-                               ctx->Vdev.IsrStatus,
-                               EvtVirtioQueueDpc,
-                               ctx,
-                               EvtVirtioConfigDpc,
-                               ctx,
-                               &ctx->Intx);
-    if (!NT_SUCCESS(status)) goto fail_reset;
+     const CM_PARTIAL_RESOURCE_DESCRIPTOR *intDesc = FindTranslatedInterruptDesc(translated);
+     status = VirtioIntxConnect(ctx->Self,
+                                intDesc,
+                                ctx->Vdev.IsrStatus,
+                                EvtVirtioConfigChange,
+                                EvtVirtioQueueWork,
+                                /*EvtDpc=*/NULL,
+                                /*Cookie=*/ctx,
+                                &ctx->Intx);
+     if (!NT_SUCCESS(status)) goto fail_reset;
 
     VirtioPciAddStatus(&ctx->Vdev, VIRTIO_STATUS_DRIVER_OK);
     return STATUS_SUCCESS;
