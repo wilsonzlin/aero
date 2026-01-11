@@ -10,6 +10,7 @@ export const DISK_MANAGER_DB_VERSION = 3;
 export const OPFS_AERO_DIR = "aero";
 export const OPFS_DISKS_DIR = "disks";
 export const OPFS_METADATA_FILE = "metadata.json";
+export const OPFS_REMOTE_CACHE_DIR = "remote-cache";
 
 export const METADATA_VERSION = 2;
 
@@ -314,6 +315,11 @@ export async function opfsGetDisksDir(): Promise<FileSystemDirectoryHandle> {
   const root = await navigator.storage.getDirectory();
   const aeroDir = await root.getDirectoryHandle(OPFS_AERO_DIR, { create: true });
   return aeroDir.getDirectoryHandle(OPFS_DISKS_DIR, { create: true });
+}
+
+export async function opfsGetRemoteCacheDir(): Promise<FileSystemDirectoryHandle> {
+  const disksDir = await opfsGetDisksDir();
+  return disksDir.getDirectoryHandle(OPFS_REMOTE_CACHE_DIR, { create: true });
 }
 
 export function emptyState(): DiskManagerState {

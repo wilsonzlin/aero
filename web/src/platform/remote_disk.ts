@@ -1,7 +1,7 @@
-import { openFileHandle, removeOpfsEntry } from "./opfs";
 import type { AsyncSectorDisk } from "../storage/disk";
 import { IdbRemoteChunkCache } from "../storage/idb_remote_chunk_cache";
 import { pickDefaultBackend, type DiskBackend } from "../storage/metadata";
+import { RemoteCacheManager, type RemoteCacheDirectoryHandle, type RemoteCacheKeyParts, type RemoteCacheMetaV1 } from "../storage/remote_cache_manager";
 
 export type ByteRange = { start: number; end: number };
 
@@ -97,17 +97,19 @@ function compactRanges(ranges: ByteRange[]): ByteRange[] {
 
 export type RemoteDiskProbeResult = {
   size: number;
+  etag: string | null;
+  lastModified: string | null;
   acceptRanges: string;
   rangeProbeStatus: number;
   partialOk: boolean;
   contentRange: string;
-  etag: string | null;
 };
 
 export async function probeRemoteDisk(url: string): Promise<RemoteDiskProbeResult> {
   let acceptRanges = "";
   let size: number | null = null;
   let etag: string | null = null;
+  let lastModified: string | null = null;
 
   // Prefer HEAD for a cheap size probe, but fall back to a Range GET for servers that
   // disallow HEAD (or omit Content-Length from HEAD).
@@ -120,6 +122,7 @@ export async function probeRemoteDisk(url: string): Promise<RemoteDiskProbeResul
       }
       acceptRanges = head.headers.get("accept-ranges") ?? "";
       etag = head.headers.get("etag");
+      lastModified = head.headers.get("last-modified");
     }
   } catch {
     // ignore; fall back to GET probe
@@ -128,9 +131,8 @@ export async function probeRemoteDisk(url: string): Promise<RemoteDiskProbeResul
   const probe = await fetch(url, { method: "GET", headers: { Range: "bytes=0-0" } });
   const contentRange = probe.headers.get("content-range") ?? "";
   const partialOk = probe.status === 206;
-  if (etag === null) {
-    etag = probe.headers.get("etag");
-  }
+  if (!etag) etag = probe.headers.get("etag");
+  if (!lastModified) lastModified = probe.headers.get("last-modified");
 
   if (size === null && partialOk) {
     if (!contentRange) {
@@ -154,11 +156,12 @@ export async function probeRemoteDisk(url: string): Promise<RemoteDiskProbeResul
 
   return {
     size,
+    etag,
+    lastModified,
     acceptRanges,
     rangeProbeStatus: probe.status,
     partialOk,
     contentRange,
-    etag,
   };
 }
 
@@ -191,16 +194,7 @@ function parseContentRangeHeader(header: string): { start: number; endExclusive:
   return { start, endExclusive, total };
 }
 
-type CacheMeta = {
-  version: 1;
-  url: string;
-  etag: string | null;
-  totalSize: number;
-  blockSize: number;
-  downloaded: ByteRange[];
-  accessCounter: number;
-  blockLastAccess: Record<string, number>;
-};
+type CacheMeta = RemoteCacheMetaV1;
 
 export type RemoteDiskCacheStatus = {
   totalSize: number;
@@ -255,6 +249,54 @@ type RemoteDiskTelemetry = {
   lastFetchRange: ByteRange | null;
 };
 
+function stableImageIdFromUrl(url: string): string {
+  // Use URL parsing when possible so we can drop querystring auth material.
+  // Fall back to string splitting for relative URLs.
+  try {
+    const base = (globalThis as typeof globalThis & { location?: { href?: string } }).location?.href;
+    const u = base ? new URL(url, base) : new URL(url);
+    return `${u.origin}${u.pathname}`;
+  } catch {
+    const noHash = url.split("#", 1)[0] ?? url;
+    return (noHash.split("?", 1)[0] ?? noHash).trim();
+  }
+}
+
+function cacheKeyPartsFromUrl(url: string): RemoteCacheKeyParts {
+  return {
+    imageId: stableImageIdFromUrl(url),
+    // Without an explicit control-plane version, treat this as a single logical stream
+    // and rely on validators (ETag/Last-Modified/size) for safe invalidation.
+    version: "1",
+    deliveryType: "range",
+  };
+}
+
+function metaFromParts(
+  parts: RemoteCacheKeyParts,
+  validators: { sizeBytes: number; etag: string | null; lastModified: string | null },
+  chunkSizeBytes: number,
+): CacheMeta {
+  const now = Date.now();
+  return {
+    version: 1,
+    imageId: parts.imageId,
+    imageVersion: parts.version,
+    deliveryType: parts.deliveryType,
+    validators: {
+      sizeBytes: validators.sizeBytes,
+      etag: validators.etag ?? undefined,
+      lastModified: validators.lastModified ?? undefined,
+    },
+    chunkSizeBytes,
+    createdAtMs: now,
+    lastAccessedAtMs: now,
+    accessCounter: 0,
+    chunkLastAccess: {},
+    cachedRanges: [],
+  };
+}
+
 export class RemoteStreamingDisk implements AsyncSectorDisk {
   readonly sectorSize = REMOTE_DISK_SECTOR_SIZE;
   readonly capacityBytes: number;
@@ -265,14 +307,18 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
   private readonly prefetchSequentialBlocks: number;
   private readonly cacheKey: string;
   private readonly cacheBackend: DiskBackend;
-  private readonly etag: string | null;
+  private readonly cacheKeyParts: RemoteCacheKeyParts;
+  private readonly cacheValidators: { sizeBytes: number; etag: string | null; lastModified: string | null };
+
+  private readonly cacheManager: RemoteCacheManager | null;
+  private cacheDir: RemoteCacheDirectoryHandle | null = null;
+  private blocksDir: RemoteCacheDirectoryHandle | null = null;
 
   private meta: CacheMeta;
   private rangeSet: RangeSet;
   private cachedBytes = 0;
   private lastReadEnd: number | null = null;
   private readonly inflight = new Map<number, Promise<Uint8Array>>();
-  private metaLoaded = false;
   private cacheGeneration = 0;
   private idbCache: IdbRemoteChunkCache | null = null;
 
@@ -288,28 +334,38 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
     lastFetchRange: null,
   };
 
-  private constructor(url: string, totalSize: number, etag: string | null, cacheKey: string, options: Required<RemoteDiskOptions>) {
+  private constructor(
+    url: string,
+    totalSize: number,
+    cacheKey: string,
+    parts: RemoteCacheKeyParts,
+    validators: { sizeBytes: number; etag: string | null; lastModified: string | null },
+    options: Required<RemoteDiskOptions>,
+    opfsCache?: { manager: RemoteCacheManager; dir: RemoteCacheDirectoryHandle; blocksDir: RemoteCacheDirectoryHandle; meta: CacheMeta },
+  ) {
     this.url = url;
     this.totalSize = totalSize;
     this.capacityBytes = totalSize;
     this.blockSize = options.blockSize;
     this.cacheLimitBytes = options.cacheLimitBytes;
     this.prefetchSequentialBlocks = options.prefetchSequentialBlocks;
-    this.cacheKey = cacheKey;
     this.cacheBackend = options.cacheBackend;
-    this.etag = etag;
 
-    this.meta = {
-      version: 1,
-      url,
-      etag,
-      totalSize,
-      blockSize: this.blockSize,
-      downloaded: [],
-      accessCounter: 0,
-      blockLastAccess: {},
-    };
+    this.cacheKeyParts = parts;
+    this.cacheValidators = validators;
+    this.cacheKey = cacheKey;
+
+    this.cacheManager = opfsCache?.manager ?? null;
+    this.cacheDir = opfsCache?.dir ?? null;
+    this.blocksDir = opfsCache?.blocksDir ?? null;
+
+    this.meta = opfsCache?.meta ?? metaFromParts(parts, validators, options.blockSize);
+    this.meta.accessCounter ??= 0;
+    this.meta.chunkLastAccess ??= {};
+
     this.rangeSet = new RangeSet();
+    for (const r of this.meta.cachedRanges) this.rangeSet.insert(r.start, r.end);
+    this.cachedBytes = this.rangeSet.totalLen();
   }
 
   static async open(url: string, options: RemoteDiskOptions = {}): Promise<RemoteStreamingDisk> {
@@ -343,14 +399,17 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
       throw new Error(`Invalid prefetchSequentialBlocks=${resolved.prefetchSequentialBlocks}`);
     }
 
-    const cacheKey = await stableCacheKey(url);
-    const disk = new RemoteStreamingDisk(url, probe.size, probe.etag, cacheKey, resolved);
-    if (disk.cacheBackend === "idb") {
+    const parts = cacheKeyPartsFromUrl(url);
+    const cacheKey = await RemoteCacheManager.deriveCacheKey(parts);
+    const validators = { sizeBytes: probe.size, etag: probe.etag, lastModified: probe.lastModified };
+
+    if (resolved.cacheBackend === "idb") {
+      const disk = new RemoteStreamingDisk(url, probe.size, cacheKey, parts, validators, resolved);
       disk.idbCache = await IdbRemoteChunkCache.open({
         cacheKey,
         signature: {
-          imageId: url,
-          version: "1",
+          imageId: parts.imageId,
+          version: parts.version,
           etag: probe.etag,
           sizeBytes: probe.size,
           chunkSize: resolved.blockSize,
@@ -359,10 +418,20 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
       });
       const status = await disk.idbCache.getStatus();
       disk.cachedBytes = status.bytesUsed;
-    } else {
-      await disk.loadMeta();
+      return disk;
     }
-    return disk;
+
+    const manager = await RemoteCacheManager.openOpfs();
+    const cache = await manager.openCache(parts, { chunkSizeBytes: resolved.blockSize, validators });
+    const cacheDir = cache.dir as unknown as RemoteCacheDirectoryHandle;
+    const blocksDir = (await cacheDir.getDirectoryHandle("blocks", { create: true })) as unknown as RemoteCacheDirectoryHandle;
+
+    return new RemoteStreamingDisk(url, probe.size, cacheKey, parts, validators, resolved, {
+      manager,
+      dir: cacheDir,
+      blocksDir,
+      meta: cache.meta,
+    });
   }
 
   async getCacheStatus(): Promise<RemoteDiskCacheStatus> {
@@ -383,7 +452,7 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
         cacheLimitBytes: this.cacheLimitBytes,
       };
     }
-    await this.loadMeta();
+
     return {
       totalSize: this.totalSize,
       cachedBytes: this.cachedBytes,
@@ -418,7 +487,6 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
 
   async flushCache(): Promise<void> {
     if (this.cacheBackend === "idb") return;
-    await this.loadMeta();
     await this.persistMeta();
   }
 
@@ -478,24 +546,25 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
     if (this.cacheBackend === "idb") {
       if (!this.idbCache) throw new Error("Remote disk IDB cache not initialized");
       await this.idbCache.clear();
+      const status = await this.idbCache.getStatus();
+      this.cachedBytes = status.bytesUsed;
     } else {
-      await removeOpfsEntry(`state/remote-cache/${this.cacheKey}`, { recursive: true });
+      if (!this.cacheManager) throw new Error("Remote disk OPFS cache manager not initialized");
+      await this.cacheManager.clearCache(this.cacheKey);
+      const reopened = await this.cacheManager.openCache(this.cacheKeyParts, {
+        chunkSizeBytes: this.blockSize,
+        validators: this.cacheValidators,
+      });
+      this.cacheDir = reopened.dir as unknown as RemoteCacheDirectoryHandle;
+      this.blocksDir = (await this.cacheDir.getDirectoryHandle("blocks", { create: true })) as unknown as RemoteCacheDirectoryHandle;
+      this.meta = reopened.meta;
+      this.meta.accessCounter ??= 0;
+      this.meta.chunkLastAccess ??= {};
     }
-    this.meta = {
-      version: 1,
-      url: this.url,
-      etag: this.etag,
-      totalSize: this.totalSize,
-      blockSize: this.blockSize,
-      downloaded: [],
-      accessCounter: 0,
-      blockLastAccess: {},
-    };
     this.rangeSet = new RangeSet();
     this.cachedBytes = 0;
     this.lastReadEnd = null;
     this.inflight.clear();
-    this.metaLoaded = true;
     this.telemetry = {
       blockRequests: 0,
       cacheHits: 0,
@@ -538,17 +607,14 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
     return { start, end };
   }
 
-  private blockPath(blockIndex: number): string {
-    return `state/remote-cache/${this.cacheKey}/blocks/${blockIndex}.bin`;
-  }
-
-  private metaPath(): string {
-    return `state/remote-cache/${this.cacheKey}/meta.json`;
+  private blockFileName(blockIndex: number): string {
+    return `${blockIndex}.bin`;
   }
 
   private noteAccess(blockIndex: number): void {
-    this.meta.accessCounter++;
-    this.meta.blockLastAccess[String(blockIndex)] = this.meta.accessCounter;
+    this.meta.accessCounter = (this.meta.accessCounter ?? 0) + 1;
+    (this.meta.chunkLastAccess ??= {})[String(blockIndex)] = this.meta.accessCounter;
+    this.meta.lastAccessedAtMs = Date.now();
   }
 
   private async getBlock(blockIndex: number, onLog?: (msg: string) => void): Promise<Uint8Array> {
@@ -557,11 +623,13 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
       return await this.getBlockIdb(blockIndex, onLog);
     }
 
-    await this.loadMeta();
+    const blocksDir = this.blocksDir;
+    if (!blocksDir) throw new Error("Remote disk OPFS blocks directory not initialized");
+
     const r = this.blockRange(blockIndex);
     if (this.rangeSet.containsRange(r.start, r.end)) {
       try {
-        const handle = await openFileHandle(this.blockPath(blockIndex), { create: false });
+        const handle = await blocksDir.getFileHandle(this.blockFileName(blockIndex), { create: false });
         const file = await handle.getFile();
         const bytes = new Uint8Array(await file.arrayBuffer());
         if (bytes.length === r.end - r.start) {
@@ -576,8 +644,8 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
 
       // Heal: metadata said cached but file missing/corrupt.
       this.rangeSet.remove(r.start, r.end);
-      delete this.meta.blockLastAccess[String(blockIndex)];
-      this.meta.downloaded = this.rangeSet.getRanges();
+      delete (this.meta.chunkLastAccess ?? {})[String(blockIndex)];
+      this.meta.cachedRanges = this.rangeSet.getRanges();
       this.cachedBytes = this.rangeSet.totalLen();
       await this.persistMeta();
     }
@@ -610,15 +678,15 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
       }
       this.telemetry.bytesDownloaded += buf.byteLength;
 
-      const handle = await openFileHandle(this.blockPath(blockIndex), { create: true });
-      const writable = await handle.createWritable();
+      const handle = await blocksDir.getFileHandle(this.blockFileName(blockIndex), { create: true });
+      const writable = await handle.createWritable({ keepExistingData: false });
       await writable.write(buf);
       await writable.close();
 
       this.rangeSet.insert(r.start, r.end);
       this.cachedBytes = this.rangeSet.totalLen();
       this.noteAccess(blockIndex);
-      this.meta.downloaded = this.rangeSet.getRanges();
+      this.meta.cachedRanges = this.rangeSet.getRanges();
       await this.persistMeta();
       await this.enforceCacheLimit(blockIndex);
       this.telemetry.lastFetchMs = performance.now() - start;
@@ -698,11 +766,13 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
 
   private async enforceCacheLimit(protectedBlock: number): Promise<void> {
     if (this.cacheLimitBytes === null) return;
+    const blocksDir = this.blocksDir;
+    if (!blocksDir) return;
 
     while (this.cachedBytes > this.cacheLimitBytes) {
       let lruBlock: number | null = null;
       let lruCounter = Number.POSITIVE_INFINITY;
-      for (const [blockStr, counter] of Object.entries(this.meta.blockLastAccess)) {
+      for (const [blockStr, counter] of Object.entries(this.meta.chunkLastAccess ?? {})) {
         const block = Number(blockStr);
         if (!Number.isFinite(block) || block === protectedBlock) continue;
         if (counter < lruCounter) {
@@ -714,65 +784,23 @@ export class RemoteStreamingDisk implements AsyncSectorDisk {
       if (lruBlock === null) break;
 
       const r = this.blockRange(lruBlock);
-      await removeOpfsEntry(this.blockPath(lruBlock));
+      try {
+        await blocksDir.removeEntry(this.blockFileName(lruBlock));
+      } catch (err) {
+        // ignore missing entries
+        if ((err as { name?: unknown }).name !== "NotFoundError") throw err;
+      }
       this.rangeSet.remove(r.start, r.end);
-      delete this.meta.blockLastAccess[String(lruBlock)];
-      this.meta.downloaded = this.rangeSet.getRanges();
+      delete (this.meta.chunkLastAccess ?? {})[String(lruBlock)];
+      this.meta.cachedRanges = this.rangeSet.getRanges();
       this.cachedBytes = this.rangeSet.totalLen();
       await this.persistMeta();
     }
   }
 
-  private async loadMeta(): Promise<void> {
-    if (this.metaLoaded) return;
-    this.metaLoaded = true;
-
-    const path = this.metaPath();
-    try {
-      const handle = await openFileHandle(path, { create: false });
-      const file = await handle.getFile();
-      const raw = await file.text();
-      const parsed = JSON.parse(raw) as CacheMeta;
-      const parsedEtag = (parsed as CacheMeta & { etag?: string | null }).etag ?? null;
-      const currentEtag = this.etag ?? null;
-
-      const compatible =
-        parsed &&
-        parsed.version === 1 &&
-        parsed.url === this.url &&
-        parsedEtag === currentEtag &&
-        parsed.totalSize === this.totalSize &&
-        parsed.blockSize === this.blockSize;
-
-      if (!compatible) return;
-      this.meta = parsed;
-      this.rangeSet = new RangeSet();
-      for (const r of parsed.downloaded) this.rangeSet.insert(r.start, r.end);
-      this.cachedBytes = this.rangeSet.totalLen();
-    } catch {
-      // ignore missing / unreadable meta
-    }
-  }
-
   private async persistMeta(): Promise<void> {
-    const handle = await openFileHandle(this.metaPath(), { create: true });
-    const writable = await handle.createWritable();
-    await writable.write(JSON.stringify(this.meta, null, 2));
-    await writable.close();
-  }
-}
-
-async function stableCacheKey(url: string): Promise<string> {
-  // Use SHA-256 when available, fall back to a filesystem-safe encoding.
-  try {
-    const data = new TextEncoder().encode(url);
-    const digest = await crypto.subtle.digest("SHA-256", data);
-    const bytes = new Uint8Array(digest);
-    return Array.from(bytes)
-      .map((b) => b.toString(16).padStart(2, "0"))
-      .join("");
-  } catch {
-    return encodeURIComponent(url).replaceAll("%", "_").slice(0, 128);
+    if (!this.cacheManager) return;
+    await this.cacheManager.writeMeta(this.cacheKey, this.meta);
   }
 }
 

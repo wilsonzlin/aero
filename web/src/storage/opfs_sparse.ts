@@ -142,6 +142,7 @@ export class OpfsAeroSparseDisk implements AsyncSectorDisk {
       diskSizeBytes: number;
       blockSizeBytes: number;
       maxCachedBlocks?: number;
+      dir?: DirectoryHandle;
     },
   ): Promise<OpfsAeroSparseDisk> {
     if (!Number.isSafeInteger(opts.diskSizeBytes) || opts.diskSizeBytes <= 0) {
@@ -161,7 +162,7 @@ export class OpfsAeroSparseDisk implements AsyncSectorDisk {
     const tableBytes = tableEntries * 8;
     const dataOffset = alignUp(HEADER_SIZE + tableBytes, opts.blockSizeBytes);
 
-    const dir = await getOpfsDisksDir();
+    const dir = opts.dir ?? (await getOpfsDisksDir());
     const file = await dir.getFileHandle(name, { create: true });
     const sync = await file.createSyncAccessHandle();
 
@@ -189,9 +190,9 @@ export class OpfsAeroSparseDisk implements AsyncSectorDisk {
 
   static async open(
     name: string,
-    opts: { maxCachedBlocks?: number } = {},
+    opts: { maxCachedBlocks?: number; dir?: DirectoryHandle } = {},
   ): Promise<OpfsAeroSparseDisk> {
-    const dir = await getOpfsDisksDir();
+    const dir = opts.dir ?? (await getOpfsDisksDir());
     const file = await dir.getFileHandle(name, { create: false });
     const sync = await file.createSyncAccessHandle();
 
