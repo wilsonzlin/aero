@@ -12,5 +12,5 @@ pub mod layout;
 pub mod protocol;
 pub mod ring;
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", feature = "wasm"))]
 pub mod wasm;

@@ -11,12 +11,12 @@ crate-type = ["rlib", "cdylib"]
 # Enables wasm-bindgen + js-sys helpers for working directly with a JS
 # `SharedArrayBuffer` from Rust/WASM. The core queue/protocol code is
 # intentionally `std`-only so it can be tested on the host.
-wasm = []
+wasm = ["dep:wasm-bindgen", "dep:js-sys"]
 
 [dependencies]
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-wasm-bindgen = { version = "0.2", optional = false }
-js-sys = { version = "0.3", optional = false }
+wasm-bindgen = { version = "0.2", optional = true }
+js-sys = { version = "0.3", optional = true }
 
 [dev-dependencies]
