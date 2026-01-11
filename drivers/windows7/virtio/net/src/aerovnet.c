@@ -716,7 +716,7 @@ static NDIS_STATUS AerovNetSetupVq(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ AE
 
   Vq->QueueSize = QueueSize;
 
-  VqRes = virtqueue_split_alloc_ring(&Adapter->VirtioOps, &Adapter->VirtioOpsCtx, QueueSize, 4, VIRTIO_FALSE, &Vq->RingDma);
+  VqRes = virtqueue_split_alloc_ring(&Adapter->VirtioOps, &Adapter->VirtioOpsCtx, QueueSize, 16, VIRTIO_FALSE, &Vq->RingDma);
   if (VqRes != VIRTIO_OK) {
     return NDIS_STATUS_RESOURCES;
   }
@@ -727,7 +727,7 @@ static NDIS_STATUS AerovNetSetupVq(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ AE
                                &Adapter->VirtioOpsCtx,
                                QueueIndex,
                                QueueSize,
-                               4,
+                               16,
                                &Vq->RingDma,
                                VIRTIO_FALSE,
                                UseIndirect,
@@ -741,7 +741,7 @@ static NDIS_STATUS AerovNetSetupVq(_Inout_ AEROVNET_ADAPTER* Adapter, _Inout_ AE
                                  &Adapter->VirtioOpsCtx,
                                  QueueIndex,
                                  QueueSize,
-                                 4,
+                                 16,
                                  &Vq->RingDma,
                                  VIRTIO_FALSE,
                                  VIRTIO_FALSE,

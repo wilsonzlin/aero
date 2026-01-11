@@ -258,7 +258,7 @@ static BOOLEAN AerovblkAllocateVirtqueue(_Inout_ PAEROVBLK_DEVICE_EXTENSION devE
   vqRes = virtqueue_split_alloc_ring(&devExt->VirtioOps,
                                      &devExt->VirtioOpsCtx,
                                      (uint16_t)AEROVBLK_QUEUE_SIZE,
-                                     4,
+                                     16,
                                      VIRTIO_FALSE,
                                      &devExt->RingDma);
   if (vqRes != VIRTIO_OK) {
@@ -275,7 +275,7 @@ static BOOLEAN AerovblkAllocateVirtqueue(_Inout_ PAEROVBLK_DEVICE_EXTENSION devE
                                &devExt->VirtioOpsCtx,
                                (uint16_t)AEROVBLK_QUEUE_INDEX,
                                (uint16_t)AEROVBLK_QUEUE_SIZE,
-                               4,
+                               16,
                                &devExt->RingDma,
                                VIRTIO_FALSE,
                                VIRTIO_TRUE,
