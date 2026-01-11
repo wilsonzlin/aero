@@ -319,15 +319,15 @@ let lastFrameStartMs: number | null = null;
 let currentConfig: AeroConfig | null = null;
 let currentConfigVersion = 0;
 
-const flushPerfFrameSample = () => {
+const flushPerfFrameSample = (frameId: number) => {
   if (!perfWriter) return;
-  if (perfCurrentFrameId === 0) return;
+  if (frameId === 0) return;
 
-  perfWriter.frameSample(perfCurrentFrameId, {
+  perfWriter.frameSample(frameId, {
     durations: { gpu_ms: perfGpuMs > 0 ? perfGpuMs : 0.01 },
   });
   if (perfUploadBytes > 0) {
-    perfWriter.graphicsSample(perfCurrentFrameId, {
+    perfWriter.graphicsSample(frameId, {
       counters: { upload_bytes: perfUploadBytes },
     });
   }
@@ -354,7 +354,11 @@ const syncPerfFrame = () => {
   }
 
   if (frameId !== perfCurrentFrameId) {
-    flushPerfFrameSample();
+    // The shared frame ID is advanced by the main thread at the start of each RAF tick.
+    // At the moment we observe a new `frameId`, our accumulated counters correspond to
+    // work performed while the previous frame ID was active. Attribute that work to
+    // the *new* frame ID so it merges with the main-thread frame-time sample.
+    flushPerfFrameSample(frameId);
     perfCurrentFrameId = frameId;
   }
 };
