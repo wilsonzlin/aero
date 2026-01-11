@@ -22,6 +22,10 @@ typedef LONG NTSTATUS;
 #define NT_SUCCESS(Status) (((NTSTATUS)(Status)) >= 0)
 #endif
 
+#ifndef STATUS_NOT_SUPPORTED
+#define STATUS_NOT_SUPPORTED ((NTSTATUS)0xC00000BBL)
+#endif
+
 typedef UINT D3DKMT_HANDLE;
 
 typedef struct D3DKMT_OPENADAPTERFROMHDC {
@@ -312,6 +316,14 @@ static bool QueryVblank(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t 
   out->vidpn_source_id = vidpnSourceId;
 
   NTSTATUS st = SendAerogpuEscape(f, hAdapter, out, sizeof(*out));
+  if (st == STATUS_NOT_SUPPORTED) {
+    // Some KMDs return STATUS_NOT_SUPPORTED when AEROGPU_FEATURE_VBLANK isn't
+    // advertised; treat as a successful query of "unsupported".
+    ZeroMemory(out, sizeof(*out));
+    out->vidpn_source_id = vidpnSourceId;
+    out->flags = 0;
+    return true;
+  }
   if (!NT_SUCCESS(st)) {
     PrintNtStatus(L"D3DKMTEscape(dump-vblank) failed", f, st);
     return false;

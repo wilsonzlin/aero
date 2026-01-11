@@ -5,28 +5,6 @@
 #include "aerogpu_umd_private.h"
 #include "aerogpu_wddm_alloc.h"
 
-/*
- * The miniport driver currently includes `aerogpu_protocol.h` (legacy combined
- * header) via `aerogpu_kmd.h`. For vblank timing (dbgctl introspection and
- * DxgkDdiGetScanLine) we need MMIO register offsets from the newer PCI/MMIO ABI
- * header.
- *
- * Both headers define some overlapping legacy macro names (e.g.
- * AEROGPU_PCI_VENDOR_ID). Undefine those before including `aerogpu_pci.h` to
- * keep builds warning-clean under /W4.
- */
-#ifdef AEROGPU_PCI_VENDOR_ID
-#undef AEROGPU_PCI_VENDOR_ID
-#endif
-#ifdef AEROGPU_PCI_DEVICE_ID
-#undef AEROGPU_PCI_DEVICE_ID
-#endif
-#ifdef AEROGPU_MMIO_MAGIC
-#undef AEROGPU_MMIO_MAGIC
-#endif
-
-#include "aerogpu_pci.h"
-
 #define AEROGPU_VBLANK_PERIOD_NS_DEFAULT 16666667u
 
 /* Internal-only bits stored in AEROGPU_ALLOCATION::Flags (not exposed to UMD). */
