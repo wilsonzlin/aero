@@ -25,9 +25,16 @@ fn cmd_writer_default_emits_valid_stream_header() {
     let magic = stream.magic;
     let abi_version = stream.abi_version;
     let size_bytes = stream.size_bytes;
+    let flags = stream.flags;
+    let reserved0 = stream.reserved0;
+    let reserved1 = stream.reserved1;
     assert_eq!(magic, AEROGPU_CMD_STREAM_MAGIC);
     assert_eq!(abi_version, AEROGPU_ABI_VERSION_U32);
+    assert!(size_bytes as usize >= AerogpuCmdStreamHeader::SIZE_BYTES);
     assert_eq!(size_bytes as usize, buf.len());
+    assert_eq!(flags, 0);
+    assert_eq!(reserved0, 0);
+    assert_eq!(reserved1, 0);
 }
 
 #[test]
