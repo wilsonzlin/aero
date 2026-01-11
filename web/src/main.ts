@@ -657,14 +657,14 @@ function renderSnapshotPanel(report: PlatformFeatureReport): HTMLElement {
     if (!workerReady || !client) throw new Error("Demo VM worker not ready");
     const file = await getOpfsFileIfExists(SNAPSHOT_PATH);
     if (!file) return null;
-    const restore = await client.restoreFromOpfs(SNAPSHOT_PATH);
+    const restore = await client.restoreFromOpfs(SNAPSHOT_PATH, { timeoutMs: 120_000 });
     return { sizeBytes: file.size, serialBytes: restore.serialBytes };
   }
 
   async function saveSnapshot(): Promise<void> {
     const client = workerClient;
     if (!workerReady || !client) throw new Error("Demo VM worker not ready");
-    const snap = await client.snapshotFullToOpfs(SNAPSHOT_PATH);
+    const snap = await client.snapshotFullToOpfs(SNAPSHOT_PATH, { timeoutMs: 120_000 });
     const file = await getOpfsFileIfExists(SNAPSHOT_PATH);
     status.textContent = `Saved snapshot (${formatMaybeBytes(file?.size ?? null)}) serial_bytes=${formatSerialBytes(
       snap.serialBytes,
@@ -720,7 +720,7 @@ function renderSnapshotPanel(report: PlatformFeatureReport): HTMLElement {
     clearError();
     const client = workerClient;
     if (!workerReady || !client) return;
-    client.runSteps(50_000)
+    client.runSteps(50_000, { timeoutMs: 30_000 })
       .then((state) => {
         output.textContent =
           `steps=${state.steps.toLocaleString()} ` +

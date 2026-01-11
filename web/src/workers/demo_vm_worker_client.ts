@@ -62,28 +62,28 @@ export class DemoVmWorkerClient {
     return await this.#rpc<DemoVmWorkerInitResult>({ type: "init", ramBytes }, options);
   }
 
-  async runSteps(steps: number): Promise<DemoVmWorkerStepResult> {
-    return await this.#rpc<DemoVmWorkerStepResult>({ type: "runSteps", steps });
+  async runSteps(steps: number, options: RpcOptions = {}): Promise<DemoVmWorkerStepResult> {
+    return await this.#rpc<DemoVmWorkerStepResult>({ type: "runSteps", steps }, options);
   }
 
-  async serialOutputLen(): Promise<DemoVmWorkerSerialOutputLenResult> {
-    return await this.#rpc<DemoVmWorkerSerialOutputLenResult>({ type: "getSerialOutputLen" });
+  async serialOutputLen(options: RpcOptions = {}): Promise<DemoVmWorkerSerialOutputLenResult> {
+    return await this.#rpc<DemoVmWorkerSerialOutputLenResult>({ type: "getSerialOutputLen" }, options);
   }
 
-  async serialStats(): Promise<DemoVmWorkerSerialStatsResult> {
-    return await this.#rpc<DemoVmWorkerSerialStatsResult>({ type: "getSerialStats" });
+  async serialStats(options: RpcOptions = {}): Promise<DemoVmWorkerSerialStatsResult> {
+    return await this.#rpc<DemoVmWorkerSerialStatsResult>({ type: "getSerialStats" }, options);
   }
 
-  async snapshotFullToOpfs(path: string): Promise<DemoVmWorkerSerialOutputLenResult> {
-    return await this.#rpc<DemoVmWorkerSerialOutputLenResult>({ type: "snapshotFullToOpfs", path });
+  async snapshotFullToOpfs(path: string, options: RpcOptions = {}): Promise<DemoVmWorkerSerialOutputLenResult> {
+    return await this.#rpc<DemoVmWorkerSerialOutputLenResult>({ type: "snapshotFullToOpfs", path }, options);
   }
 
-  async snapshotDirtyToOpfs(path: string): Promise<DemoVmWorkerSerialOutputLenResult> {
-    return await this.#rpc<DemoVmWorkerSerialOutputLenResult>({ type: "snapshotDirtyToOpfs", path });
+  async snapshotDirtyToOpfs(path: string, options: RpcOptions = {}): Promise<DemoVmWorkerSerialOutputLenResult> {
+    return await this.#rpc<DemoVmWorkerSerialOutputLenResult>({ type: "snapshotDirtyToOpfs", path }, options);
   }
 
-  async restoreFromOpfs(path: string): Promise<DemoVmWorkerSerialOutputLenResult> {
-    return await this.#rpc<DemoVmWorkerSerialOutputLenResult>({ type: "restoreFromOpfs", path });
+  async restoreFromOpfs(path: string, options: RpcOptions = {}): Promise<DemoVmWorkerSerialOutputLenResult> {
+    return await this.#rpc<DemoVmWorkerSerialOutputLenResult>({ type: "restoreFromOpfs", path }, options);
   }
 
   async shutdown(): Promise<void> {
