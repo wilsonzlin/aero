@@ -1552,7 +1552,7 @@ fn aero_cpu_core_runs_int_sanity_boot_sector_fixture() {
     // subset of BIOS interrupts (INT 10/13/15/16) while leaving observable state in low RAM.
     let boot_sector: &[u8] = include_bytes!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../test_images/boot_sectors/int_sanity.bin"
+        "/../../../test_images/boot_sectors/int_sanity.bin"
     ));
     assert_eq!(boot_sector.len(), 512);
 

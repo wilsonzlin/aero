@@ -39,6 +39,10 @@ fn machine_cpu_to_snapshot(cpu: &MachineCpuState) -> CpuState {
     state.rflags = cpu.rflags;
     state.mode = CpuMode::Real;
     state.halted = cpu.halted;
+    if let Some(vector) = cpu.pending_bios_int {
+        state.pending_bios_int_valid = true;
+        state.pending_bios_int = vector;
+    }
     state.cs = SegmentState::real_mode(cpu.cs.selector);
     state.ds = SegmentState::real_mode(cpu.ds.selector);
     state.es = SegmentState::real_mode(cpu.es.selector);
@@ -63,6 +67,9 @@ fn snapshot_cpu_to_machine(state: CpuState, cpu: &mut MachineCpuState) {
     cpu.ds.selector = state.ds.selector;
     cpu.es.selector = state.es.selector;
     cpu.ss.selector = state.ss.selector;
+    cpu.pending_bios_int = state
+        .pending_bios_int_valid
+        .then_some(state.pending_bios_int);
     cpu.halted = state.halted;
 }
 
@@ -174,7 +181,9 @@ impl<D: BlockDevice> SnapshotSource for Vm<D> {
     }
 
     fn cpu_state(&self) -> CpuState {
-        machine_cpu_to_snapshot(&self.cpu)
+        let mut state = machine_cpu_to_snapshot(&self.cpu);
+        state.a20_enabled = self.mem.a20_enabled();
+        state
     }
 
     fn mmu_state(&self) -> MmuState {

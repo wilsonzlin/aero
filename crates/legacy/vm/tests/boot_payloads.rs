@@ -6,7 +6,7 @@ use vm::Vm;
 
 #[test]
 fn boot_sector_int_sanity_exercises_int10_13_15_16_and_reaches_signature() {
-    let boot: &[u8] = include_bytes!("../../../test_images/boot_sectors/int_sanity.bin");
+    let boot: &[u8] = include_bytes!("../../../../test_images/boot_sectors/int_sanity.bin");
     assert_eq!(boot.len(), 512, "boot sector must be exactly 512 bytes");
     assert_eq!(
         &boot[510..512],

@@ -81,6 +81,11 @@ members = [
 
 exclude = [
     "fuzz",
+    # `crates/legacy/*` are reference-only; keep them out of the workspace so they don't
+    # block workspace-wide builds, but mark them as excluded so they can still be built
+    # directly via `--manifest-path` without Cargo treating them as a missing workspace member.
+    "crates/legacy/aero-emulator",
+    "crates/legacy/vm",
     # Standalone tools with their own lockfiles (build by `cd tools/<name> && cargo ...`).
     # Legacy/diagnostic gateway prototype (NOT the production gateway).
     "tools/aero-gateway-rs",

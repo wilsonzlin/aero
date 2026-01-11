@@ -1,8 +1,10 @@
 #![allow(deprecated)]
 
+use std::io::{Cursor, Read, Seek, SeekFrom};
+
 use aero_snapshot::RamMode;
 use firmware::bios::{Bios, BiosConfig};
-use machine::{CpuExit, InMemoryDisk, MemoryAccess, FLAG_ALWAYS_ON, FLAG_CF, FLAG_ZF};
+use machine::{A20Gate, CpuExit, InMemoryDisk, MemoryAccess, FLAG_ALWAYS_ON, FLAG_CF, FLAG_ZF};
 use vm::{SnapshotError, SnapshotOptions, Vm};
 
 fn boot_sector_with(bytes: &[u8]) -> [u8; 512] {
@@ -12,6 +14,27 @@ fn boot_sector_with(bytes: &[u8]) -> [u8; 512] {
     sector[510] = 0x55;
     sector[511] = 0xAA;
     sector
+}
+
+fn cpu_state_from_snapshot(bytes: &[u8]) -> aero_snapshot::CpuState {
+    let mut cursor = Cursor::new(bytes);
+    let index = aero_snapshot::inspect_snapshot(&mut cursor).unwrap();
+    let cpu_section = index
+        .sections
+        .iter()
+        .find(|section| section.id == aero_snapshot::SectionId::CPU)
+        .expect("snapshot missing CPU section");
+
+    cursor
+        .seek(SeekFrom::Start(cpu_section.offset))
+        .expect("seek to CPU section");
+    let mut cpu_bytes = vec![0u8; cpu_section.len.try_into().unwrap()];
+    cursor.read_exact(&mut cpu_bytes).expect("read CPU section");
+    let mut cpu_reader = Cursor::new(cpu_bytes);
+    match cpu_section.version {
+        1 => aero_snapshot::CpuState::decode_v1(&mut cpu_reader).unwrap(),
+        _ => aero_snapshot::CpuState::decode_v2(&mut cpu_reader).unwrap(),
+    }
 }
 
 #[test]
@@ -56,6 +79,30 @@ fn snapshot_round_trip_preserves_pending_bios_int() {
     assert_eq!(restored.step(), CpuExit::Halt);
 
     assert_eq!(restored.bios.tty_output(), expected);
+}
+
+#[test]
+fn snapshot_cpu_section_records_pending_bios_int_and_a20_state() {
+    let cfg = BiosConfig {
+        memory_size_bytes: 16 * 1024 * 1024,
+        boot_drive: 0x80,
+        ..BiosConfig::default()
+    };
+    let bios = Bios::new(cfg.clone());
+    let disk = InMemoryDisk::from_boot_sector(boot_sector_with(&[]));
+
+    let mut vm = Vm::new(16 * 1024 * 1024, bios, disk);
+    vm.reset();
+
+    vm.cpu.pending_bios_int = Some(0x10);
+    vm.mem.set_a20_enabled(false);
+
+    let snapshot = vm.save_snapshot(SnapshotOptions::default()).unwrap();
+    let state = cpu_state_from_snapshot(&snapshot);
+
+    assert!(!state.a20_enabled);
+    assert!(state.pending_bios_int_valid);
+    assert_eq!(state.pending_bios_int, 0x10);
 }
 
 #[test]
