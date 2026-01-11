@@ -11,7 +11,8 @@ fn cfg_addr(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
 }
 
 fn read_cfg_u32(pc: &mut PcPlatform, bus: u8, device: u8, function: u8, offset: u8) -> u32 {
-    pc.io.write(0xCF8, 4, cfg_addr(bus, device, function, offset));
+    pc.io
+        .write(0xCF8, 4, cfg_addr(bus, device, function, offset));
     pc.io.read(0xCFC, 4)
 }
 
@@ -55,11 +56,11 @@ fn pc_platform_routes_hda_intx_via_pci_intx_router() {
     let bdf = HDA_ICH6.bdf;
 
     // Interrupt Line register should report the router-selected GSI for 00:04.0 INTA#.
-    pc.io.write(0xCF8, 4, cfg_addr(bdf.bus, bdf.device, bdf.function, 0x3c));
+    pc.io
+        .write(0xCF8, 4, cfg_addr(bdf.bus, bdf.device, bdf.function, 0x3c));
     let int_line = pc.io.read(0xCFC, 1) as u8;
     assert_eq!(
-        int_line,
-        10,
+        int_line, 10,
         "default PciIntxRouterConfig routes INTA# for device 4 to GSI10"
     );
 
@@ -92,8 +93,9 @@ fn pc_platform_routes_hda_intx_via_pci_intx_router() {
     pc.memory.write_u16(bar0_base + 0x58, 0x00ff); // RIRBWP
 
     // Enable global + controller interrupts (GIE + CIE).
-    pc.memory.write_u32(bar0_base + 0x20, 0x8000_0000 | (1 << 30)); // INTCTL
-    // Enable CORB/RIRB DMA engines and response interrupts.
+    pc.memory
+        .write_u32(bar0_base + 0x20, 0x8000_0000 | (1 << 30)); // INTCTL
+                                                               // Enable CORB/RIRB DMA engines and response interrupts.
     pc.memory.write_u8(bar0_base + 0x5c, 0x03); // RIRBCTL: RUN + RINTCTL
     pc.memory.write_u8(bar0_base + 0x4c, 0x02); // CORBCTL: RUN
 
@@ -122,4 +124,3 @@ fn pc_platform_routes_hda_intx_via_pci_intx_router() {
         .expect("pending vector should decode to an IRQ number");
     assert_eq!(irq, 10);
 }
-

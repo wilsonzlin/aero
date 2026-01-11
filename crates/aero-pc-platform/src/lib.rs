@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+use aero_audio::hda::{HdaController, HDA_MMIO_SIZE};
 use aero_devices::a20_gate::A20Gate;
 use aero_devices::acpi_pm::{AcpiPmCallbacks, AcpiPmConfig, AcpiPmIo, SharedAcpiPmIo};
 use aero_devices::clock::ManualClock;
@@ -7,7 +8,7 @@ use aero_devices::i8042::{register_i8042, I8042Ports, SharedI8042Controller};
 use aero_devices::irq::PlatformIrqLine;
 use aero_devices::pci::{
     bios_post, register_pci_config_ports, PciBarDefinition, PciConfigPorts, PciDevice,
-    PciEcamConfig, PciEcamMmio, PciIntxRouter, PciIntxRouterConfig, PciInterruptPin,
+    PciEcamConfig, PciEcamMmio, PciInterruptPin, PciIntxRouter, PciIntxRouterConfig,
     PciResourceAllocator, PciResourceAllocatorConfig, PciSubsystemIds, SharedPciConfigPorts,
 };
 use aero_devices::pic8259::register_pic8259_on_platform_interrupts;
@@ -16,7 +17,6 @@ use aero_devices::reset_ctrl::{ResetCtrl, ResetKind, RESET_CTRL_PORT};
 use aero_devices::rtc_cmos::{register_rtc_cmos, RtcCmos, SharedRtcCmos};
 use aero_devices::{hpet, i8042};
 use aero_interrupts::apic::{IOAPIC_MMIO_BASE, IOAPIC_MMIO_SIZE, LAPIC_MMIO_BASE, LAPIC_MMIO_SIZE};
-use aero_audio::hda::{HdaController, HDA_MMIO_SIZE};
 use aero_platform::address_filter::AddressFilter;
 use aero_platform::chipset::ChipsetState;
 use aero_platform::interrupts::PlatformInterrupts;
@@ -58,7 +58,8 @@ struct HdaPciConfigDevice {
 impl HdaPciConfigDevice {
     fn new() -> Self {
         let profile = aero_devices::pci::profile::HDA_ICH6;
-        let mut config = aero_devices::pci::PciConfigSpace::new(profile.vendor_id, profile.device_id);
+        let mut config =
+            aero_devices::pci::PciConfigSpace::new(profile.vendor_id, profile.device_id);
         config.set_class_code(
             profile.class.base_class,
             profile.class.sub_class,
@@ -240,12 +241,7 @@ impl PcPlatform {
     }
 
     pub fn new_with_hda(ram_size: usize) -> Self {
-        Self::new_with_config(
-            ram_size,
-            PcPlatformConfig {
-                enable_hda: true,
-            },
-        )
+        Self::new_with_config(ram_size, PcPlatformConfig { enable_hda: true })
     }
 
     pub fn new_with_config(ram_size: usize, config: PcPlatformConfig) -> Self {
@@ -345,7 +341,10 @@ impl PcPlatform {
 
             let mut dev = HdaPciConfigDevice::new();
             pci_intx.configure_device_intx(bdf, Some(PciInterruptPin::IntA), dev.config_mut());
-            pci_cfg.borrow_mut().bus_mut().add_device(bdf, Box::new(dev));
+            pci_cfg
+                .borrow_mut()
+                .bus_mut()
+                .add_device(bdf, Box::new(dev));
 
             Some(hda)
         } else {
