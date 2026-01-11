@@ -2,6 +2,9 @@
 
 use wasm_bindgen::prelude::*;
 
+#[cfg(any(target_arch = "wasm32", test))]
+mod demo_renderer;
+
 #[cfg(target_arch = "wasm32")]
 use aero_platform::audio::worklet_bridge::WorkletBridge;
 
@@ -181,6 +184,48 @@ pub fn mem_load_u32(offset: u32) -> u32 {
     #[cfg(not(target_arch = "wasm32"))]
     {
         let _ = offset;
+        0
+    }
+}
+
+/// Render an animated RGBA8888 test pattern into the module's linear memory.
+///
+/// The web runtime uses this as a cheap "CPU demo" hot loop: JS drives the frame
+/// cadence, WASM writes pixels into shared `guestMemory`, and JS performs a
+/// single bulk copy into the presentation framebuffer.
+#[wasm_bindgen]
+pub fn demo_render_rgba8888(
+    dst_offset: u32,
+    width: u32,
+    height: u32,
+    stride_bytes: u32,
+    now_ms: f64,
+) -> u32 {
+    #[cfg(target_arch = "wasm32")]
+    {
+        if dst_offset == 0 {
+            return 0;
+        }
+
+        // Convert the current memory size (in 64KiB pages) into a byte length.
+        // Use `u64` so `65536 pages * 64KiB` doesn't overflow on wasm32.
+        let pages = unsafe { core::arch::wasm32::memory_size(0) } as u64;
+        let mem_bytes = pages.saturating_mul(64 * 1024);
+        let dst_offset_u64 = dst_offset as u64;
+        if dst_offset_u64 >= mem_bytes {
+            return 0;
+        }
+
+        let max_len = (mem_bytes - dst_offset_u64).min(usize::MAX as u64) as usize;
+        unsafe {
+            let dst = core::slice::from_raw_parts_mut(dst_offset as *mut u8, max_len);
+            demo_renderer::render_rgba8888(dst, width, height, stride_bytes, now_ms)
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = (dst_offset, width, height, stride_bytes, now_ms);
         0
     }
 }

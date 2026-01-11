@@ -66,6 +66,11 @@ let currentConfigVersion = 0;
 
 let wasmApi: WasmApi | null = null;
 
+// Demo framebuffer region inside shared guest memory. The worker drives a tiny JS→WASM→SAB
+// render path by asking WASM to fill pixels here and then bulk-copying them into the VGA SAB.
+const DEMO_FB_OFFSET = 0x200000;
+const DEMO_FB_MAX_BYTES = 1024 * 768 * 4;
+
 let audioRingBuffer: SharedArrayBuffer | null = null;
 let audioDstSampleRate = 0;
 let audioChannelCount = 0;
@@ -333,6 +338,16 @@ async function initAndRun(init: WorkerInitMessage): Promise<void> {
       vgaFramebuffer = wrapSharedFramebuffer(segments.vgaFramebuffer, 0);
       frameState = init.frameStateSab ? new Int32Array(init.frameStateSab) : null;
 
+      const demoFbEnd = DEMO_FB_OFFSET + DEMO_FB_MAX_BYTES;
+      if (demoFbEnd > guestU8.byteLength) {
+        const guestBytes = guestU8.byteLength;
+        const message = `guestMemory too small for demo framebuffer: need >= ${demoFbEnd} bytes, got ${guestBytes} bytes.`;
+        setReadyFlag(status, role, false);
+        ctx.postMessage({ type: MessageType.ERROR, role, message } satisfies ProtocolMessage);
+        ctx.close();
+        return;
+      }
+
       if (init.perfChannel) {
         perfWriter = new PerfWriter(init.perfChannel.buffer, {
           workerKind: init.perfChannel.workerKind,
@@ -438,6 +453,7 @@ async function runLoop(): Promise<void> {
   ] as const;
   let modeIndex = 0;
   let mode = modes[0];
+  let demoFbView = guestU8.subarray(DEMO_FB_OFFSET, DEMO_FB_OFFSET + mode.width * mode.height * 4);
 
   const maybeEmitPerfSample = () => {
     if (!perfWriter || !perfFrameHeader) return;
@@ -545,13 +561,25 @@ async function runLoop(): Promise<void> {
           storeHeaderI32(vgaFramebuffer.header, HEADER_INDEX_STRIDE_BYTES, strideBytes);
           addHeaderI32(vgaFramebuffer.header, HEADER_INDEX_CONFIG_COUNTER, 1);
 
+          demoFbView = guestU8.subarray(DEMO_FB_OFFSET, DEMO_FB_OFFSET + strideBytes * mode.height);
           nextModeSwitchMs = now + modeSwitchIntervalMs;
         }
 
         const t0 = performance.now();
-        renderTestPattern(vgaFramebuffer, mode.width, mode.height, now);
+        const strideBytes = mode.width * 4;
+
+        const wasmRender = wasmApi?.demo_render_rgba8888;
+        if (typeof wasmRender === "function") {
+          const instructions = wasmRender(DEMO_FB_OFFSET, mode.width, mode.height, strideBytes, now) >>> 0;
+          vgaFramebuffer.pixelsU8Clamped.set(demoFbView);
+          perfInstructions += BigInt(instructions);
+        } else {
+          // Fallback for dev builds where the wasm package hasn't been rebuilt yet.
+          renderTestPattern(vgaFramebuffer, mode.width, mode.height, now);
+          perfInstructions += BigInt(mode.width * mode.height);
+        }
+
         perfCpuMs += performance.now() - t0;
-        perfInstructions += BigInt(mode.width * mode.height);
         addHeaderI32(vgaFramebuffer.header, HEADER_INDEX_FRAME_COUNTER, 1);
         if (frameState) {
           Atomics.add(frameState, FRAME_SEQ_INDEX, 1);

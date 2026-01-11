@@ -14,6 +14,18 @@ export interface WasmApi {
     sum: (a: number, b: number) => number;
     mem_store_u32: (offset: number, value: number) => void;
     mem_load_u32: (offset: number) => number;
+    /**
+     * Demo renderer: writes an RGBA8888 test pattern into WASM linear memory at `dstOffset`.
+     *
+     * Optional for dev builds where the generated wasm-bindgen package hasn't been rebuilt yet.
+     */
+    demo_render_rgba8888?: (
+        dstOffset: number,
+        width: number,
+        height: number,
+        strideBytes: number,
+        nowMs: number,
+    ) => number;
 
     /**
      * Guest RAM layout contract (see `docs/adr/0003-shared-memory-layout.md`).
@@ -194,6 +206,7 @@ function toApi(mod: RawWasmModule): WasmApi {
         mem_store_u32: mod.mem_store_u32,
         guest_ram_layout: mod.guest_ram_layout,
         mem_load_u32: mod.mem_load_u32,
+        demo_render_rgba8888: mod.demo_render_rgba8888,
         AeroApi: mod.AeroApi,
         DemoVm: mod.DemoVm,
         WorkletBridge: mod.WorkletBridge,
