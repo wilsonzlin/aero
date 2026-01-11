@@ -1,3 +1,4 @@
+pub mod abi;
 mod cpu;
 pub mod interp;
 pub mod ir;

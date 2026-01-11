@@ -548,6 +548,7 @@ name = "aero_jit"
 version = "0.1.0"
 dependencies = [
  "aero_cpu",
+ "aero_cpu_core",
  "aero_types",
  "aero_x86",
  "rand 0.8.5",
