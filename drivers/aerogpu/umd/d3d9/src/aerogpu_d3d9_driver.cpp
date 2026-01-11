@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstddef>
 #include <cstring>
 #include <cwchar>
 #include <memory>
@@ -112,6 +113,7 @@ uint32_t f32_bits(float v) {
 // D3DPRESENT_* flags (numeric values from d3d9.h). We only need DONOTWAIT for
 // max-frame-latency throttling.
 constexpr uint32_t kD3dPresentDoNotWait = 0x00000001u; // D3DPRESENT_DONOTWAIT
+constexpr uint32_t kD3dPresentIntervalImmediate = 0x80000000u; // D3DPRESENT_INTERVAL_IMMEDIATE
 
 // D3DERR_WASSTILLDRAWING (0x8876021C). Returned by PresentEx when DONOTWAIT is
 // specified and the present is throttled.
@@ -363,6 +365,7 @@ using AerogpuNtStatus = LONG;
 constexpr AerogpuNtStatus kStatusSuccess = 0x00000000L;
 constexpr AerogpuNtStatus kStatusTimeout = 0x00000102L;
 
+#pragma pack(push, 8)
 struct AerogpuD3DKMTWaitForSynchronizationObject {
   UINT ObjectCount;
   union {
@@ -375,6 +378,25 @@ struct AerogpuD3DKMTWaitForSynchronizationObject {
   };
   uint64_t Timeout;
 };
+#pragma pack(pop)
+
+static_assert(std::is_standard_layout<AerogpuD3DKMTWaitForSynchronizationObject>::value,
+              "D3DKMT wait args must have a stable ABI");
+#if defined(_WIN64)
+static_assert(sizeof(AerogpuD3DKMTWaitForSynchronizationObject) == 32, "Unexpected D3DKMT wait args size (x64)");
+static_assert(offsetof(AerogpuD3DKMTWaitForSynchronizationObject, ObjectCount) == 0, "Unexpected ObjectCount offset");
+static_assert(offsetof(AerogpuD3DKMTWaitForSynchronizationObject, ObjectHandleArray) == 8,
+              "Unexpected ObjectHandleArray offset");
+static_assert(offsetof(AerogpuD3DKMTWaitForSynchronizationObject, FenceValueArray) == 16, "Unexpected FenceValueArray offset");
+static_assert(offsetof(AerogpuD3DKMTWaitForSynchronizationObject, Timeout) == 24, "Unexpected Timeout offset");
+#else
+static_assert(sizeof(AerogpuD3DKMTWaitForSynchronizationObject) == 24, "Unexpected D3DKMT wait args size (x86)");
+static_assert(offsetof(AerogpuD3DKMTWaitForSynchronizationObject, ObjectCount) == 0, "Unexpected ObjectCount offset");
+static_assert(offsetof(AerogpuD3DKMTWaitForSynchronizationObject, ObjectHandleArray) == 4,
+              "Unexpected ObjectHandleArray offset");
+static_assert(offsetof(AerogpuD3DKMTWaitForSynchronizationObject, FenceValueArray) == 8, "Unexpected FenceValueArray offset");
+static_assert(offsetof(AerogpuD3DKMTWaitForSynchronizationObject, Timeout) == 16, "Unexpected Timeout offset");
+#endif
 
 using PFND3DKMTWaitForSynchronizationObject =
     AerogpuNtStatus(WINAPI*)(AerogpuD3DKMTWaitForSynchronizationObject* pData);
@@ -4834,7 +4856,7 @@ HRESULT AEROGPU_D3D9_CALL device_present_ex(
       return trace.ret(E_OUTOFMEMORY);
     }
     cmd->scanout_id = 0;
-    bool vsync = (pPresentEx->sync_interval != 0);
+    bool vsync = (pPresentEx->sync_interval != 0) && (pPresentEx->sync_interval != kD3dPresentIntervalImmediate);
     if (vsync && dev->adapter && dev->adapter->umd_private_valid) {
       // Only request vblank-paced presents when the active device reports vblank support.
       vsync = (dev->adapter->umd_private.flags & AEROGPU_UMDPRIV_FLAG_HAS_VBLANK) != 0;
@@ -4911,7 +4933,7 @@ HRESULT AEROGPU_D3D9_CALL device_present(
       return trace.ret(E_OUTOFMEMORY);
     }
     cmd->scanout_id = 0;
-    bool vsync = (pPresent->sync_interval != 0);
+    bool vsync = (pPresent->sync_interval != 0) && (pPresent->sync_interval != kD3dPresentIntervalImmediate);
     if (vsync && dev->adapter && dev->adapter->umd_private_valid) {
       vsync = (dev->adapter->umd_private.flags & AEROGPU_UMDPRIV_FLAG_HAS_VBLANK) != 0;
     }
