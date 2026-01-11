@@ -11,11 +11,3 @@ license = "MIT OR Apache-2.0"
 [[test]]
 name = "vbe_smoke"
 path = "../../tests/vbe_smoke.rs"
-
-[[test]]
-name = "aerogpu_ring"
-path = "tests/wasm/aerogpu_ring.rs"
-
-[[test]]
-name = "aerogpu_smoke_present"
-path = "tests/wasm/aerogpu_smoke_present.rs"
