@@ -185,6 +185,11 @@ static int RunCapsSmoke(int argc, char** argv) {
                              kTestName,
                              (unsigned)threading.DriverConcurrentCreates,
                              (unsigned)threading.DriverCommandLists);
+  if (threading.DriverConcurrentCreates || threading.DriverCommandLists) {
+    return reporter.Fail("unexpected threading caps: concurrent_creates=%u command_lists=%u",
+                         (unsigned)threading.DriverConcurrentCreates,
+                         (unsigned)threading.DriverCommandLists);
+  }
 
   D3D11_FEATURE_DATA_DOUBLES doubles;
   ZeroMemory(&doubles, sizeof(doubles));
