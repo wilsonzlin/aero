@@ -136,6 +136,9 @@ declare global {
     | "usageSwitch"
     | "usageModifier";
 
+  type HIDCollectionTypeCode = 0 | 1 | 2 | 3 | 4 | 5 | 6;
+  type HIDCollectionTypeLike = HIDCollectionType | HIDCollectionTypeCode;
+
   interface HIDReportItem {
     usagePage: number;
     usages: readonly number[];
@@ -178,7 +181,9 @@ declare global {
   interface HIDCollectionInfo {
     usagePage: number;
     usage: number;
-    type: HIDCollectionType;
+    // WebHID spec defines collection types as numeric codes (0..=6). Some environments and tests
+    // prefer the string enum form; accept both.
+    type: HIDCollectionTypeLike;
     children: readonly HIDCollectionInfo[];
     inputReports: readonly HIDReportInfo[];
     outputReports: readonly HIDReportInfo[];
