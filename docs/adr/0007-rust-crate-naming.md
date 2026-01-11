@@ -38,6 +38,7 @@ dependency renames, and makes long-term maintenance brittle.
 CI runs `scripts/ci/check-crate-name-collisions.py` to ensure the workspace does
 not introduce any new package-name collisions after `-` → `_` normalization, and
 that workspace packages use `kebab-case` (no underscores) in `[package].name`.
+It also enforces that crate directories under `crates/` do not contain underscores.
 
 ## Alternatives considered
 

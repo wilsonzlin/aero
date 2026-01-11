@@ -27,6 +27,7 @@ import os
 import subprocess
 import sys
 from dataclasses import dataclass
+from pathlib import PurePath
 from typing import Dict, List
 
 
@@ -87,8 +88,13 @@ def main() -> int:
 
     collisions = {k: v for k, v in groups.items() if len(v) > 1}
     underscored = [p for p in pkgs if "_" in p.name]
+    underscored_crates_dirs = []
+    for p in pkgs:
+        parts = PurePath(p.path).parts
+        if len(parts) >= 2 and parts[0] == "crates" and "_" in parts[1]:
+            underscored_crates_dirs.append(p)
 
-    if not collisions and not underscored:
+    if not collisions and not underscored and not underscored_crates_dirs:
         print(f"crate-name policy check: OK ({len(pkgs)} workspace packages)")
         return 0
 
@@ -103,6 +109,12 @@ def main() -> int:
             "hint: rename the package(s) to kebab-case (example: `qemu_diff` → `qemu-diff`).\n",
             file=sys.stderr,
         )
+
+    if underscored_crates_dirs:
+        print("crate directories under `crates/` must be kebab-case (no underscores):", file=sys.stderr)
+        for p in sorted(underscored_crates_dirs, key=lambda p: (p.path, p.name)):
+            print(f"  - dir: {p.path:30s} package: {p.name}", file=sys.stderr)
+        print("", file=sys.stderr)
 
     if collisions:
         print("Rust crate-name collisions detected after `-` → `_` normalization:\n", file=sys.stderr)
