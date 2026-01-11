@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -34,6 +35,59 @@ def _list_iso_files_with_xorriso(iso_path: Path) -> set[str]:
     return {line.strip() for line in proc.stdout.splitlines() if line.strip()}
 
 
+def _list_iso_files_with_powershell_mount(iso_path: Path) -> set[str]:
+    powershell = shutil.which("powershell")
+    if not powershell:
+        raise SystemExit("powershell.exe not found; cannot verify ISO contents without xorriso")
+
+    script = r"""& {
+  param([string]$IsoPath)
+  $ErrorActionPreference = 'Stop'
+  $img = $null
+  try {
+    $img = Mount-DiskImage -ImagePath $IsoPath -PassThru
+    $vol = $img | Get-Volume
+    if (-not $vol -or -not $vol.DriveLetter) {
+      throw "Mounted ISO volume has no drive letter."
+    }
+    $root = "$($vol.DriveLetter):\"
+    Get-ChildItem -LiteralPath $root -Recurse -File | ForEach-Object {
+      $rel = $_.FullName.Substring($root.Length) -replace '\\\\','/'
+      '/' + $rel
+    }
+  } finally {
+    if ($img) {
+      Dismount-DiskImage -ImagePath $IsoPath | Out-Null
+    }
+  }
+}"""
+
+    proc = subprocess.run(
+        [
+            powershell,
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            script,
+            str(iso_path),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return {line.strip() for line in proc.stdout.splitlines() if line.strip()}
+
+
+def _list_iso_files(iso_path: Path) -> set[str]:
+    xorriso = shutil.which("xorriso")
+    if xorriso:
+        return _list_iso_files_with_xorriso(iso_path)
+    if os.name == "nt":
+        return _list_iso_files_with_powershell_mount(iso_path)
+    raise SystemExit("xorriso not found; install xorriso to verify ISO contents")
+
+
 def _arches_for_require_arch(require_arch: str) -> tuple[str, ...]:
     if require_arch == "both":
         return ("x86", "amd64")
@@ -60,7 +114,7 @@ def main() -> int:
     args = parser.parse_args()
 
     manifest = _load_manifest(args.manifest)
-    files = _list_iso_files_with_xorriso(args.iso.resolve())
+    files = _list_iso_files(args.iso.resolve())
 
     missing: list[str] = []
     if "/THIRD_PARTY_NOTICES.md" not in files:

@@ -247,37 +247,36 @@ if (-not $OmitOptionalDrivers) {
 }
 
 $isoScript = Join-Path $repoRoot "drivers\scripts\make-virtio-driver-iso.ps1"
-$xorriso = Get-Command "xorriso" -ErrorAction SilentlyContinue
-if ($xorriso) {
-  $python = Resolve-Python
-  if (-not $python) {
-    throw "Python not found on PATH; required for virtio driver ISO validation."
-  }
+if (-not (Test-Path -LiteralPath $isoScript -PathType Leaf)) {
+  throw "Expected script not found: $isoScript"
+}
 
-  $driverIsoPath = Join-Path $OutRoot "aero-virtio-win7-drivers.iso"
-  $driverIsoLog = Join-Path $logsDir "make-virtio-driver-iso.log"
-  $verifyIsoLog = Join-Path $logsDir "verify-virtio-driver-iso.log"
+$python = Resolve-Python
+if (-not $python) {
+  throw "Python not found on PATH; required for virtio driver ISO validation."
+}
 
-  Write-Host "Running make-virtio-driver-iso.ps1..."
-  & pwsh -NoProfile -ExecutionPolicy Bypass -File $isoScript `
-    -VirtioWinRoot $syntheticRoot `
-    -OutIso $driverIsoPath *>&1 | Tee-Object -FilePath $driverIsoLog
-  if ($LASTEXITCODE -ne 0) {
-    throw "make-virtio-driver-iso.ps1 failed (exit $LASTEXITCODE). See $driverIsoLog"
-  }
+$driverIsoPath = Join-Path $OutRoot "aero-virtio-win7-drivers.iso"
+$driverIsoLog = Join-Path $logsDir "make-virtio-driver-iso.log"
+$verifyIsoLog = Join-Path $logsDir "verify-virtio-driver-iso.log"
 
-  if (-not (Test-Path -LiteralPath $driverIsoPath -PathType Leaf)) {
-    throw "Expected driver ISO output missing: $driverIsoPath"
-  }
+Write-Host "Running make-virtio-driver-iso.ps1..."
+& pwsh -NoProfile -ExecutionPolicy Bypass -File $isoScript `
+  -VirtioWinRoot $syntheticRoot `
+  -OutIso $driverIsoPath *>&1 | Tee-Object -FilePath $driverIsoLog
+if ($LASTEXITCODE -ne 0) {
+  throw "make-virtio-driver-iso.ps1 failed (exit $LASTEXITCODE). See $driverIsoLog"
+}
 
-  Write-Host "Verifying driver ISO contents..."
-  & $python (Join-Path $repoRoot "tools\driver-iso\verify_iso.py") `
-    --iso $driverIsoPath *>&1 | Tee-Object -FilePath $verifyIsoLog
-  if ($LASTEXITCODE -ne 0) {
-    throw "verify_iso.py failed (exit $LASTEXITCODE). See $verifyIsoLog"
-  }
-} else {
-  Write-Host "xorriso not found; skipping make-virtio-driver-iso.ps1 smoke test."
+if (-not (Test-Path -LiteralPath $driverIsoPath -PathType Leaf)) {
+  throw "Expected driver ISO output missing: $driverIsoPath"
+}
+
+Write-Host "Verifying driver ISO contents..."
+& $python (Join-Path $repoRoot "tools\driver-iso\verify_iso.py") `
+  --iso $driverIsoPath *>&1 | Tee-Object -FilePath $verifyIsoLog
+if ($LASTEXITCODE -ne 0) {
+  throw "verify_iso.py failed (exit $LASTEXITCODE). See $verifyIsoLog"
 }
 
 Write-Host "virtio-win packaging smoke test succeeded."

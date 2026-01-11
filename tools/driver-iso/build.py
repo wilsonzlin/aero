@@ -61,6 +61,41 @@ def _find_iso_tool() -> tuple[str, list[str]]:
     )
 
 
+def _build_iso_with_imapi(stage_root: Path, out_path: Path, label: str) -> None:
+    """
+    Windows fallback: build an ISO using the built-in IMAPI COM APIs.
+
+    This avoids requiring third-party mkisofs/xorriso installs on Windows CI runners.
+    """
+
+    repo_root = Path(__file__).resolve().parents[2]
+    script = repo_root / "ci" / "lib" / "New-IsoFile.ps1"
+    if not script.is_file():
+        raise SystemExit(f"IMAPI ISO builder not found: {script}")
+
+    powershell = shutil.which("powershell")
+    if not powershell:
+        raise SystemExit("powershell.exe not found; required for IMAPI ISO generation fallback")
+
+    subprocess.run(
+        [
+            powershell,
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(script),
+            "-SourcePath",
+            str(stage_root),
+            "-IsoPath",
+            str(out_path),
+            "-VolumeLabel",
+            label,
+        ],
+        check=True,
+    )
+
+
 def _arches_for_require_arch(require_arch: str) -> tuple[str, ...]:
     if require_arch == "both":
         return ("x86", "amd64")
@@ -196,7 +231,12 @@ def main() -> int:
     out_path = args.output.resolve()
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    tool_kind, tool_cmd = _find_iso_tool()
+    try:
+        tool_kind, tool_cmd = _find_iso_tool()
+    except SystemExit:
+        if os.name != "nt":
+            raise
+        tool_kind, tool_cmd = ("imapi", [])
 
     with tempfile.TemporaryDirectory(prefix="aero-virtio-iso-") as tmp:
         stage_root = Path(tmp) / "root"
@@ -221,7 +261,9 @@ def main() -> int:
         if args.include_manifest:
             shutil.copy2(args.manifest, stage_root / "manifest.json")
 
-        if tool_kind == "oscdimg":
+        if tool_kind == "imapi":
+            _build_iso_with_imapi(stage_root, out_path, label)
+        elif tool_kind == "oscdimg":
             cmd = [
                 *tool_cmd,
                 "-m",
@@ -245,7 +287,8 @@ def main() -> int:
                 str(stage_root),
             ]
 
-        subprocess.run(cmd, check=True)
+        if tool_kind != "imapi":
+            subprocess.run(cmd, check=True)
 
     print(f"Wrote {out_path} (sha256={_sha256(out_path)})")
     return 0
