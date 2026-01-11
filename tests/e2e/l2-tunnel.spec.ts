@@ -437,8 +437,30 @@ test.describe.serial('l2 tunnel (cookie auth)', () => {
 
           const wsBase = new URL(l2ProxyOrigin);
           wsBase.protocol = wsBase.protocol === 'https:' ? 'wss:' : 'ws:';
-          wsBase.pathname = '/l2';
           wsBase.search = '';
+
+          // Use the gateway as the canonical endpoint discovery API: even though
+          // this test connects directly to the L2 proxy (different port), the
+          // advertised L2 path should stay in sync.
+          const discoveryRes = await withTimeout(
+            fetch(`${gatewayOrigin}/session`, {
+              method: 'POST',
+              // Do NOT store cookies yet; we want the initial WS upgrade to be unauthenticated.
+              credentials: 'omit',
+              headers: { 'content-type': 'application/json' },
+              body: '{}',
+            }),
+            10_000,
+            'fetch /session (discovery)',
+          );
+          if (!discoveryRes.ok) throw new Error(`session discovery endpoint failed: ${discoveryRes.status}`);
+          const discoveryJson = await discoveryRes.json().catch(() => null);
+          const l2Path = discoveryJson?.endpoints?.l2;
+          if (typeof l2Path !== 'string' || l2Path.length === 0) {
+            throw new Error('session response missing endpoints.l2');
+          }
+
+          wsBase.pathname = l2Path;
           const wsUrl = wsBase.toString();
 
           // First, prove that the proxy rejects WebSocket upgrades without the session cookie.
@@ -476,6 +498,10 @@ test.describe.serial('l2 tunnel (cookie auth)', () => {
             'fetch /session',
           );
           if (!sessionRes.ok) throw new Error(`session endpoint failed: ${sessionRes.status}`);
+          const sessionJson = await sessionRes.json().catch(() => null);
+          if (sessionJson?.endpoints?.l2 !== l2Path) {
+            throw new Error(`session endpoints.l2 changed between calls (${String(l2Path)} -> ${String(sessionJson?.endpoints?.l2)})`);
+          }
 
           const ws = new WebSocket(wsUrl, 'aero-l2-tunnel-v1');
           ws.binaryType = 'arraybuffer';
