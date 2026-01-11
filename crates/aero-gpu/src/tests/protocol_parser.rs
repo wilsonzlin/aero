@@ -2,12 +2,14 @@ use crate::{
     parse_cmd_stream, AeroGpuCmd, AeroGpuCmdStreamParseError, AeroGpuOpcode,
     AEROGPU_CMD_STREAM_MAGIC,
 };
+use crate::protocol::{AEROGPU_INPUT_LAYOUT_BLOB_MAGIC, AEROGPU_INPUT_LAYOUT_BLOB_VERSION};
+
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdStreamHeader as ProtocolCmdStreamHeader,
 };
-use aero_protocol::aerogpu::aerogpu_pci::AEROGPU_ABI_VERSION_U32;
-
-use crate::protocol::AEROGPU_INPUT_LAYOUT_BLOB_MAGIC;
+use aero_protocol::aerogpu::aerogpu_pci::{
+    AEROGPU_ABI_MAJOR, AEROGPU_ABI_MINOR, AEROGPU_ABI_VERSION_U32,
+};
 
 const CMD_STREAM_SIZE_BYTES_OFFSET: usize =
     core::mem::offset_of!(ProtocolCmdStreamHeader, size_bytes);
@@ -31,12 +33,12 @@ fn pad4(out: &mut Vec<u8>) {
     }
 }
 
-fn build_stream(packets: impl FnOnce(&mut Vec<u8>)) -> Vec<u8> {
+fn build_stream_with_abi(abi_version: u32, packets: impl FnOnce(&mut Vec<u8>)) -> Vec<u8> {
     let mut out = Vec::new();
 
     // aerogpu_cmd_stream_header (24 bytes)
     push_u32(&mut out, AEROGPU_CMD_STREAM_MAGIC);
-    push_u32(&mut out, AEROGPU_ABI_VERSION_U32);
+    push_u32(&mut out, abi_version);
     push_u32(&mut out, 0); // size_bytes (patch later)
     push_u32(&mut out, 0); // flags
     push_u32(&mut out, 0); // reserved0
@@ -48,6 +50,10 @@ fn build_stream(packets: impl FnOnce(&mut Vec<u8>)) -> Vec<u8> {
     out[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
         .copy_from_slice(&size_bytes.to_le_bytes());
     out
+}
+
+fn build_stream(packets: impl FnOnce(&mut Vec<u8>)) -> Vec<u8> {
+    build_stream_with_abi(AEROGPU_ABI_VERSION_U32, packets)
 }
 
 fn emit_packet(out: &mut Vec<u8>, opcode: u32, payload: impl FnOnce(&mut Vec<u8>)) {
@@ -79,7 +85,7 @@ fn protocol_parses_all_opcodes() {
     let mut ilay_blob = Vec::new();
     // aerogpu_input_layout_blob_header
     push_u32(&mut ilay_blob, AEROGPU_INPUT_LAYOUT_BLOB_MAGIC);
-    push_u32(&mut ilay_blob, 1); // version
+    push_u32(&mut ilay_blob, AEROGPU_INPUT_LAYOUT_BLOB_VERSION);
     push_u32(&mut ilay_blob, 1); // element_count
     push_u32(&mut ilay_blob, 0); // reserved0
                                  // aerogpu_input_layout_element_dxgi (1 element)
@@ -920,4 +926,28 @@ fn protocol_rejects_stream_size_bytes_smaller_than_header() {
         err,
         AeroGpuCmdStreamParseError::InvalidSizeBytes { size_bytes: 16, .. }
     ));
+}
+
+#[test]
+fn rejects_unknown_major_abi_version() {
+    let bad_major = AEROGPU_ABI_MAJOR + 1;
+    let abi_version = (bad_major << 16) | AEROGPU_ABI_MINOR;
+    let stream = build_stream_with_abi(abi_version, |_| {});
+
+    let err = parse_cmd_stream(&stream).unwrap_err();
+    assert!(matches!(
+        err,
+        AeroGpuCmdStreamParseError::UnsupportedAbiMajor { found } if found == bad_major as u16
+    ));
+}
+
+#[test]
+fn accepts_newer_minor_abi_version() {
+    let abi_version = (AEROGPU_ABI_MAJOR << 16) | (AEROGPU_ABI_MINOR + 1);
+    let stream = build_stream_with_abi(abi_version, |_| {});
+
+    let parsed = parse_cmd_stream(&stream).expect("parse should succeed");
+    let parsed_abi_version = parsed.header.abi_version;
+    assert_eq!(parsed_abi_version, abi_version);
+    assert!(parsed.cmds.is_empty());
 }
