@@ -2,6 +2,8 @@ use std::{net::SocketAddr, path::PathBuf, str::FromStr, time::Duration};
 
 use anyhow::{anyhow, Context, Result};
 
+use aero_net_stack::StackConfig;
+
 use crate::{overrides::TestOverrides, policy::EgressPolicy};
 
 #[derive(Debug, Clone)]
@@ -296,6 +298,18 @@ pub struct ProxyConfig {
     pub tcp_send_buffer: usize,
     pub ws_send_buffer: usize,
 
+    /// Maximum number of concurrent UDP flows (unique (guest_port, dst_ip, dst_port)) tracked per
+    /// tunnel (`0` disables).
+    pub max_udp_flows_per_tunnel: usize,
+    /// UDP flow idle timeout (`0` disables).
+    pub udp_flow_idle_timeout: Option<Duration>,
+
+    /// Stack-level limits (defense in depth) applied to `aero_net_stack::StackConfig`.
+    pub stack_max_tcp_connections: u32,
+    pub stack_max_pending_dns: u32,
+    pub stack_max_dns_cache_entries: u32,
+    pub stack_max_buffered_tcp_bytes_per_conn: u32,
+
     pub dns_default_ttl_secs: u32,
     pub dns_max_ttl_secs: u32,
 
@@ -354,6 +368,51 @@ impl ProxyConfig {
             .and_then(|v| v.parse::<usize>().ok())
             .unwrap_or(64);
 
+        let max_udp_flows_per_tunnel = read_env_usize_clamped(
+            "AERO_L2_MAX_UDP_FLOWS_PER_TUNNEL",
+            256,
+            0,
+            65_535,
+        );
+
+        let udp_flow_idle_timeout_ms = read_env_u64_clamped(
+            "AERO_L2_UDP_FLOW_IDLE_TIMEOUT_MS",
+            60_000,
+            0,
+            86_400_000,
+        );
+        let udp_flow_idle_timeout =
+            (udp_flow_idle_timeout_ms > 0).then(|| Duration::from_millis(udp_flow_idle_timeout_ms));
+
+        // Stack limits (defense in depth).
+        //
+        // Note: use the stack defaults as the base so config.rs doesn't drift if the stack changes.
+        let stack_defaults = StackConfig::default();
+        let stack_max_tcp_connections = read_env_u32_clamped(
+            "AERO_L2_STACK_MAX_TCP_CONNECTIONS",
+            stack_defaults.max_tcp_connections,
+            0,
+            65_535,
+        );
+        let stack_max_pending_dns = read_env_u32_clamped(
+            "AERO_L2_STACK_MAX_PENDING_DNS",
+            stack_defaults.max_pending_dns,
+            0,
+            65_535,
+        );
+        let stack_max_dns_cache_entries = read_env_u32_clamped(
+            "AERO_L2_STACK_MAX_DNS_CACHE_ENTRIES",
+            stack_defaults.max_dns_cache_entries,
+            0,
+            1_000_000,
+        );
+        let stack_max_buffered_tcp_bytes_per_conn = read_env_u32_clamped(
+            "AERO_L2_STACK_MAX_BUFFERED_TCP_BYTES_PER_CONN",
+            stack_defaults.max_buffered_tcp_bytes_per_conn,
+            0,
+            64 * 1024 * 1024,
+        );
+
         let dns_default_ttl_secs = std::env::var("AERO_L2_DNS_DEFAULT_TTL_SECS")
             .ok()
             .and_then(|v| v.parse::<u32>().ok())
@@ -382,6 +441,12 @@ impl ProxyConfig {
             tcp_connect_timeout,
             tcp_send_buffer,
             ws_send_buffer,
+            max_udp_flows_per_tunnel,
+            udp_flow_idle_timeout,
+            stack_max_tcp_connections,
+            stack_max_pending_dns,
+            stack_max_dns_cache_entries,
+            stack_max_buffered_tcp_bytes_per_conn,
             dns_default_ttl_secs,
             dns_max_ttl_secs,
             capture_dir,
@@ -390,4 +455,28 @@ impl ProxyConfig {
             test_overrides,
         })
     }
+}
+
+fn read_env_usize_clamped(key: &str, default: usize, min: usize, max: usize) -> usize {
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .map(|v| v.clamp(min as u64, max as u64) as usize)
+        .unwrap_or(default)
+}
+
+fn read_env_u32_clamped(key: &str, default: u32, min: u32, max: u32) -> u32 {
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .map(|v| v.clamp(min as u64, max as u64) as u32)
+        .unwrap_or(default)
+}
+
+fn read_env_u64_clamped(key: &str, default: u64, min: u64, max: u64) -> u64 {
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .map(|v| v.clamp(min, max))
+        .unwrap_or(default)
 }

@@ -46,6 +46,7 @@ struct MetricsInner {
     // UDP proxy
     udp_flows_active: AtomicU64,
     udp_send_fail_total: AtomicU64,
+    udp_flow_limit_exceeded_total: AtomicU64,
 
     // DNS
     dns_queries_total: AtomicU64,
@@ -86,6 +87,7 @@ impl Metrics {
                 tcp_connect_fail_total: AtomicU64::new(0),
                 udp_flows_active: AtomicU64::new(0),
                 udp_send_fail_total: AtomicU64::new(0),
+                udp_flow_limit_exceeded_total: AtomicU64::new(0),
                 dns_queries_total: AtomicU64::new(0),
                 dns_fail_total: AtomicU64::new(0),
                 ping_rtt_ms_bucket_counts: std::array::from_fn(|_| AtomicU64::new(0)),
@@ -219,6 +221,12 @@ impl Metrics {
             .fetch_add(1, Ordering::Relaxed);
     }
 
+    pub fn udp_flow_limit_exceeded(&self) {
+        self.inner
+            .udp_flow_limit_exceeded_total
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
     pub fn record_ping_rtt_ms(&self, ms: u64) {
         self.inner.ping_rtt_ms_count.fetch_add(1, Ordering::Relaxed);
         self.inner
@@ -316,6 +324,10 @@ impl Metrics {
         let tcp_connect_fail_total = self.inner.tcp_connect_fail_total.load(Ordering::Relaxed);
         let udp_flows_active = self.inner.udp_flows_active.load(Ordering::Relaxed);
         let udp_send_fail_total = self.inner.udp_send_fail_total.load(Ordering::Relaxed);
+        let udp_flow_limit_exceeded_total = self
+            .inner
+            .udp_flow_limit_exceeded_total
+            .load(Ordering::Relaxed);
         let dns_queries_total = self.inner.dns_queries_total.load(Ordering::Relaxed);
         let dns_fail_total = self.inner.dns_fail_total.load(Ordering::Relaxed);
 
@@ -393,6 +405,11 @@ impl Metrics {
 
         push_gauge(&mut out, "l2_udp_flows_active", udp_flows_active);
         push_counter(&mut out, "l2_udp_send_fail_total", udp_send_fail_total);
+        push_counter(
+            &mut out,
+            "l2_udp_flow_limit_exceeded_total",
+            udp_flow_limit_exceeded_total,
+        );
 
         push_counter(&mut out, "l2_dns_queries_total", dns_queries_total);
         push_counter(&mut out, "l2_dns_fail_total", dns_fail_total);

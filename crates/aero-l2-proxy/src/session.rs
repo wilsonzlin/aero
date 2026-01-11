@@ -62,6 +62,7 @@ struct UdpKey {
 #[derive(Debug)]
 struct UdpFlowHandle {
     socket: std::sync::Arc<UdpSocket>,
+    activity_tx: Option<mpsc::Sender<()>>,
     task: JoinHandle<()>,
 }
 
@@ -70,6 +71,7 @@ enum SessionEvent {
     Tcp(TcpProxyEvent),
     Udp(UdpProxyEvent),
     Dns(DnsResolved),
+    UdpFlowClosed(UdpKey),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -272,6 +274,10 @@ async fn run_session_inner(
     // This service always fulfills UDP proxy actions using tokio `UdpSocket`s (no WebRTC relay),
     // so ensure the stack labels outbound UDP actions as `UdpTransport::Proxy`.
     cfg.webrtc_udp = false;
+    cfg.max_tcp_connections = state.cfg.stack_max_tcp_connections;
+    cfg.max_pending_dns = state.cfg.stack_max_pending_dns;
+    cfg.max_dns_cache_entries = state.cfg.stack_max_dns_cache_entries;
+    cfg.max_buffered_tcp_bytes_per_conn = state.cfg.stack_max_buffered_tcp_bytes_per_conn;
     let mut stack = NetworkStack::new(cfg);
 
     let mut tcp_conns: HashMap<u32, TcpConnHandle> = HashMap::new();
@@ -477,21 +483,29 @@ async fn run_session_inner(
                     break;
                 };
                 let now_ms = elapsed_ms(start);
-
-                if let SessionEvent::Tcp(
-                    TcpProxyEvent::Closed { connection_id } | TcpProxyEvent::Error { connection_id },
-                ) = &event
-                {
-                    if let Some(handle) = tcp_conns.remove(connection_id) {
-                        handle.task.abort();
-                        state.metrics.tcp_conn_closed();
-                    }
-                }
-
                 let actions = match event {
-                    SessionEvent::Tcp(ev) => stack.handle_tcp_proxy_event(ev, now_ms),
+                    SessionEvent::Tcp(ev) => {
+                        match &ev {
+                            TcpProxyEvent::Closed { connection_id }
+                            | TcpProxyEvent::Error { connection_id } => {
+                                if let Some(handle) = tcp_conns.remove(connection_id) {
+                                    handle.task.abort();
+                                    state.metrics.tcp_conn_closed();
+                                }
+                            }
+                            _ => {}
+                        }
+                        stack.handle_tcp_proxy_event(ev, now_ms)
+                    }
                     SessionEvent::Udp(ev) => stack.handle_udp_proxy_event(ev, now_ms),
                     SessionEvent::Dns(ev) => stack.handle_dns_resolved(ev, now_ms),
+                    SessionEvent::UdpFlowClosed(key) => {
+                        if let Some(flow) = udp_flows.remove(&key) {
+                            flow.task.abort();
+                            state.metrics.udp_flow_closed();
+                        }
+                        continue;
+                    }
                 };
 
                 match process_actions(
@@ -726,8 +740,13 @@ async fn process_actions(
                     dst_ip,
                     dst_port,
                 };
-
+                let limit = state.cfg.max_udp_flows_per_tunnel;
+                let can_create = limit == 0 || udp_flows.len() < limit;
                 if let std::collections::hash_map::Entry::Vacant(entry) = udp_flows.entry(key) {
+                    if !can_create {
+                        state.metrics.udp_flow_limit_exceeded();
+                        continue;
+                    }
                     let remote = forward
                         .map(|f| (f.host, f.port))
                         .unwrap_or_else(|| (dst_ip.to_string(), dst_port));
@@ -737,14 +756,24 @@ async fn process_actions(
                     let socket = std::sync::Arc::new(socket);
                     let socket_task = socket.clone();
                     let event_tx = event_tx.clone();
+                    let idle_timeout = state.cfg.udp_flow_idle_timeout;
+                    let (activity_tx, activity_rx) = mpsc::channel::<()>(1);
+                    let activity_tx = (idle_timeout.is_some()).then_some(activity_tx);
                     let task = tokio::spawn(async move {
-                        udp_task(key, socket_task, event_tx).await;
+                        udp_task(key, socket_task, event_tx, activity_rx, idle_timeout).await;
                     });
-                    entry.insert(UdpFlowHandle { socket, task });
+                    entry.insert(UdpFlowHandle {
+                        socket,
+                        activity_tx,
+                        task,
+                    });
                     state.metrics.udp_flow_opened();
                 }
 
                 if let Some(flow) = udp_flows.get(&key) {
+                    if let Some(activity_tx) = flow.activity_tx.as_ref() {
+                        let _ = activity_tx.try_send(());
+                    }
                     if flow.socket.send(&data).await.is_err() {
                         state.metrics.udp_send_failed();
                     }
@@ -904,24 +933,69 @@ async fn udp_task(
     key: UdpKey,
     socket: std::sync::Arc<UdpSocket>,
     event_tx: mpsc::Sender<SessionEvent>,
+    mut activity_rx: mpsc::Receiver<()>,
+    idle_timeout: Option<Duration>,
 ) {
     let mut buf = vec![0u8; 2048];
-    loop {
-        let n = match socket.recv(&mut buf).await {
-            Ok(n) => n,
-            Err(_) => break,
-        };
-        if n == 0 {
-            continue;
+
+    let Some(idle_timeout) = idle_timeout else {
+        loop {
+            let n = match socket.recv(&mut buf).await {
+                Ok(n) => n,
+                Err(_) => break,
+            };
+            if n == 0 {
+                continue;
+            }
+            let event = UdpProxyEvent {
+                src_ip: key.dst_ip,
+                src_port: key.dst_port,
+                dst_port: key.guest_port,
+                data: buf[..n].to_vec(),
+            };
+            if event_tx.send(SessionEvent::Udp(event)).await.is_err() {
+                break;
+            }
         }
-        let event = UdpProxyEvent {
-            src_ip: key.dst_ip,
-            src_port: key.dst_port,
-            dst_port: key.guest_port,
-            data: buf[..n].to_vec(),
-        };
-        if event_tx.send(SessionEvent::Udp(event)).await.is_err() {
-            break;
+        return;
+    };
+
+    let idle_timer = tokio::time::sleep(idle_timeout);
+    tokio::pin!(idle_timer);
+
+    loop {
+        tokio::select! {
+            _ = &mut idle_timer => {
+                let _ = event_tx.send(SessionEvent::UdpFlowClosed(key)).await;
+                break;
+            }
+            recv_res = socket.recv(&mut buf) => {
+                let n = match recv_res {
+                    Ok(n) => n,
+                    Err(_) => {
+                        let _ = event_tx.send(SessionEvent::UdpFlowClosed(key)).await;
+                        break;
+                    }
+                };
+
+                idle_timer.as_mut().reset(tokio::time::Instant::now() + idle_timeout);
+
+                if n == 0 {
+                    continue;
+                }
+                let event = UdpProxyEvent {
+                    src_ip: key.dst_ip,
+                    src_port: key.dst_port,
+                    dst_port: key.guest_port,
+                    data: buf[..n].to_vec(),
+                };
+                if event_tx.send(SessionEvent::Udp(event)).await.is_err() {
+                    break;
+                }
+            }
+            Some(()) = activity_rx.recv() => {
+                idle_timer.as_mut().reset(tokio::time::Instant::now() + idle_timeout);
+            }
         }
     }
 }
