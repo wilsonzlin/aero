@@ -173,6 +173,22 @@ LoadLibrary(<your_umd>.dll)
            D3D11DDI_DEVICECONTEXTFUNCS  (immediate context: state, draws, copies, map/unmap, flush)
 ```
 
+### 1.1 Callback tables: what you must store to report errors safely
+
+The runtime provides callback tables at adapter/device creation time. You must store them in your private adapter/device objects and treat them as **valid only until the corresponding Close/Destroy call**.
+
+At minimum you need the callback that reports errors from `void` DDIs:
+
+* `pfnSetErrorCb` (device-scoped; see §0 “Stubbing failure modes” for the context-vs-device detail)
+
+Practical guidance:
+
+* Store callbacks in the object that “owns” the handle they are associated with:
+  * adapter callbacks in the adapter private struct
+  * device callbacks in the device private struct
+  * context private struct should point back to the parent device (so it can reach `pfnSetErrorCb`)
+* Never call callbacks after `pfnCloseAdapter` / `pfnDestroyDevice`.
+
 Win7-specific gotchas:
 
 * `OpenAdapter11` is declared as `HRESULT APIENTRY OpenAdapter11(D3D10DDIARG_OPENADAPTER *pOpenData)` on Win7:
