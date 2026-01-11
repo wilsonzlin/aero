@@ -3,9 +3,10 @@ use aero_d3d11::runtime::aerogpu_cmd_executor::AerogpuD3d11Executor;
 use aero_gpu::guest_memory::VecGuestMemory;
 use aero_gpu::{AEROGPU_INPUT_LAYOUT_BLOB_MAGIC, AEROGPU_INPUT_LAYOUT_BLOB_VERSION};
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode, AerogpuCmdStreamHeader as ProtocolCmdStreamHeader,
-    AerogpuPrimitiveTopology, AEROGPU_CLEAR_COLOR, AEROGPU_CMD_STREAM_MAGIC,
-    AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
+    AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode,
+    AerogpuCmdStreamHeader as ProtocolCmdStreamHeader, AerogpuPrimitiveTopology,
+    AEROGPU_CLEAR_COLOR, AEROGPU_CMD_STREAM_MAGIC, AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+    AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
 };
 use aero_protocol::aerogpu::aerogpu_pci::{AerogpuFormat, AEROGPU_ABI_VERSION_U32};
 
@@ -79,11 +80,7 @@ fn aerogpu_cmd_renders_with_sparse_vertex_buffer_slots() {
         const PS: u32 = 11;
         const IL: u32 = 20;
 
-        let positions: [[f32; 3]; 3] = [
-            [-1.0, -1.0, 0.0],
-            [3.0, -1.0, 0.0],
-            [-1.0, 3.0, 0.0],
-        ];
+        let positions: [[f32; 3]; 3] = [[-1.0, -1.0, 0.0], [3.0, -1.0, 0.0], [-1.0, 3.0, 0.0]];
         let colors: [[f32; 4]; 3] = [[1.0, 0.0, 0.0, 1.0]; 3];
 
         let pos_bytes = bytemuck::cast_slice(&positions);
@@ -145,7 +142,10 @@ fn aerogpu_cmd_renders_with_sparse_vertex_buffer_slots() {
         stream.extend_from_slice(&0u64.to_le_bytes()); // offset_bytes
         stream.extend_from_slice(&(color_bytes.len() as u64).to_le_bytes());
         stream.extend_from_slice(color_bytes);
-        stream.resize(stream.len() + (align4(color_bytes.len()) - color_bytes.len()), 0);
+        stream.resize(
+            stream.len() + (align4(color_bytes.len()) - color_bytes.len()),
+            0,
+        );
         end_cmd(&mut stream, start);
 
         // CREATE_BUFFER + UPLOAD_RESOURCE (VB_POS).
@@ -164,7 +164,10 @@ fn aerogpu_cmd_renders_with_sparse_vertex_buffer_slots() {
         stream.extend_from_slice(&0u64.to_le_bytes()); // offset_bytes
         stream.extend_from_slice(&(pos_bytes.len() as u64).to_le_bytes());
         stream.extend_from_slice(pos_bytes);
-        stream.resize(stream.len() + (align4(pos_bytes.len()) - pos_bytes.len()), 0);
+        stream.resize(
+            stream.len() + (align4(pos_bytes.len()) - pos_bytes.len()),
+            0,
+        );
         end_cmd(&mut stream, start);
 
         // CREATE_TEXTURE2D (RT)
