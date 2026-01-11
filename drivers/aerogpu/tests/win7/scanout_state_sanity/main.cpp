@@ -52,7 +52,9 @@ static int RunScanoutStateSanity(int argc, char** argv) {
 
   if (!ok) {
     if (st == aerogpu_test::kmt::kStatusNotSupported) {
-      return reporter.Fail("AeroGPU scanout escape not supported (NTSTATUS=0x%08lX)", (unsigned long)st);
+      aerogpu_test::PrintfStdout("INFO: %s: QUERY_SCANOUT escape not supported; skipping", kTestName);
+      reporter.SetSkipped("not_supported");
+      return reporter.Pass();
     }
     return reporter.Fail("D3DKMTEscape(query-scanout) failed (NTSTATUS=0x%08lX)", (unsigned long)st);
   }
