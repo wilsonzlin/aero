@@ -6,6 +6,7 @@
 #include <cassert>
 #include <cstring>
 #include <limits>
+#include <mutex>
 #include <type_traits>
 #include <utility>
 
@@ -1277,13 +1278,12 @@ HRESULT WddmSubmit::SubmitAeroCmdStream(const uint8_t* stream_bytes,
     }
     const bool used_ctx_dma_priv_fallback = used_ctx_dma_priv_ptr_fallback || used_ctx_dma_priv_size_fallback;
     if (used_ctx_dma_priv_fallback) {
-      static bool logged_fallback = false;
-      if (!logged_fallback) {
+      static std::once_flag logged_fallback_once;
+      std::call_once(logged_fallback_once, [&] {
         AEROGPU_D3D10_11_LOG("wddm_submit: filling missing dma private data ptr/size from CreateContext (ptr=%p bytes=%u)",
                              buf.dma_private_data,
                              static_cast<unsigned>(buf.dma_private_data_bytes));
-        logged_fallback = true;
-      }
+      });
     }
     const UINT expected_dma_priv_bytes = static_cast<UINT>(AEROGPU_WIN7_DMA_BUFFER_PRIVATE_DATA_SIZE_BYTES);
     if (buf.dma_private_data_bytes != 0 && !buf.dma_private_data) {
@@ -1303,13 +1303,12 @@ HRESULT WddmSubmit::SubmitAeroCmdStream(const uint8_t* stream_bytes,
       return E_FAIL;
     }
     if (buf.dma_private_data_bytes != expected_dma_priv_bytes) {
-      static bool logged_size_mismatch = false;
-      if (!logged_size_mismatch) {
+      static std::once_flag logged_size_mismatch_once;
+      std::call_once(logged_size_mismatch_once, [&] {
         AEROGPU_D3D10_11_LOG("wddm_submit: dma private data size mismatch bytes=%u expected=%u",
                              static_cast<unsigned>(buf.dma_private_data_bytes),
                              static_cast<unsigned>(expected_dma_priv_bytes));
-        logged_size_mismatch = true;
-      }
+      });
     }
     // Safety: if the runtime reports a larger private-data size than the KMD/UMD
     // contract, clamp to the expected size so dxgkrnl does not copy extra bytes
