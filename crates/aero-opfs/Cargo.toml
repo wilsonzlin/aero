@@ -16,3 +16,4 @@ web-sys = { version = "0.3", features = ["Blob", "DomException", "File", "Worker
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3"
+aero-snapshot = { path = "../aero-snapshot" }

@@ -361,6 +361,7 @@ version = "0.1.0"
 name = "aero-opfs"
 version = "0.1.0"
 dependencies = [
+ "aero-snapshot",
  "emulator",
  "js-sys",
  "st-idb",
