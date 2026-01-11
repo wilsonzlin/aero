@@ -384,9 +384,11 @@ Recommended error codes:
 Policy denials MUST be returned as `ERROR` on the affected `stream_id` without closing the entire mux WebSocket connection.
 
 ### Reference implementations
-
+ 
 If you want a concrete implementation to compare against:
 
+- Canonical shared golden vectors + conformance tests:
+  - [`protocol-vectors/tcp-mux-v1.json`](../../protocol-vectors/tcp-mux-v1.json)
 - Gateway codec + handler:
   - `backend/aero-gateway/src/protocol/tcpMux.ts`
   - `backend/aero-gateway/src/routes/tcpMux.ts`

@@ -231,6 +231,10 @@ Header length is always **8 bytes**.
 
 ### Example (golden vector)
 
+For the canonical machine-readable golden vectors (used by conformance tests
+across Go/TypeScript implementations), see:
+[`protocol-vectors/udp-relay.json`](../../protocol-vectors/udp-relay.json).
+
 Datagram:
 
 - `guest_port = 10000` (`0x2710`)
