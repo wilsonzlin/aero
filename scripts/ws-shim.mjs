@@ -189,6 +189,9 @@ class BaseWebSocket extends EventEmitter {
   /** @param {object} opts */
   _attachSocket(socket, head, opts) {
     this.#socket = socket;
+    // Compatibility with the `ws` package: some tests reach into `_socket` to
+    // simulate backpressure (pause/resume).
+    this._socket = socket;
     this.#buffer = head && head.length > 0 ? Buffer.from(head) : Buffer.alloc(0);
     this.#maxPayloadBytes = opts.maxPayloadBytes ?? this.#maxPayloadBytes;
     this.#expectMasked = opts.expectMasked ?? false;
@@ -205,6 +208,13 @@ class BaseWebSocket extends EventEmitter {
     });
     socket.on("end", () => {
       this.#finalizeClose(1006, Buffer.alloc(0));
+      // WebSocket does not support half-close. Ensure the underlying TCP
+      // connection fully closes so servers awaiting `server.close()` do not hang.
+      try {
+        socket.destroy();
+      } catch {
+        // ignore
+      }
     });
     socket.on("close", () => {
       this.#finalizeClose(1006, Buffer.alloc(0));
