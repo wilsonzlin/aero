@@ -136,6 +136,13 @@ struct Adapter {
   // Stored as raw pointers; the tables live for the lifetime of the runtime.
   D3DDDI_ADAPTERCALLBACKS* adapter_callbacks = nullptr;
   D3DDDI_ADAPTERCALLBACKS2* adapter_callbacks2 = nullptr;
+  // Also store by-value copies so adapter code can safely reference callbacks
+  // even if the runtime decides to re-home the tables (observed on some
+  // configurations).
+  D3DDDI_ADAPTERCALLBACKS adapter_callbacks_copy = {};
+  D3DDDI_ADAPTERCALLBACKS2 adapter_callbacks2_copy = {};
+  bool adapter_callbacks_valid = false;
+  bool adapter_callbacks2_valid = false;
 
   UINT interface_version = 0;
   UINT umd_version = 0;

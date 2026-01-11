@@ -1549,6 +1549,20 @@ Adapter* acquire_adapter(const LUID& luid,
     adapter->adapter_callbacks = callbacks;
     adapter->adapter_callbacks2 = callbacks2;
     adapter->share_token_allocator.set_adapter_luid(luid);
+    if (callbacks) {
+      adapter->adapter_callbacks_copy = *callbacks;
+      adapter->adapter_callbacks_valid = true;
+    } else {
+      adapter->adapter_callbacks_copy = {};
+      adapter->adapter_callbacks_valid = false;
+    }
+    if (callbacks2) {
+      adapter->adapter_callbacks2_copy = *callbacks2;
+      adapter->adapter_callbacks2_valid = true;
+    } else {
+      adapter->adapter_callbacks2_copy = {};
+      adapter->adapter_callbacks2_valid = false;
+    }
     return adapter;
   }
 
@@ -1560,6 +1574,20 @@ Adapter* acquire_adapter(const LUID& luid,
   adapter->umd_version = umd_version;
   adapter->adapter_callbacks = callbacks;
   adapter->adapter_callbacks2 = callbacks2;
+  if (callbacks) {
+    adapter->adapter_callbacks_copy = *callbacks;
+    adapter->adapter_callbacks_valid = true;
+  } else {
+    adapter->adapter_callbacks_copy = {};
+    adapter->adapter_callbacks_valid = false;
+  }
+  if (callbacks2) {
+    adapter->adapter_callbacks2_copy = *callbacks2;
+    adapter->adapter_callbacks2_valid = true;
+  } else {
+    adapter->adapter_callbacks2_copy = {};
+    adapter->adapter_callbacks2_valid = false;
+  }
 
 #if defined(_WIN32)
   // Initialize a best-effort primary display mode so GetDisplayModeEx returns a

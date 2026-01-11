@@ -31,6 +31,16 @@ typedef uint32_t UINT;
 typedef int32_t HRESULT;
 typedef uint8_t BYTE;
 typedef int32_t BOOL;
+typedef struct _LARGE_INTEGER {
+  int64_t QuadPart;
+} LARGE_INTEGER;
+
+typedef struct _GUID {
+  uint32_t Data1;
+  uint16_t Data2;
+  uint16_t Data3;
+  uint8_t Data4[8];
+} GUID;
 typedef struct _RECT {
   long left;
   long top;
@@ -109,11 +119,197 @@ typedef struct _LUID {
 // can be compiled without the WDK.
 
 #if defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI)
+  #include <d3d9caps.h>
+  #include <d3d9types.h>
   #include <d3dumddi.h>
   #include <d3d9umddi.h>
 #endif
 
 #if !(defined(_WIN32) && defined(AEROGPU_D3D9_USE_WDK_DDI))
+
+#if !defined(_WIN32)
+// ---- D3D9 public types/constants (subset) ------------------------------------
+// Repository builds do not include the Windows SDK/WDK, but the UMD still needs
+// ABI-compatible public structs (D3DCAPS9, D3DADAPTER_IDENTIFIER9) to satisfy
+// Win7 D3D9Ex runtime behavior.
+
+// Shader version encoding (mirrors d3d9caps.h).
+#ifndef D3DVS_VERSION
+  #define D3DVS_VERSION(major, minor) (0xFFFE0000u | ((uint32_t)(major) << 8) | (uint32_t)(minor))
+#endif
+#ifndef D3DPS_VERSION
+  #define D3DPS_VERSION(major, minor) (0xFFFF0000u | ((uint32_t)(major) << 8) | (uint32_t)(minor))
+#endif
+
+// D3DPRESENT_INTERVAL_* bitmask values (from d3d9types.h).
+#ifndef D3DPRESENT_INTERVAL_ONE
+  #define D3DPRESENT_INTERVAL_ONE 0x00000001u
+#endif
+#ifndef D3DPRESENT_INTERVAL_IMMEDIATE
+  #define D3DPRESENT_INTERVAL_IMMEDIATE 0x80000000u
+#endif
+
+// D3DCAPS2_* (from d3d9caps.h).
+#ifndef D3DCAPS2_CANRENDERWINDOWED
+  #define D3DCAPS2_CANRENDERWINDOWED 0x00080000u
+#endif
+#ifndef D3DCAPS2_CANSHARERESOURCE
+  #define D3DCAPS2_CANSHARERESOURCE 0x00100000u
+#endif
+
+// D3DPRASTERCAPS_* (from d3d9caps.h).
+#ifndef D3DPRASTERCAPS_SCISSORTEST
+  #define D3DPRASTERCAPS_SCISSORTEST 0x00001000u
+#endif
+
+// D3DPTFILTERCAPS_* (from d3d9caps.h).
+#ifndef D3DPTFILTERCAPS_MINFPOINT
+  #define D3DPTFILTERCAPS_MINFPOINT 0x00000100u
+#endif
+#ifndef D3DPTFILTERCAPS_MINFLINEAR
+  #define D3DPTFILTERCAPS_MINFLINEAR 0x00000200u
+#endif
+#ifndef D3DPTFILTERCAPS_MAGFPOINT
+  #define D3DPTFILTERCAPS_MAGFPOINT 0x01000000u
+#endif
+#ifndef D3DPTFILTERCAPS_MAGFLINEAR
+  #define D3DPTFILTERCAPS_MAGFLINEAR 0x02000000u
+#endif
+
+// D3DPBLENDCAPS_* (from d3d9caps.h).
+#ifndef D3DPBLENDCAPS_ZERO
+  #define D3DPBLENDCAPS_ZERO 0x00000001u
+#endif
+#ifndef D3DPBLENDCAPS_ONE
+  #define D3DPBLENDCAPS_ONE 0x00000002u
+#endif
+#ifndef D3DPBLENDCAPS_SRCALPHA
+  #define D3DPBLENDCAPS_SRCALPHA 0x00000010u
+#endif
+#ifndef D3DPBLENDCAPS_INVSRCALPHA
+  #define D3DPBLENDCAPS_INVSRCALPHA 0x00000020u
+#endif
+
+// D3DPTEXTURECAPS_* (subset).
+#ifndef D3DPTEXTURECAPS_POW2
+  #define D3DPTEXTURECAPS_POW2 0x00000002u
+#endif
+
+typedef struct _D3DVSHADERCAPS2_0 {
+  DWORD Caps;
+  int32_t DynamicFlowControlDepth;
+  int32_t NumTemps;
+  int32_t StaticFlowControlDepth;
+  int32_t NumInstructionSlots;
+} D3DVSHADERCAPS2_0;
+
+typedef struct _D3DPSHADERCAPS2_0 {
+  DWORD Caps;
+  int32_t DynamicFlowControlDepth;
+  int32_t NumTemps;
+  int32_t StaticFlowControlDepth;
+  int32_t NumInstructionSlots;
+} D3DPSHADERCAPS2_0;
+
+// Full D3DCAPS9 layout (Win7-era; from d3d9caps.h).
+typedef struct _D3DCAPS9 {
+  DWORD DeviceType;
+  UINT AdapterOrdinal;
+  DWORD Caps;
+  DWORD Caps2;
+  DWORD Caps3;
+  DWORD PresentationIntervals;
+  DWORD CursorCaps;
+  DWORD DevCaps;
+  DWORD PrimitiveMiscCaps;
+  DWORD RasterCaps;
+  DWORD ZCmpCaps;
+  DWORD SrcBlendCaps;
+  DWORD DestBlendCaps;
+  DWORD AlphaCmpCaps;
+  DWORD ShadeCaps;
+  DWORD TextureCaps;
+  DWORD TextureFilterCaps;
+  DWORD CubeTextureFilterCaps;
+  DWORD VolumeTextureFilterCaps;
+  DWORD TextureAddressCaps;
+  DWORD VolumeTextureAddressCaps;
+  DWORD LineCaps;
+  DWORD MaxTextureWidth;
+  DWORD MaxTextureHeight;
+  DWORD MaxVolumeExtent;
+  DWORD MaxTextureRepeat;
+  DWORD MaxTextureAspectRatio;
+  DWORD MaxAnisotropy;
+  float MaxVertexW;
+  float GuardBandLeft;
+  float GuardBandTop;
+  float GuardBandRight;
+  float GuardBandBottom;
+  float ExtentsAdjust;
+  DWORD StencilCaps;
+  DWORD FVFCaps;
+  DWORD TextureOpCaps;
+  DWORD MaxTextureBlendStages;
+  DWORD MaxSimultaneousTextures;
+  DWORD VertexProcessingCaps;
+  DWORD MaxActiveLights;
+  DWORD MaxUserClipPlanes;
+  DWORD MaxVertexBlendMatrices;
+  DWORD MaxVertexBlendMatrixIndex;
+  float MaxPointSize;
+  DWORD MaxPrimitiveCount;
+  DWORD MaxVertexIndex;
+  DWORD MaxStreams;
+  DWORD MaxStreamStride;
+  DWORD VertexShaderVersion;
+  DWORD MaxVertexShaderConst;
+  DWORD PixelShaderVersion;
+  float PixelShader1xMaxValue;
+  DWORD DevCaps2;
+  float MaxNpatchTessellationLevel;
+  DWORD Reserved5;
+  UINT MasterAdapterOrdinal;
+  UINT AdapterOrdinalInGroup;
+  UINT NumberOfAdaptersInGroup;
+  DWORD DeclTypes;
+  DWORD NumSimultaneousRTs;
+  DWORD StretchRectFilterCaps;
+  D3DVSHADERCAPS2_0 VS20Caps;
+  D3DPSHADERCAPS2_0 PS20Caps;
+  DWORD VertexTextureFilterCaps;
+  DWORD MaxVShaderInstructionsExecuted;
+  DWORD MaxPShaderInstructionsExecuted;
+  DWORD MaxVertexShader30InstructionSlots;
+  DWORD MaxPixelShader30InstructionSlots;
+} D3DCAPS9;
+
+typedef struct _D3DADAPTER_IDENTIFIER9 {
+  char Driver[512];
+  char Description[512];
+  char DeviceName[32];
+  LARGE_INTEGER DriverVersion;
+  DWORD VendorId;
+  DWORD DeviceId;
+  DWORD SubSysId;
+  DWORD Revision;
+  GUID DeviceIdentifier;
+  DWORD WHQLLevel;
+} D3DADAPTER_IDENTIFIER9;
+
+typedef enum _D3DDDICAPS_TYPE {
+  D3DDDICAPS_GETD3D9CAPS = 1,
+  D3DDDICAPS_GETFORMATCOUNT = 2,
+  D3DDDICAPS_GETFORMAT = 3,
+  D3DDDICAPS_GETMULTISAMPLEQUALITYLEVELS = 4,
+} D3DDDICAPS_TYPE;
+
+typedef enum _D3DDDI_QUERYADAPTERINFO_TYPE {
+  D3DDDIQUERYADAPTERINFO_GETADAPTERIDENTIFIER = 1,
+  D3DDDIQUERYADAPTERINFO_GETADAPTERLUID = 2,
+} D3DDDI_QUERYADAPTERINFO_TYPE;
+
+#endif // !defined(_WIN32)
 
 // ---- Minimal WDDM handle shims ------------------------------------------------
 // D3D9UMDDI handle types are opaque driver-private pointers. The WDK represents
