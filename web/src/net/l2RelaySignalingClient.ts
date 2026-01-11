@@ -2,7 +2,6 @@ import {
   L2_TUNNEL_DATA_CHANNEL_LABEL,
   WebRtcL2TunnelClient,
   assertL2TunnelDataChannelSemantics,
-  createL2TunnelDataChannel,
   type L2TunnelClientOptions,
   type L2TunnelSink,
 } from "./l2Tunnel";
@@ -11,19 +10,21 @@ import { connectRelaySignaling, type ConnectRelaySignalingOptions } from "./webr
 export type ConnectL2RelaySignalingOptions = ConnectRelaySignalingOptions & {
   /**
    * Advanced: additional RTCDataChannel init options. The helper enforces the
-   * L2 tunnel's reliability + ordering requirements (see below).
+   * L2 tunnel's reliability requirements (see below). Ordering is optional and
+   * is forwarded as-is.
    */
   l2ChannelOptions?: RTCDataChannelInit;
 };
 
 // `docs/adr/0013-networking-l2-tunnel.md` + `docs/l2-tunnel-protocol.md` require
-// the L2 tunnel DataChannel to be reliable (no partial reliability settings)
-// and ordered.
+// the L2 tunnel DataChannel to be reliable (no partial reliability settings).
+// Ordering is optional; default helpers use `ordered=false` to reduce
+// head-of-line blocking.
 function createL2DataChannel(pc: RTCPeerConnection, opts?: RTCDataChannelInit): RTCDataChannel {
   if (opts?.maxRetransmits !== undefined || opts?.maxPacketLifeTime !== undefined) {
     throw new Error("L2 relay DataChannel must be reliable (do not set maxRetransmits/maxPacketLifeTime)");
   }
-  const init: RTCDataChannelInit = { ...(opts ?? {}), ordered: true };
+  const init: RTCDataChannelInit = { ordered: false, ...(opts ?? {}) };
   const channel = pc.createDataChannel(L2_TUNNEL_DATA_CHANNEL_LABEL, init);
   assertL2TunnelDataChannelSemantics(channel);
   return channel;

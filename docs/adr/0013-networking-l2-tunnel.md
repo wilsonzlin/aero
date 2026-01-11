@@ -67,9 +67,8 @@ This avoids coupling the gateway’s HTTP concerns to a high-throughput packet-f
 ### Transport choices (WS first; WebRTC optional)
 
 - **Baseline transport:** **WebSocket (WSS)** for the L2 tunnel (simplest to deploy and debug).
-- **Optional alternative:** **WebRTC DataChannel** may be added later. With the current requirement
-  for ordered delivery, it preserves the same in-order semantics as WebSocket; consider unordered
-  delivery only once the proxy-side stack implements TCP segment reassembly.
+- **Optional alternative:** **WebRTC DataChannel** may be added later as an optimization; it can
+  reduce head-of-line blocking and improve latency under loss.
 
 ### Reliability requirement for WebRTC L2
 
@@ -77,15 +76,14 @@ If/when a WebRTC transport is used for L2 tunneling:
 
 - The DataChannel **MUST be reliable** (no frame loss).
    - (I.e. do **not** use `maxRetransmits`/`maxPacketLifeTime` / “partial reliability”.)
-- The DataChannel **MUST be ordered** (`ordered: true`).
+- The DataChannel MAY be **ordered or unordered**.
+   - Recommended: `ordered: false` (reduces head-of-line blocking).
+   - `ordered: true` is allowed if a deployment prefers in-order delivery.
 
 Rationale: an L2 tunnel carries TCP/UDP/IP/ARP/DHCP frames; dropping frames breaks correctness (and
-can create hard-to-debug “random” guest networking failures). Additionally, the current proxy-side
-stack (`crates/aero-net-stack`) terminates guest TCP and intentionally does not implement full TCP
-segment reassembly. Unordered delivery at the tunnel layer can surface as out-of-order TCP segments,
-causing retransmit storms and, in the worst case, prematurely closing proxy-side TCP streams if FIN
-arrives before missing payload. Ordered delivery matches the stack’s assumptions and preserves the
-same in-order semantics as the baseline WebSocket transport.
+can create hard-to-debug “random” guest networking failures). Ordering is optional for correctness;
+choose `ordered: true` or `ordered: false` based on performance tradeoffs and proxy-side stack
+behavior.
 
 ### Security posture (auth, origin, egress policy)
 
@@ -126,9 +124,8 @@ Minimum requirements for production deployments:
 ## Consequences
 
 - **Higher bandwidth overhead:** L2 tunneling carries Ethernet/IP/TCP “chatter” (ACKs, retransmits, ARP/DHCP/broadcast) over the WAN. Expect higher baseline bandwidth than socket-level relaying.
-- **WebRTC must be reliable and ordered for L2:** if WebRTC is introduced, it cannot use
-  lossy/partially reliable settings, and it must preserve in-order delivery to match the current
-  proxy-side TCP handling.
+- **WebRTC must be reliable for L2:** if WebRTC is introduced, it cannot use lossy/partially
+  reliable settings.
 - **Operational complexity:** running a dedicated `aero-l2-proxy` adds:
   - another service to deploy/monitor/scale
   - stateful per-VM session management (timeouts, cleanup, quotas)

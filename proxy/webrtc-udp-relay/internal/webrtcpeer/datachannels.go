@@ -39,10 +39,7 @@ func validateL2DataChannel(dc *webrtc.DataChannel) error {
 		return fmt.Errorf("expected label=%q (got %q)", DataChannelLabelL2, dc.Label())
 	}
 	// L2 is a raw Ethernet tunnel that carries TCP segments to a user-space stack.
-	// The tunnel MUST be reliable (no partial reliability) and ordered.
-	if !dc.Ordered() {
-		return fmt.Errorf("l2 datachannel must be ordered (ordered=false)")
-	}
+	// The tunnel MUST be reliable (no partial reliability); ordering is optional.
 	if dc.MaxPacketLifeTime() != nil {
 		return fmt.Errorf("l2 datachannel must be fully reliable (maxPacketLifeTime must be unset)")
 	}
@@ -55,10 +52,11 @@ func validateL2DataChannel(dc *webrtc.DataChannel) error {
 // NewL2DataChannelInit returns the recommended DataChannelInit for the L2
 // tunnel.
 //
-// The L2 tunnel MUST be reliable and ordered. Do not set
-// MaxRetransmits/MaxPacketLifeTime.
+// The L2 tunnel MUST be reliable. Do not set MaxRetransmits/MaxPacketLifeTime.
+// Unordered delivery is recommended by default (reduces head-of-line blocking);
+// ordered delivery is allowed.
 func NewL2DataChannelInit() *webrtc.DataChannelInit {
-	ordered := true
+	ordered := false
 	return &webrtc.DataChannelInit{
 		Ordered: &ordered,
 	}

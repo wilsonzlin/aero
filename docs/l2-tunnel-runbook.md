@@ -51,13 +51,13 @@ Expected behavior:
 ### 2) (Optional) Start the WebRTC relay (DataChannel transport)
 
 WebRTC is optional. Use it when you want a UDP-based tunnel transport for experimentation and
-evaluation under loss. With the current requirement for ordered delivery on the `l2` DataChannel, it
-preserves the same in-order semantics as the baseline WebSocket transport.
+evaluation under loss.
 
 If you carry the **L2 tunnel** over WebRTC, the DataChannel must be configured as:
 
 - **reliable** (no frame loss / no partial reliability)
-- **ordered** (`ordered = true`)
+- Recommended: **unordered** (`ordered = false`) to reduce head-of-line blocking
+- `ordered = true` is allowed if a deployment prefers in-order delivery
 - leave `maxRetransmits` / `maxPacketLifeTime` unset (default reliable)
 
 See ADR 0013 for the rationale.

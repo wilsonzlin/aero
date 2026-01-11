@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -213,7 +214,7 @@ func TestWebRTCUDPRelay_L2TunnelRejectsPartialReliability(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = pc.Close() })
 
-	ordered := true
+	ordered := false
 	maxRetransmits := uint16(0)
 	dc, err := pc.CreateDataChannel("l2", &webrtc.DataChannelInit{
 		Ordered:        &ordered,
@@ -239,103 +240,69 @@ func TestWebRTCUDPRelay_L2TunnelRejectsPartialReliability(t *testing.T) {
 	}
 }
 
-func TestWebRTCUDPRelay_L2TunnelRejectsUnordered(t *testing.T) {
-	backendURL, upgrades := startTestL2Backend(t)
-
-	relayCfg := relay.DefaultConfig()
-	relayCfg.L2BackendWSURL = backendURL
-	destPolicy := policy.NewDevDestinationPolicy()
-	baseURL := startTestRelayServer(t, relayCfg, destPolicy)
-
-	pc, err := webrtc.NewPeerConnection(webrtc.Configuration{})
-	if err != nil {
-		t.Fatalf("new peer connection: %v", err)
-	}
-	t.Cleanup(func() { _ = pc.Close() })
-
-	ordered := false
-	dc, err := pc.CreateDataChannel("l2", &webrtc.DataChannelInit{
-		Ordered: &ordered,
-	})
-	if err != nil {
-		t.Fatalf("create data channel: %v", err)
-	}
-
-	closedCh := make(chan struct{})
-	dc.OnClose(func() { close(closedCh) })
-
-	exchangeOffer(t, baseURL, pc)
-
-	select {
-	case <-closedCh:
-	case <-time.After(5 * time.Second):
-		t.Fatalf("timed out waiting for server to close unordered l2 channel")
-	}
-
-	if got := upgrades.Load(); got != 0 {
-		t.Fatalf("backend websocket should not be dialed for rejected l2 channel (got %d upgrades)", got)
-	}
-}
-
 func TestWebRTCUDPRelay_L2TunnelPingPongRoundTrip(t *testing.T) {
-	backendURL, _ := startTestL2Backend(t)
+	for _, ordered := range []bool{false, true} {
+		ordered := ordered
+		t.Run(fmt.Sprintf("ordered=%v", ordered), func(t *testing.T) {
+			backendURL, _ := startTestL2Backend(t)
 
-	relayCfg := relay.DefaultConfig()
-	relayCfg.L2BackendWSURL = backendURL
-	destPolicy := policy.NewDevDestinationPolicy()
-	baseURL := startTestRelayServer(t, relayCfg, destPolicy)
+			relayCfg := relay.DefaultConfig()
+			relayCfg.L2BackendWSURL = backendURL
+			destPolicy := policy.NewDevDestinationPolicy()
+			baseURL := startTestRelayServer(t, relayCfg, destPolicy)
 
-	pc, err := webrtc.NewPeerConnection(webrtc.Configuration{})
-	if err != nil {
-		t.Fatalf("new peer connection: %v", err)
-	}
-	t.Cleanup(func() { _ = pc.Close() })
+			pc, err := webrtc.NewPeerConnection(webrtc.Configuration{})
+			if err != nil {
+				t.Fatalf("new peer connection: %v", err)
+			}
+			t.Cleanup(func() { _ = pc.Close() })
 
-	ordered := true
-	dc, err := pc.CreateDataChannel("l2", &webrtc.DataChannelInit{
-		Ordered: &ordered,
-	})
-	if err != nil {
-		t.Fatalf("create data channel: %v", err)
-	}
+			dc, err := pc.CreateDataChannel("l2", &webrtc.DataChannelInit{
+				Ordered: &ordered,
+			})
+			if err != nil {
+				t.Fatalf("create data channel: %v", err)
+			}
 
-	openCh := make(chan struct{})
-	gotCh := make(chan []byte, 1)
+			openCh := make(chan struct{})
+			gotCh := make(chan []byte, 1)
 
-	dc.OnOpen(func() { close(openCh) })
-	dc.OnMessage(func(msg webrtc.DataChannelMessage) {
-		if msg.IsString {
-			return
-		}
-		select {
-		case gotCh <- append([]byte(nil), msg.Data...):
-		default:
-		}
-	})
+			dc.OnOpen(func() { close(openCh) })
+			dc.OnMessage(func(msg webrtc.DataChannelMessage) {
+				if msg.IsString {
+					return
+				}
+				select {
+				case gotCh <- append([]byte(nil), msg.Data...):
+				default:
+				}
+			})
 
-	exchangeOffer(t, baseURL, pc)
+			exchangeOffer(t, baseURL, pc)
 
-	select {
-	case <-openCh:
-	case <-time.After(5 * time.Second):
-		t.Fatalf("timed out waiting for l2 datachannel open")
-	}
+			select {
+			case <-openCh:
+			case <-time.After(5 * time.Second):
+				t.Fatalf("timed out waiting for l2 datachannel open")
+			}
 
-	ping := []byte{0xA2, 0x03, 0x01, 0x00}
-	if err := dc.Send(ping); err != nil {
-		t.Fatalf("send ping: %v", err)
-	}
+			ping := []byte{0xA2, 0x03, 0x01, 0x00}
+			if err := dc.Send(ping); err != nil {
+				t.Fatalf("send ping: %v", err)
+			}
 
-	var got []byte
-	select {
-	case got = <-gotCh:
-	case <-time.After(5 * time.Second):
-		t.Fatalf("timed out waiting for pong")
-	}
+			var got []byte
+			select {
+			case got = <-gotCh:
+			case <-time.After(5 * time.Second):
+				t.Fatalf("timed out waiting for pong")
+			}
 
-	want := []byte{0xA2, 0x03, 0x02, 0x00}
-	if !bytes.Equal(got, want) {
-		t.Fatalf("pong mismatch: %x != %x", got, want)
+			want := []byte{0xA2, 0x03, 0x02, 0x00}
+			if !bytes.Equal(got, want) {
+				t.Fatalf("pong mismatch: %x != %x", got, want)
+			}
+		})
 	}
 }
 

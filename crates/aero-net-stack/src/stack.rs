@@ -1079,8 +1079,10 @@ impl NetworkStack {
         // Payload.
         if !payload.is_empty() {
             // We intentionally do not implement full TCP reassembly: accept only in-order payload.
-            // This relies on the guest->stack transport preserving frame ordering (e.g. WebSocket,
-            // or an ordered WebRTC DataChannel for the L2 tunnel).
+            // Out-of-order segments are dropped and must be retransmitted by the guest. Ordered
+            // transports (WebSocket, or an ordered WebRTC DataChannel) avoid spurious retransmits;
+            // unordered reliable transports can reduce head-of-line blocking at the cost of extra
+            // retransmissions when packets are lost.
             let seg_seq = tcp.seq_number();
             let seg_end = seg_seq.wrapping_add(payload.len() as u32);
             if seg_seq == conn.guest_next_seq {

@@ -1,6 +1,7 @@
 package webrtcpeer
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -48,146 +49,137 @@ func connectPeerConnections(t *testing.T, offerer, answerer *webrtc.PeerConnecti
 }
 
 func TestL2DataChannelSemantics_Reliable(t *testing.T) {
-	api := webrtc.NewAPI()
+	for _, ordered := range []bool{false, true} {
+		ordered := ordered
+		t.Run(fmt.Sprintf("ordered=%v", ordered), func(t *testing.T) {
+			api := webrtc.NewAPI()
 
-	serverPC, err := api.NewPeerConnection(webrtc.Configuration{})
-	if err != nil {
-		t.Fatalf("NewPeerConnection(server): %v", err)
-	}
-	t.Cleanup(func() { _ = serverPC.Close() })
+			serverPC, err := api.NewPeerConnection(webrtc.Configuration{})
+			if err != nil {
+				t.Fatalf("NewPeerConnection(server): %v", err)
+			}
+			t.Cleanup(func() { _ = serverPC.Close() })
 
-	clientPC, err := api.NewPeerConnection(webrtc.Configuration{})
-	if err != nil {
-		t.Fatalf("NewPeerConnection(client): %v", err)
-	}
-	t.Cleanup(func() { _ = clientPC.Close() })
+			clientPC, err := api.NewPeerConnection(webrtc.Configuration{})
+			if err != nil {
+				t.Fatalf("NewPeerConnection(client): %v", err)
+			}
+			t.Cleanup(func() { _ = clientPC.Close() })
 
-	type result struct {
-		ordered  bool
-		maxRet   *uint16
-		maxLife  *uint16
-		validate error
-	}
-	gotCh := make(chan result, 1)
+			type result struct {
+				ordered  bool
+				maxRet   *uint16
+				maxLife  *uint16
+				validate error
+			}
+			gotCh := make(chan result, 1)
 
-	serverPC.OnDataChannel(func(dc *webrtc.DataChannel) {
-		if dc.Label() != DataChannelLabelL2 {
-			return
-		}
-		gotCh <- result{
-			ordered:  dc.Ordered(),
-			maxRet:   dc.MaxRetransmits(),
-			maxLife:  dc.MaxPacketLifeTime(),
-			validate: validateL2DataChannel(dc),
-		}
-	})
+			serverPC.OnDataChannel(func(dc *webrtc.DataChannel) {
+				if dc.Label() != DataChannelLabelL2 {
+					return
+				}
+				gotCh <- result{
+					ordered:  dc.Ordered(),
+					maxRet:   dc.MaxRetransmits(),
+					maxLife:  dc.MaxPacketLifeTime(),
+					validate: validateL2DataChannel(dc),
+				}
+			})
 
-	ordered := true
-	if _, err := clientPC.CreateDataChannel(DataChannelLabelL2, &webrtc.DataChannelInit{Ordered: &ordered}); err != nil {
-		t.Fatalf("CreateDataChannel(%q): %v", DataChannelLabelL2, err)
-	}
+			if _, err := clientPC.CreateDataChannel(DataChannelLabelL2, &webrtc.DataChannelInit{Ordered: &ordered}); err != nil {
+				t.Fatalf("CreateDataChannel(%q): %v", DataChannelLabelL2, err)
+			}
 
-	connectPeerConnections(t, clientPC, serverPC)
+			connectPeerConnections(t, clientPC, serverPC)
 
-	select {
-	case got := <-gotCh:
-		if got.validate != nil {
-			t.Fatalf("validateL2DataChannel: %v", got.validate)
-		}
-		if got.ordered != ordered {
-			t.Fatalf("l2 datachannel ordered=%v, want %v", got.ordered, ordered)
-		}
-		if got.maxRet != nil {
-			t.Fatalf("l2 datachannel should not set maxRetransmits")
-		}
-		if got.maxLife != nil {
-			t.Fatalf("l2 datachannel should not set maxPacketLifeTime")
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatalf("timed out waiting for server-side l2 datachannel")
+			select {
+			case got := <-gotCh:
+				if got.validate != nil {
+					t.Fatalf("validateL2DataChannel: %v", got.validate)
+				}
+				if got.ordered != ordered {
+					t.Fatalf("l2 datachannel ordered=%v, want %v", got.ordered, ordered)
+				}
+				if got.maxRet != nil {
+					t.Fatalf("l2 datachannel should not set maxRetransmits")
+				}
+				if got.maxLife != nil {
+					t.Fatalf("l2 datachannel should not set maxPacketLifeTime")
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatalf("timed out waiting for server-side l2 datachannel")
+			}
+		})
 	}
 }
 
 func TestL2DataChannelSemantics_RejectsPartialReliability(t *testing.T) {
-	api := webrtc.NewAPI()
-
-	serverPC, err := api.NewPeerConnection(webrtc.Configuration{})
-	if err != nil {
-		t.Fatalf("NewPeerConnection(server): %v", err)
-	}
-	t.Cleanup(func() { _ = serverPC.Close() })
-
-	clientPC, err := api.NewPeerConnection(webrtc.Configuration{})
-	if err != nil {
-		t.Fatalf("NewPeerConnection(client): %v", err)
-	}
-	t.Cleanup(func() { _ = clientPC.Close() })
-
-	gotCh := make(chan error, 1)
-	serverPC.OnDataChannel(func(dc *webrtc.DataChannel) {
-		if dc.Label() != DataChannelLabelL2 {
-			return
-		}
-		gotCh <- validateL2DataChannel(dc)
-	})
-
-	ordered := true
-	maxRetransmits := uint16(0)
-	if _, err := clientPC.CreateDataChannel(DataChannelLabelL2, &webrtc.DataChannelInit{
-		Ordered:        &ordered,
-		MaxRetransmits: &maxRetransmits,
-	}); err != nil {
-		t.Fatalf("CreateDataChannel(%q): %v", DataChannelLabelL2, err)
+	tests := []struct {
+		name string
+		init func(ordered bool) *webrtc.DataChannelInit
+	}{
+		{
+			name: "maxRetransmits",
+			init: func(ordered bool) *webrtc.DataChannelInit {
+				maxRetransmits := uint16(0)
+				return &webrtc.DataChannelInit{
+					Ordered:        &ordered,
+					MaxRetransmits: &maxRetransmits,
+				}
+			},
+		},
+		{
+			name: "maxPacketLifeTime",
+			init: func(ordered bool) *webrtc.DataChannelInit {
+				maxPacketLifeTime := uint16(1)
+				return &webrtc.DataChannelInit{
+					Ordered:           &ordered,
+					MaxPacketLifeTime: &maxPacketLifeTime,
+				}
+			},
+		},
 	}
 
-	connectPeerConnections(t, clientPC, serverPC)
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			api := webrtc.NewAPI()
 
-	select {
-	case err := <-gotCh:
-		if err == nil {
-			t.Fatalf("expected validateL2DataChannel to reject partial-reliability l2 datachannel")
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatalf("timed out waiting for server-side l2 datachannel")
-	}
-}
+			serverPC, err := api.NewPeerConnection(webrtc.Configuration{})
+			if err != nil {
+				t.Fatalf("NewPeerConnection(server): %v", err)
+			}
+			t.Cleanup(func() { _ = serverPC.Close() })
 
-func TestL2DataChannelSemantics_RejectsUnordered(t *testing.T) {
-	api := webrtc.NewAPI()
+			clientPC, err := api.NewPeerConnection(webrtc.Configuration{})
+			if err != nil {
+				t.Fatalf("NewPeerConnection(client): %v", err)
+			}
+			t.Cleanup(func() { _ = clientPC.Close() })
 
-	serverPC, err := api.NewPeerConnection(webrtc.Configuration{})
-	if err != nil {
-		t.Fatalf("NewPeerConnection(server): %v", err)
-	}
-	t.Cleanup(func() { _ = serverPC.Close() })
+			gotCh := make(chan error, 1)
+			serverPC.OnDataChannel(func(dc *webrtc.DataChannel) {
+				if dc.Label() != DataChannelLabelL2 {
+					return
+				}
+				gotCh <- validateL2DataChannel(dc)
+			})
 
-	clientPC, err := api.NewPeerConnection(webrtc.Configuration{})
-	if err != nil {
-		t.Fatalf("NewPeerConnection(client): %v", err)
-	}
-	t.Cleanup(func() { _ = clientPC.Close() })
+			ordered := false
+			if _, err := clientPC.CreateDataChannel(DataChannelLabelL2, tt.init(ordered)); err != nil {
+				t.Fatalf("CreateDataChannel(%q): %v", DataChannelLabelL2, err)
+			}
 
-	gotCh := make(chan error, 1)
-	serverPC.OnDataChannel(func(dc *webrtc.DataChannel) {
-		if dc.Label() != DataChannelLabelL2 {
-			return
-		}
-		gotCh <- validateL2DataChannel(dc)
-	})
+			connectPeerConnections(t, clientPC, serverPC)
 
-	ordered := false
-	if _, err := clientPC.CreateDataChannel(DataChannelLabelL2, &webrtc.DataChannelInit{Ordered: &ordered}); err != nil {
-		t.Fatalf("CreateDataChannel(%q): %v", DataChannelLabelL2, err)
-	}
-
-	connectPeerConnections(t, clientPC, serverPC)
-
-	select {
-	case err := <-gotCh:
-		if err == nil {
-			t.Fatalf("expected validateL2DataChannel to reject unordered l2 datachannel")
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatalf("timed out waiting for server-side l2 datachannel")
+			select {
+			case err := <-gotCh:
+				if err == nil {
+					t.Fatalf("expected validateL2DataChannel to reject partial-reliability l2 datachannel")
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatalf("timed out waiting for server-side l2 datachannel")
+			}
+		})
 	}
 }

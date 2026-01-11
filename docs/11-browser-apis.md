@@ -1266,9 +1266,9 @@ async function setupUdpProxy(signalingUrl) {
     });
     
     // Note: this DataChannel config is for the UDP relay, where best-effort/lossy semantics are
-    // acceptable. If you carry the **L2 tunnel** over WebRTC, the channel MUST be reliable and
-    // ordered (do NOT set `maxRetransmits`/`maxPacketLifeTime`). See ADR 0013 and
-    // `docs/l2-tunnel-protocol.md`.
+    // acceptable. If you carry the **L2 tunnel** over WebRTC, the channel MUST be reliable
+    // (do NOT set `maxRetransmits`/`maxPacketLifeTime`). `ordered: false` is recommended to reduce
+    // head-of-line blocking. See ADR 0013 and `docs/l2-tunnel-protocol.md`.
     const dc = pc.createDataChannel('udp', {
         ordered: false,
         maxRetransmits: 0
