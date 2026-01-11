@@ -1089,14 +1089,18 @@ static std::optional<std::wstring> CmGetDeviceIdStringW(DEVINST inst) {
   return buf;
 }
 
-static std::optional<bool> WaveOutDevnodeTreeContainsVirtioSnd(Logger& log, HWAVEOUT hwo) {
+static std::optional<bool> WaveOutDevnodeTreeContainsVirtioSnd(Logger& log, HWAVEOUT hwo,
+                                                               bool log_failure) {
   // Some WDM audio drivers support mapping waveOut devices back to a PnP devnode. This allows us to
   // verify that we're actually opening the virtio-snd device when using WAVE_MAPPER fallback.
   DEVINST inst = 0;
   const MMRESULT mm =
       waveOutMessage(hwo, DRV_QUERYDEVNODE, reinterpret_cast<DWORD_PTR>(&inst), 0);
   if (mm != MMSYSERR_NOERROR) {
-    log.Logf("virtio-snd: waveOutMessage(DRV_QUERYDEVNODE) failed: %s", WaveOutErrorText(mm).c_str());
+    if (log_failure) {
+      log.Logf("virtio-snd: waveOutMessage(DRV_QUERYDEVNODE) failed: %s",
+               WaveOutErrorText(mm).c_str());
+    }
     return std::nullopt;
   }
 
@@ -1230,7 +1234,7 @@ static std::optional<UINT> FindWaveOutDeviceIdByVirtioDevnode(Logger& log, const
     const MMRESULT open_rc = waveOutOpen(&hwo, i, &fmt, 0, 0, CALLBACK_NULL);
     if (open_rc != MMSYSERR_NOERROR || !hwo) continue;
 
-    const auto is_virtio = WaveOutDevnodeTreeContainsVirtioSnd(log, hwo);
+    const auto is_virtio = WaveOutDevnodeTreeContainsVirtioSnd(log, hwo, false);
     (void)waveOutClose(hwo);
 
     if (is_virtio.has_value() && *is_virtio) {
@@ -1291,7 +1295,8 @@ static bool WaveOutPlaybackSmokeTest(Logger& log, UINT device_id, const std::wst
   }
 
   if (verify_mode != DevnodeVerifyMode::kNone) {
-    const auto is_virtio = WaveOutDevnodeTreeContainsVirtioSnd(log, hwo);
+    const auto is_virtio =
+        WaveOutDevnodeTreeContainsVirtioSnd(log, hwo, verify_mode == DevnodeVerifyMode::kRequired);
     if (!is_virtio.has_value()) {
       if (verify_mode == DevnodeVerifyMode::kRequired) {
         log.LogLine("virtio-snd: unable to verify waveOut devnode maps to virtio-snd");
