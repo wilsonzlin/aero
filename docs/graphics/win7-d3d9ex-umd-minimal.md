@@ -472,6 +472,10 @@ Rules for DWM stability:
 * Any waiting must be bounded and tied to a real fence.
 * If a query isn’t ready, return “not ready” (`S_FALSE` / `D3DERR_WASSTILLDRAWING`) rather than blocking.
 
+Guest-side validation:
+
+* `drivers/aerogpu/tests/win7/d3d9ex_dwm_ddi_sanity` exercises the DWM-critical D3D9Ex probes (device state checks, PresentEx throttling, vblank waits, present stats, residency, etc.) and asserts that each call remains non-blocking (per-call latency bound).
+
 ### 5.2 Keep GPU work chunks small
 
 Windows TDR is designed to reset GPUs that appear hung. Even in emulation/translation:
