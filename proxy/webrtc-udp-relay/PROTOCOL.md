@@ -37,8 +37,9 @@ DataChannel.
 - **Reliability:** **MUST be reliable.**
   - `maxRetransmits` MUST be unset
   - `maxPacketLifeTime` MUST be unset
-- **Recommended client options:**
-  - `ordered = false` (reduces head-of-line blocking)
+- **Ordering:** optional.
+  - Recommended default: `ordered = true` (more predictable throughput).
+  - `ordered = false` is allowed and may reduce head-of-line blocking.
 
 Unlike `udp`, the relay does **not** parse or frame messages on `l2`. Instead,
 it acts as a transport bridge:

@@ -53,9 +53,9 @@ func validateL2DataChannel(dc *webrtc.DataChannel) error {
 // tunnel.
 //
 // The L2 tunnel MUST be reliable. Do not set MaxRetransmits/MaxPacketLifeTime.
-// Using ordered=false is recommended to reduce head-of-line blocking.
+// Ordered delivery is recommended by default; unordered delivery is allowed.
 func NewL2DataChannelInit() *webrtc.DataChannelInit {
-	ordered := false
+	ordered := true
 	return &webrtc.DataChannelInit{
 		Ordered: &ordered,
 	}
