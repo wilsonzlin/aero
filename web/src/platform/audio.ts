@@ -6,6 +6,10 @@ export type CreateAudioOutputOptions = {
    * Size of the ring buffer in frames (per channel).
    *
    * The actual sample capacity is `ringBufferFrames * channelCount`.
+   *
+   * If omitted (and `ringBuffer` is not provided), this defaults to ~200ms of
+   * audio (`sampleRate / 5`, clamped to `[2048, sampleRate / 2]`). The previous
+   * behavior (~1s) was safe but introduced unacceptable interactive latency.
    */
   ringBufferFrames?: number;
   /**
@@ -74,6 +78,128 @@ export type DisabledAudioOutput = {
 };
 
 export type AudioOutput = EnabledAudioOutput | DisabledAudioOutput;
+
+function clampFrames(value: number, min: number, max: number): number {
+  const v = Math.floor(Number.isFinite(value) ? value : 0);
+  const lo = Math.floor(Number.isFinite(min) ? min : 0);
+  const hi = Math.floor(Number.isFinite(max) ? max : 0);
+  const clampedHi = Math.max(lo, hi);
+  return Math.min(Math.max(v, lo), clampedHi);
+}
+
+export function getDefaultRingBufferFrames(sampleRate: number): number {
+  // Default to ~200ms of capacity to keep interactive audio latency reasonable,
+  // while still allowing producers to buffer enough samples to avoid underruns.
+  // Producers should generally target a smaller steady-state fill level (see
+  // `createAdaptiveRingBufferTarget`) so latency stays in the tens of ms.
+  const minFrames = 2048;
+  const maxFrames = Math.max(minFrames, Math.floor(sampleRate / 2));
+  return clampFrames(sampleRate / 5, minFrames, maxFrames);
+}
+
+export type AdaptiveRingBufferTargetOptions = {
+  minTargetFrames?: number;
+  maxTargetFrames?: number;
+  initialTargetFrames?: number;
+  /**
+   * How many frames to add to the target per underrun (and when the buffer level
+   * is consistently very low).
+   */
+  increaseFrames?: number;
+  /**
+   * If there are no underruns for this many seconds, start slowly decreasing the
+   * target.
+   */
+  stableSeconds?: number;
+  /**
+   * How many frames to subtract from the target when stable.
+   */
+  decreaseFrames?: number;
+  /**
+   * How often to apply `decreaseFrames` while stable.
+   */
+  decreaseIntervalSeconds?: number;
+  /**
+   * If the observed buffer level falls below `target * lowWaterMarkRatio`, bump
+   * the target up (even if an underrun hasn't occurred yet).
+   */
+  lowWaterMarkRatio?: number;
+};
+
+export type AdaptiveRingBufferTarget = {
+  getTargetFrames(): number;
+  update(bufferLevelFrames: number, underrunCount: number, nowMs?: number): number;
+};
+
+export function createAdaptiveRingBufferTarget(
+  capacityFrames: number,
+  sampleRate: number,
+  options: AdaptiveRingBufferTargetOptions = {},
+): AdaptiveRingBufferTarget {
+  const minTargetFrames = clampFrames(options.minTargetFrames ?? 2048, 0, capacityFrames);
+  const maxTargetFrames = clampFrames(options.maxTargetFrames ?? capacityFrames, minTargetFrames, capacityFrames);
+
+  const initialTargetFrames = clampFrames(
+    options.initialTargetFrames ?? Math.floor(sampleRate / 20), // ~50ms
+    minTargetFrames,
+    maxTargetFrames,
+  );
+
+  const increaseFrames = Math.max(1, Math.floor(options.increaseFrames ?? sampleRate / 50)); // ~20ms
+  const stableSeconds = Number.isFinite(options.stableSeconds) ? (options.stableSeconds ?? 3) : 3;
+  const decreaseFrames = Math.max(1, Math.floor(options.decreaseFrames ?? sampleRate / 200)); // ~5ms
+  const decreaseIntervalMs = Math.max(0.1, options.decreaseIntervalSeconds ?? 1) * 1000;
+  const lowWaterMarkRatio = Number.isFinite(options.lowWaterMarkRatio) ? (options.lowWaterMarkRatio ?? 0.25) : 0.25;
+
+  const nowDefault = () =>
+    typeof globalThis.performance?.now === "function" ? globalThis.performance.now() : Date.now();
+
+  let targetFrames = initialTargetFrames;
+  let lastUnderrunCount: number | null = null;
+  let lastUnderrunTimeMs = nowDefault();
+  let lastDecreaseTimeMs = lastUnderrunTimeMs;
+
+  return {
+    getTargetFrames() {
+      return targetFrames;
+    },
+    update(bufferLevelFrames: number, underrunCount: number, nowMs?: number) {
+      const now = nowMs ?? nowDefault();
+      const level = Math.max(0, Math.floor(bufferLevelFrames));
+      const underruns = Math.max(0, Math.floor(underrunCount));
+
+      if (lastUnderrunCount === null) {
+        lastUnderrunCount = underruns;
+        lastUnderrunTimeMs = now;
+        lastDecreaseTimeMs = now;
+        return targetFrames;
+      }
+
+      const deltaUnderruns = (underruns - lastUnderrunCount) >>> 0;
+      lastUnderrunCount = underruns;
+
+      if (deltaUnderruns > 0) {
+        targetFrames = clampFrames(targetFrames + deltaUnderruns * increaseFrames, minTargetFrames, maxTargetFrames);
+        lastUnderrunTimeMs = now;
+        lastDecreaseTimeMs = now;
+        return targetFrames;
+      }
+
+      if (lowWaterMarkRatio > 0 && level < targetFrames * lowWaterMarkRatio) {
+        targetFrames = clampFrames(targetFrames + increaseFrames, minTargetFrames, maxTargetFrames);
+        lastDecreaseTimeMs = now;
+        return targetFrames;
+      }
+
+      if (now - lastUnderrunTimeMs >= stableSeconds * 1000 && now - lastDecreaseTimeMs >= decreaseIntervalMs) {
+        targetFrames = clampFrames(targetFrames - decreaseFrames, minTargetFrames, maxTargetFrames);
+        lastDecreaseTimeMs = now;
+      }
+
+      return targetFrames;
+    },
+  };
+}
 
 function getAudioContextCtor(): typeof AudioContext | undefined {
   return (
@@ -305,7 +431,7 @@ export async function createAudioOutput(options: CreateAudioOutputOptions = {}):
   const channelCount = options.channelCount ?? 2;
   const ringBufferFrames =
     options.ringBufferFrames ??
-    (options.ringBuffer ? inferRingBufferFrames(options.ringBuffer, channelCount) : sampleRate); // ~1 second by default
+    (options.ringBuffer ? inferRingBufferFrames(options.ringBuffer, channelCount) : getDefaultRingBufferFrames(sampleRate));
 
   let ringBuffer: AudioRingBufferLayout;
   try {

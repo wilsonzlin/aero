@@ -5,7 +5,7 @@ import { startFrameScheduler, type FrameSchedulerHandle } from "./main/frameSche
 import { GpuRuntime } from "./gpu/gpuRuntime";
 import { fnv1a32Hex } from "./utils/fnv1a";
 import { perf } from "./perf/perf";
-import { createAudioOutput } from "./platform/audio";
+import { createAdaptiveRingBufferTarget, createAudioOutput } from "./platform/audio";
 import { MicCapture } from "./audio/mic_capture";
 import { detectPlatformFeatures, explainMissingRequirements, type PlatformFeatureReport } from "./platform/features";
 import { importFileToOpfs, openFileHandle, removeOpfsEntry } from "./platform/opfs";
@@ -1264,10 +1264,12 @@ function renderAudioPanel(): HTMLElement {
   const status = el("pre", { text: "" });
   let toneTimer: number | null = null;
   let tonePhase = 0;
+  let toneGeneration = 0;
   let wasmBridge: unknown | null = null;
   let wasmTone: { free(): void } | null = null;
 
   function stopTone() {
+    toneGeneration += 1;
     if (toneTimer !== null) {
       window.clearInterval(toneTimer);
       toneTimer = null;
@@ -1291,14 +1293,33 @@ function renderAudioPanel(): HTMLElement {
     const sr = output.context.sampleRate;
 
     // Try to use the WASM-side bridge + sine generator if available; fall back to JS.
-    let writeTone: (frames: number) => void;
-    try {
-      const { api } = await wasmInitPromise;
-      if (
-        typeof api.attach_worklet_bridge === "function" &&
-        typeof api.SineTone === "function" &&
-        output.ringBuffer.buffer instanceof SharedArrayBuffer
-      ) {
+    const writeToneJs = (frames: number) => {
+      const buf = new Float32Array(frames * channelCount);
+      for (let i = 0; i < frames; i++) {
+        const s = Math.sin(tonePhase * 2 * Math.PI) * gain;
+        for (let c = 0; c < channelCount; c++) buf[i * channelCount + c] = s;
+        tonePhase += freqHz / sr;
+        if (tonePhase >= 1) tonePhase -= 1;
+      }
+      output.writeInterleaved(buf, sr);
+    };
+
+    let writeTone = writeToneJs;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (globalThis as any).__aeroAudioToneBackend = "js";
+
+    const gen = toneGeneration;
+    void wasmInitPromise
+      .then(({ api }) => {
+        if (toneGeneration !== gen) return;
+        if (
+          typeof api.attach_worklet_bridge !== "function" ||
+          typeof api.SineTone !== "function" ||
+          !(output.ringBuffer.buffer instanceof SharedArrayBuffer)
+        ) {
+          return;
+        }
+
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         wasmBridge = (api.attach_worklet_bridge as any)(output.ringBuffer.buffer, output.ringBuffer.capacityFrames, channelCount);
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1311,40 +1332,34 @@ function renderAudioPanel(): HTMLElement {
 
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (globalThis as any).__aeroAudioToneBackend = "wasm";
-      } else {
-        throw new Error("WASM audio bridge not available");
-      }
-    } catch {
-      writeTone = (frames: number) => {
-        const buf = new Float32Array(frames * channelCount);
-        for (let i = 0; i < frames; i++) {
-          const s = Math.sin(tonePhase * 2 * Math.PI) * gain;
-          for (let c = 0; c < channelCount; c++) buf[i * channelCount + c] = s;
-          tonePhase += freqHz / sr;
-          if (tonePhase >= 1) tonePhase -= 1;
-        }
-        output.writeInterleaved(buf, sr);
-      };
+      })
+      .catch(() => {
+        // Keep JS fallback.
+      });
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (globalThis as any).__aeroAudioToneBackend = "js";
-    }
+    const buffering = createAdaptiveRingBufferTarget(output.ringBuffer.capacityFrames, sr);
 
-    // Prefill ~100ms to avoid startup underruns.
-    writeTone(Math.floor(sr / 10));
+    // Prefill ~100ms (or up to capacity) to avoid startup underruns, then allow
+    // the adaptive target to converge downward.
+    writeTone(Math.min(output.ringBuffer.capacityFrames, Math.floor(sr / 10)));
 
     toneTimer = window.setInterval(() => {
-      const target = Math.floor(sr / 5); // ~200ms buffered
+      const underruns = output.getUnderrunCount();
       const level = output.getBufferLevelFrames();
+      const target = buffering.update(level, underruns);
       const need = Math.max(0, target - level);
       if (need > 0) writeTone(need);
 
       status.textContent =
         `AudioContext: ${output.context.state}\n` +
         `sampleRate: ${sr}\n` +
-        `bufferLevelFrames: ${output.getBufferLevelFrames()}\n` +
-        `underruns: ${output.getUnderrunCount()}`;
-    }, 50);
+        `capacityFrames: ${output.ringBuffer.capacityFrames}\n` +
+        `targetFrames: ${target}\n` +
+        `bufferLevelFrames: ${level}\n` +
+        `targetMs: ${((target / sr) * 1000).toFixed(1)}\n` +
+        `bufferLevelMs: ${((level / sr) * 1000).toFixed(1)}\n` +
+        `underruns: ${underruns}`;
+    }, 20);
   }
 
   const button = el("button", {
