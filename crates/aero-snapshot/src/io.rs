@@ -87,6 +87,12 @@ pub trait ReadLeExt: Read {
         Ok(buf)
     }
 
+    fn read_exact_into_vec(&mut self, buf: &mut Vec<u8>, len: usize) -> Result<()> {
+        buf.resize(len, 0);
+        self.read_exact(buf)?;
+        Ok(())
+    }
+
     fn read_len_prefixed_bytes_u32(&mut self, max_len: u32) -> Result<Vec<u8>> {
         let len = self.read_u32_le()?;
         if len > max_len {

@@ -101,25 +101,37 @@ fn encode_full<W: Write>(
     let chunk_size = opts.chunk_size as u64;
     let mut offset = 0u64;
     let mut buf = vec![0u8; opts.chunk_size as usize];
+    let mut compressed = Vec::new();
+    if opts.compression == Compression::Lz4 {
+        compressed.resize(max_lz4_compressed_len(opts.chunk_size) as usize, 0);
+    }
     while offset < total_len {
         let remaining = total_len - offset;
         let uncompressed_len = (remaining.min(chunk_size)) as usize;
         let buf_slice = &mut buf[..uncompressed_len];
         read_ram(offset, buf_slice)?;
 
-        let compressed = compress(opts.compression, buf_slice)?;
-        w.write_u32_le(
-            uncompressed_len
-                .try_into()
-                .map_err(|_| SnapshotError::Corrupt("chunk too large"))?,
-        )?;
-        w.write_u32_le(
-            compressed
-                .len()
-                .try_into()
-                .map_err(|_| SnapshotError::Corrupt("compressed chunk too large"))?,
-        )?;
-        w.write_bytes(&compressed)?;
+        let uncompressed_len_u32: u32 = uncompressed_len
+            .try_into()
+            .map_err(|_| SnapshotError::Corrupt("chunk too large"))?;
+        let compressed_len_u32: u32;
+        let payload: &[u8];
+        match opts.compression {
+            Compression::None => {
+                compressed_len_u32 = uncompressed_len_u32;
+                payload = buf_slice;
+            }
+            Compression::Lz4 => {
+                let written = lz4_compress_into(buf_slice, &mut compressed)?;
+                compressed_len_u32 = written
+                    .try_into()
+                    .map_err(|_| SnapshotError::Corrupt("compressed chunk too large"))?;
+                payload = &compressed[..written];
+            }
+        }
+        w.write_u32_le(uncompressed_len_u32)?;
+        w.write_u32_le(compressed_len_u32)?;
+        w.write_bytes(payload)?;
 
         offset += uncompressed_len as u64;
     }
@@ -141,6 +153,10 @@ fn encode_dirty<W: Write>(
     )?;
     let page_size = opts.page_size as u64;
     let mut buf = vec![0u8; opts.page_size as usize];
+    let mut compressed = Vec::new();
+    if opts.compression == Compression::Lz4 {
+        compressed.resize(max_lz4_compressed_len(opts.page_size) as usize, 0);
+    }
     for &page_idx in dirty_pages {
         let offset = page_idx
             .checked_mul(page_size)
@@ -154,39 +170,41 @@ fn encode_dirty<W: Write>(
         let buf_slice = &mut buf[..uncompressed_len];
         read_ram(offset, buf_slice)?;
 
-        let compressed = compress(opts.compression, buf_slice)?;
+        let compressed_len_u32: u32;
+        let payload: &[u8];
+        match opts.compression {
+            Compression::None => {
+                compressed_len_u32 = uncompressed_len as u32;
+                payload = buf_slice;
+            }
+            Compression::Lz4 => {
+                let written = lz4_compress_into(buf_slice, &mut compressed)?;
+                compressed_len_u32 = written as u32;
+                payload = &compressed[..written];
+            }
+        }
         w.write_u64_le(page_idx)?;
         w.write_u32_le(uncompressed_len as u32)?;
-        w.write_u32_le(compressed.len() as u32)?;
-        w.write_bytes(&compressed)?;
+        w.write_u32_le(compressed_len_u32)?;
+        w.write_bytes(payload)?;
     }
     Ok(())
 }
 
 fn max_lz4_compressed_len(uncompressed_len: u32) -> u32 {
-    // LZ4 worst-case size: uncompressed + (uncompressed / 255) + 16
-    uncompressed_len
-        .saturating_add(uncompressed_len / 255)
-        .saturating_add(16)
+    // `lz4_flex` exposes the exact maximum output size for its block format. Using the library's
+    // bound avoids off-by-one mistakes and ensures our encoder preallocates enough space.
+    lz4_flex::block::get_maximum_output_size(uncompressed_len as usize) as u32
 }
 
-fn compress(kind: Compression, input: &[u8]) -> Result<Vec<u8>> {
-    Ok(match kind {
-        Compression::None => input.to_vec(),
-        Compression::Lz4 => lz4_flex::block::compress(input),
-    })
+fn lz4_compress_into(input: &[u8], output: &mut [u8]) -> Result<usize> {
+    lz4_flex::block::compress_into(input, output)
+        .map_err(|_| SnapshotError::Corrupt("lz4 compression failed"))
 }
 
-fn decompress(kind: Compression, compressed: &[u8], expected_len: usize) -> Result<Vec<u8>> {
-    match kind {
-        Compression::None => {
-            if compressed.len() != expected_len {
-                return Err(SnapshotError::Corrupt("uncompressed chunk length mismatch"));
-            }
-            Ok(compressed.to_vec())
-        }
-        Compression::Lz4 => Ok(lz4_flex::block::decompress(compressed, expected_len)?),
-    }
+fn lz4_decompress_into(compressed: &[u8], output: &mut [u8]) -> Result<()> {
+    lz4_flex::block::decompress_into(compressed, output)?;
+    Ok(())
 }
 
 pub fn decode_ram_section_into<R: Read>(
@@ -228,6 +246,11 @@ fn decode_full<R: Read>(
 
     let chunk_size_u64 = chunk_size as u64;
     let mut offset = 0u64;
+    let mut compressed = Vec::new();
+    let mut decompressed = Vec::new();
+    if compression == Compression::Lz4 {
+        decompressed.resize(chunk_size as usize, 0);
+    }
     while offset < total_len {
         let expected_uncompressed = (total_len - offset).min(chunk_size_u64) as u32;
         let uncompressed_len = r.read_u32_le()?;
@@ -236,9 +259,17 @@ fn decode_full<R: Read>(
         }
         let compressed_len = r.read_u32_le()?;
         validate_compressed_len(compression, uncompressed_len, compressed_len)?;
-        let compressed = r.read_exact_vec(compressed_len as usize)?;
-        let decompressed = decompress(compression, &compressed, uncompressed_len as usize)?;
-        write_ram(offset, &decompressed)?;
+        r.read_exact_into_vec(&mut compressed, compressed_len as usize)?;
+        match compression {
+            Compression::None => {
+                write_ram(offset, &compressed)?;
+            }
+            Compression::Lz4 => {
+                let out = &mut decompressed[..uncompressed_len as usize];
+                lz4_decompress_into(&compressed, out)?;
+                write_ram(offset, out)?;
+            }
+        }
         offset += uncompressed_len as u64;
     }
     Ok(())
@@ -260,6 +291,12 @@ fn decode_dirty<R: Read>(
     if count > max_pages {
         return Err(SnapshotError::Corrupt("too many dirty pages"));
     }
+
+    let mut compressed = Vec::new();
+    let mut decompressed = Vec::new();
+    if compression == Compression::Lz4 {
+        decompressed.resize(page_size as usize, 0);
+    }
     for _ in 0..count {
         let page_idx = r.read_u64_le()?;
         let offset = page_idx
@@ -278,9 +315,17 @@ fn decode_dirty<R: Read>(
         }
         let compressed_len = r.read_u32_le()?;
         validate_compressed_len(compression, uncompressed_len, compressed_len)?;
-        let compressed = r.read_exact_vec(compressed_len as usize)?;
-        let decompressed = decompress(compression, &compressed, uncompressed_len as usize)?;
-        write_ram(offset, &decompressed)?;
+        r.read_exact_into_vec(&mut compressed, compressed_len as usize)?;
+        match compression {
+            Compression::None => {
+                write_ram(offset, &compressed)?;
+            }
+            Compression::Lz4 => {
+                let out = &mut decompressed[..uncompressed_len as usize];
+                lz4_decompress_into(&compressed, out)?;
+                write_ram(offset, out)?;
+            }
+        }
     }
     Ok(())
 }
@@ -306,4 +351,152 @@ fn validate_compressed_len(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use rand::{rngs::StdRng, RngCore, SeedableRng};
+
+    fn make_deterministic_ram(len: usize) -> Vec<u8> {
+        let mut buf = vec![0u8; len];
+        let mut rng = StdRng::seed_from_u64(0x5EED);
+        rng.fill_bytes(&mut buf);
+        buf
+    }
+
+    fn read_from_vec(src: &[u8], offset: u64, buf: &mut [u8]) -> Result<()> {
+        let offset: usize = offset
+            .try_into()
+            .map_err(|_| SnapshotError::Corrupt("ram offset overflow"))?;
+        buf.copy_from_slice(&src[offset..offset + buf.len()]);
+        Ok(())
+    }
+
+    fn write_into_vec(dst: &mut [u8], offset: u64, data: &[u8]) -> Result<()> {
+        let offset: usize = offset
+            .try_into()
+            .map_err(|_| SnapshotError::Corrupt("ram offset overflow"))?;
+        dst[offset..offset + data.len()].copy_from_slice(data);
+        Ok(())
+    }
+
+    #[test]
+    fn full_roundtrip_none() -> Result<()> {
+        let ram = make_deterministic_ram(1_000_123);
+        let opts = RamWriteOptions {
+            mode: RamMode::Full,
+            compression: Compression::None,
+            page_size: 4096,
+            chunk_size: 64 * 1024,
+        };
+
+        let mut encoded = Vec::new();
+        encode_ram_section(&mut encoded, ram.len() as u64, opts, None, |offset, buf| {
+            read_from_vec(&ram, offset, buf)
+        })?;
+
+        let mut decoded = vec![0u8; ram.len()];
+        decode_ram_section_into(
+            &mut std::io::Cursor::new(&encoded),
+            ram.len() as u64,
+            |offset, data| write_into_vec(&mut decoded, offset, data),
+        )?;
+
+        assert_eq!(decoded, ram);
+        Ok(())
+    }
+
+    #[test]
+    fn full_roundtrip_lz4() -> Result<()> {
+        let ram = make_deterministic_ram(1_000_123);
+        let opts = RamWriteOptions {
+            mode: RamMode::Full,
+            compression: Compression::Lz4,
+            page_size: 4096,
+            chunk_size: 64 * 1024,
+        };
+
+        let mut encoded = Vec::new();
+        encode_ram_section(&mut encoded, ram.len() as u64, opts, None, |offset, buf| {
+            read_from_vec(&ram, offset, buf)
+        })?;
+
+        let mut decoded = vec![0u8; ram.len()];
+        decode_ram_section_into(
+            &mut std::io::Cursor::new(&encoded),
+            ram.len() as u64,
+            |offset, data| write_into_vec(&mut decoded, offset, data),
+        )?;
+
+        assert_eq!(decoded, ram);
+        Ok(())
+    }
+
+    fn dirty_roundtrip(compression: Compression) -> Result<()> {
+        let page_size: u32 = 4096;
+        let page_size_usize = page_size as usize;
+        let ram_len = page_size_usize * 31 + 123;
+        let base = make_deterministic_ram(ram_len);
+        let mut updated = base.clone();
+
+        let last_page = (ram_len - 1) / page_size_usize;
+        // Intentionally out of order.
+        let dirty_pages = vec![last_page as u64, 0, 7];
+        for &page_idx in &dirty_pages {
+            let start = page_idx as usize * page_size_usize;
+            let end = (start + page_size_usize).min(ram_len);
+            for b in &mut updated[start..end] {
+                *b ^= 0xA5;
+            }
+        }
+
+        let opts = RamWriteOptions {
+            mode: RamMode::Dirty,
+            compression,
+            page_size,
+            chunk_size: 1024 * 1024,
+        };
+
+        let mut encoded = Vec::new();
+        encode_ram_section(
+            &mut encoded,
+            ram_len as u64,
+            opts,
+            Some(&dirty_pages),
+            |offset, buf| read_from_vec(&updated, offset, buf),
+        )?;
+
+        let mut decoded = base;
+        decode_ram_section_into(
+            &mut std::io::Cursor::new(&encoded),
+            ram_len as u64,
+            |offset, data| write_into_vec(&mut decoded, offset, data),
+        )?;
+
+        assert_eq!(decoded, updated);
+        Ok(())
+    }
+
+    #[test]
+    fn dirty_roundtrip_none() -> Result<()> {
+        dirty_roundtrip(Compression::None)
+    }
+
+    #[test]
+    fn dirty_roundtrip_lz4() -> Result<()> {
+        dirty_roundtrip(Compression::Lz4)
+    }
+
+    #[test]
+    fn lz4_compress_into_matches_allocating_api() {
+        let input = make_deterministic_ram(256 * 1024 + 3);
+        let expected = lz4_flex::block::compress(&input);
+
+        let max = lz4_flex::block::get_maximum_output_size(input.len());
+        let mut out = vec![0u8; max];
+        let written = lz4_flex::block::compress_into(&input, &mut out).unwrap();
+        assert_eq!(&out[..written], expected);
+    }
 }
