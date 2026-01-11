@@ -246,11 +246,16 @@ The canonical deployment model is to require authentication during the WebSocket
 - **JWT** (recommended for cross-origin / relay bridging):
   - `AERO_L2_AUTH_MODE=jwt` (or `cookie_or_jwt`)
   - Configure the verification secret: `AERO_L2_JWT_SECRET=...`
-  - Clients forward a token during upgrade (typically via query string, e.g. `?token=<jwt>`).
+  - Clients forward a token during upgrade:
+    - Query string: `?token=<jwt>`
+    - Or (preferred when possible): offer an additional WebSocket subprotocol token
+      `aero-l2-token.<token>` alongside `aero-l2-tunnel-v1`. This avoids credentials in URLs/logs,
+      but requires a header-safe token value (RFC 6455 HTTP "token" / RFC 7230 `tchar`; base64url/JWT works).
 - **API key** (simpler, but avoid long-lived keys for public deployments):
   - `AERO_L2_AUTH_MODE=api_key`
   - Configure the key: `AERO_L2_API_KEY=...`
-  - Clients forward the key during upgrade (typically via query string, e.g. `?apiKey=<key>`).
+  - Clients forward the key during upgrade (typically via query string, e.g. `?apiKey=<key>` or `?token=<key>`),
+    or via `Sec-WebSocket-Protocol: aero-l2-token.<token>`.
 
 Missing/incorrect credentials MUST reject the upgrade with **HTTP 401** (no WebSocket).
 
