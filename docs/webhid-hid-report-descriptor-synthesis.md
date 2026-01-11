@@ -123,7 +123,7 @@ WebHID also exposes less-common HID locals (`strings`, `designators`) and relate
 
 ### Deterministic per-item emission order
 
-Because we are regenerating bytes from metadata (not replaying the original descriptor), we emit a canonical sequence of items for each `HIDReportItem` (matching `crates/emulator/src/io/usb/hid/webhid.rs`):
+Because we are regenerating bytes from metadata (not replaying the original descriptor), we emit a canonical sequence of items for each `HIDReportItem` (matching the canonical encoder in `crates/emulator/src/io/usb/hid/report_descriptor.rs`, which is called by `webhid.rs`):
 
 1. Globals (in this order):
    - `Usage Page` (`item.usagePage`)
