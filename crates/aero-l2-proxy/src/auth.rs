@@ -66,10 +66,9 @@ pub fn verify_session_token(
         .decode(payload_b64)
         .map_err(|_| SessionVerifyError::InvalidBase64)?;
 
-    let payload: Value = serde_json::from_slice(&payload_raw).map_err(|_| SessionVerifyError::InvalidJson)?;
-    let obj = payload
-        .as_object()
-        .ok_or(SessionVerifyError::InvalidJson)?;
+    let payload: Value =
+        serde_json::from_slice(&payload_raw).map_err(|_| SessionVerifyError::InvalidJson)?;
+    let obj = payload.as_object().ok_or(SessionVerifyError::InvalidJson)?;
 
     // Gateway session tokens are authored by `backend/aero-gateway/src/session.ts`.
     //
@@ -183,10 +182,9 @@ pub fn verify_relay_jwt_hs256(
         .decode(header_b64)
         .map_err(|_| JwtVerifyError::InvalidBase64)?;
 
-    let header: Value = serde_json::from_slice(&header_raw).map_err(|_| JwtVerifyError::InvalidJson)?;
-    let header_obj = header
-        .as_object()
-        .ok_or(JwtVerifyError::InvalidJson)?;
+    let header: Value =
+        serde_json::from_slice(&header_raw).map_err(|_| JwtVerifyError::InvalidJson)?;
+    let header_obj = header.as_object().ok_or(JwtVerifyError::InvalidJson)?;
     let alg = header_obj
         .get("alg")
         .and_then(Value::as_str)

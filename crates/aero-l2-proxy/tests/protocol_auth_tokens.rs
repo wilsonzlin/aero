@@ -95,4 +95,3 @@ fn protocol_jwt_vectors() {
         assert_eq!(got.iss, v.iss);
     }
 }
-
