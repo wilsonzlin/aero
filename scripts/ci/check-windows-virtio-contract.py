@@ -720,14 +720,32 @@ def _validate_contract_devices(devices: dict[str, ContractDevice], errors: list[
     for name, dev in sorted(devices.items(), key=lambda kv: kv[0]):
         # Validate JSON device IDs and HWID patterns agree.
         expected_prefix = f"PCI\\VEN_{dev.pci_vendor_id:04X}&DEV_{dev.pci_device_id:04X}"
+
+        # Most device entries have exactly one PCI Vendor/Device pair, but AeroGPU
+        # is special: Guest Tools and validation tools accept both the canonical
+        # versioned ABI ID (A3A0:0001) and the legacy bring-up ABI ID (1AED:0001).
+        #
+        # The contract still records the canonical Vendor/Device pair in
+        # `pci_vendor_id`/`pci_device_id`; legacy IDs are expressed only via extra
+        # `hardware_id_patterns` entries.
+        allowed_vendor_device: set[tuple[int, int]] = {(dev.pci_vendor_id, dev.pci_device_id)}
+        allowed_prefixes: list[str] = [expected_prefix]
+        if name == "aero-gpu":
+            legacy_vendor = 0x1AED
+            legacy_prefix = f"PCI\\VEN_{legacy_vendor:04X}&DEV_{dev.pci_device_id:04X}"
+            allowed_vendor_device.add((legacy_vendor, dev.pci_device_id))
+            allowed_prefixes.append(legacy_prefix)
+
         for hwid in dev.parsed_hwids:
-            if hwid.ven != dev.pci_vendor_id or hwid.dev != dev.pci_device_id:
+            if (hwid.ven, hwid.dev) not in allowed_vendor_device:
                 errors.append(
                     f"[{name}] hardware_id_patterns contains VEN_{hwid.ven:04X}&DEV_{hwid.dev:04X}, "
                     f"but device entry declares VEN_{dev.pci_vendor_id:04X}&DEV_{dev.pci_device_id:04X}: {hwid.raw!r}"
                 )
-            if not hwid.raw.upper().startswith(expected_prefix.upper()):
-                errors.append(f"[{name}] invalid HWID pattern (expected to start with {expected_prefix!r}): {hwid.raw!r}")
+            if not any(hwid.raw.upper().startswith(prefix.upper()) for prefix in allowed_prefixes):
+                errors.append(
+                    f"[{name}] invalid HWID pattern (expected to start with one of {allowed_prefixes!r}): {hwid.raw!r}"
+                )
 
         if dev.is_virtio:
             if dev.pci_vendor_id != 0x1AF4:
