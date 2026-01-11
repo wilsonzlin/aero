@@ -33,6 +33,12 @@ python3 scripts/ci/gen-guest-tools-devices-cmd.py --check
 
 CI fails if `devices.cmd` is out of sync with the manifest.
 
+For a broader drift check across the Windows device contract + Guest Tools + packaging specs + INFs + emulator IDs:
+
+```bash
+cargo run -p device-contract-validator --locked
+```
+
 ## `setup.cmd`
 
 Designed for the standard flow:

@@ -22,6 +22,12 @@ Check for drift without rewriting (CI-style):
 python3 scripts/ci/gen-guest-tools-devices-cmd.py --check
 ```
 
+Full Windows device contract drift check (contract + Guest Tools + packaging specs + INFs + emulator IDs):
+
+```bash
+cargo run -p device-contract-validator --locked
+```
+
 The `*_HWIDS` values are stored as a list of individually quoted hardware IDs to safely include
 `&` characters (e.g. `"PCI\VEN_1AF4&DEV_1042&REV_01"`).
 
