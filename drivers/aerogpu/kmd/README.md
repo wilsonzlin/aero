@@ -39,6 +39,22 @@ See:
 * `drivers/aerogpu/protocol/README.md` for ABI details.
 * `docs/abi/aerogpu-pci-identity.md` for the canonical PCI IDs and the matching emulator device models.
 
+## Stable `alloc_id` / `share_token` (WDDM allocation private data)
+
+To support D3D9Ex + DWM redirected surfaces and other cross-process shared allocations, the KMD exposes a stable identifier for every WDDM allocation:
+
+- `alloc_id` (32-bit, nonzero, stable across opens)
+- `share_token` (64-bit, stable across guest processes; `0` for non-shared allocations)
+
+These are returned to UMDs via **WDDM allocation private driver data**:
+
+- The KMD writes the struct in `DxgkDdiCreateAllocation`.
+- When an allocation is opened via a shared handle in another process, dxgkrnl passes the same private blob back to the KMD in `DxgkDdiOpenAllocation`, allowing the KMD to reconstruct the same IDs.
+
+The shared layout is defined in:
+
+- `drivers/aerogpu/protocol/aerogpu_wddm_alloc.h`
+
 ## Building (WDK 10 / MSBuild)
 
 This miniport can be built via the **WDK 10** MSBuild project at:
