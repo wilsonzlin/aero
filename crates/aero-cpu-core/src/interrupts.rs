@@ -843,6 +843,20 @@ fn iret_long<B: CpuBus>(
         (None, None)
     };
 
+    if let Some(rsp) = new_rsp {
+        if !is_canonical(rsp) {
+            // Non-canonical return RSP faults with #GP(0).
+            return deliver_exception(
+                bus,
+                state,
+                pending,
+                Exception::GeneralProtection,
+                state.rip(),
+                Some(0),
+            );
+        }
+    }
+
     state.segments.cs.selector = new_cs;
     state.set_ip(new_rip);
     state.set_rflags(new_rflags | RFLAGS_RESERVED1);
