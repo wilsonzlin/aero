@@ -7,7 +7,7 @@
     "node": ">=20.11.1 <21"
   },
   "scripts": {
-    "pretest": "playwright install chromium",
+    "pretest": "node -e \"const {execSync}=require('child_process'); const skip=process.env.PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD; if(process.env.GITHUB_ACTIONS==='true'||skip==='1'||skip==='true') process.exit(0); const withDeps=process.platform==='linux'?'--with-deps':''; const cmd=['playwright','install',withDeps,'chromium'].filter(Boolean).join(' '); console.log('Running:',cmd); execSync(cmd,{stdio:'inherit'});\"",
     "test": "playwright test"
   }
 }
