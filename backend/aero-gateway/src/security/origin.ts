@@ -1,3 +1,18 @@
+function authorityHasUserinfo(raw: string): boolean {
+  const trimmed = raw.trim();
+  const schemeIdx = trimmed.indexOf('://');
+  if (schemeIdx === -1) return false;
+
+  const start = schemeIdx + 3;
+  let end = trimmed.length;
+  for (const sep of ['/', '?', '#'] as const) {
+    const idx = trimmed.indexOf(sep, start);
+    if (idx !== -1 && idx < end) end = idx;
+  }
+
+  return trimmed.slice(start, end).includes('@');
+}
+
 export function normalizeOriginString(origin: string): string | null {
   const trimmed = origin.trim();
   if (trimmed === '') return null;
@@ -33,19 +48,15 @@ export function normalizeOriginString(origin: string): string | null {
   }
 
   if (!['http:', 'https:'].includes(url.protocol)) return null;
-  if (url.username !== '' || url.password !== '') return null;
+  if (authorityHasUserinfo(trimmed) || url.username !== '' || url.password !== '') return null;
   if (url.search !== '' || url.hash !== '') return null;
   if (url.pathname !== '/' && url.pathname !== '') return null;
   if (!url.hostname) return null;
 
-  const scheme = url.protocol.slice(0, -1).toLowerCase();
-  const hostname = url.hostname.toLowerCase();
-  let port = url.port;
-  if (port === '0') return null;
-  if (port === '80' && scheme === 'http') port = '';
-  if (port === '443' && scheme === 'https') port = '';
+  if (url.port === '0') return null;
 
-  return `${scheme}://${port ? `${hostname}:${port}` : hostname}`;
+  // `URL.origin` lowercases scheme/host and strips default ports.
+  return url.origin;
 }
 
 export function normalizeAllowedOriginString(origin: string): string {

@@ -1029,22 +1029,11 @@ func normalizeOriginValue(raw string) (string, error) {
 		return "null", nil
 	}
 
-	u, err := url.Parse(raw)
-	if err != nil || u.Scheme == "" || u.Host == "" {
+	normalized, _, ok := origin.NormalizeHeader(raw)
+	if !ok {
 		return "", fmt.Errorf("expected full origin like https://example.com")
 	}
-	if u.User != nil || u.RawQuery != "" || u.Fragment != "" {
-		return "", fmt.Errorf("must not include credentials, query, or fragment")
-	}
-	if u.Path != "" && u.Path != "/" {
-		return "", fmt.Errorf("must not include a path")
-	}
-
-	scheme := strings.ToLower(u.Scheme)
-	if scheme != "http" && scheme != "https" {
-		return "", fmt.Errorf("unsupported scheme %q", u.Scheme)
-	}
-	return scheme + "://" + strings.ToLower(u.Host), nil
+	return normalized, nil
 }
 
 func parseAllowedOrigins(raw string) ([]string, error) {
@@ -1083,22 +1072,11 @@ func normalizeOriginHeaderValue(raw string) (string, error) {
 		return raw, nil
 	}
 
-	u, err := url.Parse(raw)
-	if err != nil || u.Scheme == "" || u.Host == "" {
+	normalized, _, ok := origin.NormalizeHeader(raw)
+	if !ok {
 		return "", fmt.Errorf("expected full origin like https://example.com")
 	}
-	if u.User != nil || u.RawQuery != "" || u.Fragment != "" {
-		return "", fmt.Errorf("must not include credentials, query, or fragment")
-	}
-	if u.Path != "" && u.Path != "/" {
-		return "", fmt.Errorf("must not include a path")
-	}
-
-	scheme := strings.ToLower(u.Scheme)
-	if scheme != "http" && scheme != "https" {
-		return "", fmt.Errorf("unsupported scheme %q (expected http or https)", u.Scheme)
-	}
-	return scheme + "://" + strings.ToLower(u.Host), nil
+	return normalized, nil
 }
 
 // isValidWebSocketSubprotocolToken reports whether raw is a valid WebSocket

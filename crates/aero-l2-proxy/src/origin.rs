@@ -1,6 +1,96 @@
-use url::Url;
+use url::{Host, Url};
 
-pub(crate) fn normalize_origin(input: &str) -> Option<String> {
+fn authority_has_userinfo(raw: &str) -> bool {
+    let trimmed = raw.trim();
+    let Some(scheme_sep) = trimmed.find("://") else {
+        return false;
+    };
+    let start = scheme_sep + 3;
+    let end = trimmed[start..]
+        .find(&['/', '?', '#'][..])
+        .map(|i| start + i)
+        .unwrap_or(trimmed.len());
+    trimmed[start..end].contains('@')
+}
+
+fn scheme_from_normalized_origin(normalized_origin: &str) -> Option<&'static str> {
+    if normalized_origin.starts_with("http://") {
+        Some("http")
+    } else if normalized_origin.starts_with("https://") {
+        Some("https")
+    } else {
+        None
+    }
+}
+
+fn host_from_normalized_origin(normalized_origin: &str) -> Option<&str> {
+    let (_, host) = normalized_origin.split_once("://")?;
+    Some(host)
+}
+
+fn normalize_request_host(request_host: &str, scheme: &'static str) -> Option<String> {
+    let trimmed = request_host.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    // Host is an ASCII serialization. Be strict about rejecting non-ASCII or
+    // non-printable characters that URL parsers may normalize away.
+    let lowered = trimmed.to_ascii_lowercase();
+    if !lowered.chars().all(|c| c.is_ascii_graphic()) {
+        return None;
+    }
+    // Reject percent-encoding / IPv6 zone identifiers to avoid cross-language
+    // parsing differences.
+    if lowered.contains('%') {
+        return None;
+    }
+    // Reject any userinfo in the request host.
+    if lowered.contains('@') {
+        return None;
+    }
+    // Reject empty port specs like `example.com:`. (The `:/` case is handled
+    // indirectly by URL parsing when we add the scheme prefix.)
+    if lowered.ends_with(':') {
+        return None;
+    }
+
+    let url = Url::parse(&format!("{scheme}://{lowered}")).ok()?;
+
+    if !url.username().is_empty() || url.password().is_some() {
+        return None;
+    }
+    if url.query().is_some() || url.fragment().is_some() {
+        return None;
+    }
+    if url.path() != "/" && !url.path().is_empty() {
+        return None;
+    }
+
+    let host = match url.host()? {
+        Host::Domain(domain) => domain.to_ascii_lowercase(),
+        Host::Ipv4(addr) => addr.to_string(),
+        Host::Ipv6(addr) => format!("[{addr}]"),
+    };
+
+    let mut port = url.port();
+    if port == Some(0) {
+        return None;
+    }
+    if matches!((scheme, port), ("http", Some(80)) | ("https", Some(443))) {
+        port = None;
+    }
+
+    Some(match port {
+        Some(port) => format!("{host}:{port}"),
+        None => host,
+    })
+}
+
+/// Normalize an Origin header string.
+///
+/// This matches the canonical vectors in `protocol-vectors/origin.json`.
+pub fn normalize_origin(input: &str) -> Option<String> {
     let trimmed = input.trim();
     if trimmed.is_empty() {
         return None;
@@ -8,13 +98,15 @@ pub(crate) fn normalize_origin(input: &str) -> Option<String> {
     if trimmed == "null" {
         return Some("null".to_string());
     }
-    // Origin is an ASCII serialization. Be strict about rejecting non-ASCII or
-    // non-printable characters that URL parsers may normalize away.
+
+    // Origin is an ASCII serialization (RFC 6454 / WHATWG URL). Be strict about
+    // rejecting non-ASCII or non-printable characters that URL parsers may
+    // normalize away.
     if !trimmed.chars().all(|c| c.is_ascii_graphic()) {
         return None;
     }
-    // Reject percent-encoding / IPv6 zone identifiers to avoid cross-language
-    // parsing differences.
+    // Reject percent-encoding and IPv6 zone identifiers; browsers don't emit
+    // these in Origin, and different URL libraries disagree on how to handle them.
     if trimmed.contains('%') {
         return None;
     }
@@ -46,6 +138,11 @@ pub(crate) fn normalize_origin(input: &str) -> Option<String> {
     if trimmed.ends_with(':') || trimmed.ends_with(":/") {
         return None;
     }
+    // The URL parser loses information about empty usernames (e.g.
+    // https://@example.com), so detect userinfo in the raw authority section.
+    if authority_has_userinfo(trimmed) {
+        return None;
+    }
 
     let url = Url::parse(trimmed).ok()?;
 
@@ -65,9 +162,9 @@ pub(crate) fn normalize_origin(input: &str) -> Option<String> {
     }
 
     let host = match url.host()? {
-        url::Host::Domain(domain) => domain.to_ascii_lowercase(),
-        url::Host::Ipv4(addr) => addr.to_string(),
-        url::Host::Ipv6(addr) => format!("[{addr}]"),
+        Host::Domain(domain) => domain.to_ascii_lowercase(),
+        Host::Ipv4(addr) => addr.to_string(),
+        Host::Ipv6(addr) => format!("[{addr}]"),
     };
 
     let mut port = url.port();
@@ -84,30 +181,32 @@ pub(crate) fn normalize_origin(input: &str) -> Option<String> {
     })
 }
 
-#[cfg(test)]
-mod tests {
-    use super::normalize_origin;
-    use serde::Deserialize;
-    use std::{fs, path::PathBuf};
+/// Returns true when the request Origin header is allowed.
+///
+/// When `allowed_origins` is empty, the default policy is same-host only, based
+/// on the request's Host header. Default ports are treated as equivalent.
+pub fn is_origin_allowed(raw_origin_header: &str, request_host: &str, allowed_origins: &[String]) -> bool {
+    let normalized = match normalize_origin(raw_origin_header) {
+        Some(v) => v,
+        None => return false,
+    };
 
-    #[derive(Debug, Deserialize)]
-    struct Vector {
-        raw: String,
-        normalized: Option<String>,
+    if allowed_origins.iter().any(|v| v == "*") {
+        return true;
+    }
+    if !allowed_origins.is_empty() {
+        return allowed_origins.iter().any(|v| v == &normalized);
     }
 
-    #[test]
-    fn matches_shared_vectors() {
-        let vectors_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../docs/origin-allowlist-test-vectors.json");
-        let contents = fs::read_to_string(&vectors_path)
-            .unwrap_or_else(|err| panic!("read {}: {err}", vectors_path.display()));
-        let vectors: Vec<Vector> =
-            serde_json::from_str(&contents).expect("parse origin-allowlist-test-vectors.json");
-
-        for vector in vectors {
-            let got = normalize_origin(&vector.raw);
-            assert_eq!(got, vector.normalized, "raw={}", vector.raw);
-        }
-    }
+    let Some(scheme) = scheme_from_normalized_origin(&normalized) else {
+        // "null" (or anything unexpected) cannot match a host-based request.
+        return false;
+    };
+    let Some(origin_host) = host_from_normalized_origin(&normalized) else {
+        return false;
+    };
+    let Some(request_host) = normalize_request_host(request_host, scheme) else {
+        return false;
+    };
+    origin_host == request_host
 }

@@ -24,6 +24,7 @@ Newer unified, versioned vectors (including auth tokens) live in
 - `l2-tunnel-v1.json` — legacy `aero-l2-tunnel-v1` framing vectors.
   - New canonical cross-language vectors live in
     `crates/conformance/test-vectors/aero-vectors-v1.json` (key: `aero-l2-tunnel-v1`).
+- `origin.json` — Browser `Origin` header normalization + allowlist matching semantics.
 
 ## Updating vectors
 

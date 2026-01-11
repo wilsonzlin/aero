@@ -591,7 +591,17 @@ fn enforce_security(
         match &state.cfg.security.allowed_origins {
             crate::config::AllowedOrigins::Any => {}
             crate::config::AllowedOrigins::List(list) => {
-                if !list.iter().any(|allowed| allowed == &origin) {
+                let allowed = if list.is_empty() {
+                    let request_host = headers
+                        .get(header::HOST)
+                        .and_then(|v| v.to_str().ok())
+                        .unwrap_or("");
+                    crate::origin::is_origin_allowed(origin_header, request_host, list)
+                } else {
+                    list.iter().any(|allowed| allowed == &origin)
+                };
+
+                if !allowed {
                     state.metrics.upgrade_reject_origin_not_allowed();
                     tracing::warn!(
                         reason = "origin_not_allowed",

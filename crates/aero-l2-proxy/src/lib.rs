@@ -8,9 +8,9 @@ pub mod auth;
 
 mod config;
 mod dns;
-mod origin;
 mod overrides;
 mod policy;
+pub mod origin;
 mod server;
 mod session;
 mod session_limits;

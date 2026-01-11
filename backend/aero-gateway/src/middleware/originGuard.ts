@@ -2,16 +2,61 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 
 import { normalizeOriginString } from '../security/origin.js';
 
-export function isNormalizedOriginAllowed(normalizedOrigin: string, allowedOrigins: readonly string[]): boolean {
-  if (allowedOrigins.includes('*')) return true;
-  return allowedOrigins.includes(normalizedOrigin);
+function normalizeRequestHost(requestHost: string, scheme: 'http' | 'https'): string | null {
+  const trimmed = requestHost.trim();
+  if (trimmed === '') return null;
+  if (trimmed.includes('@')) return null;
+  // Reject empty port specs like `example.com:`. Node's URL parser may otherwise
+  // treat this as if the port were absent, which would diverge from the stricter
+  // behavior in our shared protocol vectors.
+  if (trimmed.endsWith(':')) return null;
+
+  let url: URL;
+  try {
+    url = new URL(`${scheme}://${trimmed}`);
+  } catch {
+    return null;
+  }
+
+  if (url.username !== '' || url.password !== '') return null;
+  if (url.search !== '' || url.hash !== '') return null;
+  if (url.pathname !== '/' && url.pathname !== '') return null;
+
+  return url.host;
 }
 
-export function isOriginAllowed(originHeader: string, allowedOrigins: readonly string[]): boolean {
+export function isNormalizedOriginAllowed(
+  normalizedOrigin: string,
+  allowedOrigins: readonly string[],
+  requestHost: string = '',
+): boolean {
+  if (allowedOrigins.includes('*')) return true;
+
+  if (allowedOrigins.length > 0) {
+    return allowedOrigins.includes(normalizedOrigin);
+  }
+
+  // Default allowlist policy (when unset/empty): same host[:port].
+  if (normalizedOrigin === 'null') return false;
+
+  const scheme = normalizedOrigin.startsWith('http://') ? 'http' : normalizedOrigin.startsWith('https://') ? 'https' : null;
+  if (!scheme) return false;
+
+  const originHost = normalizedOrigin.slice(`${scheme}://`.length);
+  const normalizedRequestHost = normalizeRequestHost(requestHost, scheme);
+  if (!normalizedRequestHost) return false;
+  return originHost === normalizedRequestHost;
+}
+
+export function isOriginAllowed(
+  originHeader: string,
+  allowedOrigins: readonly string[],
+  requestHost: string = '',
+): boolean {
   const normalized = normalizeOriginString(originHeader);
   if (!normalized) return false;
 
-  return isNormalizedOriginAllowed(normalized, allowedOrigins);
+  return isNormalizedOriginAllowed(normalized, allowedOrigins, requestHost);
 }
 
 export async function originGuard(
@@ -24,7 +69,10 @@ export async function originGuard(
   if (!origin) return;
 
   const normalizedOrigin = normalizeOriginString(origin);
-  if (!normalizedOrigin || !isNormalizedOriginAllowed(normalizedOrigin, opts.allowedOrigins)) {
+  const hostHeader = request.headers.host;
+  const requestHost = Array.isArray(hostHeader) ? hostHeader[0] : hostHeader ?? '';
+
+  if (!normalizedOrigin || !isNormalizedOriginAllowed(normalizedOrigin, opts.allowedOrigins, requestHost)) {
     reply.code(403).send({ error: 'forbidden', message: 'Origin not allowed' });
     return;
   }

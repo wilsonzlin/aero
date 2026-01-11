@@ -14,6 +14,21 @@ type vector struct {
 	Normalized *string `json:"normalized"`
 }
 
+func TestNormalizeHeader(t *testing.T) {
+	t.Run("normalizes scheme and host", func(t *testing.T) {
+		normalized, host, ok := NormalizeHeader("HTTPS://Example.COM:443")
+		if !ok {
+			t.Fatalf("expected ok=true")
+		}
+		if normalized != "https://example.com" {
+			t.Fatalf("normalized=%q, want %q", normalized, "https://example.com")
+		}
+		if host != "example.com" {
+			t.Fatalf("host=%q, want %q", host, "example.com")
+		}
+	})
+}
+
 func TestNormalizeHeader_MatchesSharedVectors(t *testing.T) {
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {

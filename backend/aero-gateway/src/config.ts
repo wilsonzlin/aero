@@ -1,6 +1,5 @@
 import fs from 'node:fs';
 import { z } from 'zod';
-
 import { normalizeAllowedOriginString } from './security/origin.js';
 
 const logLevels = ['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'] as const;
@@ -91,7 +90,6 @@ function splitCommaListNumbers(value: string): number[] {
     return n;
   });
 }
-
 function assertReadableFile(filePath: string, envName: string): void {
   try {
     const stat = fs.statSync(filePath);

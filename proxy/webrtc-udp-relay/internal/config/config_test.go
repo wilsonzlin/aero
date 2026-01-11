@@ -262,7 +262,7 @@ func TestL2BackendWSURL_AcceptsWebSocketURL(t *testing.T) {
 	if cfg.L2BackendWSURL != "ws://127.0.0.1:8090/l2" {
 		t.Fatalf("L2BackendWSURL=%q", cfg.L2BackendWSURL)
 	}
-	if cfg.L2BackendWSOrigin != "https://example.com:443" {
+	if cfg.L2BackendWSOrigin != "https://example.com" {
 		t.Fatalf("L2BackendWSOrigin=%q", cfg.L2BackendWSOrigin)
 	}
 	if cfg.L2BackendWSToken != "test-token" {
@@ -340,7 +340,7 @@ func TestL2BackendOrigin_EnvAlias_NormalizesAndValidates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if cfg.L2BackendWSOrigin != "https://example.com:443" {
+	if cfg.L2BackendWSOrigin != "https://example.com" {
 		t.Fatalf("L2BackendWSOrigin=%q", cfg.L2BackendWSOrigin)
 	}
 }
@@ -388,8 +388,8 @@ func TestL2BackendOriginOverride_NormalizesAndValidates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if cfg.L2BackendWSOrigin != "https://example.com:443" {
-		t.Fatalf("L2BackendWSOrigin=%q, want %q", cfg.L2BackendWSOrigin, "https://example.com:443")
+	if cfg.L2BackendWSOrigin != "https://example.com" {
+		t.Fatalf("L2BackendWSOrigin=%q, want %q", cfg.L2BackendWSOrigin, "https://example.com")
 	}
 }
 
@@ -402,8 +402,8 @@ func TestL2BackendOriginAlias_NormalizesAndValidates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if cfg.L2BackendWSOrigin != "https://example.com:443" {
-		t.Fatalf("L2BackendWSOrigin=%q, want %q", cfg.L2BackendWSOrigin, "https://example.com:443")
+	if cfg.L2BackendWSOrigin != "https://example.com" {
+		t.Fatalf("L2BackendWSOrigin=%q, want %q", cfg.L2BackendWSOrigin, "https://example.com")
 	}
 }
 
@@ -430,8 +430,8 @@ func TestL2BackendOriginOverride_IgnoresInvalidWSOrigin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if cfg.L2BackendWSOrigin != "https://example.com:443" {
-		t.Fatalf("L2BackendWSOrigin=%q, want %q", cfg.L2BackendWSOrigin, "https://example.com:443")
+	if cfg.L2BackendWSOrigin != "https://example.com" {
+		t.Fatalf("L2BackendWSOrigin=%q, want %q", cfg.L2BackendWSOrigin, "https://example.com")
 	}
 }
 

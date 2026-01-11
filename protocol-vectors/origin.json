@@ -1,0 +1,186 @@
+{
+  "schema": 1,
+  "normalize": [
+    { "name": "null", "rawOriginHeader": "null", "normalizedOrigin": "null" },
+    { "name": "null_whitespace", "rawOriginHeader": "  null  ", "normalizedOrigin": "null" },
+    { "name": "basic_https", "rawOriginHeader": "https://example.com", "normalizedOrigin": "https://example.com" },
+    { "name": "trim_and_lowercase", "rawOriginHeader": " https://Example.com ", "normalizedOrigin": "https://example.com" },
+    { "name": "lowercase_scheme_and_host", "rawOriginHeader": "HTTPS://Example.COM", "normalizedOrigin": "https://example.com" },
+    { "name": "allow_trailing_slash", "rawOriginHeader": "https://example.com/", "normalizedOrigin": "https://example.com" },
+    { "name": "allow_trailing_slash_with_port", "rawOriginHeader": "http://localhost:5173/", "normalizedOrigin": "http://localhost:5173" },
+    { "name": "strip_default_port_https", "rawOriginHeader": "https://example.com:443", "normalizedOrigin": "https://example.com" },
+    { "name": "strip_default_port_https_trailing_slash", "rawOriginHeader": "https://example.com:443/", "normalizedOrigin": "https://example.com" },
+    { "name": "strip_default_port_http", "rawOriginHeader": "http://example.com:80", "normalizedOrigin": "http://example.com" },
+    { "name": "keep_non_default_port_https", "rawOriginHeader": "https://example.com:444", "normalizedOrigin": "https://example.com:444" },
+    { "name": "keep_non_default_port_http", "rawOriginHeader": "http://example.com:8080", "normalizedOrigin": "http://example.com:8080" },
+    { "name": "ipv6_http", "rawOriginHeader": "http://[::1]", "normalizedOrigin": "http://[::1]" },
+    { "name": "ipv6_http_strip_default_port", "rawOriginHeader": "http://[::1]:80", "normalizedOrigin": "http://[::1]" },
+    {
+      "name": "ipv6_lowercase_and_strip_default_port_https",
+      "rawOriginHeader": "https://[2001:DB8::1]:443/",
+      "normalizedOrigin": "https://[2001:db8::1]"
+    },
+
+    { "name": "reject_empty", "rawOriginHeader": "", "expectError": true },
+    { "name": "reject_whitespace_only", "rawOriginHeader": "   ", "expectError": true },
+    { "name": "reject_relative_url", "rawOriginHeader": "/foo", "expectError": true },
+    { "name": "reject_missing_scheme", "rawOriginHeader": "example.com", "expectError": true },
+    { "name": "reject_non_http_scheme", "rawOriginHeader": "ftp://example.com", "expectError": true },
+    { "name": "reject_credentials", "rawOriginHeader": "https://user:pass@example.com", "expectError": true },
+    { "name": "reject_empty_userinfo", "rawOriginHeader": "https://@example.com", "expectError": true },
+    { "name": "reject_query", "rawOriginHeader": "https://example.com/?q=1", "expectError": true },
+    { "name": "reject_fragment", "rawOriginHeader": "https://example.com/#frag", "expectError": true },
+    { "name": "reject_path", "rawOriginHeader": "https://example.com/path", "expectError": true },
+    { "name": "reject_empty_port", "rawOriginHeader": "https://example.com:", "expectError": true },
+    { "name": "reject_empty_port_slash", "rawOriginHeader": "https://example.com:/", "expectError": true },
+    { "name": "reject_port_zero", "rawOriginHeader": "https://example.com:0", "expectError": true },
+    { "name": "reject_percent_encoding", "rawOriginHeader": "https://%65xample.com", "expectError": true },
+    { "name": "reject_tab", "rawOriginHeader": "https://example.com\t:443", "expectError": true },
+    { "name": "reject_newline", "rawOriginHeader": "https://example.com\n.evil.com", "expectError": true },
+    { "name": "reject_nbsp", "rawOriginHeader": "https://example.com\u00a0:443", "expectError": true },
+    { "name": "reject_zero_width_space", "rawOriginHeader": "https://example.com\u200b:443", "expectError": true },
+    { "name": "reject_unicode_domain", "rawOriginHeader": "https://مثال.إختبار", "expectError": true }
+  ],
+  "allow": [
+    {
+      "name": "allow_star_valid_origin",
+      "allowedOrigins": ["*"],
+      "requestHost": "relay.example.com",
+      "rawOriginHeader": "https://evil.com",
+      "expectAllowed": true
+    },
+    {
+      "name": "deny_star_invalid_origin",
+      "allowedOrigins": ["*"],
+      "requestHost": "relay.example.com",
+      "rawOriginHeader": "not a url",
+      "expectAllowed": false
+    },
+    {
+      "name": "allow_exact_match",
+      "allowedOrigins": ["https://example.com"],
+      "requestHost": "relay.example.com",
+      "rawOriginHeader": "https://example.com",
+      "expectAllowed": true
+    },
+    {
+      "name": "deny_exact_mismatch",
+      "allowedOrigins": ["https://example.com"],
+      "requestHost": "relay.example.com",
+      "rawOriginHeader": "https://other.com",
+      "expectAllowed": false
+    },
+    {
+      "name": "allow_exact_after_normalization",
+      "allowedOrigins": ["https://example.com"],
+      "requestHost": "relay.example.com",
+      "rawOriginHeader": "HTTPS://EXAMPLE.COM:443",
+      "expectAllowed": true
+    },
+    {
+      "name": "deny_invalid_origin_when_allowlisted",
+      "allowedOrigins": ["https://example.com"],
+      "requestHost": "relay.example.com",
+      "rawOriginHeader": "https://example.com/path",
+      "expectAllowed": false
+    },
+    {
+      "name": "default_same_host_allows",
+      "allowedOrigins": [],
+      "requestHost": "example.com",
+      "rawOriginHeader": "https://example.com",
+      "expectAllowed": true
+    },
+    {
+      "name": "default_same_host_allows_default_port_https_in_host_header",
+      "allowedOrigins": [],
+      "requestHost": "example.com:443",
+      "rawOriginHeader": "https://example.com",
+      "expectAllowed": true
+    },
+    {
+      "name": "default_same_host_allows_default_port_http_in_host_header",
+      "allowedOrigins": [],
+      "requestHost": "example.com:80",
+      "rawOriginHeader": "http://example.com",
+      "expectAllowed": true
+    },
+    {
+      "name": "default_same_host_rejects_non_default_port_mismatch",
+      "allowedOrigins": [],
+      "requestHost": "example.com:444",
+      "rawOriginHeader": "https://example.com",
+      "expectAllowed": false
+    },
+    {
+      "name": "default_same_host_allows_explicit_non_default_port",
+      "allowedOrigins": [],
+      "requestHost": "example.com:444",
+      "rawOriginHeader": "https://example.com:444",
+      "expectAllowed": true
+    },
+    {
+      "name": "default_same_host_rejects_wrong_port_for_scheme",
+      "allowedOrigins": [],
+      "requestHost": "example.com:80",
+      "rawOriginHeader": "https://example.com",
+      "expectAllowed": false
+    },
+    {
+      "name": "default_same_host_rejects_invalid_request_host",
+      "allowedOrigins": [],
+      "requestHost": "example.com:",
+      "rawOriginHeader": "https://example.com",
+      "expectAllowed": false
+    },
+    {
+      "name": "default_same_host_case_insensitive",
+      "allowedOrigins": [],
+      "requestHost": "ExAmPlE.CoM",
+      "rawOriginHeader": "https://EXAMPLE.COM",
+      "expectAllowed": true
+    },
+    {
+      "name": "default_same_host_rejects_different_host",
+      "allowedOrigins": [],
+      "requestHost": "example.com",
+      "rawOriginHeader": "https://other.com",
+      "expectAllowed": false
+    },
+    {
+      "name": "default_same_host_allows_ipv6",
+      "allowedOrigins": [],
+      "requestHost": "[::1]",
+      "rawOriginHeader": "http://[::1]",
+      "expectAllowed": true
+    },
+    {
+      "name": "default_same_host_allows_ipv6_default_port",
+      "allowedOrigins": [],
+      "requestHost": "[::1]:80",
+      "rawOriginHeader": "http://[::1]",
+      "expectAllowed": true
+    },
+    {
+      "name": "default_same_host_rejects_ipv6_mismatch",
+      "allowedOrigins": [],
+      "requestHost": "[::2]",
+      "rawOriginHeader": "http://[::1]",
+      "expectAllowed": false
+    },
+    {
+      "name": "allow_null_when_configured",
+      "allowedOrigins": ["null"],
+      "requestHost": "example.com",
+      "rawOriginHeader": "null",
+      "expectAllowed": true
+    },
+    {
+      "name": "deny_null_by_default",
+      "allowedOrigins": [],
+      "requestHost": "example.com",
+      "rawOriginHeader": "null",
+      "expectAllowed": false
+    }
+  ]
+}
