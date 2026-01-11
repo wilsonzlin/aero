@@ -9,6 +9,7 @@ rem
 rem Examples:
 rem   install.cmd
 rem   install.cmd aerogpu_dx11.inf
+rem   install.cmd C:\path\to\signed\package\aerogpu.inf
 
 set "SCRIPT_DIR=%~dp0"
 rem Access real System32 when running under WoW64 (32-bit cmd.exe on 64-bit Windows).

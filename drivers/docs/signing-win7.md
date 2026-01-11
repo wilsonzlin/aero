@@ -7,6 +7,7 @@ The upstream virtio-win drivers are typically already signed for Windows. Howeve
 For the in-tree **AeroGPU** Win7 WDDM package, the repo includes scripted helpers:
 
 - `drivers/aerogpu/packaging/win7/sign_test.cmd` (creates/installs a test cert, generates `.cat` via `inf2cat` if available, signs binaries)
+- `drivers/aerogpu/packaging/win7/trust_test_cert.cmd` (imports a pre-generated test cert into Root + Trusted Publishers, optionally enables `testsigning`)
 - `drivers/aerogpu/packaging/win7/install.cmd` / `uninstall.cmd` (PnP install/remove via `pnputil`)
 
 ## Test-signing (recommended for development)
@@ -41,6 +42,28 @@ High-level steps (performed on a Windows build machine with the Windows SDK/WDK 
 4. Sign the catalog with `signtool sign`.
 
 Exact commands depend on your WDK version and driver type; keep the process scripted so builds are reproducible.
+
+### CI-style workflow (recommended)
+
+For Aero’s in-tree drivers (including AeroGPU), the repo provides an end-to-end scripted pipeline:
+
+```powershell
+.\ci\install-wdk.ps1
+.\ci\build-drivers.ps1 -ToolchainJson .\out\toolchain.json
+.\ci\make-catalogs.ps1 -ToolchainJson .\out\toolchain.json
+.\ci\sign-drivers.ps1 -ToolchainJson .\out\toolchain.json
+```
+
+This produces:
+
+- signed driver packages under `out/packages/**`
+- the public test certificate at `out/certs/aero-test.cer`
+
+When installing on a Win7 VM, you can import the certificate via the AeroGPU helper:
+
+```bat
+trust_test_cert.cmd aero-test.cer
+```
 
 ## Offline installs (WIM/WinPE) need the certificate too
 
