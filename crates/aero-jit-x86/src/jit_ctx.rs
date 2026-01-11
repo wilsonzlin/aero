@@ -1,11 +1,10 @@
-//! JIT-side context shared with generated Tier-1 WASM blocks.
+//! JIT-side context shared with generated WASM blocks/traces.
 //!
-//! This is stored in WASM linear memory separately from the architectural CPU state
-//! (`aero_cpu_core::state::CpuState` in the full emulator). Keeping these fields out of the CPU
-//! state avoids "polluting" the core ABI while still allowing the Tier-1 JIT to implement a fast
-//! inline translation path (direct-mapped TLB + direct RAM loads/stores).
+//! Tier-1 blocks receive a separate `jit_ctx_ptr` parameter pointing at a [`JitContext`] instance
+//! stored in linear memory. Tier-2 traces currently only receive a `cpu_ptr` pointing at the
+//! architectural CPU state, so Tier-2 metadata is stored at a fixed offset relative to `cpu_ptr`.
 
-use crate::{JIT_TLB_ENTRIES, JIT_TLB_ENTRY_SIZE};
+use crate::{abi, JIT_TLB_ENTRIES, JIT_TLB_ENTRY_SIZE};
 
 /// Header for the Tier-1 JIT context.
 ///
@@ -52,3 +51,34 @@ impl JitContext {
         mem[tlb_salt_off..tlb_salt_off + 8].copy_from_slice(&self.tlb_salt.to_le_bytes());
     }
 }
+
+const _: () = {
+    assert!(JitContext::TOTAL_BYTE_SIZE <= u32::MAX as usize);
+};
+
+/// Offset (relative to `cpu_ptr`) of the Tier-2 context region.
+pub const TIER2_CTX_OFFSET: u32 = abi::CPU_STATE_SIZE + (JitContext::TOTAL_BYTE_SIZE as u32);
+
+/// Offset of the Tier-2 trace exit reason (`u32`).
+pub const TRACE_EXIT_REASON_OFFSET: u32 = TIER2_CTX_OFFSET + 0;
+
+/// The trace exited normally (no special handling required).
+pub const TRACE_EXIT_REASON_NONE: u32 = 0;
+
+/// The trace exited because a code page version guard failed.
+///
+/// Runtimes are expected to invalidate the cached Tier-2 trace and resume execution in the
+/// interpreter/Tier-1 at the returned RIP.
+pub const TRACE_EXIT_REASON_CODE_INVALIDATION: u32 = 1;
+
+/// Offset of a pointer (`u32`, byte offset) to the page-version table.
+pub const CODE_VERSION_TABLE_PTR_OFFSET: u32 = TIER2_CTX_OFFSET + 4;
+
+/// Offset of the length (`u32`, number of `u32` entries) of the page-version table.
+pub const CODE_VERSION_TABLE_LEN_OFFSET: u32 = TIER2_CTX_OFFSET + 8;
+
+/// Total size (in bytes) of the Tier-2 context region.
+pub const TIER2_CTX_SIZE: u32 = 12;
+
+/// Backwards-compatible alias for [`TIER2_CTX_SIZE`].
+pub const JIT_CTX_SIZE: u32 = TIER2_CTX_SIZE;

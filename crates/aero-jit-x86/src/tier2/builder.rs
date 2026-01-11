@@ -44,6 +44,7 @@ enum DraftTerminator {
 struct DraftBlock {
     id: BlockId,
     start_rip: u64,
+    code_len: u32,
     instrs: Vec<Instr>,
     term: DraftTerminator,
 }
@@ -602,6 +603,7 @@ fn lower_block(ir: &IrBlock) -> DraftBlock {
     DraftBlock {
         id,
         start_rip: ir.entry_rip,
+        code_len: 0, // filled in by the CFG builder based on decoded x86 bytes
         instrs: ctx.instrs,
         term,
     }
@@ -631,9 +633,14 @@ pub fn build_function_from_x86<B: Tier1Bus>(
         rip_to_id.insert(rip, id);
 
         let bb = discover_block(bus, rip, cfg.block_limits);
+        let code_len = bb
+            .insts
+            .iter()
+            .fold(0u32, |acc, inst| acc.saturating_add(inst.len as u32));
         let ir = translate_block(&bb);
         let mut draft = lower_block(&ir);
         draft.id = id;
+        draft.code_len = code_len;
 
         match &draft.term {
             DraftTerminator::Jump(target) => worklist.push_back(*target),
@@ -677,6 +684,7 @@ pub fn build_function_from_x86<B: Tier1Bus>(
             Block {
                 id: draft.id,
                 start_rip: draft.start_rip,
+                code_len: draft.code_len,
                 instrs: draft.instrs,
                 term,
             }

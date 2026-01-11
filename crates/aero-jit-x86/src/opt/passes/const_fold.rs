@@ -244,6 +244,17 @@ fn fold_inst(
                 exit_rip: *exit_rip,
             });
         }
+        Instr::GuardCodeVersion {
+            page,
+            expected,
+            exit_rip,
+        } => {
+            out.push(Instr::GuardCodeVersion {
+                page: *page,
+                expected: *expected,
+                exit_rip: *exit_rip,
+            });
+        }
         Instr::SideExit { exit_rip } => {
             out.push(Instr::SideExit {
                 exit_rip: *exit_rip,

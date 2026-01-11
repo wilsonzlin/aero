@@ -72,6 +72,10 @@ impl<'a, B: Tier1Bus> Tier2CfgBuilder<'a, B> {
     }
 
     fn lower_block(&mut self, id: BlockId, bb: &BasicBlock) -> Block {
+        let code_len = bb
+            .insts
+            .iter()
+            .fold(0u32, |acc, inst| acc.saturating_add(inst.len as u32));
         let ir = translate_block(bb);
 
         let base = self.next_value;
@@ -95,6 +99,7 @@ impl<'a, B: Tier1Bus> Tier2CfgBuilder<'a, B> {
             return Block {
                 id,
                 start_rip: bb.entry_rip,
+                code_len,
                 instrs: Vec::new(),
                 term: Terminator::SideExit { exit_rip: bb.entry_rip },
             };
@@ -105,6 +110,7 @@ impl<'a, B: Tier1Bus> Tier2CfgBuilder<'a, B> {
         Block {
             id,
             start_rip: bb.entry_rip,
+            code_len,
             instrs,
             term,
         }

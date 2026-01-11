@@ -327,6 +327,12 @@ pub enum Instr {
         exit_rip: u64,
     },
 
+    GuardCodeVersion {
+        page: u64,
+        expected: u32,
+        exit_rip: u64,
+    },
+
     SideExit {
         exit_rip: u64,
     },
@@ -346,6 +352,7 @@ impl Instr {
             | Self::StoreMem { .. }
             | Self::SetFlags { .. }
             | Self::Guard { .. }
+            | Self::GuardCodeVersion { .. }
             | Self::SideExit { .. } => None,
         }
     }
@@ -371,6 +378,7 @@ impl Instr {
             | Self::LoadMem { .. }
             | Self::StoreMem { .. }
             | Self::Guard { .. }
+            | Self::GuardCodeVersion { .. }
             | Self::SideExit { .. } => true,
             Self::SetFlags { mask, .. } => !mask.is_empty(),
             Self::BinOp { flags, .. } => !flags.is_empty(),
@@ -408,6 +416,7 @@ impl Instr {
             | Self::LoadReg { .. }
             | Self::LoadFlag { .. }
             | Self::SetFlags { .. }
+            | Self::GuardCodeVersion { .. }
             | Self::SideExit { .. } => {}
         }
     }
@@ -434,6 +443,7 @@ impl Instr {
             | Self::LoadReg { .. }
             | Self::LoadFlag { .. }
             | Self::SetFlags { .. }
+            | Self::GuardCodeVersion { .. }
             | Self::SideExit { .. } => {}
         }
     }
@@ -502,6 +512,11 @@ impl Function {
 pub struct Block {
     pub id: BlockId,
     pub start_rip: u64,
+    /// Length of the guest machine-code region covered by this block (in bytes).
+    ///
+    /// This is used to compute which 4KiB pages must be guarded against self-modifying code when
+    /// building Tier-2 traces.
+    pub code_len: u32,
     pub instrs: Vec<Instr>,
     pub term: Terminator,
 }

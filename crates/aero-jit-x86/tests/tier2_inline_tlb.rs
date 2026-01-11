@@ -1,10 +1,12 @@
 #![cfg(debug_assertions)]
 
 use aero_jit_x86::abi;
-use aero_jit_x86::jit_ctx::JitContext;
+use aero_jit_x86::jit_ctx::{self, JitContext};
 use aero_jit_x86::tier2::ir::{Instr, Operand, TraceIr, TraceKind, ValueId};
 use aero_jit_x86::tier2::opt::RegAllocPlan;
-use aero_jit_x86::tier2::wasm::{Tier2WasmCodegen, Tier2WasmOptions, EXPORT_TRACE_FN};
+use aero_jit_x86::tier2::wasm::{
+    Tier2WasmCodegen, Tier2WasmOptions, EXPORT_TRACE_FN, IMPORT_CODE_PAGE_VERSION,
+};
 use aero_jit_x86::wasm::{
     IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U32, IMPORT_MEM_READ_U64, IMPORT_MEM_READ_U8,
     IMPORT_MEM_WRITE_U16, IMPORT_MEM_WRITE_U32, IMPORT_MEM_WRITE_U64, IMPORT_MEM_WRITE_U8,
@@ -73,6 +75,16 @@ fn instantiate(
 
     define_mem_helpers(&mut store, &mut linker, memory.clone());
     define_mmu_translate(&mut store, &mut linker, memory.clone());
+    linker
+        .define(
+            IMPORT_MODULE,
+            IMPORT_CODE_PAGE_VERSION,
+            Func::wrap(
+                &mut store,
+                |_caller: Caller<'_, HostState>, _cpu_ptr: i32, _page: i64| -> i64 { 0 },
+            ),
+        )
+        .unwrap();
 
     let instance = linker.instantiate_and_start(&mut store, &module).unwrap();
     let func = instance
@@ -359,7 +371,7 @@ fn run_trace(
 
     let cpu_ptr_usize = cpu_ptr as usize;
     let jit_ctx_ptr_usize = cpu_ptr_usize + (abi::CPU_STATE_SIZE as usize);
-    let total_len = jit_ctx_ptr_usize + JitContext::TOTAL_BYTE_SIZE;
+    let total_len = jit_ctx_ptr_usize + JitContext::TOTAL_BYTE_SIZE + (jit_ctx::TIER2_CTX_SIZE as usize);
     let mut mem = vec![0u8; total_len];
 
     // RAM at `ram_base = 0`.

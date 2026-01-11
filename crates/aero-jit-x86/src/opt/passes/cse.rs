@@ -273,6 +273,17 @@ fn process_list(
                     exit_rip: *exit_rip,
                 });
             }
+            Instr::GuardCodeVersion {
+                page,
+                expected,
+                exit_rip,
+            } => {
+                output.push(Instr::GuardCodeVersion {
+                    page: *page,
+                    expected: *expected,
+                    exit_rip: *exit_rip,
+                });
+            }
         }
     }
     false

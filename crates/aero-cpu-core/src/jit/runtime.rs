@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use crate::jit::cache::{CodeCache, CompiledBlockHandle, CompiledBlockMeta, PageVersionSnapshot};
 use crate::jit::profile::HotnessProfile;
 
@@ -41,14 +39,36 @@ pub struct JitBlockExit {
     pub exit_to_interpreter: bool,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct PageVersionTracker {
-    versions: HashMap<u64, u32>,
+    /// Page version table indexed by 4KiB physical page number.
+    ///
+    /// This is intentionally a dense table so it can be exposed to generated JIT code as a
+    /// contiguous `u32` array (one entry per page). Pages outside the table implicitly have
+    /// version 0.
+    versions: Vec<u32>,
 }
 
 impl PageVersionTracker {
     pub fn version(&self, page: u64) -> u32 {
-        self.versions.get(&page).copied().unwrap_or(0)
+        let Ok(idx) = usize::try_from(page) else {
+            return 0;
+        };
+        self.versions.get(idx).copied().unwrap_or(0)
+    }
+
+    /// Sets an explicit version for a page.
+    ///
+    /// This is primarily used by unit tests and tooling; normal execution should use
+    /// [`Self::bump_write`].
+    pub fn set_version(&mut self, page: u64, version: u32) {
+        let Ok(idx) = usize::try_from(page) else {
+            return;
+        };
+        if self.versions.len() <= idx {
+            self.versions.resize(idx + 1, 0);
+        }
+        self.versions[idx] = version;
     }
 
     pub fn bump_write(&mut self, paddr: u64, len: usize) {
@@ -60,8 +80,15 @@ impl PageVersionTracker {
         let end = paddr.checked_add(len as u64 - 1).unwrap_or(u64::MAX);
         let end_page = end >> PAGE_SHIFT;
 
-        for page in start_page..=end_page {
-            let v = self.versions.entry(page).or_insert(0);
+        let Ok(end_idx) = usize::try_from(end_page) else {
+            return;
+        };
+        if self.versions.len() <= end_idx {
+            self.versions.resize(end_idx + 1, 0);
+        }
+
+        let start_idx = start_page as usize;
+        for v in &mut self.versions[start_idx..=end_idx] {
             *v = v.saturating_add(1);
         }
     }

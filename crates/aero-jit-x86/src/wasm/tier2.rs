@@ -7,7 +7,7 @@ use aero_types::{Flag, FlagSet, Gpr, Width};
 
 use crate::abi;
 use crate::abi::{MMU_ACCESS_READ, MMU_ACCESS_WRITE};
-use crate::jit_ctx::JitContext;
+use crate::jit_ctx::{self, JitContext};
 use crate::opt::RegAllocPlan;
 use crate::t2_ir::{BinOp, FlagValues, Instr, Operand, TraceIr, TraceKind, ValueId, REG_COUNT};
 use crate::{
@@ -35,6 +35,9 @@ impl Default for Tier2WasmOptions {
         Self { inline_tlb: false }
     }
 }
+
+/// Import that returns the current code page version for self-modifying code guards.
+pub const IMPORT_CODE_PAGE_VERSION: &str = "code_page_version";
 #[derive(Clone, Copy)]
 struct ImportedFuncs {
     mem_read_u8: u32,
@@ -46,6 +49,7 @@ struct ImportedFuncs {
     mem_write_u32: u32,
     mem_write_u64: u32,
     mmu_translate: Option<u32>,
+    code_page_version: u32,
     count: u32,
 }
 
@@ -62,6 +66,7 @@ impl Tier2WasmCodegen {
     /// - export `trace(cpu_ptr: i32, jit_ctx_ptr: i32) -> i64` (returns `next_rip`)
     /// - import `env.memory`
     /// - import memory helpers described by the `IMPORT_MEM_*` constants
+    /// - import `env.code_page_version(cpu_ptr: i32, page: i64) -> i64`
     ///
     /// The trace spills cached registers + `CpuState.rflags` on every side exit.
     pub fn compile_trace(&self, trace: &TraceIr, plan: &RegAllocPlan) -> Vec<u8> {
@@ -125,6 +130,10 @@ impl Tier2WasmCodegen {
         } else {
             None
         };
+        let ty_code_page_version = types.len();
+        types
+            .ty()
+            .function([ValType::I32, ValType::I64], [ValType::I64]);
         let ty_trace = types.len();
         types.ty().function([ValType::I32, ValType::I32], [ValType::I64]);
         module.section(&types);
@@ -154,6 +163,7 @@ impl Tier2WasmCodegen {
             mem_write_u32: next(&mut next_func),
             mem_write_u64: next(&mut next_func),
             mmu_translate: options.inline_tlb.then(|| next(&mut next_func)),
+            code_page_version: next(&mut next_func),
             count: next_func - func_base,
         };
 
@@ -204,6 +214,11 @@ impl Tier2WasmCodegen {
                 EntityType::Function(ty_mmu_translate.expect("type for mmu_translate")),
             );
         }
+        imports.import(
+            IMPORT_MODULE,
+            IMPORT_CODE_PAGE_VERSION,
+            EntityType::Function(ty_code_page_version),
+        );
         module.section(&imports);
 
         let mut funcs = FunctionSection::new();
@@ -250,6 +265,14 @@ impl Tier2WasmCodegen {
             f.instruction(&Instruction::I64Load(memarg(JitContext::TLB_SALT_OFFSET, 3)));
             f.instruction(&Instruction::LocalSet(layout.tlb_salt_local()));
         }
+
+        // Default exit reason is "none".
+        f.instruction(&Instruction::LocalGet(layout.cpu_ptr_local()));
+        f.instruction(&Instruction::I32Const(jit_ctx::TRACE_EXIT_REASON_NONE as i32));
+        f.instruction(&Instruction::I32Store(memarg(
+            jit_ctx::TRACE_EXIT_REASON_OFFSET,
+            2,
+        )));
 
         // Single exit block.
         f.instruction(&Instruction::Block(BlockType::Empty));
@@ -568,6 +591,37 @@ impl Emitter<'_> {
 
                 self.f.instruction(&Instruction::If(BlockType::Empty));
                 self.depth += 1;
+                self.f.instruction(&Instruction::I64Const(exit_rip as i64));
+                self.f
+                    .instruction(&Instruction::LocalSet(self.layout.next_rip_local()));
+                self.f.instruction(&Instruction::Br(self.depth));
+                self.f.instruction(&Instruction::End);
+                self.depth -= 1;
+            }
+            Instr::GuardCodeVersion {
+                page,
+                expected,
+                exit_rip,
+            } => {
+                self.f
+                    .instruction(&Instruction::LocalGet(self.layout.cpu_ptr_local()));
+                self.f.instruction(&Instruction::I64Const(page as i64));
+                self.f
+                    .instruction(&Instruction::Call(self.imported.code_page_version));
+                self.f.instruction(&Instruction::I64Const(expected as i64));
+                self.f.instruction(&Instruction::I64Ne);
+                self.f.instruction(&Instruction::If(BlockType::Empty));
+                self.depth += 1;
+                // Mark the exit as a code-version invalidation so the runtime can evict the trace.
+                self.f
+                    .instruction(&Instruction::LocalGet(self.layout.cpu_ptr_local()));
+                self.f.instruction(&Instruction::I32Const(
+                    jit_ctx::TRACE_EXIT_REASON_CODE_INVALIDATION as i32,
+                ));
+                self.f.instruction(&Instruction::I32Store(memarg(
+                    jit_ctx::TRACE_EXIT_REASON_OFFSET,
+                    2,
+                )));
                 self.f.instruction(&Instruction::I64Const(exit_rip as i64));
                 self.f
                     .instruction(&Instruction::LocalSet(self.layout.next_rip_local()));
@@ -1099,6 +1153,10 @@ impl Emitter<'_> {
                     Width::W32 => self.f.instruction(&Instruction::I64Store32(memarg(0, 2))),
                     Width::W64 => self.f.instruction(&Instruction::I64Store(memarg(0, 3))),
                 };
+
+                // Self-modifying code invalidation: bump the version entry for the written
+                // physical page. We conservatively bump for all RAM writes.
+                self.emit_bump_code_version_fastpath();
             }
             self.f.instruction(&Instruction::End);
             self.depth -= 1;
@@ -1206,6 +1264,90 @@ impl Emitter<'_> {
         self.f.instruction(&Instruction::I32WrapI64);
     }
 
+    /// Bumps the page-version entry for the current RAM write (inline fast-path stores only).
+    ///
+    /// The runtime may choose to only bump for pages marked as executable/code, but for initial
+    /// correctness we bump for all writes that hit RAM.
+    fn emit_bump_code_version_fastpath(&mut self) {
+        // If the runtime hasn't configured a version table, skip.
+        self.f
+            .instruction(&Instruction::LocalGet(self.layout.cpu_ptr_local()));
+        self.f.instruction(&Instruction::I32Load(memarg(
+            jit_ctx::CODE_VERSION_TABLE_LEN_OFFSET,
+            2,
+        )));
+        self.f.instruction(&Instruction::I32Eqz);
+        self.f.instruction(&Instruction::If(BlockType::Empty));
+        self.f.instruction(&Instruction::Else);
+        {
+            // Compute the physical page number for this store.
+            self.f
+                .instruction(&Instruction::LocalGet(self.layout.scratch_tlb_data_local()));
+            self.f
+                .instruction(&Instruction::I64Const(PAGE_BASE_MASK as i64));
+            self.f.instruction(&Instruction::I64And);
+            self.f.instruction(&Instruction::I64Const(PAGE_SHIFT as i64));
+            self.f.instruction(&Instruction::I64ShrU); // -> page (i64)
+
+            // Bounds check: page < table_len.
+            self.f
+                .instruction(&Instruction::LocalGet(self.layout.cpu_ptr_local()));
+            self.f.instruction(&Instruction::I32Load(memarg(
+                jit_ctx::CODE_VERSION_TABLE_LEN_OFFSET,
+                2,
+            )));
+            self.f.instruction(&Instruction::I64ExtendI32U);
+            self.f.instruction(&Instruction::I64LtU);
+
+            self.f.instruction(&Instruction::If(BlockType::Empty));
+            {
+                // addr = table_ptr + page * 4
+                self.f
+                    .instruction(&Instruction::LocalGet(self.layout.cpu_ptr_local()));
+                self.f.instruction(&Instruction::I32Load(memarg(
+                    jit_ctx::CODE_VERSION_TABLE_PTR_OFFSET,
+                    2,
+                )));
+                self.f.instruction(&Instruction::I64ExtendI32U);
+
+                self.f
+                    .instruction(&Instruction::LocalGet(self.layout.scratch_tlb_data_local()));
+                self.f
+                    .instruction(&Instruction::I64Const(PAGE_BASE_MASK as i64));
+                self.f.instruction(&Instruction::I64And);
+                self.f.instruction(&Instruction::I64Const(PAGE_SHIFT as i64));
+                self.f.instruction(&Instruction::I64ShrU);
+
+                self.f.instruction(&Instruction::I64Const(4));
+                self.f.instruction(&Instruction::I64Mul);
+                self.f.instruction(&Instruction::I64Add);
+                self.f
+                    .instruction(&Instruction::LocalSet(self.layout.scratch_vpn_local()));
+
+                // table[page] += 1
+                self.f
+                    .instruction(&Instruction::LocalGet(self.layout.scratch_vpn_local()));
+                self.f.instruction(&Instruction::I32WrapI64);
+                self.f.instruction(&Instruction::I32Load(memarg(0, 2)));
+                self.f.instruction(&Instruction::I32Const(1));
+                self.f.instruction(&Instruction::I32Add);
+                self.f.instruction(&Instruction::I64ExtendI32U);
+                self.f
+                    .instruction(&Instruction::LocalSet(self.layout.scratch_vaddr_local()));
+
+                self.f
+                    .instruction(&Instruction::LocalGet(self.layout.scratch_vpn_local()));
+                self.f.instruction(&Instruction::I32WrapI64);
+                self.f
+                    .instruction(&Instruction::LocalGet(self.layout.scratch_vaddr_local()));
+                self.f.instruction(&Instruction::I32WrapI64);
+                self.f.instruction(&Instruction::I32Store(memarg(0, 2)));
+            }
+            self.f.instruction(&Instruction::End);
+        }
+        self.f.instruction(&Instruction::End);
+    }
+
     fn emit_tlb_entry_addr(&mut self) {
         // base = jit_ctx_ptr + JitContext::TLB_OFFSET + ((vpn & mask) * ENTRY_SIZE)
         self.f
@@ -1226,6 +1368,10 @@ impl Emitter<'_> {
         self.f.instruction(&Instruction::I64Add);
         self.f.instruction(&Instruction::I32WrapI64);
     }
+}
+
+fn gpr_offset(reg: Gpr) -> u32 {
+    abi::CPU_GPR_OFF[reg.as_u8() as usize]
 }
 
 fn memarg(offset: u32, align: u32) -> MemArg {
@@ -1289,8 +1435,4 @@ fn all_regs() -> [Gpr; REG_COUNT] {
         Gpr::R14,
         Gpr::R15,
     ]
-}
-
-fn gpr_offset(reg: Gpr) -> u32 {
-    crate::abi::CPU_GPR_OFF[reg.as_u8() as usize]
 }

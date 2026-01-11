@@ -1,3 +1,4 @@
+use aero_cpu_core::jit::runtime::PageVersionTracker;
 use aero_types::{Flag, FlagSet, Gpr};
 use crate::t2_ir::{
     eval_binop, FlagValues, Function, Instr, Operand, TraceIr, TraceKind, REG_COUNT,
@@ -29,7 +30,10 @@ impl PartialEq for T2State {
 impl Eq for T2State {}
 
 #[derive(Clone, Debug, Default)]
-pub struct RuntimeEnv {}
+pub struct RuntimeEnv {
+    /// Current code page versions (self-modifying code invalidation).
+    pub page_versions: PageVersionTracker,
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ExecStats {
@@ -43,6 +47,7 @@ pub struct ExecStats {
 pub enum RunExit {
     Returned,
     SideExit { next_rip: u64 },
+    Invalidate { next_rip: u64 },
     StepLimit,
 }
 
@@ -77,7 +82,7 @@ fn eval_operand(op: Operand, values: &[u64]) -> u64 {
 fn exec_instr(
     inst: &Instr,
     state: &mut T2State,
-    _env: &RuntimeEnv,
+    env: &RuntimeEnv,
     bus: &mut dyn Tier1Bus,
     values: &mut [u64],
     stats: &mut ExecStats,
@@ -164,6 +169,20 @@ fn exec_instr(
                 return Some(RunExit::SideExit { next_rip: exit_rip });
             }
         }
+        Instr::GuardCodeVersion {
+            page,
+            expected,
+            exit_rip,
+        } => {
+            let current = env.page_versions.version(page);
+            if current != expected {
+                if let Some(cache) = reg_cache {
+                    cache.spill(&mut state.cpu, stats);
+                }
+                state.cpu.rip = exit_rip;
+                return Some(RunExit::Invalidate { next_rip: exit_rip });
+            }
+        }
         Instr::SideExit { exit_rip } => {
             if let Some(cache) = reg_cache {
                 cache.spill(&mut state.cpu, stats);
@@ -217,7 +236,9 @@ pub fn run_function_from_block(
                         }
                         return exit;
                     }
-                    RunExit::Returned | RunExit::StepLimit => return exit,
+                    RunExit::Invalidate { .. } | RunExit::Returned | RunExit::StepLimit => {
+                        return exit;
+                    }
                 }
             }
         }

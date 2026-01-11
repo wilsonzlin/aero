@@ -6,7 +6,7 @@ use wasmtime::{Caller, Config, Engine, Linker, Memory, MemoryType, Module, Store
 
 use super::Tier1Cpu;
 use crate::abi;
-use crate::jit_ctx::JitContext;
+use crate::jit_ctx::{self, JitContext};
 use crate::tier1_pipeline::Tier1WasmRegistry;
 use crate::wasm::tier1::EXPORT_TIER1_BLOCK_FN;
 use crate::wasm::{
@@ -117,6 +117,15 @@ impl<Cpu> WasmtimeBackend<Cpu> {
         assert!(
             end <= byte_len,
             "cpu_ptr (0x{cpu_ptr:x}) + cpu/jit_ctx regions (end=0x{end:x}) must fit in linear memory ({} bytes)",
+            byte_len
+        );
+        let end = (cpu_ptr as usize)
+            .checked_add((jit_ctx::TIER2_CTX_OFFSET + jit_ctx::JIT_CTX_SIZE) as usize)
+            .expect("cpu_ptr overflow");
+        assert!(
+            end <= byte_len,
+            "cpu_ptr (0x{cpu_ptr:x}) + Tier-2 context ({}) must fit in linear memory ({} bytes)",
+            jit_ctx::TIER2_CTX_OFFSET + jit_ctx::JIT_CTX_SIZE,
             byte_len
         );
 
@@ -288,6 +297,53 @@ fn define_mem_helpers(linker: &mut Linker<HostExitState>, memory: Memory) {
         }
     }
 
+    fn read_u32_le(mem: &[u8], off: usize) -> u32 {
+        let mut buf = [0u8; 4];
+        buf.copy_from_slice(&mem[off..off + 4]);
+        u32::from_le_bytes(buf)
+    }
+
+    fn write_u32_le(mem: &mut [u8], off: usize, value: u32) {
+        mem[off..off + 4].copy_from_slice(&value.to_le_bytes());
+    }
+
+    fn bump_code_versions(mem: &mut [u8], cpu_ptr: i32, paddr: u64, len: usize) {
+        if len == 0 {
+            return;
+        }
+
+        let cpu_base = cpu_ptr as usize;
+        let table_len = read_u32_le(
+            mem,
+            cpu_base + jit_ctx::CODE_VERSION_TABLE_LEN_OFFSET as usize,
+        ) as u64;
+        if table_len == 0 {
+            return;
+        }
+
+        let table_ptr = read_u32_le(
+            mem,
+            cpu_base + jit_ctx::CODE_VERSION_TABLE_PTR_OFFSET as usize,
+        ) as u64;
+
+        let start_page = paddr >> crate::PAGE_SHIFT;
+        let end = paddr.saturating_add(len as u64 - 1);
+        let end_page = end >> crate::PAGE_SHIFT;
+
+        for page in start_page..=end_page {
+            if page >= table_len {
+                continue;
+            }
+            let entry_off = table_ptr + page * 4;
+            let entry_off = usize::try_from(entry_off).unwrap_or(usize::MAX);
+            if entry_off.saturating_add(4) > mem.len() {
+                continue;
+            }
+            let cur = read_u32_le(mem, entry_off);
+            write_u32_le(mem, entry_off, cur.wrapping_add(1));
+        }
+    }
+
     // Reads.
     {
         let mem = memory;
@@ -345,8 +401,11 @@ fn define_mem_helpers(linker: &mut Linker<HostExitState>, memory: Memory) {
             .func_wrap(
                 IMPORT_MODULE,
                 IMPORT_MEM_WRITE_U8,
-                move |mut caller: Caller<'_, HostExitState>, _cpu_ptr: i32, addr: i64, value: i32| {
-                    write::<1>(mem.data_mut(&mut caller), addr as usize, value as u64);
+                move |mut caller: Caller<'_, HostExitState>, cpu_ptr: i32, addr: i64, value: i32| {
+                    let addr_u = addr as u64;
+                    let mem_mut = mem.data_mut(&mut caller);
+                    write::<1>(mem_mut, addr_u as usize, value as u64);
+                    bump_code_versions(mem_mut, cpu_ptr, addr_u, 1);
                 },
             )
             .expect("define mem_write_u8");
@@ -357,8 +416,11 @@ fn define_mem_helpers(linker: &mut Linker<HostExitState>, memory: Memory) {
             .func_wrap(
                 IMPORT_MODULE,
                 IMPORT_MEM_WRITE_U16,
-                move |mut caller: Caller<'_, HostExitState>, _cpu_ptr: i32, addr: i64, value: i32| {
-                    write::<2>(mem.data_mut(&mut caller), addr as usize, value as u64);
+                move |mut caller: Caller<'_, HostExitState>, cpu_ptr: i32, addr: i64, value: i32| {
+                    let addr_u = addr as u64;
+                    let mem_mut = mem.data_mut(&mut caller);
+                    write::<2>(mem_mut, addr_u as usize, value as u64);
+                    bump_code_versions(mem_mut, cpu_ptr, addr_u, 2);
                 },
             )
             .expect("define mem_write_u16");
@@ -369,8 +431,11 @@ fn define_mem_helpers(linker: &mut Linker<HostExitState>, memory: Memory) {
             .func_wrap(
                 IMPORT_MODULE,
                 IMPORT_MEM_WRITE_U32,
-                move |mut caller: Caller<'_, HostExitState>, _cpu_ptr: i32, addr: i64, value: i32| {
-                    write::<4>(mem.data_mut(&mut caller), addr as usize, value as u64);
+                move |mut caller: Caller<'_, HostExitState>, cpu_ptr: i32, addr: i64, value: i32| {
+                    let addr_u = addr as u64;
+                    let mem_mut = mem.data_mut(&mut caller);
+                    write::<4>(mem_mut, addr_u as usize, value as u64);
+                    bump_code_versions(mem_mut, cpu_ptr, addr_u, 4);
                 },
             )
             .expect("define mem_write_u32");
@@ -381,8 +446,11 @@ fn define_mem_helpers(linker: &mut Linker<HostExitState>, memory: Memory) {
             .func_wrap(
                 IMPORT_MODULE,
                 IMPORT_MEM_WRITE_U64,
-                move |mut caller: Caller<'_, HostExitState>, _cpu_ptr: i32, addr: i64, value: i64| {
-                    write::<8>(mem.data_mut(&mut caller), addr as usize, value as u64);
+                move |mut caller: Caller<'_, HostExitState>, cpu_ptr: i32, addr: i64, value: i64| {
+                    let addr_u = addr as u64;
+                    let mem_mut = mem.data_mut(&mut caller);
+                    write::<8>(mem_mut, addr_u as usize, value as u64);
+                    bump_code_versions(mem_mut, cpu_ptr, addr_u, 8);
                 },
             )
             .expect("define mem_write_u64");

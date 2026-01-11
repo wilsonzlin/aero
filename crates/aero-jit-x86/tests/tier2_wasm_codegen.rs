@@ -1,3 +1,4 @@
+use aero_cpu_core::jit::runtime::PageVersionTracker;
 use aero_cpu_core::state::RFLAGS_DF;
 use aero_types::{Flag, FlagSet, Gpr, Width};
 mod tier1_common;
@@ -5,6 +6,7 @@ mod tier1_common;
 use tier1_common::SimpleBus;
 
 use aero_jit_x86::abi;
+use aero_jit_x86::jit_ctx;
 use aero_jit_x86::profile::{ProfileData, TraceConfig};
 use aero_jit_x86::tier2::exec::{run_trace_with_cached_regs, RunExit, RuntimeEnv, T2State};
 use aero_jit_x86::tier2::ir::{
@@ -12,11 +14,11 @@ use aero_jit_x86::tier2::ir::{
 };
 use aero_jit_x86::tier2::opt::{optimize_trace, OptConfig};
 use aero_jit_x86::tier2::trace::TraceBuilder;
-use aero_jit_x86::tier2::wasm::{Tier2WasmCodegen, EXPORT_TRACE_FN};
+use aero_jit_x86::tier2::wasm::{Tier2WasmCodegen, EXPORT_TRACE_FN, IMPORT_CODE_PAGE_VERSION};
 use aero_jit_x86::wasm::{
-    IMPORT_MEMORY, IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U32, IMPORT_MEM_READ_U64, IMPORT_MEM_READ_U8,
-    IMPORT_MEM_WRITE_U16, IMPORT_MEM_WRITE_U32, IMPORT_MEM_WRITE_U64, IMPORT_MEM_WRITE_U8,
-    IMPORT_MODULE,
+    IMPORT_MEMORY, IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U32, IMPORT_MEM_READ_U64,
+    IMPORT_MEM_READ_U8, IMPORT_MEM_WRITE_U16, IMPORT_MEM_WRITE_U32, IMPORT_MEM_WRITE_U64,
+    IMPORT_MEM_WRITE_U8, IMPORT_MODULE,
 };
 
 use wasmi::{Caller, Engine, Func, Linker, Memory, MemoryType, Module, Store, TypedFunc};
@@ -31,11 +33,20 @@ fn validate_wasm(bytes: &[u8]) {
     validator.validate_all(bytes).unwrap();
 }
 
-fn instantiate_trace(bytes: &[u8]) -> (Store<()>, Memory, TypedFunc<(i32, i32), i64>) {
+#[derive(Clone, Debug, Default)]
+struct HostEnv {
+    code_version_calls: u64,
+    bump_on_call: Option<(u64, u64)>,
+}
+
+fn instantiate_trace(
+    bytes: &[u8],
+    host_env: HostEnv,
+) -> (Store<HostEnv>, Memory, TypedFunc<(i32, i32), i64>) {
     let engine = Engine::default();
     let module = Module::new(&engine, bytes).unwrap();
 
-    let mut store = Store::new(&engine, ());
+    let mut store = Store::new(&engine, host_env);
     let mut linker = Linker::new(&engine);
 
     // Two pages: guest memory in page 0, CpuState at CPU_PTR in page 1.
@@ -46,6 +57,65 @@ fn instantiate_trace(bytes: &[u8]) -> (Store<()>, Memory, TypedFunc<(i32, i32), 
 
     define_mem_helpers(&mut store, &mut linker, memory.clone());
 
+    let mem = memory.clone();
+    linker
+        .define(
+            IMPORT_MODULE,
+            IMPORT_CODE_PAGE_VERSION,
+            Func::wrap(
+                &mut store,
+                move |mut caller: Caller<'_, HostEnv>, cpu_ptr: i32, page: i64| -> i64 {
+                    let page = page as u64;
+                    let cpu_ptr = cpu_ptr as usize;
+
+                    let mut buf = [0u8; 4];
+                    mem.read(
+                        &caller,
+                        cpu_ptr + jit_ctx::CODE_VERSION_TABLE_PTR_OFFSET as usize,
+                        &mut buf,
+                    )
+                    .unwrap();
+                    let table_ptr = u32::from_le_bytes(buf) as u64;
+
+                    mem.read(
+                        &caller,
+                        cpu_ptr + jit_ctx::CODE_VERSION_TABLE_LEN_OFFSET as usize,
+                        &mut buf,
+                    )
+                    .unwrap();
+                    let table_len = u32::from_le_bytes(buf) as u64;
+
+                    let call_idx = {
+                        let data = caller.data_mut();
+                        data.code_version_calls += 1;
+                        data.code_version_calls
+                    };
+
+                    // Optional one-shot bump used by tests to simulate mid-trace invalidation.
+                    if let Some((at, bump_page)) = caller.data().bump_on_call {
+                        if call_idx == at {
+                            caller.data_mut().bump_on_call = None;
+                            if bump_page < table_len {
+                                let addr = table_ptr as usize + bump_page as usize * 4;
+                                mem.read(&caller, addr, &mut buf).unwrap();
+                                let cur = u32::from_le_bytes(buf);
+                                let next = cur.wrapping_add(1);
+                                mem.write(&mut caller, addr, &next.to_le_bytes()).unwrap();
+                            }
+                        }
+                    }
+
+                    if page >= table_len {
+                        return 0;
+                    }
+                    let addr = table_ptr as usize + page as usize * 4;
+                    mem.read(&caller, addr, &mut buf).unwrap();
+                    u32::from_le_bytes(buf) as i64
+                },
+            ),
+        )
+        .unwrap();
+
     let instance = linker.instantiate_and_start(&mut store, &module).unwrap();
     let trace = instance
         .get_typed_func::<(i32, i32), i64>(&store, EXPORT_TRACE_FN)
@@ -53,8 +123,59 @@ fn instantiate_trace(bytes: &[u8]) -> (Store<()>, Memory, TypedFunc<(i32, i32), 
     (store, memory, trace)
 }
 
-fn define_mem_helpers(store: &mut Store<()>, linker: &mut Linker<()>, memory: Memory) {
-    fn read<const N: usize>(caller: &mut Caller<'_, ()>, memory: &Memory, addr: usize) -> u64 {
+fn bump_code_versions(
+    caller: &mut Caller<'_, HostEnv>,
+    memory: &Memory,
+    cpu_ptr: i32,
+    paddr: u64,
+    len: usize,
+) {
+    if len == 0 {
+        return;
+    }
+
+    let cpu_ptr = cpu_ptr as usize;
+    let mut buf = [0u8; 4];
+    memory
+        .read(
+            &mut *caller,
+            cpu_ptr + jit_ctx::CODE_VERSION_TABLE_LEN_OFFSET as usize,
+            &mut buf,
+        )
+        .unwrap();
+    let table_len = u32::from_le_bytes(buf) as u64;
+    if table_len == 0 {
+        return;
+    }
+
+    memory
+        .read(
+            &mut *caller,
+            cpu_ptr + jit_ctx::CODE_VERSION_TABLE_PTR_OFFSET as usize,
+            &mut buf,
+        )
+        .unwrap();
+    let table_ptr = u32::from_le_bytes(buf) as u64;
+
+    let start_page = paddr >> aero_jit_x86::PAGE_SHIFT;
+    let end = paddr.saturating_add(len as u64 - 1);
+    let end_page = end >> aero_jit_x86::PAGE_SHIFT;
+
+    for page in start_page..=end_page {
+        if page >= table_len {
+            continue;
+        }
+        let addr = table_ptr as usize + page as usize * 4;
+        memory.read(&mut *caller, addr, &mut buf).unwrap();
+        let cur = u32::from_le_bytes(buf);
+        memory
+            .write(&mut *caller, addr, &cur.wrapping_add(1).to_le_bytes())
+            .unwrap();
+    }
+}
+
+fn define_mem_helpers(store: &mut Store<HostEnv>, linker: &mut Linker<HostEnv>, memory: Memory) {
+    fn read<const N: usize>(caller: &mut Caller<'_, HostEnv>, memory: &Memory, addr: usize) -> u64 {
         let mut buf = [0u8; N];
         memory
             .read(caller, addr, &mut buf)
@@ -67,7 +188,7 @@ fn define_mem_helpers(store: &mut Store<()>, linker: &mut Linker<()>, memory: Me
     }
 
     fn write<const N: usize>(
-        caller: &mut Caller<'_, ()>,
+        caller: &mut Caller<'_, HostEnv>,
         memory: &Memory,
         addr: usize,
         value: u64,
@@ -81,117 +202,187 @@ fn define_mem_helpers(store: &mut Store<()>, linker: &mut Linker<()>, memory: Me
             .expect("memory write in bounds");
     }
 
-    let mem = memory.clone();
-    linker
-        .define(
-            IMPORT_MODULE,
-            IMPORT_MEM_READ_U8,
-            Func::wrap(
-                &mut *store,
-                move |mut caller: Caller<'_, ()>, _cpu_ptr: i32, addr: i64| -> i32 {
-                    read::<1>(&mut caller, &mem, addr as usize) as i32
-                },
-            ),
-        )
-        .unwrap();
+    // Reads.
+    {
+        let mem = memory.clone();
+        linker
+            .define(
+                IMPORT_MODULE,
+                IMPORT_MEM_READ_U8,
+                Func::wrap(
+                    &mut *store,
+                    move |mut caller: Caller<'_, HostEnv>, _cpu_ptr: i32, addr: i64| -> i32 {
+                        read::<1>(&mut caller, &mem, addr as usize) as i32
+                    },
+                ),
+            )
+            .unwrap();
+    }
+    {
+        let mem = memory.clone();
+        linker
+            .define(
+                IMPORT_MODULE,
+                IMPORT_MEM_READ_U16,
+                Func::wrap(
+                    &mut *store,
+                    move |mut caller: Caller<'_, HostEnv>, _cpu_ptr: i32, addr: i64| -> i32 {
+                        read::<2>(&mut caller, &mem, addr as usize) as i32
+                    },
+                ),
+            )
+            .unwrap();
+    }
+    {
+        let mem = memory.clone();
+        linker
+            .define(
+                IMPORT_MODULE,
+                IMPORT_MEM_READ_U32,
+                Func::wrap(
+                    &mut *store,
+                    move |mut caller: Caller<'_, HostEnv>, _cpu_ptr: i32, addr: i64| -> i32 {
+                        read::<4>(&mut caller, &mem, addr as usize) as i32
+                    },
+                ),
+            )
+            .unwrap();
+    }
+    {
+        let mem = memory.clone();
+        linker
+            .define(
+                IMPORT_MODULE,
+                IMPORT_MEM_READ_U64,
+                Func::wrap(
+                    &mut *store,
+                    move |mut caller: Caller<'_, HostEnv>, _cpu_ptr: i32, addr: i64| -> i64 {
+                        read::<8>(&mut caller, &mem, addr as usize) as i64
+                    },
+                ),
+            )
+            .unwrap();
+    }
 
-    let mem = memory.clone();
-    linker
-        .define(
-            IMPORT_MODULE,
-            IMPORT_MEM_READ_U16,
-            Func::wrap(
-                &mut *store,
-                move |mut caller: Caller<'_, ()>, _cpu_ptr: i32, addr: i64| -> i32 {
-                    read::<2>(&mut caller, &mem, addr as usize) as i32
-                },
-            ),
-        )
-        .unwrap();
+    // Writes.
+    {
+        let mem = memory.clone();
+        linker
+            .define(
+                IMPORT_MODULE,
+                IMPORT_MEM_WRITE_U8,
+                Func::wrap(
+                    &mut *store,
+                    move |mut caller: Caller<'_, HostEnv>, cpu_ptr: i32, addr: i64, value: i32| {
+                        write::<1>(&mut caller, &mem, addr as usize, value as u64);
+                        bump_code_versions(&mut caller, &mem, cpu_ptr, addr as u64, 1);
+                    },
+                ),
+            )
+            .unwrap();
+    }
+    {
+        let mem = memory.clone();
+        linker
+            .define(
+                IMPORT_MODULE,
+                IMPORT_MEM_WRITE_U16,
+                Func::wrap(
+                    &mut *store,
+                    move |mut caller: Caller<'_, HostEnv>, cpu_ptr: i32, addr: i64, value: i32| {
+                        write::<2>(&mut caller, &mem, addr as usize, value as u64);
+                        bump_code_versions(&mut caller, &mem, cpu_ptr, addr as u64, 2);
+                    },
+                ),
+            )
+            .unwrap();
+    }
+    {
+        let mem = memory.clone();
+        linker
+            .define(
+                IMPORT_MODULE,
+                IMPORT_MEM_WRITE_U32,
+                Func::wrap(
+                    &mut *store,
+                    move |mut caller: Caller<'_, HostEnv>, cpu_ptr: i32, addr: i64, value: i32| {
+                        write::<4>(&mut caller, &mem, addr as usize, value as u64);
+                        bump_code_versions(&mut caller, &mem, cpu_ptr, addr as u64, 4);
+                    },
+                ),
+            )
+            .unwrap();
+    }
+    {
+        let mem = memory;
+        linker
+            .define(
+                IMPORT_MODULE,
+                IMPORT_MEM_WRITE_U64,
+                Func::wrap(
+                    &mut *store,
+                    move |mut caller: Caller<'_, HostEnv>, cpu_ptr: i32, addr: i64, value: i64| {
+                        write::<8>(&mut caller, &mem, addr as usize, value as u64);
+                        bump_code_versions(&mut caller, &mem, cpu_ptr, addr as u64, 8);
+                    },
+                ),
+            )
+            .unwrap();
+    }
+}
 
-    let mem = memory.clone();
-    linker
-        .define(
-            IMPORT_MODULE,
-            IMPORT_MEM_READ_U32,
-            Func::wrap(
-                &mut *store,
-                move |mut caller: Caller<'_, ()>, _cpu_ptr: i32, addr: i64| -> i32 {
-                    read::<4>(&mut caller, &mem, addr as usize) as i32
-                },
-            ),
-        )
-        .unwrap();
+fn write_u32_to_memory(memory: &Memory, store: &mut Store<HostEnv>, addr: usize, value: u32) {
+    memory
+        .write(store, addr, &value.to_le_bytes())
+        .expect("memory write in bounds");
+}
 
-    let mem = memory.clone();
-    linker
-        .define(
-            IMPORT_MODULE,
-            IMPORT_MEM_READ_U64,
-            Func::wrap(
-                &mut *store,
-                move |mut caller: Caller<'_, ()>, _cpu_ptr: i32, addr: i64| -> i64 {
-                    read::<8>(&mut caller, &mem, addr as usize) as i64
-                },
-            ),
-        )
-        .unwrap();
+fn read_u32_from_memory(memory: &Memory, store: &Store<HostEnv>, addr: usize) -> u32 {
+    let mut buf = [0u8; 4];
+    memory
+        .read(store, addr, &mut buf)
+        .expect("memory read in bounds");
+    u32::from_le_bytes(buf)
+}
 
-    let mem = memory.clone();
-    linker
-        .define(
-            IMPORT_MODULE,
-            IMPORT_MEM_WRITE_U8,
-            Func::wrap(
-                &mut *store,
-                move |mut caller: Caller<'_, ()>, _cpu_ptr: i32, addr: i64, value: i32| {
-                    write::<1>(&mut caller, &mem, addr as usize, value as u64);
-                },
-            ),
-        )
-        .unwrap();
+fn install_code_version_table(memory: &Memory, store: &mut Store<HostEnv>, table: &[u32]) -> u32 {
+    if table.is_empty() {
+        write_u32_to_memory(
+            memory,
+            store,
+            CPU_PTR as usize + jit_ctx::CODE_VERSION_TABLE_PTR_OFFSET as usize,
+            0,
+        );
+        write_u32_to_memory(
+            memory,
+            store,
+            CPU_PTR as usize + jit_ctx::CODE_VERSION_TABLE_LEN_OFFSET as usize,
+            0,
+        );
+        return 0;
+    }
 
-    let mem = memory.clone();
-    linker
-        .define(
-            IMPORT_MODULE,
-            IMPORT_MEM_WRITE_U16,
-            Func::wrap(
-                &mut *store,
-                move |mut caller: Caller<'_, ()>, _cpu_ptr: i32, addr: i64, value: i32| {
-                    write::<2>(&mut caller, &mem, addr as usize, value as u64);
-                },
-            ),
-        )
-        .unwrap();
+    let table_ptr = (CPU_PTR as u32) + jit_ctx::TIER2_CTX_OFFSET + jit_ctx::JIT_CTX_SIZE;
+    let table_len = u32::try_from(table.len()).expect("table too large");
 
-    let mem = memory.clone();
-    linker
-        .define(
-            IMPORT_MODULE,
-            IMPORT_MEM_WRITE_U32,
-            Func::wrap(
-                &mut *store,
-                move |mut caller: Caller<'_, ()>, _cpu_ptr: i32, addr: i64, value: i32| {
-                    write::<4>(&mut caller, &mem, addr as usize, value as u64);
-                },
-            ),
-        )
-        .unwrap();
+    write_u32_to_memory(
+        memory,
+        store,
+        CPU_PTR as usize + jit_ctx::CODE_VERSION_TABLE_PTR_OFFSET as usize,
+        table_ptr,
+    );
+    write_u32_to_memory(
+        memory,
+        store,
+        CPU_PTR as usize + jit_ctx::CODE_VERSION_TABLE_LEN_OFFSET as usize,
+        table_len,
+    );
 
-    let mem = memory;
-    linker
-        .define(
-            IMPORT_MODULE,
-            IMPORT_MEM_WRITE_U64,
-            Func::wrap(
-                &mut *store,
-                move |mut caller: Caller<'_, ()>, _cpu_ptr: i32, addr: i64, value: i64| {
-                    write::<8>(&mut caller, &mem, addr as usize, value as u64);
-                },
-            ),
-        )
-        .unwrap();
+    for (idx, version) in table.iter().copied().enumerate() {
+        write_u32_to_memory(memory, store, table_ptr as usize + idx * 4, version);
+    }
+
+    table_ptr
 }
 
 fn read_u64_le(bytes: &[u8], off: usize) -> u64 {
@@ -239,15 +430,13 @@ fn tier2_trace_wasm_matches_interpreter_on_loop_side_exit() {
             Block {
                 id: BlockId(0),
                 start_rip: 0,
+                code_len: 64,
                 instrs: vec![
                     Instr::LoadReg {
                         dst: v(0),
                         reg: Gpr::Rax,
                     },
-                    Instr::Const {
-                        dst: v(1),
-                        value: 1,
-                    },
+                    Instr::Const { dst: v(1), value: 1 },
                     Instr::BinOp {
                         dst: v(2),
                         op: BinOp::Add,
@@ -280,6 +469,7 @@ fn tier2_trace_wasm_matches_interpreter_on_loop_side_exit() {
             Block {
                 id: BlockId(1),
                 start_rip: 100,
+                code_len: 1,
                 instrs: vec![],
                 term: Terminator::Return,
             },
@@ -292,9 +482,13 @@ fn tier2_trace_wasm_matches_interpreter_on_loop_side_exit() {
     profile.edge_counts.insert((BlockId(0), BlockId(1)), 1_000);
     profile.hot_backedges.insert((BlockId(0), BlockId(0)));
 
+    let mut page_versions = PageVersionTracker::default();
+    page_versions.set_version(0, 7);
+
     let builder = TraceBuilder::new(
         &func,
         &profile,
+        &page_versions,
         TraceConfig {
             hot_block_threshold: 1000,
             max_blocks: 8,
@@ -316,7 +510,8 @@ fn tier2_trace_wasm_matches_interpreter_on_loop_side_exit() {
         init_state.cpu.rflags |= 1u64 << flag.rflags_bit();
     }
 
-    let env = RuntimeEnv::default();
+    let mut env = RuntimeEnv::default();
+    env.page_versions.set_version(0, 7);
 
     let mut interp_state = init_state.clone();
     let mut bus = SimpleBus::new(GUEST_MEM_SIZE);
@@ -330,7 +525,7 @@ fn tier2_trace_wasm_matches_interpreter_on_loop_side_exit() {
     );
     assert_eq!(expected.exit, RunExit::SideExit { next_rip: 100 });
 
-    let (mut store, memory, func) = instantiate_trace(&wasm);
+    let (mut store, memory, func) = instantiate_trace(&wasm, HostEnv::default());
     let guest_mem_init = vec![0u8; GUEST_MEM_SIZE];
     memory.write(&mut store, 0, &guest_mem_init).unwrap();
 
@@ -339,6 +534,7 @@ fn tier2_trace_wasm_matches_interpreter_on_loop_side_exit() {
     memory
         .write(&mut store, CPU_PTR as usize, &cpu_bytes)
         .unwrap();
+    install_code_version_table(&memory, &mut store, &[7]);
 
     let got_rip = func.call(&mut store, (CPU_PTR, JIT_CTX_PTR)).unwrap() as u64;
     assert_eq!(got_rip, 100);
@@ -415,8 +611,7 @@ fn tier2_trace_wasm_matches_interpreter_on_memory_ops() {
         0x1122_3344_5566_7788
     );
 
-    let (mut store, memory, func) = instantiate_trace(&wasm);
-
+    let (mut store, memory, func) = instantiate_trace(&wasm, HostEnv::default());
     let guest_mem_init = vec![0u8; GUEST_MEM_SIZE];
     memory.write(&mut store, 0, &guest_mem_init).unwrap();
 
@@ -425,6 +620,7 @@ fn tier2_trace_wasm_matches_interpreter_on_memory_ops() {
     memory
         .write(&mut store, CPU_PTR as usize, &cpu_bytes)
         .unwrap();
+    install_code_version_table(&memory, &mut store, &[]);
 
     let got_rip = func.call(&mut store, (CPU_PTR, JIT_CTX_PTR)).unwrap() as u64;
     assert_eq!(got_rip, interp_state.cpu.rip);
@@ -441,4 +637,127 @@ fn tier2_trace_wasm_matches_interpreter_on_memory_ops() {
     assert_eq!(got_gpr, interp_state.cpu.gpr);
     assert_eq!(got_rip, interp_state.cpu.rip);
     assert_eq!(got_rflags, interp_state.cpu.rflags);
+}
+
+#[test]
+fn tier2_loop_trace_invalidates_on_mid_execution_code_version_bump() {
+    // Same basic loop shape as the side-exit test, but place the entry block at the end of a
+    // 4KiB page so its code spans 2 pages. We then bump the second page's version mid-trace and
+    // assert the loop trace deopts.
+    let entry_rip = 0x0FF0u64;
+    let func = Function {
+        entry: BlockId(0),
+        blocks: vec![
+            Block {
+                id: BlockId(0),
+                start_rip: entry_rip,
+                code_len: 0x40, // crosses the 0x1000 boundary (pages 0 and 1)
+                instrs: vec![
+                    Instr::LoadReg {
+                        dst: v(0),
+                        reg: Gpr::Rax,
+                    },
+                    Instr::Const { dst: v(1), value: 1 },
+                    Instr::BinOp {
+                        dst: v(2),
+                        op: BinOp::Add,
+                        lhs: Operand::Value(v(0)),
+                        rhs: Operand::Value(v(1)),
+                        flags: FlagSet::ALU,
+                    },
+                    Instr::StoreReg {
+                        reg: Gpr::Rax,
+                        src: Operand::Value(v(2)),
+                    },
+                    Instr::Const {
+                        dst: v(3),
+                        value: 10,
+                    },
+                    Instr::BinOp {
+                        dst: v(4),
+                        op: BinOp::LtU,
+                        lhs: Operand::Value(v(2)),
+                        rhs: Operand::Value(v(3)),
+                        flags: FlagSet::EMPTY,
+                    },
+                ],
+                term: Terminator::Branch {
+                    cond: Operand::Value(v(4)),
+                    then_bb: BlockId(0),
+                    else_bb: BlockId(1),
+                },
+            },
+            Block {
+                id: BlockId(1),
+                start_rip: 0x2000,
+                code_len: 1,
+                instrs: vec![],
+                term: Terminator::Return,
+            },
+        ],
+    };
+
+    let mut profile = ProfileData::default();
+    profile.block_counts.insert(BlockId(0), 10_000);
+    profile.edge_counts.insert((BlockId(0), BlockId(0)), 9_000);
+    profile.edge_counts.insert((BlockId(0), BlockId(1)), 1_000);
+    profile.hot_backedges.insert((BlockId(0), BlockId(0)));
+
+    let mut page_versions = PageVersionTracker::default();
+    page_versions.set_version(0, 1);
+    page_versions.set_version(1, 2);
+
+    let builder = TraceBuilder::new(
+        &func,
+        &profile,
+        &page_versions,
+        TraceConfig {
+            hot_block_threshold: 1000,
+            max_blocks: 8,
+            max_instrs: 256,
+        },
+    );
+    let mut trace = builder.build_from(BlockId(0)).expect("trace");
+    assert_eq!(trace.ir.kind, TraceKind::Loop);
+
+    let opt = optimize_trace(&mut trace.ir, &OptConfig::default());
+    let wasm = Tier2WasmCodegen::new().compile_trace(&trace.ir, &opt.regalloc);
+    validate_wasm(&wasm);
+
+    let mut init_state = T2State::default();
+    init_state.cpu.gpr[Gpr::Rax.as_u8() as usize] = 0;
+    init_state.cpu.rip = entry_rip;
+    init_state.cpu.rflags = abi::RFLAGS_RESERVED1;
+
+    // The loop trace will guard pages [0, 1] at trace entry (2 calls), and again at the start of
+    // the loop body. Bump page 1 on the 4th call to simulate mid-trace self-modifying code.
+    let host_env = HostEnv {
+        code_version_calls: 0,
+        bump_on_call: Some((4, 1)),
+    };
+    let (mut store, memory, func) = instantiate_trace(&wasm, host_env);
+
+    let guest_mem_init = vec![0u8; GUEST_MEM_SIZE];
+    memory.write(&mut store, 0, &guest_mem_init).unwrap();
+
+    let mut cpu_bytes = vec![0u8; abi::CPU_STATE_SIZE as usize];
+    write_cpu_state(&mut cpu_bytes, &init_state.cpu);
+    memory
+        .write(&mut store, CPU_PTR as usize, &cpu_bytes)
+        .unwrap();
+
+    let table_ptr = install_code_version_table(&memory, &mut store, &[1, 2]);
+
+    let got_rip = func.call(&mut store, (CPU_PTR, JIT_CTX_PTR)).unwrap() as u64;
+    assert_eq!(got_rip, entry_rip);
+
+    let exit_reason = read_u32_from_memory(
+        &memory,
+        &store,
+        CPU_PTR as usize + jit_ctx::TRACE_EXIT_REASON_OFFSET as usize,
+    );
+    assert_eq!(exit_reason, jit_ctx::TRACE_EXIT_REASON_CODE_INVALIDATION);
+
+    let bumped_page1 = read_u32_from_memory(&memory, &store, table_ptr as usize + 4);
+    assert_eq!(bumped_page1, 3);
 }

@@ -1,5 +1,6 @@
 mod tier1_common;
 
+use aero_cpu_core::jit::runtime::PageVersionTracker;
 use aero_types::{Flag, FlagSet, Width};
 use tier1_common::SimpleBus;
 
@@ -98,6 +99,8 @@ fn trace_builder_classifies_hot_backedge_as_loop() {
     profile.edge_counts.insert((entry, entry), 9_000);
     profile.edge_counts.insert((entry, exit), 1_000);
     profile.hot_backedges.insert((entry, entry));
+    let mut page_versions = PageVersionTracker::default();
+    page_versions.set_version(0, 1);
 
     let cfg = TraceConfig {
         hot_block_threshold: 1000,
@@ -105,7 +108,7 @@ fn trace_builder_classifies_hot_backedge_as_loop() {
         max_instrs: 256,
     };
 
-    let builder = TraceBuilder::new(&func, &profile, cfg);
+    let builder = TraceBuilder::new(&func, &profile, &page_versions, cfg);
     let trace = builder.build_from(entry).expect("trace should be hot");
     assert_eq!(trace.ir.kind, TraceKind::Loop);
 }
@@ -122,6 +125,8 @@ fn trace_builder_falls_back_to_linear_without_hot_backedge() {
     profile.edge_counts.insert((entry, entry), 9_000);
     profile.edge_counts.insert((entry, exit), 1_000);
     // Do not mark (entry -> entry) as a hot backedge.
+    let mut page_versions = PageVersionTracker::default();
+    page_versions.set_version(0, 1);
 
     let cfg = TraceConfig {
         hot_block_threshold: 1000,
@@ -129,7 +134,7 @@ fn trace_builder_falls_back_to_linear_without_hot_backedge() {
         max_instrs: 256,
     };
 
-    let builder = TraceBuilder::new(&func, &profile, cfg);
+    let builder = TraceBuilder::new(&func, &profile, &page_versions, cfg);
     let trace = builder.build_from(entry).expect("trace should be hot");
     assert_eq!(trace.ir.kind, TraceKind::Linear);
 }

@@ -6,7 +6,7 @@ use wasm_encoder::{
 
 use crate::abi;
 use crate::abi::{MMU_ACCESS_READ, MMU_ACCESS_WRITE};
-use crate::jit_ctx::JitContext;
+use crate::jit_ctx::{self, JitContext};
 use crate::tier1_ir::{BinOp, GuestReg, IrBlock, IrInst, IrTerminator, ValueId};
 
 use super::abi::{
@@ -697,6 +697,10 @@ impl Emitter<'_> {
                             .instruction(&Instruction::I64Store32(memarg(0, 2))),
                         Width::W64 => self.func.instruction(&Instruction::I64Store(memarg(0, 3))),
                     };
+
+                    // Self-modifying code invalidation: bump the version entry for the written
+                    // physical page. We conservatively bump for all RAM writes.
+                    self.emit_bump_code_version_fastpath();
                 }
                 self.func.instruction(&Instruction::End);
                 self.depth -= 1;
@@ -1026,6 +1030,92 @@ impl Emitter<'_> {
             .instruction(&Instruction::LocalGet(self.layout.ram_base_local()));
         self.func.instruction(&Instruction::I64Add);
         self.func.instruction(&Instruction::I32WrapI64);
+    }
+
+    /// Bumps the page-version entry for the current RAM write (inline fast-path stores only).
+    ///
+    /// The runtime may choose to only bump for pages marked as executable/code, but for initial
+    /// correctness we bump for all writes that hit RAM.
+    fn emit_bump_code_version_fastpath(&mut self) {
+        // If the runtime hasn't configured a version table, skip.
+        self.func
+            .instruction(&Instruction::LocalGet(self.layout.cpu_ptr_local()));
+        self.func.instruction(&Instruction::I32Load(memarg(
+            jit_ctx::CODE_VERSION_TABLE_LEN_OFFSET,
+            2,
+        )));
+        self.func.instruction(&Instruction::I32Eqz);
+        self.func.instruction(&Instruction::If(BlockType::Empty));
+        self.func.instruction(&Instruction::Else);
+        {
+            // Compute the physical page number for this store.
+            self.func
+                .instruction(&Instruction::LocalGet(self.layout.scratch_tlb_data_local()));
+            self.func
+                .instruction(&Instruction::I64Const(crate::PAGE_BASE_MASK as i64));
+            self.func.instruction(&Instruction::I64And);
+            self.func
+                .instruction(&Instruction::I64Const(crate::PAGE_SHIFT as i64));
+            self.func.instruction(&Instruction::I64ShrU); // -> page (i64)
+
+            // Bounds check: page < table_len.
+            self.func
+                .instruction(&Instruction::LocalGet(self.layout.cpu_ptr_local()));
+            self.func.instruction(&Instruction::I32Load(memarg(
+                jit_ctx::CODE_VERSION_TABLE_LEN_OFFSET,
+                2,
+            )));
+            self.func.instruction(&Instruction::I64ExtendI32U);
+            self.func.instruction(&Instruction::I64LtU);
+
+            self.func.instruction(&Instruction::If(BlockType::Empty));
+            {
+                // addr = table_ptr + page * 4
+                self.func
+                    .instruction(&Instruction::LocalGet(self.layout.cpu_ptr_local()));
+                self.func.instruction(&Instruction::I32Load(memarg(
+                    jit_ctx::CODE_VERSION_TABLE_PTR_OFFSET,
+                    2,
+                )));
+                self.func.instruction(&Instruction::I64ExtendI32U);
+
+                self.func
+                    .instruction(&Instruction::LocalGet(self.layout.scratch_tlb_data_local()));
+                self.func
+                    .instruction(&Instruction::I64Const(crate::PAGE_BASE_MASK as i64));
+                self.func.instruction(&Instruction::I64And);
+                self.func
+                    .instruction(&Instruction::I64Const(crate::PAGE_SHIFT as i64));
+                self.func.instruction(&Instruction::I64ShrU);
+
+                self.func.instruction(&Instruction::I64Const(4));
+                self.func.instruction(&Instruction::I64Mul);
+                self.func.instruction(&Instruction::I64Add);
+                self.func
+                    .instruction(&Instruction::LocalSet(self.layout.scratch_vpn_local()));
+
+                // table[page] += 1
+                self.func
+                    .instruction(&Instruction::LocalGet(self.layout.scratch_vpn_local()));
+                self.func.instruction(&Instruction::I32WrapI64);
+                self.func.instruction(&Instruction::I32Load(memarg(0, 2)));
+                self.func.instruction(&Instruction::I32Const(1));
+                self.func.instruction(&Instruction::I32Add);
+                self.func.instruction(&Instruction::I64ExtendI32U);
+                self.func
+                    .instruction(&Instruction::LocalSet(self.layout.scratch_vaddr_local()));
+
+                self.func
+                    .instruction(&Instruction::LocalGet(self.layout.scratch_vpn_local()));
+                self.func.instruction(&Instruction::I32WrapI64);
+                self.func
+                    .instruction(&Instruction::LocalGet(self.layout.scratch_vaddr_local()));
+                self.func.instruction(&Instruction::I32WrapI64);
+                self.func.instruction(&Instruction::I32Store(memarg(0, 2)));
+            }
+            self.func.instruction(&Instruction::End);
+        }
+        self.func.instruction(&Instruction::End);
     }
 
     fn emit_tlb_entry_addr(&mut self) {

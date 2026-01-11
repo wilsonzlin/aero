@@ -3,7 +3,7 @@ use std::rc::Rc;
 
 use aero_cpu_core::jit::cache::CompiledBlockHandle;
 use aero_cpu_core::jit::runtime::{
-    CompileRequestSink, JitBackend, JitBlockExit, JitConfig, JitRuntime,
+    CompileRequestSink, JitBackend, JitBlockExit, JitConfig, JitRuntime, PageVersionTracker,
 };
 use aero_cpu_core::state::RFLAGS_DF;
 use aero_types::{Flag, FlagSet, Gpr};
@@ -19,7 +19,7 @@ use aero_jit_x86::tier2::ir::{
 };
 use aero_jit_x86::tier2::opt::{optimize_trace, OptConfig};
 use aero_jit_x86::tier2::trace::TraceBuilder;
-use aero_jit_x86::tier2::wasm::{Tier2WasmCodegen, EXPORT_TRACE_FN};
+use aero_jit_x86::tier2::wasm::{Tier2WasmCodegen, EXPORT_TRACE_FN, IMPORT_CODE_PAGE_VERSION};
 use aero_jit_x86::wasm::{
     IMPORT_MEM_READ_U16, IMPORT_MEM_READ_U32, IMPORT_MEM_READ_U64, IMPORT_MEM_READ_U8,
     IMPORT_MEM_WRITE_U16, IMPORT_MEM_WRITE_U32, IMPORT_MEM_WRITE_U64, IMPORT_MEM_WRITE_U8,
@@ -206,6 +206,15 @@ impl WasmiTraceBackend {
             .define(IMPORT_MODULE, IMPORT_MEMORY, memory.clone())
             .unwrap();
         define_mem_helpers(&mut store, &mut linker, memory.clone());
+        linker
+            .define(
+                IMPORT_MODULE,
+                IMPORT_CODE_PAGE_VERSION,
+                Func::wrap(&mut store, |_caller: Caller<'_, ()>, _cpu_ptr: i32, _page: i64| -> i64 {
+                    0
+                }),
+            )
+            .unwrap();
 
         let instance = linker
             .instantiate_and_start(&mut store, &module)
@@ -266,6 +275,7 @@ fn tier2_trace_is_invalidated_via_jit_runtime_page_versions() {
             Block {
                 id: BlockId(0),
                 start_rip: entry_rip,
+                code_len: 64,
                 instrs: vec![
                     Instr::LoadReg {
                         dst: v(0),
@@ -301,6 +311,7 @@ fn tier2_trace_is_invalidated_via_jit_runtime_page_versions() {
             Block {
                 id: BlockId(1),
                 start_rip: exit_rip,
+                code_len: 1,
                 instrs: vec![],
                 term: Terminator::Return,
             },
@@ -313,9 +324,11 @@ fn tier2_trace_is_invalidated_via_jit_runtime_page_versions() {
     profile.edge_counts.insert((BlockId(0), BlockId(1)), 1_000);
     profile.hot_backedges.insert((BlockId(0), BlockId(0)));
 
+    let page_versions = PageVersionTracker::default();
     let builder = TraceBuilder::new(
         &func,
         &profile,
+        &page_versions,
         TraceConfig {
             hot_block_threshold: 1000,
             max_blocks: 8,

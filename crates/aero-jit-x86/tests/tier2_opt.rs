@@ -527,6 +527,7 @@ fn trace_builder_builds_loop_trace_and_deopts_with_precise_rip() {
             Block {
                 id: BlockId(0),
                 start_rip: 0,
+                code_len: 64,
                 instrs: vec![
                     Instr::LoadReg {
                         dst: v(0),
@@ -568,6 +569,7 @@ fn trace_builder_builds_loop_trace_and_deopts_with_precise_rip() {
             Block {
                 id: BlockId(1),
                 start_rip: 100,
+                code_len: 1,
                 instrs: vec![],
                 term: Terminator::Return,
             },
@@ -587,14 +589,16 @@ fn trace_builder_builds_loop_trace_and_deopts_with_precise_rip() {
         max_instrs: 256,
     };
 
-    let builder = TraceBuilder::new(&func, &profile, cfg);
+    let mut env = RuntimeEnv::default();
+    env.page_versions.set_version(0, 7);
+
+    let builder = TraceBuilder::new(&func, &profile, &env.page_versions, cfg);
     let mut trace = builder.build_from(BlockId(0)).expect("trace");
     assert_eq!(trace.ir.kind, TraceKind::Loop);
     assert_eq!(trace.entry_block, BlockId(0));
     assert_eq!(trace.side_exits.len(), 1);
     assert_eq!(trace.side_exits[0].next_rip, 100);
 
-    let env = RuntimeEnv::default();
     let mut cpu_interp = T2State::default();
     cpu_interp.cpu.gpr[Gpr::Rax.as_u8() as usize] = 0;
     assert_eq!(
