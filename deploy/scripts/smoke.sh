@@ -13,7 +13,6 @@ SMOKE_WEBRTC_API_KEY="__aero_smoke_${PROJECT_NAME}"
 SMOKE_WEBRTC_UDP_PORT_RANGE_SIZE=101
 SMOKE_WEBRTC_UDP_PORT_MIN=50000
 SMOKE_WEBRTC_UDP_PORT_MAX=$((SMOKE_WEBRTC_UDP_PORT_MIN + SMOKE_WEBRTC_UDP_PORT_RANGE_SIZE - 1))
-SMOKE_SESSION_SECRET="__aero_smoke_session_${PROJECT_NAME}"
 
 compose() {
   # The /udp smoke test sends a UDP datagram to the host via the docker network.
@@ -26,6 +25,7 @@ compose() {
     -u AERO_L2_TOKEN \
     -u AERO_L2_AUTH_MODE \
     -u AERO_L2_SESSION_SECRET \
+    -u SESSION_SECRET \
     -u AERO_L2_API_KEY \
     -u AERO_L2_JWT_SECRET \
     -u L2_BACKEND_WS_URL \
@@ -78,7 +78,6 @@ compose() {
     WEBRTC_NAT_1TO1_IPS= \
     WEBRTC_NAT_1TO1_IP_CANDIDATE_TYPE= \
     WEBRTC_UDP_LISTEN_IP= \
-    SESSION_SECRET="$SMOKE_SESSION_SECRET" \
     ALLOWED_ORIGINS= \
     AERO_GATEWAY_IMAGE="aero-gateway:${PROJECT_NAME}" \
     AERO_L2_PROXY_IMAGE="aero-l2-proxy:${PROJECT_NAME}" \
