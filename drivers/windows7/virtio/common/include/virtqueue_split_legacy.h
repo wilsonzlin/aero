@@ -121,6 +121,9 @@ typedef struct virtqueue_split {
  *
  * `queue_align` must be a power of two.
  *
+ * The used ring contains 32-bit fields and must be at least 4-byte aligned,
+ * so `queue_align` must be >= 4.
+ *
  * Typical values:
  *  - 4096 for virtio-pci legacy/transitional devices (QUEUE_ALIGN)
  *  - 4 for virtio-pci modern split rings (used ring alignment)

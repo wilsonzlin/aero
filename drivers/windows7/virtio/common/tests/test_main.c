@@ -295,6 +295,34 @@ static void test_small_queue_align(void)
     virtqueue_split_free_ring(&os_ops, &os_ctx, &ring);
 }
 
+static void test_invalid_queue_align(void)
+{
+    test_os_ctx_t os_ctx;
+    virtio_os_ops_t os_ops;
+    virtio_dma_buffer_t ring;
+    virtqueue_split_t vq;
+
+    test_os_ctx_init(&os_ctx);
+    test_os_get_ops(&os_ops);
+
+    assert(virtqueue_split_ring_size(8, 2, VIRTIO_FALSE) == 0);
+    assert(virtqueue_split_alloc_ring(&os_ops, &os_ctx, 8, 2, VIRTIO_FALSE, &ring) == VIRTIO_ERR_INVAL);
+
+    assert(virtqueue_split_alloc_ring(&os_ops, &os_ctx, 8, 4, VIRTIO_FALSE, &ring) == VIRTIO_OK);
+    assert(virtqueue_split_init(&vq,
+                                &os_ops,
+                                &os_ctx,
+                                0,
+                                8,
+                                2,
+                                &ring,
+                                VIRTIO_FALSE,
+                                VIRTIO_FALSE,
+                                0) == VIRTIO_ERR_INVAL);
+
+    virtqueue_split_free_ring(&os_ops, &os_ctx, &ring);
+}
+
 static void test_indirect_descriptors(void)
 {
     test_os_ctx_t os_ctx;
@@ -1203,6 +1231,7 @@ int main(void)
 {
     test_wraparound();
     test_small_queue_align();
+    test_invalid_queue_align();
     test_indirect_descriptors();
     test_reset();
     test_reset_queue_align4();

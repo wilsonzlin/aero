@@ -71,6 +71,13 @@ size_t virtqueue_split_ring_size(uint16_t queue_size, uint32_t queue_align, virt
     if (queue_align == 0 || ((queue_align & (queue_align - 1u)) != 0)) {
         return 0;
     }
+    /*
+     * Virtio split rings require the used ring to be 4-byte aligned (it contains
+     * 32-bit fields). Treat alignments smaller than 4 as invalid.
+     */
+    if (queue_align < 4u) {
+        return 0;
+    }
 
     desc_size = sizeof(vring_desc_t) * (size_t)queue_size;
     avail_off = desc_size;
@@ -208,6 +215,9 @@ int virtqueue_split_init(virtqueue_split_t *vq,
         return VIRTIO_ERR_INVAL;
     }
     if (queue_size == 0 || queue_align == 0 || ((queue_align & (queue_align - 1u)) != 0)) {
+        return VIRTIO_ERR_INVAL;
+    }
+    if (queue_align < 4u) {
         return VIRTIO_ERR_INVAL;
     }
 
