@@ -61,6 +61,11 @@ pub struct AeroGpuBlendState {
     pub dst_factor: u32,
     pub blend_op: u32,
     pub color_write_mask: u8,
+    pub src_factor_alpha: u32,
+    pub dst_factor_alpha: u32,
+    pub blend_op_alpha: u32,
+    pub blend_constant_rgba_f32: [u32; 4],
+    pub sample_mask: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -712,33 +717,24 @@ pub fn parse_cmd_stream(
                 }
             }
 
-            Some(AeroGpuOpcode::SetBlendState) => AeroGpuCmd::SetBlendState {
-                state: AeroGpuBlendState {
-                    enable: read_u32_le(
-                        packet
-                            .get(8..12)
-                            .ok_or(AeroGpuCmdStreamParseError::BufferTooSmall)?,
-                    ),
-                    src_factor: read_u32_le(
-                        packet
-                            .get(12..16)
-                            .ok_or(AeroGpuCmdStreamParseError::BufferTooSmall)?,
-                    ),
-                    dst_factor: read_u32_le(
-                        packet
-                            .get(16..20)
-                            .ok_or(AeroGpuCmdStreamParseError::BufferTooSmall)?,
-                    ),
-                    blend_op: read_u32_le(
-                        packet
-                            .get(20..24)
-                            .ok_or(AeroGpuCmdStreamParseError::BufferTooSmall)?,
-                    ),
-                    color_write_mask: *packet
-                        .get(24)
-                        .ok_or(AeroGpuCmdStreamParseError::BufferTooSmall)?,
-                },
-            },
+            Some(AeroGpuOpcode::SetBlendState) => {
+                let cmd: protocol::AerogpuCmdSetBlendState = read_packed_prefix(packet)?;
+                let state = cmd.state;
+                AeroGpuCmd::SetBlendState {
+                    state: AeroGpuBlendState {
+                        enable: u32::from_le(state.enable),
+                        src_factor: u32::from_le(state.src_factor),
+                        dst_factor: u32::from_le(state.dst_factor),
+                        blend_op: u32::from_le(state.blend_op),
+                        color_write_mask: state.color_write_mask,
+                        src_factor_alpha: u32::from_le(state.src_factor_alpha),
+                        dst_factor_alpha: u32::from_le(state.dst_factor_alpha),
+                        blend_op_alpha: u32::from_le(state.blend_op_alpha),
+                        blend_constant_rgba_f32: state.blend_constant_rgba_f32.map(u32::from_le),
+                        sample_mask: u32::from_le(state.sample_mask),
+                    },
+                }
+            }
             Some(AeroGpuOpcode::SetDepthStencilState) => {
                 let cmd: protocol::AerogpuCmdSetDepthStencilState = read_packed_prefix(packet)?;
                 let state = cmd.state;

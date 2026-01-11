@@ -254,6 +254,14 @@ fn protocol_parses_all_opcodes() {
             push_u32(out, 4); // blend_op
             out.push(0xF); // color_write_mask
             out.extend_from_slice(&[0u8; 3]); // reserved0[3]
+            push_u32(out, 5); // src_factor_alpha
+            push_u32(out, 6); // dst_factor_alpha
+            push_u32(out, 7); // blend_op_alpha
+            push_u32(out, 10); // blend_constant_rgba_f32[0]
+            push_u32(out, 11);
+            push_u32(out, 12);
+            push_u32(out, 13);
+            push_u32(out, 0xFFFF_FFFF); // sample_mask
         });
 
         emit_packet(out, AeroGpuOpcode::SetDepthStencilState as u32, |out| {
@@ -646,6 +654,11 @@ fn protocol_parses_all_opcodes() {
             assert_eq!(state.dst_factor, 3);
             assert_eq!(state.blend_op, 4);
             assert_eq!(state.color_write_mask, 0xF);
+            assert_eq!(state.src_factor_alpha, 5);
+            assert_eq!(state.dst_factor_alpha, 6);
+            assert_eq!(state.blend_op_alpha, 7);
+            assert_eq!(state.blend_constant_rgba_f32, [10, 11, 12, 13]);
+            assert_eq!(state.sample_mask, 0xFFFF_FFFF);
         }
         other => panic!("unexpected cmd: {other:?}"),
     }

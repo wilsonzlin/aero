@@ -2283,9 +2283,9 @@ impl AerogpuD3d9Executor {
                     src_factor: state.src_factor,
                     dst_factor: state.dst_factor,
                     blend_op: state.blend_op,
-                    src_factor_alpha: state.src_factor,
-                    dst_factor_alpha: state.dst_factor,
-                    blend_op_alpha: state.blend_op,
+                    src_factor_alpha: state.src_factor_alpha,
+                    dst_factor_alpha: state.dst_factor_alpha,
+                    blend_op_alpha: state.blend_op_alpha,
                     color_write_mask: state.color_write_mask,
                 };
                 Ok(())
