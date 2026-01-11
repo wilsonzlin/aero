@@ -121,6 +121,9 @@ impl Tier0Machine {
         while executed < max_instructions {
             let res = run_batch(&mut self.cpu, &mut self.bus, 1024);
             executed += res.executed;
+            for _ in 0..res.executed {
+                self.pending.retire_instruction();
+            }
             match res.exit {
                 BatchExit::Completed | BatchExit::Branch => continue,
                 BatchExit::Halted => return,
@@ -131,6 +134,7 @@ impl Tier0Machine {
                 BatchExit::Assist(r) => {
                     self.handle_assist(r);
                     executed += 1;
+                    self.pending.retire_instruction();
                 }
             }
         }

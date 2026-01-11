@@ -27,6 +27,9 @@ pub fn exec<B: CpuBus>(
     let instr = &decoded.instr;
     match instr.mnemonic() {
         Mnemonic::Mov => {
+            if instr.has_lock_prefix() {
+                return Err(Exception::InvalidOpcode);
+            }
             if instr.op_kind(0) == OpKind::Register && is_ctrl_or_debug_reg(instr.op0_register())
                 || instr.op_kind(1) == OpKind::Register
                     && is_ctrl_or_debug_reg(instr.op1_register())
@@ -48,18 +51,52 @@ pub fn exec<B: CpuBus>(
             Ok(ExecOutcome::Continue)
         }
         Mnemonic::Lea => {
+            if instr.has_lock_prefix() {
+                return Err(Exception::InvalidOpcode);
+            }
             let addr = calc_ea(state, instr, next_ip, false)?;
             write_op(state, bus, instr, 0, addr, next_ip)?;
             Ok(ExecOutcome::Continue)
         }
         Mnemonic::Xchg => {
-            let a = read_op(state, bus, instr, 0, next_ip)?;
-            let b = read_op(state, bus, instr, 1, next_ip)?;
-            write_op(state, bus, instr, 0, b, next_ip)?;
-            write_op(state, bus, instr, 1, a, next_ip)?;
+            let lock = instr.has_lock_prefix();
+            let op0_kind = instr.op_kind(0);
+            let op1_kind = instr.op_kind(1);
+
+            if op0_kind == OpKind::Register && op1_kind == OpKind::Register {
+                if lock {
+                    return Err(Exception::InvalidOpcode);
+                }
+                let a = read_op(state, bus, instr, 0, next_ip)?;
+                let b = read_op(state, bus, instr, 1, next_ip)?;
+                write_op(state, bus, instr, 0, b, next_ip)?;
+                write_op(state, bus, instr, 1, a, next_ip)?;
+            } else {
+                // XCHG with a memory operand is implicitly atomic (acts as if `LOCK` is present).
+                let (mem_op, reg_op) = match (op0_kind, op1_kind) {
+                    (OpKind::Memory, OpKind::Register) => (0usize, 1usize),
+                    (OpKind::Register, OpKind::Memory) => (1usize, 0usize),
+                    _ => return Err(Exception::InvalidOpcode),
+                };
+
+                let bits = op_bits(state, instr, reg_op)?;
+                let reg = instr.op_register(reg_op as u32);
+                let reg_val = state.read_reg(reg) & mask_bits(bits);
+                let addr = calc_ea(state, instr, next_ip, true)?;
+
+                let old = super::atomic_rmw_sized(bus, addr, bits, |old| (reg_val, old))?;
+                state.write_reg(reg, old);
+
+                // `mem_op` is unused because iced-x86 stores the memory operand separately
+                // from the operand index; both encodings address the same `memory_*` fields.
+                let _ = mem_op;
+            }
             Ok(ExecOutcome::Continue)
         }
         Mnemonic::Movsx | Mnemonic::Movzx => {
+            if instr.has_lock_prefix() {
+                return Err(Exception::InvalidOpcode);
+            }
             let src_bits = op_bits(state, instr, 1)?;
             let dst_bits = op_bits(state, instr, 0)?;
             let src = read_op_sized(state, bus, instr, 1, src_bits, next_ip)?;
@@ -72,6 +109,9 @@ pub fn exec<B: CpuBus>(
             Ok(ExecOutcome::Continue)
         }
         m if is_cmov(m) => {
+            if instr.has_lock_prefix() {
+                return Err(Exception::InvalidOpcode);
+            }
             if eval_cond(state, m) {
                 let v = read_op(state, bus, instr, 1, next_ip)?;
                 write_op(state, bus, instr, 0, v, next_ip)?;
@@ -79,11 +119,17 @@ pub fn exec<B: CpuBus>(
             Ok(ExecOutcome::Continue)
         }
         m if is_setcc(m) => {
+            if instr.has_lock_prefix() {
+                return Err(Exception::InvalidOpcode);
+            }
             let v = if eval_cond(state, m) { 1u64 } else { 0u64 };
             write_op_sized(state, bus, instr, 0, v, 8, next_ip)?;
             Ok(ExecOutcome::Continue)
         }
         Mnemonic::Bswap => {
+            if instr.has_lock_prefix() {
+                return Err(Exception::InvalidOpcode);
+            }
             let reg = instr.op0_register();
             let bits = reg_bits(reg)?;
             let v = state.read_reg(reg);
