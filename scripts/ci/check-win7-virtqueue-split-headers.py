@@ -51,7 +51,15 @@ def main() -> None:
         fail(f"missing canonical header: {CANONICAL_HEADER.relative_to(REPO_ROOT)}")
 
     # Ensure there is exactly one virtqueue_split.h in the repository tree.
-    found = sorted(REPO_ROOT.rglob("virtqueue_split.h"))
+    #
+    # Use a case-insensitive match because Windows checkouts are case-insensitive.
+    # (Git also struggles with case-only renames on Windows, so catching this in
+    # CI avoids confusing breakage.)
+    found: list[Path] = []
+    for path in (REPO_ROOT / "drivers").rglob("*"):
+        if path.is_file() and path.name.lower() == "virtqueue_split.h":
+            found.append(path)
+    found = sorted(found)
     if found != [CANONICAL_HEADER]:
         rels = [p.relative_to(REPO_ROOT).as_posix() for p in found]
         fail(
@@ -83,10 +91,11 @@ def main() -> None:
                 if not m:
                     continue
                 inc = m.group(1)
+                inc_lower = inc.lower()
 
                 # Any path component in an include for virtqueue_split.h is a sign
                 # we are compensating for include-path ambiguity.
-                if inc.endswith("virtqueue_split.h") and ("/" in inc or "\\" in inc):
+                if inc_lower.endswith("virtqueue_split.h") and ("/" in inc or "\\" in inc):
                     offenders.append(f"{path.relative_to(REPO_ROOT).as_posix()}:{i}: {inc}")
 
     if offenders:
