@@ -703,7 +703,7 @@ T* append_fixed_locked(Device* dev, uint32_t opcode) {
   if (!ensure_cmd_space(dev, needed)) {
     return nullptr;
   }
-  return dev->cmd.append_fixed<T>(opcode);
+  return dev->cmd.TryAppendFixed<T>(opcode);
 }
 
 template <typename HeaderT>
@@ -712,7 +712,7 @@ HeaderT* append_with_payload_locked(Device* dev, uint32_t opcode, const void* pa
   if (!ensure_cmd_space(dev, needed)) {
     return nullptr;
   }
-  return dev->cmd.append_with_payload<HeaderT>(opcode, payload, payload_size);
+  return dev->cmd.TryAppendWithPayload<HeaderT>(opcode, payload, payload_size);
 }
 
 HRESULT track_resource_allocation_locked(Device* dev, Resource* res, bool write) {
