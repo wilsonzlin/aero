@@ -130,6 +130,13 @@ function assertNonSecretUrl(url: string | undefined): void {
   }
 }
 
+function assertValidLeaseEndpoint(endpoint: string | undefined): void {
+  if (!endpoint) return;
+  if (!endpoint.startsWith("/")) {
+    throw new Error("leaseEndpoint must be a same-origin path starting with '/'");
+  }
+}
+
 /**
  * @param {DiskBackend} backend
  */
@@ -417,7 +424,12 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
         ...(payload.url ? { url: String(payload.url) } : {}),
         ...(payload.leaseEndpoint ? { leaseEndpoint: String(payload.leaseEndpoint) } : {}),
       };
+      if (!urls.url && !urls.leaseEndpoint) {
+        throw new Error("Remote disks must provide either urls.url (stable) or urls.leaseEndpoint (same-origin)");
+      }
+      assertValidLeaseEndpoint(urls.leaseEndpoint);
       assertNonSecretUrl(urls.url);
+      assertNonSecretUrl(urls.leaseEndpoint);
       const validator = payload.validator as RemoteDiskValidator | undefined;
 
       const cacheFileName = typeof payload.cacheFileName === "string" && payload.cacheFileName ? payload.cacheFileName : `${id}.cache.aerospar`;
@@ -482,7 +494,12 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
           ...(payload.url ? { url: String(payload.url) } : {}),
           ...(payload.leaseEndpoint ? { leaseEndpoint: String(payload.leaseEndpoint) } : {}),
         };
+        if (!nextUrls.url && !nextUrls.leaseEndpoint) {
+          throw new Error("Remote disks must provide either urls.url (stable) or urls.leaseEndpoint (same-origin)");
+        }
+        assertValidLeaseEndpoint(nextUrls.leaseEndpoint);
         assertNonSecretUrl(nextUrls.url);
+        assertNonSecretUrl(nextUrls.leaseEndpoint);
         meta.remote.urls = nextUrls;
       }
       if (payload.validator !== undefined) meta.remote.validator = payload.validator as RemoteDiskValidator;

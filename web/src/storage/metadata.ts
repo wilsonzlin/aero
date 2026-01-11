@@ -277,7 +277,7 @@ export async function openDiskManagerDb(): Promise<IDBDatabase> {
       };
     }
 
-    // v3: Remote streaming disk cache (HTTP Range -> persisted chunks).
+    // Remote streaming disk cache (HTTP Range -> persisted chunks).
     // Keyed by `{cacheKey, chunkIndex}` so multiple remote images can share the same DB.
     if (!db.objectStoreNames.contains("remote_chunk_meta")) {
       db.createObjectStore("remote_chunk_meta", { keyPath: "cacheKey" });
