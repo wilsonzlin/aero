@@ -549,6 +549,25 @@ HRESULT AEROGPU_APIENTRY GetCaps11(D3D10DDI_HADAPTER, const D3D11DDIARG_GETCAPS*
       return S_OK;
     }
 
+    // D3D11_FEATURE_FORMAT_SUPPORT2 is routed through GetCaps as well. The
+    // corresponding output struct is:
+    //   { DXGI_FORMAT InFormat; UINT OutFormatSupport2; }
+    //
+    // We currently do not advertise any FormatSupport2 bits.
+    case static_cast<D3D11DDICAPS_TYPE>(3): { // FORMAT_SUPPORT2
+      if (size < sizeof(DXGI_FORMAT) + sizeof(UINT)) {
+        return E_INVALIDARG;
+      }
+
+      const DXGI_FORMAT format = *reinterpret_cast<const DXGI_FORMAT*>(data);
+      zero_out();
+      *reinterpret_cast<DXGI_FORMAT*>(data) = format;
+
+      auto* out_bytes = reinterpret_cast<uint8_t*>(data);
+      *reinterpret_cast<UINT*>(out_bytes + sizeof(DXGI_FORMAT)) = 0;
+      return S_OK;
+    }
+
     case D3D11DDICAPS_TYPE_MULTISAMPLE_QUALITY_LEVELS: {
       if (size < sizeof(D3D11_FEATURE_DATA_MULTISAMPLE_QUALITY_LEVELS)) {
         return E_INVALIDARG;

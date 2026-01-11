@@ -111,6 +111,23 @@ static int RunCapsSmoke(int argc, char** argv) {
     return aerogpu_test::Fail(kTestName, "unexpected OutputMergerLogicOp (expected FALSE)");
   }
 
+  D3D11_FEATURE_DATA_FORMAT_SUPPORT2 fmt2;
+  ZeroMemory(&fmt2, sizeof(fmt2));
+  fmt2.InFormat = DXGI_FORMAT_B8G8R8A8_UNORM;
+  hr = device->CheckFeatureSupport(D3D11_FEATURE_FORMAT_SUPPORT2, &fmt2, sizeof(fmt2));
+  if (FAILED(hr)) {
+    return aerogpu_test::FailHresult(kTestName, "CheckFeatureSupport(FORMAT_SUPPORT2)", hr);
+  }
+  aerogpu_test::PrintfStdout(
+      "INFO: %s: format_support2(B8G8R8A8)=0x%08lX",
+      kTestName,
+      (unsigned long)fmt2.OutFormatSupport2);
+  if (fmt2.OutFormatSupport2 != 0) {
+    return aerogpu_test::Fail(kTestName,
+                              "unexpected FormatSupport2 bits (expected 0, got 0x%08lX)",
+                              (unsigned long)fmt2.OutFormatSupport2);
+  }
+
   UINT quality_levels = 0;
   hr = device->CheckMultisampleQualityLevels(DXGI_FORMAT_B8G8R8A8_UNORM, 1, &quality_levels);
   if (FAILED(hr)) {
