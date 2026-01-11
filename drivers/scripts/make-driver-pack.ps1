@@ -10,6 +10,10 @@ On Linux/macOS, `Mount-DiskImage` is not available. Use the cross-platform extra
 (`python3 tools/virtio-win/extract.py --virtio-win-iso … --out-root …`) and then pass
 `-VirtioWinRoot` to the extracted directory.
 
+Alternatively, you may pass `-VirtioWinIso` when running under PowerShell 7 (`pwsh`)
+on Linux/macOS: this script will automatically fall back to running the extractor if
+`Mount-DiskImage` is unavailable (requires Python + `7z` or `pycdlib`).
+
 The produced driver pack staging directory/zip includes:
 
 - `manifest.json` (source provenance: virtio-win ISO hash/volume label/version hints)
@@ -86,6 +90,37 @@ function Derive-VirtioWinVersion {
   }
 
   return $null
+}
+
+function Resolve-RepoRoot {
+  return (Resolve-Path (Join-Path (Join-Path $PSScriptRoot "..") "..")).Path
+}
+
+function Resolve-Python {
+  $candidates = @("python3", "python", "py")
+  foreach ($c in $candidates) {
+    $cmd = Get-Command $c -ErrorAction SilentlyContinue
+    if ($cmd) { return $cmd.Source }
+  }
+  return $null
+}
+
+function Read-VirtioWinProvenance {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$VirtioRoot
+  )
+
+  $p = Join-Path $VirtioRoot "virtio-win-provenance.json"
+  if (-not (Test-Path -LiteralPath $p -PathType Leaf)) {
+    return $null
+  }
+  try {
+    return Get-Content -LiteralPath $p -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+  } catch {
+    Write-Warning "Failed to parse virtio-win provenance file: $p ($($_.Exception.Message))"
+    return $null
+  }
 }
 
 function Copy-VirtioWinNotices {
@@ -240,53 +275,78 @@ $mounted = $false
 $isoPath = $null
 $isoHash = $null
 $isoVolumeLabel = $null
+$extractTempDir = $null
 
 try {
   if ($PSCmdlet.ParameterSetName -eq "FromIso") {
     $isoPath = (Resolve-Path $VirtioWinIso).Path
     $isoHash = (Get-FileHash -Algorithm SHA256 -Path $isoPath).Hash.ToLowerInvariant()
-    $img = Mount-DiskImage -ImagePath $isoPath -PassThru
-    $mounted = $true
-    # Drive letter assignment can be asynchronous on some hosts; poll briefly before failing.
-    $vol = $null
-    for ($i = 0; $i -lt 20; $i++) {
-      $vols = $img | Get-Volume -ErrorAction SilentlyContinue
-      $vol = $vols | Where-Object { $_.DriveLetter } | Select-Object -First 1
-      if ($vol) { break }
-      Start-Sleep -Milliseconds 200
+    $mountCmd = Get-Command "Mount-DiskImage" -ErrorAction SilentlyContinue
+    if ($mountCmd) {
+      $img = Mount-DiskImage -ImagePath $isoPath -PassThru
+      $mounted = $true
+      # Drive letter assignment can be asynchronous on some hosts; poll briefly before failing.
+      $vol = $null
+      for ($i = 0; $i -lt 20; $i++) {
+        $vols = $img | Get-Volume -ErrorAction SilentlyContinue
+        $vol = $vols | Where-Object { $_.DriveLetter } | Select-Object -First 1
+        if ($vol) { break }
+        Start-Sleep -Milliseconds 200
+      }
+      if (-not $vol -or -not $vol.DriveLetter) {
+        throw "Mounted virtio-win ISO has no drive letter assigned: $isoPath"
+      }
+      $isoVolumeLabel = $vol.FileSystemLabel
+      $VirtioWinRoot = "$($vol.DriveLetter):\"
+    } else {
+      # Non-Windows hosts (and some minimal Windows installs) don't have Mount-DiskImage.
+      # Fall back to the cross-platform extractor.
+      $python = Resolve-Python
+      if (-not $python) {
+        throw "Mount-DiskImage is not available and Python was not found on PATH. Install Python 3 and re-run, or extract manually and use -VirtioWinRoot."
+      }
+      $repoRoot = Resolve-RepoRoot
+      $extractor = Join-Path (Join-Path (Join-Path $repoRoot "tools") "virtio-win") "extract.py"
+      if (-not (Test-Path -LiteralPath $extractor -PathType Leaf)) {
+        throw "virtio-win extractor not found: $extractor"
+      }
+
+      $extractTempDir = Join-Path ([System.IO.Path]::GetTempPath()) ("aero-virtio-win-" + [System.Guid]::NewGuid().ToString("n"))
+      New-Item -ItemType Directory -Path $extractTempDir -Force | Out-Null
+      $VirtioWinRoot = Join-Path $extractTempDir "virtio-win-root"
+
+      Write-Host "Mount-DiskImage not available; extracting virtio-win ISO using $extractor..."
+      & $python $extractor --virtio-win-iso $isoPath --out-root $VirtioWinRoot
+      if ($LASTEXITCODE -ne 0) {
+        throw "virtio-win extractor failed (exit $LASTEXITCODE)."
+      }
+
+      # Ingest provenance (volume label, etc) from the extracted root.
+      $prov = Read-VirtioWinProvenance -VirtioRoot $VirtioWinRoot
+      if ($prov -and $prov.virtio_win_iso -and -not $isoVolumeLabel -and $prov.virtio_win_iso.volume_id) {
+        $isoVolumeLabel = ("" + $prov.virtio_win_iso.volume_id).Trim()
+      }
     }
-    if (-not $vol -or -not $vol.DriveLetter) {
-      throw "Mounted virtio-win ISO has no drive letter assigned: $isoPath"
-    }
-    $isoVolumeLabel = $vol.FileSystemLabel
-    $VirtioWinRoot = "$($vol.DriveLetter):\"
   } else {
     $VirtioWinRoot = (Resolve-Path $VirtioWinRoot).Path
 
     # If the directory came from `tools/virtio-win/extract.py`, reuse its recorded ISO
     # provenance (so non-Windows builds still record the original ISO hash).
-    $provenancePath = Join-Path $VirtioWinRoot "virtio-win-provenance.json"
-    if (Test-Path -LiteralPath $provenancePath -PathType Leaf) {
-      try {
-        $prov = Get-Content -LiteralPath $provenancePath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
-        if ($prov -and $prov.virtio_win_iso) {
-          if (-not $isoPath -and $prov.virtio_win_iso.path) {
-            $isoPath = "" + $prov.virtio_win_iso.path
-          }
-          if (-not $isoHash -and $prov.virtio_win_iso.sha256) {
-            $h = ("" + $prov.virtio_win_iso.sha256).Trim()
-            if ($h -match '^[0-9a-fA-F]{64}$') {
-              $isoHash = $h.ToLowerInvariant()
-            } else {
-              Write-Warning "virtio-win provenance file '$provenancePath' contains an invalid sha256; ignoring."
-            }
-          }
-          if (-not $isoVolumeLabel -and $prov.virtio_win_iso.volume_id) {
-            $isoVolumeLabel = ("" + $prov.virtio_win_iso.volume_id).Trim()
-          }
+    $prov = Read-VirtioWinProvenance -VirtioRoot $VirtioWinRoot
+    if ($prov -and $prov.virtio_win_iso) {
+      if (-not $isoPath -and $prov.virtio_win_iso.path) {
+        $isoPath = "" + $prov.virtio_win_iso.path
+      }
+      if (-not $isoHash -and $prov.virtio_win_iso.sha256) {
+        $h = ("" + $prov.virtio_win_iso.sha256).Trim()
+        if ($h -match '^[0-9a-fA-F]{64}$') {
+          $isoHash = $h.ToLowerInvariant()
+        } else {
+          Write-Warning "virtio-win provenance file contains an invalid sha256; ignoring."
         }
-      } catch {
-        Write-Warning "Failed to parse virtio-win provenance file: $provenancePath ($($_.Exception.Message))"
+      }
+      if (-not $isoVolumeLabel -and $prov.virtio_win_iso.volume_id) {
+        $isoVolumeLabel = ("" + $prov.virtio_win_iso.volume_id).Trim()
       }
     }
   }
@@ -469,5 +529,8 @@ try {
 finally {
   if ($mounted -and $null -ne $isoPath) {
     Dismount-DiskImage -ImagePath $isoPath | Out-Null
+  }
+  if ($extractTempDir) {
+    Remove-Item -LiteralPath $extractTempDir -Recurse -Force -ErrorAction SilentlyContinue
   }
 }

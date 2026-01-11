@@ -21,6 +21,13 @@ Then pass the extracted directory to the existing packaging scripts:
 pwsh drivers/scripts/make-driver-pack.ps1 -VirtioWinRoot /tmp/virtio-win-root
 ```
 
+Alternatively, you can pass `-VirtioWinIso` directly under `pwsh` on non-Windows hosts and
+`make-driver-pack.ps1` will fall back to running the extractor automatically:
+
+```bash
+pwsh drivers/scripts/make-driver-pack.ps1 -VirtioWinIso virtio-win.iso
+```
+
 For convenience, Aero also provides one-shot wrappers that do the extraction + packaging in one command:
 
 - `drivers/scripts/make-driver-pack.sh` (driver pack zip/staging dir)

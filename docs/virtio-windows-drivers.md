@@ -245,12 +245,20 @@ By default this requires `viostor` + `netkvm` and attempts to include `vioinput`
 
 On Linux/macOS:
 
+Option A (recommended): extract first, then use `-VirtioWinRoot`:
+
 ```bash
 python3 tools/virtio-win/extract.py \
   --virtio-win-iso virtio-win.iso \
   --out-root /tmp/virtio-win-root
 
 pwsh drivers/scripts/make-driver-pack.ps1 -VirtioWinRoot /tmp/virtio-win-root -NoZip
+```
+
+Option B: pass `-VirtioWinIso` directly under `pwsh` (auto-extract fallback on non-Windows):
+
+```bash
+pwsh drivers/scripts/make-driver-pack.ps1 -VirtioWinIso virtio-win.iso -NoZip
 ```
 
 Notes:

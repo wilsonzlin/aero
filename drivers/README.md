@@ -39,10 +39,11 @@ Notes:
 - To fail if optional drivers are requested but missing:
   - `-StrictOptional` (typically used together with `-Drivers viostor,netkvm,viosnd,vioinput`)
 
-### Linux/macOS host (extract ISO, then use `-VirtioWinRoot`)
+### Linux/macOS host
 
-`drivers/scripts/make-driver-pack.ps1` can run under PowerShell 7 (`pwsh`), but ISO mounting is Windows-only.
-First extract the ISO using the cross-platform extractor (prefers `7z` if present):
+`drivers/scripts/make-driver-pack.ps1` can run under PowerShell 7 (`pwsh`).
+
+Option A (recommended): extract first, then use `-VirtioWinRoot`:
 
 ```bash
 python3 tools/virtio-win/extract.py \
@@ -50,6 +51,12 @@ python3 tools/virtio-win/extract.py \
   --out-root /tmp/virtio-win-root
 
 pwsh drivers/scripts/make-driver-pack.ps1 -VirtioWinRoot /tmp/virtio-win-root
+```
+
+Option B: pass `-VirtioWinIso` directly under `pwsh` (auto-extract fallback on non-Windows):
+
+```bash
+pwsh drivers/scripts/make-driver-pack.ps1 -VirtioWinIso virtio-win.iso
 ```
 
 Notes:
