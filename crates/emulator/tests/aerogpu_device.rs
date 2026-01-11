@@ -3,11 +3,15 @@ use std::time::{Duration, Instant};
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdOpcode, AEROGPU_CMD_STREAM_MAGIC, AEROGPU_PRESENT_FLAG_VSYNC,
 };
-use emulator::devices::aerogpu_regs::{
-    irq_bits, mmio, ring_control, AEROGPU_ABI_MAJOR, AEROGPU_MMIO_MAGIC,
+use aero_protocol::aerogpu::aerogpu_pci::{AEROGPU_ABI_MAJOR, AEROGPU_ABI_VERSION_U32};
+use aero_protocol::aerogpu::aerogpu_ring::{
+    AerogpuRingHeader as ProtocolRingHeader, AerogpuSubmitDesc as ProtocolSubmitDesc,
 };
+use emulator::devices::aerogpu_regs::{irq_bits, mmio, ring_control, AEROGPU_MMIO_MAGIC};
 use emulator::devices::aerogpu_ring::{
-    AeroGpuSubmitDesc, AEROGPU_FENCE_PAGE_MAGIC, AEROGPU_RING_MAGIC,
+    AeroGpuRingHeader, AeroGpuSubmitDesc, AEROGPU_FENCE_PAGE_MAGIC, AEROGPU_FENCE_PAGE_SIZE_BYTES,
+    AEROGPU_RING_HEADER_SIZE_BYTES, AEROGPU_RING_MAGIC, FENCE_PAGE_COMPLETED_FENCE_OFFSET,
+    FENCE_PAGE_MAGIC_OFFSET, RING_HEAD_OFFSET, RING_TAIL_OFFSET,
 };
 use emulator::devices::aerogpu_scanout::AeroGpuFormat;
 use emulator::devices::pci::aerogpu::{AeroGpuDeviceConfig, AeroGpuPciDevice};
@@ -57,29 +61,48 @@ fn doorbell_updates_ring_head_fence_page_and_irq() {
     let ring_gpa = 0x1000u64;
     let ring_size = 0x1000u32;
     let entry_count = 8u32;
-    let entry_stride = 64u32;
+    let entry_stride = AeroGpuSubmitDesc::SIZE_BYTES;
+
+    const RING_MAGIC_OFFSET: u64 = core::mem::offset_of!(ProtocolRingHeader, magic) as u64;
+    const RING_ABI_VERSION_OFFSET: u64 = core::mem::offset_of!(ProtocolRingHeader, abi_version) as u64;
+    const RING_SIZE_BYTES_OFFSET: u64 = core::mem::offset_of!(ProtocolRingHeader, size_bytes) as u64;
+    const RING_ENTRY_COUNT_OFFSET: u64 = core::mem::offset_of!(ProtocolRingHeader, entry_count) as u64;
+    const RING_ENTRY_STRIDE_BYTES_OFFSET: u64 =
+        core::mem::offset_of!(ProtocolRingHeader, entry_stride_bytes) as u64;
+    const RING_FLAGS_OFFSET: u64 = core::mem::offset_of!(ProtocolRingHeader, flags) as u64;
 
     // Ring header.
-    mem.write_u32(ring_gpa + 0, AEROGPU_RING_MAGIC);
-    mem.write_u32(ring_gpa + 4, dev.regs.abi_version);
-    mem.write_u32(ring_gpa + 8, ring_size);
-    mem.write_u32(ring_gpa + 12, entry_count);
-    mem.write_u32(ring_gpa + 16, entry_stride);
-    mem.write_u32(ring_gpa + 20, 0);
-    mem.write_u32(ring_gpa + 24, 0); // head
-    mem.write_u32(ring_gpa + 28, 1); // tail
+    mem.write_u32(ring_gpa + RING_MAGIC_OFFSET, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa + RING_ABI_VERSION_OFFSET, AEROGPU_ABI_VERSION_U32);
+    mem.write_u32(ring_gpa + RING_SIZE_BYTES_OFFSET, ring_size);
+    mem.write_u32(ring_gpa + RING_ENTRY_COUNT_OFFSET, entry_count);
+    mem.write_u32(ring_gpa + RING_ENTRY_STRIDE_BYTES_OFFSET, entry_stride);
+    mem.write_u32(ring_gpa + RING_FLAGS_OFFSET, 0);
+    mem.write_u32(ring_gpa + RING_HEAD_OFFSET, 0); // head
+    mem.write_u32(ring_gpa + RING_TAIL_OFFSET, 1); // tail
 
     // Submit descriptor at slot 0.
-    let desc_gpa = ring_gpa + 64;
-    mem.write_u32(desc_gpa + 0, 64); // desc_size_bytes
-    mem.write_u32(desc_gpa + 4, 0); // flags
-    mem.write_u32(desc_gpa + 8, 0); // context_id
-    mem.write_u32(desc_gpa + 12, 0); // engine_id
-    mem.write_u64(desc_gpa + 16, 0); // cmd_gpa
-    mem.write_u32(desc_gpa + 24, 0); // cmd_size_bytes
-    mem.write_u64(desc_gpa + 32, 0); // alloc_table_gpa
-    mem.write_u32(desc_gpa + 40, 0); // alloc_table_size_bytes
-    mem.write_u64(desc_gpa + 48, 42); // signal_fence
+    let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+    const DESC_SIZE_BYTES_OFFSET: u64 = core::mem::offset_of!(ProtocolSubmitDesc, desc_size_bytes) as u64;
+    const DESC_FLAGS_OFFSET: u64 = core::mem::offset_of!(ProtocolSubmitDesc, flags) as u64;
+    const DESC_CONTEXT_ID_OFFSET: u64 = core::mem::offset_of!(ProtocolSubmitDesc, context_id) as u64;
+    const DESC_ENGINE_ID_OFFSET: u64 = core::mem::offset_of!(ProtocolSubmitDesc, engine_id) as u64;
+    const DESC_CMD_GPA_OFFSET: u64 = core::mem::offset_of!(ProtocolSubmitDesc, cmd_gpa) as u64;
+    const DESC_CMD_SIZE_BYTES_OFFSET: u64 = core::mem::offset_of!(ProtocolSubmitDesc, cmd_size_bytes) as u64;
+    const DESC_ALLOC_TABLE_GPA_OFFSET: u64 = core::mem::offset_of!(ProtocolSubmitDesc, alloc_table_gpa) as u64;
+    const DESC_ALLOC_TABLE_SIZE_BYTES_OFFSET: u64 =
+        core::mem::offset_of!(ProtocolSubmitDesc, alloc_table_size_bytes) as u64;
+    const DESC_SIGNAL_FENCE_OFFSET: u64 = core::mem::offset_of!(ProtocolSubmitDesc, signal_fence) as u64;
+
+    mem.write_u32(desc_gpa + DESC_SIZE_BYTES_OFFSET, AeroGpuSubmitDesc::SIZE_BYTES); // desc_size_bytes
+    mem.write_u32(desc_gpa + DESC_FLAGS_OFFSET, 0); // flags
+    mem.write_u32(desc_gpa + DESC_CONTEXT_ID_OFFSET, 0); // context_id
+    mem.write_u32(desc_gpa + DESC_ENGINE_ID_OFFSET, 0); // engine_id
+    mem.write_u64(desc_gpa + DESC_CMD_GPA_OFFSET, 0); // cmd_gpa
+    mem.write_u32(desc_gpa + DESC_CMD_SIZE_BYTES_OFFSET, 0); // cmd_size_bytes
+    mem.write_u64(desc_gpa + DESC_ALLOC_TABLE_GPA_OFFSET, 0); // alloc_table_gpa
+    mem.write_u32(desc_gpa + DESC_ALLOC_TABLE_SIZE_BYTES_OFFSET, 0); // alloc_table_size_bytes
+    mem.write_u64(desc_gpa + DESC_SIGNAL_FENCE_OFFSET, 42); // signal_fence
 
     // Fence page.
     let fence_gpa = 0x3000u64;
@@ -99,11 +122,11 @@ fn doorbell_updates_ring_head_fence_page_and_irq() {
     assert_ne!(dev.regs.irq_status & irq_bits::FENCE, 0);
     assert!(dev.irq_level());
 
-    let head_after = mem.read_u32(ring_gpa + 24);
+    let head_after = mem.read_u32(ring_gpa + RING_HEAD_OFFSET);
     assert_eq!(head_after, 1);
 
-    assert_eq!(mem.read_u32(fence_gpa + 0), AEROGPU_FENCE_PAGE_MAGIC);
-    assert_eq!(mem.read_u64(fence_gpa + 8), 42);
+    assert_eq!(mem.read_u32(fence_gpa + FENCE_PAGE_MAGIC_OFFSET), AEROGPU_FENCE_PAGE_MAGIC);
+    assert_eq!(mem.read_u64(fence_gpa + FENCE_PAGE_COMPLETED_FENCE_OFFSET), 42);
 
     dev.mmio_write(&mut mem, mmio::IRQ_ACK, 4, irq_bits::FENCE);
     assert_eq!(dev.regs.irq_status & irq_bits::FENCE, 0);
@@ -119,7 +142,7 @@ fn doorbell_accepts_newer_minor_abi_version() {
     let ring_gpa = 0x1000u64;
     let ring_size = 0x1000u32;
     let entry_count = 8u32;
-    let entry_stride = 64u32;
+    let entry_stride = AeroGpuSubmitDesc::SIZE_BYTES;
 
     // Ring header: advertise an unknown minor version while keeping the same major.
     // The protocol versioning rules require consumers to accept forward-compatible minor
@@ -131,12 +154,12 @@ fn doorbell_accepts_newer_minor_abi_version() {
     mem.write_u32(ring_gpa + 12, entry_count);
     mem.write_u32(ring_gpa + 16, entry_stride);
     mem.write_u32(ring_gpa + 20, 0);
-    mem.write_u32(ring_gpa + 24, 0); // head
-    mem.write_u32(ring_gpa + 28, 1); // tail
+    mem.write_u32(ring_gpa + RING_HEAD_OFFSET, 0); // head
+    mem.write_u32(ring_gpa + RING_TAIL_OFFSET, 1); // tail
 
     // Submit descriptor at slot 0.
-    let desc_gpa = ring_gpa + 64;
-    mem.write_u32(desc_gpa + 0, 64); // desc_size_bytes
+    let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+    mem.write_u32(desc_gpa + 0, AeroGpuSubmitDesc::SIZE_BYTES); // desc_size_bytes
     mem.write_u32(desc_gpa + 4, 0); // flags
     mem.write_u32(desc_gpa + 8, 0); // context_id
     mem.write_u32(desc_gpa + 12, 0); // engine_id
@@ -160,16 +183,16 @@ fn doorbell_accepts_newer_minor_abi_version() {
 
     dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
 
+    assert_eq!(dev.regs.stats.malformed_submissions, 0);
     assert_eq!(dev.regs.completed_fence, 42);
     assert_eq!(dev.regs.irq_status & irq_bits::ERROR, 0);
     assert_ne!(dev.regs.irq_status & irq_bits::FENCE, 0);
     assert!(dev.irq_level());
 
-    let head_after = mem.read_u32(ring_gpa + 24);
-    assert_eq!(head_after, 1);
+    assert_eq!(mem.read_u32(ring_gpa + RING_HEAD_OFFSET), 1);
 
-    assert_eq!(mem.read_u32(fence_gpa + 0), AEROGPU_FENCE_PAGE_MAGIC);
-    assert_eq!(mem.read_u64(fence_gpa + 8), 42);
+    assert_eq!(mem.read_u32(fence_gpa + FENCE_PAGE_MAGIC_OFFSET), AEROGPU_FENCE_PAGE_MAGIC);
+    assert_eq!(mem.read_u64(fence_gpa + FENCE_PAGE_COMPLETED_FENCE_OFFSET), 42);
 }
 
 #[test]
@@ -190,17 +213,17 @@ fn doorbell_accepts_larger_submit_desc_stride_and_size() {
     mem.write_u32(ring_gpa + 12, entry_count);
     mem.write_u32(ring_gpa + 16, entry_stride);
     mem.write_u32(ring_gpa + 20, 0);
-    mem.write_u32(ring_gpa + 24, 0); // head
-    mem.write_u32(ring_gpa + 28, 2); // tail
+    mem.write_u32(ring_gpa + RING_HEAD_OFFSET, 0); // head
+    mem.write_u32(ring_gpa + RING_TAIL_OFFSET, 2); // tail
 
     // Submit descriptors at slots 0 and 1 with an extended size.
-    // Slot 1 is deliberately placed at 64 + entry_stride to verify the device uses
+    // Slot 1 is deliberately placed at header + entry_stride to verify the device uses
     // `entry_stride_bytes` when walking the ring.
-    let desc0_gpa = ring_gpa + 64;
+    let desc0_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
     mem.write_u32(desc0_gpa + 0, 128); // desc_size_bytes
     mem.write_u64(desc0_gpa + 48, 41); // signal_fence
 
-    let desc1_gpa = ring_gpa + 64 + u64::from(entry_stride);
+    let desc1_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES + u64::from(entry_stride);
     mem.write_u32(desc1_gpa + 0, 128); // desc_size_bytes
     mem.write_u64(desc1_gpa + 48, 42); // signal_fence
 
@@ -212,7 +235,7 @@ fn doorbell_accepts_larger_submit_desc_stride_and_size() {
 
     assert_eq!(dev.regs.stats.malformed_submissions, 0);
     assert_eq!(dev.regs.stats.submissions, 2);
-    assert_eq!(mem.read_u32(ring_gpa + 24), 2);
+    assert_eq!(mem.read_u32(ring_gpa + RING_HEAD_OFFSET), 2);
     assert_eq!(dev.regs.completed_fence, 42);
 }
 
@@ -225,7 +248,7 @@ fn doorbell_rejects_unknown_major_abi_version() {
     let ring_gpa = 0x1000u64;
     let ring_size = 0x1000u32;
     let entry_count = 8u32;
-    let entry_stride = 64u32;
+    let entry_stride = AeroGpuSubmitDesc::SIZE_BYTES;
 
     // Ring header: advertise an unsupported major version.
     let unsupported_major = ((AEROGPU_ABI_MAJOR + 1) << 16) | 0;
@@ -235,12 +258,12 @@ fn doorbell_rejects_unknown_major_abi_version() {
     mem.write_u32(ring_gpa + 12, entry_count);
     mem.write_u32(ring_gpa + 16, entry_stride);
     mem.write_u32(ring_gpa + 20, 0);
-    mem.write_u32(ring_gpa + 24, 0); // head
-    mem.write_u32(ring_gpa + 28, 1); // tail
+    mem.write_u32(ring_gpa + RING_HEAD_OFFSET, 0); // head
+    mem.write_u32(ring_gpa + RING_TAIL_OFFSET, 1); // tail
 
     // Submit descriptor at slot 0 (should not be processed due to ABI mismatch).
-    let desc_gpa = ring_gpa + 64;
-    mem.write_u32(desc_gpa + 0, 64); // desc_size_bytes
+    let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+    mem.write_u32(desc_gpa + 0, AeroGpuSubmitDesc::SIZE_BYTES); // desc_size_bytes
     mem.write_u64(desc_gpa + 48, 42); // signal_fence
 
     // Fence page.
@@ -262,8 +285,60 @@ fn doorbell_rejects_unknown_major_abi_version() {
 
     // Ring and fence state should remain unchanged.
     assert_eq!(dev.regs.completed_fence, 0);
-    assert_eq!(mem.read_u32(ring_gpa + 24), 0);
-    assert_eq!(mem.read_u32(fence_gpa + 0), 0);
+    assert_eq!(mem.read_u32(ring_gpa + RING_HEAD_OFFSET), 0);
+    assert_eq!(mem.read_u32(fence_gpa + FENCE_PAGE_MAGIC_OFFSET), 0);
+}
+
+#[test]
+fn ring_abi_matches_c_header() {
+    assert_eq!(AEROGPU_RING_MAGIC, 0x474E_5241);
+    assert_eq!(AEROGPU_ABI_VERSION_U32, 0x0001_0001);
+    assert_eq!(AEROGPU_RING_HEADER_SIZE_BYTES, 64);
+    assert_eq!(RING_HEAD_OFFSET, 24);
+    assert_eq!(RING_TAIL_OFFSET, 28);
+
+    assert_eq!(AEROGPU_FENCE_PAGE_MAGIC, 0x434E_4546);
+    assert_eq!(AEROGPU_FENCE_PAGE_SIZE_BYTES, 56);
+    assert_eq!(FENCE_PAGE_COMPLETED_FENCE_OFFSET, 8);
+}
+
+#[test]
+fn ring_header_validation_checks_magic_and_abi_version() {
+    let mut mem = VecMemory::new(0x20_000);
+    let ring_gpa = 0x1000u64;
+    let ring_size = 0x1000u32;
+    let entry_count = 8u32;
+    let entry_stride = AeroGpuSubmitDesc::SIZE_BYTES;
+
+    const RING_MAGIC_OFFSET: u64 = core::mem::offset_of!(ProtocolRingHeader, magic) as u64;
+    const RING_ABI_VERSION_OFFSET: u64 = core::mem::offset_of!(ProtocolRingHeader, abi_version) as u64;
+    const RING_SIZE_BYTES_OFFSET: u64 = core::mem::offset_of!(ProtocolRingHeader, size_bytes) as u64;
+    const RING_ENTRY_COUNT_OFFSET: u64 = core::mem::offset_of!(ProtocolRingHeader, entry_count) as u64;
+    const RING_ENTRY_STRIDE_BYTES_OFFSET: u64 =
+        core::mem::offset_of!(ProtocolRingHeader, entry_stride_bytes) as u64;
+
+    // Start with a header that is valid in every way except the field under test.
+    mem.write_u32(ring_gpa + RING_MAGIC_OFFSET, 0);
+    mem.write_u32(ring_gpa + RING_ABI_VERSION_OFFSET, AEROGPU_ABI_VERSION_U32);
+    mem.write_u32(ring_gpa + RING_SIZE_BYTES_OFFSET, ring_size);
+    mem.write_u32(ring_gpa + RING_ENTRY_COUNT_OFFSET, entry_count);
+    mem.write_u32(ring_gpa + RING_ENTRY_STRIDE_BYTES_OFFSET, entry_stride);
+    mem.write_u32(ring_gpa + RING_HEAD_OFFSET, 0);
+    mem.write_u32(ring_gpa + RING_TAIL_OFFSET, 0);
+
+    let ring = AeroGpuRingHeader::read_from(&mut mem, ring_gpa);
+    assert!(!ring.is_valid(ring_size), "wrong magic must be rejected");
+
+    mem.write_u32(ring_gpa + RING_MAGIC_OFFSET, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa + RING_ABI_VERSION_OFFSET, 0);
+
+    let ring = AeroGpuRingHeader::read_from(&mut mem, ring_gpa);
+    assert!(!ring.is_valid(ring_size), "wrong ABI version must be rejected");
+
+    mem.write_u32(ring_gpa + RING_ABI_VERSION_OFFSET, AEROGPU_ABI_VERSION_U32);
+
+    let ring = AeroGpuRingHeader::read_from(&mut mem, ring_gpa);
+    assert!(ring.is_valid(ring_size));
 }
 
 #[test]
@@ -326,7 +401,7 @@ fn vsynced_present_fence_completes_on_vblank() {
     let ring_gpa = 0x1000u64;
     let ring_size = 0x1000u32;
     let entry_count = 8u32;
-    let entry_stride = 64u32;
+    let entry_stride = AeroGpuSubmitDesc::SIZE_BYTES;
 
     mem.write_u32(ring_gpa + 0, AEROGPU_RING_MAGIC);
     mem.write_u32(ring_gpa + 4, dev.regs.abi_version);
@@ -334,8 +409,8 @@ fn vsynced_present_fence_completes_on_vblank() {
     mem.write_u32(ring_gpa + 12, entry_count);
     mem.write_u32(ring_gpa + 16, entry_stride);
     mem.write_u32(ring_gpa + 20, 0);
-    mem.write_u32(ring_gpa + 24, 0); // head
-    mem.write_u32(ring_gpa + 28, 1); // tail
+    mem.write_u32(ring_gpa + RING_HEAD_OFFSET, 0); // head
+    mem.write_u32(ring_gpa + RING_TAIL_OFFSET, 1); // tail
 
     // Command buffer: ACMD header + PRESENT(vsync).
     let cmd_gpa = 0x4000u64;
@@ -355,8 +430,8 @@ fn vsynced_present_fence_completes_on_vblank() {
     mem.write_u32(cmd_gpa + 36, AEROGPU_PRESENT_FLAG_VSYNC);
 
     // Submit descriptor at slot 0.
-    let desc_gpa = ring_gpa + 64;
-    mem.write_u32(desc_gpa + 0, 64); // desc_size_bytes
+    let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+    mem.write_u32(desc_gpa + 0, AeroGpuSubmitDesc::SIZE_BYTES); // desc_size_bytes
     mem.write_u32(desc_gpa + 4, AeroGpuSubmitDesc::FLAG_PRESENT); // flags
     mem.write_u32(desc_gpa + 8, 0); // context_id
     mem.write_u32(desc_gpa + 12, 0); // engine_id
@@ -384,7 +459,7 @@ fn vsynced_present_fence_completes_on_vblank() {
     assert_eq!(dev.regs.irq_status & irq_bits::FENCE, 0);
     assert!(!dev.irq_level());
 
-    let head_after = mem.read_u32(ring_gpa + 24);
+    let head_after = mem.read_u32(ring_gpa + RING_HEAD_OFFSET);
     assert_eq!(head_after, 1);
 
     let t0 = Instant::now();
@@ -397,8 +472,14 @@ fn vsynced_present_fence_completes_on_vblank() {
     assert_ne!(dev.regs.irq_status & irq_bits::FENCE, 0);
     assert!(dev.irq_level());
 
-    assert_eq!(mem.read_u32(fence_gpa + 0), AEROGPU_FENCE_PAGE_MAGIC);
-    assert_eq!(mem.read_u64(fence_gpa + 8), 42);
+    assert_eq!(
+        mem.read_u32(fence_gpa + FENCE_PAGE_MAGIC_OFFSET),
+        AEROGPU_FENCE_PAGE_MAGIC
+    );
+    assert_eq!(
+        mem.read_u64(fence_gpa + FENCE_PAGE_COMPLETED_FENCE_OFFSET),
+        42
+    );
 }
 
 #[test]

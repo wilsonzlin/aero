@@ -10,7 +10,8 @@ use crate::devices::aerogpu_regs::{irq_bits, ring_control, AeroGpuRegs, FEATURE_
 use crate::devices::aerogpu_ring::{
     AeroGpuAllocEntry, AeroGpuAllocTableHeader, AeroGpuRingHeader, AeroGpuSubmitDesc,
     AEROGPU_ALLOC_TABLE_MAGIC, AEROGPU_FENCE_PAGE_MAGIC, AEROGPU_FENCE_PAGE_SIZE_BYTES,
-    AEROGPU_RING_HEADER_SIZE_BYTES,
+    AEROGPU_RING_HEADER_SIZE_BYTES, FENCE_PAGE_ABI_VERSION_OFFSET, FENCE_PAGE_COMPLETED_FENCE_OFFSET,
+    FENCE_PAGE_MAGIC_OFFSET,
 };
 use crate::gpu_worker::aerogpu_backend::{
     AeroGpuBackendCompletion, AeroGpuBackendScanout, AeroGpuBackendSubmission,
@@ -649,9 +650,12 @@ impl AeroGpuExecutor {
         }
 
         // Initialize header (idempotent) and update completed value.
-        mem.write_u32(regs.fence_gpa + 0, AEROGPU_FENCE_PAGE_MAGIC);
-        mem.write_u32(regs.fence_gpa + 4, regs.abi_version);
-        mem.write_u64(regs.fence_gpa + 8, regs.completed_fence);
+        mem.write_u32(regs.fence_gpa + FENCE_PAGE_MAGIC_OFFSET, AEROGPU_FENCE_PAGE_MAGIC);
+        mem.write_u32(regs.fence_gpa + FENCE_PAGE_ABI_VERSION_OFFSET, regs.abi_version);
+        mem.write_u64(
+            regs.fence_gpa + FENCE_PAGE_COMPLETED_FENCE_OFFSET,
+            regs.completed_fence,
+        );
 
         // Keep writes within the defined struct size; do not touch the rest of the page.
         let _ = AEROGPU_FENCE_PAGE_SIZE_BYTES;
@@ -668,7 +672,6 @@ impl AeroGpuExecutor {
         }
     }
 }
-
 const MAX_ALLOC_TABLE_SIZE_BYTES: u32 = 16 * 1024 * 1024;
 const MAX_CMD_STREAM_SIZE_BYTES: u32 = 64 * 1024 * 1024;
 
