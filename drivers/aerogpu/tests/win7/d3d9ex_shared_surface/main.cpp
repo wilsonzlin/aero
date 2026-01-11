@@ -1079,6 +1079,12 @@ static int RunParent(aerogpu_test::TestReporter* reporter,
                      bool hidden,
                      bool validate_sharing) {
   const char* kTestName = "d3d9ex_shared_surface";
+  const std::wstring child_bmp_path =
+      aerogpu_test::JoinPath(aerogpu_test::GetModuleDir(), L"d3d9ex_shared_surface_child.bmp");
+  if (dump) {
+    // Ensure we don't report a stale BMP from a previous run if the child fails before dumping.
+    DeleteFileW(child_bmp_path.c_str());
+  }
 
   const int kWidth = 64;
   const int kHeight = 64;
@@ -1645,8 +1651,6 @@ static int RunParent(aerogpu_test::TestReporter* reporter,
   }
 
   if (dump && reporter) {
-    const std::wstring child_bmp_path =
-        aerogpu_test::JoinPath(aerogpu_test::GetModuleDir(), L"d3d9ex_shared_surface_child.bmp");
     DWORD attr = GetFileAttributesW(child_bmp_path.c_str());
     if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY) == 0) {
       reporter->AddArtifactPathW(child_bmp_path);

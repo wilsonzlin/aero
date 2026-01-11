@@ -727,6 +727,12 @@ static int RunProducer(int argc, char** argv) {
   aerogpu_test::TestReporter reporter(kTestName, argc, argv);
 
   const bool dump = aerogpu_test::HasArg(argc, argv, "--dump");
+  const std::wstring bmp_path =
+      aerogpu_test::JoinPath(aerogpu_test::GetModuleDir(), L"d3d9ex_shared_surface_ipc.bmp");
+  if (dump) {
+    // Ensure we don't report a stale BMP from a previous run if the consumer fails before dumping.
+    DeleteFileW(bmp_path.c_str());
+  }
   const bool allow_microsoft = aerogpu_test::HasArg(argc, argv, "--allow-microsoft");
   const bool allow_non_aerogpu = aerogpu_test::HasArg(argc, argv, "--allow-non-aerogpu");
   const bool require_umd = aerogpu_test::HasArg(argc, argv, "--require-umd");
@@ -1047,8 +1053,6 @@ static int RunProducer(int argc, char** argv) {
   }
 
   if (dump) {
-    const std::wstring bmp_path =
-        aerogpu_test::JoinPath(aerogpu_test::GetModuleDir(), L"d3d9ex_shared_surface_ipc.bmp");
     DWORD attr = GetFileAttributesW(bmp_path.c_str());
     if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY) == 0) {
       reporter.AddArtifactPathW(bmp_path);
