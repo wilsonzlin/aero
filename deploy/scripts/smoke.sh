@@ -24,7 +24,6 @@ services:
     environment:
       # Enforce gateway session cookies (aero_session) for /l2 upgrades.
       AERO_L2_AUTH_MODE: cookie
-      AERO_L2_SESSION_SECRET: ${SESSION_SECRET}
 YAML
 
 compose() {
@@ -37,6 +36,7 @@ compose() {
     -u AERO_L2_BLOCKED_DOMAINS \
     -u AERO_L2_TOKEN \
     -u AERO_L2_AUTH_MODE \
+    -u AERO_L2_SESSION_SECRET \
     -u AERO_L2_API_KEY \
     -u AERO_L2_JWT_SECRET \
     -u L2_BACKEND_WS_URL \
@@ -55,7 +55,6 @@ compose() {
     AERO_L2_PROXY_LISTEN_ADDR= \
     AERO_L2_ALLOW_PRIVATE_IPS=0 \
     AERO_L2_AUTH_MODE=cookie \
-    AERO_L2_SESSION_SECRET="$SMOKE_SESSION_SECRET" \
     AERO_WEBRTC_UDP_RELAY_UPSTREAM=aero-webrtc-udp-relay:8080 \
     BUILD_COMMIT= \
     BUILD_TIME= \

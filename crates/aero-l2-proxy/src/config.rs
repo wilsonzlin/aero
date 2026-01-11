@@ -174,15 +174,26 @@ impl SecurityConfig {
 
         let session_secret = if matches!(auth_mode, AuthMode::Cookie | AuthMode::CookieOrJwt) {
             let secret = std::env::var("AERO_L2_SESSION_SECRET")
-                .or_else(|_| std::env::var("SESSION_SECRET"))
                 .ok()
                 .and_then(|v| {
                     let trimmed = v.trim();
                     (!trimmed.is_empty()).then(|| trimmed.as_bytes().to_vec())
+                })
+                .or_else(|| {
+                    std::env::var("SESSION_SECRET").ok().and_then(|v| {
+                        let trimmed = v.trim();
+                        (!trimmed.is_empty()).then(|| trimmed.as_bytes().to_vec())
+                    })
+                })
+                .or_else(|| {
+                    std::env::var("AERO_GATEWAY_SESSION_SECRET").ok().and_then(|v| {
+                        let trimmed = v.trim();
+                        (!trimmed.is_empty()).then(|| trimmed.as_bytes().to_vec())
+                    })
                 });
             if secret.is_none() {
                 return Err(anyhow!(
-                    "AERO_L2_SESSION_SECRET (or SESSION_SECRET) is required for AERO_L2_AUTH_MODE=cookie/cookie_or_jwt"
+                    "AERO_L2_SESSION_SECRET (or SESSION_SECRET / AERO_GATEWAY_SESSION_SECRET) is required for AERO_L2_AUTH_MODE=cookie/cookie_or_jwt"
                 ));
             }
             secret
