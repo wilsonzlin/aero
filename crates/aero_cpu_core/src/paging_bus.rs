@@ -186,33 +186,27 @@ impl<B: MemoryBus> CpuBus for WriteIntent<'_, B> {
     }
 
     fn read_u16(&mut self, vaddr: u64) -> Result<u16, Exception> {
-        let b0 = self.read_u8(vaddr)? as u16;
-        let b1 = self.read_u8(vaddr + 1)? as u16;
-        Ok(b0 | (b1 << 8))
+        let mut buf = [0u8; 2];
+        self.bus.read_bytes_access(vaddr, &mut buf, AccessType::Write)?;
+        Ok(u16::from_le_bytes(buf))
     }
 
     fn read_u32(&mut self, vaddr: u64) -> Result<u32, Exception> {
-        let mut v = 0u32;
-        for i in 0..4 {
-            v |= (self.read_u8(vaddr + i)? as u32) << (i * 8);
-        }
-        Ok(v)
+        let mut buf = [0u8; 4];
+        self.bus.read_bytes_access(vaddr, &mut buf, AccessType::Write)?;
+        Ok(u32::from_le_bytes(buf))
     }
 
     fn read_u64(&mut self, vaddr: u64) -> Result<u64, Exception> {
-        let mut v = 0u64;
-        for i in 0..8 {
-            v |= (self.read_u8(vaddr + i)? as u64) << (i * 8);
-        }
-        Ok(v)
+        let mut buf = [0u8; 8];
+        self.bus.read_bytes_access(vaddr, &mut buf, AccessType::Write)?;
+        Ok(u64::from_le_bytes(buf))
     }
 
     fn read_u128(&mut self, vaddr: u64) -> Result<u128, Exception> {
-        let mut v = 0u128;
-        for i in 0..16 {
-            v |= (self.read_u8(vaddr + i)? as u128) << (i * 8);
-        }
-        Ok(v)
+        let mut buf = [0u8; 16];
+        self.bus.read_bytes_access(vaddr, &mut buf, AccessType::Write)?;
+        Ok(u128::from_le_bytes(buf))
     }
 
     fn write_u8(&mut self, vaddr: u64, val: u8) -> Result<(), Exception> {
@@ -220,30 +214,31 @@ impl<B: MemoryBus> CpuBus for WriteIntent<'_, B> {
     }
 
     fn write_u16(&mut self, vaddr: u64, val: u16) -> Result<(), Exception> {
-        self.write_u8(vaddr, (val & 0xff) as u8)?;
-        self.write_u8(vaddr + 1, (val >> 8) as u8)?;
-        Ok(())
+        self.bus
+            .write_bytes_access(vaddr, &val.to_le_bytes(), AccessType::Write)
     }
 
     fn write_u32(&mut self, vaddr: u64, val: u32) -> Result<(), Exception> {
-        for i in 0..4 {
-            self.write_u8(vaddr + i, (val >> (i * 8)) as u8)?;
-        }
-        Ok(())
+        self.bus
+            .write_bytes_access(vaddr, &val.to_le_bytes(), AccessType::Write)
     }
 
     fn write_u64(&mut self, vaddr: u64, val: u64) -> Result<(), Exception> {
-        for i in 0..8 {
-            self.write_u8(vaddr + i, (val >> (i * 8)) as u8)?;
-        }
-        Ok(())
+        self.bus
+            .write_bytes_access(vaddr, &val.to_le_bytes(), AccessType::Write)
     }
 
     fn write_u128(&mut self, vaddr: u64, val: u128) -> Result<(), Exception> {
-        for i in 0..16 {
-            self.write_u8(vaddr + i, (val >> (i * 8)) as u8)?;
-        }
-        Ok(())
+        self.bus
+            .write_bytes_access(vaddr, &val.to_le_bytes(), AccessType::Write)
+    }
+
+    fn read_bytes(&mut self, vaddr: u64, dst: &mut [u8]) -> Result<(), Exception> {
+        self.bus.read_bytes_access(vaddr, dst, AccessType::Write)
+    }
+
+    fn write_bytes(&mut self, vaddr: u64, src: &[u8]) -> Result<(), Exception> {
+        self.bus.write_bytes_access(vaddr, src, AccessType::Write)
     }
 
     fn fetch(&mut self, vaddr: u64, max_len: usize) -> Result<[u8; 15], Exception> {

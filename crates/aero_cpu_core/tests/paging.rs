@@ -356,26 +356,54 @@ fn pagingbus_multi_byte_writes_are_atomic_wrt_page_faults() {
 
 #[test]
 fn pagingbus_does_not_panic_on_wrapping_linear_addresses() {
-    // Use a zeroed PML4 so translations reliably fault.
-    let phys = TestMemory::new(0x2000);
-    let mut bus = PagingBus::new(phys);
+    // Map the final 4KiB page in the canonical address space (0xffff...f000),
+    // but leave the low page unmapped. Reading 2 bytes at `u64::MAX` should:
+    //  - read the first byte from the high page,
+    //  - wrap to address 0 for the second byte and fault there,
+    //  - never panic from debug overflow checks.
+    let mut phys = TestMemory::new(0x10000);
 
-    let state = long_state(0, 0, 0);
+    let pml4_base = 0x1000u64;
+    let pdpt_base = 0x2000u64;
+    let pd_base = 0x3000u64;
+    let pt_base = 0x4000u64;
+    let high_page = 0x5000u64;
+
+    // PML4E[511] -> PDPT[511] -> PD[511] -> PT[511] -> high_page
+    let idx = 0x1ffu64;
+    let flags = PTE_P | PTE_RW | PTE_US;
+    phys.write_u64(pml4_base + idx * 8, pdpt_base | flags);
+    phys.write_u64(pdpt_base + idx * 8, pd_base | flags);
+    phys.write_u64(pd_base + idx * 8, pt_base | flags);
+    phys.write_u64(pt_base + idx * 8, high_page | flags);
+
+    // Place a distinguishable byte at the final address.
+    phys.write_u8_raw(high_page + 0xfff, 0x90);
+
+    let mut bus = PagingBus::new(phys);
+    let state = long_state(pml4_base, 0, 0);
     bus.sync(&state);
 
     // These accesses previously used `vaddr + i` and could panic on overflow in debug builds.
     assert_eq!(
         bus.fetch(u64::MAX, 2),
         Err(Exception::PageFault {
-            addr: u64::MAX,
+            addr: 0,
             error_code: 1 << 4, // I/D=1, P=0, W=0, U=0
         })
     );
     assert_eq!(
         bus.read_u16(u64::MAX),
         Err(Exception::PageFault {
-            addr: u64::MAX,
+            addr: 0,
             error_code: 0,
+        })
+    );
+    assert_eq!(
+        bus.atomic_rmw::<u16, _>(u64::MAX, |old| (old, old)),
+        Err(Exception::PageFault {
+            addr: 0,
+            error_code: 1 << 1, // W=1, P=0, U=0
         })
     );
 }
