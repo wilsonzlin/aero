@@ -280,6 +280,8 @@ static int RunReadbackSanity(int argc, char** argv) {
   const FLOAT clear_rgba[4] = {1.0f, 0.0f, 0.0f, 1.0f};
   context->ClearRenderTargetView(rtv.get(), clear_rgba);
   context->Draw(3, 0);
+  // Avoid any ambiguity around copying from a still-bound render target.
+  context->OMSetRenderTargets(0, NULL, NULL);
 
   // Read back the result via a staging texture.
   D3D11_TEXTURE2D_DESC st_desc = tex_desc;
@@ -302,6 +304,18 @@ static int RunReadbackSanity(int argc, char** argv) {
   hr = context->Map(staging.get(), 0, D3D11_MAP_READ, 0, &map);
   if (FAILED(hr)) {
     return FailD3D11WithRemovedReason(kTestName, "Map(staging)", hr, device.get());
+  }
+  if (!map.pData) {
+    context->Unmap(staging.get(), 0);
+    return aerogpu_test::Fail(kTestName, "Map(staging) returned NULL pData");
+  }
+  const UINT min_row_pitch = kWidth * 4;
+  if (map.RowPitch < min_row_pitch) {
+    context->Unmap(staging.get(), 0);
+    return aerogpu_test::Fail(kTestName,
+                              "Map(staging) returned too-small RowPitch=%u (min=%u)",
+                              (unsigned)map.RowPitch,
+                              (unsigned)min_row_pitch);
   }
 
   const uint32_t corner = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, 0, 0);
