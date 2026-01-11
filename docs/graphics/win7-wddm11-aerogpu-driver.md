@@ -755,13 +755,18 @@ The register names below are the canonical ones from `drivers/aerogpu/protocol/a
   
 The submission transport is a shared ring in guest physical memory, defined in `drivers/aerogpu/protocol/aerogpu_ring.h`.
   
-- The driver allocates a contiguous region in guest RAM and writes a `struct aerogpu_ring_header` at the start (magic `"ARNG"`, ABI version, entry count/stride, and the volatile `head`/`tail` counters).
+- The driver allocates a contiguous region in guest RAM and writes a `struct aerogpu_ring_header` at the start:
+  - `magic = "ARNG"`, `abi_version = AEROGPU_ABI_VERSION_U32`
+  - `size_bytes` covers the full mapping (`sizeof(ring_header) + entry_count * entry_stride_bytes`)
+  - `entry_count` must be a power-of-two
+  - `entry_stride_bytes` must be `sizeof(struct aerogpu_submit_desc)` (64)
+  - `head` is device-owned; `tail` is driver-owned (both monotonic counters)
 - The ring entries are fixed-size `struct aerogpu_submit_desc` records (64 bytes).
 - `ring->head` and `ring->tail` are monotonic indices; the slot index is `(index % entry_count)`.
   
 Submission sequence:
   
-1. Write an `aerogpu_submit_desc` into the `(tail % entry_count)` slot.
+1. Write an `aerogpu_submit_desc` into the `(ring->tail % ring->entry_count)` slot.
 2. Increment `ring->tail`.
 3. Write to `AEROGPU_MMIO_REG_DOORBELL`.
   
