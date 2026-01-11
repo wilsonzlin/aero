@@ -3,8 +3,16 @@
 #include <ntddk.h>
 
 #include "trace.h"
-#include "virtiosnd.h"
 #include "virtiosnd_tx.h"
+
+#ifndef VIRTIOSND_POOL_TAG
+#if defined(_MSC_VER)
+#define VIRTIOSND_POOL_TAG 'dnSV' /* 'VSnd' */
+#else
+/* Pool tags are diagnostic-only; avoid -Wmultichar warnings on host compilers. */
+#define VIRTIOSND_POOL_TAG 0u
+#endif
+#endif
 
 static __forceinline ULONG VirtioSndTxHdrBytes(VOID) { return (ULONG)sizeof(VIRTIO_SND_TX_HDR); }
 static __forceinline ULONG VirtioSndTxStatusBytes(VOID) { return (ULONG)sizeof(VIRTIO_SND_PCM_STATUS); }
