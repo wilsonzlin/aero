@@ -7,6 +7,7 @@ import {
   idbTxDone,
   openDiskManagerDb,
   opfsGetDisksDir,
+  opfsGetRemoteCacheDir,
   type DiskBackend,
   type DiskFormat,
   type DiskImageMetadata,
@@ -33,7 +34,6 @@ import {
 } from "./import_export";
 import { CHUNKED_DISK_CHUNK_SIZE, RANGE_STREAM_CHUNK_SIZE } from "./chunk_sizes.ts";
 import { RemoteCacheManager, remoteChunkedDeliveryType, remoteRangeDeliveryType } from "./remote_cache_manager";
-import { OpfsLruChunkCache } from "./remote/opfs_lru_chunk_cache.ts";
 
 type DiskWorkerError = { message: string; name?: string; stack?: string };
 
@@ -634,58 +634,103 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
         return;
       }
 
-      let totalBytes = 0;
-
-      // Always include the overlay size when present; this is user state.
+      let overlayBytes = 0;
       try {
-        totalBytes += await opfsGetDiskSizeBytes(meta.cache.overlayFileName);
+        overlayBytes = await opfsGetDiskSizeBytes(meta.cache.overlayFileName);
       } catch {
         // ignore (overlay may not exist yet)
       }
 
+      let cacheBytes = 0;
+
       try {
-        const cacheKey = await RemoteCacheManager.deriveCacheKey({
-          imageId: meta.remote.imageId,
-          version: meta.remote.version,
-          deliveryType: meta.remote.delivery,
-        });
+        const deliveryTypes =
+          meta.remote.delivery === "range"
+            ? [remoteRangeDeliveryType(meta.cache.chunkSizeBytes), "range"]
+            : [remoteChunkedDeliveryType(meta.cache.chunkSizeBytes), "chunked"];
 
         if (meta.remote.delivery === "range") {
-          // Range delivery caches via `OpfsLruChunkCache` (`RemoteStreamingDisk`). Prefer its accounting
-          // so we don't rely on the legacy `meta.cachedRanges` tracking.
-          try {
-            const cache = await OpfsLruChunkCache.open({
-              cacheKey,
-              chunkSize: meta.cache.chunkSizeBytes,
-              // No eviction on a pure stats probe; do not mutate cache contents.
-              maxBytes: null,
+          const remoteCacheDir = await opfsGetRemoteCacheDir();
+          const readLruChunkCacheBytes = async (cacheKey: string): Promise<number> => {
+            try {
+              const cacheDir = await remoteCacheDir.getDirectoryHandle(cacheKey, { create: false });
+              // Prefer parsing the `OpfsLruChunkCache` index to avoid walking every file.
+              try {
+                const indexHandle = await cacheDir.getFileHandle("index.json", { create: false });
+                const file = await indexHandle.getFile();
+                const raw = await file.text();
+                if (!raw.trim()) return 0;
+                const parsed = JSON.parse(raw) as unknown;
+                if (!parsed || typeof parsed !== "object") return 0;
+                const chunks = (parsed as { chunks?: unknown }).chunks;
+                if (!chunks || typeof chunks !== "object") return 0;
+                let total = 0;
+                for (const meta of Object.values(chunks as Record<string, unknown>)) {
+                  if (!meta || typeof meta !== "object") continue;
+                  const byteLength = (meta as { byteLength?: unknown }).byteLength;
+                  if (typeof byteLength === "number" && Number.isFinite(byteLength) && byteLength > 0) {
+                    total += byteLength;
+                  }
+                }
+                return total;
+              } catch {
+                // ignore and fall back to scanning
+              }
+
+              // Fall back to scanning the chunk files if the index is missing/corrupt.
+              try {
+                const chunksDir = await cacheDir.getDirectoryHandle("chunks", { create: false });
+                let total = 0;
+                for await (const [name, handle] of chunksDir.entries()) {
+                  if (handle.kind !== "file") continue;
+                  if (!name.endsWith(".bin")) continue;
+                  const file = await (handle as FileSystemFileHandle).getFile();
+                  total += file.size;
+                }
+                return total;
+              } catch {
+                // ignore
+              }
+            } catch {
+              // cache directory missing or OPFS unavailable
+            }
+            return 0;
+          };
+
+          for (const deliveryType of deliveryTypes) {
+            const cacheKey = await RemoteCacheManager.deriveCacheKey({
+              imageId: meta.remote.imageId,
+              version: meta.remote.version,
+              deliveryType,
             });
-            totalBytes += (await cache.getStats()).totalBytes;
-          } catch {
-            // Fall back to best-effort meta.json ranges if the chunk cache is unavailable.
-            const manager = await RemoteCacheManager.openOpfs();
-            const status = await manager.getCacheStatus(cacheKey);
-            if (status) totalBytes += status.cachedBytes;
+            cacheBytes += await readLruChunkCacheBytes(cacheKey);
           }
         } else {
           const manager = await RemoteCacheManager.openOpfs();
-          const status = await manager.getCacheStatus(cacheKey);
-          if (status) totalBytes += status.cachedBytes;
+          for (const deliveryType of deliveryTypes) {
+            const cacheKey = await RemoteCacheManager.deriveCacheKey({
+              imageId: meta.remote.imageId,
+              version: meta.remote.version,
+              deliveryType,
+            });
+            const status = await manager.getCacheStatus(cacheKey);
+            if (status) cacheBytes += status.cachedBytes;
+          }
         }
       } catch {
         // ignore cache probing failures
       }
 
       // Backwards compatibility: some older remote images stored cached bytes in a single sparse file.
-      if (totalBytes === 0) {
+      if (cacheBytes === 0) {
         try {
-          totalBytes = await opfsGetDiskSizeBytes(meta.cache.fileName);
+          cacheBytes += await opfsGetDiskSizeBytes(meta.cache.fileName);
         } catch {
           // ignore
         }
       }
 
-      actualSizeBytes = totalBytes;
+      actualSizeBytes = overlayBytes + cacheBytes;
       postOk(requestId, { meta, actualSizeBytes });
       return;
     }
