@@ -70,8 +70,10 @@ docker run --rm -p 8080:8080 aero-gateway
 - `GET /version` build/version info
 - `GET /metrics` Prometheus metrics
 - `POST /session` issues the `aero_session` cookie used by `/dns-query` and the `/tcp` WebSocket upgrade
+  - When the gateway is configured with `UDP_RELAY_BASE_URL`, the JSON response also includes `udpRelay` metadata (base URL + endpoints + short-lived token) for `proxy/webrtc-udp-relay`.
 - `GET /session` (dev-only helper; not part of the backend contract) sets a session cookie so Secure-cookie behavior is easy to validate in local TLS / reverse-proxy setups
 - `GET|POST /dns-query` DNS-over-HTTPS (`RFC 8484`; requires `aero_session` cookie)
+- `POST /udp-relay/token` mint a fresh short-lived UDP relay credential for the current session (optional; requires `aero_session` cookie + `Origin`; only enabled when `UDP_RELAY_BASE_URL` is configured)
 - `GET ws(s)://<host>/tcp?...` TCP proxy upgrade endpoint (WebSocket; see `docs/backend/01-aero-gateway-api.md` and `deploy/README.md`)
 - `GET ws(s)://<host>/tcp-mux` Multiplexed TCP proxy upgrade endpoint (WebSocket; subprotocol `aero-tcp-mux-v1`)
 

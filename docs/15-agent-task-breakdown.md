@@ -371,6 +371,7 @@ Implementation references:
 
 - Aero Gateway backend contract (TCP proxy + DoH): [`docs/backend/01-aero-gateway-api.md`](./backend/01-aero-gateway-api.md) (OpenAPI: [`docs/backend/openapi.yaml`](./backend/openapi.yaml))
 - Gateway implementation: `backend/aero-gateway`
+- UDP relay (WebRTC + WebSocket fallback, v1/v2 datagram framing): `proxy/webrtc-udp-relay` (protocol: [`proxy/webrtc-udp-relay/PROTOCOL.md`](../proxy/webrtc-udp-relay/PROTOCOL.md))
 - Local development relay: `net-proxy/`
 
 ### Audio Tasks
