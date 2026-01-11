@@ -133,7 +133,8 @@ jobs:
           python3 scripts/bench_compare.py \
             --base target/bench-base/criterion \
             --new target/bench-new/criterion \
-            --threshold 0.10 \
+            --thresholds-file bench/perf_thresholds.json \
+            --profile pr-smoke \
             --markdown-out bench_reports/compare.md \
             --json-out bench_reports/compare.json
 
@@ -168,7 +169,8 @@ jobs:
             python3 scripts/bench_compare.py \
               --base baseline/target/bench-new/criterion \
               --new target/bench-new/criterion \
-              --threshold 0.10 \
+              --thresholds-file bench/perf_thresholds.json \
+              --profile nightly \
               --markdown-out bench_reports/compare.md \
               --json-out bench_reports/compare.json
           else

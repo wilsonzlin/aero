@@ -144,6 +144,56 @@ def build_markdown_report(
     return "\n".join(lines) + "\n", has_regressions
 
 
+def load_threshold_from_policy(policy_path: Path, profile: str) -> float:
+    """Load a slowdown threshold from the shared perf threshold policy.
+
+    We intentionally keep this schema lightweight: CI wants a single knob for the
+    Criterion compare job (fractional slowdown, e.g. 0.10 = 10%). The JS perf
+    tooling uses per-metric rules under `profiles.<profile>.<suite>.metrics`, but
+    Criterion comparisons are reported per benchmark name and do not have a
+    stable metric ID list.
+    """
+
+    if not policy_path.exists():
+        raise SystemExit(
+            f"Threshold policy file does not exist: {policy_path} (pass --threshold to override)"
+        )
+
+    with policy_path.open("r", encoding="utf-8") as f:
+        policy = json.load(f)
+
+    profiles = policy.get("profiles")
+    if not isinstance(profiles, dict):
+        raise SystemExit(f"Malformed threshold policy: {policy_path} missing 'profiles' object")
+
+    prof = profiles.get(profile)
+    if not isinstance(prof, dict):
+        raise SystemExit(
+            f"Unknown threshold profile '{profile}' in {policy_path} (available: {', '.join(sorted(profiles.keys()))})"
+        )
+
+    criterion = prof.get("criterion")
+    if not isinstance(criterion, dict):
+        raise SystemExit(
+            f"Threshold profile '{profile}' in {policy_path} missing 'criterion' section (expected criterion.maxRegressionPct)"
+        )
+
+    value = criterion.get("maxRegressionPct")
+    try:
+        threshold = float(value)
+    except (TypeError, ValueError):
+        raise SystemExit(
+            f"Invalid criterion.maxRegressionPct in {policy_path} profile '{profile}': {value!r}"
+        )
+
+    if threshold <= 0:
+        raise SystemExit(
+            f"criterion.maxRegressionPct must be > 0 in {policy_path} profile '{profile}', got {threshold}"
+        )
+
+    return threshold
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base", required=True, type=Path, help="Criterion baseline directory")
@@ -151,18 +201,36 @@ def main() -> None:
     parser.add_argument(
         "--threshold",
         type=float,
-        default=0.10,
-        help="Slowdown threshold (fraction). Default: 0.10 (10%%)",
+        default=None,
+        help="Slowdown threshold (fraction, e.g. 0.10 = 10%%). When omitted, loaded from --thresholds-file/--profile.",
+    )
+    parser.add_argument(
+        "--thresholds-file",
+        type=Path,
+        default=Path("bench/perf_thresholds.json"),
+        help="Shared perf threshold policy file (default: bench/perf_thresholds.json). Ignored when --threshold is set.",
+    )
+    parser.add_argument(
+        "--profile",
+        type=str,
+        default="pr-smoke",
+        help="Threshold profile within the policy file (default: pr-smoke). Ignored when --threshold is set.",
     )
     parser.add_argument("--markdown-out", type=Path, help="Write report markdown to this path")
     parser.add_argument("--json-out", type=Path, help="Write report JSON to this path")
     args = parser.parse_args()
 
+    threshold = (
+        args.threshold
+        if args.threshold is not None
+        else load_threshold_from_policy(args.thresholds_file, args.profile)
+    )
+
     base_estimates = load_criterion_estimates(args.base)
     new_estimates = load_criterion_estimates(args.new)
 
     report_md, has_regressions = build_markdown_report(
-        base=base_estimates, new=new_estimates, threshold=args.threshold
+        base=base_estimates, new=new_estimates, threshold=threshold
     )
 
     if args.markdown_out:
@@ -172,7 +240,9 @@ def main() -> None:
     if args.json_out:
         args.json_out.parent.mkdir(parents=True, exist_ok=True)
         json_payload = {
-            "threshold": args.threshold,
+            "threshold": threshold,
+            "profile": args.profile if args.threshold is None else None,
+            "thresholds_file": str(args.thresholds_file) if args.threshold is None else None,
             "base": {k: v.mean_ns for k, v in base_estimates.items()},
             "new": {k: v.mean_ns for k, v in new_estimates.items()},
         }

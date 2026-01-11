@@ -142,6 +142,9 @@
             "extremeCvThreshold": 0.5
           }
         }
+      },
+      "criterion": {
+        "maxRegressionPct": 0.1
       }
     },
     "nightly": {
@@ -285,6 +288,9 @@
             "extremeCvThreshold": 0.5
           }
         }
+      },
+      "criterion": {
+        "maxRegressionPct": 0.1
       }
     }
   }

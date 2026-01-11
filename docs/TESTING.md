@@ -522,7 +522,7 @@ on regressions:
 
 - **pull_request**: benchmarks the PR base commit and the PR head commit (same
   runner), then compares results. The workflow fails if any benchmark slows down
-  by more than **10%**.
+  by more than the configured threshold (see `bench/perf_thresholds.json` → `profiles.pr-smoke.criterion.maxRegressionPct`).
 - **schedule / workflow_dispatch**: runs the suite on `main`, compares against
   the previous successful `main` run artifact, and uploads the current results
   as the new baseline artifact (`criterion`).
@@ -545,5 +545,6 @@ You can compare two Criterion output directories locally:
 python3 scripts/bench_compare.py \
   --base path/to/base/criterion \
   --new path/to/new/criterion \
-  --threshold 0.10
+  --thresholds-file bench/perf_thresholds.json \
+  --profile pr-smoke
 ```
