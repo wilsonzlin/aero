@@ -345,7 +345,7 @@ HRESULT blit_locked(Device* dev,
   }
 
   HRESULT hr = ensure_blit_objects_locked(dev);
-  if (FAILED(hr)) {
+  if (hr < 0) {
     return hr;
   }
 
