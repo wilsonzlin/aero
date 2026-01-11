@@ -37,6 +37,12 @@ param(
   [Parameter(Mandatory = $false)]
   [int]$Smp = 2,
 
+  # If set, use QEMU's transitional virtio-pci devices (legacy + modern).
+  # By default this script uses modern-only (disable-legacy=on) virtio-pci devices so
+  # Win7 drivers can bind to virtio 1.0+ IDs (DEV_1041/DEV_1042).
+  [Parameter(Mandatory = $false)]
+  [switch]$VirtioTransitional,
+
   # Extra args passed verbatim to QEMU (advanced use: accel, machine type, display, etc.)
   [Parameter(Mandatory = $false)]
   [string[]]$QemuExtraArgs = @()
@@ -78,27 +84,43 @@ Write-Host "4) After first boot, run: <CD>:\\AERO\\provision\\provision.cmd (as 
 Write-Host "5) Reboot. Then run Invoke-AeroVirtioWin7Tests.ps1 on the host to get deterministic PASS/FAIL via COM1 serial."
 Write-Host ""
 
-# Ensure the QEMU binary supports the modern-only + contract revision properties we rely on.
-Assert-AeroWin7QemuSupportsAeroW7VirtioContractV1 -QemuSystem $QemuSystem
-
-# Force modern-only virtio-pci IDs (DEV_1041/DEV_1042) per AERO-W7-VIRTIO v1.
-# The shared QEMU arg helpers also set PCI Revision ID = 0x01 so strict contract-v1
-# drivers bind under QEMU.
-$diskDriveId = "drive0"
-$diskDrive = New-AeroWin7VirtioBlkDriveArg -DiskImagePath $DiskImagePath -DriveId $diskDriveId
-$diskDevice = New-AeroWin7VirtioBlkDeviceArg -DriveId $diskDriveId
 $osIsoDrive = "file=$Win7IsoPath,media=cdrom,readonly=on"
 
-$qemuArgs = @(
-  "-m", "$MemoryMB",
-  "-smp", "$Smp",
-  "-boot", "d",
-  "-drive", $diskDrive,
-  "-device", $diskDevice,
-  "-drive", $osIsoDrive,
-  "-netdev", "user,id=net0",
-  "-device", (New-AeroWin7VirtioNetDeviceArg -NetdevId "net0")
-)
+if ($VirtioTransitional) {
+  $diskDrive = "file=$DiskImagePath,if=virtio,cache=writeback"
+  $netDevice = "virtio-net-pci,netdev=net0"
+
+  $qemuArgs = @(
+    "-m", "$MemoryMB",
+    "-smp", "$Smp",
+    "-boot", "d",
+    "-drive", $diskDrive,
+    "-drive", $osIsoDrive,
+    "-netdev", "user,id=net0",
+    "-device", $netDevice
+  )
+} else {
+  # Ensure the QEMU binary supports the modern-only + contract revision properties we rely on.
+  Assert-AeroWin7QemuSupportsAeroW7VirtioContractV1 -QemuSystem $QemuSystem
+
+  # Force modern-only virtio-pci IDs (DEV_1041/DEV_1042) per AERO-W7-VIRTIO v1.
+  # The shared QEMU arg helpers also set PCI Revision ID = 0x01 so strict contract-v1
+  # drivers bind under QEMU.
+  $diskDriveId = "drive0"
+  $diskDrive = New-AeroWin7VirtioBlkDriveArg -DiskImagePath $DiskImagePath -DriveId $diskDriveId
+  $diskDevice = New-AeroWin7VirtioBlkDeviceArg -DriveId $diskDriveId
+
+  $qemuArgs = @(
+    "-m", "$MemoryMB",
+    "-smp", "$Smp",
+    "-boot", "d",
+    "-drive", $diskDrive,
+    "-device", $diskDevice,
+    "-drive", $osIsoDrive,
+    "-netdev", "user,id=net0",
+    "-device", (New-AeroWin7VirtioNetDeviceArg -NetdevId "net0")
+  )
+}
 
 if (-not [string]::IsNullOrEmpty($ProvisioningIsoPath)) {
   $provIsoDrive = "file=$ProvisioningIsoPath,media=cdrom,readonly=on"

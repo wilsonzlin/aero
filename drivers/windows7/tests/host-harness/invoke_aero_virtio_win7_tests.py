@@ -12,6 +12,9 @@ device IDs (e.g. DEV_1041/DEV_1042/DEV_1052). If QEMU is launched with transitio
 devices (`-drive if=virtio` / `virtio-*-pci` without `disable-legacy=on`), Windows will
 enumerate different PCI IDs and the drivers will not bind.
 
+Use `--virtio-transitional` to opt back into QEMU's default transitional devices (legacy + modern)
+for older QEMU builds (or when intentionally testing legacy driver packages).
+
 It:
 - starts a tiny HTTP server on 127.0.0.1:<port> (guest reaches it as 10.0.2.2:<port> via slirp)
 - launches QEMU with virtio-blk + virtio-net + virtio-input (and optionally virtio-snd) and COM1 redirected to a log file
@@ -198,6 +201,13 @@ def main() -> int:
     parser.add_argument("--http-path", default="/aero-virtio-selftest")
     parser.add_argument("--snapshot", action="store_true", help="Discard disk writes (snapshot=on)")
     parser.add_argument(
+        "--virtio-transitional",
+        action="store_true",
+        help="Use transitional virtio-pci devices (legacy + modern). "
+        "By default the harness uses modern-only virtio-pci (disable-legacy=on, x-pci-revision=0x01) "
+        "so Win7 drivers can bind to the Aero contract v1 IDs.",
+    )
+    parser.add_argument(
         "--with-virtio-snd",
         "--enable-virtio-snd",
         dest="enable_virtio_snd",
@@ -256,11 +266,18 @@ def main() -> int:
         if args.virtio_snd_audio_backend != "wav":
             parser.error("--virtio-snd-verify-wav requires --virtio-snd-audio-backend=wav")
 
-    try:
-        _assert_qemu_supports_aero_w7_virtio_contract_v1(args.qemu_system)
-    except RuntimeError as e:
-        print(f"ERROR: {e}", file=sys.stderr)
-        return 2
+    if args.virtio_transitional and args.enable_virtio_snd:
+        parser.error(
+            "--virtio-transitional is incompatible with --with-virtio-snd/--enable-virtio-snd "
+            "(virtio-snd testing requires Aero contract v1 properties)."
+        )
+
+    if not args.virtio_transitional:
+        try:
+            _assert_qemu_supports_aero_w7_virtio_contract_v1(args.qemu_system)
+        except RuntimeError as e:
+            print(f"ERROR: {e}", file=sys.stderr)
+            return 2
 
     disk_image = Path(args.disk_image).resolve()
     serial_log = Path(args.serial_log).resolve()
@@ -275,76 +292,101 @@ def main() -> int:
         thread = Thread(target=httpd.serve_forever, daemon=True)
         thread.start()
 
-        # Aero contract v1 encodes the major version in the PCI Revision ID (= 0x01).
-        #
-        # QEMU virtio devices historically report PCI Revision ID 0x00 ("REV_00") even when
-        # using modern-only virtio-pci (disable-legacy=on). Strict contract drivers will
-        # refuse to bind unless we override the revision ID.
-        #
-        # QEMU supports overriding PCI revision via the x-pci-revision property.
-        aero_pci_rev = "0x01"
-        drive_id = "drive0"
-        drive = f"file={disk_image},if=none,id={drive_id},cache=writeback"
-        if args.snapshot:
-            drive += ",snapshot=on"
-
-        virtio_net = f"virtio-net-pci,netdev=net0,disable-legacy=on,x-pci-revision={aero_pci_rev}"
-        virtio_blk = f"virtio-blk-pci,drive={drive_id},disable-legacy=on,x-pci-revision={aero_pci_rev}"
-        virtio_kbd = f"virtio-keyboard-pci,disable-legacy=on,x-pci-revision={aero_pci_rev}"
-        virtio_mouse = f"virtio-mouse-pci,disable-legacy=on,x-pci-revision={aero_pci_rev}"
-
         wav_path: Optional[Path] = None
-        virtio_snd_args: list[str] = []
-        if args.enable_virtio_snd:
-            try:
-                device_arg = _get_qemu_virtio_sound_device_arg(args.qemu_system)
-            except RuntimeError as e:
-                print(f"ERROR: {e}", file=sys.stderr)
-                return 2
+        if args.virtio_transitional:
+            drive = f"file={disk_image},if=virtio,cache=writeback"
+            if args.snapshot:
+                drive += ",snapshot=on"
 
-            backend = args.virtio_snd_audio_backend
-            if backend == "none":
-                audiodev_arg = "none,id=snd0"
-            elif backend == "wav":
-                wav_path = Path(args.virtio_snd_wav_path).resolve()
-                wav_path.parent.mkdir(parents=True, exist_ok=True)
+            qemu_args = [
+                args.qemu_system,
+                "-m",
+                str(args.memory_mb),
+                "-smp",
+                str(args.smp),
+                "-display",
+                "none",
+                "-no-reboot",
+                "-chardev",
+                f"file,id=charserial0,path={serial_log}",
+                "-serial",
+                "chardev:charserial0",
+                "-netdev",
+                "user,id=net0",
+                "-device",
+                "virtio-net-pci,netdev=net0",
+                "-drive",
+                drive,
+            ] + qemu_extra
+        else:
+            # Aero contract v1 encodes the major version in the PCI Revision ID (= 0x01).
+            #
+            # QEMU virtio devices historically report PCI Revision ID 0x00 ("REV_00") even when
+            # using modern-only virtio-pci (disable-legacy=on). Strict contract drivers will
+            # refuse to bind unless we override the revision ID.
+            #
+            # QEMU supports overriding PCI revision via the x-pci-revision property.
+            aero_pci_rev = "0x01"
+            drive_id = "drive0"
+            drive = f"file={disk_image},if=none,id={drive_id},cache=writeback"
+            if args.snapshot:
+                drive += ",snapshot=on"
+
+            virtio_net = f"virtio-net-pci,netdev=net0,disable-legacy=on,x-pci-revision={aero_pci_rev}"
+            virtio_blk = f"virtio-blk-pci,drive={drive_id},disable-legacy=on,x-pci-revision={aero_pci_rev}"
+            virtio_kbd = f"virtio-keyboard-pci,disable-legacy=on,x-pci-revision={aero_pci_rev}"
+            virtio_mouse = f"virtio-mouse-pci,disable-legacy=on,x-pci-revision={aero_pci_rev}"
+
+            virtio_snd_args: list[str] = []
+            if args.enable_virtio_snd:
                 try:
-                    wav_path.unlink()
-                except FileNotFoundError:
-                    pass
-                audiodev_arg = f"wav,id=snd0,path={wav_path}"
-            else:
-                raise AssertionError(f"Unhandled backend: {backend}")
+                    device_arg = _get_qemu_virtio_sound_device_arg(args.qemu_system)
+                except RuntimeError as e:
+                    print(f"ERROR: {e}", file=sys.stderr)
+                    return 2
 
-            virtio_snd_args = ["-audiodev", audiodev_arg, "-device", device_arg]
+                backend = args.virtio_snd_audio_backend
+                if backend == "none":
+                    audiodev_arg = "none,id=snd0"
+                elif backend == "wav":
+                    wav_path = Path(args.virtio_snd_wav_path).resolve()
+                    wav_path.parent.mkdir(parents=True, exist_ok=True)
+                    try:
+                        wav_path.unlink()
+                    except FileNotFoundError:
+                        pass
+                    audiodev_arg = f"wav,id=snd0,path={wav_path}"
+                else:
+                    raise AssertionError(f"Unhandled backend: {backend}")
 
-        qemu_args = [
-            args.qemu_system,
-            "-m",
-            str(args.memory_mb),
-            "-smp",
-            str(args.smp),
-            "-display",
-            "none",
-            "-no-reboot",
-            "-chardev",
-            f"file,id=charserial0,path={serial_log}",
-            "-serial",
-            "chardev:charserial0",
-            "-netdev",
-            "user,id=net0",
-            "-device",
-            virtio_net,
-            "-device",
-            virtio_kbd,
-            "-device",
-            virtio_mouse,
-            "-drive",
-            drive,
-            "-device",
-            virtio_blk,
-        ]
-        qemu_args += virtio_snd_args + qemu_extra
+                virtio_snd_args = ["-audiodev", audiodev_arg, "-device", device_arg]
+
+            qemu_args = [
+                args.qemu_system,
+                "-m",
+                str(args.memory_mb),
+                "-smp",
+                str(args.smp),
+                "-display",
+                "none",
+                "-no-reboot",
+                "-chardev",
+                f"file,id=charserial0,path={serial_log}",
+                "-serial",
+                "chardev:charserial0",
+                "-netdev",
+                "user,id=net0",
+                "-device",
+                virtio_net,
+                "-device",
+                virtio_kbd,
+                "-device",
+                virtio_mouse,
+                "-drive",
+                drive,
+                "-device",
+                virtio_blk,
+            ] + virtio_snd_args + qemu_extra
 
         print("Launching QEMU:")
         print("  " + " ".join(shlex.quote(str(a)) for a in qemu_args))
@@ -358,6 +400,7 @@ def main() -> int:
             saw_virtio_snd_pass = False
             saw_virtio_snd_skip = False
             saw_virtio_snd_fail = False
+            require_per_test_markers = not args.virtio_transitional
             deadline = time.monotonic() + args.timeout_seconds
 
             while time.monotonic() < deadline:
@@ -383,87 +426,9 @@ def main() -> int:
                         saw_virtio_snd_fail = True
 
                     if b"AERO_VIRTIO_SELFTEST|RESULT|PASS" in tail:
-                        # Require the virtio-input test marker so older selftest binaries cannot
-                        # accidentally pass the host harness.
-                        if saw_virtio_input_fail:
-                            print(
-                                "FAIL: selftest RESULT=PASS but virtio-input test reported FAIL",
-                                file=sys.stderr,
-                            )
-                            _print_tail(serial_log)
-                            result_code = 1
-                            break
-                        if not saw_virtio_input_pass:
-                            print(
-                                "FAIL: selftest RESULT=PASS but did not emit virtio-input test marker",
-                                file=sys.stderr,
-                            )
-                            _print_tail(serial_log)
-                            result_code = 1
-                            break
-                        if saw_virtio_snd_fail:
-                            print(
-                                "FAIL: selftest RESULT=PASS but virtio-snd test reported FAIL",
-                                file=sys.stderr,
-                            )
-                            _print_tail(serial_log)
-                            result_code = 1
-                            break
-
-                        if args.enable_virtio_snd:
-                            if not saw_virtio_snd_pass:
-                                msg = "FAIL: virtio-snd test did not PASS while --with-virtio-snd was enabled"
-                                if saw_virtio_snd_skip:
-                                    if b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|flag_not_set" in tail:
-                                        msg = (
-                                            "FAIL: virtio-snd test was skipped (guest not configured with --test-snd) "
-                                            "but --with-virtio-snd was enabled"
-                                        )
-                                    elif b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|disabled" in tail:
-                                        msg = (
-                                            "FAIL: virtio-snd test was skipped (--disable-snd) "
-                                            "but --with-virtio-snd was enabled"
-                                        )
-                                    else:
-                                        msg = "FAIL: virtio-snd test was skipped but --with-virtio-snd was enabled"
-                                print(msg, file=sys.stderr)
-                                _print_tail(serial_log)
-                                result_code = 1
-                                break
-                        else:
-                            if not (saw_virtio_snd_pass or saw_virtio_snd_skip):
-                                print(
-                                    "FAIL: selftest RESULT=PASS but did not emit virtio-snd test marker",
-                                    file=sys.stderr,
-                                )
-                                _print_tail(serial_log)
-                                result_code = 1
-                                break
-                        print("PASS: AERO_VIRTIO_SELFTEST|RESULT|PASS")
-                        result_code = 0
-                        break
-                    if b"AERO_VIRTIO_SELFTEST|RESULT|FAIL" in tail:
-                        print("FAIL: AERO_VIRTIO_SELFTEST|RESULT|FAIL")
-                        _print_tail(serial_log)
-                        result_code = 1
-                        break
-
-                if proc.poll() is not None:
-                    # One last read after exit in case QEMU shut down immediately after writing the marker.
-                    chunk2, pos = _read_new_bytes(serial_log, pos)
-                    if chunk2:
-                        tail += chunk2
-                        if not saw_virtio_input_pass and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS" in tail:
-                            saw_virtio_input_pass = True
-                        if not saw_virtio_input_fail and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input|FAIL" in tail:
-                            saw_virtio_input_fail = True
-                        if not saw_virtio_snd_pass and b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS" in tail:
-                            saw_virtio_snd_pass = True
-                        if not saw_virtio_snd_skip and b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP" in tail:
-                            saw_virtio_snd_skip = True
-                        if not saw_virtio_snd_fail and b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL" in tail:
-                            saw_virtio_snd_fail = True
-                        if b"AERO_VIRTIO_SELFTEST|RESULT|PASS" in tail:
+                        if require_per_test_markers:
+                            # Require per-test markers so older selftest binaries cannot
+                            # accidentally pass the host harness.
                             if saw_virtio_input_fail:
                                 print(
                                     "FAIL: selftest RESULT=PASS but virtio-input test reported FAIL",
@@ -490,6 +455,8 @@ def main() -> int:
                                 break
 
                             if args.enable_virtio_snd:
+                                # When we explicitly attach virtio-snd, the guest test must actually run and PASS
+                                # (it must not be skipped via --disable-snd).
                                 if not saw_virtio_snd_pass:
                                     msg = "FAIL: virtio-snd test did not PASS while --with-virtio-snd was enabled"
                                     if saw_virtio_snd_skip:
@@ -510,6 +477,8 @@ def main() -> int:
                                     result_code = 1
                                     break
                             else:
+                                # Even when virtio-snd isn't attached, require the marker so older selftest binaries
+                                # (that predate virtio-snd testing) cannot accidentally pass.
                                 if not (saw_virtio_snd_pass or saw_virtio_snd_skip):
                                     print(
                                         "FAIL: selftest RESULT=PASS but did not emit virtio-snd test marker",
@@ -518,6 +487,88 @@ def main() -> int:
                                     _print_tail(serial_log)
                                     result_code = 1
                                     break
+                        print("PASS: AERO_VIRTIO_SELFTEST|RESULT|PASS")
+                        result_code = 0
+                        break
+                    if b"AERO_VIRTIO_SELFTEST|RESULT|FAIL" in tail:
+                        print("FAIL: AERO_VIRTIO_SELFTEST|RESULT|FAIL")
+                        _print_tail(serial_log)
+                        result_code = 1
+                        break
+
+                if proc.poll() is not None:
+                    # One last read after exit in case QEMU shut down immediately after writing the marker.
+                    chunk2, pos = _read_new_bytes(serial_log, pos)
+                    if chunk2:
+                        tail += chunk2
+                        if not saw_virtio_input_pass and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input|PASS" in tail:
+                            saw_virtio_input_pass = True
+                        if not saw_virtio_input_fail and b"AERO_VIRTIO_SELFTEST|TEST|virtio-input|FAIL" in tail:
+                            saw_virtio_input_fail = True
+                        if not saw_virtio_snd_pass and b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS" in tail:
+                            saw_virtio_snd_pass = True
+                        if not saw_virtio_snd_skip and b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP" in tail:
+                            saw_virtio_snd_skip = True
+                        if not saw_virtio_snd_fail and b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|FAIL" in tail:
+                            saw_virtio_snd_fail = True
+                        if b"AERO_VIRTIO_SELFTEST|RESULT|PASS" in tail:
+                            if require_per_test_markers:
+                                if saw_virtio_input_fail:
+                                    print(
+                                        "FAIL: selftest RESULT=PASS but virtio-input test reported FAIL",
+                                        file=sys.stderr,
+                                    )
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
+                                if not saw_virtio_input_pass:
+                                    print(
+                                        "FAIL: selftest RESULT=PASS but did not emit virtio-input test marker",
+                                        file=sys.stderr,
+                                    )
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
+                                if saw_virtio_snd_fail:
+                                    print(
+                                        "FAIL: selftest RESULT=PASS but virtio-snd test reported FAIL",
+                                        file=sys.stderr,
+                                    )
+                                    _print_tail(serial_log)
+                                    result_code = 1
+                                    break
+
+                                if args.enable_virtio_snd:
+                                    if not saw_virtio_snd_pass:
+                                        msg = "FAIL: virtio-snd test did not PASS while --with-virtio-snd was enabled"
+                                        if saw_virtio_snd_skip:
+                                            if b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|flag_not_set" in tail:
+                                                msg = (
+                                                    "FAIL: virtio-snd test was skipped (guest not configured with --test-snd) "
+                                                    "but --with-virtio-snd was enabled"
+                                                )
+                                            elif b"AERO_VIRTIO_SELFTEST|TEST|virtio-snd|SKIP|disabled" in tail:
+                                                msg = (
+                                                    "FAIL: virtio-snd test was skipped (--disable-snd) "
+                                                    "but --with-virtio-snd was enabled"
+                                                )
+                                            else:
+                                                msg = (
+                                                    "FAIL: virtio-snd test was skipped but --with-virtio-snd was enabled"
+                                                )
+                                        print(msg, file=sys.stderr)
+                                        _print_tail(serial_log)
+                                        result_code = 1
+                                        break
+                                else:
+                                    if not (saw_virtio_snd_pass or saw_virtio_snd_skip):
+                                        print(
+                                            "FAIL: selftest RESULT=PASS but did not emit virtio-snd test marker",
+                                            file=sys.stderr,
+                                        )
+                                        _print_tail(serial_log)
+                                        result_code = 1
+                                        break
                             print("PASS: AERO_VIRTIO_SELFTEST|RESULT|PASS")
                             result_code = 0
                             break

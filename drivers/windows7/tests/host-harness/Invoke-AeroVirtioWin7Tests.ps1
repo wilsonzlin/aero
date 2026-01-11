@@ -24,6 +24,12 @@ param(
   [Parameter(Mandatory = $false)]
   [switch]$Snapshot,
 
+  # If set, use QEMU's transitional virtio-pci devices (legacy + modern).
+  # By default this harness uses modern-only (disable-legacy=on) virtio-pci devices so
+  # Win7 drivers can bind to virtio 1.0+ IDs (DEV_1041/DEV_1042).
+  [Parameter(Mandatory = $false)]
+  [switch]$VirtioTransitional,
+
   # If set, stream newly captured COM1 serial output to stdout while waiting.
   [Parameter(Mandatory = $false)]
   [switch]$FollowSerial,
@@ -197,6 +203,8 @@ function Wait-AeroSelftestResult {
     [Parameter(Mandatory = $true)] $HttpListener,
     [Parameter(Mandatory = $true)] [string]$HttpPath,
     [Parameter(Mandatory = $true)] [bool]$FollowSerial,
+    # When $true, require per-test markers so older selftest binaries cannot accidentally pass.
+    [Parameter(Mandatory = $false)] [bool]$RequirePerTestMarkers = $true,
     # If true, a virtio-snd device was attached, so the virtio-snd selftest must actually run and pass
     # (not be skipped via --disable-snd).
     [Parameter(Mandatory = $true)] [bool]$RequireVirtioSndPass
@@ -240,30 +248,34 @@ function Wait-AeroSelftestResult {
       }
 
       if ($tail -match "AERO_VIRTIO_SELFTEST\|RESULT\|PASS") {
-        # Ensure we saw the virtio-input test marker so older selftest binaries (blk/net-only)
-        # cannot accidentally pass the host harness.
-        if ($sawVirtioInputFail) {
-          return @{ Result = "FAIL"; Tail = $tail }
-        }
-        if (-not $sawVirtioInputPass) {
-          return @{ Result = "MISSING_VIRTIO_INPUT"; Tail = $tail }
+        if ($RequirePerTestMarkers) {
+          # Ensure we saw the virtio-input test marker so older selftest binaries (blk/net-only)
+          # cannot accidentally pass the host harness.
+          if ($sawVirtioInputFail) {
+            return @{ Result = "FAIL"; Tail = $tail }
+          }
+          if (-not $sawVirtioInputPass) {
+            return @{ Result = "MISSING_VIRTIO_INPUT"; Tail = $tail }
+          }
+
+          # Also ensure the virtio-snd marker is present, so older selftest binaries that predate
+          # virtio-snd testing cannot accidentally pass.
+          if ($sawVirtioSndFail) {
+            return @{ Result = "FAIL"; Tail = $tail }
+          }
+          if ($sawVirtioSndPass) {
+            return @{ Result = "PASS"; Tail = $tail }
+          }
+          if ($sawVirtioSndSkip) {
+            if ($RequireVirtioSndPass) {
+              return @{ Result = "VIRTIO_SND_SKIPPED"; Tail = $tail }
+            }
+            return @{ Result = "PASS"; Tail = $tail }
+          }
+          return @{ Result = "MISSING_VIRTIO_SND"; Tail = $tail }
         }
 
-        # Also ensure the virtio-snd marker is present, so older selftest binaries that predate
-        # virtio-snd testing cannot accidentally pass.
-        if ($sawVirtioSndFail) {
-          return @{ Result = "FAIL"; Tail = $tail }
-        }
-        if ($sawVirtioSndPass) {
-          return @{ Result = "PASS"; Tail = $tail }
-        }
-        if ($sawVirtioSndSkip) {
-          if ($RequireVirtioSndPass) {
-            return @{ Result = "VIRTIO_SND_SKIPPED"; Tail = $tail }
-          }
-          return @{ Result = "PASS"; Tail = $tail }
-        }
-        return @{ Result = "MISSING_VIRTIO_SND"; Tail = $tail }
+        return @{ Result = "PASS"; Tail = $tail }
       }
       if ($tail -match "AERO_VIRTIO_SELFTEST\|RESULT\|FAIL") {
         return @{ Result = "FAIL"; Tail = $tail }
@@ -530,73 +542,95 @@ $httpListener = Start-AeroSelftestHttpServer -Port $HttpPort -Path $HttpPath
 try {
   $serialChardev = "file,id=charserial0,path=$SerialLogPath"
   $netdev = "user,id=net0"
-  # Ensure the QEMU binary supports the modern-only + contract revision properties we rely on.
-  Assert-AeroWin7QemuSupportsAeroW7VirtioContractV1 -QemuSystem $QemuSystem -WithVirtioInput
-  # Force modern-only virtio-pci IDs (DEV_1041/DEV_1042/DEV_1052) per AERO-W7-VIRTIO v1.
-  # The shared QEMU arg helpers also set PCI Revision ID = 0x01 so strict contract-v1
-  # drivers bind under QEMU.
-  $nic = New-AeroWin7VirtioNetDeviceArg -NetdevId "net0"
-  $driveId = "drive0"
-  $drive = New-AeroWin7VirtioBlkDriveArg -DiskImagePath $DiskImagePath -DriveId $driveId -Snapshot:$Snapshot
-  $blk = New-AeroWin7VirtioBlkDeviceArg -DriveId $driveId
-
-  $kbd = New-AeroWin7VirtioKeyboardDeviceArg
-  $mouse = New-AeroWin7VirtioMouseDeviceArg
-
-  $virtioSndArgs = @()
-  if ($WithVirtioSnd) {
-    $audiodev = ""
-    switch ($VirtioSndAudioBackend) {
-      "none" {
-        $audiodev = "none,id=snd0"
-      }
-      "wav" {
-        if ([string]::IsNullOrEmpty($VirtioSndWavPath)) {
-          throw "VirtioSndWavPath is required when VirtioSndAudioBackend is 'wav'."
-        }
-
-        $wavParent = Split-Path -Parent $VirtioSndWavPath
-        if ([string]::IsNullOrEmpty($wavParent)) { $wavParent = "." }
-        if (-not (Test-Path -LiteralPath $wavParent)) {
-          New-Item -ItemType Directory -Path $wavParent -Force | Out-Null
-        }
-        $VirtioSndWavPath = Join-Path (Resolve-Path -LiteralPath $wavParent).Path (Split-Path -Leaf $VirtioSndWavPath)
-
-        if (Test-Path -LiteralPath $VirtioSndWavPath) {
-          Remove-Item -LiteralPath $VirtioSndWavPath -Force
-        }
-
-        # Quote the path so Start-Process (PowerShell 5.1) doesn't split it on spaces.
-        $audiodev = 'wav,id=snd0,path="' + $VirtioSndWavPath + '"'
-      }
-      default {
-        throw "Unexpected VirtioSndAudioBackend: $VirtioSndAudioBackend"
-      }
+  if ($VirtioTransitional) {
+    if ($WithVirtioSnd -or (-not [string]::IsNullOrEmpty($VirtioSndWavPath)) -or $VirtioSndAudioBackend -ne "none") {
+      throw "-VirtioTransitional is incompatible with virtio-snd options. Remove -VirtioTransitional or pass a custom device via -QemuExtraArgs."
     }
 
-    $virtioSndDevice = Get-AeroVirtioSoundDeviceArg -QemuSystem $QemuSystem
-    $virtioSndArgs = @(
-      "-audiodev", $audiodev,
-      "-device", $virtioSndDevice
-    )
-  } elseif (-not [string]::IsNullOrEmpty($VirtioSndWavPath) -or $VirtioSndAudioBackend -ne "none") {
-    throw "-VirtioSndAudioBackend/-VirtioSndWavPath require -WithVirtioSnd."
-  }
+    $nic = "virtio-net-pci,netdev=net0"
+    $drive = "file=$DiskImagePath,if=virtio,cache=writeback"
+    if ($Snapshot) { $drive += ",snapshot=on" }
 
-  $qemuArgs = @(
-    "-m", "$MemoryMB",
-    "-smp", "$Smp",
-    "-display", "none",
-    "-no-reboot",
-    "-chardev", $serialChardev,
-    "-serial", "chardev:charserial0",
-    "-netdev", $netdev,
-    "-device", $nic,
-    "-device", $kbd,
-    "-device", $mouse,
-    "-drive", $drive,
-    "-device", $blk
-  ) + $virtioSndArgs + $QemuExtraArgs
+    $qemuArgs = @(
+      "-m", "$MemoryMB",
+      "-smp", "$Smp",
+      "-display", "none",
+      "-no-reboot",
+      "-chardev", $serialChardev,
+      "-serial", "chardev:charserial0",
+      "-netdev", $netdev,
+      "-device", $nic,
+      "-drive", $drive
+    ) + $QemuExtraArgs
+  } else {
+    # Ensure the QEMU binary supports the modern-only + contract revision properties we rely on.
+    Assert-AeroWin7QemuSupportsAeroW7VirtioContractV1 -QemuSystem $QemuSystem -WithVirtioInput
+    # Force modern-only virtio-pci IDs (DEV_1041/DEV_1042/DEV_1052) per AERO-W7-VIRTIO v1.
+    # The shared QEMU arg helpers also set PCI Revision ID = 0x01 so strict contract-v1
+    # drivers bind under QEMU.
+    $nic = New-AeroWin7VirtioNetDeviceArg -NetdevId "net0"
+    $driveId = "drive0"
+    $drive = New-AeroWin7VirtioBlkDriveArg -DiskImagePath $DiskImagePath -DriveId $driveId -Snapshot:$Snapshot
+    $blk = New-AeroWin7VirtioBlkDeviceArg -DriveId $driveId
+
+    $kbd = New-AeroWin7VirtioKeyboardDeviceArg
+    $mouse = New-AeroWin7VirtioMouseDeviceArg
+
+    $virtioSndArgs = @()
+    if ($WithVirtioSnd) {
+      $audiodev = ""
+      switch ($VirtioSndAudioBackend) {
+        "none" {
+          $audiodev = "none,id=snd0"
+        }
+        "wav" {
+          if ([string]::IsNullOrEmpty($VirtioSndWavPath)) {
+            throw "VirtioSndWavPath is required when VirtioSndAudioBackend is 'wav'."
+          }
+
+          $wavParent = Split-Path -Parent $VirtioSndWavPath
+          if ([string]::IsNullOrEmpty($wavParent)) { $wavParent = "." }
+          if (-not (Test-Path -LiteralPath $wavParent)) {
+            New-Item -ItemType Directory -Path $wavParent -Force | Out-Null
+          }
+          $VirtioSndWavPath = Join-Path (Resolve-Path -LiteralPath $wavParent).Path (Split-Path -Leaf $VirtioSndWavPath)
+
+          if (Test-Path -LiteralPath $VirtioSndWavPath) {
+            Remove-Item -LiteralPath $VirtioSndWavPath -Force
+          }
+
+          # Quote the path so Start-Process (PowerShell 5.1) doesn't split it on spaces.
+          $audiodev = 'wav,id=snd0,path="' + $VirtioSndWavPath + '"'
+        }
+        default {
+          throw "Unexpected VirtioSndAudioBackend: $VirtioSndAudioBackend"
+        }
+      }
+
+      $virtioSndDevice = Get-AeroVirtioSoundDeviceArg -QemuSystem $QemuSystem
+      $virtioSndArgs = @(
+        "-audiodev", $audiodev,
+        "-device", $virtioSndDevice
+      )
+    } elseif (-not [string]::IsNullOrEmpty($VirtioSndWavPath) -or $VirtioSndAudioBackend -ne "none") {
+      throw "-VirtioSndAudioBackend/-VirtioSndWavPath require -WithVirtioSnd."
+    }
+
+    $qemuArgs = @(
+      "-m", "$MemoryMB",
+      "-smp", "$Smp",
+      "-display", "none",
+      "-no-reboot",
+      "-chardev", $serialChardev,
+      "-serial", "chardev:charserial0",
+      "-netdev", $netdev,
+      "-device", $nic,
+      "-device", $kbd,
+      "-device", $mouse,
+      "-drive", $drive,
+      "-device", $blk
+    ) + $virtioSndArgs + $QemuExtraArgs
+  }
 
   Write-Host "Launching QEMU:"
   Write-Host "  $QemuSystem $($qemuArgs -join ' ')"
@@ -605,7 +639,7 @@ try {
   $scriptExitCode = 0
 
   try {
-    $result = Wait-AeroSelftestResult -SerialLogPath $SerialLogPath -QemuProcess $proc -TimeoutSeconds $TimeoutSeconds -HttpListener $httpListener -HttpPath $HttpPath -FollowSerial ([bool]$FollowSerial) -RequireVirtioSndPass ([bool]$WithVirtioSnd)
+    $result = Wait-AeroSelftestResult -SerialLogPath $SerialLogPath -QemuProcess $proc -TimeoutSeconds $TimeoutSeconds -HttpListener $httpListener -HttpPath $HttpPath -FollowSerial ([bool]$FollowSerial) -RequirePerTestMarkers (-not $VirtioTransitional) -RequireVirtioSndPass ([bool]$WithVirtioSnd)
   } finally {
     if (-not $proc.HasExited) {
       Stop-Process -Id $proc.Id -ErrorAction SilentlyContinue

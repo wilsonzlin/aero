@@ -237,6 +237,13 @@ python3 drivers/windows7/tests/host-harness/probe_qemu_virtio_pci_ids.py --qemu-
 python3 drivers/windows7/tests/host-harness/probe_qemu_virtio_pci_ids.py --qemu-system qemu-system-x86_64 --mode contract-v1
 ```
 
+### Transitional virtio fallback (older QEMU / legacy drivers)
+
+If your QEMU build does not support `disable-legacy=on` (or you need transitional device IDs like `DEV_1000/DEV_1001`), you can opt back into the previous layout:
+
+- PowerShell: add `-VirtioTransitional`
+- Python: add `--virtio-transitional`
+
 ## Provisioning an image (recommended approach)
 
 Windows images are **not** distributed in this repo.
