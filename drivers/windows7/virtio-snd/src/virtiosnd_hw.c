@@ -406,7 +406,7 @@ NTSTATUS VirtIoSndHwSubmitTx(
      * currently performed by higher layers (WaveRT stream). Fail clearly if a
      * caller attempts to submit before TxInit has run.
      */
-    if (InterlockedCompareExchange(&Dx->TxEngineInitialized, 0, 0) == 0 || Dx->Tx.Queue == NULL) {
+    if (InterlockedCompareExchange(&Dx->TxEngineInitialized, 0, 0) == 0 || Dx->Tx.Queue == NULL || Dx->Tx.Buffers == NULL) {
         return STATUS_INVALID_DEVICE_STATE;
     }
 
@@ -429,7 +429,7 @@ VirtIoSndHwSubmitTxSg(PVIRTIOSND_DEVICE_EXTENSION Dx, const VIRTIOSND_TX_SEGMENT
         return STATUS_INVALID_DEVICE_STATE;
     }
 
-    if (InterlockedCompareExchange(&Dx->TxEngineInitialized, 0, 0) == 0 || Dx->Tx.Queue == NULL) {
+    if (InterlockedCompareExchange(&Dx->TxEngineInitialized, 0, 0) == 0 || Dx->Tx.Queue == NULL || Dx->Tx.Buffers == NULL) {
         return STATUS_INVALID_DEVICE_STATE;
     }
 
@@ -452,7 +452,7 @@ VirtIoSndHwDrainTxCompletions(PVIRTIOSND_DEVICE_EXTENSION Dx)
         return 0;
     }
 
-    if (InterlockedCompareExchange(&Dx->TxEngineInitialized, 0, 0) == 0 || Dx->Tx.Queue == NULL) {
+    if (InterlockedCompareExchange(&Dx->TxEngineInitialized, 0, 0) == 0 || Dx->Tx.Queue == NULL || Dx->Tx.Buffers == NULL) {
         return 0;
     }
 
