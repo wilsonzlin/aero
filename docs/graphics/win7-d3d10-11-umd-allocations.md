@@ -4,8 +4,8 @@ This document is the **single authoritative, implementation-oriented spec** for 
 
 > Terminology warning: Win7 D3D UMDs have *two* different “allocation” concepts that are easy to conflate:
 >
-> 1. **Resource backing allocations**: the WDDM allocations that back D3D buffers/textures (created during `CreateResource` via `D3DDDI_ALLOCATIONINFO` / `D3D11DDI_ALLOCATIONINFO`).
-> 2. **DMA buffer (command buffer) allocation**: acquiring and releasing the per-submit command buffer + allocation list + patch list (`D3DDDICB_ALLOCATE` / `D3DDDICB_DEALLOCATE`).
+> 1. **Resource backing allocations**: the WDDM allocations that back D3D buffers/textures (created during `CreateResource` via `D3DDDI_ALLOCATIONINFO` / `D3D11DDI_ALLOCATIONINFO` and `pfnAllocateCb`).
+> 2. **DMA buffer (command buffer) allocation**: acquiring and releasing the per-submit command buffer + allocation list + patch list (also via `pfnAllocateCb`/`pfnDeallocateCb`, but using a different subset of fields in `D3DDDICB_ALLOCATE` / `D3DDDICB_DEALLOCATE`).
 >
 > This doc focuses on (1) for `CreateResource`, but also lists (2) because the callback names (`AllocateCb`/`DeallocateCb`) are otherwise confusing.
 
@@ -63,17 +63,25 @@ In practice, the adapter open struct fields you care about are:
 At adapter `pfnCreateDevice(...)` time, the runtime passes a `*_ARG_CREATEDEVICE` that contains (at minimum):
 
 * an “RT device” handle (`D3D10DDI_HRTDEVICE` / `D3D11DDI_HRTDEVICE`) that must be passed back when invoking runtime callbacks
-* a pointer to the **device callback table**:
-  * D3D10: `D3D10DDI_DEVICECALLBACKS`
-  * D3D11: `D3D11DDI_DEVICECALLBACKS`
+* pointers to runtime callback tables:
+  * D3D10/11 “device callbacks” (for error reporting, and sometimes lock/unlock):
+    * D3D10: `D3D10DDI_DEVICECALLBACKS`
+    * D3D11: `D3D11DDI_DEVICECALLBACKS`
+  * the shared `d3dumddi.h` callback table:
+    * `D3DDDI_DEVICECALLBACKS`
 
-The device callback table is where the allocation callbacks live:
+**WDK 7.1 wiring (field names):**
+
+* `pCallbacks` → `D3D10DDI_DEVICECALLBACKS` / `D3D11DDI_DEVICECALLBACKS`
+* `pUMCallbacks` → `D3DDDI_DEVICECALLBACKS`
+
+On Win7, `pUMCallbacks` is the table that contains the allocation callbacks used by `CreateResource`:
 
 * `pfnAllocateCb`
 * `pfnDeallocateCb`
 * (for CPU staging/mapping) `pfnLockCb`, `pfnUnlockCb`
 
-**Rule:** Store the callback table pointer(s) and the RT-device handle in your per-device object. Every `CreateResource`/`DestroyResource` uses them.
+**Rule:** Store both callback table pointer(s) and the RT-device handle in your per-device object. Every `CreateResource`/`DestroyResource` uses them.
 
 #### `*_ARG_CREATEDEVICE` fields that matter for allocations
 
@@ -81,8 +89,10 @@ Both D3D10 and D3D11 create-device structs contain:
 
 * `hRTDevice`
   * Runtime device handle you must pass as the first argument to `pfnAllocateCb` / `pfnDeallocateCb` / `pfnLockCb` / `pfnUnlockCb`.
+* `pUMCallbacks`
+  * Pointer to the shared callback table (`D3DDDI_DEVICECALLBACKS`) that contains `pfnAllocateCb` / `pfnDeallocateCb` (and also `pfnLockCb` / `pfnUnlockCb`).
 * `pCallbacks`
-  * Pointer to the device callback table that contains `pfnAllocateCb` and friends.
+  * Pointer to the D3D10/11 “device callbacks” table (used for error reporting via `pfnSetErrorCb`, and in some headers also provides `pfnLockCb` / `pfnUnlockCb`).
 
 D3D11 additionally wires both the device and immediate-context vtables during `CreateDevice`:
 
@@ -117,11 +127,16 @@ UMD CreateResource
   | 4) Fill allocation info array (D3D11DDI_ALLOCATIONINFO / D3DDDI_ALLOCATIONINFO)
   |      - Size, Alignment, Flags, (optional) per-allocation private data
   |
-  | 5) Create the WDDM allocation(s) (kernel allocation handles):
-  |      - either via a runtime-provided “create allocation” callback (device callbacks), or
-  |      - by calling the user-mode KMT thunk (commonly `D3DKMTCreateAllocation`) directly.
+  | 5) Call the runtime allocation callback to create WDDM allocations:
+  |      D3DDDICB_ALLOCATE alloc = {...};
+  |      alloc.hResource = hRTResource;
+  |      alloc.NumAllocations = pCreateResource->NumAllocations;
+  |      alloc.pAllocationInfo = pCreateResource->pAllocationInfo;
+  |      hr = pUMCallbacks->pfnAllocateCb(hRTDevice, &alloc);
   |
-  |    This step returns kernel allocation handles into each allocation-info entry.
+  |    Runtime returns:
+  |      - alloc.hKMResource
+  |      - pAllocationInfo[i].hAllocation for each allocation
   |
   v
 dxgkrnl / VidMm
@@ -132,19 +147,18 @@ dxgkrnl / VidMm
   v
 UMD CreateResource (continues)
   |
-  | 7) Runtime returns kernel-mode allocation handles:
-  |      - pAllocationInfo[i].hAllocation for each allocation
-  |
-  | 8) Store those KM handles in your resource private object
+  | 7) Store those KM handles in your resource private object
   v
 Return to runtime
 ```
 
 ### 2.2 The “one rule” about outputs
 
-The only “real” outputs from the allocation-creation step that the UMD must preserve are:
+The only “real” outputs from `pfnAllocateCb` that the UMD must preserve are:
 
+* `D3DDDICB_ALLOCATE::hKMResource` (resource-level kernel handle)
 * `D3DDDI_ALLOCATIONINFO::hAllocation` for every allocation entry
+* (if creating a shared resource) `D3DDDICB_ALLOCATE::hSection`
 
 Everything else is driver-owned bookkeeping.
 
@@ -154,13 +168,27 @@ Everything else is driver-owned bookkeeping.
 
 These callbacks are provided by the runtime (via the device callback table(s) handed to the UMD at `CreateDevice` time).
 
-### 3.1 DMA buffer (command buffer) allocation callbacks: `pfnAllocateCb` / `pfnDeallocateCb`
+### 3.1 Resource backing allocation callbacks: `pfnAllocateCb` / `pfnDeallocateCb`
 
-On Win7, `pfnAllocateCb`/`pfnDeallocateCb` are commonly used to acquire and release the **DMA/command buffer** that a submission will be encoded into.
+The D3D10/D3D11 runtime expects the UMD to create and destroy WDDM allocations for resources via the shared `D3DDDI_DEVICECALLBACKS` table (`*_ARG_CREATEDEVICE::pUMCallbacks`):
 
-These callbacks use `D3DDDICB_ALLOCATE` / `D3DDDICB_DEALLOCATE` (see §4.1/§4.2).
+* `pfnAllocateCb` (create allocation(s) backing a resource)
+* `pfnDeallocateCb` (destroy allocation(s) backing a resource)
 
-### 3.2 Mapping callbacks (staging + dynamic updates): `pfnLockCb` / `pfnUnlockCb`
+These calls use:
+
+* `D3DDDICB_ALLOCATE` with `NumAllocations` + `pAllocationInfo` (array of `D3DDDI_ALLOCATIONINFO`)
+* `D3DDDICB_DEALLOCATE` with `NumAllocations` + `phAllocations` (array of `D3DKMT_HANDLE`)
+
+### 3.2 DMA buffer (command buffer) allocation callbacks: `pfnAllocateCb` / `pfnDeallocateCb`
+
+On Win7, the same callback names are also used to acquire and release the **DMA/command buffer** that a submission will be encoded into (plus its allocation list / patch list).
+
+This is covered in detail in:
+
+* `docs/graphics/win7-d3d10-11-umd-callbacks-and-fences.md`
+
+### 3.3 Mapping callbacks (staging + dynamic updates): `pfnLockCb` / `pfnUnlockCb`
 
 For CPU mapping (notably `D3D11_USAGE_STAGING` readback), the UMD uses:
 
@@ -196,12 +224,44 @@ Notes:
 
 > Naming: fields below are **verbatim Win7-era header identifiers**; descriptions are the meaning in the UMD allocation contract.
 
-### 4.1 `D3DDDICB_ALLOCATE` (from `d3dumddi.h`) — DMA buffer allocation
+### 4.1 `D3DDDICB_ALLOCATE` (from `d3dumddi.h`)
 
-`D3DDDICB_ALLOCATE` is the payload for the Win7-era “acquire a command buffer” callback (`pfnAllocateCb`).
-The UMD requests buffer/list capacity; the runtime returns pointers to memory owned by the runtime/OS.
+`D3DDDICB_ALLOCATE` is an in/out struct used with `pfnAllocateCb`.
 
-Fields:
+On Win7/WDDM 1.1 it is used in two distinct places:
+
+1. **CreateResource resource backing allocations** (fill `NumAllocations`/`pAllocationInfo` and get back allocation handles).
+2. **Submission DMA buffer allocation** (request command buffer capacity and get back pointers).
+
+#### 4.1.1 Resource allocation fields (CreateResource path)
+
+* `D3DDDI_HRESOURCE hResource`
+  * Runtime resource handle being allocated for (the `hRTResource` passed to CreateResource).
+* `D3DDDI_HKMRESOURCE hKMResource`
+  * **Out**: kernel-mode resource handle returned by the runtime.
+* `UINT NumAllocations`
+  * Count of entries in `pAllocationInfo`.
+* `D3DDDI_ALLOCATIONINFO* pAllocationInfo`
+  * Array of per-allocation descriptors:
+    * UMD fills `Size`/`Alignment`/`Flags`/`pPrivateDriverData`…
+    * runtime returns `hAllocation` in each entry.
+* `VOID* pPrivateDriverData`
+  * Optional resource-level private data blob for KMD (rare in minimal designs; most metadata is per-allocation).
+* `UINT PrivateDriverDataSize`
+  * Size of `pPrivateDriverData` (bytes).
+* `HANDLE hSection`
+  * **Out (shared resources):** section handle for cross-process sharing (`IDXGIResource::GetSharedHandle`).
+* `D3DDDICB_ALLOCATEFLAGS Flags`
+  * Resource-level allocation flags (notably `Primary` for DXGI primaries/backbuffers).
+
+#### `D3DDDICB_ALLOCATEFLAGS` (swapchain/backbuffer-relevant bits)
+
+For Win7 swapchains, the critical bit is:
+
+* `Primary`
+  * Set for scanout-capable allocations (DXGI swapchain backbuffers / primaries).
+
+#### 4.1.2 DMA buffer allocation fields (submission path)
 
 * `D3DKMT_HANDLE hContext`
   * Kernel context handle that the DMA buffer will be associated with.
@@ -222,11 +282,19 @@ Fields:
 * `UINT DmaBufferPrivateDataSize`
   * Capacity of `pDmaBufferPrivateData` (bytes).
 
-### 4.2 `D3DDDICB_DEALLOCATE` (from `d3dumddi.h`) — DMA buffer release
+### 4.2 `D3DDDICB_DEALLOCATE` (from `d3dumddi.h`)
 
-Used with `pfnDeallocateCb` to release the DMA buffer instance previously acquired by `pfnAllocateCb`.
+`D3DDDICB_DEALLOCATE` is used with `pfnDeallocateCb` and mirrors the same dual use:
 
-Fields:
+#### 4.2.1 Resource deallocation fields (DestroyResource path)
+
+* `D3DDDI_HRESOURCE hResource`
+* `D3DDDI_HKMRESOURCE hKMResource`
+* `UINT NumAllocations`
+* `const D3DKMT_HANDLE* phAllocations`
+  * Array of allocation handles (`hAllocation`) to free.
+
+#### 4.2.2 DMA buffer release fields (submission path)
 
 * `VOID* pDmaBuffer` / `VOID* pCommandBuffer`
   * The command buffer pointer previously returned by `D3DDDICB_ALLOCATE`.
@@ -241,7 +309,7 @@ Fields:
 
 This is the per-allocation descriptor used for **resource backing allocations**.
 
-The D3D10/11 DDIs reuse this layout via the `D3D10DDI_ALLOCATIONINFO` / `D3D11DDI_ALLOCATIONINFO` typedefs.
+The D3D10/11 DDIs reuse this layout via the `D3D10DDI_ALLOCATIONINFO` / `D3D11DDI_ALLOCATIONINFO` typedefs, and `D3DDDICB_ALLOCATE::pAllocationInfo` points at an array of this type.
 
 Fields:
 
@@ -283,7 +351,7 @@ Conceptually, **they are the same structure as** `D3DDDI_ALLOCATIONINFO` (the D3
 
 Practical implication:
 
-* The allocation info array you fill for `CreateResource` can be passed directly to the allocation-creation step (commonly `D3DKMT_CREATEALLOCATION::pAllocationInfo` when using the `D3DKMTCreateAllocation` thunk).
+* The allocation info array you fill for `CreateResource` can be passed directly to `D3DDDICB_ALLOCATE::pAllocationInfo` when calling `pfnAllocateCb`, and the runtime returns `hAllocation` handles in the same array.
 
 ---
 
@@ -293,19 +361,24 @@ Practical implication:
 
 ### 5.0 Allocation plumbing fields (how CreateResource hands you the output arrays)
 
-These fields are the “bridge” between `CreateResource` and the OS/kernel allocation creation step:
+These fields are the “bridge” between `CreateResource` and the `pfnAllocateCb` resource-allocation call:
 
 * `UINT NumAllocations`
   * Number of allocations the runtime expects you to allocate for this resource.
 * `D3D11DDI_ALLOCATIONINFO* pAllocationInfo`
-  * Output array to fill (and the array you pass to the allocation-creation call, e.g. `D3DKMT_CREATEALLOCATION::pAllocationInfo`).
+  * Output array to fill and pass as `D3DDDICB_ALLOCATE::pAllocationInfo`.
 
 ### 5.1 Common fields (all resource dimensions)
 
-* `D3D11DDI_RESOURCE_DIMENSION ResourceDimension`
-  * Which union member is valid (Buffer/Texture1D/Texture2D/Texture3D).
-* `D3D11DDI_RESOURCE_USAGE Usage`
-  * Default/dynamic/staging semantics (drives CPU visibility expectations).
+* `D3D10DDIRESOURCE_TYPE ResourceDimension`
+  * Resource dimension discriminator.
+  * **Win7 quirk:** D3D11 uses the **D3D10 DDI** enum values for this field:
+    * `D3D10DDIRESOURCE_BUFFER`
+    * `D3D10DDIRESOURCE_TEXTURE1D`
+    * `D3D10DDIRESOURCE_TEXTURE2D`
+    * `D3D10DDIRESOURCE_TEXTURE3D`
+* `Usage`
+  * Default/dynamic/staging semantics (values match `D3D11_USAGE_*`).
 * `UINT BindFlags`
   * `D3D11_BIND_*` bits (render target, depth stencil, shader resource, etc).
 * `UINT CPUAccessFlags`
@@ -315,12 +388,12 @@ These fields are the “bridge” between `CreateResource` and the OS/kernel all
 
 ### 5.2 Dimension-specific fields (allocation sizing inputs)
 
-#### Buffer (ResourceDimension = “buffer”)
+#### Buffer (`ResourceDimension == D3D10DDIRESOURCE_BUFFER`)
 
 * `UINT ByteWidth`
 * `UINT StructureByteStride`
 
-#### Texture2D (ResourceDimension = “texture2D”)
+#### Texture2D (`ResourceDimension == D3D10DDIRESOURCE_TEXTURE2D`)
 
 * `UINT Width`
 * `UINT Height`
@@ -338,14 +411,16 @@ When the resource is a DXGI swapchain backbuffer / primary, the DDI exposes this
 **Rule of thumb:**
 
 * `pPrimaryDesc != NULL` → treat this resource as a **primary/backbuffer** allocation.
-* Set `D3DDDI_ALLOCATIONINFOFLAGS::Primary = 1` on the allocation entry that backs the primary.
+* Allocate with both:
+  * `D3DDDICB_ALLOCATEFLAGS.Primary = 1` (resource-level)
+  * `D3DDDI_ALLOCATIONINFOFLAGS::Primary = 1` (per-allocation)
 
 ### 5.4 D3D10 parity (`D3D10DDIARG_CREATERESOURCE`)
 
 The D3D10 DDI uses `D3D10DDIARG_CREATERESOURCE` (from `d3d10umddi.h`) and the same *WDDM resource allocation model* as D3D11 on Win7:
 
 * the runtime asks the UMD to fill an allocation-info array (`D3D10DDI_ALLOCATIONINFO* pAllocationInfo`), and
-* the stack creates kernel allocation handles for those entries (commonly via a KMT allocation call such as `D3DKMTCreateAllocation`, or a runtime wrapper around it).
+* the UMD calls `pfnAllocateCb` with `D3DDDICB_ALLOCATE` to create the allocation(s) and receive `hAllocation` handles.
 
 For allocation purposes, the D3D10 create-resource argument carries the same “shape” of data as the D3D11 one:
 
@@ -374,7 +449,7 @@ The table below is a pragmatic “works first” allocation plan for AeroGPU’s
 |---|---:|---|---|
 | Buffer | 1 allocation per resource | `Size = ByteWidth` (optionally align up to 256) | `CpuVisible` if CPU reads/writes are expected (dynamic/staging or `CPUAccessFlags != 0`) |
 | Texture2D (default) | 1 allocation per resource | `rowPitch = Align(Width * bytesPerPixel(Format), 256)`; `Size = rowPitch * Height` (no mips/arrays in MVP) | `RenderTarget` if `BindFlags & D3D11_BIND_RENDER_TARGET`; `CpuVisible` only if CPU access is requested |
-| Swapchain backbuffer | 1 allocation per backbuffer | Same as Texture2D, but match the swapchain format exactly (commonly `DXGI_FORMAT_B8G8R8A8_UNORM`) | Allocation `Flags.Primary`; allocation `Flags.RenderTarget`; typically `CpuVisible` in AeroGPU MVP |
+| Swapchain backbuffer | 1 allocation per backbuffer | Same as Texture2D, but match the swapchain format exactly (commonly `DXGI_FORMAT_B8G8R8A8_UNORM`) | `D3DDDICB_ALLOCATEFLAGS.Primary`; allocation `Flags.Primary`; allocation `Flags.RenderTarget`; typically `CpuVisible` in AeroGPU MVP |
 | Staging Texture2D | 1 allocation per resource | Same as Texture2D | Allocation `Flags.CpuVisible` (required); bind flags are typically 0; use `pfnLockCb`/`pfnUnlockCb` in `Map`/`Unmap` |
 
 Notes / constraints for MVP:

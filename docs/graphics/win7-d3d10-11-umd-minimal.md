@@ -246,7 +246,10 @@ Resource update/copy (minimum)
   * struct: `D3D10DDIARG_UPDATESUBRESOURCEUP`
 * `pfnCopyResource` / `pfnCopySubresourceRegion` (optional but commonly used internally by runtimes)
 
-See also: [Win7 WDDM 1.1 D3D10/11 UMD resource allocation + Map/Unmap callbacks](../windows/win7-wddm11-d3d10-11-umd-alloc-map.md).
+See also:
+
+* `docs/graphics/win7-d3d10-11-umd-allocations.md` — Win7 WDK 7.1 resource allocation (`CreateResource` → `pfnAllocateCb`) contract.
+* `docs/graphics/win7-d3d11-map-unmap.md` — Win7 `Map`/`Unmap` semantics (`LockCb`/`UnlockCb`) for dynamic uploads + staging readback.
 
 Command submission
 * `pfnFlush` (or equivalent submit/flush entrypoint in the DDI) to ensure GPU work reaches the KMD/host.
@@ -381,7 +384,10 @@ Resource updates
 * `pfnCopyResource` / `pfnCopySubresourceRegion`
 * `pfnFlush` (submits pending work; corresponds to `ID3D11DeviceContext::Flush`)
 
-See also: [Win7 WDDM 1.1 D3D10/11 UMD resource allocation + Map/Unmap callbacks](../windows/win7-wddm11-d3d10-11-umd-alloc-map.md).
+See also:
+
+* `docs/graphics/win7-d3d10-11-umd-allocations.md` — Win7 WDK 7.1 resource allocation (`CreateResource` → `pfnAllocateCb`) contract.
+* `docs/graphics/win7-d3d11-map-unmap.md` — Win7 `Map`/`Unmap` semantics (`LockCb`/`UnlockCb`) for dynamic uploads + staging readback.
 
 ---
 
