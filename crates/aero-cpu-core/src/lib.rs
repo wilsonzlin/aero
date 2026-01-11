@@ -7,6 +7,11 @@
 //! - the Tier-0 interpreter (`interp::tier0`), used for cold code and testing
 //! - the JIT runtime (`jit`), which executes dynamically generated WASM blocks
 //!
+//! For most embedding/integration code, [`interrupts::CpuCore`] is a convenient
+//! wrapper that bundles the ABI state with the minimal non-ABI runtime state
+//! required for interrupt/event delivery (pending events, interrupt shadow) and
+//! deterministic time.
+//!
 //! The older `cpu.rs`/`bus.rs` interpreter stack is kept behind the
 //! `legacy-interp` Cargo feature (default-off).
 
@@ -39,6 +44,7 @@ pub mod bus;
 pub mod cpu;
 
 pub use exception::{AssistReason, Exception};
+pub use interrupts::CpuCore;
 pub use mem::CpuBus;
 pub use paging_bus::PagingBus;
 pub use state::CpuState;
