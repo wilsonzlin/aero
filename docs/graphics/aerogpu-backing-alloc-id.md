@@ -38,8 +38,8 @@ time. That is both fragile and easy to get wrong in DWM / multi-frame apps.
      `alloc_id`, not by entry position.
 
 3. **Host resolution**
-   - When processing a command that references `backing_alloc_id != 0`, the host
-     must:
+   - Any time the host needs to read/write a resource’s guest backing memory
+     (`backing_alloc_id != 0`), it must:
      - Find the entry with matching `alloc_id` in the submission’s allocation
        table.
      - Validate bounds:
@@ -65,12 +65,17 @@ time. That is both fragile and easy to get wrong in DWM / multi-frame apps.
 
 ## Guest-side requirement (Win7): referenced `alloc_id` must be present in the submit’s allocation table
 
-Host-side validation requires that any packet referencing `backing_alloc_id != 0` can be resolved through the submission’s `aerogpu_alloc_table`.
+Host-side validation requires that any packet that needs `alloc_id` resolution can be resolved through the submission’s `aerogpu_alloc_table`. This includes:
+
+- Packets that carry `backing_alloc_id` fields directly (`CREATE_BUFFER`, `CREATE_TEXTURE2D`).
+- Packets that operate on a guest-backed resource (its `backing_alloc_id != 0`) and require host access to guest memory, such as:
+  - `AEROGPU_CMD_RESOURCE_DIRTY_RANGE` (CPU upload notifications).
+  - `AEROGPU_CMD_COPY_BUFFER` / `AEROGPU_CMD_COPY_TEXTURE2D` with `WRITEBACK_DST` (staging readback).
 
 On Win7/WDDM 1.1, that table is derived from the submission’s WDDM allocation list (`DXGK_ALLOCATIONLIST`). Therefore, the guest must ensure:
 
-- Any submission containing packets that reference `backing_alloc_id != 0` includes the corresponding **WDDM allocation handle(s)** in the submit allocation list.
-- This is not guaranteed by “currently bound” state alone: update packets like `AEROGPU_CMD_RESOURCE_DIRTY_RANGE` can be emitted during Map/Unmap while a resource is not bound, and still require the allocation to be listed for that submit.
+- Any submission containing packets that need `alloc_id` resolution includes the corresponding **WDDM allocation handle(s)** in the submit allocation list.
+- This is not guaranteed by “currently bound” state alone: update packets like `AEROGPU_CMD_RESOURCE_DIRTY_RANGE` and `COPY_* WRITEBACK_DST` can be emitted while a resource is not bound, and still require the allocation to be listed for that submit.
 
 If the allocation list omits a referenced `alloc_id`, the host must treat it as a validation error (“missing alloc_id entry”).
 

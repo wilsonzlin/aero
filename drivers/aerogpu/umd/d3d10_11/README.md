@@ -64,8 +64,11 @@ This UMD emits `drivers/aerogpu/protocol/aerogpu_cmd.h` packets and references o
 
 On Win7/WDDM 1.1, the KMD builds the per-submit `aerogpu_alloc_table` from the submission’s WDDM allocation list (`DXGK_ALLOCATIONLIST`), so the UMD must ensure:
 
-- Any submission that emits packets referencing `backing_alloc_id != 0` includes the corresponding **WDDM allocation handle** in the submit allocation list (so the KMD can emit the `alloc_id → gpa` mapping).
-- This includes packets that may be emitted while a resource is **not currently bound**, such as `AEROGPU_CMD_RESOURCE_DIRTY_RANGE` (used by Map/Unmap upload paths).
+- Any submission that includes packets requiring `alloc_id` resolution includes the corresponding **WDDM allocation handle** in the submit allocation list (so the KMD can emit the `alloc_id → gpa` mapping). This includes:
+  - `CREATE_*` packets with `backing_alloc_id != 0`
+  - `AEROGPU_CMD_RESOURCE_DIRTY_RANGE` for guest-backed resources (Map/Unmap upload paths)
+  - `COPY_*` packets with `WRITEBACK_DST` (staging readback)
+- Do not rely solely on “currently bound” state when building the list: these packets may be emitted while a resource is **not currently bound**, and still require the allocation to be listed for that submit.
 
 The WDK-backed UMDs enforce this via `TrackWddmAllocForSubmitLocked()` in:
 

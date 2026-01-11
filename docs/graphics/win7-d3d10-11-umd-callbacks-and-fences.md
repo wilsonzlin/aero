@@ -182,8 +182,11 @@ For AeroGPU guest-backed resources, the KMD builds the per-submit `aerogpu_alloc
 
 Practical implication for UMDs:
 
-- Any submission that emits packets with `backing_alloc_id != 0` must include the corresponding WDDM allocation handle(s) in the submit allocation list so the KMD can provide the `alloc_id → gpa` mapping to the host.
-- Do not rely solely on “currently bound” state when building the list: packets like `AEROGPU_CMD_RESOURCE_DIRTY_RANGE` may be emitted while the resource is not bound and still require the allocation to be listed for that submit.
+- Any submission that includes packets requiring `alloc_id` resolution must include the corresponding WDDM allocation handle(s) in the submit allocation list so the KMD can provide the `alloc_id → gpa` mapping to the host. This includes:
+  - `CREATE_*` packets with `backing_alloc_id != 0`
+  - `AEROGPU_CMD_RESOURCE_DIRTY_RANGE` for guest-backed resources
+  - `COPY_*` packets with `WRITEBACK_DST` (staging readback)
+- Do not rely solely on “currently bound” state when building the list: these packets may be emitted while the resource is not bound and still require the allocation to be listed for that submit.
 
 Then it submits via the runtime callbacks which route into:
 

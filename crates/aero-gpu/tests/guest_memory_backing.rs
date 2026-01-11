@@ -1176,6 +1176,189 @@ fn copy_buffer_writeback_writes_guest_backing() {
 }
 
 #[test]
+fn copy_buffer_writeback_requires_alloc_table_each_submit() {
+    pollster::block_on(async {
+        let (device, queue) = match create_device_queue().await {
+            Some(v) => v,
+            None => {
+                common::skip_or_panic(module_path!(), "no wgpu adapter available");
+                return;
+            }
+        };
+        let mut exec = AeroGpuExecutor::new(device, queue).expect("create executor");
+
+        let mut guest = VecGuestMemory::new(0x20_000);
+
+        const ALLOC_DST: u32 = 1;
+        const DST_GPA: u64 = 0x1000;
+        let alloc_table_gpa = 0x8000u64;
+
+        let build_alloc_table = |alloc_id: u32| -> Vec<u8> {
+            let mut out = Vec::new();
+
+            // aerogpu_alloc_table_header (24 bytes)
+            push_u32(&mut out, AEROGPU_ALLOC_TABLE_MAGIC);
+            push_u32(&mut out, AEROGPU_ABI_VERSION_U32);
+            push_u32(&mut out, 0); // size_bytes (patch later)
+            push_u32(&mut out, 1); // entry_count
+            push_u32(&mut out, ProtocolAllocEntry::SIZE_BYTES as u32); // entry_stride_bytes
+            push_u32(&mut out, 0); // reserved0
+
+            // aerogpu_alloc_entry (32 bytes)
+            push_u32(&mut out, alloc_id);
+            push_u32(&mut out, 0); // flags
+            push_u64(&mut out, DST_GPA);
+            push_u64(&mut out, 0x100); // size_bytes
+            push_u64(&mut out, 0); // reserved0
+
+            let size_bytes = out.len() as u32;
+            out[ALLOC_TABLE_SIZE_BYTES_OFFSET..ALLOC_TABLE_SIZE_BYTES_OFFSET + 4]
+                .copy_from_slice(&size_bytes.to_le_bytes());
+            out
+        };
+
+        let alloc_table_bytes = build_alloc_table(ALLOC_DST);
+        guest
+            .write(alloc_table_gpa, &alloc_table_bytes)
+            .expect("write alloc table");
+
+        let sentinel = [0xEEu8; 16];
+        guest.write(DST_GPA, &sentinel).expect("write dst sentinel");
+
+        let payload = *b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0A\x0B\x0C\x0D\x0E\x0F";
+
+        // Submission 1: create src host-owned buffer and dst guest-backed buffer.
+        let create_stream = build_stream(|out| {
+            // CREATE_BUFFER src (handle=1) host-owned.
+            emit_packet(out, AerogpuCmdOpcode::CreateBuffer as u32, |out| {
+                push_u32(out, 1); // buffer_handle
+                push_u32(out, 0); // usage_flags
+                push_u64(out, payload.len() as u64); // size_bytes
+                push_u32(out, 0); // backing_alloc_id
+                push_u32(out, 0); // backing_offset_bytes
+                push_u64(out, 0); // reserved0
+            });
+
+            // CREATE_BUFFER dst (handle=2) guest-backed.
+            emit_packet(out, AerogpuCmdOpcode::CreateBuffer as u32, |out| {
+                push_u32(out, 2); // buffer_handle
+                push_u32(out, 0); // usage_flags
+                push_u64(out, payload.len() as u64); // size_bytes
+                push_u32(out, ALLOC_DST); // backing_alloc_id
+                push_u32(out, 0); // backing_offset_bytes
+                push_u64(out, 0); // reserved0
+            });
+        });
+        let cmd_create_gpa = 0x9000u64;
+        guest
+            .write(cmd_create_gpa, &create_stream)
+            .expect("write create stream");
+        let report = exec.process_submission_from_guest_memory(
+            &mut guest,
+            cmd_create_gpa,
+            create_stream.len() as u32,
+            alloc_table_gpa,
+            alloc_table_bytes.len() as u32,
+        );
+        assert!(report.is_ok(), "create submission failed: {:#?}", report);
+
+        // Submission 2: upload src bytes (valid without alloc_table).
+        let upload_stream = build_stream(|out| {
+            emit_packet(out, AerogpuCmdOpcode::UploadResource as u32, |out| {
+                push_u32(out, 1); // resource_handle
+                push_u32(out, 0); // reserved0
+                push_u64(out, 0); // offset_bytes
+                push_u64(out, payload.len() as u64); // size_bytes
+                out.extend_from_slice(&payload);
+            });
+        });
+        let cmd_upload_gpa = 0xA000u64;
+        guest
+            .write(cmd_upload_gpa, &upload_stream)
+            .expect("write upload stream");
+        let report = exec.process_submission_from_guest_memory(
+            &mut guest,
+            cmd_upload_gpa,
+            upload_stream.len() as u32,
+            0,
+            0,
+        );
+        assert!(report.is_ok(), "upload submission failed: {:#?}", report);
+
+        // Submission 3: COPY_BUFFER with WRITEBACK_DST but *no* alloc table.
+        let copy_stream = build_stream(|out| {
+            emit_packet(out, AerogpuCmdOpcode::CopyBuffer as u32, |out| {
+                push_u32(out, 2); // dst_buffer
+                push_u32(out, 1); // src_buffer
+                push_u64(out, 0); // dst_offset_bytes
+                push_u64(out, 0); // src_offset_bytes
+                push_u64(out, payload.len() as u64); // size_bytes
+                push_u32(out, AEROGPU_COPY_FLAG_WRITEBACK_DST); // flags
+                push_u32(out, 0); // reserved0
+            });
+        });
+
+        let cmd_copy_missing_table_gpa = 0xB000u64;
+        guest
+            .write(cmd_copy_missing_table_gpa, &copy_stream)
+            .expect("write copy stream (missing table)");
+        let report = exec.process_submission_from_guest_memory(
+            &mut guest,
+            cmd_copy_missing_table_gpa,
+            copy_stream.len() as u32,
+            0,
+            0,
+        );
+        assert!(!report.is_ok(), "expected missing alloc_table error");
+        assert!(
+            report.events.iter().any(|e| matches!(
+                e,
+                ExecutorEvent::Error { message, .. } if message.to_ascii_lowercase().contains("requires alloc_table")
+            )),
+            "expected alloc_table-required validation error, got: {:#?}",
+            report.events
+        );
+
+        let mut readback = [0u8; 16];
+        guest.read(DST_GPA, &mut readback).expect("read dst");
+        assert_eq!(readback, sentinel);
+
+        // Submission 4: COPY_BUFFER with WRITEBACK_DST but alloc_table missing the destination alloc_id.
+        let bad_alloc_table_bytes = build_alloc_table(ALLOC_DST + 1);
+        guest
+            .write(alloc_table_gpa, &bad_alloc_table_bytes)
+            .expect("write bad alloc table");
+
+        let cmd_copy_missing_entry_gpa = 0xC000u64;
+        guest
+            .write(cmd_copy_missing_entry_gpa, &copy_stream)
+            .expect("write copy stream (missing entry)");
+        let report = exec.process_submission_from_guest_memory(
+            &mut guest,
+            cmd_copy_missing_entry_gpa,
+            copy_stream.len() as u32,
+            alloc_table_gpa,
+            bad_alloc_table_bytes.len() as u32,
+        );
+        assert!(!report.is_ok(), "expected missing alloc table entry error");
+        assert!(
+            report.events.iter().any(|e| matches!(
+                e,
+                ExecutorEvent::Error { message, .. } if {
+                    let msg = message.to_ascii_lowercase();
+                    msg.contains("missing alloc table entry") && msg.contains("dst_buffer")
+                }
+            )),
+            "expected missing alloc table entry validation error, got: {:#?}",
+            report.events
+        );
+
+        guest.read(DST_GPA, &mut readback).expect("read dst");
+        assert_eq!(readback, sentinel);
+    });
+}
+
+#[test]
 fn copy_buffer_writeback_rejects_readonly_alloc() {
     pollster::block_on(async {
         let (device, queue) = match create_device_queue().await {
