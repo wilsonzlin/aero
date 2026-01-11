@@ -65,6 +65,15 @@ describe("usb/usb_proxy_protocol", () => {
     ).toBe(false);
   });
 
+  it("rejects malformed usb.selected messages", () => {
+    // ok:true requires info and forbids error.
+    expect(isUsbProxyMessage({ type: "usb.selected", ok: true, error: "nope", info: { vendorId: 1, productId: 2 } })).toBe(false);
+    expect(isUsbProxyMessage({ type: "usb.selected", ok: true, info: { vendorId: 1, productId: 2, productName: 123 } })).toBe(false);
+
+    // ok:false forbids info.
+    expect(isUsbProxyMessage({ type: "usb.selected", ok: false, info: { vendorId: 1, productId: 2 } })).toBe(false);
+  });
+
   it("rejects invalid bulk endpoint directions and endpoint 0", () => {
     // bulkIn expects an IN endpoint address (`0x80 | ep_num`).
     expect(isUsbHostAction({ kind: "bulkIn", id: 1, endpoint: 1, length: 8 })).toBe(false);

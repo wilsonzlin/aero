@@ -224,10 +224,13 @@ export function isUsbSelectedMessage(value: unknown): value is UsbSelectedMessag
   if (!isRecord(value) || value.type !== "usb.selected") return false;
   if (typeof value.ok !== "boolean") return false;
   if (value.ok) {
-    if (value.info === undefined) return false;
+    if (value.error !== undefined) return false;
     if (!isRecord(value.info)) return false;
-    return isUint16(value.info.vendorId) && isUint16(value.info.productId);
+    if (!isUint16(value.info.vendorId) || !isUint16(value.info.productId)) return false;
+    if (value.info.productName !== undefined && typeof value.info.productName !== "string") return false;
+    return true;
   }
+  if (value.info !== undefined) return false;
   if (value.error !== undefined && typeof value.error !== "string") return false;
   return true;
 }
