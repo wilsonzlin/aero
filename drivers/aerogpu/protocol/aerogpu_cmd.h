@@ -831,11 +831,11 @@ AEROGPU_STATIC_ASSERT(sizeof(struct aerogpu_cmd_present_ex) == 24);
  * - `share_token` is an opaque 64-bit value that must be stable across guest
  *   processes.
  * - Recommended source of `share_token` (Win7 WDDM 1.1):
- *   - the `share_token` stored in WDDM allocation private driver data
- *     (`aerogpu_wddm_alloc_priv.share_token` in `aerogpu_wddm_alloc.h`).
- *   - the UMD must populate this field for shared allocations; dxgkrnl preserves
- *     the private-data blob and returns it verbatim when another process opens
- *     the shared resource, making the token stable across processes.
+  *   - the `share_token` stored in WDDM allocation private driver data
+  *     (`aerogpu_wddm_alloc_priv.share_token` in `aerogpu_wddm_alloc.h`).
+  *   - the UMD must populate this field for shared allocations; dxgkrnl preserves
+  *     the private-data blob and returns it verbatim when another process opens
+  *     the shared resource, making the token stable across processes.
  *   (Do NOT use the numeric value of the D3D shared `HANDLE`, which is
  *   process-local and not stable cross-process.)
  * - The host stores a mapping of (share_token -> resource).

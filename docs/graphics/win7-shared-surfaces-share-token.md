@@ -27,6 +27,8 @@ On Windows 7 (WDDM 1.1), `share_token` is stored in WDDM allocation private driv
 - Struct/field: `aerogpu_wddm_alloc_priv.share_token`
 
 The **UMD** chooses a non-zero, collision-resistant token at creation time and writes it into the allocation private-data blob. dxgkrnl preserves that blob for shared allocations and returns it verbatim to other processes when they open the shared resource, making the token stable cross-process.
+ 
+Note: `drivers/aerogpu/protocol/aerogpu_alloc_privdata.h` exists as a legacy/experimental “KMD → UMD” private-data payload, but the current Win7 WDDM 1.1 driver stack does **not** rely on KMD→UMD writeback semantics (see the header comment in `aerogpu_alloc_privdata.h`).
 
 ## Expected flow (UMD ↔ KMD ↔ host)
 
@@ -34,15 +36,13 @@ The **UMD** chooses a non-zero, collision-resistant token at creation time and w
 
 1. Producer creates a shareable resource (`pSharedHandle != NULL` in the D3D API/DDI).
 2. The UMD generates a stable `share_token` and stores it in allocation private driver data (`aerogpu_wddm_alloc_priv.share_token`) for the backing allocation(s).
-3. The UMD sends:
-   - `AEROGPU_CMD_EXPORT_SHARED_SURFACE` with `share_token = share_token`
+3. The UMD sends `AEROGPU_CMD_EXPORT_SHARED_SURFACE` with `share_token`.
 
 ### 2) Open shared resource → import (token)
 
 1. The OS duplicates/inherits the shared `HANDLE` into the consumer process.
 2. Consumer opens the resource; dxgkrnl returns the same allocation private-data blob (including `share_token`) to the UMD.
-3. The UMD sends:
-   - `AEROGPU_CMD_IMPORT_SHARED_SURFACE` with `share_token = share_token`
+3. The UMD sends `AEROGPU_CMD_IMPORT_SHARED_SURFACE` with `share_token`.
 
 At no point should the AeroGPU protocol key off the user-mode `HANDLE` numeric value.
 
