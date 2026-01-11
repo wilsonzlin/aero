@@ -722,9 +722,24 @@ async function handleRequest(msg: DiskWorkerRequest): Promise<void> {
       }
 
       // Backwards compatibility: some older remote images stored cached bytes in a single sparse file.
-      if (cacheBytes === 0) {
+      // Always include it when present so we don't under-count if both legacy + new caches exist.
+      if (meta.cache.fileName !== meta.cache.overlayFileName) {
         try {
           cacheBytes += await opfsGetDiskSizeBytes(meta.cache.fileName);
+        } catch {
+          // ignore
+        }
+      }
+
+      // Older RemoteRangeDisk versions persisted a cache file keyed by the remote base identity
+      // (in addition to the per-disk cache file above). Include it when present so stat_disk
+      // can attribute orphaned legacy bytes before the disk is opened (where we now delete it).
+      if (meta.remote.delivery === "range") {
+        try {
+          const imageKey = `${meta.remote.imageId}:${meta.remote.version}:${meta.remote.delivery}`;
+          const cacheId = await stableCacheId(imageKey);
+          cacheBytes += await opfsGetDiskSizeBytes(`remote-range-cache-${cacheId}.aerospar`).catch(() => 0);
+          cacheBytes += await opfsGetDiskSizeBytes(`remote-range-cache-${cacheId}.json`).catch(() => 0);
         } catch {
           // ignore
         }
