@@ -338,10 +338,7 @@ fn aerogpu_driver_directory_alias_is_accepted() -> anyhow::Result<()> {
     for arch in ["x86", "amd64"] {
         let driver_dir = drivers_tmp.path().join(arch).join("aero-gpu");
         fs::create_dir_all(&driver_dir)?;
-        fs::write(
-            driver_dir.join("aerogpu.inf"),
-            b"PCI\\VEN_A3A0&DEV_0001\n",
-        )?;
+        fs::write(driver_dir.join("aerogpu.inf"), b"PCI\\VEN_A3A0&DEV_0001\n")?;
         fs::write(driver_dir.join("aerogpu.sys"), b"sys\n")?;
         fs::write(driver_dir.join("aerogpu.cat"), b"cat\n")?;
     }
@@ -1272,7 +1269,8 @@ fn expected_hardware_id_patterns_in_comments_do_not_satisfy_spec() -> anyhow::Re
     let err = aero_packager::package_guest_tools(&config).unwrap_err();
     let msg = format!("{err:#}");
     assert!(
-        msg.contains("missing expected hardware ID pattern") && msg.contains("PCI\\\\VEN_1234&DEV_5678"),
+        msg.contains("missing expected hardware ID pattern")
+            && msg.contains("PCI\\\\VEN_1234&DEV_5678"),
         "unexpected error: {msg}"
     );
 

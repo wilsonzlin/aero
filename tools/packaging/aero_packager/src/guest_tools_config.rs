@@ -115,7 +115,9 @@ pub fn generate_guest_tools_devices_cmd_bytes_with_overrides(
 
     let mut out = String::new();
     out.push_str("@echo off\r\n");
-    out.push_str("rem -----------------------------------------------------------------------------\r\n");
+    out.push_str(
+        "rem -----------------------------------------------------------------------------\r\n",
+    );
     out.push_str("rem GENERATED FILE - DO NOT EDIT MANUALLY\r\n");
     out.push_str("rem\r\n");
     out.push_str("rem Source of truth: Windows device contract JSON\r\n");
@@ -130,15 +132,21 @@ pub fn generate_guest_tools_devices_cmd_bytes_with_overrides(
     if !contract_version.is_empty() {
         out.push_str(&format!("rem Contract version: {contract_version}\r\n"));
     }
-    out.push_str("rem -----------------------------------------------------------------------------\r\n");
+    out.push_str(
+        "rem -----------------------------------------------------------------------------\r\n",
+    );
     out.push_str("\r\n");
-    out.push_str("rem This file is sourced by guest-tools\\setup.cmd and guest-tools\\uninstall.cmd.\r\n");
+    out.push_str(
+        "rem This file is sourced by guest-tools\\setup.cmd and guest-tools\\uninstall.cmd.\r\n",
+    );
     out.push_str("\r\n");
     out.push_str("rem ---------------------------\r\n");
     out.push_str("rem Boot-critical storage (virtio-blk)\r\n");
     out.push_str("rem ---------------------------\r\n");
     out.push_str("\r\n");
-    out.push_str(&format!("set \"AERO_VIRTIO_BLK_SERVICE={stor_service}\"\r\n"));
+    out.push_str(&format!(
+        "set \"AERO_VIRTIO_BLK_SERVICE={stor_service}\"\r\n"
+    ));
     out.push_str("set \"AERO_VIRTIO_BLK_SYS=\"\r\n");
     out.push_str(&format!(
         "set AERO_VIRTIO_BLK_HWIDS={}\r\n",
@@ -149,17 +157,23 @@ pub fn generate_guest_tools_devices_cmd_bytes_with_overrides(
     out.push_str("rem Non-boot-critical devices (used by verify.ps1)\r\n");
     out.push_str("rem ---------------------------\r\n");
     out.push_str("\r\n");
-    out.push_str(&format!("set \"AERO_VIRTIO_NET_SERVICE={net_service}\"\r\n"));
+    out.push_str(&format!(
+        "set \"AERO_VIRTIO_NET_SERVICE={net_service}\"\r\n"
+    ));
     out.push_str(&format!(
         "set AERO_VIRTIO_NET_HWIDS={}\r\n",
         quote_cmd_list(&virtio_net_hwids)
     ));
-    out.push_str(&format!("set \"AERO_VIRTIO_INPUT_SERVICE={input_service}\"\r\n"));
+    out.push_str(&format!(
+        "set \"AERO_VIRTIO_INPUT_SERVICE={input_service}\"\r\n"
+    ));
     out.push_str(&format!(
         "set AERO_VIRTIO_INPUT_HWIDS={}\r\n",
         quote_cmd_list(&virtio_input_hwids)
     ));
-    out.push_str(&format!("set \"AERO_VIRTIO_SND_SERVICE={snd_service}\"\r\n"));
+    out.push_str(&format!(
+        "set \"AERO_VIRTIO_SND_SERVICE={snd_service}\"\r\n"
+    ));
     out.push_str("set \"AERO_VIRTIO_SND_SYS=\"\r\n");
     out.push_str(&format!(
         "set AERO_VIRTIO_SND_HWIDS={}\r\n",
@@ -170,6 +184,7 @@ pub fn generate_guest_tools_devices_cmd_bytes_with_overrides(
     for hwid in &aero_gpu_hwids {
         out.push_str(&format!("rem   - {hwid}\r\n"));
     }
+    out.push_str("rem Legacy AeroGPU device models are intentionally out of scope for Guest Tools; use drivers/aerogpu/packaging/win7/legacy with emulator/aerogpu-legacy if needed.\r\n");
     out.push_str(&format!("set \"AERO_GPU_SERVICE={gpu_service}\"\r\n"));
     out.push_str(&format!(
         "set AERO_GPU_HWIDS={}\r\n",

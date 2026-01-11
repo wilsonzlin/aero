@@ -105,10 +105,7 @@ impl From<PackagingSpecRaw> for PackagingSpec {
 
         for legacy in raw.required_drivers {
             let name = normalize_driver_name(&legacy.name);
-            if let Some(idx) = index_by_name
-                .get(&name.to_ascii_lowercase())
-                .copied()
-            {
+            if let Some(idx) = index_by_name.get(&name.to_ascii_lowercase()).copied() {
                 let existing = &mut out[idx];
                 existing.required = true;
                 for hwid in legacy.expected_hardware_ids {

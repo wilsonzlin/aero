@@ -52,8 +52,8 @@ fn validate_windows_device_contract(contract: &WindowsDeviceContract) -> Result<
     }
 
     let mut seen_device_names = HashSet::<String>::new();
-    let base_pci_hwid_re = Regex::new(r"(?i)PCI\\VEN_[0-9A-F]{4}&DEV_[0-9A-F]{4}")
-        .expect("valid PCI HWID regex");
+    let base_pci_hwid_re =
+        Regex::new(r"(?i)PCI\\VEN_[0-9A-F]{4}&DEV_[0-9A-F]{4}").expect("valid PCI HWID regex");
 
     for device in &contract.devices {
         let name = device.device.trim();
@@ -65,10 +65,10 @@ fn validate_windows_device_contract(contract: &WindowsDeviceContract) -> Result<
             anyhow::bail!("windows-device-contract contains duplicate device entry: {name}");
         }
 
-        let pci_vendor_id =
-            parse_hex_u16(&device.pci_vendor_id).with_context(|| format!("{name}.pci_vendor_id"))?;
-        let pci_device_id =
-            parse_hex_u16(&device.pci_device_id).with_context(|| format!("{name}.pci_device_id"))?;
+        let pci_vendor_id = parse_hex_u16(&device.pci_vendor_id)
+            .with_context(|| format!("{name}.pci_vendor_id"))?;
+        let pci_device_id = parse_hex_u16(&device.pci_device_id)
+            .with_context(|| format!("{name}.pci_device_id"))?;
         let expected_substr = format!("VEN_{pci_vendor_id:04X}&DEV_{pci_device_id:04X}");
 
         // Contract v1 (AERO-W7-VIRTIO) is strict about virtio-pci being modern-only and revision-gated
@@ -159,7 +159,9 @@ fn validate_windows_device_contract(contract: &WindowsDeviceContract) -> Result<
         for hwid in &device.hardware_id_patterns {
             let hwid = hwid.trim();
             if hwid.is_empty() {
-                anyhow::bail!("windows-device-contract device {name} has empty hardware_id_patterns entry");
+                anyhow::bail!(
+                    "windows-device-contract device {name} has empty hardware_id_patterns entry"
+                );
             }
             if base_pci_hwid_re.find(hwid).is_none() {
                 anyhow::bail!(
@@ -182,7 +184,8 @@ fn validate_windows_device_contract(contract: &WindowsDeviceContract) -> Result<
 
 fn parse_hex_u16(raw: &str) -> Result<u16> {
     let s = raw.trim();
-    let s = s.strip_prefix("0x")
+    let s = s
+        .strip_prefix("0x")
         .or_else(|| s.strip_prefix("0X"))
         .unwrap_or(s);
     if s.is_empty() {
@@ -191,8 +194,8 @@ fn parse_hex_u16(raw: &str) -> Result<u16> {
     if s.len() > 4 {
         anyhow::bail!("expected 16-bit hex value, got {raw:?}");
     }
-    let value = u16::from_str_radix(s, 16)
-        .with_context(|| format!("expected hex value, got {raw:?}"))?;
+    let value =
+        u16::from_str_radix(s, 16).with_context(|| format!("expected hex value, got {raw:?}"))?;
     Ok(value)
 }
 

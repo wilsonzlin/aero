@@ -49,9 +49,7 @@ fn virtio_win_packaging_overrides_service_names_in_devices_cmd() -> anyhow::Resu
         .join("specs")
         .join("win7-virtio-win.json");
 
-    let contract_path = repo_root
-        .join("docs")
-        .join("windows-device-contract.json");
+    let contract_path = repo_root.join("docs").join("windows-device-contract.json");
 
     // Build a minimal virtio-win-style driver tree containing `viostor` and `netkvm`.
     // The packager only validates that expected HWID patterns appear in at least one INF,

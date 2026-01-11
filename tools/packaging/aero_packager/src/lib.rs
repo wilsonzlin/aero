@@ -109,13 +109,14 @@ pub fn package_guest_tools(config: &PackageConfig) -> Result<PackageOutputs> {
 
     let spec = PackagingSpec::load(&config.spec_path).with_context(|| "load packaging spec")?;
 
-    let contract = windows_device_contract::load_windows_device_contract(&config.windows_device_contract_path)
-        .with_context(|| {
-            format!(
-                "load windows device contract {}",
-                config.windows_device_contract_path.display()
-            )
-        })?;
+    let contract =
+        windows_device_contract::load_windows_device_contract(&config.windows_device_contract_path)
+            .with_context(|| {
+                format!(
+                    "load windows device contract {}",
+                    config.windows_device_contract_path.display()
+                )
+            })?;
 
     let service_overrides = guest_tools_devices_cmd_service_overrides_for_spec(&contract, &spec);
     let devices_cmd_bytes = generate_guest_tools_devices_cmd_bytes_with_overrides(
@@ -133,7 +134,8 @@ pub fn package_guest_tools(config: &PackageConfig) -> Result<PackageOutputs> {
 
     let devices_cmd_path = config.guest_tools_dir.join("config").join("devices.cmd");
     let mut devices_cmd_vars = if devices_cmd_path.is_file() {
-        read_devices_cmd_vars(&devices_cmd_path).with_context(|| "read guest-tools/config/devices.cmd")?
+        read_devices_cmd_vars(&devices_cmd_path)
+            .with_context(|| "read guest-tools/config/devices.cmd")?
     } else {
         // config/devices.cmd is packaged from the Windows device contract, but we still allow
         // optional spec fixtures to define additional variables in the on-disk file.
