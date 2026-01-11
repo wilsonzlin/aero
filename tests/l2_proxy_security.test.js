@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 
 import { WebSocket } from "../tools/minimal_ws.js";
 import { encodeL2Frame, L2_TUNNEL_SUBPROTOCOL } from "../web/src/shared/l2TunnelProtocol.ts";
@@ -7,6 +8,22 @@ import { encodeL2Frame, L2_TUNNEL_SUBPROTOCOL } from "../web/src/shared/l2Tunnel
 import { startRustL2Proxy } from "../tools/rust_l2_proxy.js";
 
 const L2_PROXY_TEST_TIMEOUT_MS = 900_000;
+
+function base64UrlNoPad(buf) {
+  return buf
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+}
+
+function makeSessionCookie({ secret, sid, expUnixSeconds }) {
+  const payload = Buffer.from(JSON.stringify({ v: 1, sid, exp: expUnixSeconds }), "utf8");
+  const payloadB64 = base64UrlNoPad(payload);
+  const sig = createHmac("sha256", secret).update(payloadB64).digest();
+  const sigB64 = base64UrlNoPad(sig);
+  return `aero_session=${payloadB64}.${sigB64}`;
+}
 
 async function connectOrReject(url, { protocols, ...opts } = {}) {
   return new Promise((resolve, reject) => {
@@ -186,6 +203,27 @@ test("l2 proxy enforces token auth when configured", { timeout: L2_PROXY_TEST_TI
   }
 });
 
+test("token errors take precedence over Origin errors", { timeout: L2_PROXY_TEST_TIMEOUT_MS }, async () => {
+  const proxy = await startRustL2Proxy({
+    AERO_L2_OPEN: "0",
+    AERO_L2_ALLOWED_ORIGINS: "*",
+    AERO_L2_TOKEN: "sekrit",
+    AERO_L2_MAX_CONNECTIONS: "0",
+  });
+
+  try {
+    const missingBoth = await connectOrReject(`ws://127.0.0.1:${proxy.port}/l2`);
+    assert.equal(missingBoth.ok, false);
+    assert.equal(missingBoth.status, 401);
+
+    const missingOrigin = await connectOrReject(`ws://127.0.0.1:${proxy.port}/l2?token=sekrit`);
+    assert.equal(missingOrigin.ok, false);
+    assert.equal(missingOrigin.status, 403);
+  } finally {
+    await proxy.close();
+  }
+});
+
 test("AERO_L2_OPEN disables Origin enforcement (but not token auth)", { timeout: L2_PROXY_TEST_TIMEOUT_MS }, async () => {
   const proxy = await startRustL2Proxy({
     AERO_L2_OPEN: "1",
@@ -203,6 +241,48 @@ test("AERO_L2_OPEN disables Origin enforcement (but not token auth)", { timeout:
     assert.equal(ok.ok, true);
     ok.ws.close(1000, "done");
     await waitForClose(ok.ws);
+  } finally {
+    await proxy.close();
+  }
+});
+
+test("cookie auth requires a valid aero_session cookie", { timeout: L2_PROXY_TEST_TIMEOUT_MS }, async () => {
+  const proxy = await startRustL2Proxy({
+    AERO_L2_OPEN: "1",
+    AERO_L2_ALLOWED_ORIGINS: "",
+    AERO_L2_TOKEN: "",
+    AERO_L2_AUTH_MODE: "cookie",
+    AERO_L2_SESSION_SECRET: "sekrit",
+    AERO_L2_MAX_CONNECTIONS: "0",
+  });
+
+  try {
+    const missing = await connectOrReject(`ws://127.0.0.1:${proxy.port}/l2`);
+    assert.equal(missing.ok, false);
+    assert.equal(missing.status, 401);
+
+    const cookie = makeSessionCookie({
+      secret: "sekrit",
+      sid: "sid-test",
+      expUnixSeconds: Math.floor(Date.now() / 1000) + 3600,
+    });
+    const ok = await connectOrReject(`ws://127.0.0.1:${proxy.port}/l2`, {
+      headers: { cookie },
+    });
+    assert.equal(ok.ok, true);
+    ok.ws.close(1000, "done");
+    await waitForClose(ok.ws);
+
+    const expiredCookie = makeSessionCookie({
+      secret: "sekrit",
+      sid: "sid-test",
+      expUnixSeconds: 0,
+    });
+    const expired = await connectOrReject(`ws://127.0.0.1:${proxy.port}/l2`, {
+      headers: { cookie: expiredCookie },
+    });
+    assert.equal(expired.ok, false);
+    assert.equal(expired.status, 401);
   } finally {
     await proxy.close();
   }
@@ -226,6 +306,51 @@ test("l2 proxy enforces max connection quota at upgrade time", { timeout: L2_PRO
 
     first.ws.close(1000, "done");
     await waitForClose(first.ws);
+  } finally {
+    await proxy.close();
+  }
+});
+
+test("l2 proxy enforces per-session tunnel quota (cookie auth)", { timeout: L2_PROXY_TEST_TIMEOUT_MS }, async () => {
+  const proxy = await startRustL2Proxy({
+    AERO_L2_OPEN: "1",
+    AERO_L2_ALLOWED_ORIGINS: "",
+    AERO_L2_TOKEN: "",
+    AERO_L2_AUTH_MODE: "cookie",
+    AERO_L2_SESSION_SECRET: "sekrit",
+    AERO_L2_MAX_CONNECTIONS: "0",
+    AERO_L2_MAX_TUNNELS_PER_SESSION: "1",
+  });
+
+  try {
+    const cookie = makeSessionCookie({
+      secret: "sekrit",
+      sid: "sid-test",
+      expUnixSeconds: Math.floor(Date.now() / 1000) + 3600,
+    });
+
+    const first = await connectOrReject(`ws://127.0.0.1:${proxy.port}/l2`, {
+      headers: { cookie },
+    });
+    assert.equal(first.ok, true);
+
+    const second = await connectOrReject(`ws://127.0.0.1:${proxy.port}/l2`, {
+      headers: { cookie },
+    });
+    assert.equal(second.ok, false);
+    assert.equal(second.status, 429);
+
+    first.ws.close(1000, "done");
+    await waitForClose(first.ws);
+    // Give the server time to release the permit.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const third = await connectOrReject(`ws://127.0.0.1:${proxy.port}/l2`, {
+      headers: { cookie },
+    });
+    assert.equal(third.ok, true);
+    third.ws.close(1000, "done");
+    await waitForClose(third.ws);
   } finally {
     await proxy.close();
   }
