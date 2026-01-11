@@ -14,8 +14,8 @@ on:
       - "scripts/ci/check-win7-virtio-header-collisions.py"
       - ".github/actions/setup-rust/**"
       - ".github/workflows/drivers-win7.yml"
-      - "drivers/windows7/virtio-snd/virtio-snd.vcxproj"
-      - "drivers/windows7/virtio-snd/inf/aero-virtio-snd.inf"
+      - "drivers/windows7/virtio-snd/aero_virtio_snd.vcxproj"
+      - "drivers/windows7/virtio-snd/inf/aero_virtio_snd.inf"
       - "drivers/windows7/virtio-snd/inf/virtio-snd.inf.disabled"
     paths-ignore:
       - "docs/**"
@@ -39,8 +39,8 @@ on:
       - "scripts/ci/check-win7-virtio-header-collisions.py"
       - ".github/actions/setup-rust/**"
       - ".github/workflows/drivers-win7.yml"
-      - "drivers/windows7/virtio-snd/virtio-snd.vcxproj"
-      - "drivers/windows7/virtio-snd/inf/aero-virtio-snd.inf"
+      - "drivers/windows7/virtio-snd/aero_virtio_snd.vcxproj"
+      - "drivers/windows7/virtio-snd/inf/aero_virtio_snd.inf"
       - "drivers/windows7/virtio-snd/inf/virtio-snd.inf.disabled"
     paths-ignore:
       - "docs/**"
