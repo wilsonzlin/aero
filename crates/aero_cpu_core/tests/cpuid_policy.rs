@@ -1,10 +1,30 @@
-#![cfg(feature = "legacy-interp")]
-
+use aero_cpu_core::assist::AssistContext;
 use aero_cpu_core::cpuid::{
     bits, cpuid, CpuFeatureOverrides, CpuFeatureSet, CpuFeatures, CpuProfile, CpuTopology,
 };
+use aero_cpu_core::mem::FlatTestBus;
 use aero_cpu_core::msr;
-use aero_cpu_core::system::Cpu;
+use aero_cpu_core::state::{CpuMode, CpuState, CR0_PE};
+use aero_cpu_core::AssistReason;
+use aero_x86::Register;
+
+const CODE_BASE: u64 = 0x100;
+
+fn exec_wrmsr(
+    ctx: &mut AssistContext,
+    state: &mut CpuState,
+    bus: &mut FlatTestBus,
+    msr: u32,
+    val: u64,
+) {
+    // `WRMSR` (0F 30) reads the MSR index from ECX and the value from EDX:EAX.
+    state.write_reg(Register::ECX, msr as u64);
+    state.write_reg(Register::EAX, val as u32 as u64);
+    state.write_reg(Register::EDX, (val >> 32) as u32 as u64);
+    state.set_rip(CODE_BASE);
+    bus.load(CODE_BASE, &[0x0F, 0x30]);
+    aero_cpu_core::assist::handle_assist(ctx, state, bus, AssistReason::Msr).unwrap();
+}
 
 #[test]
 fn win7_minimum_profile_sets_required_bits() {
@@ -41,11 +61,24 @@ fn msr_efer_masks_nxe_when_cpuid_nx_is_disabled() {
 
     assert_eq!(cpuid(&features, 0x8000_0001, 0).edx & bits::EXT1_EDX_NX, 0);
 
-    let mut cpu = Cpu::new(features);
-    cpu.cs = 0x8; // CPL0 for WRMSR
+    let mut ctx = AssistContext {
+        features,
+        ..AssistContext::default()
+    };
+    let mut state = CpuState::new(CpuMode::Bit32);
+    // Keep `CpuState::mode` coherent with `update_mode()` calls performed by the assist handler.
+    state.control.cr0 |= CR0_PE;
+    state.segments.cs.selector = 0x08; // CPL0 for WRMSR.
+    let mut bus = FlatTestBus::new(0x1000);
 
-    cpu.wrmsr_value(msr::IA32_EFER, msr::EFER_NXE).unwrap();
-    assert_eq!(cpu.rdmsr_value(msr::IA32_EFER).unwrap() & msr::EFER_NXE, 0);
+    exec_wrmsr(
+        &mut ctx,
+        &mut state,
+        &mut bus,
+        msr::IA32_EFER,
+        msr::EFER_NXE,
+    );
+    assert_eq!(state.msr.efer & msr::EFER_NXE, 0);
 }
 
 #[test]
@@ -69,11 +102,23 @@ fn msr_efer_masks_sce_when_cpuid_syscall_is_disabled() {
         0
     );
 
-    let mut cpu = Cpu::new(features);
-    cpu.cs = 0x8; // CPL0 for WRMSR
+    let mut ctx = AssistContext {
+        features,
+        ..AssistContext::default()
+    };
+    let mut state = CpuState::new(CpuMode::Bit32);
+    state.control.cr0 |= CR0_PE;
+    state.segments.cs.selector = 0x08; // CPL0 for WRMSR.
+    let mut bus = FlatTestBus::new(0x1000);
 
-    cpu.wrmsr_value(msr::IA32_EFER, msr::EFER_SCE).unwrap();
-    assert_eq!(cpu.rdmsr_value(msr::IA32_EFER).unwrap() & msr::EFER_SCE, 0);
+    exec_wrmsr(
+        &mut ctx,
+        &mut state,
+        &mut bus,
+        msr::IA32_EFER,
+        msr::EFER_SCE,
+    );
+    assert_eq!(state.msr.efer & msr::EFER_SCE, 0);
 }
 
 #[test]
