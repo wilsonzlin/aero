@@ -1,13 +1,13 @@
 LIBRARY "aerogpu_d3d9"
 EXPORTS
   ; Export undecorated names expected by the runtime.
-  OpenAdapter=_OpenAdapter@8
-  OpenAdapter2=_OpenAdapter2@8
-  OpenAdapterFromHdc=_OpenAdapterFromHdc@8
-  OpenAdapterFromLuid=_OpenAdapterFromLuid@8
+  OpenAdapter=_OpenAdapter@4
+  OpenAdapter2=_OpenAdapter2@4
+  OpenAdapterFromHdc=_OpenAdapterFromHdc@4
+  OpenAdapterFromLuid=_OpenAdapterFromLuid@4
 
   ; Also export the raw stdcall-decorated names for robustness.
-  _OpenAdapter@8
-  _OpenAdapter2@8
-  _OpenAdapterFromHdc@8
-  _OpenAdapterFromLuid@8
+  _OpenAdapter@4
+  _OpenAdapter2@4
+  _OpenAdapterFromHdc@4
+  _OpenAdapterFromLuid@4

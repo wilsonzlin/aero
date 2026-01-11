@@ -63,12 +63,6 @@ typedef struct _RECT {
   #ifndef E_NOTIMPL
     #define E_NOTIMPL ((HRESULT)0x80004001L)
   #endif
-  #ifndef SUCCEEDED
-    #define SUCCEEDED(hr) (((HRESULT)(hr)) >= 0)
-  #endif
-  #ifndef FAILED
-    #define FAILED(hr) (((HRESULT)(hr)) < 0)
-  #endif
   #ifndef AEROGPU_LUID_DEFINED
     #define AEROGPU_LUID_DEFINED
 typedef struct _LUID {
@@ -163,24 +157,30 @@ typedef struct _D3DDDI_ADAPTERCALLBACKS2 {
   void* pfnDummy;
 } D3DDDI_ADAPTERCALLBACKS2;
 
+// Forward declarations for function tables referenced by the OpenAdapter arg
+// structs.
+typedef struct _D3D9DDI_ADAPTERFUNCS D3D9DDI_ADAPTERFUNCS;
+
 // ---- Adapter open ABI ---------------------------------------------------------
-typedef struct _D3D9DDIARG_OPENADAPTER {
+typedef struct _D3DDDIARG_OPENADAPTER {
   UINT Interface;
   UINT Version;
   D3DDDI_ADAPTERCALLBACKS* pAdapterCallbacks;
   D3DDDI_ADAPTERCALLBACKS2* pAdapterCallbacks2;
   D3D9DDI_HADAPTER hAdapter; // out
-} D3D9DDIARG_OPENADAPTER;
+  D3D9DDI_ADAPTERFUNCS* pAdapterFuncs; // out
+} D3DDDIARG_OPENADAPTER;
 
-typedef struct _D3D9DDIARG_OPENADAPTER2 {
+typedef struct _D3DDDIARG_OPENADAPTER2 {
   UINT Interface;
   UINT Version;
   D3DDDI_ADAPTERCALLBACKS* pAdapterCallbacks;
   D3DDDI_ADAPTERCALLBACKS2* pAdapterCallbacks2;
   D3D9DDI_HADAPTER hAdapter; // out
-} D3D9DDIARG_OPENADAPTER2;
+  D3D9DDI_ADAPTERFUNCS* pAdapterFuncs; // out
+} D3DDDIARG_OPENADAPTER2;
 
-typedef struct _D3D9DDIARG_OPENADAPTERFROMHDC {
+typedef struct _D3DDDIARG_OPENADAPTERFROMHDC {
   UINT Interface;
   UINT Version;
   HDC hDc;
@@ -188,16 +188,18 @@ typedef struct _D3D9DDIARG_OPENADAPTERFROMHDC {
   D3DDDI_ADAPTERCALLBACKS* pAdapterCallbacks;
   D3DDDI_ADAPTERCALLBACKS2* pAdapterCallbacks2;
   D3D9DDI_HADAPTER hAdapter; // out
-} D3D9DDIARG_OPENADAPTERFROMHDC;
+  D3D9DDI_ADAPTERFUNCS* pAdapterFuncs; // out
+} D3DDDIARG_OPENADAPTERFROMHDC;
 
-typedef struct _D3D9DDIARG_OPENADAPTERFROMLUID {
+typedef struct _D3DDDIARG_OPENADAPTERFROMLUID {
   UINT Interface;
   UINT Version;
   LUID AdapterLuid; // in
   D3DDDI_ADAPTERCALLBACKS* pAdapterCallbacks;
   D3DDDI_ADAPTERCALLBACKS2* pAdapterCallbacks2;
   D3D9DDI_HADAPTER hAdapter; // out
-} D3D9DDIARG_OPENADAPTERFROMLUID;
+  D3D9DDI_ADAPTERFUNCS* pAdapterFuncs; // out
+} D3DDDIARG_OPENADAPTERFROMLUID;
 
 // ---- Adapter vtable ABI (minimal) --------------------------------------------
 typedef struct _D3D9DDIARG_GETCAPS {
@@ -288,10 +290,10 @@ typedef struct AEROGPU_D3D9DDI_LOCKED_BOX {
   uint32_t slicePitch;
 } AEROGPU_D3D9DDI_LOCKED_BOX;
 
-typedef D3D9DDIARG_OPENADAPTER AEROGPU_D3D9DDIARG_OPENADAPTER;
-typedef D3D9DDIARG_OPENADAPTER2 AEROGPU_D3D9DDIARG_OPENADAPTER2;
-typedef D3D9DDIARG_OPENADAPTERFROMHDC AEROGPU_D3D9DDIARG_OPENADAPTERFROMHDC;
-typedef D3D9DDIARG_OPENADAPTERFROMLUID AEROGPU_D3D9DDIARG_OPENADAPTERFROMLUID;
+typedef D3DDDIARG_OPENADAPTER AEROGPU_D3D9DDIARG_OPENADAPTER;
+typedef D3DDDIARG_OPENADAPTER2 AEROGPU_D3D9DDIARG_OPENADAPTER2;
+typedef D3DDDIARG_OPENADAPTERFROMHDC AEROGPU_D3D9DDIARG_OPENADAPTERFROMHDC;
+typedef D3DDDIARG_OPENADAPTERFROMLUID AEROGPU_D3D9DDIARG_OPENADAPTERFROMLUID;
 
 // GetCaps / QueryAdapterInfo are adapter-level queries.
 // These argument layouts are intended to match the Windows 7-era WDK D3D9 UMD DDI.
@@ -680,17 +682,13 @@ struct AEROGPU_D3D9DDI_DEVICEFUNCS {
 // These signatures match the Win7 D3D9UMDDI prototypes. In portable mode they
 // compile against the minimal ABI shims above.
 AEROGPU_D3D9_EXPORT HRESULT AEROGPU_D3D9_CALL OpenAdapter(
-    D3D9DDIARG_OPENADAPTER* pOpenAdapter,
-    D3D9DDI_ADAPTERFUNCS* pAdapterFuncs);
+    D3DDDIARG_OPENADAPTER* pOpenAdapter);
 
 AEROGPU_D3D9_EXPORT HRESULT AEROGPU_D3D9_CALL OpenAdapter2(
-    D3D9DDIARG_OPENADAPTER2* pOpenAdapter,
-    D3D9DDI_ADAPTERFUNCS* pAdapterFuncs);
+    D3DDDIARG_OPENADAPTER2* pOpenAdapter);
 
 AEROGPU_D3D9_EXPORT HRESULT AEROGPU_D3D9_CALL OpenAdapterFromHdc(
-    D3D9DDIARG_OPENADAPTERFROMHDC* pOpenAdapter,
-    D3D9DDI_ADAPTERFUNCS* pAdapterFuncs);
+    D3DDDIARG_OPENADAPTERFROMHDC* pOpenAdapter);
 
 AEROGPU_D3D9_EXPORT HRESULT AEROGPU_D3D9_CALL OpenAdapterFromLuid(
-    D3D9DDIARG_OPENADAPTERFROMLUID* pOpenAdapter,
-    D3D9DDI_ADAPTERFUNCS* pAdapterFuncs);
+    D3DDDIARG_OPENADAPTERFROMLUID* pOpenAdapter);

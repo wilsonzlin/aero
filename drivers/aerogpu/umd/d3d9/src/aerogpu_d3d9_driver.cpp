@@ -2956,45 +2956,52 @@ HRESULT OpenAdapterCommon(const char* entrypoint,
 // -----------------------------------------------------------------------------
 
 HRESULT AEROGPU_D3D9_CALL OpenAdapter(
-    D3D9DDIARG_OPENADAPTER* pOpenAdapter,
-    D3D9DDI_ADAPTERFUNCS* pAdapterFuncs) {
-  if (!pOpenAdapter || !pAdapterFuncs) {
+    D3DDDIARG_OPENADAPTER* pOpenAdapter) {
+  if (!pOpenAdapter) {
     return E_INVALIDARG;
   }
 
   const LUID luid = aerogpu::default_luid();
+  auto* adapter_funcs = reinterpret_cast<D3D9DDI_ADAPTERFUNCS*>(pOpenAdapter->pAdapterFuncs);
+  if (!adapter_funcs) {
+    return E_INVALIDARG;
+  }
+
   return aerogpu::OpenAdapterCommon("OpenAdapter",
                                     pOpenAdapter->Interface,
                                     pOpenAdapter->Version,
                                     pOpenAdapter->pAdapterCallbacks,
-                                    pOpenAdapter->pAdapterCallbacks2,
+                                    nullptr,
                                     luid,
                                     &pOpenAdapter->hAdapter,
-                                    pAdapterFuncs);
+                                    adapter_funcs);
 }
 
 HRESULT AEROGPU_D3D9_CALL OpenAdapter2(
-    D3D9DDIARG_OPENADAPTER2* pOpenAdapter,
-    D3D9DDI_ADAPTERFUNCS* pAdapterFuncs) {
-  if (!pOpenAdapter || !pAdapterFuncs) {
+    D3DDDIARG_OPENADAPTER2* pOpenAdapter) {
+  if (!pOpenAdapter) {
     return E_INVALIDARG;
   }
 
   const LUID luid = aerogpu::default_luid();
+  auto* adapter_funcs = reinterpret_cast<D3D9DDI_ADAPTERFUNCS*>(pOpenAdapter->pAdapterFuncs);
+  if (!adapter_funcs) {
+    return E_INVALIDARG;
+  }
+
   return aerogpu::OpenAdapterCommon("OpenAdapter2",
                                     pOpenAdapter->Interface,
                                     pOpenAdapter->Version,
                                     pOpenAdapter->pAdapterCallbacks,
-                                    pOpenAdapter->pAdapterCallbacks2,
+                                    nullptr,
                                     luid,
                                     &pOpenAdapter->hAdapter,
-                                    pAdapterFuncs);
+                                    adapter_funcs);
 }
 
 HRESULT AEROGPU_D3D9_CALL OpenAdapterFromHdc(
-    D3D9DDIARG_OPENADAPTERFROMHDC* pOpenAdapter,
-    D3D9DDI_ADAPTERFUNCS* pAdapterFuncs) {
-  if (!pOpenAdapter || !pAdapterFuncs) {
+    D3DDDIARG_OPENADAPTERFROMHDC* pOpenAdapter) {
+  if (!pOpenAdapter) {
     return E_INVALIDARG;
   }
 
@@ -3010,14 +3017,19 @@ HRESULT AEROGPU_D3D9_CALL OpenAdapterFromHdc(
                 pOpenAdapter->hDc,
                 static_cast<unsigned>(luid.HighPart),
                 static_cast<unsigned>(luid.LowPart));
+  auto* adapter_funcs = reinterpret_cast<D3D9DDI_ADAPTERFUNCS*>(pOpenAdapter->pAdapterFuncs);
+  if (!adapter_funcs) {
+    return E_INVALIDARG;
+  }
+
   const HRESULT hr = aerogpu::OpenAdapterCommon("OpenAdapterFromHdc",
-                                                 pOpenAdapter->Interface,
-                                                 pOpenAdapter->Version,
-                                                 pOpenAdapter->pAdapterCallbacks,
-                                                pOpenAdapter->pAdapterCallbacks2,
+                                                pOpenAdapter->Interface,
+                                                pOpenAdapter->Version,
+                                                pOpenAdapter->pAdapterCallbacks,
+                                                nullptr,
                                                 luid,
                                                 &pOpenAdapter->hAdapter,
-                                                pAdapterFuncs);
+                                                adapter_funcs);
 
 #if defined(_WIN32)
   if (SUCCEEDED(hr) && pOpenAdapter->hDc) {
@@ -3062,21 +3074,25 @@ HRESULT AEROGPU_D3D9_CALL OpenAdapterFromHdc(
 }
 
 HRESULT AEROGPU_D3D9_CALL OpenAdapterFromLuid(
-    D3D9DDIARG_OPENADAPTERFROMLUID* pOpenAdapter,
-    D3D9DDI_ADAPTERFUNCS* pAdapterFuncs) {
-  if (!pOpenAdapter || !pAdapterFuncs) {
+    D3DDDIARG_OPENADAPTERFROMLUID* pOpenAdapter) {
+  if (!pOpenAdapter) {
     return E_INVALIDARG;
   }
 
   const LUID luid = pOpenAdapter->AdapterLuid;
+  auto* adapter_funcs = reinterpret_cast<D3D9DDI_ADAPTERFUNCS*>(pOpenAdapter->pAdapterFuncs);
+  if (!adapter_funcs) {
+    return E_INVALIDARG;
+  }
+
   const HRESULT hr = aerogpu::OpenAdapterCommon("OpenAdapterFromLuid",
                                                 pOpenAdapter->Interface,
                                                 pOpenAdapter->Version,
                                                 pOpenAdapter->pAdapterCallbacks,
-                                                pOpenAdapter->pAdapterCallbacks2,
+                                                nullptr,
                                                 luid,
                                                 &pOpenAdapter->hAdapter,
-                                                pAdapterFuncs);
+                                                adapter_funcs);
 
 #if defined(_WIN32)
   if (SUCCEEDED(hr)) {
