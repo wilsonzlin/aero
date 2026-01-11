@@ -14,7 +14,47 @@ pub use nt_packetlib::packet::PacketError;
 pub type ParseError = PacketError;
 
 // Re-export module namespaces for callers that prefer `packet::ethernet::...` paths.
-pub use nt_packetlib::packet::{arp, dhcp, dns, ethernet, icmp, ipv4, tcp, udp};
+//
+// We define these as local modules (instead of a direct `pub use nt_packetlib::packet::{...}`) so we
+// can provide a few backwards-compatibility aliases inside the module namespaces too (e.g.
+// `packet::udp::UdpDatagram`).
+pub mod arp {
+    pub use nt_packetlib::packet::arp::*;
+}
+
+pub mod dhcp {
+    pub use nt_packetlib::packet::dhcp::*;
+}
+
+pub mod dns {
+    pub use nt_packetlib::packet::dns::*;
+    pub use super::DnsType;
+}
+
+pub mod ethernet {
+    pub use nt_packetlib::packet::ethernet::*;
+    pub use super::EtherType;
+}
+
+pub mod icmp {
+    pub use nt_packetlib::packet::icmp::*;
+    pub use super::{IcmpEchoPacket, IcmpPacket};
+}
+
+pub mod ipv4 {
+    pub use nt_packetlib::packet::ipv4::*;
+    pub use super::Ipv4Protocol;
+}
+
+pub mod tcp {
+    pub use nt_packetlib::packet::tcp::*;
+}
+
+pub mod udp {
+    pub use nt_packetlib::packet::udp::*;
+    pub type UdpDatagram<'a> = UdpPacket<'a>;
+    pub type UdpDatagramBuilder<'a> = UdpPacketBuilder<'a>;
+}
 
 // Preserve the old `use aero_net_stack::packet::*;` ergonomics by re-exporting common items at the
 // top-level.
@@ -59,6 +99,7 @@ impl Ipv4Protocol {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DnsType {
     A = 1,
+    AAAA = 28,
 }
 
 /// Compatibility alias for the old `UdpDatagram` name.

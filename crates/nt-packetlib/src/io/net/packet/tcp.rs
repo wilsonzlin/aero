@@ -29,6 +29,26 @@ impl core::ops::BitOr for TcpFlags {
     }
 }
 
+impl core::ops::BitAnd for TcpFlags {
+    type Output = TcpFlags;
+
+    fn bitand(self, rhs: TcpFlags) -> Self::Output {
+        TcpFlags(self.0 & rhs.0)
+    }
+}
+
+impl core::ops::BitOrAssign for TcpFlags {
+    fn bitor_assign(&mut self, rhs: TcpFlags) {
+        self.0 |= rhs.0;
+    }
+}
+
+impl core::ops::BitAndAssign for TcpFlags {
+    fn bitand_assign(&mut self, rhs: TcpFlags) {
+        self.0 &= rhs.0;
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct TcpSegment<'a> {
     data: &'a [u8],
