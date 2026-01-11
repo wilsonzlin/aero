@@ -3,14 +3,22 @@ import { describe, expect, it, vi } from "vitest";
 import { JitWorkerClient } from "../../../src/workers/jit_worker_client";
 
 type MessageListener = (event: { data: unknown }) => void;
+type GenericListener = (event: any) => void;
 
 class FakeWorker {
-  readonly listeners = new Set<MessageListener>();
+  readonly messageListeners = new Set<MessageListener>();
+  readonly errorListeners = new Set<GenericListener>();
+  readonly messageErrorListeners = new Set<GenericListener>();
   readonly postMessageCalls: Array<{ msg: unknown; transfer: Transferable[] }> = [];
 
-  addEventListener(type: string, listener: MessageListener): void {
-    if (type !== "message") return;
-    this.listeners.add(listener);
+  addEventListener(type: string, listener: GenericListener): void {
+    if (type === "message") {
+      this.messageListeners.add(listener as MessageListener);
+    } else if (type === "error") {
+      this.errorListeners.add(listener);
+    } else if (type === "messageerror") {
+      this.messageErrorListeners.add(listener);
+    }
   }
 
   postMessage(msg: unknown, transfer: Transferable[] = []): void {
@@ -18,8 +26,20 @@ class FakeWorker {
   }
 
   dispatchMessage(data: unknown): void {
-    for (const listener of this.listeners) {
+    for (const listener of this.messageListeners) {
       listener({ data });
+    }
+  }
+
+  dispatchError(message: string): void {
+    for (const listener of this.errorListeners) {
+      listener({ message });
+    }
+  }
+
+  dispatchMessageError(): void {
+    for (const listener of this.messageErrorListeners) {
+      listener({});
     }
   }
 }
@@ -70,5 +90,23 @@ describe("JitWorkerClient", () => {
     const worker = new ThrowWorker();
     const client = new JitWorkerClient(worker as unknown as Worker);
     await expect(client.compile(new ArrayBuffer(8), { timeoutMs: 1000 })).rejects.toThrow("boom");
+  });
+
+  it("rejects pending requests when the worker errors", async () => {
+    const worker = new FakeWorker();
+    const client = new JitWorkerClient(worker as unknown as Worker);
+
+    const promise = client.compile(new ArrayBuffer(8), { timeoutMs: 1000 });
+    worker.dispatchError("worker died");
+    await expect(promise).rejects.toThrow(/worker died/i);
+  });
+
+  it("rejects pending requests on messageerror", async () => {
+    const worker = new FakeWorker();
+    const client = new JitWorkerClient(worker as unknown as Worker);
+
+    const promise = client.compile(new ArrayBuffer(8), { timeoutMs: 1000 });
+    worker.dispatchMessageError();
+    await expect(promise).rejects.toThrow(/deserialization/i);
   });
 });

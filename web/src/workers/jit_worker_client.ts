@@ -12,10 +12,14 @@ export class JitWorkerClient {
     number,
     { resolve: (value: JitWorkerResponse) => void; reject: (err: Error) => void; timeoutId: ReturnType<typeof setTimeout> }
   >();
+  readonly #onMessage: (event: MessageEvent) => void;
+  readonly #onError: (event: Event) => void;
+  readonly #onMessageError: () => void;
 
   constructor(worker: Worker) {
     this.#worker = worker;
-    this.#worker.addEventListener("message", (event) => {
+
+    this.#onMessage = (event: MessageEvent) => {
       const data = event.data as unknown;
       if (!isJitWorkerResponse(data)) return;
       const pending = this.#pending.get(data.id);
@@ -23,7 +27,23 @@ export class JitWorkerClient {
       this.#pending.delete(data.id);
       globalThis.clearTimeout(pending.timeoutId);
       pending.resolve(data);
-    });
+    };
+
+    this.#onError = (event: Event) => {
+      const message =
+        typeof (event as ErrorEvent | undefined)?.message === "string"
+          ? (event as ErrorEvent).message
+          : "JIT worker error";
+      this.#rejectAll(new Error(message));
+    };
+
+    this.#onMessageError = () => {
+      this.#rejectAll(new Error("JIT worker message deserialization failed"));
+    };
+
+    this.#worker.addEventListener("message", this.#onMessage);
+    this.#worker.addEventListener("error", this.#onError);
+    this.#worker.addEventListener("messageerror", this.#onMessageError);
   }
 
   compile(
@@ -56,5 +76,14 @@ export class JitWorkerClient {
         reject(err instanceof Error ? err : new Error(String(err)));
       }
     });
+  }
+
+  private #rejectAll(err: Error): void {
+    const pending = Array.from(this.#pending.values());
+    this.#pending.clear();
+    for (const entry of pending) {
+      globalThis.clearTimeout(entry.timeoutId);
+      entry.reject(err);
+    }
   }
 }
