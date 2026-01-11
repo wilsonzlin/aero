@@ -224,7 +224,31 @@ Practical sizing notes:
 
 If the miniport submits PCM faster than the period schedule (e.g. "fill the queue until it’s full"), the host ring buffer will eventually overfill and audio will glitch due to dropped samples.
 
-## Building (WDK 7600 / WDK 7.1)
+## Building
+
+### Supported: WDK10 / MSBuild
+
+This driver is built in CI using the WDK10 MSBuild project:
+
+- `drivers/windows7/virtio-snd/virtio-snd.vcxproj`
+
+From a Windows host with the WDK installed:
+
+```powershell
+.\ci\install-wdk.ps1
+.\ci\build-drivers.ps1 -ToolchainJson .\out\toolchain.json -Drivers windows7/virtio-snd
+```
+
+Build outputs are staged under:
+
+- `out/drivers/windows7/virtio-snd/x86/virtiosnd.sys`
+- `out/drivers/windows7/virtio-snd/x64/virtiosnd.sys`
+
+### Legacy: WDK 7600 / WDK 7.1 `build.exe` (deprecated)
+
+The original `makefile`/`sources` files are kept for reference, but the supported build path is now MSBuild (WDK10).
+
+If you still need to build with WDK 7.1:
 
 1. Open a WDK build environment:
    - **Windows 7 x86 Free Build Environment** (x86)
