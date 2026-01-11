@@ -52,7 +52,9 @@ The supported Windows 7 driver package lives under:
 * `drivers/aerogpu/packaging/win7/` (see its `README.md`)
 
 The in-tree Win7 AeroGPU INFs (`aerogpu.inf`, `aerogpu_dx11.inf`) bind to the canonical `A3A0:0001`
-HWID only. Installing against the legacy bring-up `1AED:0001` device model requires a custom INF.
+HWID only. The Win7 KMD still supports the legacy bring-up ABI (`1AED:0001`) for debugging, but
+installing against the legacy device model requires a custom INF that matches
+`PCI\VEN_1AED&DEV_0001` (and enabling the legacy emulator device model feature `emulator/aerogpu-legacy`).
 
 An older AeroGPU driver stack existed during early bring-up; it is **not** the supported driver
 package and was not WOW64-complete on Win7 x64. It is archived at

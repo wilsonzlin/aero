@@ -300,7 +300,7 @@ cd \path\to\repo\drivers\aerogpu\tests\win7
 build_all_vs2010.cmd
 :: Choose the VID/DID that matches your VM's Hardware Ids:
 run_all.cmd --require-vid=0xA3A0 --require-did=0x0001
-:: (legacy)
+:: Legacy bring-up device model (requires a custom INF + emulator/aerogpu-legacy):
 run_all.cmd --require-vid=0x1AED --require-did=0x0001
 ```
 
