@@ -495,3 +495,228 @@ fn virtio_snd_rx_captures_samples() {
     assert_eq!(telem.underrun_samples, 3);
     assert_eq!(telem.underrun_responses, 1);
 }
+
+#[test]
+fn virtio_snd_rx_resamples_host_rate_to_guest_48k() {
+    // Provide fewer host-rate samples than the guest is requesting. When the host
+    // sample rate is lower than the guest contract (44.1kHz -> 48kHz), the RX
+    // path must upsample rather than underrun.
+    let capture = TestCaptureSource {
+        samples: vec![1.0; 45],
+        pos: 0,
+        dropped: 0,
+    };
+
+    let snd = VirtioSnd::new_with_capture_and_host_sample_rate(
+        aero_audio::ring::AudioRingBuffer::new_stereo(8),
+        capture,
+        44_100,
+    );
+    let mut dev = VirtioPciDevice::new(Box::new(snd), Box::new(InterruptLog::default()));
+    let caps = parse_caps(&dev);
+
+    let mut mem = GuestRam::new(0x40000);
+
+    // Feature negotiation: accept everything the device offers.
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE,
+    );
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER,
+    );
+
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 0);
+    let f0 = bar_read_u32(&mut dev, caps.common + 0x04);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 0);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f0);
+
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x00, 1);
+    let f1 = bar_read_u32(&mut dev, caps.common + 0x04);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x08, 1);
+    bar_write_u32(&mut dev, &mut mem, caps.common + 0x0c, f1);
+
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK,
+    );
+    bar_write_u8(
+        &mut dev,
+        &mut mem,
+        caps.common + 0x14,
+        VIRTIO_STATUS_ACKNOWLEDGE
+            | VIRTIO_STATUS_DRIVER
+            | VIRTIO_STATUS_FEATURES_OK
+            | VIRTIO_STATUS_DRIVER_OK,
+    );
+
+    // Configure control and RX queues.
+    let ctrl_desc = 0x1000;
+    let ctrl_avail = 0x2000;
+    let ctrl_used = 0x3000;
+    configure_queue(
+        &mut dev,
+        &mut mem,
+        &caps,
+        VIRTIO_SND_QUEUE_CONTROL,
+        ctrl_desc,
+        ctrl_avail,
+        ctrl_used,
+    );
+
+    let rx_desc = 0x4000;
+    let rx_avail = 0x5000;
+    let rx_used = 0x6000;
+    configure_queue(
+        &mut dev,
+        &mut mem,
+        &caps,
+        VIRTIO_SND_QUEUE_RX,
+        rx_desc,
+        rx_avail,
+        rx_used,
+    );
+
+    // Drive the capture state machine: SET_PARAMS -> PREPARE -> START.
+    let ctrl_req = 0x7000;
+    let ctrl_resp = 0x7100;
+    let mut ctrl_avail_idx = 0u16;
+
+    let mut set_params = [0u8; 24];
+    set_params[0..4].copy_from_slice(&VIRTIO_SND_R_PCM_SET_PARAMS.to_le_bytes());
+    set_params[4..8].copy_from_slice(&CAPTURE_STREAM_ID.to_le_bytes());
+    set_params[8..12].copy_from_slice(&4096u32.to_le_bytes());
+    set_params[12..16].copy_from_slice(&1024u32.to_le_bytes());
+    set_params[16..20].copy_from_slice(&0u32.to_le_bytes());
+    set_params[20] = 1;
+    set_params[21] = VIRTIO_SND_PCM_FMT_S16;
+    set_params[22] = VIRTIO_SND_PCM_RATE_48000;
+    mem.write(ctrl_req, &set_params).unwrap();
+    mem.write(ctrl_resp, &[0xffu8; 64]).unwrap();
+    submit_chain(
+        &mut dev,
+        &mut mem,
+        &caps,
+        VIRTIO_SND_QUEUE_CONTROL,
+        ctrl_desc,
+        ctrl_avail,
+        ctrl_avail_idx,
+        ctrl_req,
+        set_params.len() as u32,
+        ctrl_resp,
+        64,
+    );
+    ctrl_avail_idx += 1;
+    assert_eq!(
+        u32::from_le_bytes(mem.get_slice(ctrl_resp, 4).unwrap().try_into().unwrap()),
+        VIRTIO_SND_S_OK
+    );
+
+    let prepare = [
+        VIRTIO_SND_R_PCM_PREPARE.to_le_bytes(),
+        CAPTURE_STREAM_ID.to_le_bytes(),
+    ]
+    .concat();
+    mem.write(ctrl_req, &prepare).unwrap();
+    mem.write(ctrl_resp, &[0xffu8; 64]).unwrap();
+    submit_chain(
+        &mut dev,
+        &mut mem,
+        &caps,
+        VIRTIO_SND_QUEUE_CONTROL,
+        ctrl_desc,
+        ctrl_avail,
+        ctrl_avail_idx,
+        ctrl_req,
+        prepare.len() as u32,
+        ctrl_resp,
+        64,
+    );
+    ctrl_avail_idx += 1;
+    assert_eq!(
+        u32::from_le_bytes(mem.get_slice(ctrl_resp, 4).unwrap().try_into().unwrap()),
+        VIRTIO_SND_S_OK
+    );
+
+    let start = [
+        VIRTIO_SND_R_PCM_START.to_le_bytes(),
+        CAPTURE_STREAM_ID.to_le_bytes(),
+    ]
+    .concat();
+    mem.write(ctrl_req, &start).unwrap();
+    mem.write(ctrl_resp, &[0xffu8; 64]).unwrap();
+    submit_chain(
+        &mut dev,
+        &mut mem,
+        &caps,
+        VIRTIO_SND_QUEUE_CONTROL,
+        ctrl_desc,
+        ctrl_avail,
+        ctrl_avail_idx,
+        ctrl_req,
+        start.len() as u32,
+        ctrl_resp,
+        64,
+    );
+    assert_eq!(
+        u32::from_le_bytes(mem.get_slice(ctrl_resp, 4).unwrap().try_into().unwrap()),
+        VIRTIO_SND_S_OK
+    );
+
+    // RX request: capture 48 mono samples (96 bytes).
+    let rx_hdr = 0x8000;
+    let rx_payload = 0x8100;
+    let rx_resp = 0x8200;
+
+    let hdr = [CAPTURE_STREAM_ID.to_le_bytes(), 0u32.to_le_bytes()].concat();
+    mem.write(rx_hdr, &hdr).unwrap();
+
+    let rx_avail_idx = 0u16;
+    mem.write(rx_payload, &[0xffu8; 96]).unwrap();
+    mem.write(rx_resp, &[0xffu8; 8]).unwrap();
+    submit_rx_chain(
+        &mut dev,
+        &mut mem,
+        &caps,
+        rx_desc,
+        rx_avail,
+        rx_avail_idx,
+        rx_hdr,
+        rx_payload,
+        96,
+        rx_resp,
+    );
+
+    let status_bytes = mem.get_slice(rx_resp, 8).unwrap();
+    assert_eq!(
+        u32::from_le_bytes(status_bytes[0..4].try_into().unwrap()),
+        VIRTIO_SND_S_OK
+    );
+    assert_eq!(
+        u32::from_le_bytes(status_bytes[4..8].try_into().unwrap()),
+        0
+    );
+
+    let payload_bytes = mem.get_slice(rx_payload, 96).unwrap();
+    let mut got = [0i16; 48];
+    for (i, slot) in got.iter_mut().enumerate() {
+        let off = i * 2;
+        *slot = i16::from_le_bytes(payload_bytes[off..off + 2].try_into().unwrap());
+    }
+    assert_eq!(got, [32_767; 48]);
+
+    let telem = dev
+        .device_mut::<VirtioSnd<aero_audio::ring::AudioRingBuffer, TestCaptureSource>>()
+        .unwrap()
+        .capture_telemetry();
+    assert_eq!(telem.dropped_samples, 0);
+    assert_eq!(telem.underrun_samples, 0);
+    assert_eq!(telem.underrun_responses, 0);
+}

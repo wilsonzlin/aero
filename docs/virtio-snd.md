@@ -119,6 +119,10 @@ If the host capture backend cannot provide enough samples to fill the payload bu
 In browser builds, captured samples are expected to come from the Web mic capture
 ring buffer (`SharedArrayBuffer`) via `aero_platform::audio::mic_bridge::MicBridge`.
 
+### Capture sample-rate conversion
+
+The browser microphone capture graph runs at the owning `AudioContext.sampleRate` (which browsers may ignore; Safari/iOS often uses 44.1kHz). The virtio-snd guest-facing ABI is fixed at 48kHz S16_LE, so the RX/capture path resamples from `host_sample_rate_hz` to **48kHz** before encoding PCM payload bytes.
+
 ### AudioWorklet ring buffer layout
 
 The AudioWorklet ring buffer used by the AU-WORKLET path uses **frame indices** (not sample indices).
@@ -135,17 +139,30 @@ Layout (little-endian):
 - u32 `overrunCount` (bytes 12..16): frames dropped by the producer due to buffer full (wraps at 2^32)
 - f32 `samples[]` (bytes 16..), interleaved by channel: `L0, R0, L1, R1, ...`
 
-## Audio Output Path
+## Host sample rate and resampling
 
-In the canonical Rust device model (`aero_virtio::devices::snd::VirtioSnd`), TX PCM samples are:
+In the canonical Rust device model (`aero_virtio::devices::snd::VirtioSnd`), the guest contract is fixed at **48kHz** PCM, but the host Web Audio graph may run at a different sample rate. The device therefore performs sample-rate conversion in both directions:
+
+### TX / playback
+
+TX PCM samples are:
 
 1. decoded from interleaved S16_LE to interleaved `f32`
 2. resampled from the guest contract rate (**48kHz**) to the host/output sample rate (typically `AudioContext.sampleRate`)
 3. pushed into an `aero_audio::sink::AudioSink` (usually an AudioWorklet ring buffer producer).
 
-The host/output rate defaults to 48kHz, but can be configured via:
+### RX / capture
+
+RX PCM samples are:
+
+1. read as mono `f32` from the capture backend (typically `MicBridge`) at the host/input sample rate
+2. resampled from the host/input sample rate (`host_sample_rate_hz`) to the guest contract rate (**48kHz**)
+3. encoded as S16_LE and written into the guest RX payload buffers.
+
+`host_sample_rate_hz` defaults to 48kHz, but can be configured via:
 
 - `VirtioSnd::new_with_host_sample_rate(...)`
+- `VirtioSnd::new_with_capture_and_host_sample_rate(...)`
 - `VirtioSnd::set_host_sample_rate_hz(...)`
 
 ## Windows 7 Driver Strategy

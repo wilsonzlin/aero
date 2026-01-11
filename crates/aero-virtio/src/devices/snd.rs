@@ -106,9 +106,14 @@ pub struct VirtioSnd<O: AudioSink, I: AudioCaptureSource = NullCaptureSource> {
     capture: PcmStream,
     capture_telemetry: CaptureTelemetry,
     host_sample_rate_hz: u32,
+    /// Resampler for the playback/TX path (guest 48kHz -> host/output rate).
     resampler: LinearResampler,
     decoded_frames_scratch: Vec<[f32; 2]>,
     resampled_scratch: Vec<f32>,
+    /// Resampler for the capture/RX path (host/input rate -> guest 48kHz).
+    capture_resampler: LinearResampler,
+    capture_frames_scratch: Vec<[f32; 2]>,
+    capture_interleaved_scratch: Vec<f32>,
     capture_samples_scratch: Vec<f32>,
 }
 
@@ -157,6 +162,9 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
             resampler: LinearResampler::new(PCM_SAMPLE_RATE_HZ, host_sample_rate_hz),
             decoded_frames_scratch: Vec::new(),
             resampled_scratch: Vec::new(),
+            capture_resampler: LinearResampler::new(host_sample_rate_hz, PCM_SAMPLE_RATE_HZ),
+            capture_frames_scratch: Vec::new(),
+            capture_interleaved_scratch: Vec::new(),
             capture_samples_scratch: Vec::new(),
         }
     }
@@ -174,6 +182,11 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
             .reset_rates(PCM_SAMPLE_RATE_HZ, host_sample_rate_hz);
         self.decoded_frames_scratch.clear();
         self.resampled_scratch.clear();
+        self.capture_resampler
+            .reset_rates(host_sample_rate_hz, PCM_SAMPLE_RATE_HZ);
+        self.capture_frames_scratch.clear();
+        self.capture_interleaved_scratch.clear();
+        self.capture_samples_scratch.clear();
     }
 
     pub fn output_mut(&mut self) -> &mut O {
@@ -546,21 +559,76 @@ impl<O: AudioSink, I: AudioCaptureSource> VirtioSnd<O, I> {
                 self.capture_telemetry.dropped_samples +=
                     self.capture_source.take_dropped_samples();
 
-                self.capture_samples_scratch.resize(samples_needed, 0.0);
-                let got = self
-                    .capture_source
-                    .read_mono_f32(&mut self.capture_samples_scratch[..]);
-                if got < samples_needed {
-                    self.capture_telemetry.underrun_samples += (samples_needed - got) as u64;
-                    self.capture_telemetry.underrun_responses += 1;
-                    self.capture_samples_scratch[got..].fill(0.0);
-                }
+                if self.host_sample_rate_hz == PCM_SAMPLE_RATE_HZ {
+                    self.capture_samples_scratch.resize(samples_needed, 0.0);
+                    let got = self
+                        .capture_source
+                        .read_mono_f32(&mut self.capture_samples_scratch[..]);
+                    if got < samples_needed {
+                        self.capture_telemetry.underrun_samples += (samples_needed - got) as u64;
+                        self.capture_telemetry.underrun_responses += 1;
+                        self.capture_samples_scratch[got..].fill(0.0);
+                    }
 
-                write_pcm_payload_s16le(
-                    mem,
-                    payload_descs,
-                    &self.capture_samples_scratch[..samples_needed],
-                )
+                    write_pcm_payload_s16le(
+                        mem,
+                        payload_descs,
+                        &self.capture_samples_scratch[..samples_needed],
+                    )
+                } else {
+                    // Resample host microphone samples from the host/input rate to the guest contract
+                    // rate (48kHz). `AudioCaptureSource` itself has no sample rate metadata, so the
+                    // device relies on `host_sample_rate_hz` being configured to match the host
+                    // capture graph (typically `AudioContext.sampleRate`).
+                    if self.capture_resampler.src_rate_hz() != self.host_sample_rate_hz
+                        || self.capture_resampler.dst_rate_hz() != PCM_SAMPLE_RATE_HZ
+                    {
+                        self.capture_resampler
+                            .reset_rates(self.host_sample_rate_hz, PCM_SAMPLE_RATE_HZ);
+                    }
+
+                    let required_src = self
+                        .capture_resampler
+                        .required_source_frames(samples_needed);
+                    let queued_src = self.capture_resampler.queued_source_frames();
+                    let need_src = required_src.saturating_sub(queued_src);
+
+                    if need_src > 0 {
+                        self.capture_samples_scratch.resize(need_src, 0.0);
+                        let got = self
+                            .capture_source
+                            .read_mono_f32(&mut self.capture_samples_scratch[..]);
+                        if got < need_src {
+                            // Track underruns in host sample units (matches `dropped_samples`).
+                            self.capture_telemetry.underrun_samples += (need_src - got) as u64;
+                            self.capture_telemetry.underrun_responses += 1;
+                            self.capture_samples_scratch[got..].fill(0.0);
+                        }
+
+                        self.capture_frames_scratch.resize(need_src, [0.0; 2]);
+                        for (dst, &s) in self
+                            .capture_frames_scratch
+                            .iter_mut()
+                            .zip(&self.capture_samples_scratch)
+                        {
+                            *dst = [s, s];
+                        }
+                        self.capture_resampler
+                            .push_source_frames(&self.capture_frames_scratch);
+                    }
+
+                    let produced_frames = self.capture_resampler.produce_interleaved_stereo_into(
+                        samples_needed,
+                        &mut self.capture_interleaved_scratch,
+                    );
+
+                    self.capture_samples_scratch.resize(produced_frames, 0.0);
+                    for i in 0..produced_frames {
+                        self.capture_samples_scratch[i] = self.capture_interleaved_scratch[i * 2];
+                    }
+
+                    write_pcm_payload_s16le(mem, payload_descs, &self.capture_samples_scratch)
+                }
             }
         } else {
             write_payload_silence(mem, payload_descs)
@@ -795,6 +863,10 @@ impl<O: AudioSink + 'static, I: AudioCaptureSource + 'static> VirtioDevice for V
             .reset_rates(PCM_SAMPLE_RATE_HZ, self.host_sample_rate_hz);
         self.decoded_frames_scratch.clear();
         self.resampled_scratch.clear();
+        self.capture_resampler
+            .reset_rates(self.host_sample_rate_hz, PCM_SAMPLE_RATE_HZ);
+        self.capture_frames_scratch.clear();
+        self.capture_interleaved_scratch.clear();
         self.capture_samples_scratch.clear();
     }
 
