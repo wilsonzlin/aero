@@ -210,6 +210,12 @@ static int RunD3D11SwapchainRotateSanity(int argc, char** argv) {
 
   D3D11_TEXTURE2D_DESC bb_desc;
   buffer0->GetDesc(&bb_desc);
+  if (bb_desc.Format != DXGI_FORMAT_B8G8R8A8_UNORM) {
+    return aerogpu_test::Fail(kTestName,
+                              "unexpected backbuffer format: %u (expected DXGI_FORMAT_B8G8R8A8_UNORM=%u)",
+                              (unsigned)bb_desc.Format,
+                              (unsigned)DXGI_FORMAT_B8G8R8A8_UNORM);
+  }
 
   D3D11_VIEWPORT vp;
   vp.TopLeftX = 0;
@@ -251,6 +257,7 @@ static int RunD3D11SwapchainRotateSanity(int argc, char** argv) {
 
   // Validate the pre-present contents to make swapchain-rotation failures clearer. If these don't
   // match, the failure is in rendering/readback rather than RotateResourceIdentities.
+  context->OMSetRenderTargets(0, NULL, NULL);
   context->CopyResource(staging0.get(), buffer0.get());
   context->CopyResource(staging1.get(), buffer1.get());
   context->Flush();
@@ -261,6 +268,18 @@ static int RunD3D11SwapchainRotateSanity(int argc, char** argv) {
   if (FAILED(hr)) {
     return FailD3D11WithRemovedReason(kTestName, "Map(staging0, pre-present)", hr, device.get());
   }
+  if (!map.pData) {
+    context->Unmap(staging0.get(), 0);
+    return aerogpu_test::Fail(kTestName, "Map(staging0, pre-present) returned NULL pData");
+  }
+  const UINT min_row_pitch = bb_desc.Width * 4;
+  if (map.RowPitch < min_row_pitch) {
+    context->Unmap(staging0.get(), 0);
+    return aerogpu_test::Fail(kTestName,
+                              "Map(staging0, pre-present) returned too-small RowPitch=%u (min=%u)",
+                              (unsigned)map.RowPitch,
+                              (unsigned)min_row_pitch);
+  }
   const uint32_t before0 =
       aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, (int)bb_desc.Width / 2, (int)bb_desc.Height / 2);
   context->Unmap(staging0.get(), 0);
@@ -269,6 +288,17 @@ static int RunD3D11SwapchainRotateSanity(int argc, char** argv) {
   hr = context->Map(staging1.get(), 0, D3D11_MAP_READ, 0, &map);
   if (FAILED(hr)) {
     return FailD3D11WithRemovedReason(kTestName, "Map(staging1, pre-present)", hr, device.get());
+  }
+  if (!map.pData) {
+    context->Unmap(staging1.get(), 0);
+    return aerogpu_test::Fail(kTestName, "Map(staging1, pre-present) returned NULL pData");
+  }
+  if (map.RowPitch < min_row_pitch) {
+    context->Unmap(staging1.get(), 0);
+    return aerogpu_test::Fail(kTestName,
+                              "Map(staging1, pre-present) returned too-small RowPitch=%u (min=%u)",
+                              (unsigned)map.RowPitch,
+                              (unsigned)min_row_pitch);
   }
   const uint32_t before1 =
       aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, (int)bb_desc.Width / 2, (int)bb_desc.Height / 2);
@@ -291,6 +321,7 @@ static int RunD3D11SwapchainRotateSanity(int argc, char** argv) {
     return FailD3D11WithRemovedReason(kTestName, "IDXGISwapChain::Present", hr, device.get());
   }
 
+  context->OMSetRenderTargets(0, NULL, NULL);
   context->CopyResource(staging0.get(), buffer0.get());
   context->CopyResource(staging1.get(), buffer1.get());
   context->Flush();
@@ -301,6 +332,17 @@ static int RunD3D11SwapchainRotateSanity(int argc, char** argv) {
   hr = context->Map(staging0.get(), 0, D3D11_MAP_READ, 0, &map);
   if (FAILED(hr)) {
     return FailD3D11WithRemovedReason(kTestName, "Map(staging0)", hr, device.get());
+  }
+  if (!map.pData) {
+    context->Unmap(staging0.get(), 0);
+    return aerogpu_test::Fail(kTestName, "Map(staging0) returned NULL pData");
+  }
+  if (map.RowPitch < min_row_pitch) {
+    context->Unmap(staging0.get(), 0);
+    return aerogpu_test::Fail(kTestName,
+                              "Map(staging0) returned too-small RowPitch=%u (min=%u)",
+                              (unsigned)map.RowPitch,
+                              (unsigned)min_row_pitch);
   }
   const uint32_t after0 =
       aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, (int)bb_desc.Width / 2, (int)bb_desc.Height / 2);
@@ -321,6 +363,17 @@ static int RunD3D11SwapchainRotateSanity(int argc, char** argv) {
   hr = context->Map(staging1.get(), 0, D3D11_MAP_READ, 0, &map);
   if (FAILED(hr)) {
     return FailD3D11WithRemovedReason(kTestName, "Map(staging1)", hr, device.get());
+  }
+  if (!map.pData) {
+    context->Unmap(staging1.get(), 0);
+    return aerogpu_test::Fail(kTestName, "Map(staging1) returned NULL pData");
+  }
+  if (map.RowPitch < min_row_pitch) {
+    context->Unmap(staging1.get(), 0);
+    return aerogpu_test::Fail(kTestName,
+                              "Map(staging1) returned too-small RowPitch=%u (min=%u)",
+                              (unsigned)map.RowPitch,
+                              (unsigned)min_row_pitch);
   }
   const uint32_t after1 =
       aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, (int)bb_desc.Width / 2, (int)bb_desc.Height / 2);
