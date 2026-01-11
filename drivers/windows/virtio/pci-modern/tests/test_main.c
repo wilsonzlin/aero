@@ -895,6 +895,29 @@ static void TestQueueSetupRejectUnalignedOrInvalidQueue(void)
 	VirtioPciModernTransportUninit(&t);
 }
 
+static void TestQueueSetupRejectNotifyOffOutOfRangeCompat(void)
+{
+	FAKE_DEV dev;
+	VIRTIO_PCI_MODERN_OS_INTERFACE os;
+	VIRTIO_PCI_MODERN_TRANSPORT t;
+	NTSTATUS st;
+	const UINT64 desc_pa = 0x1122334455667700ull;
+	const UINT64 avail_pa = 0x1122334455668800ull;
+	const UINT64 used_pa = 0x1122334455669900ull;
+
+	FakeDevInitValid(&dev);
+	dev.QueueNotifyOff[0] = 100;
+	os = GetOs(&dev);
+
+	st = VirtioPciModernTransportInit(&t, &os, VIRTIO_PCI_MODERN_TRANSPORT_MODE_COMPAT, 0x10000000u, sizeof(dev.Bar0));
+	assert(st == STATUS_SUCCESS);
+
+	st = VirtioPciModernTransportSetupQueue(&t, 0, desc_pa, avail_pa, used_pa);
+	assert(st == STATUS_INVALID_PARAMETER);
+
+	VirtioPciModernTransportUninit(&t);
+}
+
 static void TestNotifyRejectInvalidQueue(void)
 {
 	FAKE_DEV dev;
@@ -1173,6 +1196,7 @@ int main(void)
 	TestNegotiateFeaturesCompatDoesNotNegotiatePackedRing();
 	TestQueueSetupAndNotify();
 	TestQueueSetupRejectUnalignedOrInvalidQueue();
+	TestQueueSetupRejectNotifyOffOutOfRangeCompat();
 	TestNotifyRejectInvalidQueue();
 	TestNotifyRejectInvalidQueueCompat();
 	TestNotifyRejectNotifyOffTooLargeCompat();

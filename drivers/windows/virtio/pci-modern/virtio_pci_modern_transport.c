@@ -749,6 +749,7 @@ NTSTATUS VirtioPciModernTransportSetupQueue(VIRTIO_PCI_MODERN_TRANSPORT *t, UINT
 	VIRTIO_PCI_MODERN_SPINLOCK_STATE state;
 	UINT16 notify_off;
 	UINT16 enabled;
+	UINT64 notify_byte_off;
 
 	if (t == NULL || t->CommonCfg == NULL) {
 		return STATUS_INVALID_PARAMETER;
@@ -773,6 +774,13 @@ NTSTATUS VirtioPciModernTransportSetupQueue(VIRTIO_PCI_MODERN_TRANSPORT *t, UINT
 	if (t->Mode == VIRTIO_PCI_MODERN_TRANSPORT_MODE_STRICT && notify_off != q) {
 		VirtioPciModernUnlock(t, state);
 		return STATUS_NOT_SUPPORTED;
+	}
+
+	/* Ensure the queue's notify address is within the mapped notify region. */
+	notify_byte_off = (UINT64)notify_off * (UINT64)t->NotifyOffMultiplier;
+	if (notify_byte_off + sizeof(UINT16) > (UINT64)t->NotifyLength) {
+		VirtioPciModernUnlock(t, state);
+		return STATUS_INVALID_PARAMETER;
 	}
 
 	t->CommonCfg->queue_desc_lo = (UINT32)desc_pa;
