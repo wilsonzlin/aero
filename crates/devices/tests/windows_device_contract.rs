@@ -3,6 +3,10 @@ use aero_devices::pci::profile::{
     VIRTIO_NET, VIRTIO_SND,
 };
 
+fn repo_root() -> std::path::PathBuf {
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
+
 fn parse_hex_u16(value: &str) -> u16 {
     let value = value
         .trim()
@@ -95,6 +99,33 @@ fn assert_contract_matches_profile(profile: PciDeviceProfile, contract: &serde_j
     );
 }
 
+fn inf_installs_service(contents: &str, expected_service: &str) -> bool {
+    let expected_service = expected_service.to_ascii_lowercase();
+
+    contents.lines().any(|line| {
+        let line = line.split(';').next().unwrap_or("").trim();
+        if line.is_empty() {
+            return false;
+        }
+
+        let mut parts = line.splitn(2, '=');
+        let key = parts.next().unwrap_or("").trim().to_ascii_lowercase();
+        if key != "addservice" {
+            return false;
+        }
+
+        let value = parts.next().unwrap_or("").trim();
+        let installed_service = value
+            .split(|c: char| c == ',' || c.is_whitespace())
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_ascii_lowercase();
+
+        installed_service == expected_service
+    })
+}
+
 #[test]
 fn windows_device_contract_virtio_input_matches_pci_profile() {
     let contract: serde_json::Value =
@@ -139,6 +170,45 @@ fn windows_device_contract_virtio_input_matches_pci_profile() {
     assert_eq!(
         input.get("virtio_device_type").and_then(|v| v.as_u64()),
         Some(18)
+    );
+}
+
+#[test]
+fn windows_device_contract_virtio_input_inf_installs_declared_service() {
+    let contract: serde_json::Value =
+        serde_json::from_str(include_str!("../../../docs/windows-device-contract.json"))
+            .expect("parse windows-device-contract.json");
+
+    let devices = contract
+        .get("devices")
+        .and_then(|v| v.as_array())
+        .expect("windows-device-contract.json missing devices array");
+
+    let input = find_contract_device(devices, "virtio-input");
+    let expected_service = input
+        .get("driver_service_name")
+        .and_then(|v| v.as_str())
+        .expect("device entry missing driver_service_name");
+    let inf_name = input
+        .get("inf_name")
+        .and_then(|v| v.as_str())
+        .expect("device entry missing inf_name");
+
+    let inf_path = repo_root()
+        .join("drivers/windows/virtio-input")
+        .join(inf_name);
+    assert!(
+        inf_path.exists(),
+        "expected INF referenced by the windows device contract to exist at {}",
+        inf_path.display()
+    );
+
+    let inf_contents =
+        std::fs::read_to_string(&inf_path).expect("read virtio-input INF from repository");
+    assert!(
+        inf_installs_service(&inf_contents, expected_service),
+        "expected {} to install service {expected_service:?} via an AddService directive",
+        inf_path.display()
     );
 }
 
