@@ -82,6 +82,7 @@ static void PrintUsage() {
            L"  --query-version\n"
            L"  --query-fence\n"
            L"  --dump-ring\n"
+           L"  --dump-vblank\n"
            L"  --selftest\n");
 }
 
@@ -300,6 +301,45 @@ static int DoDumpRing(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t ri
   return 0;
 }
 
+static int DoDumpVblank(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t vidpnSourceId) {
+  aerogpu_escape_dump_vblank_inout q;
+  ZeroMemory(&q, sizeof(q));
+  q.hdr.version = AEROGPU_ESCAPE_VERSION;
+  q.hdr.op = AEROGPU_ESCAPE_OP_DUMP_VBLANK;
+  q.hdr.size = sizeof(q);
+  q.hdr.reserved0 = 0;
+  q.vidpn_source_id = vidpnSourceId;
+
+  NTSTATUS st = SendAerogpuEscape(f, hAdapter, &q, sizeof(q));
+  if (!NT_SUCCESS(st)) {
+    PrintNtStatus(L"D3DKMTEscape(dump-vblank) failed", f, st);
+    return 2;
+  }
+
+  wprintf(L"Vblank (VidPn source %lu)\n", (unsigned long)q.vidpn_source_id);
+  wprintf(L"  IRQ_STATUS: 0x%08lx\n", (unsigned long)q.irq_status);
+  wprintf(L"  IRQ_ENABLE: 0x%08lx\n", (unsigned long)q.irq_enable);
+
+  if ((q.flags & AEROGPU_DBGCTL_VBLANK_SUPPORTED) == 0) {
+    wprintf(L"  vblank: not supported (AEROGPU_FEATURE_VBLANK not set)\n");
+    return 0;
+  }
+
+  wprintf(L"  vblank_seq: 0x%I64x (%I64u)\n", (unsigned long long)q.vblank_seq, (unsigned long long)q.vblank_seq);
+  wprintf(L"  last_vblank_time_ns: 0x%I64x (%I64u ns)\n",
+          (unsigned long long)q.last_vblank_time_ns,
+          (unsigned long long)q.last_vblank_time_ns);
+
+  if (q.vblank_period_ns != 0) {
+    const double hz = 1000000000.0 / (double)q.vblank_period_ns;
+    wprintf(L"  vblank_period_ns: %lu (~%.3f Hz)\n", (unsigned long)q.vblank_period_ns, hz);
+  } else {
+    wprintf(L"  vblank_period_ns: 0\n");
+  }
+
+  return 0;
+}
+
 static int DoSelftest(const D3DKMT_FUNCS *f, D3DKMT_HANDLE hAdapter, uint32_t timeoutMs) {
   aerogpu_escape_selftest_inout q;
   ZeroMemory(&q, sizeof(q));
@@ -332,6 +372,7 @@ int wmain(int argc, wchar_t **argv) {
     CMD_QUERY_VERSION,
     CMD_QUERY_FENCE,
     CMD_DUMP_RING,
+    CMD_DUMP_VBLANK,
     CMD_SELFTEST
   } cmd = CMD_NONE;
 
@@ -396,6 +437,12 @@ int wmain(int argc, wchar_t **argv) {
     }
     if (wcscmp(a, L"--dump-ring") == 0) {
       if (!SetCommand(CMD_DUMP_RING)) {
+        return 1;
+      }
+      continue;
+    }
+    if (wcscmp(a, L"--dump-vblank") == 0) {
+      if (!SetCommand(CMD_DUMP_VBLANK)) {
         return 1;
       }
       continue;
@@ -466,6 +513,9 @@ int wmain(int argc, wchar_t **argv) {
     break;
   case CMD_DUMP_RING:
     rc = DoDumpRing(&f, open.hAdapter, ringId);
+    break;
+  case CMD_DUMP_VBLANK:
+    rc = DoDumpVblank(&f, open.hAdapter, (uint32_t)open.VidPnSourceId);
     break;
   case CMD_SELFTEST:
     rc = DoSelftest(&f, open.hAdapter, timeoutMs);

@@ -23,6 +23,7 @@ extern "C" {
 #define AEROGPU_ESCAPE_OP_QUERY_FENCE 2u
 #define AEROGPU_ESCAPE_OP_DUMP_RING 3u
 #define AEROGPU_ESCAPE_OP_SELFTEST 4u
+#define AEROGPU_ESCAPE_OP_DUMP_VBLANK 5u
 
 #define AEROGPU_DBGCTL_MAX_RECENT_DESCRIPTORS 32u
 
@@ -38,6 +39,11 @@ enum aerogpu_dbgctl_selftest_error {
   AEROGPU_DBGCTL_SELFTEST_ERR_GPU_BUSY = 3,
   AEROGPU_DBGCTL_SELFTEST_ERR_NO_RESOURCES = 4,
   AEROGPU_DBGCTL_SELFTEST_ERR_TIMEOUT = 5,
+};
+
+enum aerogpu_dbgctl_vblank_flags {
+  /* KMD observed AEROGPU_FEATURE_VBLANK and populated vblank fields. */
+  AEROGPU_DBGCTL_VBLANK_SUPPORTED = (1u << 0),
 };
 
 #pragma pack(push, 1)
@@ -82,6 +88,21 @@ typedef struct aerogpu_escape_selftest_inout {
 } aerogpu_escape_selftest_inout;
 
 AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_selftest_inout) == 32);
+
+typedef struct aerogpu_escape_dump_vblank_inout {
+  aerogpu_escape_header hdr;
+  aerogpu_u32 vidpn_source_id;
+  aerogpu_u32 irq_status;
+  aerogpu_u32 irq_enable;
+  aerogpu_u32 flags; /* aerogpu_dbgctl_vblank_flags */
+  aerogpu_u64 vblank_seq;
+  aerogpu_u64 last_vblank_time_ns;
+  aerogpu_u32 vblank_period_ns;
+  aerogpu_u32 reserved0;
+} aerogpu_escape_dump_vblank_inout;
+
+/* Must remain stable across x86/x64. */
+AEROGPU_DBGCTL_STATIC_ASSERT(sizeof(aerogpu_escape_dump_vblank_inout) == 56);
 
 #pragma pack(pop)
 

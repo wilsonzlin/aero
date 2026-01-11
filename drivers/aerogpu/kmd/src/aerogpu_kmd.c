@@ -2,6 +2,27 @@
 #include "aerogpu_dbgctl_escape.h"
 
 /*
+ * The miniport driver currently includes `aerogpu_protocol.h` (legacy combined
+ * header) via `aerogpu_kmd.h`. For dbgctl's vblank introspection we need MMIO
+ * register offsets from the newer PCI/MMIO ABI header.
+ *
+ * Both headers define some overlapping legacy macro names (e.g.
+ * AEROGPU_PCI_VENDOR_ID). Undefine those before including `aerogpu_pci.h` to
+ * keep builds warning-clean under /W4.
+ */
+#ifdef AEROGPU_PCI_VENDOR_ID
+#undef AEROGPU_PCI_VENDOR_ID
+#endif
+#ifdef AEROGPU_PCI_DEVICE_ID
+#undef AEROGPU_PCI_DEVICE_ID
+#endif
+#ifdef AEROGPU_MMIO_MAGIC
+#undef AEROGPU_MMIO_MAGIC
+#endif
+
+#include "aerogpu_pci.h"
+
+/*
  * WDDM miniport entrypoint from dxgkrnl.
  *
  * The WDK import library provides the symbol, but it is declared here to avoid
@@ -36,6 +57,25 @@ typedef struct _AEROGPU_DMA_PRIV {
 } AEROGPU_DMA_PRIV;
 
 /* ---- Helpers ------------------------------------------------------------ */
+
+/*
+ * Read a 64-bit MMIO value exposed as two 32-bit registers in LO/HI form.
+ *
+ * Use an HI/LO/HI pattern to avoid tearing if the device updates the value
+ * concurrently.
+ */
+static aerogpu_u64 AeroGpuReadRegU64HiLoHi(_In_ const AEROGPU_ADAPTER* Adapter, _In_ ULONG LoOffset, _In_ ULONG HiOffset)
+{
+    ULONG hi = AeroGpuReadRegU32(Adapter, HiOffset);
+    for (;;) {
+        const ULONG lo = AeroGpuReadRegU32(Adapter, LoOffset);
+        const ULONG hi2 = AeroGpuReadRegU32(Adapter, HiOffset);
+        if (hi == hi2) {
+            return ((aerogpu_u64)hi << 32) | (aerogpu_u64)lo;
+        }
+        hi = hi2;
+    }
+}
 
 static VOID AeroGpuLogSubmission(_Inout_ AEROGPU_ADAPTER* Adapter, _In_ ULONG Fence, _In_ ULONG Type, _In_ ULONG DmaSize)
 {
@@ -1334,6 +1374,53 @@ static NTSTATUS APIENTRY AeroGpuDdiEscape(_In_ const HANDLE hAdapter, _Inout_ DX
              */
             io->passed = 0;
             io->error_code = AEROGPU_DBGCTL_SELFTEST_ERR_TIMEOUT;
+        }
+
+        return STATUS_SUCCESS;
+    }
+
+    if (hdr->op == AEROGPU_ESCAPE_OP_DUMP_VBLANK) {
+        if (pEscape->PrivateDriverDataSize < sizeof(aerogpu_escape_dump_vblank_inout)) {
+            return STATUS_BUFFER_TOO_SMALL;
+        }
+
+        aerogpu_escape_dump_vblank_inout* io = (aerogpu_escape_dump_vblank_inout*)pEscape->pPrivateDriverData;
+
+        /* Only VidPn source 0 is currently implemented. */
+        if (io->vidpn_source_id != AEROGPU_VIDPN_SOURCE_ID) {
+            return STATUS_NOT_SUPPORTED;
+        }
+
+        io->hdr.version = AEROGPU_ESCAPE_VERSION;
+        io->hdr.op = AEROGPU_ESCAPE_OP_DUMP_VBLANK;
+        io->hdr.size = sizeof(*io);
+        io->hdr.reserved0 = 0;
+
+        io->irq_status = adapter->Bar0 ? AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_IRQ_STATUS) : 0;
+        io->irq_enable = adapter->Bar0 ? AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE) : 0;
+        io->flags = 0;
+
+        aerogpu_u64 features = 0;
+        if (adapter->Bar0) {
+            const aerogpu_u32 featuresLo = (aerogpu_u32)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FEATURES_LO);
+            const aerogpu_u32 featuresHi = (aerogpu_u32)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_FEATURES_HI);
+            features = ((aerogpu_u64)featuresHi << 32) | (aerogpu_u64)featuresLo;
+        }
+
+        io->vblank_seq = 0;
+        io->last_vblank_time_ns = 0;
+        io->vblank_period_ns = 0;
+        io->reserved0 = 0;
+
+        if (adapter->Bar0 && (features & (aerogpu_u64)AEROGPU_FEATURE_VBLANK)) {
+            io->flags |= AEROGPU_DBGCTL_VBLANK_SUPPORTED;
+            io->vblank_seq = AeroGpuReadRegU64HiLoHi(adapter,
+                                                     AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_LO,
+                                                     AEROGPU_MMIO_REG_SCANOUT0_VBLANK_SEQ_HI);
+            io->last_vblank_time_ns = AeroGpuReadRegU64HiLoHi(adapter,
+                                                              AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_LO,
+                                                              AEROGPU_MMIO_REG_SCANOUT0_VBLANK_TIME_NS_HI);
+            io->vblank_period_ns = (aerogpu_u32)AeroGpuReadRegU32(adapter, AEROGPU_MMIO_REG_SCANOUT0_VBLANK_PERIOD_NS);
         }
 
         return STATUS_SUCCESS;

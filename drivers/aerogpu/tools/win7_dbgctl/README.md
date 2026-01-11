@@ -20,6 +20,9 @@ Minimum supported commands:
 - `aerogpu_dbgctl --dump-ring`  
   Dumps ring head/tail + recent descriptors (if exposed by the driver).
 
+- `aerogpu_dbgctl --dump-vblank`  
+  Dumps vblank timing counters (seq/last time/period) and IRQ status/enable masks.
+
 - `aerogpu_dbgctl --selftest`  
   Triggers a simple KMD-side self-test.
 
@@ -36,6 +39,7 @@ aerogpu_dbgctl --list-displays
 aerogpu_dbgctl --query-version
 aerogpu_dbgctl --query-fence
 aerogpu_dbgctl --dump-ring --ring-id 0
+aerogpu_dbgctl --dump-vblank
 aerogpu_dbgctl --selftest --timeout-ms 2000
 ```
 
@@ -81,6 +85,7 @@ Escape ops used:
 - `AEROGPU_ESCAPE_OP_QUERY_DEVICE` → `--query-version`
 - `AEROGPU_ESCAPE_OP_QUERY_FENCE` → `--query-fence`
 - `AEROGPU_ESCAPE_OP_DUMP_RING` → `--dump-ring`
+- `AEROGPU_ESCAPE_OP_DUMP_VBLANK` → `--dump-vblank`
 - `AEROGPU_ESCAPE_OP_SELFTEST` → `--selftest`
 
 ## Notes / troubleshooting
