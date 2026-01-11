@@ -1,4 +1,10 @@
 use aero_gpu_trace::{AerogpuMemoryRangeCapture, TraceMeta, TraceReader, TraceWriter};
+use aero_protocol::aerogpu::aerogpu_cmd::{
+    AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdStreamHeader as ProtocolCmdStreamHeader,
+};
+use aero_protocol::aerogpu::aerogpu_ring::{
+    AerogpuAllocEntry as ProtocolAllocEntry, AerogpuAllocTableHeader as ProtocolAllocTableHeader,
+};
 use std::fs;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
@@ -27,6 +33,12 @@ const AEROGPU_FORMAT_R8G8B8A8_UNORM: u32 = 3;
 const AEROGPU_CLEAR_COLOR: u32 = 1 << 0;
 const AEROGPU_TOPOLOGY_TRIANGLELIST: u32 = 4;
 
+const CMD_STREAM_SIZE_BYTES_OFFSET: usize =
+    core::mem::offset_of!(ProtocolCmdStreamHeader, size_bytes);
+const CMD_HDR_SIZE_BYTES_OFFSET: usize = core::mem::offset_of!(ProtocolCmdHdr, size_bytes);
+const ALLOC_TABLE_SIZE_BYTES_OFFSET: usize =
+    core::mem::offset_of!(ProtocolAllocTableHeader, size_bytes);
+
 fn fixture_path() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../tests/fixtures/aerogpu_cmd_triangle.aerogputrace")
@@ -53,7 +65,8 @@ fn emit_packet(bytes: &mut Vec<u8>, opcode: u32, payload: impl FnOnce(&mut Vec<u
     let size_bytes = (bytes.len() - start) as u32;
     assert!(size_bytes >= 8);
     assert_eq!(size_bytes % 4, 0);
-    bytes[start + 4..start + 8].copy_from_slice(&size_bytes.to_le_bytes());
+    bytes[start + CMD_HDR_SIZE_BYTES_OFFSET..start + CMD_HDR_SIZE_BYTES_OFFSET + 4]
+        .copy_from_slice(&size_bytes.to_le_bytes());
 }
 
 fn build_cmd_stream(packets: impl FnOnce(&mut Vec<u8>)) -> Vec<u8> {
@@ -69,19 +82,18 @@ fn build_cmd_stream(packets: impl FnOnce(&mut Vec<u8>)) -> Vec<u8> {
     packets(&mut bytes);
 
     let size_bytes = bytes.len() as u32;
-    bytes[8..12].copy_from_slice(&size_bytes.to_le_bytes());
+    bytes[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
+        .copy_from_slice(&size_bytes.to_le_bytes());
     bytes
 }
 
 fn build_alloc_table(vertex_gpa: u64, vertex_bytes: &[u8]) -> Vec<u8> {
-    let entry_stride = 32u32;
-    let header_size = 24u32;
-    let size_bytes = header_size + entry_stride; // 1 entry
+    let entry_stride = ProtocolAllocEntry::SIZE_BYTES as u32;
 
     let mut bytes = Vec::new();
     push_u32(&mut bytes, AEROGPU_ALLOC_TABLE_MAGIC);
     push_u32(&mut bytes, AEROGPU_ABI_VERSION_U32);
-    push_u32(&mut bytes, size_bytes);
+    push_u32(&mut bytes, 0); // size_bytes (patched later)
     push_u32(&mut bytes, 1); // entry_count
     push_u32(&mut bytes, entry_stride);
     push_u32(&mut bytes, 0); // reserved0
@@ -93,6 +105,9 @@ fn build_alloc_table(vertex_gpa: u64, vertex_bytes: &[u8]) -> Vec<u8> {
     push_u64(&mut bytes, vertex_bytes.len() as u64);
     push_u64(&mut bytes, 0); // reserved0
 
+    let size_bytes = bytes.len() as u32;
+    bytes[ALLOC_TABLE_SIZE_BYTES_OFFSET..ALLOC_TABLE_SIZE_BYTES_OFFSET + 4]
+        .copy_from_slice(&size_bytes.to_le_bytes());
     assert_eq!(bytes.len(), size_bytes as usize);
     bytes
 }

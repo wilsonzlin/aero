@@ -3,8 +3,10 @@ use aero_d3d11::input_layout::fnv1a_32;
 use aero_d3d11::FourCC;
 use aero_gpu::VecGuestMemory;
 use aero_protocol::aerogpu::aerogpu_cmd::{
-    AerogpuCmdOpcode, AerogpuPrimitiveTopology, AEROGPU_CLEAR_COLOR, AEROGPU_CMD_STREAM_MAGIC,
-    AEROGPU_INPUT_LAYOUT_BLOB_MAGIC, AEROGPU_INPUT_LAYOUT_BLOB_VERSION, AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+    AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdOpcode,
+    AerogpuCmdStreamHeader as ProtocolCmdStreamHeader, AerogpuPrimitiveTopology,
+    AEROGPU_CLEAR_COLOR, AEROGPU_CMD_STREAM_MAGIC, AEROGPU_INPUT_LAYOUT_BLOB_MAGIC,
+    AEROGPU_INPUT_LAYOUT_BLOB_VERSION, AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
     AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
 };
 use aero_protocol::aerogpu::aerogpu_pci::{AerogpuFormat, AEROGPU_ABI_VERSION_U32};
@@ -39,6 +41,10 @@ const AEROGPU_TOPOLOGY_TRIANGLELIST: u32 = AerogpuPrimitiveTopology::TriangleLis
 
 // DXGI_FORMAT_R32G32B32A32_FLOAT
 const DXGI_FORMAT_R32G32B32A32_FLOAT: u32 = 2;
+
+const CMD_STREAM_SIZE_BYTES_OFFSET: usize =
+    core::mem::offset_of!(ProtocolCmdStreamHeader, size_bytes);
+const CMD_HDR_SIZE_BYTES_OFFSET: usize = core::mem::offset_of!(ProtocolCmdHdr, size_bytes);
 
 fn make_dxbc(chunks: &[(FourCC, Vec<u8>)]) -> Vec<u8> {
     let chunk_count = u32::try_from(chunks.len()).expect("too many chunks");
@@ -202,7 +208,8 @@ fn begin_cmd(stream: &mut Vec<u8>, opcode: u32) -> usize {
 
 fn end_cmd(stream: &mut Vec<u8>, start: usize) {
     let size = (stream.len() - start) as u32;
-    stream[start + 4..start + 8].copy_from_slice(&size.to_le_bytes());
+    stream[start + CMD_HDR_SIZE_BYTES_OFFSET..start + CMD_HDR_SIZE_BYTES_OFFSET + 4]
+        .copy_from_slice(&size.to_le_bytes());
     assert_eq!(size % 4, 0, "command not 4-byte aligned");
 }
 
@@ -444,7 +451,8 @@ fn aerogpu_cmd_renders_fullscreen_triangle() {
 
         // Patch stream size in header.
         let total_size = stream.len() as u32;
-        stream[8..12].copy_from_slice(&total_size.to_le_bytes());
+        stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
+            .copy_from_slice(&total_size.to_le_bytes());
 
         exec.execute_cmd_stream(&stream, Some(&allocs), &guest_mem)
             .unwrap();

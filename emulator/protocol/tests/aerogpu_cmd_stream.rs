@@ -1,9 +1,12 @@
 use aero_protocol::aerogpu::aerogpu_cmd::{
     decode_cmd_create_input_layout_blob_le, decode_cmd_create_shader_dxbc_payload_le,
     decode_cmd_set_vertex_buffers_bindings_le, decode_cmd_upload_resource_payload_le,
-    AerogpuCmdDecodeError, AerogpuCmdOpcode, AerogpuCmdStreamIter, AEROGPU_CMD_STREAM_MAGIC,
+    AerogpuCmdDecodeError, AerogpuCmdOpcode, AerogpuCmdStreamHeader, AerogpuCmdStreamIter,
+    AEROGPU_CMD_STREAM_MAGIC,
 };
 use aero_protocol::aerogpu::aerogpu_pci::AEROGPU_ABI_VERSION_U32;
+
+const CMD_STREAM_SIZE_BYTES_OFFSET: usize = core::mem::offset_of!(AerogpuCmdStreamHeader, size_bytes);
 
 fn push_u32(buf: &mut Vec<u8>, v: u32) {
     buf.extend_from_slice(&v.to_le_bytes());
@@ -45,7 +48,8 @@ fn build_stream(mut packets: Vec<Vec<u8>>) -> Vec<u8> {
     }
 
     let size_bytes = bytes.len() as u32;
-    bytes[8..12].copy_from_slice(&size_bytes.to_le_bytes());
+    bytes[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
+        .copy_from_slice(&size_bytes.to_le_bytes());
     bytes
 }
 

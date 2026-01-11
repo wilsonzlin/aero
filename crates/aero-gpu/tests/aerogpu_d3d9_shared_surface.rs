@@ -1,4 +1,13 @@
 use aero_gpu::{AerogpuD3d9Error, AerogpuD3d9Executor};
+use aero_protocol::aerogpu::aerogpu_cmd::{
+    AerogpuCmdHdr as ProtocolCmdHdr, AerogpuCmdStreamHeader as ProtocolCmdStreamHeader,
+    AEROGPU_CMD_STREAM_MAGIC,
+};
+use aero_protocol::aerogpu::aerogpu_pci::AEROGPU_ABI_VERSION_U32;
+
+const CMD_STREAM_SIZE_BYTES_OFFSET: usize =
+    core::mem::offset_of!(ProtocolCmdStreamHeader, size_bytes);
+const CMD_HDR_SIZE_BYTES_OFFSET: usize = core::mem::offset_of!(ProtocolCmdHdr, size_bytes);
 
 fn push_u8(out: &mut Vec<u8>, v: u8) {
     out.push(v);
@@ -32,8 +41,8 @@ fn build_stream(packets: impl FnOnce(&mut Vec<u8>)) -> Vec<u8> {
     let mut out = Vec::new();
 
     // aerogpu_cmd_stream_header (24 bytes)
-    push_u32(&mut out, 0x444D_4341); // "ACMD"
-    push_u32(&mut out, 0x0001_0000); // abi_version (major=1 minor=0)
+    push_u32(&mut out, AEROGPU_CMD_STREAM_MAGIC);
+    push_u32(&mut out, AEROGPU_ABI_VERSION_U32);
     push_u32(&mut out, 0); // size_bytes (patch later)
     push_u32(&mut out, 0); // flags
     push_u32(&mut out, 0); // reserved0
@@ -42,7 +51,8 @@ fn build_stream(packets: impl FnOnce(&mut Vec<u8>)) -> Vec<u8> {
     packets(&mut out);
 
     let size_bytes = out.len() as u32;
-    out[8..12].copy_from_slice(&size_bytes.to_le_bytes());
+    out[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
+        .copy_from_slice(&size_bytes.to_le_bytes());
     out
 }
 
@@ -54,7 +64,8 @@ fn emit_packet(out: &mut Vec<u8>, opcode: u32, payload: impl FnOnce(&mut Vec<u8>
     let end_aligned = align4(out.len());
     out.resize(end_aligned, 0);
     let size_bytes = (end_aligned - start) as u32;
-    out[start + 4..start + 8].copy_from_slice(&size_bytes.to_le_bytes());
+    out[start + CMD_HDR_SIZE_BYTES_OFFSET..start + CMD_HDR_SIZE_BYTES_OFFSET + 4]
+        .copy_from_slice(&size_bytes.to_le_bytes());
 }
 
 fn enc_reg_type(ty: u8) -> u32 {
@@ -400,4 +411,3 @@ fn d3d9_shared_surface_import_export_renders_via_alias_handle() {
     exec.execute_cmd_stream(&teardown)
         .expect("destroying alias should succeed");
 }
-

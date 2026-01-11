@@ -878,7 +878,8 @@ fn protocol_rejects_misaligned_cmd_size_bytes() {
     stream.extend_from_slice(&[0u8; 2]);
 
     let size_bytes = stream.len() as u32;
-    stream[8..12].copy_from_slice(&size_bytes.to_le_bytes());
+    stream[CMD_STREAM_SIZE_BYTES_OFFSET..CMD_STREAM_SIZE_BYTES_OFFSET + 4]
+        .copy_from_slice(&size_bytes.to_le_bytes());
 
     let err = parse_cmd_stream(&stream).unwrap_err();
     assert!(matches!(
