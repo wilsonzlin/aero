@@ -1200,6 +1200,126 @@ fn d3d9_copy_texture2d_writeback_writes_guest_backing() {
 }
 
 #[test]
+fn d3d9_copy_texture2d_writeback_rejects_readonly_alloc() {
+    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
+        Ok(exec) => exec,
+        Err(AerogpuD3d9Error::AdapterNotFound) => {
+            common::skip_or_panic(module_path!(), "wgpu adapter not found");
+            return;
+        }
+        Err(err) => panic!("failed to create executor: {err}"),
+    };
+
+    const OPC_CREATE_TEXTURE2D: u32 = AerogpuCmdOpcode::CreateTexture2d as u32;
+    const OPC_UPLOAD_RESOURCE: u32 = AerogpuCmdOpcode::UploadResource as u32;
+    const OPC_COPY_TEXTURE2D: u32 = AerogpuCmdOpcode::CopyTexture2d as u32;
+
+    const AEROGPU_FORMAT_R8G8B8A8_UNORM: u32 = AerogpuFormat::R8G8B8A8Unorm as u32;
+
+    const SRC_TEX: u32 = 1;
+    const DST_TEX: u32 = 2;
+
+    const DST_ALLOC_ID: u32 = 1;
+    const DST_GPA: u64 = 0x1000;
+
+    let width = 1u32;
+    let height = 1u32;
+    let row_pitch = 4u32;
+    let backing_len = (row_pitch * height) as usize;
+
+    let guest_memory = VecGuestMemory::new(0x4000);
+    let sentinel = vec![0xEEu8; backing_len];
+    guest_memory.write(DST_GPA, &sentinel).unwrap();
+    let alloc_table = AllocTable::new([(
+        DST_ALLOC_ID,
+        AllocEntry {
+            flags: ring::AEROGPU_ALLOC_FLAG_READONLY,
+            gpa: DST_GPA,
+            size_bytes: 0x1000,
+        },
+    )])
+    .expect("alloc table");
+
+    let src_tex_data = [255u8, 0, 0, 255];
+    let stream = build_stream(|out| {
+        // Host-owned source texture.
+        emit_packet(out, OPC_CREATE_TEXTURE2D, |out| {
+            push_u32(out, SRC_TEX);
+            push_u32(out, AEROGPU_RESOURCE_USAGE_TEXTURE);
+            push_u32(out, AEROGPU_FORMAT_R8G8B8A8_UNORM);
+            push_u32(out, width);
+            push_u32(out, height);
+            push_u32(out, 1); // mip_levels
+            push_u32(out, 1); // array_layers
+            push_u32(out, 0); // row_pitch_bytes (use tight packing)
+            push_u32(out, 0); // backing_alloc_id
+            push_u32(out, 0); // backing_offset_bytes
+            push_u64(out, 0); // reserved0
+        });
+
+        emit_packet(out, OPC_UPLOAD_RESOURCE, |out| {
+            push_u32(out, SRC_TEX);
+            push_u32(out, 0); // reserved0
+            push_u64(out, 0); // offset_bytes
+            push_u64(out, src_tex_data.len() as u64); // size_bytes
+            out.extend_from_slice(&src_tex_data);
+        });
+
+        // Guest-backed destination texture (READONLY alloc).
+        emit_packet(out, OPC_CREATE_TEXTURE2D, |out| {
+            push_u32(out, DST_TEX);
+            push_u32(out, AEROGPU_RESOURCE_USAGE_TEXTURE);
+            push_u32(out, AEROGPU_FORMAT_R8G8B8A8_UNORM);
+            push_u32(out, width);
+            push_u32(out, height);
+            push_u32(out, 1); // mip_levels
+            push_u32(out, 1); // array_layers
+            push_u32(out, row_pitch);
+            push_u32(out, DST_ALLOC_ID);
+            push_u32(out, 0); // backing_offset_bytes
+            push_u64(out, 0); // reserved0
+        });
+
+        emit_packet(out, OPC_COPY_TEXTURE2D, |out| {
+            push_u32(out, DST_TEX);
+            push_u32(out, SRC_TEX);
+            push_u32(out, 0); // dst_mip_level
+            push_u32(out, 0); // dst_array_layer
+            push_u32(out, 0); // src_mip_level
+            push_u32(out, 0); // src_array_layer
+            push_u32(out, 0); // dst_x
+            push_u32(out, 0); // dst_y
+            push_u32(out, 0); // src_x
+            push_u32(out, 0); // src_y
+            push_u32(out, width);
+            push_u32(out, height);
+            push_u32(out, AEROGPU_COPY_FLAG_WRITEBACK_DST);
+            push_u32(out, 0); // reserved0
+        });
+    });
+
+    let err = exec
+        .execute_cmd_stream_with_guest_memory(&stream, &guest_memory, Some(&alloc_table))
+        .expect_err("execute should fail");
+    match err {
+        AerogpuD3d9Error::Validation(msg) => {
+            let msg_lc = msg.to_ascii_lowercase();
+            assert!(
+                msg_lc.contains("readonly") || msg_lc.contains("read-only"),
+                "expected READONLY validation error, got: {msg}"
+            );
+        }
+        other => panic!("unexpected error: {other}"),
+    }
+
+    let mut out = vec![0u8; backing_len];
+    guest_memory
+        .read(DST_GPA, &mut out)
+        .expect("read guest backing");
+    assert_eq!(&out, &sentinel);
+}
+
+#[test]
 fn d3d9_create_texture2d_rebind_updates_guest_backing() {
     let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
         Ok(exec) => exec,
