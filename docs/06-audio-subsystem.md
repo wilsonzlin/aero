@@ -685,24 +685,26 @@ Microphone capture is bridged from the browser to the guest via a SharedArrayBuf
 Reference implementation files:
 
 - `web/src/audio/mic_capture.ts` (permission + lifecycle + ring buffer allocation)
+- `web/src/audio/mic_ring.js` (canonical mic ring buffer layout + read/write helpers shared by main thread/worklet/workers)
 - `web/src/audio/mic-worklet-processor.js` (AudioWorklet capture writer)
 - `crates/platform/src/audio/mic_bridge.rs` (ring buffer layout + wrap-around math)
-- `crates/aero-audio/src/capture.rs` (`AudioCaptureSource` + adapters for mic ring buffers)
-- `crates/aero-audio/src/hda.rs` (HDA capture stream servicing via `process_*_with_capture`)
+- `crates/aero-audio/src/capture.rs` (`AudioCaptureSource` trait + adapters for mic ring buffers)
+- `crates/aero-audio/src/hda.rs` (HDA capture stream DMA + mic pin exposure)
 
 ### HDA capture exposure (guest)
 
-The canonical `aero-audio` HDA model exposes:
+The canonical `aero-audio` HDA model exposes one capture stream and a microphone pin widget:
 
-- **Stream descriptor 1** as a capture stream (input DMA into guest memory via BDL entries).
-- **Codec topology** with an input converter + microphone pin so Windows can enumerate a recording endpoint.
+- **Stream DMA**: `SD1` (input stream 0) DMA-writes captured PCM bytes into guest memory via BDL entries.
+- **Codec topology**: an input converter widget (`NID 4`) plus a mic pin widget (`NID 5`) so Windows can
+  enumerate a recording endpoint.
 
 Host code provides microphone samples via `aero_audio::capture::AudioCaptureSource` (implemented for
 `aero_platform::audio::mic_bridge::MicBridge` on wasm) and advances the device model via
 `HdaController::process_*_with_capture(...)`.
 
 ### Ring buffer layout
- 
+  
 The microphone ring buffer is a mono `Float32Array` backed by a `SharedArrayBuffer`:
 
 | Offset | Type | Meaning |
