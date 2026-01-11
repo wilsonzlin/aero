@@ -5,6 +5,7 @@
 #include <scsi.h>
 #include <ntddscsi.h>
 
+#include "aero_virtio_pci_modern.h"
 #include "virtqueue_split.h"
 
 #if DBG
@@ -31,30 +32,10 @@
 
 #define AEROVBLK_VIRTIO_PCI_REVISION_ID 0x01u
 
-#define AEROVBLK_VIRTIO_PCI_BAR0_MIN_LEN 0x4000u
-
-#define AEROVBLK_VIRTIO_PCI_COMMON_CFG_OFFSET 0x0000u
-#define AEROVBLK_VIRTIO_PCI_NOTIFY_CFG_OFFSET 0x1000u
-#define AEROVBLK_VIRTIO_PCI_ISR_CFG_OFFSET 0x2000u
-#define AEROVBLK_VIRTIO_PCI_DEVICE_CFG_OFFSET 0x3000u
-
-#define AEROVBLK_VIRTIO_PCI_NOTIFY_OFF_MULTIPLIER 4u
-
-/* Virtio status bits (standard). */
-#define VIRTIO_STATUS_ACKNOWLEDGE 0x01u
-#define VIRTIO_STATUS_DRIVER 0x02u
-#define VIRTIO_STATUS_DRIVER_OK 0x04u
-#define VIRTIO_STATUS_FEATURES_OK 0x08u
-#define VIRTIO_STATUS_FAILED 0x80u
-
-/* Modern virtio feature bit indices. */
-#define VIRTIO_F_VERSION_1 32u
-
 #define VIRTIO_BLK_F_SEG_MAX 2u
 #define VIRTIO_BLK_F_BLK_SIZE 6u
 #define VIRTIO_BLK_F_FLUSH 9u
 
-#define AEROVBLK_FEATURE_VERSION_1 (1ull << VIRTIO_F_VERSION_1)
 #define AEROVBLK_FEATURE_RING_INDIRECT_DESC (1ull << VIRTIO_F_RING_INDIRECT_DESC)
 #define AEROVBLK_FEATURE_BLK_SEG_MAX (1ull << VIRTIO_BLK_F_SEG_MAX)
 #define AEROVBLK_FEATURE_BLK_BLK_SIZE (1ull << VIRTIO_BLK_F_BLK_SIZE)
@@ -101,15 +82,7 @@ typedef struct _AEROVBLK_REQUEST_CONTEXT {
 } AEROVBLK_REQUEST_CONTEXT, *PAEROVBLK_REQUEST_CONTEXT;
 
 typedef struct _AEROVBLK_DEVICE_EXTENSION {
-    PUCHAR Bar0;
-    ULONG Bar0Length;
-
-    PUCHAR CommonCfg;
-    PUCHAR NotifyBase;
-    PUCHAR IsrStatus;
-    PUCHAR DeviceCfg;
-
-    ULONG NotifyOffMultiplier;
+    AERO_VIRTIO_PCI_MODERN_DEVICE Vdev;
     USHORT QueueNotifyOff;
 
     VIRTQ_SPLIT* Vq;

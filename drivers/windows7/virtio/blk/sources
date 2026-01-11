@@ -2,9 +2,10 @@ TARGETNAME=aerovblk
 TARGETTYPE=MINIPORT
 TARGETEXT=.sys
 
-INCLUDES=$(INCLUDES);.\include;..\..\..\windows\virtio\common
+INCLUDES=$(INCLUDES);.\include;..\..\..\windows\virtio\common;..\..\virtio-modern\common\include
 
 SOURCES=src\aerovblk.c \
+        ..\..\virtio-modern\common\src\aero_virtio_pci_modern.c \
         ..\..\..\windows\virtio\common\virtqueue_split.c
 
 TARGETLIBS=$(DDK_LIB_PATH)\storport.lib
