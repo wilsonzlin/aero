@@ -108,6 +108,12 @@ Must be non-null and must succeed for the tests:
 Everything else should still be **non-null** (stubbed, usually via `SetErrorCb(E_NOTIMPL)` for `void` DDIs),
 because the runtime may call “reset to default” entrypoints like `ClearState` during initialization.
 
+Practical stub tip:
+
+* Many state-setting DDIs are called with **NULL** handles specifically to unbind/reset state.
+  For those “unbind” patterns, it’s usually better to treat the call as a no-op success (no `SetErrorCb`),
+  otherwise you can end up reporting errors during normal initialization/`ClearState` even though the app is not using the missing feature.
+
 ---
 
 ## 0) Terminology and rules used in this checklist
