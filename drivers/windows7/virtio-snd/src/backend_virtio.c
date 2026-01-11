@@ -87,6 +87,10 @@ static NTSTATUS VirtIoSndBackendVirtio_Prepare(_In_ PVOID Context)
         return STATUS_INVALID_PARAMETER;
     }
 
+    if (!ctx->Dx->Started || ctx->Dx->Removed) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+
     return VirtioSndCtrlPrepare(&ctx->Dx->Control);
 }
 
@@ -100,6 +104,10 @@ static NTSTATUS VirtIoSndBackendVirtio_Start(_In_ PVOID Context)
 
     if (ctx == NULL || ctx->Dx == NULL) {
         return STATUS_INVALID_PARAMETER;
+    }
+
+    if (!ctx->Dx->Started || ctx->Dx->Removed) {
+        return STATUS_INVALID_DEVICE_STATE;
     }
 
     return VirtioSndCtrlStart(&ctx->Dx->Control);
@@ -117,6 +125,10 @@ static NTSTATUS VirtIoSndBackendVirtio_Stop(_In_ PVOID Context)
         return STATUS_INVALID_PARAMETER;
     }
 
+    if (!ctx->Dx->Started || ctx->Dx->Removed) {
+        return STATUS_INVALID_DEVICE_STATE;
+    }
+
     return VirtioSndCtrlStop(&ctx->Dx->Control);
 }
 
@@ -131,6 +143,14 @@ static NTSTATUS VirtIoSndBackendVirtio_Release(_In_ PVOID Context)
 
     if (ctx == NULL || ctx->Dx == NULL) {
         return STATUS_INVALID_PARAMETER;
+    }
+
+    if (!ctx->Dx->Started || ctx->Dx->Removed) {
+        // Device is gone/stopped; just discard local TX buffers.
+        VirtioSndTxUninit(&ctx->Dx->Tx);
+        ctx->BufferBytes = 0;
+        ctx->PeriodBytes = 0;
+        return STATUS_SUCCESS;
     }
 
     status = VirtioSndCtrlRelease(&ctx->Dx->Control);
@@ -164,6 +184,9 @@ VirtIoSndBackendVirtio_Write(_In_ PVOID Context, _In_reads_bytes_(Bytes) const V
     if (Bytes > periodBytes) {
         return STATUS_INVALID_BUFFER_SIZE;
     }
+
+    // Poll used entries to recycle TX buffers even if interrupts are delayed.
+    VirtioSndTxProcessCompletions(&ctx->Dx->Tx);
 
     status = VirtioSndTxSubmitPeriod(&ctx->Dx->Tx, Pcm, (ULONG)Bytes, NULL, 0, TRUE);
     if (!NT_SUCCESS(status)) {

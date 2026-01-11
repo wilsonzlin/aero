@@ -58,6 +58,7 @@ VirtIoSndDispatchPnp(_In_ PDEVICE_OBJECT DeviceObject, _In_ PIRP Irp)
 {
     PIO_STACK_LOCATION stack;
     PVIRTIOSND_DEVICE_EXTENSION dx;
+    NTSTATUS status;
 
     stack = IoGetCurrentIrpStackLocation(Irp);
     dx = VIRTIOSND_GET_DX(DeviceObject);
@@ -65,6 +66,11 @@ VirtIoSndDispatchPnp(_In_ PDEVICE_OBJECT DeviceObject, _In_ PIRP Irp)
     if (dx != NULL && dx->Signature == VIRTIOSND_DX_SIGNATURE && dx->Self == DeviceObject) {
         switch (stack->MinorFunction) {
         case IRP_MN_STOP_DEVICE:
+            /*
+             * Let PortCls quiesce/close pins first so the WaveRT period timer is
+             * stopped before we tear down the virtio transport.
+             */
+            status = PcDispatchIrp(DeviceObject, Irp);
             VirtIoSndStopHardware(dx);
             if (dx->LowerDeviceObject != NULL) {
                 ObDereferenceObject(dx->LowerDeviceObject);
@@ -74,7 +80,7 @@ VirtIoSndDispatchPnp(_In_ PDEVICE_OBJECT DeviceObject, _In_ PIRP Irp)
                 ObDereferenceObject(dx->Pdo);
                 dx->Pdo = NULL;
             }
-            break;
+            return status;
 
         case IRP_MN_SURPRISE_REMOVAL:
         case IRP_MN_REMOVE_DEVICE:

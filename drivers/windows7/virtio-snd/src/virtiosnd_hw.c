@@ -234,10 +234,19 @@ _Use_decl_annotations_
 VOID VirtIoSndStopHardware(PVIRTIOSND_DEVICE_EXTENSION Dx)
 {
     NTSTATUS cancelStatus;
+    BOOLEAN wasStarted;
 
     if (Dx == NULL) {
         return;
     }
+
+    /*
+     * Stop accepting new TX/control submissions as early as possible. WaveRT's
+     * period timer runs independently of the virtio interrupt DPC; dropping this
+     * flag up-front prevents racey writes while teardown is in progress.
+     */
+    wasStarted = Dx->Started;
+    Dx->Started = FALSE;
 
     cancelStatus = Dx->Removed ? STATUS_DEVICE_REMOVED : STATUS_CANCELLED;
 
@@ -254,7 +263,7 @@ VOID VirtIoSndStopHardware(PVIRTIOSND_DEVICE_EXTENSION Dx)
      * against calling Control::Uninit on a zeroed (uninitialized) struct.
      */
     if (Dx->Control.DmaCtx != NULL) {
-        if (Dx->Started) {
+        if (wasStarted) {
             VirtioSndCtrlCancelAll(&Dx->Control, cancelStatus);
         }
         VirtioSndCtrlUninit(&Dx->Control);
@@ -270,7 +279,6 @@ VOID VirtIoSndStopHardware(PVIRTIOSND_DEVICE_EXTENSION Dx)
     VirtIoSndTransportUninit(&Dx->Transport);
 
     Dx->NegotiatedFeatures = 0;
-    Dx->Started = FALSE;
 }
 
 _Use_decl_annotations_

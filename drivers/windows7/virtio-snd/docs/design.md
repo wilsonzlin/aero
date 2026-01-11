@@ -6,10 +6,12 @@ This document is a **clean-room** design note for the Aero Windows 7 virtio-snd
 driver. It summarizes the intended architecture and how the pieces fit together.
 See `../SOURCES.md` for the authoritative list of references.
 
-The driver in this directory is a clean-room WDM function driver targeting the
-Aero virtio device contract. It includes a virtio-pci modern transport core and
-split-ring virtqueue plumbing, and integrates PortCls **WaveRT** + **Topology**
-miniports so Windows 7 can enumerate a render endpoint.
+The driver in this directory is a clean-room Windows 7 audio adapter driver
+targeting the Aero virtio device contract. It includes a virtio-pci modern
+transport core, split-ring virtqueue plumbing, and integrates PortCls
+**WaveRT** + **Topology** miniports so Windows 7 can enumerate a render endpoint.
+
+Capture (rxq stream id `1`) is defined by the contract but is not implemented yet.
 
 ## High-level architecture
 
