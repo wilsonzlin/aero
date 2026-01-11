@@ -300,6 +300,60 @@ fn command_processor_rejects_creating_buffer_under_shared_surface_alias_handle()
 }
 
 #[test]
+fn command_processor_rejects_creating_buffer_under_shared_surface_underlying_handle() {
+    let mut proc = AeroGpuCommandProcessor::new();
+
+    let stream = build_stream(|out| {
+        // Create + export + import shared surface.
+        emit_packet(out, AeroGpuOpcode::CreateTexture2d as u32, |out| {
+            push_u32(out, 0x10); // texture_handle
+            push_u32(out, 0); // usage_flags
+            push_u32(out, 3); // format
+            push_u32(out, 1); // width
+            push_u32(out, 1); // height
+            push_u32(out, 1); // mip_levels
+            push_u32(out, 1); // array_layers
+            push_u32(out, 4); // row_pitch_bytes
+            push_u32(out, 0); // backing_alloc_id
+            push_u32(out, 0); // backing_offset_bytes
+            push_u64(out, 0); // reserved0
+        });
+        emit_packet(out, AeroGpuOpcode::ExportSharedSurface as u32, |out| {
+            push_u32(out, 0x10); // resource_handle
+            push_u32(out, 0); // reserved0
+            push_u64(out, 0x1122_3344_5566_7788);
+        });
+        emit_packet(out, AeroGpuOpcode::ImportSharedSurface as u32, |out| {
+            push_u32(out, 0x20); // out_resource_handle
+            push_u32(out, 0); // reserved0
+            push_u64(out, 0x1122_3344_5566_7788);
+        });
+
+        // Destroy the original handle but keep the resource alive via the alias.
+        emit_packet(out, AeroGpuOpcode::DestroyResource as u32, |out| {
+            push_u32(out, 0x10); // resource_handle
+            push_u32(out, 0); // reserved0
+        });
+
+        // Attempt to create a new buffer using the underlying (now free-looking) handle.
+        emit_packet(out, AeroGpuOpcode::CreateBuffer as u32, |out| {
+            push_u32(out, 0x10); // buffer_handle (underlying id)
+            push_u32(out, 0); // usage_flags
+            push_u64(out, 16); // size_bytes
+            push_u32(out, 0); // backing_alloc_id
+            push_u32(out, 0); // backing_offset_bytes
+            push_u64(out, 0); // reserved0
+        });
+    });
+
+    let err = proc.process_submission(&stream, 0).unwrap_err();
+    assert!(matches!(
+        err,
+        CommandProcessorError::SharedSurfaceHandleInUse(0x10)
+    ));
+}
+
+#[test]
 fn command_processor_reports_handle_collision_before_missing_alloc_table() {
     let mut proc = AeroGpuCommandProcessor::new();
 
