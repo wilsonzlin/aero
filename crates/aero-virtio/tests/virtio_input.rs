@@ -496,10 +496,12 @@ fn virtio_pci_common_cfg_out_of_range_queue_select_reads_zero_and_ignores_writes
 
     // Writes to queue registers must be ignored and must not silently affect queue 0.
     bar_write_u64(&mut dev, &mut mem, caps.common + 0x20, 0xdead_beef);
+    bar_write_u16(&mut dev, &mut mem, caps.common + 0x1c, 1); // queue_enable
     assert_eq!(bar_read_u16(&mut dev, caps.common + 0x16), 7);
 
     // Selecting queue 0 should still show the default (unconfigured) addresses.
     bar_write_u16(&mut dev, &mut mem, caps.common + 0x16, 0);
+    assert_eq!(bar_read_u16(&mut dev, caps.common + 0x1c), 0);
     let desc_lo = bar_read_u32(&mut dev, caps.common + 0x20);
     let desc_hi = bar_read_u32(&mut dev, caps.common + 0x24);
     assert_eq!((u64::from(desc_hi) << 32) | u64::from(desc_lo), 0);
