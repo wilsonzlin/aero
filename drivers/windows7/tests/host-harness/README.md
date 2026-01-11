@@ -260,6 +260,14 @@ If your QEMU build does not support `disable-legacy=on` (or you need transitiona
 - PowerShell: add `-VirtioTransitional`
 - Python: add `--virtio-transitional`
 
+Notes:
+
+- Transitional mode is primarily a **backcompat** option for older QEMU builds and/or older guest images.
+  - It uses QEMU’s default `virtio-blk`/`virtio-net` devices and relaxes per-test marker requirements so older
+    `aero-virtio-selftest.exe` binaries can still be used.
+  - It does **not** attach virtio-input keyboard/mouse devices; the default harness mode is required for the full
+    virtio-input test coverage.
+
 Note: transitional mode is incompatible with virtio-snd testing (`-WithVirtioSnd` / `--with-virtio-snd`), since virtio-snd
 testing requires the contract-v1 overrides (`disable-legacy=on,x-pci-revision=0x01`).
 

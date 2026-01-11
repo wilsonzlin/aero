@@ -17,6 +17,8 @@ so the canonical Win7 INF (`aero-virtio-snd.inf`) can bind to `DEV_1059&REV_01` 
 
 Use `--virtio-transitional` to opt back into QEMU's default transitional devices (legacy + modern)
 for older QEMU builds (or when intentionally testing legacy driver packages).
+In transitional mode the harness uses QEMU defaults for virtio-blk/virtio-net (and relaxes per-test marker
+requirements so older guest selftest binaries can still be used).
 
 It:
 - starts a tiny HTTP server on 127.0.0.1:<port> (guest reaches it as 10.0.2.2:<port> via slirp)
@@ -271,7 +273,8 @@ def main() -> int:
         action="store_true",
         help="Use transitional virtio-pci devices (legacy + modern). "
         "By default the harness uses modern-only virtio-pci (disable-legacy=on, x-pci-revision=0x01) "
-        "so Win7 drivers can bind to the Aero contract v1 IDs.",
+        "so Win7 drivers can bind to the Aero contract v1 IDs. Transitional mode does not attach "
+        "virtio-input keyboard/mouse devices.",
     )
     parser.add_argument(
         "--with-virtio-snd",

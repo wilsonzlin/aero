@@ -28,6 +28,11 @@ param(
   # By default this harness uses modern-only (disable-legacy=on) virtio-pci devices so
   # Win7 drivers can bind to the Aero contract v1 IDs (DEV_1041/DEV_1042/DEV_1052/DEV_1059) and
   # revision gate (REV_01).
+  #
+  # Transitional mode is primarily a backcompat option for older QEMU builds and/or older guest images:
+  # - It uses QEMU defaults for virtio-blk/net and relaxes per-test marker requirements.
+  # - It does not attach virtio-input keyboard/mouse devices; use the default harness mode for full
+  #   virtio-input coverage.
   [Parameter(Mandatory = $false)]
   [switch]$VirtioTransitional,
 
