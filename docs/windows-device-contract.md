@@ -132,12 +132,15 @@ All numeric values are shown as hexadecimal.
 
 Notes:
 
- - Aero GPU INF path: `drivers/aerogpu/packaging/win7/aerogpu.inf`
- - `aerogpu.inf` / `aerogpu_dx11.inf` bind to `PCI\VEN_A3A0&DEV_0001` (canonical / current ABI).
- - `aerogpu_dx11.inf` is an optional alternative INF that binds to the same device IDs and additionally installs D3D10/11 user-mode components.
- - The deprecated legacy bring-up AeroGPU device model requires the legacy INFs under `drivers/aerogpu/packaging/win7/legacy/` and enabling the legacy device model feature (`emulator/aerogpu-legacy`).
- - Windows service names are case-insensitive. The canonical AeroGPU INFs install the `aerogpu` service (`AddService = aerogpu, ...`).
-   The legacy INFs under `drivers/aerogpu/packaging/win7/legacy/` use different casing (for example `AeroGPU`), but this contract normalizes the name to `aerogpu`.
+  - Aero GPU INF path: `drivers/aerogpu/packaging/win7/aerogpu.inf`
+  - `aerogpu.inf` / `aerogpu_dx11.inf` bind to `PCI\VEN_A3A0&DEV_0001` (canonical / current ABI).
+  - `aerogpu_dx11.inf` is an optional alternative INF that binds to the same device IDs and additionally installs D3D10/11 user-mode components.
+  - The deprecated legacy bring-up AeroGPU device model requires the legacy INFs under `drivers/aerogpu/packaging/win7/legacy/` and enabling the legacy device model feature (`emulator/aerogpu-legacy`).
+  - Windows service names are case-insensitive. The canonical AeroGPU INFs install the `aerogpu` service (`AddService = aerogpu, ...`).
+    The legacy INFs under `drivers/aerogpu/packaging/win7/legacy/` use different casing (for example `AeroGPU`), but this contract normalizes the name to `aerogpu`.
+  - `virtio-input` is exposed as a **single multi-function PCI device** (two PCI functions on the same slot):
+    - keyboard = function 0 and **must** set the multifunction bit (`header_type = 0x80`) so guests enumerate the mouse function
+    - mouse = function 1
 
 Compatibility note (transitional virtio PCI Device IDs):
 
