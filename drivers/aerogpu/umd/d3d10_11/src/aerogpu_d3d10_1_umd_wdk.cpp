@@ -480,6 +480,11 @@ struct AeroGpuDevice {
   std::atomic<uint64_t> last_submitted_fence{0};
   std::atomic<uint64_t> last_completed_fence{0};
 
+  // WDDM allocation handles (D3DKMT_HANDLE values) to include in each submission's
+  // allocation list. This allows the KMD to attach an allocation table so the
+  // host can resolve `backing_alloc_id` values in the AeroGPU command stream.
+  std::vector<uint32_t> wddm_submit_allocation_handles;
+
   // Monitored fence state for Win7/WDDM 1.1.
   // These fields are expected to be initialized by the real WDDM submission path.
   D3DKMT_HANDLE kmt_device = 0;
@@ -983,9 +988,11 @@ uint64_t submit_locked(AeroGpuDevice* dev, bool want_present, HRESULT* out_hr) {
   const size_t submit_bytes = dev->cmd.size();
 
   uint64_t fence = 0;
+  const uint32_t* alloc_handles =
+      dev->wddm_submit_allocation_handles.empty() ? nullptr : dev->wddm_submit_allocation_handles.data();
+  const uint32_t alloc_count = static_cast<uint32_t>(dev->wddm_submit_allocation_handles.size());
   const HRESULT hr =
-      dev->wddm_submit.SubmitAeroCmdStream(dev->cmd.data(), dev->cmd.size(), want_present, /*allocation_handles=*/nullptr,
-                                           /*allocation_handle_count=*/0, &fence);
+      dev->wddm_submit.SubmitAeroCmdStream(dev->cmd.data(), dev->cmd.size(), want_present, alloc_handles, alloc_count, &fence);
   dev->cmd.reset();
   if (FAILED(hr)) {
     if (out_hr) {
@@ -2198,6 +2205,12 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     if (!res->storage.empty()) {
       emit_upload_resource_locked(dev, res, 0, res->storage.size());
     }
+    if (res->wddm_allocation_handle != 0 &&
+        std::find(dev->wddm_submit_allocation_handles.begin(),
+                  dev->wddm_submit_allocation_handles.end(),
+                  res->wddm_allocation_handle) == dev->wddm_submit_allocation_handles.end()) {
+      dev->wddm_submit_allocation_handles.push_back(res->wddm_allocation_handle);
+    }
     AEROGPU_D3D10_RET_HR(S_OK);
   }
 
@@ -2369,6 +2382,12 @@ HRESULT AEROGPU_APIENTRY CreateResource(D3D10DDI_HDEVICE hDevice,
     if (!res->storage.empty()) {
       emit_upload_resource_locked(dev, res, 0, res->storage.size());
     }
+    if (res->wddm_allocation_handle != 0 &&
+        std::find(dev->wddm_submit_allocation_handles.begin(),
+                  dev->wddm_submit_allocation_handles.end(),
+                  res->wddm_allocation_handle) == dev->wddm_submit_allocation_handles.end()) {
+      dev->wddm_submit_allocation_handles.push_back(res->wddm_allocation_handle);
+    }
     AEROGPU_D3D10_RET_HR(S_OK);
   }
 
@@ -2392,6 +2411,13 @@ void AEROGPU_APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOUR
   std::lock_guard<std::mutex> lock(dev->mutex);
   if (res->mapped) {
     unmap_resource_locked(dev, res, res->mapped_subresource);
+  }
+  if (res->wddm_allocation_handle != 0) {
+    dev->wddm_submit_allocation_handles.erase(
+        std::remove(dev->wddm_submit_allocation_handles.begin(),
+                    dev->wddm_submit_allocation_handles.end(),
+                    res->wddm_allocation_handle),
+        dev->wddm_submit_allocation_handles.end());
   }
 
   if (dev->current_rtv_res == res) {
