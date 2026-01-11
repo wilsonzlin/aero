@@ -24,6 +24,9 @@ use memory::MmioHandler;
 use std::cell::RefCell;
 use std::rc::Rc;
 
+mod cpu_core;
+pub use cpu_core::{PcCpuBus, PcInterruptController};
+
 /// Base physical address of the PCIe ECAM ("MMCONFIG") window.
 ///
 /// This follows the QEMU Q35 convention (256MiB window at 0xB000_0000 covering buses 0..=255).
