@@ -1,5 +1,6 @@
 #include <cstddef>
 #include <cstdint>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <limits>
@@ -58,6 +59,26 @@ CmdLoc FindLastOpcode(const uint8_t* buf, size_t size, uint32_t opcode) {
     offset += hdr->size_bytes;
   }
   return loc;
+}
+
+size_t CountOpcode(const uint8_t* buf, size_t size, uint32_t opcode) {
+  if (!buf || size < sizeof(aerogpu_cmd_stream_header)) {
+    return 0;
+  }
+
+  size_t count = 0;
+  size_t offset = sizeof(aerogpu_cmd_stream_header);
+  while (offset + sizeof(aerogpu_cmd_hdr) <= size) {
+    const auto* hdr = reinterpret_cast<const aerogpu_cmd_hdr*>(buf + offset);
+    if (hdr->opcode == opcode) {
+      count++;
+    }
+    if (hdr->size_bytes == 0 || hdr->size_bytes > size - offset) {
+      break;
+    }
+    offset += hdr->size_bytes;
+  }
+  return count;
 }
 
 bool ValidateStream(const uint8_t* buf, size_t capacity) {
@@ -950,6 +971,157 @@ bool TestDestroyBoundVertexDeclUnbinds() {
   return Check(set_layout.offset < destroy.offset, "unbind occurs before destroy");
 }
 
+bool TestFvfXyzrhwDiffuseDrawPrimitiveUpEmitsFixedfuncCommands() {
+  struct Cleanup {
+    D3D9DDI_ADAPTERFUNCS adapter_funcs{};
+    D3D9DDI_DEVICEFUNCS device_funcs{};
+    D3D9DDI_HADAPTER hAdapter{};
+    D3D9DDI_HDEVICE hDevice{};
+    bool has_adapter = false;
+    bool has_device = false;
+
+    ~Cleanup() {
+      if (has_device && device_funcs.pfnDestroyDevice) {
+        device_funcs.pfnDestroyDevice(hDevice);
+      }
+      if (has_adapter && adapter_funcs.pfnCloseAdapter) {
+        adapter_funcs.pfnCloseAdapter(hAdapter);
+      }
+    }
+  } cleanup;
+
+  D3DDDIARG_OPENADAPTER2 open{};
+  open.Interface = 1;
+  open.Version = 1;
+  D3DDDI_ADAPTERCALLBACKS callbacks{};
+  D3DDDI_ADAPTERCALLBACKS2 callbacks2{};
+  open.pAdapterCallbacks = &callbacks;
+  open.pAdapterCallbacks2 = &callbacks2;
+  open.pAdapterFuncs = &cleanup.adapter_funcs;
+
+  HRESULT hr = ::OpenAdapter2(&open);
+  if (!Check(hr == S_OK, "OpenAdapter2")) {
+    return false;
+  }
+  cleanup.hAdapter = open.hAdapter;
+  cleanup.has_adapter = true;
+
+  D3D9DDIARG_CREATEDEVICE create_dev{};
+  create_dev.hAdapter = open.hAdapter;
+  create_dev.Flags = 0;
+
+  hr = cleanup.adapter_funcs.pfnCreateDevice(&create_dev, &cleanup.device_funcs);
+  if (!Check(hr == S_OK, "CreateDevice")) {
+    return false;
+  }
+  cleanup.hDevice = create_dev.hDevice;
+  cleanup.has_device = true;
+
+  if (!Check(cleanup.device_funcs.pfnSetFVF != nullptr, "SetFVF must be available")) {
+    return false;
+  }
+  if (!Check(cleanup.device_funcs.pfnDrawPrimitiveUP != nullptr, "DrawPrimitiveUP must be available")) {
+    return false;
+  }
+
+  AEROGPU_D3D9DDI_VIEWPORT vp{};
+  vp.x = 0.0f;
+  vp.y = 0.0f;
+  vp.w = 256.0f;
+  vp.h = 256.0f;
+  vp.min_z = 0.0f;
+  vp.max_z = 1.0f;
+  hr = cleanup.device_funcs.pfnSetViewport(create_dev.hDevice, &vp);
+  if (!Check(hr == S_OK, "SetViewport")) {
+    return false;
+  }
+
+  // D3DFVF_XYZRHW (0x4) | D3DFVF_DIFFUSE (0x40).
+  hr = cleanup.device_funcs.pfnSetFVF(create_dev.hDevice, 0x44u);
+  if (!Check(hr == S_OK, "SetFVF(XYZRHW|DIFFUSE)")) {
+    return false;
+  }
+
+  struct Vertex {
+    float x;
+    float y;
+    float z;
+    float rhw;
+    uint32_t color;
+  };
+
+  constexpr uint32_t kGreen = 0xFF00FF00u;
+  Vertex verts[3]{};
+  verts[0] = {256.0f * 0.25f, 256.0f * 0.25f, 0.5f, 1.0f, kGreen};
+  verts[1] = {256.0f * 0.75f, 256.0f * 0.25f, 0.5f, 1.0f, kGreen};
+  verts[2] = {256.0f * 0.50f, 256.0f * 0.75f, 0.5f, 1.0f, kGreen};
+
+  hr = cleanup.device_funcs.pfnDrawPrimitiveUP(
+      create_dev.hDevice, AEROGPU_D3D9DDI_PRIM_TRIANGLELIST, 1, verts, sizeof(Vertex));
+  if (!Check(hr == S_OK, "DrawPrimitiveUP")) {
+    return false;
+  }
+
+  auto* dev = reinterpret_cast<Device*>(create_dev.hDevice.pDrvPrivate);
+  dev->cmd.finalize();
+  const uint8_t* buf = dev->cmd.data();
+  const size_t len = dev->cmd.bytes_used();
+
+  if (!Check(CountOpcode(buf, len, AEROGPU_CMD_CREATE_SHADER_DXBC) >= 2,
+             "fixed-function fallback creates shaders")) {
+    return false;
+  }
+
+  const CmdLoc bind = FindLastOpcode(buf, len, AEROGPU_CMD_BIND_SHADERS);
+  if (!Check(bind.hdr != nullptr, "bind_shaders emitted")) {
+    return false;
+  }
+  const auto* bind_cmd = reinterpret_cast<const aerogpu_cmd_bind_shaders*>(bind.hdr);
+  if (!Check(bind_cmd->vs != 0 && bind_cmd->ps != 0, "bind_shaders uses non-zero VS/PS handles")) {
+    return false;
+  }
+
+  const CmdLoc upload = FindLastOpcode(buf, len, AEROGPU_CMD_UPLOAD_RESOURCE);
+  if (!Check(upload.hdr != nullptr, "upload_resource emitted")) {
+    return false;
+  }
+  const auto* upload_cmd = reinterpret_cast<const aerogpu_cmd_upload_resource*>(upload.hdr);
+  if (!Check(upload_cmd->offset_bytes == 0, "upload_resource offset is 0")) {
+    return false;
+  }
+  if (!Check(upload_cmd->size_bytes == sizeof(verts), "upload_resource size matches vertex data")) {
+    return false;
+  }
+
+  const uint8_t* payload = reinterpret_cast<const uint8_t*>(upload_cmd) + sizeof(*upload_cmd);
+  float x0 = 0.0f;
+  float y0 = 0.0f;
+  float z0 = 0.0f;
+  float w0 = 0.0f;
+  uint32_t c0 = 0;
+  std::memcpy(&x0, payload + 0, sizeof(float));
+  std::memcpy(&y0, payload + 4, sizeof(float));
+  std::memcpy(&z0, payload + 8, sizeof(float));
+  std::memcpy(&w0, payload + 12, sizeof(float));
+  std::memcpy(&c0, payload + 16, sizeof(uint32_t));
+
+  const float expected_x0 = ((verts[0].x + 0.5f - vp.x) / vp.w) * 2.0f - 1.0f;
+  const float expected_y0 = 1.0f - ((verts[0].y + 0.5f - vp.y) / vp.h) * 2.0f;
+  if (!Check(std::fabs(x0 - expected_x0) < 1e-6f, "XYZRHW->clip: x0 matches half-pixel convention")) {
+    return false;
+  }
+  if (!Check(std::fabs(y0 - expected_y0) < 1e-6f, "XYZRHW->clip: y0 matches half-pixel convention")) {
+    return false;
+  }
+  if (!Check(std::fabs(z0 - verts[0].z) < 1e-6f, "XYZRHW->clip: z preserved")) {
+    return false;
+  }
+  if (!Check(std::fabs(w0 - 1.0f) < 1e-6f, "XYZRHW->clip: w preserved")) {
+    return false;
+  }
+  return Check(c0 == kGreen, "XYZRHW->clip: diffuse color preserved");
+}
+
 bool TestResetShrinkUnbindsBackbuffer() {
   struct Cleanup {
     D3D9DDI_ADAPTERFUNCS adapter_funcs{};
@@ -1647,6 +1819,7 @@ int main() {
   failures += !aerogpu::TestInvalidPayloadArgs();
   failures += !aerogpu::TestDestroyBoundShaderUnbinds();
   failures += !aerogpu::TestDestroyBoundVertexDeclUnbinds();
+  failures += !aerogpu::TestFvfXyzrhwDiffuseDrawPrimitiveUpEmitsFixedfuncCommands();
   failures += !aerogpu::TestResetShrinkUnbindsBackbuffer();
   failures += !aerogpu::TestRotateResourceIdentitiesRebindsChangedHandles();
   failures += !aerogpu::TestPresentBackbufferRotationUndoOnSmallCmdBuffer();
