@@ -367,8 +367,8 @@ For bring-up and debugging, you can use the Escape-based dbgctl tool:
 - Tool: `drivers/aerogpu/tools/win7_dbgctl/`
 - Docs/build: `drivers/aerogpu/tools/win7_dbgctl/README.md`
 
-If `drivers\\aerogpu\\build\\stage_packaging_win7.cmd` finds an already-built dbgctl
-binary at `drivers\\aerogpu\\tools\\win7_dbgctl\\bin\\aerogpu_dbgctl.exe`, it will copy
+If `drivers\aerogpu\build\stage_packaging_win7.cmd` finds an already-built dbgctl
+binary at `drivers\aerogpu\tools\win7_dbgctl\bin\aerogpu_dbgctl.exe`, it will copy
 it into this packaging directory as `aerogpu_dbgctl.exe`.
 
 Examples:
