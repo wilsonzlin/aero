@@ -387,7 +387,10 @@ fn enforce_security(
         crate::config::AuthMode::ApiKey => {
             let expected = state.cfg.security.api_key.as_deref().unwrap_or_default();
             let provided = token_from_query(uri).or_else(|| token_from_subprotocol(headers));
-            if provided.as_deref() != Some(expected) {
+            let api_key_ok = provided
+                .as_deref()
+                .is_some_and(|provided| constant_time_eq(provided, expected));
+            if !api_key_ok {
                 state.metrics.auth_failed();
                 let reject_reason = if token_present {
                     AuthRejectReason::InvalidApiKey
@@ -610,8 +613,11 @@ fn enforce_security(
             } else {
                 let provided = token_from_query(uri).or_else(|| token_from_subprotocol(headers));
                 let api_key_present = provided.is_some();
+                let api_key_ok = provided
+                    .as_deref()
+                    .is_some_and(|provided| constant_time_eq(provided, expected));
 
-                if provided.as_deref() != Some(expected) {
+                if !api_key_ok {
                     state.metrics.auth_failed();
 
                     let reject_reason = if api_key_present {
@@ -676,7 +682,9 @@ fn enforce_security(
 
             let provided = token_from_query(uri).or_else(|| token_from_subprotocol(headers));
             let api_key_present = provided.is_some();
-            let api_key_ok = provided.as_deref() == Some(expected);
+            let api_key_ok = provided
+                .as_deref()
+                .is_some_and(|provided| constant_time_eq(provided, expected));
 
             if !cookie_ok || !api_key_ok {
                 state.metrics.auth_failed();
@@ -1378,6 +1386,17 @@ fn token_from_subprotocol(headers: &HeaderMap) -> Option<String> {
             .filter(|v| !v.is_empty())
             .map(|v| v.to_string())
     })
+}
+
+fn constant_time_eq(a: &str, b: &str) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff: u8 = 0;
+    for (&a, &b) in a.as_bytes().iter().zip(b.as_bytes()) {
+        diff |= a ^ b;
+    }
+    diff == 0
 }
 
 fn has_subprotocol(headers: &HeaderMap, required: &str) -> bool {
