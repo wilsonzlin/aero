@@ -70,7 +70,7 @@ Example (requires WDF coinstaller; `dllName` derived from `kmdfVersion`):
 Template examples are available under `drivers/_template/`:
 
 - `ci-package.README.md` (field reference)
-- `ci-package.json` (starter template; add `infFiles` if you need explicit INF selection)
+- `ci-package.json` (starter template; replace/remove the `infFiles` placeholder)
 - `ci-package.inf-wow64-example.json`
 - `ci-package.wdf-example.json`
 
