@@ -3505,8 +3505,11 @@ fn resolve_texture_binding(state: &AerogpuD3d11State, binding: &Binding) -> Resu
 
     let mut resolved: Option<u32> = None;
     let mut resolved_stage: Option<&'static str> = None;
-    for (stage_name, wants, value) in [("VS", wants_vs, vs), ("PS", wants_ps, ps), ("CS", wants_cs, cs)]
-    {
+    for (stage_name, wants, value) in [
+        ("VS", wants_vs, vs),
+        ("PS", wants_ps, ps),
+        ("CS", wants_cs, cs),
+    ] {
         if !wants {
             continue;
         }

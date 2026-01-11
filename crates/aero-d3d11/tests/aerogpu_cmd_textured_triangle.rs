@@ -412,11 +412,7 @@ fn aerogpu_cmd_renders_textured_fullscreen_triangle() {
         stream.extend_from_slice(&(vs_bytes.len() as u32).to_le_bytes());
         stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
         stream.extend_from_slice(&vs_bytes);
-        stream.resize(
-            stream.len()
-                + (align4(vs_bytes.len()) - vs_bytes.len()),
-            0,
-        );
+        stream.resize(stream.len() + (align4(vs_bytes.len()) - vs_bytes.len()), 0);
         end_cmd(&mut stream, start);
 
         // CREATE_SHADER_DXBC (PS)
@@ -427,8 +423,7 @@ fn aerogpu_cmd_renders_textured_fullscreen_triangle() {
         stream.extend_from_slice(&0u32.to_le_bytes()); // reserved0
         stream.extend_from_slice(DXBC_PS_SAMPLE);
         stream.resize(
-            stream.len()
-                + (align4(DXBC_PS_SAMPLE.len()) - DXBC_PS_SAMPLE.len()),
+            stream.len() + (align4(DXBC_PS_SAMPLE.len()) - DXBC_PS_SAMPLE.len()),
             0,
         );
         end_cmd(&mut stream, start);
