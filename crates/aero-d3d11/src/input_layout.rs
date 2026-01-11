@@ -31,6 +31,17 @@ const ELEMENT_SIZE: usize = 28;
 /// D3D11 defines `D3D11_IA_VERTEX_INPUT_STRUCTURE_ELEMENT_COUNT` as 32.
 pub const MAX_INPUT_LAYOUT_ELEMENTS: u32 = 32;
 
+/// D3D11 input-assembler vertex buffer slots.
+///
+/// D3D11 defines `D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT` as 32.
+pub const MAX_INPUT_SLOTS: u32 = 32;
+
+/// WebGPU baseline limits (minimum required by spec).
+///
+/// We validate against these early so pipeline creation doesn't fail later with opaque wgpu errors.
+pub const MAX_WGPU_VERTEX_BUFFERS: u32 = 8;
+pub const MAX_WGPU_VERTEX_ATTRIBUTES: u32 = 16;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InputLayoutBlobHeader {
     pub magic: u32,
@@ -130,6 +141,18 @@ pub enum InputLayoutError {
         expected: usize,
         actual: usize,
     },
+    InputSlotOutOfRange {
+        slot: u32,
+        max: u32,
+    },
+    TooManyVertexBuffers {
+        max_slot: u32,
+        max: u32,
+    },
+    TooManyVertexAttributes {
+        count: u32,
+        max: u32,
+    },
     UnsupportedDxgiFormat(u32),
     UnsupportedInputSlotClass(u32),
     InvalidInstanceStepRate(u32),
@@ -184,6 +207,17 @@ impl fmt::Display for InputLayoutError {
             InputLayoutError::BlobSizeMismatch { expected, actual } => write!(
                 f,
                 "ILAY blob size mismatch: expected {expected} bytes, got {actual}"
+            ),
+            InputLayoutError::InputSlotOutOfRange { slot, max } => {
+                write!(f, "input_slot {slot} is out of range (max {max})")
+            }
+            InputLayoutError::TooManyVertexBuffers { max_slot, max } => write!(
+                f,
+                "input layout references slot {max_slot}, but WebGPU only supports {max} vertex buffers"
+            ),
+            InputLayoutError::TooManyVertexAttributes { count, max } => write!(
+                f,
+                "input layout has {count} vertex attributes, but WebGPU only supports {max}"
             ),
             InputLayoutError::UnsupportedDxgiFormat(fmt) => {
                 write!(f, "unsupported DXGI_FORMAT {fmt}")
@@ -287,6 +321,12 @@ impl InputLayoutDesc {
             let semantic_index = read_u32_le(&blob[off + 4..off + 8]);
             let dxgi_format = read_u32_le(&blob[off + 8..off + 12]);
             let input_slot = read_u32_le(&blob[off + 12..off + 16]);
+            if input_slot >= MAX_INPUT_SLOTS {
+                return Err(InputLayoutError::InputSlotOutOfRange {
+                    slot: input_slot,
+                    max: MAX_INPUT_SLOTS - 1,
+                });
+            }
             let aligned_byte_offset = read_u32_le(&blob[off + 16..off + 20]);
             let input_slot_class = read_u32_le(&blob[off + 20..off + 24]);
             let instance_data_step_rate = read_u32_le(&blob[off + 24..off + 28]);
@@ -429,6 +469,13 @@ pub fn map_layout_to_shader_locations(
     layout: &InputLayoutBinding<'_>,
     vs_signature: &[VsInputSignatureElement],
 ) -> Result<Vec<VertexBufferLayoutOwned>, InputLayoutError> {
+    if layout.layout.elements.len() > MAX_WGPU_VERTEX_ATTRIBUTES as usize {
+        return Err(InputLayoutError::TooManyVertexAttributes {
+            count: layout.layout.elements.len() as u32,
+            max: MAX_WGPU_VERTEX_ATTRIBUTES,
+        });
+    }
+
     let sig_map = build_signature_map(vs_signature);
 
     struct SlotState {
@@ -526,6 +573,12 @@ pub fn map_layout_to_shader_locations(
     let mut out: Vec<VertexBufferLayoutOwned> = Vec::new();
     if slots.is_empty() {
         return Ok(out);
+    }
+    if max_slot >= MAX_WGPU_VERTEX_BUFFERS {
+        return Err(InputLayoutError::TooManyVertexBuffers {
+            max_slot,
+            max: MAX_WGPU_VERTEX_BUFFERS,
+        });
     }
 
     out.reserve((max_slot + 1) as usize);
