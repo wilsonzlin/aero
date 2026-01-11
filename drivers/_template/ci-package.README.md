@@ -14,7 +14,7 @@ For the canonical documentation, see: [`docs/16-driver-packaging-and-signing.md`
 ### `$schema` (optional)
 
 JSON Schema reference for editor tooling (example: `"../../ci/driver-package.schema.json"`). CI ignores this field.
-Update the relative path as needed if your driver directory is nested (for example, `drivers/windows7/<name>/`).
+Update the relative path as needed if your driver directory is nested (for example, `drivers/windows7/<driver>/`).
 
 ### `infFiles` (optional)
 
