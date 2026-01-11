@@ -6,9 +6,9 @@ use std::time::{Duration, Instant};
 
 use aero_protocol::aerogpu::aerogpu_cmd::{
     AerogpuCmdOpcode, AerogpuIndexFormat, AerogpuPrimitiveTopology, AerogpuShaderStage,
-    AEROGPU_CLEAR_COLOR, AEROGPU_CMD_STREAM_MAGIC, AEROGPU_RESOURCE_USAGE_INDEX_BUFFER,
-    AEROGPU_RESOURCE_USAGE_RENDER_TARGET, AEROGPU_RESOURCE_USAGE_TEXTURE,
-    AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
+    AEROGPU_CLEAR_COLOR, AEROGPU_CMD_STREAM_MAGIC, AEROGPU_COPY_FLAG_WRITEBACK_DST,
+    AEROGPU_RESOURCE_USAGE_INDEX_BUFFER, AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+    AEROGPU_RESOURCE_USAGE_TEXTURE, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER,
 };
 use aero_protocol::aerogpu::aerogpu_pci::AerogpuFormat;
 use emulator::devices::aerogpu_regs::{irq_bits, mmio, ring_control};
@@ -1629,4 +1629,201 @@ fn aerogpu_ring_submission_isolates_pixel_constants_per_context() {
     // Context 2 did not set pixel constants, so c0 defaults to 0 and the triangle is black/transparent.
     assert_eq!(px(&rgba1, width / 2, height / 2), [0, 0, 0, 0]);
     assert_eq!(px(&rgba1, 5, 5), [255, 0, 0, 255]);
+}
+
+#[test]
+fn aerogpu_ring_submission_copy_texture2d_writeback_writes_guest_memory() {
+    let mut mem = Bus::new(0x40_000);
+
+    let mut cfg = AeroGpuDeviceConfig::default();
+    cfg.executor = AeroGpuExecutorConfig {
+        verbose: false,
+        keep_last_submissions: 0,
+        fence_completion: AeroGpuFenceCompletionMode::Deferred,
+    };
+
+    let mut dev = AeroGpuPciDevice::new(cfg, 0);
+    let backend = match NativeAeroGpuBackend::new_headless() {
+        Ok(backend) => backend,
+        Err(aero_gpu::AerogpuD3d9Error::AdapterNotFound) => {
+            common::skip_or_panic(
+                concat!(
+                    module_path!(),
+                    "::aerogpu_ring_submission_copy_texture2d_writeback_writes_guest_memory"
+                ),
+                "wgpu request_adapter returned None",
+            );
+            return;
+        }
+        Err(err) => panic!("failed to initialize native AeroGPU backend: {err}"),
+    };
+    dev.set_backend(Box::new(backend));
+
+    // Ring layout in guest memory.
+    let ring_gpa = 0x1000u64;
+    let ring_size = 0x1000u32;
+    let entry_count = 8u32;
+    let entry_stride = 64u32;
+
+    // Ring header.
+    mem.write_u32(ring_gpa + 0, AEROGPU_RING_MAGIC);
+    mem.write_u32(ring_gpa + 4, dev.regs.abi_version);
+    mem.write_u32(ring_gpa + 8, ring_size);
+    mem.write_u32(ring_gpa + 12, entry_count);
+    mem.write_u32(ring_gpa + 16, entry_stride);
+    mem.write_u32(ring_gpa + 20, 0);
+    mem.write_u32(ring_gpa + 24, 0); // head
+    mem.write_u32(ring_gpa + 28, 1); // tail
+
+    // Allocation table: one entry backing a 1x1 RGBA8 texture.
+    let alloc_table_gpa = 0x6000u64;
+    let alloc_entry_count = 1u32;
+    let alloc_entry_stride = 32u32;
+    let alloc_table_size_bytes = 24u32 + alloc_entry_count * alloc_entry_stride;
+
+    let dst_gpa = 0x8000u64;
+    mem.write_physical(dst_gpa, &[0xAA, 0xAA, 0xAA, 0xAA]);
+
+    mem.write_u32(alloc_table_gpa + 0, AEROGPU_ALLOC_TABLE_MAGIC);
+    mem.write_u32(alloc_table_gpa + 4, dev.regs.abi_version);
+    mem.write_u32(alloc_table_gpa + 8, alloc_table_size_bytes);
+    mem.write_u32(alloc_table_gpa + 12, alloc_entry_count);
+    mem.write_u32(alloc_table_gpa + 16, alloc_entry_stride);
+    mem.write_u32(alloc_table_gpa + 20, 0); // reserved0
+
+    let entry0 = alloc_table_gpa + 24;
+    mem.write_u32(entry0 + 0, 1); // alloc_id
+    mem.write_u32(entry0 + 4, 0); // flags
+    mem.write_u64(entry0 + 8, dst_gpa);
+    mem.write_u64(entry0 + 16, 4096); // size_bytes
+    mem.write_u64(entry0 + 24, 0); // reserved0
+
+    let cmd_gpa = 0x4000u64;
+    let (width, height) = (1u32, 1u32);
+
+    const SRC_RT_HANDLE: u32 = 1;
+    const DST_TEX_HANDLE: u32 = 2;
+
+    let stream = build_stream(
+        |out| {
+            emit_packet(out, AerogpuCmdOpcode::CreateTexture2d as u32, |out| {
+                push_u32(out, SRC_RT_HANDLE);
+                push_u32(
+                    out,
+                    AEROGPU_RESOURCE_USAGE_TEXTURE | AEROGPU_RESOURCE_USAGE_RENDER_TARGET,
+                );
+                push_u32(out, AerogpuFormat::R8G8B8A8Unorm as u32);
+                push_u32(out, width);
+                push_u32(out, height);
+                push_u32(out, 1); // mip_levels
+                push_u32(out, 1); // array_layers
+                push_u32(out, width * 4); // row_pitch_bytes
+                push_u32(out, 0); // backing_alloc_id
+                push_u32(out, 0); // backing_offset_bytes
+                push_u64(out, 0); // reserved0
+            });
+
+            emit_packet(out, AerogpuCmdOpcode::CreateTexture2d as u32, |out| {
+                push_u32(out, DST_TEX_HANDLE);
+                push_u32(out, AEROGPU_RESOURCE_USAGE_TEXTURE);
+                push_u32(out, AerogpuFormat::R8G8B8A8Unorm as u32);
+                push_u32(out, width);
+                push_u32(out, height);
+                push_u32(out, 1); // mip_levels
+                push_u32(out, 1); // array_layers
+                push_u32(out, width * 4); // row_pitch_bytes
+                push_u32(out, 1); // backing_alloc_id
+                push_u32(out, 0); // backing_offset_bytes
+                push_u64(out, 0); // reserved0
+            });
+
+            emit_packet(out, AerogpuCmdOpcode::SetRenderTargets as u32, |out| {
+                push_u32(out, 1); // color_count
+                push_u32(out, 0); // depth_stencil
+                push_u32(out, SRC_RT_HANDLE);
+                for _ in 0..7 {
+                    push_u32(out, 0);
+                }
+            });
+
+            // Clear the render target to green.
+            emit_packet(out, AerogpuCmdOpcode::Clear as u32, |out| {
+                push_u32(out, AEROGPU_CLEAR_COLOR);
+                push_f32(out, 0.0);
+                push_f32(out, 1.0);
+                push_f32(out, 0.0);
+                push_f32(out, 1.0);
+                push_f32(out, 1.0); // depth
+                push_u32(out, 0); // stencil
+            });
+
+            emit_packet(out, AerogpuCmdOpcode::CopyTexture2d as u32, |out| {
+                push_u32(out, DST_TEX_HANDLE);
+                push_u32(out, SRC_RT_HANDLE);
+                push_u32(out, 0); // dst_mip_level
+                push_u32(out, 0); // dst_array_layer
+                push_u32(out, 0); // src_mip_level
+                push_u32(out, 0); // src_array_layer
+                push_u32(out, 0); // dst_x
+                push_u32(out, 0); // dst_y
+                push_u32(out, 0); // src_x
+                push_u32(out, 0); // src_y
+                push_u32(out, width);
+                push_u32(out, height);
+                push_u32(out, AEROGPU_COPY_FLAG_WRITEBACK_DST);
+                push_u32(out, 0); // reserved0
+            });
+        },
+        dev.regs.abi_version,
+    );
+
+    mem.write_physical(cmd_gpa, &stream);
+
+    // Submit descriptor at slot 0.
+    let desc_gpa = ring_gpa + AEROGPU_RING_HEADER_SIZE_BYTES;
+    mem.write_u32(desc_gpa + 0, 64); // desc_size_bytes
+    mem.write_u32(desc_gpa + 4, 0); // flags
+    mem.write_u32(desc_gpa + 8, 0); // context_id
+    mem.write_u32(desc_gpa + 12, 0); // engine_id
+    mem.write_u64(desc_gpa + 16, cmd_gpa); // cmd_gpa
+    mem.write_u32(desc_gpa + 24, stream.len() as u32); // cmd_size_bytes
+    mem.write_u64(desc_gpa + 32, alloc_table_gpa); // alloc_table_gpa
+    mem.write_u32(desc_gpa + 40, alloc_table_size_bytes); // alloc_table_size_bytes
+    mem.write_u64(desc_gpa + 48, 1); // signal_fence
+
+    // Fence page.
+    let fence_gpa = 0x3000u64;
+    dev.mmio_write(&mut mem, mmio::FENCE_GPA_LO, 4, fence_gpa as u32);
+    dev.mmio_write(&mut mem, mmio::FENCE_GPA_HI, 4, (fence_gpa >> 32) as u32);
+
+    dev.mmio_write(&mut mem, mmio::RING_GPA_LO, 4, ring_gpa as u32);
+    dev.mmio_write(&mut mem, mmio::RING_GPA_HI, 4, (ring_gpa >> 32) as u32);
+    dev.mmio_write(&mut mem, mmio::RING_SIZE_BYTES, 4, ring_size);
+    dev.mmio_write(&mut mem, mmio::RING_CONTROL, 4, ring_control::ENABLE);
+
+    dev.mmio_write(
+        &mut mem,
+        mmio::IRQ_ENABLE,
+        4,
+        irq_bits::FENCE | irq_bits::ERROR,
+    );
+
+    dev.mmio_write(&mut mem, mmio::DOORBELL, 4, 1);
+
+    // Drive polling until the fence completes.
+    let start = Instant::now();
+    let mut now = start;
+    for _ in 0..200 {
+        if dev.regs.completed_fence >= 1 {
+            break;
+        }
+        now += Duration::from_millis(1);
+        dev.tick(&mut mem, now);
+    }
+
+    assert_eq!(dev.regs.completed_fence, 1);
+
+    let mut out = [0u8; 4];
+    mem.read_physical(dst_gpa, &mut out);
+    assert_eq!(out, [0, 255, 0, 255]);
 }
