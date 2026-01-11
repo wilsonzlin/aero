@@ -1066,7 +1066,7 @@ HRESULT submit_chunk(const D3DDDI_DEVICECALLBACKS* callbacks,
       if (!callbacks->pfnPresentCb) {
         return E_NOTIMPL;
       }
-      uint32_t fence_id_tmp = 0;
+      uint64_t fence_id_tmp = 0;
       uint64_t fence_value_tmp = 0;
       D3DDDICB_PRESENT present = {};
       __if_exists(D3DDDICB_PRESENT::hContext) {
@@ -1133,7 +1133,7 @@ HRESULT submit_chunk(const D3DDDI_DEVICECALLBACKS* callbacks,
       if (!callbacks->pfnRenderCb) {
         return E_NOTIMPL;
       }
-      uint32_t fence_id_tmp = 0;
+      uint64_t fence_id_tmp = 0;
       uint64_t fence_value_tmp = 0;
       D3DDDICB_RENDER render = {};
       __if_exists(D3DDDICB_RENDER::hContext) {
@@ -1427,8 +1427,8 @@ HRESULT WddmSubmit::WaitForFenceWithTimeout(uint64_t fence, uint32_t timeout_ms)
     return S_OK;
   }
 
-  const D3DKMT_HANDLE handles[1] = {hSyncObject_};
-  const UINT64 fence_values[1] = {fence};
+  D3DKMT_HANDLE handles[1] = {hSyncObject_};
+  UINT64 fence_values[1] = {fence};
 
   const UINT64 timeout =
       (timeout_ms == 0) ? 0ull : (timeout_ms == ~0u ? ~0ull : static_cast<UINT64>(timeout_ms));
@@ -1513,8 +1513,8 @@ uint64_t WddmSubmit::QueryCompletedFence() {
   } else if (last_submitted_fence_ != 0) {
     // Conservative fallback: poll the last-submitted fence without relying on a
     // monitored fence CPU VA.
-    const D3DKMT_HANDLE handles[1] = {hSyncObject_};
-    const UINT64 fence_values[1] = {last_submitted_fence_};
+    D3DKMT_HANDLE handles[1] = {hSyncObject_};
+    UINT64 fence_values[1] = {last_submitted_fence_};
 
     bool need_kmt_fallback = true;
 
