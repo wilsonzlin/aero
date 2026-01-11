@@ -242,6 +242,8 @@ Each check produces a `PASS` / `WARN` / `FAIL` result:
   - Input (virtio-input)
 - **AeroGPU D3D9 UMD DLL placement**: when an AeroGPU device is detected, verifies that the expected D3D9 UMD DLL(s) exist.
   - On Win7 x64 this includes the WOW64 D3D9 UMD under `C:\Windows\SysWOW64\` (required for 32-bit D3D9 apps).
+- **AeroGPU D3D10/11 UMD DLL placement (optional)**: if any AeroGPU D3D10/11 UMD DLLs are detected, verifies that the expected D3D10/11 UMD DLL(s) exist.
+  - On Win7 x64 this includes the WOW64 D3D10/11 UMD under `C:\Windows\SysWOW64\` (required for 32-bit D3D10/D3D11 apps when using the DX11-capable driver package).
 - **virtio-blk storage service**: best-effort probe for the configured storage driver service (see `config\devices.cmd`; e.g. `aerovblk`, or `viostor` when packaging virtio-win) with state + Start type.
 - **virtio-blk boot-critical registry**: validates `HKLM\SYSTEM\CurrentControlSet\Control\CriticalDeviceDatabase\...` mappings for the configured virtio-blk HWIDs (helps prevent `0x7B` when switching the boot disk from AHCI → virtio-blk).
 - **Signature mode**: parses `bcdedit` for `testsigning` and `nointegritychecks`.
