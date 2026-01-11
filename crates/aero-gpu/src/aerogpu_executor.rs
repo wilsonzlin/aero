@@ -629,7 +629,7 @@ fn fs_main() -> @location(0) vec4<f32> {
                     resource_handle,
                     offset_bytes,
                     size_bytes,
-                } => self.exec_resource_dirty_range(resource_handle, offset_bytes, size_bytes),
+                } => self.exec_resource_dirty_range(resource_handle, offset_bytes, size_bytes, alloc_table),
                 AeroGpuCmd::UploadResource {
                     resource_handle,
                     offset_bytes,
@@ -1055,13 +1055,26 @@ fn fs_main() -> @location(0) vec4<f32> {
         handle: u32,
         offset_bytes: u64,
         size_bytes: u64,
+        alloc_table: Option<&AllocTable>,
     ) -> Result<(), ExecutorError> {
         if size_bytes == 0 {
             return Ok(());
         }
 
         if let Some(buffer) = self.buffers.get_mut(&handle) {
-            if buffer.backing.is_none() {
+            if let Some(backing) = buffer.backing {
+                // Validate that the current submission contains an allocation-table entry
+                // for this alloc_id. This catches "tracked allocation then split" bugs
+                // where the command references guest memory without an alloc-table entry.
+                alloc_table
+                    .and_then(|t| t.get(backing.alloc_id))
+                    .ok_or_else(|| {
+                        ExecutorError::Validation(format!(
+                            "RESOURCE_DIRTY_RANGE missing alloc table entry for alloc_id={}",
+                            backing.alloc_id
+                        ))
+                    })?;
+            } else {
                 return Err(ExecutorError::Validation(format!(
                     "RESOURCE_DIRTY_RANGE on host-owned buffer {handle}"
                 )));
@@ -1088,6 +1101,14 @@ fn fs_main() -> @location(0) vec4<f32> {
                     "RESOURCE_DIRTY_RANGE on host-owned texture {handle}"
                 )));
             };
+            alloc_table
+                .and_then(|t| t.get(backing.alloc_id))
+                .ok_or_else(|| {
+                    ExecutorError::Validation(format!(
+                        "RESOURCE_DIRTY_RANGE missing alloc table entry for alloc_id={}",
+                        backing.alloc_id
+                    ))
+                })?;
             let end = offset_bytes.checked_add(size_bytes).ok_or_else(|| {
                 ExecutorError::Validation("RESOURCE_DIRTY_RANGE texture range overflow".into())
             })?;

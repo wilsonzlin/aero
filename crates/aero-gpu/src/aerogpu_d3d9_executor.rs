@@ -1774,7 +1774,12 @@ impl AerogpuD3d9Executor {
                 };
 
                 match res {
-                    Resource::Buffer { size, .. } => {
+                    Resource::Buffer { size, backing, .. } => {
+                        if backing.is_some() {
+                            return Err(AerogpuD3d9Error::Validation(format!(
+                                "UPLOAD_RESOURCE on guest-backed buffer {resource_handle} is not supported (use RESOURCE_DIRTY_RANGE)"
+                            )));
+                        }
                         let end = offset_bytes
                             .checked_add(size_bytes)
                             .ok_or(AerogpuD3d9Error::UploadOutOfBounds(resource_handle))?;
@@ -1787,8 +1792,14 @@ impl AerogpuD3d9Executor {
                         width,
                         height,
                         row_pitch_bytes,
+                        backing,
                         ..
                     } => {
+                        if backing.is_some() {
+                            return Err(AerogpuD3d9Error::Validation(format!(
+                                "UPLOAD_RESOURCE on guest-backed texture {resource_handle} is not supported (use RESOURCE_DIRTY_RANGE)"
+                            )));
+                        }
                         let bpp = bytes_per_pixel(*format);
                         let expected_row_pitch = width.saturating_mul(bpp);
                         let src_pitch = if *row_pitch_bytes != 0 {
@@ -3166,7 +3177,7 @@ impl AerogpuD3d9Executor {
                 resource_handle,
                 offset_bytes,
                 size_bytes,
-            } => self.resource_dirty_range(resource_handle, offset_bytes, size_bytes),
+            } => self.resource_dirty_range(ctx, resource_handle, offset_bytes, size_bytes),
         }
     }
 
@@ -3212,6 +3223,7 @@ impl AerogpuD3d9Executor {
 
     fn resource_dirty_range(
         &mut self,
+        ctx: SubmissionCtx<'_>,
         resource_handle: u32,
         offset_bytes: u64,
         size_bytes: u64,
@@ -3234,9 +3246,14 @@ impl AerogpuD3d9Executor {
                 dirty_ranges,
                 ..
             } => {
-                if backing.is_none() {
-                    return Ok(());
-                }
+                let Some(backing) = backing.as_ref() else {
+                    return Err(AerogpuD3d9Error::Validation(format!(
+                        "RESOURCE_DIRTY_RANGE on host-owned buffer {resource_handle}"
+                    )));
+                };
+                ctx.alloc_table
+                    .and_then(|t| t.get(backing.alloc_id))
+                    .ok_or(AerogpuD3d9Error::MissingAllocTable(backing.alloc_id))?;
                 if end > *size {
                     return Err(AerogpuD3d9Error::Validation(format!(
                         "buffer dirty range out of bounds (handle={resource_handle} end={end} size={size})"
@@ -3254,8 +3271,13 @@ impl AerogpuD3d9Executor {
                 ..
             } => {
                 let Some(backing) = backing.as_ref() else {
-                    return Ok(());
+                    return Err(AerogpuD3d9Error::Validation(format!(
+                        "RESOURCE_DIRTY_RANGE on host-owned texture {resource_handle}"
+                    )));
                 };
+                ctx.alloc_table
+                    .and_then(|t| t.get(backing.alloc_id))
+                    .ok_or(AerogpuD3d9Error::MissingAllocTable(backing.alloc_id))?;
                 if end > backing.size_bytes {
                     return Err(AerogpuD3d9Error::Validation(format!(
                         "texture dirty range out of bounds (handle={resource_handle} end={end} size={})",

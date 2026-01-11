@@ -181,6 +181,7 @@ fn d3d9_cmd_stream_flushes_guest_backed_resources_from_dirty_ranges() {
 
     let mut vb_data = Vec::new();
     // D3D9 defaults to back-face culling with clockwise front faces.
+    // Use a clockwise full-screen triangle so the test does not depend on cull state.
     let verts = [
         (-1.0f32, -1.0f32, 0.0f32, 1.0f32),
         (-1.0f32, 3.0f32, 0.0f32, 1.0f32),
@@ -419,6 +420,300 @@ fn d3d9_cmd_stream_flushes_guest_backed_resources_from_dirty_ranges() {
 }
 
 #[test]
+fn d3d9_cmd_stream_uses_current_alloc_table_for_dirty_range_uploads() {
+    let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
+        Ok(exec) => exec,
+        Err(AerogpuD3d9Error::AdapterNotFound) => {
+            eprintln!("skipping alloc-table relocation test: wgpu adapter not found");
+            return;
+        }
+        Err(err) => panic!("failed to create executor: {err}"),
+    };
+
+    // Protocol constants from `drivers/aerogpu/protocol/aerogpu_cmd.h`.
+    const OPC_CREATE_BUFFER: u32 = AerogpuCmdOpcode::CreateBuffer as u32;
+    const OPC_CREATE_TEXTURE2D: u32 = AerogpuCmdOpcode::CreateTexture2d as u32;
+    const OPC_RESOURCE_DIRTY_RANGE: u32 = AerogpuCmdOpcode::ResourceDirtyRange as u32;
+    const OPC_UPLOAD_RESOURCE: u32 = AerogpuCmdOpcode::UploadResource as u32;
+    const OPC_CREATE_SHADER_DXBC: u32 = AerogpuCmdOpcode::CreateShaderDxbc as u32;
+    const OPC_BIND_SHADERS: u32 = AerogpuCmdOpcode::BindShaders as u32;
+    const OPC_CREATE_INPUT_LAYOUT: u32 = AerogpuCmdOpcode::CreateInputLayout as u32;
+    const OPC_SET_INPUT_LAYOUT: u32 = AerogpuCmdOpcode::SetInputLayout as u32;
+    const OPC_SET_RENDER_TARGETS: u32 = AerogpuCmdOpcode::SetRenderTargets as u32;
+    const OPC_SET_VIEWPORT: u32 = AerogpuCmdOpcode::SetViewport as u32;
+    const OPC_SET_SCISSOR: u32 = AerogpuCmdOpcode::SetScissor as u32;
+    const OPC_SET_VERTEX_BUFFERS: u32 = AerogpuCmdOpcode::SetVertexBuffers as u32;
+    const OPC_SET_PRIMITIVE_TOPOLOGY: u32 = AerogpuCmdOpcode::SetPrimitiveTopology as u32;
+    const OPC_SET_TEXTURE: u32 = AerogpuCmdOpcode::SetTexture as u32;
+    const OPC_CLEAR: u32 = AerogpuCmdOpcode::Clear as u32;
+    const OPC_DRAW: u32 = AerogpuCmdOpcode::Draw as u32;
+    const OPC_PRESENT: u32 = AerogpuCmdOpcode::Present as u32;
+
+    const AEROGPU_FORMAT_R8G8B8A8_UNORM: u32 = AerogpuFormat::R8G8B8A8Unorm as u32;
+    const AEROGPU_TOPOLOGY_TRIANGLELIST: u32 = AerogpuPrimitiveTopology::TriangleList as u32;
+
+    const RT_HANDLE: u32 = 1;
+    const TEX_HANDLE: u32 = 2;
+    const VB_HANDLE: u32 = 3;
+    const VS_HANDLE: u32 = 4;
+    const PS_HANDLE: u32 = 5;
+    const IL_HANDLE: u32 = 6;
+
+    const TEX_ALLOC_ID: u32 = 1;
+    const TEX_GPA_A: u64 = 0x1000;
+    const TEX_GPA_B: u64 = 0x2000;
+
+    let width = 1u32;
+    let height = 1u32;
+
+    // Populate two possible base GPAs. The executor must consult the current submission's
+    // allocation table when flushing dirty ranges; it must not bake the base GPA at create time.
+    let guest_memory = VecGuestMemory::new(0x4000);
+    guest_memory.write(TEX_GPA_A, &[0, 255, 0, 255]).unwrap(); // green
+    guest_memory.write(TEX_GPA_B, &[255, 0, 0, 255]).unwrap(); // red
+
+    let alloc_table_create = AllocTable::new([(
+        TEX_ALLOC_ID,
+        AllocEntry {
+            flags: 0,
+            gpa: TEX_GPA_A,
+            size_bytes: 4096,
+        },
+    )])
+    .expect("alloc table");
+    let alloc_table_draw = AllocTable::new([(
+        TEX_ALLOC_ID,
+        AllocEntry {
+            flags: 0,
+            gpa: TEX_GPA_B,
+            size_bytes: 4096,
+        },
+    )])
+    .expect("alloc table");
+
+    let stream_create = build_stream(|out| {
+        emit_packet(out, OPC_CREATE_TEXTURE2D, |out| {
+            push_u32(out, TEX_HANDLE);
+            push_u32(out, AEROGPU_RESOURCE_USAGE_TEXTURE);
+            push_u32(out, AEROGPU_FORMAT_R8G8B8A8_UNORM);
+            push_u32(out, width);
+            push_u32(out, height);
+            push_u32(out, 1); // mip_levels
+            push_u32(out, 1); // array_layers
+            push_u32(out, 4); // row_pitch_bytes
+            push_u32(out, TEX_ALLOC_ID);
+            push_u32(out, 0); // backing_offset_bytes
+            push_u64(out, 0); // reserved0
+        });
+    });
+
+    exec.execute_cmd_stream_with_guest_memory(&stream_create, &guest_memory, Some(&alloc_table_create))
+        .expect("create submission should succeed");
+
+    // Full-screen triangle (pos float4 + texcoord float4), same as the main guest-backing test.
+    let mut vb_data = Vec::new();
+    // D3D9 defaults to back-face culling with clockwise front faces.
+    // Use a clockwise full-screen triangle so the test does not depend on cull state.
+    let verts = [
+        (-1.0f32, -1.0f32, 0.0f32, 1.0f32),
+        (-1.0f32, 3.0f32, 0.0f32, 1.0f32),
+        (3.0f32, -1.0f32, 0.0f32, 1.0f32),
+    ];
+    for (x, y, z, w) in verts {
+        push_f32(&mut vb_data, x);
+        push_f32(&mut vb_data, y);
+        push_f32(&mut vb_data, z);
+        push_f32(&mut vb_data, w);
+        // texcoord float4 (all vertices sample the same texel).
+        push_f32(&mut vb_data, 0.5);
+        push_f32(&mut vb_data, 0.5);
+        push_f32(&mut vb_data, 0.0);
+        push_f32(&mut vb_data, 0.0);
+    }
+    assert_eq!(vb_data.len(), 3 * 32);
+
+    let vs_bytes = assemble_vs_fullscreen_pos_tex();
+    let ps_bytes = assemble_ps_sample_tex0();
+
+    let mut vertex_decl = Vec::new();
+    // POSITION0 float4 at stream 0 offset 0.
+    push_u16(&mut vertex_decl, 0);
+    push_u16(&mut vertex_decl, 0);
+    push_u8(&mut vertex_decl, 3); // FLOAT4
+    push_u8(&mut vertex_decl, 0);
+    push_u8(&mut vertex_decl, 0); // POSITION
+    push_u8(&mut vertex_decl, 0);
+    // TEXCOORD0 float4 at offset 16.
+    push_u16(&mut vertex_decl, 0);
+    push_u16(&mut vertex_decl, 16);
+    push_u8(&mut vertex_decl, 3); // FLOAT4
+    push_u8(&mut vertex_decl, 0);
+    push_u8(&mut vertex_decl, 5); // TEXCOORD
+    push_u8(&mut vertex_decl, 0);
+    // End marker.
+    push_u16(&mut vertex_decl, 0x00FF);
+    push_u16(&mut vertex_decl, 0);
+    push_u8(&mut vertex_decl, 17); // UNUSED
+    push_u8(&mut vertex_decl, 0);
+    push_u8(&mut vertex_decl, 0);
+    push_u8(&mut vertex_decl, 0);
+
+    let stream_draw = build_stream(|out| {
+        // Render target.
+        emit_packet(out, OPC_CREATE_TEXTURE2D, |out| {
+            push_u32(out, RT_HANDLE);
+            push_u32(out, AEROGPU_RESOURCE_USAGE_TEXTURE | AEROGPU_RESOURCE_USAGE_RENDER_TARGET);
+            push_u32(out, AEROGPU_FORMAT_R8G8B8A8_UNORM);
+            push_u32(out, width);
+            push_u32(out, height);
+            push_u32(out, 1); // mip_levels
+            push_u32(out, 1); // array_layers
+            push_u32(out, width * 4); // row_pitch_bytes
+            push_u32(out, 0); // backing_alloc_id
+            push_u32(out, 0); // backing_offset_bytes
+            push_u64(out, 0); // reserved0
+        });
+
+        // Host-owned vertex buffer.
+        emit_packet(out, OPC_CREATE_BUFFER, |out| {
+            push_u32(out, VB_HANDLE);
+            push_u32(out, AEROGPU_RESOURCE_USAGE_VERTEX_BUFFER);
+            push_u64(out, vb_data.len() as u64);
+            push_u32(out, 0); // backing_alloc_id
+            push_u32(out, 0); // backing_offset_bytes
+            push_u64(out, 0); // reserved0
+        });
+
+        emit_packet(out, OPC_UPLOAD_RESOURCE, |out| {
+            push_u32(out, VB_HANDLE);
+            push_u32(out, 0); // reserved0
+            push_u64(out, 0); // offset_bytes
+            push_u64(out, vb_data.len() as u64); // size_bytes
+            out.extend_from_slice(&vb_data);
+        });
+
+        // Mark the guest-backed texture dirty: the executor must consult alloc_table_draw,
+        // not the base GPA from alloc_table_create.
+        emit_packet(out, OPC_RESOURCE_DIRTY_RANGE, |out| {
+            push_u32(out, TEX_HANDLE);
+            push_u32(out, 0); // reserved0
+            push_u64(out, 0);
+            push_u64(out, 4);
+        });
+
+        emit_packet(out, OPC_CREATE_SHADER_DXBC, |out| {
+            push_u32(out, VS_HANDLE);
+            push_u32(out, AerogpuShaderStage::Vertex as u32);
+            push_u32(out, vs_bytes.len() as u32);
+            push_u32(out, 0); // reserved0
+            out.extend_from_slice(&vs_bytes);
+        });
+
+        emit_packet(out, OPC_CREATE_SHADER_DXBC, |out| {
+            push_u32(out, PS_HANDLE);
+            push_u32(out, AerogpuShaderStage::Pixel as u32);
+            push_u32(out, ps_bytes.len() as u32);
+            push_u32(out, 0); // reserved0
+            out.extend_from_slice(&ps_bytes);
+        });
+
+        emit_packet(out, OPC_BIND_SHADERS, |out| {
+            push_u32(out, VS_HANDLE);
+            push_u32(out, PS_HANDLE);
+            push_u32(out, 0); // cs
+            push_u32(out, 0); // reserved0
+        });
+
+        emit_packet(out, OPC_CREATE_INPUT_LAYOUT, |out| {
+            push_u32(out, IL_HANDLE);
+            push_u32(out, vertex_decl.len() as u32);
+            push_u32(out, 0); // reserved0
+            out.extend_from_slice(&vertex_decl);
+        });
+
+        emit_packet(out, OPC_SET_INPUT_LAYOUT, |out| {
+            push_u32(out, IL_HANDLE);
+            push_u32(out, 0); // reserved0
+        });
+
+        emit_packet(out, OPC_SET_VERTEX_BUFFERS, |out| {
+            push_u32(out, 0); // start_slot
+            push_u32(out, 1); // buffer_count
+            push_u32(out, VB_HANDLE);
+            push_u32(out, 32); // stride_bytes
+            push_u32(out, 0); // offset_bytes
+            push_u32(out, 0); // reserved0
+        });
+
+        emit_packet(out, OPC_SET_PRIMITIVE_TOPOLOGY, |out| {
+            push_u32(out, AEROGPU_TOPOLOGY_TRIANGLELIST);
+            push_u32(out, 0); // reserved0
+        });
+
+        emit_packet(out, OPC_SET_RENDER_TARGETS, |out| {
+            push_u32(out, 1); // color_count
+            push_u32(out, 0); // depth_stencil
+            push_u32(out, RT_HANDLE);
+            for _ in 0..7 {
+                push_u32(out, 0);
+            }
+        });
+
+        emit_packet(out, OPC_SET_VIEWPORT, |out| {
+            push_f32(out, 0.0);
+            push_f32(out, 0.0);
+            push_f32(out, width as f32);
+            push_f32(out, height as f32);
+            push_f32(out, 0.0);
+            push_f32(out, 1.0);
+        });
+
+        emit_packet(out, OPC_SET_SCISSOR, |out| {
+            push_i32(out, 0);
+            push_i32(out, 0);
+            push_i32(out, width as i32);
+            push_i32(out, height as i32);
+        });
+
+        emit_packet(out, OPC_CLEAR, |out| {
+            push_u32(out, AEROGPU_CLEAR_COLOR);
+            push_f32(out, 0.0);
+            push_f32(out, 0.0);
+            push_f32(out, 0.0);
+            push_f32(out, 1.0);
+            push_f32(out, 1.0);
+            push_u32(out, 0);
+        });
+
+        emit_packet(out, OPC_SET_TEXTURE, |out| {
+            push_u32(out, AerogpuShaderStage::Pixel as u32);
+            push_u32(out, 0); // slot
+            push_u32(out, TEX_HANDLE);
+            push_u32(out, 0); // reserved0
+        });
+
+        emit_packet(out, OPC_DRAW, |out| {
+            push_u32(out, 3);
+            push_u32(out, 1);
+            push_u32(out, 0);
+            push_u32(out, 0);
+        });
+
+        emit_packet(out, OPC_PRESENT, |out| {
+            push_u32(out, 0);
+            push_u32(out, 0);
+        });
+    });
+
+    exec.execute_cmd_stream_with_guest_memory(&stream_draw, &guest_memory, Some(&alloc_table_draw))
+        .expect("draw submission should succeed");
+
+    let (_out_w, _out_h, rgba) = pollster::block_on(exec.readback_texture_rgba8(RT_HANDLE))
+        .expect("readback should succeed");
+    assert_eq!(&rgba[0..4], &[255, 0, 0, 255]);
+}
+
+#[test]
 fn d3d9_copy_texture2d_flushes_dst_dirty_ranges_before_sampling() {
     let mut exec = match pollster::block_on(AerogpuD3d9Executor::new_headless()) {
         Ok(exec) => exec,
@@ -466,6 +761,7 @@ fn d3d9_copy_texture2d_flushes_dst_dirty_ranges_before_sampling() {
 
     let mut vb_data = Vec::new();
     // D3D9 defaults to back-face culling with clockwise front faces.
+    // Use a clockwise full-screen triangle so the test does not depend on cull state.
     let verts = [
         (-1.0f32, -1.0f32, 0.0f32, 1.0f32),
         (-1.0f32, 3.0f32, 0.0f32, 1.0f32),

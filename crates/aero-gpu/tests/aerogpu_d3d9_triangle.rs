@@ -162,6 +162,7 @@ fn d3d9_cmd_stream_renders_deterministic_triangle() {
 
     let mut vb_data = Vec::new();
     // D3D9 defaults to back-face culling with clockwise front faces.
+    // Use clockwise winding so the test does not depend on cull state.
     let verts = [
         (-0.8f32, -0.2f32, 0.0f32, 1.0f32),
         (0.0f32, 0.8f32, 0.0f32, 1.0f32),

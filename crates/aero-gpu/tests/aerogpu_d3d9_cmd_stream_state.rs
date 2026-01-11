@@ -165,8 +165,8 @@ fn fullscreen_triangle_pos_tex(uv: [[f32; 2]; 3]) -> Vec<u8> {
     let mut vb = Vec::new();
     let verts = [
         ([-1.0f32, -1.0, 0.0, 1.0], [uv[0][0], uv[0][1], 0.0, 0.0]),
-        // D3D9 defaults to clockwise front faces; order the fullscreen triangle accordingly so it
-        // is not culled by the default rasterizer state.
+        // D3D9 defaults to back-face culling with clockwise front faces.
+        // Use a clockwise full-screen triangle so it is not culled by the default rasterizer state.
         ([-1.0f32, 3.0, 0.0, 1.0], [uv[2][0], uv[2][1], 0.0, 0.0]),
         ([3.0f32, -1.0, 0.0, 1.0], [uv[1][0], uv[1][1], 0.0, 0.0]),
     ];
