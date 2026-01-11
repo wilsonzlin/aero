@@ -637,10 +637,12 @@ fn build_e820_map(
     const ONE_MIB: u64 = 0x0010_0000;
     // PCIe ECAM / MMCONFIG window reserved for PCI configuration space accesses.
     //
-    // This must match the platform mapping (see `aero-pc-platform`) and the
-    // ACPI `MCFG` entry emitted by `bios::acpi`.
-    const PCIE_ECAM_BASE: u64 = 0xB000_0000;
-    const PCIE_ECAM_SIZE: u64 = 0x1000_0000; // 256MiB (buses 0..=255)
+    // These constants live in `bios::mod` so the ECAM base stays in sync across:
+    // - ACPI `MCFG` generation
+    // - platform MMIO mapping
+    // - E820 reservations
+    const PCIE_ECAM_BASE: u64 = super::PCIE_ECAM_BASE;
+    const PCIE_ECAM_SIZE: u64 = super::PCIE_ECAM_SIZE;
     // The start of the "low memory" window available for RAM below 4GiB.
     //
     // The ECAM region lives immediately below the typical PCI BAR allocation window, so any RAM

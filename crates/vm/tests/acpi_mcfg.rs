@@ -1,4 +1,5 @@
 use firmware::bios::{Bios, BiosConfig};
+use firmware::bios::PCIE_ECAM_BASE;
 use machine::InMemoryDisk;
 use vm::Vm;
 
@@ -14,7 +15,6 @@ fn boot_sector_with(bytes: &[u8]) -> [u8; 512] {
 #[test]
 fn bios_publishes_mcfg_for_pcie_ecam() {
     const MEM_SIZE: usize = 16 * 1024 * 1024;
-    const EXPECTED_ECAM_BASE: u64 = 0xB000_0000;
 
     let cfg = BiosConfig {
         memory_size_bytes: MEM_SIZE as u64,
@@ -64,7 +64,7 @@ fn bios_publishes_mcfg_for_pcie_ecam() {
     let start_bus = mcfg[54];
     let end_bus = mcfg[55];
 
-    assert_eq!(base, EXPECTED_ECAM_BASE);
+    assert_eq!(base, PCIE_ECAM_BASE);
     assert_eq!(segment, 0);
     assert_eq!(start_bus, 0);
     assert_eq!(end_bus, 0xFF);

@@ -1,6 +1,8 @@
 use aero_acpi::{AcpiConfig, AcpiPlacement, AcpiTables, PhysicalMemory as AcpiPhysicalMemory};
 
-use super::BiosBus;
+use super::{
+    BiosBus, PCIE_ECAM_BASE, PCIE_ECAM_END_BUS, PCIE_ECAM_SEGMENT, PCIE_ECAM_START_BUS,
+};
 
 #[derive(Debug, Clone, Copy)]
 pub struct AcpiInfo {
@@ -51,10 +53,10 @@ pub fn build_and_write(
     // Enable PCIe-friendly config space access via MMCONFIG/ECAM.
     //
     // This must match the platform MMIO mapping (see `aero-pc-platform`).
-    cfg.pcie_ecam_base = 0xB000_0000;
-    cfg.pcie_segment = 0;
-    cfg.pcie_start_bus = 0;
-    cfg.pcie_end_bus = 0xFF;
+    cfg.pcie_ecam_base = PCIE_ECAM_BASE;
+    cfg.pcie_segment = PCIE_ECAM_SEGMENT;
+    cfg.pcie_start_bus = PCIE_ECAM_START_BUS;
+    cfg.pcie_end_bus = PCIE_ECAM_END_BUS;
 
     let tables = AcpiTables::build(&cfg, placement);
 
