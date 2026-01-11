@@ -63,12 +63,10 @@ runs:
         # we resolve it to the pinned version to keep CI reproducible.
         if [[ "$requested" == "stable" && -f rust-toolchain.toml ]]; then
           pinned=""
-          while IFS= read -r line; do
-            if [[ "$line" =~ ^[[:space:]]*channel[[:space:]]*=[[:space:]]*\"([^\"]+)\" ]]; then
-              pinned="${BASH_REMATCH[1]}"
-              break
-            fi
-          done < rust-toolchain.toml
+          toolchain_toml="$(< rust-toolchain.toml)"
+          if [[ "$toolchain_toml" =~ (^|[[:space:]])channel[[:space:]]*=[[:space:]]*\"([^\"]+)\" ]]; then
+            pinned="${BASH_REMATCH[2]}"
+          fi
           if [[ -n "$pinned" ]]; then
             resolved="$pinned"
           fi
@@ -83,12 +81,10 @@ runs:
           fi
 
           pinned_nightly=""
-          while IFS= read -r line; do
-            if [[ "$line" =~ \"nightlyWasm\"[[:space:]]*:[[:space:]]*\"([^\"]+)\" ]]; then
-              pinned_nightly="${BASH_REMATCH[1]}"
-              break
-            fi
-          done < scripts/toolchains.json
+          toolchains_json="$(< scripts/toolchains.json)"
+          if [[ "$toolchains_json" =~ \"nightlyWasm\"[[:space:]]*:[[:space:]]*\"([^\"]+)\" ]]; then
+            pinned_nightly="${BASH_REMATCH[1]}"
+          fi
 
           if [[ -z "$pinned_nightly" ]]; then
             echo "::error::setup-rust: unable to resolve rust.nightlyWasm from scripts/toolchains.json."
