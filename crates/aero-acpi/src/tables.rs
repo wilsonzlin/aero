@@ -1218,6 +1218,12 @@ fn timr_crs() -> Vec<u8> {
 mod tests {
     use super::*;
 
+    fn contains_subslice(haystack: &[u8], needle: &[u8]) -> bool {
+        haystack
+            .windows(needle.len())
+            .any(|window| window == needle)
+    }
+
     #[test]
     fn pkg_length_encoding_matches_acpica_examples() {
         assert_eq!(aml_pkg_length(0x3F), vec![0x3F]);
@@ -1230,6 +1236,7 @@ mod tests {
     #[test]
     fn eisa_id_encoding_matches_known_values() {
         assert_eq!(eisa_id_to_u32("PNP0A03"), Some(0x030A_D041));
+        assert_eq!(eisa_id_to_u32("PNP0A08"), Some(0x080A_D041));
         assert_eq!(eisa_id_to_u32("PNP0103"), Some(0x0301_D041));
     }
 
@@ -1241,5 +1248,83 @@ mod tests {
         assert_eq!(&rsdp[0..8], b"RSD PTR ");
         assert_eq!(checksum(&rsdp[..20]), 0);
         assert_eq!(checksum(&rsdp), 0);
+    }
+
+    #[test]
+    fn dsdt_uses_legacy_pci_hid_when_ecam_disabled() {
+        let cfg = AcpiConfig::default();
+        assert_eq!(cfg.pcie_ecam_base, 0);
+
+        let dsdt = build_dsdt(&cfg);
+
+        let pnp0a03 = eisa_id_to_u32("PNP0A03").unwrap().to_le_bytes();
+        let hid_pnp0a03 = [
+            &[0x08][..],
+            &b"_HID"[..],
+            &[0x0C][..],
+            &pnp0a03[..],
+        ]
+        .concat();
+        let cid_pnp0a03 = [
+            &[0x08][..],
+            &b"_CID"[..],
+            &[0x0C][..],
+            &pnp0a03[..],
+        ]
+        .concat();
+
+        assert!(
+            contains_subslice(&dsdt, &hid_pnp0a03),
+            "expected PCI0._HID to be PNP0A03 when ECAM is disabled"
+        );
+        assert!(
+            !contains_subslice(&dsdt, &cid_pnp0a03),
+            "did not expect PCI0._CID when ECAM is disabled"
+        );
+    }
+
+    #[test]
+    fn dsdt_uses_pcie_pci_hid_when_ecam_enabled() {
+        let mut cfg = AcpiConfig::default();
+        cfg.pcie_ecam_base = 0xC000_0000;
+
+        let dsdt = build_dsdt(&cfg);
+
+        let pnp0a03 = eisa_id_to_u32("PNP0A03").unwrap().to_le_bytes();
+        let pnp0a08 = eisa_id_to_u32("PNP0A08").unwrap().to_le_bytes();
+        let hid_pnp0a03 = [
+            &[0x08][..],
+            &b"_HID"[..],
+            &[0x0C][..],
+            &pnp0a03[..],
+        ]
+        .concat();
+        let hid_pnp0a08 = [
+            &[0x08][..],
+            &b"_HID"[..],
+            &[0x0C][..],
+            &pnp0a08[..],
+        ]
+        .concat();
+        let cid_pnp0a03 = [
+            &[0x08][..],
+            &b"_CID"[..],
+            &[0x0C][..],
+            &pnp0a03[..],
+        ]
+        .concat();
+
+        assert!(
+            contains_subslice(&dsdt, &hid_pnp0a08),
+            "expected PCI0._HID to be PNP0A08 when ECAM is enabled"
+        );
+        assert!(
+            contains_subslice(&dsdt, &cid_pnp0a03),
+            "expected PCI0._CID to include legacy PNP0A03 when ECAM is enabled"
+        );
+        assert!(
+            !contains_subslice(&dsdt, &hid_pnp0a03),
+            "did not expect PCI0._HID to be PNP0A03 when ECAM is enabled"
+        );
     }
 }
