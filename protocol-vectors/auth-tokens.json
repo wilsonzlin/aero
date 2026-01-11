@@ -19,9 +19,23 @@
         "expectError": true
       },
       {
+        "name": "invalidBase64urlLength.signature",
+        "secret": "test-session-secret",
+        "token": "eyJ2IjoxLCJzaWQiOiJzaWQtMTIzNDU2Nzg5MCIsImV4cCI6MTcwMDAwMDA2MH0.a",
+        "nowMs": 1700000000000,
+        "expectError": true
+      },
+      {
         "name": "invalidBase64url.payload",
         "secret": "test-session-secret",
         "token": "invalid!payload._oBcRLie1_KGm7HifmJyDVAsAUvnwmsOroHf3fwc5KQ",
+        "nowMs": 1700000000000,
+        "expectError": true
+      },
+      {
+        "name": "invalidBase64urlLength.payload",
+        "secret": "test-session-secret",
+        "token": "a.Ks5cqAbKnlzgJq8ds6-jcNtzaFjKaWfseVxY-3BgmMs",
         "nowMs": 1700000000000,
         "expectError": true
       },

@@ -16,7 +16,7 @@ Newer unified, versioned vectors (including auth tokens) live in
 - Any embedded secrets (e.g. HMAC keys) are **test-only** and must never be used in production.
 - Error cases are represented with:
   - `expectError: true`
-  - `errorContains`: substring that **all implementations** must include in the thrown error.
+  - Optional `errorContains`: substring that **all implementations** must include in the thrown error (only for APIs that throw, vs returning `null`/`None`).
 
 ## Files
 
