@@ -76,7 +76,7 @@ async function fetchIceServers(baseUrl: string, authToken?: string): Promise<RTC
   url.pathname = `${url.pathname.replace(/\/$/, "")}/webrtc/ice`;
 
   const headers = new Headers();
-  if (authToken) headers.set("Authorization", `Bearer ${authToken}`);
+  addAuthHeader(headers, authToken);
 
   const res = await fetch(url.toString(), { method: "GET", mode: "cors", headers });
   if (!res.ok) {
@@ -104,13 +104,21 @@ function addAuthToUrl(url: URL, authToken?: string): void {
 
 function addAuthHeader(headers: Headers, authToken?: string): void {
   if (!authToken) return;
+  // Forward/compat: support both jwt and api_key relay configurations without
+  // forcing the caller to specify an auth mode.
   headers.set("Authorization", `Bearer ${authToken}`);
+  headers.set("X-API-Key", authToken);
 }
 
-function toWebSocketUrl(baseUrl: string, path: string, authToken?: string): URL {
+function toWebSocketUrl(baseUrl: string, path: string): URL {
   const url = new URL(baseUrl);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   url.pathname = `${url.pathname.replace(/\/$/, "")}${path}`;
+  return url;
+}
+
+function toWebSocketUrlWithQueryAuth(baseUrl: string, path: string, authToken: string): URL {
+  const url = toWebSocketUrl(baseUrl, path);
   addAuthToUrl(url, authToken);
   return url;
 }
@@ -274,7 +282,12 @@ function sendAuth(ws: WebSocket, authToken: string): void {
 }
 
 async function negotiateWebSocketTrickle(pc: RTCPeerConnection, baseUrl: string, authToken?: string): Promise<void> {
-  const wsUrl = toWebSocketUrl(baseUrl, "/webrtc/signal", authToken).toString();
+  const wsUrls: string[] = [toWebSocketUrl(baseUrl, "/webrtc/signal").toString()];
+  if (authToken) {
+    // Query-string auth is supported for non-browser tooling, but we prefer
+    // first-message `{type:"auth"}` to avoid leaking secrets into URLs.
+    wsUrls.push(toWebSocketUrlWithQueryAuth(baseUrl, "/webrtc/signal", authToken).toString());
+  }
 
   // Candidate gathering can start immediately after SetLocalDescription; collect
   // all local candidates so we can re-send them if we have to reconnect the
@@ -326,12 +339,12 @@ async function negotiateWebSocketTrickle(pc: RTCPeerConnection, baseUrl: string,
   const local = pc.localDescription;
   if (!local?.sdp) throw new Error("missing local description after setting offer");
 
-  const protocols: Array<string | undefined> = authToken ? [undefined, authToken] : [undefined];
-  const authFirstVariants: boolean[] = authToken ? [false, true] : [false];
+  const protocols: Array<string | undefined> = [undefined];
+  const authFirstVariants: boolean[] = authToken ? [true, false] : [false];
 
   let lastErr: unknown = null;
 
-  const runTyped = async (protocol: string | undefined, authFirst: boolean): Promise<void> => {
+  const runTyped = async (wsUrl: string, protocol: string | undefined, authFirst: boolean): Promise<void> => {
     closeActiveWs();
     offerSent = false;
     trickleEnabled = true;
@@ -468,14 +481,16 @@ async function negotiateWebSocketTrickle(pc: RTCPeerConnection, baseUrl: string,
     await answerPromise;
   };
 
-  for (const protocol of protocols) {
-    for (const authFirst of authFirstVariants) {
-      try {
-        await runTyped(protocol, authFirst);
-        return;
-      } catch (err) {
-        lastErr = err;
-        closeActiveWs();
+  for (const wsUrl of wsUrls) {
+    for (const protocol of protocols) {
+      for (const authFirst of authFirstVariants) {
+        try {
+          await runTyped(wsUrl, protocol, authFirst);
+          return;
+        } catch (err) {
+          lastErr = err;
+          closeActiveWs();
+        }
       }
     }
   }
@@ -485,7 +500,7 @@ async function negotiateWebSocketTrickle(pc: RTCPeerConnection, baseUrl: string,
   // embedded in the SDP.
   await waitForIceGatheringComplete(pc);
 
-  const runLegacy = async (protocol: string | undefined, authFirst: boolean): Promise<void> => {
+  const runLegacy = async (wsUrl: string, protocol: string | undefined, authFirst: boolean): Promise<void> => {
     closeActiveWs();
     offerSent = false;
     trickleEnabled = false;
@@ -571,14 +586,16 @@ async function negotiateWebSocketTrickle(pc: RTCPeerConnection, baseUrl: string,
     await answerPromise;
   };
 
-  for (const protocol of protocols) {
-    for (const authFirst of authFirstVariants) {
-      try {
-        await runLegacy(protocol, authFirst);
-        return;
-      } catch (err) {
-        lastErr = err;
-        closeActiveWs();
+  for (const wsUrl of wsUrls) {
+    for (const protocol of protocols) {
+      for (const authFirst of authFirstVariants) {
+        try {
+          await runLegacy(wsUrl, protocol, authFirst);
+          return;
+        } catch (err) {
+          lastErr = err;
+          closeActiveWs();
+        }
       }
     }
   }
