@@ -2359,25 +2359,77 @@ static NTSTATUS APIENTRY AeroGpuDdiResetFromTimeout(_In_ const HANDLE hAdapter)
      * work as completed to unblock dxgkrnl. A well-behaved emulator should not
      * require this path under normal usage.
      */
-    if (adapter->Bar0) {
-        if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
-            AeroGpuWriteRegU32(adapter,
-                               AEROGPU_MMIO_REG_RING_CONTROL,
-                               AEROGPU_RING_CONTROL_ENABLE | AEROGPU_RING_CONTROL_RESET);
-        } else {
-            AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_HEAD, 0);
-            AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_TAIL, 0);
-            adapter->RingTail = 0;
-        }
+    if (adapter->Bar0 && adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
+        /*
+         * Disable IRQs while resetting ring state so we don't race ISR/DPC paths
+         * with partially-reset bookkeeping.
+         */
+        KIRQL irqIrql;
+        KeAcquireSpinLock(&adapter->IrqEnableLock, &irqIrql);
+        AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, 0);
+        KeReleaseSpinLock(&adapter->IrqEnableLock, irqIrql);
+        AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ACK, 0xFFFFFFFFu);
     }
 
-    adapter->LastCompletedFence = adapter->LastSubmittedFence;
+    /*
+     * Detach the pending submission list under PendingLock so we can free it
+     * without racing concurrent SubmitCommand calls.
+     */
+    LIST_ENTRY pendingToFree;
+    InitializeListHead(&pendingToFree);
+
+    ULONGLONG completedFence = 0;
+    {
+        KIRQL pendingIrql;
+        KeAcquireSpinLock(&adapter->PendingLock, &pendingIrql);
+
+        completedFence = adapter->LastSubmittedFence;
+        adapter->LastCompletedFence = completedFence;
+
+        if (adapter->Bar0) {
+            KIRQL ringIrql;
+            KeAcquireSpinLock(&adapter->RingLock, &ringIrql);
+
+            if (adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
+                if (adapter->RingHeader) {
+                    const ULONG tail = adapter->RingTail;
+                    adapter->RingHeader->head = tail;
+                    adapter->RingHeader->tail = tail;
+                    KeMemoryBarrier();
+                }
+
+                AeroGpuWriteRegU32(adapter,
+                                   AEROGPU_MMIO_REG_RING_CONTROL,
+                                   AEROGPU_RING_CONTROL_ENABLE | AEROGPU_RING_CONTROL_RESET);
+            } else {
+                AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_HEAD, 0);
+                AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_RING_TAIL, 0);
+                adapter->RingTail = 0;
+                AeroGpuWriteRegU32(adapter, AEROGPU_LEGACY_REG_INT_ACK, 0xFFFFFFFFu);
+            }
+
+            KeReleaseSpinLock(&adapter->RingLock, ringIrql);
+        }
+
+        while (!IsListEmpty(&adapter->PendingSubmissions)) {
+            InsertTailList(&pendingToFree, RemoveHeadList(&adapter->PendingSubmissions));
+        }
+
+        KeReleaseSpinLock(&adapter->PendingLock, pendingIrql);
+    }
+
+    if (adapter->Bar0 && adapter->AbiKind == AEROGPU_ABI_KIND_V1) {
+        KIRQL irqIrql;
+        KeAcquireSpinLock(&adapter->IrqEnableLock, &irqIrql);
+        AeroGpuWriteRegU32(adapter, AEROGPU_MMIO_REG_IRQ_ENABLE, adapter->IrqEnableMask);
+        KeReleaseSpinLock(&adapter->IrqEnableLock, irqIrql);
+    }
 
     if (adapter->DxgkInterface.DxgkCbNotifyInterrupt) {
         DXGKARGCB_NOTIFY_INTERRUPT notify;
         RtlZeroMemory(&notify, sizeof(notify));
         notify.InterruptType = DXGK_INTERRUPT_TYPE_DMA_COMPLETED;
-        notify.DmaCompleted.SubmissionFenceId = (ULONG)adapter->LastCompletedFence;
+        notify.DmaCompleted.SubmissionFenceId = (ULONG)completedFence;
         notify.DmaCompleted.NodeOrdinal = AEROGPU_NODE_ORDINAL;
         notify.DmaCompleted.EngineOrdinal = AEROGPU_ENGINE_ORDINAL;
         adapter->DxgkInterface.DxgkCbNotifyInterrupt(adapter->StartInfo.hDxgkHandle, &notify);
@@ -2388,7 +2440,14 @@ static NTSTATUS APIENTRY AeroGpuDdiResetFromTimeout(_In_ const HANDLE hAdapter)
     }
 
     AeroGpuMetaHandleFreeAll(adapter);
-    AeroGpuFreeAllPendingSubmissions(adapter);
+    while (!IsListEmpty(&pendingToFree)) {
+        PLIST_ENTRY entry = RemoveHeadList(&pendingToFree);
+        AEROGPU_SUBMISSION* sub = CONTAINING_RECORD(entry, AEROGPU_SUBMISSION, ListEntry);
+        AeroGpuFreeContiguous(sub->AllocTableVa);
+        AeroGpuFreeContiguous(sub->DmaCopyVa);
+        AeroGpuFreeContiguous(sub->DescVa);
+        ExFreePoolWithTag(sub, AEROGPU_POOL_TAG);
+    }
     return STATUS_SUCCESS;
 }
 
