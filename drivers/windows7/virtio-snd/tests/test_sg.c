@@ -278,6 +278,28 @@ static void test_rejects_pfn_shift_overflow(void)
 #endif
 }
 
+static void test_max_elems_bounds(void)
+{
+    uint32_t max_elems;
+
+    /* Single-byte range stays within one page. */
+    max_elems = virtiosnd_sg_max_elems_for_region(0, VIRTIOSND_SG_PAGE_SIZE, VIRTIOSND_SG_PAGE_SIZE, 0, 1, VIRTIO_FALSE);
+    assert(max_elems == 1);
+
+    /* MDL byte offset can cause a full-buffer range to span two pages. */
+    max_elems = virtiosnd_sg_max_elems_for_region(128u, VIRTIOSND_SG_PAGE_SIZE, VIRTIOSND_SG_PAGE_SIZE, 0, VIRTIOSND_SG_PAGE_SIZE, VIRTIO_FALSE);
+    assert(max_elems == 2);
+
+    /* Wrap-around splits into two logical ranges (one page each in this setup). */
+    max_elems = virtiosnd_sg_max_elems_for_region(0,
+                                                  2u * VIRTIOSND_SG_PAGE_SIZE,
+                                                  2u * VIRTIOSND_SG_PAGE_SIZE,
+                                                  6144u,
+                                                  4096u,
+                                                  VIRTIO_TRUE);
+    assert(max_elems == 2);
+}
+
 int main(void)
 {
     test_coalesce_contiguous_pfns();
@@ -287,6 +309,7 @@ int main(void)
     test_wrap_can_coalesce_across_boundary();
     test_invalid_params();
     test_rejects_pfn_shift_overflow();
+    test_max_elems_bounds();
     printf("virtiosnd_sg_tests: PASS\n");
     return 0;
 }
