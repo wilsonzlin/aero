@@ -9,8 +9,8 @@ const writeJson = async (filePath, value) => {
   await writeFile(filePath, JSON.stringify(value, null, 2));
 };
 
-const runCompare = ({ baseline, candidate, regressionThresholdPct = 15, extremeCvThreshold = 0.5 }) => {
-  return spawnSync(
+const runCompare = ({ baseline, candidate, thresholdsFile, profile = "pr-smoke" }) =>
+  spawnSync(
     process.execPath,
     [
       "tools/perf/compare.mjs",
@@ -20,14 +20,13 @@ const runCompare = ({ baseline, candidate, regressionThresholdPct = 15, extremeC
       candidate,
       "--out-dir",
       path.join(path.dirname(baseline), "out"),
-      "--regression-threshold-pct",
-      String(regressionThresholdPct),
-      "--extreme-cv-threshold",
-      String(extremeCvThreshold),
+      "--thresholds-file",
+      thresholdsFile,
+      "--profile",
+      profile,
     ],
     { encoding: "utf8" },
   );
-};
 
 test("tools/perf/compare.mjs fails on regression above threshold", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "aero-perf-compare-"));
@@ -51,12 +50,27 @@ test("tools/perf/compare.mjs fails on regression above threshold", async () => {
       ],
     });
 
-    const result = runCompare({ baseline: baselinePath, candidate: candidatePath, regressionThresholdPct: 15 });
+    const thresholdsPath = path.join(dir, "thresholds.json");
+    await writeJson(thresholdsPath, {
+      schemaVersion: 1,
+      profiles: {
+        "pr-smoke": {
+          browser: {
+            metrics: {
+              chromium_startup_ms: { better: "lower", maxRegressionPct: 0.15, extremeCvThreshold: 0.5 },
+              microbench_ms: { better: "lower", maxRegressionPct: 0.15, extremeCvThreshold: 0.5 },
+            },
+          },
+        },
+      },
+    });
+
+    const result = runCompare({ baseline: baselinePath, candidate: candidatePath, thresholdsFile: thresholdsPath });
     assert.equal(result.status, 1, `expected exit code 1, got ${result.status}\n${result.stderr}`);
 
     const outSummary = JSON.parse(await readFile(path.join(dir, "out", "summary.json"), "utf8"));
-    assert.equal(outSummary.status, "fail");
-    assert.equal(outSummary.topRegressions[0]?.name, "chromium_startup_ms");
+    assert.equal(outSummary.status, "regression");
+    assert.equal(outSummary.topRegressions[0]?.metric, "chromium_startup_ms");
 
     const compareMd = await readFile(path.join(dir, "out", "compare.md"), "utf8");
     assert.ok(compareMd.includes("# Perf comparison"));
@@ -70,18 +84,39 @@ test("tools/perf/compare.mjs passes when within threshold", async () => {
   try {
     const baselinePath = path.join(dir, "baseline.json");
     const candidatePath = path.join(dir, "candidate.json");
+    const thresholdsPath = path.join(dir, "thresholds.json");
 
     await writeJson(baselinePath, {
       meta: { gitSha: "base", iterations: 3 },
-      benchmarks: [{ name: "chromium_startup_ms", unit: "ms", stats: { median: 100, cv: 0.1 } }],
+      benchmarks: [
+        { name: "chromium_startup_ms", unit: "ms", stats: { median: 100, cv: 0.1 } },
+        { name: "microbench_ms", unit: "ms", stats: { median: 50, cv: 0.1 } },
+      ],
     });
 
     await writeJson(candidatePath, {
       meta: { gitSha: "head", iterations: 3 },
-      benchmarks: [{ name: "chromium_startup_ms", unit: "ms", stats: { median: 110, cv: 0.1 } }],
+      benchmarks: [
+        { name: "chromium_startup_ms", unit: "ms", stats: { median: 110, cv: 0.1 } },
+        { name: "microbench_ms", unit: "ms", stats: { median: 50, cv: 0.1 } },
+      ],
     });
 
-    const result = runCompare({ baseline: baselinePath, candidate: candidatePath, regressionThresholdPct: 15 });
+    await writeJson(thresholdsPath, {
+      schemaVersion: 1,
+      profiles: {
+        "pr-smoke": {
+          browser: {
+            metrics: {
+              chromium_startup_ms: { better: "lower", maxRegressionPct: 0.15, extremeCvThreshold: 0.5 },
+              microbench_ms: { better: "lower", maxRegressionPct: 0.15, extremeCvThreshold: 0.5 },
+            },
+          },
+        },
+      },
+    });
+
+    const result = runCompare({ baseline: baselinePath, candidate: candidatePath, thresholdsFile: thresholdsPath });
     assert.equal(result.status, 0, `expected exit code 0, got ${result.status}\n${result.stderr}`);
 
     const outSummary = JSON.parse(await readFile(path.join(dir, "out", "summary.json"), "utf8"));
@@ -96,18 +131,39 @@ test("tools/perf/compare.mjs returns unstable on extreme coefficient-of-variatio
   try {
     const baselinePath = path.join(dir, "baseline.json");
     const candidatePath = path.join(dir, "candidate.json");
+    const thresholdsPath = path.join(dir, "thresholds.json");
 
     await writeJson(baselinePath, {
       meta: { gitSha: "base", iterations: 3 },
-      benchmarks: [{ name: "chromium_startup_ms", unit: "ms", stats: { median: 100, cv: 0.1 } }],
+      benchmarks: [
+        { name: "chromium_startup_ms", unit: "ms", stats: { median: 100, cv: 0.1 } },
+        { name: "microbench_ms", unit: "ms", stats: { median: 50, cv: 0.1 } },
+      ],
     });
 
     await writeJson(candidatePath, {
       meta: { gitSha: "head", iterations: 3 },
-      benchmarks: [{ name: "chromium_startup_ms", unit: "ms", stats: { median: 100, cv: 0.9 } }],
+      benchmarks: [
+        { name: "chromium_startup_ms", unit: "ms", stats: { median: 100, cv: 0.9 } },
+        { name: "microbench_ms", unit: "ms", stats: { median: 50, cv: 0.1 } },
+      ],
     });
 
-    const result = runCompare({ baseline: baselinePath, candidate: candidatePath, extremeCvThreshold: 0.5 });
+    await writeJson(thresholdsPath, {
+      schemaVersion: 1,
+      profiles: {
+        "pr-smoke": {
+          browser: {
+            metrics: {
+              chromium_startup_ms: { better: "lower", maxRegressionPct: 0.15, extremeCvThreshold: 0.5 },
+              microbench_ms: { better: "lower", maxRegressionPct: 0.15, extremeCvThreshold: 0.5 },
+            },
+          },
+        },
+      },
+    });
+
+    const result = runCompare({ baseline: baselinePath, candidate: candidatePath, thresholdsFile: thresholdsPath });
     assert.equal(result.status, 2, `expected exit code 2, got ${result.status}\n${result.stderr}`);
 
     const outSummary = JSON.parse(await readFile(path.join(dir, "out", "summary.json"), "utf8"));
@@ -116,4 +172,3 @@ test("tools/perf/compare.mjs returns unstable on extreme coefficient-of-variatio
     await rm(dir, { recursive: true, force: true });
   }
 });
-

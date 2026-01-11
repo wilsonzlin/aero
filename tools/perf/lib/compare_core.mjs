@@ -89,6 +89,7 @@ export function compareCase({
   const extremeCvThreshold = isFiniteNumber(threshold?.extremeCvThreshold) ? threshold.extremeCvThreshold : null;
 
   if (!baselineStats) {
+    const unstable = !informational;
     return {
       suite,
       scenario,
@@ -108,11 +109,12 @@ export function compareCase({
       improvementPct: null,
       informational,
       status: "missing_baseline",
-      unstable: false,
+      unstable,
     };
   }
 
   if (!candidateStats) {
+    const unstable = !informational;
     return {
       suite,
       scenario,
@@ -132,7 +134,7 @@ export function compareCase({
       improvementPct: null,
       informational,
       status: "missing_candidate",
-      unstable: false,
+      unstable,
     };
   }
 

@@ -62,6 +62,58 @@ test("buildCompareResult: flags extreme variance as unstable (exit code 2)", () 
   assert.equal(exitCodeForStatus(result.status), 2);
 });
 
+test("buildCompareResult: missing candidate for required metric is unstable (exit code 2)", () => {
+  const result = buildCompareResult({
+    suite: "browser",
+    profile: "pr-smoke",
+    thresholdsFile: "bench/perf_thresholds.json",
+    baselineMeta: { gitSha: "base" },
+    candidateMeta: { gitSha: "head" },
+    cases: [
+      {
+        scenario: "browser",
+        metric: "microbench_ms",
+        unit: "ms",
+        better: "lower",
+        threshold: { maxRegressionPct: 0.1 },
+        baseline: { value: 100, cv: 0.05, n: 3 },
+        candidate: null,
+      },
+    ],
+  });
+
+  assert.equal(result.status, "unstable");
+  assert.equal(result.summary.missing, 1);
+  assert.equal(result.summary.unstable, 1);
+  assert.equal(exitCodeForStatus(result.status), 2);
+});
+
+test("buildCompareResult: missing candidate for informational metric does not fail", () => {
+  const result = buildCompareResult({
+    suite: "browser",
+    profile: "pr-smoke",
+    thresholdsFile: "bench/perf_thresholds.json",
+    baselineMeta: { gitSha: "base" },
+    candidateMeta: { gitSha: "head" },
+    cases: [
+      {
+        scenario: "browser",
+        metric: "optional_metric",
+        unit: "ms",
+        better: "lower",
+        threshold: { maxRegressionPct: 0.1, informational: true },
+        baseline: { value: 100, cv: 0.05, n: 3 },
+        candidate: null,
+      },
+    ],
+  });
+
+  assert.equal(result.status, "pass");
+  assert.equal(result.summary.missing, 1);
+  assert.equal(result.summary.unstable, 0);
+  assert.equal(exitCodeForStatus(result.status), 0);
+});
+
 test("pickThresholdProfile: defaults to pr-smoke when profileName is omitted", () => {
   const policy = {
     schemaVersion: 1,
@@ -75,4 +127,3 @@ test("pickThresholdProfile: defaults to pr-smoke when profileName is omitted", (
   const { name } = pickThresholdProfile(policy);
   assert.equal(name, "pr-smoke");
 });
-

@@ -207,6 +207,75 @@ function statsFromScenario(scenario: any, metricName: string): { value: number; 
   return { value, cv: cvForMetricLegacy(scenario, metricName), n: nForMetricLegacy(scenario, metricName) };
 }
 
+export function compareGpuBenchmarks({
+  baseline,
+  candidate,
+  suiteThresholds,
+  thresholdsFile,
+  profileName,
+  overrideMaxRegressionPct = null,
+  overrideExtremeCv = null,
+}: {
+  baseline: any;
+  candidate: any;
+  suiteThresholds: any;
+  thresholdsFile: string;
+  profileName: string;
+  overrideMaxRegressionPct?: number | null;
+  overrideExtremeCv?: number | null;
+}) {
+  const baseScenarios = baseline?.summary?.scenarios ?? baseline?.scenarios ?? {};
+  const candScenarios = candidate?.summary?.scenarios ?? candidate?.scenarios ?? {};
+
+  const scenarioIds = new Set([...Object.keys(baseScenarios), ...Object.keys(candScenarios)]);
+  const cases: any[] = [];
+
+  for (const scenarioId of Array.from(scenarioIds).sort()) {
+    const b = baseScenarios[scenarioId];
+    const c = candScenarios[scenarioId];
+    const scenarioLabel = c?.name ?? b?.name ?? scenarioId;
+    const bOk = b?.status === "ok";
+    const cOk = c?.status === "ok";
+
+    for (const [metricName, threshold] of Object.entries(suiteThresholds.metrics ?? {})) {
+      const better = (threshold as any)?.better;
+      if (better !== "lower" && better !== "higher") {
+        throw new Error(`thresholds: gpu.metrics.${metricName}.better must be "lower" or "higher"`);
+      }
+
+      const baselineStats = bOk ? statsFromScenario(b, metricName) : null;
+      const candidateStats = cOk ? statsFromScenario(c, metricName) : null;
+
+      let effectiveThreshold: any = threshold;
+      if (overrideMaxRegressionPct != null) {
+        effectiveThreshold = { ...effectiveThreshold, maxRegressionPct: overrideMaxRegressionPct };
+      }
+      if (overrideExtremeCv != null) {
+        effectiveThreshold = { ...effectiveThreshold, extremeCvThreshold: overrideExtremeCv };
+      }
+
+      cases.push({
+        scenario: scenarioLabel,
+        metric: metricName,
+        unit: unitForMetric(metricName),
+        better,
+        threshold: effectiveThreshold,
+        baseline: baselineStats,
+        candidate: candidateStats,
+      });
+    }
+  }
+
+  return buildCompareResult({
+    suite: "gpu",
+    profile: profileName,
+    thresholdsFile,
+    baselineMeta: baseline?.meta ?? baseline?.summary?.meta ?? null,
+    candidateMeta: candidate?.meta ?? candidate?.summary?.meta ?? null,
+    cases,
+  });
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.help === "true") usage(0);
@@ -230,40 +299,6 @@ async function main() {
   const { name: profileName, profile } = pickThresholdProfile(thresholdsPolicy, profileArg);
   const suiteThresholds = getSuiteThresholds(profile, "gpu");
 
-  const baseScenarios = baseline?.summary?.scenarios ?? baseline?.scenarios ?? {};
-  const candScenarios = candidate?.summary?.scenarios ?? candidate?.scenarios ?? {};
-
-  const scenarioIds = new Set([...Object.keys(baseScenarios), ...Object.keys(candScenarios)]);
-  const cases: any[] = [];
-
-  for (const scenarioId of Array.from(scenarioIds).sort()) {
-    const b = baseScenarios[scenarioId];
-    const c = candScenarios[scenarioId];
-    const scenarioLabel = c?.name ?? b?.name ?? scenarioId;
-    const bOk = b?.status === "ok";
-    const cOk = c?.status === "ok";
-
-    for (const [metricName, threshold] of Object.entries(suiteThresholds.metrics ?? {})) {
-      const better = (threshold as any)?.better;
-      if (better !== "lower" && better !== "higher") {
-        throw new Error(`thresholds: gpu.metrics.${metricName}.better must be "lower" or "higher"`);
-      }
-
-      const baselineStats = bOk ? statsFromScenario(b, metricName) : null;
-      const candidateStats = cOk ? statsFromScenario(c, metricName) : null;
-
-      cases.push({
-        scenario: scenarioLabel,
-        metric: metricName,
-        unit: unitForMetric(metricName),
-        better,
-        threshold,
-        baseline: baselineStats,
-        candidate: candidateStats,
-      });
-    }
-  }
-
   // Optional overrides (useful for debugging / emergency CI tuning).
   const cliThresholdPct = args.thresholdPct ? Number(args.thresholdPct) / 100 : null;
   const cliCvThreshold = args.cvThreshold ? Number(args.cvThreshold) : null;
@@ -283,20 +318,14 @@ async function main() {
     (isFiniteNumber(envExtremeCv) && envExtremeCv > 0 && envExtremeCv) ||
     null;
 
-  if (overrideMaxRegressionPct != null || overrideExtremeCv != null) {
-    for (const c of cases) {
-      if (overrideMaxRegressionPct != null) c.threshold = { ...c.threshold, maxRegressionPct: overrideMaxRegressionPct };
-      if (overrideExtremeCv != null) c.threshold = { ...c.threshold, extremeCvThreshold: overrideExtremeCv };
-    }
-  }
-
-  const result = buildCompareResult({
-    suite: "gpu",
-    profile: profileName,
+  const result = compareGpuBenchmarks({
+    baseline,
+    candidate,
+    suiteThresholds,
     thresholdsFile,
-    baselineMeta: baseline?.meta ?? baseline?.summary?.meta ?? null,
-    candidateMeta: candidate?.meta ?? candidate?.summary?.meta ?? null,
-    cases,
+    profileName,
+    overrideMaxRegressionPct,
+    overrideExtremeCv,
   });
 
   const markdown = renderCompareMarkdown(result, { title: "GPU perf comparison" });
@@ -314,4 +343,3 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     process.exitCode = 1;
   });
 }
-

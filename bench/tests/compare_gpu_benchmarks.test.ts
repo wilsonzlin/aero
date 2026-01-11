@@ -9,8 +9,33 @@ const writeJson = async (filePath: string, value: unknown) => {
   await writeFile(filePath, JSON.stringify(value, null, 2));
 };
 
-const runCompare = ({ baseline, candidate, outDir }: { baseline: string; candidate: string; outDir: string }) => {
-  return spawnSync(
+const writeThresholds = async (filePath: string) => {
+  await writeJson(filePath, {
+    schemaVersion: 1,
+    profiles: {
+      "pr-smoke": {
+        gpu: {
+          metrics: {
+            frameTimeMsP95: { better: "lower", maxRegressionPct: 0.15, extremeCvThreshold: 0.5 },
+          },
+        },
+      },
+    },
+  });
+};
+
+const runCompare = ({
+  baseline,
+  candidate,
+  outDir,
+  thresholdsFile,
+}: {
+  baseline: string;
+  candidate: string;
+  outDir: string;
+  thresholdsFile: string;
+}) =>
+  spawnSync(
     process.execPath,
     [
       "--experimental-strip-types",
@@ -21,22 +46,23 @@ const runCompare = ({ baseline, candidate, outDir }: { baseline: string; candida
       candidate,
       "--out-dir",
       outDir,
-      "--thresholdPct",
-      "15",
-      "--cvThreshold",
-      "0.5",
+      "--thresholds-file",
+      thresholdsFile,
+      "--profile",
+      "pr-smoke",
     ],
     { encoding: "utf8" },
   );
-};
 
 test("compare_gpu_benchmarks exits 1 on regression beyond threshold", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "aero-gpu-compare-"));
   try {
     const baselinePath = path.join(dir, "baseline.json");
     const candidatePath = path.join(dir, "candidate.json");
+    const thresholdsPath = path.join(dir, "thresholds.json");
     const outDir = path.join(dir, "out");
 
+    await writeThresholds(thresholdsPath);
     await writeJson(baselinePath, {
       meta: { gitSha: "base", iterations: 3 },
       summary: {
@@ -63,7 +89,7 @@ test("compare_gpu_benchmarks exits 1 on regression beyond threshold", async () =
       },
     });
 
-    const result = runCompare({ baseline: baselinePath, candidate: candidatePath, outDir });
+    const result = runCompare({ baseline: baselinePath, candidate: candidatePath, outDir, thresholdsFile: thresholdsPath });
     assert.equal(result.status, 1, `expected exit code 1, got ${result.status}\n${result.stderr}`);
 
     const summary = JSON.parse(await readFile(path.join(outDir, "summary.json"), "utf8"));
@@ -81,8 +107,10 @@ test("compare_gpu_benchmarks exits 2 on unstable CV", async () => {
   try {
     const baselinePath = path.join(dir, "baseline.json");
     const candidatePath = path.join(dir, "candidate.json");
+    const thresholdsPath = path.join(dir, "thresholds.json");
     const outDir = path.join(dir, "out");
 
+    await writeThresholds(thresholdsPath);
     await writeJson(baselinePath, {
       meta: { gitSha: "base", iterations: 3 },
       summary: {
@@ -109,7 +137,7 @@ test("compare_gpu_benchmarks exits 2 on unstable CV", async () => {
       },
     });
 
-    const result = runCompare({ baseline: baselinePath, candidate: candidatePath, outDir });
+    const result = runCompare({ baseline: baselinePath, candidate: candidatePath, outDir, thresholdsFile: thresholdsPath });
     assert.equal(result.status, 2, `expected exit code 2, got ${result.status}\n${result.stderr}`);
 
     const summary = JSON.parse(await readFile(path.join(outDir, "summary.json"), "utf8"));
@@ -124,8 +152,10 @@ test("compare_gpu_benchmarks supports aero-gpu-bench schemaVersion=1 baseline", 
   try {
     const baselinePath = path.join(dir, "baseline.json");
     const candidatePath = path.join(dir, "candidate.json");
+    const thresholdsPath = path.join(dir, "thresholds.json");
     const outDir = path.join(dir, "out");
 
+    await writeThresholds(thresholdsPath);
     await writeJson(baselinePath, {
       schemaVersion: 1,
       tool: "aero-gpu-bench",
@@ -158,7 +188,7 @@ test("compare_gpu_benchmarks supports aero-gpu-bench schemaVersion=1 baseline", 
       },
     });
 
-    const result = runCompare({ baseline: baselinePath, candidate: candidatePath, outDir });
+    const result = runCompare({ baseline: baselinePath, candidate: candidatePath, outDir, thresholdsFile: thresholdsPath });
     assert.equal(result.status, 1, `expected exit code 1, got ${result.status}\n${result.stderr}`);
   } finally {
     await rm(dir, { recursive: true, force: true });
