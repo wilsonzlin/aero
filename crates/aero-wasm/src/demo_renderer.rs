@@ -37,14 +37,12 @@ pub fn render_rgba8888(
 
     // Convert `now_ms` into integer offsets so the result is deterministic (and
     // stable across `wasm32` and host tests).
-    let now_ms_u32 = if now_ms.is_finite() && now_ms > 0.0 {
-        now_ms.min(u32::MAX as f64) as u32
-    } else {
-        0
-    };
-    let r_off = ((now_ms_u32 as u64).saturating_mul(60) / 1000) as u32;
-    let g_off = ((now_ms_u32 as u64).saturating_mul(35) / 1000) as u32;
-    let b_off = ((now_ms_u32 as u64).saturating_mul(20) / 1000) as u32;
+    //
+    // We intentionally follow the JS demo's semantics: `floor(now_ms * rate / 1000)`.
+    let now = if now_ms.is_finite() && now_ms > 0.0 { now_ms } else { 0.0 };
+    let r_off = ((now * 60.0) / 1000.0) as u32;
+    let g_off = ((now * 35.0) / 1000.0) as u32;
+    let b_off = ((now * 20.0) / 1000.0) as u32;
 
     let base_ptr = dst.as_mut_ptr();
 
@@ -143,5 +141,13 @@ mod tests {
         assert_eq!(&buf[0..4], &[0, 0, 0, 255]);
         // Row 1 pixel (0,1)
         assert_eq!(&buf[4..8], &[0, 1, 1, 255]);
+    }
+
+    #[test]
+    fn fractional_time_affects_offsets() {
+        let mut buf = [0u8; 4];
+        let pixels = render_rgba8888(&mut buf, 1, 1, 4, 16.8);
+        assert_eq!(pixels, 1);
+        assert_eq!(&buf[0..4], &[1, 0, 0, 255]);
     }
 }
