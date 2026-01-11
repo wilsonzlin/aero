@@ -291,4 +291,34 @@ mod tests {
             "expected execution error to be reported via completion"
         );
     }
+
+    #[test]
+    fn decode_alloc_table_bytes_accepts_extended_entry_stride() {
+        let header_size = AerogpuAllocTableHeader::SIZE_BYTES;
+        let entry_size = AerogpuAllocEntry::SIZE_BYTES;
+        let entry_stride = entry_size + 16;
+        let size_bytes = u32::try_from(header_size + entry_stride).unwrap();
+
+        let mut table = Vec::new();
+        table.extend_from_slice(&AEROGPU_ALLOC_TABLE_MAGIC.to_le_bytes());
+        table.extend_from_slice(&AEROGPU_ABI_VERSION_U32.to_le_bytes());
+        table.extend_from_slice(&size_bytes.to_le_bytes());
+        table.extend_from_slice(&1u32.to_le_bytes()); // entry_count
+        table.extend_from_slice(&(entry_stride as u32).to_le_bytes()); // entry_stride_bytes
+        table.extend_from_slice(&0u32.to_le_bytes()); // reserved0
+
+        // One entry (prefix), then padding to match the stride.
+        table.extend_from_slice(&1u32.to_le_bytes()); // alloc_id
+        table.extend_from_slice(&0u32.to_le_bytes()); // flags
+        table.extend_from_slice(&0x1000u64.to_le_bytes()); // gpa
+        table.extend_from_slice(&0x2000u64.to_le_bytes()); // size_bytes
+        table.extend_from_slice(&0u64.to_le_bytes()); // reserved0
+        table.resize(header_size + entry_stride, 0);
+
+        let entries = decode_alloc_table_bytes(&table).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].alloc_id, 1);
+        assert_eq!(entries[0].gpa, 0x1000);
+        assert_eq!(entries[0].size_bytes, 0x2000);
+    }
 }
