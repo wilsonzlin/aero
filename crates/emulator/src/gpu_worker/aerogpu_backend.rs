@@ -296,7 +296,8 @@ impl AeroGpuCommandBackend for NativeAeroGpuBackend {
             }
         };
 
-        let result = self.exec.execute_cmd_stream_with_guest_memory(
+        let result = self.exec.execute_cmd_stream_with_guest_memory_for_context(
+            submission.context_id,
             &submission.cmd_stream,
             &guest_mem,
             alloc_table.as_ref(),

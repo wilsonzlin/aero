@@ -764,13 +764,14 @@ static NTSTATUS AeroGpuLegacyRingPushSubmit(_Inout_ AEROGPU_ADAPTER* Adapter,
 }
 
 static NTSTATUS AeroGpuV1RingPushSubmit(_Inout_ AEROGPU_ADAPTER* Adapter,
-                                         _In_ uint32_t Flags,
-                                         _In_ PHYSICAL_ADDRESS CmdPa,
-                                         _In_ ULONG CmdSizeBytes,
-                                         _In_ uint64_t AllocTableGpa,
-                                         _In_ uint32_t AllocTableSizeBytes,
-                                         _In_ ULONGLONG SignalFence,
-                                         _Out_opt_ ULONG* RingTailAfterOut)
+                                        _In_ uint32_t Flags,
+                                        _In_ uint32_t ContextId,
+                                        _In_ PHYSICAL_ADDRESS CmdPa,
+                                        _In_ ULONG CmdSizeBytes,
+                                        _In_ uint64_t AllocTableGpa,
+                                        _In_ uint32_t AllocTableSizeBytes,
+                                        _In_ ULONGLONG SignalFence,
+                                        _Out_opt_ ULONG* RingTailAfterOut)
 {
     if (!Adapter->RingVa || !Adapter->RingHeader || !Adapter->Bar0 || Adapter->RingEntryCount == 0) {
         return STATUS_DEVICE_NOT_READY;
@@ -795,7 +796,7 @@ static NTSTATUS AeroGpuV1RingPushSubmit(_Inout_ AEROGPU_ADAPTER* Adapter,
     RtlZeroMemory(desc, sizeof(*desc));
     desc->desc_size_bytes = (uint32_t)sizeof(struct aerogpu_submit_desc);
     desc->flags = Flags;
-    desc->context_id = 0;
+    desc->context_id = ContextId;
     desc->engine_id = AEROGPU_ENGINE_0;
     desc->cmd_gpa = (uint64_t)CmdPa.QuadPart;
     desc->cmd_size_bytes = CmdSizeBytes;
@@ -1114,6 +1115,7 @@ static VOID AeroGpuEmitReleaseSharedSurface(_Inout_ AEROGPU_ADAPTER* Adapter, _I
         const ULONGLONG signalFence = Adapter->LastSubmittedFence;
         st = AeroGpuV1RingPushSubmit(Adapter,
                                      AEROGPU_SUBMIT_FLAG_NO_IRQ,
+                                     0,
                                      cmdPa,
                                      cmdSizeBytes,
                                      0,
@@ -3054,12 +3056,14 @@ static NTSTATUS APIENTRY AeroGpuDdiDestroyDevice(_In_ const HANDLE hDevice)
 }
 
 static NTSTATUS APIENTRY AeroGpuDdiCreateContext(_In_ const HANDLE hDevice,
-                                                _Inout_ DXGKARG_CREATECONTEXT* pCreate)
+                                                 _Inout_ DXGKARG_CREATECONTEXT* pCreate)
 {
     AEROGPU_DEVICE* dev = (AEROGPU_DEVICE*)hDevice;
     if (!dev || !pCreate) {
         return STATUS_INVALID_PARAMETER;
     }
+
+    AEROGPU_ADAPTER* adapter = dev->Adapter;
 
     AEROGPU_CONTEXT* ctx =
         (AEROGPU_CONTEXT*)ExAllocatePoolWithTag(NonPagedPool, sizeof(*ctx), AEROGPU_POOL_TAG);
@@ -3068,6 +3072,14 @@ static NTSTATUS APIENTRY AeroGpuDdiCreateContext(_In_ const HANDLE hDevice,
     }
     RtlZeroMemory(ctx, sizeof(*ctx));
     ctx->Device = dev;
+    ctx->ContextId = 0;
+    if (adapter) {
+        ULONG id = (ULONG)InterlockedIncrement(&adapter->NextContextId);
+        if (id == 0) {
+            id = (ULONG)InterlockedIncrement(&adapter->NextContextId);
+        }
+        ctx->ContextId = id;
+    }
     pCreate->hContext = (HANDLE)ctx;
     return STATUS_SUCCESS;
 }
@@ -3137,7 +3149,7 @@ static NTSTATUS APIENTRY AeroGpuDdiRender(_In_ const HANDLE hContext, _Inout_ DX
 
     AEROGPU_DMA_PRIV* priv = (AEROGPU_DMA_PRIV*)pRender->pDmaBufferPrivateData;
     priv->Type = AEROGPU_SUBMIT_RENDER;
-    priv->Reserved0 = 0;
+    priv->Reserved0 = ctx ? ctx->ContextId : 0;
     priv->MetaHandle = 0;
 
     if (pRender->AllocationListSize && pRender->pAllocationList) {
@@ -3167,7 +3179,7 @@ static NTSTATUS APIENTRY AeroGpuDdiPresent(_In_ const HANDLE hContext, _Inout_ D
 
     AEROGPU_DMA_PRIV* priv = (AEROGPU_DMA_PRIV*)pPresent->pDmaBufferPrivateData;
     priv->Type = AEROGPU_SUBMIT_PRESENT;
-    priv->Reserved0 = 0;
+    priv->Reserved0 = ctx ? ctx->ContextId : 0;
     priv->MetaHandle = 0;
 
     if (pPresent->AllocationListSize && pPresent->pAllocationList) {
@@ -3215,10 +3227,12 @@ static NTSTATUS APIENTRY AeroGpuDdiSubmitCommand(_In_ const HANDLE hAdapter,
     const ULONGLONG fence = (ULONGLONG)pSubmitCommand->SubmissionFenceId;
 
     ULONG type = AEROGPU_SUBMIT_PAGING;
+    ULONG contextId = 0;
     AEROGPU_SUBMISSION_META* meta = NULL;
     if (pSubmitCommand->pDmaBufferPrivateData) {
         const AEROGPU_DMA_PRIV* priv = (const AEROGPU_DMA_PRIV*)pSubmitCommand->pDmaBufferPrivateData;
         type = priv->Type;
+        contextId = priv->Reserved0;
         meta = AeroGpuMetaHandleTake(adapter, priv->MetaHandle);
         if (priv->MetaHandle != 0 && !meta) {
             return STATUS_INVALID_PARAMETER;
@@ -3351,6 +3365,7 @@ static NTSTATUS APIENTRY AeroGpuDdiSubmitCommand(_In_ const HANDLE hAdapter,
         const uint64_t allocTableGpa = allocTableSizeBytes ? (uint64_t)allocTablePa.QuadPart : 0;
         ringSt = AeroGpuV1RingPushSubmit(adapter,
                                          submitFlags,
+                                         (uint32_t)contextId,
                                          dmaPa,
                                          dmaSizeBytes,
                                          allocTableGpa,

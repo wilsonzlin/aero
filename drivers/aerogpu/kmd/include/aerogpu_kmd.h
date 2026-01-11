@@ -159,6 +159,13 @@ typedef struct _AEROGPU_DEVICE {
 
 typedef struct _AEROGPU_CONTEXT {
     AEROGPU_DEVICE* Device;
+    /*
+     * Opaque per-context ID that is forwarded into `aerogpu_submit_desc.context_id`.
+     *
+     * The emulator uses this to isolate per-context rendering state (D3D9 state caching assumes
+     * device contexts do not interleave state). Resources remain keyed by protocol handles.
+     */
+    ULONG ContextId;
 } AEROGPU_CONTEXT;
 
 typedef struct _AEROGPU_ADAPTER {
@@ -216,6 +223,14 @@ typedef struct _AEROGPU_ADAPTER {
      * `aerogpu_wddm_alloc.h`.
      */
     volatile LONG NextKmdAllocId;
+
+    /*
+     * Monotonic generator for `AEROGPU_CONTEXT::ContextId` values.
+     *
+     * Starts at 0 so the first allocated ID is 1 (0 is reserved to mean "unknown/default" on the
+     * host side).
+     */
+    volatile LONG NextContextId;
 
     AEROGPU_ABI_KIND AbiKind;
 

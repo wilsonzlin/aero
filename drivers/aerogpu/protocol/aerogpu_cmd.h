@@ -22,10 +22,10 @@ extern "C" {
 /*
  * Driver-defined handle IDs used by the command stream.
  *
- * Note: while `aerogpu_submit_desc.context_id` is "0 for now", the host treats
- * these handles as living in a single global namespace. Guest drivers must
- * therefore allocate handles that are unique across the entire guest
- * (multi-process), not just within one process.
+ * The host treats these handles as living in a single global namespace (across
+ * all submission contexts). Guest drivers must therefore allocate handles that
+ * are unique across the entire guest (multi-process), not just within one
+ * process.
  */
 typedef uint32_t aerogpu_handle_t;
 

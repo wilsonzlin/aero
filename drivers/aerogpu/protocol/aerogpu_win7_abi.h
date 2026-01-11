@@ -53,7 +53,7 @@ typedef uint64_t aerogpu_win7_u64;
 #pragma pack(push, 1)
 typedef struct AEROGPU_DMA_PRIV {
   aerogpu_win7_u32 Type; /* AEROGPU_SUBMIT_* */
-  aerogpu_win7_u32 Reserved0;
+  aerogpu_win7_u32 Reserved0; /* KMD-only: forwarded context id (0 == default/unknown) */
   aerogpu_win7_u64 MetaHandle; /* 0 == none */
 } AEROGPU_DMA_PRIV;
 #pragma pack(pop)

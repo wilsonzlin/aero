@@ -64,6 +64,9 @@ pub struct AerogpuD3d9Executor {
 
     presented_scanouts: HashMap<u32, u32>,
 
+    contexts: HashMap<u32, ContextState>,
+    current_context_id: u32,
+
     state: State,
     encoder: Option<wgpu::CommandEncoder>,
 }
@@ -72,6 +75,32 @@ pub struct AerogpuD3d9Executor {
 struct SubmissionCtx<'a> {
     guest_memory: Option<&'a dyn GuestMemory>,
     alloc_table: Option<&'a AllocTable>,
+}
+
+#[derive(Debug)]
+struct ContextState {
+    constants_buffer: wgpu::Buffer,
+    bind_group: Option<wgpu::BindGroup>,
+    bind_group_dirty: bool,
+    samplers_ps: [wgpu::Sampler; MAX_SAMPLERS],
+    sampler_state_ps: [D3d9SamplerState; MAX_SAMPLERS],
+    state: State,
+}
+
+impl ContextState {
+    fn new(device: &wgpu::Device) -> Self {
+        Self {
+            constants_buffer: create_constants_buffer(device),
+            bind_group: None,
+            bind_group_dirty: true,
+            samplers_ps: create_default_samplers(device),
+            sampler_state_ps: std::array::from_fn(|_| D3d9SamplerState::default()),
+            state: State {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
+        }
+    }
 }
 
 #[derive(Debug, Error)]
@@ -333,6 +362,7 @@ impl Default for RasterizerState {
 }
 
 const MAX_SAMPLERS: usize = 16;
+const CONSTANTS_BUFFER_SIZE_BYTES: usize = 512 * 16;
 const MAX_REASONABLE_RENDER_STATE_ID: u32 = 4096;
 const MAX_REASONABLE_SAMPLER_STATE_ID: u32 = 4096;
 
@@ -359,6 +389,28 @@ fn fs() -> @location(0) vec4<f32> {
     return params.color;
 }
 "#;
+fn create_constants_buffer(device: &wgpu::Device) -> wgpu::Buffer {
+    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("aerogpu-d3d9.constants"),
+        contents: &[0u8; CONSTANTS_BUFFER_SIZE_BYTES],
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+    })
+}
+
+fn create_default_samplers(device: &wgpu::Device) -> [wgpu::Sampler; MAX_SAMPLERS] {
+    std::array::from_fn(|_| {
+        device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("aerogpu-d3d9.sampler_ps_default"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        })
+    })
+}
 
 #[derive(Debug, Clone, Copy, Default)]
 struct D3d9SamplerState {
@@ -421,16 +473,11 @@ impl AerogpuD3d9Executor {
     }
 
     pub fn new(device: wgpu::Device, queue: wgpu::Queue) -> Self {
-        let constants_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("aerogpu-d3d9.constants"),
-            // The D3D9 token-stream translator packs vertex + pixel constant registers into a
-            // single uniform buffer:
-            // - c[0..255]   = vertex constants
-            // - c[256..511] = pixel constants
-            size: 512 * 16,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        // The D3D9 token-stream translator packs vertex + pixel constant registers into a single
+        // uniform buffer:
+        // - c[0..255]   = vertex constants
+        // - c[256..511] = pixel constants
+        let constants_buffer = create_constants_buffer(&device);
 
         // Dummy bindings for unbound textures/samplers.
         let dummy_texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -514,18 +561,7 @@ impl AerogpuD3d9Executor {
             source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(CLEAR_SCISSOR_WGSL)),
         });
 
-        let samplers_ps = std::array::from_fn(|_| {
-            device.create_sampler(&wgpu::SamplerDescriptor {
-                label: Some("aerogpu-d3d9.sampler_ps_default"),
-                address_mode_u: wgpu::AddressMode::ClampToEdge,
-                address_mode_v: wgpu::AddressMode::ClampToEdge,
-                address_mode_w: wgpu::AddressMode::ClampToEdge,
-                mag_filter: wgpu::FilterMode::Linear,
-                min_filter: wgpu::FilterMode::Linear,
-                mipmap_filter: wgpu::FilterMode::Nearest,
-                ..Default::default()
-            })
-        });
+        let samplers_ps = create_default_samplers(&device);
         let sampler_state_ps = std::array::from_fn(|_| D3d9SamplerState::default());
 
         Self {
@@ -553,6 +589,8 @@ impl AerogpuD3d9Executor {
             clear_color_buffer,
             clear_pipelines: HashMap::new(),
             presented_scanouts: HashMap::new(),
+            contexts: HashMap::new(),
+            current_context_id: 0,
             state: State {
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 ..Default::default()
@@ -572,22 +610,12 @@ impl AerogpuD3d9Executor {
         self.presented_scanouts.clear();
         self.pipelines.clear();
         self.clear_pipelines.clear();
+        self.contexts.clear();
+        self.current_context_id = 0;
         self.bind_group = None;
         self.bind_group_dirty = true;
         self.sampler_state_ps = std::array::from_fn(|_| D3d9SamplerState::default());
-        let device = &self.device;
-        self.samplers_ps = std::array::from_fn(|_| {
-            device.create_sampler(&wgpu::SamplerDescriptor {
-                label: Some("aerogpu-d3d9.sampler_ps_default"),
-                address_mode_u: wgpu::AddressMode::ClampToEdge,
-                address_mode_v: wgpu::AddressMode::ClampToEdge,
-                address_mode_w: wgpu::AddressMode::ClampToEdge,
-                mag_filter: wgpu::FilterMode::Linear,
-                min_filter: wgpu::FilterMode::Linear,
-                mipmap_filter: wgpu::FilterMode::Nearest,
-                ..Default::default()
-            })
-        });
+        self.samplers_ps = create_default_samplers(&self.device);
         self.state = State {
             topology: wgpu::PrimitiveTopology::TriangleList,
             ..Default::default()
@@ -596,7 +624,7 @@ impl AerogpuD3d9Executor {
 
         // Avoid leaking constants across resets; the next draw will rewrite what it needs.
         self.queue
-            .write_buffer(&self.constants_buffer, 0, &[0u8; 512 * 16]);
+            .write_buffer(&self.constants_buffer, 0, &[0u8; CONSTANTS_BUFFER_SIZE_BYTES]);
     }
 
     pub fn device(&self) -> &wgpu::Device {
@@ -616,7 +644,16 @@ impl AerogpuD3d9Executor {
     }
 
     pub fn execute_cmd_stream(&mut self, bytes: &[u8]) -> Result<(), AerogpuD3d9Error> {
+        self.execute_cmd_stream_for_context(0, bytes)
+    }
+
+    pub fn execute_cmd_stream_for_context(
+        &mut self,
+        context_id: u32,
+        bytes: &[u8],
+    ) -> Result<(), AerogpuD3d9Error> {
         self.execute_cmd_stream_with_ctx(
+            context_id,
             bytes,
             SubmissionCtx {
                 guest_memory: None,
@@ -631,7 +668,18 @@ impl AerogpuD3d9Executor {
         guest_memory: &dyn GuestMemory,
         alloc_table: Option<&AllocTable>,
     ) -> Result<(), AerogpuD3d9Error> {
+        self.execute_cmd_stream_with_guest_memory_for_context(0, bytes, guest_memory, alloc_table)
+    }
+
+    pub fn execute_cmd_stream_with_guest_memory_for_context(
+        &mut self,
+        context_id: u32,
+        bytes: &[u8],
+        guest_memory: &dyn GuestMemory,
+        alloc_table: Option<&AllocTable>,
+    ) -> Result<(), AerogpuD3d9Error> {
         self.execute_cmd_stream_with_ctx(
+            context_id,
             bytes,
             SubmissionCtx {
                 guest_memory: Some(guest_memory),
@@ -640,14 +688,45 @@ impl AerogpuD3d9Executor {
         )
     }
 
+    fn switch_context(&mut self, context_id: u32) {
+        if self.current_context_id == context_id {
+            return;
+        }
+
+        let mut next = self
+            .contexts
+            .remove(&context_id)
+            .unwrap_or_else(|| ContextState::new(&self.device));
+
+        std::mem::swap(&mut self.constants_buffer, &mut next.constants_buffer);
+        std::mem::swap(&mut self.bind_group, &mut next.bind_group);
+        std::mem::swap(&mut self.bind_group_dirty, &mut next.bind_group_dirty);
+        std::mem::swap(&mut self.samplers_ps, &mut next.samplers_ps);
+        std::mem::swap(&mut self.sampler_state_ps, &mut next.sampler_state_ps);
+        std::mem::swap(&mut self.state, &mut next.state);
+
+        let old_context = self.current_context_id;
+        self.current_context_id = context_id;
+        self.contexts.insert(old_context, next);
+    }
+
     fn execute_cmd_stream_with_ctx(
         &mut self,
+        context_id: u32,
         bytes: &[u8],
         ctx: SubmissionCtx<'_>,
     ) -> Result<(), AerogpuD3d9Error> {
+        self.switch_context(context_id);
+
         let stream = parse_cmd_stream(bytes)?;
         for cmd in stream.cmds {
-            self.execute_cmd(cmd, ctx)?;
+            if let Err(err) = self.execute_cmd(cmd, ctx) {
+                // Do not submit partially-recorded work; drop the encoder but still push an empty
+                // submit boundary so `queue.write_texture` calls don't stay queued indefinitely.
+                self.encoder = None;
+                self.queue.submit([]);
+                return Err(err);
+            }
         }
         // Make sure we don't keep uploads queued indefinitely if the guest forgets to present.
         self.flush()
@@ -1897,10 +1976,10 @@ impl AerogpuD3d9Executor {
                         "SET_SHADER_CONSTANTS_F: data length overflow".into(),
                     )
                 })?;
-                if end_offset > 512 * 16 {
+                if end_offset > CONSTANTS_BUFFER_SIZE_BYTES as u64 {
                     return Err(AerogpuD3d9Error::Validation(format!(
                         "SET_SHADER_CONSTANTS_F: upload out of bounds (end_offset={end_offset} buffer_size={})",
-                        512 * 16
+                        CONSTANTS_BUFFER_SIZE_BYTES
                     )));
                 }
 
@@ -3977,7 +4056,7 @@ fn create_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
         ty: wgpu::BindingType::Buffer {
             ty: wgpu::BufferBindingType::Uniform,
             has_dynamic_offset: false,
-            min_binding_size: wgpu::BufferSize::new(512 * 16),
+            min_binding_size: wgpu::BufferSize::new(CONSTANTS_BUFFER_SIZE_BYTES as u64),
         },
         count: None,
     });

@@ -224,7 +224,7 @@ The submit descriptor is fixed-size (packed; 64 bytes):
 |---:|---|---|---|
 | `0x00` | `u32` | `desc_size_bytes` | Must be `sizeof(struct aerogpu_submit_desc)` (64) |
 | `0x04` | `u32` | `flags` | `enum aerogpu_submit_flags` |
-| `0x08` | `u32` | `context_id` | Driver-defined (0 for now) |
+| `0x08` | `u32` | `context_id` | Driver-defined (0 == default/unknown) |
 | `0x0C` | `u32` | `engine_id` | `enum aerogpu_engine_id` (only `AEROGPU_ENGINE_0`) |
 | `0x10` | `u64` | `cmd_gpa` | Command buffer guest physical address |
 | `0x18` | `u32` | `cmd_size_bytes` | Command buffer size in bytes |

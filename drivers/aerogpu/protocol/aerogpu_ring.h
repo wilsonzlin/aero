@@ -97,7 +97,7 @@ struct aerogpu_alloc_entry {
 struct aerogpu_submit_desc {
   uint32_t desc_size_bytes; /* Must be sizeof(struct aerogpu_submit_desc) */
   uint32_t flags; /* aerogpu_submit_flags */
-  uint32_t context_id; /* Driver-defined (0 for now) */
+  uint32_t context_id; /* Driver-defined (0 == default/unknown) */
   uint32_t engine_id; /* aerogpu_engine_id */
 
   uint64_t cmd_gpa; /* Command buffer guest physical address */
