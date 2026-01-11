@@ -101,6 +101,9 @@ jobs:
       - name: Check repository layout
         run: scripts/ci/check-repo-layout.sh
 
+      - name: Check Node workflow pinning
+        run: node scripts/ci/check-node-workflows.mjs
+
       - name: Check Rust workflow policy (setup-rust)
         run: scripts/ci/check-rust-workflows.sh
 
