@@ -16,6 +16,12 @@ This doc is intentionally biased toward a **safe skeleton**:
 * Keep `pfnGetCaps` conservative: do not advertise features you don’t implement end-to-end.
 
 > Related bring-up doc: `docs/graphics/win7-d3d10-11-umd-minimal.md` (conceptual bring-up plan and minimal feature set).
+>
+> Repo pointers (AeroGPU implementation):
+> * UMD code: `drivers/aerogpu/umd/d3d10_11/`
+> * Win7 D3D11 guest tests referenced below:
+>   * `drivers/aerogpu/tests/win7/d3d11_triangle`
+>   * `drivers/aerogpu/tests/win7/readback_sanity`
 
 ---
 
