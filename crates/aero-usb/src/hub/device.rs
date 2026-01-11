@@ -785,6 +785,11 @@ impl UsbDevice for UsbHubDevice {
     }
 
     fn handle_setup(&mut self, setup: SetupPacket) {
+        // A new SETUP packet aborts any in-flight control transfer, so discard side effects that
+        // should only apply if the previous transfer reaches the status stage.
+        self.pending_address = None;
+        self.pending_configuration = None;
+
         self.ep0.begin(setup);
 
         let supported = if setup.length == 0 {
