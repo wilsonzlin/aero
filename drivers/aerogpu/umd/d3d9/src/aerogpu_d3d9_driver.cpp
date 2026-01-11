@@ -3904,9 +3904,11 @@ HRESULT AEROGPU_D3D9_CALL device_get_query_data(
   uint64_t completed = refresh_fence_snapshot(adapter).last_completed;
   if (completed < fence_value && (pGetQueryData->flags & kD3DGetDataFlush)) {
     // Non-blocking GetData(FLUSH): attempt a single flush then re-check. Never
-    // wait here (DWM can call into GetData while holding global locks).
-    {
-      std::lock_guard<std::mutex> lock(dev->mutex);
+    // wait here (DWM can call into GetData while holding global locks). Also
+    // avoid blocking on the device mutex: if another thread is inside the UMD
+    // we skip the flush attempt and fall back to polling.
+    std::unique_lock<std::mutex> dev_lock(dev->mutex, std::try_to_lock);
+    if (dev_lock.owns_lock()) {
       (void)flush_locked(dev);
     }
     completed = refresh_fence_snapshot(adapter).last_completed;
