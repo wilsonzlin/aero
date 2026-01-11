@@ -207,6 +207,8 @@ fn mnemonic_allows_lock_prefix(m: Mnemonic) -> bool {
 pub(super) fn check_fp_available(state: &CpuState, kind: FpKind) -> Result<(), Exception> {
     let cr0 = state.control.cr0;
 
+    // Give #UD priority over #NM: if the ISA is disabled entirely, we do not
+    // report it as a lazy-FPU trap.
     if (cr0 & CR0_EM) != 0 {
         return Err(Exception::InvalidOpcode);
     }

@@ -373,3 +373,47 @@ fn fxrstor_masks_st_reserve_bits() {
         assert_eq!(state.fpu.st[i], mask_st80(patterned_u128(0x10 + i as u8)));
     }
 }
+
+#[test]
+fn tier0_executes_emms() {
+    let mut state = CpuState::new(CpuMode::Bit64);
+    state.set_rip(CODE_BASE);
+    state.fpu.ftw = 0xFF;
+
+    let mut bus = FlatTestBus::new(BUS_SIZE);
+    bus.load(CODE_BASE, &[0x0F, 0x77]); // emms
+
+    step_ok(&mut state, &mut bus);
+
+    assert_eq!(state.fpu.ftw, 0);
+}
+
+#[test]
+fn fx_instructions_force_exception_masks_when_osxmmexcpt_disabled() {
+    // When CR4.OSXMMEXCPT=0, we keep all MXCSR exception masks set so we never
+    // need to inject #XM/#XF in tier-0.
+    let mut state = CpuState::new(CpuMode::Bit64);
+    state.control.cr4 |= CR4_OSFXSR;
+    state.set_rip(CODE_BASE);
+    state.write_reg(Register::RAX, DATA_BASE);
+
+    let mut bus = FlatTestBus::new(BUS_SIZE);
+
+    // LDMXCSR should force exception masks to remain set.
+    bus.write_u32(DATA_BASE, 0).unwrap();
+    bus.load(CODE_BASE, &[0x0F, 0xAE, 0x10]); // ldmxcsr [rax]
+    step_ok(&mut state, &mut bus);
+    assert_eq!(state.sse.mxcsr, 0x1F80);
+
+    // FXRSTOR should apply the same policy when restoring MXCSR from the saved image.
+    let mut image = [0u8; FXSAVE_AREA_SIZE];
+    state.fxsave32(&mut image);
+    image[24..28].copy_from_slice(&0u32.to_le_bytes());
+    bus.load(DATA_BASE, &image);
+
+    state.sse.mxcsr = 0x5F80;
+    state.set_rip(CODE_BASE);
+    bus.load(CODE_BASE, &[0x0F, 0xAE, 0x08]); // fxrstor [rax]
+    step_ok(&mut state, &mut bus);
+    assert_eq!(state.sse.mxcsr, 0x1F80);
+}

@@ -11,6 +11,7 @@
 //! `legacy-interp` Cargo feature (default-off).
 
 mod exception;
+mod fxsave;
 
 pub mod assist;
 pub mod cpuid;
