@@ -452,7 +452,9 @@ Virtio audio does not affect boot, so treat it as an optional final step:
 
 1. Shut down Windows.
 2. Switch audio from **HDA** to **virtio-snd**.
-3. Boot Windows and test audio.
+3. Boot Windows and test audio:
+   - Control Panel → **Sound** → **Playback** tab: confirm the virtio-snd output endpoint exists.
+   - Control Panel → **Sound** → **Recording** tab: confirm the virtio-snd capture endpoint exists.
 
 ## Step 6: Run `verify.cmd` and interpret `report.txt`
 
