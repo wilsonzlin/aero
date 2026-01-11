@@ -925,6 +925,10 @@ inline HRESULT DeallocateResourceIfNeeded(AeroGpuDevice*, D3D10DDI_HDEVICE, Aero
 inline void ReportDeviceErrorLocked(AeroGpuDevice* dev, D3D10DDI_HDEVICE hDevice, HRESULT hr) {
   if (dev) {
     dev->last_error = hr;
+    if (dev->device_callbacks && dev->device_callbacks->pfnSetError) {
+      const auto* cb = dev->device_callbacks;
+      cb->pfnSetError(cb->pUserContext, hr);
+    }
   }
   SetErrorIfPossible(dev, hDevice, hr);
 }
@@ -1959,10 +1963,8 @@ void unmap_resource_locked(AeroGpuDevice* dev, D3D10DDI_HDEVICE hDevice, AeroGpu
   if (!dev || !res) {
     return;
   }
-  if (!res->mapped) {
-    return;
-  }
-  if (subresource != res->mapped_subresource) {
+  if (!res->mapped || subresource != res->mapped_subresource) {
+    ReportDeviceErrorLocked(dev, hDevice, E_INVALIDARG);
     return;
   }
 
@@ -4152,14 +4154,14 @@ void AEROGPU_APIENTRY Map(D3D10DDI_HDEVICE hDevice, const AEROGPU_D3D11DDIARG_MA
   std::lock_guard<std::mutex> lock(dev->mutex);
   dev->last_error = S_OK;
 
-  HRESULT hr = map_resource_locked(dev,
-                                   res,
-                                   static_cast<uint32_t>(pMap->Subresource),
-                                   static_cast<uint32_t>(pMap->MapType),
-                                   static_cast<uint32_t>(pMap->MapFlags),
-                                   pMap->pMappedSubresource);
+  const HRESULT hr = map_resource_locked(dev,
+                                         res,
+                                         static_cast<uint32_t>(pMap->Subresource),
+                                         static_cast<uint32_t>(pMap->MapType),
+                                         static_cast<uint32_t>(pMap->MapFlags),
+                                         pMap->pMappedSubresource);
   if (FAILED(hr)) {
-    dev->last_error = hr;
+    ReportDeviceErrorLocked(dev, hDevice, hr);
   }
 }
 
@@ -4176,10 +4178,6 @@ void AEROGPU_APIENTRY Unmap(D3D10DDI_HDEVICE hDevice, const AEROGPU_D3D11DDIARG_
 
   std::lock_guard<std::mutex> lock(dev->mutex);
   dev->last_error = S_OK;
-  if (!res->mapped || res->mapped_subresource != pUnmap->Subresource) {
-    dev->last_error = E_INVALIDARG;
-    return;
-  }
   unmap_resource_locked(dev, hDevice, res, static_cast<uint32_t>(pUnmap->Subresource));
 }
 

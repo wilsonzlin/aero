@@ -118,6 +118,7 @@ struct Allocation {
 struct Harness {
   std::vector<uint8_t> last_stream;
   std::vector<AEROGPU_WDDM_ALLOCATION_HANDLE> last_allocs;
+  std::vector<HRESULT> errors;
 
   std::vector<Allocation> allocations;
   AEROGPU_WDDM_ALLOCATION_HANDLE next_handle = 1;
@@ -215,6 +216,14 @@ struct Harness {
     }
     return S_OK;
   }
+
+  static void AEROGPU_APIENTRY SetError(void* user, HRESULT hr) {
+    if (!user) {
+      return;
+    }
+    auto* h = reinterpret_cast<Harness*>(user);
+    h->errors.push_back(hr);
+  }
 };
 
 struct TestDevice {
@@ -237,6 +246,7 @@ bool InitTestDevice(TestDevice* out, bool want_backing_allocations) {
 
   out->callbacks.pUserContext = &out->harness;
   out->callbacks.pfnSubmitCmdStream = &Harness::SubmitCmdStream;
+  out->callbacks.pfnSetError = &Harness::SetError;
   if (want_backing_allocations) {
     out->callbacks.pfnAllocateBacking = &Harness::AllocateBacking;
     out->callbacks.pfnMapAllocation = &Harness::MapAllocation;
@@ -969,6 +979,58 @@ bool TestMapFlagsValidation() {
                                              /*map_flags=*/0x1,
                                              &mapped);
   if (!Check(hr == E_INVALIDARG, "Map with unknown MapFlags bits should fail")) {
+    return false;
+  }
+
+  dev.device_funcs.pfnDestroyResource(dev.hDevice, buf.hResource);
+  dev.device_funcs.pfnDestroyDevice(dev.hDevice);
+  dev.adapter_funcs.pfnCloseAdapter(dev.hAdapter);
+  return true;
+}
+
+bool TestInvalidUnmapReportsError() {
+  TestDevice dev{};
+  if (!Check(InitTestDevice(&dev, /*want_backing_allocations=*/false), "InitTestDevice(invalid unmap)")) {
+    return false;
+  }
+
+  TestResource buf{};
+  if (!Check(CreateStagingBuffer(&dev, /*byte_width=*/16, AEROGPU_D3D11_CPU_ACCESS_WRITE, &buf), "CreateStagingBuffer")) {
+    return false;
+  }
+
+  dev.harness.errors.clear();
+  dev.device_funcs.pfnUnmap(dev.hDevice, buf.hResource, /*subresource=*/0);
+  if (!Check(dev.harness.errors.size() == 1, "Unmap without Map should report one error")) {
+    return false;
+  }
+  if (!Check(dev.harness.errors[0] == E_INVALIDARG, "Unmap without Map should report E_INVALIDARG")) {
+    return false;
+  }
+
+  AEROGPU_DDI_MAPPED_SUBRESOURCE mapped = {};
+  HRESULT hr = dev.device_funcs.pfnMap(dev.hDevice,
+                                       buf.hResource,
+                                       /*subresource=*/0,
+                                       AEROGPU_DDI_MAP_WRITE,
+                                       /*map_flags=*/0,
+                                       &mapped);
+  if (!Check(hr == S_OK, "Map after invalid Unmap")) {
+    return false;
+  }
+
+  dev.harness.errors.clear();
+  dev.device_funcs.pfnUnmap(dev.hDevice, buf.hResource, /*subresource=*/1);
+  if (!Check(dev.harness.errors.size() == 1, "Unmap with wrong subresource should report one error")) {
+    return false;
+  }
+  if (!Check(dev.harness.errors[0] == E_INVALIDARG, "Unmap wrong subresource should report E_INVALIDARG")) {
+    return false;
+  }
+
+  dev.harness.errors.clear();
+  dev.device_funcs.pfnUnmap(dev.hDevice, buf.hResource, /*subresource=*/0);
+  if (!Check(dev.harness.errors.empty(), "Valid Unmap should not report errors")) {
     return false;
   }
 
@@ -3038,6 +3100,7 @@ int main() {
   ok &= TestGuestBackedTextureUnmapDirtyRange();
   ok &= TestMapUsageValidation();
   ok &= TestMapFlagsValidation();
+  ok &= TestInvalidUnmapReportsError();
   ok &= TestDynamicMapFlagsValidation();
   ok &= TestHostOwnedDynamicIABufferUploads();
   ok &= TestGuestBackedDynamicIABufferDirtyRange();

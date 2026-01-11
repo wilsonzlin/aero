@@ -449,12 +449,17 @@ typedef HRESULT(AEROGPU_APIENTRY *PFNAEROGPU_DDI_SUBMIT_CMD_STREAM)(
     uint32_t alloc_count,
     uint64_t *out_fence);
 
+// Optional error callback used by the portable (non-WDK) build to emulate Win7
+// runtime `pfnSetErrorCb` behavior for void-returning DDIs (e.g. Unmap).
+typedef void(AEROGPU_APIENTRY *PFNAEROGPU_DDI_SET_ERROR)(void *pUserContext, HRESULT hr);
+
 struct AEROGPU_D3D10_11_DEVICECALLBACKS {
   void *pUserContext;
   PFNAEROGPU_DDI_ALLOCATE_BACKING pfnAllocateBacking;
   PFNAEROGPU_DDI_MAP_ALLOCATION pfnMapAllocation;
   PFNAEROGPU_DDI_UNMAP_ALLOCATION pfnUnmapAllocation;
   PFNAEROGPU_DDI_SUBMIT_CMD_STREAM pfnSubmitCmdStream;
+  PFNAEROGPU_DDI_SET_ERROR pfnSetError;
 };
 
 // Resource update/copy DDI structs (minimal).
