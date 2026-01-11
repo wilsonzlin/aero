@@ -652,6 +652,10 @@ pub fn key_event_bytes(code: &str, pressed: bool) -> Option<Vec<u8>> {
 For browser input → USB HID usage mapping and report format details, see
 [`docs/usb-hid.md`](./usb-hid.md).
 
+For USB HID **gamepad** details (including the composite HID topology and the exact
+gamepad report descriptor + byte layout), see
+[`docs/usb-hid-gamepad.md`](./usb-hid-gamepad.md).
+
 ### USB HID Keyboard
 
 ```rust
@@ -821,6 +825,10 @@ This avoids composite HID device complexity and lets Windows naturally bind the 
 ---
 
 ## Gamepad Support
+
+Gamepads can be surfaced to the guest either via a paravirtualized path (future)
+or as a USB HID game controller. For the USB HID gamepad spec used by Aero, see
+[`docs/usb-hid-gamepad.md`](./usb-hid-gamepad.md).
 
 ```rust
 pub struct GamepadHandler {
