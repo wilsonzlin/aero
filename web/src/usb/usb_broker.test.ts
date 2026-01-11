@@ -504,4 +504,81 @@ describe("usb/UsbBroker", () => {
     expect(onChange).toHaveBeenCalledTimes(2);
   });
 
+  it("lists permitted devices and can attach one without showing the chooser", async () => {
+    let openAndClaimCalls = 0;
+
+    vi.doMock("./webusb_backend", () => ({
+      WebUsbBackend: class {
+        async ensureOpenAndClaimed(): Promise<void> {
+          openAndClaimCalls += 1;
+        }
+
+        async execute(): Promise<BackendUsbHostCompletion> {
+          throw new Error("not used");
+        }
+      },
+    }));
+
+    const device = {
+      vendorId: 0x1234,
+      productId: 0x5678,
+      productName: "Permitted",
+      close: async () => {},
+    } as unknown as USBDevice;
+
+    const getDevices = vi.fn(async () => [device]);
+    stubNavigatorUsb({ getDevices });
+
+    const { UsbBroker } = await import("./usb_broker");
+
+    const broker = new UsbBroker();
+    await expect(broker.getPermittedDevices()).resolves.toEqual([device]);
+    expect(getDevices).toHaveBeenCalledTimes(1);
+
+    const port = new FakePort();
+    broker.attachWorkerPort(port as unknown as MessagePort);
+
+    await broker.attachPermittedDevice(device);
+    expect(openAndClaimCalls).toBe(1);
+
+    const selected = port.posted.filter((m) => (m as { type?: unknown }).type === "usb.selected");
+    expect(selected).toEqual([
+      {
+        type: "usb.selected",
+        ok: true,
+        info: { vendorId: 0x1234, productId: 0x5678, productName: "Permitted" },
+      },
+    ]);
+  });
+
+  it("cancels in-flight actions with WebUSB device replaced. when attaching a new permitted device", async () => {
+    const resolvers: Array<(c: BackendUsbHostCompletion) => void> = [];
+
+    vi.doMock("./webusb_backend", () => ({
+      WebUsbBackend: class {
+        async ensureOpenAndClaimed(): Promise<void> {}
+
+        execute(_action: unknown): Promise<BackendUsbHostCompletion> {
+          return new Promise((resolve) => resolvers.push(resolve));
+        }
+      },
+    }));
+
+    const device1 = { vendorId: 0x0001, productId: 0x0002, close: async () => {} } as unknown as USBDevice;
+    const device2 = { vendorId: 0x0003, productId: 0x0004, close: async () => {} } as unknown as USBDevice;
+    stubNavigatorUsb({});
+
+    const { UsbBroker } = await import("./usb_broker");
+
+    const broker = new UsbBroker();
+    await broker.attachPermittedDevice(device1);
+
+    const p1 = broker.execute({ kind: "bulkIn", id: 1, endpoint: 1, length: 8 });
+    await Promise.resolve();
+    expect(resolvers).toHaveLength(1);
+
+    await broker.attachPermittedDevice(device2);
+
+    await expect(p1).resolves.toEqual({ kind: "bulkIn", id: 1, status: "error", message: "WebUSB device replaced." });
+  });
 });

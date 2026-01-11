@@ -35,6 +35,19 @@ function createDeferred<T>(): { promise: Promise<T>; resolve: (value: T) => void
   return { promise, resolve };
 }
 
+function wrapWithCause(message: string, cause: unknown): Error {
+  const error = new Error(message);
+  // Not all runtimes support the `ErrorOptions` constructor parameter, but
+  // attaching `cause` is still useful for debugging and for our WebUSB
+  // troubleshooting helper, which can walk `Error.cause` chains.
+  try {
+    (error as Error & { cause?: unknown }).cause = cause;
+  } catch {
+    // ignore
+  }
+  return error;
+}
+
 function getNavigatorUsb(): USB | null {
   // Keep the access tolerant so unit tests (node environment) can stub navigator.
   const nav = (globalThis as unknown as { navigator?: unknown }).navigator as (Navigator & { usb?: USB }) | undefined;
@@ -135,6 +148,30 @@ export class UsbBroker {
     this.broadcast({ type: "usb.selected", ok: false, error: reason } satisfies UsbSelectedMessage);
   }
 
+  async getPermittedDevices(): Promise<USBDevice[]> {
+    const usb = getNavigatorUsb();
+    if (!usb || typeof usb.getDevices !== "function") {
+      throw new Error("WebUSB is unavailable (navigator.usb.getDevices missing).");
+    }
+
+    try {
+      return await usb.getDevices();
+    } catch (err) {
+      throw wrapWithCause("Failed to list permitted WebUSB devices.", err);
+    }
+  }
+
+  async attachPermittedDevice(device: USBDevice): Promise<UsbDeviceInfo> {
+    if (!device) {
+      throw new Error("WebUSB device not provided.");
+    }
+    const usb = getNavigatorUsb();
+    if (!usb) {
+      throw new Error("WebUSB is unavailable (navigator.usb missing).");
+    }
+    return await this.adoptDevice(device);
+  }
+
   async requestDevice(filters?: USBDeviceFilter[]): Promise<UsbDeviceInfo> {
     const usb = getNavigatorUsb();
     if (!usb || typeof usb.requestDevice !== "function") {
@@ -179,35 +216,7 @@ export class UsbBroker {
     if (!device) {
       throw lastErr ?? new Error("WebUSB requestDevice failed.");
     }
-    const backend = new WebUsbBackend(device);
-
-    try {
-      await backend.ensureOpenAndClaimed();
-    } catch (err) {
-      try {
-        await device.close();
-      } catch {
-        // Ignore close errors; failing to open/claim is the root issue.
-      }
-      throw err;
-    }
-
-    // Replace any previously-selected device and fail outstanding actions so they don't accidentally run on the new device.
-    this.resetSelectedDevice("WebUSB device replaced.");
-
-    this.device = device;
-    this.backend = backend;
-    this.selectedInfo = {
-      vendorId: device.vendorId,
-      productId: device.productId,
-      productName: device.productName ?? undefined,
-    };
-    this.disconnectError = null;
-    this.disconnectSignal = createDeferred();
-
-    const msg: UsbSelectedMessage = { type: "usb.selected", ok: true, info: this.selectedInfo };
-    this.broadcast(msg);
-    return this.selectedInfo;
+    return await this.adoptDevice(device);
   }
 
   canForgetSelectedDevice(): boolean {
@@ -303,6 +312,42 @@ export class UsbBroker {
       const message = formatWebUsbError(err);
       this.postToPort(port, { type: "usb.selected", ok: false, error: message } satisfies UsbSelectedMessage);
     }
+  }
+
+  private async adoptDevice(device: USBDevice): Promise<UsbDeviceInfo> {
+    if (device === this.device && this.backend && !this.disconnectError && this.selectedInfo) {
+      return this.selectedInfo;
+    }
+
+    const backend = new WebUsbBackend(device);
+
+    try {
+      await backend.ensureOpenAndClaimed();
+    } catch (err) {
+      try {
+        await device.close();
+      } catch {
+        // Ignore close errors; failing to open/claim is the root issue.
+      }
+      throw err;
+    }
+
+    // Replace any previously-selected device and fail outstanding actions so they don't accidentally run on the new device.
+    this.resetSelectedDevice("WebUSB device replaced.");
+
+    this.device = device;
+    this.backend = backend;
+    this.selectedInfo = {
+      vendorId: device.vendorId,
+      productId: device.productId,
+      productName: device.productName ?? undefined,
+    };
+    this.disconnectError = null;
+    this.disconnectSignal = createDeferred();
+
+    const msg: UsbSelectedMessage = { type: "usb.selected", ok: true, info: this.selectedInfo };
+    this.broadcast(msg);
+    return this.selectedInfo;
   }
 
   private kickQueue(): void {
