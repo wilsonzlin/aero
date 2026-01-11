@@ -91,6 +91,16 @@ test("explainWebUsbError: Linux permission hints omit Windows WinUSB guidance", 
   assert.ok(!res.hints.some((hint) => hint.includes("WinUSB")));
 });
 
+test("explainWebUsbError: Android hints omit desktop WinUSB/udev guidance", () => {
+  const res = withUserAgent("Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 Chrome/120.0.0.0 Mobile", () =>
+    explainWebUsbError("NetworkError: Unable to claim interface."),
+  );
+
+  assert.ok(res.hints.some((hint) => hint.toLowerCase().includes("android")));
+  assert.ok(!res.hints.some((hint) => hint.includes("WinUSB")));
+  assert.ok(!res.hints.some((hint) => hint.toLowerCase().includes("udev")));
+});
+
 test("explainWebUsbError: SecurityError mentions protected interface classes", () => {
   const res = explainWebUsbError({
     name: "SecurityError",

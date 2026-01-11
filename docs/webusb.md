@@ -26,6 +26,7 @@ If WebUSB calls like `requestDevice()`, `device.open()`, or `device.claimInterfa
 - **User gesture required:** `navigator.usb.requestDevice()` must be triggered by a user gesture (e.g. a button click).
   - Call `requestDevice()` directly from the gesture handler; if you `await` before calling it, the user gesture can be lost.
   - User activation does **not** propagate across `postMessage()` to workers, so do the chooser step on the main thread.
+  - If you denied the prompt previously, remove the site's USB permission in browser settings and try again.
 - **Protected interface classes:** WebUSB cannot access some interface classes (HID, mass storage, audio/video, etc.). Prefer a vendor-specific interface (class `0xFF`) or a more appropriate Web API (e.g. WebHID/WebSerial).
 - **Windows (WinUSB):** WebUSB typically requires the relevant interface to be bound to **WinUSB**.
   - For development: tools like **Zadig** can install WinUSB for a specific VID/PID/interface.
@@ -33,6 +34,7 @@ If WebUSB calls like `requestDevice()`, `device.open()`, or `device.claimInterfa
 - **Linux (udev / kernel driver):**
   - Ensure your user has permission to access the device (via `udev` rules).
   - Ensure no kernel driver is attached to the interface; a bound kernel driver can prevent `claimInterface()`.
+- **macOS / Android:** support varies. If the OS has a built-in driver attached to the interface (or mobile USB/OTG restrictions apply), WebUSB may not be able to claim it. Vendor-specific interfaces (class `0xFF`) are the most feasible.
 
 ---
 

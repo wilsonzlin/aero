@@ -10,7 +10,7 @@ type ErrorLike = {
   cause?: unknown;
 };
 
-type HostOs = "windows" | "linux" | "mac" | "unknown";
+type HostOs = "windows" | "linux" | "mac" | "android" | "unknown";
 
 function safeToString(value: unknown): string {
   try {
@@ -112,9 +112,7 @@ function detectHostOs(): HostOs {
   const ua = navigator.userAgent.toLowerCase();
   if (ua.includes("windows")) return "windows";
   if (ua.includes("mac os") || ua.includes("macintosh")) return "mac";
-  // Android user agents contain "Linux"; treat Android separately and fall back
-  // to generic advice elsewhere.
-  if (ua.includes("android")) return "unknown";
+  if (ua.includes("android")) return "android";
   if (ua.includes("linux")) return "linux";
   return "unknown";
 }
@@ -231,6 +229,9 @@ export function explainWebUsbError(err: unknown): WebUsbErrorExplanation {
     addHint(
       "If you `await` before calling `requestDevice()`, the user gesture can be lost; call it directly in the click handler.",
     );
+    addHint(
+      "If you denied the permission prompt previously, remove the USB permission in your browser's site settings and try again.",
+    );
   }
 
   if (name === "TypeError" && mentionsFilters) {
@@ -280,6 +281,18 @@ export function explainWebUsbError(err: unknown): WebUsbErrorExplanation {
     if (hostOs === "linux" || hostOs === "unknown") {
       addHint(
         "Linux: ensure your user has device permissions (udev rules). Also ensure no kernel driver is attached to the interface (a bound kernel driver can prevent `claimInterface()`).",
+      );
+    }
+
+    if (hostOs === "mac") {
+      addHint(
+        "macOS: if the OS has a built-in driver attached to the interface, WebUSB may not be able to claim it. Vendor-specific interfaces (class 0xFF) are the most feasible.",
+      );
+    }
+
+    if (hostOs === "android") {
+      addHint(
+        "Android: WebUSB support and USB permissions vary by device/OTG support. If possible, try a desktop Chromium browser for troubleshooting.",
       );
     }
   }
