@@ -4982,17 +4982,71 @@ struct SoftwareVtx {
   float a[4] = {};
 };
 
+static bool ReadFloat4FromCbBinding(Resource* cb,
+                                   const aerogpu_constant_buffer_binding& binding,
+                                   uint32_t offset_within_binding_bytes,
+                                   float out_rgba[4]) {
+  if (!cb || !out_rgba) {
+    return false;
+  }
+  if (cb->kind != ResourceKind::Buffer) {
+    return false;
+  }
+
+  const uint64_t binding_offset = binding.offset_bytes;
+  uint64_t binding_size = binding.size_bytes;
+  if (binding_size == 0) {
+    binding_size = binding_offset < cb->size_bytes ? (cb->size_bytes - binding_offset) : 0;
+  }
+
+  constexpr uint64_t kFloat4Bytes = sizeof(float) * 4ull;
+  const uint64_t read_off = binding_offset + static_cast<uint64_t>(offset_within_binding_bytes);
+  const uint64_t end_off = read_off + kFloat4Bytes;
+  if (static_cast<uint64_t>(offset_within_binding_bytes) + kFloat4Bytes > binding_size) {
+    return false;
+  }
+  if (end_off > cb->storage.size()) {
+    return false;
+  }
+
+  std::memcpy(out_rgba, cb->storage.data() + static_cast<size_t>(read_off), kFloat4Bytes);
+  return true;
+}
+
 static bool ReadConstantColor(Device* dev, float out_rgba[4]) {
   if (!dev || !out_rgba) {
     return false;
   }
 
-  Resource* cb = dev->current_ps_cb0 ? dev->current_ps_cb0 : dev->current_vs_cb0;
-  if (!cb || cb->kind != ResourceKind::Buffer || cb->storage.size() < sizeof(float) * 4) {
+  const aerogpu_constant_buffer_binding& vs_cb0_binding = dev->vs_constant_buffers[0];
+  Resource* vs_cb0 = dev->current_vs_cb0;
+  if (!vs_cb0 || vs_cb0_binding.buffer == 0) {
     return false;
   }
 
-  std::memcpy(out_rgba, cb->storage.data(), sizeof(float) * 4);
+  float vs_color[4] = {};
+  if (!ReadFloat4FromCbBinding(vs_cb0, vs_cb0_binding, 0, vs_color)) {
+    return false;
+  }
+
+  float ps_mul[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+  const aerogpu_constant_buffer_binding& ps_cb0_binding = dev->ps_constant_buffers[0];
+  Resource* ps_cb0 = dev->current_ps_cb0;
+  if (ps_cb0 && ps_cb0_binding.buffer != 0) {
+    uint64_t ps_binding_size = ps_cb0_binding.size_bytes;
+    if (ps_binding_size == 0) {
+      ps_binding_size = ps_cb0_binding.offset_bytes < ps_cb0->size_bytes ? (ps_cb0->size_bytes - ps_cb0_binding.offset_bytes) : 0;
+    }
+    const uint32_t ps_mul_off = ps_binding_size >= 32 ? 16 : 0;
+    float tmp[4] = {};
+    if (ReadFloat4FromCbBinding(ps_cb0, ps_cb0_binding, ps_mul_off, tmp)) {
+      std::memcpy(ps_mul, tmp, sizeof(ps_mul));
+    }
+  }
+
+  for (int i = 0; i < 4; ++i) {
+    out_rgba[i] = Clamp01(vs_color[i] * ps_mul[i]);
+  }
   return true;
 }
 
