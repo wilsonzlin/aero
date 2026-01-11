@@ -51,6 +51,7 @@ See: [`docs/windows7-virtio-driver-contract.md`](../../../../docs/windows7-virti
 
 - [`docs/virtio-snd.md`](../../../../docs/virtio-snd.md) — high-level device-model notes (non-normative; the Windows 7 virtio contract + emulator implementation are definitive).
 - [`docs/windows7-virtio-driver-contract.md` (virtio-snd section)](../../../../docs/windows7-virtio-driver-contract.md#34-virtio-snd-audio) — queue indices, PCI IDs, and required transport features.
+- [`docs/windows/virtio-pci-modern-wdm.md`](../../../../docs/windows/virtio-pci-modern-wdm.md) — WDM virtio-pci modern transport bring-up notes (PCI caps, BAR0 mapping, feature negotiation, queues, INTx ISR/DPC).
 - Canonical wire format / behavior reference (emulator side):
   - [`crates/aero-virtio/src/devices/snd.rs`](../../../../crates/aero-virtio/src/devices/snd.rs)
   - [`crates/aero-virtio/tests/virtio_snd.rs`](../../../../crates/aero-virtio/tests/virtio_snd.rs)
