@@ -21,10 +21,10 @@ type udpRelayVectorFile struct {
 type udpRelayVector struct {
 	Name string `json:"name"`
 
-	Version   uint8  `json:"version"`
-	FrameB64  string `json:"frame_b64"`
-	GuestPort uint16 `json:"guestPort"`
-	RemoteIP  string `json:"remoteIp"`
+	Version    uint8  `json:"version"`
+	FrameB64   string `json:"frame_b64"`
+	GuestPort  uint16 `json:"guestPort"`
+	RemoteIP   string `json:"remoteIp"`
 	RemotePort uint16 `json:"remotePort"`
 	PayloadB64 string `json:"payload_b64"`
 
@@ -152,4 +152,3 @@ func TestProtocolVectors(t *testing.T) {
 		})
 	}
 }
-

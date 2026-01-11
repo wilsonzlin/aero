@@ -14,10 +14,10 @@ import (
 )
 
 const (
-	l2TunnelSubprotocol = "aero-l2-tunnel-v1"
+	l2TunnelSubprotocol      = "aero-l2-tunnel-v1"
 	l2TokenSubprotocolPrefix = "aero-l2-token."
-	l2DialTimeout       = 5 * time.Second
-	l2WriteTimeout      = 5 * time.Second
+	l2DialTimeout            = 5 * time.Second
+	l2WriteTimeout           = 5 * time.Second
 )
 
 // l2Bridge forwards binary messages between a WebRTC DataChannel ("l2") and a

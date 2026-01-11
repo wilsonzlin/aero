@@ -69,7 +69,7 @@ func TestDefaultsDev(t *testing.T) {
 
 func TestMaxDatagramPayloadBytes_EnvOverride(t *testing.T) {
 	cfg, err := load(lookupMap(map[string]string{
-		EnvAPIKey:                 "secret",
+		EnvAPIKey:                  "secret",
 		EnvMaxDatagramPayloadBytes: "1400",
 	}), nil)
 	if err != nil {
@@ -255,6 +255,7 @@ func TestL2BackendWSURL_AcceptsWebSocketURL(t *testing.T) {
 
 func TestL2BackendWSToken_AcceptsHTTPToken(t *testing.T) {
 	cfg, err := load(lookupMap(map[string]string{
+		EnvAPIKey:           "secret",
 		EnvL2BackendWSToken: "jwt_like.token-123",
 	}), nil)
 	if err != nil {
@@ -267,6 +268,7 @@ func TestL2BackendWSToken_AcceptsHTTPToken(t *testing.T) {
 
 func TestL2BackendWSToken_RejectsInvalidToken(t *testing.T) {
 	_, err := load(lookupMap(map[string]string{
+		EnvAPIKey:           "secret",
 		EnvL2BackendWSToken: "not a token",
 	}), nil)
 	if err == nil {
