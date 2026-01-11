@@ -25,6 +25,7 @@ members = [
     "crates/aero-microbench",
     "crates/aero-net-e1000",
     "crates/aero-l2-protocol",
+    "crates/aero-l2-proxy",
     "crates/aero-net-stack",
     "crates/aero-storage",
     "crates/aero-mem",

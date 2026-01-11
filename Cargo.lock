@@ -293,6 +293,17 @@ name = "aero-l2-protocol"
 version = "0.1.0"
 
 [[package]]
+name = "aero-l2-proxy"
+version = "0.1.0"
+dependencies = [
+ "aero-l2-protocol",
+ "axum",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "aero-mem"
 version = "0.1.0"
 dependencies = [
