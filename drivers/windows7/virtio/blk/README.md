@@ -2,6 +2,13 @@
 
 `aerovblk.sys` is a StorPort miniport driver intended for Windows 7 SP1 x86/x64.
 
+> **Important:** This directory contains the **legacy/transitional** virtio-blk driver
+> package. It intentionally binds to `PCI\\VEN_1AF4&DEV_1001` and does **not** bind to
+> the contract-v1 modern virtio-blk ID `PCI\\VEN_1AF4&DEV_1042`.
+>
+> For the contract-v1 virtio-blk driver, use `drivers/win7/virtio-blk/` (see also
+> `docs/windows7-virtio-driver-contract.md`).
+
 ## Building
 
 CI builds this driver with a modern WDK (currently pinned to 10.0.22621.0) via the MSBuild project `aerovblk.vcxproj`.
@@ -13,9 +20,9 @@ For local development you can use either:
 
 ## Hardware IDs
 
-The INF binds to the standard virtio-blk PCI ID used by QEMU/virtio:
+The INF binds to the transitional virtio-blk PCI ID:
 
-- `PCI\VEN_1AF4&DEV_1042` (virtio 1.0+ modern virtio-blk, `disable-legacy=on`)
+- `PCI\VEN_1AF4&DEV_1001`
 
 ## Installation (non-boot disk)
 

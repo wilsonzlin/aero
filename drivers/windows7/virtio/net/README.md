@@ -2,6 +2,13 @@
 
 This directory contains a clean-room, spec-based **virtio-net** driver for **Windows 7 SP1** implemented as an **NDIS 6.20** miniport.
 
+> **Important:** This directory contains the **legacy/transitional** virtio-net driver
+> package. It intentionally binds to `PCI\\VEN_1AF4&DEV_1000` and does **not** bind to
+> the contract-v1 modern virtio-net ID `PCI\\VEN_1AF4&DEV_1041`.
+>
+> For the contract-v1 virtio-net driver, use `drivers/win7/virtio-net/` (see also
+> `docs/windows7-virtio-driver-contract.md`).
+
 ## What it provides
 
 - Presents a standard Ethernet NIC to Windows (NDIS 6.20)
@@ -44,4 +51,4 @@ For local development you can use either:
 
 Hardware IDs matched by `aerovnet.inf`:
 
-- `PCI\\VEN_1AF4&DEV_1041` (virtio 1.0+ modern virtio-net; `disable-legacy=on`)
+- `PCI\\VEN_1AF4&DEV_1000` (transitional virtio-net)

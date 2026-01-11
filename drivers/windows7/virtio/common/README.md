@@ -10,6 +10,11 @@ It currently contains two transport implementations:
 - **Legacy/transitional:** `virtio_pci_legacy.*` (I/O port register set)
 - **Modern-only (WDM):** `virtio_pci_modern_wdm.*` (virtio 1.0+ PCI vendor caps + MMIO)
 
+> Note: This library is **not** for Aero’s virtio contract v1 devices
+> (`docs/windows7-virtio-driver-contract.md`), which require the virtio-pci **modern**
+> transport (PCI capabilities + MMIO). For the modern transport core, see
+> `drivers/win7/virtio/virtio-core/`.
+
 ## What is implemented
 
 - **Transport:** `virtio_pci_legacy.*`

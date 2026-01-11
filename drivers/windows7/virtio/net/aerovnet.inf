@@ -1,7 +1,7 @@
 ; Aero virtio-net NDIS 6.20 miniport driver (Windows 7 SP1)
 ;
 ; This INF installs the driver as a standard Ethernet NIC backed by a
-; virtio-net PCI device (virtio 1.0+ "modern" / disable-legacy=on).
+; virtio-net PCI device (transitional ID space).
 ;
 ; Note: Windows 7 x64 requires driver signing unless test mode is enabled.
 
@@ -17,10 +17,10 @@ CatalogFile = aerovnet.cat
 %Aero% = Aero,NTx86,NTamd64
 
 [Aero.NTx86]
-%AeroVNet.DeviceDesc% = AeroVNet_Install, PCI\VEN_1AF4&DEV_1041
+%AeroVNet.DeviceDesc% = AeroVNet_Install, PCI\VEN_1AF4&DEV_1000
 
 [Aero.NTamd64]
-%AeroVNet.DeviceDesc% = AeroVNet_Install, PCI\VEN_1AF4&DEV_1041
+%AeroVNet.DeviceDesc% = AeroVNet_Install, PCI\VEN_1AF4&DEV_1000
 
 [DestinationDirs]
 AeroVNet.CopyFiles = 12  ; DIRID_DRIVERS
