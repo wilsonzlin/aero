@@ -66,6 +66,16 @@ pwsh ./drivers/windows7/tests/host-harness/Invoke-AeroVirtioWin7Tests.ps1 `
 
 The harness uses QEMU’s `-audiodev none,...` backend so it remains headless/CI-friendly.
 
+Note: When `-WithVirtioSnd` / `--with-virtio-snd` is enabled, the host harness expects the guest selftest to run:
+
+- virtio-snd playback (`AERO_VIRTIO_SELFTEST|TEST|virtio-snd|PASS`)
+- virtio-snd capture endpoint checks (`...|virtio-snd-capture|PASS`)
+- virtio-snd full-duplex regression (`...|virtio-snd-duplex|PASS`)
+
+The duplex test runs only when the guest selftest is provisioned with `--test-snd-capture` (or equivalent).
+If your image was provisioned without capture smoke testing enabled, the guest will emit
+`virtio-snd-duplex|SKIP|flag_not_set` and the host harness will fail with a `...DUPLEX_SKIPPED` reason.
+
 On success, the script returns exit code `0` and prints:
 
 ```
