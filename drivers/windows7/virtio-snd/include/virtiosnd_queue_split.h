@@ -7,7 +7,8 @@
 #include "virtiosnd_queue.h"
 #include "virtiosnd_dma.h"
 
-#include "virtqueue_split.h"
+/* Explicit include to avoid picking up the legacy virtqueue header via include path order. */
+#include "../../../windows/virtio/common/virtqueue_split.h"
 
 /*
  * Indirect descriptor sizing (Aero contract v1).
