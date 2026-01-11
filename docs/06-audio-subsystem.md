@@ -68,18 +68,26 @@ Audio snapshots must capture guest-visible progress (DMA positions, buffer state
 
 ### What must be captured
 
-- **HDA controller registers**
-  - global registers (GCTL/INTCTL/INTSTS, etc.)
-  - CORB/RIRB base addresses and read/write pointers
-  - stream descriptor registers (CTL/LPIB/CBL/LVI/FMT/BDL pointers)
-- **Host-side audio plumbing**
-  - AudioWorklet ring buffer indices (read/write positions)
-  - buffering/latency control variables
+- **Guest-visible HDA controller state**
+  - Global registers: `GCTL`, `STATESTS`, `INTCTL`, `INTSTS`, DMA position buffer base (`DPLBASE/DPUBASE`).
+  - CORB/RIRB: base addresses, size selectors, read/write pointers, control/status, `RINTCNT`.
+  - Stream descriptor registers for each stream: `CTL`, `LPIB`, `CBL`, `LVI`, `FIFOS`, `FMT`, `BDPL/BDPU`.
+  - Codec runtime state that affects what Windows sees via verbs (converter stream id/channel, converter format,
+    amp gain/mute, pin widget control, etc.).
+  - Stream DMA runtime progress needed to continue deterministically after restore (BDL index + byte offset and
+    resampler fractional position).
+- **Host-side audio plumbing (recreated)**
+  - AudioWorklet ring *indices* (`read_pos` / `write_pos` monotonic frame counters + capacity). The ring buffer
+    contents are not serialized.
 
 ### Restore semantics / limitations
 
-- The browser `AudioContext` / `AudioWorkletNode` is not serializable; on restore the host pipeline must be recreated.
-- Short glitches or buffer underruns immediately after restore are acceptable; the goal is to restore *guest-visible* device state deterministically.
+- The browser `AudioContext` / `AudioWorkletNode` is not serializable; on restore the host pipeline is recreated.
+- Any buffered host audio (worklet ring contents, decoded/resampled frames) is **not** restored. The device
+  reconstructs enough internal bookkeeping to keep *guest-visible* DMA progress deterministic, but the output may
+  glitch (typically a short silence/underrun) immediately after restore.
+- The goal is *guest-visible determinism*: after restore, Windows should see the same HDA register state and DMA
+  position evolution as if execution had continued without a save/load cycle.
 
 ## HD Audio Controller Emulation
 

@@ -309,6 +309,26 @@ impl LinearResampler {
     }
 }
 
+#[cfg(feature = "io-snapshot")]
+impl LinearResampler {
+    pub(crate) fn snapshot_src_pos_bits(&self) -> u64 {
+        self.src_pos.to_bits()
+    }
+
+    pub(crate) fn restore_snapshot_state(
+        &mut self,
+        src_rate_hz: u32,
+        dst_rate_hz: u32,
+        src_pos_bits: u64,
+        queued_frames: u32,
+    ) {
+        self.reset_rates(src_rate_hz, dst_rate_hz);
+        self.src_pos = f64::from_bits(src_pos_bits);
+        self.src
+            .extend(std::iter::repeat([0.0, 0.0]).take(queued_frames as usize));
+    }
+}
+
 fn lerp(a: f32, b: f32, t: f32) -> f32 {
     a + (b - a) * t
 }

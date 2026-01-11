@@ -1,4 +1,6 @@
-use aero_io_snapshot::io::audio::state::{AudioWorkletRingState, HdaControllerState, HdaStreamState};
+use aero_io_snapshot::io::audio::state::{
+    AudioWorkletRingState, HdaCodecState, HdaControllerState, HdaStreamRuntimeState, HdaStreamState,
+};
 use aero_io_snapshot::io::network::state::{
     DhcpLease, Ipv4Addr, NatKey, NatProtocol, NatValue, NetworkStackState, TcpRestorePolicy,
 };
@@ -201,23 +203,54 @@ fn network_stack_roundtrip_with_policy() {
 fn hda_state_roundtrip() {
     let hda = HdaControllerState {
         gctl: 1,
+        statests: 0x0001,
         intctl: 2,
         intsts: 3,
+        dplbase: 0x1000,
+        dpubase: 0,
+        corblbase: 0x2000,
+        corbubase: 0,
         corbwp: 4,
         corbrp: 5,
         corbctl: 6,
+        corbsts: 7,
+        corbsize: 2,
+        rirblbase: 0x3000,
+        rirbubase: 0,
         rirbwp: 7,
         rirbctl: 8,
-        rintcnt: 9,
+        rirbsts: 9,
+        rirbsize: 2,
+        rintcnt: 10,
         streams: vec![HdaStreamState {
             ctl: 0x10,
             lpib: 0x20,
             cbl: 0x30,
             lvi: 2,
+            fifos: 0x40,
             fmt: 0x4011,
             bdpl: 0x1000,
             bdpu: 0,
         }],
+        stream_runtime: vec![HdaStreamRuntimeState {
+            bdl_index: 1,
+            bdl_offset: 128,
+            last_fmt_raw: 0x4011,
+            resampler_src_pos_bits: (0.5f64).to_bits(),
+            resampler_queued_frames: 64,
+        }],
+        codec: HdaCodecState {
+            output_stream_id: 1,
+            output_channel: 0,
+            output_format: 0x4011,
+            amp_gain_left: 0x7f,
+            amp_gain_right: 0x7f,
+            amp_mute_left: false,
+            amp_mute_right: true,
+            pin_conn_select: 0,
+            pin_ctl: 0x40,
+            afg_power_state: 0,
+        },
         worklet_ring: AudioWorkletRingState {
             capacity_frames: 48000,
             write_pos: 1024,

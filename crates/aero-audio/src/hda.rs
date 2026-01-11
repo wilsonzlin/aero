@@ -5,6 +5,11 @@ use crate::pcm::{decode_pcm_to_stereo_f32, encode_mono_f32_to_pcm, LinearResampl
 use crate::ring::AudioRingBuffer;
 use crate::sink::AudioSink;
 
+#[cfg(feature = "io-snapshot")]
+use aero_io_snapshot::io::audio::state::{
+    AudioWorkletRingState, HdaCodecState, HdaControllerState, HdaStreamRuntimeState, HdaStreamState,
+};
+
 /// Size of the HDA MMIO region.
 pub const HDA_MMIO_SIZE: usize = 0x4000;
 
@@ -1570,6 +1575,166 @@ impl HdaController {
         }
 
         written
+    }
+}
+
+#[cfg(feature = "io-snapshot")]
+impl HdaController {
+    pub fn snapshot_state(&self, worklet_ring: AudioWorkletRingState) -> HdaControllerState {
+        HdaControllerState {
+            gctl: self.gctl,
+            statests: self.statests,
+            intctl: self.intctl,
+            intsts: self.intsts,
+            dplbase: self.dplbase,
+            dpubase: self.dpubase,
+
+            corblbase: self.corblbase,
+            corbubase: self.corbubase,
+            corbwp: self.corbwp,
+            corbrp: self.corbrp,
+            corbctl: self.corbctl,
+            corbsts: self.corbsts,
+            corbsize: self.corbsize,
+
+            rirblbase: self.rirblbase,
+            rirbubase: self.rirbubase,
+            rirbwp: self.rirbwp,
+            rirbctl: self.rirbctl,
+            rirbsts: self.rirbsts,
+            rirbsize: self.rirbsize,
+            rintcnt: self.rintcnt,
+
+            streams: self
+                .streams
+                .iter()
+                .map(|sd| HdaStreamState {
+                    ctl: sd.ctl,
+                    lpib: sd.lpib,
+                    cbl: sd.cbl,
+                    lvi: sd.lvi,
+                    fifos: sd.fifos,
+                    fmt: sd.fmt,
+                    bdpl: sd.bdpl,
+                    bdpu: sd.bdpu,
+                })
+                .collect(),
+            stream_runtime: self
+                .stream_rt
+                .iter()
+                .map(|rt| HdaStreamRuntimeState {
+                    bdl_index: rt.bdl_index,
+                    bdl_offset: rt.bdl_offset,
+                    last_fmt_raw: rt.last_fmt_raw,
+                    resampler_src_pos_bits: rt.resampler.snapshot_src_pos_bits(),
+                    resampler_queued_frames: rt.resampler.queued_source_frames() as u32,
+                })
+                .collect(),
+            codec: HdaCodecState {
+                output_stream_id: self.codec.output.stream_id,
+                output_channel: self.codec.output.channel,
+                output_format: self.codec.output.format,
+                amp_gain_left: self.codec.output.amp_gain_left,
+                amp_gain_right: self.codec.output.amp_gain_right,
+                amp_mute_left: self.codec.output.amp_mute_left,
+                amp_mute_right: self.codec.output.amp_mute_right,
+                pin_conn_select: self.codec.pin.conn_select,
+                pin_ctl: self.codec.pin.pin_ctl,
+                afg_power_state: self.codec.afg_power_state,
+            },
+            worklet_ring,
+        }
+    }
+
+    pub fn restore_state(&mut self, state: &HdaControllerState) {
+        self.gctl = state.gctl;
+        self.statests = state.statests;
+        self.intctl = state.intctl;
+        self.intsts = state.intsts;
+
+        self.dplbase = state.dplbase;
+        self.dpubase = state.dpubase;
+
+        self.corblbase = state.corblbase;
+        self.corbubase = state.corbubase;
+        self.corbwp = state.corbwp;
+        self.corbrp = state.corbrp;
+        self.corbctl = state.corbctl;
+        self.corbsts = state.corbsts;
+        self.corbsize = state.corbsize;
+
+        self.rirblbase = state.rirblbase;
+        self.rirbubase = state.rirbubase;
+        self.rirbwp = state.rirbwp;
+        self.rintcnt = state.rintcnt;
+        self.rirbctl = state.rirbctl;
+        self.rirbsts = state.rirbsts;
+        self.rirbsize = state.rirbsize;
+
+        if self.streams.len() != state.streams.len() {
+            self.streams = vec![StreamDescriptor::default(); state.streams.len()];
+            self.stream_rt = (0..state.streams.len())
+                .map(|_| StreamRuntime::new(self.output_rate_hz))
+                .collect();
+            self.gcap = (state.streams.len() as u16) & 0x0f;
+        }
+
+        for (sd, s) in self.streams.iter_mut().zip(&state.streams) {
+            sd.ctl = s.ctl;
+            sd.lpib = s.lpib;
+            sd.cbl = s.cbl;
+            sd.lvi = s.lvi;
+            sd.fifos = s.fifos;
+            sd.fmt = s.fmt;
+            sd.bdpl = s.bdpl;
+            sd.bdpu = s.bdpu;
+        }
+
+        for (idx, (rt, s)) in self
+            .stream_rt
+            .iter_mut()
+            .zip(&state.stream_runtime)
+            .enumerate()
+        {
+            rt.bdl_index = s.bdl_index;
+            rt.bdl_offset = s.bdl_offset;
+            rt.last_fmt_raw = s.last_fmt_raw;
+
+            let fmt_raw = if s.last_fmt_raw != 0 {
+                s.last_fmt_raw
+            } else {
+                self.streams.get(idx).map(|sd| sd.fmt).unwrap_or(0)
+            };
+            let src_rate_hz = if fmt_raw != 0 {
+                StreamFormat::from_hda_format(fmt_raw).sample_rate_hz
+            } else {
+                self.output_rate_hz
+            };
+
+            rt.resampler.restore_snapshot_state(
+                src_rate_hz,
+                self.output_rate_hz,
+                s.resampler_src_pos_bits,
+                s.resampler_queued_frames,
+            );
+        }
+
+        self.codec.output.stream_id = state.codec.output_stream_id;
+        self.codec.output.channel = state.codec.output_channel;
+        self.codec.output.format = state.codec.output_format;
+        self.codec.output.amp_gain_left = state.codec.amp_gain_left;
+        self.codec.output.amp_gain_right = state.codec.amp_gain_right;
+        self.codec.output.amp_mute_left = state.codec.amp_mute_left;
+        self.codec.output.amp_mute_right = state.codec.amp_mute_right;
+        self.codec.pin.conn_select = state.codec.pin_conn_select;
+        self.codec.pin.pin_ctl = state.codec.pin_ctl;
+        self.codec.afg_power_state = state.codec.afg_power_state;
+
+        // Host-side output buffering is recreated on restore.
+        self.audio_out.clear();
+
+        // Derive IRQ line state from restored registers.
+        self.update_irq_line();
     }
 }
 
