@@ -1413,17 +1413,19 @@ fn fs_main() -> @location(0) vec4<f32> {
                 ExecutorError::Validation("COPY_BUFFER: WRITEBACK_DST requires alloc_table".into())
             })?;
             let dst_backing = dst_backing.ok_or_else(|| {
-                ExecutorError::Validation("COPY_BUFFER: missing dst backing for writeback".into())
+                ExecutorError::Validation(format!(
+                    "COPY_BUFFER: missing dst backing for writeback (dst_buffer={dst_buffer})"
+                ))
             })?;
             let entry = table.get(dst_backing.alloc_id).ok_or_else(|| {
                 ExecutorError::Validation(format!(
-                    "COPY_BUFFER: unknown dst backing_alloc_id={}",
+                    "COPY_BUFFER: missing alloc table entry for alloc_id={} (dst_buffer={dst_buffer})",
                     dst_backing.alloc_id
                 ))
             })?;
             if (entry.flags & ring::AEROGPU_ALLOC_FLAG_READONLY) != 0 {
                 return Err(ExecutorError::Validation(format!(
-                    "COPY_BUFFER: WRITEBACK_DST to READONLY backing_alloc_id={}",
+                    "COPY_BUFFER: dst_buffer={dst_buffer} backing alloc_id={} is READONLY",
                     dst_backing.alloc_id
                 )));
             }
@@ -1662,9 +1664,9 @@ fn fs_main() -> @location(0) vec4<f32> {
                 )
             })?;
             let dst_backing = dst_backing.ok_or_else(|| {
-                ExecutorError::Validation(
-                    "COPY_TEXTURE2D: missing dst backing for writeback".into(),
-                )
+                ExecutorError::Validation(format!(
+                    "COPY_TEXTURE2D: missing dst backing for writeback (dst_texture={dst_texture})"
+                ))
             })?;
 
             let row_bytes = width.checked_mul(dst_bpp).ok_or_else(|| {
