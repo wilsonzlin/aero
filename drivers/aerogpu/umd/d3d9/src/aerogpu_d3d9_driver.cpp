@@ -2137,7 +2137,7 @@ void release_adapter(Adapter* adapter) {
   g_adapter_cache.erase(luid_to_u64(adapter->luid));
 
 #if defined(_WIN32)
-  // Release cross-process share-token allocator state.
+  // Release cross-process alloc_id token allocator state.
   {
     std::lock_guard<std::mutex> share_lock(adapter->share_token_mutex);
     if (adapter->share_token_view) {
