@@ -403,10 +403,37 @@ static int RunD3D11DepthTestSanity(int argc, char** argv) {
   if (depth_format == DXGI_FORMAT_D24_UNORM_S8_UINT) {
     clear_flags |= D3D11_CLEAR_STENCIL;
   }
-  context->ClearDepthStencilView(dsv.get(), clear_flags, 1.0f, 0);
 
-  // Draw nearer first, then farther. With depth test enabled, the second draw should be rejected.
+  // Validate ClearDepthStencilView deterministically:
+  // 1) Clear to 1.0 to establish a known depth state.
+  // 2) Clear to 0.0, then draw a far triangle (z=0.8) in the LEFT viewport. It must be rejected.
+  // 3) Clear back to 1.0, then draw the far triangle in the RIGHT viewport. It must pass.
+  // 4) Draw a near triangle (z=0.2) in the RIGHT viewport; it must win, and the far triangle must
+  //    be rejected afterwards due to depth writes.
+  context->ClearDepthStencilView(dsv.get(), clear_flags, 1.0f, 0);
+  context->ClearDepthStencilView(dsv.get(), clear_flags, 0.0f, 0);
+
+  // Left half.
+  vp.TopLeftX = 0.0f;
+  vp.TopLeftY = 0.0f;
+  vp.Width = (FLOAT)(kWidth / 2);
+  vp.Height = (FLOAT)kHeight;
+  context->RSSetViewports(1, &vp);
+  // Far triangle (green) should be rejected because depth was cleared to 0.0.
+  context->Draw(3, 3);
+
+  // Right half.
+  context->ClearDepthStencilView(dsv.get(), clear_flags, 1.0f, 0);
+  vp.TopLeftX = (FLOAT)(kWidth / 2);
+  vp.TopLeftY = 0.0f;
+  vp.Width = (FLOAT)(kWidth / 2);
+  vp.Height = (FLOAT)kHeight;
+  context->RSSetViewports(1, &vp);
+  // Far triangle passes (depth=1.0).
+  context->Draw(3, 3);
+  // Near triangle passes and overwrites the far triangle.
   context->Draw(3, 0);
+  // Far triangle should now be rejected (depth=0.2 from the near draw).
   context->Draw(3, 3);
 
   // Explicitly unbind to exercise the "bind NULL to clear" path (common during ClearState).
@@ -453,10 +480,12 @@ static int RunD3D11DepthTestSanity(int argc, char** argv) {
   }
 
   const uint32_t corner = aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, 0, 0);
-  const uint32_t center =
-      aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, kWidth / 2, kHeight / 2);
-  const uint32_t expected_corner = 0xFFFF0000u;
-  const uint32_t expected_center = 0xFF0000FFu;
+  const uint32_t left_center =
+      aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, kWidth / 4, kHeight / 2);
+  const uint32_t right_center =
+      aerogpu_test::ReadPixelBGRA(map.pData, (int)map.RowPitch, 3 * kWidth / 4, kHeight / 2);
+  const uint32_t expected_red = 0xFFFF0000u;
+  const uint32_t expected_blue = 0xFF0000FFu;
 
   if (dump) {
     const std::wstring bmp_path = aerogpu_test::JoinPath(dir, L"d3d11_depth_test_sanity.bmp");
@@ -471,14 +500,18 @@ static int RunD3D11DepthTestSanity(int argc, char** argv) {
 
   context->Unmap(staging.get(), 0);
 
-  if ((corner & 0x00FFFFFFu) != (expected_corner & 0x00FFFFFFu) ||
-      (center & 0x00FFFFFFu) != (expected_center & 0x00FFFFFFu)) {
+  if ((corner & 0x00FFFFFFu) != (expected_red & 0x00FFFFFFu) ||
+      (left_center & 0x00FFFFFFu) != (expected_red & 0x00FFFFFFu) ||
+      (right_center & 0x00FFFFFFu) != (expected_blue & 0x00FFFFFFu)) {
     return reporter.Fail(
-        "pixel mismatch: corner=0x%08lX expected 0x%08lX; center=0x%08lX expected 0x%08lX",
+        "pixel mismatch: corner=0x%08lX expected 0x%08lX; left_center=0x%08lX expected 0x%08lX; "
+        "right_center=0x%08lX expected 0x%08lX",
         (unsigned long)corner,
-        (unsigned long)expected_corner,
-        (unsigned long)center,
-        (unsigned long)expected_center);
+        (unsigned long)expected_red,
+        (unsigned long)left_center,
+        (unsigned long)expected_red,
+        (unsigned long)right_center,
+        (unsigned long)expected_blue);
   }
 
   return reporter.Pass();
