@@ -5,6 +5,20 @@ import { normalizeOriginString } from '../security/origin.js';
 function normalizeRequestHost(requestHost: string, scheme: 'http' | 'https'): string | null {
   const trimmed = requestHost.trim();
   if (trimmed === '') return null;
+  // Host is an ASCII serialization. Be strict about rejecting non-ASCII or
+  // non-printable characters that URL parsers may normalize away.
+  if (!/^[\x21-\x7E]+$/.test(trimmed)) return null;
+  // Disallow percent-encoding and IPv6 zone identifiers; different URL parsers
+  // disagree on how to handle them, and browsers won't emit them in Host.
+  if (trimmed.includes('%')) return null;
+  // Reject comma-delimited values. Some HTTP stacks may join repeated headers
+  // with commas.
+  if (trimmed.includes(',')) return null;
+  // Reject path/query/fragment delimiters. Host headers are a host[:port]
+  // serialization and must not contain these.
+  if (trimmed.includes('/') || trimmed.includes('?') || trimmed.includes('#')) return null;
+  // Reject backslashes; some URL parsers normalize them to `/`.
+  if (trimmed.includes('\\')) return null;
   if (trimmed.includes('@')) return null;
   // Reject empty port specs like `example.com:`. Node's URL parser may otherwise
   // treat this as if the port were absent, which would diverge from the stricter

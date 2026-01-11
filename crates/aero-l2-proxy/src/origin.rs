@@ -102,6 +102,18 @@ fn normalize_request_host(request_host: &str, scheme: &'static str) -> Option<St
     if lowered.contains('%') {
         return None;
     }
+    // Reject comma-delimited values. Some HTTP stacks join repeated headers with commas.
+    if lowered.contains(',') {
+        return None;
+    }
+    // Host is a host[:port] serialization; reject any path/query/fragment delimiters.
+    if lowered.contains('/') || lowered.contains('?') || lowered.contains('#') {
+        return None;
+    }
+    // Reject backslashes; some URL parsers normalize them to `/`.
+    if lowered.contains('\\') {
+        return None;
+    }
     // Reject any userinfo in the request host.
     if lowered.contains('@') {
         return None;

@@ -27,6 +27,10 @@ export function normalizeOriginString(origin: string): string | null {
   // Reject comma-delimited values. Browsers send a single Origin serialization,
   // but some HTTP stacks may join repeated headers with commas.
   if (trimmed.includes(',')) return null;
+  // Reject query and fragment delimiters even when empty. WHATWG URL parsers
+  // normalize `https://example.com?` or `https://example.com#` to the same origin,
+  // but browsers don't emit those in Origin headers.
+  if (trimmed.includes('?') || trimmed.includes('#')) return null;
   // Require an explicit scheme://host serialization; WHATWG URL parsers accept
   // weird variants like `https:example.com` and will normalize them to an
   // authority URL, but browsers don't emit those in Origin headers.

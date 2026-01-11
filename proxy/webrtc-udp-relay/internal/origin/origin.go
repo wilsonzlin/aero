@@ -31,6 +31,12 @@ func NormalizeHeader(originHeader string) (normalizedOrigin string, host string,
 	if strings.Contains(trimmed, ",") {
 		return "", "", false
 	}
+	// Reject query and fragment delimiters even when empty. WHATWG URL parsers
+	// normalize `https://example.com?` or `https://example.com#` to the same origin,
+	// but browsers don't emit those in Origin headers.
+	if strings.Contains(trimmed, "?") || strings.Contains(trimmed, "#") {
+		return "", "", false
+	}
 	lower := strings.ToLower(trimmed)
 	schemePrefix := ""
 	switch {
@@ -146,6 +152,21 @@ func normalizeRequestHost(requestHost, scheme string) (string, bool) {
 		return "", false
 	}
 	if !isASCIIOriginString(trimmed) {
+		return "", false
+	}
+	if strings.Contains(trimmed, "%") {
+		return "", false
+	}
+	if strings.Contains(trimmed, ",") {
+		return "", false
+	}
+	if strings.Contains(trimmed, "\\") {
+		return "", false
+	}
+	if strings.Contains(trimmed, "@") {
+		return "", false
+	}
+	if strings.Contains(trimmed, "/") || strings.Contains(trimmed, "?") || strings.Contains(trimmed, "#") {
 		return "", false
 	}
 
