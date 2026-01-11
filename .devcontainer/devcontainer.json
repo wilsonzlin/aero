@@ -10,10 +10,11 @@
   "containerEnv": {
     "CARGO_BUILD_JOBS": "4",
     "CARGO_INCREMENTAL": "1",
+    "RUSTFLAGS": "-C codegen-units=4",
     "NODE_OPTIONS": "--max-old-space-size=4096",
     "PW_TEST_WORKERS": "1"
   },
-  "postCreateCommand": "bash -lc 'PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci && just setup'",
+  "postCreateCommand": "bash -lc 'just setup'",
   "customizations": {
     "vscode": {
       "extensions": [
