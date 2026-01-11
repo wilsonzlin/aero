@@ -1564,6 +1564,7 @@ impl AerogpuD3d11Executor {
                 | OPCODE_DRAW_INDEXED
                 | OPCODE_BIND_SHADERS
                 | OPCODE_SET_INPUT_LAYOUT
+                | OPCODE_SET_RENDER_TARGETS
                 | OPCODE_SET_BLEND_STATE
                 | OPCODE_SET_DEPTH_STENCIL_STATE
                 | OPCODE_SET_RASTERIZER_STATE
@@ -1625,6 +1626,50 @@ impl AerogpuD3d11Executor {
                         break;
                     }
                 } else {
+                    break;
+                }
+            }
+
+            if opcode == OPCODE_SET_RENDER_TARGETS {
+                // `struct aerogpu_cmd_set_render_targets` (48 bytes)
+                if cmd_bytes.len() < 48 {
+                    break;
+                }
+                let color_count = read_u32_le(cmd_bytes, 8)? as usize;
+                let depth_stencil = read_u32_le(cmd_bytes, 12)?;
+                if color_count > 8 {
+                    break;
+                }
+
+                let mut colors = Vec::with_capacity(color_count);
+                let mut seen_gap = false;
+                let mut invalid_gap = false;
+                for i in 0..color_count {
+                    let tex_id = read_u32_le(cmd_bytes, 16 + i * 4)?;
+                    if tex_id == 0 {
+                        seen_gap = true;
+                        continue;
+                    }
+                    if seen_gap {
+                        invalid_gap = true;
+                        break;
+                    }
+                    colors.push(tex_id);
+                }
+                if invalid_gap {
+                    break;
+                }
+
+                let depth_stencil = if depth_stencil == 0 {
+                    None
+                } else {
+                    Some(depth_stencil)
+                };
+
+                // Render targets cannot be changed inside a render pass; allow no-ops so redundant
+                // binds don't force a restart.
+                if colors != self.state.render_targets || depth_stencil != self.state.depth_stencil
+                {
                     break;
                 }
             }
@@ -2201,6 +2246,7 @@ impl AerogpuD3d11Executor {
                 }
                 OPCODE_BIND_SHADERS => self.exec_bind_shaders(cmd_bytes)?,
                 OPCODE_SET_INPUT_LAYOUT => self.exec_set_input_layout(cmd_bytes)?,
+                OPCODE_SET_RENDER_TARGETS => self.exec_set_render_targets(cmd_bytes)?,
                 OPCODE_SET_VERTEX_BUFFERS => {
                     let Ok((cmd, bindings)) = decode_cmd_set_vertex_buffers_bindings_le(cmd_bytes)
                     else {
